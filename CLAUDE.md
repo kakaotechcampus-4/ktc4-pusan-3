@@ -8,11 +8,11 @@
 
 ## 0. 이 파일의 범위
 
-| | 어디에 |
-| --- | --- |
-| **전원이 공유해야 하는 것** — 무엇을 만드는가, 절대 규칙, 용어, 협업 규칙 | **이 파일** |
-| 구현 상세 — 폴더 구조, 컴포넌트, 프롬프트, 라이브러리 관례 | `apps/*/CLAUDE.md` |
-| 기능별 결정 · 근거 · 검증 | [`docs/`](docs/README.md) 인덱스에서 도메인별로 |
+|                                                                           | 어디에                                          |
+| ------------------------------------------------------------------------- | ----------------------------------------------- |
+| **전원이 공유해야 하는 것** — 무엇을 만드는가, 절대 규칙, 용어, 협업 규칙 | **이 파일**                                     |
+| 구현 상세 — 폴더 구조, 컴포넌트, 프롬프트, 라이브러리 관례                | `apps/*/CLAUDE.md`                              |
+| 기능별 결정 · 근거 · 검증                                                 | [`docs/`](docs/README.md) 인덱스에서 도메인별로 |
 
 이 파일에는 **한 파트에서만 쓰는 규칙을 쓰지 않는다.** 프론트만 지키면 되는 규칙은 `apps/web/CLAUDE.md` 로.
 반대로 **파트 경계를 넘는 규칙은 반드시 여기 있어야 한다** — §2 절대 규칙이 그것이다.
@@ -44,8 +44,9 @@
 
 ### 기억
 
-- 🚨 **근거 Memory 가 없으면 추천을 만들지 않는다.** 억지 추천 대신 "기록이 부족해요" + 최소 질문 **1개**(복수 금지).
-- 🚨 **모든 추천에 사용한 `memory_id` 를 첨부한다.** `suggestion_evidence` 가 0행인 suggestion 은 **버그**다 (품질 지표 하드 기준 0건).
+- 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 또래 기준 일반 추천임을 **화면에 명시**하고, 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
+- 🚨 **개인화 추천에는 사용한 `memory_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
+- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 일반 추천은 근거 0행이 정상이지만, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
 - 🚨 **한 번의 관찰을 성향으로 확정하지 않는다.** 승격은 오직 Curator 의 반복 집계로만. LLM 이 `state` 를 직접 쓰지 않는다.
 - 🚨 **부모의 말은 아이의 Fact 가 아니다.** "요즘 산만하다"는 보호자 Observation(`caregiver_observation`). 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
 - 🚨 **6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다.**
@@ -54,7 +55,6 @@
 
 - 🚨 **되돌릴 수 없는 것은 사람이 승인한다** — 승인 게이트는 **딱 2곳**: ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 기록 확정. 그 외에 승인을 늘리지 말 것(자동화가 무의미해진다), **줄이지도 말 것**.
 - 🚨 **자동 실행 경로를 코드에 만들지 않는다.** 승인 없는 draft 는 24시간 뒤 만료.
-- 🚨 **모델 호출은 입력 1건당 최소 1회 · 최대 3회** (Supervisor 1 + 도메인 Agent 최대 2). 초과하면 알람.
 - 🚨 **20초 초과 시 부분 결과로 전환.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 한 화면에 섞는다.
 
 ### 개인정보
@@ -72,11 +72,11 @@
 
 새 기능을 붙일 때 **가장 먼저 판단할 것**. 칸을 잘못 고르면 §2가 자동으로 깨진다.
 
-| | 무엇 |
-| --- | --- |
-| **AI(LLM)가 하는 것** | 자연어에서 관찰 추출·라벨링(Fact/Observation/Inference), 의도 분류·라우팅, 식사·놀이·교육 후보 **생성** |
-| **코드(규칙)가 하는 것** | 날짜·나이 계산, 일정 충돌, **알레르기·금지식품 필터**, Memory 감쇠, 반복 승격, 승인 게이트 |
-| **사람이 하는 것** | **되돌릴 수 없는 것만** — 일정 등록/변경, 알레르기·건강 기록 확정 |
+|                          | 무엇                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------- |
+| **AI(LLM)가 하는 것**    | 자연어에서 관찰 추출·라벨링(Fact/Observation/Inference), 의도 분류·라우팅, 식사·놀이·교육 후보 **생성** |
+| **코드(규칙)가 하는 것** | 날짜·나이 계산, 일정 충돌, **알레르기·금지식품 필터**, Memory 감쇠, 반복 승격, 승인 게이트              |
+| **사람이 하는 것**       | **되돌릴 수 없는 것만** — 일정 등록/변경, 알레르기·건강 기록 확정                                       |
 
 > 판단 기준: **"틀렸을 때 되돌릴 수 있나?"** 못 되돌리면 사람. **"100% 맞아야 하나?"** 그러면 코드. 나머지가 LLM.
 
@@ -111,24 +111,25 @@
 
 ## 5. 용어 — 같은 단어를 같은 뜻으로
 
-6명이 병렬로 만들기 때문에 **여기서 어긋나면 통합에서 터진다.** 스키마 정본은 [테크스펙 §데이터 모델](docs/overview/tech-spec.md#데이터-모델수정중).
+6명이 병렬로 만들기 때문에 **여기서 어긋나면 통합에서 터진다.**
+스키마·인터페이스 정본은 **저장소 밖**에 있다(테크스펙에서 분리). 확정되면 `docs/api/` 에 기능 문서로 고정한다.
 
-| 용어 | 뜻 | 어디에 |
-| --- | --- | --- |
-| **Observation Memory** | 관찰 **1건**. 도메인별 4계층 테이블 | `observation_food` · `_health` · `_education` · `_activity` |
-| **Child Memory** | 관찰이 쌓여 만들어진 아이 프로필 | `profile_interest` · `profile_preference` · `profile_safety` |
-| **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지 | 관찰의 `type` |
-| **Curator** | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행 | AI 파트 |
-| **승격 (promotion)** | `observed → candidate → confirmed → archived` | `interest_state` |
-| **감쇠 (decay)** | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`) | 규칙 |
-| **Supervisor** | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅 | AI 파트 |
-| **의도 3형** | `기록형` / `요청형` / `혼합형` | Supervisor 출력 |
-| **도메인 Agent** | `food` · `activity` · `education` · `health` **4종 고정** | `suggestion_agent` |
-| **Suggestion** | 추천 1건. `draft → approved / rejected / expired` | `suggestion_status` |
-| **근거 (evidence)** | 그 추천이 쓴 `memory_id` 목록. **0행이면 버그** | `suggestion_evidence` |
-| **Correction** | 4버튼 = `confirm`(맞아요) / `once_only`(한 번 본 것뿐) / `outdated`(지금은 달라요) / `wrong`(잘못된 기록) | `correction_verdict` |
-| **run** | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다 | `GET /runs/{rid}/events` |
-| **승인 게이트** | 되돌릴 수 없는 2곳 | §2 · §3 |
+| 용어                               | 뜻                                                                                                        | 어디에                                                       |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **Observation Memory**             | 관찰 **1건**. 도메인별 4계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity`  |
+| **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_interest` · `profile_preference` · `profile_safety` |
+| **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
+| **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
+| **승격 (promotion)**               | `observed → candidate → confirmed → archived`                                                             | `interest_state`                                             |
+| **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
+| **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
+| **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
+| **도메인 Agent**                   | `food` · `activity` · `education` · `health` **4종 고정**                                                 | `suggestion_agent`                                           |
+| **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
+| **근거 (evidence)**                | 그 추천이 쓴 `memory_id` 목록. **0행이면 버그**                                                           | `suggestion_evidence`                                        |
+| **Correction**                     | 4버튼 = `confirm`(맞아요) / `once_only`(한 번 본 것뿐) / `outdated`(지금은 달라요) / `wrong`(잘못된 기록) | `correction_verdict`                                         |
+| **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
+| **승인 게이트**                    | 되돌릴 수 없는 2곳                                                                                        | §2 · §3                                                      |
 
 **주의** — `activity` 와 `play/interest` 가 기획서·테크스펙에 섞여 있다. **코드에서는 `activity` 로 통일**한다 (`suggestion_agent` enum 기준).
 
@@ -142,29 +143,37 @@
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   └── assets/               흐름도 · 프로토타입
 ├── apps/                     (예정)
-│   ├── web/CLAUDE.md         프론트 — 고태영
-│   ├── api/CLAUDE.md         백엔드 — 김명성
-│   └── ai/CLAUDE.md          AI · Agent — 이시하
+│   ├── web/                  프론트 — 고태영
+│   │   └── CLAUDE.md
+│   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI)
+│       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
+│       ├── app/api/          라우터 · 스키마 · DB — 김명성
+│       └── app/agents/       Supervisor · 도메인 Agent · Curator — 이시하
+│           └── CLAUDE.md     Agent 구현 · 프롬프트 — 이시하
 ├── eval/                     (예정) 테스트 케이스 10개 — 오현식 · 이도헌
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
-> `apps/` 하위 이름(`web`/`api`/`ai`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
+> **왜 백엔드와 AI 를 한 서비스로 묶었나** — §4 의 두 제약 때문이다. 저장이 검색보다 먼저여야 하고(같은 run 안에서),
+> 각 Agent 가 `memory.search` 와 DB 를 직접 부른다. 프로세스를 나누면 이 경로마다 네트워크 왕복이 생긴다.
+> **배포 단위는 하나, 소유는 폴더로 나눈다.** `app/api/` 와 `app/agents/` 의 경계를 넘는 변경은 두 Owner 협의 대상이다.
+>
+> 하위 이름(`web`/`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
 
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
-**파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. 인터페이스는 [테크스펙 §인터페이스 명세](docs/overview/tech-spec.md#인터페이스-명세)가 정본.
+**파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.
 
 ---
 
 ## 7. 기술 스택
 
-| | |
-| --- | --- |
-| **Frontend** | Next.js / React · TypeScript · Tailwind · Zustand · TanStack Query · (모바일: React Native 웹뷰) |
-| **Backend** | Python / FastAPI · REST · Docker |
-| **Data** | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다) |
-| **AI** | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
-| **협업** | GitHub · Notion(기획·의사결정 기록) · Discord |
+|              |                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------- |
+| **Frontend** | Next.js / React · TypeScript · Tailwind · Zustand · TanStack Query · (모바일: React Native 웹뷰)         |
+| **Backend**  | Python / FastAPI · REST · Docker                                                                         |
+| **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
+| **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
+| **협업**     | GitHub · Notion(기획·의사결정 기록) · Discord                                                            |
 
 버전·라이브러리 관례는 각 `apps/*/CLAUDE.md` 에.
 
@@ -194,14 +203,12 @@
 
 ### 결정 방식
 
-| 범위 | 누가 |
-| --- | --- |
-| 개인 구현 방식 | 작업자 자율 |
-| 기능 내부 기술 결정 | 해당 기능 Owner |
-| 영역 간 인터페이스 | 관련 Owner 협의 |
+| 범위                 | 누가                                              |
+| -------------------- | ------------------------------------------------- |
+| 개인 구현 방식       | 작업자 자율                                       |
+| 기능 내부 기술 결정  | 해당 기능 Owner                                   |
+| 영역 간 인터페이스   | 관련 Owner 협의                                   |
 | **서비스 핵심 정책** | 팀 전체 근거기반 논의 후 **PM(박재형) 최종 결정** |
-
-담당: 박재형(PM) · 고태영(프론트) · 김명성(백엔드) · 이시하(AI) · 오현식(eval) · 이도헌(eval)
 
 ---
 
@@ -224,11 +231,7 @@
 
 그중 코드에 직접 걸리는 것:
 
-- **승격 임계값** — 관찰 몇 회부터 `interest` 로 올릴 것인가 (현재 `distinct_days_14d` 기반, 값 미정)
-- **감쇠 기준** — 몇 개월 / 몇 건 (품질 지표는 21일을 쓰고 있으나 확정 아님)
-- **법정대리인 동의 시점** — 저장 **전**이어야 한다. 지금 설계는 첫 진입에서 받아 바로 Memory 를 만든다
 - **개인정보 보관 범위·기간**, **삭제 범위** (Memory·원문·Inference·Embedding·로그까지)
 - **외부 LLM 전달 범위** — 공통 컨텍스트 강제 주입 구조상 무관한 Agent 에도 건강정보가 갈 수 있다
-- **급식 데이터 출처** (나이스·유치원알리미 개방 여부) — 안 되면 보호자 수동 입력 폴백
 
 새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다.

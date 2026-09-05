@@ -41,8 +41,8 @@
 | [담당](overview/tech-spec.md#담당) | 6인 역할 · 소유 영역 · 의사결정 원칙 |
 | [요구사항](overview/tech-spec.md#요구사항) | 기능 `F-01`~`F-15` · 비기능 `NF-01`~`NF-09` |
 | [아키텍처 설계](overview/tech-spec.md#아키텍처-설계) | 기술 스택 (Next.js / FastAPI / PostgreSQL+pgvector) · 흐름도 |
-| [데이터 모델](overview/tech-spec.md#데이터-모델수정중) | **DBML 전문** · observation 4계층 · profile · suggestion · correction · event ⚠️ *수정중* |
-| [인터페이스 명세](overview/tech-spec.md#인터페이스-명세) | 화면별 최소 API 목록 + 요청/응답 예시 |
+
+> 데이터 모델(DBML)과 인터페이스 명세는 테크스펙에서 **분리**했다. 정본은 저장소 밖에 있고, 확정되면 `api/` 에 기능 문서로 고정한다.
 | [리스크](overview/tech-spec.md#리스크) | ①~⑬ · ⭐과해석 · **④법정대리인 동의 · ⑤외부 LLM 전달 범위 · ⑥삭제 범위** |
 | [요청사항](overview/tech-spec.md#요청사항) | 담당자별 미결 질문 3건 + 기한 |
 | [시나리오](overview/tech-spec.md#시나리오) | 핵심 시나리오 7단계 · 실패·예외 7종 |
@@ -71,7 +71,9 @@
 
 ## API · 백엔드
 
-*아직 문서 없음.* 엔드포인트 계약, SSE(`/runs/{rid}/events`), 승인 게이트, 외부 연동(나이스 급식 · Calendar · OCR).
+- [api/api-interface-v1.html](api/api-interface-v1.html) — 바뀐 데이터 모델(`profile_affinity` · `observed_range` · `health_safety`) 기준으로 최소 API 재고정 · 공통 Ref/에러/Idempotency 규약 · 화면 01~10 매핑 · 스키마 공백 10건 (브라우저로 열기)
+
+*아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
 
 ## 웹 · 화면
 
@@ -99,16 +101,15 @@
 
 두 개요 문서에서 `미정` 으로 남아 있는 항목. **원문이 기준**이고, 결정되면 해당 도메인 폴더에 기능 문서로 고정한 뒤 이 표에서 뺀다.
 
+> 승격 임계값 · 감쇠 기준 · 법정대리인 동의 시점 · 급식 데이터 출처는 **확정되어 이 표에서 뺐다.** 확정된 값은 아직 문서로 고정되지 않았다 — 각각 `memory/` · `safety/` · `api/` 에 기능 문서로 남길 것.
+
 | 결정할 것 | 기한 | 원문 | 결정 후 갈 곳 |
 | --- | --- | --- | --- |
-| 법정대리인 동의 절차 — 저장 **전** 동의 시점, 동의 항목 분리 | **9월 2주** (10월 3주 배포 전 필수) | [리스크 ④](overview/tech-spec.md#리스크) | `safety/` |
 | 개인정보 보관 범위·기간 | **9월 2주** | [NF-04](overview/tech-spec.md#5-2-비기능적-요구사항) | `safety/` |
 | 삭제 범위 (Memory·원문·Embedding·로그) · 공지 원문 제3자 정보 | **9월 2주** | [리스크 ⑥](overview/tech-spec.md#리스크) | `safety/` |
 | 외부 LLM 전달 범위 · 식별정보 제거 · 국외 처리 여부 | **9월 2~4주** (스키마 확정과 동시) | [리스크 ⑤](overview/tech-spec.md#리스크) | `safety/` |
 | 냅킨 계산 — 유저 1인당 월 모델 비용 | **9월 1주** | [요청사항 3](overview/tech-spec.md#요청사항) | `ops/` |
-| Memory 스키마 확정 (현재 *수정중*) | **9월 2~4주** | [데이터 모델](overview/tech-spec.md#데이터-모델수정중) | `memory/` |
 | Agent Workflow · API Schema 확정 | **9월 2~4주** | [일정](overview/tech-spec.md#일정) | `agents/` · `api/` |
-| 급식 데이터 출처(나이스·유치원알리미) 실제 호출 확인 | **~9월 1주** | [리스크 ⑧](overview/tech-spec.md#리스크) | `api/` |
 | Agent 참조 문서(건강검진 정보, 0~5세 선호 활동 자료) 출처 | **9월 2주** | [요청사항 1](overview/tech-spec.md#요청사항) | `agents/` |
 | 블라인드 비교 선택률 · 재방문율 목표치 | 미정 | [기획 §7](overview/service-plan.md#7-잘-됐다는-걸-뭘로-아는가) | `eval/` |
 
