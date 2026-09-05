@@ -71,7 +71,7 @@
 
 ## API · 백엔드
 
-- [api/api-interface-v1.html](api/api-interface-v1.html) — 바뀐 데이터 모델(`profile_affinity` · `observed_range` · `health_safety`) 기준으로 최소 API 재고정 · 공통 Ref/에러/Idempotency 규약 · 화면 01~10 매핑 · 스키마 공백 10건 (브라우저로 열기)
+- [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 28개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 3건 (브라우저로 열기)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
 
