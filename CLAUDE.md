@@ -135,18 +135,30 @@
 
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
+├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   └── assets/               흐름도 · 프로토타입
-├── apps/                     (예정)
+├── apps/
 │   ├── web/                  프론트 — 고태영
 │   │   └── CLAUDE.md
-│   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI)
+│   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
-│       ├── app/api/          라우터 · 스키마 · DB — 김명성
-│       └── app/agents/       Supervisor · 도메인 Agent · Curator — 이시하
-│           └── CLAUDE.md     Agent 구현 · 프롬프트 — 이시하
+│       ├── pyproject.toml    의존성 · ruff · pytest 설정
+│       ├── uv.lock           ⚠️ 반드시 커밋 — 6명 동일 버전 고정
+│       ├── .env.example      환경변수 템플릿 (실제 값 없음)
+│       ├── app/
+│       │   ├── main.py       FastAPI 앱 진입점
+│       │   ├── core/         설정(pydantic-settings) — 김명성
+│       │   ├── api/          라우터 · 스키마 — 김명성
+│       │   ├── domains/      도메인 모델 · 리포지토리 — 김명성
+│       │   ├── agents/       Supervisor · 도메인 Agent · Curator — 이시하
+│       │   │   └── CLAUDE.md Agent 구현 · 프롬프트 — 이시하
+│       │   ├── rules/        규칙(순수 Python) — 공동
+│       │   └── infra/        DB · 관찰가능성 인프라 — 김명성
+│       └── tests/            pytest (ASGITransport 통합 테스트)
 ├── eval/                     (예정) 테스트 케이스 10개 — 오현식 · 이도헌
+├── deploy/                   (예정) 컨테이너 · 인프라 설정
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
