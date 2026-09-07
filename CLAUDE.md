@@ -144,7 +144,8 @@
 │   ├── api/                  API 계약서 v1
 │   └── assets/               흐름도 · 프로토타입
 ├── apps/
-│   ├── web/                  (미생성) 프론트 — 고태영
+│   ├── web/                  (비어 있음) 프론트 — 고태영
+│   │   │                     ⚠️ create-next-app 이 빈 폴더를 요구하면 .gitkeep 삭제 후 진행
 │   │   └── CLAUDE.md         (미생성) 프론트 구현 관례 — 고태영
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
