@@ -91,11 +91,13 @@ apps/api/
 │   ├── core/
 │   │   └── config.py        pydantic-settings 로 .env 읽기
 │   ├── api/
-│   │   └── v1/routers/      HTTP 엔드포인트 (현재: health)
+│   │   ├── health.py        운영용 헬스체크 (/api/v1 밖)
+│   │   ├── deps/           인증 · 권한 · 동의 검사
+│   │   └── v1/             도메인 엔드포인트 (다음 이슈에서 추가)
 │   ├── domains/             도메인 모델 · 리포지토리 (다음 이슈에서 추가)
-│   ├── agents/              Supervisor · 도메인 Agent · Curator — 이시하
+│   ├── agents/              Agent — 내부 구조는 AI Owner(이시하)가 결정
 │   ├── rules/               규칙 로직 (순수 Python — DB·LLM 접근 금지)
-│   ├── infra/               DB · 관찰가능성 인프라 (다음 이슈에서 추가)
+│   ├── infra/db/            DB 세션 · 엔진 (다음 이슈에서 추가)
 │   ├── providers/           외부 LLM SDK 래퍼
 │   ├── integrations/        외부 API 연동 (NEIS, MFDS)
 │   └── workers/             백그라운드 작업 (승인 없는 실행 경로 차단)
