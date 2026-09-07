@@ -35,8 +35,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ## 처음 세팅 (클론 후 한 번)
 
 ```bash
-# 저장소 루트에서
-git clone <repo-url>
+# 저장소를 받을 위치에서
+git clone https://github.com/kakaotechcampus-4/ktc4-pusan-3.git
 cd ktc4-pusan-3
 
 # 환경변수 파일 생성 (실제 값은 팀 채널에서 공유)
