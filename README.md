@@ -15,3 +15,5 @@
 | [테크스펙](docs/overview/tech-spec.md) | 요구사항 · 아키텍처 · 데이터 모델 · API 명세 · 리스크 |
 | [Agent 처리 흐름도](docs/assets/agent-flow.png) | 인식 → 승인 → 계획 → 행동 → 결과 → 반영 |
 | [프로토타입](docs/assets/prototype.html) | 화면 01~10 시연본 (브라우저로 직접 열기) |
+
+🛠 **[백엔드 개발 가이드 → `apps/api/README.md`](apps/api/README.md)** — 사전 준비 · 실행 · 자주 쓰는 명령
