@@ -190,7 +190,7 @@
 |              |                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------- |
 | **Frontend** | Next.js / React · TypeScript · Tailwind · Zustand · TanStack Query · (모바일: React Native 웹뷰)         |
-| **Backend**  | Python / FastAPI · REST · Docker                                                                         |
+| **Backend**  | Python 3.12 / FastAPI · SQLAlchemy 2.0 (async) · Alembic · uv · REST · Docker                            |
 | **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
 | **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
 | **협업**     | GitHub · Notion(기획·의사결정 기록) · Discord                                                            |
