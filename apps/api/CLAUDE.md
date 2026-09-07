@@ -37,15 +37,20 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 - **금지**: fastapi, agents, providers, integrations
 
 ### `app/agents/`
-- **허용**: domains, rules, providers, agents/tools
+- **허용**: domains, rules, providers
 - **금지**: fastapi, infra 직접 접근
+- ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
+  미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
+  LangGraph 등 채택 프레임워크에 따라 구성이 달라질 수 있다.
 
-### `app/agents/tools/`
-- Agent 가 DB·외부에 닿는 **유일한 통로**
-- Tool 권한 매트릭스를 여기서 강제한다
+**단, 아래 한 가지는 파트 경계라 협의 대상이다.**
+- Agent 는 DB·외부에 **한 계층(tool 계층)을 통해서만** 닿는다.
+  도메인 Agent 가 `domains/*/repository` 를 직접 import 하지 않는다.
+- 이유: `docs/` 의 Tool 권한 매트릭스를 코드로 강제하려면 통로가 하나여야 한다.
+- 그 계층의 이름·형태는 AI Owner 가 정한다.
 
 ### `app/api/`
-- **허용**: domains, agents/runtime, core
+- **허용**: domains, core, agents 진입점
 - **금지**: agents 내부 구현 직접 import
 
 ### `app/providers/`
