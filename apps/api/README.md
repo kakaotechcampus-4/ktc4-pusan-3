@@ -55,9 +55,13 @@ make install
 make dev
 
 # 다른 터미널에서 health 확인
-curl http://localhost:8000/api/v1/health
+curl http://localhost:8000/health
 # 예상 응답: {"status":"ok","env":"local"}
 ```
+
+> 헬스체크는 `/api/v1` **밖**에 있습니다. API 계약서 §01이 "경로는 모두 `/api/v1` 하위 ·
+> 인증 예외 없음" 이라고 정하는데, 로드밸런서와 컨테이너 healthcheck 는 토큰 없이
+> 호출해야 하기 때문입니다. 도메인 엔드포인트는 전부 `/api/v1` 하위에 붙습니다.
 
 ---
 
