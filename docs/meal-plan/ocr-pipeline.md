@@ -60,12 +60,20 @@ CLAUDE.md §10 — *"미정을 기본값으로 채우고 넘어가지 말 것."*
 
 ```python
 # app/rules/allergen.py
-CIRCLED = {chr(0x245F + i): i for i in range(1, 21)}   # ① ~ ⑳
+CIRCLED = {chr(0x2460 + i): i + 1 for i in range(20)}   # ① ~ ⑳
 
-def parse_allergens(raw: str) -> list[int]:
+@dataclass(frozen=True)
+class ParsedAllergens:
+    codes: tuple[int, ...]    # 19종 안 · 오름차순 · 중복 제거
+    unknown: tuple[int, ...]  # 19종 밖 · 비어 있지 않으면 사람 검수 플래그
+
+def parse_allergens(raw: str) -> ParsedAllergens:
     """메뉴 원문에서 알레르기 번호만 추출. LLM 개입 없음."""
     ...
 ```
+
+범위 밖 숫자(`0`, `20`, `2026` 등)는 버리지 않고 `unknown` 으로 돌려준다 — §1 ③ 과 같은 원칙이다.
+괄호 안 구분자는 쉼표·점·공백 무엇이든 받고(`(1.5.6.16)` 도 흔하다), 닫는 괄호가 빠진 OCR 결과도 읽는다.
 
 ---
 
