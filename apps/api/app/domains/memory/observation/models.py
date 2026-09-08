@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Integer, SmallInteger, Text
-from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, Range, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.memory.enums import (
