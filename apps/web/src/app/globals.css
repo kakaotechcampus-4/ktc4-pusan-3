@@ -48,12 +48,48 @@
   --color-danger-soft: #fae8e5;
   --color-danger-ink: #8f1d17;
 
+  /* 오버레이 — 시트 뒤 가림막. 순검정은 저조도에서 눈에 때린다 */
+  --color-scrim: rgb(34 31 27 / 0.45);
+
+  /* 타이포 8단계 (문서 §4). 입력 필드는 16px 미만으로 내리지 않는다 —
+   * iOS 웹뷰가 포커스 시 화면을 자동 확대하고 그대로 남는다. */
+  --text-caption: 0.75rem; /* 12 */
+  --text-caption--line-height: 1.4;
+  --text-label: 0.8125rem; /* 13 */
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 500;
+  --text-body-sm: 0.875rem; /* 14 */
+  --text-body-sm--line-height: 1.55;
+  --text-button: 0.9375rem; /* 15 */
+  --text-button--line-height: 1.2;
+  --text-button--font-weight: 600;
+  --text-body: 1rem; /* 16 */
+  --text-body--line-height: 1.6;
+  --text-section: 1.0625rem; /* 17 */
+  --text-section--line-height: 1.4;
+  --text-section--font-weight: 600;
+  --text-section--letter-spacing: -0.01em;
+  --text-title: 1.25rem; /* 20 */
+  --text-title--line-height: 1.35;
+  --text-title--font-weight: 700;
+  --text-title--letter-spacing: -0.01em;
+  --text-display: 1.5rem; /* 24 */
+  --text-display--line-height: 1.3;
+  --text-display--font-weight: 700;
+  --text-display--letter-spacing: -0.02em;
+
+  /* 콘텐츠 최대 폭. 이보다 넓어져도 벌리지 않는다 (문서 §9) */
+  --container-content: 35rem; /* 560px */
+
   --radius-field: 0.625rem; /* 10px */
   --radius-card: 0.875rem; /* 14px */
   --radius-sheet: 1.25rem; /* 20px */
 
-  /* 그림자는 바텀시트에만. 카드 경계는 line 이 만든다 (문서 §5) */
+  /* 그림자는 바텀시트에만. 카드 경계는 line 이 만든다 (문서 §6) */
   --shadow-sheet: 0 -2px 16px rgb(34 31 27 / 0.08);
+
+  /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
 @layer base {
@@ -78,6 +114,24 @@
     word-break: keep-all;
     /* 웹뷰에서 바깥으로 튀는 스크롤 바운스를 막는다. */
     overscroll-behavior-y: none;
+  }
+
+  /* 포커스는 항상 보인다 (문서 §10). outline: none 을 쓰지 말 것. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* 🚨 transform 을 끄고 opacity 만 남긴다 (문서 §8) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
