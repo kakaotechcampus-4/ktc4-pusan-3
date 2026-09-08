@@ -108,7 +108,9 @@ class Calendar(Base, UUIDPk, Timestamps):
 
     __tablename__ = "calendar"
 
-    child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
     date: Mapped[date] = mapped_column(Date, nullable=False)
     diary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_urls: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")

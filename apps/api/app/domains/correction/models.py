@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,7 +24,9 @@ class Correction(Base, UUIDPk):
 
     __tablename__ = "correction"
 
-    affinity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    affinity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="CASCADE"), nullable=False
+    )
     verdict: Mapped[str] = mapped_column(
         enum_col("confirm", "once_only", "outdated", "wrong", name="correction_verdict"),
         nullable=False,

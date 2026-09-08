@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Text
+from sqlalchemy import ForeignKey, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,7 +23,9 @@ class HealthSafety(Base, UUIDPk, Timestamps):
 
     __tablename__ = "health_safety"
 
-    child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
     kind: Mapped[str] = mapped_column(
         enum_col(
             "allergy",
@@ -51,5 +53,9 @@ class HealthSafety(Base, UUIDPk, Timestamps):
         nullable=False,
         server_default="active",
     )
-    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="RESTRICT"), nullable=False
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
+    )

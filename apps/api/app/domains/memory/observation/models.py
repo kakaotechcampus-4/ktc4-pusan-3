@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, SmallInteger, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,11 +18,15 @@ from app.infra.db.types import enum_col
 class ObservationCommon:
     """food · education · activity 공통 컬럼. health 는 상속하지 않는다."""
 
-    child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     subject: Mapped[str] = mapped_column(Text, nullable=False)  # 정규화 대상. 임베딩·병합 판정 입력
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
-    affinity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    affinity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="SET NULL"), nullable=True
+    )
     polarity: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
     strong_signals: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default="{}"
@@ -32,7 +36,9 @@ class ObservationCommon:
         observation_status, nullable=False, server_default="active"
     )
     observed_range: Mapped[Range[date]] = mapped_column(DATERANGE, nullable=False)
-    source_writer: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_writer: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="RESTRICT"), nullable=False
+    )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
@@ -68,14 +74,18 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
 
     __tablename__ = "observation_health"
 
-    child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     confidence_source: Mapped[str] = mapped_column(confidence_source, nullable=False)
     status: Mapped[str] = mapped_column(
         observation_status, nullable=False, server_default="active"
     )
     observed_range: Mapped[Range[date]] = mapped_column(DATERANGE, nullable=False)
-    source_writer: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_writer: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="RESTRICT"), nullable=False
+    )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     severity: Mapped[str | None] = mapped_column(

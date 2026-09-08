@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Text
+from sqlalchemy import DateTime, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,7 +12,9 @@ from app.infra.db.types import enum_col
 class Suggestion(Base, UUIDPk, Timestamps):
     __tablename__ = "suggestion"
 
-    child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
     agent: Mapped[str] = mapped_column(
         enum_col("food", "activity", "education", "health", name="suggestion_agent"),
         nullable=False,

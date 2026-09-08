@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Date, Float, SmallInteger, Text
+from sqlalchemy import Date, Float, ForeignKey, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,7 +13,9 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 class ProfileAffinity(Base, UUIDPk, Timestamps):
     __tablename__ = "profile_affinity"
 
-    child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
     merge_key: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     domain: Mapped[str] = mapped_column(memory_domain, nullable=False)
