@@ -133,20 +133,45 @@
 
 ## 6. 저장소 구조
 
+`(비어 있음)` = 폴더는 있고 파일은 다음 이슈에서 · `(미생성)` = 폴더 자체가 아직 없음
+
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
+├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
+├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
+│   ├── api/                  API 계약서 v1
 │   └── assets/               흐름도 · 프로토타입
-├── apps/                     (예정)
-│   ├── web/                  프론트 — 고태영
-│   │   └── CLAUDE.md
-│   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI)
+├── apps/
+│   ├── web/                  (비어 있음) 프론트 — 고태영
+│   │   │                     ⚠️ create-next-app 이 빈 폴더를 요구하면 .gitkeep 삭제 후 진행
+│   │   └── CLAUDE.md         (미생성) 프론트 구현 관례 — 고태영
+│   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
-│       ├── app/api/          라우터 · 스키마 · DB — 김명성
-│       └── app/agents/       Supervisor · 도메인 Agent · Curator — 이시하
-│           └── CLAUDE.md     Agent 구현 · 프롬프트 — 이시하
-├── eval/                     (예정) 테스트 케이스 10개 — 오현식 · 이도헌
+│       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
+│       ├── pyproject.toml    의존성 · ruff · pytest 설정
+│       ├── uv.lock           ⚠️ 반드시 커밋 — 6명 동일 버전 고정
+│       ├── .env.example      환경변수 템플릿 (실제 값 없음)
+│       ├── alembic/          (비어 있음) DB 마이그레이션
+│       ├── app/
+│       │   ├── main.py       FastAPI 앱 진입점
+│       │   ├── core/         설정(pydantic-settings) — 김명성
+│       │   ├── api/          라우터 · 스키마 — 김명성
+│       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
+│       │   │   ├── deps/     (비어 있음) 인증 · 권한 · 동의 검사
+│       │   │   └── v1/       (비어 있음) 도메인 엔드포인트
+│       │   ├── domains/      (비어 있음) 도메인 모델 · 리포지토리 — 김명성
+│       │   ├── agents/       (비어 있음) Agent — **내부 구조는 이시하가 결정**
+│       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
+│       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
+│       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
+│       │   ├── integrations/ (비어 있음) 외부 공공 API (NEIS · MFDS)
+│       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
+│       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
+│       └── tests/            pytest (ASGITransport 통합 테스트)
+├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
+├── deploy/                   (비어 있음) 컨테이너 · 인프라 설정
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
@@ -166,7 +191,7 @@
 |              |                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------- |
 | **Frontend** | Next.js / React · TypeScript · Tailwind · Zustand · TanStack Query · (모바일: React Native 웹뷰)         |
-| **Backend**  | Python / FastAPI · REST · Docker                                                                         |
+| **Backend**  | Python 3.12 / FastAPI · SQLAlchemy 2.0 (async) · Alembic · uv · REST · Docker                            |
 | **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
 | **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
 | **협업**     | GitHub · Notion(기획·의사결정 기록) · Discord                                                            |
