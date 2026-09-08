@@ -9,6 +9,18 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 
 
 class HealthSafety(Base, UUIDPk, Timestamps):
+    """안전·제약 정보. 3층 구조다.
+
+    kind     대분류 — allergy / chronic_disease / ...
+    category kind 별 중분류 — allergy 면 "식품"/"약물"/"환경", chronic_disease 면 "내분비" 등.
+             kind 마다 값 집합이 달라 ENUM 이 아니다. 애플리케이션에서 검증한다.
+    label    구체적 대상 — "우유" / "소아 당뇨" / "천식"
+    aliases  label 의 별칭. 매칭 폭을 넓히기 위한 것
+
+    안전 조회는 항상 state='active' 로 필터한다.
+    알레르기 필터 로직은 아직 구체화 전이다.
+    """
+
     __tablename__ = "health_safety"
 
     child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -25,13 +37,13 @@ class HealthSafety(Base, UUIDPk, Timestamps):
         nullable=False,
     )
     label: Mapped[str] = mapped_column(Text, nullable=False)
-    aliases: Mapped[list] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     category: Mapped[str | None] = mapped_column(Text, nullable=True)
     severity: Mapped[str | None] = mapped_column(
         enum_col("mild", "moderate", "severe", "anaphylaxis", name="safety_severity"),
         nullable=True,
     )
-    reactions: Mapped[list] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    reactions: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     management: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[str] = mapped_column(

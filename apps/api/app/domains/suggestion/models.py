@@ -28,5 +28,8 @@ class Suggestion(Base, UUIDPk, Timestamps):
         enum_col("liked", "disliked", "not_acted", name="suggestion_feedback"),
         nullable=True,
     )
-    source_refs: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # [{"kind": "observation_food" | "observation_health" | "observation_education"
+    #           | "observation_activity" | "profile_affinity", "id": "<uuid>"}, ...]
+    # 형태 검증 CHECK 는 마이그레이션에서 is_valid_refs() 로 붙인다
+    source_refs: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, server_default="[]")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

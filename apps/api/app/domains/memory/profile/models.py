@@ -15,7 +15,7 @@ class ProfileAffinity(Base, UUIDPk, Timestamps):
 
     child_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     merge_key: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     domain: Mapped[str] = mapped_column(memory_domain, nullable=False)
     state: Mapped[str] = mapped_column(
         profile_state, nullable=False, server_default="candidate"
