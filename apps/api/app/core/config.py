@@ -9,8 +9,11 @@ class Settings(BaseSettings):
     APP_ENV: str = "local"
     APP_NAME: str = "ktc4-pusan-3-api"
 
-    DATABASE_URL: str
-    ALEMBIC_DATABASE_URL: str
+    DB_HOST: str
+    DB_PORT: int = 5432
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_NAME: str
 
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 
