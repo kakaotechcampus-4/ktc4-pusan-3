@@ -1,0 +1,9 @@
+.next/
+out/
+build/
+node_modules/
+pnpm-lock.yaml
+next-env.d.ts
+
+# 마크다운은 손으로 정렬해 둔다 (표 정렬이 prettier 로 깨진다).
+*.md

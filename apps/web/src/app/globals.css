@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 디자인 토큰 — 임시값이다.
+ * docs/web/ 에 디자인 토큰 문서가 아직 없다 (docs/README.md §웹·화면).
+ * 확정되면 여기 값을 바꾸고 그 문서를 정본으로 삼는다. 화면 코드에서 #hex 를 직접 쓰지 말 것.
+ * ────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+
+  --color-surface: #ffffff;
+  --color-surface-muted: #f6f6f4;
+  --color-ink: #1a1a17;
+  --color-ink-muted: #6b6b63;
+  --color-line: #e5e4df;
+
+  /* 브랜드 */
+  --color-brand: #2f6f4e;
+  --color-brand-soft: #e7f1ea;
+
+  /* 상태 — 승인 게이트·경고·실패에 쓴다 */
+  --color-caution: #b4531a;
+  --color-danger: #b3261e;
+
+  --radius-card: 0.875rem;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    /* 모바일은 React Native 웹뷰다 (CLAUDE.md §7). 회전 시 글자 크기가 튀는 것을 막는다. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* 웹뷰에서 바깥으로 튀는 스크롤 바운스를 막는다. */
+    overscroll-behavior-y: none;
+  }
+}
+
+/* 웹뷰 노치·홈 인디케이터 영역. 화면 컨테이너에서 pt-safe / pb-safe 로 쓴다.
+ * @utility 는 중첩할 수 없어 @layer 밖에 둔다. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
