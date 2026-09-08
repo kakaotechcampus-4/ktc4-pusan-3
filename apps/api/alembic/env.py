@@ -6,8 +6,13 @@ from sqlalchemy import create_engine, pool
 # 모델 모듈 import — autogenerate 인식을 위해 여기에 추가
 from app.domains.child import models as child_models  # noqa: F401
 from app.domains.consent import models as consent_models  # noqa: F401
+from app.domains.correction import models as correction_models  # noqa: F401
 from app.domains.identity import models as identity_models  # noqa: F401
+from app.domains.memory.observation import models as observation_models  # noqa: F401
+from app.domains.memory.profile import models as profile_models  # noqa: F401
+from app.domains.safety import models as safety_models  # noqa: F401
 from app.domains.schedule import models as schedule_models  # noqa: F401
+from app.domains.suggestion import models as suggestion_models  # noqa: F401
 from app.infra.db.base import Base
 from app.infra.db.url import build_url
 
