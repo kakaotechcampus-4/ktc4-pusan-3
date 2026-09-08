@@ -144,9 +144,20 @@
 │   ├── api/                  API 계약서 v1
 │   └── assets/               흐름도 · 프로토타입
 ├── apps/
-│   ├── web/                  (비어 있음) 프론트 — 고태영
-│   │   │                     ⚠️ create-next-app 이 빈 폴더를 요구하면 .gitkeep 삭제 후 진행
-│   │   └── CLAUDE.md         (미생성) 프론트 구현 관례 — 고태영
+│   ├── web/                  프론트 (Next.js · App Router) — 고태영
+│   │   ├── CLAUDE.md         스택·버전 · API 클라이언트 관례 · 화면 규칙 — 고태영
+│   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
+│   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
+│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   └── src/
+│   │       ├── app/          App Router — layout · providers · globals.css
+│   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
+│   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키
+│   │       └── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
+│   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
+│   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
+│   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
+│   │   └── src/config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
@@ -179,7 +190,11 @@
 > 각 Agent 가 `memory.search` 와 DB 를 직접 부른다. 프로세스를 나누면 이 경로마다 네트워크 왕복이 생긴다.
 > **배포 단위는 하나, 소유는 폴더로 나눈다.** `app/api/` 와 `app/agents/` 의 경계를 넘는 변경은 두 Owner 협의 대상이다.
 >
-> 하위 이름(`web`/`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
+> **왜 web 과 mobile 을 나눴나** — `mobile` 은 `web` 을 띄우는 **웹뷰 껍데기**다 (§7). 화면·상태·API 호출을 하나도 갖지 않는다.
+> 그래서 둘은 URL 하나 말고는 공유하는 코드가 없고, pnpm 워크스페이스로 묶지 않았다 — **각자 설치하고 각자 배포한다.**
+> 이 경계가 무너지면(= `mobile` 에 화면이 생기면) 화면이 두 벌이 되고 §2 를 두 곳에서 지켜야 한다.
+>
+> 하위 이름(`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
 
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
 **파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.
@@ -190,7 +205,7 @@
 
 |              |                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------- |
-| **Frontend** | Next.js / React · TypeScript · Tailwind · Zustand · TanStack Query · (모바일: React Native 웹뷰)         |
+| **Frontend** | Next.js 16 / React 19 · TypeScript · Tailwind 4 · Zustand 5 · TanStack Query 5 · (모바일: Expo / React Native 웹뷰) |
 | **Backend**  | Python 3.12 / FastAPI · SQLAlchemy 2.0 (async) · Alembic · uv · REST · Docker                            |
 | **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
 | **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |

@@ -17,3 +17,5 @@
 | [프로토타입](docs/assets/prototype.html) | 화면 01~10 시연본 (브라우저로 직접 열기) |
 
 🛠 **[백엔드 개발 가이드 → `apps/api/README.md`](apps/api/README.md)** — 사전 준비 · 실행 · 자주 쓰는 명령
+
+💻 **[프론트엔드 개발 가이드 → `apps/web/README.md`](apps/web/README.md)** — 실행 · 환경변수 · 검사 명령 (모바일 셸은 [`apps/mobile/README.md`](apps/mobile/README.md))
