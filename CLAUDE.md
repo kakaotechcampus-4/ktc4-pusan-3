@@ -113,10 +113,10 @@
 | 용어                               | 뜻                                                                                                        | 어디에                                                       |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | **Observation Memory**             | 관찰 **1건**. 도메인별 4계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity`  |
-| **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_interest` · `profile_preference` · `profile_safety` |
+| **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
 | **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
-| **승격 (promotion)**               | `observed → candidate → confirmed → archived`                                                             | `interest_state`                                             |
+| **승격 (promotion)**               | `candidate → confirmed → archived`                                                                        | `profile_state`                                              |
 | **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
