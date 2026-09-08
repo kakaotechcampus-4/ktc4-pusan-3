@@ -138,7 +138,7 @@
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
 ├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
-├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run)
+├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run) · db-up / db-down / db-logs (deploy/docker)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   ├── api/                  API 계약서 v1
@@ -171,7 +171,9 @@
 │       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
 │       └── tests/            pytest (ASGITransport 통합 테스트)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
-├── deploy/                   (비어 있음) 컨테이너 · 인프라 설정
+├── deploy/
+│   ├── docker/                로컬 개발 DB (Postgres+pgvector) docker-compose
+│   └── (미생성) nginx/, scripts/   배포용, 아직 없음
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 

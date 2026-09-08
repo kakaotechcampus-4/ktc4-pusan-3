@@ -14,7 +14,7 @@
 | 웹 프레임워크 | FastAPI |
 | ORM | SQLAlchemy 2.0 (async, asyncpg) |
 | 마이그레이션 | Alembic |
-| DB | PostgreSQL 17 + pgvector |
+| DB | PostgreSQL 18 + pgvector |
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
