@@ -1,6 +1,6 @@
 # 육아 Agent 협업 가이드
 
-백엔드 작업에 필요한 최소 협업 규칙입니다. 자세한 운영/보안/아키텍처 설명은 `README.md`와 `README_COLLABORATION.md`를 참고합니다.
+백엔드 · 프론트엔드 · AI 파트가 함께 지키는 최소 협업 규칙입니다. 자세한 운영/보안/아키텍처 설명은 `README.md`와 `README_COLLABORATION.md`를 참고합니다.
 
 ## 1. 기본 작업 흐름
 
@@ -9,17 +9,27 @@
 3. 작은 단위로 커밋한다.
 4. 테스트를 통과시킨다.
 5. PR을 만들고 리뷰를 받는다.
-6. 승인 후 `main`에 머지한다.
+6. 승인 후 `develop`에 머지한다.
 
-`main` 브랜치에 직접 push하지 않습니다.
+`develop` 브랜치에 직접 push하지 않습니다.
 
 ## 2. 브랜치 컨벤션
 
 형식:
 
 ```text
-<type>/be-<issue-number>-<short-description>
+<type>/<part>-<issue-number>-<short-description>
 ```
+
+part — 작업하는 파트를 하나 고릅니다.
+
+```text
+be   백엔드 (apps/api 의 app/api · domains · infra · rules)
+fe   프론트엔드 · 모바일 셸 (apps/web · apps/mobile)
+ai   Agent · 프롬프트 (apps/api 의 app/agents · providers)
+```
+
+한 브랜치는 한 파트만 담습니다. 파트 경계를 넘는 변경(예: API 계약 변경 + 화면 반영)은 브랜치를 나누고 PR도 따로 올립니다.
 
 type:
 
@@ -37,9 +47,11 @@ hotfix    운영 긴급 수정
 
 ```text
 feat/be-12-daily-routine-recommend
-fix/be-18-agent-tool-retry-loop
-refactor/be-25-split-agent-service
-docs/be-31-api-contract
+fix/be-18-quota-rollback
+feat/fe-14-suggestion-approval-sheet
+refactor/fe-22-split-api-client
+feat/ai-19-memory-curator-promotion
+docs/ai-31-supervisor-prompt-contract
 ```
 
 ## 3. 커밋 컨벤션
@@ -71,15 +83,20 @@ docs(readme): document required env variables
 이슈 제목:
 
 ```text
-[BE <Type>] <작업 요약>
+[<PART> <Type>] <작업 요약>
 ```
+
+`<PART>` 는 브랜치의 part 를 대문자로 씁니다 — `BE` · `FE` · `AI`.
 
 예시:
 
 ```text
 [BE Refactor] Agent service를 기능별로 분리
-[BE Fix] Agent tool 호출 무한 재시도 차단
-[BE Docs] API 오류 코드 문서화
+[BE Fix] 사용량 차감 rollback 누락 수정
+[FE Feat] 추천 승인 시트 화면 추가
+[FE Docs] API 클라이언트 사용 규칙 정리
+[AI Feat] Curator 반복 승격 규칙 구현
+[AI Docs] Supervisor 프롬프트 계약 문서화
 ```
 
 이슈에는 최소한 아래 내용을 작성합니다.
@@ -101,7 +118,7 @@ docs(readme): document required env variables
 PR 제목:
 
 ```text
-[BE] <type>(<scope>): <summary>
+[<PART>] <type>(<scope>): <summary>
 ```
 
 예시:
@@ -109,7 +126,10 @@ PR 제목:
 ```text
 [BE] refactor(agent): split agent service modules
 [BE] fix(quota): prevent double usage deduction
-[BE] docs(readme): add api contract
+[FE] feat(suggestion): add approval bottom sheet
+[FE] chore(web): pin tanstack query version
+[AI] feat(curator): promote repeated observations
+[AI] docs(supervisor): document intent routing contract
 ```
 
 PR에는 최소한 아래 내용을 작성합니다.
@@ -176,4 +196,3 @@ PR에는 실행한 테스트 명령어와 결과를 적습니다.
 - error code 임의 변경
 - 클라이언트와 합의 없이 API 응답 필드 삭제/타입 변경
 - 아동·보호자 개인정보(이름, 생년월일, 건강 기록 등)를 로그나 외부 요청에 원문 노출
-
