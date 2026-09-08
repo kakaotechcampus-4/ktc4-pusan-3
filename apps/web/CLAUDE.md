@@ -114,7 +114,10 @@ for await (const e of streamRunEvents(runId, controller.signal)) { ... }
 ## 5. 스타일
 
 - 색·radius·폰트는 `globals.css` 의 `@theme` 토큰으로만. 컴포넌트에서 `#hex` 를 직접 쓰지 않는다.
-- 토큰 값은 **아직 임시다.** `docs/web/` 에 디자인 토큰 문서가 확정되면 그쪽이 정본이 된다.
+- 토큰의 **정본은 [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md)** 다. `globals.css` 는 그 문서를 옮긴 것이고, 둘이 어긋나면 CSS 가 틀린 것이다.
+- 🚨 **실패를 빨강으로 칠하지 않는다.** `failed` · `partial` 의 실패 쪽 · `llm_unavailable` 은 `surface-muted` + `ink-muted` 다. `danger` 는 알레르기·건강 중단에만, `caution` 은 승인 게이트 2곳에만 쓴다.
+- 🚨 **일반 추천과 개인화 추천을 색으로 구분하지 않는다.** 라벨과 기록 건수가 본체다 (§4 첫 줄과 같은 규칙).
+- 본문 기본은 **16px / 1.6** 이다. 프로토타입의 11~13px 을 그대로 옮기지 말 것.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
 - 노치·홈 인디케이터는 `pt-safe` / `pb-safe` 유틸로. 단 웹뷰 안에서는 네이티브 셸이 이미 safe area 를 먹고 있어서 0 이 된다 — 모바일 브라우저 직접 접속용 안전장치다.
 
