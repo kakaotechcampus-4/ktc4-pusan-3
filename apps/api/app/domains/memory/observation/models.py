@@ -9,10 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.domains.memory.enums import (
     confidence_source,
     engagement_level,
-    enum_col,
     observation_status,
 )
 from app.infra.db.base import Base, Timestamps, UUIDPk
+from app.infra.db.types import enum_col
 
 
 class ObservationCommon:

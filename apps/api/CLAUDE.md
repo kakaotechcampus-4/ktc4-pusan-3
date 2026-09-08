@@ -33,7 +33,7 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
   — 날짜·나이 계산, 일정 충돌, 알레르기·금지식품 필터, 감쇠, 반복 승격
 
 ### `app/domains/`
-- **허용**: rules, core, sqlalchemy
+- **허용**: rules, core, infra/db, sqlalchemy
 - **금지**: fastapi, agents, providers, integrations
 
 ### `app/agents/`

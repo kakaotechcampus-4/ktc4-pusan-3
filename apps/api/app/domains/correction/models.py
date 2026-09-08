@@ -5,8 +5,8 @@ from sqlalchemy import DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.memory.enums import enum_col
 from app.infra.db.base import Base, UUIDPk
+from app.infra.db.types import enum_col
 
 
 class Correction(Base, UUIDPk):

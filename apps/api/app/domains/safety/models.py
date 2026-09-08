@@ -4,8 +4,8 @@ from sqlalchemy import Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.memory.enums import enum_col
 from app.infra.db.base import Base, Timestamps, UUIDPk
+from app.infra.db.types import enum_col
 
 
 class HealthSafety(Base, UUIDPk, Timestamps):
