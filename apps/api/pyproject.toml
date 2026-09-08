@@ -6,6 +6,10 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "asyncpg>=0.31.0",
+    "psycopg[binary]>=3.3.5",
+    "alembic>=1.19.2",
 ]
 
 [dependency-groups]
@@ -22,6 +26,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
