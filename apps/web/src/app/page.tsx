@@ -9,6 +9,7 @@ import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Spinner } from "@/components/ui/spinner";
 import { api, qk, type Agent, type AuthStatus } from "@/lib/api";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
 
@@ -117,7 +118,7 @@ export default function LoginPage() {
           onClick={start}
           disabled={pending || notReady || status.isPending}
         >
-          <KakaoSymbol />
+          {pending ? <Spinner /> : <KakaoSymbol />}
           {pending ? "로그인하는 중…" : "카카오로 시작하기"}
         </Button>
         <p className="text-caption text-ink-subtle text-center">

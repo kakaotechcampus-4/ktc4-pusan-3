@@ -34,7 +34,7 @@ export function Chip({
           "text-label ease-standard flex h-7 items-center rounded-full border px-2.5 transition-colors duration-120",
           selected
             ? "bg-brand-soft border-brand text-brand-ink"
-            : "bg-surface border-line text-ink-muted",
+            : "bg-surface border-line text-ink-muted hover:border-line-strong hover:bg-surface-muted",
           disabled && "bg-surface-muted border-line text-ink-subtle",
         )}
       >

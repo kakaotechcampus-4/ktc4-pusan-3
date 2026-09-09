@@ -48,6 +48,7 @@
   --color-caution-soft: #faefdb;
   --color-caution-ink: #7a4f09;
   --color-danger: #b3261e; /* 🚨 알레르기 경고 · 건강 추천 중단 전용 */
+  --color-danger-hover: #951f19; /* press/hover (흰 글자 8.4:1) */
   --color-danger-soft: #fae8e5;
   --color-danger-ink: #8f1d17;
 
@@ -55,6 +56,7 @@
    * 우리 팔레트가 아니다. 카카오 로그인 버튼은 카카오가 정한 색·모양을 써야 해서
    * 예외로 토큰을 뒀다. 🚨 다른 화면·다른 용도로 쓰지 않는다. */
   --color-kakao: #fee500;
+  --color-kakao-hover: #f0d800; /* press/hover (kakao-ink 10.5:1) */
   --color-kakao-ink: rgb(0 0 0 / 0.85);
 
   /* 오버레이 — 시트 뒤 가림막. 순검정은 저조도에서 눈에 때린다 */
@@ -99,6 +101,21 @@
 
   /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 🚨 `hover:` 를 hover 가 되는 기기에만 건다.
+ *
+ * Tailwind 기본 `hover:` 는 미디어쿼리 없이 `:hover` 를 그대로 낸다(생성 CSS 로 확인).
+ * 터치 기기에서는 탭한 뒤 손을 떼도 :hover 가 **눌러붙어서**, 방금 누른 버튼이 계속
+ * 눌린 것처럼 보인다. 이 화면은 대부분 웹뷰·모바일이라 그게 기본 경험이 된다.
+ *
+ * 아래로 덮어 두면 화면 코드는 `hover:` 를 그냥 쓰면 된다. 누른 느낌은 `active:` 가 맡는다. */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
 }
 
 @layer base {

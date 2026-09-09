@@ -10,6 +10,7 @@ import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { useChildId } from "@/hooks/use-child-id";
 import {
@@ -287,6 +288,7 @@ function ChildOnboardingScreen() {
         ) : null}
 
         <Button block onClick={submit} disabled={save.isPending}>
+          {save.isPending ? <Spinner /> : null}
           {save.isPending ? "저장하는 중…" : "다음"}
         </Button>
         <Button

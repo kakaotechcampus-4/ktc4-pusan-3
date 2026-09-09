@@ -117,7 +117,7 @@ src/
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
-  `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed`. 시트 · 배너 · 제안 카드는 그 화면 이슈에서 만든다
+  `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner`. 시트 · 배너 · 제안 카드는 그 화면 이슈에서 만든다
 - 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** safe-area 와 같은 `padding-top`/`bottom` 속성이라
   뒤에 오는 쪽이 이겨서 한쪽이 **조용히 죽는다** — 화면 5개가 `py-8` 을 넘겼는데 전부 무시돼
   상하 여백이 0 이었다(하단 문구가 화면 맨 아래 모서리에 붙었다). 상하 여백은 `Screen` 이 소유한다
@@ -266,6 +266,12 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - **Pretendard 는 자체 호스팅한다** (`public/fonts/pretendard/` · 92개 동적 서브셋).
   🚨 `src/app/pretendard.css` 는 `pretendard` 패키지에서 뽑아 url 만 바꾼 파일이다 — **손으로 고치지 않고**, 올릴 때 다시 뽑는다 (prettier 대상에서도 뺐다).
   CDN 을 쓰지 않는 이유와 서브셋을 고른 근거는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
+- **상호작용 상태는 primitive 안에 있다** (디자인 시스템 §8 표). 화면에서 `hover:`·`active:` 를 따로 붙이지 않는다.
+  🚨 **`active:` 를 빠뜨리면 웹뷰에서 아무 반응이 없다** — 웹뷰에는 호버가 없어서 `hover:` 는 브라우저에서만 걸린다.
+  🚨 `hover:` 는 `globals.css` 의 `@custom-variant` 로 **`@media (hover: hover)` 안에서만** 걸리게 덮어 뒀다.
+  Tailwind 기본값은 그냥 `:hover` 라 터치 기기에서 탭한 뒤 **눌러붙는다** — 이 화면은 대부분 웹뷰라 그게 기본 경험이 된다.
+- **기다리는 버튼에는 `Spinner` 를 붙인다.** 🚨 `prefers-reduced-motion` 에서는 스피너가 숨고 문구만 남는다 — 멈춘 스피너는 고장난 화면으로 읽힌다.
+- **등장·스크롤 애니메이션을 만들지 않는다** (디자인 시스템 §8). 하루에 여러 번 지친 상태로 여는 화면이라, 처음엔 살아 있어 보여도 100번째엔 매번 기다려야 하는 것이 된다.
 - 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 추천이 없어서 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
 - 노치·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 웹뷰 안에서는 네이티브 셸이 이미 처리해서 0 이 되고, 모바일 브라우저 직접 접속에서만 값이 생긴다.

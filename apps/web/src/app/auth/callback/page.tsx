@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Card, CardFailed } from "@/components/ui/card";
 import { Screen } from "@/components/ui/screen";
+import { Spinner } from "@/components/ui/spinner";
 import {
   api,
   isApiError,
@@ -165,7 +166,11 @@ export default function AuthCallbackPage() {
   return (
     <Screen className="justify-center gap-4">
       {outcome.kind === "working" && !failure ? (
-        <p className="text-body text-ink-muted text-center" aria-live="polite">
+        <p
+          className="text-body text-ink-muted flex items-center justify-center gap-2"
+          aria-live="polite"
+        >
+          <Spinner />
           로그인하는 중…
         </p>
       ) : null}

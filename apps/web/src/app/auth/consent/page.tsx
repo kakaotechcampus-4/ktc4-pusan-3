@@ -8,6 +8,7 @@ import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Spinner } from "@/components/ui/spinner";
 import {
   api,
   type AuthSession,
@@ -161,6 +162,7 @@ export default function AuthConsentPage() {
         ) : null}
 
         <Button block onClick={submit} disabled={!allChecked || pending}>
+          {pending ? <Spinner /> : null}
           {pending ? "저장하는 중…" : "동의하고 시작하기"}
         </Button>
         <p className="text-caption text-ink-subtle text-center">

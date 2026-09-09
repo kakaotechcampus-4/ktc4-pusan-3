@@ -38,7 +38,8 @@ export function TextInput({ label, hint, error, className, ...props }: TextInput
         aria-describedby={cn(hint ? hintId : null, error ? errorId : null) || undefined}
         className={cn(
           "text-body text-ink placeholder:text-ink-subtle rounded-field bg-surface h-13 w-full border px-3.5",
-          error ? "border-danger" : "border-line-strong",
+          "ease-standard transition-colors duration-120",
+          error ? "border-danger" : "border-line-strong hover:border-ink-subtle",
           className,
         )}
         {...props}

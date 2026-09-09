@@ -10,6 +10,7 @@ import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import {
   api,
@@ -141,6 +142,7 @@ function CreateChildScreen() {
         ) : null}
 
         <Button block onClick={submit} disabled={createChild.isPending}>
+          {createChild.isPending ? <Spinner /> : null}
           {createChild.isPending ? "만드는 중…" : "시작하기"}
         </Button>
         <p className="text-caption text-ink-subtle text-center">

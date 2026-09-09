@@ -35,7 +35,7 @@ export function Checkbox({
   return (
     <label
       htmlFor={id}
-      className={cn("flex min-h-11 cursor-pointer items-start gap-3 py-2", className)}
+      className={cn("group flex min-h-11 cursor-pointer items-start gap-3 py-2", className)}
     >
       <input
         id={id}
@@ -50,7 +50,10 @@ export function Checkbox({
         className={cn(
           "ease-standard mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border transition-colors duration-120",
           "peer-focus-visible:outline-brand peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
-          checked ? "bg-brand border-brand text-white" : "border-line-strong text-transparent",
+          checked
+            ? "bg-brand border-brand text-white"
+            : // 아직 안 고른 것만 호버에 반응한다 — 고른 것은 이미 브랜드색이라 더 강조할 게 없다.
+              "border-line-strong group-hover:border-brand group-hover:bg-brand-soft text-transparent",
         )}
       >
         <Check size={16} strokeWidth={ICON_STROKE} />
