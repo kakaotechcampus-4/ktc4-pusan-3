@@ -72,6 +72,7 @@
 ## API · 백엔드
 
 - [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 28개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 3건 (브라우저로 열기)
+- [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — 계약서 §01 `Bearer` 유지 · `token` 을 불투명 난수로 정의(즉시 무효화) · 서버는 `access_token_info` 만 호출하고 app_id 를 대조한다 · 수명 12시간에 만료 시 SDK 재로그인(refresh 없음) · 토큰은 메모리 전용, `localStorage` 금지 · XSS 방어 5단 · `session` 테이블 신설안 · `POST /auth/logout` 신설안
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
 
