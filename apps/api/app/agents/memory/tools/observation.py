@@ -54,9 +54,7 @@ async def _create(
     fields = args.model_dump(exclude=_CREATE_HANDLED)
 
     try:
-        day = resolve_date(
-            args.observed_on, today=context.today, direction=args.temporal_direction
-        )
+        day = resolve_date(args.observed_on, today=context.today, direction=args.temporal_direction)
     except DateParseError as exc:
         return fail("create", resource, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
 
@@ -124,9 +122,7 @@ async def _update(
     resolve_observed_time: bool = False,
 ) -> ToolResult:
     resource = _resource(domain)
-    current = await context.store.get_observation(
-        domain=domain, observation_id=args.observation_id
-    )
+    current = await context.store.get_observation(domain=domain, observation_id=args.observation_id)
     if current is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
 
@@ -193,19 +189,16 @@ def _query_handler(domain: str) -> Callable[..., Any]:
 
     async def handler(context: AgentContext, args: ObservationQueryArgs) -> ToolResult:
         return await _query(context, args, domain=domain)
+
     return handler
 
 
 # food
-async def create_observation_food(
-    context: AgentContext, args: ObservationFoodCreate
-) -> ToolResult:
+async def create_observation_food(context: AgentContext, args: ObservationFoodCreate) -> ToolResult:
     return await _create(context, args, domain="food")
 
 
-async def update_observation_food(
-    context: AgentContext, args: ObservationFoodUpdate
-) -> ToolResult:
+async def update_observation_food(context: AgentContext, args: ObservationFoodUpdate) -> ToolResult:
     return await _update(context, args, domain="food")
 
 

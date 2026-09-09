@@ -22,7 +22,7 @@ from app.agents.memory.result import ErrorCode, fail
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 7                # 복합 발화 대비
+MAX_STEPS = 7  # 복합 발화 대비
 MAX_COMPLETION_TOKENS = 1400
 
 # 되돌리기 어려운 tool: 같은 인자로 두 번 성공하면 기록이 두 번 남음
@@ -36,7 +36,7 @@ _ALREADY_DONE = "같은 인자로 이미 성공한 작업이다. 다시 부르�
 class ToolCallRecord:
     name: str
     arguments: dict[str, Any]
-    result: dict[str, Any]      # ToolResult.to_payload()
+    result: dict[str, Any]  # ToolResult.to_payload()
 
     @property
     def success(self) -> bool:
@@ -45,8 +45,8 @@ class ToolCallRecord:
 
 @dataclass
 class MemoryAgentResult:
-    final_message: str | None           # 끝내지 못했으면 None
-    completed: bool                     # MAX_STEPS 안에 마쳤는지 여부
+    final_message: str | None  # 끝내지 못했으면 None
+    completed: bool  # MAX_STEPS 안에 마쳤는지 여부
     steps: int
     calls: list[ToolCallRecord] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
@@ -91,7 +91,7 @@ async def run(
             )
 
         messages.append(_assistant_message(response.message))
-        for call in tool_calls:   # 한 응답에 여러 개가 와도 전부, 온 순서대로 실행한다
+        for call in tool_calls:  # 한 응답에 여러 개가 와도 전부, 온 순서대로 실행한다
             record = await _execute(call, context, succeeded)
             calls.append(record)
             messages.append(
@@ -124,7 +124,7 @@ async def _execute(
 
     result = await execute_tool(name, arguments, context)
     if key is not None and result.success:
-        succeeded.add(key)      # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
+        succeeded.add(key)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())
 
 
@@ -138,7 +138,7 @@ def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
 
 def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
     if not name.startswith(_MUTATING_PREFIXES):
-        return None             # 분리·조회는 반복 호출해도 상태 안 바뀜
+        return None  # 분리·조회는 반복 호출해도 상태 안 바뀜
     return name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
 
 

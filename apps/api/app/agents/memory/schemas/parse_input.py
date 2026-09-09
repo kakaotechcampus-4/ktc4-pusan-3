@@ -26,8 +26,8 @@ class SegmentIntent(StrEnum):
     EVENT_DELETE = "event_delete"
     EVENT_ITEM_CREATE = "event_item_create"
     REMINDER_CREATE = "reminder_create"
-    OUT_OF_SCOPE = "out_of_scope"   # 추천 요청 등 Memory Agent 범위 밖
-    UNCLEAR = "unclear"             # 정보가 부족해 되물어야 하는 조각
+    OUT_OF_SCOPE = "out_of_scope"  # 추천 요청 등 Memory Agent 범위 밖
+    UNCLEAR = "unclear"  # 정보가 부족해 되물어야 하는 조각
 
 
 class InputSegment(ToolArgs):

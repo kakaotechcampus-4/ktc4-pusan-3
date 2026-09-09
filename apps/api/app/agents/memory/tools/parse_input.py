@@ -15,17 +15,13 @@ _TERMINAL_INTENTS = {SegmentIntent.OUT_OF_SCOPE, SegmentIntent.UNCLEAR}
 
 
 async def parse_input(context: AgentContext, args: ParseInputArgs) -> ToolResult:
-    segments = [
-        {"text": segment.text, "intent": segment.intent} for segment in args.segments
-    ]
-    actionable = [
-        segment for segment in args.segments if segment.intent not in _TERMINAL_INTENTS
-    ]
+    segments = [{"text": segment.text, "intent": segment.intent} for segment in args.segments]
+    actionable = [segment for segment in args.segments if segment.intent not in _TERMINAL_INTENTS]
     return ok(
         "parse",
         RESOURCE,
         segments=segments,
-        actionable_count=len(actionable),            # 앞으로 호출할 CRUD tool 수
+        actionable_count=len(actionable),  # 앞으로 호출할 CRUD tool 수
         out_of_scope_count=_count(args, SegmentIntent.OUT_OF_SCOPE),
         unclear_count=_count(args, SegmentIntent.UNCLEAR),
     )

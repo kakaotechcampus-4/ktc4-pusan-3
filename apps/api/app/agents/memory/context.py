@@ -14,10 +14,10 @@ from app.agents.memory.store.ports import MemoryStore
 
 @dataclass(frozen=True)
 class AgentContext:
-    child_id: UUID        # 인증 context 가 붙기 전까지는 호출자가 넣어준다
-    source_writer: UUID   # 관찰을 기록한 보호자
-    now: datetime         # timezone 이 붙은 현재 시각
-    timezone: tzinfo      # 서비스 기준 timezone
+    child_id: UUID  # 인증 context 가 붙기 전까지는 호출자가 넣어준다
+    source_writer: UUID  # 관찰을 기록한 보호자
+    now: datetime  # timezone 이 붙은 현재 시각
+    timezone: tzinfo  # 서비스 기준 timezone
     store: MemoryStore
 
     @property

@@ -30,7 +30,7 @@ from app.agents.memory.schemas.schedule import (
 )
 from app.agents.memory.schemas.tool_schema import ToolDefinition
 
-_NEEDS_QUERY = ("대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다.")
+_NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(

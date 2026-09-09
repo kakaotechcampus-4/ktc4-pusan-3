@@ -3,7 +3,8 @@
 tool이 "안 하는 것"을 강제한다.
 (추천 거부, 모호한 삭제 거부, 미래 계획 미저장)
 
-날짜는 현재 시각만 주고 "오늘=YYYY-MM-DD" 식으로 펼치지 않는다. 계산은 datetime_rules.py 코드가 한다.
+날짜는 현재 시각만 주고 "오늘=YYYY-MM-DD" 식으로 펼치지 않는다.
+계산은 datetime_rules.py 코드가 한다.
 """
 
 from app.agents.memory.context import AgentContext
@@ -114,9 +115,7 @@ _SECTIONS = (
 
 def build_system_prompt(context: AgentContext, directive: str | None = None) -> str:
     """system 메시지 본문. directive는 이후 구현할 Supervisor가 넘길 상위 지시다."""
-    header = (
-        f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
-    )
+    header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
     sections = [_SECTIONS[0], header, *_SECTIONS[1:]]
     if directive:
         # Supervisor가 이미 분류해 넘긴 경우. 스스로 판단하기 전에 이 지시를 우선한다

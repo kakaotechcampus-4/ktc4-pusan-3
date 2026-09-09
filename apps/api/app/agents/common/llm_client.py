@@ -48,8 +48,8 @@ class LLMUnavailableError(LLMError):
 
 @dataclass(frozen=True)
 class LLMResponse:
-    message: Any            # openai ChatCompletionMessage — content / tool_calls 접근용
-    usage: dict[str, int]   # prompt / completion / cached token 수
+    message: Any  # openai ChatCompletionMessage — content / tool_calls 접근용
+    usage: dict[str, int]  # prompt / completion / cached token 수
     latency_ms: int
 
 

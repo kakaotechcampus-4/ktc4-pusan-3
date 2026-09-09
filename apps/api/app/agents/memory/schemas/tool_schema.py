@@ -12,13 +12,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
-_NOISE_KEYS = frozenset({"title"})       # 모델 판단에 쓸모없는 키
-_MAPPING_KEYS = frozenset({"properties", "$defs"})   # 키가 필드 이름인 자리
+_NOISE_KEYS = frozenset({"title"})  # 모델 판단에 쓸모없는 키
+_MAPPING_KEYS = frozenset({"properties", "$defs"})  # 키가 필드 이름인 자리
 
 
 @dataclass(frozen=True)
 class ToolDefinition:
     """tool 하나. description 에는 '무엇을 하는가'보다 '언제 호출하는가'를 적는다."""
+
     name: str
     description: str
     args: type[BaseModel]

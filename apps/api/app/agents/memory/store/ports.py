@@ -22,6 +22,7 @@ from app.agents.common.datetime_rules import DateRange
 # observation 4테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
 
+
 @dataclass(frozen=True)
 class ObservationRow:
     id: str
@@ -58,8 +59,11 @@ class EventItemRow:
     is_prepared: bool
 
     def to_summary(self) -> dict[str, Any]:
-        return {"item_id": self.item_id, "item_name": self.item_name,
-                "is_prepared": self.is_prepared}
+        return {
+            "item_id": self.item_id,
+            "item_name": self.item_name,
+            "is_prepared": self.is_prepared,
+        }
 
 
 @dataclass(frozen=True)

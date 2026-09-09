@@ -113,9 +113,7 @@ class InMemoryStore:
         self._observations[row.id] = updated
         return updated
 
-    async def delete_observation(
-        self, *, domain: ObservationDomain, observation_id: str
-    ) -> bool:
+    async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
         row = await self.get_observation(domain=domain, observation_id=observation_id)
         if row is None:
             return False
@@ -152,9 +150,7 @@ class InMemoryStore:
         date_to: date | None = None,
         title_query: str | None = None,
     ) -> list[EventRow]:
-        rows = [
-            row for row in self._events.values() if row.fields.get("child_id") == str(child_id)
-        ]
+        rows = [row for row in self._events.values() if row.fields.get("child_id") == str(child_id)]
         # 날짜 조건은 starts_at 기준
         if date_from is not None:
             rows = [row for row in rows if row.starts_at.date() >= date_from]
@@ -189,9 +185,7 @@ class InMemoryStore:
             return False
         del self._events[event_id]
         # ON DELETE CASCADE(일정이 사라지면 준비물과 알림도 같이 정리)
-        self._items = {
-            key: item for key, item in self._items.items() if item.event_id != event_id
-        }
+        self._items = {key: item for key, item in self._items.items() if item.event_id != event_id}
         self._reminders = {
             key: reminder
             for key, reminder in self._reminders.items()
@@ -236,9 +230,7 @@ class InMemoryStore:
 
     # reminder
     async def create_reminder(self, *, event_id: str, remind_at: datetime) -> ReminderRow:
-        row = ReminderRow(
-            id=self._next_id("reminder"), event_id=event_id, remind_at=remind_at
-        )
+        row = ReminderRow(id=self._next_id("reminder"), event_id=event_id, remind_at=remind_at)
         self._reminders[row.id] = row
         return row
 
@@ -249,9 +241,7 @@ class InMemoryStore:
         rows = [item for item in self._reminders.values() if item.event_id == event_id]
         return sorted(rows, key=lambda item: (item.remind_at, item.id))
 
-    async def update_reminder(
-        self, *, reminder_id: str, remind_at: datetime
-    ) -> ReminderRow | None:
+    async def update_reminder(self, *, reminder_id: str, remind_at: datetime) -> ReminderRow | None:
         row = self._reminders.get(reminder_id)
         if row is None:
             return None

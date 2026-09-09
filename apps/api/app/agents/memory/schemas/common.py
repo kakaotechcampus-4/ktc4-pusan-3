@@ -5,12 +5,12 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ALL_DAY_MIN = 1440              # "하루 종일" = 하루(1440분)
+ALL_DAY_MIN = 1440  # "하루 종일" = 하루(1440분)
 MAX_DURATION_MIN = ALL_DAY_MIN  # 활동/학습 세션은 하루를 넘길 수 없음
 
 
 class TemporalDirection(StrEnum):
-    """"금요일"처럼 여러 해석이 가능한 날짜 표현을 과거/미래 중 어느 쪽으로 읽을지 방향을 결정."""
+    """ "금요일"처럼 여러 해석이 가능한 날짜 표현을 과거/미래 중 어느 쪽으로 읽을지 방향을 결정."""
 
     PAST = "past"
     FUTURE = "future"
@@ -20,10 +20,10 @@ class TemporalDirection(StrEnum):
 class ConfidenceSource(StrEnum):
     """관찰 정보의 출처."""
 
-    INSTITUTION_NOTICE = "institution_notice"   # 알림장/기관 공지
-    PARENT_DIRECT = "parent_direct"             # 보호자가 직접 본 것
-    PARENT_HEDGED = "parent_hedged"             # "~한 것 같아" 처럼 확신이 약한 진술
-    PARENT_HEARSAY = "parent_hearsay"           # "선생님 말로는" 처럼 전해 들은 것
+    INSTITUTION_NOTICE = "institution_notice"  # 알림장/기관 공지
+    PARENT_DIRECT = "parent_direct"  # 보호자가 직접 본 것
+    PARENT_HEDGED = "parent_hedged"  # "~한 것 같아" 처럼 확신이 약한 진술
+    PARENT_HEARSAY = "parent_hearsay"  # "선생님 말로는" 처럼 전해 들은 것
 
 
 class Severity(StrEnum):
@@ -50,8 +50,8 @@ class StrongSignal(StrEnum):
 
 
 class EventType(StrEnum):
-    CORE = "core"           # 일상적으로 반복되는 일정
-    EPISODIC = "episodic"   # 단발성 일정
+    CORE = "core"  # 일상적으로 반복되는 일정
+    EPISODIC = "episodic"  # 단발성 일정
 
 
 class EventCategory(StrEnum):
@@ -64,16 +64,14 @@ class EventCategory(StrEnum):
 # 날짜·시각은 원문 표현으로 받고 실제 계산은 common/datetime_rules.py에서 수행
 DateExpr = Annotated[
     str,
-    Field(
-        description="원문의 날짜 표현. 예: 오늘, 모레, 금요일, 다음 주 목요일, 2023년 5월 3일"
-    ),
+    Field(description="원문의 날짜 표현. 예: 오늘, 모레, 금요일, 다음 주 목요일, 2023년 5월 3일"),
 ]
 
 TimeExpr = Annotated[
     str | None,
     Field(
         default=None,
-        description="원문의 시각 표현. 예: 오전 8시, 저녁 8시, 15:30. 발화에 없으면 비워둔다"
+        description="원문의 시각 표현. 예: 오전 8시, 저녁 8시, 15:30. 발화에 없으면 비워둔다",
     ),
 ]
 Direction = Annotated[
@@ -95,6 +93,7 @@ RecordId = Annotated[str, Field(description="조회 tool 이 돌려준 id. 임�
 
 class ToolArgs(BaseModel):
     """모든 tool argument 의 공통 base. 정의되지 않은 필드는 받지 않는다."""
+
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
 

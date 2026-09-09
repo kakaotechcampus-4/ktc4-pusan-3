@@ -13,21 +13,21 @@ Operation = Literal["parse", "create", "query", "update", "delete"]
 class ErrorCode:
     """tool 이 돌려줄 수 있는 실패 사유. 각 코드는 모델이 할 다음 행동과 1:1 이다."""
 
-    VALIDATION_ERROR = "VALIDATION_ERROR"      # 인자를 고쳐 다시 호출
-    TARGET_REQUIRED = "TARGET_REQUIRED"        # 조회 tool 을 먼저 호출
-    TARGET_NOT_FOUND = "TARGET_NOT_FOUND"      # 사용자에게 확인
-    AMBIGUOUS_TARGET = "AMBIGUOUS_TARGET"      # 어느 것인지 되물음
-    UNKNOWN_EVENT = "UNKNOWN_EVENT"            # create_event / query_event 를 먼저
-    DATE_UNPARSEABLE = "DATE_UNPARSEABLE"      # 날짜 표현을 사용자에게 되물음
-    OUT_OF_SCOPE = "OUT_OF_SCOPE"              # 범위 밖이라고 안내
-    UNKNOWN_TOOL = "UNKNOWN_TOOL"              # 존재하지 않는 tool 이름
+    VALIDATION_ERROR = "VALIDATION_ERROR"  # 인자를 고쳐 다시 호출
+    TARGET_REQUIRED = "TARGET_REQUIRED"  # 조회 tool 을 먼저 호출
+    TARGET_NOT_FOUND = "TARGET_NOT_FOUND"  # 사용자에게 확인
+    AMBIGUOUS_TARGET = "AMBIGUOUS_TARGET"  # 어느 것인지 되물음
+    UNKNOWN_EVENT = "UNKNOWN_EVENT"  # create_event / query_event 를 먼저
+    DATE_UNPARSEABLE = "DATE_UNPARSEABLE"  # 날짜 표현을 사용자에게 되물음
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"  # 범위 밖이라고 안내
+    UNKNOWN_TOOL = "UNKNOWN_TOOL"  # 존재하지 않는 tool 이름
 
 
 @dataclass(frozen=True)
 class ToolResult:
     success: bool
     operation: Operation
-    resource: str    # observation_* / event / reminder ...
+    resource: str  # observation_* / event / reminder ...
     data: dict[str, Any] = field(default_factory=dict)
     error: dict[str, str] | None = None
 

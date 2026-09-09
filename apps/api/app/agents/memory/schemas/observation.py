@@ -25,9 +25,12 @@ from app.agents.memory.schemas.common import (
 
 _DURATION = Field(
     default=None,
-    ge=1, le=MAX_DURATION_MIN,
+    ge=1,
+    le=MAX_DURATION_MIN,
     description=f"분 단위. 하루 종일이면 {MAX_DURATION_MIN}. 발화에 없으면 비워둔다",
 )
+
+
 def _optional(description: str) -> Any:
     """말에 나오지 않으면 비우는 선택 필드."""
     return Field(default=None, description=description)

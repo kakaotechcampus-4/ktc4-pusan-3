@@ -37,7 +37,7 @@ EVENT = "event"
 EVENT_ITEM = "event_item"
 REMINDER = "reminder"
 
-DRAFT_TTL_HOURS = 24    # 승인 없는 draft 는 24시간 뒤 만료
+DRAFT_TTL_HOURS = 24  # 승인 없는 draft 는 24시간 뒤 만료
 
 _UNKNOWN_EVENT = "그 event_id 의 일정이 없다. create_event 나 query_event 결과의 id 를 쓴다."
 _NO_REMIND_TIME = (
@@ -73,9 +73,7 @@ async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]
 # ── event ───────────────────────────────────────────────────────
 async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
     try:
-        day = resolve_date(
-            args.starts_on, today=context.today, direction=args.temporal_direction
-        )
+        day = resolve_date(args.starts_on, today=context.today, direction=args.temporal_direction)
     except DateParseError as exc:
         return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
 
@@ -96,7 +94,7 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
         fields={
             "event_type": args.event_type,
             "category": args.category,
-            "status": "draft",          # 승인 전까지 draft. 자동 확정 경로를 만들지 않는다
+            "status": "draft",  # 승인 전까지 draft. 자동 확정 경로를 만들지 않는다
             "created_by": "agent",
             "expires_at": context.now + timedelta(hours=DRAFT_TTL_HOURS),
         },
@@ -171,7 +169,7 @@ def _merge_start(
 ) -> tuple[datetime | None, bool | None]:
     """날짜만 바꾸면 시각은 유지하고, 시각만 바꾸면 날짜를 유지한다."""
     if args.starts_on is None and args.starts_time is None:
-        return None, None       # 시작 시각은 건드리지 않는다
+        return None, None  # 시작 시각은 건드리지 않는다
 
     local = current.starts_at.astimezone(context.timezone)
     day = (
@@ -192,7 +190,7 @@ def _merge_end(
     context: AgentContext, args: EventUpdate, current: EventRow, starts_at: datetime | None
 ) -> datetime | None:
     if args.ends_on is None and args.ends_time is None:
-        return None             # 종료 시각은 건드리지 않는다
+        return None  # 종료 시각은 건드리지 않는다
 
     anchor = starts_at or current.starts_at
     day = (
@@ -216,9 +214,7 @@ async def create_event_item(context: AgentContext, args: EventItemCreate) -> Too
     if await context.store.get_event(event_id=args.event_id) is None:
         return fail("create", EVENT_ITEM, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
-    row = await context.store.create_event_item(
-        event_id=args.event_id, item_name=args.item_name
-    )
+    row = await context.store.create_event_item(event_id=args.event_id, item_name=args.item_name)
     return ok("create", EVENT_ITEM, item_id=row.item_id, item_name=row.item_name)
 
 
@@ -269,9 +265,7 @@ async def update_reminder(context: AgentContext, args: ReminderUpdate) -> ToolRe
     if isinstance(resolved, ToolResult):
         return resolved
 
-    row = await context.store.update_reminder(
-        reminder_id=args.reminder_id, remind_at=resolved
-    )
+    row = await context.store.update_reminder(reminder_id=args.reminder_id, remind_at=resolved)
     if row is None:
         return fail("update", REMINDER, ErrorCode.TARGET_NOT_FOUND, _reminder_not_found())
     return ok("update", REMINDER, id=row.id, remind_at=row.remind_at.isoformat())
@@ -323,9 +317,7 @@ def _remind_day(
     local_fallback: datetime | None,
 ) -> date | None:
     if args.remind_on is not None:
-        return resolve_date(
-            args.remind_on, today=context.today, direction=args.temporal_direction
-        )
+        return resolve_date(args.remind_on, today=context.today, direction=args.temporal_direction)
     if args.offset_days_from_event is not None:
         # "운동회 전날" 은 오늘이 아니라 일정 날짜가 기준이다
         return shift_days(_local_date(event.starts_at, context), args.offset_days_from_event)

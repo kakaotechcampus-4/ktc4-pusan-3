@@ -20,21 +20,34 @@ from typing import Literal
 
 TemporalDirection = Literal["past", "future", "nearest"]
 
+
 class DateParseError(ValueError):
     """날짜·시각 표현을 해석하지 못함. tool 은 DATE_UNPARSEABLE 로 바꿔 모델에 되돌린다."""
+
 
 @dataclass(frozen=True)
 class DateRange:
     """조회에 사용할 [start, end) 날짜 범위."""
+
     start: date
     end: date
-    
-_DAY_OFFSETS = { # 오늘 기준 며칠 차이인지
-    "그저께": -2, "그제": -2, "재작일": -2,
-    "어제": -1, "작일": -1, "어저께": -1,
-    "오늘": 0, "금일": 0,
-    "내일": 1, "명일": 1, "낼": 1,
-    "모레": 2, "내일모레": 2, "낼모레": 2,
+
+
+_DAY_OFFSETS = {  # 오늘 기준 며칠 차이인지
+    "그저께": -2,
+    "그제": -2,
+    "재작일": -2,
+    "어제": -1,
+    "작일": -1,
+    "어저께": -1,
+    "오늘": 0,
+    "금일": 0,
+    "내일": 1,
+    "명일": 1,
+    "낼": 1,
+    "모레": 2,
+    "내일모레": 2,
+    "낼모레": 2,
     "글피": 3,
 }
 _YEAR_OFFSETS = {"올해": 0, "금년": 0, "작년": -1, "지난해": -1, "전년": -1, "재작년": -2}
@@ -44,9 +57,14 @@ _ANCHOR_RELATIVE = {"전날", "전일", "다음날", "익일", "당일", "하루
 
 _WEEKDAY_INDEX = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 _WEEK_OFFSET = {
-    "이번주": 0, "금주": 0,
-    "다음주": 1, "담주": 1, "차주": 1,
-    "지난주": -1, "저번주": -1, "전주": -1,
+    "이번주": 0,
+    "금주": 0,
+    "다음주": 1,
+    "담주": 1,
+    "차주": 1,
+    "지난주": -1,
+    "저번주": -1,
+    "전주": -1,
 }
 
 _YEAR_RE = re.compile(r"^(?P<year>\d{4})년$")
@@ -117,11 +135,11 @@ def resolve_date_range(
 
     if key in _YEAR_OFFSETS:
         year = today.year + _YEAR_OFFSETS[key]
-        return DateRange(start=date(year, 1, 1), end=date(year+1, 1, 1))
+        return DateRange(start=date(year, 1, 1), end=date(year + 1, 1, 1))
     matched = _YEAR_RE.match(key)
     if matched is not None:
         year = int(matched.group("year"))
-        return DateRange(start=date(year, 1, 1), end=date(year+1, 1, 1))
+        return DateRange(start=date(year, 1, 1), end=date(year + 1, 1, 1))
     matched = _YEAR_MONTH_RE.match(key)
     if matched is not None:
         year, month = int(matched.group("year")), int(matched.group("month"))
@@ -130,7 +148,7 @@ def resolve_date_range(
         start = date(year, month, 1)
         end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
         return DateRange(start=start, end=end)
-    
+
     day = resolve_date(text, today=today, direction=direction)
     return DateRange(start=day, end=day + timedelta(days=1))
 
@@ -203,7 +221,7 @@ def _try_iso_date(text: str) -> date | None:
     except ValueError:
         pass
     try:
-        return datetime.fromisoformat(text).date()   # LLM 이 ISO datetime 을 줄 때도 있음
+        return datetime.fromisoformat(text).date()  # LLM 이 ISO datetime 을 줄 때도 있음
     except ValueError:
         return None
 
@@ -215,9 +233,9 @@ def _try_weekday(key: str, today: date, direction: TemporalDirection) -> date | 
 
     target = _WEEKDAY_INDEX[matched.group("day")]
     week = matched.group("week")
-    if week is not None:                               # "다음 주 목요일" 처럼 주가 명시된 경우
-        monday = today - timedelta(days=today.weekday())   # 주의 시작은 월요일
-        return monday + timedelta(days=_WEEK_OFFSET[week]*7 + target)
+    if week is not None:  # "다음 주 목요일" 처럼 주가 명시된 경우
+        monday = today - timedelta(days=today.weekday())  # 주의 시작은 월요일
+        return monday + timedelta(days=_WEEK_OFFSET[week] * 7 + target)
 
     # 요일만 말한 경우. 오늘은 후보에서 빼고 앞이나 뒤로 가장 가까운 그 요일을 찾는다
     if direction == "past":
@@ -235,7 +253,8 @@ def _try_month_day(key: str, today: date, direction: TemporalDirection) -> date 
 
     month, day = int(matched.group("month")), int(matched.group("day"))
     candidates = [
-        candidate for year in (today.year - 1, today.year, today.year + 1)
+        candidate
+        for year in (today.year - 1, today.year, today.year + 1)
         if (candidate := _try_make_date(year, month, day)) is not None
     ]
     if not candidates:
@@ -257,13 +276,14 @@ def _try_year_month_day(key: str) -> date | None:
     matched = _YEAR_MONTH_DAY_RE.match(key)
     if matched is None:
         return None
-    
+
     year = int(matched.group("year"))
     month, day = int(matched.group("month")), int(matched.group("day"))
     candidate = _try_make_date(year, month, day)
     if candidate is None:
         raise DateParseError(f"존재하지 않는 날짜: {key!r}")
     return candidate
+
 
 def _try_make_date(year: int, month: int, day: int) -> date | None:
     try:
@@ -274,9 +294,9 @@ def _try_make_date(year: int, month: int, day: int) -> date | None:
 
 def _to_24_hour(hour: int, meridiem: str | None) -> int:
     if meridiem in _PM_MERIDIEMS:
-        return hour if hour == 12 else hour + 12      # 낮 12시 = 12:00, 저녁 8시 = 20:00
+        return hour if hour == 12 else hour + 12  # 낮 12시 = 12:00, 저녁 8시 = 20:00
     if meridiem == "밤":
-        return 0 if hour == 12 else hour + 12         # 밤 12시 = 자정
+        return 0 if hour == 12 else hour + 12  # 밤 12시 = 자정
     if meridiem in _AM_MERIDIEMS:
-        return 0 if hour == 12 else hour              # 오전 12시 = 자정
-    return hour                                       # 표현이 없으면 24시간제로
+        return 0 if hour == 12 else hour  # 오전 12시 = 자정
+    return hour  # 표현이 없으면 24시간제로
