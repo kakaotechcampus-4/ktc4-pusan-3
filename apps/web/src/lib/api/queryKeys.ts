@@ -5,6 +5,9 @@
  * 그래야 아이를 바꿀 때 invalidateQueries({ queryKey: qk.child(cid) }) 한 번으로 끝난다.
  */
 export const qk = {
+  /** GET /auth/{provider}/status — 로그인 전에도 부르는 유일한 쿼리다 (00 화면 prefetch). */
+  authStatus: (provider: string) => ["auth-status", provider] as const,
+
   me: () => ["me"] as const,
   consents: (childId?: string) => ["consents", childId ?? null] as const,
 

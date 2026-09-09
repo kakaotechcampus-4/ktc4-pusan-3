@@ -1,21 +1,23 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Screen } from "@/components/ui/screen";
-import { api, qk, type AuthResponse, type Me } from "@/lib/api";
-import { requestKakaoAccessToken } from "@/lib/auth/kakao";
-import { useSessionStore } from "@/stores/session";
+import { api, qk, type AuthStatus } from "@/lib/api";
+import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
 
 /**
  * 00 소개 · 로그인 — 프로토타입에 없는 화면이다.
  *
- * 소개는 일부러 짧게 뒀다. 여기서 서비스를 설명해서 설득하는 게 아니라,
+ * 소개는 일부러 짧게 뒀다. 여기서 서비스를 설명해 설득하는 게 아니라,
  * "무엇을 모으고 무엇을 안 하는지" 만 먼저 말하고 로그인으로 보낸다. (자세한 소개는 다음 이슈)
+ *
+ * 🚨 로그인 성공 처리는 여기 없다. 로그인은 페이지 이동이라 이 화면은 떠나고,
+ *    돌아오는 곳은 `/auth/callback` 이다 (docs/web/kakao-login-v1.md §4-4).
  */
 
 const POINTS = [
@@ -26,34 +28,50 @@ const POINTS = [
 
 export default function LoginPage() {
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const signIn = useSessionStore((s) => s.signIn);
 
-  /** 🚨 필수 동의가 남아 있으면 여기서 멈춘다 — 그 아래로 어떤 저장도 일어나면 안 된다 (계약서 §04). */
-  const [consentRequired, setConsentRequired] = useState<string[] | null>(null);
-
-  const login = useMutation({
-    mutationFn: async () => {
-      const accessToken = await requestKakaoAccessToken();
-      return api.post<AuthResponse>("/auth/kakao", { access_token: accessToken });
-    },
-    onSuccess: async (auth) => {
-      // 토큰은 먼저 넣는다 — 동의를 남기려면 인증된 요청을 보내야 한다.
-      signIn(auth.token);
-
-      if (auth.consent_required.length > 0) {
-        setConsentRequired(auth.consent_required);
-        return;
-      }
-
-      const me = await queryClient.fetchQuery({
-        queryKey: qk.me(),
-        queryFn: () => api.get<Me>("/me"),
-      });
-      const first = me.children[0];
-      router.replace(first ? `/child/${first.child_id}/home` : "/onboarding");
-    },
+  // 버튼을 누른 뒤 조회하면 이동 전에 왕복이 한 번 낀다. 그래서 진입 시 미리 받아 둔다.
+  const status = useQuery({
+    queryKey: qk.authStatus("kakao"),
+    queryFn: () => api.get<AuthStatus>("/auth/kakao/status"),
   });
+
+  // 이동이라서 mutation 이 아니다 — 성공하면 응답이 아니라 다른 페이지가 온다.
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /**
+   * 취소 복구 — 앱에서 인앱 브라우저의 X 를 누르고 돌아오면 이 화면이 그대로 살아 있어서
+   * 버튼이 "로그인하는 중…" 에 멈춘다. 성공하면 화면 자체가 사라지므로 **되돌아온 경우만**
+   * 풀어주면 된다. 🚨 취소는 실패가 아니다 — 배너를 띄우지 않고 버튼만 원상복구한다.
+   */
+  useEffect(() => {
+    if (!pending) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setPending(false);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [pending]);
+
+  const notReady = status.data ? !status.data.ready : false;
+
+  function start() {
+    if (!status.data) return;
+    setError(null);
+    setPending(true);
+    try {
+      const started = startOAuthLogin("kakao", status.data);
+      // 목에서는 카카오 왕복을 건너뛰고 콜백 화면으로 바로 간다 (§6).
+      if (started.kind === "internal") router.replace(started.path);
+    } catch (cause) {
+      setPending(false);
+      setError(
+        cause instanceof OAuthUnavailableError || cause instanceof Error
+          ? cause.message
+          : "로그인을 시작하지 못했어요.",
+      );
+    }
+  }
 
   return (
     <Screen className="justify-between gap-8 py-8">
@@ -82,43 +100,20 @@ export default function LoginPage() {
       </div>
 
       <div className="flex flex-col gap-3">
-        {consentRequired ? (
-          <Card>
-            <p className="text-body text-ink">먼저 동의가 필요해요</p>
-            <p className="text-body-sm text-ink-muted mt-2">
-              남은 동의 {consentRequired.length}건 — {consentRequired.join(" · ")}
-            </p>
-            <p className="text-caption text-ink-subtle mt-2">
-              동의 화면은 아직 없어요 (10 설정). 그때까지 여기서 멈춥니다.
-            </p>
-          </Card>
+        {notReady ? (
+          <CardFailed>로그인은 아직 연결 전이에요. 준비되면 이 버튼이 열려요.</CardFailed>
         ) : null}
 
-        {login.isError ? (
-          <CardFailed>
-            <p>{login.error instanceof Error ? login.error.message : "로그인하지 못했어요."}</p>
-            <Button
-              variant="tertiary"
-              className="mt-1 -ml-2"
-              onClick={() => login.mutate()}
-              disabled={login.isPending}
-            >
-              다시 시도
-            </Button>
-          </CardFailed>
-        ) : null}
+        {error ? <CardFailed>{error}</CardFailed> : null}
 
         <Button
           variant="kakao"
           block
-          onClick={() => {
-            setConsentRequired(null);
-            login.mutate();
-          }}
-          disabled={login.isPending}
+          onClick={start}
+          disabled={pending || notReady || status.isPending}
         >
           <KakaoSymbol />
-          {login.isPending ? "로그인하는 중…" : "카카오로 시작하기"}
+          {pending ? "로그인하는 중…" : "카카오로 시작하기"}
         </Button>
 
         <p className="text-caption text-ink-subtle text-center">

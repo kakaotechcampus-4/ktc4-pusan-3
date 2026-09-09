@@ -247,16 +247,68 @@ export interface Page<T> {
 /* ── 00 로그인 ────────────────────────────────────────────────────────── */
 
 /**
- * POST /auth/{provider} (계약서 §04).
+ * 로그인 계약의 정본은 docs/api/auth-kakao-v1.md 이고,
+ * 프론트가 어떻게 처리하는지는 docs/web/kakao-login-v1.md 에 있다.
  *
- * 🚨 `consent_required` 가 비어 있지 않으면 프론트는 다른 화면으로 넘어가지 않는다.
- *    그 아래 어떤 저장도 일어나면 안 되는 상태다.
+ * 🚨 계약서 §04 의 `{access_token}` 은 쓰지 않는다. 클라이언트가 카카오 토큰을 받는
+ *    경로가 없어서(카카오 JS SDK 에 그 메서드가 없다) 서버가 인가 코드를 교환하고,
+ *    프론트는 서버가 발급한 1회용 코드와 bind 비밀 한 쌍만 보낸다.
  */
-export interface AuthResponse {
+export const AUTH_PROVIDERS = ["kakao", "apple", "google", "naver"] as const;
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
+
+/** GET /auth/{provider}/status — 00 화면 진입 시 prefetch 한다. */
+export interface AuthStatus {
+  /** 서버 설정이 갖춰졌는가. false 면 버튼을 비활성화한다 — 죽은 버튼을 만들지 않는다. */
+  ready: boolean;
+  /**
+   * 시작 엔드포인트의 **절대 URL**.
+   * 🚨 프론트에서 조립하지 않는다 — API_BASE_URL 과 카카오 콜백 오리진이 어긋난 배포에서
+   *    state 쿠키가 조용히 깨진다. 서버가 등록된 콜백 URL 에서 파생해 내려준다.
+   */
+  start_url: string;
+}
+
+/** 로그인 시작 쿼리의 `client` — URL 이 아니라 열거값이다 (오픈 리다이렉트 방지). */
+export type AuthClient = "web" | "app";
+
+/** POST /auth/{provider} · /signup 의 성공 응답. */
+export interface AuthSession {
+  /** 불투명 난수 43자. JWT 가 아니다 — 디코딩해서 정보를 꺼내려 하지 않는다. */
   token: string;
+  /** 초 (12시간 = 43200). 없으면 401 을 맞고 나서야 만료를 안다. */
+  expires_in: number;
   is_new: boolean;
   parent: { id: string; nickname: string | null };
   consent_required: string[];
+}
+
+/** 신규 회원 — 동의 전에는 parent 가 없어서 토큰이 없다. `consent_code` TTL 10분. */
+export interface AuthSignupPending {
+  status: "consent_required";
+  consent_code: string;
+}
+
+export type AuthExchangeResponse = AuthSession | AuthSignupPending;
+
+/**
+ * 🚨 `status` 필드 유무로 분기한다. `token` 유무로 보지 않는다 —
+ *    신규 응답에는 token 이 아예 없고, 그 상태로 signIn(undefined) 을 부르면
+ *    토큰 없는 세션이 저장돼 이후 모든 요청이 401 이 된다.
+ */
+export function isSignupPending(res: AuthExchangeResponse): res is AuthSignupPending {
+  return "status" in res;
+}
+
+/** 계정 스코프 2건. 아이 스코프(child_basic · child_health)는 POST /consents 그대로다. */
+export const ACCOUNT_CONSENT_SCOPES = ["service_terms", "privacy_account"] as const;
+
+/** POST /auth/{provider}/signup — 필수 스코프가 빠지면 403 consent_required. */
+export interface AuthSignupRequest {
+  consent_code: string;
+  /** ② 에서 만든 것과 같은 값. consent_code 만으로 계정이 만들어지는 것을 막는다. */
+  bind: string;
+  consents: Array<{ scope: string; policy_version: string }>;
 }
 
 /* ── 01 첫 진입 ──────────────────────────────────────────────────────── */
