@@ -2,13 +2,25 @@
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { getQueryClient } from "@/lib/query-client";
+import { startMocks } from "@/mocks/start";
 import { useSessionStore } from "@/stores/session";
+
+/** 목을 켜지 않는 환경에서는 startMocks 가 즉시 끝나므로 화면이 지연되지 않는다. */
+const MOCKING = process.env.NEXT_PUBLIC_API_MOCKING === "enabled";
 
 export function Providers({ children }: { children: ReactNode }) {
   const queryClient = getQueryClient();
+
+  // 워커가 뜨기 전에 나간 요청은 목을 통과해 실서버로 간다. 그래서 기다렸다가 그린다.
+  const [mocksReady, setMocksReady] = useState(!MOCKING);
+
+  useEffect(() => {
+    if (!MOCKING) return;
+    void startMocks().finally(() => setMocksReady(true));
+  }, []);
 
   // localStorage 는 서버에 없다. 마운트 후에 복구해야 하이드레이션 불일치가 안 난다.
   useEffect(() => {
@@ -17,7 +29,7 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {children}
+      {mocksReady ? children : null}
       {/* devtools 는 프로덕션 번들에서 빠진다. 쿼리 키·캐시 상태를 눈으로 볼 때 쓴다. */}
       {process.env.NODE_ENV === "development" ? <ReactQueryDevtools initialIsOpen={false} /> : null}
     </QueryClientProvider>

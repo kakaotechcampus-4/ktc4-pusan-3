@@ -7,10 +7,13 @@ import { z } from "zod";
  */
 const publicEnvSchema = z.object({
   NEXT_PUBLIC_API_BASE_URL: z.url({ error: "NEXT_PUBLIC_API_BASE_URL 이 URL 형식이 아니다" }),
+  /** "enabled" 면 MSW 목 서버가 뜬다. 개발 환경에서만 동작한다 (src/mocks/start.ts). */
+  NEXT_PUBLIC_API_MOCKING: z.enum(["enabled", "disabled"]).default("disabled"),
 });
 
 const parsed = publicEnvSchema.safeParse({
   NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+  NEXT_PUBLIC_API_MOCKING: process.env.NEXT_PUBLIC_API_MOCKING,
 });
 
 if (!parsed.success) {
