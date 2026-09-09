@@ -41,6 +41,7 @@ src/
 │   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
 │   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
 │   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
+│   ├── pretendard.css    🚨 Pretendard @font-face — 패키지에서 뽑은 파일. 손으로 고치지 않는다
 │   ├── page.tsx          00 소개 · 로그인 (로그인 전에 보는 유일한 화면)
 │   ├── auth/callback/    로그인 복귀 지점 — 웹·앱 공통. 🚨 AuthGate 로 감싸지 않는다
 │   ├── onboarding/       01 첫 진입 — 아이 만들기. 아직 childId 가 없어서 아이 스코프 밖이다
@@ -262,6 +263,10 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 🚨 **실패를 빨강으로 칠하지 않는다.** `failed` · `partial` 의 실패 쪽 · `llm_unavailable` 은 `surface-muted` + `ink-muted` 다. `danger` 는 알레르기·건강 중단에만, `caution` 은 승인 게이트 2곳에만 쓴다.
 - 🚨 **일반 추천과 개인화 추천을 색으로 구분하지 않는다.** 라벨과 기록 건수가 본체다 (§4 첫 줄과 같은 규칙).
 - 본문 기본은 **16px / 1.6** 이다. 프로토타입의 11~13px 을 그대로 옮기지 말 것.
+- **Pretendard 는 자체 호스팅한다** (`public/fonts/pretendard/` · 92개 동적 서브셋).
+  🚨 `src/app/pretendard.css` 는 `pretendard` 패키지에서 뽑아 url 만 바꾼 파일이다 — **손으로 고치지 않고**, 올릴 때 다시 뽑는다 (prettier 대상에서도 뺐다).
+  CDN 을 쓰지 않는 이유와 서브셋을 고른 근거는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
+- 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 추천이 없어서 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
 - 노치·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 웹뷰 안에서는 네이티브 셸이 이미 처리해서 0 이 되고, 모바일 브라우저 직접 접속에서만 값이 생긴다.
   `pt-safe` / `pb-safe` 유틸은 **safe area 만** 필요한 곳(하단 고정 바 등)에 남겨 뒀다 — 여백과 같이 주려면 위 §3 의 경고를 볼 것.

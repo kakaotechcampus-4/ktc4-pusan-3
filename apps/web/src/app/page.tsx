@@ -6,25 +6,38 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
+import { DomainIcon } from "@/components/ui/icon";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { api, qk, type AuthStatus } from "@/lib/api";
+import { api, qk, type Agent, type AuthStatus } from "@/lib/api";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
 
 /**
  * 00 소개 · 로그인 — 프로토타입에 없는 화면이다.
  *
- * 소개는 일부러 짧게 뒀다. 여기서 서비스를 설명해 설득하는 게 아니라,
- * "무엇을 모으고 무엇을 안 하는지" 만 먼저 말하고 로그인으로 보낸다. (자세한 소개는 다음 이슈)
- *
  * 🚨 로그인 성공 처리는 여기 없다. 로그인은 페이지 이동이라 이 화면은 떠나고,
  *    돌아오는 곳은 `/auth/callback` 이다 (docs/web/kakao-login-v1.md §4-4).
+ *
+ * 로그인 버튼을 **소개 위쪽에 둔다.** 이 화면에 오는 사람 대부분은 로그인하러 온 것이고,
+ * 버튼을 읽고 스크롤해야 나오게 만들면 매일 여는 앱에서 그 스크롤이 계속 쌓인다.
+ * 소개는 처음 온 사람을 위해 그 아래에 둔다.
  */
 
-const POINTS = [
-  "말하듯 한 줄만 남기면 AI 가 아이 기억으로 정리해요.",
-  "식사 · 놀이 · 교육 · 건강, 지금 맞는 다음 행동을 준비해 둬요.",
-  "쌓인 기억을 근거로 보여주고, 근거가 없으면 없다고 말해요.",
+/** 🚨 지어낸 예시다. 실제 사용자 발화나 아이 정보를 넣지 않는다 (최상위 CLAUDE.md §9). */
+const EXAMPLE_INPUT = "오늘 어린이집에서 블록만 한참 쌓았대요";
+
+const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
+  { agent: "food", label: "식사", text: "오늘 급식과 알레르기를 함께 보고 저녁 한 끼를 고릅니다." },
+  { agent: "activity", label: "놀이", text: "요즘 빠져 있는 것에서 다음 놀이를 이어 붙입니다." },
+  { agent: "education", label: "교육", text: "관심이 향한 방향으로 다음 한 걸음을 제안합니다." },
+  { agent: "health", label: "건강", text: "증상과 기록을 정리해 둡니다. 진단은 하지 않습니다." },
+];
+
+/** CLAUDE.md §1 "안 만드는 것" 에서. 무엇을 안 하는지가 이 서비스의 절반이다. */
+const NOT_DOING = [
+  "진단하거나 약을 권하지 않아요. 반복되는 증상은 병원에 가시라고 말해요.",
+  "상품을 추천하거나 광고를 넣지 않아요.",
+  "이름(별명) · 나이 · 알레르기 여부까지만 물어봐요.",
 ];
 
 export default function LoginPage() {
@@ -75,37 +88,27 @@ export default function LoginPage() {
   }
 
   return (
-    <Screen className="justify-between gap-8">
-      <div className="flex flex-col gap-6 pt-8">
-        <div>
-          {/* 🚨 canvas 위 브랜드 텍스트는 `brand` 다. `brand-ink` 는 soft 배경 위 전용 (문서 §2-2). */}
-          <p className="text-label text-brand">육아기억</p>
-          <PageTitle className="mt-2">
-            아이 이야기를
-            <br />
-            여기에 모아둘게요
-          </PageTitle>
-          <p className="text-body text-ink-muted mt-3">
-            육아를 가장 많이 아는 AI 가 아니라,
-            <br />
-            우리 아이를 가장 오래 알아온 AI.
-          </p>
-        </div>
+    <Screen className="gap-8">
+      <header>
+        <p className="text-label text-brand">육아기억</p>
+        <PageTitle className="mt-2">
+          아이 이야기를
+          <br />
+          여기에 모아둘게요
+        </PageTitle>
+        <p className="text-body text-ink-muted mt-3">
+          육아를 가장 많이 아는 AI 가 아니라,
+          <br />
+          우리 아이를 가장 오래 알아온 AI.
+        </p>
+      </header>
 
-        <Card>
-          <ul className="text-body-sm text-ink-muted flex flex-col gap-3">
-            {POINTS.map((point) => (
-              <li key={point}>{point}</li>
-            ))}
-          </ul>
-        </Card>
-      </div>
+      <ExamplePreview />
 
       <div className="flex flex-col gap-3">
         {notReady ? (
           <CardFailed>로그인은 아직 연결 전이에요. 준비되면 이 버튼이 열려요.</CardFailed>
         ) : null}
-
         {error ? <CardFailed>{error}</CardFailed> : null}
 
         <Button
@@ -117,14 +120,100 @@ export default function LoginPage() {
           <KakaoSymbol />
           {pending ? "로그인하는 중…" : "카카오로 시작하기"}
         </Button>
-
         <p className="text-caption text-ink-subtle text-center">
-          이름(별명) · 나이 · 알레르기 여부까지만 물어봐요.
+          가입하면 약관과 개인정보 처리에 동의하게 돼요.
           <br />
           외부 서비스 연결은 요청하지 않아요.
         </p>
       </div>
+
+      <section className="border-line flex flex-col gap-4 border-t pt-8">
+        <div>
+          <h2 className="text-section text-ink">쌓인 기억으로 네 가지를 준비해요</h2>
+          <p className="text-body-sm text-ink-muted mt-1">
+            한 번에 두 가지까지만 꺼내요. 매번 네 개를 다 보여주지 않아요.
+          </p>
+        </div>
+        <ul className="flex flex-col gap-3">
+          {DOMAINS.map((domain) => (
+            <li key={domain.agent}>
+              <DomainRow {...domain} />
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="flex flex-col gap-3 pb-2">
+        <h2 className="text-section text-ink">이런 건 하지 않아요</h2>
+        <ul className="text-body-sm text-ink-muted flex flex-col gap-2">
+          {NOT_DOING.map((line) => (
+            <li key={line} className="flex gap-2">
+              <span aria-hidden className="text-ink-subtle">
+                ·
+              </span>
+              {line}
+            </li>
+          ))}
+        </ul>
+      </section>
     </Screen>
+  );
+}
+
+/**
+ * 제품이 실제로 무엇을 내놓는지 한 장으로 보여준다.
+ *
+ * 🚨 실제 추천이 아니라 **예시**다. 화면에 "예시" 를 명시해서 서버가 준 근거처럼 읽히지 않게 한다.
+ *    근거 칩을 일부러 함께 그린다 — 이 서비스는 근거 없이 "우리 아이 맞춤" 인 척하지 않는다.
+ */
+function ExamplePreview() {
+  return (
+    <Card className="flex flex-col gap-3">
+      <p className="text-caption text-ink-subtle">예시</p>
+
+      <p className="border-line rounded-field bg-canvas text-body-sm text-ink border px-3 py-2">
+        {EXAMPLE_INPUT}
+      </p>
+
+      <p aria-hidden className="text-ink-subtle text-center text-sm leading-none">
+        ↓
+      </p>
+
+      <div className="bg-brand-soft rounded-card p-4">
+        <span className="bg-surface text-activity-ink text-label inline-flex h-7 items-center gap-1.5 rounded-full px-2.5">
+          <DomainIcon agent="activity" />
+          놀이
+        </span>
+        <p className="text-body text-brand-ink mt-2">
+          쌓기가 계속되고 있어요. 종이컵 탑을 같이 세워 보는 건 어때요?
+        </p>
+        <p className="text-caption text-ink-muted mt-2">사용한 기록 3건 · 가장 최근 오늘</p>
+      </div>
+    </Card>
+  );
+}
+
+/** 도메인 4종. 🚨 아이콘은 aria-hidden 이라 의미는 옆의 라벨이 진다 (디자인 시스템 §3). */
+function DomainRow({ agent, label, text }: { agent: Agent; label: string; text: string }) {
+  const tone: Record<Agent, string> = {
+    food: "bg-food-soft text-food-ink",
+    activity: "bg-activity-soft text-activity-ink",
+    education: "bg-education-soft text-education-ink",
+    health: "bg-health-soft text-health-ink",
+  };
+
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tone[agent]}`}
+      >
+        <DomainIcon agent={agent} size="md" />
+      </span>
+      <span className="flex flex-col gap-0.5">
+        <span className="text-body text-ink">{label}</span>
+        <span className="text-body-sm text-ink-muted">{text}</span>
+      </span>
+    </div>
   );
 }
 
