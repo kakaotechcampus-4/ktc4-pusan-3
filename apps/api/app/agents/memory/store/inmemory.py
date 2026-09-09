@@ -82,15 +82,22 @@ class InMemoryStore:
             rows = [row for row in rows if raw_text_query in row.raw_text]
         return sorted(rows, key=lambda row: (row.observed_on, row.id))
 
+    async def get_observation(
+        self, *, domain: ObservationDomain, observation_id: str
+    ) -> ObservationRow | None:
+        row = self._observations.get(observation_id)
+        return row if row is not None and row.domain == domain else None
+
     async def update_observation(
         self,
         *,
         domain: ObservationDomain,
         observation_id: str,
         fields: dict[str, Any],
+        observed_on: date | None = None,
     ) -> ObservationRow | None:
-        row = self._observations.get(observation_id)
-        if row is None or row.domain != domain:
+        row = await self.get_observation(domain=domain, observation_id=observation_id)
+        if row is None:
             return None
 
         changes = {key: value for key, value in fields.items() if value is not None}
@@ -99,7 +106,7 @@ class InMemoryStore:
             domain=row.domain,
             raw_text=row.raw_text,
             created_at=row.created_at,
-            observed_on=row.observed_on,
+            observed_on=observed_on or row.observed_on,
             fields={**row.fields, **changes},
         )
         self._observations[row.id] = updated
@@ -108,8 +115,8 @@ class InMemoryStore:
     async def delete_observation(
         self, *, domain: ObservationDomain, observation_id: str
     ) -> bool:
-        row = self._observations.get(observation_id)
-        if row is None or row.domain != domain:
+        row = await self.get_observation(domain=domain, observation_id=observation_id)
+        if row is None:
             return False
         del self._observations[observation_id]
         return True

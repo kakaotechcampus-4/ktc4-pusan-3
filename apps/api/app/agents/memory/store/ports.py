@@ -111,14 +111,23 @@ class MemoryStore(Protocol):
         raw_text_query: str | None = None,
     ) -> list[ObservationRow]: ...
 
+    async def get_observation(
+        self, *, domain: ObservationDomain, observation_id: str
+    ) -> ObservationRow | None: ...
+
     async def update_observation(
         self,
         *,
         domain: ObservationDomain,
         observation_id: str,
         fields: dict[str, Any],
+        observed_on: date | None = None,
     ) -> ObservationRow | None:
-        """없으면 None. subject 계열이 바뀌면 embedding 재계산이 필요하다."""
+        """없으면 None.
+
+        observed_on 이 주어지면 관찰 일자까지 바꾼다. 호출자가 observed_range 도 함께 넘긴다.
+        subject 계열이 바뀌면 embedding 재계산이 필요하다.
+        """
         ...
 
     async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool: ...

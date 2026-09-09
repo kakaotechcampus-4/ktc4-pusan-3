@@ -16,12 +16,11 @@ from app.agents.memory.schemas.common import (
     EngagementLevel,
     ObservationCreateArgs,
     ObservationQueryArgs,
+    ObservationUpdateArgs,
     PromotableCreateArgs,
     RawText,
-    RecordId,
     RecordRef,
     Severity,
-    ToolArgs,
 )
 
 _DURATION = Field(
@@ -39,8 +38,7 @@ class ObservationFoodCreate(PromotableCreateArgs):
     reaction: Annotated[str | None, Field(default=None, description="좋아함 / 싫어함 / 무반응")]
 
 
-class ObservationFoodUpdate(ToolArgs):
-    observation_id: RecordId
+class ObservationFoodUpdate(ObservationUpdateArgs):
     subject: Annotated[str | None, Field(default=None, description="바꿀 음식")]
     action: Annotated[str | None, Field(default=None, description="바꿀 action")]
     amount: Annotated[str | None, Field(default=None, description="바꿀 amount")]
@@ -58,14 +56,21 @@ class ObservationHealthCreate(ObservationCreateArgs):
     body_part: Annotated[str | None, Field(default=None, description="증상이 나타난 신체 부위. 예: 얼굴 / 팔. 발화에 드러날 때만 채우기.")]
     suspected_trigger: Annotated[
         str | None,
-        Field(default=None, description="증상이 관찰된 계기. 예: 우유 먹은 뒤. 발화에 드러날 때만 채우기."),
+        Field(
+            default=None,
+            description="증상이 관찰된 계기. 예: 우유 먹은 뒤. 발화에 드러날 때만 채우기.",
+        ),
     ]
-    action_taken: Annotated[str | None, Field(default=None, description="병원 / 해열제 / 관찰. 발화에 드러날 때만 채우기.")]
-    observed_time: Annotated[str | None, Field(default=None, description="증상 관찰 시각 표현. 예: 오늘 아침, 3일 전. 발화에 드러날 때만 채우기.")]
+    action_taken: Annotated[str | None, Field(default=None, description="병원 / 해열제 / 경과 지켜봄. 발화에 드러날 때만 채우기.")]
+    observed_time: Annotated[
+        str | None, Field(default=None,
+            description=(
+                "증상을 본 시각. 예: 오전 8시, 저녁 7시, 15:30. "
+                "날짜는 observed_on 이 담당한다. 발화에 드러날 때만 채우기.")
+            )]
 
 
-class ObservationHealthUpdate(ToolArgs):
-    observation_id: RecordId
+class ObservationHealthUpdate(ObservationUpdateArgs):
     symptom: Annotated[list[str] | None, Field(default=None, description="바꿀 증상 목록")]
     body_part: Annotated[str | None, Field(default=None, description="바꿀 신체 부위")]
     suspected_trigger: Annotated[
@@ -74,7 +79,7 @@ class ObservationHealthUpdate(ToolArgs):
     ]
     severity: Annotated[Severity | None, Field(default=None, description="바꿀 정도")]
     action_taken: Annotated[str | None, Field(default=None, description="바꿀 조치")]
-    observed_time: Annotated[str | None, Field(default=None, description="바꿀 증상 관찰 시각.")]
+    observed_time: Annotated[str | None, Field(default=None, description="바꿀 시각. 예: 오전 8시, 15:30")]
 
 
 class ObservationEducationCreate(PromotableCreateArgs):
@@ -87,8 +92,7 @@ class ObservationEducationCreate(PromotableCreateArgs):
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
 
 
-class ObservationEducationUpdate(ToolArgs):
-    observation_id: RecordId
+class ObservationEducationUpdate(ObservationUpdateArgs):
     topic: Annotated[str | None, Field(default=None, description="바꿀 학습 주제")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
@@ -103,8 +107,7 @@ class ObservationActivityCreate(PromotableCreateArgs):
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
 
 
-class ObservationActivityUpdate(ToolArgs):
-    observation_id: RecordId
+class ObservationActivityUpdate(ObservationUpdateArgs):
     activity: Annotated[str | None, Field(default=None, description="바꿀 활동")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
@@ -125,6 +128,7 @@ __all__ = [
     "ObservationHealthCreate",
     "ObservationHealthUpdate",
     "ObservationQueryArgs",
+    "ObservationUpdateArgs",
     "RawText",
     "RecordRef",
 ]

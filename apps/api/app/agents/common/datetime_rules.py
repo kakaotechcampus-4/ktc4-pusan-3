@@ -13,8 +13,8 @@ LLM은 자연어의 의미 해석까지만 담당한다.
 - DB/tool: 계산된 값을 실제 observation / event / reminder 필드에 저장
 """
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Literal
 
@@ -52,7 +52,9 @@ _WEEK_OFFSET = {
 _YEAR_RE = re.compile(r"^(?P<year>\d{4})년$")
 _YEAR_MONTH_RE = re.compile(r"^(?P<year>\d{4})년(?P<month>\d{1,2})월$")
 _YEAR_MONTH_DAY_RE = re.compile(r"^(?P<year>\d{4})년(?P<month>\d{1,2})월(?P<day>\d{1,2})일$")
-_WEEKDAY_RE = re.compile(r"^(?P<week>이번주|금주|다음주|담주|차주|지난주|저번주|전주)?(?P<day>[월화수목금토일])요일$")
+_WEEKDAY_RE = re.compile(
+    r"^(?P<week>이번주|금주|다음주|담주|차주|지난주|저번주|전주)?(?P<day>[월화수목금토일])요일$"
+)
 _MONTH_DAY_RE = re.compile(r"^(?P<month>\d{1,2})월(?P<day>\d{1,2})일$")
 
 _NAMED_TIMES = {"정오": time(12, 0), "자정": time(0, 0), "한밤중": time(0, 0)}
@@ -103,8 +105,11 @@ def resolve_date(value: str, *, today: date, direction: TemporalDirection = "nea
     raise DateParseError(f"해석할 수 없는 날짜 표현: {text!r}")
 
 
-def resolve_date_range(value: str, *, today: date, direction: TemporalDirection = "nearest") -> DateRange:
-    """조회용 날짜 표현을 [start, end) 범위로 바꾼다. 연도·연월·상대연도는 기간으로, 하루 표현은 1일 범위로 만든다."""
+def resolve_date_range(
+    value: str, *, today: date, direction: TemporalDirection = "nearest"
+) -> DateRange:
+    """조회용 날짜 표현을 [start, end) 범위로 바꾼다.
+    연도·연월·상대연도는 기간으로, 하루 표현은 1일 범위로 만든다."""
     if not isinstance(value, str) or not value.strip():
         raise DateParseError("조회 날짜 표현이 비어 있다.")
     text = _normalize(value)
@@ -128,6 +133,23 @@ def resolve_date_range(value: str, *, today: date, direction: TemporalDirection 
     
     day = resolve_date(text, today=today, direction=direction)
     return DateRange(start=day, end=day + timedelta(days=1))
+
+
+def resolve_query_bound(
+    value: str | None, *, today: date, direction: TemporalDirection, is_end: bool
+) -> date | None:
+    """조회 경계를 확정한다. 표현이 없으면 경계도 없다(None).
+
+    resolve_date_range 는 [start, end) 열린 끝을 주는데 store 는 양쪽 닫힌 구간을 본다.
+    그래서 끝 경계는 하루 당긴다. 덕분에 "2026년 9월" 하나로 월 전체를 가리킬 수 있다.
+
+    direction 은 호출하는 쪽이 정한다 — 관찰 조회는 과거, 일정 조회는 미래가 기본이다.
+    "금요일" 같은 표현이 지난 금요일인지 다가올 금요일인지는 계산으로 못 정한다.
+    """
+    if value is None:
+        return None
+    span = resolve_date_range(value, today=today, direction=direction)
+    return span.end - timedelta(days=1) if is_end else span.start
 
 
 def resolve_time(value: str | None) -> time | None:
@@ -193,14 +215,14 @@ def _try_weekday(key: str, today: date, direction: TemporalDirection) -> date | 
     week = matched.group("week")
     if week is not None:                               # "다음 주 목요일" 처럼 주가 명시된 경우
         monday = today - timedelta(days=today.weekday())   # 주의 시작은 월요일
-        return monday + timedelta(days=_WEEK_OFFSET[week] * 7 + target)
+        return monday + timedelta(days=_WEEK_OFFSET[week]*7 + target)
 
     # 요일만 말한 경우. 오늘은 후보에서 빼고 앞이나 뒤로 가장 가까운 그 요일을 찾는다
     if direction == "past":
         return today - timedelta(days=(today.weekday() - target) % 7 or 7)
 
     # future/nearest 는 다음번 그 요일.
-    # 요일만 말할 때는 다가올 일정을 가리키는 경우가 대부분이라 nearest 도 미래로 봄
+    # 요일만 말할 때는 대부분 다가올 일정을 가리키는 경우라 nearest 도 미래로 봄
     return today + timedelta(days=(target - today.weekday()) % 7 or 7)
 
 
@@ -234,7 +256,8 @@ def _try_year_month_day(key: str) -> date | None:
     if matched is None:
         return None
     
-    year, month, day = int(matched.group("year")), int(matched.group("month")), int(matched.group("day"))
+    year = int(matched.group("year"))
+    month, day = int(matched.group("month")), int(matched.group("day"))
     candidate = _try_make_date(year, month, day)
     if candidate is None:
         raise DateParseError(f"존재하지 않는 날짜: {key!r}")

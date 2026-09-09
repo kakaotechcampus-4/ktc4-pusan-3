@@ -111,8 +111,11 @@ class ObservationCreateArgs(ToolArgs):
         ConfidenceSource,
         Field(
             default=ConfidenceSource.PARENT_DIRECT,
-            description="보호자가 직접 관찰했거나 아이의 발언이면 parent_direct, 전해 들었으면 parent_hearsay," \
-            "기관 공지면 institution_notice, 확신이 약하면 parent_hedged",
+            description=(
+                "보호자가 직접 관찰했거나 아이의 발언이면 parent_direct, "
+                "전해 들었으면 parent_hearsay, 기관 공지면 institution_notice, "
+                "확신이 약하면 parent_hedged"
+            ),
         ),
     ]
 
@@ -130,8 +133,30 @@ class PromotableCreateArgs(ObservationCreateArgs):
     ]
 
 
+class ObservationUpdateArgs(ToolArgs):
+    """observation update 가 공유하는 필드. 날짜도 고칠 수 있다."""
+
+    observation_id: RecordId
+    observed_on: Annotated[
+        str | None,
+        Field(default=None, description="바꿀 관찰 날짜 표현. 날짜를 안 바꾸면 비운다"),
+    ]
+    temporal_direction: Direction
+
+
 class ObservationQueryArgs(ToolArgs):
     """observation 조회 조건. 자유 검색 대신 허용 필드만 연다."""
+
+    temporal_direction: Annotated[
+        TemporalDirection,
+        Field(
+            default=TemporalDirection.PAST,
+            description=(
+                "날짜 표현을 과거로 볼지 미래로 볼지. 이미 기록된 관찰을 찾는 것이므로 "
+                "보통 past 다. 앞으로의 날짜를 찾을 때만 future"
+            ),
+        ),
+    ]
     date_from: Annotated[
         str | None, Field(default=None, description="관찰 일자 시작. 표현 또는 YYYY-MM-DD")
     ]
