@@ -8,7 +8,11 @@
  * 이 파일은 그 문서의 표를 옮긴 것이다. 값을 바꾸려면 문서를 먼저 고친다.
  * 화면 코드에서 #hex 를 직접 쓰지 말 것.
  * ────────────────────────────────────────────────────────────────────────── */
-@theme {
+/* 🚨 `static` 이 필요하다. Tailwind 4 는 기본적으로 **실제로 쓰인 토큰의 변수만** 내보내서,
+ * 아직 컴포넌트가 없는 토큰(caution 계열 · scrim · 도메인 주색 등 9개)이 CSS 에서 통째로
+ * 빠져 있었다. 이 파일은 디자인 시스템 문서를 옮긴 것이고 문서가 "35개" 라고 말하므로,
+ * 쓰이든 안 쓰이든 다 있어야 /design-system 화면이 전부 검사할 수 있다. */
+@theme static {
   --font-sans:
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
     "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;

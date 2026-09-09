@@ -91,6 +91,7 @@ src/
 | 01 첫 진입 (아이 만들기) | `/onboarding` |
 | 02 이야기 하나 | `/child/[childId]/onboarding` |
 | 03~09 | `/child/[childId]/…` |
+| 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
 
@@ -258,6 +259,8 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 색·radius·폰트는 `globals.css` 의 `@theme` 토큰으로만. 컴포넌트에서 `#hex` 를 직접 쓰지 않는다.
 - 🚨 **토큰을 "비슷한 값" 으로 쓰지 않는다.** 이름이 곧 용도다 — `brand-ink` 는 **`brand-soft` 배경 위** 텍스트고,
   `canvas` 위 브랜드 텍스트는 `brand` 다. 대비만 맞으면 된다고 생각하면 "색 하나 = 뜻 하나"(문서 §1)가 무너진다.
+- **`/design-system` 을 열어 보고 만든다.** 문서의 표를 실제 토큰·컴포넌트로 렌더하고 **대비비를 그 자리에서 계산**한다 — 토큰을 바꾸면 통과/미달이 바뀌므로 문서와 코드가 어긋나면 거기서 보인다. §7 에 사양은 있는데 아직 없는 컴포넌트 목록도 그 화면 맨 아래에 있다.
+- 🚨 **`globals.css` 는 `@theme static` 이다.** 빼면 Tailwind 가 **쓰이는 토큰의 변수만** 내보내서, 아직 컴포넌트가 없는 토큰이 CSS 에서 사라진다 (실제로 9개가 빠져 있었다).
 - **정본은 [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) 다.** 색·타이포·간격뿐 아니라 버튼 높이 · 카드 여백 · 시트 동작까지 거기 있다(§7 컴포넌트). 화면을 그리기 전에 읽고, 없는 값을 즉석에서 만들지 않는다 — 필요하면 문서를 먼저 고친다.
 - `globals.css` 는 그 문서를 옮긴 것이다. 둘이 어긋나면 **CSS 가 틀린 것**이다.
 - 🚨 **실패를 빨강으로 칠하지 않는다.** `failed` · `partial` 의 실패 쪽 · `llm_unavailable` 은 `surface-muted` + `ink-muted` 다. `danger` 는 알레르기·건강 중단에만, `caution` 은 승인 게이트 2곳에만 쓴다.

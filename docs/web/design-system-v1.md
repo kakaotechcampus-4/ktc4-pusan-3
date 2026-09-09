@@ -1,5 +1,7 @@
 # 디자인 시스템 v1
 
+**살아 있는 버전이 있다 — `pnpm dev` 후 [`/design-system`](../../apps/web/src/app/design-system/page.tsx).** 이 문서의 표를 실제 토큰·컴포넌트로 렌더하고, **대비비를 그 자리에서 계산한다.** 토큰을 바꾸면 통과/미달이 바뀌므로 문서와 코드가 어긋나면 눈에 보인다.
+
 문서 목적: 색·타이포·레이아웃·컴포넌트 토큰을 확정한다. [`apps/web/src/app/globals.css`](../../apps/web/src/app/globals.css) 는 이 문서를 옮긴 것이고, 둘이 어긋나면 CSS 가 틀린 것이다.
 
 기준 브랜치: `docs/fe-13-design-system`
@@ -471,6 +473,8 @@
 | §8 이징 | `--ease-standard` | `ease-standard` |
 
 §5 간격은 Tailwind 기본 4px 스케일을 그대로 쓴다 (`p-4` = 16px). 별도 토큰을 만들지 않는다.
+
+🚨 **`@theme` 이 아니라 `@theme static` 이다.** Tailwind 4 는 기본적으로 **실제로 쓰인 토큰의 변수만** CSS 로 내보낸다 — 아직 컴포넌트가 없는 토큰 9개(`caution` 계열 · `scrim` · 도메인 주색)가 통째로 빠져 있었고, `/design-system` 이 그 색들을 "읽기 실패" 로 잡아냈다. 이 파일은 위 표를 옮긴 것이고 표가 35개라고 말하므로, 쓰이든 안 쓰이든 다 있어야 한다.
 
 ---
 
