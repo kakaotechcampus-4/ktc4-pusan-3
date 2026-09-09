@@ -83,6 +83,17 @@
 | --- | --- | --- |
 | `--color-scrim` | `rgb(34 31 27 / 0.45)` | 바텀시트 뒤 배경. 순검정 스크림은 저조도에서 눈에 때린다 — `ink` 를 깔았다 |
 
+### 2-6. 외부 브랜드 — 카카오
+
+| 토큰 | 값 | 용도 |
+| --- | --- | --- |
+| `--color-kakao` | `#FEE500` | 카카오 로그인 버튼 배경 |
+| `--color-kakao-ink` | `rgb(0 0 0 / 0.85)` | 그 위 라벨 (16.4:1) |
+
+🚨 **우리 팔레트가 아니다.** 카카오 로그인 버튼은 카카오가 정한 색·모양을 써야 해서 예외로 뒀고, **로그인 버튼 밖에서는 쓰지 않는다.** 노랑이 승인 게이트의 `caution` 과 가까워 보이지만 뜻이 겹치지 않는 이유는 이 색이 **로그인 화면에만 있고 `caution` 이 그 화면에 없기** 때문이다 — 두 색이 한 화면에 같이 나오면 규칙이 깨진다.
+
+말풍선 심볼도 lucide 가 아니라 카카오 마크를 인라인 SVG 로 쓴다 (§7 아이콘 규칙의 예외).
+
 **비활성 상태에는 토큰을 만들지 않는다.** 어떤 컴포넌트든 `surface-muted` 배경 + `ink-subtle` 텍스트 (4.8:1) + `line` 테두리로 만든다. 브랜드색을 흐리게 만든 비활성 버튼은 "누를 수 있어 보이는데 안 눌리는" 상태가 되어 지친 사용자에게 제일 나쁘다.
 
 ---
@@ -200,10 +211,12 @@
 | `btn-secondary` | `surface` | `ink` | `line-strong` 1px | 48 | 20 | field | button |
 | `btn-tertiary` | 없음 | `brand` | — | 44 | 8 | field | button |
 | `btn-danger` | `danger` | `#FFF` | — | 48 | 20 | field | button |
+| `btn-kakao` | `kakao` | `kakao-ink` | — | 48 | 20 | field | button |
 | `:disabled` (공통) | `surface-muted` | `ink-subtle` | `line` 1px | 그대로 | 그대로 | 그대로 | 그대로 |
 
 - `btn-approve` 는 **승인 게이트 2곳 전용**이다. 52px 로 키우고 전체 폭을 쓴다 — 되돌릴 수 없는 행동을 잘못 눌러서 실행하는 경로를 만들지 않는다.
 - `btn-danger` 는 **파괴적 확정에만** (10 설정의 동의 철회·기록 삭제). 승인 게이트의 "아니에요" 는 `btn-secondary` 다. 거절은 파괴가 아니다.
+- `btn-kakao` 는 **00 로그인 화면 전용**이다 (§2-6). 그 화면에 `btn-primary` 가 없어서 "한 화면에 primary 하나" 규칙과 부딪히지 않는다.
 - 한 화면에 `btn-primary` 는 **하나**. 두 개면 무엇이 다음 행동인지 부모가 판단해야 한다.
 
 ### 입력
@@ -225,6 +238,9 @@
 | `chip-evidence` | `surface` 배경 · `line` 1px · `ink-muted` · 높이 28 · 좌우 10 · full · caption |
 | `chip-evidence-stale` | 위와 같되 `line` **점선** · `ink-subtle` (`is_stale` 근거) |
 | `chip-count` | 배경 없음 · `ink-subtle` · caption ("기록 12건") |
+| `chip-choice` | 눌러서 고르는 칩. 선택 전 `surface` · `line` 1px · `ink-muted` / 선택 후 `brand-soft` · `brand` 1px · `brand-ink` · 높이 28 · 좌우 10 · full · label |
+
+`chip-choice` 는 `aria-pressed` 로 상태를 낸다 — 색만으로 "골랐음" 을 전달하지 않는다 (§10). 위아래 8px 투명 여백으로 터치 44px 을 채우기 때문에(§9) **칩 줄에는 가로 gap 만 주고 세로 gap 은 주지 않는다.**
 
 칩 줄은 가로 스크롤하지 않는다. 넘치면 줄바꿈하고, 4개를 넘으면 **"+N" 로 접는다** — 근거를 숨기는 게 아니라 카드에서 목록으로 옮기는 것이고, 누르면 07 화면으로 간다.
 
@@ -347,6 +363,9 @@
 
 | 화면 | 무엇을 | 무엇으로 |
 | --- | --- | --- |
+| 00 소개 · 로그인 | 카카오 로그인 | `btn-kakao` (§2-6) + `card` |
+| 01 첫 진입 | 별명 · **생일** · 관계 | `input` × 2 + `chip-choice`. 🚨 나이를 받지 않는다 — `age_display` 는 서버가 만든다 |
+| 02 이야기 하나 | 관심 · 알레르기 · 한 줄 · 발달 문항 | `card` 4개 + `chip-choice` + `input` |
 | 03 홈 · 빈 상태 | 기억 0건 (`highlight: null`) | `empty-state` + `chip-count`. 경보 아님 |
 | 03 홈 · 입력 | 한 줄 입력 | `textarea` + `btn-primary` |
 | 04 저장 결과 | 진행 (SSE) | `진행 오버레이` · 20초 후 부분 결과 |

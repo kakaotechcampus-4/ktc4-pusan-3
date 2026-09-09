@@ -36,22 +36,27 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 
 ```
 src/
-├── app/                  App Router. 라우트 = 화면 01~10
+├── app/                  App Router. 라우트 = 화면 00~10
 │   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
 │   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
 │   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
-│   └── child/[childId]/  아이 스코프 화면 전부 (03~09)
+│   ├── page.tsx          00 소개 · 로그인 (로그인 전에 보는 유일한 화면)
+│   ├── onboarding/       01 첫 진입 — 아이 만들기. 아직 childId 가 없어서 아이 스코프 밖이다
+│   └── child/[childId]/  아이 스코프 화면 전부 (02 온보딩 · 03~09)
 ├── lib/
 │   ├── env.ts            NEXT_PUBLIC_* 검증 · API_BASE_URL
 │   ├── query-client.ts   QueryClient 기본값 (retry 정책)
+│   ├── cn.ts             조건부 클래스 합치기 (tailwind-merge 아님 — 뒤가 앞을 안 덮는다)
+│   ├── auth/kakao.ts     카카오 access_token 을 어디서 받는가 — 한 곳 (#26 · #18 미정)
 │   └── api/
-│       ├── types.ts      계약서 §02 공통 타입 5종 + Ref + enum
+│       ├── types.ts      계약서 §02 공통 타입 5종 + Ref + enum + 엔드포인트 요청·응답
 │       ├── errors.ts     에러 봉투 · ApiError · 에러 코드
 │       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key)
 │       ├── sse.ts        GET /runs/{rid}/events 스트림 파서
 │       └── queryKeys.ts  쿼리 키 팩토리
 ├── components/
-│   ├── ui/               토큰만 아는 primitive (버튼 · 시트 · 칩 …)
+│   ├── ui/               토큰만 아는 primitive (screen · button · text-input · chip · card)
+│   ├── auth-gate.tsx     토큰 없으면 / 로 되돌린다
 │   └── *.tsx             도메인을 아는 조합
 ├── hooks/                화면 여러 곳이 쓰는 훅
 ├── mocks/                MSW 목 서버 — 개발 환경 전용 (§7)
@@ -73,9 +78,14 @@ src/
 
 ### 라우팅 — 아이 스코프는 URL 에 둔다
 
-```text
-/child/[childId]/home
-```
+| 화면 | 라우트 |
+| --- | --- |
+| 00 소개 · 로그인 | `/` |
+| 01 첫 진입 (아이 만들기) | `/onboarding` |
+| 02 이야기 하나 | `/child/[childId]/onboarding` |
+| 03~09 | `/child/[childId]/…` |
+
+`/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
 
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
@@ -99,9 +109,22 @@ src/
 
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
+- 지금 있는 것 — `Screen`(최대 폭·좌우 여백·safe area) · `Button`(§7 6변형) · `TextInput` · `Chip`/`ChipRow` · `Card`/`CardFailed`.
+  시트 · 배너 · 제안 카드는 그 화면 이슈에서 만든다
+- ⚠️ `cn()` 은 **tailwind-merge 가 아니다.** 뒤에 온 클래스가 앞을 덮어주지 않으니, primitive 밖에서
+  `className` 으로 색·크기를 덮어쓰지 않는다. 필요하면 변형을 primitive 안에 추가한다
 - ⚠️ 라이브러리를 안 쓰는 대신 **접근성이 전부 우리 책임**이다. 포커스 트랩·ESC·스크롤 락을 직접 짜야 한다
 - 🚨 **바텀시트는 네이티브 `<dialog>` 위에 얹는다.** 포커스 트랩 · ESC · 바깥 `inert` · 스크림을 브라우저가 준다.
   "승인 시트는 스크림 탭으로 닫히지 않는다"(디자인 시스템 §7)는 `cancel` 이벤트를 막아 처리한다
+
+### 로그인 — 토큰을 받는 지점은 한 곳
+
+카카오 `access_token` 을 **어디서 받는가**는 `lib/auth/kakao.ts` 하나만 안다. 앱은 네이티브 SDK 가 토큰을 직접 주고([#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26)), 웹은 인가 코드를 서버가 교환하는 흐름이라([#18](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/18)) 두 경로가 다르다 — **화면은 그걸 알 필요가 없다.**
+
+- 🚨 **자리표시 토큰은 개발 환경 + 목 서버가 켜져 있을 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다
+- 🚨 **`consent_required` 가 비어 있지 않으면 다음 화면으로 넘어가지 않는다** (계약서 §04). 토큰은 저장하되 이동은 멈춘다 — 동의를 남기려면 인증된 요청이 필요해서다
+- 인증이 필요한 화면은 `components/auth-gate.tsx` 로 감싼다. `hydrated` 전에는 아무것도 그리지 않는다 —
+  토큰이 `localStorage` 에 있어서 서버 렌더 시점엔 항상 `null` 이고, 그때 그리면 로그인한 사용자에게도 화면이 깜빡이고 튕긴다
 
 ### 아이콘 — `lucide-react`
 
@@ -178,6 +201,9 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 🚨 **`partial` 이벤트를 실패 화면으로 떨어뜨리지 않는다.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 **한 화면에** 섞는다 (NF-06).
 - 🚨 **`failed` 는 `raw_text` 를 돌려준다.** 입력창에 그대로 남겨 놓는다 — 부모가 다시 타이핑하게 만들지 않는다.
 - 🚨 **날짜·나이를 프론트에서 계산하지 않는다.** `age_display` · `observed_label` · `state_reason` 은 서버가 만든 문구다 (§3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
+  - 그래서 01 화면은 프로토타입의 **나이 드롭다운 대신 생일**을 받는다. 나이 → 생일 환산이 곧 날짜 계산이다.
+  - 같은 이유로 `GET /dev-screening/items` 에 `age_months` 를 만들어 보내지 않고 `child_id` 를 보낸다 (서버가 `birth_date` 로 환산한다 · 계약서 수정 대상).
+  - 예외는 **표시가 아닌 입력 제약**뿐이다 — `<input type="date">` 의 `max` 로 미래 날짜를 막는 것.
 - 🚨 **health 관찰은 모양이 다르다.** `subject` · `polarity` · `affinity` 키 자체가 없다. `null` 검사가 아니라 `kind === "observation_health"` 로 분기한다 (`isHealthObservation()`).
 - 🚨 **콘솔·로그에 발화 원문을 남기지 않는다.** `memory_id` 만 (§2 개인정보).
 
