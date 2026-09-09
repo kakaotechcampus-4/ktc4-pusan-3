@@ -72,7 +72,7 @@
 ## API · 백엔드
 
 - [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 28개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 3건 (브라우저로 열기)
-- [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **인가 코드 방식**(카카오 JS SDK 에 클라이언트 토큰 수령 메서드가 없어 계약서의 `{access_token}` 은 웹에서 구현 불가) · 불투명 세션 + httpOnly 쿠키, 14일 슬라이딩, refresh 없음 · `state` 는 쿠키로 처리하고 테이블을 만들지 않는다 · CSRF 이중 제출 · 웹·API 같은 사이트 배포 · `session` 테이블 신설안 · 계약서 §01·§04 변경 필요
+- [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **인가 코드**를 프론트가 받아 서버가 교환한다(JS SDK 에 클라이언트 토큰 수령 메서드가 없다) · 요청 바디는 `{code}` 또는 `{access_token}` 중 하나로 정의하고 지금은 code 만 구현 · 계약서 §01 `Bearer` 유지 · `token` 을 불투명 난수로 정의(즉시 무효화) · 수명 12시간, refresh 없음 · `sessionStorage` 저장, `localStorage` 금지 · `app_id` 대조는 네이티브 경로용으로 보존 · `session` 테이블 신설안 · `POST /auth/logout` 신설안
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
 
