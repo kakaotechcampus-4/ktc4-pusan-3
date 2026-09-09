@@ -39,7 +39,8 @@ src/
 ├── app/                  App Router. 라우트 = 화면 01~10
 │   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
 │   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
-│   └── globals.css       Tailwind 진입점 + @theme 디자인 토큰
+│   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
+│   └── c/[childId]/      아이 스코프 화면 전부 (03~09)
 ├── lib/
 │   ├── env.ts            NEXT_PUBLIC_* 검증 · API_BASE_URL
 │   ├── query-client.ts   QueryClient 기본값 (retry 정책)
@@ -49,6 +50,10 @@ src/
 │       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key)
 │       ├── sse.ts        GET /runs/{rid}/events 스트림 파서
 │       └── queryKeys.ts  쿼리 키 팩토리
+├── components/
+│   ├── ui/               토큰만 아는 primitive (버튼 · 시트 · 칩 …)
+│   └── *.tsx             도메인을 아는 조합
+├── hooks/                화면 여러 곳이 쓰는 훅
 ├── mocks/                MSW 목 서버 — 개발 환경 전용 (§7)
 │   ├── scenario.ts       시나리오 스위치 (?scenario=)
 │   ├── fixtures.ts       계약서 기준 시드 데이터
@@ -64,7 +69,44 @@ src/
 
 ---
 
-## 3. 라이브러리 관례
+## 3. 구현 관례
+
+### 라우팅 — 아이 스코프는 URL 에 둔다
+
+```text
+/c/[childId]/home
+```
+
+🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
+"마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
+
+- 뒤로가기가 웹뷰 히스토리 기반이라([`apps/mobile/App.tsx`](../mobile/App.tsx)), 아이를 바꾼 게 히스토리에 안 남으면 뒤로가기가 어긋난다
+- `consent_required` 의 `deeplink` 가 아이를 가리키려면 URL 에 있어야 한다
+- 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
+
+클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
+**스토어를 읽어 화면을 그리지 않는다.**
+
+### 컴포넌트 — 직접 만든다
+
+별도 UI 라이브러리를 쓰지 않는다. 토큰과 1:1 로 붙고 고치기 쉬운 쪽을 골랐다.
+사양은 [디자인 시스템 §7](../../docs/web/design-system-v1.md) 에 있다 — 없는 값을 즉석에서 만들지 않는다.
+
+- `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
+- `components/` — 도메인을 아는 조합
+- ⚠️ 라이브러리를 안 쓰는 대신 **접근성이 전부 우리 책임**이다. 포커스 트랩·ESC·스크롤 락을 직접 짜야 한다
+- 🚨 **바텀시트는 네이티브 `<dialog>` 위에 얹는다.** 포커스 트랩 · ESC · 바깥 `inert` · 스크림을 브라우저가 준다.
+  "승인 시트는 스크림 탭으로 닫히지 않는다"(디자인 시스템 §7)는 `cancel` 이벤트를 막아 처리한다
+
+### 아이콘 — `lucide-react`
+
+Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 그대로 써도 트리셰이킹된다
+(`next.config.ts` 에 설정할 것 없음. 아이콘 1개 추가에 번들 +12KB 로 확인).
+
+크기 · 굵기 · 도메인 매핑은 `components/ui/icon.tsx` 한 곳에 있다. 화면에서 `size={18}` 처럼 직접 쓰지 않는다.
+
+🚨 `DomainIcon` 은 **`aria-hidden`** 이다. 도메인 아이콘은 색과 함께 단독 신호가 될 수 없고
+(디자인 시스템 §3), 의미는 항상 옆의 텍스트 라벨이 진다.
 
 ### 서버 상태 vs 클라이언트 상태 — 섞지 않는다
 
@@ -102,6 +144,22 @@ src/
 const controller = new AbortController();
 for await (const e of streamRunEvents(runId, controller.signal)) { ... }
 ```
+
+### run 상태 — `useRunStream`
+
+run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독형이라 위 이분법에 안 맞는다.
+`hooks/use-run-stream.ts` 가 `useReducer` 로 들고, 끝날 때 Query 를 무효화한다.
+
+- `runReducer` 는 순수 함수다. 훅 없이 이벤트 배열만 흘려서 검증할 수 있다
+- 끝나면 **`qk.child(cid)` 를 통째로** 무효화한다 — run 하나가 홈·관찰·프로필을 동시에 바꾼다
+- 🚨 **`partial` 이 왔으면 `done` 이 와도 부분 결과다.** 성공 화면으로 덮지 않는다 (NF-06)
+- 🚨 **20초 안전망이 훅 안에 있다.** 전체 시간이 아니라 *조용한 시간*을 잰다 —
+  전환의 정본은 서버가 보내는 `partial` 이고, 이건 스트림이 멎었을 때의 그물이다
+- 🚨 **입력 원문을 훅에 두지 않는다.** 화면을 벗어나면 스트림을 끊는데, 실패 시 원문을 입력창에
+  되돌려야 한다. `failed` 이벤트가 `raw_text` 를 실어 주지만 네트워크가 끊기면 그것도 못 받는다 —
+  **원문의 정본은 입력 화면이 들고 있는 값이다.**
+
+목의 `?scenario=partial` · `failed` 로 두 경로를 바로 확인할 수 있다 (§7).
 
 ---
 
