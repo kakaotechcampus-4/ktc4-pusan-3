@@ -118,8 +118,11 @@ src/
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
-  `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet`.
+  `TextInput` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet`.
   배너 · 제안 카드 · 탭은 그 화면 이슈에서 만든다
+- 🚨 **외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.** 접근성을 손으로 짜면
+  반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고** `classNames` 로 토큰만 입힌다 —
+  버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7)
 - 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** 상하 여백은 `Screen` 이 소유한다.
   safe-area 유틸은 **여백을 함께 받는다** (`pt-safe-8` = safe area + 32px) — 예전처럼 safe area 만 넣는
   유틸에 `py-8` 을 겹치면 같은 padding 속성이라 **한쪽이 조용히 죽는다.** 이 사고를 두 번 냈다:
@@ -246,7 +249,8 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 🚨 **날짜·나이를 프론트에서 계산하지 않는다.** `age_display` · `observed_label` · `state_reason` 은 서버가 만든 문구다 (§3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
   - 그래서 01 화면은 프로토타입의 **나이 드롭다운 대신 생일**을 받는다. 나이 → 생일 환산이 곧 날짜 계산이다.
   - 같은 이유로 `GET /dev-screening/items` 에 `age_months` 를 만들어 보내지 않고 `child_id` 를 보낸다 (서버가 `birth_date` 로 환산한다 · 계약서 수정 대상).
-  - 예외는 **표시가 아닌 입력 제약**뿐이다 — `<input type="date">` 의 `max` 로 미래 날짜를 막는 것.
+  - 예외는 **표시가 아닌 입력 제약**뿐이다 — 달력에서 오늘 이후를 못 고르게 막는 것(`DateField` 의 `toDate`).
+    🚨 `<input type="date">` 를 쓰지 않는다 — 브라우저·OS 마다 생김새가 달라 §7 입력 사양을 지킬 방법이 없다.
 - 🚨 **health 관찰은 모양이 다르다.** `subject` · `polarity` · `affinity` 키 자체가 없다. `null` 검사가 아니라 `kind === "observation_health"` 로 분기한다 (`isHealthObservation()`).
 - 🚨 **콘솔·로그에 발화 원문을 남기지 않는다.** `memory_id` 만 (§2 개인정보).
 - 🚨 **외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다.** `dangerouslySetInnerHTML` 금지, 마크다운을 쓰더라도 raw HTML 비활성(`rehype-raw` 금지).

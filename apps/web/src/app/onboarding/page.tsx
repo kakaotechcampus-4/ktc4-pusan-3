@@ -8,6 +8,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { DateField, toISODate } from "@/components/ui/date-field";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
@@ -67,7 +68,8 @@ function CreateChildScreen() {
     if (!nickname.trim()) next.nickname = "부르는 별명을 알려주세요.";
     if (!birthDate) next.birthDate = "생일을 알려주세요.";
     // 나이를 계산하는 게 아니라 입력을 막는 검사다 — 미래에 태어난 아이는 없다.
-    else if (birthDate > todayISO()) next.birthDate = "오늘보다 뒤일 수는 없어요.";
+    // 달력이 이미 막지만, 값이 다른 경로로 들어올 수 있어 제출에서도 본다.
+    else if (birthDate > toISODate(today())) next.birthDate = "오늘보다 뒤일 수는 없어요.";
 
     setErrors(next);
     if (Object.keys(next).length > 0) return;
@@ -107,14 +109,14 @@ function CreateChildScreen() {
           error={errors.nickname}
         />
 
-        <TextInput
+        <DateField
           label="생일"
           hint="나이는 생일을 보고 서버가 계산해요."
-          type="date"
           value={birthDate}
-          max={todayISO()}
-          onChange={(e) => setBirthDate(e.target.value)}
+          onChange={setBirthDate}
           error={errors.birthDate}
+          fromDate={EARLIEST_BIRTH_DATE}
+          toDate={today()}
         />
 
         <div className="flex flex-col gap-1.5">
@@ -154,9 +156,13 @@ function CreateChildScreen() {
   );
 }
 
-/** `<input type="date">` 의 상한값. 화면에 나이를 그리는 게 아니라 미래 날짜를 막는 용도다. */
-function todayISO(): string {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
+/** 달력의 상한. 화면에 나이를 그리는 게 아니라 미래 날짜를 막는 용도다. */
+function today(): Date {
+  return new Date();
 }
+
+/**
+ * 달력의 하한. 아이 서비스라 20년 전이면 충분하고, 연도 드롭다운이 무한정 길어지지 않는다.
+ * 🚨 나이 계산이 아니다 — 고를 수 있는 범위를 정하는 것뿐이다.
+ */
+const EARLIEST_BIRTH_DATE = new Date(new Date().getFullYear() - 20, 0, 1);

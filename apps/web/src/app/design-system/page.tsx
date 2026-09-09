@@ -7,6 +7,7 @@ import { Button, type ButtonVariant } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { DateField } from "@/components/ui/date-field";
 import { DomainIcon, ICON_SIZE } from "@/components/ui/icon";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
@@ -356,6 +357,7 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
 function ComponentSection() {
   const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
   const [chip, setChip] = useState("공룡");
+  const [date, setDate] = useState("");
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
 
@@ -397,6 +399,14 @@ function ComponentSection() {
         onChange={(e) => setText(e.target.value)}
       />
       <TextInput label="에러 상태" value="" onChange={() => {}} error="사유를 한 줄로 쓴다." />
+      <DateField
+        label="날짜"
+        hint="달력은 바텀시트로 연다 — 좁은 폭에서 팝오버는 화면을 벗어난다."
+        value={date}
+        onChange={setDate}
+        fromDate={new Date(new Date().getFullYear() - 20, 0, 1)}
+        toDate={new Date()}
+      />
       <Checkbox
         checked={checked}
         onChange={setChecked}
