@@ -3,7 +3,7 @@
 Owner: 고태영 (프론트 리드)
 
 > 이 파일은 **프론트에서만 지키는 규칙**이다. 파트 경계를 넘는 규칙은 [최상위 CLAUDE.md](../../CLAUDE.md) §2 에 있다.
-> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html).
+> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) (무엇을 부르는가) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
 
 ---
 
@@ -90,6 +90,8 @@ src/
 - `llm_unavailable` (503) → 🚨 **기본값으로 대체하지 않는다.** 실패했다고 화면에 말한다.
 - 4xx 는 재시도하지 않는다 (`query-client.ts` 에 이미 걸려 있다).
 - **뮤테이션은 자동 재시도가 꺼져 있다.** 승인 게이트를 두 번 실행할 수 있어서다 — 켜지 말 것.
+- 🚨 **승인 게이트에 낙관적 업데이트를 쓰지 않는다.** `onMutate` 로 캐시를 먼저 바꾸면 서버가 확정하기 전에 화면이 이미 확정된 것처럼 보인다 — "되돌릴 수 없는 것은 사람이 승인한다"(§2)가 **시각적으로** 깨진다. 응답을 받은 뒤 `invalidateQueries` 로 갱신한다. 자동 재시도와는 다른 경로라 따로 막아야 한다.
+  낙관적 업데이트가 괜찮은 곳은 되돌릴 수 있는 것뿐이다 — 준비물 체크(`is_prepared`), 관심 칩 토글 정도.
 
 ### SSE
 
@@ -121,7 +123,8 @@ for await (const e of streamRunEvents(runId, controller.signal)) { ... }
 ## 5. 스타일
 
 - 색·radius·폰트는 `globals.css` 의 `@theme` 토큰으로만. 컴포넌트에서 `#hex` 를 직접 쓰지 않는다.
-- 토큰의 **정본은 [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md)** 다. `globals.css` 는 그 문서를 옮긴 것이고, 둘이 어긋나면 CSS 가 틀린 것이다.
+- **정본은 [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) 다.** 색·타이포·간격뿐 아니라 버튼 높이 · 카드 여백 · 시트 동작까지 거기 있다(§7 컴포넌트). 화면을 그리기 전에 읽고, 없는 값을 즉석에서 만들지 않는다 — 필요하면 문서를 먼저 고친다.
+- `globals.css` 는 그 문서를 옮긴 것이다. 둘이 어긋나면 **CSS 가 틀린 것**이다.
 - 🚨 **실패를 빨강으로 칠하지 않는다.** `failed` · `partial` 의 실패 쪽 · `llm_unavailable` 은 `surface-muted` + `ink-muted` 다. `danger` 는 알레르기·건강 중단에만, `caution` 은 승인 게이트 2곳에만 쓴다.
 - 🚨 **일반 추천과 개인화 추천을 색으로 구분하지 않는다.** 라벨과 기록 건수가 본체다 (§4 첫 줄과 같은 규칙).
 - 본문 기본은 **16px / 1.6** 이다. 프로토타입의 11~13px 을 그대로 옮기지 말 것.
