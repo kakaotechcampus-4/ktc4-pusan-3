@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     MEMORY_API_KEY: str | None = None
     MEMORY_BASE_URL: str | None = None
+    MEMORY_MODEL: str | None = None
+    MEMORY_REASONING_EFFORT: str | None = None
 
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 
