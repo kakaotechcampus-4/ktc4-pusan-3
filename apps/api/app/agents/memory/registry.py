@@ -12,13 +12,19 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.result import ErrorCode, ToolResult, fail
 from app.agents.memory.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.memory.schemas.tool_schema import ToolDefinition, build_tool_specs
+from app.agents.memory.tools.observation import OBSERVATION_HANDLERS
 from app.agents.memory.tools.parse_input import parse_input
 
 ToolHandler = Callable[[AgentContext, Any], Awaitable[ToolResult]]
 
 # 이름-실제 함수 매핑 핸들러
-TOOL_HANDLERS: dict[str, ToolHandler] = {"parse_input": parse_input}
-_DEFINITIONS: dict[str, ToolDefinition] = {definition.name: definition for definition in TOOL_DEFINITIONS}
+TOOL_HANDLERS: dict[str, ToolHandler] = {
+    "parse_input": parse_input,
+    **OBSERVATION_HANDLERS,
+}
+_DEFINITIONS: dict[str, ToolDefinition] = {
+    definition.name: definition for definition in TOOL_DEFINITIONS
+}
 
 # 실행할 수 없는 tool은 모델에게 보여주지 않음
 TOOL_SPECS: list[dict[str, Any]] = build_tool_specs(
