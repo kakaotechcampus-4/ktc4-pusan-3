@@ -4,6 +4,7 @@ Owner: 고태영 (프론트 리드)
 
 > 이 파일은 **프론트에서만 지키는 규칙**이다. 파트 경계를 넘는 규칙은 [최상위 CLAUDE.md](../../CLAUDE.md) §2 에 있다.
 > 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) (무엇을 부르는가) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
+> 로그인은 계약서 §04 가 아니라 [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) (서버 정본) · [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) (프론트) 를 본다.
 
 ---
 
@@ -41,13 +42,16 @@ src/
 │   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
 │   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
 │   ├── page.tsx          00 소개 · 로그인 (로그인 전에 보는 유일한 화면)
+│   ├── auth/callback/    로그인 복귀 지점 — 웹·앱 공통. 🚨 AuthGate 로 감싸지 않는다
 │   ├── onboarding/       01 첫 진입 — 아이 만들기. 아직 childId 가 없어서 아이 스코프 밖이다
 │   └── child/[childId]/  아이 스코프 화면 전부 (02 온보딩 · 03~09)
 ├── lib/
 │   ├── env.ts            NEXT_PUBLIC_* 검증 · API_BASE_URL
 │   ├── query-client.ts   QueryClient 기본값 (retry 정책)
 │   ├── cn.ts             조건부 클래스 합치기 (tailwind-merge 아님 — 뒤가 앞을 안 덮는다)
-│   ├── auth/kakao.ts     카카오 access_token 을 어디서 받는가 — 한 곳 (#26 · #18 미정)
+│   ├── auth/
+│   │   ├── oauth.ts      로그인 시작 · provider·복귀경로 기억 · isAppShell
+│   │   └── oauth-bind.ts bind 비밀 — 1회용 코드가 오가는 홉을 지킨다
 │   └── api/
 │       ├── types.ts      계약서 §02 공통 타입 5종 + Ref + enum + 엔드포인트 요청·응답
 │       ├── errors.ts     에러 봉투 · ApiError · 에러 코드
@@ -81,6 +85,7 @@ src/
 | 화면 | 라우트 |
 | --- | --- |
 | 00 소개 · 로그인 | `/` |
+| 로그인 복귀 지점 (보여줄 내용 없음) | `/auth/callback` |
 | 01 첫 진입 (아이 만들기) | `/onboarding` |
 | 02 이야기 하나 | `/child/[childId]/onboarding` |
 | 03~09 | `/child/[childId]/…` |
@@ -117,14 +122,37 @@ src/
 - 🚨 **바텀시트는 네이티브 `<dialog>` 위에 얹는다.** 포커스 트랩 · ESC · 바깥 `inert` · 스크림을 브라우저가 준다.
   "승인 시트는 스크림 탭으로 닫히지 않는다"(디자인 시스템 §7)는 `cancel` 이벤트를 막아 처리한다
 
-### 로그인 — 토큰을 받는 지점은 한 곳
+### 로그인 — API 호출이 아니라 페이지 이동이다
 
-카카오 `access_token` 을 **어디서 받는가**는 `lib/auth/kakao.ts` 하나만 안다. 앱은 네이티브 SDK 가 토큰을 직접 주고([#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26)), 웹은 인가 코드를 서버가 교환하는 흐름이라([#18](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/18)) 두 경로가 다르다 — **화면은 그걸 알 필요가 없다.**
+정본은 [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) 다. 여기는 코드를 만질 때 걸리는 것만.
 
-- 🚨 **자리표시 토큰은 개발 환경 + 목 서버가 켜져 있을 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다
-- 🚨 **`consent_required` 가 비어 있지 않으면 다음 화면으로 넘어가지 않는다** (계약서 §04). 토큰은 저장하되 이동은 멈춘다 — 동의를 남기려면 인증된 요청이 필요해서다
+🚨 **계약서 §04 의 `{access_token}` 은 쓰지 않는다.** 클라이언트가 카카오 토큰을 받는 경로가 없다 (카카오 JS SDK 에 그 메서드가 없고, 셸이 네이티브 SDK 로 받으면 [`apps/mobile/CLAUDE.md`](../mobile/CLAUDE.md) §1 "토큰을 들고 있지 않는다" 가 깨진다). 서버가 인가 코드를 교환하고, 프론트는 **1회용 코드 + `bind` 비밀** 한 쌍만 보낸다.
+
+```
+00 화면(/) — status prefetch → 버튼 → 서버가 준 절대 start_url 로 이동
+   → 카카오 → 서버 콜백 → /auth/callback?code=  → POST /auth/{provider} { code, bind }
+```
+
+- 🚨 **`lib/auth/oauth.ts` 가 시작하는 유일한 지점이다.** 화면은 `startOAuthLogin()` 만 부른다. 성공하면 페이지가 떠나므로 값이 돌아오지 않는다 (`useMutation` 이 아니다). 목에서만 카카오 왕복을 건너뛰고 `{ kind: "internal" }` 을 돌려줘서 호출자가 라우터로 콜백 화면에 간다
+- 🚨 **`bind` 를 빼먹으면 계정이 넘어간다.** 남의 1회용 코드를 딥링크로 던져 **피해자를 공격자 계정에 로그인**시킬 수 있다. 시작 단계의 `state` 쿠키로는 못 막는다 — 막아야 하는 홉이 그 뒤다. `oauth-bind.ts` 의 주석을 읽고 만질 것
+- 🚨 **교환 응답은 `status` 필드 유무로 분기한다.** `token` 유무로 보면 안 된다 — 신규 응답에는 `token` 이 아예 없고, 그 상태로 `signIn(undefined)` 를 부르면 토큰 없는 세션이 저장돼 이후 모든 요청이 401 이 된다
+- 🚨 **에러 문구는 프론트가 만든다.** 서버는 `?error=` 에 **코드만** 싣는다 (문구를 URL 에 실으면 임의 문구를 화면에 띄우는 통로가 된다). 매핑은 콜백 화면 한 곳에 두고, **받은 코드를 화면에 그대로 출력하지 않는다**
+- 🚨 **취소는 실패가 아니다.** `?error=oauth_denied` 와 인앱 브라우저 닫기는 로그인 시작 전으로 돌아간 것뿐이다 — 배너를 띄우지 말고 버튼만 원상복구한다
+- 🚨 **복귀 경로 복원값을 검증한다.** `/` 로 시작하고 `//` 가 아닌 값만 통과시킨다 (`//evil.com` 은 프로토콜 상대 URL 이라 외부로 나간다). 서버가 오픈 리다이렉트를 막았는데 프론트가 다시 열면 의미가 없다
+- 🚨 **자리표시 코드는 개발 환경 + 목 서버일 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다 (빌드 후 번들에서 문자열이 사라지는지 확인한다)
+- 🚨 **1회용 코드는 한 번만 교환한다.** StrictMode 의 이중 실행으로 두 번 소비하면 두 번째가 `401 invalid_handoff` 다 — `useRef` 가드를 둔다
+- 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다.** 토큰을 **얻으러** 가는 화면이라 감싸면 `/` 로 튕긴다
+- `consent_required` 가 비어 있지 않으면(기존 회원) 또는 응답이 신규 가입 대기면 **콜백 화면에서 멈춘다.** 동의 화면은 아직 없다
+
+### 세션 — `sessionStorage` 다
+
+- 🚨 **토큰을 `localStorage` 에 두지 않는다.** [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §4-3 이 못박은 규칙이고, 이유는 아래 XSS 항목과 한 덩어리다
+- 토큰은 불투명 난수다. **JWT 가 아니니 디코딩해서 정보를 꺼내려 하지 않는다.** 수명 12시간 · refresh 없음
+- `signIn(token, expiresIn)` 이 만료 시각을 함께 든다. `hasLiveSession()` 으로 판정한다 — 401 을 맞고 나서야 아는 것보다 낫다
+- **`401 unauthenticated` 는 `lib/api/client.ts` 에서 한 번에 처리한다** (Providers 가 핸들러를 꽂는다). 화면마다 401 을 다루지 않는다. 🚨 `invalid_handoff`(401) 는 여기 안 걸린다 — 그건 로그인 교환 실패고 콜백 화면이 자기 문구로 처리한다
 - 인증이 필요한 화면은 `components/auth-gate.tsx` 로 감싼다. `hydrated` 전에는 아무것도 그리지 않는다 —
-  토큰이 `localStorage` 에 있어서 서버 렌더 시점엔 항상 `null` 이고, 그때 그리면 로그인한 사용자에게도 화면이 깜빡이고 튕긴다
+  토큰이 `sessionStorage` 에 있어서 서버 렌더 시점엔 항상 `null` 이고, 그때 그리면 로그인한 사용자에게도 화면이 깜빡이고 튕긴다
+- ⚠️ 부수 효과로 `activeChildId` 도 세션 스코프가 됐다. "마지막에 본 아이" 복원이 탭을 닫으면 사라진다 — 정본은 URL 이라 화면이 깨지지는 않는다
 
 ### 아이콘 — `lucide-react`
 
@@ -206,6 +234,10 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   - 예외는 **표시가 아닌 입력 제약**뿐이다 — `<input type="date">` 의 `max` 로 미래 날짜를 막는 것.
 - 🚨 **health 관찰은 모양이 다르다.** `subject` · `polarity` · `affinity` 키 자체가 없다. `null` 검사가 아니라 `kind === "observation_health"` 로 분기한다 (`isHealthObservation()`).
 - 🚨 **콘솔·로그에 발화 원문을 남기지 않는다.** `memory_id` 만 (§2 개인정보).
+- 🚨 **외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다.** `dangerouslySetInnerHTML` 금지, 마크다운을 쓰더라도 raw HTML 비활성(`rehype-raw` 금지).
+  이 서비스의 XSS 경로는 특정된다 — **기관 공지 붙여넣기·OCR 로 들어온 외부 텍스트가 LLM 을 거쳐 화면에 렌더링된다** (F-07 · F-14).
+  토큰이 JS 에서 접근 가능하므로 XSS 한 건이 세션을 넘긴다. React 는 기본적으로 이스케이프하니 **구멍은 위 둘뿐이고 막는 비용이 거의 0이다.**
+  ([`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §7-7 이 이 규칙을 최상위 CLAUDE.md §2 로 올릴 것을 제안했다 — 파트 경계를 넘어서 팀 결정 대기 중이고, 그때까지 프론트 규칙으로 여기 둔다.)
 
 ---
 
@@ -262,7 +294,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `scarcity` | 근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 **1개** |
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
-| `consent` | 403 `consent_required` — 저장 차단 · deeplink |
+| `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
+| `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
 | `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
 
 주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
@@ -272,7 +305,12 @@ NEXT_PUBLIC_API_MOCKING=enabled
 - **응답은 `lib/api/types.ts` 타입으로 강제한다.** 목이 계약서에서 벗어나면 타입 에러로 잡힌다 — 형태를 `any` 로 풀지 말 것.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
-- 화면 01~06 만 덮여 있다. 07~10 은 아직 없다.
+- 화면 00~06 만 덮여 있다. 07~10 은 아직 없다.
+- 🚨 **실제 OAuth 왕복은 목으로 흉내 낼 수 없다** — 카카오로 나가는 전체 페이지 이동이라 서비스 워커가 못 잡는다.
+  목이 덮는 것은 시작 전(`status`)과 돌아온 뒤(교환·가입)이고, 중간은 `lib/auth/oauth.ts` 의 `MOCK_ONLY` 분기가 건너뛴다.
+- 🚨 **`startMocks()` 는 한 번만 시작한다** (약속을 캐시한다). StrictMode 가 effect 를 두 번 돌리는데 두 번째 `worker.start()` 가
+  거부되면서 `.finally()` 가 즉시 실행돼 **워커가 뜨기 전에 화면이 그려졌고**, 첫 화면의 첫 요청이 목을 통과해 실서버로 나갔다.
+  00 화면의 status prefetch 가 여기 걸려서 로그인 버튼이 영구 비활성이 됐다 — 첫 화면에서 쿼리를 부르기 전까지는 안 보이던 버그다.
 - 🚨 **fixtures 에 실제 사용자 발화나 아이 정보를 넣지 않는다.** 저장소가 public 이다 (최상위 §9).
 
 msw 버전을 올리면 워커를 다시 만들어야 한다 — `pnpm exec msw init public`.
