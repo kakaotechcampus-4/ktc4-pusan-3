@@ -153,6 +153,7 @@
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
 │   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키
+│   │       ├── mocks/        MSW 목 서버 — 개발 환경 전용 (백엔드 없이 화면 작업)
 │   │       └── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유

@@ -49,9 +49,16 @@ src/
 │       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key)
 │       ├── sse.ts        GET /runs/{rid}/events 스트림 파서
 │       └── queryKeys.ts  쿼리 키 팩토리
+├── mocks/                MSW 목 서버 — 개발 환경 전용 (§7)
+│   ├── scenario.ts       시나리오 스위치 (?scenario=)
+│   ├── fixtures.ts       계약서 기준 시드 데이터
+│   ├── handlers/         엔드포인트별 핸들러
+│   └── start.ts          dev + 플래그일 때만 워커를 띄운다
 └── stores/
     └── session.ts        토큰 · activeChildId (zustand persist)
 ```
+
+`public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
 
@@ -138,6 +145,45 @@ pnpm format        # prettier --write
 **최초 세팅** — `cp .env.example .env.local`. `NEXT_PUBLIC_API_BASE_URL` 이 없으면 앱이 뜨지 않고 바로 에러를 던진다 (조용히 잘못된 주소로 붙는 것보다 낫다).
 
 🚨 `NEXT_PUBLIC_*` 는 **브라우저 번들에 그대로 박힌다.** 비밀은 여기 넣지 않는다 (§9 · NF-09).
+
+---
+
+## 7. 목(mock) 서버
+
+백엔드가 아직 없어도 화면을 만들 수 있게 [MSW](https://mswjs.io) 가 계약서 v1 응답을 대신 내려준다.
+
+```bash
+# .env.local 에서 켠다
+NEXT_PUBLIC_API_MOCKING=enabled
+```
+
+**개발 환경에서만 동작한다.** `start.ts` 가 `NODE_ENV` 로 먼저 막고 동적 import 를 쓰기 때문에, 프로덕션 빌드에는 msw 가 통째로 빠진다. 플래그가 `disabled` 면 요청은 그대로 실서버로 나간다.
+
+### 🚨 이게 있는 진짜 이유 — 실서버로 못 만드는 상태들
+
+색이나 문구가 아니라 **§4 의 규칙이 지켜지는지 확인하는 장치**다. 아래 상태들은 기억이 쌓이거나, 타이밍에 걸리거나, 모델이 죽어야 나온다.
+
+| 시나리오 | 무엇이 나오나 |
+| --- | --- |
+| `default` | 기억이 쌓인 상태 · 개인화 추천 2건 |
+| `empty` | 기록 0건 — `highlight: null` 빈 상태 |
+| `scarcity` | 근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 **1개** |
+| `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
+| `failed` | 입력 처리 실패 — `raw_text` 복원 |
+| `consent` | 403 `consent_required` — 저장 차단 · deeplink |
+| `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
+
+주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
+
+### 규칙
+
+- **응답은 `lib/api/types.ts` 타입으로 강제한다.** 목이 계약서에서 벗어나면 타입 에러로 잡힌다 — 형태를 `any` 로 풀지 말 것.
+- **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
+- **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
+- 화면 01~06 만 덮여 있다. 07~10 은 아직 없다.
+- 🚨 **fixtures 에 실제 사용자 발화나 아이 정보를 넣지 않는다.** 저장소가 public 이다 (최상위 §9).
+
+msw 버전을 올리면 워커를 다시 만들어야 한다 — `pnpm exec msw init public`.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
