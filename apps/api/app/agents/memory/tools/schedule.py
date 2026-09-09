@@ -98,7 +98,7 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
             "category": args.category,
             "status": "draft",          # 승인 전까지 draft. 자동 확정 경로를 만들지 않는다
             "created_by": "agent",
-            "expires_at": (context.now + timedelta(hours=DRAFT_TTL_HOURS)).isoformat(),
+            "expires_at": context.now + timedelta(hours=DRAFT_TTL_HOURS),
         },
     )
     return ok(

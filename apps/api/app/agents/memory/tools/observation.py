@@ -38,16 +38,9 @@ _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
 # update도 날짜를 바꿀 수 있다. 이 셋은 fields로 내려보내지 않고 따로 푼다
 _UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction"}
 
-# subject는 NOT NULL이고 임베딩 입력에 핵심. 도메인마다 다른 필드로 정의됨
-_SUBJECT_FIELD = {"food": "subject", "education": "topic", "activity": "activity"}
 
 def _resource(domain: str) -> str:
     return f"observation_{domain}"
-
-
-def _subject_of(domain: str, fields: dict[str, Any]) -> str | None:
-    key = _SUBJECT_FIELD.get(domain)
-    return fields.get(key) if key else None
 
 
 async def _create(
@@ -73,13 +66,8 @@ async def _create(
             moment = resolve_time(fields.pop("observed_time", None))
         except DateParseError as exc:
             return fail("create", resource, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
-        fields["observed_time"] = (
-            combine(day, moment, context.timezone).isoformat() if moment else None
-        )
-
-    subject = _subject_of(domain, fields)
-    if subject is not None:
-        fields["subject"] = subject
+        # 저장 경로에는 파이썬 값을 그대로 둔다. DB 타입 변환은 store 어댑터가 한다
+        fields["observed_time"] = combine(day, moment, context.timezone) if moment else None
 
     row = await context.store.create_observation(
         domain=domain,
@@ -161,13 +149,7 @@ async def _update(
         except DateParseError as exc:
             return fail("update", resource, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
         # 날짜를 같이 바꿨으면 새 날짜에, 아니면 원래 관찰 일자에 시각을 얹는다
-        fields["observed_time"] = (
-            combine(day, moment, context.timezone).isoformat() if moment else None
-        )
-
-    subject = _subject_of(domain, fields)
-    if subject is not None:
-        fields["subject"] = subject      # topic/activity 를 바꾸면 subject 도 따라간다
+        fields["observed_time"] = combine(day, moment, context.timezone) if moment else None
 
     row = await context.store.update_observation(
         domain=domain,
