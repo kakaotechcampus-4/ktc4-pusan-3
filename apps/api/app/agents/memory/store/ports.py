@@ -1,13 +1,23 @@
 """store 계약. 구현체는 이 Protocol만 만족하면 된다.
-날짜 표현은 tool이 datetime_rules로 풀고,
-child_id / source_writer 는 AgentContext가 채운다. store는 저장과 조회만 한다.
+
+tool이 넘기는 값은 이미 확정된 값이다 — 날짜 표현은 tool 이 datetime_rules로 풀고,
+child_id / source_writer 는 AgentContext가 채워서 준다. store는 저장과 조회만 한다.
+
 id / created_at / uuid 생성은 store 책임이다.
+이 파일은 DB 타입으로 바꾸는 지점에 해당한다.
+tool은 파이썬 값(datetime/date/DateRange/int)을 그대로 넘기고,
+ORM 어댑터가 여기서 변환한다 —
+    DateRange  -> psycopg Range[date]  (DATERANGE)
+    datetime   -> DateTime(timezone=True)
+JSON 직렬화는 ToolResult를 만들 때만 한다. 저장 경로에서는 하지 않는다.
 """
 
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import UUID
+
+from app.agents.common.datetime_rules import DateRange
 
 # observation 4테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
@@ -59,7 +69,6 @@ class EventRow:
     starts_at: datetime
     ends_at: datetime | None
     all_day: bool
-    created_at: datetime
     fields: dict[str, Any]  # event_type / category / status / created_by / expires_at
 
     def to_summary(
@@ -69,12 +78,11 @@ class EventRow:
     ) -> dict[str, Any]:
         """조회 결과 요약.
 
-        created_at, title에 후속 tool이 쓸 값을 얹는다.
+        event 테이블에는 created_at 이 없다(ORM 확인). 시작 시각으로 대신한다.
         event_item / reminder 에는 조회 tool이 없어서 여기 같이 싣는다.
         """
         return {
             "id": self.id,
-            "created_at": self.created_at.isoformat(),
             "title": self.title,
             "starts_at": self.starts_at.isoformat(),
             "all_day": self.all_day,
@@ -95,7 +103,7 @@ class MemoryStore(Protocol):
         source_writer: UUID,
         raw_text: str,
         observed_on: date,
-        observed_range: str,
+        observed_range: DateRange,
         fields: dict[str, Any],
     ) -> ObservationRow: ...
 
@@ -128,7 +136,9 @@ class MemoryStore(Protocol):
         """
         ...
 
-    async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool: ...
+    async def delete_observation(
+        self, *, domain: ObservationDomain, observation_id: str
+    ) -> bool: ...
 
     # event
     async def create_event(
@@ -164,7 +174,9 @@ class MemoryStore(Protocol):
 
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]: ...
 
-    async def update_event_item(self, *, item_id: str, fields: dict[str, Any]) -> EventItemRow | None: ...
+    async def update_event_item(
+        self, *, item_id: str, fields: dict[str, Any]
+    ) -> EventItemRow | None: ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...
 
@@ -175,6 +187,8 @@ class MemoryStore(Protocol):
 
     async def list_reminders(self, *, event_id: str) -> list[ReminderRow]: ...
 
-    async def update_reminder(self, *, reminder_id: str, remind_at: datetime) -> ReminderRow | None: ...
+    async def update_reminder(
+        self, *, reminder_id: str, remind_at: datetime
+    ) -> ReminderRow | None: ...
 
     async def delete_reminder(self, *, reminder_id: str) -> bool: ...

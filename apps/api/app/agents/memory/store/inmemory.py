@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from app.agents.common.datetime_rules import DateRange
 from app.agents.memory.store.ports import (
     EventItemRow,
     EventRow,
@@ -40,7 +41,7 @@ class InMemoryStore:
         source_writer: UUID,
         raw_text: str,
         observed_on: date,
-        observed_range: str,
+        observed_range: DateRange,
         fields: dict[str, Any],
     ) -> ObservationRow:
         row = ObservationRow(
@@ -138,7 +139,6 @@ class InMemoryStore:
             starts_at=starts_at,
             ends_at=ends_at,
             all_day=all_day,
-            created_at=self._now,
             fields={**fields, "child_id": str(child_id)},
         )
         self._events[row.id] = row
@@ -179,7 +179,6 @@ class InMemoryStore:
             starts_at=changes.pop("starts_at", row.starts_at),
             ends_at=changes.pop("ends_at", row.ends_at),
             all_day=changes.pop("all_day", row.all_day),
-            created_at=row.created_at,
             fields={**row.fields, **changes},
         )
         self._events[row.id] = updated

@@ -123,6 +123,17 @@ class ObservationCreateArgs(ToolArgs):
 class PromotableCreateArgs(ObservationCreateArgs):
     """승격 파이프라인에 관여하는 도메인(food/education/activity)의 추가 필드."""
 
+    subject: Annotated[
+        str,
+        Field(
+            description=(
+                "핵심 대상 하나만 남긴 정규화 형태. 병합·검색 키로 쓰인다. "
+                "'레고로 성 만들기' → '레고', '한글 자모 활동지' → '한글 자모'. "
+                "수식어나 행동은 빼고 명사만 남긴다. "
+                "'레고로 성 만들기'와 '레고로 성 쌓기'는 같은 subject다."
+            )
+        ),
+    ]
     polarity: Annotated[
         int,
         Field(default=0, ge=-1, le=1, description="좋아함 1 / 중립 0 / 싫어함 -1"),

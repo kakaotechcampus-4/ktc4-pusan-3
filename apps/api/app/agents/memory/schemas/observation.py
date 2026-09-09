@@ -37,14 +37,13 @@ _ENGAGEMENT = _optional("low / mid / high 중 하나. 발화에 없으면 비워
 
 
 class ObservationFoodCreate(PromotableCreateArgs):
-    subject: Annotated[str, Field(description="대상 음식. 예: 당근, 닭갈비")]
     action: Annotated[str | None, Field(default=None, description="먹었다 / 뱉었다 / 남김")]
     amount: Annotated[str | None, Field(default=None, description="반 그릇 / 다 먹음")]
     reaction: Annotated[str | None, Field(default=None, description="좋아함 / 싫어함 / 무반응")]
 
 
 class ObservationFoodUpdate(ObservationUpdateArgs):
-    subject: Annotated[str | None, Field(default=None, description="바꿀 음식")]
+    subject: Annotated[str | None, _optional("바꿀 정규화 대상")]
     action: Annotated[str | None, Field(default=None, description="바꿀 action")]
     amount: Annotated[str | None, Field(default=None, description="바꿀 amount")]
     reaction: Annotated[str | None, Field(default=None, description="바꿀 reaction")]
@@ -71,7 +70,7 @@ class ObservationHealthUpdate(ObservationUpdateArgs):
 
 
 class ObservationEducationCreate(PromotableCreateArgs):
-    topic: Annotated[str, Field(description="학습 주제. 예: 숫자세기, 영어 말하기")]
+    topic: Annotated[str, Field(description="발화 그대로의 학습 주제. 예: 한글 자모 활동지")]
     session_type: Annotated[str | None, _optional("독서 / 수업 / 학습지 등")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
@@ -79,13 +78,14 @@ class ObservationEducationCreate(PromotableCreateArgs):
 
 class ObservationEducationUpdate(ObservationUpdateArgs):
     topic: Annotated[str | None, Field(default=None, description="바꿀 학습 주제")]
+    subject: Annotated[str | None, _optional("바꿀 정규화 대상. topic을 바꾸면 같이 바꾼다")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
     session_type: Annotated[str | None, Field(default=None, description="바꿀 세션 형태")]
 
 
 class ObservationActivityCreate(PromotableCreateArgs):
-    activity: Annotated[str, Field(description="활동 이름. 예: 모래놀이, 레고 조립")]
+    activity: Annotated[str, Field(description="발화 그대로의 활동. 예: 레고로 성 만들기")]
     location: Annotated[str | None, _optional("장소. 집 / 기관 / 놀이터")]
     companions: Annotated[str | None, _optional("혼자 / 친구와 / 부모")]
     duration_min: Annotated[int | None, _DURATION]
@@ -94,6 +94,7 @@ class ObservationActivityCreate(PromotableCreateArgs):
 
 class ObservationActivityUpdate(ObservationUpdateArgs):
     activity: Annotated[str | None, Field(default=None, description="바꿀 활동")]
+    subject: Annotated[str | None, _optional("바꿀 정규화 대상. activity를 바꾸면 같이 바꾼다")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
     location: Annotated[str | None, Field(default=None, description="바꿀 장소")]

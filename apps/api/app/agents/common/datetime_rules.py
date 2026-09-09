@@ -186,9 +186,11 @@ def shift_days(day: date, days: int) -> date:
     return day + timedelta(days=days)
 
 
-def build_observed_range(day: date) -> str:
-    """observation의 daterange 리터럴. 관찰 1건은 하루로 보고 항상 [d, d+1) 반닫힘으로 만든다."""
-    return f"[{day.isoformat()},{(day + timedelta(days=1)).isoformat()})"
+def build_observed_range(day: date) -> DateRange:
+    """observation의 관찰 구간. 관찰 1건은 하루로 보고 항상 [d, d+1) 반닫힘으로 만든다.
+    daterange 리터럴 문자열을 만들지 않는다. DB 표현으로 바꾸는 건 store어댑터 몫이다.
+    """
+    return DateRange(start=day, end=day + timedelta(days=1))
 
 
 def _normalize(value: str) -> str:
