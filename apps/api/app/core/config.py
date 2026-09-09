@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     DB_PASSWORD: str
     DB_NAME: str
 
-    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
+    MEMORY_API_KEY: str | None = None
+    MEMORY_BASE_URL: str | None = None
+
+    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 
 
 settings = Settings()

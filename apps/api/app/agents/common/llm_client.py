@@ -26,7 +26,8 @@ class LLMError(Exception):
 
 
 class LLMConfigError(LLMError):
-    """API_KEY / BASE_URL / MODEL / REASONING_EFFORT 설정이 비었거나 잘못됨."""
+    """MEMORY_API_KEY / MEMORY_BASE_URL / MEMORY_MODEL / MEMORY_REASONING_EFFORT 가
+    비었거나 잘못됨."""
 
 
 class LLMAuthError(LLMError):
@@ -74,19 +75,21 @@ class LLMClient:
     def __init__(self, settings: AgentSettings | None = None) -> None:
         s = settings or get_agent_settings()
 
-        if not s.API_KEY or not s.BASE_URL:
-            raise LLMConfigError("API_KEY / BASE_URL 이 비어 있다. apps/api/.env 를 확인한다.")
-        if not s.MODEL:
-            raise LLMConfigError("MODEL 이 비어 있다. apps/api/.env 를 확인한다.")
-        if s.REASONING_EFFORT not in _REASONING_EFFORTS:
+        if not s.MEMORY_API_KEY or not s.MEMORY_BASE_URL:
+            raise LLMConfigError(
+                "MEMORY_API_KEY / MEMORY_BASE_URL 이 비어 있다. apps/api/.env 를 확인한다."
+            )
+        if not s.MEMORY_MODEL:
+            raise LLMConfigError("MEMORY_MODEL 이 비어 있다. apps/api/.env 를 확인한다.")
+        if s.MEMORY_REASONING_EFFORT not in _REASONING_EFFORTS:
             allowed = ", ".join(sorted(_REASONING_EFFORTS))
-            raise LLMConfigError(f"REASONING_EFFORT 는 {allowed} 중 하나여야 한다.")
+            raise LLMConfigError(f"MEMORY_REASONING_EFFORT 는 {allowed} 중 하나여야 한다.")
 
-        self._model = s.MODEL
-        self._reasoning_effort = s.REASONING_EFFORT
+        self._model = s.MEMORY_MODEL
+        self._reasoning_effort = s.MEMORY_REASONING_EFFORT
         self._client = AsyncOpenAI(
-            base_url=s.BASE_URL,
-            api_key=s.API_KEY,
+            base_url=s.MEMORY_BASE_URL,
+            api_key=s.MEMORY_API_KEY,
             timeout=s.LLM_TIMEOUT_S,
             max_retries=s.LLM_MAX_RETRIES,
         )
@@ -107,10 +110,12 @@ class LLMClient:
             "messages": messages,
             "reasoning_effort": self._reasoning_effort,
         }
-        if tools: # tools가 있는 경우에만 tool_choice 보냄
-            if self._reasoning_effort != "none": # 지금은 reasoning_effort=none 이어야 tool을 쓸 수 있음
+        # tools가 있는 경우에만 tool_choice 보냄
+        if tools:
+            # 지금은 reasoning_effort=none 이어야 tool을 쓸 수 있음
+            if self._reasoning_effort != "none":
                 raise LLMConfigError(
-                    "tool을 쓰려면 REASONING_EFFORT=none 이어야 한다 "
+                    "tool을 쓰려면 MEMORY_REASONING_EFFORT=none 이어야 한다 "
                     f"(현재 {self._reasoning_effort}). apps/api/.env 를 확인한다."
                 )
             params["tools"] = tools
@@ -142,8 +147,7 @@ class LLMClient:
     def _log_call(self, message: Any, usage: dict[str, int], latency_ms: int) -> None:
         tool_calls = getattr(message, "tool_calls", None) or []
 
-        # 🚨 발화 원문·프롬프트·응답 본문은 로그에 남기지 않는다.
-        # 루트 CLAUDE.md §2 개인정보 — 남기는 건 모델명·토큰 수·tool 이름·지연시간뿐이다.
+        # 발화 원문·프롬프트·응답 본문은 로그에 남기지 않는다
         logger.info(
             "llm call model=%s prompt_tokens=%s completion_tokens=%s "
             "tool_calls=%d tools=%s latency_ms=%d",

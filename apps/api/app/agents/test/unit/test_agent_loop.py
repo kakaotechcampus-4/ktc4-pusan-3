@@ -87,7 +87,8 @@ async def test_한_응답의_tool_을_모두_실행한다(context: AgentContext)
         _tools(
             _call("a", "create_observation_food", _APPLE),
             _call("b", "create_observation_activity",
-                  {"raw_text": "블록놀이 했어", "observed_on": "오늘", "activity": "블록놀이"}),
+                  {"raw_text": "블록놀이 했어", "observed_on": "오늘",
+                   "subject": "블록놀이", "activity": "블록놀이"}),
         ),
         _reply("두 건 기록했어요."),
     )

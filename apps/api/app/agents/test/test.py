@@ -3,7 +3,7 @@
     uv run pytest apps/api/app/agents/test/test.py -m live -s
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
-API_KEY / BASE_URL / MODEL 은 apps/api/.env 에서 읽는다.
+MEMORY_API_KEY / MEMORY_BASE_URL / MEMORY_MODEL 은 apps/api/.env 에서 읽는다.
 
 프로토타입과 달라진 점 — 이 파일은 프롬프트도 tool 스펙도 루프도 갖고 있지 않다.
 run() 을 부르고 저장된 결과를 본다. 사본을 측정하면 구현을 고쳐도 점수가 안 변한다.
@@ -387,9 +387,9 @@ for _case in CASES:
 
 # ── 실행 ────────────────────────────────────────────────────────
 def _client(model: str | None) -> LLMClient:
-    settings = AgentSettings(MODEL=model) if model else AgentSettings()
-    if not settings.API_KEY or not settings.BASE_URL:
-        pytest.skip("API_KEY / BASE_URL 이 필요합니다. apps/api/.env 를 확인하세요.")
+    settings = AgentSettings(MEMORY_MODEL=model) if model else AgentSettings()
+    if not settings.MEMORY_API_KEY or not settings.MEMORY_BASE_URL:
+        pytest.skip("MEMORY_API_KEY / MEMORY_BASE_URL 이 필요합니다. apps/api/.env 를 확인하세요.")
     return LLMClient(settings)
 
 

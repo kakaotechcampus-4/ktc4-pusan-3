@@ -13,16 +13,16 @@ DEFAULT_REASONING_EFFORT = "none"
 
 
 class AgentSettings(BaseSettings):
-    API_KEY: str = ""                        # Elice Serverless API Key
-    BASE_URL: str = ""                       # ML API endpoint(/v1 까지 포함)
-    MODEL: str = ""                          # 모델 ID
-    REASONING_EFFORT: str = DEFAULT_REASONING_EFFORT
+    MEMORY_API_KEY: str = ""                 # Elice Serverless API Key
+    MEMORY_BASE_URL: str = ""                # ML API endpoint(/v1 까지 포함)
+    MEMORY_MODEL: str = ""                   # 모델 ID
+    MEMORY_REASONING_EFFORT: str = DEFAULT_REASONING_EFFORT
 
     LLM_TIMEOUT_S: float = 60.0      # 한 번의 chat 호출 상한
     LLM_MAX_RETRIES: int = 2         # SDK 내부 재시도 (429, 5xx 대상)
 
     # 빈 값은 "미설정"으로 보고 기본값을 사용
-    @field_validator("REASONING_EFFORT", mode="before")
+    @field_validator("MEMORY_REASONING_EFFORT", mode="before")
     @classmethod
     def _blank_to_default(cls, value: object) -> object:
         if not isinstance(value, str) or value.strip():

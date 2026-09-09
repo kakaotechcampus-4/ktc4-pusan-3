@@ -266,6 +266,12 @@ tool 27개의 비용 부담이 계획에서 걱정하던 것보다 작다.
 - `common/datetime_rules.py` → `app/rules/` — 루트 §3 상 날짜 계산은 rules 소속이다. 표준 라이브러리만 쓰도록
   만들어 그대로 옮길 수 있다. `app/rules/` 는 공동 소유라 양쪽 리뷰가 필요하다.
 - `common/config.py` 의 `AgentSettings` → `app/core/config.py` — 인증·API 레이어가 붙을 때 협의.
+- `common/llm_client.py` 의 `openai` SDK 부분 → `app/providers/` — `apps/api/CLAUDE.md` 상 외부 모델 SDK 는
+  providers 소속이다. 지금 agents 에 둔 건 providers 가 아직 비어 있어서지 설계 판단이 아니다.
+  옮길 때는 통째로가 아니라 쪼갠다 — SDK 왕복·예외 번역만 providers 로 가고, `AgentSettings` 를 읽는 부분과
+  "tool 쓰려면 `REASONING_EFFORT=none`" 같은 Agent 정책은 agents 에 남는다
+  (`app/providers/` 는 agents import 금지라 `get_agent_settings()` 를 그대로 데려갈 수 없다).
+  #21 의 `providers/meal_ocr/mlapi.py` 와 공용화할지는 그쪽이 머지된 뒤에 판단한다.
 
 ---
 
