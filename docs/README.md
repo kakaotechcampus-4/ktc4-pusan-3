@@ -71,6 +71,8 @@
 
 ## API · 백엔드
 
+- [meal-plan/ocr-pipeline.md](meal-plan/ocr-pipeline.md) — 급식표 이미지 → JSON → DB 설계 결정 3가지 · 기관 단위 저장 · 알레르기 번호는 규칙이 뽑는다 · 못 읽은 칸은 `unparsed`
+- [meal-plan/ocr-model-eval.md](meal-plan/ocr-model-eval.md) — OCR 모델 비교 실험 기록 (진행 중) · 측정 방법 · Gemini 3.1 Pro 기본 채택 근거 · 게이트웨이 실측 · 남은 실험
 - [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 28개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 3건 (브라우저로 열기)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
