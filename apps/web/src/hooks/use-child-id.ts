@@ -11,7 +11,7 @@ export function useChildId(): string {
   const childId = params?.childId;
 
   if (!childId) {
-    throw new Error("useChildId 는 /c/[childId] 아래에서만 쓸 수 있다.");
+    throw new Error("useChildId 는 /child/[childId] 아래에서만 쓸 수 있다.");
   }
   return childId;
 }

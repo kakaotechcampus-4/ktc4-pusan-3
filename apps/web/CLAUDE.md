@@ -40,7 +40,7 @@ src/
 │   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
 │   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
 │   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
-│   └── c/[childId]/      아이 스코프 화면 전부 (03~09)
+│   └── child/[childId]/  아이 스코프 화면 전부 (03~09)
 ├── lib/
 │   ├── env.ts            NEXT_PUBLIC_* 검증 · API_BASE_URL
 │   ├── query-client.ts   QueryClient 기본값 (retry 정책)
@@ -74,15 +74,20 @@ src/
 ### 라우팅 — 아이 스코프는 URL 에 둔다
 
 ```text
-/c/[childId]/home
+/child/[childId]/home
 ```
 
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
 
+- 🚨 **스토어는 서버 컴포넌트에서 못 읽는다.** `localStorage` 기반이라, 서버가 아이를 아는 방법은
+  URL 아니면 쿠키뿐이다. 쿠키로 옮기면 쿠키·스토어·쿼리 키 세 곳이 어긋날 때 **다른 아이의 데이터가
+  보일 수 있다** (§2 개인정보). URL 이면 그 사고가 구조적으로 불가능하다 — 이게 URL 을 고른 첫째 이유다
 - 뒤로가기가 웹뷰 히스토리 기반이라([`apps/mobile/App.tsx`](../mobile/App.tsx)), 아이를 바꾼 게 히스토리에 안 남으면 뒤로가기가 어긋난다
-- `consent_required` 의 `deeplink` 가 아이를 가리키려면 URL 에 있어야 한다
 - 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
+
+⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
+지금 보고 있는 아이 경로 아래에 붙여서 쓴다 (`/child/{childId}/settings/consent`).
 
 클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
 **스토어를 읽어 화면을 그리지 않는다.**
