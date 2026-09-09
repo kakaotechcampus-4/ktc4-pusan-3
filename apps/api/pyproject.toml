@@ -11,6 +11,8 @@ dependencies = [
     "psycopg[binary]>=3.3.5",
     "alembic>=1.19.2",
     "pgvector>=0.5.0",
+    "openai>=1.60",
+    "tzdata>=2026.3",
 ]
 
 [dependency-groups]
@@ -34,4 +36,9 @@ known-third-party = ["alembic"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "app/agents/test"]              # Agent 테스트는 소유 디렉토리 안에 둔다
+python_files = ["test_*.py", "*_test.py", "test.py"]   # eval 진입점이 test/test.py 라 패턴 추가
+markers = ["live: 실제 LLM API 를 호출하는 eval"]
+# 라이브 eval 은 API 키와 비용이 필요하므로 기본 실행에서 뺀다.
+# 실행하려면 마커를 직접 지정한다 — pytest app/agents/test/test.py -m live
+addopts = "-m 'not live'"
