@@ -88,7 +88,9 @@ export function BottomSheet({
           {children}
         </div>
 
-        {footer ? <div className="pb-safe border-line border-t px-5 py-4">{footer}</div> : null}
+        {/* 🚨 pb-safe-4 는 safe area + 16px 을 한 속성에 합친다. py-4 와 나란히 쓰면
+            아래 패딩이 죽어서 버튼이 화면 맨 아래에 붙는다 (실제로 그랬다). */}
+        {footer ? <div className="border-line pb-safe-4 border-t px-5 pt-4">{footer}</div> : null}
       </div>
     </dialog>
   );

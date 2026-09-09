@@ -20,9 +20,9 @@ export function Screen({ children, className }: { children: ReactNode; className
     <main
       className={cn(
         "max-w-content mx-auto flex min-h-dvh w-full flex-col px-3 min-[380px]:px-4",
-        // 2rem = 32px = 간격 토큰 2xl. 웹뷰에서는 셸이 safe area 를 이미 먹어서 0 이 되고,
+        // 32px = 간격 토큰 2xl. 웹뷰에서는 셸이 safe area 를 이미 먹어서 0 이 되고,
         // 모바일 브라우저로 직접 들어왔을 때만 그만큼 더 붙는다.
-        "pt-[calc(env(safe-area-inset-top)+2rem)] pb-[calc(env(safe-area-inset-bottom)+2rem)]",
+        "pt-safe-8 pb-safe-8",
         className,
       )}
     >

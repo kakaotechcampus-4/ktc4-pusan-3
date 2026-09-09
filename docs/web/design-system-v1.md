@@ -186,7 +186,7 @@
 - 화면 좌우 여백 16px. 폭 360px 미만 기기에서만 12px.
 - **그리드는 1열 고정이다.** 제안 카드도, 관찰 목록도, 도메인 칩 줄도 세로로 쌓는다. 2열이 필요해 보이면 정보가 많은 것이지 열이 부족한 게 아니다.
 - **상하 여백 32px(`2xl`) 과 노치·홈 인디케이터는 [`components/ui/screen.tsx`](../../apps/web/src/components/ui/screen.tsx) 가 `calc` 로 함께 소유한다.** 웹뷰 안에서는 네이티브 셸이 safe area 를 이미 처리해서 0 이 되고, 모바일 브라우저 직접 접속에서만 값이 생긴다.
-- 🚨 **safe-area 유틸(`pt-safe`/`pb-safe`)과 `py-*` 를 같이 쓰지 않는다.** 같은 `padding-top`/`padding-bottom` 속성이라 뒤에 오는 쪽이 이겨서 **한쪽이 조용히 죽는다** — 실제로 화면 5개가 `<Screen className="py-8">` 을 넘겼는데 전부 무시돼 **상하 여백이 0** 이었다(하단 문구가 화면 맨 아래 모서리에 붙었다). 둘을 같이 주려면 `Screen` 처럼 `calc` 로 한 속성에 합친다.
+- 🚨 **safe-area 유틸은 여백을 함께 받는다 — `pt-safe-8` = safe area + 32px.** 예전에는 safe area 만 넣는 `pt-safe`/`pb-safe` 였는데, 같은 padding 속성이라 `py-8` 을 나란히 쓰면 **뒤에 오는 쪽이 이겨 한쪽이 조용히 죽었다.** 이 사고를 두 번 냈다 — 화면 5개의 상하 여백이 0 이었고(하단 문구가 모서리에 붙음), 바텀시트 닫기 버튼이 화면 맨 아래에 붙었다. 그래서 유틸이 `calc` 로 합쳐서 내보내고, **여백만 주는 `py-*` 를 그 위에 겹치지 않는다.**
 
 ### 여백 철학
 
@@ -305,7 +305,7 @@
 - 상단 radius-sheet · `surface` · `--shadow-sheet` · 뒤에 `--color-scrim`
 - 최대 높이 `88dvh`, 내용이 넘치면 시트 안에서만 스크롤
 - 드래그 핸들 36 × 4 · `line-strong` · full
-- 하단 버튼 영역은 `pb-safe` + 16 여백
+- 하단 버튼 영역은 **`pb-safe-4`** (safe area + 16). 🚨 `pb-safe` 와 `py-*` 를 나란히 쓰면 아래 패딩이 죽어 버튼이 화면 맨 아래에 붙는다 — 실제로 그렇게 났다
 - **승인 시트는 스크림 탭으로 닫히지 않는다.** 명시적으로 닫아야 한다 — 실수로 닫혀서 draft 가 만료되는 경로를 만들지 않는다 (승인 없는 draft 는 24시간 뒤 만료된다).
 - 구현은 [`components/ui/bottom-sheet.tsx`](../../apps/web/src/components/ui/bottom-sheet.tsx) 다. `dismissible: false` 가 위 규칙(스크림·ESC 로 안 닫힘)이고 **승인 시트 전용**이다 — 되돌릴 수 있는 것(약관 상세 등)에는 쓰지 않는다.
 - `showModal()` 이 바깥 조작은 막아 주지만 **배경 스크롤까지 막지는 않는다.** 컴포넌트가 `body` 를 `overflow: hidden` 으로 잠근다.

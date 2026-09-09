@@ -135,7 +135,7 @@ export default function AuthConsentPage() {
           확인해 주세요
         </PageTitle>
         <p className="text-body text-ink-muted mt-3">
-          네 가지 모두 동의해야 아이 기억을 만들 수 있어요. 나중에 설정에서 언제든 철회할 수 있어요.
+          네 가지 모두 동의해야 아이 기억을 만들 수 있어요.
         </p>
       </div>
 

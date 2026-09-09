@@ -120,9 +120,10 @@ src/
 - 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
   `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet`.
   배너 · 제안 카드 · 탭은 그 화면 이슈에서 만든다
-- 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** safe-area 와 같은 `padding-top`/`bottom` 속성이라
-  뒤에 오는 쪽이 이겨서 한쪽이 **조용히 죽는다** — 화면 5개가 `py-8` 을 넘겼는데 전부 무시돼
-  상하 여백이 0 이었다(하단 문구가 화면 맨 아래 모서리에 붙었다). 상하 여백은 `Screen` 이 소유한다
+- 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** 상하 여백은 `Screen` 이 소유한다.
+  safe-area 유틸은 **여백을 함께 받는다** (`pt-safe-8` = safe area + 32px) — 예전처럼 safe area 만 넣는
+  유틸에 `py-8` 을 겹치면 같은 padding 속성이라 **한쪽이 조용히 죽는다.** 이 사고를 두 번 냈다:
+  화면 5개의 상하 여백이 0 이었고, 바텀시트 닫기 버튼이 화면 맨 아래에 붙었다
 - 🚨 **화면 제목은 `PageTitle` 로 쓴다.** §9 가 좁은 폰(< 380px)에서 `display` → `title` 로 낮추라고
   정했는데, 화면마다 손으로 쓰면 어긋난다
 - ⚠️ `cn()` 은 **tailwind-merge 가 아니다.** 뒤에 온 클래스가 앞을 덮어주지 않으니, primitive 밖에서
