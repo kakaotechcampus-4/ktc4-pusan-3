@@ -6,6 +6,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",
+    "openai>=3.9.0",
 ]
 
 [dependency-groups]
