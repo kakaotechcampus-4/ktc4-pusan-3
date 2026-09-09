@@ -66,7 +66,6 @@ function ChildOnboardingScreen() {
   const [interests, setInterests] = useState<string[]>([]);
   const [safetyStatus, setSafetyStatus] = useState<SafetyStatus | null>(null);
   const [safetyText, setSafetyText] = useState("");
-  const [oneLine, setOneLine] = useState("");
   const [devAnswers, setDevAnswers] = useState<Record<string, number>>({});
   const [emptyNotice, setEmptyNotice] = useState(false);
 
@@ -117,7 +116,6 @@ function ChildOnboardingScreen() {
             })),
           }
         : {}),
-      ...(oneLine.trim() ? { one_line: oneLine.trim() } : {}),
       ...(Object.keys(devAnswers).length > 0
         ? {
             dev_answers: Object.entries(devAnswers).map(([item_id, level]) => ({ item_id, level })),
@@ -209,16 +207,6 @@ function ChildOnboardingScreen() {
         <p className="text-caption text-ink-subtle mt-2">
           보호자가 입력한 값만 저장돼요. AI 가 추측한 알레르기 정보는 저장하지 않아요.
         </p>
-      </Section>
-
-      <Section title="오늘 있었던 일 한 줄">
-        <TextInput
-          label="말하듯 적어주세요"
-          placeholder="예: 오늘은 블록을 오래 쌓았어요"
-          value={oneLine}
-          onChange={(e) => setOneLine(e.target.value)}
-          maxLength={200}
-        />
       </Section>
 
       {screening.data && screening.data.items.length > 0 ? (

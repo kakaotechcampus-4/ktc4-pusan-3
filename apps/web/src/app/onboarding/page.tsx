@@ -35,6 +35,7 @@ const RELATIONS: Array<{ value: Relation; label: string }> = [
   { value: "mother", label: "엄마" },
   { value: "father", label: "아빠" },
   { value: "grandparent", label: "조부모" },
+  { value: "sitter", label: "시터" },
   { value: "other", label: "그 밖에" },
 ];
 

@@ -314,7 +314,7 @@ export interface AuthSignupRequest {
 /* ── 01 첫 진입 ──────────────────────────────────────────────────────── */
 
 /** 수집은 별명 · 생일 · 관계까지 (F-13). 프로필 질문을 늘리지 않는다 (CLAUDE.md §2). */
-export type Relation = "mother" | "father" | "grandparent" | "other";
+export type Relation = "mother" | "father" | "grandparent" | "sitter" | "other";
 
 export interface CreateChildRequest {
   nickname: string;
@@ -367,6 +367,10 @@ export interface OnboardingRequest {
   interests?: string[];
   safety_status?: SafetyStatus;
   safety?: OnboardingSafetyInput[];
+  /**
+   * ⚠️ 화면에서 보내지 않는다. 온보딩에서 한 줄을 또 받으면 03 홈의 입력과 같은 것을
+   * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
+   */
   one_line?: string;
   dev_answers?: Array<{ item_id: string; level: number }>;
 }
