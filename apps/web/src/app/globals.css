@@ -17,9 +17,14 @@
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
     "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 
-  /* 뉴트럴 — 화면의 90%. 순백·순검정을 쓰지 않는다 (문서 §1) */
+  /* 뉴트럴 — 화면의 90%.
+   * 🚨 **바탕과 본문에 순백·순검정을 쓰지 않는다** (문서 §2-1).
+   *    surface 도 여기 포함된다 — 카드가 읽는 면적의 대부분이라, 야간 글레어는
+   *    페이지 바탕보다 카드에서 더 문제가 된다. 예전 값 #FFFFFF 는 색조가 아예 없어
+   *    웜 캔버스 위에서 혼자 차가웠다. 리프트는 1.052 → 1.043 으로 사실상 그대로다
+   *    (어차피 카드 경계는 그림자가 아니라 line 1px 이 만든다 · 문서 §6). */
   --color-canvas: #fbf9f5; /* 페이지 바탕 (웜 오프화이트) */
-  --color-surface: #ffffff; /* 카드·시트 */
+  --color-surface: #fffefb; /* 카드·시트. canvas 와 같은 색조(OKLCh H 85)로 더 밝게 */
   --color-surface-muted: #f3f1ec; /* 비활성 · 접힌 영역 · 실패 카드 */
   --color-ink: #221f1b; /* 본문 15.6:1 */
   --color-ink-muted: #605a52; /* 보조 6.5:1 */
@@ -51,10 +56,14 @@
   --color-caution: #97620e; /* 🚨 승인 게이트 2곳 전용 */
   --color-caution-soft: #faefdb;
   --color-caution-ink: #7a4f09;
-  --color-danger: #b3261e; /* 🚨 알레르기 경고 · 건강 추천 중단 전용 */
-  --color-danger-hover: #951f19; /* press/hover (흰 글자 8.4:1) */
-  --color-danger-soft: #fae8e5;
-  --color-danger-ink: #8f1d17;
+  /* 🚨 알레르기 경고 · 건강 추천 중단 · 파괴적 확정 전용.
+   * chroma 를 팔레트 안으로 낮췄다 — 예전 값은 Material 기본 빨강(#B3261E)이라
+   * 이 팔레트 소속이 아니었다 (chroma 0.178 = 도메인 최고치의 1.55배).
+   * 지금은 1.22배 — "가장 급한 색" 은 유지하되 §1 "강조는 채도가 아니라 명도" 를 지킨다. */
+  --color-danger: #a03641;
+  --color-danger-hover: #8a2632; /* press/hover (흰 글자 8.7:1) */
+  --color-danger-soft: #f7e7e7;
+  --color-danger-ink: #862431;
 
   /* 외부 브랜드 — 카카오 로그인 버튼 전용 (문서 §2-6).
    * 우리 팔레트가 아니다. 카카오 로그인 버튼은 카카오가 정한 색·모양을 써야 해서

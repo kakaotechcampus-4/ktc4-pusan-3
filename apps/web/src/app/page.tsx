@@ -38,7 +38,7 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
 const NOT_DOING = [
   "진단하거나 약을 권하지 않아요. 반복되는 증상은 병원에 가시라고 말해요.",
   "상품을 추천하거나 광고를 넣지 않아요.",
-  "이름(별명) · 나이 · 알레르기 여부까지만 물어봐요.",
+  "이름(별명), 나이, 알레르기 여부까지만 물어봐요.",
 ];
 
 export default function LoginPage() {

@@ -15,7 +15,7 @@ export default async function HomePage({ params }: PageProps<"/child/[childId]/h
         <p className="text-body-sm text-ink-muted">
           온보딩은 여기까지 왔어요. 03 홈은 아직 비어 있습니다.
         </p>
-        <p className="text-caption text-ink-subtle mt-2">child_id — {childId}</p>
+        <p className="text-caption text-ink-subtle mt-2">child_id: {childId}</p>
       </Card>
     </Screen>
   );

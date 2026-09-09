@@ -88,7 +88,7 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
   {
     scope: "privacy_account",
     target: "account",
-    label: "개인정보 수집·이용 — 보호자 본인",
+    label: "개인정보 수집·이용 (보호자 본인)",
     description:
       "로그인에 쓰는 계정 식별값만 저장해요. 이메일·프로필 사진은 받아도 저장하지 않아요.",
     details: [
@@ -104,8 +104,8 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
   {
     scope: "child_basic",
     target: "child",
-    label: "개인정보 수집·이용 — 아이 기본정보",
-    description: "별명 · 생일 · 관계까지만 받아요. 이 동의가 없으면 아이를 등록할 수 없어요.",
+    label: "개인정보 수집·이용 (아이 기본정보)",
+    description: "별명, 생일, 관계까지만 받아요. 이 동의가 없으면 아이를 등록할 수 없어요.",
     legalBasis: "개인정보보호법 제22조의2 (만 14세 미만 아동의 법정대리인 동의)",
     details: [
       { heading: "받는 것", lines: ["별명 (실명이 아니어도 됩니다)", "생일", "아이와의 관계"] },
@@ -116,7 +116,7 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
           "나이는 저장하지 않고 생일로 그때그때 계산합니다.",
         ],
       },
-      { heading: "받지 않는 것", lines: ["실명 · 주민등록번호 · 주소 · 연락처"] },
+      { heading: "받지 않는 것", lines: ["실명", "주민등록번호", "주소", "연락처"] },
       {
         heading: "이 동의가 없으면",
         lines: ["아이를 등록할 수 없습니다. 서비스의 모든 기능이 아이 등록 위에 있습니다."],
@@ -126,10 +126,10 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
   {
     scope: "child_health",
     target: "child",
-    label: "민감정보 처리 — 아이 건강·알레르기",
+    label: "민감정보 처리 (아이 건강·알레르기)",
     description:
       "알레르기와 건강 기록은 식사 제안을 걸러내고 증상을 정리하는 데만 써요. 이 동의가 없으면 식사·건강 기능이 동작하지 않아요.",
-    legalBasis: "개인정보보호법 제23조 (민감정보의 처리 — 별도 동의)",
+    legalBasis: "개인정보보호법 제23조 (민감정보의 처리, 별도 동의)",
     sensitive: true,
     details: [
       {

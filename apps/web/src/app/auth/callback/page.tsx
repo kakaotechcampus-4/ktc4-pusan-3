@@ -178,9 +178,8 @@ export default function AuthCallbackPage() {
       {outcome.kind === "consent_blocked" ? (
         <Card>
           <p className="text-body text-ink">먼저 동의가 필요해요</p>
-          <p className="text-body-sm text-ink-muted mt-2">
-            남은 동의 {outcome.scopes.length}건 — {outcome.scopes.join(" · ")}
-          </p>
+          <p className="text-body-sm text-ink-muted mt-2">남은 동의 {outcome.scopes.length}건</p>
+          <p className="text-caption text-ink-subtle mt-1">{outcome.scopes.join(", ")}</p>
           <p className="text-caption text-ink-subtle mt-2">
             동의 화면은 아직 없어요 (10 설정). 그때까지 여기서 멈춥니다.
           </p>

@@ -263,7 +263,7 @@ function ChildOnboardingScreen() {
               저장은 아직 하나도 되지 않았어요. 동의를 마치면 그대로 다시 보낼 수 있어요.
             </p>
             <p className="text-caption text-ink-subtle mt-2">
-              동의 화면은 아직 없어요 — /child/{childId}/{consentBlocked.consentDeeplink}
+              동의 화면은 아직 없어요 (/child/{childId}/{consentBlocked.consentDeeplink})
             </p>
           </Card>
         ) : save.isError ? (
