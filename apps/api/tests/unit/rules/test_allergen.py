@@ -3,9 +3,14 @@
 순수 함수만 검증한다. LLM·DB 없음.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.rules.allergen import ALLERGEN_NAMES, parse_allergens
+
+FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "meal_plan_2025_01.json"
 
 
 def test_parses_parenthesized_comma_list():
@@ -105,3 +110,66 @@ def test_same_input_gives_same_result():
     raw = "돈까스 (1,2,5,6,10,15)"
 
     assert parse_allergens(raw) == parse_allergens(raw)
+
+
+# ── 실제 급식표(성남시 센터 2025-01)에서 확인된 표기 ─────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("raw", "codes"),
+    [
+        ("모듬버섯된장국5,6", (5, 6)),
+        ("닭곰탕15", (15,)),
+        ("돼지고기하이라이스2,5,6,10,12,15,16,18", (2, 5, 6, 10, 12, 15, 16, 18)),
+        ("경기도과일 또는 고구마우유죽2", (2,)),
+        ("모듬버섯된장국 5,6", (5, 6)),
+    ],
+)
+def test_parses_numbers_appended_to_menu_name(raw, codes):
+    assert parse_allergens(raw).codes == codes
+
+
+@pytest.mark.parametrize(
+    ("raw", "codes"),
+    [
+        ("연근조림★5,6", (5, 6)),
+        ("쇠고기무밥&양념장5,6,16", (5, 6, 16)),
+        ("빵(식빵2,5,6&잼)", (2, 5, 6)),
+        ("빵(통밀빵1,2,5,6&잼)", (1, 2, 5, 6)),
+        ("케이크1,2,5,6(떡)", (1, 2, 5, 6)),
+    ],
+)
+def test_parses_numbers_next_to_symbols(raw, codes):
+    assert parse_allergens(raw).codes == codes
+
+
+@pytest.mark.parametrize("raw", ["백미밥1/2", "472/20", "1.5배", "5곡밥", "만 1~2세(13~35개월)"])
+def test_fractions_and_counts_are_not_allergens(raw):
+    result = parse_allergens(raw)
+
+    assert result.codes == ()
+    assert result.unknown == ()
+
+
+def _fixture_raws() -> list[str]:
+    plan = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    return [it["raw"] for d in plan["days"] for m in d["meals"] for it in m["items"]]
+
+
+def test_real_meal_plan_yields_no_out_of_range_numbers():
+    bad = {raw: r.unknown for raw in _fixture_raws() if (r := parse_allergens(raw)).unknown}
+
+    assert bad == {}
+
+
+def test_real_meal_plan_numbers_are_all_parsed():
+    not_allergen = {"백미밥1/2"}
+    missed = [
+        raw
+        for raw in _fixture_raws()
+        if any(ch.isdigit() for ch in raw)
+        and raw not in not_allergen
+        and not parse_allergens(raw).codes
+    ]
+
+    assert missed == []
