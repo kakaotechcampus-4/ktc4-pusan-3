@@ -1,50 +1,49 @@
 # 카카오 OAuth 로그인 v1
 
-문서 목적: 카카오 소셜 로그인의 요청·응답 계약, 세션 규칙, 웹·앱의 진입 방식, 동의 게이트와의 순서를 고정한다.
+문서 목적: 카카오 소셜 로그인의 요청·응답 계약, 세션 규칙, 웹·앱의 진입과 복귀, 동의 게이트와의 순서를 고정한다.
 
 기준 브랜치: `docs/be-18-auth-kakao`
 작성일: 2026-09-09
 담당: 이도헌
-선행 문서: [`docs/api/api-interface-v1.html`](./api-interface-v1.html) §01 공통 규약 · §04 인증·동의 — 그 문서의 `POST /auth/{provider}` 를 카카오 기준으로 구체화한다
+선행 문서: [`docs/api/api-interface-v1.html`](./api-interface-v1.html) §01 공통 규약 · §04 인증·동의 — 그 문서의 인증 절을 대체한다
+
+> 이 문서는 [#19](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/19) 리뷰에서 고태영님 제안을 반영해 **서버 주도 흐름**으로 다시 쓴 것이다. 이전 안(클라이언트가 카카오 인가 코드를 직접 받는 방식)이 왜 안 되는지는 §2-1 에 남겼다.
 
 ---
 
 ## 0. 30초 요약
 
-**계약서 §01 과 엔드포인트 모양을 유지한다.** 요청 바디만 바뀐다.
-
 | 정한 것 | 값 |
 | --- | --- |
-| 카카오 인증 | **인가 코드.** 프론트가 `code` 를 받아 서버에 넘기고, 서버가 `client_secret` 으로 교환한다 |
-| 왜 SDK 토큰이 아닌가 | **카카오 JS SDK 에 클라이언트가 access_token 을 받는 메서드가 없다** (§2-1) |
-| 요청 바디 | `{code}` 또는 `{access_token}` — **둘 중 하나만.** 지금은 `code` 만 구현 (§2-1-1) |
-| 앱에서 여는 방법 | **미정.** [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 논의 중 (§4-5) |
-| 세션 토큰 | **불투명 난수** 256비트. DB 에는 SHA-256 해시만 저장 |
-| 전달 | `Authorization: Bearer` — **계약서 §01 그대로** |
-| 수명 | 12시간, refresh 토큰 없음 |
-| 클라이언트 저장 | `sessionStorage`. **`localStorage` 금지** (§4-4) |
-| 신규 테이블 | `session` 1개 (§5-3 협의 대상) |
+| 로그인 시작 | **서버가 연다.** 클라이언트는 `start_url` 로 이동만 한다 (§2-2) |
+| 카카오 콜백 | **서버가 받는다.** `redirect_uri` 는 **API 오리진 하나만** 콘솔에 등록 (§2-1) |
+| 클라이언트가 받는 것 | 우리 서버가 발급한 **1회용 코드**. 카카오 인가 코드가 아니다 |
+| 교환 | `POST /auth/{provider}` `{ code, bind }` → 세션 (§3-4) |
+| `bind` | 클라이언트가 만든 비밀. **1회용 코드가 오가는 홉을 지킨다** (§7-2) |
+| 신규 회원 | 세션 대신 `{ status: "consent_required", consent_code }`. **동의 전에는 `parent` 를 만들지 않는다** (§6-1) |
+| 세션 토큰 | **불투명 난수** 256비트, DB 에는 SHA-256 해시. 12시간, refresh 없음 |
+| 전달 | `Authorization: Bearer` — 계약서 §01 그대로 |
+| 신규 테이블 | `session` · `auth_handoff` 2개 (§5-3 · §5-4) |
+| 무인증 엔드포인트 | **5개.** §01 에 예외로 명시해야 한다 (§3) |
 
-**계약서 변경 4건** — 요청 바디를 두 입력으로 정의, `expires_in` 추가, `POST /auth/logout` 신설, 에러 2건. **§01 공통 규약은 손대지 않는다** (§12).
+**계약서 §04 는 사실상 재작성**이다 (§12).
 
-### 0-1. 결정 넷 — 성격이 다르다
+### 0-1. 무엇이 제약이고 무엇이 선택인가
 
-| # | 무엇 | 상태 | 근거 |
-| --- | --- | --- | --- |
-| 1 | 카카오 인증을 어떻게 받나 | **고정 — 인가 코드** | 선택이 아니라 제약. JS SDK 에 클라이언트가 토큰을 받는 메서드가 없다 (§2-1) |
-| 2 | 콜백을 어디서 받나 | **프론트** | 서버가 JSON 을 돌려줄 수 있어 계약서 모양이 유지된다 (§2-2) |
-| 3 | 세션 토큰 형식 | **사실상 결정 — 불투명 난수** | 로그아웃·탈퇴·아이 파기 3곳이 즉시 무효화를 요구해 JWT 가 탈락한다 (§4-2) |
-| 4 | 세션 전달 | **헤더 (Bearer)** | 계약서 §01 이고, `client.ts`·`sse.ts` 가 이미 Bearer 전제로 구현돼 있다 (§4-1) |
-
-> **앱이 로그인을 여는 방법은 이 넷에 없다** — [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 논의 중이다. 요청 바디가 두 입력을 받으므로(§2-1-1) **그 결정이 위 넷을 바꾸지 않는다.**
->
-> **2번을 백엔드로 두면 3·4번이 따라 바뀐다.** 콜백이 백엔드면 응답이 리다이렉트라 JSON 을 실을 수 없어 세션을 쿠키로 내려야 하고, CSRF 방어와 "웹·API 같은 사이트 배포" 제약이 함께 붙는다. 게다가 `sse.ts` 가 `EventSource` 를 쓰지 않고 fetch 스트리밍 + Authorization 헤더로 구현된 이유(`apps/web/CLAUDE.md` §3)와도 어긋난다. 지금 안은 그 전부를 피한다.
+| | 무엇 | 근거 |
+| --- | --- | --- |
+| **제약** | 인가 코드 방식 | 카카오 JS SDK 에 클라이언트가 토큰을 받는 메서드가 없다 (§2-1) |
+| **제약** | 서버가 콜백을 받는다 | **preview 배포는 도메인이 매번 달라** 클라이언트 콜백 URL 을 콘솔에 등록할 수 없다 (§2-1) |
+| **선택** | 세션을 Bearer 로 전달 | 계약서 §01 이고 `client.ts`·`sse.ts` 가 이미 그 전제 (§4-1) |
+| **선택** | 불투명 토큰 (JWT 아님) | 로그아웃·탈퇴·아이 파기 3곳이 즉시 무효화를 요구 (§4-2) |
+| **선택** | 동의 전 `parent` 미생성 | 계약서를 조이는 방향. 팀 결정 대상 (§6-1) |
+| **선택** | 수명 12시간 · `sessionStorage` | 측정한 값이 아니다. `M-02` 후 조정 (§4-3) |
 
 ---
 
 ## 1. 범위
 
-**다루는 것** — 로그인·로그아웃 계약, 웹·앱의 진입 방식, `auth_identity` 생성 규칙, 세션 토큰 형식과 수명, 계정 스코프 동의 게이트와의 순서.
+**다루는 것** — 로그인 시작·콜백·교환·가입·로그아웃, 웹과 앱의 복귀 경로, 세션 형식과 수명, 동의 게이트와의 순서.
 
 **다루지 않는 것**
 
@@ -53,9 +52,10 @@
 | 동의 문구·개인정보 처리방침·이용약관 | `safety/` — NF-04 확정이 선행 조건 |
 | 아이 스코프 권한 (`requireConnected` · `requireOwner` · `requireWriter`) | 노션 「테크스팩 보완 제안 — 보호자 권한과 동의」 §2-1 |
 | 보호자 초대·연결 | 같은 문서 §2-3 |
-| 계정 탈퇴·파기 배치 | 같은 문서 §2-5. 파기 시 카카오 연결 끊기만 §7-3 에 남긴다 |
+| 계정 탈퇴·파기 배치 | 같은 문서 §2-5. 파기 시 카카오 연결 끊기만 §7-4 에 남긴다 |
+| 앱 셸의 인앱 인증 세션 구현 | 프론트 이슈 ([#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 이관) |
 
-**1차 배포는 카카오만.** `auth_identity.provider` enum 4종은 유지하되 카카오 외에는 구현하지 않는다 (노션 논의 ⑬).
+**1차 배포는 카카오만.** `provider` enum 4종은 유지하되 카카오 외에는 구현하지 않는다 (노션 논의 ⑬). 이 흐름은 provider 별로 모양이 같아서 apple·google·naver 를 한 틀로 묶을 수 있다.
 
 ### 1-1. 🔶 이번 검토에서 새로 발견된 것 — 별도 이슈가 필요하다
 
@@ -70,125 +70,226 @@
 
 ---
 
-## 2. 카카오 인증
+## 2. 흐름
 
-### 2-1. SDK 토큰 전달은 웹에서 구현되지 않는다
+### 2-1. 왜 서버가 시작하고 서버가 받는가
 
-계약서 §04 는 `POST /auth/{provider}` 요청을 `{"access_token": "..."}` 로 정의한다. **웹 클라이언트가 그 값을 가질 방법이 없다.**
+**① 클라이언트는 카카오 토큰을 받을 수 없다.** 카카오 JavaScript SDK 의 `Kakao.Auth` 가 제공하는 메서드는 `authorize()` · `setAccessToken()` · `getAccessToken()` · `getStatusInfo()` · `logout()` · `cleanup()` · `getAppKey()` · `selectShippingAddress()` 가 전부다 ([레퍼런스](https://developers.kakao.com/sdk/reference/js/release/Kakao.Auth.html)). **토큰을 발급받는 메서드가 없다.** `authorize()` 는 인가 코드를 등록된 redirect URI 로 보내고, 토큰 교환은 서버 몫이다. 이미 발급된 토큰을 넣는 `setAccessToken()` 이 따로 있다는 것도 토큰이 서버에서 내려온다는 뜻이다.
 
-카카오 JavaScript SDK 의 `Kakao.Auth` 가 제공하는 메서드는 다음이 전부다.
+**② 클라이언트가 인가 코드를 받는 방식도 배포에서 막힌다.** 그러려면 **클라이언트 콜백 URL 을 카카오 콘솔에 등록**해야 하는데, 카카오는 `redirect_uri` 완전 일치를 요구하고 **preview 배포는 도메인이 매번 다르다.** 등록할 방법이 없다.
 
-| 메서드 | 하는 일 |
-| --- | --- |
-| `authorize(settings)` | **인가 코드를 등록된 redirect URI 로 보낸다.** 토큰을 주지 않는다 |
-| `setAccessToken(token)` | 이미 발급된 토큰을 SDK 에 넣는다 |
-| `getAccessToken()` | 저장된 토큰을 읽는다 |
-| `getStatusInfo()` · `logout()` · `cleanup()` · `getAppKey()` · `selectShippingAddress()` | — |
+→ **`redirect_uri` 를 API 오리진 하나로 고정한다.** 서버가 시작하고 서버가 받는다.
 
-**클라이언트가 토큰을 발급받는 메서드가 존재하지 않는다.** SDK v1 의 `Kakao.Auth.login()` 은 현재 레퍼런스에 없다. `setAccessToken()` 이 따로 있다는 것 자체가 토큰이 서버에서 내려온다는 뜻이다.
+**부수 효과 — `app_id` 대조가 필요 없다.** 서버가 자기 `client_id`·`client_secret` 으로 직접 교환하므로 **다른 앱이 발급받은 토큰이 들어올 통로 자체가 없다.**
 
-> **단, 네이티브 SDK 는 다르다** — `loginWithKakaoTalk()` 이 토큰을 직접 준다. 그래서 **웹은 `{code}`, 앱은 방식에 따라 `{code}` 또는 `{access_token}`** 이 된다 (§2-1-1).
-
-### 2-1-1. 요청 바디를 두 입력으로 정의하는 이유
-
-앱 로그인 방식이 [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 아직 논의 중이다. 네이티브 SDK 로 가면 `{access_token}`, 시스템 인증 세션으로 가면 `{code}` 다.
-
-**서버가 두 입력을 정의해두면 그 결정을 기다리지 않아도 된다.** 백엔드는 `{code}` 부터 구현하고, 앱 방식이 정해지면 필요한 쪽을 열면 된다. 계약서를 두 번 고치지 않는다.
-
-### 2-2. 콜백은 프론트가 받는다
-
-`redirect_uri` 를 **프론트 경로**로 등록한다. 카카오가 프론트로 `?code=...` 를 붙여 보내면, 프론트가 그 code 를 서버에 POST 한다.
+### 2-2. 전체 흐름
 
 ```
-① FE   authUrl 생성 (client_id · redirect_uri · response_type=code · state)
+① FE  → GET /auth/kakao/status                     ← 00 화면 진입 시 prefetch
+        ← { ready: true, start_url: "https://<API>/api/v1/auth/kakao" }
         ↓
-②      웹  → 브라우저가 그대로 이동
-        앱  → 셸이 로그인을 연다. 방식은 #26 에서 논의 중 (§4-5)
+② FE    bind 비밀 생성(256비트) → sessionStorage 보관
+        location = start_url + "?client=web&bind=<비밀>"
         ↓
-③ 사용자  카카오 로그인 (세션이 살아 있으면 화면 없이 통과)
+③ 서버  bind 형식 검증 · state 난수 생성
+        Set-Cookie: oauth_state   (state · client · bind 해시, 10분)
+        302 → kauth.kakao.com/oauth/authorize?...&state=<state>
         ↓
-④      프론트 콜백 ?code=...&state=...
+④ 사용자 카카오 로그인
         ↓
-⑤ FE   state 를 자기가 만든 값과 대조 (§7-1). 불일치면 중단
+⑤ 카카오 → GET /auth/kakao/callback?code=...&state=...
         ↓
-⑥ FE → POST /api/v1/auth/kakao  { "code": "..." }
+⑥ 서버  state 대조 (timing-safe) → 불일치면 인가 코드 교환 전에 중단
+        POST kauth/oauth/token 으로 교환 → GET access_token_info 로 회원번호
+        카카오 토큰 폐기 (§7-4)
+        auth_identity 조회 → auth_handoff 행 생성 (1회용 코드 · bind 해시 · TTL 2분)
+        oauth_state 쿠키 만료
+        302 → 복귀 URL + "?code=<1회용 코드>"        복귀 URL 은 §2-3
         ↓
-⑦ 서버 → POST https://kauth.kakao.com/oauth/token
-          grant_type=authorization_code&client_id=...&client_secret=...
-          &redirect_uri=...&code=...
-        ← { access_token, ... }
+⑦ FE    복귀 경로에서 code 수신
+        POST /auth/kakao { code, bind }
         ↓
-⑧ 서버 → GET https://kapi.kakao.com/v1/user/access_token_info
-        ← { id, expires_in, app_id }          회원번호만 쓴다
+⑧ 서버  auth_handoff 를 DELETE … RETURNING 으로 소비 · bind 해시 대조 · 만료 확인
+        기존 회원 → 200 { token, expires_in, is_new: false, parent, consent_required }
+        신규      → 200 { status: "consent_required", consent_code }
         ↓
-⑨ 서버   auth_identity 에서 (kakao, id) 조회 → 없으면 parent + auth_identity 생성
-        ↓
-⑩ 서버   카카오 토큰 폐기 (§7-3) · session 행 생성
-        ↓
-⑪ FE ←  200 { token, expires_in, is_new, parent, consent_required }
+⑨ 신규만 POST /auth/kakao/signup { consent_code, bind, consents: [...] }
+        → parent · auth_identity · consent 를 한 트랜잭션에 생성 → 세션
 ```
 
-**②를 빼면 웹과 앱이 완전히 같다.** 화면 코드는 한 벌이고 분기는 "지금 웹뷰 안인가" 한 곳뿐이다.
+**⑦ 의 `code` 는 카카오 인가 코드가 아니다.** 우리 서버가 발급한 1회용 코드다. 카카오 인가 코드는 ⑥ 에서 서버가 이미 소비했다.
 
-**콜백을 백엔드로 두지 않은 이유** — 백엔드가 받으면 응답이 브라우저 리다이렉트가 되어 JSON 을 실을 수 없다. 세션을 쿠키로 내려야 하고, 그러면 CSRF 이중 제출과 "웹·API 같은 사이트 배포" 제약이 붙는다. 프론트가 받으면 **계약서의 `POST /auth/{provider}` 모양과 Bearer 규약이 그대로 유지된다.**
+**⑧ 을 `access_token_info` 로 하는 이유** — 회원번호 하나만 필요하다. `/v2/user/me` 는 `kakao_account`(이메일·프로필)까지 실어 오는데 NF-04 는 최소 수집을 요구한다. 받아놓고 안 쓰는 것보다 **애초에 안 받는 것**이 낫다 — 받는 순간 `privacy_account` 동의 문구에 그 항목을 적어야 한다.
 
-**⑧ 을 `/v2/user/me` 가 아니라 `access_token_info` 로 하는 이유** — 회원번호 하나만 필요하다. `/v2/user/me` 는 `kakao_account`(이메일·프로필)까지 실어 오는데 NF-04 는 최소 수집을 요구한다. 받아놓고 안 쓰는 것보다 **애초에 안 받는 것**이 낫다 — 받는 순간 `privacy_account` 동의 문구에 그 항목을 적어야 한다.
+### 2-3. 🔶 앱 복귀 URL 형식
+
+**서버가 복귀 대상을 고른다. 클라이언트는 URL 을 지정하지 못한다.** 열거값 하나만 받는다.
+
+| 시작 파라미터 | 값 | 기본 |
+| --- | --- | --- |
+| `client` | `web` \| `app` | `web` |
+
+허용값 밖이면 **시작 시점에 `400`** 으로 끊는다. 카카오 동의 화면까지 걷게 한 뒤 실패시키지 않는다.
+
+복귀 URL 은 **서버 환경변수**에서 온다.
+
+```
+AUTH_RETURN_URL_WEB=https://<도메인>/auth/callback
+AUTH_RETURN_URL_APP=yukameo://auth
+```
+
+| | 성공 | 실패 |
+| --- | --- | --- |
+| `client=web` | `https://<도메인>/auth/callback?code=<1회용>` | `…/auth/callback?error=<코드>` |
+| `client=app` | `yukameo://auth?code=<1회용>` | `yukameo://auth?error=<코드>` |
+
+**쿼리 모양을 웹·앱 동일하게 둔다** — 프론트가 파싱 코드를 한 벌만 만들면 된다.
+
+**왜 `return_to` 가 아니라 `client` 인가** — 값이 URL 이 아니라 열거값이다. `return_to` 라는 이름은 URL 을 기대하게 만들고, 나중에 누군가 `return_to=https://…` 를 넣으려 한다. 그 순간 **오픈 리다이렉트**가 된다. 이름으로 막는다.
+
+**커스텀 스킴은 카카오 콘솔에 등록하지 않는다.** `yukameo://auth` 는 **우리 서버가 302 하는 대상**이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다. 앱 스킴은 `app.json` 의 `scheme: "yukameo"` 로 이미 잡혀 있다.
+
+`client` 값은 `state` 와 함께 `oauth_state` 쿠키에 담아 콜백까지 들고 간다 (§5-5).
+
+> **로그인 후 원래 보던 화면으로 돌아가는 것**은 서버가 관여하지 않는다. 프론트가 시작 전에 `sessionStorage` 에 두었다가 복원한다. 서버가 경로를 받으면 그것도 오픈 리다이렉트 표면이 된다.
 
 ---
 
 ## 3. 엔드포인트
 
-경로·헤더·시간 표기는 [계약서 §01](./api-interface-v1.html)을 따른다. `POST /auth/{provider}` 는 인증 헤더 규칙의 **유일한 예외**다 — 로그인 전에는 세션이 없다.
+경로·시간 표기는 [계약서 §01](./api-interface-v1.html)을 따른다.
 
-### 3-1. `POST /auth/{provider}` — 계약서에 있음, 바디와 응답만 보강
+🚨 **무인증 엔드포인트가 5개 생긴다.** 계약서 §01 의 "인증 `Bearer` — 예외 없음" 에 **예외 목록을 명시**해야 한다.
 
-`provider` ∈ `kakao` · `apple` · `google` · `naver`. **구현은 `kakao` 만.** 그 외는 `422 validation_failed`.
+| 엔드포인트 | 인증 | 응답 형식 |
+| --- | --- | --- |
+| `GET /auth/{provider}/status` | 없음 | JSON |
+| `GET /auth/{provider}` | 없음 | **302** |
+| `GET /auth/{provider}/callback` | 없음 | **302** |
+| `POST /auth/{provider}` | 없음 | JSON |
+| `POST /auth/{provider}/signup` | 없음 | JSON |
+| `POST /auth/logout` | **Bearer** | 204 |
 
-**요청** — 아래 둘 중 **정확히 하나만**. 둘 다 오거나 둘 다 없으면 `400 validation_failed`.
+🚨 **302 로 답하는 둘은 공통 에러 봉투를 쓸 수 없다.** 실패도 리다이렉트로 나간다 (§8-2). 이것도 §01 예외로 적는다.
+
+### 3-1. `GET /auth/{provider}/status`
 
 ```json
-{ "code": "V1a2bC3d..." }          // 웹 · 인가 코드. 서버가 client_secret 으로 교환
-{ "access_token": "carLxSDf..." }  // 네이티브 SDK 경로. app_id 대조 필수 (§7-2)
-```
-
-**지금은 `code` 만 구현한다.** `access_token` 은 앱이 네이티브 SDK 로 가기로 하면 여는 경로다 (§2-1-1 · [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26)).
-
-**응답 200**
-
-```json
-{
-  "token": "Ky8vN2pRt7...",
-  "expires_in": 43200,
-  "is_new": true,
-  "parent": {
-    "id": "p1",
-    "nickname": null
-  },
-  "consent_required": ["service_terms", "privacy_account"]
-}
+{ "ready": true, "start_url": "https://<API 오리진>/api/v1/auth/kakao" }
 ```
 
 | 필드 | 뜻 |
 | --- | --- |
-| `token` | 세션 토큰. **불투명 난수** (§4-2). 이후 `Authorization: Bearer` 로 보낸다 |
+| `ready` | **이 provider 로 로그인을 시작할 수 있는 서버 설정이 갖춰졌는가.** `client_id`·`client_secret`·콜백 URL 이 모두 있으면 `true` |
+| `start_url` | 시작 엔드포인트의 **절대 URL**. `KAKAO_CALLBACK_URL` 의 오리진에서 파생한다 |
+
+**`ready` 가 필요한 이유 — 죽은 버튼을 만들지 않는다.** 설정이 안 잡힌 환경에서 "카카오로 시작하기"를 누르면 카카오 동의 화면까지 걸어간 뒤 실패하거나, 더 나쁘면 카카오 에러 페이지에 사용자가 버려진다. `ready: false` 면 프론트가 버튼을 비활성화하고 "아직 연결 전"이라고 말한다.
+
+**`start_url` 을 서버가 내려주는 이유** — 프론트가 `NEXT_PUBLIC_API_BASE_URL` 로 조립할 수도 있지만, **그 값과 `KAKAO_CALLBACK_URL` 의 오리진이 어긋난 배포에서 `state` 쿠키가 조용히 깨진다.** 시작과 콜백이 다른 오리진이면 쿠키가 콜백에 실리지 않는다. 서버가 등록된 콜백 URL 에서 파생해 내려주면 두 값이 어긋날 수 없다.
+
+🚨 **`missing_keys` 같은 진단 필드는 개발 환경에서만 채운다.** 프로덕션에서 무인증 엔드포인트가 "어떤 설정이 비었는지"를 알려주면 정찰에 쓰인다. 프로덕션은 `ready: false` 만 내린다.
+
+프론트는 **00 화면 진입 시 prefetch** 한다. 버튼을 누른 뒤 조회하면 이동 전에 왕복이 한 번 낀다.
+
+### 3-2. `GET /auth/{provider}` — 로그인 시작
+
+| 쿼리 | 값 | 필수 |
+| --- | --- | --- |
+| `client` | `web` \| `app` (§2-3) | 아니오 (기본 `web`) |
+| `bind` | base64url 43자 (256비트) | **예** |
+
+서버가 하는 일 — `bind` **형식 검증** → `state` 난수 생성 → `oauth_state` 쿠키 발급 → 카카오로 302.
+
+🚨 **`bind` 는 길이·문자셋을 검증한다.** "보냈다"만 확인하면 `bind=1` 로도 통과해서 §7-2 가 무의미해진다. 형식이 안 맞으면 **카카오 동의까지 걷게 하지 말고 여기서 거절한다.**
+
+**응답 302** → `https://kauth.kakao.com/oauth/authorize?client_id=…&redirect_uri=…&response_type=code&state=<state>`
+
+```
+Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=600
+```
+
+### 3-3. `GET /auth/{provider}/callback` — 카카오가 부른다
+
+`?code=…&state=…`, 실패 시 `?error=…&error_description=…`.
+
+서버가 하는 일:
+
+1. `oauth_state` 쿠키와 쿼리 `state` 를 **timing-safe 비교**. 불일치·부재면 **인가 코드 교환 전에 중단**
+2. `POST kauth/oauth/token` 으로 교환 → `GET access_token_info` 로 회원번호
+3. 카카오 토큰 폐기 (§7-4)
+4. `auth_identity` 조회 → `auth_handoff` 행 생성 (§5-4)
+5. `oauth_state` 쿠키 만료
+6. 복귀 URL 로 302 (§2-3)
+
+```
+Cache-Control: no-store
+```
+
+### 3-4. `POST /auth/{provider}` — 교환
+
+**요청**
+
+```json
+{ "code": "<1회용 코드>", "bind": "<시작 때 만든 비밀>" }
+```
+
+계약서의 `{access_token}` 을 대체한다. **웹·앱이 같은 바디를 보낸다.**
+
+**응답 200 — 두 갈래다 (union)**
+
+```json
+// 기존 회원
+{
+  "token": "Ky8vN2pRt7...",
+  "expires_in": 43200,
+  "is_new": false,
+  "parent": { "id": "p1", "nickname": "지은" },
+  "consent_required": []
+}
+```
+
+```json
+// 신규 — 아직 parent 가 없다 (§6-1)
+{ "status": "consent_required", "consent_code": "<가입 대기표>" }
+```
+
+프론트는 **`status` 필드 유무로 분기**한다.
+
+| 필드 | 뜻 |
+| --- | --- |
+| `token` | 세션 토큰. **불투명 난수** (§4-2) |
 | `expires_in` | 초. **계약서에 없어서 추가한다** — 없으면 FE 가 만료를 미리 알 수 없어 매번 401 을 맞고 나서야 재로그인한다 |
-| `is_new` | 이번 호출에서 `parent` 가 생성됐는가. FE 는 이 값으로 온보딩 분기를 태운다 |
-| `parent.nickname` | **신규는 항상 `null`.** 카카오에서 가져오지 않는다 (§4-6) |
-| `consent_required` | 계정 스코프 중 아직 `granted` 가 아닌 것. **비어 있지 않으면 FE 는 동의 화면 외 어디로도 갈 수 없다** |
+| `parent.nickname` | `null` 일 수 있다 (§5-2) |
+| `consent_code` | 가입 대기표. §3-5 에서 쓴다. TTL 10분 |
 
-`Idempotency-Key` 는 **받지 않는다.** 인가 코드는 1회용이라 재사용하면 카카오가 거절하고, 같은 회원번호로 두 번 불려도 `UNIQUE (provider, provider_user_id)` 가 두 번째 생성을 막는다.
+`Cache-Control: no-store`.
 
-세션이 만료됐을 때 FE 가 다시 부르는 것도 이 엔드포인트다. **별도의 재발급 엔드포인트를 만들지 않는다** (§4-3).
+### 3-5. `POST /auth/{provider}/signup` — 🔶 신설
 
-**응답에 `Cache-Control: no-store` 를 붙인다.** 토큰이 바디에 있다.
+**요청**
 
-### 3-2. `POST /auth/logout` — 🔶 신설
+```json
+{
+  "consent_code": "<가입 대기표>",
+  "bind": "<같은 비밀>",
+  "consents": [
+    { "scope": "service_terms",   "policy_version": "2026-09-01" },
+    { "scope": "privacy_account", "policy_version": "2026-09-01" }
+  ]
+}
+```
 
-요청 바디 없음. `Authorization` 헤더로 세션을 식별한다. **응답 204.**
+**응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 
-`session` 행을 **삭제**한다. 그 순간부터 그 토큰으로는 아무것도 못 한다.
+`parent` · `auth_identity` · `consent` 를 **한 트랜잭션에서** 만든다. 필수 스코프가 빠지면 `403 consent_required`.
 
-**계약서 28개 목록에 이것이 없다.** 없으면 클라이언트가 토큰을 버리는 것으로 흉내낼 뿐이고, 서버에서는 그 토큰이 만료까지 계속 유효하다. 즉시 무효화(§4-2)를 쓰려면 반드시 있어야 한다.
+`bind` 를 여기서도 요구한다 — 클라이언트가 계속 들고 있으므로 비용이 없고, `consent_code` 만으로 계정이 만들어지는 것을 막는다.
+
+### 3-6. `POST /auth/logout`
+
+요청 바디 없음. `Authorization` 헤더로 세션을 식별한다. **응답 204** — `session` 행을 삭제한다.
+
+**계약서 28개 목록에 이것이 없다.** 없으면 클라이언트가 토큰을 버리는 것으로 흉내낼 뿐이고 서버에서는 만료까지 유효하다.
 
 카카오 쪽 로그아웃(`POST /v1/user/logout`)은 **부르지 않는다.** 우리 서비스에서 나가는 것과 카카오 계정에서 로그아웃하는 것은 다른 행위다.
 
@@ -198,86 +299,45 @@
 
 ### 4-1. 계약서 §01 과 기존 프론트 코드를 그대로 쓴다
 
-> 인증 `Authorization: Bearer <token>` — 예외 없음. 인증 없는 엔드포인트를 만들지 않는다 (NF-09)
+세션은 `Authorization: Bearer` 로 보낸다. 이 문서가 `token` 을 불투명 문자열로 정의하는 것으로 §01 이 그대로 성립한다.
 
-이 줄은 **커버리지 규칙**이다("모든 엔드포인트가 인증을 요구한다"). 이 문서가 `token` 을 불투명 문자열로 정의하는 것으로 그대로 성립한다. **§01 을 고치지 않는다.**
-
-그리고 프론트가 이미 이 전제로 구현돼 있다 — `apps/web/src/lib/api/client.ts` 가 Bearer 를 붙이고, `sse.ts` 는 **`EventSource` 를 쓰지 않고** fetch 스트리밍으로 돌린다. `apps/web/CLAUDE.md` §3 이 이유를 적어뒀다:
+프론트가 이미 이 전제로 구현돼 있다 — `client.ts` 가 Bearer 를 붙이고, `sse.ts` 는 **`EventSource` 를 쓰지 않고** fetch 스트리밍으로 돌린다. `apps/web/CLAUDE.md` §3 이 이유를 적어뒀다:
 
 > `EventSource` 를 쓰지 않는다. Authorization 헤더를 못 붙여서 NF-09 를 깬다.
 
-쿠키로 옮기면 `client.ts` 와 `sse.ts` 를 둘 다 고쳐야 한다. **헤더 유지가 기존 코드와 맞는다.**
+세션을 쿠키로 옮기면 `client.ts` 와 `sse.ts` 를 둘 다 고쳐야 한다.
+
+> **쿠키를 아예 안 쓰는 것은 아니다.** `oauth_state` 는 쿠키다(§5-5). 카카오 왕복 동안만 살고 콜백에서 소비된다. **세션 전달**에만 쓰지 않는다.
 
 ### 4-2. 왜 JWT 가 아닌가
 
-계약서는 `token` 이 JWT 인지 불투명 문자열인지 적지 않았다. **불투명으로 정한다.**
+이 서비스는 **즉시 무효화**를 세 곳에서 요구한다 — 로그아웃, 계정 탈퇴(`parent.deleted_at`), 아이 파기(`410 child_deleted`). stateless JWT 는 서명이 유효한 동안 서버가 거절할 방법이 없다. 아동 정보를 다루면서 그 창을 만들 이유가 없다.
 
-이 서비스는 **즉시 무효화**를 세 곳에서 요구한다 — 로그아웃, 계정 탈퇴(`parent.deleted_at`), 아이 파기(`410 child_deleted`). stateless JWT 는 서명이 유효한 동안 서버가 거절할 방법이 없어서, "탈퇴했는데 만료까지는 여전히 접근된다" 같은 창이 생긴다. 아동 정보를 다루면서 그 창을 만들 이유가 없다.
+DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 읽기라 실질 비용이 거의 없다. JWT 의 다른 이점(서비스 간 stateless 전달)도 해당되지 않는다 — CLAUDE.md §6 이 백엔드와 AI 를 **한 서비스로 묶기로** 정했고 Agent 는 같은 프로세스의 폴더다. **토큰을 건네줄 상대가 없다.**
 
-DB 조회 1회를 아끼는 것이 JWT 의 이점이지만, 세션 조회는 PK 인덱스 단건 읽기라 실질 비용이 거의 없다. **무효화를 포기할 만한 대가가 아니다.**
-
-JWT 의 다른 대표 이점(서비스 간 stateless 전달)도 이 프로젝트에는 해당되지 않는다 — CLAUDE.md §6 이 백엔드와 AI 를 **한 서비스로 묶기로** 정했고, Agent 는 같은 프로세스의 `app/agents/` 폴더다. **토큰을 건네줄 상대가 없다.**
-
-부수 효과로 관리할 것이 줄어든다: 서명 키가 없고, 디코딩 가능한 payload 가 없어 클레임에 무엇을 넣을지 고민할 일도 없다.
+부수 효과로 서명 키가 없고, 디코딩 가능한 payload 가 없어 클레임 관리도 필요 없다.
 
 ### 4-3. 토큰과 수명
 
 | | 값 |
 | --- | --- |
 | 생성 | CSPRNG 256비트 → base64url (43자) |
-| DB 저장 | **SHA-256 해시.** 원문은 저장하지 않는다 (§7-3) |
-| 수명 | **12시간** (`expires_in: 43200`) |
+| DB 저장 | **SHA-256 해시.** 원문은 저장하지 않는다 |
+| 수명 | **12시간** |
 | 만료 시 | `401 unauthenticated` → FE 가 §2-2 를 다시 탄다 |
+| 클라이언트 저장 | **`sessionStorage`.** `localStorage` 금지 (§7-6) |
 
-**refresh 토큰을 만들지 않는다.** 카카오 세션이 살아 있으면 authorize 가 화면 없이 code 를 돌려준다 — 카카오는 이를 위해 `prompt=none` 을 제공한다(세션이 있으면 즉시 코드 발급, 없으면 `consent_required` 에러). **재로그인 자체가 조용하다.**
+**refresh 토큰을 만들지 않는다.** 카카오 세션이 살아 있으면 authorize 가 화면 없이 통과한다 — 카카오가 이를 위해 `prompt=none` 을 제공한다(세션이 있으면 즉시 코드 발급, 없으면 `consent_required` 에러). 재로그인 자체가 조용하다.
 
-> ⚠️ **숨긴 iframe 으로 갱신하는 방식은 쓸 수 없다.** 브라우저의 서드파티 쿠키 차단(Safari ITP, Chrome) 때문에 iframe 안에서 카카오 쿠키가 실리지 않는다. 웹은 전체 페이지 리다이렉트를 탄다. 앱은 로그인 방식에 따라 다르다(#26). 체감은 `M-03` 으로 확인하고 12시간을 조정한다.
+> ⚠️ **숨긴 iframe 갱신은 쓸 수 없다.** 브라우저의 서드파티 쿠키 차단 때문에 iframe 안에서 카카오 쿠키가 실리지 않는다. 웹은 전체 페이지 리다이렉트를, 앱은 인앱 인증 세션을 탄다. 체감은 `M-02` 로 확인하고 12시간을 조정한다.
 
-### 4-4. 클라이언트 저장 위치
+**🚨 현재 코드가 저장 규칙을 어기고 있다.** [`apps/web/src/stores/session.ts`](../../apps/web/src/stores/session.ts) 가 Zustand persist 로 토큰을 **localStorage** 에 영속 저장한다. `createJSONStorage(() => sessionStorage)` 로 바꾼다. `activeChildId` 는 계속 저장해도 된다 — 화면 선택값일 뿐 권한 근거가 아니고, `/me` 결과로 유효성을 다시 확인한다.
 
-| 위치 | 판정 |
-| --- | --- |
-| **`sessionStorage`** | ✅ 권장. 새로고침을 견디고, 탭을 닫으면 사라져 표면이 작다 |
-| 메모리 (모듈 변수) | XSS 에는 가장 안전하지만 **새로고침마다 재로그인**이 걸린다 |
-| `localStorage` | ✕ **금지.** XSS 한 건이 12시간짜리 토큰을 그대로 넘긴다 |
+### 4-4. 보호자 표시 이름
 
-**🚨 현재 코드가 이 규칙을 어기고 있다.** [`apps/web/src/stores/session.ts`](../../apps/web/src/stores/session.ts) 가 Zustand persist 로 토큰을 **localStorage** 에 영속 저장한다.
+`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 온보딩에서도 받지 않는다 — 보호자 닉네임을 받는 화면은 **10 설정의 `PATCH /parents`** 뿐이다.
 
-```ts
-storage: createJSONStorage(() => localStorage),
-partialize: (s) => ({ token: s.token, activeChildId: s.activeChildId }),   // ← token
-```
-
-`createJSONStorage(() => sessionStorage)` 로 바꾸면 된다. `activeChildId` 는 계속 저장해도 된다 — 화면 선택값일 뿐 권한 근거가 아니고(§1-1), `/me` 결과로 유효성을 다시 확인한다.
-
-### 4-5. 앱에서 로그인을 여는 방법 — 🔶 [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 논의 중
-
-**앱은 React Native(Expo) 웹뷰 셸이다.** 화면·상태·API 호출은 전부 `apps/web` 에 있고, 셸은 웹뷰를 띄우는 일만 한다.
-
-**지금은 앱에서 로그인이 완결되지 않는다.** [`apps/mobile/src/config.ts`](../../apps/mobile/src/config.ts) 의 `isInternalUrl` 이 우리 origin 만 웹뷰에 두고 나머지를 시스템 브라우저로 넘긴다. `kauth.kakao.com` 이 다른 origin 이라 로그인 페이지가 앱 밖에서 열리고, 거기서 로그인해도 **세션이 시스템 브라우저에 생기고 웹뷰는 로그아웃 상태로 남는다.**
-
-웹뷰 허용 목록에 카카오를 넣는 방법은 `apps/mobile/CLAUDE.md` §4 가 막는다 — "소셜 로그인이 웹뷰 안에서 열리면 사용자가 주소창을 못 봐서 피싱과 구분할 수 없다".
-
-후보 두 가지가 #26 에서 논의 중이다.
-
-| | 브릿지가 나르는 것 | 서버 요청 바디 |
-| --- | --- | --- |
-| **네이티브 카카오 SDK** | `access_token` | `{access_token}` — **`app_id` 대조 필수** (§7-2) |
-| **시스템 인증 세션** (`openAuthSessionAsync`) | `code` | `{code}` — 웹과 동일 |
-
-어느 쪽이든 **셸은 값만 브릿지로 옮기고 `POST` 는 웹이 한다** (`apps/mobile/CLAUDE.md` §1). 그래서 §2-1-1 이 두 입력을 미리 정의해 두었고, **이 절이 정해져도 계약서는 바뀌지 않는다.**
-
-웹뷰인지 아는 방법 — `App.tsx` 가 이미 `applicationNameForUserAgent={"YukameoApp/<version>"}` 를 붙인다.
-
-**결정되면 이 절을 채운다.**
-
-### 4-6. 보호자 표시 이름
-
-`parent.nickname` 은 **온보딩에서 보호자가 직접 입력한다.** 카카오 프로필에서 가져오지 않는다.
-
-가져오면 카카오 동의 화면에 항목이 하나 늘고, `privacy_account` 동의 문구에 "카카오 프로필 닉네임"을 적어야 한다. 표시 이름은 보호자 목록·owner 이관 화면·기록 작성자 표시에만 쓰이므로 직접 받는 편이 값도 정확하다.
-
-→ 노션 논의 사항 ⑫ 는 이 결정으로 닫힌다.
+**값이 없으면 화면이 "보호자"로 폴백한다.** 진입 마찰을 늘리면서 얻는 것이 표시 문구 하나뿐이라 첫 화면에 넣지 않는다. 자세한 근거는 §5-2.
 
 ---
 
@@ -301,23 +361,24 @@ partialize: (s) => ({ token: s.token, activeChildId: s.activeChildId }),   // �
 
 > ✅ **이미 구현돼 있다.** PR #11 (현재 `feat/be-7-db-setting-and-migration` 브랜치) 의 `identity/models.py` 에 위 표와 **필드·제약이 정확히 일치**하는 `AuthIdentity` 가 있다.
 
-### 5-2. 🚨 `parent.nickname` 충돌
+### 5-2. 🚨 `parent.nickname` 은 nullable 이어야 한다
 
-같은 브랜치의 `Parent.nickname` 이 **`nullable=False`** 다. **NOT NULL 이면 로그인 시점에 `parent` 행을 만들 수 없다.**
+같은 브랜치의 `Parent.nickname` 이 **`nullable=False`** 인데, 이 흐름에서는 값을 채울 시점이 없다.
 
-`consent.parent_id` 가 NOT NULL 이고 최초 로그인 직후 `service_terms`·`privacy_account` 를 받아야 한다 (§6-1). 동의를 기록하려면 `parent` 가 **이미 있어야** 하므로 온보딩까지 미룰 수 없다. 그런데 표시 이름은 카카오에서 가져오지 않기로 했으므로 (§4-6) 채울 값이 없다.
+`POST /auth/{provider}/signup` 이 `parent` 를 만드는데 그때 받는 것은 **동의뿐**이다. 보호자 닉네임은 카카오에서 가져오지 않고(논의 ⑫), 동의 화면에서도 받지 않는다.
 
 | 안 | 판정 |
 | --- | --- |
-| **`nickname` 을 nullable 로** | ✅ 온보딩에서 채운다. "아직 입력 안 함"이 `NULL` 로 표현된다 |
-| 빈 문자열 | ✕ "온보딩 안 함"과 "빈 이름이 잘못 저장됨"을 구분할 수 없고, `length > 0` CHECK 제약도 걸 수 없다 |
-| 카카오 닉네임 사용 | ✕ 논의 ⑫ 를 뒤집고 동의 항목이 는다 |
+| **`nickname` 을 nullable 로** | ✅ 10 설정에서 채운다. "아직 입력 안 함"이 `NULL` 로 표현된다 |
+| 동의 화면에서 함께 받는다 | ✕ **동의의 명확성이 흐려진다.** 법적 고지를 읽고 체크하는 화면에 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가"를 다투기 나빠진다. 리스크 ④(법정대리인 동의)가 걸린 화면이라 특히 그렇다 |
+| 빈 문자열 | ✕ "아직 입력 안 함"과 "빈 이름이 잘못 저장됨"을 구분할 수 없고, `length > 0` CHECK 제약도 걸 수 없다 |
+| 카카오 프로필 닉네임을 기본값으로 | ✕ NF-04 최소 수집과 부딪힌다 |
+
+**계약서와 프론트가 이미 nullable 이다** — §04 응답 예시가 `parent: { id: "p1", nickname: null }` 이고 `apps/web/src/lib/api/types.ts` 도 `string | null` 이다. NOT NULL 로 두면 그 둘을 함께 되돌려야 한다.
 
 → **PR #8 이 develop 에 머지되기 전이면 모델과 마이그레이션을 같이 고치면 되고 새 리비전이 안 붙는다.** ([PR #8 코멘트](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/8#pullrequestreview-5148979830))
 
 ### 5-3. `session` — 신설 🔶 협의 대상
-
-노션 「보호자 권한과 동의」의 신설 테이블 목록에 없다. **김명성님 확정 대상**이다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
@@ -333,7 +394,7 @@ CREATE INDEX ON session (parent_id);
 CREATE INDEX ON session (expires_at);
 ```
 
-**폐기는 행 삭제로 한다.** `revoked_at` 을 두지 않는 이유 — 세션은 증빙이 아니다. `consent` 가 append-only 인 것과 정반대로, 남은 행은 유출 표면일 뿐이다.
+**폐기는 행 삭제로 한다.** 세션은 증빙이 아니다. `consent` 가 append-only 인 것과 정반대로, 남은 행은 유출 표면일 뿐이다.
 
 | 언제 | 무엇을 지우나 |
 | --- | --- |
@@ -341,28 +402,69 @@ CREATE INDEX ON session (expires_at);
 | 계정 탈퇴 · 아이 파기 | `parent_id` 로 전부 |
 | 만료 | 배치로 `expires_at < now()` 전부 |
 
-수명이 12시간이라 행이 오래 쌓이지 않는다. 아이 파기 대상 목록(NF-14)에 `auth_identity` 와 함께 포함된다.
+### 5-4. `auth_handoff` — 신설 🔶 협의 대상
 
-### 5-4. `state` 는 테이블도 서버 저장도 필요 없다
+1회용 코드를 담는다. **Redis 가 아니라 Postgres 로 한다.**
 
-콜백을 프론트가 받으므로 **`state` 검증도 프론트가 한다** (§7-1). 서버는 `code` 만 받는다.
+| 필드 | 타입 | 비고 |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `code_hash` | bytea | **UNIQUE, NOT NULL.** SHA-256(1회용 코드) |
+| `bind_hash` | bytea | NOT NULL. SHA-256(클라이언트 비밀) (§7-2) |
+| `provider` | enum | NOT NULL |
+| `parent_id` | uuid | FK. **기존 회원일 때만** |
+| `provider_user_id` | text | **신규일 때만.** signup 에서 `auth_identity` 를 만들 때 쓴다 |
+| `expires_at` | timestamptz | NOT NULL. 교환용 2분 · 가입 대기표 10분 |
+| `created_at` | timestamptz | NOT NULL, default now() |
 
-별도 테이블을 두면 만료 정리 배치가 하나 더 생기고 로그인 시도마다 쓰기가 발생한다. **6명 10주 규모에서 얻는 것이 없다.**
+```sql
+CREATE UNIQUE INDEX ON auth_handoff (code_hash);
+CREATE INDEX ON auth_handoff (expires_at);
+```
+
+`CHECK`: `parent_id` 와 `provider_user_id` 중 **정확히 하나**만 NOT NULL.
+
+**원자적 소비는 `DELETE … RETURNING`** 으로 한다. Redis `GETDEL` 과 같은 보장이고 트랜잭션 안에 들어간다.
+
+**Postgres 로 하는 근거** — 로그인 빈도에 TTL 2분이면 동시 존재 행이 사실상 없다. 인프라 제안이 t3.medium 1대(4GB)에 DB·백엔드·프론트를 함께 올리는 구성이라 Redis 를 지금 얹을 이유가 없다. Redis 는 9/5 FE 회의에서 **외부 API 호출량 대응**으로 잠정 거론된 것이라, 그 용도가 확정될 때 이 테이블만 옮기면 된다.
+
+만료 행은 배치로 지운다. 배치가 늦어도 **교환 시 `expires_at` 검사가 만료 코드를 차단해야 한다.**
+
+### 5-5. `oauth_state` 는 쿠키다 — 테이블을 만들지 않는다
+
+카카오 왕복(③↔⑤) 동안만 살고 콜백에서 소비된다. 10분짜리 값이라 테이블을 두면 만료 정리 배치가 하나 더 생기고 로그인 시도마다 쓰기가 발생한다.
+
+담는 것 — `state` 난수 · `client`(§2-3) · `bind` 해시.
+
+```
+Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=600
+```
+
+`SameSite=Lax` 쿠키는 **크로스 사이트 최상위 GET 이동**에 실린다. 카카오 → 콜백이 그 경우라 정상 동작한다. `Path` 를 `/api/v1/auth` 로 좁혀 다른 요청에 실리지 않게 한다.
+
+🚨 **시작과 콜백이 같은 오리진이어야 한다.** 다르면 쿠키가 콜백에 실리지 않는다. `start_url` 을 서버가 `KAKAO_CALLBACK_URL` 에서 파생해 내려주는 이유가 이것이다 (§3-1). **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과하니 배포 기준으로 확인해야 한다.**
 
 ---
 
-## 6. 동의 게이트와 미들웨어 순서
+## 6. 동의 게이트
 
-### 6-1. 로그인은 동의보다 먼저다
+### 6-1. 🔶 동의 전에는 `parent` 를 만들지 않는다 — 팀 결정 대상
 
-동의를 받으려면 누가 동의하는지 알아야 하고, 그러려면 `parent` 행이 먼저 있어야 한다. 그래서 **로그인 자체는 동의 없이 성공한다.** 대신 응답의 `consent_required` 가 비어 있지 않으면 FE 는 동의 화면 외 어디로도 가지 못하고, 서버는 `/auth/*` 를 제외한 모든 엔드포인트를 미들웨어에서 막는다.
+계약서 §04 는 첫 로그인에 `parent` 를 만들고 `consent_required` 로 화면만 막는다. 그러면 **사용자가 동의 화면에서 이탈했을 때 동의하지 않은 계정이 DB 에 남는다.**
 
-프론트 차단만 믿지 않는다 — 화면을 우회해 API 를 직접 부르면 그만이다. **NF-10 은 "동의 없는 아동정보 저장 경로가 코드에 존재하지 않는다"이고, 그 강제 지점은 API 계층이다.**
+CLAUDE.md 의 "필수 동의가 비어 있으면 그 아래 어떤 저장도 일어나지 않는다"를 **계정 생성에도 적용한다.** 계정 생성도 저장이다.
 
-### 6-2. 순서 (NF-11)
+| | 기존 회원 | 신규 |
+| --- | --- | --- |
+| `POST /auth/{provider}` | 세션 발급 | `{ status: "consent_required", consent_code }` — **아직 아무것도 안 만든다** |
+| `POST /auth/{provider}/signup` | — | `parent` · `auth_identity` · `consent` 를 **한 트랜잭션에** |
+
+**계약서를 조이는 방향이라 팀 결정이 필요하다.** 나중에 풀기는 쉽고 조이기는 어려운 항목이다.
+
+### 6-2. 미들웨어 순서 (NF-11)
 
 ```
-① authenticate            Bearer 토큰 → SHA-256 → session 조회 → parent_id. 만료·없음이면 거절
+① authenticate            Bearer 토큰 → SHA-256 → session 조회 → parent_id
 ② requireAccountConsent   service_terms · privacy_account 최신 행이 granted 인가
 ③ requireConnected / requireOwner / requireWriter    아이 스코프
 ④ requireChildConsent(scope)   child_basic · child_health
@@ -370,55 +472,51 @@ CREATE INDEX ON session (expires_at);
 
 | 경로 | 통과해야 하는 것 |
 | --- | --- |
-| `POST /auth/{provider}` | 없음 |
+| `/auth/*` (§3 의 무인증 5개) | 없음 |
 | `POST /auth/logout` | ① |
 | `GET /me` · `POST /consents` · `GET /consents` | ① |
 | 그 외 전부 | ① ② + (아이 스코프면) ③ ④ |
 
-`GET /me` 와 `/consents` 가 ② 를 건너뛰는 이유 — 동의 화면 자체가 이 둘을 부른다.
+`GET /me` 와 `/consents` 가 ② 를 건너뛰는 이유 — 아이 단위 동의 화면이 이 둘을 부른다. 계정 단위 동의는 §6-1 에서 이미 끝나 있다.
 
 핸들러가 직접 권한 쿼리를 쓰지 않는다. 미들웨어 한 곳에서만 판정한다.
 
-**CSRF 방어는 필요 없다.** 쿠키를 쓰지 않으므로 브라우저가 자동으로 자격증명을 붙이지 않는다.
+**CSRF 방어는 필요 없다.** 세션을 쿠키로 보내지 않으므로 브라우저가 자동으로 자격증명을 붙이지 않는다.
 
 ---
 
 ## 7. 보안 규칙
 
-### 7-1. `state` 검증 — 프론트가 한다
+### 7-1. `state` — 카카오 왕복을 지킨다
 
-프론트가 authorize 를 부를 때 난수 `state` 를 만들어 `sessionStorage` 에 두고, 콜백에서 쿼리의 `state` 와 대조한다. **불일치·누락이면 서버에 code 를 보내지 않는다.**
+콜백에서 쿼리 `state` 를 `oauth_state` 쿠키와 **timing-safe 비교**한다. 불일치·부재면 **인가 코드 교환 전에** 끊는다. 한 번 쓰고 버린다.
 
-빼면 공격자가 **자기 카카오 계정의 인가 코드**로 만든 콜백 URL 을 피해자에게 열게 해서 피해자 브라우저를 공격자 계정으로 로그인시킬 수 있다. 그 뒤 피해자가 입력한 아이 정보가 공격자 계정에 쌓인다.
+### 7-2. 🚨 `bind` — 1회용 코드가 오가는 홉을 지킨다
 
-**서버는 `state` 를 보지 않는다.** 프론트가 자기가 만든 값과 대조하는 것으로 충분하고, 서버가 관여하면 저장소가 하나 더 필요해진다 (§5-4).
+`state` 는 카카오 왕복만 지킨다. **서버 → 클라이언트로 1회용 코드가 돌아오는 홉(⑥→⑦)은 못 막는다.**
 
-앱에서 `{code}` 경로를 쓰게 되면 `state` 대조도 **웹이** 한다 — 셸은 값을 옮기기만 한다 (§4-5). `{access_token}` 경로에는 `state` 가 없고, 대신 `app_id` 대조(§7-2)가 그 자리를 맡는다.
+없으면 공격자가 **자기 카카오 로그인으로 얻은 1회용 코드**를 링크나 딥링크로 피해자에게 던져 **피해자를 공격자 계정에 로그인**시킬 수 있다. 그 뒤 피해자가 입력하는 아이 정보가 전부 공격자 계정에 쌓인다.
 
-### 7-2. 🚨 `app_id` 대조 — `{access_token}` 경로를 열면 필수다
+막는 방법 — 클라이언트가 시작할 때 랜덤 비밀(256비트)을 `bind` 로 싣고, 서버는 그 **해시**를 `auth_handoff` 에 묶는다. 교환(§3-4)과 가입(§3-5)에서 같은 값을 다시 제시해야 세션을 내준다.
 
-`{access_token}` 입력(§2-1-1)을 여는 순간 **다른 앱이 발급받은 카카오 토큰을 우리 서버에 들이밀 수 있다.** 카카오 입장에서는 유효한 토큰이라 사용자 정보 조회가 200 을 준다.
+**PKCE 를 우리 서버-클라이언트 홉에 적용한 것**이다. 카카오 쪽 검증(`state`)과는 별개이고, 둘 다 필요하다.
 
-```python
-info = kakao.get("/v1/user/access_token_info", token=access_token)
-if str(info["app_id"]) != settings.KAKAO_APP_ID:
-    raise Unauthorized("invalid_provider_token")
-```
+🚨 **형식 검증을 시작 시점에 한다** (§3-2). "보냈다"만 확인하면 `bind=1` 로도 통과해 이 절이 무의미해진다.
 
-**이 검사가 없으면 아무 카카오 앱 개발자나 우리 서비스의 임의 계정으로 로그인할 수 있다.** 인터넷 예제 중에 `/v2/user/me` 로 프로필만 조회하고 통과시키는 코드가 흔한데, 그대로 쓰면 뚫린다.
+### 7-3. 오픈 리다이렉트를 만들지 않는다
 
-`{code}` 경로에는 필요 없다 — 우리 `client_secret` 으로 교환하므로 받은 토큰이 정의상 우리 앱 것이다.
+복귀 대상은 **서버 환경변수에서 온다.** 클라이언트는 `client=web|app` 열거값만 고른다 (§2-3). 허용값 밖이면 시작 시점에 `400`.
 
-→ **네이티브 SDK 를 도입하는 날 이 절을 함께 구현한다** ([#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26)). 테스트는 A-14.
+로그인 후 원래 화면 복원도 서버가 관여하지 않는다 — 프론트가 `sessionStorage` 로 처리한다.
 
-### 7-3. 저장하지 않는 것
+### 7-4. 저장하지 않는 것
 
 | 무엇 | 왜 |
 | --- | --- |
 | 카카오 access_token · refresh_token | 교환 직후 회원번호만 얻고 폐기한다. 카카오 API 를 더 부르지 않으므로 보관하면 유출 표면만 는다 |
 | 이메일 · 프로필 이미지 · 닉네임 | NF-04 최소 수집. `access_token_info` 는 주지도 않는다 |
-| **세션 토큰 원문** | 해시만 저장한다 (§4-3) |
-| 인가 코드 | 1회용이고 교환 즉시 무효다 |
+| **세션 토큰 · 1회용 코드 · `bind` 원문** | 전부 해시만 저장한다 |
+| 카카오 인가 코드 | 1회용이고 교환 즉시 무효다 |
 
 **예외 — 파기 배치.** 아이·계정 파기 시 카카오 연결을 끊어야 하는데 토큰이 없으므로 어드민 키로 대상을 지정한다.
 
@@ -432,42 +530,37 @@ target_id_type=user_id&target_id={provider_user_id}
 
 어드민 키는 앱 전체 권한이다. **서버 .env 에만 두고 파기 배치 외 어떤 경로에서도 부르지 않는다.**
 
-### 7-4. 로그
+### 7-5. 로그
 
-로그에 **카카오 회원번호·인가 코드·카카오 토큰·세션 토큰을 남기지 않는다.** 식별이 필요하면 `parent_id` 만 쓴다. NF-05 의 "원문 대신 `memory_id`" 를 인증 영역으로 확장한 것이다.
+**카카오 회원번호·인가 코드·카카오 토큰·1회용 코드·`bind`·세션 토큰을 남기지 않는다.** 식별이 필요하면 `parent_id` 만 쓴다. NF-05 의 "원문 대신 `memory_id`"를 인증 영역으로 확장한 것이다.
 
-카카오 호출 실패를 로깅할 때 응답 본문을 통째로 찍으면 토큰이 섞여 들어간다. 상태 코드와 카카오 에러 코드만 남긴다.
+🚨 **콜백 URL 전체를 로깅하지 않는다** — 쿼리에 인가 코드가 들어 있다. 복귀 URL 도 마찬가지로 1회용 코드가 실린다. 카카오 호출 실패는 상태 코드와 카카오 에러 코드만 남긴다.
 
-### 7-5. 비밀 관리 (NF-09)
+### 7-6. 비밀 관리 (NF-09)
 
 | 값 | 어디에 | 클라이언트 번들 |
 | --- | --- | --- |
-| `KAKAO_REST_API_KEY` | 서버 .env | ✕ |
-| `KAKAO_CLIENT_SECRET` | 서버 .env | ✕ |
-| `KAKAO_ADMIN_KEY` | 서버 .env | ✕ |
-| JavaScript 키 | 프론트 | ○ — 공개 전제로 설계된 값 |
+| `KAKAO_REST_API_KEY` · `KAKAO_CLIENT_SECRET` · `KAKAO_ADMIN_KEY` | 서버 .env | ✕ |
+| `AUTH_RETURN_URL_WEB` · `AUTH_RETURN_URL_APP` | 서버 .env | ✕ |
 
 불투명 토큰에는 **서명 키가 없다.**
 
-`apps/mobile/CLAUDE.md` §4 가 못박은 대로 **셸이 아는 비밀은 없어야 정상이다** — `EXPO_PUBLIC_*` 는 앱 번들에 그대로 들어간다. 이 설계에서 셸은 authUrl 을 웹에서 받아 열기만 하므로 키를 알 필요가 없다.
+**프론트도 앱 셸도 카카오 키를 알 필요가 없다.** 서버가 시작 URL 을 내려주므로 `NEXT_PUBLIC_KAKAO_*` 가 필요 없고, 셸은 그 URL 을 열기만 한다 — `apps/mobile/CLAUDE.md` §4 의 "셸이 아는 비밀은 없어야 정상"이 그대로 유지된다.
 
-🚨 **이 저장소는 public 이다** (CLAUDE.md §9). 1단계에서 학생 API 토큰 8건이 실제로 유출됐고, 노트북·`docs/*.md` 본문에서도 나왔다. 이 문서를 포함해 **어떤 문서에도 실제 키를 붙여넣지 않는다** — 특히 §11 환경변수 표는 값을 채우고 싶어지는 자리다. 한 번 커밋된 비밀은 지워도 히스토리에 남으므로 **유일한 조치는 폐기(rotate)** 이고, 실수했다면 즉시 담임 매니저에게 알린다.
+🚨 **이 저장소는 public 이다** (CLAUDE.md §9). 1단계에서 학생 API 토큰 8건이 실제로 유출됐고, 노트북·`docs/*.md` 본문에서도 나왔다. **어떤 문서에도 실제 키를 붙여넣지 않는다** — 특히 §11 환경변수 표는 값을 채우고 싶어지는 자리다. 한 번 커밋된 비밀은 지워도 히스토리에 남으므로 **유일한 조치는 폐기(rotate)** 이고, 실수했다면 즉시 담임 매니저에게 알린다.
 
-### 7-6. XSS 방어 — 헤더 방식을 고른 대가
+### 7-7. XSS 방어 — 헤더 방식을 고른 대가
 
 토큰이 JS 에서 접근 가능하므로 **XSS 한 건이 세션을 넘긴다.**
 
 이 서비스의 XSS 는 막연한 위험이 아니라 **경로가 특정된다** — 기관 공지 붙여넣기·OCR 로 들어온 **외부 텍스트가 LLM 을 거쳐 화면에 렌더링**된다 (F-07 · F-14).
 
-**레버리지 순서대로** 지킨다.
-
 | # | 무엇 | 왜 이 순서인가 |
 | --- | --- | --- |
 | 1 | **LLM 출력과 공지 원문을 HTML 로 렌더링하지 않는다.** `dangerouslySetInnerHTML` 금지, 마크다운은 raw HTML 비활성 (`rehype-raw` 금지) | React 는 기본적으로 이스케이프한다. 구멍은 이 둘뿐이고 막는 비용이 거의 0이다 |
-| 2 | **토큰을 `localStorage` 에 두지 않는다** (§4-4) | 저장소를 훑는 가장 흔한 공격을 무력화한다 |
+| 2 | **토큰을 `localStorage` 에 두지 않는다** (§4-3) | 저장소를 훑는 가장 흔한 공격을 무력화한다 |
 | 3 | **세션 수명 12시간** | 털려도 유효 기간이 그만큼이다 |
 | 4 | **CSP** — `Report-Only` 로 위반을 모은 뒤 강제로 전환 | XSS 가 나도 `connect-src` 로 외부 유출을 막는다. Next.js 는 인라인 스크립트를 쓰므로 처음부터 강제하면 화면이 깨진다 |
-| 5 | **웹뷰 허용 출처를 넓히지 않는다** (§4-5) | 카카오 로그인을 웹뷰에 넣지 않는 것이 `apps/mobile/CLAUDE.md` §4 이고, XSS 관점에서도 같은 방향이다 |
 
 > 1번은 **파트 경계를 넘는 규칙**이다. 프론트가 지키지만 어겼을 때 깨지는 것은 인증이다. CLAUDE.md §2 절대 규칙에 한 줄로 올리는 것을 제안한다 — *"외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다."*
 
@@ -475,25 +568,44 @@ target_id_type=user_id&target_id={provider_user_id}
 
 ## 8. 에러
 
-계약서 §01 의 에러 형식을 그대로 쓴다. 아래 2개는 이 문서에서 **신설**한다.
+### 8-1. JSON 엔드포인트 — 계약서 §01 봉투를 쓴다
 
 | HTTP | code | 언제 | 신설 |
 | --- | --- | --- | --- |
-| 400 | `validation_failed` | `code` 누락 | |
+| 400 | `validation_failed` | `code`·`bind` 누락, `bind` 형식 불량 | |
+| 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
-| 401 | `invalid_provider_token` | 인가 코드 교환 실패(만료·재사용·`redirect_uri` 불일치), 또는 **`access_token` 경로에서 app_id 불일치** (§7-2) | 🆕 |
-| 403 | `consent_required` | 계정 스코프 미동의 | |
+| 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |
 | 404 | `not_found` | `deleted_at` 이 찍힌 parent (→ §10-1) | |
 | 422 | `validation_failed` | `provider` 가 enum 밖 | |
-| 502 | `oauth_provider_error` | 카카오 API 5xx·타임아웃 | 🆕 |
+| 502 | `oauth_provider_error` | 카카오 API 5xx·타임아웃, 코드 교환 실패 | 🆕 |
 
-`invalid_provider_token` 은 **실패 사유를 구분하지 않는다.** 초대 코드 실패를 `404 invalid_invite` 로 통일한 것과 같은 이유다.
-
-`401 unauthenticated` 를 받은 FE 는 **재로그인 경로로 간다** (§4-3). `invalid_provider_token` 을 받으면 그 경로도 실패한 것이므로 실제 로그인 화면으로 보낸다.
+`invalid_handoff` 는 **실패 사유를 구분하지 않는다.** 만료·재사용·`bind` 불일치를 구분해 알려주면 공격자에게 정보를 준다. 초대 코드 실패를 `404 invalid_invite` 로 통일한 것과 같은 이유다.
 
 `502 oauth_provider_error` 는 **기본값으로 대체하지 않는다.** 카카오가 죽었을 때 로그인을 통과시키는 경로는 존재하지 않는다 — `503 llm_unavailable` 이 모델 실패를 기본값으로 넘기지 않는 것과 같은 원칙이다.
 
 카카오 타임아웃은 **3초**로 둔다. NF-06 의 20초는 Agent 파이프라인 예산이고 로그인은 그 예산 밖이다.
+
+### 8-2. 🚨 리다이렉트 엔드포인트 — 봉투를 쓸 수 없다
+
+`GET /auth/{provider}` 와 `/callback` 은 302 로 답한다. **실패도 리다이렉트로 나가므로 공통 에러 봉투가 성립하지 않는다.** 계약서 §01 에 예외로 적어야 한다.
+
+복귀 URL 에 **에러 코드만** 싣는다.
+
+```
+https://<도메인>/auth/callback?error=invalid_state
+yukameo://auth?error=oauth_denied
+```
+
+🚨 **문구를 싣지 않는다.** 서버 메시지를 URL 에 그대로 실으면 **공격자가 프론트 화면에 임의 문구를 띄우는 통로**가 된다(피싱 문구 주입). 그리고 문구를 서버가 정하면 프론트가 화면 톤을 맞출 수 없다. **사용자에게 보일 문장은 프론트가 만든다.**
+
+| `error` | 언제 |
+| --- | --- |
+| `invalid_state` | `state` 불일치·부재·만료 |
+| `invalid_client` | `client` 값이 허용값 밖 (§2-3) |
+| `invalid_bind` | `bind` 형식 불량 (§3-2) |
+| `oauth_denied` | 사용자가 카카오 동의 화면에서 취소 |
+| `oauth_provider_error` | 카카오 API 실패 |
 
 ---
 
@@ -503,40 +615,39 @@ target_id_type=user_id&target_id={provider_user_id}
 
 | # | 무엇을 잡는가 | 기대 |
 | --- | --- | --- |
-| A-01 | 처음 보는 회원번호의 `code` 로 로그인 | `parent` + `auth_identity` + `session` 각 1행, `is_new: true`, `nickname: null` |
-| A-02 | 같은 회원번호로 재로그인 | 기존 `parent`, `is_new: false`, **`auth_identity` 행 추가 없음**, `session` 은 새 행 |
-| A-03 | 빈 바디 · `code` 누락 | `400 validation_failed` |
-| A-04 | 카카오가 코드 교환을 거절 (만료·재사용) | `401 invalid_provider_token`, `parent` **미생성** |
-| A-05 | 동의 전에 `POST /children` | `403 consent_required` |
-| A-06 | 동의 전에 `GET /me` | **200** — 동의 화면이 부르는 경로 (§6-2) |
-| A-07 | 만료된 세션 토큰으로 호출 | `401 unauthenticated` |
-| A-08 | 🚨 **로그아웃 직후 같은 토큰으로 호출** | `401 unauthenticated` — **지연 없이 즉시** (§4-2) |
-| A-09 | 카카오 API 가 500 | `502 oauth_provider_error`. 로그인 통과 경로 없음 |
-| A-10 | 같은 회원번호로 동시 요청 2건 | `UNIQUE` 로 `auth_identity` 한 건만 생성, 둘 다 같은 `parent_id` |
-| A-11 | `POST /auth/apple` | `422 validation_failed` |
-| A-12 | 로그인 후 `session` 테이블 조회 | **응답 `token` 과 같은 문자열이 어디에도 없다** (해시 저장 확인) |
-| A-13 | `parent.deleted_at` 이 찍힌 계정의 세션 | `401` 또는 `404 not_found` — 만료를 기다리지 않는다 |
-| A-14 | 🚨 **`access_token` 경로 + 다른 app_id** — 그 경로를 열 때 켠다 | `401 invalid_provider_token`, `parent` **미생성** (§7-2) |
+| A-01 | 처음 보는 회원번호 → 교환 | `{ status: "consent_required", consent_code }`, **`parent` 미생성** |
+| A-02 | 이어서 signup | `parent`·`auth_identity`·`consent` 각 1행, 세션 발급, `is_new: true` |
+| A-03 | 기존 회원 → 교환 | 바로 세션. `auth_identity` 행 추가 없음 |
+| A-04 | 🚨 **같은 1회용 코드를 두 번 교환** | 두 번째 `401 invalid_handoff` |
+| A-05 | 🚨 **`bind` 를 틀리게 보내 교환** | `401 invalid_handoff`, 세션 미발급 (§7-2) |
+| A-06 | `bind` 없이 시작 (`GET /auth/kakao`) | `302 …?error=invalid_bind` — **카카오로 보내지 않는다** |
+| A-07 | `bind=1` 처럼 형식 불량으로 시작 | 같음 (§3-2) |
+| A-08 | 🚨 **`state` 불일치로 콜백** | `302 …?error=invalid_state`, **인가 코드 교환을 시도하지 않는다** |
+| A-09 | `oauth_state` 쿠키 없이 콜백 | 같음 |
+| A-10 | `client` 가 허용값 밖 | `302 …?error=invalid_client` |
+| A-11 | `client=app` 로 시작 | 복귀가 `yukameo://auth?code=…` (§2-3) |
+| A-12 | 만료된 1회용 코드 | `401 invalid_handoff` |
+| A-13 | signup 에서 필수 스코프 누락 | `403 consent_required`, **`parent` 미생성** |
+| A-14 | 만료된 세션 토큰으로 호출 | `401 unauthenticated` |
+| A-15 | 🚨 **로그아웃 직후 같은 토큰으로 호출** | `401 unauthenticated` — **지연 없이 즉시** (§4-2) |
+| A-16 | 카카오 API 가 500 | `302 …?error=oauth_provider_error`, `parent` 미생성 |
+| A-17 | 사용자가 카카오에서 취소 | `302 …?error=oauth_denied` |
+| A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
+| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `401` 또는 `404 not_found` — 만료를 기다리지 않는다 |
+| A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
 
-**A-08 이 이 목록의 이유다.** 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
+**A-05 · A-08 · A-15 가 이 목록의 이유다.** A-05 가 실패하면 §7-2 가 무의미하고, A-08 이 실패하면 로그인 CSRF 가 열리며, A-15 가 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
 
-**A-14 는 `{access_token}` 경로를 열기 전까지 skip 이다.** 다만 그날 반드시 켜야 한다 — 없으면 인증이 성립하지 않는다 (§7-2).
+카카오 호출은 유닛 층에서 **스텁으로 대체**한다. `POST /oauth/token` 과 `access_token_info` 두 응답 모양만 고정하면 A-01·A-03·A-16 이 검증된다.
 
-카카오 호출은 유닛 층에서 **스텁으로 대체**한다. `POST /oauth/token` 과 `access_token_info` 두 응답 모양만 고정하면 A-01·A-02·A-04·A-09 가 검증된다.
-
-**`state` 검증은 프론트 책임**이라 이 층에 없다. 프론트 테스트로 따로 잡는다.
-
-### 수동 확인 3건 (자동화 불가)
+### 수동 확인 2건 (자동화 불가)
 
 | # | 무엇 | 누가 |
 | --- | --- | --- |
-| M-01 | 웹에서 **새로고침** → `sessionStorage` 로 세션이 유지되는가 (§4-4) | 고태영 |
-| M-02 | 🚨 **앱에서 로그인 → 앱 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각. 방식이 정해지면 [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 구체화 | 고태영 |
-| M-03 | 카카오 세션이 살아 있을 때 **재로그인 체감** → 12시간을 조정할지 판단 (§4-3) | 고태영 |
+| M-01 | 🚨 **시작과 콜백이 같은 오리진인지 배포 환경에서 확인.** 다르면 `state` 쿠키가 콜백에 실리지 않는다. **로컬은 포트가 달라도 우연히 통과한다** (§5-5) | 김명성 · 고태영 |
+| M-02 | **앱에서 로그인 → `yukameo://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
 
-**M-02 는 실기기 없이는 확인되지 않는다.** 앱 로그인 방식이 정해지면 #26 에서 절차를 구체화한다.
-
-배포 전 AI 보안 리뷰(고태영)에 두 항목을 추가한다 — **`/auth/*` 예외가 1개(`POST /auth/{provider}`)뿐인지**, **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지** (§7-6 1번).
+배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 §3 의 5개뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
 
 ---
 
@@ -545,12 +656,12 @@ target_id_type=user_id&target_id={provider_user_id}
 | # | 무엇 | 왜 지금 못 정하나 | 누구 |
 | --- | --- | --- | --- |
 | 1 | **탈퇴 유예기간 중 재로그인** — 복구인가 신규인가 | 유예기간 N일(노션 논의 ⑤)이 미정. 그전까지 `404 not_found` 로 막아둔다 | 팀 · 9월 2주 |
-| 2 | **세션 수명 12시간이 맞는지** | `M-03` 결과에 달렸다 | 고태영 |
-| 3 | 🔶 **앱 로그인 방식** — 네이티브 SDK vs 시스템 인증 세션 | [#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 논의 중. 네이티브 SDK 로 가면 `{access_token}` 입력과 `app_id` 대조(§7-2)를 함께 구현한다. **서버 계약은 어느 쪽이든 안 바뀐다** | 고태영 |
-| 5 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 스키마는 이미 대비돼 있다 | 박재형 |
-| 6 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
+| 2 | **동의 전 `parent` 미생성** (§6-1) | 계약서를 조이는 방향이라 팀 결정이 필요하다. 나중에 풀기는 쉽고 조이기는 어렵다 | 김명성 · 박재형 |
+| 3 | **세션 수명 12시간이 맞는지** | `M-02` 결과에 달렸다. 측정한 값이 아니다 | 고태영 |
+| 4 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 이 흐름은 provider 별 모양이 같아 추가가 쉽다 | 박재형 |
+| 5 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
 
-> 6번은 이 문서가 해결하지 못하는 문제다. 로그인이 아무리 정확해도 "로그인한 사람이 법정대리인인가"는 답하지 않는다.
+> 5번은 이 문서가 해결하지 못하는 문제다. 로그인이 아무리 정확해도 "로그인한 사람이 법정대리인인가"는 답하지 않는다.
 
 ---
 
@@ -561,39 +672,35 @@ target_id_type=user_id&target_id={provider_user_id}
 **서버 (`apps/api`)**
 
 ```
-KAKAO_REST_API_KEY=      # 카카오 개발자 콘솔 > 앱 키 > REST API 키
-KAKAO_CLIENT_SECRET=     # 콘솔 > 카카오 로그인 > 보안 에서 활성화 후 발급
-KAKAO_REDIRECT_URI=      # 프론트 콜백. 콘솔 등록값과 정확히 일치해야 한다 (운영·로컬 각각)
-KAKAO_APP_ID=            # 앱 ID (숫자). access_token 경로를 열 때만 사용 (§7-2)
-KAKAO_ADMIN_KEY=         # 어드민 키. 파기 배치에서만 사용
-KAKAO_API_TIMEOUT=3      # 초
-SESSION_TTL=43200        # 초 (12시간)
+KAKAO_REST_API_KEY=          # 콘솔 > 앱 키 > REST API 키
+KAKAO_CLIENT_SECRET=         # 콘솔 > 카카오 로그인 > 보안 에서 활성화 후 발급
+KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정확히 일치 (운영·로컬 각각)
+KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
+KAKAO_API_TIMEOUT=3          # 초
+AUTH_RETURN_URL_WEB=         # 예: https://<도메인>/auth/callback
+AUTH_RETURN_URL_APP=         # 예: yukameo://auth
+SESSION_TTL=43200            # 초 (12시간)
+HANDOFF_TTL=120              # 초 (2분)
+SIGNUP_TICKET_TTL=600        # 초 (10분)
+OAUTH_STATE_TTL=600          # 초 (10분)
 ```
 
-**웹 (`apps/web`)** — `NEXT_PUBLIC_*` 는 브라우저 번들에 박힌다. 공개돼도 되는 값만.
-
-```
-NEXT_PUBLIC_KAKAO_JS_KEY=        # JavaScript 키
-NEXT_PUBLIC_KAKAO_REDIRECT_URI=  # 서버의 KAKAO_REDIRECT_URI 와 같은 값
-```
-
-**앱 (`apps/mobile`)** — 추가 없음. 셸은 authUrl 을 웹에서 받으므로 **키를 알 필요가 없다** (§7-5).
+**웹 (`apps/web`) · 앱 (`apps/mobile`)** — **추가 없음.** 서버가 `start_url` 을 내려주므로 카카오 키를 알 필요가 없다 (§7-6).
 
 ---
 
 ## 12. 계약서에 반영해야 할 것 🔶
 
-이 문서는 계약서 **§01 공통 규약을 바꾸지 않는다.** `Authorization: Bearer <token> — 예외 없음` 이 그대로 유효하고, `token` 이 불투명 문자열이라는 정의가 추가될 뿐이다.
+계약서 **§04 인증·동의는 사실상 재작성**이다. §01 도 손대야 한다.
 
-변경은 4건이다.
-
-| 계약서 현재 | 바뀌어야 할 것 |
+| | 무엇 |
 | --- | --- |
-| `POST /auth/{provider}` 요청 `{access_token}` | **`{code}` 또는 `{access_token}` 중 하나**로 정의. 웹 클라이언트는 access_token 을 가질 방법이 없고(§2-1), 앱 방식이 미정이라 두 입력을 열어둔다 (§2-1-1) |
-| 응답 | **`expires_in` 추가** (§3-1) |
-| 인증·동의 엔드포인트 4개 | **`POST /auth/logout` 신설** (§3-2) |
-| 에러 표 | `invalid_provider_token` · `oauth_provider_error` **2건 추가** (§8) |
+| **신설** | `GET /auth/{provider}/status` · `GET /auth/{provider}` · `GET /auth/{provider}/callback` · `POST /auth/{provider}/signup` · `POST /auth/logout` |
+| **변경** | `POST /auth/{provider}` — 요청 `{access_token}` → `{code, bind}`, 응답이 **union** (세션 또는 `consent_required`), `expires_in` 추가 |
+| **§01 예외 ①** | 인증 없는 엔드포인트 **5개를 명시** (§3) |
+| **§01 예외 ②** | **302 엔드포인트 2개는 공통 에러 봉투를 쓰지 않는다** (§8-2) |
+| **에러** | `invalid_handoff` · `oauth_provider_error` 추가. 리다이렉트 에러 코드 5종 (§8-2) |
 
 CLAUDE.md §8 의 결정 방식상 **영역 간 인터페이스 = 관련 Owner 협의**다. 김명성(백엔드) · 고태영(프론트) 합의 후 계약서를 고친다. **합의 전까지 이 문서는 제안 상태로 읽을 것.**
 
-**§5-3 `session` 테이블 신설**과 **§5-2 `parent.nickname` nullable 전환**도 같은 협의 대상이다.
+**§5-3 `session` · §5-4 `auth_handoff` 신설**과 **§5-2 `parent.nickname` nullable 전환**, **§6-1 동의 전 `parent` 미생성**도 같은 협의 대상이다.
