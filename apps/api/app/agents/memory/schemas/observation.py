@@ -4,7 +4,7 @@
 LLM 이 채우지 않는 필드(id · child_id · source_writer · observed_range 등)는 노출하지 않는다.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import Field
 
@@ -28,7 +28,12 @@ _DURATION = Field(
     ge=1, le=MAX_DURATION_MIN,
     description=f"분 단위. 하루 종일이면 {MAX_DURATION_MIN}. 발화에 없으면 비워둔다",
 )
-_ENGAGEMENT = Field(default=None, description="몰입도 정보. low / mid / high 중 하나로, 발화에 없으면 비워둔다")
+def _optional(description: str) -> Any:
+    """말에 나오지 않으면 비우는 선택 필드."""
+    return Field(default=None, description=description)
+
+
+_ENGAGEMENT = _optional("low / mid / high 중 하나. 발화에 없으면 비워둔다")
 
 
 class ObservationFoodCreate(PromotableCreateArgs):
@@ -49,45 +54,25 @@ class ObservationHealthCreate(ObservationCreateArgs):
     """증상과 컨디션 기록. 진단하지 않는다."""
 
     symptom: Annotated[list[str], Field(min_length=1, description="증상. 예: 발열, 콧물, 두드러기")]
-    severity: Annotated[
-        Severity | None,
-        Field(default=None, description="mild / moderate / severe / emergency. 추측하지 않고 발화에 정도가 드러날 때만 채우기"),
-    ]
-    body_part: Annotated[str | None, Field(default=None, description="증상이 나타난 신체 부위. 예: 얼굴 / 팔. 발화에 드러날 때만 채우기.")]
-    suspected_trigger: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="증상이 관찰된 계기. 예: 우유 먹은 뒤. 발화에 드러날 때만 채우기.",
-        ),
-    ]
-    action_taken: Annotated[str | None, Field(default=None, description="병원 / 해열제 / 경과 지켜봄. 발화에 드러날 때만 채우기.")]
-    observed_time: Annotated[
-        str | None, Field(default=None,
-            description=(
-                "증상을 본 시각. 예: 오전 8시, 저녁 7시, 15:30. "
-                "날짜는 observed_on 이 담당한다. 발화에 드러날 때만 채우기.")
-            )]
+    severity: Annotated[Severity | None, _optional("추측하지 않고 정도가 드러날 때만")]
+    body_part: Annotated[str | None, _optional("예: 얼굴 / 팔. 발화에 드러날 때만")]
+    suspected_trigger: Annotated[str | None, _optional("예: 우유 먹은 뒤. 발화에 드러날 때만")]
+    action_taken: Annotated[str | None, _optional("병원 / 해열제 등. 발화에 드러날 때만")]
+    observed_time: Annotated[str | None, _optional("증상을 본 시각만. 예: 오전 8시, 15:30")]
 
 
 class ObservationHealthUpdate(ObservationUpdateArgs):
     symptom: Annotated[list[str] | None, Field(default=None, description="바꿀 증상 목록")]
     body_part: Annotated[str | None, Field(default=None, description="바꿀 신체 부위")]
-    suspected_trigger: Annotated[
-        str | None,
-        Field(default=None, description="바꿀 증상이 관찰된 계기."),
-    ]
+    suspected_trigger: Annotated[str | None, _optional("바꿀 계기")]
     severity: Annotated[Severity | None, Field(default=None, description="바꿀 정도")]
     action_taken: Annotated[str | None, Field(default=None, description="바꿀 조치")]
-    observed_time: Annotated[str | None, Field(default=None, description="바꿀 시각. 예: 오전 8시, 15:30")]
+    observed_time: Annotated[str | None, _optional("바꿀 시각. 예: 오전 8시, 15:30")]
 
 
 class ObservationEducationCreate(PromotableCreateArgs):
     topic: Annotated[str, Field(description="학습 주제. 예: 숫자세기, 영어 말하기")]
-    session_type: Annotated[
-        str | None,
-        Field(default=None, description="독서 / 수업 / 학습지 등"),
-    ]
+    session_type: Annotated[str | None, _optional("독서 / 수업 / 학습지 등")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
 
@@ -101,8 +86,8 @@ class ObservationEducationUpdate(ObservationUpdateArgs):
 
 class ObservationActivityCreate(PromotableCreateArgs):
     activity: Annotated[str, Field(description="활동 이름. 예: 모래놀이, 레고 조립")]
-    location: Annotated[str | None, Field(default=None, description="장소 정보. 집 / 기관 / 놀이터")]
-    companions: Annotated[str | None, Field(default=None, description="활동 참여자. 혼자 / 친구와 / 부모")]
+    location: Annotated[str | None, _optional("장소. 집 / 기관 / 놀이터")]
+    companions: Annotated[str | None, _optional("혼자 / 친구와 / 부모")]
     duration_min: Annotated[int | None, _DURATION]
     engagement_level: Annotated[EngagementLevel | None, _ENGAGEMENT]
 
