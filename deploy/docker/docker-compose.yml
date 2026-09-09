@@ -1,0 +1,26 @@
+# 로컬 개발용 DB. 사용법: deploy/docker/.env.example 을 .env 로 복사한 뒤
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
+#
+# pgvector 확장 자체(CREATE EXTENSION)는 여기서 만들지 않는다 — apps/api/CLAUDE.md
+# 규칙대로 Alembic 첫 revision 이 만든다. 이 파일은 확장이 "설치되어 있는" 이미지만 보장한다.
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg18
+    container_name: ktc4-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ktc4-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ktc4-postgres-data:
