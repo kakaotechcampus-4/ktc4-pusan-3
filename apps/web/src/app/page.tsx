@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
+import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { api, qk, type AuthStatus } from "@/lib/api";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
@@ -74,15 +75,16 @@ export default function LoginPage() {
   }
 
   return (
-    <Screen className="justify-between gap-8 py-8">
+    <Screen className="justify-between gap-8">
       <div className="flex flex-col gap-6 pt-8">
         <div>
-          <p className="text-label text-brand-ink">육아기억</p>
-          <h1 className="text-display text-ink mt-2">
+          {/* 🚨 canvas 위 브랜드 텍스트는 `brand` 다. `brand-ink` 는 soft 배경 위 전용 (문서 §2-2). */}
+          <p className="text-label text-brand">육아기억</p>
+          <PageTitle className="mt-2">
             아이 이야기를
             <br />
             여기에 모아둘게요
-          </h1>
+          </PageTitle>
           <p className="text-body text-ink-muted mt-3">
             육아를 가장 많이 아는 AI 가 아니라,
             <br />

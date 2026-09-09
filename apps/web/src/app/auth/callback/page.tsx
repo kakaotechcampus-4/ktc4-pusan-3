@@ -155,7 +155,7 @@ export default function AuthCallbackPage() {
   const failure = urlErrorMessage ?? (outcome.kind === "failed" ? outcome.message : null);
 
   return (
-    <Screen className="justify-center gap-4 py-8">
+    <Screen className="justify-center gap-4">
       {outcome.kind === "working" && !failure ? (
         <p className="text-body text-ink-muted text-center" aria-live="polite">
           로그인하는 중…

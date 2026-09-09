@@ -8,6 +8,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { TextInput } from "@/components/ui/text-input";
 import { useChildId } from "@/hooks/use-child-id";
@@ -141,14 +142,14 @@ function ChildOnboardingScreen() {
   const consentBlocked = isApiError(save.error, "consent_required") ? save.error : null;
 
   return (
-    <Screen className="gap-5 py-8">
+    <Screen className="gap-5">
       <div>
         <p className="text-label text-ink-subtle">이야기 하나 · 2 / 2</p>
-        <h1 className="text-display text-ink mt-2">
+        <PageTitle className="mt-2">
           아이 이야기,
           <br />
           하나만 들려주세요
-        </h1>
+        </PageTitle>
         <p className="text-body text-ink-muted mt-3">
           편한 것 하나만 해도 돼요. 전부 건너뛰어도 괜찮아요.
         </p>

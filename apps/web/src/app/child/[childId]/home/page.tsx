@@ -9,7 +9,7 @@ export default async function HomePage({ params }: PageProps<"/child/[childId]/h
   const { childId } = await params;
 
   return (
-    <Screen className="justify-center gap-4 py-8">
+    <Screen className="justify-center gap-4">
       <h1 className="text-title text-ink">홈 화면은 다음 이슈예요</h1>
       <Card>
         <p className="text-body-sm text-ink-muted">

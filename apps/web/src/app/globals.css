@@ -141,8 +141,13 @@
   }
 }
 
-/* 웹뷰 노치·홈 인디케이터 영역. 화면 컨테이너에서 pt-safe / pb-safe 로 쓴다.
- * @utility 는 중첩할 수 없어 @layer 밖에 둔다. */
+/* 웹뷰 노치·홈 인디케이터 영역. @utility 는 중첩할 수 없어 @layer 밖에 둔다.
+ *
+ * 🚨 py-* · pt-* 와 **같이 쓰지 않는다.** 같은 padding 속성이라 뒤에 오는 쪽이 이겨서
+ *    한쪽이 조용히 죽는다 — 실제로 화면 5개가 `<Screen className="py-8">` 을 넘겼는데
+ *    pt-safe 가 이겨서 상하 여백이 0 이었다 (하단 문구가 화면 맨 아래에 붙었다).
+ *    여백과 safe area 를 **같이** 주려면 components/ui/screen.tsx 처럼 calc 로 합친다.
+ *    이 유틸은 safe area 만 필요한 곳(예: 하단 고정 바)에 쓴다. */
 @utility pt-safe {
   padding-top: env(safe-area-inset-top);
 }

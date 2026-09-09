@@ -8,6 +8,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { TextInput } from "@/components/ui/text-input";
 import {
@@ -79,13 +80,13 @@ function CreateChildScreen() {
   }
 
   return (
-    <Screen className="gap-6 py-8">
+    <Screen className="gap-6">
       <div>
-        <h1 className="text-display text-ink">
+        <PageTitle>
           누구 이야기를
           <br />
           모아둘까요
-        </h1>
+        </PageTitle>
         <p className="text-body text-ink-muted mt-3">
           별명과 생일만 먼저 알려주세요.
           <br />
