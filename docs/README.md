@@ -72,7 +72,7 @@
 ## API · 백엔드
 
 - [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 28개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 3건 (브라우저로 열기)
-- [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **인가 코드**를 프론트가 받아 서버가 교환한다(JS SDK 에 클라이언트 토큰 수령 메서드가 없다) · 요청 바디는 `{code}` 또는 `{access_token}` 중 하나로 정의하고 지금은 code 만 구현 · 계약서 §01 `Bearer` 유지 · `token` 을 불투명 난수로 정의(즉시 무효화) · 수명 12시간, refresh 없음 · `sessionStorage` 저장, `localStorage` 금지 · `app_id` 대조는 네이티브 경로용으로 보존 · `session` 테이블 신설안 · `POST /auth/logout` 신설안
+- [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **인가 코드**를 프론트가 받아 서버가 교환한다(JS SDK 에 클라이언트 토큰 수령 메서드가 없다) · 요청 바디 `{access_token}` → `{code}`, 웹·앱 동일 · **앱은 시스템 인증 세션**(`openAuthSessionAsync`)으로 열고 셸은 code 만 브릿지로 옮긴다 — 소셜 로그인을 웹뷰에 가두지 않는다 · 계약서 §01 `Bearer` 유지 · `token` 을 불투명 난수로 정의(즉시 무효화) · 수명 12시간, refresh 없음 · `sessionStorage` 저장, `localStorage` 금지 · `session` 테이블 신설안 · `POST /auth/logout` 신설안
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
 
