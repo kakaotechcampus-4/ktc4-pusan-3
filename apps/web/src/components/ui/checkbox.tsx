@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 import type { ReactNode } from "react";
 import { useId } from "react";
 
-import { ICON_STROKE } from "@/components/ui/icon";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { cn } from "@/lib/cn";
 
 /**
@@ -33,10 +33,7 @@ export function Checkbox({
   const descriptionId = description ? `${id}-description` : undefined;
 
   return (
-    <label
-      htmlFor={id}
-      className={cn("group flex min-h-11 cursor-pointer items-start gap-3 py-2", className)}
-    >
+    <label htmlFor={id} className={cn("group flex min-h-11 items-start gap-3 py-2", className)}>
       <input
         id={id}
         type="checkbox"
@@ -48,7 +45,7 @@ export function Checkbox({
       <span
         aria-hidden
         className={cn(
-          "ease-standard mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border transition-colors duration-120",
+          "ease-standard mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-120",
           "peer-focus-visible:outline-brand peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
           checked
             ? "bg-brand border-brand text-white"
@@ -56,7 +53,7 @@ export function Checkbox({
               "border-line-strong group-hover:border-brand group-hover:bg-brand-soft text-transparent",
         )}
       >
-        <Check size={16} strokeWidth={ICON_STROKE} />
+        <Check size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
       </span>
       <span className="flex flex-col gap-1">
         <span className="text-body text-ink">{label}</span>

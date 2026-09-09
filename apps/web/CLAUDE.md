@@ -118,7 +118,8 @@ src/
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
-  `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner`. 시트 · 배너 · 제안 카드는 그 화면 이슈에서 만든다
+  `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet`.
+  배너 · 제안 카드 · 탭은 그 화면 이슈에서 만든다
 - 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** safe-area 와 같은 `padding-top`/`bottom` 속성이라
   뒤에 오는 쪽이 이겨서 한쪽이 **조용히 죽는다** — 화면 5개가 `py-8` 을 넘겼는데 전부 무시돼
   상하 여백이 0 이었다(하단 문구가 화면 맨 아래 모서리에 붙었다). 상하 여백은 `Screen` 이 소유한다
@@ -273,6 +274,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - **Pretendard 는 자체 호스팅한다** (`public/fonts/pretendard/` · 92개 동적 서브셋).
   🚨 `src/app/pretendard.css` 는 `pretendard` 패키지에서 뽑아 url 만 바꾼 파일이다 — **손으로 고치지 않고**, 올릴 때 다시 뽑는다 (prettier 대상에서도 뺐다).
   CDN 을 쓰지 않는 이유와 서브셋을 고른 근거는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
+- 🚨 **`cursor` 는 `globals.css` 가 한 번에 건다.** Tailwind 4 preflight 는 버튼에 `cursor` 를 주지 않아서(v3 와 달라진 점) 전부 기본 화살표였다. 컴포넌트마다 붙이면 빠뜨린다 — 실제로 칩만 `not-allowed` 였다.
 - **상호작용 상태는 primitive 안에 있다** (디자인 시스템 §8 표). 화면에서 `hover:`·`active:` 를 따로 붙이지 않는다.
   🚨 **`active:` 를 빠뜨리면 웹뷰에서 아무 반응이 없다** — 웹뷰에는 호버가 없어서 `hover:` 는 브라우저에서만 걸린다.
   🚨 `hover:` 는 `globals.css` 의 `@custom-variant` 로 **`@media (hover: hover)` 안에서만** 걸리게 덮어 뒀다.
@@ -331,6 +333,43 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
 
 주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
+
+### 화면 확인하는 법
+
+**저장소가 둘로 나뉘어 있다.** 이걸 모르면 "탭 닫았는데 왜 그대로지" 로 막힌다.
+
+| | 어디 | 언제 사라지나 |
+| --- | --- | --- |
+| 로그인 세션 · `bind` · 가입 대기표 | `sessionStorage` | **탭 닫으면** 자동 |
+| 목 시나리오 | `localStorage` | **안 사라진다** — 직접 지우거나 `?scenario=default` |
+
+전부 초기화 (DevTools 콘솔):
+
+```js
+sessionStorage.clear();
+localStorage.removeItem("yukameo.session");
+localStorage.removeItem("yukameo.mock.scenario");
+location.replace("/");
+```
+
+| 보고 싶은 화면 | 어떻게 |
+| --- | --- |
+| 00 로그인 | `/` |
+| 00 로그인 · 버튼 비활성 | `/?scenario=auth_unready` |
+| **가입 동의** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
+| 01 아이 만들기 | 로그인 후 `/onboarding` (목의 `/me` 는 항상 아이가 1명이라 로그인만으로는 안 닿는다) |
+| 02 이야기 하나 | `/child/c1/onboarding` |
+| 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
+| 디자인 시스템 | `/design-system` |
+
+화면만 빨리 보려면 값을 직접 심어도 된다. 🚨 **`bind` 를 빼면 화면은 떠도 제출이 400 이다** — 서버가 형식을 검증하는 게 정상 동작이다.
+
+```js
+sessionStorage.setItem("yukameo.oauth.consent_code", "cc_mock");
+sessionStorage.setItem("yukameo.oauth.provider", "kakao");
+sessionStorage.setItem("yukameo.oauth.bind", "dev".padEnd(43, "x"));
+location.replace("/auth/consent");
+```
 
 ### 규칙
 

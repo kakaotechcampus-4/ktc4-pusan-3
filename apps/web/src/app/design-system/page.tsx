@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -353,6 +354,7 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
 ];
 
 function ComponentSection() {
+  const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
   const [chip, setChip] = useState("공룡");
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
@@ -421,6 +423,40 @@ function ComponentSection() {
       <CardFailed>
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.
       </CardFailed>
+
+      <SubTitle>바텀시트</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        네이티브 &lt;dialog&gt; 위에 얹는다 — 포커스 트랩 · ESC · 바깥 inert · 스크림을 브라우저가
+        준다. 🚨 dismissible: false 는 승인 시트 전용이다.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={() => setSheet("normal")}>
+          일반 시트
+        </Button>
+        <Button variant="secondary" onClick={() => setSheet("approval")}>
+          승인 시트 (안 닫힘)
+        </Button>
+      </div>
+      <BottomSheet
+        open={sheet !== null}
+        onClose={() => setSheet(null)}
+        dismissible={sheet !== "approval"}
+        title={sheet === "approval" ? "승인 시트" : "일반 시트"}
+        description={
+          sheet === "approval"
+            ? "스크림 탭·ESC 로 닫히지 않는다. 실수로 닫혀 draft 가 만료되는 경로를 만들지 않는다."
+            : "스크림 탭·ESC 로 닫힌다."
+        }
+        footer={
+          <Button block onClick={() => setSheet(null)}>
+            닫기
+          </Button>
+        }
+      >
+        <p className="text-body-sm text-ink-muted">
+          내용이 넘치면 화면이 아니라 시트 안에서만 스크롤한다. 최대 높이 88dvh.
+        </p>
+      </BottomSheet>
 
       <SubTitle>아이콘 · 도메인</SubTitle>
       <p className="text-caption text-ink-subtle">

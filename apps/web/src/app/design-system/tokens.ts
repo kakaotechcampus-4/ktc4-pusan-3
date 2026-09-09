@@ -106,11 +106,6 @@ export const TYPE_STEPS = [
 
 /** §7 이 사양을 정했지만 아직 코드에 없는 것. 이 목록이 비면 §7 이 다 구현된 것이다. */
 export const NOT_BUILT = [
-  {
-    name: "바텀시트",
-    where: "09 캘린더 승인 · 06 승인 게이트",
-    why: "네이티브 <dialog> 위에 얹는다",
-  },
   { name: "배너 (caution · danger)", where: "06 승인 · 알레르기 저촉", why: "" },
   {
     name: "제안 카드 (개인화 · 일반 · 실패)",

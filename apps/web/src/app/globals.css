@@ -146,6 +146,20 @@
     overscroll-behavior-y: none;
   }
 
+  /* 🚨 Tailwind 4 preflight 는 버튼에 cursor 를 주지 않는다 (v3 에서 달라진 점).
+   * 웹뷰에는 커서가 없지만 브라우저로 들어오면 "누를 수 있는 것" 이 안 보인다.
+   * 컴포넌트마다 붙이면 빠뜨리는 곳이 생겨서(실제로 칩만 not-allowed 였다) 여기 한 번에 건다. */
+  button:not(:disabled),
+  label:has(> input:not(:disabled)),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  label:has(> input:disabled) {
+    cursor: not-allowed;
+  }
+
   /* 포커스는 항상 보인다 (문서 §10). outline: none 을 쓰지 말 것. */
   :focus-visible {
     outline: 2px solid var(--color-brand);

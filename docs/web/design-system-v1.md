@@ -255,9 +255,11 @@
 | `input:focus-visible` | `brand` 2px outline · offset 2 · 테두리는 그대로 |
 | `input[aria-invalid]` | `danger` 1px 테두리 + 아래 `caption` / `danger-ink` 로 사유 한 줄 |
 | `textarea` (03 입력) | 위와 동일 · 최소 높이 96 · 자동 증가 · 최대 5줄 후 스크롤 |
-| `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 24 × 24 · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 라벨과 간격 12 · 행 전체가 터치 타깃(최소 44) |
+| `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 **20 × 20** · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 라벨과 간격 12 · 행 전체가 터치 타깃(최소 44) |
 
 🚨 **`failed` 이벤트가 오면 `raw_text` 를 `textarea` 에 그대로 되돌려 놓는다.** 부모가 다시 타이핑하게 만들지 않는다.
+
+**표식은 20px 이다.** 처음 24px 로 잡았는데 16px 라벨 옆에서 표식이 글자보다 커 보였다. 누르는 영역은 행 전체(44px)라 표식을 줄여도 터치가 나빠지지 않는다.
 
 **체크박스에 새 radius 를 만들지 않으려고 `rounded-full` 을 골랐다.** 24px 사각형에 `radius-field`(10px) 는 과하고, 그 사이 값을 만들면 §6 의 radius 4개가 5개가 된다.
 
@@ -305,6 +307,8 @@
 - 드래그 핸들 36 × 4 · `line-strong` · full
 - 하단 버튼 영역은 `pb-safe` + 16 여백
 - **승인 시트는 스크림 탭으로 닫히지 않는다.** 명시적으로 닫아야 한다 — 실수로 닫혀서 draft 가 만료되는 경로를 만들지 않는다 (승인 없는 draft 는 24시간 뒤 만료된다).
+- 구현은 [`components/ui/bottom-sheet.tsx`](../../apps/web/src/components/ui/bottom-sheet.tsx) 다. `dismissible: false` 가 위 규칙(스크림·ESC 로 안 닫힘)이고 **승인 시트 전용**이다 — 되돌릴 수 있는 것(약관 상세 등)에는 쓰지 않는다.
+- `showModal()` 이 바깥 조작은 막아 주지만 **배경 스크롤까지 막지는 않는다.** 컴포넌트가 `body` 를 `overflow: hidden` 으로 잠근다.
 
 ### 탭 (07 화면 2계층)
 
@@ -362,6 +366,8 @@
 | `input` | 테두리 `ink-subtle` | — | 〃 |
 
 전환은 전부 `fast`(120ms) + `--ease-standard` 다. 색만 바꾸고 **크기·위치는 건드리지 않는다.**
+
+🚨 **`cursor` 는 `globals.css` 가 한 번에 건다** — 누를 수 있는 것은 `pointer`, 비활성은 `not-allowed`. Tailwind 4 preflight 는 버튼에 `cursor` 를 주지 않아서(v3 에서 달라진 점) 전부 기본 화살표였다. 웹뷰에는 커서가 없지만 브라우저로 들어오면 누를 수 있는지가 안 보인다.
 
 🚨 **`hover` 는 `@media (hover: hover)` 안에서만 건다.** Tailwind 기본 `hover:` 는 미디어쿼리 없이 `:hover` 를 내는데(생성 CSS 로 확인), 터치 기기에서는 **탭한 뒤 손을 떼도 호버가 눌러붙어** 방금 누른 버튼이 계속 눌린 것처럼 보인다. 이 화면은 대부분 웹뷰·모바일이라 그게 기본 경험이 된다. `globals.css` 에서 `@custom-variant hover` 로 덮어 뒀으니 화면 코드는 `hover:` 를 그냥 쓰면 된다.
 

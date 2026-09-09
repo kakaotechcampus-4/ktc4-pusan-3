@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,7 +25,13 @@ import {
   readConsentCode,
   readProvider,
 } from "@/lib/auth";
-import { CONSENT_POLICY_VERSION, SIGNUP_CONSENTS, type ConsentScope } from "@/lib/consent";
+import {
+  CONSENT_POLICY_VERSION,
+  SIGNUP_CONSENTS,
+  TERMS_NOT_FINAL,
+  type ConsentItem,
+  type ConsentScope,
+} from "@/lib/consent";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -56,6 +63,8 @@ export default function AuthConsentPage() {
     child_health: false,
   });
   const [stage, setStage] = useState<Stage>("consent");
+  /** 상세를 펼쳐 볼 항목. null 이면 시트가 닫혀 있다. */
+  const [detail, setDetail] = useState<ConsentItem | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,11 +154,30 @@ export default function AuthConsentPage() {
               description={item.description}
             />
             {item.legalBasis ? (
-              <p className="text-caption text-ink-subtle mt-1 pl-9">{item.legalBasis}</p>
+              <p className="text-caption text-ink-subtle mt-1 pl-8">{item.legalBasis}</p>
             ) : null}
+            <div className="pl-6">
+              <Button variant="tertiary" onClick={() => setDetail(item)}>
+                상세 보기
+              </Button>
+            </div>
           </Card>
         ))}
       </div>
+
+      <BottomSheet
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        title={detail?.label ?? ""}
+        description={detail?.legalBasis}
+        footer={
+          <Button block onClick={() => setDetail(null)}>
+            닫기
+          </Button>
+        }
+      >
+        {detail ? <ConsentDetail item={detail} /> : null}
+      </BottomSheet>
 
       <div className="mt-auto flex flex-col gap-3 pt-2">
         {error ? (
@@ -170,5 +198,28 @@ export default function AuthConsentPage() {
         </p>
       </div>
     </Screen>
+  );
+}
+
+/**
+ * 🚨 약관 전문이 아니다. 보관 기간·삭제 범위가 아직 미정이라(CLAUDE.md §10) 정식 문구를
+ *    쓸 수 없고, 없는 조항을 지어 넣으면 그대로 배포된다. 확정된 사실만 보여주고
+ *    아직 최종본이 아니라는 것을 화면에 밝힌다.
+ */
+function ConsentDetail({ item }: { item: ConsentItem }) {
+  return (
+    <div className="flex flex-col gap-5">
+      {item.details.map((section) => (
+        <section key={section.heading}>
+          <h3 className="text-section text-ink">{section.heading}</h3>
+          <ul className="text-body-sm text-ink-muted marker:text-ink-subtle mt-2 flex list-disc flex-col gap-1.5 pl-5">
+            {section.lines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p className="text-caption text-ink-subtle border-line border-t pt-4">{TERMS_NOT_FINAL}</p>
+    </div>
   );
 }

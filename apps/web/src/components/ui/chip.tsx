@@ -27,7 +27,7 @@ export function Chip({
       aria-pressed={selected}
       disabled={disabled}
       onClick={onClick}
-      className="flex min-h-11 items-center py-2 disabled:cursor-not-allowed"
+      className="flex min-h-11 items-center py-2"
     >
       <span
         className={cn(
