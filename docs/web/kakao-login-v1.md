@@ -126,7 +126,8 @@
 | [`lib/auth/oauth.ts`](../../apps/web/src/lib/auth/oauth.ts) | 로그인 **시작**. `ready` 확인 → bind 생성 → 절대 `start_url` 로 이동. provider·복귀경로 기억 | ✅ 신설 (`lib/auth/kakao.ts` 삭제) |
 | [`lib/auth/oauth-bind.ts`](../../apps/web/src/lib/auth/oauth-bind.ts) | bind 비밀 생성·보관·소비 | ✅ 신설 |
 | [`app/auth/callback/page.tsx`](../../apps/web/src/app/auth/callback/page.tsx) | 돌아온 코드를 교환하고 다음 화면으로 보냄 | ✅ 신설 |
-| 동의 화면 | 필수 스코프 2건 → `POST /auth/kakao/signup` | ⬜ 별도 이슈 (§9-3) — 그때까지 콜백 화면이 멈춘다 |
+| [`app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) | 가입 동의 4건 → `POST /auth/kakao/signup` + `POST /consents` × 2 | ✅ 신설 |
+| [`lib/consent.ts`](../../apps/web/src/lib/consent.ts) | 스코프 정본 · 약관 버전 · 어느 엔드포인트로 가는지 | ✅ 신설 |
 | [`app/page.tsx`](../../apps/web/src/app/page.tsx) | 버튼 → 시작 함수. status prefetch. 성공 처리는 콜백 화면으로 이사 | ✅ 수정 |
 | [`stores/session.ts`](../../apps/web/src/stores/session.ts) | 저장소 `localStorage` → **`sessionStorage`**, `expiresAt` 보관, `hasLiveSession()` | ✅ 수정 |
 | [`lib/api/client.ts`](../../apps/web/src/lib/api/client.ts) | `401 unauthenticated` → 세션 비우고 00 으로 (핸들러는 Providers 가 꽂는다) | ✅ 수정 |
@@ -237,24 +238,38 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 ### 4-5. 신규 가입 — 동의 화면
 
-[명세 §6-1](../api/auth-kakao-v1.md) 대로면 **동의 전에는 `parent` 가 없다.** 그래서 신규는 ⑧ 에서 토큰을 못 받고, 동의 화면이 한 번 더 서버를 부른다.
+[명세 §6-1](../api/auth-kakao-v1.md) 대로면 **동의 전에는 `parent` 가 없다.** 그래서 신규는 교환 단계에서 토큰을 못 받고, 동의 화면이 계정을 만든다.
 
-```ts
-POST /auth/kakao/signup {
-  consent_code,                 // ⑧ 응답 (TTL 10분)
-  bind,                         // ② 에서 만든 같은 값
-  consents: [
-    { scope: "service_terms",   policy_version: "2026-09-01" },
-    { scope: "privacy_account", policy_version: "2026-09-01" },
-  ],
-}
-→ 200 { token, expires_in, is_new: true, parent, consent_required: [] }
+콜백이 `consent_code` 를 `sessionStorage` 에 넣고 `/auth/consent` 로 보낸다 — 🚨 **가입 대기표를 주소창·브라우저 기록에 남기지 않으려고** URL 이 아니라 저장소를 쓴다. 대기표 없이 이 주소로 들어오면 00 으로 되돌린다.
+
+#### 항목 4건 — 보내는 곳이 갈린다
+
+| 스코프 | 대상 | 어디로 | 근거 |
+| --- | --- | --- | --- |
+| `service_terms` | 계정 | `POST /auth/{provider}/signup` | 보호자 각자 1회 |
+| `privacy_account` | 계정 | 〃 | 보호자 본인 개인정보 |
+| `child_basic` | 아이 | `POST /consents` | 개인정보보호법 제22조의2 |
+| `child_health` | 아이 | 〃 | 제23조 — 민감정보 **별도 동의** |
+
+**아이 스코프를 아이가 생기기 전에 받는 이유** — 계약서 §04 가 "동의는 저장보다 먼저다" 로 못박았고 **`child_basic` 없이 `POST /children` 은 403** 이다. 즉 01 화면(아이 만들기)보다 앞서야 한다. 그래서 이 화면에서 4건을 다 받는다.
+
+```
+① POST /auth/kakao/signup { consent_code, bind, consents: [계정 2건] }   ← 계정이 여기서 생긴다
+② signIn(token, expires_in) · consent_code · bind 정리
+③ POST /consents × 2  { scope, action: "granted", policy_version, guardian_attested }
+④ /onboarding 으로 — 방금 만든 계정이라 아이가 없다. /me 를 물어볼 것도 없다
 ```
 
-- 계정 스코프 2건은 **여기서** 보낸다. 아이 스코프(`child_basic` · `child_health`)는 기존 `POST /consents` 그대로다 (계약서 §04).
-- 필수 스코프가 빠지면 `403 consent_required`. **동의를 안 한 상태로 넘어가는 경로를 화면에 만들지 않는다.**
-- `consent_code` TTL 이 10분이다. 동의 화면에서 오래 머물면 만료되므로, 만료 응답은 00 화면으로 되돌려 다시 시작하게 한다.
-- 🚨 **동의 화면에 다른 입력을 섞지 않는다.** 법적 고지를 읽고 체크하는 화면인데 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다 (테크스펙 리스크 ④). 보호자 닉네임을 여기서 받지 않기로 한 것도 같은 이유다 ([명세 §4-4](../api/auth-kakao-v1.md)).
+🚨 **①이 성공한 뒤 ③이 실패하면 계정만 남는다.** 그 상태로 01 화면에 가면 `POST /children` 이 403 이다. 그래서 화면이 단계를 들고 있다가 **재시도할 때 ①을 다시 돌리지 않고 ③만 다시 보낸다.**
+
+#### 화면 규칙
+
+- 🚨 **"전체 동의" 를 두지 않는다.** 민감정보(`child_health`)는 다른 동의와 **구분해서** 받아야 한다 (개인정보보호법 제23조). 한 번에 쓸어 담는 버튼이 그 구분을 없앤다. 4건이라 개별 체크로 충분하다.
+- 🚨 **승인 게이트가 아니다.** `btn-approve` 와 `caution` 색을 쓰지 않는다 — 그 둘은 되돌릴 수 없는 2곳 전용이다 (CLAUDE.md §2). 제출은 `btn-primary`.
+- 🚨 **다른 입력을 섞지 않는다.** 법적 고지를 읽고 확인하는 화면인데 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다 (테크스펙 리스크 ④). 보호자 닉네임을 여기서 받지 않기로 한 것도 같은 이유다 ([명세 §4-4](../api/auth-kakao-v1.md)).
+- **근거 법조문을 화면에 그대로 보여준다.** 무엇에 동의하는지 숨기지 않는다.
+- 4건이 전부 필수라 하나라도 빠지면 제출 버튼이 비활성이다. 필수는 **색이 아니라 `[필수]` 라벨**로 표시한다.
+- `consent_code` TTL 이 10분이다. 만료되면 00 으로 되돌려 다시 시작하게 한다.
 
 ### 4-6. 00 화면에서 손볼 것
 
@@ -402,10 +417,15 @@ function loadCallback(url: string) {
 - [x] 새로고침 후 로그인 유지 · 토큰이 `sessionStorage` 에만 · `expiresAt` 저장 · 새 컨텍스트는 해제
 - [x] 프로덕션 빌드 실행 번들(`.js`)에 자리표시 코드 문자열 없음 (`.js.map` 에만 남는다)
 
-동의 화면이 생긴 뒤에 확인할 것:
+- [x] `?scenario=consent` → 동의 화면 → 4건 체크 → signup → `/onboarding` 진입
+- [x] 체크박스 4개 · **"전체 동의" 없음** · 하나라도 빠지면 제출 비활성
+- [x] `consent_code` 가 URL 이 아니라 `sessionStorage` 에 있음 · 대기표 없이 `/auth/consent` 직접 접근 → 00 으로
+- [x] 보낸 요청이 `signup`(계정 2건) → `POST /consents` × 2(아이 2건) 순서
 
-- [ ] `?scenario=consent` → 동의 화면 → signup → 진입 (계정이 그 전에 안 생기는지)
+서버가 붙어야 확인 가능한 것에 추가:
+
 - [ ] `consent_code` 만료(10분) 응답 → 00 으로 되돌림
+- [ ] `POST /consents` 를 `child_id` 없이 받아 주는지 (§9-2)
 
 서버가 붙어야 확인 가능한 것:
 
@@ -430,13 +450,14 @@ function loadCallback(url: string) {
 ### 9-2. 프론트가 서버·팀에 요청한 것
 
 - **복귀 URL 에 `provider` 를 실어주면 좋겠다.** 복귀 경로가 provider 를 안 담아서(`/auth/callback?code=`) 프론트가 시작 시점에 저장해 둬야 하고, 저장이 유실되면 어느 엔드포인트로 교환할지 모른다. 서버는 이미 아는 값이고 열거값이라 오픈 리다이렉트 표면도 아니다. provider 가 카카오 하나뿐인 동안은 저장 방식으로 버틴다.
+- 🚨 **아이 스코프를 `child_id` 없이 받아 줄 수 있는지 확인이 필요하다.** 계약서 §04 의 `POST /consents` 예시는 아이 스코프에 `child_id` 를 싣는데, `child_basic` 은 **아이를 만들기 전에** 있어야 한다(`child_basic` 없이 `POST /children` → 403). 즉 가입 시점에는 실을 `child_id` 가 없다. 지금 프론트는 **생략하고 보낸다**. 서버가 거절하기로 하면 대안은 ㉠ `signup` 의 `consents` 에 4건을 다 받거나 ㉡ 01 화면에서 아이를 만든 뒤 받는 것인데, ㉡은 "동의는 저장보다 먼저다" 와 부딪힌다.
+- **`guardian_attested` 를 별도 체크박스로 받아야 하는지 확인이 필요하다.** 지금은 아이 스코프에 `true` 로 함께 싣는다. 법정대리인 확인을 별도 문항으로 받아야 하면 항목이 5건이 된다.
 - **`client` 허용값 밖일 때의 응답을 하나로 정해달라.** 명세 §2-3·§3-2 는 `400`, 리뷰 코멘트는 `?error=invalid_client` 리다이렉트였다. 프론트가 잘못된 값을 보낼 일은 없지만, 400 이면 사용자가 JSON 에러 페이지에 남고 리다이렉트면 앱으로 돌아온다.
 - **앱 콜드 스타트 재로그인 체감을 `M-02` 에 넣어야 한다** (§4-7). 웹의 "탭 닫을 때" 와 성격이 다르다 — 앱은 열 때마다 인앱 브라우저가 한 번 번쩍인다. 12시간 조정 논의에 앱 케이스를 같이 올린다.
 - **"외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다"** 를 최상위 CLAUDE.md §2 절대 규칙으로 올리는 데 동의한다 ([명세 §7-7](../api/auth-kakao-v1.md)).
 
 ### 9-3. 별도 이슈로 뺄 것
 
-- 동의 화면 (§4-5) — 10 설정의 동의 관리와 같은 컴포넌트를 쓸지 결정 필요.
-  그때까지 콜백 화면이 "동의 화면은 아직 없어요" 로 멈춘다 (§4-4). 🚨 **동의를 건너뛰고 넘어가는 임시 경로를 만들지 않았다** — 만들면 그 경로가 남는다
+- **10 설정의 동의 관리** — 현황·철회 화면. `lib/consent.ts` 의 스코프 목록을 같이 쓰고, 가입 화면과 같은 컴포넌트를 쓸지는 그 이슈에서 정한다
 - apple · google · naver — 서버가 같은 틀이라 `startOAuthLogin(provider)` 에 값만 추가된다. 버튼·약관 문구는 화면 이슈
 - 셸의 `Linking` 복귀 경로 (§4-3 재검토 조건)

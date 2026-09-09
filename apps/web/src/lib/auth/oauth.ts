@@ -96,6 +96,27 @@ export function clearProvider(): void {
   sessionStorage.removeItem(PROVIDER_KEY);
 }
 
+/* ── 가입 대기표 (consent_code) ─────────────────────────────────────────
+ * 신규 회원은 교환 응답으로 토큰 대신 `consent_code` 를 받는다. 동의 화면이 그걸 들고
+ * `/signup` 을 부르면 그때 계정이 만들어진다 (TTL 10분).
+ *
+ * 🚨 URL 이 아니라 sessionStorage 에 둔다 — 가입 대기표가 주소창·브라우저 기록에 남지 않게.
+ */
+
+const CONSENT_CODE_KEY = "yukameo.oauth.consent_code";
+
+export function rememberConsentCode(code: string): void {
+  sessionStorage.setItem(CONSENT_CODE_KEY, code);
+}
+
+export function readConsentCode(): string | null {
+  return sessionStorage.getItem(CONSENT_CODE_KEY);
+}
+
+export function clearConsentCode(): void {
+  sessionStorage.removeItem(CONSENT_CODE_KEY);
+}
+
 /* ── 복귀 경로 ──────────────────────────────────────────────────────────
  * "로그인 후 원래 보던 화면으로" 는 프론트 책임이다. 서버가 경로를 받으면 그것도
  * 오픈 리다이렉트 표면이 된다 (문서 §3-5).

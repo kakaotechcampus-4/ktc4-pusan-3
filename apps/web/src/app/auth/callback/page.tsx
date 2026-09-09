@@ -14,7 +14,14 @@ import {
   type AuthExchangeResponse,
   type Me,
 } from "@/lib/api";
-import { clearBind, clearProvider, consumeReturnPath, readBind, readProvider } from "@/lib/auth";
+import {
+  clearBind,
+  clearProvider,
+  consumeReturnPath,
+  readBind,
+  readProvider,
+  rememberConsentCode,
+} from "@/lib/auth";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -49,8 +56,6 @@ const HANDOFF_EXPIRED_MESSAGE = "로그인 확인이 만료됐어요. 다시 시
  */
 type Outcome =
   | { kind: "working" }
-  /** 신규 회원 — 동의 화면이 아직 없어서 여기서 멈춘다. */
-  | { kind: "signup_blocked" }
   /** 기존 회원인데 필수 동의가 남았다. */
   | { kind: "consent_blocked"; scopes: string[] }
   | { kind: "failed"; message: string };
@@ -112,7 +117,10 @@ export default function AuthCallbackPage() {
 
         // 🚨 token 유무가 아니라 status 필드 유무로 분기한다.
         if (isSignupPending(res)) {
-          setOutcome({ kind: "signup_blocked" });
+          // 신규 회원 — 아직 계정이 없다. 동의를 받아야 그때 만들어진다.
+          // bind 는 여기서 지우지 않는다: /signup 이 같은 값을 한 번 더 쓴다.
+          rememberConsentCode(res.consent_code);
+          router.replace("/auth/consent");
           return;
         }
 
@@ -160,18 +168,6 @@ export default function AuthCallbackPage() {
         <p className="text-body text-ink-muted text-center" aria-live="polite">
           로그인하는 중…
         </p>
-      ) : null}
-
-      {outcome.kind === "signup_blocked" ? (
-        <Card>
-          <p className="text-body text-ink">약관 동의가 필요해요</p>
-          <p className="text-body-sm text-ink-muted mt-2">
-            처음이시네요. 서비스 이용약관과 개인정보 처리에 동의하면 계정이 만들어져요.
-          </p>
-          <p className="text-caption text-ink-subtle mt-2">
-            동의 화면은 아직 없어요 (별도 이슈). 그때까지 여기서 멈춥니다.
-          </p>
-        </Card>
       ) : null}
 
       {outcome.kind === "consent_blocked" ? (

@@ -230,8 +230,13 @@
 | `input:focus-visible` | `brand` 2px outline · offset 2 · 테두리는 그대로 |
 | `input[aria-invalid]` | `danger` 1px 테두리 + 아래 `caption` / `danger-ink` 로 사유 한 줄 |
 | `textarea` (03 입력) | 위와 동일 · 최소 높이 96 · 자동 증가 · 최대 5줄 후 스크롤 |
+| `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 24 × 24 · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 라벨과 간격 12 · 행 전체가 터치 타깃(최소 44) |
 
 🚨 **`failed` 이벤트가 오면 `raw_text` 를 `textarea` 에 그대로 되돌려 놓는다.** 부모가 다시 타이핑하게 만들지 않는다.
+
+**체크박스에 새 radius 를 만들지 않으려고 `rounded-full` 을 골랐다.** 24px 사각형에 `radius-field`(10px) 는 과하고, 그 사이 값을 만들면 §6 의 radius 4개가 5개가 된다.
+
+🚨 **동의 화면의 체크박스는 승인 게이트가 아니다.** `btn-approve` 와 `caution` 색을 쓰지 않는다 — 그 둘은 되돌릴 수 없는 2곳 전용이고(§3), 법적 동의는 그 2곳이 아니다. 제출은 `btn-primary` 다.
 
 ### 칩
 
@@ -367,6 +372,7 @@
 | 화면 | 무엇을 | 무엇으로 |
 | --- | --- | --- |
 | 00 소개 · 로그인 | 카카오 로그인 | `btn-kakao` (§2-6) + `card` |
+| 00 가입 동의 (신규만) | 필수 4건 · 법조문 명시 | `card` × 4 + `checkbox` + `btn-primary`. 🚨 "전체 동의" 없음 · `caution`/`btn-approve` 아님 |
 | 01 첫 진입 | 별명 · **생일** · 관계 | `input` × 2 + `chip-choice`. 🚨 나이를 받지 않는다 — `age_display` 는 서버가 만든다 |
 | 02 이야기 하나 | 관심 · 알레르기 · 한 줄 · 발달 문항 | `card` 4개 + `chip-choice` + `input` |
 | 03 홈 · 빈 상태 | 기억 0건 (`highlight: null`) | `empty-state` + `chip-count`. 경보 아님 |

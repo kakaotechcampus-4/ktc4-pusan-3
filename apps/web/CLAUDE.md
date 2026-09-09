@@ -86,6 +86,7 @@ src/
 | --- | --- |
 | 00 소개 · 로그인 | `/` |
 | 로그인 복귀 지점 (보여줄 내용 없음) | `/auth/callback` |
+| 가입 동의 (신규 회원만) | `/auth/consent` |
 | 01 첫 진입 (아이 만들기) | `/onboarding` |
 | 02 이야기 하나 | `/child/[childId]/onboarding` |
 | 03~09 | `/child/[childId]/…` |
@@ -115,7 +116,7 @@ src/
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
-  `TextInput` · `Chip`/`ChipRow` · `Card`/`CardFailed`. 시트 · 배너 · 제안 카드는 그 화면 이슈에서 만든다
+  `TextInput` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed`. 시트 · 배너 · 제안 카드는 그 화면 이슈에서 만든다
 - 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** safe-area 와 같은 `padding-top`/`bottom` 속성이라
   뒤에 오는 쪽이 이겨서 한쪽이 **조용히 죽는다** — 화면 5개가 `py-8` 을 넘겼는데 전부 무시돼
   상하 여백이 0 이었다(하단 문구가 화면 맨 아래 모서리에 붙었다). 상하 여백은 `Screen` 이 소유한다
@@ -147,7 +148,12 @@ src/
 - 🚨 **자리표시 코드는 개발 환경 + 목 서버일 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다 (빌드 후 번들에서 문자열이 사라지는지 확인한다)
 - 🚨 **1회용 코드는 한 번만 교환한다.** StrictMode 의 이중 실행으로 두 번 소비하면 두 번째가 `401 invalid_handoff` 다 — `useRef` 가드를 둔다
 - 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다.** 토큰을 **얻으러** 가는 화면이라 감싸면 `/` 로 튕긴다
-- `consent_required` 가 비어 있지 않으면(기존 회원) 또는 응답이 신규 가입 대기면 **콜백 화면에서 멈춘다.** 동의 화면은 아직 없다
+- **신규 회원은 `/auth/consent` 로 보낸다.** 동의 4건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 2건은 `POST /consents` 다.
+  🚨 **아이 스코프를 아이보다 먼저 받는다** — `child_basic` 없이 `POST /children` 은 403 이다 (계약서 §04 "동의는 저장보다 먼저다")
+  🚨 **"전체 동의" 를 만들지 않는다** — 민감정보(`child_health`)는 다른 동의와 구분해서 받아야 한다 (개인정보보호법 제23조)
+  🚨 **승인 게이트가 아니다** — `btn-approve` · `caution` 을 쓰지 않는다. 그 둘은 되돌릴 수 없는 2곳 전용이다 (§2)
+  스코프 목록·약관 버전의 정본은 `lib/consent.ts` 다. 10 설정의 동의 관리도 같은 파일을 쓴다
+- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 10 설정의 동의 화면이 아직 없다
 
 ### 세션 — `sessionStorage` 다
 

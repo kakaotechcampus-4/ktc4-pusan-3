@@ -86,9 +86,21 @@ export const authHandlers = [
   }),
 
   // append-only. 철회도 withdrawn 행을 추가하는 것이지 지우는 게 아니다.
+  //
+  // 🚨 가입 직후에는 아이 스코프(child_basic · child_health)가 child_id 없이 온다 —
+  //    child_basic 없이 POST /children 이 403 이라 아이를 만들기 **전에** 받아야 하기 때문이다
+  //    (계약서 §04 "동의는 저장보다 먼저다"). 실서버가 이걸 받아 주는지는 #18 확인 대상이고,
+  //    목은 받아 준다. 서버가 거절하기로 하면 여기와 화면을 같이 고친다.
   http.post(url("/consents"), async ({ request }) => {
     await networkDelay();
-    const body = (await request.json()) as { scope: string; action: string };
+    const body = (await request.json()) as {
+      scope: string;
+      action: string;
+      policy_version?: string;
+    };
+    if (!body.policy_version) {
+      return apiError(400, "validation_failed", "policy_version 이 필요해요");
+    }
     return HttpResponse.json(
       {
         consent: {

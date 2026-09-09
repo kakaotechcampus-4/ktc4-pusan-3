@@ -379,3 +379,26 @@ export interface OnboardingResponse {
   skipped: string[];
   run_id: string;
 }
+
+/* ── 동의 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * POST /consents (계약서 §04). append-only — 철회도 `withdrawn` 행을 **추가**한다.
+ *
+ * 🚨 계정 스코프면 `child_id` 를 생략한다. 아이 스코프인데도 아이가 아직 없는 경우가
+ *    가입 직후다 — `child_basic` 없이 `POST /children` 이 403 이라, 아이를 만들기 전에
+ *    받아야 하기 때문이다 (#18 확인 대상).
+ */
+export interface ConsentRequest {
+  scope: string;
+  action: "granted" | "withdrawn";
+  child_id?: string;
+  policy_version: string;
+  /** 아이 스코프에서 보호자임을 확인한 표시. */
+  guardian_attested?: boolean;
+}
+
+export interface ConsentResponse {
+  consent: { id: string; scope: string; action: string; acted_at: string };
+  effective: Record<string, boolean>;
+}
