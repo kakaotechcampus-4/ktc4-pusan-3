@@ -83,7 +83,8 @@ function CreateChildScreen() {
   return (
     <Screen className="gap-6">
       <div>
-        <PageTitle>
+        <p className="text-label text-ink-subtle">아이 등록 · 1 / 2</p>
+        <PageTitle className="mt-2">
           누구 이야기를
           <br />
           모아둘까요

@@ -156,7 +156,7 @@ function ChildOnboardingScreen() {
         </p>
       </div>
 
-      <Section title="① 요즘 좋아하는 것" note="여러 개 골라도 되고, 안 골라도 돼요.">
+      <Section title="요즘 좋아하는 것" note="여러 개 골라도 되고, 안 골라도 돼요.">
         <ChipRow>
           {INTERESTS.map((item) => (
             <Chip
@@ -175,7 +175,7 @@ function ChildOnboardingScreen() {
         <p className="text-caption text-ink-subtle mt-2">고른 것은 보호자 자기보고로 저장돼요.</p>
       </Section>
 
-      <Section title="② 알레르기 · 식품 제한" note="식사 제안을 걸러내는 데만 써요.">
+      <Section title="알레르기 · 식품 제한" note="식사 제안을 걸러내는 데만 써요.">
         <ChipRow>
           {SAFETY_CHOICES.map((choice) => (
             <Chip
@@ -211,7 +211,7 @@ function ChildOnboardingScreen() {
         </p>
       </Section>
 
-      <Section title="③ 오늘 있었던 일 한 줄">
+      <Section title="오늘 있었던 일 한 줄">
         <TextInput
           label="말하듯 적어주세요"
           placeholder="예: 오늘은 블록을 오래 쌓았어요"
@@ -223,7 +223,7 @@ function ChildOnboardingScreen() {
 
       {screening.data && screening.data.items.length > 0 ? (
         <Section
-          title="④ 요즘 발달 상태 · 보호자가 보기에"
+          title="요즘 발달 상태 · 보호자가 보기에"
           note={`${screening.data.age_band} 선별 문항이에요. 각 문항에 맞는 수준을 골라주세요.`}
         >
           <div className="flex flex-col gap-4">

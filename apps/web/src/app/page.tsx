@@ -146,14 +146,10 @@ export default function LoginPage() {
 
       <section className="flex flex-col gap-3 pb-2">
         <h2 className="text-section text-ink">이런 건 하지 않아요</h2>
-        <ul className="text-body-sm text-ink-muted flex flex-col gap-2">
+        {/* 마커는 CSS 로 그린다 — 화면에 기호를 글자로 찍지 않는다. */}
+        <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
           {NOT_DOING.map((line) => (
-            <li key={line} className="flex gap-2">
-              <span aria-hidden className="text-ink-subtle">
-                ·
-              </span>
-              {line}
-            </li>
+            <li key={line}>{line}</li>
           ))}
         </ul>
       </section>
@@ -176,9 +172,7 @@ function ExamplePreview() {
         {EXAMPLE_INPUT}
       </p>
 
-      <p aria-hidden className="text-ink-subtle text-center text-sm leading-none">
-        ↓
-      </p>
+      <p className="text-caption text-ink-subtle">이렇게 정리해서 내놔요</p>
 
       <div className="bg-brand-soft rounded-card p-4">
         <span className="bg-surface text-activity-ink text-label inline-flex h-7 items-center gap-1.5 rounded-full px-2.5">
