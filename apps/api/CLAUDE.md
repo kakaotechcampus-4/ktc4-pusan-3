@@ -14,7 +14,7 @@
 | 웹 프레임워크 | FastAPI |
 | ORM | SQLAlchemy 2.0 (async, asyncpg) |
 | 마이그레이션 | Alembic |
-| DB | PostgreSQL 17 + pgvector |
+| DB | PostgreSQL 18 + pgvector |
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
@@ -33,7 +33,7 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
   — 날짜·나이 계산, 일정 충돌, 알레르기·금지식품 필터, 감쇠, 반복 승격
 
 ### `app/domains/`
-- **허용**: rules, core, sqlalchemy
+- **허용**: rules, core, infra/db, sqlalchemy
 - **금지**: fastapi, agents, providers, integrations
 
 ### `app/agents/`

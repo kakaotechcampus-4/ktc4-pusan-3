@@ -73,3 +73,4 @@ target/
 
 # ── Claude 데스크톱이 저장하는 작업 문서 (저장소와 무관) ──
 Claude outputs/
+/ktc4-pusan-3/
