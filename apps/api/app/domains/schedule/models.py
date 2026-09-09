@@ -1,12 +1,12 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Text, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infra.db.base import Base, UUIDPk
+from app.infra.db.base import Base, Timestamps, UUIDPk
 
 
 class EventType(str, enum.Enum):
@@ -89,14 +89,6 @@ class Reminder(Base, UUIDPk):
     )
     remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-import uuid
-from datetime import date
-
-from sqlalchemy import Date, Text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID  # UUID: child_id용
-from sqlalchemy.orm import Mapped, mapped_column
-
-from app.infra.db.base import Base, Timestamps, UUIDPk
 
 
 class Calendar(Base, UUIDPk, Timestamps):
