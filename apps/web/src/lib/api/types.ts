@@ -243,3 +243,87 @@ export interface Page<T> {
   items: T[];
   next_cursor: string | null;
 }
+
+/* ── 00 로그인 ────────────────────────────────────────────────────────── */
+
+/**
+ * POST /auth/{provider} (계약서 §04).
+ *
+ * 🚨 `consent_required` 가 비어 있지 않으면 프론트는 다른 화면으로 넘어가지 않는다.
+ *    그 아래 어떤 저장도 일어나면 안 되는 상태다.
+ */
+export interface AuthResponse {
+  token: string;
+  is_new: boolean;
+  parent: { id: string; nickname: string | null };
+  consent_required: string[];
+}
+
+/* ── 01 첫 진입 ──────────────────────────────────────────────────────── */
+
+/** 수집은 별명 · 생일 · 관계까지 (F-13). 프로필 질문을 늘리지 않는다 (CLAUDE.md §2). */
+export type Relation = "mother" | "father" | "grandparent" | "other";
+
+export interface CreateChildRequest {
+  nickname: string;
+  /** YYYY-MM-DD. 나이가 아니라 생일을 받는다 — 나이는 서버가 계산한다. */
+  birth_date: string;
+  relation?: Relation;
+}
+
+export interface CreateChildResponse {
+  id: string;
+  nickname: string;
+  /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+  age_display: string;
+  role: "owner" | "member";
+}
+
+/* ── 02 이야기 하나 ──────────────────────────────────────────────────── */
+
+/** 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. */
+export interface DevScreeningItem {
+  item_id: string;
+  text: string;
+  levels: Array<{ level: number; label: string }>;
+}
+
+export interface DevScreeningResponse {
+  age_band: string;
+  /** 나이대 밖이면 빈 배열이다. */
+  items: DevScreeningItem[];
+}
+
+/**
+ * 🚨 "잘 모르겠어요"(`unknown`) 는 "없음"(`none`) 이 아니다.
+ *    unknown 이면 서버가 health_safety 에 아무것도 쓰지 않고, 이후 Food Agent 는
+ *    guards.safety_unknown 으로 **실행 자체가 막힌다** (CLAUDE.md §2 — 조회 실패 시 실행 금지).
+ */
+export type SafetyStatus = "none" | "has" | "unknown";
+
+/** 🚨 보호자가 직접 입력한 값만 들어간다. LLM 이 추론한 알레르기는 저장하지 않는다 (NF-03). */
+export interface OnboardingSafetyInput {
+  type: string;
+  label: string;
+  category: string;
+  severity?: string;
+  reactions?: string[];
+}
+
+/** 전부 선택이다. 모두 건너뛰어도 200 이다. */
+export interface OnboardingRequest {
+  interests?: string[];
+  safety_status?: SafetyStatus;
+  safety?: OnboardingSafetyInput[];
+  one_line?: string;
+  dev_answers?: Array<{ item_id: string; level: number }>;
+}
+
+export interface OnboardingResponse {
+  observations: Observation[];
+  affinities: Affinity[];
+  safety: HealthSafety[];
+  /** 서버가 저장하지 않고 돌려보낸 항목. safety_status: "unknown" 이 여기 담긴다. */
+  skipped: string[];
+  run_id: string;
+}
