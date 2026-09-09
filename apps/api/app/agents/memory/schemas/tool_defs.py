@@ -36,8 +36,9 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="parse_input",
         description=(
-            "사용자 입력을 의미 단위로 나눈다. 어떤 입력이든 다른 tool 보다 "
-            "먼저 정확히 한 번 부른다. 저장이나 조회는 하지 않는다."
+            "서로 독립된 정보나 요청이 2개 이상 섞인 입력을 의미 단위로 나눈다. "
+            "그럴 때만 다른 tool 보다 먼저 한 번 부른다. 정보가 하나뿐이면 부르지 않고 "
+            "바로 해당 tool 을 부른다. 저장이나 조회는 하지 않는다."
         ),
         args=ParseInputArgs,
     ),
