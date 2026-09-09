@@ -14,6 +14,7 @@ from app.agents.memory.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.memory.schemas.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.memory.tools.observation import OBSERVATION_HANDLERS
 from app.agents.memory.tools.parse_input import parse_input
+from app.agents.memory.tools.schedule import SCHEDULE_HANDLERS
 
 ToolHandler = Callable[[AgentContext, Any], Awaitable[ToolResult]]
 
@@ -21,6 +22,7 @@ ToolHandler = Callable[[AgentContext, Any], Awaitable[ToolResult]]
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "parse_input": parse_input,
     **OBSERVATION_HANDLERS,
+    **SCHEDULE_HANDLERS,
 }
 _DEFINITIONS: dict[str, ToolDefinition] = {
     definition.name: definition for definition in TOOL_DEFINITIONS

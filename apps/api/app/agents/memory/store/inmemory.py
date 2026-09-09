@@ -243,6 +243,9 @@ class InMemoryStore:
         self._reminders[row.id] = row
         return row
 
+    async def get_reminder(self, *, reminder_id: str) -> ReminderRow | None:
+        return self._reminders.get(reminder_id)
+
     async def list_reminders(self, *, event_id: str) -> list[ReminderRow]:
         rows = [item for item in self._reminders.values() if item.event_id == event_id]
         return sorted(rows, key=lambda item: (item.remind_at, item.id))

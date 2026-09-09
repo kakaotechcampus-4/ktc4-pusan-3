@@ -1,7 +1,7 @@
 """event / event_item / reminder 의 tool argument 스키마.
 
 event 4 + event_item 3 + reminder 3 = 10개.
-status · created_by · expires_at · child_id 는 규칙이 채운다 — LLM 에게 노출하지 않는다.
+status · created_by · expires_at · child_id는 규칙이 채운다.
 """
 
 from typing import Annotated
@@ -13,6 +13,7 @@ from app.agents.memory.schemas.common import (
     Direction,
     EventCategory,
     EventType,
+    TemporalDirection,
     TimeExpr,
     ToolArgs,
 )
@@ -32,7 +33,7 @@ class EventCreate(ToolArgs):
         EventType,
         Field(
             default=EventType.EPISODIC,
-            description="매일 반복되는 일과면 core, 단발이면 episodic",
+            description="매일 반복되는 일과면 core, 단발성 일정이면 episodic",
         ),
     ]
     category: Annotated[
@@ -45,6 +46,18 @@ class EventCreate(ToolArgs):
 
 
 class EventQuery(ToolArgs):
+    """일정 조회. 날짜 조건은 시작 시각(starts_at) 기준이다."""
+
+    temporal_direction: Annotated[
+        TemporalDirection,
+        Field(
+            default=TemporalDirection.NEAREST,
+            description=(
+                "날짜 표현을 과거로 볼지 미래로 볼지. 앞으로의 일정을 찾으면 nearest, "
+                "지난 일정을 찾을 때만 past"
+            ),
+        ),
+    ]
     date_from: Annotated[DateExpr | None, Field(default=None, description="조회 시작 날짜 표현")]
     date_to: Annotated[DateExpr | None, Field(default=None, description="조회 종료 날짜 표현")]
     title_query: Annotated[str | None, Field(default=None, description="일정 이름에 포함된 키워드")]

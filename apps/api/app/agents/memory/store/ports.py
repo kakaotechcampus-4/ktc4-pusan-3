@@ -1,8 +1,6 @@
 """store 계약. 구현체는 이 Protocol만 만족하면 된다.
-
-tool 이 넘기는 값은 이미 **확정된 값**이다 — 날짜 표현은 tool 이 datetime_rules로 풀고,
-child_id / source_writer 는 AgentContext가 채워서 준다. store는 저장과 조회만 한다.
-
+날짜 표현은 tool이 datetime_rules로 풀고,
+child_id / source_writer 는 AgentContext가 채운다. store는 저장과 조회만 한다.
 id / created_at / uuid 생성은 store 책임이다.
 """
 
@@ -21,7 +19,7 @@ class ObservationRow:
     raw_text: str
     created_at: datetime
     observed_on: date
-    fields: dict[str, Any]      # 도메인별 컬럼. subject / symptom / activity ...
+    fields: dict[str, Any]  # 도메인별 컬럼. subject / symptom / activity ...
 
     def to_summary(self) -> dict[str, Any]:
         """조회 결과 요약. created_at · raw_text에 id를 붙인다."""
@@ -62,7 +60,7 @@ class EventRow:
     ends_at: datetime | None
     all_day: bool
     created_at: datetime
-    fields: dict[str, Any]      # event_type / category / status / created_by / expires_at
+    fields: dict[str, Any]  # event_type / category / status / created_by / expires_at
 
     def to_summary(
         self,
@@ -172,6 +170,8 @@ class MemoryStore(Protocol):
 
     # reminder
     async def create_reminder(self, *, event_id: str, remind_at: datetime) -> ReminderRow: ...
+
+    async def get_reminder(self, *, reminder_id: str) -> ReminderRow | None: ...
 
     async def list_reminders(self, *, event_id: str) -> list[ReminderRow]: ...
 
