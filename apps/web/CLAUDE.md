@@ -41,6 +41,7 @@ src/
 │   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
 │   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
 │   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
+│   ├── hakgyoansim.css   🚨 본문 @font-face — scripts/ 가 만든 파일. 손으로 고치지 않는다
 │   ├── pretendard.css    🚨 Pretendard @font-face — 패키지에서 뽑은 파일. 손으로 고치지 않는다
 │   ├── page.tsx          00 소개 · 로그인 (로그인 전에 보는 유일한 화면)
 │   ├── auth/callback/    로그인 복귀 지점 — 웹·앱 공통. 🚨 AuthGate 로 감싸지 않는다
@@ -278,9 +279,18 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   🚨 **줄표(`—`) 도 화면 텍스트에서 쓰지 않는다** — 괄호·쉼표·줄바꿈으로 바꾼다.
   **붙인 가운뎃점**(`수집·이용`)은 병렬 합성어라 그대로 두고, **띄운 가운뎃점**(` · `)은 메타 스트립에서 **줄당 하나까지**다.
   주석·문서·`/design-system`(내부 문서)은 대상이 아니다.
-- **Pretendard 는 자체 호스팅한다** (`public/fonts/pretendard/` · 92개 동적 서브셋).
-  🚨 `src/app/pretendard.css` 는 `pretendard` 패키지에서 뽑아 url 만 바꾼 파일이다 — **손으로 고치지 않고**, 올릴 때 다시 뽑는다 (prettier 대상에서도 뺐다).
-  CDN 을 쓰지 않는 이유와 서브셋을 고른 근거는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
+- **서체는 두 벌이고 쓰는 자리가 다르다** (디자인 시스템 §4). 둘 다 자체 호스팅 · 92개 동적 서브셋이다.
+  - `font-sans` = **학교안심 날개 R.** 기본값이라 따로 붙일 일이 없다.
+  - 🚨 `font-doc` = **Pretendard.** 이용약관 · 개인정보 처리방침 · 동의 전문처럼 **읽고 동의해야 하는 긴 법률 문서** 화면에 쓴다.
+    폴백이 아니라 역할이다 — 손글씨는 단일 웨이트라 굵기가 브라우저 합성이고, 불리한 조항을 놓치지 않고 읽어야 하는 글에서는 손해만 된다.
+    **문서 화면은 통째로 `font-doc` 이다.** 제목만 손글씨로 두는 식으로 한 화면에서 섞지 않는다.
+  - 🚨 `src/app/hakgyoansim.css` · `pretendard.css` 를 **손으로 고치지 않는다.** 각각 `scripts/build-hakgyoansim-subset.py` 와
+    `pretendard` 패키지에서 뽑은 파일이고, 올릴 때 다시 뽑는다 (prettier 대상에서도 뺐다).
+  - 🚨 **폰트 CDN 을 쓰지 않는다.** 둘 다 자체 호스팅이다 (최상위 §9). 새 폰트를 넣을 때는
+    **라이선스가 woff2 변환과 재배포를 허용하는지 먼저 확인한다** — 금지면 자체 호스팅 자체가 불가능해진다.
+  - ⚠️ 본문 서체는 단일 웨이트라 **`label`(500)이 `body`(400)와 똑같이 나온다** (브라우저는 600 이상만 합성).
+    칩·탭·폼 라벨을 굵기로 구분하려 하지 말 것.
+  - 근거와 실측치는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
 - 🚨 **`cursor` 는 `globals.css` 가 한 번에 건다.** Tailwind 4 preflight 는 버튼에 `cursor` 를 주지 않아서(v3 와 달라진 점) 전부 기본 화살표였다. 컴포넌트마다 붙이면 빠뜨린다 — 실제로 칩만 `not-allowed` 였다.
 - **상호작용 상태는 primitive 안에 있다** (디자인 시스템 §8 표). 화면에서 `hover:`·`active:` 를 따로 붙이지 않는다.
   🚨 **`active:` 를 빠뜨리면 웹뷰에서 아무 반응이 없다** — 웹뷰에는 호버가 없어서 `hover:` 는 브라우저에서만 걸린다.

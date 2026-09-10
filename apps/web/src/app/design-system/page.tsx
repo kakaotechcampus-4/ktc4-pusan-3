@@ -259,7 +259,7 @@ function TypeSection() {
     <div ref={root}>
       <Section
         title="타이포"
-        note="8단계 · 본문 16px / 1.6 · Pretendard 자체 호스팅. 아래 '실측' 은 지금 화면에서 읽은 값이다."
+        note="8단계 · 본문 16px / 1.6 · 학교안심 날개 R 자체 호스팅. 단일 웨이트라 600·700 은 브라우저 합성이고, 500 은 400 과 똑같이 나온다. 아래 '실측' 은 지금 화면에서 읽은 값이다."
       >
         <ul className="flex flex-col gap-4">
           {TYPE_STEPS.map((step) => (
@@ -278,6 +278,42 @@ function TypeSection() {
                 <br />
                 실측 {measured[step.name] ?? "…"}
               </span>
+            </li>
+          ))}
+        </ul>
+
+        <SubTitle>서체 두 벌</SubTitle>
+        <p className="text-body-sm text-ink-muted">
+          font-doc 은 폴백이 아니라 역할이다. 약관·처리방침처럼 읽고 동의해야 하는 긴 법률 문서는
+          통째로 font-doc 을 쓰고, 한 화면에서 둘을 섞지 않는다.
+        </p>
+        <ul className="mt-3 flex flex-col gap-4">
+          {[
+            {
+              cls: "font-sans",
+              name: "font-sans",
+              use: "기본값 · 화면 대부분",
+              note: "학교안심 날개 R · Regular 400 하나뿐이라 아래 굵기는 합성이다",
+            },
+            {
+              cls: "font-doc",
+              name: "font-doc",
+              use: "이용약관 · 개인정보 처리방침 · 동의 전문",
+              note: "Pretendard Variable · 굵기가 실제 웨이트로 나온다",
+            },
+          ].map((f) => (
+            <li
+              key={f.name}
+              className="border-line flex flex-col gap-1 border-b pb-4 last:border-0"
+            >
+              <span className={`${f.cls} text-body text-ink`}>
+                제3자 제공에 동의하지 않을 수 있으며, 동의를 거부해도 서비스 이용에 제한이 없습니다.
+              </span>
+              <span className={`${f.cls} text-section text-ink`}>수집·이용 목적 (굵기 600)</span>
+              <span className="text-caption text-ink-subtle">
+                {f.name} · {f.use}
+              </span>
+              <span className="text-caption text-ink-muted">{f.note}</span>
             </li>
           ))}
         </ul>

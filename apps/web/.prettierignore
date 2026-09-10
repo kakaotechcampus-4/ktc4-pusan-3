@@ -13,3 +13,6 @@ public/mockServiceWorker.js
 
 # pretendard 패키지에서 뽑아 온 폰트 CSS. 손으로 고치지 않는다 (파일 머리말 참고).
 src/app/pretendard.css
+
+# 스크립트가 생성한 본문 폰트 CSS. 손으로 고치지 않는다 (파일 머리말 참고).
+src/app/hakgyoansim.css
