@@ -1,7 +1,21 @@
+import enum as _enum
+
 from sqlalchemy import Enum as SAEnum
 
 
 def enum_col(*values: str, name: str) -> SAEnum:
+    
+    return SAEnum(
+        *values,
+        name=name,
+        native_enum=False,
+        length=32,
+        create_constraint=True,
+        validate_strings=True,
+    )
+
+
+def enum_col_py(py_enum: type[_enum.Enum], name: str) -> SAEnum:
     """값이 정해진 컬럼을 VARCHAR + CHECK 로 만든다.
 
     native_enum=False — PG 네이티브 ENUM 타입을 쓰지 않는다.
@@ -21,8 +35,9 @@ def enum_col(*values: str, name: str) -> SAEnum:
       VARCHAR 는 선언 길이만큼 공간을 미리 잡지 않아 낭비도 없다.
     """
     return SAEnum(
-        *values,
+        py_enum,
         name=name,
+        values_callable=lambda e: [m.value for m in e],
         native_enum=False,
         length=32,
         create_constraint=True,

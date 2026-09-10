@@ -2,13 +2,14 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
+from app.infra.db.types import enum_col_py
 
 
-class AuthProvider(str, enum.Enum):
+class AuthProvider(enum.StrEnum):
     KAKAO = "kakao"
     APPLE = "apple"
     GOOGLE = "google"
@@ -30,13 +31,7 @@ class AuthIdentity(Base, UUIDPk):
         ForeignKey("parent.id", ondelete="CASCADE"), nullable=False
     )
     provider: Mapped[AuthProvider] = mapped_column(
-        Enum(
-            AuthProvider,
-            name="auth_provider",
-            values_callable=lambda e: [m.value for m in e],
-            native_enum=False,
-            create_constraint=True,
-        ),
+        enum_col_py(AuthProvider, name="auth_provider"),
         nullable=False,
     )
     provider_user_id: Mapped[str] = mapped_column(Text, nullable=False)

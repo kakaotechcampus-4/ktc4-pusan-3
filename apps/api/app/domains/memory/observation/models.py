@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import date, datetime
 
@@ -6,13 +7,47 @@ from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.memory.enums import (
-    confidence_source,
-    engagement_level,
-    observation_status,
-)
 from app.infra.db.base import Base, Timestamps, UUIDPk
-from app.infra.db.types import enum_col
+from app.infra.db.types import enum_col_py
+
+
+class ConfidenceSource(enum.StrEnum):
+    INSTITUTION_NOTICE = "institution_notice"
+    PARENT_DIRECT = "parent_direct"
+    PARENT_HEDGED = "parent_hedged"
+    PARENT_HEARSAY = "parent_hearsay"
+
+
+class ObservationStatus(enum.StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class EngagementLevel(enum.StrEnum):
+    LOW = "low"
+    MID = "mid"
+    HIGH = "high"
+
+
+class HealthSeverity(enum.StrEnum):
+    MILD = "mild"
+    MODERATE = "moderate"
+    SEVERE = "severe"
+    EMERGENCY = "emergency"
+
+
+confidence_source = enum_col_py(ConfidenceSource, name="confidence_source")
+observation_status = enum_col_py(ObservationStatus, name="observation_status")
+engagement_level = enum_col_py(EngagementLevel, name="engagement_level")
+
+# generalization 은 유효 월령 72+ 라 1차 배포 타겟(≤71개월)에서 제외 확정
+STRONG_SIGNALS = (
+    "resistance_to_redirect",
+    "self_initiated",
+    "comparative_choice",
+    "asks_questions",
+    "role_extension",
+)
 
 
 class ObservationCommon:
@@ -31,8 +66,8 @@ class ObservationCommon:
     strong_signals: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default="{}"
     )
-    confidence_source: Mapped[str] = mapped_column(confidence_source, nullable=False)
-    status: Mapped[str] = mapped_column(
+    confidence_source: Mapped[ConfidenceSource] = mapped_column(confidence_source, nullable=False)
+    status: Mapped[ObservationStatus] = mapped_column(
         observation_status, nullable=False, server_default="active"
     )
     observed_range: Mapped[Range[date]] = mapped_column(DATERANGE, nullable=False)
@@ -56,7 +91,9 @@ class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
     topic: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     session_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    engagement_level: Mapped[str | None] = mapped_column(engagement_level, nullable=True)
+    engagement_level: Mapped[EngagementLevel | None] = mapped_column(
+        engagement_level, nullable=True
+    )
 
 
 class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
@@ -66,7 +103,9 @@ class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
     companions: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    engagement_level: Mapped[str | None] = mapped_column(engagement_level, nullable=True)
+    engagement_level: Mapped[EngagementLevel | None] = mapped_column(
+        engagement_level, nullable=True
+    )
 
 
 class ObservationHealth(Base, UUIDPk, Timestamps):
@@ -78,8 +117,8 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence_source: Mapped[str] = mapped_column(confidence_source, nullable=False)
-    status: Mapped[str] = mapped_column(
+    confidence_source: Mapped[ConfidenceSource] = mapped_column(confidence_source, nullable=False)
+    status: Mapped[ObservationStatus] = mapped_column(
         observation_status, nullable=False, server_default="active"
     )
     observed_range: Mapped[Range[date]] = mapped_column(DATERANGE, nullable=False)
@@ -88,8 +127,8 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
-    severity: Mapped[str | None] = mapped_column(
-        enum_col("mild", "moderate", "severe", "emergency", name="health_severity"),
+    severity: Mapped[HealthSeverity | None] = mapped_column(
+        enum_col_py(HealthSeverity, name="health_severity"),
         nullable=True,
     )
     body_part: Mapped[str | None] = mapped_column(Text, nullable=True)
