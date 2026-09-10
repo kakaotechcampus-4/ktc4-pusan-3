@@ -4,6 +4,18 @@ from sqlalchemy import Enum as SAEnum
 
 
 def enum_col(*values: str, name: str) -> SAEnum:
+    
+    return SAEnum(
+        *values,
+        name=name,
+        native_enum=False,
+        length=32,
+        create_constraint=True,
+        validate_strings=True,
+    )
+
+
+def enum_col_py(py_enum: type[_enum.Enum], name: str) -> SAEnum:
     """값이 정해진 컬럼을 VARCHAR + CHECK 로 만든다.
 
     native_enum=False — PG 네이티브 ENUM 타입을 쓰지 않는다.
@@ -21,22 +33,6 @@ def enum_col(*values: str, name: str) -> SAEnum:
       에러가 값 검증이 아니라 길이 초과로 나서 원인을 찾기 어렵다.
       현재 최장 값은 'institution_notice'(18자)이므로 32 면 충분하고,
       VARCHAR 는 선언 길이만큼 공간을 미리 잡지 않아 낭비도 없다.
-    """
-    return SAEnum(
-        *values,
-        name=name,
-        native_enum=False,
-        length=32,
-        create_constraint=True,
-        validate_strings=True,
-    )
-
-
-def enum_col_py(py_enum: type[_enum.Enum], name: str) -> SAEnum:
-    """Python enum 클래스를 받아 VARCHAR + CHECK 컬럼을 만든다.
-
-    enum_col 과 동일한 옵션이며 Python 레이어 타입 안전성을 추가한다.
-    values_callable 로 member.value 를 추출해 DB 에 소문자 값이 저장된다.
     """
     return SAEnum(
         py_enum,
