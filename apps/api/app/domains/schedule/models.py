@@ -2,11 +2,12 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Text, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
+from app.infra.db.types import enum_col_py
 
 
 class EventType(str, enum.Enum):
@@ -32,16 +33,6 @@ class EventCreatedBy(str, enum.Enum):
     CAREGIVER = "caregiver"
 
 
-def _enum(py_enum: type[enum.Enum], name: str) -> Enum:
-    return Enum(
-        py_enum,
-        name=name,
-        values_callable=lambda e: [m.value for m in e],
-        native_enum=False,
-        create_constraint=True,
-    )
-
-
 class Event(Base, UUIDPk):
     __tablename__ = "event"
 
@@ -49,18 +40,22 @@ class Event(Base, UUIDPk):
         ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    event_type: Mapped[EventType] = mapped_column(_enum(EventType, "event_type"), nullable=False)
+    event_type: Mapped[EventType] = mapped_column(
+        enum_col_py(EventType, name="event_type"), nullable=False
+    )
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     category: Mapped[EventCategory] = mapped_column(
-        _enum(EventCategory, "event_category"), nullable=False
+        enum_col_py(EventCategory, name="event_category"), nullable=False
     )
     status: Mapped[EventStatus] = mapped_column(
-        _enum(EventStatus, "event_status"), nullable=False, server_default=EventStatus.DRAFT.value
+        enum_col_py(EventStatus, name="event_status"),
+        nullable=False,
+        server_default=EventStatus.DRAFT.value,
     )
     created_by: Mapped[EventCreatedBy] = mapped_column(
-        _enum(EventCreatedBy, "event_created_by"), nullable=False
+        enum_col_py(EventCreatedBy, name="event_created_by"), nullable=False
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

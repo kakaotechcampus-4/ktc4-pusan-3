@@ -1,3 +1,4 @@
+import enum
 import uuid
 
 from sqlalchemy import ForeignKey, Text
@@ -5,7 +6,28 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
-from app.infra.db.types import enum_col
+from app.infra.db.types import enum_col_py
+
+
+class SafetyKind(str, enum.Enum):
+    ALLERGY = "allergy"
+    CHRONIC_DISEASE = "chronic_disease"
+    DIETARY_RESTRICTION = "dietary_restriction"
+    BEHAVIORAL = "behavioral"
+    ENVIRONMENTAL = "environmental"
+    OTHER_MEDICAL = "other_medical"
+
+
+class SafetySeverity(str, enum.Enum):
+    MILD = "mild"
+    MODERATE = "moderate"
+    SEVERE = "severe"
+    ANAPHYLAXIS = "anaphylaxis"
+
+
+class SafetyState(str, enum.Enum):
+    ACTIVE = "active"
+    RETRACTED = "retracted"
 
 
 class HealthSafety(Base, UUIDPk, Timestamps):
@@ -26,30 +48,22 @@ class HealthSafety(Base, UUIDPk, Timestamps):
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
-    kind: Mapped[str] = mapped_column(
-        enum_col(
-            "allergy",
-            "chronic_disease",
-            "dietary_restriction",
-            "behavioral",
-            "environmental",
-            "other_medical",
-            name="safety_kind",
-        ),
+    kind: Mapped[SafetyKind] = mapped_column(
+        enum_col_py(SafetyKind, name="safety_kind"),
         nullable=False,
     )
     label: Mapped[str] = mapped_column(Text, nullable=False)
     aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     category: Mapped[str | None] = mapped_column(Text, nullable=True)
-    severity: Mapped[str | None] = mapped_column(
-        enum_col("mild", "moderate", "severe", "anaphylaxis", name="safety_severity"),
+    severity: Mapped[SafetySeverity | None] = mapped_column(
+        enum_col_py(SafetySeverity, name="safety_severity"),
         nullable=True,
     )
     reactions: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     management: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    state: Mapped[str] = mapped_column(
-        enum_col("active", "retracted", name="safety_state"),
+    state: Mapped[SafetyState] = mapped_column(
+        enum_col_py(SafetyState, name="safety_state"),
         nullable=False,
         server_default="active",
     )

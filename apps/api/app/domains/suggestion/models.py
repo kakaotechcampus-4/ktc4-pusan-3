@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import datetime
 
@@ -6,7 +7,27 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
-from app.infra.db.types import enum_col
+from app.infra.db.types import enum_col_py
+
+
+class SuggestionAgent(str, enum.Enum):
+    FOOD = "food"
+    ACTIVITY = "activity"
+    EDUCATION = "education"
+    HEALTH = "health"
+
+
+class SuggestionStatus(str, enum.Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class SuggestionFeedback(str, enum.Enum):
+    LIKED = "liked"
+    DISLIKED = "disliked"
+    NOT_ACTED = "not_acted"
 
 
 class Suggestion(Base, UUIDPk, Timestamps):
@@ -15,19 +36,19 @@ class Suggestion(Base, UUIDPk, Timestamps):
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
-    agent: Mapped[str] = mapped_column(
-        enum_col("food", "activity", "education", "health", name="suggestion_agent"),
+    agent: Mapped[SuggestionAgent] = mapped_column(
+        enum_col_py(SuggestionAgent, name="suggestion_agent"),
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(
-        enum_col("draft", "approved", "rejected", "expired", name="suggestion_status"),
+    status: Mapped[SuggestionStatus] = mapped_column(
+        enum_col_py(SuggestionStatus, name="suggestion_status"),
         nullable=False,
         server_default="draft",
     )
-    feedback: Mapped[str | None] = mapped_column(
-        enum_col("liked", "disliked", "not_acted", name="suggestion_feedback"),
+    feedback: Mapped[SuggestionFeedback | None] = mapped_column(
+        enum_col_py(SuggestionFeedback, name="suggestion_feedback"),
         nullable=True,
     )
     # [{"kind": "observation_food" | "observation_health" | "observation_education"

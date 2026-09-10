@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import datetime
 
@@ -6,7 +7,14 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, UUIDPk
-from app.infra.db.types import enum_col
+from app.infra.db.types import enum_col_py
+
+
+class CorrectionVerdict(str, enum.Enum):
+    CONFIRM = "confirm"
+    ONCE_ONLY = "once_only"
+    OUTDATED = "outdated"
+    WRONG = "wrong"
 
 
 class Correction(Base, UUIDPk):
@@ -27,8 +35,8 @@ class Correction(Base, UUIDPk):
     affinity_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="CASCADE"), nullable=False
     )
-    verdict: Mapped[str] = mapped_column(
-        enum_col("confirm", "once_only", "outdated", "wrong", name="correction_verdict"),
+    verdict: Mapped[CorrectionVerdict] = mapped_column(
+        enum_col_py(CorrectionVerdict, name="correction_verdict"),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(

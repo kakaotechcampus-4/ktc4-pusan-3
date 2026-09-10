@@ -2,10 +2,11 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, UUIDPk
+from app.infra.db.types import enum_col_py
 
 
 class ConsentScope(str, enum.Enum):
@@ -35,23 +36,11 @@ class Consent(Base, UUIDPk):
     parent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("parent.id"), nullable=False)
     child_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("child.id"))
     scope: Mapped[ConsentScope] = mapped_column(
-        Enum(
-            ConsentScope,
-            name="consent_scope",
-            values_callable=lambda e: [m.value for m in e],
-            native_enum=False,
-            create_constraint=True,
-        ),
+        enum_col_py(ConsentScope, name="consent_scope"),
         nullable=False,
     )
     action: Mapped[ConsentAction] = mapped_column(
-        Enum(
-            ConsentAction,
-            name="consent_action",
-            values_callable=lambda e: [m.value for m in e],
-            native_enum=False,
-            create_constraint=True,
-        ),
+        enum_col_py(ConsentAction, name="consent_action"),
         nullable=False,
     )
     policy_version: Mapped[str] = mapped_column(Text, nullable=False)

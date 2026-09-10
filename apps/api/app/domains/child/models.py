@@ -2,10 +2,11 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
+from app.infra.db.types import enum_col_py
 
 
 class ParentChildRelation(str, enum.Enum):
@@ -14,16 +15,6 @@ class ParentChildRelation(str, enum.Enum):
     GRANDPARENT = "grandparent"
     SITTER = "sitter"
     OTHER = "other"
-
-
-def _relation_enum() -> Enum:
-    return Enum(
-        ParentChildRelation,
-        name="parent_child_relation",
-        values_callable=lambda e: [m.value for m in e],
-        native_enum=False,
-        create_constraint=True,
-    )
 
 
 class ParentChild(Base, UUIDPk):
@@ -36,7 +27,9 @@ class ParentChild(Base, UUIDPk):
     child_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
-    relation: Mapped[ParentChildRelation] = mapped_column(_relation_enum(), nullable=False)
+    relation: Mapped[ParentChildRelation] = mapped_column(
+        enum_col_py(ParentChildRelation, name="parent_child_relation"), nullable=False
+    )
     connected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

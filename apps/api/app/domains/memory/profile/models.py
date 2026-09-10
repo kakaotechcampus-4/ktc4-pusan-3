@@ -6,7 +6,12 @@ from sqlalchemy import Date, Float, ForeignKey, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.memory.enums import memory_domain, profile_state
+from app.domains.memory.enums import (
+    MemoryDomain,
+    ProfileState,
+    memory_domain,
+    profile_state,
+)
 from app.infra.db.base import Base, Timestamps, UUIDPk
 
 
@@ -18,8 +23,8 @@ class ProfileAffinity(Base, UUIDPk, Timestamps):
     )
     merge_key: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
-    domain: Mapped[str] = mapped_column(memory_domain, nullable=False)
-    state: Mapped[str] = mapped_column(
+    domain: Mapped[MemoryDomain] = mapped_column(memory_domain, nullable=False)
+    state: Mapped[ProfileState] = mapped_column(
         profile_state, nullable=False, server_default="candidate"
     )
     polarity: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
