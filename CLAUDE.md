@@ -139,6 +139,9 @@
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
 ├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
 ├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run) · db-up / db-down / db-logs (deploy/docker)
+├── PRODUCT.md                제품 진실 — 사용자 · 목적 · 포지셔닝 · 제약 · 가진 근거 자료. **시각 결정은 없다**
+├── DESIGN.md                 디자인 시스템을 AI 가 읽는 형식으로 옮긴 것 (토큰 프론트매터 + 규칙 산문)
+├── .impeccable/design.json   DESIGN.md 가 못 담는 것 — tonal ramp · 그림자 · 모션 · 컴포넌트 스니펫 (기계 전용)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   ├── api/                  API 계약서 v1
@@ -198,6 +201,13 @@
 > 이 경계가 무너지면(= `mobile` 에 화면이 생기면) 화면이 두 벌이 되고 §2 를 두 곳에서 지켜야 한다.
 >
 > 하위 이름(`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
+
+> **`PRODUCT.md` · `DESIGN.md` 는 새 문서가 아니라 옮긴 것이다.** 사람이 근거와 함께 읽는 정본은 그대로
+> `docs/` 에 있다 — 제품은 [`docs/overview/`](docs/overview/), 디자인은 [`docs/web/design-system-v1.md`](docs/web/design-system-v1.md).
+> 루트의 두 파일은 **AI 도구가 한 번에 읽도록 요약·구조화한 사본**이고, `.impeccable/` 은 그 사본의 기계 전용 부속이다.
+>
+> 🚨 **값이 어긋나면 `docs/` 가 맞다.** 토큰을 바꿀 때는 `docs/web/design-system-v1.md` → `globals.css` → `DESIGN.md`
+> 순으로 고친다. 반대 방향으로 고치면 근거 없는 값이 정본에 역류한다.
 
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
 **파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.

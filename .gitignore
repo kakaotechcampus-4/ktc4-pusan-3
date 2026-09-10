@@ -74,3 +74,7 @@ target/
 # ── Claude 데스크톱이 저장하는 작업 문서 (저장소와 무관) ──
 Claude outputs/
 /ktc4-pusan-3/
+
+# ── 디자인 도구(impeccable) 로컬 설정 ──────────────
+# design.json 은 커밋한다 (DESIGN.md 의 부속). config.local.json 은 기기별 설정이라 뺀다.
+.impeccable/config.local.json
