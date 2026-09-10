@@ -130,13 +130,20 @@ autogenerate는 **표준 SQL 타입 변화만** 비교한다. PostgreSQL 전용 
 
 ```python
 # upgrade()
-op.execute("ALTER TABLE suggestion DROP CONSTRAINT IF EXISTS suggestion_status_check")
-op.execute("ALTER TABLE suggestion ADD CONSTRAINT suggestion_status_check CHECK (status IN ('draft', 'approved', 'rejected', 'expired', 'new_value'))")
+op.execute("ALTER TABLE suggestion DROP CONSTRAINT IF EXISTS suggestion_status")
+op.execute("ALTER TABLE suggestion ADD CONSTRAINT suggestion_status CHECK (status IN ('draft', 'approved', 'rejected', 'expired', 'new_value'))")
 
 # downgrade()
-op.execute("ALTER TABLE suggestion DROP CONSTRAINT IF EXISTS suggestion_status_check")
-op.execute("ALTER TABLE suggestion ADD CONSTRAINT suggestion_status_check CHECK (status IN ('draft', 'approved', 'rejected', 'expired'))")
+op.execute("ALTER TABLE suggestion DROP CONSTRAINT IF EXISTS suggestion_status")
+op.execute("ALTER TABLE suggestion ADD CONSTRAINT suggestion_status CHECK (status IN ('draft', 'approved', 'rejected', 'expired'))")
 ```
+
+> 제약 이름은 SQLAlchemy `Enum(name=..., create_constraint=True)` 의 `name=` 값으로 결정된다.
+> 실제 DB에 등록된 이름 확인:
+> ```sql
+> SELECT conname FROM pg_constraint
+> WHERE conrelid = 'suggestion'::regclass AND contype = 'c';
+> ```
 
 ---
 
