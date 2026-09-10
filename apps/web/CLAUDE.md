@@ -35,46 +35,19 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 
 ## 2. 폴더 구조
 
-```
-src/
-├── app/                  App Router. 라우트 = 화면 00~10
-│   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
-│   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
-│   ├── globals.css       Tailwind 진입점 + @theme 디자인 토큰
-│   ├── hakgyoansim.css   🚨 본문 @font-face — scripts/ 가 만든 파일. 손으로 고치지 않는다
-│   ├── pretendard.css    🚨 Pretendard @font-face — 패키지에서 뽑은 파일. 손으로 고치지 않는다
-│   ├── page.tsx          00 소개 · 로그인 (로그인 전에 보는 유일한 화면)
-│   ├── auth/callback/    로그인 복귀 지점 — 웹·앱 공통. 🚨 AuthGate 로 감싸지 않는다
-│   ├── onboarding/       01 첫 진입 — 아이 만들기. 아직 childId 가 없어서 아이 스코프 밖이다
-│   └── child/[childId]/  아이 스코프 화면 전부 (02 온보딩 · 03~09)
-├── lib/
-│   ├── env.ts            NEXT_PUBLIC_* 검증 · API_BASE_URL
-│   ├── query-client.ts   QueryClient 기본값 (retry 정책)
-│   ├── cn.ts             조건부 클래스 합치기 (tailwind-merge 아님 — 뒤가 앞을 안 덮는다)
-│   ├── auth/
-│   │   ├── oauth.ts      로그인 시작 · provider·복귀경로 기억 · isAppShell
-│   │   └── oauth-bind.ts bind 비밀 — 1회용 코드가 오가는 홉을 지킨다
-│   └── api/
-│       ├── types.ts      계약서 §02 공통 타입 5종 + Ref + enum + 엔드포인트 요청·응답
-│       ├── errors.ts     에러 봉투 · ApiError · 에러 코드
-│       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key)
-│       ├── sse.ts        GET /runs/{rid}/events 스트림 파서
-│       └── queryKeys.ts  쿼리 키 팩토리
-├── components/
-│   ├── ui/               토큰만 아는 primitive (screen · button · text-input · chip · card)
-│   ├── auth-gate.tsx     토큰 없으면 / 로 되돌린다
-│   └── *.tsx             도메인을 아는 조합
-├── hooks/                화면 여러 곳이 쓰는 훅
-├── mocks/                MSW 목 서버 — 개발 환경 전용 (§7)
-│   ├── scenario.ts       시나리오 스위치 (?scenario=)
-│   ├── fixtures.ts       계약서 기준 시드 데이터
-│   ├── handlers/         엔드포인트별 핸들러
-│   └── start.ts          dev + 플래그일 때만 워커를 띄운다
-└── stores/
-    └── session.ts        토큰 · activeChildId (zustand persist)
-```
+`src/` 아래를 열어 보면 나오는 것은 안 적는다. **열어 봐도 안 보이는 것만** 적는다.
 
-`public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
+- `app/` = App Router. **라우트가 곧 화면 00~10** 이고, 대응표는 아래 §3 라우팅에 있다
+- 🚨 `app/hakgyoansim.css` · `app/pretendard.css` 는 **생성된 파일이다.** 손으로 고치지 않는다 (§5 서체)
+- 🚨 `app/auth/callback/` 은 **`AuthGate` 로 감싸지 않는다** — 토큰을 얻으러 가는 화면이다
+- 🚨 `app/onboarding/` 만 아이 스코프 **밖**이다 — 아직 `childId` 가 없다 (§3 라우팅)
+- `lib/api/` = 계약서 v1 타입 · fetch 클라이언트 · SSE 파서 · 쿼리 키 팩토리. **`fetch` 를 직접 부르지 않는다** (§3 API 호출)
+- ⚠️ `lib/cn.ts` 는 **tailwind-merge 가 아니다** — 뒤에 온 클래스가 앞을 안 덮는다 (§3 컴포넌트)
+- `lib/auth/oauth-bind.ts` = bind 비밀. 만지기 전에 그 파일 주석을 읽는다 (§3 로그인)
+- `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
+- `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
+- `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3)
+- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
 
@@ -307,13 +280,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 
 ## 6. 명령어
 
-```bash
-pnpm dev           # 개발 서버 (Turbopack)
-pnpm build         # 프로덕션 빌드 (타입 에러 나면 실패한다)
-pnpm typecheck     # next typegen && tsc --noEmit
-pnpm lint          # eslint
-pnpm format        # prettier --write
-```
+스크립트 목록은 `package.json` 에 있다. 거기서 안 보이는 것만 적는다.
 
 `pnpm typecheck` 가 `next typegen` 을 먼저 도는 이유: `LayoutProps` · `PageProps` 같은 전역 타입은 Next 가 `.next/types` 에 생성한다. 빌드/타입젠 전에는 `tsc` 가 그 타입을 못 찾는다.
 
@@ -353,40 +320,9 @@ NEXT_PUBLIC_API_MOCKING=enabled
 
 ### 화면 확인하는 법
 
-**저장소가 둘로 나뉘어 있다.** 이걸 모르면 "탭 닫았는데 왜 그대로지" 로 막힌다.
+시나리오별 주소 · 저장소 초기화 스니펫 · 화면별 진입 경로는 [`docs/web/mock-screens-v1.md`](../../docs/web/mock-screens-v1.md) 에 있다.
 
-| | 어디 | 언제 사라지나 |
-| --- | --- | --- |
-| 로그인 세션 · `bind` · 가입 대기표 | `sessionStorage` | **탭 닫으면** 자동 |
-| 목 시나리오 | `localStorage` | **안 사라진다** — 직접 지우거나 `?scenario=default` |
-
-전부 초기화 (DevTools 콘솔):
-
-```js
-sessionStorage.clear();
-localStorage.removeItem("yukameo.session");
-localStorage.removeItem("yukameo.mock.scenario");
-location.replace("/");
-```
-
-| 보고 싶은 화면 | 어떻게 |
-| --- | --- |
-| 00 로그인 | `/` |
-| 00 로그인 · 버튼 비활성 | `/?scenario=auth_unready` |
-| **가입 동의** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
-| 01 아이 만들기 | 로그인 후 `/onboarding` (목의 `/me` 는 항상 아이가 1명이라 로그인만으로는 안 닿는다) |
-| 02 이야기 하나 | `/child/c1/onboarding` |
-| 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
-| 디자인 시스템 | `/design-system` |
-
-화면만 빨리 보려면 값을 직접 심어도 된다. 🚨 **`bind` 를 빼면 화면은 떠도 제출이 400 이다** — 서버가 형식을 검증하는 게 정상 동작이다.
-
-```js
-sessionStorage.setItem("yukameo.oauth.consent_code", "cc_mock");
-sessionStorage.setItem("yukameo.oauth.provider", "kakao");
-sessionStorage.setItem("yukameo.oauth.bind", "dev".padEnd(43, "x"));
-location.replace("/auth/consent");
-```
+🚨 **저장소가 둘로 나뉘어 있다** — 로그인 세션·`bind` 는 `sessionStorage`(탭 닫으면 사라짐), 목 시나리오는 `localStorage`(안 사라짐). 이걸 모르면 "탭 닫았는데 왜 그대로지" 로 막힌다.
 
 ### 규칙
 
