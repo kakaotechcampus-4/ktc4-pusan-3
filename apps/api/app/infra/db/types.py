@@ -1,3 +1,5 @@
+import enum as _enum
+
 from sqlalchemy import Enum as SAEnum
 
 
@@ -23,6 +25,23 @@ def enum_col(*values: str, name: str) -> SAEnum:
     return SAEnum(
         *values,
         name=name,
+        native_enum=False,
+        length=32,
+        create_constraint=True,
+        validate_strings=True,
+    )
+
+
+def enum_col_py(py_enum: type[_enum.Enum], name: str) -> SAEnum:
+    """Python enum 클래스를 받아 VARCHAR + CHECK 컬럼을 만든다.
+
+    enum_col 과 동일한 옵션이며 Python 레이어 타입 안전성을 추가한다.
+    values_callable 로 member.value 를 추출해 DB 에 소문자 값이 저장된다.
+    """
+    return SAEnum(
+        py_enum,
+        name=name,
+        values_callable=lambda e: [m.value for m in e],
         native_enum=False,
         length=32,
         create_constraint=True,
