@@ -15,7 +15,8 @@ export const SCENARIOS = {
   scarcity: "근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 1개",
   partial: "Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06)",
   failed: "입력 처리 실패 — raw_text 를 입력창에 되돌림",
-  consent: "필수 동의 미완료 — 403 consent_required 로 저장 차단",
+  consent: "필수 동의 미완료 — 신규 가입 대기 · 403 consent_required 로 저장 차단",
+  auth_unready: "로그인 미연결 — GET /auth/kakao/status 가 ready: false",
   stale: "6개월 지난 근거 — is_stale 인 기억만 남은 상태 (NF-08)",
 } as const;
 

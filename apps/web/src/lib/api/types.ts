@@ -243,3 +243,166 @@ export interface Page<T> {
   items: T[];
   next_cursor: string | null;
 }
+
+/* ── 00 로그인 ────────────────────────────────────────────────────────── */
+
+/**
+ * 로그인 계약의 정본은 docs/api/auth-kakao-v1.md 이고,
+ * 프론트가 어떻게 처리하는지는 docs/web/kakao-login-v1.md 에 있다.
+ *
+ * 🚨 계약서 §04 의 `{access_token}` 은 쓰지 않는다. 클라이언트가 카카오 토큰을 받는
+ *    경로가 없어서(카카오 JS SDK 에 그 메서드가 없다) 서버가 인가 코드를 교환하고,
+ *    프론트는 서버가 발급한 1회용 코드와 bind 비밀 한 쌍만 보낸다.
+ */
+export const AUTH_PROVIDERS = ["kakao", "apple", "google", "naver"] as const;
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
+
+/** GET /auth/{provider}/status — 00 화면 진입 시 prefetch 한다. */
+export interface AuthStatus {
+  /** 서버 설정이 갖춰졌는가. false 면 버튼을 비활성화한다 — 죽은 버튼을 만들지 않는다. */
+  ready: boolean;
+  /**
+   * 시작 엔드포인트의 **절대 URL**.
+   * 🚨 프론트에서 조립하지 않는다 — API_BASE_URL 과 카카오 콜백 오리진이 어긋난 배포에서
+   *    state 쿠키가 조용히 깨진다. 서버가 등록된 콜백 URL 에서 파생해 내려준다.
+   */
+  start_url: string;
+}
+
+/** 로그인 시작 쿼리의 `client` — URL 이 아니라 열거값이다 (오픈 리다이렉트 방지). */
+export type AuthClient = "web" | "app";
+
+/** POST /auth/{provider} · /signup 의 성공 응답. */
+export interface AuthSession {
+  /** 불투명 난수 43자. JWT 가 아니다 — 디코딩해서 정보를 꺼내려 하지 않는다. */
+  token: string;
+  /** 초 (12시간 = 43200). 없으면 401 을 맞고 나서야 만료를 안다. */
+  expires_in: number;
+  is_new: boolean;
+  parent: { id: string; nickname: string | null };
+  consent_required: string[];
+}
+
+/** 신규 회원 — 동의 전에는 parent 가 없어서 토큰이 없다. `consent_code` TTL 10분. */
+export interface AuthSignupPending {
+  status: "consent_required";
+  consent_code: string;
+}
+
+export type AuthExchangeResponse = AuthSession | AuthSignupPending;
+
+/**
+ * 🚨 `status` 필드 유무로 분기한다. `token` 유무로 보지 않는다 —
+ *    신규 응답에는 token 이 아예 없고, 그 상태로 signIn(undefined) 을 부르면
+ *    토큰 없는 세션이 저장돼 이후 모든 요청이 401 이 된다.
+ */
+export function isSignupPending(res: AuthExchangeResponse): res is AuthSignupPending {
+  return "status" in res;
+}
+
+/** 계정 스코프 2건. 아이 스코프(child_basic · child_health)는 POST /consents 그대로다. */
+export const ACCOUNT_CONSENT_SCOPES = ["service_terms", "privacy_account"] as const;
+
+/** POST /auth/{provider}/signup — 필수 스코프가 빠지면 403 consent_required. */
+export interface AuthSignupRequest {
+  consent_code: string;
+  /** ② 에서 만든 것과 같은 값. consent_code 만으로 계정이 만들어지는 것을 막는다. */
+  bind: string;
+  consents: Array<{ scope: string; policy_version: string }>;
+}
+
+/* ── 01 첫 진입 ──────────────────────────────────────────────────────── */
+
+/** 수집은 별명 · 생일 · 관계까지 (F-13). 프로필 질문을 늘리지 않는다 (CLAUDE.md §2). */
+export type Relation = "mother" | "father" | "grandparent" | "sitter" | "other";
+
+export interface CreateChildRequest {
+  nickname: string;
+  /** YYYY-MM-DD. 나이가 아니라 생일을 받는다 — 나이는 서버가 계산한다. */
+  birth_date: string;
+  relation?: Relation;
+}
+
+export interface CreateChildResponse {
+  id: string;
+  nickname: string;
+  /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+  age_display: string;
+  role: "owner" | "member";
+}
+
+/* ── 02 이야기 하나 ──────────────────────────────────────────────────── */
+
+/** 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. */
+export interface DevScreeningItem {
+  item_id: string;
+  text: string;
+  levels: Array<{ level: number; label: string }>;
+}
+
+export interface DevScreeningResponse {
+  age_band: string;
+  /** 나이대 밖이면 빈 배열이다. */
+  items: DevScreeningItem[];
+}
+
+/**
+ * 🚨 "잘 모르겠어요"(`unknown`) 는 "없음"(`none`) 이 아니다.
+ *    unknown 이면 서버가 health_safety 에 아무것도 쓰지 않고, 이후 Food Agent 는
+ *    guards.safety_unknown 으로 **실행 자체가 막힌다** (CLAUDE.md §2 — 조회 실패 시 실행 금지).
+ */
+export type SafetyStatus = "none" | "has" | "unknown";
+
+/** 🚨 보호자가 직접 입력한 값만 들어간다. LLM 이 추론한 알레르기는 저장하지 않는다 (NF-03). */
+export interface OnboardingSafetyInput {
+  type: string;
+  label: string;
+  category: string;
+  severity?: string;
+  reactions?: string[];
+}
+
+/** 전부 선택이다. 모두 건너뛰어도 200 이다. */
+export interface OnboardingRequest {
+  interests?: string[];
+  safety_status?: SafetyStatus;
+  safety?: OnboardingSafetyInput[];
+  /**
+   * ⚠️ 화면에서 보내지 않는다. 온보딩에서 한 줄을 또 받으면 03 홈의 입력과 같은 것을
+   * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
+   */
+  one_line?: string;
+  dev_answers?: Array<{ item_id: string; level: number }>;
+}
+
+export interface OnboardingResponse {
+  observations: Observation[];
+  affinities: Affinity[];
+  safety: HealthSafety[];
+  /** 서버가 저장하지 않고 돌려보낸 항목. safety_status: "unknown" 이 여기 담긴다. */
+  skipped: string[];
+  run_id: string;
+}
+
+/* ── 동의 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * POST /consents (계약서 §04). append-only — 철회도 `withdrawn` 행을 **추가**한다.
+ *
+ * 🚨 계정 스코프면 `child_id` 를 생략한다. 아이 스코프인데도 아이가 아직 없는 경우가
+ *    가입 직후다 — `child_basic` 없이 `POST /children` 이 403 이라, 아이를 만들기 전에
+ *    받아야 하기 때문이다 (#18 확인 대상).
+ */
+export interface ConsentRequest {
+  scope: string;
+  action: "granted" | "withdrawn";
+  child_id?: string;
+  policy_version: string;
+  /** 아이 스코프에서 보호자임을 확인한 표시. */
+  guardian_attested?: boolean;
+}
+
+export interface ConsentResponse {
+  consent: { id: string; scope: string; action: string; acted_at: string };
+  effective: Record<string, boolean>;
+}

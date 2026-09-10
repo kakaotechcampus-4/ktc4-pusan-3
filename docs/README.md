@@ -79,6 +79,8 @@
 ## 웹 · 화면
 
 - [web/design-system-v1.md](web/design-system-v1.md) — 색 31 · 타이포 8단계 · 레이아웃 · 컴포넌트 사양 확정 · 승인 게이트는 `caution`, 실패는 뉴트럴 · 그림자 1단계 · 전 구간 1열 고정
+- [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 `sessionStorage` 12시간
+- [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫
 
 *아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기.
 

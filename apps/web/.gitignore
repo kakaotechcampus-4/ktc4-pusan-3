@@ -40,3 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 🚨 재배포를 금지하는 라이선스의 폰트를 검토용으로 두는 자리 — 커밋되면 안 된다 (저장소 public · 최상위 §9).
+# 지금 쓰는 폰트는 OFL 이라 원본을 fonts-src/ 에 커밋한다.
+/.fonts-src

@@ -9,7 +9,21 @@ import { currentScenario, SCENARIOS, syncScenarioFromUrl } from "./scenario";
  * 아래 조건이 항상 거짓이 되고 동적 import 가 통째로 떨어져 나간다 —
  * msw 는 프로덕션 번들에 들어가지 않는다.
  */
-export async function startMocks(): Promise<void> {
+/**
+ * 🚨 한 번만 시작한다. StrictMode 가 개발 환경에서 effect 를 두 번 돌리는데, 두 번째
+ *    `worker.start()` 는 "cannot configure an already enabled network" 로 **거부된다.**
+ *    그러면 호출부의 `.finally()` 가 즉시 실행돼 **워커가 뜨기 전에 화면이 그려지고**,
+ *    첫 화면의 첫 요청이 목을 통과해 실서버로 나간다 (00 로그인의 status prefetch 가
+ *    여기 걸렸다). 약속을 캐시해서 두 번째 호출이 같은 완료를 기다리게 한다.
+ */
+let starting: Promise<void> | null = null;
+
+export function startMocks(): Promise<void> {
+  starting ??= run();
+  return starting;
+}
+
+async function run(): Promise<void> {
   if (process.env.NODE_ENV !== "development") return;
   if (process.env.NEXT_PUBLIC_API_MOCKING !== "enabled") return;
 

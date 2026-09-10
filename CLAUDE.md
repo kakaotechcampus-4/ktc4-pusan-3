@@ -133,61 +133,25 @@
 
 ## 6. 저장소 구조
 
+폴더 구조는 저장소를 열어 보면 된다. 여기엔 **열어 봐도 안 보이는 것만** 적는다.
+
 `(비어 있음)` = 폴더는 있고 파일은 다음 이슈에서 · `(미생성)` = 폴더 자체가 아직 없음
 
-```
-├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
-├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
-├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run) · db-up / db-down / db-logs (deploy/docker)
-├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
-│   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
-│   ├── api/                  API 계약서 v1
-│   └── assets/               흐름도 · 프로토타입
-├── apps/
-│   ├── web/                  프론트 (Next.js · App Router) — 고태영
-│   │   ├── CLAUDE.md         스택·버전 · API 클라이언트 관례 · 화면 규칙 — 고태영
-│   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
-│   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
-│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
-│   │   └── src/
-│   │       ├── app/          App Router — layout · providers · globals.css
-│   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
-│   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키
-│   │       ├── mocks/        MSW 목 서버 — 개발 환경 전용 (백엔드 없이 화면 작업)
-│   │       └── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
-│   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
-│   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
-│   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
-│   │   └── src/config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
-│       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
-│       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
-│       ├── pyproject.toml    의존성 · ruff · pytest 설정
-│       ├── uv.lock           ⚠️ 반드시 커밋 — 6명 동일 버전 고정
-│       ├── .env.example      환경변수 템플릿 (실제 값 없음)
-│       ├── alembic/          (비어 있음) DB 마이그레이션
-│       ├── app/
-│       │   ├── main.py       FastAPI 앱 진입점
-│       │   ├── core/         설정(pydantic-settings) — 김명성
-│       │   ├── api/          라우터 · 스키마 — 김명성
-│       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
-│       │   │   ├── deps/     (비어 있음) 인증 · 권한 · 동의 검사
-│       │   │   └── v1/       (비어 있음) 도메인 엔드포인트
-│       │   ├── domains/      (비어 있음) 도메인 모델 · 리포지토리 — 김명성
-│       │   ├── agents/       (비어 있음) Agent — **내부 구조는 이시하가 결정**
-│       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
-│       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
-│       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
-│       │   ├── integrations/ (비어 있음) 외부 공공 API (NEIS · MFDS)
-│       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
-│       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
-│       └── tests/            pytest (ASGITransport 통합 테스트)
-├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
-├── deploy/
-│   ├── docker/                로컬 개발 DB (Postgres+pgvector) docker-compose
-│   └── (미생성) nginx/, scripts/   배포용, 아직 없음
-└── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
-```
+| 어디 | 누가 · 무엇 |
+| --- | --- |
+| `apps/web/` · `apps/mobile/` | 고태영 |
+| `apps/api/app/api/` · `domains/` · `core/` · `infra/db/` | 김명성 |
+| `apps/api/app/agents/` | 이시하 — **내부 구조는 이시하가 결정** (`agents/CLAUDE.md` 미생성) |
+| `apps/api/app/rules/` | 공동 |
+| `eval/` | 오현식 · 이도헌 (비어 있음) |
+| `apps/api/alembic/` · `api/deps/` · `api/v1/` · `providers/` · `integrations/` · `workers/` | 비어 있음 |
+| `deploy/nginx/` · `deploy/scripts/` | 미생성 |
+
+- ⚠️ **`apps/web/pnpm-lock.yaml` 과 `apps/api/uv.lock` 은 반드시 커밋한다** — 6명이 같은 버전을 쓰는 유일한 장치다
+- ⚠️ **`.github/` 에는 손대면 안 되는 파일이 있다** — §8
+- `apps/api/app/api/health.py` 는 운영용 헬스체크라 `/api/v1` 밖이다 (계약서 §01)
+- `.impeccable/design.json` 은 `DESIGN.md` 가 못 담는 것(tonal ramp · 그림자 · 모션 · 컴포넌트 스니펫) — 기계 전용
+- `docs/` 는 기능별 결정·근거·검증. 인덱스는 `docs/README.md`
 
 > **왜 백엔드와 AI 를 한 서비스로 묶었나** — §4 의 두 제약 때문이다. 저장이 검색보다 먼저여야 하고(같은 run 안에서),
 > 각 Agent 가 `memory.search` 와 DB 를 직접 부른다. 프로세스를 나누면 이 경로마다 네트워크 왕복이 생긴다.
@@ -199,6 +163,13 @@
 >
 > 하위 이름(`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
 
+> **`PRODUCT.md` · `DESIGN.md` 는 새 문서가 아니라 옮긴 것이다.** 사람이 근거와 함께 읽는 정본은 그대로
+> `docs/` 에 있다 — 제품은 [`docs/overview/`](docs/overview/), 디자인은 [`docs/web/design-system-v1.md`](docs/web/design-system-v1.md).
+> 루트의 두 파일은 **AI 도구가 한 번에 읽도록 요약·구조화한 사본**이고, `.impeccable/` 은 그 사본의 기계 전용 부속이다.
+>
+> 🚨 **값이 어긋나면 `docs/` 가 맞다.** 토큰을 바꿀 때는 `docs/web/design-system-v1.md` → `globals.css` → `DESIGN.md`
+> 순으로 고친다. 반대 방향으로 고치면 근거 없는 값이 정본에 역류한다.
+
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
 **파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.
 
@@ -206,15 +177,16 @@
 
 ## 7. 기술 스택
 
-|              |                                                                                                          |
-| ------------ | -------------------------------------------------------------------------------------------------------- |
-| **Frontend** | Next.js 16 / React 19 · TypeScript · Tailwind 4 · Zustand 5 · TanStack Query 5 · (모바일: Expo / React Native 웹뷰) |
-| **Backend**  | Python 3.12 / FastAPI · SQLAlchemy 2.0 (async) · Alembic · uv · REST · Docker                            |
-| **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
-| **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
-| **협업**     | GitHub · Notion(기획·의사결정 기록) · Discord                                                            |
+언어·프레임워크·버전은 매니페스트가 정본이다 (`apps/web/package.json` · `apps/api/pyproject.toml`).
+라이브러리 관례와 버전을 **그 값으로 고정한 이유**는 각 `apps/*/CLAUDE.md` 에 있다.
 
-버전·라이브러리 관례는 각 `apps/*/CLAUDE.md` 에.
+매니페스트에 안 적히는 것만 여기 둔다.
+
+| | |
+| --- | --- |
+| **Data** | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다) |
+| **AI** | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
+| **협업** | GitHub · Notion(기획·의사결정 기록) · Discord |
 
 ---
 
