@@ -188,20 +188,25 @@ function ExamplePreview() {
   );
 }
 
-/** 도메인 4종. 🚨 아이콘은 aria-hidden 이라 의미는 옆의 라벨이 진다 (디자인 시스템 §3). */
+/**
+ * 도메인 4종. 🚨 아이콘은 aria-hidden 이라 의미는 옆의 라벨이 진다 (디자인 시스템 §3).
+ *
+ * 아이콘을 파스텔 원 안에 넣지 않는다. 그 원은 뜻을 하나도 나르지 않는데 —
+ * 도메인은 옆의 라벨이 이미 말하고 있다 — 화면에서 제일 눈에 띄는 물건이 됐다.
+ * 디자인 시스템 §1 이 "예쁘라고 칠하는 색은 없다" 고 정한 자리다. 색은 아이콘이 그대로 낸다.
+ */
 function DomainRow({ agent, label, text }: { agent: Agent; label: string; text: string }) {
   const tone: Record<Agent, string> = {
-    food: "bg-food-soft text-food-ink",
-    activity: "bg-activity-soft text-activity-ink",
-    education: "bg-education-soft text-education-ink",
-    health: "bg-health-soft text-health-ink",
+    food: "text-food-ink",
+    activity: "text-activity-ink",
+    education: "text-education-ink",
+    health: "text-health-ink",
   };
 
   return (
     <div className="flex items-start gap-3">
-      <span
-        className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tone[agent]}`}
-      >
+      {/* 아이콘 20px 을 본문 첫 줄(16px · 1.6 = 25.6px)의 광학 중심에 맞춘다. */}
+      <span className={`flex h-6 w-5 shrink-0 items-center justify-center ${tone[agent]}`}>
         <DomainIcon agent={agent} size="md" />
       </span>
       <span className="flex flex-col gap-0.5">

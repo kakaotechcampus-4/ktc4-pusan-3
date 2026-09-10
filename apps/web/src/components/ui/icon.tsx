@@ -1,4 +1,4 @@
-import { Blocks, BookOpen, HeartPulse, Utensils, type LucideIcon } from "lucide-react";
+import { Blocks, BookOpen, Thermometer, Utensils, type LucideIcon } from "lucide-react";
 
 import type { Agent } from "@/lib/api/types";
 
@@ -14,12 +14,19 @@ export type IconSize = keyof typeof ICON_SIZE;
 /** lucide 기본값 2 는 16px 에서 두껍게 보인다. 한 값으로 고정해 화면마다 달라지지 않게 한다. */
 export const ICON_STROKE = 1.75;
 
-/** 🚨 도메인 4종과 1:1. suggestion_agent enum 이 바뀌면 여기서 타입 에러가 난다. */
+/**
+ * 🚨 도메인 4종과 1:1. suggestion_agent enum 이 바뀌면 여기서 타입 에러가 난다.
+ *
+ * 🚨 `health` 는 **심전도(`HeartPulse`)를 쓰지 않는다.** 그 기호는 병원과 진단을 뜻하는데,
+ *    이 제품은 Health Agent 가 진단하지 않는다고 못박아 뒀다 (CLAUDE.md §2) — 아이콘이
+ *    제품의 반대말을 하면 안 된다. 나머지 셋(수저·블록·책)이 전부 **집에 있는 물건**이라
+ *    체온계로 맞췄다. 넷이 같은 층위의 사물이면 4색을 못 알아봐도 모양으로 구분된다.
+ */
 export const DOMAIN_ICON: Record<Agent, LucideIcon> = {
   food: Utensils,
   activity: Blocks,
   education: BookOpen,
-  health: HeartPulse,
+  health: Thermometer,
 };
 
 /**
