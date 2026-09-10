@@ -15,7 +15,7 @@ enum_col_py 로 통합하면서 length=32 로 맞춘다.
   event.created_by                  VARCHAR(9)  → VARCHAR(32)
 
 Revision ID: c1d2e3f4a5b6
-Revises: 70e8ab2bf4b9
+Revises: a1b2c3d4e5f6
 Create Date: 2026-09-09
 """
 
