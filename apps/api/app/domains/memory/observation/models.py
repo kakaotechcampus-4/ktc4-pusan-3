@@ -7,16 +7,26 @@ from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.memory.enums import (
-    ConfidenceSource,
-    EngagementLevel,
-    ObservationStatus,
-    confidence_source,
-    engagement_level,
-    observation_status,
-)
 from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
+
+
+class ConfidenceSource(str, enum.Enum):
+    INSTITUTION_NOTICE = "institution_notice"
+    PARENT_DIRECT = "parent_direct"
+    PARENT_HEDGED = "parent_hedged"
+    PARENT_HEARSAY = "parent_hearsay"
+
+
+class ObservationStatus(str, enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class EngagementLevel(str, enum.Enum):
+    LOW = "low"
+    MID = "mid"
+    HIGH = "high"
 
 
 class HealthSeverity(str, enum.Enum):
@@ -24,6 +34,20 @@ class HealthSeverity(str, enum.Enum):
     MODERATE = "moderate"
     SEVERE = "severe"
     EMERGENCY = "emergency"
+
+
+confidence_source = enum_col_py(ConfidenceSource, name="confidence_source")
+observation_status = enum_col_py(ObservationStatus, name="observation_status")
+engagement_level = enum_col_py(EngagementLevel, name="engagement_level")
+
+# generalization 은 유효 월령 72+ 라 1차 배포 타겟(≤71개월)에서 제외 확정
+STRONG_SIGNALS = (
+    "resistance_to_redirect",
+    "self_initiated",
+    "comparative_choice",
+    "asks_questions",
+    "role_extension",
+)
 
 
 class ObservationCommon:

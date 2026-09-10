@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import date
 
@@ -6,13 +7,24 @@ from sqlalchemy import Date, Float, ForeignKey, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.memory.enums import (
-    MemoryDomain,
-    ProfileState,
-    memory_domain,
-    profile_state,
-)
 from app.infra.db.base import Base, Timestamps, UUIDPk
+from app.infra.db.types import enum_col_py
+
+
+class MemoryDomain(str, enum.Enum):
+    FOOD = "food"
+    ACTIVITY = "activity"
+    EDUCATION = "education"
+
+
+class ProfileState(str, enum.Enum):
+    CANDIDATE = "candidate"
+    CONFIRMED = "confirmed"
+    ARCHIVED = "archived"
+
+
+memory_domain = enum_col_py(MemoryDomain, name="memory_domain")
+profile_state = enum_col_py(ProfileState, name="profile_state")
 
 
 class ProfileAffinity(Base, UUIDPk, Timestamps):
