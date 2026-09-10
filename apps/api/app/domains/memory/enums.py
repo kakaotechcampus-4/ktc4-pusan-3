@@ -2,7 +2,6 @@ import enum
 
 from app.infra.db.types import enum_col_py
 
-
 # ---------- Python enum 정의 ----------
 
 class MemoryDomain(str, enum.Enum):

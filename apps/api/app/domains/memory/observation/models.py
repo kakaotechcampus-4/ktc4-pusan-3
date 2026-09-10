@@ -67,7 +67,9 @@ class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
     topic: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     session_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    engagement_level: Mapped[EngagementLevel | None] = mapped_column(engagement_level, nullable=True)
+    engagement_level: Mapped[EngagementLevel | None] = mapped_column(
+        engagement_level, nullable=True
+    )
 
 
 class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
@@ -77,7 +79,9 @@ class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
     companions: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    engagement_level: Mapped[EngagementLevel | None] = mapped_column(engagement_level, nullable=True)
+    engagement_level: Mapped[EngagementLevel | None] = mapped_column(
+        engagement_level, nullable=True
+    )
 
 
 class ObservationHealth(Base, UUIDPk, Timestamps):
