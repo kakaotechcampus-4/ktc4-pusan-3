@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
-        db-migrate db-rollback db-current db-history db-check db-revision
+        db-migrate db-rollback db-current db-history db-check db-revision db-psql
 
 help:
 	@echo "사용 가능한 명령"
@@ -20,6 +20,7 @@ help:
 	@echo "  make db-history   전체 revision 체인 출력"
 	@echo "  make db-check     ORM 모델과 DB 스키마 일치 검증 (PR 올리기 전 필수)"
 	@echo "  make db-revision msg=\"설명\"  새 migration 파일 자동 생성"
+	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
 
@@ -65,3 +66,6 @@ db-check:
 db-revision:
 	@[ "$(msg)" ] || { echo "사용법: make db-revision msg=\"한 줄 설명\""; exit 1; }
 	cd apps/api && uv run alembic revision --autogenerate -m "$(msg)"
+
+db-psql:
+	docker exec -it ktc4-postgres psql -U $$(docker exec ktc4-postgres printenv POSTGRES_USER) -d $$(docker exec ktc4-postgres printenv POSTGRES_DB)
