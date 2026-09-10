@@ -10,21 +10,21 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class SuggestionAgent(str, enum.Enum):
+class SuggestionAgent(enum.StrEnum):
     FOOD = "food"
     ACTIVITY = "activity"
     EDUCATION = "education"
     HEALTH = "health"
 
 
-class SuggestionStatus(str, enum.Enum):
+class SuggestionStatus(enum.StrEnum):
     DRAFT = "draft"
     APPROVED = "approved"
     REJECTED = "rejected"
     EXPIRED = "expired"
 
 
-class SuggestionFeedback(str, enum.Enum):
+class SuggestionFeedback(enum.StrEnum):
     LIKED = "liked"
     DISLIKED = "disliked"
     NOT_ACTED = "not_acted"

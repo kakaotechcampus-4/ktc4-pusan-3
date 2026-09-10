@@ -9,7 +9,7 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class SafetyKind(str, enum.Enum):
+class SafetyKind(enum.StrEnum):
     ALLERGY = "allergy"
     CHRONIC_DISEASE = "chronic_disease"
     DIETARY_RESTRICTION = "dietary_restriction"
@@ -18,14 +18,14 @@ class SafetyKind(str, enum.Enum):
     OTHER_MEDICAL = "other_medical"
 
 
-class SafetySeverity(str, enum.Enum):
+class SafetySeverity(enum.StrEnum):
     MILD = "mild"
     MODERATE = "moderate"
     SEVERE = "severe"
     ANAPHYLAXIS = "anaphylaxis"
 
 
-class SafetyState(str, enum.Enum):
+class SafetyState(enum.StrEnum):
     ACTIVE = "active"
     RETRACTED = "retracted"
 

@@ -9,7 +9,7 @@ from app.infra.db.base import Base, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class ConsentScope(str, enum.Enum):
+class ConsentScope(enum.StrEnum):
     SERVICE_TERMS = "service_terms"
     PRIVACY_ACCOUNT = "privacy_account"
     CHILD_BASIC = "child_basic"
@@ -17,7 +17,7 @@ class ConsentScope(str, enum.Enum):
     QUALITY_IMPROVE = "quality_improve"
 
 
-class ConsentAction(str, enum.Enum):
+class ConsentAction(enum.StrEnum):
     GRANTED = "granted"
     WITHDRAWN = "withdrawn"
 

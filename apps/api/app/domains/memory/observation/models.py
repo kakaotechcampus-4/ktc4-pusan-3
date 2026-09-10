@@ -11,25 +11,25 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class ConfidenceSource(str, enum.Enum):
+class ConfidenceSource(enum.StrEnum):
     INSTITUTION_NOTICE = "institution_notice"
     PARENT_DIRECT = "parent_direct"
     PARENT_HEDGED = "parent_hedged"
     PARENT_HEARSAY = "parent_hearsay"
 
 
-class ObservationStatus(str, enum.Enum):
+class ObservationStatus(enum.StrEnum):
     ACTIVE = "active"
     INACTIVE = "inactive"
 
 
-class EngagementLevel(str, enum.Enum):
+class EngagementLevel(enum.StrEnum):
     LOW = "low"
     MID = "mid"
     HIGH = "high"
 
 
-class HealthSeverity(str, enum.Enum):
+class HealthSeverity(enum.StrEnum):
     MILD = "mild"
     MODERATE = "moderate"
     SEVERE = "severe"

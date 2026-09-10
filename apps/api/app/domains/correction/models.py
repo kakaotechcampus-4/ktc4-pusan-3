@@ -10,7 +10,7 @@ from app.infra.db.base import Base, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class CorrectionVerdict(str, enum.Enum):
+class CorrectionVerdict(enum.StrEnum):
     CONFIRM = "confirm"
     ONCE_ONLY = "once_only"
     OUTDATED = "outdated"

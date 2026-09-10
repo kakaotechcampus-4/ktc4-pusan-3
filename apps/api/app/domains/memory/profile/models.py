@@ -11,13 +11,13 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class MemoryDomain(str, enum.Enum):
+class MemoryDomain(enum.StrEnum):
     FOOD = "food"
     ACTIVITY = "activity"
     EDUCATION = "education"
 
 
-class ProfileState(str, enum.Enum):
+class ProfileState(enum.StrEnum):
     CANDIDATE = "candidate"
     CONFIRMED = "confirmed"
     ARCHIVED = "archived"

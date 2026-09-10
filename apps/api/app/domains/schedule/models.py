@@ -10,25 +10,25 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class EventType(str, enum.Enum):
+class EventType(enum.StrEnum):
     CORE = "core"
     EPISODIC = "episodic"
 
 
-class EventCategory(str, enum.Enum):
+class EventCategory(enum.StrEnum):
     INSTITUTION = "institution"
     HEALTH = "health"
     ACTIVITY = "activity"
     ETC = "etc"
 
 
-class EventStatus(str, enum.Enum):
+class EventStatus(enum.StrEnum):
     DRAFT = "draft"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
 
 
-class EventCreatedBy(str, enum.Enum):
+class EventCreatedBy(enum.StrEnum):
     AGENT = "agent"
     CAREGIVER = "caregiver"
 

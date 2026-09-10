@@ -9,7 +9,7 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class ParentChildRelation(str, enum.Enum):
+class ParentChildRelation(enum.StrEnum):
     MOTHER = "mother"
     FATHER = "father"
     GRANDPARENT = "grandparent"

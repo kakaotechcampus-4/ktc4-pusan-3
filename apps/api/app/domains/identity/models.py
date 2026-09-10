@@ -9,7 +9,7 @@ from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
 
 
-class AuthProvider(str, enum.Enum):
+class AuthProvider(enum.StrEnum):
     KAKAO = "kakao"
     APPLE = "apple"
     GOOGLE = "google"
