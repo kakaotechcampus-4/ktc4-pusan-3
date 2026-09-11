@@ -425,7 +425,8 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **Spinner:** 16×16 · 2px 테두리 · **트랙 = 현재 글자색 25% + 머리 = 100%** · 1초에 1바퀴. 🚨 `prefers-reduced-motion` 에서는 **숨긴다** — 멈춘 스피너는 "고장난 화면" 으로 읽히고, 옆의 문구가 상태를 대신 말한다
 - **진행 오버레이(SSE):** 단계를 세로로 쌓고 현재 단계만 살린다. 완료 `ink-muted` + 체크 `brand` / 진행 중 `ink` + label 600 / 대기 `ink-subtle`. `aria-live="polite"`
 
-> **아직 구현되지 않은 것** — 배너 · 탭 · 진행 오버레이 · 빈 상태 · 스켈레톤은 위 사양이 확정돼 있지만 컴포넌트 파일은 아직 없다. 새로 만들 때 이 값에서 벗어나지 말 것. 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet` · `DomainIcon` 이다.
+> **아직 구현되지 않은 것** — `card-general`(일반 추천) · 탭 · `card-photo` · 캘린더 그리드. `card-general` 은 사양은 있는데 **실을 데이터가 없어서** 못 만든다 (계약서에 개인화/일반을 가르는 타입 필드가 없다 — `docs/web/design-system-v1.md` §14). 나머지는 그 화면 이슈에서 만든다.
+> 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `EvidenceChip`/`CountChip` · `DomainChip` · `Card`/`CardFailed` · `Banner` · `Spinner` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `DomainIcon` 이다.
 
 ## Do's and Don'ts
 

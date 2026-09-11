@@ -370,7 +370,7 @@
 | `input` | `surface` 배경 · `line-strong` 1px · radius-field · 높이 `field` · **body(16px)** · placeholder `ink-subtle` |
 | `input:focus-visible` | `brand` 2px outline · offset 2 · 테두리는 그대로 |
 | `input[aria-invalid]` | `danger` 1px 테두리 + 아래 `caption` / `danger-ink` 로 사유 한 줄 |
-| `textarea` (03 입력) | 위와 동일 · 최소 높이 96 · 자동 증가 · 최대 5줄 후 스크롤 |
+| `textarea` (03 입력) | 위와 동일 · 자동 증가 · 몇 줄까지 늘어나는지는 [`text-area.tsx`](../../apps/web/src/components/ui/text-area.tsx) 가 원본. 🚨 "한 줄" 이라고 부르지만 부모는 서너 줄을 쓴다 — 쓰는 동안 자기 글이 안 보이면 안 된다 |
 | `date-field` | 값을 보여주는 트리거(입력과 같은 사양) + 달력을 담은 **바텀시트** · 연도·월 드롭다운 · 오늘 이후 비활성 · 요일과 월 이름은 한국어 |
 | `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 **20 × 20** · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 행 전체가 터치 타깃(`touch`) |
 
@@ -414,12 +414,17 @@
 
 ### 배너
 
-| 이름 | 사양 |
+| 이름 | 무엇을 알리는가 |
 | --- | --- |
-| `banner-caution` | `caution-soft` 배경 · 왼쪽 `caution` 3px 바 · 안쪽 12/14 · radius-field · `caution-ink` · body-sm |
-| `banner-danger` | `danger-soft` 배경 · 왼쪽 `danger` 3px 바 · 나머지 동일 · `danger-ink` |
+| `banner-caution` | **내가 확인해야 한다** — 승인 게이트 2곳 전용 (06 의 `prechecks`) |
+| `banner-danger` | **막혔다** — 알레르기 저촉 · 건강 추천 중단 |
+
+두 배너는 배경·왼쪽 바·글자만 색이 다르고 치수는 같다. 구현은 [`components/ui/banner.tsx`](../../apps/web/src/components/ui/banner.tsx) 가 원본이다.
 
 배너는 화면 최상단 한 곳에만 둔다. 두 개가 동시에 필요하면 `danger` 가 이긴다.
+guard 가 여러 건이어도 배너는 **하나**고 안에서 줄로 나눈다 — 배너가 쌓이면 그때부터 아무도 안 읽는다.
+
+🚨 **실패는 배너가 아니다.** `failed` · `partial` 의 실패 쪽은 `card-failed` 다 (§3).
 
 ### 바텀시트
 
@@ -450,14 +455,20 @@
 | 진행 중 | `ink` · label 600 · 좌측 진행 인디케이터 `brand` |
 | 대기 | `ink-subtle` |
 
+`aria-live="polite"` 로 단계 변화를 읽어 준다 — 진행 표시를 눈으로만 알 수 있게 두지 않는다.
+**단계 문구는 서버가 보내는 `step.label` 을 그대로 쓴다.** 파이프라인이 바뀌면 문구도 같이 바뀌어야 하는데, 프론트에 적어 두면 어긋난다.
+
 🚨 **20초를 넘기면 부분 결과로 전환한다**(NF-06). 오버레이를 계속 돌리지 않고, 그 시점까지 성공한 Agent 결과를 그리고 실패한 쪽은 `card-failed` 로 같은 화면에 둔다.
 
 ### 빈 상태 · 스켈레톤
 
 | 이름 | 사양 |
 | --- | --- |
-| `empty-state` | `surface-muted` · radius-card · 위아래 32 · 아이콘 40 · `section` 제목 + `body-sm` `ink-muted` 설명 + **쌓인 기록 건수 명시** |
-| `skeleton` | `line` 블록 · radius-field · 1.2s ease-in-out 로 opacity 0.6 ↔ 1 · **`prefers-reduced-motion` 에서는 정지** |
+| `empty-state` | `surface-muted` · radius-card · `section` 제목 + `body-sm` `ink-muted` 설명 + **쌓인 기록 건수 명시**. 아이콘만 40px 로 **크기 3단계(16·20·24) 밖**이다 — 빈 화면 한가운데 놓이는 유일한 자리라 24px 는 장식으로도 안 보인다 |
+| `skeleton` | `line` 블록 · radius-field · `--animate-skeleton` (1.2s ease-in-out · opacity 0.6 ↔ 1) · **`prefers-reduced-motion` 에서는 정지** |
+
+🚨 **Tailwind 기본 `animate-pulse` 를 쓰지 않는다** — 2s · opacity 1 ↔ 0.5 라 위 값과 다르다. 토큰은 `globals.css` 의 `--animate-skeleton` 이다.
+스피너와 달리 **숨기지 않는다** — 숨기면 레이아웃이 두 번 흔들린다.
 
 빈 상태를 사과문으로 쓰지 않는다. 03 홈에서 `highlight: null` 이면 "아직 기억이 없어요" 가 아니라 **"기록 0건 — 오늘 있었던 일을 한 줄 남겨 보세요"** 다. 규칙(§3)대로 건수를 그대로 보여준다.
 
@@ -589,7 +600,7 @@
 | 04 저장 결과 | `saved` · `promoted` | `card` + `brand` 체크 |
 | 04 저장 결과 | `failed` (+ `raw_text` 복원) | `card-failed`. **빨강 금지** |
 | 05 제안 · 개인화 | 근거 칩 N개 | `card-personalized` + `chip-domain` + `chip-evidence` |
-| 05 제안 · 일반 (`scarcity`) | "또래 기준" 라벨 + 건수 | `card-general` (점선) |
+| 05 제안 · 일반 (`scarcity`) | "또래 기준" 라벨 + 건수 | `card-general` (점선). ⚠️ **아직 못 만든다** — §14 |
 | 05 제안 · `partial` | 성공 + 실패 한 화면 | `card-personalized` + `card-failed` 나란히 |
 | 06 승인 · `prechecks` | "확인해 주세요" | `banner-caution` + `btn-approve` |
 | 06 승인 · 알레르기 저촉 | 추천 차단 | `banner-danger` |
@@ -642,6 +653,8 @@
 | **토스트 · 인라인 알림** | 어떤 성공을 알려야 하는지가 안 정해졌다. 승인 결과는 화면 전환으로 알리고 있어서 아직 필요가 없다 |
 | **에러 화면 전문** | 네트워크 끊김 · 세션 만료 등 화면 단위 에러는 계약서 에러 코드가 확정된 뒤 |
 | **캘린더 그리드 (09)** | 09 화면 상세가 프로토타입에만 있고 컴포넌트로 안 뽑혔다 |
+| **일반 추천 카드 (`card-general`)** | 사양은 §7 에 있는데 **실을 데이터가 없다.** 계약서 v1 의 `scarcity` 응답은 `suggestions: []` 고, 개인화와 일반을 가르는 타입 필드(CLAUDE.md §2)도 계약서에 없다. 필드 없이 프론트가 "또래 기준" 을 지어내면 그 규칙을 UI 로 덮는 것이라, 05 는 그때까지 "기록이 부족하다 + 질문 1개" 를 그린다. 👉 계약서에 `Suggestion.kind` 를 넣는 것이 선행 |
+| **`Evidence.is_stale`** | `chip-evidence-stale` 을 그리려면 6개월 판정이 필요한데 프론트는 날짜를 계산하지 않는다(CLAUDE.md §3). `Affinity` 에는 `is_stale` 이 있고 `Evidence` 에는 없다 — 계약서 수정 대상이고, 그때까지 점선 칩은 목에서만 나온다 |
 
 ---
 

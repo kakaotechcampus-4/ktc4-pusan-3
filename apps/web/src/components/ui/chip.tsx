@@ -49,3 +49,62 @@ export function Chip({
 export function ChipRow({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap gap-x-2">{children}</div>;
 }
+
+/**
+ * 디자인 시스템 §7 `chip-evidence` · `chip-evidence-stale` — 추천이 쓴 근거 하나.
+ *
+ * 🚨 **누를 수 없다.** 근거를 눌러 07 상세로 가는 경로는 07 화면 이슈 것이고,
+ *    지금 `<button>` 으로 만들어 두면 아무 데도 안 가는 버튼이 된다.
+ *
+ * 🚨 `is_stale` (6개월 넘음) 은 점선 + 더 옅은 글자다. 단독 근거로 쓰지 않는다는 규칙(NF-08)은
+ *    화면이 아니라 **서버**가 지키지만, 섞여 들어온 것을 부모가 알아볼 수 있어야 한다.
+ *    색만으로 구분하지 않으려고 테두리 모양을 바꾼다 (문서 §10).
+ */
+export function EvidenceChip({
+  label,
+  meta,
+  stale = false,
+}: {
+  label: string;
+  /** "3일 전 · 보호자 직접" 같은 한 줄. 서버가 만든 문구를 그대로 받는다. */
+  meta?: string;
+  stale?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "text-caption min-h-chip inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5",
+        stale
+          ? "border-line text-ink-subtle border-dashed"
+          : "border-line bg-surface text-ink-muted",
+      )}
+    >
+      {label}
+      {meta ? <span className="text-ink-subtle">· {meta}</span> : null}
+      {/* 점선만으로는 무엇이 다른지 모른다 — 모양과 글자를 같이 낸다 (문서 §10). */}
+      {stale ? <span className="text-ink-subtle">· 오래된 기록</span> : null}
+    </span>
+  );
+}
+
+/**
+ * 디자인 시스템 §7 `chip-count` — "기록 12건".
+ *
+ * 배경도 테두리도 없다. 칩이라고 부르지만 실제로는 **건수를 칩 줄에 섞어 놓기 위한 글자**다 —
+ * 근거 칩 옆에서 같은 높이로 서야 줄이 흐트러지지 않는다.
+ */
+export function CountChip({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-caption text-ink-subtle min-h-chip inline-flex items-center px-0.5">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * 근거 칩 줄. `ChipRow` 와 달리 **세로 gap 을 준다** — 근거 칩은 누를 수 없어서
+ * 누르는 영역을 채우는 투명 여백이 없고, 그대로 두면 줄바꿈됐을 때 칩끼리 붙는다.
+ */
+export function EvidenceRow({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">{children}</div>;
+}

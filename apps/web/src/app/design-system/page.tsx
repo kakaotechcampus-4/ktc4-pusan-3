@@ -1,17 +1,24 @@
 "use client";
 
+import { NotebookPen } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { DomainChip } from "@/components/domain-chip";
+import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Chip, ChipRow } from "@/components/ui/chip";
+import { Chip, ChipRow, CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
 import { DateField } from "@/components/ui/date-field";
+import { EmptyState } from "@/components/ui/empty-state";
 import { DomainIcon, ICON_SIZE } from "@/components/ui/icon";
+import { ProgressSteps } from "@/components/ui/progress-steps";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { TextArea } from "@/components/ui/text-area";
 import { TextInput } from "@/components/ui/text-input";
 import type { Agent } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
@@ -444,6 +451,7 @@ function ComponentSection() {
   const [date, setDate] = useState("");
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
+  const [area, setArea] = useState("");
 
   return (
     <Section title="컴포넌트" note="지금 코드에 있는 것만. 사양은 §7, 없는 것은 맨 아래에.">
@@ -497,6 +505,13 @@ function ComponentSection() {
         label="체크박스"
         description="표식은 rounded-full — 24px 에 새 radius 를 만들지 않으려고 골랐다."
       />
+      <TextArea
+        label="여러 줄 입력 (03 홈)"
+        hint="최소 96 · 자동 증가 · 5줄이 넘으면 안에서 스크롤한다."
+        placeholder="예: 저녁에 계란말이를 또 찾았어요"
+        value={area}
+        onChange={(e) => setArea(e.target.value)}
+      />
 
       <SubTitle>칩</SubTitle>
       <ChipRow>
@@ -509,6 +524,20 @@ function ComponentSection() {
           비활성
         </Chip>
       </ChipRow>
+      <p className="text-caption text-ink-subtle">
+        도메인 칩 · 근거 칩 · 건수. 🚨 한 화면에 도메인 색은 2개까지다 — 여기는 네 색을 나란히
+        비교하려고 모아 둔 내부 문서라 예외다.
+      </p>
+      <EvidenceRow>
+        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+          <DomainChip key={agent} agent={agent} />
+        ))}
+      </EvidenceRow>
+      <EvidenceRow>
+        <EvidenceChip label="계란 반찬" meta="3일 전" />
+        <EvidenceChip label="물놀이" stale />
+        <CountChip>외 2건</CountChip>
+      </EvidenceRow>
 
       <SubTitle>긴 문구</SubTitle>
       <p className="text-caption text-ink-subtle">
@@ -533,6 +562,18 @@ function ComponentSection() {
       <CardFailed>
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.
       </CardFailed>
+
+      <SubTitle>배너</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 caution 은 승인 게이트 2곳 전용, danger 는 알레르기·건강 중단·파괴적 확정 전용이다. 화면
+        최상단 한 곳에만 두고, 둘이 동시에 필요하면 danger 가 이긴다.
+      </p>
+      <Banner tone="caution" title="처음 보는 재료가 있어요">
+        아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
+      </Banner>
+      <Banner tone="danger" title="알레르기 기록에 추가했어요">
+        이 재료가 들어간 제안은 넣지 않아요.
+      </Banner>
 
       <SubTitle>바텀시트</SubTitle>
       <p className="text-caption text-ink-subtle">
@@ -567,6 +608,29 @@ function ComponentSection() {
           내용이 넘치면 화면이 아니라 시트 안에서만 스크롤한다. 최대 높이 88dvh.
         </p>
       </BottomSheet>
+
+      <SubTitle>진행 오버레이 (04 · SSE)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        완료 · 진행 중 · 대기 3상태. 단계 문구는 서버의 step.label 을 그대로 쓴다. 🚨 20초를 넘기면
+        오버레이를 걷고 부분 결과로 넘어간다 (NF-06).
+      </p>
+      <Card>
+        <ProgressSteps index={2} total={3} label="관찰을 나누고 있어요" />
+      </Card>
+
+      <SubTitle>빈 상태 · 스켈레톤</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 빈 상태를 사과문으로 쓰지 않는다. 쌓인 기록 건수를 그대로 보여준다.
+      </p>
+      <EmptyState
+        icon={NotebookPen}
+        title="아래에 한 줄 적으면 여기에 쌓여요"
+        description="기억이 없으면 제안도 만들지 않아요."
+        count={0}
+      />
+      <Card>
+        <SkeletonBlock />
+      </Card>
 
       <SubTitle>아이콘 · 도메인</SubTitle>
       <p className="text-caption text-ink-subtle">
