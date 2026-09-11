@@ -3,7 +3,11 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 /**
- * 디자인 시스템 §7 버튼 표를 그대로 옮겼다. 값을 바꾸려면 문서를 먼저 고친다.
+ * 디자인 시스템 §7 버튼. 높이는 `globals.css` 의 `--height-*` 토큰이 원본이고,
+ * 좌우 여백처럼 이 컴포넌트에서만 쓰는 치수는 이 파일이 원본이다.
+ *
+ * 🚨 높이는 `min-h-*` 다. 문구가 두 줄이 되거나 글자를 키우면 버튼이 늘어나야 한다 —
+ *    고정 높이면 글자가 버튼 밖으로 흘러 무엇을 누르는지가 가려진다 (문서 §10).
  *
  * 🚨 한 화면에 primary 는 하나다. 두 개면 무엇이 다음 행동인지 부모가 판단해야 한다.
  * 🚨 approve 는 승인 게이트 2곳 전용(52px · 전체 폭), danger 는 파괴적 확정 전용이다.
@@ -22,17 +26,20 @@ const DISABLED =
  *    누른 느낌(`active:`)은 터치에서도 걸리므로 모든 변형에 넣는다.
  */
 const VARIANT: Record<ButtonVariant, string> = {
-  primary: "h-12 px-5 rounded-field bg-brand text-white hover:bg-brand-hover active:bg-brand-hover",
+  primary:
+    "min-h-button px-5 rounded-field bg-brand text-white hover:bg-brand-hover active:bg-brand-hover",
   secondary:
-    "h-12 px-5 rounded-field bg-surface text-ink border border-line-strong hover:bg-surface-muted active:bg-surface-muted",
-  tertiary: "h-11 px-2 rounded-field text-brand hover:bg-brand-soft active:bg-brand-soft",
+    "min-h-button px-5 rounded-field bg-surface text-ink border border-line-strong hover:bg-surface-muted active:bg-surface-muted",
+  tertiary: "min-h-touch px-2 rounded-field text-brand hover:bg-brand-soft active:bg-brand-soft",
+  // 좌우 여백이 없는 게 아니라 전체 폭이라 필요 없던 것이다. 문구가 길어 가장자리까지
+  // 닿으면 다른 변형과 같은 여백을 받는다.
   approve:
-    "h-13 w-full rounded-field bg-brand text-white hover:bg-brand-hover active:bg-brand-hover",
+    "min-h-approve w-full px-5 rounded-field bg-brand text-white hover:bg-brand-hover active:bg-brand-hover",
   danger:
-    "h-12 px-5 rounded-field bg-danger text-white hover:bg-danger-hover active:bg-danger-hover",
+    "min-h-button px-5 rounded-field bg-danger text-white hover:bg-danger-hover active:bg-danger-hover",
   // 외부 브랜드. 카카오가 정한 색·모양을 따라야 해서 예외로 둔 변형이다 (문서 §2-6).
   kakao:
-    "h-12 px-5 rounded-field bg-kakao text-kakao-ink hover:bg-kakao-hover active:bg-kakao-hover",
+    "min-h-button px-5 rounded-field bg-kakao text-kakao-ink hover:bg-kakao-hover active:bg-kakao-hover",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -54,7 +61,9 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "text-button ease-standard inline-flex items-center justify-center gap-2 transition-colors duration-120",
+        // `py-2` 는 한 줄일 때는 보이지 않는다(최소 높이가 더 크다). 문구가 늘어나 버튼이
+        // 커지기 시작하면 그때부터 글자가 위아래 가장자리에 붙지 않게 받친다.
+        "text-button ease-standard inline-flex items-center justify-center gap-2 py-2 text-center transition-colors duration-120",
         VARIANT[variant],
         block && variant !== "approve" && "w-full",
         DISABLED,

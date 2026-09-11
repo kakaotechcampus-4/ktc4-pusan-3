@@ -33,7 +33,7 @@ export function Checkbox({
   const descriptionId = description ? `${id}-description` : undefined;
 
   return (
-    <label htmlFor={id} className={cn("group flex min-h-11 items-start gap-3 py-2", className)}>
+    <label htmlFor={id} className={cn("group min-h-touch flex items-start gap-3 py-2", className)}>
       <input
         id={id}
         type="checkbox"

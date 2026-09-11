@@ -1,11 +1,31 @@
 # 디자인 시스템 v1
 
-**살아 있는 버전이 있다 — `pnpm dev` 후 [`/design-system`](../../apps/web/src/app/design-system/page.tsx).** 이 문서의 표를 실제 토큰·컴포넌트로 렌더하고, **대비비를 그 자리에서 계산한다.** 토큰을 바꾸면 통과/미달이 바뀌므로 문서와 코드가 어긋나면 눈에 보인다.
+**살아 있는 버전이 있다 — `pnpm dev` 후 [`/design-system`](../../apps/web/src/app/design-system/page.tsx).** 실제 토큰·컴포넌트를 렌더하고, **대비비와 높이를 지금 값으로 읽는다.** 토큰을 바꾸면 통과/미달이 바뀌므로 문서와 코드가 어긋나면 눈에 보인다.
 
-문서 목적: 색·타이포·레이아웃·컴포넌트 토큰을 확정한다. [`apps/web/src/app/globals.css`](../../apps/web/src/app/globals.css) 는 이 문서를 옮긴 것이고, 둘이 어긋나면 CSS 가 틀린 것이다.
+문서 목적: 색·타이포·레이아웃·컴포넌트가 **왜 그 모양인지, 어디에 쓰고 어디에 쓰지 않는지**를 확정한다.
+
+### 무엇이 어디에 있나
+
+같은 값을 두 곳에 손으로 적으면 어느 쪽이 최신 결정인지 알 수 없게 된다. 그래서 종류마다 원본을 한 곳으로 정했다.
+
+| 무엇 | 원본 | 이 문서에는 |
+| --- | --- | --- |
+| 디자인 의도 · 사용 조건 · 금지 예 | **이 문서** | 전부 |
+| 여러 컴포넌트가 같이 쓰는 값 (색 · 타이포 · radius · **높이**) | [`globals.css`](../../apps/web/src/app/globals.css) 의 `@theme` | **토큰 이름**으로 부른다. 숫자는 결정의 근거를 설명할 때만 적는다 |
+| 한 컴포넌트 안에서만 쓰는 치수 (버튼 좌우 여백 등) · 상태별 표현 · 키보드 · 포커스 동작 | [`components/ui/`](../../apps/web/src/components/ui) 코드와 `/design-system` | 그 치수가 **결정인 이유가 있을 때만** 이유와 함께 적는다 |
+
+**아직 코드가 없는 컴포넌트**(`/design-system` 맨 아래 목록)는 이 문서가 유일한 사양이라 숫자를 그대로 둔다. 만들 때 위 표대로 옮기고 여기서 숫자를 뺀다.
+
+🚨 **문서와 코드가 어긋나면 한쪽이 틀렸다고 가정하지 않는다. 먼저 바뀐 이유를 확인한다.** 구현 실수일 수도 있지만, 실기기 검증이나 접근성 때문에 코드를 먼저 고친 것일 수도 있다.
+
+1. 어긋난 지점의 커밋·PR 에서 **왜 바꿨는지**를 찾는다.
+2. 이유가 있으면 **같은 PR 에서** 이 문서의 근거를 고친다 (값만 바꾸고 근거를 두면 다음 사람이 되돌린다). [`DESIGN.md`](../../DESIGN.md) · `.impeccable/design.json` 사본도 같이 맞춘다.
+3. 이유를 못 찾으면 구현 실수로 보고 코드를 되돌린다.
+
+값을 바꾸는 PR 은 1~2 를 한 번에 담는다. 값이 바뀌었는데 문서나 코드 한쪽만 들어 있으면 리뷰에서 반대쪽을 요구한다.
 
 기준 브랜치: `docs/fe-13-design-system`
-작성일: 2026-09-08
+작성일: 2026-09-08 · 개정 2026-09-11 (값의 원본을 `globals.css` 로 · 높이를 최소값으로 · PR #29 리뷰 반영)
 담당: 고태영
 선행 문서: [`docs/api/api-interface-v1.html`](../api/api-interface-v1.html) (화면 01~10 · 상태값 이름의 정본)
 
@@ -22,6 +42,7 @@
 | 간격 | 4px 배수 7단계 · 컨테이너 최대 폭 560px |
 | radius | 4개 (10 · 14 · 20 · 9999) |
 | 그림자 | **1개** (바텀시트) + 스크림 |
+| 높이 | 토큰 **5개** (`touch` · `button` · `approve` · `field` · `chip`) · **전부 최소 높이** |
 | 컴포넌트 | 버튼 6 · 입력 3 · 칩 4 · 카드 5 · 배너 2 · 시트 · 탭 · 진행 · 빈 상태 · 스켈레톤 |
 | 브레이크포인트 | 3개 · 전 구간 1열 |
 
@@ -304,6 +325,9 @@
 
 값이 비어 있으면 §5 기본값(카드 안쪽 16px 등)을 따른다. 타이포 열은 §4 역할 이름이다.
 
+**높이는 `globals.css` 의 `--height-*` 토큰 이름으로 적는다** (`button` = `min-h-button`). 숫자는 [`/design-system`](../../apps/web/src/app/design-system/page.tsx) 의 "높이" 가 지금 값을 읽어 보여준다. 🚨 **전부 최소 높이다** — 문구가 길거나 글자를 키우면 늘어난다 (§10).
+좌우 여백처럼 한 컴포넌트 안에서만 쓰는 치수는 그 컴포넌트 코드가 원본이라 이 표에 옮기지 않는다 (머리말).
+
 **구현은 직접 한다.** 별도 UI 라이브러리를 쓰지 않는다 — 토큰과 1:1 로 붙고 고치기 쉬운 쪽을 골랐다.
 대신 접근성이 전부 우리 책임이 되므로, **직접 짜면 반드시 빠뜨리는 것은 이미 검증된 것 위에 얹는다.**
 
@@ -321,18 +345,20 @@
 
 ### 버튼
 
-| 이름 | 배경 | 글자 | 테두리 | 높이 | 좌우 여백 | radius | 타이포 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `btn-primary` | `brand` | `#FFF` | — | 48 | 20 | field | button |
-| `btn-primary:active` | `brand-hover` | `#FFF` | — | 48 | 20 | field | button |
-| `btn-approve` | `brand` | `#FFF` | — | **52** · 전체 폭 | — | field | button |
-| `btn-secondary` | `surface` | `ink` | `line-strong` 1px | 48 | 20 | field | button |
-| `btn-tertiary` | 없음 | `brand` | — | 44 | 8 | field | button |
-| `btn-danger` | `danger` | `#FFF` | — | 48 | 20 | field | button |
-| `btn-kakao` | `kakao` | `kakao-ink` | — | 48 | 20 | field | button |
-| `:disabled` (공통) | `surface-muted` | `ink-subtle` | `line` 1px | 그대로 | 그대로 | 그대로 | 그대로 |
+| 이름 | 배경 | 글자 | 테두리 | 높이 | radius | 타이포 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `btn-primary` | `brand` | `#FFF` | — | `button` | field | button |
+| `btn-primary:active` | `brand-hover` | `#FFF` | — | `button` | field | button |
+| `btn-approve` | `brand` | `#FFF` | — | **`approve`** · 전체 폭 | field | button |
+| `btn-secondary` | `surface` | `ink` | `line-strong` 1px | `button` | field | button |
+| `btn-tertiary` | 없음 | `brand` | — | `touch` | field | button |
+| `btn-danger` | `danger` | `#FFF` | — | `button` | field | button |
+| `btn-kakao` | `kakao` | `kakao-ink` | — | `button` | field | button |
+| `:disabled` (공통) | `surface-muted` | `ink-subtle` | `line` 1px | 그대로 | 그대로 | 그대로 |
 
-- `btn-approve` 는 **승인 게이트 2곳 전용**이다. 52px 로 키우고 전체 폭을 쓴다 — 되돌릴 수 없는 행동을 잘못 눌러서 실행하는 경로를 만들지 않는다.
+- `btn-approve` 는 **승인 게이트 2곳 전용**이다. 다른 버튼보다 한 단계 키우고(`approve` > `button`) 전체 폭을 쓴다 — 되돌릴 수 없는 행동을 잘못 눌러서 실행하는 경로를 만들지 않는다.
+- 🚨 **`approve` 와 `field` 는 지금 값이 같지만 다른 토큰이다.** 승인 버튼은 잘못 누르지 않게 키운 것이고 입력은 16px 글자에 여유를 준 것이라, 한쪽을 바꿀 때 다른 쪽이 따라 바뀌면 안 된다.
+- 🚨 **승인 버튼은 문구가 길어져도 전부 보여야 한다.** 무엇을 승인하는지가 가려진 승인 버튼은 승인 게이트가 아니다 — 문구를 줄여 넣지 말고 버튼이 늘어나게 둔다 (§10).
 - `btn-danger` 는 **파괴적 확정에만** (10 설정의 동의 철회·기록 삭제). 승인 게이트의 "아니에요" 는 `btn-secondary` 다. 거절은 파괴가 아니다.
 - `btn-kakao` 는 **00 로그인 화면 전용**이다 (§2-6). 그 화면에 `btn-primary` 가 없어서 "한 화면에 primary 하나" 규칙과 부딪히지 않는다.
 - 한 화면에 `btn-primary` 는 **하나**. 두 개면 무엇이 다음 행동인지 부모가 판단해야 한다.
@@ -341,12 +367,12 @@
 
 | 이름 | 사양 |
 | --- | --- |
-| `input` | `surface` 배경 · `line-strong` 1px · radius-field · 높이 52 · 좌우 14 · **body(16px)** · placeholder `ink-subtle` |
+| `input` | `surface` 배경 · `line-strong` 1px · radius-field · 높이 `field` · **body(16px)** · placeholder `ink-subtle` |
 | `input:focus-visible` | `brand` 2px outline · offset 2 · 테두리는 그대로 |
 | `input[aria-invalid]` | `danger` 1px 테두리 + 아래 `caption` / `danger-ink` 로 사유 한 줄 |
 | `textarea` (03 입력) | 위와 동일 · 최소 높이 96 · 자동 증가 · 최대 5줄 후 스크롤 |
 | `date-field` | 값을 보여주는 트리거(입력과 같은 사양) + 달력을 담은 **바텀시트** · 연도·월 드롭다운 · 오늘 이후 비활성 · 요일과 월 이름은 한국어 |
-| `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 **20 × 20** · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 라벨과 간격 12 · 행 전체가 터치 타깃(최소 44) |
+| `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 **20 × 20** · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 행 전체가 터치 타깃(`touch`) |
 
 🚨 **`failed` 이벤트가 오면 `raw_text` 를 `textarea` 에 그대로 되돌려 놓는다.** 부모가 다시 타이핑하게 만들지 않는다.
 
@@ -360,13 +386,17 @@
 
 | 이름 | 사양 |
 | --- | --- |
-| `chip-domain` | `{domain}-soft` 배경 · `{domain}-ink` 글자 · 아이콘 16 + 라벨 · 높이 28 · 좌우 10 · full · label |
-| `chip-evidence` | `surface` 배경 · `line` 1px · `ink-muted` · 높이 28 · 좌우 10 · full · caption |
+| `chip-domain` | `{domain}-soft` 배경 · `{domain}-ink` 글자 · 아이콘 16 + 라벨 · 높이 `chip` · full · label |
+| `chip-evidence` | `surface` 배경 · `line` 1px · `ink-muted` · 높이 `chip` · full · caption |
 | `chip-evidence-stale` | 위와 같되 `line` **점선** · `ink-subtle` (`is_stale` 근거) |
 | `chip-count` | 배경 없음 · `ink-subtle` · caption ("기록 12건") |
-| `chip-choice` | 눌러서 고르는 칩. 선택 전 `surface` · `line` 1px · `ink-muted` / 선택 후 `brand-soft` · `brand` 1px · `brand-ink` · 높이 28 · 좌우 10 · full · label |
+| `chip-choice` | 눌러서 고르는 칩. 선택 전 `surface` · `line` 1px · `ink-muted` / 선택 후 `brand-soft` · `brand` 1px · `brand-ink` · 높이 `chip` · full · label |
 
-`chip-choice` 는 `aria-pressed` 로 상태를 낸다 — 색만으로 "골랐음" 을 전달하지 않는다 (§10). 위아래 8px 투명 여백으로 터치 44px 을 채우기 때문에(§9) **칩 줄에는 가로 gap 만 주고 세로 gap 은 주지 않는다.**
+세 칩의 좌우 여백은 같고 [`chip.tsx`](../../apps/web/src/components/ui/chip.tsx) 가 원본이다. 도메인·근거 칩을 만들 때 거기서 가져간다.
+
+`chip-choice` 는 `aria-pressed` 로 상태를 낸다 — 색만으로 "골랐음" 을 전달하지 않는다 (§10). 보이는 칩(`chip`)의 위아래에 투명 여백을 둬서 누르는 영역을 `touch` 로 채우기 때문에(§9) **칩 줄에는 가로 gap 만 주고 세로 gap 은 주지 않는다.**
+
+칩 문구가 길면 칩 안에서 줄바꿈한다 — 말줄임(`…`)으로 자르지 않는다. 관심사 이름이 잘리면 무엇을 고르는지 모른다.
 
 칩 줄은 가로 스크롤하지 않는다. 넘치면 줄바꿈하고, 4개를 넘으면 **"+N" 로 접는다** — 근거를 숨기는 게 아니라 카드에서 목록으로 옮기는 것이고, 누르면 07 화면으로 간다.
 
@@ -395,7 +425,7 @@
 
 - 상단 radius-sheet · `surface` · `--shadow-sheet` · 뒤에 `--color-scrim`
 - 최대 높이 `88dvh`, 내용이 넘치면 시트 안에서만 스크롤
-- 드래그 핸들 36 × 4 · `line-strong` · full
+- 드래그 핸들 · `line-strong` · full
 - 하단 버튼 영역은 **`pb-safe-4`** (safe area + 16). 🚨 `pb-safe` 와 `py-*` 를 나란히 쓰면 아래 패딩이 죽어 버튼이 화면 맨 아래에 붙는다 — 실제로 그렇게 났다
 - **승인 시트는 스크림 탭으로 닫히지 않는다.** 명시적으로 닫아야 한다 — 실수로 닫혀서 draft 가 만료되는 경로를 만들지 않는다 (승인 없는 draft 는 24시간 뒤 만료된다).
 - 구현은 [`components/ui/bottom-sheet.tsx`](../../apps/web/src/components/ui/bottom-sheet.tsx) 다. `dismissible: false` 가 위 규칙(스크림·ESC 로 안 닫힘)이고 **승인 시트 전용**이다 — 되돌릴 수 있는 것(약관 상세 등)에는 쓰지 않는다.
@@ -408,7 +438,7 @@
 | 활성 | `ink` · label 600 · 아래 `brand` 2px |
 | 비활성 | `ink-muted` · label 400 · 밑줄 없음 |
 
-높이 44. 탭 전환은 URL 에 남긴다 — 관찰/프로필은 다른 엔드포인트라 뒤로가기가 동작해야 한다.
+높이 `touch`. 탭 전환은 URL 에 남긴다 — 관찰/프로필은 다른 엔드포인트라 뒤로가기가 동작해야 한다.
 
 ### 진행 오버레이 (04 · SSE)
 
@@ -479,7 +509,7 @@
 
 | 이름 | 사양 |
 | --- | --- |
-| `spinner` | 16 × 16 · 2px 테두리 · **트랙 = 현재 글자색 25% · 머리 = 100%** · 1초에 1바퀴 · 버튼 안이나 대기 화면에서 문구 왼쪽에 |
+| `spinner` | 버튼 글자 옆에 들어가는 크기 · **트랙 = 현재 글자색 25% · 머리 = 100%** · 1초에 1바퀴 · 버튼 안이나 대기 화면에서 문구 왼쪽에 |
 
 **위쪽만 투명하게 뚫지 않는다.** 그렇게 하면 어디서 끊겼는지가 눈에 남아 3/4 짜리 조각이 도는 것으로 보인다. 원이 계속 보이고 그 위를 밝은 머리가 도는 쪽이 조용하고, 밤에 보는 화면에서는 그 차이가 크다.
 
@@ -511,12 +541,14 @@
 
 | 요소 | 최소 크기 |
 | --- | --- |
-| 승인 게이트 버튼 | **48 × 48** 이상 (전체 폭 52 높이) |
+| 승인 게이트 버튼 | **48 × 48** 이상 (전체 폭 · `approve` 높이) |
 | 일반 버튼 · 탭 · 칩 | 44 × 44 |
 | 아이콘 버튼 | 아이콘 24 + 여백 10 = 44 |
 | 인접 타깃 사이 간격 | 8 이상 |
 
-칩 자체 높이는 28px 이지만 **누를 수 있는 칩은 위아래 8px 씩 투명 여백을 둬서 44px** 을 채운다.
+이 표는 **요구사항**이다. 코드는 높이 토큰(`touch` · `button` · `approve`)으로 이걸 지킨다 — 토큰 값을 바꿀 때 이 표의 최소값 아래로 내려가면 안 된다.
+
+보이는 칩(`chip`)은 이보다 작지만 **누를 수 있는 칩은 위아래 투명 여백으로 `touch` 를 채운다.**
 
 ---
 
@@ -524,7 +556,17 @@
 
 - **포커스는 항상 보인다.** `:focus-visible` 에 `brand` 2px outline + offset 2 (5.9:1). `outline: none` 을 쓰지 않는다.
 - **색만으로 정보를 전달하지 않는다** (WCAG 1.4.1). 도메인 칩은 아이콘+라벨, 개인화/일반은 라벨과 건수, 실패는 문장이 함께 나간다. 검증은 **도메인 칩에서 라벨을 지워 보는 것** — 그래도 구분되면 통과가 아니라 위반이다.
-- **크기는 `rem` 으로 쓴다.** 표에는 px 로 적었지만 CSS 는 rem 이다. 사용자가 시스템 글자 크기를 키웠을 때 따라 커져야 한다.
+- **크기는 `rem` 으로 쓴다.** 문서에는 px 로 적은 곳이 있지만 토큰 값은 rem 이다. 사용자가 글자 크기를 키웠을 때 따라 커져야 한다.
+- 🚨 **높이는 최소값이다. `h-*` 로 고정하지 않고 `min-h-*` 로 쓴다.** 높이 값이 맞아도 문구가 두 줄이 되거나 글자를 키우면 고정 높이는 글자를 밖으로 흘린다. 개정 전 코드로 재 보니, 긴 문구에서 글자만 200% 로 키웠을 때 primary·승인 버튼 글자가 위아래로 27~29px 넘쳐 **아래 설명 문구를 덮었다.** 승인 버튼에서 그러면 무엇을 승인하는지가 가려진다.
+- **컴포넌트를 추가·수정하면 `/design-system` 의 "긴 문구" 줄을 두 상태에서 본다.**
+
+  | 상태 | 어떻게 | 왜 따로 보나 |
+  | --- | --- | --- |
+  | 긴 문구 | 버튼·칩 문구가 두세 줄이 되는 예시 (그 줄에 있다) | 기본 글자 크기에서도 줄이 늘어난다 |
+  | 글자만 확대 200% | 개발자도구에서 `:root { --text-button: 1.875rem; --text-label: 1.625rem; --text-body: 2rem }` · 실기기는 안드로이드 설정의 글꼴 크기 | **글자만 커지고 높이 토큰은 그대로다.** 고정 높이가 가장 잘 깨지는 상태다. 안드로이드 웹뷰는 기본값이 시스템 글꼴 크기를 따라가는 것으로 알려져 있고, 셸이 이를 끄지 않았다 (`react-native-webview` 의 `textZoom` 을 두지 않음). ⚠️ 실기기로는 아직 확인 전이다 |
+  | 전체 확대 200% | 브라우저 기본 글자 크기 · 모바일 사파리의 페이지 확대 | rem 이 전부 같이 커진다. 줄바꿈이 늘어 시트·화면 하단이 밀린다 |
+
+  확인할 것은 셋이다 — **글자가 컴포넌트 밖으로 나가거나 잘리지 않는가**, **승인 버튼의 문구가 전부 보이는가**, **바텀시트 하단 버튼이 화면 밖으로 밀려나지 않는가**(시트는 안에서 스크롤해야 한다).
 - **`-webkit-text-size-adjust: 100%`** 는 회전 시 글자가 튀는 것만 막는 값이다. 확대 자체를 막는 `user-scalable=no` 는 쓰지 않는다.
 - **한국어 스크린리더 라벨**을 붙인다. 아이콘 버튼의 `aria-label`, 진행 오버레이의 `aria-live="polite"`, 승인 시트의 `role="dialog"` + `aria-modal`.
 - **대비비는 눈으로 고르지 않고 계산한다.** WCAG 2.2 상대 휘도 공식(`sRGB → linearize → 0.2126R + 0.7152G + 0.0722B`)으로 §2 의 모든 쌍을 돌렸고 **본문 쌍 전부 4.5:1 이상, 비텍스트 쌍 전부 3:1 이상**이다. 토큰을 바꿀 때는 값만 바꾸지 말고 **그 색이 얹히는 배경과의 쌍을 다시 계산한다.** soft 배경 위 텍스트는 `canvas` 가 아니라 그 soft 색과 비교해야 한다 — 여기서 많이 틀린다.
@@ -572,7 +614,7 @@
 
 ## 13. `globals.css` 적용
 
-이 문서의 표를 그대로 옮겼다. Tailwind 4 CSS-first 라 `tailwind.config.*` 는 없고, `@theme` 에 넣으면 유틸이 자동 생성된다.
+**공통 값의 원본은 이 파일이다** (머리말). 이 문서의 절마다 어떤 토큰으로 가는지만 적는다. Tailwind 4 CSS-first 라 `tailwind.config.*` 는 없고, `@theme` 에 넣으면 유틸이 자동 생성된다.
 
 | 문서 | `@theme` | 생성되는 유틸 |
 | --- | --- | --- |
@@ -580,11 +622,14 @@
 | §4 타이포 | `--text-*` (+ `--text-*--line-height` · `--font-weight`) | `text-body` · `text-caption` |
 | §5 컨테이너 | `--container-content` | `max-w-content` |
 | §6 radius · 그림자 | `--radius-*` · `--shadow-sheet` | `rounded-card` · `shadow-sheet` |
+| §7 · §9 높이 | `--height-*` | 🚨 **`min-h-button` 으로만 쓴다.** `h-button` 도 생성되지만 쓰지 않는다 (§10) |
 | §8 이징 | `--ease-standard` | `ease-standard` |
+
+⚠️ 높이 토큰이 `--spacing-*` 이 아니라 `--height-*` 인 이유: `--spacing-*` 에 넣으면 `p-button` · `gap-chip` 같은 여백 유틸까지 생긴다. 높이 값이 여백으로 새어 나가지 않게 높이 계열(`h-*` · `min-h-*` · `max-h-*`)에만 걸리는 이름공간을 골랐다. 그래서 `size-touch` 는 없다 — 정사각형은 `h-touch aspect-square` 로 쓴다.
 
 §5 간격은 Tailwind 기본 4px 스케일을 그대로 쓴다 (`p-4` = 16px). 별도 토큰을 만들지 않는다.
 
-🚨 **`@theme` 이 아니라 `@theme static` 이다.** Tailwind 4 는 기본적으로 **실제로 쓰인 토큰의 변수만** CSS 로 내보낸다 — 아직 컴포넌트가 없는 토큰 9개(`caution` 계열 · `scrim` · 도메인 주색)가 통째로 빠져 있었고, `/design-system` 이 그 색들을 "읽기 실패" 로 잡아냈다. 이 파일은 위 표를 옮긴 것이고 표가 35개라고 말하므로, 쓰이든 안 쓰이든 다 있어야 한다.
+🚨 **`@theme` 이 아니라 `@theme static` 이다.** Tailwind 4 는 기본적으로 **실제로 쓰인 토큰의 변수만** CSS 로 내보낸다 — 아직 컴포넌트가 없는 토큰 9개(`caution` 계열 · `scrim` · 도메인 주색)가 통째로 빠져 있었고, `/design-system` 이 그 색들을 "읽기 실패" 로 잡아냈다. 이 문서가 색이 35개라고 말하고 `/design-system` 이 그 전부를 검사하므로, 쓰이든 안 쓰이든 다 있어야 한다.
 
 ---
 
