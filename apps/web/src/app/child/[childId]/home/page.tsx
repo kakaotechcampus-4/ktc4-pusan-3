@@ -1,22 +1,21 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CalendarDays, NotebookPen, Utensils } from "lucide-react";
+import { CalendarDays, NotebookPen, Repeat, Utensils, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { HomeComposer } from "@/components/home-composer";
 import { RunProgress, RunResult } from "@/components/run-result";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import { TextArea } from "@/components/ui/text-area";
 import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
 import {
@@ -137,11 +136,36 @@ function HomeScreen() {
   }
 
   return (
-    <Screen className="gap-5">
+    <Screen
+      className="gap-5"
+      bottomBar={
+        <div className="flex flex-col gap-2">
+          {submit.isError ? (
+            <CardFailed>
+              <p>{submit.error instanceof Error ? submit.error.message : "보내지 못했어요."}</p>
+              <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => submit.mutate()}>
+                다시 시도
+              </Button>
+            </CardFailed>
+          ) : null}
+          <HomeComposer
+            value={text}
+            onChange={setText}
+            onSubmit={() => submit.mutate()}
+            prompts={home.data?.agent_prompts ?? []}
+            onPickPrompt={(agent) => goToSuggestions([agent])}
+            pending={submit.isPending}
+          />
+        </div>
+      }
+    >
       <header>
+        {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
         <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
         {home.data ? (
-          <p className="text-body-sm text-ink-subtle mt-2">기억 {home.data.observation_count}건</p>
+          <p className="text-body-sm text-ink-subtle mt-2">
+            지금까지 함께 쌓은 기억 {home.data.observation_count}건
+          </p>
         ) : null}
       </header>
 
@@ -167,39 +191,11 @@ function HomeScreen() {
       ) : home.data ? (
         <HomeBody data={home.data} />
       ) : null}
-
-      <section className="mt-auto flex flex-col gap-3 pt-4">
-        <TextArea
-          label="오늘 있었던 일 한 줄"
-          hint="한 줄만 적어도 돼요. 정리하지 않아도 괜찮아요."
-          placeholder="예: 저녁에 계란말이를 또 찾았어요"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          disabled={submit.isPending}
-        />
-
-        {submit.isError ? (
-          <CardFailed>
-            <p>{submit.error instanceof Error ? submit.error.message : "보내지 못했어요."}</p>
-            <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => submit.mutate()}>
-              다시 시도
-            </Button>
-          </CardFailed>
-        ) : null}
-
-        <Button block onClick={() => submit.mutate()} disabled={submit.isPending || !text.trim()}>
-          {submit.isPending ? <Spinner /> : null}
-          {submit.isPending ? "보내는 중…" : "이 이야기 남기기"}
-        </Button>
-      </section>
     </Screen>
   );
 }
 
 function HomeBody({ data }: { data: HomeResponse }) {
-  const router = useRouter();
-  const childId = useChildId();
-
   // 🚨 기억이 0건이면 빈 상태다. 경보가 아니라 건수를 그대로 보여준다 (문서 §7).
   if (data.highlight === null && data.observation_count === 0) {
     return (
@@ -213,97 +209,84 @@ function HomeBody({ data }: { data: HomeResponse }) {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex gap-3">
-        <CountCard label="이번 주 기록" value={data.week_count} />
-        <CountCard label="다가오는 일정" value={data.upcoming_count} />
-      </div>
+    <div className="flex flex-col gap-6">
+      <Counts week={data.week_count} upcoming={data.upcoming_count} />
 
       {data.today.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-section text-ink">오늘</h2>
-          {data.today.map((item) =>
-            item.kind === "meal" ? (
-              <TodayCard key={item.title} icon={<Utensils {...TODAY_ICON} />} title={item.title}>
-                {item.origin}
-              </TodayCard>
-            ) : (
-              <TodayCard
-                key={item.event_id}
-                icon={<CalendarDays {...TODAY_ICON} />}
-                title={item.title}
-              />
-            ),
-          )}
-        </section>
+        <Section label="오늘">
+          <Card className="flex flex-col gap-3">
+            {data.today.map((item) =>
+              item.kind === "meal" ? (
+                <TodayRow key={item.title} icon={Utensils} title={item.title} note={item.origin} />
+              ) : (
+                <TodayRow key={item.event_id} icon={CalendarDays} title={item.title} />
+              ),
+            )}
+          </Card>
+        </Section>
       ) : null}
 
       {data.highlight ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-section text-ink">눈여겨볼 것</h2>
-          <Card>
-            <p className="text-body text-ink">{data.highlight.text}</p>
-            {/* 🚨 승격 이유는 서버가 만든 문구다. 프론트에서 횟수를 세지 않는다. */}
-            <p className="text-body-sm text-ink-muted mt-1">{data.highlight.state_reason}</p>
+        <Section label="눈여겨볼 것">
+          <Card tone="accent">
+            <div className="flex items-start gap-3">
+              <IconTile icon={Repeat} />
+              <div className="min-w-0">
+                <p className="text-body text-ink">{data.highlight.text}</p>
+                {/* 🚨 승격 이유는 서버가 만든 문구다. 프론트에서 횟수를 세지 않는다. */}
+                <p className="text-body-sm text-ink-muted mt-1">{data.highlight.state_reason}</p>
+              </div>
+            </div>
           </Card>
-        </section>
-      ) : null}
-
-      {data.agent_prompts.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-section text-ink">지금 도와드릴 수 있는 것</h2>
-          {/* 🚨 시각대 규칙(F-15)으로 서버가 만든 목록이다. 프론트가 고르지 않는다.
-              primary 를 쓰지 않는 이유는 아래 입력 버튼이 이 화면의 다음 행동이기 때문이다. */}
-          {data.agent_prompts.slice(0, 2).map((prompt) => (
-            <Button
-              key={prompt.agent}
-              variant="secondary"
-              block
-              onClick={() => router.push(`/child/${childId}/suggestions?agents=${prompt.agent}`)}
-            >
-              {prompt.text}
-            </Button>
-          ))}
-        </section>
+        </Section>
       ) : null}
     </div>
   );
 }
 
-const TODAY_ICON = {
-  "aria-hidden": true,
-  size: ICON_SIZE.md,
-  strokeWidth: ICON_STROKE,
-  className: "text-ink-subtle shrink-0",
-} as const;
-
-function CountCard({ label, value }: { label: string; value: number }) {
+/** 섹션 제목. 🚨 브랜드색 라벨이라 화면에 초록이 규칙적으로 들어온다 (문서 §2-2 "canvas 위 브랜드 텍스트"). */
+function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="border-line rounded-card bg-surface flex-1 border p-4">
-      <p className="text-title text-ink">{value}</p>
+    <section>
+      <h2 className="text-label text-brand">{label}</h2>
+      <div className="mt-2">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * 이번 주 기록 · 다가오는 일정.
+ *
+ * 카드 두 장을 나란히 놓지 않고 **한 장 안에서 나눈다** — 그리드는 1열 고정이다 (문서 §5).
+ * 숫자는 `brand` 다. 부모가 화면에서 제일 먼저 보는 값이라 여기가 브랜드색이 설 자리다.
+ */
+function Counts({ week, upcoming }: { week: number; upcoming: number }) {
+  return (
+    <Card className="flex items-stretch gap-4">
+      <Count value={week} label="이번 주 기록" />
+      <span aria-hidden className="bg-line w-px self-stretch" />
+      <Count value={upcoming} label="다가오는 일정" />
+    </Card>
+  );
+}
+
+function Count({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="flex-1">
+      <p className="text-display text-brand">{value}</p>
       <p className="text-caption text-ink-subtle mt-1">{label}</p>
     </div>
   );
 }
 
-function TodayCard({
-  icon,
-  title,
-  children,
-}: {
-  icon: ReactNode;
-  title: string;
-  children?: ReactNode;
-}) {
+function TodayRow({ icon, title, note }: { icon: LucideIcon; title: string; note?: string }) {
   return (
-    <Card>
-      <div className="flex items-start gap-2.5">
-        {icon}
-        <div>
-          <p className="text-body text-ink">{title}</p>
-          {children ? <p className="text-caption text-ink-subtle mt-1">{children}</p> : null}
-        </div>
+    <div className="flex items-center gap-3">
+      <IconTile icon={icon} />
+      <div className="min-w-0">
+        <p className="text-body-sm text-ink">{title}</p>
+        {note ? <p className="text-caption text-ink-subtle mt-0.5">{note}</p> : null}
       </div>
-    </Card>
+    </div>
   );
 }

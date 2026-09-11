@@ -103,10 +103,16 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
-  `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`/`CardFailed` · `Banner` · `Spinner` ·
-  `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
+  `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
+  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
 - 도메인을 아는 조합 (`components/`) — `DomainChip` · `SuggestionCard`/`HealthSuggestionCard` ·
-  `RunProgress`/`RunResult` · `ApprovalSheet` · `AuthGate` · `ChildScope`
+  `HomeComposer` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
+  `AuthGate` · `ChildScope`
+- 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
+  아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다
+- 🚨 **브랜드색은 정해진 다섯 자리에만 쓴다** (디자인 시스템 §2-2 표). 밋밋하다고 아무 데나
+  초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 를 **카드 배경**으로 쓰는 것은
+  개인화 추천 카드뿐이다
 - 탭(07) · `card-photo`(08) · 캘린더 그리드(09)는 그 화면 이슈에서 만든다.
   **일반 추천 카드(`card-general`)는 계약서가 막고 있다** — 디자인 시스템 §14
 - 🚨 **외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.** 접근성을 손으로 짜면

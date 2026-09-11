@@ -123,7 +123,10 @@ function SuggestionsScreen() {
   return (
     <Screen className="gap-5">
       <header>
-        <PageTitle>제안 후보</PageTitle>
+        <p className="text-label text-brand">우리 아이 기억으로 만든</p>
+        <PageTitle className="mt-1">제안 후보</PageTitle>
+        {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
+            스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
         {data ? <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p> : null}
       </header>
 

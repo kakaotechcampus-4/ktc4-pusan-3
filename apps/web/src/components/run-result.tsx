@@ -1,9 +1,12 @@
 "use client";
 
+import { PenLine, Sprout } from "lucide-react";
+
 import { domainLabel } from "@/components/domain-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import type { RunState } from "@/hooks/use-run-stream";
 import {
@@ -32,6 +35,7 @@ export function RunProgress({ state }: { state: RunState }) {
   return (
     <div className="flex flex-1 flex-col justify-center gap-6">
       <div>
+        <IconTile icon={PenLine} className="mb-3" />
         <h2 className="text-title text-ink">적어주신 말을 보고 있어요</h2>
         <p className="text-body-sm text-ink-muted mt-2">
           저장이 끝나야 다음으로 넘어가요. 잘못 저장하지 않으려고 한 칸씩 확인해요.
@@ -69,7 +73,8 @@ export function RunResult({
     return (
       <div className="flex flex-col gap-4">
         <div>
-          <h2 className="text-title text-ink">읽지 못했어요</h2>
+          <p className="text-label text-brand">저장 결과</p>
+          <h2 className="text-title text-ink mt-1">읽지 못했어요</h2>
           <p className="text-body-sm text-ink-muted mt-2">
             한 줄을 구조화하는 데 실패했어요. 잘못 저장하지 않으려고 아무것도 저장하지 않았어요.
           </p>
@@ -94,7 +99,8 @@ export function RunResult({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h2 className="text-title text-ink">이렇게 저장했어요</h2>
+        <p className="text-label text-brand">저장 결과</p>
+        <h2 className="text-title text-ink mt-1">이렇게 저장했어요</h2>
         {inputText ? (
           <p className="text-body-sm text-ink-muted mt-2">적어주신 한 줄: {inputText}</p>
         ) : null}
@@ -118,7 +124,7 @@ export function RunResult({
         </CardFailed>
       ) : (
         <section className="flex flex-col gap-3">
-          <h3 className="text-section text-ink">관찰 {state.observations.length}건 저장됨</h3>
+          <h3 className="text-label text-brand">관찰 {state.observations.length}건 저장됨</h3>
           {state.observations.map((observation) => (
             <ObservationCard key={observation.id} observation={observation} />
           ))}
@@ -127,11 +133,16 @@ export function RunResult({
 
       {state.promoted.length > 0 ? (
         <section className="flex flex-col gap-3">
-          <h3 className="text-section text-ink">기억이 자랐어요</h3>
+          <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {state.promoted.map((change) => (
             <Card key={change.ref.id}>
-              <p className="text-body text-ink">{change.merge_key}</p>
-              <p className="text-body-sm text-ink-muted mt-1">{change.state_reason}</p>
+              <div className="flex items-start gap-3">
+                <IconTile icon={Sprout} />
+                <div className="min-w-0">
+                  <p className="text-body text-ink">{change.merge_key}</p>
+                  <p className="text-body-sm text-ink-muted mt-1">{change.state_reason}</p>
+                </div>
+              </div>
             </Card>
           ))}
         </section>
@@ -143,7 +154,7 @@ export function RunResult({
 
       {state.offers.length > 0 ? (
         <section className="flex flex-col gap-3">
-          <h3 className="text-section text-ink">이것도 도와드릴까요?</h3>
+          <h3 className="text-label text-brand">이것도 도와드릴까요?</h3>
           {/* 🚨 Agent 는 최대 2개다 (NF-01). 서버가 고른 것만 그대로 보여준다.
               🚨 여기는 primary 를 쓰지 않는다 — 나란히 놓인 선택지라 둘 중 하나를 다음 행동으로
                  세우면 안 된다 (문서 §7 "한 화면에 primary 는 하나"). 기본값은 아래의 기록만이다. */}
