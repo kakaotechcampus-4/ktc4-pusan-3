@@ -93,6 +93,8 @@
 
 ## 운영 (Ops)
 
+- [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
+
 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
 
 ## 기획 · 검증
