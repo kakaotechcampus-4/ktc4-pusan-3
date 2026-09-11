@@ -167,8 +167,9 @@
 > `docs/` 에 있다 — 제품은 [`docs/overview/`](docs/overview/), 디자인은 [`docs/web/design-system-v1.md`](docs/web/design-system-v1.md).
 > 루트의 두 파일은 **AI 도구가 한 번에 읽도록 요약·구조화한 사본**이고, `.impeccable/` 은 그 사본의 기계 전용 부속이다.
 >
-> 🚨 **값이 어긋나면 `docs/` 가 맞다.** 토큰을 바꿀 때는 `docs/web/design-system-v1.md` → `globals.css` → `DESIGN.md`
-> 순으로 고친다. 반대 방향으로 고치면 근거 없는 값이 정본에 역류한다.
+> 🚨 **디자인은 원본이 종류마다 한 곳이다** — 의도·근거는 `docs/web/design-system-v1.md`, 공통 값(색·높이 등)은 `apps/web/src/app/globals.css`.
+> `DESIGN.md` 는 둘의 사본이라 어느 쪽의 원본도 아니다. 어긋나면 한쪽이 틀렸다고 가정하지 말고 **바뀐 이유부터 확인**한 뒤,
+> **같은 PR 에서** 근거 · 값 · 사본을 함께 맞춘다 (절차는 그 문서 머리말). 제품 내용은 그대로 `docs/overview/` 가 맞다.
 
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
 **파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.
