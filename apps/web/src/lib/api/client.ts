@@ -1,5 +1,10 @@
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, NetworkError, type ApiErrorBody } from "./errors";
+import {
+  IdempotencyKeyRequiredError,
+  requiresIdempotencyKey,
+  type IdempotencyKey,
+} from "./idempotency";
 
 /* ── 인증 토큰 ────────────────────────────────────────────────────────────
  * Authorization: Bearer <token> — 예외 없음. 인증 없는 엔드포인트는 없다 (NF-09).
@@ -13,27 +18,16 @@ export function setAuthToken(token: string | null): void {
 }
 
 /* ── Idempotency-Key ──────────────────────────────────────────────────────
- * 중복 실행이 기억을 두 번 쌓거나 캘린더에 두 번 쓰는 엔드포인트에만 필수다.
- * 헤더가 없으면 서버가 400 을 준다.
+ * 어느 엔드포인트가 키를 요구하는지는 idempotency.ts 의 표가 정본이다.
+ * 여기서는 그 표를 마지막 그물로만 쓴다 — 정상 경로는 operations.ts 의 전용 함수다.
  */
-const IDEMPOTENCY_REQUIRED: RegExp[] = [
-  /^\/children\/[^/]+\/inputs$/,
-  /^\/children\/[^/]+\/onboarding$/,
-  /^\/children\/[^/]+\/photos$/,
-  /^\/children\/[^/]+\/health-safety$/, // 승인 게이트 ㉡
-  /^\/events\/[^/]+\/confirm$/, // 승인 게이트 ㉠
-];
-
-export function newIdempotencyKey(): string {
-  return crypto.randomUUID();
-}
-
 export interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   /** JSON 으로 직렬화해 보낸다. FormData 를 주면 그대로 보내고 Content-Type 을 건드리지 않는다. */
   body?: unknown;
   query?: Record<string, string | number | boolean | null | undefined>;
-  idempotencyKey?: string;
+  /** 🚨 되돌릴 수 없는 엔드포인트에서는 없으면 요청 자체가 막힌다 (idempotency.ts). */
+  idempotencyKey?: IdempotencyKey;
   signal?: AbortSignal;
   headers?: Record<string, string>;
 }
@@ -56,13 +50,9 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, query, idempotencyKey, signal, headers } = options;
 
-  if (process.env.NODE_ENV !== "production") {
-    const needsKey = method === "POST" && IDEMPOTENCY_REQUIRED.some((re) => re.test(path));
-    if (needsKey && !idempotencyKey) {
-      console.warn(
-        `[api] ${method} ${path} 은 Idempotency-Key 가 필수다. newIdempotencyKey() 를 넘길 것 (없으면 서버가 400).`,
-      );
-    }
+  // 🚨 경고가 아니라 차단이다. 환경을 가리지 않고, 요청은 나가지 않는다.
+  if (method === "POST" && !idempotencyKey && requiresIdempotencyKey(path)) {
+    throw new IdempotencyKeyRequiredError(path);
   }
 
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
