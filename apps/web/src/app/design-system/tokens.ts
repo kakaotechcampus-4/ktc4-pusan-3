@@ -104,6 +104,18 @@ export const TYPE_STEPS = [
   },
 ] as const;
 
+/**
+ * §7 · §9 높이 토큰. 값은 적지 않는다 — 화면이 `globals.css` 의 변수를 읽어 보여준다.
+ * 여기 적는 것은 **어디에 쓰는가** 뿐이다. 값을 두 곳에 손으로 적으면 어긋난다.
+ */
+export const HEIGHT_TOKENS = [
+  { name: "touch", use: "터치 타깃 최소 · 탭 · tertiary · 칩과 체크박스의 누르는 행" },
+  { name: "button", use: "primary · secondary · danger · kakao" },
+  { name: "approve", use: "승인 게이트 2곳 전용" },
+  { name: "field", use: "입력 · 날짜 입력" },
+  { name: "chip", use: "보이는 칩. 누르는 영역은 touch 가 채운다" },
+] as const;
+
 /** §7 이 사양을 정했지만 아직 코드에 없는 것. 이 목록이 비면 §7 이 다 구현된 것이다. */
 export const NOT_BUILT = [
   { name: "배너 (caution · danger)", where: "06 승인 · 알레르기 저촉", why: "" },

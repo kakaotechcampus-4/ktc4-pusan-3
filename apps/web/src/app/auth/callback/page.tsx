@@ -191,7 +191,7 @@ export default function AuthCallbackPage() {
           <CardFailed>{failure}</CardFailed>
           <button
             type="button"
-            className="text-button text-brand h-11"
+            className="text-button text-brand min-h-touch"
             onClick={() => router.replace("/")}
           >
             처음으로 돌아가기
