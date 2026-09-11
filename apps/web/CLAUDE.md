@@ -4,6 +4,7 @@ Owner: 고태영 (프론트 리드)
 
 > 이 파일은 **프론트에서만 지키는 규칙**이다. 파트 경계를 넘는 규칙은 [최상위 CLAUDE.md](../../CLAUDE.md) §2 에 있다.
 > 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) (무엇을 부르는가) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
+> 되돌릴 수 없는 5개를 건드린다면 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md) 도 읽는다 (승인 게이트 2곳이 거기 있다).
 
 ---
 
@@ -46,16 +47,23 @@ src/
 │   └── api/
 │       ├── types.ts      계약서 §02 공통 타입 5종 + Ref + enum
 │       ├── errors.ts     에러 봉투 · ApiError · 에러 코드
-│       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key)
+│       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key 차단)
+│       ├── idempotency.ts  🚨 되돌릴 수 없는 5개 경로의 **단일 출처** + 키 타입
+│       ├── operations.ts   그 5개 전용 함수 — 키가 **필수 인자**다
+│       ├── use-idempotency-key.ts  한 동작에 키 하나 (재시도는 같은 키)
 │       ├── sse.ts        GET /runs/{rid}/events 스트림 파서
 │       └── queryKeys.ts  쿼리 키 팩토리
 ├── mocks/                MSW 목 서버 — 개발 환경 전용 (§7)
 │   ├── scenario.ts       시나리오 스위치 (?scenario=)
 │   ├── fixtures.ts       계약서 기준 시드 데이터
 │   ├── handlers/         엔드포인트별 핸들러
+│   │   └── idempotency.ts  서버 몫을 목이 대신 지킨다 (재생 · 재사용 거부 · 동시 차단)
+│   ├── contract.test.ts  목이 **동작**까지 계약과 같은지 (§8)
+│   ├── server.ts         테스트용 setupServer — 브라우저와 같은 핸들러
 │   └── start.ts          dev + 플래그일 때만 워커를 띄운다
-└── stores/
-    └── session.ts        토큰 · activeChildId (zustand persist)
+├── stores/
+│   └── session.ts        토큰 · activeChildId (zustand persist)
+└── test/setup.ts         목 서버 켜기 · 테스트 사이 상태 비우기
 ```
 
 `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
@@ -78,9 +86,27 @@ src/
 
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
-- **Idempotency-Key 가 필수인 5곳** — `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety` · `POST /events/{eid}/confirm`.
-  `newIdempotencyKey()` 를 넘긴다. 빠뜨리면 dev 콘솔에 경고가 뜨고 서버는 400 을 준다.
-  🚨 **재시도할 때 키를 새로 만들지 않는다** — 같은 키를 다시 보내는 게 중복 실행을 막는 유일한 방법이다.
+
+### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
+
+`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · `POST /events/{eid}/confirm`(게이트 ㉠).
+
+**`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
+경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
+
+```tsx
+const idem = useIdempotencyKey();                       // @/lib/api/use-idempotency-key
+const mutation = useMutation({
+  mutationFn: () => confirmEvent(eventId, idem.current()),
+  onSuccess: () => { idem.rotate(); },                  // 🚨 성공한 뒤에만
+});
+```
+
+- 키 없이 부르면 **요청이 나가지 않는다** (`IdempotencyKeyRequiredError`). 경고가 아니라 차단이고, 프로덕션에서도 같다.
+- 🚨 **`mutationFn` 안에서 `newIdempotencyKey()` 를 부르지 않는다.** 재시도마다 새 키가 나가면 중복 방지가 통째로 무의미해진다. 타입은 이걸 못 잡는다 — 리뷰에서 지적된 지점이다.
+- 🚨 **`rotate()` 를 실패 경로에서 부르지 않는다.** 실패 뒤 다시 누르는 게 재시도고, 재시도는 같은 키다.
+- 서버가 무엇을 보장해야 하는지(재생 · 재사용 거부 · 동시 차단 · 2xx 만 저장)는 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md).
+- `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.** 키 수명 관리가 깨진 것이니 화면을 그리지 말고 고친다.
 
 ### 에러
 
@@ -139,6 +165,7 @@ for await (const e of streamRunEvents(runId, controller.signal)) { ... }
 pnpm dev           # 개발 서버 (Turbopack)
 pnpm build         # 프로덕션 빌드 (타입 에러 나면 실패한다)
 pnpm typecheck     # next typegen && tsc --noEmit
+pnpm test          # vitest run — 목이 계약대로 "행동" 하는지 (§8)
 pnpm lint          # eslint
 pnpm format        # prettier --write
 ```
@@ -181,12 +208,43 @@ NEXT_PUBLIC_API_MOCKING=enabled
 ### 규칙
 
 - **응답은 `lib/api/types.ts` 타입으로 강제한다.** 목이 계약서에서 벗어나면 타입 에러로 잡힌다 — 형태를 `any` 로 풀지 말 것.
+- 🚨 **타입은 모양만 본다.** 동의 거부 · 중복 처리 · 상태 전이 · SSE 순서는 타입이 모른다. 그건 §8 의 테스트가 건다 — **둘 다 있어야 목이 계약에서 안 벗어난다.**
+- **되돌릴 수 없는 5개는 `withIdempotency()` 로 감싼다** (`handlers/idempotency.ts`). 키 없으면 400 · 같은 키 재시도는 처음 응답 재생 · 다른 요청이면 422 · 처리 중이면 409.
+  🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
 - 화면 01~06 만 덮여 있다. 07~10 은 아직 없다.
 - 🚨 **fixtures 에 실제 사용자 발화나 아이 정보를 넣지 않는다.** 저장소가 public 이다 (최상위 §9).
 
 msw 버전을 올리면 워커를 다시 만들어야 한다 — `pnpm exec msw init public`.
+
+---
+
+## 8. 테스트
+
+```bash
+pnpm test          # vitest run
+pnpm test:watch
+```
+
+**지금 있는 건 계약 회귀 테스트 하나다.** 화면 테스트(RTL·jsdom)는 컴포넌트가 생길 때 붙인다.
+
+### 무엇을 거는가
+
+목이 **계약대로 행동하는지**를 건다. 타입 검사가 못 보는 것들이다 — 키 누락 · 재시도 · 동시 요청 · 권한 부족 · 상태 전이 · SSE 이벤트 순서.
+
+- `src/mocks/contract.test.ts` — 목의 동작
+- `src/lib/api/idempotency.test.ts` — 클라이언트의 차단
+
+### 규칙
+
+- 🚨 **테스트 전용 핸들러를 만들지 않는다.** `src/mocks/server.ts` 는 브라우저 워커와 **같은 핸들러**를 쓴다. 따로 두면 확인한 적 없는 목으로 화면을 만들게 된다.
+- 🚨 **목은 프로세스 수명만큼 사는 상태를 들고 있다** (확정된 event · 저장된 응답 · 등록된 안전 항목). 새 상태를 추가하면 리셋 함수를 export 하고 `src/test/setup.ts` 의 `afterEach` 에 건다 — 안 그러면 결과가 테스트 순서에 따라 바뀐다.
+- `onUnhandledRequest: "error"` 다. 계약서에 없는 경로를 부르면 테스트가 실패한다.
+- 🚨 **픽스처·테스트 문자열에 실제 사용자 발화나 아이 정보를 넣지 않는다.** 저장소가 public 이다 (최상위 §9).
+- 백엔드가 붙으면 **같은 표를 실서버에도** 건다. 목이 통과한다고 서버가 통과하는 게 아니다 ([`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md) §6-3).
+
+---
 
 <!-- BEGIN:nextjs-agent-rules -->
 

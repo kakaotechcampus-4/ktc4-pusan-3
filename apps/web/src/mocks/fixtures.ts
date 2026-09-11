@@ -216,6 +216,34 @@ export const healthSafety: HealthSafety[] = [
   },
 ];
 
+/**
+ * 보호자가 방금 확정한 안전 정보 (승인 게이트 ㉡ 응답).
+ * 🚨 서버가 만드는 필드(id · created_by · updated_at)는 여기서 채운다 — 요청에 없는 값이다.
+ */
+export function newHealthSafety(input: {
+  type: string;
+  label: string;
+  category?: string;
+  severity?: string | null;
+  reactions?: string[];
+  notes?: string | null;
+}): HealthSafety {
+  return {
+    kind: "health_safety",
+    id: `hs_${Date.now()}`,
+    type: input.type,
+    label: input.label,
+    aliases: [],
+    category: input.category ?? "기타",
+    severity: input.severity ?? null,
+    reactions: input.reactions ?? [],
+    management: { avoid: true },
+    notes: input.notes ?? null,
+    created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
+    updated_at: hoursFromNow(0),
+  };
+}
+
 /* ── 제안 ─────────────────────────────────────────────────────────────── */
 
 function evidenceFrom(a: Affinity): Evidence {
