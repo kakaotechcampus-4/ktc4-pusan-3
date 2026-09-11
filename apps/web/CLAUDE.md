@@ -43,6 +43,8 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 🚨 `app/onboarding/` 만 아이 스코프 **밖**이다 — 아직 `childId` 가 없다 (§3 라우팅)
 - `lib/api/` = 계약서 v1 타입 · fetch 클라이언트 · SSE 파서 · 쿼리 키 팩토리. **`fetch` 를 직접 부르지 않는다** (§3 API 호출)
 - ⚠️ `lib/cn.ts` 는 **tailwind-merge 가 아니다** — 뒤에 온 클래스가 앞을 안 덮는다 (§3 컴포넌트)
+- 🚨 `lib/format.ts` 는 **날짜 계산이 아니라 표시 변환**이다. 절대 시각 하나를 한국 시간대 표기로
+  바꾸는 것이 전부고, 상대 시간·나이·기간은 여기서도 만들지 않는다 (§4)
 - `lib/auth/oauth-bind.ts` = bind 비밀. 만지기 전에 그 파일 주석을 읽는다 (§3 로그인)
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
@@ -64,10 +66,18 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 가입 동의 (신규 회원만) | `/auth/consent` |
 | 01 첫 진입 (아이 만들기) | `/onboarding` |
 | 02 이야기 하나 | `/child/[childId]/onboarding` |
-| 03~09 | `/child/[childId]/…` |
+| 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
+| 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 06 승인 | 05 위의 바텀시트 (라우트 없음) |
+| 06~09 | `/child/[childId]/…` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+
+🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
+`failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
+라우트를 나누면 그 값이 언마운트와 함께 죽는다 — 그래서 03 이 run 이 도는 동안 본문만 바꿔 그린다.
+프로토타입에서 04 가 별도 화면으로 보이는 것은 뒤로가기 화살표 때문이지 주소가 달라서가 아니다.
 
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
@@ -91,9 +101,14 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
-- 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
-  `TextInput` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet`.
-  배너 · 제안 카드 · 탭은 그 화면 이슈에서 만든다
+- 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
+  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`/`CardFailed` · `Banner` · `Spinner` ·
+  `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
+- 도메인을 아는 조합 (`components/`) — `DomainChip` · `SuggestionCard`/`HealthSuggestionCard` ·
+  `RunProgress`/`RunResult` · `ApprovalSheet` · `AuthGate` · `ChildScope`
+- 탭(07) · `card-photo`(08) · 캘린더 그리드(09)는 그 화면 이슈에서 만든다.
+  **일반 추천 카드(`card-general`)는 계약서가 막고 있다** — 디자인 시스템 §14
 - 🚨 **외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.** 접근성을 손으로 짜면
   반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고** `classNames` 로 토큰만 입힌다 —
   버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7)

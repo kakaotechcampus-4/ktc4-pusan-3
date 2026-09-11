@@ -25,6 +25,15 @@ location.replace("/");
 | **가입 동의** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
 | 01 아이 만들기 | 로그인 후 `/onboarding` (목의 `/me` 는 항상 아이가 1명이라 로그인만으로는 안 닿는다) |
 | 02 이야기 하나 | `/child/c1/onboarding` |
+| 03 홈 | `/child/c1/home` |
+| 03 홈 · 빈 상태 | `/child/c1/home?scenario=empty` |
+| 04 진행 · 저장 결과 | 03 에서 한 줄 적고 남기기 (04 는 별도 주소가 없다) |
+| 04 실패 · 원문 복원 | `/child/c1/home?scenario=failed` 에서 한 줄 남기기 |
+| 04 부분 결과 | `/child/c1/home?scenario=partial` 에서 한 줄 남기기 |
+| 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
+| 05 · 근거 부족 (질문 1개) | 위 주소에 `&scenario=scarcity` |
+| 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
+| 06 승인 시트 | 05 에서 "이걸로" (시트라 주소가 없다) |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 
