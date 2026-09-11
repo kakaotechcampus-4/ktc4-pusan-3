@@ -261,6 +261,18 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
+/**
+ * stale 시나리오 — 근거가 전부 6개월을 넘겼다.
+ *
+ * 🚨 `Evidence.is_stale` 은 **계약서 v1 에 아직 없는 필드**다 (types.ts 의 주석 참고).
+ *    프론트는 날짜를 계산하지 않으므로 이 판정은 서버가 내려줘야 하고, 그 전까지는
+ *    점선 근거 칩(NF-08)을 확인할 방법이 목뿐이다.
+ */
+export const staleSuggestion: Suggestion = {
+  ...suggestions[1],
+  evidence: [{ ...evidenceFrom(staleAffinities[1]), is_stale: true }],
+};
+
 /* ── 홈 ───────────────────────────────────────────────────────────────── */
 
 export const home: HomeResponse = {
