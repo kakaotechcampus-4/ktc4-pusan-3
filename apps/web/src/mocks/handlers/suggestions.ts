@@ -3,9 +3,21 @@ import { http, HttpResponse } from "msw";
 import { draftEvent, suggestions } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
+import { withIdempotency } from "./idempotency";
 
-/** 승인 게이트 ㉠ 을 이미 통과한 event. 중복 확정은 409 다. */
+/**
+ * 승인 게이트 ㉠ 을 이미 통과한 event.
+ *
+ * 🚨 여기 있다고 무조건 409 를 주면 안 된다. "확정은 됐는데 응답을 못 받아 같은 키로
+ *    다시 보낸 재시도" 는 withIdempotency 가 먼저 가로채 처음 응답을 재생한다.
+ *    이 409 는 **새 요청으로 이미 확정된 일정을 또 확정하려는 경우** 에만 나온다.
+ */
 const confirmedEvents = new Set<string>();
+
+/** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
+export function resetConfirmedEvents(): void {
+  confirmedEvents.clear();
+}
 
 /** 05 제안 · 06 승인. */
 export const suggestionHandlers = [
@@ -82,18 +94,22 @@ export const suggestionHandlers = [
   }),
 
   // 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점.
-  http.post(url("/events/:eid/confirm"), async ({ params }) => {
-    await networkDelay();
-    const eventId = String(params.eid);
+  http.post(
+    url("/events/:eid/confirm"),
+    withIdempotency(async ({ params }) => {
+      await networkDelay();
+      const eventId = String(params.eid);
 
-    if (confirmedEvents.has(eventId)) {
-      return apiError(409, "already_confirmed", "이미 확정된 일정이에요");
-    }
-    confirmedEvents.add(eventId);
+      // 여기까지 왔다는 건 처음 보는 키라는 뜻이다 — 즉 새 요청이다.
+      if (confirmedEvents.has(eventId)) {
+        return apiError(409, "already_confirmed", "이미 확정된 일정이에요");
+      }
+      confirmedEvents.add(eventId);
 
-    return HttpResponse.json({
-      event: draftEvent({ id: eventId, status: "confirmed" }),
-      suggestion_status: "approved",
-    });
-  }),
+      return HttpResponse.json({
+        event: draftEvent({ id: eventId, status: "confirmed" }),
+        suggestion_status: "approved",
+      });
+    }),
+  ),
 ];
