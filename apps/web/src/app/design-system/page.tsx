@@ -1,6 +1,6 @@
 "use client";
 
-import { NotebookPen } from "lucide-react";
+import { ArrowUp, CalendarDays, Camera, Mic, NotebookPen, Sprout, Utensils } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { DomainChip } from "@/components/domain-chip";
@@ -12,7 +12,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Chip, ChipRow, CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
 import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
-import { DomainIcon, ICON_SIZE } from "@/components/ui/icon";
+import { IconButton } from "@/components/ui/icon-button";
+import { IconTile } from "@/components/ui/icon-tile";
+import { DomainIcon, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
@@ -452,6 +454,7 @@ function ComponentSection() {
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
   const [area, setArea] = useState("");
+  const [bar, setBar] = useState("");
 
   return (
     <Section title="컴포넌트" note="지금 코드에 있는 것만. 사양은 §7, 없는 것은 맨 아래에.">
@@ -481,6 +484,66 @@ function ComponentSection() {
           </span>
         </li>
       </ul>
+
+      <SubTitle>아이콘 버튼</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        글자 없는 원형 버튼. 🚨 aria-label 이 필수고, brand 의 비활성 배경은 surface 다 —
+        채팅바(surface-muted) 위에서 같은 색이면 버튼이 사라진다.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <IconButton label="사진으로 적기">
+          <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+        </IconButton>
+        <IconButton label="말로 적기" disabled>
+          <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+        </IconButton>
+        <IconButton label="보내기" tone="brand">
+          <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
+        </IconButton>
+        <IconButton label="보내기 (비활성)" tone="brand" disabled>
+          <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
+        </IconButton>
+      </div>
+
+      <SubTitle>아이콘 타일</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        brand-soft 바탕 + brand-ink 아이콘. 목록 줄 앞에 선다. 🚨 도메인 색을 여기 넣지 않는다.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <IconTile icon={Utensils} />
+        <IconTile icon={CalendarDays} />
+        <IconTile icon={Sprout} />
+      </div>
+
+      <SubTitle>채팅바 (03 홈)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        surface-muted 알약 안에 사진 · 마이크 · 입력 · 보내기. 입력은 테두리 없는 bare 변형이고,
+        상자처럼 보이는 것은 알약 쪽이다. 화면 하단 고정은 Screen 의 bottomBar 가 소유한다.
+      </p>
+      <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
+        <IconButton label="사진으로 적기" className="self-center">
+          <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+        </IconButton>
+        <div className="min-w-0 flex-1">
+          <TextArea
+            label="채팅바 예시"
+            labelHidden
+            variant="bare"
+            maxHeightPx={104}
+            placeholder="오늘 있었던 일, 말하듯 적어주세요"
+            value={bar}
+            onChange={(e) => setBar(e.target.value)}
+          />
+        </div>
+        <IconButton
+          label="보내기"
+          tone="brand"
+          className="self-center"
+          disabled={bar.trim().length === 0}
+        >
+          <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
+        </IconButton>
+      </div>
 
       <SubTitle>입력</SubTitle>
       <TextInput
@@ -558,6 +621,11 @@ function ComponentSection() {
       <SubTitle>카드</SubTitle>
       <Card>
         <p className="text-body-sm text-ink-muted">card — surface · line 1px · radius-card</p>
+      </Card>
+      <Card tone="accent">
+        <p className="text-body-sm text-ink-muted">
+          card-accent — 테두리만 brand. 🚨 한 화면에 한 장. 두 장이면 강조가 아니라 장식이다.
+        </p>
       </Card>
       <CardFailed>
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.

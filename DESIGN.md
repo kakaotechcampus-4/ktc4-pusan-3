@@ -425,6 +425,12 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **Spinner:** 16×16 · 2px 테두리 · **트랙 = 현재 글자색 25% + 머리 = 100%** · 1초에 1바퀴. 🚨 `prefers-reduced-motion` 에서는 **숨긴다** — 멈춘 스피너는 "고장난 화면" 으로 읽히고, 옆의 문구가 상태를 대신 말한다
 - **진행 오버레이(SSE):** 단계를 세로로 쌓고 현재 단계만 살린다. 완료 `ink-muted` + 체크 `brand` / 진행 중 `ink` + label 600 / 대기 `ink-subtle`. `aria-live="polite"`
 
+- **card-accent:** `card` 와 같고 테두리만 `brand`. **한 화면에 한 장**만 (03 홈의 눈여겨볼 것)
+- **아이콘 버튼:** 글자 없는 원형 버튼. ghost(배경 없음 · press `brand-soft`) / brand(`brand` 채움). `aria-label` 필수 · 비활성 brand 는 `surface` + `line`(채팅바가 `surface-muted` 라 같은 색이면 사라진다) · Spinner 를 넣지 않는다
+- **아이콘 타일:** `brand-soft` 바탕 + `brand-ink` 아이콘, radius-field 정사각. 목록 줄 앞에. 🚨 도메인 색 금지
+- **채팅바(03):** `surface-muted` 알약 안에 `[사진] [마이크] [입력] [보내기]`. 입력은 테두리 없는 `bare` 변형. 화면 하단 고정은 `Screen` 의 `bottomBar` 가 소유한다
+- **브랜드색이 서는 자리:** 섹션 라벨 · 먼저 읽는 숫자 · 아이콘 타일/빈 상태 아이콘 · `card-accent` 테두리 · 주 버튼. 🚨 `brand-soft` 를 카드 배경으로 쓰는 것은 개인화 추천 카드뿐
+
 > **아직 구현되지 않은 것** — `card-general`(일반 추천) · 탭 · `card-photo` · 캘린더 그리드. `card-general` 은 사양은 있는데 **실을 데이터가 없어서** 못 만든다 (계약서에 개인화/일반을 가르는 타입 필드가 없다 — `docs/web/design-system-v1.md` §14). 나머지는 그 화면 이슈에서 만든다.
 > 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `EvidenceChip`/`CountChip` · `DomainChip` · `Card`/`CardFailed` · `Banner` · `Spinner` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `DomainIcon` 이다.
 

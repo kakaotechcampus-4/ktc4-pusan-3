@@ -42,12 +42,9 @@ export function EmptyState({
         className,
       )}
     >
-      <Icon
-        aria-hidden
-        size={EMPTY_ICON_PX}
-        strokeWidth={ICON_STROKE}
-        className="text-ink-subtle"
-      />
+      {/* 빈 화면에서 유일한 색이다. 🚨 사과하는 화면이 아니라 시작하는 화면이라(문서 §7)
+          아이콘까지 회색이면 "아직 아무것도 없다" 가 아니라 "여기는 비활성" 으로 읽힌다. */}
+      <Icon aria-hidden size={EMPTY_ICON_PX} strokeWidth={ICON_STROKE} className="text-brand" />
       <p className="text-section text-ink mt-3">{title}</p>
       <p className="text-body-sm text-ink-muted mt-1">{description}</p>
       <p className="text-caption text-ink-subtle mt-3">

@@ -23,6 +23,20 @@ import { cn } from "@/lib/cn";
 const MIN_HEIGHT_PX = 96;
 /** 5줄 = 16px × 1.6 × 5 + 위아래 여백. 이보다 길어지면 늘리지 않고 안에서 스크롤한다. */
 const MAX_HEIGHT_PX = 152;
+/** 채팅바의 바닥값. 옆의 아이콘 버튼(`touch` 44)과 같은 줄에 서야 한다. */
+const BARE_MIN_HEIGHT_PX = 44;
+
+/**
+ * `field` = 테두리가 있는 보통 입력. `bare` = 테두리 없이 다른 상자 안에 들어가는 입력
+ * (03 채팅바). 🚨 bare 를 단독으로 쓰지 않는다 — 감싸는 상자가 입력처럼 보여야 한다.
+ */
+type TextAreaVariant = "field" | "bare";
+
+const VARIANT: Record<TextAreaVariant, string> = {
+  field:
+    "rounded-field bg-surface border-line-strong hover:border-ink-subtle ease-standard border px-3.5 py-3 transition-colors duration-120",
+  bare: "border-0 bg-transparent px-1 py-2 focus-visible:outline-none",
+};
 
 interface TextAreaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "id" | "rows"> {
   label: string;
@@ -30,6 +44,9 @@ interface TextAreaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>
   labelHidden?: boolean;
   hint?: string;
   value: string;
+  variant?: TextAreaVariant;
+  /** 자동 증가의 천장. 채팅바처럼 좁은 자리에서는 낮춘다. */
+  maxHeightPx?: number;
 }
 
 export function TextArea({
@@ -38,11 +55,15 @@ export function TextArea({
   hint,
   className,
   value,
+  variant = "field",
+  maxHeightPx = MAX_HEIGHT_PX,
   ...props
 }: TextAreaProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const ref = useRef<HTMLTextAreaElement>(null);
+  // 채팅바는 한 줄에서 시작한다 — 96px 짜리 빈 상자가 화면 아래를 차지하면 본문이 밀린다.
+  const minHeight = variant === "bare" ? BARE_MIN_HEIGHT_PX : MIN_HEIGHT_PX;
 
   // 값이 바뀔 때마다 다시 잰다. 입력 중뿐 아니라 raw_text 복원처럼 밖에서 값을 넣을 때도
   // 높이가 맞아야 해서 onChange 가 아니라 value 를 본다.
@@ -50,8 +71,8 @@ export function TextArea({
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, MIN_HEIGHT_PX), MAX_HEIGHT_PX)}px`;
-  }, [value]);
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, minHeight), maxHeightPx)}px`;
+  }, [value, minHeight, maxHeightPx]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -68,10 +89,10 @@ export function TextArea({
         id={id}
         value={value}
         aria-describedby={hint ? hintId : undefined}
-        style={{ minHeight: MIN_HEIGHT_PX, maxHeight: MAX_HEIGHT_PX }}
+        style={{ minHeight, maxHeight: maxHeightPx }}
         className={cn(
-          "text-body text-ink placeholder:text-ink-subtle rounded-field bg-surface w-full resize-none border px-3.5 py-3",
-          "border-line-strong hover:border-ink-subtle ease-standard transition-colors duration-120",
+          "text-body text-ink placeholder:text-ink-subtle w-full resize-none",
+          VARIANT[variant],
           className,
         )}
         {...props}
