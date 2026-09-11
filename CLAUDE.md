@@ -152,9 +152,10 @@
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
-│   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키
-│   │       ├── mocks/        MSW 목 서버 — 개발 환경 전용 (백엔드 없이 화면 작업)
-│   │       └── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
+│   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키 · Idempotency 강제
+│   │       ├── mocks/        MSW 목 서버 — 개발 환경 전용 (백엔드 없이 화면 작업) + 계약 회귀 테스트
+│   │       ├── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
+│   │       └── test/         Vitest 셋업 (`pnpm test`) — 목이 계약대로 "행동" 하는지
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
 │   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
