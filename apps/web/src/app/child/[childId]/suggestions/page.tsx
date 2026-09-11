@@ -6,6 +6,7 @@ import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
 import { AuthGate } from "@/components/auth-gate";
+import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
 import { HealthSuggestionCard, SuggestionCard } from "@/components/suggestion-card";
 import { Banner } from "@/components/ui/banner";
@@ -154,15 +155,11 @@ function SuggestionsScreen() {
           <SkeletonBlock label="제안을 준비하는 중" />
         </Card>
       ) : consentBlocked ? (
-        <Card>
-          <p className="text-body text-ink">먼저 동의가 필요해요</p>
-          <p className="text-body-sm text-ink-muted mt-2">
-            저장은 아직 하나도 되지 않았어요. 동의를 마치면 다시 받아볼 수 있어요.
-          </p>
-          <p className="text-caption text-ink-subtle mt-2">
-            동의 화면은 아직 없어요 (/child/{childId}/{consentBlocked.consentDeeplink})
-          </p>
-        </Card>
+        <ConsentRequiredCard
+          childId={childId}
+          error={consentBlocked}
+          what="제안을 준비할 수 없어요."
+        />
       ) : suggestions.isError ? (
         // 🚨 llm_unavailable 을 기본값으로 대체하지 않는다. 실패했다고 화면에 말한다.
         <CardFailed>

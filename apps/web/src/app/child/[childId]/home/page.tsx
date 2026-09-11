@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { RunProgress, RunResult } from "@/components/run-result";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
 import {
   api,
+  isApiError,
   newIdempotencyKey,
   qk,
   type Agent,
@@ -102,6 +104,8 @@ function HomeScreen() {
     submit.mutate();
   }
 
+  const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
+
   function goToSuggestions(agents: Agent[]) {
     // run 이 끝난 뒤에만 부른다 — 저장이 이미 끝나서 여기서 스트림이 끊겨도 잃을 것이 없다.
     const params = new URLSearchParams({ agents: agents.join(",") });
@@ -145,6 +149,14 @@ function HomeScreen() {
         <Card>
           <SkeletonBlock label="홈을 불러오는 중" />
         </Card>
+      ) : consentBlocked ? (
+        // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
+        //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
+        <ConsentRequiredCard
+          childId={childId}
+          error={consentBlocked}
+          what="오늘 기록을 보여드릴 수 없어요."
+        />
       ) : home.isError ? (
         <CardFailed>
           <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
