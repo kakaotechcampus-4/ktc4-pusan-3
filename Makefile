@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
-        db-migrate db-rollback db-current db-history db-check db-revision db-psql
+        db-migrate db-rollback db-current db-history db-heads db-check db-revision \
+        db-merge db-psql
 
 help:
 	@echo "사용 가능한 명령"
@@ -18,8 +19,10 @@ help:
 	@echo "  make db-rollback  마지막 migration 한 단계 되돌리기 (downgrade -1)"
 	@echo "  make db-current   현재 적용된 revision 확인"
 	@echo "  make db-history   전체 revision 체인 출력"
+	@echo "  make db-heads     현재 head 목록 (충돌 판정용)"
 	@echo "  make db-check     ORM 모델과 DB 스키마 일치 검증 (PR 올리기 전 필수)"
 	@echo "  make db-revision msg=\"설명\"  새 migration 파일 자동 생성"
+	@echo "  make db-merge msg=\"설명\"     갈라진 head를 합치는 merge revision 생성"
 	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
@@ -60,12 +63,19 @@ db-current:
 db-history:
 	cd apps/api && uv run alembic history --verbose
 
+db-heads:
+	cd apps/api && uv run alembic heads
+
 db-check:
 	cd apps/api && uv run alembic check
 
 db-revision:
 	@[ "$(msg)" ] || { echo "사용법: make db-revision msg=\"한 줄 설명\""; exit 1; }
 	cd apps/api && uv run alembic revision --autogenerate -m "$(msg)"
+
+db-merge:
+	@[ "$(msg)" ] || { echo "사용법: make db-merge msg=\"한 줄 설명\""; exit 1; }
+	cd apps/api && uv run alembic merge -m "$(msg)" heads
 
 db-psql:
 	docker exec -it ktc4-postgres psql -U $$(docker exec ktc4-postgres printenv POSTGRES_USER) -d $$(docker exec ktc4-postgres printenv POSTGRES_DB)
