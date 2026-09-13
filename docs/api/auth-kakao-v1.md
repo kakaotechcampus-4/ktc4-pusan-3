@@ -119,7 +119,9 @@
 | --- | --- | --- |
 | `client` | `web` \| `app` | `web` |
 
-허용값 밖이면 **시작 시점에 `400`** 으로 끊는다. 카카오 동의 화면까지 걷게 한 뒤 실패시키지 않는다.
+허용값 밖이면 카카오로 보내지 않고 **시작 시점에 웹 복귀 URL로
+`302 …?error=invalid_client`** 를 보낸다. 잘못된 값으로는 앱 복귀 여부를 신뢰할 수
+없으므로 `web`을 안전한 기본 복귀 대상으로 쓴다.
 
 복귀 URL 은 **서버 환경변수**에서 온다.
 
@@ -689,7 +691,7 @@ yukameo://auth?error=oauth_denied
 | A-07 | `bind=1` 처럼 형식 불량으로 시작 | 같음 (§3-2) |
 | A-08 | 🚨 **`state` 불일치로 콜백** | `302 …?error=invalid_state`, **인가 코드 교환을 시도하지 않는다** |
 | A-09 | `oauth_state` 쿠키 없이 콜백 | 같음 |
-| A-10 | `client` 가 허용값 밖 | `302 …?error=invalid_client` |
+| A-10 | `client` 가 허용값 밖 | 웹 복귀 URL로 `302 …?error=invalid_client`, 카카오 호출 없음 |
 | A-11 | `client=app` 로 시작 | 복귀가 `yukameo://auth?code=…` (§2-3) |
 | A-12 | 만료된 1회용 코드 | `401 invalid_handoff` |
 | A-13 | signup 에서 필수 스코프 누락 | `403 consent_required`, **`parent` 미생성** |
@@ -698,7 +700,7 @@ yukameo://auth?error=oauth_denied
 | A-16 | 카카오 API 가 500 | `302 …?error=oauth_provider_error`, `parent` 미생성 |
 | A-17 | 사용자가 카카오에서 취소 | `302 …?error=oauth_denied` |
 | A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
-| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `401` 또는 `404 not_found` — 만료를 기다리지 않는다 |
+| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10-1) |
 | A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
 
 **A-05 · A-08 · A-15 가 이 목록의 이유다.** A-05 가 실패하면 §7-2 가 무의미하고, A-08 이 실패하면 로그인 CSRF 가 열리며, A-15 가 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
