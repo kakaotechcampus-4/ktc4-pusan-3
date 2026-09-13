@@ -13,10 +13,6 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# REVIEW: 이 코드는 API 요청에서 사용할 DB 세션을 `app.infra.db`에서 직접 가져온다.
-# `apps/api/CLAUDE.md`의 API 허용 목록에는 `infra`가 없어 자동 경계 검사가 생기면 막힐 수 있다.
-# 확인할 내용: `app.api.deps`가 `app.infra.db`를 직접 사용하도록 경계 문서에 허용할지 결정한다.
-# 검증 테스트 없음: 저장소에 import 경계를 실행하는 설정과 명령이 아직 없다.
 from app.infra.db.session import get_session
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]

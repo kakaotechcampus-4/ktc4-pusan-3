@@ -50,8 +50,20 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 - 그 계층의 이름·형태는 AI Owner 가 정한다.
 
 ### `app/api/`
-- **허용**: domains, core, agents 진입점
+- **허용**: domains, core, agents 진입점, integrations
 - **금지**: agents 내부 구현 직접 import
+- **DB 예외**: `app/api/deps/db.py` 한 곳만 `app/infra/db/session.py` 를 import 한다.
+  라우터는 엔진이나 `get_session` 을 직접 가져오지 않고 `SessionDep` 를 받는다.
+- FastAPI 전용 오류 모델·예외 핸들러는 `app/api/errors.py` 에 둔다. `app/core/` 에
+  FastAPI·Starlette 의존성을 추가하지 않는다.
+
+### `app/integrations/`
+- 카카오 OAuth·NEIS·MFDS처럼 서비스 밖의 HTTP API 호출을 격리한다.
+- 카카오 요청 URL, 타임아웃, 응답 파싱, 외부 오류 변환은 `app/integrations/kakao/`가 맡는다.
+- **허용**: core, 사용하는 외부 SDK·HTTP 클라이언트
+- **금지**: api, domains, agents, infra import
+- 인증 라우터는 카카오 integration을 호출할 수 있지만, 카카오 응답 모양을 다른 도메인으로
+  퍼뜨리지 않는다.
 
 ### `app/providers/`
 - 외부 모델 SDK 전용
@@ -97,6 +109,68 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
 - `--autogenerate` 결과를 확인 없이 커밋하지 않는다.
   자동 인식 안 되는 것: `enum`, `CHECK` 제약, `daterange`, `vector` 타입, `GRANT`
 - 첫 revision 에 `CREATE EXTENSION IF NOT EXISTS vector` 를 직접 넣는다.
+
+---
+
+## 카카오 OAuth #34 구현 하네스
+
+이 절은 #34 작업자가 폴더 위치나 기본 보안 규칙을 다시 결정하느라 멈추지 않게 하는 실행
+기준이다. 아래 값은 백엔드 Owner가 확정했으므로 다시 검토 질문으로 되돌리지 않는다.
+
+### 이미 확정한 경계
+
+| 대상 | 구현 위치와 규칙 |
+|------|------------------|
+| 6개 인증 라우트 | `app/api/v1/routers/auth.py`. 루트 보안 목록의 5개만 무인증이고 `/auth/logout`만 Bearer 인증이다. |
+| 현재 보호자 주입 | `app/api/deps/auth.py`. 라우터는 ORM 객체가 아닌 `CurrentParent`만 받는다. |
+| DB 세션 연결 | `app/api/deps/db.py`만 infra 세션을 import하고, 모든 인증 라우터는 `SessionDep`를 받는다. |
+| 카카오 HTTP 호출 | `app/integrations/kakao/`. 토큰 교환·회원번호 조회·토큰 폐기·타임아웃·외부 오류 변환을 맡는다. |
+| DB 모델 | `app/domains/identity/`. `session`과 `auth_handoff` 모델 및 저장 규칙을 둔다. |
+| DB 스키마 | 모델 변경과 같은 PR의 새 Alembic revision. 원문 토큰·인가 코드·bind는 컬럼에 저장하지 않는다. |
+| 공통 API 오류 | `app/api/errors.py`. JSON 엔드포인트만 오류 봉투를 쓰고, 302 엔드포인트 실패는 허용된 복귀 URL로 오류 코드만 보낸다. |
+| 환경 설정 | `app/core/config.py`와 `.env.example`. 실제 키나 실제 배포 URL은 커밋하지 않는다. |
+
+### 구현할 때 지킬 순서
+
+1. `Settings`와 `.env.example`에 `KAKAO_REST_API_KEY`, `KAKAO_CLIENT_SECRET`,
+   `KAKAO_CALLBACK_URL`, `KAKAO_API_TIMEOUT`, `AUTH_RETURN_URL_WEB`,
+   `AUTH_RETURN_URL_APP`을 추가한다. `KAKAO_ADMIN_KEY`는 실제 연결 끊기 구현이 이 PR
+   범위에 포함될 때만 읽는다.
+2. `session`·`auth_handoff` 모델과 migration을 먼저 만들고, 저장값이
+   `docs/api/auth-kakao-v1.md` §5와 같은지 확인한다.
+3. 카카오 호출 코드는 integration에 구현하고 HTTP 응답은 테스트에서 스텁으로 바꿀 수 있게
+   클라이언트 경계를 한 곳으로 모은다.
+4. 라우터 6개를 계약서 순서대로 구현한다. 일회용 코드 소비와 신규 가입은 각각 하나의 DB
+   트랜잭션 안에서 끝낸다.
+5. `docs/api/auth-kakao-v1.md` A-01~A-20을 자동 테스트로 옮긴 뒤 수동 검증 M-01·M-02로
+   배포·실기기 경로를 확인한다.
+
+### 자동 검증
+
+DB를 보지 않는 테스트는 `client`, DB를 읽거나 쓰는 테스트는 `db_client` fixture를 쓴다.
+DB 테스트를 기본 테스트에서 제외하지 않는다.
+
+```bash
+make db-up
+make test
+make lint
+```
+
+- `make test`는 실제 PostgreSQL에 연결한다. 각 DB 테스트는 바깥 트랜잭션을 마지막에
+  롤백하므로 테스트끼리 데이터를 공유하지 않는다.
+- 카카오 서버를 실제 호출하는 테스트는 만들지 않는다. integration 응답을 스텁으로 바꾸고
+  호출 여부와 입력값을 함께 검증한다.
+- M-01은 배포 환경의 시작 URL과 콜백 URL이 같은 오리진인지 확인한다.
+- M-02는 iOS·Android 실기기에서 앱 복귀와 웹뷰 세션 생성을 확인한다.
+
+### 혼자 바꾸지 않고 확인할 때
+
+- 문서의 경로, 요청·응답 필드, 상태 코드처럼 웹·앱과 맞물린 API 계약을 바꿔야 할 때는
+  김명성·고태영과 먼저 맞춘다.
+- 동의 문구·필수 동의 범위·동의 전 `parent` 생성 여부를 바꿔야 할 때는 PM 결정을 받는다.
+- 배포 오리진, 카카오 콘솔 등록값, 앱 딥링크처럼 저장소 밖 값을 모르면 임의의 값을 넣지
+  않고 M-01·M-02의 미검증 항목으로 남긴다.
+- 그 밖의 함수 분리, 내부 이름, 테스트 파일 분리는 #34 작업자가 결정한다.
 
 ---
 

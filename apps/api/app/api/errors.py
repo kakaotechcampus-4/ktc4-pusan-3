@@ -84,10 +84,6 @@ _FRAMEWORK_CODE: dict[int, str] = {
 }
 
 
-# REVIEW: 이 함수는 웹 프레임워크의 예외를 공통 API 오류 응답으로 바꾸지만 `app.core`에 있다.
-# `apps/api/CLAUDE.md`에는 core의 허용 의존성이 없어 파일 위치에 대한 판단 근거가 부족하다.
-# 확인할 내용: 프레임워크 전용 예외 처리를 `app.core`에 둘지 `app.api`로 옮길지 결정한다.
-# 검증: `uv run pytest tests/integration/api/test_errors.py -q` (오류 응답 형식)
 def register_error_handlers(app: FastAPI) -> None:
     """Spring 의 @RestControllerAdvice 등록을 손으로 하는 지점."""
 

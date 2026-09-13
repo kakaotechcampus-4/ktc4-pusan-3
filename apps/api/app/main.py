@@ -10,10 +10,10 @@ Spring 대응: @SpringBootApplication 이 붙은 Application 클래스.
 from fastapi import FastAPI
 
 from app.api import health
+from app.api.errors import register_error_handlers
 from app.api.v1.router import v1_router
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
-from app.core.errors import register_error_handlers
 
 app = FastAPI(title=settings.APP_NAME)
 

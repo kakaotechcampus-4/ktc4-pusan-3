@@ -3,14 +3,13 @@
 Spring 대응: 공통 DTO 패키지. Pydantic BaseModel 하나가 DTO + Bean Validation +
     Jackson 직렬화를 겸한다.
 
-에러 봉투 모델은 app/core/errors.py 에 두고 여기서 다시 내보낸다.
-core 는 아무것도 import 하지 않는 잎이어야 해서(apps/api/CLAUDE.md 레이어 경계)
-봉투를 만드는 쪽이 schemas 를 부를 수 없다. 정의가 두 벌이 되는 것을 막는 배치다.
+에러 봉투 모델은 app/api/errors.py 에 두고 여기서 다시 내보낸다.
+응답 생성과 OpenAPI 문서가 같은 모델을 써서 정의가 두 벌이 되는 것을 막는다.
 """
 
 from pydantic import BaseModel
 
-from app.core.errors import ErrorBody, ErrorEnvelope
+from app.api.errors import ErrorBody, ErrorEnvelope
 
 __all__ = ["ErrorBody", "ErrorEnvelope", "Ref"]
 

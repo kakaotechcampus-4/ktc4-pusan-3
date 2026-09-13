@@ -27,17 +27,13 @@ async def client():
         yield c
 
 
-# REVIEW: 이 픽스처는 DB 통합 테스트마다 실제 PostgreSQL 연결과 트랜잭션을 만든다.
-# 현재 CI에는 PostgreSQL 실행 설정이 없어 db_client를 쓰는 테스트가 추가되면 실패할 수 있다.
-# 확인할 내용: CI에 PostgreSQL을 실행할지, DB 통합 테스트를 기본 테스트에서 분리할지 결정한다.
-# 검증 테스트 없음: 현재 session 또는 db_client 픽스처를 사용하는 테스트가 없다.
 @pytest.fixture
 async def session():
     """테스트마다 트랜잭션 하나. 끝나면 롤백해 다음 테스트에 흔적을 남기지 않는다.
 
-    Spring 의 @Transactional 테스트와 같은 효과를 손으로 만든 것이다. 커넥션에 묶은
-    세션이라 핸들러 안의 commit() 은 SAVEPOINT 로 처리되고(SQLAlchemy 기본
-    join_transaction_mode="conditional_savepoint"), 바깥 rollback() 이 전부 되돌린다.
+    Spring 의 @Transactional 테스트와 같은 효과를 손으로 만든 것이다. 세션을 이미
+    시작된 커넥션 트랜잭션에 묶으므로 핸들러가 commit() 해도 바깥 트랜잭션은 남고,
+    마지막 rollback() 이 테스트 중 변경을 전부 되돌린다.
     """
     async with engine.connect() as conn:
         tx = await conn.begin()

@@ -22,7 +22,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps.db import SessionDep
-from app.core.errors import ApiError
+from app.api.errors import ApiError
 
 # auto_error=False — 헤더가 없을 때 FastAPI 기본 403 이 나가지 않게 하고,
 # 우리가 401 unauthenticated 봉투로 답한다 (계약서 §01).

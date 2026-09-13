@@ -4,10 +4,6 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
-    # REVIEW: 이 의존성은 서버가 카카오 API를 호출할 때 사용하며 구현 위치는 integrations로 적혀 있다.
-    # `apps/api/CLAUDE.md`에는 외부 인증 API의 위치와 API 레이어의 접근 방향이 정해져 있지 않다.
-    # 확인할 내용: 카카오 API 클라이언트를 둘 폴더와 인증 라우터가 접근하는 방향을 결정한다.
-    # 검증 테스트 없음: 카카오 API 클라이언트 모듈이 아직 없다.
     # 카카오 호출(app/integrations/kakao)과 테스트 ASGI 클라이언트가 함께 쓴다.
     # 배포되는 서버에도 있어야 하므로 dev 그룹이 아니라 여기 둔다.
     "httpx>=0.28.0",
