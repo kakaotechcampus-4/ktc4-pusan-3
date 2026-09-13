@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
-        db-merge db-psql
+        db-merge db-reset db-psql
 
 help:
 	@echo "사용 가능한 명령"
@@ -21,6 +21,7 @@ help:
 	@echo "  make db-history   전체 revision 체인 출력"
 	@echo "  make db-heads     현재 head 목록 (충돌 판정용)"
 	@echo "  make db-check     ORM 모델과 DB 스키마 일치 검증 (PR 올리기 전 필수)"
+	@echo "  make db-reset yes=1  로컬 DB를 비우고 migration 처음부터 재적용 (데이터 전부 삭제)"
 	@echo "  make db-revision msg=\"설명\"  새 migration 파일 자동 생성"
 	@echo "  make db-merge msg=\"설명\"     갈라진 head를 합치는 merge revision 생성"
 	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
@@ -76,6 +77,11 @@ db-revision:
 db-merge:
 	@[ "$(msg)" ] || { echo "사용법: make db-merge msg=\"한 줄 설명\""; exit 1; }
 	cd apps/api && uv run alembic merge -m "$(msg)" heads
+
+db-reset:
+	@[ "$(yes)" = "1" ] || { echo "로컬 개발 DB의 데이터를 전부 지우고 migration을 처음부터 다시 적용합니다."; echo "실행하려면: make db-reset yes=1"; exit 1; }
+	docker exec ktc4-postgres psql -U $$(docker exec ktc4-postgres printenv POSTGRES_USER) -d $$(docker exec ktc4-postgres printenv POSTGRES_DB) -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+	cd apps/api && uv run alembic upgrade heads
 
 db-psql:
 	docker exec -it ktc4-postgres psql -U $$(docker exec ktc4-postgres printenv POSTGRES_USER) -d $$(docker exec ktc4-postgres printenv POSTGRES_DB)
