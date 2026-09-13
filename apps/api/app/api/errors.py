@@ -1,8 +1,7 @@
 """계약서 §01 에러 봉투 — 모든 에러 응답이 여기를 통과한다.
 
-Spring 대응: @RestControllerAdvice + @ExceptionHandler 묶음.
-    Spring 은 컴포넌트 스캔이 그것을 알아서 등록하지만 FastAPI 는 스캔이 없어서,
-    register_error_handlers(app) 를 app/main.py 에서 한 번 직접 불러 준다.
+FastAPI는 이 예외 처리기를 자동으로 등록하지 않으므로
+register_error_handlers(app)를 app/main.py에서 한 번 직접 호출한다.
 
 FastAPI 기본 에러 응답은 {"detail": "..."} 인데 계약은
 {"error": {"code", "message", "detail"}} 다. 프론트 apps/web/src/lib/api/errors.ts 가
@@ -23,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 class ErrorBody(BaseModel):
-    """Spring 대응: ErrorResponse record."""
+    """오류 코드, 사용자 메시지, 선택 상세 정보를 담는다."""
 
     code: str
     message: str
@@ -43,8 +42,7 @@ class ErrorEnvelope(BaseModel):
 class ApiError(Exception):
     """우리 코드가 던지는 유일한 에러.
 
-    Spring 대응: RuntimeException 을 상속한 BusinessException + ErrorCode enum.
-    status 와 code 를 짝지어 들고 다니므로 핸들러가 그대로 봉투에 옮긴다.
+    HTTP 상태와 서비스 오류 코드를 함께 들고 다니므로 핸들러가 그대로 봉투에 옮긴다.
 
     🚨 HTTPException 을 직접 던지지 않는다. 그쪽은 status 만 있고 code 가 없어서
        아래 _FRAMEWORK_CODE 의 추측에 기대게 된다.
@@ -85,7 +83,7 @@ _FRAMEWORK_CODE: dict[int, str] = {
 
 
 def register_error_handlers(app: FastAPI) -> None:
-    """Spring 의 @RestControllerAdvice 등록을 손으로 하는 지점."""
+    """애플리케이션에서 사용할 공통 예외 처리기를 등록한다."""
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
@@ -102,8 +100,6 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-        # Spring 대응: MethodArgumentNotValidException 핸들러.
-        #
         # 🚨 FastAPI 는 "경로 값이 enum 밖" 과 "바디 필드 누락" 을 같은 예외로 낸다.
         #    명세 §8-1 은 앞을 422, 뒤를 400 으로 정했으므로 loc 의 첫 칸으로 가른다.
         errors = exc.errors()

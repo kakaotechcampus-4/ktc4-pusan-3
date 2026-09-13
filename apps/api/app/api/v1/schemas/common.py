@@ -1,8 +1,5 @@
 """엔드포인트 여러 곳이 함께 쓰는 요청·응답 조각 — 계약서 §01 · §02
 
-Spring 대응: 공통 DTO 패키지. Pydantic BaseModel 하나가 DTO + Bean Validation +
-    Jackson 직렬화를 겸한다.
-
 에러 봉투 모델은 app/api/errors.py 에 두고 여기서 다시 내보낸다.
 응답 생성과 OpenAPI 문서가 같은 모델을 써서 정의가 두 벌이 되는 것을 막는다.
 """

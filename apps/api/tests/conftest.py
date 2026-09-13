@@ -1,7 +1,5 @@
 """테스트 공통 픽스처.
 
-Spring 대응: @SpringBootTest + @Transactional(테스트 후 롤백) + @MockBean.
-
 픽스처가 셋이다.
     client     — DB 를 쓰지 않는 테스트용. 서버도 DB 도 띄우지 않고 돈다
     session    — 트랜잭션 하나를 열고 테스트가 끝나면 롤백한다 (DB 필요)
@@ -18,7 +16,7 @@ from app.main import app
 
 @pytest.fixture
 async def client():
-    """ASGI 직결 클라이언트 — Spring 의 MockMvc 에 가깝다. 포트를 열지 않는다.
+    """ASGI 앱을 직접 호출하는 클라이언트. 별도 서버 포트를 열지 않는다.
 
     DB 커넥션은 첫 쿼리에서 열리므로(lazy), DB 를 보지 않는 엔드포인트 테스트는
     Postgres 없이도 통과한다. DB 를 보는 테스트는 아래 db_client 를 쓸 것.
@@ -31,8 +29,8 @@ async def client():
 async def session():
     """테스트마다 트랜잭션 하나. 끝나면 롤백해 다음 테스트에 흔적을 남기지 않는다.
 
-    Spring 의 @Transactional 테스트와 같은 효과를 손으로 만든 것이다. 세션을 이미
-    시작된 커넥션 트랜잭션에 묶으므로 핸들러가 commit() 해도 바깥 트랜잭션은 남고,
+    세션을 이미 시작된 커넥션 트랜잭션에 묶으므로 핸들러가 commit() 해도
+    바깥 트랜잭션은 남고,
     마지막 rollback() 이 테스트 중 변경을 전부 되돌린다.
     """
     async with engine.connect() as conn:

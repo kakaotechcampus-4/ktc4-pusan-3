@@ -1,8 +1,6 @@
 """DB 세션 주입 — 라우터는 `session: SessionDep` 한 줄만 적는다.
 
-Spring 대응: @PersistenceContext EntityManager 또는 생성자 주입.
-    Spring 은 타입만 보고 컨테이너가 빈을 찾아 넣지만, FastAPI 에는 컨테이너가
-    없어서 "이 값을 만드는 함수" 를 Depends 로 직접 지목한다.
+FastAPI는 값을 만드는 함수인 get_session을 Depends로 직접 지정한다.
 
 Annotated[타입, Depends(함수)] = "타입 + 만드는 법" 을 한 이름으로 묶은 별칭이다.
 테스트는 그 함수를 키로 바꿔 끼운다 (tests/conftest.py 의 dependency_overrides).

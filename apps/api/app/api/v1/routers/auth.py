@@ -1,8 +1,5 @@
 """카카오 OAuth 로그인 — 명세: docs/api/auth-kakao-v1.md §3
 
-Spring 대응: @RestController @RequestMapping("/auth") 인 AuthController.
-    다른 점은 라우터를 **둘로 나눈 것**이다.
-
 왜 둘로 나누나 — 경로가 고정된 /auth/logout 과 경로에 값이 들어가는
 /auth/{provider} 를 한 라우터에 두면 등록 순서에 로그인이 걸린다
 (app/api/v1/router.py 의 주석). 나눠 두면 그 순서가 붙어 있는 두 줄로 드러나고,
@@ -35,14 +32,11 @@ provider_router = APIRouter(prefix=f"{AUTH_PREFIX}/{{provider}}", tags=["auth"])
     status_code=204,
     # 🚨 204 는 본문이 없어야 한다. response_class 를 두지 않으면 FastAPI 가
     #    JSON 으로 null 을 실으려 해서 Content-Length 가 어긋난다.
-    #    Spring 의 @ResponseStatus(NO_CONTENT) + void 는 이 처리가 자동이다.
     response_class=Response,
     responses={401: {"model": ErrorEnvelope}},
 )
 async def logout(auth: CurrentParent) -> Response:
     """세션 행 1건 삭제 — 명세 §3-6 · 테스트 A-15.
-
-    Spring 대응: @PostMapping("/logout") @ResponseStatus(NO_CONTENT)
 
     계약서 28개 목록에 없던 엔드포인트다. 없으면 클라이언트가 토큰을 버리는 흉내만
     내고 서버에서는 만료까지 유효하다.

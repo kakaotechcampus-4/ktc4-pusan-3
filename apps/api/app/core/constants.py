@@ -1,8 +1,7 @@
 """경로 접두사 상수 — 같은 문자열을 여러 곳에서 손으로 적지 않기 위한 유일한 출처.
 
-Spring 대응: application.yml 의 server.servlet.context-path.
-    거기서는 설정 한 줄이 모든 컨트롤러 앞에 붙지만, FastAPI 는
-    include_router(prefix=...) 로 직접 붙인다 (app/main.py).
+FastAPI에서는 app/main.py의 include_router(prefix=...)가 모든 v1 라우터 앞에
+이 접두사를 붙인다.
 
 🚨 /api/v1 은 세 곳에서 필요하다 — ① 라우터 마운트 ② oauth_state 쿠키의 Path
    ③ GET /auth/{provider}/status 가 내려주는 start_url.
