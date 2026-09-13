@@ -1,0 +1,257 @@
+# apps/web — 프론트 구현 컨텍스트
+
+Owner: 고태영 (프론트 리드)
+
+> 이 파일은 **프론트에서만 지키는 규칙**이다. 파트 경계를 넘는 규칙은 [최상위 CLAUDE.md](../../CLAUDE.md) §2 에 있다.
+> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) (무엇을 부르는가) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
+> 되돌릴 수 없는 5개를 건드린다면 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md) 도 읽는다 (승인 게이트 2곳이 거기 있다).
+
+---
+
+## 1. 스택 · 버전
+
+| | 버전 | 비고 |
+| --- | --- | --- |
+| Next.js | 16.3.4 | App Router · Turbopack. `next lint` 는 16 에서 빠졌다 — lint 는 별도 스크립트 |
+| React | 19.2.8 | |
+| TypeScript | **6.0.3** | ⚠️ 아래 참고 |
+| Tailwind CSS | 4.3.3 | CSS-first. `tailwind.config.*` 없음 — 토큰은 `globals.css` 의 `@theme` |
+| Zustand | 5.0.15 | 클라이언트 상태 전용 |
+| TanStack Query | 5.102.8 | 서버 상태 전용 |
+| Zod | 4.5.4 | 환경변수 검증 · (필요해지면) 응답 파싱 |
+| ESLint | 10.10.0 | `eslint-config-next` flat config |
+| Prettier | 3.9.6 | `prettier-plugin-tailwindcss` 로 클래스 정렬 |
+
+### ⚠️ TypeScript 는 왜 7 이 아닌가
+
+TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 아직 지원하지 않는다**
+(`typescript-eslint does not support TS 7.0` 로 lint 가 죽는다 · [typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)).
+그래서 툴체인 전체가 도는 최신 버전인 **6.0.3** 에 맞춰 뒀다. 위 이슈가 닫히면 그때 7 로 올린다.
+
+`eslint.config.mjs` 의 `settings.react.version` 도 같은 종류의 임시 조치다 —
+`eslint-plugin-react` 의 자동 버전 탐지가 ESLint 10 API 와 안 맞아 터진다. **React 버전을 올리면 이 값도 같이 올릴 것.**
+
+---
+
+## 2. 폴더 구조
+
+```
+src/
+├── app/                  App Router. 라우트 = 화면 01~10
+│   ├── layout.tsx        루트 레이아웃 (lang="ko" · viewport)
+│   ├── providers.tsx     QueryClientProvider + 세션 persist 복구
+│   └── globals.css       Tailwind 진입점 + @theme 디자인 토큰
+├── lib/
+│   ├── env.ts            NEXT_PUBLIC_* 검증 · API_BASE_URL
+│   ├── query-client.ts   QueryClient 기본값 (retry 정책)
+│   └── api/
+│       ├── types.ts      계약서 §02 공통 타입 5종 + Ref + enum
+│       ├── errors.ts     에러 봉투 · ApiError · 에러 코드
+│       ├── client.ts     fetch 래퍼 (Bearer · Idempotency-Key 차단)
+│       ├── idempotency.ts  🚨 되돌릴 수 없는 5개 경로의 **단일 출처** + 키 타입
+│       ├── operations.ts   그 5개 전용 함수 — 키가 **필수 인자**다
+│       ├── use-idempotency-key.ts  한 동작에 키 하나 (재시도는 같은 키)
+│       ├── sse.ts        GET /runs/{rid}/events 스트림 파서
+│       └── queryKeys.ts  쿼리 키 팩토리
+├── mocks/                MSW 목 서버 — 개발 환경 전용 (§7)
+│   ├── scenario.ts       시나리오 스위치 (?scenario=)
+│   ├── fixtures.ts       계약서 기준 시드 데이터
+│   ├── handlers/         엔드포인트별 핸들러
+│   │   └── idempotency.ts  서버 몫을 목이 대신 지킨다 (재생 · 재사용 거부 · 동시 차단)
+│   ├── contract.test.ts  목이 **동작**까지 계약과 같은지 (§8)
+│   ├── server.ts         테스트용 setupServer — 브라우저와 같은 핸들러
+│   └── start.ts          dev + 플래그일 때만 워커를 띄운다
+├── stores/
+│   └── session.ts        토큰 · activeChildId (zustand persist)
+└── test/setup.ts         목 서버 켜기 · 테스트 사이 상태 비우기
+```
+
+`public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
+
+화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
+
+---
+
+## 3. 라이브러리 관례
+
+### 서버 상태 vs 클라이언트 상태 — 섞지 않는다
+
+- **TanStack Query** = 서버에서 온 것 전부. 관찰·프로필·제안·일정·홈.
+- **Zustand** = 서버가 모르는 것만. 토큰, 지금 보고 있는 아이, 열려 있는 모달.
+- 🚨 **아이 이름·생일·알레르기를 Zustand 에 캐시하지 않는다.** 개인정보는 화면이 필요할 때 Query 로 가져오고, 스토어에는 `id` 만 둔다 (§2 개인정보).
+
+쿼리 키는 손으로 쓰지 말고 `qk` 팩토리를 쓴다. 아이 스코프는 전부 `qk.child(cid)` 아래라서, 아이를 바꿀 때 한 번의 무효화로 끝난다.
+
+### API 호출
+
+- `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
+- 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
+
+### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
+
+`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · `POST /events/{eid}/confirm`(게이트 ㉠).
+
+**`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
+경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
+
+```tsx
+const idem = useIdempotencyKey();                       // @/lib/api/use-idempotency-key
+const mutation = useMutation({
+  mutationFn: () => confirmEvent(eventId, idem.current()),
+  onSuccess: () => { idem.rotate(); },                  // 🚨 성공한 뒤에만
+});
+```
+
+- 키 없이 부르면 **요청이 나가지 않는다** (`IdempotencyKeyRequiredError`). 경고가 아니라 차단이고, 프로덕션에서도 같다.
+- 🚨 **`mutationFn` 안에서 `newIdempotencyKey()` 를 부르지 않는다.** 재시도마다 새 키가 나가면 중복 방지가 통째로 무의미해진다. 타입은 이걸 못 잡는다 — 리뷰에서 지적된 지점이다.
+- 🚨 **`rotate()` 를 실패 경로에서 부르지 않는다.** 실패 뒤 다시 누르는 게 재시도고, 재시도는 같은 키다.
+- 서버가 무엇을 보장해야 하는지(재생 · 재사용 거부 · 동시 차단 · 2xx 만 저장)는 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md).
+- `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.** 키 수명 관리가 깨진 것이니 화면을 그리지 말고 고친다.
+
+### 에러
+
+`ApiError` 로 잡는다. 특히:
+
+- `consent_required` (403) → 저장이 아예 안 된 상태다. `error.consentDeeplink` 로 동의 화면에 보낸다.
+- `llm_unavailable` (503) → 🚨 **기본값으로 대체하지 않는다.** 실패했다고 화면에 말한다.
+- 4xx 는 재시도하지 않는다 (`query-client.ts` 에 이미 걸려 있다).
+- **뮤테이션은 자동 재시도가 꺼져 있다.** 승인 게이트를 두 번 실행할 수 있어서다 — 켜지 말 것.
+- 🚨 **승인 게이트에 낙관적 업데이트를 쓰지 않는다.** `onMutate` 로 캐시를 먼저 바꾸면 서버가 확정하기 전에 화면이 이미 확정된 것처럼 보인다 — "되돌릴 수 없는 것은 사람이 승인한다"(§2)가 **시각적으로** 깨진다. 응답을 받은 뒤 `invalidateQueries` 로 갱신한다. 자동 재시도와는 다른 경로라 따로 막아야 한다.
+  낙관적 업데이트가 괜찮은 곳은 되돌릴 수 있는 것뿐이다 — 준비물 체크(`is_prepared`), 관심 칩 토글 정도.
+
+### SSE
+
+`EventSource` 를 쓰지 않는다. Authorization 헤더를 못 붙여서 NF-09 를 깬다.
+`streamRunEvents(runId, signal)` 을 async iterator 로 돌린다.
+
+```ts
+const controller = new AbortController();
+for await (const e of streamRunEvents(runId, controller.signal)) { ... }
+```
+
+---
+
+## 4. 화면을 그릴 때 지켜야 하는 것
+
+최상위 §2 가 프론트에 떨어지는 지점만 추렸다. 어기면 서비스가 성립하지 않는다.
+
+- 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천에는 "또래 기준 일반 추천" 을 **화면에 명시**하고 쌓인 기록 건수를 그대로 보여준다. 되물을 때 질문은 **1개**.
+- 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
+- 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).
+- 🚨 **`partial` 이벤트를 실패 화면으로 떨어뜨리지 않는다.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 **한 화면에** 섞는다 (NF-06).
+- 🚨 **`failed` 는 `raw_text` 를 돌려준다.** 입력창에 그대로 남겨 놓는다 — 부모가 다시 타이핑하게 만들지 않는다.
+- 🚨 **날짜·나이를 프론트에서 계산하지 않는다.** `age_display` · `observed_label` · `state_reason` 은 서버가 만든 문구다 (§3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
+- 🚨 **health 관찰은 모양이 다르다.** `subject` · `polarity` · `affinity` 키 자체가 없다. `null` 검사가 아니라 `kind === "observation_health"` 로 분기한다 (`isHealthObservation()`).
+- 🚨 **콘솔·로그에 발화 원문을 남기지 않는다.** `memory_id` 만 (§2 개인정보).
+
+---
+
+## 5. 스타일
+
+- 색·radius·폰트는 `globals.css` 의 `@theme` 토큰으로만. 컴포넌트에서 `#hex` 를 직접 쓰지 않는다.
+- **정본은 [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) 다.** 색·타이포·간격뿐 아니라 버튼 높이 · 카드 여백 · 시트 동작까지 거기 있다(§7 컴포넌트). 화면을 그리기 전에 읽고, 없는 값을 즉석에서 만들지 않는다 — 필요하면 문서를 먼저 고친다.
+- `globals.css` 는 그 문서를 옮긴 것이다. 둘이 어긋나면 **CSS 가 틀린 것**이다.
+- 🚨 **실패를 빨강으로 칠하지 않는다.** `failed` · `partial` 의 실패 쪽 · `llm_unavailable` 은 `surface-muted` + `ink-muted` 다. `danger` 는 알레르기·건강 중단에만, `caution` 은 승인 게이트 2곳에만 쓴다.
+- 🚨 **일반 추천과 개인화 추천을 색으로 구분하지 않는다.** 라벨과 기록 건수가 본체다 (§4 첫 줄과 같은 규칙).
+- 본문 기본은 **16px / 1.6** 이다. 프로토타입의 11~13px 을 그대로 옮기지 말 것.
+- **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
+- 노치·홈 인디케이터는 `pt-safe` / `pb-safe` 유틸로. 단 웹뷰 안에서는 네이티브 셸이 이미 safe area 를 먹고 있어서 0 이 된다 — 모바일 브라우저 직접 접속용 안전장치다.
+
+---
+
+## 6. 명령어
+
+```bash
+pnpm dev           # 개발 서버 (Turbopack)
+pnpm build         # 프로덕션 빌드 (타입 에러 나면 실패한다)
+pnpm typecheck     # next typegen && tsc --noEmit
+pnpm test          # vitest run — 목이 계약대로 "행동" 하는지 (§8)
+pnpm lint          # eslint
+pnpm format        # prettier --write
+```
+
+`pnpm typecheck` 가 `next typegen` 을 먼저 도는 이유: `LayoutProps` · `PageProps` 같은 전역 타입은 Next 가 `.next/types` 에 생성한다. 빌드/타입젠 전에는 `tsc` 가 그 타입을 못 찾는다.
+
+**최초 세팅** — `cp .env.example .env.local`. `NEXT_PUBLIC_API_BASE_URL` 이 없으면 앱이 뜨지 않고 바로 에러를 던진다 (조용히 잘못된 주소로 붙는 것보다 낫다).
+
+🚨 `NEXT_PUBLIC_*` 는 **브라우저 번들에 그대로 박힌다.** 비밀은 여기 넣지 않는다 (§9 · NF-09).
+
+---
+
+## 7. 목(mock) 서버
+
+백엔드가 아직 없어도 화면을 만들 수 있게 [MSW](https://mswjs.io) 가 계약서 v1 응답을 대신 내려준다.
+
+```bash
+# .env.local 에서 켠다
+NEXT_PUBLIC_API_MOCKING=enabled
+```
+
+**개발 환경에서만 동작한다.** `start.ts` 가 `NODE_ENV` 로 먼저 막고 동적 import 를 쓰기 때문에, 프로덕션 빌드에는 msw 가 통째로 빠진다. 플래그가 `disabled` 면 요청은 그대로 실서버로 나간다.
+
+### 🚨 이게 있는 진짜 이유 — 실서버로 못 만드는 상태들
+
+색이나 문구가 아니라 **§4 의 규칙이 지켜지는지 확인하는 장치**다. 아래 상태들은 기억이 쌓이거나, 타이밍에 걸리거나, 모델이 죽어야 나온다.
+
+| 시나리오 | 무엇이 나오나 |
+| --- | --- |
+| `default` | 기억이 쌓인 상태 · 개인화 추천 2건 |
+| `empty` | 기록 0건 — `highlight: null` 빈 상태 |
+| `scarcity` | 근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 **1개** |
+| `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
+| `failed` | 입력 처리 실패 — `raw_text` 복원 |
+| `consent` | 403 `consent_required` — 저장 차단 · deeplink |
+| `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
+
+주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
+
+### 규칙
+
+- **응답은 `lib/api/types.ts` 타입으로 강제한다.** 목이 계약서에서 벗어나면 타입 에러로 잡힌다 — 형태를 `any` 로 풀지 말 것.
+- 🚨 **타입은 모양만 본다.** 동의 거부 · 중복 처리 · 상태 전이 · SSE 순서는 타입이 모른다. 그건 §8 의 테스트가 건다 — **둘 다 있어야 목이 계약에서 안 벗어난다.**
+- **되돌릴 수 없는 5개는 `withIdempotency()` 로 감싼다** (`handlers/idempotency.ts`). 키 없으면 400 · 같은 키 재시도는 처음 응답 재생 · 다른 요청이면 422 · 처리 중이면 409.
+  🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
+- **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
+- **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
+- 화면 01~06 만 덮여 있다. 07~10 은 아직 없다.
+- 🚨 **fixtures 에 실제 사용자 발화나 아이 정보를 넣지 않는다.** 저장소가 public 이다 (최상위 §9).
+
+msw 버전을 올리면 워커를 다시 만들어야 한다 — `pnpm exec msw init public`.
+
+---
+
+## 8. 테스트
+
+```bash
+pnpm test          # vitest run
+pnpm test:watch
+```
+
+**지금 있는 건 계약 회귀 테스트 하나다.** 화면 테스트(RTL·jsdom)는 컴포넌트가 생길 때 붙인다.
+
+### 무엇을 거는가
+
+목이 **계약대로 행동하는지**를 건다. 타입 검사가 못 보는 것들이다 — 키 누락 · 재시도 · 동시 요청 · 권한 부족 · 상태 전이 · SSE 이벤트 순서.
+
+- `src/mocks/contract.test.ts` — 목의 동작
+- `src/lib/api/idempotency.test.ts` — 클라이언트의 차단
+
+### 규칙
+
+- 🚨 **테스트 전용 핸들러를 만들지 않는다.** `src/mocks/server.ts` 는 브라우저 워커와 **같은 핸들러**를 쓴다. 따로 두면 확인한 적 없는 목으로 화면을 만들게 된다.
+- 🚨 **목은 프로세스 수명만큼 사는 상태를 들고 있다** (확정된 event · 저장된 응답 · 등록된 안전 항목). 새 상태를 추가하면 리셋 함수를 export 하고 `src/test/setup.ts` 의 `afterEach` 에 건다 — 안 그러면 결과가 테스트 순서에 따라 바뀐다.
+- `onUnhandledRequest: "error"` 다. 계약서에 없는 경로를 부르면 테스트가 실패한다.
+- 🚨 **픽스처·테스트 문자열에 실제 사용자 발화나 아이 정보를 넣지 않는다.** 저장소가 public 이다 (최상위 §9).
+- 백엔드가 붙으면 **같은 표를 실서버에도** 건다. 목이 통과한다고 서버가 통과하는 게 아니다 ([`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md) §6-3).
+
+---
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

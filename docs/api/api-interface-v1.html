@@ -1,0 +1,1424 @@
+<meta charset="utf-8">
+<title>육아기억 AI API 계약서</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600&display=swap">
+<style>
+:root{
+  --paper:#F5F6F2; --surface:#FFFFFF; --surface-2:#ECEFE8;
+  --ink:#141A17; --ink-2:#4B5650; --ink-3:#7C877F;
+  --rule:#DCE0D7; --rule-2:#C2C9BC;
+  --accent:#2E6B58; --accent-soft:#E1EDE7;
+  --danger:#A63A2E; --danger-soft:#F7E6E2;
+  --warn:#8A6316; --warn-soft:#F4EBD7;
+  --info:#2C5387; --info-soft:#E2E9F3;
+  --violet:#584A86; --violet-soft:#E9E6F2;
+  --m-fg:#FFFFFF;
+  --shadow:0 1px 2px rgba(20,26,23,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0F1412; --surface:#161C19; --surface-2:#1E2622;
+    --ink:#E7EBE4; --ink-2:#A7B1A9; --ink-3:#78837B;
+    --rule:#28302B; --rule-2:#39433C;
+    --accent:#6FBFA2; --accent-soft:#16302A;
+    --danger:#E8907F; --danger-soft:#331C18;
+    --warn:#D6A44A; --warn-soft:#2E2514;
+    --info:#8FB2E0; --info-soft:#172430;
+    --violet:#A99BD6; --violet-soft:#211D32;
+    --m-fg:#0F1412;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F1412; --surface:#161C19; --surface-2:#1E2622;
+  --ink:#E7EBE4; --ink-2:#A7B1A9; --ink-3:#78837B;
+  --rule:#28302B; --rule-2:#39433C;
+  --accent:#6FBFA2; --accent-soft:#16302A;
+  --danger:#E8907F; --danger-soft:#331C18;
+  --warn:#D6A44A; --warn-soft:#2E2514;
+  --info:#8FB2E0; --info-soft:#172430;
+  --violet:#A99BD6; --violet-soft:#211D32;
+  --m-fg:#0F1412;
+  --shadow:0 1px 2px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  font-size:15px; line-height:1.7; font-weight:400;
+  -webkit-font-smoothing:antialiased;
+}
+code,pre,.mono{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace}
+a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+
+.wrap{max-width:1220px; margin:0 auto; padding:0 24px 96px}
+.masthead{border-bottom:1px solid var(--rule-2); padding:40px 0 26px; margin-bottom:32px}
+.eyebrow{
+  font-family:"Gowun Dodum",serif; font-size:12.5px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--accent); margin:0 0 12px
+}
+h1{
+  font-family:"Gowun Dodum",serif; font-weight:400; font-size:clamp(30px,4.4vw,44px);
+  line-height:1.22; margin:0 0 14px; text-wrap:balance; letter-spacing:-.01em
+}
+.lede{font-size:16.5px; color:var(--ink-2); max-width:64ch; margin:0 0 22px}
+.meta{display:flex; flex-wrap:wrap; gap:8px 10px; font-size:12.5px}
+.meta span{background:var(--surface); border:1px solid var(--rule); border-radius:3px; padding:3px 9px; color:var(--ink-2)}
+.meta b{font-weight:500; color:var(--ink)}
+
+.cols{display:grid; grid-template-columns:238px minmax(0,1fr); gap:52px; align-items:start}
+
+/* ---------- sidebar ---------- */
+nav.toc{
+  position:sticky; top:20px; font-size:13.5px; line-height:1.5;
+  max-height:calc(100vh - 40px); overflow-y:auto; overscroll-behavior:contain;
+  padding-right:6px; scrollbar-width:thin; scrollbar-color:var(--rule-2) transparent
+}
+nav.toc::-webkit-scrollbar{width:6px}
+nav.toc::-webkit-scrollbar-thumb{background:var(--rule-2); border-radius:99px}
+nav.toc ol{list-style:none; margin:0; padding:0}
+nav.toc > ol{display:flex; flex-direction:column; gap:1px}
+nav.toc a.sec{
+  display:block; padding:5px 10px; color:var(--ink-2); text-decoration:none;
+  border-left:2px solid var(--rule); border-radius:0 3px 3px 0
+}
+nav.toc a.sec:hover{color:var(--ink); background:var(--surface)}
+nav.toc a.sec.on{color:var(--accent); border-left-color:var(--accent); background:var(--accent-soft); font-weight:500}
+nav.toc .num{color:var(--ink-3); font-size:11.5px; margin-right:6px; font-variant-numeric:tabular-nums}
+.toc-sub{margin:2px 0 8px 11px!important; padding-left:9px!important; border-left:1px solid var(--rule)}
+.toc-sub li{margin:0}
+.toc-sub a{
+  display:flex; gap:6px; align-items:baseline; text-decoration:none;
+  font-family:"IBM Plex Mono",monospace; font-size:11.5px; line-height:1.45;
+  padding:3px 7px; border-radius:3px; color:var(--ink-3); word-break:break-all
+}
+.toc-sub a:hover{color:var(--ink); background:var(--surface)}
+.toc-sub a.on{color:var(--accent); background:var(--accent-soft)}
+.mm{font-size:9px; font-weight:600; letter-spacing:.03em; flex:none; width:31px; text-align:right; padding-top:1px}
+.mm-get{color:var(--accent)} .mm-post{color:var(--info)} .mm-patch,.mm-put{color:var(--warn)}
+.mm-del{color:var(--danger)} .mm-sse{color:var(--violet)}
+.toc-foot{margin-top:14px; padding-left:12px; font-size:12px; color:var(--ink-3)}
+
+/* ---------- sections ---------- */
+section{scroll-margin-top:20px; padding-top:8px; margin-bottom:56px}
+h2{font-family:"Gowun Dodum",serif; font-weight:400; font-size:25px; line-height:1.3; margin:0 0 6px; letter-spacing:-.005em}
+h2 .h-num{color:var(--ink-3); font-size:15px; margin-right:10px; font-family:"IBM Plex Mono",monospace}
+h3{font-size:15.5px; font-weight:600; margin:34px 0 10px; letter-spacing:-.005em}
+h3:first-of-type{margin-top:24px}
+h4{font-size:13px; font-weight:600; margin:22px 0 8px; color:var(--ink-2); letter-spacing:.02em}
+p{margin:0 0 12px; max-width:72ch}
+.sub{color:var(--ink-2); font-size:14px; margin:0 0 20px; max-width:72ch}
+ul{margin:0 0 14px; padding-left:19px; max-width:72ch}
+li{margin-bottom:5px}
+li::marker{color:var(--ink-3)}
+
+/* ---------- table ---------- */
+.tw{overflow-x:auto; border:1px solid var(--rule); border-radius:4px; background:var(--surface); margin:0 0 18px}
+table{border-collapse:collapse; width:100%; font-size:13.5px; min-width:520px}
+th,td{text-align:left; padding:9px 13px; border-bottom:1px solid var(--rule); vertical-align:top}
+th{font-size:11.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3); background:var(--surface-2); white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td code{font-size:12.5px; background:var(--surface-2); padding:1px 5px; border-radius:3px; white-space:nowrap}
+td.num{font-variant-numeric:tabular-nums}
+
+/* ---------- code ---------- */
+.code{position:relative; margin:0 0 14px}
+pre{
+  margin:0; background:var(--surface); border:1px solid var(--rule); border-radius:4px;
+  padding:13px 15px; overflow-x:auto; font-size:12.5px; line-height:1.65; color:var(--ink);
+  tab-size:2
+}
+pre .c{color:var(--ink-3)}
+pre .k{color:var(--info)}
+pre .s{color:var(--accent)}
+pre .n{color:var(--violet)}
+.copy{
+  position:absolute; top:7px; right:7px; font:500 11px/1 "IBM Plex Sans KR",sans-serif;
+  background:var(--surface-2); color:var(--ink-3); border:1px solid var(--rule);
+  border-radius:3px; padding:4px 7px; cursor:pointer; opacity:0; transition:opacity .12s
+}
+.code:hover .copy,.copy:focus{opacity:1}
+.copy:hover{color:var(--ink)}
+
+/* ---------- endpoints ---------- */
+.ep{border-top:1px solid var(--rule); padding:20px 0 4px; scroll-margin-top:18px}
+.ep:first-of-type{border-top:1px solid var(--rule-2)}
+.ep-h{display:flex; flex-wrap:wrap; align-items:center; gap:9px; margin-bottom:7px}
+.m{font:600 10.5px/1 "IBM Plex Mono",monospace; letter-spacing:.06em; padding:5px 7px; border-radius:3px; color:var(--m-fg); flex:none}
+.m-get{background:var(--accent)} .m-post{background:var(--info)}
+.m-patch{background:var(--warn)} .m-put{background:var(--warn)}
+.m-del{background:var(--danger)} .m-sse{background:var(--violet)}
+.path{font-size:14px; font-weight:600; letter-spacing:-.01em; word-break:break-all}
+.path .v{color:var(--ink-3); font-weight:400}
+.tag{font-size:10.5px; font-weight:500; letter-spacing:.04em; padding:3px 7px; border-radius:99px; border:1px solid transparent; white-space:nowrap}
+.t-gate{background:var(--danger-soft); color:var(--danger); border-color:var(--danger)}
+.t-idem{background:var(--surface-2); color:var(--ink-2); border-color:var(--rule-2)}
+.ep-d{font-size:14px; color:var(--ink-2); margin:0 0 12px; max-width:74ch}
+.io{display:grid; gap:12px; grid-template-columns:1fr}
+@media (min-width:980px){ .io.two{grid-template-columns:1fr 1fr} }
+.io-l{font-size:11px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3); margin:0 0 5px}
+.note{font-size:13px; color:var(--ink-2); margin:2px 0 14px; max-width:74ch}
+.note b{font-weight:600; color:var(--ink)}
+
+/* ---------- api index (§03) ---------- */
+.api-group{margin:0 0 22px}
+.api-group h3{margin:0 0 8px}
+.api-list{display:flex; flex-direction:column; border:1px solid var(--rule); border-radius:4px; overflow:hidden; background:var(--surface)}
+a.row{
+  display:grid; grid-template-columns:56px minmax(190px,1.15fr) minmax(0,1.5fr) 42px;
+  gap:12px; align-items:baseline; padding:8px 13px; text-decoration:none;
+  border-top:1px solid var(--rule); color:var(--ink)
+}
+a.row:first-child{border-top:0}
+a.row:hover{background:var(--accent-soft)}
+a.row .m{padding:4px 5px; font-size:9.5px; text-align:center; justify-self:start}
+a.row .rp{font:600 12.5px/1.5 "IBM Plex Mono",monospace; word-break:break-all}
+a.row .rd{font-size:12.5px; color:var(--ink-2); line-height:1.5}
+a.row .rs{font:500 11px/1.6 "IBM Plex Mono",monospace; color:var(--ink-3); text-align:right; font-variant-numeric:tabular-nums}
+@media (max-width:640px){
+  a.row{grid-template-columns:52px minmax(0,1fr); gap:6px 10px}
+  a.row .rd,a.row .rs{grid-column:2}
+  a.row .rs{text-align:left}
+}
+
+/* ---------- callouts ---------- */
+.call{border-left:3px solid var(--danger); background:var(--danger-soft); padding:12px 16px; border-radius:0 4px 4px 0; margin:0 0 18px; font-size:13.5px}
+.call.open{border-left-color:var(--warn); background:var(--warn-soft)}
+.call.info{border-left-color:var(--info); background:var(--info-soft)}
+.call p{margin:0 0 6px; max-width:70ch}
+.call p:last-child{margin:0}
+.call .ct{font-weight:600; font-size:12px; letter-spacing:.05em; text-transform:uppercase; display:block; margin-bottom:4px}
+
+/* ---------- open questions ---------- */
+.oq{display:grid; gap:10px}
+.q{display:grid; grid-template-columns:34px minmax(0,1fr); gap:14px; background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--warn); border-radius:0 4px 4px 0; padding:13px 16px}
+.q .qn{font:600 13px/1 "IBM Plex Mono",monospace; color:var(--warn); font-variant-numeric:tabular-nums; padding-top:2px}
+.q h4{margin:0 0 4px; font-size:14px; color:var(--ink)}
+.q p{margin:0; font-size:13.5px; color:var(--ink-2)}
+.q .who{font-size:12px; color:var(--ink-3); margin-top:6px; display:block}
+
+footer{border-top:1px solid var(--rule-2); margin-top:20px; padding-top:20px; font-size:13px; color:var(--ink-3)}
+@media (max-width:900px){
+  .cols{grid-template-columns:1fr; gap:26px}
+  nav.toc{position:static; max-height:none; overflow:visible; border-bottom:1px solid var(--rule); padding-bottom:14px}
+  nav.toc > ol{flex-direction:row; flex-wrap:wrap; gap:4px}
+  nav.toc a.sec{border-left:0; border:1px solid var(--rule); border-radius:3px; padding:4px 9px}
+  nav.toc a.sec.on{border-color:var(--accent)}
+  .toc-sub{display:none}
+  .toc-foot{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important; scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="wrap">
+<header class="masthead">
+  <p class="eyebrow">부산대 3팀 · 육아기억 AI</p>
+  <h1>API 계약서 v1</h1>
+  <p class="lede">
+    프로토타입 화면 01~10 을 그리는 데 필요한 <b>최소 API</b> 를 고정한다. 요청·응답·상태 전이·에러 코드가 여기 적힌 대로다.
+    <b>API 계약은 이 문서가 정본</b>이고, 테이블 정의는 <b>데이터 모델 문서(Notion)</b> 가 정본이다.
+  </p>
+  <div class="meta">
+    <span>작성일 <b>2026-09-05</b></span>
+    <span>스키마 <b>데이터 모델 (Notion)</b></span>
+    <span>화면 <b>prototype.html 01~10</b></span>
+    <span>상태 <b>확정</b></span>
+    <span>엔드포인트 <b>28</b></span>
+    <span>열린 결정 <b>3건</b></span>
+  </div>
+</header>
+
+<div class="cols">
+<nav class="toc" aria-label="목차 및 API 목록">
+  <ol>
+    <li><a class="sec" href="#rules"><span class="num">01</span>공통 규약</a></li>
+    <li><a class="sec" href="#types"><span class="num">02</span>공통 타입</a></li>
+    <li><a class="sec" href="#index"><span class="num">03</span>API 목록 · 화면 매핑</a></li>
+    <li><a class="sec" href="#auth"><span class="num">04</span>인증 · 동의</a>
+      <ol class="toc-sub">
+        <li><a href="#ep-auth"><span class="mm mm-post">POST</span>/auth/{provider}</a></li>
+        <li><a href="#ep-me"><span class="mm mm-get">GET</span>/me</a></li>
+        <li><a href="#ep-consent-post"><span class="mm mm-post">POST</span>/consents</a></li>
+        <li><a href="#ep-consent-get"><span class="mm mm-get">GET</span>/consents</a></li>
+      </ol>
+    </li>
+    <li><a class="sec" href="#family"><span class="num">05</span>아이 · 보호자</a>
+      <ol class="toc-sub">
+        <li><a href="#ep-children"><span class="mm mm-post">POST</span>/children</a></li>
+        <li><a href="#ep-screening"><span class="mm mm-get">GET</span>/dev-screening/items</a></li>
+        <li><a href="#ep-onboarding"><span class="mm mm-post">POST</span>/children/{cid}/onboarding</a></li>
+        <li><a href="#ep-parents"><span class="mm mm-get">GET</span>/children/{cid}/parents</a></li>
+        <li><a href="#ep-invites"><span class="mm mm-post">POST</span>/children/{cid}/invites</a></li>
+        <li><a href="#ep-child-patch"><span class="mm mm-patch">PATCH</span>/children/{cid}</a></li>
+      </ol>
+    </li>
+    <li><a class="sec" href="#input"><span class="num">06</span>입력 · 진행(SSE)</a>
+      <ol class="toc-sub">
+        <li><a href="#ep-home"><span class="mm mm-get">GET</span>/children/{cid}/home</a></li>
+        <li><a href="#ep-inputs"><span class="mm mm-post">POST</span>/children/{cid}/inputs</a></li>
+        <li><a href="#ep-sse"><span class="mm mm-sse">SSE</span>/runs/{rid}/events</a></li>
+      </ol>
+    </li>
+    <li><a class="sec" href="#suggest"><span class="num">07</span>제안 · 승인</a>
+      <ol class="toc-sub">
+        <li><a href="#ep-suggestions"><span class="mm mm-post">POST</span>/children/{cid}/suggestions</a></li>
+        <li><a href="#ep-feedback"><span class="mm mm-patch">PATCH</span>/suggestions/{sid}/feedback</a></li>
+        <li><a href="#ep-draft"><span class="mm mm-post">POST</span>/suggestions/{sid}/event</a></li>
+        <li><a href="#ep-confirm"><span class="mm mm-post">POST</span>/events/{eid}/confirm</a></li>
+        <li><a href="#ep-reminders"><span class="mm mm-post">POST</span>/events/{eid}/reminders</a></li>
+        <li><a href="#ep-safety"><span class="mm mm-post">POST</span>/children/{cid}/health-safety</a></li>
+      </ol>
+    </li>
+    <li><a class="sec" href="#memory"><span class="num">08</span>기억 · 교정</a>
+      <ol class="toc-sub">
+        <li><a href="#ep-obs"><span class="mm mm-get">GET</span>/children/{cid}/observations</a></li>
+        <li><a href="#ep-obs-one"><span class="mm mm-get">GET</span>/observations/{kind}/{id}</a></li>
+        <li><a href="#ep-affinities"><span class="mm mm-get">GET</span>/children/{cid}/affinities</a></li>
+        <li><a href="#ep-corrections"><span class="mm mm-post">POST</span>/corrections</a></li>
+        <li><a href="#ep-obs-del"><span class="mm mm-del">DEL</span>/children/{cid}/observations</a></li>
+      </ol>
+    </li>
+    <li><a class="sec" href="#photo"><span class="num">09</span>사진 · 캘린더</a>
+      <ol class="toc-sub">
+        <li><a href="#ep-photos"><span class="mm mm-post">POST</span>/children/{cid}/photos</a></li>
+        <li><a href="#ep-commit"><span class="mm mm-post">POST</span>/photo-runs/{rid}/commit</a></li>
+        <li><a href="#ep-calendar"><span class="mm mm-get">GET</span>/children/{cid}/calendar</a></li>
+        <li><a href="#ep-items"><span class="mm mm-patch">PATCH</span>/event-items/{iid}</a></li>
+      </ol>
+    </li>
+    <li><a class="sec" href="#guards"><span class="num">10</span>규칙이 막는 것</a></li>
+    <li><a class="sec" href="#open"><span class="num">11</span>열린 결정 3건</a></li>
+  </ol>
+  <p class="toc-foot">경로는 모두 <code>/api/v1</code> 하위.<br>시간은 RFC 3339 (+09:00).</p>
+</nav>
+
+<main>
+<section id="rules">
+  <h2><span class="h-num">01</span>공통 규약</h2>
+  <p class="sub">엔드포인트마다 반복하지 않는다. 여기 있는 건 전부에 적용된다.</p>
+
+  <h3>기본</h3>
+  <div class="tw"><table>
+    <tbody>
+      <tr><th>Base</th><td><code>/api/v1</code> · <code>Content-Type: application/json; charset=utf-8</code></td></tr>
+      <tr><th>인증</th><td><code>Authorization: Bearer &lt;token&gt;</code> — <b>예외 없음</b>. 인증 없는 엔드포인트를 만들지 않는다 (NF-09)</td></tr>
+      <tr><th>시간</th><td>RFC 3339 · <code>2026-09-05T18:30:00+09:00</code>. 날짜는 <code>YYYY-MM-DD</code>. <b>나이는 저장하지 않고</b> 서버가 <code>birth_date</code> 로 계산해 <code>age_display</code> 로 내린다</td></tr>
+      <tr><th>아이 스코프</th><td><code>/children/{cid}/*</code> 는 호출자의 <code>parent_child</code> 연결을 매 요청 확인. 없으면 <code>403 child_access_denied</code></td></tr>
+      <tr><th>삭제</th><td>상태 전이가 기본 (<code>inactive</code> · <code>archived</code> · <code>cancelled</code>). <b>하드 삭제는 <code>health_safety</code> 한 곳뿐</b> — 아이와 무관해진 안전 정보는 행을 지운다</td></tr>
+      <tr><th>페이지네이션</th><td><code>?cursor=&amp;limit=</code>. 커서는 <code>(observed_to, kind, id)</code> 를 base64 로 인코딩 — 테이블별 uuid 만으로는 4개 테이블 병합 정렬 위치를 복원할 수 없다</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Ref — 도메인 간 참조</h3>
+  <p>4개 observation 테이블이 물리적으로 나뉘어 있어 <b>id 만으로는 어느 테이블인지 알 수 없다.</b> 모든 참조는 항상 이 모양이다.</p>
+  <div class="code"><pre>{
+  <span class="k">"kind"</span>: <span class="s">"observation_activity"</span>,
+  <span class="k">"id"</span>: <span class="s">"o_9f3a"</span>
+}
+
+<span class="c">// kind 허용값</span>
+<span class="c">// observation_food | observation_health | observation_education | observation_activity</span>
+<span class="c">// profile_affinity | health_safety | event | suggestion</span></pre></div>
+
+  <h3>에러</h3>
+  <div class="code"><pre>{
+  <span class="k">"error"</span>: {
+    <span class="k">"code"</span>: <span class="s">"consent_required"</span>,
+    <span class="k">"message"</span>: <span class="s">"아이 건강정보 동의가 필요해요"</span>,
+    <span class="k">"detail"</span>: {
+      <span class="k">"scope"</span>: <span class="s">"child_health"</span>,
+      <span class="k">"deeplink"</span>: <span class="s">"settings/consent"</span>
+    }
+  }
+}</pre></div>
+  <div class="tw"><table>
+    <thead><tr><th>HTTP</th><th>code</th><th>언제</th></tr></thead>
+    <tbody>
+      <tr><td class="num">401</td><td><code>unauthenticated</code></td><td>토큰 없음·만료</td></tr>
+      <tr><td class="num">403</td><td><code>child_access_denied</code></td><td><code>parent_child</code> 연결 없음</td></tr>
+      <tr><td class="num">403</td><td><code>consent_required</code></td><td>필수 <code>consent</code> 미동의 · 철회 상태. <b>저장 시도 전에</b> 막는다</td></tr>
+      <tr><td class="num">404</td><td><code>not_found</code></td><td>없거나 <code>deleted_at</code> 이 찍힌 리소스</td></tr>
+      <tr><td class="num">409</td><td><code>owner_required</code> · <code>already_sent</code> · <code>already_confirmed</code> · <code>invite_used</code></td><td>되돌릴 수 없는 상태와 충돌</td></tr>
+      <tr><td class="num">422</td><td><code>validation_failed</code></td><td>enum 밖 값, 빈 <code>observed_range</code>, 상한 무한 범위</td></tr>
+      <tr><td class="num">503</td><td><code>llm_unavailable</code></td><td>모델 호출 실패. <b>기본값으로 대체하지 않는다</b></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Idempotency-Key</h3>
+  <p>중복 실행이 <b>기억을 두 번 쌓거나 캘린더에 두 번 쓰는</b> 엔드포인트에만 필수다. 헤더가 없으면 <code>400</code>.</p>
+  <ul>
+    <li><code>POST /children/{cid}/inputs</code> — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는다</li>
+    <li><code>POST /events/{eid}/confirm</code> — 승인 게이트 ㉠</li>
+    <li><code>POST /children/{cid}/health-safety</code> — 승인 게이트 ㉡</li>
+    <li><code>POST /children/{cid}/photos</code> · <code>POST /children/{cid}/onboarding</code></li>
+  </ul>
+</section>
+
+<section id="types">
+  <h2><span class="h-num">02</span>공통 타입</h2>
+  <p class="sub">아래 5개가 화면 대부분을 채운다. 엔드포인트 상세에서는 이름으로만 참조한다.</p>
+
+  <h3>Observation</h3>
+  <p>공통 컬럼 + 도메인 필드. <b>도메인 필드는 <code>domain_fields</code> 안에 넣는다</b> — 4개 테이블을 한 배열로 병합해 내릴 때 키 충돌을 막는다.</p>
+  <div class="code"><pre>{
+  <span class="k">"kind"</span>: <span class="s">"observation_activity"</span>,          <span class="c">// Ref 의 kind 와 같은 값</span>
+  <span class="k">"id"</span>: <span class="s">"o_9f3a"</span>,
+  <span class="k">"child_id"</span>: <span class="s">"c1"</span>,
+  <span class="k">"raw_text"</span>: <span class="s">"레고로 자동차 만들고 30분 넘게 앉아 있었어"</span>,
+  <span class="k">"subject"</span>: <span class="s">"레고 자동차"</span>,                <span class="c">// LLM 추출. health 에는 없음</span>
+  <span class="k">"polarity"</span>: <span class="n">1</span>,                           <span class="c">// -1 / 0 / 1</span>
+  <span class="k">"strong_signals"</span>: [
+    <span class="s">"self_initiated"</span>,
+    <span class="s">"resistance_to_redirect"</span>
+  ],
+  <span class="k">"confidence_source"</span>: <span class="s">"parent_direct"</span>,    <span class="c">// institution_notice | parent_direct</span>
+                                             <span class="c">// | parent_hedged | parent_hearsay</span>
+                                             <span class="c">// "맞아요" 교정으로 상향된다</span>
+  <span class="k">"status"</span>: <span class="s">"active"</span>,                      <span class="c">// active | inactive</span>
+  <span class="k">"observed_from"</span>: <span class="s">"2026-09-05"</span>,           <span class="c">// observed_range 하한</span>
+  <span class="k">"observed_to"</span>: <span class="s">"2026-09-05"</span>,             <span class="c">// 상한. 무한대 금지</span>
+  <span class="k">"observed_label"</span>: <span class="s">"오늘"</span>,                 <span class="c">// 표시 문구. 서버가 만든다</span>
+  <span class="k">"affinity"</span>: {
+    <span class="k">"id"</span>: <span class="s">"a_12"</span>,
+    <span class="k">"merge_key"</span>: <span class="s">"만들기 놀이"</span>,
+    <span class="k">"state"</span>: <span class="s">"candidate"</span>
+  },
+  <span class="k">"source_writer"</span>: {
+    <span class="k">"parent_id"</span>: <span class="s">"p1"</span>,
+    <span class="k">"nickname"</span>: <span class="s">"지은"</span>
+  },
+  <span class="k">"source_notice_id"</span>: <span class="n">null</span>,
+  <span class="k">"domain_fields"</span>: {
+    <span class="k">"activity"</span>: <span class="s">"레고 조립"</span>,
+    <span class="k">"location"</span>: <span class="s">"집"</span>,
+    <span class="k">"companions"</span>: <span class="s">"혼자"</span>,
+    <span class="k">"duration_min"</span>: <span class="n">35</span>,
+    <span class="k">"engagement_level"</span>: <span class="s">"high"</span>
+  },
+  <span class="k">"created_at"</span>: <span class="s">"2026-09-05T18:30:00+09:00"</span>
+}</pre></div>
+  <div class="call">
+    <span class="ct">🚨 health 는 모양이 다르다</span>
+    <p><code>observation_health</code> 응답에는 <code>subject</code> · <code>polarity</code> · <code>strong_signals</code> · <code>affinity</code> <b>키 자체가 없다</b>
+    (승격 파이프라인 밖이라 프로필 행이 존재하지 않는다). 프론트는 <code>null</code> 검사가 아니라 <code>kind === "observation_health"</code> 로 분기한다.</p>
+    <div class="code" style="margin-top:8px"><pre>{
+  <span class="k">"kind"</span>: <span class="s">"observation_health"</span>,
+  <span class="k">"id"</span>: <span class="s">"o_44"</span>,
+  <span class="k">"raw_text"</span>: <span class="s">"아침에 열 나고 콧물"</span>,
+  <span class="k">"confidence_source"</span>: <span class="s">"parent_direct"</span>,
+  <span class="k">"status"</span>: <span class="s">"active"</span>,
+  <span class="k">"observed_from"</span>: <span class="s">"2026-09-05"</span>,
+  <span class="k">"observed_to"</span>: <span class="s">"2026-09-05"</span>,
+  <span class="k">"domain_fields"</span>: {
+    <span class="k">"symptom"</span>: [<span class="s">"발열"</span>, <span class="s">"콧물"</span>],       <span class="c">// 배열이다</span>
+    <span class="k">"severity"</span>: <span class="s">"mild"</span>,
+    <span class="k">"body_part"</span>: <span class="s">"얼굴"</span>,
+    <span class="k">"suspected_trigger"</span>: <span class="s">"우유 먹은 뒤"</span>,
+    <span class="k">"action_taken"</span>: <span class="s">"관찰"</span>,
+    <span class="k">"observed_time"</span>: <span class="s">"2026-09-05T07:10:00+09:00"</span>
+  }
+}</pre></div>
+  </div>
+
+  <h3>Affinity</h3>
+  <p><code>observation_count</code> · <code>state_reason</code> · <code>source_refs</code> 는 컬럼이 아니라 <b>서버 파생값</b>이다 (<code>affinity_id</code> 역참조 집계).</p>
+  <div class="code"><pre>{
+  <span class="k">"kind"</span>: <span class="s">"profile_affinity"</span>,
+  <span class="k">"id"</span>: <span class="s">"a_12"</span>,
+  <span class="k">"merge_key"</span>: <span class="s">"만들기 놀이"</span>,               <span class="c">// 사람이 읽는 라벨. 수정 가능</span>
+  <span class="k">"domain"</span>: <span class="s">"activity"</span>,                    <span class="c">// food | activity | education</span>
+  <span class="k">"state"</span>: <span class="s">"candidate"</span>,                   <span class="c">// candidate | confirmed | archived</span>
+  <span class="k">"polarity"</span>: <span class="n">1</span>,                           <span class="c">// confirmed 면 NOT NULL</span>
+  <span class="k">"strength"</span>: <span class="n">0.42</span>,
+  <span class="k">"last_observed_on"</span>: <span class="s">"2026-09-04"</span>,
+  <span class="k">"observation_count"</span>: <span class="n">3</span>,                  <span class="c">// 파생</span>
+  <span class="k">"state_reason"</span>: <span class="s">"서로 다른 3일에 관찰됐어요"</span>,   <span class="c">// 승격 임계값 기준으로 서버가 만든 문구</span>
+  <span class="k">"is_stale"</span>: <span class="n">false</span>,                      <span class="c">// 6개월 이상 전이면 true (NF-08)</span>
+  <span class="k">"source_refs"</span>: [
+    { <span class="k">"kind"</span>: <span class="s">"observation_activity"</span>, <span class="k">"id"</span>: <span class="s">"o_9f3a"</span> }
+  ]
+}</pre></div>
+
+  <h3>HealthSafety</h3>
+  <p>테이블의 <code>kind</code> 컬럼은 Ref 의 <code>kind</code> 와 이름이 겹친다. API 에서는 <b><code>type</code> 으로 내린다.</b>
+  상태 컬럼은 두지 않는다 — 아이와 무관해진 항목은 <a href="#ep-safety"><code>DELETE</code></a> 로 행을 지운다.</p>
+  <div class="code"><pre>{
+  <span class="k">"kind"</span>: <span class="s">"health_safety"</span>,
+  <span class="k">"id"</span>: <span class="s">"hs_3"</span>,
+  <span class="k">"type"</span>: <span class="s">"allergy"</span>,                      <span class="c">// ← DB 의 health_safety.kind</span>
+  <span class="k">"label"</span>: <span class="s">"우유"</span>,
+  <span class="k">"aliases"</span>: [<span class="s">"유제품"</span>],
+  <span class="k">"category"</span>: <span class="s">"식품"</span>,
+  <span class="k">"severity"</span>: <span class="s">"moderate"</span>,
+  <span class="k">"reactions"</span>: [<span class="s">"두드러기"</span>],
+  <span class="k">"management"</span>: {},
+  <span class="k">"notes"</span>: <span class="n">null</span>,
+  <span class="k">"created_by"</span>: {
+    <span class="k">"parent_id"</span>: <span class="s">"p1"</span>,
+    <span class="k">"nickname"</span>: <span class="s">"지은"</span>
+  },
+  <span class="k">"updated_at"</span>: <span class="s">"2026-09-01T09:00:00+09:00"</span>
+}</pre></div>
+
+  <h3>Suggestion</h3>
+  <div class="code"><pre>{
+  <span class="k">"id"</span>: <span class="s">"s_7"</span>,
+  <span class="k">"child_id"</span>: <span class="s">"c1"</span>,
+  <span class="k">"agent"</span>: <span class="s">"food"</span>,                         <span class="c">// food | activity | education | health</span>
+  <span class="k">"content"</span>: <span class="s">"저녁에 계란말이 + 미역국"</span>,
+  <span class="k">"reason"</span>: {                                <span class="c">// 열린 결정 02</span>
+    <span class="k">"why_this"</span>: <span class="s">"계란 반찬을 최근 5일 중 4일 찾았어요"</span>,
+    <span class="k">"why_now"</span>: <span class="s">"오늘 급식에 계란이 없었어요"</span>
+  },
+  <span class="k">"status"</span>: <span class="s">"draft"</span>,                       <span class="c">// draft | approved | rejected | expired</span>
+  <span class="k">"expires_at"</span>: <span class="s">"2026-09-06T18:30:00+09:00"</span>,  <span class="c">// 생성 +24h</span>
+  <span class="k">"feedback"</span>: <span class="n">null</span>,
+  <span class="k">"source_refs"</span>: [
+    { <span class="k">"kind"</span>: <span class="s">"observation_food"</span>, <span class="k">"id"</span>: <span class="s">"o_11"</span> }
+  ],
+  <span class="k">"evidence"</span>: [                              <span class="c">// source_refs 를 화면용으로 펼친 것</span>
+    {
+      <span class="k">"ref"</span>: { <span class="k">"kind"</span>: <span class="s">"observation_food"</span>, <span class="k">"id"</span>: <span class="s">"o_11"</span> },
+      <span class="k">"label"</span>: <span class="s">"계란말이 요청 · 반복 5회"</span>,
+      <span class="k">"observed_to"</span>: <span class="s">"2026-09-04"</span>,
+      <span class="k">"confidence_source"</span>: <span class="s">"parent_direct"</span>
+    }
+  ]
+}</pre></div>
+  <div class="call">
+    <span class="ct">🚨 evidence 0건은 응답에 실리지 않는다</span>
+    <p><code>source_refs</code> 가 빈 suggestion 은 <b>버그</b>다 (CLAUDE.md §2). 서버가 생성 단계에서 버리고, 대신 <code>scarcity</code> 로 내린다.
+    프론트에 "근거 없음" 상태를 그리지 않는다 — 그 상태는 존재하지 않아야 한다.</p>
+  </div>
+
+  <h3>Event · EventItem · Reminder</h3>
+  <div class="code"><pre>{
+  <span class="k">"id"</span>: <span class="s">"e_3"</span>,
+  <span class="k">"title"</span>: <span class="s">"농구 체험"</span>,
+  <span class="k">"event_type"</span>: <span class="s">"episodic"</span>,                <span class="c">// core | episodic</span>
+  <span class="k">"starts_at"</span>: <span class="s">"2026-09-12T10:00:00+09:00"</span>,
+  <span class="k">"ends_at"</span>: <span class="n">null</span>,
+  <span class="k">"all_day"</span>: <span class="n">false</span>,
+  <span class="k">"category"</span>: <span class="s">"activity"</span>,                  <span class="c">// institution | health | activity | etc</span>
+  <span class="k">"status"</span>: <span class="s">"draft"</span>,                       <span class="c">// draft(24h 만료) | confirmed | cancelled</span>
+  <span class="k">"created_by"</span>: <span class="s">"agent"</span>,                    <span class="c">// agent | caregiver</span>
+  <span class="k">"source_notice_id"</span>: <span class="n">null</span>,
+  <span class="k">"source_refs"</span>: [
+    { <span class="k">"kind"</span>: <span class="s">"observation_activity"</span>, <span class="k">"id"</span>: <span class="s">"o_9f3a"</span> }
+  ],
+  <span class="k">"items"</span>: [
+    {
+      <span class="k">"item_id"</span>: <span class="s">"i_1"</span>,
+      <span class="k">"item_name"</span>: <span class="s">"편한 옷"</span>,
+      <span class="k">"is_prepared"</span>: <span class="n">false</span>,
+      <span class="k">"prepared_at"</span>: <span class="n">null</span>
+    }
+  ],
+  <span class="k">"reminders"</span>: [
+    {
+      <span class="k">"id"</span>: <span class="s">"r_1"</span>,
+      <span class="k">"remind_at"</span>: <span class="s">"2026-09-11T20:00:00+09:00"</span>,
+      <span class="k">"sent"</span>: <span class="n">false</span>
+    }
+  ]
+}</pre></div>
+  <p class="note"><b><code>sent_at</code> 을 쓰는 API 는 없다.</b> 스케줄러 워커만 채운다. <code>sent: true</code> 인 reminder 는 <code>PATCH</code>·<code>DELETE</code> 모두 <code>409 already_sent</code>.</p>
+</section>
+
+<section id="index">
+  <h2><span class="h-num">03</span>API 목록 · 화면 매핑</h2>
+  <p class="sub">엔드포인트 <b>28개</b>. 누르면 상세로 이동한다. 오른쪽 숫자는 이 호출을 쓰는 프로토타입 화면.</p>
+
+  <div class="api-group">
+    <h3>인증 · 동의</h3>
+    <div class="api-list">
+      <a class="row" href="#ep-auth"><span class="m m-post">POST</span><span class="rp">/auth/{provider}</span><span class="rd">소셜 로그인 · <code>auth_identity</code> 조회·생성</span><span class="rs">로그인</span></a>
+      <a class="row" href="#ep-me"><span class="m m-get">GET</span><span class="rp">/me</span><span class="rd">내 아이 목록 · 미동의 스코프</span><span class="rs">로그인</span></a>
+      <a class="row" href="#ep-consent-post"><span class="m m-post">POST</span><span class="rp">/consents</span><span class="rd">동의·철회 기록 (append-only)</span><span class="rs">01·10</span></a>
+      <a class="row" href="#ep-consent-get"><span class="m m-get">GET</span><span class="rp">/consents</span><span class="rd">현재 동의 상태 + 이력</span><span class="rs">10</span></a>
+    </div>
+  </div>
+
+  <div class="api-group">
+    <h3>아이 · 보호자 · 온보딩</h3>
+    <div class="api-list">
+      <a class="row" href="#ep-children"><span class="m m-post">POST</span><span class="rp">/children</span><span class="rd">아이 생성 · 호출자가 owner</span><span class="rs">01</span></a>
+      <a class="row" href="#ep-screening"><span class="m m-get">GET</span><span class="rp">/dev-screening/items</span><span class="rd">나이대별 선별 문항 (진단 아님)</span><span class="rs">02</span></a>
+      <a class="row" href="#ep-onboarding"><span class="m m-post">POST</span><span class="rp">/children/{cid}/onboarding</span><span class="rd">관심 칩 · 알레르기 · 한 줄 · 발달 답변</span><span class="rs">02</span></a>
+      <a class="row" href="#ep-parents"><span class="m m-get">GET</span><span class="rp">/children/{cid}/parents</span><span class="rd">함께 보는 보호자 목록</span><span class="rs">10</span></a>
+      <a class="row" href="#ep-invites"><span class="m m-post">POST</span><span class="rp">/children/{cid}/invites</span><span class="rd">초대 링크 발행 · <code>/invites/{token}/accept</code></span><span class="rs">10</span></a>
+      <a class="row" href="#ep-child-patch"><span class="m m-patch">PATCH</span><span class="rp">/children/{cid}</span><span class="rd">이름 · 생일 수정</span><span class="rs">10</span></a>
+    </div>
+  </div>
+
+  <div class="api-group">
+    <h3>입력 · 진행</h3>
+    <div class="api-list">
+      <a class="row" href="#ep-home"><span class="m m-get">GET</span><span class="rp">/children/{cid}/home</span><span class="rd">홈 카운트 · 오늘 · 눈여겨볼 것</span><span class="rs">03</span></a>
+      <a class="row" href="#ep-inputs"><span class="m m-post">POST</span><span class="rp">/children/{cid}/inputs</span><span class="rd">한 줄 입력 → <code>202 run_id</code></span><span class="rs">03</span></a>
+      <a class="row" href="#ep-sse"><span class="m m-sse">SSE</span><span class="rp">/runs/{rid}/events</span><span class="rd">step · saved · promoted · partial · failed</span><span class="rs">04</span></a>
+    </div>
+  </div>
+
+  <div class="api-group">
+    <h3>제안 · 승인</h3>
+    <div class="api-list">
+      <a class="row" href="#ep-suggestions"><span class="m m-post">POST</span><span class="rp">/children/{cid}/suggestions</span><span class="rd">Agent 최대 2개 실행 · guards · scarcity</span><span class="rs">05</span></a>
+      <a class="row" href="#ep-feedback"><span class="m m-patch">PATCH</span><span class="rp">/suggestions/{sid}/feedback</span><span class="rd">제안 평가 (기억은 안 바뀜)</span><span class="rs">07</span></a>
+      <a class="row" href="#ep-draft"><span class="m m-post">POST</span><span class="rp">/suggestions/{sid}/event</span><span class="rd">일정 초안 생성 (draft · 24h)</span><span class="rs">06</span></a>
+      <a class="row" href="#ep-confirm"><span class="m m-post">POST</span><span class="rp">/events/{eid}/confirm</span><span class="rd">승인 게이트 ㉠ · <code>/cancel</code></span><span class="rs">06</span></a>
+      <a class="row" href="#ep-reminders"><span class="m m-post">POST</span><span class="rp">/events/{eid}/reminders</span><span class="rd">알림 등록 (보호자 토큰 전용)</span><span class="rs">06</span></a>
+      <a class="row" href="#ep-safety"><span class="m m-post">POST</span><span class="rp">/children/{cid}/health-safety</span><span class="rd">승인 게이트 ㉡ · <code>GET</code> · <code>DELETE</code></span><span class="rs">06·10</span></a>
+    </div>
+  </div>
+
+  <div class="api-group">
+    <h3>기억 · 교정</h3>
+    <div class="api-list">
+      <a class="row" href="#ep-obs"><span class="m m-get">GET</span><span class="rp">/children/{cid}/observations</span><span class="rd">4테이블 병합 · 기간 겹침 조회</span><span class="rs">07</span></a>
+      <a class="row" href="#ep-obs-one"><span class="m m-get">GET</span><span class="rp">/children/{cid}/observations/{kind}/{id}</span><span class="rd">기억 상세 · 쓰인 제안 · 교정 이력</span><span class="rs">07</span></a>
+      <a class="row" href="#ep-affinities"><span class="m m-get">GET</span><span class="rp">/children/{cid}/affinities</span><span class="rd">프로필 탭 · <code>PATCH /affinities/{id}</code></span><span class="rs">07</span></a>
+      <a class="row" href="#ep-corrections"><span class="m m-post">POST</span><span class="rp">/corrections</span><span class="rd">4버튼 교정 · cascade · <code>GET</code> 이력</span><span class="rs">04·07</span></a>
+      <a class="row" href="#ep-obs-del"><span class="m m-del">DEL</span><span class="rp">/children/{cid}/observations</span><span class="rd">기억 전체 지우기 → <code>inactive</code></span><span class="rs">10</span></a>
+    </div>
+  </div>
+
+  <div class="api-group">
+    <h3>사진 · 캘린더</h3>
+    <div class="api-list">
+      <a class="row" href="#ep-photos"><span class="m m-post">POST</span><span class="rp">/children/{cid}/photos</span><span class="rd">OCR·분석 → SSE · <code>/reanalyze</code></span><span class="rs">08</span></a>
+      <a class="row" href="#ep-commit"><span class="m m-post">POST</span><span class="rp">/photo-runs/{rid}/commit</span><span class="rd">승인 후 저장 · lane 별 규칙</span><span class="rs">08</span></a>
+      <a class="row" href="#ep-calendar"><span class="m m-get">GET</span><span class="rp">/children/{cid}/calendar</span><span class="rd">월·일 조회 · <code>PUT</code> 일기 · 이미지 업로드</span><span class="rs">09</span></a>
+      <a class="row" href="#ep-items"><span class="m m-patch">PATCH</span><span class="rp">/event-items/{iid}</span><span class="rd">준비물 체크 (<code>prepared_at</code> 은 서버)</span><span class="rs">09</span></a>
+    </div>
+  </div>
+
+  <h3>화면 → 호출</h3>
+  <div class="tw"><table>
+    <thead><tr><th>화면</th><th>호출</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td>로그인</td><td><code>POST /auth/{provider}</code> · <code>GET /me</code></td><td>provider 4종</td></tr>
+      <tr><td>01 첫 진입</td><td><code>POST /consents</code> · <code>POST /children</code></td><td><b>동의가 먼저</b></td></tr>
+      <tr><td>02 이야기 하나</td><td><code>GET /dev-screening/items</code> · <code>POST /children/{cid}/onboarding</code></td><td>전부 건너뛰기 허용</td></tr>
+      <tr><td>03 홈</td><td><code>GET /children/{cid}/home</code> · <code>POST /children/{cid}/inputs</code></td><td>빈 상태 포함</td></tr>
+      <tr><td>04 저장 결과</td><td>SSE <code>saved</code> · <code>promoted</code> · <code>failed</code> · <code>POST /corrections</code></td><td>실패도 이벤트</td></tr>
+      <tr><td>05 제안 후보</td><td><code>POST /children/{cid}/suggestions</code> · <code>POST /children/{cid}/answers</code></td><td>guards · scarcity</td></tr>
+      <tr><td>06 승인</td><td><code>POST /suggestions/{sid}/event</code> · <code>/confirm</code> · <code>/reminders</code> · <code>/health-safety</code></td><td>승인 게이트 2곳</td></tr>
+      <tr><td>07 기록 고치기</td><td><code>GET /observations</code> · <code>GET /affinities</code> · <code>POST /corrections</code> · <code>PATCH /feedback</code></td><td>2계층 탭</td></tr>
+      <tr><td>08 사진 분석</td><td><code>POST /children/{cid}/photos</code> · <code>/reanalyze</code> · <code>/commit</code></td><td>승인 전 저장 없음</td></tr>
+      <tr><td>09 캘린더 · 일기</td><td><code>GET/PUT /calendar/{date}</code> · <code>PATCH /event-items/{iid}</code></td><td>쓰기 화면</td></tr>
+      <tr><td>10 설정</td><td><code>PATCH /children/{cid}</code> · <code>/parents</code> · <code>/invites</code> · <code>DELETE /observations</code></td><td>owner 권한</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="auth">
+  <h2><span class="h-num">04</span>인증 · 동의</h2>
+  <p class="sub">로그인과 첫 진입 사이에 <b>동의 단계</b>가 있다. 필수 동의가 비어 있으면 그 아래 어떤 저장도 일어나지 않는다.</p>
+
+  <article class="ep" id="ep-auth">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/auth/<span class="v">{provider}</span></code></div>
+    <p class="ep-d"><code>provider</code> ∈ <code>kakao · apple · google · naver</code>. 서버는 <code>(provider, provider_user_id)</code> 로 <code>auth_identity</code> 를 찾고, 없으면 <code>parent</code> 를 만든다. 이메일·프로필 이미지는 <b>받아도 저장하지 않는다</b> (NF-04).</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"access_token"</span>: <span class="s">"..."</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 200</p><div class="code"><pre>{
+  <span class="k">"token"</span>: <span class="s">"..."</span>,
+  <span class="k">"is_new"</span>: <span class="n">true</span>,
+  <span class="k">"parent"</span>: {
+    <span class="k">"id"</span>: <span class="s">"p1"</span>,
+    <span class="k">"nickname"</span>: <span class="n">null</span>
+  },
+  <span class="k">"consent_required"</span>: [
+    <span class="s">"service_terms"</span>,
+    <span class="s">"privacy_account"</span>
+  ]
+}</pre></div></div>
+    </div>
+    <p class="note"><code>consent_required</code> 가 비어 있지 않으면 프론트는 <b>다른 화면으로 못 넘어간다.</b> 계정 스코프 2건은 보호자마다 각자 1회.</p>
+  </article>
+
+  <article class="ep" id="ep-me">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/me</code></div>
+    <p class="ep-d">아이 목록. <code>role</code> 은 <code>child.owner_parent_id</code> 와 호출자를 비교해 서버가 계산한다.</p>
+    <div class="code"><pre>{
+  <span class="k">"id"</span>: <span class="s">"p1"</span>,
+  <span class="k">"nickname"</span>: <span class="s">"지은"</span>,
+  <span class="k">"children"</span>: [
+    {
+      <span class="k">"child_id"</span>: <span class="s">"c1"</span>,
+      <span class="k">"nickname"</span>: <span class="s">"민준"</span>,
+      <span class="k">"age_display"</span>: <span class="s">"만 4세"</span>,
+      <span class="k">"relation"</span>: <span class="s">"mother"</span>,
+      <span class="k">"role"</span>: <span class="s">"owner"</span>,                    <span class="c">// owner | member</span>
+      <span class="k">"consent_required"</span>: []
+    }
+  ]
+}</pre></div>
+    <p class="note"><b>승인 대기 상태는 없다.</b> 초대 링크를 수락하면 <code>parent_child</code> 행이 바로 생기고 <b>즉시 연결</b>된다.
+    목록에 있는 아이는 전부 조회 가능하고, 권한 차이는 <code>role</code> 뿐이다.</p>
+  </article>
+
+  <article class="ep" id="ep-consent-post">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/consents</code><span class="tag t-gate">저장 전 게이트</span></div>
+    <p class="ep-d">append-only. 철회도 <code>withdrawn</code> 행을 <b>추가</b>한다. 현재 상태 = 해당 스코프의 최신 행이 <code>granted</code> 인가.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"scope"</span>: <span class="s">"child_health"</span>,
+  <span class="k">"action"</span>: <span class="s">"granted"</span>,
+  <span class="k">"child_id"</span>: <span class="s">"c1"</span>,              <span class="c">// 계정 스코프면 생략</span>
+  <span class="k">"policy_version"</span>: <span class="s">"2026-09-01"</span>,
+  <span class="k">"guardian_attested"</span>: <span class="n">true</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"consent"</span>: {
+    <span class="k">"id"</span>: <span class="s">"cs_4"</span>,
+    <span class="k">"scope"</span>: <span class="s">"child_health"</span>,
+    <span class="k">"action"</span>: <span class="s">"granted"</span>,
+    <span class="k">"acted_at"</span>: <span class="s">"2026-09-05T09:00:00+09:00"</span>
+  },
+  <span class="k">"effective"</span>: {
+    <span class="k">"service_terms"</span>: <span class="n">true</span>,
+    <span class="k">"privacy_account"</span>: <span class="n">true</span>,
+    <span class="k">"child_basic"</span>: <span class="n">true</span>,
+    <span class="k">"child_health"</span>: <span class="n">true</span>,
+    <span class="k">"quality_improve"</span>: <span class="n">false</span>
+  }
+}</pre></div></div>
+    </div>
+    <div class="call">
+      <span class="ct">🚨 동의는 저장보다 먼저다</span>
+      <p><code>child_basic</code> 없이 <code>POST /children</code> → <code>403</code>. <code>child_health</code> 없이 <code>POST /inputs</code> · <code>/health-safety</code> · Food·Health Agent → <code>403 consent_required</code>.
+      <b>동의 시점은 아직 팀 미결(9월 2주)</b>이지만, API 는 "저장 전 차단"으로 먼저 고정한다 — 나중에 풀기는 쉽고, 나중에 조이기는 못 한다.</p>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-consent-get">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/consents<span class="v">?child_id=c1</span></code></div>
+    <p class="ep-d">10 설정 화면의 동의 현황 + 철회 버튼. <code>history</code> 는 증빙이라 삭제 엔드포인트가 없다.</p>
+    <div class="code"><pre>{
+  <span class="k">"effective"</span>: {
+    <span class="k">"child_basic"</span>: <span class="n">true</span>,
+    <span class="k">"child_health"</span>: <span class="n">false</span>,
+    <span class="k">"quality_improve"</span>: <span class="n">false</span>
+  },
+  <span class="k">"history"</span>: [
+    {
+      <span class="k">"scope"</span>: <span class="s">"child_health"</span>,
+      <span class="k">"action"</span>: <span class="s">"withdrawn"</span>,
+      <span class="k">"policy_version"</span>: <span class="s">"2026-09-01"</span>,
+      <span class="k">"acted_at"</span>: <span class="s">"2026-09-15T14:00:00+09:00"</span>
+    }
+  ]
+}</pre></div>
+  </article>
+</section>
+
+<section id="family">
+  <h2><span class="h-num">05</span>아이 · 보호자 · 온보딩</h2>
+
+  <article class="ep" id="ep-children">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/children</code></div>
+    <p class="ep-d">생성자가 <code>child.owner_parent_id</code> 가 되고 <code>parent_child</code> 행이 함께 생긴다. 수집은 <b>별명 · 생일 · 관계</b>까지 (F-13).</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"nickname"</span>: <span class="s">"민준"</span>,
+  <span class="k">"birth_date"</span>: <span class="s">"2021-04-02"</span>,
+  <span class="k">"relation"</span>: <span class="s">"mother"</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"id"</span>: <span class="s">"c1"</span>,
+  <span class="k">"nickname"</span>: <span class="s">"민준"</span>,
+  <span class="k">"age_display"</span>: <span class="s">"만 4세"</span>,
+  <span class="k">"role"</span>: <span class="s">"owner"</span>
+}</pre></div></div>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-screening">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/dev-screening/items<span class="v">?age_months=52</span></code></div>
+    <p class="ep-d">02 화면의 선별 문항. <b>발달 검사가 아니다</b> — 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. 나이대 밖이면 빈 배열.</p>
+    <div class="code"><pre>{
+  <span class="k">"age_band"</span>: <span class="s">"만 4세 · 유아"</span>,
+  <span class="k">"items"</span>: [
+    {
+      <span class="k">"item_id"</span>: <span class="s">"d4a"</span>,
+      <span class="k">"text"</span>: <span class="s">"가위로 선을 따라 종이를 자른다."</span>,
+      <span class="k">"levels"</span>: [
+        { <span class="k">"level"</span>: <span class="n">1</span>, <span class="k">"label"</span>: <span class="s">"아직"</span> },
+        { <span class="k">"level"</span>: <span class="n">2</span>, <span class="k">"label"</span>: <span class="s">"가끔"</span> },
+        { <span class="k">"level"</span>: <span class="n">3</span>, <span class="k">"label"</span>: <span class="s">"자주"</span> }
+      ]
+    }
+  ]
+}</pre></div>
+  </article>
+
+  <article class="ep" id="ep-onboarding">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/children/<span class="v">{cid}</span>/onboarding</code><span class="tag t-idem">Idempotency</span></div>
+    <p class="ep-d">전부 선택. 모두 건너뛰어도 <code>200</code> 이다.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"interests"</span>: [<span class="s">"공룡"</span>, <span class="s">"물놀이"</span>],
+  <span class="k">"safety_status"</span>: <span class="s">"has"</span>,        <span class="c">// none | has | unknown</span>
+  <span class="k">"safety"</span>: [
+    {
+      <span class="k">"type"</span>: <span class="s">"allergy"</span>,
+      <span class="k">"label"</span>: <span class="s">"우유"</span>,
+      <span class="k">"category"</span>: <span class="s">"식품"</span>,
+      <span class="k">"severity"</span>: <span class="s">"moderate"</span>,
+      <span class="k">"reactions"</span>: [<span class="s">"두드러기"</span>]
+    }
+  ],
+  <span class="k">"one_line"</span>: <span class="s">"오늘 농구하는 형들 계속 보더라"</span>,
+  <span class="k">"dev_answers"</span>: [
+    { <span class="k">"item_id"</span>: <span class="s">"d4a"</span>, <span class="k">"level"</span>: <span class="n">2</span> }
+  ]
+}</pre></div></div>
+      <div><p class="io-l">응답 200</p><div class="code"><pre>{
+  <span class="k">"observations"</span>: [ Observation ],
+  <span class="k">"affinities"</span>: [ Affinity ],
+  <span class="k">"safety"</span>: [ HealthSafety ],
+  <span class="k">"skipped"</span>: [<span class="s">"dev_answers"</span>],
+  <span class="k">"run_id"</span>: <span class="s">"r01"</span>
+}</pre></div></div>
+    </div>
+    <p class="note"><b>관심 칩도 <code>observation_activity</code> 행으로 남긴다.</b> <code>affinity</code> 만 직접 만들면 07 화면에서 "왜 이게 관심이야?" 에 보여줄 근거가 없다.
+    <code>confidence_source: "parent_direct"</code>, <code>observed_range</code> 는 오늘 하루.</p>
+    <div class="call">
+      <span class="ct">🚨 "잘 모르겠어요" 는 "없음" 이 아니다</span>
+      <p><code>safety_status: "unknown"</code> 이면 <code>health_safety</code> 에 <b>아무것도 쓰지 않고</b> <code>skipped</code> 에 담아 되돌린다.
+      이후 Food Agent 는 <code>guards.safety_unknown</code> 으로 <b>실행 자체가 막힌다.</b></p>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-parents">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/children/<span class="v">{cid}</span>/parents</code></div>
+    <p class="ep-d">10 설정의 "함께 보는 보호자". <code>DELETE /children/{cid}/parents/{pid}</code> 로 연결을 끊되 <b>owner 는 삭제 불가</b> (<code>409 owner_required</code>) — 이관은 <code>child.owner_parent_id</code> 변경으로 처리한다.</p>
+    <div class="code"><pre>{
+  <span class="k">"parents"</span>: [
+    {
+      <span class="k">"parent_id"</span>: <span class="s">"p1"</span>,
+      <span class="k">"nickname"</span>: <span class="s">"지은"</span>,
+      <span class="k">"relation"</span>: <span class="s">"mother"</span>,       <span class="c">// mother | father | grandparent | sitter | other</span>
+      <span class="k">"role"</span>: <span class="s">"owner"</span>,
+      <span class="k">"connected_at"</span>: <span class="s">"2026-08-30T11:00:00+09:00"</span>
+    }
+  ]
+}</pre></div>
+  </article>
+
+  <article class="ep" id="ep-invites">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/children/<span class="v">{cid}</span>/invites</code></div>
+    <p class="ep-d">토큰은 <code>invite</code> 행으로 검증한다. <code>used_at</code> 이 찍히면 재사용 <code>409 invite_used</code>, 기한이 지나면 <code>410</code> — 한 링크는 <b>한 번만</b> 쓴다.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"relation"</span>: <span class="s">"grandparent"</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"invite_url"</span>: <span class="s">"https://.../i/AbC123"</span>,
+  <span class="k">"expires_at"</span>: <span class="s">"2026-09-12T00:00:00+09:00"</span>
+}</pre></div></div>
+    </div>
+    <p class="note">수락은 <code>POST /invites/{token}/accept</code> → <code>parent_child</code> 행 생성 + <code>invite.used_at</code>·<code>used_by</code> 기록.
+    발행 시 지정한 <code>relation</code> 이 수락자에게 프리필된다.</p>
+  </article>
+
+  <article class="ep" id="ep-child-patch">
+    <div class="ep-h"><span class="m m-patch">PATCH</span><code class="path">/children/<span class="v">{cid}</span></code></div>
+    <p class="ep-d"><code>nickname</code> · <code>birth_date</code> 만. 아이 삭제는 <code>DELETE</code> 가 아니라 <code>deleted_at</code> · <code>deleted_by</code> 를 채우는 <code>POST /children/{cid}/archive</code> (owner 전용).</p>
+  </article>
+</section>
+
+<section id="input">
+  <h2><span class="h-num">06</span>입력 · 진행(SSE)</h2>
+
+  <article class="ep" id="ep-home">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/children/<span class="v">{cid}</span>/home</code></div>
+    <p class="ep-d">03 화면 한 번에. 기억이 0건이면 <code>highlight: null</code> 이고 프론트는 빈 상태 문구를 그린다.</p>
+    <div class="code"><pre>{
+  <span class="k">"observation_count"</span>: <span class="n">12</span>,     <span class="c">// 4개 테이블 합, status='active'</span>
+  <span class="k">"week_count"</span>: <span class="n">4</span>,             <span class="c">// observed_range 가 최근 7일과 겹치는 것</span>
+  <span class="k">"upcoming_count"</span>: <span class="n">2</span>,         <span class="c">// confirmed AND starts_at &gt; now()</span>
+  <span class="k">"today"</span>: [
+    {
+      <span class="k">"kind"</span>: <span class="s">"meal"</span>,
+      <span class="k">"title"</span>: <span class="s">"급식 · 계란말이, 미역국, 김"</span>,
+      <span class="k">"origin"</span>: <span class="s">"어린이집"</span>
+    },
+    {
+      <span class="k">"kind"</span>: <span class="s">"event"</span>,
+      <span class="k">"event_id"</span>: <span class="s">"e_3"</span>,
+      <span class="k">"title"</span>: <span class="s">"내일 물놀이 · 준비물 3개"</span>
+    }
+  ],
+  <span class="k">"highlight"</span>: {
+    <span class="k">"text"</span>: <span class="s">"계란말이 요청이 5일째예요."</span>,
+    <span class="k">"state_reason"</span>: <span class="s">"서로 다른 3일에 관찰됐어요"</span>,
+    <span class="k">"ref"</span>: { <span class="k">"kind"</span>: <span class="s">"profile_affinity"</span>, <span class="k">"id"</span>: <span class="s">"a_12"</span> }
+  },
+  <span class="k">"agent_prompts"</span>: [
+    { <span class="k">"agent"</span>: <span class="s">"food"</span>, <span class="k">"text"</span>: <span class="s">"오늘 저녁 뭐 할지 같이 정하기"</span> }
+  ]
+}</pre></div>
+    <p class="note"><code>highlight</code> 선정: <code>profile_affinity</code> 중 <code>state</code> 가 가장 최근에 바뀐 1건, 없으면 <code>last_observed_on</code> 최신.
+    <code>agent_prompts</code> 는 시각대 규칙(F-15) — 모델을 부르지 않는다.</p>
+  </article>
+
+  <article class="ep" id="ep-inputs">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/children/<span class="v">{cid}</span>/inputs</code><span class="tag t-idem">Idempotency 필수</span></div>
+    <p class="ep-d">한 줄 입력. 즉시 <code>202</code> 로 <code>run_id</code> 만 주고, 결과는 전부 SSE 로 흐른다.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"text"</span>: <span class="s">"오늘 저녁 뭐 먹이지? 계란말이 5일째 찾아"</span>,
+  <span class="k">"source"</span>: <span class="s">"home_input"</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 202</p><div class="code"><pre>{
+  <span class="k">"run_id"</span>: <span class="s">"r88"</span>
+}</pre></div></div>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-sse">
+    <div class="ep-h"><span class="m m-sse">SSE</span><code class="path">/runs/<span class="v">{rid}</span>/events</code></div>
+    <p class="ep-d">04 오버레이. 이벤트는 <b>도착 순서대로</b> 그린다. <code>saved</code> 는 <code>promoted</code> 보다 항상 먼저 온다 — 저장이 검색보다 먼저이기 때문이다.</p>
+    <div class="code"><pre><span class="k">event: step</span>
+{
+  <span class="k">"index"</span>: <span class="n">2</span>,
+  <span class="k">"total"</span>: <span class="n">3</span>,
+  <span class="k">"label"</span>: <span class="s">"관찰을 나누고 있어요"</span>
+}
+
+<span class="k">event: saved</span>
+{
+  <span class="k">"observations"</span>: [ Observation ]
+}
+
+<span class="k">event: promoted</span>
+{
+  <span class="k">"changes"</span>: [
+    {
+      <span class="k">"ref"</span>: { <span class="k">"kind"</span>: <span class="s">"profile_affinity"</span>, <span class="k">"id"</span>: <span class="s">"a_12"</span> },
+      <span class="k">"merge_key"</span>: <span class="s">"계란 반찬"</span>,
+      <span class="k">"state_before"</span>: <span class="s">"candidate"</span>,
+      <span class="k">"state_after"</span>: <span class="s">"confirmed"</span>,
+      <span class="k">"state_reason"</span>: <span class="s">"서로 다른 3일에 관찰됐어요"</span>
+    }
+  ]
+}
+
+<span class="k">event: offer</span>
+{
+  <span class="k">"options"</span>: [
+    { <span class="k">"agent"</span>: <span class="s">"food"</span>, <span class="k">"label"</span>: <span class="s">"오늘 저녁 같이 정하기"</span> }
+  ]
+}
+
+<span class="k">event: partial</span>
+{
+  <span class="k">"reason"</span>: <span class="s">"timeout_20s"</span>,
+  <span class="k">"succeeded"</span>: [<span class="s">"food"</span>],
+  <span class="k">"failed"</span>: [<span class="s">"activity"</span>]
+}
+
+<span class="k">event: failed</span>
+{
+  <span class="k">"reason"</span>: <span class="s">"unparsable"</span>,      <span class="c">// unparsable | no_child_observation | llm_unavailable</span>
+  <span class="k">"raw_text"</span>: <span class="s">"..."</span>
+}
+
+<span class="k">event: done</span>
+{
+  <span class="k">"run_id"</span>: <span class="s">"r88"</span>,
+  <span class="k">"model_calls"</span>: <span class="n">2</span>
+}</pre></div>
+    <div class="call">
+      <span class="ct">🚨 실패는 200 + 빈 배열이 아니다</span>
+      <p><code>failed</code> 는 <code>raw_text</code> 를 <b>돌려줘야</b> "적어주신 말은 입력창에 그대로 남겨뒀어요" 가 성립한다.
+      <code>partial</code> 은 NF-06 — Agent 2개 중 1개만 성공해도 그 화면을 보여준다.
+      <code>done.model_calls</code> 가 <b>3 을 넘으면 서버 알람</b>이다 (NF-01).</p>
+    </div>
+  </article>
+</section>
+
+<section id="suggest">
+  <h2><span class="h-num">07</span>제안 · 승인</h2>
+
+  <article class="ep" id="ep-suggestions">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/children/<span class="v">{cid}</span>/suggestions</code></div>
+    <p class="ep-d">05 화면. <code>agents</code> 는 <b>최대 2개</b> (NF-01). 각 Agent 가 직접 <code>memory.search</code> 를 부르므로 별도 검색 호출은 없다.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"run_id"</span>: <span class="s">"r88"</span>,
+  <span class="k">"agents"</span>: [<span class="s">"food"</span>, <span class="s">"activity"</span>]
+}</pre></div></div>
+      <div><p class="io-l">응답 200</p><div class="code"><pre>{
+  <span class="k">"suggestions"</span>: [ Suggestion ],
+  <span class="k">"looked_at"</span>: <span class="s">"오늘 급식 · 최근 3일 식사 · 확정 관심 2건"</span>,
+  <span class="k">"guards"</span>: [
+    {
+      <span class="k">"code"</span>: <span class="s">"safety_unknown"</span>,
+      <span class="k">"blocked_agents"</span>: [<span class="s">"food"</span>],
+      <span class="k">"message"</span>: <span class="s">"알레르기 정보가 없어 식사 제안을 안전하게 걸러낼 수 없어요"</span>,
+      <span class="k">"deeplink"</span>: <span class="s">"settings/health-safety"</span>
+    }
+  ],
+  <span class="k">"scarcity"</span>: <span class="n">null</span>
+}</pre></div></div>
+    </div>
+    <h4>기록이 부족할 때</h4>
+    <div class="code"><pre>{
+  <span class="k">"suggestions"</span>: [],
+  <span class="k">"scarcity"</span>: {
+    <span class="k">"count"</span>: <span class="n">1</span>,
+    <span class="k">"question"</span>: {                     <span class="c">// 배열이 아니라 단수다</span>
+      <span class="k">"id"</span>: <span class="s">"q1"</span>,
+      <span class="k">"text"</span>: <span class="s">"요즘 실내와 야외 중 어디를 더 찾나요?"</span>,
+      <span class="k">"options"</span>: [<span class="s">"실내"</span>, <span class="s">"야외"</span>, <span class="s">"모르겠어요"</span>]
+    }
+  }
+}</pre></div>
+    <p class="note">"질문은 한 개까지만 드려요" 를 타입으로 못 박는다.
+    답은 <code>POST /children/{cid}/answers</code> → <code>{"question_id", "answer"}</code>, 관찰 1건으로 저장된다 (<code>confidence_source: "parent_direct"</code>).</p>
+    <div class="call">
+      <span class="ct">🚨 Agent 별 검색 전략이 다르다</span>
+      <p><code>observation_health</code> 에는 <code>embedding</code> 이 없다. <b>Health Agent 는 벡터 검색을 쓰지 않는다</b> — <code>symptom</code> 배열 + 기간 조회만.
+      API 는 <code>health</code> 에 대해 유사도 파라미터를 받지 않는다. <code>profile_affinity.domain</code> 에도 <code>health</code> 가 없어 Health 근거는 항상 관찰 직접 참조다.</p>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-feedback">
+    <div class="ep-h"><span class="m m-patch">PATCH</span><code class="path">/suggestions/<span class="v">{sid}</span>/feedback</code></div>
+    <p class="ep-d">07 화면의 "받은 제안에 대한 피드백". 제안이 실제로 어땠는지를 기록한다.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"feedback"</span>: <span class="s">"child_disliked"</span>
+  <span class="c">// child_liked | child_disliked | not_acted</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 200</p><div class="code"><pre>{
+  <span class="k">"suggestion"</span>: Suggestion,
+  <span class="k">"memory_changed"</span>: <span class="n">false</span>
+}</pre></div></div>
+    </div>
+    <p class="note"><b>피드백은 제안 가중치만 바꾼다. 기억은 그대로 둔다</b> — <code>memory_changed</code> 가 항상 <code>false</code> 인 이유이고, 화면 문구와 같은 사실이다.
+    기억을 고치려면 <a href="#ep-corrections"><code>POST /corrections</code></a> 로 가야 한다.
+    <code>calendar.feedback</code> 은 <b>용도를 따로 논의 중</b>이라 이 문서에서 다루지 않는다 — 캘린더 응답에 실리지 않는다.</p>
+  </article>
+
+  <article class="ep" id="ep-draft">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/suggestions/<span class="v">{sid}</span>/event</code><span class="tag t-gate">승인 게이트 ㉠ 준비</span></div>
+    <p class="ep-d">06 화면. <b>여기서는 아직 캘린더에 쓰지 않는다.</b> <code>status: "draft"</code> · <code>created_by: "agent"</code> 로 초안만 만들고, 24시간 뒤 만료된다 (NF-07).</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"title"</span>: <span class="s">"농구 체험"</span>,
+  <span class="k">"starts_at"</span>: <span class="s">"2026-09-12T10:00:00+09:00"</span>,
+  <span class="k">"all_day"</span>: <span class="n">false</span>,
+  <span class="k">"event_type"</span>: <span class="s">"episodic"</span>,
+  <span class="k">"category"</span>: <span class="s">"activity"</span>,
+  <span class="k">"items"</span>: [<span class="s">"편한 옷"</span>]
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"event"</span>: Event,
+  <span class="k">"expires_at"</span>: <span class="s">"2026-09-06T18:30:00+09:00"</span>,
+  <span class="k">"prechecks"</span>: [
+    {
+      <span class="k">"code"</span>: <span class="s">"unknown_ingredient"</span>,
+      <span class="k">"item"</span>: <span class="s">"닭고기"</span>,
+      <span class="k">"note"</span>: <span class="s">"첫 기록"</span>
+    }
+  ]
+}</pre></div></div>
+    </div>
+    <p class="note"><code>prechecks</code> 는 06 화면 상단의 "확인해 주세요" 배너다. 규칙이 만들고, <b>모델은 관여하지 않는다.</b></p>
+  </article>
+
+  <article class="ep" id="ep-confirm">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/events/<span class="v">{eid}</span>/confirm</code><span class="tag t-gate">승인 게이트 ㉠</span><span class="tag t-idem">Idempotency 필수</span></div>
+    <p class="ep-d">되돌릴 수 없는 지점. <code>event.status → confirmed</code>, 연결된 <code>suggestion.status → approved</code>. 이미 확정이면 <code>409 already_confirmed</code>.</p>
+    <p class="note">취소는 <code>POST /events/{eid}/cancel</code> → <code>cancelled</code>. <b>삭제하지 않는다</b> — <code>source_refs</code> 가 근거 추적용으로 남아야 한다.</p>
+  </article>
+
+  <article class="ep" id="ep-reminders">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/events/<span class="v">{eid}</span>/reminders</code></div>
+    <p class="ep-d">일정당 여러 개 (전날 저녁 + 당일 아침).</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"reminders"</span>: [
+    { <span class="k">"remind_at"</span>: <span class="s">"2026-09-11T20:00:00+09:00"</span> }
+  ]
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"reminders"</span>: [
+    {
+      <span class="k">"id"</span>: <span class="s">"r_1"</span>,
+      <span class="k">"remind_at"</span>: <span class="s">"2026-09-11T20:00:00+09:00"</span>,
+      <span class="k">"sent"</span>: <span class="n">false</span>
+    }
+  ]
+}</pre></div></div>
+    </div>
+    <div class="call info">
+      <span class="ct">발송 여부는 알림 설정이 결정한다</span>
+      <p>이 엔드포인트는 <b>언제 알릴지만 등록</b>한다. 실제로 보낼지는 <b>보호자의 알림 설정</b>이 정한다 — 스케줄러가 발송 직전에 그 설정을 확인하고, 꺼져 있으면 보내지 않는다.
+      일정 자체는 <a href="#ep-confirm">승인 게이트 ㉠</a> 에서 이미 사람이 승인했으므로 여기에 승인을 하나 더 두지 않는다.</p>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-safety">
+    <div class="ep-h"><span class="m m-get">GET</span><span class="m m-post">POST</span><span class="m m-del">DELETE</span><code class="path">/children/<span class="v">{cid}</span>/health-safety<span class="v">[/{id}]</span></code><span class="tag t-gate">승인 게이트 ㉡</span></div>
+    <p class="ep-d">알레르기·만성질환의 <b>유일한 쓰기 경로</b>다.</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"type"</span>: <span class="s">"allergy"</span>,
+  <span class="k">"label"</span>: <span class="s">"닭고기"</span>,
+  <span class="k">"category"</span>: <span class="s">"식품"</span>,
+  <span class="k">"severity"</span>: <span class="s">"mild"</span>,
+  <span class="k">"reactions"</span>: [<span class="s">"두드러기"</span>],
+  <span class="k">"notes"</span>: <span class="s">"어린이집에서 처음 확인"</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"safety"</span>: HealthSafety    <span class="c">// created_by = 호출한 보호자</span>
+}</pre></div></div>
+    </div>
+    <div class="call">
+      <span class="ct">🚨 방어가 두 겹이다</span>
+      <p><b>보호자 토큰으로만 호출된다.</b> Agent 실행 경로의 어떤 코드도 이 함수를 부르지 않고, DB 레벨에서도 Agent/Curator role 에 이 테이블 write 권한이 없다.
+      심사에서 "AI 가 알레르기를 잘못 기록하면?" 이 나오면 답이 두 겹 — <b>코드에 경로가 없고, 있어도 DB 가 거부한다.</b></p>
+      <p><b>해제는 <code>DELETE /children/{cid}/health-safety/{id}</code> — 행을 지운다.</b> 상태 컬럼이 없어서 이 테이블만 hard delete 다.
+      아이가 알레르기를 벗어났거나 잘못 넣은 항목처럼 <b>아이와 연관되지 않는 정보</b>일 때만 쓴다.
+      <code>UNIQUE(child_id, type, label)</code> 이라 같은 항목 재등록은 <code>409</code> — 지우고 다시 넣는다.</p>
+      <p>되돌릴 수 없으므로 프론트는 삭제 전에 <b>무엇이 없어지는지 보여주고 한 번 더 확인받는다</b>. 감쇠는 없다 — 시간이 지났다는 이유로 서버가 지우지 않는다.</p>
+    </div>
+  </article>
+</section>
+
+<section id="memory">
+  <h2><span class="h-num">08</span>기억 · 교정</h2>
+  <p class="sub">07 화면은 2계층이다. <b>관찰</b>(무슨 일이 있었나)과 <b>프로필</b>(그래서 뭘 알게 됐나)은 다른 탭이고 다른 엔드포인트다.</p>
+
+  <article class="ep" id="ep-obs">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/children/<span class="v">{cid}</span>/observations</code></div>
+    <p class="ep-d"><code>domain</code> 생략 시 4개 테이블을 <code>observed_to DESC</code> 로 병합. <code>from</code>/<code>to</code> 는 <b><code>observed_range</code> 와 겹치는가</b>로 판정한다 (포함이 아니라 overlap).</p>
+    <div class="io two">
+      <div><p class="io-l">쿼리 파라미터</p><div class="code"><pre>?domain=food            <span class="c">// food|health|education|activity</span>
+&amp;from=2026-09-01
+&amp;to=2026-09-05
+&amp;status=active          <span class="c">// active|inactive (기본 active)</span>
+&amp;affinity_id=a_12
+&amp;unused_in_suggestions=true   <span class="c">// "제안에서 빠진 기억"</span>
+&amp;cursor=eyJvIjoi...
+&amp;limit=20</pre></div></div>
+      <div><p class="io-l">응답 200</p><div class="code"><pre>{
+  <span class="k">"items"</span>: [ Observation ],
+  <span class="k">"next_cursor"</span>: <span class="s">"eyJvIjoi..."</span>,
+  <span class="k">"total"</span>: <span class="n">12</span>
+}</pre></div></div>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-obs-one">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/children/<span class="v">{cid}</span>/observations/<span class="v">{kind}</span>/<span class="v">{id}</span></code></div>
+    <p class="ep-d">"기억 상세" 화면. 단건 + 이 관찰이 쓰인 제안 + 교정 이력을 함께 내린다. 경로에 <code>kind</code> 가 들어가는 이유는 <b>테이블이 4개</b>이기 때문이다.</p>
+    <div class="code"><pre>{
+  <span class="k">"observation"</span>: Observation,
+  <span class="k">"used_in"</span>: [
+    {
+      <span class="k">"suggestion_id"</span>: <span class="s">"s_7"</span>,
+      <span class="k">"content"</span>: <span class="s">"저녁에 계란말이 + 미역국"</span>,
+      <span class="k">"status"</span>: <span class="s">"approved"</span>
+    }
+  ],
+  <span class="k">"corrections"</span>: [
+    {
+      <span class="k">"id"</span>: <span class="s">"cr_2"</span>,
+      <span class="k">"verdict"</span>: <span class="s">"once_only"</span>,
+      <span class="k">"created_at"</span>: <span class="s">"2026-09-04T21:00:00+09:00"</span>
+    }
+  ]
+}</pre></div>
+    <p class="note"><code>used_in</code> 이 빈 배열이면 화면은 "이 기억은 제안 근거에서 빠져 있어요" 를 그린다.</p>
+  </article>
+
+  <article class="ep" id="ep-affinities">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/children/<span class="v">{cid}</span>/affinities<span class="v">?domain=&amp;state=</span></code></div>
+    <p class="ep-d">관심·선호는 <code>profile_affinity</code> <b>한 배열</b>로 내려간다. 좋아함/싫어함은 별도 배열이 아니라 <code>polarity</code> 로 구분한다.</p>
+    <div class="code"><pre>{
+  <span class="k">"affinities"</span>: [ Affinity ],    <span class="c">// 기본 state != 'archived'</span>
+  <span class="k">"safety"</span>: [ HealthSafety ]      <span class="c">// 지워지지 않은 전부</span>
+}</pre></div>
+    <p class="note"><code>merge_key</code> 는 사람이 읽는 라벨이라 수정 가능하다: <code>PATCH /affinities/{id}</code> → <code>{"merge_key": "만들기 놀이"}</code>.
+    라벨 수정은 교정이 아니라 이름 바꾸기다 — <code>state</code> 를 건드리지 않는다.</p>
+  </article>
+
+  <article class="ep" id="ep-corrections">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/corrections</code></div>
+    <p class="ep-d">관찰이든 프로필이든 같은 엔드포인트. <code>target_ref</code> 는 <b>객체 1개</b>다 (배열 전송 <code>422</code>).</p>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"target_ref"</span>: {
+    <span class="k">"kind"</span>: <span class="s">"profile_affinity"</span>,
+    <span class="k">"id"</span>: <span class="s">"a_12"</span>
+  },
+  <span class="k">"verdict"</span>: <span class="s">"outdated"</span>,
+  <span class="k">"child_id"</span>: <span class="s">"c1"</span>          <span class="c">// ⚠ 열린 결정 01</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"correction"</span>: {
+    <span class="k">"id"</span>: <span class="s">"cr_9"</span>,
+    <span class="k">"verdict"</span>: <span class="s">"outdated"</span>,
+    <span class="k">"created_at"</span>: <span class="s">"2026-09-05T19:02:00+09:00"</span>
+  },
+  <span class="k">"target"</span>: Affinity,          <span class="c">// 갱신 후 상태</span>
+  <span class="k">"cascade"</span>: {
+    <span class="k">"affinities_recomputed"</span>: [
+      { <span class="k">"kind"</span>: <span class="s">"profile_affinity"</span>, <span class="k">"id"</span>: <span class="s">"a_12"</span> }
+    ],
+    <span class="k">"suggestions_recalculated"</span>: [<span class="s">"s_7"</span>]
+  }
+}</pre></div></div>
+    </div>
+    <h4>verdict 의 효과 — 프론트가 추측하지 않게 고정한다</h4>
+    <div class="tw"><table>
+      <thead><tr><th>대상</th><th>confirm</th><th>once_only</th><th>outdated</th><th>wrong</th></tr></thead>
+      <tbody>
+        <tr><td><code>observation_*</code></td><td><code>confidence_source</code> 상향<br><code>parent_hearsay</code>·<code>parent_hedged</code> → <code>parent_direct</code></td><td><code>affinity_id = NULL</code><br>집계에서 제외, 행은 남김</td><td><code>status = 'inactive'</code></td><td><code>status = 'inactive'</code><br>+ 같은 <code>affinity</code> 재계산</td></tr>
+        <tr><td><code>profile_affinity</code></td><td><code>strength</code> 상향<br><code>state</code> 유지</td><td><code>state</code> 한 단계 강등<br><code>confirmed → candidate</code></td><td><code>state = 'archived'</code></td><td><code>state = 'archived'</code><br>+ 근거 관찰 <code>inactive</code></td></tr>
+        <tr><td><code>health_safety</code></td><td colspan="4">교정 대상이 아니다. 보호자 확인값이라 강등·감쇠가 없고, 해제는 <a href="#ep-safety"><code>DELETE</code></a> 뿐이다</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note"><b>관찰의 <code>confirm</code> 은 <code>confidence_source</code> 를 직접 올린다.</b>
+    보호자가 "맞아요" 를 누른 순간 전해 들은 말·얼버무린 말이 <b>직접 확인한 관찰</b>이 되기 때문이다.
+    <code>institution_notice</code> 는 올리지 않는다 (기관 기록을 보호자 발화로 바꾸면 출처가 뒤바뀐다).</p>
+    <div class="call info">
+      <span class="ct">cascade 가 화면 문구가 된다</span>
+      <p>"이 관찰을 고쳤더니 만들기 놀이가 후보로 내려갔어요" 를 서버 사실로 말하려면 <code>cascade</code> 가 필요하다.
+      관찰 하나를 고치면 프로필이 따라 움직이는 게 이 모델의 특징이고, 그걸 안 보여주면 사용자는 자기 교정이 무슨 일을 했는지 모른다.</p>
+    </div>
+    <p class="note"><code>GET /corrections?target_ref.kind=&amp;target_ref.id=</code> — 07 의 History.
+    되돌리기는 <b>새 correction 을 쌓는 방식</b>이다 (<code>outdated</code> 뒤에 <code>confirm</code>). 삭제 엔드포인트는 만들지 않는다 — 이 테이블이 데이터 해자의 원재료다.</p>
+  </article>
+
+  <article class="ep" id="ep-obs-del">
+    <div class="ep-h"><span class="m m-del">DELETE</span><code class="path">/children/<span class="v">{cid}</span>/observations<span class="v">?confirm=true</span></code></div>
+    <p class="ep-d">10 설정의 "기억 전체 지우기". 하드 삭제가 아니라 <code>status = 'inactive'</code> 일괄 전환이다.</p>
+    <div class="code"><pre>{
+  <span class="k">"inactivated_count"</span>: <span class="n">12</span>,
+  <span class="k">"kept"</span>: [<span class="s">"health_safety"</span>, <span class="s">"event"</span>, <span class="s">"calendar"</span>, <span class="s">"consent"</span>]
+}</pre></div>
+    <p class="note"><code>event.source_refs</code> · <code>suggestion.source_refs</code> 가 끊어진 참조를 갖지 않으려면 행이 남아 있어야 한다.
+    <b>이 일괄 삭제는 <code>health_safety</code> 를 건드리지 않는다</b> — 기억을 지운다고 알레르기까지 없어지지 않는다. 안전 정보는 <a href="#ep-safety">개별 삭제</a>로만 지운다.
+    <code>profile_affinity</code> 는 근거가 전부 <code>inactive</code> 가 되므로 <code>archived</code> 로 함께 내려간다.</p>
+  </article>
+</section>
+
+<section id="photo">
+  <h2><span class="h-num">09</span>사진 · 캘린더</h2>
+
+  <article class="ep" id="ep-photos">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/children/<span class="v">{cid}</span>/photos</code><span class="tag t-idem">Idempotency</span></div>
+    <p class="ep-d"><code>multipart/form-data</code> → <code>202 {"run_id"}</code>. SSE 채널을 재사용하고 이벤트 2종이 추가된다.</p>
+    <div class="code"><pre><span class="k">event: lane</span>
+{
+  <span class="k">"guess"</span>: <span class="s">"document"</span>,          <span class="c">// document | activity</span>
+  <span class="k">"confidence"</span>: <span class="n">0.72</span>
+}
+
+<span class="k">event: parsed</span>
+{
+  <span class="k">"raw_text"</span>: <span class="s">"9월 12일 물놀이 · 준비물: 수건, 수영복"</span>,
+  <span class="k">"extracted"</span>: {
+    <span class="k">"items"</span>: [<span class="s">"수건"</span>, <span class="s">"수영복"</span>],
+    <span class="k">"when"</span>: <span class="s">"2026-09-12"</span>,
+    <span class="k">"all_day"</span>: <span class="n">true</span>
+  }
+}</pre></div>
+    <p class="note"><code>POST /photo-runs/{rid}/reanalyze</code> → <code>{"hint_text": "물병도 있었어요"}</code> → 새 <code>run_id</code>.
+    <b>힌트는 재분석 참고용이고 그대로 저장하지 않는다.</b></p>
+  </article>
+
+  <article class="ep" id="ep-commit">
+    <div class="ep-h"><span class="m m-post">POST</span><code class="path">/photo-runs/<span class="v">{rid}</span>/commit</code><span class="tag t-gate">승인 후에만 저장</span></div>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"lane"</span>: <span class="s">"document"</span>,
+  <span class="k">"selected_items"</span>: [<span class="s">"수건"</span>, <span class="s">"수영복"</span>],
+  <span class="k">"attach_to_calendar"</span>: <span class="n">true</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 201</p><div class="code"><pre>{
+  <span class="k">"observations"</span>: [ Observation ],
+  <span class="k">"event"</span>: Event,
+  <span class="k">"calendar_date"</span>: <span class="s">"2026-09-12"</span>
+}</pre></div></div>
+    </div>
+    <div class="tw"><table>
+      <thead><tr><th>lane</th><th>대상</th><th>confidence_source</th><th>부수 효과</th></tr></thead>
+      <tbody>
+        <tr><td><code>document</code></td><td><code>observation_education</code> 또는 event 만</td><td><code>institution_notice</code></td><td><code>event</code>(draft) + <code>event_item</code> 생성, <code>source_notice_id</code> 연결</td></tr>
+        <tr><td><code>activity</code></td><td><code>observation_activity</code></td><td><code>parent_hearsay</code></td><td><code>calendar.image_urls</code> 에 추가. <b><code>affinity_id</code> 는 붙이지 않는다</b></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note"><b>문서에서 읽은 것은 <code>institution_notice</code> 로 고정한다.</b> 기관 공지가 보호자 발화로 들어가면 출처 추적이 끊긴다.
+    사진 태그는 화면 문구 그대로 <b>성향이나 발달로 확정하지 않고, 알레르기·건강 정보로도 쓰지 않는다</b> — 그래서 <code>activity</code> lane 은 프로필 승격 경로에 올리지 않는다.</p>
+  </article>
+
+  <article class="ep" id="ep-calendar">
+    <div class="ep-h"><span class="m m-get">GET</span><code class="path">/children/<span class="v">{cid}</span>/calendar<span class="v">?month=2026-09</span></code>
+      <span class="m m-put">PUT</span><code class="path">/calendar/<span class="v">{date}</span></code></div>
+    <div class="io two">
+      <div><p class="io-l">월 조회</p><div class="code"><pre>{
+  <span class="k">"days"</span>: [
+    {
+      <span class="k">"date"</span>: <span class="s">"2026-09-12"</span>,
+      <span class="k">"has_diary"</span>: <span class="n">true</span>,
+      <span class="k">"has_event"</span>: <span class="n">true</span>,      <span class="c">// confirmed 만</span>
+      <span class="k">"has_image"</span>: <span class="n">false</span>,
+      <span class="k">"observation_count"</span>: <span class="n">2</span>
+    }
+  ]
+}</pre></div></div>
+      <div><p class="io-l">일 조회</p><div class="code"><pre>{
+  <span class="k">"diary"</span>: {
+    <span class="k">"text"</span>: <span class="s">"물놀이 다녀옴"</span>,
+    <span class="k">"image_urls"</span>: [<span class="s">"https://..."</span>]
+  },
+  <span class="k">"events"</span>: [ Event ],
+  <span class="k">"observations"</span>: [ Observation ]
+}</pre></div></div>
+    </div>
+    <p class="note">일 조회의 <code>events</code> 는 <code>calendar.event_id</code> 배열(episodic)에 더해 그날 <code>starts_at</code> 이 걸린 <code>core</code> 일정도 함께 내린다. 화면은 둘을 구분하지 않는다.</p>
+    <p class="note"><code>PUT</code> 요청은 <code>{"text", "image_urls", "event_ids"}</code>. 이미지 업로드는 <code>POST /children/{cid}/calendar/{date}/images</code> (<code>multipart</code>) → <code>{"image_url"}</code>.</p>
+    <div class="call">
+      <span class="ct">🚨 일기는 관찰로 자동 추출하지 않는다</span>
+      <p>하려면 <a href="#ep-inputs"><code>POST /children/{cid}/inputs</code></a> 에 <b>명시적으로</b> 태워야 한다. 사용자가 일기라고 쓴 걸 아이 성향으로 조용히 승격시키면 신뢰가 깨진다.</p>
+    </div>
+  </article>
+
+  <article class="ep" id="ep-items">
+    <div class="ep-h"><span class="m m-patch">PATCH</span><code class="path">/event-items/<span class="v">{iid}</span></code></div>
+    <div class="io two">
+      <div><p class="io-l">요청</p><div class="code"><pre>{
+  <span class="k">"is_prepared"</span>: <span class="n">true</span>
+}</pre></div></div>
+      <div><p class="io-l">응답 200</p><div class="code"><pre>{
+  <span class="k">"item_id"</span>: <span class="s">"i_1"</span>,
+  <span class="k">"item_name"</span>: <span class="s">"수영복"</span>,
+  <span class="k">"is_prepared"</span>: <span class="n">true</span>,
+  <span class="k">"prepared_at"</span>: <span class="s">"2026-09-11T21:14:00+09:00"</span>
+}</pre></div></div>
+    </div>
+    <p class="note"><code>prepared_at</code> 은 <b>서버가 채운다.</b> 기기 시계를 믿으면 준비물 이력이 뒤섞인다.</p>
+  </article>
+</section>
+
+<section id="guards">
+  <h2><span class="h-num">10</span>규칙이 막는 것</h2>
+  <p class="sub">모델이 아니라 <b>코드가</b> 보장하는 항목. 각 줄은 eval 케이스로 그대로 옮겨갈 수 있어야 한다.</p>
+  <div class="tw"><table>
+    <thead><tr><th>보장</th><th>어디서</th><th>깨졌을 때 신호</th></tr></thead>
+    <tbody>
+      <tr><td>알레르기 정보 없이 식사 제안 금지</td><td><a href="#ep-suggestions"><code>POST /suggestions</code></a> — Food Agent <b>미실행</b></td><td><code>guards.safety_unknown</code> 없이 food 제안이 오면 버그</td></tr>
+      <tr><td>근거 0건 제안 금지</td><td>생성 단계에서 폐기 → <code>scarcity</code></td><td><code>source_refs: []</code> 인 Suggestion 응답 = 버그 (하드 기준 0건)</td></tr>
+      <tr><td>LLM 이 안전정보를 쓰지 못함</td><td><a href="#ep-safety"><code>/health-safety</code></a> 보호자 토큰 전용 + DB role 권한 미부여</td><td>Agent 경로에서 <code>201</code> 이 나오면 즉시 중단</td></tr>
+      <tr><td>모델 호출 1~3회</td><td>SSE <code>done.model_calls</code></td><td><code>&gt; 3</code> 이면 알람</td></tr>
+      <tr><td>20초 초과 시 부분 결과</td><td>SSE <code>partial</code></td><td>전체 실패로 떨어지면 NF-06 위반</td></tr>
+      <tr><td>승인 없는 draft 는 24h 만료</td><td><code>event.status='draft'</code> · <code>suggestion.expires_at</code></td><td>25시간 뒤 <code>confirmed</code> 가 있으면 자동 실행 경로가 있다는 뜻</td></tr>
+      <tr><td>부모 말이 아이 Fact 가 되지 않음</td><td><code>confidence_source</code> = <code>parent_hedged</code>/<code>parent_hearsay</code>, 승격 가중치 분리</td><td>eval 10번 (부모 알레르기가 아이 것으로 저장)</td></tr>
+      <tr><td>6개월 지난 관심은 단독 근거 금지</td><td><code>Affinity.is_stale</code> — evidence 가 stale 1건뿐이면 제안 폐기</td><td>NF-08</td></tr>
+      <tr><td>원문 대신 id 로 로깅</td><td>모든 로그·모델 입력에서 <code>raw_text</code> 대신 Ref</td><td>NF-05</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="open">
+  <h2><span class="h-num">11</span>열린 결정 3건</h2>
+  <p class="sub">
+    나머지 계약은 확정됐다. 아래 3건만 아직 스키마가 받쳐주지 않는다 —
+    <b>미정을 기본값으로 채우지 않는다.</b> "이 문서가 가정한 것"과 "누가 정하는지"를 같이 적었다.
+  </p>
+  <div class="oq">
+    <div class="q"><span class="qn">01</span><div>
+      <h4><code>correction.child_id</code> 가 없다</h4>
+      <p>07 의 History 와 아이별 교정 이력 조회가 <code>target_ref</code> 를 4개 테이블에 조인해야만 가능해진다. 컬럼 하나면 조인이 사라진다.</p>
+      <span class="who">이 문서는 요청·응답에 <code>child_id</code> 를 포함 · 결정: 이시하</span>
+    </div></div>
+    <div class="q"><span class="qn">02</span><div>
+      <h4><code>suggestion.reason</code> 이 단수인데 화면은 두 줄이다</h4>
+      <p>프로토타입 05 는 <b>"왜 이걸 ·"</b> 과 <b>"왜 지금 ·"</b> 을 나란히 그리고, F-09 도 Why this / Why now / Evidence 를 요구한다. 컬럼 2개로 나누거나 <code>reason</code> 을 jsonb 로 두어야 한다.</p>
+      <span class="who">이 문서는 <code>reason: {why_this, why_now}</code> 로 가정 · 결정: 이시하 · 고태영</span>
+    </div></div>
+    <div class="q"><span class="qn">03</span><div>
+      <h4>Health 도메인은 프로필이 없다</h4>
+      <p><code>profile_affinity.domain</code> 은 <code>food/activity/education</code> 3종. 건강은 승격 파이프라인 밖이라 <b>"같은 증상 3회 반복 → 추천 중단"</b> 을 집계할 테이블이 없다. 지금은 <code>observation_health</code> 를 매번 기간 조회해 센다.</p>
+      <span class="who">이 문서는 API 단 집계로 가정 · 결정: 이시하</span>
+    </div></div>
+  </div>
+</section>
+
+<footer>
+  <p>이 문서는 <code>docs/api/api-interface-v1.html</code> 로 저장소에 있다. 근거는
+  <b>데이터 모델 문서(Notion)</b> 와 <code>docs/assets/prototype.html</code>.
+  <b>계약을 바꿀 때는 이 문서를 먼저 고치고</b> 프론트·백엔드에 알린다.</p>
+  <p>규칙·용어의 정본은 저장소 루트 <code>CLAUDE.md</code> (§2 절대 규칙 · §5 용어).</p>
+</footer>
+
+</main>
+</div>
+</div>
+
+<script>
+(function(){
+  document.querySelectorAll('.code').forEach(function(box){
+    var pre = box.querySelector('pre');
+    if(!pre) return;
+    var b = document.createElement('button');
+    b.className = 'copy'; b.type = 'button'; b.textContent = '복사';
+    b.addEventListener('click', function(){
+      var t = pre.innerText;
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(t).then(function(){
+          b.textContent = '복사됨'; setTimeout(function(){ b.textContent = '복사'; }, 1400);
+        }).catch(function(){ b.textContent = '실패'; });
+      }
+    });
+    box.appendChild(b);
+  });
+
+  if(!('IntersectionObserver' in window)) return;
+  var byId = {};
+  document.querySelectorAll('nav.toc a').forEach(function(a){
+    byId[a.getAttribute('href').slice(1)] = a;
+  });
+  var targets = document.querySelectorAll('main section[id], main article.ep[id]');
+  var visible = {};
+  function paint(){
+    var best = null;
+    Object.keys(visible).forEach(function(id){
+      if(!visible[id]) return;
+      if(best === null || visible[id] < visible[best]) best = id;
+    });
+    if(best === null) return;
+    var link = byId[best];
+    if(!link) return;
+    Object.keys(byId).forEach(function(id){ byId[id].classList.remove('on'); });
+    link.classList.add('on');
+    if(link.parentElement && link.parentElement.parentElement &&
+       link.parentElement.parentElement.classList.contains('toc-sub')){
+      var sec = link.parentElement.parentElement.previousElementSibling;
+      if(sec && sec.classList.contains('sec')) sec.classList.add('on');
+    }
+  }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      visible[e.target.id] = e.isIntersecting ? e.boundingClientRect.top : 0;
+      if(!e.isIntersecting) visible[e.target.id] = 0;
+    });
+    paint();
+  }, { rootMargin: '-8% 0px -70% 0px', threshold: 0 });
+  Array.prototype.forEach.call(targets, function(t){ io.observe(t); });
+  var first = byId['delta']; if(first) first.classList.add('on');
+})();
+</script>

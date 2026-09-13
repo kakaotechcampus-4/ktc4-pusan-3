@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 디자인 토큰 — 정본은 docs/web/design-system-v1.md 다.
+ * 이 파일은 그 문서의 표를 옮긴 것이다. 값을 바꾸려면 문서를 먼저 고친다.
+ * 화면 코드에서 #hex 를 직접 쓰지 말 것.
+ * ────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+
+  /* 뉴트럴 — 화면의 90%. 순백·순검정을 쓰지 않는다 (문서 §1) */
+  --color-canvas: #fbf9f5; /* 페이지 바탕 (웜 오프화이트) */
+  --color-surface: #ffffff; /* 카드·시트 */
+  --color-surface-muted: #f3f1ec; /* 비활성 · 접힌 영역 · 실패 카드 */
+  --color-ink: #221f1b; /* 본문 15.6:1 */
+  --color-ink-muted: #605a52; /* 보조 6.5:1 */
+  --color-ink-subtle: #6f6a61; /* 메타 5.1:1 — 읽으라고 있는 글자다 */
+  --color-line: #e8e4dc;
+  --color-line-strong: #969086; /* 입력 테두리 · 포커스 링 3.0:1 */
+
+  /* 브랜드 — 세이지 그린 */
+  --color-brand: #3a6b52;
+  --color-brand-hover: #2f5943;
+  --color-brand-soft: #e7efe9; /* 개인화 추천 카드 배경 */
+  --color-brand-ink: #26493a;
+
+  /* 도메인 4종 — suggestion_agent enum 과 1:1. 다른 용도로 쓰지 않는다 */
+  --color-food: #9a4f22;
+  --color-food-soft: #f6ebe1;
+  --color-food-ink: #7e3f1b;
+  --color-activity: #2c7080;
+  --color-activity-soft: #e5eff1;
+  --color-activity-ink: #1f5563;
+  --color-education: #4e5aa0;
+  --color-education-soft: #e9eaf5;
+  --color-education-ink: #3b4680;
+  --color-health: #8a4e74;
+  --color-health-soft: #f3e9ef;
+  --color-health-ink: #6e3b5b;
+
+  /* 상태 — 딱 2개. 늘리지 말 것 (문서 §3) */
+  --color-caution: #97620e; /* 🚨 승인 게이트 2곳 전용 */
+  --color-caution-soft: #faefdb;
+  --color-caution-ink: #7a4f09;
+  --color-danger: #b3261e; /* 🚨 알레르기 경고 · 건강 추천 중단 전용 */
+  --color-danger-soft: #fae8e5;
+  --color-danger-ink: #8f1d17;
+
+  /* 오버레이 — 시트 뒤 가림막. 순검정은 저조도에서 눈에 때린다 */
+  --color-scrim: rgb(34 31 27 / 0.45);
+
+  /* 타이포 8단계 (문서 §4). 입력 필드는 16px 미만으로 내리지 않는다 —
+   * iOS 웹뷰가 포커스 시 화면을 자동 확대하고 그대로 남는다. */
+  --text-caption: 0.75rem; /* 12 */
+  --text-caption--line-height: 1.4;
+  --text-label: 0.8125rem; /* 13 */
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 500;
+  --text-body-sm: 0.875rem; /* 14 */
+  --text-body-sm--line-height: 1.55;
+  --text-button: 0.9375rem; /* 15 */
+  --text-button--line-height: 1.2;
+  --text-button--font-weight: 600;
+  --text-body: 1rem; /* 16 */
+  --text-body--line-height: 1.6;
+  --text-section: 1.0625rem; /* 17 */
+  --text-section--line-height: 1.4;
+  --text-section--font-weight: 600;
+  --text-section--letter-spacing: -0.01em;
+  --text-title: 1.25rem; /* 20 */
+  --text-title--line-height: 1.35;
+  --text-title--font-weight: 700;
+  --text-title--letter-spacing: -0.01em;
+  --text-display: 1.5rem; /* 24 */
+  --text-display--line-height: 1.3;
+  --text-display--font-weight: 700;
+  --text-display--letter-spacing: -0.02em;
+
+  /* 콘텐츠 최대 폭. 이보다 넓어져도 벌리지 않는다 (문서 §9) */
+  --container-content: 35rem; /* 560px */
+
+  --radius-field: 0.625rem; /* 10px */
+  --radius-card: 0.875rem; /* 14px */
+  --radius-sheet: 1.25rem; /* 20px */
+
+  /* 그림자는 바텀시트에만. 카드 경계는 line 이 만든다 (문서 §6) */
+  --shadow-sheet: 0 -2px 16px rgb(34 31 27 / 0.08);
+
+  /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@layer base {
+  :root {
+    /* 다크모드는 v1 범위 밖이다 (문서 §8). 지우면 폼 컨트롤만 다크가 된다. */
+    color-scheme: light;
+  }
+
+  html {
+    /* 모바일은 React Native 웹뷰다 (CLAUDE.md §7). 회전 시 글자 크기가 튀는 것을 막는다. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* 본문 기본 16px / 1.6 — 지친 눈으로 읽을 크기다 (문서 §4) */
+    font-size: 1rem;
+    line-height: 1.6;
+    /* 좁은 웹뷰에서 어절이 잘리면 읽는 속도가 떨어진다 */
+    word-break: keep-all;
+    /* 웹뷰에서 바깥으로 튀는 스크롤 바운스를 막는다. */
+    overscroll-behavior-y: none;
+  }
+
+  /* 포커스는 항상 보인다 (문서 §10). outline: none 을 쓰지 말 것. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* 🚨 transform 을 끄고 opacity 만 남긴다 (문서 §8) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* 웹뷰 노치·홈 인디케이터 영역. 화면 컨테이너에서 pt-safe / pb-safe 로 쓴다.
+ * @utility 는 중첩할 수 없어 @layer 밖에 둔다. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}

@@ -1,0 +1,44 @@
+[project]
+name = "ktc4-pusan-3-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic-settings>=2.6.0",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "asyncpg>=0.31.0",
+    "psycopg[binary]>=3.3.5",
+    "alembic>=1.19.2",
+    "pgvector>=0.5.0",
+    "openai>=1.60",
+    "tzdata>=2026.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests", "app/agents/test"]              # Agent 테스트는 소유 디렉토리 안에 둔다
+python_files = ["test_*.py", "*_test.py", "test.py"]   # eval 진입점이 test/test.py 라 패턴 추가
+markers = ["live: 실제 LLM API 를 호출하는 eval"]
+# 라이브 eval 은 API 키와 비용이 필요하므로 기본 실행에서 뺀다.
+# 실행하려면 마커를 직접 지정한다 — pytest app/agents/test/test.py -m live
+addopts = "-m 'not live'"
