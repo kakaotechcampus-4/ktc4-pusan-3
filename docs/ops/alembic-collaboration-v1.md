@@ -109,27 +109,160 @@ make db-check
 생성된 `alembic/versions/*.py` 파일을 열어 아래를 확인한다.
 
 - [ ] `upgrade()` 와 `downgrade()` 가 서로 역연산인가
-- [ ] §4 "autogenerate가 잡지 못하는 것" 항목이 빠지지 않았는가
-- [ ] `server_default` 가 있는 컬럼에 올바른 기본값이 설정되었는가
+- [ ] `drop_table` / `drop_column` 이 있다면, 삭제가 맞는가 이름 변경인가 (§4.2)
+- [ ] PostgreSQL 전용 타입이 들어갔다면 import와 `sa.` 접두어가 맞는가 (§4.1)
+- [ ] 기존 컬럼의 타입을 바꿨다면 `postgresql_using` 이 필요한 변환인가 (§4.1)
+- [ ] `upgrade()` 본문이 `pass` 인데 모델은 바꿨다면 §4.3 항목인가
+- [ ] `server_default` 가 있는 컬럼에 올바른 기본값이 설정되었는가 (기본값 *변경* 은 자동 감지되지 않는다 — §4.3)
 - [ ] `nullable=False` 컬럼을 추가할 때 기존 행의 기본값이 처리되었는가
+- [ ] 생성된 파일을 실제로 `make db-migrate` 로 한 번 실행해봤는가 (§4.1은 실행 시점에만 드러난다)
 
 ---
 
-## 4. autogenerate가 잡지 못하는 것
+## 4. autogenerate 결과를 그대로 믿으면 안 되는 것
 
-autogenerate는 **표준 SQL 타입 변화만** 비교한다. PostgreSQL 전용 기능이나 Alembic이 추적하지 않는 항목은 diff에 포함되지 않아서 **생성된 파일에 아무 내용이 없어도 실제로는 변경이 필요한 경우**가 있다.
+autogenerate는 "모델 ↔ DB 차이"를 비교해 코드를 써준다. **항목마다 감지 범위가 다르고, 실패하는 방식도 다르다.** 세 가지로 나눠서 본다.
 
-아래 항목은 **직접 손으로 작성해야 한다.**
+| 분류 | 무슨 일이 생기나 | 어디 |
+|---|---|---|
+| 감지는 되는데 **코드가 불완전** | 파일은 생기는데 `make db-migrate` 에서 죽는다 | §4.1 |
+| 감지는 되는데 **의도와 다른 코드** | 에러 없이 돌아가고 **데이터가 사라진다** | §4.2 |
+| 아예 **감지되지 않음** | `upgrade()` 본문이 `pass` 로 비어 있고 `make db-check` 도 통과한다 | §4.3 |
+
+> 아래 재현 결과는 프로젝트와 같은 alembic 1.19.2 기준이다(2026-09-13).
+
+---
+
+### 4.1 감지는 되지만 코드 보완이 필요한 것 — PostgreSQL 전용 타입
+
+`ARRAY`, `JSONB`, `DATERANGE`, `vector` 는 **autogenerate가 감지한다.** 실제로 `70e8ab2bf4b9` 마이그레이션에 이 타입들이 이미 자동 생성돼 들어가 있다. 문제는 **생성된 코드가 그대로 실행되지 않을 수 있다**는 것이다.
+
+모델에 네 타입의 컬럼을 추가하고 `make db-revision` 을 돌린 결과:
+
+```python
+# 파일 상단 import — 이게 전부다
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+def upgrade() -> None:
+    op.add_column("memo", sa.Column("tags", postgresql.ARRAY(Text()), nullable=True))
+    op.add_column("memo", sa.Column("payload", postgresql.JSONB(astext_type=Text()), nullable=True))
+    op.add_column("memo", sa.Column("observed_range", postgresql.DATERANGE(), nullable=True))
+    op.add_column("memo", sa.Column("embedding", pgvector.sqlalchemy.vector.VECTOR(dim=1536), nullable=True))
+```
+
+두 군데가 깨져 있다.
+
+- `Text()` 가 `sa.` 접두어 없이 렌더링된다 (`postgresql.ARRAY` / `JSONB` 안쪽)
+- `pgvector.sqlalchemy.vector` 모듈 import가 없다
+
+**파일을 열어봐도 멀쩡해 보이고 파이썬 import도 성공한다.** 이름이 함수 본문 안에 있어서, `make db-migrate` 로 실제 실행할 때가 되어서야 죽는다.
+
+```
+NameError: name 'Text' is not defined
+```
+
+보완:
+
+```python
+import pgvector.sqlalchemy.vector      # ← 추가
+
+op.add_column("memo", sa.Column("tags", postgresql.ARRAY(sa.Text()), nullable=True))
+#                                                        ^^^ sa. 붙이기
+```
+
+#### 기존 컬럼의 타입 변경은 `USING` 이 빠진다
+
+타입 비교(`compare_type`)는 **기본값이 `True`** 라서 타입 변경 자체는 감지된다. 다만 autogenerate 렌더러는 `type_=` 만 쓰고 **`postgresql_using` 은 절대 넣지 않는다.** PostgreSQL이 암묵적으로 캐스팅하지 못하는 변환(`text` → `jsonb` 등)은 그대로 돌리면 거부당한다.
+
+```python
+op.alter_column(
+    "memo", "payload",
+    type_=postgresql.JSONB(astext_type=sa.Text()),
+    existing_type=sa.Text(),
+    postgresql_using="payload::jsonb",   # ← 직접 추가
+)
+```
+
+기존 행이 있는 테이블의 타입을 바꿀 때는 **변환식이 모든 기존 값에 대해 성공하는지** 먼저 확인한다.
+
+---
+
+### 4.2 감지는 되지만 의도와 다르게 나오는 것 — 이름 변경
+
+autogenerate는 "이름이 바뀌었다"를 이해하지 못한다. **없어진 것 + 새로 생긴 것**으로 본다. 재현 결과:
+
+```python
+# 테이블명 변경: observation_food → food_observation
+op.create_table("food_observation", ...)
+op.drop_table("observation_food")          # ← 기존 데이터 전부 삭제
+
+# 컬럼명 변경: serving_size → portion_size
+op.add_column("observation_food", sa.Column("portion_size", sa.String(length=20), nullable=True))
+op.drop_column("observation_food", "serving_size")   # ← 기존 값 전부 삭제
+```
+
+에러 없이 실행되고 데이터만 사라진다. **생성된 코드를 지우고 rename 연산으로 교체한다.**
+
+```python
+def upgrade() -> None:
+    op.rename_table("observation_food", "food_observation")
+    op.alter_column("food_observation", "serving_size", new_column_name="portion_size")
+
+def downgrade() -> None:
+    op.alter_column("food_observation", "portion_size", new_column_name="serving_size")
+    op.rename_table("food_observation", "observation_food")
+```
+
+`drop_table` / `drop_column` 이 생성된 migration은 **의도한 삭제인지 이름 변경인지 반드시 확인한다.**
+
+---
+
+### 4.3 아예 감지되지 않는 것
+
+`upgrade()` 본문이 비어 있어도 실제로는 변경이 필요한 경우다. **`make db-check` 도 통과하기 때문에 직접 챙기는 수밖에 없다.**
 
 | 항목 | 이유 |
-|------|------|
-| `Enum` / `CHECK` 제약 | `native_enum=False` 사용 시 autogenerate가 변경을 감지 못함 |
-| `DATERANGE`, `ARRAY`, `JSONB` 타입 변경 | PostgreSQL 전용 타입은 autogenerate 지원 범위 밖 |
-| `vector` 컬럼 | pgvector 타입은 별도 extension, autogenerate 인식 불가 |
+|---|---|
+| 기존 컬럼의 `server_default` 변경 | `compare_server_default` 가 꺼져 있음 (아래) |
+| `Enum` / `CHECK` 제약 | autogenerate의 비교 대상이 아님 |
 | `GRANT` / 권한 | DDL 권한은 Alembic 관할 밖 |
 | `CREATE EXTENSION` | 첫 revision에 직접 삽입 필요 |
+| 이름만 다른 중복 인덱스 | 정의가 같아도 이름이 다르면 둘 다 유효한 객체로 남음 |
 
-**enum 컬럼 변경 예시** (autogenerate가 감지 못하므로 수동 추가):
+#### `server_default` 변경 — 지금 우리 설정에서는 조용히 무시된다
+
+`compare_server_default` 의 기본값은 **`False`** 이고, `alembic/env.py` 의 `context.configure(...)` 에 이 옵션이 없다. 모델의 `server_default` 만 바꾸면 이렇게 된다.
+
+```
+모델: server_default="off"  →  server_default="on" 으로 변경
+
+make db-check     → No new upgrade operations detected.     ← 통과해버린다
+make db-revision  → upgrade() 본문이 pass (빈 migration)
+```
+
+옵션을 켜면 정상적으로 잡힌다.
+
+```
+make db-check     → FAILED: New upgrade operations detected: [... 'modify_default' ...]
+make db-revision  → op.alter_column("cfg", "flag", server_default="on", existing_type=..., ...)
+```
+
+켜는 방법 (online / offline 양쪽 `context.configure` 에 모두 추가):
+
+```python
+# alembic/env.py
+context.configure(
+    connection=connection,
+    target_metadata=target_metadata,
+    compare_server_default=True,     # ← 추가
+)
+```
+
+> **켜기 전에 알아둘 것.** PostgreSQL은 기본값을 `'{}'::text[]` 처럼 캐스팅이 붙은 형태로 저장해서, 모델의 `server_default="{}"` 와 문자열 비교에서 어긋나 **실제 변경이 없는데도 diff가 잡히는 경우**가 있다. 우리 테이블에도 `ARRAY ... server_default='{}'` 컬럼이 여러 개라 켜자마자 `make db-check` 가 깨질 수 있다. 켜는 건 별도 작업으로 다루고, **그때까지는 기본값을 바꿀 때 migration을 직접 작성한다.**
+
+#### enum / CHECK 제약 (수동 작성 예시)
 
 ```python
 # upgrade()
@@ -493,7 +626,7 @@ PR을 올리기 전 아래를 확인한다.
 - [ ] 이미 공유된 revision의 `down_revision` 을 고치지는 않았는가 (§5 케이스 3)
 - [ ] merge revision을 만들었다면 그 파일이 PR에 포함되어 있는가
 - [ ] `downgrade()` 가 구현되어 있는가 (롤백 가능 여부)
-- [ ] §4 수동 항목이 필요한 변경인 경우 직접 작성했는가
+- [ ] §4 보완 항목(전용 타입 import · rename · server_default)을 확인했는가
 
 ---
 
