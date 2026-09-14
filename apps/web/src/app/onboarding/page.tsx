@@ -8,7 +8,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
-import { DateField, toISODate } from "@/components/ui/date-field";
+import { DateField } from "@/components/ui/date-field";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
@@ -20,6 +20,7 @@ import {
   type CreateChildResponse,
   type Relation,
 } from "@/lib/api";
+import { toISODate } from "@/lib/format";
 
 /**
  * 01 첫 진입 — 아이 만들기.

@@ -4,6 +4,7 @@ import { ArrowUp, CalendarDays, Camera, Mic, NotebookPen, Sprout, Utensils } fro
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { DomainChip } from "@/components/domain-chip";
+import { DayMarkLegend } from "@/components/month-grid";
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, type ButtonVariant } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
+import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import type { Agent } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
@@ -630,6 +632,32 @@ function ComponentSection() {
       <CardFailed>
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.
       </CardFailed>
+
+      <SubTitle>탭 (07)</SubTitle>
+      {/* 링크는 이 화면 안의 앵커다 — 내부 문서에서 다른 화면으로 새 나가지 않게. */}
+      <div id="design-system-tabs">
+        <Tabs
+          items={[
+            { key: "a", label: "관찰", href: "#design-system-tabs" },
+            { key: "b", label: "프로필", href: "#design-system-tabs" },
+            { key: "c", label: "제안 피드백", href: "#design-system-tabs" },
+          ]}
+          active="a"
+          label="탭 예시"
+        />
+      </div>
+      <p className="text-caption text-ink-subtle">
+        활성은 ink + brand 2px 밑줄입니다. 🚨 굵기로 구분하지 않습니다 — 본문 서체가 단일 웨이트라
+        label 500 과 600 이 화면에서 같습니다 (§4). 전환은 URL 에 남깁니다.
+      </p>
+
+      <SubTitle>캘린더 표식 (09)</SubTitle>
+      <DayMarkLegend hasProfileMarks />
+      <p className="text-caption text-ink-subtle">
+        🚨 색이 아니라 모양으로 가릅니다. 네 표식은 전부 currentColor 라 고른 날(brand 채움)
+        위에서도 같은 모양이 읽힙니다. 뜻을 잇는 것은 이 범례고, 날짜 칸의 aria-label 이 같은 말을
+        다시 합니다.
+      </p>
 
       <SubTitle>배너</SubTitle>
       <p className="text-caption text-ink-subtle">

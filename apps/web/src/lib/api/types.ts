@@ -391,6 +391,154 @@ export interface CreateHealthSafetyResponse {
   safety: HealthSafety;
 }
 
+/* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
+
+/**
+ * 🚨 **관찰과 프로필은 다른 엔드포인트다** (계약서 §08 "07 화면은 2계층이다").
+ *    화면에서도 한 목록에 섞지 않는다 — 관찰 1건과 confirmed 프로필이 같은 줄로 서면
+ *    "한 번의 관찰을 성향으로 확정하지 않는다"(CLAUDE.md §2)가 화면에서 사라진다.
+ */
+
+/** `GET /children/{cid}/observations`. `Page<T>` 와 달리 `total` 이 함께 온다. */
+export interface ObservationsResponse {
+  items: Observation[];
+  next_cursor: string | null;
+  /** 필터를 걸기 전 전체가 아니라 **그 필터의** 건수다. 화면에 그대로 보여준다. */
+  total: number;
+}
+
+/** 관찰 목록 필터. `?domain=` 생략 시 4개 테이블을 observed_to DESC 로 병합한다. */
+export interface ObservationFilters {
+  domain?: Agent;
+  /** "제안에서 빠진 기억" — 근거로 쓰인 적 없는 것만. */
+  unused_in_suggestions?: boolean;
+}
+
+/**
+ * `GET /children/{cid}/observations/{kind}/{id}` — 관찰 상세.
+ * 경로에 `kind` 가 들어가는 이유는 테이블이 4개이기 때문이다.
+ */
+export interface ObservationDetailResponse {
+  observation: Observation;
+  /** 🚨 빈 배열이면 "이 기억은 제안 근거에서 빠져 있어요" 를 그린다. */
+  used_in: Array<{ suggestion_id: string; content: string; status: SuggestionStatus }>;
+  corrections: Array<{ id: string; verdict: CorrectionVerdict; created_at: string }>;
+}
+
+/**
+ * `GET /children/{cid}/affinities` — 관심·선호는 **한 배열**로 내려온다.
+ * 좋아함/싫어함은 별도 배열이 아니라 `polarity` 로 구분한다.
+ */
+export interface AffinitiesResponse {
+  /** 기본 `state != 'archived'`. */
+  affinities: Affinity[];
+  /** 지워지지 않은 전부. 🚨 감쇠가 없다 — 보호자만 지울 수 있다. */
+  safety: HealthSafety[];
+}
+
+/**
+ * `POST /corrections` — 관찰이든 프로필이든 같은 엔드포인트.
+ * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 422.
+ */
+export interface CorrectionRequest {
+  target_ref: Ref;
+  verdict: CorrectionVerdict;
+  child_id: string;
+}
+
+/**
+ * 🚨 `cascade` 를 화면이 추측하지 않는다. 무엇이 다시 계산됐는지는 서버만 안다 —
+ *    "이 기록을 쓴 추천 1건이 다시 계산됐어요" 는 이 값으로 만든 문구다.
+ */
+export interface CorrectionResponse {
+  correction: { id: string; verdict: CorrectionVerdict; created_at: string };
+  /** 갱신 후 상태. 관찰을 고쳤으면 Observation, 프로필을 고쳤으면 Affinity 다. */
+  target: Observation | Affinity;
+  cascade: {
+    affinities_recomputed: Ref[];
+    suggestions_recalculated: string[];
+  };
+}
+
+/* ── 07 제안 피드백 ──────────────────────────────────────────────────── */
+
+/** `PATCH /suggestions/{sid}/feedback`. 🚨 교정(`CorrectionVerdict`)과 다른 축이다. */
+export const SUGGESTION_FEEDBACKS = ["child_liked", "child_disliked", "not_acted"] as const;
+export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
+
+/**
+ * 🚨 `memory_changed` 는 **항상 false** 다 (계약서 §08). 피드백은 제안 가중치만 바꾸고
+ *    기억은 그대로 둔다 — 화면 문구가 이 사실과 같은 말을 해야 한다.
+ *    기억을 고치려면 `POST /corrections` 로 간다.
+ */
+export interface SuggestionFeedbackResponse {
+  suggestion: Suggestion;
+  memory_changed: boolean;
+}
+
+/**
+ * ⚠️ **계약서 v1 에 아직 없다.** 계약서 §03 은 07 화면에 `PATCH /feedback` 을 배정했는데
+ *    **평가할 제안을 목록으로 얻을 길이 없다.** 프론트가 제안을 지어낼 수는 없으므로
+ *    (근거를 달고 나가는 추천이 이 제품의 본체다) 서버가 내려주는 형태로 여기 제안해 두고
+ *    목으로 먼저 세웠다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ *    서버가 안 보내면 피드백 탭은 "아직 받은 제안이 없어요" 를 그린다.
+ */
+export interface SuggestionListResponse {
+  items: Suggestion[];
+  next_cursor: string | null;
+}
+
+/* ── 09 캘린더 ───────────────────────────────────────────────────────── */
+
+/** `GET /children/{cid}/calendar?month=YYYY-MM` 의 한 칸. */
+export interface CalendarDay {
+  /** YYYY-MM-DD. */
+  date: string;
+  has_diary: boolean;
+  /** 🚨 `confirmed` 만 센다. draft 는 아직 캘린더에 쓴 것이 아니다 (승인 게이트 ㉠). */
+  has_event: boolean;
+  has_image: boolean;
+  observation_count: number;
+  /**
+   * ⚠️ **계약서 v1 에 아직 없다.** "이날 프로필이 달라졌다"(승격·강등)를 날짜 칸에 그리려면
+   *    이 값이 필요한데 월 조회 응답에는 없다. 프론트가 셀 수 없는 값이다 — 승격은 Curator 의
+   *    반복 집계 결과라 관찰 건수로 역산할 수 없다 (CLAUDE.md §2).
+   *    👉 `apps/api` Owner 협의 대상. 안 오면 고리 표식과 범례의 그 줄이 나오지 않는다.
+   */
+  profile_changed_count?: number;
+}
+
+export interface CalendarMonthResponse {
+  days: CalendarDay[];
+}
+
+/**
+ * `GET /children/{cid}/calendar/{date}`.
+ *
+ * `events` 는 그 날짜에 걸린 `episodic` 과 `core` 를 함께 담는다 — 화면은 둘을 구분하지 않는다.
+ *
+ * 🚨 **일기는 관찰로 자동 추출되지 않는다** (계약서 §09). 기억으로 남기려면 보호자가
+ *    `POST /children/{cid}/inputs` 에 명시적으로 태워야 한다. 화면이 이 사실을 말한다 —
+ *    사용자가 일기라고 쓴 것을 아이 성향으로 조용히 승격시키면 신뢰가 깨진다.
+ */
+export interface CalendarDayResponse {
+  diary: { text: string; image_urls: string[] } | null;
+  events: CalendarEvent[];
+  observations: Observation[];
+}
+
+/** `PUT /children/{cid}/calendar/{date}`. 이미지 업로드는 08 사진 화면 것이다. */
+export interface CalendarDayUpdate {
+  text: string;
+  image_urls: string[];
+  event_ids: string[];
+}
+
+/** `PATCH /event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
+export interface EventItemUpdateResponse {
+  item: EventItem;
+}
+
 export interface Me {
   id: string;
   nickname: string | null;

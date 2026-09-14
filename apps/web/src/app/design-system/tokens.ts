@@ -118,7 +118,5 @@ export const HEIGHT_TOKENS = [
 
 /** §7 이 사양을 정했지만 아직 코드에 없는 것. 이 목록이 비면 §7 이 다 구현된 것이다. */
 export const NOT_BUILT = [
-  { name: "탭", where: "07 기록 고치기 2계층", why: "전환을 URL 에 남긴다" },
   { name: "사진 카드 (card-photo)", where: "08 사진 분석", why: "승인 전에는 caution 라벨" },
-  { name: "캘린더 그리드", where: "09 캘린더", why: "react-day-picker 위에 얹는다" },
 ] as const;

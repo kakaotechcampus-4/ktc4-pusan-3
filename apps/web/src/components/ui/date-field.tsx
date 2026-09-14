@@ -9,6 +9,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { cn } from "@/lib/cn";
+import { toISODate } from "@/lib/format";
 
 /**
  * 날짜 입력. 값은 `YYYY-MM-DD` 문자열이고, 달력은 바텀시트로 연다.
@@ -191,12 +192,6 @@ function parseDate(value: string): Date | undefined {
   if (!m) return undefined;
   const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-/** Date → `YYYY-MM-DD`. toISOString 은 UTC 라 시간대에 따라 하루가 밀린다. */
-export function toISODate(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 function formatKorean(date: Date): string {

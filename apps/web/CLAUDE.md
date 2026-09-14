@@ -71,9 +71,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
 | 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
-| 07 기억 | `/child/[childId]/memories` (자리만 있고 내용은 다음 이슈) |
-| 09 캘린더 | `/child/[childId]/calendar` (〃) |
-| 10 설정 | `/child/[childId]/settings` (〃) |
+| 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
+| 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
+| 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
@@ -108,10 +108,11 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
-- 도메인을 아는 조합 (`components/`) — `DomainChip` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
+  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs`
+- 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
-  `AuthGate` · `ChildScope`
+  `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
+  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel`
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
@@ -124,13 +125,27 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   1.15:1 이고 본문 서체가 단일 웨이트라 굵기로도 못 만든다 — 색만 두면 단독 신호가 된다 (디자인 시스템 §3)
 - 🚨 **설정에서 `aria-current` 를 붙이지 않는다** (`onRoute={false}`). 홈 칸을 켜 두는 것은 시각적
   결정이고, 제목이 "설정" 인 화면에서 "홈, 현재 페이지" 라고 읽히면 그건 사실이 아니다
-- 🚨 **네비가 가리키는 곳에는 라우트가 먼저 있어야 한다.** 07·09·10 은 내용이 없어도 화면을 뒀다 —
-  아무 데도 안 가는 탭을 만들지 않는다 (00 로그인의 `ready:false` 와 같은 원칙)
+- 🚨 **네비가 가리키는 곳에는 라우트가 먼저 있어야 한다.** 07·09·10 은 내용이 생기기 전에도 화면을 뒀다 —
+  아무 데도 안 가는 탭을 만들지 않는다 (00 로그인의 `ready:false` 와 같은 원칙). 지금 남은 자리표시는 10 하나다
 - 🚨 **브랜드색은 정해진 다섯 자리에만 쓴다** (디자인 시스템 §2-2 표). 밋밋하다고 아무 데나
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
-- 탭(07) · `card-photo`(08) · 캘린더 그리드(09)는 그 화면 이슈에서 만든다
+- `card-photo`(08)는 그 화면 이슈에서 만든다
+- 🚨 **07 기억 화면에는 도메인 색을 쓰지 않는다** (`DomainMeta`). 도메인 색의 뜻은 "이 제안이 어느
+  Agent 에서 왔는가" 하나인데(디자인 시스템 §3) 07 에 서 있는 것은 제안이 아니라 관찰과 프로필이다.
+  게다가 관찰 목록은 `?domain=` 없이 부르면 4개 테이블이 섞여 내려와서, `DomainChip` 을 쓰는 순간
+  **목록 하나가 혼자 "한 화면에 도메인 색 2개" 상한을 깬다.** 아이콘 + 라벨만 뉴트럴로 낸다
+- 🚨 **09 월 그리드의 표식은 색이 아니라 모양이다** (디자인 시스템 §7 캘린더 그리드). 전부
+  `currentColor` 라 고른 날·오늘·비활성의 글자색을 따라간다 — 표식에 색을 주면 도메인 4색과 섞인다.
+  🚨 **범례를 지우지 않는다.** 모양을 뜻으로 잇는 자리가 거기 하나뿐이라, 없으면 단독 신호가 된다
+- 🚨 **관찰(`ObservationList`)과 프로필(`AffinityList`)을 한 컴포넌트로 만들지 않는다.** 줄과 카드로
+  모양이 다른 것이 이 화면의 요점이다 — 한 목록에 섞으면 "한 번 본 것" 과 "확정된 성향" 이 같은
+  무게로 읽혀서 최상위 §2("한 번의 관찰을 성향으로 확정하지 않는다")가 화면에서 사라진다
+- 🚨 **교정 4버튼에 확인 단계를 붙이지 않는다.** 승인 게이트는 딱 2곳이고 교정은 그 둘이 아니다
+  (최상위 §2). 교정은 append-only 라 반대 교정으로 되돌린다 — `wrong` 도 `btn-danger` 가 아니다
+- 🚨 **일기를 관찰과 같은 구역·같은 표식으로 그리지 않는다.** 일기는 관찰로 자동 추출되지 않는다
+  (계약서 §09). 같은 점을 찍거나 한 목록에 합치면 화면이 그 규칙의 반대말을 한다
 - 🚨 **일반 추천(`GeneralSuggestionCard`)과 개인화 목록(`SuggestionList`)은 다른 컴포넌트 · 다른 타입 ·
   응답의 다른 필드다.** 한 곳에 플래그로 섞으면 언젠가 근거 0건인 것이 개인화로 그려지고, 그러면
   "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다 (최상위 §2).
@@ -407,7 +422,7 @@ NEXT_PUBLIC_API_MOCKING=enabled
   🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
-- 화면 00~06 만 덮여 있다. 07~10 은 아직 없다.
+- 화면 00~07 · 09 가 덮여 있다. 08 사진 · 10 설정은 아직 없다.
 - 🚨 **실제 OAuth 왕복은 목으로 흉내 낼 수 없다** — 카카오로 나가는 전체 페이지 이동이라 서비스 워커가 못 잡는다.
   목이 덮는 것은 시작 전(`status`)과 돌아온 뒤(교환·가입)이고, 중간은 `lib/auth/oauth.ts` 의 `MOCK_ONLY` 분기가 건너뛴다.
 - 🚨 **`startMocks()` 는 한 번만 시작한다** (약속을 캐시한다). StrictMode 가 effect 를 두 번 돌리는데 두 번째 `worker.start()` 가

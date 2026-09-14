@@ -1,5 +1,5 @@
 import { DomainIcon } from "@/components/ui/icon";
-import type { Agent } from "@/lib/api/types";
+import type { Agent, ObservationKind } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
 /**
@@ -84,6 +84,31 @@ export function DomainChip({
         className,
       )}
     >
+      <DomainIcon agent={agent} />
+      {DOMAIN_LABEL[agent]}
+    </span>
+  );
+}
+
+/** `observation_food` → `food`. 관찰의 `kind` 는 테이블 이름이고 도메인은 그 접미사다. */
+export function observationAgent(kind: ObservationKind): Agent {
+  return kind.replace("observation_", "") as Agent;
+}
+
+/**
+ * 07 기억 화면의 도메인 표시 — **색이 없다.**
+ *
+ * 🚨 도메인 색의 뜻은 "이 제안이 **어느 Agent 에서 왔는가**" 하나다 (문서 §3). 07 에는 제안이
+ *    없다 — 여기 서 있는 것은 부모가 적은 관찰과 거기서 자란 프로필이라, `chip-domain` 을
+ *    쓰면 색이 뜻하지 않는 것을 뜻하게 된다. 게다가 관찰 목록은 4개 도메인이 섞여 내려오므로
+ *    (`?domain=` 생략 시 4개 테이블 병합) 칩을 쓰는 순간 **한 화면에 도메인 색 2개**라는
+ *    상한(문서 §3)을 목록 하나가 혼자 깨뜨린다.
+ *
+ * 그래서 아이콘 + 라벨만 뉴트럴 메타로 낸다. 아이콘은 여전히 `aria-hidden` 이고 뜻은 라벨이 진다.
+ */
+export function DomainMeta({ agent, className }: { agent: Agent; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1", className)}>
       <DomainIcon agent={agent} />
       {DOMAIN_LABEL[agent]}
     </span>

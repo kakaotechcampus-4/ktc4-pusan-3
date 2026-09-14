@@ -1,8 +1,11 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
 
+import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetRegisteredSafety } from "@/mocks/handlers/children";
+import { resetMemoryState } from "@/mocks/handlers/memories";
 import { resetIdempotencyStore } from "@/mocks/handlers/idempotency";
 import { resetConfirmedEvents } from "@/mocks/handlers/suggestions";
+import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
 
 /**
@@ -19,6 +22,9 @@ afterEach(() => {
   resetIdempotencyStore();
   resetConfirmedEvents();
   resetRegisteredSafety();
+  resetMemoryState();
+  resetCalendarState();
+  resetDiaries();
 });
 
 afterAll(() => {
