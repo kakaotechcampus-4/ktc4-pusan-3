@@ -2,13 +2,13 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
-import { HealthSuggestionCard, SuggestionCard } from "@/components/suggestion-card";
+import { SuggestionList } from "@/components/suggestion-list";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -116,6 +116,16 @@ function SuggestionsScreen() {
         )
       : [];
 
+  const dismissedCount = (data?.suggestions ?? []).filter((s) => dismissed.includes(s.id)).length;
+
+  // 줄이 사라진 자리를 대신 받는다. 방금 접었을 때만 옮기고, 되돌리면 다시 목록으로 돌아간다.
+  const dismissNoticeRef = useRef<HTMLDivElement>(null);
+  const lastDismissed = useRef(0);
+  useEffect(() => {
+    if (dismissedCount > lastDismissed.current) dismissNoticeRef.current?.focus();
+    lastDismissed.current = dismissedCount;
+  }, [dismissedCount]);
+
   const consentBlocked = isApiError(suggestions.error, "consent_required")
     ? suggestions.error
     : null;
@@ -123,8 +133,7 @@ function SuggestionsScreen() {
   return (
     <Screen className="gap-5">
       <header>
-        <p className="text-label text-brand">우리 아이 기억으로 만든</p>
-        <PageTitle className="mt-1">제안 후보</PageTitle>
+        <PageTitle>제안 후보</PageTitle>
         {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
             스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
         {data ? <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p> : null}
@@ -141,7 +150,7 @@ function SuggestionsScreen() {
             <p key={guard.code}>{guard.message}</p>
           ))}
           <p className="text-caption mt-1">
-            설정에서 알려주시면 이 배너가 사라져요. 설정 화면은 다음 이슈예요.
+            알레르기를 알려주시면 식사 제안도 함께 준비해요. 알려주는 화면은 준비 중이에요.
           </p>
         </Banner>
       ) : null}
@@ -171,25 +180,45 @@ function SuggestionsScreen() {
               ? suggestions.error.message
               : "제안을 준비하지 못했어요."}
           </p>
-          <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => suggestions.refetch()}>
+          <Button
+            variant="tertiary"
+            size="compact"
+            className="mt-3"
+            onClick={() => suggestions.refetch()}
+          >
             다시 시도
           </Button>
         </CardFailed>
       ) : null}
 
-      {visible.map((suggestion) =>
-        suggestion.agent === "health" ? (
-          <HealthSuggestionCard key={suggestion.id} suggestion={suggestion} />
-        ) : (
-          <SuggestionCard
-            key={suggestion.id}
-            suggestion={suggestion}
-            busy={createDraft.isPending}
-            onApprove={() => createDraft.mutate(suggestion)}
-            onReject={() => setDismissed((prev) => [...prev, suggestion.id])}
-          />
-        ),
-      )}
+      {/* 🚨 후보를 카드 더미로 펼쳐 놓지 않는다. 한 덩어리 목록에서 한 줄씩 훑고, 고른 하나만
+          그 자리에서 연다 — 밤에 한 손으로 여는 화면에서 "둘 다 읽고 고르기" 는 인지 노동이다. */}
+      <SuggestionList
+        suggestions={visible}
+        pendingId={createDraft.isPending ? (createDraft.variables?.id ?? null) : null}
+        onApprove={(suggestion) => createDraft.mutate(suggestion)}
+        onReject={(suggestion) => setDismissed((prev) => [...prev, suggestion.id])}
+      />
+
+      {/* 🚨 접은 것을 말없이 지우지 않는다. 줄이 그냥 사라지면 무슨 일이 일어났는지 알 수 없고,
+          누르던 버튼이 언마운트돼 키보드·스크린리더 사용자는 자리까지 잃는다. 무슨 일이 있었는지
+          알리고(`role="status"`), 되돌릴 길을 같은 자리에 두고, 그 자리로 초점을 옮긴다.
+          전부 접으면 목록이 사라지는데, 그때 화면에 남는 설명도 이 줄이 진다. */}
+      {dismissedCount > 0 ? (
+        <div
+          ref={dismissNoticeRef}
+          role="status"
+          tabIndex={-1}
+          className="border-line rounded-card bg-surface flex flex-wrap items-center gap-2 border p-4"
+        >
+          <p className="text-body-sm text-ink-muted flex-1">
+            제안 {dismissedCount}건을 접어 뒀어요. 기억은 그대로예요.
+          </p>
+          <Button variant="tertiary" size="compact" onClick={() => setDismissed([])}>
+            되돌리기
+          </Button>
+        </div>
+      ) : null}
 
       {createDraft.isError ? (
         <CardFailed>
@@ -206,7 +235,12 @@ function SuggestionsScreen() {
       {failedAgents.map((agent) => (
         <CardFailed key={agent}>
           <p>{domainLabel(agent)} 쪽은 이번에 준비하지 못했어요.</p>
-          <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => suggestions.refetch()}>
+          <Button
+            variant="tertiary"
+            size="compact"
+            className="mt-3"
+            onClick={() => suggestions.refetch()}
+          >
             다시 시도
           </Button>
         </CardFailed>
@@ -214,12 +248,16 @@ function SuggestionsScreen() {
 
       {data?.scarcity ? <ScarcityCard childId={childId} scarcity={data.scarcity} /> : null}
 
-      <Button
-        variant="secondary"
-        block
-        className="mt-auto"
-        onClick={() => router.push(`/child/${childId}/home`)}
-      >
+      {/* 줄마다 반복하지 않고 목록 아래에 한 번만 둔다. */}
+      {visible.length > 0 ? (
+        <p className="text-caption text-ink-subtle">
+          고르면 저장될 내용을 먼저 보여드려요. 승인 전에는 아무것도 넣지 않아요.
+        </p>
+      ) : null}
+
+      {/* 🚨 화면 바닥에 붙이지 않는다. 후보가 한두 개뿐인 화면에서 `mt-auto` 는 목록과 버튼 사이에
+          빈 화면을 한 폭 만든다 — 나가는 버튼은 내용 바로 뒤를 따라간다. */}
+      <Button variant="secondary" block onClick={() => router.push(`/child/${childId}/home`)}>
         홈으로
       </Button>
 
