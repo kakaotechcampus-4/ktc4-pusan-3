@@ -67,10 +67,20 @@ def envelope(
     code: str,
     message: str,
     detail: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    """봉투를 만드는 유일한 함수. detail 이 없으면 키 자체를 빼고 내린다."""
+    """봉투를 만드는 유일한 함수. detail 이 없으면 키 자체를 빼고 내린다.
+
+    🚨 mode="json" 이 빠지면 detail 에 UUID·datetime 이 들어온 순간 JSONResponse 의
+       json.dumps 가 예외 핸들러 안에서 터진다. 그러면 봉투가 아니라 plain text 500 이
+       나가고 프론트가 code 를 못 읽는다.
+    """
     body = ErrorEnvelope(error=ErrorBody(code=code, message=message, detail=detail))
-    return JSONResponse(status_code=status, content=body.model_dump(exclude_none=True))
+    return JSONResponse(
+        status_code=status,
+        content=body.model_dump(mode="json", exclude_none=True),
+        headers=headers,
+    )
 
 
 # 프레임워크가 스스로 내는 status 만 적는다. 우리 코드는 ApiError 를 던진다.
@@ -96,15 +106,19 @@ def register_error_handlers(app: FastAPI) -> None:
             # 여기 오는 것은 버그다 — 우리 코드가 HTTPException 을 직접 던졌다는 뜻.
             log.warning("매핑 없는 HTTPException status=%s", exc.status_code)
             code = "internal_error"
-        return envelope(exc.status_code, code, "요청을 처리할 수 없어요")
+        # 봉투를 새로 만들면서 원래 응답의 헤더를 잃지 않는다 — 405 의 Allow,
+        # 인증 스킴의 WWW-Authenticate, 앞으로 쓸 429 의 Retry-After 가 여기 실린다.
+        return envelope(exc.status_code, code, "요청을 처리할 수 없어요", headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         # 🚨 FastAPI 는 "경로 값이 enum 밖" 과 "바디 필드 누락" 을 같은 예외로 낸다.
         #    명세 §8-1 은 앞을 422, 뒤를 400 으로 정했으므로 loc 의 첫 칸으로 가른다.
         errors = exc.errors()
-        in_path = any(e.get("loc", ("",))[0] == "path" for e in errors)
-        fields = [".".join(str(part) for part in e.get("loc", ())[1:]) for e in errors]
+        # loc 는 없을 수도, 있지만 빈 튜플일 수도 있다. [0] 을 그냥 집으면
+        # 예외 핸들러 안에서 IndexError 가 나서 500 이 된다.
+        in_path = any((e.get("loc") or ("",))[0] == "path" for e in errors)
+        fields = [".".join(str(part) for part in (e.get("loc") or ())[1:]) for e in errors]
         return envelope(
             422 if in_path else 400,
             "validation_failed",
