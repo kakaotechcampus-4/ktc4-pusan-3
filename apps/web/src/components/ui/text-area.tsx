@@ -70,6 +70,15 @@ export function TextArea({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+
+    // 🚨 **빈 입력의 높이를 placeholder 가 정하게 두지 않는다.** `scrollHeight` 는 값이 없으면
+    //    placeholder 를 재는데, 그 문구가 한 줄에 안 들어가면 **빈 입력창이 두 줄 높이로 선다** —
+    //    채팅바가 52 대신 75px 이 되고 옆의 버튼들이 한가운데 떠 있었다. 값이 없으면 바닥값이다.
+    if (value.length === 0) {
+      el.style.height = `${minHeight}px`;
+      return;
+    }
+
     el.style.height = "auto";
     el.style.height = `${Math.min(Math.max(el.scrollHeight, minHeight), maxHeightPx)}px`;
   }, [value, minHeight, maxHeightPx]);
@@ -87,6 +96,10 @@ export function TextArea({
       <textarea
         ref={ref}
         id={id}
+        // 🚨 `rows` 기본값은 **2** 다. 높이를 자동 증가로 재는데 그 기본값이 남아 있으면
+        //    `height: auto` 가 "두 줄" 로 풀려서, 한 글자만 넣어도 상자가 두 줄(67px)로 뛴다
+        //    (채팅바가 52 → 75px). 높이는 아래 effect 가 정하므로 바닥은 한 줄이어야 한다.
+        rows={1}
         value={value}
         aria-describedby={hint ? hintId : undefined}
         style={{ minHeight, maxHeight: maxHeightPx }}
