@@ -5,6 +5,7 @@ import type { Agent, Observation } from "@/lib/api/types";
 import { healthObservation, observations } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { networkDelay, url } from "./helpers";
+import { withIdempotency } from "./idempotency";
 
 /**
  * 04 저장 결과 — 입력 한 줄과 run 스트림.
@@ -81,14 +82,18 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
 }
 
 export const runHandlers = [
-  http.post(url("/children/:cid/inputs"), async ({ request }) => {
-    await networkDelay();
-    const body = (await request.json()) as { text: string };
-    const runId = `r_${Date.now()}`;
-    inputTextByRun.set(runId, body.text);
-    // 즉시 202 로 run_id 만 준다. 결과는 전부 SSE 로 흐른다.
-    return HttpResponse.json({ run_id: runId }, { status: 202 });
-  }),
+  // 🚨 키가 없으면 400 이다 — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는 지점.
+  http.post(
+    url("/children/:cid/inputs"),
+    withIdempotency(async ({ request }) => {
+      await networkDelay();
+      const body = (await request.json()) as { text: string };
+      const runId = `r_${Date.now()}`;
+      inputTextByRun.set(runId, body.text);
+      // 즉시 202 로 run_id 만 준다. 결과는 전부 SSE 로 흐른다.
+      return HttpResponse.json({ run_id: runId }, { status: 202 });
+    }),
+  ),
 
   http.get(url("/runs/:runId/events"), ({ params }) => {
     const runId = String(params.runId);
