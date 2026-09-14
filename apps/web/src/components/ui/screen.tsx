@@ -15,39 +15,55 @@ import { cn } from "@/lib/cn";
  *    **상하 여백이 0** 이었다 (하단 문구가 화면 맨 아래 모서리에 붙었다).
  *    그래서 두 값을 calc 로 한 속성에 합쳐 둔다.
  *
- * 🚨 **하단 고정 바도 이 컴포넌트가 소유한다** (`bottomBar`). 화면이 직접 `sticky` 를 붙이면
- *    아래 여백을 0 으로 되돌려야 하는데, 그게 바로 위에서 두 번 사고 난 그 조작이다.
- *    바를 넘기면 본문의 아래 여백을 바가 가져가고, safe area 도 바가 받는다.
+ * 🚨 **화면 아래에 붙는 것도 전부 이 컴포넌트가 소유한다** (`bottomBar` · `nav`).
+ *    화면이 직접 `sticky` 를 붙이면 아래 여백을 0 으로 되돌려야 하는데, 그게 바로 위에서
+ *    두 번 사고 난 그 조작이다. 둘 다 넘기면 **채팅바가 위, 네비가 아래**로 한 덩어리가 되고
+ *    safe area 는 제일 아래 것이 받는다 — 각자 받으면 그만큼 두 번 밀린다.
  */
 export function Screen({
   children,
   className,
   bottomBar,
+  nav,
 }: {
   children: ReactNode;
   className?: string;
-  /** 스크롤과 무관하게 화면 아래에 붙는 영역 (03 홈의 채팅바). 좌우·아래 여백은 여기서 준다. */
+  /** 스크롤과 무관하게 화면 아래에 붙는 영역 (03 홈의 채팅바). */
   bottomBar?: ReactNode;
+  /** 그보다 더 아래에 붙는 화면 이동 바 (`ChildNav`). */
+  nav?: ReactNode;
 }) {
+  const pinned = Boolean(bottomBar || nav);
+
   return (
     <main className="max-w-content pt-safe-8 mx-auto flex min-h-dvh w-full flex-col">
-      {/* 좌우 여백이 본문에만 걸린다 — 하단 바의 구분선은 화면 끝까지 가야 한다. */}
+      {/* 좌우 여백이 본문에만 걸린다 — 아래 바의 구분선은 화면 끝까지 가야 한다. */}
       <div
         className={cn(
           "flex flex-1 flex-col px-3 min-[380px]:px-4",
-          // 바가 없으면 이 컴포넌트가 아래 여백까지 소유한다 (기존 동작).
-          bottomBar ? "pb-4" : "pb-safe-8",
+          // 붙는 것이 없으면 이 컴포넌트가 아래 여백까지 소유한다 (기존 동작).
+          pinned ? "pb-4" : "pb-safe-8",
           className,
         )}
       >
         {children}
       </div>
 
-      {bottomBar ? (
+      {pinned ? (
         // sticky 라 본문이 짧으면 그냥 아래에 놓이고, 길면 스크롤 위에 떠 있는다.
-        // 🚨 pb-safe-4 는 safe area + 16px 을 한 속성에 합친다 — py-* 를 겹치지 않는다.
-        <div className="bg-canvas border-line pb-safe-4 sticky bottom-0 border-t px-3 pt-3 min-[380px]:px-4">
-          {bottomBar}
+        // 🚨 pb-safe-* 는 safe area + 여백을 한 속성에 합친다 — py-* 를 겹치지 않는다.
+        <div className="bg-canvas sticky bottom-0">
+          {bottomBar ? (
+            <div
+              className={cn(
+                "border-line border-t px-3 pt-3 min-[380px]:px-4",
+                nav ? "pb-3" : "pb-safe-4",
+              )}
+            >
+              {bottomBar}
+            </div>
+          ) : null}
+          {nav ? <div className="border-line pb-safe-2 border-t">{nav}</div> : null}
         </div>
       ) : null}
     </main>

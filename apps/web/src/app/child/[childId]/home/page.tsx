@@ -1,17 +1,27 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CalendarDays, NotebookPen, Repeat, Utensils, type LucideIcon } from "lucide-react";
+import {
+  CalendarDays,
+  NotebookPen,
+  Repeat,
+  Settings,
+  Utensils,
+  type LucideIcon,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { HomeComposer } from "@/components/home-composer";
 import { RunProgress, RunResult } from "@/components/run-result";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { IconButton } from "@/components/ui/icon-button";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
@@ -138,6 +148,7 @@ function HomeScreen() {
   return (
     <Screen
       className="gap-5"
+      nav={<ChildNav active="home" />}
       bottomBar={
         <div className="flex flex-col gap-2">
           {submit.isError ? (
@@ -164,14 +175,20 @@ function HomeScreen() {
         </div>
       }
     >
-      <header>
-        {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
-        <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
-        {home.data ? (
-          <p className="text-body-sm text-ink-subtle mt-2">
-            지금까지 함께 쌓은 기억 {home.data.observation_count}건
-          </p>
-        ) : null}
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
+          <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
+          {home.data ? (
+            <p className="text-body-sm text-ink-subtle mt-2">
+              지금까지 함께 쌓은 기억 {home.data.observation_count}건
+            </p>
+          ) : null}
+        </div>
+        {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+        <IconButton label="설정" onClick={() => router.push(`/child/${childId}/settings`)}>
+          <Settings aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+        </IconButton>
       </header>
 
       {home.isPending ? (

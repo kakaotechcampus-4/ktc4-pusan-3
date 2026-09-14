@@ -69,7 +69,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
 | 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
-| 06~09 | `/child/[childId]/…` |
+| 07 기억 | `/child/[childId]/memories` (자리만 있고 내용은 다음 이슈) |
+| 09 캘린더 | `/child/[childId]/calendar` (〃) |
+| 10 설정 | `/child/[childId]/settings` (〃) |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
@@ -105,11 +107,16 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
-- 도메인을 아는 조합 (`components/`) — `DomainChip` · `AgentPrompts` · `SuggestionList` ·
+- 도메인을 아는 조합 (`components/`) — `DomainChip` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope`
-- 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
-  아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다
+- 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
+  아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
+  둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 세 화면과 설정에만 붙인다.** 04 저장 결과·05 제안 후보처럼
+  흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7)
+- 🚨 **네비가 가리키는 곳에는 라우트가 먼저 있어야 한다.** 07·09·10 은 내용이 없어도 화면을 뒀다 —
+  아무 데도 안 가는 탭을 만들지 않는다 (00 로그인의 `ready:false` 와 같은 원칙)
 - 🚨 **브랜드색은 정해진 다섯 자리에만 쓴다** (디자인 시스템 §2-2 표). 밋밋하다고 아무 데나
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
