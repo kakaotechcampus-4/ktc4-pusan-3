@@ -2,7 +2,7 @@
 
 import { ArrowUp, Camera, Mic } from "lucide-react";
 
-import { DomainChip } from "@/components/domain-chip";
+import { AgentPrompts } from "@/components/agent-prompts";
 import { IconButton } from "@/components/ui/icon-button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
@@ -43,38 +43,18 @@ export function HomeComposer({
 
   return (
     <div className="flex flex-col gap-2">
-      {prompts.length > 0 ? (
-        <ul className="flex flex-col gap-1.5">
-          {prompts.slice(0, 2).map((prompt) => (
-            <li key={prompt.agent}>
-              <button
-                type="button"
-                onClick={() => onPickPrompt(prompt.agent)}
-                disabled={pending}
-                className="border-line hover:border-brand hover:bg-brand-soft active:border-brand active:bg-brand-soft ease-standard min-h-touch flex w-full items-center gap-2 rounded-full border px-2 py-1.5 text-left transition-colors duration-120"
-              >
-                <DomainChip agent={prompt.agent} />
-                <span className="text-body-sm text-ink-muted min-w-0">{prompt.text}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {/* 🚨 가로 한 줄로 눕힌다. 세로로 쌓으면 채팅바 위가 두 줄을 먹고, 부모가 제일 자주 여는
+          화면에서 **입력창이 그만큼 화면 아래로 밀린다.** 넘치는 만큼은 밀어서 본다 —
+          디자인 시스템 §7 이 "칩 줄은 가로 스크롤하지 않는다" 고 못박은 것은 **근거 칩**이고,
+          거기서 가리면 부모가 판단할 정보가 사라진다. 이 줄은 들어가는 문이라 밀어도 잃는 게 없다. */}
+      <AgentPrompts items={prompts} onPick={onPickPrompt} disabled={pending} layout="scroller" />
 
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
       <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
-        <IconButton
-          label="사진으로 적기 (사진 화면을 만드는 중이에요)"
-          disabled
-          className="self-center"
-        >
+        <IconButton label="사진으로 적기 (사진 화면을 만드는 중이에요)" disabled>
           <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
         </IconButton>
-        <IconButton
-          label="말로 적기 (음성 처리 방침을 정하는 중이에요)"
-          disabled
-          className="self-center"
-        >
+        <IconButton label="말로 적기 (음성 처리 방침을 정하는 중이에요)" disabled>
           <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
         </IconButton>
 
@@ -84,7 +64,9 @@ export function HomeComposer({
             labelHidden
             variant="bare"
             maxHeightPx={104}
-            placeholder="오늘 있었던 일, 말하듯 적어주세요"
+            /* 🚨 한 줄에 들어가는 길이여야 한다. 버튼 3개가 132px 을 가져가서 입력에 남는 폭이
+               206px 뿐이고, 이보다 길면 빈 입력창이 두 줄로 선다. 전체 문구는 위의 라벨이 진다. */
+            placeholder="말하듯 적어주세요"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             disabled={pending}
@@ -96,7 +78,6 @@ export function HomeComposer({
         <IconButton
           label={pending ? "보내는 중이에요" : "이 이야기 남기기"}
           tone="brand"
-          className="self-center"
           aria-busy={pending}
           disabled={!canSubmit}
           onClick={onSubmit}

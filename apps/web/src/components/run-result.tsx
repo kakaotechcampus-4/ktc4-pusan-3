@@ -2,6 +2,7 @@
 
 import { PenLine, Sprout } from "lucide-react";
 
+import { AgentPrompts } from "@/components/agent-prompts";
 import { domainLabel } from "@/components/domain-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -73,8 +74,7 @@ export function RunResult({
     return (
       <div className="flex flex-col gap-4">
         <div>
-          <p className="text-label text-brand">저장 결과</p>
-          <h2 className="text-title text-ink mt-1">읽지 못했어요</h2>
+          <h2 className="text-title text-ink">읽지 못했어요</h2>
           <p className="text-body-sm text-ink-muted mt-2">
             한 줄을 구조화하는 데 실패했어요. 잘못 저장하지 않으려고 아무것도 저장하지 않았어요.
           </p>
@@ -98,13 +98,21 @@ export function RunResult({
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <p className="text-label text-brand">저장 결과</p>
-        <h2 className="text-title text-ink mt-1">이렇게 저장했어요</h2>
-        {inputText ? (
-          <p className="text-body-sm text-ink-muted mt-2">적어주신 한 줄: {inputText}</p>
-        ) : null}
-      </div>
+      <h2 className="text-title text-ink">이렇게 저장했어요</h2>
+
+      {/* 이 화면의 주인공은 결과 카드가 아니라 **부모가 적은 말**이다 (관찰 노트).
+          화면에서 한 장만 쓰는 `card-accent` 를 여기 쓴다 — 아래는 전부 거기서 나온 것이다. */}
+      {inputText ? (
+        <Card tone="accent">
+          <div className="flex items-start gap-3">
+            <IconTile icon={PenLine} />
+            <div className="min-w-0">
+              <p className="text-caption text-ink-subtle">적어주신 한 줄</p>
+              <p className="text-body text-ink mt-1">{inputText}</p>
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       {state.partial ? (
         <CardFailed>
@@ -123,16 +131,20 @@ export function RunResult({
           </p>
         </CardFailed>
       ) : (
-        <section className="flex flex-col gap-3">
+        <section>
           <h3 className="text-label text-brand">관찰 {state.observations.length}건 저장됨</h3>
-          {state.observations.map((observation) => (
-            <ObservationCard key={observation.id} observation={observation} />
-          ))}
+          {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
+              한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
+          <Card className="divide-line mt-2 flex flex-col divide-y">
+            {state.observations.map((observation) => (
+              <ObservationRow key={observation.id} observation={observation} />
+            ))}
+          </Card>
         </section>
       )}
 
       {state.promoted.length > 0 ? (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {state.promoted.map((change) => (
             <Card key={change.ref.id}>
@@ -152,34 +164,28 @@ export function RunResult({
         한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
       </p>
 
+      {/* 🚨 제안을 버튼으로 쌓지 않는다. 예전에는 [제안][제안][아니요] 3개가 같은 무게로 서서
+          무엇이 다음 행동인지가 없었다 — 고르는 것은 줄(`AgentPromptRow`)이고, 화면을 떠나는
+          것만 버튼이다. "아니요" 버튼은 지웠다: 기본값이 기록만이라는 것은 아래 문구가 말하고,
+          아무것도 고르지 않아도 이미 저장은 끝나 있다. */}
       {state.offers.length > 0 ? (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-2">
           <h3 className="text-label text-brand">이것도 도와드릴까요?</h3>
-          {/* 🚨 Agent 는 최대 2개다 (NF-01). 서버가 고른 것만 그대로 보여준다.
-              🚨 여기는 primary 를 쓰지 않는다 — 나란히 놓인 선택지라 둘 중 하나를 다음 행동으로
-                 세우면 안 된다 (문서 §7 "한 화면에 primary 는 하나"). 기본값은 아래의 기록만이다. */}
-          {state.offers.slice(0, 2).map((offer) => (
-            <Button
-              key={offer.agent}
-              variant="secondary"
-              block
-              onClick={() => onPickOffer([offer.agent])}
-            >
-              {offer.label}
-            </Button>
-          ))}
-          <Button variant="tertiary" onClick={onDone}>
-            아니요, 기록만
-          </Button>
-          <p className="text-caption text-ink-subtle">
-            아무것도 누르지 않고 닫아도 기록은 남아요. 기본값은 기록만이에요.
+          {/* 여기는 화면에 자리가 있으므로 세로로 쌓는다 (03 채팅바 위와 달리 입력창을 안 민다). */}
+          <AgentPrompts
+            items={state.offers.map((offer) => ({ agent: offer.agent, text: offer.label }))}
+            onPick={(agent) => onPickOffer([agent])}
+            layout="list"
+          />
+          <p className="text-caption text-ink-subtle mt-1">
+            고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요.
           </p>
         </section>
-      ) : (
-        <Button variant="secondary" block onClick={onDone}>
-          홈으로
-        </Button>
-      )}
+      ) : null}
+
+      <Button variant="secondary" block onClick={onDone}>
+        홈으로
+      </Button>
     </div>
   );
 }
@@ -200,11 +206,16 @@ const OBSERVATION_AGENT: Record<Observation["kind"], Agent> = {
   observation_health: "health",
 };
 
-function ObservationCard({ observation }: { observation: Observation }) {
+function ObservationRow({ observation }: { observation: Observation }) {
   const agent = OBSERVATION_AGENT[observation.kind];
+  const detail = isHealthObservation(observation)
+    ? [observation.domain_fields.symptom?.join(", "), observation.domain_fields.observed_time]
+        .filter(Boolean)
+        .join(", ")
+    : observation.subject;
 
   return (
-    <Card>
+    <div className="py-3 first:pt-0 last:pb-0">
       {/* 🚨 여기서는 **도메인 색을 쓰지 않는다** (`DomainChip` 이 아니다). 한 화면에 도메인 색은
           2개까지인데(문서 §3), 한 줄이 관찰 3건으로 갈리면 4색이 다 뜰 수 있다. 그리고 도메인 색은
           "어느 Agent 의 결과인가" 신호라(05 제안) 저장된 관찰에 쓰면 그 뜻이 흐려진다.
@@ -217,21 +228,13 @@ function ObservationCard({ observation }: { observation: Observation }) {
         ) : null}
       </div>
 
-      <p className="text-body text-ink mt-3">{observation.raw_text}</p>
+      <p className="text-body text-ink mt-2">{observation.raw_text}</p>
 
-      {isHealthObservation(observation) ? (
-        <p className="text-body-sm text-ink-muted mt-1">
-          {[observation.domain_fields.symptom?.join(", "), observation.domain_fields.observed_time]
-            .filter(Boolean)
-            .join(", ")}
-        </p>
-      ) : (
-        <p className="text-body-sm text-ink-muted mt-1">{observation.subject}</p>
-      )}
-
-      <p className="text-caption text-ink-subtle mt-2">
-        {CONFIDENCE_LABEL[observation.confidence_source]}
-      </p>
-    </Card>
+      <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-1.5">
+        {detail ? <span>{detail}</span> : null}
+        {detail ? <span aria-hidden>·</span> : null}
+        <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
+      </div>
+    </div>
   );
 }
