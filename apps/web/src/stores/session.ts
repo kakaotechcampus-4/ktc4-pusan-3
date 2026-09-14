@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
 import { setAuthToken } from "@/lib/api/client";
+import { useDraftStore } from "@/stores/draft";
 
 /**
  * 로그인 토큰과 "지금 보고 있는 아이" 만 담는다.
@@ -48,6 +49,9 @@ export const useSessionStore = create<SessionState>()(
       },
       signOut: () => {
         setAuthToken(null);
+        // 🚨 아직 안 보낸 입력에는 아이 이야기가 그대로 들어 있다. 로그아웃하면 같이 지운다 —
+        //    메모리에만 있어도 다음 사람이 같은 탭을 쓰면 남의 아이 이야기가 보인다.
+        useDraftStore.getState().clearAll();
         set({ token: null, expiresAt: null, activeChildId: null });
       },
       setActiveChild: (activeChildId) => set({ activeChildId }),

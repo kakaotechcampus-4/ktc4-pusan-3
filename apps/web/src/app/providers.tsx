@@ -50,8 +50,12 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       {mocksReady ? children : null}
-      {/* devtools 는 프로덕션 번들에서 빠진다. 쿼리 키·캐시 상태를 눈으로 볼 때 쓴다. */}
-      {process.env.NODE_ENV === "development" ? <ReactQueryDevtools initialIsOpen={false} /> : null}
+      {/* devtools 는 프로덕션 번들에서 빠진다. 쿼리 키·캐시 상태를 눈으로 볼 때 쓴다.
+          🚨 왼쪽 아래로 옮겨 뒀다 — 기본값(오른쪽 아래)이 03 홈 채팅바의 **보내기 버튼을 덮어서**
+             개발 중에 누르면 devtools 가 열린다 (실제로 클릭이 막혔다). */}
+      {process.env.NODE_ENV === "development" ? (
+        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+      ) : null}
     </QueryClientProvider>
   );
 }

@@ -2,9 +2,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
@@ -16,13 +17,13 @@ import { useChildId } from "@/hooks/use-child-id";
 import {
   api,
   isApiError,
-  newIdempotencyKey,
   qk,
+  submitOnboarding,
   type DevScreeningResponse,
   type OnboardingRequest,
-  type OnboardingResponse,
   type SafetyStatus,
 } from "@/lib/api";
+import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 
 /**
  * 02 이야기 하나 — 전부 선택이다. 모두 건너뛰어도 200 이고 홈으로 간다.
@@ -77,16 +78,16 @@ function ChildOnboardingScreen() {
       api.get<DevScreeningResponse>("/dev-screening/items", { query: { child_id: childId } }),
   });
 
-  /** 🚨 재시도할 때 키를 새로 만들지 않는다 — 같은 키를 다시 보내는 게 중복 저장을 막는 유일한 방법이다. */
-  const idempotencyKey = useRef<string | null>(null);
+  /**
+   * 🚨 **재시도할 때 키를 새로 만들지 않는다** — 같은 키를 다시 보내는 게 중복 저장을 막는
+   *    유일한 방법이다. `mutationFn` 안에서 키를 만들면 재시도마다 새 키가 나간다
+   *    (`use-idempotency-key.ts`).
+   */
+  const idempotencyKey = useIdempotencyKey();
 
   const save = useMutation({
-    mutationFn: (body: OnboardingRequest) => {
-      idempotencyKey.current ??= newIdempotencyKey();
-      return api.post<OnboardingResponse>(`/children/${childId}/onboarding`, body, {
-        idempotencyKey: idempotencyKey.current,
-      });
-    },
+    mutationFn: (body: OnboardingRequest) =>
+      submitOnboarding(childId, body, idempotencyKey.current()),
     onSuccess: async () => {
       // 온보딩 한 번이 관찰·프로필·홈을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
@@ -257,19 +258,15 @@ function ChildOnboardingScreen() {
         ) : null}
 
         {consentBlocked ? (
-          <Card>
-            <p className="text-body text-ink">먼저 동의가 필요해요</p>
-            <p className="text-body-sm text-ink-muted mt-2">
-              저장은 아직 하나도 되지 않았어요. 동의를 마치면 그대로 다시 보낼 수 있어요.
-            </p>
-            <p className="text-caption text-ink-subtle mt-2">
-              동의 화면은 아직 없어요 (/child/{childId}/{consentBlocked.consentDeeplink})
-            </p>
-          </Card>
+          <ConsentRequiredCard
+            childId={childId}
+            error={consentBlocked}
+            what="적어주신 것을 저장할 수 없어요."
+          />
         ) : save.isError ? (
           <CardFailed>
             <p>{save.error instanceof Error ? save.error.message : "저장하지 못했어요."}</p>
-            <Button variant="tertiary" className="mt-1 -ml-2" onClick={submit}>
+            <Button variant="tertiary" size="compact" className="mt-3" onClick={submit}>
               다시 시도
             </Button>
           </CardFailed>

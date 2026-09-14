@@ -118,15 +118,7 @@ export const HEIGHT_TOKENS = [
 
 /** §7 이 사양을 정했지만 아직 코드에 없는 것. 이 목록이 비면 §7 이 다 구현된 것이다. */
 export const NOT_BUILT = [
-  { name: "배너 (caution · danger)", where: "06 승인 · 알레르기 저촉", why: "" },
-  {
-    name: "제안 카드 (개인화 · 일반 · 실패)",
-    where: "05 제안",
-    why: "🚨 개인화와 일반을 한 컴포넌트로 만들지 않는다",
-  },
-  { name: "근거 칩 (chip-evidence · -stale)", where: "05 · 07", why: "" },
-  { name: "도메인 칩 (chip-domain)", where: "05 제안", why: "지금은 소개 화면이 직접 그린다" },
   { name: "탭", where: "07 기록 고치기 2계층", why: "전환을 URL 에 남긴다" },
-  { name: "진행 오버레이", where: "04 저장 결과 (SSE)", why: "20초 넘기면 부분 결과로" },
-  { name: "빈 상태 · 스켈레톤", where: "03 홈", why: "" },
+  { name: "사진 카드 (card-photo)", where: "08 사진 분석", why: "승인 전에는 caution 라벨" },
+  { name: "캘린더 그리드", where: "09 캘린더", why: "react-day-picker 위에 얹는다" },
 ] as const;

@@ -44,10 +44,13 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 🚨 `app/onboarding/` 만 아이 스코프 **밖**이다 — 아직 `childId` 가 없다 (§3 라우팅)
 - `lib/api/` = 계약서 v1 타입 · fetch 클라이언트 · SSE 파서 · 쿼리 키 팩토리. **`fetch` 를 직접 부르지 않는다** (§3 API 호출)
 - ⚠️ `lib/cn.ts` 는 **tailwind-merge 가 아니다** — 뒤에 온 클래스가 앞을 안 덮는다 (§3 컴포넌트)
+- 🚨 `lib/format.ts` 는 **날짜 계산이 아니라 표시 변환**이다. 절대 시각 하나를 한국 시간대 표기로
+  바꾸는 것이 전부고, 상대 시간·나이·기간은 여기서도 만들지 않는다 (§4)
 - `lib/auth/oauth-bind.ts` = bind 비밀. 만지기 전에 그 파일 주석을 읽는다 (§3 로그인)
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
-- `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3)
+- `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
+  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
@@ -65,10 +68,20 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 가입 동의 (신규 회원만) | `/auth/consent` |
 | 01 첫 진입 (아이 만들기) | `/onboarding` |
 | 02 이야기 하나 | `/child/[childId]/onboarding` |
-| 03~09 | `/child/[childId]/…` |
+| 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
+| 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 06 승인 | 05 위의 바텀시트 (라우트 없음) |
+| 07 기억 | `/child/[childId]/memories` (자리만 있고 내용은 다음 이슈) |
+| 09 캘린더 | `/child/[childId]/calendar` (〃) |
+| 10 설정 | `/child/[childId]/settings` (〃) |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+
+🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
+`failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
+라우트를 나누면 그 값이 언마운트와 함께 죽는다 — 그래서 03 이 run 이 도는 동안 본문만 바꿔 그린다.
+프로토타입에서 04 가 별도 화면으로 보이는 것은 뒤로가기 화살표 때문이지 주소가 달라서가 아니다.
 
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
@@ -92,9 +105,38 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
-- 지금 있는 것 — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` · `Button`(§7 6변형) ·
-  `TextInput` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `Card`/`CardFailed` · `Spinner` · `BottomSheet`.
-  배너 · 제안 카드 · 탭은 그 화면 이슈에서 만든다
+- 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
+  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
+  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
+- 도메인을 아는 조합 (`components/`) — `DomainChip` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
+  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
+  `AuthGate` · `ChildScope`
+- 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
+  아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
+  둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 세 화면과 설정에만 붙인다.** 04 저장 결과·05 제안 후보처럼
+  흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7)
+- 🚨 **네비는 `surface-muted` 면이고 위에 선이 없다.** 선을 하나 더 긋는 것으로는 채팅바와 안 갈린다 —
+  `line` 1px 은 `canvas` 위에서 1.21:1 이고 03 홈에는 **같은 선이 27px 위에도** 있어서, 한 신호가
+  "여기부터 고정" 과 "여기부터 다른 종류" 를 나눠 쓰면 하단이 줄 쳐진 슬래브 하나로 읽힌다
+- 🚨 **켜진 탭에 모양 신호를 함께 준다** (칸 위쪽 `brand` 2px). `brand` 와 `ink-subtle` 은 휘도 차가
+  1.15:1 이고 본문 서체가 단일 웨이트라 굵기로도 못 만든다 — 색만 두면 단독 신호가 된다 (디자인 시스템 §3)
+- 🚨 **설정에서 `aria-current` 를 붙이지 않는다** (`onRoute={false}`). 홈 칸을 켜 두는 것은 시각적
+  결정이고, 제목이 "설정" 인 화면에서 "홈, 현재 페이지" 라고 읽히면 그건 사실이 아니다
+- 🚨 **네비가 가리키는 곳에는 라우트가 먼저 있어야 한다.** 07·09·10 은 내용이 없어도 화면을 뒀다 —
+  아무 데도 안 가는 탭을 만들지 않는다 (00 로그인의 `ready:false` 와 같은 원칙)
+- 🚨 **브랜드색은 정해진 다섯 자리에만 쓴다** (디자인 시스템 §2-2 표). 밋밋하다고 아무 데나
+  초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
+  제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
+  "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
+- 탭(07) · `card-photo`(08) · 캘린더 그리드(09)는 그 화면 이슈에서 만든다
+- 🚨 **일반 추천(`GeneralSuggestionCard`)과 개인화 목록(`SuggestionList`)은 다른 컴포넌트 · 다른 타입 ·
+  응답의 다른 필드다.** 한 곳에 플래그로 섞으면 언젠가 근거 0건인 것이 개인화로 그려지고, 그러면
+  "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다 (최상위 §2).
+  `GeneralSuggestion` 에는 `evidence` 필드가 **아예 없어서** 개인화 쪽에 넘기면 컴파일이 막는다.
+  ⚠️ `SuggestionsResponse.general` 은 **계약서 v1 에 아직 없다** — 제안 형태로 두고 optional 로 받는다
+  (서버가 안 보내면 질문 1개만 그린다). 👉 `apps/api` Owner 협의 대상 (최상위 §8)
 - 🚨 **외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.** 접근성을 손으로 짜면
   반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고** `classNames` 로 토큰만 입힌다 —
   버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7)
@@ -224,7 +266,12 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   전환의 정본은 서버가 보내는 `partial` 이고, 이건 스트림이 멎었을 때의 그물이다
 - 🚨 **입력 원문을 훅에 두지 않는다.** 화면을 벗어나면 스트림을 끊는데, 실패 시 원문을 입력창에
   되돌려야 한다. `failed` 이벤트가 `raw_text` 를 실어 주지만 네트워크가 끊기면 그것도 못 받는다 —
-  **원문의 정본은 입력 화면이 들고 있는 값이다.**
+  **원문의 정본은 `stores/draft.ts` 다.**
+- 🚨 **아직 안 보낸 한 줄은 화면 로컬 상태로 두지 않는다** (`stores/draft.ts`). 하단 네비가 보내기 버튼
+  21px 아래에 다른 화면으로 가는 문을 세 개 열어서, `useState` 로 두면 잘못 누른 한 번에 쓰던 글이
+  언마운트와 함께 죽는다. 승인을 하나 더 다는 건 답이 아니다 (최상위 §2 — 승인 게이트는 딱 2곳).
+  🚨 **그 스토어에 `persist` 를 붙이지 않는다** — 아이에 대한 발화 원문이라 디스크에 남기지 않는다
+  (최상위 §2 개인정보). 로그아웃에서 `clearAll()` 로 지운다
 
 목의 `?scenario=partial` · `failed` 로 두 경로를 바로 확인할 수 있다 (§7).
 
@@ -235,6 +282,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 최상위 §2 가 프론트에 떨어지는 지점만 추렸다. 어기면 서비스가 성립하지 않는다.
 
 - 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천에는 "또래 기준 일반 추천" 을 **화면에 명시**하고 쌓인 기록 건수를 그대로 보여준다. 되물을 때 질문은 **1개**.
+  🚨 **둘이 한 화면에 같이 서지 않는다** — 일반 추천은 개인화 **대신** 나간다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
 - 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
 - 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).
 - 🚨 **`partial` 이벤트를 실패 화면으로 떨어뜨리지 않는다.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 **한 화면에** 섞는다 (NF-06).
@@ -335,8 +383,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | 시나리오 | 무엇이 나오나 |
 | --- | --- |
 | `default` | 기억이 쌓인 상태 · 개인화 추천 2건 |
-| `empty` | 기록 0건 — `highlight: null` 빈 상태 |
-| `scarcity` | 근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 **1개** |
+| `empty` | 기록 0건 — `highlight: null` 빈 상태 · 05 는 일반 추천 **2건**(도메인 2색) |
+| `scarcity` | 근거 부족 — 개인화 대신 **일반 추천 1건**(점선 카드) + 되묻는 질문 **1개** |
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |

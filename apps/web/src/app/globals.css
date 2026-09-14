@@ -151,6 +151,22 @@
 
   /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* 스켈레톤 깜빡임 (문서 §7).
+   * 🚨 Tailwind 기본 `animate-pulse` 를 쓰지 않는다 — 2s · opacity 1↔0.5 라 문서 값(1.2s ·
+   *    0.6↔1)과 다르다. 여러 자리에 놓일 값이라 컴포넌트가 아니라 여기가 원본이다.
+   *    `prefers-reduced-motion` 에서는 아래 base 레이어가 애니메이션을 멈춘다. */
+  --animate-skeleton: skeleton 1.2s ease-in-out infinite;
+
+  @keyframes skeleton {
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
 }
 
 /* 🚨 `hover:` 를 hover 가 되는 기기에만 건다.

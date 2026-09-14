@@ -663,12 +663,12 @@
       "css": ".ds-chip-domain{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-activity-soft);color:var(--color-activity-ink);font-family:var(--font-sans);}"
     },
     {
-      "name": "Personalized Suggestion Card",
-      "kind": "card",
-      "refersTo": "card-personalized",
-      "description": "근거 memory_id 가 붙은 추천. 근거 칩 행이 없으면 이 카드를 쓸 수 없다.",
-      "html": "<article class=\"ds-card-personalized\"><span class=\"ds-chip-domain-s\">놀이</span><p class=\"ds-card-body\">쌓기가 계속되고 있어요. 종이컵 탑을 같이 세워 보는 건 어때요?</p><p class=\"ds-card-meta\">사용한 기록 3건 · 가장 최근 오늘</p></article>",
-      "css": ".ds-card-personalized{display:block;background:var(--color-brand-soft);border-radius:var(--radius-card);padding:16px;font-family:var(--font-sans);}.ds-chip-domain-s{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;background:var(--color-surface);color:var(--color-activity-ink)}.ds-card-body{margin:8px 0 0;font-size:1rem;line-height:1.6;color:var(--color-brand-ink)}.ds-card-meta{margin:8px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-muted)}"
+      "name": "Personalized Suggestion Row",
+      "kind": "list-row",
+      "refersTo": "suggestion-row",
+      "description": "05 제안 후보의 개인화 추천 한 줄. 카드가 아니라 목록 줄이고, 화면에서 한 줄만 열린다. 열린 줄은 두 칸 — 위 {domain}-soft(제안 · 이유 · 글자는 전부 {domain}-ink) · 아래 canvas(근거 칩 · 고르는 버튼). 색 면의 뜻은 '어느 Agent 에서 왔는가' 이고 '개인화됨' 이 아니다. 근거 칩 행이 없으면 이 줄을 쓸 수 없다. 고르는 버튼은 도메인 색을 따라가지 않는다 — 실행은 브랜드다.",
+      "html": "<li class=\"ds-srow\"><div class=\"ds-srow-head\"><span class=\"ds-chip-domain-s\">놀이</span><p class=\"ds-srow-title\">쌓기가 계속되고 있어요. 종이컵 탑을 같이 세워 보는 건 어때요?</p><dl class=\"ds-srow-why\"><dt>왜 이걸</dt><dd>블록 쌓기를 서로 다른 3일에 찾았어요</dd><dt>왜 지금</dt><dd>이번 주말 일정이 비어 있어요</dd></dl></div><div class=\"ds-srow-base\"><p class=\"ds-srow-meta\">사용한 기록</p><span class=\"ds-chip-evidence\">블록 쌓기</span></div></li>",
+      "css": ".ds-srow{display:block;list-style:none;font-family:var(--font-sans);border:1px solid var(--color-line);border-radius:var(--radius-card);overflow:hidden}.ds-srow-head{background:var(--color-activity-soft);padding:12px 16px}.ds-chip-domain-s{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;background:var(--color-surface);color:var(--color-activity-ink)}.ds-srow-title{margin:6px 0 0;font-size:1.25rem;font-weight:700;line-height:1.35;letter-spacing:-0.01em;color:var(--color-activity-ink)}.ds-srow-why{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:12px 0 0}.ds-srow-why dt{font-size:0.75rem;line-height:1.4;color:var(--color-activity-ink)}.ds-srow-why dd{margin:0;font-size:0.875rem;line-height:1.55;color:var(--color-activity-ink)}.ds-srow-base{background:var(--color-canvas);padding:16px}.ds-srow-meta{margin:0 0 6px;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-chip-evidence{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;border:1px solid var(--color-line);background:var(--color-surface);font-size:0.75rem;color:var(--color-ink-muted)}"
     },
     {
       "name": "General Suggestion Card",
@@ -717,6 +717,21 @@
       {
         "name": "The 흐린 회색 글씨를 만들지 않는다 규칙",
         "body": "ink-subtle 도 5.1:1 을 넘긴다. 기록 건수·날짜는 부모가 실제로 읽는 정보다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 바닥은 면으로 만든다 규칙",
+        "body": "하단 화면 이동 바는 surface-muted 면이고 위에 선이 없다. line 1px 은 canvas 위에서 1.21:1 이라 비텍스트 3:1 에 못 미치고, 03 홈에는 같은 선이 27px 위에도 있어 한 신호가 두 뜻을 나눠 쓴다. 면은 대비 1.07:1 이지만 바 전체 면적에 걸려 훨씬 세다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 활성 표시는 색 하나가 아니다 규칙",
+        "body": "brand 와 ink-subtle 은 휘도 차가 1.15:1 이고 본문 서체가 단일 웨이트라 굵기로도 위계를 못 만든다. 켜진 탭에는 색과 함께 모양 신호(칸 위쪽 brand 2px)를 준다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 일반 추천은 개인화와 섞이지 않는다 규칙",
+        "body": "근거가 부족하면 개인화 대신 또래 기준 일반 추천(card-general, canvas 바탕 + line-strong 1px 점선)을 그린다. 컴포넌트·타입·응답 필드가 전부 따로다 — GeneralSuggestion 에는 evidence 필드가 없어서 개인화 목록에 넘기면 컴파일이 막는다. 구분은 색이 아니라 라벨과 기록 건수가 진다.",
         "section": "colors"
       },
       {
