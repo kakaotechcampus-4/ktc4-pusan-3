@@ -1,12 +1,14 @@
-"""event / event_item / reminder 의 CRUD tool 10개.
+"""event / event_item 의 CRUD tool 7개.
 
-일정은 관찰과 달리 의존성(준비물과 알림은 event 없이 존재 X)이 있음.
+일정은 관찰과 달리 의존성(준비물은 event 없이 존재 X)이 있음.
 그래서 event_id는 항상 create_event / query_event 가 돌려준 값이어야 하고,
 없는 id 면 UNKNOWN_EVENT 로 되돌려 모델이 먼저 일정을 찾게 한다.
 status / created_by / expires_at / child_id 는 규칙이 채운다.
+
+알림 tool 은 두지 않는다. 알림 등록은 일정 승인 뒤 보호자가 거는 경로다 (계약서 §07).
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -15,7 +17,6 @@ from app.agents.common.datetime_rules import (
     resolve_date,
     resolve_query_bound,
     resolve_time,
-    shift_days,
 )
 from app.agents.memory.context import AgentContext
 from app.agents.memory.result import ErrorCode, ToolResult, fail, ok
@@ -27,27 +28,15 @@ from app.agents.memory.schemas.schedule import (
     EventQuery,
     EventRef,
     EventUpdate,
-    ReminderCreate,
-    ReminderRef,
-    ReminderUpdate,
 )
 from app.agents.memory.store.ports import EventRow
 
 EVENT = "event"
 EVENT_ITEM = "event_item"
-REMINDER = "reminder"
 
 DRAFT_TTL_HOURS = 24  # 승인 없는 draft 는 24시간 뒤 만료
 
 _UNKNOWN_EVENT = "그 event_id 의 일정이 없다. create_event 나 query_event 결과의 id 를 쓴다."
-_NO_REMIND_TIME = (
-    "알림은 몇 시에 보낼지가 필요하다. 발화의 시각 표현을 remind_time 에 넣고, "
-    "말하지 않았으면 사용자에게 몇 시에 알릴지 묻는다."
-)
-_NO_REMIND_ANCHOR = (
-    "알림 날짜가 없다. remind_on 에 날짜 표현을 넣거나, 일정 기준 상대 표현이면 "
-    "offset_days_from_event 에 일수를 넣는다(전날 -1, 당일 0)."
-)
 
 
 def _date_remedy(exc: DateParseError) -> str:
@@ -58,16 +47,9 @@ def _time_remedy(exc: DateParseError) -> str:
     return f"{exc} 시각은 '오전 10시'·'저녁 8시'·'14:30' 처럼 몇 시인지 알 때만 넣는다."
 
 
-def _local_date(moment: datetime, context: AgentContext) -> date:
-    return moment.astimezone(context.timezone).date()
-
-
 async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]:
-    """준비물·알림을 함께 실어 보낸다. 둘 다 조회 tool 이 없어서 여기서만 볼 수 있다."""
-    return row.to_summary(
-        items=await context.store.list_event_items(event_id=row.id),
-        reminders=await context.store.list_reminders(event_id=row.id),
-    )
+    """준비물을 함께 실어 보낸다. 조회 tool 이 없어서 여기서만 볼 수 있다."""
+    return row.to_summary(items=await context.store.list_event_items(event_id=row.id))
 
 
 # ── event ───────────────────────────────────────────────────────
@@ -203,7 +185,7 @@ def _merge_end(
 
 
 async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
-    # 준비물과 알림도 함께 사라진다 (ON DELETE CASCADE)
+    # 준비물도 함께 사라진다 (ON DELETE CASCADE)
     if not await context.store.delete_event(event_id=args.event_id):
         return fail("delete", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
     return ok("delete", EVENT, id=args.event_id)
@@ -238,92 +220,6 @@ def _item_not_found() -> str:
     return "그 item_id 의 준비물이 없다. query_event 결과의 items[].item_id 를 쓴다."
 
 
-# ── reminder ────────────────────────────────────────────────────
-async def create_reminder(context: AgentContext, args: ReminderCreate) -> ToolResult:
-    event = await context.store.get_event(event_id=args.event_id)
-    if event is None:
-        return fail("create", REMINDER, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-
-    resolved = _resolve_remind_at(context, args, event)
-    if isinstance(resolved, ToolResult):
-        return resolved
-
-    row = await context.store.create_reminder(event_id=args.event_id, remind_at=resolved)
-    return ok("create", REMINDER, id=row.id, remind_at=row.remind_at.isoformat())
-
-
-async def update_reminder(context: AgentContext, args: ReminderUpdate) -> ToolResult:
-    current = await context.store.get_reminder(reminder_id=args.reminder_id)
-    if current is None:
-        return fail("update", REMINDER, ErrorCode.TARGET_NOT_FOUND, _reminder_not_found())
-
-    event = await context.store.get_event(event_id=current.event_id)
-    if event is None:
-        return fail("update", REMINDER, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-
-    resolved = _resolve_remind_at(context, args, event, fallback=current.remind_at)
-    if isinstance(resolved, ToolResult):
-        return resolved
-
-    row = await context.store.update_reminder(reminder_id=args.reminder_id, remind_at=resolved)
-    if row is None:
-        return fail("update", REMINDER, ErrorCode.TARGET_NOT_FOUND, _reminder_not_found())
-    return ok("update", REMINDER, id=row.id, remind_at=row.remind_at.isoformat())
-
-
-async def delete_reminder(context: AgentContext, args: ReminderRef) -> ToolResult:
-    if not await context.store.delete_reminder(reminder_id=args.reminder_id):
-        return fail("delete", REMINDER, ErrorCode.TARGET_NOT_FOUND, _reminder_not_found())
-    return ok("delete", REMINDER, id=args.reminder_id)
-
-
-def _reminder_not_found() -> str:
-    return "그 reminder_id 의 알림이 없다. query_event 결과의 reminders[].id 를 쓴다."
-
-
-def _resolve_remind_at(
-    context: AgentContext,
-    args: ReminderCreate | ReminderUpdate,
-    event: EventRow,
-    fallback: datetime | None = None,
-) -> datetime | ToolResult:
-    """알림 시각을 확정한다. 실패하면 ToolResult 로 돌려 모델이 고치게 한다."""
-    operation = "update" if fallback is not None else "create"
-    local_fallback = fallback.astimezone(context.timezone) if fallback else None
-
-    try:
-        day = _remind_day(context, args, event, local_fallback)
-        moment = resolve_time(args.remind_time)
-    except DateParseError as exc:
-        remedy = _time_remedy(exc) if args.remind_time else _date_remedy(exc)
-        return fail(operation, REMINDER, ErrorCode.DATE_UNPARSEABLE, remedy)
-
-    if day is None:
-        return fail(operation, REMINDER, ErrorCode.VALIDATION_ERROR, _NO_REMIND_ANCHOR)
-
-    if moment is None:
-        # 시각을 안 주면 자정에 알림이 가버린다. 임의로 정하지 않고 되묻게 한다
-        if local_fallback is None:
-            return fail(operation, REMINDER, ErrorCode.VALIDATION_ERROR, _NO_REMIND_TIME)
-        moment = local_fallback.timetz().replace(tzinfo=None)
-
-    return combine(day, moment, context.timezone)
-
-
-def _remind_day(
-    context: AgentContext,
-    args: ReminderCreate | ReminderUpdate,
-    event: EventRow,
-    local_fallback: datetime | None,
-) -> date | None:
-    if args.remind_on is not None:
-        return resolve_date(args.remind_on, today=context.today, direction=args.temporal_direction)
-    if args.offset_days_from_event is not None:
-        # "운동회 전날" 은 오늘이 아니라 일정 날짜가 기준이다
-        return shift_days(_local_date(event.starts_at, context), args.offset_days_from_event)
-    return local_fallback.date() if local_fallback else None
-
-
 SCHEDULE_HANDLERS = {
     "create_event": create_event,
     "query_event": query_event,
@@ -332,7 +228,4 @@ SCHEDULE_HANDLERS = {
     "create_event_item": create_event_item,
     "update_event_item": update_event_item,
     "delete_event_item": delete_event_item,
-    "create_reminder": create_reminder,
-    "update_reminder": update_reminder,
-    "delete_reminder": delete_reminder,
 }

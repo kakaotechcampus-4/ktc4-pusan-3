@@ -18,7 +18,7 @@ _PARSE_RULE = """
 [parse_input을 언제 부르나]
 - 서로 독립된 정보나 요청이 2개 이상일 때만, 가장 먼저 한 번 부른다.
 - 하나뿐이면 부르지 않고 곧바로 해당 tool을 부른다.
-- 한 일정에 딸린 준비물·알림은 그 일정의 부속이라 하나로 센다.
+- 한 일정에 딸린 준비물은 그 일정의 부속이라 하나로 센다.
   "오늘 2시에 모래놀이했어" → 부르지 않는다
   "오늘 2시에 모래놀이하고 떡볶이 먹었어" → 부른다
   "금요일에 물놀이 있어. 수영복이랑 여벌옷 챙겨야 해" → 부르지 않는다
@@ -33,7 +33,10 @@ _ROUTING = """
 - 증상·컨디션 → observation_health
 - 학습 주제가 분명한 활동(책읽기·활동지·한글·숫자세기) → observation_education
 - 그 밖의 놀이·자유활동·신체활동 → observation_activity
-- 앞으로의 예정 → event. 챙길 것은 event_item, 알림은 reminder
+- 앞으로의 예정 → event. 챙길 것은 event_item
+- 알림 요청이 오면 그 일정을 query_event로 찾고, 없을 때만 create_event로 만든다.
+  그리고 알림은 생성된 일정을 바탕으로 직접 보내준다고 한 줄로 알린다.
+- 매일 반복되는 식사 일과의 알림(예: 매일 저녁 7시 우유)은 event_type=core 일정으로 저장한다.
 """.strip()
 
 _FUTURE = """
@@ -47,12 +50,11 @@ _VALUES = """
 [값을 채울 때]
 - 날짜와 시각은 계산하지 말고 원문 표현 그대로 넘긴다. "오늘" "모레" "금요일" "저녁 8시".
 - temporal_direction은 이미 일어난 일이면 past, 앞으로의 일이면 future.
-- observed_time · starts_time · remind_time에는 몇 시인지 알 수 있는 표현만 넣는다.
+- observed_time · starts_time에는 몇 시인지 알 수 있는 표현만 넣는다.
   "낮" "아침" "저녁때" "밤" 처럼 시간대만 말한 경우에는 그 필드를 아예 비운다.
   발화에 그런 말이 있어도 넣지 않는다. 시간대는 raw_text에 이미 남는다.
 - 활동·음식·학습에는 시각 필드가 자체가 없다. 관찰 시각은 observation_health에만 있다.
   "2시에 모래놀이했어"의 2시는 raw_text에만 남기고 없는 필드를 만들지 않는다.
-- "전날" "당일"처럼 일정이 기준인 표현은 offset_days_from_event를 쓴다. 전날은 -1.
 - "하루 종일" "종일" "내내"는 duration_min=1440.
 - 발화에 없는 값을 만들지 않는다. duration, engagement_level, severity, reaction, amount 는
   말로 드러났을 때만 채우고 아니면 비운다.
@@ -67,8 +69,8 @@ _IDS = """
 [id를 쓸 때]
 - id는 조회하거나 방금 만든 결과에 들어 있는 값만 쓴다. 지어내지 않는다.
 - 수정·삭제할 대상의 id를 모르면 조회 tool을 먼저 부른다.
-- 새 일정의 준비물·알림은 create_event가 돌려준 id를 쓴다.
-- 알림·준비물을 붙일 일정은 항상 query_event로 먼저 찾는다.
+- 새 일정의 준비물은 create_event가 돌려준 id를 쓴다.
+- 준비물을 붙일 일정은 항상 query_event로 먼저 찾는다.
   결과가 있으면 그 id를 쓰고, 없을 때만 create_event로 만든다.
 """.strip()
 

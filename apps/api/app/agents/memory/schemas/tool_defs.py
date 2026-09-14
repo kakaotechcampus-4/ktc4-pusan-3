@@ -1,4 +1,4 @@
-"""tool 27개의 이름 · 호출 조건 · argument 모델 정의.
+"""tool 24개의 이름 · 호출 조건 · argument 모델 정의.
 
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
@@ -24,9 +24,6 @@ from app.agents.memory.schemas.schedule import (
     EventQuery,
     EventRef,
     EventUpdate,
-    ReminderCreate,
-    ReminderRef,
-    ReminderUpdate,
 )
 from app.agents.memory.schemas.tool_schema import ToolDefinition
 
@@ -150,8 +147,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="query_event",
         description=(
-            "일정을 날짜 범위나 이름으로 찾는다. 준비물과 알림도 함께 돌려준다. "
-            "일정 수정·삭제, 알림 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
+            "일정을 날짜 범위나 이름으로 찾는다. 준비물도 함께 돌려준다. "
+            "일정 수정·삭제, 준비물 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
         ),
         args=EventQuery,
     ),
@@ -162,7 +159,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="delete_event",
-        description=f"일정 한 건을 지운다. 연결된 준비물과 알림도 함께 삭제한다. {_NEEDS_QUERY}",
+        description=f"일정 한 건을 지운다. 연결된 준비물도 함께 삭제한다. {_NEEDS_QUERY}",
         args=EventRef,
     ),
     # event_item
@@ -183,25 +180,5 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="delete_event_item",
         description=f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY}",
         args=EventItemRef,
-    ),
-    # reminder
-    ToolDefinition(
-        name="create_reminder",
-        description=(
-            "일정에 알림을 건다. '전날 저녁 8시'처럼 일정 기준 상대 표현이면 "
-            "remind_on 을 비우고 offset_days_from_event 를 쓴다. "
-            "event_id 는 create_event 나 query_event 결과에서 가져온다."
-        ),
-        args=ReminderCreate,
-    ),
-    ToolDefinition(
-        name="update_reminder",
-        description=f"예약된 알림 정보를 수정한다. {_NEEDS_QUERY}",
-        args=ReminderUpdate,
-    ),
-    ToolDefinition(
-        name="delete_reminder",
-        description=f"알림 한 건을 해제한다. {_NEEDS_QUERY}",
-        args=ReminderRef,
     ),
 ]

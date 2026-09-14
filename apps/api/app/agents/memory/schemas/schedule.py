@@ -1,7 +1,9 @@
-"""event / event_item / reminder 의 tool argument 스키마.
+"""event / event_item 의 tool argument 스키마.
 
-event 4 + event_item 3 + reminder 3 = 10개.
+event 4 + event_item 3 = 7개.
 status · created_by · expires_at · child_id는 규칙이 채운다.
+
+알림은 Agent 가 만들지 않는다. 알림 등록은 일정 승인 뒤 보호자가 거는 경로다 (계약서 §07).
 """
 
 from typing import Annotated
@@ -94,37 +96,3 @@ class EventItemUpdate(ToolArgs):
 
 class EventItemRef(ToolArgs):
     item_id: Annotated[str, Field(description="query_event 결과의 items[].item_id")]
-
-
-class ReminderCreate(ToolArgs):
-    """알림 한 건. 일정 기준 상대 표현이면 offset_days_from_event 를 쓴다.
-
-    "운동회 전날 저녁 8시" 처럼 기준이 일정인 표현은 remind_on 으로 풀 수 없다.
-    """
-
-    event_id: EventId
-    remind_on: Annotated[
-        str | None,
-        Field(default=None, description="알림 날짜 표현. 일정 기준 상대 표현이면 비운다"),
-    ]
-    offset_days_from_event: Annotated[
-        int | None,
-        Field(default=None, ge=-30, le=30, description="일정 당일 0, 전날 -1, 이틀 전 -2"),
-    ]
-    remind_time: TimeExpr
-    temporal_direction: Direction
-
-
-class ReminderUpdate(ToolArgs):
-    reminder_id: Annotated[str, Field(description="query_event 결과의 reminders[].id")]
-    remind_on: Annotated[str | None, Field(default=None, description="바꿀 날짜 표현")]
-    offset_days_from_event: Annotated[
-        int | None,
-        Field(default=None, ge=-30, le=30, description="일정 기준 상대 일수로 바꿀 때"),
-    ]
-    remind_time: TimeExpr
-    temporal_direction: Direction
-
-
-class ReminderRef(ToolArgs):
-    reminder_id: Annotated[str, Field(description="query_event 결과의 reminders[].id")]
