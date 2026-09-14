@@ -7,6 +7,7 @@ include_router와 register_error_handlers 호출이 실제 등록 지점이다.
 from fastapi import FastAPI
 
 from app.api import health
+from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
 from app.api.v1.router import v1_router
 from app.core.config import settings
@@ -17,6 +18,10 @@ app = FastAPI(title=settings.APP_NAME)
 # 에러 봉투 핸들러 (계약서 §01). 등록을 잊으면 FastAPI 기본 {"detail": ...} 가 나가고
 # 프론트 apps/web/src/lib/api/client.ts 가 code 를 못 읽는다. 그래서 맨 위에 둔다.
 register_error_handlers(app)
+
+# 브라우저에서 다른 오리진의 이 API 를 부를 수 있게 한다 (이슈 #34).
+# 허용 오리진은 CORS_ALLOW_ORIGINS 환경변수에서만 오고, * 는 부팅에서 막힌다.
+register_cors(app)
 
 # 헬스체크는 /api/v1 밖에 둔다.
 # API 계약서 §01: "경로는 모두 /api/v1 하위 · 인증 예외 없음".

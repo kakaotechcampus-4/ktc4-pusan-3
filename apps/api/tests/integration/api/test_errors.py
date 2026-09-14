@@ -32,18 +32,18 @@ async def test_logout_is_not_swallowed_by_provider_route(client):
     assert response.json()["error"]["code"] == "unauthenticated"
 
 
-async def test_logout_with_token_reaches_unimplemented_dependency(client):
-    """토큰이 있으면 인증 의존성 안까지 들어가고, 지금은 501 이 정상이다.
+async def test_method_not_allowed_is_hidden_as_not_found(client):
+    """🚨 405 는 상태와 코드 모두 404 로 내린다.
 
-    #34 에서 get_current_parent 본문이 채워지면 이 테스트는 A-14/A-15 로 대체된다.
+    "메서드가 다르다" 는 곧 "그 경로는 있다" 는 뜻이다. 코드만 not_found 로 적고 상태를
+    405 로 두면 숨긴 것이 아니다 — 공격자는 코드가 아니라 상태를 본다. Allow 헤더도
+    같은 이유로 지운다.
     """
-    response = await client.post(
-        "/api/v1/auth/logout",
-        headers={"Authorization": "Bearer dummy-token"},
-    )
+    response = await client.post("/health")
 
-    assert response.status_code == 501
-    assert response.json()["error"]["code"] == "not_implemented"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    assert "allow" not in {name.lower() for name in response.headers}
 
 
 async def test_health_stays_outside_v1(client):

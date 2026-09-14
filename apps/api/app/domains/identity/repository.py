@@ -8,12 +8,19 @@
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.identity.models import AuthHandoff, AuthIdentity, AuthProvider
+from app.domains.identity.models import (
+    AuthHandoff,
+    AuthIdentity,
+    AuthProvider,
+    AuthSession,
+    Parent,
+)
 
 
 async def find_parent_id_by_identity(
@@ -64,3 +71,50 @@ async def create_handoff(
         )
     )
     await session.flush()
+
+
+@dataclass(frozen=True)
+class SessionRow:
+    """세션 1건 + 그 계정의 탈퇴 여부. 인증 판정에 필요한 칸만 담는다.
+
+    ORM 객체를 올려보내지 않는다 — 세션이 닫힌 뒤 필드를 더 읽다 실패하는 경로와,
+    핸들러가 parent 를 통해 다른 테이블까지 조회하는 경로를 둘 다 막는다.
+    """
+
+    session_id: uuid.UUID
+    parent_id: uuid.UUID
+    expires_at: datetime
+    parent_deleted_at: datetime | None
+
+
+async def find_session_by_token_hash(
+    session: AsyncSession,
+    *,
+    token_hash: bytes,
+) -> SessionRow | None:
+    """세션 토큰 해시로 한 건 찾는다 (§6-2 ①).
+
+    parent 를 조인해 탈퇴 여부까지 한 번에 가져온다. 나눠 부르면 "세션은 살아 있는데
+    계정은 지워진" 사이를 두 쿼리 사이에서 보게 된다.
+    """
+    stmt = (
+        select(
+            AuthSession.id,
+            AuthSession.parent_id,
+            AuthSession.expires_at,
+            Parent.deleted_at,
+        )
+        .join(Parent, Parent.id == AuthSession.parent_id)
+        .where(AuthSession.token_hash == token_hash)
+    )
+    row = (await session.execute(stmt)).first()
+    return SessionRow(*row) if row is not None else None
+
+
+async def delete_session(session: AsyncSession, *, session_id: uuid.UUID) -> None:
+    """세션 행 1건 삭제 — 로그아웃 (§5-3 · A-15).
+
+    🚨 id 로만 지운다. parent_id 로 지우면 같은 계정의 다른 기기 세션까지 끊긴다.
+       폐기를 행 삭제로 하는 이유는 §5-3 — 세션은 증빙이 아니라 유출 표면이다.
+    """
+    await session.execute(delete(AuthSession).where(AuthSession.id == session_id))

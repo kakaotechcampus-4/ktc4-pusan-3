@@ -28,7 +28,11 @@ from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
 from app.domains.identity.models import AuthProvider
-from app.domains.identity.repository import create_handoff, find_parent_id_by_identity
+from app.domains.identity.repository import (
+    create_handoff,
+    delete_session,
+    find_parent_id_by_identity,
+)
 from app.integrations.kakao.client import KakaoApiError, build_authorize_url, kakao_client
 
 log = logging.getLogger(__name__)
@@ -229,18 +233,21 @@ async def callback(
     response_class=Response,
     responses={401: {"model": ErrorEnvelope}},
 )
-async def logout(auth: CurrentParent) -> Response:
+async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     """세션 행 1건 삭제 — 명세 §3-6 · 테스트 A-15.
 
     계약서 28개 목록에 없던 엔드포인트다. 없으면 클라이언트가 토큰을 버리는 흉내만
     내고 서버에서는 만료까지 유효하다.
 
-    지금은 골격이라 여기까지 오지 않는다 — get_current_parent 가 먼저
-    401(헤더 없음) 또는 501(미구현)을 던진다.
+    🚨 지운 즉시 무효다. 다음 요청은 get_current_parent 에서 401 로 떨어진다 — 불투명
+       토큰을 JWT 대신 고른 이유가 이것이다 (§4-2).
+
+    카카오 쪽 로그아웃은 부르지 않는다. 우리 서비스에서 나가는 것과 카카오 계정에서
+    로그아웃하는 것은 다른 행위다 (§3-6).
     """
-    # TODO(#34): session_id 로 session 행 1건 DELETE → 204.
-    #   🚨 같은 parent 의 다른 세션을 지우지 않는다 (명세 §5-3).
-    raise ApiError(501, "not_implemented", "아직 구현되지 않았어요")
+    await delete_session(session, session_id=auth.session_id)
+    await session.commit()
+    return Response(status_code=204)
 
 
 # 아래 2개는 이어서 채운다. 둘 다 무인증이고 계약서 §01 에 예외로 명시해야 한다.

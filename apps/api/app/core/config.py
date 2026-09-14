@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
@@ -19,6 +20,10 @@ class Settings(BaseSettings):
     MEMORY_BASE_URL: str | None = None
     MEMORY_MODEL: str | None = None
     MEMORY_REASONING_EFFORT: str | None = None
+
+    # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
+    # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
+    CORS_ALLOW_ORIGINS: str = ""
 
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
     #
@@ -42,6 +47,24 @@ class Settings(BaseSettings):
     HANDOFF_TTL: int = 120
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600
+
+    @field_validator("CORS_ALLOW_ORIGINS")
+    @classmethod
+    def _reject_wildcard_origin(cls, raw: str) -> str:
+        """🚨 * 를 허용 오리진으로 쓰지 않는다.
+
+        이 API 는 Bearer 토큰으로 아이 정보를 내려준다. 아무 사이트나 부를 수 있으면
+        XSS 한 번에 남의 페이지에서 우리 API 를 호출하는 통로가 열린다. 오타로 들어가는
+        것을 막으려고 부팅에서 끊는다 — 런타임에 조용히 넓어지는 것이 제일 나쁘다.
+        """
+        if "*" in raw:
+            raise ValueError("CORS_ALLOW_ORIGINS 에 * 를 쓰지 않는다. 오리진을 명시할 것")
+        return raw
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """허용 오리진 목록. 빈 칸과 빈 항목은 버린다."""
+        return [origin.strip() for origin in self.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
     @property
     def kakao_missing_keys(self) -> list[str]:

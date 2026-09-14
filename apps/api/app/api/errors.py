@@ -84,12 +84,21 @@ def envelope(
 
 
 # 프레임워크가 스스로 내는 status 만 적는다. 우리 코드는 ApiError 를 던진다.
-# 405 도 not_found 로 내린다 — 그 경로가 존재한다는 사실을 밖에 알리지 않는다.
+#
+# 🚨 상태와 코드를 항상 같은 기준으로 맞춘다. 코드만 바꾸고 상태를 그대로 두면
+#    프론트가 둘 중 무엇으로 분기해야 할지 알 수 없다.
 _FRAMEWORK_CODE: dict[int, str] = {
     401: "unauthenticated",
     404: "not_found",
-    405: "not_found",
 }
+
+_METHOD_NOT_ALLOWED = 405
+"""405 는 404 로 바꿔 내린다.
+
+"메서드가 다르다" 는 곧 "그 경로는 있다" 는 뜻이다. 상태를 405 로 두고 코드만 not_found
+로 적으면 숨긴 것이 아니다 — 공격자는 코드가 아니라 상태를 본다. Allow 헤더도 같은
+이유로 지운다. 셋 중 하나라도 남으면 경로 존재가 드러난다.
+"""
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -101,14 +110,25 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-        code = _FRAMEWORK_CODE.get(exc.status_code)
+        status = exc.status_code
+        # 봉투를 새로 만들면서 원래 응답의 헤더를 잃지 않는다 — 인증 스킴의
+        # WWW-Authenticate, 앞으로 쓸 429 의 Retry-After 가 여기 실린다.
+        headers = dict(exc.headers or {})
+
+        if status == _METHOD_NOT_ALLOWED:
+            status = 404
+            headers = {name: value for name, value in headers.items() if name.lower() != "allow"}
+
+        code = _FRAMEWORK_CODE.get(status)
         if code is None:
             # 여기 오는 것은 버그다 — 우리 코드가 HTTPException 을 직접 던졌다는 뜻.
-            log.warning("매핑 없는 HTTPException status=%s", exc.status_code)
-            code = "internal_error"
-        # 봉투를 새로 만들면서 원래 응답의 헤더를 잃지 않는다 — 405 의 Allow,
-        # 인증 스킴의 WWW-Authenticate, 앞으로 쓸 429 의 Retry-After 가 여기 실린다.
-        return envelope(exc.status_code, code, "요청을 처리할 수 없어요", headers=exc.headers)
+            # 원래 상태는 로그에만 남기고 밖으로는 500 으로 나간다. 매핑이 없다는 것은
+            # 그 상태로 내보낼 코드를 정한 적이 없다는 뜻이라, 짝이 안 맞는 응답을
+            # 만들어 내보내지 않는다.
+            log.warning("매핑 없는 HTTPException status=%s", status)
+            return envelope(500, "internal_error", "요청을 처리할 수 없어요")
+
+        return envelope(status, code, "요청을 처리할 수 없어요", headers=headers or None)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:

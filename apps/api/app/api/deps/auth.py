@@ -9,11 +9,14 @@ GET /me와 /consents는 계정 동의 검사를 건너뛴다 (§6-2).
    조회하는 경로가 열린다. 권한 판정은 deps 한 곳에서만
    한다 (명세 §6-2 "핸들러가 직접 권한 쿼리를 쓰지 않는다").
 
-구현 상태: 토큰으로 세션을 찾는 본문은 session 테이블을 만드는 #34 PR 에서 채운다.
+🚨 실패를 두 갈래로 나눈다 — 세션이 없음·만료·삭제됨은 전부 401 unauthenticated,
+   계정 자체가 탈퇴 처리된 경우만 404 not_found (명세 §8-1 · A-19).
+   앞의 셋을 구분해 알려주면 공격자에게 정보를 주고, 뒤는 만료를 기다리지 않는다.
 """
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -22,6 +25,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError
+from app.domains.identity.repository import find_session_by_token_hash
 
 # auto_error=False — 헤더가 없을 때 FastAPI 기본 403 이 나가지 않게 하고,
 # 우리가 401 unauthenticated 봉투로 답한다 (계약서 §01).
@@ -57,13 +61,22 @@ async def get_current_parent(
     if credentials is None:
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
 
-    # TODO(#34): hash_token(credentials.credentials) 로 session 조회 →
-    #   expires_at 확인 → AuthContext(parent_id, session_id) 반환.
-    #
-    #   🚨 "없음 · 만료 · 이미 삭제됨" 을 구분해 알려주지 않는다 — 전부
-    #      401 unauthenticated. 사유를 알려주면 공격자에게 정보를 준다 (명세 §8-1).
-    #   관련 테스트: A-14(만료 토큰) · A-15(로그아웃 직후) · A-19(탈퇴한 계정)
-    raise ApiError(501, "not_implemented", "아직 구현되지 않았어요")
+    row = await find_session_by_token_hash(
+        session, token_hash=hash_token(credentials.credentials)
+    )
+
+    # 🚨 "없음 · 만료 · 이미 삭제됨" 을 구분해 알려주지 않는다 — 전부 401 이다.
+    #    사유를 알려주면 공격자에게 정보를 준다 (명세 §8-1).
+    #    관련 테스트: A-14(만료 토큰) · A-15(로그아웃 직후)
+    if row is None or row.expires_at <= datetime.now(UTC):
+        raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
+
+    # A-19 만 다른 곳으로 간다. 탈퇴한 계정은 세션 만료를 기다리지 않고 즉시 끊는다.
+    # 유예기간 N일이 미정이라 그전까지 404 로 막아둔다 (§8-1 · §10-1).
+    if row.parent_deleted_at is not None:
+        raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
+
+    return AuthContext(parent_id=row.parent_id, session_id=row.session_id)
 
 
 CurrentParent = Annotated[AuthContext, Depends(get_current_parent)]
