@@ -35,22 +35,31 @@ async def session():
     """
     async with engine.connect() as conn:
         tx = await conn.begin()
-        factory = async_sessionmaker(bind=conn, expire_on_commit=False)
+        factory = async_sessionmaker(
+            bind=conn,
+            expire_on_commit=False,
+            # 🚨 이 인자가 없으면 핸들러의 rollback 이 바깥 트랜잭션까지 되감는다.
+            #    A-13(signup 실패 → parent 미생성)처럼 롤백을 확인하는 테스트가
+            #    그 뒤 단언에서 죽은 커넥션을 본다. savepoint 로 받아 격리한다.
+            join_transaction_mode="create_savepoint",
+        )
         async with factory() as s:
             yield s
         await tx.rollback()
 
 
 @pytest.fixture
-async def db_client(session: AsyncSession):
-    """DB 를 보는 엔드포인트 테스트용.
+async def db_client(client: AsyncClient, session: AsyncSession):
+    """DB 를 보는 엔드포인트 테스트용. 위 client 에 세션 오버라이드만 얹는다.
 
     🚨 dependency_overrides 의 "키" 는 함수 객체 자체다. 라우터가
        Depends(get_session) 으로 적어둔 그 함수를 위 session 픽스처로 갈아 끼운다.
        이 줄이 없으면 요청 핸들러가 커넥션을 따로 열어서 롤백이 안 먹고,
        A-01("parent 미생성")같은 검증이 다음 테스트로 흘러넘친다.
+
+    🚨 정리는 pop 으로 이 키만 지운다. clear() 로 비우면 다른 픽스처가 끼워 둔
+       오버라이드(A-12·A-16 에서 쓸 카카오 integration 스텁 등)까지 함께 사라진다.
     """
     app.dependency_overrides[get_session] = lambda: session
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
-    app.dependency_overrides.clear()
+    yield client
+    app.dependency_overrides.pop(get_session, None)
