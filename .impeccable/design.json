@@ -604,7 +604,7 @@
       "refersTo": "button-primary",
       "description": "화면의 다음 행동. 한 화면에 하나만 둔다.",
       "html": "<button class=\"ds-btn-primary\">이렇게 기록할게요</button>",
-      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-brand);color:#fff}.ds-btn-primary:hover{background:var(--color-brand-hover)}.ds-btn-primary:active{background:var(--color-brand-hover)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.ds-btn-primary:disabled{background:var(--color-surface-muted);color:var(--color-ink-subtle);border:1px solid var(--color-line);cursor:not-allowed}"
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);min-height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-brand);color:#fff}.ds-btn-primary:hover{background:var(--color-brand-hover)}.ds-btn-primary:active{background:var(--color-brand-hover)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.ds-btn-primary:disabled{background:var(--color-surface-muted);color:var(--color-ink-subtle);border:1px solid var(--color-line);cursor:not-allowed}"
     },
     {
       "name": "Approve Button",
@@ -612,7 +612,7 @@
       "refersTo": "button-approve",
       "description": "승인 게이트 2곳 전용. 높이 52 · 전체 폭으로 다른 버튼과 구조적으로 구분된다.",
       "html": "<button class=\"ds-btn-approve\">캘린더에 등록할게요</button>",
-      "css": ".ds-btn-approve{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:52px;width:100%;border-radius:var(--radius-field);background:var(--color-brand);color:#fff}.ds-btn-approve:hover{background:var(--color-brand-hover)}.ds-btn-approve:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+      "css": ".ds-btn-approve{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);min-height:52px;width:100%;border-radius:var(--radius-field);background:var(--color-brand);color:#fff}.ds-btn-approve:hover{background:var(--color-brand-hover)}.ds-btn-approve:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
     },
     {
       "name": "Secondary Button",
@@ -620,7 +620,7 @@
       "refersTo": "button-secondary",
       "description": "거절·취소. 거절은 파괴가 아니므로 danger 를 쓰지 않는다.",
       "html": "<button class=\"ds-btn-secondary\">아니에요</button>",
-      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-surface);color:var(--color-ink);border:1px solid var(--color-line-strong)}.ds-btn-secondary:hover{background:var(--color-surface-muted)}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);min-height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-surface);color:var(--color-ink);border:1px solid var(--color-line-strong)}.ds-btn-secondary:hover{background:var(--color-surface-muted)}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
     },
     {
       "name": "Danger Button",
@@ -628,7 +628,7 @@
       "refersTo": "button-danger",
       "description": "파괴적 확정에만 — 동의 철회 · 기록 삭제.",
       "html": "<button class=\"ds-btn-danger\">기록 삭제하기</button>",
-      "css": ".ds-btn-danger{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-danger);color:#fff}.ds-btn-danger:hover{background:var(--color-danger-hover)}.ds-btn-danger:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);min-height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-danger);color:#fff}.ds-btn-danger:hover{background:var(--color-danger-hover)}.ds-btn-danger:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
     },
     {
       "name": "Kakao Login Button",
@@ -636,7 +636,7 @@
       "refersTo": "button-kakao",
       "description": "00 로그인 화면 전용. 카카오가 정한 색·모양이라 우리 팔레트 밖의 예외다.",
       "html": "<button class=\"ds-btn-kakao\"><svg viewBox=\"0 0 18 18\" width=\"18\" height=\"18\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M9 1.5C4.58 1.5 1 4.31 1 7.78c0 2.2 1.45 4.13 3.63 5.25-.16.57-.58 2.1-.66 2.43-.1.4.15.4.31.29.13-.09 2.03-1.38 2.85-1.94.6.09 1.22.13 1.87.13 4.42 0 8-2.81 8-6.28S13.42 1.5 9 1.5Z\"/></svg>카카오로 시작하기</button>",
-      "css": ".ds-btn-kakao{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-kakao);color:var(--color-kakao-ink)}.ds-btn-kakao:hover{background:var(--color-kakao-hover)}.ds-btn-kakao:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+      "css": ".ds-btn-kakao{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);min-height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-kakao);color:var(--color-kakao-ink)}.ds-btn-kakao:hover{background:var(--color-kakao-hover)}.ds-btn-kakao:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
     },
     {
       "name": "Text Input",
@@ -644,7 +644,7 @@
       "refersTo": "input",
       "description": "라벨·설명·사유를 입력과 한 덩어리로 묶는다. 16px 미만으로 내리지 않는다(iOS 자동 확대).",
       "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-name\">아이 이름(별명)</label><p class=\"ds-field-hint\">화면에서 아이를 부를 때 씁니다.</p><input class=\"ds-input\" id=\"ds-name\" placeholder=\"민준\"><p class=\"ds-field-error\">이름은 12자까지 쓸 수 있어요.</p></div>",
-      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:var(--font-sans);}.ds-field-label{font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-muted)}.ds-field-hint{margin:0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-input{height:52px;padding:0 14px;font:inherit;font-size:1rem;line-height:1.6;color:var(--color-ink);background:var(--color-surface);border:1px solid var(--color-line-strong);border-radius:var(--radius-field);caret-color:var(--color-brand);transition:border-color 120ms cubic-bezier(0.2,0,0,1)}.ds-input::placeholder{color:var(--color-ink-subtle)}.ds-input:hover{border-color:var(--color-ink-subtle)}.ds-input:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.ds-input::selection{background:var(--color-brand-soft);color:var(--color-brand-ink)}.ds-field-error{margin:0;font-size:0.75rem;line-height:1.4;color:var(--color-danger-ink)}"
+      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:var(--font-sans);}.ds-field-label{font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-muted)}.ds-field-hint{margin:0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-input{min-height:52px;padding:0 14px;font:inherit;font-size:1rem;line-height:1.6;color:var(--color-ink);background:var(--color-surface);border:1px solid var(--color-line-strong);border-radius:var(--radius-field);caret-color:var(--color-brand);transition:border-color 120ms cubic-bezier(0.2,0,0,1)}.ds-input::placeholder{color:var(--color-ink-subtle)}.ds-input:hover{border-color:var(--color-ink-subtle)}.ds-input:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.ds-input::selection{background:var(--color-brand-soft);color:var(--color-brand-ink)}.ds-field-error{margin:0;font-size:0.75rem;line-height:1.4;color:var(--color-danger-ink)}"
     },
     {
       "name": "Choice Chip",
@@ -652,7 +652,7 @@
       "refersTo": "chip-choice",
       "description": "눌러서 고르는 칩. aria-pressed 로 상태를 내고, 위아래 투명 여백으로 터치 44px 을 채운다.",
       "html": "<div class=\"ds-chiprow\"><button class=\"ds-chip-hit\" aria-pressed=\"true\"><span class=\"ds-chip ds-chip-on\">블록</span></button><button class=\"ds-chip-hit\" aria-pressed=\"false\"><span class=\"ds-chip\">그림책</span></button></div>",
-      "css": ".ds-chiprow{display:flex;flex-wrap:wrap;column-gap:8px;font-family:var(--font-sans);}.ds-chip-hit{display:flex;align-items:center;min-height:44px;padding:8px 0;background:none;border:0;cursor:pointer}.ds-chip{display:flex;align-items:center;height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-surface);border:1px solid var(--color-line);color:var(--color-ink-muted);transition:background-color 120ms cubic-bezier(0.2,0,0,1),border-color 120ms cubic-bezier(0.2,0,0,1)}.ds-chip-hit:hover .ds-chip{background:var(--color-surface-muted);border-color:var(--color-line-strong)}.ds-chip-on{background:var(--color-brand-soft);border-color:var(--color-brand);color:var(--color-brand-ink)}.ds-chip-hit:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px;border-radius:9999px}"
+      "css": ".ds-chiprow{display:flex;flex-wrap:wrap;column-gap:8px;font-family:var(--font-sans);}.ds-chip-hit{display:flex;align-items:center;min-height:44px;padding:8px 0;background:none;border:0;cursor:pointer}.ds-chip{display:flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-surface);border:1px solid var(--color-line);color:var(--color-ink-muted);transition:background-color 120ms cubic-bezier(0.2,0,0,1),border-color 120ms cubic-bezier(0.2,0,0,1)}.ds-chip-hit:hover .ds-chip{background:var(--color-surface-muted);border-color:var(--color-line-strong)}.ds-chip-on{background:var(--color-brand-soft);border-color:var(--color-brand);color:var(--color-brand-ink)}.ds-chip-hit:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px;border-radius:9999px}"
     },
     {
       "name": "Domain Chip",
@@ -660,7 +660,7 @@
       "refersTo": "chip-domain",
       "description": "추천이 어느 Agent 에서 왔는지. 아이콘은 aria-hidden 이고 의미는 라벨이 진다.",
       "html": "<span class=\"ds-chip-domain\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2\"/><rect x=\"14\" y=\"2\" width=\"8\" height=\"8\" rx=\"1\"/></svg>놀이</span>",
-      "css": ".ds-chip-domain{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-activity-soft);color:var(--color-activity-ink);font-family:var(--font-sans);}"
+      "css": ".ds-chip-domain{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-activity-soft);color:var(--color-activity-ink);font-family:var(--font-sans);}"
     },
     {
       "name": "Personalized Suggestion Card",
@@ -668,7 +668,7 @@
       "refersTo": "card-personalized",
       "description": "근거 memory_id 가 붙은 추천. 근거 칩 행이 없으면 이 카드를 쓸 수 없다.",
       "html": "<article class=\"ds-card-personalized\"><span class=\"ds-chip-domain-s\">놀이</span><p class=\"ds-card-body\">쌓기가 계속되고 있어요. 종이컵 탑을 같이 세워 보는 건 어때요?</p><p class=\"ds-card-meta\">사용한 기록 3건 · 가장 최근 오늘</p></article>",
-      "css": ".ds-card-personalized{display:block;background:var(--color-brand-soft);border-radius:var(--radius-card);padding:16px;font-family:var(--font-sans);}.ds-chip-domain-s{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;background:var(--color-surface);color:var(--color-activity-ink)}.ds-card-body{margin:8px 0 0;font-size:1rem;line-height:1.6;color:var(--color-brand-ink)}.ds-card-meta{margin:8px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-muted)}"
+      "css": ".ds-card-personalized{display:block;background:var(--color-brand-soft);border-radius:var(--radius-card);padding:16px;font-family:var(--font-sans);}.ds-chip-domain-s{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;background:var(--color-surface);color:var(--color-activity-ink)}.ds-card-body{margin:8px 0 0;font-size:1rem;line-height:1.6;color:var(--color-brand-ink)}.ds-card-meta{margin:8px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-muted)}"
     },
     {
       "name": "General Suggestion Card",

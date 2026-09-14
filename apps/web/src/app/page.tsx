@@ -175,7 +175,7 @@ function ExamplePreview() {
       <p className="text-caption text-ink-subtle">이렇게 정리해서 내놔요</p>
 
       <div className="bg-brand-soft rounded-card p-4">
-        <span className="bg-surface text-activity-ink text-label inline-flex h-7 items-center gap-1.5 rounded-full px-2.5">
+        <span className="bg-surface text-activity-ink text-label min-h-chip inline-flex items-center gap-1.5 rounded-full px-2.5">
           <DomainIcon agent="activity" />
           놀이
         </span>

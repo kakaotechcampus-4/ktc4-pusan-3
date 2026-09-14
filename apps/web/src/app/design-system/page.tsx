@@ -15,15 +15,19 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import type { Agent } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
-import { COLOR_GROUPS, NOT_BUILT, TYPE_STEPS, type ColorPair } from "./tokens";
+import { COLOR_GROUPS, HEIGHT_TOKENS, NOT_BUILT, TYPE_STEPS, type ColorPair } from "./tokens";
 
 /**
- * 디자인 시스템을 한 화면에서 본다. 정본은 [`docs/web/design-system-v1.md`] 이고,
- * 이 페이지는 **그 문서가 코드에서 실제로 어떻게 나오는지**를 보여준다.
+ * 디자인 시스템을 한 화면에서 본다. 의도와 금지 예는 [`docs/web/design-system-v1.md`],
+ * 공통 값은 `globals.css`, 상태·포커스 동작은 컴포넌트 코드가 원본이고 (문서 머리말),
+ * 이 페이지는 **그 셋이 실제로 어떻게 나오는지**를 보여주는 실행 가능한 예제다.
  *
- * 🚨 스크린샷이 아니라 **살아 있는 문서**다. 색은 `globals.css` 의 실제 변수를 읽고,
+ * 🚨 스크린샷이 아니라 **살아 있는 문서**다. 색·높이는 `globals.css` 의 실제 변수를 읽고,
  *    대비비는 §10 의 공식으로 그 자리에서 계산한다. 토큰을 바꾸면 여기서 통과/실패가
  *    바뀌므로, 문서와 코드가 어긋나면 눈에 보인다.
+ *
+ * 🚨 **"긴 문구" 는 글자를 키운 채로 본다** (문서 §10). 표의 값이 맞아도 문구가 잘리거나
+ *    승인 버튼이 가려지면 사양이 지켜진 게 아니다.
  *
  * 폭은 `Screen` 을 그대로 쓴다 — 컴포넌트를 실제로 놓일 폭에서 봐야 판단이 맞는다.
  */
@@ -34,8 +38,9 @@ export default function DesignSystemPage() {
         <p className="text-label text-brand">내부 문서</p>
         <PageTitle className="mt-2">디자인 시스템</PageTitle>
         <p className="text-body text-ink-muted mt-3">
-          정본은 <code className="text-ink">docs/web/design-system-v1.md</code> 입니다. 이 화면은 그
-          문서가 코드에서 실제로 어떻게 나오는지 보여줍니다. 대비비는 지금 값으로 계산합니다.
+          의도는 <code className="text-ink">docs/web/design-system-v1.md</code>, 값은{" "}
+          <code className="text-ink">globals.css</code> 가 원본입니다. 이 화면은 둘이 코드에서
+          실제로 어떻게 나오는지 보여줍니다. 대비비와 높이는 지금 값으로 읽습니다.
         </p>
       </header>
 
@@ -375,7 +380,50 @@ function ShapeSection() {
           </li>
         ))}
       </ul>
+
+      <SubTitle>높이</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        globals.css 의 --height-* 를 지금 읽은 값이다. 🚨 전부 최소 높이(min-h-*)로만 쓴다 — 문구가
+        길거나 글자를 키우면 늘어난다.
+      </p>
+      <HeightList />
     </Section>
+  );
+}
+
+/** 높이 토큰을 문서에 숫자로 옮겨 적지 않고 여기서 읽는다 — 값의 원본은 한 곳이다. */
+function HeightList() {
+  const root = useRef<HTMLUListElement>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!root.current) return;
+    const style = getComputedStyle(root.current);
+    const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const next: Record<string, string> = {};
+    for (const { name } of HEIGHT_TOKENS) {
+      const raw = style.getPropertyValue(`--height-${name}`).trim();
+      // rem 은 루트 글자 크기를 따라간다. 브라우저 기본 글자를 키우면 px 이 같이 커지는 게 맞다.
+      const px = raw.endsWith("rem") ? Math.round(parseFloat(raw) * rootPx) : null;
+      next[name] = raw ? `${raw}${px === null ? "" : ` · ${px}px`}` : "읽기 실패";
+    }
+    setValues(next);
+  }, []);
+
+  return (
+    <ul ref={root} className="flex flex-col gap-2">
+      {HEIGHT_TOKENS.map((t) => (
+        <li key={t.name} className="flex items-center gap-3">
+          <span
+            className="bg-brand-soft border-brand w-3 shrink-0 rounded-sm border"
+            style={{ height: `var(--height-${t.name})` }}
+          />
+          <span className="text-caption text-ink-muted">
+            {t.name} {values[t.name] ?? "…"} · {t.use}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -385,7 +433,7 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
   { variant: "primary", use: "한 화면에 하나" },
   { variant: "secondary", use: "거절·취소. 거절은 파괴가 아니다" },
   { variant: "tertiary", use: "재시도 같은 약한 행동" },
-  { variant: "approve", use: "🚨 승인 게이트 2곳 전용 · 52px 전체 폭" },
+  { variant: "approve", use: "🚨 승인 게이트 2곳 전용 · 전체 폭" },
   { variant: "danger", use: "🚨 파괴적 확정에만 (동의 철회·삭제)" },
   { variant: "kakao", use: "00 로그인 전용 (외부 브랜드)" },
 ];
@@ -459,6 +507,22 @@ function ComponentSection() {
         ))}
         <Chip selected={false} disabled onClick={() => {}}>
           비활성
+        </Chip>
+      </ChipRow>
+
+      <SubTitle>긴 문구</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 브라우저 확대 200% 와 시스템 글자 크기를 키운 상태로 본다. 글자가 버튼·칩 밖으로 나가거나
+        잘리면 안 되고, 승인 버튼은 문구 전체가 보여야 한다. 높이 값이 맞아도 여기서 깨지면 사양이
+        지켜진 게 아니다.
+      </p>
+      <Button block>이번 주 토요일 오전 10시 소아과 예방접종 일정을 캘린더에 추가하기</Button>
+      <Button variant="approve">
+        땅콩 알레르기를 아이의 건강 기록으로 확정하고 앞으로 식사 추천에서 계속 빼기
+      </Button>
+      <ChipRow>
+        <Chip selected={false} onClick={() => {}}>
+          블록 쌓기와 종이컵 탑 같은 높이 쌓는 놀이
         </Chip>
       </ChipRow>
 

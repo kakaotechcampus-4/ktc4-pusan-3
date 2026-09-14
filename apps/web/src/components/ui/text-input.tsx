@@ -37,7 +37,8 @@ export function TextInput({ label, hint, error, className, ...props }: TextInput
         aria-invalid={error ? true : undefined}
         aria-describedby={cn(hint ? hintId : null, error ? errorId : null) || undefined}
         className={cn(
-          "text-body text-ink placeholder:text-ink-subtle rounded-field bg-surface h-13 w-full border px-3.5",
+          // 높이는 최소값이다 — 글자를 키우면 입력도 따라 커져야 값이 잘리지 않는다 (문서 §10).
+          "text-body text-ink placeholder:text-ink-subtle rounded-field bg-surface min-h-field w-full border px-3.5 py-2",
           "ease-standard transition-colors duration-120",
           error ? "border-danger" : "border-line-strong hover:border-ink-subtle",
           className,

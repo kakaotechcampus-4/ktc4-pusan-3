@@ -14,7 +14,7 @@ import { cn } from "@/lib/cn";
  * 날짜 입력. 값은 `YYYY-MM-DD` 문자열이고, 달력은 바텀시트로 연다.
  *
  * **왜 `<input type="date">` 를 안 쓰나** — 브라우저·OS 마다 생김새가 완전히 달라서
- * 토큰으로 맞출 수가 없다. 디자인 시스템 §7 이 정한 입력 사양(높이 52 · `line-strong` 1px ·
+ * 토큰으로 맞출 수가 없다. 디자인 시스템 §7 이 정한 입력 사양(`field` 높이 · `line-strong` 1px ·
  * body 16px)을 지킬 방법이 없는 유일한 입력이었다.
  *
  * **왜 팝오버가 아니라 바텀시트인가** — 이 화면은 대부분 웹뷰다(§9). 좁은 폭에서 달력을
@@ -75,7 +75,7 @@ export function DateField({
           setOpen(true);
         }}
         className={cn(
-          "rounded-field bg-surface ease-standard flex h-13 w-full items-center justify-between border px-3.5 transition-colors duration-120",
+          "rounded-field bg-surface ease-standard min-h-field flex w-full items-center justify-between gap-2 border px-3.5 py-2 text-left transition-colors duration-120",
           error ? "border-danger" : "border-line-strong hover:border-ink-subtle",
         )}
       >
@@ -86,7 +86,8 @@ export function DateField({
           aria-hidden
           size={ICON_SIZE.md}
           strokeWidth={ICON_STROKE}
-          className="text-ink-subtle"
+          // 글자를 키워 값이 두 줄이 돼도 아이콘이 찌그러지지 않게.
+          className="text-ink-subtle shrink-0"
         />
       </button>
 
@@ -156,19 +157,19 @@ const CALENDAR_CLASSES = {
   root: "relative w-full",
   months: "flex flex-col gap-4",
   month: "flex flex-col gap-3",
-  nav: "absolute inset-x-0 top-0 flex h-11 items-center justify-between",
-  month_caption: "flex h-11 items-center justify-center",
+  nav: "absolute inset-x-0 top-0 flex h-touch items-center justify-between",
+  month_caption: "flex min-h-touch items-center justify-center",
   dropdowns: "flex items-center justify-center gap-2",
   dropdown_root: "relative",
   dropdown:
-    "text-body text-ink bg-surface border-line-strong rounded-field h-11 cursor-pointer border px-3 pr-8",
+    "text-body text-ink bg-surface border-line-strong rounded-field min-h-touch cursor-pointer border px-3 pr-8",
   years_dropdown: "",
   months_dropdown: "",
   caption_label: "sr-only",
   button_previous:
-    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex size-11 items-center justify-center rounded-full disabled:opacity-40",
+    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   button_next:
-    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex size-11 items-center justify-center rounded-full disabled:opacity-40",
+    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   month_grid: "w-full border-collapse",
   weekdays: "flex",
   weekday: "text-caption text-ink-subtle flex h-8 flex-1 items-center justify-center font-normal",
@@ -176,7 +177,7 @@ const CALENDAR_CLASSES = {
   week: "flex",
   day: "flex flex-1 items-center justify-center p-0",
   day_button:
-    "text-body-sm text-ink ease-standard flex size-11 items-center justify-center rounded-full transition-colors duration-120 hover:bg-surface-muted",
+    "text-body-sm text-ink ease-standard flex h-touch aspect-square items-center justify-center rounded-full transition-colors duration-120 hover:bg-surface-muted",
   selected: "[&_button]:bg-brand [&_button]:text-white [&_button]:hover:bg-brand-hover",
   today: "[&_button]:text-brand [&_button]:font-semibold",
   outside: "[&_button]:text-ink-subtle",
