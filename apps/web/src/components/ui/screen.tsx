@@ -54,16 +54,23 @@ export function Screen({
         // 🚨 pb-safe-* 는 safe area + 여백을 한 속성에 합친다 — py-* 를 겹치지 않는다.
         <div className="bg-canvas sticky bottom-0">
           {bottomBar ? (
+            // 🚨 위 여백보다 아래 여백이 커야 한다 (8 / 20). 채팅바와 네비 **사이**가
+            //    채팅바 **안**(제안 줄↔알약 8px)보다 넓어야 두 덩어리로 갈린다 —
+            //    예전엔 12/12 라 사이와 안이 같았고, 그래서 선을 아무리 그어도
+            //    하단 전체가 줄 쳐진 슬래브 하나로 읽혔다.
             <div
               className={cn(
-                "border-line border-t px-3 pt-3 min-[380px]:px-4",
-                nav ? "pb-3" : "pb-safe-4",
+                "border-line border-t px-3 pt-2 min-[380px]:px-4",
+                nav ? "pb-5" : "pb-safe-4",
               )}
             >
               {bottomBar}
             </div>
           ) : null}
-          {nav ? <div className="border-line pb-safe-2 border-t">{nav}</div> : null}
+          {/* 🚨 네비는 **바닥 면**이다. 선이 아니라 색으로 갈린다 — `line` 1px 은 canvas 위에서
+              1.21:1 이라 같은 선이 위(고정 영역 시작)에도 있으면 두 뜻이 한 신호를 나눠 쓴다.
+              `surface-muted` 는 대비로는 1.07:1 이지만 **바 전체 면적**에 걸려서 훨씬 세다. */}
+          {nav ? <div className="bg-surface-muted pb-safe-2">{nav}</div> : null}
         </div>
       ) : null}
     </main>

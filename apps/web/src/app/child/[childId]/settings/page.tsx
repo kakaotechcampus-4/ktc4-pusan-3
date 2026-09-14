@@ -11,6 +11,8 @@ import { Screen } from "@/components/ui/screen";
  *
  * 🚨 네비에서는 **홈이 켜진 채**다. 설정은 홈에서 들어가는 곁가지라 자기 칸이 없고,
  *    아무 칸도 안 켜진 네비는 고장난 것처럼 보인다 (`ChildNav` 주석).
+ *    🚨 그건 시각적 결정이라 `onRoute={false}` 로 `aria-current` 는 뺀다 — 제목이 "설정" 인데
+ *    스크린리더가 "홈, 현재 페이지" 라고 읽으면 그건 사실이 아니다.
  *
  * 다음 이슈에서 `GET /consents` · `/parents` · `/invites` · `/health-safety` ·
  * `DELETE /observations` 를 붙인다. 🚨 파괴적 확정(동의 철회 · 기억 삭제)에만 `btn-danger` 를
@@ -26,7 +28,7 @@ export default function SettingsPage() {
 
 function SettingsScreen() {
   return (
-    <Screen className="gap-5" nav={<ChildNav active="home" />}>
+    <Screen className="gap-5" nav={<ChildNav active="home" onRoute={false} />}>
       <header>
         <PageTitle>설정</PageTitle>
         <p className="text-body-sm text-ink-muted mt-2">

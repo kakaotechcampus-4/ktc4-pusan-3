@@ -720,6 +720,16 @@
         "section": "colors"
       },
       {
+        "name": "The 바닥은 면으로 만든다 규칙",
+        "body": "하단 화면 이동 바는 surface-muted 면이고 위에 선이 없다. line 1px 은 canvas 위에서 1.21:1 이라 비텍스트 3:1 에 못 미치고, 03 홈에는 같은 선이 27px 위에도 있어 한 신호가 두 뜻을 나눠 쓴다. 면은 대비 1.07:1 이지만 바 전체 면적에 걸려 훨씬 세다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 활성 표시는 색 하나가 아니다 규칙",
+        "body": "brand 와 ink-subtle 은 휘도 차가 1.15:1 이고 본문 서체가 단일 웨이트라 굵기로도 위계를 못 만든다. 켜진 탭에는 색과 함께 모양 신호(칸 위쪽 brand 2px)를 준다.",
+        "section": "colors"
+      },
+      {
         "name": "The 한 화면 한 서체 규칙",
         "body": "문서 화면은 통째로 font-doc 이다. 제목만 손글씨로 남기면 size-adjust 때문에 크기감이 어긋난다.",
         "section": "typography"

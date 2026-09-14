@@ -28,6 +28,7 @@ import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
+import { useDraftStore, useDraftText } from "@/stores/draft";
 import {
   api,
   isApiError,
@@ -44,9 +45,13 @@ import {
  * 03 홈 · 한 줄 입력 + 04 진행 · 저장 결과.
  *
  * 🚨 **04 를 별도 라우트로 두지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
- *    `failed` 일 때 입력창에 되돌릴 **원문의 정본은 이 화면이 들고 있는 `text`** 다
- *    (apps/web/CLAUDE.md §3). 라우트를 나누면 그 값이 언마운트와 함께 죽는다.
+ *    `failed` 일 때 입력창에 원문을 되돌려 놓아야 한다 (apps/web/CLAUDE.md §3).
  *    그래서 run 이 도는 동안 같은 컴포넌트 안에서 본문만 바꿔 그린다.
+ *
+ * 🚨 **아직 안 보낸 원문은 이 화면이 들고 있지 않다** (`stores/draft.ts`). 하단 네비가
+ *    보내기 버튼 바로 아래에 다른 화면으로 가는 문을 세 개 열어서, 화면 로컬 상태로 두면
+ *    잘못 누른 한 번에 쓰던 글이 사라진다. 저장소가 아니라 **메모리**에 둔다 —
+ *    발화 원문은 디스크에 남기지 않는다 (최상위 CLAUDE.md §2).
  *
  * 🚨 **빈 상태는 사과문이 아니다.** `highlight: null` 이면 쌓인 기록 건수를 그대로 보여준다
  *    (CLAUDE.md §2 — 근거가 없으면 없다고 말한다).
@@ -63,7 +68,9 @@ function HomeScreen() {
   const childId = useChildId();
   const router = useRouter();
 
-  const [text, setText] = useState("");
+  // 🚨 `useState` 가 아니다 — 네비로 다녀와도 쓰던 글이 살아 있어야 한다 (위 주석 · stores/draft.ts).
+  const [text, setText] = useDraftText(childId);
+  const clearDraft = useDraftStore((s) => s.clearDraft);
   /** 05 로 넘길 때 같이 보낸다 — 어느 입력에서 나온 제안인지 서버가 알아야 한다. */
   const [runId, setRunId] = useState<string | null>(null);
   const run = useRunStream(childId);
@@ -96,7 +103,7 @@ function HomeScreen() {
 
   // 🚨 실패해도 입력창에 원문이 남는 방법은 **지우지 않는 것**이다 (apps/web/CLAUDE.md §3).
   //    `failed` 이벤트의 `raw_text` 로 되돌리는 방법도 있지만, 네트워크가 끊기면 그 값이 안 온다 —
-  //    원문의 정본은 이 화면의 `text` 고, 성공했을 때만 비운다 (아래 closeRun).
+  //    원문의 정본은 draft 스토어고, 성공했을 때만 비운다 (아래 closeRun).
   /** 결과 화면을 닫고 홈으로. 성공이면 입력창을 비운다 — 실패면 원문을 남긴다. */
   function closeRun() {
     const failed = run.state.status === "failed";
@@ -104,7 +111,7 @@ function HomeScreen() {
     submit.reset();
     idempotencyKey.current = null;
     setRunId(null);
-    if (!failed) setText("");
+    if (!failed) clearDraft(childId);
   }
 
   function retry() {
