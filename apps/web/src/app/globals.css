@@ -1,18 +1,44 @@
 @import "tailwindcss";
+/* 🚨 웹폰트를 실제로 싣는 곳. 이게 없으면 아래 --font-sans · --font-doc 은 선언만 있고
+ * 기기 기본 폰트로 떨어진다 (한동안 그 상태였다). 폴백 순서를 정하는 것은 이 import 순서가
+ * 아니라 토큰의 font-family 목록이다 — 여기서는 @font-face 를 등록만 한다.
+ * 둘 다 자체 호스팅 92개 동적 서브셋이다 (문서 §4). */
+@import "./hakgyoansim.css";
+@import "./pretendard.css";
 
 /* ──────────────────────────────────────────────────────────────────────────
  * 디자인 토큰 — 정본은 docs/web/design-system-v1.md 다.
  * 이 파일은 그 문서의 표를 옮긴 것이다. 값을 바꾸려면 문서를 먼저 고친다.
  * 화면 코드에서 #hex 를 직접 쓰지 말 것.
  * ────────────────────────────────────────────────────────────────────────── */
-@theme {
+/* 🚨 `static` 이 필요하다. Tailwind 4 는 기본적으로 **실제로 쓰인 토큰의 변수만** 내보내서,
+ * 아직 컴포넌트가 없는 토큰(caution 계열 · scrim · 도메인 주색 등 9개)이 CSS 에서 통째로
+ * 빠져 있었다. 이 파일은 디자인 시스템 문서를 옮긴 것이고 문서가 "35개" 라고 말하므로,
+ * 쓰이든 안 쓰이든 다 있어야 /design-system 화면이 전부 검사할 수 있다. */
+@theme static {
+  /* 🚨 본문 서체가 손글씨다 (문서 §4). Pretendard 는 폴백으로 남는다 —
+   * 손글씨에 글리프가 없는 글자(한자·특수기호 등)가 두부(□)로 떨어지지 않게 받는 자리다.
+   * 손글씨는 Regular 400 단일 웨이트라 600~700 은 브라우저가 합성한다 (hakgyoansim.css 머리말). */
   --font-sans:
+    "Hakgyoansim Nalgae R", "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+
+  /* 🚨 `font-doc` 은 폴백이 아니라 **역할이 다른 자리**다 (문서 §4).
+   * 이용약관 · 개인정보 처리방침 · 동의 전문처럼 **읽고 동의해야 하는 긴 법률 문서**는
+   * 온기가 아니라 판별성이 필요하다. 손글씨는 단일 웨이트라 굵기가 합성이고,
+   * 그 자리에서는 손해만 된다. 문서 화면은 통째로 이걸 쓴다 — 한 화면에서 섞지 않는다. */
+  --font-doc:
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
     "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 
-  /* 뉴트럴 — 화면의 90%. 순백·순검정을 쓰지 않는다 (문서 §1) */
+  /* 뉴트럴 — 화면의 90%.
+   * 🚨 **바탕과 본문에 순백·순검정을 쓰지 않는다** (문서 §2-1).
+   *    surface 도 여기 포함된다 — 카드가 읽는 면적의 대부분이라, 야간 글레어는
+   *    페이지 바탕보다 카드에서 더 문제가 된다. 예전 값 #FFFFFF 는 색조가 아예 없어
+   *    웜 캔버스 위에서 혼자 차가웠다. 리프트는 1.052 → 1.043 으로 사실상 그대로다
+   *    (어차피 카드 경계는 그림자가 아니라 line 1px 이 만든다 · 문서 §6). */
   --color-canvas: #fbf9f5; /* 페이지 바탕 (웜 오프화이트) */
-  --color-surface: #ffffff; /* 카드·시트 */
+  --color-surface: #fffefb; /* 카드·시트. canvas 와 같은 색조(OKLCh H 85)로 더 밝게 */
   --color-surface-muted: #f3f1ec; /* 비활성 · 접힌 영역 · 실패 카드 */
   --color-ink: #221f1b; /* 본문 15.6:1 */
   --color-ink-muted: #605a52; /* 보조 6.5:1 */
@@ -30,9 +56,15 @@
   --color-food: #9a4f22;
   --color-food-soft: #f6ebe1;
   --color-food-ink: #7e3f1b;
-  --color-activity: #2c7080;
+  /* 🚨 틸만 채도를 따로 올려 뒀다. 네 도메인은 **동급**인데 chroma 가 food 0.115 ·
+   * education 0.112 · health 0.095 인 사이에서 activity 만 0.072 였다 — 같은 크기·같은
+   * 자리에 놓아도 놀이 칩만 혼자 흐려 보였고, 하필 놀이가 네 도메인 중 제일 생생해야 할
+   * 자리다. 216° 는 sRGB 가 채도를 가장 못 내는 구간이라(그 명도에서 천장이 0.089) 갈 수
+   * 있는 끝인 0.086 에 붙였다. 대비 5.3 → 5.4:1, brand(세이지)와의 거리도 0.069 → 0.077 로
+   * 벌어진다 — 틸과 세이지는 원래 제일 헷갈리는 한 쌍이다. */
+  --color-activity: #0f7084;
   --color-activity-soft: #e5eff1;
-  --color-activity-ink: #1f5563;
+  --color-activity-ink: #055766;
   --color-education: #4e5aa0;
   --color-education-soft: #e9eaf5;
   --color-education-ink: #3b4680;
@@ -44,9 +76,24 @@
   --color-caution: #97620e; /* 🚨 승인 게이트 2곳 전용 */
   --color-caution-soft: #faefdb;
   --color-caution-ink: #7a4f09;
-  --color-danger: #b3261e; /* 🚨 알레르기 경고 · 건강 추천 중단 전용 */
-  --color-danger-soft: #fae8e5;
-  --color-danger-ink: #8f1d17;
+  /* 🚨 알레르기 경고 · 건강 추천 중단 · 파괴적 확정 전용.
+   * **밝기를 올린 이유는 색약이다.** 예전 값(#A03641 · L 48.9)은 테라코타(food)와 명도로만
+   * 갈려서 적록색약에서 거리가 0.117 밖에 안 됐다 — 하필 **알레르기 경고는 식사 화면에 뜨는
+   * 색**이라 제일 붙으면 안 되는 한 쌍이다. L 54.6 으로 올리면 색조를 16°(테라코타는 49°)까지
+   * 파란 쪽으로 잡을 수 있어 0.159 로 벌어지고, health(플럼)와도 0.086 → 0.097 로 멀어진다.
+   * 대가로 chroma 는 0.140 → 0.150 (도메인 최고치의 1.22 → 1.30배). 밝게 올리면서 채도를
+   * 그대로 두면 빨강이 **분홍**이 된다 — 실제로 얹어 보니 삭제 버튼이 라즈베리로 읽혔다. */
+  --color-danger: #b74351;
+  --color-danger-hover: #a02e40; /* press/hover (흰 글자 7.1:1) */
+  --color-danger-soft: #f7e8e8;
+  --color-danger-ink: #891e32;
+
+  /* 외부 브랜드 — 카카오 로그인 버튼 전용 (문서 §2-6).
+   * 우리 팔레트가 아니다. 카카오 로그인 버튼은 카카오가 정한 색·모양을 써야 해서
+   * 예외로 토큰을 뒀다. 🚨 다른 화면·다른 용도로 쓰지 않는다. */
+  --color-kakao: #fee500;
+  --color-kakao-hover: #f0d800; /* press/hover (kakao-ink 10.5:1) */
+  --color-kakao-ink: rgb(0 0 0 / 0.85);
 
   /* 오버레이 — 시트 뒤 가림막. 순검정은 저조도에서 눈에 때린다 */
   --color-scrim: rgb(34 31 27 / 0.45);
@@ -92,6 +139,21 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* 🚨 `hover:` 를 hover 가 되는 기기에만 건다.
+ *
+ * Tailwind 기본 `hover:` 는 미디어쿼리 없이 `:hover` 를 그대로 낸다(생성 CSS 로 확인).
+ * 터치 기기에서는 탭한 뒤 손을 떼도 :hover 가 **눌러붙어서**, 방금 누른 버튼이 계속
+ * 눌린 것처럼 보인다. 이 화면은 대부분 웹뷰·모바일이라 그게 기본 경험이 된다.
+ *
+ * 아래로 덮어 두면 화면 코드는 `hover:` 를 그냥 쓰면 된다. 누른 느낌은 `active:` 가 맡는다. */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
 @layer base {
   :root {
     /* 다크모드는 v1 범위 밖이다 (문서 §8). 지우면 폼 컨트롤만 다크가 된다. */
@@ -116,10 +178,46 @@
     overscroll-behavior-y: none;
   }
 
+  /* 🚨 Tailwind 4 preflight 는 버튼에 cursor 를 주지 않는다 (v3 에서 달라진 점).
+   * 웹뷰에는 커서가 없지만 브라우저로 들어오면 "누를 수 있는 것" 이 안 보인다.
+   * 컴포넌트마다 붙이면 빠뜨리는 곳이 생겨서(실제로 칩만 not-allowed 였다) 여기 한 번에 건다. */
+  button:not(:disabled),
+  label:has(> input:not(:disabled)),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  label:has(> input:disabled) {
+    cursor: not-allowed;
+  }
+
   /* 포커스는 항상 보인다 (문서 §10). outline: none 을 쓰지 말 것. */
   :focus-visible {
     outline: 2px solid var(--color-brand);
     outline-offset: 2px;
+  }
+
+  /* 🚨 **브라우저가 대신 칠하는 표면도 팔레트 안에 둔다.**
+   * 선택 영역·캐럿·탭 하이라이트·스크롤바는 우리가 정하지 않으면 OS 기본값이 그대로 나간다
+   * (대개 채도 높은 파랑, 반투명 순검정). 웜 오프화이트 위에서 그 파랑만 혼자 다른 앱에서
+   * 온 것처럼 보이고, 특히 탭 하이라이트는 **웹뷰에서 누를 때마다** 보인다. */
+  ::selection {
+    background-color: var(--color-brand-soft);
+    color: var(--color-brand-ink);
+  }
+
+  html {
+    /* 탭한 순간의 사각형. 지우지 않고 우리 잉크로 옅게 깐다 —
+     * 투명하게 만들면 active 상태가 없는 요소는 아무 반응이 없어진다. */
+    -webkit-tap-highlight-color: rgb(34 31 27 / 0.06);
+    /* 데스크톱 브라우저에서만 보인다. 웹뷰·모바일은 오버레이 스크롤바다. */
+    scrollbar-color: var(--color-line-strong) var(--color-canvas);
+  }
+
+  input,
+  textarea {
+    caret-color: var(--color-brand);
   }
 
   /* 🚨 transform 을 끄고 opacity 만 남긴다 (문서 §8) */
@@ -135,11 +233,18 @@
   }
 }
 
-/* 웹뷰 노치·홈 인디케이터 영역. 화면 컨테이너에서 pt-safe / pb-safe 로 쓴다.
- * @utility 는 중첩할 수 없어 @layer 밖에 둔다. */
-@utility pt-safe {
-  padding-top: env(safe-area-inset-top);
+/* 웹뷰 노치·홈 인디케이터 영역. @utility 는 중첩할 수 없어 @layer 밖에 둔다.
+ *
+ * 🚨 **여백을 함께 받는다.** 예전에는 safe area 만 넣는 `pt-safe`/`pb-safe` 였는데,
+ *    실제로 필요한 곳은 늘 "safe area + 여백" 이었다. 둘 다 padding 속성이라 `py-8` 같은
+ *    걸 나란히 쓰면 **뒤에 오는 쪽이 이겨 한쪽이 조용히 죽는다** — 이 사고를 두 번 냈다
+ *    (화면 5개의 상하 여백이 0 이었고, 바텀시트 닫기 버튼이 화면 맨 아래에 붙었다).
+ *    그래서 유틸이 calc 로 합쳐서 내보낸다. `pb-safe-4` = safe area + 16px.
+ *    여백이 필요 없으면 `pb-safe-0`.
+ */
+@utility pt-safe-* {
+  padding-top: calc(env(safe-area-inset-top) + --spacing(--value(integer)));
 }
-@utility pb-safe {
-  padding-bottom: env(safe-area-inset-bottom);
+@utility pb-safe-* {
+  padding-bottom: calc(env(safe-area-inset-bottom) + --spacing(--value(integer)));
 }

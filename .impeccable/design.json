@@ -1,0 +1,775 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-10T10:14:46Z",
+  "title": "Design System: 육아기억 AI",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "웜 오프화이트",
+        "canonical": "oklch(98.3% 0.006 84.6)",
+        "tonalRamp": [
+          "#0C0B09",
+          "#252421",
+          "#413F3C",
+          "#5F5D5A",
+          "#7F7D79",
+          "#A09E9A",
+          "#C6C4C0",
+          "#F0EEEA"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "서피스",
+        "canonical": "oklch(99.7% 0.004 91.4)",
+        "tonalRamp": [
+          "#0C0B09",
+          "#252422",
+          "#40403D",
+          "#5E5D5B",
+          "#7E7D7A",
+          "#9F9E9B",
+          "#C5C4C1",
+          "#EFEEEB"
+        ]
+      },
+      "surface-muted": {
+        "role": "neutral",
+        "displayName": "뮤티드 서피스",
+        "canonical": "oklch(95.8% 0.007 88.6)",
+        "tonalRamp": [
+          "#0C0B08",
+          "#252420",
+          "#41403C",
+          "#5F5D59",
+          "#7F7D79",
+          "#A09E9A",
+          "#C6C4BF",
+          "#F0EEE9"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "잉크",
+        "canonical": "oklch(24.1% 0.009 75.2)",
+        "tonalRamp": [
+          "#0D0B07",
+          "#27231F",
+          "#423F3B",
+          "#615D58",
+          "#807D78",
+          "#A29E99",
+          "#C7C3BE",
+          "#F2EEE8"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "뮤티드 잉크",
+        "canonical": "oklch(47.1% 0.015 75.2)",
+        "tonalRamp": [
+          "#0F0A05",
+          "#28231C",
+          "#443F37",
+          "#635D55",
+          "#837C74",
+          "#A49D94",
+          "#CAC3BA",
+          "#F4EDE4"
+        ]
+      },
+      "ink-subtle": {
+        "role": "neutral",
+        "displayName": "서틀 잉크",
+        "canonical": "oklch(52.6% 0.015 82.4)",
+        "tonalRamp": [
+          "#0E0B05",
+          "#28231C",
+          "#443F37",
+          "#625D54",
+          "#827D73",
+          "#A39E94",
+          "#C9C3B9",
+          "#F4EEE3"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "라인",
+        "canonical": "oklch(92.0% 0.012 84.6)",
+        "tonalRamp": [
+          "#0D0B06",
+          "#27241E",
+          "#433F39",
+          "#615D56",
+          "#807D76",
+          "#A29E96",
+          "#C7C4BC",
+          "#F2EEE6"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "강한 라인",
+        "canonical": "oklch(65.6% 0.016 80.7)",
+        "tonalRamp": [
+          "#0F0A04",
+          "#28231B",
+          "#443F36",
+          "#625D54",
+          "#827C73",
+          "#A49E93",
+          "#CAC3B9",
+          "#F4EEE3"
+        ]
+      },
+      "brand": {
+        "role": "primary",
+        "displayName": "세이지 그린",
+        "canonical": "oklch(48.5% 0.068 160.2)",
+        "tonalRamp": [
+          "#001303",
+          "#002D18",
+          "#184B33",
+          "#386951",
+          "#588A70",
+          "#79AC90",
+          "#9ED2B5",
+          "#C8FDDF"
+        ]
+      },
+      "brand-hover": {
+        "role": "primary",
+        "displayName": "세이지 그린 프레스",
+        "canonical": "oklch(42.6% 0.060 159.5)",
+        "tonalRamp": [
+          "#001203",
+          "#002D19",
+          "#1F4934",
+          "#3E6852",
+          "#5D8971",
+          "#7EAA91",
+          "#A3D1B6",
+          "#CDFCE0"
+        ]
+      },
+      "brand-soft": {
+        "role": "primary",
+        "displayName": "세이지 그린 소프트",
+        "canonical": "oklch(94.4% 0.012 153.7)",
+        "tonalRamp": [
+          "#080D09",
+          "#202621",
+          "#3B423D",
+          "#59605B",
+          "#787F7A",
+          "#99A19B",
+          "#BFC6C1",
+          "#E9F1EB"
+        ]
+      },
+      "brand-ink": {
+        "role": "primary",
+        "displayName": "세이지 그린 잉크",
+        "canonical": "oklch(37.4% 0.049 164.5)",
+        "tonalRamp": [
+          "#001106",
+          "#062B1E",
+          "#254839",
+          "#436756",
+          "#628776",
+          "#83A897",
+          "#A8CFBC",
+          "#D1F9E6"
+        ]
+      },
+      "food": {
+        "role": "secondary",
+        "displayName": "테라코타",
+        "canonical": "oklch(51.1% 0.115 48.6)",
+        "tonalRamp": [
+          "#2B0000",
+          "#4C0200",
+          "#6D2600",
+          "#904617",
+          "#B4663B",
+          "#D8875C",
+          "#FFAD80",
+          "#FFD7AA"
+        ]
+      },
+      "food-soft": {
+        "role": "secondary",
+        "displayName": "테라코타 소프트",
+        "canonical": "oklch(94.6% 0.018 64.9)",
+        "tonalRamp": [
+          "#100A04",
+          "#2A221B",
+          "#473E36",
+          "#655C53",
+          "#857B72",
+          "#A79C93",
+          "#CDC2B8",
+          "#F7ECE2"
+        ]
+      },
+      "food-ink": {
+        "role": "secondary",
+        "displayName": "테라코타 잉크",
+        "canonical": "oklch(44.1% 0.100 47.7)",
+        "tonalRamp": [
+          "#270000",
+          "#470B00",
+          "#682B02",
+          "#8A4A27",
+          "#AD6A47",
+          "#D18B67",
+          "#FAB18B",
+          "#FFDBB4"
+        ]
+      },
+      "activity": {
+        "role": "secondary",
+        "displayName": "틸",
+        "canonical": "oklch(50.4% 0.086 216.6)",
+        "tonalRamp": [
+          "#001022",
+          "#002C3E",
+          "#004A5D",
+          "#00697D",
+          "#348A9E",
+          "#59ACC1",
+          "#80D2E8",
+          "#AAFEFF"
+        ]
+      },
+      "activity-soft": {
+        "role": "secondary",
+        "displayName": "틸 소프트",
+        "canonical": "oklch(94.5% 0.011 211.0)",
+        "tonalRamp": [
+          "#060C0E",
+          "#1E2627",
+          "#394143",
+          "#575F61",
+          "#767F81",
+          "#97A0A2",
+          "#BCC6C8",
+          "#E7F1F3"
+        ]
+      },
+      "activity-ink": {
+        "role": "secondary",
+        "displayName": "틸 잉크",
+        "canonical": "oklch(42.1% 0.073 215.0)",
+        "tonalRamp": [
+          "#00101E",
+          "#002C3A",
+          "#004958",
+          "#206877",
+          "#448898",
+          "#67AABB",
+          "#8CD1E2",
+          "#B6FCFF"
+        ]
+      },
+      "education": {
+        "role": "secondary",
+        "displayName": "인디고",
+        "canonical": "oklch(49.2% 0.112 274.2)",
+        "tonalRamp": [
+          "#070039",
+          "#171959",
+          "#2F377A",
+          "#4B579C",
+          "#6977C0",
+          "#8999E4",
+          "#AEBFFF",
+          "#D7E9FF"
+        ]
+      },
+      "education-soft": {
+        "role": "secondary",
+        "displayName": "인디고 소프트",
+        "canonical": "oklch(93.9% 0.015 281.9)",
+        "tonalRamp": [
+          "#0A0A11",
+          "#23232B",
+          "#3E3F48",
+          "#5C5D66",
+          "#7B7C86",
+          "#9D9DA8",
+          "#C2C3CE",
+          "#ECEDF9"
+        ]
+      },
+      "education-ink": {
+        "role": "secondary",
+        "displayName": "인디고 잉크",
+        "canonical": "oklch(41.4% 0.097 273.3)",
+        "tonalRamp": [
+          "#050033",
+          "#171C52",
+          "#303A72",
+          "#4C5994",
+          "#6A79B7",
+          "#8B9ADB",
+          "#AFC0FF",
+          "#D9EBFF"
+        ]
+      },
+      "health": {
+        "role": "secondary",
+        "displayName": "플럼",
+        "canonical": "oklch(50.7% 0.095 342.4)",
+        "tonalRamp": [
+          "#210015",
+          "#400930",
+          "#60284D",
+          "#82466C",
+          "#A4668D",
+          "#C887AF",
+          "#F0ACD5",
+          "#FFD6FF"
+        ]
+      },
+      "health-soft": {
+        "role": "secondary",
+        "displayName": "플럼 소프트",
+        "canonical": "oklch(94.4% 0.013 340.6)",
+        "tonalRamp": [
+          "#0F090D",
+          "#292226",
+          "#453D42",
+          "#635B60",
+          "#837A80",
+          "#A59BA1",
+          "#CAC1C7",
+          "#F5EBF1"
+        ]
+      },
+      "health-ink": {
+        "role": "secondary",
+        "displayName": "플럼 잉크",
+        "canonical": "oklch(42.7% 0.084 342.9)",
+        "tonalRamp": [
+          "#1F0014",
+          "#3E0F2E",
+          "#5D2C4B",
+          "#7E4A6A",
+          "#A0698A",
+          "#C48AAC",
+          "#EBAFD3",
+          "#FFD9FE"
+        ]
+      },
+      "caution": {
+        "role": "tertiary",
+        "displayName": "앰버",
+        "canonical": "oklch(54.1% 0.112 71.0)",
+        "tonalRamp": [
+          "#240000",
+          "#431300",
+          "#633200",
+          "#845000",
+          "#A67024",
+          "#CA924A",
+          "#F2B870",
+          "#FFE299"
+        ]
+      },
+      "caution-soft": {
+        "role": "tertiary",
+        "displayName": "앰버 소프트",
+        "canonical": "oklch(95.5% 0.029 82.6)",
+        "tonalRamp": [
+          "#110A01",
+          "#2B2313",
+          "#473E2E",
+          "#665C4B",
+          "#867C6A",
+          "#A79D8B",
+          "#CDC3B0",
+          "#F8EDD9"
+        ]
+      },
+      "caution-ink": {
+        "role": "tertiary",
+        "displayName": "앰버 잉크",
+        "canonical": "oklch(46.5% 0.096 71.8)",
+        "tonalRamp": [
+          "#210000",
+          "#3F1800",
+          "#5E3500",
+          "#7F5311",
+          "#A07337",
+          "#C49459",
+          "#EBBA7E",
+          "#FFE5A7"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "크림슨",
+        "canonical": "oklch(54.6% 0.150 16.5)",
+        "tonalRamp": [
+          "#330000",
+          "#570007",
+          "#7C0022",
+          "#A02E3F",
+          "#C6515D",
+          "#EC737D",
+          "#FF99A2",
+          "#FFC3CB"
+        ]
+      },
+      "danger-hover": {
+        "role": "tertiary",
+        "displayName": "크림슨 프레스",
+        "canonical": "oklch(48.0% 0.149 15.9)",
+        "tonalRamp": [
+          "#330000",
+          "#570008",
+          "#7B0023",
+          "#A02E40",
+          "#C6515F",
+          "#EC737F",
+          "#FF99A3",
+          "#FFC4CC"
+        ]
+      },
+      "danger-soft": {
+        "role": "tertiary",
+        "displayName": "크림슨 소프트",
+        "canonical": "oklch(94.3% 0.016 17.4)",
+        "tonalRamp": [
+          "#110809",
+          "#2C2121",
+          "#483C3C",
+          "#675A5A",
+          "#877A7A",
+          "#A89B9B",
+          "#CFC0C0",
+          "#F9EAEA"
+        ]
+      },
+      "danger-ink": {
+        "role": "tertiary",
+        "displayName": "크림슨 잉크",
+        "canonical": "oklch(41.9% 0.141 15.7)",
+        "tonalRamp": [
+          "#310000",
+          "#55000A",
+          "#790825",
+          "#9D3242",
+          "#C25461",
+          "#E87681",
+          "#FF9CA5",
+          "#FFC6CF"
+        ]
+      },
+      "kakao": {
+        "role": "tertiary",
+        "displayName": "카카오 옐로",
+        "canonical": "oklch(91.4% 0.191 101.4)",
+        "tonalRamp": [
+          "#1D0300",
+          "#3A1D00",
+          "#573C00",
+          "#765C00",
+          "#977D00",
+          "#B99F00",
+          "#DFC600",
+          "#FFF12A"
+        ]
+      },
+      "kakao-hover": {
+        "role": "tertiary",
+        "displayName": "카카오 옐로 프레스",
+        "canonical": "oklch(87.5% 0.183 101.2)",
+        "tonalRamp": [
+          "#1D0300",
+          "#391E00",
+          "#563C00",
+          "#755C00",
+          "#967D00",
+          "#B89F00",
+          "#DEC600",
+          "#FFF13F"
+        ]
+      },
+      "kakao-ink": {
+        "role": "tertiary",
+        "displayName": "카카오 잉크",
+        "canonical": "rgb(0 0 0 / 0.85)"
+      },
+      "scrim": {
+        "role": "neutral",
+        "displayName": "스크림",
+        "canonical": "rgb(34 31 27 / 0.45)"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "화면 제목. 좁은 폰(< 380px)에서는 title 로 낮아진다."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "카드 제목 · 시트 헤더."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "섹션 구분."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "본문 기본값 · 입력값. 한 줄 35자 안팎."
+      },
+      "body-sm": {
+        "displayName": "Body Small",
+        "purpose": "보조 설명."
+      },
+      "button": {
+        "displayName": "Button",
+        "purpose": "버튼 라벨."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "칩 · 탭 · 폼 라벨. 손글씨에서는 단일 웨이트라 body 와 같은 굵기로 렌더된다."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "메타 · 타임스탬프 · 건수. 화면 최소 크기."
+      },
+      "body-doc": {
+        "displayName": "Body (문서)",
+        "purpose": "약관 · 처리방침 · 동의 전문 전용. Pretendard 로 바꿔 실제 웨이트 4단계를 쓴다."
+      }
+    },
+    "shadows": [
+      {
+        "name": "sheet",
+        "value": "0 -2px 16px rgb(34 31 27 / 0.08)",
+        "purpose": "바텀시트 상단. 시스템 전체에서 유일한 그림자."
+      },
+      {
+        "name": "scrim",
+        "value": "rgb(34 31 27 / 0.45)",
+        "purpose": "시트 뒤 가림막. 순검정이 아니라 ink 를 깐다."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fast",
+        "value": "120ms",
+        "purpose": "색·투명도 변화, 버튼 press."
+      },
+      {
+        "name": "base",
+        "value": "200ms",
+        "purpose": "펼침·접힘, 탭 전환."
+      },
+      {
+        "name": "sheet",
+        "value": "280ms",
+        "purpose": "바텀시트 등장·퇴장."
+      },
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "전 구간 공통 이징. 색만 바꾸고 크기·위치는 건드리지 않는다."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "< 380px"
+      },
+      {
+        "name": "base",
+        "value": "380–560px"
+      },
+      {
+        "name": "content-max",
+        "value": "560px (그 이상은 가운데 정렬 고정)"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "화면의 다음 행동. 한 화면에 하나만 둔다.",
+      "html": "<button class=\"ds-btn-primary\">이렇게 기록할게요</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-brand);color:#fff}.ds-btn-primary:hover{background:var(--color-brand-hover)}.ds-btn-primary:active{background:var(--color-brand-hover)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.ds-btn-primary:disabled{background:var(--color-surface-muted);color:var(--color-ink-subtle);border:1px solid var(--color-line);cursor:not-allowed}"
+    },
+    {
+      "name": "Approve Button",
+      "kind": "button",
+      "refersTo": "button-approve",
+      "description": "승인 게이트 2곳 전용. 높이 52 · 전체 폭으로 다른 버튼과 구조적으로 구분된다.",
+      "html": "<button class=\"ds-btn-approve\">캘린더에 등록할게요</button>",
+      "css": ".ds-btn-approve{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:52px;width:100%;border-radius:var(--radius-field);background:var(--color-brand);color:#fff}.ds-btn-approve:hover{background:var(--color-brand-hover)}.ds-btn-approve:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "거절·취소. 거절은 파괴가 아니므로 danger 를 쓰지 않는다.",
+      "html": "<button class=\"ds-btn-secondary\">아니에요</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-surface);color:var(--color-ink);border:1px solid var(--color-line-strong)}.ds-btn-secondary:hover{background:var(--color-surface-muted)}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "파괴적 확정에만 — 동의 철회 · 기록 삭제.",
+      "html": "<button class=\"ds-btn-danger\">기록 삭제하기</button>",
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-danger);color:#fff}.ds-btn-danger:hover{background:var(--color-danger-hover)}.ds-btn-danger:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+    },
+    {
+      "name": "Kakao Login Button",
+      "kind": "button",
+      "refersTo": "button-kakao",
+      "description": "00 로그인 화면 전용. 카카오가 정한 색·모양이라 우리 팔레트 밖의 예외다.",
+      "html": "<button class=\"ds-btn-kakao\"><svg viewBox=\"0 0 18 18\" width=\"18\" height=\"18\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M9 1.5C4.58 1.5 1 4.31 1 7.78c0 2.2 1.45 4.13 3.63 5.25-.16.57-.58 2.1-.66 2.43-.1.4.15.4.31.29.13-.09 2.03-1.38 2.85-1.94.6.09 1.22.13 1.87.13 4.42 0 8-2.81 8-6.28S13.42 1.5 9 1.5Z\"/></svg>카카오로 시작하기</button>",
+      "css": ".ds-btn-kakao{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:0.9375rem;font-weight:600;line-height:1.2;border:0;cursor:pointer;transition:background-color 120ms cubic-bezier(0.2,0,0,1);font-family:var(--font-sans);height:48px;padding:0 20px;border-radius:var(--radius-field);background:var(--color-kakao);color:var(--color-kakao-ink)}.ds-btn-kakao:hover{background:var(--color-kakao-hover)}.ds-btn-kakao:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "라벨·설명·사유를 입력과 한 덩어리로 묶는다. 16px 미만으로 내리지 않는다(iOS 자동 확대).",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-name\">아이 이름(별명)</label><p class=\"ds-field-hint\">화면에서 아이를 부를 때 씁니다.</p><input class=\"ds-input\" id=\"ds-name\" placeholder=\"민준\"><p class=\"ds-field-error\">이름은 12자까지 쓸 수 있어요.</p></div>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:6px;font-family:var(--font-sans);}.ds-field-label{font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-muted)}.ds-field-hint{margin:0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-input{height:52px;padding:0 14px;font:inherit;font-size:1rem;line-height:1.6;color:var(--color-ink);background:var(--color-surface);border:1px solid var(--color-line-strong);border-radius:var(--radius-field);caret-color:var(--color-brand);transition:border-color 120ms cubic-bezier(0.2,0,0,1)}.ds-input::placeholder{color:var(--color-ink-subtle)}.ds-input:hover{border-color:var(--color-ink-subtle)}.ds-input:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.ds-input::selection{background:var(--color-brand-soft);color:var(--color-brand-ink)}.ds-field-error{margin:0;font-size:0.75rem;line-height:1.4;color:var(--color-danger-ink)}"
+    },
+    {
+      "name": "Choice Chip",
+      "kind": "chip",
+      "refersTo": "chip-choice",
+      "description": "눌러서 고르는 칩. aria-pressed 로 상태를 내고, 위아래 투명 여백으로 터치 44px 을 채운다.",
+      "html": "<div class=\"ds-chiprow\"><button class=\"ds-chip-hit\" aria-pressed=\"true\"><span class=\"ds-chip ds-chip-on\">블록</span></button><button class=\"ds-chip-hit\" aria-pressed=\"false\"><span class=\"ds-chip\">그림책</span></button></div>",
+      "css": ".ds-chiprow{display:flex;flex-wrap:wrap;column-gap:8px;font-family:var(--font-sans);}.ds-chip-hit{display:flex;align-items:center;min-height:44px;padding:8px 0;background:none;border:0;cursor:pointer}.ds-chip{display:flex;align-items:center;height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-surface);border:1px solid var(--color-line);color:var(--color-ink-muted);transition:background-color 120ms cubic-bezier(0.2,0,0,1),border-color 120ms cubic-bezier(0.2,0,0,1)}.ds-chip-hit:hover .ds-chip{background:var(--color-surface-muted);border-color:var(--color-line-strong)}.ds-chip-on{background:var(--color-brand-soft);border-color:var(--color-brand);color:var(--color-brand-ink)}.ds-chip-hit:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px;border-radius:9999px}"
+    },
+    {
+      "name": "Domain Chip",
+      "kind": "chip",
+      "refersTo": "chip-domain",
+      "description": "추천이 어느 Agent 에서 왔는지. 아이콘은 aria-hidden 이고 의미는 라벨이 진다.",
+      "html": "<span class=\"ds-chip-domain\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2\"/><rect x=\"14\" y=\"2\" width=\"8\" height=\"8\" rx=\"1\"/></svg>놀이</span>",
+      "css": ".ds-chip-domain{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;line-height:1.4;background:var(--color-activity-soft);color:var(--color-activity-ink);font-family:var(--font-sans);}"
+    },
+    {
+      "name": "Personalized Suggestion Card",
+      "kind": "card",
+      "refersTo": "card-personalized",
+      "description": "근거 memory_id 가 붙은 추천. 근거 칩 행이 없으면 이 카드를 쓸 수 없다.",
+      "html": "<article class=\"ds-card-personalized\"><span class=\"ds-chip-domain-s\">놀이</span><p class=\"ds-card-body\">쌓기가 계속되고 있어요. 종이컵 탑을 같이 세워 보는 건 어때요?</p><p class=\"ds-card-meta\">사용한 기록 3건 · 가장 최근 오늘</p></article>",
+      "css": ".ds-card-personalized{display:block;background:var(--color-brand-soft);border-radius:var(--radius-card);padding:16px;font-family:var(--font-sans);}.ds-chip-domain-s{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;background:var(--color-surface);color:var(--color-activity-ink)}.ds-card-body{margin:8px 0 0;font-size:1rem;line-height:1.6;color:var(--color-brand-ink)}.ds-card-meta{margin:8px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-muted)}"
+    },
+    {
+      "name": "General Suggestion Card",
+      "kind": "card",
+      "refersTo": "card-general",
+      "description": "근거가 없을 때. 점선 테두리 + 또래 기준 라벨 + 쌓인 기록 건수가 전부 필수다.",
+      "html": "<article class=\"ds-card-general\"><p class=\"ds-card-tag\">또래 기준 일반 추천</p><p class=\"ds-card-body-n\">5세가 좋아하는 놀이로 골랐어요. 종이컵 쌓기는 어때요?</p><p class=\"ds-card-meta\">쌓인 기록 2건 · 더 쌓이면 우리 아이 기준으로 바뀌어요</p></article>",
+      "css": ".ds-card-general{display:block;background:var(--color-canvas);border:1px dashed var(--color-line-strong);border-radius:var(--radius-card);padding:16px;font-family:var(--font-sans);}.ds-card-tag{margin:0;font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-muted)}.ds-card-body-n{margin:8px 0 0;font-size:1rem;line-height:1.6;color:var(--color-ink)}.ds-card-meta{margin:8px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}"
+    },
+    {
+      "name": "Failed Card",
+      "kind": "card",
+      "refersTo": "card-failed",
+      "description": "Agent 하나가 실패해도 화면은 나간다. 실패를 빨강으로 칠하지 않는다.",
+      "html": "<div class=\"ds-card-failed\" role=\"status\">놀이 추천을 못 받아왔어요. 식사 추천은 아래에 있어요.</div>",
+      "css": ".ds-card-failed{background:var(--color-surface-muted);color:var(--color-ink-muted);border-radius:var(--radius-card);padding:16px;font-size:0.875rem;line-height:1.55;font-family:var(--font-sans);}"
+    }
+  ],
+  "narrative": {
+    "northStar": "아이 관찰 노트",
+    "overview": "이 화면의 주인공은 UI 가 아니라 적어 둔 것이다. 부모가 한 줄 남기면 그것이 관찰로 쌓이고, 추천이 나올 때 근거를 달고 나온다. 관찰 노트의 미감은 단정하지 않는 데 있다 — 한 번 본 것을 성향으로 확정하지 않고, 근거가 없으면 일반 추천이라고 화면에 쓰고, 6개월 지난 기록은 점선으로 눌러 그린다. 본문 서체가 손글씨인 것은 부모가 수첩에 적어 둔 글씨라는 뜻이고, 가독성을 조금 내주고 온기를 사는 교환이다. 다만 약관·처리방침·동의 전문은 그 교환을 하지 않고 Pretendard 로 바꾼다. 바탕은 웜 오프화이트이고 순백·순검정이 없다. 새벽 수유와 재운 뒤 확인이 실제 사용 장면이라 강조는 채도가 아니라 명도로 만든다.",
+    "keyCharacteristics": [
+      "기록·근거·건수가 화면의 주어. 장식이 아니라 본체다",
+      "웜 오프화이트 위 세이지 그린 하나 — 나머지는 전부 뜻이 정해진 색",
+      "손글씨 본문 + 법률 문서용 Pretendard, 한 화면에서 섞지 않음",
+      "평면이 기본. 그림자 1단계, 경계는 line 1px",
+      "전 구간 1열 · 최대 폭 560px · 데스크톱 레이아웃 없음",
+      "따뜻하고 단정하고 손으로 쓴 듯한 · 조용하고 단단한 컴포넌트"
+    ],
+    "rules": [
+      {
+        "name": "The 뜻 하나 규칙",
+        "body": "모든 색은 '이 색 = 이 뜻' 이 1:1 이다. 예쁘라고 칠하는 색은 없고, 뜻이 없는 자리에는 뉴트럴을 쓴다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 라벨이 본체 규칙",
+        "body": "색은 단독 신호가 될 수 없다. 검증은 도메인 칩에서 라벨을 지워 보는 것 — 그래도 구분되면 통과가 아니라 위반이다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 실패는 빨강이 아니다 규칙",
+        "body": "실패 카드는 surface-muted + ink-muted 다. 빨강은 알레르기·파괴적 확정에만 남는다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 흐린 회색 글씨를 만들지 않는다 규칙",
+        "body": "ink-subtle 도 5.1:1 을 넘긴다. 기록 건수·날짜는 부모가 실제로 읽는 정보다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 한 화면 한 서체 규칙",
+        "body": "문서 화면은 통째로 font-doc 이다. 제목만 손글씨로 남기면 size-adjust 때문에 크기감이 어긋난다.",
+        "section": "typography"
+      },
+      {
+        "name": "The 12px 하한 규칙",
+        "body": "화면에 12px 미만 글자를 만들지 않는다. 입력은 16px 미만으로 내리지 않는다.",
+        "section": "typography"
+      },
+      {
+        "name": "The 기호를 글자로 찍지 않는다 규칙",
+        "body": "①②③ · ↓ · ★ 로 뜻을 나타내지 않는다. 순서는 <ol>, 마커는 CSS marker:, 그림은 아이콘 + 라벨.",
+        "section": "typography"
+      },
+      {
+        "name": "The 1열 고정 규칙",
+        "body": "2열이 필요해 보이면 정보가 많은 것이지 열이 부족한 게 아니다. 데스크톱 레이아웃을 만들지 않는다.",
+        "section": "layout"
+      },
+      {
+        "name": "The 위는 넉넉히 목록은 촘촘히 규칙",
+        "body": "화면 상단은 32px, 카드 목록은 12px. 부모는 감상하러 온 게 아니라 확인하러 왔다.",
+        "section": "layout"
+      },
+      {
+        "name": "The 단계를 늘리지 않는다 규칙",
+        "body": "높낮이는 평면 / 시트 하나 / 가림막에서 끝난다. 미세한 그림자가 여러 겹 깔리면 저조도에서 뿌옇게 보인다.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do 모든 색을 뜻과 1:1 로 쓴다. 도메인 색은 그 도메인에만, caution 은 승인 게이트 2곳에만, danger 는 알레르기·건강 중단·파괴적 확정에만.",
+      "Do 색을 바꿀 때 그 색이 얹히는 배경과의 쌍을 다시 계산한다. soft 배경 위 텍스트는 canvas 가 아니라 그 soft 색과 비교한다.",
+      "Do 기록 건수 · 날짜 · 근거를 화면에 그대로 보여준다. 근거가 없으면 '또래 기준 일반 추천' 이라고 쓴다.",
+      "Do 상태 변화를 색으로만 만든다(120ms). 크기와 위치는 움직이지 않는다.",
+      "Do 브라우저가 대신 칠하는 표면(선택 영역 · 캐럿 · 탭 하이라이트 · 스크롤바)도 팔레트 안에 둔다.",
+      "Do 화면 제목에 PageTitle 을 쓴다. 좁은 폰에서 display → title 로 낮추는 규칙이 거기 한 곳에 있다."
+    ],
+    "donts": [
+      "Don't 병원·의료 앱처럼 보이게 만들지 않는다. 건강 도메인에도 심전도·청진기 기호를 쓰지 않는다.",
+      "Don't 원색 캐릭터 키즈 앱으로 가지 않는다. 이 화면을 여는 사람은 아이가 아니라 지친 보호자다.",
+      "Don't SaaS 대시보드로 만들지 않는다. KPI 타일·지표 카드 그리드·스파크라인을 만들지 않는다.",
+      "Don't 실패·부분 성공을 빨강으로 칠하지 않는다.",
+      "Don't 그림자 단계를 늘리거나 카드에 그림자를 넣지 않는다.",
+      "Don't 2열 그리드나 데스크톱 전용 레이아웃을 만들지 않는다.",
+      "Don't 12px 미만 글자를 쓰지 않는다. 입력은 16px 미만으로 내리지 않는다.",
+      "Don't 화면 텍스트에 이모지·기호와 줄표(—)를 쓰지 않는다.",
+      "Don't 승인 게이트를 늘리지도 줄이지도 않는다.",
+      "Don't 비활성 상태를 브랜드색을 흐리게 만들어 표현하지 않는다.",
+      "Don't 컴포넌트 밖에서 #hex 를 직접 쓰지 않는다."
+    ]
+  }
+}
