@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -17,13 +17,13 @@ import { useChildId } from "@/hooks/use-child-id";
 import {
   api,
   isApiError,
-  newIdempotencyKey,
   qk,
+  submitOnboarding,
   type DevScreeningResponse,
   type OnboardingRequest,
-  type OnboardingResponse,
   type SafetyStatus,
 } from "@/lib/api";
+import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 
 /**
  * 02 이야기 하나 — 전부 선택이다. 모두 건너뛰어도 200 이고 홈으로 간다.
@@ -78,16 +78,16 @@ function ChildOnboardingScreen() {
       api.get<DevScreeningResponse>("/dev-screening/items", { query: { child_id: childId } }),
   });
 
-  /** 🚨 재시도할 때 키를 새로 만들지 않는다 — 같은 키를 다시 보내는 게 중복 저장을 막는 유일한 방법이다. */
-  const idempotencyKey = useRef<string | null>(null);
+  /**
+   * 🚨 **재시도할 때 키를 새로 만들지 않는다** — 같은 키를 다시 보내는 게 중복 저장을 막는
+   *    유일한 방법이다. `mutationFn` 안에서 키를 만들면 재시도마다 새 키가 나간다
+   *    (`use-idempotency-key.ts`).
+   */
+  const idempotencyKey = useIdempotencyKey();
 
   const save = useMutation({
-    mutationFn: (body: OnboardingRequest) => {
-      idempotencyKey.current ??= newIdempotencyKey();
-      return api.post<OnboardingResponse>(`/children/${childId}/onboarding`, body, {
-        idempotencyKey: idempotencyKey.current,
-      });
-    },
+    mutationFn: (body: OnboardingRequest) =>
+      submitOnboarding(childId, body, idempotencyKey.current()),
     onSuccess: async () => {
       // 온보딩 한 번이 관찰·프로필·홈을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });

@@ -10,16 +10,18 @@ import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { Spinner } from "@/components/ui/spinner";
 import {
-  api,
+  addHealthSafety,
+  confirmEvent as confirmEventRequest,
   newIdempotencyKey,
   qk,
-  type ConfirmEventResponse,
   type CreateEventResponse,
+  type ConfirmEventResponse,
   type CreateHealthSafetyRequest,
-  type CreateHealthSafetyResponse,
+  type IdempotencyKey,
   type Precheck,
   type Suggestion,
 } from "@/lib/api";
+import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { formatEventTime } from "@/lib/format";
 
 /**
@@ -68,8 +70,14 @@ export function ApprovalSheet({
   const [answers, setAnswers] = useState<Record<string, SafetyAnswer>>({});
   const [confirmed, setConfirmed] = useState<ConfirmEventResponse | null>(null);
 
-  const safetyKeys = useRef(new Map<string, string>());
-  const confirmKey = useRef<string | null>(null);
+  /**
+   * 🚨 **재료 한 건이 사용자 동작 하나다.** 그래서 `useIdempotencyKey()`(동작 하나에 키 하나)가
+   *    아니라 재료별 맵이다 — 같은 재료를 다시 저장하면 같은 키가 나가고(재시도), 다른 재료는
+   *    다른 키가 나간다. 하나로 묶으면 두 번째 재료가 "같은 키 · 다른 요청" 이라 422 다.
+   */
+  const safetyKeys = useRef(new Map<string, IdempotencyKey>());
+  /** 확정은 동작 하나다. 재시도는 같은 키, 성공한 뒤에만 다음 키로 넘어간다. */
+  const confirmKey = useIdempotencyKey();
 
   const ingredientChecks = draft.prechecks.filter((p) => p.code === "unknown_ingredient");
   const answeredAll = ingredientChecks.every((p) => answers[p.item] !== undefined);
@@ -87,22 +95,18 @@ export function ApprovalSheet({
         category: "식품",
         notes: "승인 화면에서 보호자가 확인",
       };
-      return api.post<CreateHealthSafetyResponse>(`/children/${childId}/health-safety`, body, {
-        idempotencyKey: key,
-      });
+      return addHealthSafety(childId, body, key);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) }),
   });
 
   /** 승인 게이트 ㉠ — 되돌릴 수 없는 지점. */
   const confirmEvent = useMutation({
-    mutationFn: () => {
-      confirmKey.current ??= newIdempotencyKey();
-      return api.post<ConfirmEventResponse>(`/events/${draft.event.id}/confirm`, undefined, {
-        idempotencyKey: confirmKey.current,
-      });
-    },
+    mutationFn: () => confirmEventRequest(draft.event.id, confirmKey.current()),
     onSuccess: async (result) => {
+      // 🚨 다음 동작으로 넘어가는 것은 **성공 응답을 받은 뒤**다. 실패 뒤 다시 누르는 것은
+      //    같은 키로 가야 재시도로 취급된다.
+      confirmKey.rotate();
       setConfirmed(result);
       // 일정 하나가 홈 카운트·캘린더·제안 상태를 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });

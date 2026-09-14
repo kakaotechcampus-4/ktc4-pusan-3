@@ -10,7 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
@@ -32,14 +32,14 @@ import { useDraftStore, useDraftText } from "@/stores/draft";
 import {
   api,
   isApiError,
-  newIdempotencyKey,
   qk,
+  submitInput,
   type Agent,
-  type CreateInputRequest,
-  type CreateInputResponse,
   type HomeResponse,
+  type InputRequest,
   type Me,
 } from "@/lib/api";
+import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 
 /**
  * 03 홈 · 한 줄 입력 + 04 진행 · 저장 결과.
@@ -84,16 +84,17 @@ function HomeScreen() {
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
 
-  /** 🚨 재시도할 때 키를 새로 만들지 않는다 — 같은 키를 다시 보내는 게 중복 저장을 막는다. */
-  const idempotencyKey = useRef<string | null>(null);
+  /**
+   * 🚨 **재시도할 때 키를 새로 만들지 않는다** — 같은 키를 다시 보내는 게 중복 저장을 막는다.
+   *    `mutationFn` 안에서 `newIdempotencyKey()` 를 부르면 재시도마다 새 키가 나가서
+   *    키를 붙인 의미가 통째로 사라진다 (`use-idempotency-key.ts`).
+   */
+  const idempotencyKey = useIdempotencyKey();
 
   const submit = useMutation({
     mutationFn: () => {
-      idempotencyKey.current ??= newIdempotencyKey();
-      const body: CreateInputRequest = { text: text.trim(), source: "home_input" };
-      return api.post<CreateInputResponse>(`/children/${childId}/inputs`, body, {
-        idempotencyKey: idempotencyKey.current,
-      });
+      const body: InputRequest = { text: text.trim(), source: "home_input" };
+      return submitInput(childId, body, idempotencyKey.current());
     },
     onSuccess: (res) => {
       setRunId(res.run_id);
@@ -109,7 +110,10 @@ function HomeScreen() {
     const failed = run.state.status === "failed";
     run.reset();
     submit.reset();
-    idempotencyKey.current = null;
+    // 🚨 여기서 키를 넘긴다. 실패 뒤 "수정할게요" 로 닫으면 **다음 요청은 본문이 다르고**,
+    //    같은 키에 다른 본문을 보내면 422 idempotency_key_reuse 다. 재시도(같은 본문)는
+    //    이 함수를 거치지 않고 `retry()` 로 가서 같은 키를 그대로 쓴다.
+    idempotencyKey.rotate();
     setRunId(null);
     if (!failed) clearDraft(childId);
   }
