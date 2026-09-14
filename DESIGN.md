@@ -193,11 +193,18 @@ components:
     textColor: "{colors.ink}"
     rounded: "{rounded.card}"
     padding: "16px"
-  card-personalized:
-    backgroundColor: "{colors.brand-soft}"
-    textColor: "{colors.brand-ink}"
-    rounded: "{rounded.card}"
+  suggestion-row-open:
+    backgroundColor: "{colors.food-soft}"
+    textColor: "{colors.food-ink}"
+    padding: "12px 16px"
+  suggestion-row-base:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
     padding: "16px"
+  suggestion-row-collapsed:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    padding: "12px 16px"
   card-general:
     backgroundColor: "{colors.canvas}"
     textColor: "{colors.ink}"
@@ -260,7 +267,7 @@ components:
 ### Primary
 
 - **세이지 그린** (`brand` · 5.9:1): 주 버튼 · 활성 탭 · 링크 · 포커스 링. 하루에 여러 번 보는 색이라 채도를 팔레트에서 가장 낮게(0.068) 잡았다.
-- **세이지 그린 소프트** (`brand-soft`): **개인화 추천 카드의 배경**. 이 배경이 깔렸다는 것은 근거 `memory_id` 가 붙어 있다는 뜻이다.
+- **세이지 그린 소프트** (`brand-soft`): 아이콘 타일 · press 틴트 · 선택된 칩. 🚨 **큰 면을 이 색으로 칠하지 않는다** — 제안이 앉는 색 면은 브랜드가 아니라 그 제안의 **도메인 색**이다.
 - **세이지 그린 잉크** (`brand-ink` · 8.6:1): `brand-soft` 위의 글자.
 
 성공 상태에 별도 색을 두지 않는다. `brand` 를 쓴다 — 초록을 두 뜻으로 쓰면 브랜드가 "성공" 으로 읽힌다.
@@ -375,11 +382,12 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 
 ### Buttons
 
+- **크기 2단계:** `default` 48(화면이 소유한 행동) / `compact` 44 · 좌우 16(**카드 안**의 행동). 카드 본문이 12~14px 인데 48px 상자가 들어가면 버튼이 내용보다 커 보인다. 카드 안에서는 폭도 내용만큼만 쓴다
 - **Shape:** 완만한 모서리(`field` 10px). 높이 48, 좌우 20. 🚨 **높이는 최소값이다**(`min-h-button`) — 문구가 길거나 글자를 키우면 버튼이 늘어난다
-- **Primary:** `brand` 배경 + 흰 글자. 🚨 **한 화면에 하나.** 두 개면 무엇이 다음 행동인지 부모가 판단해야 한다
+- **Primary:** `brand` 배경 + 흰 글자. 🚨 **한 화면에 하나.** 두 개면 무엇이 다음 행동인지 부모가 판단해야 한다. 예외는 **목록 항목**(05 제안 카드의 "이걸로") — 이때 화면의 다른 곳에는 primary 가 없어야 한다
 - **Approve:** `brand` 배경 · **높이 52 · 전체 폭.** 🚨 승인 게이트 2곳 전용이다 — 되돌릴 수 없는 행동을 잘못 눌러 실행하는 경로를 만들지 않는다
 - **Secondary:** `surface` 배경 + `line-strong` 1px + `ink` 글자. 승인 게이트의 "아니에요" 가 여기다 — 거절은 파괴가 아니다
-- **Tertiary:** 배경 없음 + `brand` 글자 · 높이 44 · 좌우 8
+- **Tertiary:** 배경 없음 + `line` 1px 테두리 + `ink-muted` 글자 · 높이 48 · 좌우 16. 🚨 **글자만 있는 버튼이 아니다** — 셋의 실루엣을 맞추고 서열은 채움 → 옅은 채움 → 빈 칸으로 낸다. 글자를 `brand` 로 두면 거절 버튼이 실행 버튼보다 눈에 띈다
 - **Danger:** `danger` 배경 + 흰 글자. 파괴적 확정에만(동의 철회 · 기록 삭제)
 - **Kakao:** `kakao` 배경 + `kakao-ink` 글자. 00 로그인 화면 전용
 - **Hover / Active:** 색만 바뀐다(120ms · `cubic-bezier(0.2, 0, 0, 1)`). `hover:` 는 `@media (hover: hover)` 안에서만 걸고, 누른 느낌은 `active:` 가 맡는다 — 터치 기기에서 호버가 눌러붙기 때문이다
@@ -398,10 +406,11 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 
 - **Corner Style:** `card` 14px · 안쪽 여백 16 · 카드 사이 12
 - **card:** `surface` + `line` 1px. 그림자 없음
-- **card-personalized:** `brand-soft` 배경 · 테두리 없음 · **근거 칩 행 필수**
+- **suggestion-row (05 개인화):** 카드가 아니라 **목록 한 줄**. 접히면 도메인 칩 + 제안 문장(`body` · `ink`) + 기록 건수, 열리면 **두 칸** — 위 **`{domain}-soft`**(제안 `title` 20 · 이유 · 글자는 전부 `{domain}-ink` · 칩은 `surface` 로 띄운다) / 아래 **`canvas`**(**근거 칩 행 필수** · 고르는 버튼). 항상 한 줄만 열린다. 나누는 수단은 선이 아니라 바탕색이고, 아래 칸은 줄 가장자리까지 꽉 차서 카드 속 카드가 되지 않는다. 🚨 도메인 면 위 글자는 전부 그 도메인 `-ink` · 🚨 health 줄도 자기 색(플럼)을 쓴다 — 면의 뜻은 "고를 수 있음" 이 아니라 "어느 Agent" 다(다른 것은 고르는 버튼이 없다는 점) · 🚨 접힌 줄에도 기록 건수가 남는다 · 🚨 아래 칸이 `canvas` 인 것은 후보 사이 경계가 줄 안의 경계보다 세야 해서다(접힌 줄이 `surface`) · 누른 느낌은 그 줄이 열릴 색
+- **제안 줄:** `surface` + `line` 1px + full + 높이 44, 도메인 칩 + 문구. 누른 느낌은 그 주제가 열릴 색(`{domain}-soft`). 배치 2종 — **list**(04, 세로로 쌓음) / **scroller**(03 채팅바 위, 가로 한 줄로 눕히고 넘치면 민다: 바 183 → 133px). scroller 는 화면 끝까지 흐르고 `overscroll-behavior-x: contain` 이 걸린다(웹뷰 뒤로가기 제스처 차단). 🚨 제안을 버튼으로 쌓지 않는다 — 고르는 것은 줄, 화면을 떠나는 것만 버튼
 - **card-general:** `canvas` 배경 · `line-strong` **1px 점선** · "또래 기준 일반 추천" 라벨 + 기록 건수 **필수**
 - **card-failed:** `surface-muted` · `ink-muted` · 재시도는 tertiary 버튼
-- 🚨 **card-personalized 와 card-general 을 같은 컴포넌트로 만들지 않는다.** 한 컴포넌트에 플래그를 넣으면 언젠가 근거 0건인데 개인화로 그려진다
+- 🚨 **개인화(suggestion-row)와 card-general 을 같은 컴포넌트로 만들지 않는다.** 한 컴포넌트에 플래그를 넣으면 언젠가 근거 0건인데 개인화로 그려진다
 
 ### Inputs / Fields
 
@@ -425,11 +434,11 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **Spinner:** 16×16 · 2px 테두리 · **트랙 = 현재 글자색 25% + 머리 = 100%** · 1초에 1바퀴. 🚨 `prefers-reduced-motion` 에서는 **숨긴다** — 멈춘 스피너는 "고장난 화면" 으로 읽히고, 옆의 문구가 상태를 대신 말한다
 - **진행 오버레이(SSE):** 단계를 세로로 쌓고 현재 단계만 살린다. 완료 `ink-muted` + 체크 `brand` / 진행 중 `ink` + label 600 / 대기 `ink-subtle`. `aria-live="polite"`
 
-- **card-accent:** `card` 와 같고 테두리만 `brand`. **한 화면에 한 장**만 (03 홈의 눈여겨볼 것)
+- **card-accent:** `card` 와 같고 테두리만 `brand`. **한 화면에 한 장**만 — 제일 먼저 읽어야 하는 한 덩어리에 (03 눈여겨볼 것 · 04 적어주신 한 줄)
 - **아이콘 버튼:** 글자 없는 원형 버튼. ghost(배경 없음 · press `brand-soft`) / brand(`brand` 채움). `aria-label` 필수 · 비활성 brand 는 `surface` + `line`(채팅바가 `surface-muted` 라 같은 색이면 사라진다) · Spinner 를 넣지 않는다
 - **아이콘 타일:** `brand-soft` 바탕 + `brand-ink` 아이콘, radius-field 정사각. 목록 줄 앞에. 🚨 도메인 색 금지
-- **채팅바(03):** `surface-muted` 알약 안에 `[사진] [마이크] [입력] [보내기]`. 입력은 테두리 없는 `bare` 변형. 화면 하단 고정은 `Screen` 의 `bottomBar` 가 소유한다
-- **브랜드색이 서는 자리:** 섹션 라벨 · 먼저 읽는 숫자 · 아이콘 타일/빈 상태 아이콘 · `card-accent` 테두리 · 주 버튼. 🚨 `brand-soft` 를 카드 배경으로 쓰는 것은 개인화 추천 카드뿐
+- **채팅바(03):** `surface-muted` 알약 안에 `[사진] [마이크] [입력] [보내기]`. 입력은 테두리 없는 `bare` 변형. 화면 하단 고정은 `Screen` 의 `bottomBar` 가 소유한다. 빈 상태 높이는 버튼 한 줄 + 안쪽 여백이고, 자랄 때 버튼은 아래에 붙는다. 🚨 placeholder 가 한 줄을 넘으면 **빈 입력창이 두 줄 높이로 선다**
+- **브랜드색이 서는 자리:** 섹션 라벨 · 먼저 읽는 숫자 · 아이콘 타일/빈 상태 아이콘 · `card-accent` 테두리 · 주 버튼. 🚨 `brand-soft` 로 큰 면을 칠하지 않는다 — 제안이 앉는 색 면은 **도메인 색**이고, 고르는 버튼만 브랜드다("어디서 왔나" 와 "무엇을 하는가" 를 같은 색으로 쓰지 않는다)
 
 > **아직 구현되지 않은 것** — `card-general`(일반 추천) · 탭 · `card-photo` · 캘린더 그리드. `card-general` 은 사양은 있는데 **실을 데이터가 없어서** 못 만든다 (계약서에 개인화/일반을 가르는 타입 필드가 없다 — `docs/web/design-system-v1.md` §14). 나머지는 그 화면 이슈에서 만든다.
 > 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `EvidenceChip`/`CountChip` · `DomainChip` · `Card`/`CardFailed` · `Banner` · `Spinner` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `DomainIcon` 이다.
