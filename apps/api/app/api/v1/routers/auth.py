@@ -16,6 +16,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlencode, urlparse
+from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Response
 from fastapi.responses import RedirectResponse
@@ -23,14 +24,32 @@ from fastapi.responses import RedirectResponse
 from app.api.deps.auth import CurrentParent, hash_token
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError
-from app.api.v1.schemas.auth import AuthStatusResponse
+from app.api.v1.schemas.auth import (
+    BIND_PATTERN,
+    AuthStatusResponse,
+    ConsentRequiredResponse,
+    ExchangeRequest,
+    ParentSummary,
+    SessionResponse,
+    SignupRequest,
+)
 from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
+from app.domains.consent.repository import (
+    ACCOUNT_SCOPES,
+    grant_account_scope,
+    missing_account_scopes,
+)
 from app.domains.identity.models import AuthProvider
 from app.domains.identity.repository import (
+    consume_handoff,
     create_handoff,
+    create_identity,
+    create_parent,
+    create_session,
     delete_session,
+    find_parent,
     find_parent_id_by_identity,
 )
 from app.integrations.kakao.client import KakaoApiError, build_authorize_url, kakao_client
@@ -53,10 +72,11 @@ STATE_COOKIE = "oauth_state"
 _CLIENTS = frozenset({"web", "app"})
 """복귀 대상은 URL 이 아니라 열거값이다. URL 을 받으면 그 순간 오픈 리다이렉트다 (§2-3)."""
 
-_BIND_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}")
-"""base64url 43자 = 256비트 (§3-2).
+_BIND_PATTERN = re.compile(BIND_PATTERN)
+"""시작 쿼리의 bind 검증. 교환·가입 바디는 같은 패턴을 pydantic 이 검증한다.
 
-🚨 길이와 문자셋을 본다. "보냈다" 만 확인하면 bind=1 로도 통과해 §7-2 가 무의미해진다.
+🚨 쿼리 쪽은 pydantic 에 맡길 수 없다 — 검증이 핸들러보다 먼저 돌아 302 대신 400 JSON 이
+   나가기 때문이다 (start 의 주석). 그래서 패턴 문자열 하나를 schemas 에서 공유한다.
 """
 
 
@@ -250,14 +270,157 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     return Response(status_code=204)
 
 
-# 아래 2개는 이어서 채운다. 둘 다 무인증이고 계약서 §01 에 예외로 명시해야 한다.
-#   POST ""          → 세션 | consent_required  §3-4  (DELETE … RETURNING 소비)
-#   POST "/signup"   → 세션                     §3-5  (한 트랜잭션)
+# ──────────────────────────────────────────────────────────────────────────────
+# 3-4. 교환 — 1회용 코드를 세션으로
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@provider_router.post("")
+async def exchange(
+    provider: AuthProvider,
+    session: SessionDep,
+    body: ExchangeRequest,
+) -> SessionResponse | ConsentRequiredResponse:
+    """1회용 코드를 세션(기존 회원) 또는 가입 대기표(신규)로 바꾼다 — 명세 §3-4.
+
+    테스트 A-01 · A-03 · A-04 · A-05 · A-12 · A-19.
+    """
+    consumed = await consume_handoff(session, code_hash=hash_token(body.code))
+    if consumed is None:
+        # 없음·만료·이미 사용됨을 구분하지 않는다. 구분해 알려주면 공격자에게 정보를
+        # 준다 — 초대 코드 실패를 하나로 묶은 것과 같은 이유다 (§8-1 · A-04 · A-12).
+        raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
+
+    if not hmac.compare_digest(consumed.bind_hash, hash_token(body.bind)):
+        # 🚨 소비된 것으로 두고 실패시킨다. 롤백해서 재시도 기회를 주면 1회용 코드를
+        #    가로챈 쪽이 bind 를 맞출 때까지 반복할 수 있다 (§7-2 · A-05).
+        await session.commit()
+        raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
+
+    if consumed.parent_id is None:
+        # 처음 보는 회원번호. 🚨 아직 아무것도 만들지 않는다 — parent 는 필수 동의를
+        # 검증한 signup 트랜잭션에서만 생긴다 (§6-1 · A-01).
+        consent_code = secrets.token_urlsafe(32)
+        await create_handoff(
+            session,
+            provider=provider,
+            code_hash=hash_token(consent_code),
+            bind_hash=consumed.bind_hash,
+            parent_id=None,
+            provider_user_id=consumed.provider_user_id,
+            # 가입 대기표는 10분. 동의 화면을 읽을 시간이 필요하다 (§5-4).
+            expires_at=datetime.now(UTC) + timedelta(seconds=settings.SIGNUP_TICKET_TTL),
+        )
+        await session.commit()
+        return ConsentRequiredResponse(consent_code=consent_code)
+
+    response = await _issue_session(session, parent_id=consumed.parent_id, is_new=False)
+    await session.commit()
+    return response
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3-5. 가입 — 동의와 계정을 한 트랜잭션에
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@provider_router.post("/signup")
+async def signup(
+    provider: AuthProvider,
+    session: SessionDep,
+    body: SignupRequest,
+) -> SessionResponse:
+    """필수 동의를 받고 계정을 만든다 — 명세 §3-5 · 테스트 A-02 · A-13.
+
+    🚨 parent · auth_identity · consent · session 을 한 트랜잭션에서 만든다. 중간에
+       실패하면 아무것도 남지 않아야 한다 — 동의 없는 계정이 DB 에 남는 것이 §6-1 이
+       막으려는 바로 그 상태다.
+    """
+    granted = {consent.scope for consent in body.consents}
+    missing = [scope for scope in ACCOUNT_SCOPES if scope not in granted]
+    if missing:
+        # 🚨 대기표를 소비하기 전에 본다. 필수 동의를 빼먹는 것은 공격이 아니라 사용자의
+        #    선택이라, 여기서 소비하면 체크박스 하나 놓친 사람이 로그인부터 다시 해야
+        #    한다. bind 불일치(공격 신호)와는 다르게 다룬다 (A-13).
+        raise ApiError(
+            403,
+            "consent_required",
+            "필수 항목에 동의해야 가입할 수 있어요",
+            {"missing": [scope.value for scope in missing]},
+        )
+
+    consumed = await consume_handoff(session, code_hash=hash_token(body.consent_code))
+    if consumed is None:
+        raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
+
+    if not hmac.compare_digest(consumed.bind_hash, hash_token(body.bind)):
+        # 교환과 같다 — 소비된 것으로 두고 실패시킨다 (§7-2).
+        await session.commit()
+        raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
+
+    if consumed.provider_user_id is None:
+        # 기존 회원의 교환용 코드로 가입을 부른 것이다. 대기표와 교환용 코드는 같은
+        # 테이블에 살고 둘 중 하나만 차 있으므로 여기서 갈린다.
+        raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
+
+    parent = await create_parent(session)
+    await create_identity(
+        session,
+        parent_id=parent.id,
+        provider=provider,
+        provider_user_id=consumed.provider_user_id,
+    )
+    for consent in body.consents:
+        if consent.scope in ACCOUNT_SCOPES:
+            await grant_account_scope(
+                session,
+                parent_id=parent.id,
+                scope=consent.scope,
+                policy_version=consent.policy_version,
+            )
+
+    response = await _issue_session(session, parent_id=parent.id, is_new=True)
+    await session.commit()
+    return response
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 안쪽 도구
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+async def _issue_session(
+    session: SessionDep,
+    *,
+    parent_id: UUID,
+    is_new: bool,
+) -> SessionResponse:
+    """세션 행 1건을 만들고 응답을 짠다 — 교환과 가입이 같은 모양을 쓴다 (§3-4).
+
+    🚨 토큰 원문은 저장되지 않는다. 남기는 것은 해시뿐이고, 원문은 이 응답에 한 번
+       실려 나가면 끝이다 (§5 · A-18).
+    """
+    parent = await find_parent(session, parent_id)
+    if parent is None or parent.deleted_at is not None:
+        # A-19 · §10-1. 탈퇴 유예기간 중 재로그인을 어떻게 다룰지 정해지기 전까지
+        # 404 로 막아둔다. 세션을 내주지 않는다.
+        raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
+
+    token = secrets.token_urlsafe(32)
+    await create_session(
+        session,
+        parent_id=parent_id,
+        token_hash=hash_token(token),
+        expires_at=datetime.now(UTC) + timedelta(seconds=settings.SESSION_TTL),
+    )
+
+    return SessionResponse(
+        token=token,
+        expires_in=settings.SESSION_TTL,
+        is_new=is_new,
+        parent=ParentSummary(id=parent.id, nickname=parent.nickname),
+        consent_required=await missing_account_scopes(session, parent_id=parent_id),
+    )
 
 
 def _is_ready(provider: AuthProvider) -> bool:

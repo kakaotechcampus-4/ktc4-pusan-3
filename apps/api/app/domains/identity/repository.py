@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.identity.models import (
@@ -118,3 +118,75 @@ async def delete_session(session: AsyncSession, *, session_id: uuid.UUID) -> Non
        폐기를 행 삭제로 하는 이유는 §5-3 — 세션은 증빙이 아니라 유출 표면이다.
     """
     await session.execute(delete(AuthSession).where(AuthSession.id == session_id))
+
+
+@dataclass(frozen=True)
+class HandoffRow:
+    """소비된 1회용 코드 1건. parent_id 와 provider_user_id 중 하나만 차 있다."""
+
+    bind_hash: bytes
+    provider_user_id: str | None
+    parent_id: uuid.UUID | None
+
+
+async def consume_handoff(session: AsyncSession, *, code_hash: bytes) -> HandoffRow | None:
+    """1회용 코드를 원자적으로 소비한다 — 명세 §5-4 · A-04 · A-12.
+
+    🚨 DELETE … RETURNING 한 문장이다. 먼저 SELECT 하고 나중에 DELETE 하면 "조회했는데
+       그 사이 남이 썼다" 는 틈이 생긴다. 두 번째 요청은 지울 행이 없어 None 을 받는다.
+
+    만료는 DB 시각으로 본다. 애플리케이션 시계를 쓰면 두 시계가 어긋난 만큼 창이 생긴다.
+    """
+    stmt = (
+        delete(AuthHandoff)
+        .where(AuthHandoff.code_hash == code_hash, AuthHandoff.expires_at > func.now())
+        .returning(AuthHandoff.bind_hash, AuthHandoff.provider_user_id, AuthHandoff.parent_id)
+    )
+    row = (await session.execute(stmt)).first()
+    return HandoffRow(*row) if row is not None else None
+
+
+async def create_parent(session: AsyncSession) -> Parent:
+    """보호자 1건. 닉네임은 받지 않는다 — 카카오에서 가져오지 않고 동의 화면에서도
+    묻지 않는다 (§5-2 · NF-04 최소 수집). 설정 화면에서만 채운다."""
+    parent = Parent()
+    session.add(parent)
+    await session.flush()
+    return parent
+
+
+async def create_identity(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    provider: AuthProvider,
+    provider_user_id: str,
+) -> None:
+    """provider + 회원번호를 보호자에 묶는다 (§5-2). UNIQUE 가 중복 가입을 막는다."""
+    session.add(
+        AuthIdentity(
+            parent_id=parent_id,
+            provider=provider,
+            provider_user_id=provider_user_id,
+        )
+    )
+    await session.flush()
+
+
+async def create_session(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    token_hash: bytes,
+    expires_at: datetime,
+) -> None:
+    """세션 1건 (§5-3). 토큰 원문은 받지 않는다 — 해시만 저장한다 (A-18)."""
+    session.add(
+        AuthSession(parent_id=parent_id, token_hash=token_hash, expires_at=expires_at)
+    )
+    await session.flush()
+
+
+async def find_parent(session: AsyncSession, parent_id: uuid.UUID) -> Parent | None:
+    """세션 응답에 실을 보호자. deleted_at 판정도 이 행으로 한다 (§10-1)."""
+    return await session.get(Parent, parent_id)
