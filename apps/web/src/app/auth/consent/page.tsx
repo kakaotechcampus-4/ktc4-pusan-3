@@ -157,7 +157,7 @@ export default function AuthConsentPage() {
               <p className="text-caption text-ink-subtle mt-1 pl-8">{item.legalBasis}</p>
             ) : null}
             <div className="pl-6">
-              <Button variant="tertiary" onClick={() => setDetail(item)}>
+              <Button variant="tertiary" size="compact" onClick={() => setDetail(item)}>
                 상세 보기
               </Button>
             </div>

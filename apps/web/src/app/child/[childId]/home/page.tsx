@@ -143,7 +143,12 @@ function HomeScreen() {
           {submit.isError ? (
             <CardFailed>
               <p>{submit.error instanceof Error ? submit.error.message : "보내지 못했어요."}</p>
-              <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => submit.mutate()}>
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="mt-3"
+                onClick={() => submit.mutate()}
+              >
                 다시 시도
               </Button>
             </CardFailed>
@@ -184,7 +189,7 @@ function HomeScreen() {
       ) : home.isError ? (
         <CardFailed>
           <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
-          <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => home.refetch()}>
+          <Button variant="tertiary" size="compact" className="mt-3" onClick={() => home.refetch()}>
             다시 시도
           </Button>
         </CardFailed>

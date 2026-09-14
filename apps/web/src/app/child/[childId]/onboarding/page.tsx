@@ -266,7 +266,7 @@ function ChildOnboardingScreen() {
         ) : save.isError ? (
           <CardFailed>
             <p>{save.error instanceof Error ? save.error.message : "저장하지 못했어요."}</p>
-            <Button variant="tertiary" className="mt-1 -ml-2" onClick={submit}>
+            <Button variant="tertiary" size="compact" className="mt-3" onClick={submit}>
               다시 시도
             </Button>
           </CardFailed>

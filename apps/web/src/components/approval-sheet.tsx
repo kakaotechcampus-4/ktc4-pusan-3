@@ -189,7 +189,12 @@ export function ApprovalSheet({
           {saveSafety.isError ? (
             <CardFailed>
               <p>알레르기 기록을 저장하지 못했어요. 저장되기 전까지는 넣지 않을게요.</p>
-              <Button variant="tertiary" className="mt-1 -ml-2" onClick={() => saveSafety.reset()}>
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="mt-3"
+                onClick={() => saveSafety.reset()}
+              >
                 다시 고르기
               </Button>
             </CardFailed>
@@ -206,7 +211,8 @@ export function ApprovalSheet({
               </p>
               <Button
                 variant="tertiary"
-                className="mt-1 -ml-2"
+                size="compact"
+                className="mt-3"
                 onClick={() => confirmEvent.mutate()}
               >
                 다시 시도
