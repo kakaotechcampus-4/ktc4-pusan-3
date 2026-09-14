@@ -13,6 +13,10 @@ from app.api.v1.router import v1_router
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
 
+# 🚨 모델을 전부 등록시킨다. 이 줄이 없으면 요청이 건드리는 테이블만 메타데이터에 올라오고,
+#    FK 가 가리키는 테이블을 못 찾아 flush 가 NoReferencedTableError 로 죽는다.
+from app.infra.db import registry  # noqa: F401  (import 자체가 목적)
+
 app = FastAPI(title=settings.APP_NAME)
 
 # 에러 봉투 핸들러 (계약서 §01). 등록을 잊으면 FastAPI 기본 {"detail": ...} 가 나가고

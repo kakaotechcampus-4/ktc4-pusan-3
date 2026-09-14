@@ -47,6 +47,12 @@ async def session():
             yield s
         await tx.rollback()
 
+    # 🚨 커넥션 풀을 비운다. pytest-asyncio 는 테스트마다 새 이벤트 루프를 열고, asyncpg
+    #    커넥션은 자기를 만든 루프에 묶여 있다. 풀에 남겨 두면 다음 테스트가 다른 루프에서
+    #    같은 커넥션을 꺼내 "another operation is in progress" 로 죽는다.
+    #    단독 실행은 통과하고 모아서 돌리면 두 번째부터 깨지는 증상이 이것이다.
+    await engine.dispose()
+
 
 @pytest.fixture
 async def db_client(client: AsyncClient, session: AsyncSession):
