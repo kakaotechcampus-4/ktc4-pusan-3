@@ -55,22 +55,6 @@ class KakaoClient:
     callback_url: str
     http: httpx.AsyncClient
 
-    def build_authorize_url(self, *, state: str) -> str:
-        """카카오 동의 화면 URL (§3-2).
-
-        redirect_uri 는 콘솔 등록값과 완전히 같아야 한다. 그래서 조립하지 않고
-        KAKAO_CALLBACK_URL 을 그대로 싣는다 — 한 글자만 달라도 카카오가 거절한다.
-        """
-        query = urlencode(
-            {
-                "client_id": self.rest_api_key,
-                "redirect_uri": self.callback_url,
-                "response_type": "code",
-                "state": state,
-            }
-        )
-        return f"{AUTHORIZE_URL}?{query}"
-
     async def exchange_code(self, code: str) -> str:
         """인가 코드를 access token 으로 바꾼다 (§3-3 2번).
 
@@ -163,6 +147,26 @@ class KakaoClient:
         if not isinstance(payload, dict):
             raise KakaoApiError(f"{where}: 응답이 객체가 아니다")
         return payload
+
+
+def build_authorize_url(*, rest_api_key: str, callback_url: str, state: str) -> str:
+    """카카오 동의 화면 URL (§3-2).
+
+    클라이언트가 아니라 모듈 함수다. 로그인 시작 라우터는 카카오를 호출하지 않고 URL 만
+    필요한데, 메서드로 두면 URL 한 줄 만들자고 httpx 커넥션을 열어야 한다.
+
+    redirect_uri 는 콘솔 등록값과 완전히 같아야 한다. 그래서 조립하지 않고
+    KAKAO_CALLBACK_URL 을 그대로 싣는다 — 한 글자만 달라도 카카오가 거절한다.
+    """
+    query = urlencode(
+        {
+            "client_id": rest_api_key,
+            "redirect_uri": callback_url,
+            "response_type": "code",
+            "state": state,
+        }
+    )
+    return f"{AUTHORIZE_URL}?{query}"
 
 
 def _bearer(access_token: str) -> dict[str, str]:

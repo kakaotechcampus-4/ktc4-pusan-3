@@ -20,6 +20,7 @@ from app.integrations.kakao.client import (
     TOKEN_URL,
     KakaoApiError,
     KakaoClient,
+    build_authorize_url,
 )
 
 CALLBACK_URL = "http://localhost:8000/api/v1/auth/kakao/callback"
@@ -42,15 +43,19 @@ def json_handler(payload: dict, status: int = 200):
     return handler
 
 
-async def test_authorize_url_carries_registered_callback_verbatim():
-    """redirect_uri 는 조립하지 않고 KAKAO_CALLBACK_URL 을 그대로 싣는다 (§3-2)."""
-    client = build_client(json_handler({}))
+def test_authorize_url_carries_registered_callback_verbatim():
+    """redirect_uri 는 조립하지 않고 KAKAO_CALLBACK_URL 을 그대로 싣는다 (§3-2).
 
-    url = client.build_authorize_url(state="state-abc")
+    모듈 함수라 httpx 클라이언트가 필요 없다 — 시작 라우터는 카카오를 부르지 않는다.
+    """
+    url = build_authorize_url(
+        rest_api_key="test-rest-api-key", callback_url=CALLBACK_URL, state="state-abc"
+    )
 
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
-    assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == "https://kauth.kakao.com/oauth/authorize"
+    base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    assert base == "https://kauth.kakao.com/oauth/authorize"
     assert query["redirect_uri"] == [CALLBACK_URL]
     assert query["client_id"] == ["test-rest-api-key"]
     assert query["response_type"] == ["code"]
