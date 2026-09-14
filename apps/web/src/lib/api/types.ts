@@ -171,6 +171,12 @@ export interface Suggestion {
   id: string;
   child_id: string;
   agent: Agent;
+  /**
+   * 🚨 **개인화와 일반을 가르는 필드다** (CLAUDE.md §2 "타입으로 구분한다").
+   *    일반 추천은 근거 0행이 정상이지만 그래서 개인화로 집계되면 안 된다 —
+   *    한 필드에 섞이면 "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다.
+   */
+  kind: "personalized";
   content: string;
   reason: { why_this: string; why_now: string };
   status: SuggestionStatus;
@@ -179,6 +185,26 @@ export interface Suggestion {
   feedback: unknown | null;
   source_refs: Ref[];
   evidence: Evidence[];
+}
+
+/**
+ * 또래 기준 일반 추천. 근거 Memory 가 부족할 때 개인화 **대신** 나간다 (CLAUDE.md §2).
+ *
+ * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
+ *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
+ *    `source_refs` 필드가 **아예 없어서**, 개인화 목록(`SuggestionList`)에 넘기면 타입이 막는다.
+ *
+ * 🚨 **`basis` 는 서버 문구다.** "또래 기준" 이라는 말을 프론트가 지어내지 않는다 —
+ *    무엇을 기준으로 골랐는지는 만든 쪽만 안다.
+ */
+export interface GeneralSuggestion {
+  id: string;
+  child_id: string;
+  agent: Agent;
+  kind: "general";
+  content: string;
+  /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  basis: string;
 }
 
 /* ── Event · EventItem · Reminder ─────────────────────────────────────── */
@@ -278,11 +304,26 @@ export interface Scarcity {
 }
 
 /**
+ * ⚠️ **계약서 v1 에 아직 없는 필드다** (`general`). "근거가 부족하면 개인화 대신 일반 추천을 낸다"
+ *    (CLAUDE.md §2)를 화면이 지키려면 실을 데이터가 필요한데, v1 의 `scarcity` 응답은
+ *    `suggestions: []` 로 끝난다. 필드 없이 프론트가 또래 기준 추천을 지어내면 규칙을 UI 로
+ *    덮는 것이라, 서버가 내려주는 형태로 여기 제안해 두고 목으로 먼저 세웠다.
+ *    👉 `apps/api` Owner 협의 대상이다 (최상위 CLAUDE.md §8 "영역 간 인터페이스").
+ *    서버가 안 보내면 `general` 이 undefined 라 화면은 예전처럼 질문 1개만 그린다.
+ */
+
+/**
  * 🚨 `suggestions` 가 비어 있는데 `scarcity` 도 null 인 응답은 없다.
  *    둘 다 비면 화면에 그릴 것이 없다는 뜻이고, 그건 서버 버그다.
  */
 export interface SuggestionsResponse {
+  /** 🚨 개인화만 담는다. 일반 추천은 아래 `general` 이다 — 한 배열에 섞지 않는다. */
   suggestions: Suggestion[];
+  /**
+   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
+   * 둘이 같이 나오지 않는다). 위 ⚠️ 참고 — 계약서에 아직 없어서 optional 이다.
+   */
+  general?: GeneralSuggestion[];
   /** "오늘 급식 · 최근 3일 식사 · 확정 관심 2건" — 무엇을 봤는지. 서버가 만든 문구다. */
   looked_at: string;
   guards: Guard[];

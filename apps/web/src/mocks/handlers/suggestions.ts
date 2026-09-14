@@ -2,7 +2,13 @@ import { http, HttpResponse } from "msw";
 
 import type { CalendarEvent } from "@/lib/api/types";
 
-import { draftEvent, healthSafety, staleSuggestion, suggestions } from "../fixtures";
+import {
+  draftEvent,
+  generalSuggestions,
+  healthSafety,
+  staleSuggestion,
+  suggestions,
+} from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 
@@ -24,10 +30,14 @@ export const suggestionHandlers = [
 
     if (scenario === "consent") return consentRequired("child_health");
 
-    // 🚨 근거가 없으면 개인화 대신 일반 추천이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
+    // 🚨 근거가 없으면 개인화 대신 **일반 추천**이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
+    //    개인화(`suggestions`)와 일반(`general`)은 **다른 필드**다. 한 배열에 섞으면 언젠가
+    //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2).
+    //    ⚠️ `general` 은 계약서 v1 에 아직 없다 — types.ts 의 ⚠️ 참고 (서버 Owner 협의 대상).
     if (scenario === "scarcity" || scenario === "empty") {
       return HttpResponse.json({
         suggestions: [],
+        general: scenario === "empty" ? generalSuggestions : [generalSuggestions[0]],
         looked_at: "오늘 급식",
         guards: [],
         scarcity: {

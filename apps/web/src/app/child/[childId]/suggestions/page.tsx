@@ -8,6 +8,7 @@ import { ApprovalSheet } from "@/components/approval-sheet";
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
+import { GeneralSuggestionCard } from "@/components/general-suggestion-card";
 import { SuggestionList } from "@/components/suggestion-list";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
@@ -43,10 +44,12 @@ import {
  * 🚨 **성공과 실패를 한 화면에 섞는다** (NF-06). 요청한 Agent 중 결과가 없는 쪽은
  *    `CardFailed` 로 같은 화면에 남긴다 — 전체를 실패 화면으로 덮지 않는다.
  *
- * ⚠️ 일반 추천 카드(`card-general`)는 아직 없다. 계약서 v1 의 `scarcity` 응답에는
- *    "또래 기준 일반 추천" 을 실을 자리가 없고, 개인화와 일반을 **타입으로 구분**하라는
- *    CLAUDE.md §2 의 필드도 아직 계약서에 없다. 없는 필드를 프론트가 지어내면 그 규칙을
- *    UI 로 덮는 것이라, 지금은 계약서대로 "기록이 부족하다" 를 말하고 질문 1개를 드린다.
+ * 🚨 **근거가 부족하면 개인화 대신 일반 추천을 그린다** (CLAUDE.md §2). 개인화 목록과
+ *    일반 카드는 **다른 컴포넌트 · 다른 타입 · 응답의 다른 필드**다 — 한 곳에 섞으면
+ *    언젠가 근거 0건인 것이 개인화로 그려진다. 둘이 한 화면에 같이 나오는 경우는 없다.
+ *
+ * ⚠️ `general` 필드는 **계약서 v1 에 아직 없다** (types.ts 의 ⚠️). 서버가 안 보내면
+ *    일반 카드 없이 예전처럼 질문 1개만 그린다 — 프론트가 또래 기준 추천을 지어내지 않는다.
  */
 export default function SuggestionsPage() {
   return (
@@ -104,6 +107,13 @@ function SuggestionsScreen() {
 
   const data = suggestions.data;
   const visible = data?.suggestions.filter((s) => !dismissed.includes(s.id)) ?? [];
+  /**
+   * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
+   * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
+   * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
+   */
+  const scarcity = data?.scarcity ?? null;
+  const general = scarcity ? (data?.general ?? []) : [];
   const blockedByGuard = new Set(data?.guards.flatMap((g) => g.blocked_agents) ?? []);
   /**
    * 요청했는데 결과도 없고 규칙에 막힌 것도 아닌 Agent = 이번에 실패한 쪽이다 (NF-06).
@@ -246,7 +256,20 @@ function SuggestionsScreen() {
         </CardFailed>
       ))}
 
-      {data?.scarcity ? <ScarcityCard childId={childId} scarcity={data.scarcity} /> : null}
+      {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
+          질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
+          카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다. */}
+      {scarcity && general.length > 0 ? (
+        <ul className="flex flex-col gap-3">
+          {general.map((item) => (
+            <GeneralSuggestionCard key={item.id} suggestion={item} recordCount={scarcity.count} />
+          ))}
+        </ul>
+      ) : null}
+
+      {scarcity ? (
+        <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
+      ) : null}
 
       {/* 줄마다 반복하지 않고 목록 아래에 한 번만 둔다. */}
       {visible.length > 0 ? (
@@ -278,10 +301,22 @@ function SuggestionsScreen() {
 }
 
 /**
- * 근거가 부족할 때. 🚨 **질문은 한 개까지만** 드린다 (CLAUDE.md §2).
+ * 근거가 부족할 때 되묻는 자리. 🚨 **질문은 한 개까지만** 드린다 (CLAUDE.md §2).
  * 쌓인 기록 건수를 숨기지 않고 그대로 보여준다 — 없는 근거로 "우리 아이 맞춤" 인 척하지 않는다.
+ *
+ * 🚨 **위에 일반 추천을 그렸는지에 따라 문구가 달라진다.** 또래 기준 추천을 이미 보여 준 화면에서
+ *    "추천을 만들지 않겠다" 고 말하면 화면이 스스로를 부정한다. 카드가 두 경우를 다 알고 있어야
+ *    서버가 `general` 을 안 보낼 때도 말이 된다.
  */
-function ScarcityCard({ childId, scarcity }: { childId: string; scarcity: Scarcity }) {
+function ScarcityCard({
+  childId,
+  scarcity,
+  hasGeneral,
+}: {
+  childId: string;
+  scarcity: Scarcity;
+  hasGeneral: boolean;
+}) {
   const [answered, setAnswered] = useState<string | null>(null);
 
   const answer = useMutation({
@@ -294,9 +329,16 @@ function ScarcityCard({ childId, scarcity }: { childId: string; scarcity: Scarci
 
   return (
     <Card>
-      <h2 className="text-section text-ink">판단할 기록이 부족해요</h2>
+      <h2 className="text-section text-ink">
+        {hasGeneral ? "다음엔 우리 아이 기준으로 골라 드릴게요" : "판단할 기록이 부족해요"}
+      </h2>
       <p className="text-body-sm text-ink-muted mt-1">
-        이 주제로 참고할 기록이 {scarcity.count}건뿐이에요. 근거 없이 추천을 만들지는 않을게요.
+        {scarcity.count === 0
+          ? "이 주제로 쌓인 기록이 아직 없어요."
+          : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
+        {hasGeneral
+          ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+          : "근거 없이 추천을 만들지는 않을게요."}
       </p>
 
       <p className="text-body text-ink mt-4">{scarcity.question.text}</p>

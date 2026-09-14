@@ -109,7 +109,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet`
 - 도메인을 아는 조합 (`components/`) — `DomainChip` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
+  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope`
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
@@ -129,8 +129,13 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
-- 탭(07) · `card-photo`(08) · 캘린더 그리드(09)는 그 화면 이슈에서 만든다.
-  **일반 추천 카드(`card-general`)는 계약서가 막고 있다** — 디자인 시스템 §14
+- 탭(07) · `card-photo`(08) · 캘린더 그리드(09)는 그 화면 이슈에서 만든다
+- 🚨 **일반 추천(`GeneralSuggestionCard`)과 개인화 목록(`SuggestionList`)은 다른 컴포넌트 · 다른 타입 ·
+  응답의 다른 필드다.** 한 곳에 플래그로 섞으면 언젠가 근거 0건인 것이 개인화로 그려지고, 그러면
+  "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다 (최상위 §2).
+  `GeneralSuggestion` 에는 `evidence` 필드가 **아예 없어서** 개인화 쪽에 넘기면 컴파일이 막는다.
+  ⚠️ `SuggestionsResponse.general` 은 **계약서 v1 에 아직 없다** — 제안 형태로 두고 optional 로 받는다
+  (서버가 안 보내면 질문 1개만 그린다). 👉 `apps/api` Owner 협의 대상 (최상위 §8)
 - 🚨 **외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.** 접근성을 손으로 짜면
   반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고** `classNames` 로 토큰만 입힌다 —
   버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7)
@@ -258,6 +263,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 최상위 §2 가 프론트에 떨어지는 지점만 추렸다. 어기면 서비스가 성립하지 않는다.
 
 - 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천에는 "또래 기준 일반 추천" 을 **화면에 명시**하고 쌓인 기록 건수를 그대로 보여준다. 되물을 때 질문은 **1개**.
+  🚨 **둘이 한 화면에 같이 서지 않는다** — 일반 추천은 개인화 **대신** 나간다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
 - 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
 - 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).
 - 🚨 **`partial` 이벤트를 실패 화면으로 떨어뜨리지 않는다.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 **한 화면에** 섞는다 (NF-06).
@@ -358,8 +364,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | 시나리오 | 무엇이 나오나 |
 | --- | --- |
 | `default` | 기억이 쌓인 상태 · 개인화 추천 2건 |
-| `empty` | 기록 0건 — `highlight: null` 빈 상태 |
-| `scarcity` | 근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 **1개** |
+| `empty` | 기록 0건 — `highlight: null` 빈 상태 · 05 는 일반 추천 **2건**(도메인 2색) |
+| `scarcity` | 근거 부족 — 개인화 대신 **일반 추천 1건**(점선 카드) + 되묻는 질문 **1개** |
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |

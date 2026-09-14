@@ -730,6 +730,11 @@
         "section": "colors"
       },
       {
+        "name": "The 일반 추천은 개인화와 섞이지 않는다 규칙",
+        "body": "근거가 부족하면 개인화 대신 또래 기준 일반 추천(card-general, canvas 바탕 + line-strong 1px 점선)을 그린다. 컴포넌트·타입·응답 필드가 전부 따로다 — GeneralSuggestion 에는 evidence 필드가 없어서 개인화 목록에 넘기면 컴파일이 막는다. 구분은 색이 아니라 라벨과 기록 건수가 진다.",
+        "section": "colors"
+      },
+      {
         "name": "The 한 화면 한 서체 규칙",
         "body": "문서 화면은 통째로 font-doc 이다. 제목만 손글씨로 남기면 size-adjust 때문에 크기감이 어긋난다.",
         "section": "typography"
