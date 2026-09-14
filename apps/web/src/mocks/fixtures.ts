@@ -13,6 +13,7 @@ import type {
   Affinity,
   CalendarEvent,
   Evidence,
+  GeneralSuggestion,
   HealthSafety,
   HomeResponse,
   Me,
@@ -216,6 +217,34 @@ export const healthSafety: HealthSafety[] = [
   },
 ];
 
+/**
+ * 보호자가 방금 확정한 안전 정보 (승인 게이트 ㉡ 응답).
+ * 🚨 서버가 만드는 필드(id · created_by · updated_at)는 여기서 채운다 — 요청에 없는 값이다.
+ */
+export function newHealthSafety(input: {
+  type: string;
+  label: string;
+  category?: string;
+  severity?: string | null;
+  reactions?: string[];
+  notes?: string | null;
+}): HealthSafety {
+  return {
+    kind: "health_safety",
+    id: `hs_${Date.now()}`,
+    type: input.type,
+    label: input.label,
+    aliases: [],
+    category: input.category ?? "기타",
+    severity: input.severity ?? null,
+    reactions: input.reactions ?? [],
+    management: { avoid: true },
+    notes: input.notes ?? null,
+    created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
+    updated_at: hoursFromNow(0),
+  };
+}
+
 /* ── 제안 ─────────────────────────────────────────────────────────────── */
 
 function evidenceFrom(a: Affinity): Evidence {
@@ -233,6 +262,7 @@ export const suggestions: Suggestion[] = [
     id: "s_1",
     child_id: CHILD_ID,
     agent: "food",
+    kind: "personalized",
     content: "계란말이에 시금치를 조금 섞어 보세요",
     reason: {
       why_this: "계란 반찬을 서로 다른 3일에 찾았어요",
@@ -248,6 +278,7 @@ export const suggestions: Suggestion[] = [
     id: "s_2",
     child_id: CHILD_ID,
     agent: "activity",
+    kind: "personalized",
     content: "주말에 실내 물놀이장은 어떨까요",
     reason: {
       why_this: "물놀이에서 오래 머물렀어요",
@@ -260,6 +291,43 @@ export const suggestions: Suggestion[] = [
     evidence: [evidenceFrom(affinities[1])],
   },
 ];
+
+/**
+ * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 추천 (CLAUDE.md §2).
+ *
+ * 🚨 `evidence` 필드가 없다 — 일반 추천은 근거 0행이 정상이고, 그래서 개인화와 **타입이 다르다.**
+ * 🚨 `basis` 는 서버가 만든 문구다. 목에서도 프론트가 "또래 기준" 을 지어내지 않게 여기 둔다.
+ */
+export const generalSuggestions: GeneralSuggestion[] = [
+  {
+    id: "g_1",
+    child_id: CHILD_ID,
+    agent: "activity",
+    kind: "general",
+    content: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요",
+    basis: "36개월 또래가 자주 찾는 놀이예요",
+  },
+  {
+    id: "g_2",
+    child_id: CHILD_ID,
+    agent: "food",
+    kind: "general",
+    content: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요",
+    basis: "36개월 또래의 식사에서 흔한 형태예요",
+  },
+];
+
+/**
+ * stale 시나리오 — 근거가 전부 6개월을 넘겼다.
+ *
+ * 🚨 `Evidence.is_stale` 은 **계약서 v1 에 아직 없는 필드**다 (types.ts 의 주석 참고).
+ *    프론트는 날짜를 계산하지 않으므로 이 판정은 서버가 내려줘야 하고, 그 전까지는
+ *    점선 근거 칩(NF-08)을 확인할 방법이 목뿐이다.
+ */
+export const staleSuggestion: Suggestion = {
+  ...suggestions[1],
+  evidence: [{ ...evidenceFrom(staleAffinities[1]), is_stale: true }],
+};
 
 /* ── 홈 ───────────────────────────────────────────────────────────────── */
 

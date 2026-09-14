@@ -5,12 +5,17 @@
  * 그래야 아이를 바꿀 때 invalidateQueries({ queryKey: qk.child(cid) }) 한 번으로 끝난다.
  */
 export const qk = {
+  /** GET /auth/{provider}/status — 로그인 전에도 부르는 유일한 쿼리다 (00 화면 prefetch). */
+  authStatus: (provider: string) => ["auth-status", provider] as const,
+
   me: () => ["me"] as const,
   consents: (childId?: string) => ["consents", childId ?? null] as const,
 
   child: (childId: string) => ["child", childId] as const,
 
   home: (childId: string) => [...qk.child(childId), "home"] as const,
+  /** 02 온보딩의 발달 선별 문항. 나이대에 따라 달라져서 아이 스코프 아래에 둔다. */
+  devScreening: (childId: string) => [...qk.child(childId), "dev-screening"] as const,
   observations: (childId: string, filters?: Record<string, unknown>) =>
     [...qk.child(childId), "observations", filters ?? null] as const,
   observation: (childId: string, kind: string, id: string) =>
@@ -18,6 +23,12 @@ export const qk = {
   affinities: (childId: string, filters?: Record<string, unknown>) =>
     [...qk.child(childId), "affinities", filters ?? null] as const,
   healthSafety: (childId: string) => [...qk.child(childId), "health-safety"] as const,
+  /**
+   * 05 제안 후보. 같은 run·같은 Agent 조합이면 같은 화면이라 키에 둘 다 담는다 —
+   * 뒤로 갔다 오면 Agent 를 다시 돌리지 않는다 (NF-01 은 model call 을 센다).
+   */
+  suggestions: (childId: string, runId: string | null, agents: readonly string[]) =>
+    [...qk.child(childId), "suggestions", runId, [...agents].join(",")] as const,
   calendar: (childId: string, month: string) => [...qk.child(childId), "calendar", month] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,

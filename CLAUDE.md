@@ -133,6 +133,8 @@
 
 ## 6. 저장소 구조
 
+폴더 구조는 저장소를 열어 보면 된다. 여기엔 **열어 봐도 안 보이는 것만** 적는다.
+
 `(비어 있음)` = 폴더는 있고 파일은 다음 이슈에서 · `(미생성)` = 폴더 자체가 아직 없음
 
 ```
@@ -152,9 +154,10 @@
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
-│   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키
-│   │       ├── mocks/        MSW 목 서버 — 개발 환경 전용 (백엔드 없이 화면 작업)
-│   │       └── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
+│   │       ├── lib/api/      계약서 v1 타입 · fetch 클라이언트 · SSE · 쿼리 키 · Idempotency 강제
+│   │       ├── mocks/        MSW 목 서버 — 개발 환경 전용 (백엔드 없이 화면 작업) + 계약 회귀 테스트
+│   │       ├── stores/       Zustand — 클라이언트 상태만 (서버 상태는 TanStack Query)
+│   │       └── test/         Vitest 셋업 (`pnpm test`) — 목이 계약대로 "행동" 하는지
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
 │   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
@@ -199,6 +202,14 @@
 >
 > 하위 이름(`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
 
+> **`PRODUCT.md` · `DESIGN.md` 는 새 문서가 아니라 옮긴 것이다.** 사람이 근거와 함께 읽는 정본은 그대로
+> `docs/` 에 있다 — 제품은 [`docs/overview/`](docs/overview/), 디자인은 [`docs/web/design-system-v1.md`](docs/web/design-system-v1.md).
+> 루트의 두 파일은 **AI 도구가 한 번에 읽도록 요약·구조화한 사본**이고, `.impeccable/` 은 그 사본의 기계 전용 부속이다.
+>
+> 🚨 **디자인은 원본이 종류마다 한 곳이다** — 의도·근거는 `docs/web/design-system-v1.md`, 공통 값(색·높이 등)은 `apps/web/src/app/globals.css`.
+> `DESIGN.md` 는 둘의 사본이라 어느 쪽의 원본도 아니다. 어긋나면 한쪽이 틀렸다고 가정하지 말고 **바뀐 이유부터 확인**한 뒤,
+> **같은 PR 에서** 근거 · 값 · 사본을 함께 맞춘다 (절차는 그 문서 머리말). 제품 내용은 그대로 `docs/overview/` 가 맞다.
+
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
 **파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.
 
@@ -206,15 +217,16 @@
 
 ## 7. 기술 스택
 
-|              |                                                                                                          |
-| ------------ | -------------------------------------------------------------------------------------------------------- |
-| **Frontend** | Next.js 16 / React 19 · TypeScript · Tailwind 4 · Zustand 5 · TanStack Query 5 · (모바일: Expo / React Native 웹뷰) |
-| **Backend**  | Python 3.12 / FastAPI · SQLAlchemy 2.0 (async) · Alembic · uv · REST · Docker                            |
-| **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
-| **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
-| **협업**     | GitHub · Notion(기획·의사결정 기록) · Discord                                                            |
+언어·프레임워크·버전은 매니페스트가 정본이다 (`apps/web/package.json` · `apps/api/pyproject.toml`).
+라이브러리 관례와 버전을 **그 값으로 고정한 이유**는 각 `apps/*/CLAUDE.md` 에 있다.
 
-버전·라이브러리 관례는 각 `apps/*/CLAUDE.md` 에.
+매니페스트에 안 적히는 것만 여기 둔다.
+
+| | |
+| --- | --- |
+| **Data** | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다) |
+| **AI** | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
+| **협업** | GitHub · Notion(기획·의사결정 기록) · Discord |
 
 ---
 

@@ -9,13 +9,17 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
+    "lucide-react": "1.42.0",
     "next": "16.3.4",
     "react": "19.2.8",
+    "react-day-picker": "10.0.1",
     "react-dom": "19.2.8",
     "zod": "4.5.4",
     "zustand": "5.0.15"
@@ -32,7 +36,8 @@
     "prettier": "3.9.6",
     "prettier-plugin-tailwindcss": "0.8.1",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "5.0.0"
   },
   "packageManager": "pnpm@11.10.0",
   "msw": {

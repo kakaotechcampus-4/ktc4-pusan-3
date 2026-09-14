@@ -1,5 +1,10 @@
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, NetworkError, type ApiErrorBody } from "./errors";
+import {
+  IdempotencyKeyRequiredError,
+  requiresIdempotencyKey,
+  type IdempotencyKey,
+} from "./idempotency";
 
 /* ── 인증 토큰 ────────────────────────────────────────────────────────────
  * Authorization: Bearer <token> — 예외 없음. 인증 없는 엔드포인트는 없다 (NF-09).
@@ -12,28 +17,31 @@ export function setAuthToken(token: string | null): void {
   authToken = token;
 }
 
-/* ── Idempotency-Key ──────────────────────────────────────────────────────
- * 중복 실행이 기억을 두 번 쌓거나 캘린더에 두 번 쓰는 엔드포인트에만 필수다.
- * 헤더가 없으면 서버가 400 을 준다.
+/* ── 401 unauthenticated ──────────────────────────────────────────────────
+ * 세션 만료를 한 곳에서 처리한다 — 화면마다 401 을 다루면 어딘가는 빠뜨린다.
+ * 스토어를 여기서 import 하지 않는 이유는 위와 같다(서버 컴포넌트에서 못 쓰게 된다).
+ * 그래서 Providers 가 핸들러를 꽂아 준다.
+ *
+ * 🚨 `invalid_handoff`(401) 는 여기 걸리지 않는다. 그건 로그인 교환이 실패한 것이라
+ *    "세션이 끊겼다" 와 다른 상태고, 콜백 화면이 자기 문구로 처리한다.
  */
-const IDEMPOTENCY_REQUIRED: RegExp[] = [
-  /^\/children\/[^/]+\/inputs$/,
-  /^\/children\/[^/]+\/onboarding$/,
-  /^\/children\/[^/]+\/photos$/,
-  /^\/children\/[^/]+\/health-safety$/, // 승인 게이트 ㉡
-  /^\/events\/[^/]+\/confirm$/, // 승인 게이트 ㉠
-];
+let onUnauthenticated: (() => void) | null = null;
 
-export function newIdempotencyKey(): string {
-  return crypto.randomUUID();
+export function setUnauthenticatedHandler(handler: (() => void) | null): void {
+  onUnauthenticated = handler;
 }
 
+/* ── Idempotency-Key ──────────────────────────────────────────────────────
+ * 어느 엔드포인트가 키를 요구하는지는 idempotency.ts 의 표가 정본이다.
+ * 여기서는 그 표를 마지막 그물로만 쓴다 — 정상 경로는 operations.ts 의 전용 함수다.
+ */
 export interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   /** JSON 으로 직렬화해 보낸다. FormData 를 주면 그대로 보내고 Content-Type 을 건드리지 않는다. */
   body?: unknown;
   query?: Record<string, string | number | boolean | null | undefined>;
-  idempotencyKey?: string;
+  /** 🚨 되돌릴 수 없는 엔드포인트에서는 없으면 요청 자체가 막힌다 (idempotency.ts). */
+  idempotencyKey?: IdempotencyKey;
   signal?: AbortSignal;
   headers?: Record<string, string>;
 }
@@ -56,13 +64,9 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, query, idempotencyKey, signal, headers } = options;
 
-  if (process.env.NODE_ENV !== "production") {
-    const needsKey = method === "POST" && IDEMPOTENCY_REQUIRED.some((re) => re.test(path));
-    if (needsKey && !idempotencyKey) {
-      console.warn(
-        `[api] ${method} ${path} 은 Idempotency-Key 가 필수다. newIdempotencyKey() 를 넘길 것 (없으면 서버가 400).`,
-      );
-    }
+  // 🚨 경고가 아니라 차단이다. 환경을 가리지 않고, 요청은 나가지 않는다.
+  if (method === "POST" && !idempotencyKey && requiresIdempotencyKey(path)) {
+    throw new IdempotencyKeyRequiredError(path);
   }
 
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
@@ -94,6 +98,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!response.ok) {
     const envelope = payload as Partial<ApiErrorBody> | null;
     const error = envelope?.error;
+    if (response.status === 401 && error?.code === "unauthenticated") onUnauthenticated?.();
     throw new ApiError(
       response.status,
       error?.code ?? "unknown",
