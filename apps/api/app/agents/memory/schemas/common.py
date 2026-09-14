@@ -55,7 +55,7 @@ class AssistanceLevel(StrEnum):
     INDEPENDENT = "independent"  # 혼자
     VERBAL_PROMPT = "verbal_prompt"  # 말로 시켜야 함
     PARTIAL_ASSIST = "partial_assist"  # 일부 도와줘야 함
-    FULL_ASSIST = "full_assist"  # 거의 다 해줘야 함ㄴ
+    FULL_ASSIST = "full_assist"  # 거의 다 해줘야 함
 
 
 class CompletionStatus(StrEnum):

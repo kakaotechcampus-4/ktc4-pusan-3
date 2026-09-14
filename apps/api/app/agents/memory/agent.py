@@ -65,7 +65,7 @@ async def run(
     max_steps: int = MAX_STEPS,
 ) -> MemoryAgentResult:
     """발화 한 건을 처리한다. directive는 이후 Supervisor가 넘길 상위 지시다."""
-    llm = client or LLMClient()
+    llm = client or LLMClient(role="memory")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(context, directive)},
         {"role": "user", "content": raw_text},
