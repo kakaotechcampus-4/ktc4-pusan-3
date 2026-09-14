@@ -1,4 +1,4 @@
-"""observation 4테이블(food / health / education / activity)의 CRUD tool 16개.
+"""observation 5테이블(food / health / education / activity / routine)의 CRUD tool 20개.
 
 각 tool 흐름:
   - 날짜·시각 표현을 datetime_rules 로 확정 -> context 값 주입 -> NOT NULL 기본값 채움
@@ -29,6 +29,8 @@ from app.agents.memory.schemas.observation import (
     ObservationHealthCreate,
     ObservationHealthUpdate,
     ObservationQueryArgs,
+    ObservationRoutineCreate,
+    ObservationRoutineUpdate,
     RecordRef,
 )
 
@@ -185,7 +187,7 @@ def _time_remedy(exc: DateParseError) -> str:
 
 
 def _query_handler(domain: str) -> Callable[..., Any]:
-    """조회 tool 4개는 인자도 동작도 같다. 이름만 다르게 만들어 registry에 올린다."""
+    """조회 tool 5개는 인자도 동작도 같다. 이름만 다르게 만들어 registry에 올린다."""
 
     async def handler(context: AgentContext, args: ObservationQueryArgs) -> ToolResult:
         return await _query(context, args, domain=domain)
@@ -257,10 +259,28 @@ async def delete_observation_activity(context: AgentContext, args: RecordRef) ->
     return await _delete(context, args, domain="activity")
 
 
+# routine
+async def create_observation_routine(
+    context: AgentContext, args: ObservationRoutineCreate
+) -> ToolResult:
+    return await _create(context, args, domain="routine")
+
+
+async def update_observation_routine(
+    context: AgentContext, args: ObservationRoutineUpdate
+) -> ToolResult:
+    return await _update(context, args, domain="routine")
+
+
+async def delete_observation_routine(context: AgentContext, args: RecordRef) -> ToolResult:
+    return await _delete(context, args, domain="routine")
+
+
 query_observation_food = _query_handler("food")
 query_observation_health = _query_handler("health")
 query_observation_education = _query_handler("education")
 query_observation_activity = _query_handler("activity")
+query_observation_routine = _query_handler("routine")
 
 OBSERVATION_HANDLERS = {
     "create_observation_food": create_observation_food,
@@ -279,4 +299,8 @@ OBSERVATION_HANDLERS = {
     "query_observation_activity": query_observation_activity,
     "update_observation_activity": update_observation_activity,
     "delete_observation_activity": delete_observation_activity,
+    "create_observation_routine": create_observation_routine,
+    "query_observation_routine": query_observation_routine,
+    "update_observation_routine": update_observation_routine,
+    "delete_observation_routine": delete_observation_routine,
 }

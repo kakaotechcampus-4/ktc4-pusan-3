@@ -17,6 +17,7 @@ class SegmentIntent(StrEnum):
     OBSERVATION_HEALTH = "observation_health"
     OBSERVATION_EDUCATION = "observation_education"
     OBSERVATION_ACTIVITY = "observation_activity"
+    OBSERVATION_ROUTINE = "observation_routine"
     OBSERVATION_QUERY = "observation_query"
     OBSERVATION_UPDATE = "observation_update"
     OBSERVATION_DELETE = "observation_delete"

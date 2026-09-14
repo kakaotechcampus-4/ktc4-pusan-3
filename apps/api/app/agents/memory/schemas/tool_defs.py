@@ -1,4 +1,4 @@
-"""tool 24개의 이름 · 호출 조건 · argument 모델 정의.
+"""tool 28개의 이름 · 호출 조건 · argument 모델 정의.
 
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
@@ -13,6 +13,8 @@ from app.agents.memory.schemas.observation import (
     ObservationHealthCreate,
     ObservationHealthUpdate,
     ObservationQueryArgs,
+    ObservationRoutineCreate,
+    ObservationRoutineUpdate,
     RecordRef,
 )
 from app.agents.memory.schemas.parse_input import ParseInputArgs
@@ -133,6 +135,31 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="delete_observation_activity",
         description=f"활동 기록 한 건을 지운다. {_NEEDS_QUERY}",
+        args=RecordRef,
+    ),
+    # observation_routine
+    ToolDefinition(
+        name="create_observation_routine",
+        description=(
+            "아이가 반복하는 생활 행동, 스스로 해낸 일, 생활 습관, 인사 같은 사회적 생활기술을 "
+            "기록한다. 양치·옷 입기·정리·인사·손톱 물어뜯기·등원 준비. "
+            "놀이 자체는 activity, 먹은 음식은 food, 증상은 health로 보낸다."
+        ),
+        args=ObservationRoutineCreate,
+    ),
+    ToolDefinition(
+        name="query_observation_routine",
+        description=f"저장된 생활 행동 기록을 날짜나 키워드로 찾는다. {_NEEDS_QUERY}",
+        args=ObservationQueryArgs,
+    ),
+    ToolDefinition(
+        name="update_observation_routine",
+        description=f"이미 저장된 생활 행동 기록을 고친다. {_NEEDS_QUERY}",
+        args=ObservationRoutineUpdate,
+    ),
+    ToolDefinition(
+        name="delete_observation_routine",
+        description=f"생활 행동 기록 한 건을 지운다. {_NEEDS_QUERY}",
         args=RecordRef,
     ),
     # event

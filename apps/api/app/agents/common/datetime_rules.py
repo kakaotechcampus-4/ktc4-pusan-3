@@ -1,16 +1,16 @@
 """Memory Agent가 추출한 날짜·시각 표현을 확정 값으로 변환하는 규칙 모듈.
 
 LLM은 자연어의 의미 해석까지만 담당한다.
-예를 들어 "모레 운동회가 있고 전날 저녁 8시에 알려줘"라는 입력에서
-"모레", "저녁 8시", "행사 기준 하루 전"과 같은 표현과 관계를 추출한다.
+예를 들어 "금요일 오전 10시에 물놀이가 있어"라는 입력에서
+"금요일", "오전 10시" 같은 표현과 과거/미래 문맥을 추출한다.
 
 이 모듈은 그 결과를 AgentContext의 현재 시각과 서비스 timezone을 기준으로
 실제 date / time / datetime 값으로 계산한다.
 
 역할 분리 원칙:
-- LLM: 날짜·시각 표현 추출, 과거/미래 문맥 판단, 기준 일정과의 관계 해석
+- LLM: 날짜·시각 표현 추출, 과거/미래 문맥 판단
 - 이 모듈: 날짜 덧셈·뺄셈, 요일/연도 계산, 24시간제 변환, timezone 적용, 유효성 검증
-- DB/tool: 계산된 값을 실제 observation / event / reminder 필드에 저장
+- DB/tool: 계산된 값을 실제 observation / event 필드에 저장
 """
 
 import re
@@ -105,7 +105,7 @@ def resolve_date(value: str, *, today: date, direction: TemporalDirection = "nea
     key = text.replace(" ", "")
     if key in _ANCHOR_RELATIVE:
         raise DateParseError(
-            f"'{text}' 는 기준 일정이 있어야 해석된다. offset_days_from_event 를 쓴다."
+            f"'{text}' 는 기준 일정이 있어야 풀리는 날짜다. 사용자에게 날짜를 되묻는다."
         )
     if key in _DAY_OFFSETS:
         return today + timedelta(days=_DAY_OFFSETS[key])
@@ -197,11 +197,6 @@ def resolve_time(value: str | None) -> time | None:
 def combine(day: date, moment: time | None, tz: tzinfo) -> datetime:
     """날짜와 시각을 timezone 이 붙은 datetime 으로 합친다. 시각이 없으면 자정."""
     return datetime.combine(day, moment or time(0, 0), tzinfo=tz)
-
-
-def shift_days(day: date, days: int) -> date:
-    """기준 날짜에서 days만큼 이동. reminder의 offset_days_from_event가 쓴다."""
-    return day + timedelta(days=days)
 
 
 def build_observed_range(day: date) -> DateRange:

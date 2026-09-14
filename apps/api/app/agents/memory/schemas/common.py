@@ -39,6 +39,32 @@ class EngagementLevel(StrEnum):
     HIGH = "high"
 
 
+class RoutineCategory(StrEnum):
+    """생활 행동의 종류. data_model.md §5 observation_routine."""
+
+    SELF_CARE = "self_care"  # 양치 / 옷 입기 / 손 씻기
+    MEALTIME = "mealtime"  # 식사 도구 / 식사 태도 — 무엇을 먹었는지는 food
+    HOUSEHOLD_TASK = "household_task"  # 장난감 정리 / 심부름
+    SOCIAL_MANNER = "social_manner"  # 인사 / 차례 지키기
+    HABIT = "habit"  # 손톱 물어뜯기 / 손가락 빨기 (증상 X, 단순 버릇)
+    TRANSITION = "transition"  # 등원 준비 / 잠자리 들기 / 놀이 끝내기
+
+class AssistanceLevel(StrEnum):
+    """얼마나 도움을 받아 해냈는지."""
+
+    INDEPENDENT = "independent"  # 혼자
+    VERBAL_PROMPT = "verbal_prompt"  # 말로 시켜야 함
+    PARTIAL_ASSIST = "partial_assist"  # 일부 도와줘야 함
+    FULL_ASSIST = "full_assist"  # 거의 다 해줘야 함ㄴ
+
+
+class CompletionStatus(StrEnum):
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    REFUSED = "refused"
+    INTERRUPTED = "interrupted"
+
+
 class StrongSignal(StrEnum):
     """성향 판단에 무게를 주는 행동 신호. 발화에 근거가 있을 때만 붙인다."""
 
@@ -120,7 +146,7 @@ class ObservationCreateArgs(ToolArgs):
 
 
 class PromotableCreateArgs(ObservationCreateArgs):
-    """승격 파이프라인에 관여하는 도메인(food/education/activity)의 추가 필드."""
+    """승격 파이프라인에 관여하는 도메인(food/education/activity/routine)의 추가 필드."""
 
     subject: Annotated[
         str,

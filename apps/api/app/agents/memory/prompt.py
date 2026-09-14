@@ -32,6 +32,9 @@ _ROUTING = """
 - 실제로 먹거나 마신 것, 음식에 보인 반응 → observation_food
 - 증상·컨디션 → observation_health
 - 학습 주제가 분명한 활동(책읽기·활동지·한글·숫자세기) → observation_education
+- 스스로 한 일·생활 습관·인사 같은 생활 행동(양치·옷 입기·정리·손톱 물어뜯기·등원 준비)
+  → observation_routine. "포크만 써"는 routine, "브로콜리를 남겼어"는 food.
+  손톱 물어뜯기는 증상이 아니라 습관, 장난감 정리는 놀이가 아니라 생활 행동이다.
 - 그 밖의 놀이·자유활동·신체활동 → observation_activity
 - 앞으로의 예정 → event. 챙길 것은 event_item
 - 알림 요청이 오면 그 일정을 query_event로 찾고, 없을 때만 create_event로 만든다.
@@ -56,8 +59,8 @@ _VALUES = """
 - 활동·음식·학습에는 시각 필드가 자체가 없다. 관찰 시각은 observation_health에만 있다.
   "2시에 모래놀이했어"의 2시는 raw_text에만 남기고 없는 필드를 만들지 않는다.
 - "하루 종일" "종일" "내내"는 duration_min=1440.
-- 발화에 없는 값을 만들지 않는다. duration, engagement_level, severity, reaction, amount 는
-  말로 드러났을 때만 채우고 아니면 비운다.
+- 발화에 없는 값을 만들지 않는다. duration, engagement_level, severity, reaction, amount,
+  context, assistance_level, completion_status, trigger 는 말로 드러났을 때만 채우고 아니면 비운다.
 - 없었다고 말한 증상은 symptom에 넣지 않는다. "콧물이 났는데 열은 없었대" 는 콧물만 기록한다.
 - 보호자가 직접 본 것은 parent_direct, "~했대" "선생님 말로는" 처럼 전해 들은 것은
   parent_hearsay, 확신이 약하면 parent_hedged, 알림장·기관 공지는 institution_notice.

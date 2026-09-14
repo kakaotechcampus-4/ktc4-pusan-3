@@ -19,7 +19,7 @@ from uuid import UUID
 
 from app.agents.common.datetime_rules import DateRange
 
-# observation 4테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
+# observation 5테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
 
 
