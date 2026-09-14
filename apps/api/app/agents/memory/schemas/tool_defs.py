@@ -3,6 +3,7 @@
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
 
+from app.agents.common.tool_schema import ToolDefinition
 from app.agents.memory.schemas.observation import (
     ObservationActivityCreate,
     ObservationActivityUpdate,
@@ -27,7 +28,6 @@ from app.agents.memory.schemas.schedule import (
     EventRef,
     EventUpdate,
 )
-from app.agents.memory.schemas.tool_schema import ToolDefinition
 
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
 
