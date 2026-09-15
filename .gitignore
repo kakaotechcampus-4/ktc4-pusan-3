@@ -82,3 +82,7 @@ Claude outputs/
 #    설계 근거의 정본은 docs/ 다 — 같은 근거가 두 곳에 있으면 어느 쪽이 최신인지 알 수 없다.
 .impeccable/*
 !.impeccable/design.json
+
+# ── oh-my-claudecode(OMC) 로컬 상태 ──────────────────
+# 세션별 작업 상태 · 계획 · 로그. 개인 로컬 도구 상태라 저장소와 무관하다.
+.omc/

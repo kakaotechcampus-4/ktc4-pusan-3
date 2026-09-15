@@ -127,19 +127,19 @@
 
 ```
 AUTH_RETURN_URL_WEB=https://<도메인>/auth/callback
-AUTH_RETURN_URL_APP=yukameo://auth
+AUTH_RETURN_URL_APP=icatch://auth
 ```
 
 | | 성공 | 실패 |
 | --- | --- | --- |
 | `client=web` | `https://<도메인>/auth/callback?code=<1회용>` | `…/auth/callback?error=<코드>` |
-| `client=app` | `yukameo://auth?code=<1회용>` | `yukameo://auth?error=<코드>` |
+| `client=app` | `icatch://auth?code=<1회용>` | `icatch://auth?error=<코드>` |
 
 **쿼리 모양을 웹·앱 동일하게 둔다** — 프론트가 파싱 코드를 한 벌만 만들면 된다.
 
 **왜 `return_to` 가 아니라 `client` 인가** — 값이 URL 이 아니라 열거값이다. `return_to` 라는 이름은 URL 을 기대하게 만들고, 나중에 누군가 `return_to=https://…` 를 넣으려 한다. 그 순간 **오픈 리다이렉트**가 된다. 이름으로 막는다.
 
-**커스텀 스킴은 카카오 콘솔에 등록하지 않는다.** `yukameo://auth` 는 **우리 서버가 302 하는 대상**이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다. 앱 스킴은 `app.json` 의 `scheme: "yukameo"` 로 이미 잡혀 있다.
+**커스텀 스킴은 카카오 콘솔에 등록하지 않는다.** `icatch://auth` 는 **우리 서버가 302 하는 대상**이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다. 앱 스킴은 `app.json` 의 `scheme: "icatch"` 로 이미 잡혀 있다.
 
 `client` 값은 `state` 와 함께 `oauth_state` 쿠키에 담아 콜백까지 들고 간다 (§5-5).
 
@@ -663,7 +663,7 @@ target_id_type=user_id&target_id={provider_user_id}
 
 ```
 https://<도메인>/auth/callback?error=invalid_state
-yukameo://auth?error=oauth_denied
+icatch://auth?error=oauth_denied
 ```
 
 🚨 **문구를 싣지 않는다.** 서버 메시지를 URL 에 그대로 실으면 **공격자가 프론트 화면에 임의 문구를 띄우는 통로**가 된다(피싱 문구 주입). 그리고 문구를 서버가 정하면 프론트가 화면 톤을 맞출 수 없다. **사용자에게 보일 문장은 프론트가 만든다.**
@@ -694,7 +694,7 @@ yukameo://auth?error=oauth_denied
 | A-08 | 🚨 **`state` 불일치로 콜백** | `302 …?error=invalid_state`, **인가 코드 교환을 시도하지 않는다** |
 | A-09 | `oauth_state` 쿠키 없이 콜백 | 같음 |
 | A-10 | `client` 가 허용값 밖 | 웹 복귀 URL로 `302 …?error=invalid_client`, 카카오 호출 없음 |
-| A-11 | `client=app` 로 시작 | 복귀가 `yukameo://auth?code=…` (§2-3) |
+| A-11 | `client=app` 로 시작 | 복귀가 `icatch://auth?code=…` (§2-3) |
 | A-12 | 만료된 1회용 코드 | `401 invalid_handoff` |
 | A-13 | signup 에서 필수 스코프 누락 | `403 consent_required`, **`parent` 미생성** |
 | A-14 | 만료된 세션 토큰으로 호출 | `401 unauthenticated` |
@@ -714,7 +714,7 @@ yukameo://auth?error=oauth_denied
 | # | 무엇 | 누가 |
 | --- | --- | --- |
 | M-01 | 🚨 **시작과 콜백이 같은 오리진인지 배포 환경에서 확인.** 다르면 `state` 쿠키가 콜백에 실리지 않는다. **로컬은 포트가 달라도 우연히 통과한다** (§5-5) | 김명성 · 고태영 |
-| M-02 | **앱에서 로그인 → `yukameo://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
+| M-02 | **앱에서 로그인 → `icatch://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
 
 배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 §3 의 5개뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
 
@@ -746,7 +746,7 @@ KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정
 KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
 KAKAO_API_TIMEOUT=3          # 초
 AUTH_RETURN_URL_WEB=         # 예: https://<도메인>/auth/callback
-AUTH_RETURN_URL_APP=         # 예: yukameo://auth
+AUTH_RETURN_URL_APP=         # 예: icatch://auth
 SESSION_TTL=43200            # 초 (12시간)
 HANDOFF_TTL=120              # 초 (2분)
 SIGNUP_TICKET_TTL=600        # 초 (10분)
