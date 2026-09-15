@@ -28,7 +28,7 @@ MAX_COMPLETION_TOKENS = 900
 BAD_JSON = "BAD_JSON"  # arguments가 JSON 이 아니다
 SCHEMA = "SCHEMA"  # 스키마/짝 검사 위반
 NO_TOOL_CALL = "NO_TOOL_CALL"  # route를 부르지 않고 말로 답함
-LLM_UNAVAILABLE = "LLM_UNAVAILABLE"  # 인증/rate limit/네트워크
+LLM_UNAVAILABLE = "LLM_UNAVAILABLE"  # 인증/rate limit/네트워크/설정. detail에 예외 이름
 
 # route를 강제로 부르게 한다. provider 가 dict를 거절하면 순서대로 물러선다
 _FORCE_ROUTE: dict[str, Any] = {"type": "function", "function": {"name": "route"}}
@@ -39,12 +39,12 @@ _TOOL_CHOICE_FALLBACKS: tuple[str, ...] = ("required", "auto")
 class SupervisorResult:
     output: SupervisorOutput | None  # 검증까지 통과했을 때만
     error: str | None = None  # 위 실패 코드 중 하나. output과 둘 중 하나만 찬다
-    detail: str | None = None  # 어디가 걸렸는지 — 조각 번호·필드 경로만. 값은 담지 않는다
+    # 에러 발생지: 조각 번호·필드 경로, LLM 실패면 예외 이름만
+    detail: str | None = None
     model_calls: int = 0
     usage: dict[str, int] = field(default_factory=dict)
     latency_ms: int = 0
     # keep_rejected=True 일 때만 찬다. 조각 원문이 들어 있으니 로그·저장에 쓰지 않는다
-    # (합성 케이스로 프롬프트를 고칠 때 콘솔에서 보려고 둔 자리다)
     rejected: SupervisorOutput | None = None
 
     @property
@@ -60,13 +60,17 @@ async def run(
     keep_rejected 는 라이브 분기 확인(합성 케이스)에서만 켠다 — 버려진 조각을 눈으로 보려는 것이다.
     pipeline 은 켜지 않는다.
     """
-    llm = client or LLMClient(role="supervisor")
+    started = time.perf_counter()
+    try:
+        llm = client or LLMClient(role="supervisor")
+    except LLMError as exc:
+        # SUPERVISOR_* 설정 오류. 입력 실패로 만들지 않고 강등
+        return _failed(LLM_UNAVAILABLE, 0, {}, started, detail=type(exc).__name__)
     messages = [
         {"role": "system", "content": build_system_prompt()},
         {"role": "user", "content": raw_text},
     ]
 
-    started = time.perf_counter()
     usage: dict[str, int] = {}
     calls = 0
     response = None
@@ -82,11 +86,11 @@ async def run(
             break
         except LLMBadRequestError:
             continue
-        except LLMError:
-            return _failed(LLM_UNAVAILABLE, calls, usage, started)
+        except LLMError as exc:
+            return _failed(LLM_UNAVAILABLE, calls, usage, started, detail=type(exc).__name__)
 
     if response is None:  # 모든 tool_choice 거절됨
-        return _failed(LLM_UNAVAILABLE, calls, usage, started)
+        return _failed(LLM_UNAVAILABLE, calls, usage, started, detail=LLMBadRequestError.__name__)
     usage = dict(response.usage)
 
     tool_calls = getattr(response.message, "tool_calls", None) or []
