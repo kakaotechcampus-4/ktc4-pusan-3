@@ -20,7 +20,7 @@ import type {
   Ref,
 } from "@/lib/api/types";
 import { isHealthObservation } from "@/lib/api/types";
-import { formatDay } from "@/lib/format";
+import { formatDay, withRo } from "@/lib/format";
 
 /**
  * 07 상세 · 교정 시트 — 관찰과 프로필이 **같은 시트**를 쓴다.
@@ -46,9 +46,11 @@ const CONFIDENCE_LABEL: Record<ConfidenceSource, string> = {
   parent_hearsay: "전해 들은 말",
 };
 
+/** 🚨 지난 교정 이력에도 쓰이므로 **화면 버튼에서 빠진 값(`confirm`)까지** 담는다. */
 const VERDICT_LABEL: Record<CorrectionVerdict, string> = {
   confirm: "맞아요",
-  once_only: "한 번 본 것뿐",
+  once_only: "이번만 그랬어요",
+  need_more_observation: "기록이 더 필요해요",
   outdated: "지금은 달라요",
   wrong: "잘못된 기록",
 };
@@ -111,7 +113,11 @@ export function MemoryDetailSheet({
             <AffinityDetail affinity={target.affinity} />
           )}
 
+          {/* 🚨 성공하면 **다시 세운다.** 확인 패널이 열린 채로 두면 방금 바꾼 것을 또 바꾸라고
+              묻는 화면이 된다 — 실패했을 때는 `correction.id` 가 그대로라 패널이 남고,
+              부모가 같은 자리에서 다시 누를 수 있다 (그게 재시도다). */}
           <CorrectionButtons
+            key={result?.correction.id ?? "new"}
             targetKind={target.type}
             onSelect={(verdict) => correct.mutate(verdict)}
             pending={correct.isPending ? (correct.variables ?? null) : null}
@@ -149,7 +155,7 @@ function CascadeResult({
   return (
     <div className="bg-surface-muted rounded-field p-3.5" role="status">
       <p className="text-body-sm text-ink">
-        {VERDICT_LABEL[result.correction.verdict]}로 반영했어요.
+        {withRo(VERDICT_LABEL[result.correction.verdict])} 반영했어요.
       </p>
       {profiles === 0 && suggestions === 0 ? (
         <p className="text-caption text-ink-muted mt-1">다시 계산된 것은 없어요.</p>

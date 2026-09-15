@@ -272,14 +272,24 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect(after.items.some((item) => item.id === target!.id)).toBe(false);
   });
 
-  it("프로필 once_only 는 confirmed 를 candidate 로 한 단계만 내린다", async () => {
+  it("기억 need_more_observation 은 confirmed 를 candidate 로 한 단계만 내린다", async () => {
     const result = await api.post<CorrectionResponse>("/corrections", {
       target_ref: { kind: "profile_affinity", id: "a_12" },
-      verdict: "once_only",
+      verdict: "need_more_observation",
       child_id: "c1",
     });
 
     expect((result.target as Affinity).state).toBe("candidate");
+  });
+
+  it("기억 outdated 는 archived 로 내린다 — 한 단계가 아니다", async () => {
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id: "a_20" },
+      verdict: "outdated",
+      child_id: "c1",
+    });
+
+    expect((result.target as Affinity).state).toBe("archived");
   });
 });
 

@@ -42,8 +42,19 @@ export type AffinityState = "candidate" | "confirmed" | "archived";
 export type ConfidenceSource =
   "institution_notice" | "parent_direct" | "parent_hedged" | "parent_hearsay";
 
-/** 4버튼 교정 (CLAUDE.md §5 Correction). */
-export type CorrectionVerdict = "confirm" | "once_only" | "outdated" | "wrong";
+/**
+ * 교정 판정 (CLAUDE.md §5 Correction).
+ *
+ * 🚨 **화면이 쓰는 것과 타입에 있는 것이 다르다.** 여기는 계약서 enum 이라 지난 교정 이력
+ *    (`ObservationDetailResponse.corrections`)에 실려 오는 값을 전부 담아야 한다. 어떤 버튼을
+ *    보여줄지는 `CorrectionButtons` 의 표가 정한다 — 기록과 기억이 서로 다른 것을 묻는다.
+ *
+ * ⚠️ `need_more_observation` 은 **계약서 v1 에 아직 없다.** "아직 확정하지 말고 더 지켜보자" 는
+ *    기억에만 있는 판정인데 v1 에는 그 자리가 없어서(`once_only` 는 관찰 한 건에 대한 말이다)
+ *    제안 형태로 두고 목에 먼저 세웠다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ */
+export type CorrectionVerdict =
+  "confirm" | "once_only" | "need_more_observation" | "outdated" | "wrong";
 
 export type SuggestionStatus = "draft" | "approved" | "rejected" | "expired";
 export type EventStatus = "draft" | "confirmed" | "cancelled";

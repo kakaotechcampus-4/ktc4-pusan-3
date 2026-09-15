@@ -218,12 +218,17 @@ export const memoryHandlers = [
   }),
 ];
 
-/** 프로필 교정의 효과 표 (계약서 §08). 프론트가 추측하지 않게 목도 그대로 따른다. */
+/**
+ * 기억 교정의 효과 표 (계약서 §08). 프론트가 추측하지 않게 목도 그대로 따른다.
+ *
+ * ⚠️ `need_more_observation` 은 계약서 v1 에 없는 값이다 (types.ts 의 ⚠️). "아직 확정하지 말고
+ *    더 지켜보자" 라서 **한 단계만** 내린다 — v1 에서 `once_only` 가 하던 자리와 같다.
+ */
 function nextAffinity(target: Affinity, verdict: CorrectionRequest["verdict"]): Affinity {
   if (verdict === "confirm") {
     return { ...target, strength: Math.min(1, target.strength + 0.1) };
   }
-  if (verdict === "once_only") {
+  if (verdict === "need_more_observation" || verdict === "once_only") {
     return target.state === "confirmed" ? { ...target, state: "candidate" } : target;
   }
   return { ...target, state: "archived" };
