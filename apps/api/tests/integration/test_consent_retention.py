@@ -287,6 +287,35 @@ async def test_purge_child_retains_evidence_then_deletes(session, seeded):
     assert row.purge_at == NOW + RETENTION_PERIOD
 
 
+async def test_policy_version_survives_while_only_evidence_refers_to_it(session, seeded):
+    """🚨 운영 consent 가 사라진 뒤에도 증빙이 가리키는 본문은 지울 수 없다.
+
+    "증빙이 남아 있는 동안 참조 정책 본문을 재현할 수 있다" 는 consent 가 아니라
+    consent_retention 쪽 이야기다 — 대상이 지워지면 consent 행은 없어지므로, 그때부터는
+    보관 테이블의 FK 만이 본문을 붙잡는다.
+    """
+    a, _, child = seeded
+    version = await policy_id(session, ConsentScope.CHILD_HEALTH)
+    await record_consent(
+        session,
+        actor_parent_id=a.id,
+        child_id=child.id,
+        scope=ConsentScope.CHILD_HEALTH,
+        action=ConsentAction.GRANTED,
+        policy_version_id=version,
+    )
+    await purge_child(session, child_id=child.id, now=NOW)
+    assert await count(session, Consent) == 0, "막는 주체가 consent 가 아님을 분명히 한다"
+    assert await count(session, ConsentRetention) == 1
+
+    with pytest.raises(IntegrityError):
+        async with session.begin_nested():
+            await session.execute(delete(PolicyVersion).where(PolicyVersion.id == version))
+
+    content = await session.scalar(select(PolicyVersion.content).where(PolicyVersion.id == version))
+    assert content is not None, "보관 기간 동안 동의 당시 본문을 그대로 읽을 수 있다"
+
+
 async def test_purge_parent_keeps_other_subjects_consent(session, seeded):
     """계정 삭제는 그 계정 대상 동의만 옮긴다. 아이 동의는 운영 DB 에 남는다."""
     a, b, child = seeded
