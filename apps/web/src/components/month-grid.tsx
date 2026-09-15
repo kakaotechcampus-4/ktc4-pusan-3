@@ -23,9 +23,9 @@ import { toISODate } from "@/lib/format";
  * 🚨 **모양도 단독 신호가 될 수 없다** (문서 §3 · §10). 모양을 뜻으로 잇는 것은 그리드 아래
  *    **범례**이고, 칸마다 `aria-label` 이 같은 사실을 말로 다시 낸다. 세 경로가 같은 말을 한다.
  *
- * 🚨 **일기에 관찰과 같은 표식을 주지 않는다.** 일기는 관찰로 자동 추출되지 않는다(계약서 §09) —
- *    같은 점을 찍으면 화면이 그 규칙의 반대말을 한다. 가로 막대(일정)와 세로 막대(일기)는
- *    축이 달라서 6px 에서도 갈린다.
+ * 🚨 **일기에 기록과 같은 표식을 주지 않는다.** 일기는 기록으로 자동 추출되지 않는다(계약서 §09) —
+ *    같은 점을 찍으면 화면이 그 규칙의 반대말을 한다. 네 모양을 어떤 축으로 갈랐는지는
+ *    아래 `MARK_SHAPE` 의 표에 있다.
  *
  * 표식은 전부 `currentColor` 다. 고른 날(`brand` 채움 · 흰 글자) · 오늘 · 비활성의 글자색을
  * 그대로 따라가서, 어느 상태에서도 표식이 바탕에 묻히거나 혼자 튀지 않는다.
@@ -123,9 +123,9 @@ function CalendarDayButton({ day, modifiers, children, ...buttonProps }: DayButt
         .join(", ")}
     >
       <span>{children}</span>
-      {/* 표식이 없는 날에도 자리를 지킨다 — 있고 없고에 따라 숫자가 위아래로
-          흔들리면 달을 훑을 때 줄이 맞지 않는다. */}
-      <span aria-hidden className="flex h-1.5 items-center justify-center gap-1">
+      {/* 표식이 없는 날에도 자리를 지킨다 — 있고 없고에 따라 숫자가 위아래로 흔들리면
+          달을 훑을 때 줄이 맞지 않는다. 높이는 제일 큰 표식(고리 8 · 사선 획의 대각 7.8)에 맞춘다. */}
+      <span aria-hidden className="flex h-2 items-center justify-center gap-1">
         {marks.map((mark) => (
           <Mark key={mark.kind} kind={mark.kind} />
         ))}
@@ -147,15 +147,37 @@ type MarkKind = "event" | "observation" | "diary" | "profile";
 /** 순서는 이 배열이 정한다 — 칸마다 순서가 달라지면 모양을 외울 수 없다. */
 const MARK_ORDER: MarkKind[] = ["event", "observation", "diary", "profile"];
 
+/**
+ * 🚨 **네 모양이 한 가족이어야 한다.** 차트 범례처럼 같은 언어로 읽혀야지, 제각각이면 칸에
+ *    부스러기가 흩어진 것처럼 보인다. 그래서 **기울어진 것을 두지 않는다** — 화면의 다른 모든
+ *    선이 수직·수평인데 표식 하나만 대각선이면 그것만 혼자 튄다 (실제로 사선 안을 그렸다가
+ *    "예쁘지 않다" 로 되돌린 자리다).
+ *
+ * 그 다음이 구분이다. 작은 크기에서 버티는 축은 **비율 > 채움 > 각짐** 순이고, 어느 두 짝도
+ * **두 축 이상**에서 갈리게 잡았다.
+ *
+ * | | 비율 | 채움 | 각짐 | 크기 |
+ * | --- | --- | --- | --- | --- |
+ * | 일정 | 가로로 길다 | 참 | 둥근 끝 | 10×3 |
+ * | 기록 | 정사각 | 참 | 둥글다 | 6 |
+ * | 일기 | 정사각 | **빔** | **각졌다** | 7 |
+ * | 기억 변화 | 정사각 | **빔** | 둥글다 | 8 |
+ *
+ * 🚨 제일 약한 짝은 **일기(빈 네모 7) vs 기억 변화(빈 원 8)** 다 — 둘 다 비어 있어서 각짐
+ *    하나로만 갈리면 위태롭다. 그래서 크기를 한 단계 벌려 **각짐 + 크기** 두 축으로 잡았다.
+ *    둘 중 하나의 크기를 건드릴 때 이 문장을 같이 볼 것.
+ */
 const MARK_SHAPE: Record<MarkKind, string> = {
-  // 가로 막대 — 시간을 차지하는 것(일정)은 눕는다.
+  // 가로 막대 — 시간을 차지하는 것(일정)은 눕는다. 유일하게 가로로 긴 표식이다.
   event: "h-[3px] w-2.5 rounded-full bg-current",
   // 찬 점 — 남긴 말 하나.
   observation: "size-1.5 rounded-full bg-current",
-  // 세로 막대 — 손으로 그은 획(일기). 일정과 축이 달라서 6px 에서도 갈린다.
-  diary: "h-1.5 w-[3px] rounded-full bg-current",
-  // 빈 고리 — 관찰이 모여 **둘레만 생긴** 것. 채워지지 않은 것이 아직 확정이 아니라는 뜻과 맞는다.
-  profile: "size-1.5 rounded-full border-[1.5px] border-current",
+  // 빈 네모 — 펼쳐 놓은 종이 한 장(일기). 기록과 채움이, 기억과 각짐·크기가 다르다.
+  // 🚨 크기를 **rem 으로** 준다 (7px = 0.4375rem). `size-[7px]` 로 두면 글자를 키워도 혼자
+  //    7px 에 머물러, 200% 에서 기록(12) < 일기(7) < 기억(16) 으로 **크기 서열이 뒤집힌다.**
+  diary: "size-[0.4375rem] rounded-[1.5px] border-[1.5px] border-current",
+  // 빈 고리 — 기록이 모여 **둘레만 생긴** 것. 채워지지 않은 것이 아직 확정이 아니라는 뜻과 맞는다.
+  profile: "size-2 rounded-full border-[1.5px] border-current",
 };
 
 const MARK_LABEL: Record<MarkKind, string> = {
