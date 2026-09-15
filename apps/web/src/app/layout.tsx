@@ -4,7 +4,9 @@ import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "육아기억 AI",
+  // 배포 도메인. 상대경로 메타데이터(OG · canonical)가 이 주소를 기준으로 풀린다.
+  metadataBase: new URL("https://icatch.ai.kr"),
+  title: "아이캐치",
   description: "육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI.",
   // 🚨 public repo · 실서비스 전까지 검색 노출 금지.
   robots: { index: false, follow: false },

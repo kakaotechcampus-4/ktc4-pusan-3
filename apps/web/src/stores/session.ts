@@ -57,7 +57,7 @@ export const useSessionStore = create<SessionState>()(
       setActiveChild: (activeChildId) => set({ activeChildId }),
     }),
     {
-      name: "yukameo.session",
+      name: "icatch.session",
       storage: createJSONStorage(() => sessionStorage),
       partialize: (s) => ({
         token: s.token,
