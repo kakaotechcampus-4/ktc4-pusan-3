@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { josa } from "es-hangul";
 import { useState } from "react";
 
 import { CorrectionButtons } from "@/components/correction-buttons";
@@ -20,7 +21,7 @@ import type {
   Ref,
 } from "@/lib/api/types";
 import { isHealthObservation } from "@/lib/api/types";
-import { formatDay, withRo } from "@/lib/format";
+import { formatDay } from "@/lib/format";
 
 /**
  * 07 상세 · 교정 시트 — 관찰과 프로필이 **같은 시트**를 쓴다.
@@ -155,7 +156,7 @@ function CascadeResult({
   return (
     <div className="bg-surface-muted rounded-field p-3.5" role="status">
       <p className="text-body-sm text-ink">
-        {withRo(VERDICT_LABEL[result.correction.verdict])} 반영했어요.
+        {josa(VERDICT_LABEL[result.correction.verdict], "으로/로")} 반영했어요.
       </p>
       {profiles === 0 && suggestions === 0 ? (
         <p className="text-caption text-ink-muted mt-1">다시 계산된 것은 없어요.</p>

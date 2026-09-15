@@ -86,27 +86,3 @@ export function parseISODate(value: string): Date | null {
   const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isNaN(date.getTime()) ? null : date;
 }
-
-/**
- * 조사 "로 / 으로" 를 앞 글자의 받침으로 고른다. **표시 변환이다** — 날짜 계산과 달리
- * 규칙이 한글 코드포인트로 닫혀 있어서 서버에 물을 것이 없다.
- *
- * 🚨 **문구를 `라벨 + 조사` 로 조립하는 자리에만 쓴다.** 교정 판정 이름이 늘어날 때마다
- *    "잘못된 기록**로** 바꿀까요?" 같은 문장이 생기는데, 라벨은 데이터고 조사는 문법이라
- *    라벨 쪽에 조사를 박아 두면 다른 문장에서 못 쓴다.
- *
- * 받침이 없거나 `ㄹ` 이면 "로", 그 밖에는 "으로". 한글이 아닌 글자로 끝나면 "로" 로 둔다
- * (영문·숫자는 읽는 방식이 갈려서 규칙 하나로 정할 수 없다).
- */
-export function withRo(word: string): string {
-  const last = word.trim().at(-1);
-  if (!last) return word;
-
-  const code = last.charCodeAt(0);
-  const isHangulSyllable = code >= 0xac00 && code <= 0xd7a3;
-  if (!isHangulSyllable) return `${word}로`;
-
-  const finalConsonant = (code - 0xac00) % 28;
-  // 0 = 받침 없음, 8 = ㄹ
-  return finalConsonant === 0 || finalConsonant === 8 ? `${word}로` : `${word}으로`;
-}

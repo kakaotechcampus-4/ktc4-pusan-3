@@ -1,10 +1,10 @@
 "use client";
 
+import { josa } from "es-hangul";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { withRo } from "@/lib/format";
 import type { CorrectionVerdict } from "@/lib/api/types";
 
 /**
@@ -102,7 +102,9 @@ export function CorrectionButtons({
         {/* 🚨 `role="status"` 로 알린다 — 버튼 묶음이 통째로 바뀌는데 눈으로만 알 수 있으면
             스크린리더 사용자는 자기가 무엇을 확인하는 중인지 모른다. */}
         <div role="status">
-          <p className="text-body text-ink">{withRo(asking.label)} 바꿀까요?</p>
+          {/* 🚨 라벨에 조사를 박지 않는다. 라벨은 데이터고 조사는 문법이라, 박아 두면 다른
+              문장에서 못 쓴다 — 받침으로 고르는 것은 `josa` 가 한다 (키가 `"으로/로"` 순서다). */}
+          <p className="text-body text-ink">{josa(asking.label, "으로/로")} 바꿀까요?</p>
           <p className="text-body-sm text-ink-muted mt-1">{asking.effect}</p>
           <p className="text-caption text-ink-subtle mt-2">{RECOVERY[targetKind]}</p>
         </div>
