@@ -23,7 +23,7 @@ BIND = "A" * 43
 """base64url 43자 = 256비트 (§3-2)."""
 
 RETURN_WEB = "https://app.example.test/auth/callback"
-RETURN_APP = "yukameo://auth"
+RETURN_APP = "icatch://auth"
 CALLBACK = "https://api.example.test/api/v1/auth/kakao/callback"
 
 
