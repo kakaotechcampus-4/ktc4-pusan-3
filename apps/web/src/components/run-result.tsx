@@ -126,13 +126,13 @@ export function RunResult({
       {noChildObservation ? (
         <CardFailed>
           <p>
-            아이에 관한 관찰은 찾지 못했어요. 적어주신 말은 그대로 두고, 기억으로는 저장하지
+            아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지
             않았어요.
           </p>
         </CardFailed>
       ) : (
         <section>
-          <h3 className="text-label text-brand">관찰 {state.observations.length}건 저장됨</h3>
+          <h3 className="text-label text-brand">기록 {state.observations.length}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
           <Card className="divide-line mt-2 flex flex-col divide-y">

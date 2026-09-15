@@ -29,7 +29,16 @@ export const qk = {
    */
   suggestions: (childId: string, runId: string | null, agents: readonly string[]) =>
     [...qk.child(childId), "suggestions", runId, [...agents].join(",")] as const,
+  /** 07 피드백 탭이 평가할 제안 목록. ⚠️ 엔드포인트가 계약서 협의 대상이다 (types.ts). */
+  suggestionList: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
+  /** 09 월 조회. `month` 는 `YYYY-MM` — 달을 넘기면 다른 키라 이전 달이 캐시에 남는다. */
   calendar: (childId: string, month: string) => [...qk.child(childId), "calendar", month] as const,
+  /**
+   * 09 일 조회. 🚨 월 키 **아래에 두지 않는다** — 일기를 쓰면 그날만 무효화하고 싶은데,
+   * 월 키 아래면 `calendar` 를 통째로 지우게 되고 달 전체가 다시 뜬다.
+   */
+  calendarDay: (childId: string, date: string) =>
+    [...qk.child(childId), "calendar-day", date] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,
 } as const;

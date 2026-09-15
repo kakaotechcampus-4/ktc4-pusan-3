@@ -5,6 +5,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ToastProvider } from "@/components/ui/toast";
 import { setUnauthenticatedHandler } from "@/lib/api/client";
 import { currentPath, rememberReturnPath } from "@/lib/auth";
 import { getQueryClient } from "@/lib/query-client";
@@ -49,7 +50,9 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {mocksReady ? children : null}
+      {/* 🚨 토스트는 **쿼리 안쪽**이다 — 뮤테이션 `onError` 에서 부르기 때문이다.
+          바깥에 두면 화면이 Provider 밖에서 `useToast()` 를 부르게 된다. */}
+      <ToastProvider>{mocksReady ? children : null}</ToastProvider>
       {/* devtools 는 프로덕션 번들에서 빠진다. 쿼리 키·캐시 상태를 눈으로 볼 때 쓴다.
           🚨 왼쪽 아래로 옮겨 뒀다 — 기본값(오른쪽 아래)이 03 홈 채팅바의 **보내기 버튼을 덮어서**
              개발 중에 누르면 devtools 가 열린다 (실제로 클릭이 막혔다). */}

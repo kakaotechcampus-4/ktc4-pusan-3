@@ -33,9 +33,56 @@ const DATE_ONLY = new Intl.DateTimeFormat("ko-KR", {
   weekday: "short",
 });
 
+const MONTH_ONLY = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "long",
+});
+
 /** 일정 시각 한 줄. `all_day` 면 시각을 빼고 날짜만 낸다. */
 export function formatEventTime(iso: string, allDay = false): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "";
   return allDay ? `${DATE_ONLY.format(at)} 하루 종일` : DATE_TIME.format(at);
+}
+
+/**
+ * 날짜 하나를 한국어 표기로 ("9월 12일 (토)"). `YYYY-MM-DD` 와 ISO 시각을 모두 받는다.
+ * 🚨 상대 표현("3일 전")을 만들지 않는다 — 그건 `observed_label` 이고 서버가 만든다.
+ */
+export function formatDay(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return DATE_ONLY.format(at);
+}
+
+/** `Date` → "2026년 9월". 달력 머리에 쓴다. */
+export function formatMonth(date: Date): string {
+  return MONTH_ONLY.format(date);
+}
+
+/** `Date` → `YYYY-MM`. 월 조회 쿼리 파라미터다 (표시가 아니라 키). */
+export function toMonthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * `Date` → `YYYY-MM-DD`. 🚨 `toISOString()` 은 UTC 라 시간대에 따라 **하루가 밀린다** —
+ * 달력에서 고른 날과 서버에 보내는 날이 달라지는 종류의 사고다.
+ */
+export function toISODate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * `YYYY-MM-DD` → `Date`(로컬 자정). 🚨 `new Date("2026-09-12")` 는 **UTC 자정**으로 읽어서
+ * 한국에서는 같은 날이지만 시간대에 따라 전날이 된다 — 위 `toISODate` 와 짝이다.
+ * 잘못된 값이면 `null` 이다. 화면이 조용히 오늘로 대체하지 않게 판단은 호출부가 한다.
+ */
+export function parseISODate(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
 }

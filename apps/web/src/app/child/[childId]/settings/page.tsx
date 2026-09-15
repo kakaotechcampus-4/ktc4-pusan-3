@@ -44,7 +44,7 @@ function SettingsScreen() {
           <li>알레르기 · 건강 기록 (보호자가 직접 확인한 값만 저장돼요)</li>
           <li>함께 보는 보호자 초대와 권한</li>
           <li>동의 관리 · 철회</li>
-          <li>쌓인 기억 지우기</li>
+          <li>쌓인 기록 지우기</li>
         </ul>
       </Card>
     </Screen>

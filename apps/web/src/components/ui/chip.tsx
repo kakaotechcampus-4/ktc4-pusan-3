@@ -33,10 +33,16 @@ export function Chip({
       <span
         className={cn(
           "text-label ease-standard min-h-chip flex items-center rounded-full border px-2.5 py-0.5 text-left transition-colors duration-120",
-          selected
-            ? "bg-brand-soft border-brand text-brand-ink"
-            : "bg-surface border-line text-ink-muted hover:border-line-strong hover:bg-surface-muted",
-          disabled && "bg-surface-muted border-line text-ink-subtle",
+          // 🚨 `cn()` 은 tailwind-merge 가 아니다 — 아래 세 줄이 같은 속성(bg·border·text)을 던지면
+          //    클래스 순서가 아니라 생성 CSS 순서가 이긴다. 그래서 **한 번에 하나만** 고른다.
+          //    (선택된 칩을 비활성으로 만드는 경우가 실제로 있다 — 07 피드백 전송 중이다.)
+          disabled
+            ? "bg-surface-muted border-line text-ink-subtle"
+            : selected
+              ? "bg-brand-soft border-brand text-brand-ink"
+              : // 🚨 `active:` 를 빠뜨리면 웹뷰에서 눌러도 아무 반응이 없다 (apps/web/CLAUDE.md §5).
+                //    `hover:` 는 hover 가 되는 기기에서만 걸린다 — 이 화면은 대부분 웹뷰다.
+                "bg-surface border-line text-ink-muted hover:border-line-strong hover:bg-surface-muted active:border-line-strong active:bg-surface-muted",
         )}
       >
         {children}

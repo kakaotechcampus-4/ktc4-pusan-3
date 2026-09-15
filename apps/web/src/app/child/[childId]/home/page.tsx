@@ -192,7 +192,7 @@ function HomeScreen() {
           <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
           {home.data ? (
             <p className="text-body-sm text-ink-subtle mt-2">
-              지금까지 함께 쌓은 기억 {home.data.observation_count}건
+              지금까지 함께 쌓은 기록 {home.data.observation_count}건
             </p>
           ) : null}
         </div>
@@ -235,7 +235,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       <EmptyState
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기억이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
+        description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
         count={0}
       />
     );

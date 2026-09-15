@@ -4,6 +4,7 @@ import { ArrowUp, CalendarDays, Camera, Mic, NotebookPen, Sprout, Utensils } fro
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { DomainChip } from "@/components/domain-chip";
+import { DayMarkLegend } from "@/components/month-grid";
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, type ButtonVariant } from "@/components/ui/button";
@@ -14,13 +15,16 @@ import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { useToast } from "@/components/ui/toast";
 import { DomainIcon, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
+import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import type { Agent } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
@@ -447,8 +451,23 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
   { variant: "kakao", use: "00 로그인 전용 (외부 브랜드)" },
 ];
 
+const DS_DOMAIN_OPTIONS = [
+  { value: "all", label: "전체" },
+  { value: "food", label: "식사" },
+  { value: "activity", label: "놀이" },
+] as const;
+
+const DS_STATE_OPTIONS = [
+  { value: "all", label: "전체" },
+  { value: "confirmed", label: "확인됨" },
+  { value: "candidate", label: "후보" },
+] as const;
+
 function ComponentSection() {
+  const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
+  const [selectDomain, setSelectDomain] = useState("all");
+  const [selectState, setSelectState] = useState("confirmed");
   const [chip, setChip] = useState("공룡");
   const [date, setDate] = useState("");
   const [checked, setChecked] = useState(true);
@@ -508,11 +527,15 @@ function ComponentSection() {
       <SubTitle>아이콘 타일</SubTitle>
       <p className="text-caption text-ink-subtle">
         brand-soft 바탕 + brand-ink 아이콘. 목록 줄 앞에 선다. 🚨 도메인 색을 여기 넣지 않는다.
+        neutral 톤(surface-muted + ink-muted)은 브랜드색도 도메인색도 못 쓰는 목록용이다 (07
+        기록·기억) — 거기서는 색이 아니라 배치가 종류를 말한다.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <IconTile icon={Utensils} />
         <IconTile icon={CalendarDays} />
         <IconTile icon={Sprout} />
+        <IconTile icon={Utensils} tone="neutral" />
+        <IconTile icon={CalendarDays} tone="neutral" />
       </div>
 
       <SubTitle>채팅바 (03 홈)</SubTitle>
@@ -631,6 +654,32 @@ function ComponentSection() {
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.
       </CardFailed>
 
+      <SubTitle>탭 (07)</SubTitle>
+      {/* 링크는 이 화면 안의 앵커다 — 내부 문서에서 다른 화면으로 새 나가지 않게. */}
+      <div id="design-system-tabs">
+        <Tabs
+          items={[
+            { key: "a", label: "기록", href: "#design-system-tabs" },
+            { key: "b", label: "기억", href: "#design-system-tabs" },
+            { key: "c", label: "제안 피드백", href: "#design-system-tabs" },
+          ]}
+          active="a"
+          label="탭 예시"
+        />
+      </div>
+      <p className="text-caption text-ink-subtle">
+        활성은 ink + brand 2px 밑줄입니다. 🚨 굵기로 구분하지 않습니다 — 본문 서체가 단일 웨이트라
+        label 500 과 600 이 화면에서 같습니다 (§4). 전환은 URL 에 남깁니다.
+      </p>
+
+      <SubTitle>캘린더 표식 (09)</SubTitle>
+      <DayMarkLegend hasProfileMarks />
+      <p className="text-caption text-ink-subtle">
+        🚨 색이 아니라 모양으로 가릅니다. 네 표식은 전부 currentColor 라 고른 날(brand 채움)
+        위에서도 같은 모양이 읽힙니다. 뜻을 잇는 것은 이 범례고, 날짜 칸의 aria-label 이 같은 말을
+        다시 합니다.
+      </p>
+
       <SubTitle>배너</SubTitle>
       <p className="text-caption text-ink-subtle">
         🚨 caution 은 승인 게이트 2곳 전용, danger 는 알레르기·건강 중단·파괴적 확정 전용이다. 화면
@@ -642,6 +691,46 @@ function ComponentSection() {
       <Banner tone="danger" title="알레르기 기록에 추가했어요">
         이 재료가 들어간 제안은 넣지 않아요.
       </Banner>
+
+      <SubTitle>고르기 상자</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        직접 만든 드롭다운이다 — 네이티브 &lt;select&gt; 는 닫혀 있을 때 말고는 생김새를 우리가 못
+        정해서 쓰지 않는다. 대신 접근성이 전부 우리 책임이다: combobox + listbox ARIA · 열 때 고른
+        항목으로 포커스가 들어가고 닫을 때 버튼으로 돌아온다 · ESC · 바깥 클릭 · Tab · 스크롤에
+        닫힌다 · 방향키 · Home · End. 🚨 그림자 없이 line-strong 1px 로 뜬 면을 만들고(§6), 등장
+        애니메이션도 쉐브론 회전도 없다(§8). 🚨 라벨을 지우지 않는다.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <Select
+          label="분류"
+          value={selectDomain}
+          options={DS_DOMAIN_OPTIONS}
+          onChange={setSelectDomain}
+        />
+        <Select
+          label="상태"
+          value={selectState}
+          options={DS_STATE_OPTIONS}
+          onChange={setSelectState}
+        />
+      </div>
+
+      <SubTitle>토스트</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        화면 안에 자리가 없는 사실을 잠깐 띄운다. 🚨 성공을 알리지 않고(성공은 화면이 이미 말한다),
+        되돌릴 것이 있으면 여기 담지 않는다(사라지는 자리다). 남는 자리는 **조용히 되돌아간 실패**
+        하나 — 준비물 체크처럼 낙관적으로 반영했다가 실패해서 원래대로 돌아가는 경우다. 위에
+        붙고(아래는 채팅바+이동 바), 그림자·애니메이션이 없고, 한 번에 하나이며 6초 뒤 사라진다. 🚨
+        바텀시트 안에서 부르지 않는다 — dialog 의 top layer 뒤로 깔려 안 보인다.
+      </p>
+      <div>
+        <Button
+          variant="secondary"
+          onClick={() => toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.")}
+        >
+          토스트 띄우기
+        </Button>
+      </div>
 
       <SubTitle>바텀시트</SubTitle>
       <p className="text-caption text-ink-subtle">
@@ -683,7 +772,7 @@ function ComponentSection() {
         오버레이를 걷고 부분 결과로 넘어간다 (NF-06).
       </p>
       <Card>
-        <ProgressSteps index={2} total={3} label="관찰을 나누고 있어요" />
+        <ProgressSteps index={2} total={3} label="기록을 나누고 있어요" />
       </Card>
 
       <SubTitle>빈 상태 · 스켈레톤</SubTitle>
@@ -693,7 +782,7 @@ function ComponentSection() {
       <EmptyState
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기억이 없으면 제안도 만들지 않아요."
+        description="기록이 없으면 제안도 만들지 않아요."
         count={0}
       />
       <Card>
