@@ -265,15 +265,19 @@ Cache-Control: no-store
   "consent_code": "<가입 대기표>",
   "bind": "<같은 비밀>",
   "consents": [
-    { "scope": "service_terms",   "policy_version": "2026-09-01" },
-    { "scope": "privacy_account", "policy_version": "2026-09-01" }
+    { "scope": "service_terms",   "policy_version": "draft-0" },
+    { "scope": "privacy_account", "policy_version": "draft-0" }
   ]
 }
 ```
 
+🚨 **`draft-0` 은 임시 placeholder 다.** 실제 약관·처리방침 본문이 확정되기 전이라 `policy_version` 테이블에 등록된 버전이 이것 하나뿐이다. 확정되면 새 버전이 등록되고 이 값은 바뀌므로 **클라이언트에 하드코딩하지 않는다** — 유효한 버전을 서버에서 받아오는 정책 조회 API 는 다음 Issue 에서 붙인다.
+
 **응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 
 `parent` · `auth_identity` · `consent` 를 **한 트랜잭션에서** 만든다. 필수 스코프가 빠지면 `403 consent_required`.
+
+서버는 `scope` + `policy_version` 을 등록된 정책 버전에 연결해 저장한다. 등록되지 않았거나 적용 기간 밖이면 `400 policy_version_invalid` (§8-1). 이 검사는 **대기표를 소비하기 전에** 하므로, 낡은 화면이 보낸 값이어도 대기표는 살아 있고 동의 화면만 다시 불러오면 된다.
 
 `bind` 를 여기서도 요구한다 — 클라이언트가 계속 들고 있으므로 비용이 없고, `consent_code` 만으로 계정이 만들어지는 것을 막는다.
 
@@ -642,6 +646,7 @@ target_id_type=user_id&target_id={provider_user_id}
 | HTTP | code | 언제 | 신설 |
 | --- | --- | --- | --- |
 | 400 | `validation_failed` | `code`·`bind` 누락, `bind` 형식 불량 | |
+| 400 | `policy_version_invalid` | 동의한 정책 버전이 미등록이거나 적용 기간 밖 (§3-5) | 🆕 |
 | 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
 | 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |

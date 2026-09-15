@@ -18,11 +18,22 @@ from sqlalchemy import func, select
 from app.api.deps.auth import hash_token
 from app.domains.consent.models import Consent, ConsentScope
 from app.domains.identity.models import AuthHandoff, AuthIdentity, AuthProvider, AuthSession, Parent
+from app.domains.policy.models import PolicyVersion
 
 BIND = "A" * 43
 OTHER_BIND = "B" * 43
 KAKAO_USER_ID = "1234567890"
-POLICY = "2026-09-01"
+POLICY = "draft-0"
+"""🚨 계약서 §3-5 예시는 "2026-09-01" 이지만 그건 등록된 버전이 아니다.
+
+가입은 이제 policy_version 테이블에 등록되고 적용 기간 안인 버전만 받는다 (PR C).
+지금 등록된 것은 PR B 마이그레이션이 시드한 placeholder "draft-0" 하나뿐이라 여기서도
+그 값을 쓴다. 실제 약관이 확정되면 새 버전을 등록하고 이 상수와 계약서 예시를 함께
+바꾼다 — 한쪽만 바꾸면 이 테스트가 그 사실을 잡는다.
+"""
+
+UNREGISTERED_POLICY = "2026-09-01"
+"""등록된 적 없는 버전. 낡은 화면이 보내는 값을 흉내낸다."""
 
 REQUIRED_CONSENTS = [
     {"scope": "service_terms", "policy_version": POLICY},
@@ -137,6 +148,86 @@ async def test_signup_without_required_scope_creates_nothing(db_client, session)
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "consent_required"
     assert await count(session, Parent) == 0
+
+
+async def test_signup_with_unregistered_policy_version_is_rejected(db_client, session):
+    """🚨 등록되지 않은 정책 버전으로는 가입할 수 없다 (노션 정책 정본 §5).
+
+    재현할 수 없는 문구에 "동의했다" 고 남기면 증빙이 증빙이 아니다. parent 도 만들지
+    않는다 — 동의 없는 계정이 남는 것이 §6-1 이 막으려는 상태다.
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "consents": [
+                {"scope": "service_terms", "policy_version": UNREGISTERED_POLICY},
+                {"scope": "privacy_account", "policy_version": UNREGISTERED_POLICY},
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "policy_version_invalid"
+    assert await count(session, Parent) == 0
+    assert await count(session, Consent) == 0
+
+
+async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, session):
+    """낡은 화면은 공격이 아니다 — 대기표를 태우지 않는다.
+
+    새로고침 한 번이면 될 일에 로그인부터 다시 시키지 않는다. 필수 동의 누락(A-13)과
+    같은 판단이다.
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "consents": [
+                {"scope": "service_terms", "policy_version": UNREGISTERED_POLICY},
+                {"scope": "privacy_account", "policy_version": UNREGISTERED_POLICY},
+            ],
+        },
+    )
+
+    retry = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+    )
+
+    assert retry.status_code == 200
+    assert retry.json()["is_new"] is True
+
+
+async def test_signup_links_consent_to_the_registered_policy_version(db_client, session):
+    """저장된 것은 문자열이 아니라 policy_version 행의 id 다 — 본문을 재현할 수 있다."""
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+    )
+
+    rows = (await session.execute(select(Consent))).scalars().all()
+    assert len(rows) == 2
+    for row in rows:
+        version = await session.get(PolicyVersion, row.policy_version_id)
+        assert version.scope == row.scope
+        assert version.version == POLICY
+        assert row.subject_parent_id == row.actor_ref, "본인이 본인 계정에 동의한 가입 경로"
 
 
 async def test_missing_consent_leaves_the_ticket_usable(db_client, session):
