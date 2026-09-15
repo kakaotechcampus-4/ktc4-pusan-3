@@ -49,11 +49,10 @@ function scenarioAffinities(): Affinity[] {
 }
 
 /**
- * 목록의 기본은 **살아 있는 기억**이다. 교정으로 내려간 것은 빠진다 (계약서 §08).
+ * 목록의 기본은 **살아 있는 기록**이다. 교정으로 내려간 것은 빠진다 (계약서 §08).
  *
- * ⚠️ `status=inactive` 는 계약서 v1 에 아직 없는 파라미터다. 교정으로 뺀 기억을 되돌릴 경로가
- *    화면에 있어야 해서(`memories/page.tsx` 의 🚨) 제안 형태로 목에 먼저 세웠다.
- *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ * `status=inactive` 는 계약서에 있는 파라미터라 목도 받아 둔다. 다만 **화면은 쓰지 않는다** —
+ * 교정을 되돌리는 기능을 주지 않기로 해서, 뺀 것을 다시 꺼내 보는 길도 두지 않는다.
  */
 function scenarioObservations(inactiveOnly = false): Observation[] {
   if (currentScenario() === "empty") return [];
@@ -111,10 +110,20 @@ export const memoryHandlers = [
     return HttpResponse.json(body);
   }),
 
-  http.get(url("/children/:cid/affinities"), async () => {
+  http.get(url("/children/:cid/affinities"), async ({ request }) => {
     await networkDelay();
+
+    // 계약서 §08 이 주는 필터 둘. 🚨 정렬 파라미터는 없다 — 화면도 정렬을 만들지 않는다.
+    const params = new URL(request.url).searchParams;
+    const domain = params.get("domain");
+    const state = params.get("state");
+
+    let affinities = scenarioAffinities();
+    if (domain) affinities = affinities.filter((a) => a.domain === domain);
+    if (state) affinities = affinities.filter((a) => a.state === state);
+
     const body: AffinitiesResponse = {
-      affinities: scenarioAffinities(),
+      affinities,
       // 🚨 안전 정보는 감쇠가 없다 — 기억이 비어도 여기는 비지 않는다.
       safety: healthSafety,
     };

@@ -20,6 +20,7 @@ import { DomainIcon, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
@@ -450,9 +451,23 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
   { variant: "kakao", use: "00 로그인 전용 (외부 브랜드)" },
 ];
 
+const DS_DOMAIN_OPTIONS = [
+  { value: "all", label: "전체" },
+  { value: "food", label: "식사" },
+  { value: "activity", label: "놀이" },
+] as const;
+
+const DS_STATE_OPTIONS = [
+  { value: "all", label: "전체" },
+  { value: "confirmed", label: "확인됨" },
+  { value: "candidate", label: "후보" },
+] as const;
+
 function ComponentSection() {
   const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
+  const [selectDomain, setSelectDomain] = useState("all");
+  const [selectState, setSelectState] = useState("confirmed");
   const [chip, setChip] = useState("공룡");
   const [date, setDate] = useState("");
   const [checked, setChecked] = useState(true);
@@ -676,6 +691,29 @@ function ComponentSection() {
       <Banner tone="danger" title="알레르기 기록에 추가했어요">
         이 재료가 들어간 제안은 넣지 않아요.
       </Banner>
+
+      <SubTitle>고르기 상자</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        직접 만든 드롭다운이다 — 네이티브 &lt;select&gt; 는 닫혀 있을 때 말고는 생김새를 우리가 못
+        정해서 쓰지 않는다. 대신 접근성이 전부 우리 책임이다: combobox + listbox ARIA · 열 때 고른
+        항목으로 포커스가 들어가고 닫을 때 버튼으로 돌아온다 · ESC · 바깥 클릭 · Tab · 스크롤에
+        닫힌다 · 방향키 · Home · End. 🚨 그림자 없이 line-strong 1px 로 뜬 면을 만들고(§6), 등장
+        애니메이션도 쉐브론 회전도 없다(§8). 🚨 라벨을 지우지 않는다.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <Select
+          label="분류"
+          value={selectDomain}
+          options={DS_DOMAIN_OPTIONS}
+          onChange={setSelectDomain}
+        />
+        <Select
+          label="상태"
+          value={selectState}
+          options={DS_STATE_OPTIONS}
+          onChange={setSelectState}
+        />
+      </div>
 
       <SubTitle>토스트</SubTitle>
       <p className="text-caption text-ink-subtle">

@@ -50,7 +50,7 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
     {
       verdict: "wrong",
       label: "잘못된 기록",
-      effect: "이 기록을 목록에서 빼요. 지워지지는 않아요.",
+      effect: "이 기록을 목록에서 빼요.",
     },
   ],
   affinity: [
@@ -67,14 +67,19 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
     {
       verdict: "wrong",
       label: "잘못된 기록",
-      effect: "이 기억을 목록에서 빼요. 쌓인 기록은 지워지지 않아요.",
+      effect: "이 기억을 목록에서 빼요. 쌓인 기록은 그대로 남아요.",
     },
   ],
 };
 
+/**
+ * 🚨 **되돌릴 수 있다고 말하지 않는다.** 교정 자체는 append-only 라 데이터가 지워지지는 않지만,
+ *    화면에는 되돌리는 기능이 없다(제품 결정). "다시 고칠 수 있어요" 라고 쓰면 부모가 찾지 못할
+ *    길을 약속하는 것이다 — 목록에서 빠진다는 사실과, 앞으로 어떻게 되는지만 말한다.
+ */
 const RECOVERY: Record<CorrectionTargetKind, string> = {
-  observation: '다시 고치고 싶으면 목록의 "고쳐서 뺀 기록" 에서 찾을 수 있어요.',
-  affinity: "같은 것이 다시 쌓이면 기억은 또 만들어져요.",
+  observation: "목록에서 빠지고 되돌릴 수 없어요. 제안의 근거로도 쓰이지 않아요.",
+  affinity: "목록에서 빠지고 되돌릴 수 없어요. 같은 것이 다시 쌓이면 새로 만들어져요.",
 };
 
 export function CorrectionButtons({

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Notebook, Sprout, ThumbsUp } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useState, type ReactNode } from "react";
 
 import { AffinityList } from "@/components/affinity-list";
 import { AuthGate } from "@/components/auth-gate";
@@ -14,10 +14,10 @@ import { MemoryDetailSheet, type MemoryTarget } from "@/components/memory-detail
 import { ObservationList } from "@/components/observation-list";
 import { SuggestionFeedbackList } from "@/components/suggestion-feedback-list";
 import { Button } from "@/components/ui/button";
-import { Chip, ChipRow } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { useChildId } from "@/hooks/use-child-id";
@@ -63,6 +63,56 @@ function isAgent(value: string | null): value is Agent {
   return value !== null && (AGENTS as readonly string[]).includes(value);
 }
 
+/* ── 필터 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * 🚨 **정렬을 만들지 않는다.** 두 엔드포인트 다 계약서에 정렬 파라미터가 없다 —
+ *    관찰은 `observed_to DESC` 고정이고(§08) 프로필은 `?domain=&state=` 뿐이다. 커서
+ *    페이지네이션이라 받아 온 쪽만 다시 정렬하면 다음 장을 붙이는 순간 순서가 어긋난다.
+ *    정렬이 필요하면 계약서 먼저다 (최상위 §8 영역 간 인터페이스).
+ */
+const FILTER_STATES = ["all", "confirmed", "candidate"] as const;
+type AffinityFilterState = (typeof FILTER_STATES)[number];
+
+function isFilterState(value: string | null): value is AffinityFilterState {
+  return value !== null && (FILTER_STATES as readonly string[]).includes(value);
+}
+
+const DOMAIN_OPTIONS = [
+  { value: "all", label: "전체" },
+  ...AGENTS.map((agent) => ({ value: agent, label: domainLabel(agent) })),
+] as const;
+
+/** 🚨 기억에는 health 가 없다 — `Affinity.domain` 이 health 를 뺀 3종이다 (승격 파이프라인 밖). */
+const AFFINITY_DOMAIN_OPTIONS = [
+  { value: "all", label: "전체" },
+  ...AGENTS.filter((agent) => agent !== "health").map((agent) => ({
+    value: agent,
+    label: domainLabel(agent),
+  })),
+] as const;
+
+const USE_OPTIONS = [
+  { value: "all", label: "전체" },
+  { value: "unused", label: "사용되지 않은 기록만" },
+] as const;
+
+/**
+ * 🚨 **`archived` 를 고르게 두지 않는다.** 교정으로 내려간 기억을 다시 꺼내 보는 길인데,
+ *    이 제품은 교정을 되돌리는 기능을 주지 않기로 했다. 목록에 없는 것을 필터로만 되살리면
+ *    "되돌릴 수 있다" 는 기대를 만들면서 되돌릴 수단은 안 주는 셈이다.
+ */
+const STATE_OPTIONS = [
+  { value: "all", label: "전체" },
+  { value: "confirmed", label: "확인됨" },
+  { value: "candidate", label: "후보" },
+] as const;
+
+/** 좁은 폰에서 둘이 나란히 서고, 더 좁아지면 줄바꿈한다. */
+function FilterRow({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-end gap-2">{children}</div>;
+}
+
 export default function MemoriesPage() {
   return (
     // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (05 화면과 같은 이유).
@@ -85,12 +135,12 @@ function MemoriesScreen() {
   const domain: Agent | null = isAgent(domainParam) ? domainParam : null;
   const unusedOnly = searchParams.get("unused") === "1";
   /**
-   * 🚨 **교정으로 뺀 기억을 다시 열 수 있는 유일한 경로다.** 교정은 append-only 라 반대 교정으로
-   *    되돌리는데(`CorrectionButtons` 의 🚨), `wrong`·`outdated` 를 누르면 그 줄이 기본 목록에서
-   *    사라진다. 여기로 못 찾아가면 부모에게 그 버튼은 **되돌릴 수 없는 동작**이고, 그러면
-   *    확인 단계를 붙이지 않은 근거(승인 게이트는 딱 2곳 · 최상위 §2)가 통째로 무너진다.
+   * 기억 탭의 승격 상태 필터. 🚨 **`archived` 는 고르게 두지 않는다** — 교정으로 내려간 기억을
+   * 다시 꺼내 보는 길이고, 이 제품은 교정을 되돌리는 기능을 주지 않기로 했다. 목록에 없는
+   * 것을 필터로만 되살리면 "되돌릴 수 있다" 는 기대를 만들면서 되돌릴 수단은 안 주는 셈이다.
    */
-  const inactiveOnly = searchParams.get("inactive") === "1";
+  const stateParam = searchParams.get("state");
+  const state: AffinityFilterState = isFilterState(stateParam) ? stateParam : "all";
 
   const [target, setTarget] = useState<MemoryTarget | null>(null);
 
@@ -101,18 +151,27 @@ function MemoriesScreen() {
     { key: "feedback", label: "제안 피드백", href: `${base}?tab=feedback` },
   ];
 
-  /** 관찰 탭의 필터만 주소에 반영한다. 탭을 옮기면 필터는 따라가지 않는다 (다른 목록이다). */
-  function setFilter(next: { domain?: Agent | null; unused?: boolean; inactive?: boolean }) {
+  /**
+   * 필터를 주소에 남긴다 — 뒤로가기가 동작해야 하고, 링크로 그 상태를 그대로 열 수 있어야 한다.
+   * 🚨 **탭을 옮기면 필터는 따라가지 않는다.** 두 목록이 서로 다른 것이라 `?domain=` 이 같은
+   *    뜻이어도 고른 자리가 다르다 — 탭 링크는 필터 없는 주소를 가리킨다.
+   */
+  function setFilter(next: {
+    domain?: Agent | null;
+    unused?: boolean;
+    state?: AffinityFilterState;
+  }) {
     const params = new URLSearchParams();
+    if (tab !== "observations") params.set("tab", tab);
+
     const nextDomain = next.domain === undefined ? domain : next.domain;
-    // 🚨 "제안에서 빠진 것" 과 "고쳐서 뺀 것" 은 겹칠 수 없다 — 전자는 살아 있는 기억 중에서
-    //    고르는 것이고 후자는 목록에서 빠진 것을 불러오는 것이다. 한쪽을 켜면 다른 쪽을 끈다.
-    const nextInactive = next.inactive === undefined ? inactiveOnly : next.inactive;
-    const nextUnused =
-      next.unused === undefined ? unusedOnly && !nextInactive : next.unused && !nextInactive;
+    const nextUnused = next.unused === undefined ? unusedOnly : next.unused;
+    const nextState = next.state === undefined ? state : next.state;
+
     if (nextDomain) params.set("domain", nextDomain);
-    if (nextUnused) params.set("unused", "1");
-    if (nextInactive) params.set("inactive", "1");
+    if (tab === "observations" && nextUnused) params.set("unused", "1");
+    if (tab === "profile" && nextState !== "all") params.set("state", nextState);
+
     const query = params.toString();
     router.replace(query ? `${base}?${query}` : base, { scroll: false });
   }
@@ -133,7 +192,6 @@ function MemoriesScreen() {
           childId={childId}
           domain={domain}
           unusedOnly={unusedOnly}
-          inactiveOnly={inactiveOnly}
           onFilter={setFilter}
           onOpen={(observation) => setTarget({ type: "observation", observation })}
         />
@@ -141,6 +199,9 @@ function MemoriesScreen() {
 
       {tab === "profile" ? (
         <ProfileTab
+          domain={domain}
+          state={state}
+          onFilter={setFilter}
           childId={childId}
           onOpen={(affinity) => setTarget({ type: "affinity", affinity })}
         />
@@ -159,19 +220,17 @@ function ObservationsTab({
   childId,
   domain,
   unusedOnly,
-  inactiveOnly,
   onFilter,
   onOpen,
 }: {
   childId: string;
   domain: Agent | null;
   unusedOnly: boolean;
-  inactiveOnly: boolean;
-  onFilter: (next: { domain?: Agent | null; unused?: boolean; inactive?: boolean }) => void;
+  onFilter: (next: { domain?: Agent | null; unused?: boolean }) => void;
   onOpen: (observation: Observation) => void;
 }) {
   const router = useRouter();
-  const filters = { domain, unusedOnly, inactiveOnly };
+  const filters = { domain, unusedOnly };
 
   const observations = useQuery({
     queryKey: qk.observations(childId, filters),
@@ -180,48 +239,31 @@ function ObservationsTab({
         query: {
           ...(domain ? { domain } : {}),
           ...(unusedOnly ? { unused_in_suggestions: "true" } : {}),
-          // ⚠️ 계약서 v1 에 아직 없는 파라미터다. 안 받는 서버는 이 값을 무시하고 살아 있는
-          //    기억을 돌려주므로 화면이 깨지지 않는다. 👉 apps/api Owner 협의 대상 (최상위 §8)
-          ...(inactiveOnly ? { status: "inactive" } : {}),
         },
       }),
   });
 
-  const filtered = domain !== null || unusedOnly || inactiveOnly;
+  const filtered = domain !== null || unusedOnly;
 
   return (
     <section className="flex flex-col gap-3">
-      {/* 두 축이라 줄을 나눈다. 분류는 하나만 고르고, 아래 토글은 그것과 무관하게 겹친다 —
-          한 줄에 섞으면 무엇이 배타적인지 알 수 없다. */}
-      <ChipRow>
-        <Chip selected={domain === null} onClick={() => onFilter({ domain: null })}>
-          전체
-        </Chip>
-        {AGENTS.map((agent) => (
-          <Chip
-            key={agent}
-            selected={domain === agent}
-            onClick={() => onFilter({ domain: domain === agent ? null : agent })}
-          >
-            {domainLabel(agent)}
-          </Chip>
-        ))}
-      </ChipRow>
-      <ChipRow>
-        <Chip
-          selected={unusedOnly}
-          onClick={() => onFilter({ unused: !unusedOnly, inactive: false })}
-        >
-          제안에서 빠진 것만
-        </Chip>
-        {/* 🚨 교정으로 뺀 기억을 되돌리러 오는 자리다 (위 `inactiveOnly` 의 🚨). */}
-        <Chip
-          selected={inactiveOnly}
-          onClick={() => onFilter({ inactive: !inactiveOnly, unused: false })}
-        >
-          고쳐서 뺀 기록
-        </Chip>
-      </ChipRow>
+      {/* 🚨 **정렬은 두지 않는다.** 계약서가 이 목록을 `observed_to DESC` 로 고정했고(§08)
+          정렬 파라미터가 없다. 커서 페이지네이션이라 받아 온 쪽만 프론트에서 다시 정렬하면
+          다음 장을 붙이는 순간 순서가 어긋난다 — 서버가 주는 순서를 그대로 쓴다. */}
+      <FilterRow>
+        <Select
+          label="분류"
+          value={domain ?? "all"}
+          options={DOMAIN_OPTIONS}
+          onChange={(value) => onFilter({ domain: value === "all" ? null : value })}
+        />
+        <Select
+          label="보기"
+          value={unusedOnly ? "unused" : "all"}
+          options={USE_OPTIONS}
+          onChange={(value) => onFilter({ unused: value === "unused" })}
+        />
+      </FilterRow>
 
       {observations.isPending ? <SkeletonBlock label="기록을 불러오는 중" /> : null}
 
@@ -234,10 +276,10 @@ function ObservationsTab({
           filtered ? (
             <EmptyState
               icon={Notebook}
-              title={inactiveOnly ? "고쳐서 뺀 기록이 없어요" : "이 조건에 맞는 기록이 없어요"}
+              title="이 조건에 맞는 기록이 없어요"
               description={
-                inactiveOnly
-                  ? '"지금은 달라요" 나 "잘못된 기록" 으로 고친 것이 여기 모여요.'
+                unusedOnly
+                  ? "적어주신 기록이 전부 제안에 쓰이고 있어요. 다른 분류를 골라보세요."
                   : "다른 분류를 골라보세요."
               }
               count={0}
@@ -276,18 +318,50 @@ function ObservationsTab({
 
 function ProfileTab({
   childId,
+  domain,
+  state,
+  onFilter,
   onOpen,
 }: {
   childId: string;
+  domain: Agent | null;
+  state: AffinityFilterState;
+  onFilter: (next: { domain?: Agent | null; state?: AffinityFilterState }) => void;
   onOpen: (affinity: Affinity) => void;
 }) {
+  const filters = { domain, state };
+
   const affinities = useQuery({
-    queryKey: qk.affinities(childId),
-    queryFn: () => api.get<AffinitiesResponse>(`/children/${childId}/affinities`),
+    queryKey: qk.affinities(childId, filters),
+    queryFn: () =>
+      api.get<AffinitiesResponse>(`/children/${childId}/affinities`, {
+        query: {
+          ...(domain ? { domain } : {}),
+          ...(state === "all" ? {} : { state }),
+        },
+      }),
   });
+
+  const filtered = domain !== null || state !== "all";
 
   return (
     <section className="flex flex-col gap-3">
+      {/* 🚨 여기도 정렬을 두지 않는다 — 계약서의 이 엔드포인트는 `?domain=&state=` 뿐이다. */}
+      <FilterRow>
+        <Select
+          label="분류"
+          value={domain ?? "all"}
+          options={AFFINITY_DOMAIN_OPTIONS}
+          onChange={(value) => onFilter({ domain: value === "all" ? null : value })}
+        />
+        <Select
+          label="상태"
+          value={state}
+          options={STATE_OPTIONS}
+          onChange={(value) => onFilter({ state: value })}
+        />
+      </FilterRow>
+
       {affinities.isPending ? <SkeletonBlock label="기억을 불러오는 중" /> : null}
 
       {affinities.isError ? (
@@ -296,13 +370,23 @@ function ProfileTab({
 
       {affinities.data ? (
         affinities.data.affinities.length === 0 ? (
-          <EmptyState
-            icon={Sprout}
-            title="아직 확정된 기억이 없어요"
-            description="같은 것이 서로 다른 날에 반복되면 기억이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
-            count={0}
-            countLabel="쌓인 기억"
-          />
+          filtered ? (
+            <EmptyState
+              icon={Sprout}
+              title="이 조건에 맞는 기억이 없어요"
+              description="다른 분류나 상태를 골라보세요."
+              count={0}
+              countLabel="이 조건의 기억"
+            />
+          ) : (
+            <EmptyState
+              icon={Sprout}
+              title="아직 확정된 기억이 없어요"
+              description="같은 것이 서로 다른 날에 반복되면 기억이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
+              count={0}
+              countLabel="쌓인 기억"
+            />
+          )
         ) : (
           <>
             <p className="text-caption text-ink-subtle">

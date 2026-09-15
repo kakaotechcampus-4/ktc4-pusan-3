@@ -108,7 +108,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast`
+  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` · `Select`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
@@ -162,11 +162,12 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 🚨 **라벨에 조사를 박지 않는다.** `withRo()`(`lib/format.ts`)가 받침으로 고른다 —
   라벨은 데이터고 조사는 문법이라, 박아 두면 다른 문장에서 못 쓴다. 교정은 append-only 라
   반대 교정으로 되돌린다 — `wrong` 도 `btn-danger` 가 아니다.
-  🚨 **그 "반대 교정" 에 도달할 경로가 화면에 있어야 한다.** `wrong`·`outdated` 를 누르면 그 줄이
-  기본 목록에서 사라지는데, 다시 여는 길이 없으면 부모에게 그 버튼은 **되돌릴 수 없는 동작**이고
-  그러면 확인 단계를 뺀 근거가 통째로 무너진다. 기록 탭의 "고쳐서 뺀 기록" 칩이 그 길이다.
-  ⚠️ `status=inactive` 는 **계약서 v1 에 아직 없는 파라미터**다 — 안 받는 서버는 무시하고 살아 있는
-  기억을 돌려주므로 화면이 깨지지 않는다. 👉 `apps/api` Owner 협의 대상 (최상위 §8)
+  🚨 **교정을 되돌리는 기능은 주지 않는다** (제품 결정). `wrong`·`outdated` 를 누르면 그 줄이
+  목록에서 사라지고 다시 꺼내 볼 길이 없다 — 그래서 **확인 단계가 그 무게를 진다.**
+  🚨 화면 문구도 "다시 고칠 수 있어요" 라고 쓰지 않는다. 한동안 "고쳐서 뺀 기록" 필터로 되살릴 수
+  있게 뒀다가 내린 자리라, 문구가 남으면 **찾지 못할 길을 약속**하게 된다.
+  🚨 같은 이유로 기억 탭의 상태 필터에 **`archived` 를 두지 않는다** — 목록에 없는 것을 필터로만
+  되살리면 되돌릴 수 있다는 기대를 만들면서 수단은 안 주는 셈이다
 - 🚨 **기록과 기억을 한 단어로 묶지 않는다.** 목록은 줄과 카드로 갈라 놓고 교정 시트의 문구가
   둘을 도로 합치면, 부모는 기억을 고치면서 자기가 기록 한 건을 고치는 줄 안다
   (`CorrectionButtons` 와 `CascadeResult` 가 `targetKind` 로 갈린다)
@@ -182,6 +183,17 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   `GeneralSuggestion` 에는 `evidence` 필드가 **아예 없어서** 개인화 쪽에 넘기면 컴파일이 막는다.
   ⚠️ `SuggestionsResponse.general` 은 **계약서 v1 에 아직 없다** — 제안 형태로 두고 optional 로 받는다
   (서버가 안 보내면 질문 1개만 그린다). 👉 `apps/api` Owner 협의 대상 (최상위 §8)
+- 🚨 **07 목록의 필터는 계약서가 주는 것만 만든다** (`?domain=` · `?unused_in_suggestions=` ·
+  기억 탭의 `?state=`). 🚨 **정렬을 만들지 않는다** — 두 엔드포인트 다 정렬 파라미터가 없고
+  관찰은 `observed_to DESC` 고정이다. 커서 페이지네이션이라 받아 온 쪽만 다시 정렬하면 다음 장을
+  붙이는 순간 순서가 어긋난다. 정렬이 필요하면 계약서 먼저다 (최상위 §8)
+- 🚨 **고르기 상자(`Select`)는 직접 만든 드롭다운이다.** 네이티브 `<select>` 는 닫혀 있을 때
+  말고는 생김새를 우리가 못 정해서 쓰지 않기로 했다 — 대신 **키보드 · 포커스 · 스크린리더 ·
+  바깥 클릭이 전부 그 파일의 책임**이 된다. 그 파일의 🚨 를 지우지 말 것:
+  ARIA 는 `combobox` + `listbox` 한 쌍 · 열 때 고른 항목으로 포커스가 들어가고 **닫을 때 버튼으로
+  돌아온다**(안 그러면 포커스가 `<body>` 로 떨어진다 · 09 달력에서 낸 사고와 같다) ·
+  ESC · 바깥 클릭 · Tab · 스크롤에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
+  등장 애니메이션도 쉐브론 회전도 없다(방향은 아이콘을 갈아 끼워 말한다)
 - 🚨 **외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.** 접근성을 손으로 짜면
   반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고** `classNames` 로 토큰만 입힌다 —
   버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7)
