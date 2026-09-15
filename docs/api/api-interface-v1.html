@@ -307,7 +307,7 @@ html{scroll-behavior:smooth}
       <tr><th>인증</th><td><code>Authorization: Bearer &lt;token&gt;</code> — <b>예외 없음</b>. 인증 없는 엔드포인트를 만들지 않는다 (NF-09)</td></tr>
       <tr><th>시간</th><td>RFC 3339 · <code>2026-09-05T18:30:00+09:00</code>. 날짜는 <code>YYYY-MM-DD</code>. <b>나이는 저장하지 않고</b> 서버가 <code>birth_date</code> 로 계산해 <code>age_display</code> 로 내린다</td></tr>
       <tr><th>아이 스코프</th><td><code>/children/{cid}/*</code> 는 호출자의 <code>parent_child</code> 연결을 매 요청 확인. 없으면 <code>403 child_access_denied</code></td></tr>
-      <tr><th>삭제</th><td>상태 전이가 기본 (<code>inactive</code> · <code>archived</code> · <code>cancelled</code>). <b>하드 삭제는 <code>health_safety</code> 한 곳뿐</b> — 아이와 무관해진 안전 정보는 행을 지운다</td></tr>
+      <tr><th>삭제</th><td>상태 전이가 기본 (<code>inactive</code> · <code>archived</code> · <code>cancelled</code>). 안전 정보의 개별 회수는 <code>state = 'retracted'</code>로 전환한다</td></tr>
       <tr><th>페이지네이션</th><td><code>?cursor=&amp;limit=</code>. 커서는 <code>(observed_to, kind, id)</code> 를 base64 로 인코딩 — 테이블별 uuid 만으로는 4개 테이블 병합 정렬 위치를 복원할 수 없다</td></tr>
     </tbody>
   </table></div>
@@ -444,7 +444,7 @@ html{scroll-behavior:smooth}
 
   <h3>HealthSafety</h3>
   <p>테이블의 <code>kind</code> 컬럼은 Ref 의 <code>kind</code> 와 이름이 겹친다. API 에서는 <b><code>type</code> 으로 내린다.</b>
-  상태 컬럼은 두지 않는다 — 아이와 무관해진 항목은 <a href="#ep-safety"><code>DELETE</code></a> 로 행을 지운다.</p>
+  DB의 <code>state</code>는 <code>active / retracted</code>이며, <code>NOT NULL</code> · 기본값은 <code>active</code>다. 보호자가 <a href="#ep-safety"><code>DELETE</code></a>로 회수하면 <code>retracted</code>로 전환한다. 안전정보 조회·사용은 <code>state = 'active'</code>만 대상으로 한다.</p>
   <div class="code"><pre>{
   <span class="k">"kind"</span>: <span class="s">"health_safety"</span>,
   <span class="k">"id"</span>: <span class="s">"hs_3"</span>,
@@ -1088,10 +1088,9 @@ html{scroll-behavior:smooth}
       <span class="ct">🚨 방어가 두 겹이다</span>
       <p><b>보호자 토큰으로만 호출된다.</b> Agent 실행 경로의 어떤 코드도 이 함수를 부르지 않고, DB 레벨에서도 Agent/Curator role 에 이 테이블 write 권한이 없다.
       심사에서 "AI 가 알레르기를 잘못 기록하면?" 이 나오면 답이 두 겹 — <b>코드에 경로가 없고, 있어도 DB 가 거부한다.</b></p>
-      <p><b>해제는 <code>DELETE /children/{cid}/health-safety/{id}</code> — 행을 지운다.</b> 상태 컬럼이 없어서 이 테이블만 hard delete 다.
-      아이가 알레르기를 벗어났거나 잘못 넣은 항목처럼 <b>아이와 연관되지 않는 정보</b>일 때만 쓴다.
-      <code>UNIQUE(child_id, type, label)</code> 이라 같은 항목 재등록은 <code>409</code> — 지우고 다시 넣는다.</p>
-      <p>되돌릴 수 없으므로 프론트는 삭제 전에 <b>무엇이 없어지는지 보여주고 한 번 더 확인받는다</b>. 감쇠는 없다 — 시간이 지났다는 이유로 서버가 지우지 않는다.</p>
+      <p><b>회수는 <code>DELETE /children/{cid}/health-safety/{id}</code> — <code>state = 'retracted'</code>로 전환한다.</b>
+      잘못 등록했거나 더 이상 적용하지 않을 항목을 보호자가 회수한다. 행은 유지하며, 안전정보 조회·사용에서는 <code>state = 'active'</code>인 항목만 대상으로 한다.</p>
+      <p>프론트는 회수 전에 <b>어떤 항목이 안전정보에서 제외되는지 보여주고 한 번 더 확인받는다</b>. 감쇠는 없다 — 시간이 지났다는 이유로 서버가 자동 회수하지 않는다.</p>
     </div>
   </article>
 </section>
@@ -1187,7 +1186,7 @@ html{scroll-behavior:smooth}
       <tbody>
         <tr><td><code>observation_*</code></td><td><code>confidence_source</code> 상향<br><code>parent_hearsay</code>·<code>parent_hedged</code> → <code>parent_direct</code></td><td><code>affinity_id = NULL</code><br>집계에서 제외, 행은 남김</td><td><code>status = 'inactive'</code></td><td><code>status = 'inactive'</code><br>+ 같은 <code>affinity</code> 재계산</td></tr>
         <tr><td><code>profile_affinity</code></td><td><code>strength</code> 상향<br><code>state</code> 유지</td><td><code>state</code> 한 단계 강등<br><code>confirmed → candidate</code></td><td><code>state = 'archived'</code></td><td><code>state = 'archived'</code><br>+ 근거 관찰 <code>inactive</code></td></tr>
-        <tr><td><code>health_safety</code></td><td colspan="4">교정 대상이 아니다. 보호자 확인값이라 강등·감쇠가 없고, 해제는 <a href="#ep-safety"><code>DELETE</code></a> 뿐이다</td></tr>
+        <tr><td><code>health_safety</code></td><td colspan="4">교정 대상이 아니다. 보호자 확인값이라 강등·감쇠가 없고, <a href="#ep-safety"><code>DELETE</code></a>로 회수하면 <code>state = 'retracted'</code>로 전환한다</td></tr>
       </tbody>
     </table></div>
     <p class="note"><b>관찰의 <code>confirm</code> 은 <code>confidence_source</code> 를 직접 올린다.</b>
@@ -1210,7 +1209,7 @@ html{scroll-behavior:smooth}
   <span class="k">"kept"</span>: [<span class="s">"health_safety"</span>, <span class="s">"event"</span>, <span class="s">"calendar"</span>, <span class="s">"consent"</span>]
 }</pre></div>
     <p class="note"><code>event.source_refs</code> · <code>suggestion.source_refs</code> 가 끊어진 참조를 갖지 않으려면 행이 남아 있어야 한다.
-    <b>이 일괄 삭제는 <code>health_safety</code> 를 건드리지 않는다</b> — 기억을 지운다고 알레르기까지 없어지지 않는다. 안전 정보는 <a href="#ep-safety">개별 삭제</a>로만 지운다.
+    <b>이 일괄 삭제는 <code>health_safety</code> 를 건드리지 않는다</b> — 기억을 지운다고 알레르기까지 없어지지 않는다. 개별 안전 정보의 사용 중단은 <a href="#ep-safety">회수</a>로 처리한다.
     <code>profile_affinity</code> 는 근거가 전부 <code>inactive</code> 가 되므로 <code>archived</code> 로 함께 내려간다.</p>
   </article>
 </section>
