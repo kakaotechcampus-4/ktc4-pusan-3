@@ -15,6 +15,7 @@ import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { useToast } from "@/components/ui/toast";
 import { DomainIcon, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { PageTitle } from "@/components/ui/page-title";
@@ -450,6 +451,7 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
 ];
 
 function ComponentSection() {
+  const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
   const [chip, setChip] = useState("공룡");
   const [date, setDate] = useState("");
@@ -674,6 +676,23 @@ function ComponentSection() {
       <Banner tone="danger" title="알레르기 기록에 추가했어요">
         이 재료가 들어간 제안은 넣지 않아요.
       </Banner>
+
+      <SubTitle>토스트</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        화면 안에 자리가 없는 사실을 잠깐 띄운다. 🚨 성공을 알리지 않고(성공은 화면이 이미 말한다),
+        되돌릴 것이 있으면 여기 담지 않는다(사라지는 자리다). 남는 자리는 **조용히 되돌아간 실패**
+        하나 — 준비물 체크처럼 낙관적으로 반영했다가 실패해서 원래대로 돌아가는 경우다. 위에
+        붙고(아래는 채팅바+이동 바), 그림자·애니메이션이 없고, 한 번에 하나이며 6초 뒤 사라진다. 🚨
+        바텀시트 안에서 부르지 않는다 — dialog 의 top layer 뒤로 깔려 안 보인다.
+      </p>
+      <div>
+        <Button
+          variant="secondary"
+          onClick={() => toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.")}
+        >
+          토스트 띄우기
+        </Button>
+      </div>
 
       <SubTitle>바텀시트</SubTitle>
       <p className="text-caption text-ink-subtle">

@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
+import { useToast } from "@/components/ui/toast";
 import { api, qk } from "@/lib/api";
 import type {
   CalendarDayResponse,
@@ -184,6 +185,7 @@ function PreparedCheckbox({
   item: EventItem;
 }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const key = qk.calendarDay(childId, date);
 
   const toggle = useMutation({
@@ -210,8 +212,12 @@ function PreparedCheckbox({
       return { previous };
     },
     // 실패하면 되돌린다 — 체크한 채로 남으면 안 챙긴 것을 챙겼다고 믿게 된다.
+    // 🚨 **되돌리기만 하면 조용하다.** 화면에는 체크가 풀린 것만 보이고 왜 그런지가 어디에도
+    //    없어서, 부모는 자기가 잘못 눌렀다고 생각한다. 체크박스 옆에는 문장이 들어갈 자리가
+    //    없으므로 토스트가 그 자리를 받는다 (`ui/toast.tsx` 의 🚨 — 토스트가 맞는 유일한 자리다).
     onError: (_error, _variables, context) => {
       if (context?.previous) queryClient.setQueryData(key, context.previous);
+      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: key });
