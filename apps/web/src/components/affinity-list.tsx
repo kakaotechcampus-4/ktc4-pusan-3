@@ -2,7 +2,7 @@
 
 import { ChevronRight } from "lucide-react";
 
-import { domainLabel } from "@/components/domain-chip";
+import { domainField, domainLabel } from "@/components/domain-chip";
 import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import type { Affinity, AffinityState } from "@/lib/api/types";
@@ -76,8 +76,14 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
       )}
     >
       {/* 🚨 기록 줄과 **같은 타일**이다. 둘이 한 화면의 두 탭이라, 왼쪽 기준선이 다르면
-          같은 아이에 대한 두 목록이 아니라 남남으로 읽힌다. 뉴트럴인 이유는 그쪽과 같다. */}
-      <IconTile icon={DOMAIN_ICON[affinity.domain]} tone="neutral" />
+          같은 아이에 대한 두 목록이 아니라 남남으로 읽힌다. 도메인 색인 이유도 그쪽과 같다.
+          🚨 **오래된 것만 뉴트럴이다.** `is_stale` 카드는 통째로 `surface-muted` 인데
+          그 위에 색 타일이 서면 "근거에서 빠져 있다" 는 사실을 화면이 되받아친다. */}
+      <IconTile
+        icon={DOMAIN_ICON[affinity.domain]}
+        tone={stale ? "neutral" : "plain"}
+        className={stale ? undefined : domainField(affinity.domain)}
+      />
 
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className={cn("text-title", stale ? "text-ink-muted" : "text-ink")}>

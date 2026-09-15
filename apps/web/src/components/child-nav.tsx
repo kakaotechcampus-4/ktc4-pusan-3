@@ -8,7 +8,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { cn } from "@/lib/cn";
 
 /**
- * 화면 아래 이동 바 — 홈 · 캘린더 · 기억 세 칸.
+ * 화면 아래 이동 바 — 홈 · 캘린더 · 기록/기억 세 칸.
  *
  * 프로토타입의 3칸 탭을 그대로 옮겼다. 다만 아이콘은 유니코드 기호(⌂ ▦ ☰)가 아니라 lucide 다 —
  * 기호를 글자로 찍으면 스크린리더가 제각각 읽고 글리프가 없으면 두부(□)가 된다 (문서 §4).
@@ -29,7 +29,7 @@ export type ChildTab = "home" | "calendar" | "memories";
 const TABS: Array<{ key: ChildTab; label: string; icon: LucideIcon; path: string }> = [
   { key: "home", label: "홈", icon: House, path: "home" },
   { key: "calendar", label: "캘린더", icon: CalendarDays, path: "calendar" },
-  { key: "memories", label: "기억", icon: Notebook, path: "memories" },
+  { key: "memories", label: "기록/기억", icon: Notebook, path: "memories" },
 ];
 
 export function ChildNav({ active, onRoute = true }: { active: ChildTab; onRoute?: boolean }) {

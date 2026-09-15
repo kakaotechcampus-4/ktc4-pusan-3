@@ -27,14 +27,23 @@ export function IconTile({
   className,
 }: {
   icon: LucideIcon;
-  tone?: "brand" | "neutral";
+  /**
+   * `plain` 은 **색을 바깥에서 주는** 자리다 — 도메인 색은 primitive 가 알면 안 되는 값이라
+   * (`components/ui/` 는 토큰만 안다) 호출자가 `className` 으로 `domainField()` 를 넘긴다.
+   * 🚨 `cn()` 은 tailwind-merge 가 아니라서, 여기서 `bg-*` 를 깔아 두면 바깥 색이 안 덮인다.
+   */
+  tone?: "brand" | "neutral" | "plain";
   className?: string;
 }) {
   return (
     <span
       className={cn(
         "rounded-field flex size-9 shrink-0 items-center justify-center",
-        tone === "neutral" ? "bg-surface-muted text-ink-muted" : "bg-brand-soft text-brand-ink",
+        tone === "plain"
+          ? null
+          : tone === "neutral"
+            ? "bg-surface-muted text-ink-muted"
+            : "bg-brand-soft text-brand-ink",
         className,
       )}
     >

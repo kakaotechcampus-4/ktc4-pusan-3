@@ -2,7 +2,7 @@
 
 import { ChevronRight } from "lucide-react";
 
-import { domainLabel, observationAgent } from "@/components/domain-chip";
+import { domainField, domainLabel, observationAgent } from "@/components/domain-chip";
 import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
@@ -20,8 +20,13 @@ import { isHealthObservation, type Observation } from "@/lib/api/types";
  *
  * 줄의 뼈대는 세 가지 **다른 종류**다 — 왼쪽 타일(어느 영역인지) · 문장 · 그 아래 한 줄.
  * 전부 같은 크기의 글자로 쌓으면 훑을 기준선이 없어서 목록이 통째로 회색 덩어리로 읽힌다.
- * 🚨 **타일은 뉴트럴이다.** 07 에는 도메인 색도 브랜드도 못 쓴다 — 여기서 색을 들이면
- *    "어느 Agent 결과인가"(도메인) 와 "무엇을 하는가"(브랜드) 의 뜻이 둘 다 흐려진다.
+ * 🚨 **타일은 그 영역의 도메인 색이다** (문서 §3 · §7 "07 기록 줄 · 기억 카드").
+ *    도메인 색의 뜻을 "어느 Agent 결과인가" 에서 **"어느 영역인가"** 로 넓히면서 열린 자리다 —
+ *    07 은 제안이 아니라 **쌓인 것을 훑는 화면**이고, 목록이 네 영역을 섞어 내려주므로
+ *    "한 화면에 도메인 색 2개" 상한의 예외이기도 하다 (그 상한은 제안 화면의 규칙이다).
+ *    🚨 **브랜드는 여전히 못 쓴다.** "어디서 왔나"(도메인) 와 "무엇을 하는가"(브랜드) 를
+ *    같은 색으로 쓰지 않는다 — 여기 서 있는 것은 고르는 버튼이 아니다.
+ *    🚨 **색이 단독 신호가 되지 않는다** — 타일 옆에 영역 이름이 항상 글자로 선다.
  *
  * 🚨 **이 줄이 무엇으로 이어졌는지는 칩이 진다.** "이 기록이 어느 기억에 묶였나" 는 이 제품의
  *    논지 자체(기록이 쌓여 기억이 된다)라, 날짜와 같은 무게의 회색 글자로 두면 목록에서
@@ -60,7 +65,7 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
       onClick={onOpen}
       className="min-h-touch ease-standard active:bg-surface-muted flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors duration-120 focus-visible:-outline-offset-2"
     >
-      <IconTile icon={DOMAIN_ICON[agent]} tone="neutral" />
+      <IconTile icon={DOMAIN_ICON[agent]} tone="plain" className={domainField(agent)} />
 
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className="text-body text-ink">{observation.raw_text}</span>
