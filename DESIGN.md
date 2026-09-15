@@ -1,5 +1,5 @@
 ---
-name: 육아기억 AI
+name: 아이캐치
 description: 밤에 지친 손으로 여는, 아이에 대한 기록이 주인공인 화면의 디자인 시스템
 colors:
   canvas: "#FBF9F5"
@@ -240,7 +240,7 @@ components:
     size: "20px"
 ---
 
-# Design System: 육아기억 AI
+# Design System: 아이캐치
 
 ## Overview
 

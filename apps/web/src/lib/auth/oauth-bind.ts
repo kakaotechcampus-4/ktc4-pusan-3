@@ -15,7 +15,7 @@
  * 정본: docs/api/auth-kakao-v1.md §7-2 · docs/web/kakao-login-v1.md §3-4 · §4-3
  */
 
-const KEY = "yukameo.oauth.bind";
+const KEY = "icatch.oauth.bind";
 
 /**
  * 256비트 난수를 base64url 43자로. 서버가 길이·문자셋을 검증하므로 모양을 맞춘다

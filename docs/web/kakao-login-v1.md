@@ -23,7 +23,7 @@
 | 인가 코드 교환        | **서버**가 한다. 웹·앱 모두 카카오 토큰을 못 본다                                                    |
 | 클라이언트가 보내는 것 | 서버가 발급한 **1회용 코드 + bind 비밀** 한 쌍                                                       |
 | 시작 파라미터         | `client=web\|app` (열거값) · `bind` (base64url 43자)                                                 |
-| 복귀 경로             | 웹 `/auth/callback?code=` · 앱 `yukameo://auth?code=` — **쿼리 모양이 같다**                          |
+| 복귀 경로             | 웹 `/auth/callback?code=` · 앱 `icatch://auth?code=` — **쿼리 모양이 같다**                          |
 | 앱에서 카카오 페이지  | **인앱 인증 세션** (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`)                        |
 | 웹뷰 안에서 OAuth     | **금지** — 앱이 카카오 계정 입력창을 들여다볼 수 있는 구조가 된다                                     |
 | 세션                  | 불투명 난수 · **12시간** · refresh 없음 · **`sessionStorage`**                                        |
@@ -63,7 +63,7 @@
 ②' 웹이 client=app 을 실어 이동을 시도
    → 셸의 onShouldStartLoadWithRequest 가 시작 URL 을 잡아 인앱 인증 세션으로 연다
      (시스템 브라우저 X · 웹뷰 X)
-③~⑥ 동일. 단 서버가 yukameo://auth?code=… 로 302
+③~⑥ 동일. 단 서버가 icatch://auth?code=… 로 302
 ⑦' 인증 세션이 스킴을 가로채 스스로 닫고 셸에 URL 을 넘긴다
    → 셸이 https://<web>/auth/callback?code=… 로 바꿔 웹뷰에 싣는다
 ⑦~⑨ 동일 — 웹은 자기가 어디서 돌아왔는지 몰라도 된다
@@ -103,7 +103,7 @@
 
 ### 3-4. `bind` — 1회용 코드만으로는 계정이 넘어간다
 
-⑥ 의 코드는 URL 에 실려 돌아온다. 그것만으로 세션이 나오면, 공격자가 **자기 카카오 로그인으로 얻은 코드**를 링크나 `yukameo://auth?code=…` 딥링크로 피해자에게 던져 **피해자를 공격자 계정에 로그인**시킬 수 있다. 그 뒤 피해자가 입력하는 아이 이름·생일·건강 정보가 전부 공격자 계정에 쌓인다.
+⑥ 의 코드는 URL 에 실려 돌아온다. 그것만으로 세션이 나오면, 공격자가 **자기 카카오 로그인으로 얻은 코드**를 링크나 `icatch://auth?code=…` 딥링크로 피해자에게 던져 **피해자를 공격자 계정에 로그인**시킬 수 있다. 그 뒤 피해자가 입력하는 아이 이름·생일·건강 정보가 전부 공격자 계정에 쌓인다.
 
 막는 방법 — 시작할 때 브라우저가 랜덤 비밀(256비트)을 만들어 ② 에서 `bind` 로 싣고, 서버는 그 **해시**를 `auth_handoff` 행에 묶는다. ⑦ 에서 같은 값을 다시 제시해야 세션이 나온다. 남이 던진 코드는 해시가 애초에 안 맞는다.
 
@@ -166,7 +166,7 @@ export function startOAuthLogin(provider: AuthProvider, status: AuthStatus): Log
 
 - 🚨 **서버가 준 절대 `start_url` 로 이동한다.** 상대경로로 가면 Next 오리진에서 출발하는데 카카오는 API 오리진으로 돌려보내서, 시작 때 심은 `state` 쿠키가 서버 콜백에 실리지 않는다. 로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과하니 **배포 기준으로 판단할 것.**
 - `status` 는 **00 화면 진입 시 prefetch** 한다. 버튼을 누른 뒤 조회하면 이동 전에 왕복이 한 번 낀다. `ready: false` 면 버튼을 비활성화하고 "아직 연결 전" 이라고 말한다.
-- `client` 판정은 셸 여부다. 앱 웹뷰는 `applicationNameForUserAgent` 로 붙은 `YukameoApp/…` 을 UA 에서 찾아 판별한다.
+- `client` 판정은 셸 여부다. 앱 웹뷰는 `applicationNameForUserAgent` 로 붙은 `IcatchApp/…` 을 UA 에서 찾아 판별한다.
 - **복귀 화면 복원은 프론트가 한다** (§3-5). 🚨 복원할 때 **저장된 값이 우리 앱 내부 경로인지 검사한다** — 그냥 `location = 저장값` 으로 쓰면 프론트가 오픈 리다이렉트를 자기 손으로 만든다. `/` 로 시작하고 `//` 가 아닌 값만 허용한다.
 - ⚠️ **저장 시점이 이 문서의 초안과 다르다.** "로그인을 **시작할 때** 현재 경로를 저장" 하면 그 시점의 경로는 항상 로그인 화면(`/`)이라 복원할 게 없다. 실제로 복원이 필요한 곳은 세션이 끊겨 **튕겨 나오는 지점** — [`AuthGate`](../../apps/web/src/components/auth-gate.tsx) 와 [`client.ts`](../../apps/web/src/lib/api/client.ts) 의 401 처리 — 이므로 **거기서** `rememberReturnPath(currentPath())` 를 부른다. `startOAuthLogin` 은 저장된 값을 덮지 않는다.
 
@@ -174,7 +174,7 @@ export function startOAuthLogin(provider: AuthProvider, status: AuthStatus): Log
 
 ```ts
 // lib/auth/oauth-bind.ts — 실제 구현
-const KEY = "yukameo.oauth.bind";
+const KEY = "icatch.oauth.bind";
 
 export function createBind(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));            // 256비트
@@ -190,7 +190,7 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 **`sessionStorage` 를 쓴다** ([명세 §2-2](../api/auth-kakao-v1.md)). 이 흐름에서는 살아남는다 — 웹은 같은 탭에서 오리진을 떠났다 돌아오는 것이라 탭이 살아 있는 동안 유지되고, 앱은 인앱 인증 세션이 앱을 죽이지 않아 웹뷰 컨텍스트가 그대로다.
 
-⚠️ **재검토 조건이 하나 있다.** 앱이 인앱 브라우저에 있는 동안 OS 가 프로세스를 정리하면 `yukameo://auth?code=` 로 앱이 새로 열리는데, 그때 웹뷰가 새로 만들어져 `sessionStorage` 가 비어 있다. 지금은 셸이 그 딥링크 복귀 경로를 처리하지 않으므로(§5-2) 어차피 코드가 유실돼 사용자가 다시 누르면 되고, 그래서 `sessionStorage` 로 충분하다. **셸에 `Linking` 복귀를 추가하는 순간 bind 를 `localStorage` 로 올려야** 그 경로가 실제로 완주한다.
+⚠️ **재검토 조건이 하나 있다.** 앱이 인앱 브라우저에 있는 동안 OS 가 프로세스를 정리하면 `icatch://auth?code=` 로 앱이 새로 열리는데, 그때 웹뷰가 새로 만들어져 `sessionStorage` 가 비어 있다. 지금은 셸이 그 딥링크 복귀 경로를 처리하지 않으므로(§5-2) 어차피 코드가 유실돼 사용자가 다시 누르면 되고, 그래서 `sessionStorage` 로 충분하다. **셸에 `Linking` 복귀를 추가하는 순간 bind 를 `localStorage` 로 올려야** 그 경로가 실제로 완주한다.
 
 교환·가입이 끝나면 성공·실패 모두 지운다. 신규 가입은 ⑨ 에서 같은 bind 를 한 번 더 쓰므로 **⑧ 에서 지우지 않는다.**
 
@@ -326,7 +326,7 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 // App.tsx — onShouldStartLoadWithRequest
 if (isInternalUrl(request.url)) return true;
 if (isAuthStartUrl(request.url)) {                 // pathname 이 /auth/<provider> 로 끝나는지
-  void WebBrowser.openAuthSessionAsync(request.url, "yukameo://auth")
+  void WebBrowser.openAuthSessionAsync(request.url, "icatch://auth")
     .then((r) => { if (r.type === "success") loadCallback(r.url); });
   return false;
 }
@@ -336,17 +336,17 @@ return false;
 
 `expo-web-browser` 의 `openAuthSessionAsync` 가 Android = Custom Tabs, iOS = `ASWebAuthenticationSession` 으로 갈라주고 양쪽 다 복귀 URL 을 promise 로 돌려준다. **네이티브 코드를 직접 짜지 않는다** — config plugin 도 필요 없고 CNG 가 처리한다.
 
-`scheme: "yukameo"` 는 [`app.json`](../../apps/mobile/app.json) 에 이미 있다. **이 스킴을 카카오 콘솔에 등록하지 않는다** — `yukameo://auth` 는 우리 서버가 302 하는 대상이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다.
+`scheme: "icatch"` 는 [`app.json`](../../apps/mobile/app.json) 에 이미 있다. **이 스킴을 카카오 콘솔에 등록하지 않는다** — `icatch://auth` 는 우리 서버가 302 하는 대상이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다.
 
 ### 5-2. 복귀 URL 을 웹뷰에 싣는다
 
 ```ts
 function loadCallback(url: string) {
   // ⚠️ 커스텀 스킴을 URL 로 파싱하지 않는다 (§7)
-  const PREFIX = "yukameo://auth";
+  const PREFIX = "icatch://auth";
   if (!url.startsWith(PREFIX)) return;
   const query = url.slice(PREFIX.length);
-  if (query && !query.startsWith("?")) return;      // yukameo://authXXX 는 남이다
+  if (query && !query.startsWith("?")) return;      // icatch://authXXX 는 남이다
   setWebViewUri(`${WEB_URL}/auth/callback${query}`);
 }
 ```
@@ -387,7 +387,7 @@ function loadCallback(url: string) {
 
 ## 7. 함정
 
-- 🚨 **커스텀 스킴을 RN 의 `URL` 로 파싱하지 않는다.** RN 의 `URL` 은 브라우저 것이 아니라 부분 폴리필이라 `host`·`hostname`·`pathname`·`origin` 정규식이 `https?:` 로 고정돼 있어 `yukameo://` 는 hostname 이 빈 문자열로 나오고, `hash` 는 setter 자체가 없어 대입하면 TypeError 가 난다. 여기서 조용히 실패하면 **복귀가 무시돼 로그인이 끝나지 않는다.** 문자열 prefix 비교로 처리한다.
+- 🚨 **커스텀 스킴을 RN 의 `URL` 로 파싱하지 않는다.** RN 의 `URL` 은 브라우저 것이 아니라 부분 폴리필이라 `host`·`hostname`·`pathname`·`origin` 정규식이 `https?:` 로 고정돼 있어 `icatch://` 는 hostname 이 빈 문자열로 나오고, `hash` 는 setter 자체가 없어 대입하면 TypeError 가 난다. 여기서 조용히 실패하면 **복귀가 무시돼 로그인이 끝나지 않는다.** 문자열 prefix 비교로 처리한다.
 - 🚨 **시작과 콜백은 같은 오리진이어야 한다** (§4-2). 로컬에서만 통과하는 종류의 버그다.
 - 🚨 **복귀 경로 복원값을 검증한다** (§4-2). 서버가 오픈 리다이렉트를 막았는데 프론트가 다시 열면 의미가 없다.
 - 🚨 **응답 분기는 `status` 필드로** (§4-4). `token` 유무로 하면 토큰 없는 세션이 저장된다.

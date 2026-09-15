@@ -91,7 +91,7 @@ export default function LoginPage() {
   return (
     <Screen className="gap-8">
       <header>
-        <p className="text-label text-brand">육아기억</p>
+        <p className="text-label text-brand">아이캐치</p>
         <PageTitle className="mt-2">
           아이 이야기를
           <br />

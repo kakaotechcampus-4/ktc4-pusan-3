@@ -13,8 +13,8 @@
 
 ```js
 sessionStorage.clear();
-localStorage.removeItem("yukameo.session");
-localStorage.removeItem("yukameo.mock.scenario");
+localStorage.removeItem("icatch.session");
+localStorage.removeItem("icatch.mock.scenario");
 location.replace("/");
 ```
 
@@ -41,8 +41,8 @@ location.replace("/");
 화면만 빨리 보려면 값을 직접 심어도 된다. 🚨 **`bind` 를 빼면 화면은 떠도 제출이 400 이다** — 서버가 형식을 검증하는 게 정상 동작이다.
 
 ```js
-sessionStorage.setItem("yukameo.oauth.consent_code", "cc_mock");
-sessionStorage.setItem("yukameo.oauth.provider", "kakao");
-sessionStorage.setItem("yukameo.oauth.bind", "dev".padEnd(43, "x"));
+sessionStorage.setItem("icatch.oauth.consent_code", "cc_mock");
+sessionStorage.setItem("icatch.oauth.provider", "kakao");
+sessionStorage.setItem("icatch.oauth.bind", "dev".padEnd(43, "x"));
 location.replace("/auth/consent");
 ```

@@ -24,7 +24,7 @@ export type Scenario = keyof typeof SCENARIOS;
 
 export const DEFAULT_SCENARIO: Scenario = "default";
 
-const STORAGE_KEY = "yukameo.mock.scenario";
+const STORAGE_KEY = "icatch.mock.scenario";
 
 function isScenario(value: string | null): value is Scenario {
   return value !== null && value in SCENARIOS;

@@ -17,7 +17,7 @@ import { WebView, type WebViewNavigation } from "react-native-webview";
 import { WEB_URL, isInternalUrl } from "./src/config";
 
 /** 웹 쪽에서 네이티브임을 알아볼 수 있게 붙인다 (예: 웹뷰에서만 다른 UI). */
-const USER_AGENT_SUFFIX = `YukameoApp/${Constants.expoConfig?.version ?? "0.0.0"}`;
+const USER_AGENT_SUFFIX = `IcatchApp/${Constants.expoConfig?.version ?? "0.0.0"}`;
 
 function Shell() {
   const webViewRef = useRef<WebView>(null);
