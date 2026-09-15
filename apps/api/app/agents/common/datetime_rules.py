@@ -78,6 +78,10 @@ _WEEKDAY_RE = re.compile(
 _MONTH_DAY_RE = re.compile(r"^(?P<month>\d{1,2})월(?P<day>\d{1,2})일$")
 
 _NAMED_TIMES = {"정오": time(12, 0), "자정": time(0, 0), "한밤중": time(0, 0)}
+# 시각 자리에 올 수 있는 "하루 종일". 일정에서만 뜻이 있다 (00:00~23:59)
+_ALL_DAY = {"하루종일", "종일", "온종일", "하루온종일"}
+ALL_DAY_START = time(0, 0)
+ALL_DAY_END = time(23, 59)
 _TIME_RE = re.compile(
     r"^(?P<mer>새벽|아침|오전|낮|점심|오후|저녁|밤)?"
     r"(?P<hour>\d{1,2})(?::|시)"
@@ -177,6 +181,16 @@ def resolve_query_bound(
         return None
     span = resolve_date_range(value, today=today, direction=direction)
     return span.end - timedelta(days=1) if is_end else span.start
+
+
+def is_all_day(value: str | None) -> bool:
+    """시각 자리에 "하루 종일" 이 온 경우. 일정은 00:00~23:59 · all_day 로 저장한다.
+
+    시각을 모르는 것(=되묻는다)과 하루 종일인 것(=아는 것)은 다르다. 그래서 값으로 받는다.
+    """
+    if value is None:
+        return False
+    return _normalize(value).replace(" ", "") in _ALL_DAY
 
 
 def resolve_time(value: str | None) -> time | None:

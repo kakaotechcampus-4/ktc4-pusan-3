@@ -4,16 +4,20 @@
 그래서 event_id는 항상 create_event / query_event 가 돌려준 값이어야 하고,
 없는 id 면 UNKNOWN_EVENT 로 되돌려 모델이 먼저 일정을 찾게 한다.
 status / created_by / expires_at / child_id 는 규칙이 채운다.
+새 일정도 고친 일정도 draft다. 확정은 보호자 승인을 거쳐야 한다.
 
-알림은 등록된 일정을 기준으로 자동 설정되므로 Agent 는 일정만 만들고 안내한다.
+알림은 등록된 일정을 기준으로 자동 설정되므로 Agent는 일정만 만들고 안내한다.
 """
 
 from datetime import datetime, time, timedelta
 from typing import Any
 
 from app.agents.common.datetime_rules import (
+    ALL_DAY_END,
+    ALL_DAY_START,
     DateParseError,
     combine,
+    is_all_day,
     resolve_date,
     resolve_query_bound,
     resolve_time,
@@ -37,14 +41,14 @@ EVENT_ITEM = "event_item"
 DRAFT_TTL_HOURS = 24  # 승인 없는 draft 는 24시간 뒤 만료
 
 _UNKNOWN_EVENT = "그 event_id 의 일정이 없다. create_event 나 query_event 결과의 id 를 쓴다."
+_NEEDS_START_TIME = (
+    "일정은 시작 시각이 있어야 저장한다. 몇 시인지 보호자에게 묻고 답을 들은 뒤 다시 부른다. "
+    "'낮'·'아침' 처럼 시간대만 아는 것도 시각이 아니다."
+)
 
 
 def _date_remedy(exc: DateParseError) -> str:
     return f"{exc} 오늘·모레·금요일 같은 원문 표현이나 YYYY-MM-DD 로 넣는다."
-
-
-def _time_remedy(exc: DateParseError) -> str:
-    return f"{exc} 시각은 '오전 10시'·'저녁 8시'·'14:30' 처럼 몇 시인지 알 때만 넣는다."
 
 
 async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]:
@@ -59,14 +63,22 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
     except DateParseError as exc:
         return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
 
-    try:
-        starts_moment = resolve_time(args.starts_time)
-        ends_moment = resolve_time(args.ends_time)
-    except DateParseError as exc:
-        return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
+    all_day = is_all_day(args.starts_time)
+    if all_day:
+        # 하루 종일 하는 행사. 00:00 ~ 23:59 로 저장
+        starts_moment, ends_moment = ALL_DAY_START, ALL_DAY_END
+    else:
+        try:
+            starts_moment = resolve_time(args.starts_time)
+            ends_moment = resolve_time(args.ends_time)
+        except DateParseError:
+            # "아침"·"낮" 처럼 시간대만 말한 경우-> 지어내지 말고 몇 시인지 질문
+            return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_START_TIME)
 
-    # 시각을 말하지 않았으면 만들어내지 않고 하루 종일 일정으로 둔다
-    all_day = starts_moment is None
+        # 시각 없이 저장하지 않도록
+        if starts_moment is None:
+            return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_START_TIME)
+
     row = await context.store.create_event(
         child_id=context.child_id,
         title=args.title,
@@ -92,7 +104,7 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
 
 async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     try:
-        # 날짜 조건은 starts_at 기준이다. "내일 무슨 일정 있어?" 가 이 경로다
+        # 날짜 조건은 starts_at 기준
         bounds = {
             "date_from": resolve_query_bound(
                 args.date_from,
@@ -140,6 +152,11 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
         "event_type": args.event_type,
         "category": args.category,
     }
+    if any(value is not None for value in fields.values()):
+        # 고친 일정은 다시 승인을 받도록. 만료 시계도 수정 시점부터 다시 셈
+        fields["status"] = "draft"
+        fields["expires_at"] = context.now + timedelta(hours=DRAFT_TTL_HOURS)
+
     row = await context.store.update_event(event_id=args.event_id, fields=fields)
     if row is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
@@ -159,6 +176,8 @@ def _merge_start(
         if args.starts_on is not None
         else local.date()
     )
+    if is_all_day(args.starts_time):
+        return combine(day, ALL_DAY_START, context.timezone), True
     if args.starts_time is not None:
         moment = resolve_time(args.starts_time)
         return combine(day, moment, context.timezone), moment is None
@@ -171,6 +190,9 @@ def _merge_start(
 def _merge_end(
     context: AgentContext, args: EventUpdate, current: EventRow, starts_at: datetime | None
 ) -> datetime | None:
+    if is_all_day(args.starts_time):  # 하루 종일로 바꾸면 끝도 그날 23:59 다
+        anchor = starts_at or current.starts_at
+        return combine(anchor.astimezone(context.timezone).date(), ALL_DAY_END, context.timezone)
     if args.ends_on is None and args.ends_time is None:
         return None  # 종료 시각은 건드리지 않는다
 

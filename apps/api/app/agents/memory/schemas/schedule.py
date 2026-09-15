@@ -3,8 +3,7 @@
 event 4 + event_item 3 = 7개.
 status · created_by · expires_at · child_id는 규칙이 채운다.
 
-알림은 Agent가 만들지 않는다.
-발송은 등록된 일정을 기준으로 자동이다.
+알림은 Agent가 만들지 않는다. 발송은 등록된 일정을 기준으로 자동이다.
 """
 
 from typing import Annotated
@@ -25,11 +24,20 @@ EventId = Annotated[str, Field(description="create_event / query_event 가 돌�
 
 
 class EventCreate(ToolArgs):
-    """새 일정. 시각을 말하지 않았으면 starts_time 을 비워 all_day로 저장한다."""
+    """새 일정. 시작 시각이 있어야 등록한다. 모르면 부르지 말고 보호자에게 묻는다."""
 
     title: Annotated[str, Field(description="일정 이름. 예: 운동회, 물놀이")]
     starts_on: DateExpr
-    starts_time: TimeExpr
+    starts_time: Annotated[
+        str,
+        Field(
+            description=(
+                "시작 시각. 원문 표현 그대로. 예: 오전 10시, 저녁 8시, 14:30. "
+                "하루 종일 하는 행사면 '하루 종일'. "
+                "발화에 시각도 '하루 종일' 도 없으면 이 tool 을 부르지 말고 몇 시인지 먼저 묻는다"
+            )
+        ),
+    ]
     ends_time: TimeExpr
     temporal_direction: Direction
     event_type: Annotated[
