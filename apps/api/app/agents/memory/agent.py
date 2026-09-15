@@ -7,26 +7,52 @@ app/api와 이후의 Supervisor는 내부(registry·prompt·client)를 모른 �
   - 모델이 낸 arguments가 깨져도 루프를 죽이지 않는다
   - 같은 인자로 성공한 쓰기 작업을 두 번 실행하지 않는다
   - 끝나지 않는 대화를 끊고, 끝났는지 여부를 호출자에게 알린다
+
+task 를 넘기면(Supervisor 경로) 세 가지가 더 붙는다.
+  - [tool 묶음] 기록 기본 묶음은 항상, 수정·삭제는 lookup_edit 조각이 있을 때만
+  - [허용 목록] 모델에게 안 보여준 tool은 이름으로 불러도 실행하지 않는다
+  - [조기 종료] 할 일을 다 한 게 코드로 확인되면 요약 호출 없이 끝낸다 (_covered)
 """
 
 import json
 import logging
+from collections import Counter
+from collections.abc import Collection
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from app.agents.common.llm_client import LLMClient
+from app.agents.memory.bundles import tools_for
 from app.agents.memory.context import AgentContext
 from app.agents.memory.prompt import build_system_prompt
-from app.agents.memory.registry import TOOL_SPECS, execute_tool
+from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
+from app.agents.memory.schemas.task import MemoryTask, WorkType
 
 logger = logging.getLogger(__name__)
 
 MAX_STEPS = 7  # 복합 발화 대비
 MAX_COMPLETION_TOKENS = 1400
 
-# 되돌리기 어려운 tool: 같은 인자로 두 번 성공하면 기록이 두 번 남음
+# 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
+EARLY_STOP = True
+
+# 되돌리기 어려운 tool
 _MUTATING_PREFIXES = ("create_", "update_", "delete_")
+
+# 힌트의 작업 종류마다 "해냈다" 로 치는 쓰기 (조기 종료 ⑤)
+_WRITES_FOR: dict[WorkType, tuple[str, ...]] = {
+    WorkType.OBSERVE: ("create_observation_",),
+    WorkType.SCHEDULE: ("create_event", "create_event_item"),
+    WorkType.LOOKUP_EDIT: ("update_", "delete_"),
+}
+# 이 말이 든 힌트가 있으면 조기 종료하지 않음
+# 알림 요청은 쓰기 없이 안내로 끝나야 함
+_NEEDS_REPLY_CUES = ("알림", "알람")
+
+EndedBy = Literal["model", "coverage", "max_steps"]
+
+_HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
 _ALREADY_DONE = "같은 인자로 이미 성공한 작업이다. 다시 부르지 않는다."
@@ -45,11 +71,15 @@ class ToolCallRecord:
 
 @dataclass
 class MemoryAgentResult:
-    final_message: str | None  # 끝내지 못했으면 None
+    final_message: str | None  # 끝내지 못했거나 조기 종료했으면 None
     completed: bool  # MAX_STEPS 안에 마쳤는지 여부
     steps: int
     calls: list[ToolCallRecord] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
+    # model: 모델이 tool 없이 답해서 끝남(되묻기/조회 답/알림 안내 등 final_message 있음)
+    # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
+    # max_steps: 끝내지 못함
+    ended_by: EndedBy = "model"
 
     @property
     def tool_names(self) -> list[str]:
@@ -63,12 +93,24 @@ async def run(
     client: LLMClient | None = None,
     directive: str | None = None,
     max_steps: int = MAX_STEPS,
+    task: MemoryTask | None = None,
 ) -> MemoryAgentResult:
-    """발화 한 건을 처리한다. directive는 이후 Supervisor가 넘길 상위 지시다."""
+    """발화 한 건을 처리한다.
+
+    task는 Supervisor 경로로, raw_text는 task.raw_text와 같아야 한다.
+    """
+    if task is not None and task.raw_text != raw_text:
+        raise ValueError("task.raw_text와 raw_text가 다르다")
+
     llm = client or LLMClient(role="memory")
+    allowed = tools_for(task) if task is not None else None
+    tools = specs_for(allowed) if allowed is not None else TOOL_SPECS
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(context, directive)},
-        {"role": "user", "content": raw_text},
+        {
+            "role": "system",
+            "content": build_system_prompt(context, directive, task_mode=task is not None),
+        },
+        {"role": "user", "content": _user_message(raw_text, task)},
     ]
     calls: list[ToolCallRecord] = []
     usage: dict[str, int] = {}
@@ -76,7 +118,7 @@ async def run(
 
     for step in range(max_steps):
         response = await llm.chat(
-            messages=messages, tools=TOOL_SPECS, max_completion_tokens=MAX_COMPLETION_TOKENS
+            messages=messages, tools=tools, max_completion_tokens=MAX_COMPLETION_TOKENS
         )
         _accumulate(usage, response.usage)
 
@@ -91,9 +133,11 @@ async def run(
             )
 
         messages.append(_assistant_message(response.message))
+        step_records: list[ToolCallRecord] = []
         for call in tool_calls:  # 한 응답에 여러 개가 와도 전부, 온 순서대로 실행한다
-            record = await _execute(call, context, succeeded)
+            record = await _execute(call, context, succeeded, allowed)
             calls.append(record)
+            step_records.append(record)
             messages.append(
                 {
                     "role": "tool",
@@ -102,15 +146,80 @@ async def run(
                 }
             )
 
-    # 여기까지 왔으면 모델이 마무리 응답을 내지 않아 미완료된 것으로 간주
+        if task is not None and EARLY_STOP and _covered(task, step_records, calls):
+            # 모델에게 "무엇을 했는지" 요약을 받으려고 한 번 더 부르지 않는다
+            return MemoryAgentResult(
+                final_message=None,
+                completed=True,
+                steps=step + 1,
+                calls=calls,
+                usage=usage,
+                ended_by="coverage",
+            )
+
+    # 모델이 마무리 응답을 내지 않아 미완료된 것으로 간주
     logger.warning("memory agent 미완료 max_steps=%d tools=%s", max_steps, [c.name for c in calls])
     return MemoryAgentResult(
-        final_message=None, completed=False, steps=max_steps, calls=calls, usage=usage
+        final_message=None,
+        completed=False,
+        steps=max_steps,
+        calls=calls,
+        usage=usage,
+        ended_by="max_steps",
+    )
+
+
+def _user_message(raw_text: str, task: MemoryTask | None) -> str:
+    """task 모드면 원문 뒤에 기록 후보를 붙인다. 후보가 없으면(강등 포함) 원문만.
+
+    작업 종류 라벨(observe · schedule · lookup_edit)은 싣지 않는다 — 코드(묶음·종료 판정)만 쓴다.
+    REQUEST 조각도 싣지 않는다 — "이건 요청" 이라는 표시를 보면 모델이 그 부분의 기록을 건너뛴다.
+    """
+    if task is None or not task.hints:
+        return raw_text
+    candidates = "\n".join(f"- {hint.text}" for hint in task.hints)
+    return f"[보호자 발화]\n{raw_text}\n\n{_HINT_HEADER}\n{candidates}"
+
+
+def _covered(
+    task: MemoryTask, step_records: list[ToolCallRecord], calls: list[ToolCallRecord]
+) -> bool:
+    """현재 스텝에서 작업을 종료해도 되는지 확인한다.
+
+    다음 조건을 모두 만족
+    - 이번 스텝에서 실행한 호출이 모두 성공
+    - 이번 스텝의 호출이 모두 쓰기 작업
+    - create_event 호출이 없음
+    - 작업 종류별 성공한 쓰기 수가 run 전체의 힌트 수를 충족
+    - 힌트가 하나 이상 있고 알림 요청 힌트는 없음
+
+    조건을 만족하지 않으면 다음 스텝에서 모델이 작업을 이어감
+    """
+
+    if not task.hints or not step_records:
+        return False
+    if any(cue in hint.text for hint in task.hints for cue in _NEEDS_REPLY_CUES):
+        return False
+    if not all(record.success for record in step_records):
+        return False
+    if not all(record.name.startswith(_MUTATING_PREFIXES) for record in step_records):
+        return False
+    if any(record.name == "create_event" for record in step_records):
+        return False
+
+    written = [record.name for record in calls if record.success]
+    needed = Counter(WorkType(hint.work) for hint in task.hints)
+    return all(
+        sum(name.startswith(_WRITES_FOR[work]) for name in written) >= count
+        for work, count in needed.items()
     )
 
 
 async def _execute(
-    call: Any, context: AgentContext, succeeded: set[tuple[str, str]]
+    call: Any,
+    context: AgentContext,
+    succeeded: set[tuple[str, str]],
+    allowed: Collection[str] | None = None,
 ) -> ToolCallRecord:
     name = call.function.name
     arguments = _parse_arguments(call.function.arguments)
@@ -122,7 +231,7 @@ async def _execute(
     if key is not None and key in succeeded:
         return _failed(name, arguments, ErrorCode.VALIDATION_ERROR, _ALREADY_DONE)
 
-    result = await execute_tool(name, arguments, context)
+    result = await execute_tool(name, arguments, context, allowed=allowed)
     if key is not None and result.success:
         succeeded.add(key)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())

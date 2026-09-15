@@ -37,9 +37,11 @@ _ROUTING = """
   손톱 물어뜯기는 증상이 아니라 습관, 장난감 정리는 놀이가 아니라 생활 행동이다.
 - 그 밖의 놀이·자유활동·신체활동 → observation_activity
 - 앞으로의 예정 → event. 챙길 것은 event_item
-- 알림 요청이 오면 그 일정을 query_event로 찾고, 없을 때만 create_event로 만든다.
-  그리고 알림은 생성된 일정을 바탕으로 직접 보내준다고 한 줄로 알린다.
-- 매일 반복되는 식사 일과의 알림(예: 매일 저녁 7시 우유)은 event_type=core 일정으로 저장한다.
+- 알림 요청 때문에 일정을 만들거나 고치지 않는다.
+  일정이 등록돼 있으면 보호자가 설정해 둔 시간에 맞춰 알림이 자동으로 간다고 한 줄로 알린다.
+  몇 시에 보내겠다고 약속하지 않는다.
+- 다만 매일 반복되는 식사 일과의 알림(예: 매일 저녁 7시 우유)은 예외다.
+  event_type=core 일정으로 저장한다.
 """.strip()
 
 _FUTURE = """
@@ -96,6 +98,8 @@ _OUT_OF_SCOPE = """
 _ASK = """
 [되물어야 할 때]
 - 무엇을 지울지 모르는 삭제·수정 요청은 실행하지 않고 어떤 기록인지 묻는다.
+- 예약·진료·상담처럼 시각이 있어야 하는 일정인데 발화에 시각이 없으면
+  등록하기 전에 몇 시인지 묻는다. 운동회·소풍처럼 하루 종일 하는 일정은 묻지 않고 등록한다.
 - 필요한 값이 없으면 묻는다. 질문은 한 번에 하나만 한다.
 """.strip()
 
@@ -118,10 +122,16 @@ _SECTIONS = (
 )
 
 
-def build_system_prompt(context: AgentContext, directive: str | None = None) -> str:
-    """system 메시지 본문. directive는 이후 구현할 Supervisor가 넘길 상위 지시다."""
+def build_system_prompt(
+    context: AgentContext, directive: str | None = None, *, task_mode: bool = False
+) -> str:
+    """system 메시지 본문.
+
+    task_mode: Supervisor가 조각을 나눠 넘기는 경로.
+    """
+    fixed = [section for section in _SECTIONS if not (task_mode and section is _PARSE_RULE)]
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
-    sections = [_SECTIONS[0], header, *_SECTIONS[1:]]
+    sections = [*fixed, header]
     if directive:
         # Supervisor가 이미 분류해 넘긴 경우. 스스로 판단하기 전에 이 지시를 우선한다
         sections.append(f"[상위 지시]\n{directive}")
