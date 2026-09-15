@@ -96,8 +96,8 @@ function MemoriesScreen() {
 
   const base = `/child/${childId}/memories`;
   const tabs: TabItem[] = [
-    { key: "observations", label: "관찰", href: base },
-    { key: "profile", label: "프로필", href: `${base}?tab=profile` },
+    { key: "observations", label: "기록", href: base },
+    { key: "profile", label: "기억", href: `${base}?tab=profile` },
     { key: "feedback", label: "제안 피드백", href: `${base}?tab=feedback` },
   ];
 
@@ -120,9 +120,9 @@ function MemoriesScreen() {
   return (
     <Screen className="gap-5" nav={<ChildNav active="memories" />}>
       <header>
-        <PageTitle>기억</PageTitle>
+        <PageTitle>기록과 기억</PageTitle>
         <p className="text-body-sm text-ink-muted mt-2">
-          적어주신 말이 관찰로 쌓이고, 같은 것이 반복되면 프로필이 돼요.
+          적어주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
         </p>
       </header>
 
@@ -219,14 +219,14 @@ function ObservationsTab({
           selected={inactiveOnly}
           onClick={() => onFilter({ inactive: !inactiveOnly, unused: false })}
         >
-          고쳐서 뺀 기억
+          고쳐서 뺀 기록
         </Chip>
       </ChipRow>
 
-      {observations.isPending ? <SkeletonBlock label="기억을 불러오는 중" /> : null}
+      {observations.isPending ? <SkeletonBlock label="기록을 불러오는 중" /> : null}
 
       {observations.isError ? (
-        <LoadFailed what="기억을" childId={childId} error={observations.error} />
+        <LoadFailed what="기록을" childId={childId} error={observations.error} />
       ) : null}
 
       {observations.data ? (
@@ -234,14 +234,14 @@ function ObservationsTab({
           filtered ? (
             <EmptyState
               icon={Notebook}
-              title={inactiveOnly ? "고쳐서 뺀 기억이 없어요" : "이 조건에 맞는 기억이 없어요"}
+              title={inactiveOnly ? "고쳐서 뺀 기록이 없어요" : "이 조건에 맞는 기록이 없어요"}
               description={
                 inactiveOnly
-                  ? '"지금은 달라요" 나 "잘못된 기록" 으로 고친 기억이 여기 모여요.'
+                  ? '"지금은 달라요" 나 "잘못된 기록" 으로 고친 것이 여기 모여요.'
                   : "다른 분류를 골라보세요."
               }
               count={0}
-              countLabel="이 조건의 기억"
+              countLabel="이 조건의 기록"
             />
           ) : (
             <EmptyState
@@ -263,7 +263,7 @@ function ObservationsTab({
         ) : (
           <>
             {/* 🚨 건수를 숨기지 않는다 (문서 §7). 필터를 걸면 그 필터의 건수다. */}
-            <p className="text-caption text-ink-subtle">기억 {observations.data.total}건</p>
+            <p className="text-caption text-ink-subtle">기록 {observations.data.total}건</p>
             <ObservationList observations={observations.data.items} onOpen={onOpen} />
           </>
         )
@@ -288,25 +288,25 @@ function ProfileTab({
 
   return (
     <section className="flex flex-col gap-3">
-      {affinities.isPending ? <SkeletonBlock label="프로필을 불러오는 중" /> : null}
+      {affinities.isPending ? <SkeletonBlock label="기억을 불러오는 중" /> : null}
 
       {affinities.isError ? (
-        <LoadFailed what="프로필을" childId={childId} error={affinities.error} />
+        <LoadFailed what="기억을" childId={childId} error={affinities.error} />
       ) : null}
 
       {affinities.data ? (
         affinities.data.affinities.length === 0 ? (
           <EmptyState
             icon={Sprout}
-            title="아직 확정된 프로필이 없어요"
-            description="같은 것이 서로 다른 날에 반복되면 프로필이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
+            title="아직 확정된 기억이 없어요"
+            description="같은 것이 서로 다른 날에 반복되면 기억이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
             count={0}
-            countLabel="쌓인 프로필"
+            countLabel="쌓인 기억"
           />
         ) : (
           <>
             <p className="text-caption text-ink-subtle">
-              프로필 {affinities.data.affinities.length}건
+              기억 {affinities.data.affinities.length}건
             </p>
             <AffinityList affinities={affinities.data.affinities} onOpen={onOpen} />
           </>

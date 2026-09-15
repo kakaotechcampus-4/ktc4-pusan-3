@@ -2,8 +2,9 @@
 
 import { ChevronRight } from "lucide-react";
 
-import { DomainMeta, observationAgent } from "@/components/domain-chip";
-import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { domainLabel, observationAgent } from "@/components/domain-chip";
+import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 
 /**
@@ -16,6 +17,15 @@ import { isHealthObservation, type Observation } from "@/lib/api/types";
  *    지점이다. 다섯 줄이 카드 한 장을 만들었다는 사실이 **배치만으로** 보여야 한다.
  *
  * 🚨 **줄을 끌고 가는 것은 부모가 적은 말(`raw_text`)이다.** 도메인도 날짜도 그 아래 메타다.
+ *
+ * 줄의 뼈대는 세 가지 **다른 종류**다 — 왼쪽 타일(어느 영역인지) · 문장 · 그 아래 한 줄.
+ * 전부 같은 크기의 글자로 쌓으면 훑을 기준선이 없어서 목록이 통째로 회색 덩어리로 읽힌다.
+ * 🚨 **타일은 뉴트럴이다.** 07 에는 도메인 색도 브랜드도 못 쓴다 — 여기서 색을 들이면
+ *    "어느 Agent 결과인가"(도메인) 와 "무엇을 하는가"(브랜드) 의 뜻이 둘 다 흐려진다.
+ *
+ * 🚨 **이 줄이 무엇으로 이어졌는지는 칩이 진다.** "이 기록이 어느 기억에 묶였나" 는 이 제품의
+ *    논지 자체(기록이 쌓여 기억이 된다)라, 날짜와 같은 무게의 회색 글자로 두면 목록에서
+ *    제일 약한 것이 제일 중요한 사실이 된다.
  *
  * 🚨 **날짜를 만들지 않는다.** `observed_label`("오늘" · "3일 전")은 서버 문구다 (CLAUDE.md §3).
  *    없으면 그 자리를 비운다 — 프론트가 `observed_to` 로 계산해 채우지 않는다.
@@ -42,19 +52,23 @@ export function ObservationList({
 }
 
 function ObservationRow({ observation, onOpen }: { observation: Observation; onOpen: () => void }) {
+  const agent = observationAgent(observation.kind);
+
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="min-h-touch ease-standard active:bg-surface-muted flex w-full items-start gap-2 px-4 py-3 text-left transition-colors duration-120 focus-visible:-outline-offset-2"
+      className="min-h-touch ease-standard active:bg-surface-muted flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors duration-120 focus-visible:-outline-offset-2"
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
+      <IconTile icon={DOMAIN_ICON[agent]} tone="neutral" />
+
+      <span className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className="text-body text-ink">{observation.raw_text}</span>
 
-        {/* 🚨 띄운 가운뎃점은 **줄당 하나**다 (문서 §4). 도메인과 날짜가 한 줄, 아래 줄은 따로. */}
-        <span className="text-caption text-ink-subtle flex flex-wrap items-center gap-1">
-          <DomainMeta agent={observationAgent(observation.kind)} />
-          {observation.observed_label ? <span>· {observation.observed_label}</span> : null}
+        {/* 🚨 띄운 가운뎃점은 **줄당 하나**다 (문서 §4). 도메인과 날짜가 한 줄, 칩은 아래 줄. */}
+        <span className="text-caption text-ink-subtle">
+          {domainLabel(agent)}
+          {observation.observed_label ? ` · ${observation.observed_label}` : ""}
         </span>
 
         <ObservationLink observation={observation} />
@@ -64,9 +78,22 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
         aria-hidden
         size={ICON_SIZE.md}
         strokeWidth={ICON_STROKE}
-        className="text-ink-subtle mt-0.5 shrink-0"
+        className="text-ink-subtle mt-2 shrink-0"
       />
     </button>
+  );
+}
+
+/** 줄 아래에 하나만 서는 작은 표식. 글자 줄이 아니라 **모양**이라 메타와 안 섞인다. */
+function LinkChip({ label, value }: { label: string; value: string }) {
+  return (
+    // 🚨 `truncate` 로 잘라 맞추지 않는다 (문서 §10). 글자를 키우면 칩이 두 줄이 될지언정
+    //    묶인 기억 이름이 잘리지는 않는다 — 이름이 반만 보이면 무엇에 묶였는지 알 수 없다.
+    <span className="bg-surface-muted text-ink-muted text-caption min-h-chip inline-flex w-fit max-w-full items-center gap-1 rounded-full px-2.5 py-1">
+      {/* 띄운 가운뎃점은 줄당 하나다 (문서 §4). 이 칩은 자기 줄이라 위 메타 줄과 겹치지 않는다. */}
+      <span className="text-ink-subtle shrink-0">{label} ·</span>
+      <span>{value}</span>
+    </span>
   );
 }
 
@@ -81,11 +108,9 @@ function ObservationLink({ observation }: { observation: Observation }) {
   if (isHealthObservation(observation)) {
     const symptoms = observation.domain_fields.symptom;
     if (!symptoms || symptoms.length === 0) return null;
-    return <span className="text-caption text-ink-muted">증상 · {symptoms.join(", ")}</span>;
+    return <LinkChip label="증상" value={symptoms.join(", ")} />;
   }
 
   if (!observation.affinity) return null;
-  return (
-    <span className="text-caption text-ink-muted">프로필 · {observation.affinity.merge_key}</span>
-  );
+  return <LinkChip label="기억" value={observation.affinity.merge_key} />;
 }

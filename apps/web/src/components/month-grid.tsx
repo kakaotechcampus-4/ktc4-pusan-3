@@ -160,9 +160,9 @@ const MARK_SHAPE: Record<MarkKind, string> = {
 
 const MARK_LABEL: Record<MarkKind, string> = {
   event: "일정",
-  observation: "관찰",
+  observation: "기록",
   diary: "일기",
-  profile: "프로필 변화",
+  profile: "기억 변화",
 };
 
 function Mark({ kind }: { kind: MarkKind }) {
@@ -179,9 +179,9 @@ function markList(summary: CalendarDay | undefined): Array<{ kind: MarkKind; spo
 
   const spoken: Partial<Record<MarkKind, string>> = {};
   if (summary.has_event) spoken.event = "일정 있음";
-  if (summary.observation_count > 0) spoken.observation = `관찰 ${summary.observation_count}건`;
+  if (summary.observation_count > 0) spoken.observation = `기록 ${summary.observation_count}건`;
   if (summary.has_diary) spoken.diary = "일기 있음";
-  if ((summary.profile_changed_count ?? 0) > 0) spoken.profile = "프로필 달라짐";
+  if ((summary.profile_changed_count ?? 0) > 0) spoken.profile = "기억 달라짐";
 
   return MARK_ORDER.filter((kind) => spoken[kind] !== undefined).map((kind) => ({
     kind,

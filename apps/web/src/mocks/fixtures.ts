@@ -176,7 +176,7 @@ export const affinities: Affinity[] = [
     strength: 0.82,
     last_observed_on: daysAgo(0),
     observation_count: 3,
-    state_reason: "서로 다른 3일에 관찰됐어요",
+    state_reason: "서로 다른 3일에 기록됐어요",
     is_stale: false,
     source_refs: [
       { kind: "observation_food", id: "o_1" },
@@ -349,7 +349,7 @@ export const home: HomeResponse = {
   ],
   highlight: {
     text: "계란 반찬을 찾은 지 5일째예요.",
-    state_reason: "서로 다른 3일에 관찰됐어요",
+    state_reason: "서로 다른 3일에 기록됐어요",
     ref: { kind: "profile_affinity", id: "a_12" },
   },
   agent_prompts: [

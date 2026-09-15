@@ -510,11 +510,15 @@ function ComponentSection() {
       <SubTitle>아이콘 타일</SubTitle>
       <p className="text-caption text-ink-subtle">
         brand-soft 바탕 + brand-ink 아이콘. 목록 줄 앞에 선다. 🚨 도메인 색을 여기 넣지 않는다.
+        neutral 톤(surface-muted + ink-muted)은 브랜드색도 도메인색도 못 쓰는 목록용이다 (07
+        기록·기억) — 거기서는 색이 아니라 배치가 종류를 말한다.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <IconTile icon={Utensils} />
         <IconTile icon={CalendarDays} />
         <IconTile icon={Sprout} />
+        <IconTile icon={Utensils} tone="neutral" />
+        <IconTile icon={CalendarDays} tone="neutral" />
       </div>
 
       <SubTitle>채팅바 (03 홈)</SubTitle>
@@ -638,8 +642,8 @@ function ComponentSection() {
       <div id="design-system-tabs">
         <Tabs
           items={[
-            { key: "a", label: "관찰", href: "#design-system-tabs" },
-            { key: "b", label: "프로필", href: "#design-system-tabs" },
+            { key: "a", label: "기록", href: "#design-system-tabs" },
+            { key: "b", label: "기억", href: "#design-system-tabs" },
             { key: "c", label: "제안 피드백", href: "#design-system-tabs" },
           ]}
           active="a"
@@ -711,7 +715,7 @@ function ComponentSection() {
         오버레이를 걷고 부분 결과로 넘어간다 (NF-06).
       </p>
       <Card>
-        <ProgressSteps index={2} total={3} label="관찰을 나누고 있어요" />
+        <ProgressSteps index={2} total={3} label="기록을 나누고 있어요" />
       </Card>
 
       <SubTitle>빈 상태 · 스켈레톤</SubTitle>
@@ -721,7 +725,7 @@ function ComponentSection() {
       <EmptyState
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기억이 없으면 제안도 만들지 않아요."
+        description="기록이 없으면 제안도 만들지 않아요."
         count={0}
       />
       <Card>

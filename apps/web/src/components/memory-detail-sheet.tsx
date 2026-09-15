@@ -96,7 +96,7 @@ export function MemoryDetailSheet({
     <BottomSheet
       open={target !== null}
       onClose={close}
-      title={target?.type === "affinity" ? "프로필 상세" : "기억 상세"}
+      title={target?.type === "affinity" ? "기억 상세" : "기록 상세"}
       footer={
         <Button variant="secondary" block onClick={close}>
           닫기
@@ -155,10 +155,10 @@ function CascadeResult({
         <p className="text-caption text-ink-muted mt-1">다시 계산된 것은 없어요.</p>
       ) : (
         <ul className="text-caption text-ink-muted mt-1 flex flex-col gap-0.5">
-          {profiles > 0 ? <li>프로필 {profiles}건을 다시 계산했어요.</li> : null}
+          {profiles > 0 ? <li>기억 {profiles}건을 다시 계산했어요.</li> : null}
           {suggestions > 0 ? (
             <li>
-              {targetKind === "observation" ? "이 기억" : "이 프로필"}을 쓰던 추천 {suggestions}건이
+              {targetKind === "observation" ? "이 기록" : "이 기억"}을 쓰던 추천 {suggestions}건이
               달라졌어요.
             </li>
           ) : null}
@@ -208,12 +208,12 @@ function ObservationDetail({
         {isHealthObservation(observation) ? (
           <HealthFields fields={observation.domain_fields} />
         ) : observation.affinity ? (
-          <MetaRow label="묶인 프로필">{observation.affinity.merge_key}</MetaRow>
+          <MetaRow label="묶인 기억">{observation.affinity.merge_key}</MetaRow>
         ) : null}
       </dl>
 
       <section>
-        <h3 className="text-section text-ink">이 기억을 쓴 추천</h3>
+        <h3 className="text-section text-ink">이 기록을 쓴 추천</h3>
         {detail.isPending ? (
           <Skeleton className="mt-2 h-12 w-full" />
         ) : detail.data && detail.data.used_in.length > 0 ? (
@@ -225,7 +225,7 @@ function ObservationDetail({
             ))}
           </ul>
         ) : (
-          <p className="text-body-sm text-ink-muted mt-2">이 기억은 제안 근거에서 빠져 있어요.</p>
+          <p className="text-body-sm text-ink-muted mt-2">이 기록은 제안 근거에서 빠져 있어요.</p>
         )}
       </section>
 
@@ -279,8 +279,8 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
         <MetaRow label="분류">
           <DomainMeta agent={affinity.domain} />
         </MetaRow>
-        <MetaRow label="쌓인 관찰">{affinity.observation_count}건</MetaRow>
-        <MetaRow label="마지막 관찰">{formatDay(affinity.last_observed_on)}</MetaRow>
+        <MetaRow label="쌓인 기록">{affinity.observation_count}건</MetaRow>
+        <MetaRow label="마지막 기록">{formatDay(affinity.last_observed_on)}</MetaRow>
       </dl>
 
       {affinity.is_stale ? (

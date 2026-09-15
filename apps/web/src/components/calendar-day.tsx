@@ -331,7 +331,7 @@ function Diary({
 function DiaryNote() {
   return (
     <p className="text-caption text-ink-subtle">
-      일기는 아이 기억으로 저장되지 않아요. 기억으로 남기려면 홈에서 한 줄로 적어주세요.
+      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어주세요.
     </p>
   );
 }

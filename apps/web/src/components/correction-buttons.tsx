@@ -47,7 +47,7 @@ export function CorrectionButtons({
   return (
     <div>
       <p className="text-label text-ink-muted">
-        {targetKind === "observation" ? "이 기억이 어떤가요?" : "이 프로필이 맞나요?"}
+        {targetKind === "observation" ? "이 기록이 어떤가요?" : "이 기억이 맞나요?"}
       </p>
       {/* 넷이 같은 무게다. 순서는 교정의 세기 순(맞음 → 한 번 → 지났음 → 틀림)이고,
           한 줄에 둘씩 둬서 좁은 폰에서도 문구가 잘리지 않는다. */}
@@ -70,7 +70,7 @@ export function CorrectionButtons({
           다시 열 수 있게 해 두고 그 사실까지 같이 말한다. 둘 중 하나라도 없으면 부모에게
           `잘못된 기록` 은 되돌릴 수 없는 동작이 되고, 그러면 확인 단계를 뺀 근거가 무너진다. */}
       <p className="text-caption text-ink-subtle mt-2">
-        이 창에서 바로 다시 고칠 수 있어요. 창을 닫은 뒤에는 목록의 &quot;고쳐서 뺀 기억&quot; 에서
+        이 창에서 바로 다시 고칠 수 있어요. 창을 닫은 뒤에는 목록의 &quot;고쳐서 뺀 기록&quot; 에서
         찾을 수 있어요.
       </p>
     </div>

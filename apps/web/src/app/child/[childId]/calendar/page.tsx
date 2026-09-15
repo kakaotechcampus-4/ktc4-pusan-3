@@ -159,9 +159,9 @@ function daySummary(summary: CalendarDay | undefined): string | null {
 
   const parts: string[] = [];
   if (summary.has_event) parts.push("일정 있음");
-  if (summary.observation_count > 0) parts.push(`관찰 ${summary.observation_count}건`);
+  if (summary.observation_count > 0) parts.push(`기록 ${summary.observation_count}건`);
   if (summary.has_diary) parts.push("일기 있음");
-  if ((summary.profile_changed_count ?? 0) > 0) parts.push("프로필 달라짐");
+  if ((summary.profile_changed_count ?? 0) > 0) parts.push("기억 달라짐");
 
   // 🚨 빈 날은 **여기서 말하지 않는다.** 아래 하루 패널의 빈 상태가 그 말을 맡는다 —
   //    같은 사실을 두 곳에서 하면 화면이 사과하는 것처럼 읽힌다 (문서 §7).

@@ -2,8 +2,9 @@
 
 import { ChevronRight } from "lucide-react";
 
-import { DomainMeta } from "@/components/domain-chip";
-import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { domainLabel } from "@/components/domain-chip";
+import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
 import type { Affinity, AffinityState } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
@@ -64,7 +65,7 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
       type="button"
       onClick={onOpen}
       className={cn(
-        "rounded-card ease-standard flex w-full items-start gap-2 border p-4 text-left transition-colors duration-120",
+        "rounded-card ease-standard flex w-full items-start gap-3 border p-4 text-left transition-colors duration-120",
         // 🚨 세 모양이 서로 배타적이다. `stale` 이 먼저다 — 후보인데 오래된 것은
         //    "아직 확정 안 됨" 보다 "근거에서 빠져 있음" 이 부모에게 더 중요한 사실이다.
         stale
@@ -74,23 +75,32 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
             : "bg-surface border-line active:bg-surface-muted",
       )}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span
-          className={cn(
-            "text-caption flex flex-wrap items-center gap-1",
-            stale ? "text-ink-muted" : "text-ink-subtle",
-          )}
-        >
-          <DomainMeta agent={affinity.domain} />
-          <span>· {STATE_LABEL[affinity.state]}</span>
-        </span>
+      {/* 🚨 기록 줄과 **같은 타일**이다. 둘이 한 화면의 두 탭이라, 왼쪽 기준선이 다르면
+          같은 아이에 대한 두 목록이 아니라 남남으로 읽힌다. 뉴트럴인 이유는 그쪽과 같다. */}
+      <IconTile icon={DOMAIN_ICON[affinity.domain]} tone="neutral" />
 
+      <span className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className={cn("text-title", stale ? "text-ink-muted" : "text-ink")}>
           {affinity.merge_key}
         </span>
 
-        <span className="text-label text-ink-muted">
-          {polarityLabel(affinity.polarity)} · 기록 {affinity.observation_count}건
+        {/* 🚨 승격 상태는 **글자로도** 남는다 (위 🚨). 칩 모양이라 아래 설명 줄과 안 섞인다. */}
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span
+            className={cn(
+              "text-caption min-h-chip inline-flex items-center rounded-full px-2.5 py-0.5",
+              stale ? "bg-surface text-ink-muted" : "bg-surface-muted text-ink-muted",
+            )}
+          >
+            {STATE_LABEL[affinity.state]}
+          </span>
+          <span className={cn("text-caption", stale ? "text-ink-muted" : "text-ink-subtle")}>
+            {domainLabel(affinity.domain)} · 기록 {affinity.observation_count}건
+          </span>
+        </span>
+
+        <span className={cn("text-body-sm", stale ? "text-ink-muted" : "text-ink")}>
+          {polarityLabel(affinity.polarity)}
         </span>
 
         {/* 서버가 임계값을 알고 쓴 문장이다. 화면이 바꿔 쓰지 않는다. */}
@@ -98,7 +108,7 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
 
         {stale ? (
           <span className="text-caption text-ink-muted">
-            6개월이 지나서 이 프로필만으로는 추천을 만들지 않아요.
+            6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.
           </span>
         ) : null}
       </span>
@@ -107,7 +117,7 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
         aria-hidden
         size={ICON_SIZE.md}
         strokeWidth={ICON_STROKE}
-        className={cn("mt-0.5 shrink-0", stale ? "text-ink-muted" : "text-ink-subtle")}
+        className={cn("mt-1.5 shrink-0", stale ? "text-ink-muted" : "text-ink-subtle")}
       />
     </button>
   );
