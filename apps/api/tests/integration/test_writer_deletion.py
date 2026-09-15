@@ -17,6 +17,7 @@ from app.domains.memory.observation.models import (
     ObservationFood,
     ObservationHealth,
 )
+from app.domains.policy.models import PolicyVersion
 from app.domains.safety.models import HealthSafety, SafetyKind
 
 RECORDS = [
@@ -101,13 +102,20 @@ async def test_owner_delete_is_still_blocked(session, family):
 @pytest.mark.parametrize("target", ["parent", "child"])
 async def test_consent_subject_delete_is_still_blocked(session, family, target):
     _, writer, child = family
+    is_child = target == "child"
+    scope = ConsentScope.CHILD_BASIC if is_child else ConsentScope.SERVICE_TERMS
     session.add(
         Consent(
-            parent_id=writer.id,
-            child_id=child.id if target == "child" else None,
-            scope=ConsentScope.CHILD_BASIC if target == "child" else ConsentScope.SERVICE_TERMS,
+            # 동의 대상이 삭제를 막는다 — 행위자(actor)는 SET NULL 이라 막지 않는다 (PR C).
+            subject_parent_id=None if is_child else writer.id,
+            child_id=child.id if is_child else None,
+            actor_parent_id=writer.id,
+            actor_ref=writer.id,
+            scope=scope,
             action=ConsentAction.GRANTED,
-            policy_version="synthetic-version",
+            policy_version_id=await session.scalar(
+                select(PolicyVersion.id).where(PolicyVersion.scope == scope)
+            ),
         )
     )
     await session.flush()
