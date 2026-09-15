@@ -280,11 +280,19 @@ async def exchange(
     provider: AuthProvider,
     session: SessionDep,
     body: ExchangeRequest,
+    response: Response,
 ) -> SessionResponse | ConsentRequiredResponse:
     """1회용 코드를 세션(기존 회원) 또는 가입 대기표(신규)로 바꾼다 — 명세 §3-4.
 
     테스트 A-01 · A-03 · A-04 · A-05 · A-12 · A-19.
+
+    🚨 응답에 세션 토큰이나 가입 대기표가 실린다. 캐시에 남으면 뒤로 가기나 공용 PC 의
+       브라우저 캐시에서 그대로 꺼낼 수 있다 (명세 §3-4 의 Cache-Control: no-store).
+       302 둘은 _redirect() 가 붙여주지만, pydantic 모델을 그대로 돌려주는 이쪽은
+       Response 를 받아 직접 붙인다.
     """
+    response.headers["Cache-Control"] = "no-store"
+
     consumed = await consume_handoff(session, code_hash=hash_token(body.code))
     if consumed is None:
         # 없음·만료·이미 사용됨을 구분하지 않는다. 구분해 알려주면 공격자에게 정보를
@@ -329,6 +337,7 @@ async def signup(
     provider: AuthProvider,
     session: SessionDep,
     body: SignupRequest,
+    response: Response,
 ) -> SessionResponse:
     """필수 동의를 받고 계정을 만든다 — 명세 §3-5 · 테스트 A-02 · A-13.
 
@@ -336,6 +345,8 @@ async def signup(
        실패하면 아무것도 남지 않아야 한다 — 동의 없는 계정이 DB 에 남는 것이 §6-1 이
        막으려는 바로 그 상태다.
     """
+    response.headers["Cache-Control"] = "no-store"
+
     granted = {consent.scope for consent in body.consents}
     missing = [scope for scope in ACCOUNT_SCOPES if scope not in granted]
     if missing:

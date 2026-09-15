@@ -162,6 +162,31 @@ async def test_missing_consent_leaves_the_ticket_usable(db_client, session):
     assert retry.json()["is_new"] is True
 
 
+async def test_token_responses_are_never_cached(db_client, session):
+    """🚨 토큰이 실리는 응답은 캐시에 남기지 않는다 — 명세 §3-4 · §3-5.
+
+    뒤로 가기나 공용 PC 의 브라우저 캐시에서 세션 토큰·가입 대기표를 그대로 꺼낼 수 있다.
+    302 둘은 _redirect() 가 붙여주지만 이 둘은 pydantic 모델을 그대로 돌려주는 경로라
+    따로 붙여야 한다.
+    """
+    await seed_handoff(session, code="handoff-code")
+
+    exchanged = await db_client.post(
+        "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
+    )
+    signed = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": exchanged.json()["consent_code"],
+            "bind": BIND,
+            "consents": REQUIRED_CONSENTS,
+        },
+    )
+
+    assert exchanged.headers["cache-control"] == "no-store"
+    assert signed.headers["cache-control"] == "no-store"
+
+
 # ── A-03 기존 회원 ────────────────────────────────────────────────────────────
 
 
