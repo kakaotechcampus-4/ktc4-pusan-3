@@ -48,9 +48,21 @@ function scenarioAffinities(): Affinity[] {
   return affinities;
 }
 
-function scenarioObservations(): Observation[] {
+/**
+ * 목록의 기본은 **살아 있는 기억**이다. 교정으로 내려간 것은 빠진다 (계약서 §08).
+ *
+ * ⚠️ `status=inactive` 는 계약서 v1 에 아직 없는 파라미터다. 교정으로 뺀 기억을 되돌릴 경로가
+ *    화면에 있어야 해서(`memories/page.tsx` 의 🚨) 제안 형태로 목에 먼저 세웠다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ */
+function scenarioObservations(inactiveOnly = false): Observation[] {
   if (currentScenario() === "empty") return [];
-  return allObservations.filter((o) => !inactivatedObservations.has(`${o.kind}:${o.id}`));
+  return (
+    allObservations
+      .filter((o) => inactivatedObservations.has(`${o.kind}:${o.id}`) === inactiveOnly)
+      // 목록이 내려주는 status 도 실제 상태와 맞춰 둔다 — 화면이 이 값으로 갈리는 날 어긋나지 않게.
+      .map((o) => (inactiveOnly ? { ...o, status: "inactive" as const } : o))
+  );
 }
 
 export const memoryHandlers = [
@@ -60,8 +72,9 @@ export const memoryHandlers = [
     const params = new URL(request.url).searchParams;
     const domain = params.get("domain");
     const unusedOnly = params.get("unused_in_suggestions") === "true";
+    const inactiveOnly = params.get("status") === "inactive";
 
-    let items = scenarioObservations();
+    let items = scenarioObservations(inactiveOnly);
     if (domain) items = items.filter((o) => o.kind === `observation_${domain}`);
     // "제안에서 빠진 기억" — 목에서는 프로필에 묶이지 않은 것을 그 자리에 둔다.
     if (unusedOnly) {

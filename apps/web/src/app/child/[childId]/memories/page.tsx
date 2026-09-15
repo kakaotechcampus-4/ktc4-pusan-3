@@ -84,6 +84,13 @@ function MemoriesScreen() {
   const domainParam = searchParams.get("domain");
   const domain: Agent | null = isAgent(domainParam) ? domainParam : null;
   const unusedOnly = searchParams.get("unused") === "1";
+  /**
+   * 🚨 **교정으로 뺀 기억을 다시 열 수 있는 유일한 경로다.** 교정은 append-only 라 반대 교정으로
+   *    되돌리는데(`CorrectionButtons` 의 🚨), `wrong`·`outdated` 를 누르면 그 줄이 기본 목록에서
+   *    사라진다. 여기로 못 찾아가면 부모에게 그 버튼은 **되돌릴 수 없는 동작**이고, 그러면
+   *    확인 단계를 붙이지 않은 근거(승인 게이트는 딱 2곳 · 최상위 §2)가 통째로 무너진다.
+   */
+  const inactiveOnly = searchParams.get("inactive") === "1";
 
   const [target, setTarget] = useState<MemoryTarget | null>(null);
 
@@ -95,12 +102,17 @@ function MemoriesScreen() {
   ];
 
   /** 관찰 탭의 필터만 주소에 반영한다. 탭을 옮기면 필터는 따라가지 않는다 (다른 목록이다). */
-  function setFilter(next: { domain?: Agent | null; unused?: boolean }) {
+  function setFilter(next: { domain?: Agent | null; unused?: boolean; inactive?: boolean }) {
     const params = new URLSearchParams();
     const nextDomain = next.domain === undefined ? domain : next.domain;
-    const nextUnused = next.unused === undefined ? unusedOnly : next.unused;
+    // 🚨 "제안에서 빠진 것" 과 "고쳐서 뺀 것" 은 겹칠 수 없다 — 전자는 살아 있는 기억 중에서
+    //    고르는 것이고 후자는 목록에서 빠진 것을 불러오는 것이다. 한쪽을 켜면 다른 쪽을 끈다.
+    const nextInactive = next.inactive === undefined ? inactiveOnly : next.inactive;
+    const nextUnused =
+      next.unused === undefined ? unusedOnly && !nextInactive : next.unused && !nextInactive;
     if (nextDomain) params.set("domain", nextDomain);
     if (nextUnused) params.set("unused", "1");
+    if (nextInactive) params.set("inactive", "1");
     const query = params.toString();
     router.replace(query ? `${base}?${query}` : base, { scroll: false });
   }
@@ -121,6 +133,7 @@ function MemoriesScreen() {
           childId={childId}
           domain={domain}
           unusedOnly={unusedOnly}
+          inactiveOnly={inactiveOnly}
           onFilter={setFilter}
           onOpen={(observation) => setTarget({ type: "observation", observation })}
         />
@@ -146,17 +159,19 @@ function ObservationsTab({
   childId,
   domain,
   unusedOnly,
+  inactiveOnly,
   onFilter,
   onOpen,
 }: {
   childId: string;
   domain: Agent | null;
   unusedOnly: boolean;
-  onFilter: (next: { domain?: Agent | null; unused?: boolean }) => void;
+  inactiveOnly: boolean;
+  onFilter: (next: { domain?: Agent | null; unused?: boolean; inactive?: boolean }) => void;
   onOpen: (observation: Observation) => void;
 }) {
   const router = useRouter();
-  const filters = { domain, unusedOnly };
+  const filters = { domain, unusedOnly, inactiveOnly };
 
   const observations = useQuery({
     queryKey: qk.observations(childId, filters),
@@ -165,11 +180,14 @@ function ObservationsTab({
         query: {
           ...(domain ? { domain } : {}),
           ...(unusedOnly ? { unused_in_suggestions: "true" } : {}),
+          // ⚠️ 계약서 v1 에 아직 없는 파라미터다. 안 받는 서버는 이 값을 무시하고 살아 있는
+          //    기억을 돌려주므로 화면이 깨지지 않는다. 👉 apps/api Owner 협의 대상 (최상위 §8)
+          ...(inactiveOnly ? { status: "inactive" } : {}),
         },
       }),
   });
 
-  const filtered = domain !== null || unusedOnly;
+  const filtered = domain !== null || unusedOnly || inactiveOnly;
 
   return (
     <section className="flex flex-col gap-3">
@@ -190,8 +208,18 @@ function ObservationsTab({
         ))}
       </ChipRow>
       <ChipRow>
-        <Chip selected={unusedOnly} onClick={() => onFilter({ unused: !unusedOnly })}>
+        <Chip
+          selected={unusedOnly}
+          onClick={() => onFilter({ unused: !unusedOnly, inactive: false })}
+        >
           제안에서 빠진 것만
+        </Chip>
+        {/* 🚨 교정으로 뺀 기억을 되돌리러 오는 자리다 (위 `inactiveOnly` 의 🚨). */}
+        <Chip
+          selected={inactiveOnly}
+          onClick={() => onFilter({ inactive: !inactiveOnly, unused: false })}
+        >
+          고쳐서 뺀 기억
         </Chip>
       </ChipRow>
 
@@ -206,8 +234,12 @@ function ObservationsTab({
           filtered ? (
             <EmptyState
               icon={Notebook}
-              title="이 조건에 맞는 기억이 없어요"
-              description="다른 분류를 골라보세요."
+              title={inactiveOnly ? "고쳐서 뺀 기억이 없어요" : "이 조건에 맞는 기억이 없어요"}
+              description={
+                inactiveOnly
+                  ? '"지금은 달라요" 나 "잘못된 기록" 으로 고친 기억이 여기 모여요.'
+                  : "다른 분류를 골라보세요."
+              }
               count={0}
               countLabel="이 조건의 기억"
             />

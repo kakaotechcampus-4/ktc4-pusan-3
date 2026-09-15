@@ -49,8 +49,10 @@ export function Checkbox({
           "peer-focus-visible:outline-brand peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
           checked
             ? "bg-brand border-brand text-white"
-            : // 아직 안 고른 것만 호버에 반응한다 — 고른 것은 이미 브랜드색이라 더 강조할 게 없다.
-              "border-line-strong group-hover:border-brand group-hover:bg-brand-soft text-transparent",
+            : // 아직 안 고른 것만 누름에 반응한다 — 고른 것은 이미 브랜드색이라 더 강조할 게 없다.
+              // 🚨 `group-active:` 를 빠뜨리면 웹뷰에서 눌러도 아무 반응이 없다
+              //    (apps/web/CLAUDE.md §5). 09 준비물 체크의 유일한 조작이 이것이다.
+              "border-line-strong group-hover:border-brand group-hover:bg-brand-soft group-active:border-brand group-active:bg-brand-soft text-transparent",
         )}
       >
         <Check size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />

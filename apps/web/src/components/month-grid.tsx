@@ -1,7 +1,8 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { DayPicker } from "react-day-picker";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { DayPicker, type ChevronProps, type DayButtonProps } from "react-day-picker";
 import { ko } from "react-day-picker/locale";
 
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -47,66 +48,97 @@ export function MonthGrid({
   /** 서버가 내려준 그 달의 요약. 목록에 없는 날은 표식이 없다. */
   days: CalendarDay[];
 }) {
-  const byDate = new Map(days.map((day) => [day.date, day]));
+  /** 🚨 렌더마다 새 Map 을 만들면 아래 Provider 값이 매번 바뀐다. 날짜 칸이 통째로 다시 그려진다. */
+  const byDate = useMemo(() => new Map(days.map((day) => [day.date, day])), [days]);
   /** 🚨 계약서에 아직 없는 optional 필드다. 안 오면 고리 표식도 범례의 그 줄도 나오지 않는다. */
   const hasProfileMarks = days.some((day) => (day.profile_changed_count ?? 0) > 0);
 
   return (
     <div className="flex flex-col gap-3">
-      <DayPicker
-        mode="single"
-        required
-        locale={ko}
-        month={month}
-        onMonthChange={onMonthChange}
-        selected={selected}
-        onSelect={onSelect}
-        // 🚨 지난 달 날짜를 그리지 않는다. 그려 두면 누를 수 있는데, 누르면 이 달에 없는 날이
-        //    골라져서 아직 받아오지 않은 달의 하루가 열린다 — 빈 화면으로 보이는 사고다.
-        showOutsideDays={false}
-        components={{
-          Chevron: ({ orientation }) =>
-            orientation === "left" ? (
-              <ChevronLeft size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-            ) : (
-              <ChevronRight size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-            ),
-          DayButton: ({ day, modifiers, children, ...buttonProps }) => {
-            const marks = markList(byDate.get(toISODate(day.date)));
-
-            return (
-              <button
-                {...buttonProps}
-                // 라이브러리가 만든 라벨("2026년 9월 12일")에 오늘인지와 그날 무엇이 있었는지를 잇는다.
-                // 🚨 "오늘" 을 말로도 낸다 — 화면에서는 테두리와 글자색이 말하는데, 둘 다 눈에만
-                //    보이는 신호다 (문서 §10).
-                aria-label={[
-                  buttonProps["aria-label"],
-                  modifiers.today ? "오늘" : null,
-                  ...marks.map((mark) => mark.spoken),
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-              >
-                <span>{children}</span>
-                {/* 표식이 없는 날에도 자리를 지킨다 — 있고 없고에 따라 숫자가 위아래로
-                    흔들리면 달을 훑을 때 줄이 맞지 않는다. */}
-                <span aria-hidden className="flex h-1.5 items-center justify-center gap-1">
-                  {marks.map((mark) => (
-                    <Mark key={mark.kind} kind={mark.kind} />
-                  ))}
-                </span>
-              </button>
-            );
-          },
-        }}
-        classNames={CALENDAR_CLASSES}
-      />
+      {/* 날짜 칸이 그날 무엇이 있었는지 알아야 하는데, 라이브러리는 `DayButton` 에 day 와
+          modifiers 만 준다. 컴포넌트를 렌더 안에서 만들면 안 되므로(아래 🚨) context 로 넘긴다. */}
+      <DayMarksContext.Provider value={byDate}>
+        <DayPicker
+          mode="single"
+          required
+          locale={ko}
+          month={month}
+          onMonthChange={onMonthChange}
+          selected={selected}
+          onSelect={onSelect}
+          // 🚨 지난 달 날짜를 그리지 않는다. 그려 두면 누를 수 있는데, 누르면 이 달에 없는 날이
+          //    골라져서 아직 받아오지 않은 달의 하루가 열린다 — 빈 화면으로 보이는 사고다.
+          showOutsideDays={false}
+          // 🚨 **모듈 상수여야 한다.** 여기에 객체 리터럴을 쓰면 렌더마다 새 컴포넌트 타입이라
+          //    React 가 날짜 칸을 전부 언마운트/리마운트한다. 그러면 Enter 로 날을 고를 때마다
+          //    포커스가 `<body>` 로 날아가고, `DayButton` 안의 훅도 매번 초기화돼 동작하지 않는다.
+          components={CALENDAR_COMPONENTS}
+          classNames={CALENDAR_CLASSES}
+        />
+      </DayMarksContext.Provider>
 
       <DayMarkLegend hasProfileMarks={hasProfileMarks} />
     </div>
   );
 }
+
+/* ── 날짜 칸 ──────────────────────────────────────────────────────────── */
+
+/**
+ * 날짜 칸이 그날의 요약을 읽는 통로. props 로는 못 넘긴다 — 라이브러리가 `DayButton` 을
+ * 자기 손으로 렌더하면서 `day` 와 `modifiers` 만 준다.
+ */
+const DayMarksContext = createContext<Map<string, CalendarDay>>(new Map());
+
+function CalendarChevron({ orientation }: ChevronProps) {
+  return orientation === "left" ? (
+    <ChevronLeft size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+  ) : (
+    <ChevronRight size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+  );
+}
+
+function CalendarDayButton({ day, modifiers, children, ...buttonProps }: DayButtonProps) {
+  const byDate = useContext(DayMarksContext);
+  const marks = markList(byDate.get(toISODate(day.date)));
+  const ref = useRef<HTMLButtonElement>(null);
+
+  // 🚨 **라이브러리 기본 `DayButton` 이 하던 일이다. 덮어쓰면 같이 해야 한다.**
+  //    `react-day-picker` 의 방향키·PageUp/PageDown 처리는 `focused` 모디파이어만 옮기고
+  //    DOM 포커스는 이 effect 가 옮긴다. 이게 없으면 그리드 안에서 **키보드로 다른 날에
+  //    도달할 방법이 통째로 사라진다** — 로빙 탭인덱스라 Tab 은 그리드를 빠져나간다.
+  useEffect(() => {
+    if (modifiers.focused) ref.current?.focus();
+  }, [modifiers.focused]);
+
+  return (
+    <button
+      {...buttonProps}
+      ref={ref}
+      // 라이브러리가 만든 라벨에 그날 무엇이 있었는지를 잇는다.
+      // 🚨 "오늘" · "선택됨" 을 여기서 더하지 않는다 — ko 로케일의 `labelDayButton` 이 이미
+      //    앞에 붙여 준다. 더하면 칸마다 "오늘" 이 두 번 읽힌다.
+      aria-label={[buttonProps["aria-label"], ...marks.map((mark) => mark.spoken)]
+        .filter(Boolean)
+        .join(", ")}
+    >
+      <span>{children}</span>
+      {/* 표식이 없는 날에도 자리를 지킨다 — 있고 없고에 따라 숫자가 위아래로
+          흔들리면 달을 훑을 때 줄이 맞지 않는다. */}
+      <span aria-hidden className="flex h-1.5 items-center justify-center gap-1">
+        {marks.map((mark) => (
+          <Mark key={mark.kind} kind={mark.kind} />
+        ))}
+      </span>
+    </button>
+  );
+}
+
+/** 🚨 모듈 상수다. 렌더 안에서 만들면 날짜 칸이 매 렌더 리마운트된다 (`MonthGrid` 의 🚨). */
+const CALENDAR_COMPONENTS = {
+  Chevron: CalendarChevron,
+  DayButton: CalendarDayButton,
+} as const;
 
 /* ── 표식 ─────────────────────────────────────────────────────────────── */
 
@@ -195,7 +227,10 @@ const CALENDAR_CLASSES = {
     "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   month_grid: "w-full border-collapse",
   weekdays: "flex",
-  weekday: "text-caption text-ink-subtle flex h-8 flex-1 items-center justify-center font-normal",
+  // 🚨 글자가 들어가는 요소에 고정 높이를 주지 않는다 (apps/web/CLAUDE.md §5). `h-8` 이었는데
+  //    글자 200% 에서 caption 이 상자를 넘어 요일 줄이 눌렸다.
+  weekday:
+    "text-caption text-ink-subtle min-h-chip flex flex-1 items-center justify-center py-1 font-normal",
   weeks: "flex flex-col gap-1",
   week: "flex gap-1",
   day: "flex flex-1 items-stretch p-0",

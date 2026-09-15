@@ -98,7 +98,7 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
 
         {stale ? (
           <span className="text-caption text-ink-muted">
-            6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.
+            6개월이 지나서 이 프로필만으로는 추천을 만들지 않아요.
           </span>
         ) : null}
       </span>

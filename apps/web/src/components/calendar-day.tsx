@@ -79,12 +79,26 @@ export function CalendarDayPanel({
         </Section>
       ) : null}
 
+      {/* 🚨 **"채우려고 만들지 않아요" 와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
+          버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를
+          나눈다. 빈 날이라고 일기 구역을 숨기지도 않는다. 그러면 "그날 일기를 쓰는 법" 이
+          날마다 달라져서, 빈 날에만 다른 버튼을 찾아야 한다. */}
+      {nothing && !writing ? (
+        <EmptyState
+          icon={CalendarOff}
+          title="이날은 아무것도 없어요"
+          description="기록이 없는 날은 비워둬요. 채우려고 만들지 않아요."
+          count={0}
+          countLabel="이날의 기록"
+        />
+      ) : null}
+
       {hasDiary || writing ? (
         <Section title="이날의 일기">
           <Diary childId={childId} date={date} data={data} onDone={() => setWriting(false)} />
         </Section>
-      ) : nothing ? null : (
-        // 다른 기록은 있고 일기만 없는 날. 구역 제목은 남기되 입력창은 접어 둔다.
+      ) : (
+        // 일기만 없는 날. 구역 제목은 남기되 입력창은 접어 둔다 — 빈 날도 같은 모양이다.
         <Section title="이날의 일기">
           <div>
             <Button variant="tertiary" size="compact" onClick={() => setWriting(true)}>
@@ -99,22 +113,6 @@ export function CalendarDayPanel({
         <Section title="이날의 사진">
           <Photos urls={data.diary.image_urls} />
         </Section>
-      ) : null}
-
-      {nothing && !writing ? (
-        <EmptyState
-          icon={CalendarOff}
-          title="이날은 아무것도 없어요"
-          description="기록이 없는 날은 비워둬요. 채우려고 만들지 않아요."
-          count={0}
-          countLabel="이날의 기록"
-          // 🚨 빈 상태를 사과문으로 쓰지 않는다 (문서 §7) — 여기서 할 수 있는 일 하나를 같이 준다.
-          action={
-            <Button variant="secondary" block onClick={() => setWriting(true)}>
-              일기 쓰기
-            </Button>
-          }
-        />
       ) : null}
     </div>
   );

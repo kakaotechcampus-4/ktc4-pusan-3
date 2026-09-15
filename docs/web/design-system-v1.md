@@ -642,6 +642,10 @@ guard 가 여러 건이어도 배너는 **하나**고 안에서 줄로 나눈다
 
 🚨 **지난 달 날짜를 그리지 않는다** (`showOutsideDays={false}`). 그리면 누를 수 있는데, 누르면 아직 받아오지 않은 달의 하루가 열려 빈 화면으로 보인다.
 
+🚨 **`DayButton` 을 덮어쓸 때 포커스 이동을 같이 가져온다.** 라이브러리의 방향키·월 경계 처리는 `focused` 모디파이어만 옮기고 **DOM 포커스는 기본 `DayButton` 안의 effect 가** 옮긴다. 그 effect 없이 덮어쓰면 그리드가 로빙 탭인덱스라 **키보드로 다른 날에 도달할 방법이 통째로 사라진다** — 라이브러리를 얹은 이유 넷 중 둘이 죽는다.
+🚨 **`components` 는 모듈 상수여야 한다.** 렌더 안의 객체 리터럴로 넘기면 매 렌더 새 컴포넌트 타입이라 날짜 칸이 전부 리마운트되고, 날을 고를 때마다 포커스가 `<body>` 로 날아간다.
+🚨 **`aria-label` 에 "오늘" 을 직접 더하지 않는다.** ko 로케일의 `labelDayButton` 이 "오늘" 과 "선택됨" 을 이미 앞에 붙인다 — 더하면 칸마다 두 번 읽힌다.
+
 ### 진행 오버레이 (04 · SSE)
 
 단계 목록을 세로로 쌓고 현재 단계만 살린다.
@@ -689,12 +693,17 @@ guard 가 여러 건이어도 배너는 **하나**고 안에서 줄로 나눈다
 | `btn-tertiary` | `surface-muted` + `line-strong` 테두리 | 〃 | 〃 |
 | `btn-danger` | `danger-hover` | `danger-hover` | 〃 |
 | `btn-kakao` | `kakao-hover` | `kakao-hover` | 〃 |
-| `chip-choice` (미선택) | 배경 `surface-muted` · 테두리 `line-strong` | — | 〃 |
-| `chip-choice` (선택됨) | 그대로 | — | 〃 |
-| `checkbox` (미선택) | 표식 `brand` 테두리 + `brand-soft` 채움 | — | 〃 |
+| `chip-choice` (미선택) | 배경 `surface-muted` · 테두리 `line-strong` | 〃 | 〃 |
+| `chip-choice` (선택됨) | 그대로 | 그대로 | 〃 |
+| `checkbox` (미선택) | 표식 `brand` 테두리 + `brand-soft` 채움 | 〃 | 〃 |
 | `input` | 테두리 `ink-subtle` | — | 〃 |
 
 전환은 전부 `fast`(120ms) + `--ease-standard` 다. 색만 바꾸고 **크기·위치는 건드리지 않는다.**
+
+🚨 **press 칸이 비면 웹뷰에서 그 요소는 눌러도 아무 반응이 없다.** 이 화면은 대부분 웹뷰인데 호버가 없고,
+`hover:` 는 `globals.css` 의 `@custom-variant` 로 `@media (hover: hover)` 안에서만 걸린다. 칩과 체크박스가
+실제로 그 상태였다 — 07 피드백 탭의 유일한 조작이 칩이고 09 준비물 체크의 유일한 조작이 체크박스라,
+그 두 화면이 붙고 나서야 드러났다. **표에 `—` 를 남기지 않는다.**
 
 🚨 **`cursor` 는 `globals.css` 가 한 번에 건다** — 누를 수 있는 것은 `pointer`, 비활성은 `not-allowed`. Tailwind 4 preflight 는 버튼에 `cursor` 를 주지 않아서(v3 에서 달라진 점) 전부 기본 화살표였다. 웹뷰에는 커서가 없지만 브라우저로 들어오면 누를 수 있는지가 안 보인다.
 

@@ -116,7 +116,11 @@ function CalendarScreen() {
         <div>
           {/* 🚨 날짜 문구를 조합해 만들지 않는다 — 절대 날짜 하나를 한국어 표기로 바꾼 것뿐이다. */}
           <h2 className="text-title text-ink">{formatDay(date)}</h2>
-          <p className="text-body-sm text-ink-muted mt-1">{daySummary(summary)}</p>
+          {/* 🚨 아무것도 없는 날에는 이 줄을 그리지 않는다. 바로 아래 빈 상태가 같은 말을
+              더 크게 하고 있어서, 남겨 두면 한 화면이 같은 사실을 두 번 말한다. */}
+          {daySummary(summary) ? (
+            <p className="text-body-sm text-ink-muted mt-1">{daySummary(summary)}</p>
+          ) : null}
         </div>
 
         {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
@@ -147,10 +151,11 @@ function CalendarScreen() {
  * 달 조회가 이미 들고 있는 숫자로 한 줄 요약한다 — 하루 조회를 기다리는 동안에도 이 줄은
  * 바로 서서, 부모가 고른 날에 뭐가 있는지 먼저 안다.
  *
- * 🚨 **없는 날을 사과하지 않는다.** "아직 아무것도 없어요" 가 아니라 사실 그대로 쓴다.
+ * 🚨 **없는 날에는 아무 말도 하지 않는다.** 빈 날의 문구는 하루 패널의 빈 상태 하나가 맡는다 —
+ *    요약 줄까지 같은 말을 하면 한 화면이 같은 사실을 두 번 말한다.
  */
-function daySummary(summary: CalendarDay | undefined): string {
-  if (!summary) return "이날은 아직 적은 것이 없어요.";
+function daySummary(summary: CalendarDay | undefined): string | null {
+  if (!summary) return null;
 
   const parts: string[] = [];
   if (summary.has_event) parts.push("일정 있음");
@@ -158,7 +163,9 @@ function daySummary(summary: CalendarDay | undefined): string {
   if (summary.has_diary) parts.push("일기 있음");
   if ((summary.profile_changed_count ?? 0) > 0) parts.push("프로필 달라짐");
 
-  return parts.length === 0 ? "이날은 아직 적은 것이 없어요." : parts.join(", ");
+  // 🚨 빈 날은 **여기서 말하지 않는다.** 아래 하루 패널의 빈 상태가 그 말을 맡는다 —
+  //    같은 사실을 두 곳에서 하면 화면이 사과하는 것처럼 읽힌다 (문서 §7).
+  return parts.length === 0 ? null : parts.join(", ");
 }
 
 /**

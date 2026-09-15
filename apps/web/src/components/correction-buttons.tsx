@@ -18,6 +18,11 @@ import type { CorrectionVerdict } from "@/lib/api/types";
  *
  * 🚨 **무엇이 다시 계산됐는지는 서버만 안다.** 응답의 `cascade` 를 화면이 그대로 옮기고,
  *    프론트가 "추천이 바뀔 거예요" 를 추측하지 않는다.
+ *
+ * 🚨 **관찰과 프로필을 "기억" 한 단어로 묶지 않는다** (`targetKind`). 07 의 논지 전체가
+ *    "관찰 1건과 confirmed 프로필이 같은 무게로 읽히면 최상위 §2 가 화면에서 사라진다" 인데,
+ *    목록은 줄과 카드로 갈라 놓고 교정하는 순간 문구가 둘을 도로 합치면 부모는 프로필을
+ *    고치면서 자기가 관찰 한 건을 고치는 줄 안다.
  */
 const VERDICTS: Array<{ verdict: CorrectionVerdict; label: string }> = [
   { verdict: "confirm", label: "맞아요" },
@@ -27,9 +32,12 @@ const VERDICTS: Array<{ verdict: CorrectionVerdict; label: string }> = [
 ];
 
 export function CorrectionButtons({
+  targetKind,
   onSelect,
   pending,
 }: {
+  /** 무엇을 고치는 중인가. 문구가 갈린다 — 관찰 1건과 프로필은 다른 것이다. */
+  targetKind: "observation" | "affinity";
   onSelect: (verdict: CorrectionVerdict) => void;
   /** 보내는 중인 판정. 🚨 넷 전부가 아니라 **누른 것만** 기다린다. */
   pending: CorrectionVerdict | null;
@@ -38,7 +46,9 @@ export function CorrectionButtons({
 
   return (
     <div>
-      <p className="text-label text-ink-muted">이 기억이 어떤가요?</p>
+      <p className="text-label text-ink-muted">
+        {targetKind === "observation" ? "이 기억이 어떤가요?" : "이 프로필이 맞나요?"}
+      </p>
       {/* 넷이 같은 무게다. 순서는 교정의 세기 순(맞음 → 한 번 → 지났음 → 틀림)이고,
           한 줄에 둘씩 둬서 좁은 폰에서도 문구가 잘리지 않는다. */}
       <div className="mt-2 grid grid-cols-2 gap-2">
@@ -55,8 +65,13 @@ export function CorrectionButtons({
           </Button>
         ))}
       </div>
+      {/* 🚨 **여기서 되돌릴 수 있다는 말만 한다.** 교정은 append-only 라 반대 교정으로
+          되돌리는데(위 🚨), 그 경로가 이 창 말고는 없다 — 관찰 탭의 "고쳐서 뺀 기억" 필터로
+          다시 열 수 있게 해 두고 그 사실까지 같이 말한다. 둘 중 하나라도 없으면 부모에게
+          `잘못된 기록` 은 되돌릴 수 없는 동작이 되고, 그러면 확인 단계를 뺀 근거가 무너진다. */}
       <p className="text-caption text-ink-subtle mt-2">
-        고친 기억은 다시 고칠 수 있어요. 기록이 사라지지는 않아요.
+        이 창에서 바로 다시 고칠 수 있어요. 창을 닫은 뒤에는 목록의 &quot;고쳐서 뺀 기억&quot; 에서
+        찾을 수 있어요.
       </p>
     </div>
   );

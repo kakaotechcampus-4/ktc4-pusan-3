@@ -112,6 +112,7 @@ export function MemoryDetailSheet({
           )}
 
           <CorrectionButtons
+            targetKind={target.type}
             onSelect={(verdict) => correct.mutate(verdict)}
             pending={correct.isPending ? (correct.variables ?? null) : null}
           />
@@ -123,7 +124,7 @@ export function MemoryDetailSheet({
             </p>
           ) : null}
 
-          {result ? <CascadeResult result={result} /> : null}
+          {result ? <CascadeResult result={result} targetKind={target.type} /> : null}
         </div>
       )}
     </BottomSheet>
@@ -134,7 +135,14 @@ export function MemoryDetailSheet({
  * 🚨 무엇이 다시 계산됐는지는 **서버가 준 숫자**로만 말한다. "추천이 바뀔 거예요" 같은
  *    예측을 프론트가 쓰지 않는다 — 재계산 범위를 아는 것은 Curator 뿐이다.
  */
-function CascadeResult({ result }: { result: CorrectionResponse }) {
+function CascadeResult({
+  result,
+  targetKind,
+}: {
+  result: CorrectionResponse;
+  /** 🚨 관찰과 프로필을 "기억" 한 단어로 묶지 않는다 (`CorrectionButtons` 의 🚨). */
+  targetKind: "observation" | "affinity";
+}) {
   const profiles = result.cascade.affinities_recomputed.length;
   const suggestions = result.cascade.suggestions_recalculated.length;
 
@@ -148,7 +156,12 @@ function CascadeResult({ result }: { result: CorrectionResponse }) {
       ) : (
         <ul className="text-caption text-ink-muted mt-1 flex flex-col gap-0.5">
           {profiles > 0 ? <li>프로필 {profiles}건을 다시 계산했어요.</li> : null}
-          {suggestions > 0 ? <li>이 기억을 쓰던 추천 {suggestions}건이 달라졌어요.</li> : null}
+          {suggestions > 0 ? (
+            <li>
+              {targetKind === "observation" ? "이 기억" : "이 프로필"}을 쓰던 추천 {suggestions}건이
+              달라졌어요.
+            </li>
+          ) : null}
         </ul>
       )}
     </div>
