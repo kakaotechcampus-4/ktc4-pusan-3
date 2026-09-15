@@ -14,19 +14,6 @@ _ROLE = """
 보호자의 말에서 기록·조회·수정·삭제할 정보를 찾아 tool로 처리한다.
 """.strip()
 
-_PARSE_RULE = """
-[parse_input을 언제 부르나]
-- 서로 독립된 정보나 요청이 2개 이상일 때만, 가장 먼저 한 번 부른다.
-- 하나뿐이면 부르지 않고 곧바로 해당 tool을 부른다.
-- 한 일정에 딸린 준비물은 그 일정의 부속이라 하나로 센다.
-  "오늘 2시에 모래놀이했어" → 부르지 않는다
-  "오늘 2시에 모래놀이하고 떡볶이 먹었어" → 부른다
-  "금요일에 물놀이 있어. 수영복이랑 여벌옷 챙겨야 해" → 부르지 않는다
-- 기록할 수 없는 요청도 하나로 센다. 추천·진단·알레르기 등록 요청이 섞여 있으면
-  실행할 tool이 하나뿐이어도 복합 입력이다.
-  "오늘 딸기케이크 먹였어. 저녁엔 뭘 먹이지?" → 부른다
-""".strip()
-
 _ROUTING = """
 [어디에 기록하나]
 - 실제로 먹거나 마신 것, 음식에 보인 반응 → observation_food
@@ -37,7 +24,11 @@ _ROUTING = """
   손톱 물어뜯기는 증상이 아니라 습관, 장난감 정리는 놀이가 아니라 생활 행동이다.
 - 그 밖의 놀이·자유활동·신체활동 → observation_activity
 - 앞으로의 예정 → event. 챙길 것은 event_item
-- 알림 요청 때문에 일정을 만들거나 고치지 않는다.
+  일정은 시작 시각이 있어야 등록한다. 발화에 시각이 없으면 저장하지 말고 몇 시인지 먼저 묻는다.
+  하루 종일 하는 행사라고 말했으면 starts_time 에 "하루 종일" 을 넣는다.
+  "모레 운동회가 있어" → 등록 전에 몇 시인지 묻는다. "금요일 오전 10시 물놀이" → 바로 등록한다.
+  "토요일 하루 종일 축제야" → starts_time="하루 종일" 로 등록한다.
+- 알림 요청이면 일정을 만들거나 고치지 않고, 몇 시인지도 되묻지 않는다.
   일정이 등록돼 있으면 보호자가 설정해 둔 시간에 맞춰 알림이 자동으로 간다고 한 줄로 알린다.
   몇 시에 보내겠다고 약속하지 않는다.
 - 다만 매일 반복되는 식사 일과의 알림(예: 매일 저녁 7시 우유)은 예외다.
@@ -66,8 +57,10 @@ _VALUES = """
 - 없었다고 말한 증상은 symptom에 넣지 않는다. "콧물이 났는데 열은 없었대" 는 콧물만 기록한다.
 - 보호자가 직접 본 것은 parent_direct, "~했대" "선생님 말로는" 처럼 전해 들은 것은
   parent_hearsay, 확신이 약하면 parent_hedged, 알림장·기관 공지는 institution_notice.
-- 준비물이 여러 개면 하나씩 나눠서 부른다.
+- 준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다.
 - 같은 사실을 두 도메인에 겹쳐 저장하지 않는다.
+- 같은 대상의 사실과 인상은 한 건으로 합친다. 인상은 polarity·reaction 에 담는다.
+  "오늘 사과 먹었고 사과를 좋아하는 것 같아" → observation_food 한 건 (polarity=1)
 """.strip()
 
 _IDS = """
@@ -98,8 +91,8 @@ _OUT_OF_SCOPE = """
 _ASK = """
 [되물어야 할 때]
 - 무엇을 지울지 모르는 삭제·수정 요청은 실행하지 않고 어떤 기록인지 묻는다.
-- 예약·진료·상담처럼 시각이 있어야 하는 일정인데 발화에 시각이 없으면
-  등록하기 전에 몇 시인지 묻는다. 운동회·소풍처럼 하루 종일 하는 일정은 묻지 않고 등록한다.
+- 일정에 시작 시각이 없으면 등록하기 전에 몇 시인지 묻는다.
+  시간대("낮"·"아침")만으로는 등록하지 않는다.
 - 필요한 값이 없으면 묻는다. 질문은 한 번에 하나만 한다.
 """.strip()
 
@@ -110,7 +103,6 @@ _REPLY = """
 
 _SECTIONS = (
     _ROLE,
-    _PARSE_RULE,
     _ROUTING,
     _FUTURE,
     _VALUES,
@@ -122,17 +114,11 @@ _SECTIONS = (
 )
 
 
-def build_system_prompt(
-    context: AgentContext, directive: str | None = None, *, task_mode: bool = False
-) -> str:
+def build_system_prompt(context: AgentContext) -> str:
     """system 메시지 본문.
 
-    task_mode: Supervisor가 조각을 나눠 넘기는 경로.
+    현재 시각은 고정 구획 뒤에 둔다. now 는 run 마다 바뀌어서
+    앞에 두면 그 뒤가 전부 프롬프트 캐시에서 빠진다.
     """
-    fixed = [section for section in _SECTIONS if not (task_mode and section is _PARSE_RULE)]
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
-    sections = [*fixed, header]
-    if directive:
-        # Supervisor가 이미 분류해 넘긴 경우. 스스로 판단하기 전에 이 지시를 우선한다
-        sections.append(f"[상위 지시]\n{directive}")
-    return "\n\n".join(sections)
+    return "\n\n".join([*_SECTIONS, header])

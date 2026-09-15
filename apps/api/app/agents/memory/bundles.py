@@ -7,9 +7,19 @@
 새 tool을 추가할 때는 어느 묶음에 포함할지 함께 정하고 test_bundles에서 누락 여부를 확인한다.
 """
 
-from app.agents.memory.schemas.task import MemoryTask
+from app.agents.memory.schemas.task import MemoryTask, WorkType
 
 _DOMAINS = ("food", "health", "education", "activity", "routine")
+
+# 되돌리기 어려운 tool
+MUTATING_PREFIXES: tuple[str, ...] = ("create_", "update_", "delete_")
+
+# 작업 종류마다 "해냈다" 로 치는 쓰기. agent의 조기 종료와 pipeline의 불일치 기록이 같이 쓴다
+WRITES_FOR: dict[WorkType, tuple[str, ...]] = {
+    WorkType.OBSERVE: ("create_observation_",),
+    WorkType.SCHEDULE: ("create_event", "create_event_item"),
+    WorkType.LOOKUP_EDIT: ("update_", "delete_"),
+}
 
 # 기록 기본 묶음: 관찰 create 5 + 일정/준비물 등록 + 준비물을 붙일 일정 찾기
 RECORD_BASE: frozenset[str] = frozenset(

@@ -18,7 +18,6 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineUpdate,
     RecordRef,
 )
-from app.agents.memory.schemas.parse_input import ParseInputArgs
 from app.agents.memory.schemas.schedule import (
     EventCreate,
     EventItemCreate,
@@ -32,15 +31,6 @@ from app.agents.memory.schemas.schedule import (
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
-    ToolDefinition(
-        name="parse_input",
-        description=(
-            "서로 독립된 정보나 요청이 2개 이상 섞인 입력을 의미 단위로 나눈다. "
-            "그럴 때만 다른 tool 보다 먼저 한 번 부른다. 정보가 하나뿐이면 부르지 않고 "
-            "바로 해당 tool 을 부른다. 저장이나 조회는 하지 않는다."
-        ),
-        args=ParseInputArgs,
-    ),
     # observation_food
     ToolDefinition(
         name="create_observation_food",
@@ -193,7 +183,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="create_event_item",
         description=(
-            "일정에 챙길 준비물을 하나 추가한다. 준비물이 여러 개면 하나씩 나눠서 부른다. "
+            "일정에 챙길 준비물을 하나 추가한다. "
+            "준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. "
             "event_id 는 create_event 나 query_event 결과에서 가져온다."
         ),
         args=EventItemCreate,

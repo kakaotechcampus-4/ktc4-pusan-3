@@ -172,7 +172,11 @@ class LLMClient:
             raise LLMError(f"LLM 호출 실패: {exc}") from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
-        message = response.choices[0].message
+        # 콘텐츠 필터 등을 이유로 choices가 비거나 message가 null로 오는 provider의 경우
+        choice = response.choices[0] if response.choices else None
+        message = getattr(choice, "message", None)
+        if message is None:
+            raise LLMError("LLM 응답에 message가 없다.")
         usage = _usage_dict(response.usage)
         self._log_call(message, usage, latency_ms)
         return LLMResponse(message=message, usage=usage, latency_ms=latency_ms)

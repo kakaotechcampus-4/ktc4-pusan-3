@@ -12,6 +12,7 @@ task 를 넘기면(Supervisor 경로) 세 가지가 더 붙는다.
   - [tool 묶음] 기록 기본 묶음은 항상, 수정·삭제는 lookup_edit 조각이 있을 때만
   - [허용 목록] 모델에게 안 보여준 tool은 이름으로 불러도 실행하지 않는다
   - [조기 종료] 할 일을 다 한 게 코드로 확인되면 요약 호출 없이 끝낸다 (_covered)
+task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없이 Memory 만 재는 경로다.
 """
 
 import json
@@ -22,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.agents.common.llm_client import LLMClient
-from app.agents.memory.bundles import tools_for
+from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
@@ -37,18 +38,14 @@ MAX_COMPLETION_TOKENS = 1400
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
 
-# 되돌리기 어려운 tool
-_MUTATING_PREFIXES = ("create_", "update_", "delete_")
-
-# 힌트의 작업 종류마다 "해냈다" 로 치는 쓰기 (조기 종료 ⑤)
-_WRITES_FOR: dict[WorkType, tuple[str, ...]] = {
-    WorkType.OBSERVE: ("create_observation_",),
-    WorkType.SCHEDULE: ("create_event", "create_event_item"),
-    WorkType.LOOKUP_EDIT: ("update_", "delete_"),
-}
 # 이 말이 든 힌트가 있으면 조기 종료하지 않음
 # 알림 요청은 쓰기 없이 안내로 끝나야 함
 _NEEDS_REPLY_CUES = ("알림", "알람")
+
+# 이 tool을 부른 run은 조기 종료하지 않음(후속 변경이 있을 수 있음)
+_OPEN_ENDED = frozenset(
+    {"create_event", "create_event_item", "update_event_item", "delete_event_item"}
+)
 
 EndedBy = Literal["model", "coverage", "max_steps"]
 
@@ -91,7 +88,6 @@ async def run(
     context: AgentContext,
     *,
     client: LLMClient | None = None,
-    directive: str | None = None,
     max_steps: int = MAX_STEPS,
     task: MemoryTask | None = None,
 ) -> MemoryAgentResult:
@@ -106,10 +102,7 @@ async def run(
     allowed = tools_for(task) if task is not None else None
     tools = specs_for(allowed) if allowed is not None else TOOL_SPECS
     messages: list[dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": build_system_prompt(context, directive, task_mode=task is not None),
-        },
+        {"role": "system", "content": build_system_prompt(context)},
         {"role": "user", "content": _user_message(raw_text, task)},
     ]
     calls: list[ToolCallRecord] = []
@@ -189,7 +182,8 @@ def _covered(
     다음 조건을 모두 만족
     - 이번 스텝에서 실행한 호출이 모두 성공
     - 이번 스텝의 호출이 모두 쓰기 작업
-    - create_event 호출이 없음
+    - run 전체에 일정·준비물 쓰기(_OPEN_ENDED)가 없음
+      준비물을 한 스텝에 하나씩 부르는 모델이면 첫 준비물 뒤에서 끊겨 나머지가 사라진다 (T13)
     - 작업 종류별 성공한 쓰기 수가 run 전체의 힌트 수를 충족
     - 힌트가 하나 이상 있고 알림 요청 힌트는 없음
 
@@ -202,15 +196,15 @@ def _covered(
         return False
     if not all(record.success for record in step_records):
         return False
-    if not all(record.name.startswith(_MUTATING_PREFIXES) for record in step_records):
+    if not all(record.name.startswith(MUTATING_PREFIXES) for record in step_records):
         return False
-    if any(record.name == "create_event" for record in step_records):
+    if any(record.name in _OPEN_ENDED for record in calls):
         return False
 
     written = [record.name for record in calls if record.success]
     needed = Counter(WorkType(hint.work) for hint in task.hints)
     return all(
-        sum(name.startswith(_WRITES_FOR[work]) for name in written) >= count
+        sum(name.startswith(WRITES_FOR[work]) for name in written) >= count
         for work, count in needed.items()
     )
 
@@ -246,7 +240,7 @@ def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
 
 
 def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
-    if not name.startswith(_MUTATING_PREFIXES):
+    if not name.startswith(MUTATING_PREFIXES):
         return None  # 분리·조회는 반복 호출해도 상태 안 바뀜
     return name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
 

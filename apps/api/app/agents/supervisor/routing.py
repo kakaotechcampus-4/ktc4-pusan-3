@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 IntentType = Literal["record", "request", "mixed"]
 
-MAX_DOMAIN_AGENTS = 2 # 한 입력에서 부르는 도메인 Agent 상한
+MAX_DOMAIN_AGENTS = 2  # 한 입력에서 부르는 도메인 Agent 상한
 IMPLEMENTED_AGENTS: frozenset[str] = frozenset({DomainAgentName.FOOD.value})
 
 # 순수 요청형에서 Memory를 건너뛸지. 켜면 Supervisor 오류가 곧 기록 누락이 된다
@@ -77,7 +77,8 @@ _GUIDANCE: dict[str, Guidance] = {
     GuardReason.SAFETY_RECORD.value: Guidance(
         code=GuardReason.SAFETY_RECORD.value,
         message="알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-        deeplink="settings/health-safety",  # 앱에서 deeplink를 열면 알레르기 등록 화면으로 이동하도록
+        # 앱에서 deeplink를 열면 알레르기 등록 화면으로 이동하도록
+        deeplink="settings/health-safety",
     ),
     GuardReason.DIAGNOSIS.value: Guidance(
         code=GuardReason.DIAGNOSIS.value,

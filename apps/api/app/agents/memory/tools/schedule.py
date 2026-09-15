@@ -5,7 +5,7 @@
 없는 id 면 UNKNOWN_EVENT 로 되돌려 모델이 먼저 일정을 찾게 한다.
 status / created_by / expires_at / child_id 는 규칙이 채운다.
 
-알림 tool 은 두지 않는다. 알림 등록은 일정 승인 뒤 보호자가 거는 경로다 (계약서 §07).
+알림은 등록된 일정을 기준으로 자동 설정되므로 Agent 는 일정만 만들고 안내한다.
 """
 
 from datetime import datetime, time, timedelta

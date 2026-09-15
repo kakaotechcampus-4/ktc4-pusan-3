@@ -30,6 +30,7 @@ class FoodAgentResult:
     requires_safety_check: bool
     model_calls: int = 0  # LLMClient.chat() 호출 수(입력 run 의 done.model_calls에 더해짐)
 
+
 async def run(
     task: FoodTask, context: FoodContext, *, client: LLMClient | None = None
 ) -> FoodAgentResult:

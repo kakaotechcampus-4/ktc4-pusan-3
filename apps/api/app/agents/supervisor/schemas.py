@@ -165,7 +165,8 @@ def align_segment(raw_text: str, segment: "Segment") -> list[Range] | None:
     모델이 자연스럽게 수행하는 분리이고, 각 Agent에도 완결된 요청을 전달하는 편이 낫다.
     - 단, 건너뛴 구간이 접속 조사나 연결 표현(랑·하고·도·, …)으로 시작하고,
     부정 표현(안·못·말고·빼고·없…)을 포함하지 않으며, 두 구간이 같은 문장 안에 있을 때만 허용한다.
-    - record 조각에는 이 예외를 적용하지 않는다. 기록 문장에서 일부 표현을 생략하면 의미가 달라질 수 있기 때문이다.
+    - record 조각에는 이 예외를 적용하지 않는다.
+    기록 문장에서 일부 표현을 생략하면 의미가 달라질 수 있기 때문이다.
     """
     haystack = normalize(raw_text)
     text = normalize(segment.text)

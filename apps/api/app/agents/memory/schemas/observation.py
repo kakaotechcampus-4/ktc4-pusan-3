@@ -117,7 +117,8 @@ _ROUTINE_CATEGORY = (
     "habit(손톱 물어뜯기/손가락 빨기) / transition(등원 준비/잠자리 들기/놀이 끝내기)"
 )
 _ASSISTANCE = _optional(
-    "혼자 했으면 independent, 말로 시켜야 했으면 verbal_prompt, 일부 도와줬으면 partial_assist, "
+    "해내는 데 필요했던 도움. 시키지 않아도 스스로 했으면 independent, "
+    "말로 시켜서 했으면 verbal_prompt(시킨 뒤에 혼자 했어도), 일부 도와줬으면 partial_assist, "
     "거의 다 해줬으면 full_assist. 발화에 드러날 때만"
 )
 _COMPLETION = _optional("completed / partial / refused / interrupted. 해냈는지 드러날 때만")

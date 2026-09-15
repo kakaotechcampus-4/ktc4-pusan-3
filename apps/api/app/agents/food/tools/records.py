@@ -11,6 +11,7 @@ from app.agents.food.schemas.records import (
     SearchFoodMemoryArgs,
 )
 
+
 async def search_food_memory(context: FoodContext, args: SearchFoodMemoryArgs) -> ToolResult:
     """아이의 식사 기록과 음식 선호·기피 정보를 조회한다.
 

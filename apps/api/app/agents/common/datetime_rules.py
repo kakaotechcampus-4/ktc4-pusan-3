@@ -15,10 +15,12 @@ LLM은 자연어의 의미 해석까지만 담당한다.
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import MAXYEAR, MINYEAR, date, datetime, time, timedelta, tzinfo
 from typing import Literal
 
 TemporalDirection = Literal["past", "future", "nearest"]
+
+_MIN_YEAR, _MAX_YEAR = MINYEAR + 1, MAXYEAR - 1
 
 
 class DateParseError(ValueError):
@@ -82,6 +84,8 @@ _TIME_RE = re.compile(
     r"(?:(?P<minute>\d{1,2})분?|(?P<half>반))?$"
 )
 _TIME_TAIL_RE = re.compile(r"(에|쯤|경|정각|께)$")
+# 구간을 여닫는 조사
+_RANGE_TAIL_RE = re.compile(r"(?:부터|까지)$")
 
 _PM_MERIDIEMS = {"오후", "저녁", "낮", "점심"}
 _AM_MERIDIEMS = {"오전", "아침", "새벽"}
@@ -97,9 +101,12 @@ def resolve_date(value: str, *, today: date, direction: TemporalDirection = "nea
     if not isinstance(value, str) or not value.strip():
         raise DateParseError("날짜 표현이 비어 있다.")
 
-    text = _normalize(value)
+    # "어제부터 계속 기침" 의 "어제부터" 처럼 구간을 여는 표현은 그 날짜 하나로 본다.
+    # (관찰은 하루 단위 — build_observed_range)
+    text = _RANGE_TAIL_RE.sub("", _normalize(value)) or _normalize(value)
     iso = _try_iso_date(text)
     if iso is not None:
+        _check_year(iso.year, text)
         return iso
 
     key = text.replace(" ", "")
@@ -139,10 +146,12 @@ def resolve_date_range(
     matched = _YEAR_RE.match(key)
     if matched is not None:
         year = int(matched.group("year"))
+        _check_year(year, text)
         return DateRange(start=date(year, 1, 1), end=date(year + 1, 1, 1))
     matched = _YEAR_MONTH_RE.match(key)
     if matched is not None:
         year, month = int(matched.group("year")), int(matched.group("month"))
+        _check_year(year, text)
         if not 1 <= month <= 12:
             raise DateParseError(f"존재하지 않는 월: {text!r}")
         start = date(year, month, 1)
@@ -273,11 +282,17 @@ def _try_year_month_day(key: str) -> date | None:
         return None
 
     year = int(matched.group("year"))
+    _check_year(year, key)
     month, day = int(matched.group("month")), int(matched.group("day"))
     candidate = _try_make_date(year, month, day)
     if candidate is None:
         raise DateParseError(f"존재하지 않는 날짜: {key!r}")
     return candidate
+
+
+def _check_year(year: int, text: str) -> None:
+    if not _MIN_YEAR <= year <= _MAX_YEAR:
+        raise DateParseError(f"다룰 수 없는 연도: {text!r}")
 
 
 def _try_make_date(year: int, month: int, day: int) -> date | None:

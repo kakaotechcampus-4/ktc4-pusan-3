@@ -3,7 +3,8 @@
 event 4 + event_item 3 = 7개.
 status · created_by · expires_at · child_id는 규칙이 채운다.
 
-알림은 Agent 가 만들지 않는다. 알림 등록은 일정 승인 뒤 보호자가 거는 경로다 (계약서 §07).
+알림은 Agent가 만들지 않는다.
+발송은 등록된 일정을 기준으로 자동이다.
 """
 
 from typing import Annotated
