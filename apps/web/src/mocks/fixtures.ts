@@ -14,7 +14,9 @@ import type {
   CalendarDay,
   CalendarEvent,
   Evidence,
+  ChildProfile,
   GeneralSuggestion,
+  GrowthLog,
   HealthSafety,
   HomeResponse,
   Me,
@@ -250,6 +252,65 @@ export function newHealthSafety(input: {
     notes: input.notes ?? null,
     created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
     updated_at: hoursFromNow(0),
+  };
+}
+
+/* ── 11 아이 프로필 · 측정 로그 ───────────────────────────────────────── */
+
+/**
+ * ⚠️ `GET /children/{cid}` 는 계약서 v1 에 없다 (이슈 #75). 여기가 그 제안의 유일한 구현이다.
+ * 🚨 `age_display` 는 **서버 문구**라 목이 만든다 — 화면은 생일에서 나이를 계산하지 않는다.
+ */
+export const childProfile: ChildProfile = {
+  id: CHILD_ID,
+  nickname: "민준",
+  birth_date: "2021-04-02",
+  age_display: "만 4세",
+  gender: "unspecified",
+  relation: "mother",
+  role: "owner",
+};
+
+/** 🚨 `measured_label` 도 서버 문구다 (`observed_label` 과 같은 처리). */
+function growthLog(id: string, days: number, height: number | null, weight: number | null): GrowthLog {
+  return {
+    id,
+    measured_on: daysAgo(days),
+    height_cm: height,
+    weight_kg: weight,
+    measured_label: observedLabel(days),
+    note: null,
+  };
+}
+
+/**
+ * 🚨 **증감·백분위를 담지 않는다.** 이 배열은 "잰 날 목록" 이지 성장 곡선의 데이터가 아니다
+ *    (`DESIGN.md` — 부모가 자기 아이를 지표로 보게 하지 않는다).
+ * 🚨 한쪽만 잰 날이 섞여 있다 — 화면이 null 한쪽을 제대로 그리는지 여기서 걸린다.
+ */
+export const growthLogs: GrowthLog[] = [
+  growthLog("g_3", 12, 104.2, 17.1),
+  growthLog("g_2", 47, null, 16.8),
+  growthLog("g_1", 104, 101.5, 16.2),
+];
+
+/** 🚨 서버가 채우는 값(id · measured_label)은 여기서 만든다 — 요청에 없는 값이다. */
+export function newGrowthLog(input: {
+  measured_on: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}): GrowthLog {
+  const days = Math.max(
+    0,
+    Math.round((Date.now() - new Date(`${input.measured_on}T00:00:00`).getTime()) / DAY_MS),
+  );
+  return {
+    id: `g_${Date.now()}`,
+    measured_on: input.measured_on,
+    height_cm: input.height_cm ?? null,
+    weight_kg: input.weight_kg ?? null,
+    measured_label: observedLabel(days),
+    note: null,
   };
 }
 

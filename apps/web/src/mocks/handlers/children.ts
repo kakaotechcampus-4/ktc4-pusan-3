@@ -1,5 +1,7 @@
 import { http, HttpResponse } from "msw";
 
+import type { HealthSafety } from "@/lib/api/types";
+
 import {
   affinities,
   CHILD_ID,
@@ -15,13 +17,28 @@ import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 
-/** 새 요청으로 같은 항목을 또 넣는 것을 막는다 (키 재시도와는 다른 경로다). */
-const registeredSafety = new Set(healthSafety.map((item) => `${item.type}:${item.label}`));
+/**
+ * 등록된 안전 정보. 🚨 **예전에는 Set 하나였다** — 등록 여부만 알면 409 를 낼 수 있어서였다.
+ * 11 아이 프로필이 목록을 읽고 회수까지 하면서, `GET` 이 방금 등록한 항목을 돌려주지 않으면
+ * 화면이 "저장됐다는데 목록에 없다" 로 보인다. 그래서 목이 **실제 목록을 들고 있는다.**
+ *
+ * 🚨 회수는 행을 지우지 않는다 — 계약서는 `state = 'retracted'` 로의 전환이라고 정했다.
+ *    목록·사용에서 빠지는 것은 `active` 필터가 하고, 행은 남는다 (증빙).
+ */
+interface SafetyRow {
+  safety: HealthSafety;
+  retracted: boolean;
+}
+
+let safetyState: SafetyRow[] = healthSafety.map((safety) => ({ safety, retracted: false }));
+
+function activeSafety(): HealthSafety[] {
+  return safetyState.filter((row) => !row.retracted).map((row) => row.safety);
+}
 
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
-export function resetRegisteredSafety(): void {
-  registeredSafety.clear();
-  for (const item of healthSafety) registeredSafety.add(`${item.type}:${item.label}`);
+export function resetSafetyState(): void {
+  safetyState = healthSafety.map((safety) => ({ safety, retracted: false }));
 }
 
 /** 01·02 첫 진입 · 온보딩, 03 홈. */
@@ -93,13 +110,17 @@ export const childrenHandlers = [
       if (currentScenario() === "consent") return consentRequired("child_health");
 
       const body = (await request.json()) as { type: string; label: string; category?: string };
-      const key = `${body.type}:${body.label}`;
-      if (registeredSafety.has(key)) {
+      const exists = safetyState.some(
+        (row) => !row.retracted && row.safety.type === body.type && row.safety.label === body.label,
+      );
+      if (exists) {
         return apiError(409, "already_exists", "이미 등록된 항목이에요");
       }
-      registeredSafety.add(key);
 
-      return HttpResponse.json({ safety: newHealthSafety(body) }, { status: 201 });
+      const safety = newHealthSafety(body);
+      safetyState = [{ safety, retracted: false }, ...safetyState];
+
+      return HttpResponse.json({ safety }, { status: 201 });
     }),
   ),
 
@@ -140,6 +161,24 @@ export const childrenHandlers = [
 
   http.get(url("/children/:cid/health-safety"), async () => {
     await networkDelay();
-    return HttpResponse.json({ items: healthSafety, updated_at: daysAgo(3) });
+    if (currentScenario() === "empty") return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
+    return HttpResponse.json({ items: activeSafety(), updated_at: daysAgo(3) });
+  }),
+
+  /**
+   * 🚨 회수 — `state = 'retracted'` 로의 전환이다 (계약서 §10). **행을 지우지 않는다.**
+   *    잘못 등록했거나 더 이상 적용하지 않는 항목을 보호자가 내린다.
+   *
+   * 🚨 `Idempotency-Key` 를 요구하지 않는다. 계약서 §01 의 필수 5개는 전부 POST 이고,
+   *    같은 회수를 두 번 보내도 결과가 같다 (아래 404 는 **없는 id** 를 가리킬 때다).
+   */
+  http.delete(url("/children/:cid/health-safety/:id"), async ({ params }) => {
+    await networkDelay();
+    const row = safetyState.find((item) => item.safety.id === params.id);
+    if (!row || row.retracted) {
+      return apiError(404, "not_found", "이미 내려간 기록이에요");
+    }
+    row.retracted = true;
+    return new HttpResponse(null, { status: 204 });
   }),
 ];

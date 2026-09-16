@@ -11,7 +11,10 @@ import type {
   AffinitiesResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
+  ChildProfile,
   CorrectionResponse,
+  GrowthLogsResponse,
+  HealthSafetyListResponse,
   Observation,
   ObservationsResponse,
   SuggestionFeedbackResponse,
@@ -365,6 +368,139 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
+  });
+});
+
+/**
+ * 11 아이 프로필. ⚠️ 여기서 거는 경로 셋(`GET`/`PATCH /children/{cid}` · `/growth`)은
+ * **계약서 v1 에 없다** (이슈 #75). 목이 그 제안된 계약대로 행동하는지를 걸어 둬서,
+ * 서버가 붙을 때 같은 표를 실서버에도 그대로 옮길 수 있게 한다.
+ */
+describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
+  it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
+    const before = await api.get<ChildProfile>("/children/c1");
+
+    const { child } = await api.patch<{ child: ChildProfile }>("/children/c1", {
+      nickname: "민서",
+    });
+
+    expect(child.nickname).toBe("민서");
+    // 🚨 안 보낸 필드가 조용히 비워지면, 두 보호자가 같은 화면을 열어 뒀을 때 남의 수정이 사라진다.
+    expect(child.birth_date).toBe(before.birth_date);
+    expect(child.gender).toBe(before.gender);
+
+    const after = await api.get<ChildProfile>("/children/c1");
+    expect(after.nickname).toBe("민서");
+  });
+
+  it("빈 별명은 422 다 — 이름 없는 아이를 만들지 않는다", async () => {
+    await expect(api.patch("/children/c1", { nickname: "   " })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "validation_failed"),
+    );
+  });
+});
+
+describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
+  it("Idempotency-Key 없이도 저장된다 (되돌릴 수 있는 것이라 표에 없다)", async () => {
+    const { items: before } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+
+    await api.post("/children/c1/growth", { measured_on: "2026-09-10", height_cm: 105 });
+
+    const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(after.length).toBe(before.length + 1);
+    // 🚨 날짜 문구는 서버가 만든다 — 프론트가 계산해 채우지 않는다 (CLAUDE.md §3).
+    expect(after[0].measured_label).toBeTypeOf("string");
+  });
+
+  it("한쪽만 재고 온 날을 받는다", async () => {
+    const { log } = await api.post<{ log: { height_cm: number | null; weight_kg: number | null } }>(
+      "/children/c1/growth",
+      { measured_on: "2026-09-11", weight_kg: 17.4 },
+    );
+    expect(log.height_cm).toBeNull();
+    expect(log.weight_kg).toBe(17.4);
+  });
+
+  it("둘 다 비어 있으면 422 다", async () => {
+    await expect(api.post("/children/c1/growth", { measured_on: "2026-09-12" })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed"),
+    );
+  });
+
+  it("지우면 목록에서 빠진다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items[0];
+
+    await api.delete(`/children/c1/growth/${target.id}`);
+
+    const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(after.some((log) => log.id === target.id)).toBe(false);
+  });
+});
+
+/**
+ * 🚨 승인 게이트 ㉡. 등록은 `lib/api/operations.ts` 의 전용 함수로만 부를 수 있고(키가 필수 인자),
+ *    회수는 행을 지우는 것이 아니라 `retracted` 로 내리는 것이다 (계약서 §10).
+ */
+describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠진다", () => {
+  it("등록한 항목이 GET 에 그대로 나온다", async () => {
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+    await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "땅콩", category: "식품" },
+      newIdempotencyKey(),
+    );
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.length).toBe(before.items.length + 1);
+    expect(after.items.some((item) => item.label === "땅콩")).toBe(true);
+  });
+
+  it("같은 항목을 새 키로 또 등록하면 409 다 (재시도와 다른 경로)", async () => {
+    await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "땅콩", category: "식품" },
+      newIdempotencyKey(),
+    );
+
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: "allergy", label: "땅콩", category: "식품" },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_exists"));
+  });
+
+  it("내린 항목은 목록에서 빠지고, 같은 항목을 다시 등록할 수 있다", async () => {
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    const target = before.items[0];
+
+    await api.delete(`/children/c1/health-safety/${target.id}`);
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.some((item) => item.id === target.id)).toBe(false);
+
+    // 내려간 뒤에는 같은 라벨이 다시 등록돼야 한다 — 회수가 "영영 못 쓰는 이름" 을 만들면 안 된다.
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: target.type, label: target.label, category: target.category },
+        newIdempotencyKey(),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("이미 내려간 항목을 또 내리면 404 다", async () => {
+    const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    const target = items[0];
+
+    await api.delete(`/children/c1/health-safety/${target.id}`);
+
+    await expect(api.delete(`/children/c1/health-safety/${target.id}`)).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "not_found"),
+    );
   });
 });
 

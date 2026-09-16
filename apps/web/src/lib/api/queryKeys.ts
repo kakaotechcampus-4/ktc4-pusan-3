@@ -24,6 +24,13 @@ export const qk = {
     [...qk.child(childId), "affinities", filters ?? null] as const,
   healthSafety: (childId: string) => [...qk.child(childId), "health-safety"] as const,
   /**
+   * 11 아이 프로필. ⚠️ `GET /children/{cid}` 는 계약서 v1 에 없다 (이슈 #75) —
+   * 지금은 목만 답한다. 아이 스코프 아래라 아이를 바꾸면 한 번에 무효화된다.
+   */
+  childProfile: (childId: string) => [...qk.child(childId), "profile"] as const,
+  /** 11 키·몸무게 측정 로그. ⚠️ 계약서 v1 에 없다 (이슈 #75). */
+  growth: (childId: string) => [...qk.child(childId), "growth"] as const,
+  /**
    * 05 제안 후보. 같은 run·같은 Agent 조합이면 같은 화면이라 키에 둘 다 담는다 —
    * 뒤로 갔다 오면 Agent 를 다시 돌리지 않는다 (NF-01 은 model call 을 센다).
    */

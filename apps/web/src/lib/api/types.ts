@@ -657,6 +657,85 @@ export interface CreateChildResponse {
   role: "owner" | "member";
 }
 
+/* ── 11 아이 프로필 ──────────────────────────────────────────────────── */
+
+/**
+ * ⚠️ **계약서 v1 에 없다** (이슈 #75 · `apps/api` Owner 협의 + PM 결정 대기).
+ *    계약서가 주는 것은 `PATCH /children/{cid}` 의 `nickname` · `birth_date` 둘뿐이고,
+ *    읽는 엔드포인트(`GET /children/{cid}`)도 성별도 측정 로그도 없다.
+ *    최상위 `CLAUDE.md` §2 의 "수집은 이름(별명)·나이·알레르기 여부까지" 도 함께 걸린다.
+ *    그래서 아래 세 타입은 **목에서만 사는 제안된 모양**이고, 서버가 붙기 전에
+ *    이 주석이 지워지면 안 된다 — 지워지는 순간 계약서에 있는 것처럼 보인다.
+ *
+ * 🚨 **성별은 화면 표시 전용으로 제안했다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
+ *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다.
+ */
+export type Gender = "male" | "female" | "unspecified";
+
+export interface ChildProfile {
+  id: string;
+  nickname: string;
+  /** YYYY-MM-DD. */
+  birth_date: string;
+  /** 🚨 서버가 만든 문구. 프론트가 생일에서 계산하지 않는다 (CLAUDE.md §3). */
+  age_display: string;
+  gender: Gender;
+  relation: Relation;
+  role: "owner" | "member";
+}
+
+/** 셋 다 선택이다 — 고친 것만 보낸다. */
+export interface UpdateChildRequest {
+  nickname?: string;
+  birth_date?: string;
+  gender?: Gender;
+}
+
+export interface UpdateChildResponse {
+  child: ChildProfile;
+}
+
+/**
+ * 키 · 몸무게를 **잰 날 한 줄**. 🚨 지표가 아니라 기록이다.
+ *
+ * 🚨 **증감·백분위·또래 비교 필드를 여기에 만들지 않는다.** `DESIGN.md` 의
+ *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, "지난번보다 +2cm" 는 이 제품이
+ *    하지 않기로 한 **발달 평가**다 (CLAUDE.md §2 · 스펙 아웃).
+ */
+export interface GrowthLog {
+  id: string;
+  /** YYYY-MM-DD. */
+  measured_on: string;
+  /** 🚨 한쪽만 재고 오는 날이 있다. 둘 다 null 인 행은 서버가 거부한다. */
+  height_cm: number | null;
+  weight_kg: number | null;
+  /** 🚨 서버 문구("2주 전"). 없으면 그 자리를 비운다 — 프론트가 계산해 채우지 않는다. */
+  measured_label?: string;
+  note: string | null;
+}
+
+/** `?cursor=` 는 아직 쓰지 않는다 — 측정 기록은 한 화면에 다 들어오는 분량이다. */
+export interface GrowthLogsResponse {
+  items: GrowthLog[];
+  next_cursor: string | null;
+}
+
+export interface CreateGrowthLogRequest {
+  measured_on: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}
+
+export interface CreateGrowthLogResponse {
+  log: GrowthLog;
+}
+
+/** `GET /children/{cid}/health-safety` — 보호자가 확정한 것만 들어 있다 (NF-03). */
+export interface HealthSafetyListResponse {
+  items: HealthSafety[];
+  updated_at: string;
+}
+
 /* ── 02 이야기 하나 ──────────────────────────────────────────────────── */
 
 /** 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. */

@@ -2,11 +2,12 @@ import { authHandlers } from "./auth";
 import { calendarHandlers } from "./calendar";
 import { childrenHandlers } from "./children";
 import { memoryHandlers } from "./memories";
+import { profileHandlers } from "./profile";
 import { runHandlers } from "./runs";
 import { suggestionHandlers } from "./suggestions";
 
 /**
- * 화면 01~07 · 09 가 쓰는 엔드포인트. 08 사진 · 10 설정은 다음 이슈다.
+ * 화면 01~07 · 09 · 11 이 쓰는 엔드포인트. 08 사진 · 10 설정은 다음 이슈다.
  * 여기 없는 경로는 onUnhandledRequest 가 콘솔에 경고로 알려준다.
  *
  * 🚨 **순서가 뜻을 갖는 자리가 하나 있다.** `suggestionHandlers` 의
@@ -18,6 +19,10 @@ import { suggestionHandlers } from "./suggestions";
 export const handlers = [
   ...authHandlers,
   ...childrenHandlers,
+  // 🚨 `childrenHandlers` **뒤**여야 한다. msw 는 먼저 등록된 핸들러가 이기는데,
+  //    `GET /children/:cid` 는 `GET /children/:cid/home` 보다 넓은 패턴이 아니므로
+  //    충돌하지는 않는다 — 다만 순서가 뜻을 갖는 자리(아래 주석)와 같은 파일이라 붙여 둔다.
+  ...profileHandlers,
   ...runHandlers,
   ...suggestionHandlers,
   ...memoryHandlers,
