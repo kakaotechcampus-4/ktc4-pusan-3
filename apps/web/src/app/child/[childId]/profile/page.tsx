@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ruler, ShieldCheck } from "lucide-react";
+import { Ruler, Shield } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
@@ -195,22 +195,39 @@ function IdentityForm({ childId, profile }: { childId: string; profile: ChildPro
   const [nicknameError, setNicknameError] = useState<string | null>(null);
 
   /**
-   * 🚨 **서버 값이 바뀌면 폼을 그 값으로 맞춘다.** `useState` 초기값은 첫 렌더에서 한 번만
-   *    읽히므로, 배우자가 같은 아이의 별명을 고쳐서 이 쿼리가 새로 받아와도 폼은 옛 값을
-   *    들고 있었다. 그러면 아래 `changes` 가 **남이 방금 저장한 값을 내 수정분으로 잡고**,
+   * 🚨 **서버 값이 바뀌면 손대지 않은 칸만 그 값으로 맞춘다.** `useState` 초기값은 첫 렌더에서
+   *    한 번만 읽히므로, 배우자가 같은 아이의 별명을 고쳐서 이 쿼리가 새로 받아와도 폼은 옛
+   *    값을 들고 있었다. 그러면 아래 `changes` 가 **남이 방금 저장한 값을 내 수정분으로 잡고**,
    *    저장 버튼이 켜진 채 그 수정을 되돌리자고 제안한다 — 공유 계정이라 실제로 나는 경로다.
+   *
+   * 🚨 **칸 단위로 맞춘다.** 세 칸을 통째로 덮으면 배우자가 생일을 고친 순간 내가 적고 있던
+   *    별명이 말없이 사라진다. 지금 값이 마지막으로 받은 서버 값과 같을 때(= 안 건드린 칸)만
+   *    새 값으로 바꾼다.
+   *    ⚠️ 남는 경우가 하나 있다 — **같은 칸을 둘이 동시에** 고치면 내가 적던 쪽이 남고, 저장하면
+   *    배우자 값을 덮는다. 그건 충돌이라 화면이 혼자 못 정한다 (지금은 내 입력을 지키는 쪽).
    *
    * 🚨 effect 가 아니라 렌더 중 조정이다 (React "Adjusting state when props change").
    *    effect 로 하면 옛 값으로 한 프레임을 먼저 그린다. TanStack Query 는 structural
    *    sharing 이라 내용이 같으면 참조가 그대로여서, 이 비교는 값이 실제로 바뀔 때만 걸린다.
    */
-  const serverValues = `${profile.nickname}\u0000${profile.birth_date}\u0000${profile.gender}`;
-  const [syncedValues, setSyncedValues] = useState(serverValues);
-  if (syncedValues !== serverValues) {
-    setSyncedValues(serverValues);
-    setNickname(profile.nickname);
-    setBirthDate(profile.birth_date);
-    setGender(profile.gender);
+  const [synced, setSynced] = useState(() => ({
+    nickname: profile.nickname,
+    birth_date: profile.birth_date,
+    gender: profile.gender,
+  }));
+  if (
+    synced.nickname !== profile.nickname ||
+    synced.birth_date !== profile.birth_date ||
+    synced.gender !== profile.gender
+  ) {
+    if (nickname === synced.nickname) setNickname(profile.nickname);
+    if (birthDate === synced.birth_date) setBirthDate(profile.birth_date);
+    if (gender === synced.gender) setGender(profile.gender);
+    setSynced({
+      nickname: profile.nickname,
+      birth_date: profile.birth_date,
+      gender: profile.gender,
+    });
   }
 
   /**
@@ -532,7 +549,7 @@ function SafetySection({
         <SectionError what="안전 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon={ShieldCheck}
+          icon={Shield}
           title="등록된 것이 아직 없어요"
           description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사 제안이 이 목록을 보고 걸러요."
           count={0}

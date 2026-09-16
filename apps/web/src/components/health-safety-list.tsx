@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
-import { Shield, ShieldAlert } from "lucide-react";
+import { Shield } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Banner } from "@/components/ui/banner";
@@ -397,6 +397,3 @@ export function HealthSafetySheet({
     </BottomSheet>
   );
 }
-
-/** 구역 제목 옆에 서는 아이콘. 목록이 비어 있을 때 `EmptyState` 가 쓴다. */
-export const HEALTH_SAFETY_ICON = ShieldAlert;
