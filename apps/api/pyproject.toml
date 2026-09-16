@@ -16,6 +16,7 @@ dependencies = [
     "pgvector>=0.5.0",
     "openai>=1.60",
     "tzdata>=2026.3",
+    "openpyxl>=3.1.5",
 ]
 
 [dependency-groups]
