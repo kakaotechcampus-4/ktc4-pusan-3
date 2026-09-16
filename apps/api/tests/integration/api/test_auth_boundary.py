@@ -137,6 +137,24 @@ async def test_cors_stays_off_when_no_origin_is_configured(monkeypatch):
     assert "access-control-allow-origin" not in response.headers
 
 
+@pytest.mark.parametrize("field", ["AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP"])
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_missing_return_url_fails_at_boot(field, blank):
+    """🚨 #45. 복귀 URL 이 없으면 서버가 뜨지 않는다 — 웹·앱 둘 다.
+
+    카카오 키와 달리 "없어도 뜨고 ready: false 로 알린다" 를 쓰지 않는다. 이 값이 없으면
+    인증이 아예 성립하지 않기 때문이다 — 성공도 실패도 전부 여기로 돌아간다(§2-3).
+    빠진 채로 뜨면 사용자가 카카오 인증을 **마친 뒤에** 깨진다.
+
+    앱도 같이 막는 이유는 #58 리뷰에서 정했다 — 런타임 거절로 두면 앱 주소가 빠진
+    배포를 앱 사용자만 겪는다. 배포 시점에 끊는 편이 낫다.
+
+    키만 두고 값을 비우는 실수가 흔해서 빈 문자열도 함께 막는다.
+    """
+    with pytest.raises(ValidationError):
+        Settings(**{field: blank})
+
+
 def test_wildcard_origin_fails_at_boot():
     """🚨 * 는 부팅에서 끊는다.
 

@@ -1,9 +1,9 @@
-"""Pydantic 모델을 OpenAI function tool 스펙으로 바꾼다.
+"""Pydantic 모델을 OpenAI function tool 스펙으로 바꾼다. Memory · Food · Supervisor 가 같이 쓴다.
 
 스키마 정본은 Pydantic 모델 하나뿐이다. 모델에서 JSON Schema를 뽑아 쓰기 때문에
 검증 규칙과 모델에게 보내는 스펙이 어긋날 수 없다.
 
-매 요청마다 tool 27개의 스키마가 통째로 실려 나가므로 토큰을 아낀다.
+매 요청마다 tool 스키마가 통째로 실려 나가므로 토큰을 아낀다.
 $ref 를 펼쳐 넣고 모델이 안 읽는 키는 뺀다.
 """
 

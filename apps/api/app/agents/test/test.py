@@ -1,25 +1,30 @@
-"""Memory Agent 라이브 eval. 실제 모델을 부르고 run()을 돌린다.
+"""라이브 테스트. 실제 모델로 발화 하나를 Supervisor → Memory → Food 까지 돌린다.
+
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
-    uv run pytest apps/api/app/agents/test/test.py -m live -s
+    uv run pytest app/agents/test/test.py -m live -k end_to_end -s   # 끝까지
+    uv run pytest app/agents/test/test.py -m live -k split -s        # Supervisor 단독
+    uv run pytest app/agents/test/test.py -m live -s                 # 둘 다
+
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
-MEMORY_API_KEY / MEMORY_BASE_URL / MEMORY_MODEL 은 apps/api/.env 에서 읽는다.
+SUPERVISOR_MODEL · SUPERVISOR_BASE_URL 이 비면 MEMORY_* 를 쓴다 — 기준선이 그 상태다.
+후보 모델은 셸 환경변수로 바꿔 끼운다: $env:SUPERVISOR_MODEL / $env:SUPERVISOR_BASE_URL
 
-프로토타입과 달라진 점 — 이 파일은 프롬프트도 tool 스펙도 루프도 갖고 있지 않다.
-run() 을 부르고 저장된 결과를 본다. 사본을 측정하면 구현을 고쳐도 점수가 안 변한다.
+  split        Supervisor 만 부른다 (Step 5). 조각을 어떻게 나누고 어디로 보내는지
+  end_to_end   Supervisor → Memory(task 모드) → Food 를 끝까지 (Step 9).
+               Food 는 테스트 가짜가 아니라 agents/food 의 mock 그대로다 —
+               실구현이 들어오면 이 테스트가 그대로 회귀 테스트가 된다
 
-인자를 직접 검사하지 않는 이유: 날짜·시각은 모델이 표현만 주고 코드가 확정한다.
-"모델이 2026-09-11 을 보냈는가" 가 아니라 "운동회가 9/11 로 저장됐는가"를 확인해야 한다.
 """
 
 import asyncio
 import json
 import os
-import re
 import time
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from datetime import date, datetime
+from collections import Counter
+from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -27,577 +32,639 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agents.common.config import AgentSettings
 from app.agents.common.datetime_rules import DateRange
-from app.agents.common.llm_client import LLMClient
-from app.agents.memory.agent import MemoryAgentResult, run
+from app.agents.common.llm_client import LLMClient, LLMConfigError
+from app.agents.food.context import FoodContext
+from app.agents.food.schemas.common import FeedingStage, FoodTaskType
 from app.agents.memory.context import AgentContext
+from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory.store.ports import EventItemRow, EventRow, ObservationRow, ReminderRow
+from app.agents.memory.store.ports import EventRow, ObservationRow
+from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 tool 이 정본이다
+from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
+from app.agents.supervisor import agent as supervisor
+from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
+from app.agents.test.routing_cases import (
+    CASES_BY_ID,
+    RC_CASES,
+    T_CASES,
+    RoutingCase,
+    SplitScore,
+    covered_by,
+    format_score,
+    format_segments,
+    format_spans,
+    score_split,
+)
 
 pytestmark = pytest.mark.live
 
+# 흔들림(같은 입력에 결과가 바뀌는 것)을 보려면 2 이상으로 올린다
+TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+
 KST = ZoneInfo("Asia/Seoul")
-NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)  # 수요일. 상대 날짜 해석을 고정한다
+# 기준 시각은 오늘 오전 9시. 날짜를 박아 두면 모델이 보는 "현재 시각" 이 실제와 달라진다.
+# 결과를 나란히 비교할 때만 고정한다 — $env:EVAL_NOW="2026-09-09" (test_memory.py 와 같은 변수)
+_PINNED = os.getenv("EVAL_NOW")
+TODAY = date.fromisoformat(_PINNED) if _PINNED else datetime.now(KST).date()
+NOW = datetime(TODAY.year, TODAY.month, TODAY.day, 9, 0, tzinfo=KST)
 CHILD = UUID("00000000-0000-7000-8000-000000000001")
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
-
-DOMAINS = ("food", "health", "education", "activity")
-MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete 전부를 금지한다
-
+DOMAINS = ("food", "health", "education", "activity", "routine")
 RESULT_PATH = Path(
-    os.getenv("EVAL_RESULT_PATH", str(Path(__file__).with_name("eval_results.jsonl")))
+    os.getenv("TEST_RESULT_PATH", str(Path(__file__).with_name("test_results.jsonl")))
 )
-INPUT_PATH = Path(os.getenv("EVAL_INPUT_PATH", str(Path(__file__).with_name("test_input.txt"))))
-EVAL_MODELS = [x.strip() for x in os.getenv("EVAL_MODELS", "").split(",") if x.strip()]
+# 있으면 비용을 같이 찍는다. $env:LLM_INPUT_PRICE_PER_M="0.15" 처럼 준다
+INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
+OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CLARIFY = ("무엇을", "어떤", "알려주", "말씀해", "확인이 필요", "골라", "선택", "할까요", "인가요")
-_OUT_OF_SCOPE = ("범위", "추천", "진단", "직접 입력", "할 수 없", "하지 않", "드릴 수 없", "어려워")
-
-
-# ── 결과 스냅샷 ─────────────────────────────────────────────────
-@dataclass
-class Snapshot:
-    """run() 이 끝난 뒤의 호출 흔적 + 저장된 상태."""
-
-    result: MemoryAgentResult
-    observations: dict[str, list[ObservationRow]]
-    events: list[tuple[EventRow, list[EventItemRow], list[ReminderRow]]]
-
-    def count(self, tool: str) -> int:
-        return sum(1 for call in self.result.calls if call.name == tool)
-
-    def rows(self, domain: str) -> list[ObservationRow]:
-        return self.observations[domain]
-
-    def fields(self, domain: str) -> list[dict[str, Any]]:
-        return [row.fields for row in self.rows(domain)]
-
-    def observed_on(self, domain: str) -> list[str]:
-        return [row.observed_on.isoformat() for row in self.rows(domain)]
-
-    def starts_at(self) -> str:
-        first = self.events[0][0] if self.events else None
-        return first.starts_at.astimezone(KST).isoformat() if first else ""
-
-    @property
-    def item_names(self) -> list[str]:
-        return [item.item_name for _, items, _ in self.events for item in items]
-
-    @property
-    def remind_at(self) -> list[str]:
-        return [
-            reminder.remind_at.astimezone(KST).isoformat()
-            for _, _, reminders in self.events
-            for reminder in reminders
-        ]
-
-    @property
-    def wrote_anything(self) -> bool:
-        return any(self.observations[domain] for domain in DOMAINS) or bool(self.events)
-
-    def said(self, needles: tuple[str, ...]) -> bool:
-        text = self.result.final_message or ""
-        return any(needle in text for needle in needles)
+_CASES = (*RC_CASES, *T_CASES)
 
 
-Check = tuple[str, Callable[[Snapshot], bool]]
+def _client() -> LLMClient:
+    try:
+        return LLMClient(role="supervisor")
+    except LLMConfigError as exc:
+        pytest.skip(f"Supervisor 설정이 필요합니다: {exc}")
+
+
+@pytest.mark.parametrize("case", _CASES, ids=[case.case_id for case in _CASES])
+def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> None:
+    """조각을 어떻게 나누고 어디로 보내는지 본다. 채점은 구간 단위다.
+
+    Step 5 에서는 **틀린 라벨로 실패시키지 않는다** — 프롬프트를 고칠 근거를 모으는 단계다.
+    합격선과 assert 는 Step 9·10 에서 붙인다. 여기서 실패하는 건 Supervisor 가 아예
+    결과를 못 낸 경우(검증 실패·LLM 오류)뿐이다.
+    """
+    # 라벨이 틀려도 실패하지 않는다 — 정답 구간은 점수로만 본다. 그래서 둘을 나눠 적는다
+    expect(f"검증을 통과한 출력이 나온다 (라벨은 점수로만 본다) · 정답 구간 {format_spans(case)}")
+    client = _client()
+    for attempt in range(1, TEST_REPEAT + 1):
+        started = time.perf_counter()
+        # keep_rejected — 버려진 조각을 콘솔에서 본다. 케이스 문장이 합성이라 괜찮다
+        result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        score = score_split(case, result.output)
+
+        suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+        print(f"\n[{case.case_id}{suffix}] {case.watch}")
+        print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
+        print(f"      {format_score(score)}")
+        if result.error:
+            print(f"      검증 실패: {result.error} ({result.detail})")
+            print(f"      버려진 조각: {format_segments(result.rejected)}")
+            if result.rejected_raw:  # 스키마에서 걸리면 조각이 객체가 되지 못한다
+                print(f"      모델이 낸 원본: {result.rejected_raw}")
+
+        assert result.error is None, (
+            f"{case.case_id}: Supervisor 실패 {result.error} ({result.detail})"
+        )
+
+
+# ── 끝까지 (Step 9) ─────────────────────────────────────────────
+@dataclass(frozen=True)
+class LiveCase:
+    case: RoutingCase
+    stage: FeedingStage
+    label: str  # 변형이면 접미사가 붙는다 (RC20-i)
+
+
+_E2E_CASES: tuple[LiveCase, ...] = (
+    *(LiveCase(case, case.stage, case.case_id) for case in RC_CASES),
+    # 같은 입력을 영아기로 한 번 더 — 식이 단계는 발화가 아니라 아이 나이에서 코드가 정한다
+    LiveCase(CASES_BY_ID["RC20"], FeedingStage.INFANT, "RC20-i"),
+    # T14 는 test_memory.py 에도 있지만 거기서는 Memory 만 돈다.
+    # "저녁에는 뭘 먹이면 좋을까?" 가 Food 로 떨어지는지는 여기서만 실제로 확인된다
+    LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
+)
+
 Seed = Callable[[AgentContext], Awaitable[None]]
 
 
-@dataclass(frozen=True)
-class EvalCase:
-    case_id: str
-    text: str
-    seed: Seed | None = None
-    required_tools: dict[str, int] = field(default_factory=dict)
-    forbidden_tools: set[str] = field(default_factory=set)
-    expect_parse: bool | None = None  # True=불러야 · False=부르면 안 됨 · None=따지지 않음
-    expect_clarification: bool = False
-    expect_out_of_scope: bool = False
-    checks: tuple[Check, ...] = ()
-
-
-# ── seed — 조회·수정·삭제 케이스가 기댈 기존 기록 ───────────────
-async def _seed_block_play(context: AgentContext) -> None:
-    await context.store.create_observation(
-        domain="activity",
-        child_id=CHILD,
-        source_writer=WRITER,
-        raw_text="어제 블록놀이를 20분 했어",
-        observed_on=date(2026, 9, 8),
-        observed_range=DateRange(start=date(2026, 9, 8), end=date(2026, 9, 9)),
-        fields={"activity": "블록놀이", "subject": "블록놀이", "duration_min": 20},
-    )
-
-
-async def _seed_apple(context: AgentContext) -> None:
+async def _seed_lunch(context: AgentContext) -> None:
+    """RC13 — 고칠 기록이 있어야 수정 요청이 성립한다."""
     await context.store.create_observation(
         domain="food",
         child_id=CHILD,
         source_writer=WRITER,
-        raw_text="어제 사과를 먹었어",
-        observed_on=date(2026, 9, 8),
-        observed_range=DateRange(start=date(2026, 9, 8), end=date(2026, 9, 9)),
-        fields={"subject": "사과", "action": "먹었다"},
+        raw_text="점심에 떡볶이를 먹었어",
+        observed_on=TODAY,
+        observed_range=DateRange(start=TODAY, end=TODAY + timedelta(days=1)),
+        fields={"subject": "떡볶이", "action": "먹었다"},
     )
 
 
-async def _seed_sports_day(context: AgentContext) -> None:
-    await context.store.create_event(
-        child_id=CHILD,
-        title="운동회",
-        starts_at=datetime(2026, 9, 11, tzinfo=KST),
-        ends_at=None,
-        all_day=True,
-        fields={"status": "draft", "created_by": "caregiver", "category": "institution"},
-    )
+_SEEDS: dict[str, Seed] = {"RC13": _seed_lunch}
 
 
-def _no_guess(domain: str, key: str) -> Check:
-    return (
-        f"{domain}.{key} 를 지어내지 않았다",
-        lambda s: all(f.get(key) in (None, "") for f in s.fields(domain)),
-    )
+@dataclass
+class Observed:
+    """한 번 돌린 결과. 콘솔·JSONL·판정이 전부 여기서 나온다."""
+
+    live: LiveCase
+    result: PipelineResult
+    score: SplitScore
+    observations: dict[str, list[ObservationRow]]
+    events: list[tuple[EventRow, int]]  # 일정과 그 준비물 수
+    order: list[str]  # 이벤트 종류 순서
+    elapsed_ms: int
+    failures: list[str] = field(default_factory=list)
+    reports: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)  # 저장에 안 남은 관찰 구간 (콘솔 전용)
+
+    @property
+    def rows(self) -> list[ObservationRow]:
+        return [row for domain in DOMAINS for row in self.observations[domain]]
 
 
-# ── 케이스 ──────────────────────────────────────────────────────
-CASES: list[EvalCase] = [
-    EvalCase(
-        "T01",
-        "오늘 민준이가 아침에 사과를 반 개 먹었어.",
-        required_tools={"create_observation_food": 1},
-        forbidden_tools={"create_observation_activity", "create_event"},
-        expect_parse=False,
-        checks=(
-            (
-                "사과가 저장됐다",
-                lambda s: any("사과" in str(f.get("subject")) for f in s.fields("food")),
-            ),
-            (
-                "양이 보존됐다",
-                lambda s: any("반" in str(f.get("amount")) for f in s.fields("food")),
-            ),
-            ("오늘로 기록됐다", lambda s: s.observed_on("food") == ["2026-09-09"]),
-        ),
-    ),
-    EvalCase(
-        "T02",
-        "내일 아침은 바나나를 먹일 예정이야.",
-        forbidden_tools={MUTATING},
-        checks=(("아무것도 저장하지 않았다", lambda s: not s.wrote_anything),),
-    ),
-    EvalCase(
-        "T03",
-        "오늘 유치원에서 레고로 성을 만들면서 친구랑 계속 놀았대.",
-        required_tools={"create_observation_activity": 1},
-        forbidden_tools={"create_observation_education", "create_observation_food"},
-        checks=(
-            _no_guess("activity", "duration_min"),
-            (
-                "전해 들은 말로 기록됐다",
-                lambda s: all(
-                    f.get("confidence_source") == "parent_hearsay" for f in s.fields("activity")
-                ),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T04",
-        "오늘 집에서 한글 자모 활동지를 20분 했어. 끝까지 집중해서 풀었어.",
-        required_tools={"create_observation_education": 1},
-        forbidden_tools={"create_observation_activity"},
-        checks=(
-            (
-                "topic 이 한글 자모다",
-                lambda s: any(
-                    "한글" in str(f.get("topic")) or "자모" in str(f.get("topic"))
-                    for f in s.fields("education")
-                ),
-            ),
-            (
-                "20분이 저장됐다",
-                lambda s: any(f.get("duration_min") == 20 for f in s.fields("education")),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T05",
-        "선생님 말로는 오늘 낮에 콧물이 좀 났는데 열은 없었대.",
-        required_tools={"create_observation_health": 1},
-        forbidden_tools={"create_observation_activity", "create_observation_food"},
-        checks=(
-            (
-                "콧물이 저장됐다",
-                lambda s: any(
-                    any("콧물" in str(x) for x in f.get("symptom", [])) for f in s.fields("health")
-                ),
-            ),
-            (
-                "없다고 한 열은 빠졌다",
-                lambda s: (
-                    not any(
-                        any("열" in str(x) for x in f.get("symptom", []))
-                        for f in s.fields("health")
-                    )
-                ),
-            ),
-            (
-                "전해 들은 말로 기록됐다",
-                lambda s: all(
-                    f.get("confidence_source") == "parent_hearsay" for f in s.fields("health")
-                ),
-            ),
-            _no_guess("health", "observed_time"),
-        ),
-    ),
-    EvalCase(
-        "T06",
-        "오늘 저녁으로 닭갈비를 먹였어. 오늘 유치원에서는 하루 종일 쌓기놀이를 했대. "
-        "모레 운동회가 있고 체육복을 가져가야 해. 운동회 알림은 내일 오전 8시에 만들어줘. "
-        "그리고 내일 일정도 알려줘.",
-        required_tools={
-            "create_observation_food": 1,
-            "create_observation_activity": 1,
-            "create_event": 1,
-            "create_event_item": 1,
-            "create_reminder": 1,
-            "query_event": 1,
-        },
-        expect_parse=True,
-        checks=(
-            ("운동회가 9/11 로 저장됐다", lambda s: s.starts_at().startswith("2026-09-11")),
-            ("체육복이 준비물에 있다", lambda s: any("체육복" in name for name in s.item_names)),
-            (
-                "알림이 9/10 08:00 이다",
-                lambda s: any(x.startswith("2026-09-10T08:00") for x in s.remind_at),
-            ),
-            (
-                "하루 종일이 1440 이다",
-                lambda s: any(f.get("duration_min") == 1440 for f in s.fields("activity")),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T07",
-        "내일 무슨 일정 있어?",
-        required_tools={"query_event": 1},
-        forbidden_tools={MUTATING},
-    ),
-    EvalCase(
-        "T08",
-        "어제 블록놀이 했다고 기록한 거 보여줘.",
-        seed=_seed_block_play,
-        required_tools={"query_observation_activity": 1},
-        forbidden_tools={MUTATING},
-    ),
-    EvalCase(
-        "T09",
-        "어제 블록놀이를 20분 했다고 기록했는데 40분으로 바꿔줘.",
-        seed=_seed_block_play,
-        required_tools={"query_observation_activity": 1, "update_observation_activity": 1},
-        forbidden_tools={"create_observation_activity", "delete_observation_activity"},
-        checks=(
-            (
-                "40분으로 바뀌었다",
-                lambda s: [f.get("duration_min") for f in s.fields("activity")] == [40],
-            ),
-        ),
-    ),
-    EvalCase(
-        "T10",
-        "어제 사과 먹었다고 저장한 기록 지워줘.",
-        seed=_seed_apple,
-        required_tools={"query_observation_food": 1, "delete_observation_food": 1},
-        forbidden_tools={"create_observation_food"},
-        checks=(("음식 기록이 지워졌다", lambda s: s.rows("food") == []),),
-    ),
-    EvalCase(
-        "T11",
-        "모레 운동회 시간을 오전 10시로 바꿔줘.",
-        seed=_seed_sports_day,
-        required_tools={"query_event": 1, "update_event": 1},
-        forbidden_tools={"create_event", "delete_event"},
-        checks=(
-            ("9/11 10:00 으로 바뀌었다", lambda s: s.starts_at().startswith("2026-09-11T10:00")),
-        ),
-    ),
-    EvalCase(
-        "T12",
-        "모레 운동회 전날 저녁 8시에 알려줘.",
-        seed=_seed_sports_day,
-        required_tools={"query_event": 1, "create_reminder": 1},
-        forbidden_tools={"create_event"},
-        checks=(
-            (
-                "알림이 9/10 20:00 이다",
-                lambda s: any(x.startswith("2026-09-10T20:00") for x in s.remind_at),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T13",
-        "금요일 오전 10시에 어린이집 물놀이가 있어. 수영복이랑 여벌옷을 챙겨야 해.",
-        required_tools={"create_event": 1, "create_event_item": 2},
-        expect_parse=False,  # 한 일정 + 그 부속이라 복합이 아니다 (D7)
-        checks=(
-            ("9/11 10:00 로 저장됐다", lambda s: s.starts_at().startswith("2026-09-11T10:00")),
-            ("수영복이 있다", lambda s: any("수영복" in name for name in s.item_names)),
-            ("여벌옷이 있다", lambda s: any("여벌옷" in name for name in s.item_names)),
-        ),
-    ),
-    EvalCase(
-        "T14",
-        "오늘 간식으로 딸기케이크를 먹였어. 저녁에는 뭘 먹이면 좋을까?",
-        required_tools={"create_observation_food": 1},
-        forbidden_tools={"create_event", "create_observation_activity"},
-        expect_parse=True,
-        expect_out_of_scope=True,
-        checks=(
-            (
-                "딸기케이크만 저장됐다",
-                lambda s: any("딸기케이크" in str(f.get("subject")) for f in s.fields("food")),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T15",
-        "오늘 기록 다 지워줘.",
-        seed=_seed_apple,
-        forbidden_tools={MUTATING},
-        expect_clarification=True,
-        checks=(("아무것도 지우지 않았다", lambda s: len(s.rows("food")) == 1),),
-    ),
-    EvalCase(
-        "T16",
-        "오늘 2시에 모래놀이했어.",
-        required_tools={"create_observation_activity": 1},
-        expect_parse=False,
-    ),
-    EvalCase(
-        "T17",
-        "오늘 2시에 모래놀이하고 떡볶이 먹었어.",
-        required_tools={"create_observation_activity": 1, "create_observation_food": 1},
-        expect_parse=True,
-    ),
-    EvalCase(
-        "T18",
-        "내일부터 한글 공부를 시작하려고 해.",
-        forbidden_tools={MUTATING},
-        checks=(("저장 없이 되물었다", lambda s: not s.wrote_anything),),
-    ),
-    EvalCase(
-        "T19",
-        "우리 애 우유 알레르기 있어. 등록해줘.",
-        forbidden_tools={MUTATING},
-        expect_out_of_scope=True,
-        checks=(("아무것도 저장하지 않았다", lambda s: not s.wrote_anything),),
-    ),
-    EvalCase(
-        "T20",
-        "어제부터 계속 기침하는데 무슨 병일까?",
-        required_tools={"create_observation_health": 1},
-        expect_out_of_scope=True,
-        checks=(
-            (
-                "기침이 저장됐다",
-                lambda s: any(
-                    any("기침" in str(x) for x in f.get("symptom", [])) for f in s.fields("health")
-                ),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T21",
-        "선생님이 그러는데 오늘 낮에 배가 아프다고 했대.",
-        required_tools={"create_observation_health": 1},
-        checks=(
-            (
-                "전해 들은 말로 기록됐다",
-                lambda s: all(
-                    f.get("confidence_source") == "parent_hearsay" for f in s.fields("health")
-                ),
-            ),
-            _no_guess("health", "observed_time"),
-        ),
-    ),
-    EvalCase(
-        "T22",
-        "오늘 도서관에서 책 읽고 놀이터에서 그네도 탔어.",
-        required_tools={"create_observation_education": 1, "create_observation_activity": 1},
-        expect_parse=True,
-    ),
-    EvalCase(
-        "T23",
-        "아까 블록놀이 기록 있잖아, 그거 30분으로 고쳐줘.",
-        seed=_seed_block_play,
-        required_tools={"query_observation_activity": 1, "update_observation_activity": 1},
-        forbidden_tools={"create_observation_activity"},
-        checks=(
-            (
-                "30분으로 바뀌었다",
-                lambda s: [f.get("duration_min") for f in s.fields("activity")] == [30],
-            ),
-        ),
-    ),
-    EvalCase(
-        "T24",
-        "다음 주 수요일 병원 예약 있어. 진료 전날 밤 9시에 알려줘.",
-        required_tools={"create_event": 1, "create_reminder": 1},
-        checks=(
-            ("병원이 9/16 으로 저장됐다", lambda s: s.starts_at().startswith("2026-09-16")),
-            (
-                "알림이 9/15 21:00 이다",
-                lambda s: any(x.startswith("2026-09-15T21:00") for x in s.remind_at),
-            ),
-        ),
-    ),
-    EvalCase(
-        "T25",
-        "오늘 사과 먹었고 사과를 좋아하는 것 같아.",
-        required_tools={"create_observation_food": 1},
-        checks=(
-            ("한 건만 저장됐다", lambda s: len(s.rows("food")) == 1),
-            ("좋아함이 반영됐다", lambda s: all(f.get("polarity") == 1 for f in s.fields("food"))),
-        ),
-    ),
-]
-
-
-# ── 입력 파일과의 일치 ──────────────────────────────────────────
-def _load_inputs() -> dict[str, str]:
-    pattern = re.compile(r"^\[(T\d{2})\]\s*(.+)$")
-    result: dict[str, str] = {}
-    for line in INPUT_PATH.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        match = pattern.match(line.strip())
-        if not match:
-            raise AssertionError(f"test_input.txt 형식 오류: {line}")
-        result[match.group(1)] = match.group(2).strip()
-    return result
-
-
-FILE_INPUTS = _load_inputs()
-_MISSING = [case.case_id for case in CASES if case.case_id not in FILE_INPUTS]
-assert not _MISSING, f"test_input.txt 에 없는 CASES id: {_MISSING}"
-for _case in CASES:
-    assert _case.text == FILE_INPUTS[_case.case_id], f"{_case.case_id} 입력이 파일과 다릅니다."
-
-
-# ── 실행 ────────────────────────────────────────────────────────
-def _client(model: str | None) -> LLMClient:
-    settings = AgentSettings(MEMORY_MODEL=model) if model else AgentSettings()
-    if not settings.MEMORY_API_KEY or not settings.MEMORY_BASE_URL:
-        pytest.skip("MEMORY_API_KEY / MEMORY_BASE_URL 이 필요합니다. apps/api/.env 를 확인하세요.")
-    return LLMClient(settings)
-
-
-async def _snapshot(case: EvalCase, client: LLMClient) -> Snapshot:
-    store = InMemoryStore(now=NOW)
-    context = AgentContext(child_id=CHILD, source_writer=WRITER, now=NOW, timezone=KST, store=store)
-    if case.seed:
-        await case.seed(context)
-
-    result = await run(case.text, context, client=client)
-
-    events = [
-        (
-            event,
-            await store.list_event_items(event_id=event.id),
-            await store.list_reminders(event_id=event.id),
-        )
-        for event in await store.query_events(child_id=CHILD)
-    ]
-    observations = {
-        domain: await store.query_observations(domain=domain, child_id=CHILD) for domain in DOMAINS
-    }
-    return Snapshot(result=result, observations=observations, events=events)
-
-
-def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
-    failures: list[str] = []
-    if not snapshot.result.completed:
-        failures.append("MAX_STEPS 안에 끝내지 못함")
-
-    for tool, minimum in case.required_tools.items():
-        actual = snapshot.count(tool)
-        if actual < minimum:
-            failures.append(f"{tool}: 최소 {minimum}회 필요, 실제 {actual}회")
-
-    for tool in case.forbidden_tools:
-        if tool == MUTATING:
-            used = [
-                call.name
-                for call in snapshot.result.calls
-                if call.name.startswith(("create_", "update_", "delete_"))
-            ]
-        else:
-            used = [call.name for call in snapshot.result.calls if call.name == tool]
-        if used:
-            failures.append(f"금지된 호출: {sorted(set(used))}")
-
-    if case.expect_parse is True and snapshot.count("parse_input") == 0:
-        failures.append("복합 입력인데 parse_input 을 부르지 않음")
-    if case.expect_parse is False and snapshot.count("parse_input") > 0:
-        failures.append("단일 입력인데 parse_input 을 부름")
-
-    if case.expect_clarification and not snapshot.said(_CLARIFY):
-        failures.append(f"되묻지 않음: {snapshot.result.final_message!r}")
-    if case.expect_out_of_scope and not snapshot.said(_OUT_OF_SCOPE):
-        failures.append(f"범위 밖이라고 안내하지 않음: {snapshot.result.final_message!r}")
-
-    for label, predicate in case.checks:
-        try:
-            if not predicate(snapshot):
-                failures.append(label)
-        except Exception as exc:  # 저장 자체가 안 되면 검사식이 터진다
-            failures.append(f"{label} (검사 실패: {type(exc).__name__})")
-
-    failed = [
-        f"{call.name}:{call.result.get('error', {}).get('code')}"
-        for call in snapshot.result.calls
-        if not call.success
-    ]
-    if failed:
-        failures.append(f"tool 실패 {failed}")
-    return failures
+_RECORDS: list[dict[str, Any]] = []
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _reset_results() -> None:
+def _results() -> Iterator[None]:
     RESULT_PATH.unlink(missing_ok=True)
+    _RECORDS.clear()
+    yield
+    if _RECORDS:
+        print(_format_summary(_RECORDS))
 
 
-@pytest.mark.parametrize("model", EVAL_MODELS or [None], ids=lambda m: m or "env")
-@pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
-def test_memory_agent_eval(case: EvalCase, model: str | None) -> None:
-    client = _client(model)
-    started = time.perf_counter()
-    snapshot = asyncio.run(_snapshot(case, client))
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    failures = _judge(case, snapshot)
+@pytest.mark.parametrize("live", _E2E_CASES, ids=[live.label for live in _E2E_CASES])
+def test_end_to_end(live: LiveCase, expect: Callable[..., None]) -> None:
+    """입력 하나를 끝까지 돌리고 조각이 어디로 갔는지 본다."""
+    expect(*_expected_end_to_end(live))
+    clients = _clients()
+    for attempt in range(1, TEST_REPEAT + 1):
+        observed = asyncio.run(_run_once(live, *clients))
+        record = _record(observed)
+        _RECORDS.append(record)
+        _print_case(observed, attempt)
+        with RESULT_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    record = {
-        "case_id": case.case_id,
-        "model": model or "env",
-        "passed": not failures,
-        "failures": failures,
-        "steps": snapshot.result.steps,
-        "tools": snapshot.result.tool_names,
-        "usage": snapshot.result.usage,
-        "latency_ms": elapsed_ms,
-        "final_message": snapshot.result.final_message,
+        assert not observed.failures, f"{live.label}: " + " / ".join(observed.failures)
+
+
+def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
+    """통과하려면 무엇이 맞아야 하는가. 결과 파일의 [기대] 가 된다 (conftest).
+
+    _judge 가 끊는 것만 적는다. 라벨 점수는 보고만 하므로 여기 넣지 않는다.
+    """
+    case = live.case
+    observe = [
+        span.text
+        for span in case.spans
+        if span.strict and span.kind == SegmentKind.RECORD and span.work == WorkType.OBSERVE
+    ]
+    food_tasks = {
+        span.food_task
+        for span in case.spans
+        if span.kind == SegmentKind.REQUEST and span.agent == DomainAgentName.FOOD
     }
-    with RESULT_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    expected = [
+        f"정답 구간 {format_spans(case)}",
+        "Supervisor 출력이 검증을 통과한다 (버려지면 강등 — 요청이 어디에도 못 간다)",
+        "입력을 그대로 돌려주지 않는다 — 저장·추천·안내·메모 중 하나는 나온다",
+        f"관찰 구간 {len(observe)}개가 저장에 남는다"
+        if observe
+        else "저장이 필요한 관찰 구간 없음",
+        f"Food 호출 {len(food_tasks)}회 (food 요청 조각만 받는다)",
+        "저장(Saved)이 Food 호출보다 먼저",
+        "Memory 가 health_safety 계열 tool 을 부르지 않는다",
+        "food.subject 에 끼니 이름(아침·점심·저녁·간식)이 들어가지 않는다",
+        "같은 날 같은 대상이 두 번 저장되지 않는다",
+        "영양소 분석에 propose_meal_candidates 가 안 열리고 filter_food_safety 는 안 보인다",
+    ]
+    if live.label == "RC20-i":
+        expected.append(f"{live.stage} 라 영양소 분석이 unsupported_stage 로 막힌다")
+    if case.case_id == "RC15":
+        expected.append("보호자 얘기가 아이 관찰로 저장되지 않는다")
+    return tuple(expected)
 
-    verdict = "PASS" if not failures else "FAIL"
-    print(
-        f"\n[{case.case_id}] {verdict} steps={snapshot.result.steps} "
-        f"tools={snapshot.result.tool_names}"
+
+def _clients() -> tuple[LLMClient, LLMClient]:
+    try:
+        return LLMClient(role="supervisor"), LLMClient(role="memory")
+    except LLMConfigError as exc:
+        pytest.skip(f"Supervisor·Memory 설정이 필요합니다: {exc}")
+
+
+async def _run_once(
+    live: LiveCase, supervisor_client: LLMClient, memory_client: LLMClient
+) -> Observed:
+    store = InMemoryStore(now=NOW)
+    memory_context = AgentContext(
+        child_id=CHILD, source_writer=WRITER, now=NOW, timezone=KST, store=store
     )
-    for failure in failures:
-        print(f"    - {failure}")
+    food_context = FoodContext(
+        child_id=CHILD,
+        now=NOW,
+        timezone=KST,
+        stage=live.stage,
+        memory=None,  # type: ignore[arg-type]
+        profile=None,  # type: ignore[arg-type]
+        safety=None,  # type: ignore[arg-type]
+        menu=None,  # type: ignore[arg-type]
+        nutrition=None,  # type: ignore[arg-type]
+    )
+    seed = _SEEDS.get(live.case.case_id)
+    if seed is not None:
+        await seed(memory_context)
 
-    assert not failures, f"{case.case_id}: " + " / ".join(failures)
+    emitted: list[Any] = []
+    started = time.perf_counter()
+    result = await handle_input(
+        live.case.text,
+        memory_context,
+        food_context,
+        run_id=f"live-{live.label}",
+        supervisor_client=supervisor_client,
+        memory_client=memory_client,
+        emit=emitted.append,
+    )
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+    observations = {
+        domain: await store.query_observations(domain=domain, child_id=CHILD) for domain in DOMAINS
+    }
+    events = [
+        (row, len(await store.list_event_items(event_id=row.id)))
+        for row in await store.query_events(child_id=CHILD)
+    ]
+    observed = Observed(
+        live=live,
+        result=result,
+        score=score_split(live.case, result.supervisor.output),
+        observations=observations,
+        events=events,
+        order=[type(event).__name__ for event in emitted],
+        elapsed_ms=elapsed_ms,
+    )
+    _judge(observed)
+    return observed
+
+
+# ── 판정 ────────────────────────────────────────────────────────
+def _judge(observed: Observed) -> None:
+    """실패로 끊을 것과 보고만 할 것을 나눈다. 메시지에는 원문을 담지 않는다 (S10)."""
+    result, case = observed.result, observed.live.case
+    output = result.supervisor.output
+    segments = list(output.segments) if output else []
+
+    # 출력이 버려지면 조각이 하나도 안 나눠진다. 기록은 Memory 단독으로 남지만(S2)
+    # 요청은 어느 Agent 에도 못 간다 — RC20 이 조용히 통과하던 구멍이다
+    # 저장도 추천도 안내도 메모도 없으면 pipeline 이 입력을 그대로 돌려준다.
+    # 되물어야 하는 입력에서 Memory 가 빈 응답을 내면 여기로 떨어진다 (RC15)
+    if result.failed is not None:
+        observed.failures.append(f"입력을 그대로 돌려줬다 ({result.failed.reason})")
+
+    if result.supervisor.error:
+        detail = f"{result.supervisor.error} {result.supervisor.detail}"
+        observed.failures.append(f"Supervisor 출력이 버려졌다 → 강등 ({detail})")
+
+    # Food 는 food REQUEST 조각만 받는다 (S10)
+    allowed = {
+        normalize(segment.text)
+        for segment in segments
+        if segment.kind == SegmentKind.REQUEST and segment.agent == DomainAgentName.FOOD
+    }
+    stray = sum(
+        1
+        for task in result.routing.food_tasks
+        for text in task.request_texts
+        if normalize(text) not in allowed
+    )
+    if stray:
+        observed.failures.append(f"Food 가 food 요청이 아닌 조각을 받았다 ({stray}건)")
+
+    expected = _expected_food_tasks(observed)
+    if len(result.food) != expected:
+        observed.failures.append(f"Food 호출 {len(result.food)}회 ≠ food 유형 {expected}개")
+
+    for food in result.food:
+        # S3 · S6 — 분석에 식품 제안이 열리면 안 되고, 안전 필터는 모델에게 보이면 안 된다
+        if (
+            food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
+            and "propose_meal_candidates" in food.tools
+        ):
+            observed.failures.append("영양소 분석에 propose_meal_candidates 가 열렸다")
+        if "filter_food_safety" in food.tools:
+            observed.failures.append("filter_food_safety 가 모델에게 보인다")
+
+    if observed.live.label == "RC20-i":
+        status = result.food[0].status if result.food else "(호출 없음)"
+        if status != "unsupported_stage":
+            observed.failures.append(f"영아기 영양소 분석이 unsupported_stage 가 아니다: {status}")
+
+    # 루트 §4 — 저장이 검색보다 먼저
+    if "FoodRouted" in observed.order and "Saved" in observed.order:
+        if observed.order.index("FoodRouted") < observed.order.index("Saved"):
+            observed.failures.append("Food 가 저장보다 먼저 불렸다")
+
+    memory = result.memory
+    if memory is not None:
+        leaked = [name for name in memory.tool_names if "safety" in name or "allerg" in name]
+        if leaked:  # 루트 §2 — 알레르기·건강 정보는 LLM 이 만들거나 고치지 않는다
+            observed.failures.append(
+                f"Memory 가 health_safety 계열 tool 을 불렀다 ({len(leaked)}건)"
+            )
+
+    # 같은 날 같은 대상이 두 행이면 중복이다 (라이브 RC08 — 킥보드 2행)
+    seen = Counter(
+        (domain, str(row.fields.get("subject")), row.observed_on)
+        for domain in DOMAINS
+        for row in observed.observations[domain]
+        if row.fields.get("subject")
+    )
+    twice = [key for key, count in seen.items() if count > 1]
+    if twice:
+        observed.failures.append(f"같은 관찰이 두 번 저장됐다 ({len(twice)}건)")
+
+    # subject 는 병합·검색 키다. 끼니 이름이 들어가면
+    # profile_affinity 에 "저녁을 좋아한다" 가 쌓인다
+    slots = [
+        row.fields["subject"]
+        for row in observed.observations["food"]
+        if str(row.fields.get("subject", "")).strip() in MEAL_SLOTS
+    ]
+    if slots:
+        observed.failures.append(f"food.subject 에 끼니 이름이 들어갔다 ({len(slots)}건)")
+
+    if case.case_id == "RC15":  # 루트 §2 — 부모의 말은 아이의 fact 가 아니다
+        if [row for row in observed.rows if "피곤" in row.raw_text]:
+            observed.failures.append("보호자 얘기가 아이 관찰로 저장됐다")
+
+    # fail-open — Supervisor 가 어떻게 나눴든 관찰은 저장에 남아야 한다 (S2)
+    saved_texts = [row.raw_text for row in observed.rows]
+    observed.missing = [
+        span.text
+        for span in case.spans
+        if span.strict
+        and span.kind == SegmentKind.RECORD
+        and span.work == WorkType.OBSERVE
+        and not covered_by(case, span, saved_texts)
+    ]
+    if observed.missing:
+        observed.failures.append(f"관찰 구간 {len(observed.missing)}개가 저장에 없다")
+
+    _report(observed)
+
+
+def _report(observed: Observed) -> None:
+    """실패로 끊지는 않지만 Step 10 에서 봐야 하는 것들."""
+    result, score = observed.result, observed.score
+    budget = MAX_MODEL_CALLS + (1 if result.rerouted else 0)  # pipeline._log 와 같은 기준
+    if result.model_calls > budget:
+        observed.reports.append(f"호출 예산 초과 model_calls={result.model_calls}/{budget}")
+    if result.rerouted:  # 처음 나눈 결과가 틀렸다는 뜻이다 — 고쳐졌어도 Supervisor 오분류로 센다
+        observed.reports.append(f"재분기 {result.rerouted.bounced}")
+    if "Unwritten" in observed.order:  # 기록 조각을 짚었는데 쓰기가 없었다 (RC01 — 말만 한 run)
+        observed.reports.append("쓰기 없음")
+    if score.record_to_request:
+        observed.reports.append(f"RECORD→REQUEST {score.record_to_request}")
+    if score.request_to_record:
+        observed.reports.append(f"REQUEST→RECORD {score.request_to_record}")
+    if score.record_found > score.work_ok:
+        observed.reports.append(f"작업 종류 불일치 {score.record_found - score.work_ok}")
+    if score.lookup_edit_missed:
+        observed.reports.append(f"lookup_edit 누락 {score.lookup_edit_missed}")
+    if score.rec_to_analysis or score.analysis_to_rec:
+        observed.reports.append(
+            f"food 유형 추천→분석 {score.rec_to_analysis} · 분석→추천 {score.analysis_to_rec}"
+        )
+    if score.missed:
+        observed.reports.append(f"못 찾은 구간 {score.missed}")
+    if result.failed is not None:
+        observed.reports.append(f"failed={result.failed.reason}")
+    if observed.live.case.case_id == "RC24":
+        # Step 1 규칙의 첫 측정 — 매일 반복되는 식사 일과는 core 일정이어야 한다
+        types = [str(row.fields.get("event_type")) for row, _ in observed.events]
+        observed.reports.append(f"RC24 event_type={types or '(일정 없음)'}")
+
+
+def _expected_food_tasks(observed: Observed) -> int:
+    """Supervisor 출력이 낸 food 유형 수. agent 상한에 걸려 food 가 빠지면 0 이다."""
+    if "food" in observed.result.routing.dropped_agents:
+        return 0
+    output = observed.result.supervisor.output
+    if output is None:
+        return 0
+    return len(
+        {
+            segment.food_task
+            for segment in output.segments
+            if segment.kind == SegmentKind.REQUEST and segment.agent == DomainAgentName.FOOD
+        }
+    )
+
+
+# ── 출력 ────────────────────────────────────────────────────────
+def _print_case(observed: Observed, attempt: int) -> None:
+    result = observed.result
+    suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+    print(f"\n[{observed.live.label}{suffix}] {observed.live.case.watch}")
+    print(
+        f"    S {result.supervisor.model_calls}회 {result.supervisor.latency_ms}ms  "
+        f"{format_segments(result.supervisor.output)}"
+    )
+    if result.supervisor.error:
+        print(f"      검증 실패: {result.supervisor.error} ({result.supervisor.detail}) → 강등")
+    if result.rerouted:
+        print(
+            f"      다시 나눔: Memory 가 적지 않은 조각 {result.rerouted.bounced}개 → "
+            f"Food {list(result.rerouted.food_tasks)} (위 조각은 다시 나눈 결과)"
+        )
+
+    memory = result.memory
+    if memory is None:
+        print("    M 호출 못 함")
+    else:
+        note = f" → 메모 {memory.final_message!r}" if memory.final_message else ""
+        print(
+            f"    M {memory.steps}회  {_tool_summary(memory.tool_names)}  "
+            f"ended_by={memory.ended_by}{note}"
+        )
+        print(f"      저장 {_saved_summary(observed)}")
+    for food in result.food:
+        safety = "health_safety 사전 확인 대상" if food.requires_safety_check else "사전 확인 없음"
+        print(
+            f"    F {food.task_type}·{food.stage} ← {list(food.request_texts)} · "
+            f"tools {len(food.tools)} · {safety} · {food.status}"
+        )
+    if result.routing.unavailable_agents:
+        print(f"      미구현 agent: {list(result.routing.unavailable_agents)}")
+    for guidance in result.routing.guidance:
+        print(f"      안내: {guidance.code}")
+    if result.failed is not None:
+        print(f"      실패: {result.failed.reason}")
+    print(
+        f"    model_calls={result.model_calls} {observed.elapsed_ms}ms  "
+        f"{format_score(observed.score)}"
+    )
+    disagreement = observed.result.disagreement
+    print(
+        f"      불일치 Memory만 {list(disagreement.memory_only)} · "
+        f"Supervisor만 {list(disagreement.supervisor_only)}"
+    )
+    if observed.missing:
+        print(f"      ⚠ 저장에 없는 관찰 구간: {observed.missing}")
+    for report in observed.reports:
+        print(f"      · {report}")
+
+
+def _tool_summary(names: list[str]) -> str:
+    if not names:
+        return "tool 호출 없음"
+    counts = Counter(names)
+    return " · ".join(name if count == 1 else f"{name} ×{count}" for name, count in counts.items())
+
+
+def _saved_summary(observed: Observed) -> str:
+    parts = [f"{domain} {len(rows)}" for domain, rows in observed.observations.items() if rows]
+    for row, items in observed.events:
+        parts.append(f"일정 {row.title!r}({row.fields.get('event_type')}, 준비물 {items})")
+    return " · ".join(parts) or "없음"
+
+
+def _record(observed: Observed) -> dict[str, Any]:
+    """JSONL 한 줄. 조각·메모 원문은 넣지 않는다 (S10)."""
+    result = observed.result
+    memory = result.memory
+    usage = _usage(observed)
+    return {
+        "case_id": observed.live.label,
+        "stage": str(observed.live.stage),
+        "supervisor": "env",  # 모델명 대신 (plan.md D7)
+        "supervisor_error": result.supervisor.error,
+        "supervisor_detail": result.supervisor.detail,
+        "supervisor_calls": result.supervisor.model_calls,
+        "supervisor_latency_ms": result.supervisor.latency_ms,
+        "degraded": result.routing.degraded,
+        "intent": result.routing.intent_type,
+        "score": asdict(observed.score),
+        "memory_steps": memory.steps if memory else None,
+        "memory_ended_by": memory.ended_by if memory else None,
+        "memory_tools": memory.tool_names if memory else [],
+        "saved": {domain: len(rows) for domain, rows in observed.observations.items()},
+        "events": [
+            {"event_type": str(row.fields.get("event_type")), "items": items}
+            for row, items in observed.events
+        ],
+        "food": [
+            {
+                "task_type": str(food.task_type),
+                "stage": str(food.stage),
+                "status": food.status,
+                "tools": len(food.tools),
+                "requires_safety_check": food.requires_safety_check,
+            }
+            for food in result.food
+        ],
+        "guidance": [guidance.code for guidance in result.routing.guidance],
+        "unavailable": list(result.routing.unavailable_agents),
+        "dropped": list(result.routing.dropped_agents),
+        "failed": result.failed.reason if result.failed else None,
+        # 처음 나눈 결과가 조각을 흘려 다시 나눈 수. score·supervisor_* 는 다시 나눈 쪽 기준이다
+        "rerouted": result.rerouted.bounced if result.rerouted else 0,
+        "disagreement": asdict(result.disagreement),
+        "missing_observations": len(observed.missing),
+        "model_calls": result.model_calls,
+        "latency_ms": observed.elapsed_ms,
+        "usage": usage,
+        "failures": observed.failures,
+        "reports": observed.reports,
+    }
+
+
+def _usage(observed: Observed) -> dict[str, int]:
+    total: dict[str, int] = {}
+    sources = [observed.result.supervisor.usage]
+    if observed.result.memory is not None:
+        sources.append(observed.result.memory.usage)
+    for source in sources:
+        for key, value in source.items():
+            total[key] = total.get(key, 0) + value
+    return total
+
+
+# ── 요약 ────────────────────────────────────────────────────────
+def _format_summary(records: list[dict[str, Any]]) -> str:
+    def total(key: str) -> int:
+        return sum(record["score"][key] for record in records)
+
+    def ratio(found: int, spans: int) -> str:
+        return f"{found}/{spans} ({found / spans:.0%})" if spans else "해당 없음"
+
+    calls = [record["model_calls"] for record in records]
+    latency = [record["latency_ms"] for record in records]
+    supervisor_latency = [record["supervisor_latency_ms"] for record in records]
+    prompt = sum(record["usage"].get("prompt_tokens", 0) for record in records)
+    completion = sum(record["usage"].get("completion_tokens", 0) for record in records)
+    not_substring = sum(1 for record in records if record["supervisor_error"] == "NOT_SUBSTRING")
+
+    cases = len({record["case_id"] for record in records})
+    within = sum(1 for call in calls if call <= MAX_MODEL_CALLS) / len(calls)
+    lines = [
+        "",
+        f"══ 라이브 요약 — run {len(records)}회 / 케이스 {cases}개",
+        f"  RECORD 구간 recall   {ratio(total('record_found'), total('record_spans'))}"
+        f"   · RECORD→REQUEST {total('record_to_request')}"
+        f" · REQUEST→RECORD {total('request_to_record')}",
+        f"  작업 종류            {ratio(total('work_ok'), total('record_spans'))}"
+        f"   · lookup_edit 누락 {total('lookup_edit_missed')}",
+        f"  agent               {ratio(total('agent_ok'), total('request_spans'))}",
+        f"  food 유형            {ratio(total('food_task_ok'), total('food_spans'))}"
+        f"   · 추천→분석 {total('rec_to_analysis')} · 분석→추천 {total('analysis_to_rec')}",
+        f"  GUARDED             {ratio(total('guarded_found'), total('guarded_spans'))}",
+        f"  부분 문자열 위반      {not_substring}/{len(records)}"
+        f"   · 강등 {sum(1 for r in records if r['degraded'])}회"
+        f" · 재분기 {sum(1 for r in records if r['rerouted'])}회",
+        f"  저장 누락(fail-open) {sum(r['missing_observations'] for r in records)}건"
+        f"   · failed {sum(1 for r in records if r['failed'])}건",
+        f"  호출 수              평균 {sum(calls) / len(calls):.1f} · 최대 {max(calls)}"
+        f" · ≤{MAX_MODEL_CALLS} 비율 {within:.0%}",
+        f"  지연                 Supervisor p95 {_p95(supervisor_latency)}ms"
+        f" · 전체 p95 {_p95(latency)}ms",
+        f"  토큰                 prompt {prompt} · completion {completion}"
+        f"{_cost(prompt, completion)}",
+    ]
+    shaky = _shaky(records)
+    if TEST_REPEAT > 1:
+        lines.append(f"  흔들림               {len(shaky)}개 케이스 {shaky}")
+    return "\n".join(lines)
+
+
+def _p95(values: list[int]) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
+
+
+def _cost(prompt: int, completion: int) -> str:
+    if not (INPUT_PRICE or OUTPUT_PRICE):
+        return ""
+    cost = prompt / 1_000_000 * INPUT_PRICE + completion / 1_000_000 * OUTPUT_PRICE
+    return f" · 비용 {cost:.4f}"
+
+
+def _shaky(records: list[dict[str, Any]]) -> list[str]:
+    """같은 케이스를 여러 번 돌렸을 때 결과가 바뀐 케이스. 한 번의 만점은 흔들림을 숨긴다."""
+    signatures: dict[str, set[str]] = {}
+    for record in records:
+        score = record["score"]
+        signature = json.dumps(
+            [
+                score["segments"],
+                score["record_found"],
+                score["work_ok"],
+                score["agent_ok"],
+                score["food_task_ok"],
+                record["food"],
+                record["failed"],
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        signatures.setdefault(record["case_id"], set()).add(signature)
+    return sorted(case_id for case_id, seen in signatures.items() if len(seen) > 1)

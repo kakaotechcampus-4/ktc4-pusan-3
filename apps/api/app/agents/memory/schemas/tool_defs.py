@@ -1,8 +1,9 @@
-"""tool 27개의 이름 · 호출 조건 · argument 모델 정의.
+"""tool 28개의 이름 · 호출 조건 · argument 모델 정의.
 
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
 
+from app.agents.common.tool_schema import ToolDefinition
 from app.agents.memory.schemas.observation import (
     ObservationActivityCreate,
     ObservationActivityUpdate,
@@ -13,9 +14,10 @@ from app.agents.memory.schemas.observation import (
     ObservationHealthCreate,
     ObservationHealthUpdate,
     ObservationQueryArgs,
+    ObservationRoutineCreate,
+    ObservationRoutineUpdate,
     RecordRef,
 )
-from app.agents.memory.schemas.parse_input import ParseInputArgs
 from app.agents.memory.schemas.schedule import (
     EventCreate,
     EventItemCreate,
@@ -24,24 +26,11 @@ from app.agents.memory.schemas.schedule import (
     EventQuery,
     EventRef,
     EventUpdate,
-    ReminderCreate,
-    ReminderRef,
-    ReminderUpdate,
 )
-from app.agents.memory.schemas.tool_schema import ToolDefinition
 
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
-    ToolDefinition(
-        name="parse_input",
-        description=(
-            "서로 독립된 정보나 요청이 2개 이상 섞인 입력을 의미 단위로 나눈다. "
-            "그럴 때만 다른 tool 보다 먼저 한 번 부른다. 정보가 하나뿐이면 부르지 않고 "
-            "바로 해당 tool 을 부른다. 저장이나 조회는 하지 않는다."
-        ),
-        args=ParseInputArgs,
-    ),
     # observation_food
     ToolDefinition(
         name="create_observation_food",
@@ -138,6 +127,31 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         description=f"활동 기록 한 건을 지운다. {_NEEDS_QUERY}",
         args=RecordRef,
     ),
+    # observation_routine
+    ToolDefinition(
+        name="create_observation_routine",
+        description=(
+            "아이가 반복하는 생활 행동, 스스로 해낸 일, 생활 습관, 인사 같은 사회적 생활기술을 "
+            "기록한다. 양치·옷 입기·정리·인사·손톱 물어뜯기·등원 준비. "
+            "놀이 자체는 activity, 먹은 음식은 food, 증상은 health로 보낸다."
+        ),
+        args=ObservationRoutineCreate,
+    ),
+    ToolDefinition(
+        name="query_observation_routine",
+        description=f"저장된 생활 행동 기록을 날짜나 키워드로 찾는다. {_NEEDS_QUERY}",
+        args=ObservationQueryArgs,
+    ),
+    ToolDefinition(
+        name="update_observation_routine",
+        description=f"이미 저장된 생활 행동 기록을 고친다. {_NEEDS_QUERY}",
+        args=ObservationRoutineUpdate,
+    ),
+    ToolDefinition(
+        name="delete_observation_routine",
+        description=f"생활 행동 기록 한 건을 지운다. {_NEEDS_QUERY}",
+        args=RecordRef,
+    ),
     # event
     ToolDefinition(
         name="create_event",
@@ -150,8 +164,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="query_event",
         description=(
-            "일정을 날짜 범위나 이름으로 찾는다. 준비물과 알림도 함께 돌려준다. "
-            "일정 수정·삭제, 알림 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
+            "일정을 날짜 범위나 이름으로 찾는다. 준비물도 함께 돌려준다. "
+            "일정 수정·삭제, 준비물 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
         ),
         args=EventQuery,
     ),
@@ -162,14 +176,15 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="delete_event",
-        description=f"일정 한 건을 지운다. 연결된 준비물과 알림도 함께 삭제한다. {_NEEDS_QUERY}",
+        description=f"일정 한 건을 지운다. 연결된 준비물도 함께 삭제한다. {_NEEDS_QUERY}",
         args=EventRef,
     ),
     # event_item
     ToolDefinition(
         name="create_event_item",
         description=(
-            "일정에 챙길 준비물을 하나 추가한다. 준비물이 여러 개면 하나씩 나눠서 부른다. "
+            "일정에 챙길 준비물을 하나 추가한다. "
+            "준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. "
             "event_id 는 create_event 나 query_event 결과에서 가져온다."
         ),
         args=EventItemCreate,
@@ -183,25 +198,5 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="delete_event_item",
         description=f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY}",
         args=EventItemRef,
-    ),
-    # reminder
-    ToolDefinition(
-        name="create_reminder",
-        description=(
-            "일정에 알림을 건다. '전날 저녁 8시'처럼 일정 기준 상대 표현이면 "
-            "remind_on 을 비우고 offset_days_from_event 를 쓴다. "
-            "event_id 는 create_event 나 query_event 결과에서 가져온다."
-        ),
-        args=ReminderCreate,
-    ),
-    ToolDefinition(
-        name="update_reminder",
-        description=f"예약된 알림 정보를 수정한다. {_NEEDS_QUERY}",
-        args=ReminderUpdate,
-    ),
-    ToolDefinition(
-        name="delete_reminder",
-        description=f"알림 한 건을 해제한다. {_NEEDS_QUERY}",
-        args=ReminderRef,
     ),
 ]
