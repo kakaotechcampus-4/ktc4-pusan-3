@@ -135,23 +135,8 @@ export const childrenHandlers = [
     return HttpResponse.json(home);
   }),
 
-  http.get(url("/children/:cid/affinities"), async () => {
-    await networkDelay();
-    const scenario = currentScenario();
-    if (scenario === "empty") return HttpResponse.json({ items: [], next_cursor: null });
-    return HttpResponse.json({
-      items: scenario === "stale" ? staleAffinities : affinities,
-      next_cursor: null,
-    });
-  }),
-
-  http.get(url("/children/:cid/observations"), async () => {
-    await networkDelay();
-    if (currentScenario() === "empty") {
-      return HttpResponse.json({ items: [], next_cursor: null });
-    }
-    return HttpResponse.json({ items: observations, next_cursor: null });
-  }),
+  // 07 기억 화면이 쓰는 `/observations` · `/affinities` 는 `handlers/memories.ts` 가 갖는다 —
+  // 예전에 여기 있던 자리표시 응답은 계약서 모양(`{ affinities, safety }`)과 달랐다.
 
   http.get(url("/children/:cid/health-safety"), async () => {
     await networkDelay();

@@ -11,11 +11,14 @@
 
 import type {
   Affinity,
+  CalendarDay,
   CalendarEvent,
   Evidence,
+  GeneralSuggestion,
   HealthSafety,
   HomeResponse,
   Me,
+  Observation,
   ObservationHealth,
   ObservationPromotable,
   Suggestion,
@@ -25,8 +28,14 @@ import type {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 🚨 `toISOString()` 을 쓰지 않는다. UTC 로 접혀서 한국 시간 자정~오전 9시 사이에는
+ *    **하루가 밀린다** — 그러면 목이 만든 "오늘" 이 화면이 보는 오늘과 달라서,
+ *    캘린더에서 오늘 칸에 표식이 안 찍히는 것처럼 보인다 (`lib/format.ts` 의 같은 주의).
+ */
 function iso(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 export function daysAgo(n: number): string {
@@ -167,7 +176,7 @@ export const affinities: Affinity[] = [
     strength: 0.82,
     last_observed_on: daysAgo(0),
     observation_count: 3,
-    state_reason: "서로 다른 3일에 관찰됐어요",
+    state_reason: "서로 다른 3일에 기록됐어요",
     is_stale: false,
     source_refs: [
       { kind: "observation_food", id: "o_1" },
@@ -261,6 +270,7 @@ export const suggestions: Suggestion[] = [
     id: "s_1",
     child_id: CHILD_ID,
     agent: "food",
+    kind: "personalized",
     content: "계란말이에 시금치를 조금 섞어 보세요",
     reason: {
       why_this: "계란 반찬을 서로 다른 3일에 찾았어요",
@@ -276,6 +286,7 @@ export const suggestions: Suggestion[] = [
     id: "s_2",
     child_id: CHILD_ID,
     agent: "activity",
+    kind: "personalized",
     content: "주말에 실내 물놀이장은 어떨까요",
     reason: {
       why_this: "물놀이에서 오래 머물렀어요",
@@ -289,6 +300,43 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
+/**
+ * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 추천 (CLAUDE.md §2).
+ *
+ * 🚨 `evidence` 필드가 없다 — 일반 추천은 근거 0행이 정상이고, 그래서 개인화와 **타입이 다르다.**
+ * 🚨 `basis` 는 서버가 만든 문구다. 목에서도 프론트가 "또래 기준" 을 지어내지 않게 여기 둔다.
+ */
+export const generalSuggestions: GeneralSuggestion[] = [
+  {
+    id: "g_1",
+    child_id: CHILD_ID,
+    agent: "activity",
+    kind: "general",
+    content: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요",
+    basis: "36개월 또래가 자주 찾는 놀이예요",
+  },
+  {
+    id: "g_2",
+    child_id: CHILD_ID,
+    agent: "food",
+    kind: "general",
+    content: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요",
+    basis: "36개월 또래의 식사에서 흔한 형태예요",
+  },
+];
+
+/**
+ * stale 시나리오 — 근거가 전부 6개월을 넘겼다.
+ *
+ * 🚨 `Evidence.is_stale` 은 **계약서 v1 에 아직 없는 필드**다 (types.ts 의 주석 참고).
+ *    프론트는 날짜를 계산하지 않으므로 이 판정은 서버가 내려줘야 하고, 그 전까지는
+ *    점선 근거 칩(NF-08)을 확인할 방법이 목뿐이다.
+ */
+export const staleSuggestion: Suggestion = {
+  ...suggestions[1],
+  evidence: [{ ...evidenceFrom(staleAffinities[1]), is_stale: true }],
+};
+
 /* ── 홈 ───────────────────────────────────────────────────────────────── */
 
 export const home: HomeResponse = {
@@ -301,7 +349,7 @@ export const home: HomeResponse = {
   ],
   highlight: {
     text: "계란 반찬을 찾은 지 5일째예요.",
-    state_reason: "서로 다른 3일에 관찰됐어요",
+    state_reason: "서로 다른 3일에 기록됐어요",
     ref: { kind: "profile_affinity", id: "a_12" },
   },
   agent_prompts: [
@@ -339,4 +387,126 @@ export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEven
     reminders: [],
     ...overrides,
   };
+}
+
+/* ── 07 기억 ──────────────────────────────────────────────────────────── */
+
+/**
+ * 관찰 목록은 4개 도메인이 섞여 내려온다 (`?domain=` 생략 시 4개 테이블 병합).
+ * 필터 칩이 실제로 무언가를 걸러내려면 도메인이 셋 이상 있어야 해서 교육 관찰을 하나 더 둔다.
+ */
+export const educationObservation: ObservationPromotable = promotable(
+  "o_5",
+  "observation_education",
+  "숫자 세기",
+  "블록을 세면서 열까지 갔어요",
+  6,
+  null,
+);
+
+/** 4개 테이블을 `observed_to DESC` 로 병합한 모양 — 서버가 하는 일을 목도 그대로 한다. */
+export const allObservations: Observation[] = [
+  ...observations,
+  educationObservation,
+  healthObservation,
+].sort((a, b) => (a.observed_to < b.observed_to ? 1 : -1));
+
+/**
+ * 07 피드백 탭이 평가할 제안 목록.
+ * ⚠️ `GET /children/{cid}/suggestions` 는 계약서 v1 에 아직 없다 (types.ts 의 ⚠️).
+ */
+export const receivedSuggestions: Suggestion[] = [
+  { ...suggestions[0], id: "s_past_1", status: "approved", feedback: "child_liked" },
+  { ...suggestions[1], id: "s_past_2", status: "rejected", feedback: null },
+];
+
+/* ── 09 캘린더 ───────────────────────────────────────────────────────── */
+
+/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다 (`confirmed`). draft 는 여기 오지 않는다. */
+export const confirmedEvent: CalendarEvent = {
+  id: "e_3",
+  title: "물놀이",
+  event_type: "episodic",
+  starts_at: `${daysAgo(-2)}T10:00:00+09:00`,
+  ends_at: null,
+  all_day: false,
+  category: "institution",
+  status: "confirmed",
+  created_by: "agent",
+  source_notice_id: null,
+  source_refs: [],
+  items: [
+    { item_id: "i_1", item_name: "수건", is_prepared: false, prepared_at: null },
+    { item_id: "i_2", item_name: "수영복", is_prepared: true, prepared_at: hoursFromNow(-20) },
+  ],
+  reminders: [],
+};
+
+/** 일기는 관찰이 아니다 — 별도 저장소에 둔다 (계약서 §09). 날짜 → 본문·사진. */
+const diaries = new Map<string, { text: string; image_urls: string[] }>([
+  [
+    daysAgo(1),
+    {
+      text: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
+      image_urls: [],
+    },
+  ],
+]);
+
+/** 🚨 프로필 승격이 일어난 날. 프론트가 관찰 건수로 역산할 수 없는 값이라 목이 들고 있다. */
+const profileChanged = new Map<string, number>([[daysAgo(0), 1]]);
+
+export function readDiary(date: string): { text: string; image_urls: string[] } | null {
+  return diaries.get(date) ?? null;
+}
+
+export function writeDiary(date: string, value: { text: string; image_urls: string[] }): void {
+  if (value.text.trim() === "") diaries.delete(date);
+  else diaries.set(date, value);
+}
+
+/** 테스트용 — 목은 프로세스 수명만큼 살아 있다 (apps/web/CLAUDE.md §8). */
+export function resetDiaries(): void {
+  diaries.clear();
+  diaries.set(daysAgo(1), {
+    text: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
+    image_urls: [],
+  });
+}
+
+/** 일정이 걸린 날. 서버가 `starts_at` 을 날짜로 접어 내리는 자리다. */
+function eventDate(event: CalendarEvent): string {
+  return event.starts_at.slice(0, 10);
+}
+
+export function calendarEventsOn(date: string): CalendarEvent[] {
+  return [confirmedEvent].filter((event) => eventDate(event) === date);
+}
+
+export function calendarObservationsOn(date: string): Observation[] {
+  return allObservations.filter((observation) => observation.observed_to === date);
+}
+
+/**
+ * 월 조회. 🚨 `has_event` 는 `confirmed` 만 센다 — draft 는 아직 캘린더에 쓴 것이 아니다.
+ */
+export function calendarMonth(month: string): CalendarDay[] {
+  const dates = new Set<string>();
+  for (const observation of allObservations) {
+    if (observation.observed_to.startsWith(month)) dates.add(observation.observed_to);
+  }
+  for (const event of [confirmedEvent]) {
+    if (eventDate(event).startsWith(month)) dates.add(eventDate(event));
+  }
+  for (const date of diaries.keys()) if (date.startsWith(month)) dates.add(date);
+  for (const date of profileChanged.keys()) if (date.startsWith(month)) dates.add(date);
+
+  return [...dates].sort().map((date) => ({
+    date,
+    has_diary: diaries.has(date),
+    has_event: calendarEventsOn(date).length > 0,
+    has_image: (diaries.get(date)?.image_urls.length ?? 0) > 0,
+    observation_count: calendarObservationsOn(date).length,
+    profile_changed_count: profileChanged.get(date) ?? 0,
+  }));
 }

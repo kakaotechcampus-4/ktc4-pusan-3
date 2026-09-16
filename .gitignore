@@ -75,9 +75,17 @@ target/
 Claude outputs/
 /ktc4-pusan-3/
 
-# ── 디자인 도구(impeccable) 로컬 설정 ──────────────
-# design.json 은 커밋한다 (DESIGN.md 의 부속). config.local.json 은 기기별 설정이라 뺀다.
-.impeccable/config.local.json
+# ── 디자인 도구(impeccable) ─────────────────────────
+# 🚨 커밋하는 것은 design.json 하나다 — DESIGN.md 가 못 담는 값(tonal ramp · 모션 · 스니펫)의
+#    부속이고, 루트 CLAUDE.md §6 이 그 셋을 같은 PR 에서 함께 고치라고 정해 뒀다.
+#    나머지(방향 계약 · 리뷰 스크린샷 · 질문 데몬 · 훅 캐시)는 도구가 돌면서 만드는 것이고,
+#    설계 근거의 정본은 docs/ 다 — 같은 근거가 두 곳에 있으면 어느 쪽이 최신인지 알 수 없다.
+.impeccable/*
+!.impeccable/design.json
+
+# ── oh-my-claudecode(OMC) 로컬 상태 ──────────────────
+# 세션별 작업 상태 · 계획 · 로그. 개인 로컬 도구 상태라 저장소와 무관하다.
+.omc/
 
 # ── Agent eval 실행 결과 (돌릴 때마다 값이 바뀌어 재현되지 않는다) ──
 # 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.

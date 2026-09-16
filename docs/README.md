@@ -1,4 +1,4 @@
-# 육아기억 AI 문서 인덱스
+# 아이캐치 문서 인덱스
 
 > 육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI.
 
@@ -94,6 +94,8 @@
 *아직 문서 없음.* eval 케이스 10개, Trajectory 판정, 골든셋, 주 1회 회귀 실행.
 
 ## 운영 (Ops)
+
+- [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 
 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
 

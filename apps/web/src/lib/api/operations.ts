@@ -14,7 +14,13 @@
 
 import { api } from "./client";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
-import type { Affinity, CalendarEvent, HealthSafety, Observation, SuggestionStatus } from "./types";
+import type {
+  CalendarEvent,
+  HealthSafety,
+  OnboardingRequest,
+  OnboardingResponse,
+  SuggestionStatus,
+} from "./types";
 
 /* ── 04 한 줄 입력 ────────────────────────────────────────────────────── */
 
@@ -34,22 +40,18 @@ export function submitInput(
 
 /* ── 02 온보딩 ────────────────────────────────────────────────────────── */
 
-export interface OnboardingRequest {
-  interests?: string[];
-  /** 🚨 "잘 모르겠어요"(unknown)는 "없음"(none)이 아니다. 서버가 skipped 로 되돌린다. */
-  safety_status?: "none" | "has" | "unknown";
-  safety?: Array<Omit<HealthSafetyRequest, "notes"> & { notes?: string | null }>;
-  one_line?: string;
-  dev_answers?: Array<{ item_id: string; level: number }>;
-}
-
-export interface OnboardingResponse {
-  observations: Observation[];
-  affinities: Affinity[];
-  safety: HealthSafety[];
-  skipped: string[];
-  run_id: string;
-}
+/**
+ * 🚨 **요청·응답 타입은 `types.ts` 가 정본이다. 여기서 다시 정의하지 않는다.**
+ *    한동안 두 벌이었고(`OnboardingRequest` · `OnboardingResponse`), 배럴이 `export *` 를
+ *    두 번 해서 이름이 겹쳤다 (TS2308). 그때 **나중에 온 이 파일 쪽이 조용히 이겼고**,
+ *    화면은 계약서를 적어 둔 정의가 아니라 이쪽 정의로 타입이 잡혀 있었다.
+ *    이 파일이 하는 일은 "키를 필수 인자로 받는 호출 지점" 하나다 — 타입의 집이 아니다.
+ *
+ * ⚠️ 두 벌이 완전히 같지는 않았다. 이쪽 `safety` 원소에는 `notes` 가 있고 `severity` 가
+ *    `string | null` 이었다. 정본(`OnboardingSafetyInput`)에는 `notes` 가 없다.
+ *    **서버가 `safety[].notes` 를 받는지가 확인되면 `types.ts` 를 고친다** — 화면은
+ *    보호자가 적은 라벨만 올리고 심각도·반응·메모를 추측하지 않으므로(NF-03) 지금은 정본이 맞다.
+ */
 
 /** 전부 선택이다 — 모두 건너뛰어도 200 이다. */
 export function submitOnboarding(

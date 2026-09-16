@@ -33,7 +33,7 @@ export const CALLBACK_PATH = "/auth/callback";
 /** 앱 웹뷰인가. 셸이 `applicationNameForUserAgent` 로 UA 에 붙인 표식을 본다. */
 export function isAppShell(): boolean {
   if (typeof navigator === "undefined") return false;
-  return navigator.userAgent.includes("YukameoApp/");
+  return navigator.userAgent.includes("IcatchApp/");
 }
 
 export function authClient(): AuthClient {
@@ -79,7 +79,7 @@ export function startOAuthLogin(
  * 알아야 해서 시작 시점에 저장해 둔다. 서버가 복귀 URL 에 실어주면 이 저장은 없어진다.
  */
 
-const PROVIDER_KEY = "yukameo.oauth.provider";
+const PROVIDER_KEY = "icatch.oauth.provider";
 const DEFAULT_PROVIDER: AuthProvider = "kakao";
 
 function rememberProvider(provider: AuthProvider): void {
@@ -103,7 +103,7 @@ export function clearProvider(): void {
  * 🚨 URL 이 아니라 sessionStorage 에 둔다 — 가입 대기표가 주소창·브라우저 기록에 남지 않게.
  */
 
-const CONSENT_CODE_KEY = "yukameo.oauth.consent_code";
+const CONSENT_CODE_KEY = "icatch.oauth.consent_code";
 
 export function rememberConsentCode(code: string): void {
   sessionStorage.setItem(CONSENT_CODE_KEY, code);
@@ -126,7 +126,7 @@ export function clearConsentCode(): void {
  *    끊겨 **튕겨 나오는 지점** — AuthGate 와 client.ts 의 401 처리 — 이므로 거기서 저장한다.
  */
 
-const RETURN_KEY = "yukameo.oauth.return";
+const RETURN_KEY = "icatch.oauth.return";
 
 export function rememberReturnPath(path: string): void {
   if (!isInternalPath(path)) return;
