@@ -20,7 +20,11 @@ class Settings(BaseSettings):
     MEMORY_MODEL: str | None = None
     MEMORY_REASONING_EFFORT: str | None = None
 
-    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": str(_ENV_FILE),
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

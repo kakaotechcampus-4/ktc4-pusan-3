@@ -78,3 +78,8 @@ Claude outputs/
 # ── 디자인 도구(impeccable) 로컬 설정 ──────────────
 # design.json 은 커밋한다 (DESIGN.md 의 부속). config.local.json 은 기기별 설정이라 뺀다.
 .impeccable/config.local.json
+
+# ── Agent eval 실행 결과 (돌릴 때마다 값이 바뀌어 재현되지 않는다) ──
+# 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.
+apps/api/app/agents/test/**/*_result.txt
+apps/api/app/agents/test/**/*_results.jsonl
