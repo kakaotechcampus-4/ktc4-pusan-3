@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     FOOD_MODEL: str | None = None
     FOOD_REASONING_EFFORT: str | None = None
 
+    # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
+    MEAL_OCR_BASE_URL: str | None = None
+    MEAL_OCR_API_KEY: str | None = None
+    MEAL_OCR_MODEL: str = "gemini-3.1-pro-preview"
+
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
