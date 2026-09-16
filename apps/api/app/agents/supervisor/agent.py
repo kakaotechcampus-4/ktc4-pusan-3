@@ -6,6 +6,7 @@ Memory는 원문 전체를 보므로 Supervisor가 없어도 기록은 남는다
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +17,7 @@ from app.agents.common.llm_client import LLMBadRequestError, LLMClient, LLMError
 from app.agents.supervisor.prompt import build_system_prompt
 from app.agents.supervisor.schemas import (
     ROUTE_TOOL_SPEC,
+    ROUTE_TOOL_SPEC_STRICT,
     Segment,
     SupervisorOutput,
     validate_segments,
@@ -31,9 +33,28 @@ SCHEMA = "SCHEMA"  # 스키마/짝 검사 위반
 NO_TOOL_CALL = "NO_TOOL_CALL"  # route를 부르지 않고 말로 답함
 LLM_UNAVAILABLE = "LLM_UNAVAILABLE"  # 인증/rate limit/네트워크/설정. detail에 예외 이름
 
-# route를 강제로 부르게 한다. provider 가 dict를 거절하면 순서대로 물러선다
+# route를 강제로 부르게 한다. provider 가 거절하면 순서대로 물러선다
 _FORCE_ROUTE: dict[str, Any] = {"type": "function", "function": {"name": "route"}}
-_TOOL_CHOICE_FALLBACKS: tuple[str, ...] = ("required", "auto")
+
+# strict 모드에서는 누락 필드나 잘못된 enum 값을 provider 단계에서 거를 수 있음.
+# 다만 선택 필드가 nullable이라 모델이 라벨 대신 null을 반환하는 경우가 있어 기본값은 비활성화.
+# 테스트에서는 strict를 끈 쪽이 RC07 놀이 추천과 T19 알레르기 등록을 안정적으로 분류함.
+# 스키마 오류는 조각 단위 검증과 _repair에서 처리하도록 함.
+# 재검증: $env:SUPERVISOR_STRICT="1"
+_USE_STRICT = os.getenv("SUPERVISOR_STRICT", "0") == "1"
+
+
+def _attempts(*, strict: bool) -> tuple[tuple[dict[str, Any], Any], ...]:
+    """스펙과 tool_choice 조합을 앞에서부터 시도한다. provider 가 거절하면 다음으로 물러선다."""
+    fallbacks = (
+        (ROUTE_TOOL_SPEC, _FORCE_ROUTE),
+        (ROUTE_TOOL_SPEC, "required"),
+        (ROUTE_TOOL_SPEC, "auto"),
+    )
+    return ((ROUTE_TOOL_SPEC_STRICT, _FORCE_ROUTE), *fallbacks) if strict else fallbacks
+
+
+_ATTEMPTS = _attempts(strict=_USE_STRICT)
 
 
 @dataclass
@@ -87,12 +108,12 @@ async def run(
     usage: dict[str, int] = {}
     calls = 0
     response = None
-    for tool_choice in (_FORCE_ROUTE, *_TOOL_CHOICE_FALLBACKS):
+    for spec, tool_choice in _ATTEMPTS:
         try:
             calls += 1
             response = await llm.chat(
                 messages=messages,
-                tools=[ROUTE_TOOL_SPEC],
+                tools=[spec],
                 tool_choice=tool_choice,
                 max_completion_tokens=MAX_COMPLETION_TOKENS,
             )

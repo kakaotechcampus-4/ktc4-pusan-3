@@ -8,6 +8,7 @@ Agent의 내부(registry·tools·store)는 import하지 않는다.
 
 import logging
 import re
+from copy import deepcopy
 from enum import StrEnum
 from typing import Annotated, Any
 
@@ -64,8 +65,8 @@ _LABEL_ENUMS: dict[str, type] = {
 def _repair(data: dict[str, Any]) -> dict[str, Any]:
     """모델이 남긴 단서로 라벨을 고친다. 단서가 없으면 그대로 두고 검증에 맡긴다.
 
-      - work는 record 전용. request인데 work만 있고 agent가 없으면 kind를 잘못 붙인 것
-      - food에 유형이 빠졌으면 프롬프트가 정해 둔 기본값("애매하면 추천")사용
+    - work는 record 전용. request인데 work만 있고 agent가 없으면 kind를 잘못 붙인 것
+    - food에 유형이 빠졌으면 프롬프트가 정해 둔 기본값("애매하면 추천")사용
     """
     for name, enum in _LABEL_ENUMS.items():
         value = data.get(name)
@@ -224,6 +225,23 @@ ROUTE_TOOL = ToolDefinition(
     args=SupervisorOutput,
 )
 ROUTE_TOOL_SPEC = build_tool_spec(ROUTE_TOOL)
+
+
+def _strict(spec: dict[str, Any]) -> dict[str, Any]:
+    """provider strict 모드에 맞게 tool spec을 변환한다.
+
+    strict 모드에서는 모든 필드가 required여야 하므로,
+    선택 필드는 nullable 타입을 유지한 채 null로 전달받는다.
+    """
+    copied = deepcopy(spec)
+    function = copied["function"]
+    function["strict"] = True
+    item = function["parameters"]["properties"]["segments"]["items"]
+    item["required"] = list(item["properties"])
+    return copied
+
+
+ROUTE_TOOL_SPEC_STRICT = _strict(ROUTE_TOOL_SPEC)
 
 # 검증 실패 코드 — 모두 "Memory 단독으로 강등" 으로 이어진다 (재시도하지 않는다)
 NOT_SUBSTRING = "NOT_SUBSTRING"

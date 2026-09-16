@@ -85,6 +85,19 @@ class MemoryNote:
 
 
 @dataclass(frozen=True)
+class Unwritten:
+    """기록할 조각을 짚었는데 성공한 쓰기가 하나도 없는 run.
+
+    사용자 응답은 그대로 두어 화면에는 Memory가 한 말이 그대로 나간다.
+    TODO: 테스트 케이스 확장과 미구현 Agent 도입 후에 빈도를 체크하고 처리 방식을 확정 
+    """
+
+    hints: int  # Supervisor가 짚은 기록 조각 수
+    tools: int  # Memory가 부른 tool 수. 0이면 말만 한 것이다
+    note: bool  # Memory가 문장을 냈는지
+
+
+@dataclass(frozen=True)
 class Rerouted:
     """Memory 가 기록하지 않은 조각을 Supervisor 에게 돌려주고 다시 나눈 것."""
 
@@ -104,7 +117,18 @@ class Done:
     model_calls: int
 
 
-Event = Step | Saved | FoodRouted | Unavailable | Guidance | MemoryNote | Rerouted | Failed | Done
+Event = (
+    Step
+    | Saved
+    | FoodRouted
+    | Unavailable
+    | Guidance
+    | MemoryNote
+    | Unwritten
+    | Rerouted
+    | Failed
+    | Done
+)
 Emit = Callable[[Event], None]
 
 _LABELS = ("입력을 살펴보고 있어요", "관찰을 나누고 있어요", "다음 행동을 준비하고 있어요")
@@ -190,6 +214,9 @@ async def handle_input(
                 send(Saved(refs))
             if memory.final_message:
                 send(MemoryNote(memory.final_message))
+            unwritten = _unwritten(routing.memory_task, memory)
+            if unwritten is not None:
+                send(unwritten)
 
     # 위임이 어긋났으면 Supervisor에게 이유를 주고 한 번만 다시 나눈다.
     # Memory는 다시 돌리지 않는다.
@@ -283,6 +310,23 @@ def _food_routed(result: FoodAgentResult) -> FoodRouted:
         requires_safety_check=result.requires_safety_check,
         status=result.status,
     )
+
+
+def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten | None:
+    """기록할 조각을 짚었는데 쓰기가 하나도 없으면 남긴다. 판정은 하지 않는다."""
+    if task is None or not task.hints:
+        return None
+    if any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls):
+        return None
+
+    event = Unwritten(len(task.hints), len(memory.calls), bool(memory.final_message))
+    # tool을 한 번도 안 부르고 답만 낸 것은 "했다고 말만 한" 것이므로, 그때만 경고로 처리
+    log = logger.warning if event.tools == 0 and event.note else logger.info
+    log(
+        "기록 힌트가 있는데 쓰기가 없다 hints=%d tools=%d note=%s",
+        *(event.hints, event.tools, event.note),
+    )
+    return event
 
 
 def _bounced_hints(task: MemoryTask | None, memory: MemoryAgentResult | None) -> tuple[str, ...]:
