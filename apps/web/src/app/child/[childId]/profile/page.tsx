@@ -173,7 +173,7 @@ function IdentitySection({
   return (
     <Section
       title="부르는 이름"
-      description="아이를 부르는 말과 생일이에요. 나이는 생일을 보고 서버가 계산해요."
+      description="아이를 부르는 말과 생일이에요."
     >
       {query.isPending ? (
         <SkeletonBlock label="아이 정보를 불러오는 중" />
@@ -193,6 +193,25 @@ function IdentityForm({ childId, profile }: { childId: string; profile: ChildPro
   const [birthDate, setBirthDate] = useState(profile.birth_date);
   const [gender, setGender] = useState<Gender>(profile.gender);
   const [nicknameError, setNicknameError] = useState<string | null>(null);
+
+  /**
+   * 🚨 **서버 값이 바뀌면 폼을 그 값으로 맞춘다.** `useState` 초기값은 첫 렌더에서 한 번만
+   *    읽히므로, 배우자가 같은 아이의 별명을 고쳐서 이 쿼리가 새로 받아와도 폼은 옛 값을
+   *    들고 있었다. 그러면 아래 `changes` 가 **남이 방금 저장한 값을 내 수정분으로 잡고**,
+   *    저장 버튼이 켜진 채 그 수정을 되돌리자고 제안한다 — 공유 계정이라 실제로 나는 경로다.
+   *
+   * 🚨 effect 가 아니라 렌더 중 조정이다 (React "Adjusting state when props change").
+   *    effect 로 하면 옛 값으로 한 프레임을 먼저 그린다. TanStack Query 는 structural
+   *    sharing 이라 내용이 같으면 참조가 그대로여서, 이 비교는 값이 실제로 바뀔 때만 걸린다.
+   */
+  const serverValues = `${profile.nickname}\u0000${profile.birth_date}\u0000${profile.gender}`;
+  const [syncedValues, setSyncedValues] = useState(serverValues);
+  if (syncedValues !== serverValues) {
+    setSyncedValues(serverValues);
+    setNickname(profile.nickname);
+    setBirthDate(profile.birth_date);
+    setGender(profile.gender);
+  }
 
   /**
    * 🚨 **고친 것만 보낸다.** 안 고친 필드를 함께 올리면 두 보호자가 같은 화면을 열어 뒀을 때
@@ -226,9 +245,11 @@ function IdentityForm({ childId, profile }: { childId: string; profile: ChildPro
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 🚨 **hint 를 달지 않는다.** 구역 설명이 이미 "아이를 부르는 말과 생일이에요" 라고
+          해서 같은 말이 두 층으로 쌓였고, 그만큼 "재 둔 것" 이 첫 화면 밖으로 밀렸다 —
+          이 화면의 논지(세 가지 진실의 무게가 다르다)가 스크롤해야 보이면 논지가 아니다. */}
       <TextInput
         label="별명"
-        hint="화면에서 아이를 부르는 말이에요."
         value={nickname}
         onChange={(e) => setNickname(e.target.value)}
         error={nicknameError}
@@ -254,13 +275,17 @@ function IdentityForm({ childId, profile }: { childId: string; profile: ChildPro
         {save.isPending ? "저장하는 중이에요" : "고친 것 저장하기"}
       </Button>
 
+      {/* 🚨 `role="status"` 로 알린다 — 버튼이 비활성으로 돌아가는 것 말고는 눈으로만 알 수
+          있어서, 스크린리더 사용자는 저장됐는지 실패했는지 모른다 (`CorrectionButtons` 와 같음). */}
       {save.isError ? (
-        <p className="text-body-sm text-ink-muted">
+        <p role="status" className="text-body-sm text-ink-muted">
           저장하지 못했어요. 고친 것은 그대로 있으니 다시 눌러 주세요.
         </p>
       ) : save.isSuccess && !dirty ? (
         // 🚨 토스트를 쓰지 않는다 — 성공은 화면이 이미 말한다 (apps/web/CLAUDE.md §3).
-        <p className="text-body-sm text-ink-muted">저장했어요.</p>
+        <p role="status" className="text-body-sm text-ink-muted">
+          저장했어요.
+        </p>
       ) : null}
     </div>
   );
@@ -321,7 +346,9 @@ function GrowthSection({
       </Button>
 
       {remove.isError ? (
-        <p className="text-body-sm text-ink-muted">지우지 못했어요. 다시 눌러 주세요.</p>
+        <p role="status" className="text-body-sm text-ink-muted">
+          지우지 못했어요. 그 줄은 아직 목록에 있으니 다시 눌러 주세요.
+        </p>
       ) : null}
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
@@ -347,7 +374,13 @@ function GrowthSheet({
   const [measuredOn, setMeasuredOn] = useState(toToday);
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  /**
+   * 🚨 **사유를 입력에 붙인다.** 시트 아래 떠 있는 문단으로 두면 보조기술이 그 문구를 어느
+   *    칸의 문제인지 잇지 못한다 — `TextInput` 의 `error` 는 `aria-invalid` 와
+   *    `aria-describedby` 를 함께 걸어 준다 (디자인 시스템 §7 입력).
+   *    "둘 중 하나는 적어주세요" 처럼 칸 하나에 안 붙는 사유는 **첫 칸**이 받는다.
+   */
+  const [errors, setErrors] = useState<{ height?: string; weight?: string }>({});
 
   const save = useMutation({
     mutationFn: (body: { measured_on: string; height_cm?: number; weight_kg?: number }) =>
@@ -363,7 +396,7 @@ function GrowthSheet({
     setMeasuredOn(toToday());
     setHeight("");
     setWeight("");
-    setError(null);
+    setErrors({});
     save.reset();
   }
 
@@ -372,15 +405,18 @@ function GrowthSheet({
     const w = parseMeasurement(weight);
 
     if (h === "invalid" || w === "invalid") {
-      setError("숫자로 적어주세요");
+      setErrors({
+        ...(h === "invalid" ? { height: "숫자로 적어주세요" } : {}),
+        ...(w === "invalid" ? { weight: "숫자로 적어주세요" } : {}),
+      });
       return;
     }
     // 🚨 한쪽만 재고 오는 날이 있다. 둘 다 비어 있을 때만 막는다.
     if (h === null && w === null) {
-      setError("키나 몸무게 중 하나는 적어주세요");
+      setErrors({ height: "키나 몸무게 중 하나는 적어주세요" });
       return;
     }
-    setError(null);
+    setErrors({});
 
     save.mutate({
       measured_on: measuredOn,
@@ -420,6 +456,7 @@ function GrowthSheet({
           label="키 · cm"
           value={height}
           onChange={(e) => setHeight(e.target.value)}
+          error={errors.height}
           inputMode="decimal"
           autoComplete="off"
           placeholder="104.2"
@@ -429,15 +466,16 @@ function GrowthSheet({
           label="몸무게 · kg"
           value={weight}
           onChange={(e) => setWeight(e.target.value)}
+          error={errors.weight}
           inputMode="decimal"
           autoComplete="off"
           placeholder="17.1"
         />
 
-        {error ? <p className="text-body-sm text-danger-ink">{error}</p> : null}
-
         {save.isError ? (
-          <p className="text-body-sm text-ink-muted">적지 못했어요. 다시 눌러 주세요.</p>
+          <p role="status" className="text-body-sm text-ink-muted">
+            적지 못했어요. 저장된 것은 없으니 다시 눌러 주세요.
+          </p>
         ) : null}
       </div>
     </BottomSheet>

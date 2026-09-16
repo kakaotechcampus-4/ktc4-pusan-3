@@ -2,12 +2,13 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
-import { ShieldAlert } from "lucide-react";
+import { Shield, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
+import { IconTile } from "@/components/ui/icon-tile";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
@@ -136,6 +137,14 @@ function HealthSafetyRow({ childId, item }: { childId: string; item: HealthSafet
   return (
     <div className="flex flex-col">
       <div className="flex items-start gap-3 px-4 py-3.5">
+        {/* 🚨 **측정 기록 줄과 같은 타일을 세운다** (apps/web/CLAUDE.md §3 — 한 화면의 두
+            목록은 같은 기준선에서 시작한다). 없으면 두 "훑는 목록" 의 왼쪽 들여쓰기가 달라
+            남남으로 읽힌다. 🚨 뉴트럴이다 — 도메인 `health` 색은 "Health Agent 결과" 라는
+            뜻이고, 이 기록은 Agent 가 만지지 못하는 것이다.
+            🚨 `ShieldAlert` 가 아니라 `Shield` 다. 줄마다 경고 표시가 서면 등록해 둔 사실이
+            매번 사고처럼 읽힌다 — 이 화면은 알리는 자리가 아니라 관리하는 자리다. */}
+        <IconTile icon={Shield} tone="neutral" />
+
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <p className="text-body text-ink">{item.label}</p>
           {/* 🚨 띄운 가운뎃점은 줄당 하나다 (디자인 시스템 §4) — 나머지는 쉼표로 잇는다. */}
@@ -182,9 +191,12 @@ function HealthSafetyRow({ childId, item }: { childId: string; item: HealthSafet
             {josa(item.label, "이/가")} 안전 정보에서 빠져요. 앞으로 식사 제안이 이 항목을
             거르지 않아요.
           </p>
+          {/* 🚨 **실패를 빨강으로 칠하지 않는다** (디자인 시스템 §3 · §5). `danger` 는
+              알레르기·건강 중단·파괴적 확정에만 쓰고, 실패는 `ink-muted` 다.
+              🚨 **서버가 준 문구를 그대로 싣지 않는다** — 에러 문구는 프론트가 만든다. */}
           {retract.isError ? (
-            <p className="text-caption text-danger-ink">
-              {retract.error instanceof Error ? retract.error.message : "내리지 못했어요"}
+            <p role="status" className="text-body-sm text-ink-muted">
+              내리지 못했어요. 아직 안전 정보에 그대로 있으니 다시 눌러 주세요.
             </p>
           ) : null}
           <div className="flex gap-2">
@@ -300,6 +312,26 @@ export function HealthSafetySheet({
       dismissible={false}
       footer={
         <div className="flex flex-col gap-2">
+          {/* 🚨 **실패 문구가 버튼 옆에 있어야 한다.** 예전에는 시트 본문 맨 아래였는데,
+              본문은 스크롤하고 버튼은 고정이라 390px 폰에서는 **되돌릴 수 없는 등록이
+              실패한 사실이 화면에 하나도 안 보였다.** 확인 패널에 `scrollIntoView` 를 단 것과
+              같은 사고다 — 여기는 고정 영역으로 옮겨서 애초에 스크롤 밖으로 나가지 않게 한다.
+              🚨 실패를 한 덩어리로 뭉뚱그리지 않는다 — 다시 눌러야 하는 것과 다른 곳으로
+              가야 하는 것은 다른 말이다 (apps/web/CLAUDE.md §3 에러). */}
+          {alreadyExists ? (
+            <p role="status" className="text-body-sm text-ink-muted">
+              이미 등록된 항목이에요. 목록에서 확인할 수 있어요.
+            </p>
+          ) : consentRequired ? (
+            <p role="status" className="text-body-sm text-ink-muted">
+              건강 정보 동의를 받기 전이라 저장된 것은 하나도 없어요. 동의 화면은 아직 없어요.
+            </p>
+          ) : save.isError ? (
+            <p role="status" className="text-body-sm text-ink-muted">
+              등록하지 못했어요. 저장된 것은 하나도 없으니 다시 눌러 주세요.
+            </p>
+          ) : null}
+
           <Button variant="approve" onClick={submit} disabled={save.isPending}>
             {save.isPending ? <Spinner /> : null}
             {save.isPending ? "등록하는 중이에요" : "확인했어요, 등록할게요"}
@@ -361,21 +393,6 @@ export function HealthSafetySheet({
           autoComplete="off"
         />
 
-        {/* 🚨 실패를 한 덩어리로 뭉뚱그리지 않는다 — 다시 눌러야 하는 것과 다른 곳으로 가야
-            하는 것은 다른 말이다 (apps/web/CLAUDE.md §3 에러). */}
-        {alreadyExists ? (
-          <p className="text-body-sm text-ink-muted">
-            이미 등록된 항목이에요. 목록에서 확인할 수 있어요.
-          </p>
-        ) : consentRequired ? (
-          <p className="text-body-sm text-ink-muted">
-            건강 정보 동의를 받기 전이라 저장된 것은 하나도 없어요. 동의 화면은 아직 없어요.
-          </p>
-        ) : save.isError ? (
-          <p className="text-body-sm text-ink-muted">
-            등록하지 못했어요. 저장된 것은 하나도 없으니 다시 눌러 주세요.
-          </p>
-        ) : null}
       </div>
     </BottomSheet>
   );

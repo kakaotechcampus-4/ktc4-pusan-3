@@ -66,8 +66,14 @@ function GrowthLogRow({
 }) {
   /**
    * 🚨 **지우기 전에 확인 단계를 둔다. 하지만 승인 게이트가 아니다** — 게이트는 딱 2곳이고
-   *    늘리지 않는다 (최상위 §2). 그래서 `btn-approve` 도 `caution` 도 쓰지 않고
-   *    `btn-primary` + `btn-tertiary` 다 (디자인 시스템 §7 "교정" 과 같은 처리).
+   *    늘리지 않는다 (최상위 §2). 그래서 `btn-approve` 도 `caution` 도 쓰지 않는다.
+   *
+   * 🚨 **07 교정과 달리 `btn-secondary` 다** (07 은 `btn-primary` + `btn-tertiary`).
+   *    이유는 이 패널이 앉는 화면이 다르기 때문이다 — 07 에는 화면 primary 가 없지만
+   *    11 에는 "고친 것 저장하기" 가 있고, 이 패널은 **인라인**이라 그 버튼과 한 화면에
+   *    같이 선다. 둘 다 채운 초록이면 "한 화면에 primary 하나"(디자인 시스템 §7)가 깨지고,
+   *    부모가 다음 행동을 판단해야 한다. 시트(`GrowthSheet`)는 모달이라 뒤가 `inert` 이므로
+   *    자기 primary 를 갖는다 — **인라인이냐 모달이냐가 가르는 선**이다.
    *
    * 🚨 **빨강을 쓰지 않는다.** 잘못 적은 숫자를 지우는 것은 사고가 아니라 **고치는 행위**다 —
    *    07 에서 `wrong` 교정에 `btn-danger` 를 안 쓴 것과 같은 이유다. `danger` 는
@@ -124,7 +130,13 @@ function GrowthLogRow({
             이 줄이 측정 기록에서 빠져요. 다시 재서 적을 수 있어요.
           </p>
           <div className="flex gap-2">
-            <Button size="compact" onClick={onDelete} disabled={deleting} className="flex-1">
+            <Button
+              variant="secondary"
+              size="compact"
+              onClick={onDelete}
+              disabled={deleting}
+              className="flex-1"
+            >
               {deleting ? "지우는 중이에요" : "지우기"}
             </Button>
             <Button
