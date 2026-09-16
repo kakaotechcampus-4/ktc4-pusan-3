@@ -69,8 +69,36 @@ async def seed_member(session, *, deleted: bool = False) -> Parent:
     return parent
 
 
-async def count(session, model) -> int:
+TRACKED = (Parent, AuthIdentity, AuthSession, Consent, AuthHandoff)
+"""행 수 변화를 지켜볼 테이블."""
+
+
+async def row_count(session, model) -> int:
     return await session.scalar(select(func.count()).select_from(model))
+
+
+async def snapshot(session) -> dict:
+    """지금 행 수를 찍어 둔다. 이 뒤로는 기준점 대비 증감만 본다.
+
+    🚨 절대 개수를 세지 않는다. 테스트끼리는 바깥 트랜잭션 롤백으로 격리되지만, 로컬에서
+       앱을 한 번 써 본 개발자의 DB 에는 커밋된 행이 남아 있고 그건 롤백 대상이 아니다.
+       빈 DB 에서만 통과하는 테스트는 "내 로컬에서만 빨간불" 을 만든다 (#45).
+    """
+    return {model: await row_count(session, model) for model in TRACKED}
+
+
+async def changed(session, base: dict) -> dict:
+    """기준점 이후 달라진 것만 {테이블 이름: 증감} 으로 돌려준다.
+
+    변화가 없으면 빈 dict 다. 그래서 "아무것도 만들지 않았다" 를 `== {}` 한 줄로 쓸 수
+    있고, 기대한 것 외에 **다른 테이블이 건드려졌는지까지** 함께 잡힌다.
+    """
+    now = {model: await row_count(session, model) for model in TRACKED}
+    return {
+        model.__name__: now[model] - base[model]
+        for model in TRACKED
+        if now[model] != base[model]
+    }
 
 
 # ── A-01 · A-02 신규 가입 ─────────────────────────────────────────────────────
@@ -79,7 +107,7 @@ async def count(session, model) -> int:
 async def test_first_time_member_gets_consent_code_and_no_parent(db_client, session):
     """A-01. 처음 보는 회원번호는 대기표만 받는다. 🚨 parent 가 생기면 §6-1 위반이다."""
     await seed_handoff(session, code="handoff-code")
-    before = await count(session, Parent)
+    base = await snapshot(session)
 
     response = await db_client.post(
         "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
@@ -90,7 +118,8 @@ async def test_first_time_member_gets_consent_code_and_no_parent(db_client, sess
     assert body["status"] == "consent_required"
     assert body["consent_code"]
     assert "token" not in body
-    assert await count(session, Parent) == before
+    # 교환용 코드가 대기표로 바뀌었을 뿐 (소비 -1, 발급 +1) 계정은 하나도 안 생겼다.
+    assert await changed(session, base) == {}
 
 
 async def test_signup_creates_account_and_session_in_one_go(db_client, session):
@@ -100,6 +129,7 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
         "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
     )
     consent_code = exchanged.json()["consent_code"]
+    base = await snapshot(session)
 
     response = await db_client.post(
         "/api/v1/auth/kakao/signup",
@@ -112,9 +142,14 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
     assert body["token"]
     assert body["expires_in"] == 43200
     assert body["consent_required"] == []
-    assert await count(session, Parent) == 1
-    assert await count(session, AuthIdentity) == 1
-    assert await count(session, Consent) == 2
+    # 한 트랜잭션에서 만들어진 것 전부. 대기표는 소비돼 -1 이다.
+    assert await changed(session, base) == {
+        "Parent": 1,
+        "AuthIdentity": 1,
+        "Consent": 2,
+        "AuthSession": 1,
+        "AuthHandoff": -1,
+    }
 
 
 async def test_signup_without_required_scope_creates_nothing(db_client, session):
@@ -124,6 +159,7 @@ async def test_signup_without_required_scope_creates_nothing(db_client, session)
         "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
     )
     consent_code = exchanged.json()["consent_code"]
+    base = await snapshot(session)
 
     response = await db_client.post(
         "/api/v1/auth/kakao/signup",
@@ -136,7 +172,8 @@ async def test_signup_without_required_scope_creates_nothing(db_client, session)
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "consent_required"
-    assert await count(session, Parent) == 0
+    # 🚨 아무것도 만들어지지 않았다. 대기표조차 태우지 않는다.
+    assert await changed(session, base) == {}
 
 
 async def test_missing_consent_leaves_the_ticket_usable(db_client, session):
@@ -194,6 +231,7 @@ async def test_returning_member_gets_session_without_new_identity(db_client, ses
     """A-03. 기존 회원은 바로 세션이다. auth_identity 행이 늘지 않는다."""
     parent = await seed_member(session)
     await seed_handoff(session, code="handoff-code", parent_id=parent.id)
+    base = await snapshot(session)
 
     response = await db_client.post(
         "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
@@ -204,7 +242,8 @@ async def test_returning_member_gets_session_without_new_identity(db_client, ses
     assert body["is_new"] is False
     assert body["parent"]["id"] == str(parent.id)
     assert body["parent"]["nickname"] is None
-    assert await count(session, AuthIdentity) == 1
+    # 세션만 생기고 코드는 소비된다. AuthIdentity 가 목록에 없다 = 연결이 늘지 않았다.
+    assert await changed(session, base) == {"AuthSession": 1, "AuthHandoff": -1}
 
 
 async def test_returning_member_sees_outstanding_consents(db_client, session):
@@ -246,6 +285,7 @@ async def test_wrong_bind_burns_the_code(db_client, session):
     """
     parent = await seed_member(session)
     await seed_handoff(session, code="handoff-code", parent_id=parent.id)
+    base = await snapshot(session)
 
     wrong = await db_client.post(
         "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": OTHER_BIND}
@@ -255,7 +295,8 @@ async def test_wrong_bind_burns_the_code(db_client, session):
     assert wrong.status_code == 401
     assert wrong.json()["error"]["code"] == "invalid_handoff"
     assert retry.status_code == 401
-    assert await count(session, AuthSession) == 0
+    # 코드는 태워졌고(-1) 세션은 안 나갔다. AuthSession 이 목록에 없는 것이 그 증거다.
+    assert await changed(session, base) == {"AuthHandoff": -1}
 
 
 async def test_expired_handoff_is_rejected(db_client, session):
@@ -307,6 +348,7 @@ async def test_logout_invalidates_the_token_immediately(db_client, session):
     """🚨 A-15. 로그아웃 직후 같은 토큰은 401. 지연이 있으면 불투명 토큰을 고른 이유가 사라진다."""
     token = await issue_session(db_client, session)
     headers = {"Authorization": f"Bearer {token}"}
+    base = await snapshot(session)
 
     logout = await db_client.post("/api/v1/auth/logout", headers=headers)
     after = await db_client.post("/api/v1/auth/logout", headers=headers)
@@ -314,7 +356,7 @@ async def test_logout_invalidates_the_token_immediately(db_client, session):
     assert logout.status_code == 204
     assert after.status_code == 401
     assert after.json()["error"]["code"] == "unauthenticated"
-    assert await count(session, AuthSession) == 0
+    assert await changed(session, base) == {"AuthSession": -1}
 
 
 async def test_logout_leaves_other_sessions_alone(db_client, session):
@@ -329,10 +371,12 @@ async def test_logout_leaves_other_sessions_alone(db_client, session):
         )
     )
     await session.flush()
+    base = await snapshot(session)
 
     await db_client.post("/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
-    assert await count(session, AuthSession) == 1
+    # 🚨 정확히 1행만 줄었다. 2 였다면 같은 계정의 다른 기기까지 끊은 것이다.
+    assert await changed(session, base) == {"AuthSession": -1}
 
 
 async def test_expired_session_token_is_401(db_client, session):
@@ -382,6 +426,7 @@ async def test_withdrawn_member_cannot_exchange(db_client, session):
     """A-19. 탈퇴 계정은 교환에서도 세션을 받지 못한다 (§10-1)."""
     parent = await seed_member(session, deleted=True)
     await seed_handoff(session, code="handoff-code", parent_id=parent.id)
+    base = await snapshot(session)
 
     response = await db_client.post(
         "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
@@ -389,7 +434,8 @@ async def test_withdrawn_member_cannot_exchange(db_client, session):
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
-    assert await count(session, AuthSession) == 0
+    # 세션은 나가지 않는다. 코드는 이미 소비된 뒤라 -1 이다.
+    assert await changed(session, base) == {"AuthHandoff": -1}
 
 
 # ── A-18 저장 확인 ────────────────────────────────────────────────────────────
@@ -404,12 +450,22 @@ async def test_no_plaintext_secret_is_ever_stored(db_client, session):
     token = await issue_session(db_client, session)
     await seed_handoff(session, code="another-code")
 
-    stored_tokens = (await session.execute(select(AuthSession.token_hash))).scalars().all()
-    handoff = (await session.execute(select(AuthHandoff.code_hash, AuthHandoff.bind_hash))).one()
+    # 🚨 이 테스트가 심은 행만 집는다. 전체 조회로 .one() 을 쓰면 수동으로 로그인해 본
+    #    개발자의 DB 에서 MultipleResultsFound 로 깨진다 (#45).
+    stored_token = await session.scalar(
+        select(AuthSession.token_hash).where(AuthSession.token_hash == hash_token(token))
+    )
+    handoff = (
+        await session.execute(
+            select(AuthHandoff.code_hash, AuthHandoff.bind_hash).where(
+                AuthHandoff.code_hash == hash_token("another-code")
+            )
+        )
+    ).one()
 
-    assert hash_token(token) in stored_tokens
-    assert all(raw != token.encode() for raw in stored_tokens)
-    assert handoff.code_hash == hash_token("another-code")
+    # 원문으로 저장됐다면 해시로 찾을 때 안 나온다.
+    assert stored_token == hash_token(token)
+    assert stored_token != token.encode()
     assert handoff.code_hash != b"another-code"
     assert handoff.bind_hash == hash_token(BIND)
     assert handoff.bind_hash != BIND.encode()
