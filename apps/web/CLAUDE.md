@@ -50,7 +50,8 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
-  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지
+  🚨 `stores/draft.ts` · `stores/photo-draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문과
+  아이 사진 원본이라 `persist` 금지
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
@@ -114,7 +115,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
-  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` · `PhotoReview`
+  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` · `PhotoReview` · `PhotoSourceSheet`
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
@@ -137,6 +138,23 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   캘린더에 확정하는 것은 09 의 `POST /events/{eid}/confirm` 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
   ⚠️ 디자인 시스템 §7 `card-photo` · §11 표가 한동안 `caution` 을 적어 뒀는데 최상위 §2 와 어긋나서
   #60 에서 문서 쪽을 고쳤다. "승인 전에는 저장되지 않아요" 는 경고가 아니라 **사실**이라 중립 면이다
+- 🚨 **사진을 고르는 자리는 08 화면이 아니라 시트다** (`PhotoSourceSheet`). 03 홈의 카메라
+  버튼과 09 하루 패널의 "사진으로 적기" 가 **그 자리에서** 시트를 열고, 촬영/앨범을 고르면
+  바로 08 의 **읽는 중**으로 넘어간다 — 고르기만 하는 화면을 한 칸 두지 않는다.
+  시트는 세 곳이 **한 벌을 같이 쓴다**(08 의 "다른 사진 고르기" 도 같은 것을 연다) —
+  화면마다 다른 방식으로 고르게 하면 부모가 매번 다시 찾는다.
+  🚨 **파일 입력이 두 개인 이유는 `capture` 다.** 하나만 두면 우리 시트에서 고른 것을 OS 가 또 묻는다
+  - 🚨 **고른 파일은 `stores/photo-draft.ts` 로 넘긴다.** `File` 은 URL 에 못 싣고, 라우트 이동이
+    사용자 제스처를 소비해서 "08 에 도착한 뒤 파일 입력을 대신 눌러 주기" 도 막힌다.
+    **`persist` 금지** (아이 사진 원본 · `draft.ts` 와 같은 규칙) · 한 번 쓰면 `release` 로 뗀다
+    (안 떼면 08 을 다시 열 때 지난번 사진이 저절로 올라간다) · `childId` 를 함께 확인한다
+  - 🚨 **넘겨받은 사진은 effect 가 아니라 `useState` 초기값으로 받는다.** effect 에서 `setState`
+    하면 08 의 첫 프레임이 **사진 없는 화면**이라 "고르면 바로 읽는 화면" 이 한 번 깜빡인다
+    (lint 의 `react-hooks/set-state-in-effect` 가 같은 것을 잡는다). `peek` 은 순수한 읽기다
+  - 🚨 **objectURL 해제를 effect cleanup 에 걸지 않는다.** StrictMode 가 mount 직후 cleanup 을
+    한 번 돌려서 방금 넘겨받은 사진이 그 자리에서 해제된다 (`ERR_FILE_NOT_FOUND` 로 났다).
+    만드는 것도 해제하는 것도 스토어 한 곳이고, 해제는 **다음 사진**과 **로그아웃** 두 이벤트뿐이다 —
+    살아 있는 URL 은 언제나 최대 한 개다
 - 🚨 **08 은 `lane` 을 서버 추측 + 한 번 정정으로 정한다.** 프로토타입의 탭 선택은 같은 것을 두 번
   고르게 만들어서 뺐다. 정정 버튼에는 "아니에요" 가 아니라 **바뀔 결과**를 쓴다(`아이 활동 사진이에요`)
 - 🚨 **08 의 문서 lane 은 항목을 미리 골라 두고, 활동 lane 은 하나도 고르지 않은 채로 시작한다.**

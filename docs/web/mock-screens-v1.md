@@ -36,7 +36,8 @@ location.replace("/");
 | 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
 | 06 승인 시트 | 05 에서 "이걸로" (시트라 주소가 없다) |
 | 07 기록 · 기억 | `/child/c1/memories` (`?tab=profile` · `?tab=feedback` · `?domain=food`) |
-| 08 사진으로 적기 | `/child/c1/photos` — 아무 이미지 파일이나 고르면 알림장으로 읽는다 |
+| 08 사진으로 적기 | 03 홈의 카메라 버튼 → 시트에서 촬영/앨범 (아무 이미지 파일이나 고르면 알림장으로 읽는다) |
+| 08 · 직접 들어온 경우 | `/child/c1/photos` — 넘겨받은 사진이 없어서 고르는 칸이 선다 |
 | 08 · 아이 활동 사진 | `/child/c1/photos?scenario=photo_activity` (태그가 **하나도 안 골라진** 채로 시작한다) |
 | 08 · 읽어낼 게 없는 사진 | `/child/c1/photos?scenario=photo_unreadable` |
 | 08 · 캘린더의 하루에서 들어온 경우 | `/child/c1/photos?date=2026-09-12` 또는 09 하루 패널의 "사진으로 적기" |
