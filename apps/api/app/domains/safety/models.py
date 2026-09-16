@@ -67,8 +67,8 @@ class HealthSafety(Base, UUIDPk, Timestamps):
         nullable=False,
         server_default="active",
     )
-    created_by: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="RESTRICT"), nullable=False
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
