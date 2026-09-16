@@ -16,6 +16,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { HomeComposer } from "@/components/home-composer";
+import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { RunProgress, RunResult } from "@/components/run-result";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -29,6 +30,7 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
 import { useDraftStore, useDraftText } from "@/stores/draft";
+import { usePhotoDraftStore } from "@/stores/photo-draft";
 import {
   api,
   isApiError,
@@ -73,6 +75,13 @@ function HomeScreen() {
   const clearDraft = useDraftStore((s) => s.clearDraft);
   /** 05 로 넘길 때 같이 보낸다 — 어느 입력에서 나온 제안인지 서버가 알아야 한다. */
   const [runId, setRunId] = useState<string | null>(null);
+  /**
+   * 사진은 **여기서 고르고 08 에서 확인한다.** 고르는 것은 두 갈래 한 번이라 화면을 따로
+   * 두지 않고(`PhotoSourceSheet`), 고른 파일은 라우트를 못 넘어가서 스토어로 넘긴다
+   * (`stores/photo-draft.ts` — 메모리 전용).
+   */
+  const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
+  const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
   const run = useRunStream(childId);
 
   const home = useQuery({
@@ -181,7 +190,7 @@ function HomeScreen() {
             onSubmit={() => submit.mutate()}
             prompts={home.data?.agent_prompts ?? []}
             onPickPrompt={(agent) => goToSuggestions([agent])}
-            onPickPhoto={() => router.push(`/child/${childId}/photos`)}
+            onPickPhoto={() => setPhotoSheetOpen(true)}
             pending={submit.isPending}
           />
         </div>
@@ -225,6 +234,18 @@ function HomeScreen() {
       ) : home.data ? (
         <HomeBody data={home.data} />
       ) : null}
+
+      {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
+          홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
+      <PhotoSourceSheet
+        open={photoSheetOpen}
+        onClose={() => setPhotoSheetOpen(false)}
+        onPick={(file) => {
+          putPhoto(childId, file);
+          setPhotoSheetOpen(false);
+          router.push(`/child/${childId}/photos`);
+        }}
+      />
     </Screen>
   );
 }

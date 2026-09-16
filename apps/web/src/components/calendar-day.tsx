@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
+import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
+import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, qk } from "@/lib/api";
 import type {
   CalendarDayResponse,
@@ -58,6 +60,8 @@ export function CalendarDayPanel({
    * 세우는 쪽(09 화면)이 책임진다.
    */
   const [writing, setWriting] = useState(false);
+  const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
+  const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
   const router = useRouter();
 
   const hasDiary = data.diary !== null && data.diary.text.trim() !== "";
@@ -121,17 +125,24 @@ export function CalendarDayPanel({
           <Photos urls={data.diary.image_urls} />
         ) : null}
         <div>
-          <Button
-            variant="tertiary"
-            size="compact"
-            onClick={() => router.push(`/child/${childId}/photos?date=${date}`)}
-          >
+          <Button variant="tertiary" size="compact" onClick={() => setPhotoSheetOpen(true)}>
             사진으로 적기
           </Button>
         </div>
         <p className="text-caption text-ink-subtle">
           사진에서 읽어낸 것을 보여드리고, 승인해야 저장돼요.
         </p>
+        {/* 🚨 홈과 **같은 시트**다. 사진을 고르는 방법이 화면마다 다르면 부모가 매번 다시 찾는다. */}
+        <PhotoSourceSheet
+          open={photoSheetOpen}
+          onClose={() => setPhotoSheetOpen(false)}
+          onPick={(file) => {
+            putPhoto(childId, file);
+            setPhotoSheetOpen(false);
+            // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
+            router.push(`/child/${childId}/photos?date=${date}`);
+          }}
+        />
       </Section>
     </div>
   );
