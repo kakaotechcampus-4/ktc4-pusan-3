@@ -23,7 +23,7 @@
 
 | 입력 | 어디서 오나 | 읽는 방법 | 못 읽는 칸 |
 | --- | --- | --- | --- |
-| `image` | 보호자가 찍은 사진 | OCR (Gemini, 실측 99~100%) | 생긴다 → 검수 |
+| `image` | 보호자가 찍은 사진 | OCR (Gemini) → [`image_ocr.py`](../../apps/api/app/providers/meal_plan/image_ocr.py) | 생긴다 → 검수 (실측: 178항목 · 번호 일치 100% · [모델 비교](./ocr-model-eval-v1.md)) |
 | `xlsx` | 급식관리지원센터 배포 엑셀 (6종 시트) | 셀을 그대로 읽는다 (openpyxl) → [`xlsx.py`](../../apps/api/app/providers/meal_plan/xlsx.py) | 거의 없다 (실측: 6시트 · 868항목 · 0) |
 | `hwp` | 센터 배포 한글 | 표 안 텍스트를 읽는다 (라이브러리 미정, §6) | 거의 없다 |
 
@@ -109,7 +109,7 @@ class MealPlanReader(Protocol):
 app/providers/meal_plan/
 ├── schema.py      MealPlanJSON · MealPlanSource · MealType
 ├── base.py        MealPlanReader
-├── image_ocr.py   (4/5) Gemini OCR
+├── image_ocr.py   (4/5 · #67) Gemini OCR — ImageOcrMealPlanReader · 설정 MEAL_OCR_* · 2분할 호출
 ├── xlsx.py        (3/5 · #63) 센터 엑셀 — XlsxMealPlanReader(sheet=None) · list_menu_sheets()
 └── hwp.py         (#63) 센터 한글
 ```
@@ -130,9 +130,9 @@ app/providers/meal_plan/
 | --- | --- | --- |
 | 1/5 | `app/rules/allergen.py` 파서 | #64 머지 |
 | 2/5 | 이 문서 + `MealPlanJSON` + `MealPlanReader` | #65 |
-| 3/5 | 엑셀 읽기 (#63) | 이 PR |
-| 4/5 | 사진 OCR (Gemini) + 설정 키 `MEAL_OCR_*` | |
-| 5/5 | 평가 스크립트 + 정답셋 178항목 + 모델 비교 | |
+| 3/5 | 엑셀 읽기 (#63) | #66 |
+| 4/5 | 사진 OCR (Gemini) + 설정 키 `MEAL_OCR_*` | #67 |
+| 5/5 | 평가 스크립트 + 정답셋 178항목 + 모델 비교 ([문서](./ocr-model-eval-v1.md)) | 이 PR |
 | — | 저장 (테이블) | 회의안건 1-2 확정 후 별도 이슈 |
 
 ---

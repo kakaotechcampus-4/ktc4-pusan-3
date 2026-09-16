@@ -80,6 +80,7 @@
 ## 급식표 (meal-plan)
 
 - [meal-plan/meal-plan-pipeline-v1.md](meal-plan/meal-plan-pipeline-v1.md) — 입력 3종(사진 · 엑셀 · 한글)이 모이는 `MealPlanJSON` 과 `MealPlanReader` 확정 · `source` 필드로 검수 필요 여부 구분 · `meal_type` 5종 · `allergen_codes` 는 JSON 에 없음(규칙이 뽑음) · 저장 기준은 미정(우선 아이 기준) · 못 읽은 칸은 그 칸만 비움
+- [meal-plan/ocr-model-eval-v1.md](meal-plan/ocr-model-eval-v1.md) — 사진 입력 기본 모델 `gemini-3.1-pro-preview` 확정(정답셋 178항목, 메뉴 단위 번호 일치 100%) · 채점 지표는 메뉴 단위 번호 일치가 정본 · 게이트웨이 출력 상한 6,000 → 2분할 · 후보 방식 A/A+/A′/B
 
 ## 웹 · 화면
 
