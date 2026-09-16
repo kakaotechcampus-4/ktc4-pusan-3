@@ -39,7 +39,15 @@ class Settings(BaseSettings):
     KAKAO_API_TIMEOUT: float = 3.0
 
     # 로그인을 마친 뒤 302 로 돌려보낼 곳. client 열거값이 web / app 을 고른다 (§2-3).
-    AUTH_RETURN_URL_WEB: str | None = None
+    #
+    # 🚨 웹 쪽은 필수다. 없으면 서버가 뜨지 않는다 (아래 검증, #45).
+    #    카카오 키와 달리 "없어도 일단 뜨고 ready: false 로 알린다" 를 쓰지 않는 이유 —
+    #    이 값이 없으면 인증이 아예 성립하지 않는다. 성공도 실패도 전부 여기로 돌아가고
+    #    (§2-3 의 안전한 기본 복귀 대상), 없으면 302 를 만들 수조차 없다.
+    #    빠진 채로 뜨면 사용자가 카카오 인증을 **마친 뒤에** 깨진다.
+    AUTH_RETURN_URL_WEB: str
+    #    앱 쪽은 선택이다. 없다고 웹 로그인까지 막을 이유가 없어서, client=app 으로
+    #    시작할 때만 거절한다 (routers/auth.py 의 start).
     AUTH_RETURN_URL_APP: str | None = None
 
     # 수명 (초) — 명세 §5. 측정으로 정한 값이 아니다. M-02 뒤에 조정한다 (§10 2번).
@@ -47,6 +55,21 @@ class Settings(BaseSettings):
     HANDOFF_TTL: int = 120
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600
+
+    @field_validator("AUTH_RETURN_URL_WEB")
+    @classmethod
+    def _require_web_return_url(cls, raw: str) -> str:
+        """빈 문자열도 없는 것으로 본다.
+
+        `AUTH_RETURN_URL_WEB=` 처럼 키만 두고 값을 비워 두는 실수가 흔하다. 타입만
+        필수로 걸면 그건 통과해 버려서, 결국 로그인 마지막 단계에서 깨진다.
+        """
+        if not raw.strip():
+            raise ValueError(
+                "AUTH_RETURN_URL_WEB 이 비어 있다. 로그인을 마친 사용자를 돌려보낼 곳이라 "
+                "없으면 인증이 성립하지 않는다 (예: http://localhost:3000/auth/callback)"
+            )
+        return raw
 
     @field_validator("CORS_ALLOW_ORIGINS")
     @classmethod
@@ -73,10 +96,9 @@ class Settings(BaseSettings):
         🚨 이 목록은 개발 환경 응답에만 싣는다. 프로덕션에서 무인증 엔드포인트가
            "어떤 설정이 비었는지" 를 알려주면 정찰에 쓰인다 (§3-1).
 
-        REVIEW(#34): 명세 §3-1 은 ready 의 조건을 client_id · client_secret ·
-          콜백 URL 셋으로 못박고 있어 그대로 따랐다. 다만 AUTH_RETURN_URL_WEB 이
-          비면 성공도 실패도 돌려보낼 곳이 없어 로그인이 끝까지 못 간다.
-          ready 에 포함할지는 프론트와 함께 정할 일이라 여기서 넓히지 않았다.
+        여기는 **카카오 키만** 본다. 복귀 URL 은 provider 와 무관한 값이라
+        app/api/v1/routers/auth.py 의 _missing_keys() 가 더한다 — ready 판정에
+        포함하기로 #45 에서 정했다.
         """
         return [
             name

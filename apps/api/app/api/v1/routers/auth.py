@@ -127,6 +127,13 @@ async def start(
 
     target = client or "web"
 
+    if target == "app" and not settings.AUTH_RETURN_URL_APP:
+        # 앱으로 돌려보낼 주소가 없다. 카카오까지 걷게 하지 않고 웹으로 끊는다.
+        # 🚨 bind 검증보다 먼저다 — 아래 실패들도 target 으로 돌아가는데, 그 주소가
+        #    없으면 실패를 알릴 방법조차 없다.
+        log.warning("AUTH_RETURN_URL_APP 이 없어 앱 복귀 요청을 거절했다")
+        return _error_redirect("web", "oauth_provider_error")
+
     if bind is None or not _BIND_PATTERN.fullmatch(bind):
         # 형식이 안 맞으면 카카오 동의까지 걷게 하지 말고 여기서 끊는다 (A-06 · A-07).
         return _error_redirect(target, "invalid_bind")
@@ -434,18 +441,21 @@ async def _issue_session(
     )
 
 
-def _is_ready(provider: AuthProvider) -> bool:
-    """이 provider 로 로그인을 시작할 수 있는가.
-
-    카카오 외에는 설정 자체가 없다. enum 에는 있으므로 422 가 아니라 ready: false 다.
-    """
-    return provider is AuthProvider.KAKAO and settings.kakao_ready
-
-
 def _missing_keys(provider: AuthProvider) -> list[str]:
-    if provider is AuthProvider.KAKAO:
-        return settings.kakao_missing_keys
-    return [f"{provider.value.upper()} 미구현"]
+    """이 provider 로 로그인을 시작할 수 없게 만드는 빈 설정.
+
+    웹 복귀 URL 은 여기서 보지 않는다 — 없으면 서버가 아예 뜨지 않기 때문이다
+    (Settings 의 검증, #45). ready 는 "카카오 설정이 갖춰졌나" 라는 원래 뜻을 지킨다.
+    """
+    if provider is not AuthProvider.KAKAO:
+        # 카카오 외에는 설정 자체가 없다. enum 에는 있으므로 422 가 아니라 ready: false 다.
+        return [f"{provider.value.upper()} 미구현"]
+    return settings.kakao_missing_keys
+
+
+def _is_ready(provider: AuthProvider) -> bool:
+    """이 provider 로 로그인을 시작할 수 있는가 — 빈 설정이 하나도 없을 때만."""
+    return not _missing_keys(provider)
 
 
 def _start_url(provider: AuthProvider) -> str:
