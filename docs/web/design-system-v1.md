@@ -499,7 +499,9 @@
 | `suggestion-row` (05 개인화) | 카드가 아니라 **목록 한 줄**이다. 접히면 `surface` 에 도메인 칩 + 기록 건수 / 제안 문장(`body`) + 쉐브론, 열리면 **두 칸** — 위 **`{domain}-soft`**(제안 `title` · 이유 `body-sm` · 글자는 전부 `{domain}-ink` · 칩은 `surface` 바탕으로 띄운다) · 아래 **`canvas`**(**근거 칩 행 필수** · 고르는 버튼). 줄 사이는 `line` 1px, 목록 전체가 한 컨테이너. 누른 느낌은 **그 줄이 열릴 색**이다 |
 | `card-general` (05 일반) | `canvas` 배경 · `line-strong` **1px 점선** · 머리줄에 `chip-domain` + "또래 기준 일반 추천" 라벨 + `chip-count` **필수** · 제안 문장 `body`/`ink` · 기준 문구 `body-sm`/`ink-muted`. **고르는 버튼이 없다** — 승인 게이트 ㉠ 은 되돌릴 수 없는 캘린더 쓰기인데 이 추천은 이 아이의 기록에서 나온 것이 아니다. 개인화 목록이 서는 자리에 **대신** 선다 |
 | `card-failed` | `surface-muted` · 테두리 없음 · `ink-muted` · 재시도 `btn-tertiary` |
-| `card-photo` (08) | 4:3 이미지 + 하단 16 여백 · 승인 전에는 `caution` 계열 라벨 |
+| `card-photo` (08) | **4:3 이미지가 위, `line` 1px 아래로 읽어낸 것이 이어 붙는 한 덩어리.** 안쪽 16. 사진이 없을 때도 같은 4:3 칸이고 `surface-muted` 면에 브랜드 아이콘 하나다 — 점선 드롭존을 만들지 않는다(점선은 `card-general` 과 `chip-evidence-stale` 이 이미 가져간 뜻이다). 확인 단계에서만 `accent`(그 화면의 한 장)이고 저장한 뒤에는 기본 테두리로 돌아온다 |
+
+🚨 **"승인 전에는 저장되지 않아요" 라벨에 `caution` 을 쓰지 않는다.** 이 표는 한동안 `caution` 계열을 적어 뒀는데, `caution` 은 **승인 게이트 2곳(캘린더 쓰기 · 건강 기록 확정) 전용**이고 (최상위 `CLAUDE.md` §2 · 아래 §11), 08 의 `commit` 은 `event` 를 **draft** 로만 만들어서 게이트가 아니다. 그 문구는 경고가 아니라 **사실**이라 중립 면(`surface-muted` + `ink-muted`)에 앉힌다. 게이트를 색으로 늘리면 세 곳이 된다.
 
 🚨 **개인화(`suggestion-row`)와 `card-general` 은 같은 컴포넌트로 만들지 않는다.** 한 컴포넌트에 플래그를 넣으면 언젠가 근거 0건인데 개인화로 그려진다.
 **타입도 응답 필드도 따로다** — `GeneralSuggestion` 에는 `evidence` 필드가 아예 없어서 개인화 목록에 넘기면 컴파일이 막고,
@@ -942,7 +944,7 @@ guard 가 여러 건이어도 배너는 **하나**고 안에서 줄로 나눈다
 | 07 기록 고치기 | 기록 / 기억 2계층 | `탭` (화면의 말은 기록·기억, 코드·엔드포인트는 observation·affinity) |
 | 07 기록 고치기 | 교정 (기록 2 · 기억 3) | `btn-secondary`. `wrong` 도 빨강 아님 — 교정은 사고가 아니다. 고르면 **확인 단계**가 뜬다 (§7 "교정") |
 | 07 기록 상세 | `is_stale` 근거 | `chip-evidence-stale` |
-| 08 사진 분석 | 승인 전 미저장 | `card-photo` + `caution` 라벨 |
+| 08 사진 분석 | 승인 전 미저장 | `card-photo` + **중립** 라벨(`surface-muted`/`ink-muted`). 🚨 `caution` 아님 — 여기는 승인 게이트가 아니다 (§7 `card-photo`) |
 | 09 캘린더 | 일정 쓰기 | `bottom-sheet` + `btn-approve` (승인 게이트 ㉠) |
 | 10 설정 | 동의 철회 · 삭제 | `btn-danger` — **여기서만** |
 

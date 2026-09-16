@@ -35,6 +35,12 @@ location.replace("/");
 | 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` |
 | 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
 | 06 승인 시트 | 05 에서 "이걸로" (시트라 주소가 없다) |
+| 07 기록 · 기억 | `/child/c1/memories` (`?tab=profile` · `?tab=feedback` · `?domain=food`) |
+| 08 사진으로 적기 | `/child/c1/photos` — 아무 이미지 파일이나 고르면 알림장으로 읽는다 |
+| 08 · 아이 활동 사진 | `/child/c1/photos?scenario=photo_activity` (태그가 **하나도 안 골라진** 채로 시작한다) |
+| 08 · 읽어낼 게 없는 사진 | `/child/c1/photos?scenario=photo_unreadable` |
+| 08 · 캘린더의 하루에서 들어온 경우 | `/child/c1/photos?date=2026-09-12` 또는 09 하루 패널의 "사진으로 적기" |
+| 09 캘린더 | `/child/c1/calendar` (`?date=YYYY-MM-DD`) |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 
