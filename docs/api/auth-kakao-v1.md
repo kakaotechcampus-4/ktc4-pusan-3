@@ -130,6 +130,11 @@ AUTH_RETURN_URL_WEB=https://<도메인>/auth/callback
 AUTH_RETURN_URL_APP=icatch://auth
 ```
 
+🚨 **둘 다 필수다. 하나라도 비어 있으면 서버가 뜨지 않는다** (#45 · #58). 카카오 키처럼
+"없어도 뜨고 `ready: false` 로 알린다" 를 쓰지 않는 이유는, 이 값이 없으면 인증이 아예
+성립하지 않기 때문이다 — 성공도 실패도 전부 여기로 돌아가고, 빠진 채로 뜨면 사용자가
+**카카오 인증을 마친 뒤에** 깨진다. 런타임 거절로 두면 그 사실을 사용자만 겪는다.
+
 | | 성공 | 실패 |
 | --- | --- | --- |
 | `client=web` | `https://<도메인>/auth/callback?code=<1회용>` | `…/auth/callback?error=<코드>` |
@@ -265,15 +270,19 @@ Cache-Control: no-store
   "consent_code": "<가입 대기표>",
   "bind": "<같은 비밀>",
   "consents": [
-    { "scope": "service_terms",   "policy_version": "2026-09-01" },
-    { "scope": "privacy_account", "policy_version": "2026-09-01" }
+    { "scope": "service_terms",   "policy_version": "draft-0" },
+    { "scope": "privacy_account", "policy_version": "draft-0" }
   ]
 }
 ```
 
+🚨 **`draft-0` 은 임시 placeholder 다.** 실제 약관·처리방침 본문이 확정되기 전이라 `policy_version` 테이블에 등록된 버전이 이것 하나뿐이다. 확정되면 새 버전이 등록되고 이 값은 바뀌므로 **클라이언트에 하드코딩하지 않는다** — 유효한 버전을 서버에서 받아오는 정책 조회 API 는 다음 Issue 에서 붙인다.
+
 **응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 
 `parent` · `auth_identity` · `consent` 를 **한 트랜잭션에서** 만든다. 필수 스코프가 빠지면 `403 consent_required`.
+
+서버는 `scope` + `policy_version` 을 등록된 정책 버전에 연결해 저장한다. 등록되지 않았거나 적용 기간 밖이면 `400 policy_version_invalid` (§8-1). 이 검사는 **대기표를 소비하기 전에** 하므로, 낡은 화면이 보낸 값이어도 대기표는 살아 있고 동의 화면만 다시 불러오면 된다.
 
 `bind` 를 여기서도 요구한다 — 클라이언트가 계속 들고 있으므로 비용이 없고, `consent_code` 만으로 계정이 만들어지는 것을 막는다.
 
@@ -642,6 +651,7 @@ target_id_type=user_id&target_id={provider_user_id}
 | HTTP | code | 언제 | 신설 |
 | --- | --- | --- | --- |
 | 400 | `validation_failed` | `code`·`bind` 누락, `bind` 형식 불량 | |
+| 400 | `policy_version_invalid` | 동의한 정책 버전이 미등록이거나 적용 기간 밖 (§3-5) | 🆕 |
 | 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
 | 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |
@@ -745,8 +755,8 @@ KAKAO_CLIENT_SECRET=         # 콘솔 > 카카오 로그인 > 보안 에서 활�
 KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정확히 일치 (운영·로컬 각각)
 KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
 KAKAO_API_TIMEOUT=3          # 초
-AUTH_RETURN_URL_WEB=         # 예: https://<도메인>/auth/callback
-AUTH_RETURN_URL_APP=         # 예: icatch://auth
+AUTH_RETURN_URL_WEB=         # 🚨 필수. 예: https://<도메인>/auth/callback
+AUTH_RETURN_URL_APP=         # 🚨 필수. 예: icatch://auth
 SESSION_TTL=43200            # 초 (12시간)
 HANDOFF_TTL=120              # 초 (2분)
 SIGNUP_TICKET_TTL=600        # 초 (10분)

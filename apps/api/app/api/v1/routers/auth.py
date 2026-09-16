@@ -36,6 +36,7 @@ from app.api.v1.schemas.auth import (
 from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
+from app.domains.consent.models import ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
     grant_account_scope,
@@ -52,6 +53,7 @@ from app.domains.identity.repository import (
     find_parent,
     find_parent_id_by_identity,
 )
+from app.domains.policy.repository import find_active_version
 from app.integrations.kakao.client import KakaoApiError, build_authorize_url, kakao_client
 
 log = logging.getLogger(__name__)
@@ -360,6 +362,28 @@ async def signup(
             {"missing": [scope.value for scope in missing]},
         )
 
+    # 🚨 대기표를 소비하기 전에 본다 — 위 필수 동의 검사와 같은 이유다. 등록되지 않은
+    #    정책 버전은 공격이 아니라 낡은 화면을 띄워 둔 사용자다. 여기서 대기표를 태우면
+    #    새로고침 한 번이면 될 일에 로그인부터 다시 시켜야 한다.
+    #    등록·기간 검사를 통과한 버전만 동의로 남긴다 — 재현할 수 없는 문구에
+    #    "동의했다" 고 적지 않는다 (노션 정책 정본 §5).
+    now = datetime.now(UTC)
+    versions: dict[ConsentScope, UUID] = {}
+    for consent in body.consents:
+        if consent.scope not in ACCOUNT_SCOPES:
+            continue
+        registered = await find_active_version(
+            session, scope=consent.scope, version=consent.policy_version, now=now
+        )
+        if registered is None:
+            raise ApiError(
+                400,
+                "policy_version_invalid",
+                "동의 화면을 다시 불러와 주세요",
+                {"scope": consent.scope.value, "policy_version": consent.policy_version},
+            )
+        versions[consent.scope] = registered.id
+
     consumed = await consume_handoff(session, code_hash=hash_token(body.consent_code))
     if consumed is None:
         raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
@@ -381,14 +405,13 @@ async def signup(
         provider=provider,
         provider_user_id=consumed.provider_user_id,
     )
-    for consent in body.consents:
-        if consent.scope in ACCOUNT_SCOPES:
-            await grant_account_scope(
-                session,
-                parent_id=parent.id,
-                scope=consent.scope,
-                policy_version=consent.policy_version,
-            )
+    for scope, policy_version_id in versions.items():
+        await grant_account_scope(
+            session,
+            parent_id=parent.id,
+            scope=scope,
+            policy_version_id=policy_version_id,
+        )
 
     response = await _issue_session(session, parent_id=parent.id, is_new=True)
     await session.commit()
@@ -434,18 +457,21 @@ async def _issue_session(
     )
 
 
-def _is_ready(provider: AuthProvider) -> bool:
-    """이 provider 로 로그인을 시작할 수 있는가.
-
-    카카오 외에는 설정 자체가 없다. enum 에는 있으므로 422 가 아니라 ready: false 다.
-    """
-    return provider is AuthProvider.KAKAO and settings.kakao_ready
-
-
 def _missing_keys(provider: AuthProvider) -> list[str]:
-    if provider is AuthProvider.KAKAO:
-        return settings.kakao_missing_keys
-    return [f"{provider.value.upper()} 미구현"]
+    """이 provider 로 로그인을 시작할 수 없게 만드는 빈 설정.
+
+    복귀 URL 은 여기서 보지 않는다 — 없으면 서버가 아예 뜨지 않기 때문이다
+    (Settings 의 검증, #45). ready 는 "카카오 설정이 갖춰졌나" 라는 원래 뜻을 지킨다.
+    """
+    if provider is not AuthProvider.KAKAO:
+        # 카카오 외에는 설정 자체가 없다. enum 에는 있으므로 422 가 아니라 ready: false 다.
+        return [f"{provider.value.upper()} 미구현"]
+    return settings.kakao_missing_keys
+
+
+def _is_ready(provider: AuthProvider) -> bool:
+    """이 provider 로 로그인을 시작할 수 있는가 — 빈 설정이 하나도 없을 때만."""
+    return not _missing_keys(provider)
 
 
 def _start_url(provider: AuthProvider) -> str:
@@ -462,13 +488,12 @@ def _start_url(provider: AuthProvider) -> str:
 
 
 def _return_url(target: str) -> str:
-    """복귀 URL. 서버 환경변수에서만 온다 — 클라이언트는 URL 을 지정하지 못한다 (§2-3)."""
-    raw = settings.AUTH_RETURN_URL_APP if target == "app" else settings.AUTH_RETURN_URL_WEB
-    if not raw:
-        # 돌려보낼 곳이 없으면 302 를 만들 수 없다. 흐름의 실패가 아니라 서버 설정
-        # 문제라 봉투로 답한다 (§8-2 의 예외가 아니다).
-        raise ApiError(500, "internal_error", "로그인 설정이 끝나지 않았어요")
-    return raw
+    """복귀 URL. 서버 환경변수에서만 온다 — 클라이언트는 URL 을 지정하지 못한다 (§2-3).
+
+    둘 다 비어 있을 수 없다 — 하나라도 없으면 서버가 뜨지 않는다 (Settings 의 검증, #45).
+    그래서 여기서 다시 확인하지 않는다.
+    """
+    return settings.AUTH_RETURN_URL_APP if target == "app" else settings.AUTH_RETURN_URL_WEB
 
 
 def _redirect(base: str, **params: str) -> RedirectResponse:
