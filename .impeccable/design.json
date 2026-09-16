@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-10T10:14:46Z",
+  "generatedAt": "2026-09-16T00:00:00Z",
   "title": "Design System: 아이캐치",
   "extensions": {
     "colorMeta": {
@@ -685,6 +685,22 @@
       "description": "Agent 하나가 실패해도 화면은 나간다. 실패를 빨강으로 칠하지 않는다.",
       "html": "<div class=\"ds-card-failed\" role=\"status\">놀이 추천을 못 받아왔어요. 식사 추천은 아래에 있어요.</div>",
       "css": ".ds-card-failed{background:var(--color-surface-muted);color:var(--color-ink-muted);border-radius:var(--radius-card);padding:16px;font-size:0.875rem;line-height:1.55;font-family:var(--font-sans);}"
+    },
+    {
+      "name": "Bottom Navigation",
+      "kind": "nav",
+      "refersTo": "nav-bottom",
+      "description": "화면 아래 4칸(홈 · 캘린더 · 기록/기억 · 아이). 바닥은 선이 아니라 surface-muted 면이 만들고, 켜진 칸은 색과 함께 위쪽 brand 2px 선을 받는다.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"화면 이동\"><ul class=\"ds-nav-list\"><li><a class=\"ds-nav-item\" href=\"#\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\"/><path d=\"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg><span>홈</span></a></li><li><a class=\"ds-nav-item\" href=\"#\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M8 2v4\"/><path d=\"M16 2v4\"/><rect width=\"18\" height=\"18\" x=\"3\" y=\"4\" rx=\"2\"/><path d=\"M3 10h18\"/></svg><span>캘린더</span></a></li><li><a class=\"ds-nav-item\" href=\"#\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M2 6h4\"/><path d=\"M2 10h4\"/><path d=\"M2 14h4\"/><path d=\"M2 18h4\"/><rect width=\"16\" height=\"20\" x=\"4\" y=\"2\" rx=\"2\"/></svg><span>기록/기억</span></a></li><li><a class=\"ds-nav-item ds-nav-item-on\" href=\"#\" aria-current=\"page\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8\" r=\"5\"/><path d=\"M20 21a8 8 0 0 0-16 0\"/></svg><span>아이</span></a></li></ul></nav>",
+      "css": ".ds-nav { background: var(--color-surface-muted); } .ds-nav-list { display: grid; grid-template-columns: repeat(4, 1fr); list-style: none; margin: 0; padding: 0; } .ds-nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 44px; padding: 4px 0; border-top: 2px solid transparent; color: var(--color-ink-subtle); text-decoration: none; font-size: 0.75rem; line-height: 1.4; transition: color 120ms cubic-bezier(0.2, 0, 0, 1), background 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-nav-item-on { color: var(--color-brand); border-top-color: var(--color-brand); } .ds-nav-item:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; } .ds-nav-item:active { color: var(--color-ink); background: var(--color-surface); }"
+    },
+    {
+      "name": "Neutral Icon Tile Row",
+      "kind": "custom",
+      "refersTo": "icon-tile-neutral",
+      "description": "07 기록 줄과 11 목록(재 둔 것 · 안전 정보)이 공유하는 줄 문법 — 왼쪽 뉴트럴 타일, 값이 주어인 본문 한 줄, 아래 메타 한 줄. 보호자가 적은 기록에는 출처 색이 없어서 타일이 뉴트럴이다.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-row-tile\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0l-4.6-4.6a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4Z\"/><path d=\"m7.5 10.5 2 2\"/><path d=\"m10.5 7.5 2 2\"/><path d=\"m13.5 4.5 2 2\"/><path d=\"m4.5 13.5 2 2\"/></svg></span><span class=\"ds-row-body\"><span class=\"ds-row-value\">키 103.2cm</span><span class=\"ds-row-meta\">오늘 잼</span></span></div>",
+      "css": ".ds-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; } .ds-row-tile { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: none; border-radius: 10px; background: var(--color-surface-muted); color: var(--color-ink-muted); } .ds-row-body { display: flex; flex-direction: column; gap: 2px; } .ds-row-value { font-size: 1rem; line-height: 1.6; color: var(--color-ink); } .ds-row-meta { font-size: 0.75rem; line-height: 1.4; color: var(--color-ink-subtle); }"
     }
   ],
   "narrative": {
@@ -702,6 +718,11 @@
       {
         "name": "The 뜻 하나 규칙",
         "body": "모든 색은 '이 색 = 이 뜻' 이 1:1 이다. 도메인 색의 뜻은 '어느 영역인가' 이고(제안 화면에서는 그것이 곧 '어느 Agent 결과인가'), 실행은 브랜드, 상태는 caution·danger 다. 예쁘라고 칠하는 색은 없고, 뜻이 없는 자리에는 뉴트럴을 쓴다.",
+        "section": "colors"
+      },
+      {
+        "name": "The 도메인 색은 출처다 규칙",
+        "body": "도메인 색이 말하는 것은 \"어느 Agent 의 결과인가\" 하나다. Agent 가 만지지 못하는 데이터에는 도메인 색이 붙지 않는다 — 11 의 알레르기·건강 기록은 보호자만 확정할 수 있어서 health 플럼을 쓰면 화면이 규칙의 반대말을 한다. 그 화면은 도메인 4색을 하나도 쓰지 않고, 색은 승인 게이트(caution)와 회수(danger) 두 자리에만 선다.",
         "section": "colors"
       },
       {
@@ -763,6 +784,11 @@
         "name": "The 단계를 늘리지 않는다 규칙",
         "body": "높낮이는 평면 / 시트 하나 / 가림막에서 끝난다. 미세한 그림자가 여러 겹 깔리면 저조도에서 뿌옇게 보인다.",
         "section": "elevation"
+      },
+      {
+        "name": "The 인라인이냐 모달이냐 규칙",
+        "body": "\"한 화면에 primary 는 하나\" 를 가르는 선은 인라인이냐 모달이냐다. 바텀시트는 뒤가 inert 라 자기 primary 를 가져도 되지만, 줄 아래에 펼쳐지는 인라인 확인 패널은 화면의 primary 와 같은 뷰포트에 함께 서므로 secondary 로 내려간다. 07 교정 확인이 btn-primary 인 것은 07 에 화면 primary 가 없어서고, 11 의 한 줄 지우기 확인이 secondary 인 것은 위에 저장 버튼이 서 있어서다.",
+        "section": "components"
       }
     ],
     "dos": [
@@ -771,12 +797,14 @@
       "Do 기록 건수 · 날짜 · 근거를 화면에 그대로 보여준다. 근거가 없으면 '또래 기준 일반 추천' 이라고 쓴다.",
       "Do 상태 변화를 색으로만 만든다(120ms). 크기와 위치는 움직이지 않는다.",
       "Do 브라우저가 대신 칠하는 표면(선택 영역 · 캐럿 · 탭 하이라이트 · 스크롤바)도 팔레트 안에 둔다.",
-      "Do 화면 제목에 PageTitle 을 쓴다. 좁은 폰에서 display → title 로 낮추는 규칙이 거기 한 곳에 있다."
+      "Do 화면 제목에 PageTitle 을 쓴다. 좁은 폰에서 display → title 로 낮추는 규칙이 거기 한 곳에 있다.",
+      "Do btn-danger 를 뜻으로 고른다 — 파괴적 확정(동의 철회 · 데이터 삭제 · 안전 정보 회수)에만. 되돌릴 수 있는 삭제는 secondary + tertiary 다."
     ],
     "donts": [
       "Don't 병원·의료 앱처럼 보이게 만들지 않는다. 건강 도메인에도 심전도·청진기 기호를 쓰지 않는다.",
       "Don't 원색 캐릭터 키즈 앱으로 가지 않는다. 이 화면을 여는 사람은 아이가 아니라 지친 보호자다.",
       "Don't SaaS 대시보드로 만들지 않는다. KPI 타일·지표 카드 그리드·스파크라인을 만들지 않는다.",
+      "Don't Agent 가 만지지 못하는 데이터에 도메인 색을 쓰지 않는다. 도메인 색은 \"어느 Agent 결과인가\" 하나만 뜻한다.",
       "Don't 실패·부분 성공을 빨강으로 칠하지 않는다.",
       "Don't 그림자 단계를 늘리거나 카드에 그림자를 넣지 않는다.",
       "Don't 2열 그리드나 데스크톱 전용 레이아웃을 만들지 않는다.",
