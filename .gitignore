@@ -86,3 +86,8 @@ Claude outputs/
 # ── oh-my-claudecode(OMC) 로컬 상태 ──────────────────
 # 세션별 작업 상태 · 계획 · 로그. 개인 로컬 도구 상태라 저장소와 무관하다.
 .omc/
+
+# ── Agent eval 실행 결과 (돌릴 때마다 값이 바뀌어 재현되지 않는다) ──
+# 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.
+apps/api/app/agents/test/**/*_result.txt
+apps/api/app/agents/test/**/*_results.jsonl

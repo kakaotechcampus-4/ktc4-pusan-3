@@ -1,24 +1,26 @@
 """Memory Agent가 추출한 날짜·시각 표현을 확정 값으로 변환하는 규칙 모듈.
 
 LLM은 자연어의 의미 해석까지만 담당한다.
-예를 들어 "모레 운동회가 있고 전날 저녁 8시에 알려줘"라는 입력에서
-"모레", "저녁 8시", "행사 기준 하루 전"과 같은 표현과 관계를 추출한다.
+예를 들어 "금요일 오전 10시에 물놀이가 있어"라는 입력에서
+"금요일", "오전 10시" 같은 표현과 과거/미래 문맥을 추출한다.
 
 이 모듈은 그 결과를 AgentContext의 현재 시각과 서비스 timezone을 기준으로
 실제 date / time / datetime 값으로 계산한다.
 
 역할 분리 원칙:
-- LLM: 날짜·시각 표현 추출, 과거/미래 문맥 판단, 기준 일정과의 관계 해석
+- LLM: 날짜·시각 표현 추출, 과거/미래 문맥 판단
 - 이 모듈: 날짜 덧셈·뺄셈, 요일/연도 계산, 24시간제 변환, timezone 적용, 유효성 검증
-- DB/tool: 계산된 값을 실제 observation / event / reminder 필드에 저장
+- DB/tool: 계산된 값을 실제 observation / event 필드에 저장
 """
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import MAXYEAR, MINYEAR, date, datetime, time, timedelta, tzinfo
 from typing import Literal
 
 TemporalDirection = Literal["past", "future", "nearest"]
+
+_MIN_YEAR, _MAX_YEAR = MINYEAR + 1, MAXYEAR - 1
 
 
 class DateParseError(ValueError):
@@ -76,12 +78,18 @@ _WEEKDAY_RE = re.compile(
 _MONTH_DAY_RE = re.compile(r"^(?P<month>\d{1,2})월(?P<day>\d{1,2})일$")
 
 _NAMED_TIMES = {"정오": time(12, 0), "자정": time(0, 0), "한밤중": time(0, 0)}
+# 시각 자리에 올 수 있는 "하루 종일". 일정에서만 뜻이 있다 (00:00~23:59)
+_ALL_DAY = {"하루종일", "종일", "온종일", "하루온종일"}
+ALL_DAY_START = time(0, 0)
+ALL_DAY_END = time(23, 59)
 _TIME_RE = re.compile(
     r"^(?P<mer>새벽|아침|오전|낮|점심|오후|저녁|밤)?"
     r"(?P<hour>\d{1,2})(?::|시)"
     r"(?:(?P<minute>\d{1,2})분?|(?P<half>반))?$"
 )
 _TIME_TAIL_RE = re.compile(r"(에|쯤|경|정각|께)$")
+# 구간을 여닫는 조사
+_RANGE_TAIL_RE = re.compile(r"(?:부터|까지)$")
 
 _PM_MERIDIEMS = {"오후", "저녁", "낮", "점심"}
 _AM_MERIDIEMS = {"오전", "아침", "새벽"}
@@ -97,15 +105,18 @@ def resolve_date(value: str, *, today: date, direction: TemporalDirection = "nea
     if not isinstance(value, str) or not value.strip():
         raise DateParseError("날짜 표현이 비어 있다.")
 
-    text = _normalize(value)
+    # "어제부터 계속 기침" 의 "어제부터" 처럼 구간을 여는 표현은 그 날짜 하나로 본다.
+    # (관찰은 하루 단위 — build_observed_range)
+    text = _RANGE_TAIL_RE.sub("", _normalize(value)) or _normalize(value)
     iso = _try_iso_date(text)
     if iso is not None:
+        _check_year(iso.year, text)
         return iso
 
     key = text.replace(" ", "")
     if key in _ANCHOR_RELATIVE:
         raise DateParseError(
-            f"'{text}' 는 기준 일정이 있어야 해석된다. offset_days_from_event 를 쓴다."
+            f"'{text}' 는 기준 일정이 있어야 풀리는 날짜다. 사용자에게 날짜를 되묻는다."
         )
     if key in _DAY_OFFSETS:
         return today + timedelta(days=_DAY_OFFSETS[key])
@@ -139,10 +150,12 @@ def resolve_date_range(
     matched = _YEAR_RE.match(key)
     if matched is not None:
         year = int(matched.group("year"))
+        _check_year(year, text)
         return DateRange(start=date(year, 1, 1), end=date(year + 1, 1, 1))
     matched = _YEAR_MONTH_RE.match(key)
     if matched is not None:
         year, month = int(matched.group("year")), int(matched.group("month"))
+        _check_year(year, text)
         if not 1 <= month <= 12:
             raise DateParseError(f"존재하지 않는 월: {text!r}")
         start = date(year, month, 1)
@@ -168,6 +181,16 @@ def resolve_query_bound(
         return None
     span = resolve_date_range(value, today=today, direction=direction)
     return span.end - timedelta(days=1) if is_end else span.start
+
+
+def is_all_day(value: str | None) -> bool:
+    """시각 자리에 "하루 종일" 이 온 경우. 일정은 00:00~23:59 · all_day 로 저장한다.
+
+    시각을 모르는 것(=되묻는다)과 하루 종일인 것(=아는 것)은 다르다. 그래서 값으로 받는다.
+    """
+    if value is None:
+        return False
+    return _normalize(value).replace(" ", "") in _ALL_DAY
 
 
 def resolve_time(value: str | None) -> time | None:
@@ -197,11 +220,6 @@ def resolve_time(value: str | None) -> time | None:
 def combine(day: date, moment: time | None, tz: tzinfo) -> datetime:
     """날짜와 시각을 timezone 이 붙은 datetime 으로 합친다. 시각이 없으면 자정."""
     return datetime.combine(day, moment or time(0, 0), tzinfo=tz)
-
-
-def shift_days(day: date, days: int) -> date:
-    """기준 날짜에서 days만큼 이동. reminder의 offset_days_from_event가 쓴다."""
-    return day + timedelta(days=days)
 
 
 def build_observed_range(day: date) -> DateRange:
@@ -278,11 +296,17 @@ def _try_year_month_day(key: str) -> date | None:
         return None
 
     year = int(matched.group("year"))
+    _check_year(year, key)
     month, day = int(matched.group("month")), int(matched.group("day"))
     candidate = _try_make_date(year, month, day)
     if candidate is None:
         raise DateParseError(f"존재하지 않는 날짜: {key!r}")
     return candidate
+
+
+def _check_year(year: int, text: str) -> None:
+    if not _MIN_YEAR <= year <= _MAX_YEAR:
+        raise DateParseError(f"다룰 수 없는 연도: {text!r}")
 
 
 def _try_make_date(year: int, month: int, day: int) -> date | None:

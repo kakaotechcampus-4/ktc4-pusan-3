@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     MEMORY_BASE_URL: str | None = None
     MEMORY_MODEL: str | None = None
     MEMORY_REASONING_EFFORT: str | None = None
+
+    SUPERVISOR_API_KEY: str | None = None
+    SUPERVISOR_BASE_URL: str | None = None
+    SUPERVISOR_MODEL: str | None = None
+    SUPERVISOR_REASONING_EFFORT: str | None = None
+
+    FOOD_API_KEY: str | None = None
+    FOOD_BASE_URL: str | None = None
+    FOOD_MODEL: str | None = None
+    FOOD_REASONING_EFFORT: str | None = None
 
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
@@ -112,7 +122,20 @@ class Settings(BaseSettings):
         """이 서버 설정으로 카카오 로그인을 시작할 수 있는가 (§3-1 의 ready)."""
         return not self.kakao_missing_keys
 
+    # extra는 기본 forbid
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 
 
-settings = Settings()
+def _load() -> Settings:
+    """설정을 읽는다. 실패시 키 이름과 사유만 남기고 값은 찍지 않는다."""
+    try:
+        return Settings()
+    except ValidationError as error:
+        detail = ", ".join(
+            f"{'.'.join(str(part) for part in item['loc'])}={item['type']}"
+            for item in error.errors()
+        )
+        raise RuntimeError(f".env 설정 오류 — {detail}") from None
+
+
+settings = _load()

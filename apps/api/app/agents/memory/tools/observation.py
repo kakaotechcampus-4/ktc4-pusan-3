@@ -1,4 +1,4 @@
-"""observation 4테이블(food / health / education / activity)의 CRUD tool 16개.
+"""observation 5테이블(food / health / education / activity / routine)의 CRUD tool 20개.
 
 각 tool 흐름:
   - 날짜·시각 표현을 datetime_rules 로 확정 -> context 값 주입 -> NOT NULL 기본값 채움
@@ -29,6 +29,8 @@ from app.agents.memory.schemas.observation import (
     ObservationHealthCreate,
     ObservationHealthUpdate,
     ObservationQueryArgs,
+    ObservationRoutineCreate,
+    ObservationRoutineUpdate,
     RecordRef,
 )
 
@@ -37,6 +39,23 @@ _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
 
 # update도 날짜를 바꿀 수 있다. 이 셋은 fields로 내려보내지 않고 따로 푼다
 _UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction"}
+
+# 음식 이름이 아니라 끼니 이름
+MEAL_SLOTS = frozenset(
+    {"밥", "아침", "점심", "저녁", "간식", "야식", "아침밥", "점심밥", "저녁밥", "식사", "끼니"}
+)
+_NOT_A_FOOD = (
+    "'{subject}'은 끼니 이름이라 subject가 될 수 없다. 무엇을 먹었는지 음식 이름을 넣는다. "
+    "발화에 음식 이름이 없으면 저장하지 않는다. 안 먹는다는 식사 태도면 "
+    "create_observation_routine에 routine_category=mealtime 으로 남기고, "
+    "먹었다는 말이면 무엇을 먹었는지 보호자에게 되묻는다."
+)
+
+
+def _meal_slot(subject: Any) -> str | None:
+    """subject가 끼니 이름이면 그 값을 돌려준다."""
+    value = str(subject or "").strip()
+    return value if value in MEAL_SLOTS else None
 
 
 def _resource(domain: str) -> str:
@@ -185,7 +204,7 @@ def _time_remedy(exc: DateParseError) -> str:
 
 
 def _query_handler(domain: str) -> Callable[..., Any]:
-    """조회 tool 4개는 인자도 동작도 같다. 이름만 다르게 만들어 registry에 올린다."""
+    """조회 tool 5개는 인자도 동작도 같다. 이름만 다르게 만들어 registry에 올린다."""
 
     async def handler(context: AgentContext, args: ObservationQueryArgs) -> ToolResult:
         return await _query(context, args, domain=domain)
@@ -195,10 +214,26 @@ def _query_handler(domain: str) -> Callable[..., Any]:
 
 # food
 async def create_observation_food(context: AgentContext, args: ObservationFoodCreate) -> ToolResult:
+    slot = _meal_slot(args.subject)
+    if slot is not None:
+        return fail(
+            "create",
+            _resource("food"),
+            ErrorCode.VALIDATION_ERROR,
+            _NOT_A_FOOD.format(subject=slot),
+        )
     return await _create(context, args, domain="food")
 
 
 async def update_observation_food(context: AgentContext, args: ObservationFoodUpdate) -> ToolResult:
+    slot = _meal_slot(args.subject)
+    if slot is not None:
+        return fail(
+            "update",
+            _resource("food"),
+            ErrorCode.VALIDATION_ERROR,
+            _NOT_A_FOOD.format(subject=slot),
+        )
     return await _update(context, args, domain="food")
 
 
@@ -257,10 +292,28 @@ async def delete_observation_activity(context: AgentContext, args: RecordRef) ->
     return await _delete(context, args, domain="activity")
 
 
+# routine
+async def create_observation_routine(
+    context: AgentContext, args: ObservationRoutineCreate
+) -> ToolResult:
+    return await _create(context, args, domain="routine")
+
+
+async def update_observation_routine(
+    context: AgentContext, args: ObservationRoutineUpdate
+) -> ToolResult:
+    return await _update(context, args, domain="routine")
+
+
+async def delete_observation_routine(context: AgentContext, args: RecordRef) -> ToolResult:
+    return await _delete(context, args, domain="routine")
+
+
 query_observation_food = _query_handler("food")
 query_observation_health = _query_handler("health")
 query_observation_education = _query_handler("education")
 query_observation_activity = _query_handler("activity")
+query_observation_routine = _query_handler("routine")
 
 OBSERVATION_HANDLERS = {
     "create_observation_food": create_observation_food,
@@ -279,4 +332,8 @@ OBSERVATION_HANDLERS = {
     "query_observation_activity": query_observation_activity,
     "update_observation_activity": update_observation_activity,
     "delete_observation_activity": delete_observation_activity,
+    "create_observation_routine": create_observation_routine,
+    "query_observation_routine": query_observation_routine,
+    "update_observation_routine": update_observation_routine,
+    "delete_observation_routine": delete_observation_routine,
 }
