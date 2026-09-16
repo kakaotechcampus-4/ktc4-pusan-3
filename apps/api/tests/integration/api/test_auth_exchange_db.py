@@ -197,6 +197,7 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
     consent_code = (
         await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
     ).json()["consent_code"]
+    base = await snapshot(session)
 
     response = await db_client.post(
         "/api/v1/auth/kakao/signup",
@@ -212,8 +213,8 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "policy_version_invalid"
-    assert await count(session, Parent) == 0
-    assert await count(session, Consent) == 0
+    # 🚨 parent 도 동의도 만들어지지 않았다. 대기표조차 태우지 않는다.
+    assert await changed(session, base) == {}
 
 
 async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, session):
