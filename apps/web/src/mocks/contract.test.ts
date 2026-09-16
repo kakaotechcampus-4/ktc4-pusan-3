@@ -3,7 +3,15 @@ import { describe, expect, it } from "vitest";
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, isApiError } from "@/lib/api/errors";
 import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
-import { addHealthSafety, confirmEvent, submitOnboarding } from "@/lib/api/operations";
+import {
+  addHealthSafety,
+  commitPhotoRun,
+  confirmEvent,
+  photoFormData,
+  reanalyzePhotoRun,
+  submitOnboarding,
+  uploadPhoto,
+} from "@/lib/api/operations";
 import { streamRunEvents } from "@/lib/api/sse";
 import { api } from "@/lib/api/client";
 import type {
@@ -14,6 +22,7 @@ import type {
   CorrectionResponse,
   Observation,
   ObservationsResponse,
+  PhotoCommitResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
@@ -365,6 +374,173 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
+  });
+});
+
+/**
+ * 08 사진 — **승인 전에는 아무것도 저장되지 않는다.**
+ *
+ * 이 블록이 지키는 것은 문구가 아니라 **행동**이다. 화면이 "승인 전에는 저장되지 않아요" 라고
+ * 쓰는데 목이 업로드만으로 관찰을 쌓으면, 화면은 거짓말을 하면서도 통과한다.
+ */
+describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
+  /** 실제 이미지 바이트가 필요하지 않다. 목이 보는 것은 파트 이름과 크기다. */
+  function fakePhoto(name = "notice.jpg"): File {
+    return new File([new Uint8Array([1, 2, 3, 4])], name, { type: "image/jpeg" });
+  }
+
+  async function upload(date?: string): Promise<string> {
+    const { run_id } = await uploadPhoto(
+      "c1",
+      photoFormData(fakePhoto(), date),
+      newIdempotencyKey(),
+    );
+    return run_id;
+  }
+
+  it("업로드는 lane · parsed 를 흘려보내고 saved 는 보내지 않는다", async () => {
+    const runId = await upload();
+
+    const seen: string[] = [];
+    for await (const event of streamRunEvents(runId)) seen.push(event.type);
+
+    expect(seen).toContain("lane");
+    expect(seen).toContain("parsed");
+    // 🚨 여기가 04 한 줄 입력 run 과 갈리는 지점이다.
+    expect(seen).not.toContain("saved");
+    expect(seen.indexOf("lane")).toBeLessThan(seen.indexOf("parsed"));
+    expect(seen.at(-1)).toBe("done");
+  });
+
+  it("업로드만으로는 관찰이 늘지 않는다 — commit 이 저장한다", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    const runId = await upload();
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    const between = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(between.total).toBe(before.total);
+
+    const saved = await commitPhotoRun(runId, {
+      lane: "document",
+      selected_items: ["수건"],
+      attach_to_calendar: true,
+    });
+    expect(saved.observations).toHaveLength(1);
+  });
+
+  it("고르지 않은 항목은 저장되지 않는다", async () => {
+    const runId = await upload();
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    const saved = await commitPhotoRun(runId, {
+      lane: "document",
+      selected_items: ["수건"],
+      attach_to_calendar: false,
+    });
+
+    const items = saved.observations[0]?.domain_fields.items as string[];
+    expect(items).toEqual(["수건"]);
+    expect(items).not.toContain("수영복");
+  });
+
+  it("문서에서 읽은 것은 institution_notice 로 고정이고 프로필로 승격하지 않는다", async () => {
+    const runId = await upload();
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    const saved = await commitPhotoRun(runId, {
+      lane: "document",
+      selected_items: ["수건", "수영복"],
+      attach_to_calendar: true,
+    });
+
+    const observation = saved.observations[0];
+    // 🚨 기관 공지가 보호자 발화로 들어가면 출처 추적이 끊긴다 (계약서 §09).
+    expect(observation.confidence_source).toBe("institution_notice");
+    expect("affinity" in observation && observation.affinity).toBeNull();
+  });
+
+  it("문서 lane 이 만드는 일정은 draft 다 — 승인 게이트는 여전히 09 에 있다", async () => {
+    const runId = await upload();
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    const saved: PhotoCommitResponse = await commitPhotoRun(runId, {
+      lane: "document",
+      selected_items: ["수건"],
+      attach_to_calendar: true,
+    });
+
+    expect(saved.event).not.toBeNull();
+    // 🚨 confirmed 로 만들면 승인 게이트가 3곳이 된다 (CLAUDE.md §2).
+    expect(saved.event?.status).toBe("draft");
+    expect(saved.calendar_date).not.toBeNull();
+  });
+
+  it("활동 사진은 화면이 들고 온 날짜로 캘린더에 붙는다", async () => {
+    setScenario("photo_activity");
+    try {
+      const runId = await upload("2026-09-12");
+      for await (const _ of streamRunEvents(runId)) void _;
+
+      const saved = await commitPhotoRun(runId, {
+        lane: "activity",
+        selected_items: ["블록 쌓기"],
+        attach_to_calendar: true,
+      });
+
+      expect(saved.calendar_date).toBe("2026-09-12");
+      // 🚨 사진 태그는 성향으로 확정하지 않는다 — affinity 를 붙이지 않는다 (계약서 §09).
+      const observation = saved.observations[0];
+      expect(observation.confidence_source).toBe("parent_hearsay");
+      expect("affinity" in observation && observation.affinity).toBeNull();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("읽어낼 게 없는 사진은 failed 로 끝나고 아무것도 저장하지 않는다", async () => {
+    setScenario("photo_unreadable");
+    try {
+      const before = await api.get<ObservationsResponse>("/children/c1/observations");
+      const runId = await upload();
+
+      const seen: string[] = [];
+      for await (const event of streamRunEvents(runId)) seen.push(event.type);
+
+      expect(seen.at(-1)).toBe("failed");
+      expect(seen).not.toContain("parsed");
+
+      const after = await api.get<ObservationsResponse>("/children/c1/observations");
+      expect(after.total).toBe(before.total);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("다시 읽기는 새 run 을 주고, 힌트를 그대로 저장하지 않는다", async () => {
+    const runId = await upload();
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    const { run_id: nextRunId } = await reanalyzePhotoRun(runId, { hint_text: "물병도 있었어요" });
+
+    expect(nextRunId).not.toBe(runId);
+    // 🚨 재분석 자체는 저장이 아니다.
+    const after = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(after.total).toBe(before.total);
+
+    const seen: string[] = [];
+    for await (const event of streamRunEvents(nextRunId)) seen.push(event.type);
+    expect(seen).toContain("parsed");
+  });
+
+  it("고른 것도 없고 올릴 날짜도 없으면 422 다 — 빈 저장을 만들지 않는다", async () => {
+    const runId = await upload();
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    await expect(
+      commitPhotoRun(runId, { lane: "document", selected_items: [], attach_to_calendar: false }),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
   });
 });
 

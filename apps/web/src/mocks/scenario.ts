@@ -18,6 +18,8 @@ export const SCENARIOS = {
   consent: "필수 동의 미완료 — 신규 가입 대기 · 403 consent_required 로 저장 차단",
   auth_unready: "로그인 미연결 — GET /auth/kakao/status 가 ready: false",
   stale: "6개월 지난 근거 — is_stale 인 기억만 남은 상태 (NF-08)",
+  photo_activity: "08 사진 — 아이 활동 사진으로 읽음 (태그는 하나도 안 골라진 채로 시작)",
+  photo_unreadable: "08 사진 — 읽어낼 게 없는 사진 (failed · 저장된 것 없음)",
 } as const;
 
 export type Scenario = keyof typeof SCENARIOS;

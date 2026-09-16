@@ -4,6 +4,7 @@ import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetRegisteredSafety } from "@/mocks/handlers/children";
 import { resetMemoryState } from "@/mocks/handlers/memories";
 import { resetIdempotencyStore } from "@/mocks/handlers/idempotency";
+import { resetPhotoRuns } from "@/mocks/handlers/photos";
 import { resetConfirmedEvents } from "@/mocks/handlers/suggestions";
 import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
@@ -24,6 +25,7 @@ afterEach(() => {
   resetRegisteredSafety();
   resetMemoryState();
   resetCalendarState();
+  resetPhotoRuns();
   resetDiaries();
 });
 
