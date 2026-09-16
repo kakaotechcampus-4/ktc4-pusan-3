@@ -8,7 +8,7 @@
 
   - MemoryTask
       원문 전체와 RECORD 조각 힌트를 전달한다.
-      Memory는 항상 호출한다.
+      원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
 
   - FoodTask
       agent=food인 REQUEST 조각을
@@ -59,8 +59,10 @@ IntentType = Literal["record", "request", "mixed"]
 MAX_DOMAIN_AGENTS = 2  # 한 입력에서 부르는 도메인 Agent 상한
 IMPLEMENTED_AGENTS: frozenset[str] = frozenset({DomainAgentName.FOOD.value})
 
-# 순수 요청형에서 Memory를 건너뛸지. 켜면 Supervisor 오류가 곧 기록 누락이 된다
-SKIP_MEMORY_FOR_PURE_REQUEST = False
+# True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
+#       (Supervisor가 의도를 제대로 나눴다고 보는 정책으로, 잘못 나누면 입력 정보가 그대로 삭제)
+# False: Supervisor가 요청으로만 잘라도 Memory가 원문을 한 번 더 확인
+SKIP_MEMORY_FOR_PURE_REQUEST = True
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,9 @@
 
 Memory 저장이 끝난 뒤 Food를 실행해 같은 요청에서 저장된 관찰도 바로 조회할 수 있게 한다.
 Supervisor 실패 시에는 Memory가 원문을 처리하고, Memory 실패 시 전체 요청을 실패로 처리한다.
+
+Supervisor가 요청을 기록으로 잘못 나누면 그 조각은 어디서도 처리되지 않는다.
+Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 돌려주고 한 번만 다시 나눈다.
 """
 
 import logging
@@ -18,14 +21,20 @@ from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
-from app.agents.memory.schemas.task import WorkType
+from app.agents.memory.schemas.task import MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.routing import Guidance, Routing, route
+from app.agents.supervisor.schemas import normalize
 
 logger = logging.getLogger(__name__)
 
 MAX_MODEL_CALLS = 3  # 한 요청에서 허용하는 모델 호출 수
+
+# Memory 가 기록하지 않은 RECORD 조각이 있으면 Supervisor 에게 이유를 주고 한 번 더 나눠 본다.
+# 조각을 잘못 위임하면 그 요청은 아무 데서도 처리되지 않는다 — 호출 하나를 더 쓰는 값이 있다.
+# 다시 나누는 것은 run 당 한 번뿐이고, 그때만 예산이 MAX_MODEL_CALLS + 1 이 된다
+REROUTE_MISDELEGATED = True
 
 # no_child_observation 판정 기준은 추후 추가
 FailReason = Literal["unparsable", "llm_unavailable"]
@@ -76,6 +85,14 @@ class MemoryNote:
 
 
 @dataclass(frozen=True)
+class Rerouted:
+    """Memory 가 기록하지 않은 조각을 Supervisor 에게 돌려주고 다시 나눈 것."""
+
+    bounced: int  # 되돌린 조각 수. 원문은 싣지 않는다 (S10)
+    food_tasks: tuple[str, ...] = ()  # 다시 나눈 뒤의 Food 작업 유형
+
+
+@dataclass(frozen=True)
 class Failed:
     reason: FailReason
     raw_text: str  # 실패 시 원문 유지
@@ -87,7 +104,7 @@ class Done:
     model_calls: int
 
 
-Event = Step | Saved | FoodRouted | Unavailable | Guidance | MemoryNote | Failed | Done
+Event = Step | Saved | FoodRouted | Unavailable | Guidance | MemoryNote | Rerouted | Failed | Done
 Emit = Callable[[Event], None]
 
 _LABELS = ("입력을 살펴보고 있어요", "관찰을 나누고 있어요", "다음 행동을 준비하고 있어요")
@@ -115,6 +132,7 @@ class PipelineResult:
     routing: Routing
     memory: MemoryAgentResult | None  # Memory 미실행 또는 실패 시 None
     food: tuple[FoodAgentResult, ...] = ()
+    rerouted: Rerouted | None = None  # 다시 나눴으면 그 결과. routing 은 다시 나눈 쪽이다
     failed: Failed | None = None
     disagreement: Disagreement = Disagreement()
     model_calls: int = 0
@@ -155,8 +173,7 @@ async def handle_input(
 
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
-    # Memory는 기본적으로 항상 부른다. 순수 요청형에서 건너뛰려면
-    # routing의 SKIP_MEMORY_FOR_PURE_REQUEST를 켠다
+    # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
     if routing.memory_task is not None:
         send(Step(2, _TOTAL_STEPS, _LABELS[1]))
         try:
@@ -173,6 +190,35 @@ async def handle_input(
                 send(Saved(refs))
             if memory.final_message:
                 send(MemoryNote(memory.final_message))
+
+    # 위임이 어긋났으면 Supervisor에게 이유를 주고 한 번만 다시 나눈다.
+    # Memory는 다시 돌리지 않는다.
+    rerouted: Rerouted | None = None
+    bounced = _bounced_hints(routing.memory_task, memory) if failed is None else ()
+    # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
+    stranded = not routing.food_tasks and not routing.unavailable_agents
+    if bounced and stranded and REROUTE_MISDELEGATED:
+        retry = await run_supervisor(
+            raw_text, client=supervisor_client, feedback=_reroute_feedback(bounced)
+        )
+        model_calls += retry.model_calls
+        if retry.output is not None:
+            before, supervisor = routing, retry
+            routing = route(raw_text, retry, run_id=run_id)
+            for guidance in routing.guidance:  # 새로 생긴 안내만 내보낸다
+                if guidance not in before.guidance:
+                    send(guidance)
+            appeared = tuple(
+                agent
+                for agent in routing.unavailable_agents
+                if agent not in before.unavailable_agents
+            )
+            if appeared:
+                send(Unavailable(appeared))
+            rerouted = Rerouted(len(bounced), tuple(str(t.task_type) for t in routing.food_tasks))
+            send(rerouted)
+        else:
+            logger.info("reroute 실패 run_id=%s error=%s", run_id, retry.error)
 
     food: list[FoodAgentResult] = []
     # 도메인 Agent는 지금 Food 하나뿐이라 이 블록도 Food 전용.
@@ -199,6 +245,7 @@ async def handle_input(
         routing=routing,
         memory=memory,
         food=tuple(food),
+        rerouted=rerouted,
         failed=failed,
         disagreement=_disagreement(routing, memory),
         model_calls=model_calls,
@@ -238,15 +285,55 @@ def _food_routed(result: FoodAgentResult) -> FoodRouted:
     )
 
 
+def _bounced_hints(task: MemoryTask | None, memory: MemoryAgentResult | None) -> tuple[str, ...]:
+    """Supervisor가 기록이라고 보냈는데 Memory가 적지 않은 조각.
+
+    어느 조각을 적었는지 raw_text로 확인할 수 있는 건 관찰뿐이고,
+    일정·수정 힌트는 조회로 끝나거나 되묻고 끝나는 게 정상이라 여기서 판단하지 않음.
+    """
+    if task is None or memory is None:
+        return ()
+
+    written = [
+        normalize(str(call.arguments.get("raw_text", "")))
+        for call in memory.calls
+        if call.success and call.name.startswith("create_observation_")
+    ]
+    return tuple(
+        hint.text
+        for hint in task.hints
+        if WorkType(hint.work) is WorkType.OBSERVE and not _kept(normalize(hint.text), written)
+    )
+
+
+def _kept(hint: str, written: list[str]) -> bool:
+    """힌트와 기록된 조각을 비교해 어느 쪽이 다른 쪽에 들어가면 적힌 것으로 본다."""
+    return any(hint and text and (hint in text or text in hint) for text in written)
+
+
+def _reroute_feedback(bounced: tuple[str, ...]) -> str:
+    """Supervisor에게 돌려줄 실패 원인. 모델 입력이라 조각 원문이 들어간다 (로그에는 안 남긴다)."""
+    listed = "\n".join(f"- {text}" for text in bounced)
+    return (
+        "[다시 나누기] 아래 조각을 record 로 보냈는데 Memory 가 기록하지 않았다.\n"
+        f"{listed}\n"
+        "기록할 사실이 아니라 요청이면 request로 바꾸고 담당 agent와 food 유형을 정한다. "
+        "기록이 맞으면 record로 두고, 발화 전체를 다시 나눠 route를 부른다."
+    )
+
+
 def _did_anything(
     memory: MemoryAgentResult | None, food: list[FoodAgentResult], routing: Routing
 ) -> bool:
-    """저장, 추천, 안내, 메모 중 하나라도 처리됐는지 확인한다."""
+    """저장, 추천, 안내, 메모 중 하나라도 처리됐는지 확인한다.
+
+    순수 요청형+구현중인 에이전트로 분기했을 경우 화면에 "준비 중" 을 띄울 수 있다.
+    """
     wrote = memory is not None and any(
         call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
     )
     note = memory is not None and bool(memory.final_message)
-    return wrote or note or bool(food) or bool(routing.guidance)
+    return wrote or note or bool(food) or bool(routing.guidance) or bool(routing.unavailable_agents)
 
 
 def _disagreement(routing: Routing, memory: MemoryAgentResult | None) -> Disagreement:
@@ -274,7 +361,7 @@ def _log(result: PipelineResult) -> None:
     memory = result.memory
     logger.info(
         "pipeline run_id=%s intent=%s degraded=%s supervisor_error=%s hints=%d steps=%s "
-        "ended_by=%s saved=%d food=%s guidance=%s unavailable=%s note=%s failed=%s "
+        "ended_by=%s saved=%d food=%s guidance=%s unavailable=%s note=%s rerouted=%s failed=%s "
         "memory_only=%s supervisor_only=%s model_calls=%d latency_ms=%d",
         result.run_id,
         result.routing.intent_type,
@@ -288,13 +375,19 @@ def _log(result: PipelineResult) -> None:
         [guidance.code for guidance in result.routing.guidance],
         list(result.routing.unavailable_agents),
         bool(memory and memory.final_message),
+        result.rerouted.bounced if result.rerouted else 0,
         result.failed.reason if result.failed else None,
         list(result.disagreement.memory_only),
         list(result.disagreement.supervisor_only),
         result.model_calls,
         result.latency_ms,
     )
-    if result.model_calls > MAX_MODEL_CALLS:
+    # 다시 나눈 run 은 Supervisor 호출이 하나 더 붙는다. 그만큼만 예산을 늘려 잡는다
+    budget = MAX_MODEL_CALLS + (1 if result.rerouted else 0)
+    if result.model_calls > budget:
         logger.warning(
-            "model_calls 예산 초과 run_id=%s model_calls=%d", result.run_id, result.model_calls
+            "model_calls 예산 초과 run_id=%s model_calls=%d 예산=%d",
+            result.run_id,
+            result.model_calls,
+            budget,
         )
