@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
@@ -40,15 +40,16 @@ class Settings(BaseSettings):
 
     # 로그인을 마친 뒤 302 로 돌려보낼 곳. client 열거값이 web / app 을 고른다 (§2-3).
     #
-    # 🚨 웹 쪽은 필수다. 없으면 서버가 뜨지 않는다 (아래 검증, #45).
+    # 🚨 둘 다 필수다. 하나라도 비면 서버가 뜨지 않는다 (아래 검증, #45).
     #    카카오 키와 달리 "없어도 일단 뜨고 ready: false 로 알린다" 를 쓰지 않는 이유 —
     #    이 값이 없으면 인증이 아예 성립하지 않는다. 성공도 실패도 전부 여기로 돌아가고
     #    (§2-3 의 안전한 기본 복귀 대상), 없으면 302 를 만들 수조차 없다.
     #    빠진 채로 뜨면 사용자가 카카오 인증을 **마친 뒤에** 깨진다.
+    #
+    #    앱도 같이 막는다 (#58 리뷰, 김명성). 사용자가 앱 환경에 치우쳐 있어서, 앱 주소가
+    #    빠진 배포를 런타임 거절로 알리면 그 사실을 앱 사용자만 겪는다.
     AUTH_RETURN_URL_WEB: str
-    #    앱 쪽은 선택이다. 없다고 웹 로그인까지 막을 이유가 없어서, client=app 으로
-    #    시작할 때만 거절한다 (routers/auth.py 의 start).
-    AUTH_RETURN_URL_APP: str | None = None
+    AUTH_RETURN_URL_APP: str
 
     # 수명 (초) — 명세 §5. 측정으로 정한 값이 아니다. M-02 뒤에 조정한다 (§10 2번).
     SESSION_TTL: int = 43200
@@ -56,9 +57,9 @@ class Settings(BaseSettings):
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600
 
-    @field_validator("AUTH_RETURN_URL_WEB")
+    @field_validator("AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP")
     @classmethod
-    def _require_web_return_url(cls, raw: str) -> str:
+    def _require_return_url(cls, raw: str, info: ValidationInfo) -> str:
         """빈 문자열도 없는 것으로 본다.
 
         `AUTH_RETURN_URL_WEB=` 처럼 키만 두고 값을 비워 두는 실수가 흔하다. 타입만
@@ -66,7 +67,7 @@ class Settings(BaseSettings):
         """
         if not raw.strip():
             raise ValueError(
-                "AUTH_RETURN_URL_WEB 이 비어 있다. 로그인을 마친 사용자를 돌려보낼 곳이라 "
+                f"{info.field_name} 이 비어 있다. 로그인을 마친 사용자를 돌려보낼 곳이라 "
                 "없으면 인증이 성립하지 않는다 (예: http://localhost:3000/auth/callback)"
             )
         return raw

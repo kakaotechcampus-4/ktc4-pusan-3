@@ -127,13 +127,6 @@ async def start(
 
     target = client or "web"
 
-    if target == "app" and not settings.AUTH_RETURN_URL_APP:
-        # 앱으로 돌려보낼 주소가 없다. 카카오까지 걷게 하지 않고 웹으로 끊는다.
-        # 🚨 bind 검증보다 먼저다 — 아래 실패들도 target 으로 돌아가는데, 그 주소가
-        #    없으면 실패를 알릴 방법조차 없다.
-        log.warning("AUTH_RETURN_URL_APP 이 없어 앱 복귀 요청을 거절했다")
-        return _error_redirect("web", "oauth_provider_error")
-
     if bind is None or not _BIND_PATTERN.fullmatch(bind):
         # 형식이 안 맞으면 카카오 동의까지 걷게 하지 말고 여기서 끊는다 (A-06 · A-07).
         return _error_redirect(target, "invalid_bind")
@@ -444,7 +437,7 @@ async def _issue_session(
 def _missing_keys(provider: AuthProvider) -> list[str]:
     """이 provider 로 로그인을 시작할 수 없게 만드는 빈 설정.
 
-    웹 복귀 URL 은 여기서 보지 않는다 — 없으면 서버가 아예 뜨지 않기 때문이다
+    복귀 URL 은 여기서 보지 않는다 — 없으면 서버가 아예 뜨지 않기 때문이다
     (Settings 의 검증, #45). ready 는 "카카오 설정이 갖춰졌나" 라는 원래 뜻을 지킨다.
     """
     if provider is not AuthProvider.KAKAO:
@@ -472,13 +465,12 @@ def _start_url(provider: AuthProvider) -> str:
 
 
 def _return_url(target: str) -> str:
-    """복귀 URL. 서버 환경변수에서만 온다 — 클라이언트는 URL 을 지정하지 못한다 (§2-3)."""
-    raw = settings.AUTH_RETURN_URL_APP if target == "app" else settings.AUTH_RETURN_URL_WEB
-    if not raw:
-        # 돌려보낼 곳이 없으면 302 를 만들 수 없다. 흐름의 실패가 아니라 서버 설정
-        # 문제라 봉투로 답한다 (§8-2 의 예외가 아니다).
-        raise ApiError(500, "internal_error", "로그인 설정이 끝나지 않았어요")
-    return raw
+    """복귀 URL. 서버 환경변수에서만 온다 — 클라이언트는 URL 을 지정하지 못한다 (§2-3).
+
+    둘 다 비어 있을 수 없다 — 하나라도 없으면 서버가 뜨지 않는다 (Settings 의 검증, #45).
+    그래서 여기서 다시 확인하지 않는다.
+    """
+    return settings.AUTH_RETURN_URL_APP if target == "app" else settings.AUTH_RETURN_URL_WEB
 
 
 def _redirect(base: str, **params: str) -> RedirectResponse:

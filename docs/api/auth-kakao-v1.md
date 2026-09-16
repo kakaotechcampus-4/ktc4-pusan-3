@@ -130,6 +130,11 @@ AUTH_RETURN_URL_WEB=https://<도메인>/auth/callback
 AUTH_RETURN_URL_APP=icatch://auth
 ```
 
+🚨 **둘 다 필수다. 하나라도 비어 있으면 서버가 뜨지 않는다** (#45 · #58). 카카오 키처럼
+"없어도 뜨고 `ready: false` 로 알린다" 를 쓰지 않는 이유는, 이 값이 없으면 인증이 아예
+성립하지 않기 때문이다 — 성공도 실패도 전부 여기로 돌아가고, 빠진 채로 뜨면 사용자가
+**카카오 인증을 마친 뒤에** 깨진다. 런타임 거절로 두면 그 사실을 사용자만 겪는다.
+
 | | 성공 | 실패 |
 | --- | --- | --- |
 | `client=web` | `https://<도메인>/auth/callback?code=<1회용>` | `…/auth/callback?error=<코드>` |
@@ -745,8 +750,8 @@ KAKAO_CLIENT_SECRET=         # 콘솔 > 카카오 로그인 > 보안 에서 활�
 KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정확히 일치 (운영·로컬 각각)
 KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
 KAKAO_API_TIMEOUT=3          # 초
-AUTH_RETURN_URL_WEB=         # 예: https://<도메인>/auth/callback
-AUTH_RETURN_URL_APP=         # 예: icatch://auth
+AUTH_RETURN_URL_WEB=         # 🚨 필수. 예: https://<도메인>/auth/callback
+AUTH_RETURN_URL_APP=         # 🚨 필수. 예: icatch://auth
 SESSION_TTL=43200            # 초 (12시간)
 HANDOFF_TTL=120              # 초 (2분)
 SIGNUP_TICKET_TTL=600        # 초 (10분)

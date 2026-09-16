@@ -123,34 +123,6 @@ async def test_status_hides_missing_keys_in_production(client, unconfigured, mon
     assert "missing_keys" not in body
 
 
-async def test_app_return_url_does_not_block_web_login(client, configured, monkeypatch):
-    """앱 복귀 URL 이 비어도 웹 로그인은 막지 않는다.
-
-    ready 는 provider 단위 한 값이라, 앱 주소가 없다고 false 를 내리면 웹 사용자의
-    버튼까지 꺼진다. 앱은 client=app 으로 시작할 때만 거절한다 (아래 테스트).
-
-    웹 복귀 URL 은 여기서 다루지 않는다 — 없으면 서버가 아예 안 뜬다
-    (test_auth_boundary.py 의 부팅 검증, #45).
-    """
-    monkeypatch.setattr(settings, "AUTH_RETURN_URL_APP", None)
-
-    body = (await client.get("/api/v1/auth/kakao/status")).json()
-
-    assert body["ready"] is True
-
-
-async def test_start_rejects_app_client_without_app_return_url(client, configured, monkeypatch):
-    """앱으로 돌려보낼 주소가 없으면 카카오까지 걷게 하지 않는다."""
-    monkeypatch.setattr(settings, "AUTH_RETURN_URL_APP", None)
-
-    response = await client.get(f"/api/v1/auth/kakao?client=app&bind={BIND}")
-
-    base, params = redirect_query(response)
-    # 앱으로는 못 보내니 웹으로 알린다.
-    assert base == RETURN_WEB
-    assert params["error"] == ["oauth_provider_error"]
-
-
 async def test_status_derives_start_url_from_callback_origin(client, configured):
     """start_url 은 등록된 콜백 URL 의 오리진에서 나온다 (§3-1).
 
