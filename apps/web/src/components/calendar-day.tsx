@@ -2,6 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarOff } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
@@ -32,8 +33,9 @@ import { formatEventTime } from "@/lib/format";
  *    사용자가 일기라고 쓴 것을 아이 성향으로 조용히 승격시키면 신뢰가 깨진다. 화면이 그 사실을
  *    말하고, 기억으로 남기는 길(홈의 한 줄)을 따로 알려준다.
  *
- * 🚨 **사진은 조회만 한다.** 넣는 것은 08 사진 화면 것이고 그 화면이 아직 없다 —
- *    아무 데도 안 가는 "사진으로 적기" 버튼을 만들지 않는다.
+ * 🚨 **사진을 여기서 올리지 않는다.** 넣는 것은 08 사진 화면(`/child/{cid}/photos?date=`)이고,
+ *    이 패널은 그 화면으로 가는 문 하나와 이미 남은 사진의 조회만 맡는다 — 사진은 읽어낸 것을
+ *    보호자가 확인해야 저장되는데(승인 전 저장 금지) 그 확인이 하루 패널에 들어갈 크기가 아니다.
  */
 export function CalendarDayPanel({
   childId,
@@ -56,6 +58,7 @@ export function CalendarDayPanel({
    * 세우는 쪽(09 화면)이 책임진다.
    */
   const [writing, setWriting] = useState(false);
+  const router = useRouter();
 
   const hasDiary = data.diary !== null && data.diary.text.trim() !== "";
   const nothing = data.events.length === 0 && data.observations.length === 0 && !hasDiary;
@@ -110,11 +113,26 @@ export function CalendarDayPanel({
         </Section>
       )}
 
-      {data.diary && data.diary.image_urls.length > 0 ? (
-        <Section title="이날의 사진">
+      {/* 🚨 일기 구역과 같은 규칙이다 — **빈 날에도 같은 모양으로** 선다. 사진이 있는 날에만
+          이 구역이 생기면 "그날 사진을 넣는 법" 이 날마다 달라져서, 빈 날에는 부모가 홈까지
+          올라가 카메라 버튼을 찾아야 한다. */}
+      <Section title="이날의 사진">
+        {data.diary && data.diary.image_urls.length > 0 ? (
           <Photos urls={data.diary.image_urls} />
-        </Section>
-      ) : null}
+        ) : null}
+        <div>
+          <Button
+            variant="tertiary"
+            size="compact"
+            onClick={() => router.push(`/child/${childId}/photos?date=${date}`)}
+          >
+            사진으로 적기
+          </Button>
+        </div>
+        <p className="text-caption text-ink-subtle">
+          사진에서 읽어낸 것을 보여드리고, 승인해야 저장돼요.
+        </p>
+      </Section>
     </div>
   );
 }

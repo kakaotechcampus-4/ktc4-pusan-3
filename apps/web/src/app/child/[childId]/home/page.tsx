@@ -181,6 +181,7 @@ function HomeScreen() {
             onSubmit={() => submit.mutate()}
             prompts={home.data?.agent_prompts ?? []}
             onPickPrompt={(agent) => goToSuggestions([agent])}
+            onPickPhoto={() => router.push(`/child/${childId}/photos`)}
             pending={submit.isPending}
           />
         </div>
