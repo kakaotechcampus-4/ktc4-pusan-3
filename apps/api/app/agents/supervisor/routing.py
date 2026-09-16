@@ -92,6 +92,14 @@ _GUIDANCE: dict[str, Guidance] = {
     ),
 }
 
+# 한 번에 부를 수 있는 도메인 Agent 상한을 넘겨 빠진 요청이 있을 때 알리는 용도
+# TODO: 사용자에게 제공될 답변 점검
+AGENT_LIMIT = "agent_limit"
+_AGENT_LIMIT = Guidance(
+    code=AGENT_LIMIT,
+    message=f"한 번에 {MAX_DOMAIN_AGENTS}가지까지 준비할 수 있어요. 나머지는 다시 말씀해 주세요.",
+)
+
 
 @dataclass(frozen=True)
 class Routing:
@@ -138,7 +146,7 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         food_tasks=food_tasks,
         unavailable_agents=tuple(a for a in selected if a not in IMPLEMENTED_AGENTS),
         dropped_agents=tuple(dropped),
-        guidance=_guidance(result.output),
+        guidance=_guidance(result.output, dropped=bool(dropped)),
     )
     _log(routing, None)
     return routing
@@ -162,15 +170,21 @@ def _food_tasks(segments: list, *, run_id: str) -> tuple[FoodTask, ...]:
     )
 
 
-def _guidance(output: SupervisorOutput) -> tuple[Guidance, ...]:
-    """guard · out_of_scope 별 안내. 같은 코드는 한 번만."""
+def _guidance(output: SupervisorOutput, *, dropped: bool = False) -> tuple[Guidance, ...]:
+    """guard · out_of_scope 별 안내. 같은 코드는 한 번만.
+
+    상한을 넘겨 버린 요청이 있으면 그것도 알린다 — 조용히 빠지면 사용자는 답이 없는 이유를 모른다.
+    """
     codes = []
     for segment in output.segments:
         if segment.kind == SegmentKind.GUARDED:
             codes.append(str(segment.guard))
         elif segment.kind == SegmentKind.OUT_OF_SCOPE:
             codes.append(SegmentKind.OUT_OF_SCOPE.value)
-    return tuple(_GUIDANCE[code] for code in dict.fromkeys(codes))
+    guidance = [_GUIDANCE[code] for code in dict.fromkeys(codes)]
+    if dropped:
+        guidance.append(_AGENT_LIMIT)
+    return tuple(guidance)
 
 
 def covers_only_requests(raw_text: str, output: SupervisorOutput) -> bool:

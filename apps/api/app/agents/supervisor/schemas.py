@@ -6,15 +6,18 @@
 Agent의 내부(registry·tools·store)는 import하지 않는다.
 """
 
+import logging
 import re
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents.common.tool_schema import ToolDefinition, build_tool_spec
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.memory.schemas.task import WorkType
+
+logger = logging.getLogger(__name__)
 
 
 class SegmentKind(StrEnum):
@@ -43,6 +46,71 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
 
+# 이 필드가 있으면 kind 는 하나로 정해지므로 kind만 빠졌을 때 되짚는 데 사용
+_KIND_FOR_FIELD: dict[str, SegmentKind] = {
+    "work": SegmentKind.RECORD,
+    "agent": SegmentKind.REQUEST,
+    "guard": SegmentKind.GUARDED,
+}
+
+_LABEL_ENUMS: dict[str, type] = {
+    "work": WorkType,
+    "agent": DomainAgentName,
+    "guard": GuardReason,
+    "food_task": FoodTaskType,
+}
+
+
+def _repair(data: dict[str, Any]) -> dict[str, Any]:
+    """모델이 남긴 단서로 라벨을 고친다. 단서가 없으면 그대로 두고 검증에 맡긴다.
+
+      - work는 record 전용. request인데 work만 있고 agent가 없으면 kind를 잘못 붙인 것
+      - food에 유형이 빠졌으면 프롬프트가 정해 둔 기본값("애매하면 추천")사용
+    """
+    for name, enum in _LABEL_ENUMS.items():
+        value = data.get(name)
+        if value is None:
+            continue
+        try:
+            enum(value)
+        except ValueError:
+            # 없는 값 (request 인데 agent가 없으면 unclear)
+            data.pop(name)
+            logger.info("supervisor 조각에서 값이 틀린 %s 를 지움", name)
+
+    kind = data.get("kind")
+    if kind is None:
+        # kind만 빠뜨림
+        for field, inferred in _KIND_FOR_FIELD.items():
+            if data.get(field):
+                data["kind"] = kind = inferred.value
+                logger.info("supervisor 조각 kind 를 %s 로 되짚음 — %s 가 있다", inferred, field)
+                break
+
+    if kind == SegmentKind.REQUEST and data.get("work") and not data.get("agent"):
+        data["kind"] = kind = SegmentKind.RECORD.value
+        logger.info("supervisor 조각 kind를 record로 고침 — work만 있고 agent가 없다")
+    if kind == SegmentKind.REQUEST and not data.get("agent") and not data.get("work"):
+        # 조각을 어디로 보낼지 모르겠을때의 처리
+        data["kind"] = kind = SegmentKind.UNCLEAR.value
+        logger.info("supervisor 조각을 unclear로 고침 — request인데 agent가 없다")
+    if (
+        kind == SegmentKind.REQUEST
+        and data.get("agent") == DomainAgentName.FOOD
+        and not data.get("food_task")
+    ):
+        data["food_task"] = FoodTaskType.MEAL_RECOMMENDATION.value
+        logger.info("supervisor food 조각에 유형이 없어 기본값(meal_recommendation)을 넣음")
+    return data
+
+
+_REQUIRED_FIELD: dict[SegmentKind, str] = {
+    SegmentKind.RECORD: "work",
+    SegmentKind.REQUEST: "agent",
+    SegmentKind.GUARDED: "guard",
+}
+
+
 class Segment(_Strict):
     """발화에서 잘라낸 한 조각. kind에 맞는 필드만 채운다."""
 
@@ -63,14 +131,14 @@ class Segment(_Strict):
         WorkType | None,
         Field(
             default=None,
-            description="kind=record 일 때만. observe / schedule / lookup_edit",
+            description="kind=record 면 반드시 하나. observe / schedule / lookup_edit",
         ),
     ]
     agent: Annotated[
         DomainAgentName | None,
         Field(
             default=None,
-            description="kind=request 일 때만. food / activity / growth / health",
+            description="kind=request 면 반드시 하나. food / activity / growth / health",
         ),
     ]
     food_task: Annotated[
@@ -78,7 +146,7 @@ class Segment(_Strict):
         Field(
             default=None,
             description=(
-                "agent=food 일 때만. meal_recommendation(뭘 먹일까·메뉴·간식) / "
+                "agent=food 면 반드시 하나. meal_recommendation(뭘 먹일까·메뉴·간식) / "
                 "nutrient_analysis(영양 괜찮은지·영양소·과잉/부족)"
             ),
         ),
@@ -87,34 +155,56 @@ class Segment(_Strict):
         GuardReason | None,
         Field(
             default=None,
-            description="kind=guarded일 때만. safety_record / diagnosis",
+            description="kind=guarded 면 반드시 하나. safety_record / diagnosis",
         ),
     ]
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_mismatched(cls, data: Any) -> Any:
+        """kind와 짝이 아닌 라벨 필드는 지우고 응답.
+
+        모델이 request 조각에 work를, food가 아닌 agent에 food_task를 같이 채우는 일 방지
+        """
+        if not isinstance(data, dict):
+            return data
+        data = _repair(dict(data))
+        try:
+            keep = _REQUIRED_FIELD.get(SegmentKind(data.get("kind")))
+        except ValueError:
+            return data
+
+        dropped = [
+            name
+            for name in ("work", "agent", "guard")
+            if name != keep and data.get(name) is not None
+        ]
+        is_food = data.get("kind") == SegmentKind.REQUEST and data.get("agent") == (
+            DomainAgentName.FOOD
+        )
+        if not is_food and data.get("food_task") is not None:
+            dropped.append("food_task")
+        if not dropped:
+            return data
+
+        # 조각 원문은 로그에 싣지 않고 무엇을 지웠는지만 남김
+        logger.info(
+            "supervisor 조각에서 kind 와 안 맞는 필드 제거 kind=%s fields=%s", keep, dropped
+        )
+        return {key: value for key, value in data.items() if key not in dropped}
+
     @model_validator(mode="after")
     def _pair(self) -> "Segment":
-        """kind 와 짝이 맞지 않는 필드가 있으면 거절한다.
+        """_drop_mismatched에서 걸러진 라벨을 못 읽는 조각을 거절한다.
 
-        라벨만 맞고 필드가 비면 routing 이 조각을 어디로 보낼지 알 수 없고,
-        반대로 엉뚱한 필드가 차 있으면 (예: activity인데 food_task) 뒤에서 무시된다.
+        (필드가 비면 routing이 조각을 어디로 보낼지 알 수 없어 고칠 방법이 없음)
         """
-        required = {
-            SegmentKind.RECORD: "work",
-            SegmentKind.REQUEST: "agent",
-            SegmentKind.GUARDED: "guard",
-        }.get(SegmentKind(self.kind))
-        for name in ("work", "agent", "guard"):
-            value = getattr(self, name)
-            if name == required and value is None:
-                raise ValueError(f"kind={self.kind}이면 {name}가 필요하다")
-            if name != required and value is not None:
-                raise ValueError(f"kind={self.kind}에는 {name}를 넣지 않는다")
-
-        is_food = self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.FOOD
-        if is_food and self.food_task is None:
-            raise ValueError("agent=food이면 food_task가 필요하다")
-        if not is_food and self.food_task is not None:
-            raise ValueError("food_task는 agent=food일 때만 넣는다")
+        required = _REQUIRED_FIELD.get(SegmentKind(self.kind))
+        if required is not None and getattr(self, required) is None:
+            raise ValueError(f"kind={self.kind}이면 {required}가 필요하다")
+        if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.FOOD:
+            if self.food_task is None:
+                raise ValueError("agent=food이면 food_task가 필요하다")
         return self
 
 

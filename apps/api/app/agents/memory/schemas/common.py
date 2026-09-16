@@ -40,7 +40,7 @@ class EngagementLevel(StrEnum):
 
 
 class RoutineCategory(StrEnum):
-    """생활 행동의 종류. data_model.md §5 observation_routine."""
+    """생활 행동의 종류."""
 
     SELF_CARE = "self_care"  # 양치 / 옷 입기 / 손 씻기
     MEALTIME = "mealtime"  # 식사 도구 / 식사 태도 — 무엇을 먹었는지는 food
@@ -48,6 +48,7 @@ class RoutineCategory(StrEnum):
     SOCIAL_MANNER = "social_manner"  # 인사 / 차례 지키기
     HABIT = "habit"  # 손톱 물어뜯기 / 손가락 빨기 (증상 X, 단순 버릇)
     TRANSITION = "transition"  # 등원 준비 / 잠자리 들기 / 놀이 끝내기
+
 
 class AssistanceLevel(StrEnum):
     """얼마나 도움을 받아 해냈는지."""

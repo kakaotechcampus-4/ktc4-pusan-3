@@ -40,6 +40,23 @@ _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
 # update도 날짜를 바꿀 수 있다. 이 셋은 fields로 내려보내지 않고 따로 푼다
 _UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction"}
 
+# 음식 이름이 아니라 끼니 이름
+MEAL_SLOTS = frozenset(
+    {"밥", "아침", "점심", "저녁", "간식", "야식", "아침밥", "점심밥", "저녁밥", "식사", "끼니"}
+)
+_NOT_A_FOOD = (
+    "'{subject}'은 끼니 이름이라 subject가 될 수 없다. 무엇을 먹었는지 음식 이름을 넣는다. "
+    "발화에 음식 이름이 없으면 저장하지 않는다. 안 먹는다는 식사 태도면 "
+    "create_observation_routine에 routine_category=mealtime 으로 남기고, "
+    "먹었다는 말이면 무엇을 먹었는지 보호자에게 되묻는다."
+)
+
+
+def _meal_slot(subject: Any) -> str | None:
+    """subject가 끼니 이름이면 그 값을 돌려준다."""
+    value = str(subject or "").strip()
+    return value if value in MEAL_SLOTS else None
+
 
 def _resource(domain: str) -> str:
     return f"observation_{domain}"
@@ -197,10 +214,26 @@ def _query_handler(domain: str) -> Callable[..., Any]:
 
 # food
 async def create_observation_food(context: AgentContext, args: ObservationFoodCreate) -> ToolResult:
+    slot = _meal_slot(args.subject)
+    if slot is not None:
+        return fail(
+            "create",
+            _resource("food"),
+            ErrorCode.VALIDATION_ERROR,
+            _NOT_A_FOOD.format(subject=slot),
+        )
     return await _create(context, args, domain="food")
 
 
 async def update_observation_food(context: AgentContext, args: ObservationFoodUpdate) -> ToolResult:
+    slot = _meal_slot(args.subject)
+    if slot is not None:
+        return fail(
+            "update",
+            _resource("food"),
+            ErrorCode.VALIDATION_ERROR,
+            _NOT_A_FOOD.format(subject=slot),
+        )
     return await _update(context, args, domain="food")
 
 

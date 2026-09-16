@@ -52,7 +52,14 @@ EndedBy = Literal["model", "coverage", "max_steps"]
 _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
-_ALREADY_DONE = "같은 인자로 이미 성공한 작업이다. 다시 부르지 않는다."
+
+# 모델이 tool도 안 부르고 답도 비운 턴을 내면 사용자는 아무것도 못 봄.
+# run 당 한 번만 다시 묻게 한다
+_EMPTY_TURN = "답이 비어 있다. 한 문장으로 답한다 — 무엇을 했는지, 저장하지 않았으면 무엇을 물어봐야 하는지."
+_ALREADY_DONE = (
+    "같은 작업을 이미 했다. 다시 부르지 않는다. "
+    "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
+)
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,7 @@ async def run(
     calls: list[ToolCallRecord] = []
     usage: dict[str, int] = {}
     succeeded: set[tuple[str, str]] = set()
+    nudged = False  # 빈 턴을 다시 물은 적이 있는지
 
     for step in range(max_steps):
         response = await llm.chat(
@@ -117,6 +125,11 @@ async def run(
 
         tool_calls = getattr(response.message, "tool_calls", None) or []
         if not tool_calls:
+            if not (response.message.content or "").strip() and not nudged:
+                # 빈 턴. 응답 문구는 화면이 지어내지 않으므로 모델에게 한 번 더 묻는다
+                nudged = True
+                messages.append({"role": "user", "content": _EMPTY_TURN})
+                continue
             return MemoryAgentResult(
                 final_message=response.message.content,
                 completed=True,
@@ -240,8 +253,18 @@ def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
 
 
 def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
+    """같은 run에서 두 번 하면 안 되는 작업인지 가른다.
+
+    관찰 저장은 인자가 아니라 대상으로 센다. 인자 전체로 비교하면 raw_text를 한 글자만
+    다르게 준 두 호출이 다 통과해 같은 관찰이 두 행으로 남는다.
+    """
     if not name.startswith(MUTATING_PREFIXES):
         return None  # 분리·조회는 반복 호출해도 상태 안 바뀜
+    if name.startswith("create_observation_"):
+        target = arguments.get("subject") or arguments.get("symptom") or arguments.get("raw_text")
+        return name, json.dumps(
+            [target, arguments.get("observed_on")], sort_keys=True, ensure_ascii=False
+        )
     return name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
 
 

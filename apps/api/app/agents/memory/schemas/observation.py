@@ -40,16 +40,22 @@ def _optional(description: str) -> Any:
 
 
 _ENGAGEMENT = _optional("low / mid / high 중 하나. 발화에 없으면 비워둔다")
+_FOOD_SUBJECT = (
+    "먹거나 마신 것의 이름. 예: 딸기케이크, 김밥, 우유. "
+    "'아침·점심·저녁·간식' 은 끼니 이름이라 subject 가 될 수 없다. "
+    "무엇을 먹었는지 발화에 없으면 이 tool을 부르지 않고, 메뉴 이름에 대해 되묻는다. "
+)
 
 
 class ObservationFoodCreate(PromotableCreateArgs):
+    subject: Annotated[str, Field(description=_FOOD_SUBJECT)]
     action: Annotated[str | None, Field(default=None, description="먹었다 / 뱉었다 / 남김")]
     amount: Annotated[str | None, Field(default=None, description="반 그릇 / 다 먹음")]
     reaction: Annotated[str | None, Field(default=None, description="좋아함 / 싫어함 / 무반응")]
 
 
 class ObservationFoodUpdate(ObservationUpdateArgs):
-    subject: Annotated[str | None, _optional("바꿀 정규화 대상")]
+    subject: Annotated[str | None, _optional("바꿀 음식 이름. 끼니 이름은 넣지 않는다")]
     action: Annotated[str | None, Field(default=None, description="바꿀 action")]
     amount: Annotated[str | None, Field(default=None, description="바꿀 amount")]
     reaction: Annotated[str | None, Field(default=None, description="바꿀 reaction")]

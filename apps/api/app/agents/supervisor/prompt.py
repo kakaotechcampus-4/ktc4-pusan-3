@@ -58,6 +58,8 @@ _ELSE = """
 [out_of_scope · unclear]
 - out_of_scope  구매·예약·결제·기관 연락·대신 보내기.
 - unclear       무엇을 하라는지 알 수 없는 조각.
+- 보호자 자신의 얘기("나 오늘 너무 피곤해")는 아이 기록이 아니다.
+  record 로 보내지 말고 unclear 로 둔다.
 """.strip()
 
 _EXAMPLES = """
@@ -73,10 +75,21 @@ _EXAMPLES = """
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth
 - "땅콩 알레르기 등록해줘." → guarded/safety_record
+- "어제부터 기침하는데 무슨 병일까?"
+  → record/observe "어제부터 기침하는데" + guarded/diagnosis "무슨 병일까?"
 - "이 반찬 좀 주문해줘." → out_of_scope
+- "새 블록 세트 하나 주문해줘." → out_of_scope (블록이라도 activity 가 아니다)
 """.strip()
 
-_SECTIONS = (_ROLE, _SPLIT, _RECORD, _REQUEST, _GUARDED, _ELSE, _EXAMPLES)
+_RETRY = """
+[다시 나눌 때]
+- "[다시 나누기]" 메시지가 오면 앞서 record 로 보낸 조각 중 기록되지 않은 것이 적혀 있다.
+- 그 조각이 답을 구하는 물음이면 request 로 바꾸고 agent 를 정한다.
+  기록할 사실이 맞으면 record 로 둔다.
+- 나머지 조각은 처음 나눌 때와 같은 기준으로 나눈다. route 는 발화 전체를 다시 담아 한 번 부른다.
+""".strip()
+
+_SECTIONS = (_ROLE, _SPLIT, _RECORD, _REQUEST, _GUARDED, _ELSE, _EXAMPLES, _RETRY)
 
 
 def build_system_prompt() -> str:
