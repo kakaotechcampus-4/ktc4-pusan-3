@@ -27,12 +27,46 @@ class DateParseError(ValueError):
     """날짜·시각 표현을 해석하지 못함. tool 은 DATE_UNPARSEABLE 로 바꿔 모델에 되돌린다."""
 
 
+class MissingStartTime(DateParseError):
+    """일정의 시작 시각을 모르면 자정으로 때우지 않고 몇 시인지 되묻게 한다."""
+
+
 @dataclass(frozen=True)
 class DateRange:
     """조회에 사용할 [start, end) 날짜 범위."""
 
     start: date
     end: date
+
+
+@dataclass(frozen=True)
+class EventWhen:
+    """일정이 언제인가를 의미하는 클래스.
+    시작+종료+종일 여부는 따로 움직이지 않는 시간 표현으로 간주한다."""
+
+    starts_at: datetime
+    ends_at: datetime | None
+    all_day: bool
+
+
+@dataclass(frozen=True)
+class WhenPatch:
+    """발화에서 뽑은 "언제"에 해당하는 표현. 말하지 않은 자리는 None으로 두기."""
+
+    starts_on: str | None = None  # 시작 "날짜" (모레, 금요일, 2026-09-17)
+    starts_time: str | None = None  # 시작 "시각" (오전 10시, 하루 종일)
+    ends_on: str | None = None
+    ends_time: str | None = None
+    direction: TemporalDirection = "nearest"
+
+    def is_empty(self) -> bool:
+        """언제인지에 대해 아무 말도 하지 않았다면 시간 구간을 건드리지 않는다."""
+        return (
+            self.starts_on is None
+            and self.starts_time is None
+            and self.ends_on is None
+            and self.ends_time is None
+        )
 
 
 _DAY_OFFSETS = {  # 오늘 기준 며칠 차이인지
@@ -220,6 +254,132 @@ def resolve_time(value: str | None) -> time | None:
 def combine(day: date, moment: time | None, tz: tzinfo) -> datetime:
     """날짜와 시각을 timezone 이 붙은 datetime 으로 합친다. 시각이 없으면 자정."""
     return datetime.combine(day, moment or time(0, 0), tzinfo=tz)
+
+
+def resolve_when(
+    patch: WhenPatch, *, current: EventWhen | None, today: date, tz: tzinfo
+) -> EventWhen:
+    """발화에서 추출한 시각 표현을 기존 일정 구간에 반영한다.
+    시작,종료,all_day를 함께 계산해 시간 구간의 일관성을 유지한다.
+
+    원칙:
+    - 날짜만 변경하면 기존 구간의 길이를 유지한 채 전체 구간을 이동한다.
+    - all_day가 켜지면 00:00~23:59로 다시 계산한다.
+    - all_day가 꺼지면 종일 일정에서 사용하던 종료 시각은 유지하지 않는다.
+    - 종일 일정에 종료 시각만 주어진 경우에는 이를 시각 일정 전환으로 보지 않는다.
+
+    새 일정인 경우 current는 None
+    """
+
+    start_day = _start_day(patch, current, today=today, tz=tz)
+
+    if _stays_all_day(patch, current):
+        end_day = _all_day_end_day(patch, current, start_day, today=today, tz=tz)
+        return EventWhen(
+            starts_at=combine(start_day, ALL_DAY_START, tz),
+            ends_at=combine(end_day, ALL_DAY_END, tz),
+            all_day=True,
+        )
+
+    starts_at = combine(start_day, _start_time(patch, current, tz), tz)
+    return EventWhen(
+        starts_at=starts_at,
+        ends_at=_end_at(patch, current, starts_at, today=today, tz=tz),
+        all_day=False,
+    )
+
+
+def check_when(when: EventWhen) -> str | None:
+    """구간이 성립하면 None, 아니면 모델에게 설명문을 돌려준다."""
+    if when.ends_at is not None and when.ends_at < when.starts_at:
+        return (
+            "끝나는 시각이 시작보다 앞선다. 자정을 넘기거나 여러 날 가는 일정이면 "
+            "ends_on에 끝나는 날짜를 넣는다. 아니면 ends_time을 다시 확인한다."
+        )
+    return None
+
+
+def _start_day(patch: WhenPatch, current: EventWhen | None, *, today: date, tz: tzinfo) -> date:
+    if patch.starts_on is not None:
+        return resolve_date(patch.starts_on, today=today, direction=patch.direction)
+    if current is not None:
+        return current.starts_at.astimezone(tz).date()
+    raise DateParseError("일정의 시작 날짜가 없다.")
+
+
+def _stays_all_day(patch: WhenPatch, current: EventWhen | None) -> bool:
+    if is_all_day(patch.starts_time):
+        return True
+    if patch.starts_time is not None:
+        return False  # 시각을 새로 말했으면 더 이상 하루 종일로 두지 않음
+    return current.all_day if current is not None else False
+
+
+def _all_day_end_day(
+    patch: WhenPatch, current: EventWhen | None, start_day: date, *, today: date, tz: tzinfo
+) -> date:
+    """며칠짜리인지는 유지한 채 마지막 날만 옮긴다."""
+    if patch.ends_on is not None:
+        return resolve_date(patch.ends_on, today=today, direction=patch.direction)
+    if current is None or current.ends_at is None:
+        return start_day
+    span = current.ends_at.astimezone(tz).date() - current.starts_at.astimezone(tz).date()
+    return start_day + span
+
+
+def _start_time(patch: WhenPatch, current: EventWhen | None, tz: tzinfo) -> time:
+    """시작 시각. 모르면 자정으로 때우지 않고 MissingStartTime으로 되묻게 한다."""
+    if patch.starts_time is None:
+        # 시각을 말하지 않았으면 원래 시각 그대로
+        if current is not None and not current.all_day:
+            return current.starts_at.astimezone(tz).time()
+        raise MissingStartTime("일정의 시작 시각이 없다.")
+
+    try:
+        moment = resolve_time(patch.starts_time)
+    except DateParseError as exc:
+        raise MissingStartTime(str(exc)) from exc  # "아침"/"낮" 은 시각이 아님
+    if moment is None:
+        raise MissingStartTime("일정의 시작 시각이 없다.")
+    return moment
+
+
+def _end_at(
+    patch: WhenPatch,
+    current: EventWhen | None,
+    starts_at: datetime,
+    *,
+    today: date,
+    tz: tzinfo,
+) -> datetime | None:
+    """ends_on(날짜)과 ends_time(시각)을 합쳐 종료 시각 하나로 만든다.
+    빠진 쪽은 지어내지 않고 기존 값에서 가져온다.
+    날짜는 기존 종료일(없으면 시작일), 시각은 기존 종료 시각(없으면 시작 시각).
+    """
+    previous = _previous_end(current)
+    if patch.ends_on is None and patch.ends_time is None:
+        if previous is None or current is None:
+            return None
+        return starts_at + (previous - current.starts_at)  # 길이를 유지한 채 함께 이동
+
+    anchor = previous or starts_at
+    day = (
+        resolve_date(patch.ends_on, today=today, direction=patch.direction)
+        if patch.ends_on is not None
+        else anchor.astimezone(tz).date()
+    )
+    moment = resolve_time(patch.ends_time) if patch.ends_time is not None else None
+    if moment is None:
+        # 끝나는 날짜만 바꿨다고 시각을 자정으로 두지 않음
+        moment = anchor.astimezone(tz).time()
+    return combine(day, moment, tz)
+
+
+def _previous_end(current: EventWhen | None) -> datetime | None:
+    """종일 일정의 23:59 는 그 성격에서 나온 값이라, 시각 있는 일정이 되면 버린다."""
+    if current is None or current.all_day:
+        return None
+    return current.ends_at
 
 
 def build_observed_range(day: date) -> DateRange:

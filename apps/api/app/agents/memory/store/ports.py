@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange
+from app.agents.common.datetime_rules import DateRange, EventWhen
 
 # observation 5테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
@@ -152,7 +152,16 @@ class MemoryStore(Protocol):
 
     async def get_event(self, *, event_id: str) -> EventRow | None: ...
 
-    async def update_event(self, *, event_id: str, fields: dict[str, Any]) -> EventRow | None: ...
+    async def update_event(
+        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
+    ) -> EventRow | None:
+        """fields 의 None 은 "바꾸지 않는다". 시간 구간만은 when 으로 통째로 받는다.
+
+        ends_at 은 None 이 곧 "종료 없음" 이라 fields 로는 지울 수가 없다. 그리고
+        시작·종료·all_day 는 함께 정해지는 값이라 한 덩어리로 오는 편이 안전하다
+        (datetime_rules.resolve_when 이 셋을 같이 계산한다).
+        """
+        ...
 
     async def delete_event(self, *, event_id: str) -> bool:
         """연결된 event_item 도 함께 제거 (ON DELETE CASCADE)."""
