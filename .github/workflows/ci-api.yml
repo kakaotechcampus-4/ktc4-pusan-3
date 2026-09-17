@@ -3,8 +3,7 @@ name: API CI
 on:
   pull_request:
     branches:
-      - develop
-      - main
+      - '**'  # 임시: 모든 PR에서 CI 트리거 (테스트용)
     paths:
       - 'apps/api/**'
       - '.github/workflows/ci-api.yml'
