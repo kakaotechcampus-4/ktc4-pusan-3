@@ -70,7 +70,7 @@ jobs:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: ci_db
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U ci_user -d ci_db"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
