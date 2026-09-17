@@ -1,12 +1,13 @@
 from pathlib import Path
 
 from pydantic import ValidationError, ValidationInfo, field_validator
-from pydantic_settings import BaseSettings
+
+from app.core.agent_config import AgentLLMSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
-class Settings(BaseSettings):
+class Settings(AgentLLMSettings):
     APP_ENV: str = "local"
     APP_NAME: str = "ktc4-pusan-3-api"
 
@@ -16,20 +17,6 @@ class Settings(BaseSettings):
     DB_PASSWORD: str
     DB_NAME: str
 
-    MEMORY_API_KEY: str | None = None
-    MEMORY_BASE_URL: str | None = None
-    MEMORY_MODEL: str | None = None
-    MEMORY_REASONING_EFFORT: str | None = None
-
-    SUPERVISOR_API_KEY: str | None = None
-    SUPERVISOR_BASE_URL: str | None = None
-    SUPERVISOR_MODEL: str | None = None
-    SUPERVISOR_REASONING_EFFORT: str | None = None
-
-    FOOD_API_KEY: str | None = None
-    FOOD_BASE_URL: str | None = None
-    FOOD_MODEL: str | None = None
-    FOOD_REASONING_EFFORT: str | None = None
 
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
