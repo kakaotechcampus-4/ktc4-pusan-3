@@ -1,11 +1,12 @@
 from sqlalchemy.engine import URL
 
-from app.core.config import settings
 from app.infra.db.config import get_alembic_settings
 
 
 def build_url(driver: str) -> URL:
     """앱 실행 시: 전체 검증된 settings 사용"""
+    from app.core.config import settings  # 지연 import (필요할 때만 로드)
+
     return URL.create(
         driver,
         username=settings.DB_USER,
