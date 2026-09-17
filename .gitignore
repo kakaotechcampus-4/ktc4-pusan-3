@@ -91,3 +91,6 @@ Claude outputs/
 # 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.
 apps/api/app/agents/test/**/*_result.txt
 apps/api/app/agents/test/**/*_results.jsonl
+
+# ── 로컬 구현 계획 (개발 과정 문서, 커밋 불필요) ──
+.impl-plan/

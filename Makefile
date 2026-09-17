@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
-        db-migrate db-rollback db-current db-history db-heads db-check db-revision \
+        db-migrate db-rollback db-current db-history db-heads db-heads-check db-check db-revision \
         db-merge db-reset db-psql
 
 help:
@@ -20,6 +20,7 @@ help:
 	@echo "  make db-current   현재 적용된 revision 확인"
 	@echo "  make db-history   전체 revision 체인 출력"
 	@echo "  make db-heads     현재 head 목록 (충돌 판정용)"
+	@echo "  make db-heads-check  Alembic head 단일성 검증 (PR CI 전용)"
 	@echo "  make db-check     ORM 모델과 DB 스키마 일치 검증 (PR 올리기 전 필수)"
 	@echo "  make db-reset yes=1  로컬 DB를 비우고 migration 처음부터 재적용 (데이터 전부 삭제)"
 	@echo "  make db-revision msg=\"설명\"  새 migration 파일 자동 생성"
@@ -69,6 +70,16 @@ db-heads:
 
 db-check:
 	cd apps/api && uv run alembic check
+
+db-heads-check:
+	@heads=$$(cd apps/api && uv run alembic heads | wc -l); \
+	if [ "$$heads" -gt 1 ]; then \
+		echo "❌ Alembic에 여러 개의 head가 존재합니다. 충돌 해결이 필요합니다."; \
+		echo "참고: docs/ops/alembic-collaboration-v1.md"; \
+		exit 1; \
+	else \
+		echo "✅ Alembic head 단일성 검증 성공"; \
+	fi
 
 db-revision:
 	@[ "$(msg)" ] || { echo "사용법: make db-revision msg=\"한 줄 설명\""; exit 1; }
