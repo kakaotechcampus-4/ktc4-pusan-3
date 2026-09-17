@@ -9,6 +9,7 @@
     - 생성 시 종료 < 시작: 잘못된 시간 구간 방지
     - 종료 날짜만 변경: 기존 종료 시각 유지
     - 빈 시각 표현: 종일 일정으로 해석하지 않음
+    - 생성 시 끝나는 날짜 지정: 자정 넘김/여러 날 일정을 한 번에 저장
 
 날짜 계산과 일정 시간 구간의 일관성은 모델이 아닌 코드에서 보장하는 영역이다.
 """
@@ -156,10 +157,45 @@ async def test_빈_시각_표현은_하루_종일이_아니다(context: AgentCon
     assert _local(row.starts_at) == "2026-09-17T15:00+09:00"
 
 
+async def test_끝나는_날짜를_주면_여러_날_일정도_한_번에_만든다(context: AgentContext) -> None:
+    event_id = await _create(
+        context,
+        starts_on="2026-09-17",
+        starts_time="오전 9시",
+        ends_on="2026-09-19",
+        ends_time="오후 5시",
+    )
+
+    row = await _row(context, event_id)
+    assert _local(row.starts_at) == "2026-09-17T09:00+09:00"
+    assert _local(row.ends_at) == "2026-09-19T17:00+09:00"
+
+
+async def test_자정을_넘기는_일정도_한_번에_만든다(context: AgentContext) -> None:
+    # ends_on이 없으면 종료가 같은 날로 계산돼 종료 < 시작이 된다
+    event_id = await _create(
+        context,
+        starts_on="2026-09-17",
+        starts_time="밤 11시",
+        ends_on="2026-09-18",
+        ends_time="새벽 1시",
+    )
+
+    row = await _row(context, event_id)
+    assert _local(row.starts_at) == "2026-09-17T23:00+09:00"
+    assert _local(row.ends_at) == "2026-09-18T01:00+09:00"
+
+
 # 불변식
 _BASES = {
     "종일": {"starts_on": "2026-09-17", "starts_time": "하루 종일"},
     "시각": {"starts_on": "2026-09-17", "starts_time": "오후 3시", "ends_time": "오후 5시"},
+    "다일": {
+        "starts_on": "2026-09-17",
+        "starts_time": "오전 9시",
+        "ends_on": "2026-09-19",
+        "ends_time": "오후 5시",
+    },
 }
 _PATCHES = [
     {"starts_on": "2026-09-18"},
