@@ -205,7 +205,8 @@ Elice 질의는 그래도 보낸다. 개발 중에 실제 사용자 데이터가
 | 기록을 남긴 보호자만 탈퇴하면 기록은 남고 작성자 연결만 끊긴다 | [observation/models.py:74](../../apps/api/app/domains/memory/observation/models.py) (`SET NULL`) |
 | 임베딩은 같은 행의 컬럼이라 따로 지울 것이 없다 | 〃 `:61` |
 | 기억 전체 삭제를 눌러도 동의 이력은 남는다 | [api-interface-v1.html](../api/api-interface-v1.html) §07 |
-| `deleted_at` 칸이 있지만 쓰는 코드가 없다 — 유예기간을 아직 안 정해서 | [identity/models.py:31](../../apps/api/app/domains/identity/models.py) · [child/models.py:44](../../apps/api/app/domains/child/models.py). 🔸 결정 5 |
+| `parent.deleted_at` 은 **탈퇴 계정을 막는 데 쓰인다** — 유예기간이 미정이라 그때까지 `404` 로 세션을 안 내준다 | [deps/auth.py:74-77](../../apps/api/app/api/deps/auth.py) · [routers/auth.py:436-441](../../apps/api/app/api/v1/routers/auth.py). 🔸 결정 5 |
+| `child.deleted_at` 은 아직 쓰는 코드가 없다 | [child/models.py:44](../../apps/api/app/domains/child/models.py) |
 | 증빙 파기 배치는 있는데 **실행 스케줄이 안 붙어 있다** | [workers/consent_purge.py:6-7](../../apps/api/app/workers/consent_purge.py) |
 | 사진 원본·썸네일 정리는 범위 밖으로 명시돼 있다 | [retention.py:9-11](../../apps/api/app/domains/consent/retention.py) |
 
