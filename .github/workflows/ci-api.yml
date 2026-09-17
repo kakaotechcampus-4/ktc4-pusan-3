@@ -16,7 +16,10 @@ on:
       - '.github/workflows/ci-api.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.ref == 'refs/heads/develop'
+        && format('{0}-{1}', github.workflow, github.sha)
+        || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 jobs:
