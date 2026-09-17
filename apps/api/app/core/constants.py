@@ -25,3 +25,6 @@ OAUTH_COOKIE_PATH = f"{API_V1_PREFIX}{AUTH_PREFIX}"
 쿠키를 인증 요청에만 실리게 좁힌다. 이 값을 문자열로 다시 적지 말고 여기서 가져간다 —
 마운트 지점을 바꾸면 쿠키 Path 도 함께 따라와야 한다.
 """
+
+CI_TEST_CONSTANT = "test-2-value"
+"""CI 테스트: test-2 브랜치의 상수 추가."""
