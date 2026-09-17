@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-16T00:00:00Z",
+  "generatedAt": "2026-09-17",
   "title": "Design System: 아이캐치",
   "extensions": {
     "colorMeta": {
@@ -701,6 +701,11 @@
       "description": "07 기록 줄과 11 목록(재 둔 것 · 안전 정보)이 공유하는 줄 문법 — 왼쪽 뉴트럴 타일, 값이 주어인 본문 한 줄, 아래 메타 한 줄. 보호자가 적은 기록에는 출처 색이 없어서 타일이 뉴트럴이다.",
       "html": "<div class=\"ds-row\"><span class=\"ds-row-tile\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0l-4.6-4.6a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4Z\"/><path d=\"m7.5 10.5 2 2\"/><path d=\"m10.5 7.5 2 2\"/><path d=\"m13.5 4.5 2 2\"/><path d=\"m4.5 13.5 2 2\"/></svg></span><span class=\"ds-row-body\"><span class=\"ds-row-value\">키 103.2cm</span><span class=\"ds-row-meta\">오늘 잼</span></span></div>",
       "css": ".ds-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; } .ds-row-tile { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: none; border-radius: 10px; background: var(--color-surface-muted); color: var(--color-ink-muted); } .ds-row-body { display: flex; flex-direction: column; gap: 2px; } .ds-row-value { font-size: 1rem; line-height: 1.6; color: var(--color-ink); } .ds-row-meta { font-size: 0.75rem; line-height: 1.4; color: var(--color-ink-subtle); }"
+    },
+    {
+      "name": "Date Field Calendar",
+      "description": "날짜 고르기 시트의 달력. react-day-picker 위에 얹되 머리줄만 직접 그린다 — 연월을 누르면 연도 그리드(4열 · 최근이 위) → 달 그리드(3열 · 범위 밖 잠금) 로 펼친다. 라이브러리의 captionLayout=\"dropdown\" 은 네이티브 <select> 두 개라 쓰지 않는다. 화살표는 날짜 면에서만 서고 감출 때는 visibility:hidden 이다. 그리드가 열리면 고른 칸으로 포커스가 들어가고 달을 고르면 연월 버튼으로 돌아온다. 세 면의 높이를 날짜 면에 rem 으로 맞춰 시트가 뛰지 않게 한다.",
+      "css": "/* 머리줄 — 화살표 · 연월 버튼 · 화살표 한 줄 */\n.datefield-header {\n  display: flex;\n  min-height: var(--height-touch);\n  align-items: center;\n  justify-content: space-between;\n  gap: 0.25rem;\n}\n.datefield-caption {\n  display: flex;\n  align-items: center;\n  gap: 0.375rem;\n  min-height: var(--height-touch);\n  padding-inline: 0.75rem;\n  border-radius: var(--radius-field);\n  font-size: var(--text-section);\n  color: var(--color-ink);\n  transition: background-color 120ms var(--ease-standard);\n}\n.datefield-caption:active { background: var(--color-surface-muted); }\n/* 화살표는 날짜 면에서만. visibility 라 포커스·a11y 트리에서 함께 빠진다 */\n.datefield-nav[hidden-view] { visibility: hidden; }\n\n/* 세 면이 같은 자리를 번갈아 쓴다 — 바닥을 날짜 면에 맞춘다 (px 아님) */\n.datefield-panel { display: flex; flex-direction: column; min-height: 19rem; }\n\n/* 연도 4열 · 달 3열 */\n.datefield-grid { display: grid; gap: 0.375rem; }\n.datefield-grid--years { grid-template-columns: repeat(4, minmax(0, 1fr)); }\n.datefield-grid--months { grid-template-columns: repeat(3, minmax(0, 1fr)); }\n.datefield-cell {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: var(--height-touch);\n  padding-inline: 0.25rem;\n  border-radius: var(--radius-field);\n  font-size: var(--text-body-sm);\n  color: var(--color-ink);\n  transition: background-color 120ms var(--ease-standard);\n}\n/* 고른 칸은 채움 + 흰 글자 + aria-pressed 셋으로 말한다 */\n.datefield-cell[aria-pressed=\"true\"] { background: var(--color-brand); color: #fff; }\n.datefield-cell:disabled { color: var(--color-ink-subtle); background: transparent; }"
     }
   ],
   "narrative": {
