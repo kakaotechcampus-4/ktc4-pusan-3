@@ -17,7 +17,6 @@ class Settings(AgentLLMSettings):
     DB_PASSWORD: str
     DB_NAME: str
 
-
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
     MEAL_OCR_API_KEY: str | None = None
