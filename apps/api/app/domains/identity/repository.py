@@ -129,17 +129,30 @@ class HandoffRow:
     parent_id: uuid.UUID | None
 
 
-async def consume_handoff(session: AsyncSession, *, code_hash: bytes) -> HandoffRow | None:
+async def consume_handoff(
+    session: AsyncSession, *, code_hash: bytes, provider: AuthProvider
+) -> HandoffRow | None:
     """1회용 코드를 원자적으로 소비한다 — 명세 §5-4 · A-04 · A-12.
 
     🚨 DELETE … RETURNING 한 문장이다. 먼저 SELECT 하고 나중에 DELETE 하면 "조회했는데
        그 사이 남이 썼다" 는 틈이 생긴다. 두 번째 요청은 지울 행이 없어 None 을 받는다.
 
+    🚨 provider 도 조건이다 (#83). 코드가 어느 provider 로 발급됐는지 보지 않으면,
+       카카오로 받은 코드를 /auth/google/signup 에 보내 카카오 회원번호를 구글
+       식별자로 등록할 수 있다. 경로의 provider 를 그대로 믿고 identity 를 만들기
+       때문이다. 조건을 WHERE 에 두면 불일치가 "없는 코드" 와 똑같이 보이고
+       (§8-1 — 어느 쪽이 틀렸는지 알려주지 않는다), 코드가 타지 않아 진짜 사용자는
+       올바른 경로로 다시 시도할 수 있다.
+
     만료는 DB 시각으로 본다. 애플리케이션 시계를 쓰면 두 시계가 어긋난 만큼 창이 생긴다.
     """
     stmt = (
         delete(AuthHandoff)
-        .where(AuthHandoff.code_hash == code_hash, AuthHandoff.expires_at > func.now())
+        .where(
+            AuthHandoff.code_hash == code_hash,
+            AuthHandoff.provider == provider,
+            AuthHandoff.expires_at > func.now(),
+        )
         .returning(AuthHandoff.bind_hash, AuthHandoff.provider_user_id, AuthHandoff.parent_id)
     )
     row = (await session.execute(stmt)).first()
