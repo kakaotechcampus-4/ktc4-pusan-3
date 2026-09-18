@@ -402,6 +402,28 @@ export interface CreateHealthSafetyResponse {
   safety: HealthSafety;
 }
 
+/**
+ * 🚨 **승인 게이트 ㉡ — 고치기.** ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ *
+ * 🚨 **`type` 과 `label` 이 없다.** 그 둘은 이 기록의 **정체**다 — 우유를 땅콩으로 고치는 것은
+ *    고치기가 아니라 다른 기록이고, `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이
+ *    같이 흔들린다. 항목이 잘못됐으면 **내리고(`DELETE`) 새로 등록**한다.
+ *    고칠 수 있는 것은 그 항목에 대해 **나중에 알게 된 것**뿐이다.
+ *
+ * 🚨 보호자 직접 입력만 들어온다. LLM 이 이 요청을 만들지 않는다 (NF-03 · 최상위 §2).
+ */
+export interface UpdateHealthSafetyRequest {
+  category?: string;
+  /** `null` 은 "모르겠어요" 로 되돌리는 것이다 — 값을 안 보내는 것(그대로 두기)과 다르다. */
+  severity?: string | null;
+  reactions?: string[];
+  notes?: string | null;
+}
+
+export interface UpdateHealthSafetyResponse {
+  safety: HealthSafety;
+}
+
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 /**

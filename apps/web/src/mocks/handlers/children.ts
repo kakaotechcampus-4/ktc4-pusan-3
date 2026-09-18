@@ -9,6 +9,7 @@ import {
   emptyHome,
   healthSafety,
   home,
+  hoursFromNow,
   newHealthSafety,
   observations,
   safetyScan,
@@ -181,6 +182,39 @@ export const childrenHandlers = [
     await networkDelay(1400);
     if (currentScenario() === "consent") return consentRequired("child_health");
     return HttpResponse.json(safetyScan);
+  }),
+
+  /**
+   * 🚨 승인 게이트 ㉡ — **고치기.** ⚠️ 계약서 v1 에 없다 (이슈 #87).
+   *
+   * 🚨 **`type` · `label` 은 받지 않는다.** 그 둘은 이 기록의 정체고, 바꾸는 것은 고치기가 아니라
+   *    다른 기록이다 — `UNIQUE(child_id, type, label)` 이 같이 흔들린다. 보내 오면 400 이다.
+   * 🚨 `severity: null` 은 "모르겠어요 로 되돌리기" 다. 키를 안 보내는 것(그대로 두기)과 다르다.
+   */
+  http.patch(url("/children/:cid/health-safety/:id"), async ({ request, params }) => {
+    await networkDelay(320);
+    if (currentScenario() === "consent") return consentRequired("child_health");
+
+    const body = (await request.json()) as Record<string, unknown>;
+    if ("type" in body || "label" in body) {
+      return apiError(400, "validation_failed", "종류와 이름은 고칠 수 없어요");
+    }
+
+    const row = safetyState.find((item) => item.safety.id === params.id);
+    if (!row || row.retracted) return apiError(404, "not_found", "이미 내려간 기록이에요");
+
+    row.safety = {
+      ...row.safety,
+      ...(body.category !== undefined ? { category: String(body.category) } : {}),
+      ...("severity" in body
+        ? { severity: body.severity === null ? null : String(body.severity) }
+        : {}),
+      ...(Array.isArray(body.reactions) ? { reactions: body.reactions.map(String) } : {}),
+      ...("notes" in body ? { notes: body.notes === null ? null : String(body.notes) } : {}),
+      updated_at: hoursFromNow(0),
+    };
+
+    return HttpResponse.json({ safety: row.safety });
   }),
 
   /**

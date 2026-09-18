@@ -2,12 +2,14 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
-import { Shield } from "lucide-react";
+import { CircleMinus, Pencil, Shield } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
@@ -20,6 +22,8 @@ import {
   qk,
   type CreateHealthSafetyRequest,
   type HealthSafety,
+  type UpdateHealthSafetyRequest,
+  type UpdateHealthSafetyResponse,
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 
@@ -87,22 +91,32 @@ const TYPE_LABEL: Record<string, string> = {
 export function HealthSafetyList({
   childId,
   items,
+  onEdit,
 }: {
   childId: string;
   items: HealthSafety[];
+  onEdit: (item: HealthSafety) => void;
 }) {
   return (
     <ul className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border">
       {items.map((item) => (
         <li key={item.id}>
-          <HealthSafetyRow childId={childId} item={item} />
+          <HealthSafetyRow childId={childId} item={item} onEdit={() => onEdit(item)} />
         </li>
       ))}
     </ul>
   );
 }
 
-function HealthSafetyRow({ childId, item }: { childId: string; item: HealthSafety }) {
+function HealthSafetyRow({
+  childId,
+  item,
+  onEdit,
+}: {
+  childId: string;
+  item: HealthSafety;
+  onEdit: () => void;
+}) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
 
@@ -165,14 +179,18 @@ function HealthSafetyRow({ childId, item }: { childId: string; item: HealthSafet
           </p>
         </div>
 
-        <Button
-          variant="tertiary"
-          size="compact"
-          onClick={() => setConfirming((open) => !open)}
-          className="shrink-0"
-        >
-          내리기
-        </Button>
+        {/* 🚨 **행동 둘이 아이콘이다** (측정 기록 줄과 같은 처리). 글자 버튼 둘을 나란히 두면
+            360px 에서 줄이 두 겹으로 접히고, 이름보다 버튼이 넓어진다. 뜻은 `IconButton` 의
+            `label`(스크린리더 이름 + 툴팁)이 지고, 누르면 열리는 패널·시트가 글자로 다시 말한다.
+            🚨 내리기에 `Trash2` 를 쓰지 않는다 — 지우는 게 아니라 **내리는** 것이다 (행은 남는다). */}
+        <div className="-my-1 flex shrink-0 items-center">
+          <IconButton label="이 기록 고치기" onClick={onEdit}>
+            <Pencil aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButton>
+          <IconButton label="이 기록 내리기" onClick={() => setConfirming((open) => !open)}>
+            <CircleMinus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButton>
+        </div>
       </div>
 
       {confirming ? (
@@ -232,12 +250,19 @@ export function HealthSafetySheet({
   open,
   onClose,
   childId,
+  item,
 }: {
   open: boolean;
   onClose: () => void;
   childId: string;
+  /**
+   * 넘기면 **고치기**, 없으면 **등록**이다. 🚨 둘 다 승인 게이트 ㉡ 라 화면이 같다 —
+   * `caution` 배너 + `btn-approve`. 게이트를 늘린 것이 아니라 같은 게이트의 다른 동작이다.
+   */
+  item?: HealthSafety;
 }) {
   const queryClient = useQueryClient();
+  const editing = item !== undefined;
 
   const [type, setType] = useState<TypeValue>("allergy");
   const [label, setLabel] = useState("");
@@ -262,6 +287,28 @@ export function HealthSafetySheet({
     },
   });
 
+  /**
+   * 🚨 **고치기에는 `Idempotency-Key` 를 붙이지 않는다.** 필수 5개는 전부 "두 번 실행되면
+   *    두 번 쌓이는" POST 이고, 같은 값으로 두 번 PATCH 해도 결과가 같다.
+   * 🚨 낙관적 업데이트를 쓰지 않는다 — 서버가 확정하기 전에 목록을 바꾸면 "되돌릴 수 없는 것은
+   *    사람이 승인한다" 가 시각적으로 깨진다 (apps/web/CLAUDE.md §3).
+   */
+  const update = useMutation({
+    mutationFn: (body: UpdateHealthSafetyRequest) =>
+      api.patch<UpdateHealthSafetyResponse>(
+        `/children/${childId}/health-safety/${item?.id}`,
+        body,
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+      reset();
+      onClose();
+    },
+  });
+
+  const pending = editing ? update.isPending : save.isPending;
+  const failed = editing ? update.isError : save.isError;
+
   function reset() {
     setType("allergy");
     setLabel("");
@@ -271,20 +318,59 @@ export function HealthSafetySheet({
     setNotes("");
     setLabelError(null);
     save.reset();
+    update.reset();
+  }
+
+  /**
+   * 🚨 **고치기는 서버 값이 바뀌면 폼을 맞춘다.** 배우자가 같은 항목을 먼저 고쳤을 때 옛 값을
+   *    들고 있으면, 승인하는 순간 남의 수정을 되돌린다 (11 부르는 이름과 같은 처리).
+   *    effect 가 아니라 렌더 중 조정이다 — effect 면 옛 값으로 한 프레임을 먼저 그린다.
+   */
+  const itemKey = item ? `${item.id}\u0000${item.updated_at}` : null;
+  /**
+   * 🚨 **`useState(itemKey)` 로 시작하면 안 된다.** 첫 렌더에서 이미 같은 값이라 비교가
+   *    통과해 버리고, **폼이 기본값인 채로 열린다** — 고치기 시트가 "무엇인가요" 를 비운 채
+   *    떴다 (실제로 그랬다). `null` 로 시작해야 첫 렌더에서 한 번 맞춘다.
+   *    등록 모드는 `item` 이 없어서 이 분기에 아예 안 들어온다.
+   */
+  const [syncedItem, setSyncedItem] = useState<string | null>(null);
+  if (item && syncedItem !== itemKey) {
+    setSyncedItem(itemKey);
+    {
+      setType((TYPE_LABEL[item.type] ? item.type : "allergy") as TypeValue);
+      setLabel(item.label);
+      setCategory((item.category || "기타") as CategoryValue);
+      setSeverity((item.severity && SEVERITY_LABEL[item.severity] ? item.severity : "unknown") as SeverityValue);
+      setReactions(item.reactions.join(", "));
+      setNotes(item.notes ?? "");
+      setLabelError(null);
+    }
   }
 
   function submit() {
+    const reactionList = reactions
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (editing) {
+      // 🚨 종류·이름은 보내지 않는다 — 그 둘은 이 기록의 정체다 (`UpdateHealthSafetyRequest`).
+      // 🚨 "모르겠어요" 로 되돌리는 것은 `null` 이다. 키를 빼면 "그대로 두기" 가 된다.
+      update.mutate({
+        category,
+        severity: severity === "unknown" ? null : severity,
+        reactions: reactionList,
+        notes: notes.trim() ? notes.trim() : null,
+      });
+      return;
+    }
+
     const trimmed = label.trim();
     if (!trimmed) {
       setLabelError("무엇인지 적어주세요");
       return;
     }
     setLabelError(null);
-
-    const reactionList = reactions
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
 
     save.mutate({
       type,
@@ -298,7 +384,7 @@ export function HealthSafetySheet({
   }
 
   const alreadyExists = isApiError(save.error, "already_exists");
-  const consentRequired = isApiError(save.error, "consent_required");
+  const consentRequired = isApiError(editing ? update.error : save.error, "consent_required");
 
   return (
     <BottomSheet
@@ -307,7 +393,7 @@ export function HealthSafetySheet({
         reset();
         onClose();
       }}
-      title="알레르기 · 건강 기록 추가"
+      title={editing ? "알레르기 · 건강 기록 고치기" : "알레르기 · 건강 기록 추가"}
       // 🚨 승인 시트는 스크림 탭·ESC 로 닫히지 않는다 (디자인 시스템 §7). 나가는 길은 아래 버튼이다.
       dismissible={false}
       footer={
@@ -326,15 +412,23 @@ export function HealthSafetySheet({
             <p role="status" className="text-body-sm text-ink-muted">
               건강 정보 동의를 받기 전이라 저장된 것은 하나도 없어요. 동의 화면은 아직 없어요.
             </p>
-          ) : save.isError ? (
+          ) : failed ? (
             <p role="status" className="text-body-sm text-ink-muted">
-              등록하지 못했어요. 저장된 것은 하나도 없으니 다시 눌러 주세요.
+              {editing
+                ? "고치지 못했어요. 기록은 고치기 전 그대로니 다시 눌러 주세요."
+                : "등록하지 못했어요. 저장된 것은 하나도 없으니 다시 눌러 주세요."}
             </p>
           ) : null}
 
-          <Button variant="approve" onClick={submit} disabled={save.isPending}>
-            {save.isPending ? <Spinner /> : null}
-            {save.isPending ? "등록하는 중이에요" : "확인했어요, 등록할게요"}
+          <Button variant="approve" onClick={submit} disabled={pending}>
+            {pending ? <Spinner /> : null}
+            {pending
+              ? editing
+                ? "고치는 중이에요"
+                : "등록하는 중이에요"
+              : editing
+                ? "확인했어요, 고칠게요"
+                : "확인했어요, 등록할게요"}
           </Button>
           <Button
             variant="tertiary"
@@ -343,7 +437,7 @@ export function HealthSafetySheet({
               reset();
               onClose();
             }}
-            disabled={save.isPending}
+            disabled={pending}
           >
             그만두기
           </Button>
@@ -357,16 +451,37 @@ export function HealthSafetySheet({
           들은 이야기가 아니라 직접 확인한 것만 남기는 편이 안전해요.
         </Banner>
 
-        <Select label="종류" value={type} options={TYPE_OPTIONS} onChange={setType} />
+        {/* 🚨 **고칠 때는 종류와 이름이 입력이 아니다.** 그 둘은 이 기록의 정체라서, 바꾸는 것은
+            고치기가 아니라 다른 기록이다 — `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목"
+            판정이 같이 흔들린다. 입력을 비활성으로 두는 대신 **아예 글자로** 세운다: 비활성
+            입력은 "왜 안 눌리지" 를 만들고, 브랜드색을 흐리게 만든 비활성과 같은 종류의 나쁨이다
+            (디자인 시스템 §2-5). 바꿀 길은 아래 문구가 알려준다. */}
+        {editing ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-label text-ink-muted">무엇인가요</span>
+            {/* 🚨 이름이 먼저다. 종류는 뒤에 쉼표로 붙이되, 이름이 비면 붙이지 않는다 —
+                앞이 빈 채 쉼표로 시작하는 줄이 실제로 나왔다. */}
+            <p className="text-body text-ink">
+              {[label, TYPE_LABEL[type]].filter(Boolean).join(", ")}
+            </p>
+            <p className="text-caption text-ink-subtle">
+              종류와 이름은 고칠 수 없어요. 다른 항목이면 이 기록을 내리고 새로 등록해 주세요.
+            </p>
+          </div>
+        ) : (
+          <>
+            <Select label="종류" value={type} options={TYPE_OPTIONS} onChange={setType} />
 
-        <TextInput
-          label="무엇인가요"
-          hint="한 번에 하나씩 적어요. 우유, 땅콩처럼 짧게."
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          error={labelError}
-          autoComplete="off"
-        />
+            <TextInput
+              label="무엇인가요"
+              hint="한 번에 하나씩 적어요. 우유, 땅콩처럼 짧게."
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              error={labelError}
+              autoComplete="off"
+            />
+          </>
+        )}
 
         <Select label="분류" value={category} options={CATEGORY_OPTIONS} onChange={setCategory} />
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ruler, Shield } from "lucide-react";
+import { Plus, Ruler, Shield } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
@@ -16,6 +16,8 @@ import { CardFailed } from "@/components/ui/card";
 import { CountChip } from "@/components/ui/chip";
 import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Select } from "@/components/ui/select";
@@ -31,6 +33,7 @@ import {
   type Gender,
   type GrowthLog,
   type GrowthLogsResponse,
+  type HealthSafety,
   type HealthSafetyListResponse,
   type UpdateChildRequest,
 } from "@/lib/api";
@@ -185,6 +188,25 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * 구역에 **더하는** 행동. 아이콘 하나다.
+ *
+ * 🚨 **글자 버튼이 아니다.** 13px 라벨 옆에 테두리 있는 글자 버튼이 서면 그 줄에서 제일 무거운
+ *    것이 버튼이 되고, 구역이 셋이라 같은 상자가 화면에 여럿 생긴다 (목록 아래 전체 폭 버튼을
+ *    걷어낸 것과 같은 이유 · 디자인 시스템 §7 버튼).
+ * 🚨 **`label` 을 빼지 않는다.** 글자가 없으니 스크린리더에 남는 것이 그것뿐이고, 툴팁도
+ *    거기서 나온다 (`IconButton`). 무엇에 더하는지까지 담는다 — 화면에 같은 아이콘이 둘이라
+ *    "추가" 만으로는 어느 구역인지 알 수 없다.
+ * 🚨 아이콘이 단독 신호가 되지 않는다 — 바로 왼쪽에 구역 이름이 글자로 서 있다 (§3 · §10).
+ */
+function SectionAction({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <IconButton label={label} onClick={onClick} className="-my-1">
+      <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+    </IconButton>
   );
 }
 
@@ -385,10 +407,7 @@ function GrowthSection({
       count={logs.length > 0 ? logs.length : undefined}
       action={
         // 🚨 승인 게이트가 아니다 — 잘못 적으면 그 줄을 지우면 된다 (최상위 §2).
-        //    그래서 `tertiary` 이고, 이 화면의 primary 는 위 저장 버튼 하나다.
-        <Button variant="tertiary" size="compact" onClick={() => setAdding(true)}>
-          새로 적기
-        </Button>
+        <SectionAction label="키·몸무게 새로 적기" onClick={() => setAdding(true)} />
       }
     >
       {query.isPending ? (
@@ -645,6 +664,8 @@ function SafetySection({
    */
   const [mode, setMode] = useState<null | "choose" | "manual" | "scan">(null);
   const [photo, setPhoto] = useState<File | null>(null);
+  /** 고치는 중인 기록. 있으면 같은 승인 게이트 시트가 고치기로 열린다. */
+  const [editing, setEditing] = useState<HealthSafety | null>(null);
 
   /**
    * 🚨 **파일 입력은 사용자 제스처에서 열어야 한다.** 시트를 닫고 나서 열려고 하면 제스처가
@@ -660,11 +681,7 @@ function SafetySection({
       title="알레르기 · 건강"
       description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
       count={items.length > 0 ? items.length : undefined}
-      action={
-        <Button variant="tertiary" size="compact" onClick={() => setMode("choose")}>
-          추가
-        </Button>
-      }
+      action={<SectionAction label="알레르기·건강 기록 추가" onClick={() => setMode("choose")} />}
     >
       {query.isPending ? (
         <SkeletonBlock label="안전 정보를 불러오는 중" />
@@ -682,7 +699,7 @@ function SafetySection({
           countLabel="등록된 항목"
         />
       ) : (
-        <HealthSafetyList childId={childId} items={items} />
+        <HealthSafetyList childId={childId} items={items} onEdit={setEditing} />
       )}
 
       {/* 🚨 화면에 보이지 않지만 자리는 여기다 — 고르는 시트가 닫힌 뒤에도 같은 입력을 쓴다. */}
@@ -713,6 +730,18 @@ function SafetySection({
         onClose={() => setMode(null)}
         childId={childId}
       />
+
+      {/* 🚨 고치는 기록이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
+          같은 인스턴스를 재사용하면 앞 기록의 입력이 남는다. */}
+      {editing ? (
+        <HealthSafetySheet
+          key={editing.id}
+          open
+          onClose={() => setEditing(null)}
+          childId={childId}
+          item={editing}
+        />
+      ) : null}
 
       {/* 🚨 사진이 바뀌면 시트를 새로 만든다 (`key`). 미리보기 URL 과 "한 번만 읽는다" 가드를
           `useState` 초기값·`useRef` 로 들고 있어서, 같은 인스턴스를 재사용하면 두 번째 사진이
