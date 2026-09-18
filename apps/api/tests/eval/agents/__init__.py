@@ -1,1 +1,1 @@
-"""Agent 테스트 패키지. pytest 가 app.agents.test.* 로 수집한다."""
+"""Agent 라이브 eval 패키지. pytest 가 tests.eval.agents.* 로 수집한다."""
