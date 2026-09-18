@@ -442,9 +442,20 @@ CREATE INDEX ON auth_handoff (expires_at);
 ```sql
 DELETE FROM auth_handoff
 WHERE code_hash = :code_hash
+  AND provider   = :provider
   AND expires_at > now()
 RETURNING *;
 ```
+
+🚨 **`provider` 도 조건이다** (#83). 이 조건이 없으면 카카오로 발급된 코드를
+`POST /auth/google/signup` 에 보내 **카카오 회원번호를 구글 식별자로 등록**할 수 있다 —
+`auth_identity` 의 provider 는 URL 경로에서 오기 때문이다. 구글 로그인을 붙이는 시점에
+같은 값을 가진 실제 사용자의 자리가 미리 점유돼 있게 된다.
+
+조건을 WHERE 에 두는 이유는 둘이다. **불일치가 "없는 코드" 와 구분되지 않고**(§8-1),
+**코드가 타지 않아** 엉뚱한 경로로 보내진 사용자가 올바른 경로로 다시 시도할 수 있다.
+`bind` 불일치를 태우는 것(§7-2)과 다르게 다루는 이유는, provider 는 비밀이 아니라
+맞혀볼 것이 없어서 태워도 얻는 게 없기 때문이다.
 
 | 요청 | 결과 |
 | --- | --- |
