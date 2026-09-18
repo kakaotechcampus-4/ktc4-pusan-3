@@ -32,7 +32,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agents.common.datetime_rules import DateRange
+from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRange
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FeedingStage, FoodTaskType
@@ -48,6 +48,7 @@ from app.agents.test.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
     T_CASES,
+    R,
     RoutingCase,
     SplitScore,
     covered_by,
@@ -129,6 +130,34 @@ class LiveCase:
     label: str  # 변형이면 접미사가 붙는다 (RC20-i)
 
 
+# 일정의 시간 구간 전용.
+# 여기서 보는 건 라우팅 정답이 아니라 "모델이 낸 인자로 어떤 구간이 저장되는가"이다.
+_SCHEDULE_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "SC01",
+        "금요일부터 일요일까지 캠프 가는데 오전 9시 시작이고 마지막 날 오후 5시에 끝나.",
+        (
+            R(
+                "금요일부터 일요일까지 캠프 가는데 오전 9시 시작이고 마지막 날 오후 5시에 끝나",
+                WorkType.SCHEDULE,
+            ),
+        ),
+        watch="여러 날 일정에 ends_on 을 쓰는가 — 안 쓰면 종료가 첫날로 붙는다",
+    ),
+    RoutingCase(
+        "SC02",
+        "토요일 밤 11시부터 새벽 1시까지 불꽃놀이 보러 가.",
+        (R("토요일 밤 11시부터 새벽 1시까지 불꽃놀이 보러 가", WorkType.SCHEDULE),),
+        watch="자정을 넘기는 구간. ends_on 없이 새벽 1시만 주면 규칙이 되묻는다",
+    ),
+    RoutingCase(
+        "SC03",
+        "일요일은 하루 종일 마을 축제인데 오후 5시에 끝나.",
+        (R("일요일은 하루 종일 마을 축제인데 오후 5시에 끝나", WorkType.SCHEDULE),),
+        watch="종일 + 종료 시각은 같이 못 쓴다. 거부를 받고 모델이 어떻게 고치는가",
+    ),
+)
+
 _E2E_CASES: tuple[LiveCase, ...] = (
     *(LiveCase(case, case.stage, case.case_id) for case in RC_CASES),
     # 같은 입력을 영아기로 한 번 더 — 식이 단계는 발화가 아니라 아이 나이에서 코드가 정한다
@@ -136,6 +165,7 @@ _E2E_CASES: tuple[LiveCase, ...] = (
     # T14 는 test_memory.py 에도 있지만 거기서는 Memory 만 돈다.
     # "저녁에는 뭘 먹이면 좋을까?" 가 Food 로 떨어지는지는 여기서만 실제로 확인된다
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
+    *(LiveCase(case, case.stage, case.case_id) for case in _SCHEDULE_CASES),
 )
 
 Seed = Callable[[AgentContext], Awaitable[None]]
@@ -233,6 +263,7 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         "Memory 가 health_safety 계열 tool 을 부르지 않는다",
         "food.subject 에 끼니 이름(아침·점심·저녁·간식)이 들어가지 않는다",
         "같은 날 같은 대상이 두 번 저장되지 않는다",
+        "저장된 일정의 종료가 시작보다 뒤다 (종일이면 00:00~23:59)",
         "영양소 분석에 propose_meal_candidates 가 안 열리고 filter_food_safety 는 안 보인다",
     ]
     if live.label == "RC20-i":
@@ -390,6 +421,8 @@ def _judge(observed: Observed) -> None:
     if slots:
         observed.failures.append(f"food.subject 에 끼니 이름이 들어갔다 ({len(slots)}건)")
 
+    _judge_event_intervals(observed)
+
     if case.case_id == "RC15":  # 루트 §2 — 부모의 말은 아이의 fact 가 아니다
         if [row for row in observed.rows if "피곤" in row.raw_text]:
             observed.failures.append("보호자 얘기가 아이 관찰로 저장됐다")
@@ -408,6 +441,39 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"관찰 구간 {len(observed.missing)}개가 저장에 없다")
 
     _report(observed)
+
+
+def _judge_event_intervals(observed: Observed) -> None:
+    """저장된 일정의 시간 구간이 성립하는지 확인한다."""
+    for row, _ in observed.events:
+        start = row.starts_at.astimezone(KST)
+        end = row.ends_at.astimezone(KST) if row.ends_at else None
+
+        if end is not None and end <= start:
+            observed.failures.append(f"일정의 종료가 시작보다 앞서거나 같다 ({_interval(row)})")
+        if row.all_day and (
+            start.time() != ALL_DAY_START or end is None or end.time() != ALL_DAY_END
+        ):
+            # 종일 일정은 00:00~23:59
+            observed.failures.append(f"종일 일정이 00:00~23:59가 아니다 ({_interval(row)})")
+
+
+def _interval(row: EventRow) -> str:
+    """저장된 시간 구간 한 줄. 하루 안에 끝나면 끝 날짜를 생략한다."""
+    start = row.starts_at.astimezone(KST)
+    end = row.ends_at.astimezone(KST) if row.ends_at else None
+    if row.all_day and end is not None:
+        if (start.time(), end.time()) == (ALL_DAY_START, ALL_DAY_END):
+            # 00:00~23:59 == 종일이라 시각을 적지 않는다
+            # 어긋난 종일 일정은 아래로 내려가 실제 시각을 그대로 보여준다
+            if end.date() == start.date():
+                return f"종일 {start:%m/%d}"
+            return f"종일 {start:%m/%d}~{end:%m/%d}"
+    if end is None:
+        return f"{start:%m/%d %H:%M}~"
+    if end.date() == start.date():
+        return f"{start:%m/%d %H:%M}~{end:%H:%M}"
+    return f"{start:%m/%d %H:%M}~{end:%m/%d %H:%M}"
 
 
 def _report(observed: Observed) -> None:
@@ -440,6 +506,11 @@ def _report(observed: Observed) -> None:
         # Step 1 규칙의 첫 측정 — 매일 반복되는 식사 일과는 core 일정이어야 한다
         types = [str(row.fields.get("event_type")) for row, _ in observed.events]
         observed.reports.append(f"RC24 event_type={types or '(일정 없음)'}")
+    if observed.live.case.case_id.startswith("SC"):
+        # 저장된 구간을 그대로 남긴다 — 모델이 ends_on을 썼는지 확인 가능하다.
+        # 일정이 없으면 규칙이 되묻고 모델이 고치지 못한 것이다
+        stored = " · ".join(_interval(row) for row, _ in observed.events)
+        observed.reports.append(f"{observed.live.case.case_id} 구간={stored or '(일정 없음)'}")
 
 
 def _expected_food_tasks(observed: Observed) -> int:
@@ -522,7 +593,9 @@ def _tool_summary(names: list[str]) -> str:
 def _saved_summary(observed: Observed) -> str:
     parts = [f"{domain} {len(rows)}" for domain, rows in observed.observations.items() if rows]
     for row, items in observed.events:
-        parts.append(f"일정 {row.title!r}({row.fields.get('event_type')}, 준비물 {items})")
+        parts.append(
+            f"일정 {row.title!r}({row.fields.get('event_type')}, {_interval(row)}, 준비물 {items})"
+        )
     return " · ".join(parts) or "없음"
 
 
@@ -547,7 +620,18 @@ def _record(observed: Observed) -> dict[str, Any]:
         "memory_tools": memory.tool_names if memory else [],
         "saved": {domain: len(rows) for domain, rows in observed.observations.items()},
         "events": [
-            {"event_type": str(row.fields.get("event_type")), "items": items}
+            {
+                "event_type": str(row.fields.get("event_type")),
+                "items": items,
+                # 구간까지 남겨서 실행마다 다른 시각이 나오는지 결과에서 확인
+                "all_day": row.all_day,
+                "starts_at": row.starts_at.astimezone(KST).isoformat(timespec="minutes"),
+                "ends_at": (
+                    row.ends_at.astimezone(KST).isoformat(timespec="minutes")
+                    if row.ends_at
+                    else None
+                ),
+            }
             for row, items in observed.events
         ],
         "food": [
