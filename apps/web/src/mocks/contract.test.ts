@@ -447,18 +447,21 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
   });
 
   it("초대 링크는 부를 때마다 새로 나온다 — 한 링크는 한 번만 쓴다", async () => {
-    const first = await api.post<InviteResponse>("/children/c1/invites", {
-      relation: "grandparent",
-    });
-    const second = await api.post<InviteResponse>("/children/c1/invites", { relation: "sitter" });
+    const first = await api.post<InviteResponse>("/children/c1/invites", {});
+    const second = await api.post<InviteResponse>("/children/c1/invites", {});
 
     expect(first.invite_url).not.toBe(second.invite_url);
     expect(new Date(first.expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it("relation 없이 초대하면 422 가 아니라 400 validation_failed 다", async () => {
-    const caught = await api.post("/children/c1/invites", {}).catch((e) => e);
-    expect(isApiError(caught, "validation_failed")).toBe(true);
+  /**
+   * 🚨 아이와 어떤 사이인지는 **받는 쪽이 고르는 값**이라 화면이 안 보낸다 (#89).
+   *    계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서, 없다고 막히면 화면이
+   *    초대를 아예 못 한다 — 이 테스트가 그 회귀를 잡는다.
+   */
+  it("relation 없이 초대해도 링크가 나온다", async () => {
+    const res = await api.post<InviteResponse>("/children/c1/invites", {});
+    expect(res.invite_url).toMatch(/^https:\/\//);
   });
 });
 

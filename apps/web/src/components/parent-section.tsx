@@ -9,7 +9,6 @@ import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
-import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
@@ -39,14 +38,6 @@ import { formatDay } from "@/lib/format";
  *    계속 쓰는 것처럼 보이게 하지 않는다. 만료 시각을 같이 적는다.
  */
 
-const RELATION_OPTIONS = [
-  { value: "father", label: "아빠" },
-  { value: "mother", label: "엄마" },
-  { value: "grandparent", label: "조부모" },
-  { value: "sitter", label: "돌봄 선생님" },
-  { value: "other", label: "그 밖에" },
-] as const satisfies ReadonlyArray<{ value: Relation; label: string }>;
-
 const RELATION_LABEL: Record<Relation, string> = {
   mother: "엄마",
   father: "아빠",
@@ -66,7 +57,6 @@ export function ParentSection({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [relation, setRelation] = useState<Relation>("grandparent");
   const [issued, setIssued] = useState<InviteResponse | null>(null);
   const [disconnecting, setDisconnecting] = useState<ChildParent | null>(null);
 
@@ -76,8 +66,17 @@ export function ParentSection({
   });
 
   const invite = useMutation({
+    /**
+     * 🚨 **관계를 여기서 정하지 않는다.** 아이와 어떤 사이인지는 초대받은 사람이 자기 입으로
+     *    말할 일이지, 보내는 사람이 미리 찍어 둘 값이 아니다 — 잘못 찍으면 받는 쪽이 자기
+     *    프로필을 고치러 가야 하고, 그 값은 기록마다 "누가 적었나" 로 남는다.
+     *
+     * ⚠️ 계약서 §08 의 요청 본문에는 `relation` 이 있고 "발행 시 지정한 relation 이
+     *    수락자에게 프리필된다" 고 적혀 있다. 프론트는 **안 보낸다** — 수락 화면에서 받는
+     *    쪽이 고르는 것이 맞다. 서버가 필수로 요구하면 계약을 고쳐야 한다 (#89).
+     */
     mutationFn: () => {
-      const body: InviteRequest = { relation };
+      const body: InviteRequest = {};
       return api.post<InviteResponse>(`/children/${childId}/invites`, body);
     },
     onSuccess: (data) => setIssued(data),
@@ -152,7 +151,7 @@ export function ParentSection({
         description={
           issued
             ? "이 링크를 받은 사람이 열면 바로 함께 보게 돼요."
-            : "어떤 관계인지 먼저 골라 주세요. 초대받은 분에게 미리 채워져요."
+            : "링크 하나를 만들어 전해 주세요. 아이와 어떤 사이인지는 받는 분이 직접 고릅니다."
         }
         footer={
           issued ? (
@@ -201,12 +200,12 @@ export function ParentSection({
             </ul>
           </div>
         ) : (
-          <Select
-            label="초대할 사람"
-            value={relation}
-            options={RELATION_OPTIONS}
-            onChange={setRelation}
-          />
+          <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-1.5 pl-5">
+            {/* 🚨 바로 위 설명이 한 말을 다시 적지 않는다. 시트 머리와 본문이 같은 문장을
+                두 번 하면 읽는 사람이 둘 중 하나를 건너뛴다. */}
+            <li>링크를 연 사람은 이 아이의 기록과 제안을 함께 보게 돼요.</li>
+            <li>한 번 쓰면 그 링크는 닫혀요. 여러 명을 초대하려면 그만큼 만들어 주세요.</li>
+          </ul>
         )}
       </BottomSheet>
 

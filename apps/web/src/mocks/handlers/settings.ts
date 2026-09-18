@@ -6,7 +6,6 @@ import type {
   ConsentHistoryEntry,
   ConsentsResponse,
   InviteResponse,
-  Relation,
 } from "@/lib/api/types";
 import { PARENT_ID } from "../fixtures";
 import { apiError, networkDelay, url } from "./helpers";
@@ -120,12 +119,13 @@ export const settingsHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
-  http.post(url("/children/:cid/invites"), async ({ request }) => {
+  /**
+   * 🚨 **`relation` 없이도 발행된다.** 아이와 어떤 사이인지는 받는 쪽이 수락 화면에서 고르는
+   *    값이라 화면이 안 보낸다 (#89). 계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서,
+   *    보내오면 받아는 주되 없다고 막지 않는다 — 막으면 화면이 아예 초대를 못 한다.
+   */
+  http.post(url("/children/:cid/invites"), async () => {
     await networkDelay();
-    const body = (await request.json()) as { relation?: Relation };
-    if (!body.relation) {
-      return apiError(400, "validation_failed", "relation 이 필요해요");
-    }
     // 토큰은 서버가 만든다. 목이라 시각으로 유일성만 맞춘다.
     const token = `mock${Date.now().toString(36)}`;
     const res: InviteResponse = {

@@ -779,7 +779,12 @@ export interface ChildParentsResponse {
  *    기한이 지나면 410 이다. 화면이 "언제든 쓸 수 있는 링크" 처럼 보이게 하지 않는다.
  */
 export interface InviteRequest {
-  relation: Relation;
+  /**
+   * ⚠️ **프론트는 보내지 않는다.** 계약서 §08 은 발행할 때 관계를 지정하면 수락자에게
+   * 프리필된다고 적지만, 아이와 어떤 사이인지는 **받는 쪽이 자기 입으로 말할 값**이다
+   * (#89). 서버가 필수로 요구하면 계약을 고친다 — 그때까지 타입만 남겨 둔다.
+   */
+  relation?: Relation;
 }
 
 export interface InviteResponse {
