@@ -39,7 +39,7 @@ test:
 	cd apps/api && uv run pytest
 
 lint:
-	cd apps/api && uv run ruff check .
+	cd apps/api && uv run ruff check . && uv run ruff format --check .
 
 fmt:
 	cd apps/api && uv run ruff format .
