@@ -50,7 +50,8 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
-  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지
+  🚨 `stores/draft.ts` · `stores/photo-draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문과
+  아이 사진 원본이라 `persist` 금지
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
@@ -72,6 +73,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
+| 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
 | 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
 | 디자인 시스템 (내부 문서) | `/design-system` |
@@ -108,11 +110,12 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` · `Select`
+  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` · `Select` ·
+  `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
-  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel`
+  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` · `PhotoReview` · `PhotoSourceSheet`
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
@@ -131,7 +134,33 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
-- `card-photo`(08)는 그 화면 이슈에서 만든다
+- 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 이 만드는 `event` 는 `draft` 고,
+  캘린더에 확정하는 것은 09 의 `POST /events/{eid}/confirm` 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
+  ⚠️ 디자인 시스템 §7 `card-photo` · §11 표가 한동안 `caution` 을 적어 뒀는데 최상위 §2 와 어긋나서
+  #60 에서 문서 쪽을 고쳤다. "승인 전에는 저장되지 않아요" 는 경고가 아니라 **사실**이라 중립 면이다
+- 🚨 **사진을 고르는 자리는 08 화면이 아니라 시트다** (`PhotoSourceSheet`). 03 홈의 카메라
+  버튼과 09 하루 패널의 "사진으로 적기" 가 **그 자리에서** 시트를 열고, 촬영/앨범을 고르면
+  바로 08 의 **읽는 중**으로 넘어간다 — 고르기만 하는 화면을 한 칸 두지 않는다.
+  시트는 세 곳이 **한 벌을 같이 쓴다**(08 의 "다른 사진 고르기" 도 같은 것을 연다) —
+  화면마다 다른 방식으로 고르게 하면 부모가 매번 다시 찾는다.
+  🚨 **파일 입력이 두 개인 이유는 `capture` 다.** 하나만 두면 우리 시트에서 고른 것을 OS 가 또 묻는다
+  - 🚨 **고른 파일은 `stores/photo-draft.ts` 로 넘긴다.** `File` 은 URL 에 못 싣고, 라우트 이동이
+    사용자 제스처를 소비해서 "08 에 도착한 뒤 파일 입력을 대신 눌러 주기" 도 막힌다.
+    **`persist` 금지** (아이 사진 원본 · `draft.ts` 와 같은 규칙) · 한 번 쓰면 `release` 로 뗀다
+    (안 떼면 08 을 다시 열 때 지난번 사진이 저절로 올라간다) · `childId` 를 함께 확인한다
+  - 🚨 **넘겨받은 사진은 effect 가 아니라 `useState` 초기값으로 받는다.** effect 에서 `setState`
+    하면 08 의 첫 프레임이 **사진 없는 화면**이라 "고르면 바로 읽는 화면" 이 한 번 깜빡인다
+    (lint 의 `react-hooks/set-state-in-effect` 가 같은 것을 잡는다). `peek` 은 순수한 읽기다
+  - 🚨 **objectURL 해제를 effect cleanup 에 걸지 않는다.** StrictMode 가 mount 직후 cleanup 을
+    한 번 돌려서 방금 넘겨받은 사진이 그 자리에서 해제된다 (`ERR_FILE_NOT_FOUND` 로 났다).
+    만드는 것도 해제하는 것도 스토어 한 곳이고, 해제는 **다음 사진**과 **로그아웃** 두 이벤트뿐이다 —
+    살아 있는 URL 은 언제나 최대 한 개다
+- 🚨 **08 은 `lane` 을 서버 추측 + 한 번 정정으로 정한다.** 프로토타입의 탭 선택은 같은 것을 두 번
+  고르게 만들어서 뺐다. 정정 버튼에는 "아니에요" 가 아니라 **바뀔 결과**를 쓴다(`아이 활동 사진이에요`)
+- 🚨 **08 의 문서 lane 은 항목을 미리 골라 두고, 활동 lane 은 하나도 고르지 않은 채로 시작한다.**
+  기관이 적어 준 글자를 옮긴 것과 모델이 아이에 대해 추측한 것을 같은 무게로 두지 않는다
+  (최상위 §2 "한 번의 관찰을 성향으로 확정하지 않는다"). 같은 이유로 활동 lane 은 태그를 하나도
+  안 고르면 저장 버튼이 눌리지 않는다 — 화면이 바로 위에서 한 말을 스스로 뒤집지 않게
 - 🚨 **07 의 도메인 색은 왼쪽 아이콘 타일 하나까지다** (디자인 시스템 §3 예외 ㉡). 도메인 색의 뜻을
   "어느 Agent 결과인가" 에서 **"어느 영역인가"** 로 넓히면서 열린 자리다 — 07 은 제안이 아니라
   쌓인 것을 훑는 화면이고, 목록이 네 영역을 섞어 내려주므로 "한 화면에 2개" 상한의 예외이기도 하다
@@ -456,6 +485,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
 | `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
+| `photo_activity` | 08 사진을 아이 활동 사진으로 읽음 — 태그가 하나도 안 골라진 채로 시작 |
+| `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
 
 주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
 
@@ -473,7 +504,11 @@ NEXT_PUBLIC_API_MOCKING=enabled
   🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
-- 화면 00~07 · 09 가 덮여 있다. 08 사진 · 10 설정은 아직 없다.
+- 화면 00~09 가 덮여 있다. 10 설정은 아직 없다.
+  🚨 **`GET /runs/{rid}/events` 는 핸들러가 하나다** — 04 한 줄 입력 run 과 08 사진 run 이 같은 경로를
+  나눠 쓴다 (계약서 §09 "SSE 채널을 재사용한다"). 갈라 쓰는 지점은 `handlers/runs.ts` 한 곳이고,
+  `handlers/photos.ts` 가 run 등록부와 사진 대본을 내보낸다. 같은 경로에 핸들러를 두 개 등록하면
+  msw 가 먼저 등록된 쪽으로만 보내서 **사진 run 이 `saved` 를 흘린다** (저장한 적도 없는 관찰이 나온다).
 - 🚨 **실제 OAuth 왕복은 목으로 흉내 낼 수 없다** — 카카오로 나가는 전체 페이지 이동이라 서비스 워커가 못 잡는다.
   목이 덮는 것은 시작 전(`status`)과 돌아온 뒤(교환·가입)이고, 중간은 `lib/auth/oauth.ts` 의 `MOCK_ONLY` 분기가 건너뛴다.
 - 🚨 **`startMocks()` 는 한 번만 시작한다** (약속을 캐시한다). StrictMode 가 effect 를 두 번 돌리는데 두 번째 `worker.start()` 가

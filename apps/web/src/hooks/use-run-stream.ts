@@ -7,7 +7,9 @@ import { qk } from "@/lib/api/queryKeys";
 import {
   streamRunEvents,
   type FailedEvent,
+  type LaneEvent,
   type OfferEvent,
+  type ParsedEvent,
   type PartialEvent,
   type PromotedEvent,
   type RunEvent,
@@ -16,7 +18,7 @@ import {
 import type { Observation } from "@/lib/api/types";
 
 /**
- * 04 저장 결과 — run 이벤트 스트림 상태.
+ * 04 저장 결과 · 08 사진 분석 — run 이벤트 스트림 상태.
  *
  * run 상태는 서버 상태(TanStack Query)도 클라이언트 상태(Zustand)도 아니다. 구독형이라
  * 둘 다 안 맞아서, 화면이 사는 동안만 useReducer 로 들고 끝날 때 Query 를 무효화한다.
@@ -39,6 +41,15 @@ export interface RunState {
   observations: Observation[];
   promoted: PromotedEvent["changes"];
   offers: OfferEvent["options"];
+  /**
+   * 08 사진 — 이 사진을 어느 쪽으로 읽었는지 **추측**. 04 한 줄 입력 run 에서는 늘 `null` 이다.
+   * 🚨 확정이 아니다. 부모가 바꾸면 그쪽이 정본이고, 화면이 그 값을 따로 들고 있다.
+   */
+  lane: LaneEvent | null;
+  /**
+   * 08 사진 — 사진에서 읽어낸 것. 🚨 **아직 저장된 것이 아니다** — `commit` 을 눌러야 저장된다.
+   */
+  parsed: ParsedEvent | null;
   /** 채워져 있으면 성공·실패를 한 화면에 섞어 그린다 (NF-06). */
   partial: PartialEvent | null;
   /** raw_text 가 빈 문자열일 수 있다 — 스트림이 끊긴 경우다. 위 주석 참고. */
@@ -51,6 +62,8 @@ export const initialRunState: RunState = {
   observations: [],
   promoted: [],
   offers: [],
+  lane: null,
+  parsed: null,
   partial: null,
   failure: null,
 };
@@ -89,6 +102,13 @@ export function runReducer(state: RunState, action: RunAction): RunState {
       switch (action.event.type) {
         case "step":
           return { ...state, step: action.event.data as StepEvent };
+
+        // 08 사진 — 아래 둘은 **저장이 아니다.** 부모가 확인하고 commit 을 눌러야 저장된다.
+        case "lane":
+          return { ...state, lane: action.event.data as LaneEvent };
+
+        case "parsed":
+          return { ...state, parsed: action.event.data as ParsedEvent };
 
         case "saved":
           return {
