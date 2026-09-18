@@ -39,6 +39,12 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     return;
   }
 
+  if (scenario === "disconnected") {
+    // 🚨 done·failed 없이 그냥 닫힌다 (서버·프록시가 종료 이벤트 전에 끊은 경우).
+    //    화면이 진행 상태에 영원히 남지 않는지 확인할 방법이 이것뿐이다 (PR #71 리뷰).
+    return;
+  }
+
   yield frame("step", { index: 2, total: 3, label: "관찰을 나누고 있어요" });
   await sleep(700);
 

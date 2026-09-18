@@ -27,7 +27,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
-import { useRunStream } from "@/hooks/use-run-stream";
+import { isRunConfirmed, useRunStream } from "@/hooks/use-run-stream";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import {
   api,
@@ -107,18 +107,23 @@ function HomeScreen() {
 
   // 🚨 실패해도 입력창에 원문이 남는 방법은 **지우지 않는 것**이다 (apps/web/CLAUDE.md §3).
   //    `failed` 이벤트의 `raw_text` 로 되돌리는 방법도 있지만, 네트워크가 끊기면 그 값이 안 온다 —
-  //    원문의 정본은 draft 스토어고, 성공했을 때만 비운다 (아래 closeRun).
-  /** 결과 화면을 닫고 홈으로. 성공이면 입력창을 비운다 — 실패면 원문을 남긴다. */
+  //    원문의 정본은 draft 스토어고, 서버가 끝을 말했을 때만 비운다 (아래 closeRun).
+  /** 결과 화면을 닫고 홈으로. 🚨 서버가 끝을 말한 경우에만 원문과 키를 비운다. */
   function closeRun() {
-    const failed = run.state.status === "failed";
+    // 🚨 `failed` 만 보면 안 된다. 20초 침묵·끊긴 스트림(`unconfirmed`)도 **저장됐는지 모르는**
+    //    상태라, 여기서 비우면 확인되지 않은 채로 보호자가 적은 말이 사라진다 (PR #71 리뷰).
+    const confirmed = isRunConfirmed(run.state.status);
     run.reset();
     submit.reset();
-    // 🚨 여기서 키를 넘긴다. 실패 뒤 "수정할게요" 로 닫으면 **다음 요청은 본문이 다르고**,
-    //    같은 키에 다른 본문을 보내면 422 idempotency_key_reuse 다. 재시도(같은 본문)는
-    //    이 함수를 거치지 않고 `retry()` 로 가서 같은 키를 그대로 쓴다.
-    idempotencyKey.rotate();
     setRunId(null);
-    if (!failed) clearDraft(childId);
+    if (!confirmed) return;
+
+    // 여기까지 왔으면 이 입력은 끝났다. 다음 한 줄은 새 동작이라 새 키를 쓴다.
+    // 🚨 반대로 실패·미확인 상태에서는 키를 갈지 않는다 — 서버가 이미 저장했을 수 있는 한 줄을
+    //    새 키로 다시 보내면 그때 두 번 저장된다. 본문을 고쳐 쓰는 경우는 키가 본문에 묶여 있어
+    //    (`current(body.text)`) 저절로 새 키가 나간다.
+    idempotencyKey.rotate();
+    clearDraft(childId);
   }
 
   function retry() {
