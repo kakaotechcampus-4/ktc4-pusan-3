@@ -65,7 +65,7 @@ jobs:
             exit 0
           fi
 
-          MESSAGE="🔔 <@${REVIEWER_ID}>님💕 PR 리뷰 부탁드립니다💕
+          MESSAGE="🔔 <@${REVIEWER_ID}>님💕 PR 리뷰 부탁드립니당💕
           링크: ${PR_URL}
           작성자🙇: ${PR_AUTHOR} · 리뷰어🤹: <@${REVIEWER_ID}> · 브랜치: ${HEAD_BRANCH} → ${BASE_BRANCH}"
 
