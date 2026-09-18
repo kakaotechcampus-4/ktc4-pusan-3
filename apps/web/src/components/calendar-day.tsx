@@ -12,6 +12,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
 import { api, qk } from "@/lib/api";
+import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
   CalendarDayUpdate,
@@ -188,11 +189,23 @@ function PreparedCheckbox({
   const toast = useToast();
   const key = qk.calendarDay(childId, date);
 
+  /**
+   * 🚨 이 준비물의 요청을 한 줄로 세운다. 낙관적 업데이트라 체크박스는 응답을 기다리지 않는데,
+   *    체크 → 해제를 빠르게 누르면 `true` · `false` 가 동시에 나가고 응답이 역전되면
+   *    **마지막 선택이 아닌 값이 서버에 남는다** (PR #71 리뷰). 체크박스를 잠그는 대신 줄을
+   *    세우는 이유는 위 주석과 같다 — 왕복을 기다리는 체크박스로는 가방을 못 싼다.
+   *
+   *    항목마다 하나씩이라 다른 준비물은 서로 기다리지 않는다 (`serial-queue.ts`).
+   */
+  const [queue] = useState(createSerialQueue);
+
   const toggle = useMutation({
     mutationFn: (isPrepared: boolean) =>
-      api.patch<EventItemUpdateResponse>(`/event-items/${item.item_id}`, {
-        is_prepared: isPrepared,
-      }),
+      queue.run(() =>
+        api.patch<EventItemUpdateResponse>(`/event-items/${item.item_id}`, {
+          is_prepared: isPrepared,
+        }),
+      ),
     onMutate: async (isPrepared) => {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<CalendarDayResponse>(key);
@@ -216,11 +229,15 @@ function PreparedCheckbox({
     //    없어서, 부모는 자기가 잘못 눌렀다고 생각한다. 체크박스 옆에는 문장이 들어갈 자리가
     //    없으므로 토스트가 그 자리를 받는다 (`ui/toast.tsx` 의 🚨 — 토스트가 맞는 유일한 자리다).
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      // 🚨 뒤에 기다리는 선택이 있으면 되돌리지 않는다. 되돌리면 방금 누른 값이 화면에서
+      //    한 번 뒤집혔다가 그 요청이 끝나고 다시 바뀐다 — 부모 눈에는 체크가 혼자 춤춘다.
+      if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
       toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: key });
+      // 🚨 줄의 **마지막** 요청만 재조회한다. 중간에 부르면 아직 뒤 요청이 반영되지 않은
+      //    서버 값을 받아, 방금 누른 선택을 화면에서 되돌린다.
+      if (queue.pending === 0) void queryClient.invalidateQueries({ queryKey: key });
     },
   });
 
