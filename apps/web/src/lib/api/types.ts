@@ -402,6 +402,28 @@ export interface CreateHealthSafetyResponse {
   safety: HealthSafety;
 }
 
+/**
+ * 🚨 **승인 게이트 ㉡ — 고치기.** ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ *
+ * 🚨 **`type` 과 `label` 이 없다.** 그 둘은 이 기록의 **정체**다 — 우유를 땅콩으로 고치는 것은
+ *    고치기가 아니라 다른 기록이고, `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이
+ *    같이 흔들린다. 항목이 잘못됐으면 **내리고(`DELETE`) 새로 등록**한다.
+ *    고칠 수 있는 것은 그 항목에 대해 **나중에 알게 된 것**뿐이다.
+ *
+ * 🚨 보호자 직접 입력만 들어온다. LLM 이 이 요청을 만들지 않는다 (NF-03 · 최상위 §2).
+ */
+export interface UpdateHealthSafetyRequest {
+  category?: string;
+  /** `null` 은 "모르겠어요" 로 되돌리는 것이다 — 값을 안 보내는 것(그대로 두기)과 다르다. */
+  severity?: string | null;
+  reactions?: string[];
+  notes?: string | null;
+}
+
+export interface UpdateHealthSafetyResponse {
+  safety: HealthSafety;
+}
+
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 /**
@@ -655,6 +677,126 @@ export interface CreateChildResponse {
   /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
   age_display: string;
   role: "owner" | "member";
+}
+
+/* ── 11 알레르기 검사지 읽기 ─────────────────────────────────────────── */
+
+/**
+ * ⚠️ **계약서 v1 에 없다** (이슈 #86). 목만 답한다.
+ *
+ * 🚨 **이 경로는 저장하지 않는다.** 검사지 사진에서 **적힌 것을 옮겨 오기만** 하고, 저장은
+ *    보호자가 승인한 뒤 `POST /children/{cid}/health-safety`(승인 게이트 ㉡) 가 한다.
+ *    최상위 `CLAUDE.md` §2 가 "알레르기·검진·건강 정보는 LLM 이 생성·추론·수정하지 않는다.
+ *    보호자 직접 입력 또는 **의료 기록만**" 이라고 정했고, 검사지는 그 의료 기록이다 —
+ *    허용되는 것은 **옮겨 적기**뿐이고 **채워 넣기**가 아니다.
+ *
+ * 🚨 그래서 이 타입의 필드는 대부분 `null` 을 허용한다. 못 읽은 칸은 `null` 로 오고,
+ *    화면은 그 자리를 **비워 둔 채** 보호자에게 넘긴다 (기본값으로 넘기지 않는다 · §2).
+ */
+export interface SafetyScanCandidate {
+  id: string;
+  /** 못 읽었으면 `null`. 🚨 추측해 채우지 않는다. */
+  type: string | null;
+  label: string | null;
+  category: string | null;
+  severity: string | null;
+  reactions: string[];
+  /**
+   * 🚨 **검사지에 적혀 있던 그 줄 그대로.** 이 제품은 추천에 근거를 달고 나가는데
+   *    (PRODUCT.md), 보호자가 승인할 때 "무엇을 보고 이렇게 옮겼는지" 가 없으면 확인할 방법이
+   *    없다. 원문이 없으면 `null` 이고, 그러면 화면은 그 줄을 **미리 고르지 않는다**.
+   */
+  source_text: string | null;
+}
+
+export interface SafetyScanResponse {
+  /** 읽기 단위. 같은 사진을 다시 읽으면 새 값이다 (저장하는 것이 없어서 재생하지 않는다). */
+  scan_id: string;
+  candidates: SafetyScanCandidate[];
+  /**
+   * 🚨 **줄은 있는데 못 읽은 것의 수.** 0 이 아니면 화면이 그 사실을 그대로 말한다 —
+   *    "다 읽었다" 고 넘기면 보호자가 빠진 항목을 모른 채 승인한다.
+   */
+  unreadable_count: number;
+}
+
+/* ── 11 아이 프로필 ──────────────────────────────────────────────────── */
+
+/**
+ * ⚠️ **계약서 v1 에 없다** (이슈 #75 · `apps/api` Owner 협의 + PM 결정 대기).
+ *    계약서가 주는 것은 `PATCH /children/{cid}` 의 `nickname` · `birth_date` 둘뿐이고,
+ *    읽는 엔드포인트(`GET /children/{cid}`)도 성별도 측정 로그도 없다.
+ *    최상위 `CLAUDE.md` §2 의 "수집은 이름(별명)·나이·알레르기 여부까지" 도 함께 걸린다.
+ *    그래서 아래 세 타입은 **목에서만 사는 제안된 모양**이고, 서버가 붙기 전에
+ *    이 주석이 지워지면 안 된다 — 지워지는 순간 계약서에 있는 것처럼 보인다.
+ *
+ * 🚨 **성별은 화면 표시 전용으로 제안했다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
+ *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다.
+ */
+export type Gender = "male" | "female" | "unspecified";
+
+export interface ChildProfile {
+  id: string;
+  nickname: string;
+  /** YYYY-MM-DD. */
+  birth_date: string;
+  /** 🚨 서버가 만든 문구. 프론트가 생일에서 계산하지 않는다 (CLAUDE.md §3). */
+  age_display: string;
+  gender: Gender;
+  relation: Relation;
+  role: "owner" | "member";
+}
+
+/** 셋 다 선택이다 — 고친 것만 보낸다. */
+export interface UpdateChildRequest {
+  nickname?: string;
+  birth_date?: string;
+  gender?: Gender;
+}
+
+export interface UpdateChildResponse {
+  child: ChildProfile;
+}
+
+/**
+ * 키 · 몸무게를 **잰 날 한 줄**. 🚨 지표가 아니라 기록이다.
+ *
+ * 🚨 **증감·백분위·또래 비교 필드를 여기에 만들지 않는다.** `DESIGN.md` 의
+ *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, "지난번보다 +2cm" 는 이 제품이
+ *    하지 않기로 한 **발달 평가**다 (CLAUDE.md §2 · 스펙 아웃).
+ */
+export interface GrowthLog {
+  id: string;
+  /** YYYY-MM-DD. */
+  measured_on: string;
+  /** 🚨 한쪽만 재고 오는 날이 있다. 둘 다 null 인 행은 서버가 거부한다. */
+  height_cm: number | null;
+  weight_kg: number | null;
+  /** 🚨 서버 문구("2주 전"). 없으면 그 자리를 비운다 — 프론트가 계산해 채우지 않는다. */
+  measured_label?: string;
+  note: string | null;
+}
+
+/** `?cursor=` 는 아직 쓰지 않는다 — 측정 기록은 한 화면에 다 들어오는 분량이다. */
+export interface GrowthLogsResponse {
+  items: GrowthLog[];
+  next_cursor: string | null;
+}
+
+export interface CreateGrowthLogRequest {
+  measured_on: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}
+
+export interface CreateGrowthLogResponse {
+  log: GrowthLog;
+}
+
+/** `GET /children/{cid}/health-safety` — 보호자가 확정한 것만 들어 있다 (NF-03). */
+export interface HealthSafetyListResponse {
+  items: HealthSafety[];
+  updated_at: string;
 }
 
 /* ── 02 이야기 하나 ──────────────────────────────────────────────────── */

@@ -14,8 +14,11 @@ import type {
   CalendarDay,
   CalendarEvent,
   Evidence,
+  ChildProfile,
   GeneralSuggestion,
+  GrowthLog,
   HealthSafety,
+  SafetyScanResponse,
   HomeResponse,
   Me,
   Observation,
@@ -250,6 +253,125 @@ export function newHealthSafety(input: {
     notes: input.notes ?? null,
     created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
     updated_at: hoursFromNow(0),
+  };
+}
+
+/* ── 11 알레르기 검사지 읽기 ─────────────────────────────────────────── */
+
+/**
+ * ⚠️ `POST /children/{cid}/health-safety/scan` 은 계약서 v1 에 없다 (이슈 #86).
+ *
+ * 🚨 **여기 있는 것은 "검사지에 적혀 있던 것" 을 흉내 낸 값이다.** 실제 검사지도, 실제 아이
+ *    정보도 아니다 (저장소가 public · 최상위 §9).
+ *
+ * 🚨 **일부러 덜 읽은 줄을 섞어 뒀다.** 화면이 못 읽은 칸을 **비워서** 보호자에게 넘기는지
+ *    확인하려면 목이 완벽하게 읽어 주면 안 된다 — 목의 존재 이유가 그것이다 (§7 머리말).
+ *      · `sc_1` 전부 읽음 → 미리 골라 둔다
+ *      · `sc_2` 분류를 못 읽음 → 보호자가 채워야 고를 수 있다
+ *      · `sc_3` 원문이 없음 → 무엇을 보고 옮겼는지 못 대니 미리 고르지 않는다
+ *      · `unreadable_count` 2 → 줄은 있는데 통째로 못 읽은 것이 둘
+ */
+export const safetyScan: SafetyScanResponse = {
+  scan_id: "scan_1",
+  candidates: [
+    {
+      id: "sc_1",
+      type: "allergy",
+      label: "달걀흰자",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Egg white  class 3  (3.9 kU/L)",
+    },
+    {
+      id: "sc_2",
+      type: "allergy",
+      label: "땅콩",
+      category: null,
+      severity: "severe",
+      reactions: [],
+      source_text: "Peanut  class 4",
+    },
+    {
+      id: "sc_3",
+      type: "allergy",
+      label: "집먼지진드기",
+      category: "환경",
+      severity: null,
+      reactions: [],
+      source_text: null,
+    },
+    {
+      // 🚨 이미 등록된 항목이다. 화면이 미리 걸러 내는지 확인하는 줄 —
+      //    안 걸러 내면 승인하고 나서 409 를 본다.
+      id: "sc_4",
+      type: "allergy",
+      label: "우유",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Milk  class 3",
+    },
+  ],
+  unreadable_count: 2,
+};
+
+/* ── 11 아이 프로필 · 측정 로그 ───────────────────────────────────────── */
+
+/**
+ * ⚠️ `GET /children/{cid}` 는 계약서 v1 에 없다 (이슈 #75). 여기가 그 제안의 유일한 구현이다.
+ * 🚨 `age_display` 는 **서버 문구**라 목이 만든다 — 화면은 생일에서 나이를 계산하지 않는다.
+ */
+export const childProfile: ChildProfile = {
+  id: CHILD_ID,
+  nickname: "민준",
+  birth_date: "2021-04-02",
+  age_display: "만 4세",
+  gender: "unspecified",
+  relation: "mother",
+  role: "owner",
+};
+
+/** 🚨 `measured_label` 도 서버 문구다 (`observed_label` 과 같은 처리). */
+function growthLog(id: string, days: number, height: number | null, weight: number | null): GrowthLog {
+  return {
+    id,
+    measured_on: daysAgo(days),
+    height_cm: height,
+    weight_kg: weight,
+    measured_label: observedLabel(days),
+    note: null,
+  };
+}
+
+/**
+ * 🚨 **증감·백분위를 담지 않는다.** 이 배열은 "잰 날 목록" 이지 성장 곡선의 데이터가 아니다
+ *    (`DESIGN.md` — 부모가 자기 아이를 지표로 보게 하지 않는다).
+ * 🚨 한쪽만 잰 날이 섞여 있다 — 화면이 null 한쪽을 제대로 그리는지 여기서 걸린다.
+ */
+export const growthLogs: GrowthLog[] = [
+  growthLog("g_3", 12, 104.2, 17.1),
+  growthLog("g_2", 47, null, 16.8),
+  growthLog("g_1", 104, 101.5, 16.2),
+];
+
+/** 🚨 서버가 채우는 값(id · measured_label)은 여기서 만든다 — 요청에 없는 값이다. */
+export function newGrowthLog(input: {
+  measured_on: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}): GrowthLog {
+  const days = Math.max(
+    0,
+    Math.round((Date.now() - new Date(`${input.measured_on}T00:00:00`).getTime()) / DAY_MS),
+  );
+  return {
+    id: `g_${Date.now()}`,
+    measured_on: input.measured_on,
+    height_cm: input.height_cm ?? null,
+    weight_kg: input.weight_kg ?? null,
+    measured_label: observedLabel(days),
+    note: null,
   };
 }
 

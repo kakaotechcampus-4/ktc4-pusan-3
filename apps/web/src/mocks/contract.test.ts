@@ -11,9 +11,14 @@ import type {
   AffinitiesResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
+  ChildProfile,
   CorrectionResponse,
+  HealthSafety,
+  GrowthLogsResponse,
+  HealthSafetyListResponse,
   Observation,
   ObservationsResponse,
+  SafetyScanResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
@@ -365,6 +370,274 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
+  });
+});
+
+/**
+ * 11 아이 프로필. ⚠️ 여기서 거는 경로 셋(`GET`/`PATCH /children/{cid}` · `/growth`)은
+ * **계약서 v1 에 없다** (이슈 #75). 목이 그 제안된 계약대로 행동하는지를 걸어 둬서,
+ * 서버가 붙을 때 같은 표를 실서버에도 그대로 옮길 수 있게 한다.
+ */
+describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
+  it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
+    const before = await api.get<ChildProfile>("/children/c1");
+
+    const { child } = await api.patch<{ child: ChildProfile }>("/children/c1", {
+      nickname: "민서",
+    });
+
+    expect(child.nickname).toBe("민서");
+    // 🚨 안 보낸 필드가 조용히 비워지면, 두 보호자가 같은 화면을 열어 뒀을 때 남의 수정이 사라진다.
+    expect(child.birth_date).toBe(before.birth_date);
+    expect(child.gender).toBe(before.gender);
+
+    const after = await api.get<ChildProfile>("/children/c1");
+    expect(after.nickname).toBe("민서");
+  });
+
+  it("빈 별명은 422 다 — 이름 없는 아이를 만들지 않는다", async () => {
+    await expect(api.patch("/children/c1", { nickname: "   " })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "validation_failed"),
+    );
+  });
+});
+
+describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
+  it("Idempotency-Key 없이도 저장된다 (되돌릴 수 있는 것이라 표에 없다)", async () => {
+    const { items: before } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+
+    await api.post("/children/c1/growth", { measured_on: "2026-09-10", height_cm: 105 });
+
+    const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(after.length).toBe(before.length + 1);
+    // 🚨 날짜 문구는 서버가 만든다 — 프론트가 계산해 채우지 않는다 (CLAUDE.md §3).
+    expect(after[0].measured_label).toBeTypeOf("string");
+  });
+
+  it("한쪽만 재고 온 날을 받는다", async () => {
+    const { log } = await api.post<{ log: { height_cm: number | null; weight_kg: number | null } }>(
+      "/children/c1/growth",
+      { measured_on: "2026-09-11", weight_kg: 17.4 },
+    );
+    expect(log.height_cm).toBeNull();
+    expect(log.weight_kg).toBe(17.4);
+  });
+
+  it("둘 다 비어 있으면 422 다", async () => {
+    await expect(api.post("/children/c1/growth", { measured_on: "2026-09-12" })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed"),
+    );
+  });
+
+  it("지우면 목록에서 빠진다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items[0];
+
+    await api.delete(`/children/c1/growth/${target.id}`);
+
+    const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(after.some((log) => log.id === target.id)).toBe(false);
+  });
+});
+
+/**
+ * 🚨 승인 게이트 ㉡. 등록은 `lib/api/operations.ts` 의 전용 함수로만 부를 수 있고(키가 필수 인자),
+ *    회수는 행을 지우는 것이 아니라 `retracted` 로 내리는 것이다 (계약서 §10).
+ */
+describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠진다", () => {
+  it("등록한 항목이 GET 에 그대로 나온다", async () => {
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+    await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "땅콩", category: "식품" },
+      newIdempotencyKey(),
+    );
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.length).toBe(before.items.length + 1);
+    expect(after.items.some((item) => item.label === "땅콩")).toBe(true);
+  });
+
+  it("같은 항목을 새 키로 또 등록하면 409 다 (재시도와 다른 경로)", async () => {
+    await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "땅콩", category: "식품" },
+      newIdempotencyKey(),
+    );
+
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: "allergy", label: "땅콩", category: "식품" },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_exists"));
+  });
+
+  it("내린 항목은 목록에서 빠지고, 같은 항목을 다시 등록할 수 있다", async () => {
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    const target = before.items[0];
+
+    await api.delete(`/children/c1/health-safety/${target.id}`);
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.some((item) => item.id === target.id)).toBe(false);
+
+    // 내려간 뒤에는 같은 라벨이 다시 등록돼야 한다 — 회수가 "영영 못 쓰는 이름" 을 만들면 안 된다.
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: target.type, label: target.label, category: target.category },
+        newIdempotencyKey(),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("이미 내려간 항목을 또 내리면 404 다", async () => {
+    const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    const target = items[0];
+
+    await api.delete(`/children/c1/health-safety/${target.id}`);
+
+    await expect(api.delete(`/children/c1/health-safety/${target.id}`)).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "not_found"),
+    );
+  });
+});
+
+/**
+ * 🚨 승인 게이트 ㉡ — 고치기. ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ *
+ * 여기서 거는 것은 **정체를 못 바꾼다는 것**이다. `type`·`label` 이 바뀌면
+ * `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이 같이 흔들린다.
+ */
+describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
+  async function first(): Promise<HealthSafety> {
+    const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    return items[0];
+  }
+
+  it("심각도·증상·메모는 고쳐진다", async () => {
+    const before = await first();
+
+    const { safety } = await api.patch<{ safety: HealthSafety }>(
+      `/children/c1/health-safety/${before.id}`,
+      { severity: "severe", reactions: ["기침"], notes: "병원에서 다시 확인" },
+    );
+
+    expect(safety.severity).toBe("severe");
+    expect(safety.reactions).toEqual(["기침"]);
+    // 🚨 정체는 그대로다.
+    expect(safety.type).toBe(before.type);
+    expect(safety.label).toBe(before.label);
+  });
+
+  it("🚨 종류·이름을 보내면 400 이다", async () => {
+    const target = await first();
+
+    await expect(
+      api.patch(`/children/c1/health-safety/${target.id}`, { label: "땅콩" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    await expect(
+      api.patch(`/children/c1/health-safety/${target.id}`, { type: "condition" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("`severity: null` 은 모르겠어요 로 되돌리는 것이다", async () => {
+    const target = await first();
+    const { safety } = await api.patch<{ safety: HealthSafety }>(
+      `/children/c1/health-safety/${target.id}`,
+      { severity: null },
+    );
+    expect(safety.severity).toBeNull();
+  });
+
+  it("내려간 기록은 고칠 수 없다", async () => {
+    const target = await first();
+    await api.delete(`/children/c1/health-safety/${target.id}`);
+
+    await expect(
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found"));
+  });
+
+  it("동의가 없으면 고치지도 못한다", async () => {
+    const target = await first();
+    setScenario("consent");
+    await expect(
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
+    setScenario("default");
+  });
+});
+
+/**
+ * 🚨 11 알레르기 검사지 읽기. ⚠️ 계약서 v1 에 없다 (이슈 #86).
+ *
+ * 여기서 거는 것은 **읽기가 저장이 아니라는 것**과 **못 읽은 칸을 채워 보내지 않는다는 것**이다.
+ * 최상위 `CLAUDE.md` §2 가 "LLM 이 건강 정보를 생성·추론하지 않는다" 를 못박았는데, 그 규칙이
+ * 지켜지는지는 타입이 못 본다 — `null` 을 허용한다는 것과 실제로 `null` 을 보낸다는 것은 다르다.
+ */
+describe("⑮ 검사지 읽기는 저장이 아니다", () => {
+  async function scan(): Promise<SafetyScanResponse> {
+    const form = new FormData();
+    form.append("photo", new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), "sheet.png");
+    return api.post<SafetyScanResponse>("/children/c1/health-safety/scan", form);
+  }
+
+  it("읽어도 안전 정보 목록이 늘지 않는다", async () => {
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+    const result = await scan();
+    expect(result.candidates.length).toBeGreaterThan(0);
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.length).toBe(before.items.length);
+  });
+
+  it("Idempotency-Key 없이 부를 수 있다 — 저장하는 것이 없어서 표에 없다", async () => {
+    await expect(scan()).resolves.toBeDefined();
+  });
+
+  it("🚨 못 읽은 칸을 채워 보내지 않는다", async () => {
+    const { candidates } = await scan();
+
+    // 목이 일부러 덜 읽은 줄을 섞어 둔다 — 완벽하게 읽어 주면 화면의 빈 칸 처리를 확인할 수 없다.
+    expect(candidates.some((c) => c.category === null)).toBe(true);
+    expect(candidates.some((c) => c.severity === null)).toBe(true);
+    // 🚨 원문 없이 옮겨 적은 줄이 있어야 화면이 그 줄을 미리 고르지 않는지 확인할 수 있다.
+    expect(candidates.some((c) => c.source_text === null)).toBe(true);
+  });
+
+  it("🚨 읽지 못한 줄 수를 그대로 내린다", async () => {
+    const { unreadable_count } = await scan();
+    expect(unreadable_count).toBeGreaterThan(0);
+  });
+
+  it("승인해야 저장된다 — 고른 줄 수만큼 게이트 ㉡ 를 부른다", async () => {
+    const { candidates } = await scan();
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+    // 화면이 하는 것과 같다: 필수 칸이 다 찬 줄만, 줄마다 키 하나로.
+    const complete = candidates.filter((c) => c.label !== null && c.category !== null);
+    for (const candidate of complete) {
+      if (before.items.some((item) => item.label === candidate.label)) continue;
+      await addHealthSafety(
+        "c1",
+        { type: "allergy", label: candidate.label!, category: candidate.category! },
+        newIdempotencyKey(),
+      );
+    }
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.length).toBeGreaterThan(before.items.length);
+  });
+
+  it("동의가 없으면 읽지도 못한다 — 저장 전에 막힌다", async () => {
+    setScenario("consent");
+    await expect(scan()).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
+    setScenario("default");
   });
 });
 
