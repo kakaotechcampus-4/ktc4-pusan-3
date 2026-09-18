@@ -1,7 +1,7 @@
 /**
  * 동의 스코프 정본. 화면(가입 동의 · 10 설정)이 같은 목록을 두 벌 갖지 않게 여기 모은다.
  *
- * 근거: 계약서 §04 `POST /consents` · docs/api/auth-kakao-v1.md §3-5 · 개인정보보호법.
+ * 근거: 계약서 §04 `POST /consents` · `GET /consents` · docs/api/auth-kakao-v1.md §3-5 · 개인정보보호법.
  */
 
 /** 서버가 이 값으로 어느 버전에 동의했는지 기록한다. 약관을 고치면 여기부터 올린다. */
@@ -12,6 +12,7 @@ export const CONSENT_SCOPES = [
   "privacy_account",
   "child_basic",
   "child_health",
+  "location",
 ] as const;
 export type ConsentScope = (typeof CONSENT_SCOPES)[number];
 
@@ -20,20 +21,54 @@ export interface ConsentItem {
   /**
    * 어디로 보내는가.
    * - `account` → `POST /auth/{provider}/signup` 의 `consents` (계정이 그때 만들어진다)
-   * - `child`   → `POST /consents` (가입 직후. 🚨 `child_basic` 없이 `POST /children` 은 403 이라
+   * - `child`   → `POST /consents` (🚨 `child_basic` 없이 `POST /children` 은 403 이라
    *               아이를 만들기 **전에** 받아야 한다 · 계약서 §04)
    */
   target: "account" | "child";
+  /**
+   * 🚨 **필수 = 이게 없으면 서비스가 성립하지 않는다.** 편의상 붙이는 딱지가 아니다.
+   *    필수로 두려면 "없으면 무엇이 아예 안 되는가" 를 한 문장으로 댈 수 있어야 하고,
+   *    그 문장이 `blocks` 다. 못 대면 선택이다.
+   */
+  required: boolean;
+  /**
+   * 가입 화면에서 묻는가. 선택 동의 중에도 **가입 때 같이 묻는 것**(아이 건강)과
+   * 나중에 그 기능을 쓸 때 묻는 것(위치정보)이 갈린다 — 알레르기는 첫 식사 제안 전에
+   * 알고 있어야 하는 값이라 가입 흐름 안에서 한 번 묻는 편이 낫다.
+   */
+  askAtSignup: boolean;
+  /** 법적 표기. 동의 전문 시트의 제목이고, 가입 화면의 체크박스 라벨이다. */
   label: string;
+  /**
+   * 목록 줄에서 쓰는 짧은 이름. 🚨 **법적 표기를 대신하는 값이 아니다** — 줄에는 오른쪽에
+   * 버튼이 서 있어서 긴 라벨이 두 줄로 접히는데, 접힌 라벨은 읽히지 않고 자리만 먹는다.
+   * 무엇에 동의하는지의 정본은 그 줄에서 여는 전문 시트(`label` + `details`)다.
+   */
+  shortLabel: string;
   description: string;
   /** 화면에 그대로 보여준다 — 무엇에 동의하는지 근거를 숨기지 않는다. */
   legalBasis?: string;
   /**
    * 🚨 민감정보는 다른 동의와 **구분해서** 받아야 한다 (개인정보보호법 제23조).
-   * 그래서 이 화면에는 "전체 동의" 가 없다 — 한 번에 쓸어 담으면 그 구분이 사라진다.
+   * 그래서 어느 화면에도 "전체 동의" 가 없다 — 한 번에 쓸어 담으면 그 구분이 사라진다.
    */
   sensitive?: boolean;
-  /** "상세 보기" 시트에 펼쳐 보여줄 내용. */
+  /**
+   * 이 동의가 없을 때 **무엇이 멈추는가.** 10 설정의 철회 확인 시트가 이 문장들을 그대로
+   * 보여준다 — 끄기 전에 결과를 먼저 읽는 것이 이 화면의 일이다.
+   *
+   * 🚨 필수 동의의 것은 "멈춘다" 가 아니라 "계정이 없어진다" 에 가깝다. 같은 필드에 담되
+   *    화면이 다르게 말한다 (필수는 철회 버튼 자체가 없다).
+   */
+  blocks: string[];
+  /**
+   * 이 동의를 **받으면** 무엇이 되는가. 선택 동의에만 있다.
+   *
+   * 🚨 `blocks` 를 켜기 쪽에 돌려 쓰지 않는다. 그건 "없으면 멈추는 것" 이라, 켜는 시트에 그대로
+   *    올리면 "동의하면 이 기능이 동작해요" 아래에 "이 기능이 멈춰요" 가 붙는다 (실제로 그랬다).
+   */
+  enables?: string[];
+  /** 전문 시트에 펼쳐 보여줄 내용. */
   details: Array<{ heading: string; lines: string[] }>;
 }
 
@@ -44,28 +79,31 @@ export interface ConsentItem {
  * 없는 조항을 그럴듯하게 지어 넣으면 그대로 배포되고, 아동 건강정보를 다루는 서비스에서
  * 그건 사고다. **확정되면 여기에 정식 문구를 넣고 이 안내를 지운다.**
  */
-/**
- * 🚨 **"언제든 철회할 수 있어요" 를 쓰지 않는다.**
- *
- * 네 건이 전부 필수라, 하나라도 철회하면 서비스가 성립하지 않는다 —
- * `child_basic` 없이는 아이를 등록할 수 없고(`POST /children` → 403),
- * `child_health` 없이는 입력조차 저장되지 않는다(`POST /inputs` → 403).
- * 즉 철회는 "설정에서 스위치 하나 끄기" 가 아니라 **탈퇴에 가깝다.**
- * 가벼운 문구로 말하면 실제로 눌렀을 때와 다르다.
- *
- * 철회가 정확히 무엇을 지우는지는 아직 팀 미정이라(최상위 CLAUDE.md §10 삭제 범위)
- * 지금은 **아무 약속도 하지 않는다.** 확정되면 그때 정확한 문구를 넣는다.
- */
 export const TERMS_NOT_FINAL =
   "확정된 내용만 적어 뒀어요. 보관 기간과 삭제 범위가 정해지면 정식 약관으로 바뀝니다.";
 
-/** 아이를 처음 등록하는 보호자(owner)가 가입 시점에 받는 4건. 전부 필수다. */
-export const SIGNUP_CONSENTS: ConsentItem[] = [
+/**
+ * 🚨 **필수 동의에는 "언제든 철회할 수 있어요" 를 쓰지 않는다.**
+ *
+ * 필수 3건은 하나라도 철회하면 서비스가 성립하지 않는다 — `child_basic` 없이는 아이를
+ * 등록할 수 없고(`POST /children` → 403), 계정 스코프 둘은 계정 자체의 근거다.
+ * 즉 그 철회는 "설정에서 스위치 하나 끄기" 가 아니라 **탈퇴에 가깝다.**
+ * 가벼운 문구로 말하면 실제로 눌렀을 때와 다르다. 그래서 10 설정은 필수 3건에
+ * **철회 버튼을 두지 않고**, 대신 왜 못 끄는지를 글자로 적는다.
+ *
+ * 선택 2건은 반대다. 화면에서 켜고 끌 수 있고, 끌 때 무엇이 멈추는지(`blocks`)를
+ * 먼저 보여준 뒤 확정받는다.
+ */
+export const CONSENT_ITEMS: ConsentItem[] = [
   {
     scope: "service_terms",
     target: "account",
+    required: true,
+    askAtSignup: true,
+    shortLabel: "서비스 이용약관",
     label: "서비스 이용약관",
     description: "보호자 계정으로 이 서비스를 쓰는 데 동의해요. 보호자마다 한 번만 받아요.",
+    blocks: ["계정 자체가 이 동의 위에 있어서, 철회하면 서비스를 쓸 수 없어요."],
     details: [
       {
         heading: "무엇에 동의하나요",
@@ -88,9 +126,13 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
   {
     scope: "privacy_account",
     target: "account",
+    required: true,
+    askAtSignup: true,
+    shortLabel: "보호자 개인정보",
     label: "개인정보 수집·이용 (보호자 본인)",
     description:
       "로그인에 쓰는 계정 식별값만 저장해요. 이메일·프로필 사진은 받아도 저장하지 않아요.",
+    blocks: ["로그인을 할 수 없게 돼요. 계정을 알아볼 방법이 이것뿐이에요."],
     details: [
       { heading: "받는 것", lines: ["카카오 회원번호 (로그인 식별용)"] },
       {
@@ -104,9 +146,13 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
   {
     scope: "child_basic",
     target: "child",
+    required: true,
+    askAtSignup: true,
+    shortLabel: "아이 기본정보",
     label: "개인정보 수집·이용 (아이 기본정보)",
     description: "별명, 생일, 관계까지만 받아요. 이 동의가 없으면 아이를 등록할 수 없어요.",
     legalBasis: "개인정보보호법 제22조의2 (만 14세 미만 아동의 법정대리인 동의)",
+    blocks: ["아이를 등록할 수 없어요. 이 서비스의 모든 기능이 아이 등록 위에 있어요."],
     details: [
       { heading: "받는 것", lines: ["별명 (실명이 아니어도 됩니다)", "생일", "아이와의 관계"] },
       {
@@ -126,11 +172,35 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
   {
     scope: "child_health",
     target: "child",
+    /**
+     * 🚨 **선택이다.** 없으면 식사·건강 기능만 멈추고 나머지는 그대로 돈다 — 그래서
+     *    필수의 조건("없으면 서비스가 성립하지 않는다")을 만족하지 않는다.
+     *    민감정보라 별도 동의로 받아야 하는데(제23조), 별도로 받으면서 거절할 수 없게
+     *    묶어 두면 그 별도 동의가 형식만 남는다.
+     *
+     * ⚠️ 계약서 §04 는 `child_health` 없이 `POST /inputs` 도 403 이라고 적혀 있다.
+     *    그대로면 이 동의를 끈 보호자는 한 줄 입력조차 못 해서 선택이라는 말이 거짓이 된다.
+     *    막히는 범위를 `POST /health-safety` 와 Food·Health Agent 로 좁히는 것이
+     *    백엔드 협의 대상이다 (이슈 #89).
+     */
+    required: false,
+    askAtSignup: true,
+    shortLabel: "아이 건강·알레르기",
     label: "민감정보 처리 (아이 건강·알레르기)",
     description:
       "알레르기와 건강 기록은 식사 제안을 걸러내고 증상을 정리하는 데만 써요. 이 동의가 없으면 식사·건강 기능이 동작하지 않아요.",
     legalBasis: "개인정보보호법 제23조 (민감정보의 처리, 별도 동의)",
     sensitive: true,
+    blocks: [
+      "식사 제안이 멈춰요. 알레르기를 모르는 채로 먹을 것을 권하지 않아요.",
+      "건강 기록 정리와 증상 반복 알림이 멈춰요.",
+      "이미 적어 둔 알레르기 기록은 지워지지 않고 쓰이지만 않아요.",
+    ],
+    enables: [
+      "적어 두신 알레르기로 식사 제안을 걸러내요. 이 걸러내기는 AI 가 아니라 코드가 해요.",
+      "증상 기록을 정리해서 보여주고, 같은 증상이 세 번 반복되면 병원 확인을 권해요.",
+      "알레르기와 건강 정보는 AI 가 만들거나 고치지 않아요. 적어 주신 값만 저장해요.",
+    ],
     details: [
       {
         heading: "받는 것",
@@ -166,8 +236,79 @@ export const SIGNUP_CONSENTS: ConsentItem[] = [
         heading: "동의하지 않으면",
         lines: [
           "식사와 건강 기능이 동작하지 않습니다. 알레르기를 모르는 채로 식사를 제안하지 않습니다.",
+          "나머지 기능(놀이 · 교육 · 기록)은 그대로 씁니다.",
+        ],
+      },
+    ],
+  },
+  {
+    scope: "location",
+    target: "child",
+    required: false,
+    /**
+     * 🚨 **가입 때 묻지 않는다.** 놀이 제안을 처음 볼 때까지 쓸 일이 없는 값이라,
+     *    쓰지도 않을 시점에 미리 받아 두지 않는다. 설정에서 켜는 것이 기본 경로다.
+     */
+    askAtSignup: false,
+    shortLabel: "위치정보",
+    label: "위치정보 수집·이용",
+    description:
+      "지금 있는 지역의 날씨와 계절에 맞춰 놀이를 제안해요. 위치를 기록으로 저장하지는 않아요.",
+    legalBasis: "위치정보의 보호 및 이용 등에 관한 법률 제19조 (개인위치정보의 이용·제공)",
+    blocks: [
+      "놀이 제안이 날씨와 계절을 못 봐요. 밖에서 놀 수 있는 날인지 판단하지 않고 제안해요.",
+      "놀이 제안 자체는 그대로 나와요.",
+    ],
+    enables: [
+      "지금 있는 지역의 날씨와 계절을 보고 놀이를 골라요.",
+      "시·군·구 수준까지만 봐요. 정확한 좌표도, 이동 경로도 받지 않아요.",
+      "위치를 아이의 기억으로 저장하지 않아요. 제안을 고를 때 한 번 쓰고 버려요.",
+    ],
+    details: [
+      {
+        heading: "받는 것",
+        lines: [
+          "기기가 알려주는 대략적인 위치 (시·군·구 수준)",
+          "정확한 좌표를 요구하지 않습니다.",
+        ],
+      },
+      {
+        heading: "쓰는 곳",
+        lines: [
+          "그 지역의 날씨와 계절을 보고 놀이 제안을 고릅니다.",
+          "실내에서 할 것인지 밖에서 할 것인지를 가르는 데만 씁니다.",
+        ],
+      },
+      {
+        heading: "저장하지 않는 것",
+        lines: [
+          "이동 경로 · 방문한 장소",
+          "위치를 아이의 기억으로 저장하지 않습니다. 제안을 고를 때 한 번 쓰고 버립니다.",
+        ],
+      },
+      {
+        heading: "동의하지 않으면",
+        lines: [
+          "놀이 제안이 날씨와 계절을 보지 않습니다. 제안 자체는 그대로 나옵니다.",
+          "나머지 기능은 아무 영향이 없습니다.",
         ],
       },
     ],
   },
 ];
+
+/**
+ * 가입 동의 화면이 묻는 것. 🚨 **제출을 막는 것은 `required` 인 것들뿐이다** —
+ * 이 목록 전체가 아니다. 선택 동의는 안 골라도 계정이 만들어진다.
+ */
+export const SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => i.askAtSignup);
+
+/** 10 설정에서 현황만 보여주고 철회 버튼을 두지 않는 것. */
+export const REQUIRED_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => i.required);
+
+/** 10 설정에서 켜고 끌 수 있는 것. */
+export const OPTIONAL_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => !i.required);
+
+export function consentItem(scope: string): ConsentItem | undefined {
+  return CONSENT_ITEMS.find((i) => i.scope === scope);
+}
