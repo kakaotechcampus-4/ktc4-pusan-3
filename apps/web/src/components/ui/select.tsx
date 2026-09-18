@@ -23,8 +23,15 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  * 🚨 **포커스는 열 때 들어가고 닫을 때 버튼으로 돌아온다.** 돌아오지 않으면 닫는 순간
  *    포커스가 `<body>` 로 떨어져서 키보드 사용자가 자리를 잃는다 (09 달력에서 같은 사고를 냈다).
  *
- * 🚨 **ESC · 바깥 클릭 · Tab 으로 닫힌다.** 열어 두고 스크롤하면 목록이 트리거에서 떨어지므로
- *    스크롤에도 닫는다.
+ * 🚨 **ESC · 바깥 클릭 · Tab 으로 닫힌다.**
+ *
+ * ⚠️ **스크롤에는 닫지 않는다.** 한동안 닫았는데, 그건 목록이 트리거에서 떨어질까 봐 넣은
+ *    가드였다 — 이 목록은 `relative` 루트 안의 `absolute` 라 **트리거에 붙어 같이 움직인다.**
+ *    떨어질 일이 없으니 막을 것도 없었고, 대신 **자기가 일으킨 스크롤에 자기가 닫혔다:**
+ *    열릴 때 고른 항목에 포커스를 주면 브라우저가 그 항목을 보이게 하려고 가장 가까운
+ *    스크롤 상자를 움직이는데, 그 스크롤 이벤트를 `capture` 로 듣고 있었다.
+ *    바텀시트 안(본문이 `overflow-y-auto`)에서 **상자가 아예 안 열리는 것처럼** 보인 이유다.
+ *    페이지가 긴 화면(07 기억)에서는 스크롤이 안 일어나서 여태 안 보였다.
  *
  * 🚨 **그림자가 없다** (문서 §6 — 그림자는 바텀시트 하나뿐). 떠 있는 면의 경계는 `line-strong`
  *    1px 이 만든다 (토스트와 같은 처리다).
@@ -64,27 +71,28 @@ export function Select<T extends string>({
     if (focusTrigger) triggerRef.current?.focus();
   }, []);
 
-  // 열렸을 때만 바깥 클릭·스크롤·리사이즈를 듣는다.
+  // 열렸을 때만 바깥 클릭을 듣는다.
   useEffect(() => {
     if (!open) return;
 
     const onPointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
-    // 🚨 목록은 트리거에 붙어 있다 — 페이지가 움직이면 자리가 어긋나므로 닫는다.
-    const onMove = () => setOpen(false);
 
     document.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
     };
   }, [open]);
 
-  // 열리면 고른 항목에 포커스를 둔다 — 어디서부터 움직이는지가 보여야 한다.
+  /**
+   * 열리면 고른 항목에 포커스를 둔다 — 어디서부터 움직이는지가 보여야 한다.
+   *
+   * 🚨 이 포커스가 **스크롤을 일으킨다** (브라우저가 항목을 보이게 하려고 가장 가까운 스크롤
+   *    상자를 움직인다). 그 스크롤에 닫히는 가드가 있었고, 그래서 바텀시트 안에서는 상자가
+   *    안 열리는 것처럼 보였다 (위 ⚠️). 가드를 걷었으니 이 스크롤은 이제 하던 일만 한다 —
+   *    좁은 시트에서 목록이 화면 밖으로 나가는 것을 막아 준다.
+   */
   useEffect(() => {
     if (!open) return;
     const items = listRef.current?.querySelectorAll<HTMLLIElement>('[role="option"]');
