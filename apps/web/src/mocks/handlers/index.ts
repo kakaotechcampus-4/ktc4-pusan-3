@@ -3,10 +3,11 @@ import { calendarHandlers } from "./calendar";
 import { childrenHandlers } from "./children";
 import { memoryHandlers } from "./memories";
 import { runHandlers } from "./runs";
+import { settingsHandlers } from "./settings";
 import { suggestionHandlers } from "./suggestions";
 
 /**
- * 화면 01~07 · 09 가 쓰는 엔드포인트. 08 사진 · 10 설정은 다음 이슈다.
+ * 화면 01~07 · 09 · 10 이 쓰는 엔드포인트. 08 사진은 다음 이슈다.
  * 여기 없는 경로는 onUnhandledRequest 가 콘솔에 경고로 알려준다.
  *
  * 🚨 **순서가 뜻을 갖는 자리가 하나 있다.** `suggestionHandlers` 의
@@ -22,4 +23,5 @@ export const handlers = [
   ...suggestionHandlers,
   ...memoryHandlers,
   ...calendarHandlers,
+  ...settingsHandlers,
 ];

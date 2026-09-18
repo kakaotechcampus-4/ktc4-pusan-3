@@ -9,6 +9,10 @@ import { api } from "@/lib/api/client";
 import type {
   Affinity,
   AffinitiesResponse,
+  ChildParentsResponse,
+  ConsentResponse,
+  ConsentsResponse,
+  InviteResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
   CorrectionResponse,
@@ -365,6 +369,91 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
+  });
+});
+
+describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
+  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(before.effective.child_health).toBe(true);
+
+    await api.post<ConsentResponse>("/consents", {
+      scope: "child_health",
+      action: "withdrawn",
+      child_id: "c1",
+      policy_version: "2026-09-01",
+    });
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after.effective.child_health).toBe(false);
+    // 🚨 이력은 증빙이라 지워지지 않는다. 철회 한 줄이 **더해져** 있어야 한다.
+    expect(after.history).toHaveLength(1);
+    expect(after.history[0]).toMatchObject({ scope: "child_health", action: "withdrawn" });
+  });
+
+  it("껐다 켜면 이력 두 줄이 남고 현재 상태는 켜짐이다", async () => {
+    for (const action of ["withdrawn", "granted"] as const) {
+      await api.post<ConsentResponse>("/consents", {
+        scope: "location",
+        action,
+        child_id: "c1",
+        policy_version: "2026-09-01",
+      });
+    }
+
+    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(res.effective.location).toBe(true);
+    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(2);
+  });
+
+  it("POST /consents 의 effective 와 GET /consents 의 effective 가 같은 표를 본다", async () => {
+    const posted = await api.post<ConsentResponse>("/consents", {
+      scope: "location",
+      action: "granted",
+      child_id: "c1",
+      policy_version: "2026-09-01",
+    });
+    const fetched = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(fetched.effective).toEqual(posted.effective);
+  });
+
+  it("owner 는 연결을 끊을 수 없다 — 409 owner_required", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const owner = before.parents.find((p) => p.role === "owner");
+    expect(owner).toBeDefined();
+
+    const caught = await api.delete(`/children/c1/parents/${owner!.parent_id}`).catch((e) => e);
+    expect(isApiError(caught, "owner_required")).toBe(true);
+    expect((caught as ApiError).status).toBe(409);
+
+    const after = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(after.parents).toHaveLength(before.parents.length);
+  });
+
+  it("member 는 끊을 수 있고 목록에서 빠진다", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const member = before.parents.find((p) => p.role === "member");
+    expect(member).toBeDefined();
+
+    await api.delete(`/children/c1/parents/${member!.parent_id}`);
+
+    const after = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
+  });
+
+  it("초대 링크는 부를 때마다 새로 나온다 — 한 링크는 한 번만 쓴다", async () => {
+    const first = await api.post<InviteResponse>("/children/c1/invites", {
+      relation: "grandparent",
+    });
+    const second = await api.post<InviteResponse>("/children/c1/invites", { relation: "sitter" });
+
+    expect(first.invite_url).not.toBe(second.invite_url);
+    expect(new Date(first.expires_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("relation 없이 초대하면 422 가 아니라 400 validation_failed 다", async () => {
+    const caught = await api.post("/children/c1/invites", {}).catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
   });
 });
 

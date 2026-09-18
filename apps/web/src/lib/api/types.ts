@@ -732,3 +732,57 @@ export interface ConsentResponse {
   consent: { id: string; scope: string; action: string; acted_at: string };
   effective: Record<string, boolean>;
 }
+
+/**
+ * GET /consents?child_id= (계약서 §04). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ *
+ * 🚨 `history` 는 증빙이라 삭제 엔드포인트가 없다 — 화면에도 "이력 지우기" 를 만들지 않는다.
+ * 🚨 `effective` 는 **서버가 계산한 최신 상태**다. `history` 를 프론트에서 접어 현재 상태를
+ *    다시 만들지 않는다 (append-only 라 같은 스코프에 여러 행이 있고, 접는 규칙이 두 벌이 된다).
+ */
+export interface ConsentHistoryEntry {
+  scope: string;
+  action: "granted" | "withdrawn";
+  policy_version: string;
+  acted_at: string;
+}
+
+export interface ConsentsResponse {
+  effective: Record<string, boolean>;
+  history: ConsentHistoryEntry[];
+}
+
+/* ── 10 설정 ─────────────────────────────────────────────────────────── */
+
+/**
+ * GET /children/{cid}/parents (계약서 §07). "함께 보는 보호자".
+ *
+ * 🚨 **승인 대기 상태가 없다.** 초대 링크를 수락하면 `parent_child` 행이 바로 생긴다 —
+ *    화면에 "대기 중" 칸을 만들지 않는다 (계약서 §02 `GET /me`).
+ */
+export interface ChildParent {
+  parent_id: string;
+  nickname: string;
+  relation: Relation;
+  role: "owner" | "member";
+  connected_at: string;
+}
+
+export interface ChildParentsResponse {
+  parents: ChildParent[];
+}
+
+/**
+ * POST /children/{cid}/invites (계약서 §08).
+ *
+ * 🚨 **한 링크는 한 번만 쓴다.** `used_at` 이 찍히면 재사용 409 `invite_used`,
+ *    기한이 지나면 410 이다. 화면이 "언제든 쓸 수 있는 링크" 처럼 보이게 하지 않는다.
+ */
+export interface InviteRequest {
+  relation: Relation;
+}
+
+export interface InviteResponse {
+  invite_url: string;
+  expires_at: string;
+}

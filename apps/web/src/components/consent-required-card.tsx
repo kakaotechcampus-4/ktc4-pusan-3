@@ -1,5 +1,8 @@
+import Link from "next/link";
+
 import { Card } from "@/components/ui/card";
 import type { ApiError } from "@/lib/api";
+import { consentItem } from "@/lib/consent";
 
 /**
  * `403 consent_required` 를 만났을 때. **저장이 아예 안 된 상태**다 (계약서 §04 "동의는 저장보다 먼저다").
@@ -12,6 +15,10 @@ import type { ApiError } from "@/lib/api";
  *
  * ⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
  *    지금 보고 있는 아이 경로 아래에 붙여서 쓴다 — 이 조립을 화면마다 하면 어긋난다.
+ *
+ * 🚨 **딥링크를 그대로 주소로 쓰지 않는다.** 서버가 준 문자열이라 `settings/consents` 처럼
+ *    지금 없는 경로가 오기도 하고(목이 그렇다), 외부 주소가 오면 화면이 앱 밖으로 나간다.
+ *    가는 곳은 10 설정 화면 하나이고, 딥링크는 **어느 구역인지 힌트**로만 쓴다.
  */
 export function ConsentRequiredCard({
   childId,
@@ -26,7 +33,11 @@ export function ConsentRequiredCard({
   error: ApiError;
   what: string;
 }) {
-  const deeplink = error.consentDeeplink;
+  // 🚨 스코프 코드를 화면에 그대로 내지 않는다 — `child_health` 는 부모가 읽을 말이 아니다.
+  const scopes = error.detail?.scopes;
+  const missing = (Array.isArray(scopes) ? scopes : [])
+    .map((s) => (typeof s === "string" ? consentItem(s)?.label : undefined))
+    .filter((label): label is string => Boolean(label));
 
   return (
     <Card>
@@ -34,11 +45,19 @@ export function ConsentRequiredCard({
       <p className="text-body-sm text-ink-muted mt-2">
         동의를 받기 전이라 {what} 저장된 것은 하나도 없어요.
       </p>
-      {/* 동의 화면(10 설정)은 아직 없다. 링크를 거는 대신 갈 곳을 적어 둔다 —
-          아무 데도 안 가는 링크를 만들지 않는다. */}
-      <p className="text-caption text-ink-subtle mt-2">
-        동의 화면은 아직 없어요 {deeplink ? `(/child/${childId}/${deeplink})` : null}
-      </p>
+      {missing.length > 0 ? (
+        <p className="text-caption text-ink-subtle mt-2">
+          설정 화면의 동의에서 켤 수 있어요 ({missing.join(", ")}).
+        </p>
+      ) : null}
+      <div className="mt-3">
+        <Link
+          href={`/child/${childId}/settings`}
+          className="text-button text-ink border-line rounded-field min-h-touch bg-surface ease-standard hover:bg-surface-muted active:bg-surface-muted inline-flex items-center px-4 py-2 transition-colors duration-120"
+        >
+          동의 관리로 가기
+        </Link>
+      </div>
     </Card>
   );
 }

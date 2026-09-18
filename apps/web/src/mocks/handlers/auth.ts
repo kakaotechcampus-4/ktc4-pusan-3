@@ -4,6 +4,7 @@ import { API_BASE_URL } from "@/lib/env";
 import { me, meNeedingConsent, MOCK_TOKEN, PARENT_ID } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { consentEffective, recordConsent } from "./settings";
 
 /**
  * 로그인 · 동의. 정본은 docs/api/auth-kakao-v1.md §3, 프론트 쪽은 docs/web/kakao-login-v1.md.
@@ -101,21 +102,14 @@ export const authHandlers = [
     if (!body.policy_version) {
       return apiError(400, "validation_failed", "policy_version 이 필요해요");
     }
+    // 🚨 effective 를 여기서 손으로 만들지 않는다. 10 설정의 `GET /consents` 와 같은 표를
+    //    써야 "설정에서 껐는데 다시 켜져 있다" 가 안 생긴다 (handlers/settings.ts).
+    const action = body.action === "withdrawn" ? "withdrawn" : "granted";
+    const entry = recordConsent(body.scope, action, body.policy_version);
     return HttpResponse.json(
       {
-        consent: {
-          id: `cs_${Date.now()}`,
-          scope: body.scope,
-          action: body.action,
-          acted_at: new Date().toISOString(),
-        },
-        effective: {
-          service_terms: true,
-          privacy_account: true,
-          child_basic: true,
-          child_health: body.scope === "child_health" ? body.action === "granted" : true,
-          quality_improve: false,
-        },
+        consent: { id: `cs_${Date.now()}`, ...entry },
+        effective: consentEffective(),
       },
       { status: 201 },
     );
