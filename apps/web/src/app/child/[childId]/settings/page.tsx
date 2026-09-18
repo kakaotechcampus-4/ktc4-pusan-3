@@ -1,6 +1,5 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Plus, UserRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -10,14 +9,11 @@ import { ChildNav } from "@/components/child-nav";
 import { ConsentSection } from "@/components/consent-section";
 import { ParentSection } from "@/components/parent-section";
 import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
-import { Card } from "@/components/ui/card";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
-import { api, qk, type ChildParentsResponse, type ConsentsResponse } from "@/lib/api";
-import { OPTIONAL_CONSENTS } from "@/lib/consent";
 
 /**
  * 10 설정 — **지금 이렇게 되어 있어요.**
@@ -62,8 +58,6 @@ function SettingsScreen() {
         <p className="text-body-sm text-ink-muted mt-2">함께 보는 사람과 동의를 여기서 관리해요.</p>
       </header>
 
-      <StatusSummary childId={childId} />
-
       <Section
         title="함께 보는 보호자"
         description="같은 아이를 함께 보는 사람이에요. 초대는 링크 하나로 해요."
@@ -103,70 +97,6 @@ function SettingsScreen() {
         <AccountSection />
       </Section>
     </Screen>
-  );
-}
-
-/**
- * 맨 위 현황 한 덩어리. 🚨 **화면에서 `card-accent` 는 한 장뿐이다** (디자인 시스템 §7).
- *
- * 🚨 **지표 타일을 만들지 않는다.** 왼쪽에 무엇인지, 오른쪽에 지금 값. 한 줄에 하나씩 쌓는다 —
- *    부모가 자기 아이를 숫자판으로 보게 하지 않는다 (디자인 시스템 Don't).
- *
- * 🚨 **두 쿼리를 여기서 새로 부르지 않는다.** 아래 구역이 쓰는 것과 **같은 쿼리 키**라
- *    TanStack 이 한 번만 부른다. 키가 어긋나면 같은 화면에서 같은 값을 두 번 받아 오고,
- *    철회한 뒤 위아래가 다른 말을 한다.
- */
-function StatusSummary({ childId }: { childId: string }) {
-  const consents = useQuery({
-    queryKey: qk.consents(childId),
-    queryFn: () => api.get<ConsentsResponse>("/consents", { query: { child_id: childId } }),
-  });
-  const parents = useQuery({
-    queryKey: qk.parents(childId),
-    queryFn: () => api.get<ChildParentsResponse>(`/children/${childId}/parents`),
-  });
-
-  /**
-   * 🚨 **필수와 선택을 한 분수로 합치지 않는다.** "4 / 5" 는 다섯 개를 다 끌 수 있다는 뜻으로
-   *    읽히는데, 아래 구역은 바로 그 오해를 막으려고 두 무리를 갈라 놨다. 셋은 늘 켜져
-   *    있어야 서비스가 성립하므로 셀 이유도 없다 — 세는 것은 보호자가 쥔 둘이다.
-   */
-  const grantedOptional = consents.data
-    ? OPTIONAL_CONSENTS.filter((item) => consents.data.effective[item.scope] === true).length
-    : null;
-
-  return (
-    <Card tone="accent">
-      <h2 className="text-section text-ink">지금 이렇게 되어 있어요</h2>
-      <dl className="mt-3 flex flex-col gap-2">
-        <SummaryRow
-          label="함께 보는 사람"
-          value={parents.data ? `${parents.data.parents.length}명` : null}
-        />
-        <SummaryRow
-          label="켜 둔 선택 동의"
-          value={
-            grantedOptional === null ? null : `${grantedOptional} / ${OPTIONAL_CONSENTS.length}`
-          }
-        />
-        <SummaryRow label="로그인" value="카카오" />
-      </dl>
-    </Card>
-  );
-}
-
-/**
- * 🚨 값이 아직 없으면 **자리를 비워 두지 않는다.** 숫자 칸이 비면 "0명" 으로 읽힌다 —
- *    불러오는 중이라는 것을 글자로 말한다 (흐린 회색 글씨를 만들지 않는다 · 문서 §3).
- */
-function SummaryRow({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className="text-body-sm text-ink-muted">{label}</dt>
-      <dd className={value === null ? "text-body-sm text-ink-subtle" : "text-title text-brand"}>
-        {value ?? "불러오는 중"}
-      </dd>
-    </div>
   );
 }
 
