@@ -15,6 +15,7 @@ from typing import Any
 from app.agents.common.datetime_rules import (
     DateParseError,
     EventWhen,
+    MissingEndTime,
     MissingStartTime,
     WhenPatch,
     check_when,
@@ -43,6 +44,10 @@ _UNKNOWN_EVENT = "그 event_id 의 일정이 없다. create_event 나 query_even
 _NEEDS_START_TIME = (
     "일정은 시작 시각이 있어야 저장한다. 몇 시인지 보호자에게 묻고 답을 들은 뒤 다시 부른다. "
     "'낮'·'아침' 처럼 시간대만 아는 것도 시각이 아니다."
+)
+_NEEDS_END_TIME = (
+    "끝나는 날짜는 있는데 끝나는 시각이 없다. ends_time에 끝나는 시각을 넣거나, "
+    "모르면 보호자에게 묻는다. 끝을 비워 둘 거면 ends_on도 함께 뺀다."
 )
 
 
@@ -176,10 +181,12 @@ def _resolve_when(
         # 알림이 시작 시각을 기준으로 가기 때문에
         # 자정으로 임의로 두게 하지 않고 몇 시인지 체크하게 함
         return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_START_TIME)
+    except MissingEndTime:
+        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_END_TIME)
     except DateParseError as exc:
         return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
 
-    problem = check_when(when)
+    problem = check_when(when, patch)
     if problem is not None:
         return fail(operation, EVENT, ErrorCode.VALIDATION_ERROR, problem)
     return when
