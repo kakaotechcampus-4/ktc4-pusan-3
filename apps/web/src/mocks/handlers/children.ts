@@ -11,6 +11,7 @@ import {
   home,
   newHealthSafety,
   observations,
+  safetyScan,
   staleAffinities,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -163,6 +164,23 @@ export const childrenHandlers = [
     await networkDelay();
     if (currentScenario() === "empty") return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
     return HttpResponse.json({ items: activeSafety(), updated_at: daysAgo(3) });
+  }),
+
+  /**
+   * 11 알레르기 검사지 읽기. ⚠️ **계약서 v1 에 없다** (이슈 #86).
+   *
+   * 🚨 **저장하지 않는다.** 검사지에 적힌 것을 옮겨 오기만 하고, 저장은 보호자가 승인한 뒤
+   *    바로 위 `POST /health-safety`(승인 게이트 ㉡) 가 한다 — 쓰기 경로는 여전히 하나다.
+   *    그래서 `withIdempotency` 로 감싸지 않는다 (되돌릴 수 없는 5개에 이 경로가 없다).
+   *
+   * 🚨 **못 읽은 칸을 채워 보내지 않는다.** `null` 로 내리고 화면이 그 자리를 비운다 —
+   *    LLM 이 건강 정보를 추론하지 않는다는 규칙이 여기서 지켜지거나 깨진다 (최상위 §2).
+   */
+  http.post(url("/children/:cid/health-safety/scan"), async () => {
+    // 사진을 읽는 시간. 스피너와 "읽고 있어요" 가 실제로 보이려면 짧으면 안 된다.
+    await networkDelay(1400);
+    if (currentScenario() === "consent") return consentRequired("child_health");
+    return HttpResponse.json(safetyScan);
   }),
 
   /**

@@ -71,24 +71,54 @@ export function Select<T extends string>({
     const onPointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
-    // 🚨 목록은 트리거에 붙어 있다 — 페이지가 움직이면 자리가 어긋나므로 닫는다.
-    const onMove = () => setOpen(false);
+    /**
+     * 🚨 목록은 트리거에 붙어 있다 — 페이지가 움직이면 자리가 어긋나므로 닫는다.
+     *
+     * 🚨 **목록 자신이 스크롤한 것은 빼야 한다.** 이 목록에도 `overflow-y-auto` 가 있어서,
+     *    방향키로 아래 항목에 닿으면 목록이 스스로 스크롤한다. 그것까지 "페이지가 움직였다" 로
+     *    치면 **긴 목록을 방향키로 내려가는 순간 닫힌다.** 트리거는 그대로 있으니 자리도
+     *    안 어긋난다.
+     */
+    const onMove = (event: Event) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
 
     document.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
+
+    /**
+     * 🚨 **스크롤 감시는 한 프레임 뒤에 건다.** "페이지가 움직이면 닫는다" 는 **연 다음의**
+     *    움직임을 말하는 것인데, 여는 동작 자체가 스크롤을 만든다 — 버튼을 누르면 브라우저가
+     *    그 버튼을 보이게 하려고 스크롤되는 면(바텀시트 본문 등)을 움직이고, 그 스크롤이
+     *    같은 틱에 감시에 걸려 **방금 연 목록을 즉시 닫는다.** 화면에서는 "눌렀는데 아무 일도
+     *    안 일어난다" 로 보인다 (11 검사지 시트에서 실제로 그랬다 · 두 번 눌러야 열렸다).
+     */
+    const frame = requestAnimationFrame(() => {
+      window.addEventListener("scroll", onMove, true);
+      window.addEventListener("resize", onMove);
+    });
+
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("scroll", onMove, true);
       window.removeEventListener("resize", onMove);
     };
   }, [open]);
 
-  // 열리면 고른 항목에 포커스를 둔다 — 어디서부터 움직이는지가 보여야 한다.
+  /**
+   * 열리면 고른 항목에 포커스를 둔다 — 어디서부터 움직이는지가 보여야 한다.
+   *
+   * 🚨 **`preventScroll` 없이 부르면 상자가 열리자마자 도로 닫힌다.** 이 상자가 스크롤되는 면
+   *    (바텀시트 본문 등) 안에 있고 아래쪽에 있으면, 브라우저가 포커스 받은 항목을 보이게
+   *    하려고 **그 면을 스크롤한다.** 그 스크롤이 바로 위 `onMove` 에 걸려서 방금 연 목록을
+   *    닫는다 — 화면에서는 **눌렀는데 아무 일도 안 일어나는 것**으로 보인다 (11 검사지 시트에서
+   *    실제로 그랬다). 목록은 트리거에 붙어 있어 이미 보이므로 스크롤할 이유가 없다.
+   */
   useEffect(() => {
     if (!open) return;
     const items = listRef.current?.querySelectorAll<HTMLLIElement>('[role="option"]');
-    items?.[selectedIndex]?.focus();
+    items?.[selectedIndex]?.focus({ preventScroll: true });
   }, [open, selectedIndex]);
 
   function moveFocus(from: number, delta: number) {

@@ -657,6 +657,47 @@ export interface CreateChildResponse {
   role: "owner" | "member";
 }
 
+/* ── 11 알레르기 검사지 읽기 ─────────────────────────────────────────── */
+
+/**
+ * ⚠️ **계약서 v1 에 없다** (이슈 #86). 목만 답한다.
+ *
+ * 🚨 **이 경로는 저장하지 않는다.** 검사지 사진에서 **적힌 것을 옮겨 오기만** 하고, 저장은
+ *    보호자가 승인한 뒤 `POST /children/{cid}/health-safety`(승인 게이트 ㉡) 가 한다.
+ *    최상위 `CLAUDE.md` §2 가 "알레르기·검진·건강 정보는 LLM 이 생성·추론·수정하지 않는다.
+ *    보호자 직접 입력 또는 **의료 기록만**" 이라고 정했고, 검사지는 그 의료 기록이다 —
+ *    허용되는 것은 **옮겨 적기**뿐이고 **채워 넣기**가 아니다.
+ *
+ * 🚨 그래서 이 타입의 필드는 대부분 `null` 을 허용한다. 못 읽은 칸은 `null` 로 오고,
+ *    화면은 그 자리를 **비워 둔 채** 보호자에게 넘긴다 (기본값으로 넘기지 않는다 · §2).
+ */
+export interface SafetyScanCandidate {
+  id: string;
+  /** 못 읽었으면 `null`. 🚨 추측해 채우지 않는다. */
+  type: string | null;
+  label: string | null;
+  category: string | null;
+  severity: string | null;
+  reactions: string[];
+  /**
+   * 🚨 **검사지에 적혀 있던 그 줄 그대로.** 이 제품은 추천에 근거를 달고 나가는데
+   *    (PRODUCT.md), 보호자가 승인할 때 "무엇을 보고 이렇게 옮겼는지" 가 없으면 확인할 방법이
+   *    없다. 원문이 없으면 `null` 이고, 그러면 화면은 그 줄을 **미리 고르지 않는다**.
+   */
+  source_text: string | null;
+}
+
+export interface SafetyScanResponse {
+  /** 읽기 단위. 같은 사진을 다시 읽으면 새 값이다 (저장하는 것이 없어서 재생하지 않는다). */
+  scan_id: string;
+  candidates: SafetyScanCandidate[];
+  /**
+   * 🚨 **줄은 있는데 못 읽은 것의 수.** 0 이 아니면 화면이 그 사실을 그대로 말한다 —
+   *    "다 읽었다" 고 넘기면 보호자가 빠진 항목을 모른 채 승인한다.
+   */
+  unreadable_count: number;
+}
+
 /* ── 11 아이 프로필 ──────────────────────────────────────────────────── */
 
 /**

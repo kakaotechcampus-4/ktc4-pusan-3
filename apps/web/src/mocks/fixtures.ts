@@ -18,6 +18,7 @@ import type {
   GeneralSuggestion,
   GrowthLog,
   HealthSafety,
+  SafetyScanResponse,
   HomeResponse,
   Me,
   Observation,
@@ -254,6 +255,66 @@ export function newHealthSafety(input: {
     updated_at: hoursFromNow(0),
   };
 }
+
+/* ── 11 알레르기 검사지 읽기 ─────────────────────────────────────────── */
+
+/**
+ * ⚠️ `POST /children/{cid}/health-safety/scan` 은 계약서 v1 에 없다 (이슈 #86).
+ *
+ * 🚨 **여기 있는 것은 "검사지에 적혀 있던 것" 을 흉내 낸 값이다.** 실제 검사지도, 실제 아이
+ *    정보도 아니다 (저장소가 public · 최상위 §9).
+ *
+ * 🚨 **일부러 덜 읽은 줄을 섞어 뒀다.** 화면이 못 읽은 칸을 **비워서** 보호자에게 넘기는지
+ *    확인하려면 목이 완벽하게 읽어 주면 안 된다 — 목의 존재 이유가 그것이다 (§7 머리말).
+ *      · `sc_1` 전부 읽음 → 미리 골라 둔다
+ *      · `sc_2` 분류를 못 읽음 → 보호자가 채워야 고를 수 있다
+ *      · `sc_3` 원문이 없음 → 무엇을 보고 옮겼는지 못 대니 미리 고르지 않는다
+ *      · `unreadable_count` 2 → 줄은 있는데 통째로 못 읽은 것이 둘
+ */
+export const safetyScan: SafetyScanResponse = {
+  scan_id: "scan_1",
+  candidates: [
+    {
+      id: "sc_1",
+      type: "allergy",
+      label: "달걀흰자",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Egg white  class 3  (3.9 kU/L)",
+    },
+    {
+      id: "sc_2",
+      type: "allergy",
+      label: "땅콩",
+      category: null,
+      severity: "severe",
+      reactions: [],
+      source_text: "Peanut  class 4",
+    },
+    {
+      id: "sc_3",
+      type: "allergy",
+      label: "집먼지진드기",
+      category: "환경",
+      severity: null,
+      reactions: [],
+      source_text: null,
+    },
+    {
+      // 🚨 이미 등록된 항목이다. 화면이 미리 걸러 내는지 확인하는 줄 —
+      //    안 걸러 내면 승인하고 나서 409 를 본다.
+      id: "sc_4",
+      type: "allergy",
+      label: "우유",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Milk  class 3",
+    },
+  ],
+  unreadable_count: 2,
+};
 
 /* ── 11 아이 프로필 · 측정 로그 ───────────────────────────────────────── */
 

@@ -2,13 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ruler, Shield } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { GrowthLogList } from "@/components/growth-log-list";
 import { HealthSafetyList, HealthSafetySheet } from "@/components/health-safety-list";
+import { HealthSafetyScanSheet } from "@/components/health-safety-scan-sheet";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
@@ -567,6 +568,67 @@ function toToday(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/**
+ * 더하는 길 고르기. 🚨 **승인 게이트가 아니다** — 아직 아무것도 저장하지 않으므로
+ * `caution` 도 `btn-approve` 도 쓰지 않고, 스크림 탭으로 닫힌다.
+ *
+ * 🚨 **직접 적기가 위다.** 사진이 더 편해 보여도, 검사지가 없는 보호자가 대부분이고
+ *    이 제품의 기본 경로는 보호자가 직접 확인한 것을 적는 것이다 (최상위 §2).
+ */
+function AddSafetySheet({
+  open,
+  onClose,
+  onManual,
+  onPhoto,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onManual: () => void;
+  onPhoto: () => void;
+}) {
+  return (
+    <BottomSheet open={open} onClose={onClose} title="알레르기 · 건강 기록 추가">
+      <div className="flex flex-col gap-2">
+        <AddSafetyOption
+          title="직접 적기"
+          description="확인한 것을 한 건씩 적어요."
+          onClick={onManual}
+        />
+        <AddSafetyOption
+          title="검사지 사진에서 가져오기"
+          description="알레르기 검사지를 찍으면 적힌 것을 옮겨 와요. 확인하고 한 번에 등록해요."
+          onClick={onPhoto}
+        />
+      </div>
+    </BottomSheet>
+  );
+}
+
+/**
+ * 고르는 줄. 🚨 **`Button` 이 아니다** — 설명이 두 줄까지 늘어나고 왼쪽 정렬이라 버튼 사양
+ * (가운데 정렬 · 한 줄)과 맞지 않는다. 시트 안의 목록 줄이라 `line` 1px 로 갈린다.
+ */
+function AddSafetyOption({
+  title,
+  description,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-card border-line bg-surface ease-standard active:bg-surface-muted hover:bg-surface-muted min-h-touch flex flex-col items-start gap-1 border px-4 py-3 text-left transition-colors duration-120"
+    >
+      <span className="text-body text-ink">{title}</span>
+      <span className="text-body-sm text-ink-muted">{description}</span>
+    </button>
+  );
+}
+
 /* ── ㉢ 알레르기 · 건강 (🚨 승인 게이트 ㉡) ──────────────────────────── */
 
 function SafetySection({
@@ -576,7 +638,20 @@ function SafetySection({
   childId: string;
   query: ReturnType<typeof useQuery<HealthSafetyListResponse>>;
 }) {
-  const [adding, setAdding] = useState(false);
+  /**
+   * 더하는 길이 둘이다 — 직접 적기와 검사지 사진. 🚨 **시트를 겹쳐 열지 않는다**
+   * (`<dialog>` 두 장이 포개지면 포커스 트랩이 둘이 된다). 한 번에 하나만 열리게
+   * 상태 하나로 가른다.
+   */
+  const [mode, setMode] = useState<null | "choose" | "manual" | "scan">(null);
+  const [photo, setPhoto] = useState<File | null>(null);
+
+  /**
+   * 🚨 **파일 입력은 사용자 제스처에서 열어야 한다.** 시트를 닫고 나서 열려고 하면 제스처가
+   *    이미 소비돼 브라우저가 막는다 — 고르는 줄에서 바로 `click()` 한다.
+   *    `accept="image/*"` 하나면 OS 가 촬영·앨범을 알아서 같이 준다.
+   */
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const items = query.data?.items ?? [];
 
@@ -586,7 +661,7 @@ function SafetySection({
       description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
       count={items.length > 0 ? items.length : undefined}
       action={
-        <Button variant="tertiary" size="compact" onClick={() => setAdding(true)}>
+        <Button variant="tertiary" size="compact" onClick={() => setMode("choose")}>
           추가
         </Button>
       }
@@ -610,7 +685,51 @@ function SafetySection({
         <HealthSafetyList childId={childId} items={items} />
       )}
 
-      <HealthSafetySheet open={adding} onClose={() => setAdding(false)} childId={childId} />
+      {/* 🚨 화면에 보이지 않지만 자리는 여기다 — 고르는 시트가 닫힌 뒤에도 같은 입력을 쓴다. */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0] ?? null;
+          // 같은 파일을 다시 고를 수 있게 값을 비운다 (안 비우면 onChange 가 안 온다).
+          e.target.value = "";
+          if (!file) return;
+          setPhoto(file);
+          setMode("scan");
+        }}
+      />
+
+      <AddSafetySheet
+        open={mode === "choose"}
+        onClose={() => setMode(null)}
+        onManual={() => setMode("manual")}
+        onPhoto={() => photoInputRef.current?.click()}
+      />
+
+      <HealthSafetySheet
+        open={mode === "manual"}
+        onClose={() => setMode(null)}
+        childId={childId}
+      />
+
+      {/* 🚨 사진이 바뀌면 시트를 새로 만든다 (`key`). 미리보기 URL 과 "한 번만 읽는다" 가드를
+          `useState` 초기값·`useRef` 로 들고 있어서, 같은 인스턴스를 재사용하면 두 번째 사진이
+          첫 번째 사진의 결과를 그대로 보여준다. */}
+      {photo ? (
+        <HealthSafetyScanSheet
+          key={`${photo.name}:${photo.lastModified}`}
+          open={mode === "scan"}
+          onClose={() => {
+            setMode(null);
+            setPhoto(null);
+          }}
+          childId={childId}
+          file={photo}
+          registeredLabels={items.map((item) => item.label)}
+        />
+      ) : null}
     </Section>
   );
 }

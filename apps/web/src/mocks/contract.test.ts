@@ -17,6 +17,7 @@ import type {
   HealthSafetyListResponse,
   Observation,
   ObservationsResponse,
+  SafetyScanResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
@@ -501,6 +502,75 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
     await expect(api.delete(`/children/c1/health-safety/${target.id}`)).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "not_found"),
     );
+  });
+});
+
+/**
+ * 🚨 11 알레르기 검사지 읽기. ⚠️ 계약서 v1 에 없다 (이슈 #86).
+ *
+ * 여기서 거는 것은 **읽기가 저장이 아니라는 것**과 **못 읽은 칸을 채워 보내지 않는다는 것**이다.
+ * 최상위 `CLAUDE.md` §2 가 "LLM 이 건강 정보를 생성·추론하지 않는다" 를 못박았는데, 그 규칙이
+ * 지켜지는지는 타입이 못 본다 — `null` 을 허용한다는 것과 실제로 `null` 을 보낸다는 것은 다르다.
+ */
+describe("⑮ 검사지 읽기는 저장이 아니다", () => {
+  async function scan(): Promise<SafetyScanResponse> {
+    const form = new FormData();
+    form.append("photo", new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), "sheet.png");
+    return api.post<SafetyScanResponse>("/children/c1/health-safety/scan", form);
+  }
+
+  it("읽어도 안전 정보 목록이 늘지 않는다", async () => {
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+    const result = await scan();
+    expect(result.candidates.length).toBeGreaterThan(0);
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.length).toBe(before.items.length);
+  });
+
+  it("Idempotency-Key 없이 부를 수 있다 — 저장하는 것이 없어서 표에 없다", async () => {
+    await expect(scan()).resolves.toBeDefined();
+  });
+
+  it("🚨 못 읽은 칸을 채워 보내지 않는다", async () => {
+    const { candidates } = await scan();
+
+    // 목이 일부러 덜 읽은 줄을 섞어 둔다 — 완벽하게 읽어 주면 화면의 빈 칸 처리를 확인할 수 없다.
+    expect(candidates.some((c) => c.category === null)).toBe(true);
+    expect(candidates.some((c) => c.severity === null)).toBe(true);
+    // 🚨 원문 없이 옮겨 적은 줄이 있어야 화면이 그 줄을 미리 고르지 않는지 확인할 수 있다.
+    expect(candidates.some((c) => c.source_text === null)).toBe(true);
+  });
+
+  it("🚨 읽지 못한 줄 수를 그대로 내린다", async () => {
+    const { unreadable_count } = await scan();
+    expect(unreadable_count).toBeGreaterThan(0);
+  });
+
+  it("승인해야 저장된다 — 고른 줄 수만큼 게이트 ㉡ 를 부른다", async () => {
+    const { candidates } = await scan();
+    const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+    // 화면이 하는 것과 같다: 필수 칸이 다 찬 줄만, 줄마다 키 하나로.
+    const complete = candidates.filter((c) => c.label !== null && c.category !== null);
+    for (const candidate of complete) {
+      if (before.items.some((item) => item.label === candidate.label)) continue;
+      await addHealthSafety(
+        "c1",
+        { type: "allergy", label: candidate.label!, category: candidate.category! },
+        newIdempotencyKey(),
+      );
+    }
+
+    const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+    expect(after.items.length).toBeGreaterThan(before.items.length);
+  });
+
+  it("동의가 없으면 읽지도 못한다 — 저장 전에 막힌다", async () => {
+    setScenario("consent");
+    await expect(scan()).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
+    setScenario("default");
   });
 });
 
