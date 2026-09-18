@@ -78,6 +78,12 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
 
+🚨 **`useSearchParams()` 를 쓰는 화면은 `<Suspense>` 경계 안에 둔다.** 경계가 없으면 프리렌더가
+CSR bailout 을 일으켜 **프로덕션 빌드가 그 화면에서 멈춘다** (`Missing Suspense boundary with useSearchParams`).
+`pnpm dev` 에서는 드러나지 않아서 `pnpm build` 로만 잡힌다 — 실제로 `/auth/callback` 이 그렇게 빠져 있었다 (PR #71 리뷰).
+위 표에서 `?` 가 붙은 화면(05 · 07 · 09)과 `/auth/callback` 이 대상이다. `fallback` 에는 그 화면이
+hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 정적 HTML 과 hydrate 결과가 한 번 어긋나 깜빡인다.
+
 🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
 `failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
 라우트를 나누면 그 값이 언마운트와 함께 죽는다 — 그래서 03 이 run 이 도는 동안 본문만 바꿔 그린다.
