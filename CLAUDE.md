@@ -172,6 +172,7 @@
 │       ├── app/
 │       │   ├── main.py       FastAPI 앱 진입점
 │       │   ├── core/         설정(pydantic-settings) — 김명성
+│       │   │   └── agent_config.py  역할별 LLM 키 선언 파일 — 이시하 (core, agents가 함께 상속)
 │       │   ├── api/          라우터 · 스키마 — 김명성
 │       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
 │       │   │   ├── deps/     (비어 있음) 인증 · 권한 · 동의 검사
