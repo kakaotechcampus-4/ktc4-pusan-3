@@ -185,7 +185,9 @@ export default function AuthConsentPage() {
         title={detail?.label ?? ""}
         description={detail?.legalBasis}
         footer={
-          <Button block onClick={() => setDetail(null)}>
+          /* 🚨 10 설정의 전문 시트와 **같은 버튼**이다. 같은 시트를 여는 두 화면에서
+             한쪽만 채운 버튼이면 같은 행동이 다른 무게로 읽힌다. */
+          <Button block variant="secondary" onClick={() => setDetail(null)}>
             닫기
           </Button>
         }

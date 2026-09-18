@@ -73,7 +73,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
-| 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
+| 10 설정 | `/child/[childId]/settings` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
@@ -93,7 +93,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
 
 ⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
-지금 보고 있는 아이 경로 아래에 붙여서 쓴다 (`/child/{childId}/settings/consent`).
+🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 지금 없는 경로(`settings/consents`)가 오기도 하고,
+외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 10 설정 한 곳(`/child/{childId}/settings`)이고,
+딥링크는 **어느 구역인지 힌트**로만 쓴다 (`ConsentRequiredCard`).
 
 클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
 **스토어를 읽어 화면을 그리지 않는다.**
@@ -112,7 +114,8 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
-  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel`
+  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
+  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection` · `ParentSection` · `AccountSection`
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
@@ -238,12 +241,15 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 🚨 **자리표시 코드는 개발 환경 + 목 서버일 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다 (빌드 후 번들에서 문자열이 사라지는지 확인한다)
 - 🚨 **1회용 코드는 한 번만 교환한다.** StrictMode 의 이중 실행으로 두 번 소비하면 두 번째가 `401 invalid_handoff` 다 — `useRef` 가드를 둔다
 - 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다.** 토큰을 **얻으러** 가는 화면이라 감싸면 `/` 로 튕긴다
-- **신규 회원은 `/auth/consent` 로 보낸다.** 동의 4건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 2건은 `POST /consents` 다.
+- **신규 회원은 `/auth/consent` 로 보낸다.** 필수 3건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 스코프는 `POST /consents` 다.
   🚨 **아이 스코프를 아이보다 먼저 받는다** — `child_basic` 없이 `POST /children` 은 403 이다 (계약서 §04 "동의는 저장보다 먼저다")
   🚨 **"전체 동의" 를 만들지 않는다** — 민감정보(`child_health`)는 다른 동의와 구분해서 받아야 한다 (개인정보보호법 제23조)
+  🚨 **필수와 선택을 같은 컨트롤로 그리지 않는다.** 필수는 `service_terms` · `privacy_account` · `child_basic` 셋이고,
+  `child_health` · `location` 은 **선택**이다 (#89). 가입은 필수 3건만 막고, 10 설정에서는 선택 2건만 켜고 끈다 —
+  필수에 철회 버튼을 나란히 두면 화면이 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와 다르다 (`lib/consent.ts`)
   🚨 **승인 게이트가 아니다** — `btn-approve` · `caution` 을 쓰지 않는다. 그 둘은 되돌릴 수 없는 2곳 전용이다 (§2)
   스코프 목록·약관 버전의 정본은 `lib/consent.ts` 다. 10 설정의 동의 관리도 같은 파일을 쓴다
-- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 10 설정의 동의 화면이 아직 없다
+- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 남은 동의는 10 설정에서 켠다
 
 ### 세션 — `sessionStorage` 다
 
@@ -473,7 +479,9 @@ NEXT_PUBLIC_API_MOCKING=enabled
   🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
-- 화면 00~07 · 09 가 덮여 있다. 08 사진 · 10 설정은 아직 없다.
+- 화면 00~07 · 09 · 10 이 덮여 있다. 08 사진은 아직 없다.
+  🚨 **동의는 목이 상태를 들고 있다** (`handlers/settings.ts`). 켜고 끄는 화면이라 응답이 매번 같으면
+  무엇을 눌러도 화면이 안 변한다 — 새 상태를 더하면 리셋 함수를 `test/setup.ts` 에 건다 (§8).
 - 🚨 **실제 OAuth 왕복은 목으로 흉내 낼 수 없다** — 카카오로 나가는 전체 페이지 이동이라 서비스 워커가 못 잡는다.
   목이 덮는 것은 시작 전(`status`)과 돌아온 뒤(교환·가입)이고, 중간은 `lib/auth/oauth.ts` 의 `MOCK_ONLY` 분기가 건너뛴다.
 - 🚨 **`startMocks()` 는 한 번만 시작한다** (약속을 캐시한다). StrictMode 가 effect 를 두 번 돌리는데 두 번째 `worker.start()` 가
