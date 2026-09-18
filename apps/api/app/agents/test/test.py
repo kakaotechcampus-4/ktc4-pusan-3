@@ -48,6 +48,7 @@ from app.agents.test.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
     T_CASES,
+    R,
     RoutingCase,
     SplitScore,
     covered_by,
@@ -129,6 +130,34 @@ class LiveCase:
     label: str  # 변형이면 접미사가 붙는다 (RC20-i)
 
 
+# 일정의 시간 구간 전용.
+# 여기서 보는 건 라우팅 정답이 아니라 "모델이 낸 인자로 어떤 구간이 저장되는가"이다.
+_SCHEDULE_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "SC01",
+        "금요일부터 일요일까지 캠프 가는데 오전 9시 시작이고 마지막 날 오후 5시에 끝나.",
+        (
+            R(
+                "금요일부터 일요일까지 캠프 가는데 오전 9시 시작이고 마지막 날 오후 5시에 끝나",
+                WorkType.SCHEDULE,
+            ),
+        ),
+        watch="여러 날 일정에 ends_on 을 쓰는가 — 안 쓰면 종료가 첫날로 붙는다",
+    ),
+    RoutingCase(
+        "SC02",
+        "토요일 밤 11시부터 새벽 1시까지 불꽃놀이 보러 가.",
+        (R("토요일 밤 11시부터 새벽 1시까지 불꽃놀이 보러 가", WorkType.SCHEDULE),),
+        watch="자정을 넘기는 구간. ends_on 없이 새벽 1시만 주면 규칙이 되묻는다",
+    ),
+    RoutingCase(
+        "SC03",
+        "일요일은 하루 종일 마을 축제인데 오후 5시에 끝나.",
+        (R("일요일은 하루 종일 마을 축제인데 오후 5시에 끝나", WorkType.SCHEDULE),),
+        watch="종일 + 종료 시각은 같이 못 쓴다. 거부를 받고 모델이 어떻게 고치는가",
+    ),
+)
+
 _E2E_CASES: tuple[LiveCase, ...] = (
     *(LiveCase(case, case.stage, case.case_id) for case in RC_CASES),
     # 같은 입력을 영아기로 한 번 더 — 식이 단계는 발화가 아니라 아이 나이에서 코드가 정한다
@@ -136,6 +165,7 @@ _E2E_CASES: tuple[LiveCase, ...] = (
     # T14 는 test_memory.py 에도 있지만 거기서는 Memory 만 돈다.
     # "저녁에는 뭘 먹이면 좋을까?" 가 Food 로 떨어지는지는 여기서만 실제로 확인된다
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
+    *(LiveCase(case, case.stage, case.case_id) for case in _SCHEDULE_CASES),
 )
 
 Seed = Callable[[AgentContext], Awaitable[None]]
@@ -476,6 +506,11 @@ def _report(observed: Observed) -> None:
         # Step 1 규칙의 첫 측정 — 매일 반복되는 식사 일과는 core 일정이어야 한다
         types = [str(row.fields.get("event_type")) for row, _ in observed.events]
         observed.reports.append(f"RC24 event_type={types or '(일정 없음)'}")
+    if observed.live.case.case_id.startswith("SC"):
+        # 저장된 구간을 그대로 남긴다 — 모델이 ends_on을 썼는지 확인 가능하다.
+        # 일정이 없으면 규칙이 되묻고 모델이 고치지 못한 것이다
+        stored = " · ".join(_interval(row) for row, _ in observed.events)
+        observed.reports.append(f"{observed.live.case.case_id} 구간={stored or '(일정 없음)'}")
 
 
 def _expected_food_tasks(observed: Observed) -> int:
