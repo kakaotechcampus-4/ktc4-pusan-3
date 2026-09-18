@@ -11,6 +11,14 @@
     - 빈 시각 표현: 종일 일정으로 해석하지 않음
     - 생성 시 끝나는 날짜 지정: 자정 넘김/여러 날 일정을 한 번에 저장
 
+리뷰에서 추가로 발견된 사항:
+
+    - 여러 날 일정의 시작 시각 변경: 종료가 함께 밀림
+    - 종일 일정에 종료 시각: 조용히 버리고 성공을 돌려줌
+    - 끝나는 날짜만 지정: 종료를 시작 시각으로 채움
+    - 종료 날짜 해석 기준: 시작일이 아니라 오늘 기준으로 풀림
+    - 종료 == 시작: 길이 0 일정이 저장됨
+
 날짜 계산과 일정 시간 구간의 일관성은 모델이 아닌 코드에서 보장하는 영역이다.
 """
 
@@ -184,6 +192,124 @@ async def test_자정을_넘기는_일정도_한_번에_만든다(context: Agent
     row = await _row(context, event_id)
     assert _local(row.starts_at) == "2026-09-17T23:00+09:00"
     assert _local(row.ends_at) == "2026-09-18T01:00+09:00"
+
+
+# 리뷰 추가 테스트
+async def test_당일_일정은_시작_시각을_바꾸면_길이를_유지한다(context: AgentContext) -> None:
+    # "3시에서 6시로 바꿔줘" -> 2시간짜리 예약을 통째로 이동
+    event_id = await _create(
+        context, starts_on="2026-09-17", starts_time="오후 3시", ends_time="오후 5시"
+    )
+
+    await execute_tool("update_event", {"event_id": event_id, "starts_time": "오후 6시"}, context)
+
+    row = await _row(context, event_id)
+    assert _local(row.starts_at) == "2026-09-17T18:00+09:00"
+    assert _local(row.ends_at) == "2026-09-17T20:00+09:00"
+
+
+async def test_여러_날_일정은_시작_시각을_바꿔도_종료가_밀리지_않는다(
+    context: AgentContext,
+) -> None:
+    event_id = await _create(
+        context,
+        starts_on="2026-09-17",
+        starts_time="오전 9시",
+        ends_on="2026-09-19",
+        ends_time="오후 5시",
+    )
+
+    await execute_tool("update_event", {"event_id": event_id, "starts_time": "오후 3시"}, context)
+
+    row = await _row(context, event_id)
+    assert _local(row.starts_at) == "2026-09-17T15:00+09:00"
+    assert _local(row.ends_at) == "2026-09-19T17:00+09:00"
+
+
+async def test_종일_일정에_종료_시각을_주면_반영하지_않는다(context: AgentContext) -> None:
+    created = await execute_tool(
+        "create_event",
+        {
+            "title": "마을 축제",
+            "starts_on": "2026-09-17",
+            "starts_time": "하루 종일",
+            "ends_time": "오후 5시",
+        },
+        context,
+    )
+    assert created.success is False
+    assert created.error is not None
+    assert created.error["code"] == ErrorCode.VALIDATION_ERROR
+
+    event_id = await _create(context, starts_on="2026-09-17", starts_time="하루 종일")
+    updated = await execute_tool(
+        "update_event", {"event_id": event_id, "ends_time": "오후 5시"}, context
+    )
+    assert updated.success is False
+    assert updated.error is not None
+    assert updated.error["code"] == ErrorCode.VALIDATION_ERROR
+
+
+async def test_끝나는_날짜만_주고_시각을_안_주면_되묻는다(context: AgentContext) -> None:
+    result = await execute_tool(
+        "create_event",
+        {
+            "title": "캠프",
+            "starts_on": "2026-09-17",
+            "starts_time": "오전 9시",
+            "ends_on": "2026-09-19",
+        },
+        context,
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert await context.store.query_events(child_id=context.child_id) == []
+
+
+async def test_끝나는_날짜는_오늘이_아니라_시작일을_기준으로_해석한다(
+    context: AgentContext,
+) -> None:
+    event_id = await _create(
+        context,
+        starts_on="다음주 월요일",
+        starts_time="오전 9시",
+        ends_on="수요일",
+        ends_time="오후 5시",
+    )
+
+    row = await _row(context, event_id)
+    assert _local(row.starts_at) == "2026-09-21T09:00+09:00"
+    assert _local(row.ends_at) == "2026-09-23T17:00+09:00"
+
+
+async def test_종료_자리의_자정은_다음_날로_읽는다(context: AgentContext) -> None:
+    event_id = await _create(
+        context, starts_on="2026-09-17", starts_time="밤 11시", ends_time="자정"
+    )
+
+    row = await _row(context, event_id)
+    assert _local(row.starts_at) == "2026-09-17T23:00+09:00"
+    assert _local(row.ends_at) == "2026-09-18T00:00+09:00"
+
+
+async def test_종료가_시작과_같으면_저장하지_않는다(context: AgentContext) -> None:
+    # 길이 0 일정을 따로 허용하지 않고, "종료 없음"은 ends_at=None이 표현한다
+    result = await execute_tool(
+        "create_event",
+        {
+            "title": "면담",
+            "starts_on": "2026-09-17",
+            "starts_time": "오후 3시",
+            "ends_time": "오후 3시",
+        },
+        context,
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert await context.store.query_events(child_id=context.child_id) == []
 
 
 # 불변식
