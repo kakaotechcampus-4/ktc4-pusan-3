@@ -199,8 +199,11 @@ export function ConsentSection({ childId }: { childId: string }) {
         {/* 🚨 "탈퇴하면 됩니다" 라고 쓰지 않는다 — 탈퇴 엔드포인트가 없고 유예기간도
             미정이라(docs/api/auth-kakao-v1.md §미결), 지금 없는 길을 안내하게 된다. */}
         <p className="text-caption text-ink-subtle mt-2">
-          이 셋은 서비스가 성립하는 근거라 화면에서 끌 수 없어요. 그만 쓰고 싶다면 계정을 정리하는
-          방법을 준비하고 있어요.
+          {/* 🚨 개수를 글자로 박지 않는다. 필수/선택은 `lib/consent.ts` 가 정하고 여기서
+              세는데, "이 셋은" 처럼 박아 두면 목록이 바뀔 때 화면만 옛말을 한다
+              (실제로 아이 건강이 선택으로 갔다가 다시 필수로 돌아왔다). */}
+          이 {REQUIRED_CONSENTS.length}건은 서비스가 성립하는 근거라 화면에서 끌 수 없어요. 그만
+          쓰고 싶다면 계정을 정리하는 방법을 준비하고 있어요.
         </p>
       </div>
 

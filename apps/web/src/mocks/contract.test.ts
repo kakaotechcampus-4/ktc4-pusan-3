@@ -373,6 +373,11 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 });
 
 describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
+  /**
+   * 🚨 `child_health` 는 **화면에 철회 버튼이 없는** 필수 동의다. 그래도 API 로는 철회가
+   *    가능하고(계약서 §04 는 스코프를 가리지 않는다), append-only 는 모든 스코프에서
+   *    지켜져야 한다 — 화면이 안 부른다고 목이 안 지켜도 되는 것이 아니다.
+   */
   it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
     const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
     expect(before.effective.child_health).toBe(true);

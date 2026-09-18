@@ -73,10 +73,9 @@ export default function AuthConsentPage() {
   }, [hydrated, router]);
 
   /**
-   * 🚨 **막는 것은 필수뿐이다.** 예전에는 이 화면의 4건이 전부 필수였는데, 아이 건강은
-   *    없어도 나머지 기능이 그대로 도는 값이라 선택으로 내렸다 (`lib/consent.ts`).
-   *    별도 동의로 받아야 하는 민감정보를(제23조) 거절할 수 없게 묶어 두면 그 별도 동의가
-   *    형식만 남는다.
+   * 🚨 **막는 것은 `required` 뿐이다.** 지금은 이 화면의 4건이 전부 필수라 결과가 "모두
+   *    고름" 과 같지만, **`SIGNUP_CONSENTS.length` 로 세지 않는다** — 선택 동의를 이 화면에
+   *    올리는 날 조용히 그것까지 막게 된다. 필수/선택의 정본은 `lib/consent.ts` 다.
    */
   const requiredChecked = SIGNUP_CONSENTS.filter((i) => i.required).every(
     (item) => checked[item.scope] === true,
@@ -145,7 +144,7 @@ export default function AuthConsentPage() {
           확인해 주세요
         </PageTitle>
         <p className="text-body text-ink-muted mt-3">
-          필수 세 가지에 동의하면 시작할 수 있어요. 선택은 나중에 설정에서 켜도 돼요.
+          네 가지 모두 동의해야 아이 기억을 만들 수 있어요.
         </p>
       </div>
 
