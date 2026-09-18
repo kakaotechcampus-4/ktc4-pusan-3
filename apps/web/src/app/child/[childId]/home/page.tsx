@@ -94,7 +94,10 @@ function HomeScreen() {
   const submit = useMutation({
     mutationFn: () => {
       const body: InputRequest = { text: text.trim(), source: "home_input" };
-      return submitInput(childId, body, idempotencyKey.current());
+      // 🚨 키를 **본문에 묶는다.** 같은 본문의 재시도는 같은 키(중복 저장 방지), 고쳐 쓴 본문은
+      //    새 키다. 서버가 처리했는데 응답만 유실되면 화면은 실패로 보이고 보호자는 한 줄을
+      //    고쳐서 다시 보내는데, 키가 그대로면 "같은 키 · 다른 본문" 이라 계속 422 다 (PR #71 리뷰).
+      return submitInput(childId, body, idempotencyKey.current(body.text));
     },
     onSuccess: (res) => {
       setRunId(res.run_id);
