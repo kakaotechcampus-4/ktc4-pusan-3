@@ -38,6 +38,9 @@ jobs:
       - name: Run ruff check
         run: cd apps/api && uv run ruff check .
 
+      - name: Run ruff format check
+        run: cd apps/api && uv run ruff format --check .
+
       - name: Run unit tests (without live marker)
         env:
           DB_HOST: dummy
