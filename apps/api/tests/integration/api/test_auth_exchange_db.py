@@ -106,9 +106,7 @@ async def changed(session, base: dict) -> dict:
     """
     now = {model: await row_count(session, model) for model in TRACKED}
     return {
-        model.__name__: now[model] - base[model]
-        for model in TRACKED
-        if now[model] != base[model]
+        model.__name__: now[model] - base[model] for model in TRACKED if now[model] != base[model]
     }
 
 

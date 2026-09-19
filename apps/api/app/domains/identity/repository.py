@@ -194,9 +194,7 @@ async def create_session(
     expires_at: datetime,
 ) -> None:
     """세션 1건 (§5-3). 토큰 원문은 받지 않는다 — 해시만 저장한다 (A-18)."""
-    session.add(
-        AuthSession(parent_id=parent_id, token_hash=token_hash, expires_at=expires_at)
-    )
+    session.add(AuthSession(parent_id=parent_id, token_hash=token_hash, expires_at=expires_at))
     await session.flush()
 
 
