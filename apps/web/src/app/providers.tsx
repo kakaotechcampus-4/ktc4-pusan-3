@@ -2,8 +2,12 @@
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ToastProvider } from "@/components/ui/toast";
+import { setUnauthenticatedHandler } from "@/lib/api/client";
+import { currentPath, rememberReturnPath } from "@/lib/auth";
 import { getQueryClient } from "@/lib/query-client";
 import { startMocks } from "@/mocks/start";
 import { useSessionStore } from "@/stores/session";
@@ -13,6 +17,7 @@ const MOCKING = process.env.NEXT_PUBLIC_API_MOCKING === "enabled";
 
 export function Providers({ children }: { children: ReactNode }) {
   const queryClient = getQueryClient();
+  const router = useRouter();
 
   // 워커가 뜨기 전에 나간 요청은 목을 통과해 실서버로 간다. 그래서 기다렸다가 그린다.
   const [mocksReady, setMocksReady] = useState(!MOCKING);
@@ -22,16 +27,38 @@ export function Providers({ children }: { children: ReactNode }) {
     void startMocks().finally(() => setMocksReady(true));
   }, []);
 
-  // localStorage 는 서버에 없다. 마운트 후에 복구해야 하이드레이션 불일치가 안 난다.
+  // sessionStorage 는 서버에 없다. 마운트 후에 복구해야 하이드레이션 불일치가 안 난다.
   useEffect(() => {
     void useSessionStore.persist.rehydrate();
   }, []);
 
+  /**
+   * 세션 만료(401 unauthenticated)를 한 곳에서 처리한다 — 화면마다 다루면 어딘가는 빠뜨린다.
+   * client.ts 가 스토어를 직접 import 하지 않기 때문에(서버 컴포넌트에서 못 쓰게 된다)
+   * 여기서 핸들러를 꽂아 준다.
+   */
+  useEffect(() => {
+    setUnauthenticatedHandler(() => {
+      // 만료로 튕기는 것이라 로그인 후 되돌아올 화면을 남긴다.
+      rememberReturnPath(currentPath());
+      useSessionStore.getState().signOut();
+      queryClient.clear();
+      router.replace("/");
+    });
+    return () => setUnauthenticatedHandler(null);
+  }, [router, queryClient]);
+
   return (
     <QueryClientProvider client={queryClient}>
-      {mocksReady ? children : null}
-      {/* devtools 는 프로덕션 번들에서 빠진다. 쿼리 키·캐시 상태를 눈으로 볼 때 쓴다. */}
-      {process.env.NODE_ENV === "development" ? <ReactQueryDevtools initialIsOpen={false} /> : null}
+      {/* 🚨 토스트는 **쿼리 안쪽**이다 — 뮤테이션 `onError` 에서 부르기 때문이다.
+          바깥에 두면 화면이 Provider 밖에서 `useToast()` 를 부르게 된다. */}
+      <ToastProvider>{mocksReady ? children : null}</ToastProvider>
+      {/* devtools 는 프로덕션 번들에서 빠진다. 쿼리 키·캐시 상태를 눈으로 볼 때 쓴다.
+          🚨 왼쪽 아래로 옮겨 뒀다 — 기본값(오른쪽 아래)이 03 홈 채팅바의 **보내기 버튼을 덮어서**
+             개발 중에 누르면 devtools 가 열린다 (실제로 클릭이 막혔다). */}
+      {process.env.NODE_ENV === "development" ? (
+        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+      ) : null}
     </QueryClientProvider>
   );
 }

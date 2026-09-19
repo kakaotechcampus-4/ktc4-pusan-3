@@ -3,16 +3,9 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-# 모델 모듈 import — autogenerate 인식을 위해 여기에 추가
-from app.domains.child import models as child_models  # noqa: F401
-from app.domains.consent import models as consent_models  # noqa: F401
-from app.domains.correction import models as correction_models  # noqa: F401
-from app.domains.identity import models as identity_models  # noqa: F401
-from app.domains.memory.observation import models as observation_models  # noqa: F401
-from app.domains.memory.profile import models as profile_models  # noqa: F401
-from app.domains.safety import models as safety_models  # noqa: F401
-from app.domains.schedule import models as schedule_models  # noqa: F401
-from app.domains.suggestion import models as suggestion_models  # noqa: F401
+# 모델 등록 — autogenerate 가 전체 스키마를 보려면 모든 모델이 import 돼 있어야 한다.
+# 목록은 app/infra/db/registry.py 한 곳에만 둔다. 운영 앱도 같은 모듈을 쓴다.
+from app.infra.db import registry  # noqa: F401
 from app.infra.db.base import Base
 from app.infra.db.url import build_url
 

@@ -1,4 +1,4 @@
-# 육아기억 AI 문서 인덱스
+# 아이캐치 문서 인덱스
 
 > 육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI.
 
@@ -75,11 +75,18 @@
 - [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **서버 주도 인가 코드 흐름.** `redirect_uri` 를 API 오리진 하나로 고정(preview 도메인은 등록 불가) · 클라이언트는 1회용 코드를 받아 `{code, bind}` 로 교환하고 `bind` 가 그 홉을 지킨다 · **동의 전에는 `parent` 를 만들지 않는다**(`signup` 신설) · 계약서 §01 `Bearer` 유지, 무인증 5개와 302 엔드포인트 2개를 예외로 명시 · 불투명 세션 12시간, refresh 없음 · `session`·`auth_handoff` 테이블 신설안 · `parent.nickname` nullable
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
 
-*아직 문서 없음.* 외부 연동(나이스 급식 · Calendar · OCR).
+*아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).
+
+## 급식표 (meal-plan)
+
+- [meal-plan/meal-plan-pipeline-v1.md](meal-plan/meal-plan-pipeline-v1.md) — 입력 3종(사진 · 엑셀 · 한글)이 모이는 `MealPlanJSON` 과 `MealPlanReader` 확정 · `source` 필드로 검수 필요 여부 구분 · `meal_type` 5종 · `allergen_codes` 는 JSON 에 없음(규칙이 뽑음) · 저장 기준은 미정(우선 아이 기준) · 못 읽은 칸은 그 칸만 비움
+- [meal-plan/ocr-model-eval-v1.md](meal-plan/ocr-model-eval-v1.md) — 사진 입력 기본 모델 `gemini-3.1-pro-preview` 확정(정답셋 178항목, 메뉴 단위 번호 일치 100%) · 채점 지표는 메뉴 단위 번호 일치가 정본 · 게이트웨이 출력 상한 6,000 → 2분할 · 후보 방식 A/A+/A′/B
 
 ## 웹 · 화면
 
 - [web/design-system-v1.md](web/design-system-v1.md) — 색 31 · 타이포 8단계 · 레이아웃 · 컴포넌트 사양 확정 · 승인 게이트는 `caution`, 실패는 뉴트럴 · 그림자 1단계 · 전 구간 1열 고정
+- [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 `sessionStorage` 12시간
+- [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫
 
 *아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기.
 
@@ -92,6 +99,8 @@
 *아직 문서 없음.* eval 케이스 10개, Trajectory 판정, 골든셋, 주 1회 회귀 실행.
 
 ## 운영 (Ops)
+
+- [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 
 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
 
@@ -133,6 +142,7 @@
 | `memory/` | Child·Observation Memory 스키마, 3분류, Curator 승격·감쇠, Correction | 이시하 (AI) |
 | `agents/` | Supervisor 라우팅, Food · Activity · Education · Health Agent, 프롬프트·컨텍스트 | 이시하 (AI) |
 | `api/` | 엔드포인트 계약, SSE, 승인 게이트, 외부 API 연동 | 김명성 (백엔드) |
+| `meal-plan/` | 급식표 입력(사진 · 엑셀 · 한글) → 구조화 JSON · 알레르기 번호 · 저장 | 박재형 (PM) |
 | `web/` | 화면 01~10, 컴포넌트, 디자인 토큰 | 고태영 (프론트) |
 | `safety/` | 가드레일, 동의 절차, 개인정보 보관·삭제 범위 | 박재형 (PM) |
 | `eval/` | 테스트 케이스, Trajectory 판정, 골든셋, 회귀 결과 | 오현식 · 이도헌 |

@@ -1,18 +1,18 @@
 {
   "expo": {
-    "name": "육아기억 AI",
-    "slug": "yukameo",
-    "scheme": "yukameo",
+    "name": "아이캐치",
+    "slug": "icatch",
+    "scheme": "icatch",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "kr.ac.pusan.ktc4.yukameo"
+      "bundleIdentifier": "kr.ac.pusan.ktc4.icatch"
     },
     "android": {
-      "package": "kr.ac.pusan.ktc4.yukameo",
+      "package": "kr.ac.pusan.ktc4.icatch",
       "adaptiveIcon": {
         "backgroundColor": "#E7F1EA",
         "foregroundImage": "./assets/android-icon-foreground.png",

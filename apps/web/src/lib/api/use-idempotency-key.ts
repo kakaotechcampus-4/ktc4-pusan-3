@@ -21,28 +21,20 @@
  * 실패·타임아웃 뒤 다시 누르면 `current()` 가 같은 키를 돌려준다. 그게 재시도다.
  */
 
-import { useCallback, useRef } from "react";
+import { useState } from "react";
 
-import { newIdempotencyKey, type IdempotencyKey } from "./idempotency";
+import { createIdempotencyKeyHolder, type IdempotencyKeyHolder } from "./idempotency";
 
-export interface IdempotencyKeyHolder {
-  /** 지금 동작의 키. 여러 번 불러도 같은 값이다. */
-  current: () => IdempotencyKey;
-  /** 다음 동작으로 넘어간다. 🚨 성공 응답을 받은 뒤에만 부른다. */
-  rotate: () => void;
-}
+export type { IdempotencyKeyHolder };
 
+/**
+ * 🚨 본문이 바뀌면 키도 바뀌어야 하는 동작은 `current(text)` 로 본문을 넘긴다
+ *    (한 줄 입력 · 사진 설명처럼 사용자가 고쳐 쓸 수 있는 것). 자세한 이유는 `idempotency.ts`.
+ */
 export function useIdempotencyKey(): IdempotencyKeyHolder {
-  const keyRef = useRef<IdempotencyKey | null>(null);
-
-  const current = useCallback((): IdempotencyKey => {
-    keyRef.current ??= newIdempotencyKey();
-    return keyRef.current;
-  }, []);
-
-  const rotate = useCallback((): void => {
-    keyRef.current = null;
-  }, []);
-
-  return { current, rotate };
+  // 🚨 렌더마다 새로 만들면 키가 매번 바뀐다 — 재시도가 새 요청이 되어 장치가 통째로 무의미해진다.
+  //    `useState` 의 게으른 초기화로 컴포넌트 수명 동안 **한 번만** 만든다. `useMemo` 는 React 가
+  //    버릴 수 있어서 안 되고, `useRef` 는 렌더 중 읽기를 react-hooks/refs 가 막는다.
+  const [holder] = useState(createIdempotencyKeyHolder);
+  return holder;
 }

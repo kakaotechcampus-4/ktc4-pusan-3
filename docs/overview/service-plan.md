@@ -24,7 +24,7 @@
 
 ### 서비스 프로토타입
 
-[육아기억 AI 프로토타입 (standalone)](../assets/prototype.html) — 브라우저에서 파일을 직접 열어 보세요.
+[아이캐치 프로토타입 (standalone)](../assets/prototype.html) — 브라우저에서 파일을 직접 열어 보세요.
 
 ---
 

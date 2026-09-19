@@ -27,7 +27,7 @@ class ErrorCode:
 class ToolResult:
     success: bool
     operation: Operation
-    resource: str  # observation_* / event / reminder ...
+    resource: str  # observation_* / event / event_item ...
     data: dict[str, Any] = field(default_factory=dict)
     error: dict[str, str] | None = None
 

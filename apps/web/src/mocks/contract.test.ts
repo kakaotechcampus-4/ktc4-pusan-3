@@ -6,6 +6,16 @@ import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import { addHealthSafety, confirmEvent, submitOnboarding } from "@/lib/api/operations";
 import { streamRunEvents } from "@/lib/api/sse";
 import { api } from "@/lib/api/client";
+import type {
+  Affinity,
+  AffinitiesResponse,
+  CalendarDayResponse,
+  CalendarMonthResponse,
+  CorrectionResponse,
+  Observation,
+  ObservationsResponse,
+  SuggestionFeedbackResponse,
+} from "@/lib/api/types";
 
 import { setScenario } from "./scenario";
 
@@ -183,3 +193,182 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     }
   });
 });
+
+/* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
+
+describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
+  it("도메인을 생략하면 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    const kinds = new Set(page.items.map((item) => item.kind));
+    expect(kinds.size).toBeGreaterThan(1);
+    expect(kinds).toContain("observation_health");
+    expect(page.total).toBe(page.items.length);
+
+    const dates = page.items.map((item) => item.observed_to);
+    expect([...dates].sort().reverse()).toEqual(dates);
+  });
+
+  it("도메인 필터는 그 테이블만 내려준다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "food" },
+    });
+
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.every((item) => item.kind === "observation_food")).toBe(true);
+  });
+
+  it("프로필은 affinities 한 배열이고 safety 가 따로 온다", async () => {
+    const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
+
+    expect(Array.isArray(body.affinities)).toBe(true);
+    // 🚨 기억이 비어도 안전 정보는 비지 않는다 — 감쇠가 없다 (계약서 §07).
+    expect(body.safety.length).toBeGreaterThan(0);
+  });
+
+  it("health 관찰에는 subject · polarity · affinity 키가 아예 없다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "health" },
+    });
+    const health = page.items[0];
+
+    expect(health.kind).toBe("observation_health");
+    expect("subject" in health).toBe(false);
+    expect("polarity" in health).toBe(false);
+    expect("affinity" in health).toBe(false);
+  });
+});
+
+describe("⑨ 교정은 지우지 않고 내린다", () => {
+  it("target_ref 를 배열로 보내면 422 다", async () => {
+    const response = await fetch(`${API_BASE_URL}/corrections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_ref: [{ kind: "profile_affinity", id: "a_12" }],
+        verdict: "confirm",
+        child_id: "c1",
+      }),
+    });
+
+    expect(response.status).toBe(422);
+  });
+
+  it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    const target = before.items.find((item) => item.kind === "observation_education");
+    expect(target).toBeDefined();
+
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "wrong",
+      child_id: "c1",
+    });
+
+    // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
+    expect((result.target as Observation).status).toBe("inactive");
+    // 기본 조회는 active 만 본다 — 행은 남았지만 목록에서는 빠진다.
+    const after = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(after.items.some((item) => item.id === target!.id)).toBe(false);
+  });
+
+  it("기억 need_more_observation 은 confirmed 를 candidate 로 한 단계만 내린다", async () => {
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id: "a_12" },
+      verdict: "need_more_observation",
+      child_id: "c1",
+    });
+
+    expect((result.target as Affinity).state).toBe("candidate");
+  });
+
+  it("기억 outdated 는 archived 로 내린다 — 한 단계가 아니다", async () => {
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id: "a_20" },
+      verdict: "outdated",
+      child_id: "c1",
+    });
+
+    expect((result.target as Affinity).state).toBe("archived");
+  });
+});
+
+describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
+  it("memory_changed 가 항상 false 다", async () => {
+    const body = await api.patch<SuggestionFeedbackResponse>("/suggestions/s_past_2/feedback", {
+      feedback: "child_disliked",
+    });
+
+    expect(body.suggestion.feedback).toBe("child_disliked");
+    // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
+    expect(body.memory_changed).toBe(false);
+  });
+
+  it("피드백을 보내도 관찰 건수가 그대로다", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    await api.patch("/suggestions/s_past_1/feedback", { feedback: "not_acted" });
+    const after = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    expect(after.total).toBe(before.total);
+  });
+});
+
+/* ── 09 캘린더 ───────────────────────────────────────────────────────── */
+
+describe("⑪ 일기는 관찰이 아니다", () => {
+  it("일기를 써도 관찰이 늘지 않는다", async () => {
+    const date = (
+      await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+        query: { month: monthOf(new Date()) },
+      })
+    ).days[0]?.date;
+    expect(date).toBeDefined();
+
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    await api.put<CalendarDayResponse>(`/children/c1/calendar/${date}`, {
+      text: "지어낸 일기 한 줄",
+      image_urls: [],
+      event_ids: [],
+    });
+
+    const after = await api.get<ObservationsResponse>("/children/c1/observations");
+    // 🚨 계약서 §09 — 일기는 명시적으로 태우지 않는 한 관찰로 추출되지 않는다.
+    expect(after.total).toBe(before.total);
+
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.diary?.text).toBe("지어낸 일기 한 줄");
+  });
+
+  it("월 조회의 has_event 는 confirmed 만 센다", async () => {
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: monthOf(new Date()) },
+    });
+
+    // 05·06 이 만드는 draft(e_draft_1)는 아직 캘린더에 쓴 것이 아니다.
+    for (const day of month.days) {
+      if (!day.has_event) continue;
+      const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
+      expect(detail.events.every((event) => event.status === "confirmed")).toBe(true);
+    }
+  });
+
+  it("준비물 체크는 다시 읽어도 남아 있다", async () => {
+    await api.patch("/event-items/i_1", { is_prepared: true });
+
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: monthOf(new Date()) },
+    });
+    const eventDay = month.days.find((day) => day.has_event);
+    expect(eventDay).toBeDefined();
+
+    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
+    const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
+    expect(item?.is_prepared).toBe(true);
+  });
+});
+
+/** 목이 만든 달을 그대로 물어보기 위한 키. 표시가 아니라 쿼리 파라미터다. */
+function monthOf(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
