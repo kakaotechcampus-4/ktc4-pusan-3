@@ -174,6 +174,7 @@ async def _update(
         observation_id=args.observation_id,
         fields=fields,
         observed_on=day if args.observed_on is not None else None,
+        clear=frozenset(args.clear),
     )
     if row is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))

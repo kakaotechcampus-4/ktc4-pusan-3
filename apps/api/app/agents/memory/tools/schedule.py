@@ -138,6 +138,8 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
         ends_on=args.ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
+        # ends_at은 fields가 아니라 when으로 가기 때문에 store의 clear과 무관
+        drop_end="ends_at" in args.clear,
     )
     before = EventWhen(
         starts_at=current.starts_at, ends_at=current.ends_at, all_day=current.all_day
