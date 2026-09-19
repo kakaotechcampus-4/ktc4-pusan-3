@@ -4,6 +4,7 @@ import { API_BASE_URL } from "@/lib/env";
 import { me, meNeedingConsent, MOCK_TOKEN, PARENT_ID } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import type { WithdrawResponse } from "@/lib/api/types";
 import { consentEffective, recordConsent } from "./settings";
 
 /**
@@ -37,6 +38,38 @@ export const authHandlers = [
       // 실서버는 등록된 카카오 콜백 URL 의 오리진에서 파생한다. 목은 자기 주소로 충분하다.
       start_url: `${API_BASE_URL}/auth/${String(params.provider)}`,
     });
+  }),
+
+  /**
+   * 🚨 **`/auth/*` 의 이름이 정해진 경로는 `:provider` 보다 먼저 선다.** msw 는 배열 순서대로
+   *    맞추는데 `:provider` 가 `logout` · `withdraw` 까지 삼킨다. 실제로 `POST /auth/logout`
+   *    이 교환 핸들러에 걸려 있었고, 본문이 없어서 500 으로 떨어졌는데도 화면은 로컬 세션을
+   *    비우고 나가 버려서 **아무도 눈치채지 못했다.** 새 `/auth/<이름>` 을 더할 때도 여기다.
+   */
+  http.post(url("/auth/logout"), async () => {
+    await networkDelay();
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  /**
+   * ⚠️ **계약서에도 `docs/api/auth-kakao-v1.md` 에도 없다** (`lib/api/types.ts` 의
+   *    `WithdrawRequest` 주석). 화면을 끝까지 돌려 보려고 목에만 세운 제안이다.
+   *
+   * 🚨 목이라고 **아무거나 200 으로 돌려주지 않는다.** 화면이 읽은 유예기간을 같이 받고 안
+   *    보내면 막는다 — 실서버가 그 값을 남겨야 "부모가 무엇을 읽고 눌렀는가" 를 알 수 있다.
+   */
+  http.post(url("/auth/withdraw"), async ({ request }) => {
+    await networkDelay();
+    const body = (await request.json()) as { acknowledged_grace_days?: number };
+    if (typeof body.acknowledged_grace_days !== "number") {
+      return apiError(400, "validation_failed", "acknowledged_grace_days 가 필요해요");
+    }
+    const res: WithdrawResponse = {
+      purge_after: new Date(
+        Date.now() + body.acknowledged_grace_days * 24 * 60 * 60 * 1000,
+      ).toISOString(),
+    };
+    return HttpResponse.json(res);
   }),
 
   // 교환 — 계약서의 {access_token} 대신 {code, bind} 를 받는다. 응답은 두 갈래(union)다.
@@ -74,11 +107,6 @@ export const authHandlers = [
       return apiError(403, "consent_required", "먼저 동의가 필요해요", { scopes: missing });
     }
     return session(true);
-  }),
-
-  http.post(url("/auth/logout"), async () => {
-    await networkDelay();
-    return new HttpResponse(null, { status: 204 });
   }),
 
   http.get(url("/me"), async () => {

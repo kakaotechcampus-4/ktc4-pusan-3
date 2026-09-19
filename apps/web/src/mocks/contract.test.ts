@@ -13,6 +13,7 @@ import type {
   ConsentResponse,
   ConsentsResponse,
   InviteResponse,
+  WithdrawResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
   CorrectionResponse,
@@ -459,6 +460,27 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
    *    계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서, 없다고 막히면 화면이
    *    초대를 아예 못 한다 — 이 테스트가 그 회귀를 잡는다.
    */
+  /**
+   * ⚠️ `POST /auth/withdraw` 는 **계약서에 없다** (`lib/api/types.ts`). 화면을 끝까지 돌려
+   *    보려고 목에만 세운 제안이고, 서버가 붙으면 이 표를 실서버에도 건다.
+   */
+  it("POST /auth/logout 이 교환 핸들러에 안 먹힌다 — 204 다", async () => {
+    // 🚨 `:provider` 가 `logout` 까지 삼켜서 실제로 500 이 나고 있었다. 화면이 로컬 세션을
+    //    비우고 나가 버려서 아무도 눈치채지 못한 종류의 회귀라, 여기서 못을 박는다.
+    const res = await raw("/auth/logout");
+    expect(res.status).toBe(204);
+  });
+
+  it("탈퇴는 화면이 읽은 유예기간을 같이 받는다 — 없으면 막힌다", async () => {
+    const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+
+    const res = await api.post<WithdrawResponse>("/auth/withdraw", {
+      acknowledged_grace_days: 30,
+    });
+    expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
+  });
+
   it("relation 없이 초대해도 링크가 나온다", async () => {
     const res = await api.post<InviteResponse>("/children/c1/invites", {});
     expect(res.invite_url).toMatch(/^https:\/\//);
