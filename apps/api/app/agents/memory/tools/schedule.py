@@ -164,7 +164,9 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
     row = await context.store.update_event(event_id=args.event_id, fields=fields, when=when)
     if row is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    return ok("update", EVENT, id=row.id, starts_at=row.starts_at.isoformat())
+    # 비운 필드를 필드명만 실어서 모델이 결과로 지워진 걸 확인 가능하게 함
+    cleared = {"cleared": ["ends_at"]} if patch.drop_end else {}
+    return ok("update", EVENT, id=row.id, starts_at=row.starts_at.isoformat(), **cleared)
 
 
 def _resolve_when(

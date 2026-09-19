@@ -178,7 +178,9 @@ async def _update(
     )
     if row is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
-    return ok("update", resource, id=row.id, observed_on=row.observed_on.isoformat())
+    # 비운 필드를 필드명만 실어서 모델이 결과로 지워진 걸 확인 가능하게 함
+    cleared = {"cleared": sorted(set(args.clear))} if args.clear else {}
+    return ok("update", resource, id=row.id, observed_on=row.observed_on.isoformat(), **cleared)
 
 
 async def _delete(context: AgentContext, args: RecordRef, *, domain: str) -> ToolResult:
