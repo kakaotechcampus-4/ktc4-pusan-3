@@ -171,7 +171,10 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_event",
-        description=f"이미 등록된 일정의 정보를 고친다. {_NEEDS_QUERY}",
+        description=(
+            "이미 등록된 일정의 정보를 고친다. "
+            f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY}'
+        ),
         args=EventUpdate,
     ),
     ToolDefinition(
