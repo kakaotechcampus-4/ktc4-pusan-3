@@ -150,13 +150,11 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
             return resolved
         when = resolved
 
-    fields: dict[str, Any] = {
-        "title": args.title,
-        "event_type": args.event_type,
-        "category": args.category,
-    }
+    edits = {"title": args.title, "event_type": args.event_type, "category": args.category}
+    # 안 바꿀 필드(None)는 store 로 넘기지 않는다
+    fields: dict[str, Any] = {key: value for key, value in edits.items() if value is not None}
     moved = when is not None and when != before
-    if moved or any(value is not None for value in fields.values()):
+    if moved or fields:
         # 고친 일정은 다시 승인을 받도록. 만료 시계도 수정 시점부터 다시 셈
         fields["status"] = "draft"
         fields["expires_at"] = context.now + timedelta(hours=DRAFT_TTL_HOURS)
@@ -209,9 +207,11 @@ async def create_event_item(context: AgentContext, args: EventItemCreate) -> Too
 
 
 async def update_event_item(context: AgentContext, args: EventItemUpdate) -> ToolResult:
+    edits = {"item_name": args.item_name, "is_prepared": args.is_prepared}
     row = await context.store.update_event_item(
         item_id=args.item_id,
-        fields={"item_name": args.item_name, "is_prepared": args.is_prepared},
+        # 안 바꿀 필드(None)는 넘기지 않는다. is_prepared=False 는 바꾸는 값이라 남는다
+        fields={key: value for key, value in edits.items() if value is not None},
     )
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
