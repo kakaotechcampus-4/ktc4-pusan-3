@@ -94,19 +94,19 @@ class InMemoryStore:
         observation_id: str,
         fields: dict[str, Any],
         observed_on: date | None = None,
+        clear: frozenset[str] = frozenset(),
     ) -> ObservationRow | None:
         row = await self.get_observation(domain=domain, observation_id=observation_id)
         if row is None:
             return None
 
-        changes = {key: value for key, value in fields.items() if value is not None}
         updated = ObservationRow(
             id=row.id,
             domain=row.domain,
             raw_text=row.raw_text,
             created_at=row.created_at,
             observed_on=observed_on or row.observed_on,
-            fields={**row.fields, **changes},
+            fields={**row.fields, **fields, **dict.fromkeys(clear)},  # clear는 None으로
         )
         self._observations[row.id] = updated
         return updated
@@ -168,7 +168,7 @@ class InMemoryStore:
         if row is None:
             return None
 
-        changes = {key: value for key, value in fields.items() if value is not None}
+        changes = dict(fields)
         updated = EventRow(
             id=row.id,
             title=changes.pop("title", row.title),
@@ -211,12 +211,11 @@ class InMemoryStore:
         if row is None:
             return None
 
-        changes = {key: value for key, value in fields.items() if value is not None}
         updated = EventItemRow(
             item_id=row.item_id,
             event_id=row.event_id,
-            item_name=changes.get("item_name", row.item_name),
-            is_prepared=changes.get("is_prepared", row.is_prepared),
+            item_name=fields.get("item_name", row.item_name),
+            is_prepared=fields.get("is_prepared", row.is_prepared),
         )
         self._items[row.item_id] = updated
         return updated
