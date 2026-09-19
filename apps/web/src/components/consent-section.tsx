@@ -29,9 +29,13 @@ import { formatDay } from "@/lib/format";
 /**
  * 10 설정 — 동의 관리.
  *
- * 🚨 **필수와 선택을 같은 컨트롤로 그리지 않는다.** 필수 3건은 철회 버튼이 아예 없고 잠금
- *    아이콘 + 왜 못 끄는지가 글자로 선다. 선택 2건만 켜고 끈다 — 같은 스위치를 나란히 두면
- *    "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와 다르다 (`lib/consent.ts` 주석).
+ * 🚨 **필수와 선택을 같은 컨트롤로도, 같은 구역으로도 두지 않는다.** 내가 지금 쥐고 있는 것
+ *    (선택)은 화면 **위**에서 켜고 끄고, 이미 동의한 것(필수)은 **맨 아래**에서 이름과 상태만
+ *    간단히 보여준다. 같은 목록에 나란히 두면 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와
+ *    다르다 — 그리고 손댈 수 없는 넷이 손댈 수 있는 하나보다 위에 서서 자리를 먹는다.
+ *
+ * 🚨 **필수를 화면에서 빼지는 않는다.** 무엇에 동의했는지 열람할 경로는 남아 있어야 한다
+ *    (전문 시트로 가는 길이 여기 하나뿐이다).
  *
  * 🚨 **승인 게이트가 아니다.** 승인 게이트는 캘린더 쓰기·건강 기록 확정 딱 2곳이고 늘리지
  *    않는다 (최상위 CLAUDE.md §2) — `btn-approve` 도 `caution` 색도 쓰지 않는다.
@@ -122,18 +126,13 @@ export function ConsentSection({ childId }: { childId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-3">
       {/* 값이 바뀐 뒤 한 문장. 자리를 차지하지 않고 소리로만 남는다. */}
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
 
       <div>
-        {/* 🚨 두 무리 다 머리말을 단다. 한쪽에만 라벨이 있으면 나머지가 "그냥 목록" 으로
-            읽혀서, 이 화면이 가르려던 것(내가 쥔 것 / 못 끄는 것)이 사라진다.
-            🚨 **자물쇠 아이콘을 붙이지 않는다.** 열린 자물쇠와 닫힌 자물쇠는 16px 에서 거의
-            같은 모양이라, 두 머리줄을 가르는 대신 헷갈리게 만든다 — 뜻은 글자가 진다 (§4). */}
-        <h3 className="text-label text-ink-muted mb-2">켜고 끌 수 있는 동의</h3>
         <SettingsGroup>
           {OPTIONAL_CONSENTS.map((item) => {
             const on = effective[item.scope] === true;
@@ -174,37 +173,6 @@ export function ConsentSection({ childId }: { childId: string }) {
             );
           })}
         </SettingsGroup>
-      </div>
-
-      <div>
-        <h3 className="text-label text-ink-muted mb-2">끌 수 없는 동의</h3>
-        <SettingsGroup>
-          {REQUIRED_CONSENTS.map((item) => (
-            <SettingsInfoRow
-              key={item.scope}
-              icon={CONSENT_ICON[item.scope]}
-              title={item.shortLabel}
-              /* 🚨 **여기도 상태가 먼저다.** 이유만 적어 두면 제목이 "지금 이렇게 되어
-                 있어요" 인 화면에서 이 셋만 지금 어떤지를 말하지 않는다. 약관 버전이
-                 올라 필수 스코프가 꺼지면(콜백 화면이 이 화면으로 보내는 그 경우)
-                 줄이 똑같이 그려져서, 요약의 분수만 조용히 줄어든다. */
-              status={effective[item.scope] === true ? "동의함" : "동의하지 않음"}
-              note={item.blocks[0]}
-              /* 🚨 **오른쪽을 비운다.** 여기엔 할 수 있는 일이 없고, 그게 이 무리의 사실이다.
-                 버튼을 하나 세워 두면 오른쪽 열이 "무엇이든 할 수 있는 자리" 로 읽힌다. */
-              onTitleClick={() => setDetail(item)}
-            />
-          ))}
-        </SettingsGroup>
-        {/* 🚨 "탈퇴하면 됩니다" 라고 쓰지 않는다 — 탈퇴 엔드포인트가 없고 유예기간도
-            미정이라(docs/api/auth-kakao-v1.md §미결), 지금 없는 길을 안내하게 된다. */}
-        <p className="text-caption text-ink-subtle mt-2">
-          {/* 🚨 개수를 글자로 박지 않는다. 필수/선택은 `lib/consent.ts` 가 정하고 여기서
-              세는데, "이 셋은" 처럼 박아 두면 목록이 바뀔 때 화면만 옛말을 한다
-              (실제로 아이 건강이 선택으로 갔다가 다시 필수로 돌아왔다). */}
-          이 {REQUIRED_CONSENTS.length}건은 서비스가 성립하는 근거라 화면에서 끌 수 없어요. 그만
-          쓰고 싶다면 계정을 정리하는 방법을 준비하고 있어요.
-        </p>
       </div>
 
       {/* 내용 보기 — 되돌릴 수 있는 시트라 스크림 탭·ESC 로 닫힌다. */}
@@ -308,5 +276,68 @@ function ConsentDetail({ item }: { item: ConsentItem }) {
       ))}
       <p className="text-caption text-ink-subtle border-line border-t pt-4">{TERMS_NOT_FINAL}</p>
     </div>
+  );
+}
+
+/**
+ * 맨 아래 — **이미 동의한 것.** 필수 4건을 이름과 상태만으로 간단히 보여준다.
+ *
+ * 🚨 **여기서는 아무것도 할 수 없다.** 오른쪽이 비어 있고 왜 못 끄는지도 한 줄로 줄였다 —
+ *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹던 것을 아래로 내린 것이
+ *    이 구역의 전부다. 줄마다 이유를 길게 적으면 내린 의미가 없어진다.
+ *
+ * 🚨 **그래도 전문으로 가는 길은 남긴다.** 무엇에 동의했는지 확인할 경로가 이것뿐이다 —
+ *    줄의 이름을 누르면 `font-doc` 전문 시트가 열린다.
+ *
+ * 🚨 **상태를 글자로 낸다** (`동의함`). 약관 버전이 올라 필수 스코프가 꺼지는 경우가 있고
+ *    (콜백 화면이 이 화면으로 보내는 그 경우다), 그때 줄이 똑같이 그려지면 안 된다.
+ */
+export function GrantedConsentSection({ childId }: { childId: string }) {
+  const [detail, setDetail] = useState<ConsentItem | null>(null);
+
+  const consents = useQuery({
+    queryKey: qk.consents(childId),
+    queryFn: () => api.get<ConsentsResponse>("/consents", { query: { child_id: childId } }),
+  });
+
+  // 🚨 위 구역이 이미 같은 쿼리로 실패를 말한다. 여기서 또 실패 카드를 세우면 한 화면에
+  //    같은 사고가 두 번 적힌다 — 조용히 비워 두고 상태만 모른 채로 이름을 보여준다.
+  const effective = consents.data?.effective;
+
+  return (
+    <>
+      <SettingsGroup>
+        {REQUIRED_CONSENTS.map((item) => (
+          <SettingsInfoRow
+            key={item.scope}
+            icon={CONSENT_ICON[item.scope]}
+            title={item.shortLabel}
+            onTitleClick={() => setDetail(item)}
+            status={
+              effective === undefined
+                ? undefined
+                : effective[item.scope] === true
+                  ? "동의함"
+                  : "동의하지 않음"
+            }
+          />
+        ))}
+      </SettingsGroup>
+
+      <BottomSheet
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        variant="document"
+        title={detail?.label ?? ""}
+        description={detail?.legalBasis}
+        footer={
+          <Button block variant="secondary" onClick={() => setDetail(null)}>
+            닫기
+          </Button>
+        }
+      >
+        {detail ? <ConsentDetail item={detail} /> : null}
+      </BottomSheet>
+    </>
   );
 }
