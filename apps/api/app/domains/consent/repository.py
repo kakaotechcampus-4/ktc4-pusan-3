@@ -87,9 +87,12 @@ async def record_consent(
 
     actor_ref 는 actor_parent_id 로 여기서 채운다 — 호출자가 따로 넘기지 못한다.
     """
-    if await latest_action(
-        session, scope=scope, subject_parent_id=subject_parent_id, child_id=child_id
-    ) is action:
+    if (
+        await latest_action(
+            session, scope=scope, subject_parent_id=subject_parent_id, child_id=child_id
+        )
+        is action
+    ):
         return None
 
     consent = Consent(

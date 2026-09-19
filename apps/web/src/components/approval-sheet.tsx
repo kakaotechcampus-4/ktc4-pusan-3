@@ -45,6 +45,9 @@ import { formatEventTime } from "@/lib/format";
 /** 알레르기 확인은 3지선다다. 🚨 "모르겠어요" 는 "없음" 이 아니다 — 아무것도 저장하지 않는다. */
 type SafetyAnswer = "has" | "none" | "unknown";
 
+/** 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**. 둘을 한 값으로 쓰지 않는다. */
+type SafetySaveState = "saving" | "saved" | "failed";
+
 const SAFETY_CHOICES: Array<{ value: SafetyAnswer; label: string }> = [
   { value: "none", label: "먹어봤어요 · 괜찮았어요" },
   { value: "has", label: "알레르기가 있어요" },
@@ -68,6 +71,15 @@ export function ApprovalSheet({
   const queryClient = useQueryClient();
 
   const [answers, setAnswers] = useState<Record<string, SafetyAnswer>>({});
+  /**
+   * 재료별 **서버 저장** 상태.
+   *
+   * 🚨 화면의 "기록에 추가했어요" 는 오직 여기서만 나온다. 예전에는 보호자가 "있어요" 를 누른
+   *    순간부터 그 문구가 떴는데, 저장이 실패해도 그대로 남아서 **기록되지 않은 알레르기를
+   *    기록됐다고 믿게** 했다 (PR #71 리뷰). 선택은 이 제안을 막을 뿐이고, 다음 제안까지
+   *    걸러내는 것은 저장이 끝나야 한다.
+   */
+  const [saveState, setSaveState] = useState<Record<string, SafetySaveState>>({});
   const [confirmed, setConfirmed] = useState<ConfirmEventResponse | null>(null);
 
   /**
@@ -81,8 +93,18 @@ export function ApprovalSheet({
 
   const ingredientChecks = draft.prechecks.filter((p) => p.code === "unknown_ingredient");
   const answeredAll = ingredientChecks.every((p) => answers[p.item] !== undefined);
-  /** 🚨 알레르기가 확인된 재료가 하나라도 있으면 이 제안은 나가지 않는다 (문서 §11). */
-  const blocked = ingredientChecks.some((p) => answers[p.item] === "has");
+  /**
+   * 🚨 알레르기가 확인된 재료. 하나라도 있으면 이 제안은 나가지 않는다 (문서 §11).
+   *    저장까지 끝난 재료는 **선택을 바꿔도 계속 막는다** — 기록이 이미 서버에 있는데 화면에서만
+   *    풀리면, 알레르기가 등록된 아이에게 그 재료가 든 일정을 넣을 수 있다 (최상위 §2).
+   */
+  const blockedItems = ingredientChecks
+    .map((p) => p.item)
+    .filter((item) => answers[item] === "has" || saveState[item] === "saved");
+  const blocked = blockedItems.length > 0;
+  /** 막힌 재료가 전부 기록에 남았는가. 이것이 참일 때만 "앞으로도 걸러내요" 라고 말할 수 있다. */
+  const recorded = blocked && blockedItems.every((item) => saveState[item] === "saved");
+  const failedItems = blockedItems.filter((item) => saveState[item] === "failed");
 
   /** 승인 게이트 ㉡ — 보호자가 확인한 값만 들어간다. LLM 이 추론한 값은 여기 오지 않는다 (NF-03). */
   const saveSafety = useMutation({
@@ -97,7 +119,12 @@ export function ApprovalSheet({
       };
       return addHealthSafety(childId, body, key);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) }),
+    onMutate: (item) => setSaveState((prev) => ({ ...prev, [item]: "saving" })),
+    onSuccess: (_result, item) => {
+      setSaveState((prev) => ({ ...prev, [item]: "saved" }));
+      return queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) });
+    },
+    onError: (_error, item) => setSaveState((prev) => ({ ...prev, [item]: "failed" })),
   });
 
   /** 승인 게이트 ㉠ — 되돌릴 수 없는 지점. */
@@ -120,7 +147,8 @@ export function ApprovalSheet({
     if (value === "has") saveSafety.mutate(item);
   }
 
-  const busy = confirmEvent.isPending || saveSafety.isPending;
+  const busy =
+    confirmEvent.isPending || Object.values(saveState).some((state) => state === "saving");
 
   return (
     <BottomSheet
@@ -171,9 +199,20 @@ export function ApprovalSheet({
       ) : (
         <div className="flex flex-col gap-4">
           {blocked ? (
-            <Banner tone="danger" title="알레르기 기록에 추가했어요">
-              이 재료가 들어간 제안은 넣지 않아요. 앞으로의 식사 제안에서도 걸러내요.
-            </Banner>
+            // 🚨 두 문구를 가르는 것은 보호자의 선택이 아니라 **서버 저장 결과**다.
+            //    저장 전에 "앞으로도 걸러내요" 라고 말하면, 저장이 실패한 채로 닫은 보호자가
+            //    다음 제안에서도 걸러진다고 믿는다 (PR #71 리뷰).
+            recorded ? (
+              <Banner tone="danger" title="알레르기 기록에 추가했어요">
+                이 재료가 들어간 제안은 넣지 않아요. 앞으로의 식사 제안에서도 걸러내요.
+              </Banner>
+            ) : (
+              // 하단 문구가 "이 제안은 넣지 않을게요" 를 이미 말한다. 제목은 그 말을 되풀이하지
+              // 않고 **기록 쪽**을 말한다 — 둘이 가리키는 대상이 다르다는 것이 이 수정의 요지다.
+              <Banner tone="danger" title="아직 기록에는 저장되지 않았어요">
+                이 제안은 넣지 않아요. 다만 기록에 저장되기 전까지는 다음 제안에서 걸러내지 못해요.
+              </Banner>
+            )
           ) : ingredientChecks.length > 0 ? (
             <Banner tone="caution" title="처음 보는 재료가 있어요">
               아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
@@ -186,20 +225,28 @@ export function ApprovalSheet({
               precheck={precheck}
               value={answers[precheck.item]}
               onAnswer={(value) => answer(precheck.item, value)}
-              disabled={saveSafety.isPending}
+              disabled={saveState[precheck.item] === "saving"}
             />
           ))}
 
-          {saveSafety.isError ? (
+          {failedItems.length > 0 ? (
+            // 🚨 예전에는 `saveSafety.reset()` 을 부르는 "다시 고르기" 였다 — 실패 안내만 지우고
+            //    저장은 다시 시도하지 않아서, 화면에서 실패가 사라진 채로 기록이 비어 있었다.
             <CardFailed>
-              <p>알레르기 기록을 저장하지 못했어요. 저장되기 전까지는 넣지 않을게요.</p>
+              <p>
+                {failedItems.join(", ")} — 알레르기 기록에 저장하지 못했어요. 이 제안은 넣지 않지만,
+                저장되기 전까지는 다음 제안에서 걸러내지 못해요.
+              </p>
               <Button
                 variant="tertiary"
                 size="compact"
                 className="mt-3"
-                onClick={() => saveSafety.reset()}
+                disabled={busy}
+                // 🚨 재료별 키를 그대로 다시 쓴다 (`safetyKeys`). 새 키를 만들면 이미 저장된
+                //    재료가 한 번 더 들어간다.
+                onClick={() => failedItems.forEach((item) => saveSafety.mutate(item))}
               >
-                다시 고르기
+                다시 시도
               </Button>
             </CardFailed>
           ) : null}
