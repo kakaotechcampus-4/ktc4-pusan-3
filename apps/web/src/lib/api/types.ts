@@ -791,3 +791,27 @@ export interface InviteResponse {
   invite_url: string;
   expires_at: string;
 }
+
+/**
+ * POST /auth/withdraw — ⚠️ **계약서 v1 에도 `docs/api/auth-kakao-v1.md` 에도 없다.**
+ *
+ * 그 문서 §1 이 "계정 탈퇴·파기 배치" 를 다루지 않는 것으로 미뤄 뒀고(노션), §미결 1 의
+ * **유예기간 N일이 아직 정해지지 않았다.** 이 프론트는 `WITHDRAW_GRACE_DAYS` 를 팀 제안값으로
+ * 두고 화면을 세웠다 — MSW 목 위에서만 돈다. 🚨 서버가 붙기 전에 이 값을 화면에서만 바꾸지
+ * 말 것: 부모에게 약속한 날짜와 서버가 실제로 지우는 날짜가 어긋난다.
+ *
+ * 서버가 이미 정해 둔 것(같은 문서 §4-2 · §5-3)은 **탈퇴 시 그 보호자의 세션을 전부
+ * 무효화한다**는 것과, 계정이 `parent.deleted_at` 으로 내려간다는 것 둘이다.
+ */
+export interface WithdrawRequest {
+  /**
+   * 🚨 화면이 무엇을 보여줬는지 서버에 남긴다. 유예기간을 바꿨는데 옛 화면을 보던 사람이
+   *    그대로 탈퇴하면, 그 사람이 읽은 조건이 무엇이었는지 알 방법이 이것뿐이다.
+   */
+  acknowledged_grace_days: number;
+}
+
+export interface WithdrawResponse {
+  /** 유예가 끝나 되돌릴 수 없게 되는 시각. 화면이 계산하지 않는다 — 서버가 만든 값이다. */
+  purge_after: string;
+}

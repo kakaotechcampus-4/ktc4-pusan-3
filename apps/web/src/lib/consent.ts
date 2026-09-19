@@ -313,3 +313,12 @@ export const OPTIONAL_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => !i.r
 export function consentItem(scope: string): ConsentItem | undefined {
   return CONSENT_ITEMS.find((i) => i.scope === scope);
 }
+
+/**
+ * 탈퇴 유예기간. ⚠️ **팀 제안값이다** — `docs/api/auth-kakao-v1.md` §미결 1 의 "유예기간 N일"
+ * 이 아직 정해지지 않았고, 이 PR 이 30일을 제안한다 (#89).
+ *
+ * 🚨 **화면에서만 바꾸지 않는다.** 부모에게 약속한 날짜와 서버가 실제로 지우는 날짜가
+ *    어긋나면 그건 문구 문제가 아니라 사고다. 서버가 정하면 그 값으로 맞춘다.
+ */
+export const WITHDRAW_GRACE_DAYS = 30;
