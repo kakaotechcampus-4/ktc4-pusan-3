@@ -21,6 +21,7 @@ from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
@@ -61,6 +62,16 @@ class Ref:
 @dataclass(frozen=True)
 class Saved:
     refs: tuple[Ref, ...]  # 화면용 변환은 app/api에서 처리
+
+
+@dataclass(frozen=True)
+class EventDrafts:
+    """보호자 제출을 기다리는 일정 초안. SSE 이름은 event_draft.
+
+    JSON 변환은 EventDraft.to_payload() 가 한다.
+    """
+
+    drafts: tuple[EventDraft, ...]
 
 
 @dataclass(frozen=True)
@@ -120,6 +131,7 @@ class Done:
 Event = (
     Step
     | Saved
+    | EventDrafts
     | FoodRouted
     | Unavailable
     | Guidance
@@ -212,6 +224,9 @@ async def handle_input(
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
+            # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
+            if memory.drafts:
+                send(EventDrafts(memory.drafts))
             if memory.final_message:
                 send(MemoryNote(memory.final_message))
             unwritten = _unwritten(routing.memory_task, memory)
@@ -405,8 +420,8 @@ def _log(result: PipelineResult) -> None:
     memory = result.memory
     logger.info(
         "pipeline run_id=%s intent=%s degraded=%s supervisor_error=%s hints=%d steps=%s "
-        "ended_by=%s saved=%d food=%s guidance=%s unavailable=%s note=%s rerouted=%s failed=%s "
-        "memory_only=%s supervisor_only=%s model_calls=%d latency_ms=%d",
+        "ended_by=%s saved=%d drafts=%d food=%s guidance=%s unavailable=%s note=%s "
+        "rerouted=%s failed=%s memory_only=%s supervisor_only=%s model_calls=%d latency_ms=%d",
         result.run_id,
         result.routing.intent_type,
         result.routing.degraded,
@@ -415,6 +430,7 @@ def _log(result: PipelineResult) -> None:
         memory.steps if memory else None,
         memory.ended_by if memory else None,
         len(_saved_refs(memory)) if memory else 0,
+        len(memory.drafts) if memory else 0,
         [str(item.task_type) for item in result.food],
         [guidance.code for guidance in result.routing.guidance],
         list(result.routing.unavailable_agents),
