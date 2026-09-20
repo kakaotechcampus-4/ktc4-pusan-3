@@ -1,9 +1,9 @@
 """Memory Agent 라이브 eval. 실제 모델을 부르고 run()을 돌린다.
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
-    uv run pytest tests/eval/agents/test_memory.py -m live -s
+    uv run pytest tests/eval/agents/memory/test_memory.py -m live -s
 
 Memory 하나만 떼어 T01~T30 의 저장 결과를 세밀하게 본다. Supervisor → Memory → Food 를
-끝까지 돌리는 라이브 테스트는 test.py 다.
+끝까지 돌리는 라이브 테스트는 tests/eval/agents/supervisor/test.py 다.
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
 MEMORY_API_KEY / MEMORY_BASE_URL / MEMORY_MODEL 은 apps/api/.env 에서 읽는다.

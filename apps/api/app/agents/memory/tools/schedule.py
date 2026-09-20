@@ -138,6 +138,8 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
         ends_on=args.ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
+        # ends_at은 fields가 아니라 when으로 가기 때문에 store의 clear과 무관
+        drop_end="ends_at" in args.clear,
     )
     before = EventWhen(
         starts_at=current.starts_at, ends_at=current.ends_at, all_day=current.all_day
@@ -150,13 +152,11 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
             return resolved
         when = resolved
 
-    fields: dict[str, Any] = {
-        "title": args.title,
-        "event_type": args.event_type,
-        "category": args.category,
-    }
+    edits = {"title": args.title, "event_type": args.event_type, "category": args.category}
+    # 안 바꿀 필드(None)는 store 로 넘기지 않는다
+    fields: dict[str, Any] = {key: value for key, value in edits.items() if value is not None}
     moved = when is not None and when != before
-    if moved or any(value is not None for value in fields.values()):
+    if moved or fields:
         # 고친 일정은 다시 승인을 받도록. 만료 시계도 수정 시점부터 다시 셈
         fields["status"] = "draft"
         fields["expires_at"] = context.now + timedelta(hours=DRAFT_TTL_HOURS)
@@ -164,7 +164,9 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
     row = await context.store.update_event(event_id=args.event_id, fields=fields, when=when)
     if row is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    return ok("update", EVENT, id=row.id, starts_at=row.starts_at.isoformat())
+    # 비운 필드를 필드명만 실어서 모델이 결과로 지워진 걸 확인 가능하게 함
+    cleared = {"cleared": ["ends_at"]} if patch.drop_end else {}
+    return ok("update", EVENT, id=row.id, starts_at=row.starts_at.isoformat(), **cleared)
 
 
 def _resolve_when(
@@ -209,9 +211,11 @@ async def create_event_item(context: AgentContext, args: EventItemCreate) -> Too
 
 
 async def update_event_item(context: AgentContext, args: EventItemUpdate) -> ToolResult:
+    edits = {"item_name": args.item_name, "is_prepared": args.is_prepared}
     row = await context.store.update_event_item(
         item_id=args.item_id,
-        fields={"item_name": args.item_name, "is_prepared": args.is_prepared},
+        # 안 바꿀 필드(None)는 넘기지 않는다. is_prepared=False 는 바꾸는 값이라 남는다
+        fields={key: value for key, value in edits.items() if value is not None},
     )
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())

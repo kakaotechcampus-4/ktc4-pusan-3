@@ -6,11 +6,12 @@ status · created_by · expires_at · child_id는 규칙이 채운다.
 알림은 Agent가 만들지 않는다. 발송은 등록된 일정을 기준으로 자동이다.
 """
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
 from app.agents.memory.schemas.common import (
+    ClearableUpdateArgs,
     DateExpr,
     Direction,
     EventCategory,
@@ -90,7 +91,10 @@ class EventQuery(ToolArgs):
     title_query: Annotated[str | None, Field(default=None, description="일정 이름에 포함된 키워드")]
 
 
-class EventUpdate(ToolArgs):
+class EventUpdate(ClearableUpdateArgs):
+    # ends_at 하나가 ends_on, ends_time 두 개의 인자로 나뉘어 들어오기 때문에
+    # 컬럼째로만 지우게 함
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset({"ends_at"})
     event_id: EventId
     title: Annotated[str | None, Field(default=None, description="바꿀 이름")]
     starts_on: Annotated[DateExpr | None, Field(default=None, description="바꿀 시작 날짜 표현")]

@@ -19,6 +19,12 @@
     - 종료 날짜 해석 기준: 시작일이 아니라 오늘 기준으로 풀림
     - 종료 == 시작: 길이 0 일정이 저장됨
 
+종료 지우기:
+
+    - 시각 일정·여러 날 일정: 시작은 그대로 두고 종료만 없어짐
+    - 종일 일정: 23:59 는 따로 지울 수 없어 거부
+    - 지우기와 새 종료가 함께 오면 거부
+
 날짜 계산과 일정 시간 구간의 일관성은 모델이 아닌 코드에서 보장하는 영역이다.
 """
 
@@ -29,6 +35,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.agents.common.datetime_rules import EventWhen, WhenPatch, check_when, resolve_when
 from app.agents.memory.context import AgentContext
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
@@ -310,6 +317,58 @@ async def test_종료가_시작과_같으면_저장하지_않는다(context: Age
     assert result.error is not None
     assert result.error["code"] == ErrorCode.VALIDATION_ERROR
     assert await context.store.query_events(child_id=context.child_id) == []
+
+
+# 종료 지우기. tool 을 거치지 않고 규칙 함수를 직접 확인한다
+def _at(day: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 9, day, hour, minute, tzinfo=KST)
+
+
+def _drop_end(current: EventWhen, **extra: str) -> tuple[EventWhen, str | None]:
+    patch = WhenPatch(drop_end=True, **extra)
+    when = resolve_when(patch, current=current, today=NOW.date(), tz=KST)
+    return when, check_when(when, patch)
+
+
+def test_종료만_지우라고_해도_구간을_다시_계산한다() -> None:
+    # is_empty 가 drop_end 를 안 보면 update_event 가 구간 재설정을 통째로 건너뛴다
+    assert WhenPatch(drop_end=True).is_empty() is False
+
+
+def test_시각_일정의_종료를_지우면_시작은_그대로_두고_종료만_없어진다() -> None:
+    current = EventWhen(starts_at=_at(17, 15), ends_at=_at(17, 17), all_day=False)
+
+    when, problem = _drop_end(current)
+
+    assert problem is None
+    assert when == EventWhen(starts_at=_at(17, 15), ends_at=None, all_day=False)
+
+
+def test_여러_날_일정의_종료를_지우면_종료만_없어진다() -> None:
+    current = EventWhen(starts_at=_at(17, 9), ends_at=_at(19, 17), all_day=False)
+
+    when, problem = _drop_end(current)
+
+    assert problem is None
+    assert when == EventWhen(starts_at=_at(17, 9), ends_at=None, all_day=False)
+
+
+def test_종일_일정의_종료는_지울_수_없다() -> None:
+    current = EventWhen(starts_at=_at(17, 0), ends_at=_at(17, 23, 59), all_day=True)
+
+    _, problem = _drop_end(current)
+
+    assert problem is not None
+    assert "하루 종일" in problem
+
+
+@pytest.mark.parametrize("extra", [{"ends_on": "2026-09-19"}, {"ends_time": "오후 6시"}])
+def test_종료를_지우면서_새_종료를_주면_어느_쪽도_고르지_않는다(extra: dict[str, str]) -> None:
+    current = EventWhen(starts_at=_at(17, 15), ends_at=_at(17, 17), all_day=False)
+
+    _, problem = _drop_end(current, **extra)
+
+    assert problem is not None
 
 
 # 불변식
