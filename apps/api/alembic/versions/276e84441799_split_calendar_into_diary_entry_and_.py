@@ -1,8 +1,8 @@
 """split calendar into diary_entry and shared_photo
 
-Revision ID: f509d1e12fce
+Revision ID: 276e84441799
 Revises: e4f31ff97e3a
-Create Date: 2026-09-20 17:37:51.878844
+Create Date: 2026-09-20 18:21:48.017631
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'f509d1e12fce'
+revision: str = '276e84441799'
 down_revision: Union[str, Sequence[str], None] = 'e4f31ff97e3a'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -31,8 +31,11 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['author_parent_id'], ['parent.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['child_id'], ['child.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('child_id', 'author_parent_id', 'date', name='uq_diary_entry_child_author_date')
     )
+    op.create_index('ix_diary_entry_author_parent_id', 'diary_entry', ['author_parent_id'], unique=False)
+    op.create_index('ix_diary_entry_child_date', 'diary_entry', ['child_id', 'date'], unique=False)
     op.create_table('shared_photo',
     sa.Column('id', sa.UUID(), server_default=sa.text('uuidv7()'), nullable=False),
     sa.Column('child_id', sa.UUID(), nullable=False),
@@ -45,6 +48,8 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['uploader_parent_id'], ['parent.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_index('ix_shared_photo_child_date', 'shared_photo', ['child_id', 'date'], unique=False)
+    op.create_index('ix_shared_photo_uploader_parent_id', 'shared_photo', ['uploader_parent_id'], unique=False)
     op.drop_table('calendar')
     # ### end Alembic commands ###
 
@@ -63,6 +68,10 @@ def downgrade() -> None:
     sa.ForeignKeyConstraint(['child_id'], ['child.id'], name=op.f('calendar_child_id_fkey'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('calendar_pkey'))
     )
+    op.drop_index('ix_shared_photo_uploader_parent_id', table_name='shared_photo')
+    op.drop_index('ix_shared_photo_child_date', table_name='shared_photo')
     op.drop_table('shared_photo')
+    op.drop_index('ix_diary_entry_child_date', table_name='diary_entry')
+    op.drop_index('ix_diary_entry_author_parent_id', table_name='diary_entry')
     op.drop_table('diary_entry')
     # ### end Alembic commands ###

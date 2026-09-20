@@ -124,6 +124,12 @@ async def test_diary_deleted_with_author(session, family):
     assert await session.scalar(select(DiaryEntry.id).where(DiaryEntry.id == entry_id)) is None
     assert await session.scalar(select(DiaryEntry.id).where(DiaryEntry.id == other_id)) == other_id
 
+    # other_id survived the author delete above — still there to prove the child cascade.
+    await session.execute(delete(Child).where(Child.id == child.id))
+    assert (
+        await session.scalars(select(DiaryEntry.id).where(DiaryEntry.id.in_([entry_id, other_id])))
+    ).all() == []
+
 
 async def test_owner_delete_is_still_blocked(session, family):
     owner, _, child = family

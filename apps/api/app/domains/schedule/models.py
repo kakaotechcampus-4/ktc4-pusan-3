@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Text, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -92,9 +92,19 @@ class DiaryEntry(Base, UUIDPk, Timestamps):
     author_parent_id 는 ON DELETE CASCADE 다 — 작성자 없는 개인 일기는 의미가 없어서,
     다른 공동 기록의 작성자 FK(SET NULL)와 다르게 작성자가 탈퇴하면 이 행도 함께 삭제된다.
     계정은 유지한 채 그 아이와의 연결만 해제되는 경우의 삭제는 서비스 레이어 책임이다.
+
+    (child_id, author_parent_id, date) 유니크 — 옛 calendar 의 "하루 한 행" 불변식을
+    작성자 단위로 이어받는다. 같은 보호자가 같은 날 일기를 두 번 쓰면 덮어쓰기다.
     """
 
     __tablename__ = "diary_entry"
+    __table_args__ = (
+        UniqueConstraint(
+            "child_id", "author_parent_id", "date", name="uq_diary_entry_child_author_date"
+        ),
+        Index("ix_diary_entry_child_date", "child_id", "date"),
+        Index("ix_diary_entry_author_parent_id", "author_parent_id"),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -114,6 +124,10 @@ class SharedPhoto(Base, UUIDPk, Timestamps):
     """
 
     __tablename__ = "shared_photo"
+    __table_args__ = (
+        Index("ix_shared_photo_child_date", "child_id", "date"),
+        Index("ix_shared_photo_uploader_parent_id", "uploader_parent_id"),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
