@@ -177,20 +177,55 @@ async def test_reminder_deleted_with_parent(session, family):
 
 async def test_push_device_deleted_with_parent(session, family):
     """push_device 도 개인 데이터라 소유 보호자가 지워지면 같이 지워진다."""
-    _, writer, _ = family
+    owner, writer, _ = family
+    last_seen = datetime(2026, 9, 1, tzinfo=timezone.utc)
     device = PushDevice(
         parent_id=writer.id,
-        device_token="synthetic-device-token",
+        device_token="synthetic-device-token-writer",
         platform=PushPlatform.IOS,
-        last_seen_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        last_seen_at=last_seen,
     )
-    session.add(device)
+    other = PushDevice(
+        parent_id=owner.id,
+        device_token="synthetic-device-token-owner",
+        platform=PushPlatform.ANDROID,
+        last_seen_at=last_seen,
+    )
+    session.add_all([device, other])
     await session.flush()
-    device_id = device.id
+    device_id, other_id = device.id, other.id
 
     await session.execute(delete(Parent).where(Parent.id == writer.id))
 
     assert await session.scalar(select(PushDevice.id).where(PushDevice.id == device_id)) is None
+    assert await session.scalar(select(PushDevice.id).where(PushDevice.id == other_id)) == other_id
+
+
+async def test_push_device_token_must_be_unique(session, family):
+    """upsert-by-device 설계의 전제 — 같은 토큰 두 번째 삽입은 DB 가 막는다."""
+    owner, writer, _ = family
+    last_seen = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    session.add(
+        PushDevice(
+            parent_id=writer.id,
+            device_token="shared-token",
+            platform=PushPlatform.IOS,
+            last_seen_at=last_seen,
+        )
+    )
+    await session.flush()
+
+    with pytest.raises(IntegrityError):
+        async with session.begin_nested():
+            session.add(
+                PushDevice(
+                    parent_id=owner.id,
+                    device_token="shared-token",
+                    platform=PushPlatform.IOS,
+                    last_seen_at=last_seen,
+                )
+            )
+            await session.flush()
 
 
 async def test_owner_delete_is_still_blocked(session, family):

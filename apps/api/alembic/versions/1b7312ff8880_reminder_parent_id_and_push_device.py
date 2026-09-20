@@ -1,9 +1,13 @@
 """reminder parent_id and push_device
 
-Revision ID: 1f6e95bef49f
+Revision ID: 1b7312ff8880
 Revises: e4f31ff97e3a
-Create Date: 2026-09-20 18:46:29.561427
+Create Date: 2026-09-20 18:57:18.543126
 
+reminder.parent_id 는 NOT NULL 로 바로 추가한다 — reminder 에는 아직 쓰기 경로가
+없어 기존 행이 없다. 행이 있는 채로 이 마이그레이션을 돌리면 ADD COLUMN 이 그대로
+실패한다(백필 없음). 나중에 reminder 에 데이터가 쌓인 뒤 이 파일을 참고 마이그레이션
+템플릿으로 재사용하지 말 것 — nullable 로 추가 → 백필 → NOT NULL 순서가 필요하다.
 """
 from typing import Sequence, Union
 
@@ -12,8 +16,8 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = '1f6e95bef49f'
-down_revision: Union[str, Sequence[str], None] = 'e4f31ff97e3a'
+revision: str = '1b7312ff8880'
+down_revision: Union[str, Sequence[str], None] = '276e84441799'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -27,7 +31,7 @@ def upgrade() -> None:
     sa.Column('device_token', sa.Text(), nullable=False),
     sa.Column('platform', sa.Enum('ios', 'android', name='push_platform', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.Column('enabled', sa.Boolean(), server_default=sa.text('true'), nullable=False),
-    sa.Column('last_seen_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('last_seen_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['parent_id'], ['parent.id'], ondelete='CASCADE'),
