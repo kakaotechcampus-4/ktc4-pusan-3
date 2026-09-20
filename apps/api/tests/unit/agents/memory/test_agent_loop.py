@@ -109,25 +109,32 @@ async def test_한_응답의_tool_을_모두_실행한다(context: AgentContext)
         assert len(rows) == 1
 
 
-async def test_의존_체인_은_앞_step_의_id_를_쓴다(context: AgentContext) -> None:
-    # create_event 결과의 id 로 준비물을 붙인다. 지금까지 스크래치에서만 돌던 흐름이다
+async def test_새_일정과_준비물은_create_event_한_번으로_끝난다(context: AgentContext) -> None:
+    # 초안에는 event id 가 없어 준비물을 뒤 step 으로 이어 붙일 수 없다
     llm = FakeLLM(
         _tools(
             _call(
                 "a",
                 "create_event",
-                {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"},
+                {
+                    "title": "운동회",
+                    "starts_on": "모레",
+                    "starts_time": "오전 9시",
+                    "items": ["체육복"],
+                },
             )
         ),
-        _tools(_call("b", "create_event_item", {"event_id": "event-1", "item_name": "체육복"})),
-        _reply("등록했어요."),
+        _reply("확인해 주세요."),
     )
     result = await run("모레 운동회, 체육복 챙겨야 해", context, client=llm)
 
     assert result.completed is True
+    assert result.tool_names == ["create_event"]
     assert result.calls[-1].success is True
-    items = await context.store.list_event_items(event_id="event-1")
-    assert [item.item_name for item in items] == ["체육복"]
+    drafts = context.drafts.all()
+    assert len(drafts) == 1
+    assert [item.item_name for item in drafts[0].items] == ["체육복"]
+    assert await context.store.query_events(child_id=context.child_id) == []
 
 
 # ── 깨진 arguments ──────────────────────────────────────────────

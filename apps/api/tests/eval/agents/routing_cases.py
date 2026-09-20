@@ -168,6 +168,15 @@ T_SPANS: dict[str, tuple[Span, ...]] = {
         R("블록으로 성 만들고 나서", OBSERVE),
         R("정리는 안 하겠대", OBSERVE),
     ),
+    # 이미 있는 일정에 준비물만 붙이는 발화(query_event로 찾아 create_event_item)
+    "T31": (R("운동회에 물통이랑 모자도 챙겨야 해", SCHEDULE),),
+    # 일정 초안 엣지(한 일정에 수정과 준비물이 같이)
+    "T32": (
+        R("운동회에 물통이랑 모자도 챙기고", SCHEDULE),
+        R("시간은 오전 10시로 바꿔줘", LOOKUP_EDIT),
+    ),
+    "T33": (R("운동회 준비물 체육복을 체육복 상의로 바꿔줘", LOOKUP_EDIT),),
+    "T34": (R("운동회 준비물 체육복 챙겼다고 체크해줘", LOOKUP_EDIT),),
 }
 
 T_CASES: tuple[RoutingCase, ...] = tuple(

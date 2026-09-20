@@ -35,9 +35,10 @@ from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory.store.ports import EventItemRow, EventRow, ObservationRow
+from app.agents.memory.store.ports import EventItemRow, ObservationRow
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.routing import Routing, route
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
@@ -127,7 +128,8 @@ class Snapshot:
 
     result: MemoryAgentResult
     observations: dict[str, list[ObservationRow]]
-    events: list[tuple[EventRow, list[EventItemRow]]]
+    drafts: tuple[EventDraft, ...]  # 일정은 저장되지 않으니 제출 전 초안을 본다
+    stored_items: list[EventItemRow]  # 승인 없이 바로 쓰는 것(is_prepared)을 볼 곳
 
     def count(self, tool: str) -> int:
         return sum(1 for call in self.result.calls if call.name == tool)
@@ -142,16 +144,16 @@ class Snapshot:
         return [row.observed_on.isoformat() for row in self.rows(domain)]
 
     def starts_at(self) -> str:
-        first = self.events[0][0] if self.events else None
+        first = self.drafts[0] if self.drafts else None
         return first.starts_at.astimezone(KST).isoformat() if first else ""
 
     @property
     def item_names(self) -> list[str]:
-        return [item.item_name for _, items in self.events for item in items]
+        return [item.item_name for draft in self.drafts for item in draft.items]
 
     @property
     def wrote_anything(self) -> bool:
-        return any(self.observations[domain] for domain in DOMAINS) or bool(self.events)
+        return any(self.observations[domain] for domain in DOMAINS) or bool(self.drafts)
 
     def said(self, needles: tuple[str, ...]) -> bool:
         text = self.result.final_message or ""
@@ -233,10 +235,17 @@ async def _seed_sports_day(context: AgentContext) -> None:
         title="운동회",
         starts_at=_at(2),  # 모레 오전 9시
         ends_at=None,
-        # 시각이 있으니 all_day 가 아니다. all_day 는 하루 종일 행사(00:00~23:59)다 (D9-1)
+        # 시각이 있으니 all_day 가 아니다. all_day 는 하루 종일 행사(00:00~23:59)
         all_day=False,
-        fields={"status": "draft", "created_by": "caregiver", "category": "institution"},
+        fields={"created_by": "caregiver", "category": "institution"},
     )
+
+
+async def _seed_sports_day_items(context: AgentContext) -> None:
+    """운동회 + 이미 저장된 준비물 하나. 준비물 경로를 재는 케이스가 쓴다."""
+    await _seed_sports_day(context)
+    events = await context.store.query_events(child_id=CHILD)
+    await context.store.create_event_item(event_id=events[0].id, item_name="체육복")
 
 
 def _no_guess(domain: str, key: str) -> Check:
@@ -256,7 +265,6 @@ def _routine(category: str) -> Check:
     )
 
 
-# 알림 tool 은 없다 (계약서 §07).
 # 일정이 등록되면 알림을 받기로 한 보호자에게 자동으로 간다고 안내한다
 _REMINDER_NOTICE: Check = (
     "일정으로 알림이 간다고 안내했다",
@@ -362,14 +370,14 @@ CASES: list[EvalCase] = [
             "create_observation_food": 1,
             "create_observation_activity": 1,
             "create_event": 1,
-            "create_event_item": 1,
             "query_event": 1,
         },
-        # 알림 tool 은 없고, 알림 요청 때문에 일정을 고치지도 않는다
-        forbidden_tools={"create_reminder", "update_event"},
+        # 알림 tool 은 없고, 알림 요청 때문에 일정을 고치지도 않는다.
+        # 새 일정의 준비물은 create_event 의 items 로 간다 — 뒤이어 부를 것이 없다
+        forbidden_tools={"create_reminder", "update_event", "create_event_item"},
         checks=(
             (
-                "운동회가 모레 15:00 으로 저장됐다",
+                "운동회 초안이 모레 15:00 이다",
                 lambda s: s.starts_at().startswith(f"{_date(2)}T15:00"),
             ),
             ("체육복이 준비물에 있다", lambda s: any("체육복" in name for name in s.item_names)),
@@ -421,7 +429,8 @@ CASES: list[EvalCase] = [
         required_tools={"query_event": 1, "update_event": 1},
         forbidden_tools={"create_event", "delete_event"},
         checks=(
-            ("모레 10:00 으로 바뀌었다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
+            ("초안이 모레 10:00 이다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
+            ("바뀐 필드가 starts_at 이다", lambda s: "starts_at" in s.drafts[0].changed),
         ),
     ),
     EvalCase(
@@ -436,12 +445,15 @@ CASES: list[EvalCase] = [
     EvalCase(
         "T13",
         "금요일 오전 10시에 어린이집 물놀이가 있어. 수영복이랑 여벌옷을 챙겨야 해.",
-        required_tools={"create_event": 1, "create_event_item": 2},
+        required_tools={"create_event": 1},
+        # 준비물 둘이 create_event의 items로 한 번에 와야 한다
+        forbidden_tools={"create_event_item"},
         checks=(
             (
-                "금요일 10:00 로 저장됐다",
+                "금요일 10:00 초안이다",
                 lambda s: s.starts_at().startswith(f"{_weekday('금')}T10:00"),
             ),
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
             ("수영복이 있다", lambda s: any("수영복" in name for name in s.item_names)),
             ("여벌옷이 있다", lambda s: any("여벌옷" in name for name in s.item_names)),
         ),
@@ -641,6 +653,75 @@ CASES: list[EvalCase] = [
             # 스키마 기준(아이의 발언 = parent_direct)과 hearsay 어느 쪽으로도 읽힌다
         ),
     ),
+    EvalCase(
+        "T31",
+        "운동회에 물통이랑 모자도 챙겨야 해.",
+        seed=_seed_sports_day,
+        # 이미 있는 일정을 찾아 그 일정의 수정 초안에 준비물을 붙인다
+        required_tools={"query_event": 1, "create_event_item": 2},
+        forbidden_tools={"create_event"},
+        checks=(
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
+            ("수정 초안이다", lambda s: s.drafts[0].op == "update"),
+            ("물통이 있다", lambda s: any("물통" in name for name in s.item_names)),
+            ("모자가 있다", lambda s: any("모자" in name for name in s.item_names)),
+            (
+                "시각은 그대로 모레 09:00 이다",
+                lambda s: s.starts_at().startswith(f"{_date(2)}T09:00"),
+            ),
+            ("바뀐 필드가 items 뿐이다", lambda s: s.drafts[0].changed == ("items",)),
+        ),
+    ),
+    EvalCase(
+        "T32",
+        "운동회에 물통이랑 모자도 챙기고, 시간은 오전 10시로 바꿔줘.",
+        seed=_seed_sports_day,
+        # 수정과 준비물 추가가 한 일정에 같이
+        required_tools={"query_event": 1, "update_event": 1, "create_event_item": 2},
+        forbidden_tools={"create_event"},
+        checks=(
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
+            ("모레 10:00 이다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
+            ("물통과 모자가 둘 다 있다", lambda s: {"물통", "모자"} <= set(s.item_names)),
+            (
+                "바뀐 필드가 starts_at 과 items 다",
+                lambda s: s.drafts[0].changed == ("starts_at", "items"),
+            ),
+        ),
+    ),
+    EvalCase(
+        "T33",
+        "운동회 준비물 체육복을 체육복 상의로 바꿔줘.",
+        seed=_seed_sports_day_items,
+        # 준비물 이름 변경은 보호자가 초안에서 확인
+        required_tools={"query_event": 1, "update_event_item": 1},
+        forbidden_tools={"create_event", "create_event_item", "delete_event_item"},
+        checks=(
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
+            ("초안 이름이 바뀌었다", lambda s: any("상의" in name for name in s.item_names)),
+            ("바뀐 필드가 items 뿐이다", lambda s: s.drafts[0].changed == ("items",)),
+            (
+                "저장된 이름은 그대로다",
+                lambda s: [item.item_name for item in s.stored_items] == ["체육복"],
+            ),
+        ),
+    ),
+    EvalCase(
+        "T34",
+        "운동회 준비물 체육복 챙겼다고 체크해줘.",
+        seed=_seed_sports_day_items,
+        # 체크는 되돌릴 수 있어 승인 게이트에 넣지 않고 바로 쓴다
+        required_tools={"query_event": 1, "update_event_item": 1},
+        forbidden_tools={"create_event", "update_event", "create_event_item"},
+        checks=(
+            ("초안을 만들지 않았다", lambda s: s.drafts == ()),
+            ("바로 체크됐다", lambda s: all(item.is_prepared for item in s.stored_items)),
+            (
+                "챙긴 시각이 남았다",
+                lambda s: all(item.prepared_at == NOW for item in s.stored_items),
+            ),
+        ),
+    ),
 ]
 
 
@@ -682,14 +763,20 @@ async def _snapshot(case: EvalCase, client: LLMClient) -> Snapshot:
     task = _task_for(case) if MEMORY_MODE == "task" else None
     result = await run(case.text, context, client=client, task=task)
 
-    events = [
-        (event, await store.list_event_items(event_id=event.id))
-        for event in await store.query_events(child_id=CHILD)
-    ]
     observations = {
         domain: await store.query_observations(domain=domain, child_id=CHILD) for domain in DOMAINS
     }
-    return Snapshot(result=result, observations=observations, events=events)
+    stored_items = [
+        item
+        for event in await store.query_events(child_id=CHILD)
+        for item in await store.list_event_items(event_id=event.id)
+    ]
+    return Snapshot(
+        result=result,
+        observations=observations,
+        drafts=result.drafts,
+        stored_items=stored_items,
+    )
 
 
 def _routing_for(case: EvalCase) -> Routing:

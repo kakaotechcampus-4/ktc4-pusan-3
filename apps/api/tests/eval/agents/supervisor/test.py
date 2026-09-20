@@ -10,8 +10,8 @@
 SUPERVISOR_MODEL · SUPERVISOR_BASE_URL 이 비면 MEMORY_* 를 쓴다 — 기준선이 그 상태다.
 후보 모델은 셸 환경변수로 바꿔 끼운다: $env:SUPERVISOR_MODEL / $env:SUPERVISOR_BASE_URL
 
-  split        Supervisor 만 부른다 (Step 5). 조각을 어떻게 나누고 어디로 보내는지
-  end_to_end   Supervisor → Memory(task 모드) → Food 를 끝까지 (Step 9).
+  split        Supervisor만 호출: 조각을 어떻게 나누고 어디로 보내는지
+  end_to_end   Supervisor → Memory(task 모드) → Food까지
                Food 는 테스트 가짜가 아니라 agents/food 의 mock 그대로다 —
                실구현이 들어오면 이 테스트가 그대로 회귀 테스트가 된다
 
@@ -37,9 +37,10 @@ from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FeedingStage, FoodTaskType
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory.store.ports import EventRow, ObservationRow
+from app.agents.memory.store.ports import ObservationRow
 from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 tool 이 정본이다
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.supervisor import agent as supervisor
@@ -229,13 +230,7 @@ async def _seed_sports_day(context: AgentContext) -> None:
         starts_at=_SPORTS_DAY_START,
         ends_at=_SPORTS_DAY_START + timedelta(hours=2),
         all_day=False,
-        fields={
-            "event_type": "episodic",
-            "category": "institution",
-            "status": "draft",
-            "created_by": "agent",
-            "expires_at": NOW + timedelta(hours=24),
-        },
+        fields={"event_type": "episodic", "category": "institution", "created_by": "agent"},
     )
 
 
@@ -250,7 +245,7 @@ class Observed:
     result: PipelineResult
     score: SplitScore
     observations: dict[str, list[ObservationRow]]
-    events: list[tuple[EventRow, int]]  # 일정과 그 준비물 수
+    events: tuple[EventDraft, ...]  # 제출을 기다리는 일정 초안. 저장된 행이 아니다
     order: list[str]  # 이벤트 종류 순서
     elapsed_ms: int
     failures: list[str] = field(default_factory=list)
@@ -381,10 +376,8 @@ async def _run_once(
     observations = {
         domain: await store.query_observations(domain=domain, child_id=CHILD) for domain in DOMAINS
     }
-    events = [
-        (row, len(await store.list_event_items(event_id=row.id)))
-        for row in await store.query_events(child_id=CHILD)
-    ]
+    # 일정은 저장되지 않으니 memory가 만든 초안을 본다
+    events = result.memory.drafts if result.memory else ()
     observed = Observed(
         live=live,
         result=result,
@@ -533,18 +526,18 @@ def _judge_clear(observed: Observed) -> None:
 
     if case_id == "CL02":
         if len(observed.events) != 1:
-            observed.failures.append(f"일정이 1건이 아니다 ({len(observed.events)}건)")
+            observed.failures.append(f"일정 초안이 1건이 아니다 ({len(observed.events)}건)")
             return
-        row, _ = observed.events[0]
-        if row.ends_at is not None:
-            observed.failures.append(f"일정의 끝이 지워지지 않았다 ({_interval(row)})")
-        if row.starts_at != _SPORTS_DAY_START:
-            observed.failures.append(f"일정의 시작이 바뀌었다 ({_interval(row)})")
+        draft = observed.events[0]
+        if draft.ends_at is not None:
+            observed.failures.append(f"초안의 끝이 지워지지 않았다 ({_interval(draft)})")
+        if draft.starts_at != _SPORTS_DAY_START:
+            observed.failures.append(f"초안의 시작이 바뀌었다 ({_interval(draft)})")
 
 
 def _judge_event_intervals(observed: Observed) -> None:
-    """저장된 일정의 시간 구간이 성립하는지 확인한다."""
-    for row, _ in observed.events:
+    """초안의 시간 구간이 성립하는지 확인한다. 보호자에게 올라가기 전 마지막 관문이다."""
+    for row in observed.events:
         start = row.starts_at.astimezone(KST)
         end = row.ends_at.astimezone(KST) if row.ends_at else None
 
@@ -557,8 +550,8 @@ def _judge_event_intervals(observed: Observed) -> None:
             observed.failures.append(f"종일 일정이 00:00~23:59가 아니다 ({_interval(row)})")
 
 
-def _interval(row: EventRow) -> str:
-    """저장된 시간 구간 한 줄. 하루 안에 끝나면 끝 날짜를 생략한다."""
+def _interval(row: EventDraft) -> str:
+    """초안의 시간 구간 한 줄. 하루 안에 끝나면 끝 날짜를 생략한다."""
     start = row.starts_at.astimezone(KST)
     end = row.ends_at.astimezone(KST) if row.ends_at else None
     if row.all_day and end is not None:
@@ -603,12 +596,12 @@ def _report(observed: Observed) -> None:
         observed.reports.append(f"failed={result.failed.reason}")
     if observed.live.case.case_id == "RC24":
         # Step 1 규칙의 첫 측정 — 매일 반복되는 식사 일과는 core 일정이어야 한다
-        types = [str(row.fields.get("event_type")) for row, _ in observed.events]
+        types = [str(draft.event_type) for draft in observed.events]
         observed.reports.append(f"RC24 event_type={types or '(일정 없음)'}")
     if observed.live.case.case_id.startswith("SC"):
         # 저장된 구간을 그대로 남긴다 — 모델이 ends_on을 썼는지 확인 가능하다.
         # 일정이 없으면 규칙이 되묻고 모델이 고치지 못한 것이다
-        stored = " · ".join(_interval(row) for row, _ in observed.events)
+        stored = " · ".join(_interval(draft) for draft in observed.events)
         observed.reports.append(f"{observed.live.case.case_id} 구간={stored or '(일정 없음)'}")
 
 
@@ -691,9 +684,10 @@ def _tool_summary(names: list[str]) -> str:
 
 def _saved_summary(observed: Observed) -> str:
     parts = [f"{domain} {len(rows)}" for domain, rows in observed.observations.items() if rows]
-    for row, items in observed.events:
+    for draft in observed.events:
         parts.append(
-            f"일정 {row.title!r}({row.fields.get('event_type')}, {_interval(row)}, 준비물 {items})"
+            f"초안 {draft.title!r}({draft.event_type}, {_interval(draft)}, "
+            f"준비물 {len(draft.items)})"
         )
     return " · ".join(parts) or "없음"
 
@@ -718,20 +712,22 @@ def _record(observed: Observed) -> dict[str, Any]:
         "memory_ended_by": memory.ended_by if memory else None,
         "memory_tools": memory.tool_names if memory else [],
         "saved": {domain: len(rows) for domain, rows in observed.observations.items()},
-        "events": [
+        "event_drafts": [
             {
-                "event_type": str(row.fields.get("event_type")),
-                "items": items,
+                "op": draft.op,
+                "event_type": str(draft.event_type),
+                "items": len(draft.items),
+                "changed": list(draft.changed),
                 # 구간까지 남겨서 실행마다 다른 시각이 나오는지 결과에서 확인
-                "all_day": row.all_day,
-                "starts_at": row.starts_at.astimezone(KST).isoformat(timespec="minutes"),
+                "all_day": draft.all_day,
+                "starts_at": draft.starts_at.astimezone(KST).isoformat(timespec="minutes"),
                 "ends_at": (
-                    row.ends_at.astimezone(KST).isoformat(timespec="minutes")
-                    if row.ends_at
+                    draft.ends_at.astimezone(KST).isoformat(timespec="minutes")
+                    if draft.ends_at
                     else None
                 ),
             }
-            for row, items in observed.events
+            for draft in observed.events
         ],
         "food": [
             {
