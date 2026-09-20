@@ -22,18 +22,19 @@ class EventCategory(enum.StrEnum):
     ETC = "etc"
 
 
-class EventStatus(enum.StrEnum):
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    CANCELLED = "cancelled"
-
-
 class EventCreatedBy(enum.StrEnum):
     AGENT = "agent"
     CAREGIVER = "caregiver"
 
 
 class Event(Base, UUIDPk):
+    """보호자가 제출(submit)한 일정만 들어간다. draft 는 DB 에 쓰지 않는다 (9/17 결정).
+
+    승인 전 초안은 memory agent 가 SSE 로만 내보내고, 이 테이블에는 보호자가 확인·제출한
+    행만 쓴다 — 그래서 draft/confirmed 를 가르는 status 자체가 필요 없다. 취소는 삭제로
+    통일한다(hard delete) — delete_event 와 같은 규칙이라 별도 cancelled 상태를 두지 않는다.
+    """
+
     __tablename__ = "event"
 
     child_id: Mapped[uuid.UUID] = mapped_column(
@@ -49,20 +50,14 @@ class Event(Base, UUIDPk):
     category: Mapped[EventCategory] = mapped_column(
         enum_col_py(EventCategory, name="event_category"), nullable=False
     )
-    status: Mapped[EventStatus] = mapped_column(
-        enum_col_py(EventStatus, name="event_status"),
-        nullable=False,
-        server_default=EventStatus.DRAFT.value,
-    )
     created_by: Mapped[EventCreatedBy] = mapped_column(
         enum_col_py(EventCreatedBy, name="event_created_by"), nullable=False
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     source_refs: Mapped[list | None] = mapped_column(JSONB)
 
 
-class EventItem(Base):
+class EventItem(Base, Timestamps):
     __tablename__ = "event_item"
 
     item_id: Mapped[uuid.UUID] = mapped_column(
