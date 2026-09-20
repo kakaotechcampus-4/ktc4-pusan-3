@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from app.agents.common.config import AgentSettings
+from app.core.agent_config import AgentLLMSettings
 from app.core.config import Settings
 
 _ENV_EXAMPLE = Path(__file__).resolve().parents[3] / ".env.example"
@@ -37,3 +38,24 @@ def test_3() -> None:
     """선언만 하고 템플릿에 안 적은 키가 없다 — 팀원이 존재를 모르게 되는 것을 막는다."""
     undocumented = sorted(set(Settings.model_fields) - _example_keys())
     assert not undocumented, f".env.example 에 없는 선언: {undocumented}"
+
+
+# --- _blank_is_default validator ---
+
+
+def test_blank_timeout_falls_back_to_default() -> None:
+    """LLM_TIMEOUT_S 가 빈 문자열이면 기본값 60.0 을 쓴다."""
+    s = AgentLLMSettings(LLM_TIMEOUT_S="", _env_file=None)
+    assert s.LLM_TIMEOUT_S == 60.0
+
+
+def test_explicit_timeout_is_preserved() -> None:
+    """LLM_TIMEOUT_S 에 값을 넣으면 그대로 유지된다."""
+    s = AgentLLMSettings(LLM_TIMEOUT_S=30.0, _env_file=None)
+    assert s.LLM_TIMEOUT_S == 30.0
+
+
+def test_blank_max_retries_falls_back_to_default() -> None:
+    """LLM_MAX_RETRIES 가 빈 문자열이면 기본값 2 를 쓴다."""
+    s = AgentLLMSettings(LLM_MAX_RETRIES="", _env_file=None)
+    assert s.LLM_MAX_RETRIES == 2

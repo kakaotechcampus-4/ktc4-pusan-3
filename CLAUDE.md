@@ -172,6 +172,7 @@
 │       ├── app/
 │       │   ├── main.py       FastAPI 앱 진입점
 │       │   ├── core/         설정(pydantic-settings) — 김명성
+│       │   │   └── agent_config.py  역할별 LLM 키 선언 파일 — 이시하 (core, agents가 함께 상속)
 │       │   ├── api/          라우터 · 스키마 — 김명성
 │       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
 │       │   │   ├── deps/     (비어 있음) 인증 · 권한 · 동의 검사
@@ -184,7 +185,7 @@
 │       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · NEIS · MFDS)
 │       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
 │       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
-│       └── tests/            pytest (ASGITransport 통합 테스트)
+│       └── tests/            pytest — unit · integration · eval(라이브 LLM)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
 │   ├── docker/                로컬 개발 DB (Postgres+pgvector) docker-compose

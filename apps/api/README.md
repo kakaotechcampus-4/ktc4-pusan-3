@@ -104,7 +104,8 @@ apps/api/
 └── tests/
     ├── conftest.py           공통 픽스처 (ASGITransport AsyncClient)
     ├── integration/          HTTP 레이어 통합 테스트
-    ├── unit/                 규칙·도메인 단위 테스트
+    ├── unit/                 규칙·도메인·Agent 단위 테스트 (agents/ 는 Agent 별로 나눈다)
+    ├── eval/                 실제 LLM 을 부르는 라이브 eval (-m live)
     └── fixtures/             테스트용 고정 데이터
 ```
 
