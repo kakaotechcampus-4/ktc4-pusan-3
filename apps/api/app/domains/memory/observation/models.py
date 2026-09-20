@@ -19,7 +19,21 @@ class ConfidenceSource(enum.StrEnum):
 
 
 class ObservationStatus(enum.StrEnum):
+    """검색과 집계를 따로 끊는다. 두 곳의 포함 여부가 값마다 다르다.
+
+      active       Memory Search O · Curator 집계 O
+      stand_alone  Memory Search O · Curator 집계 X
+      inactive     Memory Search X · Curator 집계 X
+
+    stand_alone 은 Correction once_only("이번만 그랬어요") 가 만드는 상태다.
+    관찰 자체는 실제로 있었던 일이라 검색에는 남기고, 성향으로 집계되는 것만 막는다.
+    active / inactive 둘뿐이면 이 둘을 한 번에 빼거나 한 번에 남길 수밖에 없다.
+
+    누가 이 값을 읽는지는 아직 코드에 없다 — 검색 필터와 Curator 집계는 후속 이슈다.
+    """
+
     ACTIVE = "active"
+    STAND_ALONE = "stand_alone"
     INACTIVE = "inactive"
 
 
