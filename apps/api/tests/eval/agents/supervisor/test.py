@@ -1,9 +1,9 @@
 """라이브 테스트. 실제 모델로 발화 하나를 Supervisor → Memory → Food 까지 돌린다.
 
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
-    uv run pytest tests/eval/agents/test.py -m live -k end_to_end -s   # 끝까지
-    uv run pytest tests/eval/agents/test.py -m live -k split -s        # Supervisor 단독
-    uv run pytest tests/eval/agents/test.py -m live -s                 # 둘 다
+    uv run pytest app/agents/test/test.py -m live -k end_to_end -s   # 끝까지
+    uv run pytest app/agents/test/test.py -m live -k split -s        # Supervisor 단독
+    uv run pytest app/agents/test/test.py -m live -s                 # 둘 다
 
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
@@ -44,7 +44,7 @@ from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 t
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
-from tests.eval.agents.routing_cases import (
+from app.agents.test.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
     T_CASES,
@@ -158,6 +158,24 @@ _SCHEDULE_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+# 저장된 값 하나만 비우기 (#93). 기록은 남기고 그 값만 clear 로 지우는가
+_CLEAR_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "CL01",
+        "아까 열 난 기록 있잖아, 시간은 정확하지 않으니까 빼줘.",
+        (R("아까 열 난 기록 있잖아, 시간은 정확하지 않으니까 빼줘", WorkType.LOOKUP_EDIT),),
+        seed="오늘 오전 8시 발열 observation_health 1건 (body_part 이마)",
+        watch='clear=["observed_time"] 을 쓰는가. null 로 보내거나 기록째 지우면 실패',
+    ),
+    RoutingCase(
+        "CL02",
+        "모레 운동회 끝나는 시간은 아직 모르니까 빼줘.",
+        (R("모레 운동회 끝나는 시간은 아직 모르니까 빼줘", WorkType.LOOKUP_EDIT),),
+        seed="모레 15:00~17:00 운동회 event 1건",
+        watch='clear=["ends_at"] 을 쓰는가. ends_time 을 clear 에 넣으면 거부받고 고치는가',
+    ),
+)
+
 _E2E_CASES: tuple[LiveCase, ...] = (
     *(LiveCase(case, case.stage, case.case_id) for case in RC_CASES),
     # 같은 입력을 영아기로 한 번 더 — 식이 단계는 발화가 아니라 아이 나이에서 코드가 정한다
@@ -166,6 +184,7 @@ _E2E_CASES: tuple[LiveCase, ...] = (
     # "저녁에는 뭘 먹이면 좋을까?" 가 Food 로 떨어지는지는 여기서만 실제로 확인된다
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
     *(LiveCase(case, case.stage, case.case_id) for case in _SCHEDULE_CASES),
+    *(LiveCase(case, case.stage, case.case_id) for case in _CLEAR_CASES),
 )
 
 Seed = Callable[[AgentContext], Awaitable[None]]
@@ -184,7 +203,43 @@ async def _seed_lunch(context: AgentContext) -> None:
     )
 
 
-_SEEDS: dict[str, Seed] = {"RC13": _seed_lunch}
+_FEVER_AT = datetime(TODAY.year, TODAY.month, TODAY.day, 8, 0, tzinfo=KST)
+_SPORTS_DAY = TODAY + timedelta(days=2)
+_SPORTS_DAY_START = datetime(_SPORTS_DAY.year, _SPORTS_DAY.month, _SPORTS_DAY.day, 15, tzinfo=KST)
+
+
+async def _seed_fever(context: AgentContext) -> None:
+    """CL01 — 시각까지 적힌 증상 기록. 시각만 비우고 나머지는 남아야 한다."""
+    await context.store.create_observation(
+        domain="health",
+        child_id=CHILD,
+        source_writer=WRITER,
+        raw_text="아침 8시에 이마가 뜨겁고 열이 났어",
+        observed_on=TODAY,
+        observed_range=DateRange(start=TODAY, end=TODAY + timedelta(days=1)),
+        fields={"symptom": ["발열"], "body_part": "이마", "observed_time": _FEVER_AT},
+    )
+
+
+async def _seed_sports_day(context: AgentContext) -> None:
+    """CL02 — 끝나는 시각까지 있는 일정. 끝만 비우고 시작은 남아야 한다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="운동회",
+        starts_at=_SPORTS_DAY_START,
+        ends_at=_SPORTS_DAY_START + timedelta(hours=2),
+        all_day=False,
+        fields={
+            "event_type": "episodic",
+            "category": "institution",
+            "status": "draft",
+            "created_by": "agent",
+            "expires_at": NOW + timedelta(hours=24),
+        },
+    )
+
+
+_SEEDS: dict[str, Seed] = {"RC13": _seed_lunch, "CL01": _seed_fever, "CL02": _seed_sports_day}
 
 
 @dataclass
@@ -270,6 +325,14 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         expected.append(f"{live.stage} 라 영양소 분석이 unsupported_stage 로 막힌다")
     if case.case_id == "RC15":
         expected.append("보호자 얘기가 아이 관찰로 저장되지 않는다")
+    if case.case_id == "RC13":
+        expected.append(
+            "김밥으로 고쳤다면 말하지 않은 action 은 남는다 (안 고쳤으면 판정 못 함으로 보고)"
+        )
+    if case.case_id == "CL01":
+        expected.append("증상 기록은 1건 그대로, 관찰 시각만 비워지고 나머지 필드는 남는다")
+    if case.case_id == "CL02":
+        expected.append("일정은 1건 그대로, 끝만 비워지고 시작은 남는다")
     return tuple(expected)
 
 
@@ -427,6 +490,8 @@ def _judge(observed: Observed) -> None:
         if [row for row in observed.rows if "피곤" in row.raw_text]:
             observed.failures.append("보호자 얘기가 아이 관찰로 저장됐다")
 
+    _judge_clear(observed)
+
     # fail-open — Supervisor 가 어떻게 나눴든 관찰은 저장에 남아야 한다 (S2)
     saved_texts = [row.raw_text for row in observed.rows]
     observed.missing = [
@@ -441,6 +506,40 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"관찰 구간 {len(observed.missing)}개가 저장에 없다")
 
     _report(observed)
+
+
+def _judge_clear(observed: Observed) -> None:
+    """비우기(#93). 요청한 값만 비워지고 기록과 나머지 값은 남는가."""
+    case_id = observed.live.case.case_id
+
+    if case_id == "RC13":  # 고치기만 한 요청에서 말하지 않은 값을 지우지 않는다
+        food = observed.observations["food"]
+        if not any(row.fields.get("subject") == "김밥" for row in food):
+            # 고치지 않았으면 action 이 남아 있어도 clear 를 참았는지는 알 수 없다
+            observed.reports.append("수정이 안 일어나 clear 과사용은 판정 못 함")
+        elif not any(row.fields.get("action") == "먹었다" for row in food):
+            observed.failures.append("수정 요청에서 말하지 않은 action 이 지워졌다")
+
+    if case_id == "CL01":
+        rows = observed.observations["health"]
+        if len(rows) != 1:
+            observed.failures.append(f"증상 기록이 1건이 아니다 ({len(rows)}건)")
+            return
+        fields = rows[0].fields
+        if fields.get("observed_time") is not None:
+            observed.failures.append("관찰 시각이 지워지지 않았다")
+        if fields.get("symptom") != ["발열"] or fields.get("body_part") != "이마":
+            observed.failures.append("말하지 않은 필드가 바뀌었다")
+
+    if case_id == "CL02":
+        if len(observed.events) != 1:
+            observed.failures.append(f"일정이 1건이 아니다 ({len(observed.events)}건)")
+            return
+        row, _ = observed.events[0]
+        if row.ends_at is not None:
+            observed.failures.append(f"일정의 끝이 지워지지 않았다 ({_interval(row)})")
+        if row.starts_at != _SPORTS_DAY_START:
+            observed.failures.append(f"일정의 시작이 바뀌었다 ({_interval(row)})")
 
 
 def _judge_event_intervals(observed: Observed) -> None:
