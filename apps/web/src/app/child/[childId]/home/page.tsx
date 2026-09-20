@@ -240,8 +240,8 @@ function HomeScreen() {
       <PhotoSourceSheet
         open={photoSheetOpen}
         onClose={() => setPhotoSheetOpen(false)}
-        onPick={(file) => {
-          putPhoto(childId, file);
+        onPick={({ file, lane }) => {
+          putPhoto(childId, file, lane);
           setPhotoSheetOpen(false);
           router.push(`/child/${childId}/photos`);
         }}

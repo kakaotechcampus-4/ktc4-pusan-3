@@ -7,6 +7,7 @@ import type {
   PhotoLane,
   PhotoReanalyzeRequest,
 } from "@/lib/api/types";
+import { PHOTO_LANES } from "@/lib/api/types";
 
 import { CHILD_ID, daysAgo, draftEvent } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -30,7 +31,10 @@ import { withIdempotency } from "./idempotency";
 
 /** 이 run 이 사진 run 인가. 값은 그 run 이 읽어낸 것이다. */
 interface PhotoRun {
-  lane: PhotoLane;
+  /** 🚨 부모가 시트에서 **고른** lane. 업로드 multipart 의 `lane` 필드로 들어온다. */
+  declared: PhotoLane;
+  /** 서버가 읽어 보니 어느 쪽이더라. 보통 `declared` 와 같고, 시나리오로 어긋나게 만든다. */
+  guess: PhotoLane;
   confidence: number;
   raw_text: string;
   items: string[];
@@ -56,46 +60,44 @@ export function isPhotoRun(runId: string): boolean {
 }
 
 /**
- * 시나리오가 사진의 종류를 정한다. 실서버로는 "읽히는 알림장" 과 "안 읽히는 사진" 을
- * 마음대로 만들 수 없어서(찍어 봐야 안다) 여기서 손으로 켠다.
+ * 🚨 **무엇을 읽어낼지는 부모가 고른 lane 이 정한다.** 문서를 골랐으면 글자를, 활동을 골랐으면
+ *    태그를 돌려준다 — 그래서 두 lane 을 보는 데 시나리오가 필요 없다(시트에서 고르면 된다).
+ *    시나리오가 만드는 것은 **실서버로 못 만드는 상태** 둘뿐이다: 아예 안 읽히는 사진과,
+ *    부모가 고른 것과 서버가 읽은 것이 어긋난 경우.
  */
-function readPhoto(date: string | null): PhotoRun {
+function readPhoto(declared: PhotoLane, date: string | null): PhotoRun {
   const scenario = currentScenario();
+  const base = { declared, guess: declared, confidence: 0.86, date, unreadable: false };
 
   if (scenario === "photo_unreadable") {
+    return { ...base, confidence: 0.3, raw_text: "", items: [], when: null, unreadable: true };
+  }
+
+  const content =
+    declared === "document"
+      ? {
+          raw_text: "9월 넷째 주 알림장\n금요일 물놀이가 있어요. 준비물: 수건, 수영복, 여벌 옷",
+          items: ["수건", "수영복", "여벌 옷"],
+          when: daysAgo(-3),
+        }
+      : {
+          // 활동 사진에는 읽을 글자가 없다. 빈 `raw_text` 가 그 사실이다.
+          raw_text: "",
+          items: ["블록 쌓기", "실내 놀이", "오래 앉아 있기", "혼자 놀기"],
+          when: null,
+        };
+
+  if (scenario === "photo_lane_mismatch") {
+    // 🚨 화면은 **고른 쪽을 그대로 두고** 한 줄로만 알린다 — 추측이 선언을 덮지 않는다.
     return {
-      lane: "document",
-      confidence: 0.3,
-      raw_text: "",
-      items: [],
-      when: null,
-      date,
-      unreadable: true,
+      ...base,
+      ...content,
+      guess: declared === "document" ? "activity" : "document",
+      confidence: 0.79,
     };
   }
 
-  if (scenario === "photo_activity") {
-    return {
-      lane: "activity",
-      confidence: 0.81,
-      raw_text: "",
-      items: ["블록 쌓기", "실내 놀이", "오래 앉아 있기", "혼자 놀기"],
-      when: null,
-      date,
-      unreadable: false,
-    };
-  }
-
-  // 기본은 문서 lane 이다 — 08 화면을 여는 가장 흔한 이유가 알림장이다.
-  return {
-    lane: "document",
-    confidence: 0.72,
-    raw_text: "9월 넷째 주 알림장\n금요일 물놀이가 있어요. 준비물: 수건, 수영복, 여벌 옷",
-    items: ["수건", "수영복", "여벌 옷"],
-    when: daysAgo(-3),
-    date,
-    unreadable: false,
-  };
+  return { ...base, ...content };
 }
 
 function frame(event: string, data: unknown): Uint8Array {
@@ -125,7 +127,7 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
     return;
   }
 
-  yield frame("lane", { guess: run.lane, confidence: run.confidence });
+  yield frame("lane", { guess: run.guess, confidence: run.confidence });
   await sleep(300);
 
   yield frame("step", { index: 2, total: 2, label: "읽은 것을 정리하고 있어요" });
@@ -204,9 +206,19 @@ export const photoHandlers = [
         return apiError(422, "validation_failed", "사진 파일이 없어요", { field: "file" });
       }
 
+      // 🚨 `lane` 은 필수다. 빠지면 서버가 추측해서 저장 경로를 정하게 되는데,
+      //    문서와 활동은 `confidence_source` 가 통째로 다르다 (계약서 §09).
+      const formLane = form.get("lane");
+      if (typeof formLane !== "string" || !PHOTO_LANES.includes(formLane as PhotoLane)) {
+        return apiError(422, "validation_failed", "어떤 사진인지 알려주세요", { field: "lane" });
+      }
+
       const formDate = form.get("date");
       const runId = `pr_${Date.now()}`;
-      photoRuns.set(runId, readPhoto(typeof formDate === "string" ? formDate : null));
+      photoRuns.set(
+        runId,
+        readPhoto(formLane as PhotoLane, typeof formDate === "string" ? formDate : null),
+      );
       return HttpResponse.json({ run_id: runId }, { status: 202 });
     }),
   ),

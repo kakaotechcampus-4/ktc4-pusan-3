@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import type { PhotoLane } from "@/lib/api/types";
+
 /**
  * 03 홈 · 09 캘린더에서 **막 고른 사진 한 장**을 08 화면까지 들고 가는 자리.
  *
@@ -29,6 +31,12 @@ import { create } from "zustand";
  */
 export interface PendingPhoto {
   file: File;
+  /**
+   * 🚨 **부모가 시트에서 고른 값**이다 (서버 추측이 아니다). 사진과 함께 다녀야 하는 이유는,
+   * 08 이 업로드에 이 값을 싣고 확인 화면의 정본으로도 쓰기 때문이다 — 파일만 넘기면
+   * 부모가 고른 것을 08 이 다시 묻게 된다.
+   */
+  lane: PhotoLane;
   /** `URL.createObjectURL` 결과. 🚨 해제는 이 스토어만 한다 (다음 사진 · 로그아웃). */
   url: string;
 }
@@ -46,9 +54,9 @@ interface PhotoDraftState {
    * 🚨 **이벤트 핸들러에서만 부른다.** 08 로 넘기지 않고 **그 자리에서 쓸** 사진을 만든다
    * (08 화면 자신의 시트가 쓴다). 앞의 URL 은 여기서 해제한다.
    */
-  adoptPhoto: (file: File) => PendingPhoto;
+  adoptPhoto: (file: File, lane: PhotoLane) => PendingPhoto;
   /** 🚨 **이벤트 핸들러에서만 부른다.** `adoptPhoto` + 08 로 넘길 자리에 놓기. */
-  putPhoto: (childId: string, file: File) => void;
+  putPhoto: (childId: string, file: File, lane: PhotoLane) => void;
   /** 순수한 읽기. 렌더 중에 불러도 안전하다 — 아무것도 바꾸지 않는다. */
   peek: (childId: string) => PendingPhoto | null;
   /** 화면이 가져갔다. 참조만 놓고 **URL 은 해제하지 않는다.** */
@@ -61,25 +69,25 @@ export const usePhotoDraftStore = create<PhotoDraftState>()((set, get) => ({
   pending: null,
   live: null,
 
-  adoptPhoto: (file) => {
+  adoptPhoto: (file, lane) => {
     // 앞 사진은 이 순간 화면에서 내려간다. 살아 있는 URL 은 언제나 한 개다.
     const previous = get().live;
     if (previous) URL.revokeObjectURL(previous);
 
     const url = URL.createObjectURL(file);
     set({ live: url });
-    return { file, url };
+    return { file, lane, url };
   },
 
-  putPhoto: (childId, file) => {
-    const adopted = get().adoptPhoto(file);
+  putPhoto: (childId, file, lane) => {
+    const adopted = get().adoptPhoto(file, lane);
     set({ pending: { childId, ...adopted } });
   },
 
   peek: (childId) => {
     const pending = get().pending;
     if (!pending || pending.childId !== childId) return null;
-    return { file: pending.file, url: pending.url };
+    return { file: pending.file, lane: pending.lane, url: pending.url };
   },
 
   release: () => set({ pending: null }),

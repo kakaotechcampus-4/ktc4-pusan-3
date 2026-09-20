@@ -12,7 +12,7 @@ import {
   submitOnboarding,
   uploadPhoto,
 } from "@/lib/api/operations";
-import { streamRunEvents } from "@/lib/api/sse";
+import { streamRunEvents, type LaneEvent, type ParsedEvent } from "@/lib/api/sse";
 import { api } from "@/lib/api/client";
 import type {
   Affinity,
@@ -23,6 +23,7 @@ import type {
   Observation,
   ObservationsResponse,
   PhotoCommitResponse,
+  PhotoLane,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
@@ -389,10 +390,10 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
     return new File([new Uint8Array([1, 2, 3, 4])], name, { type: "image/jpeg" });
   }
 
-  async function upload(date?: string): Promise<string> {
+  async function upload(lane: PhotoLane = "document", date?: string): Promise<string> {
     const { run_id } = await uploadPhoto(
       "c1",
-      photoFormData(fakePhoto(), date),
+      photoFormData(fakePhoto(), { lane, date }),
       newIdempotencyKey(),
     );
     return run_id;
@@ -477,22 +478,65 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
   });
 
   it("활동 사진은 화면이 들고 온 날짜로 캘린더에 붙는다", async () => {
-    setScenario("photo_activity");
+    const runId = await upload("activity", "2026-09-12");
+    for await (const _ of streamRunEvents(runId)) void _;
+
+    const saved = await commitPhotoRun(runId, {
+      lane: "activity",
+      selected_items: ["블록 쌓기"],
+      attach_to_calendar: true,
+    });
+
+    expect(saved.calendar_date).toBe("2026-09-12");
+    // 🚨 사진 태그는 성향으로 확정하지 않는다 — affinity 를 붙이지 않는다 (계약서 §09).
+    const observation = saved.observations[0];
+    expect(observation.confidence_source).toBe("parent_hearsay");
+    expect("affinity" in observation && observation.affinity).toBeNull();
+  });
+
+  it("고른 lane 이 읽어낼 것을 정한다 — 시나리오 없이 두 갈래가 다 나온다", async () => {
+    const docRun = await upload("document");
+    const docEvents = [];
+    for await (const e of streamRunEvents(docRun)) docEvents.push(e);
+    const docParsed = docEvents.find((e) => e.type === "parsed")!.data as ParsedEvent;
+    expect(docParsed.raw_text).not.toBe("");
+
+    const actRun = await upload("activity");
+    const actEvents = [];
+    for await (const e of streamRunEvents(actRun)) actEvents.push(e);
+    const actParsed = actEvents.find((e) => e.type === "parsed")!.data as ParsedEvent;
+    // 활동 사진에는 읽을 글자가 없다.
+    expect(actParsed.raw_text).toBe("");
+    expect(actParsed.extracted.items.length).toBeGreaterThan(0);
+  });
+
+  it("lane 없이 올리면 422 다 — 서버가 저장 경로를 추측하게 두지 않는다", async () => {
+    const form = new FormData();
+    form.append("file", fakePhoto());
+
+    await expect(uploadPhoto("c1", form, newIdempotencyKey())).rejects.toSatisfy((error: unknown) =>
+      isApiError(error, "validation_failed"),
+    );
+  });
+
+  it("어긋나게 읽혀도 서버는 부모가 고른 lane 을 덮지 않는다", async () => {
+    setScenario("photo_lane_mismatch");
     try {
-      const runId = await upload("2026-09-12");
-      for await (const _ of streamRunEvents(runId)) void _;
+      const runId = await upload("document");
+      const seen = [];
+      for await (const e of streamRunEvents(runId)) seen.push(e);
+
+      const lane = seen.find((e) => e.type === "lane")!.data as LaneEvent;
+      // 🚨 서버는 "다르게 읽혔다" 만 알린다. 무엇으로 저장할지는 commit 의 `lane` 이 정하고,
+      //    그 값은 화면이 부모가 고른 것으로 채운다.
+      expect(lane.guess).toBe("activity");
 
       const saved = await commitPhotoRun(runId, {
-        lane: "activity",
-        selected_items: ["블록 쌓기"],
-        attach_to_calendar: true,
+        lane: "document",
+        selected_items: ["수건"],
+        attach_to_calendar: false,
       });
-
-      expect(saved.calendar_date).toBe("2026-09-12");
-      // 🚨 사진 태그는 성향으로 확정하지 않는다 — affinity 를 붙이지 않는다 (계약서 §09).
-      const observation = saved.observations[0];
-      expect(observation.confidence_source).toBe("parent_hearsay");
-      expect("affinity" in observation && observation.affinity).toBeNull();
+      expect(saved.observations[0].confidence_source).toBe("institution_notice");
     } finally {
       setScenario("default");
     }

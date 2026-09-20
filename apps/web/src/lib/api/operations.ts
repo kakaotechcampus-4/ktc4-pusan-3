@@ -21,6 +21,7 @@ import type {
   OnboardingResponse,
   PhotoCommitRequest,
   PhotoCommitResponse,
+  PhotoLane,
   PhotoReanalyzeRequest,
   PhotoReanalyzeResponse,
   SuggestionStatus,
@@ -71,8 +72,9 @@ export function submitOnboarding(
 /**
  * multipart/form-data → 202 {run_id}. SSE 채널을 재사용한다.
  *
- * ⚠️ **계약서가 multipart 필드 이름을 정해 두지 않았다.** 화면은 `file` 과, 캘린더의 특정 날짜에서
- *    들어온 경우 `date`(YYYY-MM-DD) 를 보낸다 — `photoFormData()` 가 그 두 이름을 한 곳에서 만든다.
+ * ⚠️ **계약서가 multipart 필드 이름을 정해 두지 않았다.** 화면은 `file` · `lane`(부모가 고른 값) ·
+ *    캘린더의 특정 날짜에서 들어온 경우 `date`(YYYY-MM-DD) 를 보낸다 —
+ *    `photoFormData()` 가 그 이름들을 한 곳에서 만든다.
  *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
  */
 export function uploadPhoto(
@@ -83,10 +85,22 @@ export function uploadPhoto(
   return api.post(idempotentPath.photo(childId), form, { idempotencyKey });
 }
 
-/** 위 ⚠️ 의 필드 이름을 만드는 **유일한 자리**. 화면이 FormData 를 직접 조립하지 않는다. */
-export function photoFormData(file: File, date?: string): FormData {
+/**
+ * 위 ⚠️ 의 필드 이름을 만드는 **유일한 자리**. 화면이 FormData 를 직접 조립하지 않는다.
+ *
+ * 🚨 `lane` 은 **부모가 시트에서 고른 값**이다. 계약서 §09 는 서버가 추측해 `lane` 이벤트로
+ *    내려주게 되어 있는데, 부모가 먼저 선언하면 그 추측은 "다르게 읽혔다" 를 알리는 용도가 된다 —
+ *    무엇을 찍었는지는 찍은 사람이 안다. 문서와 활동은 저장 경로가 통째로 다르므로
+ *    (`institution_notice` vs 보호자 확인) 이 값을 추측에 맡기지 않는다.
+ *    ⚠️ 이 필드도 계약서에 없다. 👉 `apps/api` Owner 협의 대상.
+ */
+export function photoFormData(
+  file: File,
+  { lane, date }: { lane: PhotoLane; date?: string },
+): FormData {
   const form = new FormData();
   form.append("file", file);
+  form.append("lane", lane);
   // 🚨 날짜를 프론트가 계산하지 않는다. 캘린더에서 고른 날이 있을 때만 그 값을 그대로 싣고,
   //    없으면 아예 보내지 않는다 — "오늘" 로 채우는 것은 서버가 할 일이다 (CLAUDE.md §3).
   if (date) form.append("date", date);

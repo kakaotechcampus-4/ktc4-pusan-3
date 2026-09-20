@@ -136,8 +136,8 @@ export function CalendarDayPanel({
         <PhotoSourceSheet
           open={photoSheetOpen}
           onClose={() => setPhotoSheetOpen(false)}
-          onPick={(file) => {
-            putPhoto(childId, file);
+          onPick={({ file, lane }) => {
+            putPhoto(childId, file, lane);
             setPhotoSheetOpen(false);
             // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
             router.push(`/child/${childId}/photos?date=${date}`);

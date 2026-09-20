@@ -124,8 +124,13 @@ function PhotosScreen() {
    */
 
   const upload = useMutation({
-    mutationFn: (picked: File) =>
-      uploadPhoto(childId, photoFormData(picked, date), idempotencyKey.current()),
+    mutationFn: (picked: PendingPhoto) =>
+      uploadPhoto(
+        childId,
+        // 🚨 부모가 고른 lane 을 함께 싣는다 — 서버가 추측하게 두지 않는다 (operations.ts).
+        photoFormData(picked.file, { lane: picked.lane, date }),
+        idempotencyKey.current(),
+      ),
     onSuccess: (res) => {
       setRunId(res.run_id);
       run.start(res.run_id);
@@ -171,7 +176,7 @@ function PhotosScreen() {
   useEffect(() => {
     if (!photo || uploadedRef.current === photo.file) return;
     uploadedRef.current = photo.file;
-    startUpload(photo.file);
+    startUpload(photo);
   }, [photo, startUpload]);
 
   /**
@@ -230,7 +235,7 @@ function PhotosScreen() {
           title="사진을 보내지 못했어요"
           note="저장된 것은 없어요. 같은 사진을 그대로 다시 보낼 수 있어요."
           // 🚨 같은 사진의 재시도라 Idempotency-Key 를 그대로 쓴다 (키를 돌리지 않는다).
-          onRetry={() => startUpload(photo.file)}
+          onRetry={() => startUpload(photo)}
           onPickAnother={pickAnother}
         />
       ) : /* 🚨 `idle` 을 실패로 떨어뜨리지 않는다. 사진을 고른 직후의 한 틱과 요청이 나가기 전이
@@ -243,13 +248,14 @@ function PhotosScreen() {
           total={run.state.step?.total ?? 2}
           label={run.state.step?.label ?? "사진을 열고 있어요"}
         />
-      ) : run.state.parsed && run.state.lane ? (
+      ) : run.state.parsed ? (
         // 🚨 run 마다 새로 세운다. 다시 읽기(`reanalyze`)는 새 run 이라, 앞 run 에서 고른 항목이
         //    넘어오면 **부모가 확인한 적 없는 것**이 저장 대상으로 남는다.
         <PhotoReview
           key={runId}
-          guess={run.state.lane.guess}
-          confidence={run.state.lane.confidence}
+          declared={photo.lane}
+          guess={run.state.lane?.guess ?? null}
+          confidence={run.state.lane?.confidence ?? 0}
           parsed={run.state.parsed}
           date={date}
           previewUrl={photo.url}
@@ -271,7 +277,7 @@ function PhotosScreen() {
         <Failed
           title="이 사진에서는 읽어낼 게 없었어요"
           note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
-          onRetry={() => startUpload(photo.file)}
+          onRetry={() => startUpload(photo)}
           onPickAnother={pickAnother}
         />
       )}
@@ -280,11 +286,11 @@ function PhotosScreen() {
       <PhotoSourceSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        onPick={(picked) => {
+        onPick={({ file, lane }) => {
           setSheetOpen(false);
           // 🚨 이벤트 핸들러라 여기서 만들어도 된다. 만드는 것도 해제하는 것도 스토어가
           //    한 곳에서 맡는다 — 올리는 것은 위의 effect 다 (사진 한 장당 한 번).
-          setPhoto(usePhotoDraftStore.getState().adoptPhoto(picked));
+          setPhoto(usePhotoDraftStore.getState().adoptPhoto(file, lane));
         }}
       />
     </Screen>

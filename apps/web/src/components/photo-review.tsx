@@ -33,19 +33,23 @@ import type { ParsedEvent, PhotoCommitRequest, PhotoLane } from "@/lib/api";
  */
 
 /**
- * 이 아래면 "맞나요" 로 되묻고, 위면 "이렇게 읽었어요" 로 알린다.
+ * 서버 추측이 이 값보다 확실할 때만 **부모가 고른 것과 다르다는 사실**을 화면에 올린다.
  *
+ * 🚨 **lane 의 정본은 부모가 시트에서 고른 값이다** (`PhotoSourceSheet`). 서버 추측은 그걸
+ *    덮지 않고, 어긋날 때 한 줄로 알리기만 한다 — 어설픈 추측으로 부모가 선언한 것을
+ *    되묻으면 "무엇을 찍었는지" 를 찍은 사람보다 모델이 더 잘 안다는 화면이 된다.
  * 🚨 **숫자를 화면에 그리지 않는다.** 0.72 를 보여줘 봐야 부모가 할 수 있는 일이 없고,
  *    수치를 늘어놓는 화면을 만들지 않는다는 규칙(DESIGN.md Don't)과도 어긋난다.
- *    확신도가 바꾸는 것은 **문장 하나**뿐이고, 어느 쪽이든 고치는 버튼은 똑같이 서 있다.
  */
 const SURE_ENOUGH = 0.6;
 
 interface LaneCopy {
   /** 이 lane 이 무엇인지. 바꾸는 버튼의 문구를 만들 때도 쓴다. */
   name: string;
-  sure: string;
-  unsure: string;
+  /** 부모가 고른 대로 읽었다는 확인 한 줄. */
+  read: string;
+  /** 🚨 서버가 **다르게** 읽었을 때만 선다. `other` 는 서버가 읽은 쪽이다. */
+  mismatch: (other: string) => string;
   note: string;
   itemsTitle: string;
   /**
@@ -66,8 +70,8 @@ interface LaneCopy {
 const LANE: Record<PhotoLane, LaneCopy> = {
   document: {
     name: "알림장이나 식단표",
-    sure: "알림장이나 식단표로 읽었어요.",
-    unsure: "글자가 많아서 알림장이나 식단표로 읽었는데, 맞나요?",
+    read: "알림장이나 식단표로 읽었어요.",
+    mismatch: (other) => `알림장이나 식단표로 고르셨는데, 글자가 거의 없어요. ${other}일까요?`,
     note: "문서에서는 글자만 읽어요. 준비물과 일시로 정리하고, 아이의 기록으로는 쌓지 않아요.",
     itemsTitle: "준비물",
     previewTerm: "준비물",
@@ -81,8 +85,8 @@ const LANE: Record<PhotoLane, LaneCopy> = {
   },
   activity: {
     name: "아이 활동 사진",
-    sure: "아이 활동 사진으로 읽었어요.",
-    unsure: "아이 활동 사진으로 읽었는데, 맞나요?",
+    read: "아이 활동 사진으로 읽었어요.",
+    mismatch: (other) => `아이 활동 사진으로 고르셨는데, 글자가 많아요. ${other}일까요?`,
     note: "사진에서 활동 태그만 뽑아요. 얼굴이나 사람은 분석하지 않아요.",
     itemsTitle: "뽑아낸 활동 태그",
     previewTerm: "활동",
@@ -110,8 +114,10 @@ function initialSelection(lane: PhotoLane, items: string[]): string[] {
 }
 
 export interface PhotoReviewProps {
-  /** 서버 추측. 부모가 바꾸면 이 값이 아니라 아래 로컬 상태가 정본이다. */
-  guess: PhotoLane;
+  /** 🚨 **부모가 시트에서 고른 값.** 이 화면의 시작점이자 정본이다 (서버 추측이 아니다). */
+  declared: PhotoLane;
+  /** 서버가 읽은 쪽. 고른 것과 다를 때만 화면에 올린다. 안 왔으면 `null`. */
+  guess: PhotoLane | null;
   confidence: number;
   parsed: ParsedEvent;
   /** 이 사진을 어느 날에 남기는지. 캘린더에서 들어왔으면 그날, 아니면 오늘이다. */
@@ -128,6 +134,7 @@ export interface PhotoReviewProps {
 }
 
 export function PhotoReview({
+  declared,
   guess,
   confidence,
   parsed,
@@ -140,10 +147,10 @@ export function PhotoReview({
   onPickAnother,
   previewUrl,
 }: PhotoReviewProps) {
-  // 🚨 서버 추측은 **초기값일 뿐**이다. 부모가 바꾸면 그쪽이 정본이고 commit 에 그 값이 실린다.
-  const [lane, setLane] = useState<PhotoLane>(guess);
+  // 🚨 부모가 고른 것으로 시작한다. 여기서 바꾸면 그쪽이 정본이고 commit 에 그 값이 실린다.
+  const [lane, setLane] = useState<PhotoLane>(declared);
   const [selected, setSelected] = useState<string[]>(() =>
-    initialSelection(guess, parsed.extracted.items),
+    initialSelection(declared, parsed.extracted.items),
   );
   const [hintOpen, setHintOpen] = useState(false);
   const [hint, setHint] = useState("");
@@ -158,6 +165,12 @@ export function PhotoReview({
    */
   const attachDate = lane === "document" ? (parsed.extracted.when ?? null) : date;
   const attachToCalendar = attachDate !== null;
+
+  /**
+   * 🚨 **서버가 다르게 읽었을 때만 참이다.** 부모가 여기서 lane 을 바꾸면 그 순간 어긋남이
+   *    사라지므로 (`lane` 이 `guess` 와 같아진다) 문장이 저절로 확인 문구로 돌아간다.
+   */
+  const mismatched = guess !== null && guess !== lane && confidence >= SURE_ENOUGH;
 
   function toggleLane() {
     setLane(other);
@@ -189,7 +202,7 @@ export function PhotoReview({
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-body text-ink">
-                {confidence >= SURE_ENOUGH ? copy.sure : copy.unsure}
+                {mismatched ? copy.mismatch(LANE[other].name) : copy.read}
               </p>
               {/* 🚨 "아니에요" 가 아니라 **바뀔 결과**를 버튼에 쓴다. 한 번 눌렀을 때 무엇이
                   되는지가 버튼에 없으면 부모가 눌러 보고 나서야 안다. */}
