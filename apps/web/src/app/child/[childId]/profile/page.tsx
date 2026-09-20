@@ -1,10 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Ruler, Shield } from "lucide-react";
+import { Pencil, Plus, Ruler, Shield, type LucideIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ChildIdentityCard, ChildIdentitySheet } from "@/components/child-identity";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { GrowthLogList } from "@/components/growth-log-list";
@@ -20,7 +21,6 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
@@ -30,45 +30,11 @@ import {
   isApiError,
   qk,
   type ChildProfile,
-  type Gender,
   type GrowthLog,
   type GrowthLogsResponse,
   type HealthSafety,
   type HealthSafetyListResponse,
-  type UpdateChildRequest,
 } from "@/lib/api";
-
-/**
- * 11 아이 프로필 — 프로토타입에 없는 화면이다 (#74).
- *
- * **왜 한 화면인가** — 아이에 대한 진실은 세 가지고, 셋 다 **무게가 다르다.**
- *   ㉠ 거의 안 바뀌는 것 (부르는 이름: 별명 · 생일 · 성별)
- *   ㉡ 잴 때마다 새로 쌓이는 것 (재 둔 것: 키 · 몸무게)
- *   ㉢ 보호자만 확정할 수 있는 것 (알레르기 · 건강 — 🚨 승인 게이트 ㉡)
- * 07 이 기록(줄)과 기억(카드)을 모양으로 갈라 놓은 것과 같은 수법으로, 여기서도 셋을
- * **모양과 무게로** 가른다. 탭으로 나누지 않은 것은 셋이 짧고 서로를 참조하기 때문이다.
- *
- * 🚨 **성장 차트 · 백분위 · 또래 비교 · 증감을 만들지 않는다.** `DESIGN.md` 의
- *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, 증감은 이 제품이 하지 않기로 한
- *    **발달 평가**다 (최상위 CLAUDE.md §2 · 스펙 아웃).
- *
- * 🚨 **아이 사진 · 아바타를 두지 않는다.** 수집이 늘고(§2 개인정보), 워드마크도 없는
- *    제품이라 브랜드가 서는 자리도 아니다.
- *
- * 🚨 **승인 게이트를 늘리지 않는다** (최상위 §2). 별명 · 생일 · 성별 · 측정 기록은 되돌릴 수
- *    있어서 게이트가 아니다 — `btn-approve` 와 `caution` 은 알레르기 등록에만 선다.
- *
- * 🚨 **나이를 계산하지 않는다.** `age_display` 는 서버 문구다 (CLAUDE.md §3).
- *
- * ⚠️ `GET/PATCH /children/{cid}` 의 `gender` 와 `/growth` 는 **계약서 v1 에 없다** (#75).
- *    지금은 MSW 목만 답한다 — 실서버 연결은 그 협의 이후다.
- */
-
-const GENDER_OPTIONS = [
-  { value: "unspecified", label: "밝히지 않을래요" },
-  { value: "male", label: "남자아이" },
-  { value: "female", label: "여자아이" },
-] as const satisfies ReadonlyArray<{ value: Gender; label: string }>;
 
 /**
  * 달력의 하한. 아이 서비스라 20년 전이면 충분하다 (01 화면과 같은 값).
@@ -202,10 +168,19 @@ function Section({
  *    "추가" 만으로는 어느 구역인지 알 수 없다.
  * 🚨 아이콘이 단독 신호가 되지 않는다 — 바로 왼쪽에 구역 이름이 글자로 서 있다 (§3 · §10).
  */
-function SectionAction({ label, onClick }: { label: string; onClick: () => void }) {
+function SectionAction({
+  label,
+  icon: Icon = Plus,
+  onClick,
+}: {
+  label: string;
+  /** 기본은 더하기다. 고치는 구역만 연필을 넘긴다 — 뜻이 다르면 모양도 달라야 한다. */
+  icon?: LucideIcon;
+  onClick: () => void;
+}) {
   return (
     <IconButton label={label} onClick={onClick} className="-my-1">
-      <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+      <Icon aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
     </IconButton>
   );
 }
@@ -231,144 +206,46 @@ function IdentitySection({
   childId: string;
   query: ReturnType<typeof useQuery<ChildProfile>>;
 }) {
+  const [editing, setEditing] = useState(false);
+
   return (
     <Section
       title="부르는 이름"
       description="아이를 부르는 말과 생일이에요."
+      // 🚨 고치는 것은 드문 일이라 **행동으로** 둔다 — 입력칸을 늘 펼쳐 두지 않는다
+      //    (`ChildIdentityCard` 머리말). 다른 두 구역과 같은 머리줄 문법이다.
+      action={
+        query.data ? (
+          <SectionAction
+            label="부르는 이름 고치기"
+            icon={Pencil}
+            onClick={() => setEditing(true)}
+          />
+        ) : undefined
+      }
     >
       {query.isPending ? (
         <SkeletonBlock label="아이 정보를 불러오는 중" />
       ) : query.isError ? (
         <SectionError what="아이 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
       ) : (
-        <IdentityForm childId={childId} profile={query.data} />
+        <>
+          <ChildIdentityCard profile={query.data} />
+          {/* 🚨 열 때마다 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서 같은
+              인스턴스를 재사용하면 지난번에 고치다 만 값이 남는다. */}
+          {editing ? (
+            <ChildIdentitySheet
+              key={query.data.id}
+              open
+              onClose={() => setEditing(false)}
+              childId={childId}
+              profile={query.data}
+              earliestBirthDate={EARLIEST_BIRTH_DATE}
+            />
+          ) : null}
+        </>
       )}
     </Section>
-  );
-}
-
-function IdentityForm({ childId, profile }: { childId: string; profile: ChildProfile }) {
-  const queryClient = useQueryClient();
-
-  const [nickname, setNickname] = useState(profile.nickname);
-  const [birthDate, setBirthDate] = useState(profile.birth_date);
-  const [gender, setGender] = useState<Gender>(profile.gender);
-  const [nicknameError, setNicknameError] = useState<string | null>(null);
-
-  /**
-   * 🚨 **서버 값이 바뀌면 손대지 않은 칸만 그 값으로 맞춘다.** `useState` 초기값은 첫 렌더에서
-   *    한 번만 읽히므로, 배우자가 같은 아이의 별명을 고쳐서 이 쿼리가 새로 받아와도 폼은 옛
-   *    값을 들고 있었다. 그러면 아래 `changes` 가 **남이 방금 저장한 값을 내 수정분으로 잡고**,
-   *    저장 버튼이 켜진 채 그 수정을 되돌리자고 제안한다 — 공유 계정이라 실제로 나는 경로다.
-   *
-   * 🚨 **칸 단위로 맞춘다.** 세 칸을 통째로 덮으면 배우자가 생일을 고친 순간 내가 적고 있던
-   *    별명이 말없이 사라진다. 지금 값이 마지막으로 받은 서버 값과 같을 때(= 안 건드린 칸)만
-   *    새 값으로 바꾼다.
-   *    ⚠️ 남는 경우가 하나 있다 — **같은 칸을 둘이 동시에** 고치면 내가 적던 쪽이 남고, 저장하면
-   *    배우자 값을 덮는다. 그건 충돌이라 화면이 혼자 못 정한다 (지금은 내 입력을 지키는 쪽).
-   *
-   * 🚨 effect 가 아니라 렌더 중 조정이다 (React "Adjusting state when props change").
-   *    effect 로 하면 옛 값으로 한 프레임을 먼저 그린다. TanStack Query 는 structural
-   *    sharing 이라 내용이 같으면 참조가 그대로여서, 이 비교는 값이 실제로 바뀔 때만 걸린다.
-   */
-  const [synced, setSynced] = useState(() => ({
-    nickname: profile.nickname,
-    birth_date: profile.birth_date,
-    gender: profile.gender,
-  }));
-  if (
-    synced.nickname !== profile.nickname ||
-    synced.birth_date !== profile.birth_date ||
-    synced.gender !== profile.gender
-  ) {
-    if (nickname === synced.nickname) setNickname(profile.nickname);
-    if (birthDate === synced.birth_date) setBirthDate(profile.birth_date);
-    if (gender === synced.gender) setGender(profile.gender);
-    setSynced({
-      nickname: profile.nickname,
-      birth_date: profile.birth_date,
-      gender: profile.gender,
-    });
-  }
-
-  /**
-   * 🚨 **고친 것만 보낸다.** 안 고친 필드를 함께 올리면 두 보호자가 같은 화면을 열어 뒀을 때
-   *    나중 저장이 남의 수정을 덮는다 (배우자·조부모가 같은 아이를 본다 · PRODUCT.md).
-   */
-  const changes: UpdateChildRequest = {
-    ...(nickname.trim() !== profile.nickname ? { nickname: nickname.trim() } : {}),
-    ...(birthDate !== profile.birth_date ? { birth_date: birthDate } : {}),
-    ...(gender !== profile.gender ? { gender } : {}),
-  };
-  const dirty = Object.keys(changes).length > 0;
-
-  const save = useMutation({
-    mutationFn: (body: UpdateChildRequest) =>
-      api.patch<{ child: ChildProfile }>(`/children/${childId}`, body),
-    onSuccess: async () => {
-      // 별명 하나가 홈 인사말과 `GET /me` 의 아이 목록까지 바꾼다. 아이 스코프를 통째로 무효화한다.
-      await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
-      await queryClient.invalidateQueries({ queryKey: qk.me() });
-    },
-  });
-
-  function submit() {
-    if (!nickname.trim()) {
-      setNicknameError("별명을 적어주세요");
-      return;
-    }
-    setNicknameError(null);
-    save.mutate(changes);
-  }
-
-  return (
-    <div className="flex flex-col gap-4">
-      {/* 🚨 **입력을 카드로 감싸지 않는다.** 입력칸은 그 자체가 테두리 있는 면이라, 한 번
-          감싸면 **상자 안의 상자**가 된다 — 한동안 그렇게 뒀고 화면이 상자의 나열로 읽혔다.
-          목록 둘만 상자를 갖고 폼은 `canvas` 위에 서는 편이 세 구역의 리듬도 만든다
-          (긴 입력 묶음 → 담긴 목록 → 담긴 목록).
-          🚨 **hint 를 달지 않는다.** 구역 설명이 이미 "아이를 부르는 말과 생일이에요" 라고
-          해서 같은 말이 두 층으로 쌓였고, 그만큼 "재 둔 것" 이 첫 화면 밖으로 밀렸다. */}
-      <TextInput
-        label="별명"
-        value={nickname}
-        onChange={(e) => setNickname(e.target.value)}
-        error={nicknameError}
-        autoComplete="off"
-      />
-
-      <DateField
-        label="생일"
-        value={birthDate}
-        onChange={setBirthDate}
-        fromDate={EARLIEST_BIRTH_DATE}
-        toDate={new Date()}
-      />
-
-      {/* 🚨 기본값이 "밝히지 않을래요" 다. 수집을 늘리지 않는다는 원칙이 남아 있는 자리고,
-          성별은 화면 표시 전용이라 비워 둬도 화면이 하는 일이 줄지 않는다 (#75). */}
-      <Select label="성별" value={gender} options={GENDER_OPTIONS} onChange={setGender} />
-
-      {/* 🚨 이 화면의 primary 는 이 버튼 하나다 (디자인 시스템 §7 — 한 화면에 primary 하나).
-          🚨 비활성을 브랜드색 흐리게로 만들지 않는다 — `Button` 의 DISABLED 가 소유한다. */}
-      <Button block onClick={submit} disabled={!dirty || save.isPending}>
-        {save.isPending ? <Spinner /> : null}
-        {save.isPending ? "저장하는 중이에요" : "고친 것 저장하기"}
-      </Button>
-
-      {/* 🚨 `role="status"` 로 알린다 — 버튼이 비활성으로 돌아가는 것 말고는 눈으로만 알 수
-          있어서, 스크린리더 사용자는 저장됐는지 실패했는지 모른다 (`CorrectionButtons` 와 같음). */}
-      {save.isError ? (
-        <p role="status" className="text-body-sm text-ink-muted">
-          저장하지 못했어요. 고친 것은 그대로 있으니 다시 눌러 주세요.
-        </p>
-      ) : save.isSuccess && !dirty ? (
-        // 🚨 토스트를 쓰지 않는다 — 성공은 화면이 이미 말한다 (apps/web/CLAUDE.md §3).
-        <p role="status" className="text-body-sm text-ink-muted">
-          저장했어요.
-        </p>
-      ) : null}
-    </div>
   );
 }
 
@@ -687,7 +564,11 @@ function SafetySection({
         <SkeletonBlock label="안전 정보를 불러오는 중" />
       ) : isApiError(query.error, "consent_required") ? (
         // 🚨 일반 실패로 뭉뚱그리지 않는다 — 다시 시도해도 같은 403 이다.
-        <ConsentRequiredCard childId={childId} error={query.error} what="안전 정보를 불러올 수 없고" />
+        <ConsentRequiredCard
+          childId={childId}
+          error={query.error}
+          what="안전 정보를 불러올 수 없고"
+        />
       ) : query.isError ? (
         <SectionError what="안전 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
       ) : items.length === 0 ? (
@@ -725,11 +606,7 @@ function SafetySection({
         onPhoto={() => photoInputRef.current?.click()}
       />
 
-      <HealthSafetySheet
-        open={mode === "manual"}
-        onClose={() => setMode(null)}
-        childId={childId}
-      />
+      <HealthSafetySheet open={mode === "manual"} onClose={() => setMode(null)} childId={childId} />
 
       {/* 🚨 고치는 기록이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
           같은 인스턴스를 재사용하면 앞 기록의 입력이 남는다. */}

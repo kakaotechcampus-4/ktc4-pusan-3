@@ -448,7 +448,7 @@
 | `input:focus-visible` | `brand` 2px outline · offset 2 · 테두리는 그대로 |
 | `input[aria-invalid]` | `danger` 1px 테두리 + 아래 `caption` / `danger-ink` 로 사유 한 줄 |
 | `textarea` (03 입력) | 위와 동일 · 자동 증가 · 몇 줄까지 늘어나는지는 [`text-area.tsx`](../../apps/web/src/components/ui/text-area.tsx) 가 원본. 🚨 "한 줄" 이라고 부르지만 부모는 서너 줄을 쓴다 — 쓰는 동안 자기 글이 안 보이면 안 된다 |
-| `date-field` | 값을 보여주는 트리거(입력과 같은 사양) + 달력을 담은 **바텀시트** · 연월을 누르면 **연도·달 그리드**(아래 "날짜 고르기 달력") · 오늘 이후 비활성 · 요일과 월 이름은 한국어 |
+| `date-field` | 값을 보여주는 트리거(입력과 같은 사양) + 달력을 담은 **바텀시트** · 연월을 누르면 **연도·달 그리드**(아래 "날짜 고르기 달력") · 오늘 이후 비활성 · 요일과 월 이름은 한국어. 🚨 트리거의 날짜 표기는 `formatDateWithYear`(**연도 있고 요일 없음**)다 — 생일을 받는 입력이라 어느 해인지가 본체고 요일은 군더더기다 |
 | `checkbox` | 네이티브 `<input type="checkbox">` 를 `sr-only` 로 숨기고 표식만 그린다 · 표식 **20 × 20** · **`rounded-full`** · 선택 전 `line-strong` 1px / 선택 후 `brand` 채움 + 흰 체크 16 · 행 전체가 터치 타깃(`touch`) |
 
 🚨 **`failed` 이벤트가 오면 `raw_text` 를 `textarea` 에 그대로 되돌려 놓는다.** 부모가 다시 타이핑하게 만들지 않는다.
@@ -986,7 +986,8 @@ guard 가 여러 건이어도 배너는 **하나**고 안에서 줄로 나눈다
 | 10 설정 | 동의 철회 · 삭제 | `btn-danger` |
 | 11 아이 · 머리 | 제목 + 이 화면이 하는 일 | `PageTitle` "아이 프로필" + `body-sm`/`ink-muted` 한 줄. 🚨 **아이 이름·나이를 여기 세우지 않는다** — 바로 아래 별명·생일 입력이 같은 값을 들고 있어 한 화면에 같은 사실이 두 번 선다 |
 | 11 아이 · 구역 머리줄 | 라벨 · 건수 · 더하는 행동 | `label`/`brand` + `chip-count` + **`icon-button`(`Plus`)**. 🚨 글자 버튼을 두지 않는다 — 13px 라벨 옆에서 제일 무거운 것이 버튼이 되고, 구역이 셋이라 같은 상자가 여럿 생긴다. 🚨 `label` 에 **어느 구역인지**까지 담는다(같은 아이콘이 화면에 둘이다). 🚨 `min-h-touch` 를 깔지 않는다 |
-| 11 아이 · 부르는 이름 | 별명 · 생일 · 성별 고치기 | `input` + `date-field` + `select` + `btn-primary`(화면의 유일한 primary). 🚨 **카드로 감싸지 않는다** — 입력칸이 이미 면이라 감싸면 상자 안의 상자다. 🚨 승인 게이트가 아니다 — 되돌릴 수 있다 |
+| 11 아이 · 부르는 이름 | 평소 (읽기) | `card` 한 장 — 위는 `icon-tile`(brand) + 별명(`title`) + `age_display`, 아래는 선으로 갈린 `dl` 두 줄(생일 · 성별, 값은 오른쪽). 🚨 **입력칸을 늘 열어 두지 않는다**: 거의 안 고치는 값이라 드문 일을 위한 입력이 자주 보는 것을 아래로 민다 |
+| 11 아이 · 부르는 이름 | 고치기 | 머리줄 `icon-button`(`Pencil`) → `bottom-sheet`(닫힘 허용) 안에 `input` + `date-field` + `select` + `btn-primary`. 🚨 승인 게이트가 아니다 — 되돌릴 수 있다. 🚨 시트가 자기 primary 를 갖는다(모달이라 뒤가 `inert`) — 그래서 **이 화면에는 primary 가 하나도 없다**(07 기억과 같다) |
 | 11 아이 · 재 둔 것 | 키 · 몸무게 측정 기록 | 07 과 같은 **줄 목록**(뉴트럴 `icon-tile`) + `bottom-sheet`. 🚨 **차트 · 백분위 · 또래 비교 · 증감 없음** — 지표로 보게 하지 않는다(§1). 🚨 뉴트럴 타일을 밋밋하다고 `brand-soft` 로 바꾸지 않는다([`icon-tile.tsx`](../../apps/web/src/components/ui/icon-tile.tsx)) |
 | 11 아이 · 재 둔 것 | 한 줄 지우기 확인 | `btn-secondary` + `btn-tertiary`. 🚨 07 교정(`btn-primary`)과 다르다 — 아래 "인라인 확인과 모달" 참고 |
 | 11 아이 · 알레르기 · 건강 | 등록 (승인 게이트 ㉡) | `bottom-sheet`(`dismissible: false`) + `banner-caution` + `btn-approve` |

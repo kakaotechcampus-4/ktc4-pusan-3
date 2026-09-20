@@ -33,6 +33,19 @@ const DATE_ONLY = new Intl.DateTimeFormat("ko-KR", {
   weekday: "short",
 });
 
+/**
+ * 🚨 **연도가 있고 요일이 없다.** `DATE_ONLY` 는 최근 날짜를 훑는 자리(측정 기록 · 캘린더)용이라
+ *    연도를 빼고 요일을 넣었는데, **생일에는 정확히 반대가 필요하다** — 어느 해에 태어났는지가
+ *    본체이고, 2021년 4월 2일이 금요일이었다는 것은 아무도 안 궁금하다.
+ *    한동안 생일에 `DATE_ONLY` 를 썼더니 화면에 "4월 2일 (금)" 이 떴다.
+ */
+const DATE_WITH_YEAR = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
 const MONTH_ONLY = new Intl.DateTimeFormat("ko-KR", {
   timeZone: TIME_ZONE,
   year: "numeric",
@@ -54,6 +67,16 @@ export function formatDay(iso: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "";
   return DATE_ONLY.format(at);
+}
+
+/**
+ * 생일처럼 **해가 중요한 날짜** 한 줄 ("2021년 4월 2일"). `YYYY-MM-DD` 와 ISO 시각을 모두 받는다.
+ * 🚨 나이를 만들지 않는다 — `age_display` 는 서버 문구다 (apps/web/CLAUDE.md §4).
+ */
+export function formatDateWithYear(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return DATE_WITH_YEAR.format(at);
 }
 
 /** `Date` → "2026년 9월". 달력 머리에 쓴다. */
