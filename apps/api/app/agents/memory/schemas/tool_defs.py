@@ -156,7 +156,9 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="create_event",
         description=(
-            "앞으로의 일정을 등록한다. 운동회·병원·참관수업처럼 날짜가 있는 예정에 쓴다. "
+            "앞으로의 일정을 초안으로 만든다. 운동회·병원·참관수업처럼 날짜가 있는 예정에 쓴다. "
+            "챙길 준비물이 같이 나오면 items 에 모두 넣는다. 이 tool 한 번으로 끝내고 "
+            "준비물을 따로 부르지 않는다. "
             "이미 지난 일을 기록하는 건 observation이다."
         ),
         args=EventCreate,
