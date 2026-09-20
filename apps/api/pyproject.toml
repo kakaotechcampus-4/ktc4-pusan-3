@@ -4,6 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    # 카카오 호출(app/integrations/kakao)과 테스트 ASGI 클라이언트가 함께 쓴다.
+    # 배포되는 서버에도 있어야 하므로 dev 그룹이 아니라 여기 둔다.
+    "httpx>=0.28.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",
     "sqlalchemy[asyncio]>=2.0.52",
@@ -13,13 +16,13 @@ dependencies = [
     "pgvector>=0.5.0",
     "openai>=1.60",
     "tzdata>=2026.3",
+    "openpyxl>=3.1.5",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
-    "httpx>=0.28.0",
     "ruff>=0.8.0",
 ]
 

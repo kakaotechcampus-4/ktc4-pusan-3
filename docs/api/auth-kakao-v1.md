@@ -36,7 +36,7 @@
 | **제약** | 서버가 콜백을 받는다 | **preview 배포는 도메인이 매번 달라** 클라이언트 콜백 URL 을 콘솔에 등록할 수 없다 (§2-1) |
 | **선택** | 세션을 Bearer 로 전달 | 계약서 §01 이고 `client.ts`·`sse.ts` 가 이미 그 전제 (§4-1) |
 | **선택** | 불투명 토큰 (JWT 아님) | 로그아웃·탈퇴·아이 파기 3곳이 즉시 무효화를 요구 (§4-2) |
-| **선택** | 동의 전 `parent` 미생성 | 계약서를 조이는 방향. 팀 결정 대상 (§6-1) |
+| **선택** | 필수 동의 후 `parent` 생성 | 동의하지 않은 계정을 DB에 남기지 않는다 (§6-1) |
 | **선택** | 수명 12시간 · `sessionStorage` | 측정한 값이 아니다. `M-02` 후 조정 (§4-3) |
 
 ---
@@ -119,25 +119,32 @@
 | --- | --- | --- |
 | `client` | `web` \| `app` | `web` |
 
-허용값 밖이면 **시작 시점에 `400`** 으로 끊는다. 카카오 동의 화면까지 걷게 한 뒤 실패시키지 않는다.
+허용값 밖이면 카카오로 보내지 않고 **시작 시점에 웹 복귀 URL로
+`302 …?error=invalid_client`** 를 보낸다. 잘못된 값으로는 앱 복귀 여부를 신뢰할 수
+없으므로 `web`을 안전한 기본 복귀 대상으로 쓴다.
 
 복귀 URL 은 **서버 환경변수**에서 온다.
 
 ```
 AUTH_RETURN_URL_WEB=https://<도메인>/auth/callback
-AUTH_RETURN_URL_APP=yukameo://auth
+AUTH_RETURN_URL_APP=icatch://auth
 ```
+
+🚨 **둘 다 필수다. 하나라도 비어 있으면 서버가 뜨지 않는다** (#45 · #58). 카카오 키처럼
+"없어도 뜨고 `ready: false` 로 알린다" 를 쓰지 않는 이유는, 이 값이 없으면 인증이 아예
+성립하지 않기 때문이다 — 성공도 실패도 전부 여기로 돌아가고, 빠진 채로 뜨면 사용자가
+**카카오 인증을 마친 뒤에** 깨진다. 런타임 거절로 두면 그 사실을 사용자만 겪는다.
 
 | | 성공 | 실패 |
 | --- | --- | --- |
 | `client=web` | `https://<도메인>/auth/callback?code=<1회용>` | `…/auth/callback?error=<코드>` |
-| `client=app` | `yukameo://auth?code=<1회용>` | `yukameo://auth?error=<코드>` |
+| `client=app` | `icatch://auth?code=<1회용>` | `icatch://auth?error=<코드>` |
 
 **쿼리 모양을 웹·앱 동일하게 둔다** — 프론트가 파싱 코드를 한 벌만 만들면 된다.
 
 **왜 `return_to` 가 아니라 `client` 인가** — 값이 URL 이 아니라 열거값이다. `return_to` 라는 이름은 URL 을 기대하게 만들고, 나중에 누군가 `return_to=https://…` 를 넣으려 한다. 그 순간 **오픈 리다이렉트**가 된다. 이름으로 막는다.
 
-**커스텀 스킴은 카카오 콘솔에 등록하지 않는다.** `yukameo://auth` 는 **우리 서버가 302 하는 대상**이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다. 앱 스킴은 `app.json` 의 `scheme: "yukameo"` 로 이미 잡혀 있다.
+**커스텀 스킴은 카카오 콘솔에 등록하지 않는다.** `icatch://auth` 는 **우리 서버가 302 하는 대상**이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다. 앱 스킴은 `app.json` 의 `scheme: "icatch"` 로 이미 잡혀 있다.
 
 `client` 값은 `state` 와 함께 `oauth_state` 쿠키에 담아 콜백까지 들고 간다 (§5-5).
 
@@ -176,6 +183,12 @@ AUTH_RETURN_URL_APP=yukameo://auth
 **`ready` 가 필요한 이유 — 죽은 버튼을 만들지 않는다.** 설정이 안 잡힌 환경에서 "카카오로 시작하기"를 누르면 카카오 동의 화면까지 걸어간 뒤 실패하거나, 더 나쁘면 카카오 에러 페이지에 사용자가 버려진다. `ready: false` 면 프론트가 버튼을 비활성화하고 "아직 연결 전"이라고 말한다.
 
 **`start_url` 을 서버가 내려주는 이유** — 프론트가 `NEXT_PUBLIC_API_BASE_URL` 로 조립할 수도 있지만, **그 값과 `KAKAO_CALLBACK_URL` 의 오리진이 어긋난 배포에서 `state` 쿠키가 조용히 깨진다.** 시작과 콜백이 다른 오리진이면 쿠키가 콜백에 실리지 않는다. 서버가 등록된 콜백 URL 에서 파생해 내려주면 두 값이 어긋날 수 없다.
+
+🚨 **운영에서는 카카오 설정이 비면 서버가 뜨지 않는다** (#97). 그래서 `ready: false` 는
+사실상 개발 환경과 미구현 provider(apple · google)의 것이다. 운영에서 키가 없으면
+로그인 버튼만 꺼진 채 배포가 끝나고, 서비스가 성립하지 않는다는 사실을 사용자가 먼저
+발견한다 — 복귀 URL(§2-3)과 같은 이유로 부팅에서 끊는다. **응답 모양과 `ready` 의 의미는
+그대로다.**
 
 🚨 **`missing_keys` 같은 진단 필드는 개발 환경에서만 채운다.** 프로덕션에서 무인증 엔드포인트가 "어떤 설정이 비었는지"를 알려주면 정찰에 쓰인다. 프로덕션은 `ready: false` 만 내린다.
 
@@ -263,15 +276,19 @@ Cache-Control: no-store
   "consent_code": "<가입 대기표>",
   "bind": "<같은 비밀>",
   "consents": [
-    { "scope": "service_terms",   "policy_version": "2026-09-01" },
-    { "scope": "privacy_account", "policy_version": "2026-09-01" }
+    { "scope": "service_terms",   "policy_version": "draft-0" },
+    { "scope": "privacy_account", "policy_version": "draft-0" }
   ]
 }
 ```
 
+🚨 **`draft-0` 은 임시 placeholder 다.** 실제 약관·처리방침 본문이 확정되기 전이라 `policy_version` 테이블에 등록된 버전이 이것 하나뿐이다. 확정되면 새 버전이 등록되고 이 값은 바뀌므로 **클라이언트에 하드코딩하지 않는다** — 유효한 버전을 서버에서 받아오는 정책 조회 API 는 다음 Issue 에서 붙인다.
+
 **응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 
 `parent` · `auth_identity` · `consent` 를 **한 트랜잭션에서** 만든다. 필수 스코프가 빠지면 `403 consent_required`.
+
+서버는 `scope` + `policy_version` 을 등록된 정책 버전에 연결해 저장한다. 등록되지 않았거나 적용 기간 밖이면 `400 policy_version_invalid` (§8-1). 이 검사는 **대기표를 소비하기 전에** 하므로, 낡은 화면이 보낸 값이어도 대기표는 살아 있고 동의 화면만 다시 불러오면 된다.
 
 `bind` 를 여기서도 요구한다 — 클라이언트가 계속 들고 있으므로 비용이 없고, `consent_code` 만으로 계정이 만들어지는 것을 막는다.
 
@@ -431,9 +448,20 @@ CREATE INDEX ON auth_handoff (expires_at);
 ```sql
 DELETE FROM auth_handoff
 WHERE code_hash = :code_hash
+  AND provider   = :provider
   AND expires_at > now()
 RETURNING *;
 ```
+
+🚨 **`provider` 도 조건이다** (#83). 이 조건이 없으면 카카오로 발급된 코드를
+`POST /auth/google/signup` 에 보내 **카카오 회원번호를 구글 식별자로 등록**할 수 있다 —
+`auth_identity` 의 provider 는 URL 경로에서 오기 때문이다. 구글 로그인을 붙이는 시점에
+같은 값을 가진 실제 사용자의 자리가 미리 점유돼 있게 된다.
+
+조건을 WHERE 에 두는 이유는 둘이다. **불일치가 "없는 코드" 와 구분되지 않고**(§8-1),
+**코드가 타지 않아** 엉뚱한 경로로 보내진 사용자가 올바른 경로로 다시 시도할 수 있다.
+`bind` 불일치를 태우는 것(§7-2)과 다르게 다루는 이유는, provider 는 비밀이 아니라
+맞혀볼 것이 없어서 태워도 얻는 게 없기 때문이다.
 
 | 요청 | 결과 |
 | --- | --- |
@@ -492,13 +520,13 @@ Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth
 | 카카오 access token | — | 저장하지 않음 | 회원번호 조회 직후 폐기 |
 | 카카오 인가 코드 | 카카오가 정함 | 저장하지 않음 | 교환 즉시 무효 |
 
-🔶 **수명 숫자 중 측정으로 정한 것은 없다.** 12시간은 `M-02` 뒤에 조정한다 (§10 3번).
+🔶 **수명 숫자 중 측정으로 정한 것은 없다.** 12시간은 `M-02` 뒤에 조정한다 (§10 2번).
 
 ---
 
 ## 6. 동의 게이트
 
-### 6-1. 🔶 동의 전에는 `parent` 를 만들지 않는다 — 팀 결정 대상
+### 6-1. `parent`는 필수 동의 후 생성한다
 
 계약서 §04 는 첫 로그인에 `parent` 를 만들고 `consent_required` 로 화면만 막는다. 그러면 **사용자가 동의 화면에서 이탈했을 때 동의하지 않은 계정이 DB 에 남는다.**
 
@@ -509,7 +537,9 @@ CLAUDE.md 의 "필수 동의가 비어 있으면 그 아래 어떤 저장도 일
 | `POST /auth/{provider}` | 세션 발급 | `{ status: "consent_required", consent_code }` — **아직 아무것도 안 만든다** |
 | `POST /auth/{provider}/signup` | — | `parent` · `auth_identity` · `consent` 를 **한 트랜잭션에** |
 
-**계약서를 조이는 방향이라 팀 결정이 필요하다.** 나중에 풀기는 쉽고 조이기는 어려운 항목이다.
+이 순서를 확정한다. `POST /auth/{provider}`는 신규 사용자의 `parent`를 만들지 않는다.
+`POST /auth/{provider}/signup`이 필수 동의를 먼저 검증하고, 검증에 성공한 요청만
+`parent`·`auth_identity`·`consent`를 한 트랜잭션에서 생성한다.
 
 ### 6-2. 미들웨어 순서 (NF-11)
 
@@ -638,6 +668,7 @@ target_id_type=user_id&target_id={provider_user_id}
 | HTTP | code | 언제 | 신설 |
 | --- | --- | --- | --- |
 | 400 | `validation_failed` | `code`·`bind` 누락, `bind` 형식 불량 | |
+| 400 | `policy_version_invalid` | 동의한 정책 버전이 미등록이거나 적용 기간 밖 (§3-5) | 🆕 |
 | 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
 | 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |
@@ -659,7 +690,7 @@ target_id_type=user_id&target_id={provider_user_id}
 
 ```
 https://<도메인>/auth/callback?error=invalid_state
-yukameo://auth?error=oauth_denied
+icatch://auth?error=oauth_denied
 ```
 
 🚨 **문구를 싣지 않는다.** 서버 메시지를 URL 에 그대로 실으면 **공격자가 프론트 화면에 임의 문구를 띄우는 통로**가 된다(피싱 문구 주입). 그리고 문구를 서버가 정하면 프론트가 화면 톤을 맞출 수 없다. **사용자에게 보일 문장은 프론트가 만든다.**
@@ -689,8 +720,8 @@ yukameo://auth?error=oauth_denied
 | A-07 | `bind=1` 처럼 형식 불량으로 시작 | 같음 (§3-2) |
 | A-08 | 🚨 **`state` 불일치로 콜백** | `302 …?error=invalid_state`, **인가 코드 교환을 시도하지 않는다** |
 | A-09 | `oauth_state` 쿠키 없이 콜백 | 같음 |
-| A-10 | `client` 가 허용값 밖 | `302 …?error=invalid_client` |
-| A-11 | `client=app` 로 시작 | 복귀가 `yukameo://auth?code=…` (§2-3) |
+| A-10 | `client` 가 허용값 밖 | 웹 복귀 URL로 `302 …?error=invalid_client`, 카카오 호출 없음 |
+| A-11 | `client=app` 로 시작 | 복귀가 `icatch://auth?code=…` (§2-3) |
 | A-12 | 만료된 1회용 코드 | `401 invalid_handoff` |
 | A-13 | signup 에서 필수 스코프 누락 | `403 consent_required`, **`parent` 미생성** |
 | A-14 | 만료된 세션 토큰으로 호출 | `401 unauthenticated` |
@@ -698,7 +729,7 @@ yukameo://auth?error=oauth_denied
 | A-16 | 카카오 API 가 500 | `302 …?error=oauth_provider_error`, `parent` 미생성 |
 | A-17 | 사용자가 카카오에서 취소 | `302 …?error=oauth_denied` |
 | A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
-| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `401` 또는 `404 not_found` — 만료를 기다리지 않는다 |
+| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10-1) |
 | A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
 
 **A-05 · A-08 · A-15 가 이 목록의 이유다.** A-05 가 실패하면 §7-2 가 무의미하고, A-08 이 실패하면 로그인 CSRF 가 열리며, A-15 가 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
@@ -710,7 +741,7 @@ yukameo://auth?error=oauth_denied
 | # | 무엇 | 누가 |
 | --- | --- | --- |
 | M-01 | 🚨 **시작과 콜백이 같은 오리진인지 배포 환경에서 확인.** 다르면 `state` 쿠키가 콜백에 실리지 않는다. **로컬은 포트가 달라도 우연히 통과한다** (§5-5) | 김명성 · 고태영 |
-| M-02 | **앱에서 로그인 → `yukameo://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
+| M-02 | **앱에서 로그인 → `icatch://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
 
 배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 §3 의 5개뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
 
@@ -721,12 +752,11 @@ yukameo://auth?error=oauth_denied
 | # | 무엇 | 왜 지금 못 정하나 | 누구 |
 | --- | --- | --- | --- |
 | 1 | **탈퇴 유예기간 중 재로그인** — 복구인가 신규인가 | 유예기간 N일(노션 논의 ⑤)이 미정. 그전까지 `404 not_found` 로 막아둔다 | 팀 · 9월 2주 |
-| 2 | **동의 전 `parent` 미생성** (§6-1) | 계약서를 조이는 방향이라 팀 결정이 필요하다. 나중에 풀기는 쉽고 조이기는 어렵다 | 김명성 · 박재형 |
-| 3 | **세션 수명 12시간이 맞는지** | `M-02` 결과에 달렸다. 측정한 값이 아니다 | 고태영 |
-| 4 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 이 흐름은 provider 별 모양이 같아 추가가 쉽다 | 박재형 |
-| 5 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
+| 2 | **세션 수명 12시간이 맞는지** | `M-02` 결과에 달렸다. 측정한 값이 아니다 | 고태영 |
+| 3 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 이 흐름은 provider 별 모양이 같아 추가가 쉽다 | 박재형 |
+| 4 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
 
-> 5번은 이 문서가 해결하지 못하는 문제다. 로그인이 아무리 정확해도 "로그인한 사람이 법정대리인인가"는 답하지 않는다.
+> 4번은 이 문서가 해결하지 못하는 문제다. 로그인이 아무리 정확해도 "로그인한 사람이 법정대리인인가"는 답하지 않는다.
 
 ---
 
@@ -742,8 +772,8 @@ KAKAO_CLIENT_SECRET=         # 콘솔 > 카카오 로그인 > 보안 에서 활�
 KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정확히 일치 (운영·로컬 각각)
 KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
 KAKAO_API_TIMEOUT=3          # 초
-AUTH_RETURN_URL_WEB=         # 예: https://<도메인>/auth/callback
-AUTH_RETURN_URL_APP=         # 예: yukameo://auth
+AUTH_RETURN_URL_WEB=         # 🚨 필수. 예: https://<도메인>/auth/callback
+AUTH_RETURN_URL_APP=         # 🚨 필수. 예: icatch://auth
 SESSION_TTL=43200            # 초 (12시간)
 HANDOFF_TTL=120              # 초 (2분)
 SIGNUP_TICKET_TTL=600        # 초 (10분)
@@ -768,7 +798,8 @@ OAUTH_STATE_TTL=600          # 초 (10분)
 
 CLAUDE.md §8 의 결정 방식상 **영역 간 인터페이스 = 관련 Owner 협의**다. 김명성(백엔드) · 고태영(프론트) 합의 후 계약서를 고친다. **합의 전까지 이 문서는 제안 상태로 읽을 것.**
 
-**§5-3 `session` · §5-4 `auth_handoff` 신설**과 **§5-2 `parent.nickname` nullable 전환**, **§6-1 동의 전 `parent` 미생성**도 같은 협의 대상이다.
+**§5-3 `session` · §5-4 `auth_handoff` 신설**과 **§5-2 `parent.nickname` nullable 전환**도 같은 협의 대상이다.
+**§6-1의 필수 동의 후 `parent` 생성은 #34 구현 기준으로 확정했다.**
 
 ---
 

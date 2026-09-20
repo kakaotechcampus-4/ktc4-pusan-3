@@ -1,6 +1,6 @@
 # apps/web
 
-육아기억 AI 프론트엔드. Next.js 16 App Router.
+아이캐치 프론트엔드. Next.js 16 App Router.
 
 ```bash
 cp .env.example .env.local   # NEXT_PUBLIC_API_BASE_URL 확인

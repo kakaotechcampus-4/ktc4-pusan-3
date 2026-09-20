@@ -71,8 +71,8 @@ class ObservationCommon:
         observation_status, nullable=False, server_default="active"
     )
     observed_range: Mapped[Range[date]] = mapped_column(DATERANGE, nullable=False)
-    source_writer: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="RESTRICT"), nullable=False
+    source_writer: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
@@ -122,8 +122,8 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
         observation_status, nullable=False, server_default="active"
     )
     observed_range: Mapped[Range[date]] = mapped_column(DATERANGE, nullable=False)
-    source_writer: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="RESTRICT"), nullable=False
+    source_writer: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
@@ -134,6 +134,4 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     body_part: Mapped[str | None] = mapped_column(Text, nullable=True)
     suspected_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_taken: Mapped[str | None] = mapped_column(Text, nullable=True)
-    observed_time: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    observed_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

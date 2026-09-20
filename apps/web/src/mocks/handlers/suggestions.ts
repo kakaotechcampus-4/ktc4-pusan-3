@@ -1,6 +1,14 @@
 import { http, HttpResponse } from "msw";
 
-import { draftEvent, suggestions } from "../fixtures";
+import type { CalendarEvent } from "@/lib/api/types";
+
+import {
+  draftEvent,
+  generalSuggestions,
+  healthSafety,
+  staleSuggestion,
+  suggestions,
+} from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -19,6 +27,12 @@ export function resetConfirmedEvents(): void {
   confirmedEvents.clear();
 }
 
+/**
+ * 만들어 둔 초안. 확정 응답이 **같은 일정**을 돌려줘야 한다 —
+ * 제목이 바뀌어 돌아오면 "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
+ */
+const drafts = new Map<string, CalendarEvent>();
+
 /** 05 제안 · 06 승인. */
 export const suggestionHandlers = [
   http.post(url("/children/:cid/suggestions"), async () => {
@@ -28,10 +42,14 @@ export const suggestionHandlers = [
 
     if (scenario === "consent") return consentRequired("child_health");
 
-    // 🚨 근거가 없으면 개인화 대신 일반 추천이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
+    // 🚨 근거가 없으면 개인화 대신 **일반 추천**이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
+    //    개인화(`suggestions`)와 일반(`general`)은 **다른 필드**다. 한 배열에 섞으면 언젠가
+    //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2).
+    //    ⚠️ `general` 은 계약서 v1 에 아직 없다 — types.ts 의 ⚠️ 참고 (서버 Owner 협의 대상).
     if (scenario === "scarcity" || scenario === "empty") {
       return HttpResponse.json({
         suggestions: [],
+        general: scenario === "empty" ? generalSuggestions : [generalSuggestions[0]],
         looked_at: "오늘 급식",
         guards: [],
         scarcity: {
@@ -46,9 +64,10 @@ export const suggestionHandlers = [
     }
 
     // 알레르기 정보를 모르면 Food Agent 를 아예 실행하지 않는다 (기본값으로 넘기지 않는다).
+    // 남은 activity 제안의 근거는 6개월이 지났다 — 점선 근거 칩이 나오는 유일한 경로다 (NF-08).
     if (scenario === "stale") {
       return HttpResponse.json({
-        suggestions: [suggestions[1]],
+        suggestions: [staleSuggestion],
         looked_at: "오늘 급식 · 확정 관심 0건",
         guards: [
           {
@@ -82,12 +101,49 @@ export const suggestionHandlers = [
     await networkDelay();
     const body = (await request.json()) as { title?: string };
     const event = draftEvent(body.title ? { title: body.title } : {});
+    drafts.set(event.id, event);
     return HttpResponse.json(
       {
         event,
         expires_at: event.starts_at,
         // 06 화면 상단 "확인해 주세요" 배너. 규칙이 만들고 모델은 관여하지 않는다.
         prechecks: [{ code: "unknown_ingredient", item: "닭고기", note: "첫 기록" }],
+      },
+      { status: 201 },
+    );
+  }),
+
+  /* ── 승인 게이트 ㉡ — 알레르기·건강 기록의 유일한 쓰기 경로 ─────────────
+   * 🚨 보호자 토큰으로만 호출된다. Agent 실행 경로에는 이 함수를 부르는 코드가 없고,
+   *    DB 레벨에서도 Agent/Curator role 에 write 권한이 없다 (계약서 §07 "방어가 두 겹").
+   */
+  http.get(url("/children/:cid/health-safety"), async () => {
+    await networkDelay();
+    return HttpResponse.json({ items: healthSafety });
+  }),
+
+  http.post(url("/children/:cid/health-safety"), async ({ request }) => {
+    await networkDelay();
+    const body = (await request.json()) as { type: string; label: string; category: string };
+
+    // UNIQUE(child_id, type, label) — 같은 항목 재등록은 409 다. 지우고 다시 넣어야 한다.
+    if (healthSafety.some((s) => s.type === body.type && s.label === body.label)) {
+      return apiError(409, "conflict", "이미 등록된 항목이에요");
+    }
+
+    return HttpResponse.json(
+      {
+        safety: {
+          ...healthSafety[0],
+          id: `hs_${Date.now()}`,
+          type: body.type,
+          label: body.label,
+          category: body.category,
+          aliases: [],
+          severity: null,
+          reactions: [],
+          notes: null,
+        },
       },
       { status: 201 },
     );
@@ -106,8 +162,11 @@ export const suggestionHandlers = [
       }
       confirmedEvents.add(eventId);
 
+      // 🚨 확정 응답은 **만들어 둔 그 초안**을 돌려준다. 제목이 바뀌어 돌아오면
+      //    "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
+      const draft = drafts.get(eventId) ?? draftEvent({ id: eventId });
       return HttpResponse.json({
-        event: draftEvent({ id: eventId, status: "confirmed" }),
+        event: { ...draft, status: "confirmed" },
         suggestion_status: "approved",
       });
     }),

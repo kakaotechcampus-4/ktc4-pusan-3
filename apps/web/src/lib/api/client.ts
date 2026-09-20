@@ -17,6 +17,20 @@ export function setAuthToken(token: string | null): void {
   authToken = token;
 }
 
+/* ── 401 unauthenticated ──────────────────────────────────────────────────
+ * 세션 만료를 한 곳에서 처리한다 — 화면마다 401 을 다루면 어딘가는 빠뜨린다.
+ * 스토어를 여기서 import 하지 않는 이유는 위와 같다(서버 컴포넌트에서 못 쓰게 된다).
+ * 그래서 Providers 가 핸들러를 꽂아 준다.
+ *
+ * 🚨 `invalid_handoff`(401) 는 여기 걸리지 않는다. 그건 로그인 교환이 실패한 것이라
+ *    "세션이 끊겼다" 와 다른 상태고, 콜백 화면이 자기 문구로 처리한다.
+ */
+let onUnauthenticated: (() => void) | null = null;
+
+export function setUnauthenticatedHandler(handler: (() => void) | null): void {
+  onUnauthenticated = handler;
+}
+
 /* ── Idempotency-Key ──────────────────────────────────────────────────────
  * 어느 엔드포인트가 키를 요구하는지는 idempotency.ts 의 표가 정본이다.
  * 여기서는 그 표를 마지막 그물로만 쓴다 — 정상 경로는 operations.ts 의 전용 함수다.
@@ -84,6 +98,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!response.ok) {
     const envelope = payload as Partial<ApiErrorBody> | null;
     const error = envelope?.error;
+    if (response.status === 401 && error?.code === "unauthenticated") onUnauthenticated?.();
     throw new ApiError(
       response.status,
       error?.code ?? "unknown",

@@ -1,4 +1,4 @@
-# 육아기억 AI — 프로젝트 컨텍스트
+# 아이캐치 — 프로젝트 컨텍스트
 
 > **육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI.**
 
@@ -123,7 +123,7 @@
 | **도메인 Agent**                   | `food` · `activity` · `education` · `health` **4종 고정**                                                 | `suggestion_agent`                                           |
 | **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
 | **근거 (evidence)**                | 그 추천이 쓴 `memory_id` 목록. **0행이면 버그**                                                           | `suggestion_evidence`                                        |
-| **Correction**                     | 4버튼 = `confirm`(맞아요) / `once_only`(한 번 본 것뿐) / `outdated`(지금은 달라요) / `wrong`(잘못된 기록) | `correction_verdict`                                         |
+| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) ⚠️ / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. ⚠️ = 계약서 v1 에 없는 값(협의 대상) | `correction_verdict`                                         |
 | **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
 | **승인 게이트**                    | 되돌릴 수 없는 2곳                                                                                        | §2 · §3                                                      |
 
@@ -132,6 +132,8 @@
 ---
 
 ## 6. 저장소 구조
+
+폴더 구조는 저장소를 열어 보면 된다. 여기엔 **열어 봐도 안 보이는 것만** 적는다.
 
 `(비어 있음)` = 폴더는 있고 파일은 다음 이슈에서 · `(미생성)` = 폴더 자체가 아직 없음
 
@@ -179,7 +181,7 @@
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
 │       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
 │       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
-│       │   ├── integrations/ (비어 있음) 외부 공공 API (NEIS · MFDS)
+│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · NEIS · MFDS)
 │       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
 │       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
 │       └── tests/            pytest (ASGITransport 통합 테스트)
@@ -200,6 +202,14 @@
 >
 > 하위 이름(`api`/`app/agents`)은 아직 확정 전이다. 다르게 정하면 **이 표를 먼저 고칠 것.**
 
+> **`PRODUCT.md` · `DESIGN.md` 는 새 문서가 아니라 옮긴 것이다.** 사람이 근거와 함께 읽는 정본은 그대로
+> `docs/` 에 있다 — 제품은 [`docs/overview/`](docs/overview/), 디자인은 [`docs/web/design-system-v1.md`](docs/web/design-system-v1.md).
+> 루트의 두 파일은 **AI 도구가 한 번에 읽도록 요약·구조화한 사본**이고, `.impeccable/` 은 그 사본의 기계 전용 부속이다.
+>
+> 🚨 **디자인은 원본이 종류마다 한 곳이다** — 의도·근거는 `docs/web/design-system-v1.md`, 공통 값(색·높이 등)은 `apps/web/src/app/globals.css`.
+> `DESIGN.md` 는 둘의 사본이라 어느 쪽의 원본도 아니다. 어긋나면 한쪽이 틀렸다고 가정하지 말고 **바뀐 이유부터 확인**한 뒤,
+> **같은 PR 에서** 근거 · 값 · 사본을 함께 맞춘다 (절차는 그 문서 머리말). 제품 내용은 그대로 `docs/overview/` 가 맞다.
+
 **작업 전에 읽을 것**: 이 파일(§2·§3·§5) → 해당 `apps/*/CLAUDE.md` → 관련 `docs/` 문서.
 **파트 경계를 넘는 작업**이면 상대 파트의 `CLAUDE.md` 도 읽는다. `app/api/` ↔ `app/agents/` 사이도 파트 경계다.
 
@@ -207,15 +217,16 @@
 
 ## 7. 기술 스택
 
-|              |                                                                                                          |
-| ------------ | -------------------------------------------------------------------------------------------------------- |
-| **Frontend** | Next.js 16 / React 19 · TypeScript · Tailwind 4 · Zustand 5 · TanStack Query 5 · (모바일: Expo / React Native 웹뷰) |
-| **Backend**  | Python 3.12 / FastAPI · SQLAlchemy 2.0 (async) · Alembic · uv · REST · Docker                            |
-| **Data**     | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다)                     |
-| **AI**       | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
-| **협업**     | GitHub · Notion(기획·의사결정 기록) · Discord                                                            |
+언어·프레임워크·버전은 매니페스트가 정본이다 (`apps/web/package.json` · `apps/api/pyproject.toml`).
+라이브러리 관례와 버전을 **그 값으로 고정한 이유**는 각 `apps/*/CLAUDE.md` 에 있다.
 
-버전·라이브러리 관례는 각 `apps/*/CLAUDE.md` 에.
+매니페스트에 안 적히는 것만 여기 둔다.
+
+| | |
+| --- | --- |
+| **Data** | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다) |
+| **AI** | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
+| **협업** | GitHub · Notion(기획·의사결정 기록) · Discord |
 
 ---
 
@@ -227,6 +238,21 @@
 - **`develop` → `main` PR = 멘토 리뷰용.** base 가 `main` 인지 반드시 확인할 것 — GitHub 이 `develop` 을 미리 채워두는데, 그대로 두면 **멘토가 자동 지정되지 않아 리뷰가 시작되지 않는다.**
 - PR 템플릿의 **"리뷰에서 봐주셨으면 하는 곳"** 이 가장 중요하다. "전체 봐주세요"보다 "이 부분이 이 방식이 맞는지 모르겠습니다"가 훨씬 나은 리뷰를 받는다.
 - 주 1회 정기 통합 (김명성). "다 만들고 합치자"는 실패 공식이다.
+- **남의 파일에서 충돌이 나면 `develop` 쪽을 기준으로 두고 내 추가분만 얹는다.** 내 브랜치 쪽을 통째로 남기면 그 사이 머지된 남의 변경이 조용히 되돌아간다 (#59 가 #58 의 복귀 URL 필수 검증을 지웠던 사례). 합친 뒤에는 **새로 받은 상태에서** `make test` 를 돌리고 나서 push 한다 — 로컬에만 있는 파일 때문에 남의 환경에서만 깨지는 일이 있었다.
+
+### PR 쓰는 법 — 팀 내부 PR · 멘토 PR 공통
+
+멘토 PR 의 질문은 PM 이 새로 쓰는 게 아니라 **각자 PR 의 "리뷰에서 봐주셨으면 하는 곳"을 옮겨 붙이는 것**이다.
+그래서 내부 PR 에 아래처럼 적혀 있어야 멘토 PR 도 그대로 된다. 압축해서 쓰면 PM 이 풀어 쓰다 뜻이 바뀌고, 멘토는 맥락을 못 잡는다.
+
+- **처음 읽는 사람이 읽는다고 전제한다.** 리뷰어(팀원이든 멘토든)는 내 브랜치의 논의를 모른다. 팀 내부 용어·결정을 한 질문에 압축하지 말고 배경 → 잠정 결론 → 고민 이유 순으로 푼다.
+- **질문 하나에 결정 하나.** "이 방식이 괜찮을까요?" 가 아니라 **"A 로 하려고 하는데 B 조건에서 문제가 없는지"** 로 쓴다. 서로 다른 결정이 한 질문에 섞이면 답하는 쪽이 쪼개서 되물어야 한다.
+- **기능 PR 은 작게.** 하나의 PR 은 하나의 목적. 큰 작업은 나눠 올린다 (CONTRIBUTING §6).
+- **해결된 결정은 `docs/` 에 고정한다.** PR 본문은 지나가고 문서는 남는다. 다음 PR 은 남은 질문 + 새로 검증한 결과 중심으로.
+
+**멘토 PR (`develop → main`) 에만 더해지는 것**
+
+- 본문은 내부 PR 들의 변경을 **연결해서 전체 흐름**을 설명한다. 각 PR 의 리뷰 포인트를 옮겨 붙이되, 여러 파트에 걸치거나 되돌리기 어려운 것만 고른다.
 
 ### 🚨 손대면 안 되는 파일
 
@@ -256,7 +282,16 @@
 
 🚨 **이 저장소는 public 이다.** 1단계에서 학생 API 토큰 8건이 실제로 유출됐고, 노트북·`docs/*.md` 본문에서도 나왔다.
 
-- `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다. 인증 없는 엔드포인트를 만들지 않는다.
+- `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
+- `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
+  위한 아래 5개만 인증 없이 호출한다. 새 예외가 필요하면 구현 전에 이 목록과 API 계약을
+  함께 변경한다.
+  - `GET /auth/{provider}/status`
+  - `GET /auth/{provider}`
+  - `GET /auth/{provider}/callback`
+  - `POST /auth/{provider}`
+  - `POST /auth/{provider}/signup`
+- 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**
 - 첫 커밋 날 보안 5종 체크, 배포 전 AI 보안 리뷰 1회 (고태영).

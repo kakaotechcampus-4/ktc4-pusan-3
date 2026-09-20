@@ -6,13 +6,12 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange
+from app.agents.common.datetime_rules import DateRange, EventWhen
 from app.agents.memory.store.ports import (
     EventItemRow,
     EventRow,
     ObservationDomain,
     ObservationRow,
-    ReminderRow,
 )
 
 
@@ -25,7 +24,6 @@ class InMemoryStore:
         self._observations: dict[str, ObservationRow] = {}
         self._events: dict[str, EventRow] = {}
         self._items: dict[str, EventItemRow] = {}
-        self._reminders: dict[str, ReminderRow] = {}
         self._counters: dict[str, int] = {}
 
     def _next_id(self, prefix: str) -> str:
@@ -163,7 +161,9 @@ class InMemoryStore:
     async def get_event(self, *, event_id: str) -> EventRow | None:
         return self._events.get(event_id)
 
-    async def update_event(self, *, event_id: str, fields: dict[str, Any]) -> EventRow | None:
+    async def update_event(
+        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
+    ) -> EventRow | None:
         row = self._events.get(event_id)
         if row is None:
             return None
@@ -172,9 +172,10 @@ class InMemoryStore:
         updated = EventRow(
             id=row.id,
             title=changes.pop("title", row.title),
-            starts_at=changes.pop("starts_at", row.starts_at),
-            ends_at=changes.pop("ends_at", row.ends_at),
-            all_day=changes.pop("all_day", row.all_day),
+            # 시간 구간은 EventWhen(starts_at, ends_at, all_day) 함께 고려
+            starts_at=when.starts_at if when is not None else row.starts_at,
+            ends_at=when.ends_at if when is not None else row.ends_at,
+            all_day=when.all_day if when is not None else row.all_day,
             fields={**row.fields, **changes},
         )
         self._events[row.id] = updated
@@ -184,13 +185,8 @@ class InMemoryStore:
         if event_id not in self._events:
             return False
         del self._events[event_id]
-        # ON DELETE CASCADE(일정이 사라지면 준비물과 알림도 같이 정리)
+        # ON DELETE CASCADE(일정이 사라지면 준비물도 같이 정리)
         self._items = {key: item for key, item in self._items.items() if item.event_id != event_id}
-        self._reminders = {
-            key: reminder
-            for key, reminder in self._reminders.items()
-            if reminder.event_id != event_id
-        }
         return True
 
     # event_item
@@ -227,27 +223,3 @@ class InMemoryStore:
 
     async def delete_event_item(self, *, item_id: str) -> bool:
         return self._items.pop(item_id, None) is not None
-
-    # reminder
-    async def create_reminder(self, *, event_id: str, remind_at: datetime) -> ReminderRow:
-        row = ReminderRow(id=self._next_id("reminder"), event_id=event_id, remind_at=remind_at)
-        self._reminders[row.id] = row
-        return row
-
-    async def get_reminder(self, *, reminder_id: str) -> ReminderRow | None:
-        return self._reminders.get(reminder_id)
-
-    async def list_reminders(self, *, event_id: str) -> list[ReminderRow]:
-        rows = [item for item in self._reminders.values() if item.event_id == event_id]
-        return sorted(rows, key=lambda item: (item.remind_at, item.id))
-
-    async def update_reminder(self, *, reminder_id: str, remind_at: datetime) -> ReminderRow | None:
-        row = self._reminders.get(reminder_id)
-        if row is None:
-            return None
-        updated = ReminderRow(id=row.id, event_id=row.event_id, remind_at=remind_at)
-        self._reminders[row.id] = updated
-        return updated
-
-    async def delete_reminder(self, *, reminder_id: str) -> bool:
-        return self._reminders.pop(reminder_id, None) is not None

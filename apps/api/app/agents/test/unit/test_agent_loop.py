@@ -1,7 +1,7 @@
 """agent 루프 검증. 가짜 LLM 응답으로 돌리므로 실제 API를 부르지 않는다.
 
-지금까지 다단계 흐름은 스크래치 스모크에서만 돌았다. 의존 체인·재시도·중복 차단은
-가장 깨지기 쉬운데 회귀 방어가 없었다. 여기가 그 자리다.
+Memory agent에 관한 루프 테스트이므로 unit 디렉토리에 두고,
+전체 라우팅 테스트는 상위 디렉토리에 둔다.
 """
 
 import json
@@ -20,6 +20,7 @@ from app.agents.memory.result import ErrorCode
 from app.agents.memory.store import InMemoryStore
 
 KST = ZoneInfo("Asia/Seoul")
+# 재현을 위해 임의로 설정한 값이므로 변경가능
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
 
 
@@ -86,9 +87,16 @@ async def test_한_응답의_tool_을_모두_실행한다(context: AgentContext)
     llm = FakeLLM(
         _tools(
             _call("a", "create_observation_food", _APPLE),
-            _call("b", "create_observation_activity",
-                  {"raw_text": "블록놀이 했어", "observed_on": "오늘",
-                   "subject": "블록놀이", "activity": "블록놀이"}),
+            _call(
+                "b",
+                "create_observation_activity",
+                {
+                    "raw_text": "블록놀이 했어",
+                    "observed_on": "오늘",
+                    "subject": "블록놀이",
+                    "activity": "블록놀이",
+                },
+            ),
         ),
         _reply("두 건 기록했어요."),
     )
@@ -102,25 +110,30 @@ async def test_한_응답의_tool_을_모두_실행한다(context: AgentContext)
 
 
 async def test_의존_체인_은_앞_step_의_id_를_쓴다(context: AgentContext) -> None:
-    # create_event 결과의 id 로 알림을 건다. 지금까지 스크래치에서만 돌던 흐름이다
+    # create_event 결과의 id 로 준비물을 붙인다. 지금까지 스크래치에서만 돌던 흐름이다
     llm = FakeLLM(
-        _tools(_call("a", "create_event", {"title": "운동회", "starts_on": "모레"})),
         _tools(
-            _call("b", "create_reminder",
-                  {"event_id": "event-1", "offset_days_from_event": -1, "remind_time": "저녁 8시"})
+            _call(
+                "a",
+                "create_event",
+                {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"},
+            )
         ),
+        _tools(_call("b", "create_event_item", {"event_id": "event-1", "item_name": "체육복"})),
         _reply("등록했어요."),
     )
-    result = await run("모레 운동회, 전날 저녁 8시에 알려줘", context, client=llm)
+    result = await run("모레 운동회, 체육복 챙겨야 해", context, client=llm)
 
     assert result.completed is True
-    assert result.calls[-1].result["data"]["remind_at"].startswith("2026-09-10T20:00")
+    assert result.calls[-1].success is True
+    items = await context.store.list_event_items(event_id="event-1")
+    assert [item.item_name for item in items] == ["체육복"]
 
 
 # ── 깨진 arguments ──────────────────────────────────────────────
 async def test_JSON_이_깨져도_루프가_죽지_않는다(context: AgentContext) -> None:
     llm = FakeLLM(
-        _tools(_call("a", "create_observation_food", '{"raw_text": "사과",')),   # 잘린 JSON
+        _tools(_call("a", "create_observation_food", '{"raw_text": "사과",')),  # 잘린 JSON
         _reply("다시 시도할게요."),
     )
     result = await run("사과 먹었어", context, client=llm)
@@ -149,6 +162,29 @@ async def test_깨진_뒤에도_다음_tool_이_실행된다(context: AgentConte
 
 
 # ── 중복 쓰기 차단 ──────────────────────────────────────────────
+async def test_빈_턴이_오면_한_번_다시_묻는다(context: AgentContext) -> None:
+    """라이브 RC15·T24 — tool 도 안 부르고 답도 비운 턴이 왔다.
+
+    그대로 두면 pipeline 이 "아무것도 못 했다" 로 보고 입력을 그대로 돌려준다.
+    되물어야 하는 입력이었는데 사용자는 아무것도 못 본다.
+    """
+    llm = FakeLLM(_reply(""), _reply("몇 시에 시작하나요?"))
+    result = await run("다음 주 수요일 병원 예약 있어", context, client=llm)
+
+    assert result.final_message == "몇 시에 시작하나요?"
+    assert len(llm.seen) == 2
+    assert "답이 비어 있다" in llm.seen[1][-1]["content"]
+
+
+async def test_다시_물어도_비면_그대로_끝낸다(context: AgentContext) -> None:
+    # 한 번만 다시 묻는다. 계속 물으면 호출만 쌓인다
+    llm = FakeLLM(_reply(""), _reply("   "))
+    result = await run("다음 주 수요일 병원 예약 있어", context, client=llm)
+
+    assert result.steps == 2
+    assert not (result.final_message or "").strip()
+
+
 async def test_같은_인자의_쓰기를_두_번_실행하지_않는다(context: AgentContext) -> None:
     # 프롬프트에도 적혀 있지만 무시된 전례가 있다. 저장 중복은 되돌리기 어렵다
     llm = FakeLLM(
@@ -161,7 +197,46 @@ async def test_같은_인자의_쓰기를_두_번_실행하지_않는다(context
     rows = await context.store.query_observations(domain="food", child_id=context.child_id)
     assert len(rows) == 1
     assert result.calls[1].success is False
-    assert "이미 성공한" in result.calls[1].result["error"]["message"]
+    assert "이미 했다" in result.calls[1].result["error"]["message"]
+
+
+async def test_같은_날_같은_대상이면_인자가_달라도_두_번_저장하지_않는다(
+    context: AgentContext,
+) -> None:
+    """라이브 RC08 — 킥보드 관찰이 거의 같은 내용으로 두 행 저장됐다.
+
+    인자 전체로 비교하면 raw_text 만 살짝 달라도 통과한다. 대상(subject)과 날짜로 센다.
+    잃는 게 있으면 안 되니 error.message 가 update 로 고치라고 알려준다 (D4).
+    """
+    first = {**_APPLE, "raw_text": "오늘 사과 먹었어"}
+    again = {**_APPLE, "raw_text": "사과를 반 개 먹었지", "amount": "반 개"}
+    llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", first)),
+        _tools(_call("b", "create_observation_food", again)),
+        _reply("끝"),
+    )
+    result = await run("오늘 사과 먹었어", context, client=llm)
+
+    rows = await context.store.query_observations(domain="food", child_id=context.child_id)
+    assert len(rows) == 1
+    assert result.calls[1].success is False
+    assert "update" in result.calls[1].result["error"]["message"]
+
+
+async def test_대상이_다르면_두_번_저장한다(context: AgentContext) -> None:
+    # 한 발화에 관찰이 둘일 수 있다 (T17 — 모래놀이 + 떡볶이). 대상이 다르면 막지 않는다
+    other = {**_APPLE, "raw_text": "바나나도 먹었어", "subject": "바나나"}
+    llm = FakeLLM(
+        _tools(
+            _call("a", "create_observation_food", _APPLE),
+            _call("b", "create_observation_food", other),
+        ),
+        _reply("끝"),
+    )
+    await run("사과랑 바나나 먹었어", context, client=llm)
+
+    rows = await context.store.query_observations(domain="food", child_id=context.child_id)
+    assert len(rows) == 2
 
 
 async def test_키_순서가_달라도_같은_인자로_본다(context: AgentContext) -> None:
@@ -179,8 +254,13 @@ async def test_키_순서가_달라도_같은_인자로_본다(context: AgentCon
 async def test_인자가_다르면_막지_않는다(context: AgentContext) -> None:
     llm = FakeLLM(
         _tools(_call("a", "create_observation_food", _APPLE)),
-        _tools(_call("b", "create_observation_food",
-                     {"raw_text": "바나나 먹었어", "observed_on": "오늘", "subject": "바나나"})),
+        _tools(
+            _call(
+                "b",
+                "create_observation_food",
+                {"raw_text": "바나나 먹었어", "observed_on": "오늘", "subject": "바나나"},
+            )
+        ),
         _reply("끝"),
     )
     await run("사과랑 바나나 먹었어", context, client=llm)
@@ -209,17 +289,6 @@ async def test_조회는_몇_번이든_막지_않는다(context: AgentContext) -
         _reply("끝"),
     )
     result = await run("사과 기록 보여줘", context, client=llm)
-    assert [call.success for call in result.calls] == [True, True]
-
-
-async def test_parse_input_도_막지_않는다(context: AgentContext) -> None:
-    segment = {"segments": [{"text": "사과 먹었어", "intent": "observation_food"}]}
-    llm = FakeLLM(
-        _tools(_call("a", "parse_input", segment)),
-        _tools(_call("b", "parse_input", segment)),
-        _reply("끝"),
-    )
-    result = await run("사과 먹었어", context, client=llm)
     assert [call.success for call in result.calls] == [True, True]
 
 
@@ -265,14 +334,6 @@ async def test_system_과_user_가_먼저_쌓인다(context: AgentContext) -> No
     first_request = llm.seen[0]
     assert first_request[0]["role"] == "system"
     assert first_request[1] == {"role": "user", "content": "사과 먹었어"}
-
-
-async def test_directive_가_system_프롬프트에_실린다(context: AgentContext) -> None:
-    # 이후 Supervisor 가 분류 결과를 넘기는 자리
-    llm = FakeLLM(_reply("끝"))
-    await run("사과 먹었어", context, client=llm, directive="관찰만 저장하라.")
-
-    assert "관찰만 저장하라." in llm.seen[0][0]["content"]
 
 
 # ── 사용량 ──────────────────────────────────────────────────────

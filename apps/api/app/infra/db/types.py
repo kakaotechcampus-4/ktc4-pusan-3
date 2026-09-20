@@ -4,7 +4,7 @@ from sqlalchemy import Enum as SAEnum
 
 
 def enum_col(*values: str, name: str) -> SAEnum:
-    
+
     return SAEnum(
         *values,
         name=name,
