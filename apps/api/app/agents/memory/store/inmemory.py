@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange
+from app.agents.common.datetime_rules import DateRange, EventWhen
 from app.agents.memory.store.ports import (
     EventItemRow,
     EventRow,
@@ -161,7 +161,9 @@ class InMemoryStore:
     async def get_event(self, *, event_id: str) -> EventRow | None:
         return self._events.get(event_id)
 
-    async def update_event(self, *, event_id: str, fields: dict[str, Any]) -> EventRow | None:
+    async def update_event(
+        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
+    ) -> EventRow | None:
         row = self._events.get(event_id)
         if row is None:
             return None
@@ -170,9 +172,10 @@ class InMemoryStore:
         updated = EventRow(
             id=row.id,
             title=changes.pop("title", row.title),
-            starts_at=changes.pop("starts_at", row.starts_at),
-            ends_at=changes.pop("ends_at", row.ends_at),
-            all_day=changes.pop("all_day", row.all_day),
+            # 시간 구간은 EventWhen(starts_at, ends_at, all_day) 함께 고려
+            starts_at=when.starts_at if when is not None else row.starts_at,
+            ends_at=when.ends_at if when is not None else row.ends_at,
+            all_day=when.all_day if when is not None else row.all_day,
             fields={**row.fields, **changes},
         )
         self._events[row.id] = updated

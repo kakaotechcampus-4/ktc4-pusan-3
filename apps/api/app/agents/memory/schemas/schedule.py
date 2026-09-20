@@ -38,7 +38,23 @@ class EventCreate(ToolArgs):
             )
         ),
     ]
-    ends_time: TimeExpr
+    ends_on: Annotated[
+        DateExpr | None,
+        Field(
+            default=None,
+            description=(
+                "끝나는 날짜. 시작과 같은 날에 끝나면 비워 둔다. 자정을 넘기거나(밤 11시~새벽 1시) "
+                "여러 날 이어지는 일정(17일~19일 캠프)일 때만 넣는다"
+            ),
+        ),
+    ]
+    ends_time: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="끝나는 시각. 원문 표현 그대로. 예: 오후 5시, 17:30",
+        ),
+    ]
     temporal_direction: Direction
     event_type: Annotated[
         EventType,

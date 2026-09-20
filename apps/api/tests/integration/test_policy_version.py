@@ -70,9 +70,7 @@ async def test_find_active_version_respects_effective_window(session):
         )
         is not None
     )
-    assert (
-        await find_active_version(session, scope=scope, version="v1", now=ended_at) is None
-    )
+    assert await find_active_version(session, scope=scope, version="v1", now=ended_at) is None
     assert (
         await find_active_version(session, scope=scope, version="nonexistent", now=effective_at)
         is None
