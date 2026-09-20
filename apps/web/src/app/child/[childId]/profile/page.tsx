@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Pencil, Plus, Ruler, Shield, type LucideIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
@@ -8,23 +8,22 @@ import { AuthGate } from "@/components/auth-gate";
 import { ChildIdentityCard, ChildIdentitySheet } from "@/components/child-identity";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
-import { GrowthLogList } from "@/components/growth-log-list";
+import { GrowthLatestCard } from "@/components/growth-log-list";
+import { GrowthSheet } from "@/components/growth-sheet";
 import { HealthSafetyList, HealthSafetySheet } from "@/components/health-safety-list";
 import { HealthSafetyScanSheet } from "@/components/health-safety-scan-sheet";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { CountChip } from "@/components/ui/chip";
-import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import { TextInput } from "@/components/ui/text-input";
 import { useChildId } from "@/hooks/use-child-id";
+import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import {
   api,
   isApiError,
@@ -35,12 +34,6 @@ import {
   type HealthSafety,
   type HealthSafetyListResponse,
 } from "@/lib/api";
-
-/**
- * 달력의 하한. 아이 서비스라 20년 전이면 충분하다 (01 화면과 같은 값).
- * 🚨 나이 계산이 아니다 — 고를 수 있는 범위를 정하는 것뿐이다 (apps/web/CLAUDE.md §4 예외).
- */
-const EARLIEST_BIRTH_DATE = new Date(new Date().getFullYear() - 20, 0, 1);
 
 export default function ChildProfilePage() {
   return (
@@ -76,7 +69,7 @@ function ChildProfileScreen() {
       <header>
         <PageTitle>아이 프로필</PageTitle>
         <p className="text-body-sm text-ink-muted mt-2">
-          부르는 이름과 재 둔 것, 알레르기를 여기서 관리해요.
+          부르는 이름과 키·몸무게, 알레르기를 여기서 관리해요.
         </p>
       </header>
 
@@ -249,8 +242,17 @@ function IdentitySection({
   );
 }
 
-/* ── ㉡ 재 둔 것 ──────────────────────────────────────────────────────── */
+/* ── ㉡ 키 · 몸무게 ──────────────────────────────────────────────────── */
 
+/**
+ * 🚨 **여기는 가장 최근 한 줄만 세운다.** 쌓인 목록과 변화 그래프는 11-1 상세
+ * (`profile/growth`)가 진다 — 이유는 `GrowthLatestCard` 머리말에 있다.
+ *
+ * 🚨 **화면의 말은 "키 · 몸무게" 고 코드의 이름은 `growth` 다.** 07 이 관찰/기록 ·
+ *    프로필/기억으로 갈라 두는 것과 같은 처리다 (apps/web/CLAUDE.md §3) — 화면 문구만
+ *    바꾸고 엔드포인트·쿼리 키·타입 이름을 따라 바꾸지 않는다. 그쪽은 계약서를 따른다.
+ * 🚨 상세로 가는 길이 **줄 자체**다. 머리줄의 `Plus` 말고 다른 버튼을 늘리지 않는다.
+ */
 function GrowthSection({
   childId,
   query,
@@ -258,27 +260,23 @@ function GrowthSection({
   childId: string;
   query: ReturnType<typeof useQuery<GrowthLogsResponse>>;
 }) {
-  const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const remove = useMutation({
-    mutationFn: (log: GrowthLog) => {
-      setDeletingId(log.id);
-      return api.delete<void>(`/children/${childId}/growth/${log.id}`);
-    },
-    onSettled: async () => {
-      setDeletingId(null);
-      await queryClient.invalidateQueries({ queryKey: qk.growth(childId) });
-    },
-  });
 
   const logs = query.data?.items ?? [];
+  /**
+   * 🚨 **서버가 준 순서를 믿지 않는다.** 목은 최신이 위지만 계약서가 정렬을 약속한 적이 없고,
+   *    여기서 틀리면 화면이 **오래된 값을 "지금 얼마" 로** 말한다. 날짜 비교는 계산이 아니라
+   *    같은 형식(`YYYY-MM-DD`)의 문자열 정렬이다 (apps/web/CLAUDE.md §4 는 **나이·기간**을 막는다).
+   */
+  const latest = logs.reduce<GrowthLog | null>(
+    (best, log) => (best === null || log.measured_on > best.measured_on ? log : best),
+    null,
+  );
 
   return (
     <Section
-      title="재 둔 것"
-      description="키와 몸무게를 잰 날 그대로 쌓아 둬요. 또래와 견주지 않아요."
+      title="키 · 몸무게"
+      description="가장 최근에 잰 것만 보여줘요. 눌러서 지난 기록과 변화를 볼 수 있어요."
       // 🚨 불러오기 전과 0 건일 때는 넘기지 않는다 — 앞은 "아직 모름" 이라 0 을 그리면
       //    거짓말이고, 뒤는 바로 아래 `EmptyState` 가 같은 숫자를 이미 말한다.
       count={logs.length > 0 ? logs.length : undefined}
@@ -291,8 +289,9 @@ function GrowthSection({
         <SkeletonBlock label="측정 기록을 불러오는 중" />
       ) : query.isError ? (
         <SectionError what="측정 기록을 불러오지 못했어요" onRetry={() => void query.refetch()} />
-      ) : logs.length === 0 ? (
+      ) : latest === null ? (
         // 🚨 빈 상태를 사과문으로 쓰지 않는다. 쌓인 건수를 그대로 보여준다 (`EmptyState`).
+        // 🚨 상세로 가는 길을 여기 붙이지 않는다 — 가 봐야 같은 0 건이다.
         <EmptyState
           icon={Ruler}
           title="아직 잰 기록이 없어요"
@@ -301,167 +300,12 @@ function GrowthSection({
           countLabel="적어 둔 기록"
         />
       ) : (
-        <GrowthLogList logs={logs} onDelete={(log) => remove.mutate(log)} deletingId={deletingId} />
+        <GrowthLatestCard log={latest} href={`/child/${childId}/profile/growth`} />
       )}
-
-      {remove.isError ? (
-        <p role="status" className="text-body-sm text-ink-muted">
-          지우지 못했어요. 그 줄은 아직 목록에 있으니 다시 눌러 주세요.
-        </p>
-      ) : null}
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
     </Section>
   );
-}
-
-/**
- * 새 측정 기록. 🚨 **승인 게이트가 아니다** — `caution` 도 `btn-approve` 도 쓰지 않고,
- * 스크림 탭으로 닫힌다 (`dismissible` 기본값).
- */
-function GrowthSheet({
-  open,
-  onClose,
-  childId,
-}: {
-  open: boolean;
-  onClose: () => void;
-  childId: string;
-}) {
-  const queryClient = useQueryClient();
-
-  const [measuredOn, setMeasuredOn] = useState(toToday);
-  const [height, setHeight] = useState("");
-  const [weight, setWeight] = useState("");
-  /**
-   * 🚨 **사유를 입력에 붙인다.** 시트 아래 떠 있는 문단으로 두면 보조기술이 그 문구를 어느
-   *    칸의 문제인지 잇지 못한다 — `TextInput` 의 `error` 는 `aria-invalid` 와
-   *    `aria-describedby` 를 함께 걸어 준다 (디자인 시스템 §7 입력).
-   *    "둘 중 하나는 적어주세요" 처럼 칸 하나에 안 붙는 사유는 **첫 칸**이 받는다.
-   */
-  const [errors, setErrors] = useState<{ height?: string; weight?: string }>({});
-
-  const save = useMutation({
-    mutationFn: (body: { measured_on: string; height_cm?: number; weight_kg?: number }) =>
-      api.post<{ log: GrowthLog }>(`/children/${childId}/growth`, body),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: qk.growth(childId) });
-      reset();
-      onClose();
-    },
-  });
-
-  function reset() {
-    setMeasuredOn(toToday());
-    setHeight("");
-    setWeight("");
-    setErrors({});
-    save.reset();
-  }
-
-  function submit() {
-    const h = parseMeasurement(height);
-    const w = parseMeasurement(weight);
-
-    if (h === "invalid" || w === "invalid") {
-      setErrors({
-        ...(h === "invalid" ? { height: "숫자로 적어주세요" } : {}),
-        ...(w === "invalid" ? { weight: "숫자로 적어주세요" } : {}),
-      });
-      return;
-    }
-    // 🚨 한쪽만 재고 오는 날이 있다. 둘 다 비어 있을 때만 막는다.
-    if (h === null && w === null) {
-      setErrors({ height: "키나 몸무게 중 하나는 적어주세요" });
-      return;
-    }
-    setErrors({});
-
-    save.mutate({
-      measured_on: measuredOn,
-      ...(h !== null ? { height_cm: h } : {}),
-      ...(w !== null ? { weight_kg: w } : {}),
-    });
-  }
-
-  return (
-    <BottomSheet
-      open={open}
-      onClose={() => {
-        reset();
-        onClose();
-      }}
-      title="새로 재서 적기"
-      description="둘 중 하나만 적어도 괜찮아요."
-      footer={
-        <Button block onClick={submit} disabled={save.isPending}>
-          {save.isPending ? <Spinner /> : null}
-          {save.isPending ? "적는 중이에요" : "적어 두기"}
-        </Button>
-      }
-    >
-      <div className="flex flex-col gap-4">
-        <DateField
-          label="잰 날"
-          value={measuredOn}
-          onChange={setMeasuredOn}
-          fromDate={EARLIEST_BIRTH_DATE}
-          toDate={new Date()}
-        />
-
-        {/* ⚠️ 입력을 16px 미만으로 내리지 않는다 — iOS 웹뷰가 화면을 확대하고 그대로 남는다
-            (`TextInput` 주석). `inputMode="decimal"` 로 숫자 키패드만 띄운다. */}
-        <TextInput
-          label="키 · cm"
-          value={height}
-          onChange={(e) => setHeight(e.target.value)}
-          error={errors.height}
-          inputMode="decimal"
-          autoComplete="off"
-          placeholder="104.2"
-        />
-
-        <TextInput
-          label="몸무게 · kg"
-          value={weight}
-          onChange={(e) => setWeight(e.target.value)}
-          error={errors.weight}
-          inputMode="decimal"
-          autoComplete="off"
-          placeholder="17.1"
-        />
-
-        {save.isError ? (
-          <p role="status" className="text-body-sm text-ink-muted">
-            적지 못했어요. 저장된 것은 없으니 다시 눌러 주세요.
-          </p>
-        ) : null}
-      </div>
-    </BottomSheet>
-  );
-}
-
-/**
- * 빈 칸은 `null`, 숫자가 아니면 `"invalid"`.
- * 🚨 잘못 적은 값을 조용히 0 이나 `NaN` 으로 넘기지 않는다 — 아이 몸무게가 0kg 으로 쌓인다.
- */
-function parseMeasurement(value: string): number | null | "invalid" {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed <= 0) return "invalid";
-  return parsed;
-}
-
-/**
- * 🚨 오늘 날짜를 `toISOString()` 으로 만들지 않는다 — UTC 로 접혀서 한국 시간 자정~오전 9시
- *    사이에는 **하루가 밀린다** (`lib/format.ts` 의 같은 주의). 여기는 계산이 아니라
- *    입력 기본값이다.
- */
-function toToday(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 /**

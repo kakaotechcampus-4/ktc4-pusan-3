@@ -1,12 +1,14 @@
 "use client";
 
-import { Ruler, Trash2 } from "lucide-react";
+import { ChevronRight, Ruler, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { cn } from "@/lib/cn";
 import { formatDay } from "@/lib/format";
 import type { GrowthLog } from "@/lib/api/types";
 
@@ -34,21 +36,39 @@ export function GrowthLogList({
   logs,
   onDelete,
   deletingId,
+  scrollable = false,
 }: {
   logs: GrowthLog[];
   onDelete: (log: GrowthLog) => void;
   /** 지우는 중인 줄. 그 줄의 버튼만 잠근다 — 목록 전체를 잠그면 다른 줄까지 굳는다. */
   deletingId: string | null;
+  /**
+   * 목록 자체를 스크롤 영역으로 만든다 (11-1 상세). 🚨 **기본값은 꺼짐**이다 — 프로필(11)은
+   * 한 줄만 세우고, 한 줄짜리 목록에 스크롤 상자를 두면 잘린 것처럼 보인다.
+   *
+   * 🚨 `overflow-hidden` 을 **대체**한다. 둘을 같이 주면 `cn()` 이 tailwind-merge 가 아니라서
+   *    어느 쪽이 이길지가 생성된 CSS 순서에 달린다 (이 파일 위아래에서 여러 번 덴 자리다).
+   *    `overflow-y-auto` 는 가로축도 `auto` 로 계산돼서 모서리 둥글림은 그대로 잘린다.
+   *
+   * 🚨 **`tabindex` 를 붙이지 않는다.** 줄마다 지우기 버튼이 있어서 키보드는 그 버튼을 타고
+   *    넘어가며 영역이 따라 스크롤된다 — 상자 자체에 탭 정지를 하나 더 만들 이유가 없다.
+   */
+  scrollable?: boolean;
 }) {
   return (
-    <ul className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border">
+    <ul
+      className={cn(
+        "border-line divide-line rounded-card bg-surface divide-y border",
+        /* 🚨 높이를 `rem` 으로 고정하지 않는다 — 줄 높이가 글자 크기를 따라 늘어나는데
+           (`min-h-touch` · 디자인 시스템 §10) 상자만 고정이면 200% 확대에서 두 줄만 보인다.
+           화면 높이의 60% 면 844px 기기에서 여섯 줄 남짓이고, 마지막 줄이 반쯤 잘려서
+           "더 있다" 를 모양이 말한다 — 스크롤 안내 문구를 따로 두지 않는 이유다. */
+        scrollable ? "max-h-[60vh] overflow-y-auto" : "overflow-hidden",
+      )}
+    >
       {logs.map((log) => (
         <li key={log.id}>
-          <GrowthLogRow
-            log={log}
-            onDelete={() => onDelete(log)}
-            deleting={deletingId === log.id}
-          />
+          <GrowthLogRow log={log} onDelete={() => onDelete(log)} deleting={deletingId === log.id} />
         </li>
       ))}
     </ul>
@@ -168,4 +188,50 @@ function GrowthValues({ log }: { log: GrowthLog }) {
   if (parts.length === 0) return <span className="text-ink-muted">잰 값이 없어요</span>;
 
   return <>{parts.join(", ")}</>;
+}
+
+/**
+ * 11 프로필의 "키 · 몸무게" 구역(코드에서는 `growth`)이 평소에 세우는 것 — **가장 최근에 잰 한 줄**이다.
+ *
+ * 🚨 **여기서 목록 전체를 펼치지 않는다.** 프로필은 부르는 이름 · 키·몸무게 · 알레르기 셋이
+ *    사는 화면이고, 측정 기록은 쌓일수록 길어져서 그냥 두면 한 구역이 다른 둘을 화면 밖으로
+ *    민다. 매일 여는 화면에서 이 구역이 답해야 하는 것은 "지금 얼마"지 "그동안 어땠나" 가
+ *    아니다 — 후자는 눌러서 가는 11-1 상세가 진다.
+ *
+ * 🚨 **잰 값을 큰 글자로 세우지 않는다.** 줄 문법(`GrowthLogRow`)을 그대로 쓴다. 값이
+ *    `display` 로 서는 순간 그건 지표 타일이고, `DESIGN.md` 의 Don't 가 막는 그것이다.
+ *
+ * 🚨 **줄 자체가 링크다.** 옆에 "전체 보기" 글자 버튼을 따로 달면 구역 머리줄의 `Plus` 와
+ *    합쳐 이 작은 구역에 행동이 셋이 된다 (머리줄 버튼을 아이콘으로 내린 것과 같은 이유).
+ */
+export function GrowthLatestCard({ log, href }: { log: GrowthLog; href: string }) {
+  return (
+    <Link
+      href={href}
+      className="rounded-card border-line bg-surface ease-standard active:bg-surface-muted hover:bg-surface-muted min-h-touch flex items-start gap-3 border px-4 py-3.5 transition-colors duration-120"
+    >
+      <IconTile icon={Ruler} tone="neutral" />
+
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="text-body text-ink">
+          <GrowthValues log={log} />
+        </span>
+        {/* 🚨 띄운 가운뎃점은 줄당 하나다 (디자인 시스템 §4). */}
+        <span className="text-caption text-ink-subtle">
+          {formatDay(log.measured_on)}
+          {log.measured_label ? ` · ${log.measured_label}` : ""}
+        </span>
+      </span>
+
+      {/* 🚨 화살표가 단독 신호가 되지 않게 이름을 함께 내보낸다 — 줄의 글자는 잰 값이라
+          여기를 누르면 어디로 가는지는 말해 주지 않는다. */}
+      <span className="sr-only">지난 기록과 변화 보기</span>
+      <ChevronRight
+        aria-hidden
+        size={ICON_SIZE.md}
+        strokeWidth={ICON_STROKE}
+        className="text-ink-subtle mt-1.5 shrink-0"
+      />
+    </Link>
+  );
 }

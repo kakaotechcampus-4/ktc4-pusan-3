@@ -333,7 +333,12 @@ export const childProfile: ChildProfile = {
 };
 
 /** 🚨 `measured_label` 도 서버 문구다 (`observed_label` 과 같은 처리). */
-function growthLog(id: string, days: number, height: number | null, weight: number | null): GrowthLog {
+function growthLog(
+  id: string,
+  days: number,
+  height: number | null,
+  weight: number | null,
+): GrowthLog {
   return {
     id,
     measured_on: daysAgo(days),
@@ -349,10 +354,19 @@ function growthLog(id: string, days: number, height: number | null, weight: numb
  *    (`DESIGN.md` — 부모가 자기 아이를 지표로 보게 하지 않는다).
  * 🚨 한쪽만 잰 날이 섞여 있다 — 화면이 null 한쪽을 제대로 그리는지 여기서 걸린다.
  */
+/**
+ * 🚨 **한쪽만 잰 날이 섞여 있어야 한다** (`g_5`). 그 날은 키 그래프에 점이 없고 몸무게에만
+ *    있는데, 빈 칸을 0 이나 직전 값으로 채우는 버그는 이 픽스처가 아니면 화면에서 안 보인다.
+ * 🚨 **잰 간격이 고르지 않다.** 가로축이 시간 축이라 간격이 그대로 그려지는데, 고른 간격만
+ *    넣어 두면 축을 범주로 그려 놓고도 맞아 보인다 (`GrowthChart` 머리말).
+ */
 export const growthLogs: GrowthLog[] = [
-  growthLog("g_3", 12, 104.2, 17.1),
-  growthLog("g_2", 47, null, 16.8),
-  growthLog("g_1", 104, 101.5, 16.2),
+  growthLog("g_6", 12, 104.2, 17.1),
+  growthLog("g_5", 47, null, 16.8),
+  growthLog("g_4", 104, 101.5, 16.2),
+  growthLog("g_3", 190, 99.8, 15.7),
+  growthLog("g_2", 285, 97.1, 15.1),
+  growthLog("g_1", 372, 94.6, 14.4),
 ];
 
 /** 🚨 서버가 채우는 값(id · measured_label)은 여기서 만든다 — 요청에 없는 값이다. */
