@@ -312,6 +312,67 @@ export const safetyScan: SafetyScanResponse = {
       reactions: ["두드러기"],
       source_text: "Milk  class 3",
     },
+    /**
+     * 🚨 **잘 읽은 줄이 여기부터 여럿이다.** 검사지 한 장에는 보통 열 줄 넘게 찍히는데,
+     *    후보가 서넛뿐이면 **"잘 읽었어요" 를 왜 접어 두는지가 화면에서 안 보인다** —
+     *    확인이 필요한 두 줄이 화면 위에 그냥 있고, 접힘이 있으나 마나가 된다.
+     *    11-2 가 두 무리로 가르는 이유를 목이 실제로 만들어 줘야 한다.
+     * 🚨 이름은 전부 지어낸 것이다 (실제 검사지도 실제 아이 정보도 아니다 · 최상위 §9).
+     */
+    {
+      id: "sc_5",
+      type: "allergy",
+      label: "새우",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Shrimp  class 3",
+    },
+    {
+      id: "sc_6",
+      type: "allergy",
+      label: "고등어",
+      category: "식품",
+      severity: "mild",
+      reactions: [],
+      source_text: "Mackerel  class 2",
+    },
+    {
+      id: "sc_7",
+      type: "allergy",
+      label: "밀",
+      category: "식품",
+      severity: "mild",
+      reactions: [],
+      source_text: "Wheat  class 2",
+    },
+    {
+      id: "sc_8",
+      type: "allergy",
+      label: "대두",
+      category: "식품",
+      severity: "mild",
+      reactions: [],
+      source_text: "Soybean  class 2",
+    },
+    {
+      id: "sc_9",
+      type: "allergy",
+      label: "자작나무 꽃가루",
+      category: "환경",
+      severity: "mild",
+      reactions: ["재채기"],
+      source_text: "Birch pollen  class 2",
+    },
+    {
+      id: "sc_10",
+      type: "allergy",
+      label: "고양이 비듬",
+      category: "환경",
+      severity: "mild",
+      reactions: [],
+      source_text: "Cat dander  class 2",
+    },
   ],
   unreadable_count: 2,
 };

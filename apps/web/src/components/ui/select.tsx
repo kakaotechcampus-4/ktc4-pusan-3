@@ -31,21 +31,31 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  * 🚨 **등장 애니메이션이 없다** (문서 §8). 쉐브론도 회전시키지 않는다 — 상호작용 전환은
  *    "색만 바꾸고 크기·위치는 건드리지 않는다" 라서, 방향은 아이콘을 갈아 끼워 말한다.
  * 🚨 **라벨을 지우지 않는다.** 좁은 화면에서 상자만 남기면 무엇을 고르는 상자인지 사라진다.
+ *
+ * 🚨 **사유(`error`)는 상자에 붙인다** (`TextInput` 과 같은 처리 · 문서 §7 입력).
+ *    상자 밖에 떠 있는 문단으로 두면 보조기술이 그 문구를 **어느 칸의 문제인지** 잇지 못한다.
+ *    `aria-invalid` 와 `aria-describedby` 를 함께 건다 — 색(`danger` 테두리)만으로는
+ *    단독 신호가 되고, 안 고른 것을 "고르지 않음" 으로 넘길 수 있는 칸에서는 그게 곧
+ *    **빈 값이 조용히 저장되는 길**이다.
  */
 export function Select<T extends string>({
   label,
   value,
   options,
   onChange,
+  error,
 }: {
   label: string;
   value: T;
   options: ReadonlyArray<{ value: T; label: string }>;
   onChange: (value: T) => void;
+  /** 고르지 않았거나 잘못 고른 이유. 🚨 상자 밖 문단으로 대신하지 않는다 (위 머리말). */
+  error?: string | null;
 }) {
   const id = useId();
   const listId = `${id}-list`;
   const labelId = `${id}-label`;
+  const errorId = `${id}-error`;
 
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -150,6 +160,8 @@ export function Select<T extends string>({
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-labelledby={`${labelId} ${id}-value`}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         onClick={() => setOpen((prev) => !prev)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -161,6 +173,9 @@ export function Select<T extends string>({
           "border-line-strong bg-surface text-body-sm text-ink ease-standard min-h-touch flex w-full items-center justify-between gap-2 rounded-full py-2 pr-3 pl-3.5 text-left transition-colors duration-120",
           "hover:bg-surface-muted active:bg-surface-muted",
           "border focus-visible:-outline-offset-2",
+          // 🚨 `cn()` 은 tailwind-merge 가 아니다 — 위에서 깐 `border-line-strong` 과 같은
+          //    속성이라 **한 번에 하나만** 고를 수 없어서, 사유가 있을 때만 덮어쓴다.
+          error ? "border-danger" : null,
         )}
       >
         <span id={`${id}-value`} className="truncate">
@@ -182,6 +197,12 @@ export function Select<T extends string>({
           />
         )}
       </button>
+
+      {error ? (
+        <p id={errorId} className="text-caption text-danger-ink">
+          {error}
+        </p>
+      ) : null}
 
       {open ? (
         <ul

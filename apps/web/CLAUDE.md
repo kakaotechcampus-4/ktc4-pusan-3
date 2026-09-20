@@ -51,7 +51,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
-  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지
+  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
+  🚨 `stores/safety-scan-draft.ts` 도 같다 (**알레르기 검사지 사진** — 의료 기록이다).
+  둘 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`)
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
@@ -77,6 +79,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
+| 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
@@ -87,6 +90,19 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 기기 뒤로가기가 히스토리 기반이라([`apps/mobile/App.tsx`](../mobile/App.tsx)) 시트는 그 버튼으로
 안 닫히거나, 닫히면서 앱을 벗어난다. 그 화면에서 뒤로 가는 길은 링크로도 함께 세운다
 (주소로 바로 들어오면 히스토리에 프로필이 없어서 `router.back()` 이 앱 밖으로 나간다).
+
+🚨 **11-2 도 시트가 아니라 라우트다. 다만 11-1 과 이유가 다르다.** 검사지 한 장에서 열 줄 넘게
+나오는데, 시트 높이 안에서는 `caution` 배너 · 검사지 사진 · 후보 목록 · 승인 버튼이 서로 자리를
+뺏는다 — 사진을 96px 까지 줄여야 목록이 보였다. 08 사진으로 적기와 같은 모양으로 화면을 내줬다.
+
+- 🚨 **네비를 붙이지 않는다** (11-1 과 반대다). 11-1 은 **가는 곳**이라 네비가 있지만 11-2 는
+  **흐름 중인 화면**이고 승인 게이트가 걸려 있다 — 고르다 마는 길을 만들지 않는다
+- 🚨 **여기는 승인 게이트 ㉡ 다.** 08 사진이 만드는 `event` 는 `draft` 라 `caution`·`btn-approve`
+  를 안 쓰지만, 11-2 의 등록은 되돌릴 수 없어서 **둘 다 쓴다.** 게이트를 늘린 것이 아니라
+  **있던 게이트가 시트에서 화면으로 옮겨온 것**이다 (최상위 §2 — 늘리지도 줄이지도 않는다)
+- 🚨 **고른 파일은 URL 로 못 넘긴다.** 화면 밖 스토어(`stores/safety-scan-draft.ts`)에 한 칸
+  두고 넘긴다. 라우트 이동이 사용자 제스처를 소비해서 도착한 뒤 `input.click()` 을 부르는
+  방법은 브라우저가 막는다. 🚨 그 스토어에 `persist` 를 붙이지 말 것 — **의료 기록 사진**이다
 
 🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
 `failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
@@ -130,7 +146,11 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
-  `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `HealthSafetyScanSheet`
+  `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet`
+- 🚨 **`components/safety-scan-fields.ts` 는 컴포넌트가 아니다** — 11-2 의 확인 화면과 고치기
+  시트가 **같은 판단**(무엇이 확인이 필요한 줄인가)을 보게 두는 자리다. 양쪽에 따로 두면
+  목록이 "고를 수 있다" 고 본 줄을 시트가 "아직 아니다" 라고 보는 어긋남이 생기는데,
+  승인 게이트에서 그 어긋남은 **확인 안 한 것이 등록되는** 경로다
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다

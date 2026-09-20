@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { Pencil, Plus, Ruler, Shield, type LucideIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
@@ -11,7 +12,6 @@ import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { GrowthLatestCard } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { HealthSafetyList, HealthSafetySheet } from "@/components/health-safety-list";
-import { HealthSafetyScanSheet } from "@/components/health-safety-scan-sheet";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
+import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import {
   api,
@@ -378,13 +379,18 @@ function SafetySection({
   childId: string;
   query: ReturnType<typeof useQuery<HealthSafetyListResponse>>;
 }) {
+  const router = useRouter();
+
   /**
    * 더하는 길이 둘이다 — 직접 적기와 검사지 사진. 🚨 **시트를 겹쳐 열지 않는다**
    * (`<dialog>` 두 장이 포개지면 포커스 트랩이 둘이 된다). 한 번에 하나만 열리게
    * 상태 하나로 가른다.
+   *
+   * 🚨 **검사지는 시트가 아니라 화면(11-2)으로 나간다.** 한 장에서 열 줄 넘게 나오는데 시트
+   *    높이 안에서는 배너·사진·목록·승인 버튼이 서로 자리를 뺏는다 (사진을 96px 까지 줄여야
+   *    목록이 보였다). 그래서 여기 남는 `mode` 는 둘뿐이다.
    */
-  const [mode, setMode] = useState<null | "choose" | "manual" | "scan">(null);
-  const [photo, setPhoto] = useState<File | null>(null);
+  const [mode, setMode] = useState<null | "choose" | "manual">(null);
   /** 고치는 중인 기록. 있으면 같은 승인 게이트 시트가 고치기로 열린다. */
   const [editing, setEditing] = useState<HealthSafety | null>(null);
 
@@ -438,8 +444,11 @@ function SafetySection({
           // 같은 파일을 다시 고를 수 있게 값을 비운다 (안 비우면 onChange 가 안 온다).
           e.target.value = "";
           if (!file) return;
-          setPhoto(file);
-          setMode("scan");
+          // 🚨 **파일은 URL 로 못 넘긴다.** 화면 밖 스토어에 한 칸 두고 넘긴다 —
+          //    objectURL 을 만드는 것도 해제하는 것도 거기 한 곳이 맡는다.
+          useSafetyScanDraftStore.getState().putPhoto(childId, file);
+          setMode(null);
+          router.push(`/child/${childId}/profile/safety-scan`);
         }}
       />
 
@@ -461,23 +470,6 @@ function SafetySection({
           onClose={() => setEditing(null)}
           childId={childId}
           item={editing}
-        />
-      ) : null}
-
-      {/* 🚨 사진이 바뀌면 시트를 새로 만든다 (`key`). 미리보기 URL 과 "한 번만 읽는다" 가드를
-          `useState` 초기값·`useRef` 로 들고 있어서, 같은 인스턴스를 재사용하면 두 번째 사진이
-          첫 번째 사진의 결과를 그대로 보여준다. */}
-      {photo ? (
-        <HealthSafetyScanSheet
-          key={`${photo.name}:${photo.lastModified}`}
-          open={mode === "scan"}
-          onClose={() => {
-            setMode(null);
-            setPhoto(null);
-          }}
-          childId={childId}
-          file={photo}
-          registeredLabels={items.map((item) => item.label)}
         />
       ) : null}
     </Section>
