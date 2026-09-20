@@ -112,7 +112,8 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` · `Select`
+  `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
+  `BottomSheet` · `Tabs` · `Toast` · `Select` · `ButtonLink`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
@@ -125,6 +126,18 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7).
   설정의 하위 화면 둘이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
   있어서 안 붙인다**(빠져나가는 길은 자기 "그만두고 돌아가기" 하나다)
+- 🚨 **돌아가기 화살표는 `IconButtonLink` 다** (`components/ui/icon-button.tsx`). `IconButton` 과
+  **같은** 모양·톤 표를 쓴다. 🚨 `router.back()` 으로 만들지 않는다 — 히스토리는 어디서 왔는지에
+  따라 달라져서, 알림이나 링크로 바로 들어오면 돌아갈 데가 없다. 🚨 `label` 에 "뒤로" 가 아니라
+  **가는 곳**을 적는다("설정으로 돌아가기"). 🚨 **`PageTitle` 과 한 줄**에 세우고 `-ml-3` 를
+  **줄 전체**에 건다 — 44px 원 안에 20px 아이콘이 가운데 있어 좌우 12px 이 비고, 그대로 두면
+  화살표가 화면 왼쪽 기준선보다 안쪽에 선다.
+  ⚠️ 그러면 **제목만 왼쪽이 안 맞는다**(화살표 16 · 제목 52 · 나머지 전부 16). 가로로 붙이는 한
+  피할 수 없고(타깃 44 > 여백 16), 세로 44px 을 아끼는 값으로 받기로 했다 (제품 결정 · #89)
+- 🚨 **한 화면에 같은 이름의 링크를 둘 두지 않는다.** 고객센터 아래에 화살표와 같은 이름의
+  돌아가기를 하나 더 뒀더니 스크린리더 링크 목록에 같은 이름이 두 번 떴다 — 둘 다 같은 곳으로
+  갔다. 탈퇴 화면은 예외가 아니라 **다른 경우**다(아래 "그만두고 돌아가기" 는 흐름을 그만둔다는
+  뜻이라 이름도 하는 일도 화살표와 다르다)
 - 🚨 **버튼처럼 보이는 링크는 `ButtonLink` 다** (`components/ui/button.tsx`). `Button` 과 **같은**
   변형·크기 표를 쓴다 — 두 벌이 되면 한쪽만 고쳐져 같은 자리에 선 둘이 달라진다.
   🚨 `<button onClick={router.push}>` 로 대신하지 않는다(링크가 링크가 아니게 된다) ·
@@ -214,6 +227,10 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   움직이는데, 떨어질까 봐 넣었던 스크롤 가드가 **열릴 때 포커스가 일으킨 스크롤**을 잡아
   자기를 닫고 있었다 — 바텀시트 안(본문이 `overflow-y-auto`)에서 상자가 **아예 안 열렸다.**
   페이지가 긴 화면(07)에서는 스크롤이 안 나서 여태 안 보였다
+- 🚨 **접히는 질문(10 › 고객센터)은 네이티브 `<details>`/`<summary>` 다.** 펼침 상태·키보드·포커스를
+  브라우저가 준다 — `aria-expanded` 를 손으로 달지 않는다. 🚨 기본 마커를 지우고(`list-none` +
+  `::-webkit-details-marker`) 쉐브론은 **회전이 아니라 갈아 끼운다**. 🚨 `summary` 여백은 카드 밖으로
+  **네 방향 다** 되민다(`-m-4 p-4`) — 아래만 남기면 닫힌 카드에 32px 빈 띠가 생긴다
 - 🚨 **화면을 그리는 외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.**
   접근성을 손으로 짜면 반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고**
   `classNames` 로 토큰만 입힌다 — 버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7).
