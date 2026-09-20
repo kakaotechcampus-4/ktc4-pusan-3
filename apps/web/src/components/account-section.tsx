@@ -2,10 +2,10 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { DoorOpen, KeyRound } from "lucide-react";
+import { DoorOpen, KeyRound, UserMinus } from "lucide-react";
 import { useState } from "react";
 
-import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
+import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
@@ -16,17 +16,19 @@ import { useSessionStore } from "@/stores/session";
 /**
  * 10 설정 — 계정.
  *
- * 🚨 **계정 탈퇴 버튼을 만들지 않는다.** 엔드포인트가 없고(계약서에도 auth 문서에도),
- *    탈퇴 유예기간이 팀 미정이다 (`docs/api/auth-kakao-v1.md` §미결 1). 없는 기능을 화면에
- *    세워 두고 "준비 중" 을 눌러 알려주면, 정말 지우고 싶어서 온 사람에게 가장 나쁜 자리에서
- *    가장 나쁜 답을 한다. 준비되면 그때 만든다.
+ * 🚨 **탈퇴가 이 구역에 있다.** 로그인·로그아웃과 같은 축(계정을 어떻게 할 것인가)이라
+ *    따로 떼어 두면 부모가 설정 전체를 훑어야 찾는다. 다만 **여기서 실행되지는 않는다** —
+ *    줄을 누르면 안내와 절차를 가진 화면으로 간다.
+ *
+ * 🚨 **탈퇴 줄에 빨강을 쓰지 않는다.** 이 줄은 아무것도 확정하지 않고 다음 화면으로 갈
+ *    뿐이다. `danger` 는 파괴적 **확정**의 색이고 그 자리는 탈퇴 화면의 확인 시트다.
  *
  * 🚨 **로그아웃은 파괴가 아니다.** `danger` 를 쓰지 않는다 — 다시 로그인하면 그대로다.
  *    다만 아직 안 보낸 한 줄은 같이 지워지므로(세션 스토어), 그 사실을 확인 시트에 적는다.
  *
  * 🚨 **서버 호출이 실패해도 이 기기에서는 나간다.** 토큰을 들고 남는 것이 더 나쁘다.
  */
-export function AccountSection() {
+export function AccountSection({ childId }: { childId: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const signOut = useSessionStore((s) => s.signOut);
@@ -60,6 +62,13 @@ export function AccountSection() {
               로그아웃
             </Button>
           }
+        />
+        <SettingsLinkRow
+          href={`/child/${childId}/settings/withdraw`}
+          icon={UserMinus}
+          title="탈퇴하기"
+          status="쌓인 기억이 사라져요"
+          note="무엇이 어떻게 되는지 다음 화면에서 알려드려요"
         />
       </SettingsGroup>
 

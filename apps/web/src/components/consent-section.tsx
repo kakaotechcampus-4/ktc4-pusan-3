@@ -30,9 +30,10 @@ import { formatDay } from "@/lib/format";
  * 10 설정 — 동의 관리.
  *
  * 🚨 **필수와 선택을 같은 컨트롤로도, 같은 구역으로도 두지 않는다.** 내가 지금 쥐고 있는 것
- *    (선택)은 화면 **위**에서 켜고 끄고, 이미 동의한 것(필수)은 **맨 아래**에서 이름과 상태만
- *    간단히 보여준다. 같은 목록에 나란히 두면 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와
- *    다르다 — 그리고 손댈 수 없는 넷이 손댈 수 있는 하나보다 위에 서서 자리를 먹는다.
+ *    (선택)은 화면 **위**에서 켜고 끄고, 필수 넷은 아래 **약관과 방침**에서 이름과 상태만
+ *    간단히 보여준다 (`GrantedConsentSection`). 같은 목록에 나란히 두면 "다 끌 수 있다" 고
+ *    말하는 셈이고, 눌렀을 때와 다르다 — 그리고 손댈 수 없는 넷이 손댈 수 있는 하나보다
+ *    위에 서서 자리를 먹는다.
  *
  * 🚨 **필수를 화면에서 빼지는 않는다.** 무엇에 동의했는지 열람할 경로는 남아 있어야 한다
  *    (전문 시트로 가는 길이 여기 하나뿐이다).
@@ -57,7 +58,13 @@ import { formatDay } from "@/lib/format";
  *    않으려고 시트 전체에 건다 (디자인 시스템 §4).
  */
 
-/** 화면 왼쪽 타일. 스코프마다 뜻이 좁은 사물 하나씩. */
+/**
+ * 화면 왼쪽 타일. 스코프마다 뜻이 좁은 사물 하나씩.
+ *
+ * ⚠️ 지금 타일이 실제로 서는 것은 **선택 동의 줄뿐**이다 — 약관 목록은 컴팩트한 줄이라
+ *    타일이 없다. 그래도 표는 다섯 스코프를 다 든다: `ConsentScope` 로 인덱싱하므로 빠진
+ *    키가 있으면 타입이 막고, 어느 줄이 타일을 쓰게 되든 여기 한 곳만 보면 된다.
+ */
 const CONSENT_ICON = {
   service_terms: FileText,
   privacy_account: UserRound,
@@ -280,17 +287,21 @@ function ConsentDetail({ item }: { item: ConsentItem }) {
 }
 
 /**
- * 맨 아래 — **이미 동의한 것.** 필수 4건을 이름과 상태만으로 간단히 보여준다.
+ * **약관과 방침** — 가입할 때 동의한 문서 목록이다.
  *
- * 🚨 **여기서는 아무것도 할 수 없다.** 오른쪽이 비어 있고 왜 못 끄는지도 한 줄로 줄였다 —
- *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹던 것을 아래로 내린 것이
- *    이 구역의 전부다. 줄마다 이유를 길게 적으면 내린 의미가 없어진다.
+ * 🚨 **"이미 동의한 것" 이라고 부르지 않는다.** 그 이름은 *동의라는 행위*를 주어로 삼아서
+ *    동의 구역의 꼬리처럼 읽히는데, 부모가 여기 오는 이유는 동의 이력을 확인하려는 게
+ *    아니라 **약관을 읽으려는** 것이다. 이름이 곧 그 화면이 무엇인지다.
  *
- * 🚨 **그래도 전문으로 가는 길은 남긴다.** 무엇에 동의했는지 확인할 경로가 이것뿐이다 —
- *    줄의 이름을 누르면 `font-doc` 전문 시트가 열린다.
+ * 🚨 **여기서는 아무것도 할 수 없다.** 전문을 여는 것 말고는 버튼이 없다 — 필수 동의라
+ *    화면에서 끌 수 없고, 그만 쓰려면 계정 구역의 탈퇴로 간다.
  *
- * 🚨 **상태를 글자로 낸다** (`동의함`). 약관 버전이 올라 필수 스코프가 꺼지는 경우가 있고
- *    (콜백 화면이 이 화면으로 보내는 그 경우다), 그때 줄이 똑같이 그려지면 안 된다.
+ * 🚨 **컴팩트한 줄이다** — 아이콘 타일이 없고 상태가 오른쪽 끝에 붙는다. 여기 줄들은
+ *    "무엇을 하는 곳" 이 아니라 **문서 목록**이라 훑는 속도가 먼저고, 타일을 세우면 설정의
+ *    다른 구역들과 같은 무게로 읽혀 자리를 먹는다 (디자인 시스템 §7 설정 줄 · 컴팩트).
+ *
+ * 🚨 **그래도 상태를 글자로 낸다** (`동의함`). 약관 버전이 올라 필수 스코프가 꺼지는 경우가
+ *    있고(콜백 화면이 이 화면으로 보내는 그 경우다), 그때 줄이 똑같이 그려지면 안 된다.
  */
 export function GrantedConsentSection({ childId }: { childId: string }) {
   const [detail, setDetail] = useState<ConsentItem | null>(null);
@@ -308,21 +319,29 @@ export function GrantedConsentSection({ childId }: { childId: string }) {
     <>
       <SettingsGroup>
         {REQUIRED_CONSENTS.map((item) => (
-          <SettingsInfoRow
-            key={item.scope}
-            icon={CONSENT_ICON[item.scope]}
-            title={item.shortLabel}
-            onTitleClick={() => setDetail(item)}
-            status={
-              effective === undefined
-                ? undefined
+          <li key={item.scope} className="flex items-center justify-between gap-3 px-4">
+            {/* 🚨 이름이 유일한 조작이다. 줄 전체를 버튼으로 만들지 않는 것은 다른 설정 줄과
+                같지만, 여기서는 **누를 것이 이것뿐**이라 밑줄이 더 중요하다. */}
+            <button
+              type="button"
+              onClick={() => setDetail(item)}
+              className="text-body text-ink ease-standard decoration-line-strong hover:decoration-ink-muted active:text-ink-muted min-h-touch max-w-full py-2 text-left underline decoration-1 underline-offset-4 transition-colors duration-120 focus-visible:-outline-offset-2"
+            >
+              {item.shortLabel}
+            </button>
+            <span className="text-caption text-ink-subtle shrink-0">
+              {effective === undefined
+                ? null
                 : effective[item.scope] === true
                   ? "동의함"
-                  : "동의하지 않음"
-            }
-          />
+                  : "동의하지 않음"}
+            </span>
+          </li>
         ))}
       </SettingsGroup>
+
+      {/* 어느 판에 동의했는지. 🚨 약관을 고치면 이 값부터 올라간다 (`lib/consent.ts`). */}
+      <p className="text-caption text-ink-subtle">{CONSENT_POLICY_VERSION} 판에 동의했어요.</p>
 
       <BottomSheet
         open={detail !== null}
