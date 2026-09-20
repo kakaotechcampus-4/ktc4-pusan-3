@@ -1,6 +1,6 @@
 """Shared records outlive their writer, but not their child (Issue #47, PR A)."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import delete, select
@@ -21,6 +21,25 @@ from app.domains.memory.observation.models import (
 )
 from app.domains.policy.models import PolicyVersion
 from app.domains.safety.models import HealthSafety, SafetyKind
+from app.domains.schedule.models import (
+    DiaryEntry,
+    Event,
+    EventCategory,
+    EventCreatedBy,
+    EventType,
+    PushDevice,
+    PushPlatform,
+    Reminder,
+    SharedPhoto,
+)
+
+OBSERVATION_MODELS = {
+    ObservationFood,
+    ObservationEducation,
+    ObservationActivity,
+    ObservationHealth,
+    ObservationRoutine,
+}
 
 RECORDS = [
     (ObservationFood, "source_writer", {}),
@@ -29,6 +48,11 @@ RECORDS = [
     (ObservationHealth, "source_writer", {"symptom": ["synthetic symptom"]}),
     (ObservationRoutine, "source_writer", {"routine_category": RoutineCategory.HABIT}),
     (HealthSafety, "created_by", {"kind": SafetyKind.ALLERGY, "label": "synthetic label"}),
+    (
+        SharedPhoto,
+        "uploader_parent_id",
+        {"date": date(2026, 9, 1), "image_url": "https://example.test/photo.jpg"},
+    ),
 ]
 
 
@@ -45,7 +69,7 @@ async def family(session):
 
 def make_record(model, column, extra, child_id, writer_id):
     values = {"child_id": child_id, column: writer_id, **extra}
-    if model is not HealthSafety:
+    if model in OBSERVATION_MODELS:
         values.update(
             raw_text="synthetic record",
             confidence_source=ConfidenceSource.PARENT_DIRECT,
@@ -90,6 +114,117 @@ async def test_writer_delete_preserves_records_and_child_cascade(
     assert (
         await session.scalars(select(model.id).where(model.id.in_([record_id, other_id])))
     ).all() == []
+
+
+async def test_diary_deleted_with_author(session, family):
+    """Diary는 개인 데이터라 RECORDS(공동 기록)와 반대다 — 작성자가 지워지면 같이 지워진다."""
+    owner, writer, child = family
+    entry = DiaryEntry(
+        child_id=child.id, author_parent_id=writer.id, date=date(2026, 9, 1), content="synthetic"
+    )
+    other = DiaryEntry(
+        child_id=child.id, author_parent_id=owner.id, date=date(2026, 9, 1), content="synthetic"
+    )
+    session.add_all([entry, other])
+    await session.flush()
+    entry_id, other_id = entry.id, other.id
+
+    await session.execute(delete(Parent).where(Parent.id == writer.id))
+
+    assert await session.scalar(select(DiaryEntry.id).where(DiaryEntry.id == entry_id)) is None
+    assert await session.scalar(select(DiaryEntry.id).where(DiaryEntry.id == other_id)) == other_id
+
+    # other_id survived the author delete above — still there to prove the child cascade.
+    await session.execute(delete(Child).where(Child.id == child.id))
+    assert (
+        await session.scalars(select(DiaryEntry.id).where(DiaryEntry.id.in_([entry_id, other_id])))
+    ).all() == []
+
+
+async def test_reminder_deleted_with_parent(session, family):
+    """Reminder도 개인 설정이라 RECORDS(공동 기록)와 반대다 — 받을 사람이 지워지면 같이 지워진다."""
+    owner, writer, child = family
+    event = Event(
+        child_id=child.id,
+        title="synthetic event",
+        event_type=EventType.EPISODIC,
+        starts_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        category=EventCategory.ACTIVITY,
+        created_by=EventCreatedBy.CAREGIVER,
+    )
+    session.add(event)
+    await session.flush()
+
+    remind_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    reminder = Reminder(event_id=event.id, parent_id=writer.id, remind_at=remind_at)
+    other = Reminder(event_id=event.id, parent_id=owner.id, remind_at=remind_at)
+    session.add_all([reminder, other])
+    await session.flush()
+    reminder_id, other_id = reminder.id, other.id
+
+    await session.execute(delete(Parent).where(Parent.id == writer.id))
+
+    assert await session.scalar(select(Reminder.id).where(Reminder.id == reminder_id)) is None
+    assert await session.scalar(select(Reminder.id).where(Reminder.id == other_id)) == other_id
+
+    # other_id survived the parent delete above — still there to prove the event cascade.
+    await session.execute(delete(Event).where(Event.id == event.id))
+    assert (
+        await session.scalars(select(Reminder.id).where(Reminder.id.in_([reminder_id, other_id])))
+    ).all() == []
+
+
+async def test_push_device_deleted_with_parent(session, family):
+    """push_device 도 개인 데이터라 소유 보호자가 지워지면 같이 지워진다."""
+    owner, writer, _ = family
+    last_seen = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    device = PushDevice(
+        parent_id=writer.id,
+        device_token="synthetic-device-token-writer",
+        platform=PushPlatform.IOS,
+        last_seen_at=last_seen,
+    )
+    other = PushDevice(
+        parent_id=owner.id,
+        device_token="synthetic-device-token-owner",
+        platform=PushPlatform.ANDROID,
+        last_seen_at=last_seen,
+    )
+    session.add_all([device, other])
+    await session.flush()
+    device_id, other_id = device.id, other.id
+
+    await session.execute(delete(Parent).where(Parent.id == writer.id))
+
+    assert await session.scalar(select(PushDevice.id).where(PushDevice.id == device_id)) is None
+    assert await session.scalar(select(PushDevice.id).where(PushDevice.id == other_id)) == other_id
+
+
+async def test_push_device_token_must_be_unique(session, family):
+    """upsert-by-device 설계의 전제 — 같은 토큰 두 번째 삽입은 DB 가 막는다."""
+    owner, writer, _ = family
+    last_seen = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    session.add(
+        PushDevice(
+            parent_id=writer.id,
+            device_token="shared-token",
+            platform=PushPlatform.IOS,
+            last_seen_at=last_seen,
+        )
+    )
+    await session.flush()
+
+    with pytest.raises(IntegrityError):
+        async with session.begin_nested():
+            session.add(
+                PushDevice(
+                    parent_id=owner.id,
+                    device_token="shared-token",
+                    platform=PushPlatform.IOS,
+                    last_seen_at=last_seen,
+                )
+            )
+            await session.flush()
 
 
 async def test_owner_delete_is_still_blocked(session, family):
