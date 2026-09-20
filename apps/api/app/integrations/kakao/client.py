@@ -108,9 +108,7 @@ class KakaoClient:
            늘지 않는다. 카카오 쪽에서 수명대로 만료된다.
         """
         try:
-            await self._request(
-                "POST", LOGOUT_URL, where="logout", headers=_bearer(access_token)
-            )
+            await self._request("POST", LOGOUT_URL, where="logout", headers=_bearer(access_token))
         except KakaoApiError:
             log.warning("카카오 토큰 폐기에 실패했다 — 로그인은 계속한다")
 

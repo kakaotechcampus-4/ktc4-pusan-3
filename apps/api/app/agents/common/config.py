@@ -4,18 +4,17 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+
+from app.core.agent_config import AGENT_ROLES, AgentLLMSettings, AgentRole
 
 _ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 DEFAULT_REASONING_EFFORT = "none"
 
 # LLM을 부르는 역할. 역할의 키가 비어 있으면 MEMORY_*를 사용
-AgentRole = Literal["memory", "supervisor", "food"]
-_PREFIX: dict[str, str] = {"memory": "MEMORY", "supervisor": "SUPERVISOR", "food": "FOOD"}
+_PREFIX: dict[str, str] = {role.lower(): role for role in AGENT_ROLES}
 
 
 class AgentConfigError(ValueError):
@@ -39,27 +38,13 @@ class LLMProfile:
         return self.keys.get(name, f"{_PREFIX[self.role]}_{name.upper()}")
 
 
-class AgentSettings(BaseSettings):
-    # 기본 설정. 다른 역할의 키가 비어 있으면 이 값을 쓴다
-    MEMORY_API_KEY: str = ""  # Elice Serverless API Key
-    MEMORY_BASE_URL: str = ""  # ML API endpoint(/v1 까지 포함)
-    MEMORY_MODEL: str = ""  # 모델 ID
-    MEMORY_REASONING_EFFORT: str = DEFAULT_REASONING_EFFORT
+class AgentSettings(AgentLLMSettings):
+    """Agent가 쓰는 설정.
 
-    # Supervisor/Food — 전부 선택. MODEL과 BASE_URL은 한 쌍으로 채운다
-    # (BASE_URL 이 모델마다 다르다. 한쪽만 채우면 LLMClient 가 거절한다)
-    SUPERVISOR_API_KEY: str = ""
-    SUPERVISOR_BASE_URL: str = ""
-    SUPERVISOR_MODEL: str = ""
-    SUPERVISOR_REASONING_EFFORT: str = ""
-
-    FOOD_API_KEY: str = ""
-    FOOD_BASE_URL: str = ""
-    FOOD_MODEL: str = ""
-    FOOD_REASONING_EFFORT: str = ""
-
-    LLM_TIMEOUT_S: float = 60.0  # 한 번의 chat 호출 상한
-    LLM_MAX_RETRIES: int = 2  # SDK 내부 재시도 (429, 5xx 대상)
+    app/core/agent_config.py의 AgentLLMSettings에 선언된 키 설정을
+    역할별 LLMProfile로 바꾸는 규칙.
+    빈 값 폴백, MODEL/BASE_URL 쌍 검증, 어느 키에서 읽었는지(keys).
+    """
 
     # 빈 값은 "미설정"으로 보고 기본값을 사용
     @field_validator("MEMORY_REASONING_EFFORT", mode="before")
@@ -142,7 +127,9 @@ class AgentSettings(BaseSettings):
         )
 
     def _own(self, key: str) -> str:
-        return str(getattr(self, key)).strip()
+        """설정된 값만 돌려준다. 빈 값·None은 "미설정"이라 빈 문자열."""
+        value = getattr(self, key)
+        return str(value).strip() if value else ""
 
 
 # 값이 없어도 import는 통과(실제 검증은 LLMClient 생성 시점에 진행)

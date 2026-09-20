@@ -1,7 +1,7 @@
 """agent 루프 검증. 가짜 LLM 응답으로 돌리므로 실제 API를 부르지 않는다.
 
-Memory agent에 관한 루프 테스트이므로 unit 디렉토리에 두고,
-전체 라우팅 테스트는 상위 디렉토리에 둔다.
+Memory agent 의 루프만 본다. Supervisor 라우팅까지 묶어서 보는 테스트는
+tests/unit/agents/supervisor 에 있다.
 """
 
 import json
