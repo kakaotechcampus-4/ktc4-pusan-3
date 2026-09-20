@@ -64,13 +64,13 @@ function ChildProfileScreen() {
 
   return (
     <Screen className="gap-6" nav={<ChildNav active="profile" />}>
-      {/* 🚨 **머리에 아이 이름·나이를 다시 세우지 않는다.** 바로 아래 "부르는 이름" 구역의
+      {/* 🚨 **머리에 아이 이름·나이를 다시 세우지 않는다.** 바로 아래 "기본 정보" 구역의
           별명 입력과 생일 입력이 같은 값을 들고 있어서, 머리에 또 쓰면 한 화면에서 같은 사실이
           두 번 선다. 제목은 화면을 가리키고, 아이가 누구인지는 그 구역이 진다. */}
       <header>
         <PageTitle>아이 프로필</PageTitle>
         <p className="text-body-sm text-ink-muted mt-2">
-          부르는 이름과 키·몸무게, 알레르기를 여기서 관리해요.
+          기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
         </p>
       </header>
 
@@ -115,7 +115,11 @@ function Section({
   children,
 }: {
   title: string;
-  description: string;
+  /**
+   * 구역이 하는 일을 한 줄로. 🚨 **설명이 필요 없는 구역에는 넘기지 않는다** — 라벨만으로
+   * 뜻이 서는데 문장을 하나 더 깔면 그건 설명이 아니라 빈 줄이다 ("기본 정보" 가 그렇다).
+   */
+  description?: string;
   /** 쌓인 건수. 아직 안 불러왔거나 0 이면 넘기지 않는다 (위 주석). */
   count?: number;
   /**
@@ -135,7 +139,7 @@ function Section({
             🚨 `items-center` 다. 버튼이 있는 줄에서 `items-baseline` 을 쓰면 버튼 상자가
             글자 기준선에 매달려 라벨보다 아래로 처진다.
             🚨 **줄 높이를 `min-h-touch` 로 깔지 않는다.** 버튼이 이미 자기 높이(44)를 갖고
-            있어서 있는 줄은 어차피 44 인데, 없는 줄("부르는 이름")까지 44 가 되면 13px 라벨
+            있어서 있는 줄은 어차피 44 인데, 없는 줄("기본 정보")까지 44 가 되면 13px 라벨
             위아래로 빈 공간이 15px 씩 생겨 라벨과 설명이 남남처럼 떨어진다. */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-baseline gap-2">
@@ -144,7 +148,7 @@ function Section({
           </div>
           {action}
         </div>
-        <p className="text-body-sm text-ink-muted mt-1">{description}</p>
+        {description ? <p className="text-body-sm text-ink-muted mt-1">{description}</p> : null}
       </div>
       {children}
     </section>
@@ -191,7 +195,7 @@ function SectionError({ what, onRetry }: { what: string; onRetry: () => void }) 
   );
 }
 
-/* ── ㉠ 부르는 이름 ───────────────────────────────────────────────────── */
+/* ── ㉠ 기본 정보 ─────────────────────────────────────────────────────── */
 
 function IdentitySection({
   childId,
@@ -204,17 +208,15 @@ function IdentitySection({
 
   return (
     <Section
-      title="부르는 이름"
-      description="아이를 부르는 말과 생일이에요."
+      title="기본 정보"
+      // 🚨 **설명 줄을 두지 않는다.** "아이를 부르는 말과 생일이에요" 는 바로 아래 카드가
+      //    별명 · 생일 · 성별을 글자로 다 보여주는 것을 한 번 더 말할 뿐이었다 —
+      //    같은 화면에서 같은 사실이 두 번 서는 자리다 (머리의 아이 이름을 뺀 것과 같은 이유).
       // 🚨 고치는 것은 드문 일이라 **행동으로** 둔다 — 입력칸을 늘 펼쳐 두지 않는다
       //    (`ChildIdentityCard` 머리말). 다른 두 구역과 같은 머리줄 문법이다.
       action={
         query.data ? (
-          <SectionAction
-            label="부르는 이름 고치기"
-            icon={Pencil}
-            onClick={() => setEditing(true)}
-          />
+          <SectionAction label="기본 정보 고치기" icon={Pencil} onClick={() => setEditing(true)} />
         ) : undefined
       }
     >

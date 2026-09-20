@@ -323,7 +323,7 @@ export function HealthSafetySheet({
 
   /**
    * 🚨 **고치기는 서버 값이 바뀌면 폼을 맞춘다.** 배우자가 같은 항목을 먼저 고쳤을 때 옛 값을
-   *    들고 있으면, 승인하는 순간 남의 수정을 되돌린다 (11 부르는 이름과 같은 처리).
+   *    들고 있으면, 승인하는 순간 남의 수정을 되돌린다 (11 기본 정보와 같은 처리).
    *    effect 가 아니라 렌더 중 조정이다 — effect 면 옛 값으로 한 프레임을 먼저 그린다.
    */
   const itemKey = item ? `${item.id}\u0000${item.updated_at}` : null;

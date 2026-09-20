@@ -733,8 +733,14 @@ export interface SafetyScanResponse {
  *
  * 🚨 **성별은 화면 표시 전용으로 제안했다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
  *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다.
+ *
+ * ⚠️ **"밝히지 않음"(`unspecified`)을 뺐다 — 성별이 필수값이 됐다.** 최상위 CLAUDE.md §2 의
+ *    "수집은 이름(별명)·나이·알레르기 여부까지" 를 넘는 쪽으로 한 걸음 더 간 것이라
+ *    **#75 의 PM 결정 대상이 하나 늘었다**. 화면 표시 전용이라는 위 제약은 그대로다.
+ *    ⚠️ 01 첫 진입은 아직 성별을 받지 않는다 — 새로 만든 아이의 성별을 무엇으로 둘지는
+ *    서버 계약과 함께 정해야 한다 (지금은 목이 `male` 로 들고 있다).
  */
-export type Gender = "male" | "female" | "unspecified";
+export type Gender = "male" | "female";
 
 export interface ChildProfile {
   id: string;

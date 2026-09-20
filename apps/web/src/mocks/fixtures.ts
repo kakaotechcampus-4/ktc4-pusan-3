@@ -388,7 +388,7 @@ export const childProfile: ChildProfile = {
   nickname: "민준",
   birth_date: "2021-04-02",
   age_display: "만 4세",
-  gender: "unspecified",
+  gender: "male",
   relation: "mother",
   role: "owner",
 };

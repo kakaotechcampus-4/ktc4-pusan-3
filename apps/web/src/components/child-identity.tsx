@@ -8,14 +8,14 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { IconTile } from "@/components/ui/icon-tile";
-import { Select } from "@/components/ui/select";
+import { ChoiceField } from "@/components/ui/choice-field";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { formatDateWithYear } from "@/lib/format";
 import { api, qk, type ChildProfile, type Gender, type UpdateChildRequest } from "@/lib/api";
 
 /**
- * 11 부르는 이름 — **보여주는 카드 + 고칠 때만 여는 시트.**
+ * 11 기본 정보 — **보여주는 카드 + 고칠 때만 여는 시트.**
  *
  * 🚨 **입력칸을 늘 열어 두지 않는다.** 한동안 별명·생일·성별이 화면에 입력 셋으로 서 있었는데,
  *    이 셋은 **거의 안 고치는 값**이다 (서페이스 브리프: 여기 오는 이유 셋 중 하나이고 셋 다
@@ -38,11 +38,15 @@ import { api, qk, type ChildProfile, type Gender, type UpdateChildRequest } from
 const GENDER_LABEL: Record<Gender, string> = {
   male: "남자아이",
   female: "여자아이",
-  unspecified: "밝히지 않음",
 };
 
+/**
+ * ⚠️ **"밝히지 않을래요" 를 뺐다 — 필수값이 됐다** (`Gender` 타입 머리말 · #75).
+ * 🚨 그래서 고르는 물건도 드롭다운이 아니다 (`ChoiceField` 머리말) — 둘뿐인 선택지를
+ *    상자 안에 감췄다가 탭 두 번으로 다시 보여줄 이유가 없고, 비어 있을 수 없는 값이라
+ *    **둘 다 꺼진 상태가 정상인** 칩도 아니다.
+ */
 const GENDER_OPTIONS = [
-  { value: "unspecified", label: "밝히지 않을래요" },
   { value: "male", label: "남자아이" },
   { value: "female", label: "여자아이" },
 ] as const satisfies ReadonlyArray<{ value: Gender; label: string }>;
@@ -175,7 +179,7 @@ export function ChildIdentitySheet({
     <BottomSheet
       open={open}
       onClose={onClose}
-      title="부르는 이름 고치기"
+      title="기본 정보 고치기"
       // 🚨 승인 게이트가 아니라 스크림 탭으로 닫힌다 — 되돌릴 수 있는 값이다 (위 머리말).
       footer={
         <div className="flex flex-col gap-2">
@@ -216,9 +220,9 @@ export function ChildIdentitySheet({
           toDate={new Date()}
         />
 
-        {/* 🚨 기본값이 "밝히지 않을래요" 다. 수집을 늘리지 않는다는 원칙이 남아 있는 자리고,
-            성별은 화면 표시 전용이라 비워 둬도 화면이 하는 일이 줄지 않는다 (#75). */}
-        <Select label="성별" value={gender} options={GENDER_OPTIONS} onChange={setGender} />
+        {/* ⚠️ 필수값이다 — 비워 둘 수 없다 (#75 · 위 `GENDER_OPTIONS` 주석).
+            🚨 성별은 **화면 표시 전용**이라는 제약은 그대로다: Agent 컨텍스트에 넣지 않는다. */}
+        <ChoiceField label="성별" value={gender} options={GENDER_OPTIONS} onChange={setGender} />
       </div>
     </BottomSheet>
   );
