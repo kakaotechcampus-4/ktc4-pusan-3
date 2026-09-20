@@ -36,10 +36,13 @@ location.replace("/");
 | 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
 | 06 승인 시트 | 05 에서 "이걸로" (시트라 주소가 없다) |
 | 07 기록 · 기억 | `/child/c1/memories` (`?tab=profile` · `?tab=feedback` · `?domain=food`) |
-| 08 사진으로 적기 | 03 홈의 카메라 버튼 → 시트에서 촬영/앨범 (아무 이미지 파일이나 고르면 알림장으로 읽는다) |
+| 08 사진으로 적기 | 03 홈의 카메라 버튼 → 시트에서 **어떤 사진인지 고르고** → 최근 사진·촬영·앨범 |
+| 08 · 알림장으로 읽기 | 시트에서 "알림장·식단표" 를 고른다 (아무 이미지 파일이나 넣으면 된다) |
+| 08 · 아이 활동 사진으로 읽기 | 시트에서 "아이 활동 사진" 을 고른다 — 태그가 **하나도 안 골라진** 채로 시작한다 |
+| 08 · 최근 사진 줄 | 목을 켜면 가짜 썸네일이 채워진다. 실제로는 `apps/mobile` 셸이 꽂는다 (웹은 갤러리를 못 읽는다) |
 | 08 · 직접 들어온 경우 | `/child/c1/photos` — 넘겨받은 사진이 없어서 고르는 칸이 선다 |
-| 08 · 아이 활동 사진 | `/child/c1/photos?scenario=photo_activity` (태그가 **하나도 안 골라진** 채로 시작한다) |
 | 08 · 읽어낼 게 없는 사진 | `/child/c1/photos?scenario=photo_unreadable` |
+| 08 · 고른 종류와 다르게 읽힘 | `?scenario=photo_lane_mismatch` — 한 줄로 알리고 고른 쪽을 유지한다 |
 | 08 · 캘린더의 하루에서 들어온 경우 | `/child/c1/photos?date=2026-09-12` 또는 09 하루 패널의 "사진으로 적기" |
 | 09 캘린더 | `/child/c1/calendar` (`?date=YYYY-MM-DD`) |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |

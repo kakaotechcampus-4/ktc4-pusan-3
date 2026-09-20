@@ -48,7 +48,10 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   바꾸는 것이 전부고, 상대 시간·나이·기간은 여기서도 만들지 않는다 (§4)
 - `lib/auth/oauth-bind.ts` = bind 비밀. 만지기 전에 그 파일 주석을 읽는다 (§3 로그인)
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
-- `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
+- `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
+  🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
+  서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
+- `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
   🚨 `stores/draft.ts` · `stores/photo-draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문과
   아이 사진 원본이라 `persist` 금지
@@ -116,6 +119,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` · `PhotoReview` · `PhotoSourceSheet`
+  (시트 안의 lane 라디오 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
@@ -155,8 +159,23 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
     한 번 돌려서 방금 넘겨받은 사진이 그 자리에서 해제된다 (`ERR_FILE_NOT_FOUND` 로 났다).
     만드는 것도 해제하는 것도 스토어 한 곳이고, 해제는 **다음 사진**과 **로그아웃** 두 이벤트뿐이다 —
     살아 있는 URL 은 언제나 최대 한 개다
-- 🚨 **08 은 `lane` 을 서버 추측 + 한 번 정정으로 정한다.** 프로토타입의 탭 선택은 같은 것을 두 번
-  고르게 만들어서 뺐다. 정정 버튼에는 "아니에요" 가 아니라 **바뀔 결과**를 쓴다(`아이 활동 사진이에요`)
+- 🚨 **`lane` 은 부모가 시트에서 **고른다.** 서버 추측이 정하지 않는다.** 계약서 §09 의 `lane`
+  이벤트는 추측이고, 무엇을 찍었는지는 찍은 사람이 안다 — 그래서 시트가 먼저 묻고
+  (`어떤 사진인가요?` 라디오 2칸) 고른 값을 업로드 multipart 의 `lane` 으로 싣는다.
+  🚨 **서버 추측은 선언을 덮지 않는다.** 어긋날 때만(`confidence >= 0.6`) 확인 화면에 한 줄이
+  서고, 바꾸는 버튼에는 "아니에요" 가 아니라 **바뀔 결과**를 쓴다(`아이 활동 사진이에요`).
+  🚨 **시트는 두 단계다. 한 화면에 쌓지 않는다** — ㉠ 어떤 사진인가 → ㉡ 어디서 가져오나
+  (최근 사진 · 촬영 · 앨범). 처음엔 한 화면에 셋을 세우고 앞을 안 고르면 뒤를 비활성으로 뒀는데,
+  **할 일이 하나인 순간에 세 덩어리를 보여 주고** 꺼진 것들이 "왜 안 눌리지" 를 먼저 묻게 만들었다.
+  🚨 **시트 제목이 지금 묻는 것**이다 (㉠ "어떤 사진인가요?" · ㉡ 고른 종류의 이름) — 같은 제목을
+  쓰면 넘어간 것이 화면에 안 보인다. 🚨 ㉠ 에 확인 버튼을 두지 않는다(고르면 바로 ㉡)
+- 🚨 **최근 사진 줄은 네이티브 셸이 있을 때만 선다** (`lib/native/recent-photos.ts`).
+  **웹은 기기 갤러리를 읽을 수 없다** — 파일 입력은 OS 피커를 열 뿐이고 목록을 먼저 가져오는
+  API 가 없다. 셸(`apps/mobile`)이 `expo-media-library` 로 읽어 `window.icatch.recentPhotos` 에
+  꽂아 주는 구조이고, 그 구현은 **별도 브랜치·별도 이슈**다.
+  🚨 **셸이 없으면 줄 자체를 그리지 않는다** — 빈 상자도 권한 안내도 띄우지 않는다
+  (브라우저에는 허용할 권한이 아예 없다). 개발 환경에서 화면을 보려면 목 스위치를 켠다
+  (`mocks/native-bridge.ts` 가 가짜 썸네일을 꽂는다)
 - 🚨 **08 의 문서 lane 은 항목을 미리 골라 두고, 활동 lane 은 하나도 고르지 않은 채로 시작한다.**
   기관이 적어 준 글자를 옮긴 것과 모델이 아이에 대해 추측한 것을 같은 무게로 두지 않는다
   (최상위 §2 "한 번의 관찰을 성향으로 확정하지 않는다"). 같은 이유로 활동 lane 은 태그를 하나도
@@ -485,8 +504,11 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
 | `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
-| `photo_activity` | 08 사진을 아이 활동 사진으로 읽음 — 태그가 하나도 안 골라진 채로 시작 |
 | `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
+| `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
+
+🚨 **08 의 두 lane 은 시나리오가 아니다.** 시트에서 고르면 그대로 갈린다 — 시나리오가 만드는 것은
+**실서버로 못 만드는 상태**(안 읽히는 사진 · 어긋난 추측)뿐이다.
 
 주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
 
