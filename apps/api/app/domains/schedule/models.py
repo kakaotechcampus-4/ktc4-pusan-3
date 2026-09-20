@@ -33,6 +33,11 @@ class EventCreatedBy(enum.StrEnum):
     CAREGIVER = "caregiver"
 
 
+class PushPlatform(enum.StrEnum):
+    IOS = "ios"
+    ANDROID = "android"
+
+
 class Event(Base, UUIDPk):
     __tablename__ = "event"
 
@@ -77,13 +82,46 @@ class EventItem(Base):
 
 
 class Reminder(Base, UUIDPk):
+    """보호자 개인 알림 설정. 같은 일정이라도 받을지는 보호자마다 다르다.
+
+    parent_id 는 ON DELETE CASCADE 다 — diary_entry.author_parent_id 와 같은 이유로,
+    받을 사람 없는 개인 알림 설정은 의미가 없어 작성자가 탈퇴하면 함께 삭제된다.
+    """
+
     __tablename__ = "reminder"
+    __table_args__ = (
+        Index("ix_reminder_event_id", "event_id"),
+        Index("ix_reminder_parent_id", "parent_id"),
+    )
 
     event_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("event.id", ondelete="CASCADE"), nullable=False
     )
+    parent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="CASCADE"), nullable=False
+    )
     remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PushDevice(Base, UUIDPk, Timestamps):
+    """알림을 보낼 기기 1대. Reminder 와 분리한다 — 알림 설정과 발송 대상은 다른 생명주기다.
+
+    device_token 유니크 — 로그인·앱 실행·토큰 갱신 시 이 값 기준으로 upsert 한다.
+    같은 기기에서 다른 계정으로 로그인하면 같은 행의 parent_id 가 바뀐다.
+    """
+
+    __tablename__ = "push_device"
+
+    parent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    device_token: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    platform: Mapped[PushPlatform] = mapped_column(
+        enum_col_py(PushPlatform, name="push_platform"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class DiaryEntry(Base, UUIDPk, Timestamps):
