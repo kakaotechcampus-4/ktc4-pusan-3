@@ -2,8 +2,8 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Text, text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
@@ -86,18 +86,54 @@ class Reminder(Base, UUIDPk):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class Calendar(Base, UUIDPk, Timestamps):
-    """하루 한 행. 일기 + 사진.
+class DiaryEntry(Base, UUIDPk, Timestamps):
+    """보호자 개인 기록. 작성자 본인만 조회·수정·삭제한다 (아이 공동 기록이 아니다).
 
-    일정은 event.calendar_id 로 역방향 참조한다 (배열에는 FK 를 걸 수 없어서).
-    episodic 일정은 calendar_id 로, core 일정은 starts_at 날짜로 조회한다.
+    author_parent_id 는 ON DELETE CASCADE 다 — 작성자 없는 개인 일기는 의미가 없어서,
+    다른 공동 기록의 작성자 FK(SET NULL)와 다르게 작성자가 탈퇴하면 이 행도 함께 삭제된다.
+    계정은 유지한 채 그 아이와의 연결만 해제되는 경우의 삭제는 서비스 레이어 책임이다.
+
+    (child_id, author_parent_id, date) 유니크 — 옛 calendar 의 "하루 한 행" 불변식을
+    작성자 단위로 이어받는다. 같은 보호자가 같은 날 일기를 두 번 쓰면 덮어쓰기다.
     """
 
-    __tablename__ = "calendar"
+    __tablename__ = "diary_entry"
+    __table_args__ = (
+        UniqueConstraint(
+            "child_id", "author_parent_id", "date", name="uq_diary_entry_child_author_date"
+        ),
+        Index("ix_diary_entry_child_date", "child_id", "date"),
+        Index("ix_diary_entry_author_parent_id", "author_parent_id"),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
+    author_parent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="CASCADE"), nullable=False
+    )
     date: Mapped[date] = mapped_column(Date, nullable=False)
-    diary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    image_urls: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SharedPhoto(Base, UUIDPk, Timestamps):
+    """아이 공동 사진. Connected 보호자가 함께 조회·관리한다.
+
+    uploader_parent_id 는 ON DELETE SET NULL 이다 — observation.source_writer 와 같은 패턴으로,
+    업로더가 탈퇴해도 사진 자체는 유지하고 참조만 지운다.
+    """
+
+    __tablename__ = "shared_photo"
+    __table_args__ = (
+        Index("ix_shared_photo_child_date", "child_id", "date"),
+        Index("ix_shared_photo_uploader_parent_id", "uploader_parent_id"),
+    )
+
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
+    uploader_parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    image_url: Mapped[str] = mapped_column(Text, nullable=False)

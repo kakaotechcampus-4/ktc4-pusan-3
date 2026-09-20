@@ -21,6 +21,15 @@ from app.domains.memory.observation.models import (
 )
 from app.domains.policy.models import PolicyVersion
 from app.domains.safety.models import HealthSafety, SafetyKind
+from app.domains.schedule.models import DiaryEntry, SharedPhoto
+
+OBSERVATION_MODELS = {
+    ObservationFood,
+    ObservationEducation,
+    ObservationActivity,
+    ObservationHealth,
+    ObservationRoutine,
+}
 
 RECORDS = [
     (ObservationFood, "source_writer", {}),
@@ -29,6 +38,11 @@ RECORDS = [
     (ObservationHealth, "source_writer", {"symptom": ["synthetic symptom"]}),
     (ObservationRoutine, "source_writer", {"routine_category": RoutineCategory.HABIT}),
     (HealthSafety, "created_by", {"kind": SafetyKind.ALLERGY, "label": "synthetic label"}),
+    (
+        SharedPhoto,
+        "uploader_parent_id",
+        {"date": date(2026, 9, 1), "image_url": "https://example.test/photo.jpg"},
+    ),
 ]
 
 
@@ -45,7 +59,7 @@ async def family(session):
 
 def make_record(model, column, extra, child_id, writer_id):
     values = {"child_id": child_id, column: writer_id, **extra}
-    if model is not HealthSafety:
+    if model in OBSERVATION_MODELS:
         values.update(
             raw_text="synthetic record",
             confidence_source=ConfidenceSource.PARENT_DIRECT,
@@ -89,6 +103,31 @@ async def test_writer_delete_preserves_records_and_child_cascade(
     await session.execute(delete(Child).where(Child.id == child.id))
     assert (
         await session.scalars(select(model.id).where(model.id.in_([record_id, other_id])))
+    ).all() == []
+
+
+async def test_diary_deleted_with_author(session, family):
+    """Diary는 개인 데이터라 RECORDS(공동 기록)와 반대다 — 작성자가 지워지면 같이 지워진다."""
+    owner, writer, child = family
+    entry = DiaryEntry(
+        child_id=child.id, author_parent_id=writer.id, date=date(2026, 9, 1), content="synthetic"
+    )
+    other = DiaryEntry(
+        child_id=child.id, author_parent_id=owner.id, date=date(2026, 9, 1), content="synthetic"
+    )
+    session.add_all([entry, other])
+    await session.flush()
+    entry_id, other_id = entry.id, other.id
+
+    await session.execute(delete(Parent).where(Parent.id == writer.id))
+
+    assert await session.scalar(select(DiaryEntry.id).where(DiaryEntry.id == entry_id)) is None
+    assert await session.scalar(select(DiaryEntry.id).where(DiaryEntry.id == other_id)) == other_id
+
+    # other_id survived the author delete above — still there to prove the child cascade.
+    await session.execute(delete(Child).where(Child.id == child.id))
+    assert (
+        await session.scalars(select(DiaryEntry.id).where(DiaryEntry.id.in_([entry_id, other_id])))
     ).all() == []
 
 
