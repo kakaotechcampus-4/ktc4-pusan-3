@@ -16,8 +16,6 @@ from app.domains.memory.observation.models import (
     ObservationEducation,
     ObservationFood,
     ObservationHealth,
-    ObservationRoutine,
-    RoutineCategory,
 )
 from app.domains.policy.models import PolicyVersion
 from app.domains.safety.models import HealthSafety, SafetyKind
@@ -27,7 +25,6 @@ RECORDS = [
     (ObservationEducation, "source_writer", {"topic": "synthetic topic"}),
     (ObservationActivity, "source_writer", {"activity": "synthetic activity"}),
     (ObservationHealth, "source_writer", {"symptom": ["synthetic symptom"]}),
-    (ObservationRoutine, "source_writer", {"routine_category": RoutineCategory.HABIT}),
     (HealthSafety, "created_by", {"kind": SafetyKind.ALLERGY, "label": "synthetic label"}),
 ]
 

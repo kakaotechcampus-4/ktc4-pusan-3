@@ -33,7 +33,6 @@ from app.domains.memory.observation.models import (
     ObservationEducation,
     ObservationFood,
     ObservationHealth,
-    ObservationRoutine,
     ObservationStatus,
 )
 
@@ -42,7 +41,6 @@ OBSERVATIONS = [
     (ObservationEducation, {"subject": "synthetic subject", "topic": "synthetic topic"}),
     (ObservationActivity, {"subject": "synthetic subject", "activity": "synthetic activity"}),
     (ObservationHealth, {"symptom": ["synthetic symptom"]}),
-    (ObservationRoutine, {"subject": "synthetic subject", "routine_category": "habit"}),
 ]
 
 ALLOWED_PAIRS = [(kind, verdict) for kind in OBSERVATION_KINDS for verdict in OBSERVATION_VERDICTS]

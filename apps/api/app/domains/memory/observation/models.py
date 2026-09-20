@@ -50,35 +50,9 @@ class HealthSeverity(enum.StrEnum):
     EMERGENCY = "emergency"
 
 
-class RoutineCategory(enum.StrEnum):
-    SELF_CARE = "self_care"  # 양치 / 옷 입기 / 손 씻기
-    MEALTIME = "mealtime"  # 식사 도구 / 식사 태도 — 무엇을 먹었는지는 food
-    HOUSEHOLD_TASK = "household_task"  # 장난감 정리 / 심부름
-    SOCIAL_MANNER = "social_manner"  # 인사 / 차례 지키기
-    HABIT = "habit"  # 손톱 물어뜯기 / 손가락 빨기 (증상 X, 단순 버릇)
-    TRANSITION = "transition"  # 등원 준비 / 잠자리 들기 / 놀이 끝내기
-
-
-class AssistanceLevel(enum.StrEnum):
-    INDEPENDENT = "independent"
-    VERBAL_PROMPT = "verbal_prompt"
-    PARTIAL_ASSIST = "partial_assist"
-    FULL_ASSIST = "full_assist"
-
-
-class CompletionStatus(enum.StrEnum):
-    COMPLETED = "completed"
-    PARTIAL = "partial"
-    REFUSED = "refused"
-    INTERRUPTED = "interrupted"
-
-
 confidence_source = enum_col_py(ConfidenceSource, name="confidence_source")
 observation_status = enum_col_py(ObservationStatus, name="observation_status")
 engagement_level = enum_col_py(EngagementLevel, name="engagement_level")
-routine_category = enum_col_py(RoutineCategory, name="routine_category")
-assistance_level = enum_col_py(AssistanceLevel, name="assistance_level")
-completion_status = enum_col_py(CompletionStatus, name="completion_status")
 
 # generalization 은 유효 월령 72+ 라 1차 배포 타겟(≤71개월)에서 제외 확정
 STRONG_SIGNALS = (
@@ -146,20 +120,6 @@ class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
     engagement_level: Mapped[EngagementLevel | None] = mapped_column(
         engagement_level, nullable=True
     )
-
-
-class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
-    __tablename__ = "observation_routine"
-
-    routine_category: Mapped[RoutineCategory] = mapped_column(routine_category, nullable=False)
-    context: Mapped[str | None] = mapped_column(Text, nullable=True)
-    assistance_level: Mapped[AssistanceLevel | None] = mapped_column(
-        assistance_level, nullable=True
-    )
-    completion_status: Mapped[CompletionStatus | None] = mapped_column(
-        completion_status, nullable=True
-    )
-    trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ObservationHealth(Base, UUIDPk, Timestamps):
