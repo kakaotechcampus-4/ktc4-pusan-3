@@ -151,7 +151,6 @@ async def test_reminder_deleted_with_parent(session, family):
         starts_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         category=EventCategory.ACTIVITY,
         created_by=EventCreatedBy.CAREGIVER,
-        expires_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
     )
     session.add(event)
     await session.flush()
