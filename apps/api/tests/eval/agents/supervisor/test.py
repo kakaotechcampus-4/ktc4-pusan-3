@@ -1,9 +1,9 @@
 """라이브 테스트. 실제 모델로 발화 하나를 Supervisor → Memory → Food 까지 돌린다.
 
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
-    uv run pytest app/agents/test/test.py -m live -k end_to_end -s   # 끝까지
-    uv run pytest app/agents/test/test.py -m live -k split -s        # Supervisor 단독
-    uv run pytest app/agents/test/test.py -m live -s                 # 둘 다
+    uv run pytest tests/eval/agents/test.py -m live -k end_to_end -s   # 끝까지
+    uv run pytest tests/eval/agents/test.py -m live -k split -s        # Supervisor 단독
+    uv run pytest tests/eval/agents/test.py -m live -s                 # 둘 다
 
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
@@ -44,7 +44,7 @@ from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 t
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
-from app.agents.test.routing_cases import (
+from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
     T_CASES,
