@@ -2,7 +2,7 @@ import { http, HttpResponse } from "msw";
 
 import type { ChildProfile, GrowthLog, UpdateChildRequest } from "@/lib/api/types";
 
-import { childProfile, growthLogs, newGrowthLog } from "../fixtures";
+import { childProfile, growthLogs, measuredLabel, newGrowthLog } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 
@@ -89,6 +89,45 @@ export const profileHandlers = [
     logs = [log, ...logs];
 
     return HttpResponse.json({ log }, { status: 201 });
+  }),
+
+  /**
+   * 🚨 **보낸 필드만 바꾼다** (`PATCH /children/{cid}` 와 같은 규칙). 안 고친 필드를 함께
+   *    올리면 두 보호자가 같은 화면을 열어 뒀을 때 나중 저장이 남의 수정을 덮는다.
+   *
+   * 🚨 **`null` 은 "그날 그건 안 잰 것으로 되돌리기" 다.** 키를 안 보내는 것(그대로 두기)과
+   *    구분된다. 다만 **고친 결과가 둘 다 비면 거부한다** — 잰 날짜만 있고 잰 것이 없는
+   *    기록은 목록에서 뜻이 없다 (등록과 같은 판단).
+   *
+   * 🚨 **`measured_label` 은 서버가 다시 만든다.** 날짜를 고치면 "2주 전" 도 같이 바뀌어야
+   *    하는데, 프론트가 만들면 규칙이 두 곳이 된다 (최상위 CLAUDE.md §3).
+   */
+  http.patch(url("/children/:cid/growth/:id"), async ({ request, params }) => {
+    await networkDelay(320);
+    const body = (await request.json()) as {
+      measured_on?: string;
+      height_cm?: number | null;
+      weight_kg?: number | null;
+    };
+
+    const current = logs.find((log) => log.id === params.id);
+    if (!current) return apiError(404, "not_found", "이미 지워진 기록이에요");
+
+    const next = {
+      ...current,
+      ...(body.measured_on !== undefined ? { measured_on: body.measured_on } : {}),
+      ...(body.height_cm !== undefined ? { height_cm: body.height_cm } : {}),
+      ...(body.weight_kg !== undefined ? { weight_kg: body.weight_kg } : {}),
+    };
+
+    if (next.height_cm == null && next.weight_kg == null) {
+      return apiError(422, "validation_failed", "키나 몸무게 중 하나는 적어주세요");
+    }
+
+    next.measured_label = measuredLabel(next.measured_on);
+    logs = logs.map((log) => (log.id === next.id ? next : log));
+
+    return HttpResponse.json({ log: next });
   }),
 
   /** 되돌릴 수 있는 것이라 확인 단계도 승인 게이트도 없다 — 목록에서 바로 지운다. */

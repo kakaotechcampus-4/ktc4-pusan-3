@@ -52,6 +52,8 @@ function GrowthDetailScreen() {
   const queryClient = useQueryClient();
 
   const [adding, setAdding] = useState(false);
+  /** 고치는 중인 줄. 있으면 **같은 시트**가 고치기로 열린다 (`GrowthSheet` 머리말). */
+  const [editing, setEditing] = useState<GrowthLog | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   /** 🚨 프로필 화면과 **같은 쿼리 키**다 — 여기서 지운 줄이 뒤로 갔을 때 그대로 남으면 안 된다. */
@@ -153,6 +155,7 @@ function GrowthDetailScreen() {
                 것을 그대로 보여주는 것이 이 화면이 하는 일이다 (최상위 CLAUDE.md §2). */}
             <GrowthLogList
               logs={logs}
+              onEdit={setEditing}
               onDelete={(log) => remove.mutate(log)}
               deletingId={deletingId}
               scrollable
@@ -167,6 +170,18 @@ function GrowthDetailScreen() {
       )}
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
+
+      {/* 🚨 고치는 줄이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
+          같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다). */}
+      {editing ? (
+        <GrowthSheet
+          key={editing.id}
+          open
+          onClose={() => setEditing(null)}
+          childId={childId}
+          log={editing}
+        />
+      ) : null}
     </Screen>
   );
 }

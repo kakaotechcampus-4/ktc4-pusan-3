@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Ruler, Trash2 } from "lucide-react";
+import { ChevronRight, Pencil, Ruler, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -34,11 +34,14 @@ import type { GrowthLog } from "@/lib/api/types";
  */
 export function GrowthLogList({
   logs,
+  onEdit,
   onDelete,
   deletingId,
   scrollable = false,
 }: {
   logs: GrowthLog[];
+  /** 이 줄을 고친다. 🚨 승인 게이트가 아니다 — 되돌릴 수 있는 값이다 (최상위 §2). */
+  onEdit: (log: GrowthLog) => void;
   onDelete: (log: GrowthLog) => void;
   /** 지우는 중인 줄. 그 줄의 버튼만 잠근다 — 목록 전체를 잠그면 다른 줄까지 굳는다. */
   deletingId: string | null;
@@ -68,7 +71,12 @@ export function GrowthLogList({
     >
       {logs.map((log) => (
         <li key={log.id}>
-          <GrowthLogRow log={log} onDelete={() => onDelete(log)} deleting={deletingId === log.id} />
+          <GrowthLogRow
+            log={log}
+            onEdit={() => onEdit(log)}
+            onDelete={() => onDelete(log)}
+            deleting={deletingId === log.id}
+          />
         </li>
       ))}
     </ul>
@@ -77,10 +85,12 @@ export function GrowthLogList({
 
 function GrowthLogRow({
   log,
+  onEdit,
   onDelete,
   deleting,
 }: {
   log: GrowthLog;
+  onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
@@ -128,14 +138,25 @@ function GrowthLogRow({
           </p>
         </div>
 
-        <IconButton
-          label="이 기록 지우기"
-          onClick={() => setConfirming((open) => !open)}
-          disabled={deleting}
-          className="-my-1"
-        >
-          <Trash2 aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-        </IconButton>
+        {/* 🚨 **행동 둘이 아이콘이다** (안전 정보 줄과 같은 처리). 글자 버튼 둘을 나란히 두면
+            360px 에서 줄이 두 겹으로 접히고, 잰 값보다 버튼이 넓어진다. 뜻은 `IconButton` 의
+            `label`(스크린리더 이름 + 툴팁)이 지고, 누르면 열리는 시트·패널이 글자로 다시 말한다.
+            🚨 **고치기가 왼쪽이다** — 잘못 적은 숫자에 더 자주 하는 일이 고치는 쪽이고,
+            지우기가 먼저 손에 닿으면 고치면 되는 것을 지우게 된다.
+            🚨 여기서 `Trash2` 는 맞다. 안전 정보는 행이 남는 **내리기**라 `CircleMinus` 지만,
+            측정 기록은 정말 그 줄이 없어진다. */}
+        <div className="-my-1 flex shrink-0 items-center">
+          <IconButton label="이 기록 고치기" onClick={onEdit} disabled={deleting}>
+            <Pencil aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButton>
+          <IconButton
+            label="이 기록 지우기"
+            onClick={() => setConfirming((open) => !open)}
+            disabled={deleting}
+          >
+            <Trash2 aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButton>
+        </div>
       </div>
 
       {confirming ? (

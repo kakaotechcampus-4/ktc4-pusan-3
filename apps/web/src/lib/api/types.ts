@@ -727,8 +727,9 @@ export interface SafetyScanResponse {
  *    계약서가 주는 것은 `PATCH /children/{cid}` 의 `nickname` · `birth_date` 둘뿐이고,
  *    읽는 엔드포인트(`GET /children/{cid}`)도 성별도 측정 로그도 없다.
  *    최상위 `CLAUDE.md` §2 의 "수집은 이름(별명)·나이·알레르기 여부까지" 도 함께 걸린다.
- *    그래서 아래 세 타입은 **목에서만 사는 제안된 모양**이고, 서버가 붙기 전에
- *    이 주석이 지워지면 안 된다 — 지워지는 순간 계약서에 있는 것처럼 보인다.
+ *    그래서 **이 구역의 타입은 전부 목에서만 사는 제안된 모양**이고(아이 프로필 · 측정 기록 ·
+ *    측정 기록 고치기까지), 서버가 붙기 전에 이 주석이 지워지면 안 된다 — 지워지는 순간
+ *    계약서에 있는 것처럼 보인다.
  *
  * 🚨 **성별은 화면 표시 전용으로 제안했다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
  *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다.
@@ -790,6 +791,28 @@ export interface CreateGrowthLogRequest {
 }
 
 export interface CreateGrowthLogResponse {
+  log: GrowthLog;
+}
+
+/**
+ * 🚨 **보낸 필드만 바꾼다.** 안 보낸 것은 그대로 둔다 — 두 보호자가 같은 화면을 열어 뒀을 때
+ *    나중 저장이 남의 수정을 덮지 않게 (`UpdateChildRequest` 와 같은 규칙).
+ *
+ * 🚨 **`null` 은 "그날 그건 안 잰 것으로 되돌리기" 다.** 키를 아예 안 보내는 것(그대로 두기)과
+ *    다르다 — 몸무게만 재고 온 날에 키를 잘못 적었으면 그 값을 **비울** 길이 있어야 한다.
+ *    다만 둘 다 비면 잰 것이 없는 기록이라 서버가 거부한다.
+ *
+ * 🚨 **측정 기록은 승인 게이트가 아니다** (최상위 CLAUDE.md §2 — 게이트는 2곳이고 늘리지
+ *    않는다). 되돌릴 수 없는 5개가 아니므로 `Idempotency-Key` 를 붙이지 않는다.
+ */
+export interface UpdateGrowthLogRequest {
+  /** YYYY-MM-DD. */
+  measured_on?: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}
+
+export interface UpdateGrowthLogResponse {
   log: GrowthLog;
 }
 

@@ -5,6 +5,7 @@ import { ApiError, isApiError } from "@/lib/api/errors";
 import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import { addHealthSafety, confirmEvent, submitOnboarding } from "@/lib/api/operations";
 import { streamRunEvents } from "@/lib/api/sse";
+import { toISODate } from "@/lib/format";
 import { api } from "@/lib/api/client";
 import type {
   Affinity,
@@ -13,8 +14,9 @@ import type {
   CalendarMonthResponse,
   ChildProfile,
   CorrectionResponse,
-  HealthSafety,
+  GrowthLog,
   GrowthLogsResponse,
+  HealthSafety,
   HealthSafetyListResponse,
   Observation,
   ObservationsResponse,
@@ -426,6 +428,59 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
   it("둘 다 비어 있으면 422 다", async () => {
     await expect(api.post("/children/c1/growth", { measured_on: "2026-09-12" })).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "validation_failed"),
+    );
+  });
+
+  it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items.find((log) => log.height_cm !== null && log.weight_kg !== null)!;
+
+    const { log } = await api.patch<{ log: GrowthLog }>(`/children/c1/growth/${target.id}`, {
+      height_cm: 111.1,
+    });
+
+    expect(log.height_cm).toBe(111.1);
+    // 🚨 안 보낸 필드가 조용히 비워지면, 두 보호자가 같은 화면을 열어 뒀을 때 남의 수정이 사라진다.
+    expect(log.weight_kg).toBe(target.weight_kg);
+    expect(log.measured_on).toBe(target.measured_on);
+  });
+
+  it("null 은 '그날 그건 안 잰 것' 이다 — 키를 안 보내는 것과 다르다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items.find((log) => log.height_cm !== null && log.weight_kg !== null)!;
+
+    const { log } = await api.patch<{ log: GrowthLog }>(`/children/c1/growth/${target.id}`, {
+      height_cm: null,
+    });
+
+    expect(log.height_cm).toBeNull();
+    expect(log.weight_kg).toBe(target.weight_kg);
+  });
+
+  it("고친 결과가 둘 다 비면 422 다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items.find((log) => log.height_cm !== null && log.weight_kg !== null)!;
+
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { height_cm: null, weight_kg: null }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("날짜를 고치면 서버가 날짜 문구도 다시 만든다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items[items.length - 1];
+
+    const { log } = await api.patch<{ log: GrowthLog }>(`/children/c1/growth/${target.id}`, {
+      measured_on: toISODate(new Date()),
+    });
+
+    // 🚨 프론트가 계산해 채우지 않는다 (CLAUDE.md §3) — 목이 서버 역할을 한다.
+    expect(log.measured_label).toBe("오늘");
+  });
+
+  it("이미 지워진 줄을 고치면 404 다", async () => {
+    await expect(api.patch("/children/c1/growth/g_nope", { height_cm: 100 })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "not_found"),
     );
   });
 

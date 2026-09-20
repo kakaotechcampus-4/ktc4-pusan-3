@@ -430,22 +430,35 @@ export const growthLogs: GrowthLog[] = [
   growthLog("g_1", 372, 94.6, 14.4),
 ];
 
+/**
+ * 잰 날짜 하나에서 "2주 전" 을 만든다. 🚨 **서버 문구다** — 날짜를 고치면 이 문구도 같이
+ * 바뀌어야 하는데, 프론트가 만들면 규칙이 두 곳이 된다 (최상위 CLAUDE.md §3).
+ *
+ * 🚨 **`Date.now()` 에서 빼지 않는다. 자정끼리 뺀다.** 예전 계산이 `Date.now() - 잰 날 자정`
+ *    이었는데, **낮 12시가 지나면 그 차가 반올림되어 1일**이 된다 — 오늘 적은 기록이
+ *    "어제" 로 떴다 (PATCH 회귀 테스트가 이걸 잡았다). 날짜 차이는 시각이 아니라 날로 센다.
+ */
+export function measuredLabel(measuredOn: string): string {
+  const measured = new Date(`${measuredOn}T00:00:00`);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // 반올림은 서머타임으로 23·25시간짜리 날이 생겨도 날 수가 어긋나지 않게 한다.
+  const days = Math.max(0, Math.round((today.getTime() - measured.getTime()) / DAY_MS));
+  return observedLabel(days);
+}
+
 /** 🚨 서버가 채우는 값(id · measured_label)은 여기서 만든다 — 요청에 없는 값이다. */
 export function newGrowthLog(input: {
   measured_on: string;
   height_cm?: number | null;
   weight_kg?: number | null;
 }): GrowthLog {
-  const days = Math.max(
-    0,
-    Math.round((Date.now() - new Date(`${input.measured_on}T00:00:00`).getTime()) / DAY_MS),
-  );
   return {
     id: `g_${Date.now()}`,
     measured_on: input.measured_on,
     height_cm: input.height_cm ?? null,
     weight_kg: input.weight_kg ?? null,
-    measured_label: observedLabel(days),
+    measured_label: measuredLabel(input.measured_on),
     note: null,
   };
 }
