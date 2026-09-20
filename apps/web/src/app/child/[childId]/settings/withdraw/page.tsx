@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
@@ -8,6 +9,8 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
@@ -87,7 +90,21 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
   return (
     <Screen className="gap-6">
       <header>
-        <PageTitle>탈퇴하기</PageTitle>
+        {/* 🚨 **아래 "그만두고 돌아가기" 와 중복이 아니다.** 이 화면은 스크롤이 길어서,
+            읽다 그만두려는 사람이 아래까지 내려가야 나가는 길을 만나면 안 된다.
+            둘 다 같은 곳으로 간다 — 나가는 길을 두 뜻으로 가르지 않는다. */}
+        {/* 🚨 **화살표는 링크다** (`IconButtonLink`). `router.back()` 은 어디서 왔는지에
+            따라 달라져서, 알림이나 링크로 바로 들어오면 돌아갈 데가 없다.
+            🚨 **줄 전체를 `-ml-3` 로 민다.** 44px 원 안에 20px 아이콘이 가운데 있어 좌우
+            12px 이 비는데, 그대로 두면 화살표가 화면 왼쪽 기준선보다 안쪽에 선다.
+            ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
+            유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
+        <div className="-ml-3 flex items-center gap-1">
+          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기">
+            <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButtonLink>
+          <PageTitle>탈퇴하기</PageTitle>
+        </div>
         <p className="text-body-sm text-ink-muted mt-2">
           읽고 나서 결정해 주세요. 되돌릴 수 있는 기간이 있지만, 그 기간이 지나면 되돌릴 수 없어요.
         </p>

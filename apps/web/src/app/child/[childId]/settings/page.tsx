@@ -1,6 +1,6 @@
 "use client";
 
-import { LifeBuoy, Plus, UserRound } from "lucide-react";
+import { ArrowLeft, LifeBuoy, Plus, UserRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
@@ -9,9 +9,8 @@ import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, GrantedConsentSection } from "@/components/consent-section";
 import { ParentSection } from "@/components/parent-section";
 import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
-import { ButtonLink } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import { IconButton } from "@/components/ui/icon-button";
+import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
@@ -26,8 +25,8 @@ import { useChildId } from "@/hooks/use-child-id";
  * 🚨 **맨 위에 현황 요약을 두지 않는다.** 한동안 `card-accent` 한 장에 모아 뒀는데, 그 값들이
  *    바로 아래 구역들이 이미 말하는 것이라 **같은 사실을 두 번** 적는 꼴이었다.
  *
- * 🚨 **위에서 아래로 "내가 쥔 것 → 참고 → 내가 못 쥔 것" 이다.** 지금 켜고 끌 수 있는 것이
- *    위에 서고, 이미 동의해 손댈 수 없는 것은 맨 아래에서 이름과 상태만 간단히 선다.
+ * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 지금 켜고 끌 수 있는 동의가
+ *    위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
  *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹지 않게 한다.
  *
  * 🚨 **아이 정보(이름·생일·알레르기)를 여기서 보여주지도 고치지도 않는다.** 11 아이 프로필이
@@ -61,7 +60,18 @@ function SettingsScreen() {
   return (
     <Screen className="gap-6" nav={<ChildNav active="home" onRoute={false} />}>
       <header>
-        <PageTitle>설정</PageTitle>
+        {/* 🚨 **화살표는 링크다** (`IconButtonLink`). `router.back()` 은 어디서 왔는지에
+            따라 달라져서, 알림이나 링크로 바로 들어오면 돌아갈 데가 없다.
+            🚨 **줄 전체를 `-ml-3` 로 민다.** 44px 원 안에 20px 아이콘이 가운데 있어 좌우
+            12px 이 비는데, 그대로 두면 화살표가 화면 왼쪽 기준선보다 안쪽에 선다.
+            ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
+            유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
+        <div className="-ml-3 flex items-center gap-1">
+          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기">
+            <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButtonLink>
+          <PageTitle>설정</PageTitle>
+        </div>
         <p className="text-body-sm text-ink-muted mt-2">함께 보는 사람과 동의를 여기서 관리해요.</p>
       </header>
 
@@ -111,36 +121,17 @@ function SettingsScreen() {
         </SettingsGroup>
       </Section>
 
-      <Section title="계정" description="로그인에 쓰는 정보와 나가는 길이에요.">
-        <AccountSection />
-      </Section>
-
-      {/* 🚨 **이미 동의한 것은 맨 아래다.** 손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서
-          자리를 먹지 않게 한다. 그래도 화면에서 빼지는 않는다 — 무엇에 동의했는지 열람할
-          경로가 이것 하나뿐이다 (줄의 이름을 누르면 전문 시트). */}
-      <Section
-        title="이미 동의한 것"
-        description="서비스가 성립하는 근거라 화면에서 끌 수 없어요. 이름을 누르면 전문을 볼 수 있어요."
-      >
+      {/* 🚨 **약관은 계정 바로 위다.** 읽기만 하는 문서 목록이라 손대는 구역들보다 뒤에 오되,
+          계정(로그아웃·탈퇴)보다는 앞에 둔다 — 나가는 길이 화면의 마지막이어야 한다. */}
+      <Section title="약관과 방침" description="가입할 때 동의한 것들이에요. 누르면 전문을 봐요.">
         <GrantedConsentSection childId={childId} />
       </Section>
 
-      {/* 🚨 **탈퇴는 화면 맨 아래에 한 줄로만 선다.** 여기가 이 앱에서 되돌릴 수 없는 것 중
-          가장 큰 자리라 안내와 절차를 **다른 화면**이 진다 — 설정 한 줄에서 바로 실행되는
-          경로를 만들지 않는다. 🚨 그렇다고 숨기지도 않는다 (접지 않고, 글자를 줄이지 않는다). */}
-      <section className="mt-2 flex flex-col gap-2">
-        {/* 🚨 **여기에 빨강을 쓰지 않는다.** 이 버튼은 아무것도 확정하지 않고 다음 화면으로
-            갈 뿐이다 — `danger` 는 파괴적 **확정**의 색이고, 그 자리는 탈퇴 화면의 확인
-            시트다 (디자인 시스템 §7). 가는 길까지 빨강으로 칠하면 색의 뜻이 하나 늘어난다.
-            ⚠️ `cn()` 은 tailwind-merge 가 아니라 `className` 으로 글자색을 덮어도
-            어느 쪽이 이길지가 생성된 CSS 순서에 달린다 — 덮어쓰지 않는 게 맞다. */}
-        <ButtonLink href={`/child/${childId}/settings/withdraw`} variant="tertiary" block>
-          탈퇴하기
-        </ButtonLink>
-        <p className="text-caption text-ink-subtle text-center">
-          쌓인 기억이 사라져요. 무엇이 어떻게 되는지 다음 화면에서 알려드려요.
-        </p>
-      </section>
+      {/* 🚨 **탈퇴가 계정 구역 안에 있다.** 로그인·로그아웃과 같은 축이라 따로 떼어 두면
+          부모가 설정 전체를 훑어야 찾는다. 실행은 여기서 안 하고 다음 화면이 진다. */}
+      <Section title="계정" description="로그인에 쓰는 정보와 나가는 길이에요.">
+        <AccountSection childId={childId} />
+      </Section>
     </Screen>
   );
 }
