@@ -47,12 +47,14 @@ class EventItemRow:
     event_id: str
     item_name: str
     is_prepared: bool
+    prepared_at: datetime | None = None  # 체크한 시각. 언제 정하는지는 tool 이 안다
 
     def to_summary(self) -> dict[str, Any]:
         return {
             "item_id": self.item_id,
             "item_name": self.item_name,
             "is_prepared": self.is_prepared,
+            "prepared_at": self.prepared_at.isoformat() if self.prepared_at else None,
         }
 
 
@@ -178,12 +180,19 @@ class MemoryStore(Protocol):
     # event_item
     async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow: ...
 
+    async def get_event_item(self, *, item_id: str) -> EventItemRow | None:
+        """없으면 None. 부모 일정과 현재 is_prepared 를 알아야 하는 tool 이 쓴다."""
+        ...
+
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]: ...
 
     async def update_event_item(
         self, *, item_id: str, fields: dict[str, Any]
     ) -> EventItemRow | None:
-        """없으면 None. fields에는 바꿀 것만 담긴다."""
+        """없으면 None. fields에는 바꿀 것만 담긴다.
+
+        prepared_at 은 tool 이 정해서 넘긴다. store 는 받은 값을 그대로 저장한다.
+        """
         ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...

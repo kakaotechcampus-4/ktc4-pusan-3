@@ -188,15 +188,18 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="create_event_item",
         description=(
-            "일정에 챙길 준비물을 하나 추가한다. "
-            "준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. "
-            "event_id 는 create_event 나 query_event 결과에서 가져온다."
+            "이미 있는 일정에 챙길 준비물을 하나 추가한다. "
+            "새 일정이면 create_event의 items를 쓴다. "
+            f"준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. {_NEEDS_QUERY}"
         ),
         args=EventItemCreate,
     ),
     ToolDefinition(
         name="update_event_item",
-        description=f"준비물 이름을 고치거나 챙김 여부를 표시한다. {_NEEDS_QUERY}",
+        description=(
+            "준비물 이름을 고치거나 챙김 여부를 표시한다. "
+            f"이름을 고치면 보호자 확인을 거치고, 챙김 표시는 바로 반영된다. {_NEEDS_QUERY}"
+        ),
         args=EventItemUpdate,
     ),
     ToolDefinition(

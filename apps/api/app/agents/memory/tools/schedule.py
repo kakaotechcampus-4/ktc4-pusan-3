@@ -5,6 +5,11 @@ EventDraft로 만들어 context.drafts에 넣고, 저장은 보호자가 초안�
 새 일정의 준비물도 여기서 items로 같이 받는다.
 
 수정도 현재 값에 바뀐 값을 얹은 초안을 만들고, 바뀐 필드 이름을 changed에 적는다.
+현재 값은 버퍼의 초안이 먼저고 없으면 DB 행이다. 기존 일정의 준비물 추가와 이름 변경도
+같은 초안에 얹는다.
+
+바로 쓰는 것은 셋이다. 준비물 챙김 표시(is_prepared)는 되돌릴 수 있고,
+일정 삭제와 준비물 삭제는 9/17 결정대로 승인 없이 지운다.
 
 기존 일정을 가리키는 event_id 는 query_event가 돌려준 값이어야 하고,
 없는 id 면 UNKNOWN_EVENT 로 되돌려 모델이 먼저 일정을 찾게 한다.
@@ -14,6 +19,7 @@ created_by / child_id 는 규칙이 채운다.
 """
 
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -39,7 +45,7 @@ from app.agents.memory.schemas.schedule import (
     EventRef,
     EventUpdate,
 )
-from app.agents.memory.store.ports import EventRow
+from app.agents.memory.store.ports import EventItemRow, EventRow
 
 EVENT = "event"
 EVENT_ITEM = "event_item"
@@ -259,33 +265,111 @@ async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
     # 준비물도 함께 사라진다 (ON DELETE CASCADE)
     if not await context.store.delete_event(event_id=args.event_id):
         return fail("delete", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
+    # 같은 run 에서 고쳤다가 지운 일정이면 초안도 뺀다. 없는 일정의 초안을 승인 화면에 올리지 않는다
+    context.drafts.drop(args.event_id)
     return ok("delete", EVENT, id=args.event_id)
 
 
 # ── event_item ──────────────────────────────────────────────────
 async def create_event_item(context: AgentContext, args: EventItemCreate) -> ToolResult:
-    if await context.store.get_event(event_id=args.event_id) is None:
+    """이미 있는 일정에 준비물을 붙인다. 새 일정의 준비물은 create_event 의 items 로 간다."""
+    # 버퍼의 초안은 event_id 를 갖지 않는다. 여기 오는 id 는 언제나 DB id 다
+    parent = await current_draft(context, args.event_id)
+    if parent is None:
         return fail("create", EVENT_ITEM, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
-    row = await context.store.create_event_item(event_id=args.event_id, item_name=args.item_name)
-    return ok("create", EVENT_ITEM, item_id=row.item_id, item_name=row.item_name)
+    items = (*parent.items, DraftItem(item_id=None, item_name=args.item_name))
+    context.drafts.put(_with_items(parent, args.event_id, items))
+    return ok(
+        "create",
+        EVENT_ITEM,
+        draft=True,
+        event_id=args.event_id,
+        item_name=args.item_name,
+        items=[item.item_name for item in items],
+    )
 
 
 async def update_event_item(context: AgentContext, args: EventItemUpdate) -> ToolResult:
-    edits = {"item_name": args.item_name, "is_prepared": args.is_prepared}
-    row = await context.store.update_event_item(
-        item_id=args.item_id,
-        # 안 바꿀 필드(None)는 넘기지 않는다. is_prepared=False 는 바꾸는 값이라 남는다
-        fields={key: value for key, value in edits.items() if value is not None},
-    )
+    current = await context.store.get_event_item(item_id=args.item_id)
+    if current is None:
+        return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
+    if args.item_name is None:
+        return await _check_event_item(context, current, args.is_prepared)
+    return await _rename_event_item(context, current, args)
+
+
+async def _check_event_item(
+    context: AgentContext, current: EventItemRow, is_prepared: bool | None
+) -> ToolResult:
+    """챙김 표시는 바로 쓴다. 되돌릴 수 있는 값이라 승인 게이트에 넣지 않는다."""
+    fields: dict[str, Any] = {} if is_prepared is None else {"is_prepared": is_prepared}
+    prepared_at = prepared_at_for(current, is_prepared, context.now)
+    if prepared_at != current.prepared_at:
+        fields["prepared_at"] = prepared_at
+
+    row = await context.store.update_event_item(item_id=current.item_id, fields=fields)
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
-    return ok("update", EVENT_ITEM, item_id=row.item_id, is_prepared=row.is_prepared)
+    return ok("update", EVENT_ITEM, draft=False, item_id=row.item_id, is_prepared=row.is_prepared)
+
+
+async def _rename_event_item(
+    context: AgentContext, current: EventItemRow, args: EventItemUpdate
+) -> ToolResult:
+    """이름 변경과 is_prepared는 보호자가 초안에서 확인하고 제출한다."""
+    parent = await current_draft(context, current.event_id)
+    if parent is None:
+        return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
+
+    renamed = DraftItem(
+        item_id=current.item_id,
+        item_name=args.item_name or current.item_name,
+        is_prepared=current.is_prepared if args.is_prepared is None else args.is_prepared,
+    )
+    items = tuple(renamed if item.item_id == current.item_id else item for item in parent.items)
+    if items == parent.items and not parent.changed:
+        return ok("update", EVENT_ITEM, draft=False, item_id=current.item_id, changed=[])
+
+    context.drafts.put(_with_items(parent, current.event_id, items))
+    return ok(
+        "update", EVENT_ITEM, draft=True, item_id=current.item_id, item_name=renamed.item_name
+    )
+
+
+def _with_items(parent: EventDraft, event_id: str, items: tuple[DraftItem, ...]) -> EventDraft:
+    """준비물만 바꾼 수정 초안."""
+    return replace(
+        parent,
+        op="update",
+        event_id=event_id,
+        items=items,
+        changed=_merge_changed(parent.changed, ("items",) if items != parent.items else ()),
+    )
+
+
+def prepared_at_for(
+    current: EventItemRow, is_prepared: bool | None, now: datetime
+) -> datetime | None:
+    """준비물을 챙긴 시각. 체크하면 now, 해제하면 제거.
+
+    TODO: 백엔드의 PATCH /event-items/{iid}도 같은 규칙을 쓰게 하기
+    app/rules/는 be 파트라 지금은 임시로 여기 두고, API를 만들 때 옮기기
+    """
+    if is_prepared is None or is_prepared == current.is_prepared:
+        return current.prepared_at
+    return now if is_prepared else None
 
 
 async def delete_event_item(context: AgentContext, args: EventItemRef) -> ToolResult:
-    if not await context.store.delete_event_item(item_id=args.item_id):
+    row = await context.store.get_event_item(item_id=args.item_id)
+    if row is None or not await context.store.delete_event_item(item_id=args.item_id):
         return fail("delete", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
+    # 지운 준비물이 초안에 남지 않게
+    buffered = context.drafts.get(row.event_id)
+    if buffered is not None:
+        kept = tuple(item for item in buffered.items if item.item_id != args.item_id)
+        context.drafts.put(replace(buffered, items=kept))
     return ok("delete", EVENT_ITEM, item_id=args.item_id)
 
 

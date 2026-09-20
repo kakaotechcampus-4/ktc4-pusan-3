@@ -196,9 +196,13 @@ class InMemoryStore:
             event_id=event_id,
             item_name=item_name,
             is_prepared=False,
+            prepared_at=None,
         )
         self._items[row.item_id] = row
         return row
+
+    async def get_event_item(self, *, item_id: str) -> EventItemRow | None:
+        return self._items.get(item_id)
 
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]:
         rows = [item for item in self._items.values() if item.event_id == event_id]
@@ -216,6 +220,8 @@ class InMemoryStore:
             event_id=row.event_id,
             item_name=fields.get("item_name", row.item_name),
             is_prepared=fields.get("is_prepared", row.is_prepared),
+            # 언제로 둘지는 tool 이 정해서 넘긴다. 여기서는 받은 값을 그대로 쓴다
+            prepared_at=fields.get("prepared_at", row.prepared_at),
         )
         self._items[row.item_id] = updated
         return updated

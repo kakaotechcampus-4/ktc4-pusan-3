@@ -21,7 +21,7 @@ from app.agents.memory.schemas.common import (
     ToolArgs,
 )
 
-EventId = Annotated[str, Field(description="create_event / query_event 가 돌려준 event id")]
+EventId = Annotated[str, Field(description="query_event 가 돌려준 event id")]
 
 
 class EventCreate(ToolArgs):
@@ -129,7 +129,7 @@ class EventRef(ToolArgs):
 
 
 class EventItemCreate(ToolArgs):
-    """준비물 한 개. 여러 개면 item 마다 따로 호출한다."""
+    """이미 있는 일정의 준비물 한 개. 여러 개면 item마다 따로 호출한다."""
 
     event_id: EventId
     item_name: Annotated[str, Field(description="준비물 이름. 예: 체육복, 수영복")]
