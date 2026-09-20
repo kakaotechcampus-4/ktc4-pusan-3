@@ -8,7 +8,6 @@ import {
   commitPhotoRun,
   confirmEvent,
   photoFormData,
-  reanalyzePhotoRun,
   submitOnboarding,
   uploadPhoto,
 } from "@/lib/api/operations";
@@ -23,6 +22,7 @@ import type {
   Observation,
   ObservationsResponse,
   PhotoCommitResponse,
+  PhotoEntry,
   PhotoLane,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
@@ -390,6 +390,20 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
     return new File([new Uint8Array([1, 2, 3, 4])], name, { type: "image/jpeg" });
   }
 
+  /** 스트림을 끝까지 돌려서 `parsed` 를 꺼낸다. */
+  async function parsedOf(runId: string): Promise<ParsedEvent> {
+    const events = [];
+    for await (const e of streamRunEvents(runId)) events.push(e);
+    const parsed = events.find((e) => e.type === "parsed");
+    if (!parsed) throw new Error("parsed 이벤트가 오지 않았다");
+    return parsed.data as ParsedEvent;
+  }
+
+  /** 🚨 부모가 고치기 시트에서 확인한 것과 같은 모양 — 확인된 항목만 commit 에 실린다. */
+  function checked(entries: PhotoEntry[]): PhotoEntry[] {
+    return entries.filter((e) => !e.needs_review);
+  }
+
   async function upload(lane: PhotoLane = "document", date?: string): Promise<string> {
     const { run_id } = await uploadPhoto(
       "c1",
@@ -417,41 +431,68 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const runId = await upload();
-    for await (const _ of streamRunEvents(runId)) void _;
+    const parsed = await parsedOf(runId);
 
     const between = await api.get<ObservationsResponse>("/children/c1/observations");
     expect(between.total).toBe(before.total);
 
     const saved = await commitPhotoRun(runId, {
       lane: "document",
-      selected_items: ["수건"],
+      entries: checked(parsed.entries ?? []),
       attach_to_calendar: true,
     });
     expect(saved.observations).toHaveLength(1);
   });
 
-  it("고르지 않은 항목은 저장되지 않는다", async () => {
+  it("알림장 한 장에서 항목이 여러 개 나오고, 못 읽은 것이 섞여 온다", async () => {
+    const parsed = await parsedOf(await upload());
+    const entries = parsed.entries ?? [];
+
+    // 🚨 계약서 v1 의 `extracted`(항목 하나)로는 담을 수 없는 모양이다 — 이 테스트가 그 사실이다.
+    expect(entries.length).toBeGreaterThan(1);
+    expect(entries.some((e) => e.needs_review)).toBe(true);
+    // 🚨 못 읽은 날짜는 `null` 이다. 서버가 오늘로 채우지 않는다.
+    const unread = entries.find((e) => e.needs_review)!;
+    expect(unread.date).toBeNull();
+    expect(unread.review_reason).toBeTruthy();
+  });
+
+  it("확인하지 않은 항목을 보내면 422 다 — 승인 전 저장을 서버도 막는다", async () => {
     const runId = await upload();
-    for await (const _ of streamRunEvents(runId)) void _;
+    const parsed = await parsedOf(runId);
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        // 화면이라면 빼고 보냈을 것을 일부러 그대로 보낸다.
+        entries: parsed.entries ?? [],
+        attach_to_calendar: true,
+      }),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+  });
+
+  it("확인한 항목만 저장된다", async () => {
+    const runId = await upload();
+    const parsed = await parsedOf(runId);
+    const only = checked(parsed.entries ?? []);
 
     const saved = await commitPhotoRun(runId, {
       lane: "document",
-      selected_items: ["수건"],
+      entries: only,
       attach_to_calendar: false,
     });
 
-    const items = saved.observations[0]?.domain_fields.items as string[];
-    expect(items).toEqual(["수건"]);
-    expect(items).not.toContain("수영복");
+    expect(saved.observations[0]?.domain_fields.entries).toBe(only.length);
+    expect(only.length).toBeLessThan((parsed.entries ?? []).length);
   });
 
   it("문서에서 읽은 것은 institution_notice 로 고정이고 프로필로 승격하지 않는다", async () => {
     const runId = await upload();
-    for await (const _ of streamRunEvents(runId)) void _;
+    const parsed = await parsedOf(runId);
 
     const saved = await commitPhotoRun(runId, {
       lane: "document",
-      selected_items: ["수건", "수영복"],
+      entries: checked(parsed.entries ?? []),
       attach_to_calendar: true,
     });
 
@@ -463,11 +504,11 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
 
   it("문서 lane 이 만드는 일정은 draft 다 — 승인 게이트는 여전히 09 에 있다", async () => {
     const runId = await upload();
-    for await (const _ of streamRunEvents(runId)) void _;
+    const parsed = await parsedOf(runId);
 
     const saved: PhotoCommitResponse = await commitPhotoRun(runId, {
       lane: "document",
-      selected_items: ["수건"],
+      entries: checked(parsed.entries ?? []),
       attach_to_calendar: true,
     });
 
@@ -477,13 +518,23 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
     expect(saved.calendar_date).not.toBeNull();
   });
 
+  it("한 달치 식단표도 항목 배열로 온다 — 화면이 접어 두는 이유", async () => {
+    setScenario("photo_meal_plan");
+    try {
+      const parsed = await parsedOf(await upload());
+      expect((parsed.entries ?? []).length).toBeGreaterThan(20);
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("활동 사진은 화면이 들고 온 날짜로 캘린더에 붙는다", async () => {
     const runId = await upload("activity", "2026-09-12");
     for await (const _ of streamRunEvents(runId)) void _;
 
     const saved = await commitPhotoRun(runId, {
       lane: "activity",
-      selected_items: ["블록 쌓기"],
+      selected_tags: ["블록 쌓기"],
       attach_to_calendar: true,
     });
 
@@ -507,7 +558,10 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
     const actParsed = actEvents.find((e) => e.type === "parsed")!.data as ParsedEvent;
     // 활동 사진에는 읽을 글자가 없다.
     expect(actParsed.raw_text).toBe("");
-    expect(actParsed.extracted.items.length).toBeGreaterThan(0);
+    // 🚨 문서는 `entries`, 활동은 `tags` — 다른 필드다 (한 배열에 섞지 않는다).
+    expect((actParsed.tags ?? []).length).toBeGreaterThan(0);
+    expect(actParsed.entries ?? []).toHaveLength(0);
+    expect((docParsed.entries ?? []).length).toBeGreaterThan(0);
   });
 
   it("lane 없이 올리면 422 다 — 서버가 저장 경로를 추측하게 두지 않는다", async () => {
@@ -531,9 +585,10 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
       //    그 값은 화면이 부모가 고른 것으로 채운다.
       expect(lane.guess).toBe("activity");
 
+      const parsed = seen.find((e) => e.type === "parsed")!.data as ParsedEvent;
       const saved = await commitPhotoRun(runId, {
         lane: "document",
-        selected_items: ["수건"],
+        entries: checked(parsed.entries ?? []),
         attach_to_calendar: false,
       });
       expect(saved.observations[0].confidence_source).toBe("institution_notice");
@@ -561,29 +616,12 @@ describe("⑦ 08 사진 — 읽기와 저장이 갈린다", () => {
     }
   });
 
-  it("다시 읽기는 새 run 을 주고, 힌트를 그대로 저장하지 않는다", async () => {
-    const runId = await upload();
-    for await (const _ of streamRunEvents(runId)) void _;
-
-    const before = await api.get<ObservationsResponse>("/children/c1/observations");
-    const { run_id: nextRunId } = await reanalyzePhotoRun(runId, { hint_text: "물병도 있었어요" });
-
-    expect(nextRunId).not.toBe(runId);
-    // 🚨 재분석 자체는 저장이 아니다.
-    const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.total).toBe(before.total);
-
-    const seen: string[] = [];
-    for await (const event of streamRunEvents(nextRunId)) seen.push(event.type);
-    expect(seen).toContain("parsed");
-  });
-
   it("고른 것도 없고 올릴 날짜도 없으면 422 다 — 빈 저장을 만들지 않는다", async () => {
     const runId = await upload();
     for await (const _ of streamRunEvents(runId)) void _;
 
     await expect(
-      commitPhotoRun(runId, { lane: "document", selected_items: [], attach_to_calendar: false }),
+      commitPhotoRun(runId, { lane: "document", entries: [], attach_to_calendar: false }),
     ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
   });
 });

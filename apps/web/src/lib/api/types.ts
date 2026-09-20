@@ -512,15 +512,38 @@ export const PHOTO_LANES = ["document", "activity"] as const;
 export type PhotoLane = (typeof PHOTO_LANES)[number];
 
 /**
- * `POST /photo-runs/{rid}/reanalyze` — 힌트 한 줄을 참고로 **다시 읽는다**. 새 `run_id` 가 온다.
- * 🚨 힌트는 재분석 참고용이고 **그대로 저장되지 않는다** (계약서 §09). 화면 문구가 그 사실을 말한다.
+ * 사진 한 장에서 읽어낸 **항목 하나** (문서 lane).
+ *
+ * ⚠️ **계약서 v1 에 없는 모양이다.** §09 의 `parsed.extracted` 는 `items` · `when` 하나뿐이라
+ *    **항목 한 개**만 담을 수 있는데, 실제로 들어오는 것은 그렇지 않다 — 알림장 한 장에 일정이
+ *    여러 개 적혀 있고, 식단표는 거의 **한 달치**가 한 장이다. 배열이 아니면 화면이 첫 개만
+ *    보여주거나 전부 한 덩어리로 뭉개야 한다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ *
+ * 🚨 **활동 lane 과 한 배열에 섞지 않는다.** 활동은 날짜도 준비물도 없는 태그라
+ *    `ParsedEvent.tags` 로 따로 온다 — 모양이 다른 둘을 한 필드에 넣으면 화면이 플래그로
+ *    갈라야 하고, 그러면 저장 경로가 섞인다 (일반 추천과 개인화 추천을 안 섞는 것과 같은 규칙).
  */
-export interface PhotoReanalyzeRequest {
-  hint_text: string;
-}
+export const PHOTO_ENTRY_KINDS = ["event", "supply", "meal"] as const;
+export type PhotoEntryKind = (typeof PHOTO_ENTRY_KINDS)[number];
 
-export interface PhotoReanalyzeResponse {
-  run_id: string;
+export interface PhotoEntry {
+  id: string;
+  kind: PhotoEntryKind;
+  /** 화면에 그대로 세우는 한 줄. 서버가 만든 문구다. */
+  title: string;
+  /** `YYYY-MM-DD`. 🚨 **못 읽었으면 `null`** — 프론트가 오늘로 채우지 않는다. */
+  date: string | null;
+  all_day?: boolean;
+  /** 준비물처럼 딸린 항목. 없으면 빈 배열. */
+  items: string[];
+  /**
+   * 🚨 **확인이 필요한가.** 값을 못 읽었거나 서버가 자신이 없을 때 참이다.
+   *    화면은 이 값 하나로 위(확인이 필요해요)와 아래(잘 읽었어요)를 가른다.
+   */
+  needs_review: boolean;
+  /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
+  review_reason?: string;
 }
 
 /**
@@ -537,8 +560,15 @@ export interface PhotoReanalyzeResponse {
  */
 export interface PhotoCommitRequest {
   lane: PhotoLane;
-  /** 🚨 **고른 것만** 간다. 화면에서 고르지 않은 항목은 저장되지 않는다. */
-  selected_items: string[];
+  /**
+   * 문서 lane — **보호자가 확인한 항목만** 간다 (고친 값이 실려 있다).
+   * 🚨 확인하지 않은 항목(`needs_review` 인 채로 둔 것)은 **빼고 보낸다.** 값을 못 읽은 것을
+   *    그대로 저장하면 "승인 전에는 저장되지 않아요" 가 문구만 남는다.
+   * ⚠️ 계약서 v1 의 `selected_items`(문자열 배열)를 대신한다 — `PhotoEntry` 의 ⚠️ 참고.
+   */
+  entries?: PhotoEntry[];
+  /** 활동 lane — 보호자가 고른 태그. 🚨 **고른 것만** 간다. */
+  selected_tags?: string[];
   /**
    * 문서 lane 이면 "읽어낸 일시로 일정 초안까지 만들까", 활동 lane 이면 "사진을 그날 캘린더에
    * 함께 남길까" 다 — 한 필드가 lane 에 따라 다른 뜻을 나른다 (계약서 §09 부수 효과 표).

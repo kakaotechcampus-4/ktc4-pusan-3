@@ -24,7 +24,6 @@ import {
   commitPhotoRun,
   isApiError,
   photoFormData,
-  reanalyzePhotoRun,
   uploadPhoto,
   type PhotoCommitRequest,
   type PhotoCommitResponse,
@@ -146,18 +145,6 @@ function PhotosScreen() {
     onSuccess: (res) => setSaved(res),
   });
 
-  const reanalyze = useMutation({
-    mutationFn: (hint: string) => {
-      if (!runId) throw new Error("다시 읽을 사진이 없어요.");
-      return reanalyzePhotoRun(runId, { hint_text: hint });
-    },
-    onSuccess: (res) => {
-      // 새 run 이다. 사진은 그대로 두고 읽기만 다시 한다.
-      setRunId(res.run_id);
-      run.start(res.run_id);
-    },
-  });
-
   /**
    * 🚨 **고르는 것과 보내는 것이 한 동작이다.** 고르기만 하고 멈추면 화면에 "이제 보내기" 버튼이
    *    하나 더 생기는데, 그 버튼은 아무것도 승인하지 않으면서 확인처럼 보인다 —
@@ -189,7 +176,6 @@ function PhotosScreen() {
     run.reset();
     upload.reset();
     commit.reset();
-    reanalyze.reset();
     setRunId(null);
     setSaved(null);
     // 앞 사진의 objectURL 은 위의 cleanup 이 해제한다 (상태가 바뀌면 그때 돈다).
@@ -197,6 +183,14 @@ function PhotosScreen() {
     // 🚨 여기서 돌린다. 다음 요청은 **다른 사진**이라 같은 키로 보내면 422 다.
     idempotencyKey.rotate();
     setSheetOpen(true);
+  }
+
+  /**
+   * 저장하지 않고 03 홈으로. 🚨 **확인을 묻지 않는다** — 여기까지 저장된 것이 없어서
+   *    잃을 것이 없고, 승인 게이트는 딱 2곳이다 (CLAUDE.md §2).
+   */
+  function goHome() {
+    router.push(`/child/${childId}/home`);
   }
 
   const consentBlocked = isApiError(upload.error, "consent_required") ? upload.error : null;
@@ -236,7 +230,7 @@ function PhotosScreen() {
           note="저장된 것은 없어요. 같은 사진을 그대로 다시 보낼 수 있어요."
           // 🚨 같은 사진의 재시도라 Idempotency-Key 를 그대로 쓴다 (키를 돌리지 않는다).
           onRetry={() => startUpload(photo)}
-          onPickAnother={pickAnother}
+          onGoHome={goHome}
         />
       ) : /* 🚨 `idle` 을 실패로 떨어뜨리지 않는다. 사진을 고른 직후의 한 틱과 요청이 나가기 전이
              여기 걸리는데, 그 상태를 "읽어낼 게 없었어요" 로 그리면 **보내 보지도 않고 실패라고
@@ -249,8 +243,8 @@ function PhotosScreen() {
           label={run.state.step?.label ?? "사진을 열고 있어요"}
         />
       ) : run.state.parsed ? (
-        // 🚨 run 마다 새로 세운다. 다시 읽기(`reanalyze`)는 새 run 이라, 앞 run 에서 고른 항목이
-        //    넘어오면 **부모가 확인한 적 없는 것**이 저장 대상으로 남는다.
+        // 🚨 run 마다 새로 세운다. 사진을 바꾸면 앞 사진에서 고치던 항목이 넘어오면 안 된다 —
+        //    **부모가 확인한 적 없는 것**이 저장 대상으로 남는다.
         <PhotoReview
           key={runId}
           declared={photo.lane}
@@ -268,9 +262,7 @@ function PhotosScreen() {
                 : "저장하지 못했어요. 아직 아무것도 저장되지 않았어요."
               : null
           }
-          onReanalyze={(hint) => reanalyze.mutate(hint)}
-          reanalyzing={reanalyze.isPending}
-          onPickAnother={pickAnother}
+          onGoHome={goHome}
         />
       ) : (
         // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
@@ -278,7 +270,7 @@ function PhotosScreen() {
           title="이 사진에서는 읽어낼 게 없었어요"
           note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
           onRetry={() => startUpload(photo)}
-          onPickAnother={pickAnother}
+          onGoHome={goHome}
         />
       )}
 
@@ -371,12 +363,12 @@ function Failed({
   title,
   note,
   onRetry,
-  onPickAnother,
+  onGoHome,
 }: {
   title: string;
   note: string;
   onRetry: () => void;
-  onPickAnother: () => void;
+  onGoHome: () => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -386,8 +378,8 @@ function Failed({
       </div>
       <div className="flex flex-wrap gap-2">
         <Button onClick={onRetry}>다시 시도</Button>
-        <Button variant="secondary" onClick={onPickAnother}>
-          다른 사진 고르기
+        <Button variant="secondary" onClick={onGoHome}>
+          메인으로 돌아가기
         </Button>
       </div>
     </div>

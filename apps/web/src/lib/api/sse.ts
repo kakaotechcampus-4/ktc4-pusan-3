@@ -1,6 +1,6 @@
 import { authHeaders, buildUrl } from "./client";
 import { NetworkError } from "./errors";
-import type { Affinity, Agent, Observation, PhotoLane, Ref } from "./types";
+import type { Affinity, Agent, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
 
 /**
  * GET /runs/{rid}/events — 04 오버레이.
@@ -75,13 +75,13 @@ export interface LaneEvent {
  */
 export interface ParsedEvent {
   raw_text: string;
-  extracted: {
-    /** 문서 lane 이면 준비물, 활동 lane 이면 활동 태그. 계약서는 한 필드로 둘을 나른다. */
-    items: string[];
-    /** YYYY-MM-DD. 읽어내지 못했으면 없다 — 프론트가 오늘로 채우지 않는다. */
-    when?: string | null;
-    all_day?: boolean;
-  };
+  /**
+   * 문서 lane 에서 읽어낸 **항목들**. 알림장 한 장에 일정이 여러 개, 식단표는 한 달치가 온다.
+   * ⚠️ 계약서 v1 의 `extracted`(항목 하나)를 대신한다 — `PhotoEntry` 의 ⚠️ 참고.
+   */
+  entries?: PhotoEntry[];
+  /** 활동 lane 에서 뽑아낸 태그. 🚨 `entries` 와 **다른 필드다** (모양도 저장 경로도 다르다). */
+  tags?: string[];
 }
 
 /** model_calls 가 3 을 넘으면 서버 알람이다 (NF-01). */

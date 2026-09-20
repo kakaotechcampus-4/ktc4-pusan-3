@@ -21,6 +21,7 @@ export const SCENARIOS = {
   photo_unreadable: "08 사진 — 읽어낼 게 없는 사진 (failed · 저장된 것 없음)",
   photo_lane_mismatch:
     "08 사진 — 고른 종류와 서버가 읽은 종류가 어긋남 (한 줄로 알리고 고른 쪽을 유지)",
+  photo_meal_plan: "08 사진 — 한 달치 식단표 (항목 21건 · 잘 읽은 것이 접혀 있어야 하는 이유)",
 } as const;
 
 export type Scenario = keyof typeof SCENARIOS;

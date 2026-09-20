@@ -22,8 +22,6 @@ import type {
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
-  PhotoReanalyzeRequest,
-  PhotoReanalyzeResponse,
   SuggestionStatus,
 } from "./types";
 
@@ -107,18 +105,12 @@ export function photoFormData(
   return form;
 }
 
-/**
- * 힌트 한 줄로 **다시 읽기**. 새 run 이 시작되므로 호출부가 스트림을 다시 건다.
- *
- * 🚨 되돌릴 수 없는 5개가 아니다 (아무것도 저장하지 않는다). 그래서 키를 받지 않는다 —
- *    여기에 키를 붙이면 "키가 필요한 곳" 의 목록이 계약서와 어긋난다.
+/*
+ * ⚠️ `POST /photo-runs/{rid}/reanalyze`(힌트 한 줄로 다시 읽기) 를 부르는 함수는 **없다.**
+ *    화면에서 뺐기 때문이다 — 읽어낸 항목을 부모가 **그 자리에서 고칠 수 있게** 되면서
+ *    "빠진 것을 알려주고 모델에게 다시 맡기기" 가 더 먼 길이 됐다 (고치면 바로 끝난다).
+ *    엔드포인트는 계약서에 남아 있고, 필요해지면 여기 다시 만든다.
  */
-export function reanalyzePhotoRun(
-  runId: string,
-  body: PhotoReanalyzeRequest,
-): Promise<PhotoReanalyzeResponse> {
-  return api.post(`/photo-runs/${runId}/reanalyze`, body);
-}
 
 /**
  * 🚨 **사진 흐름에서 저장이 일어나는 유일한 지점.** 여기 오기 전까지는 아무것도 저장되지 않는다.
