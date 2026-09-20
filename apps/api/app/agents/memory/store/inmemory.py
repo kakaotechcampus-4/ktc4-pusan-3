@@ -129,6 +129,7 @@ class InMemoryStore:
         all_day: bool,
         fields: dict[str, Any],
     ) -> EventRow:
+        """테스트 시드 전용."""
         row = EventRow(
             id=self._next_id("event"),
             title=title,
@@ -164,6 +165,7 @@ class InMemoryStore:
     async def update_event(
         self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
     ) -> EventRow | None:
+        """테스트 시드 전용."""
         row = self._events.get(event_id)
         if row is None:
             return None
@@ -191,6 +193,7 @@ class InMemoryStore:
 
     # event_item
     async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow:
+        """테스트 시드 전용."""
         row = EventItemRow(
             item_id=self._next_id("event_item"),
             event_id=event_id,

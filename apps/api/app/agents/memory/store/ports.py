@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange, EventWhen
+from app.agents.common.datetime_rules import DateRange
 
 # observation 5테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
@@ -65,7 +65,7 @@ class EventRow:
     starts_at: datetime
     ends_at: datetime | None
     all_day: bool
-    fields: dict[str, Any]  # event_type / category / status / created_by / expires_at
+    fields: dict[str, Any]  # event_type / category / created_by
 
     def to_summary(self, items: list[EventItemRow] | None = None) -> dict[str, Any]:
         """조회 결과 요약.
@@ -136,18 +136,7 @@ class MemoryStore(Protocol):
         self, *, domain: ObservationDomain, observation_id: str
     ) -> bool: ...
 
-    # event
-    async def create_event(
-        self,
-        *,
-        child_id: UUID,
-        title: str,
-        starts_at: datetime,
-        ends_at: datetime | None,
-        all_day: bool,
-        fields: dict[str, Any],
-    ) -> EventRow: ...
-
+    # event(create, update X)
     async def query_events(
         self,
         *,
@@ -159,27 +148,11 @@ class MemoryStore(Protocol):
 
     async def get_event(self, *, event_id: str) -> EventRow | None: ...
 
-    async def update_event(
-        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
-    ) -> EventRow | None:
-        """없으면 None.
-
-        fields: 변경할 값(비울 수 있는 컬럼이 없어 clear 인자 없음)
-        종료 지우기: when.ends_at=None으로 들어옴(WhenPatch.drop_end)
-
-        시간 구간은 when 하나로 받는다.
-        시작·종료·all_day 는 함께 정해지는 값이라 한 덩어리로 오는 편이 안전하다
-        (datetime_rules.resolve_when 이 셋을 같이 계산한다).
-        """
-        ...
-
     async def delete_event(self, *, event_id: str) -> bool:
         """연결된 event_item 도 함께 제거 (ON DELETE CASCADE)."""
         ...
 
-    # event_item
-    async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow: ...
-
+    # event_item(create X)
     async def get_event_item(self, *, item_id: str) -> EventItemRow | None:
         """없으면 None. 부모 일정과 현재 is_prepared 를 알아야 하는 tool 이 쓴다."""
         ...
