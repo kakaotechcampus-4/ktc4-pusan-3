@@ -88,7 +88,13 @@ export function SafetyScanReview({
   onLeave: () => void;
 }) {
   const [editing, setEditing] = useState<ScanRow | null>(null);
-  const [showChecked, setShowChecked] = useState(false);
+  /**
+   * 🚨 **기본이 펼침이다.** 한동안 접어 뒀는데, 그러면 보호자가 **한 번도 안 본 줄들이**
+   *    "N건을 등록해요" 라는 숫자로만 요약된 채 승인으로 넘어간다 — 승인 게이트에서
+   *    제일 피해야 할 모양이다. OCR 이 틀리는 자리는 못 읽은 칸만이 아니라 **잘 읽었다고
+   *    자신한 칸**이기도 하다. 길어지는 문제는 접는 대신 **안에서 스크롤**로 푼다.
+   */
+  const [showChecked, setShowChecked] = useState(true);
   const [showRegistered, setShowRegistered] = useState(false);
 
   const live = rows.filter((row) => row.status !== "done");
@@ -115,7 +121,8 @@ export function SafetyScanReview({
     <div className="flex flex-col gap-6">
       {/* 🚨 `caution` 은 승인 게이트 2곳 전용이다 (디자인 시스템 §3). 여기가 그중 하나다. */}
       <Banner tone="caution" title="검사지에 적힌 것만 옮겼어요">
-        읽지 못한 칸은 비워 뒀어요. 검사지를 보고 직접 채워 주세요. 승인 전에는 저장되지 않아요.
+        사진에서 읽은 것이라 잘못 옮겨졌을 수 있어요. 읽지 못한 칸은 비워 뒀으니 검사지를 보고 직접
+        채워 주세요. 승인 전에는 저장되지 않아요.
       </Banner>
 
       {previewUrl ? <Preview url={previewUrl} /> : null}
@@ -196,10 +203,25 @@ export function SafetyScanReview({
           </Button>
         ) : (
           <>
+            {/* 🚨 **게이트의 마지막 확인은 버튼 옆에 선다.** 위의 `banner-caution` 은 화면
+                맨 위에 있고 이 버튼은 카드 열 장 아래라, 실제로 누르는 순간에는 그 경고가
+                화면에 없다 — 시트였다면 둘이 한 화면에 같이 섰겠지만 여기는 화면이다.
+                🚨 **배너를 하나 더 세우지 않는다** (디자인 시스템 §7 — 배너가 쌓이면 그때부터
+                아무도 안 읽는다). 색은 `caution` 을 쓰되 배너가 아닌 **글자 한 덩이**다:
+                이 화면이 승인 게이트라 그 색을 쓸 수 있고(§3 — 게이트 2곳 전용),
+                `caution-soft` 배경이 아니라 카드 면 위라서 `caution-ink` 가 아니라
+                `caution` 이다 (이름이 곧 용도다 · §5. `surface` 위 5.1:1).
+                🚨 **색이 단독 신호가 아니다** — 무엇을 왜 다시 봐야 하는지를 글자가 말한다.
+                🚨 굵게 강조하지 않는다: 본문 서체가 단일 웨이트라 굵기가 안 먹는다 (§4). */}
+            <p className="text-body-sm text-caution mt-4">
+              등록하면 앞으로 식사 제안이 이 목록을 보고 걸러요. 사진에서 옮긴 값이라 이름이나
+              분류가 실제와 다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
+            </p>
+
             {/* 🚨 승인 게이트 ㉡ — 되돌릴 수 없는 확정이라 `btn-approve` 다. */}
             <Button
               variant="approve"
-              className="mt-4"
+              className="mt-3"
               onClick={onApprove}
               disabled={saving || picked.length === 0}
               aria-busy={saving}
@@ -219,8 +241,10 @@ export function SafetyScanReview({
         )}
       </Card>
 
+      {/* 🚨 "식사 제안이 이 목록을 보고 걸러요" 는 승인 버튼 옆으로 올렸다 — 결정하는 자리에
+          있어야 하는 말이고, 두 곳에 있으면 둘 다 흘려 읽게 된다. 여기 남는 것은 §2 의 약속이다. */}
       <p className="text-caption text-ink-subtle">
-        등록한 것은 AI 가 만들거나 고치지 못해요. 식사 제안이 이 목록을 보고 걸러요.
+        등록한 것은 AI 가 만들지도 고치지도 못해요. 보호자가 확인한 것만 저장돼요.
       </p>
 
       <SafetyScanRowSheet
@@ -299,11 +323,12 @@ function CheckedGroup({
       heading={`잘 읽었어요 ${rows.length}건`}
       note={
         open
-          ? "잘못 읽은 것이 있으면 눌러서 고쳐요."
+          ? `${pickedCount}건을 등록해요. 잘못 읽은 것이 있으면 눌러서 고쳐요.`
           : `${pickedCount}건을 등록해요. 눌러서 하나씩 확인할 수 있어요.`
       }
       open={open}
       onToggle={onToggle}
+      scrollable
     >
       {rows.map((row) => (
         <li key={row.id}>
@@ -381,6 +406,7 @@ function FoldableGroup({
   note,
   open,
   onToggle,
+  scrollable = false,
   children,
 }: {
   id: string;
@@ -388,6 +414,17 @@ function FoldableGroup({
   note: string;
   open: boolean;
   onToggle: () => void;
+  /**
+   * 목록 자체를 스크롤 영역으로 만든다.
+   *
+   * 🚨 **펼친 채로 두되 화면을 밀지 않게 하는 장치다.** 검사지 한 장에서 열 줄 넘게 나오는데
+   *    전부 펼쳐서 쌓으면 아래의 "이렇게 등록할게요" 와 승인 버튼이 스크롤 끝으로 밀린다 —
+   *    보호자가 확인을 마치고도 승인 버튼을 찾아 한참 내려가야 한다.
+   * 🚨 **높이를 `rem` 으로 고정하지 않는다** — 줄이 글자 크기를 따라 늘어나는데 상자만
+   *    고정이면 200% 확대에서 한 줄만 보인다 (디자인 시스템 §10 · 11-1 기록 목록과 같은 값).
+   * 🚨 **접는 것으로 대신하지 않는다.** 접으면 안 본 줄이 숫자로만 요약된 채 승인으로 간다.
+   */
+  scrollable?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -422,7 +459,15 @@ function FoldableGroup({
       </button>
 
       {open ? (
-        <ul id={id} className="flex flex-col gap-2">
+        <ul
+          id={id}
+          className={cn(
+            "flex flex-col gap-2",
+            // 🚨 `overscroll-contain` 으로 끝까지 굴렸을 때 페이지가 따라 튀지 않게 한다 —
+            //    승인 화면에서 목록을 훑다 화면이 통째로 움직이면 자리를 잃는다.
+            scrollable ? "max-h-[60vh] overflow-y-auto overscroll-contain" : null,
+          )}
+        >
           {children}
         </ul>
       ) : null}

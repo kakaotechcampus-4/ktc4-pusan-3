@@ -170,6 +170,14 @@ function SafetyScanScreen() {
       (row) => row.checked && row.status !== "done" && !row.alreadyRegistered,
     );
 
+    /**
+     * 🚨 **성공·실패를 지역 변수로 센다.** `rows` 를 다시 읽어 세면 안 된다 — `setState` 는
+     *    비동기라 이 루프가 끝난 시점에도 마지막 `patch` 가 아직 반영 전일 수 있고, 그러면
+     *    **실패한 줄이 있는데도 화면을 떠나는** 일이 생긴다.
+     */
+    let failed = 0;
+    let saved = 0;
+
     for (const row of picked) {
       patch(row.id, { status: "saving" });
       const key = keys.current.get(row.id) ?? newIdempotencyKey();
@@ -188,13 +196,31 @@ function SafetyScanScreen() {
           key,
         );
         patch(row.id, { status: "done", checked: false });
+        saved += 1;
       } catch {
         patch(row.id, { status: "failed" });
+        failed += 1;
       }
     }
     setSaving(false);
     // 안전 정보 하나가 Food Agent 의 실행 조건까지 바꾼다. 아이 스코프를 통째로 무효화한다.
     await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+
+    /**
+     * 🚨 **다 잘 됐으면 프로필로 돌아간다.** 승인이 이 화면의 마지막 일이라, 끝내고도 머물면
+     *    남는 것이 **비활성 승인 버튼과 "그만 보기" 뿐인 막다른 화면**이다 (실제로 그랬다).
+     *    등록된 것을 확인하는 자리는 프로필의 알레르기 목록이고, 거기가 정본이다.
+     *
+     * 🚨 **한 건이라도 실패하면 머문다.** 실패한 줄은 `failed` 로 남아 있고 다시 누르는 것이
+     *    재시도인데(같은 키), 화면을 떠나면 그 재시도 경로가 통째로 사라진다.
+     * 🚨 **등록한 것이 없으면 떠나지 않는다.** 고른 게 없는데 화면이 바뀌면 보호자는 자기가
+     *    무엇을 했는지 모른 채 다른 화면에 서 있게 된다.
+     * ⚠️ 남아 있는 "확인이 필요해요" 줄은 **보호자가 고르지 않은 것**이고, 화면이 바로 위에서
+     *    "확인하지 않은 N건은 등록하지 않아요" 라고 이미 말했다 — 그래서 떠나는 것을 막지 않는다.
+     */
+    if (failed === 0 && saved > 0) {
+      router.push(`/child/${childId}/profile`);
+    }
   }
 
   const failedCount = rows.filter((row) => row.status === "failed").length;
