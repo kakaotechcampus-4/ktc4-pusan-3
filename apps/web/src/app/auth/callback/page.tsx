@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import { Card, CardFailed } from "@/components/ui/card";
 import { Screen } from "@/components/ui/screen";
@@ -62,6 +62,33 @@ type Outcome =
   | { kind: "failed"; message: string };
 
 export default function AuthCallbackPage() {
+  // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (05·07·09 화면과 같은 이유).
+  //    이 화면만 경계가 없어서 프로덕션 빌드가 프리렌더 단계에서 멈췄다 (PR #71 리뷰).
+  //    fallback 은 아래 본문의 "로그인하는 중…" 과 같은 것을 그린다 — 프리렌더된 정적 HTML 이
+  //    곧 이 한 장이라, 다른 것을 끼우면 hydrate 직후 화면이 한 번 바뀐다.
+  return (
+    <Suspense fallback={<Working />}>
+      <AuthCallbackScreen />
+    </Suspense>
+  );
+}
+
+/** 교환하는 동안 보이는 유일한 내용. Suspense fallback 과 본문이 같은 것을 그린다 (위 주석). */
+function Working() {
+  return (
+    <Screen className="justify-center gap-4">
+      <p
+        className="text-body text-ink-muted flex items-center justify-center gap-2"
+        aria-live="polite"
+      >
+        <Spinner />
+        로그인하는 중…
+      </p>
+    </Screen>
+  );
+}
+
+function AuthCallbackScreen() {
   const router = useRouter();
   const params = useSearchParams();
   const queryClient = useQueryClient();
@@ -163,18 +190,10 @@ export default function AuthCallbackPage() {
 
   const failure = urlErrorMessage ?? (outcome.kind === "failed" ? outcome.message : null);
 
+  if (outcome.kind === "working" && !failure) return <Working />;
+
   return (
     <Screen className="justify-center gap-4">
-      {outcome.kind === "working" && !failure ? (
-        <p
-          className="text-body text-ink-muted flex items-center justify-center gap-2"
-          aria-live="polite"
-        >
-          <Spinner />
-          로그인하는 중…
-        </p>
-      ) : null}
-
       {outcome.kind === "consent_blocked" ? (
         <Card>
           <p className="text-body text-ink">먼저 동의가 필요해요</p>

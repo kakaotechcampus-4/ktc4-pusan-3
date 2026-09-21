@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange
+from app.agents.common.datetime_rules import DateRange, EventWhen
 from app.agents.memory.store.ports import (
     EventItemRow,
     EventRow,
@@ -94,19 +94,19 @@ class InMemoryStore:
         observation_id: str,
         fields: dict[str, Any],
         observed_on: date | None = None,
+        clear: frozenset[str] = frozenset(),
     ) -> ObservationRow | None:
         row = await self.get_observation(domain=domain, observation_id=observation_id)
         if row is None:
             return None
 
-        changes = {key: value for key, value in fields.items() if value is not None}
         updated = ObservationRow(
             id=row.id,
             domain=row.domain,
             raw_text=row.raw_text,
             created_at=row.created_at,
             observed_on=observed_on or row.observed_on,
-            fields={**row.fields, **changes},
+            fields={**row.fields, **fields, **dict.fromkeys(clear)},  # clear는 None으로
         )
         self._observations[row.id] = updated
         return updated
@@ -161,18 +161,21 @@ class InMemoryStore:
     async def get_event(self, *, event_id: str) -> EventRow | None:
         return self._events.get(event_id)
 
-    async def update_event(self, *, event_id: str, fields: dict[str, Any]) -> EventRow | None:
+    async def update_event(
+        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
+    ) -> EventRow | None:
         row = self._events.get(event_id)
         if row is None:
             return None
 
-        changes = {key: value for key, value in fields.items() if value is not None}
+        changes = dict(fields)
         updated = EventRow(
             id=row.id,
             title=changes.pop("title", row.title),
-            starts_at=changes.pop("starts_at", row.starts_at),
-            ends_at=changes.pop("ends_at", row.ends_at),
-            all_day=changes.pop("all_day", row.all_day),
+            # 시간 구간은 EventWhen(starts_at, ends_at, all_day) 함께 고려
+            starts_at=when.starts_at if when is not None else row.starts_at,
+            ends_at=when.ends_at if when is not None else row.ends_at,
+            all_day=when.all_day if when is not None else row.all_day,
             fields={**row.fields, **changes},
         )
         self._events[row.id] = updated
@@ -208,12 +211,11 @@ class InMemoryStore:
         if row is None:
             return None
 
-        changes = {key: value for key, value in fields.items() if value is not None}
         updated = EventItemRow(
             item_id=row.item_id,
             event_id=row.event_id,
-            item_name=changes.get("item_name", row.item_name),
-            is_prepared=changes.get("is_prepared", row.is_prepared),
+            item_name=fields.get("item_name", row.item_name),
+            is_prepared=fields.get("is_prepared", row.is_prepared),
         )
         self._items[row.item_id] = updated
         return updated

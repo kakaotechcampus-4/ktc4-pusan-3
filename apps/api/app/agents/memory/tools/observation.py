@@ -38,7 +38,7 @@ from app.agents.memory.schemas.observation import (
 _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
 
 # update도 날짜를 바꿀 수 있다. 이 셋은 fields로 내려보내지 않고 따로 푼다
-_UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction"}
+_UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction", "clear"}
 
 # 음식 이름이 아니라 끼니 이름
 MEAL_SLOTS = frozenset(
@@ -166,15 +166,21 @@ async def _update(
         # 날짜를 같이 바꿨으면 새 날짜에, 아니면 원래 관찰 일자에 시각을 얹는다
         fields["observed_time"] = combine(day, moment, context.timezone) if moment else None
 
+    # 안 바꿀 필드(None)는 store로 넘기지 않음 + 비우기는 clear로만 함
+    fields = {key: value for key, value in fields.items() if value is not None}
+
     row = await context.store.update_observation(
         domain=domain,
         observation_id=args.observation_id,
         fields=fields,
         observed_on=day if args.observed_on is not None else None,
+        clear=frozenset(args.clear),
     )
     if row is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
-    return ok("update", resource, id=row.id, observed_on=row.observed_on.isoformat())
+    # 비운 필드를 필드명만 실어서 모델이 결과로 지워진 걸 확인 가능하게 함
+    cleared = {"cleared": sorted(set(args.clear))} if args.clear else {}
+    return ok("update", resource, id=row.id, observed_on=row.observed_on.isoformat(), **cleared)
 
 
 async def _delete(context: AgentContext, args: RecordRef, *, domain: str) -> ToolResult:

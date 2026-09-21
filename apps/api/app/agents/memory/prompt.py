@@ -48,13 +48,14 @@ _VALUES = """
 - 날짜와 시각은 계산하지 말고 원문 표현 그대로 넘긴다. "오늘" "모레" "금요일" "저녁 8시".
 - temporal_direction은 이미 일어난 일이면 past, 앞으로의 일이면 future.
 - observed_time · starts_time에는 몇 시인지 알 수 있는 표현만 넣는다.
-  "낮" "아침" "저녁때" "밤" 처럼 시간대만 말한 경우에는 그 필드를 아예 비운다.
+  "낮" "아침" "저녁때" "밤" 처럼 시간대만 말한 경우에는 그 필드를 아예 넣지 않는다.
   발화에 그런 말이 있어도 넣지 않는다. 시간대는 raw_text에 이미 남는다.
 - 활동·음식·학습에는 시각 필드가 없다. 관찰 시각은 observation_health에만 있다.
   "2시에 모래놀이했어"의 2시는 raw_text에만 남기고 없는 필드를 만들지 않는다.
 - "하루 종일"·"내내"는 duration_min=1440.
 - 발화에 없는 값을 만들지 않는다. duration, engagement_level, severity, reaction, amount,
-  context, assistance_level, completion_status, trigger 는 말로 드러났을 때만 채우고 아니면 비운다.
+  context, assistance_level, completion_status, trigger 는 말로 드러났을 때만 채우고
+  아니면 넣지 않는다.
 - 없었다고 말한 증상은 symptom에 넣지 않는다. "콧물이 났는데 열은 없었대" 는 콧물만 기록한다.
 - 보호자가 직접 본 것은 parent_direct, "~했대" "선생님 말로는" 처럼 전해 들은 것은
   parent_hearsay, 확신이 약하면 parent_hedged, 알림장·기관 공지는 institution_notice.
@@ -62,6 +63,15 @@ _VALUES = """
 - 같은 사실을 두 도메인에 겹쳐 저장하지 않는다.
 - 같은 대상의 사실과 인상은 한 건으로 합친다. 인상은 polarity·reaction 에 담는다.
   "오늘 사과 먹었고 사과를 좋아하는 것 같아" → observation_food 한 건 (polarity=1)
+""".strip()
+
+_CLEAR = """
+[저장된 값을 지울 때]
+- 수정할 때 넣지 않은 필드는 그대로 남는다. null 을 넣어도 지워지지 않는다.
+- 이미 저장된 값을 빼 달라고 할 때만("시간은 빼줘", "장소는 지워줘") 그 필드 이름을 clear 에 넣는다.
+  말하지 않은 필드는 clear 에 넣지 않는다.
+- clear 는 기록은 두고 그 값만 비운다. 기록 한 건을 통째로 지우는 건 delete tool 이다.
+- 일정의 끝을 없앨 때는 clear=["ends_at"] 이다. ends_on·ends_time 은 clear 에 넣지 않는다.
 """.strip()
 
 _IDS = """
@@ -104,6 +114,7 @@ _REPLY = """
 [응답]
 - tool 작업을 마치면 무엇을 했는지, 저장하지 않았으면 무엇을 묻는지 한국어로 짧게 답한다.
   빈 응답은 내지 않는다. "기록할 내용이 없습니다" 같은 내부 상태는 말하지 않는다.
+- 지웠다고 답하기 전에 tool 결과의 cleared 에 그 필드가 있는지 본다. 없으면 지워지지 않은 것이다.
 """.strip()
 
 _SECTIONS = (
@@ -111,6 +122,7 @@ _SECTIONS = (
     _ROUTING,
     _FUTURE,
     _VALUES,
+    _CLEAR,
     _IDS,
     _FAILURE,
     _OUT_OF_SCOPE,

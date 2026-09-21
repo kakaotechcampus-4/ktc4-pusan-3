@@ -70,6 +70,47 @@ export function RunResult({
   onDone: () => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
+  // 🚨 서버가 끝을 말하지 않고 끝난 run 이다 (20초 침묵 · 끊긴 스트림 · 연결 실패).
+  //    **저장 여부를 모른다** — "저장했어요" 도 "저장하지 않았어요" 도 말하지 않는다
+  //    (CLAUDE.md §2 · PR #71 리뷰). 원문은 입력창에 그대로 남아 있다 (03 홈 `closeRun`).
+  if (state.status === "unconfirmed") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-title text-ink">결과를 받지 못했어요</h2>
+          <p className="text-body-sm text-ink-muted mt-2">
+            연결이 끊겨서 저장됐는지 확인하지 못했어요. 적어주신 말은 입력창에 그대로 남겨뒀어요.
+          </p>
+        </div>
+
+        <CardFailed>
+          {/* 같은 키로 나가는 재시도라 실제로 두 번 저장되지 않는다 (lib/api/idempotency.ts). */}
+          <p>다시 시도하면 같은 한 줄로 확인해요. 이미 저장됐다면 두 번 저장되지 않아요.</p>
+        </CardFailed>
+
+        {state.observations.length > 0 ? (
+          <section>
+            <h3 className="text-label text-brand">
+              여기까지 받은 기록 {state.observations.length}건
+            </h3>
+            <Card className="divide-line mt-2 flex flex-col divide-y">
+              {state.observations.map((observation) => (
+                <ObservationRow key={observation.id} observation={observation} />
+              ))}
+            </Card>
+          </section>
+        ) : null}
+
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={onRetry}>다시 시도</Button>
+          <Button variant="secondary" onClick={onEdit}>
+            직접 고쳐 쓰기
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (state.failure) {
     return (
       <div className="flex flex-col gap-4">
@@ -114,6 +155,8 @@ export function RunResult({
         </Card>
       ) : null}
 
+      {/* 🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
+          클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다. */}
       {state.partial ? (
         <CardFailed>
           <p>

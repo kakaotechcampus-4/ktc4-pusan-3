@@ -9,21 +9,21 @@ status / created_by / expires_at / child_id 는 규칙이 채운다.
 알림은 등록된 일정을 기준으로 자동 설정되므로 Agent는 일정만 만들고 안내한다.
 """
 
-from datetime import datetime, time, timedelta
+from datetime import timedelta
 from typing import Any
 
 from app.agents.common.datetime_rules import (
-    ALL_DAY_END,
-    ALL_DAY_START,
     DateParseError,
-    combine,
-    is_all_day,
-    resolve_date,
+    EventWhen,
+    MissingEndTime,
+    MissingStartTime,
+    WhenPatch,
+    check_when,
     resolve_query_bound,
-    resolve_time,
+    resolve_when,
 )
 from app.agents.memory.context import AgentContext
-from app.agents.memory.result import ErrorCode, ToolResult, fail, ok
+from app.agents.memory.result import ErrorCode, Operation, ToolResult, fail, ok
 from app.agents.memory.schemas.schedule import (
     EventCreate,
     EventItemCreate,
@@ -45,6 +45,10 @@ _NEEDS_START_TIME = (
     "일정은 시작 시각이 있어야 저장한다. 몇 시인지 보호자에게 묻고 답을 들은 뒤 다시 부른다. "
     "'낮'·'아침' 처럼 시간대만 아는 것도 시각이 아니다."
 )
+_NEEDS_END_TIME = (
+    "끝나는 날짜는 있는데 끝나는 시각이 없다. ends_time에 끝나는 시각을 넣거나, "
+    "모르면 보호자에게 묻는다. 끝을 비워 둘 거면 ends_on도 함께 뺀다."
+)
 
 
 def _date_remedy(exc: DateParseError) -> str:
@@ -58,33 +62,23 @@ async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]
 
 # ── event ───────────────────────────────────────────────────────
 async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
-    try:
-        day = resolve_date(args.starts_on, today=context.today, direction=args.temporal_direction)
-    except DateParseError as exc:
-        return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
-
-    all_day = is_all_day(args.starts_time)
-    if all_day:
-        # 하루 종일 하는 행사. 00:00 ~ 23:59 로 저장
-        starts_moment, ends_moment = ALL_DAY_START, ALL_DAY_END
-    else:
-        try:
-            starts_moment = resolve_time(args.starts_time)
-            ends_moment = resolve_time(args.ends_time)
-        except DateParseError:
-            # "아침"·"낮" 처럼 시간대만 말한 경우-> 지어내지 말고 몇 시인지 질문
-            return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_START_TIME)
-
-        # 시각 없이 저장하지 않도록
-        if starts_moment is None:
-            return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_START_TIME)
+    patch = WhenPatch(
+        starts_on=args.starts_on,
+        starts_time=args.starts_time,
+        ends_on=args.ends_on,
+        ends_time=args.ends_time,
+        direction=args.temporal_direction,
+    )
+    when = _resolve_when(context, patch, current=None, operation="create")
+    if isinstance(when, ToolResult):
+        return when
 
     row = await context.store.create_event(
         child_id=context.child_id,
         title=args.title,
-        starts_at=combine(day, starts_moment, context.timezone),
-        ends_at=combine(day, ends_moment, context.timezone) if ends_moment else None,
-        all_day=all_day,
+        starts_at=when.starts_at,
+        ends_at=when.ends_at,
+        all_day=when.all_day,
         fields={
             "event_type": args.event_type,
             "category": args.category,
@@ -138,72 +132,66 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
     if current is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
-    try:
-        starts_at, all_day = _merge_start(context, args, current)
-        ends_at = _merge_end(context, args, current, starts_at)
-    except DateParseError as exc:
-        return fail("update", EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+    patch = WhenPatch(
+        starts_on=args.starts_on,
+        starts_time=args.starts_time,
+        ends_on=args.ends_on,
+        ends_time=args.ends_time,
+        direction=args.temporal_direction,
+        # ends_at은 fields가 아니라 when으로 가기 때문에 store의 clear과 무관
+        drop_end="ends_at" in args.clear,
+    )
+    before = EventWhen(
+        starts_at=current.starts_at, ends_at=current.ends_at, all_day=current.all_day
+    )
+    # 언제로 변경할지 언급이 없으면 구간 재설정은 스킵
+    when: EventWhen | None = None
+    if not patch.is_empty():
+        resolved = _resolve_when(context, patch, current=before, operation="update")
+        if isinstance(resolved, ToolResult):
+            return resolved
+        when = resolved
 
-    fields: dict[str, Any] = {
-        "title": args.title,
-        "starts_at": starts_at,
-        "ends_at": ends_at,
-        "all_day": all_day,
-        "event_type": args.event_type,
-        "category": args.category,
-    }
-    if any(value is not None for value in fields.values()):
+    edits = {"title": args.title, "event_type": args.event_type, "category": args.category}
+    # 안 바꿀 필드(None)는 store 로 넘기지 않는다
+    fields: dict[str, Any] = {key: value for key, value in edits.items() if value is not None}
+    moved = when is not None and when != before
+    if moved or fields:
         # 고친 일정은 다시 승인을 받도록. 만료 시계도 수정 시점부터 다시 셈
         fields["status"] = "draft"
         fields["expires_at"] = context.now + timedelta(hours=DRAFT_TTL_HOURS)
 
-    row = await context.store.update_event(event_id=args.event_id, fields=fields)
+    row = await context.store.update_event(event_id=args.event_id, fields=fields, when=when)
     if row is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    return ok("update", EVENT, id=row.id, starts_at=row.starts_at.isoformat())
+    # 비운 필드를 필드명만 실어서 모델이 결과로 지워진 걸 확인 가능하게 함
+    cleared = {"cleared": ["ends_at"]} if patch.drop_end else {}
+    return ok("update", EVENT, id=row.id, starts_at=row.starts_at.isoformat(), **cleared)
 
 
-def _merge_start(
-    context: AgentContext, args: EventUpdate, current: EventRow
-) -> tuple[datetime | None, bool | None]:
-    """날짜만 바꾸면 시각은 유지하고, 시각만 바꾸면 날짜를 유지한다."""
-    if args.starts_on is None and args.starts_time is None:
-        return None, None  # 시작 시각은 건드리지 않는다
+def _resolve_when(
+    context: AgentContext,
+    patch: WhenPatch,
+    *,
+    current: EventWhen | None,
+    operation: Operation,
+) -> EventWhen | ToolResult:
+    """시간 구간을 확정한다. 실패하면 ToolResult로 돌려 모델이 고쳐 다시 부르게 한다."""
+    try:
+        when = resolve_when(patch, current=current, today=context.today, tz=context.timezone)
+    except MissingStartTime:
+        # 알림이 시작 시각을 기준으로 가기 때문에
+        # 자정으로 임의로 두게 하지 않고 몇 시인지 체크하게 함
+        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_START_TIME)
+    except MissingEndTime:
+        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_END_TIME)
+    except DateParseError as exc:
+        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
 
-    local = current.starts_at.astimezone(context.timezone)
-    day = (
-        resolve_date(args.starts_on, today=context.today, direction=args.temporal_direction)
-        if args.starts_on is not None
-        else local.date()
-    )
-    if is_all_day(args.starts_time):
-        return combine(day, ALL_DAY_START, context.timezone), True
-    if args.starts_time is not None:
-        moment = resolve_time(args.starts_time)
-        return combine(day, moment, context.timezone), moment is None
-
-    # 시각을 안 줬으면 원래 성격을 유지한다. all_day 였으면 계속 all_day
-    keep = None if current.all_day else local.timetz().replace(tzinfo=None)
-    return combine(day, keep, context.timezone), current.all_day
-
-
-def _merge_end(
-    context: AgentContext, args: EventUpdate, current: EventRow, starts_at: datetime | None
-) -> datetime | None:
-    if is_all_day(args.starts_time):  # 하루 종일로 바꾸면 끝도 그날 23:59 다
-        anchor = starts_at or current.starts_at
-        return combine(anchor.astimezone(context.timezone).date(), ALL_DAY_END, context.timezone)
-    if args.ends_on is None and args.ends_time is None:
-        return None  # 종료 시각은 건드리지 않는다
-
-    anchor = starts_at or current.starts_at
-    day = (
-        resolve_date(args.ends_on, today=context.today, direction=args.temporal_direction)
-        if args.ends_on is not None
-        else anchor.astimezone(context.timezone).date()
-    )
-    moment: time | None = resolve_time(args.ends_time) if args.ends_time else None
-    return combine(day, moment, context.timezone)
+    problem = check_when(when, patch)
+    if problem is not None:
+        return fail(operation, EVENT, ErrorCode.VALIDATION_ERROR, problem)
+    return when
 
 
 async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
@@ -223,9 +211,11 @@ async def create_event_item(context: AgentContext, args: EventItemCreate) -> Too
 
 
 async def update_event_item(context: AgentContext, args: EventItemUpdate) -> ToolResult:
+    edits = {"item_name": args.item_name, "is_prepared": args.is_prepared}
     row = await context.store.update_event_item(
         item_id=args.item_id,
-        fields={"item_name": args.item_name, "is_prepared": args.is_prepared},
+        # 안 바꿀 필드(None)는 넘기지 않는다. is_prepared=False 는 바꾸는 값이라 남는다
+        fields={key: value for key, value in edits.items() if value is not None},
     )
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())

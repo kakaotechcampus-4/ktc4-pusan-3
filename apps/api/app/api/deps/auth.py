@@ -61,9 +61,7 @@ async def get_current_parent(
     if credentials is None:
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
 
-    row = await find_session_by_token_hash(
-        session, token_hash=hash_token(credentials.credentials)
-    )
+    row = await find_session_by_token_hash(session, token_hash=hash_token(credentials.credentials))
 
     # 🚨 "없음 · 만료 · 이미 삭제됨" 을 구분해 알려주지 않는다 — 전부 401 이다.
     #    사유를 알려주면 공격자에게 정보를 준다 (명세 §8-1).
