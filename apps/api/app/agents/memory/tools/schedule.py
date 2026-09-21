@@ -33,7 +33,7 @@ from app.agents.common.datetime_rules import (
     resolve_when,
 )
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import DraftItem, EventDraft
+from app.agents.memory.drafts import DraftItem, EventDraft, EventSnapshot
 from app.agents.memory.result import ErrorCode, Operation, ToolResult, fail, ok
 from app.agents.memory.schemas.common import EventCategory, EventType
 from app.agents.memory.schemas.schedule import (
@@ -205,20 +205,32 @@ async def current_draft(context: AgentContext, event_id: str) -> EventDraft | No
     row = await context.store.get_event(event_id=event_id)
     if row is None:
         return None
-    items = await context.store.list_event_items(event_id=event_id)
-    return EventDraft(
-        op="update",
-        event_id=row.id,
+    rows = await context.store.list_event_items(event_id=event_id)
+    items = tuple(
+        DraftItem(item_id=item.item_id, item_name=item.item_name, is_prepared=item.is_prepared)
+        for item in rows
+    )
+    # 원본은 여기에서만. 두 번째 호출부터는 버퍼의 초안이 현재 값
+    before = EventSnapshot(
         title=row.title,
         starts_at=row.starts_at,
         ends_at=row.ends_at,
         all_day=row.all_day,
         event_type=row.fields.get("event_type", EventType.EPISODIC),
         category=row.fields.get("category", EventCategory.ETC),
-        items=tuple(
-            DraftItem(item_id=item.item_id, item_name=item.item_name, is_prepared=item.is_prepared)
-            for item in items
-        ),
+        items=items,
+    )
+    return EventDraft(
+        op="update",
+        event_id=row.id,
+        title=before.title,
+        starts_at=before.starts_at,
+        ends_at=before.ends_at,
+        all_day=before.all_day,
+        event_type=before.event_type,
+        category=before.category,
+        items=items,
+        before=before,
     )
 
 
@@ -311,7 +323,40 @@ async def _check_event_item(
     row = await context.store.update_event_item(item_id=current.item_id, fields=fields)
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
+    _sync_checked(context, row)
     return ok("update", EVENT_ITEM, draft=False, item_id=row.item_id, is_prepared=row.is_prepared)
+
+
+def _sync_checked(context: AgentContext, row: EventItemRow) -> None:
+    """바로 쓴 챙김 표시를 버퍼의 초안에도 맞춘다.
+
+    같은 run에서 update_event가 먼저 돌면 초안이 DB의 옛 값을 들고 나가서,
+    보호자 화면은 방금 체크했다고 말한 준비물을 체크 안 된 채로 보게 된다.
+
+    # TODO: 제출 API는 item_id가 있는 준비물의 is_prepared를 읽지 않는다.
+    #   SSE로 나간 뒤 보호자가 PATCH /event-items/{iid}로 체크를 바꾸면 초안은 다시
+    #   낡는다. items가 최종 목록이라 그대로 저장하면 방금 한 체크가 풀린다.
+    #   체크 상태는 PATCH의 몫이고, 초안이 정하는 것은 item_id가 null인
+    #   새 준비물의 초기값만이다.
+    """
+    buffered = context.drafts.get(row.event_id)
+    if buffered is None:
+        return
+
+    def checked(items: tuple[DraftItem, ...]) -> tuple[DraftItem, ...]:
+        return tuple(
+            replace(item, is_prepared=row.is_prepared) if item.item_id == row.item_id else item
+            for item in items
+        )
+
+    before = buffered.before
+    context.drafts.put(
+        replace(
+            buffered,
+            items=checked(buffered.items),
+            before=before if before is None else replace(before, items=checked(before.items)),
+        )
+    )
 
 
 async def _rename_event_item(

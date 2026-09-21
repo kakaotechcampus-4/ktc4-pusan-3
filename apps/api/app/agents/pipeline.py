@@ -69,6 +69,15 @@ class EventDrafts:
     """보호자 제출을 기다리는 일정 초안. SSE 이름은 event_draft.
 
     JSON 변환은 EventDraft.to_payload() 가 한다.
+    run당 한 프레임+초안이 배열로 실리기 때문에 화면이 초안 묶음을 한 번에 디스플레이
+
+    # TODO: 제안에서 온 일정도 같은 모양으로 내야 한다. (#121 이 POST /suggestions/{sid}/event와
+    #   POST /events/{eid}/confirm을 하나로 합쳐서, 합친 엔드포인트가 호출 즉시 event를 쓰면
+    #   보호자가 확인하는 단계=승인 게이트 사라짐.
+    #   초안만 내고 제출은 한 엔드포인트로 모아야 승인 시트를 하나로 유지 가능)
+    # TODO(결정 필요): 초안의 수명이 없음. run이 끝나면 사라지고 되받을 경로가 없어서 보호자가
+    #   새로고침했을 때의 대응 필요. 사라지는 걸 감안해 시트 문구를 바꿀지, run 단위로 남길지
+    #   (이 경우 "승인 전 행을 DB 에 두지 않는다"와 상충) 결정 필요
     """
 
     drafts: tuple[EventDraft, ...]

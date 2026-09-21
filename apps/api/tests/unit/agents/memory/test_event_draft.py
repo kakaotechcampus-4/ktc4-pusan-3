@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft
+from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft, EventSnapshot
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.store import InMemoryStore
@@ -61,6 +61,7 @@ def _draft(
     ends_at: datetime | None = None,
     items: tuple[DraftItem, ...] = (),
     changed: tuple[str, ...] = (),
+    before: EventSnapshot | None = None,
 ) -> EventDraft:
     return EventDraft(
         op=op,  # type: ignore[arg-type]
@@ -73,6 +74,7 @@ def _draft(
         category="activity",
         items=items,
         changed=changed,
+        before=before,
     )
 
 
@@ -87,6 +89,7 @@ def test_새_일정_초안은_준비물을_안에_싣고_id_는_비어_있다() 
     payload = draft.to_payload()
 
     assert payload == {
+        "draft_id": None,  # DraftBook 에 넣기 전이라 아직 없다
         "op": "create",
         "event_id": None,
         "event": {
@@ -97,12 +100,13 @@ def test_새_일정_초안은_준비물을_안에_싣고_id_는_비어_있다() 
             "event_type": "episodic",
             "category": "activity",
         },
+        "before": None,  # 새 일정은 원본이 없다
         "items": [
             {"item_id": None, "item_name": "수영복", "is_prepared": False},
             {"item_id": None, "item_name": "여벌옷", "is_prepared": False},
         ],
-        "changed": [],
     }
+    assert "changed" not in payload  # 화면은 before 와 비교해 직접 구한다
 
 
 def test_payload_는_그대로_json_으로_나간다() -> None:
@@ -114,22 +118,56 @@ def test_payload_는_그대로_json_으로_나간다() -> None:
     assert loaded["event"]["ends_at"] == "2026-09-25T17:00:00+09:00"
 
 
-def test_수정_초안은_event_id_와_바뀐_필드_이름을_싣는다() -> None:
+def test_수정_초안은_event_id_와_원본을_싣는다() -> None:
+    before = EventSnapshot(
+        title="운동회",
+        starts_at=datetime(2026, 9, 25, 10, 0, tzinfo=KST),
+        ends_at=None,
+        all_day=False,
+        event_type="episodic",
+        category="activity",
+        items=(DraftItem(item_id="event_item-1", item_name="체육복"),),
+    )
     draft = _draft(
         op="update",
         event_id="event-1",
         title="가을 운동회",
         items=(DraftItem(item_id="event_item-1", item_name="체육복", is_prepared=True),),
         changed=("title", "items"),
+        before=before,
     )
 
     payload = draft.to_payload()
 
     assert payload["event_id"] == "event-1"
-    assert payload["changed"] == ["title", "items"]
     assert payload["items"] == [
         {"item_id": "event_item-1", "item_name": "체육복", "is_prepared": True}
     ]
+    # 화면이 "운동회 → 가을 운동회" 를 그릴 수 있어야 한다
+    assert payload["before"]["title"] == "운동회"
+    assert payload["before"]["items"] == [
+        {"item_id": "event_item-1", "item_name": "체육복", "is_prepared": False}
+    ]
+    assert "changed" not in payload
+
+
+def test_before_와_event_의_시각_표기가_같다() -> None:
+    # 표기가 갈리면 화면이 안 바뀐 필드를 바뀌었다고 읽는다
+    moment = datetime(2026, 9, 25, 10, 0, tzinfo=KST)
+    before = EventSnapshot(
+        title="운동회",
+        starts_at=moment,
+        ends_at=None,
+        all_day=False,
+        event_type="episodic",
+        category="activity",
+    )
+    draft = _draft(op="update", event_id="event-1", before=before)
+
+    payload = draft.to_payload()
+
+    assert payload["before"]["starts_at"] == payload["event"]["starts_at"]
+    assert payload["before"]["ends_at"] == payload["event"]["ends_at"] is None
 
 
 def test_같은_일정에_두_번_쌓으면_초안은_하나다() -> None:
@@ -370,3 +408,104 @@ async def test_없는_일정을_고치면_UNKNOWN_EVENT(context: AgentContext) -
     assert result.error is not None
     assert result.error["code"] == ErrorCode.UNKNOWN_EVENT
     assert context.drafts.all() == ()
+
+
+# ── 즉시 쓰기와 초안의 어긋남 (FE 리뷰) ──────────────────────────
+async def _seed_checked(context: AgentContext) -> str:
+    """운동회 15:00 + 체육복 미체크."""
+    row = await context.store.create_event(
+        child_id=context.child_id,
+        title="운동회",
+        starts_at=SEEDED_START,
+        ends_at=None,
+        all_day=False,
+        fields={"event_type": "episodic", "category": "institution"},
+    )
+    await context.store.create_event_item(event_id=row.id, item_name="체육복")
+    return row.id
+
+
+@pytest.mark.parametrize("check_first", [False, True], ids=["수정_먼저", "체크_먼저"])
+async def test_챙김_표시는_순서와_무관하게_초안에_비친다(
+    context: AgentContext, check_first: bool
+) -> None:
+    # "운동회 5시로 옮기고, 체육복은 챙겼어" — 한 응답에 둘이 같이 온다.
+    # 즉시 쓰기가 버퍼를 안 건드리면 수정이 먼저인 경우 초안이 옛 값을 들고 나가고,
+    # items 가 최종 목록이라 제출하는 순간 방금 한 체크가 풀린다
+    event_id = await _seed_checked(context)
+    check = ("update_event_item", {"item_id": "event_item-1", "is_prepared": True})
+    edit = ("update_event", {"event_id": event_id, "starts_time": "오후 5시"})
+
+    for name, args in [check, edit] if check_first else [edit, check]:
+        result = await execute_tool(name, args, context)
+        assert result.success is True, result.error
+
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert [item.is_prepared for item in draft.items] == [True]
+    stored = await context.store.get_event_item(item_id="event_item-1")
+    assert stored is not None and stored.is_prepared is True
+
+
+async def test_챙김_표시는_before_에도_비친다(context: AgentContext) -> None:
+    # 이미 DB 에 들어간 값이라 "수정 전 원본" 이 그쪽이다.
+    # 안 맞추면 화면이 준비물을 바뀐 것으로 표시한다
+    event_id = await _seed_checked(context)
+
+    await execute_tool("update_event", {"event_id": event_id, "starts_time": "오후 5시"}, context)
+    await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "is_prepared": True}, context
+    )
+
+    draft = context.drafts.get(event_id)
+    assert draft is not None and draft.before is not None
+    assert [item.is_prepared for item in draft.before.items] == [True]
+    assert draft.before.items == draft.items  # 준비물은 바뀐 게 없다
+
+
+async def test_챙김_표시가_초안을_새로_만들지는_않는다(context: AgentContext) -> None:
+    await _seed_checked(context)
+
+    await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "is_prepared": True}, context
+    )
+
+    assert context.drafts.all() == ()
+
+
+# ── draft_id ────────────────────────────────────────────────────
+async def test_초안마다_draft_id_가_붙는다(context: AgentContext) -> None:
+    event_id = await _seed_event(context)
+
+    await _create_event(context, title="물놀이")
+    await _update(context, event_id, title="가을 운동회")
+
+    ids = [draft.draft_id for draft in context.drafts.all()]
+    assert ids == ["d1", "d2"]
+    assert all(draft.to_payload()["draft_id"] for draft in context.drafts.all())
+
+
+async def test_같은_일정을_두_번_고쳐도_draft_id_는_그대로다(context: AgentContext) -> None:
+    # 화면이 초안을 가리키는 키라 중간에 바뀌면 안 된다
+    event_id = await _seed_event(context)
+
+    await _update(context, event_id, title="가을 운동회")
+    first = context.drafts.get(event_id)
+    await _update(context, event_id, starts_time="오후 3시")
+    second = context.drafts.get(event_id)
+
+    assert first is not None and second is not None
+    assert first.draft_id == second.draft_id
+
+
+async def test_수정_초안의_before_는_DB_원본이다(context: AgentContext) -> None:
+    event_id = await _seed_event(context, "체육복")
+
+    await _update(context, event_id, title="가을 운동회", starts_time="오후 3시")
+
+    draft = context.drafts.get(event_id)
+    assert draft is not None and draft.before is not None
+    assert draft.before.title == "운동회"
+    assert draft.before.starts_at == SEEDED_START
+    assert [item.item_name for item in draft.before.items] == ["체육복"]
+    assert draft.title == "가을 운동회"  # 초안 쪽은 바뀐 값이다
