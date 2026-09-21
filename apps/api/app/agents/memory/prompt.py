@@ -61,6 +61,8 @@ _VALUES = """
   parent_hearsay, 확신이 약하면 parent_hedged, 알림장·기관 공지는 institution_notice.
 - 새 일정의 준비물은 create_event 의 items 에 모두 넣는다. 몇 개든 create_event 한 번이다.
   이미 있는 일정에 붙일 때만 create_event_item 을 준비물마다 따로 부르고, 한 응답에 모두 부른다.
+- items 와 item_name 에는 조사를 떼고 사물 이름만 넣는다. "수영복이랑 여벌옷 챙겨야 해" 는
+  ["수영복", "여벌옷"] 이다. 없는 말을 붙여 늘리지 않는다.
 - 같은 사실을 두 도메인에 겹쳐 저장하지 않는다.
 - 같은 대상의 사실과 인상은 한 건으로 합친다. 인상은 polarity·reaction 에 담는다.
   "오늘 사과 먹었고 사과를 좋아하는 것 같아" → observation_food 한 건 (polarity=1)

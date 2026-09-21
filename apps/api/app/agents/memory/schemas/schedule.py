@@ -76,7 +76,8 @@ class EventCreate(ToolArgs):
         Field(
             default_factory=list,
             description=(
-                '챙길 준비물 이름. 발화에 나온 준비물을 여기에 다 넣는다. 예: ["체육복", "물통"]. '
+                "챙길 준비물 이름. 발화에 나온 준비물을 여기에 다 넣는다. "
+                '조사를 떼고 사물 이름만 넣는다 — "수영복이랑 여벌옷" → ["수영복", "여벌옷"]. '
                 "준비물 얘기가 없으면 비워 둔다"
             ),
         ),
@@ -132,12 +133,22 @@ class EventItemCreate(ToolArgs):
     """이미 있는 일정의 준비물 한 개. 여러 개면 item마다 따로 호출한다."""
 
     event_id: EventId
-    item_name: Annotated[str, Field(description="준비물 이름. 예: 체육복, 수영복")]
+    item_name: Annotated[
+        str,
+        Field(
+            description=(
+                "준비물 이름. 조사를 떼고 사물 이름만 넣는다. "
+                '"물통도 챙겨야 해" → 물통, "체육복이랑" → 체육복'
+            )
+        ),
+    ]
 
 
 class EventItemUpdate(ToolArgs):
     item_id: Annotated[str, Field(description="query_event 결과의 items[].item_id")]
-    item_name: Annotated[str | None, Field(default=None, description="바꿀 이름")]
+    item_name: Annotated[
+        str | None, Field(default=None, description="바꿀 이름. 조사를 떼고 사물 이름만")
+    ]
     is_prepared: Annotated[bool | None, Field(default=None, description="준비 완료 여부")]
 
 
