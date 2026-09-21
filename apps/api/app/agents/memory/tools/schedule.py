@@ -362,14 +362,12 @@ async def _check_event_item(
 def _sync_checked(context: AgentContext, row: EventItemRow) -> None:
     """바로 쓴 챙김 표시를 버퍼의 초안에도 맞춘다.
 
-    같은 run에서 update_event가 먼저 돌면 초안이 DB의 옛 값을 들고 나가서,
-    보호자 화면은 방금 체크했다고 말한 준비물을 체크 안 된 채로 보게 된다.
+    is_prepared 는 payload 에 싣지 않는다. 체크 상태는
+    PATCH /event-items/{iid}의 몫이라 화면은 초안에서 그 값을 보지 않는다.
 
-    # TODO: 제출 API는 item_id가 있는 준비물의 is_prepared를 읽지 않는다.
-    #   SSE로 나간 뒤 보호자가 PATCH /event-items/{iid}로 체크를 바꾸면 초안은 다시
-    #   낡는다. items가 최종 목록이라 그대로 저장하면 방금 한 체크가 풀린다.
-    #   체크 상태는 PATCH의 몫이고, 초안이 정하는 것은 item_id가 null인
-    #   새 준비물의 초기값만이다.
+    버퍼를 맞추는 건 내부 판정 때문이다. _diff 가 items를 통째로 비교해서,
+    같은 run에서 update_event가 먼저 돌면 초안이 DB의 옛 값을 들고 있다가
+    "준비물이 바뀌었다"로 읽힌다.
     """
     buffered = context.drafts.get(row.event_id)
     if buffered is None:
