@@ -746,6 +746,15 @@ export interface AuthSignupRequest {
   consent_code: string;
   /** ② 에서 만든 것과 같은 값. consent_code 만으로 계정이 만들어지는 것을 막는다. */
   bind: string;
+  /**
+   * ⚠️ **`docs/api/auth-kakao-v1.md` §3-5 에 없다** (#96 에서 추가 요청 중 · 확정 전).
+   *
+   * 계정이 여기서 만들어지는데 이름을 받을 다른 엔드포인트가 없다 — 계약서에 `PATCH /me`
+   * 가 없어서, 이 바디에 싣지 않으면 보호자 이름을 저장할 길 자체가 없다.
+   * 🚨 서버가 거절하기로 하면 화면이 아니라 **계약을 먼저 고친다.** 이름 화면을 지우고
+   *    `parent.nickname` 을 null 로 두는 것도 선택지다 (그 필드는 nullable 이다 · §5-2).
+   */
+  nickname: string;
   consents: Array<{ scope: string; policy_version: string }>;
 }
 
@@ -759,6 +768,26 @@ export interface CreateChildRequest {
   /** YYYY-MM-DD. 나이가 아니라 생일을 받는다 — 나이는 서버가 계산한다. */
   birth_date: string;
   relation?: Relation;
+  /**
+   * 아이 스코프 동의 2건 (`child_basic` · `child_health`).
+   *
+   * ⚠️ **계약서 §05 의 바디에 없다** (#96 에서 추가 요청 중 · 확정 전).
+   *
+   * 🚨 **아이를 만드는 것과 같은 트랜잭션이어야 한다.** 동의를 아이 단위로 기록하기로
+   *    하면서(#96) 닭-달걀이 생겼다 — `POST /consents` 는 `child_id` 를 받는데 그
+   *    `child_id` 는 이 호출 전에는 없고, 계약서 §04 는 `child_basic` 없이 이 호출이
+   *    403 이라고 말한다. 둘을 동시에 만족시키는 모양은 이것뿐이다.
+   */
+  consents: Array<{ scope: string; policy_version: string }>;
+  /**
+   * 법정대리인임을 보호자가 확인한 표시 (개인정보보호법 제22조의2).
+   *
+   * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 — 그러면
+   *    아무도 확인하지 않은 동의가 확인된 것으로 남는다.
+   * 🚨 초대로 들어온 보호자는 이 값을 보낼 일이 없다. 법정대리인 동의는 아이당 한 번,
+   *    아이를 등록하는 보호자가 한다 (#96).
+   */
+  guardian_attested: boolean;
 }
 
 export interface CreateChildResponse {
@@ -1049,8 +1078,27 @@ export interface InviteRequest {
 }
 
 export interface InviteResponse {
-  invite_url: string;
+  /**
+   * ⚠️ **계약서 §05 는 `invite_url` 이다** (#96 에서 코드로 바꾸자고 제안 중 · 확정 전).
+   * 형식·정규화는 `lib/invite-code.ts` — 그 파일 머리말에 왜 링크가 아닌지 적어 뒀다.
+   */
+  invite_code: string;
   expires_at: string;
+}
+
+/**
+ * POST /invites/{code}/accept — 수락하면 `parent_child` 행이 **바로** 생긴다.
+ * 🚨 승인 대기 상태가 없다 (계약서 §02 `GET /me`). 화면에 "대기 중" 칸을 만들지 않는다.
+ *
+ * ⚠️ **응답 모양이 계약서에 없다.** 화면은 수락한 뒤 그 아이 홈으로 가야 해서 `child_id`
+ *    가 필요하다 — 없으면 `GET /me` 를 한 번 더 부르게 된다. 목이 이 모양으로 답한다.
+ */
+export interface InviteAcceptResponse {
+  child_id: string;
+  nickname: string;
+  /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+  age_display: string;
+  role: "owner" | "member";
 }
 
 /**

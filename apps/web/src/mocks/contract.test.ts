@@ -20,7 +20,9 @@ import type {
   ChildParentsResponse,
   ConsentResponse,
   ConsentsResponse,
+  InviteAcceptResponse,
   InviteResponse,
+  Me,
   WithdrawResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
@@ -38,6 +40,8 @@ import type {
   SafetyScanResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
+
+import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { setScenario } from "./scenario";
 
@@ -464,11 +468,11 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
   });
 
-  it("초대 링크는 부를 때마다 새로 나온다 — 한 링크는 한 번만 쓴다", async () => {
+  it("초대 코드는 부를 때마다 새로 나온다 — 한 코드는 한 번만 쓴다", async () => {
     const first = await api.post<InviteResponse>("/children/c1/invites", {});
     const second = await api.post<InviteResponse>("/children/c1/invites", {});
 
-    expect(first.invite_url).not.toBe(second.invite_url);
+    expect(first.invite_code).not.toBe(second.invite_code);
     expect(new Date(first.expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
@@ -498,9 +502,140 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it("relation 없이 초대해도 링크가 나온다", async () => {
+  it("relation 없이 초대해도 코드가 나온다", async () => {
     const res = await api.post<InviteResponse>("/children/c1/invites", {});
-    expect(res.invite_url).toMatch(/^https:\/\//);
+    expect(res.invite_code).toHaveLength(INVITE_CODE_LENGTH);
+  });
+
+  /**
+   * 🚨 **정규화를 거쳐도 같은 코드여야 한다.** 발행한 값에 `I` `L` `O` `U` 가 섞여 있으면,
+   *    받는 쪽 화면이 `O`→`0` 으로 고쳐 보내는 순간 **서버에 없는 코드**가 된다.
+   */
+  it("발행된 코드는 화면의 정규화를 통과해도 그대로다", async () => {
+    const res = await api.post<InviteResponse>("/children/c1/invites", {});
+    expect(normalizeInviteCode(res.invite_code)).toBe(res.invite_code);
+  });
+});
+
+/**
+ * 초대 수락. ⚠️ 코드 방식과 응답 모양 둘 다 **계약 확정 전이다** (#96) —
+ * 서버가 붙으면 이 표를 실서버에도 그대로 건다.
+ */
+describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
+  it("아이가 없는 계정은 코드로 연결된다", async () => {
+    setScenario("consent");
+    try {
+      const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      expect(res.child_id).toBe("c1");
+      // 🚨 초대받은 보호자는 owner 가 아니다. 이게 뒤집히면 10 설정에서 남을 끊을 수 있다.
+      expect(res.role).toBe("member");
+
+      // 수락하면 **바로** 연결된다 — 승인 대기 상태가 없다 (계약서 §02).
+      const me = await api.get<Me>("/me");
+      expect(me.children.map((c) => c.child_id)).toContain("c1");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("이미 아이가 있으면 수락이 막힌다", async () => {
+    // default 시나리오는 아이가 하나 있는 계정이다.
+    const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+    expect(isApiError(caught, "child_already_exists")).toBe(true);
+  });
+
+  it.each([
+    ["MKWASTED", "invite_used"],
+    ["MKPAST12", "invite_expired"],
+    ["ABC", "invite_not_found"],
+  ])("%s 는 %s 로 막힌다", async (code, expected) => {
+    setScenario("consent");
+    try {
+      const caught = await api.post(`/invites/${code}/accept`, {}).catch((e) => e);
+      expect(isApiError(caught, expected)).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  /**
+   * 🚨 **시도 제한이 8자 코드의 전제다.** 이게 빠지면 40비트를 그냥 긁을 수 있다 —
+   *    링크 방식에는 없던 요구사항이라, 서버에 요청한 것을 목이 먼저 지킨다 (#96).
+   */
+  it("여러 번 틀리면 429 로 막힌다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.post("/invites/MKWASTED/accept", {}).catch(() => null);
+      }
+      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      expect(isApiError(caught, "too_many_attempts")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/**
+ * 가입 흐름. ⚠️ `signup` 의 `nickname` 과 `POST /children` 의 `consents` 둘 다
+ * **계약 확정 전이다** (#96).
+ */
+describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는다", () => {
+  it("계정 동의가 빠지면 signup 이 403 이다", async () => {
+    const caught = await api
+      .post("/auth/kakao/signup", {
+        consent_code: "cc_mock",
+        bind: "b",
+        nickname: "테스터",
+        consents: [{ scope: "service_terms", policy_version: "2026-09-01" }],
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+  });
+
+  it("이름이 없으면 signup 이 막힌다", async () => {
+    const caught = await api
+      .post("/auth/kakao/signup", {
+        consent_code: "cc_mock",
+        bind: "b",
+        consents: [
+          { scope: "service_terms", policy_version: "2026-09-01" },
+          { scope: "privacy_account", policy_version: "2026-09-01" },
+        ],
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+  });
+
+  /**
+   * 🚨 **아이와 아이 동의는 한 트랜잭션이다.** 동의 없이 아이가 만들어지면 그 아이의
+   *    기록은 근거 없는 수집이 된다 (계약서 §04 "동의는 저장보다 먼저다").
+   */
+  it("아이 동의가 빠지면 POST /children 이 403 이다", async () => {
+    const caught = await api
+      .post("/children", {
+        nickname: "테스트",
+        birth_date: "2021-04-02",
+        consents: [{ scope: "child_basic", policy_version: "2026-09-01" }],
+        guardian_attested: true,
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+  });
+
+  it("법정대리인 확인이 없으면 POST /children 이 403 이다", async () => {
+    const caught = await api
+      .post("/children", {
+        nickname: "테스트",
+        birth_date: "2021-04-02",
+        consents: [
+          { scope: "child_basic", policy_version: "2026-09-01" },
+          { scope: "child_health", policy_version: "2026-09-01" },
+        ],
+        guardian_attested: false,
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
   });
 });
 

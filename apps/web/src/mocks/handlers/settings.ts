@@ -8,6 +8,7 @@ import type {
   InviteResponse,
 } from "@/lib/api/types";
 import { PARENT_ID } from "../fixtures";
+import { INVITE_CODE_LENGTH } from "@/lib/invite-code";
 import { apiError, networkDelay, url } from "./helpers";
 
 /**
@@ -126,12 +127,22 @@ export const settingsHandlers = [
    */
   http.post(url("/children/:cid/invites"), async () => {
     await networkDelay();
-    // 토큰은 서버가 만든다. 목이라 시각으로 유일성만 맞춘다.
-    const token = `mock${Date.now().toString(36)}`;
+    // 코드는 서버가 만든다. 목이라 Crockford Base32 알파벳 안에서 8자만 맞춘다
+    // (⚠️ 계약서는 아직 `invite_url` 이다 — #96 · `lib/invite-code.ts`).
+    const code = randomInviteCode();
     const res: InviteResponse = {
-      invite_url: `https://icatch.ai.kr/i/${token}`,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      invite_code: code,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
     return HttpResponse.json(res, { status: 201 });
   }),
 ];
+
+/** 🚨 알파벳을 손으로 쓰지 않는다 — 화면의 정규화(`I`·`L`·`O` 치환)를 통과하는 값만 나와야 한다. */
+function randomInviteCode(): string {
+  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  return Array.from(
+    { length: INVITE_CODE_LENGTH },
+    () => alphabet[Math.floor(Math.random() * alphabet.length)],
+  ).join("");
+}

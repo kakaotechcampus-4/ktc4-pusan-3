@@ -1,10 +1,11 @@
 import { http, HttpResponse } from "msw";
 
 import { API_BASE_URL } from "@/lib/env";
-import { me, meNeedingConsent, MOCK_TOKEN, PARENT_ID } from "../fixtures";
+import { me, MOCK_TOKEN, PARENT_ID } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import type { WithdrawResponse } from "@/lib/api/types";
+import { currentMe } from "./membership";
 import { consentEffective, recordConsent } from "./settings";
 
 /**
@@ -18,12 +19,16 @@ import { consentEffective, recordConsent } from "./settings";
 const EXPIRES_IN = 43_200; // 12시간
 
 /** 세션 응답. `/auth/{provider}` 와 `/signup` 이 같은 모양을 돌려준다. */
-function session(isNew: boolean, consentRequired: string[] = []) {
+function session(
+  isNew: boolean,
+  nickname: string = me.nickname ?? "",
+  consentRequired: string[] = [],
+) {
   return HttpResponse.json({
     token: MOCK_TOKEN,
     expires_in: EXPIRES_IN,
     is_new: isNew,
-    parent: { id: PARENT_ID, nickname: me.nickname },
+    parent: { id: PARENT_ID, nickname },
     consent_required: consentRequired,
   });
 }
@@ -95,6 +100,7 @@ export const authHandlers = [
     const body = (await request.json()) as {
       consent_code?: string;
       bind?: string;
+      nickname?: string;
       consents?: Array<{ scope: string }>;
     };
     if (!body.consent_code || !body.bind) {
@@ -106,20 +112,29 @@ export const authHandlers = [
     if (missing.length > 0) {
       return apiError(403, "consent_required", "먼저 동의가 필요해요", { scopes: missing });
     }
-    return session(true);
+    // ⚠️ `nickname` 은 계약 확정 전이다 (#96 · `AuthSignupRequest` 주석). 목이라고 아무거나
+    //    200 으로 돌려주지 않는다 — 화면이 앞 화면에서 받아 온 값을 실제로 보내는지 건다.
+    //    서버가 이 필드를 안 받기로 하면 여기와 이름 화면을 함께 지운다.
+    if (!body.nickname) {
+      return apiError(400, "validation_failed", "nickname 이 필요해요");
+    }
+    return session(true, body.nickname);
   }),
 
+  // 🚨 아이 목록을 여기서 만들지 않는다 — `currentMe()` 가 정본이다. 신규 가입은 아이
+  //    0명에서 시작하고, 아이는 `POST /children` 이나 초대 수락으로만 생긴다
+  //    (`handlers/membership.ts` — 그러지 않으면 00-1·초대 화면을 열어 볼 수 없다).
   http.get(url("/me"), async () => {
     await networkDelay();
-    return HttpResponse.json(currentScenario() === "consent" ? meNeedingConsent : me);
+    return HttpResponse.json(currentMe());
   }),
 
   // append-only. 철회도 withdrawn 행을 추가하는 것이지 지우는 게 아니다.
   //
-  // 🚨 가입 직후에는 아이 스코프(child_basic · child_health)가 child_id 없이 온다 —
-  //    child_basic 없이 POST /children 이 403 이라 아이를 만들기 **전에** 받아야 하기 때문이다
-  //    (계약서 §04 "동의는 저장보다 먼저다"). 실서버가 이걸 받아 주는지는 #18 확인 대상이고,
-  //    목은 받아 준다. 서버가 거절하기로 하면 여기와 화면을 같이 고친다.
+  // 🚨 **가입 흐름은 이 경로를 쓰지 않는다.** 계정 2건은 `/signup` 바디로, 아이 2건은
+  //    `POST /children` 바디로 간다 (#96) — 동의를 아이 단위로 기록하면 `child_id` 없이
+  //    저장할 수 없고, 그 id 는 아이를 만들어야 생기기 때문이다. 여기로 오는 것은
+  //    10 설정에서 켜고 끄는 경우뿐이고, 그때는 `child_id` 가 있다.
   http.post(url("/consents"), async ({ request }) => {
     await networkDelay();
     const body = (await request.json()) as {

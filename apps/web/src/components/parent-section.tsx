@@ -22,6 +22,7 @@ import {
   type InviteResponse,
   type Relation,
 } from "@/lib/api";
+import { formatInviteCode } from "@/lib/invite-code";
 import { formatDay } from "@/lib/format";
 
 /**
@@ -138,7 +139,7 @@ export function ParentSection({
         누가 무엇을 적었는지는 기록마다 남아요. 함께 보는 보호자도 같은 기억을 봅니다.
       </p>
 
-      {/* 초대 — 링크를 만드는 것까지가 이 화면의 일이다. 보내는 것은 보호자가 한다. */}
+      {/* 초대 — 코드를 만드는 것까지가 이 화면의 일이다. 전하는 것은 보호자가 한다. */}
       <BottomSheet
         open={inviteOpen}
         onClose={() => {
@@ -150,8 +151,8 @@ export function ParentSection({
         title="보호자 초대하기"
         description={
           issued
-            ? "이 링크를 받은 사람이 열면 바로 함께 보게 돼요."
-            : "링크 하나를 만들어 전해 주세요. 아이와 어떤 사이인지는 받는 분이 직접 고릅니다."
+            ? "이 코드를 받은 사람이 앱에서 입력하면 바로 함께 보게 돼요."
+            : "코드 하나를 만들어 전해 주세요. 아이와 어떤 사이인지는 받는 분이 직접 고릅니다."
         }
         footer={
           issued ? (
@@ -170,41 +171,45 @@ export function ParentSection({
               <Button
                 className="flex-1"
                 onClick={() => {
+                  // 🚨 복사는 **정규화된 값**이다. 화면의 `ABCD-1234` 를 그대로 복사하면
+                  //    받는 쪽이 하이픈까지 붙여 넣는데, 그건 코드가 아니라 표시 형식이다.
                   void navigator.clipboard
-                    .writeText(issued.invite_url)
-                    .then(() => toast.show("초대 링크를 복사했어요"))
+                    .writeText(issued.invite_code)
+                    .then(() => toast.show("초대 코드를 복사했어요"))
                     // 🚨 조용히 되돌아간 실패 — 토스트를 쓰는 유일한 자리다 (문서 §7).
-                    .catch(() => toast.show("복사하지 못했어요. 링크를 길게 눌러 복사해 주세요"));
+                    .catch(() => toast.show("복사하지 못했어요. 코드를 길게 눌러 복사해 주세요"));
                 }}
               >
-                링크 복사
+                코드 복사
               </Button>
             </div>
           ) : (
             <Button block onClick={() => invite.mutate()} disabled={invite.isPending}>
               {invite.isPending ? <Spinner /> : null}
-              {invite.isPending ? "만드는 중…" : "초대 링크 만들기"}
+              {invite.isPending ? "만드는 중…" : "초대 코드 만들기"}
             </Button>
           )
         }
       >
         {issued ? (
           <div className="flex flex-col gap-3">
-            {/* 🚨 링크를 잘라 보여주지 않는다. 길게 눌러 복사하는 경로가 남아야 한다. */}
-            <p className="rounded-field border-line bg-surface text-body-sm text-ink border p-3 break-all">
-              {issued.invite_url}
+            {/* 🚨 네 자씩 끊어 크게 보여준다 — 이 코드는 **눈으로 옮겨 적는** 값이라,
+                본문 크기로 늘어놓으면 받아 적다 틀린다. 그래서 링크와 달리 줄바꿈이 없다. */}
+            <p className="rounded-field border-line bg-surface text-display text-ink border p-3 text-center tracking-[0.2em] tabular-nums">
+              {formatInviteCode(issued.invite_code)}
             </p>
             <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-1.5 pl-5">
               <li>{formatDay(issued.expires_at)}까지 쓸 수 있어요.</li>
-              <li>한 번 쓰면 그 링크는 닫혀요. 더 초대하려면 다시 만들어 주세요.</li>
+              <li>한 번 쓰면 그 코드는 닫혀요. 더 초대하려면 다시 만들어 주세요.</li>
+              <li>받는 분은 앱에서 로그인한 뒤 이 코드를 입력하면 돼요.</li>
             </ul>
           </div>
         ) : (
           <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-1.5 pl-5">
             {/* 🚨 바로 위 설명이 한 말을 다시 적지 않는다. 시트 머리와 본문이 같은 문장을
                 두 번 하면 읽는 사람이 둘 중 하나를 건너뛴다. */}
-            <li>링크를 연 사람은 이 아이의 기록과 제안을 함께 보게 돼요.</li>
-            <li>한 번 쓰면 그 링크는 닫혀요. 여러 명을 초대하려면 그만큼 만들어 주세요.</li>
+            <li>코드를 입력한 사람은 이 아이의 기록과 제안을 함께 보게 돼요.</li>
+            <li>한 번 쓰면 그 코드는 닫혀요. 여러 명을 초대하려면 그만큼 만들어 주세요.</li>
           </ul>
         )}
       </BottomSheet>

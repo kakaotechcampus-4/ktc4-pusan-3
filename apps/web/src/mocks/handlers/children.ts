@@ -18,6 +18,7 @@ import {
 import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
+import { joinChild } from "./membership";
 
 /**
  * 등록된 안전 정보. 🚨 **예전에는 Set 하나였다** — 등록 여부만 알면 409 를 낼 수 있어서였다.
@@ -45,9 +46,46 @@ export function resetSafetyState(): void {
 
 /** 01·02 첫 진입 · 온보딩, 03 홈. */
 export const childrenHandlers = [
+  /**
+   * 🚨 **아이와 아이 동의가 한 트랜잭션이다** (#96 · ⚠️ 계약 확정 전).
+   *    동의를 아이 단위로 기록하면 `POST /consents` 로는 저장할 수 없다 — 그 엔드포인트는
+   *    `child_id` 를 받는데 이 호출 전에는 그 id 가 없다. 계약서 §04 는 `child_basic` 없이
+   *    이 호출이 403 이라고 말하므로, 둘을 동시에 만족시키는 모양은 이것뿐이다.
+   *
+   * 🚨 목이라고 **아무거나 201 로 돌려주지 않는다.** 동의가 빠지면 막는다 — 화면이 체크값을
+   *    실제로 실어 보내는지, 법정대리인 확인을 상수 true 로 굳혀 두지 않았는지를 여기서 건다.
+   */
   http.post(url("/children"), async ({ request }) => {
     await networkDelay();
-    const body = (await request.json()) as { nickname: string };
+    const body = (await request.json()) as {
+      nickname: string;
+      consents?: Array<{ scope: string }>;
+      guardian_attested?: boolean;
+    };
+
+    const scopes = (body.consents ?? []).map((c) => c.scope);
+    const missing = ["child_basic", "child_health"].filter((s) => !scopes.includes(s));
+    if (missing.length > 0) {
+      return apiError(403, "consent_required", "아이 정보에 대한 동의가 필요해요", {
+        scopes: missing,
+      });
+    }
+    // 법정대리인 확인은 그 동의의 **유효 요건**이다 (개인정보보호법 제22조의2) —
+    // 없으면 동의가 있어도 저장하지 않는다.
+    if (body.guardian_attested !== true) {
+      return apiError(403, "consent_required", "법정대리인 확인이 필요해요", {
+        scopes: ["child_basic"],
+      });
+    }
+
+    joinChild({
+      child_id: CHILD_ID,
+      nickname: body.nickname,
+      age_display: "만 4세",
+      relation: "mother",
+      role: "owner",
+      consent_required: [],
+    });
     return HttpResponse.json(
       { id: CHILD_ID, nickname: body.nickname, age_display: "만 4세", role: "owner" },
       { status: 201 },
@@ -154,7 +192,8 @@ export const childrenHandlers = [
 
   http.get(url("/children/:cid/health-safety"), async () => {
     await networkDelay();
-    if (currentScenario() === "empty") return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
+    if (currentScenario() === "empty")
+      return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
     return HttpResponse.json({ items: activeSafety(), updated_at: daysAgo(3) });
   }),
 
