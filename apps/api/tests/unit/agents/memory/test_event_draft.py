@@ -554,3 +554,55 @@ async def test_새_일정_초안도_items_를_갖는다(context: AgentContext) -
     assert draft.event_id is None
     assert all(item.item_id is None for item in draft.items)
     assert len(draft.items) == 2
+
+
+# ── 준비물 이름 중복 (BE 리뷰) ──────────────────────────────────
+async def test_이름이_같은_준비물은_두_번_붙지_않는다(context: AgentContext) -> None:
+    # "체육복을 운동복으로 바꿔줘" 뒤에 "운동복도 챙겨야 해".
+    # item_id 는 안 겹치지만 제출하면 같은 이름 두 행이 생긴다
+    event_id = await _seed_event(context, "체육복")
+    await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "item_name": "운동복"}, context
+    )
+
+    result = await execute_tool(
+        "create_event_item", {"event_id": event_id, "item_name": "운동복"}, context
+    )
+
+    assert result.success is True, result.error
+    assert result.data["added"] is False
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert [(item.item_id, item.item_name) for item in draft.items] == [("event_item-1", "운동복")]
+
+
+async def test_이미_저장된_준비물과_같은_이름도_안_붙는다(context: AgentContext) -> None:
+    event_id = await _seed_event(context, "체육복")
+
+    result = await execute_tool(
+        "create_event_item", {"event_id": event_id, "item_name": " 체육복 "}, context
+    )
+
+    assert result.data["added"] is False
+    draft = context.drafts.get(event_id)
+    assert draft is None  # 바뀐 게 없으니 초안도 안 만든다
+
+
+async def test_새_일정의_items_도_같은_이름은_하나만_담는다(context: AgentContext) -> None:
+    await _create_event(context, items=["물통", "수건", "물통"])
+
+    draft = context.drafts.all()[0]
+    assert [item.item_name for item in draft.items] == ["물통", "수건"]
+
+
+async def test_다른_이름이면_그대로_붙는다(context: AgentContext) -> None:
+    event_id = await _seed_event(context, "체육복")
+
+    result = await execute_tool(
+        "create_event_item", {"event_id": event_id, "item_name": "물통"}, context
+    )
+
+    assert result.data["added"] is True
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert [item.item_name for item in draft.items] == ["체육복", "물통"]

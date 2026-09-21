@@ -71,7 +71,8 @@ class EventDraft:
     #   items 순회는 두 경우 모두에서 돌아야 한다. 순회를 event_id 분기 안에 넣으면
     #   새 일정의 준비물이 통째로 빠진다.
     #   - 1단계  event_id null → INSERT event / non-null → UPDATE event
-    #   - 2단계  (두 경우 모두) item_id null → INSERT / non-null → UPDATE / 배열에 없는 기존 item_id → DELETE
+    #   - 2단계  (두 경우 모두) item_id null → INSERT / non-null → UPDATE
+    #            배열에 없는 기존 item_id → DELETE
     """
 
     op: DraftOp

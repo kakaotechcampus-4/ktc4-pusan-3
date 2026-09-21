@@ -68,6 +68,25 @@ def _date_remedy(exc: DateParseError) -> str:
     return f"{exc} 오늘·모레·금요일 같은 원문 표현이나 YYYY-MM-DD 로 넣는다."
 
 
+def _new_items(names: list[str]) -> tuple[DraftItem, ...]:
+    """새 일정의 준비물. 한 호출에 같은 이름이 두 번 오면 앞의 것만 남긴다."""
+    items: tuple[DraftItem, ...] = ()
+    for name in names:
+        if not _has_item(items, name):
+            items = (*items, DraftItem(item_id=None, item_name=name))
+    return items
+
+
+def _has_item(items: tuple[DraftItem, ...], name: str) -> bool:
+    """같은 이름의 준비물이 이미 있는지.
+
+    제출 API 가 items를 최종 목록으로 읽으므로 같은 이름이 둘이면 그대로 두 행이 되어,
+    item_id는 안 겹치지만(한쪽은 None) 보호자에게는 같은 준비물이 두 번 보인다.
+    """
+    target = name.strip()
+    return any(item.item_name.strip() == target for item in items)
+
+
 async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]:
     """준비물을 함께 실어 보낸다. 조회 tool 이 없어서 여기서만 볼 수 있다."""
     return row.to_summary(items=await context.store.list_event_items(event_id=row.id))
@@ -95,7 +114,7 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
         all_day=when.all_day,
         event_type=args.event_type,
         category=args.category,
-        items=tuple(DraftItem(item_id=None, item_name=name) for name in args.items),
+        items=_new_items(args.items),
     )
     context.drafts.put(draft)
     # 모델이 저장된 일정으로 착각하고 다음 tool에 넘기면 안 됨 ->  id 싣지 않음
@@ -290,12 +309,25 @@ async def create_event_item(context: AgentContext, args: EventItemCreate) -> Too
     if parent is None:
         return fail("create", EVENT_ITEM, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
+    if _has_item(parent.items, args.item_name):
+        # 이미 있는 준비물. 더하면 제출할 때 같은 이름 두 행이 된다
+        return ok(
+            "create",
+            EVENT_ITEM,
+            draft=False,
+            added=False,
+            event_id=args.event_id,
+            item_name=args.item_name,
+            items=[item.item_name for item in parent.items],
+        )
+
     items = (*parent.items, DraftItem(item_id=None, item_name=args.item_name))
     context.drafts.put(_with_items(parent, args.event_id, items))
     return ok(
         "create",
         EVENT_ITEM,
         draft=True,
+        added=True,
         event_id=args.event_id,
         item_name=args.item_name,
         items=[item.item_name for item in items],
