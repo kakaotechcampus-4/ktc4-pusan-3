@@ -217,7 +217,28 @@ description 이 없는 필드는 테스트가 잡는다.
 같은 제목으로 "바꾸면" 바뀐 게 없고, 그때는 초안을 만들지 않는다.
 
 초안 payload 모양은 `app/agents/memory/drafts.py` 의 `EventDraft.to_payload()` 가 정본이다.
-제출 API 가 이 모양을 그대로 받을 수 있는지는 리뷰에서 확정한다.
+9/22 회의에서 **`op` 별로 두 모양**으로 확정했다 — create 는 `POST`, update 는 `PATCH` 로 가기 때문이다.
+
+```
+create : draft_id · op · source · event · items
+update : draft_id · op · source · event_id · event · before · items
+```
+
+`event_id` 와 `before` 는 create 에서 언제나 `null` 이라 싣지 않는다. `op` 는 두 모양 모두에 남긴다 —
+화면이 이 값으로 부를 엔드포인트를 고른다.
+
+`before` 는 수정 전 원본 전체(준비물 포함)다. 화면이 "오후 3시 → 오후 5시" 를 그리는 데 쓴다.
+바뀐 필드 이름(`changed`)은 payload 에 싣지 않는다. 보호자가 시트에서 값을 고치는 순간 서버가 보낸
+`changed` 는 못 쓰는 값이 되고, 화면은 어차피 `before` 와 비교해야 한다. dataclass 에는 남겨서
+tool 결과와 "바뀐 게 없으면 초안을 만들지 않는다" 판정에 쓴다.
+
+`source` 는 제안에서 온 초안의 출처를 담을 자리다. Memory 는 그 경로를 거치지 않아 언제나 `null` 이고,
+#121 의 제안 경로가 붙을 때 suggestion 도메인이 채운다.
+
+준비물의 `is_prepared` 는 payload 에 싣지 않는다. `items` 가 최종 목록이라 실어 보내면, SSE 로 나간 뒤
+보호자가 `PATCH /event-items/{iid}` 로 누른 체크가 제출하는 순간 풀린다. 체크는 그 PATCH 만의 몫이다.
+`DraftItem.is_prepared` 필드는 남는다 — `_diff` 가 `items` 를 통째로 비교해서, 필드를 지우면
+체크만 한 run 이 빈 수정 초안을 만든다.
 
 ### D10. 지우는 것은 승인을 거치지 않는다
 
@@ -227,6 +248,14 @@ description 이 없는 필드는 테스트가 잡는다.
 
 대신 대상이 모호하면 되묻는 규칙이 유일한 안전장치다 (eval "모호한 삭제 → 삭제 0회 + 재질문 1개").
 같은 run 에서 고쳤다가 지운 일정이면 버퍼의 초안도 같이 뺀다.
+
+### D11. 초안은 run 이 끝나면 사라진다
+
+9/22 회의 결정이다. 초안은 `AgentContext` 안에 run 단위로만 살고, 화면을 벗어나거나 새로고침하면
+되받을 경로가 없다. 승인 시트 문구도 "하루 뒤 만료" 가 아니라 이 동작에 맞춰 바뀐다.
+
+run 단위로 어딘가 남기는 안도 봤지만, `event` 테이블이 아닌 별도 저장 구조가 필요하고 "승인 전 행을 DB 에 두지 않는다" 와 어디까지 다른지 따져야 해서 접었다. 보호자가 다시 말해야 하는
+비용은 받아들인다.
 
 ---
 
@@ -370,8 +399,8 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 | `app/api` 연결 | `run()` 을 부르는 엔드포인트. `child_id`/`source_writer` 를 인증 context 에서 채워야 한다 |
 | embedding | `subject` 가 임베딩 입력인데 update 로 바뀔 수 있다. 재계산 시점을 Curator 앞으로 둘지 결정 필요 |
 | 날짜 규칙·프롬프트 단위 테스트 | 초판에 있던 `test_datetime_rules.py` · `test_prompt.py` 가 지금 없다. `datetime_rules.py` 는 `test_event_when.py` 가 간접적으로만 덮고, 프롬프트 구획을 겨누는 테스트는 아예 없다 |
-| 초안 payload 확정 | `EventDraft.to_payload()` 의 모양을 제출 API 가 그대로 받을 수 있는지 리뷰 대기. create 초안 둘을 구분할 키가 배열 인덱스뿐인 것도 같이 본다 |
-| 승인 전 재발화 | 초안을 제출하기 전에 같은 일정을 다시 말하면 `query_event` 가 0건을 돌려주고 create 초안이 두 장 생긴다. `DraftBook` 이 run 단위라서다. 어떻게 다룰지 안 정했다 |
+| 낡은 초안이 뒤 결과를 덮어쓰는 것 | 초안은 만들어진 시점의 DB 값을 들고 화면에 떠 있다. 두 장을 띄워두고 나중 것부터 제출하면 앞 초안이 뒤 결과를 지운다(`items` 가 최종 목록이라). 일단 현상유지로 두고 잠금은 나중에 보기로 했다 |
+| 승인 전 재발화 | 초안을 제출하기 전에 같은 일정을 다시 말하면 `query_event` 가 0건을 돌려주고 create 초안이 두 장 생긴다. `DraftBook` 이 run 단위라서다(D11). 보호자가 한 장만 승인하면 된다 |
 | `calendar` 연동 | `event.calendar_id` 컬럼이 아직 없다. 일기·사진은 `diary_entry` · `shared_photo` 로 갈라졌다 |
 | `EventCreate.ends_on` | 생성은 하루짜리만, 수정으로는 여러 날로 바꿀 수 있는 비대칭 |
 | 주·월 단위 조회 | `resolve_query_bound` 에 "이번 주" 가 없다 |
