@@ -17,6 +17,7 @@ import { api } from "@/lib/api/client";
 import type {
   Affinity,
   AffinitiesResponse,
+  AuthSession,
   ChildParentsResponse,
   ConsentResponse,
   ConsentsResponse,
@@ -591,6 +592,46 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
       })
       .catch((e) => e);
     expect(isApiError(caught, "consent_required")).toBe(true);
+  });
+
+  /**
+   * 🚨 **선택 동의가 제출을 막지 않는다.** 가입 화면에 `location` 이 서면서 이 구분이
+   *    실제로 갈리는 자리가 됐다 — 목록 길이로 세는 구현이면 여기서 403 이 난다.
+   */
+  it("선택 동의를 안 골라도 가입된다", async () => {
+    const res = await api.post<AuthSession>("/auth/kakao/signup", {
+      consent_code: "cc_mock",
+      bind: "b",
+      nickname: "테스터",
+      consents: [
+        { scope: "service_terms", policy_version: "2026-09-01" },
+        { scope: "privacy_account", policy_version: "2026-09-01" },
+      ],
+    });
+    expect(res.is_new).toBe(true);
+
+    // 안 고른 것은 켜져 있지 않다 — 화면이 물어본 것과 서버에 남는 것이 같아야 한다.
+    const consents = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(consents.effective.location).toBe(false);
+  });
+
+  it("가입에서 켠 선택 동의는 10 설정에도 켜져 있다", async () => {
+    await api.post<AuthSession>("/auth/kakao/signup", {
+      consent_code: "cc_mock",
+      bind: "b",
+      nickname: "테스터",
+      consents: [
+        { scope: "service_terms", policy_version: "2026-09-01" },
+        { scope: "privacy_account", policy_version: "2026-09-01" },
+        { scope: "location", policy_version: "2026-09-01" },
+      ],
+    });
+
+    const consents = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(consents.effective.location).toBe(true);
+    expect(consents.history.some((h) => h.scope === "location" && h.action === "granted")).toBe(
+      true,
+    );
   });
 
   it("이름이 없으면 signup 이 막힌다", async () => {

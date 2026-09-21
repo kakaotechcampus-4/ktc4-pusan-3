@@ -19,7 +19,13 @@ import {
   readConsentCode,
   readProvider,
 } from "@/lib/auth";
-import { ACCOUNT_SIGNUP_CONSENTS, CONSENT_POLICY_VERSION, type ConsentScope } from "@/lib/consent";
+import {
+  ACCOUNT_SIGNUP_CONSENTS,
+  ACCOUNT_SIGNUP_OPTIONAL,
+  ACCOUNT_SIGNUP_REQUIRED,
+  CONSENT_POLICY_VERSION,
+  type ConsentScope,
+} from "@/lib/consent";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -64,6 +70,10 @@ export default function AuthConsentPage() {
     if (!consentCode.current) router.replace("/");
   }, [hydrated, router]);
 
+  /**
+   * 🚨 **막는 것은 `required` 뿐이다.** 이 화면에 선택 동의(`location`)가 서면서 실제로
+   *    갈리는 자리가 됐다 — 목록 길이로 세면 선택까지 필수가 된다.
+   */
   const requiredChecked = requiredConsentsChecked(ACCOUNT_SIGNUP_CONSENTS, checked);
 
   async function submit() {
@@ -118,8 +128,7 @@ export default function AuthConsentPage() {
           확인해 주세요
         </PageTitle>
         <p className="text-body text-ink-muted mt-3">
-          이름 하나와 보호자 계정에 대한 동의 두 가지예요. 아이에 대한 동의는 아이를 등록할 때 따로
-          받아요.
+          이름 하나와 보호자 계정에 대한 동의예요. 아이에 대한 동의는 아이를 등록할 때 따로 받아요.
         </p>
       </div>
 
@@ -138,13 +147,34 @@ export default function AuthConsentPage() {
 
       <div className="flex flex-col gap-3">
         {/* 🚨 이름 칸과 **제목으로 가른다.** 같은 제출 버튼을 쓰더라도 무엇에 동의하는지는
-            이 아래 두 항목이 각자 말해야 한다 (위 머리말 ⚠️). */}
+            아래 항목들이 각자 말해야 한다 (위 머리말 ⚠️). */}
         <p className="text-section text-ink">보호자 계정에 대한 동의</p>
+
+        {/* 🚨 **필수와 선택을 한 무리로 그리지 않는다** (디자인 시스템 §7 동의 목록).
+            같은 체크박스가 죽 늘어서 있으면 선택도 채워야 넘어가는 칸으로 읽히고,
+            반대로 필수가 골라도 되는 것처럼 읽힌다. 머리줄로 가른다. */}
+        <p className="text-label text-ink-muted">필수</p>
         <ConsentChecklist
-          items={ACCOUNT_SIGNUP_CONSENTS}
+          items={ACCOUNT_SIGNUP_REQUIRED}
           checked={checked}
           onChange={(scope, next) => setChecked((prev) => ({ ...prev, [scope]: next }))}
         />
+
+        {ACCOUNT_SIGNUP_OPTIONAL.length > 0 ? (
+          <>
+            <p className="text-label text-ink-muted mt-2">선택</p>
+            <ConsentChecklist
+              items={ACCOUNT_SIGNUP_OPTIONAL}
+              checked={checked}
+              onChange={(scope, next) => setChecked((prev) => ({ ...prev, [scope]: next }))}
+            />
+            {/* 🚨 "지금 안 해도 된다" 를 **고르기 전에** 말한다. 선택 동의를 가입 화면에
+                올리는 대가가 "필수처럼 보이는 것" 이라, 그 대가를 여기서 갚는다. */}
+            <p className="text-caption text-ink-subtle">
+              지금 켜지 않아도 돼요. 설정에서 언제든 켜고 끌 수 있어요.
+            </p>
+          </>
+        ) : null}
       </div>
 
       <div className="mt-auto flex flex-col gap-3 pt-2">

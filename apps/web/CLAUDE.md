@@ -386,6 +386,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   🚨 **필수와 선택을 같은 컨트롤로 그리지 않는다.** 필수는 `service_terms` · `privacy_account` ·
   `child_basic` · `child_health` 넷이고, `location` 이 **선택**이다 (#89). 10 설정에서는 선택만 켜고 끄고,
   필수에는 철회 버튼을 두지 않는다 — 나란히 두면 화면이 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와 다르다.
+  🔶 **`location` 은 가입 화면에서도 묻는다** (계정 스코프 · 보호자 기기의 위치라 아이 것이 아니다).
+  거기서도 필수와 **머리줄로 가르고**, 막는 기준은 `required` 뿐이다 — 선택이 하나 서면서 이 구분이
+  실제로 갈리는 자리가 됐다 (`ACCOUNT_SIGNUP_REQUIRED` / `ACCOUNT_SIGNUP_OPTIONAL`).
   🚨 **막는 기준은 `required` 이지 개수가 아니다** — `SIGNUP_CONSENTS.length` 로 세면 선택 동의를
   가입 화면에 올리는 날 조용히 그것까지 막는다. 정본은 `lib/consent.ts` 다.
   ⚠️ `child_health` 를 선택으로 내려 봤다가 되돌렸다 — 계약서 §04 가 그 동의 없이 `POST /inputs` 도

@@ -251,13 +251,26 @@ export const CONSENT_ITEMS: ConsentItem[] = [
   },
   {
     scope: "location",
-    target: "child",
+    /**
+     * 🚨 **아이가 아니라 계정 스코프다.** 받는 값은 **보호자 기기의 위치**이고, 위치정보법
+     *    제19조의 개인위치정보주체도 보호자 본인이다 — 놀이 제안에 쓰인다고 해서 아이의
+     *    개인정보가 되지 않는다 (최상위 §2 "부모의 말은 아이의 Fact 가 아니다" 와 같은 갈래).
+     *
+     * 실무적으로도 이래야 성립한다 — 가입 화면에는 아직 아이가 없어서 `child_id` 를 실을
+     * 수 없다. 아이 스코프로 두면 `POST /consents` 가 저장할 자리를 못 찾는다.
+     */
+    target: "account",
     required: false,
     /**
-     * 🚨 **가입 때 묻지 않는다.** 놀이 제안을 처음 볼 때까지 쓸 일이 없는 값이라,
-     *    쓰지도 않을 시점에 미리 받아 두지 않는다. 설정에서 켜는 것이 기본 경로다.
+     * ⚠️ **가입 때 묻는 것으로 바뀌었다.** 처음에는 "놀이 제안을 처음 볼 때까지 쓸 일이
+     *    없으니 쓰지도 않을 시점에 미리 받지 않는다" 로 두고 설정에서만 켜게 했었다 (#89).
+     *
+     * 🚨 그래서 **막는 것은 여전히 `required` 뿐이다.** 가입 화면에 선택이 처음으로 서는
+     *    자리라, 목록 길이로 제출을 막으면 이 항목까지 필수가 된다 (`requiredConsentsChecked`).
+     * 🚨 가입 화면에서 **필수와 같은 무리로 그리지 않는다** — 머리줄로 가른다
+     *    (디자인 시스템 §7 동의 목록).
      */
-    askAtSignup: false,
+    askAtSignup: true,
     shortLabel: "위치정보",
     label: "위치정보 수집·이용",
     description:
@@ -320,6 +333,19 @@ export const CONSENT_ITEMS: ConsentItem[] = [
  */
 export const ACCOUNT_SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter(
   (i) => i.askAtSignup && i.target === "account",
+);
+
+/** 가입 화면의 **필수** 무리. 이게 비면 계정이 만들어지지 않는다. */
+export const ACCOUNT_SIGNUP_REQUIRED: ConsentItem[] = ACCOUNT_SIGNUP_CONSENTS.filter(
+  (i) => i.required,
+);
+
+/**
+ * 가입 화면의 **선택** 무리. 🚨 안 골라도 계정이 만들어진다 — 이 목록이 제출을 막지 않는다.
+ * 머리줄로 필수와 갈라 그린다 (디자인 시스템 §7 동의 목록).
+ */
+export const ACCOUNT_SIGNUP_OPTIONAL: ConsentItem[] = ACCOUNT_SIGNUP_CONSENTS.filter(
+  (i) => !i.required,
 );
 
 /**

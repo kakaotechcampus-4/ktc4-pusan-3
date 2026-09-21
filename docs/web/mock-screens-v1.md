@@ -23,6 +23,7 @@ location.replace("/");
 | 00 로그인 | `/` |
 | 00 로그인 · 버튼 비활성 | `/?scenario=auth_unready` |
 | **가입 (이름 + 동의 → 경로 고르기)** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
+| 가입에서 켠 선택 동의(위치)가 10 설정에 반영되는지 | 가입에서 `[선택] 위치정보` 를 켜고 → `/child/c1/settings` |
 | 00-1 경로 고르기 (새로 등록 / 초대로 참여) | `/start?scenario=consent` — 🚨 `consent` 시나리오에서만 아이가 0명이다 (아래) |
 | 초대 코드 입력 | `/invite?scenario=consent` — 아무 8자(`MKGRAND1`)나 넣으면 연결된다 |
 | 초대 · 이미 사용된 코드 | 위 화면에 `MKWASTED` |

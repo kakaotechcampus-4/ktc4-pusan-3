@@ -101,7 +101,7 @@ export const authHandlers = [
       consent_code?: string;
       bind?: string;
       nickname?: string;
-      consents?: Array<{ scope: string }>;
+      consents?: Array<{ scope: string; policy_version?: string }>;
     };
     if (!body.consent_code || !body.bind) {
       return apiError(400, "validation_failed", "consent_code · bind 가 필요해요");
@@ -117,6 +117,13 @@ export const authHandlers = [
     //    서버가 이 필드를 안 받기로 하면 여기와 이름 화면을 함께 지운다.
     if (!body.nickname) {
       return apiError(400, "validation_failed", "nickname 이 필요해요");
+    }
+
+    // 🚨 **가입에서 받은 동의도 같은 표에 쌓는다** (`handlers/settings.ts`).
+    //    선택 동의(`location`)를 가입 화면에서 켤 수 있게 되면서, 여기서 안 쌓으면
+    //    10 설정이 "켰는데 꺼져 있다" 로 보인다 — 화면이 아니라 목이 거짓말하는 경우다.
+    for (const consent of body.consents ?? []) {
+      recordConsent(consent.scope, "granted", consent.policy_version ?? "unknown");
     }
     return session(true, body.nickname);
   }),
