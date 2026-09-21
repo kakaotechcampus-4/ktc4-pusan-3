@@ -22,7 +22,7 @@ location.replace("/");
 | --- | --- |
 | 00 로그인 | `/` |
 | 00 로그인 · 버튼 비활성 | `/?scenario=auth_unready` |
-| **가입 (이름 → 동의 → 경로 고르기)** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
+| **가입 (이름 + 동의 → 경로 고르기)** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
 | 00-1 경로 고르기 (새로 등록 / 초대로 참여) | `/start?scenario=consent` — 🚨 `consent` 시나리오에서만 아이가 0명이다 (아래) |
 | 초대 코드 입력 | `/invite?scenario=consent` — 아무 8자(`MKGRAND1`)나 넣으면 연결된다 |
 | 초대 · 이미 사용된 코드 | 위 화면에 `MKWASTED` |
@@ -70,7 +70,5 @@ location.replace("/");
 sessionStorage.setItem("icatch.oauth.consent_code", "cc_mock");
 sessionStorage.setItem("icatch.oauth.provider", "kakao");
 sessionStorage.setItem("icatch.oauth.bind", "dev".padEnd(43, "x"));
-// 동의 화면은 이름이 먼저 있어야 한다 — 없으면 /auth/profile 로 되돌린다.
-sessionStorage.setItem("icatch.signup.nickname", "테스터");
 location.replace("/auth/consent");
 ```

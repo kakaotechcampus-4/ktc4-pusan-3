@@ -148,8 +148,7 @@ function AuthCallbackScreen() {
           // 신규 회원 — 아직 계정이 없다. 동의를 받아야 그때 만들어진다.
           // bind 는 여기서 지우지 않는다: /signup 이 같은 값을 한 번 더 쓴다.
           rememberConsentCode(res.consent_code);
-          // 이름 → 동의 → 계정 순이다. 동의 화면에 다른 입력을 섞지 않으려고 나눴다 (#96).
-          router.replace("/auth/profile");
+          router.replace("/auth/consent");
           return;
         }
 

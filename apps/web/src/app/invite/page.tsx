@@ -122,7 +122,9 @@ function InviteScreen() {
         </p>
       </Card>
 
-      <div className="mt-auto flex flex-col gap-3 pt-2">
+      {/* 🚨 바닥에 붙이지 않는다. 내용이 셋뿐인 화면에서 `mt-auto` 는 안내와 버튼 사이에
+          빈 화면을 한 폭 만든다 — 버튼은 내용 바로 뒤를 따라간다 (05 화면과 같은 규칙). */}
+      <div className="flex flex-col gap-3">
         {failure ? <CardFailed>{failure}</CardFailed> : null}
 
         <Button block onClick={() => accept.mutate(code)} disabled={!ready || accept.isPending}>
