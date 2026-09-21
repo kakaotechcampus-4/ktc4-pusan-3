@@ -20,6 +20,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ChoiceField } from "@/components/ui/choice-field";
 import { Chip, ChipRow, CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
 import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -463,6 +464,11 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
   { variant: "kakao", use: "00 로그인 전용 (외부 브랜드)" },
 ];
 
+const DS_GENDER_OPTIONS = [
+  { value: "male", label: "남자아이" },
+  { value: "female", label: "여자아이" },
+] as const;
+
 const DS_DOMAIN_OPTIONS = [
   { value: "all", label: "전체" },
   { value: "food", label: "식사" },
@@ -478,6 +484,7 @@ const DS_STATE_OPTIONS = [
 function ComponentSection() {
   const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
+  const [dsGender, setDsGender] = useState("male");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
   const [chip, setChip] = useState("공룡");
@@ -726,6 +733,23 @@ function ComponentSection() {
           onChange={setSelectState}
         />
       </div>
+
+      <SubTitle>고르는 칸 (둘 중 하나)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        반드시 하나를 고르는 칸이다. 🚨 선택지가 둘이면 드롭다운을 쓰지 않는다 — 있는 선택지를 상자
+        안에 감췄다가 탭 두 번으로 다시 보여줄 뿐이다. 🚨 chip-choice 도 아니다: 칩은 aria-pressed
+        토글이라 둘 다 꺼진 상태가 정상이고, 보조기술에 &quot;둘 중 하나&quot; 라는 관계가 안
+        드러난다. 그래서 네이티브 라디오를 sr-only 로 숨기고 표식만 그린다 — 그룹 · 방향키 이동 · 단
+        하나만 선택을 브라우저가 준다. 🚨 고른 것을 색 하나로 말하지 않는다(체크 아이콘 · §3) · 칸을
+        똑같이 나눈다(한쪽이 넓으면 기본값처럼 보인다) · min-h-field 로 같은 폼의 입력과 높이를
+        맞춘다.
+      </p>
+      <ChoiceField
+        label="성별"
+        value={dsGender}
+        options={DS_GENDER_OPTIONS}
+        onChange={setDsGender}
+      />
 
       <SubTitle>토스트</SubTitle>
       <p className="text-caption text-ink-subtle">

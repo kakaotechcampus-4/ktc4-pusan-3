@@ -6,6 +6,7 @@ import { healthObservation, observations } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
+import { isPhotoRun, photoRunScript } from "./photos";
 
 /**
  * 04 저장 결과 — 입력 한 줄과 run 스트림.
@@ -36,6 +37,12 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (scenario === "failed") {
     // 여기서 스트림이 끝난다. 저장된 게 없으니 다음 칸으로 전파하지 않는다.
     yield frame("failed", { reason: "unparsable", raw_text: rawText });
+    return;
+  }
+
+  if (scenario === "disconnected") {
+    // 🚨 done·failed 없이 그냥 닫힌다 (서버·프록시가 종료 이벤트 전에 끊은 경우).
+    //    화면이 진행 상태에 영원히 남지 않는지 확인할 방법이 이것뿐이다 (PR #71 리뷰).
     return;
   }
 
@@ -95,13 +102,20 @@ export const runHandlers = [
     }),
   ),
 
+  /**
+   * 🚨 **한 경로를 두 종류의 run 이 나눠 쓴다** (계약서 §09 "SSE 채널을 재사용한다").
+   *    같은 경로에 핸들러를 두 개 등록하면 msw 가 먼저 등록된 쪽으로만 보내서, 사진 run 이
+   *    한 줄 입력 대본을 받아 **저장한 적도 없는 관찰이 `saved` 로 흘러나온다.**
+   *    갈라 쓰는 지점을 여기 한 곳에 둔다.
+   */
   http.get(url("/runs/:runId/events"), ({ params }) => {
     const runId = String(params.runId);
+    const script = isPhotoRun(runId) ? photoRunScript(runId) : runScript(runId);
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const chunk of runScript(runId)) {
+          for await (const chunk of script) {
             controller.enqueue(chunk);
           }
         } finally {

@@ -1,6 +1,6 @@
 import { authHeaders, buildUrl } from "./client";
 import { NetworkError } from "./errors";
-import type { Affinity, Agent, Observation, Ref } from "./types";
+import type { Affinity, Agent, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
 
 /**
  * GET /runs/{rid}/events — 04 오버레이.
@@ -10,6 +10,10 @@ import type { Affinity, Agent, Observation, Ref } from "./types";
  *
  * 🚨 이벤트는 도착 순서대로 그린다. saved 는 promoted 보다 항상 먼저 온다 —
  *    저장이 검색보다 먼저이기 때문이다 (CLAUDE.md §4).
+ *
+ * 🚨 **08 사진 run 은 같은 채널을 쓰지만 다른 이벤트가 온다** (계약서 §09). `lane` · `parsed` 가
+ *    추가되고, `saved` 는 **오지 않는다** — 사진은 승인(`commit`) 전에 아무것도 저장하지 않는다.
+ *    한 스트림 구현을 둘이 나눠 쓰는 것이라, 화면이 자기가 어느 run 을 보고 있는지 알고 그린다.
  */
 
 export interface StepEvent {
@@ -52,6 +56,34 @@ export interface FailedEvent {
   raw_text: string;
 }
 
+/**
+ * 08 사진 — 이 사진을 문서로 읽을지 활동 사진으로 읽을지. 🚨 **추측이다.**
+ * 프론트가 이 값을 확정으로 쓰지 않는다 — 화면이 부모에게 한 번 되묻고, 부모가 바꾸면 그쪽이 정본이다.
+ */
+export interface LaneEvent {
+  guess: PhotoLane;
+  /** 0~1. 🚨 숫자를 화면에 그리지 않는다 — 부모가 할 수 있는 일이 아니다. 문구만 바꾼다. */
+  confidence: number;
+}
+
+/**
+ * 08 사진 — 사진에서 읽어낸 것.
+ *
+ * 🚨 **`raw_text` 는 외부 텍스트다.** OCR 로 들어온 기관 공지가 모델을 거쳐 화면에 닿는 경로라
+ *    `dangerouslySetInnerHTML` 로 그리지 않는다 (apps/web/CLAUDE.md §4).
+ * 🚨 **아직 아무것도 저장되지 않았다.** 저장은 `POST /photo-runs/{rid}/commit` 뿐이다.
+ */
+export interface ParsedEvent {
+  raw_text: string;
+  /**
+   * 문서 lane 에서 읽어낸 **항목들**. 알림장 한 장에 일정이 여러 개, 식단표는 한 달치가 온다.
+   * ⚠️ 계약서 v1 의 `extracted`(항목 하나)를 대신한다 — `PhotoEntry` 의 ⚠️ 참고.
+   */
+  entries?: PhotoEntry[];
+  /** 활동 lane 에서 뽑아낸 태그. 🚨 `entries` 와 **다른 필드다** (모양도 저장 경로도 다르다). */
+  tags?: string[];
+}
+
 /** model_calls 가 3 을 넘으면 서버 알람이다 (NF-01). */
 export interface DoneEvent {
   run_id: string;
@@ -60,6 +92,8 @@ export interface DoneEvent {
 
 export type RunEvent =
   | { type: "step"; data: StepEvent }
+  | { type: "lane"; data: LaneEvent }
+  | { type: "parsed"; data: ParsedEvent }
   | { type: "saved"; data: SavedEvent }
   | { type: "promoted"; data: PromotedEvent }
   | { type: "offer"; data: OfferEvent }

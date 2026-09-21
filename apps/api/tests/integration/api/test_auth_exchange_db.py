@@ -106,9 +106,7 @@ async def changed(session, base: dict) -> dict:
     """
     now = {model: await row_count(session, model) for model in TRACKED}
     return {
-        model.__name__: now[model] - base[model]
-        for model in TRACKED
-        if now[model] != base[model]
+        model.__name__: now[model] - base[model] for model in TRACKED if now[model] != base[model]
     }
 
 
@@ -161,6 +159,66 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
         "AuthSession": 1,
         "AuthHandoff": -1,
     }
+
+
+async def test_signup_rejects_a_code_issued_for_another_provider(db_client, session):
+    """🚨 #83. 카카오로 발급된 코드로는 다른 provider 에 가입할 수 없다.
+
+    막지 않으면 카카오 회원번호가 Google 식별자로 등록된다 — 소비 조건이 코드와 만료뿐이고
+    identity 의 provider 는 URL 경로에서 오기 때문이다. 나중에 구글 로그인을 붙였을 때
+    같은 값을 가진 실제 사용자의 자리를 미리 차지할 수 있다.
+
+    실패는 없는 코드와 구분되지 않는다 (§8-1).
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+
+    response = await db_client.post(
+        "/api/v1/auth/google/signup",
+        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_handoff"
+    assert await changed(session, base) == {}
+
+
+async def test_rejected_provider_mismatch_leaves_the_ticket_usable(db_client, session):
+    """🚨 #83. 다른 provider 로 내밀어도 대기표는 타지 않는다.
+
+    provider 를 WHERE 절에서 거르므로 지울 행을 못 찾는다. bind 불일치(§7-2)와 다르게
+    다루는 이유 — provider 는 비밀이 아니라 맞혀볼 것이 없어서, 태워도 얻는 게 없고
+    엉뚱한 경로로 한 번 보내진 사용자만 로그인부터 다시 하게 된다.
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    body = {"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS}
+
+    await db_client.post("/api/v1/auth/google/signup", json=body)
+    response = await db_client.post("/api/v1/auth/kakao/signup", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["is_new"] is True
+
+
+async def test_exchange_rejects_a_code_issued_for_another_provider(db_client, session):
+    """🚨 #83. 교환도 같은 규칙이다 — 두 엔드포인트가 같은 소비 함수를 쓴다."""
+    member = await seed_member(session)
+    await seed_handoff(session, code="handoff-code", parent_id=member.id)
+    base = await snapshot(session)
+
+    response = await db_client.post(
+        "/api/v1/auth/google", json={"code": "handoff-code", "bind": BIND}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_handoff"
+    assert await changed(session, base) == {}
 
 
 async def test_signup_without_required_scope_creates_nothing(db_client, session):

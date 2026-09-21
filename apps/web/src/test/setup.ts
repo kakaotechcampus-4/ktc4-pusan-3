@@ -1,9 +1,11 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
 
 import { resetCalendarState } from "@/mocks/handlers/calendar";
-import { resetRegisteredSafety } from "@/mocks/handlers/children";
+import { resetSafetyState } from "@/mocks/handlers/children";
 import { resetMemoryState } from "@/mocks/handlers/memories";
+import { resetProfileState } from "@/mocks/handlers/profile";
 import { resetIdempotencyStore } from "@/mocks/handlers/idempotency";
+import { resetPhotoRuns } from "@/mocks/handlers/photos";
 import { resetConsentState, resetParentState } from "@/mocks/handlers/settings";
 import { resetConfirmedEvents } from "@/mocks/handlers/suggestions";
 import { resetDiaries } from "@/mocks/fixtures";
@@ -22,9 +24,11 @@ afterEach(() => {
   server.resetHandlers();
   resetIdempotencyStore();
   resetConfirmedEvents();
-  resetRegisteredSafety();
+  resetSafetyState();
   resetMemoryState();
   resetCalendarState();
+  resetPhotoRuns();
+  resetProfileState();
   resetDiaries();
   resetConsentState();
   resetParentState();

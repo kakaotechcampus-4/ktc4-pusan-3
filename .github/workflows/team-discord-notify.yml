@@ -1,0 +1,88 @@
+name: Team Discord Notifications
+
+on:
+  issues:
+    types: [opened]
+
+  pull_request:
+    types: [review_requested]
+
+permissions: {}
+
+jobs:
+  # 새 Issue → Discord #이슈알림
+  issue-created:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send issue notification
+        env:
+          WEBHOOK: ${{ secrets.ISSUE_DISCORD_WEBHOOK }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+
+        run: |
+          MESSAGE="📌 새 이슈 생성
+          링크: ${ISSUE_URL}
+          작성자: ${ISSUE_AUTHOR} · 제목: ${ISSUE_TITLE}"
+
+          PAYLOAD=$(jq -n \
+            --arg content "$MESSAGE" \
+            '{content: $content}')
+
+          curl -fsS \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK"
+
+          echo "Discord issue notification sent."
+
+  # Reviewer 지정 → Discord #PR알림
+  review-requested:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send review request notification
+        env:
+          WEBHOOK: ${{ secrets.PR_DISCORD_WEBHOOK }}
+          DISCORD_REVIEWER_MAP: ${{ vars.DISCORD_REVIEWER_MAP }}
+
+          REVIEWER: ${{ github.event.requested_reviewer.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+
+        run: |
+          REVIEWER_ID=$(echo "$DISCORD_REVIEWER_MAP" |
+            jq -r --arg reviewer "$REVIEWER" '.[$reviewer] // empty')
+
+          if [ -z "$REVIEWER_ID" ]; then
+            echo "Discord mapping not found: $REVIEWER"
+            exit 0
+          fi
+
+          MESSAGE="🔔 <@${REVIEWER_ID}>님💕 PR 리뷰 부탁드립니다💕
+          링크: ${PR_URL}
+          작성자🙇: ${PR_AUTHOR} · 리뷰어🤹: <@${REVIEWER_ID}> · 브랜치: ${HEAD_BRANCH} → ${BASE_BRANCH}"
+
+          PAYLOAD=$(jq -n \
+            --arg content "$MESSAGE" \
+            --arg reviewer_id "$REVIEWER_ID" \
+            '{
+              content: $content,
+              allowed_mentions: {
+                parse: [],
+                users: [$reviewer_id]
+              }
+            }')
+
+          curl -fsS \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK"
+
+          echo "Discord PR review notification sent."

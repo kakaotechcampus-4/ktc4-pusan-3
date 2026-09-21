@@ -35,6 +35,47 @@ export function restoreIdempotencyKey(value: string): IdempotencyKey {
   return value as IdempotencyKey;
 }
 
+/* ── 키 수명 ──────────────────────────────────────────────────────────── */
+
+export interface IdempotencyKeyHolder {
+  /**
+   * 지금 동작의 키. 같은 인자로 여러 번 불러도 같은 값이다 — 그게 재시도다.
+   *
+   * @param payload 이 키로 보낼 본문. **본문이 달라지면 새 키**를 돌려준다.
+   *   서버는 같은 키에 다른 본문이 오면 `422 idempotency_key_reuse` 로 거절하는데
+   *   (idempotency-v1 §0 서버 보장 ③), 거기 걸리는 경로가 실제로 있다 — 서버는 처리했는데
+   *   **응답만 유실되면** 화면은 실패로 보이고, 보호자가 한 줄을 고쳐서 다시 보낸다.
+   *   그때 본문만 바뀌고 키는 그대로라 계속 422 다 (PR #71 리뷰).
+   *   본문이 하나뿐인 동작(확정 · 승인)은 넘기지 않는다.
+   */
+  current: (payload?: string) => IdempotencyKey;
+  /** 다음 동작으로 넘어간다. 🚨 성공 응답을 받은 뒤에만 부른다. */
+  rotate: () => void;
+}
+
+/**
+ * 키 수명의 순수 구현. React 없이 검증할 수 있게 훅 밖에 둔다.
+ * 화면에서는 `useIdempotencyKey()` 로 쓴다 — 렌더 사이에 이 객체를 유지하는 것이 훅의 일이다.
+ */
+export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
+  let key: IdempotencyKey | null = null;
+  let issuedFor: string | undefined;
+
+  return {
+    current(payload) {
+      if (key === null || payload !== issuedFor) {
+        key = newIdempotencyKey();
+        issuedFor = payload;
+      }
+      return key;
+    },
+    rotate() {
+      key = null;
+      issuedFor = undefined;
+    },
+  };
+}
+
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
