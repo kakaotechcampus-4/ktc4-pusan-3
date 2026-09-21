@@ -26,13 +26,16 @@ class DraftItem:
     item_id: str | None
     item_name: str
     is_prepared: bool = False
+    """payload 에는 싣지 않는다.
+
+    체크 상태는 PATCH /event-items/{iid}의 몫이다. items가 최종 목록이라 초안에
+    실어 보내면 SSE 뒤에 보호자가 누른 체크가 제출하는 순간 풀린다.
+    필드는 남겨 _diff 가 items를 통째로 비교해 "바뀐 게 없으면 초안을 만들지
+    않는다"를 판정하고, _sync_checked가 이 값을 맞춘다.
+    """
 
     def to_payload(self) -> dict[str, Any]:
-        return {
-            "item_id": self.item_id,
-            "item_name": self.item_name,
-            "is_prepared": self.is_prepared,
-        }
+        return {"item_id": self.item_id, "item_name": self.item_name}
 
 
 @dataclass(frozen=True)
@@ -85,24 +88,41 @@ class EventDraft:
     category: str
     items: tuple[DraftItem, ...] = ()
     changed: tuple[str, ...] = ()
-    before: EventSnapshot | None = None  # create 면 None
-    draft_id: str | None = None  # DraftBook 이 채운다
+    before: EventSnapshot | None = None  # create면 None
+    draft_id: str | None = None  # DraftBook이 채운다
 
     def to_payload(self) -> dict[str, Any]:
+        """op에 따라 모양이 갈린다. create는 POST, update는 PATCH.
+
+        create 초안은 event_id와 before가 언제나 null이라 싣지 않는다.
+        op는 두 모양 모두에 남기고, 화면이 이 값으로 부를 엔드포인트를 고른다.
+        """
+        event = {
+            "title": self.title,
+            "starts_at": _moment(self.starts_at),
+            "ends_at": _moment(self.ends_at),
+            "all_day": self.all_day,
+            "event_type": self.event_type,
+            "category": self.category,
+        }
+        items = [item.to_payload() for item in self.items]
+        # 제안에서 온 초안만 출처를 채운다. Memory는 그 경로를 거치지 않아 언제나 null
+        if self.op == "create":
+            return {
+                "draft_id": self.draft_id,
+                "op": self.op,
+                "source": None,
+                "event": event,
+                "items": items,
+            }
         return {
             "draft_id": self.draft_id,
             "op": self.op,
+            "source": None,
             "event_id": self.event_id,
-            "event": {
-                "title": self.title,
-                "starts_at": _moment(self.starts_at),
-                "ends_at": _moment(self.ends_at),
-                "all_day": self.all_day,
-                "event_type": self.event_type,
-                "category": self.category,
-            },
+            "event": event,
             "before": self.before.to_payload() if self.before is not None else None,
-            "items": [item.to_payload() for item in self.items],
+            "items": items,
         }
 
 
