@@ -17,6 +17,11 @@ import { api } from "@/lib/api/client";
 import type {
   Affinity,
   AffinitiesResponse,
+  ChildParentsResponse,
+  ConsentResponse,
+  ConsentsResponse,
+  InviteResponse,
+  WithdrawResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
   ChildProfile,
@@ -382,6 +387,120 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
+  });
+});
+
+describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
+  /**
+   * 🚨 `child_health` 는 **화면에 철회 버튼이 없는** 필수 동의다. 그래도 API 로는 철회가
+   *    가능하고(계약서 §04 는 스코프를 가리지 않는다), append-only 는 모든 스코프에서
+   *    지켜져야 한다 — 화면이 안 부른다고 목이 안 지켜도 되는 것이 아니다.
+   */
+  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(before.effective.child_health).toBe(true);
+
+    await api.post<ConsentResponse>("/consents", {
+      scope: "child_health",
+      action: "withdrawn",
+      child_id: "c1",
+      policy_version: "2026-09-01",
+    });
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after.effective.child_health).toBe(false);
+    // 🚨 이력은 증빙이라 지워지지 않는다. 철회 한 줄이 **더해져** 있어야 한다.
+    expect(after.history).toHaveLength(1);
+    expect(after.history[0]).toMatchObject({ scope: "child_health", action: "withdrawn" });
+  });
+
+  it("껐다 켜면 이력 두 줄이 남고 현재 상태는 켜짐이다", async () => {
+    for (const action of ["withdrawn", "granted"] as const) {
+      await api.post<ConsentResponse>("/consents", {
+        scope: "location",
+        action,
+        child_id: "c1",
+        policy_version: "2026-09-01",
+      });
+    }
+
+    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(res.effective.location).toBe(true);
+    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(2);
+  });
+
+  it("POST /consents 의 effective 와 GET /consents 의 effective 가 같은 표를 본다", async () => {
+    const posted = await api.post<ConsentResponse>("/consents", {
+      scope: "location",
+      action: "granted",
+      child_id: "c1",
+      policy_version: "2026-09-01",
+    });
+    const fetched = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(fetched.effective).toEqual(posted.effective);
+  });
+
+  it("owner 는 연결을 끊을 수 없다 — 409 owner_required", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const owner = before.parents.find((p) => p.role === "owner");
+    expect(owner).toBeDefined();
+
+    const caught = await api.delete(`/children/c1/parents/${owner!.parent_id}`).catch((e) => e);
+    expect(isApiError(caught, "owner_required")).toBe(true);
+    expect((caught as ApiError).status).toBe(409);
+
+    const after = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(after.parents).toHaveLength(before.parents.length);
+  });
+
+  it("member 는 끊을 수 있고 목록에서 빠진다", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const member = before.parents.find((p) => p.role === "member");
+    expect(member).toBeDefined();
+
+    await api.delete(`/children/c1/parents/${member!.parent_id}`);
+
+    const after = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
+  });
+
+  it("초대 링크는 부를 때마다 새로 나온다 — 한 링크는 한 번만 쓴다", async () => {
+    const first = await api.post<InviteResponse>("/children/c1/invites", {});
+    const second = await api.post<InviteResponse>("/children/c1/invites", {});
+
+    expect(first.invite_url).not.toBe(second.invite_url);
+    expect(new Date(first.expires_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  /**
+   * 🚨 아이와 어떤 사이인지는 **받는 쪽이 고르는 값**이라 화면이 안 보낸다 (#89).
+   *    계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서, 없다고 막히면 화면이
+   *    초대를 아예 못 한다 — 이 테스트가 그 회귀를 잡는다.
+   */
+  /**
+   * ⚠️ `POST /auth/withdraw` 는 **계약서에 없다** (`lib/api/types.ts`). 화면을 끝까지 돌려
+   *    보려고 목에만 세운 제안이고, 서버가 붙으면 이 표를 실서버에도 건다.
+   */
+  it("POST /auth/logout 이 교환 핸들러에 안 먹힌다 — 204 다", async () => {
+    // 🚨 `:provider` 가 `logout` 까지 삼켜서 실제로 500 이 나고 있었다. 화면이 로컬 세션을
+    //    비우고 나가 버려서 아무도 눈치채지 못한 종류의 회귀라, 여기서 못을 박는다.
+    const res = await raw("/auth/logout");
+    expect(res.status).toBe(204);
+  });
+
+  it("탈퇴는 화면이 읽은 유예기간을 같이 받는다 — 없으면 막힌다", async () => {
+    const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+
+    const res = await api.post<WithdrawResponse>("/auth/withdraw", {
+      acknowledged_grace_days: 30,
+    });
+    expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("relation 없이 초대해도 링크가 나온다", async () => {
+    const res = await api.post<InviteResponse>("/children/c1/invites", {});
+    expect(res.invite_url).toMatch(/^https:\/\//);
   });
 });
 

@@ -1,6 +1,16 @@
 "use client";
 
-import { ArrowUp, CalendarDays, Camera, Mic, NotebookPen, Sprout, Utensils } from "lucide-react";
+import {
+  ArrowUp,
+  CalendarDays,
+  Camera,
+  Mic,
+  NotebookPen,
+  ShieldCheck,
+  Sprout,
+  UserRound,
+  Utensils,
+} from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { DomainChip } from "@/components/domain-chip";
@@ -29,6 +39,8 @@ import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import type { Agent } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
+import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
+
 import { COLOR_GROUPS, HEIGHT_TOKENS, NOT_BUILT, TYPE_STEPS, type ColorPair } from "./tokens";
 
 /**
@@ -471,7 +483,7 @@ const DS_STATE_OPTIONS = [
 
 function ComponentSection() {
   const toast = useToast();
-  const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
+  const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
   const [dsGender, setDsGender] = useState("male");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
@@ -768,16 +780,28 @@ function ComponentSection() {
         <Button variant="secondary" onClick={() => setSheet("approval")}>
           승인 시트 (안 닫힘)
         </Button>
+        <Button variant="secondary" onClick={() => setSheet("document")}>
+          문서 시트 (font-doc)
+        </Button>
       </div>
       <BottomSheet
         open={sheet !== null}
         onClose={() => setSheet(null)}
         dismissible={sheet !== "approval"}
-        title={sheet === "approval" ? "승인 시트" : "일반 시트"}
+        variant={sheet === "document" ? "document" : "default"}
+        title={
+          sheet === "approval"
+            ? "승인 시트"
+            : sheet === "document"
+              ? "서비스 이용약관"
+              : "일반 시트"
+        }
         description={
           sheet === "approval"
             ? "스크림 탭·ESC 로 닫히지 않는다. 실수로 닫혀 draft 가 만료되는 경로를 만들지 않는다."
-            : "스크림 탭·ESC 로 닫힌다."
+            : sheet === "document"
+              ? "제목까지 통째로 font-doc 이다 — 한 화면 한 서체."
+              : "스크림 탭·ESC 로 닫힌다."
         }
         footer={
           <Button block onClick={() => setSheet(null)}>
@@ -786,9 +810,32 @@ function ComponentSection() {
         }
       >
         <p className="text-body-sm text-ink-muted">
-          내용이 넘치면 화면이 아니라 시트 안에서만 스크롤한다. 최대 높이 88dvh.
+          {sheet === "document"
+            ? "약관·동의 전문 전용이다. 제목만 손글씨로 남기면 size-adjust 때문에 같은 시트 안에서 글자 크기감이 어긋난다."
+            : "내용이 넘치면 화면이 아니라 시트 안에서만 스크롤한다. 최대 높이 88dvh."}
         </p>
       </BottomSheet>
+
+      <SubTitle>설정 줄 (10)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        한 덩어리 안에 line 1px 로 줄을 나눈다. 🚨 줄마다 카드를 두르지 않는다 (카드 속 카드). 🚨
+        상태를 글자로 단다 — 색·아이콘으로 대신하지 않는다. 되돌리기 어려운 행동이 달린 줄은 줄
+        전체를 버튼으로 만들지 않는다.
+      </p>
+      <SettingsGroup>
+        <SettingsLinkRow href="#" icon={UserRound} title="다른 화면으로 가는 줄" />
+        <SettingsInfoRow
+          icon={ShieldCheck}
+          title="행동이 따로 달린 줄"
+          status="동의함"
+          note="9월 5일 (토)에 동의했어요"
+          action={
+            <Button variant="tertiary" size="compact">
+              철회하기
+            </Button>
+          }
+        />
+      </SettingsGroup>
 
       <SubTitle>진행 오버레이 (04 · SSE)</SubTitle>
       <p className="text-caption text-ink-subtle">

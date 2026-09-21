@@ -993,3 +993,86 @@ export interface ConsentResponse {
   consent: { id: string; scope: string; action: string; acted_at: string };
   effective: Record<string, boolean>;
 }
+
+/**
+ * GET /consents?child_id= (계약서 §04). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ *
+ * 🚨 `history` 는 증빙이라 삭제 엔드포인트가 없다 — 화면에도 "이력 지우기" 를 만들지 않는다.
+ * 🚨 `effective` 는 **서버가 계산한 최신 상태**다. `history` 를 프론트에서 접어 현재 상태를
+ *    다시 만들지 않는다 (append-only 라 같은 스코프에 여러 행이 있고, 접는 규칙이 두 벌이 된다).
+ */
+export interface ConsentHistoryEntry {
+  scope: string;
+  action: "granted" | "withdrawn";
+  policy_version: string;
+  acted_at: string;
+}
+
+export interface ConsentsResponse {
+  effective: Record<string, boolean>;
+  history: ConsentHistoryEntry[];
+}
+
+/* ── 10 설정 ─────────────────────────────────────────────────────────── */
+
+/**
+ * GET /children/{cid}/parents (계약서 §07). "함께 보는 보호자".
+ *
+ * 🚨 **승인 대기 상태가 없다.** 초대 링크를 수락하면 `parent_child` 행이 바로 생긴다 —
+ *    화면에 "대기 중" 칸을 만들지 않는다 (계약서 §02 `GET /me`).
+ */
+export interface ChildParent {
+  parent_id: string;
+  nickname: string;
+  relation: Relation;
+  role: "owner" | "member";
+  connected_at: string;
+}
+
+export interface ChildParentsResponse {
+  parents: ChildParent[];
+}
+
+/**
+ * POST /children/{cid}/invites (계약서 §08).
+ *
+ * 🚨 **한 링크는 한 번만 쓴다.** `used_at` 이 찍히면 재사용 409 `invite_used`,
+ *    기한이 지나면 410 이다. 화면이 "언제든 쓸 수 있는 링크" 처럼 보이게 하지 않는다.
+ */
+export interface InviteRequest {
+  /**
+   * ⚠️ **프론트는 보내지 않는다.** 계약서 §08 은 발행할 때 관계를 지정하면 수락자에게
+   * 프리필된다고 적지만, 아이와 어떤 사이인지는 **받는 쪽이 자기 입으로 말할 값**이다
+   * (#89). 서버가 필수로 요구하면 계약을 고친다 — 그때까지 타입만 남겨 둔다.
+   */
+  relation?: Relation;
+}
+
+export interface InviteResponse {
+  invite_url: string;
+  expires_at: string;
+}
+
+/**
+ * POST /auth/withdraw — ⚠️ **계약서 v1 에도 `docs/api/auth-kakao-v1.md` 에도 없다.**
+ *
+ * 그 문서 §1 이 "계정 탈퇴·파기 배치" 를 다루지 않는 것으로 미뤄 뒀고(노션), §미결 1 의
+ * **유예기간 N일이 아직 정해지지 않았다.** 이 프론트는 `WITHDRAW_GRACE_DAYS` 를 팀 제안값으로
+ * 두고 화면을 세웠다 — MSW 목 위에서만 돈다. 🚨 서버가 붙기 전에 이 값을 화면에서만 바꾸지
+ * 말 것: 부모에게 약속한 날짜와 서버가 실제로 지우는 날짜가 어긋난다.
+ *
+ * 서버가 이미 정해 둔 것(같은 문서 §4-2 · §5-3)은 **탈퇴 시 그 보호자의 세션을 전부
+ * 무효화한다**는 것과, 계정이 `parent.deleted_at` 으로 내려간다는 것 둘이다.
+ */
+export interface WithdrawRequest {
+  /**
+   * 🚨 화면이 무엇을 보여줬는지 서버에 남긴다. 유예기간을 바꿨는데 옛 화면을 보던 사람이
+   *    그대로 탈퇴하면, 그 사람이 읽은 조건이 무엇이었는지 알 방법이 이것뿐이다.
+   */
+  acknowledged_grace_days: number;
+}
+
+export interface WithdrawResponse {
+  /** 유예가 끝나 되돌릴 수 없게 되는 시각. 화면이 계산하지 않는다 — 서버가 만든 값이다. */
+  purge_after: string;
+}

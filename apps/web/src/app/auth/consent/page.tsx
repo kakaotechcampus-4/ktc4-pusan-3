@@ -56,14 +56,10 @@ export default function AuthConsentPage() {
   const signIn = useSessionStore((s) => s.signIn);
   const hydrated = useSessionStore((s) => s.hydrated);
 
-  const [checked, setChecked] = useState<Record<ConsentScope, boolean>>({
-    service_terms: false,
-    privacy_account: false,
-    child_basic: false,
-    child_health: false,
-  });
+  /** 🚨 선택 동의도 기본값은 **꺼짐**이다. 미리 체크해 두면 "고르지 않음" 이 동의가 된다. */
+  const [checked, setChecked] = useState<Partial<Record<ConsentScope, boolean>>>({});
   const [stage, setStage] = useState<Stage>("consent");
-  /** 상세를 펼쳐 볼 항목. null 이면 시트가 닫혀 있다. */
+  /** 전문을 펼쳐 볼 항목. null 이면 시트가 닫혀 있다. */
   const [detail, setDetail] = useState<ConsentItem | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,11 +72,18 @@ export default function AuthConsentPage() {
     if (!consentCode.current) router.replace("/");
   }, [hydrated, router]);
 
-  const allChecked = SIGNUP_CONSENTS.every((item) => checked[item.scope]);
+  /**
+   * 🚨 **막는 것은 `required` 뿐이다.** 지금은 이 화면의 4건이 전부 필수라 결과가 "모두
+   *    고름" 과 같지만, **`SIGNUP_CONSENTS.length` 로 세지 않는다** — 선택 동의를 이 화면에
+   *    올리는 날 조용히 그것까지 막게 된다. 필수/선택의 정본은 `lib/consent.ts` 다.
+   */
+  const requiredChecked = SIGNUP_CONSENTS.filter((i) => i.required).every(
+    (item) => checked[item.scope] === true,
+  );
 
   async function submit() {
     const code = consentCode.current;
-    if (!code || !allChecked) return;
+    if (!code || !requiredChecked) return;
 
     setPending(true);
     setError(null);
@@ -90,7 +93,11 @@ export default function AuthConsentPage() {
         const body: AuthSignupRequest = {
           consent_code: code,
           bind: readBind(),
-          consents: SIGNUP_CONSENTS.filter((i) => i.target === "account").map((i) => ({
+          // 🚨 **고른 것만 보낸다.** 선택을 안 고른 스코프까지 실어 보내면 화면이 물어본
+          //    것과 서버에 남는 것이 달라진다.
+          consents: SIGNUP_CONSENTS.filter(
+            (i) => i.target === "account" && checked[i.scope] === true,
+          ).map((i) => ({
             scope: i.scope,
             policy_version: CONSENT_POLICY_VERSION,
           })),
@@ -107,7 +114,9 @@ export default function AuthConsentPage() {
       // ② 아이 스코프 → 🚨 아이를 만들기 **전에** 받아야 한다.
       //    child_basic 없이 POST /children 은 403 이다 (계약서 §04 "동의는 저장보다 먼저다").
       //    아직 아이가 없으므로 child_id 를 싣지 않는다 (#18 확인 대상).
-      for (const item of SIGNUP_CONSENTS.filter((i) => i.target === "child")) {
+      for (const item of SIGNUP_CONSENTS.filter(
+        (i) => i.target === "child" && checked[i.scope] === true,
+      )) {
         const body: ConsentRequest = {
           scope: item.scope,
           action: "granted",
@@ -143,11 +152,11 @@ export default function AuthConsentPage() {
         {SIGNUP_CONSENTS.map((item) => (
           <Card key={item.scope}>
             <Checkbox
-              checked={checked[item.scope]}
+              checked={checked[item.scope] === true}
               onChange={(next) => setChecked((prev) => ({ ...prev, [item.scope]: next }))}
               label={
                 <>
-                  <span className="text-ink-muted">[필수] </span>
+                  <span className="text-ink-muted">{item.required ? "[필수] " : "[선택] "}</span>
                   {item.label}
                 </>
               }
@@ -157,8 +166,10 @@ export default function AuthConsentPage() {
               <p className="text-caption text-ink-subtle mt-1 pl-8">{item.legalBasis}</p>
             ) : null}
             <div className="pl-6">
+              {/* 🚨 10 설정과 **같은 말**을 쓴다. 같은 시트를 같은 `details` 로 여는데
+                  화면마다 이름이 다르면 두 곳을 오가는 사람이 다른 것으로 읽는다. */}
               <Button variant="tertiary" size="compact" onClick={() => setDetail(item)}>
-                상세 보기
+                내용 보기
               </Button>
             </div>
           </Card>
@@ -168,10 +179,14 @@ export default function AuthConsentPage() {
       <BottomSheet
         open={detail !== null}
         onClose={() => setDetail(null)}
+        /* 🚨 약관 전문은 통째로 `font-doc` 이다. 제목만 손글씨로 남기지 않는다 (§4). */
+        variant="document"
         title={detail?.label ?? ""}
         description={detail?.legalBasis}
         footer={
-          <Button block onClick={() => setDetail(null)}>
+          /* 🚨 10 설정의 전문 시트와 **같은 버튼**이다. 같은 시트를 여는 두 화면에서
+             한쪽만 채운 버튼이면 같은 행동이 다른 무게로 읽힌다. */
+          <Button block variant="secondary" onClick={() => setDetail(null)}>
             닫기
           </Button>
         }
@@ -189,12 +204,12 @@ export default function AuthConsentPage() {
           </CardFailed>
         ) : null}
 
-        <Button block onClick={submit} disabled={!allChecked || pending}>
+        <Button block onClick={submit} disabled={!requiredChecked || pending}>
           {pending ? <Spinner /> : null}
           {pending ? "저장하는 중…" : "동의하고 시작하기"}
         </Button>
         <p className="text-caption text-ink-subtle text-center">
-          동의하지 않으면 계정이 만들어지지 않아요.
+          필수에 동의하지 않으면 계정이 만들어지지 않아요.
         </p>
       </div>
     </Screen>

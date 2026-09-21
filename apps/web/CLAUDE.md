@@ -80,7 +80,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
-| 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
+| 10 설정 | `/child/[childId]/settings` |
+| 10 설정 › 고객센터 (읽는 화면) | `/child/[childId]/settings/help` |
+| 10 설정 › 탈퇴 (흐름 중인 화면) | `/child/[childId]/settings/withdraw` |
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
@@ -129,7 +131,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
 
 ⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
-지금 보고 있는 아이 경로 아래에 붙여서 쓴다 (`/child/{childId}/settings/consent`).
+🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 지금 없는 경로(`settings/consents`)가 오기도 하고,
+외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 10 설정 한 곳(`/child/{childId}/settings`)이고,
+딥링크는 **어느 구역인지 힌트**로만 쓴다 (`ConsentRequiredCard`).
 
 클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
 **스토어를 읽어 화면을 그리지 않는다.**
@@ -150,13 +154,16 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` ·
+  `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
+  `BottomSheet` · `Tabs` · `Toast` · `ButtonLink` ·
   `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
+  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
+  `ParentSection` · `AccountSection` ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
   `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
@@ -168,8 +175,30 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
-- 🚨 **하단 네비(`ChildNav`)는 가는 곳 세 화면과 설정에만 붙인다.** 04 저장 결과·05 제안 후보처럼
-  흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7)
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 저장 결과·05 제안 후보처럼
+  흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7).
+  설정의 하위 화면 둘이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
+  있어서 안 붙인다**(빠져나가는 길은 자기 "그만두고 돌아가기" 하나다)
+- 🚨 **돌아가기 화살표는 `IconButtonLink` 다** (`components/ui/icon-button.tsx`). `IconButton` 과
+  **같은** 모양·톤 표를 쓴다. 🚨 `router.back()` 으로 만들지 않는다 — 히스토리는 어디서 왔는지에
+  따라 달라져서, 알림이나 링크로 바로 들어오면 돌아갈 데가 없다. 🚨 `label` 에 "뒤로" 가 아니라
+  **가는 곳**을 적는다("설정으로 돌아가기"). 🚨 **`PageTitle` 과 한 줄**에 세우고 `-ml-3` 를
+  **줄 전체**에 건다 — 44px 원 안에 20px 아이콘이 가운데 있어 좌우 12px 이 비고, 그대로 두면
+  화살표가 화면 왼쪽 기준선보다 안쪽에 선다.
+  ⚠️ 그러면 **제목만 왼쪽이 안 맞는다**(화살표 16 · 제목 52 · 나머지 전부 16). 가로로 붙이는 한
+  피할 수 없고(타깃 44 > 여백 16), 세로 44px 을 아끼는 값으로 받기로 했다 (제품 결정 · #89)
+- 🚨 **한 화면에 같은 이름의 링크를 둘 두지 않는다.** 고객센터 아래에 화살표와 같은 이름의
+  돌아가기를 하나 더 뒀더니 스크린리더 링크 목록에 같은 이름이 두 번 떴다 — 둘 다 같은 곳으로
+  갔다. 탈퇴 화면은 예외가 아니라 **다른 경우**다(아래 "그만두고 돌아가기" 는 흐름을 그만둔다는
+  뜻이라 이름도 하는 일도 화살표와 다르다)
+- 🚨 **버튼처럼 보이는 링크는 `ButtonLink` 다** (`components/ui/button.tsx`). `Button` 과 **같은**
+  변형·크기 표를 쓴다 — 두 벌이 되면 한쪽만 고쳐져 같은 자리에 선 둘이 달라진다.
+  🚨 `<button onClick={router.push}>` 로 대신하지 않는다(링크가 링크가 아니게 된다) ·
+  🚨 행동에 쓰지 않는다(누르면 값이 바뀌는 것은 `Button`) · 🚨 `disabled` 가 없다(`<a>` 에는
+  그 상태가 없다 — 못 가는 링크는 안 그린다)
+- 🚨 **탈퇴처럼 끝나면 세션이 없어지는 화면은 끝 상태를 `AuthGate` 밖에 둔다.** 안에 두면
+  게이트가 그 순간 `/` 로 튕겨서 "탈퇴했어요" 를 아무도 못 보고, 게이트가 **복귀 경로로 그
+  주소를 기억**해 둬서 다음 로그인이 탈퇴 화면으로 떨어진다 (실제로 그랬다)
 - 🚨 **네비는 `surface-muted` 면이고 위에 선이 없다.** 선을 하나 더 긋는 것으로는 채팅바와 안 갈린다 —
   `line` 1px 은 `canvas` 위에서 1.21:1 이고 03 홈에는 **같은 선이 27px 위에도** 있어서, 한 신호가
   "여기부터 고정" 과 "여기부터 다른 종류" 를 나눠 쓰면 하단이 줄 쳐진 슬래브 하나로 읽힌다
@@ -286,8 +315,16 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   바깥 클릭이 전부 그 파일의 책임**이 된다. 그 파일의 🚨 를 지우지 말 것:
   ARIA 는 `combobox` + `listbox` 한 쌍 · 열 때 고른 항목으로 포커스가 들어가고 **닫을 때 버튼으로
   돌아온다**(안 그러면 포커스가 `<body>` 로 떨어진다 · 09 달력에서 낸 사고와 같다) ·
-  ESC · 바깥 클릭 · Tab · 스크롤에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
+  ESC · 바깥 클릭 · Tab 에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
   등장 애니메이션도 쉐브론 회전도 없다(방향은 아이콘을 갈아 끼워 말한다)
+  ⚠️ **스크롤에는 닫지 않는다.** 목록이 `relative` 루트 안의 `absolute` 라 트리거에 붙어 같이
+  움직이는데, 떨어질까 봐 넣었던 스크롤 가드가 **열릴 때 포커스가 일으킨 스크롤**을 잡아
+  자기를 닫고 있었다 — 바텀시트 안(본문이 `overflow-y-auto`)에서 상자가 **아예 안 열렸다.**
+  페이지가 긴 화면(07)에서는 스크롤이 안 나서 여태 안 보였다
+- 🚨 **접히는 질문(10 › 고객센터)은 네이티브 `<details>`/`<summary>` 다.** 펼침 상태·키보드·포커스를
+  브라우저가 준다 — `aria-expanded` 를 손으로 달지 않는다. 🚨 기본 마커를 지우고(`list-none` +
+  `::-webkit-details-marker`) 쉐브론은 **회전이 아니라 갈아 끼운다**. 🚨 `summary` 여백은 카드 밖으로
+  **네 방향 다** 되민다(`-m-4 p-4`) — 아래만 남기면 닫힌 카드에 32px 빈 띠가 생긴다
 - 🚨 **화면을 그리는 외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.**
   접근성을 손으로 짜면 반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고**
   `classNames` 로 토큰만 입힌다 — 버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7).
@@ -331,12 +368,19 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **자리표시 코드는 개발 환경 + 목 서버일 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다 (빌드 후 번들에서 문자열이 사라지는지 확인한다)
 - 🚨 **1회용 코드는 한 번만 교환한다.** StrictMode 의 이중 실행으로 두 번 소비하면 두 번째가 `401 invalid_handoff` 다 — `useRef` 가드를 둔다
 - 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다.** 토큰을 **얻으러** 가는 화면이라 감싸면 `/` 로 튕긴다
-- **신규 회원은 `/auth/consent` 로 보낸다.** 동의 4건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 2건은 `POST /consents` 다.
+- **신규 회원은 `/auth/consent` 로 보낸다.** 필수 4건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 2건은 `POST /consents` 다.
   🚨 **아이 스코프를 아이보다 먼저 받는다** — `child_basic` 없이 `POST /children` 은 403 이다 (계약서 §04 "동의는 저장보다 먼저다")
   🚨 **"전체 동의" 를 만들지 않는다** — 민감정보(`child_health`)는 다른 동의와 구분해서 받아야 한다 (개인정보보호법 제23조)
+  🚨 **필수와 선택을 같은 컨트롤로 그리지 않는다.** 필수는 `service_terms` · `privacy_account` ·
+  `child_basic` · `child_health` 넷이고, `location` 이 **선택**이다 (#89). 10 설정에서는 선택만 켜고 끄고,
+  필수에는 철회 버튼을 두지 않는다 — 나란히 두면 화면이 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와 다르다.
+  🚨 **막는 기준은 `required` 이지 개수가 아니다** — `SIGNUP_CONSENTS.length` 로 세면 선택 동의를
+  가입 화면에 올리는 날 조용히 그것까지 막는다. 정본은 `lib/consent.ts` 다.
+  ⚠️ `child_health` 를 선택으로 내려 봤다가 되돌렸다 — 계약서 §04 가 그 동의 없이 `POST /inputs` 도
+  403 이라고 못박고 있어서, 선택으로 두면 **한 줄 입력조차 안 되는데 화면은 "선택" 이라고 말한다**
   🚨 **승인 게이트가 아니다** — `btn-approve` · `caution` 을 쓰지 않는다. 그 둘은 되돌릴 수 없는 2곳 전용이다 (§2)
   스코프 목록·약관 버전의 정본은 `lib/consent.ts` 다. 10 설정의 동의 관리도 같은 파일을 쓴다
-- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 10 설정의 동의 화면이 아직 없다
+- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 남은 동의는 10 설정에서 켠다
 
 ### 세션 — `sessionStorage` 다
 
@@ -591,11 +635,16 @@ NEXT_PUBLIC_API_MOCKING=enabled
   🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
-- 화면 00~09 가 덮여 있다. 10 설정은 아직 없다.
+- 화면 00~11 이 덮여 있다. 이제 빠진 화면이 없다.
   🚨 **`GET /runs/{rid}/events` 는 핸들러가 하나다** — 04 한 줄 입력 run 과 08 사진 run 이 같은 경로를
   나눠 쓴다 (계약서 §09 "SSE 채널을 재사용한다"). 갈라 쓰는 지점은 `handlers/runs.ts` 한 곳이고,
   `handlers/photos.ts` 가 run 등록부와 사진 대본을 내보낸다. 같은 경로에 핸들러를 두 개 등록하면
   msw 가 먼저 등록된 쪽으로만 보내서 **사진 run 이 `saved` 를 흘린다** (저장한 적도 없는 관찰이 나온다).
+  🚨 **`/auth/*` 의 이름이 정해진 경로는 `:provider` 보다 앞에 둔다.** msw 는 배열 순서대로
+  맞추는데 `:provider` 가 `logout` · `withdraw` 까지 삼킨다 — 실제로 `POST /auth/logout` 이
+  교환 핸들러에 걸려 500 이었는데, 화면이 로컬 세션을 비우고 나가 버려서 아무도 몰랐다
+  🚨 **동의는 목이 상태를 들고 있다** (`handlers/settings.ts`). 켜고 끄는 화면이라 응답이 매번 같으면
+  무엇을 눌러도 화면이 안 변한다 — 새 상태를 더하면 리셋 함수를 `test/setup.ts` 에 건다 (§8).
 - 🚨 **실제 OAuth 왕복은 목으로 흉내 낼 수 없다** — 카카오로 나가는 전체 페이지 이동이라 서비스 워커가 못 잡는다.
   목이 덮는 것은 시작 전(`status`)과 돌아온 뒤(교환·가입)이고, 중간은 `lib/auth/oauth.ts` 의 `MOCK_ONLY` 분기가 건너뛴다.
 - 🚨 **`startMocks()` 는 한 번만 시작한다** (약속을 캐시한다). StrictMode 가 effect 를 두 번 돌리는데 두 번째 `worker.start()` 가

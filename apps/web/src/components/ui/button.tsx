@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
@@ -95,5 +96,48 @@ export function Button({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * 버튼처럼 보이지만 **다른 화면으로 가는 것**. `<a>` 라서 새 탭·길게 누르기·붙여넣기가
+ * 브라우저 기본대로 동작한다.
+ *
+ * 🚨 **`<button onClick={router.push}>` 로 대신하지 않는다.** 그러면 링크가 링크가 아니게 되고
+ *    (웹뷰 뒤로가기와 키보드 관례가 어긋난다), 스크린리더에도 "버튼" 으로 읽혀 어디로 가는지
+ *    모른다. 반대로 **행동에 이걸 쓰지 않는다** — 누르면 값이 바뀌는 것은 `Button` 이다.
+ *
+ * 🚨 변형·크기 표를 여기서 따로 만들지 않고 `Button` 과 **같은 것**을 쓴다. 두 벌이 되면
+ *    한쪽만 고쳐져서 같은 자리에 선 둘이 서로 달라진다.
+ * 🚨 `disabled` 가 없다 — `<a>` 는 비활성이라는 상태가 없다. 못 가는 링크는 **안 그린다.**
+ */
+export function ButtonLink({
+  href,
+  variant = "primary",
+  size = "default",
+  block = false,
+  className,
+  children,
+}: {
+  href: string;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  block?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "text-button ease-standard inline-flex items-center justify-center gap-2 py-2 text-center transition-colors duration-120",
+        variant === "approve" ? null : SIZE[size],
+        VARIANT[variant],
+        block && variant !== "approve" && "w-full",
+        className,
+      )}
+    >
+      {children}
+    </Link>
   );
 }
