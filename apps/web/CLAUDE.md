@@ -71,8 +71,11 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | --- | --- |
 | 00 소개 · 로그인 | `/` |
 | 로그인 복귀 지점 (보여줄 내용 없음) | `/auth/callback` |
-| 가입 동의 (신규 회원만) | `/auth/consent` |
-| 01 첫 진입 (아이 만들기) | `/onboarding` |
+| 가입 1/2 보호자 이름 (신규 회원만) | `/auth/profile` |
+| 가입 2/2 계정 동의 2건 (신규 회원만) | `/auth/consent` |
+| 00-1 경로 고르기 (아이 0명) | `/start` |
+| 초대 코드 입력 · 수락 | `/invite` |
+| 01 첫 진입 (아이 만들기 + 아이 동의 2건) | `/onboarding` |
 | 02 이야기 하나 | `/child/[childId]/onboarding` |
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
 | 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
@@ -88,7 +91,14 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
-`/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+`/onboarding` · `/start` · `/invite` 는 아이 스코프 **밖**이다 — `POST /children` 이나 초대 수락이
+성공해야 `childId` 가 생긴다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+
+🚨 **아이가 0명이면 `/onboarding` 이 아니라 `/start` 로 보낸다** (#96). 초대를 기다리는 사람이
+아이 만들기에 바로 떨어지면 **같은 아이를 또 등록**하고, 아이는 보호자당 한 명이라 그 뒤로는
+초대를 수락할 수 없다 (`409 child_already_exists`). 되돌리는 길이 없어서 고르기 전에 묻는다.
+기준이 "신규 회원" 이 아니라 **아이 0명**인 이유는, 초대를 기다리는 기존 회원도 같은 화면이
+필요하기 때문이다.
 
 🚨 **`useSearchParams()` 를 쓰는 화면은 `<Suspense>` 경계 안에 둔다.** 경계가 없으면 프리렌더가
 CSR bailout 을 일으켜 **프로덕션 빌드가 그 화면에서 멈춘다** (`Missing Suspense boundary with useSearchParams`).
@@ -368,8 +378,11 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **자리표시 코드는 개발 환경 + 목 서버일 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다 (빌드 후 번들에서 문자열이 사라지는지 확인한다)
 - 🚨 **1회용 코드는 한 번만 교환한다.** StrictMode 의 이중 실행으로 두 번 소비하면 두 번째가 `401 invalid_handoff` 다 — `useRef` 가드를 둔다
 - 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다.** 토큰을 **얻으러** 가는 화면이라 감싸면 `/` 로 튕긴다
-- **신규 회원은 `/auth/consent` 로 보낸다.** 필수 4건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 2건은 `POST /consents` 다.
-  🚨 **아이 스코프를 아이보다 먼저 받는다** — `child_basic` 없이 `POST /children` 은 403 이다 (계약서 §04 "동의는 저장보다 먼저다")
+- **신규 회원은 `/auth/profile` → `/auth/consent` 로 보낸다.** 필수 4건을 받아야 하지만 **화면이 둘로 갈린다** — 계정 2건은 `signup` 바디로(여기서 계정이 생긴다), 아이 2건 + 법정대리인 확인은 01 아이 만들기 화면이 `POST /children` 바디로 보낸다 (아이와 한 트랜잭션).
+  ⚠️ **아이 2건이 `POST /consents` 에서 옮겨 온 것은 #96 이고 계약 확정 전이다.** 동의를 **아이 단위**로 기록하기로 하면서 `child_id` 없이는 저장할 수 없게 됐는데, 그 id 는 `POST /children` 이 만든다 — 계약서 §04 의 "`child_basic` 없이 `POST /children` 은 403" 과 동시에 성립하는 모양은 이것뿐이다
+  🚨 **아이 동의를 가입 화면에서 받지 않는 두 번째 이유** — 가입만 끝내고 아이 만들기에서 나간 사람의 동의가 갈 곳 없이 사라진다. 값은 그 값이 쓰이는 화면에 둔다 (`lib/consent.ts` 의 `ACCOUNT_SIGNUP_CONSENTS` 주석)
+  🚨 **법정대리인 확인을 상수 `true` 로 보내지 않는다** — 체크박스 값 그대로다. 아무도 확인하지 않은 동의가 확인된 것으로 남으면 그 동의는 증빙이 아니다
+  🚨 **보호자 이름은 동의 화면에서 받지 않는다** — 법적 고지 화면에 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다. 그래서 앞 화면(`/auth/profile`)이 받고 `lib/auth/signup-nickname.ts` 가 가입이 끝날 때까지 들고 있는다 (⚠️ `signup` 바디의 `nickname` 도 계약 확정 전이다 · #96)
   🚨 **"전체 동의" 를 만들지 않는다** — 민감정보(`child_health`)는 다른 동의와 구분해서 받아야 한다 (개인정보보호법 제23조)
   🚨 **필수와 선택을 같은 컨트롤로 그리지 않는다.** 필수는 `service_terms` · `privacy_account` ·
   `child_basic` · `child_health` 넷이고, `location` 이 **선택**이다 (#89). 10 설정에서는 선택만 켜고 끄고,

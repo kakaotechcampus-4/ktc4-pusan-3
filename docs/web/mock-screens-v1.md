@@ -22,8 +22,14 @@ location.replace("/");
 | --- | --- |
 | 00 로그인 | `/` |
 | 00 로그인 · 버튼 비활성 | `/?scenario=auth_unready` |
-| **가입 동의** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
-| 01 아이 만들기 | 로그인 후 `/onboarding` (목의 `/me` 는 항상 아이가 1명이라 로그인만으로는 안 닿는다) |
+| **가입 (이름 → 동의 → 경로 고르기)** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
+| 00-1 경로 고르기 (새로 등록 / 초대로 참여) | `/start?scenario=consent` — 🚨 `consent` 시나리오에서만 아이가 0명이다 (아래) |
+| 초대 코드 입력 | `/invite?scenario=consent` — 아무 8자(`MKGRAND1`)나 넣으면 연결된다 |
+| 초대 · 이미 사용된 코드 | 위 화면에 `MKWASTED` |
+| 초대 · 기한 지난 코드 | 위 화면에 `MKPAST12` |
+| 초대 · 이미 아이가 있음 | 위 화면에 `MKTAKEN2`, 또는 `consent` 가 아닌 시나리오에서 아무 코드나 |
+| 초대 · 시도 제한(429) | 위 화면에서 틀린 코드를 5번 |
+| 01 아이 만들기 | `/onboarding` — `consent` 가 아닌 시나리오에서는 `/me` 에 아이가 1명이라 00-1 이 홈으로 보낸다 |
 | 02 이야기 하나 | `/child/c1/onboarding` |
 | 03 홈 | `/child/c1/home` |
 | 03 홈 · 빈 상태 | `/child/c1/home?scenario=empty` |
@@ -50,11 +56,21 @@ location.replace("/");
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 
+🚨 **`consent` 시나리오에서만 아이가 0명이다.** 목의 `/me` 는 다른 시나리오에서 늘 아이 1명을
+돌려주고, 00-1 과 초대 화면은 **아이가 없는 계정에서만** 선다 (있으면 홈으로 되돌린다).
+그 시나리오에서 아이가 생기는 길은 실서버와 같은 둘뿐이다 — `POST /children` 과 초대 수락
+(`mocks/handlers/membership.ts`). 새로고침해도 유지되고, 탭을 닫으면 사라진다.
+
+🚨 **초대 실패는 시나리오가 아니라 입력값으로 갈린다.** 만료·재사용·중복 등록은 실서버에서도
+그냥 일어나는 일이라, 시나리오로 만들 이유가 없다 (08 의 두 lane 과 같은 판단).
+
 화면만 빨리 보려면 값을 직접 심어도 된다. 🚨 **`bind` 를 빼면 화면은 떠도 제출이 400 이다** — 서버가 형식을 검증하는 게 정상 동작이다.
 
 ```js
 sessionStorage.setItem("icatch.oauth.consent_code", "cc_mock");
 sessionStorage.setItem("icatch.oauth.provider", "kakao");
 sessionStorage.setItem("icatch.oauth.bind", "dev".padEnd(43, "x"));
+// 동의 화면은 이름이 먼저 있어야 한다 — 없으면 /auth/profile 로 되돌린다.
+sessionStorage.setItem("icatch.signup.nickname", "테스터");
 location.replace("/auth/consent");
 ```

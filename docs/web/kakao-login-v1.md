@@ -126,7 +126,10 @@
 | [`lib/auth/oauth.ts`](../../apps/web/src/lib/auth/oauth.ts) | 로그인 **시작**. `ready` 확인 → bind 생성 → 절대 `start_url` 로 이동. provider·복귀경로 기억 | ✅ 신설 (`lib/auth/kakao.ts` 삭제) |
 | [`lib/auth/oauth-bind.ts`](../../apps/web/src/lib/auth/oauth-bind.ts) | bind 비밀 생성·보관·소비 | ✅ 신설 |
 | [`app/auth/callback/page.tsx`](../../apps/web/src/app/auth/callback/page.tsx) | 돌아온 코드를 교환하고 다음 화면으로 보냄 | ✅ 신설 |
-| [`app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) | 가입 동의 4건 → `POST /auth/kakao/signup` + `POST /consents` × 2 | ✅ 신설 |
+| [`app/auth/profile/page.tsx`](../../apps/web/src/app/auth/profile/page.tsx) | 가입 1/2 — 보호자 이름. 값은 `lib/auth/signup-nickname.ts` 가 든다 | 🔶 #96 |
+| [`app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) | 가입 2/2 — **계정 2건** → `POST /auth/kakao/signup` | ✅ 신설 · 🔶 #96 에서 4건 → 2건 |
+| [`app/start/page.tsx`](../../apps/web/src/app/start/page.tsx) | 00-1 — 아이 0명일 때 "새로 등록 / 초대로 참여" | 🔶 #96 |
+| [`app/invite/page.tsx`](../../apps/web/src/app/invite/page.tsx) | 초대 코드 입력 → `POST /invites/{code}/accept` | 🔶 #96 |
 | [`lib/consent.ts`](../../apps/web/src/lib/consent.ts) | 스코프 정본 · 약관 버전 · 어느 엔드포인트로 가는지 | ✅ 신설 |
 | [`app/page.tsx`](../../apps/web/src/app/page.tsx) | 버튼 → 시작 함수. status prefetch. 성공 처리는 콜백 화면으로 이사 | ✅ 수정 |
 | [`stores/session.ts`](../../apps/web/src/stores/session.ts) | 저장소 `localStorage` → **`sessionStorage`**, `expiresAt` 보관, `hasLiveSession()` | ✅ 수정 |
@@ -242,35 +245,42 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 콜백이 `consent_code` 를 `sessionStorage` 에 넣고 `/auth/consent` 로 보낸다 — 🚨 **가입 대기표를 주소창·브라우저 기록에 남기지 않으려고** URL 이 아니라 저장소를 쓴다. 대기표 없이 이 주소로 들어오면 00 으로 되돌린다.
 
-#### 항목 4건 — 보내는 곳이 갈린다
+#### 항목 4건 — 보내는 곳이 갈린다 (🔶 #96 에서 바뀌었다)
 
-| 스코프 | 대상 | 어디로 | 근거 |
-| --- | --- | --- | --- |
-| `service_terms` | 계정 | `POST /auth/{provider}/signup` | 보호자 각자 1회 |
-| `privacy_account` | 계정 | 〃 | 보호자 본인 개인정보 |
-| `child_basic` | 아이 | `POST /consents` | 개인정보보호법 제22조의2 |
-| `child_health` | 아이 | 〃 | 제23조 — 민감정보 **별도 동의** |
+| 스코프 | 대상 | 어디로 | 어느 화면 | 근거 |
+| --- | --- | --- | --- | --- |
+| `service_terms` | 계정 | `POST /auth/{provider}/signup` | 가입 2/2 | 보호자 각자 1회 |
+| `privacy_account` | 계정 | 〃 | 〃 | 보호자 본인 개인정보 |
+| `child_basic` | 아이 | 🔶 `POST /children` | 01 아이 만들기 | 개인정보보호법 제22조의2 |
+| `child_health` | 아이 | 〃 | 〃 | 제23조 — 민감정보 **별도 동의** |
+| `guardian_attested` | 아이 | 〃 | 〃 | 위 두 동의의 **유효 요건** (제22조의2) |
 
-**아이 스코프를 아이가 생기기 전에 받는 이유** — 계약서 §04 가 "동의는 저장보다 먼저다" 로 못박았고 **`child_basic` 없이 `POST /children` 은 403** 이다. 즉 01 화면(아이 만들기)보다 앞서야 한다. 그래서 이 화면에서 4건을 다 받는다.
+**왜 아이 2건이 `POST /consents` 에서 옮겨 갔나** — 동의를 **아이 단위**로 기록하기로 하면서(#96) 닭-달걀이 생겼다. `POST /consents` 는 `child_id` 를 받는데 그 id 는 `POST /children` 이 만들고, 계약서 §04 는 `child_basic` 없이 그 호출이 403 이라고 말한다. **둘을 동시에 만족시키는 모양은 "아이와 동의를 한 트랜잭션" 뿐이다.** ⚠️ 계약서 §05 의 바디에는 아직 없다 — 확정 전이다.
+
+두 번째 이유는 이탈이다. 가입 화면에서 4건을 다 받으면 **가입만 끝내고 01 에서 나간 사람**의 아이 동의가 화면 상태로만 남아 있다가 사라지고, 다시 들어와도 01 이 그 값을 묻지 않아 보낼 것이 없다. 값을 **그 값이 쓰이는 화면**에 두면 이탈해도 늘 같은 자리에 있다.
 
 ```
-① POST /auth/kakao/signup { consent_code, bind, consents: [계정 2건] }   ← 계정이 여기서 생긴다
-② signIn(token, expires_in) · consent_code · bind 정리
-③ POST /consents × 2  { scope, action: "granted", policy_version, guardian_attested }
-④ /onboarding 으로 — 방금 만든 계정이라 아이가 없다. /me 를 물어볼 것도 없다
+① POST /auth/kakao/signup { consent_code, bind, nickname, consents: [계정 2건] }  ← 계정이 여기서 생긴다
+② signIn(token, expires_in) · consent_code · bind · nickname 정리
+③ /start 로 — 아이가 없다. 새로 등록할지 초대를 받을지 거기서 고른다 (#96)
+④ 01 에서 POST /children { …아이, consents: [아이 2건], guardian_attested }  ← 아이와 동의가 한 트랜잭션
 ```
 
-🚨 **①이 성공한 뒤 ③이 실패하면 계정만 남는다.** 그 상태로 01 화면에 가면 `POST /children` 이 403 이다. 그래서 화면이 단계를 들고 있다가 **재시도할 때 ①을 다시 돌리지 않고 ③만 다시 보낸다.**
+🚨 **③에서 01 로 바로 보내지 않는다.** 초대를 기다리는 사람이 아이 만들기에 떨어지면 같은 아이를 또 등록하고, 아이는 보호자당 한 명이라 그 뒤로는 초대를 수락할 수 없다.
+
+🚨 **부분 실패가 없어졌다.** 예전에는 ①이 성공한 뒤 `POST /consents` 가 실패하면 **계정만 남고 01 이 403** 이었고, 화면이 단계를 들고 있다가 재시도할 때 ①을 건너뛰어야 했다. 지금은 계정과 아이가 각자 한 번의 호출로 끝나서 그 중간 상태 자체가 없다.
 
 #### 화면 규칙
 
 - 🚨 **"전체 동의" 를 두지 않는다.** 민감정보(`child_health`)는 다른 동의와 **구분해서** 받아야 한다 (개인정보보호법 제23조). 한 번에 쓸어 담는 버튼이 그 구분을 없앤다. 4건이라 개별 체크로 충분하다.
 - 🚨 **승인 게이트가 아니다.** `btn-approve` 와 `caution` 색을 쓰지 않는다 — 그 둘은 되돌릴 수 없는 2곳 전용이다 (CLAUDE.md §2). 제출은 `btn-primary`.
-- 🚨 **"언제든 철회할 수 있어요" 를 쓰지 않는다.** 네 건이 전부 필수라 하나라도 철회하면 서비스가 성립하지 않는다 — `child_basic` 없이는 아이를 등록할 수 없고 `child_health` 없이는 입력조차 저장되지 않는다(둘 다 403). 철회는 스위치 하나 끄기가 아니라 **탈퇴에 가깝고**, 무엇을 지우는지는 아직 미정이다(최상위 CLAUDE.md §10). 지금은 **아무 약속도 하지 않는다.**
+- 🚨 **"언제든 철회할 수 있어요" 를 쓰지 않는다.** 가입 흐름의 네 건이 전부 필수라 하나라도 철회하면 서비스가 성립하지 않는다 — `child_basic` 없이는 아이를 등록할 수 없고 `child_health` 없이는 입력조차 저장되지 않는다(둘 다 403). 철회는 스위치 하나 끄기가 아니라 **탈퇴에 가깝고**, 무엇을 지우는지는 아직 미정이다(최상위 CLAUDE.md §10). 지금은 **아무 약속도 하지 않는다.**
 - **각 항목에 "상세 보기" 가 있다.** 바텀시트로 확정된 사실만 펼친다 — 받는 것 · 쓰는 곳 · 하지 않는 것 · 동의하지 않으면. 🚨 **약관 전문을 지어내지 않는다**: 보관 기간·삭제 범위가 미정이라 정식 문구를 쓸 수 없고, 없는 조항을 그럴듯하게 넣으면 그대로 배포된다. 시트 하단에 최종본이 아님을 항상 밝힌다.
-- 🚨 **다른 입력을 섞지 않는다.** 법적 고지를 읽고 확인하는 화면인데 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다 (테크스펙 리스크 ④). 보호자 닉네임을 여기서 받지 않기로 한 것도 같은 이유다 ([명세 §4-4](../api/auth-kakao-v1.md)).
+- 🚨 **다른 입력을 섞지 않는다.** 법적 고지를 읽고 확인하는 화면인데 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다 (테크스펙 리스크 ④). 보호자 닉네임을 여기서 받지 않기로 한 것도 같은 이유다 ([명세 §4-4](../api/auth-kakao-v1.md)) — 그래서 **앞 화면(`/auth/profile`)이 받는다.**
+  🚨 01 아이 만들기는 이 규칙의 예외처럼 보이지만 아니다. 거기서 묻는 것은 **그 화면이 입력받는 대상(아이)에 대한 동의**라 무관한 입력이 아니다.
 - **근거 법조문을 화면에 그대로 보여준다.** 무엇에 동의하는지 숨기지 않는다.
-- 4건이 전부 필수라 하나라도 빠지면 제출 버튼이 비활성이다. 필수는 **색이 아니라 `[필수]` 라벨**로 표시한다.
+- 이 화면의 2건이 전부 필수라 하나라도 빠지면 제출 버튼이 비활성이다. 필수는 **색이 아니라 `[필수]` 라벨**로 표시한다.
+  🚨 막는 기준은 **`required`** 이지 목록 길이가 아니다 — 선택 동의를 이 화면에 올리는 날 조용히 그것까지 막는다 (`requiredConsentsChecked()`).
 - `consent_code` TTL 이 10분이다. 만료되면 00 으로 되돌려 다시 시작하게 한다.
 
 ### 4-6. 00 화면에서 손볼 것
