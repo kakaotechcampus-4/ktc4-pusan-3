@@ -105,6 +105,8 @@ _INPUT_DEFAULT = Path(__file__).resolve().parents[1] / "test_input.txt"
 INPUT_PATH = Path(os.getenv("EVAL_INPUT_PATH", str(_INPUT_DEFAULT)))
 EVAL_MODELS = [x.strip() for x in os.getenv("EVAL_MODELS", "").split(",") if x.strip()]
 
+# 되묻는 말은 어미가 실행마다 다르다. "할까요" 만 두면 "지울까요"·"맞나요" 가 떨어진다 —
+# 동작은 맞는데 판정이 틀리는 경우다. 물음 어미를 묶어서 본다
 _CLARIFY = (
     "무엇을",
     "어떤",
@@ -114,11 +116,28 @@ _CLARIFY = (
     "확인이 필요",
     "골라",
     "선택",
-    "할까요",
-    "인가요",
+    "까요",  # 할까요 · 지울까요 · 맞을까요
+    "나요",  # 인가요 · 맞나요 · 시작하나요
     "정해 주",  # "시간을 정해 주세요" 도 되묻는 말이다
 )
-_OUT_OF_SCOPE = ("범위", "추천", "진단", "직접 입력", "할 수 없", "하지 않", "드릴 수 없", "어려워")
+# 모델이 쓰는 말이 실행마다 조금씩 다르다. "직접 입력" 하나만 두면 "직접 등록해 주세요" 가
+# 떨어진다. (동작은 맞는데 판정이 틀리는 경우라 표현을 넓힘)
+_OUT_OF_SCOPE = (
+    "범위",
+    "추천",
+    "진단",
+    "직접 입력",
+    "직접 등록",
+    "직접 추가",
+    "할 수 없",
+    "하지 않",
+    "드릴 수 없",
+    "어려워",
+)
+
+# 모델이 내부 추론을 그대로 final_message에 흘리는 경우를 잡는다.
+# 영문 단어가 다섯 개 넘게 이어지면 한국어 답변이 아니다.
+_REASONING_LEAK = re.compile(r"[A-Za-z]{2,}(?:[ ,.'\"?!:;()]+[A-Za-z]{2,}){4,}")
 
 
 # ── 결과 스냅샷 ─────────────────────────────────────────────────
@@ -819,6 +838,11 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
             used = [call.name for call in snapshot.result.calls if call.name == tool]
         if used:
             failures.append(f"금지된 호출: {sorted(set(used))}")
+
+    message = snapshot.result.final_message or ""
+    if _REASONING_LEAK.search(message):
+        # 기대 문구가 어딘가 들어 있으면 통과하던 자리라, 답변이 엉망이어도 못 잡았다
+        failures.append(f"내부 추론이 답변에 섞임: {message[:80]!r}")
 
     # task 모드에서 범위 밖 안내는 Supervisor(routing guidance) 몫이라 Memory 에게 묻지 않는다
     if MEMORY_MODE == "solo" and case.expect_out_of_scope and not snapshot.said(_OUT_OF_SCOPE):
