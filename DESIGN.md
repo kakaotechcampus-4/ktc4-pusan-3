@@ -216,6 +216,13 @@ components:
     textColor: "{colors.ink-muted}"
     rounded: "{rounded.card}"
     padding: "16px"
+  card-photo:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.card}"
+    padding: "16px"
+    border: "1px solid {colors.line}"
+    aspectRatio: "4 / 3"
   banner-caution:
     backgroundColor: "{colors.caution-soft}"
     textColor: "{colors.caution-ink}"
@@ -413,6 +420,8 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **제안 줄:** `surface` + `line` 1px + full + 높이 44, 도메인 칩 + 문구. 누른 느낌은 그 주제가 열릴 색(`{domain}-soft`). 배치 2종 — **list**(04, 세로로 쌓음) / **scroller**(03 채팅바 위, 가로 한 줄로 눕히고 넘치면 민다: 바 183 → 133px). scroller 는 화면 끝까지 흐르고 `overscroll-behavior-x: contain` 이 걸린다(웹뷰 뒤로가기 제스처 차단). 🚨 제안을 버튼으로 쌓지 않는다 — 고르는 것은 줄, 화면을 떠나는 것만 버튼
 - **card-general:** `canvas` 배경 · `line-strong` **1px 점선** · 머리줄에 도메인 칩 + "또래 기준 일반 추천" 라벨 + 기록 건수 **필수** · 제안 문장 `body`/`ink` · 기준 문구 `body-sm`/`ink-muted`. **고르는 버튼이 없다** — 승인 게이트 ㉠ 은 되돌릴 수 없는 캘린더 쓰기인데 이 추천은 이 아이의 기록에서 나온 것이 아니다
 - **card-failed:** `surface-muted` · `ink-muted` · 재시도는 tertiary 버튼
+- **card-photo (08):** 4:3 이미지가 위, `line` 1px 아래로 그 사진에서 읽어낸 것이 이어 붙는 **한 덩어리**. 확인 단계에서만 `accent` 이고 저장한 뒤에는 기본 테두리로 돌아온다. 사진이 없을 때의 빈 4:3 칸은 **주된 경로가 아니다** — 사진은 03 홈·09 캘린더에서 시트로 고르고 08 에는 이미 들고 들어온다. 🚨 점선 드롭존을 만들지 않는다(점선은 card-general 과 오래된 근거 칩이 이미 가져간 뜻이다). 🚨 **"승인 전에는 저장되지 않아요" 라벨에 `caution` 을 쓰지 않는다** — `caution` 은 승인 게이트 2곳 전용이고 08 의 저장은 `event` 를 draft 로만 만들어서 게이트가 아니다
+- **고르는 시트 (08 사진):** **두 단계** — ㉠ 어떤 사진인가(알림장·식단표 / 아이 활동 사진) → ㉡ 어디서 가져오나(최근 사진 줄 + 촬영·앨범). 🚨 **한 화면에 쌓지 않는다** — 셋을 한 화면에 세우고 앞을 안 고르면 뒤를 비활성으로 두는 방식은, 할 일이 하나인 순간에 세 덩어리를 보여 주고 "왜 안 눌리지" 를 먼저 묻게 만들었다. **시트 제목이 지금 묻는 것**이고, ㉠ 은 확인 버튼 없이 고르면 바로 ㉡ 이라 오른쪽 쉐브론이 붙는다. 되돌아가는 길은 ㉡ 맨 위 tertiary + **왼쪽 쉐브론**. 최근 사진은 가로로 밀고 **네이티브 셸이 있을 때만 선다**. 🚨 두 단계가 같은 줄 모양을 쓴다(모양이 갈리면 다른 화면에 떨어진 것처럼 읽힌다). 🚨 카드로 만들지 않는다(시트 안의 카드 안의 카드). 🚨 비활성은 타일을 뉴트럴로 — 브랜드색을 흐리게 만들지 않는다. 모든 시트에 닫는 버튼을 세운다(웹뷰에는 ESC 가 없다) — 아직 시작한 것이 없으면 "취소" 가 아니라 "닫기" 다
 - 🚨 **개인화(suggestion-row)와 card-general 을 같은 컴포넌트로 만들지 않는다.** 한 컴포넌트에 플래그를 넣으면 언젠가 근거 0건인데 개인화로 그려진다. 타입도 응답 필드도 따로다 — GeneralSuggestion 에는 evidence 필드가 아예 없고, 응답에서도 suggestions 와 general 로 갈린다
 - **고르기 상자:** **직접 만든 드롭다운**이다(네이티브 `<select>` 는 닫혀 있을 때 말고 생김새를 못 정해서 쓰지 않는다). 닫힘 `surface` + `line-strong` 1px + full + `min-h-touch` + 쉐브론, 펼치면 `radius-card` 패널에 고른 항목만 `brand-soft` + `brand-ink` + 체크. 🚨 **여는 동작이 만든 스크롤에 닫히지 않는다** — 여는 포커스는 `preventScroll`, 스크롤 감시는 한 프레임 뒤에, 목록 자신의 스크롤은 제외. 안 그러면 스크롤되는 면 안에서 "눌렀는데 아무 일도 안 일어난다". 🚨 직접 만든 대신 접근성이 전부 우리 책임이다 — `combobox`+`listbox` ARIA · 열 때 포커스가 들어가고 **닫을 때 버튼으로 돌아온다** · ESC·바깥 클릭·Tab·스크롤에 닫힌다 · 방향키/Home/End · 그림자 없이 `line-strong` 로 뜬 면 · 애니메이션과 쉐브론 회전 없음 · 라벨을 지우지 않는다
 - **07 필터:** 계약서가 주는 것만 만든다(기록 `domain`·`unused_in_suggestions`, 기억 `domain`·`state`). 🚨 **정렬을 만들지 않는다** — 정렬 파라미터가 없고 커서 페이지네이션이라 받아 온 쪽만 정렬하면 다음 장에서 순서가 어긋난다. 🚨 기억 상태 필터에 `archived` 를 두지 않는다(교정을 되돌리는 기능을 주지 않기로 했다)
@@ -457,9 +466,9 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **캘린더 그리드(09):** `react-day-picker` 위에 얹고 기본 CSS 를 안 불러온다. 날짜 칸은 숫자 한 단 + 표식 줄 한 단. 표식 4종은 **색이 아니라 모양**이다 — 가로 막대(일정) · 찬 점(기록) · 빈 네모(일기) · 빈 고리(기억 변화), 전부 `currentColor`. 🚨 **네 모양이 한 가족이어야 한다** — 기울어진 것을 두지 않는다(수직·수평뿐인 화면에서 대각선 하나가 혼자 튄다). 구분은 비율 > 채움 > 각짐 순으로 잡고 어느 두 짝도 두 축 이상에서 갈린다. 🚨 표식 크기는 rem 으로 준다(px 로 박으면 글자 확대에서 크기 서열이 뒤집힌다). 🚨 모양도 단독 신호가 될 수 없어서 그리드 아래 **범례**와 칸의 `aria-label` 이 같은 말을 한다. 🚨 오늘은 `brand` 글자색 + `brand` 테두리 둘 다 받는다. 🚨 `DayButton` 을 덮어쓰면 라이브러리가 하던 **포커스 이동(effect)** 을 같이 가져오고, `components` 는 **모듈 상수**로 둔다 — 안 그러면 방향키가 죽고 날을 고를 때마다 포커스가 날아간다
 - **브랜드색이 서는 자리:** 섹션 라벨 · 먼저 읽는 숫자 · 아이콘 타일/빈 상태 아이콘 · `card-accent` 테두리 · 주 버튼. 🚨 `brand-soft` 로 큰 면을 칠하지 않는다 — 제안이 앉는 색 면은 **도메인 색**이고, 고르는 버튼만 브랜드다("어디서 왔나" 와 "무엇을 하는가" 를 같은 색으로 쓰지 않는다)
 
-> **아직 구현되지 않은 것** — `card-photo` 하나다 (08 사진 화면 이슈에서 만든다).
+> **§7 의 컴포넌트가 전부 구현됐다.**
 > `card-general`(일반 추천)은 화면을 만들었고 목으로 돌아간다 — 남은 것은 계약서에 `SuggestionsResponse.general` 과 `kind` 를 넣는 협의뿐이다 (`docs/web/design-system-v1.md` §14).
-> 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `EvidenceChip`/`CountChip` · `DomainChip`/`DomainMeta` · `Card`/`CardFailed` · `Banner` · `Spinner` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `DomainIcon` · `Tabs` · `MonthGrid`/`DayMarkLegend` 이다.
+> 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `EvidenceChip`/`CountChip` · `DomainChip`/`DomainMeta` · `Card`/`CardFailed` · `Banner` · `Spinner` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `DomainIcon` · `Tabs` · `MonthGrid`/`DayMarkLegend` · `PhotoCard`/`PhotoSlotButton` 이다.
 
 ## Do's and Don'ts
 

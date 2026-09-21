@@ -112,6 +112,7 @@ function CreateChildScreen() {
         />
 
         <DateField
+          placeholder="생일을 골라주세요"
           label="생일"
           hint="나이는 생일을 보고 서버가 계산해요."
           value={birthDate}

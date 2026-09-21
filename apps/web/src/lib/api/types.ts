@@ -521,6 +521,96 @@ export interface SuggestionListResponse {
   next_cursor: string | null;
 }
 
+/* ── 08 사진으로 적기 ────────────────────────────────────────────────── */
+
+/**
+ * 사진 한 장을 어느 쪽으로 읽을지 (계약서 §09).
+ *
+ * 🚨 **도메인(`Agent`)이 아니다.** `document` 는 기관이 써 준 글자를 읽는 것이고
+ *    `activity` 는 아이가 무엇을 했는지 태그만 뽑는 것이라, 뒤따르는 규칙이 통째로 다르다.
+ *    도메인 색을 여기 쓰지 않는 이유이기도 하다.
+ */
+export const PHOTO_LANES = ["document", "activity"] as const;
+export type PhotoLane = (typeof PHOTO_LANES)[number];
+
+/**
+ * 사진 한 장에서 읽어낸 **항목 하나** (문서 lane).
+ *
+ * ⚠️ **계약서 v1 에 없는 모양이다.** §09 의 `parsed.extracted` 는 `items` · `when` 하나뿐이라
+ *    **항목 한 개**만 담을 수 있는데, 실제로 들어오는 것은 그렇지 않다 — 알림장 한 장에 일정이
+ *    여러 개 적혀 있고, 식단표는 거의 **한 달치**가 한 장이다. 배열이 아니면 화면이 첫 개만
+ *    보여주거나 전부 한 덩어리로 뭉개야 한다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ *
+ * 🚨 **활동 lane 과 한 배열에 섞지 않는다.** 활동은 날짜도 준비물도 없는 태그라
+ *    `ParsedEvent.tags` 로 따로 온다 — 모양이 다른 둘을 한 필드에 넣으면 화면이 플래그로
+ *    갈라야 하고, 그러면 저장 경로가 섞인다 (일반 추천과 개인화 추천을 안 섞는 것과 같은 규칙).
+ */
+export const PHOTO_ENTRY_KINDS = ["event", "supply", "meal"] as const;
+export type PhotoEntryKind = (typeof PHOTO_ENTRY_KINDS)[number];
+
+export interface PhotoEntry {
+  id: string;
+  kind: PhotoEntryKind;
+  /** 화면에 그대로 세우는 한 줄. 서버가 만든 문구다. */
+  title: string;
+  /** `YYYY-MM-DD`. 🚨 **못 읽었으면 `null`** — 프론트가 오늘로 채우지 않는다. */
+  date: string | null;
+  all_day?: boolean;
+  /** 준비물처럼 딸린 항목. 없으면 빈 배열. */
+  items: string[];
+  /**
+   * 🚨 **확인이 필요한가.** 값을 못 읽었거나 서버가 자신이 없을 때 참이다.
+   *    화면은 이 값 하나로 위(확인이 필요해요)와 아래(잘 읽었어요)를 가른다.
+   */
+  needs_review: boolean;
+  /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
+  review_reason?: string;
+}
+
+/**
+ * `POST /photo-runs/{rid}/commit` — 🚨 **사진 흐름에서 저장이 일어나는 유일한 지점.**
+ * 여기 오기 전까지는 아무것도 저장되지 않는다.
+ *
+ * 🚨 **승인 게이트가 아니다.** 문서 lane 이 만드는 `event` 는 `draft` 고, 캘린더에 쓰는
+ *    되돌릴 수 없는 지점은 여전히 `POST /events/{eid}/confirm` 하나다 (CLAUDE.md §2 —
+ *    승인 게이트를 늘리지도 줄이지도 않는다). 그래서 이 화면은 `btn-approve` 도 `caution` 도 쓰지 않는다.
+ *
+ * ⚠️ 계약서 §01 의 Idempotency 목록에 이 엔드포인트가 없다. 관찰을 만드는 쓰기라 두 번 보내면
+ *    두 번 쌓일 수 있다 — 화면은 보내는 동안 버튼을 잠그지만 네트워크 재시도까지 막지는 못한다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ */
+export interface PhotoCommitRequest {
+  lane: PhotoLane;
+  /**
+   * 문서 lane — **보호자가 확인한 항목만** 간다 (고친 값이 실려 있다).
+   * 🚨 확인하지 않은 항목(`needs_review` 인 채로 둔 것)은 **빼고 보낸다.** 값을 못 읽은 것을
+   *    그대로 저장하면 "승인 전에는 저장되지 않아요" 가 문구만 남는다.
+   * ⚠️ 계약서 v1 의 `selected_items`(문자열 배열)를 대신한다 — `PhotoEntry` 의 ⚠️ 참고.
+   */
+  entries?: PhotoEntry[];
+  /** 활동 lane — 보호자가 고른 태그. 🚨 **고른 것만** 간다. */
+  selected_tags?: string[];
+  /**
+   * 문서 lane 이면 "읽어낸 일시로 일정 초안까지 만들까", 활동 lane 이면 "사진을 그날 캘린더에
+   * 함께 남길까" 다 — 한 필드가 lane 에 따라 다른 뜻을 나른다 (계약서 §09 부수 효과 표).
+   */
+  attach_to_calendar: boolean;
+}
+
+/**
+ * 🚨 문서에서 읽은 것은 `confidence_source: "institution_notice"` 로 고정된다.
+ *    기관 공지가 보호자 발화로 들어가면 출처 추적이 끊긴다 (계약서 §09).
+ * 🚨 활동 lane 의 태그는 `affinity_id` 를 달지 않는다 — 사진 한 장을 성향으로 확정하지 않는다.
+ */
+export interface PhotoCommitResponse {
+  observations: Observation[];
+  /** 문서 lane 에서 일시를 읽어냈을 때만 온다. `status` 는 `draft` 다. */
+  event: CalendarEvent | null;
+  /** YYYY-MM-DD. 저장 뒤 "캘린더에서 보기" 가 여는 날짜다 — 프론트가 계산하지 않는다. */
+  calendar_date: string | null;
+}
+
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
 /** `GET /children/{cid}/calendar?month=YYYY-MM` 의 한 칸. */

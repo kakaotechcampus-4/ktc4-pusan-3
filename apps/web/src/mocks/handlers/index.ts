@@ -2,12 +2,13 @@ import { authHandlers } from "./auth";
 import { calendarHandlers } from "./calendar";
 import { childrenHandlers } from "./children";
 import { memoryHandlers } from "./memories";
+import { photoHandlers } from "./photos";
 import { profileHandlers } from "./profile";
 import { runHandlers } from "./runs";
 import { suggestionHandlers } from "./suggestions";
 
 /**
- * 화면 01~07 · 09 · 11 이 쓰는 엔드포인트. 08 사진 · 10 설정은 다음 이슈다.
+ * 화면 01~09 · 11 이 쓰는 엔드포인트. 10 설정은 다음 이슈다.
  * 여기 없는 경로는 onUnhandledRequest 가 콘솔에 경고로 알려준다.
  *
  * 🚨 **순서가 뜻을 갖는 자리가 하나 있다.** `suggestionHandlers` 의
@@ -24,6 +25,9 @@ export const handlers = [
   //    충돌하지는 않는다 — 다만 순서가 뜻을 갖는 자리(아래 주석)와 같은 파일이라 붙여 둔다.
   ...profileHandlers,
   ...runHandlers,
+  // 🚨 `GET /runs/{rid}/events` 는 `runHandlers` 한 곳에만 있다 — 사진 run 은 그 안에서 갈린다
+  //    (`handlers/photos.ts` 의 주석). 여기에 같은 경로를 또 등록하지 않는다.
+  ...photoHandlers,
   ...suggestionHandlers,
   ...memoryHandlers,
   ...calendarHandlers,

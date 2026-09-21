@@ -57,6 +57,12 @@ export function DateField({
   fromDate,
   /** 고를 수 있는 가장 늦은 날. 생일이면 오늘. */
   toDate,
+  /**
+   * 비어 있을 때의 문구. 🚨 **화면마다 고르는 날의 뜻이 다르다** — 01 은 생일이고 08 은
+   *    알림장에서 읽은 일시라, 한 문구를 박아 두면 다른 화면에서 거짓말이 된다
+   *    (실제로 08 의 "언제" 칸에 "생일을 골라주세요" 가 떴다).
+   */
+  placeholder = "날짜를 골라주세요",
 }: {
   label: string;
   hint?: string;
@@ -66,6 +72,7 @@ export function DateField({
   error?: string | null;
   fromDate: Date;
   toDate: Date;
+  placeholder?: string;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -103,7 +110,7 @@ export function DateField({
         )}
       >
         <span className={cn("text-body", selected ? "text-ink" : "text-ink-subtle")}>
-          {value ? formatDateWithYear(value) : "생일을 골라주세요"}
+          {value ? formatDateWithYear(value) : placeholder}
         </span>
         <CalendarIcon
           aria-hidden

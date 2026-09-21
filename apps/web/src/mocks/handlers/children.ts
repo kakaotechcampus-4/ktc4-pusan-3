@@ -126,17 +126,8 @@ export const childrenHandlers = [
     }),
   ),
 
-  /**
-   * 09 사진. 화면은 다음 이슈지만 되돌릴 수 없는 5개에 들어 있어서 여기 둔다 —
-   * 표(lib/api/idempotency.ts)에 있는 경로는 목에도 있어야 계약 회귀 테스트가 성립한다.
-   */
-  http.post(
-    url("/children/:cid/photos"),
-    withIdempotency(async () => {
-      await networkDelay(400);
-      return HttpResponse.json({ run_id: `pr_${Date.now()}` }, { status: 202 });
-    }),
-  ),
+  // 🚨 `POST /children/{cid}/photos` 는 여기 없다 — 08 화면이 생기면서
+  //    `handlers/photos.ts` 로 옮겼다 (run 등록부를 그 파일이 들고 있어야 SSE 가 갈린다).
 
   http.get(url("/children/:cid/home"), async () => {
     await networkDelay();

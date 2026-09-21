@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 import { setAuthToken } from "@/lib/api/client";
 import { useDraftStore } from "@/stores/draft";
+import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 
 /**
@@ -50,9 +51,11 @@ export const useSessionStore = create<SessionState>()(
       },
       signOut: () => {
         setAuthToken(null);
-        // 🚨 아직 안 보낸 입력에는 아이 이야기가 그대로 들어 있다. 로그아웃하면 같이 지운다 —
+        // 🚨 아직 안 보낸 입력·사진에는 아이 이야기가 그대로 들어 있다. 로그아웃하면 같이 지운다 —
         //    메모리에만 있어도 다음 사람이 같은 탭을 쓰면 남의 아이 이야기가 보인다.
         useDraftStore.getState().clearAll();
+        // 🚨 고르고 아직 안 올린 사진도 같이 지운다 (`stores/photo-draft.ts` — 같은 이유다).
+        usePhotoDraftStore.getState().clearAll();
         // 🚨 넘기다 만 알레르기 검사지 사진도 같이 놓는다 (의료 기록이다 · 최상위 §2).
         //    여기서는 objectURL 까지 해제한다 — 탭이 사는 동안 메모리에 남지 않게.
         useSafetyScanDraftStore.getState().clearAll();
