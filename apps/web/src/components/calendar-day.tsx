@@ -2,16 +2,20 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarOff } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
+import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
+import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, qk } from "@/lib/api";
+import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
   CalendarDayUpdate,
@@ -32,8 +36,9 @@ import { formatEventTime } from "@/lib/format";
  *    사용자가 일기라고 쓴 것을 아이 성향으로 조용히 승격시키면 신뢰가 깨진다. 화면이 그 사실을
  *    말하고, 기억으로 남기는 길(홈의 한 줄)을 따로 알려준다.
  *
- * 🚨 **사진은 조회만 한다.** 넣는 것은 08 사진 화면 것이고 그 화면이 아직 없다 —
- *    아무 데도 안 가는 "사진으로 적기" 버튼을 만들지 않는다.
+ * 🚨 **사진을 여기서 올리지 않는다.** 넣는 것은 08 사진 화면(`/child/{cid}/photos?date=`)이고,
+ *    이 패널은 그 화면으로 가는 문 하나와 이미 남은 사진의 조회만 맡는다 — 사진은 읽어낸 것을
+ *    보호자가 확인해야 저장되는데(승인 전 저장 금지) 그 확인이 하루 패널에 들어갈 크기가 아니다.
  */
 export function CalendarDayPanel({
   childId,
@@ -56,6 +61,9 @@ export function CalendarDayPanel({
    * 세우는 쪽(09 화면)이 책임진다.
    */
   const [writing, setWriting] = useState(false);
+  const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
+  const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
+  const router = useRouter();
 
   const hasDiary = data.diary !== null && data.diary.text.trim() !== "";
   const nothing = data.events.length === 0 && data.observations.length === 0 && !hasDiary;
@@ -110,11 +118,33 @@ export function CalendarDayPanel({
         </Section>
       )}
 
-      {data.diary && data.diary.image_urls.length > 0 ? (
-        <Section title="이날의 사진">
+      {/* 🚨 일기 구역과 같은 규칙이다 — **빈 날에도 같은 모양으로** 선다. 사진이 있는 날에만
+          이 구역이 생기면 "그날 사진을 넣는 법" 이 날마다 달라져서, 빈 날에는 부모가 홈까지
+          올라가 카메라 버튼을 찾아야 한다. */}
+      <Section title="이날의 사진">
+        {data.diary && data.diary.image_urls.length > 0 ? (
           <Photos urls={data.diary.image_urls} />
-        </Section>
-      ) : null}
+        ) : null}
+        <div>
+          <Button variant="tertiary" size="compact" onClick={() => setPhotoSheetOpen(true)}>
+            사진으로 적기
+          </Button>
+        </div>
+        <p className="text-caption text-ink-subtle">
+          사진에서 읽어낸 것을 보여드리고, 승인해야 저장돼요.
+        </p>
+        {/* 🚨 홈과 **같은 시트**다. 사진을 고르는 방법이 화면마다 다르면 부모가 매번 다시 찾는다. */}
+        <PhotoSourceSheet
+          open={photoSheetOpen}
+          onClose={() => setPhotoSheetOpen(false)}
+          onPick={({ file, lane }) => {
+            putPhoto(childId, file, lane);
+            setPhotoSheetOpen(false);
+            // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
+            router.push(`/child/${childId}/photos?date=${date}`);
+          }}
+        />
+      </Section>
     </div>
   );
 }
@@ -188,11 +218,23 @@ function PreparedCheckbox({
   const toast = useToast();
   const key = qk.calendarDay(childId, date);
 
+  /**
+   * 🚨 이 준비물의 요청을 한 줄로 세운다. 낙관적 업데이트라 체크박스는 응답을 기다리지 않는데,
+   *    체크 → 해제를 빠르게 누르면 `true` · `false` 가 동시에 나가고 응답이 역전되면
+   *    **마지막 선택이 아닌 값이 서버에 남는다** (PR #71 리뷰). 체크박스를 잠그는 대신 줄을
+   *    세우는 이유는 위 주석과 같다 — 왕복을 기다리는 체크박스로는 가방을 못 싼다.
+   *
+   *    항목마다 하나씩이라 다른 준비물은 서로 기다리지 않는다 (`serial-queue.ts`).
+   */
+  const [queue] = useState(createSerialQueue);
+
   const toggle = useMutation({
     mutationFn: (isPrepared: boolean) =>
-      api.patch<EventItemUpdateResponse>(`/event-items/${item.item_id}`, {
-        is_prepared: isPrepared,
-      }),
+      queue.run(() =>
+        api.patch<EventItemUpdateResponse>(`/event-items/${item.item_id}`, {
+          is_prepared: isPrepared,
+        }),
+      ),
     onMutate: async (isPrepared) => {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<CalendarDayResponse>(key);
@@ -216,11 +258,15 @@ function PreparedCheckbox({
     //    없어서, 부모는 자기가 잘못 눌렀다고 생각한다. 체크박스 옆에는 문장이 들어갈 자리가
     //    없으므로 토스트가 그 자리를 받는다 (`ui/toast.tsx` 의 🚨 — 토스트가 맞는 유일한 자리다).
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      // 🚨 뒤에 기다리는 선택이 있으면 되돌리지 않는다. 되돌리면 방금 누른 값이 화면에서
+      //    한 번 뒤집혔다가 그 요청이 끝나고 다시 바뀐다 — 부모 눈에는 체크가 혼자 춤춘다.
+      if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
       toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: key });
+      // 🚨 줄의 **마지막** 요청만 재조회한다. 중간에 부르면 아직 뒤 요청이 반영되지 않은
+      //    서버 값을 받아, 방금 누른 선택을 화면에서 되돌린다.
+      if (queue.pending === 0) void queryClient.invalidateQueries({ queryKey: key });
     },
   });
 

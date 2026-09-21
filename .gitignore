@@ -94,3 +94,5 @@ apps/api/app/agents/test/**/*_results.jsonl
 
 # ── 로컬 구현 계획 (개발 과정 문서, 커밋 불필요) ──
 .impl-plan/
+apps/api/tests/**/*_result.txt
+apps/api/tests/**/*_results.jsonl

@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange
+from app.agents.common.datetime_rules import DateRange, EventWhen
 
 # observation 5테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
@@ -117,8 +117,13 @@ class MemoryStore(Protocol):
         observation_id: str,
         fields: dict[str, Any],
         observed_on: date | None = None,
+        clear: frozenset[str] = frozenset(),
     ) -> ObservationRow | None:
         """없으면 None.
+
+        fields: 변경할 값
+        값 비우기: clear(이름이 적힌 컬럼을 NULL로)
+        같은 이름이 fields 와 clear 에 같이 오지 않게 tool 스키마가 막음.
 
         observed_on 이 주어지면 관찰 일자까지 바꾼다. 호출자가 observed_range 도 함께 넘긴다.
         subject 계열이 바뀌면 embedding 재계산이 필요하다.
@@ -152,7 +157,19 @@ class MemoryStore(Protocol):
 
     async def get_event(self, *, event_id: str) -> EventRow | None: ...
 
-    async def update_event(self, *, event_id: str, fields: dict[str, Any]) -> EventRow | None: ...
+    async def update_event(
+        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
+    ) -> EventRow | None:
+        """없으면 None.
+
+        fields: 변경할 값(비울 수 있는 컬럼이 없어 clear 인자 없음)
+        종료 지우기: when.ends_at=None으로 들어옴(WhenPatch.drop_end)
+
+        시간 구간은 when 하나로 받는다.
+        시작·종료·all_day 는 함께 정해지는 값이라 한 덩어리로 오는 편이 안전하다
+        (datetime_rules.resolve_when 이 셋을 같이 계산한다).
+        """
+        ...
 
     async def delete_event(self, *, event_id: str) -> bool:
         """연결된 event_item 도 함께 제거 (ON DELETE CASCADE)."""
@@ -165,6 +182,8 @@ class MemoryStore(Protocol):
 
     async def update_event_item(
         self, *, item_id: str, fields: dict[str, Any]
-    ) -> EventItemRow | None: ...
+    ) -> EventItemRow | None:
+        """없으면 None. fields에는 바꿀 것만 담긴다."""
+        ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...

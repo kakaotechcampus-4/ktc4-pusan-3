@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
@@ -25,6 +26,10 @@ const TONE: Record<IconButtonTone, string> = {
     "bg-brand text-white hover:bg-brand-hover active:bg-brand-hover disabled:bg-surface disabled:text-ink-subtle disabled:border disabled:border-line",
 };
 
+/** 두 컴포넌트가 나눠 쓰는 모양. 🚨 한 벌로 둔다 — 두 벌이 되면 한쪽만 고쳐진다. */
+const SHAPE =
+  "h-touch ease-standard flex aspect-square shrink-0 items-center justify-center rounded-full transition-colors duration-120";
+
 interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
   /** 스크린리더가 읽을 이름. 눈에 보이지 않으므로 생략할 수 없다. */
   label: string;
@@ -45,14 +50,41 @@ export function IconButton({
       type={type}
       aria-label={label}
       title={label}
-      className={cn(
-        "h-touch ease-standard flex aspect-square shrink-0 items-center justify-center rounded-full transition-colors duration-120",
-        TONE[tone],
-        className,
-      )}
+      className={cn(SHAPE, TONE[tone], className)}
       {...props}
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * 아이콘만 있는 **링크**. 화면 왼쪽 위의 돌아가기 화살표가 이것이다.
+ *
+ * 🚨 **`<button onClick={router.back()}>` 로 만들지 않는다.** 뒤로가기 히스토리는 **어디서
+ *    왔는지에 따라 달라진다** — 알림이나 링크로 이 화면에 바로 들어오면 돌아갈 데가 없다.
+ *    가는 곳을 `href` 로 못박으면 어디서 왔든 같은 자리로 간다. `<a>` 라서 웹뷰 뒤로가기·
+ *    길게 누르기 같은 브라우저 관례도 그대로 붙는다 (`ButtonLink` 와 같은 이유).
+ *
+ * 🚨 `label` 은 여기서도 필수다 — 글자가 없으니 스크린리더에 남는 것이 그것뿐이다.
+ *    **"뒤로" 가 아니라 가는 곳을 적는다** ("설정으로 돌아가기").
+ */
+export function IconButtonLink({
+  href,
+  label,
+  tone = "ghost",
+  className,
+  children,
+}: {
+  href: string;
+  label: string;
+  tone?: IconButtonTone;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link href={href} aria-label={label} title={label} className={cn(SHAPE, TONE[tone], className)}>
+      {children}
+    </Link>
   );
 }

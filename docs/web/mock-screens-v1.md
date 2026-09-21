@@ -30,11 +30,23 @@ location.replace("/");
 | 04 진행 · 저장 결과 | 03 에서 한 줄 적고 남기기 (04 는 별도 주소가 없다) |
 | 04 실패 · 원문 복원 | `/child/c1/home?scenario=failed` 에서 한 줄 남기기 |
 | 04 부분 결과 | `/child/c1/home?scenario=partial` 에서 한 줄 남기기 |
+| 04 결과 못 받음 (저장 여부 모름) | `/child/c1/home?scenario=disconnected` 에서 한 줄 남기기 |
 | 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
 | 05 · 근거 부족 (일반 추천 1건 + 질문 1개) | 위 주소에 `&scenario=scarcity` |
 | 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` |
 | 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
 | 06 승인 시트 | 05 에서 "이걸로" (시트라 주소가 없다) |
+| 07 기록 · 기억 | `/child/c1/memories` (`?tab=profile` · `?tab=feedback` · `?domain=food`) |
+| 08 사진으로 적기 | 03 홈의 카메라 버튼 → 시트에서 **어떤 사진인지 고르고** → 최근 사진·촬영·앨범 |
+| 08 · 알림장으로 읽기 | 시트에서 "알림장·식단표" 를 고른다 (아무 이미지 파일이나 넣으면 된다) |
+| 08 · 아이 활동 사진으로 읽기 | 시트에서 "아이 활동 사진" 을 고른다 — 태그가 **하나도 안 골라진** 채로 시작한다 |
+| 08 · 최근 사진 줄 | 목을 켜면 가짜 썸네일이 채워진다. 실제로는 `apps/mobile` 셸이 꽂는다 (웹은 갤러리를 못 읽는다) |
+| 08 · 직접 들어온 경우 | `/child/c1/photos` — 넘겨받은 사진이 없어서 고르는 칸이 선다 |
+| 08 · 읽어낼 게 없는 사진 | `/child/c1/photos?scenario=photo_unreadable` |
+| 08 · 한 달치 식단표 | `?scenario=photo_meal_plan` — 항목 21건. 잘 읽은 것이 접히고, 펼치면 목록 안에서 스크롤한다 |
+| 08 · 고른 종류와 다르게 읽힘 | `?scenario=photo_lane_mismatch` — **화면에는 차이가 없다.** 계약 테스트용이다 (추측이 선언을 덮지 않는지) |
+| 08 · 캘린더의 하루에서 들어온 경우 | `/child/c1/photos?date=2026-09-12` 또는 09 하루 패널의 "사진으로 적기" |
+| 09 캘린더 | `/child/c1/calendar` (`?date=YYYY-MM-DD`) |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 

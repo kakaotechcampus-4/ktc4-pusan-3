@@ -1,12 +1,13 @@
 from pathlib import Path
 
-from pydantic import ValidationError, ValidationInfo, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import ValidationError, ValidationInfo, field_validator, model_validator
+
+from app.core.agent_config import AgentLLMSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
-class Settings(BaseSettings):
+class Settings(AgentLLMSettings):
     APP_ENV: str = "local"
     APP_NAME: str = "ktc4-pusan-3-api"
 
@@ -15,21 +16,6 @@ class Settings(BaseSettings):
     DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
-
-    MEMORY_API_KEY: str | None = None
-    MEMORY_BASE_URL: str | None = None
-    MEMORY_MODEL: str | None = None
-    MEMORY_REASONING_EFFORT: str | None = None
-
-    SUPERVISOR_API_KEY: str | None = None
-    SUPERVISOR_BASE_URL: str | None = None
-    SUPERVISOR_MODEL: str | None = None
-    SUPERVISOR_REASONING_EFFORT: str | None = None
-
-    FOOD_API_KEY: str | None = None
-    FOOD_BASE_URL: str | None = None
-    FOOD_MODEL: str | None = None
-    FOOD_REASONING_EFFORT: str | None = None
 
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
@@ -42,10 +28,13 @@ class Settings(BaseSettings):
 
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
     #
-    # 🚨 카카오 값은 전부 Optional 이다. 키가 없어도 서버는 떠야 한다.
-    #    ① GET /auth/{provider}/status 가 ready: false 를 내려 프론트가 버튼을
-    #       비활성화하는 구조다 (§3-1 · 테스트 A-20). 부팅을 막으면 그 화면 자체가 없다.
-    #    ② 카카오 키를 못 받은 팀원도 나머지 API 를 띄워 쓸 수 있어야 한다.
+    # 🚨 개발 환경에서만 Optional 이다. prod 는 없으면 서버가 뜨지 않는다 (#97).
+    #    ① local · dev — 키가 없어도 뜬다. GET /auth/{provider}/status 가 ready: false 를
+    #       내려 프론트가 버튼을 비활성화하고(§3-1 · A-20), 키를 못 받은 팀원도 나머지
+    #       API 를 띄워 쓸 수 있다.
+    #    ② prod — 키가 없으면 아무도 로그인할 수 없는 서비스가 조용히 배포되고, 그 사실을
+    #       사용자가 먼저 발견한다. 복귀 URL 과 같은 이유로 부팅에서 끊는다 (아래 검증).
+    #       원래 ①의 근거는 개발 편의뿐이었다 — 운영에는 적용되지 않는다 (멘토 리뷰, #71).
     KAKAO_REST_API_KEY: str | None = None
     KAKAO_CLIENT_SECRET: str | None = None
     KAKAO_CALLBACK_URL: str | None = None
@@ -86,6 +75,37 @@ class Settings(BaseSettings):
                 "없으면 인증이 성립하지 않는다 (예: http://localhost:3000/auth/callback)"
             )
         return raw
+
+    @model_validator(mode="after")
+    def _require_kakao_keys_in_prod(self) -> "Settings":
+        """🚨 운영에서는 카카오 키가 없으면 서버가 뜨지 않는다 (#97).
+
+        local · dev 는 막지 않는다. 키를 못 받은 팀원이 나머지 API 를 띄워 쓰기 위해서다.
+
+        dev 를 뺀 이유 — **아직 dev 환경이 없다** (배포 도메인 미정). 지금 정하면
+        추측이고, 추측이 빗나갔을 때 손해가 한쪽으로 크다.
+
+            막았는데 키 없이 써야 하는 곳이었다면
+                → 팀이 가짜 키를 넣어 우회한다. 그 뒤로 이 검증은 아무도 안 믿는다.
+            열었는데 운영 리허설 자리였다면
+                → 키 누락을 prod 배포에서 알게 된다. 늦지만 사용자에게 가기 전이다.
+
+        아래쪽이 덜 나쁘다. 그래서 열어 둔다.
+
+        🚨 dev 서버가 생기면 다시 판단한다. 조건에 "dev" 를 더하면 된다.
+
+        운영은 다르다. 키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채
+        배포가 끝나고, 서비스가 성립하지 않는다는 사실을 사용자가 먼저 발견한다.
+
+        빠진 키 이름을 메시지에 싣는다 — 부팅 로그는 배포자만 본다 (응답에 싣지
+        않는 것은 kakao_missing_keys 의 주석 참고).
+        """
+        if self.APP_ENV == "prod" and self.kakao_missing_keys:
+            raise ValueError(
+                f"운영 환경인데 카카오 설정이 비어 있다: {', '.join(self.kakao_missing_keys)}. "
+                "이대로 뜨면 로그인 버튼만 꺼진 채 배포된다"
+            )
+        return self
 
     @field_validator("CORS_ALLOW_ORIGINS")
     @classmethod
