@@ -509,3 +509,48 @@ async def test_수정_초안의_before_는_DB_원본이다(context: AgentContext
     assert draft.before.starts_at == SEEDED_START
     assert [item.item_name for item in draft.before.items] == ["체육복"]
     assert draft.title == "가을 운동회"  # 초안 쪽은 바뀐 값이다
+
+
+# ── 제출 API 가 기대는 불변식 (BE 리뷰) ─────────────────────────
+async def test_초안의_item_id_는_겹치지_않는다(context: AgentContext) -> None:
+    # 제출 API 가 item_id 로 UPDATE 대상을 고른다. 겹치면 같은 행을 두 번 고친다
+    event_id = await _seed_event(context, "체육복", "물통")
+
+    await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "item_name": "체육복 상의"}, context
+    )
+    await execute_tool(
+        "update_event_item", {"item_id": "event_item-2", "is_prepared": True}, context
+    )
+    await _update(context, event_id, starts_time="오후 5시")
+    await execute_tool("create_event_item", {"event_id": event_id, "item_name": "모자"}, context)
+
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    saved = [item.item_id for item in draft.items if item.item_id is not None]
+    assert saved == sorted(set(saved))  # 겹치지도, 사라지지도 않는다
+    assert [item.item_name for item in draft.items] == ["체육복 상의", "물통", "모자"]
+
+
+async def test_같은_준비물을_두_번_고쳐도_항목은_하나다(context: AgentContext) -> None:
+    event_id = await _seed_event(context, "체육복")
+
+    for name in ("A", "B"):
+        result = await execute_tool(
+            "update_event_item", {"item_id": "event_item-1", "item_name": name}, context
+        )
+        assert result.success is True, result.error
+
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert [(item.item_id, item.item_name) for item in draft.items] == [("event_item-1", "B")]
+
+
+async def test_새_일정_초안도_items_를_갖는다(context: AgentContext) -> None:
+    # 제출 API 가 event_id 유무로 먼저 분기하면 이쪽 items 를 빠뜨린다
+    await _create_event(context, items=["수영복", "여벌옷"])
+
+    draft = context.drafts.all()[0]
+    assert draft.event_id is None
+    assert all(item.item_id is None for item in draft.items)
+    assert len(draft.items) == 2

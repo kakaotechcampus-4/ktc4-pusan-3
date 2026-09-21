@@ -67,6 +67,8 @@ class EventDraft:
     payload에는 싣지 않지만, tool 결과와 "바뀐 게 없으면 초안을 만들지 않는다" 판정에는 그대로 쓴다.
 
     # TODO: 제출 API는 items를 최종 목록으로 읽고, 배열에 없는 기존 item_id는 삭제.
+    #   create 초안도 items를 가짐(다만 전부 item_id=None). event_id 유무로 먼저 분기하면
+    #   새 일정의 준비물을 빠뜨린다. 분기는 event_id가 아니라 item_id로 한다.
     """
 
     op: DraftOp
