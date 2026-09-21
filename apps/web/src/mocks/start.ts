@@ -29,6 +29,11 @@ async function run(): Promise<void> {
 
   syncScenarioFromUrl();
 
+  // 최근 사진은 API 가 아니라 네이티브 셸이 꽂는 값이라 MSW 가 가로챌 대상이 없다.
+  // 같은 스위치로 함께 켠다 — 스위치가 둘이면 "왜 안 보이지" 를 두 군데서 찾게 된다.
+  const { startNativeBridgeStub } = await import("./native-bridge");
+  startNativeBridgeStub();
+
   const { worker } = await import("./browser");
 
   await worker.start({
