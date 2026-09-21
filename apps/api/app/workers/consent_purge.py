@@ -21,8 +21,6 @@ async def purge_expired_retentions(session: AsyncSession, *, now: datetime) -> i
     현재 시각은 호출자가 넘긴다 — 배치가 직접 시계를 읽으면 테스트가 실제 시각에
     묶인다 (policy repository 의 find_active_version 과 같은 이유).
     """
-    result = await session.execute(
-        delete(ConsentRetention).where(ConsentRetention.purge_at <= now)
-    )
+    result = await session.execute(delete(ConsentRetention).where(ConsentRetention.purge_at <= now))
     await session.flush()
     return result.rowcount

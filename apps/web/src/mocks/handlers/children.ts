@@ -1,5 +1,7 @@
 import { http, HttpResponse } from "msw";
 
+import type { HealthSafety } from "@/lib/api/types";
+
 import {
   affinities,
   CHILD_ID,
@@ -7,21 +9,38 @@ import {
   emptyHome,
   healthSafety,
   home,
+  hoursFromNow,
   newHealthSafety,
   observations,
+  safetyScan,
   staleAffinities,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 
-/** 새 요청으로 같은 항목을 또 넣는 것을 막는다 (키 재시도와는 다른 경로다). */
-const registeredSafety = new Set(healthSafety.map((item) => `${item.type}:${item.label}`));
+/**
+ * 등록된 안전 정보. 🚨 **예전에는 Set 하나였다** — 등록 여부만 알면 409 를 낼 수 있어서였다.
+ * 11 아이 프로필이 목록을 읽고 회수까지 하면서, `GET` 이 방금 등록한 항목을 돌려주지 않으면
+ * 화면이 "저장됐다는데 목록에 없다" 로 보인다. 그래서 목이 **실제 목록을 들고 있는다.**
+ *
+ * 🚨 회수는 행을 지우지 않는다 — 계약서는 `state = 'retracted'` 로의 전환이라고 정했다.
+ *    목록·사용에서 빠지는 것은 `active` 필터가 하고, 행은 남는다 (증빙).
+ */
+interface SafetyRow {
+  safety: HealthSafety;
+  retracted: boolean;
+}
+
+let safetyState: SafetyRow[] = healthSafety.map((safety) => ({ safety, retracted: false }));
+
+function activeSafety(): HealthSafety[] {
+  return safetyState.filter((row) => !row.retracted).map((row) => row.safety);
+}
 
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
-export function resetRegisteredSafety(): void {
-  registeredSafety.clear();
-  for (const item of healthSafety) registeredSafety.add(`${item.type}:${item.label}`);
+export function resetSafetyState(): void {
+  safetyState = healthSafety.map((safety) => ({ safety, retracted: false }));
 }
 
 /** 01·02 첫 진입 · 온보딩, 03 홈. */
@@ -93,13 +112,17 @@ export const childrenHandlers = [
       if (currentScenario() === "consent") return consentRequired("child_health");
 
       const body = (await request.json()) as { type: string; label: string; category?: string };
-      const key = `${body.type}:${body.label}`;
-      if (registeredSafety.has(key)) {
+      const exists = safetyState.some(
+        (row) => !row.retracted && row.safety.type === body.type && row.safety.label === body.label,
+      );
+      if (exists) {
         return apiError(409, "already_exists", "이미 등록된 항목이에요");
       }
-      registeredSafety.add(key);
 
-      return HttpResponse.json({ safety: newHealthSafety(body) }, { status: 201 });
+      const safety = newHealthSafety(body);
+      safetyState = [{ safety, retracted: false }, ...safetyState];
+
+      return HttpResponse.json({ safety }, { status: 201 });
     }),
   ),
 
@@ -131,6 +154,74 @@ export const childrenHandlers = [
 
   http.get(url("/children/:cid/health-safety"), async () => {
     await networkDelay();
-    return HttpResponse.json({ items: healthSafety, updated_at: daysAgo(3) });
+    if (currentScenario() === "empty") return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
+    return HttpResponse.json({ items: activeSafety(), updated_at: daysAgo(3) });
+  }),
+
+  /**
+   * 11 알레르기 검사지 읽기. ⚠️ **계약서 v1 에 없다** (이슈 #86).
+   *
+   * 🚨 **저장하지 않는다.** 검사지에 적힌 것을 옮겨 오기만 하고, 저장은 보호자가 승인한 뒤
+   *    바로 위 `POST /health-safety`(승인 게이트 ㉡) 가 한다 — 쓰기 경로는 여전히 하나다.
+   *    그래서 `withIdempotency` 로 감싸지 않는다 (되돌릴 수 없는 5개에 이 경로가 없다).
+   *
+   * 🚨 **못 읽은 칸을 채워 보내지 않는다.** `null` 로 내리고 화면이 그 자리를 비운다 —
+   *    LLM 이 건강 정보를 추론하지 않는다는 규칙이 여기서 지켜지거나 깨진다 (최상위 §2).
+   */
+  http.post(url("/children/:cid/health-safety/scan"), async () => {
+    // 사진을 읽는 시간. 스피너와 "읽고 있어요" 가 실제로 보이려면 짧으면 안 된다.
+    await networkDelay(1400);
+    if (currentScenario() === "consent") return consentRequired("child_health");
+    return HttpResponse.json(safetyScan);
+  }),
+
+  /**
+   * 🚨 승인 게이트 ㉡ — **고치기.** ⚠️ 계약서 v1 에 없다 (이슈 #87).
+   *
+   * 🚨 **`type` · `label` 은 받지 않는다.** 그 둘은 이 기록의 정체고, 바꾸는 것은 고치기가 아니라
+   *    다른 기록이다 — `UNIQUE(child_id, type, label)` 이 같이 흔들린다. 보내 오면 400 이다.
+   * 🚨 `severity: null` 은 "모르겠어요 로 되돌리기" 다. 키를 안 보내는 것(그대로 두기)과 다르다.
+   */
+  http.patch(url("/children/:cid/health-safety/:id"), async ({ request, params }) => {
+    await networkDelay(320);
+    if (currentScenario() === "consent") return consentRequired("child_health");
+
+    const body = (await request.json()) as Record<string, unknown>;
+    if ("type" in body || "label" in body) {
+      return apiError(400, "validation_failed", "종류와 이름은 고칠 수 없어요");
+    }
+
+    const row = safetyState.find((item) => item.safety.id === params.id);
+    if (!row || row.retracted) return apiError(404, "not_found", "이미 내려간 기록이에요");
+
+    row.safety = {
+      ...row.safety,
+      ...(body.category !== undefined ? { category: String(body.category) } : {}),
+      ...("severity" in body
+        ? { severity: body.severity === null ? null : String(body.severity) }
+        : {}),
+      ...(Array.isArray(body.reactions) ? { reactions: body.reactions.map(String) } : {}),
+      ...("notes" in body ? { notes: body.notes === null ? null : String(body.notes) } : {}),
+      updated_at: hoursFromNow(0),
+    };
+
+    return HttpResponse.json({ safety: row.safety });
+  }),
+
+  /**
+   * 🚨 회수 — `state = 'retracted'` 로의 전환이다 (계약서 §10). **행을 지우지 않는다.**
+   *    잘못 등록했거나 더 이상 적용하지 않는 항목을 보호자가 내린다.
+   *
+   * 🚨 `Idempotency-Key` 를 요구하지 않는다. 계약서 §01 의 필수 5개는 전부 POST 이고,
+   *    같은 회수를 두 번 보내도 결과가 같다 (아래 404 는 **없는 id** 를 가리킬 때다).
+   */
+  http.delete(url("/children/:cid/health-safety/:id"), async ({ params }) => {
+    await networkDelay();
+    const row = safetyState.find((item) => item.safety.id === params.id);
+    if (!row || row.retracted) {
+      return apiError(404, "not_found", "이미 내려간 기록이에요");
+    }
+    row.retracted = true;
+    return new HttpResponse(null, { status: 204 });
   }),
 ];

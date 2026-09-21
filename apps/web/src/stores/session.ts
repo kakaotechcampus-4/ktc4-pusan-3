@@ -4,6 +4,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { setAuthToken } from "@/lib/api/client";
 import { useDraftStore } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
+import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 
 /**
  * 로그인 토큰과 "지금 보고 있는 아이" 만 담는다.
@@ -55,6 +56,9 @@ export const useSessionStore = create<SessionState>()(
         useDraftStore.getState().clearAll();
         // 🚨 고르고 아직 안 올린 사진도 같이 지운다 (`stores/photo-draft.ts` — 같은 이유다).
         usePhotoDraftStore.getState().clearAll();
+        // 🚨 넘기다 만 알레르기 검사지 사진도 같이 놓는다 (의료 기록이다 · 최상위 §2).
+        //    여기서는 objectURL 까지 해제한다 — 탭이 사는 동안 메모리에 남지 않게.
+        useSafetyScanDraftStore.getState().clearAll();
         set({ token: null, expiresAt: null, activeChildId: null });
       },
       setActiveChild: (activeChildId) => set({ activeChildId }),

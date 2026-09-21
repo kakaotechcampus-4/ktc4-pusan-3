@@ -295,10 +295,12 @@ async def exchange(
     """
     response.headers["Cache-Control"] = "no-store"
 
-    consumed = await consume_handoff(session, code_hash=hash_token(body.code))
+    _warn_if_unimplemented(provider)
+    consumed = await consume_handoff(session, code_hash=hash_token(body.code), provider=provider)
     if consumed is None:
-        # 없음·만료·이미 사용됨을 구분하지 않는다. 구분해 알려주면 공격자에게 정보를
-        # 준다 — 초대 코드 실패를 하나로 묶은 것과 같은 이유다 (§8-1 · A-04 · A-12).
+        # 없음·만료·이미 사용됨·다른 provider 의 코드를 구분하지 않는다. 구분해 알려주면
+        # 공격자에게 정보를 준다 — 초대 코드 실패를 하나로 묶은 것과 같은 이유다
+        # (§8-1 · A-04 · A-12 · #83).
         raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
 
     if not hmac.compare_digest(consumed.bind_hash, hash_token(body.bind)):
@@ -384,7 +386,10 @@ async def signup(
             )
         versions[consent.scope] = registered.id
 
-    consumed = await consume_handoff(session, code_hash=hash_token(body.consent_code))
+    _warn_if_unimplemented(provider)
+    consumed = await consume_handoff(
+        session, code_hash=hash_token(body.consent_code), provider=provider
+    )
     if consumed is None:
         raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
 
@@ -455,6 +460,19 @@ async def _issue_session(
         parent=ParentSummary(id=parent.id, nickname=parent.nickname),
         consent_required=await missing_account_scopes(session, parent_id=parent_id),
     )
+
+
+def _warn_if_unimplemented(provider: AuthProvider) -> None:
+    """구현되지 않은 provider 로 코드를 내민 요청을 기록한다 (#83).
+
+    거절은 여기서 하지 않는다 — consume_handoff 가 provider 까지 조건에 넣어 행을
+    못 찾고, 호출부가 없는 코드와 똑같이 401 로 답한다(§8-1). 다만 카카오 외의
+    provider 로 오는 요청은 정상 흐름에 존재할 수 없으므로 신호로 남길 값어치가 있다.
+
+    🚨 코드나 bind 는 남기지 않는다 (§7-5).
+    """
+    if provider is not AuthProvider.KAKAO:
+        log.warning("구현되지 않은 provider 로 1회용 코드 소비 시도: %s", provider.value)
 
 
 def _missing_keys(provider: AuthProvider) -> list[str]:

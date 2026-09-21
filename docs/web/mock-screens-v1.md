@@ -30,6 +30,7 @@ location.replace("/");
 | 04 진행 · 저장 결과 | 03 에서 한 줄 적고 남기기 (04 는 별도 주소가 없다) |
 | 04 실패 · 원문 복원 | `/child/c1/home?scenario=failed` 에서 한 줄 남기기 |
 | 04 부분 결과 | `/child/c1/home?scenario=partial` 에서 한 줄 남기기 |
+| 04 결과 못 받음 (저장 여부 모름) | `/child/c1/home?scenario=disconnected` 에서 한 줄 남기기 |
 | 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
 | 05 · 근거 부족 (일반 추천 1건 + 질문 1개) | 위 주소에 `&scenario=scarcity` |
 | 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` |

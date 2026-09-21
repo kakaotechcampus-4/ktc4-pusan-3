@@ -6,11 +6,12 @@ status · created_by · expires_at · child_id는 규칙이 채운다.
 알림은 Agent가 만들지 않는다. 발송은 등록된 일정을 기준으로 자동이다.
 """
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
 from app.agents.memory.schemas.common import (
+    ClearableUpdateArgs,
     DateExpr,
     Direction,
     EventCategory,
@@ -38,7 +39,23 @@ class EventCreate(ToolArgs):
             )
         ),
     ]
-    ends_time: TimeExpr
+    ends_on: Annotated[
+        DateExpr | None,
+        Field(
+            default=None,
+            description=(
+                "끝나는 날짜. 시작과 같은 날에 끝나면 비워 둔다. 자정을 넘기거나(밤 11시~새벽 1시) "
+                "여러 날 이어지는 일정(17일~19일 캠프)일 때만 넣는다"
+            ),
+        ),
+    ]
+    ends_time: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="끝나는 시각. 원문 표현 그대로. 예: 오후 5시, 17:30",
+        ),
+    ]
     temporal_direction: Direction
     event_type: Annotated[
         EventType,
@@ -74,7 +91,10 @@ class EventQuery(ToolArgs):
     title_query: Annotated[str | None, Field(default=None, description="일정 이름에 포함된 키워드")]
 
 
-class EventUpdate(ToolArgs):
+class EventUpdate(ClearableUpdateArgs):
+    # ends_at 하나가 ends_on, ends_time 두 개의 인자로 나뉘어 들어오기 때문에
+    # 컬럼째로만 지우게 함
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset({"ends_at"})
     event_id: EventId
     title: Annotated[str | None, Field(default=None, description="바꿀 이름")]
     starts_on: Annotated[DateExpr | None, Field(default=None, description="바꿀 시작 날짜 표현")]

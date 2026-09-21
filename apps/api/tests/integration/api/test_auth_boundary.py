@@ -155,6 +155,46 @@ def test_missing_return_url_fails_at_boot(field, blank):
         Settings(**{field: blank})
 
 
+KAKAO_KEYS = ("KAKAO_REST_API_KEY", "KAKAO_CLIENT_SECRET", "KAKAO_CALLBACK_URL")
+
+
+@pytest.mark.parametrize("key", KAKAO_KEYS)
+def test_missing_kakao_key_fails_at_boot_in_prod(key):
+    """🚨 #97. 운영에서는 카카오 키가 비면 서버가 뜨지 않는다.
+
+    복귀 URL 과 달리 local · dev 는 막지 않는다(아래 테스트). 운영만 다른 이유 —
+    키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채 배포가 끝나고,
+    서비스가 성립하지 않는다는 사실을 사용자가 먼저 발견한다 (멘토 리뷰, #71).
+    """
+    with pytest.raises(ValidationError):
+        Settings(APP_ENV="prod", **{key: ""})
+
+
+@pytest.mark.parametrize("env", ["local", "dev"])
+@pytest.mark.parametrize("key", KAKAO_KEYS)
+def test_missing_kakao_key_is_allowed_outside_prod(env, key):
+    """개발 환경은 키 없이 뜬다 — ready: false 로 알린다 (§3-1 · A-20).
+
+    키를 못 받은 팀원이 나머지 API 를 띄워 쓰는 것, 키를 받기 전에 dev 서버를
+    올려보는 것이 실제로 필요하다.
+    """
+    settings_without_key = Settings(APP_ENV=env, **{key: ""})
+
+    assert settings_without_key.kakao_ready is False
+
+
+def test_prod_boots_when_kakao_keys_are_present():
+    """운영이라도 키가 다 있으면 뜬다 — 막는 것은 누락뿐이다."""
+    configured = Settings(
+        APP_ENV="prod",
+        KAKAO_REST_API_KEY="rest-key",
+        KAKAO_CLIENT_SECRET="client-secret",
+        KAKAO_CALLBACK_URL="https://api.example.test/api/v1/auth/kakao/callback",
+    )
+
+    assert configured.kakao_ready is True
+
+
 def test_wildcard_origin_fails_at_boot():
     """🚨 * 는 부팅에서 끊는다.
 

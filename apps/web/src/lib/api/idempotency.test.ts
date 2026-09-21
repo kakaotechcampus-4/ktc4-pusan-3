@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { api } from "./client";
 import {
+  createIdempotencyKeyHolder,
   IdempotencyKeyRequiredError,
   idempotentPath,
   newIdempotencyKey,
@@ -73,5 +74,64 @@ describe("전용 함수", () => {
     const first = await confirmEvent("e_retry", key);
     const second = await confirmEvent("e_retry", key);
     expect(second).toEqual(first);
+  });
+});
+
+/**
+ * 키 수명 — 본문이 바뀌면 키도 바뀐다.
+ *
+ * 멘토 리뷰(#71): "최초 POST 를 서버가 처리했지만 응답만 유실되면 (…) 사용자가 내용을 고쳐
+ * 다시 전송하면 기존 키에 다른 본문이 묶여 422 `idempotency_key_reuse` 가 계속 발생하고,
+ * 키를 바꾸는 경로에도 진입하지 못합니다."
+ */
+describe("키 수명 — 본문에 묶인 키", () => {
+  it("같은 본문이면 같은 키다 — 그게 재시도다", () => {
+    const holder = createIdempotencyKeyHolder();
+    expect(holder.current("한 줄 A")).toBe(holder.current("한 줄 A"));
+  });
+
+  it("🚨 본문을 고쳐 쓰면 새 키다", () => {
+    const holder = createIdempotencyKeyHolder();
+    const first = holder.current("한 줄 A");
+    expect(holder.current("한 줄 B")).not.toBe(first);
+  });
+
+  it("rotate 뒤에는 같은 본문이어도 새 키다 — 다음 동작이다", () => {
+    const holder = createIdempotencyKeyHolder();
+    const first = holder.current("한 줄 A");
+    holder.rotate();
+    expect(holder.current("한 줄 A")).not.toBe(first);
+  });
+
+  it("본문을 안 넘기는 동작(확정 · 승인)은 예전 그대로다", () => {
+    const holder = createIdempotencyKeyHolder();
+    expect(holder.current()).toBe(holder.current());
+  });
+});
+
+describe("응답 유실 → 본문 수정 → 재전송", () => {
+  const body = (text: string) => ({ text, source: "home_input" }) as const;
+
+  it("같은 키에 다른 본문을 보내면 422 다 — 고쳐야 하는 이유", async () => {
+    const key = newIdempotencyKey();
+    // 서버는 처리했고(여기까지는 성공) 화면만 응답을 못 받은 상태를 흉내 낸다.
+    await submitInput("c1", body("지어낸 한 줄"), key);
+
+    await expect(submitInput("c1", body("지어낸 다른 한 줄"), key)).rejects.toMatchObject({
+      code: "idempotency_key_reuse",
+    });
+  });
+
+  it("holder 를 거치면 고쳐 쓴 본문이 새 키로 나가 통과한다", async () => {
+    const holder = createIdempotencyKeyHolder();
+
+    const first = body("지어낸 한 줄");
+    await submitInput("c1", first, holder.current(first.text));
+
+    // 보호자가 한 줄을 고쳐서 다시 보낸다. rotate 를 부른 적은 없다 — 부를 자리가 없는 경로다.
+    const edited = body("지어낸 다른 한 줄");
+    await expect(submitInput("c1", edited, holder.current(edited.text))).resolves.toHaveProperty(
+      "run_id",
+    );
   });
 });

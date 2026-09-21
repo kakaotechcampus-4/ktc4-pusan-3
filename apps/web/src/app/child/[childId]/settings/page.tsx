@@ -14,9 +14,12 @@ import { Screen } from "@/components/ui/screen";
  *    🚨 그건 시각적 결정이라 `onRoute={false}` 로 `aria-current` 는 뺀다 — 제목이 "설정" 인데
  *    스크린리더가 "홈, 현재 페이지" 라고 읽으면 그건 사실이 아니다.
  *
- * 다음 이슈에서 `GET /consents` · `/parents` · `/invites` · `/health-safety` ·
- * `DELETE /observations` 를 붙인다. 🚨 파괴적 확정(동의 철회 · 기억 삭제)에만 `btn-danger` 를
- * 쓰고, 알레르기 기록 확정은 **승인 게이트 ㉡** 라 지우기 전에 무엇이 없어지는지 보여준다.
+ * 🚨 **아이 이름·생일과 알레르기는 여기 있지 않다.** 11 아이 프로필 화면이 가져갔다 (#74) —
+ *    아이 자체에 대한 것은 네비의 "아이" 칸이 소유하고, 여기는 **계정과 공유**만 다룬다.
+ *    한 기능이 두 화면에 서면 어느 쪽이 정본인지 부모가 판단해야 한다.
+ *
+ * 다음 이슈에서 `GET /consents` · `/parents` · `/invites` · `DELETE /observations` 를 붙인다.
+ * 🚨 파괴적 확정(동의 철회 · 기억 삭제)에만 `btn-danger` 를 쓴다.
  */
 export default function SettingsPage() {
   return (
@@ -32,7 +35,7 @@ function SettingsScreen() {
       <header>
         <PageTitle>설정</PageTitle>
         <p className="text-body-sm text-ink-muted mt-2">
-          아이 정보와 동의, 함께 보는 보호자를 여기서 관리해요.
+          동의와 함께 보는 보호자를 여기서 관리해요. 아이 정보는 아래 아이 칸에 있어요.
         </p>
       </header>
 
@@ -40,8 +43,6 @@ function SettingsScreen() {
         <p className="text-body text-ink">아직 만드는 중이에요</p>
         <p className="text-body-sm text-ink-muted mt-2">들어올 것은 이렇습니다.</p>
         <ul className="text-body-sm text-ink-muted mt-3 flex list-disc flex-col gap-1 pl-5">
-          <li>아이 이름과 생일 고치기</li>
-          <li>알레르기 · 건강 기록 (보호자가 직접 확인한 값만 저장돼요)</li>
           <li>함께 보는 보호자 초대와 권한</li>
           <li>동의 관리 · 철회</li>
           <li>쌓인 기록 지우기</li>

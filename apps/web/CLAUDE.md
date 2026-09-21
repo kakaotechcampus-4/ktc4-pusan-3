@@ -20,6 +20,7 @@ Owner: 고태영 (프론트 리드)
 | Zustand | 5.0.15 | 클라이언트 상태 전용 |
 | TanStack Query | 5.102.8 | 서버 상태 전용 |
 | Zod | 4.5.4 | 환경변수 검증 · (필요해지면) 응답 파싱 |
+| Recharts | 3.10.1 | 11-1 변화 그래프 **하나**에만 쓴다 — 아래 §3 컴포넌트 |
 | ESLint | 10.10.0 | `eslint-config-next` flat config |
 | Prettier | 3.9.6 | `prettier-plugin-tailwindcss` 로 클래스 정렬 |
 
@@ -53,8 +54,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
 - `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
-  🚨 `stores/draft.ts` · `stores/photo-draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문과
-  아이 사진 원본이라 `persist` 금지
+  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
+  🚨 `stores/photo-draft.ts`(**아이 사진 원본**) · `stores/safety-scan-draft.ts`(**알레르기 검사지
+  사진** — 의료 기록이다) 도 같다. 셋 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`)
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
@@ -79,9 +81,38 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
 | 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
+| 11 아이 프로필 | `/child/[childId]/profile` |
+| 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
+| 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 `/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+
+🚨 **`useSearchParams()` 를 쓰는 화면은 `<Suspense>` 경계 안에 둔다.** 경계가 없으면 프리렌더가
+CSR bailout 을 일으켜 **프로덕션 빌드가 그 화면에서 멈춘다** (`Missing Suspense boundary with useSearchParams`).
+`pnpm dev` 에서는 드러나지 않아서 `pnpm build` 로만 잡힌다 — 실제로 `/auth/callback` 이 그렇게 빠져 있었다 (PR #71 리뷰).
+위 표에서 `?` 가 붙은 화면(05 · 07 · 09)과 `/auth/callback` 이 대상이다. `fallback` 에는 그 화면이
+hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 정적 HTML 과 hydrate 결과가 한 번 어긋나 깜빡인다.
+
+🚨 **11-1 은 11 안의 시트가 아니라 라우트다.** 잰 기록이 쌓이면 목록이 길어져서 프로필의
+다른 두 구역(부르는 이름 · 알레르기)을 화면 밖으로 민다. 그래서 프로필은 **가장 최근 한 줄**만
+세우고 목록과 변화 그래프는 이 주소가 진다. 시트로 하지 않은 이유는 **뒤로가기**다 — 웹뷰의
+기기 뒤로가기가 히스토리 기반이라([`apps/mobile/App.tsx`](../mobile/App.tsx)) 시트는 그 버튼으로
+안 닫히거나, 닫히면서 앱을 벗어난다. 그 화면에서 뒤로 가는 길은 링크로도 함께 세운다
+(주소로 바로 들어오면 히스토리에 프로필이 없어서 `router.back()` 이 앱 밖으로 나간다).
+
+🚨 **11-2 도 시트가 아니라 라우트다. 다만 11-1 과 이유가 다르다.** 검사지 한 장에서 열 줄 넘게
+나오는데, 시트 높이 안에서는 `caution` 배너 · 검사지 사진 · 후보 목록 · 승인 버튼이 서로 자리를
+뺏는다 — 사진을 96px 까지 줄여야 목록이 보였다. 08 사진으로 적기와 같은 모양으로 화면을 내줬다.
+
+- 🚨 **네비를 붙이지 않는다** (11-1 과 반대다). 11-1 은 **가는 곳**이라 네비가 있지만 11-2 는
+  **흐름 중인 화면**이고 승인 게이트가 걸려 있다 — 고르다 마는 길을 만들지 않는다
+- 🚨 **여기는 승인 게이트 ㉡ 다.** 08 사진이 만드는 `event` 는 `draft` 라 `caution`·`btn-approve`
+  를 안 쓰지만, 11-2 의 등록은 되돌릴 수 없어서 **둘 다 쓴다.** 게이트를 늘린 것이 아니라
+  **있던 게이트가 시트에서 화면으로 옮겨온 것**이다 (최상위 §2 — 늘리지도 줄이지도 않는다)
+- 🚨 **고른 파일은 URL 로 못 넘긴다.** 화면 밖 스토어(`stores/safety-scan-draft.ts`)에 한 칸
+  두고 넘긴다. 라우트 이동이 사용자 제스처를 소비해서 도착한 뒤 `input.click()` 을 부르는
+  방법은 브라우저가 막는다. 🚨 그 스토어에 `persist` 를 붙이지 말 것 — **의료 기록 사진**이다
 
 🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
 `failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
@@ -108,18 +139,32 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 별도 UI 라이브러리를 쓰지 않는다. 토큰과 1:1 로 붙고 고치기 쉬운 쪽을 골랐다.
 사양은 [디자인 시스템 §7](../../docs/web/design-system-v1.md) 에 있다 — 없는 값을 즉석에서 만들지 않는다.
 
+🚨 **예외는 recharts 하나이고, 쓰는 자리도 하나다** (11-1 변화 그래프). 그리는 물건이 버튼이나
+입력이 아니라 **축 계산 · 눈금 배치 · 반응형 리사이즈**라서, 손으로 만들면 그게 곧 차트 라이브러리다.
+🚨 **recharts 로 화면 부품을 만들지 않는다** — 토큰과 1:1 로 안 붙는 물건이라 카드·칩·목록이
+거기 들어오는 순간 §5 스타일 규칙이 두 벌이 된다. 색·글자 크기는 그 안에서도
+`var(--color-*)` 로 넘긴다 (`GrowthChart`).
+
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` · `Select` ·
+  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` ·
+  `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
-  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` · `PhotoReview` · `PhotoSourceSheet`
-  (시트 안의 lane 라디오 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
+  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
+  `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
+  `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
+  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
+  (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
+- 🚨 **`components/safety-scan-fields.ts` 는 컴포넌트가 아니다** — 11-2 의 확인 화면과 고치기
+  시트가 **같은 판단**(무엇이 확인이 필요한 줄인가)을 보게 두는 자리다. 양쪽에 따로 두면
+  목록이 "고를 수 있다" 고 본 줄을 시트가 "아직 아니다" 라고 보는 어긋남이 생기는데,
+  승인 게이트에서 그 어긋남은 **확인 안 한 것이 등록되는** 경로다
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
@@ -344,6 +389,10 @@ const mutation = useMutation({
 - 키 없이 부르면 **요청이 나가지 않는다** (`IdempotencyKeyRequiredError`). 경고가 아니라 차단이고, 프로덕션에서도 같다.
 - 🚨 **`mutationFn` 안에서 `newIdempotencyKey()` 를 부르지 않는다.** 재시도마다 새 키가 나가면 중복 방지가 통째로 무의미해진다. 타입은 이걸 못 잡는다 — 리뷰에서 지적된 지점이다.
 - 🚨 **`rotate()` 를 실패 경로에서 부르지 않는다.** 실패 뒤 다시 누르는 게 재시도고, 재시도는 같은 키다.
+  **끝을 확인하지 못한 경로에서도 부르지 않는다** — 서버가 이미 저장했을 수 있는 요청을 새 키로 보내면 그때 두 번 저장된다.
+- 🚨 **사용자가 고쳐 쓸 수 있는 본문은 `current(text)` 로 본문을 넘긴다** (한 줄 입력 등). 서버가 처리했는데
+  응답만 유실되면 화면은 실패로 보이고 보호자는 한 줄을 고쳐서 다시 보내는데, 키가 그대로면 "같은 키 · 다른 본문"
+  이라 계속 `422` 다. 본문이 바뀌면 키도 바뀌어야 그 경로가 풀린다 (PR #71 리뷰).
 - 서버가 무엇을 보장해야 하는지(재생 · 재사용 거부 · 동시 차단 · 2xx 만 저장)는 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md).
 - `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.** 키 수명 관리가 깨진 것이니 화면을 그리지 말고 고친다.
 
@@ -357,6 +406,11 @@ const mutation = useMutation({
 - **뮤테이션은 자동 재시도가 꺼져 있다.** 승인 게이트를 두 번 실행할 수 있어서다 — 켜지 말 것.
 - 🚨 **승인 게이트에 낙관적 업데이트를 쓰지 않는다.** `onMutate` 로 캐시를 먼저 바꾸면 서버가 확정하기 전에 화면이 이미 확정된 것처럼 보인다 — "되돌릴 수 없는 것은 사람이 승인한다"(§2)가 **시각적으로** 깨진다. 응답을 받은 뒤 `invalidateQueries` 로 갱신한다. 자동 재시도와는 다른 경로라 따로 막아야 한다.
   낙관적 업데이트가 괜찮은 곳은 되돌릴 수 있는 것뿐이다 — 준비물 체크(`is_prepared`), 관심 칩 토글 정도.
+- 🚨 **낙관적 업데이트를 쓰면 같은 대상의 요청을 직렬화한다** (`lib/serial-queue.ts`). 응답을 기다리지 않는 토글은
+  빠르게 두 번 누르면 요청 두 건이 동시에 나가고, 응답이 역전되면 **마지막 선택이 아닌 값이 서버에 남는다**.
+  재조회도 그 값을 받아 화면까지 되돌린다 (PR #71 리뷰). 버튼을 잠가서 막지 않는다 — 왕복을 기다리는 체크박스는
+  낙관적 업데이트를 쓰는 이유 자체를 없앤다. 화면은 즉시 바뀌고 **요청만** 줄을 선다.
+  재조회(`onSettled`)는 줄의 **마지막** 요청에서만 부른다.
 
 ### SSE
 
@@ -378,6 +432,13 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 🚨 **`partial` 이 왔으면 `done` 이 와도 부분 결과다.** 성공 화면으로 덮지 않는다 (NF-06)
 - 🚨 **20초 안전망이 훅 안에 있다.** 전체 시간이 아니라 *조용한 시간*을 잰다 —
   전환의 정본은 서버가 보내는 `partial` 이고, 이건 스트림이 멎었을 때의 그물이다
+- 🚨 **서버가 말한 끝과 클라이언트가 스스로 끝낸 것을 섞지 않는다.** `done` · `partial` · `failed` 는
+  서버가 말한 끝이고, `unconfirmed` 하나만 다르다 — 20초 침묵 · 종료 이벤트 없는 EOF · 연결 실패라
+  **서버가 무엇을 저장했는지 모르는** 상태다. 섞으면 화면이 "저장됐어요" 라고 말하고 입력창의 원문까지
+  지운다. 원문을 비워도 되는지는 `isRunConfirmed(status)` 하나로 판단한다 (PR #71 리뷰)
+- 🚨 **종료 이벤트 없이 스트림이 닫히는 경우를 반드시 처리한다.** `for await` 는 EOF 에서 예외 없이
+  끝난다 — 거기서 아무것도 안 하면 status 가 `streaming` 에 남고, idle 타이머까지 해제된 뒤라
+  20초 전환조차 돌지 않아 진행 화면이 영원히 돈다. `pumpRunEvents()` 가 그 자리를 막는다
 - 🚨 **입력 원문을 훅에 두지 않는다.** 화면을 벗어나면 스트림을 끊는데, 실패 시 원문을 입력창에
   되돌려야 한다. `failed` 이벤트가 `raw_text` 를 실어 주지만 네트워크가 끊기면 그것도 못 받는다 —
   **원문의 정본은 `stores/draft.ts` 다.**
@@ -387,7 +448,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   🚨 **그 스토어에 `persist` 를 붙이지 않는다** — 아이에 대한 발화 원문이라 디스크에 남기지 않는다
   (최상위 §2 개인정보). 로그아웃에서 `clearAll()` 로 지운다
 
-목의 `?scenario=partial` · `failed` 로 두 경로를 바로 확인할 수 있다 (§7).
+목의 `?scenario=partial` · `failed` · `disconnected` 로 세 경로를 바로 확인할 수 있다 (§7).
 
 ---
 
@@ -399,6 +460,10 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   🚨 **둘이 한 화면에 같이 서지 않는다** — 일반 추천은 개인화 **대신** 나간다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
 - 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
 - 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).
+- 🚨 **"기록했어요" 는 서버 저장이 끝난 뒤에만 말한다.** 특히 알레르기다 — 보호자의 선택(이 제안을 막는다)과
+  서버 저장 완료(다음 제안부터 걸러낸다)는 **다른 상태**다. 선택만 보고 "앞으로도 걸러내요" 라고 말하면,
+  저장이 실패한 채로 닫은 보호자가 등록되지 않은 알레르기를 등록됐다고 믿는다 (PR #71 리뷰).
+  실패는 같은 키로 **다시 시도**할 길을 같은 자리에 둔다 — 안내만 지우는 버튼을 두지 않는다.
 - 🚨 **`partial` 이벤트를 실패 화면으로 떨어뜨리지 않는다.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 **한 화면에** 섞는다 (NF-06).
 - 🚨 **`failed` 는 `raw_text` 를 돌려준다.** 입력창에 그대로 남겨 놓는다 — 부모가 다시 타이핑하게 만들지 않는다.
 - 🚨 **날짜·나이를 프론트에서 계산하지 않는다.** `age_display` · `observed_label` · `state_reason` 은 서버가 만든 문구다 (§3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
