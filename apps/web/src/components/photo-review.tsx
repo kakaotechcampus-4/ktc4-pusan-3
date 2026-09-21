@@ -1,6 +1,5 @@
 "use client";
 
-import { josa } from "es-hangul";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 
@@ -44,41 +43,32 @@ import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/l
  */
 
 /**
- * 서버 추측이 이 값보다 확실할 때만 **부모가 고른 것과 다르다는 사실**을 화면에 올린다.
- *
- * 🚨 **lane 의 정본은 부모가 시트에서 고른 값이다** (`PhotoSourceSheet`). 서버 추측은 그걸
- *    덮지 않고, 어긋날 때 한 줄로 알리기만 한다.
- * 🚨 **숫자를 화면에 그리지 않는다.** 0.72 를 보여줘 봐야 부모가 할 수 있는 일이 없다.
+ * 🚨 **여기서 lane 을 바꾸지 않는다.** 부모가 시트에서 **고르고 시작했기 때문**이다
+ *    (`PhotoSourceSheet` 1단계) — 무엇을 찍었는지는 찍은 사람이 알고, 그 선언이 업로드에
+ *    실려 무엇을 읽을지까지 정한다. 결과가 "다른 종류로 읽혔을" 자리가 없다.
+ *    한동안 서버 추측(`lane` 이벤트)과 어긋나면 되묻는 줄을 세워 뒀는데, 고를 때 이미 물은
+ *    것을 결과 화면에서 또 묻는 것이라 뺐다. 🚨 **서버 추측은 선언을 덮지 않는다** 는 규칙은
+ *    그대로고, 그 사실은 화면이 아니라 계약 테스트가 지킨다 (`mocks/contract.test.ts`).
  */
-const SURE_ENOUGH = 0.6;
-
 interface LaneCopy {
-  name: string;
   read: string;
-  mismatch: (other: string) => string;
   note: string;
   footnote: string;
 }
 
 const LANE: Record<PhotoLane, LaneCopy> = {
   document: {
-    name: "알림장이나 식단표",
     read: "알림장이나 식단표로 읽었어요.",
-    mismatch: (other) => `알림장이나 식단표로 고르셨는데, 글자가 거의 없어요. ${other}일까요?`,
     note: "문서에서는 글자만 읽어요. 준비물과 일시로 정리하고, 아이의 기록으로는 쌓지 않아요.",
     footnote:
       "문서에서 읽은 것은 기관이 알려준 사실로만 저장해요. 아이의 성향이나 선호로 해석하지 않아요.",
   },
   activity: {
-    name: "아이 활동 사진",
     read: "아이 활동 사진으로 읽었어요.",
-    mismatch: (other) => `아이 활동 사진으로 고르셨는데, 글자가 많아요. ${other}일까요?`,
     note: "사진에서 활동 태그만 뽑아요. 얼굴이나 사람은 분석하지 않아요.",
     footnote: "태그는 성향이나 발달로 확정하지 않아요. 알레르기나 건강 정보로도 쓰지 않아요.",
   },
 };
-
-const OTHER_LANE: Record<PhotoLane, PhotoLane> = { document: "activity", activity: "document" };
 
 const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
   event: "일정",
@@ -87,11 +77,11 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
 };
 
 export interface PhotoReviewProps {
-  /** 🚨 **부모가 시트에서 고른 값.** 이 화면의 시작점이자 정본이다 (서버 추측이 아니다). */
-  declared: PhotoLane;
-  /** 서버가 읽은 쪽. 고른 것과 다를 때만 화면에 올린다. 안 왔으면 `null`. */
-  guess: PhotoLane | null;
-  confidence: number;
+  /**
+   * 🚨 **부모가 시트에서 고른 값.** 이 화면의 정본이고 **여기서 바뀌지 않는다** (위 주석).
+   *    서버가 보내는 `lane` 추측은 이 화면이 쓰지 않는다 — 계약서에 남아 있을 뿐이다.
+   */
+  lane: PhotoLane;
   parsed: ParsedEvent;
   /** 이 사진을 어느 날에 남기는지. 캘린더에서 들어왔으면 그날, 아니면 오늘이다. */
   date: string;
@@ -105,9 +95,7 @@ export interface PhotoReviewProps {
 }
 
 export function PhotoReview({
-  declared,
-  guess,
-  confidence,
+  lane,
   parsed,
   date,
   onCommit,
@@ -116,9 +104,6 @@ export function PhotoReview({
   onGoHome,
   previewUrl,
 }: PhotoReviewProps) {
-  // 🚨 부모가 고른 것으로 시작한다. 여기서 바꾸면 그쪽이 정본이고 commit 에 그 값이 실린다.
-  const [lane, setLane] = useState<PhotoLane>(declared);
-
   /**
    * 🚨 **읽어낸 항목의 정본은 여기다.** 부모가 고치면 이 배열이 바뀌고, 저장은 이 값을 보낸다 —
    *    서버가 보낸 `parsed` 를 다시 읽지 않는다.
@@ -129,20 +114,6 @@ export function PhotoReview({
   const [showChecked, setShowChecked] = useState(false);
 
   const copy = LANE[lane];
-  const other = OTHER_LANE[lane];
-
-  /**
-   * 🚨 **서버가 다르게 읽었을 때만 참이다.** 부모가 여기서 lane 을 바꾸면 그 순간 어긋남이
-   *    사라지므로 문장이 저절로 확인 문구로 돌아간다.
-   */
-  const mismatched = guess !== null && guess !== lane && confidence >= SURE_ENOUGH;
-
-  function toggleLane() {
-    setLane(other);
-    // 🚨 고른 것을 그대로 들고 넘어가지 않는다. 준비물로 읽은 것이 활동 태그로 저장되면
-    //    출처(`confidence_source`)가 통째로 뒤바뀐다.
-    setTags([]);
-  }
 
   function saveEntry(next: PhotoEntry) {
     setEntries((prev) => prev.map((e) => (e.id === next.id ? next : e)));
@@ -188,16 +159,8 @@ export function PhotoReview({
         tone="accent"
         footer={
           <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-body text-ink">
-                {mismatched ? copy.mismatch(LANE[other].name) : copy.read}
-              </p>
-              {/* 🚨 "아니에요" 가 아니라 **바뀔 결과**를 버튼에 쓴다.
-                  🚨 라벨에 조사를 박지 않는다 — `josa` 가 받침으로 고른다. */}
-              <Button variant="tertiary" size="compact" onClick={toggleLane}>
-                {josa(LANE[other].name, "이에요/예요")}
-              </Button>
-            </div>
+            {/* 🚨 바꾸는 버튼을 두지 않는다 — 시트에서 고르고 시작했다 (위 주석). */}
+            <p className="text-body text-ink">{copy.read}</p>
             <p className="text-body-sm text-ink-muted">{copy.note}</p>
 
             {lane === "document" && parsed.raw_text ? (
@@ -381,6 +344,12 @@ function CheckedGroup({
 }) {
   if (entries.length === 0) return null;
 
+  /**
+   * 몇 줄부터 스크롤을 거는가. 🚨 **짧은 목록에까지 걸지 않는다** — 알림장 서너 줄에 상자가
+   * 생기면 잘린 것처럼 보이고, 스크롤할 것도 없는데 스크롤 영역이 하나 더 생긴다.
+   */
+  const scrollable = entries.length > 6;
+
   return (
     <section className="flex flex-col gap-2">
       <button
@@ -415,7 +384,22 @@ function CheckedGroup({
       </button>
 
       {open ? (
-        <ul id="photo-checked-list" className="flex flex-col gap-2">
+        <ul
+          id="photo-checked-list"
+          className={cn(
+            "flex flex-col gap-2",
+            /**
+             * 🚨 **펼쳐도 화면을 밀지 않게 하는 장치다.** 식단표 한 장이 스무 줄이 넘는데
+             *    전부 쌓이면 아래의 "이렇게 저장할게요" 와 저장 버튼이 스크롤 끝으로 밀린다 —
+             *    다 확인하고도 버튼을 찾아 한참 내려가야 한다 (11-2 검사지와 같은 값·같은 이유).
+             * 🚨 **높이를 `rem` 으로 고정하지 않는다** — 줄이 글자 크기를 따라 늘어나는데
+             *    상자만 고정이면 200% 확대에서 한 줄만 보인다 (디자인 시스템 §10).
+             * 🚨 `overscroll-contain` 으로 끝까지 굴렸을 때 페이지가 따라 튀지 않게 한다.
+             * 🚨 **확인이 필요해요 쪽에는 걸지 않는다** — 실제로 손봐야 하는 목록이라 가리면 안 된다.
+             */
+            scrollable ? "max-h-[60vh] overflow-y-auto overscroll-contain" : null,
+          )}
+        >
           {entries.map((entry) => (
             <li key={entry.id}>
               <EntryRow entry={entry} onEdit={onEdit} />

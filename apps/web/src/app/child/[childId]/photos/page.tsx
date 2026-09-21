@@ -247,9 +247,8 @@ function PhotosScreen() {
         //    **부모가 확인한 적 없는 것**이 저장 대상으로 남는다.
         <PhotoReview
           key={runId}
-          declared={photo.lane}
-          guess={run.state.lane?.guess ?? null}
-          confidence={run.state.lane?.confidence ?? 0}
+          // 🚨 시트에서 고른 값이 그대로 정본이다. 서버의 `lane` 추측은 이 화면이 쓰지 않는다.
+          lane={photo.lane}
           parsed={run.state.parsed}
           date={date}
           previewUrl={photo.url}
