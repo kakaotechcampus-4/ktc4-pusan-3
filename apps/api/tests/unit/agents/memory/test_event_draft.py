@@ -78,7 +78,24 @@ def _draft(
     )
 
 
-def test_새_일정_초안은_준비물을_안에_싣고_id_는_비어_있다() -> None:
+def _snapshot(
+    *,
+    title: str = "운동회",
+    items: tuple[DraftItem, ...] = (),
+) -> EventSnapshot:
+    return EventSnapshot(
+        title=title,
+        starts_at=datetime(2026, 9, 25, 10, 0, tzinfo=KST),
+        ends_at=None,
+        all_day=False,
+        event_type="episodic",
+        category="activity",
+        items=items,
+    )
+
+
+def test_새_일정_초안은_POST_용_모양이다() -> None:
+    # create 는 POST 로 간다. event_id 와 before 는 언제나 null 이라 싣지 않는다
     draft = _draft(
         items=(
             DraftItem(item_id=None, item_name="수영복"),
@@ -91,7 +108,7 @@ def test_새_일정_초안은_준비물을_안에_싣고_id_는_비어_있다() 
     assert payload == {
         "draft_id": None,  # DraftBook 에 넣기 전이라 아직 없다
         "op": "create",
-        "event_id": None,
+        "source": None,  # 제안에서 온 초안만 채운다
         "event": {
             "title": "물놀이",
             "starts_at": "2026-09-25T10:00:00+09:00",
@@ -100,13 +117,11 @@ def test_새_일정_초안은_준비물을_안에_싣고_id_는_비어_있다() 
             "event_type": "episodic",
             "category": "activity",
         },
-        "before": None,  # 새 일정은 원본이 없다
         "items": [
-            {"item_id": None, "item_name": "수영복", "is_prepared": False},
-            {"item_id": None, "item_name": "여벌옷", "is_prepared": False},
+            {"item_id": None, "item_name": "수영복"},
+            {"item_id": None, "item_name": "여벌옷"},
         ],
     }
-    assert "changed" not in payload  # 화면은 before 와 비교해 직접 구한다
 
 
 def test_payload_는_그대로_json_으로_나간다() -> None:
@@ -118,7 +133,8 @@ def test_payload_는_그대로_json_으로_나간다() -> None:
     assert loaded["event"]["ends_at"] == "2026-09-25T17:00:00+09:00"
 
 
-def test_수정_초안은_event_id_와_원본을_싣는다() -> None:
+def test_수정_초안은_PATCH_용_모양이다() -> None:
+    # update 만 event_id 와 before 를 싣는다
     before = EventSnapshot(
         title="운동회",
         starts_at=datetime(2026, 9, 25, 10, 0, tzinfo=KST),
@@ -140,14 +156,10 @@ def test_수정_초안은_event_id_와_원본을_싣는다() -> None:
     payload = draft.to_payload()
 
     assert payload["event_id"] == "event-1"
-    assert payload["items"] == [
-        {"item_id": "event_item-1", "item_name": "체육복", "is_prepared": True}
-    ]
+    assert payload["items"] == [{"item_id": "event_item-1", "item_name": "체육복"}]
     # 화면이 "운동회 → 가을 운동회" 를 그릴 수 있어야 한다
     assert payload["before"]["title"] == "운동회"
-    assert payload["before"]["items"] == [
-        {"item_id": "event_item-1", "item_name": "체육복", "is_prepared": False}
-    ]
+    assert payload["before"]["items"] == [{"item_id": "event_item-1", "item_name": "체육복"}]
     assert "changed" not in payload
 
 
@@ -606,3 +618,71 @@ async def test_다른_이름이면_그대로_붙는다(context: AgentContext) ->
     draft = context.drafts.get(event_id)
     assert draft is not None
     assert [item.item_name for item in draft.items] == ["체육복", "물통"]
+
+
+# ── 회의 결정으로 바뀐 payload ──────────────────────────────────
+def test_create_와_update_의_키_집합이_다르다() -> None:
+    # create 는 POST, update 는 PATCH 로 가서 스키마가 나뉜다
+    create = _draft().to_payload()
+    update = _draft(op="update", event_id="event-1", before=_snapshot()).to_payload()
+
+    assert set(create) == {"draft_id", "op", "source", "event", "items"}
+    assert set(update) == {"draft_id", "op", "source", "event_id", "event", "before", "items"}
+    # op 는 두 모양 모두에 남는다. 화면이 이 값으로 부를 엔드포인트를 고른다
+    assert create["op"] == "create"
+    assert update["op"] == "update"
+
+
+def test_출처_슬롯은_비어_있다() -> None:
+    # 제안에서 온 초안만 채운다. Memory 는 그 경로를 거치지 않는다
+    for draft in (_draft(), _draft(op="update", event_id="event-1", before=_snapshot())):
+        assert draft.to_payload()["source"] is None
+
+
+def test_준비물_체크_상태는_payload_에_없다() -> None:
+    # items 가 최종 목록이라 실어 보내면 제출할 때 PATCH 로 누른 체크가 풀린다
+    draft = _draft(
+        op="update",
+        event_id="event-1",
+        items=(DraftItem(item_id="event_item-1", item_name="체육복", is_prepared=True),),
+        before=_snapshot(items=(DraftItem(item_id="event_item-1", item_name="체육복"),)),
+    )
+
+    payload = draft.to_payload()
+
+    assert payload["items"] == [{"item_id": "event_item-1", "item_name": "체육복"}]
+    assert payload["before"]["items"] == [{"item_id": "event_item-1", "item_name": "체육복"}]
+
+
+def test_체크_상태_필드_자체는_남는다() -> None:
+    # payload 에서만 뺐다. _diff 가 이 값을 봐야 체크만 한 run 이 빈 초안을 안 만든다
+    assert DraftItem(item_id="i", item_name="체육복", is_prepared=True).is_prepared is True
+
+
+async def test_체크만_한_run_은_수정_초안을_만들지_않는다(context: AgentContext) -> None:
+    # is_prepared 를 payload 에서 뺀 뒤에도 이 판정이 살아 있어야 한다
+    await _seed_event(context, "체육복")
+
+    result = await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "is_prepared": True}, context
+    )
+
+    assert result.success is True, result.error
+    assert result.data["draft"] is False
+    assert context.drafts.all() == ()
+    stored = await context.store.get_event_item(item_id="event_item-1")
+    assert stored is not None and stored.is_prepared is True
+
+
+async def test_수정_뒤_체크해도_준비물이_바뀐_것으로_잡히지_않는다(context: AgentContext) -> None:
+    # _sync_checked 가 버퍼를 안 맞추면 changed 에 items 가 붙는다
+    event_id = await _seed_event(context, "체육복")
+
+    await _update(context, event_id, starts_time="오후 5시")
+    await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "is_prepared": True}, context
+    )
+
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert draft.changed == ("starts_at",)  # items 는 붙지 않는다
