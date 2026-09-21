@@ -19,10 +19,11 @@ import {
 } from "@/lib/api";
 import {
   CONSENT_POLICY_VERSION,
+  LEGAL_DOCUMENTS,
   OPTIONAL_CONSENTS,
-  REQUIRED_CONSENTS,
   TERMS_NOT_FINAL,
   type ConsentItem,
+  type LegalDocument,
 } from "@/lib/consent";
 import { formatDay } from "@/lib/format";
 
@@ -30,10 +31,10 @@ import { formatDay } from "@/lib/format";
  * 10 설정 — 동의 관리.
  *
  * 🚨 **필수와 선택을 같은 컨트롤로도, 같은 구역으로도 두지 않는다.** 내가 지금 쥐고 있는 것
- *    (선택)은 화면 **위**에서 켜고 끄고, 필수 넷은 아래 **약관과 방침**에서 이름과 상태만
- *    간단히 보여준다 (`GrantedConsentSection`). 같은 목록에 나란히 두면 "다 끌 수 있다" 고
- *    말하는 셈이고, 눌렀을 때와 다르다 — 그리고 손댈 수 없는 넷이 손댈 수 있는 하나보다
- *    위에 서서 자리를 먹는다.
+ *    (선택)만 이 구역이 든다. 필수 동의 넷은 **가입 화면이 받는 것**이라 설정에 다시 세우지
+ *    않는다 — 같은 목록에 나란히 두면 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와 다르다.
+ *    아래 **약관과 방침**(`LegalDocumentSection`)이 드는 것은 동의 스코프가 아니라
+ *    읽는 문서 둘(이용약관 · 처리방침)이다.
  *
  * 🚨 **필수를 화면에서 빼지는 않는다.** 무엇에 동의했는지 열람할 경로는 남아 있어야 한다
  *    (전문 시트로 가는 길이 여기 하나뿐이다).
@@ -268,7 +269,7 @@ export function ConsentSection({ childId }: { childId: string }) {
  *    쓸 수 없고, 없는 조항을 지어 넣으면 그대로 배포된다. 확정된 사실만 보여주고 아직
  *    최종본이 아니라는 것을 화면에 밝힌다 (가입 동의 화면과 같은 규칙).
  */
-function ConsentDetail({ item }: { item: ConsentItem }) {
+function ConsentDetail({ item }: { item: Pick<ConsentItem, "details"> }) {
   return (
     <div className="flex flex-col gap-5">
       {item.details.map((section) => (
@@ -287,61 +288,45 @@ function ConsentDetail({ item }: { item: ConsentItem }) {
 }
 
 /**
- * **약관과 방침** — 가입할 때 동의한 문서 목록이다.
+ * **약관과 방침** — 보호자가 언제든 다시 읽는 **법적 문서 둘**이다 (`LEGAL_DOCUMENTS`).
  *
- * 🚨 **"이미 동의한 것" 이라고 부르지 않는다.** 그 이름은 *동의라는 행위*를 주어로 삼아서
- *    동의 구역의 꼬리처럼 읽히는데, 부모가 여기 오는 이유는 동의 이력을 확인하려는 게
- *    아니라 **약관을 읽으려는** 것이다. 이름이 곧 그 화면이 무엇인지다.
+ * 🚨 **동의 스코프를 늘어놓지 않는다.** 필수 동의 네 건은 *가입할 때 받는 것*이고, 그걸 설정에
+ *    다시 세우면 가입 화면을 한 번 더 그리는 셈이다. 부모가 여기서 하려는 일은 동의 이력
+ *    확인이 아니라 **약관을 읽는 것**이라, 읽을 문서만 남긴다 (제품 결정 · #89).
  *
- * 🚨 **여기서는 아무것도 할 수 없다.** 전문을 여는 것 말고는 버튼이 없다 — 필수 동의라
- *    화면에서 끌 수 없고, 그만 쓰려면 계정 구역의 탈퇴로 간다.
+ * 🚨 **"이미 동의한 것" 이라고 부르지 않는다.** 그 이름은 *동의라는 행위*를 주어로 삼아
+ *    동의 구역의 꼬리처럼 읽힌다. 이름이 곧 그 구역이 무엇인지다.
  *
- * 🚨 **컴팩트한 줄이다** — 아이콘 타일이 없고 상태가 오른쪽 끝에 붙는다. 여기 줄들은
- *    "무엇을 하는 곳" 이 아니라 **문서 목록**이라 훑는 속도가 먼저고, 타일을 세우면 설정의
- *    다른 구역들과 같은 무게로 읽혀 자리를 먹는다 (디자인 시스템 §7 설정 줄 · 컴팩트).
+ * 🚨 **줄마다 상태를 달지 않는다.** 이용약관은 가입 때 동의한 것이지만 처리방침은 동의하는
+ *    글이 아니라 **알리는 글**이다 — 둘을 한 목록에 두고 "동의함" 을 나란히 붙이면 처리방침도
+ *    동의 대상인 것처럼 읽힌다. 어느 판인지는 목록 아래 한 줄이 말한다.
  *
- * 🚨 **그래도 상태를 글자로 낸다** (`동의함`). 약관 버전이 올라 필수 스코프가 꺼지는 경우가
- *    있고(콜백 화면이 이 화면으로 보내는 그 경우다), 그때 줄이 똑같이 그려지면 안 된다.
+ * 🚨 **컴팩트한 줄이다** — 아이콘 타일이 없다. 여기 줄들은 "무엇을 하는 곳" 이 아니라
+ *    **문서 목록**이라 훑는 속도가 먼저고, 타일을 세우면 손대는 구역들과 같은 무게로 읽힌다.
  */
-export function GrantedConsentSection({ childId }: { childId: string }) {
-  const [detail, setDetail] = useState<ConsentItem | null>(null);
-
-  const consents = useQuery({
-    queryKey: qk.consents(childId),
-    queryFn: () => api.get<ConsentsResponse>("/consents", { query: { child_id: childId } }),
-  });
-
-  // 🚨 위 구역이 이미 같은 쿼리로 실패를 말한다. 여기서 또 실패 카드를 세우면 한 화면에
-  //    같은 사고가 두 번 적힌다 — 조용히 비워 두고 상태만 모른 채로 이름을 보여준다.
-  const effective = consents.data?.effective;
+export function LegalDocumentSection() {
+  const [detail, setDetail] = useState<LegalDocument | null>(null);
 
   return (
     <>
       <SettingsGroup>
-        {REQUIRED_CONSENTS.map((item) => (
-          <li key={item.scope} className="flex items-center justify-between gap-3 px-4">
+        {LEGAL_DOCUMENTS.map((doc) => (
+          <li key={doc.id} className="px-4">
             {/* 🚨 이름이 유일한 조작이다. 줄 전체를 버튼으로 만들지 않는 것은 다른 설정 줄과
                 같지만, 여기서는 **누를 것이 이것뿐**이라 밑줄이 더 중요하다. */}
             <button
               type="button"
-              onClick={() => setDetail(item)}
-              className="text-body text-ink ease-standard decoration-line-strong hover:decoration-ink-muted active:text-ink-muted min-h-touch max-w-full py-2 text-left underline decoration-1 underline-offset-4 transition-colors duration-120 focus-visible:-outline-offset-2"
+              onClick={() => setDetail(doc)}
+              className="text-body text-ink ease-standard decoration-line-strong hover:decoration-ink-muted active:text-ink-muted min-h-touch block max-w-full py-2 text-left underline decoration-1 underline-offset-4 transition-colors duration-120 focus-visible:-outline-offset-2"
             >
-              {item.shortLabel}
+              {doc.label}
             </button>
-            <span className="text-caption text-ink-subtle shrink-0">
-              {effective === undefined
-                ? null
-                : effective[item.scope] === true
-                  ? "동의함"
-                  : "동의하지 않음"}
-            </span>
           </li>
         ))}
       </SettingsGroup>
 
-      {/* 어느 판에 동의했는지. 🚨 약관을 고치면 이 값부터 올라간다 (`lib/consent.ts`). */}
-      <p className="text-caption text-ink-subtle">{CONSENT_POLICY_VERSION} 판에 동의했어요.</p>
+      {/* 어느 판인지. 🚨 약관을 고치면 이 값부터 올라간다 (`lib/consent.ts`). */}
+      <p className="text-caption text-ink-subtle">{CONSENT_POLICY_VERSION} 판이에요.</p>
 
       <BottomSheet
         open={detail !== null}

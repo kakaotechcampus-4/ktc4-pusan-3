@@ -1,12 +1,12 @@
 "use client";
 
-import { ArrowLeft, LifeBuoy, Plus, UserRound } from "lucide-react";
+import { ArrowLeft, LifeBuoy, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
-import { ConsentSection, GrantedConsentSection } from "@/components/consent-section";
+import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
 import { ParentSection } from "@/components/parent-section";
 import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -29,9 +29,9 @@ import { useChildId } from "@/hooks/use-child-id";
  *    위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
  *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹지 않게 한다.
  *
- * 🚨 **아이 정보(이름·생일·알레르기)를 여기서 보여주지도 고치지도 않는다.** 11 아이 프로필이
- *    소유한다 — 같은 값을 두 화면에서 고칠 수 있으면 어느 쪽이 정본인지 사라진다.
- *    여기 남는 것은 **가는 길 하나**다.
+ * 🚨 **아이 정보를 여기서 다루지 않는다.** 이름·생일·알레르기는 11 아이 프로필이 소유하고,
+ *    거기로 가는 길도 하단 네비가 든다 — 설정에 가는 길을 하나 더 두면 같은 화면으로 가는
+ *    문이 둘이 된다 (제품 결정 · #89).
  *
  * 🚨 **네비에서는 홈이 켜진 채**다. 설정은 홈 헤더에서 들어가는 곁가지라 자기 칸이 없고,
  *    아무 칸도 안 켜진 네비는 고장난 것처럼 보인다 (`ChildNav` 주석).
@@ -98,18 +98,6 @@ function SettingsScreen() {
         <ConsentSection childId={childId} />
       </Section>
 
-      {/* 🚨 아이 정보를 여기에 **보여주지 않는다.** 이름도 나이도 아바타도 두지 않고
-          가는 길만 남긴다 — 같은 값이 두 화면에 뜨면 어느 쪽이 지금 값인지 알 수 없다. */}
-      <Section title="아이" description="부르는 이름과 생일, 알레르기는 아이 화면이 들고 있어요.">
-        <SettingsGroup>
-          <SettingsLinkRow
-            href={`/child/${childId}/profile`}
-            icon={UserRound}
-            title="아이 정보 고치기"
-          />
-        </SettingsGroup>
-      </Section>
-
       <Section title="고객센터" description="자주 묻는 것과 이 서비스의 기본 정보예요.">
         <SettingsGroup>
           <SettingsLinkRow
@@ -123,8 +111,11 @@ function SettingsScreen() {
 
       {/* 🚨 **약관은 계정 바로 위다.** 읽기만 하는 문서 목록이라 손대는 구역들보다 뒤에 오되,
           계정(로그아웃·탈퇴)보다는 앞에 둔다 — 나가는 길이 화면의 마지막이어야 한다. */}
-      <Section title="약관과 방침" description="가입할 때 동의한 것들이에요. 누르면 전문을 봐요.">
-        <GrantedConsentSection childId={childId} />
+      {/* 🚨 **동의 스코프가 아니라 읽는 문서 둘이다.** 필수 동의 네 건은 가입 화면이 받는
+          것이라 설정에 다시 세우지 않는다 — 여기서 부모가 하려는 일은 동의 이력 확인이
+          아니라 약관을 읽는 것이다 (`LegalDocumentSection`). */}
+      <Section title="약관과 방침" description="누르면 전문을 볼 수 있어요.">
+        <LegalDocumentSection />
       </Section>
 
       {/* 🚨 **탈퇴가 계정 구역 안에 있다.** 로그인·로그아웃과 같은 축이라 따로 떼어 두면
