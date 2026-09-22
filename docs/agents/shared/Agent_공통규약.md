@@ -11,6 +11,51 @@
 
 ---
 
+## 0. 전체 구조
+
+```
+부모 입력 / 기관 공지(텍스트) / 외부 이벤트        기관 공지(이미지)
+        ↓                                          ↓
+  Child Supervisor                           OCR 파이프라인 (Agent 아님)
+  입력 해석 · Agent Routing                   텍스트 추출 → 3갈래 분류
+        ↓                                     ├─ 일반 공지 → notice
+   Memory Agent  ←────── 일정성 공지 원문 ──────┤
+   관찰·일정 저장 (공유 테이블 단일 writer)       └─ 급식표 → `daycare_meal` (+ 대체식 확인 안내)
+        ↓                            ▲
+  ┌─────────┼─────────┬─────────┐    │ 승인된 suggestion 이관
+  Food   Activity   Growth    Health │
+  └─────────┼─────────┴─────────┘    │
+        ↓                            │
+   suggestion (draft, 3개) ── 사용자 승인
+   readout / event 이관 / 역질의
+        ↓
+    Curator (Agent 아님, 배치)
+  정규화 · 병합 · 승격 · 감쇠
+        ↓
+    profile_affinity
+  확정 관심 · 선호/기피
+        ↓
+   다음 추천의 1순위 근거
+```
+
+라우팅과 Agent 경계는 [supervisor-agent-v1.md](../supervisor-agent-v1.md), 관찰·일정 저장은 [memory-agent-v1.md](../memory-agent-v1.md) 에 있다.
+
+### Curator와 OCR 파이프라인은 Agent가 아니다
+
+대화 입력을 받지 않고 Supervisor의 라우팅 대상도 아니다.
+
+| | 입력 | 출력 |
+| --- | --- | --- |
+| Curator | `observation_*` 누적 | `profile_affinity` (병합·승격·감쇠) |
+| OCR 파이프라인 | 기관 공지 **이미지** | 일반 공지 → `notice` · 급식표 → `daycare_meal` · 일정성 공지 → **추출 원문을 Memory로** (`event` · `event_item`은 Memory가 쓴다) |
+| OCR 파이프라인 | 처방전·약봉투 **이미지** | `prescription_draft` (Health가 읽기만. 확인 카드의 "확인·등록"이 복약 초안 제출을 겸한다) |
+
+어느 갈래인지는 OCR 파이프라인이 추출 텍스트를 보고 판단한다. 일정성 공지는 Memory가 구조화한 뒤 이벤트 draft 확인 모달이 뜬다.
+
+텍스트로 붙여넣은 공지는 OCR을 거치지 않고 **Memory Agent**가 처리한다. 텍스트로 들어온 **일반 공지**를 `notice`에 누가 쓰는지, 한 장에 일정과 일반 안내가 섞인 공지를 어떻게 나누는지는 미정이다. Growth는 `notice` 행을 **읽기만** 한다.
+
+---
+
 ## 1. Agent의 모양
 
 ```python

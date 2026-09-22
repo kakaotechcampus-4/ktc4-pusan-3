@@ -24,7 +24,7 @@ memory-agent-v1.md
 | 1 | [shared/Agent_공통규약.md](shared/Agent_공통규약.md) | 쓰기 권한 · 출력 채널 · 근거 · 게이팅 · 호출 예산 · 금지 사항 |
 | 2 | [shared/Tool_공통.md](shared/Tool_공통.md) | `LifeStage` · `Gate` · `rank_evidence` 정본 |
 | 3 | [shared/연령별_Tool_전략.md](shared/연령별_Tool_전략.md) | 월령 경계표 · 교정연령 · 경계 처리 |
-| 4 | [shared/5agents.md](shared/5agents.md) §4-1, §6 | Activity ↔ Growth 경계, Activity 역할 |
+| 4 | [supervisor-agent-v1.md](supervisor-agent-v1.md) §2, §3-1 | 2차 라벨, Activity ↔ Growth 경계. Activity 역할은 아래 §2 에 있다 |
 | 5 | [data_model.md](data_model.md) | `observation_activity` · `profile_affinity` · `suggestion` |
 | 6 | [shared/RAG_plan.md](shared/RAG_plan.md) · [shared/외부연결_계획.md](shared/외부연결_계획.md) §3 | 문서 행 제작 절차 · 날씨·장소 API |
 
@@ -49,6 +49,29 @@ memory-agent-v1.md
 **`activity_doc`은 테이블이다.** Food·Growth와 맞춘다. 시드는 YAML로 버전 관리하고 Alembic이 `doc_key` 기준 upsert한다. lint·교차 검수 절차는 [shared/RAG_plan.md](shared/RAG_plan.md) §2에 있다. few-shot을 코드 안 YAML로 두기로 했던 R-1은 이 결정으로 닫힌다.
 
 **`hazard_term`은 Activity 소유다.** Growth도 읽는다 — `growth_doc` 적재 시점에 한 번, 활동 후보 출력 사후에 한 번. 구현을 두 벌 두지 않는다. Growth가 필요로 하는 것은 아래 §5에 적었다.
+
+### Activity Agent의 역할
+
+아이의 현재 관심과 실제 놀이 반응을 바탕으로, **지금 실행하기 좋은** 놀이·외출 활동을 추천한다.
+
+하는 일
+
+- 집/실내/야외 놀이 추천
+- `candidate` 관심을 확인해볼 가벼운 탐색 활동
+- `confirmed` 관심을 더 깊게 즐길 활동
+- 최근 했던 놀이와 중복되는 추천 제거 (코드)
+- 날씨·시간·거리·가족 일정 반영
+
+연결할 것 — `observation_activity` · `profile_affinity(domain=activity)` · Child Profile · Calendar · Weather · 위치 기반 장소 정보
+
+하지 않는 일
+
+- 한 번 즐긴 놀이를 장기 취향으로 확정
+- 외부 리뷰만 보고 최적 장소라고 단정
+- 보호자 승인 없이 예약·결제 — 경로 자체를 만들지 않는다
+- `observation_education` · `observation_routine` 읽기
+
+Growth 와의 경계는 [supervisor-agent-v1.md](supervisor-agent-v1.md) §3-1 에 있다. 읽기 포트가 비대칭이다 — Growth 는 놀이 기록을 읽지만 Activity 는 학습·루틴 기록을 읽지 않는다.
 
 ---
 
@@ -145,11 +168,11 @@ app/agents/activity/
 | --- | --- |
 | `app/rules/age.py` | `life_stage()` · 달력 계산 |
 | `app/rules/term_match.py` | 위험 용어·알레르기 매처 |
-| `common/tool_runtime.py` | `ToolResult` · `ErrorCode` · `execute_tool` |
+| `common/tool_runtime.py` | `ToolResult` · `ErrorCode`. `execute_tool` 은 각 Agent 의 `registry.py` 가 갖는다 |
 | `common/evidence.py` | `rank_evidence()` |
 | `common/suggestion.py` · `common/readout.py` | `SuggestionDraft` · `Readout` |
 
-`ToolResult`와 `ErrorCode`는 지금 코드에 어휘가 세 벌이다(`food/result.py` · `memory/result.py` · 명세). [shared/Tool_공통.md](shared/Tool_공통.md) §1의 어휘로 통일하기로 했으니 그걸 따르면 된다.
+`ToolResult`와 `ErrorCode`는 [shared/Tool_공통.md](shared/Tool_공통.md) §1의 어휘 하나로 통일돼 있다. Agent 전용 코드가 필요하면 `common` 것을 상속해서 얹는다 — `memory/result.py`가 선례다.
 
 ---
 

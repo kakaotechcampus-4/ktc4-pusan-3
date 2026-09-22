@@ -3,7 +3,7 @@
 > **한 줄 요약** — 진단을 대신하지 않고, 보호자가 아이의 건강 기록을 **다시 찾고 · 정리하고 · 챙기는 노동**을 줄이는 Agent. 판단이 필요한 계산은 전부 코드가 공신력 있는 기준표로 하고, AI는 기록을 옮겨 적는 일만 합니다.
 >
 > 대상 독자: 기획 · 디자인 · 프론트엔드 · 백엔드 · QA
-> 최종 갱신: 2026-09-22 (개정 3 — 성장 판정 제거 · 복약 초안 payload · 중단 soft delete · 성별 미사용 · 알레르기 후보 감지 제거 · 문서 테이블 대신 상수 파일 · `event_requests`도 초안 payload) · 관련 문서: [`5agents.md`](../shared/5agents.md) §8 · [`health_agent_own_table.md`](health_agent_own_table.md)(소유 테이블) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · `설계_점검_2026-09-20.md`(저장소 밖)
+> 최종 갱신: 2026-09-22 (개정 3 — 성장 판정 제거 · 복약 초안 payload · 중단 soft delete · 성별 미사용 · 알레르기 후보 감지 제거 · 문서 테이블 대신 상수 파일 · `event_requests`도 초안 payload) · 관련 문서: [`Agent_공통규약.md`](../shared/Agent_공통규약.md) · [`health_agent_own_table.md`](health_agent_own_table.md)(소유 테이블) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · `설계_점검_2026-09-20.md`(저장소 밖)
 
 ### 개정 1에서 늘어난 것 — "판단은 줄이고 산출물은 늘린다"
 

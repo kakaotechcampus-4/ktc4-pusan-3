@@ -2,7 +2,7 @@
 
 > ⚠ **이 문서는 [`health_agent_own_table.md`](health_agent_own_table.md)에 흡수됐다 — 정본은 그쪽이다.** 2026-09-22 결정은 양쪽에 반영했고, 미결 번호는 정본 기준(M-11 게이트 범위 · M-12 중단 시 복용 기록 · M-13 처방전 카드 = 승인 · M-14 수정 시 복용 기록).
 
-> 기준 문서: [`data_model.md`](../data_model.md) (표 형식·제약 표기) · [`5agents.md`](../shared/5agents.md) §5 Health Agent · [`5agents_구현.md`](../shared/5agents_구현.md) §5 (event 이관)
+> 기준 문서: [`data_model.md`](../data_model.md) (표 형식·제약 표기) · [`Health_Agent_명세.md`](Health_Agent_명세.md) · [`공통_구현_계획.md`](../shared/공통_구현_계획.md) §6 (suggestion·초안 쓰기)
 >
 > **소유 Agent: Health.** 이 도메인의 두 테이블은 Health Agent 가 직접 CRUD 한다. 다른 Agent 는 읽지 않는다.
 >
@@ -181,7 +181,7 @@ CREATE INDEX medication_dose_send_idx
 
 ## 6. 단일 writer 원칙 재정의
 
-`5agents_구현.md` §0 의 **"Memory 가 단일 writer"** 를 이 테이블이 깬다. 원칙을 버리지 말고 기준을 다시 쓴다.
+[`Agent_공통규약.md`](../shared/Agent_공통규약.md) §2 의 **"Memory 가 공유 테이블 단일 writer"** 를 이 테이블이 깬다. 원칙을 버리지 말고 기준을 다시 쓴다.
 
 > **공유 테이블의 단일 writer 는 Memory 다.** `observation_*` · `profile_affinity` · `event` 는 여러 Agent 가 읽으므로 쓰기 통로가 하나여야 한다.
 >
@@ -230,7 +230,7 @@ DB 권한도 같이 간다 — Agent role 에 `health_safety` write 는 계속 �
 
 `status='stopped'` 로 바꾼다. 행과 dose 를 남기므로 먹인 기록이 사라지지 않는다. 발송 잡이 `active` 만 읽으니 알림은 즉시 멈춘다. `event` 삭제(hard delete)와 방식이 다른 이유는 event 에는 남길 기록이 없고 복약에는 있기 때문이다.
 
-### `5agents_구현.md` 에서 바뀌는 것
+### 공통 문서에서 바뀌는 것
 
 §5 "event 이관 — Health 가 주 고객" 이 절반만 남는다. 복약은 이관이 아니라 자체 테이블 CRUD 로 빠지고, **event 이관에 남는 건 재방문 · 검진 window 뿐**이다. §7 Health 항목의 "event 이관의 주 고객: 복약·재방문·검진 window" 에서 복약을 뺀다.
 
@@ -238,7 +238,7 @@ DB 권한도 같이 간다 — Agent role 에 `health_safety` write 는 계속 �
 
 ## 8. Health Agent 쪽 계약
 
-`medication` 2차 라벨(`5agents_구현.md` §2 참고)이 여는 tool 묶음.
+`medication` 2차 라벨([`supervisor-agent-v1.md`](../supervisor-agent-v1.md) §2 참고)이 여는 tool 묶음.
 
 | tool | 방향 | 비고 |
 | --- | --- | --- |
