@@ -1,4 +1,13 @@
-"""Observation repository의 DB 동작 계약."""
+"""Observation repository — DB 동작 계약.
+
+각 테스트 함수는 repository 함수 하나의 명세를 정의한다.
+함수명이 곧 스펙이므로, 실패하면 "어떤 계약이 깨졌는지" 함수명만 보고 판단할 수 있어야 한다.
+
+# 인덱스 의존
+#   count_active, page: ix_observation_{domain}_child_status (child_id, status)
+#   find/update/delete: PK (id) + child_id 필터
+#   query date overlap: (child_id, status) 인덱스 후 observed_range post-filter
+"""
 
 from datetime import date, datetime, timedelta, timezone
 
@@ -28,6 +37,7 @@ from app.domains.suggestion.models import Suggestion, SuggestionAgent
 
 @pytest.fixture
 async def family(session):
+    """보호자(writer) 1명 + 아이 2명. 아이 간 격리를 검증하는 기본 구조."""
     owner = Parent()
     writer = Parent()
     session.add_all([owner, writer])
@@ -44,10 +54,12 @@ async def family(session):
 
 
 def observed(day: date, *, days: int = 1) -> Range[date]:
+    """[day, day+days) 반열린 관찰 범위."""
     return Range(day, day + timedelta(days=days), bounds="[)")
 
 
 def required_fields(domain: ObservationDomain, label: str) -> dict:
+    """도메인별 NOT NULL 컬럼의 최소 필드셋."""
     common = {"confidence_source": ConfidenceSource.PARENT_DIRECT}
     match domain:
         case ObservationDomain.FOOD:
@@ -68,6 +80,7 @@ def required_fields(domain: ObservationDomain, label: str) -> dict:
 
 
 async def add_observation(session, writer, child, domain, day, label):
+    """테스트 헬퍼: 최소 필드로 관찰 1건 생성."""
     return await create_observation(
         session,
         domain=domain,
@@ -79,27 +92,36 @@ async def add_observation(session, writer, child, domain, day, label):
     )
 
 
-async def test_create_and_query_use_domain_child_overlap_and_literal_text(session, family):
+async def test_create_returns_record_with_observed_on_and_default_status(session, family):
+    """create → ObservationRecord 반환, observed_on = observed_range.lower, status = active."""
+    writer, child, _ = family
+    record = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과"
+    )
+    assert record.observed_on == date(2026, 9, 1)
+    assert record.domain is ObservationDomain.FOOD
+    assert record.fields["status"] is ObservationStatus.ACTIVE
+    assert record.fields["subject"] == "사과"
+
+
+async def test_query_filters_by_domain_child_date_overlap_and_literal_text(session, family):
+    """query는 (도메인, 아이, 날짜 overlap, raw_text 리터럴) 네 축으로 필터한다.
+
+    - 다른 아이의 같은 도메인 기록은 제외
+    - 같은 아이의 다른 도메인 기록은 제외
+    - 날짜 범위 밖 기록은 제외
+    - raw_text에 '%' 같은 특수문자가 있어도 리터럴 매칭
+    """
     writer, child, other_child = family
-    older = await add_observation(
+    target = await add_observation(
         session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과 100%"
     )
     await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 5), "배")
     await add_observation(
-        session,
-        writer,
-        other_child,
-        ObservationDomain.FOOD,
-        date(2026, 9, 1),
-        "사과 100%",
+        session, writer, other_child, ObservationDomain.FOOD, date(2026, 9, 1), "사과 100%",
     )
     await add_observation(
-        session,
-        writer,
-        child,
-        ObservationDomain.HEALTH,
-        date(2026, 9, 1),
-        "사과 100%",
+        session, writer, child, ObservationDomain.HEALTH, date(2026, 9, 1), "사과 100%",
     )
 
     rows = await query_observations(
@@ -111,43 +133,39 @@ async def test_create_and_query_use_domain_child_overlap_and_literal_text(sessio
         raw_text_query="100%",
     )
 
-    assert [row.id for row in rows] == [older.id]
-    assert rows[0].observed_on == date(2026, 9, 1)
-    assert rows[0].fields["status"] is ObservationStatus.ACTIVE
+    assert [row.id for row in rows] == [target.id]
 
 
-async def test_find_update_and_delete_never_cross_child_scope(session, family):
+async def test_find_update_delete_are_scoped_to_child_id(session, family):
+    """find/update/delete 모두 child_id WHERE절로 다른 아이 접근을 차단한다.
+
+    - 다른 아이의 child_id → find=None, update=None, delete=False
+    - 같은 아이의 child_id → 정상 동작
+    """
     writer, child, other_child = family
     record = await add_observation(
         session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과"
     )
 
+    # 다른 아이로 접근 → 전부 실패
     assert (
         await find_observation(
-            session,
-            domain="food",
-            child_id=other_child.id,
-            observation_id=record.id,
+            session, domain="food", child_id=other_child.id, observation_id=record.id,
         )
         is None
     )
     assert (
         await update_observation(
-            session,
-            domain="food",
-            child_id=other_child.id,
-            observation_id=record.id,
-            fields={"subject": "배"},
+            session, domain="food", child_id=other_child.id,
+            observation_id=record.id, fields={"subject": "배"},
         )
         is None
     )
     assert not await delete_observation(
-        session,
-        domain="food",
-        child_id=other_child.id,
-        observation_id=record.id,
+        session, domain="food", child_id=other_child.id, observation_id=record.id,
     )
 
+    # 같은 아이로 접근 → 정상
     updated = await update_observation(
         session,
         domain="food",
@@ -163,23 +181,27 @@ async def test_find_update_and_delete_never_cross_child_scope(session, family):
     assert updated.fields["amount"] is None
 
     assert await delete_observation(
-        session,
-        domain="food",
-        child_id=child.id,
-        observation_id=record.id,
+        session, domain="food", child_id=child.id, observation_id=record.id,
     )
     assert (
         await find_observation(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=record.id,
+            session, domain="food", child_id=child.id, observation_id=record.id,
         )
         is None
     )
 
 
-async def test_count_active_observations_merges_five_tables_and_uses_overlap(session, family):
+async def test_count_active_merges_five_tables_excludes_inactive_and_other_child(session, family):
+    """count_active는 5테이블 UNION ALL + status='active' + child_id 필터.
+
+    - 5개 도메인 각 1건 = total 5, period 5
+    - 기간 밖 old(8/1) = total +1, period 변동 없음
+    - 기간 걸친 overlapping(8/31~9/1) = total +1, period +1
+    - stand_alone(집계 제외) = total/period 변동 없음
+    - 다른 아이 = 변동 없음
+    → total_count=7, period_count=6
+    인덱스: ix_observation_{domain}_child_status → Index Only Scan 가능.
+    """
     writer, child, other_child = family
     period_start = date(2026, 9, 1)
     period_end = date(2026, 9, 8)
@@ -214,10 +236,7 @@ async def test_count_active_observations_merges_five_tables_and_uses_overlap(ses
     )
 
     counts = await count_active_observations(
-        session,
-        child_id=child.id,
-        period_start=period_start,
-        period_end=period_end,
+        session, child_id=child.id, period_start=period_start, period_end=period_end,
     )
 
     assert old.observed_on < period_start
@@ -226,7 +245,8 @@ async def test_count_active_observations_merges_five_tables_and_uses_overlap(ses
     assert counts.period_count == 6
 
 
-async def test_repository_rejects_unknown_fields_and_invalid_ranges(session, family):
+async def test_create_rejects_managed_field_in_fields_dict(session, family):
+    """fields에 child_id 같은 managed 필드를 넣으면 ValueError."""
     writer, child, _ = family
     with pytest.raises(ValueError, match="지원하지 않는 관찰 필드"):
         await create_observation(
@@ -239,23 +259,30 @@ async def test_repository_rejects_unknown_fields_and_invalid_ranges(session, fam
             fields={**required_fields(ObservationDomain.FOOD, "사과"), "child_id": child.id},
         )
 
+
+async def test_query_rejects_date_from_after_date_to(session, family):
+    """date_from > date_to이면 ValueError."""
+    _, child, _ = family
     with pytest.raises(ValueError, match="date_from"):
         await query_observations(
-            session,
-            domain="food",
-            child_id=child.id,
-            date_from=date(2026, 9, 2),
-            date_to=date(2026, 9, 1),
+            session, domain="food", child_id=child.id,
+            date_from=date(2026, 9, 2), date_to=date(2026, 9, 1),
         )
 
+
+async def test_count_active_rejects_empty_period(session, family):
+    """period_start == period_end(빈 기간)이면 ValueError."""
+    _, child, _ = family
     with pytest.raises(ValueError, match="집계 기간"):
         await count_active_observations(
-            session,
-            child_id=child.id,
-            period_start=date(2026, 9, 1),
-            period_end=date(2026, 9, 1),
+            session, child_id=child.id,
+            period_start=date(2026, 9, 1), period_end=date(2026, 9, 1),
         )
 
+
+async def test_create_rejects_empty_and_unbounded_observed_range(session, family):
+    """observed_range가 empty이거나 upper=None이면 ValueError."""
+    writer, child, _ = family
     for invalid_range in (Range(empty=True), Range(date(2026, 9, 1), None)):
         with pytest.raises(ValueError, match="observed_range"):
             await create_observation(
@@ -269,7 +296,14 @@ async def test_repository_rejects_unknown_fields_and_invalid_ranges(session, fam
             )
 
 
-async def test_api_page_merges_domains_with_stable_cursor_and_status(session, family):
+async def test_page_merges_five_domains_with_cursor_and_status_filter(session, family):
+    """page는 5테이블 병합 후 status 필터 + 역순 커서 페이징을 제공한다.
+
+    - active만 기본 조회 (stand_alone은 별도 status 파라미터로)
+    - 다른 아이 기록 제외
+    - 날짜 필터(date_from=date_to → 하루)
+    - limit=1 → next_cursor → 다음 페이지
+    """
     writer, child, other_child = family
     food = await add_observation(
         session, writer, child, ObservationDomain.FOOD, date(2026, 9, 2), "사과"
@@ -310,7 +344,8 @@ async def test_api_page_merges_domains_with_stable_cursor_and_status(session, fa
     assert [row.id for row in day.items] == [health.id]
 
 
-async def test_api_page_filters_affinity_and_unused_suggestion_evidence(session, family):
+async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, family):
+    """affinity_id 필터 + unused_in_suggestions=True로 제안에 안 쓰인 관찰만 조회."""
     writer, child, _ = family
     affinity = ProfileAffinity(
         child_id=child.id,
@@ -360,7 +395,12 @@ async def test_api_page_filters_affinity_and_unused_suggestion_evidence(session,
     assert [row.id for row in page.items] == [unused.id]
 
 
-async def test_api_page_cursor_does_not_skip_same_day_records(session, family):
+async def test_page_cursor_does_not_skip_same_day_different_domain_records(session, family):
+    """같은 날짜·다른 도메인 3건을 limit=1씩 순회하면 3건 모두 수집된다.
+
+    커서 정렬: (upper(observed_range) DESC, kind DESC, id DESC).
+    같은 날짜에서 kind+id로 구분하므로 중복·누락이 없어야 한다.
+    """
     writer, child, _ = family
     await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과")
     await add_observation(

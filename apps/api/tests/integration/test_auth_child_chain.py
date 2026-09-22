@@ -1,7 +1,12 @@
-"""세션 키 → 부모 식별 → 아이 접근 체인의 DB 계약.
+"""세션 키 → 부모 식별 → 아이 접근 — 인증·인가 체인의 DB 계약.
 
-API 라우터는 Bearer 토큰에서 parent_id를 꺼내고, parent_id로 아이 접근 권한을 확인한다.
-이 테스트는 그 체인을 구성하는 repository 함수들이 올바르게 연결되는지 검증한다.
+API 라우터의 인증 흐름:
+  Bearer token → hash → find_session_by_token_hash → parent_id
+                                                      ↓
+                                        find_accessible_child(child_id, parent_id)
+
+이 테스트는 체인의 각 단계가 올바르게 동작하고, 단계 간 연결이 끊기지 않는지 검증한다.
+인덱스 의존: ix_session_token_hash (unique), parent_child_parent_id_child_id_key (unique composite).
 """
 
 import hashlib
@@ -55,8 +60,8 @@ async def test_valid_session_resolves_to_parent(session, two_parents):
     assert row.parent_deleted_at is None
 
 
-async def test_expired_session_still_returns_row(session, two_parents):
-    """만료된 세션도 행 자체는 반환한다 — 만료 판정은 호출자(deps/auth.py)가 한다."""
+async def test_expired_session_returns_row_with_past_expires_at(session, two_parents):
+    """만료된 세션도 행은 반환한다. 만료 판정은 repository가 아니라 deps/auth.py가 한다."""
     parent_a, _ = two_parents
     token_hash = _hash("expired-token")
     expired_at = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -71,14 +76,14 @@ async def test_expired_session_still_returns_row(session, two_parents):
     assert row.expires_at == expired_at
 
 
-async def test_unknown_token_returns_none(session, two_parents):
-    """등록되지 않은 토큰 해시는 None."""
+async def test_unknown_token_hash_returns_none(session, two_parents):
+    """DB에 없는 토큰 해시 → None. deps/auth.py는 이를 401로 변환한다."""
     row = await find_session_by_token_hash(session, token_hash=_hash("no-such-token"))
     assert row is None
 
 
 async def test_deleted_parent_session_carries_deleted_at(session, two_parents):
-    """탈퇴한 부모의 세션은 parent_deleted_at이 찬다."""
+    """탈퇴한 부모의 세션은 parent_deleted_at이 채워진다. deps/auth.py는 이를 404로 변환한다."""
     parent_a, _ = two_parents
     deleted_time = datetime.now(timezone.utc)
     parent_a.deleted_at = deleted_time
@@ -146,8 +151,8 @@ async def test_find_accessible_child_blocks_cross_parent_access(session, two_par
 # -- 3. 전체 체인: 세션 → 부모 → 아이 --
 
 
-async def test_full_chain_session_to_parent_to_child(session, two_parents):
-    """세션 토큰 → parent_id → 접근 가능한 아이까지 한 번에 검증한다."""
+async def test_full_chain_token_hash_to_parent_to_accessible_child(session, two_parents):
+    """전체 체인: token_hash → SessionRow.parent_id → find_accessible_child 성공/차단."""
     parent_a, parent_b = two_parents
 
     # 세션 생성
