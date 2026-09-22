@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 · 외부 링크를 시스템 브라우저로 · 연결 실패 화면과 재시도 · safe area 처리.
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 · 외부 링크를 시스템 브라우저로 · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 토큰을 들고 있지 않다. 상태를 관리하지 않는다.
 
@@ -47,10 +47,11 @@ Expo autolinking 이 pnpm 의 격리된 심볼릭 링크 구조에서 네이티�
 ## 3. 구조
 
 ```
-App.tsx           웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크)
-index.ts          registerRootComponent
-src/config.ts     WEB_URL · 허용 출처 판정
-app.json          Expo 설정 (name · scheme · bundle id)
+App.tsx               웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
+index.ts              registerRootComponent
+src/config.ts         WEB_URL · 허용 출처 판정
+src/native/safe-area.ts  상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다
+app.json              Expo 설정 (name · scheme · bundle id)
 ```
 
 ---
@@ -59,7 +60,16 @@ app.json          Expo 설정 (name · scheme · bundle id)
 
 - **허용 출처 밖은 웹뷰에 가두지 않는다.** `onShouldStartLoadWithRequest` 에서 `isInternalUrl()` 로 거르고, 아니면 `Linking.openURL` 로 시스템 브라우저에 넘긴다. 소셜 로그인·약관 페이지가 웹뷰 안에서 열리면 사용자가 주소창을 못 봐서 피싱과 구분할 수 없다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
-- **safe area 는 네이티브 셸이 먹는다** (`SafeAreaView`). 웹의 `pt-safe`/`pb-safe` 는 모바일 브라우저 직접 접속용이라 웹뷰 안에서는 0 이 된다 — 정상이다.
+- 🚨 **safe area 는 셸이 재고, 칠하는 것은 페이지다.** 웹뷰는 화면 끝까지 덮고(`edges={["left","right"]}`),
+  상태바·제스처바 크기는 `--shell-inset-top` / `--shell-inset-bottom` 으로 넘긴다
+  (`src/native/safe-area.ts` → 웹의 `pt-safe-*`/`pb-safe-*`).
+  **셸이 그 자리를 자기 배경색으로 칠하면 안 된다** — 이어져야 할 색이 화면마다 다르다
+  (그냥 화면 `canvas` · 하단 네비 `surface-muted` · 시트가 열리면 딤). 셸은 그중 하나밖에 모르니
+  위아래에 흰 띠가 남았다 (#133). 화면별로 색을 바꿔 칠하는 것은 §1 을 깨는 길이다 — 자리만 비워 준다.
+  ⚠️ 셸이 그리는 **연결 실패 화면**은 예외다. 그건 셸의 화면이라 거기서는 `SafeAreaView` 가 직접 먹는다.
+- ⚠️ **Android 웹뷰의 `env(safe-area-inset-*)` 는 상태바·제스처바를 세지 않는다** (디스플레이 컷아웃만 본다).
+  그래서 웹이 스스로 알 수 없고, 셸이 넘겨야 한다. 예전에 셸 패딩과 `env()` 가 **둘 다 걸려 위쪽이 두 번 밀린**
+  적이 있는데(#133), 지금은 웹이 셸 값을 먼저 보므로 한 번만 센다.
 - 🚨 **`EXPO_PUBLIC_*` 는 앱 번들에 그대로 들어간다.** 디컴파일하면 보인다. 이 셸이 아는 비밀은 **없어야 정상**이다 (§9 · NF-09).
 
 ---

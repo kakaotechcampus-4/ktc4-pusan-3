@@ -164,7 +164,9 @@
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
 │   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
-│   │   └── src/config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
+│   │   └── src/
+│   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
+│   │       └── native/       웹이 못 하는 것만. 지금은 safe area 크기를 CSS 변수로 넘기는 것 하나
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅

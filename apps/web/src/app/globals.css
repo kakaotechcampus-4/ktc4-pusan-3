@@ -271,10 +271,21 @@
  *    (화면 5개의 상하 여백이 0 이었고, 바텀시트 닫기 버튼이 화면 맨 아래에 붙었다).
  *    그래서 유틸이 calc 로 합쳐서 내보낸다. `pb-safe-4` = safe area + 16px.
  *    여백이 필요 없으면 `pb-safe-0`.
+ *
+ * 🚨 **값의 출처가 둘이다.**
+ *    - `--shell-inset-*` — 네이티브 셸(`apps/mobile`)이 웹뷰에 꽂아 주는 값.
+ *    - `env(safe-area-inset-*)` — 모바일 브라우저로 직접 들어왔을 때.
+ *
+ *    Android 웹뷰의 `env(safe-area-inset-*)` 는 **상태바·제스처바를 세지 않는다**(디스플레이
+ *    컷아웃만 본다). 그래서 셸 안에서는 늘 0 이고, 그 자리를 셸이 자기 배경색으로 칠하면
+ *    페이지 색과 어긋나 위아래에 흰 띠가 생긴다 (#133). 셸이 값만 넘기고 **칠하는 건 페이지**가
+ *    하도록 변수를 먼저 본다. 셸 밖에서는 변수가 없으니 `env()` 로 떨어진다 — 기존 동작 그대로다.
  */
 @utility pt-safe-* {
-  padding-top: calc(env(safe-area-inset-top) + --spacing(--value(integer)));
+  padding-top: calc(var(--shell-inset-top, env(safe-area-inset-top)) + --spacing(--value(integer)));
 }
 @utility pb-safe-* {
-  padding-bottom: calc(env(safe-area-inset-bottom) + --spacing(--value(integer)));
+  padding-bottom: calc(
+    var(--shell-inset-bottom, env(safe-area-inset-bottom)) + --spacing(--value(integer))
+  );
 }
