@@ -287,7 +287,15 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 
 **마지막 칸이 제일 중요하다.** 배치로 `expired` 를 찍으면 늦게 온 채택이 `expired → approved` 라는 **역방향 전이**를 요구한다. 조회 시점 판정이면 행은 계속 `draft` 라 **`draft → approved` 로 정상 전이**한다. 🚨 나들이 추천은 **구조적으로** 24시간을 넘기므로, 배치를 돌리면 *"채택률이 조금 낮게 잡히는"* 게 아니라 **나들이 카테고리만 통째로 0%** 가 된다.
 
-**채택 경로** — 승인 게이트는 3곳(캘린더 쓰기 / 건강·알레르기 확정 / 복약 등록)으로 고정이라 *"이 추천 채택하시겠어요?"* 를 따로 만들 수 없다. **캘린더 쓰기 승인 하나가 두 가지를 기록한다** — 일정 저장 + `suggestion.status = approved`. 제출 요청이 그 suggestion 을 가리키는 필드 이름은 [#121](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/121) 의 제출 스키마와 같이 정한다.
+**채택 경로** — 승인 게이트는 3곳(캘린더 쓰기 / 건강·알레르기 확정 / 복약 등록)으로 고정이라 *"이 추천 채택하시겠어요?"* 를 따로 만들 수 없다. **캘린더 쓰기 승인 하나가 두 가지를 기록한다** — 일정 저장 + `suggestion.status = approved`.
+
+초안 payload 의 정본은 [`docs/event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) 다. 세 경로(한 줄 입력 · 추천 → 일정 · 공지 OCR)가 **같은 JSON 모양**을 내되 클래스는 공유하지 않는다. 여기서 Activity 가 지킬 것은 셋이다.
+
+- 🚩 **추천 → 일정 초안을 만드는 곳은 `suggestion` 도메인(서버)이지 Activity Agent 가 아니다.** Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Memory Agent 가 돌 일이 아니고, `app/agents/memory/drafts.py` 는 레이어 경계상 `app/api` 가 import 할 수 없다.
+- `draft_id` 는 *"한 응답 안에서만 유일"* 로 읽는다 — 제안 경로에는 run 이 없다.
+- `op` 는 `create` 하나다. 추천에서 생기는 일정은 언제나 새 일정이라 `event_id`·`before` 가 없다.
+
+🚩 **`source`(출처) 필드는 아직 payload 에 없다.** Memory 는 채울 값이 영원히 `null` 이라 넣지 않았고, **키 이름과 모양은 이 경로를 만드는 PR 에서 정한다.** 그 PR 이 Activity 쪽이므로 여기서 정해 올린다.
 
 ---
 
