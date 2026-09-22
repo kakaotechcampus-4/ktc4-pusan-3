@@ -113,7 +113,7 @@
 
 | 용어                               | 뜻                                                                                                        | 어디에                                                       |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Observation Memory**             | 관찰 **1건**. 도메인별 4계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity`  |
+| **Observation Memory**             | 관찰 **1건**. 도메인별 5계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity` · `_routine` |
 | **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
 | **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
@@ -121,7 +121,7 @@
 | **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
-| **도메인 Agent**                   | `food` · `activity` · `education` · `health` **4종 고정**                                                 | `suggestion_agent`                                           |
+| **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
 | **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
 | **근거 (evidence)**                | 그 추천이 쓴 `memory_id` 목록. **0행이면 버그**                                                           | `suggestion_evidence`                                        |
 | **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. | `correction_verdict`                                         |
