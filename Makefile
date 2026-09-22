@@ -3,7 +3,11 @@
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-lint web-fmt \
-        web-typecheck web-check
+        web-typecheck web-check web-image web-up web-down web-logs
+
+# 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
+COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
+COMPOSE_DEPLOY := docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
 
 help:
 	@echo "사용 가능한 명령"
@@ -43,8 +47,14 @@ help:
 	@echo "  make db-merge msg=\"설명\"     갈라진 head를 합치는 merge revision 생성"
 	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
 	@echo ""
+	@echo "── 배포 (docker) ──"
+	@echo "  make web-image    프론트 이미지 굽기 (deploy/docker/.env 의 NEXT_PUBLIC_API_BASE_URL 이 박힌다)"
+	@echo "  make web-up       프론트 컨테이너 기동"
+	@echo "  make web-down     프론트 컨테이너 중지"
+	@echo "  make web-logs     프론트 컨테이너 로그"
+	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
-	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다."
+	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다 (배포 4개는 docker)."
 
 install:
 	cd apps/api && uv sync
@@ -92,13 +102,13 @@ web-fmt:
 web-check: web-typecheck web-lint web-test
 
 db-up:
-	docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
+	$(COMPOSE_DEV) up -d
 
 db-down:
-	docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env down
+	$(COMPOSE_DEV) down
 
 db-logs:
-	docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env logs -f db
+	$(COMPOSE_DEV) logs -f db
 
 db-migrate:
 	cd apps/api && uv run alembic upgrade heads
@@ -133,3 +143,19 @@ db-reset:
 
 db-psql:
 	docker exec -it ktc4-postgres psql -U $$(docker exec ktc4-postgres printenv POSTGRES_USER) -d $$(docker exec ktc4-postgres printenv POSTGRES_DB)
+
+# ── 배포 (docker) ────────────────────────────────────────────────────
+# 🚨 web-image 는 deploy/docker/.env 의 NEXT_PUBLIC_API_BASE_URL 을 번들에 박는다.
+#    주소가 바뀌면 web-up 을 다시 하는 게 아니라 web-image 를 다시 굽는다.
+
+web-image:
+	$(COMPOSE_DEPLOY) build web
+
+web-up:
+	$(COMPOSE_DEPLOY) up -d web
+
+web-down:
+	$(COMPOSE_DEPLOY) down
+
+web-logs:
+	$(COMPOSE_DEPLOY) logs -f web

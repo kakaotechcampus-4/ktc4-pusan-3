@@ -141,7 +141,7 @@
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
 ├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
-├── Makefile                  `make` 만 치면 전체 목록. 앞에 web- 이 붙으면 apps/web(pnpm), 안 붙으면 apps/api(uv), db-* 는 docker (deploy/docker)
+├── Makefile                  `make` 만 치면 전체 목록. 앞에 web- 이 붙으면 apps/web(pnpm), 안 붙으면 apps/api(uv), db-*·web-image/up/down/logs 는 docker (deploy/docker)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   ├── api/                  API 계약서 v1
@@ -152,6 +152,8 @@
 │   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
 │   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
 │   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
+│   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
@@ -189,8 +191,9 @@
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
-│   ├── docker/                로컬 개발 DB (Postgres+pgvector) docker-compose
-│   └── (미생성) nginx/, scripts/   배포용, 아직 없음
+│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector),
+│   │                          docker-compose.deploy.yml 은 배포(지금은 web 하나). .env 는 한 곳을 같이 쓴다
+│   └── nginx/, scripts/       (비어 있음) 배포용. web 을 nginx 뒤로 넣을 때 채운다
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
