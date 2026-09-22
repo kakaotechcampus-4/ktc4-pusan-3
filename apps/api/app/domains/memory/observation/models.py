@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -119,6 +119,7 @@ class ObservationCommon:
 
 class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon):
     __tablename__ = "observation_food"
+    __table_args__ = (Index("ix_observation_food_child_status", "child_id", "status"),)
 
     action: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -127,6 +128,7 @@ class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon):
 
 class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
     __tablename__ = "observation_education"
+    __table_args__ = (Index("ix_observation_education_child_status", "child_id", "status"),)
 
     topic: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     session_type: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -138,6 +140,7 @@ class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
 
 class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
     __tablename__ = "observation_activity"
+    __table_args__ = (Index("ix_observation_activity_child_status", "child_id", "status"),)
 
     activity: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -150,6 +153,7 @@ class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
 
 class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
     __tablename__ = "observation_routine"
+    __table_args__ = (Index("ix_observation_routine_child_status", "child_id", "status"),)
 
     routine_category: Mapped[RoutineCategory] = mapped_column(routine_category, nullable=False)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -166,6 +170,7 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다."""
 
     __tablename__ = "observation_health"
+    __table_args__ = (Index("ix_observation_health_child_status", "child_id", "status"),)
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
