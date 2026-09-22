@@ -767,7 +767,12 @@ export interface CreateChildRequest {
   nickname: string;
   /** YYYY-MM-DD. 나이가 아니라 생일을 받는다 — 나이는 서버가 계산한다. */
   birth_date: string;
-  relation?: Relation;
+  /**
+   * ⚠️ **`relation` 이 여기서 빠졌다** (계약서 §05 에는 아직 있다 · 확정 전).
+   *    02 온보딩으로 옮겼다 — 01 은 **되돌리기 어려운 것**(별명·생일·법정대리인 동의)만
+   *    받고, 고를 수 있는 것은 전부 다음 화면이 받는다.
+   *    🚨 두 곳에서 받지 않는다. 같은 값을 두 엔드포인트가 쓰면 어느 쪽이 정본인지 사라진다.
+   */
   /**
    * 아이 스코프 동의 2건 (`child_basic` · `child_health`).
    *
@@ -949,7 +954,13 @@ export interface HealthSafetyListResponse {
 
 /* ── 02 이야기 하나 ──────────────────────────────────────────────────── */
 
-/** 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. */
+/**
+ * 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다.
+ *
+ * ⚠️ **화면이 더 이상 부르지 않는다.** 02 에서 발달 문항을 뺐다 — 화면에 "발달 상태" 라는
+ *    말이 서는 순간 발달 평가로 읽히고, 그건 이 제품이 안 만들기로 한 것이다 (최상위 §1).
+ *    계약서에는 남아 있어 타입과 목은 유지한다 (서버가 지울지는 팀 결정).
+ */
 export interface DevScreeningItem {
   item_id: string;
   text: string;
@@ -978,9 +989,33 @@ export interface OnboardingSafetyInput {
   reactions?: string[];
 }
 
-/** 전부 선택이다. 모두 건너뛰어도 200 이다. */
+/**
+ * 전부 선택이다. 모두 건너뛰어도 200 이다.
+ *
+ * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
+ *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
+ *    - 들어온 것: `relation`(01 에서 이동) · `gender` · `height_cm` · `weight_kg`
+ *    - 빠진 것: `interests` · `dev_answers`
+ *
+ * 🚨 **`interests` 를 뺀 자리를 다른 것으로 채우지 않았다.** 관심사는 03 홈의 한 줄에서
+ *    관찰로 쌓이는 값이고(그게 이 제품의 방식이다), 가입 첫날 칩으로 고른 여덟 개는
+ *    **보호자가 짐작한 목록**이다. 발달 문항도 같은 이유로 뺐다 — 화면에 "발달 상태" 라는
+ *    말이 서면 그때부터 발달 평가로 읽힌다 (최상위 §2 · 스펙 아웃).
+ */
 export interface OnboardingRequest {
-  interests?: string[];
+  /**
+   * 🚨 **아이가 아니라 나와 아이 사이의 값이다** (`parent_child` 행). `POST /children` 에서
+   *    옮겨 왔다 — 01 은 되돌리기 어려운 것(별명·생일·법정대리인 동의)만 받는다.
+   */
+  relation?: Relation;
+  gender?: Gender;
+  /**
+   * 🚨 **잰 날은 서버가 찍는다.** 프론트가 "오늘" 을 만들어 보내지 않는다 (CLAUDE.md §4 —
+   *    날짜 계산은 서버가 한다). 다른 날 잰 값은 11-1 에서 날짜를 골라 적는다.
+   * 🚨 둘 다 비면 아예 보내지 않는다 — 잰 것이 없는 기록을 만들지 않는다.
+   */
+  height_cm?: number;
+  weight_kg?: number;
   safety_status?: SafetyStatus;
   safety?: OnboardingSafetyInput[];
   /**
@@ -988,7 +1023,6 @@ export interface OnboardingRequest {
    * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
    */
   one_line?: string;
-  dev_answers?: Array<{ item_id: string; level: number }>;
 }
 
 export interface OnboardingResponse {

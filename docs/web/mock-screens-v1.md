@@ -32,7 +32,7 @@ location.replace("/");
 | 초대 · 이미 아이가 있음 | 위 화면에 `MKTAKEN2`, 또는 `consent` 가 아닌 시나리오에서 아무 코드나 |
 | 초대 · 시도 제한(429) | 위 화면에서 틀린 코드를 5번 |
 | 01 아이 만들기 | `/onboarding` — `consent` 가 아닌 시나리오에서는 `/me` 에 아이가 1명이라 00-1 이 홈으로 보낸다 |
-| 02 이야기 하나 | `/child/c1/onboarding` |
+| 02 아이 정보 (전부 선택) | `/child/c1/onboarding` — 관계 · 성별 · 키 · 몸무게 · 알레르기 |
 | 03 홈 | `/child/c1/home` |
 | 03 홈 · 빈 상태 | `/child/c1/home?scenario=empty` |
 | 04 진행 · 저장 결과 | 03 에서 한 줄 적고 남기기 (04 는 별도 주소가 없다) |

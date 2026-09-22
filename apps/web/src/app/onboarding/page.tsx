@@ -9,20 +9,12 @@ import { ConsentChecklist, requiredConsentsChecked } from "@/components/consent-
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Chip, ChipRow } from "@/components/ui/chip";
 import { DateField } from "@/components/ui/date-field";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
-import {
-  api,
-  qk,
-  type CreateChildRequest,
-  type CreateChildResponse,
-  type Relation,
-} from "@/lib/api";
-import { OWNER_RELATIONS, relationOptions } from "@/lib/relation";
+import { api, qk, type CreateChildRequest, type CreateChildResponse } from "@/lib/api";
 import { CHILD_SIGNUP_CONSENTS, CONSENT_POLICY_VERSION, type ConsentScope } from "@/lib/consent";
 import { toISODate } from "@/lib/format";
 
@@ -33,7 +25,12 @@ import { toISODate } from "@/lib/format";
  *    계약서가 `birth_date` 를 받고, 나이 → 생일 환산은 프론트가 날짜를 계산하는 것이라 금지다
  *    (apps/web/CLAUDE.md §4). 나이 문구(`age_display`)는 서버가 만들어 내려준다.
  *
- * 🚨 수집은 별명 · 생일 · 관계까지다. 프로필 질문을 늘리지 않는다 (CLAUDE.md §2 개인정보).
+ * 🚨 수집은 별명 · 생일까지다. 프로필 질문을 늘리지 않는다 (CLAUDE.md §2 개인정보).
+ *
+ * 🚨 **고를 수 있는 것은 이 화면에 두지 않는다.** 관계 · 성별 · 키 · 몸무게 · 알레르기는
+ *    전부 02 가 받는다. 이 화면이 받는 것은 **되돌리기 어려운 것**뿐이다 — 아이를 만드는
+ *    일과 그 아이 정보에 대한 법정대리인 동의. 선택 항목을 같은 버튼에 묶어 두면 "지금
+ *    꼭 정해야 하는 것" 과 "나중에 해도 되는 것" 이 한 덩어리로 보인다.
  *
  * 🚨 **아이 동의 2건과 법정대리인 확인을 이 화면이 받는다** (#96). 가입 동의 화면이 아니라
  *    여기인 이유는 두 가지다 —
@@ -59,7 +56,6 @@ function CreateChildScreen() {
 
   const [nickname, setNickname] = useState("");
   const [birthDate, setBirthDate] = useState("");
-  const [relation, setRelation] = useState<Relation | null>(null);
   /** 🚨 기본값은 **꺼짐**이다. 미리 체크해 두면 "고르지 않음" 이 동의가 된다. */
   const [consents, setConsents] = useState<Partial<Record<ConsentScope, boolean>>>({});
   const [attested, setAttested] = useState(false);
@@ -89,8 +85,6 @@ function CreateChildScreen() {
     createChild.mutate({
       nickname: nickname.trim(),
       birth_date: birthDate,
-      // 안 고르면 필드를 아예 빼고 보낸다 (프로토타입에서 선택 항목이다).
-      ...(relation ? { relation } : {}),
       // 🚨 **고른 것만 보낸다.** 안 고른 스코프까지 실어 보내면 화면이 물어본 것과
       //    서버에 남는 것이 달라진다.
       consents: CHILD_SIGNUP_CONSENTS.filter((i) => consents[i.scope] === true).map((i) => ({
@@ -115,7 +109,7 @@ function CreateChildScreen() {
         <p className="text-body text-ink-muted mt-3">
           별명과 생일만 먼저 알려주세요.
           <br />
-          나머지는 다음 화면에서 골라도 돼요.
+          나머지는 다음 화면에서 골라도 되고, 건너뛰어도 돼요.
         </p>
       </div>
 
@@ -140,25 +134,6 @@ function CreateChildScreen() {
           fromDate={EARLIEST_BIRTH_DATE}
           toDate={today()}
         />
-
-        <div className="flex flex-col gap-1.5">
-          {/* 🚨 **"부르는 말" 이 아니라 "관계" 다.** 이 값은 10 설정의 보호자 목록에 서고
-              기록마다 "누가 적었나" 로 남는다 — 호칭이 아니라 신분이다.
-              🚨 고를 수 있는 것이 **셋뿐이다.** 이 화면이 같이 받는 것이 법정대리인 동의라
-              시터·그 밖에는 여기 설 수 없다 (`lib/relation.ts` 의 `OWNER_RELATIONS`). */}
-          <p className="text-label text-ink-muted">아이와의 관계 · 선택</p>
-          <ChipRow>
-            {relationOptions(OWNER_RELATIONS).map((item) => (
-              <Chip
-                key={item.value}
-                selected={relation === item.value}
-                onClick={() => setRelation(relation === item.value ? null : item.value)}
-              >
-                {item.label}
-              </Chip>
-            ))}
-          </ChipRow>
-        </div>
       </div>
 
       <div className="flex flex-col gap-3">

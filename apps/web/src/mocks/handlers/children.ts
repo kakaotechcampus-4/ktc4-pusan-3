@@ -1,17 +1,16 @@
 import { http, HttpResponse } from "msw";
 
-import type { HealthSafety } from "@/lib/api/types";
+import type { HealthSafety, Relation } from "@/lib/api/types";
 
 import {
-  affinities,
   CHILD_ID,
   daysAgo,
   emptyHome,
   healthSafety,
   home,
   hoursFromNow,
+  me,
   newHealthSafety,
-  observations,
   safetyScan,
   staleAffinities,
 } from "../fixtures";
@@ -78,11 +77,13 @@ export const childrenHandlers = [
       });
     }
 
+    // 🚨 관계를 여기서 정하지 않는다 — 01 은 더 이상 보내지 않고 02 가 받는다.
+    //    그때까지는 비어 있는 것이 사실이라, 목이 "엄마" 로 채워 두지 않는다.
     joinChild({
       child_id: CHILD_ID,
       nickname: body.nickname,
       age_display: "만 4세",
-      relation: "mother",
+      relation: "other",
       role: "owner",
       consent_required: [],
     });
@@ -120,17 +121,48 @@ export const childrenHandlers = [
     });
   }),
 
-  // 전부 선택이다. 모두 건너뛰어도 200 이다.
+  /**
+   * 02 아이 정보. 전부 선택이라 모두 건너뛰어도 200 이다.
+   *
+   * ⚠️ **본문이 계약서 §05 와 달라졌다** (확정 전) — `relation` · `gender` · `height_cm` ·
+   *    `weight_kg` 가 들어오고 `interests` · `dev_answers` 가 빠졌다 (`OnboardingRequest`).
+   *
+   * 🚨 **관심사가 없으므로 `affinities` 를 돌려주지 않는다.** 예전에는 시드를 그대로 실어
+   *    보냈는데, 이제 보낸 적 없는 관심이 저장된 것처럼 보인다 — 목이 화면에 거짓말하는
+   *    경우다. 보낸 값에서 나올 수 있는 것만 돌려준다.
+   * 🚨 `safety_status: "unknown"` 은 **저장하지 않고 `skipped` 로 되돌린다** (계약서 §05).
+   *    "잘 모르겠어요" 는 "없음" 이 아니다 — 이후 Food Agent 가 `safety_unknown` 으로 막힌다.
+   */
   http.post(
     url("/children/:cid/onboarding"),
-    withIdempotency(async () => {
+    withIdempotency(async ({ request }) => {
       await networkDelay(400);
       if (currentScenario() === "consent") return consentRequired("child_health");
+
+      const body = (await request.json()) as {
+        relation?: Relation;
+        safety_status?: string;
+        safety?: Array<{ label: string }>;
+      };
+
+      // 관계는 `parent_child` 행의 값이다 — 보냈으면 `GET /me` 에도 그 값으로 서야 한다.
+      if (body.relation) {
+        joinChild({
+          child_id: CHILD_ID,
+          nickname: me.children[0]?.nickname ?? "민준",
+          age_display: "만 4세",
+          relation: body.relation,
+          role: "owner",
+          consent_required: [],
+        });
+      }
+
+      const unknown = body.safety_status === "unknown";
       return HttpResponse.json({
-        observations: observations.slice(0, 1),
-        affinities: affinities.slice(1),
-        safety: healthSafety,
-        skipped: ["dev_answers"],
+        observations: [],
+        affinities: [],
+        safety: unknown ? [] : healthSafety.slice(0, body.safety?.length ?? 0),
+        skipped: unknown ? ["safety"] : [],
         run_id: "r01",
       });
     }),

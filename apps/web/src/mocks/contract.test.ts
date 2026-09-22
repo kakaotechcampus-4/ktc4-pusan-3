@@ -95,9 +95,9 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
 describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
   it("422 idempotency_key_reuse", async () => {
     const key = newIdempotencyKey();
-    await submitOnboarding("c1", { interests: ["공룡"] }, key);
+    await submitOnboarding("c1", { gender: "female" }, key);
 
-    await expect(submitOnboarding("c1", { interests: ["물놀이"] }, key)).rejects.toSatisfy(
+    await expect(submitOnboarding("c1", { gender: "male" }, key)).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "idempotency_key_reuse") && e.status === 422,
     );
   });
@@ -162,7 +162,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
       const key = newIdempotencyKey();
       let caught: unknown;
       try {
-        await submitOnboarding("c1", { interests: ["공룡"] }, key);
+        await submitOnboarding("c1", { gender: "female" }, key);
       } catch (e) {
         caught = e;
       }
@@ -173,7 +173,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
 
       // 🚨 거부는 "처리 결과" 가 아니다. 동의를 받은 뒤 같은 키로 다시 보내면 통과해야 한다.
       setScenario("default");
-      const retried = await submitOnboarding("c1", { interests: ["공룡"] }, key);
+      const retried = await submitOnboarding("c1", { gender: "female" }, key);
       expect(retried.run_id).toBe("r01");
     } finally {
       setScenario("default");

@@ -13,43 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { formatDateWithYear } from "@/lib/format";
 import { api, qk, type ChildProfile, type Gender, type UpdateChildRequest } from "@/lib/api";
-
-/**
- * 11 기본 정보 — **보여주는 카드 + 고칠 때만 여는 시트.**
- *
- * 🚨 **입력칸을 늘 열어 두지 않는다.** 한동안 별명·생일·성별이 화면에 입력 셋으로 서 있었는데,
- *    이 셋은 **거의 안 고치는 값**이다 (서페이스 브리프: 여기 오는 이유 셋 중 하나이고 셋 다
- *    드물게 하는 일이다). 드문 일을 위한 입력이 늘 펼쳐져 있으면 자주 보는 것(키·몸무게 ·
- *    알레르기)이 그만큼 아래로 밀리고, 화면이 "아이" 가 아니라 "설정 폼" 으로 읽힌다.
- *    그래서 평소에는 **읽는 카드**이고, 고치는 것은 시트가 받는다.
- *
- * 🚨 **시트는 승인 게이트가 아니다.** 별명·생일·성별은 되돌릴 수 있다 — `caution` 도
- *    `btn-approve` 도 쓰지 않고 스크림 탭으로 닫힌다. 게이트는 그대로 2곳이다 (최상위 §2).
- *
- * 🚨 **시트가 자기 primary 를 갖는다.** 모달이라 뒤가 `inert` 이고, 그래서 화면의 primary 와
- *    한자리에 서지 않는다 (디자인 시스템 §7 "인라인이냐 모달이냐"). 이 변경으로 **화면에는
- *    primary 가 하나도 없게 됐다** — 07 기억과 같다. 주 행동이 "고르기" 가 아니라 "훑기" 인
- *    화면이라 그게 맞다.
- *
- * 🚨 **아이 사진·아바타는 여전히 두지 않는다.** 왼쪽 타일은 아이콘이고 아무것도 수집하지
- *    않는다 (§2 개인정보 · 03 홈의 `card-accent` 안 타일과 같은 자리).
- */
-
-const GENDER_LABEL: Record<Gender, string> = {
-  male: "남자아이",
-  female: "여자아이",
-};
-
-/**
- * ⚠️ **"밝히지 않을래요" 를 뺐다 — 필수값이 됐다** (`Gender` 타입 머리말 · #75).
- * 🚨 그래서 고르는 물건도 드롭다운이 아니다 (`ChoiceField` 머리말) — 둘뿐인 선택지를
- *    상자 안에 감췄다가 탭 두 번으로 다시 보여줄 이유가 없고, 비어 있을 수 없는 값이라
- *    **둘 다 꺼진 상태가 정상인** 칩도 아니다.
- */
-const GENDER_OPTIONS = [
-  { value: "male", label: "남자아이" },
-  { value: "female", label: "여자아이" },
-] as const satisfies ReadonlyArray<{ value: Gender; label: string }>;
+import { GENDER_LABEL, GENDER_OPTIONS } from "@/lib/gender";
 
 /* ── 보여주는 카드 ────────────────────────────────────────────────────── */
 

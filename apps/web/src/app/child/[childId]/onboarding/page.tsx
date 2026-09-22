@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
@@ -15,35 +15,40 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { useChildId } from "@/hooks/use-child-id";
 import {
-  api,
   isApiError,
   qk,
   submitOnboarding,
-  type DevScreeningResponse,
+  type Gender,
   type OnboardingRequest,
+  type Relation,
   type SafetyStatus,
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
+import { GENDER_OPTIONS } from "@/lib/gender";
+import { parseMeasurement } from "@/lib/measurement";
+import { OWNER_RELATIONS, relationOptions } from "@/lib/relation";
 
 /**
- * 02 이야기 하나 — 전부 선택이다. 모두 건너뛰어도 200 이고 홈으로 간다.
+ * 02 아이 정보 — **전부 선택이다.** 모두 건너뛰어도 200 이고 홈으로 간다.
  *
- * 프로토타입의 ⑤ 캘린더 연동 토글은 뺐다 — 요청 본문에 대응하는 필드가 없고,
- * 연동 자체가 아직 열려 있는 결정이다 (CLAUDE.md §10).
+ * 🚨 **01 이 받지 않는 것을 전부 여기서 받는다.** 01 은 되돌리기 어려운 것(아이를 만드는 일 ·
+ *    법정대리인 동의)만 받고, 고를 수 있는 것은 이 화면이 진다.
+ *
+ * 🚨 **11 아이 프로필과 같은 물건으로 묻는다** — 성별은 같은 `ChoiceField` 와 같은 목록
+ *    (`lib/gender.ts`), 키·몸무게는 같은 읽기 규칙(`lib/measurement.ts`)이다. 두 화면이
+ *    각자 폼을 들면 한쪽에만 붙은 검증이 생기고, 실제로 그렇게 갈렸던 적이 있다
+ *    (11 과 11-1 이 `GrowthSheet` 하나를 나눠 쓰는 것과 같은 판단).
+ *    🚨 다만 **시트를 그대로 가져오지는 않았다.** 11 의 시트들은 열릴 때마다 각자 저장하는
+ *       물건이라(`PATCH /children/{cid}` · `POST /growth` · 승인 게이트 ㉡), 이 화면에
+ *       올리면 "다음" 을 누르기도 전에 세 번 저장된다 — 건너뛰기가 뜻을 잃는다.
+ *       여기서는 한 번에 모아 `POST /children/{cid}/onboarding` 하나로 보낸다.
+ *
+ * 🚨 **관심사와 발달 문항을 뺐다.** 관심은 03 홈의 한 줄에서 관찰로 쌓이는 값이고, 첫날
+ *    칩으로 고른 여덟 개는 보호자가 짐작한 목록이다. 발달 문항은 화면에 "발달 상태" 라는
+ *    말이 서는 순간 발달 평가로 읽힌다 — 안 만들기로 한 것이다 (최상위 §1 · §2).
  *
  * 🚨 여기서 고른 값은 전부 **보호자 자기보고**다. AI 가 추론한 값을 여기에 섞지 않는다.
  */
-
-const INTERESTS = [
-  "공룡",
-  "자동차",
-  "블록",
-  "그림 그리기",
-  "물놀이",
-  "공놀이",
-  "동물",
-  "노래 부르기",
-];
 
 const SAFETY_CHOICES: Array<{ value: SafetyStatus; label: string }> = [
   { value: "none", label: "없음" },
@@ -64,19 +69,15 @@ function ChildOnboardingScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const [interests, setInterests] = useState<string[]>([]);
+  const [relation, setRelation] = useState<Relation | null>(null);
+  /** 🚨 `null` 은 "안 고름" 이다. 없는 enum 값("밝히지 않음")을 지어내지 않는다. */
+  const [gender, setGender] = useState<Gender | null>(null);
+  const [height, setHeight] = useState("");
+  const [weight, setWeight] = useState("");
+  const [measureErrors, setMeasureErrors] = useState<{ height?: string; weight?: string }>({});
   const [safetyStatus, setSafetyStatus] = useState<SafetyStatus | null>(null);
   const [safetyText, setSafetyText] = useState("");
-  const [devAnswers, setDevAnswers] = useState<Record<string, number>>({});
   const [emptyNotice, setEmptyNotice] = useState(false);
-
-  const screening = useQuery({
-    queryKey: qk.devScreening(childId),
-    // 🚨 계약서의 `?age_months=` 는 프론트가 만들 수 없는 값이다 — 생일에서 개월 수를 계산해야 한다.
-    //    서버가 birth_date 를 갖고 있으니 child_id 를 보내고 환산은 서버가 한다 (#18 에서 확정).
-    queryFn: () =>
-      api.get<DevScreeningResponse>("/dev-screening/items", { query: { child_id: childId } }),
-  });
 
   /**
    * 🚨 **재시도할 때 키를 새로 만들지 않는다** — 같은 키를 다시 보내는 게 중복 저장을 막는
@@ -89,7 +90,7 @@ function ChildOnboardingScreen() {
     mutationFn: (body: OnboardingRequest) =>
       submitOnboarding(childId, body, idempotencyKey.current()),
     onSuccess: async () => {
-      // 온보딩 한 번이 관찰·프로필·홈을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
+      // 온보딩 한 번이 프로필·안전정보·홈을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
       router.replace(`/child/${childId}/home`);
     },
@@ -104,8 +105,14 @@ function ChildOnboardingScreen() {
             .filter(Boolean)
         : [];
 
+    const heightValue = parseMeasurement(height);
+    const weightValue = parseMeasurement(weight);
+
     const body: OnboardingRequest = {
-      ...(interests.length > 0 ? { interests } : {}),
+      ...(relation ? { relation } : {}),
+      ...(gender ? { gender } : {}),
+      ...(typeof heightValue === "number" ? { height_cm: heightValue } : {}),
+      ...(typeof weightValue === "number" ? { weight_kg: weightValue } : {}),
       ...(safetyStatus ? { safety_status: safetyStatus } : {}),
       // 🚨 보호자가 적은 라벨만 그대로 올린다. 심각도·반응은 여기서 추측하지 않는다 (NF-03).
       ...(safetyLabels.length > 0
@@ -117,11 +124,6 @@ function ChildOnboardingScreen() {
             })),
           }
         : {}),
-      ...(Object.keys(devAnswers).length > 0
-        ? {
-            dev_answers: Object.entries(devAnswers).map(([item_id, level]) => ({ item_id, level })),
-          }
-        : {}),
     };
 
     return Object.keys(body).length > 0 ? body : null;
@@ -131,6 +133,16 @@ function ChildOnboardingScreen() {
   const body = buildBody();
 
   function submit() {
+    /**
+     * 🚨 **잘못 적은 숫자를 조용히 버리지 않는다.** `buildBody()` 는 숫자가 아닌 값을 그냥
+     *    빼는데, 그대로 제출하면 **적은 사람만 적었다고 믿는다.** 여기서 먼저 막는다.
+     */
+    const next: { height?: string; weight?: string } = {};
+    if (parseMeasurement(height) === "invalid") next.height = "숫자로 적어주세요.";
+    if (parseMeasurement(weight) === "invalid") next.weight = "숫자로 적어주세요.";
+    setMeasureErrors(next);
+    if (Object.keys(next).length > 0) return;
+
     if (!body) {
       setEmptyNotice(true);
       return;
@@ -144,34 +156,81 @@ function ChildOnboardingScreen() {
   return (
     <Screen className="gap-5">
       <div>
-        <p className="text-label text-ink-subtle">이야기 하나 · 2 / 2</p>
+        <p className="text-label text-ink-subtle">아이 등록 · 2 / 2</p>
         <PageTitle className="mt-2">
-          아이 이야기,
+          알려주실 게
           <br />
-          하나만 들려주세요
+          있다면 지금
         </PageTitle>
         <p className="text-body text-ink-muted mt-3">
-          편한 것 하나만 해도 돼요. 전부 건너뛰어도 괜찮아요.
+          전부 선택이에요. 편한 것만 적고 넘어가도 되고, 나중에 프로필에서 적어도 돼요.
         </p>
       </div>
 
-      <Section title="요즘 좋아하는 것" note="여러 개 골라도 되고, 안 골라도 돼요.">
+      <Section title="아이와의 관계" note="10 설정의 보호자 목록에 이렇게 보여요.">
+        {/* 🚨 고를 수 있는 것이 **셋뿐이다.** 01 에서 법정대리인 동의를 한 사람이라
+            시터·그 밖에는 여기 설 수 없다 (`lib/relation.ts` 의 `OWNER_RELATIONS`).
+            함께 보는 시터는 초대로 들어오고, 그 화면은 5종 전부다. */}
         <ChipRow>
-          {INTERESTS.map((item) => (
+          {relationOptions(OWNER_RELATIONS).map((item) => (
             <Chip
-              key={item}
-              selected={interests.includes(item)}
-              onClick={() =>
-                setInterests((prev) =>
-                  prev.includes(item) ? prev.filter((v) => v !== item) : [...prev, item],
-                )
-              }
+              key={item.value}
+              selected={relation === item.value}
+              onClick={() => setRelation(relation === item.value ? null : item.value)}
             >
-              {item}
+              {item.label}
             </Chip>
           ))}
         </ChipRow>
-        <p className="text-caption text-ink-subtle mt-2">고른 것은 보호자 자기보고로 저장돼요.</p>
+      </Section>
+
+      <Section title="성별" note="나이에 맞는 제안을 고를 때만 써요.">
+        {/* 🚨 **11 프로필은 `ChoiceField`(라디오)인데 여기는 칩이다.** 컨트롤을 고르는 기준이
+            "필수인가" 라서다 — 11 은 비어 있을 수 없는 값이라 라디오고, 여기는 **안 고르고
+            넘어갈 수 있어야** 해서 "둘 다 꺼진 상태가 정상" 인 칩이다 (디자인 시스템 §7
+            고르는 칸 · 칩). 라디오에 빈 값을 억지로 넣으면 그 컴포넌트의 전제가 깨진다.
+            🚨 **목록과 라벨은 11 과 같은 것을 쓴다** (`lib/gender.ts`) — 컨트롤만 다르다. */}
+        <ChipRow>
+          {GENDER_OPTIONS.map((item) => (
+            <Chip
+              key={item.value}
+              selected={gender === item.value}
+              onClick={() => setGender(gender === item.value ? null : item.value)}
+            >
+              {item.label}
+            </Chip>
+          ))}
+        </ChipRow>
+      </Section>
+
+      <Section title="키 · 몸무게" note="오늘 잰 값으로 기록해요. 한쪽만 적어도 돼요.">
+        {/* 🚨 **잰 날짜를 여기서 묻지 않는다.** 서버가 오늘로 찍는다 — 프론트가 날짜를
+            만들지 않는다 (CLAUDE.md §4). 다른 날 잰 값은 11-1 에서 날짜를 골라 적는다.
+            🚨 백분위·또래 비교·"빠르다/느리다" 를 여기에도 만들지 않는다 (최상위 §2). */}
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <TextInput
+              label="키 (cm)"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="예: 104.2"
+              value={height}
+              onChange={(e) => setHeight(e.target.value)}
+              error={measureErrors.height}
+            />
+          </div>
+          <div className="flex-1">
+            <TextInput
+              label="몸무게 (kg)"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="예: 17.1"
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+              error={measureErrors.weight}
+            />
+          </div>
+        </div>
       </Section>
 
       <Section title="알레르기 · 식품 제한" note="식사 제안을 걸러내는 데만 써요.">
@@ -210,49 +269,11 @@ function ChildOnboardingScreen() {
         </p>
       </Section>
 
-      {screening.data && screening.data.items.length > 0 ? (
-        <Section
-          title="요즘 발달 상태 · 보호자가 보기에"
-          note={`${screening.data.age_band} 선별 문항이에요. 각 문항에 맞는 수준을 골라주세요.`}
-        >
-          <div className="flex flex-col gap-4">
-            {screening.data.items.map((item) => (
-              <div key={item.item_id}>
-                <p className="text-body-sm text-ink">{item.text}</p>
-                <ChipRow>
-                  {item.levels.map((level) => (
-                    <Chip
-                      key={level.level}
-                      selected={devAnswers[item.item_id] === level.level}
-                      onClick={() =>
-                        setDevAnswers((prev) => {
-                          if (prev[item.item_id] !== level.level) {
-                            return { ...prev, [item.item_id]: level.level };
-                          }
-                          const next = { ...prev };
-                          delete next[item.item_id];
-                          return next;
-                        })
-                      }
-                    >
-                      {level.label}
-                    </Chip>
-                  ))}
-                </ChipRow>
-              </div>
-            ))}
-          </div>
-          <p className="text-caption text-ink-subtle mt-2">
-            발달 검사나 진단이 아니에요. 보호자가 고른 값만 저장하고, AI 는 발달을 평가하지 않아요.
-          </p>
-        </Section>
-      ) : null}
-
       <div className="mt-auto flex flex-col gap-3 pt-4">
         {emptyNotice && !body ? (
           <Card>
             <p className="text-body-sm text-ink-muted">
-              아직 아무것도 들려주지 않으셨어요. 하나만 골라주거나 건너뛰기를 눌러주세요.
+              아직 아무것도 적지 않으셨어요. 하나만 골라주거나 건너뛰기를 눌러주세요.
             </p>
           </Card>
         ) : null}
@@ -285,9 +306,9 @@ function ChildOnboardingScreen() {
           지금은 건너뛰기
         </Button>
         <p className="text-caption text-ink-subtle text-center">
-          고른 값만 저장하고, AI 가 추론한 값은 저장하지 않아요.
+          적은 값만 저장하고, AI 가 추론한 값은 저장하지 않아요.
           <br />
-          건너뛰면 제안 없이 홈으로 가요.
+          건너뛰어도 나중에 프로필에서 적을 수 있어요.
         </p>
       </div>
     </Screen>
