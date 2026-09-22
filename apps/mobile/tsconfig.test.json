@@ -1,0 +1,16 @@
+{
+  // 🚨 앱 설정과 나눠 둔 이유 — 테스트는 Node 내장 러너로 돌아서 `node:test` · `Buffer` 같은
+  //    Node 전역이 필요한데, 그 타입이 앱 코드에까지 들어오면 `setTimeout` 처럼 React Native 와
+  //    모양이 다른 것들이 조용히 섞인다. 앱은 앱 타입만 본다.
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "types": ["node"],
+    "moduleResolution": "bundler",
+    "customConditions": [],
+    // Node 러너가 `./bridge.ts` 를 그대로 읽는다 (타입 스트리핑).
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.test.ts", "src/native/*.ts"]
+}

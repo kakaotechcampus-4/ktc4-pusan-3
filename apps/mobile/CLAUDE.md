@@ -105,7 +105,8 @@ app.json                   Expo 설정 (name · scheme · bundle id · 권한 �
 pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
-pnpm typecheck       # tsc --noEmit
+pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
+pnpm test            # Node 내장 러너 — 브릿지 왕복 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
@@ -114,4 +115,18 @@ pnpm doctor          # expo-doctor 전체 점검
 
 🚨 **실기기로 개발할 때 `localhost` 는 안 된다.** 폰 입장에서 localhost 는 폰 자신이다.
 `EXPO_PUBLIC_WEB_URL` 에 개발 PC 의 LAN IP 를 넣는다 (예: `http://192.168.0.10:3000`).
-그리고 `apps/web` 을 `pnpm dev -- -H 0.0.0.0` 으로 띄워 외부에서 붙을 수 있게 한다.
+그리고 `apps/web` 을 `pnpm dev -H 0.0.0.0` 으로 띄워 외부에서 붙을 수 있게 한다
+(⚠️ pnpm 10+ 는 `--` 없이 그대로 넘긴다 — `pnpm dev -- -H` 는 `-H` 를 디렉터리로 읽는다).
+
+### WSL 에서 개발하고 Windows 에뮬레이터로 볼 때
+
+포트를 `adb reverse` 로 넘기면 `localhost` 를 그대로 쓸 수 있다. 에뮬레이터는 Windows 쪽에서 돌고
+Metro · Next 는 WSL 에서 도는데, WSL2 가 Windows 의 `localhost` 를 WSL 로 넘겨 주기 때문이다.
+
+```bash
+adb.exe reverse tcp:8081 tcp:8081   # Metro
+adb.exe reverse tcp:3000 tcp:3000   # apps/web
+```
+
+`.env.local` 은 `EXPO_PUBLIC_WEB_URL=http://localhost:3000` 그대로 두고,
+Expo 는 `pnpm exec expo start --localhost` 로 띄운다.
