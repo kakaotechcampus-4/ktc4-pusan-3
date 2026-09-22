@@ -27,6 +27,9 @@ Owner: 고태영 (프론트 리드)
 | React | 19.2.3 | |
 | react-native-webview | 13.16.1 | |
 | react-native-safe-area-context | 5.7.0 | |
+| expo-media-library | 57.0.5 | 최근 사진 목록 · 권한 |
+| expo-image-manipulator | 57.0.19 | 썸네일 축소 |
+| expo-file-system | 57.0.7 | 원본 base64 읽기 |
 | TypeScript | 6.0.3 | |
 
 ### ⚠️ 네이티브 패키지는 npm 최신 ≠ 맞는 버전
@@ -47,11 +50,37 @@ Expo autolinking 이 pnpm 의 격리된 심볼릭 링크 구조에서 네이티�
 ## 3. 구조
 
 ```
-App.tsx           웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크)
-index.ts          registerRootComponent
-src/config.ts     WEB_URL · 허용 출처 판정
-app.json          Expo 설정 (name · scheme · bundle id)
+App.tsx                    웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크 · 브릿지 배선)
+index.ts                   registerRootComponent
+src/config.ts              WEB_URL · 허용 출처 판정
+src/native/bridge.ts       웹뷰에 꽂는 창구 — 주입 스크립트 · 요청 파싱 · 조각 전송
+src/native/recent-photos.ts  최근 사진을 실제로 읽는 곳 (권한 · 썸네일 · 원본)
+app.json                   Expo 설정 (name · scheme · bundle id · 권한 플러그인)
 ```
+
+### 최근 사진 브릿지 (`window.icatch.recentPhotos`)
+
+08 사진 시트의 "최근 사진" 줄은 **웹이 만들 수 없다.** 브라우저는 기기 갤러리 *목록*을 읽는 API 가 없고
+(`<input type="file">` 은 OS 피커를 열 뿐이다), 그래서 값은 셸이 꽂아 준다.
+
+**계약의 정본은 웹에 있다** — [`apps/web/src/lib/native/recent-photos.ts`](../web/src/lib/native/recent-photos.ts).
+여기는 그 계약을 만족시키는 쪽이고, 모양을 바꾸려면 **웹의 그 파일을 먼저 고친다.**
+
+```
+웹  listRecentPhotos(12)  ──postMessage──▶  App.tsx onMessage
+                                                 └▶ src/native/recent-photos.ts (권한 · 쿼리 · 썸네일)
+웹  ◀──injectJavaScript──  조각 N 개 + 끝맺음  ◀──┘
+```
+
+- **큰 값은 나눠 보낸다.** 네이티브 → 웹은 스크립트를 밀어 넣는 것뿐이라 값을 스크립트에 적어야 하는데,
+  사진 원본 base64 를 한 번에 넣으면 Android WebView 가 조용히 잘라 먹는다.
+- 🚨 **`injectedJavaScriptBeforeContentLoaded` 다.** 웹의 개발용 가짜 브릿지
+  (`apps/web/src/mocks/native-bridge.ts`)가 "이미 꽂혀 있으면 안 건드린다" 이므로, 진짜가 먼저 자리를 잡아야
+  셸 안에서 가짜 썸네일이 뜨지 않는다.
+- 🚨 **권한 거부를 셸이 설명하지 않는다.** 답은 빈 값(`kind: "empty"`)이고, 줄을 그릴지 말지는 웹이 정한다.
+  여기에 안내 화면을 만들면 화면이 두 벌이 된다 (§1).
+- 🚨 **원본을 줄이지 않는다.** 이 사진으로 알림장 글자를 읽는다. "앨범에서 고르기" 는 원본을 그대로 넘기므로,
+  여기만 줄이면 **같은 사진인데 경로에 따라 분석 결과가 달라진다.**
 
 ---
 
@@ -60,6 +89,12 @@ app.json          Expo 설정 (name · scheme · bundle id)
 - **허용 출처 밖은 웹뷰에 가두지 않는다.** `onShouldStartLoadWithRequest` 에서 `isInternalUrl()` 로 거르고, 아니면 `Linking.openURL` 로 시스템 브라우저에 넘긴다. 소셜 로그인·약관 페이지가 웹뷰 안에서 열리면 사용자가 주소창을 못 봐서 피싱과 구분할 수 없다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
 - **safe area 는 네이티브 셸이 먹는다** (`SafeAreaView`). 웹의 `pt-safe`/`pb-safe` 는 모바일 브라우저 직접 접속용이라 웹뷰 안에서는 0 이 된다 — 정상이다.
+- 🚨 **웹에서 온 메시지를 믿지 않는다.** `parseBridgeRequest()` 를 거치지 않은 값으로 네이티브를 부르지 않는다.
+  웹뷰는 우리 페이지만 띄우지만(`isInternalUrl`), 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
+- 🚨 **사진 경로 · 파일 이름 · 썸네일을 로그에 찍지 않는다** (최상위 CLAUDE.md §2 개인정보).
+  예외 메시지에도 경로가 섞여 들어오므로 `catch` 에서 그대로 찍지 않는다.
+- 🚨 **권한은 필요한 것만 묻는다.** `granularPermissions: ["photo"]` — 사진만이다. 기본값은 영상 · 오디오까지
+  묻고, 저장 권한(`savePhotosPermission`)과 사진 위치(`isAccessMediaLocationEnabled`)는 끈 채로 둔다.
 - 🚨 **`EXPO_PUBLIC_*` 는 앱 번들에 그대로 들어간다.** 디컴파일하면 보인다. 이 셸이 아는 비밀은 **없어야 정상**이다 (§9 · NF-09).
 
 ---
