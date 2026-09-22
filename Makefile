@@ -1,20 +1,37 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
-        db-merge db-reset db-psql
+        db-merge db-reset db-psql \
+        web-install web-dev web-build web-start web-test web-lint web-fmt \
+        web-typecheck web-check
 
 help:
 	@echo "사용 가능한 명령"
+	@echo ""
+	@echo "── 백엔드 · AI (apps/api) ──"
 	@echo "  make install      의존성 설치 (클론 직후)"
 	@echo "  make dev          개발 서버 실행  http://localhost:8000"
 	@echo "  make test         테스트 실행"
 	@echo "  make lint         코드 검사 (ruff)"
 	@echo "  make fmt          코드 포맷팅 (ruff)"
 	@echo ""
+	@echo "── 프론트 (apps/web) ──"
+	@echo "  make web-install    의존성 설치 (클론 직후 · pnpm)"
+	@echo "  make web-dev        개발 서버 실행  http://localhost:3000"
+	@echo "  make web-build      프로덕션 빌드 (프리렌더까지 — dev 에서 안 보이는 에러가 여기서 난다)"
+	@echo "  make web-start      빌드 결과를 로컬에서 실행 (web-build 먼저)"
+	@echo "  make web-test       테스트 실행 (vitest)"
+	@echo "  make web-typecheck  타입 검사 (next typegen + tsc)"
+	@echo "  make web-lint       코드 검사 (eslint)"
+	@echo "  make web-fmt        코드 포맷팅 (prettier)"
+	@echo "  make web-check      typecheck + lint + test — PR 올리기 전"
+	@echo ""
+	@echo "── 로컬 개발 DB (deploy/docker) ──"
 	@echo "  make db-up        로컬 Postgres+pgvector 기동 (최초 1회 deploy/docker/.env 필요)"
 	@echo "  make db-down      로컬 DB 중지"
 	@echo "  make db-logs      로컬 DB 로그"
 	@echo ""
+	@echo "── 마이그레이션 (alembic) ──"
 	@echo "  make db-migrate   pending migration 전체 적용 (upgrade heads)"
 	@echo "  make db-rollback  마지막 migration 한 단계 되돌리기 (downgrade -1)"
 	@echo "  make db-current   현재 적용된 revision 확인"
@@ -27,6 +44,7 @@ help:
 	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
+	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다."
 
 install:
 	cd apps/api && uv sync
@@ -42,6 +60,36 @@ lint:
 
 fmt:
 	cd apps/api && uv run ruff format .
+
+# ── 프론트 (apps/web) ────────────────────────────────────────────────
+# 최초 1회: cd apps/web && cp .env.example .env.local
+# NEXT_PUBLIC_API_BASE_URL 이 없으면 앱이 뜨지 않고 바로 에러를 던진다 (src/lib/env.ts).
+
+web-install:
+	cd apps/web && pnpm install
+
+web-dev:
+	cd apps/web && pnpm dev
+
+web-build:
+	cd apps/web && pnpm build
+
+web-start:
+	cd apps/web && pnpm start
+
+web-test:
+	cd apps/web && pnpm test
+
+web-typecheck:
+	cd apps/web && pnpm typecheck
+
+web-lint:
+	cd apps/web && pnpm lint
+
+web-fmt:
+	cd apps/web && pnpm format
+
+web-check: web-typecheck web-lint web-test
 
 db-up:
 	docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d

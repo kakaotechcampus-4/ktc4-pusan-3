@@ -141,7 +141,7 @@
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
 ├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
-├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run) · db-up / db-down / db-logs (deploy/docker)
+├── Makefile                  `make` 만 치면 전체 목록. 앞에 web- 이 붙으면 apps/web(pnpm), 안 붙으면 apps/api(uv), db-* 는 docker (deploy/docker)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   ├── api/                  API 계약서 v1
