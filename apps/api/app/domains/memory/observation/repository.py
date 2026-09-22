@@ -271,12 +271,16 @@ async def query_observations(
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
     stmt = select(model).where(model.child_id == child_id)
-    if date_from is not None and date_to is not None:
-        stmt = stmt.where(model.observed_range.op("&&")(func.daterange(date_from, date_to, "[)")))
+    # date_to는 inclusive — InMemoryStore(inmemory.py:79)의 observed_on <= date_to 와 일치
+    dto_exclusive = date_to + timedelta(days=1) if date_to is not None else None
+    if date_from is not None and dto_exclusive is not None:
+        stmt = stmt.where(
+            model.observed_range.op("&&")(func.daterange(date_from, dto_exclusive, "[)"))
+        )
     elif date_from is not None:
         stmt = stmt.where(model.observed_range.op("&&")(func.daterange(date_from, None, "[)")))
-    elif date_to is not None:
-        stmt = stmt.where(model.observed_range.op("&&")(func.daterange(None, date_to, "[)")))
+    elif dto_exclusive is not None:
+        stmt = stmt.where(model.observed_range.op("&&")(func.daterange(None, dto_exclusive, "[)")))
     if raw_text_query is not None:
         stmt = stmt.where(model.raw_text.contains(raw_text_query, autoescape=True))
     rows = (await session.scalars(stmt.order_by(model.created_at.desc()))).all()

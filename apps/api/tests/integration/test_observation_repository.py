@@ -136,6 +136,30 @@ async def test_query_filters_by_domain_child_date_overlap_and_literal_text(sessi
     assert [row.id for row in rows] == [target.id]
 
 
+async def test_query_date_to_is_inclusive(session, family):
+    """date_to는 inclusive — InMemoryStore(inmemory.py:79)의 observed_on <= date_to 와 동일.
+
+    date_to=9/2 → 9/2에 관찰된 기록도 포함되어야 한다.
+    """
+    writer, child, _ = family
+    sep1 = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "9/1 기록"
+    )
+    sep2 = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 2), "9/2 기록"
+    )
+    await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 3), "9/3 기록"
+    )
+
+    rows = await query_observations(
+        session, domain="food", child_id=child.id,
+        date_from=date(2026, 9, 1), date_to=date(2026, 9, 2),
+    )
+
+    assert {row.id for row in rows} == {sep1.id, sep2.id}
+
+
 async def test_find_update_delete_are_scoped_to_child_id(session, family):
     """find/update/delete 모두 child_id WHERE절로 다른 아이 접근을 차단한다.
 
