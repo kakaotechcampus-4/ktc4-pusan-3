@@ -154,7 +154,7 @@ Agent 2개 중 1개만 성공해도 그 화면을 보여주고, **성공과 실�
 
 - `docs/overview/service-plan.md` — 페르소나 · 포지셔닝 · 안전 설계 · 성공 지표 · 첫 100명 채널
 - `docs/overview/tech-spec.md` — 요구사항 `F-01`~`F-15` · `NF-01`~`NF-09` · 리스크 · 테스트 전략
-- `docs/api/api-interface-v1.html` — 화면 01~10 을 그리는 API 28개 계약 (요청·응답·상태 전이·에러 코드)
+- `docs/api/api-interface-v1.html` — 화면 01~10 을 그리는 API 27개 계약 (요청·응답·상태 전이·에러 코드)
 - `docs/web/design-system-v1.md` · `/design-system` 라우트 — 토큰과 대비비가 실제로 렌더되는 살아 있는 버전
 - `docs/assets/prototype.html` — 화면 01~10 standalone 시연본
 - `docs/assets/agent-flow.png` — 처리 흐름도(실패 시나리오 포함)
