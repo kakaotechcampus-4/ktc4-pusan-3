@@ -1115,31 +1115,34 @@ export interface ChildParentsResponse {
 }
 
 /**
- * POST /children/{cid}/invites (계약서 §08).
+ * POST /children/{cid}/invites — 정본은 `docs/api/invite-v1.md` 다.
  *
  * 🚨 **한 링크는 한 번만 쓴다.** `used_at` 이 찍히면 재사용 409 `invite_used`,
  *    기한이 지나면 410 이다. 화면이 "언제든 쓸 수 있는 링크" 처럼 보이게 하지 않는다.
  */
-export interface InviteRequest {
-  /**
-   * ⚠️ **프론트는 보내지 않는다.** 계약서 §08 은 발행할 때 관계를 지정하면 수락자에게
-   * 프리필된다고 적지만, 아이와 어떤 사이인지는 **받는 쪽이 자기 입으로 말할 값**이다
-   * (#89). 서버가 필수로 요구하면 계약을 고친다 — 그때까지 타입만 남겨 둔다.
-   */
-  relation?: Relation;
-}
+/**
+ * `POST /children/{cid}/invites` 의 본문. 🚨 **비어 있는 것이 맞다.**
+ *
+ * 관계는 **받는 쪽이 수락 화면에서 고른다** (#89 · #96) — 잘못 찍으면 받는 쪽이 자기 프로필을
+ * 고치러 가야 하고, 그 값은 기록마다 "누가 적었나" 로 남는다. `invite-v1.md` §3-1 도 발행 요청을
+ * `{}` 로, 수락 요청이 `relation` 을 싣는 것으로 확정했다 (`InviteAcceptRequest`).
+ */
+export type InviteRequest = Record<string, never>;
 
 export interface InviteResponse {
   /**
-   * ⚠️ **계약서 §05 는 `invite_url` 이다** (#96 에서 코드로 바꾸자고 제안 중 · 확정 전).
-   * 형식·정규화는 `lib/invite-code.ts` — 그 파일 머리말에 왜 링크가 아닌지 적어 뒀다.
+   * `docs/api/invite-v1.md` §3-1 확정. 형식·정규화는 `lib/invite-code.ts` — 그 파일 머리말에
+   * 왜 링크가 아닌지 적어 뒀다.
+   * 🚨 **보낼 때는 정규화한 값이다.** 화면의 `ABCD-1234` 는 읽기 편하라고 끊은 표시 형식이다.
    */
   invite_code: string;
   expires_at: string;
 }
 
 /**
- * GET /invites/{code} — ⚠️ **계약서에 없다** (#96). 수락 **전에** 어느 아이인지 보여주려고 신설했다.
+ * GET /invites/{code} — 🔶 **아직 제안이다** (#96). 수락 **전에** 어느 아이인지
+ * 보여주려고 신설했다. 코드 방식 자체는 확정됐고 **이 조회만 아직 열려 있다**
+ * (`docs/api/invite-v1.md` §3-2 · §7 열린 결정 01).
  *
  * 🚨 **이 호출은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
  *    쓸 수 있는 코드라 다시 받아야 한다. 소비는 `accept` 하나만 한다.

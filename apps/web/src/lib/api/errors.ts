@@ -20,7 +20,7 @@ export const API_ERROR_CODES = [
   "already_confirmed", // 409 승인 게이트 중복
   "already_exists", // 409 health_safety UNIQUE(child_id, type, label) 재등록 — 계약서에 코드가 없어 제안
   "invite_used", // 409
-  // ── 초대 (#96). ⚠️ 계약서에는 `invite_used` 하나뿐이다 — 아래 4개는 프론트 제안이고
+  // ── 초대. 🔶 이름은 **아직 제안**이다 (`docs/api/invite-v1.md` §5 · §7 열린 결정 03) —
   //    백엔드가 다른 이름으로 정하면 여기와 화면 문구를 그 이름으로 맞춘다.
   "child_already_exists", // 409 이미 아이가 있는 보호자가 수락 — 아이는 보호자당 한 명
   "invite_expired", // 410 코드 기한 만료

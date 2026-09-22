@@ -8,9 +8,11 @@ import { apiError, networkDelay, url } from "./helpers";
 import { currentMe, joinChild } from "./membership";
 
 /**
- * 초대 확인 · 수락. ⚠️ **둘 다 계약 확정 전이다** (#96) — 계약서 §05 는 링크
- * (`/invites/{token}/accept`)뿐이고 `GET /invites/{code}` 도 응답 모양도 없다
- * (`lib/invite-code.ts` · `InvitePreviewResponse`).
+ * 초대 확인 · 수락.
+ *
+ * **코드 방식과 `{ relation }` 은 `docs/api/invite-v1.md` 로 확정됐다** (#96).
+ * ⚠️ **`GET /invites/{code}`(수락 전 확인)와 그 응답 모양은 아직 제안이다** — 계약서에 없다
+ *    (`InvitePreviewResponse`). 수락 전에 어느 아이인지 보여줄 길이 그것뿐이라 먼저 만들어 뒀다.
  *
  * 🚨 **실패를 시나리오로 만들지 않았다.** 목 시나리오는 *실서버로 만들기 어려운 상태* 를 위한
  *    것인데(apps/web/CLAUDE.md §7), 만료·재사용·중복 등록은 **입력값으로 갈리는 것**이라

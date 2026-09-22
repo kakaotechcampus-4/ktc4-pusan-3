@@ -128,7 +128,7 @@ export const settingsHandlers = [
   http.post(url("/children/:cid/invites"), async () => {
     await networkDelay();
     // 코드는 서버가 만든다. 목이라 Crockford Base32 알파벳 안에서 8자만 맞춘다
-    // (⚠️ 계약서는 아직 `invite_url` 이다 — #96 · `lib/invite-code.ts`).
+    // (`docs/api/invite-v1.md` §4 — 서버는 정규화한 값을 해시로 저장한다).
     const code = randomInviteCode();
     const res: InviteResponse = {
       invite_code: code,
