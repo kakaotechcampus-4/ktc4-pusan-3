@@ -1,0 +1,29 @@
+# 빌드 컨텍스트에서 뺄 것. 이 폴더가 컨텍스트다 (deploy/docker/docker-compose.deploy.yml).
+# ⚠️ 줄 끝 주석을 지원하지 않는다 — `dist # 설명` 은 그 문자열 전체가 패턴이 된다. 주석은 줄 단위로.
+#
+# 🚨 .env* 를 빼는 것이 이 파일의 제일 중요한 일이다. 저장소엔 없지만 각자 로컬엔 .env.local 이
+#    있고, 컨텍스트에 들어가면 Next 가 그것을 읽어 이미지에 값이 박힌다 (최상위 §9).
+#    배포용 값은 Dockerfile 의 --build-arg 로만 들어온다.
+.env
+.env.*
+
+# 설치·빌드 산출물 — 이미지 안에서 다시 만든다. 호스트의 것을 넣으면 플랫폼이 어긋난다.
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+next-env.d.ts
+
+# 런타임에 쓰지 않는 것
+.git
+.gitignore
+.impeccable
+
+# 서브셋 원본 TTF 와 그것을 쪼개는 python 스크립트. 서비스되는 건 public/fonts 의 woff2 고,
+# 그건 커밋돼 있어서 이미지 빌드에 python 이 필요 없다 (§5 서체).
+fonts-src
+scripts
+
+README.md
+CLAUDE.md

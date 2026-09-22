@@ -586,6 +586,34 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 
 🚨 `NEXT_PUBLIC_*` 는 **브라우저 번들에 그대로 박힌다.** 비밀은 여기 넣지 않는다 (§9 · NF-09).
 
+루트에서 `make` 를 치면 `web-*` 로 같은 스크립트를 부를 수 있다 (6명이 파트를 오갈 때 한 줄로 끝내기 위한 것이다).
+`make web-check` = typecheck + lint + test.
+
+🚨 **`make web-build` 를 PR 전에 한 번 돈다.** `pnpm dev` 가 통과하는데 프로덕션 빌드만 멈추는 자리가 있다
+(§3 라우팅의 `useSearchParams` Suspense 경계). dev 서버만 보고 올리면 그 화면은 배포에서만 죽는다.
+
+### 배포 — 이미지는 API 주소를 안고 굳는다
+
+[`Dockerfile`](Dockerfile) 3단계(deps → builder → runner) · [`deploy/docker/docker-compose.deploy.yml`](../../deploy/docker/docker-compose.deploy.yml) ·
+`make web-image` / `web-up` / `web-down` / `web-logs`.
+
+- 🚨 **`NEXT_PUBLIC_API_BASE_URL` 은 런타임 환경변수가 아니라 `--build-arg` 다.** 위 줄이 이유 전부다 —
+  빌드가 문자열로 박아 버리므로 컨테이너에 환경변수를 새로 꽂아도 바뀌지 않는다. 주소가 바뀌면
+  **다시 굽는다.** 값의 정본은 `deploy/docker/.env` 고, 비어 있으면 빌드가 그 자리에서 멈춘다
+  (조용히 잘못된 주소로 굳는 것보다 낫다 — `.env.local` 규칙과 같은 이유)
+- 🚨 **그 주소의 오리진은 서버의 `KAKAO_CALLBACK_URL` 오리진과 같아야 한다.** 다르면 `state` 쿠키가
+  콜백에 실리지 않는다 ([`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §5-5) —
+  **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과한다.** 이 값은 배포 기준으로 확인한다
+- 🚨 **목 서버는 이 이미지로 켤 수 없고, 켤 수 있는 척하지도 않는다.** `NEXT_PUBLIC_API_MOCKING` 을
+  빌드 인자로 열지 않고 `disabled` 로 고정해 뒀다 — 프로덕션 빌드에는 msw 가 통째로 빠져서(§7)
+  인자만 열어 두면 "배포에서 목이 안 뜬다" 를 디버깅하게 된다
+- 🚨 **`.dockerignore` 의 `.env*` 를 지우지 않는다.** 저장소엔 없지만 각자 로컬엔 `.env.local` 이 있고,
+  빌드 컨텍스트에 들어가면 Next 가 그것을 읽어 **개인 설정이 배포 이미지에 굳는다** (최상위 §9)
+- `output: "standalone"` 을 끄지 않는다 (`next.config.ts`). 끄면 `.next/standalone` 이 안 생겨서
+  Dockerfile 의 마지막 COPY 가 실패한다. 🚨 standalone 은 `public/` 과 `.next/static/` 을 **자기 안에
+  넣지 않는다** — Dockerfile 이 손으로 옮기고, 그 두 줄을 빼면 화면은 뜨는데 CSS 와 서브셋 폰트 92개가
+  전부 404 다 (§5 서체)
+
 ---
 
 ## 7. 목(mock) 서버
