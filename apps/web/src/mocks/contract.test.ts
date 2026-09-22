@@ -22,6 +22,7 @@ import type {
   ConsentResponse,
   ConsentsResponse,
   InviteAcceptResponse,
+  InvitePreviewResponse,
   InviteResponse,
   Me,
   WithdrawResponse,
@@ -523,6 +524,61 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
  * 서버가 붙으면 이 표를 실서버에도 그대로 건다.
  */
 describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
+  /**
+   * 🚨 **확인은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
+   *    쓸 수 있는 코드라 다시 받아야 한다 — 이 테스트가 그 회귀를 잡는다.
+   */
+  it("확인은 코드를 소비하지 않는다 — 두 번 확인한 뒤에도 수락된다", async () => {
+    setScenario("consent");
+    try {
+      const first = await api.get<InvitePreviewResponse>("/invites/MKGRAND1");
+      expect(first.child.nickname).toBeTruthy();
+      await api.get<InvitePreviewResponse>("/invites/MKGRAND1");
+
+      const accepted = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      expect(accepted.child_id).toBe("c1");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  /**
+   * 🚨 **확인도 시도 제한에 걸린다.** 코드를 소비하지 않고 계정 상태도 안 보므로 수락보다
+   *    **더 좋은 추측 도구**다 — 여기만 열려 있으면 8자(40비트) 제한이 있으나 마나다.
+   */
+  it("확인을 여러 번 틀리면 수락까지 429 로 막힌다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.get("/invites/MKWASTED").catch(() => null);
+      }
+      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      expect(isApiError(caught, "too_many_attempts")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  /**
+   * 🚨 **연결되지 않을 아이의 별명·나이를 보여주지 않는다.** 확인 단계가 막지 않으면
+   *    프로필까지 보여주고 나서 수락에서 거절하는 꼴이 된다.
+   */
+  it("이미 아이가 있으면 확인 단계에서 막힌다", async () => {
+    const caught = await api.get("/invites/MKGRAND1").catch((e) => e);
+    expect(isApiError(caught, "child_already_exists")).toBe(true);
+  });
+
+  it("받는 쪽이 고른 관계가 보호자 목록에 들어간다", async () => {
+    setScenario("consent");
+    try {
+      await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", { relation: "sitter" });
+      const me = await api.get<Me>("/me");
+      expect(me.children[0]?.relation).toBe("sitter");
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("아이가 없는 계정은 코드로 연결된다", async () => {
     setScenario("consent");
     try {

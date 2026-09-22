@@ -20,33 +20,24 @@ import {
   type ChildParentsResponse,
   type InviteRequest,
   type InviteResponse,
-  type Relation,
 } from "@/lib/api";
 import { formatInviteCode } from "@/lib/invite-code";
+import { RELATION_LABEL } from "@/lib/relation";
 import { formatDay } from "@/lib/format";
 
 /**
  * 10 설정 — 함께 보는 보호자.
  *
- * 🚨 **승인 대기 칸을 만들지 않는다.** 초대 링크를 수락하면 `parent_child` 행이 바로 생긴다
+ * 🚨 **승인 대기 칸을 만들지 않는다.** 초대를 수락하면 `parent_child` 행이 바로 생긴다
  *    (계약서 §02). 없는 상태를 화면에 만들면 부모가 오지 않을 알림을 기다린다.
  *
  * 🚨 **owner 에게는 연결 끊기 버튼이 없다.** 서버도 409 `owner_required` 로 막는다 —
  *    화면이 버튼을 그렸다가 눌러야 실패를 알려주는 경로를 만들지 않는다. 이관은
  *    `child.owner_parent_id` 변경이라 이 화면의 일이 아니다 (계약서 §07).
  *
- * 🚨 **한 링크는 한 번만 쓴다.** 발행할 때마다 새 링크다 — "초대 링크" 를 한 번 만들어 두고
+ * 🚨 **한 코드는 한 번만 쓴다.** 발행할 때마다 새 코드다 — "초대 코드" 를 한 번 만들어 두고
  *    계속 쓰는 것처럼 보이게 하지 않는다. 만료 시각을 같이 적는다.
  */
-
-const RELATION_LABEL: Record<Relation, string> = {
-  mother: "엄마",
-  father: "아빠",
-  grandparent: "조부모",
-  sitter: "돌봄 선생님",
-  other: "그 밖에",
-};
-
 export function ParentSection({
   childId,
   inviteOpen,
@@ -250,7 +241,7 @@ export function ParentSection({
             <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
               <li>이 아이의 기록과 제안을 더는 볼 수 없어요.</li>
               <li>그동안 적어 준 기록은 남아요. 누가 적었는지도 그대로예요.</li>
-              <li>다시 함께 보려면 초대 링크를 새로 만들어야 해요.</li>
+              <li>다시 함께 보려면 초대 코드를 새로 만들어야 해요.</li>
             </ul>
             {disconnect.isError ? (
               <CardFailed>

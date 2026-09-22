@@ -128,7 +128,7 @@
 | [`app/auth/callback/page.tsx`](../../apps/web/src/app/auth/callback/page.tsx) | 돌아온 코드를 교환하고 다음 화면으로 보냄 | ✅ 신설 |
 | [`app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) | 가입 — 보호자 이름 + **계정 2건** → `POST /auth/kakao/signup` | ✅ 신설 · 🔶 #96 에서 4건 → 2건 |
 | [`app/start/page.tsx`](../../apps/web/src/app/start/page.tsx) | 00-1 — 아이 0명일 때 "새로 등록 / 초대로 참여" | 🔶 #96 |
-| [`app/invite/page.tsx`](../../apps/web/src/app/invite/page.tsx) | 초대 코드 입력 → `POST /invites/{code}/accept` | 🔶 #96 |
+| [`app/invite/page.tsx`](../../apps/web/src/app/invite/page.tsx) | 코드 입력 → `GET /invites/{code}` 로 **어느 아이인지 보여주고** → `POST /invites/{code}/accept` | 🔶 #96 |
 | [`lib/consent.ts`](../../apps/web/src/lib/consent.ts) | 스코프 정본 · 약관 버전 · 어느 엔드포인트로 가는지 | ✅ 신설 |
 | [`app/page.tsx`](../../apps/web/src/app/page.tsx) | 버튼 → 시작 함수. status prefetch. 성공 처리는 콜백 화면으로 이사 | ✅ 수정 |
 | [`stores/session.ts`](../../apps/web/src/stores/session.ts) | 저장소 `localStorage` → **`sessionStorage`**, `expiresAt` 보관, `hasLiveSession()` | ✅ 수정 |

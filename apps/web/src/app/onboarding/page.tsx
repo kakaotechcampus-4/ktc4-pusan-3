@@ -22,6 +22,7 @@ import {
   type CreateChildResponse,
   type Relation,
 } from "@/lib/api";
+import { OWNER_RELATIONS, relationOptions } from "@/lib/relation";
 import { CHILD_SIGNUP_CONSENTS, CONSENT_POLICY_VERSION, type ConsentScope } from "@/lib/consent";
 import { toISODate } from "@/lib/format";
 
@@ -43,14 +44,6 @@ import { toISODate } from "@/lib/format";
  *    🚨 초대로 들어온 보호자는 이 화면을 지나지 않는다 — 그 아이의 법정대리인 동의는
  *      이미 받았고, 법정대리인이 아닌 사람에게 또 받으면 그 동의가 무효다.
  */
-
-const RELATIONS: Array<{ value: Relation; label: string }> = [
-  { value: "mother", label: "엄마" },
-  { value: "father", label: "아빠" },
-  { value: "grandparent", label: "조부모" },
-  { value: "sitter", label: "시터" },
-  { value: "other", label: "그 밖에" },
-];
 
 export default function OnboardingPage() {
   return (
@@ -149,9 +142,13 @@ function CreateChildScreen() {
         />
 
         <div className="flex flex-col gap-1.5">
-          <p className="text-label text-ink-muted">부르는 말 · 선택</p>
+          {/* 🚨 **"부르는 말" 이 아니라 "관계" 다.** 이 값은 10 설정의 보호자 목록에 서고
+              기록마다 "누가 적었나" 로 남는다 — 호칭이 아니라 신분이다.
+              🚨 고를 수 있는 것이 **셋뿐이다.** 이 화면이 같이 받는 것이 법정대리인 동의라
+              시터·그 밖에는 여기 설 수 없다 (`lib/relation.ts` 의 `OWNER_RELATIONS`). */}
+          <p className="text-label text-ink-muted">아이와의 관계 · 선택</p>
           <ChipRow>
-            {RELATIONS.map((item) => (
+            {relationOptions(OWNER_RELATIONS).map((item) => (
               <Chip
                 key={item.value}
                 selected={relation === item.value}

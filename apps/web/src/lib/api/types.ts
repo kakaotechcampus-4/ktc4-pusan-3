@@ -1087,6 +1087,40 @@ export interface InviteResponse {
 }
 
 /**
+ * GET /invites/{code} — ⚠️ **계약서에 없다** (#96). 수락 **전에** 어느 아이인지 보여주려고 신설했다.
+ *
+ * 🚨 **이 호출은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
+ *    쓸 수 있는 코드라 다시 받아야 한다. 소비는 `accept` 하나만 한다.
+ *
+ * 🚨 **여기서 아이의 건강·알레르기를 내리지 않는다.** 아직 연결되지 않은 사람이고
+ *    (`parent_child` 행이 없다), 코드만 알면 누구나 부를 수 있는 창구다 — 별명·나이와
+ *    초대한 보호자까지다 (최상위 §2 개인정보 · 최소 수집).
+ * 🚨 **그래서 이 경로도 시도 제한에 함께 걸린다.** 수락보다 **더 좋은 추측 도구**다 —
+ *    맞는 코드를 찾는 데 계정 상태도 필요 없다.
+ */
+export interface InvitePreviewResponse {
+  child: {
+    nickname: string;
+    /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+    age_display: string;
+  };
+  /** 누가 불렀는지. 🚨 별명만 — 초대한 보호자의 다른 정보는 내리지 않는다. */
+  invited_by: { nickname: string | null };
+  expires_at: string;
+}
+
+/**
+ * POST /invites/{code}/accept 의 본문.
+ *
+ * 🚨 **관계는 받는 쪽이 고른다.** 발행할 때 지정하지 않는다 (#89) — 아이와 어떤 사이인지는
+ *    자기 입으로 말할 값이고, 그 값이 기록마다 "누가 적었나" 로 남는다.
+ *    안 골랐으면 **필드를 아예 빼고 보낸다** (01 아이 등록과 같은 처리).
+ */
+export interface InviteAcceptRequest {
+  relation?: Relation;
+}
+
+/**
  * POST /invites/{code}/accept — 수락하면 `parent_child` 행이 **바로** 생긴다.
  * 🚨 승인 대기 상태가 없다 (계약서 §02 `GET /me`). 화면에 "대기 중" 칸을 만들지 않는다.
  *
