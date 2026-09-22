@@ -9,7 +9,7 @@
     - 생성 시 종료 < 시작: 잘못된 시간 구간 방지
     - 종료 날짜만 변경: 기존 종료 시각 유지
     - 빈 시각 표현: 종일 일정으로 해석하지 않음
-    - 생성 시 끝나는 날짜 지정: 자정 넘김/여러 날 일정을 한 번에 저장
+    - 생성 시 끝나는 날짜 지정: 자정 넘김/여러 날 일정을 한 초안에
 
 리뷰에서 추가로 발견된 사항:
 
@@ -17,7 +17,7 @@
     - 종일 일정에 종료 시각: 조용히 버리고 성공을 돌려줌
     - 끝나는 날짜만 지정: 종료를 시작 시각으로 채움
     - 종료 날짜 해석 기준: 시작일이 아니라 오늘 기준으로 풀림
-    - 종료 == 시작: 길이 0 일정이 저장됨
+    - 종료 == 시작: 길이 0 일정을 만들지 않음
 
 종료 지우기:
 
@@ -26,6 +26,9 @@
     - 지우기와 새 종료가 함께 오면 거부
 
 날짜 계산과 일정 시간 구간의 일관성은 모델이 아닌 코드에서 보장하는 영역이다.
+
+create_event 도 update_event 도 store 에 쓰지 않는다. 생성 케이스는 초안을 보고,
+수정 케이스는 _create 가 초안 값으로 store 를 시드한 뒤 수정 초안을 본다.
 """
 
 from datetime import datetime
@@ -37,6 +40,7 @@ import pytest
 
 from app.agents.common.datetime_rules import EventWhen, WhenPatch, check_when, resolve_when
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.store import InMemoryStore
@@ -57,13 +61,39 @@ def context() -> AgentContext:
     )
 
 
-async def _create(context: AgentContext, **args: Any) -> str:
+async def _draft(context: AgentContext, **args: Any) -> EventDraft:
+    """create_event 를 부르고 버퍼에 쌓인 초안을 꺼낸다."""
+    before = len(context.drafts.all())
     result = await execute_tool("create_event", {"title": "운동회", **args}, context)
     assert result.success is True, result.error
-    return result.data["id"]
+    drafts = context.drafts.all()
+    assert len(drafts) == before + 1
+    return drafts[-1]
 
 
-async def _row(context: AgentContext, event_id: str) -> EventRow:
+async def _create(context: AgentContext, **args: Any) -> str:
+    """초안을 만들어 그 값으로 store 를 시드한다.
+
+    수정 케이스는 이미 저장된 일정을 전제로 한다. 보호자 제출 API 가 아직 없어서
+    여기서 InMemoryStore 를 직접 부른다.
+    """
+    draft = await _draft(context, **args)
+    row = await context.store.create_event(
+        child_id=context.child_id,
+        title=draft.title,
+        starts_at=draft.starts_at,
+        ends_at=draft.ends_at,
+        all_day=draft.all_day,
+        fields={"event_type": draft.event_type, "category": draft.category},
+    )
+    return row.id
+
+
+async def _row(context: AgentContext, event_id: str) -> EventRow | EventDraft:
+    """수정 뒤의 값. update_event 는 store 를 고치지 않으므로 초안이 있으면 초안을 본다."""
+    draft = context.drafts.get(event_id)
+    if draft is not None:
+        return draft
     row = await context.store.get_event(event_id=event_id)
     assert row is not None
     return row
@@ -127,7 +157,7 @@ async def test_시각_있는_일정의_날짜만_바꾸면_종료도_길이를_�
     assert _local(row.ends_at) == "2026-09-18T17:00+09:00"
 
 
-async def test_만들_때도_종료가_시작보다_앞서면_저장하지_않는다(context: AgentContext) -> None:
+async def test_만들_때도_종료가_시작보다_앞서면_초안을_만들지_않는다(context: AgentContext) -> None:
     result = await execute_tool(
         "create_event",
         {
@@ -142,7 +172,7 @@ async def test_만들_때도_종료가_시작보다_앞서면_저장하지_않�
     assert result.success is False
     assert result.error is not None
     assert result.error["code"] == ErrorCode.VALIDATION_ERROR
-    assert await context.store.query_events(child_id=context.child_id) == []
+    assert context.drafts.all() == ()
 
 
 async def test_종료_날짜만_바꾸면_종료_시각은_유지된다(context: AgentContext) -> None:
@@ -173,7 +203,7 @@ async def test_빈_시각_표현은_하루_종일이_아니다(context: AgentCon
 
 
 async def test_끝나는_날짜를_주면_여러_날_일정도_한_번에_만든다(context: AgentContext) -> None:
-    event_id = await _create(
+    draft = await _draft(
         context,
         starts_on="2026-09-17",
         starts_time="오전 9시",
@@ -181,14 +211,13 @@ async def test_끝나는_날짜를_주면_여러_날_일정도_한_번에_만든
         ends_time="오후 5시",
     )
 
-    row = await _row(context, event_id)
-    assert _local(row.starts_at) == "2026-09-17T09:00+09:00"
-    assert _local(row.ends_at) == "2026-09-19T17:00+09:00"
+    assert _local(draft.starts_at) == "2026-09-17T09:00+09:00"
+    assert _local(draft.ends_at) == "2026-09-19T17:00+09:00"
 
 
 async def test_자정을_넘기는_일정도_한_번에_만든다(context: AgentContext) -> None:
     # ends_on이 없으면 종료가 같은 날로 계산돼 종료 < 시작이 된다
-    event_id = await _create(
+    draft = await _draft(
         context,
         starts_on="2026-09-17",
         starts_time="밤 11시",
@@ -196,9 +225,8 @@ async def test_자정을_넘기는_일정도_한_번에_만든다(context: Agent
         ends_time="새벽 1시",
     )
 
-    row = await _row(context, event_id)
-    assert _local(row.starts_at) == "2026-09-17T23:00+09:00"
-    assert _local(row.ends_at) == "2026-09-18T01:00+09:00"
+    assert _local(draft.starts_at) == "2026-09-17T23:00+09:00"
+    assert _local(draft.ends_at) == "2026-09-18T01:00+09:00"
 
 
 # 리뷰 추가 테스트
@@ -247,6 +275,7 @@ async def test_종일_일정에_종료_시각을_주면_반영하지_않는다(c
     assert created.success is False
     assert created.error is not None
     assert created.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert context.drafts.all() == ()
 
     event_id = await _create(context, starts_on="2026-09-17", starts_time="하루 종일")
     updated = await execute_tool(
@@ -271,13 +300,13 @@ async def test_끝나는_날짜만_주고_시각을_안_주면_되묻는다(cont
 
     assert result.success is False
     assert result.error is not None
-    assert await context.store.query_events(child_id=context.child_id) == []
+    assert context.drafts.all() == ()
 
 
 async def test_끝나는_날짜는_오늘이_아니라_시작일을_기준으로_해석한다(
     context: AgentContext,
 ) -> None:
-    event_id = await _create(
+    draft = await _draft(
         context,
         starts_on="다음주 월요일",
         starts_time="오전 9시",
@@ -285,22 +314,18 @@ async def test_끝나는_날짜는_오늘이_아니라_시작일을_기준으로
         ends_time="오후 5시",
     )
 
-    row = await _row(context, event_id)
-    assert _local(row.starts_at) == "2026-09-21T09:00+09:00"
-    assert _local(row.ends_at) == "2026-09-23T17:00+09:00"
+    assert _local(draft.starts_at) == "2026-09-21T09:00+09:00"
+    assert _local(draft.ends_at) == "2026-09-23T17:00+09:00"
 
 
 async def test_종료_자리의_자정은_다음_날로_읽는다(context: AgentContext) -> None:
-    event_id = await _create(
-        context, starts_on="2026-09-17", starts_time="밤 11시", ends_time="자정"
-    )
+    draft = await _draft(context, starts_on="2026-09-17", starts_time="밤 11시", ends_time="자정")
 
-    row = await _row(context, event_id)
-    assert _local(row.starts_at) == "2026-09-17T23:00+09:00"
-    assert _local(row.ends_at) == "2026-09-18T00:00+09:00"
+    assert _local(draft.starts_at) == "2026-09-17T23:00+09:00"
+    assert _local(draft.ends_at) == "2026-09-18T00:00+09:00"
 
 
-async def test_종료가_시작과_같으면_저장하지_않는다(context: AgentContext) -> None:
+async def test_종료가_시작과_같으면_초안을_만들지_않는다(context: AgentContext) -> None:
     # 길이 0 일정을 따로 허용하지 않고, "종료 없음"은 ends_at=None이 표현한다
     result = await execute_tool(
         "create_event",
@@ -316,7 +341,7 @@ async def test_종료가_시작과_같으면_저장하지_않는다(context: Age
     assert result.success is False
     assert result.error is not None
     assert result.error["code"] == ErrorCode.VALIDATION_ERROR
-    assert await context.store.query_events(child_id=context.child_id) == []
+    assert context.drafts.all() == ()
 
 
 # 종료 지우기. tool 을 거치지 않고 규칙 함수를 직접 확인한다
