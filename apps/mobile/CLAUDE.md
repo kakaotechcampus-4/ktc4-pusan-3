@@ -27,7 +27,8 @@ Owner: 고태영 (프론트 리드)
 | React | 19.2.3 | |
 | react-native-webview | 13.16.1 | |
 | react-native-safe-area-context | 5.7.0 | |
-| expo-media-library | 57.0.5 | 최근 사진 목록 · 권한 |
+| expo-media-library | 57.0.5 | 최근 사진 목록 · 권한 (`/legacy` 진입점을 쓴다 — `src/native/recent-photos.ts` 머리말) |
+| expo-dev-client | 57.0.19 | 개발 빌드 런처 — Expo Go 로는 사진을 못 본다 (아래) |
 | expo-image-manipulator | 57.0.19 | 썸네일 축소 |
 | expo-file-system | 57.0.7 | 원본 base64 읽기 |
 | TypeScript | 6.0.3 | |
@@ -81,6 +82,25 @@ app.json                   Expo 설정 (name · scheme · bundle id · 권한 �
   여기에 안내 화면을 만들면 화면이 두 벌이 된다 (§1).
 - 🚨 **원본을 줄이지 않는다.** 이 사진으로 알림장 글자를 읽는다. "앨범에서 고르기" 는 원본을 그대로 넘기므로,
   여기만 줄이면 **같은 사진인데 경로에 따라 분석 결과가 달라진다.**
+- 🚨 **고른 사진의 주소를 `getAssetInfoAsync(id)` 로 다시 묻지 않는다.** 그 함수는 EXIF 를 열기 때문에
+  Android 에서 `ACCESS_MEDIA_LOCATION`(사진이 **찍힌 장소**)을 요구하고, 없으면 호출 자체가 거절된다.
+  이 앱은 그 권한을 받을 이유가 없으므로, 목록을 만들 때 쥐고 있던 주소를 셸이 기억해 뒀다가 쓴다.
+
+### 🚨 Expo Go 로는 최근 사진을 볼 수 없다 — 개발 빌드가 필요하다
+
+Expo Go 는 Android 권한 정책이 바뀐 뒤로 미디어 라이브러리 접근을 **아예 막았다.**
+권한을 묻기도 전에 호출이 거절된다 (`Expo Go can no longer provide full access to the media library`).
+
+그래서 **이 줄을 눈으로 확인하려면 개발 빌드**를 써야 한다. 나머지 화면은 Expo Go 에서 그대로 보인다 —
+브릿지가 없는 것과 같은 상태가 되어 최근 사진 줄만 안 선다.
+
+```bash
+pnpm android          # = expo run:android — prebuild + gradle + 설치까지 한 번에
+```
+
+- `android/` · `ios/` 는 **생성물이고 커밋하지 않는다** (`.gitignore`). `app.json` 을 고쳤으면 다시 prebuild 한다.
+- 에뮬레이터 저장 공간이 빠듯하면 `-PreactNativeArchitectures=x86_64` 로 APK 를 한 ABI 로 줄인다
+  (4 ABI 175MB → x86_64 32MB).
 
 ---
 
@@ -129,4 +149,17 @@ adb.exe reverse tcp:3000 tcp:3000   # apps/web
 ```
 
 `.env.local` 은 `EXPO_PUBLIC_WEB_URL=http://localhost:3000` 그대로 두고,
-Expo 는 `pnpm exec expo start --localhost` 로 띄운다.
+Expo 는 `pnpm exec expo start --localhost --dev-client` 로 띄운다.
+
+개발 빌드를 WSL 에서 만들고 Windows 에뮬레이터에 넣을 때는 **Windows 쪽 `adb.exe`** 를 쓴다
+(WSL 의 adb 는 Windows adb 서버를 못 본다). APK 경로도 Windows 경로로 준다.
+
+```bash
+cd android && ./gradlew assembleDebug -PreactNativeArchitectures=x86_64
+cp app/build/outputs/apk/debug/app-debug.apk /mnt/c/Users/Public/icatch-debug.apk
+adb.exe install -r 'C:\Users\Public\icatch-debug.apk'
+adb.exe shell am start -a android.intent.action.VIEW \
+  -d "icatch://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
+```
+
+⚠️ AVD 스냅샷이 깨져 있으면 에뮬레이터가 `offline` 에서 안 넘어온다. `-no-snapshot-load` 로 콜드 부팅한다.
