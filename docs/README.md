@@ -72,8 +72,7 @@
 - [agents/food/](agents/food/) · [agents/growth/](agents/growth/) · [agents/health/](agents/health/) — Agent별 명세 · Tool · 소유 테이블 · 구현 계획 · 테스트
 - [agents/data_model.md](agents/data_model.md) — DB 스키마 정본
 - [agents/memory-agent-v1.md](agents/memory-agent-v1.md) — Memory Agent
-
-Activity는 아직 비어 있다 (`agents/activity/`).
+- [agents/activity-agent-v1.md](agents/activity-agent-v1.md) — Activity Agent. 월령 임계값 게이팅 · 추천 근거 3단 · 안전 판정을 모델 출력 바깥에 두는 구조 · 월령별 차단 · 경고 9축
 
 ## API · 백엔드
 
