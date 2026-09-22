@@ -130,8 +130,9 @@ export const childrenHandlers = [
    * 🚨 **관심사가 없으므로 `affinities` 를 돌려주지 않는다.** 예전에는 시드를 그대로 실어
    *    보냈는데, 이제 보낸 적 없는 관심이 저장된 것처럼 보인다 — 목이 화면에 거짓말하는
    *    경우다. 보낸 값에서 나올 수 있는 것만 돌려준다.
-   * 🚨 `safety_status: "unknown"` 은 **저장하지 않고 `skipped` 로 되돌린다** (계약서 §05).
-   *    "잘 모르겠어요" 는 "없음" 이 아니다 — 이후 Food Agent 가 `safety_unknown` 으로 막힌다.
+   * ⚠️ **알레르기가 이 본문에서 빠졌다.** 02 가 11 과 같은 구역을 쓰면서 등록이 승인 게이트
+   *    ㉡ 로만 간다 (`components/safety-section.tsx`). `safety_status`(없음/잘 모르겠어요)를
+   *    물을 자리가 지금 없는 것은 **열린 결정**이다 (`OnboardingRequest` 주석).
    */
   http.post(
     url("/children/:cid/onboarding"),
@@ -139,11 +140,7 @@ export const childrenHandlers = [
       await networkDelay(400);
       if (currentScenario() === "consent") return consentRequired("child_health");
 
-      const body = (await request.json()) as {
-        relation?: Relation;
-        safety_status?: string;
-        safety?: Array<{ label: string }>;
-      };
+      const body = (await request.json()) as { relation?: Relation };
 
       // 관계는 `parent_child` 행의 값이다 — 보냈으면 `GET /me` 에도 그 값으로 서야 한다.
       if (body.relation) {
@@ -157,12 +154,13 @@ export const childrenHandlers = [
         });
       }
 
-      const unknown = body.safety_status === "unknown";
+      // 🚨 알레르기는 이 경로로 오지 않는다 — 승인 게이트 ㉡ 가 유일한 쓰기 경로다.
+      //    관심사도 없으니 돌려줄 관찰·프로필도 없다. 보낸 값에서 나올 수 있는 것만 답한다.
       return HttpResponse.json({
         observations: [],
         affinities: [],
-        safety: unknown ? [] : healthSafety.slice(0, body.safety?.length ?? 0),
-        skipped: unknown ? ["safety"] : [],
+        safety: [],
+        skipped: [],
         run_id: "r01",
       });
     }),

@@ -864,7 +864,15 @@ export interface SafetyScanResponse {
  *    ⚠️ 01 첫 진입은 아직 성별을 받지 않는다 — 새로 만든 아이의 성별을 무엇으로 둘지는
  *    서버 계약과 함께 정해야 한다 (지금은 목이 `male` 로 들고 있다).
  */
-export type Gender = "male" | "female";
+/**
+ * 🚨 **`undisclosed` 가 기본값이다** (최상위 `CLAUDE.md` §2 — "성별의 기본값은
+ *    '밝히지 않을래요' 다"). 한동안 `male | female` 둘만 두고 필수값으로 뒀다가(#75)
+ *    되돌렸다 — 둘 중 하나를 고르게 만들면 **안 밝히는 선택지가 화면에서 사라진다.**
+ *
+ * 🚨 **"모름" 이 아니라 "밝히지 않음" 이다.** 보호자는 아이 성별을 알고 있고, 이 값은
+ *    *우리에게 알려 줄지*를 고르는 것이다 — 문구를 "잘 모르겠어요" 로 쓰지 않는다.
+ */
+export type Gender = "male" | "female" | "undisclosed";
 
 export interface ChildProfile {
   id: string;
@@ -1016,6 +1024,16 @@ export interface OnboardingRequest {
    */
   height_cm?: number;
   weight_kg?: number;
+  /**
+   * ⚠️ **화면에서 보내지 않는다.** 02 의 알레르기 구역이 11 아이 프로필과 같은 것이 되면서
+   * (`components/safety-section.tsx`) 등록이 **승인 게이트 ㉡**(`POST /children/{cid}/health-safety`)
+   * 로만 간다 — 알레르기의 쓰기 경로를 둘로 두지 않는다 (NF-03).
+   *
+   * 🚨 **그래서 `safety_status` 를 물을 자리가 지금 없다.** 목록이 0건인 것만으로는
+   *    "확인했고 없다"(`none`)와 "아직 모른다"(`unknown`)를 가를 수 없는데, 계약서 §05 는
+   *    후자를 `guards.safety_unknown` 으로 받아 Food Agent 실행 자체를 막는다 (최상위 §2).
+   *    **어디서 그 선언을 받을지는 팀 결정이다** — 계약서에 남아 있어 타입만 유지한다.
+   */
   safety_status?: SafetyStatus;
   safety?: OnboardingSafetyInput[];
   /**

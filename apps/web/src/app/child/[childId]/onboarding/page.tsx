@@ -2,15 +2,18 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
+import { SafetySection } from "@/components/safety-section";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { ChoiceField } from "@/components/ui/choice-field";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { Section } from "@/components/ui/section";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { useChildId } from "@/hooks/use-child-id";
@@ -21,10 +24,9 @@ import {
   type Gender,
   type OnboardingRequest,
   type Relation,
-  type SafetyStatus,
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
-import { GENDER_OPTIONS } from "@/lib/gender";
+import { DEFAULT_GENDER, GENDER_OPTIONS } from "@/lib/gender";
 import { parseMeasurement } from "@/lib/measurement";
 import { OWNER_RELATIONS, relationOptions } from "@/lib/relation";
 
@@ -50,12 +52,6 @@ import { OWNER_RELATIONS, relationOptions } from "@/lib/relation";
  * 🚨 여기서 고른 값은 전부 **보호자 자기보고**다. AI 가 추론한 값을 여기에 섞지 않는다.
  */
 
-const SAFETY_CHOICES: Array<{ value: SafetyStatus; label: string }> = [
-  { value: "none", label: "없음" },
-  { value: "has", label: "있음 · 입력" },
-  { value: "unknown", label: "잘 모르겠어요" },
-];
-
 export default function ChildOnboardingPage() {
   return (
     <AuthGate>
@@ -70,13 +66,13 @@ function ChildOnboardingScreen() {
   const queryClient = useQueryClient();
 
   const [relation, setRelation] = useState<Relation | null>(null);
-  /** 🚨 `null` 은 "안 고름" 이다. 없는 enum 값("밝히지 않음")을 지어내지 않는다. */
-  const [gender, setGender] = useState<Gender | null>(null);
+  /**
+   * 🚨 **출발값이 "밝히지 않을래요" 다** (최상위 §2). `male` 을 먼저 세워 두지 않는다.
+   */
+  const [gender, setGender] = useState<Gender>(DEFAULT_GENDER);
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
   const [measureErrors, setMeasureErrors] = useState<{ height?: string; weight?: string }>({});
-  const [safetyStatus, setSafetyStatus] = useState<SafetyStatus | null>(null);
-  const [safetyText, setSafetyText] = useState("");
   const [emptyNotice, setEmptyNotice] = useState(false);
 
   /**
@@ -97,33 +93,16 @@ function ChildOnboardingScreen() {
   });
 
   function buildBody(): OnboardingRequest | null {
-    const safetyLabels =
-      safetyStatus === "has"
-        ? safetyText
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [];
-
     const heightValue = parseMeasurement(height);
     const weightValue = parseMeasurement(weight);
 
     const body: OnboardingRequest = {
       ...(relation ? { relation } : {}),
-      ...(gender ? { gender } : {}),
+      // 🚨 **기본값은 보내지 않는다.** 서버의 출발값과 같은 값이라 보낼 것이 없고, 보내면
+      //    아래 "아무것도 적지 않음" 검사가 늘 통과해 안내가 영영 안 뜬다.
+      ...(gender !== DEFAULT_GENDER ? { gender } : {}),
       ...(typeof heightValue === "number" ? { height_cm: heightValue } : {}),
       ...(typeof weightValue === "number" ? { weight_kg: weightValue } : {}),
-      ...(safetyStatus ? { safety_status: safetyStatus } : {}),
-      // 🚨 보호자가 적은 라벨만 그대로 올린다. 심각도·반응은 여기서 추측하지 않는다 (NF-03).
-      ...(safetyLabels.length > 0
-        ? {
-            safety: safetyLabels.map((label) => ({
-              type: "allergy",
-              label,
-              category: "식품",
-            })),
-          }
-        : {}),
     };
 
     return Object.keys(body).length > 0 ? body : null;
@@ -167,7 +146,7 @@ function ChildOnboardingScreen() {
         </p>
       </div>
 
-      <Section title="아이와의 관계" note="10 설정의 보호자 목록에 이렇게 보여요.">
+      <Section title="아이와의 관계" description="10 설정의 보호자 목록에 이렇게 보여요.">
         {/* 🚨 고를 수 있는 것이 **셋뿐이다.** 01 에서 법정대리인 동의를 한 사람이라
             시터·그 밖에는 여기 설 수 없다 (`lib/relation.ts` 의 `OWNER_RELATIONS`).
             함께 보는 시터는 초대로 들어오고, 그 화면은 5종 전부다. */}
@@ -184,26 +163,23 @@ function ChildOnboardingScreen() {
         </ChipRow>
       </Section>
 
-      <Section title="성별" note="나이에 맞는 제안을 고를 때만 써요.">
-        {/* 🚨 **11 프로필은 `ChoiceField`(라디오)인데 여기는 칩이다.** 컨트롤을 고르는 기준이
-            "필수인가" 라서다 — 11 은 비어 있을 수 없는 값이라 라디오고, 여기는 **안 고르고
-            넘어갈 수 있어야** 해서 "둘 다 꺼진 상태가 정상" 인 칩이다 (디자인 시스템 §7
-            고르는 칸 · 칩). 라디오에 빈 값을 억지로 넣으면 그 컴포넌트의 전제가 깨진다.
-            🚨 **목록과 라벨은 11 과 같은 것을 쓴다** (`lib/gender.ts`) — 컨트롤만 다르다. */}
-        <ChipRow>
-          {GENDER_OPTIONS.map((item) => (
-            <Chip
-              key={item.value}
-              selected={gender === item.value}
-              onClick={() => setGender(gender === item.value ? null : item.value)}
-            >
-              {item.label}
-            </Chip>
-          ))}
-        </ChipRow>
-      </Section>
+      {/*
+        🚨 **11 프로필과 같은 물건·같은 목록이다** (`ChoiceField` · `lib/gender.ts`).
+           "밝히지 않을래요" 가 기본값이라 이 칸은 **비어 있을 수 없는 값**이고, 그래서
+           칩(둘 다 꺼진 상태가 정상)이 아니라 라디오다 (디자인 시스템 §7 고르는 칸).
+        🚨 **이것만 `Section` 으로 감싸지 않는다.** 컨트롤이 하나뿐인데 구역 제목까지 세우면
+           제목과 `<legend>` 가 **같은 말을 두 번** 한다 ("성별" 아래 "성별"). 이름은 legend 가
+           져야 한다 — 구역 제목은 `<fieldset>` 과 연결되지 않아서 보조기술에 안 붙는다.
+      */}
+      <ChoiceField
+        label="성별"
+        hint="나이에 맞는 제안을 고를 때만 써요. 밝히지 않아도 돼요."
+        value={gender}
+        options={GENDER_OPTIONS}
+        onChange={setGender}
+      />
 
-      <Section title="키 · 몸무게" note="오늘 잰 값으로 기록해요. 한쪽만 적어도 돼요.">
+      <Section title="키 · 몸무게" description="오늘 잰 값으로 기록해요. 한쪽만 적어도 돼요.">
         {/* 🚨 **잰 날짜를 여기서 묻지 않는다.** 서버가 오늘로 찍는다 — 프론트가 날짜를
             만들지 않는다 (CLAUDE.md §4). 다른 날 잰 값은 11-1 에서 날짜를 골라 적는다.
             🚨 백분위·또래 비교·"빠르다/느리다" 를 여기에도 만들지 않는다 (최상위 §2). */}
@@ -233,41 +209,14 @@ function ChildOnboardingScreen() {
         </div>
       </Section>
 
-      <Section title="알레르기 · 식품 제한" note="식사 제안을 걸러내는 데만 써요.">
-        <ChipRow>
-          {SAFETY_CHOICES.map((choice) => (
-            <Chip
-              key={choice.value}
-              selected={safetyStatus === choice.value}
-              onClick={() => setSafetyStatus(safetyStatus === choice.value ? null : choice.value)}
-            >
-              {choice.label}
-            </Chip>
-          ))}
-        </ChipRow>
-
-        {safetyStatus === "has" ? (
-          <div className="mt-3">
-            <TextInput
-              label="어떤 것을 피해야 하나요"
-              hint="쉼표로 구분해 적어주세요."
-              placeholder="예: 우유, 땅콩"
-              value={safetyText}
-              onChange={(e) => setSafetyText(e.target.value)}
-            />
-          </div>
-        ) : null}
-
-        {safetyStatus === "unknown" ? (
-          <p className="text-caption text-ink-subtle mt-3">
-            지금은 저장하지 않을게요. 확인되기 전까지 식사 제안은 만들지 않아요.
-          </p>
-        ) : null}
-
-        <p className="text-caption text-ink-subtle mt-2">
-          보호자가 입력한 값만 저장돼요. AI 가 추측한 알레르기 정보는 저장하지 않아요.
-        </p>
-      </Section>
+      {/*
+        🚨 **11 아이 프로필과 같은 구역이다** (`components/safety-section.tsx`) — 직접 적기와
+           검사지 사진, 두 길이 그대로 열린다.
+        🚨 **이 구역만 다른 버튼을 따라간다.** 나머지 셋은 아래 "다음" 이 한 번에 보내지만,
+           알레르기는 **승인 게이트 ㉡** 라 시트에서 확정하는 즉시 저장된다 (NF-03 —
+           알레르기의 유일한 쓰기 경로). 그래서 여기서 등록한 것은 "건너뛰기" 를 눌러도 남는다.
+      */}
+      <SafetySection childId={childId} />
 
       <div className="mt-auto flex flex-col gap-3 pt-4">
         {emptyNotice && !body ? (
@@ -312,15 +261,5 @@ function ChildOnboardingScreen() {
         </p>
       </div>
     </Screen>
-  );
-}
-
-function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
-  return (
-    <section className="border-line rounded-card bg-surface border p-4">
-      <h2 className="text-section text-ink">{title}</h2>
-      {note ? <p className="text-body-sm text-ink-muted mt-1">{note}</p> : null}
-      <div className="mt-3">{children}</div>
-    </section>
   );
 }
