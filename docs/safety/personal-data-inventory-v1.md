@@ -43,6 +43,14 @@
 
 나이는 저장하지 않고 생일로 매번 계산한다. 성별·키·몸무게는 **컬럼 자체가 없다** ([food/store/ports.py:9](../../apps/api/app/agents/food/store/ports.py) — "키·몸무게는 수집 범위 결정 전까지 비움").
 
+**생일은 일(日) 단위 `date` 로 받는다 — 연·월만 받지 않는다.** 코드가 월령을 **월 단위 경계**로 판정하는 자리가 있어서다. 연·월만 받으면 월령이 최대 30일 틀리고, 경계 근처 아이는 하루 차이로 칸이 바뀐다.
+
+- 식이 단계(영아기/유아기)는 `birth_date` 에서 코드가 계산한다. 경계 개월 수는 미정이라, 정해지는 순간 경계 ±1개월의 아이는 일자 없이는 어느 쪽인지 정할 수 없다 ([food/context.py:27-28](../../apps/api/app/agents/food/context.py))
+- 영양 기준 조회가 `age_months` 를 받는다 ([food/store/ports.py:111](../../apps/api/app/agents/food/store/ports.py)). Food Agent 가 프로필에서 읽는 것은 `birth_date` 하나다 (〃 `:88`)
+- 나이 계산은 서버만 한다. 프론트가 나이를 생일로 환산하지 않는 것도 같은 규칙이다 ([onboarding/page.tsx:28-29](../../apps/web/src/app/onboarding/page.tsx) · 루트 CLAUDE.md §2 "날짜·나이 계산은 규칙(코드)이"). 입력이 월 단위면 계산도 월 단위 정확도가 된다
+
+2026-09-22 에 "생년·생월만 받기로 하지 않았나" 는 질문이 있었다. 그런 결정은 코드·계약서·CLAUDE.md·이 문서 어디에도 없다. 판단과 열어 둔 조건은 [privacy-decisions-v1.md §10](privacy-decisions-v1.md#10-생일-수집-단위--닫힘-2026-09-22).
+
 ### 1-3. 민감정보 (제23조)
 
 | 항목 | 저장 위치 | 동의 항목 | 근거 |
