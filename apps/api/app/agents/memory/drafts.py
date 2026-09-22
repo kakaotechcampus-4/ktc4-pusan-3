@@ -110,15 +110,13 @@ class EventDraft:
         if self.op == "create":
             return {
                 "draft_id": self.draft_id,
-                "op": self.op,
-                "source": None,
+                "op": self.op, # TODO: 제안 경로가 일정 초안을 만들 때 source키 추가
                 "event": event,
                 "items": items,
             }
         return {
             "draft_id": self.draft_id,
             "op": self.op,
-            "source": None,
             "event_id": self.event_id,
             "event": event,
             "before": self.before.to_payload() if self.before is not None else None,
