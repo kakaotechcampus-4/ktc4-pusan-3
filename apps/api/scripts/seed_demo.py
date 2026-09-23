@@ -5,7 +5,8 @@
 카카오 로그인을 거치지 않고 `POST /children/{cid}/inputs` 와 `GET /runs/{rid}/events` 를
 curl 과 브라우저에서 바로 두드리기 위한 것이다. 출력을 그대로 붙여 넣으면 된다.
 
-🚨 APP_ENV=local 에서만 돈다. 배포 DB 에 가짜 보호자가 생기면 안 된다.
+🚨 APP_ENV=local 이고 DB 가 내 컴퓨터(localhost)일 때만 돈다.
+   배포 DB 에 가짜 보호자가 생기면 안 된다.
 🚨 실제 아이 정보를 넣지 않는다 (루트 §9). 별명은 "데모아이", 생일은 지어낸 날짜다.
 🚨 토큰은 화면에만 찍고 어디에도 저장하지 않는다. 12시간 뒤 만료된다.
 """
@@ -25,6 +26,8 @@ from app.infra.db.session import async_session_factory
 
 TOKEN_TTL = timedelta(hours=12)
 """auth-kakao-v1 §4-3 과 같은 수명. 데모가 하루를 넘기면 다시 돌린다."""
+
+LOCAL_DB_HOSTS = ("localhost", "127.0.0.1")
 
 
 async def seed() -> tuple[str, str]:
@@ -53,8 +56,12 @@ async def seed() -> tuple[str, str]:
 
 
 def main() -> None:
-    if settings.APP_ENV != "local":
-        sys.exit(f"APP_ENV={settings.APP_ENV!r} — 로컬(local)에서만 돌린다.")
+    # 🚨 APP_ENV 는 기본값이 local 이라 비어 있어도 통과한다. DB 주소까지 내 컴퓨터인지 본다 —
+    #    .env 의 DB 만 배포 쪽으로 바꿔 둔 채 돌리는 실수를 막는다.
+    if settings.APP_ENV != "local" or settings.DB_HOST not in LOCAL_DB_HOSTS:
+        sys.exit(
+            f"APP_ENV={settings.APP_ENV!r} · DB_HOST={settings.DB_HOST!r} — 로컬 DB 에서만 돌린다."
+        )
 
     token, child_id = asyncio.run(seed())
     expires_ms = int((time.time() + TOKEN_TTL.total_seconds()) * 1000)
