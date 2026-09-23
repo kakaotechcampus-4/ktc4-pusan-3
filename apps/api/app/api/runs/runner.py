@@ -24,6 +24,7 @@ import traceback
 from collections.abc import Awaitable, Callable
 
 from app.api import idempotency
+from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         # 이미 끝 신호가 나갔으면(done 뒤 결과 기록에서 터진 경우) 덧붙이지 않는다 — 화면은 이미
         # 결과를 받았다. 채널도 버리지만, 읽는 사람이 헷갈리지 않게 여기서도 적어 둔다.
         if channel.ended_with is None:
-            channel.publish(("failed", {"reason": "internal_error", "raw_text": raw_text}))
+            channel.publish(sse.failed_event("internal_error", raw_text))
     finally:
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
         # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.

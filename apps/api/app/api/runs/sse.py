@@ -14,11 +14,23 @@ from collections.abc import AsyncIterator
 
 from app.api.runs.registry import RunChannel
 
+SseEvent = tuple[str, dict]
+"""채널에 넣는 모양 — (이름, 내용). frame() 이 이걸 `event:` · `data:` 두 줄로 쓴다."""
+
 
 def frame(name: str, payload: dict) -> str:
     """이벤트 하나를 SSE 프레임 문자열로. 한글은 그대로, JSON 은 공백 없이 한 줄."""
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"event: {name}\ndata: {data}\n\n"
+
+
+def failed_event(reason: str, raw_text: str) -> SseEvent:
+    """화면용 failed. 모양을 한 곳에서 정한다 — 번역기(Agent 의 Failed)와 러너(internal_error)가
+    같이 쓴다.
+
+    raw_text 가 있어야 "적어주신 말은 입력창에 그대로 남겨뒀어요" 가 성립한다 (계약서 §06).
+    """
+    return "failed", {"reason": reason, "raw_text": raw_text}
 
 
 async def stream(channel: RunChannel, *, heartbeat_seconds: float = 10.0) -> AsyncIterator[str]:
