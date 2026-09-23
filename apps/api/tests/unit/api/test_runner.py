@@ -15,7 +15,7 @@ import uuid
 import pytest
 
 from app.agents import entrypoint
-from app.agents.entrypoint import Done, Failed, MemoryNote, Step
+from app.agents.entrypoint import Done, EventDrafts, Failed, MemoryNote, Step
 from app.api import idempotency
 from app.api.runs import registry, runner
 
@@ -106,6 +106,39 @@ async def test_job_that_returns_without_an_end_signal_ends_with_failed():
 
     assert names(channel) == ["step", "failed"]
     assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+
+
+async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
+    """번역이 터지면 run 전체가 failed 로 끝난다 — 조용히 빠지지 않고 화면에 드러난다.
+
+    그래도 데이터는 안전하다. 러너 세션은 done 일 때만 확정하고 나머지는 되돌리므로(7단계)
+    failed 는 "저장 없음" 이고, 키가 풀려 다시 보내도 두 번 저장되지 않는다.
+    로그에는 예외 종류와 위치만 남고 원문은 남지 않는다 (루트 §2).
+    """
+    secret = RAW_TEXT
+
+    class BrokenDraft:
+        def to_payload(self) -> dict:
+            raise ValueError(f"input_value={secret!r}")
+
+    async def fake_handle_input(**kwargs):
+        kwargs["emit"](Step(1, 3, "입력을 살펴보고 있어요"))
+        kwargs["emit"](EventDrafts((BrokenDraft(),)))
+        kwargs["emit"](Done(kwargs["run_id"], 2))  # 위에서 터져서 여기까지 안 온다
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
+    idempotency.remember(**scope, run_id=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["step", "failed"]
+    assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+    assert idempotency.recall(**scope) is None
+    assert "ValueError" in caplog.text
+    assert secret not in caplog.text
 
 
 async def test_failed_from_the_agents_releases_the_key(monkeypatch):

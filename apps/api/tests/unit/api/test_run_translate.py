@@ -244,20 +244,18 @@ class _NotJsonDraft:
 
 
 @pytest.mark.parametrize("draft", [_RaisingDraft(), _NotJsonDraft()], ids=["raises", "not_json"])
-def test_relay_skips_an_event_it_cannot_translate(draft, caplog):
-    """🚨 번역이 터져도 pipeline 을 멈추지 않는다 — 그 이벤트 하나만 빼고 run 은 끝까지 간다.
+def test_relay_raises_on_an_event_it_cannot_translate(draft):
+    """🚨 번역 실패는 조용히 넘기지 않는다 — 에러를 그대로 올려서 run 을 실패로 끝낸다.
 
-    emit 은 pipeline 안에서 불린다. 여기서 예외가 올라가면 Memory 가 이미 저장한 뒤에 run 이
-    실패로 끝나고, 보호자가 다시 보내면 두 번 저장된다. JSON 으로 못 바뀌는 값을 채널에 넣으면
-    200 을 보낸 뒤 스트림 중간에 끊긴다 — 둘 다 여기서 걸러야 한다.
-    로그에는 이벤트 종류만 남고 내용(원문)은 남지 않는다 (루트 §2).
+    번역 실패는 코드 버그다(초안 모양과 번역기가 어긋남). 건너뛰면 화면에서 초안만 조용히 빠져서
+    아무도 모른다. 올리면 러너가 failed 를 붙여 화면에 "읽지 못했어요" 로 드러난다 (runner 테스트).
+    JSON 으로 못 바뀌는 값도 채널에 넣기 전에 터뜨린다 — 넣고 나면 200 을 보낸 뒤 스트림 중간에
+    끊긴다. 어느 쪽이든 채널에는 반쯤 들어간 것이 없어야 한다.
     """
     channel = registry.open_run(parent_id=PARENT)
     emit = translate.relay(channel)
 
-    emit(EventDrafts((draft,)))  # 예외가 여기서 올라오면 이 테스트가 실패한다
-    emit(Done(channel.run_id, 2))
+    with pytest.raises((ValueError, TypeError)):
+        emit(EventDrafts((draft,)))
 
-    assert [name for name, _ in channel.events] == ["done"]
-    assert "EventDrafts" in caplog.text
-    assert SECRET not in caplog.text
+    assert channel.events == []

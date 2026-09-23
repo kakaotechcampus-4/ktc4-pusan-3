@@ -21,14 +21,9 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
-import logging
-import traceback
-
 from app.agents.entrypoint import Done, Emit, Event, EventDrafts, Failed, Guidance, Step
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
-
-log = logging.getLogger(__name__)
 
 
 def to_sse(event: Event) -> sse.SseEvent | None:
@@ -58,29 +53,20 @@ def relay(channel: RunChannel) -> Emit:
     sync 다 — pipeline 은 emit 을 기다리지(await) 않고, 채널의 publish 도 sync 라 그대로 이어진다.
     끝 신호 뒤에 오는 것(pipeline 이 Failed 뒤에 보내는 Done 등)은 채널이 버린다.
 
-    🚨 번역이 터져도 pipeline 을 멈추지 않는다. emit 은 pipeline 안에서 불려서, 여기서 예외가 나면
-       Memory 가 이미 저장한 뒤에 run 이 실패로 끝난다 — 화면은 "아무것도 저장 안 했어요" 를 보고
-       보호자가 다시 보내면 두 번 저장된다. 그 이벤트 하나만 빼고 로그를 남긴다.
-    🚨 채널에 넣기 전에 SSE 글자로 한 번 바꿔 본다. JSON 으로 못 바뀌는 값을 넣으면 200 을 보낸 뒤
-       스트림 중간에 연결이 끊기고, 다시 붙어도 같은 자리에서 또 끊긴다.
+    🚨 번역이 터지면 그대로 올린다 — run 이 failed 로 끝나 화면에 "읽지 못했어요" 로 드러난다.
+       번역 실패는 코드 버그(초안 모양과 번역기가 어긋남)라, 그 이벤트만 건너뛰면 화면에서 조용히
+       빠져서 아무도 모른다. 올려도 데이터는 안전하다 — 러너 세션은 done 일 때만 확정하고 나머지는
+       되돌려서(7단계) failed 는 언제나 "저장 없음" 이고, 키가 풀려 다시 보내도 두 번 저장되지
+       않는다. 로그는 러너가 남긴다(예외 종류 · 위치만, 원문 없이).
+    🚨 채널에 넣기 전에 SSE 글자로 한 번 바꿔 본다. JSON 으로 못 바뀌는 값이 채널에 들어가면 200 을
+       보낸 뒤 스트림 중간에 끊기고, 다시 붙어도 같은 자리에서 또 끊긴다 — 넣기 전에 터뜨린다.
     """
 
     def emit(event: Event) -> None:
-        try:
-            translated = to_sse(event)
-            if translated is None:
-                return
-            sse.frame(*translated)
-        except Exception as exc:
-            # 🚨 로그에 내용을 남기지 않는다 (루트 §2) — 이벤트 종류 · 예외 종류 · 코드 위치만
-            log.error(
-                "run %s 의 %s 를 화면 이벤트로 못 바꿔 건너뛴다 — %s\n%s",
-                channel.run_id,
-                type(event).__name__,
-                type(exc).__name__,
-                "".join(traceback.format_tb(exc.__traceback__)),
-            )
+        translated = to_sse(event)
+        if translated is None:
             return
+        sse.frame(*translated)  # JSON 으로 못 바뀌면 여기서 터진다 — 채널에 넣기 전에
         channel.publish(translated)
 
     return emit
