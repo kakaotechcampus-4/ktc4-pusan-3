@@ -108,7 +108,6 @@ def test_새_일정_초안은_POST_용_모양이다() -> None:
     assert payload == {
         "draft_id": None,  # DraftBook 에 넣기 전이라 아직 없다
         "op": "create",
-        "source": None,  # 제안에서 온 초안만 채운다
         "event": {
             "title": "물놀이",
             "starts_at": "2026-09-25T10:00:00+09:00",
@@ -626,17 +625,18 @@ def test_create_와_update_의_키_집합이_다르다() -> None:
     create = _draft().to_payload()
     update = _draft(op="update", event_id="event-1", before=_snapshot()).to_payload()
 
-    assert set(create) == {"draft_id", "op", "source", "event", "items"}
-    assert set(update) == {"draft_id", "op", "source", "event_id", "event", "before", "items"}
+    assert set(create) == {"draft_id", "op", "event", "items"}
+    assert set(update) == {"draft_id", "op", "event_id", "event", "before", "items"}
     # op 는 두 모양 모두에 남는다. 화면이 이 값으로 부를 엔드포인트를 고른다
     assert create["op"] == "create"
     assert update["op"] == "update"
 
 
-def test_출처_슬롯은_비어_있다() -> None:
-    # 제안에서 온 초안만 채운다. Memory 는 그 경로를 거치지 않는다
+def test_출처_슬롯은_아직_payload_에_없다() -> None:
+    # 채울 값이 언제나 null 이라 타입을 정할 수 없어 뺐다. 제안 경로가 초안을 만들기
+    # 시작하면 그때 넣는다 — drafts.py 의 TODO 와 짝이다
     for draft in (_draft(), _draft(op="update", event_id="event-1", before=_snapshot())):
-        assert draft.to_payload()["source"] is None
+        assert "source" not in draft.to_payload()
 
 
 def test_준비물_체크_상태는_payload_에_없다() -> None:
