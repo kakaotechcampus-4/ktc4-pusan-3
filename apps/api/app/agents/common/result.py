@@ -75,7 +75,7 @@ class DomainAgentResult:
     event_requests: tuple[EventRequest, ...] = ()
     needs_observation: tuple[str, ...] = field(default_factory=tuple)
     medication_drafts: tuple[MedicationDraft, ...] = ()
-    model_calls: int = 0
+    model_calls: int = 0  # Agent 진입 수 — 0(게이트 닫힘) · 1 · 2(안전 필터 후 재호출)
 
     def __post_init__(self) -> None:
         if len(self.needs_observation) > 1:
