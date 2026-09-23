@@ -67,6 +67,22 @@ async def test_job_exception_ends_with_failed_only_and_channel_closes():
     assert channel.closed
 
 
+async def test_exception_after_done_keeps_done_as_the_only_end():
+    """pipeline 은 done 을 보낸 뒤에도 코드가 더 돈다(결과 기록). 거기서 터져도 화면은 이미
+    결과를 받았다 — failed 를 덧붙이지 않는다.
+    """
+    channel = registry.open_run(parent_id=PARENT)
+
+    async def done_then_boom(ch: registry.RunChannel) -> None:
+        ch.publish(("done", {"run_id": ch.run_id, "model_calls": 1}))
+        raise RuntimeError("결과 기록 중 실패")
+
+    await asyncio.wait_for(runner.start(channel, done_then_boom, raw_text="한 줄"), timeout=1)
+
+    assert names(channel) == ["done"]
+    assert channel.closed
+
+
 async def test_job_exception_log_keeps_type_and_place_but_not_message(caplog):
     """🚨 로그에 원문을 남기지 않는다 (루트 §2).
 

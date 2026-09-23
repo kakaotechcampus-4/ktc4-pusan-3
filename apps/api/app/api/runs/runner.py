@@ -8,8 +8,8 @@
    그때 보호자는 무엇이 저장됐는지 모른다.
 
 🚨 끝 신호는 `done` 또는 `failed` **하나**다. 둘 다 보내지 않는다 — 목(handlers/runs.ts)도
-   failed 에서 끝나고, 화면의 `case "done"` 은 상태를 성공으로 덮는다. 5단계 pipeline 은
-   `Failed` 뒤에 `Done` 을 보내므로 매핑에서 그 `Done` 을 버려야 한다.
+   failed 에서 끝나고, 화면의 `case "done"` 은 상태를 성공으로 덮는다. 끝 신호 뒤에 오는 것은
+   채널(registry.RunChannel.publish)이 버린다.
 
 🚨 태스크를 채널에 매단다. asyncio 는 태스크를 약하게만 잡고 있어서, 참조를 지역 변수로만 두면
    GC 가 도중에 거둬 run 이 조용히 사라진다.
@@ -60,12 +60,16 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
             "".join(traceback.format_tb(exc.__traceback__)),
         )
         # failed 가 끝 신호다. done 을 붙이지 않는다 — 화면의 `case "done"` 이 성공으로 덮는다.
-        channel.publish(("failed", {"reason": "internal_error", "raw_text": raw_text}))
+        # 이미 끝 신호가 나갔으면(done 뒤 결과 기록에서 터진 경우) 덧붙이지 않는다 — 화면은 이미
+        # 결과를 받았다. 채널도 버리지만, 읽는 사람이 헷갈리지 않게 여기서도 적어 둔다.
+        if channel.ended_with is None:
+            channel.publish(("failed", {"reason": "internal_error", "raw_text": raw_text}))
     finally:
-        # 실패로 끝난 run 은 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
+        # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
+        # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.
         # 🚨 publish 와 여기 사이에 await 가 없어야 한다. 화면이 failed 를 받자마자 재시도해도
         #    키가 이미 지워져 있다.
-        if any(name == "failed" for name, _ in channel.events):
+        if channel.ended_with == "failed":
             idempotency.forget_run(channel.run_id)
         channel.close()
 

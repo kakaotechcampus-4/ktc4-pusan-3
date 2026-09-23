@@ -8,11 +8,16 @@
 🚨 프로세스 메모리에 산다. `_channels` 는 모듈 변수라 서버가 켜져 있는 동안 하나뿐이고,
    POST 가 넣은 채널을 GET 이 같은 dict 에서 찾는다. 그래서 `--workers 2` 이상이면 깨진다 —
    데모는 단일 프로세스 전제다 (#134).
+
+이벤트는 `(이름, 내용)` 짝이다. sse.frame() 이 그대로 `event:` · `data:` 두 줄로 쓴다.
 """
 
 import asyncio
 import time
 import uuid
+
+TERMINAL = frozenset({"failed", "done"})
+"""끝 신호. run 하나에 한 번만 나간다 — 화면은 둘 중 하나를 받으면 읽기를 멈춘다(sse.ts)."""
 
 _channels: dict[str, "RunChannel"] = {}
 
@@ -24,6 +29,8 @@ class RunChannel:
         """이 run 을 만든 보호자. GET 은 이 보호자에게만 흘린다 — 주소에 아이 id 가 없어서
         아이 소유 검사로는 못 막는다 (auth-kakao-v1 부록 A 1번)."""
         self.events = []
+        self.ended_with: str | None = None
+        """나간 끝 신호의 이름(failed · done). 아직 없으면 None."""
         self.closed = False
         self.closed_at = None
         self._changed = asyncio.Event()
@@ -31,8 +38,19 @@ class RunChannel:
         """이 run 을 돌리는 백그라운드 태스크. 참조를 여기 매달아야 GC 가 도중에 거두지 않는다."""
 
     def publish(self, event) -> None:
-        """이벤트 하나를 붙이고 자는 구독자를 깨운다. sync 다 — pipeline 의 emit 콜백이 그렇다."""
+        """이벤트 하나를 붙이고 자는 구독자를 깨운다. sync 다 — pipeline 의 emit 콜백이 그렇다.
+
+        🚨 끝 신호 뒤에 오는 것은 버린다. pipeline 은 Failed 뒤에 Done 을 보내고, done 뒤에도
+           결과를 기록하는 코드가 더 돌다 터질 수 있다. 끝 신호가 두 개 쌓이면 러너가 "실패한 run"
+           으로 보고 Idempotency-Key 를 놓아서, 같은 키로 다시 누를 때 두 번 저장된다.
+           넣는 쪽(번역기 · 러너)이 여럿이라 여기 한 곳에서 막는다.
+        """
+        if self.ended_with is not None:
+            return
         self.events.append(event)
+        name, _ = event
+        if name in TERMINAL:
+            self.ended_with = name
         self._changed.set()
 
     def close(self) -> None:

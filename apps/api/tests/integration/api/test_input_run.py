@@ -130,6 +130,29 @@ async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
     assert retried.json()["run_id"] != first.json()["run_id"]
 
 
+async def test_finished_run_keeps_its_key_even_if_it_crashes_after(db_client, bearer, monkeypatch):
+    """🚨 done 까지 나간 run 은 저장이 끝난 run 이다. 그 뒤에 터져도 키를 놓지 않는다.
+
+    놓으면 같은 키로 다시 누를 때 새 run 이 떠서 관찰이 두 번 저장된다. pipeline 은 done 을
+    보낸 뒤에도 결과를 기록하는 코드가 더 돈다 — 거기서 터지는 경우다.
+    """
+
+    async def done_then_boom(channel):
+        channel.publish(("done", {"run_id": channel.run_id, "model_calls": 1}))
+        raise RuntimeError("결과 기록 중 실패")
+
+    monkeypatch.setattr(runner, "fake_job", done_then_boom)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    cid = uuid.uuid4()
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    await asyncio.wait_for(registry.get(first.json()["run_id"]).task, timeout=2)
+    retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert retried.json() == first.json()
+
+
 async def test_different_key_starts_a_new_run(db_client, bearer):
     headers, _ = bearer
 
