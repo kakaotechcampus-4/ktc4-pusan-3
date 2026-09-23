@@ -13,7 +13,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps.auth import get_current_parent
-from app.api.v1.routers import auth, runs
+from app.api.v1.routers import auth, children, runs
 
 public_router = APIRouter()
 """무인증. 로그인 자체를 시작·완료하는 5개만 (루트 CLAUDE.md §9).
@@ -26,6 +26,7 @@ protected_router = APIRouter(dependencies=[Depends(get_current_parent)])
 """나머지 전부. 앞으로 추가되는 도메인 라우터는 여기에 붙인다."""
 
 protected_router.include_router(auth.fixed_router)
+protected_router.include_router(children.router)
 protected_router.include_router(runs.router)
 public_router.include_router(auth.provider_router)
 

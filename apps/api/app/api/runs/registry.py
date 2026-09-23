@@ -24,6 +24,8 @@ class RunChannel:
         self.closed = False
         self.closed_at = None
         self._changed = asyncio.Event()
+        self.task: asyncio.Task[None] | None = None
+        """이 run 을 돌리는 백그라운드 태스크. 참조를 여기 매달아야 GC 가 도중에 거두지 않는다."""
 
     def publish(self, event) -> None:
         """이벤트 하나를 붙이고 자는 구독자를 깨운다. sync 다 — pipeline 의 emit 콜백이 그렇다."""
