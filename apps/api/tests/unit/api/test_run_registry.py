@@ -7,7 +7,8 @@ Agent 가 내보내는 진행 이벤트와, 나중에 따로 붙는 화면(SSE) 
    (Agent 가 이미 두 개 내보낸 뒤) 두 번 붙으면(새로고침) 빈손이 된다.
    아래 "늦게 붙기" · "두 번 붙기" 두 테스트가 그 결정을 고정한다 — 큐로 만들면 둘 다 깨진다.
 
-이 파일은 웹 지식이 필요 없다. 이벤트는 아무 객체나 넣을 수 있고, 여기서는 문자열을 쓴다.
+이 파일은 웹 지식이 필요 없다. 이벤트는 (이름, 내용) 짝이다 — 채널은 이름으로 끝 신호를
+알아본다(failed · done). 내용은 여기서 상관없어서 비워 둔다.
 """
 
 import asyncio
@@ -20,6 +21,10 @@ from app.api.runs import registry
 
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
+
+STEP_1 = ("step", {"index": 1})
+STEP_2 = ("step", {"index": 2})
+DONE = ("done", {})
 
 
 @pytest.fixture(autouse=True)
@@ -53,12 +58,12 @@ async def test_late_subscriber_receives_everything():
     실제로는 POST 202 를 받고 화면이 GET 을 여는 사이에 Agent 가 벌써 Step 1·2 를 내보낸다.
     """
     channel = registry.open_run(parent_id=PARENT)
-    channel.publish("step-1")
-    channel.publish("step-2")
-    channel.publish("done")
+    channel.publish(STEP_1)
+    channel.publish(STEP_2)
+    channel.publish(DONE)
     channel.close()
 
-    assert await collect(channel) == ["step-1", "step-2", "done"]
+    assert await collect(channel) == [STEP_1, STEP_2, DONE]
 
 
 async def test_two_subscribers_both_receive_everything():
@@ -68,14 +73,14 @@ async def test_two_subscribers_both_receive_everything():
     화면 새로고침, 또는 탭 두 개가 이 경우다.
     """
     channel = registry.open_run(parent_id=PARENT)
-    channel.publish("step-1")
-    channel.publish("done")
+    channel.publish(STEP_1)
+    channel.publish(DONE)
     channel.close()
 
     first, second = await asyncio.gather(collect(channel), collect(channel))
 
-    assert first == ["step-1", "done"]
-    assert second == ["step-1", "done"]
+    assert first == [STEP_1, DONE]
+    assert second == [STEP_1, DONE]
 
 
 async def test_live_subscriber_wakes_on_publish_and_ends_on_close():
@@ -89,11 +94,30 @@ async def test_live_subscriber_wakes_on_publish_and_ends_on_close():
     subscriber = asyncio.create_task(collect(channel))
     await asyncio.sleep(0)  # 구독자가 먼저 잠들 기회를 준다
 
-    channel.publish("step-1")
-    channel.publish("step-2")
+    channel.publish(STEP_1)
+    channel.publish(STEP_2)
     channel.close()
 
-    assert await asyncio.wait_for(subscriber, timeout=1) == ["step-1", "step-2"]
+    assert await asyncio.wait_for(subscriber, timeout=1) == [STEP_1, STEP_2]
+
+
+async def test_events_after_an_end_signal_are_dropped():
+    """🚨 끝 신호(failed · done)는 run 에 한 번뿐이다. 그 뒤에 오는 것은 버린다.
+
+    pipeline 은 Failed 뒤에 Done 을 보내고, done 뒤에도 코드가 더 돌다 터질 수 있다. 끝 신호가
+    두 개 쌓이면 러너의 키 해제 판단이 엇갈린다 — done 뒤에 failed 가 붙으면 저장이 끝난 run 의
+    Idempotency-Key 가 지워져, 같은 키로 다시 누를 때 두 번 저장된다.
+    """
+    channel = registry.open_run(parent_id=PARENT)
+    assert channel.ended_with is None
+
+    channel.publish(STEP_1)
+    channel.publish(DONE)
+    channel.publish(("failed", {"reason": "internal_error", "raw_text": "한 줄"}))
+    channel.publish(STEP_2)
+
+    assert channel.events == [STEP_1, DONE]
+    assert channel.ended_with == "done"
 
 
 async def test_unknown_run_is_none():

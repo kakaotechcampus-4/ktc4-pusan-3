@@ -10,11 +10,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
 
-from app.api import idempotency
+from app.api import idempotency, quota
 from app.api.deps.auth import CurrentParent
 from app.api.errors import ApiError
 from app.api.runs import registry, runner
 from app.api.v1.schemas.children import CreateInputRequest, CreateInputResponse
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -45,7 +46,16 @@ async def create_input(
     if replayed is not None:
         return CreateInputResponse(run_id=replayed)
 
+    # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
+    if not quota.consume(
+        parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
+    ):
+        raise ApiError(429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요.")
+
     channel = registry.open_run(parent_id=parent.parent_id)
     idempotency.remember(**scope, run_id=channel.run_id)
-    runner.start(channel, runner.fake_job, raw_text=body.text)
+    # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
+    # 되지 않는다 (§2).
+    job = runner.agent_job(child_id=cid, parent_id=parent.parent_id, raw_text=body.text)
+    runner.start(channel, job, raw_text=body.text)
     return CreateInputResponse(run_id=channel.run_id)

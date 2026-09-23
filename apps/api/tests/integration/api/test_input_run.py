@@ -9,6 +9,7 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 그때 재생이 없으면 관찰이 두 번 저장되고 홈 숫자가 2배가 된다.
 
 🚨 3단계에서는 아이 소유 확인(403)을 하지 않는다 — 9단계. cid 는 아무 UUID 나 받는다.
+🚨 진짜 Agent(LLM)는 부르지 않는다 — `agent_job` 을 가짜 러너로 바꿔 끼운다(`agent_calls`).
 """
 
 import asyncio
@@ -16,8 +17,9 @@ import uuid
 
 import pytest
 
-from app.api import idempotency
+from app.api import idempotency, quota
 from app.api.runs import registry, runner
+from app.core.config import settings
 
 from .conftest import issue_bearer
 
@@ -31,10 +33,28 @@ def _clean_process_memory(monkeypatch):
     """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다."""
     registry.clear()
     idempotency.clear()
+    quota.clear()
     monkeypatch.setattr(runner, "DEMO_STEP_DELAY", 0.0)
     yield
     registry.clear()
     idempotency.clear()
+    quota.clear()
+
+
+@pytest.fixture(autouse=True)
+def agent_calls(monkeypatch) -> list[dict]:
+    """진짜 Agent 대신 가짜 러너를 끼운다. 창구가 agent_job 에 무엇을 넘겼는지는 기록한다.
+
+    `runner.fake_job` 을 부를 때마다 다시 읽는다 — 테스트가 fake_job 을 바꿔 끼우면 그것이 돈다.
+    """
+    calls: list[dict] = []
+
+    def fake_agent_job(**kwargs):
+        calls.append(kwargs)
+        return runner.fake_job
+
+    monkeypatch.setattr(runner, "agent_job", fake_agent_job)
+    return calls
 
 
 def with_key(headers: dict[str, str], key: str | None = None) -> dict[str, str]:
@@ -73,6 +93,20 @@ async def test_inputs_rejects_empty_text(db_client, bearer):
     assert response.json()["error"]["code"] == "validation_failed"
 
 
+async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls):
+    """5단계 — 접수 창구가 진짜 Agent 에 넘긴다. 누구(보호자)의 어느 아이 이야기인지를 같이.
+
+    보호자는 본문이 아니라 토큰에서 온다. Memory 가 이 값을 작성자로 적어서, 보호자의 말이
+    아이의 사실로 저장되지 않는다 (§2 "부모의 말은 아이의 Fact 가 아니다").
+    """
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+
+    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert agent_calls == [{"child_id": cid, "parent_id": parent_id, "raw_text": BODY["text"]}]
+
+
 async def test_inputs_accepts_and_returns_run_id(db_client, bearer):
     """202 에 본문이 있어야 한다 — 프론트가 202 도 JSON 으로 파싱한다 (client.ts).
 
@@ -89,11 +123,12 @@ async def test_inputs_accepts_and_returns_run_id(db_client, bearer):
     assert registry.get(run_id) is not None  # 채널이 열려 있어야 GET 이 붙을 수 있다
 
 
-async def test_same_key_replays_the_same_run_id(db_client, bearer):
+async def test_same_key_replays_the_same_run_id(db_client, bearer, agent_calls):
     """같은 키로 다시 오면 새 run 을 만들지 않고 처음 응답을 그대로 준다.
 
-    보호자가 버튼을 두 번 누른 경우다. 새 run 이 생기면 관찰이 두 번 저장된다.
-    같은 아이(같은 경로)여야 한다 — 스코프에 path 가 들어 있어 다른 아이면 다른 요청이다.
+    보호자가 버튼을 두 번 누른 경우다. 새 run 이 생기면 관찰이 두 번 저장되고, 모델도 두 번
+    불린다(월 크레딧). 같은 아이(같은 경로)여야 한다 — 스코프에 path 가 들어 있어 다른 아이면
+    다른 요청이다.
     """
     headers, _ = bearer
     keyed = with_key(headers)
@@ -104,6 +139,7 @@ async def test_same_key_replays_the_same_run_id(db_client, bearer):
 
     assert second.status_code == 202
     assert second.json() == first.json()
+    assert len(agent_calls) == 1  # Agent 를 다시 부르지 않았다
 
 
 async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
@@ -128,6 +164,69 @@ async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
 
     assert retried.status_code == 202
     assert retried.json()["run_id"] != first.json()["run_id"]
+
+
+async def test_finished_run_keeps_its_key_even_if_it_crashes_after(db_client, bearer, monkeypatch):
+    """🚨 done 까지 나간 run 은 저장이 끝난 run 이다. 그 뒤에 터져도 키를 놓지 않는다.
+
+    놓으면 같은 키로 다시 누를 때 새 run 이 떠서 관찰이 두 번 저장된다. pipeline 은 done 을
+    보낸 뒤에도 결과를 기록하는 코드가 더 돈다 — 거기서 터지는 경우다.
+    """
+
+    async def done_then_boom(channel):
+        channel.publish(("done", {"run_id": channel.run_id, "model_calls": 1}))
+        raise RuntimeError("결과 기록 중 실패")
+
+    monkeypatch.setattr(runner, "fake_job", done_then_boom)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    cid = uuid.uuid4()
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    await asyncio.wait_for(registry.get(first.json()["run_id"]).task, timeout=2)
+    retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert retried.json() == first.json()
+
+
+async def test_inputs_over_the_daily_limit_are_rejected(
+    db_client, bearer, monkeypatch, agent_calls
+):
+    """보호자별 하루 입력 횟수를 넘으면 429 — Agent 를 부르기 전에 막는다 (월 크레딧 보호).
+
+    한도는 설정값이다(INPUT_DAILY_LIMIT). 여기서는 빨리 보려고 2 로 줄인다.
+    """
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 2)
+    headers, _ = bearer
+
+    responses = []
+    for _ in range(3):
+        url = INPUTS.format(cid=uuid.uuid4())
+        responses.append(await db_client.post(url, json=BODY, headers=with_key(headers)))
+
+    assert [r.status_code for r in responses] == [202, 202, 429]
+    assert responses[2].json()["error"]["code"] == "daily_input_limit"
+    assert len(agent_calls) == 2  # 거절된 입력은 Agent 까지 가지 않았다
+
+
+async def test_replay_is_not_counted_and_still_works_after_the_limit(
+    db_client, bearer, monkeypatch
+):
+    """같은 키 재생은 새 입력이 아니다 — 세지 않고, 한도에 걸린 뒤에도 처음 run 을 돌려준다.
+
+    응답을 못 받아 다시 누른 보호자가 "오늘은 더 적을 수 없어요" 를 보면, 이미 접수된 입력을
+    실패로 알게 된다.
+    """
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    cid = uuid.uuid4()
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    replayed = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert replayed.status_code == 202
+    assert replayed.json() == first.json()
 
 
 async def test_different_key_starts_a_new_run(db_client, bearer):
