@@ -1,4 +1,4 @@
-"""API 가 부르는 agents 진입점.
+"""API가 부르는 agents 진입점.
 
 api 레이어는 이 모듈만 import한다. 밖으로는 handle_input 과 그 입출력 타입만 내보낸다.
 """
@@ -33,8 +33,8 @@ async def handle_input(
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다."""
     now = datetime.now(KST)
-    # run 하나가 store 하나를 쓴다. 앞선 run 에 저장한 관찰은 다음 run 에서 조회되지 않는다.
-    # TODO: DB 어댑터로 교체 (#142 후속)
+    # run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서 조회되지 않는다.
+    # TODO: DB 어댑터로 교체
     store = InMemoryStore(now=now)
 
     memory_context = AgentContext(
@@ -44,18 +44,19 @@ async def handle_input(
         timezone=KST,
         store=store,
     )
-    # 두 컨텍스트가 같은 now 를 쓴다. 자정 근처에서 기준일이 갈리지 않게 한다.
-    food_context = FoodContext(
-        child_id=child_id,
-        now=now,
-        timezone=KST,
-        stage=_DEFAULT_STAGE,
-    )
+
+    # 아직 FRAME 상태라서 주석처리
+    # food_context = FoodContext(
+    #     child_id=child_id,
+    #     now=now,
+    #     timezone=KST,
+    #     stage=_DEFAULT_STAGE,
+    # )
 
     return await _handle_input(
         raw_text,
         memory_context,
-        food_context,
+        # food_context,
         run_id=run_id,
         emit=emit,
     )
