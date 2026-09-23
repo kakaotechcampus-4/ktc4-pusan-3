@@ -67,7 +67,12 @@ SKIP_MEMORY_FOR_PURE_REQUEST = True
 
 @dataclass(frozen=True)
 class Guidance:
-    """정해진 안내 한 건. 계약서 guards 와 같은 모양(code · message · deeplink)."""
+    """정해진 안내 한 건.
+
+    계약서의 guards 와 code · message · deeplink 를 공유하지만 같은 것이 아니다.
+    guards 는 POST /suggestions 응답 안의 칸이고 blocked_agents 를 더 싣는다.
+    이쪽은 입력 run 의 SSE 로 나간다.
+    """
 
     code: str
     message: str

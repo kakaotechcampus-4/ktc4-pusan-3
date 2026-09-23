@@ -52,6 +52,8 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 ### `app/api/`
 - **허용**: domains, core, agents 진입점, integrations
 - **금지**: agents 내부 구현 직접 import
+- **agents 진입점은 `app/agents/entrypoint.py` 하나다.** `handle_input` 과 그 입출력·이벤트 타입을
+  여기서 내보낸다. `pipeline` 이나 `memory`·`food` 하위 모듈을 직접 import 하지 않는다.
 - **DB 예외**: `app/api/deps/db.py` 한 곳만 `app/infra/db/session.py` 를 import 한다.
   라우터는 엔진이나 `get_session` 을 직접 가져오지 않고 `SessionDep` 를 받는다.
 - FastAPI 전용 오류 모델·예외 핸들러는 `app/api/errors.py` 에 둔다. `app/core/` 에
