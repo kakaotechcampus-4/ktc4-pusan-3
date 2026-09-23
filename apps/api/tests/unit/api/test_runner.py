@@ -3,7 +3,7 @@
 접수 창구는 Agent 를 기다리지 않는다. 러너가 뒤에서 돌면서 채널에 이벤트를 넣고, 끝나면 닫는다.
 
 🚨 껍데기(start)의 약속 하나 — **무슨 일이 있어도 채널은 닫힌다.** job 이 예외로 죽어도 `failed`
-   와 `done` 을 내보내고 닫는다. 안 닫히면 화면이 20초 뒤 "결과를 받지 못했어요" 로 떨어지고,
+   를 내보내고 닫는다. 안 닫히면 화면이 20초 뒤 "결과를 받지 못했어요" 로 떨어지고,
    그때 보호자는 무엇이 저장됐는지 모른다 (use-run-stream.ts 의 unconfirmed).
 
 HTTP 없이 채널과 태스크만 본다.
@@ -46,8 +46,13 @@ async def test_start_runs_job_attaches_task_and_closes_channel():
     assert names(channel) == ["step", "done"]
 
 
-async def test_job_exception_becomes_failed_then_done_and_channel_closes():
-    """계약서 §06 — failed 는 raw_text 를 돌려줘야 "적어주신 말은 입력창에 그대로" 가 성립한다."""
+async def test_job_exception_ends_with_failed_only_and_channel_closes():
+    """계약서 §06 — failed 는 raw_text 를 돌려줘야 "적어주신 말은 입력창에 그대로" 가 성립한다.
+
+    🚨 failed 가 끝 신호다. 뒤에 done 을 붙이지 않는다 — 목(handlers/runs.ts)도 failed 에서 끝나고,
+       화면의 `case "done"` 은 상태를 성공으로 덮는다. 둘 다 보내면 프론트 한 줄 차이로 실패가
+       "다 됐어요" 가 된다 (#140 리뷰).
+    """
     channel = registry.open_run(parent_id=PARENT)
 
     async def boom(ch: registry.RunChannel) -> None:
@@ -57,9 +62,8 @@ async def test_job_exception_becomes_failed_then_done_and_channel_closes():
     task = runner.start(channel, boom, raw_text="계란말이 또 찾아요")
     await asyncio.wait_for(task, timeout=1)
 
-    assert names(channel) == ["step", "failed", "done"]
+    assert names(channel) == ["step", "failed"]
     assert channel.events[1][1] == {"reason": "internal_error", "raw_text": "계란말이 또 찾아요"}
-    assert channel.events[2][1]["run_id"] == channel.run_id
     assert channel.closed
 
 
