@@ -14,17 +14,19 @@
 🚨 태스크를 채널에 매단다. asyncio 는 태스크를 약하게만 잡고 있어서, 참조를 지역 변수로만 두면
    GC 가 도중에 거둬 run 이 조용히 사라진다.
 
-3단계는 가짜 job(`fake_job`)이다. 5단계에서 pipeline.handle_input 으로 바뀌고 껍데기는 그대로
-남는다.
+5단계부터 접수 창구는 `agent_job` 으로 진짜 Agent 를 부른다. `fake_job` 은 LLM 없이 흐름만 볼 때
+(테스트) 쓴다. 껍데기(`start` · `_guarded`)는 둘 다 같다.
 """
 
 import asyncio
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
+from uuid import UUID
 
+from app.agents import entrypoint
 from app.api import idempotency
-from app.api.runs import sse
+from app.api.runs import sse, translate
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
@@ -37,8 +39,33 @@ DEMO_STEP_DELAY = 0.4
 STEP_LABELS = ("적어주신 말을 읽고 있어요", "관찰을 나누고 있어요", "정리하고 있어요")
 
 
+def agent_job(*, child_id: UUID, parent_id: UUID, raw_text: str) -> Job:
+    """진짜 Agent(entrypoint.handle_input)를 돌리는 job 을 만든다. 진행 이벤트는 번역해서 채널로.
+
+    - 저장소는 넘기지 않는다 — 지금은 run 마다 메모리 저장소다. DB 저장은 7단계.
+    - 생일도 아직 안 넘긴다 — 아이 정보를 읽는 9단계에서. 그 전까지 식이 단계는 진입점의 기본값.
+    - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
+
+    🚨 `entrypoint.handle_input` 을 모듈 이름으로 부른다 — 테스트가 진입점을 바꿔 끼울 수 있게.
+    """
+
+    async def job(channel: RunChannel) -> None:
+        await entrypoint.handle_input(
+            child_id=child_id,
+            parent_id=parent_id,
+            raw_text=raw_text,
+            run_id=channel.run_id,
+            emit=translate.relay(channel),
+        )
+
+    return job
+
+
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:
-    """step 1/3 → 2/3 → 3/3 → done. 저장은 하지 않는다."""
+    """step 1/3 → 2/3 → 3/3 → done. 저장은 하지 않는다.
+
+    LLM 없이 흐름만 볼 때 쓴다 — 테스트가 agent_job 대신 이걸 끼운다.
+    """
     delay = DEMO_STEP_DELAY if step_delay is None else step_delay
     total = len(STEP_LABELS)
     for index, label in enumerate(STEP_LABELS, start=1):

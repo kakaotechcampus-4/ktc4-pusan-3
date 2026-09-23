@@ -47,5 +47,8 @@ async def create_input(
 
     channel = registry.open_run(parent_id=parent.parent_id)
     idempotency.remember(**scope, run_id=channel.run_id)
-    runner.start(channel, runner.fake_job, raw_text=body.text)
+    # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
+    # 되지 않는다 (§2).
+    job = runner.agent_job(child_id=cid, parent_id=parent.parent_id, raw_text=body.text)
+    runner.start(channel, job, raw_text=body.text)
     return CreateInputResponse(run_id=channel.run_id)

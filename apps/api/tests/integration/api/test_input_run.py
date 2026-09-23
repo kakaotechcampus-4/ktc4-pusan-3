@@ -9,6 +9,7 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 그때 재생이 없으면 관찰이 두 번 저장되고 홈 숫자가 2배가 된다.
 
 🚨 3단계에서는 아이 소유 확인(403)을 하지 않는다 — 9단계. cid 는 아무 UUID 나 받는다.
+🚨 진짜 Agent(LLM)는 부르지 않는다 — `agent_job` 을 가짜 러너로 바꿔 끼운다(`agent_calls`).
 """
 
 import asyncio
@@ -35,6 +36,22 @@ def _clean_process_memory(monkeypatch):
     yield
     registry.clear()
     idempotency.clear()
+
+
+@pytest.fixture(autouse=True)
+def agent_calls(monkeypatch) -> list[dict]:
+    """진짜 Agent 대신 가짜 러너를 끼운다. 창구가 agent_job 에 무엇을 넘겼는지는 기록한다.
+
+    `runner.fake_job` 을 부를 때마다 다시 읽는다 — 테스트가 fake_job 을 바꿔 끼우면 그것이 돈다.
+    """
+    calls: list[dict] = []
+
+    def fake_agent_job(**kwargs):
+        calls.append(kwargs)
+        return runner.fake_job
+
+    monkeypatch.setattr(runner, "agent_job", fake_agent_job)
+    return calls
 
 
 def with_key(headers: dict[str, str], key: str | None = None) -> dict[str, str]:
@@ -73,6 +90,20 @@ async def test_inputs_rejects_empty_text(db_client, bearer):
     assert response.json()["error"]["code"] == "validation_failed"
 
 
+async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls):
+    """5단계 — 접수 창구가 진짜 Agent 에 넘긴다. 누구(보호자)의 어느 아이 이야기인지를 같이.
+
+    보호자는 본문이 아니라 토큰에서 온다. Memory 가 이 값을 작성자로 적어서, 보호자의 말이
+    아이의 사실로 저장되지 않는다 (§2 "부모의 말은 아이의 Fact 가 아니다").
+    """
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+
+    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert agent_calls == [{"child_id": cid, "parent_id": parent_id, "raw_text": BODY["text"]}]
+
+
 async def test_inputs_accepts_and_returns_run_id(db_client, bearer):
     """202 에 본문이 있어야 한다 — 프론트가 202 도 JSON 으로 파싱한다 (client.ts).
 
@@ -89,11 +120,12 @@ async def test_inputs_accepts_and_returns_run_id(db_client, bearer):
     assert registry.get(run_id) is not None  # 채널이 열려 있어야 GET 이 붙을 수 있다
 
 
-async def test_same_key_replays_the_same_run_id(db_client, bearer):
+async def test_same_key_replays_the_same_run_id(db_client, bearer, agent_calls):
     """같은 키로 다시 오면 새 run 을 만들지 않고 처음 응답을 그대로 준다.
 
-    보호자가 버튼을 두 번 누른 경우다. 새 run 이 생기면 관찰이 두 번 저장된다.
-    같은 아이(같은 경로)여야 한다 — 스코프에 path 가 들어 있어 다른 아이면 다른 요청이다.
+    보호자가 버튼을 두 번 누른 경우다. 새 run 이 생기면 관찰이 두 번 저장되고, 모델도 두 번
+    불린다(월 크레딧). 같은 아이(같은 경로)여야 한다 — 스코프에 path 가 들어 있어 다른 아이면
+    다른 요청이다.
     """
     headers, _ = bearer
     keyed = with_key(headers)
@@ -104,6 +136,7 @@ async def test_same_key_replays_the_same_run_id(db_client, bearer):
 
     assert second.status_code == 202
     assert second.json() == first.json()
+    assert len(agent_calls) == 1  # Agent 를 다시 부르지 않았다
 
 
 async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
