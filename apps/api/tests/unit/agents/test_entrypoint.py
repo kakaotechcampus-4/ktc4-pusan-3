@@ -3,12 +3,12 @@
 pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 """
 
-from typing import Any
+from typing import Any, get_args
 from uuid import UUID
 
 import pytest
 
-from app.agents import entrypoint
+from app.agents import entrypoint, pipeline
 from app.agents.food.schemas.common import FeedingStage
 from app.agents.memory.store import InMemoryStore
 
@@ -53,3 +53,10 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
     assert memory.now == food.now  # 기준일이 두 Agent 사이에서 갈리지 않게
     assert memory.timezone is food.timezone is entrypoint.KST
     assert memory.now.tzinfo is entrypoint.KST
+
+
+def test_이벤트_타입이_전부_밖으로_나간다() -> None:
+    """pipeline 에 이벤트를 추가하면 entrypoint 에도 적어야 한다. api 는 이 파일만 본다."""
+    exported = {getattr(entrypoint, name) for name in entrypoint.__all__}
+    missing = [event.__name__ for event in get_args(pipeline.Event) if event not in exported]
+    assert not missing
