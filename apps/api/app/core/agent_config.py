@@ -42,6 +42,12 @@ class AgentLLMSettings(BaseSettings):
     FOOD_MODEL: str = ""
     FOOD_REASONING_EFFORT: str = ""
 
+    # Curator 임베딩. 대화 모델이 아니라 AgentRole 에 넣지 않는다
+    # REASONING_EFFORT 가 없고, 비어 있어도 MEMORY_* 로 대체하지 않는다
+    EMBEDDING_API_KEY: str = ""
+    EMBEDDING_BASE_URL: str = ""
+    EMBEDDING_MODEL: str = ""
+
     # 역할과 무관한 호출 튜닝값
     LLM_TIMEOUT_S: float = 60.0  # 한 번의 chat 호출 상한 (초)
     LLM_MAX_RETRIES: int = 2  # SDK 내부 재시도 (429, 5xx 대상)
