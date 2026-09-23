@@ -11,10 +11,14 @@
 """
 
 import asyncio
+import uuid
 
 import pytest
 
 from app.api.runs import registry, sse
+
+PARENT = uuid.UUID(int=1)
+"""채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +54,7 @@ def test_frame_data_stays_on_one_line_even_if_value_has_newline():
 
 
 async def test_stream_of_closed_channel_is_exactly_its_frames():
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
     channel.publish(("step", {"index": 1}))
     channel.publish(("done", {"run_id": channel.run_id}))
     channel.close()
@@ -69,7 +73,7 @@ async def test_stream_sends_ping_while_channel_is_quiet_then_ends_on_close():
     그래서 조용할 때 ping 을 보낸다. heartbeat 를 0.01초로 줄여 "조용한 동안" 을
     테스트 안에서 만든다.
     """
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
     frames: list[str] = []
 
     async def consume():

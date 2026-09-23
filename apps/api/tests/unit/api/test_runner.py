@@ -10,10 +10,14 @@ HTTP 없이 채널과 태스크만 본다.
 """
 
 import asyncio
+import uuid
 
 import pytest
 
 from app.api.runs import registry, runner
+
+PARENT = uuid.UUID(int=1)
+"""채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +32,7 @@ def names(channel: registry.RunChannel) -> list[str]:
 
 
 async def test_start_runs_job_attaches_task_and_closes_channel():
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
 
     async def job(ch: registry.RunChannel) -> None:
         ch.publish(("step", {"index": 1, "total": 1, "label": "한 단계"}))
@@ -44,7 +48,7 @@ async def test_start_runs_job_attaches_task_and_closes_channel():
 
 async def test_job_exception_becomes_failed_then_done_and_channel_closes():
     """계약서 §06 — failed 는 raw_text 를 돌려줘야 "적어주신 말은 입력창에 그대로" 가 성립한다."""
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
 
     async def boom(ch: registry.RunChannel) -> None:
         ch.publish(("step", {"index": 1, "total": 3, "label": "시작"}))
@@ -65,7 +69,7 @@ async def test_job_exception_log_keeps_type_and_place_but_not_message(caplog):
     예외 메시지에는 입력 문장이 섞이기 쉽다 — pydantic 검증 에러의 input_value 가 그렇다.
     그래서 예외 종류와 코드 위치만 남기고 메시지는 뺀다.
     """
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
     raw_text = "계란말이 또 찾아요"
 
     async def boom(ch: registry.RunChannel) -> None:
@@ -82,7 +86,7 @@ async def test_job_exception_log_keeps_type_and_place_but_not_message(caplog):
 
 async def test_fake_job_walks_three_steps_then_done():
     """3단계의 가짜 러너. 5단계에서 진짜 pipeline 으로 바뀌지만 껍데기는 그대로 남는다."""
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
 
     await runner.fake_job(channel, step_delay=0.0)
 

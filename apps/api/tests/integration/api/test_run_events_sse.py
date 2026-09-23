@@ -34,8 +34,8 @@ async def test_closed_channel_streams_exact_bytes(db_client, bearer):
 
     프레임마다 빈 줄, 마지막에도 빈 줄, 한글은 그대로, data 는 한 줄.
     """
-    headers, _ = bearer
-    channel = registry.open_run()
+    headers, parent_id = bearer
+    channel = registry.open_run(parent_id=parent_id)
     channel.publish(("step", {"index": 1, "total": 3, "label": "기록 중"}))
     channel.publish(("done", {"run_id": channel.run_id, "model_calls": 0}))
     channel.close()

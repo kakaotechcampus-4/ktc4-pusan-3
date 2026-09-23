@@ -45,7 +45,7 @@ async def create_input(
     if replayed is not None:
         return CreateInputResponse(run_id=replayed)
 
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=parent.parent_id)
     idempotency.remember(**scope, run_id=channel.run_id)
     runner.start(channel, runner.fake_job, raw_text=body.text)
     return CreateInputResponse(run_id=channel.run_id)

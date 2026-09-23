@@ -12,10 +12,14 @@ Agent 가 내보내는 진행 이벤트와, 나중에 따로 붙는 화면(SSE) 
 
 import asyncio
 import time
+import uuid
 
 import pytest
 
 from app.api.runs import registry
+
+PARENT = uuid.UUID(int=1)
+"""채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +39,8 @@ async def collect(channel: registry.RunChannel) -> list:
 
 
 async def test_open_run_gives_distinct_ids_and_registers_them():
-    a = registry.open_run()
-    b = registry.open_run()
+    a = registry.open_run(parent_id=PARENT)
+    b = registry.open_run(parent_id=PARENT)
 
     assert a.run_id != b.run_id
     assert registry.get(a.run_id) is a
@@ -48,7 +52,7 @@ async def test_late_subscriber_receives_everything():
 
     실제로는 POST 202 를 받고 화면이 GET 을 여는 사이에 Agent 가 벌써 Step 1·2 를 내보낸다.
     """
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
     channel.publish("step-1")
     channel.publish("step-2")
     channel.publish("done")
@@ -63,7 +67,7 @@ async def test_two_subscribers_both_receive_everything():
     🚨 큐면 여기서 깨진다. 한쪽이 꺼낸 것을 다른 쪽은 못 본다.
     화면 새로고침, 또는 탭 두 개가 이 경우다.
     """
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
     channel.publish("step-1")
     channel.publish("done")
     channel.close()
@@ -81,7 +85,7 @@ async def test_live_subscriber_wakes_on_publish_and_ends_on_close():
     테스트가 멈추는 대신 TimeoutError 로 떨어진다 — "인덱스를 먼저 보고 나서 잠든다" 를 어기면
     여기서 걸린다.
     """
-    channel = registry.open_run()
+    channel = registry.open_run(parent_id=PARENT)
     subscriber = asyncio.create_task(collect(channel))
     await asyncio.sleep(0)  # 구독자가 먼저 잠들 기회를 준다
 
@@ -101,14 +105,14 @@ async def test_sweep_removes_only_channels_closed_long_ago():
 
     세 가지를 한 번에 본다 — 오래전에 닫힘(치움) · 방금 닫힘(둠) · 아직 열림(둠).
     """
-    old = registry.open_run()
+    old = registry.open_run(parent_id=PARENT)
     old.close()
     old.closed_at = time.monotonic() - 3600  # 한 시간 전에 닫힌 것처럼
 
-    recent = registry.open_run()
+    recent = registry.open_run(parent_id=PARENT)
     recent.close()
 
-    still_open = registry.open_run()
+    still_open = registry.open_run(parent_id=PARENT)
 
     removed = registry.sweep(ttl_seconds=300)
 

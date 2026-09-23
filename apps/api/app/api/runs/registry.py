@@ -18,8 +18,11 @@ _channels: dict[str, "RunChannel"] = {}
 
 
 class RunChannel:
-    def __init__(self, run_id: str):
+    def __init__(self, run_id: str, parent_id: uuid.UUID):
         self.run_id = run_id
+        self.parent_id = parent_id
+        """이 run 을 만든 보호자. GET 은 이 보호자에게만 흘린다 — 주소에 아이 id 가 없어서
+        아이 소유 검사로는 못 막는다 (auth-kakao-v1 부록 A 1번)."""
         self.events = []
         self.closed = False
         self.closed_at = None
@@ -69,9 +72,10 @@ class RunChannel:
             i += 1
 
 
-def open_run() -> RunChannel:
+def open_run(*, parent_id: uuid.UUID) -> RunChannel:
+    """🚨 parent_id 는 필수다. 빠뜨리면 누구나 열 수 있는 run 이 생긴다."""
     run_id = uuid.uuid4().hex
-    channel = RunChannel(run_id)
+    channel = RunChannel(run_id, parent_id)
     _channels[run_id] = channel
     return channel
 

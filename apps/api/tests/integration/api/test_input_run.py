@@ -159,6 +159,34 @@ async def test_key_is_scoped_per_parent(db_client, bearer, session):
     assert a.json()["run_id"] != b.json()["run_id"]
 
 
+async def test_other_parent_cannot_open_the_run(db_client, bearer, session, monkeypatch):
+    """🚨 run 은 만든 보호자만 연다. 남의 run 은 없는 run 과 똑같이 404 — 있다는 것도 흘리지 않는다.
+
+    `failed` 는 보호자가 적은 문장(raw_text)을 그대로 싣는다. 로그인만 했으면 남의 run_id 로
+    그 문장을 받아 갈 수 있었다 (#140 리뷰 재현). 주소에 아이 id 가 없어 아이 소유 403(9단계)으로는
+    못 막는다 — auth-kakao-v1 부록 A 1번 "간접 식별자는 소유를 역추적해 검사한다".
+    """
+
+    async def boom(channel):
+        raise RuntimeError("일부러 낸 실패")
+
+    monkeypatch.setattr(runner, "fake_job", boom)
+    headers_a, _ = bearer
+    headers_b, _ = await issue_bearer(session, token="test-token-other-parent")
+
+    accepted = await db_client.post(
+        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers_a)
+    )
+    run_id = accepted.json()["run_id"]
+    await asyncio.wait_for(registry.get(run_id).task, timeout=2)
+
+    response = await db_client.get(EVENTS.format(rid=run_id), headers=headers_b)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    assert BODY["text"] not in response.text
+
+
 async def test_post_then_get_streams_steps_to_done(db_client, bearer):
     """서버 쪽 관통 — 접수하고 이어서 GET 하면 step → … → done 이 흐른다.
 
