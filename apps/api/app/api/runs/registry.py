@@ -36,6 +36,19 @@ class RunChannel:
         self.closed_at = time.monotonic()
         self._changed.set()
 
+    async def wait_changed(self, timeout: float | None = None) -> bool:
+        """깃발을 내리고, 올라갈 때까지 잔다. timeout 안에 안 올라가면 False.
+
+        🚨 SSE 의 하트비트가 이걸 쓴다. 제너레이터(subscribe)를 wait_for 로 감싸면 시간이 지날 때
+           취소 신호가 제너레이터 안으로 들어가 죽는다. 깃발 기다리기만 취소하는 건 안전하다.
+        """
+        self._changed.clear()
+        try:
+            await asyncio.wait_for(self._changed.wait(), timeout)
+        except TimeoutError:
+            return False
+        return True
+
     async def subscribe(self):
         """0번부터 끝까지 내준다. 늦게 붙어도, 두 번 붙어도 처음부터다 — 구독자마다 자기 인덱스를
         가진다.
@@ -48,8 +61,7 @@ class RunChannel:
             if i >= len(self.events):
                 if self.closed:
                     return
-                self._changed.clear()
-                await self._changed.wait()
+                await self.wait_changed()
                 continue
             yield self.events[i]
             i += 1
