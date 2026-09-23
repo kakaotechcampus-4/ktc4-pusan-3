@@ -66,6 +66,48 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert channel.closed
 
 
+async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
+    """안전망 — 모델이 멈춘 run 을 끊는다. 서버가 안 끊으면 ping 이 화면의 20초 타이머를 계속
+    되살려서 진행 화면이 몇 분씩 돈다.
+
+    끊긴 run 은 failed(timeout) 으로 끝나고 키를 놓는다 — "다시 시도" 가 새 run 을 띄운다.
+    """
+
+    async def stuck_handle_input(**kwargs):
+        kwargs["emit"](Step(1, 3, "입력을 살펴보고 있어요"))
+        await asyncio.sleep(10)  # 모델이 멈춘 것처럼
+
+    monkeypatch.setattr(entrypoint, "handle_input", stuck_handle_input)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.05)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
+    idempotency.remember(**scope, run_id=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["step", "failed"]
+    assert channel.events[-1][1] == {"reason": "timeout", "raw_text": RAW_TEXT}
+    assert idempotency.recall(**scope) is None
+
+
+async def test_job_that_returns_without_an_end_signal_ends_with_failed():
+    """러너의 약속 — 무슨 일이 있어도 끝 신호는 하나다. 끝 신호 없이 돌아온 job 에 failed 를 붙인다.
+
+    안 붙이면 화면은 "확인하지 못했어요" 로 떨어지고 키도 안 풀려서, 다시 눌러도 닫힌 run 만
+    재생된다. 7단계에서 러너 세션은 done 일 때만 확정하므로 이 failed 는 "저장 없음" 이 맞다.
+    """
+    channel = registry.open_run(parent_id=PARENT)
+
+    async def quiet(ch: registry.RunChannel) -> None:
+        ch.publish(("step", {"index": 1, "total": 3, "label": "시작"}))
+
+    await asyncio.wait_for(runner.start(channel, quiet, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["step", "failed"]
+    assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+
+
 async def test_failed_from_the_agents_releases_the_key(monkeypatch):
     """Agent 가 스스로 알린 실패(예외가 아니라 Failed 이벤트)도 키를 놓는다.
 
