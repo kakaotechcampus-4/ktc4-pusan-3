@@ -16,6 +16,7 @@
 
 import asyncio
 import logging
+import traceback
 from collections.abc import Awaitable, Callable
 
 from app.api import idempotency
@@ -44,9 +45,16 @@ async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> N
 async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
     try:
         await job(channel)
-    except Exception:
-        # 🚨 로그에 원문을 남기지 않는다 (루트 §2). run_id 와 스택만.
-        log.exception("run %s 의 job 이 예외로 끝났다", channel.run_id)
+    except Exception as exc:
+        # 🚨 로그에 원문을 남기지 않는다 (루트 §2). log.exception 은 예외 메시지까지 찍는데,
+        #    거기에 입력 문장이 섞이기 쉽다(pydantic 검증 에러의 input_value 등).
+        #    그래서 예외 종류와 코드 위치(format_tb — 메시지 없이 파일·줄·코드만)만 남긴다.
+        log.error(
+            "run %s 의 job 이 %s 로 끝났다\n%s",
+            channel.run_id,
+            type(exc).__name__,
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
         channel.publish(("failed", {"reason": "internal_error", "raw_text": raw_text}))
         channel.publish(("done", {"run_id": channel.run_id, "model_calls": 0}))
     finally:

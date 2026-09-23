@@ -59,6 +59,27 @@ async def test_job_exception_becomes_failed_then_done_and_channel_closes():
     assert channel.closed
 
 
+async def test_job_exception_log_keeps_type_and_place_but_not_message(caplog):
+    """🚨 로그에 원문을 남기지 않는다 (루트 §2).
+
+    예외 메시지에는 입력 문장이 섞이기 쉽다 — pydantic 검증 에러의 input_value 가 그렇다.
+    그래서 예외 종류와 코드 위치만 남기고 메시지는 뺀다.
+    """
+    channel = registry.open_run()
+    raw_text = "계란말이 또 찾아요"
+
+    async def boom(ch: registry.RunChannel) -> None:
+        # 실제 코드처럼 변수에서 메시지를 만든다.
+        # 스택에는 소스 줄이 찍히므로 여기 문자열을 직접 쓰면 테스트가 제 발에 걸린다.
+        raise ValueError(f"input_value={raw_text!r}")
+
+    await asyncio.wait_for(runner.start(channel, boom, raw_text=raw_text), timeout=1)
+
+    assert "ValueError" in caplog.text
+    assert "boom" in caplog.text  # 어디서 터졌는지는 남는다
+    assert "계란말이" not in caplog.text
+
+
 async def test_fake_job_walks_three_steps_then_done():
     """3단계의 가짜 러너. 5단계에서 진짜 pipeline 으로 바뀌지만 껍데기는 그대로 남는다."""
     channel = registry.open_run()
