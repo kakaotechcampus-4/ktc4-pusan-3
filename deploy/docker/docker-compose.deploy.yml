@@ -7,6 +7,8 @@
 #
 # 지금은 web 하나다. api 와 nginx 가 여기 합류한다 — 그때 web 의 ports 를 지우고
 # nginx 뒤로 넣는다 (지금은 앞에 아무것도 없어서 포트를 직접 낸다).
+# 🚨 api 는 --workers 1 이다. run 진행 상황과 Idempotency-Key 가 프로그램 메모리에 있어서 (#134)
+#    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
 services:
   web:
     build:
