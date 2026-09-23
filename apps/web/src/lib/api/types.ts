@@ -746,6 +746,15 @@ export interface AuthSignupRequest {
   consent_code: string;
   /** ② 에서 만든 것과 같은 값. consent_code 만으로 계정이 만들어지는 것을 막는다. */
   bind: string;
+  /**
+   * ⚠️ **`docs/api/auth-kakao-v1.md` §3-5 에 없다** (#96 에서 추가 요청 중 · 확정 전).
+   *
+   * 계정이 여기서 만들어지는데 이름을 받을 다른 엔드포인트가 없다 — 계약서에 `PATCH /me`
+   * 가 없어서, 이 바디에 싣지 않으면 보호자 이름을 저장할 길 자체가 없다.
+   * 🚨 서버가 거절하기로 하면 화면이 아니라 **계약을 먼저 고친다.** 이름 화면을 지우고
+   *    `parent.nickname` 을 null 로 두는 것도 선택지다 (그 필드는 nullable 이다 · §5-2).
+   */
+  nickname: string;
   consents: Array<{ scope: string; policy_version: string }>;
 }
 
@@ -758,7 +767,32 @@ export interface CreateChildRequest {
   nickname: string;
   /** YYYY-MM-DD. 나이가 아니라 생일을 받는다 — 나이는 서버가 계산한다. */
   birth_date: string;
-  relation?: Relation;
+  /**
+   * ⚠️ **`relation` 이 여기서 빠졌다** (계약서 §05 에는 아직 있다 · 확정 전).
+   *    02 온보딩으로 옮겼다 — 01 은 **되돌리기 어려운 것**(별명·생일·법정대리인 동의)만
+   *    받고, 고를 수 있는 것은 전부 다음 화면이 받는다.
+   *    🚨 두 곳에서 받지 않는다. 같은 값을 두 엔드포인트가 쓰면 어느 쪽이 정본인지 사라진다.
+   */
+  /**
+   * 아이 스코프 동의 2건 (`child_basic` · `child_health`).
+   *
+   * ⚠️ **계약서 §05 의 바디에 없다** (#96 에서 추가 요청 중 · 확정 전).
+   *
+   * 🚨 **아이를 만드는 것과 같은 트랜잭션이어야 한다.** 동의를 아이 단위로 기록하기로
+   *    하면서(#96) 닭-달걀이 생겼다 — `POST /consents` 는 `child_id` 를 받는데 그
+   *    `child_id` 는 이 호출 전에는 없고, 계약서 §04 는 `child_basic` 없이 이 호출이
+   *    403 이라고 말한다. 둘을 동시에 만족시키는 모양은 이것뿐이다.
+   */
+  consents: Array<{ scope: string; policy_version: string }>;
+  /**
+   * 법정대리인임을 보호자가 확인한 표시 (개인정보보호법 제22조의2).
+   *
+   * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 — 그러면
+   *    아무도 확인하지 않은 동의가 확인된 것으로 남는다.
+   * 🚨 초대로 들어온 보호자는 이 값을 보낼 일이 없다. 법정대리인 동의는 아이당 한 번,
+   *    아이를 등록하는 보호자가 한다 (#96).
+   */
+  guardian_attested: boolean;
 }
 
 export interface CreateChildResponse {
@@ -830,7 +864,15 @@ export interface SafetyScanResponse {
  *    ⚠️ 01 첫 진입은 아직 성별을 받지 않는다 — 새로 만든 아이의 성별을 무엇으로 둘지는
  *    서버 계약과 함께 정해야 한다 (지금은 목이 `male` 로 들고 있다).
  */
-export type Gender = "male" | "female";
+/**
+ * 🚨 **`undisclosed` 가 기본값이다** (최상위 `CLAUDE.md` §2 — "성별의 기본값은
+ *    '밝히지 않을래요' 다"). 한동안 `male | female` 둘만 두고 필수값으로 뒀다가(#75)
+ *    되돌렸다 — 둘 중 하나를 고르게 만들면 **안 밝히는 선택지가 화면에서 사라진다.**
+ *
+ * 🚨 **"모름" 이 아니라 "밝히지 않음" 이다.** 보호자는 아이 성별을 알고 있고, 이 값은
+ *    *우리에게 알려 줄지*를 고르는 것이다 — 문구를 "잘 모르겠어요" 로 쓰지 않는다.
+ */
+export type Gender = "male" | "female" | "undisclosed";
 
 export interface ChildProfile {
   id: string;
@@ -920,7 +962,13 @@ export interface HealthSafetyListResponse {
 
 /* ── 02 이야기 하나 ──────────────────────────────────────────────────── */
 
-/** 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. */
+/**
+ * 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다.
+ *
+ * ⚠️ **화면이 더 이상 부르지 않는다.** 02 에서 발달 문항을 뺐다 — 화면에 "발달 상태" 라는
+ *    말이 서는 순간 발달 평가로 읽히고, 그건 이 제품이 안 만들기로 한 것이다 (최상위 §1).
+ *    계약서에는 남아 있어 타입과 목은 유지한다 (서버가 지울지는 팀 결정).
+ */
 export interface DevScreeningItem {
   item_id: string;
   text: string;
@@ -949,9 +997,43 @@ export interface OnboardingSafetyInput {
   reactions?: string[];
 }
 
-/** 전부 선택이다. 모두 건너뛰어도 200 이다. */
+/**
+ * 전부 선택이다. 모두 건너뛰어도 200 이다.
+ *
+ * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
+ *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
+ *    - 들어온 것: `relation`(01 에서 이동) · `gender` · `height_cm` · `weight_kg`
+ *    - 빠진 것: `interests` · `dev_answers`
+ *
+ * 🚨 **`interests` 를 뺀 자리를 다른 것으로 채우지 않았다.** 관심사는 03 홈의 한 줄에서
+ *    관찰로 쌓이는 값이고(그게 이 제품의 방식이다), 가입 첫날 칩으로 고른 여덟 개는
+ *    **보호자가 짐작한 목록**이다. 발달 문항도 같은 이유로 뺐다 — 화면에 "발달 상태" 라는
+ *    말이 서면 그때부터 발달 평가로 읽힌다 (최상위 §2 · 스펙 아웃).
+ */
 export interface OnboardingRequest {
-  interests?: string[];
+  /**
+   * 🚨 **아이가 아니라 나와 아이 사이의 값이다** (`parent_child` 행). `POST /children` 에서
+   *    옮겨 왔다 — 01 은 되돌리기 어려운 것(별명·생일·법정대리인 동의)만 받는다.
+   */
+  relation?: Relation;
+  gender?: Gender;
+  /**
+   * 🚨 **잰 날은 서버가 찍는다.** 프론트가 "오늘" 을 만들어 보내지 않는다 (CLAUDE.md §4 —
+   *    날짜 계산은 서버가 한다). 다른 날 잰 값은 11-1 에서 날짜를 골라 적는다.
+   * 🚨 둘 다 비면 아예 보내지 않는다 — 잰 것이 없는 기록을 만들지 않는다.
+   */
+  height_cm?: number;
+  weight_kg?: number;
+  /**
+   * ⚠️ **화면에서 보내지 않는다.** 02 의 알레르기 구역이 11 아이 프로필과 같은 것이 되면서
+   * (`components/safety-section.tsx`) 등록이 **승인 게이트 ㉡**(`POST /children/{cid}/health-safety`)
+   * 로만 간다 — 알레르기의 쓰기 경로를 둘로 두지 않는다 (NF-03).
+   *
+   * 🚨 **그래서 `safety_status` 를 물을 자리가 지금 없다.** 목록이 0건인 것만으로는
+   *    "확인했고 없다"(`none`)와 "아직 모른다"(`unknown`)를 가를 수 없는데, 계약서 §05 는
+   *    후자를 `guards.safety_unknown` 으로 받아 Food Agent 실행 자체를 막는다 (최상위 §2).
+   *    **어디서 그 선언을 받을지는 팀 결정이다** — 계약서에 남아 있어 타입만 유지한다.
+   */
   safety_status?: SafetyStatus;
   safety?: OnboardingSafetyInput[];
   /**
@@ -959,7 +1041,6 @@ export interface OnboardingRequest {
    * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
    */
   one_line?: string;
-  dev_answers?: Array<{ item_id: string; level: number }>;
 }
 
 export interface OnboardingResponse {
@@ -1034,23 +1115,79 @@ export interface ChildParentsResponse {
 }
 
 /**
- * POST /children/{cid}/invites (계약서 §08).
+ * POST /children/{cid}/invites — 정본은 `docs/api/invite-v1.md` 다.
  *
  * 🚨 **한 링크는 한 번만 쓴다.** `used_at` 이 찍히면 재사용 409 `invite_used`,
  *    기한이 지나면 410 이다. 화면이 "언제든 쓸 수 있는 링크" 처럼 보이게 하지 않는다.
  */
-export interface InviteRequest {
+/**
+ * `POST /children/{cid}/invites` 의 본문. 🚨 **비어 있는 것이 맞다.**
+ *
+ * 관계는 **받는 쪽이 수락 화면에서 고른다** (#89 · #96) — 잘못 찍으면 받는 쪽이 자기 프로필을
+ * 고치러 가야 하고, 그 값은 기록마다 "누가 적었나" 로 남는다. `invite-v1.md` §3-1 도 발행 요청을
+ * `{}` 로, 수락 요청이 `relation` 을 싣는 것으로 확정했다 (`InviteAcceptRequest`).
+ */
+export type InviteRequest = Record<string, never>;
+
+export interface InviteResponse {
   /**
-   * ⚠️ **프론트는 보내지 않는다.** 계약서 §08 은 발행할 때 관계를 지정하면 수락자에게
-   * 프리필된다고 적지만, 아이와 어떤 사이인지는 **받는 쪽이 자기 입으로 말할 값**이다
-   * (#89). 서버가 필수로 요구하면 계약을 고친다 — 그때까지 타입만 남겨 둔다.
+   * `docs/api/invite-v1.md` §3-1 확정. 형식·정규화는 `lib/invite-code.ts` — 그 파일 머리말에
+   * 왜 링크가 아닌지 적어 뒀다.
+   * 🚨 **보낼 때는 정규화한 값이다.** 화면의 `ABCD-1234` 는 읽기 편하라고 끊은 표시 형식이다.
    */
+  invite_code: string;
+  expires_at: string;
+}
+
+/**
+ * GET /invites/{code} — 🔶 **아직 제안이다** (#96). 수락 **전에** 어느 아이인지
+ * 보여주려고 신설했다. 코드 방식 자체는 확정됐고 **이 조회만 아직 열려 있다**
+ * (`docs/api/invite-v1.md` §3-2 · §7 열린 결정 01).
+ *
+ * 🚨 **이 호출은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
+ *    쓸 수 있는 코드라 다시 받아야 한다. 소비는 `accept` 하나만 한다.
+ *
+ * 🚨 **여기서 아이의 건강·알레르기를 내리지 않는다.** 아직 연결되지 않은 사람이고
+ *    (`parent_child` 행이 없다), 코드만 알면 누구나 부를 수 있는 창구다 — 별명·나이와
+ *    초대한 보호자까지다 (최상위 §2 개인정보 · 최소 수집).
+ * 🚨 **그래서 이 경로도 시도 제한에 함께 걸린다.** 수락보다 **더 좋은 추측 도구**다 —
+ *    맞는 코드를 찾는 데 계정 상태도 필요 없다.
+ */
+export interface InvitePreviewResponse {
+  child: {
+    nickname: string;
+    /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+    age_display: string;
+  };
+  /** 누가 불렀는지. 🚨 별명만 — 초대한 보호자의 다른 정보는 내리지 않는다. */
+  invited_by: { nickname: string | null };
+  expires_at: string;
+}
+
+/**
+ * POST /invites/{code}/accept 의 본문.
+ *
+ * 🚨 **관계는 받는 쪽이 고른다.** 발행할 때 지정하지 않는다 (#89) — 아이와 어떤 사이인지는
+ *    자기 입으로 말할 값이고, 그 값이 기록마다 "누가 적었나" 로 남는다.
+ *    안 골랐으면 **필드를 아예 빼고 보낸다** (01 아이 등록과 같은 처리).
+ */
+export interface InviteAcceptRequest {
   relation?: Relation;
 }
 
-export interface InviteResponse {
-  invite_url: string;
-  expires_at: string;
+/**
+ * POST /invites/{code}/accept — 수락하면 `parent_child` 행이 **바로** 생긴다.
+ * 🚨 승인 대기 상태가 없다 (계약서 §02 `GET /me`). 화면에 "대기 중" 칸을 만들지 않는다.
+ *
+ * ⚠️ **응답 모양이 계약서에 없다.** 화면은 수락한 뒤 그 아이 홈으로 가야 해서 `child_id`
+ *    가 필요하다 — 없으면 `GET /me` 를 한 번 더 부르게 된다. 목이 이 모양으로 답한다.
+ */
+export interface InviteAcceptResponse {
+  child_id: string;
+  nickname: string;
+  /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+  age_display: string;
+  role: "owner" | "member";
 }
 
 /**

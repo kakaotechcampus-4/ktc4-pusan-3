@@ -80,12 +80,6 @@ export const me: Me = {
   ],
 };
 
-/** consent 시나리오에서 쓴다 — 필수 동의가 비어 있으면 그 아래 저장이 전부 막힌다. */
-export const meNeedingConsent: Me = {
-  ...me,
-  children: [{ ...me.children[0], consent_required: ["child_health"] }],
-};
-
 /* ── 관찰 ─────────────────────────────────────────────────────────────── */
 
 function promotable(

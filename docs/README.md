@@ -71,8 +71,9 @@
 
 ## API · 백엔드
 
-- [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 27개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 2건 (브라우저로 열기)
+- [api/api-interface-v1.html](api/api-interface-v1.html) — ⚠️ **초기 프로토타입 시점의 글이라 갱신하지 않는다.** 문서 안에는 "이 문서가 정본" 이라고 적혀 있지만 그대로 두고, **확정된 계약은 아래 기능 문서들이 대체한다** (§04 → `auth-kakao-v1.md`, §05 초대 → `invite-v1.md`). 화면이 무엇을 부르는지 훑는 용도로는 여전히 가장 빠르다 — 화면 01~10 을 그리는 최소 API 27개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 2건 (브라우저로 열기)
 - [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **서버 주도 인가 코드 흐름.** `redirect_uri` 를 API 오리진 하나로 고정(preview 도메인은 등록 불가) · 클라이언트는 1회용 코드를 받아 `{code, bind}` 로 교환하고 `bind` 가 그 홉을 지킨다 · **동의 전에는 `parent` 를 만들지 않는다**(`signup` 신설) · 계약서 §01 `Bearer` 유지, 무인증 5개와 302 엔드포인트 2개를 예외로 명시 · 불투명 세션 12시간, refresh 없음 · `session`·`auth_handoff` 테이블 신설안 · `parent.nickname` nullable
+- [api/invite-v1.md](api/invite-v1.md) — **초대를 링크가 아니라 코드로.** 카톡 링크는 인앱 브라우저에서 열려 `sessionStorage` 가 날아가면 `bind` 까지 잃고 **로그인 자체가 깨진다** · Crockford Base32 8자(`I`·`L`·`O`·`U` 제외) · 정규화한 값을 해시로 저장 · 24시간 · 1회용 · 🚨 **시도 제한이 이 선택의 전제**(40비트 · 확인과 수락이 같은 통) · 관계는 **받는 쪽이 수락할 때** 고른다 · 🔶 수락 전 확인 `GET /invites/{code}` 와 에러 5종은 협의 대상 · ⚠️ 계약서 §05 를 **대체한다**
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).

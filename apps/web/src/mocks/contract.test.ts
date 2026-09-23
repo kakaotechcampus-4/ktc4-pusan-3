@@ -17,10 +17,14 @@ import { api } from "@/lib/api/client";
 import type {
   Affinity,
   AffinitiesResponse,
+  AuthSession,
   ChildParentsResponse,
   ConsentResponse,
   ConsentsResponse,
+  InviteAcceptResponse,
+  InvitePreviewResponse,
   InviteResponse,
+  Me,
   WithdrawResponse,
   CalendarDayResponse,
   CalendarMonthResponse,
@@ -38,6 +42,8 @@ import type {
   SafetyScanResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
+
+import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { setScenario } from "./scenario";
 
@@ -89,9 +95,9 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
 describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
   it("422 idempotency_key_reuse", async () => {
     const key = newIdempotencyKey();
-    await submitOnboarding("c1", { interests: ["공룡"] }, key);
+    await submitOnboarding("c1", { gender: "female" }, key);
 
-    await expect(submitOnboarding("c1", { interests: ["물놀이"] }, key)).rejects.toSatisfy(
+    await expect(submitOnboarding("c1", { gender: "male" }, key)).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "idempotency_key_reuse") && e.status === 422,
     );
   });
@@ -156,7 +162,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
       const key = newIdempotencyKey();
       let caught: unknown;
       try {
-        await submitOnboarding("c1", { interests: ["공룡"] }, key);
+        await submitOnboarding("c1", { gender: "female" }, key);
       } catch (e) {
         caught = e;
       }
@@ -167,7 +173,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
 
       // 🚨 거부는 "처리 결과" 가 아니다. 동의를 받은 뒤 같은 키로 다시 보내면 통과해야 한다.
       setScenario("default");
-      const retried = await submitOnboarding("c1", { interests: ["공룡"] }, key);
+      const retried = await submitOnboarding("c1", { gender: "female" }, key);
       expect(retried.run_id).toBe("r01");
     } finally {
       setScenario("default");
@@ -464,11 +470,11 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
   });
 
-  it("초대 링크는 부를 때마다 새로 나온다 — 한 링크는 한 번만 쓴다", async () => {
+  it("초대 코드는 부를 때마다 새로 나온다 — 한 코드는 한 번만 쓴다", async () => {
     const first = await api.post<InviteResponse>("/children/c1/invites", {});
     const second = await api.post<InviteResponse>("/children/c1/invites", {});
 
-    expect(first.invite_url).not.toBe(second.invite_url);
+    expect(first.invite_code).not.toBe(second.invite_code);
     expect(new Date(first.expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
@@ -498,9 +504,235 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it("relation 없이 초대해도 링크가 나온다", async () => {
+  it("relation 없이 초대해도 코드가 나온다", async () => {
     const res = await api.post<InviteResponse>("/children/c1/invites", {});
-    expect(res.invite_url).toMatch(/^https:\/\//);
+    expect(res.invite_code).toHaveLength(INVITE_CODE_LENGTH);
+  });
+
+  /**
+   * 🚨 **정규화를 거쳐도 같은 코드여야 한다.** 발행한 값에 `I` `L` `O` `U` 가 섞여 있으면,
+   *    받는 쪽 화면이 `O`→`0` 으로 고쳐 보내는 순간 **서버에 없는 코드**가 된다.
+   */
+  it("발행된 코드는 화면의 정규화를 통과해도 그대로다", async () => {
+    const res = await api.post<InviteResponse>("/children/c1/invites", {});
+    expect(normalizeInviteCode(res.invite_code)).toBe(res.invite_code);
+  });
+});
+
+/**
+ * 초대 수락. 코드 방식은 `docs/api/invite-v1.md` 로 확정됐고, **확인 조회(`GET /invites/{code}`)와
+ * 응답 모양은 아직 제안이다** (같은 문서 §7 열린 결정). 서버가 붙으면 이 표를 실서버에도 건다.
+ */
+describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
+  /**
+   * 🚨 **확인은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
+   *    쓸 수 있는 코드라 다시 받아야 한다 — 이 테스트가 그 회귀를 잡는다.
+   */
+  it("확인은 코드를 소비하지 않는다 — 두 번 확인한 뒤에도 수락된다", async () => {
+    setScenario("consent");
+    try {
+      const first = await api.get<InvitePreviewResponse>("/invites/MKGRAND1");
+      expect(first.child.nickname).toBeTruthy();
+      await api.get<InvitePreviewResponse>("/invites/MKGRAND1");
+
+      const accepted = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      expect(accepted.child_id).toBe("c1");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  /**
+   * 🚨 **확인도 시도 제한에 걸린다.** 코드를 소비하지 않고 계정 상태도 안 보므로 수락보다
+   *    **더 좋은 추측 도구**다 — 여기만 열려 있으면 8자(40비트) 제한이 있으나 마나다.
+   */
+  it("확인을 여러 번 틀리면 수락까지 429 로 막힌다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.get("/invites/MKWASTED").catch(() => null);
+      }
+      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      expect(isApiError(caught, "too_many_attempts")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  /**
+   * 🚨 **연결되지 않을 아이의 별명·나이를 보여주지 않는다.** 확인 단계가 막지 않으면
+   *    프로필까지 보여주고 나서 수락에서 거절하는 꼴이 된다.
+   */
+  it("이미 아이가 있으면 확인 단계에서 막힌다", async () => {
+    const caught = await api.get("/invites/MKGRAND1").catch((e) => e);
+    expect(isApiError(caught, "child_already_exists")).toBe(true);
+  });
+
+  it("받는 쪽이 고른 관계가 보호자 목록에 들어간다", async () => {
+    setScenario("consent");
+    try {
+      await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", { relation: "sitter" });
+      const me = await api.get<Me>("/me");
+      expect(me.children[0]?.relation).toBe("sitter");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("아이가 없는 계정은 코드로 연결된다", async () => {
+    setScenario("consent");
+    try {
+      const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      expect(res.child_id).toBe("c1");
+      // 🚨 초대받은 보호자는 owner 가 아니다. 이게 뒤집히면 10 설정에서 남을 끊을 수 있다.
+      expect(res.role).toBe("member");
+
+      // 수락하면 **바로** 연결된다 — 승인 대기 상태가 없다 (계약서 §02).
+      const me = await api.get<Me>("/me");
+      expect(me.children.map((c) => c.child_id)).toContain("c1");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("이미 아이가 있으면 수락이 막힌다", async () => {
+    // default 시나리오는 아이가 하나 있는 계정이다.
+    const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+    expect(isApiError(caught, "child_already_exists")).toBe(true);
+  });
+
+  it.each([
+    ["MKWASTED", "invite_used"],
+    ["MKPAST12", "invite_expired"],
+    ["ABC", "invite_not_found"],
+  ])("%s 는 %s 로 막힌다", async (code, expected) => {
+    setScenario("consent");
+    try {
+      const caught = await api.post(`/invites/${code}/accept`, {}).catch((e) => e);
+      expect(isApiError(caught, expected)).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  /**
+   * 🚨 **시도 제한이 8자 코드의 전제다.** 이게 빠지면 40비트를 그냥 긁을 수 있다 —
+   *    링크 방식에는 없던 요구사항이라, 서버에 요청한 것을 목이 먼저 지킨다 (#96).
+   */
+  it("여러 번 틀리면 429 로 막힌다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.post("/invites/MKWASTED/accept", {}).catch(() => null);
+      }
+      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      expect(isApiError(caught, "too_many_attempts")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/**
+ * 가입 흐름. ⚠️ `signup` 의 `nickname` 과 `POST /children` 의 `consents` 둘 다
+ * **계약 확정 전이다** (#96).
+ */
+describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는다", () => {
+  it("계정 동의가 빠지면 signup 이 403 이다", async () => {
+    const caught = await api
+      .post("/auth/kakao/signup", {
+        consent_code: "cc_mock",
+        bind: "b",
+        nickname: "테스터",
+        consents: [{ scope: "service_terms", policy_version: "2026-09-01" }],
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+  });
+
+  /**
+   * 🚨 **선택 동의가 제출을 막지 않는다.** 가입 화면에 `location` 이 서면서 이 구분이
+   *    실제로 갈리는 자리가 됐다 — 목록 길이로 세는 구현이면 여기서 403 이 난다.
+   */
+  it("선택 동의를 안 골라도 가입된다", async () => {
+    const res = await api.post<AuthSession>("/auth/kakao/signup", {
+      consent_code: "cc_mock",
+      bind: "b",
+      nickname: "테스터",
+      consents: [
+        { scope: "service_terms", policy_version: "2026-09-01" },
+        { scope: "privacy_account", policy_version: "2026-09-01" },
+      ],
+    });
+    expect(res.is_new).toBe(true);
+
+    // 안 고른 것은 켜져 있지 않다 — 화면이 물어본 것과 서버에 남는 것이 같아야 한다.
+    const consents = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(consents.effective.location).toBe(false);
+  });
+
+  it("가입에서 켠 선택 동의는 10 설정에도 켜져 있다", async () => {
+    await api.post<AuthSession>("/auth/kakao/signup", {
+      consent_code: "cc_mock",
+      bind: "b",
+      nickname: "테스터",
+      consents: [
+        { scope: "service_terms", policy_version: "2026-09-01" },
+        { scope: "privacy_account", policy_version: "2026-09-01" },
+        { scope: "location", policy_version: "2026-09-01" },
+      ],
+    });
+
+    const consents = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(consents.effective.location).toBe(true);
+    expect(consents.history.some((h) => h.scope === "location" && h.action === "granted")).toBe(
+      true,
+    );
+  });
+
+  it("이름이 없으면 signup 이 막힌다", async () => {
+    const caught = await api
+      .post("/auth/kakao/signup", {
+        consent_code: "cc_mock",
+        bind: "b",
+        consents: [
+          { scope: "service_terms", policy_version: "2026-09-01" },
+          { scope: "privacy_account", policy_version: "2026-09-01" },
+        ],
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+  });
+
+  /**
+   * 🚨 **아이와 아이 동의는 한 트랜잭션이다.** 동의 없이 아이가 만들어지면 그 아이의
+   *    기록은 근거 없는 수집이 된다 (계약서 §04 "동의는 저장보다 먼저다").
+   */
+  it("아이 동의가 빠지면 POST /children 이 403 이다", async () => {
+    const caught = await api
+      .post("/children", {
+        nickname: "테스트",
+        birth_date: "2021-04-02",
+        consents: [{ scope: "child_basic", policy_version: "2026-09-01" }],
+        guardian_attested: true,
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+  });
+
+  it("법정대리인 확인이 없으면 POST /children 이 403 이다", async () => {
+    const caught = await api
+      .post("/children", {
+        nickname: "테스트",
+        birth_date: "2021-04-02",
+        consents: [
+          { scope: "child_basic", policy_version: "2026-09-01" },
+          { scope: "child_health", policy_version: "2026-09-01" },
+        ],
+        guardian_attested: false,
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
   });
 });
 

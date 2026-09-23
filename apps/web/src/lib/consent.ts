@@ -19,10 +19,14 @@ export type ConsentScope = (typeof CONSENT_SCOPES)[number];
 export interface ConsentItem {
   scope: ConsentScope;
   /**
-   * 어디로 보내는가.
+   * 어디로 보내는가. **화면도 이 값으로 갈린다** (아래 `ACCOUNT_SIGNUP_CONSENTS` 주석).
    * - `account` → `POST /auth/{provider}/signup` 의 `consents` (계정이 그때 만들어진다)
-   * - `child`   → `POST /consents` (🚨 `child_basic` 없이 `POST /children` 은 403 이라
-   *               아이를 만들기 **전에** 받아야 한다 · 계약서 §04)
+   * - `child`   → `POST /children` 의 `consents` (아이와 **한 트랜잭션**) ·
+   *               설정에서 켜고 끌 때는 `POST /consents` (그때는 `child_id` 가 있다)
+   *
+   * ⚠️ `child` 쪽이 `POST /consents` 에서 `POST /children` 으로 옮겨 온 이유는 #96 이다 —
+   *    동의를 아이 단위로 기록하면 `child_id` 없이는 저장할 수 없고, 그 id 는 아이를
+   *    만들어야 생긴다. `CreateChildRequest.consents` 주석에 같은 내용이 있다.
    */
   target: "account" | "child";
   /**
@@ -32,8 +36,9 @@ export interface ConsentItem {
    */
   required: boolean;
   /**
-   * 가입 화면에서 묻는가. `required` 와 **같은 축이 아니다** — 지금은 필수 4건이 전부
-   * 가입 때 묻고 선택(`location`)은 안 묻지만, 그건 우연이 아니라 각각의 이유 때문이다.
+   * 가입 **흐름**에서 묻는가 (어느 화면인지는 `target` 이 가른다). `required` 와 **같은
+   * 축이 아니다** — 지금은 필수 4건이 전부 가입 때 묻고 선택(`location`)은 안 묻지만,
+   * 그건 우연이 아니라 각각의 이유 때문이다.
    * 위치정보는 놀이 제안을 처음 볼 때까지 쓸 일이 없어서 쓰지도 않을 시점에 미리 받지 않는다.
    * 🚨 선택 동의를 가입 화면에 올리더라도 **제출을 막는 것은 `required` 뿐**이다.
    */
@@ -246,13 +251,26 @@ export const CONSENT_ITEMS: ConsentItem[] = [
   },
   {
     scope: "location",
-    target: "child",
+    /**
+     * 🚨 **아이가 아니라 계정 스코프다.** 받는 값은 **보호자 기기의 위치**이고, 위치정보법
+     *    제19조의 개인위치정보주체도 보호자 본인이다 — 놀이 제안에 쓰인다고 해서 아이의
+     *    개인정보가 되지 않는다 (최상위 §2 "부모의 말은 아이의 Fact 가 아니다" 와 같은 갈래).
+     *
+     * 실무적으로도 이래야 성립한다 — 가입 화면에는 아직 아이가 없어서 `child_id` 를 실을
+     * 수 없다. 아이 스코프로 두면 `POST /consents` 가 저장할 자리를 못 찾는다.
+     */
+    target: "account",
     required: false,
     /**
-     * 🚨 **가입 때 묻지 않는다.** 놀이 제안을 처음 볼 때까지 쓸 일이 없는 값이라,
-     *    쓰지도 않을 시점에 미리 받아 두지 않는다. 설정에서 켜는 것이 기본 경로다.
+     * ⚠️ **가입 때 묻는 것으로 바뀌었다.** 처음에는 "놀이 제안을 처음 볼 때까지 쓸 일이
+     *    없으니 쓰지도 않을 시점에 미리 받지 않는다" 로 두고 설정에서만 켜게 했었다 (#89).
+     *
+     * 🚨 그래서 **막는 것은 여전히 `required` 뿐이다.** 가입 화면에 선택이 처음으로 서는
+     *    자리라, 목록 길이로 제출을 막으면 이 항목까지 필수가 된다 (`requiredConsentsChecked`).
+     * 🚨 가입 화면에서 **필수와 같은 무리로 그리지 않는다** — 머리줄로 가른다
+     *    (디자인 시스템 §7 동의 목록).
      */
-    askAtSignup: false,
+    askAtSignup: true,
     shortLabel: "위치정보",
     label: "위치정보 수집·이용",
     description:
@@ -301,10 +319,45 @@ export const CONSENT_ITEMS: ConsentItem[] = [
 ];
 
 /**
- * 가입 동의 화면이 묻는 것. 🚨 **제출을 막는 것은 `required` 인 것들뿐이다** —
- * 이 목록 전체가 아니다. 선택 동의는 안 골라도 계정이 만들어진다.
+ * 가입 흐름에서 묻는 것. 🚨 **화면이 둘로 갈린다** — `target` 이 그 기준이다.
+ *
+ * 왜 한 화면에서 넷을 다 받지 않는가 (#96) — 계정은 동의 직후에 만들어지고
+ * (`auth-kakao-v1.md` §6-1) 아이는 그 다음 화면에서 만들어진다. 아이 동의를 계정 동의와
+ * 같은 화면에서 받으면, **가입은 끝났는데 아이를 만들기 전에 나간 사람**의 동의가 화면
+ * 상태로만 남아 있다가 사라진다. 다시 들어오면 아이 만들기 화면이 그 값을 다시 묻지
+ * 않으므로 `POST /children` 에 실을 것이 없다. 각 동의를 **그 동의가 쓰이는 화면**에 두면
+ * 이탈해도 값이 늘 같은 자리에 있다.
+ *
+ * 🚨 **제출을 막는 것은 `required` 인 것들뿐이다** — 목록 길이가 아니다. 선택 동의를
+ *    이 화면들에 올리는 날 조용히 그것까지 막지 않게.
  */
-export const SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => i.askAtSignup);
+export const ACCOUNT_SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter(
+  (i) => i.askAtSignup && i.target === "account",
+);
+
+/** 가입 화면의 **필수** 무리. 이게 비면 계정이 만들어지지 않는다. */
+export const ACCOUNT_SIGNUP_REQUIRED: ConsentItem[] = ACCOUNT_SIGNUP_CONSENTS.filter(
+  (i) => i.required,
+);
+
+/**
+ * 가입 화면의 **선택** 무리. 🚨 안 골라도 계정이 만들어진다 — 이 목록이 제출을 막지 않는다.
+ * 머리줄로 필수와 갈라 그린다 (디자인 시스템 §7 동의 목록).
+ */
+export const ACCOUNT_SIGNUP_OPTIONAL: ConsentItem[] = ACCOUNT_SIGNUP_CONSENTS.filter(
+  (i) => !i.required,
+);
+
+/**
+ * 01 아이 만들기 화면이 함께 묻는 것. `POST /children` 바디로 간다 (아이와 한 트랜잭션).
+ *
+ * 🚨 **초대로 들어온 보호자는 이것을 묻지 않는다.** 그 아이에 대한 법정대리인 동의는
+ *    아이를 등록한 보호자가 이미 했다 (#96). 초대받은 사람에게 또 물으면, 법정대리인이
+ *    아닌 사람에게서 법정대리인 동의를 받는 것이 된다.
+ */
+export const CHILD_SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter(
+  (i) => i.askAtSignup && i.target === "child",
+);
 
 /** 10 설정에서 현황만 보여주고 철회 버튼을 두지 않는 것. */
 export const REQUIRED_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => i.required);
