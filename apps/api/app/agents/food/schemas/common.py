@@ -20,7 +20,11 @@ class FoodTaskType(StrEnum):
 
 
 class FeedingStage(StrEnum):
-    """식이 단계. 발화가 아니라 아이의 나이에서 코드가 계산한다 (경계 개월 수는 미정)."""
+    """식이 단계. 발화가 아니라 아이의 나이에서 코드가 계산한다.
+
+    값이 app/rules/age.py 의 Band 와 같은 문자열이라 FeedingStage(life_stage(...).big) 으로
+    바로 만든다. 경계 월령은 그쪽 _STAGE_BOUNDARIES 한 곳에만 둔다.
+    """
 
     INFANT = "infant"  # 영아기: 분유/수유 · 이유식 · 식재료 도입
     TODDLER = "toddler"  # 유아기: 기관 급식 · 섭취 분석 · 영양성분 · 균형 · 반복 메뉴
