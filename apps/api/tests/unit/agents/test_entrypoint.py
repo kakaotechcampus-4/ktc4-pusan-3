@@ -3,6 +3,8 @@
 pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 """
 
+import calendar
+from datetime import date, datetime
 from typing import Any, get_args
 from uuid import UUID
 
@@ -60,3 +62,58 @@ def test_이벤트_타입이_전부_밖으로_나간다() -> None:
     exported = {getattr(entrypoint, name) for name in entrypoint.__all__}
     missing = [event.__name__ for event in get_args(pipeline.Event) if event not in exported]
     assert not missing
+
+
+async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """api 가 만든 store 에 써야 저장된 행을 api 가 다시 읽을 수 있다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, food_context: Any, **kwargs: Any) -> str:
+        seen["memory"] = memory_context
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    store = InMemoryStore()
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기 잘 먹었어",
+        run_id="run-1",
+        store=store,
+    )
+
+    assert seen["memory"].store is store
+
+
+def _months_ago(months: int) -> date:
+    """오늘 기준으로 딱 그만큼 나이 먹은 아이의 생일."""
+    today = datetime.now(entrypoint.KST).date()
+    year, month = divmod(today.year * 12 + today.month - 1 - months, 12)
+    return date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
+
+
+@pytest.mark.parametrize(
+    ("months", "expected"),
+    [(0, FeedingStage.INFANT), (11, FeedingStage.INFANT), (12, FeedingStage.TODDLER)],
+)
+async def test_생일을_주면_월령에서_단계를_고른다(
+    monkeypatch: pytest.MonkeyPatch, months: int, expected: FeedingStage
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, food_context: Any, **kwargs: Any) -> str:
+        seen["food"] = food_context
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="오늘 뭐 먹일까",
+        run_id="run-1",
+        birth_date=_months_ago(months),
+    )
+
+    assert seen["food"].stage is expected
