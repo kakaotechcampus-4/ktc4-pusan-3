@@ -15,13 +15,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agents import pipeline
-from app.agents.memory.drafts import DraftItem, EventDraft, EventSnapshot
-from app.agents.pipeline import (
+from app.agents import entrypoint
+from app.agents.entrypoint import (
     Done,
+    EventDraft,
     EventDrafts,
     Failed,
     FoodRouted,
+    Guidance,
     MemoryNote,
     Ref,
     Rerouted,
@@ -30,7 +31,10 @@ from app.agents.pipeline import (
     Unavailable,
     Unwritten,
 )
-from app.agents.supervisor.routing import Guidance
+
+# 초안을 만들 부품이라 진입점이 내보내지 않는다. app/api 코드가 아니라 픽스처를 만드는 테스트라
+# 레이어 경계(api 는 진입점만) 밖이다 — 화면으로 가는 모양은 EventDraft.to_payload() 가 정한다.
+from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.api.runs import registry, sse, translate
 
 KST = ZoneInfo("Asia/Seoul")
@@ -92,7 +96,7 @@ def test_every_pipeline_event_is_either_sent_or_held():
     안 정하면 translate 가 조용히 버린다. 버리는 쪽이 안전한 기본값이지만, 화면에 가야 할 것
     (예: 나중의 `promoted` · `partial`)이 말없이 사라지는 것은 막아야 한다.
     """
-    events = set(get_args(pipeline.Event))
+    events = set(get_args(entrypoint.Event))
 
     undecided = sorted(event.__name__ for event in events - SENT - HELD)
     assert not undecided, f"보낼지 정해 주세요 → translate.py · 이 파일의 SENT/HELD: {undecided}"

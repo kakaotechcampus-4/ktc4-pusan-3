@@ -18,15 +18,13 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 🚨 필드를 하나씩 옮겨 적는다 (`dataclasses.asdict` 로 통째로 넘기지 않는다). agents 가 이벤트에
    필드를 늘려도 화면으로 새어 나가지 않게 — 화면에 가는 모양은 이 파일이 정한다.
 
-TODO(#145): 머지되면 agents import 를 `app.agents.entrypoint` 하나로 바꾼다
-            — api 는 agents 진입점만 본다 (apps/api/CLAUDE.md 레이어 경계).
+agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
 import logging
 import traceback
 
-from app.agents.pipeline import Done, Emit, Event, EventDrafts, Failed, Step
-from app.agents.supervisor.routing import Guidance
+from app.agents.entrypoint import Done, Emit, Event, EventDrafts, Failed, Guidance, Step
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 
