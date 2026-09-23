@@ -150,6 +150,7 @@ class DomainAgentResult:
 - 근거 0행이면 **일반 추천을 낸다**(`kind="general"`). `reason`을 코드 템플릿으로 덮어쓰고, 화면이 "또래 기준"과 함께 `scarcity`(쌓인 기록 건수 + 되물을 질문 1개)를 표시한다. 추천을 빼고 `scarcity`만 내리지 않는다 — 루트 CLAUDE.md §2가 "일반 추천을 낸다"이기 때문이다.
 - **문서 행(`*_doc`)은 근거가 아니다.** `reference_refs`에 따로 담는다. `source_refs`는 아이 기록만.
 - 18개월 미만은 `profile_affinity`가 구조적으로 0행이라 **티어 1·2 가 없다.** 티어 3(최근 14일 관찰)은 그대로 있어서 개인화가 아예 막히는 구간은 아니다 → 정상 경로로 테스트한다.
+- **`observation_routine` 은 승격은 안 하지만 근거로는 쓴다.** `profile_affinity.domain` 에 `routine` 이 없어 티어 1·2 가 생기지 않는다. 관찰은 티어 3 로 그대로 인용된다 — Growth 의 `routine_coaching` 이 이 경로다 (2026-09-23).
 - **Health는 이 규칙의 대상이 아니다.** `profile_affinity.domain`에 `health`가 없고 `observation_health`에는 `embedding`도 없다. Health의 근거는 **항상 관찰 직접 참조**이고, 티어도 `rank_evidence`도 벡터 검색도 쓰지 않는다 — 증상은 선호가 아니라서 쌓인다고 성향이 되지 않는다. Health는 `suggestion`을 만들지 않으므로 `suggestion_evidence`도 없고, 근거는 `Readout.source_refs`에 담긴다.
 
 ---
