@@ -83,14 +83,16 @@ def agent_job(*, child_id: UUID, parent_id: UUID, raw_text: str) -> Job:
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:
     """step 1/3 → 2/3 → 3/3 → done. 저장은 하지 않는다.
 
-    LLM 없이 흐름만 볼 때 쓴다 — 테스트가 agent_job 대신 이걸 끼운다.
+    LLM 없이 흐름만 볼 때 쓴다 — 테스트가 agent_job 대신 이걸 끼운다. 진짜 Agent 와 같은 이벤트
+    객체(Step · Done)를 번역기로 흘린다 — 화면에 가는 모양은 translate.py 한 곳에서만 정한다.
     """
+    emit = translate.relay(channel)
     delay = DEMO_STEP_DELAY if step_delay is None else step_delay
     total = len(STEP_LABELS)
     for index, label in enumerate(STEP_LABELS, start=1):
-        channel.publish(("step", {"index": index, "total": total, "label": label}))
+        emit(entrypoint.Step(index, total, label))
         await asyncio.sleep(delay)
-    channel.publish(("done", {"run_id": channel.run_id, "model_calls": 0}))
+    emit(entrypoint.Done(channel.run_id, 0))
 
 
 async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
