@@ -17,8 +17,9 @@ import uuid
 
 import pytest
 
-from app.api import idempotency
+from app.api import idempotency, quota
 from app.api.runs import registry, runner
+from app.core.config import settings
 
 from .conftest import issue_bearer
 
@@ -32,10 +33,12 @@ def _clean_process_memory(monkeypatch):
     """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다."""
     registry.clear()
     idempotency.clear()
+    quota.clear()
     monkeypatch.setattr(runner, "DEMO_STEP_DELAY", 0.0)
     yield
     registry.clear()
     idempotency.clear()
+    quota.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -184,6 +187,46 @@ async def test_finished_run_keeps_its_key_even_if_it_crashes_after(db_client, be
     retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
 
     assert retried.json() == first.json()
+
+
+async def test_inputs_over_the_daily_limit_are_rejected(
+    db_client, bearer, monkeypatch, agent_calls
+):
+    """보호자별 하루 입력 횟수를 넘으면 429 — Agent 를 부르기 전에 막는다 (월 크레딧 보호).
+
+    한도는 설정값이다(INPUT_DAILY_LIMIT). 여기서는 빨리 보려고 2 로 줄인다.
+    """
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 2)
+    headers, _ = bearer
+
+    responses = []
+    for _ in range(3):
+        url = INPUTS.format(cid=uuid.uuid4())
+        responses.append(await db_client.post(url, json=BODY, headers=with_key(headers)))
+
+    assert [r.status_code for r in responses] == [202, 202, 429]
+    assert responses[2].json()["error"]["code"] == "daily_input_limit"
+    assert len(agent_calls) == 2  # 거절된 입력은 Agent 까지 가지 않았다
+
+
+async def test_replay_is_not_counted_and_still_works_after_the_limit(
+    db_client, bearer, monkeypatch
+):
+    """같은 키 재생은 새 입력이 아니다 — 세지 않고, 한도에 걸린 뒤에도 처음 run 을 돌려준다.
+
+    응답을 못 받아 다시 누른 보호자가 "오늘은 더 적을 수 없어요" 를 보면, 이미 접수된 입력을
+    실패로 알게 된다.
+    """
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    cid = uuid.uuid4()
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    replayed = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert replayed.status_code == 202
+    assert replayed.json() == first.json()
 
 
 async def test_different_key_starts_a_new_run(db_client, bearer):
