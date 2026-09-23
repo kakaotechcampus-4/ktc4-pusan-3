@@ -44,6 +44,9 @@ async def test_closed_channel_streams_exact_bytes(db_client, bearer):
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    # 중간 서버(nginx 등)가 프레임을 모았다가 한꺼번에 보내지 않게 한다
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
     assert response.text == (
         'event: step\ndata: {"index":1,"total":3,"label":"기록 중"}\n\n'
         f'event: done\ndata: {{"run_id":"{channel.run_id}","model_calls":0}}\n\n'
