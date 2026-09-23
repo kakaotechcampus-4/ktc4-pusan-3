@@ -13,7 +13,8 @@
 | 허용 목록 | `execute_tool(name, args, allowed=tools_for(task_type, gate))` — 목록 밖이면 `TOOL_NOT_ALLOWED` |
 | 반환 | `ToolResult(ok, data, error: ErrorCode \| None, source_refs)` |
 | 빈 결과 | 성공 + 빈 목록. **조회 실패를 빈 목록으로 숨기지 않는다** (`UPSTREAM_ERROR`) |
-| 외부 API | 런타임 직접 호출 금지 → **캐시 테이블 조회**. 캐시 미스만 API 호출 + 저장 (예외: 병원·응급 실시간) |
+| 외부 API | 값이 크고 재사용되면 **캐시 테이블 조회** — 캐시 미스만 API 호출 + 저장. 메뉴 영양·레시피·급식·도서가 여기다 |
+| 외부 API (실시간) | **지금 값이어야 하는 것은 저장하지 않는다** — 날씨 · 대기질 · 응급실 · 장소. 패스스루 + 프로세스 내 캐시만 쓴다. 틀린 값이 DB 에 남으면 근거처럼 보이고, 아이별 데이터가 아니라 붙이면 삭제 범위만 넓어진다. 날씨는 발표 시각(`nx` · `ny` · `base_date` · `base_time`)을 캐시 키로 쓰면 새 발표가 나올 때 자동으로 무효화된다 ([외부연결_계획.md](외부연결_계획.md) §1) |
 | 수치 | 모델은 tool 결과에 있는 수치만 옮긴다. 계산·추정·단위 환산 금지 |
 
 `ErrorCode`: `TOOL_NOT_ALLOWED` · `INVALID_ARGS` · `NOT_FOUND` · `UPSTREAM_ERROR` · `CONSENT_REQUIRED` · `SAFETY_UNAVAILABLE` · `EVIDENCE_REQUIRED` · `NO_RECORDS`
@@ -68,7 +69,7 @@ DataReady(daycare_meal: bool, notice: bool, book_api: bool)
 - **Gating은 각 Agent의 registry가 한다.** Supervisor는 tool을 모른다
 - 빈 튜플이면 **모델을 부르지 않고** 코드 readout으로 끝낸다(`model_calls=0`). 연령 때문에 닫혔으면 언제 열리는지 함께 알린다
 
-## 4. `rank_evidence` — 코드 (Food 식단 · Growth)
+## 4. `rank_evidence` — 코드 (Food · Activity · Growth 공통)
 
 ```python
 def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
@@ -91,8 +92,55 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 
 ## 5. 출력 검증 — 모든 `propose_*`
 
-- **개수는 정확히 3개.** 3개가 아니면 거절한다. 안전 필터 뒤에 3개 미만이 되면 그 Agent만 모델을 1회 재호출하고, 걸러진 항목을 제외 목록으로 넣는다(**사유는 넣지 않는다**). 재호출 후에도 부족하면 **남은 만큼만** 낸다 — 개수 규칙의 유일한 예외다
-- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반 시 `EVIDENCE_REQUIRED`. 인용된 id는 `suggestion_evidence` 행이 된다 (`memory_kind` + `memory_id`)
-- **기피 근거를 인용했으면 `reason`에 무엇을 피했는지가 있어야 한다.** 없으면 해당 후보 거절 — 인용만 하고 말하지 않으면 보호자에게는 근거 없는 추천과 같다
-- 근거 0건 → `kind="general"`, `reason`은 단계별 코드 템플릿으로 **덮어쓴다**
-- 금지 표현 필터(Agent별 목록) 통과 못 하면 해당 후보 삭제
+코드는 [`common/suggestion.py`](../../../apps/api/app/agents/common/suggestion.py) 다.
+후보 하나를 보는 `build()` 와 묶음을 보는 `check_count()` 로 나뉘고, 실패는 둘 다 `SuggestionRejected` 다.
+모델에게는 사유 문장과 함께 돌려준다.
+
+### 5-1. 순서
+
+순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 "기피를 말하지 않았다" 같은 엉뚱한 사유가 나간다.
+
+| # | 무엇 | 대상 | 통과 못 하면 |
+| --- | --- | --- | --- |
+| 1 | 안전 필터 (알레르기 · 연령 금지식품 · `hazard_term`) | 후보 풀 | 그 후보를 **풀에서 뺀다**. 거절이 아니라 제거다 |
+| 2 | 금지 표현 필터 (Agent별 목록) | 후보 하나 | 그 후보 **삭제** |
+| 3 | 도메인별 출력 검증 | 후보 하나 | 그 후보 **거절** (5-5) |
+| 4 | `build()` — 근거와 문구 | 후보 하나 | 그 후보 **거절** |
+| 5 | `check_count()` — 개수 | 묶음 | **묶음 거절** → 재호출 판단 (5-2) |
+
+### 5-2. 개수 — 정확히 3개
+
+2개 이하나 4개 이상이면 거절한다. 예외는 하나뿐이다.
+
+- 안전 필터(1번) 뒤에 3개 미만이 되면 **그 Agent 만 모델을 1회 재호출**한다. 걸러진 항목을 제외 목록으로 넣되 **사유는 넣지 않는다** — 알레르기 목록을 프롬프트로 되돌려 보내는 셈이 된다.
+- 재호출은 1회로 끝난다. 그래도 못 채우면 **남은 만큼만** 낸다. `check_count(after_retry=True)` 가 이 경우만 통과시키고, 0개는 여전히 거절이다.
+- 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다.
+- 이때만 그 Agent 의 진입 수가 2가 된다 ([Agent_공통규약.md](Agent_공통규약.md) §7).
+
+### 5-3. 근거 — `kind` 는 코드가 정한다
+
+모델이 `kind` 를 고르지 않는다. `build()` 가 **아이 기록 근거의 행 수**로 정한다.
+
+- 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `intake_daily` · `daycare_meal`)이 **0행이면 `kind="general"`**. 문서 행(`*_doc`)만 달고 나가는 것도 0행으로 센다 — 문서만 보고 만든 추천은 개인화가 아니다.
+- `general` 이면 `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다.
+- 1행 이상이면 `kind="personalized"` 이고 `reason` 이 비어 있으면 거절한다.
+- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`memory_kind` + `memory_id`).
+
+### 5-4. 문구 — 기피를 인용했으면 말해야 한다
+
+`polarity = −1` 근거를 인용한 후보는 `reason` 에 **무엇을 피했는지**가 있어야 한다. 없으면 거절한다.
+인용만 하고 말하지 않으면 보호자 화면에서는 근거 없는 추천과 구별이 안 된다.
+
+지금 코드는 **기피 근거의 라벨 문자열이 `reason` 안에 있는지**만 본다. 문장 품질은 못 본다 —
+라벨조차 안 나오면 확실히 말하지 않은 것이라는 하한만 거는 것이다.
+
+### 5-5. 도메인별 확장 — 여기에 더하지 않는다
+
+**후보를 지우는 공통 규칙은 안전뿐이다.** 도메인마다 더 지워야 할 것이 있으면
+이 절이 아니라 **그 Agent 문서의 출력 검증**에 둔다. 이 절은 네 Agent 가 전부 통과하는 자리라
+한 도메인의 사정을 넣으면 다른 도메인이 막힌다.
+
+- Food 는 영양 분석이 부족을 가리키면 기피 식품군을 **일부러** 낸다. "기피 대상은 거절"을 여기 두면 이 경로가 막힌다.
+- Activity 는 반대다. 꼭 해야 하는 놀이가 없어서 기피 대상을 다시 낼 이유가 없다 — 기피 근거와 `merge_key` 가 같은 후보를 거절하는 규칙을 Activity 쪽에 둔다 ([README.md](../README.md) §2).
+
+둘 다 **제거 필터가 아니라 출력 검증**이다. 후보 풀은 그대로 두고 나가는 것만 막는다.

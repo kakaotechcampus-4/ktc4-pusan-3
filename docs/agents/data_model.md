@@ -593,9 +593,9 @@ PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memor
 **1번이 제일 급하다.** `ObservationRoutine` 은 `ObservationCommon`(= `affinity_id` 포함)을 상속하므로 승격 대상인데,
 `MemoryDomain` 에 `routine` 이 없어 Curator 가 승격할 자리가 없다. 열거형 값 하나 추가로 끝난다.
 
-**4번은 BE 잘못이 아니다.** 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 아직 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이라
-ORM 이 루트 문서를 정확히 따랐다. `growth` 로 닫은 것은 Agent 명세 쪽뿐이다.
-루트 CLAUDE.md §5 를 먼저 고쳐야 enum 을 바꿀 근거가 생긴다 — PM 결정 사안이다.
+**4번은 BE 잘못이 아니다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이라
+ORM 이 루트 문서를 정확히 따랐다. 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
+남은 것은 `SuggestionAgent` enum 값과 마이그레이션뿐이다.
 관찰 테이블 이름 `observation_education` 은 그대로 둔다.
 
 **8번은 고쳤다.** `active / retracted / none / unknown` 이 한 칸에 같이 적혀 있었다. F-4 를 `child.allergy_status` 로 닫기 전의 흔적이고, ORM 이 맞다.

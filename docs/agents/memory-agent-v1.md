@@ -25,6 +25,8 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 ```
 
 밖으로 열린 것은 **`run(raw_text, context, *, client, max_steps, task)` 하나**다.
+
+`max_steps`(기본 `MAX_STEPS = 7`)는 **LLM 왕복 수** 상한이지 tool 건수 상한이 아니다. 한 왕복에 tool 이 여러 개 와도 그 바퀴에서 전부 실행하고 `steps` 는 1만 올라간다 — 실행 건수는 `len(calls)` 다. run 예산(`model_calls`)은 이 루프를 몇 바퀴 돌았든 Memory 를 1로 센다 ([Agent_공통규약.md](shared/Agent_공통규약.md) §7).
 `apps/api/CLAUDE.md` §레이어 경계가 *"app/api — 허용: agents 진입점 / 금지: agents 내부 구현 직접 import"*
 라서 registry·prompt·client 는 전부 내부 구현으로 둔다. 초판에는 이 규칙을 import-linter 가 강제한다고
 적었는데 그런 설정은 저장소에 없다. 지금은 규칙 문서와 리뷰가 전부다.

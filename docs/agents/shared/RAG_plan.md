@@ -177,7 +177,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 교육부·보건복지부 「2019 개정 누리과정」 고시 (3–5세) | `learning_activity` 영역 틀 | `public_law` |
 | 위 두 과정의 **해설서·놀이 사례집** | 구체 활동 아이디어 | 저작물 → **`fact_rewrite`만** |
 | 국가건강정보포털 배변·수면·양치 자료 | `routine_step` · `rhythm_info` | 공공누리 확인 |
-| i-누리 · 중앙육아종합지원센터 놀이자료 | – | **사용 안 함** (공공누리 표기 미확인, Activity D10과 동일) |
+| i-누리 · 중앙육아종합지원센터 놀이자료 | – | **사용 안 함** — 사이트 표기가 `ALL RIGHTS RESERVED` 이고, 누리과정 놀이자료는 공공누리 제4유형(출처표시 + 상업금지 + 변경금지)이라 상업 금지에 걸린다 (2026-09-23 확인) |
 
 ### 행 예시
 
@@ -319,7 +319,6 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | # | 내용 |
 | --- | --- |
-| R-1 | Activity D9는 few-shot을 "코드 안 YAML"로 정했다. `activity_doc` **테이블**로 바꾸는 것과 충돌한다 → 시드는 YAML로 유지하고 DB에 upsert하는 방식으로 통일할지 확정 |
 | R-2 | 공공 발간물별 공공누리 유형 실제 확인 (특히 급식관리지원센터 · 학회 자료) |
 | R-3 | Health 의료 검수자 확보 여부. 없으면 `emergency_sign`은 국가건강정보포털 문구 범위로만 제한 |
 | R-4 | 원문 복제 검사 기준 (8어절) 확정 |

@@ -162,7 +162,7 @@
 | | | C12 | 1 | 교육 tool 개방 · 표준보육과정 인덱스 |
 | **11 / 12** | T11 | C11 | 1 | `mode=rhythm_info` — 안내만 |
 | | | C12 | 1 | `mode=next_step` |
-| **17 / 18** | T01 | C17 | 1 | affinity 구조적 0행 → `general` |
+| **17 / 18** | T01 | C17 | 1 | affinity 구조적 0행. 관찰도 0건이면 `general`, 관찰이 있으면 17개월도 `personalized` |
 | | | C18 | 1 | affinity 있으면 `personalized` |
 | **23 / 24** | T17 | C23 | **0** | `closed.manner_under24` |
 | | | C24 | 1 | 상황 연습 3개 |
