@@ -106,6 +106,30 @@ async def test_same_key_replays_the_same_run_id(db_client, bearer):
     assert second.json() == first.json()
 
 
+async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
+    """실패로 끝난 run 의 키는 지운다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
+
+    프론트는 실패 뒤 재시도에 같은 키를 쓴다(home/page.tsx `retry()`). 키가 남아 있으면
+    이미 닫힌 실패 run 이 재생돼 몇 번을 눌러도 같은 실패만 받는다.
+    (idempotency-v1 §3-4 — 기억하는 것은 성공뿐이다)
+    """
+
+    async def boom(channel):
+        raise RuntimeError("일부러 낸 실패")
+
+    monkeypatch.setattr(runner, "fake_job", boom)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    cid = uuid.uuid4()
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    await asyncio.wait_for(registry.get(first.json()["run_id"]).task, timeout=2)
+    retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert retried.status_code == 202
+    assert retried.json()["run_id"] != first.json()["run_id"]
+
+
 async def test_different_key_starts_a_new_run(db_client, bearer):
     headers, _ = bearer
 

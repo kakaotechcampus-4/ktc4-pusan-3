@@ -18,6 +18,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+from app.api import idempotency
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,11 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         channel.publish(("failed", {"reason": "internal_error", "raw_text": raw_text}))
         channel.publish(("done", {"run_id": channel.run_id, "model_calls": 0}))
     finally:
+        # 실패로 끝난 run 은 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
+        # 🚨 publish 와 여기 사이에 await 가 없어야 한다. 화면이 failed 를 받자마자 재시도해도
+        #    키가 이미 지워져 있다.
+        if any(name == "failed" for name, _ in channel.events):
+            idempotency.forget_run(channel.run_id)
         channel.close()
 
 

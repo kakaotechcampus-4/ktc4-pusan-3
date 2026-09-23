@@ -28,6 +28,16 @@ def remember(*, parent_id: UUID, method: str, path: str, key: str, run_id: str) 
     _seen[(parent_id, method, path, key)] = run_id
 
 
+def forget_run(run_id: str) -> None:
+    """이 run 을 가리키는 키를 지운다. 실패로 끝난 run 에 쓴다.
+
+    기억하는 것은 성공뿐이다 (§3-4). 실패한 run 이 남아 있으면 같은 키로 "다시 시도" 할 때마다
+    이미 닫힌 실패가 재생돼 재시도가 영원히 막힌다.
+    """
+    for scope in [scope for scope, seen in _seen.items() if seen == run_id]:
+        del _seen[scope]
+
+
 def clear() -> None:
     """전부 비운다. 테스트용."""
     _seen.clear()
