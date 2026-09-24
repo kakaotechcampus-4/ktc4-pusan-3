@@ -515,7 +515,7 @@ class MedicationDraft:
 - hook 두 개는 pipeline에서 Memory 저장 **직후** 동기 실행
 - 선행 스키마: `child.gestational_weeks` · consent 조회 포트 (`child.gender` · `child_growth_log`는 Health와 무관해짐)
 - **신규 소유 테이블**: `medication_dose_log` · `medication_schedule` 컬럼 4개 추가 → [`health_agent_own_table.md`](health_agent_own_table.md)
-- **공유 테이블 변경 요청**: `observation_health.temperature` · `measured_at` (Memory 소유, Health는 읽기만)
+- **공유 테이블 변경 요청**: `observation_health.temperature` · `measured_at` · `measure_site` (Memory 소유, Health는 읽기만)
 - `prescription_draft`는 **OCR 파이프라인 소유**입니다. Health role에 write 권한을 주지 않습니다
 - 처방전 원본 이미지는 파이프라인에서 파기합니다. Health는 추출 결과만 봅니다
 

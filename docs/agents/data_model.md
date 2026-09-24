@@ -548,15 +548,21 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 ### 아직 위 표에 없는 것
 
-#### observation_health — 체온 두 칸
+#### observation_health — 체온 세 칸
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | temperature | numeric(3,1) | nullable. **℃.** 38.4 같은 값. `symptom text[]` 에 "발열" 만 들어가면 숫자가 남지 않는다 |
 | measured_at | timestamptz | nullable. 잰 시각. `observed_time`(관찰 시점)과 다르다 — 한 번의 관찰에서 여러 번 잰다 |
+| measure_site | enum | `ear` / `forehead` / `armpit` / `oral` / `rectal`, nullable. **잰 부위.** 부위마다 정상 범위가 달라 숫자만으로는 못 읽는다 |
 
 Health 의 `build_fever_timeline` 하드 선행이다. 이게 없으면 "3일째 열이 오르내린다" 를 숫자로 못 쓴다.
 같은 증상 3회 반복 판정(루트 CLAUDE.md §2 안전)도 시각 없이는 셀 수 없다.
+
+`measure_site` 는 명성님 제안이다(2026-09-23) — 겨드랑이와 귀는 같은 아이에게서도 값이 다르게 나온다.
+부위를 모르면 37.8 이 높은 값인지 아닌지 판단할 수 없어, 숫자만 쌓으면 타임라인이 들쭉날쭉해진다.
+**부위별 기준값은 코드 상수로 둔다** — 모델이 정상 범위를 지어내지 않게 한다 (루트 CLAUDE.md §2 안전).
+nullable 인 이유는 보호자가 부위를 안 밝힐 수 있어서다. 그때는 부위 비교를 하지 않고 숫자만 보여준다.
 
 #### notice (기관 공지) — 테이블 신설
 
@@ -600,7 +606,7 @@ PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memor
 | 3 | 추천 근거 | `suggestion_evidence` 테이블 | `source_refs` jsonb 유지 + 그 위에 조회 API | 🚨 |
 | 4 | `suggestion.agent` | `food / activity / growth / health` | `education` | ⚠️ |
 | 5 | `child.gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
-| 6 | `observation_health` 체온 | 위 절에서 신설 요청 | 없음 | ⚠️ |
+| 6 | `observation_health` 체온 | 위 절에서 신설 요청 — `temperature` · `measured_at` · `measure_site` | 없음 | ⚠️ |
 | 7 | `notice` | FK 대상 | 테이블 없음 → `source_notice_id` 가 FK 없는 plain uuid | ⚠️ |
 | 8 | `health_safety.state` | `active` / `retracted` / `none` / `unknown` | `active` / `retracted` | ⚠️ ORM 에 두 값이 없다 |
 

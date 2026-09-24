@@ -351,7 +351,7 @@ CREATE TABLE prescription_draft (
 
 | 테이블 | 요청 | 왜 |
 | --- | --- | --- |
-| `observation_health` | **`temperature numeric(3,1)`** · **`measured_at timestamptz`** | `build_fever_timeline`의 하드 선행. 지금은 `symptom text[]`에 "발열"만 들어가 숫자가 없다 |
+| `observation_health` | **`temperature numeric(3,1)`** · **`measured_at timestamptz`** · **`measure_site enum`**(`ear`/`forehead`/`armpit`/`oral`/`rectal`, nullable) | `build_fever_timeline`의 하드 선행. 지금은 `symptom text[]`에 "발열"만 들어가 숫자가 없다 |
 | `child` | `gestational_weeks smallint` (선택) | 검진·접종 안내의 조산아 처리. `gender`는 요청 철회(성별 미사용) |
 
 소유자는 Memory다. Health는 읽기만 한다.

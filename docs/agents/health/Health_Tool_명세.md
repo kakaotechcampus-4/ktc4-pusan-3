@@ -105,11 +105,12 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | 금지 | 원인 추정 · 중증도 판정 · "심해지고 있어요" |
 
 ### `build_fever_timeline`
-| 입력 | `observation_health`(`temperature`·`measured_at`) 24–48시간 · `medication_dose_log` · `medication_schedule` |
+| 입력 | `observation_health`(`temperature`·`measured_at`·`measure_site`) 24–48시간 · `medication_dose_log` · `medication_schedule` |
 | --- | --- |
 | 출력 | 시간순 나열 + 최고·최저 체온과 시각 + 마지막 복약(약 이름 **원문**) + **등록된 일정상의** 다음 예정 시각 → `Readout(code, kind="fever_timeline")` |
 | 금지 | 약 성분·계열 판정(아세트아미노펜/이부프로펜) · 계열 최소 간격으로 계산한 "투약 가능 시각" · 경과 해석 |
-| 선행 | `observation_health.temperature` (공유 테이블 변경 요청) |
+| 선행 | `observation_health` 체온 세 칸 (공유 테이블 변경 요청) |
+| 부위 | 값 옆에 **잰 부위를 함께 보여준다.** 부위마다 정상 범위가 달라 숫자만 나열하면 들쭉날쭉해 보인다. 부위별 기준값은 **코드 상수**다 — 모델이 정상 범위를 지어내지 않는다. `measure_site` 가 비면 부위 비교 없이 숫자만 낸다 |
 | 우선순위 | 응급 신호(3개월 미만 발열 등)에 걸리면 타임라인보다 병원 안내가 먼저 |
 
 ### `get_next_dose`

@@ -26,6 +26,11 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 
 밖으로 열린 것은 **`run(raw_text, context, *, client, max_steps, task)` 하나**다.
 
+> **다음 이슈** — `observation_health` 에 체온 세 칸(`temperature` · `measured_at` · `measure_site`)이 들어오면
+> `ObservationHealthCreate` · `ObservationHealthUpdate` 에 필드를 더하고, 발화에서 숫자와 부위를 뽑도록 프롬프트를 고쳐야 한다.
+> `measured_at` 을 `observed_time` 처럼 자연어 시각 파싱에 태울지, `CLEARABLE` 에 넣을지가 함께 정해진다.
+> 컬럼만 생기고 Memory 가 안 채우면 Health 의 `build_fever_timeline` 이 읽을 게 없다.
+
 `max_steps`(기본 `MAX_STEPS = 7`)는 **LLM 왕복 수** 상한이지 tool 건수 상한이 아니다. 한 왕복에 tool 이 여러 개 와도 그 바퀴에서 전부 실행하고 `steps` 는 1만 올라간다 — 실행 건수는 `len(calls)` 다. run 예산(`model_calls`)은 이 루프를 몇 바퀴 돌았든 Memory 를 1로 센다 ([Agent_공통규약.md](shared/Agent_공통규약.md) §7).
 `apps/api/CLAUDE.md` §레이어 경계가 *"app/api — 허용: agents 진입점 / 금지: agents 내부 구현 직접 import"*
 라서 registry·prompt·client 는 전부 내부 구현으로 둔다. 초판에는 이 규칙을 import-linter 가 강제한다고

@@ -68,7 +68,7 @@
 2) medication_schedule       (+ indication_text · symptom_codes · storage · med_form · source · source_draft_id. status는 active/completed 둘뿐)
 3) medication_dose           (generated column)
 4) medication_dose_log
-5) observation_health.temperature · measured_at   ← Memory 소유, 변경 요청
+5) observation_health.temperature · measured_at · measure_site   ← Memory 소유, 변경 요청
 6) child.gestational_weeks
 ```
 
