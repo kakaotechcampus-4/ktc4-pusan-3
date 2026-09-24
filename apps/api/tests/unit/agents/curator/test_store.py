@@ -5,6 +5,7 @@ DB 구현이 붙으면 같은 기대를 그쪽에도 걸어야 한다 — 여기
     - active 만 본다 (stand_alone · inactive 는 Curator 집계 밖)
     - 저장된 순서로 돌려준다 (observed_on 순이 아니다)
     - 다른 아이 · 다른 도메인 · 다른 polarity 의 Profile 은 후보가 아니다
+    - Profile 후보도 저장된 순서로 돌려준다 (동점이면 오래된 Profile 을 고르는 근거)
     - archived Profile 도 조회 후보다 (연결할지는 연결 로직이 정한다)
 
 인메모리 계약만 본다. DB 의 날짜 정렬 · 벡터 타입 · 동시성은 DB 구현이 붙을 때 검증한다.
@@ -106,6 +107,19 @@ async def test_Profile_후보는_같은_아이_도메인_polarity_만이다() ->
 
     found = await store.list_profiles(child_id=CHILD, domain="food", polarity=1)
     assert _ids(found) == [like.id]
+
+
+async def test_Profile_후보는_저장된_순서대로_돌려준다() -> None:
+    """연결 단계가 동점일 때 앞의 것(오래된 Profile)을 고르는 근거다."""
+    store = InMemoryCuratorStore()
+    ids = [
+        store.add_profile(
+            child_id=CHILD, domain="food", merge_key=key, polarity=1, embedding=VEC
+        ).id
+        for key in ("생딸기", "딸기", "딸기잼")
+    ]
+
+    assert _ids(await store.list_profiles(child_id=CHILD, domain="food", polarity=1)) == ids
 
 
 async def test_중립_관찰은_중립_Profile_만_찾는다() -> None:
