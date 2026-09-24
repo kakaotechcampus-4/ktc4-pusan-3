@@ -418,7 +418,7 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
   같은 규칙을 써야 한다. ai 브랜치에서 be 파트 폴더를 건드릴 수 없어 tool 에 둔 것이지 제자리가 아니다.
 - `common/datetime_rules.py` → `app/rules/` — 루트 §3 상 날짜 계산은 rules 소속이다. 표준 라이브러리만 쓰도록
   만들어 그대로 옮길 수 있다. 제출 API 가 `check_when` 을 다시 불러야 해서 이제는 필요가 더 분명해졌다.
-  `app/rules/` 는 공동 소유라 양쪽 리뷰가 필요하다.
+  `app/rules/` 는 공동 소유지만 파트 리드는 리뷰 없이 고칠 수 있다 (2026-09-23 합의).
 - `common/config.py` 의 `AgentSettings` → `app/core/config.py` — 인증·API 레이어가 붙을 때 협의.
 - `common/llm_client.py` 의 `openai` SDK 부분 → `app/providers/` — `apps/api/CLAUDE.md` 상 외부 모델 SDK 는
   providers 소속이다. 지금 agents 에 둔 건 providers 가 아직 비어 있어서지 설계 판단이 아니다.
