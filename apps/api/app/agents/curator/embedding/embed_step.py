@@ -27,7 +27,9 @@ class EmbedStepResult:
     embedded: tuple[ObservationKey, ...] = ()  # 벡터를 저장한 관찰
     failed: tuple[ObservationKey, ...] = ()  # 임베딩 실패. 벡터가 비어 있는 채로 남는다
     skipped: tuple[ObservationKey, ...] = ()  # 보내지 않은 관찰 (subject 가 빈 문자열)
-    requests: int = 0  # embed 를 부른 횟수. 대상이 없으면 0
+    # embed() 호출 횟수. 대상이 없으면 0. Embedder 안의 배치 분할 · SDK 재시도 때문에
+    # 실제 HTTP 요청 수와 다를 수 있다
+    embed_calls: int = 0
 
 
 async def embed_pending(
@@ -56,7 +58,7 @@ async def embed_pending(
             type(exc).__name__,
         )
         return EmbedStepResult(
-            failed=tuple(item.key for item in targets), skipped=skipped, requests=1
+            failed=tuple(item.key for item in targets), skipped=skipped, embed_calls=1
         )
 
     by_text = dict(zip(texts, vectors, strict=True))
@@ -64,5 +66,5 @@ async def embed_pending(
         vectors={item.key: by_text[item.subject.strip()] for item in targets}
     )
     return EmbedStepResult(
-        embedded=tuple(item.key for item in targets), skipped=skipped, requests=1
+        embedded=tuple(item.key for item in targets), skipped=skipped, embed_calls=1
     )

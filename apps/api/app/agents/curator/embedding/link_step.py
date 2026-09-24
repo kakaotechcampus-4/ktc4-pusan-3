@@ -37,7 +37,12 @@ DEFAULT_THRESHOLD = 0.5
 
 LinkStatus = Literal["linked", "created", "held"]
 Match = Literal["exact", "similar", "new"]
-HoldReason = Literal["invalid_observation_embedding", "invalid_profile_embedding"]
+HoldReason = Literal[
+    "embedding_failed",  # 임베딩 API 실패. 다음 실행이 자동으로 다시 시도한다 (임베딩 단계)
+    "empty_subject",  # subject 가 빈 문자열. 고칠 때까지 계속 보류된다 (임베딩 단계)
+    "invalid_observation_embedding",  # 관찰 벡터가 잘못됐다
+    "invalid_profile_embedding",  # 후보 Profile 벡터가 잘못됐다. invalid_profile_ids 참고
+]
 
 
 @dataclass(frozen=True)
@@ -65,10 +70,7 @@ class LinkStepResult:
 async def link_pending(
     store: CuratorStore, *, child_id: UUID, threshold: float = DEFAULT_THRESHOLD
 ) -> LinkStepResult:
-    # NaN 이면 모든 비교가 거짓이라 관찰마다 새 candidate 가 생긴다. 아무것도 하기 전에 막는다
-    if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
-        raise ValueError(f"threshold 는 -1 이상 1 이하의 유한한 값이어야 한다: {threshold!r}")
-
+    check_threshold(threshold)
     outcomes: list[LinkOutcome] = []
     for item in await store.list_unlinked(child_id=child_id):
         outcome = await _link_one(store, item, child_id=child_id, threshold=threshold)
@@ -85,6 +87,12 @@ async def link_pending(
             )
         outcomes.append(outcome)
     return LinkStepResult(tuple(outcomes))
+
+
+def check_threshold(threshold: float) -> None:
+    """NaN 이면 모든 비교가 거짓이라 관찰마다 새 candidate 가 생긴다. 아무것도 하기 전에 막는다."""
+    if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold 는 -1 이상 1 이하의 유한한 값이어야 한다: {threshold!r}")
 
 
 async def _link_one(

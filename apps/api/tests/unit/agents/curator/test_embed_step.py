@@ -66,7 +66,7 @@ async def test_요청은_한_번이고_같은_subject_는_한_번만_보낸다()
     result = await embed_pending(_store(), fake, child_id=CHILD)
 
     assert fake.calls == [["딸기", "레고"]]  # 처음 나온 순서
-    assert result.requests == 1
+    assert result.embed_calls == 1
 
 
 async def test_앞뒤_공백만_다른_subject_는_같은_것으로_보낸다() -> None:
@@ -120,7 +120,7 @@ async def test_대상이_없으면_API_를_부르지_않는다() -> None:
     result = await embed_pending(InMemoryCuratorStore(), fake, child_id=CHILD)
 
     assert fake.calls == []
-    assert result.requests == 0
+    assert result.embed_calls == 0
     assert result.embedded == result.failed == result.skipped == ()
 
 
@@ -164,4 +164,4 @@ async def test_빈_subject_만_있으면_API_를_부르지_않는다() -> None:
 
     assert fake.calls == []
     assert result.skipped == (("food", "blank"),)
-    assert result.requests == 0
+    assert result.embed_calls == 0
