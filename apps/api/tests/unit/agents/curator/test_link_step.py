@@ -86,6 +86,25 @@ async def test_이름이_같으면_유사도와_관계없이_연결한다() -> N
     assert store.observation("food", "1").affinity_id == strawberry.id
 
 
+async def test_띄어쓰기만_다르면_이름이_같은_것으로_본다() -> None:
+    store = InMemoryCuratorStore()
+    tomato = _profile(store, "방울토마토", _at(0))
+    _observe(store, "1", "방울 토마토", _at(90))  # 벡터는 멀다 (유사도 0)
+
+    [outcome] = await _link(store)
+
+    assert (outcome.status, outcome.match, outcome.affinity_id) == ("linked", "exact", tomato.id)
+
+
+async def test_새_Profile_의_merge_key_는_공백을_지우지_않는다() -> None:
+    store = InMemoryCuratorStore()
+    _observe(store, "1", " 방울 토마토 ", _at(0))
+
+    await _link(store)
+
+    assert [p.merge_key for p in store.profiles] == ["방울 토마토"]
+
+
 async def test_이름이_같은_Profile_이_여럿이면_오래된_것에_연결한다() -> None:
     store = InMemoryCuratorStore()
     older = _profile(store, "딸기", _at(0))

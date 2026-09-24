@@ -1,7 +1,7 @@
 """연결 단계. 벡터는 있고 연결이 없는 관찰을 Profile 에 붙이거나 새 candidate 를 만든다.
 
 관찰을 저장된 순서대로 한 건씩 처리한다. 앞에서 만든 Profile 이 다음 관찰의 후보가 된다.
-    1. 이름이 같은 Profile (strip 한 subject == strip 한 merge_key)
+    1. 이름이 같은 Profile (공백을 모두 지운 subject == 공백을 모두 지운 merge_key)
     2. 코사인 유사도가 가장 높은 Profile. threshold 이상일 때만
     3. 둘 다 없으면 새 candidate (merge_key = subject, 벡터는 관찰 것을 그대로)
 후보는 같은 아이 · 도메인 · polarity 뿐이다. archived 도 똑같이 비교한다.
@@ -107,9 +107,10 @@ async def _link_one(
         child_id=child_id, domain=item.domain, polarity=item.polarity
     )
     subject = item.subject.strip()
+    name = same_name_key(subject)
 
     # 저장된 순서라 첫 번째가 가장 오래된 Profile 이다
-    same_name = next((p for p in profiles if p.merge_key.strip() == subject), None)
+    same_name = next((p for p in profiles if same_name_key(p.merge_key) == name), None)
     if same_name is not None:
         await store.link(domain=item.domain, observation_id=item.id, affinity_id=same_name.id)
         return LinkOutcome(item.key, "linked", affinity_id=same_name.id, match="exact")
@@ -154,6 +155,16 @@ async def _link_one(
     )
     await store.link(domain=item.domain, observation_id=item.id, affinity_id=created.id)
     return LinkOutcome(item.key, "created", affinity_id=created.id, match="new")
+
+
+def same_name_key(text: str) -> str:
+    """이름 비교용 키. 공백을 모두 지운다 — "방울토마토"와 "방울 토마토"는 같은 이름이다.
+
+    띄어쓰기만 다른 쌍은 유사도가 0.78~0.92 로 흩어져 임계값에 따라 놓칠 수 있다
+    (임계값 실험, pairs_tune.txt). 규칙으로 잡으면 확실하고 잘못 합침도 늘지 않는다.
+    merge_key 에는 공백을 지우지 않은 subject 를 그대로 저장한다 — 사람이 읽는 값이다.
+    """
+    return "".join(text.split())
 
 
 def _valid(vector: list[float] | None) -> TypeGuard[list[float]]:
