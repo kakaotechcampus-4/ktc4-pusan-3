@@ -74,7 +74,13 @@ class CuratorStore(Protocol):
     async def list_profiles(
         self, *, child_id: UUID, domain: CuratorDomain, polarity: int
     ) -> list[ProfileItem]:
-        """같은 아이 · 도메인 · polarity 의 Profile. archived 도 포함한다."""
+        """같은 아이 · 도메인 · polarity 의 Profile. archived 도 포함한다.
+
+        저장된 순서(ORDER BY created_at, id)로 돌려준다. created_at 이 같은 행이 있을 수 있어
+        id 를 보조 기준으로 둔다 — 그래야 실행할 때마다 같은 Profile 이 골린다.
+        연결 단계는 동점이면 앞의 것(오래된 Profile)을 고른다 — 한쪽으로 모여야 나중에 중복을
+        정리하기 쉽다.
+        """
         ...
 
     async def link(self, *, domain: CuratorDomain, observation_id: str, affinity_id: str) -> None:
