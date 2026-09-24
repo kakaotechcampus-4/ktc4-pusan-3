@@ -378,17 +378,23 @@
 
 루트 CLAUDE.md §2가 이름으로 지목한 테이블이다 — "개인화 추천에는 사용한 `memory_id`를 반드시 첨부한다. 0행이면 버그(품질 지표 하드 기준 0건)". jsonb로 두면 그 지표를 COUNT로 셀 수 없어 행으로 뺐다.
 
+> 루트 CLAUDE.md §2·§5 는 이 값을 `memory_id` 라고 부른다. 컬럼 이름은 `source_id` 로 바꿨지만(2026-09-23) 가리키는 것은 같다 — 루트 문서의 어휘를 고칠지는 별도 결정이다.
+
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
 | suggestion_id | uuid | FK → `suggestion.id`, NOT NULL, `ON DELETE CASCADE` |
-| memory_kind | text | NOT NULL. 아래 두 무리 중 하나 |
-| memory_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
+| source_kind | text | NOT NULL. 아래 두 무리 중 하나 |
+| source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
+| source_updated_at | timestamptz | NOT NULL. **인용할 때 읽은 근거 행의 `updated_at`** 을 그대로 박는다 |
+| note | text | nullable. 그 근거를 왜 인용했는지. **화면에 나가지 않는 내부 메모**다 |
 | created_at | timestamptz | NOT NULL, default `now()` |
 
-- `PRIMARY KEY (suggestion_id, memory_kind, memory_id)`
-- `memory_kind` 인덱스를 따로 둔다 — 품질 지표가 kind로 거르기 때문
+- `PRIMARY KEY (suggestion_id, source_kind, source_id)`
+- `source_kind` 인덱스를 따로 둔다 — 품질 지표가 kind로 거르기 때문
+- **이름이 `memory_*`가 아니라 `source_*`인 이유** — 가리키는 대상이 Memory 소유 테이블만이 아니다. 문서 행(`*_doc`)과 Food 소유인 `daycare_meal`도 들어온다 (2026-09-23 회의 확정).
+- **`source_updated_at` 을 두는 이유** — 근거는 추천이 나간 뒤에도 바뀐다. 보호자가 관찰을 `once_only`로 고치거나 `wrong`으로 내리면 그 추천이 인용한 근거가 인용 시점의 그것이 아니다. 인용할 때의 `updated_at`을 박아 두면 원본과 한 번 비교해 "이 추천이 본 것과 지금이 다르다"를 알 수 있다 — 이력을 되짚지 않아도 된다.
 
-**`memory_kind`는 두 무리다.**
+**`source_kind`는 두 무리다.**
 
 | 무리 | 값 | 개인화 근거로 셈 |
 | --- | --- | --- |
@@ -567,7 +573,7 @@ nullable 인 이유는 보호자가 부위를 안 밝힐 수 있어서다. 그�
 #### notice (기관 공지) — 테이블 신설
 
 `observation_*.source_notice_id` 가 이미 이 테이블을 가리키는데 테이블이 없어서 FK 가 안 걸려 있다.
-`suggestion_evidence.memory_kind` 의 아이 기록 값이기도 하다.
+`suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다.
 
 소유는 Memory · OCR 파이프라인이다. Growth 가 기관 맥락 연결에 읽고, Food 는 `intake_daily.source_notice_id` 로 건다.
 Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 돈다.
@@ -603,7 +609,7 @@ PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memor
 | --- | --- | --- | --- | --- |
 | 1 | `profile_affinity.domain` | `food / activity / education` | 같음 | ✅ 문서 쪽이 넓었고 좁혔다 |
 | 2 | `suggestion.kind` | `general` / `personalized` NOT NULL | 컬럼 없음 | 🚨 |
-| 3 | 추천 근거 | `suggestion_evidence` 테이블 | `source_refs` jsonb 유지 + 그 위에 조회 API | 🚨 |
+| 3 | 추천 근거 | `suggestion_evidence` 테이블 (2026-09-23 스키마 확정) | `source_refs` jsonb 유지 + 그 위에 조회 API | 🚨 |
 | 4 | `suggestion.agent` | `food / activity / growth / health` | `education` | ⚠️ |
 | 5 | `child.gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
 | 6 | `observation_health` 체온 | 위 절에서 신설 요청 — `temperature` · `measured_at` · `measure_site` | 없음 | ⚠️ |

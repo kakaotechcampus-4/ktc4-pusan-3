@@ -86,7 +86,7 @@
 | `compute_growth_delta` | `child_growth_log[]`(**전부**), `asks_judgement: bool` → `Readout(code, kind="growth_delta")` | 측정 로그 전체를 시간순으로 읽어 **실제 수치 그대로** 서술. 최소 간격 없음 · 연령 축 없음. 측정일 전부 표기. 판정어 없음. **신체 성장의 유일한 계산** — 판정 요청("잘 크고 있어?")이면 `delta.checkup_hint`를 덧붙인다 |
 | `rank_evidence` | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | domains 복수 |
 | `check_routine_category` | `category`, `stage` → allow \| readout key | 예절 ≥24개월 · 습관 ≥36개월 |
-| `search_growth_doc` | run 시작 시 자동. 월령·`row_type`·`routine_category`·`trigger_tags` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 `merge_key`·루틴 카테고리). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `memory_kind='growth_doc'`으로 담는다 |
+| `search_growth_doc` | run 시작 시 자동. 월령·`row_type`·`routine_category`·`trigger_tags` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 `merge_key`·루틴 카테고리). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='growth_doc'`으로 담는다 |
 | `pick_next_step` | `subject` + 관찰의 `assistance_level` → `growth_doc` 행 | `next_step_of` 사슬에서 **현재 칸의 바로 다음 행**을 코드가 고른다. 모델은 그 행을 집 상황에 맞춰 문장으로 쓸 뿐 단계를 고르지 않는다 — 건너뛰면 아이가 아직 못 하는 걸 시키게 된다 |
 
 `growth_delta` 템플릿 — 요약 한 줄 + 측정 전부를 시간순으로. 감소값은 부호 그대로, 해석 문구 없음.

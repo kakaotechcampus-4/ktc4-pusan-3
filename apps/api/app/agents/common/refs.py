@@ -26,7 +26,7 @@ ChildRecordKind = Literal[
 # 문서 행. 참고일 뿐이라 개인화 근거로 세지 않는다.
 DocKind = Literal["food_doc", "growth_doc", "activity_doc"]
 
-MemoryKind = ChildRecordKind | DocKind
+SourceKind = ChildRecordKind | DocKind
 
 _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
     (
@@ -46,7 +46,7 @@ _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class Ref:
-    kind: MemoryKind
+    kind: SourceKind
     id: UUID
 
     @property
@@ -55,6 +55,8 @@ class Ref:
 
         문서 행만 달고 나간 개인화 추천은 근거 0행과 같다. 행 수만 세면 그게 통과하므로
         품질 지표는 이 값이 참인 행만 센다 (docs/agents/data_model.md suggestion_evidence).
+        `suggestion_evidence` 는 이 값을 `source_kind` 로 받는다 — Memory 소유 테이블만 가리키는
+        게 아니라서 `memory_*` 가 아니다 (문서 행과 daycare_meal 도 들어온다).
         """
         return self.kind in _CHILD_RECORD_KINDS
 

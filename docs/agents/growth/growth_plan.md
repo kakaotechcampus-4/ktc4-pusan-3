@@ -184,7 +184,7 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 | `test_growth_delta.py` | 측정 1건 → 안내 · **간격이 짧아도 수치가 그대로 나옴** · **AI 0회** · 측정일 전부 표기 · 반올림 0건 |
 | `test_growth_routine.py` | `trigger` NULL → 역질의 · 30개월 습관 → 닫힘 readout · **20개월 자립 + 근거 0 → 역질의**(일반 제안 아님) · **8개월 → `rhythm_info` readout 하나, `suggestion` 0건** |
 | `test_growth_output.py` | ISBN 검증(직전 검색 결과 + 만료 전 suggestion 제외) · 근거 id · hazard |
-| `test_growth_doc.py` | **신규** — `search_growth_doc` 쿼리에 보호자 발화 0건 · 월령 밖 행 미노출 · 결과가 `memory_kind='growth_doc'`으로만 담김(품질 지표에서 제외) |
+| `test_growth_doc.py` | **신규** — `search_growth_doc` 쿼리에 보호자 발화 0건 · 월령 밖 행 미노출 · 결과가 `source_kind='growth_doc'`으로만 담김(품질 지표에서 제외) |
 | `test_growth_next_step.py` | **신규** — `pick_next_step`이 사슬의 바로 다음 칸 · 건너뛰기 0건 · 사슬 끝이면 일반 템플릿 |
 | `test_growth_wording.py` | **평가 표현 회귀** — 금지어 사전 전체를 출력 10종에 대해 |
 | `test_growth_evidence.py` | affinity 0행(Curator 없음) → 티어 3 또는 general |

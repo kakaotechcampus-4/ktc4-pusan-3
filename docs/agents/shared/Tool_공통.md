@@ -124,7 +124,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `intake_daily` · `daycare_meal`)이 **0행이면 `kind="general"`**. 문서 행(`*_doc`)만 달고 나가는 것도 0행으로 센다 — 문서만 보고 만든 추천은 개인화가 아니다.
 - `general` 이면 `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다.
 - 1행 이상이면 `kind="personalized"` 이고 `reason` 이 비어 있으면 거절한다.
-- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`memory_kind` + `memory_id`).
+- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
 
 ### 5-4. 문구 — 기피를 인용했으면 말해야 한다
 

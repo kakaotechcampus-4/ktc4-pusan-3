@@ -46,7 +46,7 @@ memory-agent-v1.md
 
 **승인된 추천은 `observation_activity`로 간다.** 보호자가 승인하면 Memory Agent가 `suggestion`을 관찰로 재구조화해 저장하고, feedback(`liked`/`disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)를 갱신한다. `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음"이다.
 
-**근거는 `suggestion_evidence` 테이블에 행으로 쌓는다.** `PK(suggestion_id, memory_kind, memory_id)`. `memory_kind`가 아이 기록(`observation_*`·`profile_affinity` 등)이면 개인화 근거로 세고, 문서 행(`activity_doc`)이면 참고로만 센다. `kind='personalized'`인데 아이 기록 행이 0이면 버그다.
+**근거는 `suggestion_evidence` 테이블에 행으로 쌓는다.** `PK(suggestion_id, source_kind, source_id)`. `source_kind`가 아이 기록(`observation_*`·`profile_affinity` 등)이면 개인화 근거로 세고, 문서 행(`activity_doc`)이면 참고로만 센다. `kind='personalized'`인데 아이 기록 행이 0이면 버그다.
 
 **`activity_doc`은 테이블이다.** Food·Growth와 맞춘다. 시드는 YAML로 버전 관리하고 Alembic이 `doc_key` 기준 upsert한다. lint·교차 검수 절차는 [shared/RAG_plan.md](shared/RAG_plan.md) §2에 있다. few-shot을 코드 안 YAML로 두기로 했던 R-1은 이 결정으로 닫힌다.
 
