@@ -1,0 +1,67 @@
+# 임계값 검증용 쌍. 임계값을 고른 뒤 평가에만 쓴다.
+#
+# 🚨 선정용(pairs_tune.txt) 결과를 보기 전에 정답을 확정하고 커밋한다.
+#    이 파일 결과를 보고 임계값을 다시 고르지 않는다 — 그러면 검증이 아니라 두 번째 선정이다.
+#
+# 정답 질문 · 형식 · 규칙은 pairs_tune.txt 와 같다.
+# pairs_tune.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+#
+# ⚠️ same 은 오타 · 띄어쓰기 · 다른 이름이 대부분이다. 이 결과를 "의미가 비슷한 표현을
+#    얼마나 잘 잇는가" 전체로 넓혀 해석하지 않는다.
+#
+# 형식: 도메인 | 정답 | subject A | subject B
+
+# ── food ──
+food | same | 당근 | 홍당무
+food | same | 짜장면 | 자장면
+food | same | 돈가스 | 돈까스
+food | same | 키위 | 참다래
+food | same | 떡볶이 | 떡뽁이
+food | same | 아보카도 | 아보카토
+
+food | near | 당근 | 무
+food | near | 카레 | 짜장
+food | near | 돈가스 | 생선가스
+food | near | 키위 | 망고
+food | near | 떡볶이 | 떡국
+food | near | 오트밀 | 시리얼
+
+food | unrelated | 당근 | 돈가스
+food | unrelated | 키위 | 카레
+
+# ── activity ──
+activity | same | 시소 | 씨소
+activity | same | 모래성 | 모래 성
+activity | same | 탬버린 | 템버린
+activity | same | 흔들말 | 흔들목마
+activity | same | 비석치기 | 비사치기
+activity | same | 윷놀이 | 윳놀이
+
+activity | near | 시소 | 정글짐
+activity | near | 모래성 | 눈사람
+activity | near | 탬버린 | 캐스터네츠
+activity | near | 흔들목마 | 붕붕카
+activity | near | 볼풀 | 에어바운스
+activity | near | 윷놀이 | 제기차기
+
+activity | unrelated | 시소 | 탬버린
+activity | unrelated | 볼풀 | 윷놀이
+
+# ── education ──
+education | same | 곱셈 | 곱하기
+education | same | 뺄셈 | 빼기
+education | same | 국기 | 나라 국기
+education | same | 낱말 카드 | 단어 카드
+education | same | 동시 | 어린이 시
+education | same | 끝말잇기 | 끝말 잇기
+education | same | 수수께끼 | 수수께기
+
+education | near | 곱셈 | 나눗셈
+education | near | 뺄셈 | 분수
+education | near | 국기 | 지도
+education | near | 동시 | 일기
+education | near | 끝말잇기 | 스무고개
+education | near | 수수께끼 | 속담
+
+education | unrelated | 곱셈 | 동시
+education | unrelated | 국기 | 끝말잇기
