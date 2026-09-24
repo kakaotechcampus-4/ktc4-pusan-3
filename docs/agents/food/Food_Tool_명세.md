@@ -131,18 +131,25 @@ menu_catalog
 
 단계 안에서 코드가 주입하는 값: `texture`(4–5 `puree` / 6–8 `puree`·`mashed` / 9–11 `minced`·`soft_pieces`) · 섭취기준 연령군(12–35 `1-2y` / 36+ `3-5y`) · 연령 식품 규칙(12개월 미만 꿀·생우유 금지, 48개월 미만 질식 주의) · 급식 조회는 `daycare_meal` 행이 있는 아이만.
 
-닫힘 조건 추가: `consent_child_health=False` → 전부 `()` · `safety_ok=False` → `meal_recommendation`만 `()`.
+닫힘 조건 추가: `safety_ok=False` → `meal_recommendation`만 `()`.
 
-`allergy_status`(F-4 확정)별 동작 —
+**`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — `allergy_states` 가 빈 튜플로 오고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
 
-| 값 | `health_safety` 행 | 식단 추천 |
-| --- | --- | --- |
-| `none` | 0행 | **연다.** 없다고 확인한 아이다 |
-| `has` | 1행 이상 | 연다 (그 행으로 필터) |
-| `has` | 0행 | `()` — 있다는데 뭔지 모른다 |
-| `unknown` | 무관 | `()` + 등록 안내. 물어본 적이 없어 0행의 뜻을 모른다 |
+Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨이 닫힌다. Growth 는 `growth_review` 만 readout 으로 내려간다.
 
-0행이 "없다고 확인함"인지 "물어본 적 없음"인지는 **행으로 표현할 수 없다.** 그래서 `child`에 둔다.
+`kind='allergy'` 행들의 `state`(F-4 확정)별 동작 —
+
+| 행 상태 | 식단 추천 |
+| --- | --- |
+| 조회 실패 | `()` — 빈 목록으로 숨기지 않는다. **막는 것은 이것뿐** |
+| 0행 | **연다** — 건강정보 동의를 안 해 행이 없다. 알레르기 없는 아이 기준 일반 식단 |
+| `unknown` 이 하나라도 | **연다** + 확인 안내 — 추천은 내보내고 그 항목만 되묻는다 |
+| 전부 `none` | **연다.** 없다고 확인한 아이다 |
+| `active` 있음 | 연다 (그 행들로 필터) |
+
+`child` 를 만들 때 19종이 전부 `unknown` 으로 들어가고 보호자 답에 따라 `none`·`active` 가 된다. 그래서 **"아직 안 물어봤다"가 `unknown` 이라는 값으로 남아** "없다고 확인함"과 갈린다 — `child.allergy_status` 는 필요 없다.
+
+**거르는 것은 `active` 뿐이다.** `unknown` 은 게이트가 아니라 안내 신호다 — 모르는 항목 때문에 추천을 닫으면 답을 미룬 보호자가 서비스를 못 쓴다. 19종 밖은 추가할 때 `active` 로 들어가고, `retracted` 는 필터에서 `none` 과 같다.
 
 `daycare_meal` 라벨은 이 표의 적용을 받지 않는다 — 급식 기록을 고치는 일이라 알레르기 필터가 걸릴 자리가 아니다. 다만 `consent_child_health=False`면 다른 라벨과 같이 닫힌다.
 
@@ -259,7 +266,8 @@ menu_catalog
 | `unsupported.milk_meal` | 이 시기에는 모유나 분유만 먹어요. 이유식은 보통 생후 4~6개월에 시작해요. |
 | `unsupported.infant_nutrient` | 돌 전에는 영양소 분석을 지원하지 않아요. |
 | `blocked.safety` | 알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요. |
-| `blocked.consent` | 식단 추천에는 건강정보 동의가 필요해요. |
+
+| `notice.allergy_unconfirmed` | 아직 확인하지 않은 알레르기 항목이 있다는 안내. **추천과 함께 나간다** |
 | `blocked.allergy_unknown` | 알레르기가 있는지 먼저 알려주시면 걸러서 추천해드릴게요. |
 | `general.reason.toddler` | 또래 아이들이 많이 먹는 메뉴예요. |
 | `general.reason.weaning` | 이 시기 아기들이 많이 먹는 재료예요. |

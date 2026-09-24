@@ -166,7 +166,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 축 | 어디서 |
 | --- | --- |
 | 연령 | `birth_date` → [`연령별_Tool_전략.md`](연령별_Tool_전략.md) |
-| 동의 | `consent(scope=child_health)` 최신 행이 `granted`인가 |
+| 동의 | `consent(scope=child_health)` 최신 행이 `granted`인가. **없을 때의 뜻은 Agent 마다 다르다** — Health 는 전 라벨 닫힘, Growth 는 `growth_review` 만 readout, Food 는 닫히지 않고 `health_safety`·`child_growth_log` 를 못 읽는 상태로 간다 |
 | 안전 | `health_safety` 조회 성공 여부 |
 | 데이터 | 측정 건수 · 급식 행 · 공지 유무 |
 | 환경 | 위치 권한 · 외부 API 가용 |

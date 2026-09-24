@@ -58,8 +58,7 @@
 | deleted_at | timestamptz | nullable. 값이 있으면 전원 접근 차단 |
 | deleted_by | uuid | FK → parent.id, nullable, ON DELETE SET NULL |
 | gender | — | **수집하지 않는다.** 성장 판정 제거(2026-09-22)로 소비처가 사라졌다 |
-| allergy_status | enum | `none` / `has` / `unknown`, NOT NULL, default `unknown`. **F-4.** `health_safety` 0행이 "없다고 확인함"인지 "물어본 적 없음"인지를 가른다 — 행으로는 표현할 수 없다 |
-| gestational_weeks | smallint | nullable. 조산(37주 미만)이면 24개월까지 교정연령 계산 |
+| gestational_weeks | smallint | nullable. **재태주수.** 37주 미만이면 조산아로 보고 24개월까지 교정연령을 함께 계산한다 — `app/rules/age.py` 의 `life_stage(gestational_weeks=...)` 입력이다. 없으면 만삭으로 간주한다. 32주 조산·생후 4개월이면 출생 후로는 이유기인데 교정으로는 아직 수유기라, 이 값이 없으면 이유식 안내가 두 달 일찍 열린다. **온보딩에서 받아야 한다** — 조산 여부와 몇 주 만에 태어났는지 |
 
 #### child_growth_log (키·몸무게 로그) — 이름·타입 확정 2026-09-22
 
@@ -193,7 +192,8 @@
 | source_notice_id | uuid | FK → `notice.id`, nullable. 값이 존재하면 기관 공지 기반 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
-- `health` 에서는 다음 필드 제외 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
+- `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
+- `routine` 에서는 **승격 기계장치 세 칸만 제외**: `affinity_id` · `embedding` · `strong_signals`. `subject` 와 `polarity` 는 남는다 — routine 은 승격되지 않지만 **관찰 자체는 티어 3 근거로 인용된다** (`routine_coaching` 의 근거가 `observation_routine` 이다). `common/evidence.py` 의 `ObservationRow` 가 이 두 칸을 NOT NULL 로 요구한다 (2026-09-23 결정)
 
 ### 1. observation_food (섭취·영양)
 
@@ -238,6 +238,10 @@
 
 아이의 반복적 생활 행동, 자립 수행, 생활 습관 또는 사회적 생활기술에 대한 관찰
 
+**승격 대상이 아니다.** `ObservationCommon` 중 `affinity_id` · `embedding` · `strong_signals` 를 상속하지 않는다 — 이 세 칸은 `profile_affinity` 로 올리기 위한 장치다. 생활 습관은 선호가 아니라 수행이라 성향으로 굳히지 않는다.
+
+다만 `subject` 와 `polarity` 는 남긴다. Growth 의 `routine_coaching` 이 이 관찰을 **티어 3 근거로 인용**하기 때문이다 — 승격은 안 하지만 근거로는 쓰는 자리다. `health`(근거도 `rank_evidence` 를 안 거친다)와 다르다.
+
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | subject | text | 공통 컬럼. 정규화된 행동 대상. `"양치하기"`, `"손톱 물어뜯기"`, `"인사하기"` |
@@ -281,7 +285,7 @@
 | child_id | uuid | NOT NULL. FK → `child.id`, `ON DELETE CASCADE` |
 | merge_key | text | NOT NULL, 사람이 읽는 프로필 라벨. 자유롭게 변경 가능 |
 | embedding | vector(1536) | nullable, `merge_key`를 임베딩한 벡터. 병합 후보 검색용 |
-| domain | text | NOT NULL. `food` / `activity` / `education` / `routine` |
+| domain | text | NOT NULL. `food` / `activity` / `education`. **`routine` 은 없다** — 승격 대상이 아니다 (2026-09-23) |
 | state | text | NOT NULL, DEFAULT `candidate`. `candidate / confirmed / archived` |
 | polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL |
 | strength | real | NOT NULL, DEFAULT `0.3`. 프로필 강도 |
@@ -313,7 +317,7 @@
 | reactions | text[] | 알레르기 반응 목록, 예: ["두드러기","호흡곤란"], default '{}' |
 | management | jsonb | 만성질환 관리 정보. 예: `{insulin:"식전", carb_limit_g:150, meds:[…]}`, NOT NULL, default '{}' |
 | notes | text | 보호자 자유 기술 |
-| state | enum | `active` / `retracted`, NOT NULL, DEFAULT `active`. 감쇠 없음 — 보호자만 `retracted` 로 바꾼다 |
+| state | enum | `active` / `retracted` / `none` / `unknown`, NOT NULL, DEFAULT `unknown`. 감쇠 없음 — 보호자만 바꾼다. `none` 은 "확인했고 없다", `unknown` 은 "아직 못 물어봤다" 다 (2026-09-23 명성님 확인) |
 | created_by | uuid | nullable. FK → `parent.id`, `ON DELETE SET NULL`. 최초 등록 보호자 |
 | updated_by | uuid | nullable. FK → `parent.id`, `ON DELETE SET NULL`. 마지막 수정 보호자 |
 | created_at | timestamptz | default now() |
@@ -321,6 +325,18 @@
 
 제약:
 
+- **`child` 를 만들 때 `kind='allergy'` 19행을 전부 `state='unknown'` 으로 넣는다.** `allergen_term` 의 식약처 표시 대상 19종이다.
+  보호자가 온보딩에서 답하면 각 행이 `none`(없다) 또는 `active`(있다) 로 바뀐다.
+  **19종 밖의 알레르기**(특정 약물 등)는 보호자가 행을 추가하는 것이고, 추가 자체가 "있다" 이므로 `active` 로 들어간다.
+- **거르는 것은 `state='active'` 뿐이다** (F-4). `unknown` 은 추천을 막지 않는다 — 아직 안 물어본 항목일 뿐이라,
+  추천은 그대로 내보내고 "이 알레르기가 있는지 확인해 주세요" 안내를 함께 띄운다.
+  모르는 항목 때문에 추천을 통째로 닫으면 답을 미룬 보호자가 서비스를 못 쓴다.
+- **0행도 추천을 막지 않는다.** 건강정보 동의를 안 한 보호자는 이 테이블에 행이 쌓이지 않는데,
+  그렇다고 식단을 못 받으면 안 된다 — 알레르기 없는 아이 기준의 일반 식단으로 간다. `active` 행이 없으니 거를 것도 없다.
+- **막는 것은 조회 실패 하나다.** 실패를 빈 목록으로 숨기지 않는다 (루트 CLAUDE.md §2).
+- **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고, 나머지 `kind`(만성질환·식이제한·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
+  비대칭에는 이유가 있다 — 알레르기는 안전 필터의 입력이라 "모름"과 "없음"을 갈라야 하고, 나머지는 추천을 막는 값이 아니라 관리 정보다.
+- 필터에서 `retracted` 는 `none` 과 같다. 보호자가 취소한 것이고 지금은 해당 없음이다. 구분은 이력을 위한 것이다.
 - `UNIQUE(child_id, kind, label)`
 - 안전 조회는 항상 `state='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
@@ -524,13 +540,11 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 | 요청 | 어디에 | 올린 Agent |
 | --- | --- | --- |
-| `child.allergy_status` (`none`/`has`/`unknown`) | Child §child | Food (F-4) |
 | `child.gestational_weeks smallint` | Child §child | Food · Health |
 | `child.gender` 수집하지 않음 | Child §child | Health (성장 판정 제거로 철회) |
 | `child_growth_log` — `numeric(4,1)` · `check_date date NOT NULL` | Child §child_growth_log | Growth (G-5) |
 | `suggestion.kind` (`general`/`personalized`) | Suggestion §suggestion | Food · Growth |
 | `source_refs` 제거 → `suggestion_evidence` | Suggestion §suggestion_evidence | Food · Growth |
-| `profile_affinity.domain` 에 `routine` | Memory/Profile | Growth |
 
 ### 아직 위 표에 없는 것
 
@@ -581,24 +595,26 @@ PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memor
 
 | # | 항목 | 이 문서 | ORM | |
 | --- | --- | --- | --- | --- |
-| 1 | `profile_affinity.domain` | `food / activity / education / routine` | `MemoryDomain` 에 `routine` **없음** | 🚨 |
+| 1 | `profile_affinity.domain` | `food / activity / education` | 같음 | ✅ 문서 쪽이 넓었고 좁혔다 |
 | 2 | `suggestion.kind` | `general` / `personalized` NOT NULL | 컬럼 없음 | 🚨 |
 | 3 | 추천 근거 | `suggestion_evidence` 테이블 | `source_refs` jsonb 유지 + 그 위에 조회 API | 🚨 |
 | 4 | `suggestion.agent` | `food / activity / growth / health` | `education` | ⚠️ |
-| 5 | `child.allergy_status` · `gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
+| 5 | `child.gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
 | 6 | `observation_health` 체온 | 위 절에서 신설 요청 | 없음 | ⚠️ |
 | 7 | `notice` | FK 대상 | 테이블 없음 → `source_notice_id` 가 FK 없는 plain uuid | ⚠️ |
-| 8 | `health_safety.state` | `active` / `retracted` | `active` / `retracted` | ✅ 문서 쪽 오류였고 고쳤다 |
+| 8 | `health_safety.state` | `active` / `retracted` / `none` / `unknown` | `active` / `retracted` | ⚠️ ORM 에 두 값이 없다 |
 
-**1번이 제일 급하다.** `ObservationRoutine` 은 `ObservationCommon`(= `affinity_id` 포함)을 상속하므로 승격 대상인데,
-`MemoryDomain` 에 `routine` 이 없어 Curator 가 승격할 자리가 없다. 열거형 값 하나 추가로 끝난다.
+**1번은 닫혔다.** 문서가 `routine` 을 넣고 있었는데 **routine 은 승격 대상이 아니다**(2026-09-23, 명성님 확인).
+ORM 이 처음부터 맞았다. `observation_routine` 은 `affinity_id` · `embedding` · `strong_signals` 를 빼고,
+`subject` · `polarity` 만 남겨 티어 3 근거로는 계속 쓴다 — 위 Memory/Observation §5 를 볼 것.
 
 **4번은 BE 잘못이 아니다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이라
 ORM 이 루트 문서를 정확히 따랐다. 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
 남은 것은 `SuggestionAgent` enum 값과 마이그레이션뿐이다.
 관찰 테이블 이름 `observation_education` 은 그대로 둔다.
 
-**8번은 고쳤다.** `active / retracted / none / unknown` 이 한 칸에 같이 적혀 있었다. F-4 를 `child.allergy_status` 로 닫기 전의 흔적이고, ORM 이 맞다.
+**8번은 되돌렸다.** 한때 `active` / `retracted` 두 값으로 좁혔는데, `none` · `unknown` 은 알레르기 유무를 가르려고 넣어 둔 것이었다 (2026-09-23 명성님 확인).
+ORM 에 두 값을 더해야 한다. `child.allergy_status` 는 **뺐다** — 알레르기 유무는 `kind='allergy'` 행들의 state 로 가른다 (위 Saftey 절).
 
 ### 이 문서가 이미 미결로 적어 둔 것 (ORM 도 같음)
 

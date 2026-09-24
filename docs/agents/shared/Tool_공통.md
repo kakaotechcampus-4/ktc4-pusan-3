@@ -55,7 +55,7 @@ Food 게이팅에서 `toddler`와 `preschool`은 tool 묶음이 같고 **섭취�
 Gate(stage: LifeStage,
      consent_child_health: bool,                              # consent(child_health) 최신 행이 granted
      safety_ok: bool,                                         # health_safety 조회 성공 여부
-     allergy_status: Literal["none", "has", "unknown"],       # child.allergy_status (F-4)
+     allergy_states: tuple[SafetyState, ...],                 # kind='allergy' 행들의 state (F-4)
      growth_log_count: int,
      has_location: bool, outdoor_ok: bool,
      data: DataReady)

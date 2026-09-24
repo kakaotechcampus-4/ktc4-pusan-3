@@ -8,15 +8,15 @@
 
 | 이름 | 월령 | 비고 |
 | --- | --- | --- |
-| **C48 (기본)** | 48개월 | `allergy_status=none` · 최근 7일 기록 충분(10행 이상) · 급식 데이터 있음 · 동의 있음 |
+| **C48 (기본)** | 48개월 | `kind='allergy'` 19행 전부 `none` · 최근 7일 기록 충분(10행 이상) · 급식 데이터 있음 · 동의 있음 |
 | C2 | 2개월 | 수유기 |
 | C8 | 8개월 | 이유기 |
 | C30 | 30개월 | 유아식 · 섭취기준 1–2세 · 질식 주의 구간 |
 | C48-milk | 48개월 | `health_safety`에 **우유 알레르기** 등록 |
-| C48-noconsent | 48개월 | `child_health` 동의 **철회** |
+| C48-noconsent | 48개월 | `child_health` 동의 **철회** — `health_safety`·`child_growth_log` 를 못 읽는다 |
 | C48-safetyfail | 48개월 | `health_safety` 조회가 **예외로 실패** |
-| C48-unknown | 48개월 | `allergy_status='unknown'` · `health_safety` 0행 |
-| C48-has0 | 48개월 | `allergy_status='has'` · `health_safety` **0행** |
+| C48-unconfirmed | 48개월 | `kind='allergy'` 행에 `unknown` 이 섞여 있음 (아직 안 물어본 항목) |
+| C48-norows | 48개월 | `kind='allergy'` **0행** — 건강정보 동의를 안 해 행이 안 쌓인 경우 |
 | C48-empty | 48개월 | 기록 0건 · affinity 0행 (**Curator 없음**) |
 | C48-narrow | 48개월 | 알레르기 다수 — 안전 필터 후 후보 **2개**만 남음 |
 | C48-pool2 | 48개월 | 후보 **풀 자체가 2개** |
@@ -154,14 +154,14 @@
 
 | 입력 | 픽스처 | 호출 | 기대 | 실패 |
 | --- | --- | --- | --- | --- |
-| T01 | C48-noconsent | **0** | `blocked.consent` 글자 그대로 | 모델 호출 · 일반 추천으로 우회 |
-| T11 | C48-noconsent | **0** | `blocked.consent` | 모델 호출 |
-| T09 | C48-noconsent | **0** | 급식 조회까지 닫힘 (동의는 전 라벨을 닫는다) | 급식만 보여줌 |
+| T01 | C48-noconsent | 1 | **추천이 나간다.** 알레르기 필터 없는 일반 식단 | 동의 없다고 `blocked.consent` 로 막기 |
+| T11 | C48-noconsent | 1 | 영양소 분석 진행. 권장 열량은 **연령군 일반값**(측정을 못 읽는다) | 측정 없이 열량을 지어내기 · `blocked.consent` 로 막기 |
+| T09 | C48-noconsent | 1 | 급식 조회는 그대로 — 급식표는 건강정보가 아니다 | 동의로 닫기 |
 | T01 | C48-safetyfail | **0** | `blocked.safety` 글자 그대로 · 포트 예외가 `SAFETY_UNAVAILABLE`로 올라옴 | 모델 호출 · **빈 알레르기 목록으로 진행** · 조회 실패를 0행으로 숨김 |
 | T11 | C48-safetyfail | 1 | 영양소 분석은 **진행**된다 (`safety_ok=False`는 식단 추천만 닫는다) | 영양 분석까지 중단 |
-| T01 | C48-unknown | **0** | `blocked.allergy_unknown` 글자 그대로 | "알레르기 없음"으로 간주하고 추천 |
-| T01 | C48-has0 | **0** | `blocked.allergy_unknown` — 있다는데 뭔지 모른다 | 필터 없이 추천 |
-| T01 | C48 (`allergy_status='none'`) | 1 | **0행이어도 정상 추천** | 0행을 "모름"으로 읽고 막기 |
+| T01 | C48-unconfirmed | 1 | 추천이 나가고 `notice.allergy_unconfirmed` 가 함께 붙는다 | 추천을 막기 · 안내 없이 추천만 |
+| T01 | C48-norows | 1 | 알레르기 없는 아이 기준 일반 식단. 안내 문구 없음 | 0행을 막기 |
+| T01 | C48 (19행 전부 `none`) | 1 | **정상 추천** | `none` 을 "모름"으로 읽고 막기 |
 | T01 | C48-empty | 1 | `kind="general"` · `reason`이 `general.reason.toddler`와 글자 단위로 같음 · `source_refs` **0행** | `personalized` · 모델이 쓴 이유가 남아 있음 |
 | T11 | C48-empty | 1 | `nutrient.insufficient` + 끼니 수 · `findings` 없음 | 구간 판정 서술 |
 | T01 | 급식 API 실패 | 1 | 캐시만 사용 · "급식 정보를 못 찾았어요" | 급식 메뉴 생성 |
@@ -238,7 +238,7 @@ Food가 직접 쓰는 유일한 자리이고, 승인 게이트가 없다. 기본
 | INSERT 시도 | C48-dc + "내일 급식은 카레래" (없는 날) | `NOT_FOUND` · **INSERT 0건** | 없는 급식을 지어내 행 생성 |
 | slot 모호 | T44에 날짜만 붙여 "오늘 급식 바꿔줘" | 그날 행이 둘(점심·오후간식)이라 `daycare.slot_ambiguous` | 점심으로 임의 선택 |
 | 이유기 아이 | C8 + `daycare_meal` 있음 | **열린다** — 단계가 아니라 행으로 여닫는다 | 단계로 닫음 |
-| 동의 철회 | C48-noconsent + T41 | `blocked.consent` · 모델 0회 | 갱신 진행 |
+| 동의 철회 | C48-noconsent + T41 | 갱신 진행 — 급식 기록은 건강정보가 아니다 | `blocked.consent` 로 막기 |
 | 미래 삭제 후 | T43 뒤 `lookup_daycare_menu` | 그날이 목록에서 빠짐 | 빈 메뉴로 남음 |
 
 **승인 게이트가 없다는 것을 고정한다.** T41~T43·T45~T48에서 확인 모달이 뜨면 실패다 — 게이트는 캘린더 쓰기와 건강·알레르기 확정 두 곳뿐이다.

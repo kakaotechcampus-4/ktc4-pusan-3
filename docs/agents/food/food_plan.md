@@ -29,7 +29,7 @@
 
 | # | 결정 | 없으면 | 담당 |
 | --- | --- | --- | --- |
-| 1 | `child.allergy_status` (`none`/`has`/`unknown`) | **알레르기 없는 아이가 추천을 영영 못 받음** | PM · BE |
+| 1 | `health_safety` 온보딩 19행 생성 + `state` 에 `none`·`unknown` | **알레르기 없는 아이가 추천을 영영 못 받음** | PM · BE |
 | 2 | 온보딩에 `child_health` 동의 단계 | 알레르기 수집이 법적으로 성립 안 함 | PM |
 | 3 | `suggestion`에 `kind` · `task_type` · `content jsonb` · `reference_refs` | "또래 기준" 표시 불가 | BE |
 | 4 | 급식 경로 = **기관 공지 OCR 우선** + 대체·제외 메뉴 확인 흐름(`intake_daily` 급식 행) | 유아기 tool 절반이 죽음 · 급식을 먹은 것으로 잘못 셈 | PM · OCR |
@@ -67,7 +67,7 @@ DoD: `test_evidence_ranking.py` 통과 · `//30` 나눗셈 0건 · import-linter
 4) food_doc
 6) intake_daily
 6a) daycare_meal
-7) child.allergy_status / gestational_weeks   (S0-1)
+7) health_safety 온보딩 19행 / child.gestational_weeks   (S0-1)
 8) suggestion 컬럼 추가                        (S0-3)
 ```
 
@@ -128,7 +128,7 @@ app/agents/food/
 | `meal_recommendation` | `()` | 3 | 5 |
 | `nutrient_analysis` | `()` | `()` | 7 |
 
-추가 닫힘: 동의 없음 → 전부 · `safety_ok=False` → 식단 추천 · `allergy_status='has'` + 등록 0건 → 식단 추천.
+추가 닫힘: `safety_ok=False` → 식단 추천. 동의 없음은 닫지 않는다 — `health_safety`·`child_growth_log` 를 못 읽을 뿐이라 알레르기 필터 없는 일반 식단에 연령군 일반값 열량으로 간다. `kind='allergy'` 가 0행이거나 `unknown` 이 섞인 것도 닫지 않는다.
 
 DoD: mock `run()`이 포트·클라이언트를 **건드리지 않고** `DomainAgentResult` 반환 · `test_food_registry.py` 통과.
 
