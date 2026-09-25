@@ -193,7 +193,7 @@
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
-- `routine` 에서는 **승격 기계장치 세 칸만 제외**: `affinity_id` · `embedding` · `strong_signals`. `subject` 와 `polarity` 는 남는다 — routine 은 승격되지 않지만 **관찰 자체는 티어 3 근거로 인용된다** (`routine_coaching` 의 근거가 `observation_routine` 이다). `common/evidence.py` 의 `ObservationRow` 가 이 두 칸을 NOT NULL 로 요구한다 (2026-09-23 결정)
+- `routine` 에서는 **승격 기계장치 세 칸만 제외**: `affinity_id` · `embedding` · `strong_signals`. `subject` 와 `polarity` 는 남는다 — routine 은 승격되지 않지만 **관찰 자체는 티어 3 근거로 인용된다** (`routine_coaching` 의 근거가 `observation_routine` 이다). `common/evidence.py` 의 `ObservationRow` 가 이 두 칸을 NOT NULL 로 요구한다 (2026-09-23 결정). 테이블은 아직 세 칸을 다 들고 있다 — 아래 대조표 9번
 
 ### 1. observation_food (섭취·영양)
 
@@ -270,7 +270,7 @@
 - `health`는 `ObservationCommon`을 상속하지 않고 필요한 공통 필드를 직접 선언 (승격 파이프라인 밖이라서)
 - `observation_food.amount`/`reaction`: 노션엔 enum으로 있었으나 값 집합이 아직 미확정이라 text로 구현, 검증은 애플리케이션 레이어
 - `observation_health.observed_time`: 노션엔 default now()로 있었으나 구현은 default 없이 nullable
-- `observation_routine`: 노션 원안 그대로 구현 (ObservationCommon 상속 + `routine_category`/`context`/`assistance_level`/`completion_status`/`trigger`).
+- `observation_routine`: 노션 원안 그대로 구현 (ObservationCommon 상속 + `routine_category`/`context`/`assistance_level`/`completion_status`/`trigger`). 승격 세 칸이 그대로 남아 있다 — 아래 대조표 9번
 - 인덱스: 5테이블 전부에 `(child_id, status)` 복합 인덱스 (PR #130). Agent 의 `memory.search` 가 아이별로 `status='active'` 를 거르는 경로다.
 
 **미결**: `observed_range` 빈 범위·무한 상한 금지 CHECK는 아직 없음. `source_notice_id` FK는 `notice` 도메인 생성 후 추가
@@ -611,23 +611,28 @@ PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memor
 | 1 | `profile_affinity.domain` | `food / activity / education` | 같음 | ✅ 문서 쪽이 넓었고 좁혔다 |
 | 2 | `suggestion.kind` | `general` / `personalized` NOT NULL | 컬럼 없음 | 🚨 |
 | 3 | 추천 근거 | `suggestion_evidence` 테이블 (2026-09-23 스키마 확정) | `source_refs` jsonb 유지 + 그 위에 조회 API | 🚨 |
-| 4 | `suggestion.agent` | `food / activity / growth / health` | `education` | ⚠️ |
+| 4 | `suggestion.agent` | `food / activity / growth / health` | `education` | ⚠️ 마이그레이션 필요 |
 | 5 | `child.gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
 | 6 | `observation_health` 체온 | 위 절에서 신설 요청 — `temperature` · `measured_at` · `measure_site` | 없음 | ⚠️ |
 | 7 | `notice` | FK 대상 | 테이블 없음 → `source_notice_id` 가 FK 없는 plain uuid | ⚠️ |
 | 8 | `health_safety.state` | `active` / `retracted` / `none` / `unknown` | `active` / `retracted` | ⚠️ ORM 에 두 값이 없다 |
+| 9 | `observation_routine` 의 승격 세 칸 | `affinity_id` · `embedding` · `strong_signals` 없음 | `ObservationCommon` 을 통째로 상속해 세 칸 다 있음 | ⚠️ 마이그레이션 필요 |
 
 **1번은 닫혔다.** 문서가 `routine` 을 넣고 있었는데 **routine 은 승격 대상이 아니다**(2026-09-23, 명성님 확인).
-ORM 이 처음부터 맞았다. `observation_routine` 은 `affinity_id` · `embedding` · `strong_signals` 를 빼고,
-`subject` · `polarity` 만 남겨 티어 3 근거로는 계속 쓴다 — 위 Memory/Observation §5 를 볼 것.
+`profile_affinity.domain` 은 ORM 이 처음부터 맞았다. `observation_routine` 은 `subject` · `polarity` 만 남기고 `affinity_id` · `embedding` · `strong_signals` 를 뺀다 — 티어 3 근거로는 계속 쓰기 때문이다 (위 Memory/Observation §5).
+테이블 쪽은 아직 안 맞춰졌다 — 아래 9번이 그것이다.
 
-**4번은 BE 잘못이 아니다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이라
-ORM 이 루트 문서를 정확히 따랐다. 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
-남은 것은 `SuggestionAgent` enum 값과 마이그레이션뿐이다.
-관찰 테이블 이름 `observation_education` 은 그대로 둔다.
+**4번은 BE 잘못이 아니다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이어서 ORM 이 루트 문서를 정확히 따랐고, 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
+남은 것은 `SuggestionAgent` enum 값과 마이그레이션이다 — 값이 VARCHAR + CHECK 로 들어가 있어 CHECK 교체가 필요하고, 기존 행의 `education` 도 같이 옮겨야 한다.
+관찰 테이블 이름 `observation_education` 은 그대로 둔다 — `growth` 가 읽는 테이블은 `observation_education` 과 `observation_routine` 둘이라 Agent 이름이 테이블 이름을 따라갈 수 없다.
 
 **8번은 되돌렸다.** 한때 `active` / `retracted` 두 값으로 좁혔는데, `none` · `unknown` 은 알레르기 유무를 가르려고 넣어 둔 것이었다 (2026-09-23 명성님 확인).
 ORM 에 두 값을 더해야 한다. `child.allergy_status` 는 **뺐다** — 알레르기 유무는 `kind='allergy'` 행들의 state 로 가른다 (위 Saftey 절).
+
+**9번 — 세 칸을 떼면 두 곳이 같이 움직인다.** 컬럼만 지우면 깨지는 자리를 찾아 둔다 (2026-09-24 확인, 미적용).
+
+- `domains/memory/observation/page_observations.sql` — `observation_routine` 에서 `affinity_id` 를 SELECT 한다. `observation_health` 처럼 `NULL::uuid` 로 바꾸는 방향
+- `agents/memory/schemas/common.py` — `ObservationRoutineCreate` 가 `PromotableCreateArgs` 를 상속해 모델에게 `strong_signals` 칸을 열어 둔다. tool 은 `model_dump()` 를 그대로 리포지토리로 내려보내서, 컬럼이 없어지면 `_validate_fields` 가 routine 기록을 전부 거절한다
 
 ### 이 문서가 이미 미결로 적어 둔 것 (ORM 도 같음)
 
