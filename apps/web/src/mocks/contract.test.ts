@@ -1325,9 +1325,9 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
       expect(draft).not.toHaveProperty("id");
       expect(draft).not.toHaveProperty("status");
     }
-    // 🚨 **날짜를 읽은 항목마다 한 장이다** — 단수였을 때는 첫 항목만 일정이 됐다.
-    const dated = (parsed.entries ?? []).filter((e) => e.date !== null && e.kind === "event");
-    expect(saved.drafts.length).toBeGreaterThanOrEqual(Math.min(dated.length, 1));
+    // 🚨 **날짜를 읽은 `event` 항목마다 정확히 한 장이다** — 단수였을 때는 첫 항목만 일정이 됐다.
+    const dated = (parsed.entries ?? []).filter((e) => e.kind === "event" && e.date !== null);
+    expect(saved.drafts).toHaveLength(dated.length);
     expect(saved.calendar_date).not.toBeNull();
   });
 
@@ -1336,6 +1336,27 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     try {
       const parsed = await parsedOf(await upload());
       expect((parsed.entries ?? []).length).toBeGreaterThan(20);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("🚨 식단표는 일정 초안을 만들지 않는다 — 급식은 일정이 아니다", async () => {
+    setScenario("photo_meal_plan");
+    try {
+      const runId = await upload();
+      const parsed = await parsedOf(runId);
+
+      const saved = await commitPhotoRun(runId, {
+        lane: "document",
+        entries: checked(parsed.entries ?? []),
+        attach_to_calendar: true,
+      });
+
+      // 급식 항목은 전부 날짜가 있다. `kind` 를 안 보면 여기서 초안 20장이 나오고,
+      // 화면에는 승인 버튼이 스무 개 선다.
+      expect(saved.drafts).toHaveLength(0);
+      expect(saved.observations.length).toBeGreaterThan(0);
     } finally {
       setScenario("default");
     }

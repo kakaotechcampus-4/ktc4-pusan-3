@@ -456,6 +456,7 @@ function SavedResult({
       <EventDraftList
         childId={childId}
         incoming={result.drafts}
+        origin="photo"
         found="사진에서 일정을 읽어냈어요."
       />
 

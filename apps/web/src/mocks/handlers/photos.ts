@@ -368,14 +368,16 @@ export const photoHandlers = [
     const attachedDate = body.lane === "document" ? when : run.date;
 
     /**
-     * 🚨 **날짜를 읽어낸 항목마다 초안 한 장이다.** 알림장 한 장에 일정이 여러 개 적혀 있는데,
-     *    계약서 §09 의 `event`(단수)로는 첫 항목만 일정이 되고 나머지는 조용히 사라졌다.
+     * 🚨 **날짜를 읽어낸 `event` 항목마다 초안 한 장이다.** 알림장 한 장에 일정이 여러 개 적혀
+     *    있는데, 계약서 §09 의 `event`(단수)로는 첫 항목만 일정이 되고 나머지는 사라졌다.
+     * 🚨 **`kind` 를 반드시 본다.** 날짜만 보고 거르면 **한 달치 식단표가 초안 21장**이 된다 —
+     *    급식(`meal`)은 전부 날짜가 있고, 그건 일정이 아니라 그날의 식사 기록이다.
      * 🚨 **아무것도 저장하지 않는다.** 저장은 보호자가 카드에서 제출할 때 한 번이다 (게이트 ㉠).
      */
     const drafts: EventDraft[] =
       body.lane === "document" && attaching
         ? entries
-            .filter((entry) => entry.date !== null)
+            .filter((entry) => entry.kind === "event" && entry.date !== null)
             .map((entry) => ({
               draft_id: `d_photo_${entry.id}`,
               op: "create" as const,

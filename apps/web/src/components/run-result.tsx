@@ -212,6 +212,7 @@ export function RunResult({
       <EventDraftList
         childId={childId}
         incoming={state.drafts}
+        origin="input"
         found="적어주신 말에서 일정을 찾았어요."
       />
 

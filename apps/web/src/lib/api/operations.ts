@@ -169,14 +169,22 @@ export function submitEventDraft(
 }
 
 /**
- * 수정 초안을 반영한다. 🚨 **이것도 캘린더 쓰기라 게이트 ㉠ 이다** — 다만 키를 받지 않는다.
- * `items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같기 때문이다 (`idempotency.ts` 참고).
+ * 수정 초안을 반영한다. 🚨 **이것도 캘린더 쓰기라 게이트 ㉠ 이고, 키를 받는다.**
+ *
+ * 🚨 한동안 키 없이 뒀다 — `items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같다고 봤다.
+ *    **`item_id: null` 인 새 준비물에는 그 말이 성립하지 않는다:** 재시도가 같은 null 행을 다시
+ *    보내는데 서버는 그게 이미 들어간 것인지 알 방법이 없다. 서버가 저장하고 응답만 유실되면
+ *    카드가 실패로 보이고, 보호자가 한 번 더 누르면 **"모자" 가 두 줄** 들어간다.
  *
  * ⚠️ 경로가 미정이다 (`docs/event/event-draft-flow-v1.md` §6 — op 별로 가른다는 것까지만 정했다).
+ *    🚨 그래서 `idempotentPath` 표에는 **아직 넣지 않았다** — 그 표는 POST 차단과 계약 테스트
+ *    ①(키 없으면 400)을 함께 돌리는데, `POST /events/{eid}` 는 존재하지 않는 경로다.
+ *    경로가 확정되면 표로 옮긴다.
  */
 export function updateEventDraft(
   eventId: string,
   body: SubmitEventBody,
+  idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
-  return api.patch(`/events/${eventId}`, body);
+  return api.patch(`/events/${eventId}`, body, { idempotencyKey });
 }

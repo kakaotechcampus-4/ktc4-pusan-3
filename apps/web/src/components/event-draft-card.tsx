@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -95,6 +95,19 @@ export function EventDraftCard({
   const [event, setEvent] = useState<EventDraftFields>(() => draft.event);
   const [items, setItems] = useState<EventDraftItem[]>(() => draft.items);
   const [newItem, setNewItem] = useState("");
+  /**
+   * 🚨 **넣은 뒤에 보여줄 것은 로컬 값이 아니라 보낸 값이다.** 제출이 나가는 동안에도 칸은
+   *    살아 있어서, 기다리는 사이 날짜를 바꾸면 "넣었어요" 카드가 **캘린더에 안 들어간 값**을
+   *    보여준다 — 승인 게이트가 자기가 쓴 것과 다른 것을 말하게 된다.
+   */
+  const [sent, setSent] = useState<{ event: EventDraftFields; items: EventDraftItem[] } | null>(
+    null,
+  );
+  /**
+   * 🚨 **"하루 종일" 을 껐다 켜도 원래 시각이 살아 있어야 한다.** 켤 때 `starts_at` 을 자정으로
+   *    덮어썼더니, 끄는 순간 그 자정을 도로 읽어서 10시에 온 초안이 0시가 됐다.
+   */
+  const originalStartsAt = useRef(draft.event.starts_at);
 
   const date = seoulDate(event.starts_at);
   const missingDate = date === "";
@@ -117,6 +130,7 @@ export function EventDraftCard({
    *    이 칩이 카드마다 결과를 말하는 유일한 표시다).
    */
   if (done) {
+    const shown = sent ?? { event, items };
     return (
       <Card>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -127,10 +141,10 @@ export function EventDraftCard({
             넣었어요
           </span>
         </div>
-        <p className="text-body text-ink mt-3">{event.title}</p>
-        {event.starts_at ? (
+        <p className="text-body text-ink mt-3">{shown.event.title}</p>
+        {shown.event.starts_at ? (
           <p className="text-body-sm text-ink-muted mt-1">
-            {formatEventTime(event.starts_at, event.all_day)}
+            {formatEventTime(shown.event.starts_at, shown.event.all_day)}
           </p>
         ) : null}
       </Card>
@@ -178,9 +192,7 @@ export function EventDraftCard({
           placeholder="날짜를 골라주세요"
           hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
           value={date}
-          onChange={(next) =>
-            patch({ starts_at: withSeoulDate(event.starts_at, next, event.all_day) })
-          }
+          onChange={(next) => patch(moveToDate(event, next, originalStartsAt.current))}
           fromDate={FROM_DATE}
           toDate={TO_DATE}
         />
@@ -190,7 +202,12 @@ export function EventDraftCard({
           onChange={(checked) =>
             patch({
               all_day: checked,
-              starts_at: withSeoulDate(event.starts_at, date, checked),
+              // 🚨 켤 때 자정으로 덮되, 끌 때는 **처음 온 시각**을 되살린다.
+              starts_at: withSeoulDate(
+                checked ? event.starts_at : originalStartsAt.current,
+                date,
+                checked,
+              ),
             })
           }
           label="하루 종일"
@@ -258,16 +275,32 @@ export function EventDraftCard({
                 배너를 하나 더 세우지 않는다 — 배너가 쌓이면 그때부터 아무도 안 읽는다.
                 색은 `caution` 을 쓰되 배너가 아닌 **글자 한 덩이**다. 이 버튼이 게이트라 그 색을
                 쓸 수 있고(§3 — 게이트 2곳 전용), 카드 면 위라 `caution-ink` 가 아니라 `caution` 이다. */}
-            <p className={cn("text-body-sm mb-3", canSubmit ? "text-caution" : "text-ink-subtle")}>
-              {missingDate
-                ? "날짜를 골라주셔야 넣을 수 있어요."
-                : (lockReason ?? "누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.")}
-            </p>
+            {/* 🚨 **막는 것이 둘이면 둘 다 말한다.** 날짜만 먼저 말하면 보호자가 그것을 채운 뒤에야
+                두 번째 관문을 알게 된다 — 제안 경로는 일자가 늘 비어 있어서 늘 그랬다. */}
+            <div
+              className={cn(
+                "mb-3 flex flex-col gap-1",
+                canSubmit ? "text-caution" : "text-ink-subtle",
+              )}
+            >
+              {lockReason ? <p className="text-body-sm">{lockReason}</p> : null}
+              {missingDate ? (
+                <p className="text-body-sm">날짜를 골라주셔야 넣을 수 있어요.</p>
+              ) : null}
+              {canSubmit ? (
+                <p className="text-body-sm">
+                  누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.
+                </p>
+              ) : null}
+            </div>
             <Button
               variant="approve"
               disabled={!canSubmit}
               aria-busy={busy}
-              onClick={() => onSubmit({ event, items })}
+              onClick={() => {
+                setSent({ event, items });
+                onSubmit({ event, items });
+              }}
             >
               {busy ? <Spinner /> : null}
               {busy ? "넣는 중이에요" : "확인했어요, 캘린더에 넣을게요"}
@@ -351,7 +384,9 @@ function Diff({
   if (before.title !== event.title) {
     rows.push({ term: "제목", from: before.title, to: event.title });
   }
-  if (before.starts_at !== event.starts_at || before.all_day !== event.all_day) {
+  // 🚨 문자열이 아니라 **순간**으로 비교한다. `+09:00` 과 `Z` 처럼 표기만 다른 같은 시각을
+  //    "달라졌다" 고 읽으면 "오후 3:00 → 오후 3:00" 같은 줄이 선다.
+  if (!sameInstant(before.starts_at, event.starts_at) || before.all_day !== event.all_day) {
     rows.push({
       term: "일시",
       from: before.starts_at ? formatEventTime(before.starts_at, before.all_day) : "없음",
@@ -437,6 +472,36 @@ const SEOUL_HMS = new Intl.DateTimeFormat("en-GB", {
   second: "2-digit",
   hourCycle: "h23",
 });
+
+/** 두 ISO 시각이 같은 순간인가. 표기가 달라도 같으면 참이다. */
+function sameInstant(a: string | null, b: string | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  return !Number.isNaN(left) && !Number.isNaN(right) && left === right;
+}
+
+/**
+ * 고른 날짜로 옮긴다. 🚨 **`ends_at` 을 두고 가지 않는다** — `starts_at` 만 옮기면 끝이 시작보다
+ *    앞선 일정이 제출된다. 걸린 시간(`ends_at - starts_at`)을 유지한 채로 같이 옮긴다.
+ */
+function moveToDate(
+  event: EventDraftFields,
+  date: string,
+  originalStartsAt: string | null,
+): Partial<EventDraftFields> {
+  const starts = withSeoulDate(
+    event.all_day ? event.starts_at : originalStartsAt,
+    date,
+    event.all_day,
+  );
+  if (!event.ends_at || !event.starts_at || !starts) return { starts_at: starts };
+
+  const span = Date.parse(event.ends_at) - Date.parse(event.starts_at);
+  if (Number.isNaN(span)) return { starts_at: starts };
+  return { starts_at: starts, ends_at: new Date(Date.parse(starts) + span).toISOString() };
+}
 
 /** ISO 시각 → 서울 기준 `YYYY-MM-DD`. 🚨 값이 없으면 **빈 문자열**이다 — 오늘로 채우지 않는다. */
 function seoulDate(iso: string | null): string {

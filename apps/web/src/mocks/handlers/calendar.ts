@@ -17,6 +17,7 @@ import {
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { withIdempotency } from "./idempotency";
 
 /**
  * 09 캘린더 핸들러.
@@ -95,44 +96,46 @@ export const calendarHandlers = [
    * 🚨 **수정 초안의 제출. 승인 게이트 ㉠ 이다** — create 는 `POST`, update 는 `PATCH` 로
    *    갈린다 (9/21 회의). ⚠️ 경로는 확정 전이다 (`docs/event/event-draft-flow-v1.md` §6).
    *
-   * 🚨 **Idempotency-Key 를 요구하지 않는다.** `items` 가 최종 목록이라 같은 본문을 두 번 보내도
-   *    결과가 같다 — 새 행을 만드는 POST 만 키가 필요하다 (`lib/api/idempotency.ts` 의 주석).
-   *    이 판단이 틀리면 `idempotentPath` 표에 줄을 더하고 여기도 `withIdempotency` 로 감싼다.
+   * 🚨 **키를 요구한다.** `item_id: null` 인 새 준비물은 멱등이 아니라서, 재시도가 같은 null 행을
+   *    다시 보내면 준비물이 두 줄 들어간다 (`lib/api/operations.ts` 의 주석).
    *
    * 🚨 **`items` 에서 빠진 `item_id` 는 삭제다.** 보낸 것만 남는 것이 계약이고 (#122),
    *    보호자가 승인 화면에서 준비물을 지울 수 있는 유일한 표현 방법이다.
    */
-  http.patch(url("/events/:eid"), async ({ params, request }) => {
-    await networkDelay();
-    const eid = String(params.eid);
-    const body = (await request.json()) as {
-      event: { title: string; starts_at: string | null; all_day: boolean };
-      items: Array<{ item_id: string | null; item_name: string }>;
-    };
+  http.patch(
+    url("/events/:eid"),
+    withIdempotency(async ({ params, request }) => {
+      await networkDelay();
+      const eid = String(params.eid);
+      const body = (await request.json()) as {
+        event: { title: string; starts_at: string | null; all_day: boolean };
+        items: Array<{ item_id: string | null; item_name: string }>;
+      };
 
-    // 화면이 막지만 계약도 막는다 — 규칙은 코드가 진다 (최상위 §3).
-    if (!body.event.starts_at) {
-      return apiError(400, "invalid_request", "일자가 없는 일정은 만들 수 없어요");
-    }
+      // 화면이 막지만 계약도 막는다 — 규칙은 코드가 진다 (최상위 §3).
+      if (!body.event.starts_at) {
+        return apiError(400, "invalid_request", "일자가 없는 일정은 만들 수 없어요");
+      }
 
-    return HttpResponse.json({
-      event: {
-        ...confirmedEvent,
-        id: eid,
-        title: body.event.title,
-        starts_at: body.event.starts_at,
-        all_day: body.event.all_day,
-        status: "confirmed" as const,
-        items: body.items.map((item, index) => ({
-          item_id: item.item_id ?? `i_new_${index}`,
-          item_name: item.item_name,
-          // 🚨 초안은 체크 상태를 정하지 않는다 — 기존 행은 서버가 들고 있던 값을 지킨다 (#122 §4-3).
-          is_prepared: item.item_id ? (preparedItems.get(item.item_id) ?? false) : false,
-          prepared_at: null,
-        })),
-      },
-    });
-  }),
+      return HttpResponse.json({
+        event: {
+          ...confirmedEvent,
+          id: eid,
+          title: body.event.title,
+          starts_at: body.event.starts_at,
+          all_day: body.event.all_day,
+          status: "confirmed" as const,
+          items: body.items.map((item, index) => ({
+            item_id: item.item_id ?? `i_new_${index}`,
+            item_name: item.item_name,
+            // 🚨 초안은 체크 상태를 정하지 않는다 — 기존 행은 서버가 들고 있던 값을 지킨다 (#122 §4-3).
+            is_prepared: item.item_id ? (preparedItems.get(item.item_id) ?? false) : false,
+            prepared_at: null,
+          })),
+        },
+      });
+    }),
+  ),
 
   http.patch(url("/event-items/:iid"), async ({ params, request }) => {
     await networkDelay();

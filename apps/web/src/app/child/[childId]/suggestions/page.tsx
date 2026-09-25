@@ -94,7 +94,12 @@ function SuggestionsScreen() {
     },
   });
 
-  /** 승인 게이트가 아니다 — 초안은 24시간 뒤 만료되는 되돌릴 수 있는 상태다. */
+  /**
+   * 🚨 **승인 게이트가 아니다 — 이 호출은 아무것도 쓰지 않는다** (#121). 응답은 저장된 일정이
+   *    아니라 초안 + 사전검사고, 쓰는 것은 시트 안 카드의 제출 하나다.
+   *    (만료 문구를 쓰지 않는다: `event.status` 가 없어지면서 서버에 초안 행 자체가 없다 · #118.
+   *     24시간 만료가 남아 있는 것은 `suggestion` 쪽이다.)
+   */
   const createDraft = useMutation({
     mutationFn: (suggestion: Suggestion) => {
       const body: CreateEventRequest = { title: suggestion.content };
