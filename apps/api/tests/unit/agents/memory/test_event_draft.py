@@ -633,7 +633,7 @@ def test_create_와_update_의_키_집합이_다르다() -> None:
 
 
 def test_출처_슬롯은_아직_payload_에_없다() -> None:
-    # 채울 값이 영원히 null 이라 타입을 정할 수 없어 뺐다. 제안 경로가 초안을 만들기
+    # 채울 값이 언제나 null 이라 타입을 정할 수 없어 뺐다. 제안 경로가 초안을 만들기
     # 시작하면 그때 넣는다 — drafts.py 의 TODO 와 짝이다
     for draft in (_draft(), _draft(op="update", event_id="event-1", before=_snapshot())):
         assert "source" not in draft.to_payload()
