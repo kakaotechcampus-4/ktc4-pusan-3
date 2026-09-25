@@ -581,6 +581,59 @@ export const emptyHome: HomeResponse = {
  *
  * 🚨 `id` · `status` · `expires_at` 이 없다. 이 응답은 DB 에 쓰지 않으므로 아직 행이 아니다 (#121).
  */
+/**
+ * 한 줄 입력 run 이 내보내는 초안 묶음. 🚨 **`create` 와 `update` 가 섞여 있다** —
+ * "금요일에 물놀이 있어. 그리고 운동회는 5시로 옮겨줘" 같은 한 줄이 그렇게 갈린다 (#122).
+ * 화면이 `op` 로 엔드포인트를 가르는지, `before` 로 변화를 그리는지 이 픽스처가 확인한다.
+ */
+export const runEventDrafts: EventDraft[] = [
+  {
+    draft_id: "d1",
+    op: "create",
+    event_id: null,
+    event: {
+      title: "물놀이",
+      starts_at: hoursFromNow(72),
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "activity",
+    },
+    before: null,
+    items: [
+      { item_id: null, item_name: "수영복" },
+      { item_id: null, item_name: "여벌옷" },
+    ],
+  },
+  {
+    draft_id: "d2",
+    op: "update",
+    event_id: "ev_1",
+    event: {
+      title: "운동회",
+      starts_at: hoursFromNow(120),
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "institution",
+    },
+    /** 🚨 **원본 전체**다. 바뀐 필드 이름만으로는 "오후 3시 → 오후 5시" 를 그릴 수 없다 (#122). */
+    before: {
+      title: "운동회",
+      starts_at: hoursFromNow(118),
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "institution",
+      items: [{ item_id: "ei_1", item_name: "체육복" }],
+    },
+    items: [
+      { item_id: "ei_1", item_name: "체육복" },
+      { item_id: null, item_name: "모자" },
+    ],
+  },
+];
+
 export function suggestionDraft(suggestion: Suggestion): EventDraft {
   return {
     draft_id: `d_${suggestion.id}`,

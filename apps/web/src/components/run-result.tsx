@@ -4,6 +4,7 @@ import { PenLine, Sprout } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { domainLabel } from "@/components/domain-chip";
+import { EventDraftList } from "@/components/event-draft-list";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
@@ -57,6 +58,7 @@ export function RunProgress({ state }: { state: RunState }) {
 export function RunResult({
   state,
   inputText,
+  childId,
   onRetry,
   onEdit,
   onDone,
@@ -65,6 +67,7 @@ export function RunResult({
   state: RunState;
   /** 부모가 적은 원문. 🚨 훅이 아니라 입력 화면이 들고 있는 값이다. */
   inputText: string;
+  childId: string;
   onRetry: () => void;
   onEdit: () => void;
   onDone: () => void;
@@ -202,6 +205,11 @@ export function RunResult({
           ))}
         </section>
       ) : null}
+
+      {/* 🚨 **일정 초안은 저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이 아래는
+          **보호자가 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게
+          저장했어요" 라는 제목이 아직 저장 안 된 것까지 덮는다 — 그래서 머리글로 가른다. */}
+      <EventDraftList childId={childId} incoming={state.drafts} />
 
       <p className="text-caption text-ink-subtle">
         한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.

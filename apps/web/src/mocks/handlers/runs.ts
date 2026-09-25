@@ -2,7 +2,7 @@ import { http, HttpResponse } from "msw";
 
 import type { Agent, Observation } from "@/lib/api/types";
 
-import { healthObservation, observations } from "../fixtures";
+import { healthObservation, observations, runEventDrafts } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -68,6 +68,17 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     ],
   });
   await sleep(400);
+
+  /**
+   * 🚨 **한 프레임에 배열이다** (#122 — `EventDrafts` 는 run 당 한 번). 초안마다 한 프레임이면
+   *    화면이 묶음을 한 번에 못 그린다.
+   * 🚨 **아무것도 저장되지 않았다.** 저장은 보호자가 카드에서 제출할 때 한 번이다 (게이트 ㉠).
+   * 🚨 한 run 이 `create` 와 `update` 를 **같이** 낼 수 있다 ("금요일에 물놀이 있어. 그리고
+   *    운동회는 5시로 옮겨줘"). 화면이 op 로 엔드포인트를 가르는지 여기서 확인된다.
+   * ⚠️ 프레임 이름이 계약에 없다 — `sse.ts` 의 `DRAFT_EVENT_NAMES` 참고 (#151).
+   */
+  yield frame("event_draft", { drafts: runEventDrafts });
+  await sleep(300);
 
   if (scenario === "partial") {
     // 🚨 실패 화면으로 떨어뜨리지 않는다. 성공한 쪽은 그대로 보여준다 (NF-06).

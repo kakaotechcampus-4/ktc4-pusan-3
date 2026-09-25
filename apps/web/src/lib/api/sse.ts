@@ -1,6 +1,6 @@
 import { authHeaders, buildUrl } from "./client";
 import { NetworkError } from "./errors";
-import type { Affinity, Agent, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
+import type { Affinity, Agent, EventDraft, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
 
 /**
  * GET /runs/{rid}/events — 04 오버레이.
@@ -84,6 +84,34 @@ export interface ParsedEvent {
   tags?: string[];
 }
 
+/**
+ * 04 한 줄 입력 — Agent 가 만든 **일정 초안 묶음.**
+ *
+ * 🚨 **한 프레임에 배열로 온다** (#122 — `EventDrafts` 는 run 당 한 번이다). 초안마다 한 프레임이
+ *    아니라서 화면이 묶음을 한 번에 그린다.
+ * 🚨 **아직 아무것도 저장되지 않았다.** `event` 테이블에는 보호자가 제출한 행만 들어간다 (#118) —
+ *    저장은 초안 제출 하나뿐이고 그게 승인 게이트 ㉠ 이다.
+ * 🚨 **초안은 서버에 남지 않는다** (9/21). 화면이 세션 스토리지에 들고 있고, 새로고침하면 사라진다.
+ *
+ * ⚠️ **이벤트 이름이 계약에 없다.** #122 에서 모양(`{ drafts: [...] }` 한 프레임)은 확정됐지만
+ *    프레임 이름은 답이 오지 않았다 — 계약서 §03 의 목록에도 `event_draft` 가 없다.
+ *    아래 `DRAFT_EVENT_NAMES` 에 후보를 적어 두고 **둘 다 받는다.** 확정되면 하나로 줄인다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+ */
+export interface EventDraftsEvent {
+  drafts: EventDraft[];
+}
+
+/**
+ * 🚨 이름이 확정될 때까지 **둘 다 받는다.** 틀린 쪽 하나만 걸어 두면 초안이 조용히 안 그려지고,
+ *    화면에는 "아무 일도 없었던 것" 처럼 보인다 — 실패가 안 보이는 게 제일 나쁘다.
+ */
+export const DRAFT_EVENT_NAMES = ["event_draft", "event_drafts"] as const;
+
+export function isDraftEvent(type: string): boolean {
+  return (DRAFT_EVENT_NAMES as readonly string[]).includes(type);
+}
+
 /** model_calls 가 3 을 넘으면 서버 알람이다 (NF-01). */
 export interface DoneEvent {
   run_id: string;
@@ -97,6 +125,8 @@ export type RunEvent =
   | { type: "saved"; data: SavedEvent }
   | { type: "promoted"; data: PromotedEvent }
   | { type: "offer"; data: OfferEvent }
+  | { type: "event_draft"; data: EventDraftsEvent }
+  | { type: "event_drafts"; data: EventDraftsEvent }
   | { type: "partial"; data: PartialEvent }
   | { type: "failed"; data: FailedEvent }
   | { type: "done"; data: DoneEvent }

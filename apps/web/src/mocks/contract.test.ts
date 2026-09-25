@@ -11,7 +11,13 @@ import {
   submitOnboarding,
   uploadPhoto,
 } from "@/lib/api/operations";
-import { streamRunEvents, type LaneEvent, type ParsedEvent } from "@/lib/api/sse";
+import {
+  isDraftEvent,
+  streamRunEvents,
+  type EventDraftsEvent,
+  type LaneEvent,
+  type ParsedEvent,
+} from "@/lib/api/sse";
 import { toISODate } from "@/lib/format";
 import { api } from "@/lib/api/client";
 import type {
@@ -41,6 +47,7 @@ import type {
   PhotoLane,
   SafetyScanResponse,
   CreateEventResponse,
+  EventDraft,
   SubmitEventBody,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
@@ -281,6 +288,40 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     expect(seen).toContain("promoted");
     expect(seen.indexOf("saved")).toBeLessThan(seen.indexOf("promoted"));
     expect(seen.at(-1)).toBe("done");
+  });
+
+  it("일정 초안은 한 프레임에 배열로 온다 — 저장 뒤 · done 전", async () => {
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text: "지어낸 한 줄", source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    const seen: string[] = [];
+    let drafts: EventDraft[] = [];
+    for await (const event of streamRunEvents(run_id)) {
+      seen.push(event.type);
+      if (isDraftEvent(event.type)) drafts = (event.data as EventDraftsEvent).drafts;
+    }
+
+    // 🚨 프레임이 하나다. 초안마다 한 장씩 오면 화면이 묶음을 한 번에 못 그린다.
+    expect(seen.filter(isDraftEvent)).toHaveLength(1);
+    expect(drafts.length).toBeGreaterThan(0);
+
+    // 🚨 한 run 이 create 와 update 를 같이 낼 수 있다 — 화면이 op 로 엔드포인트를 가른다.
+    expect(drafts.some((d) => d.op === "create")).toBe(true);
+    const update = drafts.find((d) => d.op === "update");
+    expect(update?.event_id).toBeTruthy();
+    // 🚨 update 초안은 `before` 가 원본 전체다 — 없으면 "오후 3시 → 오후 5시" 를 못 그린다.
+    expect(update?.before?.items).toBeDefined();
+
+    // 🚨 초안은 저장된 게 아니다. id·status 가 붙으면 승인 게이트를 건너뛴 것이다.
+    for (const d of drafts) {
+      expect(d).not.toHaveProperty("id");
+      expect(d).not.toHaveProperty("status");
+      // 🚨 `is_prepared` 는 payload 에 없다 — 체크는 PATCH /event-items/{iid} 만의 몫이다 (#122).
+      for (const item of d.items) expect(item).not.toHaveProperty("is_prepared");
+    }
   });
 
   it("failed 시나리오는 원문을 돌려주고 거기서 끝난다", async () => {

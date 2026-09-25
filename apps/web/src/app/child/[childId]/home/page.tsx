@@ -164,6 +164,7 @@ function HomeScreen() {
         <RunResult
           state={run.state}
           inputText={text}
+          childId={childId}
           onRetry={retry}
           onEdit={closeRun}
           onDone={closeRun}
