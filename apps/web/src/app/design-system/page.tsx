@@ -37,7 +37,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
-import type { Agent } from "@/lib/api/types";
+import { EventDraftCard } from "@/components/event-draft-card";
+import type { Agent, EventDraft, EventDraftFields } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
 import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
 
@@ -74,6 +75,7 @@ export default function DesignSystemPage() {
       <TypeSection />
       <ShapeSection />
       <ComponentSection />
+      <EventDraftSection />
       <MotionSection />
       <NotBuiltSection />
     </Screen>
@@ -892,6 +894,143 @@ function softOf(agent: Agent): string {
     health: "bg-health-soft text-health-ink",
   }[agent];
 }
+
+/* ── 일정 초안 ─────────────────────────────────────────────────────────── */
+
+/**
+ * `EventDraftCard` 는 초안이 만들어지는 **세 경로가 같이 쓰는 한 벌**이라, 경로별로 다른 모양이
+ * 나오는지를 여기서 나란히 놓고 본다. 카드는 한 벌이고 그릇(04 레이어 · 05 시트 · 08 화면)만 셋이다.
+ */
+function EventDraftSection() {
+  return (
+    <Section
+      title="일정 초안"
+      note="한 줄 입력 · 제안 카드 · 사진 셋이 같은 카드를 쓴다. 제출이 승인 게이트 ㉠ 다."
+    >
+      <SubTitle>제안에서 온 초안 — 일자가 비어 있다</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 제안 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
+        채우지 않고, 보호자가 고르기 전에는 제출 버튼이 잠긴다. 사전검사(알레르기)는 이 경로에만
+        온다.
+      </p>
+      <EventDraftCard
+        draft={DS_DRAFT_FROM_SUGGESTION}
+        prechecks={[{ code: "unknown_ingredient", item: "닭고기", note: "첫 기록" }]}
+        onSubmit={() => {}}
+      />
+
+      <SubTitle>한 줄 입력에서 온 새 일정</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        준비물은 `item_id: null` 이라 아직 저장 전이다. 빼면 배열에서 빠지고, 그게 삭제를 표현하는
+        유일한 방법이다 (#122).
+      </p>
+      <EventDraftCard draft={DS_DRAFT_CREATE} onSubmit={() => {}} />
+
+      <SubTitle>수정 초안 — 무엇이 달라지는지</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 바뀐 필드 **이름**이 아니라 값의 변화를 그린다. `before` 와 지금 값을 화면이 직접
+        비교한다 — 서버가 준 `changed` 는 보호자가 값을 고치는 순간 못 쓴다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_UPDATE} onSubmit={() => {}} />
+
+      <SubTitle>사진에서 온 초안 — 확인이 필요한 것</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        왜 확인이 필요한지는 서버 문구(`review_reason`)를 그대로 쓴다. 프론트가 지어내지 않는다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_NEEDS_REVIEW} onSubmit={() => {}} />
+
+      <SubTitle>제출 상태 — 건별이다</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        9/21 회의 결정으로 초안은 한 장씩 제출한다. 그래서 성공도 실패도 카드마다 따로 선다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_CREATE} state="submitting" onSubmit={() => {}} />
+      <EventDraftCard draft={DS_DRAFT_CREATE} state="submitted" onSubmit={() => {}} />
+      <EventDraftCard
+        draft={DS_DRAFT_CREATE}
+        state="failed"
+        error="넣지 못했어요. 잠시 뒤 다시 시도해 주세요."
+        onSubmit={() => {}}
+      />
+
+      <SubTitle>알레르기로 막힌 초안</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 여기만 `danger` 다. 실패는 빨강이 아니고(§3), 알레르기만 빨강이다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_FROM_SUGGESTION} blocked onSubmit={() => {}} />
+    </Section>
+  );
+}
+
+const DS_FIELDS: EventDraftFields = {
+  title: "물놀이",
+  starts_at: "2026-09-18T10:00:00+09:00",
+  ends_at: null,
+  all_day: false,
+  event_type: "episodic",
+  category: "activity",
+};
+
+/** 제안에서 온 초안. 🚨 일자를 모른다. */
+const DS_DRAFT_FROM_SUGGESTION: EventDraft = {
+  draft_id: "d0",
+  op: "create",
+  event_id: null,
+  event: {
+    ...DS_FIELDS,
+    title: "주말에 실내 물놀이장은 어떨까요",
+    starts_at: null,
+    all_day: true,
+  },
+  before: null,
+  items: [],
+  suggestion_id: "s_2",
+};
+
+const DS_DRAFT_CREATE: EventDraft = {
+  draft_id: "d1",
+  op: "create",
+  event_id: null,
+  event: DS_FIELDS,
+  before: null,
+  items: [
+    { item_id: null, item_name: "수영복" },
+    { item_id: null, item_name: "여벌옷" },
+  ],
+};
+
+const DS_DRAFT_UPDATE: EventDraft = {
+  draft_id: "d2",
+  op: "update",
+  event_id: "ev_1",
+  event: {
+    ...DS_FIELDS,
+    title: "운동회",
+    starts_at: "2026-09-18T17:00:00+09:00",
+    category: "institution",
+  },
+  before: {
+    ...DS_FIELDS,
+    title: "운동회",
+    starts_at: "2026-09-18T15:00:00+09:00",
+    category: "institution",
+    items: [{ item_id: "ei_1", item_name: "체육복" }],
+  },
+  items: [
+    { item_id: "ei_1", item_name: "체육복" },
+    { item_id: null, item_name: "모자" },
+  ],
+};
+
+const DS_DRAFT_NEEDS_REVIEW: EventDraft = {
+  draft_id: "d3",
+  op: "create",
+  event_id: null,
+  event: { ...DS_FIELDS, title: "가을 소풍", starts_at: null, all_day: true },
+  before: null,
+  items: [{ item_id: null, item_name: "도시락" }],
+  needs_review: true,
+  review_reason: "알림장에서 날짜를 읽지 못했어요. 사진을 보고 채워 주세요.",
+};
 
 /* ── 모션 ──────────────────────────────────────────────────────────────── */
 

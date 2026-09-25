@@ -347,6 +347,116 @@ export interface AnswerRequest {
   answer: string;
 }
 
+/* ── 일정 초안 (event draft) ─────────────────────────────────────────── */
+
+/**
+ * 🚨 **초안이 만들어지는 경로는 셋인데 payload 는 한 벌이다** (#121 · #122 합의).
+ *
+ *   ㉠ 한 줄 입력   "금요일에 물놀이 있어"        → Memory Agent  → SSE `event_draft`
+ *   ㉡ 제안 카드    activity 제안 "나들이"        → suggestion 도메인 (서버)
+ *   ㉢ 사진(알림장) 한 장에 일정 여러 건          → OCR 파이프라인
+ *
+ * 모양이 갈리면 화면이 여러 벌이 된다. 그래서 세 경로가 같은 JSON 을 내고 화면은
+ * `EventDraftCard` 한 벌로 그린다. 정본은 `apps/api/app/agents/memory/drafts.py` 의
+ * `EventDraft.to_payload()` 이고, 문서는 [`docs/event/event-draft-flow-v1.md`] 다.
+ *
+ * 🚨 **초안은 DB 에 없다.** 9/17 에 `event.status` 가 없어지면서 승인 전 행을 두지 않기로 했다 —
+ *    `event` 테이블에는 보호자가 제출한 행만 들어간다. 초안은 SSE 와 응답에만 존재한다.
+ * 🚨 **제출이 승인 게이트 ㉠ 이다** (`POST /children/{cid}/events`). 초안을 만드는 호출은
+ *    아무것도 쓰지 않는다 — `POST /suggestions/{sid}/event` 도 #121 에서 쓰기를 뗐다.
+ * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
+ */
+
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `status` · `reminders` 가 없다 — 아직 행이 아니다. */
+export interface EventDraftFields {
+  title: string;
+  /**
+   * ⚠️ **`null` 이 될 수 있는 것이 `CalendarEvent` 와 다른 점이다.** 제안에서 온 초안은
+   *    제안 문장만으로 일자를 알 수 없어서 비워서 내려온다 — 🚨 **프론트가 오늘로 채우지 않는다**
+   *    (`PhotoEntry.date` 와 같은 규칙). 보호자가 채우기 전에는 제출할 수 없다.
+   */
+  starts_at: string | null;
+  ends_at: string | null;
+  all_day: boolean;
+  event_type: CalendarEvent["event_type"];
+  category: CalendarEvent["category"];
+}
+
+/**
+ * 초안의 준비물 한 줄.
+ *
+ * 🚨 **`is_prepared` 가 없다** (#122 확정). 체크 상태는 `PATCH /event-items/{iid}` 만의 몫이고,
+ *    초안이 정하는 것은 새 준비물(`item_id: null`)의 초기값뿐이다. payload 에 실으면
+ *    SSE 가 나간 뒤 보호자가 체크한 것이 제출하는 순간 풀린다.
+ */
+export interface EventDraftItem {
+  /** 🚨 `null` = 아직 저장 전인 새 준비물. 값이 있으면 기존 행이다. */
+  item_id: string | null;
+  item_name: string;
+}
+
+/** 수정 초안의 **원본 전체**. 화면이 "오후 3시 → 오후 5시" 를 그리는 데 쓴다. */
+export interface EventDraftBefore extends EventDraftFields {
+  items: EventDraftItem[];
+}
+
+export interface EventDraft {
+  /**
+   * 🚨 **화면 전용 키다** (#122 재리뷰). 서버는 이 값을 읽지 않고, 제출 요청에도 싣지 않는다.
+   *    화면이 카드를 가리키고 세션 스토리지 키로 쓴다 — 배열 인덱스로는 한 장 제출 뒤 나머지가 밀린다.
+   */
+  draft_id: string;
+  /** 화면이 부를 엔드포인트를 이 값으로 고른다. */
+  op: "create" | "update";
+  /** 🚨 `create` 는 언제나 `null` 이다. */
+  event_id: string | null;
+  event: EventDraftFields;
+  /** 🚨 `create` 는 `null`. `update` 면 준비물까지 포함한 원본 전체다. */
+  before: EventDraftBefore | null;
+  /**
+   * 🚨 **제출 시점의 최종 목록이다.** 항목별 op 가 없어서, 배열에서 빠진 `item_id` 가
+   *    삭제를 표현하는 유일한 방법이다 (#122 확정).
+   */
+  items: EventDraftItem[];
+  /**
+   * ⚠️ **계약서에 아직 없는 필드다.** 값을 못 읽었거나 서버가 자신이 없을 때 참이다 —
+   *    사진 경로의 `PhotoEntry.needs_review` 와 **같은 모양으로 맞추자는 제안**이다.
+   *    세 경로가 빈 필드를 저마다 다른 방식으로 말하면 카드가 경로별로 분기한다.
+   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+   */
+  needs_review?: boolean;
+  /** 왜 확인이 필요한지. 🚨 서버 문구다 — 프론트가 지어내지 않는다. */
+  review_reason?: string;
+  /**
+   * ⚠️ 이 초안이 어느 제안에서 왔는지. 제안 경로에만 있다 (#122 에서 모양이 미정으로 남은 자리).
+   *    제출받는 쪽이 `suggestion.status` 를 함께 바꿔야 해서 필요하다.
+   */
+  suggestion_id?: string | null;
+}
+
+/**
+ * 초안 제출 본문 — 🚨 **승인 게이트 ㉠. 되돌릴 수 없는 지점.**
+ *
+ * 🚨 **`op` 에 따라 엔드포인트가 갈린다** (9/21 회의): create 는 `POST`, update 는 `PATCH`.
+ *    그래서 본문에 `op` 도 `event_id` 도 싣지 않는다 — 어느 일정인지는 경로가 말한다.
+ * ⚠️ **경로와 요청 스키마는 아직 미정이다** ([`docs/event/event-draft-flow-v1.md`] §6).
+ *    아래는 확정된 payload 계약(#122)에서 **화면이 되돌려 보낼 수 있는 부분만** 추린 잠정형이다.
+ *
+ * 🚨 **보호자가 확인한 최종 상태를 통째로 보낸다** (#122 확정). 부분 갱신이 아니라서
+ *    `items` 배열에서 빠진 `item_id` 가 삭제로 처리된다.
+ * 🚨 `draft_id` 를 싣지 않는다 (§4-4 — 화면 전용 키고 서버는 읽지 않는다).
+ * 🚨 `items` 에 `is_prepared` 가 없다 (§4-3 — 체크는 `PATCH /event-items/{iid}` 만의 몫).
+ */
+export interface SubmitEventBody {
+  event: EventDraftFields;
+  items: EventDraftItem[];
+  /**
+   * 제출받는 쪽이 `suggestion.status` 를 함께 바꿔야 해서 필요하다. 제안 경로(create)에만 있다.
+   * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
+   */
+  suggestion_id?: string | null;
+}
+
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
 
 /**
