@@ -14,8 +14,11 @@ import type {
   CalendarDay,
   CalendarEvent,
   Evidence,
+  ChildProfile,
   GeneralSuggestion,
+  GrowthLog,
   HealthSafety,
+  SafetyScanResponse,
   HomeResponse,
   Me,
   Observation,
@@ -75,12 +78,6 @@ export const me: Me = {
       consent_required: [],
     },
   ],
-};
-
-/** consent 시나리오에서 쓴다 — 필수 동의가 비어 있으면 그 아래 저장이 전부 막힌다. */
-export const meNeedingConsent: Me = {
-  ...me,
-  children: [{ ...me.children[0], consent_required: ["child_health"] }],
 };
 
 /* ── 관찰 ─────────────────────────────────────────────────────────────── */
@@ -250,6 +247,213 @@ export function newHealthSafety(input: {
     notes: input.notes ?? null,
     created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
     updated_at: hoursFromNow(0),
+  };
+}
+
+/* ── 11 알레르기 검사지 읽기 ─────────────────────────────────────────── */
+
+/**
+ * ⚠️ `POST /children/{cid}/health-safety/scan` 은 계약서 v1 에 없다 (이슈 #86).
+ *
+ * 🚨 **여기 있는 것은 "검사지에 적혀 있던 것" 을 흉내 낸 값이다.** 실제 검사지도, 실제 아이
+ *    정보도 아니다 (저장소가 public · 최상위 §9).
+ *
+ * 🚨 **일부러 덜 읽은 줄을 섞어 뒀다.** 화면이 못 읽은 칸을 **비워서** 보호자에게 넘기는지
+ *    확인하려면 목이 완벽하게 읽어 주면 안 된다 — 목의 존재 이유가 그것이다 (§7 머리말).
+ *      · `sc_1` 전부 읽음 → 미리 골라 둔다
+ *      · `sc_2` 분류를 못 읽음 → 보호자가 채워야 고를 수 있다
+ *      · `sc_3` 원문이 없음 → 무엇을 보고 옮겼는지 못 대니 미리 고르지 않는다
+ *      · `unreadable_count` 2 → 줄은 있는데 통째로 못 읽은 것이 둘
+ */
+export const safetyScan: SafetyScanResponse = {
+  scan_id: "scan_1",
+  candidates: [
+    {
+      id: "sc_1",
+      type: "allergy",
+      label: "달걀흰자",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Egg white  class 3  (3.9 kU/L)",
+    },
+    {
+      id: "sc_2",
+      type: "allergy",
+      label: "땅콩",
+      category: null,
+      severity: "severe",
+      reactions: [],
+      source_text: "Peanut  class 4",
+    },
+    {
+      id: "sc_3",
+      type: "allergy",
+      label: "집먼지진드기",
+      category: "환경",
+      severity: null,
+      reactions: [],
+      source_text: null,
+    },
+    {
+      // 🚨 이미 등록된 항목이다. 화면이 미리 걸러 내는지 확인하는 줄 —
+      //    안 걸러 내면 승인하고 나서 409 를 본다.
+      id: "sc_4",
+      type: "allergy",
+      label: "우유",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Milk  class 3",
+    },
+    /**
+     * 🚨 **잘 읽은 줄이 여기부터 여럿이다.** 검사지 한 장에는 보통 열 줄 넘게 찍히는데,
+     *    후보가 서넛뿐이면 **"잘 읽었어요" 를 왜 접어 두는지가 화면에서 안 보인다** —
+     *    확인이 필요한 두 줄이 화면 위에 그냥 있고, 접힘이 있으나 마나가 된다.
+     *    11-2 가 두 무리로 가르는 이유를 목이 실제로 만들어 줘야 한다.
+     * 🚨 이름은 전부 지어낸 것이다 (실제 검사지도 실제 아이 정보도 아니다 · 최상위 §9).
+     */
+    {
+      id: "sc_5",
+      type: "allergy",
+      label: "새우",
+      category: "식품",
+      severity: "moderate",
+      reactions: ["두드러기"],
+      source_text: "Shrimp  class 3",
+    },
+    {
+      id: "sc_6",
+      type: "allergy",
+      label: "고등어",
+      category: "식품",
+      severity: "mild",
+      reactions: [],
+      source_text: "Mackerel  class 2",
+    },
+    {
+      id: "sc_7",
+      type: "allergy",
+      label: "밀",
+      category: "식품",
+      severity: "mild",
+      reactions: [],
+      source_text: "Wheat  class 2",
+    },
+    {
+      id: "sc_8",
+      type: "allergy",
+      label: "대두",
+      category: "식품",
+      severity: "mild",
+      reactions: [],
+      source_text: "Soybean  class 2",
+    },
+    {
+      id: "sc_9",
+      type: "allergy",
+      label: "자작나무 꽃가루",
+      category: "환경",
+      severity: "mild",
+      reactions: ["재채기"],
+      source_text: "Birch pollen  class 2",
+    },
+    {
+      id: "sc_10",
+      type: "allergy",
+      label: "고양이 비듬",
+      category: "환경",
+      severity: "mild",
+      reactions: [],
+      source_text: "Cat dander  class 2",
+    },
+  ],
+  unreadable_count: 2,
+};
+
+/* ── 11 아이 프로필 · 측정 로그 ───────────────────────────────────────── */
+
+/**
+ * ⚠️ `GET /children/{cid}` 는 계약서 v1 에 없다 (이슈 #75). 여기가 그 제안의 유일한 구현이다.
+ * 🚨 `age_display` 는 **서버 문구**라 목이 만든다 — 화면은 생일에서 나이를 계산하지 않는다.
+ */
+export const childProfile: ChildProfile = {
+  id: CHILD_ID,
+  nickname: "민준",
+  birth_date: "2021-04-02",
+  age_display: "만 4세",
+  gender: "male",
+  relation: "mother",
+  role: "owner",
+};
+
+/** 🚨 `measured_label` 도 서버 문구다 (`observed_label` 과 같은 처리). */
+function growthLog(
+  id: string,
+  days: number,
+  height: number | null,
+  weight: number | null,
+): GrowthLog {
+  return {
+    id,
+    measured_on: daysAgo(days),
+    height_cm: height,
+    weight_kg: weight,
+    measured_label: observedLabel(days),
+    note: null,
+  };
+}
+
+/**
+ * 🚨 **증감·백분위를 담지 않는다.** 이 배열은 "잰 날 목록" 이지 성장 곡선의 데이터가 아니다
+ *    (`DESIGN.md` — 부모가 자기 아이를 지표로 보게 하지 않는다).
+ * 🚨 한쪽만 잰 날이 섞여 있다 — 화면이 null 한쪽을 제대로 그리는지 여기서 걸린다.
+ */
+/**
+ * 🚨 **한쪽만 잰 날이 섞여 있어야 한다** (`g_5`). 그 날은 키 그래프에 점이 없고 몸무게에만
+ *    있는데, 빈 칸을 0 이나 직전 값으로 채우는 버그는 이 픽스처가 아니면 화면에서 안 보인다.
+ * 🚨 **잰 간격이 고르지 않다.** 가로축이 시간 축이라 간격이 그대로 그려지는데, 고른 간격만
+ *    넣어 두면 축을 범주로 그려 놓고도 맞아 보인다 (`GrowthChart` 머리말).
+ */
+export const growthLogs: GrowthLog[] = [
+  growthLog("g_6", 12, 104.2, 17.1),
+  growthLog("g_5", 47, null, 16.8),
+  growthLog("g_4", 104, 101.5, 16.2),
+  growthLog("g_3", 190, 99.8, 15.7),
+  growthLog("g_2", 285, 97.1, 15.1),
+  growthLog("g_1", 372, 94.6, 14.4),
+];
+
+/**
+ * 잰 날짜 하나에서 "2주 전" 을 만든다. 🚨 **서버 문구다** — 날짜를 고치면 이 문구도 같이
+ * 바뀌어야 하는데, 프론트가 만들면 규칙이 두 곳이 된다 (최상위 CLAUDE.md §3).
+ *
+ * 🚨 **`Date.now()` 에서 빼지 않는다. 자정끼리 뺀다.** 예전 계산이 `Date.now() - 잰 날 자정`
+ *    이었는데, **낮 12시가 지나면 그 차가 반올림되어 1일**이 된다 — 오늘 적은 기록이
+ *    "어제" 로 떴다 (PATCH 회귀 테스트가 이걸 잡았다). 날짜 차이는 시각이 아니라 날로 센다.
+ */
+export function measuredLabel(measuredOn: string): string {
+  const measured = new Date(`${measuredOn}T00:00:00`);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // 반올림은 서머타임으로 23·25시간짜리 날이 생겨도 날 수가 어긋나지 않게 한다.
+  const days = Math.max(0, Math.round((today.getTime() - measured.getTime()) / DAY_MS));
+  return observedLabel(days);
+}
+
+/** 🚨 서버가 채우는 값(id · measured_label)은 여기서 만든다 — 요청에 없는 값이다. */
+export function newGrowthLog(input: {
+  measured_on: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}): GrowthLog {
+  return {
+    id: `g_${Date.now()}`,
+    measured_on: input.measured_on,
+    height_cm: input.height_cm ?? null,
+    weight_kg: input.weight_kg ?? null,
+    measured_label: measuredLabel(input.measured_on),
+    note: null,
   };
 }
 

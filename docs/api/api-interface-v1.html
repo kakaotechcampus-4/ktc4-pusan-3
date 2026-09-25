@@ -154,6 +154,7 @@ pre .n{color:var(--violet)}
 .path .v{color:var(--ink-3); font-weight:400}
 .tag{font-size:10.5px; font-weight:500; letter-spacing:.04em; padding:3px 7px; border-radius:99px; border:1px solid transparent; white-space:nowrap}
 .t-gate{background:var(--danger-soft); color:var(--danger); border-color:var(--danger)}
+.t-done{background:var(--accent-soft); color:var(--accent); border-color:var(--accent)}
 .t-idem{background:var(--surface-2); color:var(--ink-2); border-color:var(--rule-2)}
 .ep-d{font-size:14px; color:var(--ink-2); margin:0 0 12px; max-width:74ch}
 .io{display:grid; gap:12px; grid-template-columns:1fr}
@@ -195,6 +196,8 @@ a.row .rs{font:500 11px/1.6 "IBM Plex Mono",monospace; color:var(--ink-3); text-
 .oq{display:grid; gap:10px}
 .q{display:grid; grid-template-columns:34px minmax(0,1fr); gap:14px; background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--warn); border-radius:0 4px 4px 0; padding:13px 16px}
 .q .qn{font:600 13px/1 "IBM Plex Mono",monospace; color:var(--warn); font-variant-numeric:tabular-nums; padding-top:2px}
+.q.done{border-left-color:var(--accent)}
+.q.done .qn{color:var(--accent)}
 .q h4{margin:0 0 4px; font-size:14px; color:var(--ink)}
 .q p{margin:0; font-size:13.5px; color:var(--ink-2)}
 .q .who{font-size:12px; color:var(--ink-3); margin-top:6px; display:block}
@@ -226,8 +229,8 @@ html{scroll-behavior:smooth}
     <span>스키마 <b>데이터 모델 (Notion)</b></span>
     <span>화면 <b>prototype.html 01~10</b></span>
     <span>상태 <b>확정</b></span>
-    <span>엔드포인트 <b>28</b></span>
-    <span>열린 결정 <b>3건</b></span>
+    <span>엔드포인트 <b>27</b></span>
+    <span>열린 결정 <b>2건</b></span>
   </div>
 </header>
 
@@ -278,7 +281,6 @@ html{scroll-behavior:smooth}
         <li><a href="#ep-obs-one"><span class="mm mm-get">GET</span>/observations/{kind}/{id}</a></li>
         <li><a href="#ep-affinities"><span class="mm mm-get">GET</span>/children/{cid}/affinities</a></li>
         <li><a href="#ep-corrections"><span class="mm mm-post">POST</span>/corrections</a></li>
-        <li><a href="#ep-obs-del"><span class="mm mm-del">DEL</span>/children/{cid}/observations</a></li>
       </ol>
     </li>
     <li><a class="sec" href="#photo"><span class="num">09</span>사진 · 캘린더</a>
@@ -290,7 +292,7 @@ html{scroll-behavior:smooth}
       </ol>
     </li>
     <li><a class="sec" href="#guards"><span class="num">10</span>규칙이 막는 것</a></li>
-    <li><a class="sec" href="#open"><span class="num">11</span>열린 결정 3건</a></li>
+    <li><a class="sec" href="#open"><span class="num">11</span>열린 결정 2건</a></li>
   </ol>
   <p class="toc-foot">경로는 모두 <code>/api/v1</code> 하위.<br>시간은 RFC 3339 (+09:00).</p>
 </nav>
@@ -467,7 +469,7 @@ html{scroll-behavior:smooth}
   <div class="code"><pre>{
   <span class="k">"id"</span>: <span class="s">"s_7"</span>,
   <span class="k">"child_id"</span>: <span class="s">"c1"</span>,
-  <span class="k">"agent"</span>: <span class="s">"food"</span>,                         <span class="c">// food | activity | education | health</span>
+  <span class="k">"agent"</span>: <span class="s">"food"</span>,                         <span class="c">// food | activity | growth | health</span>
   <span class="k">"content"</span>: <span class="s">"저녁에 계란말이 + 미역국"</span>,
   <span class="k">"reason"</span>: {                                <span class="c">// 열린 결정 02</span>
     <span class="k">"why_this"</span>: <span class="s">"계란 반찬을 최근 5일 중 4일 찾았어요"</span>,
@@ -582,7 +584,6 @@ html{scroll-behavior:smooth}
       <a class="row" href="#ep-obs-one"><span class="m m-get">GET</span><span class="rp">/children/{cid}/observations/{kind}/{id}</span><span class="rd">기억 상세 · 쓰인 제안 · 교정 이력</span><span class="rs">07</span></a>
       <a class="row" href="#ep-affinities"><span class="m m-get">GET</span><span class="rp">/children/{cid}/affinities</span><span class="rd">프로필 탭 · <code>PATCH /affinities/{id}</code></span><span class="rs">07</span></a>
       <a class="row" href="#ep-corrections"><span class="m m-post">POST</span><span class="rp">/corrections</span><span class="rd">4버튼 교정 · cascade · <code>GET</code> 이력</span><span class="rs">04·07</span></a>
-      <a class="row" href="#ep-obs-del"><span class="m m-del">DEL</span><span class="rp">/children/{cid}/observations</span><span class="rd">기억 전체 지우기 → <code>inactive</code></span><span class="rs">10</span></a>
     </div>
   </div>
 
@@ -610,7 +611,7 @@ html{scroll-behavior:smooth}
       <tr><td>07 기록 고치기</td><td><code>GET /observations</code> · <code>GET /affinities</code> · <code>POST /corrections</code> · <code>PATCH /feedback</code></td><td>2계층 탭</td></tr>
       <tr><td>08 사진 분석</td><td><code>POST /children/{cid}/photos</code> · <code>/reanalyze</code> · <code>/commit</code></td><td>승인 전 저장 없음</td></tr>
       <tr><td>09 캘린더 · 일기</td><td><code>GET/PUT /calendar/{date}</code> · <code>PATCH /event-items/{iid}</code></td><td>쓰기 화면</td></tr>
-      <tr><td>10 설정</td><td><code>PATCH /children/{cid}</code> · <code>/parents</code> · <code>/invites</code> · <code>DELETE /observations</code></td><td>owner 권한</td></tr>
+      <tr><td>10 설정</td><td><code>PATCH /children/{cid}</code> · <code>/parents</code> · <code>/invites</code></td><td>owner 권한</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -1163,7 +1164,7 @@ html{scroll-behavior:smooth}
     <span class="k">"id"</span>: <span class="s">"a_12"</span>
   },
   <span class="k">"verdict"</span>: <span class="s">"outdated"</span>,
-  <span class="k">"child_id"</span>: <span class="s">"c1"</span>          <span class="c">// ⚠ 열린 결정 01</span>
+  <span class="k">"child_id"</span>: <span class="s">"c1"</span>          <span class="c">// 필수</span>
 }</pre></div></div>
       <div><p class="io-l">응답 201</p><div class="code"><pre>{
   <span class="k">"correction"</span>: {
@@ -1180,38 +1181,32 @@ html{scroll-behavior:smooth}
   }
 }</pre></div></div>
     </div>
-    <h4>verdict 의 효과 — 프론트가 추측하지 않게 고정한다</h4>
+    <h4>verdict 의 효과 — 대상마다 쓸 수 있는 값이 다르다</h4>
     <div class="tw"><table>
-      <thead><tr><th>대상</th><th>confirm</th><th>once_only</th><th>outdated</th><th>wrong</th></tr></thead>
+      <thead><tr><th>대상</th><th>verdict</th><th>효과</th></tr></thead>
       <tbody>
-        <tr><td><code>observation_*</code></td><td><code>confidence_source</code> 상향<br><code>parent_hearsay</code>·<code>parent_hedged</code> → <code>parent_direct</code></td><td><code>affinity_id = NULL</code><br>집계에서 제외, 행은 남김</td><td><code>status = 'inactive'</code></td><td><code>status = 'inactive'</code><br>+ 같은 <code>affinity</code> 재계산</td></tr>
-        <tr><td><code>profile_affinity</code></td><td><code>strength</code> 상향<br><code>state</code> 유지</td><td><code>state</code> 한 단계 강등<br><code>confirmed → candidate</code></td><td><code>state = 'archived'</code></td><td><code>state = 'archived'</code><br>+ 근거 관찰 <code>inactive</code></td></tr>
-        <tr><td><code>health_safety</code></td><td colspan="4">교정 대상이 아니다. 보호자 확인값이라 강등·감쇠가 없고, <a href="#ep-safety"><code>DELETE</code></a>로 회수하면 <code>state = 'retracted'</code>로 전환한다</td></tr>
+        <tr><td rowspan="2"><code>observation_*</code></td><td><code>once_only</code><br>이번만 그랬어요</td><td><code>status = 'stand_alone'</code><br>집계에서만 빠지고 검색에는 남는다 — 실제로 있었던 일이라서</td></tr>
+        <tr><td><code>wrong</code><br>잘못된 기록</td><td><code>status = 'inactive'</code><br>+ 같은 <code>affinity</code> 재계산</td></tr>
+        <tr><td rowspan="3"><code>profile_affinity</code></td><td><code>need_more_observation</code><br>기록이 더 필요해요</td><td><code>state</code> 한 단계 강등 (<code>confirmed → candidate</code>)<br>근거 관찰은 그대로 둔다</td></tr>
+        <tr><td><code>outdated</code><br>지금은 달라요</td><td><code>state = 'archived'</code><br>근거 관찰은 그대로 둔다</td></tr>
+        <tr><td><code>wrong</code><br>잘못된 기록</td><td><code>state = 'archived'</code><br>근거 관찰은 그대로 둔다. 새 관련 관찰이 생기기 전까지 같은 판단을 다시 만들지 않는다</td></tr>
+        <tr><td><code>health_safety</code></td><td colspan="2">교정 대상이 아니다. 보호자 확인값이라 강등·감쇠가 없고, <a href="#ep-safety"><code>DELETE</code></a>로 회수하면 <code>state = 'retracted'</code>로 전환한다</td></tr>
       </tbody>
     </table></div>
-    <p class="note"><b>관찰의 <code>confirm</code> 은 <code>confidence_source</code> 를 직접 올린다.</b>
-    보호자가 "맞아요" 를 누른 순간 전해 들은 말·얼버무린 말이 <b>직접 확인한 관찰</b>이 되기 때문이다.
-    <code>institution_notice</code> 는 올리지 않는다 (기관 기록을 보호자 발화로 바꾸면 출처가 뒤바뀐다).</p>
+    <p class="note"><b><code>confirm</code> 은 없다.</b> "맞아요" 는 아무것도 바꾸지 않으므로 이력으로도 남기지 않는다 — 전송하지 않는다.
+    <code>confidence_source</code> 도 올리지 않는다: AI 가 구조화한 내용에 동의한 것과 보호자가 <b>직접 관찰했다</b>는 것은 별개다.<br>
+    <b>관찰에는 <code>outdated</code> 가 없다.</b> 그날 그랬다는 사실은 시간이 지나도 사실이고, 낡는 것은 그 관찰들이 만든 프로필 쪽이다.</p>
     <div class="call info">
       <span class="ct">cascade 가 화면 문구가 된다</span>
       <p>"이 관찰을 고쳤더니 만들기 놀이가 후보로 내려갔어요" 를 서버 사실로 말하려면 <code>cascade</code> 가 필요하다.
       관찰 하나를 고치면 프로필이 따라 움직이는 게 이 모델의 특징이고, 그걸 안 보여주면 사용자는 자기 교정이 무슨 일을 했는지 모른다.</p>
     </div>
     <p class="note"><code>GET /corrections?target_ref.kind=&amp;target_ref.id=</code> — 07 의 History.
-    되돌리기는 <b>새 correction 을 쌓는 방식</b>이다 (<code>outdated</code> 뒤에 <code>confirm</code>). 삭제 엔드포인트는 만들지 않는다 — 이 테이블이 데이터 해자의 원재료다.</p>
+    <b>되돌리기 API 는 없다</b> — 프론트가 선택 뒤 3초 동안 pending 으로 두고, 그 안에 취소하면 요청 자체를 보내지 않는다. 삭제 엔드포인트도 만들지 않는다 — 이 테이블이 데이터 해자의 원재료다.</p>
   </article>
 
-  <article class="ep" id="ep-obs-del">
-    <div class="ep-h"><span class="m m-del">DELETE</span><code class="path">/children/<span class="v">{cid}</span>/observations<span class="v">?confirm=true</span></code></div>
-    <p class="ep-d">10 설정의 "기억 전체 지우기". 하드 삭제가 아니라 <code>status = 'inactive'</code> 일괄 전환이다.</p>
-    <div class="code"><pre>{
-  <span class="k">"inactivated_count"</span>: <span class="n">12</span>,
-  <span class="k">"kept"</span>: [<span class="s">"health_safety"</span>, <span class="s">"event"</span>, <span class="s">"calendar"</span>, <span class="s">"consent"</span>]
-}</pre></div>
-    <p class="note"><code>event.source_refs</code> · <code>suggestion.source_refs</code> 가 끊어진 참조를 갖지 않으려면 행이 남아 있어야 한다.
-    <b>이 일괄 삭제는 <code>health_safety</code> 를 건드리지 않는다</b> — 기억을 지운다고 알레르기까지 없어지지 않는다. 개별 안전 정보의 사용 중단은 <a href="#ep-safety">회수</a>로 처리한다.
-    <code>profile_affinity</code> 는 근거가 전부 <code>inactive</code> 가 되므로 <code>archived</code> 로 함께 내려간다.</p>
-  </article>
+  <p class="note"><b>기억 전체 지우기는 제공하지 않는다.</b> <code>status</code> 를 일괄 전환해 기억을 비우는 엔드포인트를 두지 않는다 —
+  기억은 개별 <a href="#ep-corrections">교정</a>으로 관리하고, 아이의 데이터를 통째로 없애는 것은 아이 삭제로 처리한다.</p>
 </section>
 
 <section id="photo">
@@ -1333,16 +1328,16 @@ html{scroll-behavior:smooth}
 </section>
 
 <section id="open">
-  <h2><span class="h-num">11</span>열린 결정 3건</h2>
+  <h2><span class="h-num">11</span>열린 결정 2건</h2>
   <p class="sub">
-    나머지 계약은 확정됐다. 아래 3건만 아직 스키마가 받쳐주지 않는다 —
+    나머지 계약은 확정됐다. 아래 2건만 아직 스키마가 받쳐주지 않는다 —
     <b>미정을 기본값으로 채우지 않는다.</b> "이 문서가 가정한 것"과 "누가 정하는지"를 같이 적었다.
   </p>
   <div class="oq">
-    <div class="q"><span class="qn">01</span><div>
-      <h4><code>correction.child_id</code> 가 없다</h4>
-      <p>07 의 History 와 아이별 교정 이력 조회가 <code>target_ref</code> 를 4개 테이블에 조인해야만 가능해진다. 컬럼 하나면 조인이 사라진다.</p>
-      <span class="who">이 문서는 요청·응답에 <code>child_id</code> 를 포함 · 결정: 이시하</span>
+    <div class="q done"><span class="qn">01</span><div>
+      <h4><code>correction.child_id</code> <span class="tag t-done">해소</span></h4>
+      <p><code>correction</code> 이 <code>child_id</code> 를 갖는다. 대상은 <code>target_kind + target_id</code> 로 가리키고 FK 를 걸지 않으므로 <b>대상이 실제로 있는지와 그 아이 것인지는 서버가 검증한다</b> — 컬럼이 없으면 그 검증도 아이별 이력 조회도 대상 테이블 조인이 된다.</p>
+      <span class="who">결정: 이시하 · 반영: #73</span>
     </div></div>
     <div class="q"><span class="qn">02</span><div>
       <h4><code>suggestion.reason</code> 이 단수인데 화면은 두 줄이다</h4>

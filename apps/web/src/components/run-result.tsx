@@ -3,7 +3,7 @@
 import { PenLine, Sprout } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
-import { domainLabel } from "@/components/domain-chip";
+import { domainLabel, observationAgent } from "@/components/domain-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
@@ -241,16 +241,8 @@ const CONFIDENCE_LABEL: Record<ConfidenceSource, string> = {
   parent_hearsay: "전해 들음",
 };
 
-/** 관찰 4테이블 ↔ 도메인. health 는 승격 파이프라인 밖이라 모양이 다르다. */
-const OBSERVATION_AGENT: Record<Observation["kind"], Agent> = {
-  observation_food: "food",
-  observation_activity: "activity",
-  observation_education: "education",
-  observation_health: "health",
-};
-
 function ObservationRow({ observation }: { observation: Observation }) {
-  const agent = OBSERVATION_AGENT[observation.kind];
+  const agent = observationAgent(observation.kind);
   const detail = isHealthObservation(observation)
     ? [observation.domain_fields.symptom?.join(", "), observation.domain_fields.observed_time]
         .filter(Boolean)

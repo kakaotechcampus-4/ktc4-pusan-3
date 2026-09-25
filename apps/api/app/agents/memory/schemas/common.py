@@ -1,9 +1,10 @@
 # tool 스키마가 공유하는 enum/상수/공통 필드.
 
+from collections.abc import Iterable
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, ClassVar, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ALL_DAY_MIN = 1440  # "하루 종일" = 하루(1440분)
 MAX_DURATION_MIN = ALL_DAY_MIN  # 활동/학습 세션은 하루를 넘길 수 없음
@@ -124,6 +125,53 @@ class ToolArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
 
+class ClearableUpdateArgs(ToolArgs):
+    """이미 저장된 선택 필드를 비울 수 있는 update의 공통 base.
+
+    필드의 None의 의미: "안 바꿈"
+    값 비움: clear에 컬럼 이름 명시. 관찰은 인자 이름과 같고 event의 ends_at만 다르다
+    CLEARABLE: 하위 스키마가 정하는 비울 수 있는 컬럼(NOT NULL 컬럼은 포함X)
+    """
+
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset()
+
+    clear: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description=(
+                "값을 지울 필드 이름. 보호자가 이미 기록된 내용을 빼 달라고 할 때만 넣는다. "
+                "발화에 없는 필드는 여기 넣지 않고 그냥 비워 둔다. 비워 둔 필드는 변경하지 않는다"
+            ),
+        ),
+    ]
+
+    @field_validator("clear")
+    @classmethod
+    def _only_clearable(cls, names: list[str]) -> list[str]:
+        if not set(names) <= cls.CLEARABLE:
+            raise ValueError(
+                f"이 tool 에서 지울 수 있는 필드는 {_joined(cls.CLEARABLE)} 뿐이다. "
+                "나머지는 지우지 않고 새 값으로 바꾼다"
+            )
+        return names
+
+    @model_validator(mode="after")
+    def _clear_or_set(self) -> Self:
+        # ends_at 은 인자가 아니라 여기선 안 걸린다. ends_on·ends_time 과 겹치면 check_when 이 막음
+        both = [name for name in self.clear if getattr(self, name, None) is not None]
+        if both:
+            raise ValueError(
+                f"{_joined(both)} 에 새 값과 지우기가 함께 왔다. 값을 바꿀 거면 clear 에서 빼고, "
+                "지울 거면 값을 비워 둔다"
+            )
+        return self
+
+
+def _joined(names: Iterable[str]) -> str:
+    return ", ".join(sorted(set(names)))
+
+
 class ObservationCreateArgs(ToolArgs):
     """observation 계층의 테이블 create가 공유하는 필드.
     id/child_id/source_writer/observed_range/status는
@@ -146,8 +194,11 @@ class ObservationCreateArgs(ToolArgs):
     ]
 
 
-class PromotableCreateArgs(ObservationCreateArgs):
-    """승격 파이프라인에 관여하는 도메인(food/education/activity/routine)의 추가 필드."""
+class SubjectCreateArgs(ObservationCreateArgs):
+    """`subject` · `polarity` 를 받는 네 도메인(food/education/activity/routine).
+
+    routine 은 승격되지 않지만 관찰 자체가 티어 3 근거로 인용돼 이 두 칸은 받는다.
+    """
 
     subject: Annotated[
         str,
@@ -164,13 +215,18 @@ class PromotableCreateArgs(ObservationCreateArgs):
         int,
         Field(default=0, ge=-1, le=1, description="좋아함 1 / 중립 0 / 싫어함 -1"),
     ]
+
+
+class PromotableCreateArgs(SubjectCreateArgs):
+    """승격까지 가는 셋(food/education/activity) 전용. routine 에는 이 칸이 없다."""
+
     strong_signals: Annotated[
         list[StrongSignal],
         Field(default_factory=list, description="발화에 근거가 있을 때만. 없으면 빈 배열"),
     ]
 
 
-class ObservationUpdateArgs(ToolArgs):
+class ObservationUpdateArgs(ClearableUpdateArgs):
     """observation update 가 공유하는 필드. 날짜도 고칠 수 있다."""
 
     observation_id: RecordId

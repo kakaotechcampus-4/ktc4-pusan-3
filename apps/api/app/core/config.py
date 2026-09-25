@@ -1,12 +1,13 @@
 from pathlib import Path
 
 from pydantic import ValidationError, ValidationInfo, field_validator, model_validator
-from pydantic_settings import BaseSettings
+
+from app.core.agent_config import AgentLLMSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
-class Settings(BaseSettings):
+class Settings(AgentLLMSettings):
     APP_ENV: str = "local"
     APP_NAME: str = "ktc4-pusan-3-api"
 
@@ -15,21 +16,6 @@ class Settings(BaseSettings):
     DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
-
-    MEMORY_API_KEY: str | None = None
-    MEMORY_BASE_URL: str | None = None
-    MEMORY_MODEL: str | None = None
-    MEMORY_REASONING_EFFORT: str | None = None
-
-    SUPERVISOR_API_KEY: str | None = None
-    SUPERVISOR_BASE_URL: str | None = None
-    SUPERVISOR_MODEL: str | None = None
-    SUPERVISOR_REASONING_EFFORT: str | None = None
-
-    FOOD_API_KEY: str | None = None
-    FOOD_BASE_URL: str | None = None
-    FOOD_MODEL: str | None = None
-    FOOD_REASONING_EFFORT: str | None = None
 
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
@@ -74,6 +60,9 @@ class Settings(BaseSettings):
     HANDOFF_TTL: int = 120
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600
+
+    # 보호자별 하루 한 줄 입력 횟수 (app/api/quota.py). 모델 크레딧 보호용 — 테스트용 숫자.
+    INPUT_DAILY_LIMIT: int = 5
 
     @field_validator("AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP")
     @classmethod

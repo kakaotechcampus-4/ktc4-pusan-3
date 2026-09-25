@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from app.agents.common.datetime_rules import DateRange, EventWhen
+from app.agents.common.datetime_rules import DateRange
 
 # observation 5테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
@@ -47,12 +47,14 @@ class EventItemRow:
     event_id: str
     item_name: str
     is_prepared: bool
+    prepared_at: datetime | None = None  # 체크한 시각. 언제 정하는지는 tool 이 안다
 
     def to_summary(self) -> dict[str, Any]:
         return {
             "item_id": self.item_id,
             "item_name": self.item_name,
             "is_prepared": self.is_prepared,
+            "prepared_at": self.prepared_at.isoformat() if self.prepared_at else None,
         }
 
 
@@ -63,7 +65,7 @@ class EventRow:
     starts_at: datetime
     ends_at: datetime | None
     all_day: bool
-    fields: dict[str, Any]  # event_type / category / status / created_by / expires_at
+    fields: dict[str, Any]  # event_type / category / created_by
 
     def to_summary(self, items: list[EventItemRow] | None = None) -> dict[str, Any]:
         """조회 결과 요약.
@@ -117,8 +119,13 @@ class MemoryStore(Protocol):
         observation_id: str,
         fields: dict[str, Any],
         observed_on: date | None = None,
+        clear: frozenset[str] = frozenset(),
     ) -> ObservationRow | None:
         """없으면 None.
+
+        fields: 변경할 값
+        값 비우기: clear(이름이 적힌 컬럼을 NULL로)
+        같은 이름이 fields 와 clear 에 같이 오지 않게 tool 스키마가 막음.
 
         observed_on 이 주어지면 관찰 일자까지 바꾼다. 호출자가 observed_range 도 함께 넘긴다.
         subject 계열이 바뀌면 embedding 재계산이 필요하다.
@@ -129,18 +136,7 @@ class MemoryStore(Protocol):
         self, *, domain: ObservationDomain, observation_id: str
     ) -> bool: ...
 
-    # event
-    async def create_event(
-        self,
-        *,
-        child_id: UUID,
-        title: str,
-        starts_at: datetime,
-        ends_at: datetime | None,
-        all_day: bool,
-        fields: dict[str, Any],
-    ) -> EventRow: ...
-
+    # event(create, update X)
     async def query_events(
         self,
         *,
@@ -152,28 +148,24 @@ class MemoryStore(Protocol):
 
     async def get_event(self, *, event_id: str) -> EventRow | None: ...
 
-    async def update_event(
-        self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
-    ) -> EventRow | None:
-        """fields 의 None 은 "바꾸지 않는다". 시간 구간만은 when 으로 통째로 받는다.
-
-        ends_at 은 None 이 곧 "종료 없음" 이라 fields 로는 지울 수가 없다. 그리고
-        시작·종료·all_day 는 함께 정해지는 값이라 한 덩어리로 오는 편이 안전하다
-        (datetime_rules.resolve_when 이 셋을 같이 계산한다).
-        """
-        ...
-
     async def delete_event(self, *, event_id: str) -> bool:
         """연결된 event_item 도 함께 제거 (ON DELETE CASCADE)."""
         ...
 
-    # event_item
-    async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow: ...
+    # event_item(create X)
+    async def get_event_item(self, *, item_id: str) -> EventItemRow | None:
+        """없으면 None. 부모 일정과 현재 is_prepared 를 알아야 하는 tool 이 쓴다."""
+        ...
 
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]: ...
 
     async def update_event_item(
         self, *, item_id: str, fields: dict[str, Any]
-    ) -> EventItemRow | None: ...
+    ) -> EventItemRow | None:
+        """없으면 None. fields에는 바꿀 것만 담긴다.
+
+        prepared_at 은 tool 이 정해서 넘긴다. store 는 받은 값을 그대로 저장한다.
+        """
+        ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...

@@ -30,7 +30,7 @@ const EXAMPLE_INPUT = "오늘 어린이집에서 블록만 한참 쌓았대요";
 const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
   { agent: "food", label: "식사", text: "오늘 급식과 알레르기를 함께 보고 저녁 한 끼를 고릅니다." },
   { agent: "activity", label: "놀이", text: "요즘 빠져 있는 것에서 다음 놀이를 이어 붙입니다." },
-  { agent: "education", label: "교육", text: "관심이 향한 방향으로 다음 한 걸음을 제안합니다." },
+  { agent: "growth", label: "성장", text: "관심이 향한 방향으로 다음 한 걸음을 제안합니다." },
   { agent: "health", label: "건강", text: "증상과 기록을 정리해 둡니다. 진단은 하지 않습니다." },
 ];
 
@@ -199,7 +199,7 @@ function DomainRow({ agent, label, text }: { agent: Agent; label: string; text: 
   const tone: Record<Agent, string> = {
     food: "text-food-ink",
     activity: "text-activity-ink",
-    education: "text-education-ink",
+    growth: "text-growth-ink",
     health: "text-health-ink",
   };
 

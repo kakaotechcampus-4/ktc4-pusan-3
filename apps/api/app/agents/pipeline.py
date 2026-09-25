@@ -21,6 +21,7 @@ from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
@@ -29,7 +30,15 @@ from app.agents.supervisor.schemas import normalize
 
 logger = logging.getLogger(__name__)
 
-MAX_MODEL_CALLS = 3  # 한 요청에서 허용하는 모델 호출 수
+# model_calls는 Agent 진입 1회 + 재시도 1회당 +1 로 센다.
+#   - 정상 tool calling 루프는 안 센다. Memory가 7바퀴를 돌아도 1이다
+#   - 재시도는 센다. Supervisor의 tool_choice 폴백, 도메인의 안전 필터 재호출
+# 구분 기준은 "하려던 일을 하는 중인가(안 센다) / 실패해서 다시 하는가(센다)" 다.
+#
+# 정상값은 Supervisor 1 + Memory 1 + 도메인 2 = 4. 다시 나눈 run 은 아래에서 +1 한다.
+# 이 값은 실행을 막지 않고, 넘으면 _log가 경고만 남긴다.
+# Agent 안의 루프는 각자의 상한이 막는다 (Memory는 MAX_STEPS=7).
+MAX_MODEL_CALLS = 4
 
 # Memory 가 기록하지 않은 RECORD 조각이 있으면 Supervisor 에게 이유를 주고 한 번 더 나눠 본다.
 # 조각을 잘못 위임하면 그 요청은 아무 데서도 처리되지 않는다 — 호출 하나를 더 쓰는 값이 있다.
@@ -61,6 +70,28 @@ class Ref:
 @dataclass(frozen=True)
 class Saved:
     refs: tuple[Ref, ...]  # 화면용 변환은 app/api에서 처리
+
+
+@dataclass(frozen=True)
+class EventDrafts:
+    """보호자 제출을 기다리는 일정 초안. SSE 이름은 event_draft.
+
+    JSON 변환은 EventDraft.to_payload() 가 한다.
+    run당 한 프레임+초안이 배열로 실리기 때문에 화면이 초안 묶음을 한 번에 디스플레이
+
+    초안은 이 이벤트로 나가고 끝이다. run이 끝나면 사라지고 되받을 경로가 없다.
+
+    그래서 초안 두 장을 띄워두고 나중 것부터 제출하면 앞 초안이 뒤 결과를 지운다.
+    초안이 만들어진 시점의 DB 값을 들고 있는데 items가 최종 목록이라서다.
+    같은 회의에서 현상유지로 두고, 잠금은 나중에 보기로 했다.
+
+    # TODO: 제안에서 온 일정도 같은 모양으로 내야 한다. (#121 이 POST /suggestions/{sid}/event와
+    #   POST /events/{eid}/confirm을 하나로 합쳐서, 합친 엔드포인트가 호출 즉시 event를 쓰면
+    #   보호자가 확인하는 단계=승인 게이트 사라짐.
+    #   초안만 내고 제출은 한 엔드포인트로 모아야 승인 시트를 하나로 유지 가능)
+    """
+
+    drafts: tuple[EventDraft, ...]
 
 
 @dataclass(frozen=True)
@@ -120,6 +151,7 @@ class Done:
 Event = (
     Step
     | Saved
+    | EventDrafts
     | FoodRouted
     | Unavailable
     | Guidance
@@ -208,10 +240,13 @@ async def handle_input(
             # Memory 실패 시 기본값으로 대체하지 않는다
             failed = Failed("llm_unavailable", raw_text)
         else:
-            model_calls += memory.steps
+            model_calls += 1  # Agent 하나가 1. 루프를 몇 바퀴 돌았는지는 memory.steps
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
+            # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
+            if memory.drafts:
+                send(EventDrafts(memory.drafts))
             if memory.final_message:
                 send(MemoryNote(memory.final_message))
             unwritten = _unwritten(routing.memory_task, memory)
@@ -405,8 +440,8 @@ def _log(result: PipelineResult) -> None:
     memory = result.memory
     logger.info(
         "pipeline run_id=%s intent=%s degraded=%s supervisor_error=%s hints=%d steps=%s "
-        "ended_by=%s saved=%d food=%s guidance=%s unavailable=%s note=%s rerouted=%s failed=%s "
-        "memory_only=%s supervisor_only=%s model_calls=%d latency_ms=%d",
+        "ended_by=%s saved=%d drafts=%d food=%s guidance=%s unavailable=%s note=%s "
+        "rerouted=%s failed=%s memory_only=%s supervisor_only=%s model_calls=%d latency_ms=%d",
         result.run_id,
         result.routing.intent_type,
         result.routing.degraded,
@@ -415,6 +450,7 @@ def _log(result: PipelineResult) -> None:
         memory.steps if memory else None,
         memory.ended_by if memory else None,
         len(_saved_refs(memory)) if memory else 0,
+        len(memory.drafts) if memory else 0,
         [str(item.task_type) for item in result.food],
         [guidance.code for guidance in result.routing.guidance],
         list(result.routing.unavailable_agents),

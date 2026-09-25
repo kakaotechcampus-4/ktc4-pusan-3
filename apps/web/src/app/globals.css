@@ -58,7 +58,7 @@
   --color-food-soft: #f6ebe1;
   --color-food-ink: #7e3f1b;
   /* 🚨 틸만 채도를 따로 올려 뒀다. 네 도메인은 **동급**인데 chroma 가 food 0.115 ·
-   * education 0.112 · health 0.095 인 사이에서 activity 만 0.072 였다 — 같은 크기·같은
+   * growth 0.112 · health 0.095 인 사이에서 activity 만 0.072 였다 — 같은 크기·같은
    * 자리에 놓아도 놀이 칩만 혼자 흐려 보였고, 하필 놀이가 네 도메인 중 제일 생생해야 할
    * 자리다. 216° 는 sRGB 가 채도를 가장 못 내는 구간이라(그 명도에서 천장이 0.089) 갈 수
    * 있는 끝인 0.086 에 붙였다. 대비 5.3 → 5.4:1, brand(세이지)와의 거리도 0.069 → 0.077 로
@@ -66,9 +66,9 @@
   --color-activity: #0f7084;
   --color-activity-soft: #e5eff1;
   --color-activity-ink: #055766;
-  --color-education: #4e5aa0;
-  --color-education-soft: #e9eaf5;
-  --color-education-ink: #3b4680;
+  --color-growth: #4e5aa0;
+  --color-growth-soft: #e9eaf5;
+  --color-growth-ink: #3b4680;
   --color-health: #8a4e74;
   --color-health-soft: #f3e9ef;
   --color-health-ink: #6e3b5b;

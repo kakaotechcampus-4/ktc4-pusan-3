@@ -4,7 +4,7 @@
 LLM 이 채우지 않는 필드(id · child_id · source_writer · observed_range 등)는 노출하지 않는다.
 """
 
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import Field
 
@@ -24,6 +24,7 @@ from app.agents.memory.schemas.common import (
     RecordRef,
     RoutineCategory,
     Severity,
+    SubjectCreateArgs,
 )
 
 _DURATION = Field(
@@ -55,6 +56,7 @@ class ObservationFoodCreate(PromotableCreateArgs):
 
 
 class ObservationFoodUpdate(ObservationUpdateArgs):
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset({"action", "amount", "reaction"})
     subject: Annotated[str | None, _optional("바꿀 음식 이름. 끼니 이름은 넣지 않는다")]
     action: Annotated[str | None, Field(default=None, description="바꿀 action")]
     amount: Annotated[str | None, Field(default=None, description="바꿀 amount")]
@@ -73,6 +75,9 @@ class ObservationHealthCreate(ObservationCreateArgs):
 
 
 class ObservationHealthUpdate(ObservationUpdateArgs):
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset(
+        {"severity", "body_part", "suspected_trigger", "action_taken", "observed_time"}
+    )
     symptom: Annotated[list[str] | None, Field(default=None, description="바꿀 증상 목록")]
     body_part: Annotated[str | None, Field(default=None, description="바꿀 신체 부위")]
     suspected_trigger: Annotated[str | None, _optional("바꿀 계기")]
@@ -89,6 +94,9 @@ class ObservationEducationCreate(PromotableCreateArgs):
 
 
 class ObservationEducationUpdate(ObservationUpdateArgs):
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset(
+        {"session_type", "duration_min", "engagement_level"}
+    )
     topic: Annotated[str | None, Field(default=None, description="바꿀 학습 주제")]
     subject: Annotated[str | None, _optional("바꿀 정규화 대상. topic을 바꾸면 같이 바꾼다")]
     duration_min: Annotated[int | None, _DURATION]
@@ -105,6 +113,9 @@ class ObservationActivityCreate(PromotableCreateArgs):
 
 
 class ObservationActivityUpdate(ObservationUpdateArgs):
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset(
+        {"location", "companions", "duration_min", "engagement_level"}
+    )
     activity: Annotated[str | None, Field(default=None, description="바꿀 활동")]
     subject: Annotated[str | None, _optional("바꿀 정규화 대상. activity를 바꾸면 같이 바꾼다")]
     duration_min: Annotated[int | None, _DURATION]
@@ -130,7 +141,7 @@ _ASSISTANCE = _optional(
 _COMPLETION = _optional("completed / partial / refused / interrupted. 해냈는지 드러날 때만")
 
 
-class ObservationRoutineCreate(PromotableCreateArgs):
+class ObservationRoutineCreate(SubjectCreateArgs):
     """생활 행동·자립 수행·습관·사회적 생활기술. 습관은 증상이 아니다."""
 
     subject: Annotated[str, Field(description=_ROUTINE_SUBJECT)]
@@ -148,6 +159,9 @@ class ObservationRoutineCreate(PromotableCreateArgs):
 
 
 class ObservationRoutineUpdate(ObservationUpdateArgs):
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset(
+        {"context", "assistance_level", "completion_status", "trigger"}
+    )
     subject: Annotated[str | None, _optional("바꿀 행동 이름")]
     routine_category: Annotated[RoutineCategory | None, _optional("바꿀 행동 종류")]
     context: Annotated[str | None, Field(default=None, description="바꿀 상황")]
