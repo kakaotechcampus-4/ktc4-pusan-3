@@ -33,9 +33,16 @@ export function EventDraftList({
   childId,
   /** 이번 run 이 내보낸 묶음. 🚨 스토어에 얹는 것은 **처음 보는 것만**이다 (아래 `seen`). */
   incoming,
+  found,
 }: {
   childId: string;
   incoming: EventDraft[];
+  /**
+   * 어디서 찾은 일정인지 한 줄. 🚨 **그릇이 넘긴다 — 목록이 지어내지 않는다.**
+   *    여기 "적어주신 말에서 찾았어요" 를 박아 뒀더니 08 사진 화면에도 그대로 떴다.
+   *    카드의 `hint` 에서 낸 것과 같은 사고라, 출처를 아는 쪽이 말하게 한다.
+   */
+  found: string;
 }) {
   const addDrafts = useEventDraftStore((s) => s.addDrafts);
   const storeDrafts = useEventDraftStore((s) => s.byChild[childId]);
@@ -73,7 +80,7 @@ export function EventDraftList({
       <div>
         <h3 className="text-label text-brand">일정으로 만들까요?</h3>
         <p className="text-body-sm text-ink-muted mt-1">
-          적어주신 말에서 일정을 찾았어요. 넣기 전까지는 캘린더에 들어가지 않아요.
+          {found} 넣기 전까지는 캘린더에 들어가지 않아요.
         </p>
       </div>
 

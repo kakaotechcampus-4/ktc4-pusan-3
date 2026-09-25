@@ -721,8 +721,19 @@ export interface PhotoCommitRequest {
  */
 export interface PhotoCommitResponse {
   observations: Observation[];
-  /** 문서 lane 에서 일시를 읽어냈을 때만 온다. `status` 는 `draft` 다. */
-  event: CalendarEvent | null;
+  /**
+   * 문서 lane 에서 일시를 읽어낸 항목들의 **일정 초안.**
+   *
+   * 🚨 **저장된 `event` 가 아니다** (#151). `event.status` 가 없어지면서(#118) 이 커밋이
+   *    게이트 없이 캘린더에 쓰는 유일한 경로가 됐고, 그래서 다른 두 경로와 같은 모양으로 맞췄다 —
+   *    쓰는 것은 초안 제출 하나뿐이고 그게 승인 게이트 ㉠ 이다.
+   * 🚨 **배열이다.** 알림장 한 장에 일정이 여러 개 적혀 있다 — 계약서 §09 의 `event`(단수)로는
+   *    첫 항목만 일정이 되고 나머지는 조용히 사라진다.
+   *
+   * ⚠️ **`commit` 이 승인 게이트인지는 아직 안 정해졌다** (#121 에서 제기, 답 없음 · PM 최종 결정).
+   *    초안만 내는 쪽으로 짠 이유는 [`docs/web/event-draft-ui-v1.md`] §4 에 있다.
+   */
+  drafts: EventDraft[];
   /** YYYY-MM-DD. 저장 뒤 "캘린더에서 보기" 가 여는 날짜다 — 프론트가 계산하지 않는다. */
   calendar_date: string | null;
 }

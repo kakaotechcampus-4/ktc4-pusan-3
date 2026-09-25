@@ -209,7 +209,11 @@ export function RunResult({
       {/* 🚨 **일정 초안은 저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이 아래는
           **보호자가 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게
           저장했어요" 라는 제목이 아직 저장 안 된 것까지 덮는다 — 그래서 머리글로 가른다. */}
-      <EventDraftList childId={childId} incoming={state.drafts} />
+      <EventDraftList
+        childId={childId}
+        incoming={state.drafts}
+        found="적어주신 말에서 일정을 찾았어요."
+      />
 
       <p className="text-caption text-ink-subtle">
         한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.

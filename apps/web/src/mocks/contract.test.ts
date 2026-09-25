@@ -1317,9 +1317,17 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
       attach_to_calendar: true,
     });
 
-    expect(saved.event).not.toBeNull();
-    // 🚨 confirmed 로 만들면 승인 게이트가 3곳이 된다 (CLAUDE.md §2).
-    expect(saved.event?.status).toBe("draft");
+    // 🚨 **초안이지 저장된 일정이 아니다** (#151). 여기서 캘린더에 쓰면 게이트를 건너뛴다.
+    expect(saved.drafts.length).toBeGreaterThan(0);
+    for (const draft of saved.drafts) {
+      expect(draft.op).toBe("create");
+      expect(draft.event_id).toBeNull();
+      expect(draft).not.toHaveProperty("id");
+      expect(draft).not.toHaveProperty("status");
+    }
+    // 🚨 **날짜를 읽은 항목마다 한 장이다** — 단수였을 때는 첫 항목만 일정이 됐다.
+    const dated = (parsed.entries ?? []).filter((e) => e.date !== null && e.kind === "event");
+    expect(saved.drafts.length).toBeGreaterThanOrEqual(Math.min(dated.length, 1));
     expect(saved.calendar_date).not.toBeNull();
   });
 

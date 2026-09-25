@@ -7,6 +7,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { EventDraftList } from "@/components/event-draft-list";
 import { PhotoReview } from "@/components/photo-review";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
@@ -38,8 +39,14 @@ import { formatDay, parseISODate, toISODate } from "@/lib/format";
  *    저장은 `POST /photo-runs/{rid}/commit` 하나다. 그래서 화면을 그냥 나가면 남는 것이 없다 —
  *    "나가면 사라져요" 같은 확인 창을 만들지 않는다 (승인 게이트는 2곳뿐이다 · CLAUDE.md §2).
  *
- * 🚨 **여기는 그 승인 게이트가 아니다.** 문서 lane 이 만드는 `event` 는 `draft` 고, 캘린더에
- *    확정하는 것은 09 화면의 `POST /events/{eid}/confirm` 이다. `btn-approve` · `caution` 금지.
+ * 🚨 **여기는 그 승인 게이트가 아니다.** `commit` 이 만드는 것은 **관찰**이고, 일정은 `drafts` 로
+ *    내려와 보호자가 카드에서 넣어야 캘린더에 들어간다 (#151). 그래서 이 화면의 저장 버튼에는
+ *    `btn-approve` · `caution` 을 쓰지 않는다 — 그 둘은 카드의 제출 버튼이 가져간다.
+ *
+ *    ⚠️ **`commit` 이 게이트인지는 아직 안 정해졌다.** `event.status` 가 없어지면서(#118) 이
+ *    커밋이 게이트 없이 캘린더에 쓰는 유일한 경로가 됐고, #121 에서 제기했지만 답이 오지 않았다.
+ *    초안만 내는 쪽으로 짠 이유와 반대로 정해졌을 때 고칠 것은
+ *    [`docs/web/event-draft-ui-v1.md`](../../../../../../docs/web/event-draft-ui-v1.md) §4 에 있다.
  *
  * 🚨 **하단 네비(`ChildNav`)를 붙이지 않는다.** 흐름 중인 화면이라 고르는 도중에 새는 길을
  *    만들지 않는다 (apps/web/CLAUDE.md §3 — 04·05 와 같은 이유).
@@ -425,9 +432,6 @@ function SavedResult({
         <h2 className="text-title text-ink">저장했어요</h2>
         <p className="text-body-sm text-ink-muted mt-2">
           기록 {result.observations.length}건을 남겼어요.
-          {result.event
-            ? ` 일정은 ${formatDay(result.event.starts_at)} 초안으로 올라갔어요. 캘린더에 확정하는 것은 그 화면에서 따로 승인해요.`
-            : ""}
         </p>
       </div>
 
@@ -446,6 +450,14 @@ function SavedResult({
           <img src={previewUrl} alt="저장한 사진" className="h-full w-full object-cover" />
         </PhotoCard>
       ) : null}
+
+      {/* 🚨 **기록은 저장됐고 일정은 아직이다.** 위 "저장했어요" 가 덮지 않게 목록이 자기 머리글로
+          선을 긋는다 — 읽어낸 일시마다 카드 한 장이고, 넣는 것은 보호자다 (승인 게이트 ㉠). */}
+      <EventDraftList
+        childId={childId}
+        incoming={result.drafts}
+        found="사진에서 일정을 읽어냈어요."
+      />
 
       {/* 🚨 `Button` 의 클래스를 링크에 베껴 붙이지 않는다 — 같은 모양이 두 벌이 되는 순간
           한쪽이 뒤처진다 (한 화면에서 primary 버튼이 두 가지로 보이게 되는 길이다).

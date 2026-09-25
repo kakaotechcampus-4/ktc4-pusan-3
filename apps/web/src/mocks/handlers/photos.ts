@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type {
+  EventDraft,
   Observation,
   PhotoCommitRequest,
   PhotoCommitResponse,
@@ -9,7 +10,7 @@ import type {
 } from "@/lib/api/types";
 import { PHOTO_LANES } from "@/lib/api/types";
 
-import { CHILD_ID, daysAgo, draftEvent } from "../fixtures";
+import { CHILD_ID, daysAgo } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -367,11 +368,30 @@ export const photoHandlers = [
     const attachedDate = body.lane === "document" ? when : run.date;
 
     /**
-     * 🚨 **항목마다 일정을 만들지 않는다.** 계약서 §09 의 응답은 `event` 하나라, 지금은
-     *    날짜가 있는 첫 항목만 초안이 된다. 한 장에서 일정이 여러 개 나오면 `event` 도
-     *    배열이어야 한다 — 👉 `apps/api` Owner 협의 대상 (types.ts 의 ⚠️ 와 같은 줄기).
+     * 🚨 **날짜를 읽어낸 항목마다 초안 한 장이다.** 알림장 한 장에 일정이 여러 개 적혀 있는데,
+     *    계약서 §09 의 `event`(단수)로는 첫 항목만 일정이 되고 나머지는 조용히 사라졌다.
+     * 🚨 **아무것도 저장하지 않는다.** 저장은 보호자가 카드에서 제출할 때 한 번이다 (게이트 ㉠).
      */
-    const forEvent = body.lane === "document" ? entries.find((e) => e.date !== null) : undefined;
+    const drafts: EventDraft[] =
+      body.lane === "document" && attaching
+        ? entries
+            .filter((entry) => entry.date !== null)
+            .map((entry) => ({
+              draft_id: `d_photo_${entry.id}`,
+              op: "create" as const,
+              event_id: null,
+              event: {
+                title: entry.title,
+                starts_at: `${entry.date}T00:00:00+09:00`,
+                ends_at: null,
+                all_day: entry.all_day ?? true,
+                event_type: "episodic" as const,
+                category: "institution" as const,
+              },
+              before: null,
+              items: entry.items.map((name) => ({ item_id: null, item_name: name })),
+            }))
+        : [];
 
     const response: PhotoCommitResponse = {
       observations:
@@ -382,27 +402,7 @@ export const photoHandlers = [
           : tags.length > 0
             ? [activityObservation(tags, attachedDate)]
             : [],
-      // 🚨 문서 lane 이 일시를 읽어냈을 때만 일정이 생기고, 그것도 **draft** 다.
-      //    확정은 09 화면의 `POST /events/{eid}/confirm`(승인 게이트 ㉠) 뿐이다.
-      event:
-        forEvent && attaching && forEvent.date
-          ? draftEvent({
-              id: `e_photo_${Date.now()}`,
-              title: forEvent.title,
-              starts_at: `${forEvent.date}T00:00:00+09:00`,
-              all_day: true,
-              category: "institution",
-              created_by: "agent",
-              source_notice_id: `n_${params.rid}`,
-              source_refs: [],
-              items: forEvent.items.map((name, i) => ({
-                item_id: `i_photo_${i}`,
-                item_name: name,
-                is_prepared: false,
-                prepared_at: null,
-              })),
-            })
-          : null,
+      drafts,
       calendar_date: attaching ? attachedDate : null,
     };
 
