@@ -92,7 +92,7 @@
 - [web/design-system-v1.md](web/design-system-v1.md) — 색 31 · 타이포 8단계 · 레이아웃 · 컴포넌트 사양 확정 · 승인 게이트는 `caution`, 실패는 뉴트럴 · 그림자 1단계 · 전 구간 1열 고정
 - [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 `sessionStorage` 12시간
 - [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫
-- [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 제출만 게이트 ㉠ · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만
+- [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 **제출만 게이트 ㉠**(`/events/{eid}/confirm` 에서 옮겨옴) · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만 · 🔶 `photo-runs/{rid}/commit` 이 게이트인지는 미결
 
 *아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기.
 
