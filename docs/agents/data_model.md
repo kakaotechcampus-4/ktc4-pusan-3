@@ -193,7 +193,6 @@
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
-- `routine` 에서는 **승격 기계장치 세 칸만 제외**: `affinity_id` · `embedding` · `strong_signals`. `subject` 와 `polarity` 는 남는다 — routine 은 승격되지 않지만 **관찰 자체는 티어 3 근거로 인용된다** (`routine_coaching` 의 근거가 `observation_routine` 이다). `common/evidence.py` 의 `ObservationRow` 가 이 두 칸을 NOT NULL 로 요구한다 (2026-09-23 결정). 테이블은 아직 세 칸을 다 들고 있다 — 아래 대조표 9번
 
 ### 1. observation_food (섭취·영양)
 
@@ -264,16 +263,14 @@
 **구현 메모 (Memory/Observation — food, health, education, activity, routine)**
 
 - PK 기본값: 노션엔 `gen_random_uuid()`로 있었으나 다른 테이블과 동일하게 `uuidv7()`로 통일해 구현
-- `child_id`(CASCADE) / `affinity_id`(SET NULL) / `source_writer`(SET NULL) FK 적용. 작성자가 탈퇴해도 공동 관찰 기록은 유지됨
+- `child_id`(CASCADE) / `affinity_id`(SET NULL) / `source_writer`(SET NULL) FK 적용. 작성자가 탈퇴해도 공동 관찰 기록은 유지됨. `affinity_id` 는 승격 셋(food · education · activity)에만 있다 — `routine` 과 `health` 에는 없다
 - `subject`: 노션엔 nullable로 있었으나 NOT NULL로 확정 (임베딩·병합 판정 입력이라 값이 항상 있어야 함)
 - `confidence`(`confidence_source` 값으로 0.9/0.8/0.5/0.3을 계산하는 generated 컬럼)를 한때 추가했다가 제거 — `confidence_source` 원본 값만 저장하고 점수화는 상위 레이어 책임으로 이동
 - `health`는 `ObservationCommon`을 상속하지 않고 필요한 공통 필드를 직접 선언 (승격 파이프라인 밖이라서)
 - `observation_food.amount`/`reaction`: 노션엔 enum으로 있었으나 값 집합이 아직 미확정이라 text로 구현, 검증은 애플리케이션 레이어
 - `observation_health.observed_time`: 노션엔 default now()로 있었으나 구현은 default 없이 nullable
-- `observation_routine`: 노션 원안 그대로 구현 (ObservationCommon 상속 + `routine_category`/`context`/`assistance_level`/`completion_status`/`trigger`). 승격 세 칸이 그대로 남아 있다 — 아래 대조표 9번
+- `observation_routine`: `ObservationCommon` 상속 + `routine_category`/`context`/`assistance_level`/`completion_status`/`trigger`. 승격 세 칸(`affinity_id` · `embedding` · `strong_signals`)은 `d7c204e9a1b6` 에서 뺐다 — 승격 대상이 아니라 `Promotable` 믹스인을 상속하지 않는다 (2026-09-25)
 - 인덱스: 5테이블 전부에 `(child_id, status)` 복합 인덱스 (PR #130). Agent 의 `memory.search` 가 아이별로 `status='active'` 를 거르는 경로다.
-
-**미결**: `observed_range` 빈 범위·무한 상한 금지 CHECK는 아직 없음. `source_notice_id` FK는 `notice` 도메인 생성 후 추가
 
 ## Memory/Profile
 
@@ -297,9 +294,6 @@
 
 - PK 기본값 `uuidv7()`로 통일 (observation과 동일)
 - `child_id`: FK → `child.id`, `ON DELETE CASCADE` 추가 완료 (이전엔 plain uuid)
-- `polarity`가 `confirmed` 상태에서 NOT NULL이어야 한다는 제약은 아직 CHECK로 걸려있지 않음 (ORM 레벨은 nullable)
-
-**미결**: `polarity` NOT NULL(when confirmed) CHECK — 아직 추가 안 됨
 
 ## Saftey
 
@@ -317,7 +311,7 @@
 | reactions | text[] | 알레르기 반응 목록, 예: ["두드러기","호흡곤란"], default '{}' |
 | management | jsonb | 만성질환 관리 정보. 예: `{insulin:"식전", carb_limit_g:150, meds:[…]}`, NOT NULL, default '{}' |
 | notes | text | 보호자 자유 기술 |
-| state | enum | `active` / `retracted` / `none` / `unknown`, NOT NULL, DEFAULT `unknown`. 감쇠 없음 — 보호자만 바꾼다. `none` 은 "확인했고 없다", `unknown` 은 "아직 못 물어봤다" 다 (2026-09-23 명성님 확인) |
+| state | enum | `active` / `retracted` / `none` / `unknown`, NOT NULL, DEFAULT `unknown`. 감쇠 없음 — 보호자만 바꾼다. `none` 은 "확인했고 없다", `unknown` 은 "아직 부모가 확인하지 못했다" |
 | created_by | uuid | nullable. FK → `parent.id`, `ON DELETE SET NULL`. 최초 등록 보호자 |
 | updated_by | uuid | nullable. FK → `parent.id`, `ON DELETE SET NULL`. 마지막 수정 보호자 |
 | created_at | timestamptz | default now() |
@@ -343,12 +337,12 @@
 
 **구현 메모 (Safety — health_safety)**
 
-- `state`(active/retracted) 컬럼을 표에 추가 — "안전 조회는 항상 state='active' 필터" 문구를 실제 컬럼으로 구현한 것 (감쇠 없음 — 보호자만 retracted로 전환)
+- `state` 컬럼을 표에 추가 — "안전 조회는 항상 state='active' 필터" 문구를 실제 컬럼으로 구현한 것 (감쇠 없음 — 보호자만 바꾼다)
+- `state` 는 네 값이고 **DEFAULT 는 `unknown`** 이다. `active`(있다) / `retracted`(보호자가 취소했다) / `none`(확인했고 없다) / `unknown`(아직 못 물어봤다). `child` 를 만들 때 `kind='allergy'` 19행이 전부 `unknown` 으로 들어간다.
+  `none` 과 `unknown` 을 가르는 이유는 0행이 "없다"인지 "모른다"인지를 Food 게이트가 봐야 하기 때문이다 — 조회 실패만 추천을 막고 `unknown` 은 확인 안내만 붙인다 ([Tool_공통.md](shared/Tool_공통.md) §3 F-4)
 - `category`: kind마다 값 집합이 달라 enum이 아니라 text로 구현, 검증은 애플리케이션 레이어
 - `management`: 구현은 NOT NULL, default `{}`
 - `child_id`(CASCADE) / `created_by`(RESTRICT) / `updated_by`(SET NULL) FK 추가 완료 (이전엔 plain uuid) — `created_by`가 RESTRICT인 건 child 섹션의 "감사용 FK는 SET NULL" 원칙과 다름, 의도적인지 확인 필요
-
-**미결**: `UNIQUE(child_id, kind, label)` 제약이 아직 ORM `__table_args__`에 선언되지 않음 — autogenerate라 마이그레이션도 못 잡음, 수동 추가 필요. Agent/Curator role의 write 권한 분리(DB 계층 권한)도 아직 미구현
 
 ### Food 영양소 — 이 문서에 두지 않는다
 
@@ -375,11 +369,6 @@
 | updated_at | timestamptz | NOT NULL, default now(), on update now() |
 
 ### suggestion_evidence (추천이 쓴 근거)
-
-루트 CLAUDE.md §2가 이름으로 지목한 테이블이다 — "개인화 추천에는 사용한 `source_id`를 반드시 첨부한다. 0행이면 버그(품질 지표 하드 기준 0건)". jsonb로 두면 그 지표를 COUNT로 셀 수 없어 행으로 뺐다.
-
-> 이름을 `source_*` 로 바꾸면서 루트 CLAUDE.md · 테크스펙 · 기획안 · `PRODUCT.md` 의 근거 어휘도 함께 맞췄다 (2026-09-23).
-> 로그 규칙의 "원문 대신 `memory_id`" 는 이 컬럼이 아니라 일반 규칙이라 그대로 둔다.
 
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
@@ -410,10 +399,6 @@
 
 - `child_id`: FK → `child.id`, `ON DELETE CASCADE` 추가 완료 (이전엔 plain uuid)
 - `id` PK 기본값은 다른 테이블과 동일하게 `uuidv7()`
-
-**미결**: 문서 행(`*_doc`) 테이블이 아직 없다. `source_updated_at` 에 넣을 `written_at` 컬럼도 그 테이블과 같이 생긴다.
-
-`suggestion_evidence` 모델·마이그레이션과 `suggestion.kind` 컬럼은 `c5a81f0d3b62` 에서 들어갔고 `source_refs` jsonb 는 같이 삭제됐다 (2026-09-25)
 
 ## Correction
 
@@ -567,14 +552,6 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 | measured_at | timestamptz | nullable. 잰 시각. `observed_time`(관찰 시점)과 다르다 — 한 번의 관찰에서 여러 번 잰다 |
 | measure_site | enum | `ear` / `forehead` / `armpit` / `oral` / `rectal`, nullable. **잰 부위.** 부위마다 정상 범위가 달라 숫자만으로는 못 읽는다 |
 
-Health 의 `build_fever_timeline` 하드 선행이다. 이게 없으면 "3일째 열이 오르내린다" 를 숫자로 못 쓴다.
-같은 증상 3회 반복 판정(루트 CLAUDE.md §2 안전)도 시각 없이는 셀 수 없다.
-
-`measure_site` 는 명성님 제안이다(2026-09-23) — 겨드랑이와 귀는 같은 아이에게서도 값이 다르게 나온다.
-부위를 모르면 37.8 이 높은 값인지 아닌지 판단할 수 없어, 숫자만 쌓으면 타임라인이 들쭉날쭉해진다.
-**부위별 기준값은 코드 상수로 둔다** — 모델이 정상 범위를 지어내지 않게 한다 (루트 CLAUDE.md §2 안전).
-nullable 인 이유는 보호자가 부위를 안 밝힐 수 있어서다. 그때는 부위 비교를 하지 않고 숫자만 보여준다.
-
 #### notice (기관 공지) — 테이블 신설
 
 `observation_*.source_notice_id` 가 이미 이 테이블을 가리키는데 테이블이 없어서 FK 가 안 걸려 있다.
@@ -587,62 +564,29 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 
 #### observation_food.amount — 값 집합 미확정
 
-지금은 text 다. Food 의 가중치 사전(F-18) 입력이라 값 집합이 필요한데 아직 안 정했다.
+타입은 text 다. TODO: Food 의 가중치 사전(F-18) 입력을 수정하여 text여도 로직에 문제가 없도록 수정한다.
 
 ---
 
-## ORM 대조 — PR #130 (`2354945`, 2026-09-22 17:10 develop)
+## ORM 에 아직 없는 것 (참고)
 
-`feat/be-125-agent-orm-repository` 가 repository 7개를 올렸다. 이 문서와 대조한 결과다.
+이 문서가 적어 둔 스키마 중 `apps/api/app/domains/` 에 반영되지 않은 것만 모았다.
+2026-09-26 기준이고, 반영되면 이 목록에서 뺀다. 여기 없는 것은 문서와 ORM 이 같다.
 
-### 맞는 것
+**테이블이 없다**
 
-| 테이블 | 확인 |
-| --- | --- |
-| `profile_affinity` | `merge_key` · `state` · `polarity`(nullable) · `strength` · `last_observed_on` 전부 일치. `list_affinities()` 가 기본으로 `archived` 를 빼는 것도 규약과 같다 |
-| `observation_*` 공통 | `polarity smallint NOT NULL default 0` · `status` 3값(`active`/`stand_alone`/`inactive`) · `confidence_source` 4값 일치 |
-| `observation_health` | `ObservationCommon` 을 상속하지 않는다 — 승격 파이프라인 밖이라는 이 문서의 서술과 같다 |
-| `correction` | verdict 4값 일치. `confirm` 없음도 일치 |
-| `health_safety` | `state` 가 `active` / `retracted` 두 값 |
-| `suggestion` | `feedback` 이 `liked`/`disliked`/`not_acted`, `reason` 이 `text` 한 칸 |
+- `child_growth_log` — 나중에 도입한다. 이 문서에는 계획만 둔다. `Gate.growth_log_count` 가 이 테이블의 측정 건수를 센다
+- `notice` — `observation_*.source_notice_id` 가 가리키는데 테이블이 없어 FK 를 못 건다. 지금은 plain uuid 다
+- 문서 행 `food_doc` · `growth_doc` · `activity_doc` — `suggestion_evidence.source_updated_at` 에 넣을 `written_at` 컬럼도 이 테이블과 같이 생긴다
 
-PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memory/Observation 구현 메모에 반영했다.
+**컬럼이 없다**
 
-### 어긋나는 것
+- `observation_health` 의 체온 세 칸 — `temperature` · `measured_at` · `measure_site`
+- `health_safety.state` — ORM `SafetyState` 는 `active` · `retracted` 둘뿐이다. 문서는 네 값에 DEFAULT `unknown` 이라 `none` · `unknown` 을 더해야 한다. VARCHAR + CHECK 라 마이그레이션이 붙는다
 
-| # | 항목 | 이 문서 | ORM | |
-| --- | --- | --- | --- | --- |
-| 1 | `profile_affinity.domain` | `food / activity / education` | 같음 | ✅ 문서 쪽이 넓었고 좁혔다 |
-| 2 | `suggestion.kind` | `general` / `personalized` NOT NULL | 같음 | ✅ `c5a81f0d3b62` |
-| 3 | 추천 근거 | `suggestion_evidence` 테이블 (2026-09-23 스키마 확정) | 같음 | ✅ `c5a81f0d3b62` |
-| 4 | `suggestion.agent` | `food / activity / growth / health` | 같음 | ✅ `b3e7d9c05a12` |
-| 5 | `child.gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
-| 6 | `observation_health` 체온 | 위 절에서 신설 요청 — `temperature` · `measured_at` · `measure_site` | 없음 | ⚠️ |
-| 7 | `notice` | FK 대상 | 테이블 없음 → `source_notice_id` 가 FK 없는 plain uuid | ⚠️ |
-| 8 | `health_safety.state` | `active` / `retracted` / `none` / `unknown` | `active` / `retracted` | ⚠️ ORM 에 두 값이 없다 |
-| 9 | `observation_routine` 의 승격 세 칸 | `affinity_id` · `embedding` · `strong_signals` 없음 | 같음 | ✅ `d7c204e9a1b6` |
+**제약이 없다**
 
-**1번은 닫혔다.** 문서가 `routine` 을 넣고 있었는데 **routine 은 승격 대상이 아니다**(2026-09-23, 명성님 확인).
-`profile_affinity.domain` 은 ORM 이 처음부터 맞았다. `observation_routine` 은 `subject` · `polarity` 만 남기고 `affinity_id` · `embedding` · `strong_signals` 를 뺀다 — 티어 3 근거로는 계속 쓰기 때문이다 (위 Memory/Observation §5).
-테이블 쪽은 9번에서 맞췄다.
-
-**2·3번은 닫혔다.** `c5a81f0d3b62` 가 `suggestion_evidence` 를 만들고 `suggestion.kind` 를 더한 뒤 `source_refs` jsonb 를 뺐다 (2026-09-25).
-근거를 역조회하던 자리도 같이 옮겼다 — `list_suggestions_using_observation` 과 `page_observations.sql` 의 `unused_in_suggestions` 가 jsonb `@>` 대신 `suggestion_evidence` 를 조인한다.
-
-**4번도 닫혔다. BE 잘못이 아니었다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이어서 ORM 이 루트 문서를 정확히 따랐고, 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
-`b3e7d9c05a12` 가 CHECK 를 교체하고 기존 행의 `education` 을 옮긴다.
-관찰 테이블 이름 `observation_education` 은 그대로 둔다 — `growth` 가 읽는 테이블은 `observation_education` 과 `observation_routine` 둘이라 Agent 이름이 테이블 이름을 따라갈 수 없다.
-
-**8번은 되돌렸다.** 한때 `active` / `retracted` 두 값으로 좁혔는데, `none` · `unknown` 은 알레르기 유무를 가르려고 넣어 둔 것이었다 (2026-09-23 명성님 확인).
-ORM 에 두 값을 더해야 한다. `child.allergy_status` 는 **뺐다** — 알레르기 유무는 `kind='allergy'` 행들의 state 로 가른다 (위 Saftey 절).
-
-**9번은 닫혔다.** `d7c204e9a1b6` 가 세 칸을 뗐고, 같이 움직이는 두 곳도 반영했다.
-
-- `domains/memory/observation/page_observations.sql` — `observation_routine` 의 `affinity_id` 를 `observation_health` 처럼 `NULL::uuid` 로 바꿨다
-- `agents/memory/schemas/observation.py` — `ObservationRoutineCreate` 가 `PromotableCreateArgs` 대신 `SubjectCreateArgs` 를 상속한다. 그대로 뒀으면 `model_dump()` 가 없는 컬럼을 리포지토리로 내려보내 routine 기록이 전부 거절됐다
-
-### 이 문서가 이미 미결로 적어 둔 것 (ORM 도 같음)
-
-- `profile_affinity.polarity` 가 `confirmed` 일 때 NOT NULL 인 CHECK — 아직 없음
-- `health_safety` 의 `UNIQUE(child_id, kind, label)` — `__table_args__` 에 미선언
-- `observed_range` 빈 범위 · 무한 상한 금지 CHECK — 아직 없음
+- `observed_range` 의 빈 범위·무한 상한 금지 CHECK
+- `profile_affinity.polarity` 가 `confirmed` 일 때 NOT NULL 인 CHECK. ORM 레벨은 nullable 이다
+- `health_safety` 의 `UNIQUE(child_id, kind, label)` — `__table_args__` 에 미선언이라 autogenerate 가 못 잡는다. 수동 추가가 필요하다
+- Agent/Curator role 의 write 권한 분리 (DB 계층 권한)
