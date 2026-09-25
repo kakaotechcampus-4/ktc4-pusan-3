@@ -26,7 +26,7 @@
 | --- | --- |
 | `observation_food` · `profile_affinity(domain=food)` | Memory |
 | `health_safety` | 앱 API (보호자 권한) |
-| `child` (생년월일 · `gestational_weeks`) | 앱 |
+| `child` (생년월일) | 앱 |
 | `child_growth_log` (키·몸무게·측정일) | Memory |
 | `suggestion` | 주입된 writer가 INSERT (`status='draft'`) |
 
@@ -318,7 +318,6 @@ CREATE TABLE nutrient_reference (
 | 테이블 | 요청 | 왜 |
 | --- | --- | --- |
 | `health_safety` | **`child` 생성 시 `kind='allergy'` 19행을 `unknown` 으로 생성** · `state` 에 `none`·`unknown` 추가 — ✅ 확정(09-23) | F-4 닫힘. "아직 안 물어봤다"가 `unknown` 값으로 남아 "없다고 확인함"과 갈린다. `child.allergy_status` 는 뺐다 |
-| `child` | `gestational_weeks smallint` (선택) | 조산아 이유식 단계 |
 | `suggestion` | **`kind`만** 추가 · `source_refs` jsonb 제거 → `suggestion_evidence` 테이블 | 개인화/일반 표시 · 근거를 행으로 세기 위해 |
 | `observation_food` | `amount` 값 집합 확정 | 가중치 사전(F-18)의 입력 |
 | `notice` | 테이블 신설 | `intake_daily.source_notice_id` FK |

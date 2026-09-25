@@ -24,8 +24,8 @@
 ## 2. `life_stage` — 코드
 
 ```python
-def life_stage(birth_date: date, today: date, gestational_weeks: int | None = None) -> LifeStage
-# LifeStage(months: int, corrected_months: int, stage: Stage, big: Literal["infant","toddler"])
+def life_stage(birth_date: date, today: date) -> LifeStage
+# LifeStage(months: int, stage: Stage, big: Literal["infant","toddler"])
 ```
 
 | stage | 월령 | big |
@@ -35,8 +35,7 @@ def life_stage(birth_date: date, today: date, gestational_weeks: int | None = No
 | `toddler` | 12–35 | 유아기 |
 | `preschool` | 36+ | 유아기 |
 
-- **공통이 강제하는 것은 월령 계산까지다.** `life_stage()`가 `months` · `corrected_months` · `stage`를 돌려주지만, 그 값으로 tool을 어떻게 가를지는 **도메인마다 다르다** — Food는 `stage`를 배타적 범주로 쓰고, Growth는 tool별 `min_month` 눈금을 쓰고, Health는 tool을 여닫지 않고 계산 방식만 바꾼다. `stage`는 참고값이지 공통 게이팅 축이 아니다.
-- 조산(`gestational_weeks < 37`)은 24개월까지 `corrected_months`로 판정한다. 계산은 **월 단위 반올림**이다 — `corrected_months = months - round((40 - gestational_weeks) / 4.35)`. 34주면 1개월 보정. 주수를 일 단위로 환산하지 않는 것은 보호자가 기억하는 값이 대개 주 단위라서다
+- **공통이 강제하는 것은 월령 계산까지다.** `life_stage()`가 `months` · `stage`를 돌려주지만, 그 값으로 tool을 어떻게 가를지는 **도메인마다 다르다** — Food는 `stage`를 배타적 범주로 쓰고, Growth는 tool별 `min_month` 눈금을 쓰고, Health는 tool을 여닫지 않고 계산 방식만 바꾼다. `stage`는 참고값이지 공통 게이팅 축이 아니다.
 - 경계값은 `config/life_stage.yaml` 한 곳
 - **`age_months`는 민법 기준 달력 계산이다.** `(today - birth).days // 30` 금지 — 6년이면 두 달 앞서 열린다. 구현은 `app/rules/age.py` 하나
 - **`FeedingStage`는 별도 enum이 아니다.** Food 문서가 쓰던 `milk` · `weaning` · `toddler_meal`은 이 표의 값을 부르는 다른 이름이었다. 축이 하나인데 이름이 둘이면 `stage_min` 같은 컬럼에 두 집합이 섞인다 — **`LifeStage.stage` 네 값으로 통일한다.**
@@ -64,7 +63,7 @@ DataReady(daycare_meal: bool, notice: bool, book_api: bool)
 ```
 
 - **성별은 게이팅 축이 아니다.** `has_gender`는 삭제됐다(2026-09-22 성장 판정 제거). 추천·계산 어디에도 쓰지 않는다
-- `stage`가 월령을 들고 있으므로 `age_months` · `corrected_months`를 따로 넘기지 않는다
+- `stage`가 월령을 들고 있으므로 `age_months`를 따로 넘기지 않는다
 - `data`는 "그 아이에게 그 데이터가 있는가"다 — 급식 행 0건이면 `lookup_daycare_menu`가, `notice` 0건이면 `lookup_notice`가, 도서 API 장애면 도서 tool이 빠진다
 - **Gating은 각 Agent의 registry가 한다.** Supervisor는 tool을 모른다
 - 빈 튜플이면 **모델을 부르지 않고** 코드 readout으로 끝낸다(`model_calls=0`). 연령 때문에 닫혔으면 언제 열리는지 함께 알린다

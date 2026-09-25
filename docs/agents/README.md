@@ -23,7 +23,7 @@ memory-agent-v1.md
 | --- | --- | --- |
 | 1 | [shared/Agent_공통규약.md](shared/Agent_공통규약.md) | 쓰기 권한 · 출력 채널 · 근거 · 게이팅 · 호출 예산 · 금지 사항 |
 | 2 | [shared/Tool_공통.md](shared/Tool_공통.md) | `LifeStage` · `Gate` · `rank_evidence` 정본 |
-| 3 | [shared/연령별_Tool_전략.md](shared/연령별_Tool_전략.md) | 월령 경계표 · 교정연령 · 경계 처리 |
+| 3 | [shared/연령별_Tool_전략.md](shared/연령별_Tool_전략.md) | 월령 경계표 · 경계 처리 |
 | 4 | [supervisor-agent-v1.md](supervisor-agent-v1.md) §2, §3-1 | 2차 라벨, Activity ↔ Growth 경계. Activity 역할은 아래 §2 에 있다 |
 | 5 | [data_model.md](data_model.md) | `observation_activity` · `profile_affinity` · `suggestion` |
 | 6 | [shared/RAG_plan.md](shared/RAG_plan.md) · [shared/외부연결_계획.md](shared/외부연결_계획.md) §3 | 문서 행 제작 절차 · 날씨·장소 API |
@@ -98,8 +98,8 @@ Activity 것이라 비워 뒀다.
 공통이 강제하는 것은 **월령 계산까지**다. 구현은 `app/rules/age.py` 하나이고 네 Agent가 같은 함수를 쓴다.
 
 ```python
-def life_stage(birth_date: date, today: date, gestational_weeks: int | None = None) -> LifeStage
-# LifeStage(months, corrected_months, stage, big)
+def life_stage(birth_date: date, today: date) -> LifeStage
+# LifeStage(months, stage, big)
 ```
 
 | `stage` | 월령 |
@@ -124,8 +124,6 @@ def life_stage(birth_date: date, today: date, gestational_weeks: int | None = No
 - **`date` 자리에 `datetime`이 들어가지 못하게 타입으로 막는다.** UTC 서버에서 `date.today()`를 부르면 KST 00:00–09:00 사이에 하루가 어긋나 그 시간대에만 게이트가 안 열린다. 기준일은 `Gate`가 들고 있는 `today`를 쓰고 tool 안에서 직접 부르지 않는다.
 - **생일 당일 전환이다.** 12개월이 되는 날 유아식 tool이 열린다.
 - **경계값은 `config/age_gates.yaml` 한 곳에 둔다.** 코드·프롬프트·문서에 숫자를 복제하지 않는다.
-
-조산(`gestational_weeks < 37`)이면 24개월까지 `corrected_months`를 계산한다. 월 단위 반올림이다 — `months - round((40 - gestational_weeks) / 4.35)`. 34주면 1개월 보정. Activity가 활동 난이도에 교정연령을 쓸지는 정해진 게 없다. **안전 필터만은 `min(age_months, corrected_months)`를 쓴다** — 더 어린 쪽이 보수적이다.
 
 테스트는 경계마다 양쪽을 본다. 필수 월령은 3/4 · 11/12 · 17/18 · 23/24 · 35/36 · 47/48 · 71/72다. Activity에 걸리는 건 17/18(affinity 생성 시작)과 35/36(안전 기준 전환)이다.
 

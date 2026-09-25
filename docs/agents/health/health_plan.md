@@ -69,7 +69,6 @@
 3) medication_dose           (generated column)
 4) medication_dose_log
 5) observation_health.temperature · measured_at · measure_site   ← Memory 소유, 변경 요청
-6) child.gestational_weeks
 ```
 
 DDL은 [`health_agent_own_table.md`](health_agent_own_table.md) §7.

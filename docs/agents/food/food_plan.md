@@ -67,7 +67,7 @@ DoD: `test_evidence_ranking.py` 통과 · `//30` 나눗셈 0건 · import-linter
 4) food_doc
 6) intake_daily
 6a) daycare_meal
-7) health_safety 온보딩 19행 / child.gestational_weeks   (S0-1)
+7) health_safety 온보딩 19행   (S0-1)
 8) suggestion 컬럼 추가                        (S0-3)
 ```
 

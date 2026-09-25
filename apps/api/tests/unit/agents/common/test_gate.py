@@ -86,6 +86,6 @@ class TestDataReady:
 
 class TestGateCarriesAge:
     def test_월령은_stage_가_들고_있다(self):
-        """age_months · corrected_months 를 따로 넘기지 않는다."""
+        """age_months 를 따로 넘기지 않는다."""
         assert gate().stage.months == 48
         assert gate().stage.stage == "preschool"

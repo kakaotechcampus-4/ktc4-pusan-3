@@ -99,7 +99,6 @@ async def handle_input(
         # FeedingStage 값이 LifeStage.big 과 같은 문자열이다
         # TODO: FeedingStage 를 LifeStage.stage 네 값으로 통일할 때 .big을 stage로 교체한다
         #   2값으로는 infant_milk 0–3 과 infant_weaning 4–11 이 갈리지 않는다
-        # TODO: 재태주수를 받으면 Food는 corrected_stage를 보게 한다
         stage = FeedingStage(life_stage(birth_date, now.date()).big)
 
     food_context = FoodContext(

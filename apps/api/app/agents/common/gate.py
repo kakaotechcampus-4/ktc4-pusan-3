@@ -33,7 +33,7 @@ class DataReady:
 class Gate:
     """`tools_for(task_type, gate)` 의 입력.
 
-    `stage` 가 월령을 들고 있으므로 `age_months` · `corrected_months` 를 따로 넘기지 않는다.
+    `stage` 가 월령을 들고 있으므로 `age_months` 를 따로 넘기지 않는다.
     """
 
     stage: LifeStage

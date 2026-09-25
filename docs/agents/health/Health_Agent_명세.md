@@ -50,7 +50,6 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | 경계 | 무엇이 바뀌나 | 근거 |
 | --- | --- | --- |
 | 월령 전체 | 검진 차수 · 접종 시기 | 건보공단 검진 주기 · 표준예방접종일정 |
-| 조산아 | 24개월까지 교정연령 | `child.gestational_weeks` (선택 입력) |
 
 ---
 
@@ -148,7 +147,7 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | `medication_dose_log` | medication · visit_summary | 실제로 먹인 기록 |
 | `prescription_draft` | medication | **OCR 파이프라인 산출물. 읽기만** — 값은 보호자가 확인한 뒤에만 쓰임 |
 | `observation_routine` · `observation_education` | (검진 맥락 요약) | 기록 요약용. 판정 금지 |
-| `child` (생년월일 · `gestational_weeks`) | schedule_check | 월령. **성별은 읽지 않음** |
+| `child` (생년월일) | schedule_check | 월령. **성별은 읽지 않음** |
 | 공식 기준표 (코드 상수) | schedule_check | §11 |
 | 공공 API | place_lookup | §11 |
 
@@ -513,7 +512,7 @@ class MedicationDraft:
 - `health_safety` INSERT는 보호자 세션의 앱 API만 (`created_by = parent.id`)
 - 기준표와 **고정 문구 전부** `reference/`에 버전 파일로, 테스트에서 글자 단위로 고정. Health에는 문서 테이블이 없다
 - hook 두 개는 pipeline에서 Memory 저장 **직후** 동기 실행
-- 선행 스키마: `child.gestational_weeks` · consent 조회 포트 (`child.gender` · `child_growth_log`는 Health와 무관해짐)
+- 선행 스키마: consent 조회 포트 (`child.gender` · `child_growth_log`는 Health와 무관해짐)
 - **신규 소유 테이블**: `medication_dose_log` · `medication_schedule` 컬럼 4개 추가 → [`health_agent_own_table.md`](health_agent_own_table.md)
 - **공유 테이블 변경 요청**: `observation_health.temperature` · `measured_at` · `measure_site` (Memory 소유, Health는 읽기만)
 - `prescription_draft`는 **OCR 파이프라인 소유**입니다. Health role에 write 권한을 주지 않습니다
