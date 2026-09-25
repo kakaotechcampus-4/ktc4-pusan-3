@@ -63,20 +63,18 @@ def test_정해진_필드만_노출한다() -> None:
 
 
 # ── enum 일치 ───────────────────────────────────────────────────
-def test_agent_이름이_suggestion_과_한_칸만_다르다() -> None:
-    """회의 §5 ㉡ — 각자 두고 parity 로 지킨다. 어긋나면 추천이 저장되지 않는다.
+def test_agent_이름이_suggestion_과_같다() -> None:
+    """회의 §5 ㉡ — enum 을 각자 두고 parity 로 지킨다. 어긋나면 추천이 저장되지 않는다.
 
-    지금은 Supervisor 만 growth 이고 백엔드는 education 이다 (AI Owner 결정 · 2026-09-14).
-    백엔드 suggestion_agent enum 과 루트 CLAUDE.md §5 용어가 growth 로 바뀌면
-    이 테스트가 깨진다 — 그때 양쪽이 같은지 보는 parity 로 되돌린다.
+    2026-09-24 에 백엔드 `education` 을 `growth` 로 맞추면서 parity 로 돌아왔다
+    (그 전에는 Supervisor 만 growth 였다 · AI Owner 결정 2026-09-14).
+    관찰 테이블 이름(`observation_education` · `observation_routine`)은 Agent 이름과 별개다.
     """
     from app.domains.suggestion.models import SuggestionAgent
 
     supervisor = {member.value for member in DomainAgentName}
     backend = {member.value for member in SuggestionAgent}
-    assert supervisor & backend == {"food", "activity", "health"}
-    assert supervisor - backend == {"growth"}
-    assert backend - supervisor == {"education"}
+    assert supervisor == backend == {"food", "activity", "growth", "health"}
 
 
 def test_작업_종류는_memory_어휘를_그대로_쓴다() -> None:

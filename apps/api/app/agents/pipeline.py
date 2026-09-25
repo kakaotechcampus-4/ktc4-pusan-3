@@ -30,7 +30,15 @@ from app.agents.supervisor.schemas import normalize
 
 logger = logging.getLogger(__name__)
 
-MAX_MODEL_CALLS = 3  # 한 요청에서 허용하는 모델 호출 수
+# model_calls는 Agent 진입 1회 + 재시도 1회당 +1 로 센다.
+#   - 정상 tool calling 루프는 안 센다. Memory가 7바퀴를 돌아도 1이다
+#   - 재시도는 센다. Supervisor의 tool_choice 폴백, 도메인의 안전 필터 재호출
+# 구분 기준은 "하려던 일을 하는 중인가(안 센다) / 실패해서 다시 하는가(센다)" 다.
+#
+# 정상값은 Supervisor 1 + Memory 1 + 도메인 2 = 4. 다시 나눈 run 은 아래에서 +1 한다.
+# 이 값은 실행을 막지 않고, 넘으면 _log가 경고만 남긴다.
+# Agent 안의 루프는 각자의 상한이 막는다 (Memory는 MAX_STEPS=7).
+MAX_MODEL_CALLS = 4
 
 # Memory 가 기록하지 않은 RECORD 조각이 있으면 Supervisor 에게 이유를 주고 한 번 더 나눠 본다.
 # 조각을 잘못 위임하면 그 요청은 아무 데서도 처리되지 않는다 — 호출 하나를 더 쓰는 값이 있다.
@@ -232,7 +240,7 @@ async def handle_input(
             # Memory 실패 시 기본값으로 대체하지 않는다
             failed = Failed("llm_unavailable", raw_text)
         else:
-            model_calls += memory.steps
+            model_calls += 1  # Agent 하나가 1. 루프를 몇 바퀴 돌았는지는 memory.steps
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))

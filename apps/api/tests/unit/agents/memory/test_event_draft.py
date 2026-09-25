@@ -297,7 +297,7 @@ async def test_이름이_빈_준비물은_거부한다(context: AgentContext) ->
 
     assert result.success is False
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert context.drafts.all() == ()
 
 

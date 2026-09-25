@@ -144,7 +144,7 @@ async def execute_tool(
         return fail(
             None,
             name,
-            ErrorCode.UNKNOWN_TOOL,
+            ErrorCode.TOOL_NOT_ALLOWED,
             f"'{name}' 은 이번 요청에서 쓸 수 없는 tool 이다. 제공된 tool 중에서 고른다.",
         )
 
@@ -154,7 +154,7 @@ async def execute_tool(
         return fail(
             None,
             name,
-            ErrorCode.VALIDATION_ERROR,
+            ErrorCode.INVALID_ARGS,
             f"인자가 스키마와 맞지 않는다: {_summarize(exc)}",
         )
 

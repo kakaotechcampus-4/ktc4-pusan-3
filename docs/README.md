@@ -67,7 +67,13 @@
 
 ## Agent
 
-*아직 문서 없음.* Supervisor 라우팅(안전 사전검사 · 의도 분류), Food · Activity · Education · Health Agent, 공통 컨텍스트 주입.
+- [agents/README.md](agents/README.md) — **먼저 읽을 것.** 읽는 순서 · 나이 계산 · 디렉토리 구성 · Activity 담당자가 채울 빈칸
+- [agents/shared/](agents/shared/) — 네 Agent가 공유하는 규약. 공통규약 · `Tool_공통` · 연령별 전략 · RAG · 외부 연결
+- [agents/food/](agents/food/) · [agents/growth/](agents/growth/) · [agents/health/](agents/health/) — Agent별 명세 · Tool · 소유 테이블 · 구현 계획 · 테스트
+- [agents/data_model.md](agents/data_model.md) — DB 스키마 정본
+- [agents/memory-agent-v1.md](agents/memory-agent-v1.md) — Memory Agent
+
+Activity는 아직 비어 있다 (`agents/activity/`).
 
 ## API · 백엔드
 
@@ -141,7 +147,7 @@
 | --- | --- | --- |
 | `overview/` | 기획·테크스펙·범위 등 제품 전반 문서 | 박재형 (PM) |
 | `memory/` | Child·Observation Memory 스키마, 3분류, Curator 승격·감쇠, Correction | 이시하 (AI) |
-| `agents/` | Supervisor 라우팅, Food · Activity · Education · Health Agent, 프롬프트·컨텍스트 | 이시하 (AI) |
+| `agents/` | Supervisor 라우팅, Food · Activity · Growth · Health Agent, 프롬프트·컨텍스트 | 이시하 (AI) · Activity는 별도 |
 | `api/` | 엔드포인트 계약, SSE, 승인 게이트, 외부 API 연동 | 김명성 (백엔드) |
 | `meal-plan/` | 급식표 입력(사진 · 엑셀 · 한글) → 구조화 JSON · 알레르기 번호 · 저장 | 박재형 (PM) |
 | `web/` | 화면 01~10, 컴포넌트, 디자인 토큰 | 고태영 (프론트) |

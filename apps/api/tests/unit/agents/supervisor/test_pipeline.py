@@ -235,8 +235,8 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
     assert [(step.index, step.total) for step in _of(events, Step)] == [(1, 3), (2, 3), (3, 3)]
     assert [ref.kind for ref in _of(events, Saved)[0].refs] == ["observation_food"]
     assert result.failed is None
-    assert result.model_calls == 3  # Supervisor 1 + Memory 2 + Food mock 0 (S8)
-    assert _of(events, Done)[0] == Done(RUN_ID, 3)
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food mock 0 (S8)
+    assert _of(events, Done)[0] == Done(RUN_ID, 2)
 
 
 async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
@@ -553,7 +553,7 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
     assert [row.fields["subject"] for row in rows] == ["딸기케이크"]
     assert _order(events).index("Rerouted") < _order(events).index("FoodRouted")
-    assert result.model_calls == 4  # Supervisor 2 + Memory 2 — 다시 나눈 run 의 예산은 4
+    assert result.model_calls == 3  # Supervisor 2 + Memory 1 — 다시 나눈 run 의 예산은 5
 
 
 async def test_Food_로_간_조각이_있으면_다시_나누지_않는다(
@@ -598,7 +598,7 @@ async def test_다시_나누기가_실패하면_처음_나눈_대로_간다(
     assert result.rerouted is None
     assert result.food == ()
     assert result.failed is None  # 간식은 저장됐다
-    assert result.model_calls == 4  # 실패한 재시도도 호출은 호출이다
+    assert result.model_calls == 3  # 실패한 재시도도 호출은 호출이다
 
 
 # ── 안내 ────────────────────────────────────────────────────────
@@ -696,13 +696,14 @@ async def test_로그에_원문도_조각도_메모도_없다(
         assert fragment not in caplog.text
 
 
-async def test_호출_예산을_넘으면_경고를_남긴다(
+async def test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는다(
     caplog: pytest.LogCaptureFixture,
     memory_context: AgentContext,
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # 계약서 — done.model_calls 가 3 을 넘으면 서버 알람 (NF-01 · S8)
+    # 세는 단위는 Agent 진입이다. Memory 가 tool 을 네 번 불러도 예산에서는 1이다.
+    # 예산(MAX_MODEL_CALLS)을 넘으면 서버 알람이 뜬다 (NF-01 · S8)
     caplog.set_level(logging.WARNING, logger="app.agents.pipeline")
     memory_llm = FakeLLM(
         _tools(_call("a", "query_event", {})),
@@ -718,5 +719,6 @@ async def test_호출_예산을_넘으면_경고를_남긴다(
         events=events,
     )
 
-    assert result.model_calls == 5  # Supervisor 1 + Memory 4
-    assert "model_calls 예산 초과" in caplog.text
+    assert memory_llm.calls == 4  # 실제 왕복은 네 번
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1
+    assert "model_calls 예산 초과" not in caplog.text

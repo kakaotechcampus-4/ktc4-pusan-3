@@ -24,6 +24,7 @@ from app.agents.memory.schemas.common import (
     RecordRef,
     RoutineCategory,
     Severity,
+    SubjectCreateArgs,
 )
 
 _DURATION = Field(
@@ -140,7 +141,7 @@ _ASSISTANCE = _optional(
 _COMPLETION = _optional("completed / partial / refused / interrupted. 해냈는지 드러날 때만")
 
 
-class ObservationRoutineCreate(PromotableCreateArgs):
+class ObservationRoutineCreate(SubjectCreateArgs):
     """생활 행동·자립 수행·습관·사회적 생활기술. 습관은 증상이 아니다."""
 
     subject: Annotated[str, Field(description=_ROUTINE_SUBJECT)]

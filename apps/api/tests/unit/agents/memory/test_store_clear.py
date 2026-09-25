@@ -251,7 +251,7 @@ async def test_비울_수_없는_필드를_적으면_거부하고_저장도_바�
 
     assert result.success is False
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     # 다시 부를 수 있게 허용 목록을 알려준다
     assert all(allowed in result.error["message"] for allowed in _CLEARABLE[domain])
     assert await _fields(context, domain, observation_id) == before
@@ -268,7 +268,7 @@ async def test_거부_문구에_모델이_보낸_이름을_되풀이하지_않�
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert leaked not in result.error["message"]
 
 
@@ -283,7 +283,7 @@ async def test_같은_필드에_새_값과_지우기가_같이_오면_거부한�
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert await _fields(context, "health", observation_id) == before
 
 
@@ -340,7 +340,7 @@ async def test_종일_일정의_종료는_지울_수_없다(context: AgentContex
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert await _event(context, event_id) == before
 
 
@@ -356,7 +356,7 @@ async def test_종료를_지우면서_새_종료를_주면_거부한다(
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert await _event(context, event_id) == before
 
 
@@ -367,7 +367,7 @@ async def test_일정은_ends_at_말고는_비울_수_없다(context: AgentConte
     result = await execute_tool("update_event", {"event_id": event_id, "clear": [name]}, context)
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert "ends_at" in result.error["message"]
 
 
@@ -389,7 +389,7 @@ async def test_clear_는_수정_tool_에만_있다(
     result = await execute_tool(tool, args, context)
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
 
 
 def test_tool_스펙에는_clear_만_나가고_허용_목록은_안_나간다() -> None:

@@ -225,7 +225,7 @@ async def create_observation_food(context: AgentContext, args: ObservationFoodCr
         return fail(
             "create",
             _resource("food"),
-            ErrorCode.VALIDATION_ERROR,
+            ErrorCode.INVALID_ARGS,
             _NOT_A_FOOD.format(subject=slot),
         )
     return await _create(context, args, domain="food")
@@ -237,7 +237,7 @@ async def update_observation_food(context: AgentContext, args: ObservationFoodUp
         return fail(
             "update",
             _resource("food"),
-            ErrorCode.VALIDATION_ERROR,
+            ErrorCode.INVALID_ARGS,
             _NOT_A_FOOD.format(subject=slot),
         )
     return await _update(context, args, domain="food")

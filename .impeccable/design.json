@@ -274,7 +274,7 @@
           "#B6FCFF"
         ]
       },
-      "education": {
+      "growth": {
         "role": "secondary",
         "displayName": "인디고",
         "canonical": "oklch(49.2% 0.112 274.2)",
@@ -289,7 +289,7 @@
           "#D7E9FF"
         ]
       },
-      "education-soft": {
+      "growth-soft": {
         "role": "secondary",
         "displayName": "인디고 소프트",
         "canonical": "oklch(93.9% 0.015 281.9)",
@@ -304,7 +304,7 @@
           "#ECEDF9"
         ]
       },
-      "education-ink": {
+      "growth-ink": {
         "role": "secondary",
         "displayName": "인디고 잉크",
         "canonical": "oklch(41.4% 0.097 273.3)",

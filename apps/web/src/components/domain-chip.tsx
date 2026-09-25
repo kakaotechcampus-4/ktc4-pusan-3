@@ -16,7 +16,7 @@ import { cn } from "@/lib/cn";
 const DOMAIN_LABEL: Record<Agent, string> = {
   food: "식사",
   activity: "놀이",
-  education: "교육",
+  growth: "성장",
   health: "건강",
 };
 
@@ -24,21 +24,21 @@ const DOMAIN_LABEL: Record<Agent, string> = {
 const DOMAIN_FIELD: Record<Agent, string> = {
   food: "bg-food-soft text-food-ink",
   activity: "bg-activity-soft text-activity-ink",
-  education: "bg-education-soft text-education-ink",
+  growth: "bg-growth-soft text-growth-ink",
   health: "bg-health-soft text-health-ink",
 };
 
 const DOMAIN_INK: Record<Agent, string> = {
   food: "text-food-ink",
   activity: "text-activity-ink",
-  education: "text-education-ink",
+  growth: "text-growth-ink",
   health: "text-health-ink",
 };
 
 const DOMAIN_PRESS: Record<Agent, string> = {
   food: "hover:bg-food-soft active:bg-food-soft",
   activity: "hover:bg-activity-soft active:bg-activity-soft",
-  education: "hover:bg-education-soft active:bg-education-soft",
+  growth: "hover:bg-growth-soft active:bg-growth-soft",
   health: "hover:bg-health-soft active:bg-health-soft",
 };
 
@@ -90,9 +90,22 @@ export function DomainChip({
   );
 }
 
-/** `observation_food` → `food`. 관찰의 `kind` 는 테이블 이름이고 도메인은 그 접미사다. */
+/**
+ * 관찰 테이블 이름 → 그 관찰을 읽는 Agent.
+ *
+ * 🚨 **접미사를 잘라 쓰지 않는다.** 셋은 접미사가 곧 Agent 이름이지만 `observation_education`
+ *    은 아니다 — 이 테이블을 읽는 Agent 는 `growth` 다 (`observation_routine` 도 같은 Agent 가
+ *    읽는다. 관찰 테이블이 둘인데 Agent 는 하나라 이름이 1:1 로 붙지 않는다).
+ */
+const OBSERVATION_AGENT: Record<ObservationKind, Agent> = {
+  observation_food: "food",
+  observation_health: "health",
+  observation_education: "growth",
+  observation_activity: "activity",
+};
+
 export function observationAgent(kind: ObservationKind): Agent {
-  return kind.replace("observation_", "") as Agent;
+  return OBSERVATION_AGENT[kind];
 }
 
 /**
