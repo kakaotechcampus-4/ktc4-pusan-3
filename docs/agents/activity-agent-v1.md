@@ -2,9 +2,11 @@
 
 문서 목적: 놀이·활동 추천을 담당하는 Activity Agent 의 구조 · 결정 · 근거를 고정한다.
 
-기준: `origin/develop` @ `a166694` · 코드 0줄
+기준: `origin/develop` + [#138](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/138) 공통 명세 · 코드 0줄
 담당: 이도헌 · 리뷰: 이시하 (AI Owner)
-선행 문서: [`memory-agent-v1.md`](./memory-agent-v1.md) — Agent 계층의 형식·결정 선례
+선행 문서: [`memory-agent-v1.md`](./memory-agent-v1.md) · 공통 명세 [`shared/Agent_공통규약.md`](./shared/Agent_공통규약.md) · [`shared/Tool_공통.md`](./shared/Tool_공통.md) · [`shared/연령별_Tool_전략.md`](./shared/연령별_Tool_전략.md) · [`shared/RAG_plan.md`](./shared/RAG_plan.md)
+
+> **이 문서가 공통 명세를 어기면 공통 명세가 이긴다** (`Agent_공통규약.md` 머리말). 여기에는 공통이 Activity 에 맡긴 것과 Activity 에만 해당하는 것만 적는다.
 
 한 줄 요약: **Food 의 구조를 거의 그대로 따르되, 안전 판정의 근거를 모델 출력 바깥에 둔다.**
 
@@ -12,7 +14,7 @@
 
 ## 1. 무엇을 만드는가
 
-아이의 확정된 관심과 오늘의 조건(날씨·일정·최근에 한 놀이)을 엮어, **지금 바로 해볼 수 있는 놀이·활동 후보 1~3개**를 낸다.
+아이의 관심과 최근 놀이, 오늘의 조건(날씨·일정)을 엮어 **지금 바로 해볼 수 있는 놀이·활동 후보 정확히 3개**를 낸다.
 
 | 하는 일 | 하지 않는 일 |
 | --- | --- |
@@ -20,7 +22,7 @@
 | 월령 기반 안전 차단·경고 | 예약 · 결제 · 대신 연락 |
 | 날씨·대기질로 야외 가부 판정 | 상품·클래스 추천 |
 | 주변 장소 이름 제시 (36개월~) | 습관 교정 · 학습 커리큘럼 |
-| `Why this` / `Why now` / 근거 `memory_id` | 아이와 직접 대화 |
+| `Why this` / `Why now` / 근거 문장(`note`) | 아이와 직접 대화 |
 
 **Growth Agent 와의 경계** — Activity 는 `observation_activity` 를, Growth 는 `observation_education`·`observation_routine` 을 담당한다 (F-06 · F-07).
 
@@ -28,9 +30,13 @@
 | --- | --- | --- |
 | 목적 | 지금 뭐 하고 놀까 | 무엇을 배우고 익힐까 |
 | 시간 축 | 오늘 · 이번 주 | 몇 주~몇 달 |
-| 결과 | 놀이 1~3개 | 교육 활동 · 도서 · 습관 교정 · 성장폭 서술 |
+| 결과 | 놀이 3개 | 교육 활동 · 도서 · 습관 교정 · 성장폭 서술 |
 
 같은 입력이 둘 다에 걸릴 수 있다. **Supervisor 가 Agent 최대 2개까지 라우팅**하므로 Activity 가 스스로 범위를 넓히지 않는다.
+
+**Growth 도 `observation_activity` 를 읽는다** (`공통_구현_계획.md` §Growth). 놀이 기록이 Activity 밖에서도 근거가 되고, Growth 추천 화면에 *"놀이 기록을 참고했어요"* 가 나온다. `observation_activity` 스키마를 바꿀 때는 Growth 쪽도 본다.
+
+**승인된 추천은 다시 `observation_activity` 로 돌아온다.** 보호자가 승인하면 Memory Agent 가 suggestion 을 관찰로 재구조화하고, feedback(`liked`/`disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)가 된다 (`docs/agents/README.md` §2).
 
 ---
 
@@ -47,84 +53,82 @@ Food 는 `food_task` 로 4갈래를 나누지만 Activity 는 분기 축이 **ta
 
 🚨 **`Segment` 에 `activity_task` 필드를 넣지 않는다.** 넣으면 `supervisor/schemas.py` 가 바뀌고 RC01~RC30 회귀가 통째로 움직인다. `agent="activity"` 만으로 받는다.
 
-### D2. 연령 게이팅은 enum 이 아니라 **임계값**이다
+### D2. 연령 게이팅은 enum 이 아니라 **tool별 `min_month` 임계값**이다
+
+Growth 와 같은 방식이다 (`연령별_Tool_전략.md` §5-1).
+
+| tool | `min_month` | 닫혔을 때 |
+| --- | --- | --- |
+| 놀이 후보 생성 · 최근 놀이 조회 · 날씨 · 일정 | 0 | – |
+| 관심 프로필 조회 (`search_activity_memory` 안의 affinity 부분) | **18** | affinity 조회를 건너뛴다. 관찰(티어 3)로만 근거를 만든다 |
+| 주변 장소 조회 (`search_nearby_places`) | **36** | 장소가 필요 없는 활동만 후보로 |
 
 ```python
-# 각 데이터 소스가 자기 임계값을 들고 있다
-SOURCE_DEFINITIONS = (
-    SourceDefinition(name="recent_activities",  min_month=0),
-    SourceDefinition(name="weather",            min_month=0),
-    SourceDefinition(name="schedule",           min_month=0),
-    SourceDefinition(name="activity_doc",       min_month=0),
-    SourceDefinition(name="activity_profile",   min_month=18),   # 그 아래는 프로필이 없다
-    SourceDefinition(name="nearby_places",      min_month=36),
-)
-
-def sources_for(task, age_months, *, outdoor_ok):
-    return tuple(d.name for d in SOURCE_DEFINITIONS
-                 if d.min_month <= age_months
-                 and d.name in TASK_SOURCES[task]
-                 and (outdoor_ok or d.name != "nearby_places"))
-
-def decay_grace_days(age_months) -> int:
-    return 120 if age_months < 36 else 60     # 어릴수록 관찰 간격이 길다
-
-def evidence_mode(age_months) -> str:
-    return "general" if age_months < 18 else "personalized"
+def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
+    months = gate.stage.months
+    return tuple(
+        name for name in TASK_TOOLS[task_type]
+        if months >= MIN_MONTH[name]
+        and (name != "search_nearby_places" or (gate.has_location and gate.outdoor_ok))
+    )
 ```
 
-**범주에는 enum, 눈금에는 임계값.** Food 의 `FeedingStage` 는 진짜 범주형이다 — *"분유를 먹는가 / 일반식을 먹는가"* 는 질적 구분이고 `guide_weaning_stage` 와 `lookup_daycare_menu` 는 서로 배타적이다. Activity 의 18·36 은 **같은 축 위의 눈금**이고 배타적인 게 하나도 없다. 전부 *"이 월령부터 열린다"* 다.
+- 경계값은 **`config/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). `MIN_MONTH` 는 registry 가 그 파일에서 읽는 자기 표다 — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
+- 월령은 **`app/rules/age.py` 의 `life_stage()`** 에서 온다. Activity 는 `stage.months` 만 쓴다.
+- **조산아는 따로 처리하지 않는다.** 교정연령을 쓰지 않는다 (9/25 결정).
+
+**범주에는 enum, 눈금에는 임계값.** Food 의 `LifeStage.stage` 는 진짜 범주형이다 — *"분유를 먹는가 / 일반식을 먹는가"* 는 질적 구분이고 `guide_weaning_stage` 와 `lookup_daycare_menu` 는 서로 배타적이다. Activity 의 18·36 은 **같은 축 위의 눈금**이고 배타적인 게 하나도 없다. 전부 *"이 월령부터 열린다"* 다.
+
+**Activity 에는 닫힌 조합이 없다.** 어느 월령에서도 놀이 추천은 나간다. 월령이 바꾸는 것은 근거를 어디서 모으느냐와 후보에 장소가 붙느냐뿐이다. **18개월은 근거 모드를 가르지 않는다** — 그 아래는 `profile_affinity` 가 없어 티어 1·2 가 0행일 뿐이고, 관찰이 있으면 `kind="personalized"` 가 나간다.
 
 `ActivityBand(EARLY / LATE)` 는 **로그·리포트 전용**이고 게이팅에 쓰지 않는다. 경계는 Curator 구간에 맞춰 **`0–35` / `36–71`** 두 칸이다. `observation/models.py` 가 1차 배포 타겟을 ≤71개월로 못 박았으므로 72+ 칸은 만들지 않는다.
 
 🚨 **밴드에서 안전 판정을 읽지 않는다.** 밴드 경계를 로그 편의로 조정하는 순간 안전 승격 경계가 18→36 으로 조용히 끌려간다 (D6 규칙 ②).
 
-### D3. 추천 근거는 3단이다
+### D3. 추천 근거는 공통 `rank_evidence` 의 3단을 그대로 쓴다
 
-| 우선순위 | 데이터 | 활용 |
-| --- | --- | --- |
-| Tier 1 | `profile_affinity` `confirmed` | 최우선 추천 근거 |
-| Tier 2 | `strength` 가 높은 `candidate` | 보조 근거 |
-| Tier 3 | 최근 14일 `observation_activity` | Tier 1·2 가 부족할 때 fallback |
+`Tool_공통.md` §4 의 `rank_evidence()` 를 `search_activity_memory` 안에서 부른다. Food 의 `search_food_memory` 와 같은 모양이다.
 
-`suggestion.source_refs` 가 허용하는 `kind` 에 `observation_activity` 가 들어 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다. 그래서 `list_recent_activities` 는 `id` 를 반환한다.
-
-**Tier 3 덕분에 18개월 미만도 개인화가 성립한다** — 프로필이 없어도 관찰이 있으면 근거가 있다.
-
-🚨 **신선도 창이 근거 종류마다 다르다. 한 상수로 합치지 않는다.**
-
-| 근거 | 창 |
+| 우선순위 | 조건 |
 | --- | --- |
-| 프로필(Tier 1·2) | 감쇠 유예 60/120일 과 NF-08 의 180일 중 **짧은 쪽** |
-| 관찰(Tier 3) | **14일** |
+| Tier 1 | `profile_affinity` · `confirmed` · polarity ∈ {+1, −1} · 비archived |
+| Tier 2 | `profile_affinity` · `candidate` · polarity ∈ {+1, −1} · `strength ≥ 0.5` |
+| Tier 3 | 최근 14일 `observation_activity` (polarity 무관) |
 
-🚨 **관찰을 읽을 때 `ObservationStatus` 를 반드시 건다. `active` 만 근거가 된다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
+- `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
+- **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
+- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
+- `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 
-### D4. 소비 규칙은 프롬프트가 아니라 SQL 에 박는다
+**`profile_affinity` 에 routine 은 포함되지 않는다** (9/25 BE 합의). `MemoryDomain` 은 `food`/`activity`/`education` 세 값 그대로다. Activity 는 `domain=activity` 만 읽으므로 동작에 영향은 없다.
 
-| polarity | state | food | **activity** |
-| --- | --- | --- | --- |
-| +1 | candidate | 쓰지 않음 | **Tier 2** (`strength` 임계 이상만) |
-| +1 | confirmed | 추천 근거 | **Tier 1** |
-| −1 | candidate | 재노출 제안 | **추천 제외** |
-| −1 | confirmed | 제외 | **제외** |
-| NULL | — | 쓰지 않음 | **쓰지 않음** (제외도 아님) |
+### D4. 소비 규칙 — 기피는 근거로 쓰고, **기피 대상 자체는 출력에서 거절**한다
 
-**왜 activity 만 `−1 candidate` 를 제외하는가** — 활동 기피는 관찰을 쌓을 수 없다. *"물놀이 하자니까 울며 도망"* → 보호자가 다시 안 시킴 → 관찰이 1건에서 멈춤 → `strength` 가 기본값 `0.3` 근처에 머물러 `confirmed` 로 못 올라감 → Agent 가 계속 추천한다. 그래서 **candidate 만으로 제외**한다. `polarity == −1` 을 필터로 쓸지 근거로 쓸지는 도메인별로 다르게 정해도 되는 영역이다.
+| polarity / state | Activity |
+| --- | --- |
+| +1 / confirmed | 근거 (Tier 1) |
+| **−1 / confirmed** | **근거** — 피할 이유 (Tier 1) |
+| +1 / candidate (`strength ≥ 0.5`) | 근거 (Tier 2) |
+| **−1 / candidate (`strength ≥ 0.5`)** | **근거** — 피할 이유 (Tier 2) |
+| NULL | 쓰지 않음 |
+| archived | 쓰지 않음 |
+| 관찰 14일 | 근거 (Tier 3) |
 
-**Tier 2 임계** — `profile_affinity.strength: Float`(기본 `0.3`)가 그 값이다. 잠정 `0.6` 으로 시작하고 Curator 가 붙으면 다시 잰다.
+**기피(`−1`)는 제외 필터가 아니라 근거다** (`Agent_공통규약.md`). *"물놀이를 싫어해서 모래놀이를 골랐어요"* 가 되어야 하고, 후보 풀에서 지워버리면 무엇을 피해 골랐는지 화면에 말할 수 없다. 기피 근거를 인용했으면 `reason` 에 무엇을 피했는지 쓴다 (`Tool_공통.md` §5-4).
+
+**다만 기피 대상 자체가 후보로 나오면 출력에서 거절한다** (`Tool_공통.md` §5-5 · `README.md` §2). 근거로 쓰는 것과 그 활동을 다시 내지 않는 것은 별개다.
+
+- Food 는 영양 분석이 부족을 가리키면 기피 식품군을 **일부러** 낸다. Activity 에는 그런 대항 요인이 없다 — 꼭 해야 하는 놀이가 없다
+- 모델에게 기피 근거를 주고 그 활동을 안 내기를 기대하는 것은 프롬프트에 맡기는 것이라 보장이 아니다 (D6)
+- 그래서 **기피 근거와 `merge_key` 가 같은 후보는 출력 tool 이 거절**한다. 풀에서 지우는 제거 필터가 아니라 **출력 검증**이라 *"후보를 지우는 공통 규칙은 안전뿐"* 과 부딪히지 않는다
 
 🚨 **`state`·`polarity` 를 tool argument 로 받지 않는다.** 모델이 고를 수 있으면 이 표가 무의미해진다.
 
-`archived` 도 **제외**로 본다. 근거로 쓰지 않는 것만으로는 부족하다 — Curator 의 archive 가 시간 기반이면 "울며 도망친 물놀이"가 일정 기간 뒤 되살아난다.
+### D5. 신선도는 **Curator 가 맡는다**
 
-### D5. 신선도 필터는 **근거에만** 걸고 제외에는 안 건다
+Agent 는 `state`·`strength` 만 보고 티어를 매기고, **감쇠 유예일을 다시 세지 않는다** (`Agent_공통규약.md`). 값이 두 벌이 되면 한쪽만 갱신된다. NF-08(180일)도 Curator 가 `archived` 로 바꾸는 것으로 지켜진다.
 
-근거 조회에는 `last_observed_on >= 오늘 − 감쇠유예일` 을 SQL 에서 강제한다. 감쇠 배치가 아직 없어 DB 의 `state` 가 늦게 갱신되기 때문이다. 이게 빠지면 **2세 때 관찰로 5세 아이에게 추천**한다.
-
-**반대로 제외 목록에는 날짜 필터를 걸지 않는다.** 활동 기피는 관찰이 끊기는 게 정상이라, 날짜로 거르면 제외가 풀려 그 활동이 다시 추천된다.
-
-비대칭이 의도다 — **잘못된 제외는 후보 하나를 잃을 뿐이고, 잘못된 개인화는 절대 규칙 위반이다.**
+**한 번의 기피는 14일 동안만 거절 근거가 된다 — 의도다.** 관찰 1건짜리 기피는 티어 3(최근 14일)에만 들어가므로 그 기간이 지나면 그 활동이 다시 후보가 될 수 있다. 루트 §2 *"한 번의 관찰을 성향으로 확정하지 않는다"* 는 선호뿐 아니라 기피에도 적용된다. 기피가 반복되면 Curator 가 `confirmed(−1)` 로 올리고, 그때부터는 Tier 1 이라 계속 거절된다.
 
 ### ★ D6. 후보는 모델이 만든다. 단 **안전 판정의 근거는 모델 출력 바깥**에 둔다
 
@@ -133,6 +137,10 @@ def evidence_mode(age_months) -> str:
 **그 대신 안전 판정을 모델에게서 뺏는다.** 모델이 낸 문장을 `hazard_term` 사전으로 스캔한다.
 
 ```python
+class EvidenceCitation(ToolArgs):
+    id: str                             # search_activity_memory 가 돌려준 id
+    note: str                           # 화면에 보이는 근거 문장 (D12)
+
 class ActivityCandidate(ToolArgs):
     content: str                        # "구슬 꿰기로 목걸이 만들기"
     setting: ActivitySetting            # indoor / outdoor / either
@@ -144,7 +152,7 @@ class ActivityCandidate(ToolArgs):
     duration_min: int | None = None
     why_this: str
     why_now: str
-    evidence: list[str] = []            # 이번 run 에서 조회된 id 만
+    evidence: list[EvidenceCitation] = []   # id ⊂ rank_evidence 상위 10
 ```
 
 **스캔 대상은 `content` + `materials` 둘 다.** `materials` 만 보면 *"구슬 꿰기"* 처럼 재료가 문장 안에 있는 후보를 놓친다.
@@ -156,7 +164,7 @@ class ActivityCandidate(ToolArgs):
 **남는 위험 — 정직하게 적는다.** 이 방식은 두 가지를 못 막는다.
 
 - **어휘 회피** — 모델이 `"구슬"` 대신 `"동그란 알갱이"` 라고 쓰면 안 걸린다.
-- **크기 미상** — `"블록 쌓기"` 는 큰 블록인지 작은 블록인지 문장만으로는 모른다 (6-2 의 H-08 이 이 구멍을 코드에 고정한다).
+- **크기 미상** — `"블록 쌓기"` 는 큰 블록인지 작은 블록인지 문장만으로는 모른다 (5-1 의 H-08 이 이 구멍을 코드에 고정한다).
 
 완화는 프롬프트가 한다 — *"활동에 쓰는 물건을 빠짐없이 적는다"*. 하지만 **프롬프트는 보장이 아니므로** 코드 필터를 빼지 않는다.
 
@@ -172,13 +180,15 @@ class ActivityCandidate(ToolArgs):
 
 대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `label`/`aliases` 를 `content` + `materials` 에 부분 일치. `involves_food = true` 면 **Food 의 `filter_food_safety` 를 그대로 호출한다.** Activity 판을 새로 구현하지 않는다 — 구현이 둘이면 언젠가 갈라진다.
 
-**조회 실패 시 전면 차단하지 않는다.** Food 가 전면 차단하는 이유는 규칙이 엄해서가 아니라 **모든 음식 후보가 알레르기 대상이어서**다. Activity 는 재료를 쓰는 후보만 빼면 된다 — 나머지는 진행하고 화면에 고지한다: *"알레르기 정보를 확인하지 못해 재료를 쓰는 놀이는 뺐어요."* 참조 강도는 도메인 특성에 따라 다르게 둘 수 있다.
+**거르는 것은 `state = 'active'` 행뿐이다** (#138 `health_safety.state` 4값). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
+
+**조회 실패는 0행과 다르다.** 조회 자체가 실패하면 전면 차단하지 않고 **재료를 쓰는 후보만 빼고** 고지한다: *"알레르기 정보를 확인하지 못해 재료를 쓰는 놀이는 뺐어요."* Food 가 전면 차단하는 이유는 규칙이 엄해서가 아니라 모든 음식 후보가 알레르기 대상이어서다.
 
 🚨 NF-09 가 **Agent role 에 `health_safety` write 를 부여하지 않는다.** 읽기 전용이 권한으로 강제된다.
 
 ### D8. 외부 호출 **5개** · 적재 소스 **1개** · 순수 계산 **2개**
 
-**런타임에 부르는 것** (`asyncio.gather` 로 병렬. 순차 체인 없음)
+**런타임에 부르는 것** — 전부 실시간이고 캐시 테이블에 쌓지 않는다 (`Tool_공통.md` §1 실시간 행). `asyncio.gather` 로 병렬, 순차 체인 없음.
 
 | | 무엇 | 왜 |
 | --- | --- | --- |
@@ -203,8 +213,11 @@ class ActivityCandidate(ToolArgs):
 
 🚨 **감기·천식·뇌졸중·피부질환 가능지수는 쓰지 않는다.** *"감기 가능성이 높으니 실내"* 는 건강 추론이고 D7 이 막는 것과 같다. 꽃가루 응답에 함께 오더라도 **파싱 단계에서 버린다.**
 
+**연결 방식** — `app/agents/` 는 `app/integrations/` 를 import 할 수 없다 (`apps/api/CLAUDE.md` 레이어 경계). Activity 는 **포트(Protocol)만 알고**, 어댑터는 `app/integrations/` 에 두고 **`app/api` 가 주입**한다. 격자 변환은 Agent 쪽에서 하고 `integrations` 에는 `(nx, ny)` 만 넘긴다 — 원좌표가 `integrations` 에 아예 들어가지 않는다 (4-3).
+
 **키와 쿼터**
 
+- 키는 `DATA_GO_KR_SERVICE_KEY`(공공데이터포털 5개 API 공유) · `KAKAO_LOCAL_REST_API_KEY` · `PUBLIC_DATA_TIMEOUT_S`. `core/config.py` 의 `Settings` 가 `extra="forbid"` 라 **필드가 생기기 전에는 `.env` 에 두면 서버가 안 뜬다.**
 - 🚨 **`KAKAO_REST_API_KEY` 를 재사용하지 않는다.** 별도 앱 키를 판다 — 쿼터가 섞이면 장소 검색 과다 호출이 **로그인을 막는다.**
 - 🚨 **에어코리아만 개발계정 500건/일**이고 운영계정은 심의승인이라 리드타임이 있다. 나머지는 자동승인 1만/일.
 - 🚨 **Kakao Local 의 `query` 에 LLM 이 만든 문자열을 넣지 않는다.** 보호자 발화 원문이 카카오 서버 로그에 남을 수 있다. `PlaceCategory` **닫힌 enum 5값**(`park`·`playground`·`library`·`indoor_playground`·`experience_center`)만 검색어가 된다.
@@ -218,7 +231,7 @@ class ActivityCandidate(ToolArgs):
 | 날씨 | 야외 후보를 내지 않는다. 실내만 + *"날씨를 확인하지 못해 실내 놀이만 골랐어요"* | "맑음"으로 가정 · 어제 캐시 재사용 |
 | 미세먼지만 | 야외는 내되 *"미세먼지는 확인하지 못했어요"* 표시 | "좋음"으로 가정 |
 | 장소 검색 | 장소가 필요 없는 활동만 | **LLM 이 장소 이름을 지어내게 두는 것** |
-| 위치 미제공 | 야외 소스를 조회하지 않는다 | 기본 좌표로 대체 |
+| 위치 미제공 | 야외 조회를 하지 않는다 | 기본 좌표로 대체 |
 
 ### D9. 저장 형식 — 기준은 **"서버가 반경 질의를 해 주느냐"**
 
@@ -239,25 +252,21 @@ class ActivityCandidate(ToolArgs):
 - 🚨 **화이트리스트를 "응답 파싱"이 아니라 "테이블 컬럼"으로 강제한다.** 컬럼이 없으면 샐 수 없다. `전화번호`·`관리기관명` 은 **가져오지 않는다**.
 - 🚨 **CSV 를 저장소에 커밋하지 않는다.** 19,000행은 리뷰가 불가능하고 저장소가 public 이다. 적재 스크립트만 커밋하고 실행은 수동 1회. Alembic 은 **스키마만** 맡는다.
 - 행마다 **`데이터기준일자`를 보관**하고 화면에 *"공공데이터 기준 YYYY-MM"* 을 붙인다. 갱신이 연 단위라 *"지금 열려 있어요"* 는 쓸 수 없고 *"근처에 있어요"* 까지다.
-- 🚨 **장소 행을 근거(`source_refs`)에 넣지 않는다.** 근거는 `memory_id` 다 — 장소는 날씨와 같은 **필터 조건**이다.
-- **PostGIS·pgvector 둘 다 필요 없다.** 5km 반경은 위경도 bounding box + haversine 으로 끝난다.
+- 🚨 **장소 행을 근거(`suggestion_evidence`)에 넣지 않는다.** 장소는 날씨와 같은 **필터 조건**이다.
+- **PostGIS 는 필요 없다.** 5km 반경은 위경도 bounding box + haversine 으로 끝난다.
 
 **캐시 키는 시계가 아니라 발표 시각 기준**(`nx`,`ny`,`base_date`,`base_time`)이다. 그래야 같은 발표분을 두 번 안 부르고 새 발표가 나오면 자동 무효화된다. 캐시는 `app/integrations/` 안에 가둔다 — Agent 가 캐시를 아는 순간 테스트가 시간에 의존한다. **Redis 를 새로 세우지 않는다.**
 
 #### `activity_doc` — 근거 문서 테이블
 
-놀이 자료를 **원문 청킹이 아니라 사람이 읽고 재구성한 행**으로 담는다. 행마다 원문 출처(`source`, `source_page`)를 열로 남긴다.
+놀이 자료를 **원문 청킹이 아니라 사람이 읽고 재구성한 행**으로 담는다. Food(`food_doc`)·Growth(`growth_doc`)와 같은 모양이다 (`RAG_plan.md`).
 
-| | 왜 테이블인가 |
-| --- | --- |
-| 월령 타겟팅 | `min_month ≤ 아이 월령 ≤ max_month` 로 **한 자릿수 행**만 프롬프트에 들어간다 |
-| 출처 추적 | 라이선스가 문제되면 `DELETE WHERE source = ?` 한 줄 (D10) |
-
-**대가는 프롬프트 캐시다.** 고정 구간이 짧아지므로 **근거 문서 행을 동적 구간의 맨 앞**(날씨·프로필보다 앞)에 붙인다. 그래야 **같은 월령 아이들끼리는 거기까지 캐시가 산다.**
-
-**`embedding` 은 넣지 않는다.** 80행을 월령으로 거르면 한 자릿수가 남는다. 행이 수백을 넘고 *"비 오는 날 조용한 실내 놀이"* 같은 의미 질의가 필요해지면 그때 pgvector 를 본다.
-
-🚨 **`activity_doc` 행을 근거(`source_refs`)에 넣지 않는다.** 근거는 `memory_id` 이고, 근거 문서 행은 **아이의 기억이 아니라 참고 자료**다. 넣으면 *"근거 0행이면 버그"* 하드 기준이 참고 자료로 채워져 무력화된다.
+- 시드는 **YAML 로 버전 관리하고 Alembic 이 `doc_key` 기준 upsert** 한다. `hazard_term` 과 같은 방식이다.
+- 행마다 원문 출처(`source`, `source_page`)를 열로 남긴다. 라이선스가 문제되면 `DELETE WHERE source = ?` 한 줄로 뺀다 (D10).
+- 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 의미 검색 상위 5행을 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
+- **근거(`suggestion_evidence`)에는 넣되 개인화 근거로 세지 않는다.** `refs.py` 가 `activity_doc` 을 `DocKind` 로 따로 두고 `count_child_records()` 가 아이 기록만 센다. 넣어두면 어느 문서 행을 봤는지 추적되고, 문서 행만 달고 나간 추천은 자동으로 `general` 이 된다.
+- **커버리지는 행 수가 아니라 월령 구간을 빠짐없이 덮는 것이 기준이다.** 행마다 `min_month`·`max_month` 가 있으므로, 행이 적어도 0–71개월을 빈틈없이 덮으면 문서 행이 0개인 경우가 거의 생기지 않는다.
+- 🚩 **프롬프트 캐시** — 근거 문서 행은 동적 구간의 맨 앞에 붙인다 (4-5). 같은 월령 아이들끼리는 거기까지 캐시가 산다.
 
 ### D10. 놀이 자료는 **크롤링하지 않는다**
 
@@ -265,7 +274,7 @@ class ActivityCandidate(ToolArgs):
 
 i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이사랑은 `ALL RIGHTS RESERVED` 다.
 
-**사람이 읽고 few-shot 행으로 옮긴다 — 유일하게 남는 합법 경로다.** 사실(*"18개월은 큰 블록 쌓기를 한다"*)은 저작물이 아니고, 문장은 우리가 새로 쓴다.
+**사람이 읽고 `activity_doc` 행으로 옮긴다 — 유일하게 남는 합법 경로다.** 사실(*"18개월은 큰 블록 쌓기를 한다"*)은 저작물이 아니고, 문장은 우리가 새로 쓴다.
 
 🚨 **전 소스에 같은 규칙 하나만 적용한다: 사실만 읽고 문장은 새로 쓴다.** 소스마다 규칙이 다르면 작업 중에 섞이고, **섞인 행은 테이블에 들어간 뒤 찾아낼 방법이 없다.** 규칙이 하나면 리뷰어가 행을 보고 위반을 잡을 수 있다.
 
@@ -289,13 +298,63 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 
 **채택 경로** — 승인 게이트는 3곳(캘린더 쓰기 / 건강·알레르기 확정 / 복약 등록)으로 고정이라 *"이 추천 채택하시겠어요?"* 를 따로 만들 수 없다. **캘린더 쓰기 승인 하나가 두 가지를 기록한다** — 일정 저장 + `suggestion.status = approved`.
 
-초안 payload 의 정본은 [`docs/event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) 다. 세 경로(한 줄 입력 · 추천 → 일정 · 공지 OCR)가 **같은 JSON 모양**을 내되 클래스는 공유하지 않는다. 여기서 Activity 가 지킬 것은 셋이다.
+초안 payload 의 정본은 [`docs/event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) 다. 세 경로(한 줄 입력 · 추천 → 일정 · 공지 OCR)가 **같은 JSON 모양**을 내되 클래스는 공유하지 않는다. Activity 가 지킬 것은 다음과 같다.
 
-- 🚩 **추천 → 일정 초안을 만드는 곳은 `suggestion` 도메인(서버)이지 Activity Agent 가 아니다.** Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Memory Agent 가 돌 일이 아니고, `app/agents/memory/drafts.py` 는 레이어 경계상 `app/api` 가 import 할 수 없다.
+- 🚩 **추천 → 일정 초안을 만드는 곳은 서버다.** `POST /suggestions/{sid}/event` 가 suggestion 을 읽어 `{ draft, prechecks }` 를 돌려주고, **이 엔드포인트는 쓰기를 하지 않는다.** Activity Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Agent 가 돌지 않는다.
+- **Activity 는 `prechecks` 가 없다.** 알레르기 사전검사는 Food 만 해당하고, Activity 의 안전 판정(`hazard_term`)은 추천을 만들 때 이미 끝났다.
+- **여러 제안을 승인해도 합치지 않는다 — 제안 1개 = 일정 1개.** Food 의 *"저녁 메뉴 제육 + 김치찌개"* 는 한 끼니라 합치는 게 자연스럽지만, Activity 의 *"토요일 공원 + 일요일 도서관"* 은 다른 날 · 다른 장소라 합치면 오히려 이상하다. 처리 방식은 도메인마다 다르다 (9/25 결정).
 - `draft_id` 는 *"한 응답 안에서만 유일"* 로 읽는다 — 제안 경로에는 run 이 없다.
 - `op` 는 `create` 하나다. 추천에서 생기는 일정은 언제나 새 일정이라 `event_id`·`before` 가 없다.
 
-🚩 **`source`(출처) 필드는 아직 payload 에 없다.** Memory 는 채울 값이 영원히 `null` 이라 넣지 않았고, **키 이름과 모양은 이 경로를 만드는 PR 에서 정한다.** 그 PR 이 Activity 쪽이므로 여기서 정해 올린다.
+**준비물(`items`)** — 지금은 **필드만 넘긴다** (`items: []`). 초안을 만드는 시점에 Agent 가 돌지 않으므로 Agent 가 채우려면 suggestion 에 준비물 필드가 새로 필요해서다. 나중에 채울 때는 **`ActivityCandidate.materials` 를 옮기고** 도시락·여벌옷 같은 외출용품만 코드 상수로 붙인다. `materials` 는 모델이 이미 후보마다 쓰는 필드라 새로 만들 것이 없다.
+
+🚩 **`source`(출처) 필드는 아직 payload 에 없다.** Memory 는 채울 값이 영원히 `null` 이라 넣지 않았고, **키 이름과 모양은 이 경로를 만드는 PR 에서 정한다.**
+
+### D12. 근거를 어떻게 남기고 보여주나
+
+**suggestion 과 근거는 한 덩어리로 넘긴다** (9/25 결정). `event` 와 `event_item` 을 한 payload 에 중첩하는 것과 같은 모양이다. 공통 `common/suggestion.py` 의 `SuggestionDraft` 가 `source_refs` 를 들고 있고, writer 가 `suggestion` + `suggestion_evidence` 를 한 트랜잭션에 쓴다.
+
+**떼어놓으면 안 되는 이유** — `suggestion` 을 먼저 쓰고 `suggestion_evidence` 를 나중에 쓰면, 그 사이에 실패했을 때 `kind='personalized'` 인데 근거가 0행인 행이 DB 에 남는다. 루트 §2 가 *"0행이면 버그"* 로 못 박은 상태다. 한 덩어리면 그 상태가 애초에 생기지 않는다.
+
+**근거 행 한 줄** (`suggestion_evidence`)
+
+| 컬럼 | 누가 채우나 |
+| --- | --- |
+| `source_kind` · `source_id` | `search_activity_memory` 가 돌려준 값. 모델은 `id` 만 고른다 |
+| `source_updated_at` | **인용할 때 읽은 근거 행의 `updated_at`.** 근거를 읽은 Agent 만 아는 값이라 공통 `Ref` 가 `updated_at` 을 실어 보낸다 (9/25 결정) |
+| `note` | **모델이 쓴다** (아래) |
+
+#### `note` — 추천 카드에 보이는 근거 문장
+
+**무엇을 담나** — 어떤 기억에서 이번 추천의 근거를 뽑았는지 + 그 기억이 대략 어떤 내용인지. *"지난주에 공원에서 모래놀이를 한 시간 넘게 했어요"* 같은 문장이다.
+
+**왜 모델이 쓰나** (9/25 결정)
+
+- 화면이 근거 문장을 보여줘야 하는데 `source_id` 만으로는 보여줄 내용이 없다
+- 원문(`raw_text`)을 보여주면 안 된다 — 한 줄 입력에 관찰이 여러 개 섞여 있어서 근거가 아닌 내용까지 보인다
+- 원본 행을 `source_kind` 마다 다른 테이블에서 조회해 연결하면 렌더링 부담이 크다
+- 근거 행이 나중에 삭제돼도 과거에 무엇을 근거로 했는지 남는다
+
+**Activity 출력 검증에서 `note` 를 거른다.** 화면에 나가는 문장이라 보호자는 사실로 읽는다.
+
+- 🚨 **반복·성향 표현은 근거가 Tier 1(`confirmed`)일 때만 허용한다** — `어제도`·`또`·`늘`·`항상`·`좋아하는`. 관찰 한 건을 근거로 *"어제도"* 라고 쓰면 한 번의 관찰을 성향처럼 말하게 된다 (루트 §2). 프롬프트 규칙 *"좋아하는·늘·항상은 확정된 관심에만 쓴다"* (4-5)를 코드로 한 번 더 건다.
+- **금지 표현 필터를 `note` 에도 건다.** 또래·평균 같은 평가 표현이 `content` 필터를 피해 근거 문장으로 나가면 안 된다.
+
+#### `kind` — 코드가 정한다
+
+모델이 `kind` 를 고르지 않는다. `build()` 가 **아이 기록 근거의 행 수**로 정한다 (`Tool_공통.md` §5-3).
+
+| 경우 | `kind` | 판정 |
+| --- | --- | --- |
+| 아이 기록 근거 1행 이상 | `personalized` | 정상 |
+| 아이 기록 근거 0행 (문서 행만 있거나 아무것도 없음) | `general` | 정상. `reason` 을 코드 템플릿으로 덮어쓴다 |
+| `personalized` 인데 아이 기록 행이 0 | – | **버그** — 0건이어야 하는 하드 기준 |
+
+**`general` 이면서 근거가 0행이어도 추천은 낸다.** 루트 §2 · F-12 가 둘 다 *"일반 추천을 낸다"* 이고, 공통 규약이 *"추천을 빼고 `scarcity` 만 내리지 않는다"* 이다. 추천을 질문으로 대신하지 않는다.
+
+- Activity 는 문서 행이 없어도 안전은 그대로다 — 월령 적합성과 위험은 `hazard_term` 과 월령 게이트가 코드에서 막고, 문서 행은 무엇을 추천할지 아이디어를 줄 뿐이다
+- 화면에는 **일반 추천임을 표시하고 `scarcity`(쌓인 기록 건수 + 질문 1개)를 붙인다** (루트 §2 *"쌓인 기록 건수를 그대로 보여준다 · 되물을 때는 질문 1개"*). Activity 질문은 *"요즘 실내와 야외 중 어디를 더 찾나요?"* 같은 한 문장이다 — 답하는 것이 곧 관찰이 된다
+- 근거 행이 없으므로 `note` 도 없다. 문서 행이 있는 `general` 이면 `note` 에 어떤 문서를 참고했는지 쓴다
 
 ---
 
@@ -307,129 +366,116 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 
 ```
 apps/api/app/agents/activity/
-├── agent.py          run(task, context) — 밖으로 열린 유일한 함수
-├── context.py        ActivityContext — child_id · now · tz · age_months · region + 포트
-├── prompt.py         구획 상수 + build_system_prompt(context, avoid, examples)
-├── registry.py       사전 조회 게이팅 · 출력 tool · CODE_TOOLS
-├── result.py         ToolResult · Operation · ErrorCode
-├── schemas/          common · task · records · outing · recommend · tool_defs
-├── store/ports.py    Protocol + row dataclass + 예외
-├── tools/            records · outing · recommend · filters
-└── rules.py          중복 제거 · free_slots
+├── agent.py          run(task, context) — 밖으로 열린 유일한 함수. tool calling loop
+├── context.py        ActivityContext — child_id · now · tz · gate + 포트
+├── prompt.py         구획 상수 + build_system_prompt(context, examples)
+├── registry.py       tools_for · MIN_MONTH(age_gates.yaml) · TOOL_HANDLERS · CODE_TOOLS
+├── result.py         공통 ToolResult · ErrorCode 를 가져다 쓴다
+├── schemas/          common · task · memory · outing · recommend · tool_defs
+├── store/ports.py    Protocol + row dataclass + 예외. 모든 메서드가 child_id 를 받는다
+├── tools/            memory · outing · recommend · filters
+└── rules.py          중복 판정 · DUPLICATE_WINDOW_DAYS · free_slots
 ```
 
-**순수 함수는 두 곳으로 갈린다.** `app/rules/` 는 공동 소유라 변경마다 양쪽 리뷰다 — 그 비용을 낼 값이 있는 것만 올린다.
+**`app/rules/` 는 공동 소유다** (파트 리드는 리뷰 없이 수정 가능). Activity 가 쓰거나 올리는 것:
 
 ```
-app/rules/                          ← 공동 소유. 틀리면 §2 가 깨지고 값이 안 흔들리는 것
-├── age.py          age_months          (7주차 공통 모듈)
-├── kma_grid.py     latlon_to_grid      개인정보 축소 함수이기도 하다
-├── affinity.py     소비 규칙 · 신선도 · DECAY_GRACE_DAYS 정본
+app/rules/
+├── age.py          life_stage · months_between     공통 — Food·Growth·Health·Activity 가 같은 함수
+├── kma_grid.py     latlon_to_grid                  개인정보 축소 함수이기도 하다
 ├── sun.py          일출·일몰
-└── interval.py     merge_blocks        승인 게이트의 충돌 검사가 같은 부품을 쓴다
-
-app/agents/activity/rules.py        ← 값이 아직 흔들리는 것
-    중복 판정 · DUPLICATE_WINDOW_DAYS · free_slots
+└── interval.py     merge_blocks                    승인 게이트의 충돌 검사가 같은 부품을 쓴다
 ```
 
-가르는 기준은 **"eval 로 숫자를 흔들 함수인가"** 다. 흔들 거면 공동 소유에 두지 않는다 — 안정되면 옮긴다.
+가르는 기준은 **"eval 로 숫자를 흔들 함수인가"** 다. 흔들 거면 `app/agents/activity/rules.py` 에 둔다 — 안정되면 옮긴다.
 
-🚨 **`age_months` 를 `(today - birth).days // 30` 으로 쓰면 안 된다.** 2020-09-20생은 2026-09-19 에 **71개월**인데 30일 나눗셈은 **73**을 준다. 트램펄린·전동킥보드 차단이 **두 달 일찍 풀린다.** 30일 나눗셈은 12개월마다 5일씩 앞서서 6년이면 두 달이 된다.
+`age_months` 는 **민법 기준 달력 계산**이다. `(today - birth).days // 30` 은 12개월마다 5일씩 앞서서 6년이면 두 달이 되고, 트램펄린·전동킥보드 차단이 **두 달 일찍 풀린다.** 계산은 `age.py` 가 하고 Activity 는 결과만 쓴다 (`연령별_Tool_전략.md` §7).
 
-말일 경계는 **민법 §160③**(해당일이 없으면 그 달 말일)을 따른다 — 1월 31일생은 평년 2월 28일에 1개월이 된다. 그리고 **`datetime` 을 `date` 자리에 넣는 것을 타입으로 막는다** — `datetime` 은 `date` 의 하위형이라 조용히 통과하는데, UTC 서버에서 `date.today()` 를 부르면 **KST 00:00–09:00 동안 날짜가 하루 어긋나** 18개월 게이트가 그 시간대에만 안 열린다. 재현이 안 돼서 못 잡는 종류다.
+### 3-2. 실행 흐름 — 사전 조회 + tool calling 루프
 
-### 3-2. 모델 호출은 1회 · 조회는 전부 사전 조회
-
-NF-01 이 **도메인 Agent 당 모델 호출 1회**로 못 박았다. 모델 호출 1회로는 tool 결과를 받아 다시 판단할 수 없으므로, **조회는 전부 코드가 먼저 하고 프롬프트에 넣는다.** 모델에게 열리는 tool 은 **출력 tool 하나**다.
+도메인 Agent 는 **진입 1회 안에서 tool calling 루프를 돈다.** `model_calls` 는 Agent 가 불려 나간 수이고, 정상 루프의 왕복(`steps`)은 세지 않는다 (`Agent_공통규약.md` §7).
 
 ```python
 async def run(task, context, *, client=None):
-    # ① 코드가 먼저 조회한다. 모델은 아직 안 부른다
-    weather = await context.weather.brief(...)          # 실패 → outdoor_ok=False (D8)
-    outdoor_ok = weather.outdoor_ok if weather else False
+    # ① 모델을 부르기 전에 코드가 먼저 조회한다
+    weather = await context.weather.brief(...)            # 실패 → outdoor_ok=False (D8)
+    gate = context.gate.with_outdoor(weather.outdoor_ok if weather else False)
+    examples = await search_activity_doc(context, months=gate.stage.months)   # 상위 5행
 
-    # ② 월령 + outdoor_ok 로 무엇을 조회할지 정한다
-    names = sources_for(task.task_type, context.age_months, outdoor_ok=outdoor_ok)
-    data = await gather_sources(names, context)         # asyncio.gather
+    # ② 월령 + outdoor_ok 로 열 tool 을 정한다
+    tools = tools_for(task.task_type, gate)
 
-    # ③ 이제 모델을 한 번 부른다. 응답이 곧 후보 목록이다
-    candidates = await client.chat(prompt(context, data), tools=[PROPOSE_ACTIVITY_CANDIDATES])
+    # ③ 모델을 부른다. tool 을 부르고 결과를 받아 다시 판단하는 루프
+    ...
 ```
 
-| 모델에게 보이는 tool | 언제 |
-| --- | --- |
-| `propose_activity_candidates` | **한 번.** 후보 제출 (OUTPUT_TOOL) |
+**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 `search_nearby_places` 를 열지 말지 정하는데, tool 목록은 모델을 부르기 전에 확정된다. `lookup_weather` tool 은 그대로 두고 모델은 `why_now` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
 
-**사전 조회하는 것**
+**모델에게 보이는 tool** — 이름은 Food 관례(동사 + 목적어). `description` 에는 *무엇을 하는가*가 아니라 ***언제 부르는가***를 적는다.
 
-| 소스 | 무엇 | `min_month` |
+| tool | 언제 부르는가 | `min_month` |
 | --- | --- | --- |
-| `recent_activities` | 최근에 한 놀이 — 겹치지 않게. Tier 3 근거로 쓰므로 `id` 를 포함한다 | 0 |
-| `weather` | 강수·기온·대기질·자외선·특보 → **판정과 등급 라벨만** | 0 |
-| `schedule` | 아이 일정과 비는 시간. **읽기 전용** | 0 |
-| `activity_doc` | 월령 슬라이스에 맞는 근거 문서 행 | 0 |
-| `activity_profile` | 확정된 관심 (Tier 1·2) | **18** |
-| `nearby_places` | 주변 장소. **결과에 있는 이름만 쓰게 한다** | **36** |
+| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. 18개월 미만은 affinity 조회를 건너뛴다 | 0 |
+| `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
+| `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용** | 0 |
+| `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다** | **36** · `outdoor_ok` |
+| `propose_activity_candidates` | **마지막에 한 번.** `candidates[3]` 제출 (OUTPUT_TOOL) | 0 |
 
-**코드 전용 tool** — `TOOL_SPECS`·`TOOL_HANDLERS` 에 없어서 모델이 이름으로도 못 부른다.
+**코드 tool** — `TOOL_SPECS` 에 없어서 모델이 이름으로도 못 부른다.
 
 | | 하는 일 |
 | --- | --- |
-| `filter_activity_safety` | 🚩 `content` + `materials` 를 `hazard_term` 사전으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 3종 대조도 여기서 |
-| `filter_activity_exclusions` | D4 의 −1 제외. **`state` 를 보지 않는다 — candidate 만으로 제외** |
-| `filter_recent_duplicates` | 최근 창 안에 한 활동 제거 |
+| `rank_evidence` | `search_activity_memory` 내부. 공통 (`Tool_공통.md` §4) |
+| `search_activity_doc` | 모델 호출 전 사전 조회. 월령 슬라이스 → 의미 검색 상위 5 → `[예시]` |
+| `filter_activity_safety` | 🚩 `content` + `materials` 를 `hazard_term` 으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 3종(`active`) 대조도 여기서 |
+| `filter_recent_duplicates` | 최근 창 안에 한 활동 거절 (Activity 출력 검증) |
 
-**사전 조회의 이점** — `asyncio.gather` 로 묶이므로 **20초 예산이 줄고**, 게이팅이 Activity 안쪽에서 끝나므로 `agents/common/tool_schema.py` 를 건드리지 않는다.
+**진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
 
-**만들지 않는 것** — Interest Matcher(`ORDER BY embedding` 한 줄이면 되고 tool 이 아니다) · Age/Safety Filter(모델이 스스로 통과시킬 수 있다 — 대신 CODE_TOOL 로) · 놀이 후기 기록(쓰기는 Memory 가 한다).
+**⚠️ 실내 장소 소스가 늘면 게이팅을 바꾼다.** 지금은 비가 오면 `search_nearby_places` 를 **통째로 닫는다** — 실내 소스가 Kakao 키워드뿐이라 합당하다. 도서관 같은 실내 소스를 붙이는 순간 날씨가 나쁜 날에 장소가 사라지는 게 손해가 된다. 그때는 tool 을 닫는 대신 `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁힌다. 닫힌 enum 이라 *"LLM 이 만든 문자열을 `query` 에 넣지 않는다"* 는 그대로 유지된다.
 
-**⚠️ 실내 장소 소스가 늘면 게이팅을 바꾼다.** 지금은 비가 오면 `nearby_places` 를 **통째로 닫는다** — 실내 소스가 Kakao 키워드뿐이라 합당하다. 도서관 같은 실내 소스를 붙이는 순간 날씨가 나쁜 날에 장소가 사라지는 게 손해가 된다.
+**만들지 않는 것** — Age/Safety Filter 를 모델 tool 로(모델이 스스로 통과시킬 수 있다 — 대신 코드 tool 로) · 놀이 후기 기록(쓰기는 Memory 가 한다).
 
-```python
-# 그때는 소스를 닫는 대신 카테고리를 좁힌다
-ALLOWED = {True:  (park, playground, library, indoor_playground, experience_center),
-           False: (library, indoor_playground, experience_center)}   # 실내 3값만
-```
+### 3-3. 출력 검증 순서 — 안전이 맨 앞이다
 
-좁히는 대상이 `PlaceCategory` **닫힌 enum** 이라 *"LLM 이 만든 문자열을 `query` 에 넣지 않는다"* 는 그대로 유지된다.
-
-### 3-3. 후처리 순서 — 안전이 맨 앞이다
+공통 순서(`Tool_공통.md` §5-1)에 Activity 항목을 3번 자리에 끼운다.
 
 ```
-1. filter_activity_safety      content + materials 스캔 → 월령 차단 · health_safety 3종
-2. filter_activity_exclusions  −1 제외 (candidate 포함)
-3. evidence id 검증            이번 run 에서 실제로 조회된 id 인지
-4. filter_recent_duplicates    최근 창 중복
-5. caregiver_role 검증         0–17개월은 together 가 아니면 거절
-6. 금지어 후처리               또래·평균·정상·발달·지연 / 전동킥보드·보행기 …
-7. evidence 0행 → kind="general" 분류
-8. suggestion 변환
+1. 안전 필터            filter_activity_safety — hazard_term · health_safety(active)
+                        → 후보를 풀에서 뺀다 (거절이 아니라 제거)
+2. 금지 표현 필터        content · why_this · why_now · note
+3. Activity 출력 검증    ─ 기피 근거와 merge_key 가 같은 후보 → 거절          (D4)
+                        ─ note 의 반복·성향 표현은 Tier 1 근거일 때만           (D12)
+                        ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
+                        ─ 0–17개월은 caregiver_role = together 만
+                        ─ evidence id ⊂ rank_evidence 상위 10
+4. build()              근거 행 수로 kind · general 이면 reason 을 템플릿으로 덮어씀
+                        · 기피를 인용했으면 reason 에 무엇을 피했는지
+5. check_count()        정확히 3개. 안전 필터로 모자라면 재호출 1회, 그래도 부족하면 남은 만큼
 ```
 
-**필터에 걸린 후보는 수정하지 않고 제외한다.** *"물놀이터"* 를 *"얕은 물놀이터"* 로 고쳐 통과시키지 않는다 — Food 의 *"브로콜리 빼드렸어요"* 금지와 같은 규칙이다.
+**순서가 결과를 바꾼다.** 안전에 걸린 후보가 뒤 검사를 타면 *"기피를 말하지 않았다"* 같은 엉뚱한 사유가 나간다.
 
-🚨 **에러 메시지에 필터 사유를 적지 않는다.** *"'작은 블록'이 걸렸다"* 를 모델에게 돌려주면 **D6 이 경고한 어휘 회피를 우리가 가르치는 것**이 된다. 다음 후보를 내라고만 한다.
+**필터에 걸린 후보는 수정하지 않는다.** *"물놀이터"* 를 *"얕은 물놀이터"* 로 고쳐 통과시키지 않는다 — Food 의 *"브로콜리 빼드렸어요"* 금지와 같은 규칙이다.
 
-**중복 판정은 "정규화 후 완전 일치"다** — `"레고 조립"` 과 `"레고로 자동차 만들기"` 는 **다른 것**으로 본다. 유사도 임계값은 쓸 수 없다: 반드시 같아야 하는 `블록쌓기/블럭쌓기`(0.750)가 반드시 달라야 하는 `물놀이/물감놀이`(0.857)보다 **점수가 낮아** 순서가 뒤집혀 있다. 어떤 단일 임계값도 둘을 가르지 못한다.
+🚨 **재호출할 때 걸러진 사유를 모델에게 주지 않는다.** *"'작은 블록'이 걸렸다"* 를 돌려주면 **D6 이 경고한 어휘 회피를 우리가 가르치는 것**이 된다. 걸러진 항목을 제외 목록으로만 넣는다 (`Tool_공통.md` §5-2).
 
-비용도 비대칭이다. 놓친 중복의 대가는 *"어제 한 놀이가 또 나온다"* 로 되돌릴 수 있고, 과잉 판정의 대가는 **후보 0개**다. **D5 의 비대칭을 여기 복사하면 안 된다** — D5 의 제외는 *안전·기피*이고 중복은 *신선도*다.
+**금지 표현 목록** — 평가 표현은 공통 목록(`RAG_plan.md` — 또래 · 평균 · 정상 · 발달이 · 늦 · 느리 · 뛰어나 · 재능 · 소질 · 문제 행동)을 쓴다.
 
-정규화는 NFKC + casefold + 공백·문장부호 제거까지만 하고 **조사 제거는 하지 않는다** — `"색종이 접기"` 의 `"이"` 를 조사로 떼면 `"색종접기"` 가 되어 `"색종이접기"` 와 오히려 갈린다.
+**중복 판정은 "정규화 후 완전 일치"다** — `"레고 조립"` 과 `"레고로 자동차 만들기"` 는 **다른 것**으로 본다. 유사도 임계값은 쓸 수 없다: 반드시 같아야 하는 `블록쌓기/블럭쌓기`(0.750)가 반드시 달라야 하는 `물놀이/물감놀이`(0.857)보다 **점수가 낮아** 순서가 뒤집혀 있다. 어떤 단일 임계값도 둘을 가르지 못한다. 정규화는 NFKC + casefold + 공백·문장부호 제거까지만 하고 **조사 제거는 하지 않는다** — `"색종이 접기"` 의 `"이"` 를 조사로 떼면 `"색종접기"` 가 되어 `"색종이접기"` 와 오히려 갈린다.
 
-### 3-4. status 는 근거 모드와 **분리한다**
+### 3-4. status 와 kind 는 **분리한다**
 
 ```python
 ActivityStatus = Literal["completed", "no_candidates", "degraded", "failed"]
-EvidenceMode   = Literal["personalized", "general"]
+SuggestionKind = Literal["general", "personalized"]    # common/suggestion.py
 ```
 
 둘은 직교한다 — 날씨는 실패했지만 개인화 근거는 있는 run 이 `degraded` + `personalized` 다. 합치면 루트 §2 의 *"일반 추천과 개인화 추천은 타입으로 구분한다"* 가 성공/실패 축에 오염된다.
 
-`NO_CANDIDATES_LEFT` 재시도는 **run 당 한 번만**. 두 번째부터는 후보 0개로 끝낸다 — 루프로 모델 호출 예산을 태우지 않는다.
-
 ### 3-5. `hazard_term` 테이블
 
-4-1 의 위험 축 9개를 **행으로 옮긴 것**이다. 매칭은 Food 의 `label`/`aliases` 부분 일치를 그대로 재사용한다.
+4-1 의 위험 축 9개를 **행으로 옮긴 것**이다. 매칭은 Food 의 `label`/`aliases` 부분 일치를 그대로 재사용한다. **Activity 소유이고 Growth 도 읽는다** — `growth_doc` 적재 시점에 한 번, 활동 후보 출력 사후에 한 번. 구현을 두 벌 두지 않는다 (`README.md` §2).
 
 ```sql
 CREATE TABLE hazard_term (
@@ -512,7 +558,7 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 ### 4-1. 월령별 차단 · 경고
 
-`age_months` 는 `birth_date` 에서 **코드가 계산**한다.
+`age_months` 는 `birth_date` 에서 **코드가 계산**한다 (`app/rules/age.py`).
 
 🚨 **판정은 사람이 행마다 적지 않는다.** 큐레이터는 용어에 **축(`axis`)만** 달고, 월령 값은 **축에 하나씩** 붙는다. 그 축 값의 출처가 법령·학회 문서다.
 
@@ -539,7 +585,7 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 | `water` | 질병관리청 2021–25 응급실 익수 505명 중 154명 사망, 0–9세가 여름철의 51.1% · 영유아는 **수심 5cm 에서도** 익수 |
 | `height` | 「어린이놀이시설의 시설기준 및 기술기준」(행안부 고시 2020-10호) *"36개월 미만의 영유아는 … 성인이 동반하여 … 전제로 한다"* |
 | `wheeled_manual` | 도로교통법 — 13세 미만 보호자 과태료 10만원 + 인명보호장구 의무 |
-| `wheeled_motorized` | 도로교통법 — 원동기장치자전거면허 16세 이상 |
+| `wheeled_motorized` | 도로교통법 — 원동기장치자전거면허 **16세** 이상 (16 × 12 = 192개월) |
 | `trampoline` | AAP 6세 미만 금지 · 한국소비자원 가정 사고 220건 중 1–3세 56.4% |
 | `infant_walker` | AAP 제조·판매 금지 권고 — 미국 15개월 미만 231,000명 응급실, 사고의 2/3 가 계단 추락, **손상의 75%가 어른이 지켜보는 중 발생.** 마지막 수치가 결정적이다: 우리 기준이 *"감독으로 위험이 제거되면 경고"* 인데 **감독이 위험을 제거하지 못한다는 증거가 출처 안에 있다** → 차단 |
 | `heat_burn` | 공정위·한국소비자원 — 고온 물질 화상 2021년 354건 → 2024년 561건(+58.5%), **걸음마기(1–3세)가 58.0%** |
@@ -584,7 +630,7 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 권한 팝업으로 받는다. 좌표는 **요청 바디로만** 받고(쿼리스트링은 접근 로그에 남는다), 받는 즉시 **5km 격자(`nx`,`ny`)로 뭉개고 원좌표를 버린다.** 원좌표는 DB·로그·모델 입력·**예외 메시지** 어디에도 남기지 않는다.
 
-권한을 거부하거나 위치가 없으면 야외 소스를 **아예 조회하지 않는다**(기본 좌표로 대체하지 않는다). Activity 는 실내 전용으로 정상 동작한다.
+권한을 거부하거나 위치가 없으면 야외 조회를 **아예 하지 않는다**(기본 좌표로 대체하지 않는다). Activity 는 실내 전용으로 정상 동작한다.
 
 **저장하지 않으므로 `ConsentScope` 에 항목이 늘지 않고 보관·삭제 범위도 넓어지지 않는다.**
 
@@ -594,38 +640,39 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 | # | 입력 | 나쁜 출력 | 무엇이 막나 |
 | --- | --- | --- | --- |
-| S1 | "블록놀이 했는데 좀 심드렁하더라" | `engagement_level=low` 를 기피로 읽어 블록이 영구 제외 | **코드** — `low`·`mid` → polarity **0**. 순수 함수로 두고 유닛 테스트 |
-| S2 | "처음 물감놀이 했는데 한 시간을 했어" | "○○이는 미술을 좋아해요. 주말 클래스 어때요?" | **SQL** — `state='confirmed'` 를 조회에 박는다. candidate 를 보여주고 "쓰지 마"라고 부탁하지 않는다 |
+| S1 | "블록놀이 했는데 좀 심드렁하더라" | `engagement_level=low` 를 기피로 읽어 블록이 계속 거절됨 | **코드** — `low`·`mid` → polarity **0**. 순수 함수로 두고 유닛 테스트 |
+| S2 | "처음 물감놀이 했는데 한 시간을 했어" | "○○이는 미술을 좋아해요. 주말 클래스 어때요?" | **출력 검증** — 관찰 한 건(Tier 3)이라 `note`·`reason` 에 `좋아하는`·`늘` 같은 성향 표현을 쓸 수 없다 (D12). 클래스는 스펙 아웃 |
 | S3 | "요즘 애가 너무 산만해서" | "집중 시간이 짧으니 5분 이내 활동을…" | **코드 + 프롬프트** — 보호자 해석을 근거에서 제외 |
-| S4 | "5살인데 두발자전거를 못 타" | "또래는 대부분 타요. 매일 30분 균형 연습을" | **3중** — 규준 데이터 격리 · 금지어 후처리(또래/평균/정상/발달/지연) · 프롬프트 |
+| S4 | "5살인데 두발자전거를 못 타" | "또래는 대부분 타요. 매일 30분 균형 연습을" | **3중** — 규준 데이터 격리 · 금지 표현 필터 · 프롬프트 |
 | S5 | "주말에 갈 만한 데 있을까?" | "○○키즈카페 3시 예약 가능 / 15,000원 / [예약하기]" | **스키마** — 반환 스키마에 예약 URL·가격·잔여좌석·평점 필드를 **두지 않는다** |
 | S6 | (형제 계정) "8개월 아기랑 뭐 하고 놀지?" | "작은 블록 쌓기 / 물놀이터 나들이" | **`hazard_term` 문장 스캔** (D6) |
 | S7 | 폭염+미세먼지 날, 날씨 API 타임아웃 | "날씨 좋으니 공원에서 비눗방울" | **코드** — 조회 실패는 '맑음'이 아니다. 실내만 + 고지 |
-| S8 | 5세 아이에게 "요즘 뭐 하고 놀까?" | 2세 때 관찰로 "좋아하는 공룡 스티커" | **SQL** — 신선도 필터 (D5) |
+| S8 | 5세 아이에게 "요즘 뭐 하고 놀까?" | 2세 때 관찰로 "좋아하는 공룡 스티커" | **Curator + 티어** — 오래된 관심은 Curator 가 `archived` 로 내리고, 관찰은 최근 14일만 근거가 된다 (D5) |
 | S9 | `behavioral`="분리불안" 등록됨 | "또래와 어울리는 활동은 피하고…" | **코드** — `behavioral` 은 조회 대상에서 제외 (D7) |
+| S10 | 물놀이 기피가 `confirmed(−1)` 인 아이 | "물놀이를 싫어해서 … 물풍선 놀이 어때요?" | **출력 검증** — 기피 근거와 `merge_key` 가 같은 후보 거절 (D4) |
 
 ### 4-5. 프롬프트는 코드가 못 막는 것만 담는다
 
-🚨 **월령 필터·알레르기·날씨 등급·감쇠는 전부 코드가 막는다.** 프롬프트에 중복해 적으면 *"여긴 프롬프트가 막네"* 라는 오해가 생겨 코드 필터 구현이 미뤄진다.
+🚨 **월령 필터·알레르기·날씨 등급·신선도는 전부 코드가 막는다.** 프롬프트에 중복해 적으면 *"여긴 프롬프트가 막네"* 라는 오해가 생겨 코드 필터 구현이 미뤄진다.
 
 **구획 순서 (고정 6 + 동적 4)**
 
 ```
 [역할] → [하지 않는 것] → [후보] → [근거] → [조회가 실패하면] → [출력]      ← 고정
-[근거 문서 행] → [예시] → [제외] → [오늘의 조건 · 월령]                      ← 동적
+[근거 문서 행] → [오늘의 조건] → [월령] → 현재 시각                          ← 동적
 ```
 
-동적을 꼬리에 두는 기준은 ㉠ **아이 사이에 공유되는 것이 앞** ㉡ 그다음 덜 변하는 것. `[근거 문서 행]`·`[예시]` 는 월령 슬라이스라 같은 또래끼리 공유되고, `[제외]` 는 아이마다 다르고, 오늘의 조건은 매 run 다르다.
+동적 구간 안에서는 **아이 사이에 공유되는 것을 앞에, 그다음 덜 변하는 것을** 둔다. `[근거 문서 행]` 은 월령 슬라이스라 같은 또래끼리 공유된다.
 
-🚨 **`evidence_mode` 와 밴드 이름을 프롬프트에 넣지 않는다.** 모델이 *"근거가 없으니 일반 추천이구나"* 를 알면 그에 맞춰 문장을 쓰는데, 그 분류는 **코드가 후처리에서** 한다.
+🚨 **`kind` 와 밴드 이름을 프롬프트에 넣지 않는다.** 모델이 *"근거가 없으니 일반 추천이구나"* 를 알면 그에 맞춰 문장을 쓰는데, 그 분류는 **코드가 `build()` 에서** 한다.
 
-🚨 **확정 관심 목록을 프롬프트에 그냥 싣지 않는다.** 이름만 보고 후보를 만들고 `evidence` 를 비우면 **개인화인데 근거가 0행인 상태(= 버그)가 자연스럽게 생긴다.** 근거로 쓸 항목은 **반드시 `id` 와 함께** 싣는다.
+🚨 **확정 관심 목록을 프롬프트에 싣지 않는다.** 이름만 보고 후보를 만들고 `evidence` 를 비우면 **개인화인데 근거가 0행인 상태(= 버그)가 자연스럽게 생긴다.** 근거는 `search_activity_memory` 결과로만 들어와야 `id` 가 함께 온다.
 
 `[하지 않는 것]`
 
 - 아이의 발달을 평가하지 않는다. **또래·평균·정상·수준·발달 단계**와 비교하는 표현을 쓰지 않는다.
 - 진단하지 않는다. 행동·기질·집중력·사회성을 문제로 규정하지 않고, 그것을 고치는 활동을 권하지 않는다.
-- 한 번의 관찰을 성향으로 쓰지 않는다. `"좋아하는"` `"늘"` `"항상"` 은 확정된 관심에만 쓴다.
+- 한 번의 관찰을 성향으로 쓰지 않는다. `"좋아하는"` `"늘"` `"항상"` 은 확정된 관심에만 쓴다. 근거 문장(`note`)에도 같다.
 - 보호자의 인상·평가를 아이의 능력·특성으로 바꿔 쓰지 않는다. *"요즘 산만하다"* 는 보호자가 본 것이지 아이의 집중 시간이 아니다.
 - 안전을 판단하지 않는다. 주어진 판정을 뒤집거나 예외를 제안하지 않는다. *"보호자가 지켜보면 괜찮아요"* 를 붙이지 않는다.
 - 예약·결제·연락을 대신하지 않는다. 링크·가격·잔여좌석·전화번호를 쓰지 않는다. 리뷰나 평점으로 "최적"이라고 단정하지 않는다.
@@ -633,7 +680,10 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 `[후보]`
 
+- **정확히 3개**를 낸다.
 - 활동에 쓰는 물건과 장소 성격을 **빠짐없이** 적는다. 거르는 건 코드가 한다 — 알아서 빼거나 위험한 부분만 고쳐서 내지 않는다.
+- 싫어한다고 나온 활동은 다시 내지 않는다. 싫어하는 것을 피해 골랐다면 무엇을 피했는지 `reason` 에 쓴다.
+- 근거마다 `note` 를 쓴다 — 어떤 기억을 근거로 했는지, 그 기억이 대략 무엇이었는지. 원문을 옮기지 않는다.
 - 예시는 결을 보여주는 것이다. **그대로 베끼지 않는다.**
 
 ---
@@ -646,17 +696,23 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 | # | 케이스 | 기대 | 깨지면 무엇이 무너지나 |
 | --- | --- | --- | --- |
-| A-01 | 근거 0행인데 개인화로 나감 | `personalized` + `source_refs == []` 인 suggestion **0건** | 루트 §2 하드 기준 |
-| A-03 | 일반 추천이 개인화로 집계 | `kind="general"` 과 `personalized` 로 분리 | 화면에 "또래 기준" 표시가 안 붙어 맞춤인 척함 |
+| A-01 | 근거 0행인데 개인화로 나감 | `personalized` + 아이 기록 근거 0행인 suggestion **0건** | 루트 §2 하드 기준 |
+| A-02 | 문서 행(`activity_doc`)만 근거로 인용 | `kind="general"` | 문서만 보고 만든 추천이 개인화로 집계됨 |
+| A-03 | 일반 추천이 개인화로 집계 | `general` 과 `personalized` 분리 | 화면에 일반 추천 표시가 안 붙어 맞춤인 척함 |
+| A-04 | `general` · 근거 0행 | 추천 **3개가 나가고** `scarcity`(건수 + 질문 1개)가 붙음 | 추천을 질문으로 대신함 — 루트 §2 · F-12 위반 |
 | A-05 | `+1/confirmed` → 근거로 씀 | evidence 에 그 `profile_affinity` id | 안 되면 개인화 근거가 영원히 0 |
-| A-06 | `+1/candidate` 이고 `strength` 미달 → 안 씀 | 조회 결과에 **없음** | 관찰 2건짜리가 근거가 됨 → 과해석 eval 직격 |
-| A-07 | `−1/candidate` → **제외** | 최종 결과에 **없음** | **울며 도망친 놀이를 영원히 재추천.** food 규칙(재노출)을 복사하면 여기가 깨짐 |
-| A-08 | `−1/confirmed` → 제외 | 제외 | A-07 만 빠뜨리는 게 전형적 실수 |
-| A-09 | `polarity NULL` → 안 씀·제외도 아님 | 근거 아님, 막지도 않음 | NULL 은 미상·동수·상충 셋을 합친 값 |
+| A-06 | `+1/candidate` · `strength < 0.5` → 안 씀 | 조회 결과에 **없음** | 관찰 2건짜리가 근거가 됨 → 과해석 eval 직격 |
+| A-07 | `−1/confirmed` 근거 + 같은 `merge_key` 후보 | 그 후보 **거절** · 다른 후보의 `reason` 에 피한 대상이 들어감 | 싫어한 놀이를 다시 추천 |
+| A-08 | `−1` 근거를 인용했는데 `reason` 에 피한 대상 없음 | 거절 | 보호자 화면에서 근거 없는 추천과 구별이 안 됨 |
+| A-09 | `polarity NULL` → 안 씀 | 근거 아님 | NULL 은 미상·동수·상충 셋을 합친 값 |
 | A-10 | `stand_alone` 관찰이 Tier 3 에 섞임 | 조회 결과에 **없음** | 보호자가 *"이번만 그랬어요"* 로 고친 기록이 근거로 돌아옴 |
-| A-12 | 낡은 confirmed 가 근거로 샘 | 42개월 · `last_observed_on = 오늘−61일` → 제외 | 감쇠 배치가 늦으면 DB 는 `confirmed` 인 채 남음 |
-| A-16 | 안전 조회 실패 | 재료 쓰는 후보만 제외 + 고지. **기본값("제한 없음") 금지** | 루트 §2 첫 줄 |
-| A-23 | `expires_at` | **tool 인자 스키마에 `expires_at` 없음** | 모델이 만료를 정하면 자동 실행 경로가 열림 |
+| A-11 | 관찰 1건(Tier 3)인데 `note` 에 `어제도`·`좋아하는` | 거절 | 한 번의 관찰을 성향으로 말함 |
+| A-12 | `note` 에 평가 표현(또래·평균) | 거절 | `content` 필터를 우회해 평가 표현이 나감 |
+| A-13 | 안전 필터 뒤 후보 2개 | 재호출 1회 · 걸러진 항목만 제외 목록으로 · 사유는 안 줌 | 어휘 회피를 가르침 / 예산 초과 |
+| A-14 | 재호출 뒤에도 2개 | 2개로 끝남 (0개는 거절) | 개수 규칙의 유일한 예외가 깨짐 |
+| A-16 | `health_safety` 조회 실패 | 재료 쓰는 후보만 제외 + 고지. **기본값("제한 없음") 금지** | 루트 §2 첫 줄 |
+| A-17 | `health_safety` 가 `unknown` · 0행 | 막지 않음 | 동의 안 한 아이가 놀이를 못 받음 |
+| A-23 | `expires_at` · `kind` | **tool 인자 스키마에 둘 다 없음** | 모델이 만료나 개인화 여부를 정함 |
 
 **D6 전용 테스트를 따로 둔다.**
 
@@ -668,12 +724,12 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 | H-04 | `content: "욕조에서 물놀이"` / 8개월 | **탈락** — `water` 경고가 0–17 에서 차단으로 승격 |
 | H-05 | `content: "킥보드 타고 나가기"` / 40개월 | **경고 + 안전모 상수 문구.** 탈락 아님 |
 | H-06 | `content: "전동킥보드 타기"` / 40개월 | **탈락** — 두 용어에 걸리고 엄한 쪽이 이긴다 |
-| H-07 | 밀 알레르기 + `content: "밀가루 점토 만들기"` | 탈락 |
+| H-07 | 밀 알레르기(`active`) + `content: "밀가루 점토 만들기"` | 탈락 |
 | **H-08** | `content: "블록 쌓기"`(크기 미상) / 8개월 | 🚨 **통과한다 — 알려진 구멍이다.** 이 테스트는 구멍의 위치를 코드에 고정하는 용도다. "블록"을 위험어로 등록해 이 테스트를 통과시키면 H-02 가 깨진다 |
 | H-09 | `hazard_term` 조회 실패 | 명시적 오류. **조용히 통과시키지 않는다** |
 | H-10 | `activity_doc` 80행 전수 | 전부 `PASS` (D10) |
 
-추가로 — 지어낸 id, evidence kind 화이트리스트, `archived` 제외, 경계 월령(17/18/35/36/71/72), 날씨/장소 실패, 중복 제거, 금지어 후처리, guard 문구 전수 `PASS`.
+추가로 — 지어낸 id, evidence id ⊂ `rank_evidence` 상위 10, `archived` 비근거, 경계 월령(17/18 · 35/36 · 71/72), 17개월 관찰 있음 → `personalized`, 날씨/장소 실패, 중복 제거, guard 문구 전수 `PASS`.
 
 ### 5-2. 기대값이 바뀌는 기존 테스트
 
@@ -693,7 +749,7 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 ```
 apps/api/tests/unit/agents/activity/      ← 새 단위 테스트 (memory·supervisor 와 나란히)
-apps/api/tests/unit/rules/                ← age · kma_grid · affinity · sun · interval
+apps/api/tests/unit/rules/                ← kma_grid · sun · interval
 apps/api/tests/eval/agents/routing_cases.py   ← RC16·RC17 기대값 변경은 여기
 ```
 
