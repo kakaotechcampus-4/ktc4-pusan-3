@@ -38,66 +38,25 @@ _BANDS: dict[Stage, Band] = {
     "preschool": "toddler",
 }
 
-# 만삭 기준 주수. 이보다 이르면 조산으로 보고 교정연령을 계산한다.
-FULL_TERM_WEEKS = 37
-_TERM_WEEKS = 40
-_WEEKS_PER_MONTH = 4.35
-
-# 교정연령을 적용하는 상한. 이 월령부터는 출생 후 월령을 그대로 쓴다.
-CORRECTED_UNTIL_MONTHS = 24
-
-# 보호자가 기억해서 넣는 값이라 오타를 걸러 낸다. 이 범위 밖은 입력 실수로 본다.
-_MIN_GESTATIONAL_WEEKS = 20
-_MAX_GESTATIONAL_WEEKS = 44
-
 
 @dataclass(frozen=True)
 class LifeStage:
-    """게이팅에 쓰는 아이의 연령 값.
-
-    months 와 corrected_months 는 다를 수 있다. 어느 쪽을 쓸지는 도메인이 정한다
-    (docs/agents/shared/연령별_Tool_전략.md §6).
-
-        stage             출생 후 월령 기준. 검진 차수·예방접종 시기처럼 제도가 출생일을 보는 곳
-        corrected_stage   교정연령 기준. Food 의 이유식 시작, Growth 의 루틴·교육 tool 개방
-        safety_months     둘 중 작은 쪽. 꿀·질식 주의·위험 용어는 여기를 본다
-
-    만삭이면 셋이 같다. 둘을 다 내놓는 것은 호출부가 stage 를 무심코 집어 조산아에게
-    이유식을 일찍 열지 않게 하기 위해서다.
-    """
+    """게이팅에 쓰는 아이의 연령 값. `stage` 는 출생 후 월령 기준."""
 
     months: int
-    corrected_months: int
     stage: Stage
-    corrected_stage: Stage
     big: Band
 
-    @property
-    def safety_months(self) -> int:
-        """안전 필터가 보는 월령. 꿀·질식 주의·위험 용어 승격이 이 값을 기준으로 한다."""
-        return min(self.months, self.corrected_months)
 
-
-def life_stage(
-    birth_date: date,
-    today: date,
-    gestational_weeks: int | None = None,
-) -> LifeStage:
+def life_stage(birth_date: date, today: date) -> LifeStage:
     """생년월일과 기준일로 월령·단계를 계산한다.
 
     today 는 호출하는 쪽이 넘긴다. 이 함수 안에서 date.today() 를 부르지 않는다 —
     UTC 서버에서 부르면 KST 00:00~09:00 사이에 하루가 어긋나 그 시간대에만 게이트가 안 열린다.
     """
     months = months_between(birth_date, today)
-    corrected = _corrected_months(months, gestational_weeks)
     stage = stage_of(months)
-    return LifeStage(
-        months=months,
-        corrected_months=corrected,
-        stage=stage,
-        corrected_stage=stage_of(corrected),
-        big=_BANDS[stage],
-    )
+    return LifeStage(months=months, stage=stage, big=_BANDS[stage])
 
 
 def months_between(birth_date: date, today: date) -> int:
@@ -129,25 +88,6 @@ def stage_of(months: int) -> Stage:
         if months >= boundary:
             return stage
     raise AssertionError("_STAGE_BOUNDARIES 의 마지막 칸이 0 이 아니다")  # pragma: no cover
-
-
-def _corrected_months(months: int, gestational_weeks: int | None) -> int:
-    """조산이면 교정연령을, 아니면 출생 후 월령을 그대로 돌려준다.
-
-    보정은 월 단위 반올림이다 — round((40 - 주수) / 4.35). 34주면 1개월.
-    주수를 일 단위로 환산하지 않는 것은 보호자가 기억하는 값이 대개 주 단위라서다.
-    """
-    if gestational_weeks is None or months >= CORRECTED_UNTIL_MONTHS:
-        return months
-    if not _MIN_GESTATIONAL_WEEKS <= gestational_weeks <= _MAX_GESTATIONAL_WEEKS:
-        raise ValueError(f"다룰 수 없는 임신 주수: {gestational_weeks}")
-    if gestational_weeks >= FULL_TERM_WEEKS:
-        return months
-
-    weeks_early = _TERM_WEEKS - gestational_weeks
-    # +0.5 후 버림 = 반올림. round() 의 은행가 반올림(0.5 를 짝수로)을 피한다.
-    correction = int(weeks_early / _WEEKS_PER_MONTH + 0.5)
-    return max(0, months - correction)
 
 
 def _is_month_end_anniversary(birth_date: date, today: date) -> bool:

@@ -58,7 +58,6 @@
 | deleted_at | timestamptz | nullable. 값이 있으면 전원 접근 차단 |
 | deleted_by | uuid | FK → parent.id, nullable, ON DELETE SET NULL |
 | gender | — | **수집하지 않는다.** 성장 판정 제거(2026-09-22)로 소비처가 사라졌다 |
-| gestational_weeks | smallint | nullable. **재태주수.** 37주 미만이면 조산아로 보고 24개월까지 교정연령을 함께 계산한다 — `app/rules/age.py` 의 `life_stage(gestational_weeks=...)` 입력이다. 없으면 만삭으로 간주한다. 32주 조산·생후 4개월이면 출생 후로는 이유기인데 교정으로는 아직 수유기라, 이 값이 없으면 이유식 안내가 두 달 일찍 열린다. **온보딩에서 받아야 한다** — 조산 여부와 몇 주 만에 태어났는지 |
 
 #### child_growth_log (키·몸무게 로그) — 이름·타입 확정 2026-09-22
 
@@ -536,7 +535,6 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 | 요청 | 어디에 | 올린 Agent |
 | --- | --- | --- |
-| `child.gestational_weeks smallint` | Child §child | Food · Health |
 | `child.gender` 수집하지 않음 | Child §child | Health (성장 판정 제거로 철회) |
 | `child_growth_log` — `numeric(4,1)` · `check_date date NOT NULL` | Child §child_growth_log | Growth (G-5) |
 | `suggestion.kind` (`general`/`personalized`) | Suggestion §suggestion | Food · Growth |

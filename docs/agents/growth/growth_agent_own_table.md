@@ -23,7 +23,7 @@
 | `observation_education` · `observation_routine` · `observation_activity`(참고) | Memory |
 | `profile_affinity` (education · routine · activity) | Curator (배치) |
 | `child_growth_log` | Memory |
-| `child` (생년월일 · `gestational_weeks`) | 앱 |
+| `child` (생년월일) | 앱 |
 | `suggestion` | 주입된 writer가 INSERT (`status='draft'`) |
 
 DB 권한: Agent role에 `growth_doc`·`book_catalog` write **비부여**(배치·마이그레이션 role만). Growth는 전 테이블 SELECT + `suggestion` INSERT(writer 경유)뿐입니다.
