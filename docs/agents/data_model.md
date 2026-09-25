@@ -387,7 +387,7 @@
 | source_kind | text | NOT NULL. 아래 두 무리 중 하나 |
 | source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
 | source_updated_at | timestamptz | NOT NULL. **인용할 때 읽은 근거 행의 `updated_at`** 을 그대로 박는다 |
-| note | text | nullable. 그 근거를 왜 인용했는지. **화면에 나가지 않는 내부 메모**다 |
+| note | text | nullable. 그 근거를 왜 인용했는지. **보호자 화면에 그대로 나간다** |
 | created_at | timestamptz | NOT NULL, default `now()` |
 
 - `PRIMARY KEY (suggestion_id, source_kind, source_id)`
