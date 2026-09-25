@@ -139,10 +139,18 @@ export function RunResult({
   }
 
   const noChildObservation = state.observations.length === 0;
+  /**
+   * 🚨 **저장한 것이 없으면 "저장했어요" 라고 하지 않는다.** "이번 주말에 공원 산책 가기" 처럼
+   *    앞으로의 계획만 말한 한 줄은 아이에 대한 관찰이 아니라서 쌓을 것이 없고, 일정도 아직
+   *    **초안**이라 캘린더에 없다 — 그 화면에서 제목이 "저장했어요" 면 화면이 거짓말을 한다.
+   */
+  const savedSomething = !noChildObservation;
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-title text-ink">이렇게 저장했어요</h2>
+      <h2 className="text-title text-ink">
+        {savedSomething ? "이렇게 저장했어요" : "이렇게 이해했어요"}
+      </h2>
 
       {/* 이 화면의 주인공은 결과 카드가 아니라 **부모가 적은 말**이다 (관찰 노트).
           화면에서 한 장만 쓰는 `card-accent` 를 여기 쓴다 — 아래는 전부 거기서 나온 것이다. */}
@@ -172,8 +180,9 @@ export function RunResult({
       {noChildObservation ? (
         <CardFailed>
           <p>
-            아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지
-            않았어요.
+            {state.drafts.length > 0
+              ? "일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."
+              : "아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지 않았어요."}
           </p>
         </CardFailed>
       ) : (
@@ -216,9 +225,12 @@ export function RunResult({
         found="적어주신 말에서 일정을 찾았어요."
       />
 
-      <p className="text-caption text-ink-subtle">
-        한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
-      </p>
+      {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
+      {savedSomething ? (
+        <p className="text-caption text-ink-subtle">
+          한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
+        </p>
+      ) : null}
 
       {/* 🚨 제안을 버튼으로 쌓지 않는다. 예전에는 [제안][제안][아니요] 3개가 같은 무게로 서서
           무엇이 다음 행동인지가 없었다 — 고르는 것은 줄(`AgentPromptRow`)이고, 화면을 떠나는
@@ -233,8 +245,12 @@ export function RunResult({
             onPick={(agent) => onPickOffer([agent])}
             layout="list"
           />
+          {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** 일정만 말한 한 줄에는
+              쌓인 기록이 없다 — 남은 것을 안 세고 같은 문구를 쓰면 화면이 두 번 거짓말한다. */}
           <p className="text-caption text-ink-subtle mt-1">
-            고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요.
+            {savedSomething
+              ? "고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요."
+              : "고르지 않아도 괜찮아요. 기본값은 아무것도 더 하지 않는 거예요."}
           </p>
         </section>
       ) : null}

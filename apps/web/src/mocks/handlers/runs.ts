@@ -26,10 +26,35 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 🚨 **한 줄이 무엇을 만드는지는 발화에 달려 있다** (CLAUDE.md §5 의도 3형).
+ *    목이 늘 관찰과 초안을 **둘 다** 내면 두 화면을 따로 볼 수가 없다 — 기록만 남는 한 줄과
+ *    일정이 되는 한 줄은 04 에서 다르게 생겼는데, 그 차이를 확인할 방법이 없었다.
+ *
+ * 🚨 **의도 분류를 흉내 내는 것이 아니다.** 목은 낱말만 본다 — 진짜 판정은 Supervisor 의 일이고
+ *    (§3 — 의도 분류는 LLM), 여기서 규칙을 정교하게 만들면 **검증한 적 없는 분류기**를
+ *    화면 개발의 기준으로 삼게 된다. 무엇을 치면 무엇이 나오는지는
+ *    [`docs/web/mock-screens-v1.md`](../../../../docs/web/mock-screens-v1.md) 에 적어 둔다.
+ */
+const EVENT_WORDS = ["일정", "약속", "예약", "가기", "잡아", "등원", "소풍", "운동회", "물놀이"];
+const RECORD_WORDS = ["했대", "했어", "놀았", "먹었", "좋아해", "싫어해", "그렸", "봤대"];
+
+type Intent = "record" | "event" | "both";
+
+function intentOf(text: string): Intent {
+  const hasEvent = EVENT_WORDS.some((word) => text.includes(word));
+  const hasRecord = RECORD_WORDS.some((word) => text.includes(word));
+  if (hasEvent && !hasRecord) return "event";
+  if (hasRecord && !hasEvent) return "record";
+  // 🚨 아무것도 안 걸리면 **혼합형**이다 — 아무 한 줄이나 쳐 본 사람이 빈 화면을 보지 않게.
+  return "both";
+}
+
 /** 실제 파이프라인 순서다 — saved 는 promoted 보다 항상 먼저 온다 (CLAUDE.md §4). */
 async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   const scenario = currentScenario();
   const rawText = inputTextByRun.get(runId) ?? "";
+  const intent = intentOf(rawText);
 
   yield frame("step", { index: 1, total: 3, label: "무슨 말인지 보고 있어요" });
   await sleep(600);
@@ -49,25 +74,32 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   yield frame("step", { index: 2, total: 3, label: "관찰을 나누고 있어요" });
   await sleep(700);
 
-  const saved: Observation[] = [observations[0], healthObservation];
-  yield frame("saved", { observations: saved });
-  await sleep(400);
+  /**
+   * 🚨 **일정만 말한 한 줄에는 관찰이 없다.** "이번 주말에 공원 산책 가기" 는 아이가 무엇을
+   *    했다는 말이 아니라 앞으로의 계획이라, 기록으로 쌓을 것이 없다 — 화면은 그때
+   *    "아이에 관한 기록은 찾지 못했어요" 를 그리고 아래에 초안을 세운다.
+   */
+  if (intent !== "event") {
+    const saved: Observation[] = [observations[0], healthObservation];
+    yield frame("saved", { observations: saved });
+    await sleep(400);
 
-  yield frame("step", { index: 3, total: 3, label: "기억을 정리하고 있어요" });
-  await sleep(500);
+    yield frame("step", { index: 3, total: 3, label: "기억을 정리하고 있어요" });
+    await sleep(500);
 
-  yield frame("promoted", {
-    changes: [
-      {
-        ref: { kind: "profile_affinity", id: "a_12" },
-        merge_key: "계란 반찬",
-        state_before: "candidate",
-        state_after: "confirmed",
-        state_reason: "서로 다른 3일에 관찰됐어요",
-      },
-    ],
-  });
-  await sleep(400);
+    yield frame("promoted", {
+      changes: [
+        {
+          ref: { kind: "profile_affinity", id: "a_12" },
+          merge_key: "계란 반찬",
+          state_before: "candidate",
+          state_after: "confirmed",
+          state_reason: "서로 다른 3일에 관찰됐어요",
+        },
+      ],
+    });
+    await sleep(400);
+  }
 
   /**
    * 🚨 **한 프레임에 배열이다** (#122 — `EventDrafts` 는 run 당 한 번). 초안마다 한 프레임이면
@@ -77,8 +109,14 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    운동회는 5시로 옮겨줘"). 화면이 op 로 엔드포인트를 가르는지 여기서 확인된다.
    * ⚠️ 프레임 이름이 계약에 없다 — `sse.ts` 의 `DRAFT_EVENT_NAMES` 참고 (#151).
    */
-  yield frame("event_draft", { drafts: runEventDrafts });
-  await sleep(300);
+  if (intent !== "record") {
+    // 🚨 `event` 는 새 일정 한 장만, `both` 는 create·update 두 장이다 — 한 장일 때와
+    //    여러 장일 때 화면이 다르다(넘기는 줄이 서는가). 둘 다 확인할 수 있어야 한다.
+    yield frame("event_draft", {
+      drafts: intent === "event" ? runEventDrafts.slice(0, 1) : runEventDrafts,
+    });
+    await sleep(300);
+  }
 
   if (scenario === "partial") {
     // 🚨 실패 화면으로 떨어뜨리지 않는다. 성공한 쪽은 그대로 보여준다 (NF-06).

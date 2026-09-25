@@ -324,6 +324,36 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     }
   });
 
+  /**
+   * 🚨 한 줄이 무엇을 만드는지는 발화에 달려 있다 (CLAUDE.md §5 의도 3형). 목이 늘 둘 다 내면
+   *    "기록만 남는 한 줄" 과 "일정이 되는 한 줄" 의 화면을 따로 볼 수 없다.
+   *    낱말 규칙은 목의 것이고 진짜 판정은 Supervisor 의 일이다 — 여기서 거는 것은
+   *    **두 경로가 실제로 갈리는가**뿐이다.
+   */
+  it.each([
+    ["기록형", "오늘 그림놀이 했대", { observations: true, drafts: false }],
+    ["일정형", "이번 주말에 공원 산책 가기 저장해줘", { observations: false, drafts: true }],
+    ["혼합형", "지어낸 한 줄", { observations: true, drafts: true }],
+  ] as const)("%s 발화는 그에 맞는 것만 흘린다", async (_name, text, expected) => {
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text, source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    let observations = 0;
+    let drafts = 0;
+    for await (const event of streamRunEvents(run_id)) {
+      if (event.type === "saved") {
+        observations += (event.data as { observations: unknown[] }).observations.length;
+      }
+      if (isDraftEvent(event.type)) drafts += (event.data as EventDraftsEvent).drafts.length;
+    }
+
+    expect(observations > 0).toBe(expected.observations);
+    expect(drafts > 0).toBe(expected.drafts);
+  });
+
   it("failed 시나리오는 원문을 돌려주고 거기서 끝난다", async () => {
     setScenario("failed");
     try {
