@@ -20,9 +20,9 @@ colors:
   activity: "#0F7084"
   activity-soft: "#E5EFF1"
   activity-ink: "#055766"
-  education: "#4E5AA0"
-  education-soft: "#E9EAF5"
-  education-ink: "#3B4680"
+  growth: "#4E5AA0"
+  growth-soft: "#E9EAF5"
+  growth-ink: "#3B4680"
   health: "#8A4E74"
   health-soft: "#F3E9EF"
   health-ink: "#6E3B5B"
@@ -286,7 +286,7 @@ components:
 
 - **테라코타** (`food` · 5.7:1): 식사
 - **틸** (`activity` · 5.4:1): 놀이. 216° 는 sRGB 가 채도를 가장 못 내는 구간이라 갈 수 있는 끝(0.086)에 붙여 나머지 셋과 동급으로 맞췄다
-- **인디고** (`education` · 6.1:1): 교육
+- **인디고** (`growth` · 6.1:1): 성장
 - **플럼** (`health` · 5.8:1): 건강
 
 각각 `-soft` 배경과 `-ink` 글자를 함께 가진다. **soft 배경 위 텍스트의 대비는 `canvas` 가 아니라 그 soft 색과 비교한다.**

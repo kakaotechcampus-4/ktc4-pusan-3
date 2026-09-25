@@ -238,11 +238,11 @@ async def _execute(
     arguments = _parse_arguments(call.function.arguments)
     if arguments is None:
         # registry는 dict를 전제
-        return _failed(name, {}, ErrorCode.VALIDATION_ERROR, _BAD_JSON)
+        return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
 
     key = _dedup_key(name, arguments)
     if key is not None and key in succeeded:
-        return _failed(name, arguments, ErrorCode.VALIDATION_ERROR, _ALREADY_DONE)
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _ALREADY_DONE)
 
     result = await execute_tool(name, arguments, context, allowed=allowed)
     if key is not None and result.success:

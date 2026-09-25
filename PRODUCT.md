@@ -95,7 +95,7 @@ Agent 2개 중 1개만 성공해도 그 화면을 보여주고, **성공과 실�
 ## Capabilities and Constraints
 
 **만드는 것** — Child Memory 자동 구축(Fact / Observation / Inference 3분류), Curator 의 규칙 기반
-병합·집계·승격·감쇠, Supervisor 라우팅, 도메인 Agent 4종(`food` · `activity` · `education` · `health`),
+병합·집계·승격·감쇠, Supervisor 라우팅, 도메인 Agent 4종(`food` · `activity` · `growth` · `health`),
 근거(source_id) 첨부 추천, Correction 4버튼(`confirm` / `once_only` / `outdated` / `wrong`),
 보호자 초대·공유, 캘린더 쓰기, 사진 입력.
 

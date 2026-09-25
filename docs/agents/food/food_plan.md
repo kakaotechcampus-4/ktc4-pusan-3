@@ -165,7 +165,7 @@ DoD: mock `run()`이 포트·클라이언트를 **건드리지 않고** `DomainA
 - `report_nutrient_analysis`에 숫자·`%`·단위 → **거절**
 - 사후 `filter_food_safety` 재실행
 - 기피 근거를 인용했는데 `reason`에 무엇을 피했는지가 없으면 → **거절**
-- 근거 0 → `kind="general"` + 코드 템플릿으로 `reason` 덮어쓰기
+- 아이 기록 0 → `kind="general"` + 코드 템플릿으로 `reason` 덮어쓰기 · 인용마다 `note` 필수
 
 **프롬프트**: 고정 구획(역할·하지 않는 것·후보·근거·실패·출력) 먼저, 동적 구획(문서 행 예시·제외 목록) 뒤 → 캐시 접두 유지. 코드가 막는 것은 프롬프트에 중복하지 않습니다.
 
@@ -207,7 +207,7 @@ DoD: 혼합형 입력("오늘 당근 먹었어. 저녁 뭐 줄까?")에서 **Mem
 | `test_food_nutrition.py` | 행 수 미달 → `insufficient` · EAR/RNI 구분 · 히스테리시스 |
 | `test_food_evidence.py` | 기피(−1)가 근거로 나감 · 기피 인용 시 `reason` 필수 · **부족 식품군 > 기피** 가중 · `polarity IS NULL` 제외 |
 | `test_food_gating.py` | 3/4 · 11/12 · 35/36 · 47/48개월 양쪽 · 동의 철회 |
-| `test_food_output.py` | 풀 밖 메뉴 거절 · `%` 0건 · 근거 0 → general |
+| `test_food_output.py` | 풀 밖 메뉴 거절 · `%` 0건 · 아이 기록 0 → general · `note` 빈 후보 거절 |
 | `test_food_sampling.py` | 같은 `run_id` 동일 · 다른 run 다름 · 필터 뒤 실행 |
 | `test_food_daycare.py` | **신규** — span 검증 · `resolve_meal_date` 사전 · slot 모호 시 되묻기(갱신) / 전부 삭제(결석) · 갱신 뒤 안전 경고는 내되 **저장은 막지 않음** · 승인 모달 0건 · 보존 범위 밖 거절 · 행 0건이면 라벨 닫힘 |
 | 계약 테스트 | 저장된 API 응답 샘플 → dataclass 변환 |

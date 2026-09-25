@@ -160,15 +160,17 @@ reasoning 을 유지하려면 `/v1/responses` 로 옮겨야 하는데, 그때 �
 {"success": false, "operation": "update", "resource": "event", "error": {"code": "...", "message": "..."}}
 ```
 
-`error.code` 8종은 상수로 고정한다. 모델이 코드를 보고 다음 행동을 정하므로 문자열을 그때그때 지으면 안 된다.
+`error.code` 는 상수로 고정한다. 모델이 코드를 보고 다음 행동을 정하므로 문자열을 그때그때 지으면 안 된다.
+공통 코드는 `common/tool_runtime.py` 가 정본이고, Memory 전용 코드는 `memory/result.py` 가 상속해서 얹는다.
 
 | 코드 | 모델이 해야 할 일 |
 | --- | --- |
-| `VALIDATION_ERROR` | 인자를 고쳐 재호출 |
+| `INVALID_ARGS` (공통) | 인자를 고쳐 재호출 |
+| `TOOL_NOT_ALLOWED` (공통) | 이번 요청에 열린 tool 중에서 다시 고름 |
 | `TARGET_NOT_FOUND` | 조회 tool 을 먼저 |
 | `UNKNOWN_EVENT` | `query_event` 먼저 (D9 이후 `create_event` 는 id 를 돌려주지 않는다) |
 | `DATE_UNPARSEABLE` | 날짜·시각 표현을 고치거나 비움 |
-| `UNKNOWN_TOOL` · `TARGET_REQUIRED` · `AMBIGUOUS_TARGET` · `OUT_OF_SCOPE` | — |
+| `TARGET_REQUIRED` · `AMBIGUOUS_TARGET` · `OUT_OF_SCOPE` | 선언만 해 뒀고 아직 쓰는 자리가 없다 |
 
 ### D5. 모든 스키마 필드에 description
 

@@ -6,6 +6,7 @@
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -62,6 +63,39 @@ class Ref:
 
     def to_payload(self) -> dict[str, str]:
         return {"kind": self.kind, "id": str(self.id)}
+
+
+@dataclass(frozen=True)
+class EvidenceCitation:
+    """`suggestion_evidence` 한 행.
+
+    `Ref`는 가리키는 것만 들고 있고, 왜 골랐는지와 언제 것인지는 여기 저장
+    `note`는 Agent가 쓰므로, 문서 행이든 아이 기록이든 비워 둘 수 없다.
+    "보호자 화면에 그대로 나가는 값"이다.
+
+    `source_updated_at`은 인용할 때 읽은 원본의 시각이다. 아이 기록은 그 행의
+    `updated_at`, 문서 행은 `written_at`이 들어온다.
+    `polarity` 와 `label` 은 기피 검사에만 쓴다. 문서 행은 기본값 그대로다.
+    """
+
+    ref: Ref
+    source_updated_at: datetime
+    note: str
+    polarity: int = 0
+    label: str = ""
+
+    @property
+    def is_avoidance(self) -> bool:
+        """기피 근거인가. 인용했으면 `reason` 에 무엇을 피했는지 적어야 한다."""
+        return self.polarity < 0
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "source_kind": self.ref.kind,
+            "source_id": str(self.ref.id),
+            "source_updated_at": self.source_updated_at.isoformat(),
+            "note": self.note,
+        }
 
 
 def count_child_records(refs: tuple[Ref, ...]) -> int:

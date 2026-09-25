@@ -147,13 +147,13 @@ async def test_JSON_이_깨져도_루프가_죽지_않는다(context: AgentConte
 
     assert result.completed is True
     assert result.calls[0].success is False
-    assert result.calls[0].result["error"]["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.calls[0].result["error"]["code"] == ErrorCode.INVALID_ARGS
 
 
 async def test_JSON_이_객체가_아니면_거절한다(context: AgentContext) -> None:
     llm = FakeLLM(_tools(_call("a", "create_observation_food", "[1, 2]")), _reply("끝"))
     result = await run("사과", context, client=llm)
-    assert result.calls[0].result["error"]["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.calls[0].result["error"]["code"] == ErrorCode.INVALID_ARGS
 
 
 async def test_깨진_뒤에도_다음_tool_이_실행된다(context: AgentContext) -> None:
@@ -316,7 +316,7 @@ async def test_없는_tool_이름도_루프를_끊지_않는다(context: AgentCo
     result = await run("일기 써줘", context, client=llm)
 
     assert result.completed is True
-    assert result.calls[0].result["error"]["code"] == ErrorCode.UNKNOWN_TOOL
+    assert result.calls[0].result["error"]["code"] == ErrorCode.TOOL_NOT_ALLOWED
 
 
 # ── 대화 누적 ───────────────────────────────────────────────────

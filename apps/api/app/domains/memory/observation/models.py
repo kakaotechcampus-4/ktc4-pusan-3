@@ -91,21 +91,14 @@ STRONG_SIGNALS = (
 
 
 class ObservationCommon:
-    """food · education · activity 공통 컬럼. health 는 상속하지 않는다."""
+    """food · education · activity · routine 공통 컬럼. health 는 상속하지 않는다."""
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
-    subject: Mapped[str] = mapped_column(Text, nullable=False)  # 정규화 대상. 임베딩·병합 판정 입력
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
-    affinity_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="SET NULL"), nullable=True
-    )
+    subject: Mapped[str] = mapped_column(Text, nullable=False)  # 정규화 대상. 병합 판정 입력
     polarity: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
-    strong_signals: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, server_default="{}"
-    )
     confidence_source: Mapped[ConfidenceSource] = mapped_column(confidence_source, nullable=False)
     status: Mapped[ObservationStatus] = mapped_column(
         observation_status, nullable=False, server_default="active"
@@ -117,7 +110,19 @@ class ObservationCommon:
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
-class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon):
+class Promotable:
+    """`profile_affinity` 로 올리기 위한 세 칸. routine 은 상속하지 않는다."""
+
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    affinity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="SET NULL"), nullable=True
+    )
+    strong_signals: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
+
+
+class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_food"
     __table_args__ = (Index("ix_observation_food_child_status", "child_id", "status"),)
 
@@ -126,7 +131,7 @@ class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon):
     reaction: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
+class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_education"
     __table_args__ = (Index("ix_observation_education_child_status", "child_id", "status"),)
 
@@ -138,7 +143,7 @@ class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
     )
 
 
-class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
+class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_activity"
     __table_args__ = (Index("ix_observation_activity_child_status", "child_id", "status"),)
 
@@ -152,6 +157,8 @@ class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
 
 
 class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
+    """승격 대상이 아니라 Promotable을 상속하지 않는다."""
+
     __tablename__ = "observation_routine"
     __table_args__ = (Index("ix_observation_routine_child_status", "child_id", "status"),)
 

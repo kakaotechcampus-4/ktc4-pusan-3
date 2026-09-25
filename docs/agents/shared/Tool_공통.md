@@ -116,14 +116,16 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - 재호출은 1회로 끝난다. 그래도 못 채우면 **남은 만큼만** 낸다. `check_count(after_retry=True)` 가 이 경우만 통과시키고, 0개는 여전히 거절이다.
 - 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다.
 - 이때만 그 Agent 의 진입 수가 2가 된다 ([Agent_공통규약.md](Agent_공통규약.md) §7).
+- `note` 가 비어 후보가 빠지면 개수가 3개 아래로 내려간다. 재호출 사유는 안전 필터뿐이라 지금은 묶음이 거절된다. 금지 표현 필터(5-1 의 2번)도 같은 자리에 있어 새로 생긴 문제는 아니다. 재호출 사유를 늘릴지는 아직 안 정했다 (2026-09-25).
 
 ### 5-3. 근거 — `kind` 는 코드가 정한다
 
 모델이 `kind` 를 고르지 않는다. `build()` 가 **아이 기록 근거의 행 수**로 정한다.
 
-- 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `intake_daily` · `daycare_meal`)이 **0행이면 `kind="general"`**. 문서 행(`*_doc`)만 달고 나가는 것도 0행으로 센다 — 문서만 보고 만든 추천은 개인화가 아니다.
-- `general` 이면 `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다.
-- 1행 이상이면 `kind="personalized"` 이고 `reason` 이 비어 있으면 거절한다.
+- 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `intake_daily` · `daycare_meal`)이 1행 이상이면 `kind="personalized"`. `reason` 이 비어 있으면 거절한다.
+- 0행이면 `kind="general"`. `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다. 문서 행(`*_doc`)은 세지 않는다 — 있든 없든 아이 기록이 0행이면 general 이다.
+- **general 은 거절 사유가 아니다.** 추천은 그대로 나가고 화면이 또래 기준임을 말한다 (루트 CLAUDE.md §2). `general` 인데 인용이 0행인 것은 문서에서도 근거를 못 찾았다는 뜻이라 품질 지표로 본다 (2026-09-25).
+- **인용마다 `note` 가 있어야 한다.** 그 행에서 무엇을 근거로 봤는지를 Agent 가 한 줄로 쓴다. 비면 그 후보를 거절한다. 거절은 후보 단위라 묶음은 그대로 간다.
 - 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
 
 ### 5-4. 문구 — 기피를 인용했으면 말해야 한다

@@ -8,9 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.agents.common.evidence import RankedEvidence
+from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.readout import Readout, ReadoutCatalog, ReadoutText
-from app.agents.common.refs import Ref, count_child_records
+from app.agents.common.refs import EvidenceCitation, Ref, count_child_records
 from app.agents.common.result import (
     DomainAgentResult,
     EventRequest,
@@ -27,6 +27,9 @@ from app.agents.common.suggestion import (
 KST = timezone(timedelta(hours=9))
 
 
+SEEN_AT = datetime(2026, 9, 20, 9, 0, tzinfo=KST)
+
+
 def evidence(*, kind="observation_food", polarity=1, label="당근"):
     return RankedEvidence(
         ref=Ref(kind=kind, id=uuid4()),
@@ -34,6 +37,14 @@ def evidence(*, kind="observation_food", polarity=1, label="당근"):
         label=label,
         polarity=polarity,
         observed_on=date(2026, 9, 20),
+    )
+
+
+def citation(*, kind="observation_food", polarity=1, label="당근", note="지난주에 두 번 먹었다"):
+    return cite(
+        evidence(kind=kind, polarity=polarity, label=label),
+        note=note,
+        source_updated_at=SEEN_AT,
     )
 
 
@@ -60,40 +71,71 @@ class TestSuggestionBuild:
             agent="food",
             content="계란말이",
             reason="지난주에 계란을 잘 먹어서요",
-            evidence=(evidence(),),
+            citations=(citation(),),
         )
         assert draft.kind == "personalized"
-        assert len(draft.source_refs) == 1
+        assert len(draft.citations) == 1
 
     def test_근거_0행이면_일반_추천이고_이유를_덮어쓴다(self):
         draft = build(
             agent="food",
             content="계란말이",
             reason="모델이 쓴 개인화 문장",
-            evidence=(),
+            citations=(),
             general_reason="또래 아이들이 많이 먹는 메뉴예요.",
         )
         assert draft.kind == "general"
         assert draft.reason == "또래 아이들이 많이 먹는 메뉴예요."
-        assert draft.source_refs == ()
+        assert draft.citations == ()
 
     def test_문서_행만_있으면_일반_추천(self):
         draft = build(
             agent="growth",
             content="숫자 세기 놀이",
             reason="모델이 쓴 문장",
-            evidence=(evidence(kind="growth_doc"),),
+            citations=(citation(kind="growth_doc", polarity=0, label=""),),
             general_reason="또래 아이들이 많이 하는 놀이예요.",
         )
         assert draft.kind == "general"
+        # 문서 행은 kind 를 바꾸지 않지만 인용은 그대로 실려 나간다
+        assert len(draft.citations) == 1
 
     def test_근거_0행인데_일반_문구가_없으면_거절(self):
         with pytest.raises(SuggestionRejected, match="일반 추천 문구"):
-            build(agent="food", content="계란말이", reason="이유", evidence=())
+            build(agent="food", content="계란말이", reason="이유", citations=())
 
     def test_개인화인데_이유가_비면_거절(self):
         with pytest.raises(SuggestionRejected, match="이유가 비었다"):
-            build(agent="food", content="계란말이", reason="   ", evidence=(evidence(),))
+            build(agent="food", content="계란말이", reason="   ", citations=(citation(),))
+
+
+class TestNoteRequired:
+    """`note` 가 비면 그 후보만 뺀다. 묶음은 거절하지 않는다."""
+
+    def test_note_가_비면_그_후보를_거절한다(self):
+        with pytest.raises(SuggestionRejected, match="note"):
+            build(
+                agent="food",
+                content="계란말이",
+                reason="계란을 잘 먹어서요",
+                citations=(citation(note="   "),),
+            )
+
+    def test_문서_행도_note_가_필요하다(self):
+        with pytest.raises(SuggestionRejected, match="note"):
+            build(
+                agent="growth",
+                content="숫자 세기 놀이",
+                reason="모델이 쓴 문장",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="growth_doc", id=uuid4()),
+                        source_updated_at=SEEN_AT,
+                        note="",
+                    ),
+                ),
+                general_reason="또래 아이들이 많이 하는 놀이예요.",
+            )
 
 
 class TestAvoidanceMustBeStated:
@@ -103,7 +145,7 @@ class TestAvoidanceMustBeStated:
                 agent="food",
                 content="오므라이스",
                 reason="단백질이 들어 있어요",
-                evidence=(evidence(polarity=-1, label="브로콜리"),),
+                citations=(citation(polarity=-1, label="브로콜리"),),
             )
 
     def test_밝히면_통과(self):
@@ -111,7 +153,7 @@ class TestAvoidanceMustBeStated:
             agent="food",
             content="오므라이스",
             reason="브로콜리를 기피해서 계란 맛이 강한 걸로 골랐어요",
-            evidence=(evidence(polarity=-1, label="브로콜리"),),
+            citations=(citation(polarity=-1, label="브로콜리"),),
         )
         assert draft.kind == "personalized"
 
@@ -120,7 +162,7 @@ class TestAvoidanceMustBeStated:
             agent="food",
             content="계란말이",
             reason="계란을 잘 먹어서요",
-            evidence=(evidence(polarity=1, label="계란"),),
+            citations=(citation(polarity=1, label="계란"),),
         )
         assert draft.kind == "personalized"
 
@@ -128,7 +170,7 @@ class TestAvoidanceMustBeStated:
 class TestCount:
     def test_정확히_3개(self):
         drafts = tuple(
-            build(agent="food", content=f"{i}", reason="", evidence=(), general_reason="또래 기준")
+            build(agent="food", content=f"{i}", reason="", citations=(), general_reason="또래 기준")
             for i in range(REQUIRED_COUNT)
         )
         check_count(drafts)
@@ -136,7 +178,7 @@ class TestCount:
     @pytest.mark.parametrize("count", [0, 1, 2, 4, 5])
     def test_개수가_다르면_거절(self, count):
         drafts = tuple(
-            build(agent="food", content=f"{i}", reason="", evidence=(), general_reason="또래 기준")
+            build(agent="food", content=f"{i}", reason="", citations=(), general_reason="또래 기준")
             for i in range(count)
         )
         with pytest.raises(SuggestionRejected, match="정확히 3개"):
@@ -144,7 +186,9 @@ class TestCount:
 
     def test_재호출_뒤_모자라면_남은_만큼만(self):
         drafts = (
-            build(agent="food", content="하나", reason="", evidence=(), general_reason="또래 기준"),
+            build(
+                agent="food", content="하나", reason="", citations=(), general_reason="또래 기준"
+            ),
         )
         check_count(drafts, after_retry=True)
 

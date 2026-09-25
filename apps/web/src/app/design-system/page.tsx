@@ -634,7 +634,7 @@ function ComponentSection() {
         비교하려고 모아 둔 내부 문서라 예외다.
       </p>
       <EvidenceRow>
-        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+        {(["food", "activity", "growth", "health"] as Agent[]).map((agent) => (
           <DomainChip key={agent} agent={agent} />
         ))}
       </EvidenceRow>
@@ -869,7 +869,7 @@ function ComponentSection() {
         · strokeWidth 1.75 고정. 🚨 DomainIcon 은 aria-hidden 이라 의미는 옆의 라벨이 진다.
       </p>
       <ul className="flex flex-col gap-2">
-        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+        {(["food", "activity", "growth", "health"] as Agent[]).map((agent) => (
           <li key={agent} className="flex items-center gap-3">
             <span
               className={`flex size-10 items-center justify-center rounded-full ${softOf(agent)}`}
@@ -888,7 +888,7 @@ function softOf(agent: Agent): string {
   return {
     food: "bg-food-soft text-food-ink",
     activity: "bg-activity-soft text-activity-ink",
-    education: "bg-education-soft text-education-ink",
+    growth: "bg-growth-soft text-growth-ink",
     health: "bg-health-soft text-health-ink",
   }[agent];
 }

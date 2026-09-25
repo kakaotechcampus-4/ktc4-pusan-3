@@ -124,7 +124,7 @@ class DomainAgentResult:
 티어 1  confirmed  · polarity ∈ {+1, −1} · archived 제외
 티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계
 티어 3  최근 14일 관찰 (polarity 무관)        (도메인이 허용할 때만)
-── 전부 0행 ──  kind="general"
+── 전부 0행 ──  kind="general" · 응답에 scarcity 동봉
 ```
 
 > 🔴 **기피(−1)는 제외 필터가 아니라 근거다.** "브로콜리를 싫어해서"도 추천을 고르는 이유다. 후보에서 지워버리면 무엇을 피해 골랐는지 화면에 말할 수 없고, 보호자는 그 추천이 우리 아이를 보고 나온 것인지 알 수 없다.
@@ -147,8 +147,10 @@ class DomainAgentResult:
 - **기피를 근거로 썼으면 문장에도 남긴다.** 기피 근거를 인용한 추천은 무엇을 피했는지, 또는 왜 그럼에도 골랐는지를 `reason`에 밝힌다. 인용만 하고 말하지 않으면 보호자에게는 근거 없는 추천과 같다.
 - **Food는 영양이 선호보다 앞선다.** 기피 근거가 있어도 영양 분석이 부족을 가리키면 그 식품군을 뺀 추천을 내지 않는다 — [`Food_Agent_명세.md`](../food/Food_Agent_명세.md) §6.
 - **신선도는 Curator가 맡는다.** 오래된 관심은 Curator가 `strength`를 내리거나 `archived`로 바꾼다. Agent는 그 결과(`state`·`strength`)만 보고 티어를 매기고, 유예일을 다시 세지 않는다 — 값이 두 벌이 되면 한쪽만 갱신된다. NF-08(180일)도 Curator 쪽 규칙이다.
-- 근거 0행이면 **일반 추천을 낸다**(`kind="general"`). `reason`을 코드 템플릿으로 덮어쓰고, 화면이 "또래 기준"과 함께 `scarcity`(쌓인 기록 건수 + 되물을 질문 1개)를 표시한다. 추천을 빼고 `scarcity`만 내리지 않는다 — 루트 CLAUDE.md §2가 "일반 추천을 낸다"이기 때문이다.
-- **문서 행(`*_doc`)은 근거가 아니다.** `reference_refs`에 따로 담는다. `source_refs`는 아이 기록만.
+- 아이 기록이 0행이면 **일반 추천을 낸다**(`kind="general"`). `reason`을 코드 템플릿으로 덮어쓰고, 화면이 "또래 기준"과 함께 `scarcity`(쌓인 기록 건수 + 되물을 질문 1개)를 표시한다. 추천을 빼고 `scarcity`만 내리지 않는다 — 루트 CLAUDE.md §2가 "일반 추천을 낸다"이기 때문이다.
+- **문서 행(`*_doc`)은 개인화 근거가 아니다.** `suggestion_evidence` 에 `source_kind='*_doc'` 으로 같이 쌓되 품질 지표에서는 빼고 센다. 일반 추천을 떠받치는 것이 이 행이다.
+- **Growth 의 `routine_coaching` 은 이 규칙의 예외다.** 근거 0행이면 일반 추천 대신 역질의를 낸다 — 아이와 무관한 생활 조언이 되기 때문이다 ([Growth_Tool_명세.md](../growth/Growth_Tool_명세.md) §propose_routine_plan).
+- **인용마다 `note` 를 쓴다.** 그 행에서 무엇을 근거로 봤는지 한 줄이다. 보호자 화면에 그대로 나가고, 비면 그 후보가 거절된다.
 - 18개월 미만은 `profile_affinity`가 구조적으로 0행이라 **티어 1·2 가 없다.** 티어 3(최근 14일 관찰)은 그대로 있어서 개인화가 아예 막히는 구간은 아니다 → 정상 경로로 테스트한다.
 - **`observation_routine` 은 승격은 안 하지만 근거로는 쓴다.** `profile_affinity.domain` 에 `routine` 이 없어 티어 1·2 가 생기지 않는다. 관찰은 티어 3 로 그대로 인용된다 — Growth 의 `routine_coaching` 이 이 경로다 (2026-09-23).
 - **Health는 이 규칙의 대상이 아니다.** `profile_affinity.domain`에 `health`가 없고 `observation_health`에는 `embedding`도 없다. Health의 근거는 **항상 관찰 직접 참조**이고, 티어도 `rank_evidence`도 벡터 검색도 쓰지 않는다 — 증상은 선호가 아니라서 쌓인다고 성향이 되지 않는다. Health는 `suggestion`을 만들지 않으므로 `suggestion_evidence`도 없고, 근거는 `Readout.source_refs`에 담긴다.

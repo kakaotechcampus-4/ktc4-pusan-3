@@ -19,11 +19,11 @@ Agent 는 그 결과를 읽기만 한다 — 유예일을 여기서 다시 세�
 """
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
-from app.agents.common.refs import ChildRecordKind, Ref
+from app.agents.common.refs import ChildRecordKind, EvidenceCitation, Ref
 
 AffinityState = Literal["candidate", "confirmed", "archived"]
 
@@ -123,6 +123,20 @@ def rank_evidence(
 
     ranked.sort(key=lambda item: (item.tier, -item.observed_on.toordinal()))
     return tuple(ranked)
+
+
+def cite(ranked: RankedEvidence, *, note: str, source_updated_at: datetime) -> EvidenceCitation:
+    """줄 세운 근거 하나를 인용으로 옮긴다.
+
+    `polarity`와 `label`을 옮기는 자리는 여기 하나다.
+    """
+    return EvidenceCitation(
+        ref=ranked.ref,
+        source_updated_at=source_updated_at,
+        note=note,
+        polarity=ranked.polarity,
+        label=ranked.label,
+    )
 
 
 def pick_followup(affinities: tuple[AffinityRow, ...]) -> AffinityRow | None:

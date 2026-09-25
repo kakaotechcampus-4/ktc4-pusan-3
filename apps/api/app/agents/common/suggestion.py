@@ -7,8 +7,7 @@ tool 인자에 두지 않는다 — 모델이 만료나 승인 상태를 정할 
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.agents.common.evidence import RankedEvidence
-from app.agents.common.refs import Ref, count_child_records
+from app.agents.common.refs import EvidenceCitation, count_child_records
 
 SuggestionKind = Literal["general", "personalized"]
 
@@ -27,7 +26,7 @@ class SuggestionDraft:
     kind: SuggestionKind
     content: str
     reason: str
-    source_refs: tuple[Ref, ...] = ()
+    citations: tuple[EvidenceCitation, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -35,7 +34,7 @@ class SuggestionDraft:
             "kind": self.kind,
             "content": self.content,
             "reason": self.reason,
-            "source_refs": [ref.to_payload() for ref in self.source_refs],
+            "citations": [item.to_payload() for item in self.citations],
         }
 
 
@@ -44,31 +43,43 @@ def build(
     agent: str,
     content: str,
     reason: str,
-    evidence: tuple[RankedEvidence, ...] = (),
+    citations: tuple[EvidenceCitation, ...] = (),
     general_reason: str | None = None,
 ) -> SuggestionDraft:
-    """근거 유무로 `kind` 를 정하고 값을 검증한다.
+    """아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
-    근거 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
-    **덮어쓴다** — 근거가 없는데 모델이 쓴 개인화 문장이 나가면 안 된다.
+    아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
+    덮어쓴다. general 인데 인용이 0행인 것은 거절 사유가 아니라 품질 지표다.
 
     기피 근거를 인용했으면 `reason` 에 무엇을 피했는지가 있어야 한다. 인용만 하고 말하지
     않으면 보호자에게는 근거 없는 추천과 같다.
     """
-    refs = tuple(item.ref for item in evidence)
+    for item in citations:
+        if not item.note.strip():
+            raise SuggestionRejected(
+                f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
+            )
+
+    refs = tuple(item.ref for item in citations)
     if count_child_records(refs) == 0:
         if general_reason is None:
             raise SuggestionRejected(
-                f"{agent}: 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
+                f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
-        return SuggestionDraft(agent=agent, kind="general", content=content, reason=general_reason)
+        return SuggestionDraft(
+            agent=agent,
+            kind="general",
+            content=content,
+            reason=general_reason,
+            citations=citations,
+        )
 
     if not reason.strip():
         raise SuggestionRejected(f"{agent}: 개인화 추천인데 이유가 비었다")
-    if any(item.is_avoidance for item in evidence) and not _mentions_avoidance(reason, evidence):
+    if any(item.is_avoidance for item in citations) and not _mentions_avoidance(reason, citations):
         raise SuggestionRejected(f"{agent}: 기피 근거를 인용했는데 무엇을 피했는지가 이유에 없다")
     return SuggestionDraft(
-        agent=agent, kind="personalized", content=content, reason=reason, source_refs=refs
+        agent=agent, kind="personalized", content=content, reason=reason, citations=citations
     )
 
 
@@ -81,9 +92,9 @@ def check_count(drafts: tuple[SuggestionDraft, ...], *, after_retry: bool = Fals
     raise SuggestionRejected(f"추천은 정확히 {REQUIRED_COUNT}개여야 한다. 받은 것: {len(drafts)}개")
 
 
-def _mentions_avoidance(reason: str, evidence: tuple[RankedEvidence, ...]) -> bool:
+def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:
     """기피한 대상의 라벨이 이유 문장에 들어 있는가.
 
     문장 품질까지는 못 본다. 라벨조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
     """
-    return any(item.label and item.label in reason for item in evidence if item.is_avoidance)
+    return any(item.label and item.label in reason for item in citations if item.is_avoidance)

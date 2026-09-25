@@ -32,7 +32,12 @@ from app.domains.memory.observation.repository import (
     update_observation,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
-from app.domains.suggestion.models import Suggestion, SuggestionAgent
+from app.domains.suggestion.models import (
+    Suggestion,
+    SuggestionAgent,
+    SuggestionEvidence,
+    SuggestionKind,
+)
 
 
 @pytest.fixture
@@ -118,10 +123,20 @@ async def test_query_filters_by_domain_child_date_overlap_and_literal_text(sessi
     )
     await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 5), "배")
     await add_observation(
-        session, writer, other_child, ObservationDomain.FOOD, date(2026, 9, 1), "사과 100%",
+        session,
+        writer,
+        other_child,
+        ObservationDomain.FOOD,
+        date(2026, 9, 1),
+        "사과 100%",
     )
     await add_observation(
-        session, writer, child, ObservationDomain.HEALTH, date(2026, 9, 1), "사과 100%",
+        session,
+        writer,
+        child,
+        ObservationDomain.HEALTH,
+        date(2026, 9, 1),
+        "사과 100%",
     )
 
     rows = await query_observations(
@@ -153,8 +168,11 @@ async def test_query_date_to_is_inclusive(session, family):
     )
 
     rows = await query_observations(
-        session, domain="food", child_id=child.id,
-        date_from=date(2026, 9, 1), date_to=date(2026, 9, 2),
+        session,
+        domain="food",
+        child_id=child.id,
+        date_from=date(2026, 9, 1),
+        date_to=date(2026, 9, 2),
     )
 
     assert {row.id for row in rows} == {sep1.id, sep2.id}
@@ -174,19 +192,28 @@ async def test_find_update_delete_are_scoped_to_child_id(session, family):
     # 다른 아이로 접근 → 전부 실패
     assert (
         await find_observation(
-            session, domain="food", child_id=other_child.id, observation_id=record.id,
+            session,
+            domain="food",
+            child_id=other_child.id,
+            observation_id=record.id,
         )
         is None
     )
     assert (
         await update_observation(
-            session, domain="food", child_id=other_child.id,
-            observation_id=record.id, fields={"subject": "배"},
+            session,
+            domain="food",
+            child_id=other_child.id,
+            observation_id=record.id,
+            fields={"subject": "배"},
         )
         is None
     )
     assert not await delete_observation(
-        session, domain="food", child_id=other_child.id, observation_id=record.id,
+        session,
+        domain="food",
+        child_id=other_child.id,
+        observation_id=record.id,
     )
 
     # 같은 아이로 접근 → 정상
@@ -205,11 +232,17 @@ async def test_find_update_delete_are_scoped_to_child_id(session, family):
     assert updated.fields["amount"] is None
 
     assert await delete_observation(
-        session, domain="food", child_id=child.id, observation_id=record.id,
+        session,
+        domain="food",
+        child_id=child.id,
+        observation_id=record.id,
     )
     assert (
         await find_observation(
-            session, domain="food", child_id=child.id, observation_id=record.id,
+            session,
+            domain="food",
+            child_id=child.id,
+            observation_id=record.id,
         )
         is None
     )
@@ -260,7 +293,10 @@ async def test_count_active_merges_five_tables_excludes_inactive_and_other_child
     )
 
     counts = await count_active_observations(
-        session, child_id=child.id, period_start=period_start, period_end=period_end,
+        session,
+        child_id=child.id,
+        period_start=period_start,
+        period_end=period_end,
     )
 
     assert old.observed_on < period_start
@@ -289,8 +325,11 @@ async def test_query_rejects_date_from_after_date_to(session, family):
     _, child, _ = family
     with pytest.raises(ValueError, match="date_from"):
         await query_observations(
-            session, domain="food", child_id=child.id,
-            date_from=date(2026, 9, 2), date_to=date(2026, 9, 1),
+            session,
+            domain="food",
+            child_id=child.id,
+            date_from=date(2026, 9, 2),
+            date_to=date(2026, 9, 1),
         )
 
 
@@ -299,8 +338,10 @@ async def test_count_active_rejects_empty_period(session, family):
     _, child, _ = family
     with pytest.raises(ValueError, match="집계 기간"):
         await count_active_observations(
-            session, child_id=child.id,
-            period_start=date(2026, 9, 1), period_end=date(2026, 9, 1),
+            session,
+            child_id=child.id,
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 1),
         )
 
 
@@ -397,13 +438,22 @@ async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, fa
         observed_range=observed(date(2026, 9, 2)),
         fields={**required_fields(ObservationDomain.FOOD, "사과"), "affinity_id": affinity.id},
     )
+    suggestion = Suggestion(
+        child_id=child.id,
+        agent=SuggestionAgent.FOOD,
+        kind=SuggestionKind.PERSONALIZED,
+        content="사과 간식",
+        expires_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+    )
+    session.add(suggestion)
+    await session.flush()
     session.add(
-        Suggestion(
-            child_id=child.id,
-            agent=SuggestionAgent.FOOD,
-            content="사과 간식",
-            source_refs=[{"kind": "observation_food", "id": str(used.id)}],
-            expires_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        SuggestionEvidence(
+            suggestion_id=suggestion.id,
+            source_kind="observation_food",
+            source_id=used.id,
+            source_updated_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            note="사과를 먹었다",
         )
     )
     await session.flush()

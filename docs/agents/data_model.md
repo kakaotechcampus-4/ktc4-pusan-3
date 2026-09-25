@@ -363,7 +363,7 @@
 | --- | --- | --- |
 | id | uuid | PK |
 | child_id | uuid | NOT NULL. FK → `child.id`, `ON DELETE CASCADE` |
-| kind | enum | `general` / `personalized`, NOT NULL. **근거 0행이면 `general`이 정상**이고, 그래서 개인화로 집계되면 안 된다 |
+| kind | enum | `general` / `personalized`, NOT NULL. 아이 기록 근거가 1행 이상이면 `personalized`, 0행이면 `general`. **근거 0행이면 `general`이 정상**이고, 그래서 개인화로 집계되면 안 된다 |
 | feedback | enum | `liked` / `disliked` / `not_acted` , nullable. 승인 뒤 만들어진 관찰의 `polarity`(+1 / −1 / 0)로 이어진다 — `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음" |
 | ~~source_refs~~ | — | **제거.** 근거는 `suggestion_evidence` 테이블로 옮겼다 (2026-09-22) |
 | agent | enum | `food` / `activity` / `growth` / `health` |
@@ -386,8 +386,8 @@
 | suggestion_id | uuid | FK → `suggestion.id`, NOT NULL, `ON DELETE CASCADE` |
 | source_kind | text | NOT NULL. 아래 두 무리 중 하나 |
 | source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
-| source_updated_at | timestamptz | NOT NULL. **인용할 때 읽은 근거 행의 `updated_at`** 을 그대로 박는다 |
-| note | text | nullable. 그 근거를 왜 인용했는지. **보호자 화면에 그대로 나간다** |
+| source_updated_at | timestamptz | NOT NULL. **인용할 때 읽은 원본의 시각**을 그대로 박는다. 아이 기록은 그 행의 `updated_at`, 문서 행은 `written_at` 이다 |
+| note | text | NOT NULL. 그 행에서 추천 근거로 채택한 내용. Agent 가 쓰고 **보호자 화면에 그대로 나간다**. 비면 그 후보를 거절한다 |
 | created_at | timestamptz | NOT NULL, default `now()` |
 
 - `PRIMARY KEY (suggestion_id, source_kind, source_id)`
@@ -404,12 +404,16 @@
 
 🚨 **품질 지표는 아이 기록만 센다.** `kind='personalized'`인데 아이 기록 행이 0이면 버그다 — 문서 행만 달고 나가면 COUNT는 통과하지만 근거 없는 추천이다.
 
+`general` 이 0행인 것은 거절 사유가 아니다. 추천은 그대로 나간다. 다만 문서에서도 근거를 못 찾았다는 뜻이라 따로 센다 (2026-09-25).
+
 **구현 메모 (Suggestion — suggestion)**
 
 - `child_id`: FK → `child.id`, `ON DELETE CASCADE` 추가 완료 (이전엔 plain uuid)
 - `id` PK 기본값은 다른 테이블과 동일하게 `uuidv7()`
 
-**미결**: `suggestion_evidence` 모델·마이그레이션 미구현. `suggestion.kind` 컬럼도 아직 없음. `source_refs` jsonb는 제거 대상이다 (2026-09-22 결정)
+**미결**: 문서 행(`*_doc`) 테이블이 아직 없다. `source_updated_at` 에 넣을 `written_at` 컬럼도 그 테이블과 같이 생긴다.
+
+`suggestion_evidence` 모델·마이그레이션과 `suggestion.kind` 컬럼은 `c5a81f0d3b62` 에서 들어갔고 `source_refs` jsonb 는 같이 삭제됐다 (2026-09-25)
 
 ## Correction
 
@@ -609,30 +613,33 @@ PR #130 이 관찰 5테이블에 깐 `(child_id, status)` 인덱스는 위 Memor
 | # | 항목 | 이 문서 | ORM | |
 | --- | --- | --- | --- | --- |
 | 1 | `profile_affinity.domain` | `food / activity / education` | 같음 | ✅ 문서 쪽이 넓었고 좁혔다 |
-| 2 | `suggestion.kind` | `general` / `personalized` NOT NULL | 컬럼 없음 | 🚨 |
-| 3 | 추천 근거 | `suggestion_evidence` 테이블 (2026-09-23 스키마 확정) | `source_refs` jsonb 유지 + 그 위에 조회 API | 🚨 |
-| 4 | `suggestion.agent` | `food / activity / growth / health` | `education` | ⚠️ 마이그레이션 필요 |
+| 2 | `suggestion.kind` | `general` / `personalized` NOT NULL | 같음 | ✅ `c5a81f0d3b62` |
+| 3 | 추천 근거 | `suggestion_evidence` 테이블 (2026-09-23 스키마 확정) | 같음 | ✅ `c5a81f0d3b62` |
+| 4 | `suggestion.agent` | `food / activity / growth / health` | 같음 | ✅ `b3e7d9c05a12` |
 | 5 | `child.gestational_weeks` | 있음 | 컬럼 없음 | ⚠️ |
 | 6 | `observation_health` 체온 | 위 절에서 신설 요청 — `temperature` · `measured_at` · `measure_site` | 없음 | ⚠️ |
 | 7 | `notice` | FK 대상 | 테이블 없음 → `source_notice_id` 가 FK 없는 plain uuid | ⚠️ |
 | 8 | `health_safety.state` | `active` / `retracted` / `none` / `unknown` | `active` / `retracted` | ⚠️ ORM 에 두 값이 없다 |
-| 9 | `observation_routine` 의 승격 세 칸 | `affinity_id` · `embedding` · `strong_signals` 없음 | `ObservationCommon` 을 통째로 상속해 세 칸 다 있음 | ⚠️ 마이그레이션 필요 |
+| 9 | `observation_routine` 의 승격 세 칸 | `affinity_id` · `embedding` · `strong_signals` 없음 | 같음 | ✅ `d7c204e9a1b6` |
 
 **1번은 닫혔다.** 문서가 `routine` 을 넣고 있었는데 **routine 은 승격 대상이 아니다**(2026-09-23, 명성님 확인).
 `profile_affinity.domain` 은 ORM 이 처음부터 맞았다. `observation_routine` 은 `subject` · `polarity` 만 남기고 `affinity_id` · `embedding` · `strong_signals` 를 뺀다 — 티어 3 근거로는 계속 쓰기 때문이다 (위 Memory/Observation §5).
-테이블 쪽은 아직 안 맞춰졌다 — 아래 9번이 그것이다.
+테이블 쪽은 9번에서 맞췄다.
 
-**4번은 BE 잘못이 아니다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이어서 ORM 이 루트 문서를 정확히 따랐고, 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
-남은 것은 `SuggestionAgent` enum 값과 마이그레이션이다 — 값이 VARCHAR + CHECK 로 들어가 있어 CHECK 교체가 필요하고, 기존 행의 `education` 도 같이 옮겨야 한다.
+**2·3번은 닫혔다.** `c5a81f0d3b62` 가 `suggestion_evidence` 를 만들고 `suggestion.kind` 를 더한 뒤 `source_refs` jsonb 를 뺐다 (2026-09-25).
+근거를 역조회하던 자리도 같이 옮겼다 — `list_suggestions_using_observation` 과 `page_observations.sql` 의 `unused_in_suggestions` 가 jsonb `@>` 대신 `suggestion_evidence` 를 조인한다.
+
+**4번도 닫혔다. BE 잘못이 아니었다.** ORM 을 올릴 때 루트 [CLAUDE.md](../../CLAUDE.md) §5 가 "도메인 Agent — `food` · `activity` · `education` · `health` 4종 고정" 이어서 ORM 이 루트 문서를 정확히 따랐고, 그 §5 는 `f9fc83b` 에서 `growth` 로 정정됐다.
+`b3e7d9c05a12` 가 CHECK 를 교체하고 기존 행의 `education` 을 옮긴다.
 관찰 테이블 이름 `observation_education` 은 그대로 둔다 — `growth` 가 읽는 테이블은 `observation_education` 과 `observation_routine` 둘이라 Agent 이름이 테이블 이름을 따라갈 수 없다.
 
 **8번은 되돌렸다.** 한때 `active` / `retracted` 두 값으로 좁혔는데, `none` · `unknown` 은 알레르기 유무를 가르려고 넣어 둔 것이었다 (2026-09-23 명성님 확인).
 ORM 에 두 값을 더해야 한다. `child.allergy_status` 는 **뺐다** — 알레르기 유무는 `kind='allergy'` 행들의 state 로 가른다 (위 Saftey 절).
 
-**9번 — 세 칸을 떼면 두 곳이 같이 움직인다.** 컬럼만 지우면 깨지는 자리를 찾아 둔다 (2026-09-24 확인, 미적용).
+**9번은 닫혔다.** `d7c204e9a1b6` 가 세 칸을 뗐고, 같이 움직이는 두 곳도 반영했다.
 
-- `domains/memory/observation/page_observations.sql` — `observation_routine` 에서 `affinity_id` 를 SELECT 한다. `observation_health` 처럼 `NULL::uuid` 로 바꾸는 방향
-- `agents/memory/schemas/common.py` — `ObservationRoutineCreate` 가 `PromotableCreateArgs` 를 상속해 모델에게 `strong_signals` 칸을 열어 둔다. tool 은 `model_dump()` 를 그대로 리포지토리로 내려보내서, 컬럼이 없어지면 `_validate_fields` 가 routine 기록을 전부 거절한다
+- `domains/memory/observation/page_observations.sql` — `observation_routine` 의 `affinity_id` 를 `observation_health` 처럼 `NULL::uuid` 로 바꿨다
+- `agents/memory/schemas/observation.py` — `ObservationRoutineCreate` 가 `PromotableCreateArgs` 대신 `SubjectCreateArgs` 를 상속한다. 그대로 뒀으면 `model_dump()` 가 없는 컬럼을 리포지토리로 내려보내 routine 기록이 전부 거절됐다
 
 ### 이 문서가 이미 미결로 적어 둔 것 (ORM 도 같음)
 

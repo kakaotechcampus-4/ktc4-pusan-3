@@ -31,8 +31,12 @@ export interface Ref {
 
 /* ── 도메인 enum ──────────────────────────────────────────────────────── */
 
-/** 🚨 코드에서는 play/interest 가 아니라 activity 로 통일한다 (CLAUDE.md §5). */
-export const AGENTS = ["food", "activity", "education", "health"] as const;
+/**
+ * 🚨 코드에서는 play/interest 가 아니라 activity 로 통일한다 (CLAUDE.md §5).
+ * 🚨 `growth` 는 관찰 테이블 이름과 다르다 — 이 Agent 가 `observation_education` 과
+ *    `observation_routine` 둘을 읽는다. 접미사로 서로를 유추하지 말 것.
+ */
+export const AGENTS = ["food", "activity", "growth", "health"] as const;
 export type Agent = (typeof AGENTS)[number];
 
 /** 승격 상태. LLM 이 직접 쓰지 않는다 — Curator 의 반복 집계로만 바뀐다 (CLAUDE.md §2). */
