@@ -3,43 +3,48 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
+import { EventDraftCard, type DraftSubmitState } from "@/components/event-draft-card";
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
-import { Spinner } from "@/components/ui/spinner";
 import {
   addHealthSafety,
-  confirmEvent as confirmEventRequest,
   newIdempotencyKey,
   qk,
+  submitEventDraft,
   type CreateEventResponse,
-  type ConfirmEventResponse,
   type CreateHealthSafetyRequest,
   type IdempotencyKey,
   type Precheck,
   type Suggestion,
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
-import { formatEventTime } from "@/lib/format";
 
 /**
  * 06 승인 시트 — **되돌릴 수 없는 두 곳이 여기 다 있다** (CLAUDE.md §2 · §3).
  *
  *   ㉡ 건강·알레르기 기록 확정   POST /children/{cid}/health-safety
- *   ㉠ 캘린더 쓰기               POST /events/{eid}/confirm
+ *   ㉠ 캘린더 쓰기               초안 제출 (`submitEventDraft`)
  *
- * 🚨 **승인 게이트를 늘리지도 줄이지도 않는다.** 초안(`POST /suggestions/{sid}/event`)은
- *    게이트가 아니다 — 24시간 뒤 만료되는 되돌릴 수 있는 상태라 물어보지 않는다.
+ * 🚨 **승인 게이트를 늘리지도 줄이지도 않는다.** 초안을 만드는 호출
+ *    (`POST /suggestions/{sid}/event`)은 게이트가 아니다 — #121 에서 **쓰기를 뗐고**,
+ *    그 응답은 저장된 `event` 가 아니라 초안 + 사전검사다.
+ *
+ * 🚨 **시트가 그리는 것은 두 덩어리다.**
+ *    ㉠ 알레르기 사전검사 — 이 시트만의 것이다 (제안 경로에만 `prechecks` 가 온다)
+ *    ㉡ `EventDraftCard` — 세 경로가 공유하는 한 벌. 제출 버튼이 그 안에 있다
+ *    사전검사를 카드에 넣지 않는 이유는 카드가 세 경로를 같이 쓰기 때문이다 —
+ *    넣으면 한 줄 입력·사진 경로가 쓰지 않는 칸을 지고 다닌다.
  *
  * 🚨 **낙관적 업데이트를 쓰지 않는다.** `onMutate` 로 캐시를 먼저 바꾸면 서버가 확정하기 전에
  *    화면이 이미 확정된 것처럼 보인다 — "되돌릴 수 없는 것은 사람이 승인한다" 가 시각적으로 깨진다.
  * 🚨 **자동 재시도가 꺼져 있다** (`query-client.ts`). 중복 실행이 캘린더에 두 번 쓴다.
  * 🚨 **재시도할 때 Idempotency-Key 를 새로 만들지 않는다.** 같은 키를 다시 보내는 것이
  *    중복 실행을 막는 유일한 장치다.
- * 🚨 **스크림·ESC 로 닫히지 않는다** (`dismissible={false}`). 실수로 닫혀서 draft 가
- *    만료되는 경로를 만들지 않는다.
+ * 🚨 **스크림·ESC 로 닫히지 않는다** (`dismissible={false}`). 실수로 닫혀서 초안이
+ *    사라지는 경로를 만들지 않는다.
  */
 
 /** 알레르기 확인은 3지선다다. 🚨 "모르겠어요" 는 "없음" 이 아니다 — 아무것도 저장하지 않는다. */
@@ -65,7 +70,7 @@ export function ApprovalSheet({
   onClose: () => void;
   childId: string;
   suggestion: Suggestion;
-  /** `POST /suggestions/{sid}/event` 의 응답. 초안과 사전검사가 한 덩어리로 온다. */
+  /** `POST /suggestions/{sid}/event` 의 응답. 🚨 초안과 사전검사가 온다 — 저장된 일정이 아니다. */
   draft: CreateEventResponse;
 }) {
   const queryClient = useQueryClient();
@@ -80,7 +85,7 @@ export function ApprovalSheet({
    *    걸러내는 것은 저장이 끝나야 한다.
    */
   const [saveState, setSaveState] = useState<Record<string, SafetySaveState>>({});
-  const [confirmed, setConfirmed] = useState<ConfirmEventResponse | null>(null);
+  const [submitted, setSubmitted] = useState(false);
 
   /**
    * 🚨 **재료 한 건이 사용자 동작 하나다.** 그래서 `useIdempotencyKey()`(동작 하나에 키 하나)가
@@ -88,13 +93,13 @@ export function ApprovalSheet({
    *    다른 키가 나간다. 하나로 묶으면 두 번째 재료가 "같은 키 · 다른 요청" 이라 422 다.
    */
   const safetyKeys = useRef(new Map<string, IdempotencyKey>());
-  /** 확정은 동작 하나다. 재시도는 같은 키, 성공한 뒤에만 다음 키로 넘어간다. */
-  const confirmKey = useIdempotencyKey();
+  /** 제출은 동작 하나다. 재시도는 같은 키, 성공한 뒤에만 다음 키로 넘어간다. */
+  const submitKey = useIdempotencyKey();
 
   const ingredientChecks = draft.prechecks.filter((p) => p.code === "unknown_ingredient");
   const answeredAll = ingredientChecks.every((p) => answers[p.item] !== undefined);
   /**
-   * 🚨 알레르기가 확인된 재료. 하나라도 있으면 이 제안은 나가지 않는다 (문서 §11).
+   * 🚨 알레르기가 확인된 재료. 하나라도 있으면 이 일정은 나가지 않는다 (문서 §11).
    *    저장까지 끝난 재료는 **선택을 바꿔도 계속 막는다** — 기록이 이미 서버에 있는데 화면에서만
    *    풀리면, 알레르기가 등록된 아이에게 그 재료가 든 일정을 넣을 수 있다 (최상위 §2).
    */
@@ -127,14 +132,20 @@ export function ApprovalSheet({
     onError: (_error, item) => setSaveState((prev) => ({ ...prev, [item]: "failed" })),
   });
 
-  /** 승인 게이트 ㉠ — 되돌릴 수 없는 지점. */
-  const confirmEvent = useMutation({
-    mutationFn: () => confirmEventRequest(draft.event.id, confirmKey.current()),
-    onSuccess: async (result) => {
+  /**
+   * 승인 게이트 ㉠ — 되돌릴 수 없는 지점.
+   *
+   * 🚨 **`suggestion_id` 를 함께 싣는다.** 제출받는 쪽이 그 제안의 `status` 를 `approved` 로
+   *    바꿔야 한다 (#122 — 제안 경로에만 있는 필드다).
+   */
+  const submit = useMutation({
+    mutationFn: (body: Parameters<typeof submitEventDraft>[1]) =>
+      submitEventDraft(childId, body, submitKey.current()),
+    onSuccess: async () => {
       // 🚨 다음 동작으로 넘어가는 것은 **성공 응답을 받은 뒤**다. 실패 뒤 다시 누르는 것은
       //    같은 키로 가야 재시도로 취급된다.
-      confirmKey.rotate();
-      setConfirmed(result);
+      submitKey.rotate();
+      setSubmitted(true);
       // 일정 하나가 홈 카운트·캘린더·제안 상태를 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
@@ -147,131 +158,115 @@ export function ApprovalSheet({
     if (value === "has") saveSafety.mutate(item);
   }
 
-  const busy =
-    confirmEvent.isPending || Object.values(saveState).some((state) => state === "saving");
+  const saving = Object.values(saveState).some((state) => state === "saving");
+  const busy = submit.isPending || saving;
+
+  const cardState: DraftSubmitState = submitted
+    ? "submitted"
+    : submit.isPending
+      ? "submitting"
+      : submit.isError
+        ? "failed"
+        : "idle";
 
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
       dismissible={false}
-      title={confirmed ? "캘린더에 넣었어요" : "확인해 주세요"}
+      title={submitted ? "캘린더에 넣었어요" : "확인해 주세요"}
       description={
-        confirmed
+        submitted
           ? "함께 보는 보호자에게도 공유됐어요."
           : "승인하기 전에는 아무것도 저장되지 않아요."
       }
       footer={
-        confirmed ? (
-          <Button block onClick={onClose}>
-            닫기
-          </Button>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {blocked ? (
-              <p className="text-body-sm text-danger-ink">
-                알레르기를 확인했어요. 이 제안은 넣지 않을게요.
-              </p>
-            ) : (
-              <Button
-                variant="approve"
-                onClick={() => confirmEvent.mutate()}
-                disabled={busy || !answeredAll}
-              >
-                {confirmEvent.isPending ? <Spinner /> : null}
-                {confirmEvent.isPending ? "넣는 중…" : "캘린더에 넣기"}
-              </Button>
-            )}
-            <Button variant="secondary" block onClick={onClose} disabled={busy}>
-              {blocked ? "닫기" : "안 넣기"}
-            </Button>
-            {!answeredAll && !blocked ? (
-              <p className="text-caption text-ink-subtle text-center">
-                위의 확인이 끝나야 넣을 수 있어요.
-              </p>
-            ) : null}
-          </div>
-        )
+        // 🚨 **넣는 버튼은 여기 없다.** 게이트 ㉠ 은 카드 안의 `btn-approve` 다 —
+        //    시트 바닥에 하나 더 두면 같은 일을 하는 버튼이 한 화면에 둘이 된다.
+        <Button variant="secondary" block onClick={onClose} disabled={busy}>
+          {submitted ? "닫기" : "안 넣기"}
+        </Button>
       }
     >
-      {confirmed ? (
-        <ConfirmedBody title={confirmed.event.title} />
-      ) : (
-        <div className="flex flex-col gap-4">
-          {blocked ? (
-            // 🚨 두 문구를 가르는 것은 보호자의 선택이 아니라 **서버 저장 결과**다.
-            //    저장 전에 "앞으로도 걸러내요" 라고 말하면, 저장이 실패한 채로 닫은 보호자가
-            //    다음 제안에서도 걸러진다고 믿는다 (PR #71 리뷰).
-            recorded ? (
-              <Banner tone="danger" title="알레르기 기록에 추가했어요">
-                이 재료가 들어간 제안은 넣지 않아요. 앞으로의 식사 제안에서도 걸러내요.
-              </Banner>
-            ) : (
-              // 하단 문구가 "이 제안은 넣지 않을게요" 를 이미 말한다. 제목은 그 말을 되풀이하지
-              // 않고 **기록 쪽**을 말한다 — 둘이 가리키는 대상이 다르다는 것이 이 수정의 요지다.
-              <Banner tone="danger" title="아직 기록에는 저장되지 않았어요">
-                이 제안은 넣지 않아요. 다만 기록에 저장되기 전까지는 다음 제안에서 걸러내지 못해요.
-              </Banner>
-            )
-          ) : ingredientChecks.length > 0 ? (
-            <Banner tone="caution" title="처음 보는 재료가 있어요">
-              아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
+      <div className="flex flex-col gap-4">
+        {blocked ? (
+          // 🚨 두 문구를 가르는 것은 보호자의 선택이 아니라 **서버 저장 결과**다.
+          //    저장 전에 "앞으로도 걸러내요" 라고 말하면, 저장이 실패한 채로 닫은 보호자가
+          //    다음 제안에서도 걸러진다고 믿는다 (PR #71 리뷰).
+          recorded ? (
+            <Banner tone="danger" title="알레르기 기록에 추가했어요">
+              이 재료가 들어간 제안은 넣지 않아요. 앞으로의 식사 제안에서도 걸러내요.
             </Banner>
-          ) : null}
+          ) : (
+            <Banner tone="danger" title="아직 기록에는 저장되지 않았어요">
+              이 제안은 넣지 않아요. 다만 기록에 저장되기 전까지는 다음 제안에서 걸러내지 못해요.
+            </Banner>
+          )
+        ) : ingredientChecks.length > 0 && !submitted ? (
+          <Banner tone="caution" title="처음 보는 재료가 있어요">
+            아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
+          </Banner>
+        ) : null}
 
-          {ingredientChecks.map((precheck) => (
-            <SafetyCheck
-              key={precheck.item}
-              precheck={precheck}
-              value={answers[precheck.item]}
-              onAnswer={(value) => answer(precheck.item, value)}
-              disabled={saveState[precheck.item] === "saving"}
-            />
-          ))}
+        {/* 🚨 넣고 나면 확인 칸을 거둔다. 이미 지나간 관문이라, 남겨 두면 보호자가 아직 할 일이
+            있다고 읽는다. 알레르기로 막힌 경우는 배너가 그대로 남는다 (그건 결과다). */}
+        {!submitted
+          ? ingredientChecks.map((precheck) => (
+              <SafetyCheck
+                key={precheck.item}
+                precheck={precheck}
+                value={answers[precheck.item]}
+                onAnswer={(value) => answer(precheck.item, value)}
+                disabled={saveState[precheck.item] === "saving"}
+              />
+            ))
+          : null}
 
-          {failedItems.length > 0 ? (
-            // 🚨 예전에는 `saveSafety.reset()` 을 부르는 "다시 고르기" 였다 — 실패 안내만 지우고
-            //    저장은 다시 시도하지 않아서, 화면에서 실패가 사라진 채로 기록이 비어 있었다.
-            <CardFailed>
-              <p>
-                {failedItems.join(", ")} — 알레르기 기록에 저장하지 못했어요. 이 제안은 넣지 않지만,
-                저장되기 전까지는 다음 제안에서 걸러내지 못해요.
-              </p>
-              <Button
-                variant="tertiary"
-                size="compact"
-                className="mt-3"
-                disabled={busy}
-                // 🚨 재료별 키를 그대로 다시 쓴다 (`safetyKeys`). 새 키를 만들면 이미 저장된
-                //    재료가 한 번 더 들어간다.
-                onClick={() => failedItems.forEach((item) => saveSafety.mutate(item))}
-              >
-                다시 시도
-              </Button>
-            </CardFailed>
-          ) : null}
+        {failedItems.length > 0 ? (
+          // 🚨 예전에는 `saveSafety.reset()` 을 부르는 "다시 고르기" 였다 — 실패 안내만 지우고
+          //    저장은 다시 시도하지 않아서, 화면에서 실패가 사라진 채로 기록이 비어 있었다.
+          <CardFailed>
+            <p>
+              {failedItems.join(", ")} — 알레르기 기록에 저장하지 못했어요. 이 제안은 넣지 않지만,
+              저장되기 전까지는 다음 제안에서 걸러내지 못해요.
+            </p>
+            <Button
+              variant="tertiary"
+              size="compact"
+              className="mt-3"
+              disabled={busy}
+              // 🚨 재료별 키를 그대로 다시 쓴다 (`safetyKeys`). 새 키를 만들면 이미 저장된
+              //    재료가 한 번 더 들어간다.
+              onClick={() => failedItems.forEach((item) => saveSafety.mutate(item))}
+            >
+              다시 시도
+            </Button>
+          </CardFailed>
+        ) : null}
 
-          <DraftDetail draft={draft} suggestion={suggestion} />
-
-          {confirmEvent.isError ? (
-            <CardFailed>
-              <p>
-                {confirmEvent.error instanceof Error
-                  ? confirmEvent.error.message
-                  : "넣지 못했어요."}
-              </p>
-              <Button
-                variant="tertiary"
-                size="compact"
-                className="mt-3"
-                onClick={() => confirmEvent.mutate()}
-              >
-                다시 시도
-              </Button>
-            </CardFailed>
-          ) : null}
-        </div>
-      )}
+        {/* 세 경로가 공유하는 카드. 🚨 제출 버튼이 이 안에 있고, 그게 승인 게이트 ㉠ 이다. */}
+        <EventDraftCard
+          draft={draft.draft}
+          state={cardState}
+          error={
+            submit.error instanceof Error
+              ? submit.error.message
+              : submit.isError
+                ? "넣지 못했어요."
+                : undefined
+          }
+          blocked={blocked}
+          // 🚨 `blocked`(안 넣는다)와 다른 값이다 — 아직 확인이 안 끝났을 뿐이라 "못 넣는다" 로 말한다.
+          lockReason={!answeredAll ? "위의 확인이 끝나야 넣을 수 있어요." : undefined}
+          onSubmit={(final) =>
+            submit.mutate({
+              event: final.event,
+              items: final.items,
+              suggestion_id: suggestion.id,
+            })
+          }
+        />
+      </div>
     </BottomSheet>
   );
 }
@@ -309,53 +304,5 @@ function SafetyCheck({
         보호자가 확인한 값만 건강 기록에 저장돼요. 모르겠어요를 고르면 아무것도 저장하지 않아요.
       </p>
     </section>
-  );
-}
-
-/** "실제로 저장될 내용 전문" — 무엇이 들어가는지를 줄여 쓰지 않는다. */
-function DraftDetail({
-  draft,
-  suggestion,
-}: {
-  draft: CreateEventResponse;
-  suggestion: Suggestion;
-}) {
-  const { event } = draft;
-
-  return (
-    <section className="border-line rounded-card bg-surface border p-4">
-      <h3 className="text-section text-ink">실제로 저장될 내용</h3>
-      <dl className="mt-3 flex flex-col gap-2">
-        <Row term="제목" value={event.title} />
-        <Row term="일시" value={formatEventTime(event.starts_at, event.all_day)} />
-        {event.items.length > 0 ? (
-          <Row term="준비물" value={event.items.map((item) => item.item_name).join(", ")} />
-        ) : null}
-        <Row term="근거" value={suggestion.evidence.map((e) => e.label).join(", ")} />
-      </dl>
-      <p className="text-caption text-ink-subtle mt-3">
-        승인하지 않으면 초안으로만 남고 하루 뒤 사라져요.
-      </p>
-    </section>
-  );
-}
-
-function Row({ term, value }: { term: string; value: string }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="text-label text-ink-subtle w-14 shrink-0">{term}</dt>
-      <dd className="text-body-sm text-ink">{value}</dd>
-    </div>
-  );
-}
-
-function ConfirmedBody({ title }: { title: string }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-body text-ink">{title}</p>
-      <p className="text-body-sm text-ink-muted">
-        캘린더 화면은 아직 없어요. 다음 이슈에서 붙습니다.
-      </p>
-    </div>
   );
 }

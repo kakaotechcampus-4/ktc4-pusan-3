@@ -483,16 +483,22 @@ export interface Precheck {
 }
 
 export interface CreateEventResponse {
-  event: CalendarEvent;
-  /** draft 만료 시각. 지나면 승인할 수 없다. */
-  expires_at: string;
+  /**
+   * 🚨 **저장된 `event` 가 아니라 초안이다** (#121 확정). `id` · `status` · `expires_at` 이 없다 —
+   *    이 호출은 DB 에 쓰지 않으므로 아직 행이 아니다.
+   */
+  draft: EventDraft;
   prechecks: Precheck[];
 }
 
-/** 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점. 이미 확정이면 409 already_confirmed. */
-export interface ConfirmEventResponse {
+/**
+ * 제출 응답. 🚨 **승인 게이트 ㉠ 을 지난 뒤**라 여기 오는 `event` 는 실제로 저장된 행이다.
+ * 제안에서 온 초안이면 그 `suggestion.status` 도 함께 바뀐다.
+ */
+export interface SubmitEventResponse {
   event: CalendarEvent;
-  suggestion_status: SuggestionStatus;
+  /** 제안 경로에서만 의미가 있다. 다른 두 경로는 서버가 안 싣는다. */
+  suggestion_status?: SuggestionStatus;
 }
 
 /**

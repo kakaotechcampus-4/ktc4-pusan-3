@@ -223,7 +223,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
 - 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 이 만드는 `event` 는 `draft` 고,
-  캘린더에 확정하는 것은 09 의 `POST /events/{eid}/confirm` 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
+  캘린더에 쓰는 것은 **초안 제출** 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
+  ⚠️ #151 에서 08 도 초안을 내는 쪽으로 맞추기로 했다. `commit` 이 게이트인지는 **미결**이고
+  (`docs/web/event-draft-ui-v1.md` §4), 결정이 반대로 나면 이 줄과 화면을 함께 고친다.
   ⚠️ 디자인 시스템 §7 `card-photo` · §11 표가 한동안 `caution` 을 적어 뒀는데 최상위 §2 와 어긋나서
   #60 에서 문서 쪽을 고쳤다. "승인 전에는 저장되지 않아요" 는 경고가 아니라 **사실**이라 중립 면이다
 - 🚨 **사진을 고르는 자리는 08 화면이 아니라 시트다** (`PhotoSourceSheet`). 03 홈의 카메라
@@ -455,7 +457,11 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
 
-`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · `POST /events/{eid}/confirm`(게이트 ㉠).
+`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · **초안 제출**(게이트 ㉠).
+
+⚠️ 게이트 ㉠ 이 `POST /events/{eid}/confirm` 에서 **초안 제출로 옮겨왔다** (#121 · #151). 초안을 만드는
+호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다. **경로는 확정 전이고**
+(`docs/event/event-draft-flow-v1.md` §6), `idempotentPath.submitEvent` 한 줄만 고치면 따라온다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
 경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
@@ -463,7 +469,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 ```tsx
 const idem = useIdempotencyKey();                       // @/lib/api/use-idempotency-key
 const mutation = useMutation({
-  mutationFn: () => confirmEvent(eventId, idem.current()),
+  mutationFn: () => submitEventDraft(childId, body, idem.current()),
   onSuccess: () => { idem.rotate(); },                  // 🚨 성공한 뒤에만
 });
 ```

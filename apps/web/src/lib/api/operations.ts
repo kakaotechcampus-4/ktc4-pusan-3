@@ -15,14 +15,14 @@
 import { api } from "./client";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
-  CalendarEvent,
   HealthSafety,
   OnboardingRequest,
   OnboardingResponse,
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
-  SuggestionStatus,
+  SubmitEventBody,
+  SubmitEventResponse,
 } from "./types";
 
 /* ── 04 한 줄 입력 ────────────────────────────────────────────────────── */
@@ -152,15 +152,31 @@ export function addHealthSafety(
 /* ── 🚨 승인 게이트 ㉠ — 캘린더 쓰기 ──────────────────────────────────── */
 
 /**
- * 되돌릴 수 없는 지점. event.status → confirmed, 연결된 suggestion.status → approved.
+ * 초안을 캘린더에 **넣는다.** 되돌릴 수 없는 지점이다 —
+ * 여기 오기 전까지 초안은 SSE 와 응답에만 있고 DB 에 행이 없다 (#118 · #121).
  *
+ * 🚨 본문은 **보호자가 확인한 최종 상태 전체**다 (#122). 부분 갱신이 아니라서
+ *    `items` 에서 빠진 `item_id` 가 삭제로 처리된다.
  * 🚨 낙관적 업데이트 금지 (apps/web/CLAUDE.md §3). 응답을 받은 뒤에 캐시를 갱신한다.
- * 409 already_confirmed 는 "다른 요청이 이미 확정한 일정" 이라는 뜻이다 —
- * 같은 키로 다시 보낸 재시도는 409 가 아니라 처음 응답을 그대로 받는다.
+ * 🚨 재시도는 **같은 키**로 간다. 새 키를 만들면 일정이 두 건 생긴다.
  */
-export function confirmEvent(
-  eventId: string,
+export function submitEventDraft(
+  childId: string,
+  body: SubmitEventBody,
   idempotencyKey: IdempotencyKey,
-): Promise<{ event: CalendarEvent; suggestion_status: SuggestionStatus }> {
-  return api.post(idempotentPath.confirmEvent(eventId), undefined, { idempotencyKey });
+): Promise<SubmitEventResponse> {
+  return api.post(idempotentPath.submitEvent(childId), body, { idempotencyKey });
+}
+
+/**
+ * 수정 초안을 반영한다. 🚨 **이것도 캘린더 쓰기라 게이트 ㉠ 이다** — 다만 키를 받지 않는다.
+ * `items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같기 때문이다 (`idempotency.ts` 참고).
+ *
+ * ⚠️ 경로가 미정이다 (`docs/event/event-draft-flow-v1.md` §6 — op 별로 가른다는 것까지만 정했다).
+ */
+export function updateEventDraft(
+  eventId: string,
+  body: SubmitEventBody,
+): Promise<SubmitEventResponse> {
+  return api.patch(`/events/${eventId}`, body);
 }

@@ -6,7 +6,7 @@ import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import {
   addHealthSafety,
   commitPhotoRun,
-  confirmEvent,
+  submitEventDraft,
   photoFormData,
   submitOnboarding,
   uploadPhoto,
@@ -40,6 +40,8 @@ import type {
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
+  CreateEventResponse,
+  SubmitEventBody,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
@@ -56,6 +58,25 @@ import { setScenario } from "./scenario";
  * 그래서 타입 검사(시드가 lib/api/types.ts 를 만족하는가)와 **별개로** 여기서 동작을 건다.
  * 이 파일이 통과한다는 건 화면이 개발 중에 보는 그 목이 아래를 지킨다는 뜻이다.
  */
+
+/**
+ * 초안 제출 본문. 🚨 **일자가 있어야 목이 받는다** — 화면이 잠그는 것과 같은 규칙을 계약도 건다.
+ * `suggestion_id` 를 넘기면 그 제안이 "이미 넣은 것" 으로 표시된다 (중복 제출 판정 대상).
+ */
+function draftBody(suggestionId?: string): SubmitEventBody {
+  return {
+    event: {
+      title: "지어낸 일정",
+      starts_at: "2026-09-18T10:00:00+09:00",
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "activity",
+    },
+    items: [],
+    ...(suggestionId ? { suggestion_id: suggestionId } : {}),
+  };
+}
 
 /** 목이 계약서 경로를 그대로 쓰는지 확인하려면 URL 을 직접 만들어야 할 때가 있다. */
 function raw(path: string, init?: RequestInit): Promise<Response> {
@@ -81,14 +102,13 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
   it("처음 응답을 그대로 돌려주고, 처리는 한 번만 한다", async () => {
     const key = newIdempotencyKey();
 
-    const first = await confirmEvent("e_1", key);
-    const second = await confirmEvent("e_1", key);
+    const body = draftBody("s_retry");
+    const first = await submitEventDraft("c1", body, key);
+    const second = await submitEventDraft("c1", body, key);
 
     expect(first.event.status).toBe("confirmed");
-    expect(second).toEqual(first);
-
     // 두 번째가 409 로 오면 "성공했는데 응답을 못 받은" 경우가 실패처럼 보인다 — 그걸 막는 줄이다.
-    expect(second.event.id).toBe("e_1");
+    expect(second).toEqual(first);
   });
 });
 
@@ -104,7 +124,7 @@ describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
 
   it("다른 엔드포인트에 같은 키를 돌려써도 거부한다", async () => {
     const key = newIdempotencyKey();
-    await confirmEvent("e_2", key);
+    await submitEventDraft("c1", draftBody(), key);
 
     await expect(
       addHealthSafety("c1", { type: "allergy", label: "지어낸항목", category: "식품" }, key),
@@ -116,10 +136,11 @@ describe("④ 같은 키 · 동시 요청", () => {
   it("한 번만 실행되고 나머지는 409 idempotency_in_progress", async () => {
     const key = newIdempotencyKey();
 
+    const body = draftBody("s_concurrent");
     const results = await Promise.allSettled([
-      confirmEvent("e_3", key),
-      confirmEvent("e_3", key),
-      confirmEvent("e_3", key),
+      submitEventDraft("c1", body, key),
+      submitEventDraft("c1", body, key),
+      submitEventDraft("c1", body, key),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -134,15 +155,79 @@ describe("④ 같은 키 · 동시 요청", () => {
 });
 
 describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
-  it("새 키로 이미 확정된 일정을 또 확정하면 409 already_confirmed", async () => {
-    await confirmEvent("e_4", newIdempotencyKey());
+  it("새 키로 이미 넣은 제안을 또 넣으면 409 already_confirmed", async () => {
+    await submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey());
 
-    // 같은 이벤트, 새 사용자 동작(= 새 키). 이건 재시도가 아니라 중복 확정 시도다.
-    await expect(confirmEvent("e_4", newIdempotencyKey())).rejects.toSatisfy(
+    // 같은 제안, 새 사용자 동작(= 새 키). 이건 재시도가 아니라 중복 제출이다.
+    await expect(submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey())).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "already_confirmed") && e.status === 409,
     );
   });
+});
 
+/**
+ * 초안 경로 — #121 · #122 에서 정한 것이 목에서도 지켜지는지.
+ * 🚨 타입은 모양만 본다. "쓰지 않는다" 와 "food 일 때만 묻는다" 는 동작이라 여기서 건다.
+ */
+describe("일정 초안", () => {
+  it("초안을 만드는 호출은 저장된 event 가 아니라 초안을 준다 — 아직 행이 아니다", async () => {
+    const created = await api.post<CreateEventResponse>("/suggestions/s_1/event", {});
+
+    // 🚨 id · status · expires_at 이 없다. 있으면 DB 에 쓴 것이고, 그건 승인 게이트를 건너뛴 것이다.
+    expect(created.draft).toBeDefined();
+    expect(created.draft.draft_id).toBeTruthy();
+    expect(created.draft.op).toBe("create");
+    expect(created.draft.event_id).toBeNull();
+    expect(created.draft).not.toHaveProperty("id");
+    expect(created.draft).not.toHaveProperty("status");
+  });
+
+  it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
+    const created = await api.post<CreateEventResponse>("/suggestions/s_1/event", {});
+    expect(created.draft.event.starts_at).toBeNull();
+  });
+
+  it("🚨 사전검사는 food 제안에만 붙는다", async () => {
+    const food = await api.post<CreateEventResponse>("/suggestions/s_1/event", {});
+    const activity = await api.post<CreateEventResponse>("/suggestions/s_2/event", {});
+
+    expect(food.prechecks.some((p) => p.code === "unknown_ingredient")).toBe(true);
+    // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 뜨면 안 된다.
+    expect(activity.prechecks).toHaveLength(0);
+  });
+
+  it("🚨 일자 없이 제출하면 막는다 — 화면이 잠그는 것과 같은 규칙을 계약도 건다", async () => {
+    const body = { ...draftBody(), event: { ...draftBody().event, starts_at: null } };
+
+    await expect(
+      submitEventDraft("c1", body as SubmitEventBody, newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "invalid_request"));
+  });
+
+  it("🚨 items 는 최종 목록이다 — 보낸 것만 저장된다", async () => {
+    const body: SubmitEventBody = {
+      ...draftBody("s_items"),
+      items: [{ item_id: null, item_name: "수영복" }],
+    };
+    const saved = await submitEventDraft("c1", body, newIdempotencyKey());
+
+    expect(saved.event.items.map((i) => i.item_name)).toEqual(["수영복"]);
+    // 🚨 새 준비물의 체크는 언제나 false 다 — 초안이 정하는 것은 INSERT 초기값뿐이다.
+    expect(saved.event.items.every((i) => !i.is_prepared)).toBe(true);
+  });
+
+  it("제출하면 확인한 값 그대로 저장된다 — 게이트가 거짓말하지 않는다", async () => {
+    const body = draftBody("s_same");
+    const saved = await submitEventDraft("c1", body, newIdempotencyKey());
+
+    expect(saved.event.title).toBe(body.event.title);
+    expect(saved.event.starts_at).toBe(body.event.starts_at);
+    expect(saved.event.status).toBe("confirmed");
+    expect(saved.suggestion_status).toBe("approved");
+  });
+});
+
+describe("승인 게이트 ㉡", () => {
   it("승인 게이트 ㉡ 도 같은 구조다", async () => {
     const item = { type: "allergy", label: "지어낸알레르기", category: "식품" };
 

@@ -12,7 +12,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { cn } from "@/lib/cn";
 import { formatEventTime, formatTimeOfDay } from "@/lib/format";
-import type { EventDraft, EventDraftFields, EventDraftItem, Precheck } from "@/lib/api/types";
+import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/types";
 
 /**
  * 일정 초안 한 장 — **초안이 만들어지는 세 경로가 같이 쓰는 한 벌.**
@@ -44,6 +44,10 @@ import type { EventDraft, EventDraftFields, EventDraftItem, Precheck } from "@/l
  * 🚨 **준비물에 체크박스를 그리지 않는다.** `is_prepared` 는 payload 에 없고 체크는
  *    `PATCH /event-items/{iid}` 만의 몫이다 — 여기서 건드리면 제출하는 순간 풀린다.
  *
+ * 🚨 **알레르기 사전검사(`prechecks`)를 카드가 들고 있지 않다.** 그건 승인 게이트 ㉡ 이고
+ *    제안 경로에만 온다 — 세 경로가 공유하는 카드에 두면 나머지 둘이 빈 칸을 진다.
+ *    묻는 자리는 그릇(승인 시트)이고, 카드는 그 결과만 `blocked` · `lockReason` 으로 받는다.
+ *
  * 🚨 **도메인 색을 쓰지 않는다.** `category` 는 Agent 도메인이 아니다 (이름이 겹치는
  *    `activity` 가 있지만 뜻이 다르다) — `photo-review.tsx` 와 같은 판단이다.
  */
@@ -60,18 +64,13 @@ const TO_DATE = new Date(new Date().getFullYear() + 2, 11, 31);
 
 export function EventDraftCard({
   draft,
-  prechecks = [],
   state = "idle",
   error,
   blocked = false,
+  lockReason,
   onSubmit,
 }: {
   draft: EventDraft;
-  /**
-   * 규칙이 만든 사전검사. 제안 경로에만 온다 (#121 — `POST /suggestions/{sid}/event` 응답).
-   * 🚨 모델은 관여하지 않는다.
-   */
-  prechecks?: Precheck[];
   state?: DraftSubmitState;
   /** 제출이 실패한 이유. `state === "failed"` 일 때만 쓴다. */
   error?: string;
@@ -80,6 +79,12 @@ export function EventDraftCard({
    *    사전검사에 답하는 자리는 카드 밖(승인 시트)이고, 여기는 결과만 받는다.
    */
   blocked?: boolean;
+  /**
+   * 그릇이 거는 잠금과 그 이유. 🚨 **`blocked` 와 다르다** — `blocked` 는 "안 넣는다"(알레르기)고
+   *    이건 "아직 못 넣는다"(제안 경로의 재료 확인이 안 끝남)다. 둘을 한 값으로 쓰면 화면이
+   *    아직 답하지 않은 보호자에게 "이 일정은 넣지 않을게요" 라고 말한다.
+   */
+  lockReason?: string;
   /** 🚨 보호자가 확인한 **최종 상태**를 통째로 넘긴다 (#122 확정 — 부분 갱신이 아니다). */
   onSubmit: (final: { event: EventDraftFields; items: EventDraftItem[] }) => void;
 }) {
@@ -97,23 +102,37 @@ export function EventDraftCard({
   const busy = state === "submitting";
 
   /** 🚨 일자가 없으면 제출할 수 없다. 화면이 왜 잠겼는지 말한다 — 조용히 비활성으로 두지 않는다. */
-  const canSubmit = !missingDate && event.title.trim() !== "" && !blocked && !busy && !done;
+  const canSubmit =
+    !missingDate && event.title.trim() !== "" && !blocked && !lockReason && !busy && !done;
 
   function patch(next: Partial<EventDraftFields>) {
     setEvent((prev) => ({ ...prev, ...next }));
   }
 
+  /**
+   * 넣고 난 카드. 🚨 **그릇이 하는 말을 되풀이하지 않는다** — 승인 시트는 제목이 이미
+   *    "캘린더에 넣었어요" 라서, 카드가 같은 문장을 다시 쓰면 한 화면에 두 번 선다.
+   *    카드가 지는 것은 **어느 초안이 들어갔는가**뿐이고, 그래서 머리줄의
+   *    "아직 저장되지 않았어요" 자리를 같은 모양의 칩이 대신한다 (04·08 의 N장에서는
+   *    이 칩이 카드마다 결과를 말하는 유일한 표시다).
+   */
   if (done) {
     return (
       <Card>
-        <p className="text-section text-ink">캘린더에 넣었어요</p>
-        <p className="text-body-sm text-ink-muted mt-1">{event.title}</p>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-label text-ink-subtle">
+            {draft.op === "update" ? "일정 수정" : "새 일정"}
+          </span>
+          <span className="text-caption text-brand-ink bg-brand-soft rounded-field px-2 py-0.5">
+            넣었어요
+          </span>
+        </div>
+        <p className="text-body text-ink mt-3">{event.title}</p>
         {event.starts_at ? (
-          <p className="text-body-sm text-ink-muted mt-0.5">
+          <p className="text-body-sm text-ink-muted mt-1">
             {formatEventTime(event.starts_at, event.all_day)}
           </p>
         ) : null}
-        <p className="text-caption text-ink-subtle mt-2">함께 보는 보호자에게도 공유됐어요.</p>
       </Card>
     );
   }
@@ -221,26 +240,6 @@ export function EventDraftCard({
           서버가 보내 준 `changed` 는 보호자가 값을 고치는 순간 쓸 수 없어서 payload 에서 뺐다 (#122). */}
       {draft.before ? <Diff before={draft.before} event={event} items={items} /> : null}
 
-      {/* 🚨 **맥락 없이 재료 이름만 늘어놓지 않는다.** "닭고기 (첫 기록)" 만 서 있으면 그게
-          무엇을 뜻하는지 화면 어디에도 없다 — 규칙이 왜 이걸 세웠는지를 같이 말한다.
-          🚨 **여기서 묻지는 않는다.** 답을 받는 자리는 카드 밖(승인 시트)이고 이 카드는 세 경로가
-             같이 쓰므로, 제안 경로에만 있는 질문을 카드가 들고 있으면 나머지 둘이 빈 칸을 진다. */}
-      {prechecks.length > 0 ? (
-        <section className="border-line mt-4 border-t pt-3">
-          <p className="text-label text-ink-muted">처음 보는 재료</p>
-          <p className="text-caption text-ink-subtle mt-0.5">
-            알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
-          </p>
-          <ul className="mt-1.5 flex flex-col gap-1">
-            {prechecks.map((precheck) => (
-              <li key={precheck.item} className="text-body-sm text-ink">
-                {precheck.item} ({precheck.note})
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
       {error ? (
         <CardFailed className="mt-4">
           <p>{error}</p>
@@ -262,7 +261,7 @@ export function EventDraftCard({
             <p className={cn("text-body-sm mb-3", canSubmit ? "text-caution" : "text-ink-subtle")}>
               {missingDate
                 ? "날짜를 골라주셔야 넣을 수 있어요."
-                : "누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요."}
+                : (lockReason ?? "누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.")}
             </p>
             <Button
               variant="approve"

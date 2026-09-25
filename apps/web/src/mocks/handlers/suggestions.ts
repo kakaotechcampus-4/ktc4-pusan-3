@@ -1,12 +1,11 @@
 import { http, HttpResponse } from "msw";
 
-import type { CalendarEvent } from "@/lib/api/types";
-
 import {
   draftEvent,
   generalSuggestions,
   healthSafety,
   staleSuggestion,
+  suggestionDraft,
   suggestions,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -14,24 +13,16 @@ import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 
 /**
- * 승인 게이트 ㉠ 을 이미 통과한 event.
- *
- * 🚨 여기 있다고 무조건 409 를 주면 안 된다. "확정은 됐는데 응답을 못 받아 같은 키로
- *    다시 보낸 재시도" 는 withIdempotency 가 먼저 가로채 처음 응답을 재생한다.
- *    이 409 는 **새 요청으로 이미 확정된 일정을 또 확정하려는 경우** 에만 나온다.
+ * 제출된 일정. 🚨 **같은 키 재시도는 `withIdempotency` 가 먼저 가로채** 처음 응답을 재생한다.
+ *    여기 있다고 무조건 409 를 주면 안 된다 — 이 목록은 **새 요청으로 같은 초안을 또 내는 경우**를
+ *    가릴 때만 쓴다.
  */
-const confirmedEvents = new Set<string>();
+const submittedSuggestions = new Set<string>();
 
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
-export function resetConfirmedEvents(): void {
-  confirmedEvents.clear();
+export function resetSubmittedEvents(): void {
+  submittedSuggestions.clear();
 }
-
-/**
- * 만들어 둔 초안. 확정 응답이 **같은 일정**을 돌려줘야 한다 —
- * 제목이 바뀌어 돌아오면 "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
- */
-const drafts = new Map<string, CalendarEvent>();
 
 /** 05 제안 · 06 승인. */
 export const suggestionHandlers = [
@@ -96,18 +87,28 @@ export const suggestionHandlers = [
     return HttpResponse.json({ saved: true });
   }),
 
-  // 여기서는 아직 캘린더에 쓰지 않는다. draft 만 만들고 24시간 뒤 만료된다.
-  http.post(url("/suggestions/:sid/event"), async ({ request }) => {
+  /**
+   * 🚨 **아무것도 쓰지 않는다** (#121). 초안과 사전검사만 내려준다 —
+   *    저장은 제출(`POST /children/{cid}/events`) 하나뿐이고 그게 승인 게이트 ㉠ 이다.
+   */
+  http.post(url("/suggestions/:sid/event"), async ({ params }) => {
     await networkDelay();
-    const body = (await request.json()) as { title?: string };
-    const event = draftEvent(body.title ? { title: body.title } : {});
-    drafts.set(event.id, event);
+    const sid = String(params.sid);
+    const suggestion = suggestions.find((s) => s.id === sid) ?? staleSuggestion;
+
     return HttpResponse.json(
       {
-        event,
-        expires_at: event.starts_at,
-        // 06 화면 상단 "확인해 주세요" 배너. 규칙이 만들고 모델은 관여하지 않는다.
-        prechecks: [{ code: "unknown_ingredient", item: "닭고기", note: "첫 기록" }],
+        draft: suggestionDraft(suggestion),
+        /**
+         * 🚨 **`food` 제안에만 붙는다.** 사전검사는 규칙이 만들고(최상위 §3 — 알레르기 필터는
+         *    코드가 막는다) 모델은 관여하지 않는다. 물놀이 제안에 "닭고기를 먹어봤나요" 가 뜨면
+         *    그건 계약 위반이지 화면이 걸러 낼 일이 아니다 — 화면은 오는 대로 그린다.
+         * ⚠️ 기준이 `agent === "food"` 인지 "재료가 있을 때" 인지는 서버 쪽 결정이다 (#151).
+         */
+        prechecks:
+          suggestion.agent === "food"
+            ? [{ code: "unknown_ingredient", item: "닭고기", note: "첫 기록" }]
+            : [],
       },
       { status: 201 },
     );
@@ -149,25 +150,50 @@ export const suggestionHandlers = [
     );
   }),
 
-  // 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점.
+  // 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점. 캘린더에 쓰는 것은 여기 하나다.
   http.post(
-    url("/events/:eid/confirm"),
-    withIdempotency(async ({ params }) => {
+    url("/children/:cid/events"),
+    withIdempotency(async ({ request }) => {
       await networkDelay();
-      const eventId = String(params.eid);
+      const body = (await request.json()) as {
+        event: { title: string; starts_at: string | null; all_day: boolean };
+        items: Array<{ item_id: string | null; item_name: string }>;
+        suggestion_id?: string | null;
+      };
 
-      // 여기까지 왔다는 건 처음 보는 키라는 뜻이다 — 즉 새 요청이다.
-      if (confirmedEvents.has(eventId)) {
-        return apiError(409, "already_confirmed", "이미 확정된 일정이에요");
+      // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
+      if (!body.event.starts_at) {
+        return apiError(400, "invalid_request", "일자가 없는 일정은 만들 수 없어요");
       }
-      confirmedEvents.add(eventId);
 
-      // 🚨 확정 응답은 **만들어 둔 그 초안**을 돌려준다. 제목이 바뀌어 돌아오면
-      //    "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
-      const draft = drafts.get(eventId) ?? draftEvent({ id: eventId });
+      const sid = body.suggestion_id ?? null;
+      // 여기까지 왔다는 건 처음 보는 키라는 뜻이다 — 즉 새 요청이다.
+      if (sid && submittedSuggestions.has(sid)) {
+        return apiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요");
+      }
+      if (sid) submittedSuggestions.add(sid);
+
+      /**
+       * 🚨 **보호자가 확인한 값을 그대로 돌려준다.** 제목이나 시각이 바뀌어 돌아오면
+       *    "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
+       * 🚨 `items` 는 **최종 목록**이다 — 배열에서 빠진 것은 저장되지 않는다 (#122).
+       */
+      const event = draftEvent({
+        title: body.event.title,
+        starts_at: body.event.starts_at,
+        all_day: body.event.all_day,
+        status: "confirmed",
+        items: body.items.map((item, index) => ({
+          item_id: item.item_id ?? `i_new_${index}`,
+          item_name: item.item_name,
+          is_prepared: false,
+          prepared_at: null,
+        })),
+      });
+
       return HttpResponse.json({
-        event: { ...draft, status: "confirmed" },
-        suggestion_status: "approved",
+        event,
+        ...(sid ? { suggestion_status: "approved" as const } : {}),
       });
     }),
   ),

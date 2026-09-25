@@ -910,12 +910,19 @@ function EventDraftSection() {
       <SubTitle>제안에서 온 초안 — 일자가 비어 있다</SubTitle>
       <p className="text-caption text-ink-subtle">
         🚨 제안 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
-        채우지 않고, 보호자가 고르기 전에는 제출 버튼이 잠긴다. 사전검사(알레르기)는 이 경로에만
-        온다.
+        채우지 않고, 보호자가 고르기 전에는 제출 버튼이 잠긴다. 🚨 알레르기 사전검사는 이 카드가
+        아니라 **승인 시트**가 진다 — 게이트 ㉡ 이고 제안 경로에만 오기 때문이다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_FROM_SUGGESTION} onSubmit={() => {}} />
+
+      <SubTitle>그릇이 잠근 초안</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 `lockReason`(아직 못 넣는다)과 `blocked`(안 넣는다)는 다른 값이다. 재료 확인이 안 끝난
+        것을 &ldquo;이 일정은 넣지 않을게요&rdquo; 라고 말하면 화면이 거짓말을 한다.
       </p>
       <EventDraftCard
-        draft={DS_DRAFT_FROM_SUGGESTION}
-        prechecks={[{ code: "unknown_ingredient", item: "닭고기", note: "첫 기록" }]}
+        draft={DS_DRAFT_CREATE}
+        lockReason="위의 확인이 끝나야 넣을 수 있어요."
         onSubmit={() => {}}
       />
 

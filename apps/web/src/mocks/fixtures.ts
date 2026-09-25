@@ -14,6 +14,7 @@ import type {
   CalendarDay,
   CalendarEvent,
   Evidence,
+  EventDraft,
   ChildProfile,
   GeneralSuggestion,
   GrowthLog,
@@ -573,6 +574,31 @@ export const emptyHome: HomeResponse = {
 };
 
 /* ── 캘린더 초안 (승인 게이트 ㉠) ─────────────────────────────────────── */
+
+/**
+ * 제안에서 온 일정 초안. 🚨 **`starts_at` 이 `null` 이다** — 제안 문장만으로는 언제인지 알 수 없다.
+ *    보호자가 승인 시트에서 고르기 전에는 제출할 수 없다 (최상위 §3 — 화면이 날짜를 지어내지 않는다).
+ *
+ * 🚨 `id` · `status` · `expires_at` 이 없다. 이 응답은 DB 에 쓰지 않으므로 아직 행이 아니다 (#121).
+ */
+export function suggestionDraft(suggestion: Suggestion): EventDraft {
+  return {
+    draft_id: `d_${suggestion.id}`,
+    op: "create",
+    event_id: null,
+    event: {
+      title: suggestion.content,
+      starts_at: null,
+      ends_at: null,
+      all_day: true,
+      event_type: "episodic",
+      category: suggestion.agent === "health" ? "health" : "activity",
+    },
+    before: null,
+    items: [],
+    suggestion_id: suggestion.id,
+  };
+}
 
 export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
   return {
