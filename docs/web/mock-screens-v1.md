@@ -9,6 +9,8 @@
 | 로그인 세션 · `bind` · 가입 대기표 | `sessionStorage` | **탭 닫으면** 자동 |
 | 목 시나리오 | `localStorage` | **안 사라진다** — 직접 지우거나 `?scenario=default` |
 
+아직 제출하지 않은 **일정 초안**도 `sessionStorage` 다 (`icatch.event-drafts`) — 탭을 닫으면 사라진다.
+
 전부 초기화 (DevTools 콘솔):
 
 ```js
@@ -40,11 +42,18 @@ location.replace("/");
 | 04 실패 · 원문 복원 | `/child/c1/home?scenario=failed` 에서 한 줄 남기기 |
 | 04 부분 결과 | `/child/c1/home?scenario=partial` 에서 한 줄 남기기 |
 | 04 결과 못 받음 (저장 여부 모름) | `/child/c1/home?scenario=disconnected` 에서 한 줄 남기기 |
+| **04 · 일정 초안** | 03 에서 한 줄 남기면 결과 아래 "일정으로 만들까요?" 에 카드 **2장** (`create` 물놀이 + `update` 운동회). 🚨 목 대본은 고정이라 **적은 내용과 무관하게** 같은 초안이 나온다 |
+| 04 · 초안 제출 | 카드의 "확인했어요, 캘린더에 넣을게요". 🚨 **건별**이라 카드마다 따로 누른다 — `create` 는 `POST`, `update` 는 `PATCH` 로 갈린다 |
+| 04 · 부분 결과에도 초안은 온다 | `?scenario=partial` — 초안 프레임이 `partial` 보다 먼저 흐른다. 🚨 `failed`·`disconnected` 는 그 전에 끊겨서 **안 온다** |
+| 04 · 수정 초안의 변화 표시 | `update` 카드의 "이렇게 달라져요" — `before` 와 비교해 "오후 7:47 → 오후 9:47" 을 그린다 |
 | 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
 | 05 · 근거 부족 (일반 추천 1건 + 질문 1개) | 위 주소에 `&scenario=scarcity` |
 | 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` |
 | 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
 | 06 승인 시트 | 05 에서 "이걸로" (시트라 주소가 없다) |
+| **06 · 일정 초안** | 시트 안에 카드 1장. 🚨 **일자가 비어 있다** — 제안 문장만으로는 언제인지 알 수 없어서, 날짜를 골라야 넣을 수 있다 |
+| 06 · 잠긴 이유가 둘 | 식사 제안은 재료 확인 + 날짜가 **둘 다** 안 끝나서 버튼 위에 두 줄이 선다 |
+| 06 · 재료 확인은 `food` 만 | `activity` 제안(물놀이장)을 고르면 재료 확인이 **안 뜬다** — 사전검사는 서버가 붙인다 |
 | 07 기록 · 기억 | `/child/c1/memories` (`?tab=profile` · `?tab=feedback` · `?domain=food`) |
 | 08 사진으로 적기 | 03 홈의 카메라 버튼 → 시트에서 **어떤 사진인지 고르고** → 최근 사진·촬영·앨범 |
 | 08 · 알림장으로 읽기 | 시트에서 "알림장·식단표" 를 고른다 (아무 이미지 파일이나 넣으면 된다) |
@@ -54,6 +63,8 @@ location.replace("/");
 | 08 · 읽어낼 게 없는 사진 | `/child/c1/photos?scenario=photo_unreadable` |
 | 08 · 한 달치 식단표 | `?scenario=photo_meal_plan` — 항목 21건. 잘 읽은 것이 접히고, 펼치면 목록 안에서 스크롤한다 |
 | 08 · 고른 종류와 다르게 읽힘 | `?scenario=photo_lane_mismatch` — **화면에는 차이가 없다.** 계약 테스트용이다 (추측이 선언을 덮지 않는지) |
+| **08 · 일정 초안** | 알림장으로 읽고 저장하면 **날짜를 읽어낸 일정마다** 카드 한 장 (기본 대본은 3장). 🚨 관찰은 저장됐고 일정은 아직이다 |
+| 08 · 식단표는 초안이 0장 | `?scenario=photo_meal_plan` — 급식 항목은 전부 날짜가 있지만 **일정이 아니다.** 여기서 카드가 뜨면 버그다 |
 | 08 · 캘린더의 하루에서 들어온 경우 | `/child/c1/photos?date=2026-09-12` 또는 09 하루 패널의 "사진으로 적기" |
 | 09 캘린더 | `/child/c1/calendar` (`?date=YYYY-MM-DD`) |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
