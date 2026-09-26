@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Date, Float, ForeignKey, SmallInteger, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,5 +40,9 @@ class ProfileAffinity(Base, UUIDPk, Timestamps):
         profile_state, nullable=False, server_default="candidate"
     )
     polarity: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
-    strength: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.3")
+    strength: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
     last_observed_on: Mapped[date] = mapped_column(Date, nullable=False)
+    last_transition_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_transition_from: Mapped[str | None] = mapped_column(String(32), nullable=True)
