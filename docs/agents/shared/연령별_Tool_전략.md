@@ -1,7 +1,7 @@
 # 연령별 Tool 전략 — Food · Activity · Growth · Health
 
 > 게이팅의 **정본**. 각 Agent의 Tool 명세는 이 문서를 참조한다.
-> 관련: [`Tool_공통.md`](Tool_공통.md) · [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) · [`Growth_Tool_명세.md`](../growth/Growth_Tool_명세.md) · [`Health_Tool_명세.md`](../health/Health_Tool_명세.md) · `activity/`(tool 명세는 담당자 몫 — 아직 없음. 게이팅 값은 이 문서 §5-1)
+> 관련: [`Tool_공통.md`](Tool_공통.md) · [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) · [`Growth_Tool_명세.md`](../growth/Growth_Tool_명세.md) · [`Health_Tool_명세.md`](../health/Health_Tool_명세.md) · [activity-agent-v1.md](../activity/activity-agent-v1.md) (게이팅 값은 이 문서 §5-1)
 
 ---
 
@@ -127,7 +127,7 @@ Growth와 같은 눈금 방식이다. 번호가 `5-1`인 이유는 §3·§4·§5
 | tool | `min_month` | 닫혔을 때 |
 | --- | --- | --- |
 | 놀이 후보 생성 · 최근 놀이 조회 | 0 | – |
-| 관심 프로필 조회 | **18** | 조회를 건너뛴다. 관찰(티어 3)로만 근거를 만든다 |
+| 관심 프로필 조회 | **18** | 조회를 건너뛴다. 관찰(티어 3)로만 근거를 만든다. 따로 된 tool 이 아니라 `search_activity_memory` 안의 affinity 조회다 |
 | 주변 장소 조회 | **36** | 장소가 필요 없는 활동만 후보로 |
 
 **Activity에는 닫힌 조합이 없다.** 어느 월령에서도 놀이 추천 자체는 나간다. 월령이 바꾸는 것은 근거를 어디서 모으느냐와 후보에 장소가 붙느냐뿐이다.
@@ -138,7 +138,7 @@ Growth와 같은 눈금 방식이다. 번호가 `5-1`인 이유는 §3·§4·§5
 
 `hazard_term` 차단은 위 `min_month`와 다른 축이다. **36 · 72 · 192** 세 단이고, tool을 여닫는 게 아니라 나온 후보를 거른다.
 
-36은 §2의 "안전 기준(작은 부품) 전환"과 같은 값이다. 72와 192가 각각 무엇을 가르는지는 `Activity_Tool_명세.md`가 생기면 그쪽에 적는다 — 세 숫자만 받아 둔 상태다.
+36은 §2의 "안전 기준(작은 부품) 전환"과 같은 값이다. 72는 트램펄린 · 보행기, 192는 전동킥보드 · 전동휠 · 오토바이(원동기장치자전거면허 16세)의 차단 경계다. 경고는 축마다 따로 값이 있고, 0–17개월은 경고도 차단으로 올린다. 축별 값과 출처는 [activity-agent-v1.md](../activity/activity-agent-v1.md) §4-1.
 
 ---
 

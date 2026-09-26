@@ -2,9 +2,9 @@
 
 문서 목적: 놀이·활동 추천을 담당하는 Activity Agent 의 구조 · 결정 · 근거를 고정한다.
 
-기준: `origin/develop` + [#138](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/138) 공통 명세 · 코드 0줄
+기준: `origin/develop` (공통 명세 [#138](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/138) 머지 후) · 코드 0줄
 담당: 이도헌 · 리뷰: 이시하 (AI Owner)
-선행 문서: [`memory-agent-v1.md`](./memory-agent-v1.md) · 공통 명세 [`shared/Agent_공통규약.md`](./shared/Agent_공통규약.md) · [`shared/Tool_공통.md`](./shared/Tool_공통.md) · [`shared/연령별_Tool_전략.md`](./shared/연령별_Tool_전략.md) · [`shared/RAG_plan.md`](./shared/RAG_plan.md)
+선행 문서: [`memory-agent-v1.md`](../memory-agent-v1.md) · 공통 명세 [`shared/Agent_공통규약.md`](../shared/Agent_공통규약.md) · [`shared/Tool_공통.md`](../shared/Tool_공통.md) · [`shared/연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) · [`shared/RAG_plan.md`](../shared/RAG_plan.md)
 
 > **이 문서가 공통 명세를 어기면 공통 명세가 이긴다** (`Agent_공통규약.md` 머리말). 여기에는 공통이 Activity 에 맡긴 것과 Activity 에만 해당하는 것만 적는다.
 
@@ -137,7 +137,7 @@ Agent 는 `state`·`strength` 만 보고 티어를 매기고, **감쇠 유예일
 **그 대신 안전 판정을 모델에게서 뺏는다.** 모델이 낸 문장을 `hazard_term` 사전으로 스캔한다.
 
 ```python
-class EvidenceCitation(ToolArgs):
+class EvidencePick(ToolArgs):
     id: str                             # search_activity_memory 가 돌려준 id
     note: str                           # 화면에 보이는 근거 문장 (D12)
 
@@ -152,8 +152,10 @@ class ActivityCandidate(ToolArgs):
     duration_min: int | None = None
     why_this: str
     why_now: str
-    evidence: list[EvidenceCitation] = []   # id ⊂ rank_evidence 상위 10
+    evidence: list[EvidencePick] = []   # id ⊂ rank_evidence 상위 10
 ```
+
+**모델은 `id` 를 고르고 `note` 만 쓴다.** 출력 tool 이 `EvidencePick` 을 공통 `EvidenceCitation`(`common/refs.py`)으로 바꾼다 — `ref`(`source_kind` + `id`) · `source_updated_at` · `polarity` · `label` 은 그 `id` 를 돌려준 조회 결과에서 채운다. 조회 결과에 없는 `id` 면 그 후보를 거절한다.
 
 **스캔 대상은 `content` + `materials` 둘 다.** `materials` 만 보면 *"구슬 꿰기"* 처럼 재료가 문장 안에 있는 후보를 놓친다.
 
@@ -296,9 +298,9 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 
 **마지막 칸이 제일 중요하다.** 배치로 `expired` 를 찍으면 늦게 온 채택이 `expired → approved` 라는 **역방향 전이**를 요구한다. 조회 시점 판정이면 행은 계속 `draft` 라 **`draft → approved` 로 정상 전이**한다. 🚨 나들이 추천은 **구조적으로** 24시간을 넘기므로, 배치를 돌리면 *"채택률이 조금 낮게 잡히는"* 게 아니라 **나들이 카테고리만 통째로 0%** 가 된다.
 
-**채택 경로** — 승인 게이트는 3곳(캘린더 쓰기 / 건강·알레르기 확정 / 복약 등록)으로 고정이라 *"이 추천 채택하시겠어요?"* 를 따로 만들 수 없다. **캘린더 쓰기 승인 하나가 두 가지를 기록한다** — 일정 저장 + `suggestion.status = approved`.
+**채택 경로** — 승인 게이트는 2곳(캘린더 쓰기 / 건강·알레르기 확정)으로 고정이라 *"이 추천 채택하시겠어요?"* 를 따로 만들 수 없다. **캘린더 쓰기 승인 하나가 두 가지를 기록한다** — 일정 저장 + `suggestion.status = approved`.
 
-초안 payload 의 정본은 [`docs/event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) 다. 세 경로(한 줄 입력 · 추천 → 일정 · 공지 OCR)가 **같은 JSON 모양**을 내되 클래스는 공유하지 않는다. Activity 가 지킬 것은 다음과 같다.
+초안 payload 의 정본은 [`docs/event/event-draft-flow-v1.md`](../../event/event-draft-flow-v1.md) 다. 세 경로(한 줄 입력 · 추천 → 일정 · 공지 OCR)가 **같은 JSON 모양**을 내되 클래스는 공유하지 않는다. Activity 가 지킬 것은 다음과 같다.
 
 - 🚩 **추천 → 일정 초안을 만드는 곳은 서버다.** `POST /suggestions/{sid}/event` 가 suggestion 을 읽어 `{ draft, prechecks }` 를 돌려주고, **이 엔드포인트는 쓰기를 하지 않는다.** Activity Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Agent 가 돌지 않는다.
 - **Activity 는 `prechecks` 가 없다.** 알레르기 사전검사는 Food 만 해당하고, Activity 의 안전 판정(`hazard_term`)은 추천을 만들 때 이미 끝났다.
@@ -312,7 +314,7 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 
 ### D12. 근거를 어떻게 남기고 보여주나
 
-**suggestion 과 근거는 한 덩어리로 넘긴다** (9/25 결정). `event` 와 `event_item` 을 한 payload 에 중첩하는 것과 같은 모양이다. 공통 `common/suggestion.py` 의 `SuggestionDraft` 가 `source_refs` 를 들고 있고, writer 가 `suggestion` + `suggestion_evidence` 를 한 트랜잭션에 쓴다.
+**suggestion 과 근거는 한 덩어리로 넘긴다** (9/25 결정). `event` 와 `event_item` 을 한 payload 에 중첩하는 것과 같은 모양이다. 공통 `common/suggestion.py` 의 `SuggestionDraft` 가 `citations`(`EvidenceCitation` 튜플)를 들고 있고, writer 가 `suggestion` + `suggestion_evidence` 를 한 트랜잭션에 쓴다.
 
 **떼어놓으면 안 되는 이유** — `suggestion` 을 먼저 쓰고 `suggestion_evidence` 를 나중에 쓰면, 그 사이에 실패했을 때 `kind='personalized'` 인데 근거가 0행인 행이 DB 에 남는다. 루트 §2 가 *"0행이면 버그"* 로 못 박은 상태다. 한 덩어리면 그 상태가 애초에 생기지 않는다.
 
@@ -321,7 +323,7 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 | 컬럼 | 누가 채우나 |
 | --- | --- |
 | `source_kind` · `source_id` | `search_activity_memory` 가 돌려준 값. 모델은 `id` 만 고른다 |
-| `source_updated_at` | **인용할 때 읽은 근거 행의 `updated_at`.** 근거를 읽은 Agent 만 아는 값이라 공통 `Ref` 가 `updated_at` 을 실어 보낸다 (9/25 결정) |
+| `source_updated_at` | **인용할 때 읽은 근거 행의 `updated_at`** (문서 행은 `written_at`). 근거를 읽은 Agent 만 아는 값이라 `EvidenceCitation` 이 실어 보낸다 (9/25 결정) |
 | `note` | **모델이 쓴다** (아래) |
 
 #### `note` — 추천 카드에 보이는 근거 문장
@@ -480,12 +482,13 @@ SuggestionKind = Literal["general", "personalized"]    # common/suggestion.py
 ```sql
 CREATE TABLE hazard_term (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    axis               text NOT NULL,        -- small_parts / water / height / wheeled / trampoline
+    axis               text NOT NULL,        -- 4-1 의 축 9개 중 하나 (small_parts / water / ...)
     label              text NOT NULL,        -- 대표어: "구슬"
     aliases            text[] NOT NULL DEFAULT '{}',   -- "비즈","물먹는 구슬","워터비즈"
-    block_below_month  smallint,             -- 이 월령 미만 차단. NULL = 차단 없음
-    warn_below_month   smallint,             -- 이 월령 미만 경고
-    source             text NOT NULL,        -- 법령·AAP·질병관리청 URL. 출처 없는 행은 넣지 않는다
+    guards             text[] NOT NULL DEFAULT '{}',   -- 오탐 취소 문구: "비눗방울","큰 블록"
+    block_below_month  smallint,             -- 이 월령 미만 차단. NULL = 차단 없음 (축 값 복사)
+    warn_below_month   smallint,             -- 이 월령 미만 경고 (축 값 복사)
+    source             text NOT NULL,        -- 법령·AAP·질병관리청 URL (축 값 복사). 출처 없는 행은 넣지 않는다
     CONSTRAINT uq_hazard_term UNIQUE (axis, label),
     CONSTRAINT ck_hazard_term_order
         CHECK (block_below_month IS NULL OR warn_below_month IS NULL
@@ -496,7 +499,7 @@ CREATE INDEX ix_hazard_term_aliases ON hazard_term USING GIN (aliases);
 
 **축 9개 · 용어 159행**(alias 포함 매칭 대상 약 700개). 축별 행수는 4-1 표 순서로 52 / 14 / 21 / 22 / 12 / 9 / 6 / 3 / 20.
 
-- 🚨 **월령 값은 축에만 적는다. 행은 값을 갖지 않는다.** 행마다 월령을 적게 두면 그 순간부터 사람(또는 LLM)이 행 단위로 월령을 판단하게 된다. 큐레이터는 *"몇 개월부터?"*(판단)를 안 하고 *"작은 부품이 있나?"*(관찰)만 답한다.
+- 🚨 **월령 값은 시드 YAML 의 축에만 적는다.** 행의 `block/warn_below_month` · `source` 는 적재할 때 축 값을 복사한 것이다. 행마다 월령을 적게 두면 그 순간부터 사람(또는 LLM)이 행 단위로 월령을 판단하게 된다. 큐레이터는 *"몇 개월부터?"*(판단)를 안 하고 *"작은 부품이 있나?"*(관찰)만 답한다. 행에 복사해 두는 것은 매처와 Growth 가 용어 하나로 최소 월령을 바로 읽게 하려는 것이다 (`README.md` §5).
 - 🚨 **`block/warn_below_month` 는 사람이 정한다.** LLM 초안을 쓰지 않는다 — 법령·AAP·질병관리청이 이미 출처를 달고 정한 값이고, LLM 이 다시 판단하면 **출처가 끊긴다.** 반대로 `label`·`aliases` 는 LLM 초안 + 사람 검수가 가능하다 — 틀려도 사람이 읽으면 바로 안다.
 - 시드는 저장소의 **YAML**(JSON 아님 — 주석으로 행 옆에 출처를 적을 수 있다)로 버전 관리하고 Alembic 이 upsert 한다. 스키마와 시드를 **두 revision 으로 나눈다** — `enum`·`CHECK` 는 `--autogenerate` 가 못 잡으므로 손으로 쓴다.
 
@@ -528,7 +531,7 @@ haystack = DENSE(content) + SEP + SEP.join(DENSE(m) for m in materials)
 | `촛불`·`생일초` | ~~`초`~~ | 초콜릿, 초록, 초승달 |
 | (등록 안 함) | ~~`물`~~·~~`실`~~·~~`알`~~ | 물티슈·물감 / 실내·실뜨기 / 알록달록 |
 
-**겹 ② — `guards` 테이블.** 수식어로 못 가르는 오탐은 "걸렸지만 취소하는 안전 문구"로 뺀다. 매칭 구간이 guard 문구 안에 완전히 들어가면 그 hit 을 버린다. 🚨 **가장 중요한 항목이 `가위바위보`다** — 없으면 0–5세 최빈출 놀이가 통째로 사라진다. 그 밖에 `비눗방울`·`방울토마토`·`큰 블록`·`콩주머니`·`랩송`·`자석칠판`·`보행 연습` 등.
+**겹 ② — `guards` 칸.** Food `allergen_term.guards` 와 같은 모양이고 공통 매처 `app/rules/term_match.py` 가 같이 쓴다. 수식어로 못 가르는 오탐은 "걸렸지만 취소하는 안전 문구"로 뺀다. 매칭 구간이 guard 문구 안에 완전히 들어가면 그 hit 을 버린다. 🚨 **가장 중요한 항목이 `가위바위보`다** — 없으면 0–5세 최빈출 놀이가 통째로 사라진다. 그 밖에 `비눗방울`·`방울토마토`·`큰 블록`·`콩주머니`·`랩송`·`자석칠판`·`보행 연습` 등.
 
 🚨 **guard 에 "더 위험한 표현"을 넣지 않는다.** `"킥보드"` 를 취소하려고 `"전동킥보드"` 를 guard 에 넣으면 최엄격 규칙이 무력화된다. 테스트로 강제한다 — **모든 guard 문구를 guard 없이 스캔했을 때 `PASS` 여야 한다.**
 
@@ -733,12 +736,12 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 
 ### 5-2. 기대값이 바뀌는 기존 테스트
 
-원인은 한 줄 — [`routing.py:60`](../../apps/api/app/agents/supervisor/routing.py:60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
+원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py:60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
 
 | 대상 | 지금 | 구현 후 |
 | --- | --- | --- |
 | RC07 "이번 주말에 집에서 뭐 하고 놀면 좋을까?" | `unavailable_agents` 덕분에 `_did_anything()` 이 True | `unavailable=()` + `food_tasks=()` → **False → `Failed("unparsable")`**. 🚨 `_did_anything()` 수정 필수 |
-| **`stranded`** ([pipeline.py:226](../../apps/api/app/agents/pipeline.py:226)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
+| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py:261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
 | RC16 "저녁 메뉴랑 주말 놀이" | food 만 실행 | **food + activity 둘 다 실행** — 도메인 Agent 2개 동시 실행이 처음 |
 | RC17 "저녁 + 놀이 + 한글 공부" | activity `unavailable`, growth `dropped` | activity 실행, growth `dropped` |
 | `_judge` | "Food 는 food 조각만 받는다"만 검사 | Activity 에 다른 도메인 조각이 섞여도 안 잡힘 — 대칭 검사 추가 |

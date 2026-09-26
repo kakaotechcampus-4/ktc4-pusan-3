@@ -1,7 +1,7 @@
 # RAG_plan — 도메인별 근거 문서 테이블 전처리 계획
 
 > 대상: Food · Growth · Health (Activity는 `activity_doc` 선례로 함께 정렬)
-> 관련: `activity/`(Activity 담당자 몫 — 아직 없음) D6·D10 · [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) · [`Growth_Tool_명세.md`](../growth/Growth_Tool_명세.md) · [`Health_Tool_명세.md`](../health/Health_Tool_명세.md)
+> 관련: [activity-agent-v1.md](../activity/activity-agent-v1.md) D9·D10 · [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) · [`Growth_Tool_명세.md`](../growth/Growth_Tool_명세.md) · [`Health_Tool_명세.md`](../health/Health_Tool_명세.md)
 
 ---
 
