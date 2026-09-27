@@ -148,7 +148,8 @@ class Segment(_Strict):
             default=None,
             description=(
                 "agent=food 면 반드시 하나. meal_recommendation(뭘 먹일까·메뉴·간식) / "
-                "nutrient_analysis(영양 괜찮은지·영양소·과잉/부족)"
+                "nutrient_analysis(영양 괜찮은지·영양소·과잉/부족) / "
+                "daycare_meal(기관 급식이 실제로 바뀌었다는 말 — 대체식·결식)"
             ),
         ),
     ]

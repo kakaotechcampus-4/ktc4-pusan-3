@@ -211,7 +211,8 @@ async def handle_input(
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
-    food_context.stage는 호출 전에 아이 나이를 기준으로 계산해 전달한다.
+    food_context.ports는 호출 전에 만들어 전달한다. 식이 단계(LifeStage.stage)는
+    Food Agent가 build_gate로 그 안의 birth_date에서 계산한다.
     """
     started = time.perf_counter()
     send = emit or _ignore
