@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Plus, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -10,9 +10,10 @@ import { DateField } from "@/components/ui/date-field";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
+import { TimeField } from "@/components/ui/time-field";
 import { cn } from "@/lib/cn";
-import { moveToDate, sameInstant, seoulDate, withSeoulDate } from "@/lib/event-draft";
-import { formatEventTime, formatTimeOfDay } from "@/lib/format";
+import { moveStart, sameInstant, seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
+import { formatEventTime } from "@/lib/format";
 import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/types";
 
 /**
@@ -39,6 +40,10 @@ import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/typ
  * 🚨 **못 읽은 값을 프론트가 채우지 않는다.** 제안에서 온 초안은 일자가 비어 있고
  *    (`starts_at: null`), 보호자가 고르기 전에는 제출 버튼이 잠긴다. 오늘로 기본값을 넣으면
  *    "확인하고 넣은 것" 과 "들어간 것" 이 달라진다 (`PhotoEntry.date` 와 같은 규칙).
+ *    🚨 **시각도 같다** (#151). 한동안 날짜만 고르면 시각이 **자정으로 접혀** 들어가서,
+ *    아무도 고르지 않은 "오전 12:00" 이 이 게이트를 지났다 — 이제 시각 칸이 서고, 안 고르면
+ *    날짜와 똑같이 제출이 잠긴다. "하루 종일" 은 시각을 **안 묻는 것**이지 자정을 고른 것이
+ *    아니라서, 그때만 자정이고 `all_day` 가 그 사실을 함께 나른다.
  *
  * 🚨 **`items` 는 최종 목록이다** (#122 확정). 배열에서 빠진 `item_id` 가 삭제를 표현하는
  *    유일한 방법이라, 지우기가 화면에 있어야 계약이 성립한다.
@@ -105,22 +110,54 @@ export function EventDraftCard({
     null,
   );
   /**
-   * 🚨 **"하루 종일" 을 껐다 켜도 원래 시각이 살아 있어야 한다.** 켤 때 `starts_at` 을 자정으로
-   *    덮어썼더니, 끄는 순간 그 자정을 도로 읽어서 10시에 온 초안이 0시가 됐다.
+   * 🚨 **날짜와 시각은 따로 둔다.** `starts_at` 하나로 들면 "날짜는 골랐고 시각은 아직" 을
+   *    담을 자리가 없어서, 그 상태가 **자정**으로 접힌다 (그게 이 카드가 냈던 버그다).
+   *    두 칸이 각자 살아 있고, `starts_at` 은 둘이 다 차야 생긴다 (`withSeoulDateTime`).
+   *
+   * 🚨 **"하루 종일" 을 껐다 켜도 고른 시각이 살아 있다.** 예전엔 `starts_at` 을 자정으로
+   *    덮어쓰고 `useRef` 로 원본을 따로 들고 있었는데, 시각이 독립된 상태가 되면서 그 장치가
+   *    통째로 필요 없어졌다 — 켜면 칸을 **감출 뿐** 값은 그대로 있다.
    */
-  const originalStartsAt = useRef(draft.event.starts_at);
+  const [date, setDate] = useState(() => seoulDate(draft.event.starts_at));
+  const [time, setTime] = useState(() =>
+    draft.event.all_day ? "" : seoulTime(draft.event.starts_at),
+  );
 
-  const date = seoulDate(event.starts_at);
   const missingDate = date === "";
+  /** 🚨 하루 종일이면 시각을 **안 묻는다** — 안 고른 것이 아니라 물을 것이 없는 것이다. */
+  const missingTime = !event.all_day && time === "";
   const done = state === "submitted";
   const busy = state === "submitting";
 
-  /** 🚨 일자가 없으면 제출할 수 없다. 화면이 왜 잠겼는지 말한다 — 조용히 비활성으로 두지 않는다. */
+  /** 🚨 일시가 없으면 제출할 수 없다. 화면이 왜 잠겼는지 말한다 — 조용히 비활성으로 두지 않는다. */
   const canSubmit =
-    !missingDate && event.title.trim() !== "" && !blocked && !lockReason && !busy && !done;
+    !missingDate &&
+    !missingTime &&
+    event.title.trim() !== "" &&
+    !blocked &&
+    !lockReason &&
+    !busy &&
+    !done;
 
   function patch(next: Partial<EventDraftFields>) {
     setEvent((prev) => ({ ...prev, ...next }));
+  }
+
+  /**
+   * 날짜 · 시각 · 하루 종일이 **한 값(`starts_at`)을 같이 만든다.** 셋이 따로 `patch` 하면
+   * 한 칸이 다른 칸의 값을 모른 채 ISO 를 다시 조립해서, 방금 고른 것을 되돌린다.
+   */
+  function setWhen(next: { date?: string; time?: string; allDay?: boolean }) {
+    const nextDate = next.date ?? date;
+    const nextTime = next.time ?? time;
+    const allDay = next.allDay ?? event.all_day;
+
+    if (next.date !== undefined) setDate(next.date);
+    if (next.time !== undefined) setTime(next.time);
+    patch({
+      all_day: allDay,
+      ...moveStart(event, withSeoulDateTime(nextDate, nextTime, allDay)),
+    });
   }
 
   /**
@@ -193,36 +230,24 @@ export function EventDraftCard({
           placeholder="날짜를 골라주세요"
           hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
           value={date}
-          onChange={(next) => patch(moveToDate(event, next, originalStartsAt.current))}
+          onChange={(next) => setWhen({ date: next })}
           fromDate={FROM_DATE}
           toDate={TO_DATE}
         />
 
         <Checkbox
           checked={event.all_day}
-          onChange={(checked) =>
-            patch({
-              all_day: checked,
-              // 🚨 켤 때 자정으로 덮되, 끌 때는 **처음 온 시각**을 되살린다.
-              starts_at: withSeoulDate(
-                checked ? event.starts_at : originalStartsAt.current,
-                date,
-                checked,
-              ),
-            })
-          }
+          onChange={(checked) => setWhen({ allDay: checked })}
           label="하루 종일"
         />
 
-        {/* 시각을 고르는 칸은 아직 없다 — 읽어온 시각이 있으면 그대로 보여주기만 한다.
-            ⚠️ 보호자가 시각을 직접 정하는 경로는 09 캘린더 것이고, 초안 시트에 필요한지는 미정이다.
-            🚨 **날짜를 다시 쓰지 않는다.** 바로 위 `DateField` 가 이미 날짜를 지고 있어서
-               `formatEventTime` 을 쓰면 같은 날이 두 표기로 두 번 선다 — 시각만 낸다. */}
-        {!event.all_day && event.starts_at ? (
-          <p className="text-body-sm text-ink-muted">
-            <span className="text-label text-ink-subtle mr-2">몇 시</span>
-            {formatTimeOfDay(event.starts_at)}
-          </p>
+        {/* 🚨 **하루 종일이면 칸을 감춘다.** 비활성으로 두면 "고를 수 있는데 왜 안 눌리지" 를
+               먼저 묻게 된다 (`photo-source-sheet.tsx` 에서 같은 것을 고쳤다).
+            🚨 **날짜를 여기서 다시 말하지 않는다** — 바로 위 `DateField` 가 이미 지고 있다.
+            🚨 비었을 때 hint 를 이 칸에 달지 않는다. 막는 것을 말하는 자리는 **버튼 위 한 곳**
+               이고(아래), 같은 말을 두 곳에서 하면 하나는 반드시 어긋난다. */}
+        {!event.all_day ? (
+          <TimeField label="시작 시간" value={time} onChange={(next) => setWhen({ time: next })} />
         ) : null}
 
         <ItemList items={items} disabled={busy} onChange={setItems} />
@@ -287,6 +312,9 @@ export function EventDraftCard({
               {lockReason ? <p className="text-body-sm">{lockReason}</p> : null}
               {missingDate ? (
                 <p className="text-body-sm">날짜를 골라주셔야 넣을 수 있어요.</p>
+              ) : null}
+              {missingTime ? (
+                <p className="text-body-sm">몇 시에 시작하는지 골라주셔야 넣을 수 있어요.</p>
               ) : null}
               {canSubmit ? (
                 <p className="text-body-sm">

@@ -162,7 +162,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
-  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `TimeField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
   `BottomSheet` · `Tabs` · `Toast` · `ButtonLink` ·

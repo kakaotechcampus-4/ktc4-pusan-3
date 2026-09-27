@@ -37,6 +37,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
+import { TimeField } from "@/components/ui/time-field";
 import { EventDraftCard } from "@/components/event-draft-card";
 import type { Agent, EventDraft, EventDraftFields } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
@@ -489,6 +490,8 @@ function ComponentSection() {
   const [dsGender, setDsGender] = useState("male");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
+  const [dsTime, setDsTime] = useState("");
+  const [dsTimeRead, setDsTimeRead] = useState("10:23");
   const [chip, setChip] = useState("공룡");
   const [date, setDate] = useState("");
   const [checked, setChecked] = useState(true);
@@ -734,6 +737,22 @@ function ComponentSection() {
           options={DS_STATE_OPTIONS}
           onChange={setSelectState}
         />
+      </div>
+
+      <SubTitle>시각 고르기</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        고르기 상자 둘로 만든 한 칸이다 — 시(24개 · &quot;오전 9시&quot;) · 분(5분 단위). 🚨 시각
+        라이브러리를 얹지 않았다: 달력에 react-day-picker 를 얹은 이유(그리드 ARIA · 방향키 · 월
+        경계 · 로케일) 중 여기 해당하는 것이 없고, 후보였던 react-time-picker 는 오전/오후를
+        네이티브 &lt;select&gt; 로 그린다. 🚨 덜 고른 것은 고른 것이 아니다 — 시만 고르면 값은 아직
+        비어 있고, 무엇이 남았는지 글자로 말한다. 🚨 상자의 라벨은 sr-only 로 남기고(지우는 것이
+        아니다) 보이는 이름은 묶음이 진다. 🚨 폼 칸이라 알약이 아니라 min-h-field · rounded-field
+        다(shape=&quot;field&quot;).
+      </p>
+      <div className="flex flex-col gap-4">
+        <TimeField label="시작 시간" value={dsTime} onChange={setDsTime} />
+        {/* 🚨 눈금(5분) 밖 값도 목록에 선다 — 알림장에서 읽은 10:23 을 반올림하지 않는다. */}
+        <TimeField label="읽어온 값이 눈금 밖일 때" value={dsTimeRead} onChange={setDsTimeRead} />
       </div>
 
       <SubTitle>고르는 칸 (둘 중 하나)</SubTitle>

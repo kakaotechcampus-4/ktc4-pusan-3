@@ -11,10 +11,12 @@ import { DateField } from "@/components/ui/date-field";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
+import { TimeField } from "@/components/ui/time-field";
 import { qk, submitEventDraft } from "@/lib/api";
 import type { PhotoEntry } from "@/lib/api/types";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
-import { withSeoulDate } from "@/lib/event-draft";
+import { cn } from "@/lib/cn";
+import { withSeoulDateTime } from "@/lib/event-draft";
 import { formatDay } from "@/lib/format";
 
 /**
@@ -121,6 +123,12 @@ function EntryForm({
    */
   const [asEvent, setAsEvent] = useState(false);
   const [allDay, setAllDay] = useState(entry.all_day ?? true);
+  /**
+   * 🚨 **시각은 비어서 시작한다.** 알림장에서 읽어낸 것에 시각이 없기 때문이고, 없는 것을
+   *    자정으로 채우면 아무도 고르지 않은 "오전 12:00" 이 캘린더에 들어간다 — 하루 종일을
+   *    끄면 실제로 그렇게 나가고 있었다 (#151 · `lib/event-draft.ts` 머리말).
+   */
+  const [time, setTime] = useState("");
 
   /** 🚨 한 항목이 사용자 동작 하나다. 재시도는 같은 키로 간다. */
   const eventKey = useIdempotencyKey();
@@ -148,7 +156,7 @@ function EntryForm({
         {
           event: {
             title: title.trim(),
-            starts_at: withSeoulDate(null, date, allDay),
+            starts_at: withSeoulDateTime(date, time, allDay),
             ends_at: null,
             all_day: allDay,
             event_type: "episodic",
@@ -167,13 +175,19 @@ function EntryForm({
     },
   });
 
-  /** 🚨 제목과 일자가 없으면 넣을 수 없다. 화면이 **왜** 잠겼는지 말한다. */
-  const eventLock =
-    title.trim().length === 0
-      ? "무엇인지 적어주셔야 넣을 수 있어요."
-      : date === ""
-        ? "날짜를 골라주셔야 넣을 수 있어요."
-        : null;
+  /**
+   * 🚨 제목과 일시가 없으면 넣을 수 없다. 화면이 **왜** 잠겼는지 말한다.
+   *
+   * 🚨 **막는 것이 여럿이면 전부 말한다** (초안 카드와 같은 규칙). 한동안 첫 번째 것만 말했는데,
+   *    시각 칸이 서면서 알림장에서 온 항목은 **날짜도 시각도** 비어 있게 됐다 — 하나씩 말하면
+   *    보호자가 날짜를 채운 뒤에야 두 번째 관문을 알게 된다.
+   */
+  const eventLocks = [
+    title.trim().length === 0 ? "무엇인지 적어주셔야 넣을 수 있어요." : null,
+    date === "" ? "날짜를 골라주셔야 넣을 수 있어요." : null,
+    // 🚨 하루 종일이면 시각을 안 묻는다 — 물을 것이 없는 것이지 안 고른 것이 아니다.
+    !allDay && time === "" ? "몇 시에 시작하는지 골라주셔야 넣을 수 있어요." : null,
+  ].filter((reason) => reason !== null);
 
   function submit() {
     if (title.trim().length === 0) {
@@ -287,13 +301,10 @@ function EntryForm({
             <div className="mt-3 flex flex-col gap-3">
               <Checkbox checked={allDay} onChange={setAllDay} label="하루 종일" />
 
-              {/* 🚨 시각을 고르는 칸은 없다 — 알림장에서 읽어낸 것에 시각이 없다.
-                  보호자가 시각을 정하는 경로는 09 캘린더 것이다. */}
-              {!allDay ? (
-                <p className="text-body-sm text-ink-muted">
-                  몇 시인지는 캘린더에서 고칠 수 있어요.
-                </p>
-              ) : null}
+              {/* 🚨 **하루 종일이면 칸을 감춘다** (초안 카드와 같은 처리). 알림장에서 읽어낸
+                  것에는 시각이 없어서 이 칸은 늘 비어서 시작한다 — 고르기 전에는 아래 버튼이
+                  잠기고, 왜 잠겼는지는 버튼 위에서 말한다. */}
+              {!allDay ? <TimeField label="시작 시간" value={time} onChange={setTime} /> : null}
 
               {addEvent.isError ? (
                 // 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3).
@@ -308,15 +319,22 @@ function EntryForm({
 
               {/* 🚨 **게이트의 마지막 확인은 버튼 옆에 선다** (`safety-scan-review.tsx` 선례).
                   배너를 하나 더 세우지 않는다 — 색은 `caution` 을 쓰되 글자 한 덩이다. */}
-              <p
-                className={eventLock ? "text-body-sm text-ink-subtle" : "text-body-sm text-caution"}
+              <div
+                className={cn(
+                  "text-body-sm flex flex-col gap-1",
+                  eventLocks.length > 0 ? "text-ink-subtle" : "text-caution",
+                )}
               >
-                {eventLock ?? "누르면 캘린더에 바로 들어가요. 아래 저장과는 따로예요."}
-              </p>
+                {eventLocks.length > 0 ? (
+                  eventLocks.map((reason) => <p key={reason}>{reason}</p>)
+                ) : (
+                  <p>누르면 캘린더에 바로 들어가요. 아래 저장과는 따로예요.</p>
+                )}
+              </div>
 
               <Button
                 variant="approve"
-                disabled={eventLock !== null || addEvent.isPending}
+                disabled={eventLocks.length > 0 || addEvent.isPending}
                 aria-busy={addEvent.isPending}
                 onClick={() => addEvent.mutate()}
               >
