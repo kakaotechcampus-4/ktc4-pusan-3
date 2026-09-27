@@ -36,7 +36,7 @@ def life_stage(birth_date: date, today: date) -> LifeStage
 | `preschool` | 36+ | 유아기 |
 
 - **공통이 강제하는 것은 월령 계산까지다.** `life_stage()`가 `months` · `stage`를 돌려주지만, 그 값으로 tool을 어떻게 가를지는 **도메인마다 다르다** — Food는 `stage`를 배타적 범주로 쓰고, Growth는 tool별 `min_month` 눈금을 쓰고, Health는 tool을 여닫지 않고 계산 방식만 바꾼다. `stage`는 참고값이지 공통 게이팅 축이 아니다.
-- 경계값은 `config/life_stage.yaml` 한 곳
+- 경계값은 `reference/age_gates.yaml` 한 곳
 - **`age_months`는 민법 기준 달력 계산이다.** `(today - birth).days // 30` 금지 — 6년이면 두 달 앞서 열린다. 구현은 `app/rules/age.py` 하나
 - **`FeedingStage`는 별도 enum이 아니다.** Food 문서가 쓰던 `milk` · `weaning` · `toddler_meal`은 이 표의 값을 부르는 다른 이름이었다. 축이 하나인데 이름이 둘이면 `stage_min` 같은 컬럼에 두 집합이 섞인다 — **`LifeStage.stage` 네 값으로 통일한다.**
 
