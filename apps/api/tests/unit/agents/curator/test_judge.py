@@ -23,7 +23,13 @@ from app.agents.common.llm_client import (
     LLMUnavailableError,
 )
 from app.agents.curator.embedding.jev import JevJudge
-from app.agents.curator.embedding.judge import NONE, PROMPT, UNCERTAIN, JudgeAnswer
+from app.agents.curator.embedding.judge import (
+    NONE,
+    PROMPT,
+    UNCERTAIN,
+    JudgeAnswer,
+    JudgeQuotaError,
+)
 from tests.eval.agents.curator.jev_flow import PROMPT as EXPERIMENT_PROMPT
 
 BASE = "https://judge.invalid/api/alpha"
@@ -126,7 +132,7 @@ async def test_confidence_가_없어도_된다() -> None:
     [
         (401, LLMAuthError),
         (403, LLMAuthError),
-        (402, LLMError),
+        (402, JudgeQuotaError),  # LLMError 계열이면서 "이번 실행에서 멈춤" 대상
         (429, LLMRateLimitError),
         (400, LLMBadRequestError),
         (500, LLMUnavailableError),
