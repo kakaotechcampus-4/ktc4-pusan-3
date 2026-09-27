@@ -1,15 +1,14 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { Fragment } from "react";
 
-import { DomainChip, domainInk, domainField, domainPress } from "@/components/domain-chip";
+import { DomainChip } from "@/components/domain-chip";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
-import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
+import { CONFIDENCE_LABEL } from "@/lib/confidence";
+import { formatDay } from "@/lib/format";
 
 /**
  * 05 제안 후보 목록 — **훑고 나서 펼치기.**
@@ -112,14 +111,6 @@ export function SuggestionList({
     return false;
   });
 
-  /**
-   * 열려 있는 줄. 🚨 **처음엔 아무것도 안 연다** (위 머리말) — 대안이 셋인데 하나를 열어 두면
-   *    그것이 추천처럼 보인다. 🚨 화면 전체에서 하나만 열린다 (도메인 색 면이 하나여야 한다).
-   */
-  const [chosenId, setChosenId] = useState<string | null>(null);
-  // 열어 둔 줄이 "안 할래요" 로 사라지면 전부 접힌 상태로 돌아간다.
-  const openId = chosenId !== null && drawable.some((s) => s.id === chosenId) ? chosenId : null;
-
   if (drawable.length === 0) return null;
 
   /**
@@ -155,8 +146,6 @@ export function SuggestionList({
                 <li key={suggestion.id}>
                   <SuggestionRow
                     suggestion={suggestion}
-                    open={openId === suggestion.id}
-                    onToggle={() => setChosenId(openId === suggestion.id ? null : suggestion.id)}
                     selected={selectedIds.includes(suggestion.id)}
                     onToggleSelect={() => onToggleSelect(suggestion)}
                     busy={busy}
@@ -183,172 +172,85 @@ export function SuggestionList({
 
 function SuggestionRow({
   suggestion,
-  open,
-  onToggle,
   selected,
   onToggleSelect,
   busy,
   onReject,
 }: {
   suggestion: Suggestion;
-  open: boolean;
-  onToggle: () => void;
   selected: boolean;
   onToggleSelect: () => void;
   busy: boolean;
   onReject: () => void;
 }) {
-  const id = useId();
-  const panelId = `${id}-panel`;
-  const titleId = `${id}-title`;
-
   /**
-   * 🚨 Health Agent 는 진단하지 않는다 (CLAUDE.md §2). 그래서 이 줄에는 고르는 버튼이 없다 —
-   *    식단이나 놀이를 정하지 않고 모아 둔 기록을 보여주기만 한다. 색은 다른 도메인과 같은
-   *    규칙으로 자기 색(플럼)을 쓴다: 면의 뜻은 "고를 수 있음" 이 아니라 "어느 Agent" 다.
+   * 🚨 Health Agent 는 진단하지 않는다 (CLAUDE.md §2). 그래서 이 줄에는 고르는 칸이 없다 —
+   *    식단이나 놀이를 정하지 않고 모아 둔 기록을 보여주기만 한다.
    */
   const isHealth = suggestion.agent === "health";
-  /** 도메인 면을 입는가. 입으면 그 위 글자는 전부 그 도메인의 잉크다 (문서 §2-3). */
-  const onField = open;
-  const ink = domainInk(suggestion.agent);
 
   return (
-    <div>
-      {/* 🚨 **고르는 것과 여는 것은 형제다.** 체크박스를 여는 버튼 안에 넣으면 고르려다 펼쳐진다.
-          🚨 **health 줄에는 체크박스가 없다.** 고를 수 있는 것이 아니라 모아 둔 기록을 보여주는
-             줄이라(진단하지 않는다 · CLAUDE.md §2), 고르는 칸을 주면 화면이 그 규칙을 뒤집는다.
-          🚨 면 색은 **여는 버튼만** 입는다 — 체크박스까지 칠하면 도메인 색이 "고를 수 있음" 의
-             신호가 되어 health 줄과 어긋난다. */}
-      <div className={cn("flex items-stretch", onField && domainField(suggestion.agent))}>
-        {!isHealth ? (
-          <div className="flex shrink-0 items-start py-3 pl-4">
-            <Checkbox
-              checked={selected}
-              onChange={() => !busy && onToggleSelect()}
-              label={<span className="sr-only">{suggestion.content} 고르기</span>}
-            />
-          </div>
-        ) : null}
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={onToggle}
-          className={cn(
-            "min-h-touch ease-standard flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors duration-120",
-            // 🚨 포커스 링을 안쪽에 그린다. 목록이 `overflow-hidden` 이라 바깥으로 그리면
-            //    첫 줄과 마지막 줄의 링이 모서리에서 잘린다 (키보드 사용자에게만 보이는 사고).
-            "focus-visible:-outline-offset-2",
-            onField && domainField(suggestion.agent),
-            // 🚨 누르면 **그 줄이 열릴 색**을 미리 보여준다. 뉴트럴 틴트로 누르면 눌린 색과 열린 색이
-            //    달라서 두 동작이 남남처럼 보인다. 열린 줄에는 얹지 않는다 — 이미 그 바탕이라 싸운다.
-            !open && domainPress(suggestion.agent),
-          )}
-        >
-          {/* 메타 줄 — 접혀 있는 동안 근거가 있다는 사실.
-            🚨 **도메인 칩은 묶음 머리줄이 진다** (위 머리말). 묶음 안은 전부 같은 도메인이라
-               줄마다 되풀이하면 같은 칩이 셋씩 서고, 훑는 눈이 매번 그것을 지나쳐야 한다.
-            🚨 건수를 열린 줄에는 달지 않는다. 아래 칸이 근거를 실물로 보여주므로 두 번 말하게 된다 —
-               건수는 **접혀 있는 동안** 그 사실을 지키려고 있는 것이다. */}
-          <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-1">
-            {isHealth ? (
-              <span className={cn("text-caption", onField ? ink : "text-ink-subtle")}>
-                참고용이에요. 진단이 아니에요
-              </span>
-            ) : null}
-            {open ? null : (
-              <span className="text-caption text-ink-subtle">
-                사용한 기록 {suggestion.evidence.length}건
-              </span>
-            )}
-          </span>
+    <div className="px-4 py-4">
+      {isHealth ? (
+        <p className="text-caption text-ink-subtle mb-1">참고용이에요. 진단이 아니에요</p>
+      ) : null}
 
-          {/* 목록을 끌고 가는 것은 이 문장이다. 열리면 카드 제목 크기로 올라선다.
-            🚨 쉐브론이 이 줄에 붙는다. 메타 줄에 두면 **여는 표시가 여는 대상에서 한 줄 떨어지고**,
-               접힌 줄이 세 단이 되어 훑는 목록이 불필요하게 길어진다. */}
-          <span className="flex w-full items-start gap-2">
-            <span
-              id={titleId}
-              className={cn(
-                "min-w-0 flex-1",
-                open ? "text-title" : "text-body",
-                onField ? ink : "text-ink",
-              )}
-            >
-              {suggestion.content}
-            </span>
-            {open ? (
-              <ChevronUp
-                aria-hidden
-                size={ICON_SIZE.md}
-                strokeWidth={ICON_STROKE}
-                className={cn("mt-1 shrink-0", onField ? ink : "text-ink-subtle")}
-              />
-            ) : (
-              <ChevronDown
-                aria-hidden
-                size={ICON_SIZE.md}
-                strokeWidth={ICON_STROKE}
-                className="text-ink-subtle mt-0.5 shrink-0"
-              />
-            )}
-          </span>
-        </button>
-      </div>
+      {/* 🚨 **제안 문장이 고르는 칸이다.** 줄마다 "이걸로 고르기" 를 따로 두면 체크박스와 같은
+          일을 하는 버튼이 여섯 개가 되고(전부 펼쳐지니까), 화면이 초록으로 덮여 §7 "한 화면에
+          primary 하나" 가 깨진다. 고르는 대상이 곧 제안이므로 문장을 라벨로 준다 —
+          클릭 면적도 체크박스 20px 이 아니라 문장 전체가 된다. */}
+      {isHealth ? (
+        <p className="text-title text-ink">{suggestion.content}</p>
+      ) : (
+        <Checkbox
+          checked={selected}
+          onChange={() => !busy && onToggleSelect()}
+          label={<span className="text-title text-ink">{suggestion.content}</span>}
+          className="py-0"
+        />
+      )}
 
-      {/* 🚨 접혔다고 DOM 에서 빼지 않는다. `aria-controls` 가 가리키는 id 가 사라져서
-          보조기술에는 아무 데도 안 가리키는 버튼이 된다. 숨기는 것은 `hidden` 이 한다. */}
-      <div id={panelId} role="region" aria-labelledby={titleId} hidden={!open}>
-        <div className={cn("px-4 pb-4", onField && domainField(suggestion.agent))}>
-          <Reasons
-            ink={onField ? ink : null}
-            items={
-              isHealth
-                ? [
-                    { term: "무엇을 봤나", value: suggestion.reason.why_this },
-                    { term: "참고할 점", value: suggestion.reason.why_now },
-                  ]
-                : [
-                    { term: "왜 이걸", value: suggestion.reason.why_this },
-                    { term: "왜 지금", value: suggestion.reason.why_now },
-                  ]
-            }
-          />
-        </div>
+      {/* 🚨 체크박스 칸(20)과 사이(12)만큼 들여써서 이유·근거가 제안 문장과 한 세로선에 선다.
+          health 줄은 체크박스가 없으니 들여쓰지 않는다. */}
+      <div className={isHealth ? "" : "pl-8"}>
+        <Reasons
+          className="mt-2"
+          items={
+            isHealth
+              ? [
+                  { term: "무엇을 봤나", value: suggestion.reason.why_this },
+                  { term: "참고할 점", value: suggestion.reason.why_now },
+                ]
+              : [
+                  { term: "왜 이걸", value: suggestion.reason.why_this },
+                  { term: "왜 지금", value: suggestion.reason.why_now },
+                ]
+          }
+        />
 
-        {/* 아래 칸 — 쓴 기록과 어떻게 할까. 줄 가장자리까지 꽉 차서 "카드 속 카드" 가 아니라
-            바닥으로 읽힌다.
-            🚨 바탕이 `surface` 가 아니라 `canvas` 다. 접힌 줄이 `surface` 라서, 아래 칸까지
-               `surface` 로 두면 **행동 버튼이 아래 후보와 한 덩어리로 묶여 보였다** — 열린 줄이
-               초록이 끝나는 데서 끝나는 것처럼 읽혔다. 열린 줄은 초록 머리 + 웜 바닥 한 덩어리고,
-               접힌 줄은 흰 줄이다. 그래야 후보 사이 경계가 줄 안의 경계보다 세다. */}
-        <div className="bg-canvas px-4 py-4">
+        {/* 🚨 **근거는 선 아래에 둔다.** 제안·이유와 같은 무게로 쌓으면 이 제품의 차별점인
+            근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다. */}
+        <div className="border-line mt-3 border-t pt-3">
           <EvidenceList evidence={suggestion.evidence} />
-
-          {isHealth ? (
-            <p className="text-body-sm text-ink-muted mt-3">
-              기록을 모아 보여드릴 뿐이에요. 진단하지 않고, 식단이나 놀이를 정하지 않아요. 걱정되면
-              의료진에게 물어보세요.
-            </p>
-          ) : (
-            <div className="mt-4 flex items-center gap-2">
-              {/* 🚨 **여기에 "이걸로" 를 두지 않는다.** 여러 개를 고르는 화면에서 줄마다 실행
-                  버튼이 있으면 "이거 하나만" 으로 읽혀 체크박스와 싸운다. 다음 행동은 목록
-                  아래 한 곳이고, 여기 남는 것은 **이 줄을 치우는 것**뿐이다. */}
-              <Button
-                size="compact"
-                variant={selected ? "secondary" : "primary"}
-                onClick={onToggleSelect}
-                disabled={busy}
-              >
-                {selected ? "고른 것에서 빼기" : "이걸로 고르기"}
-              </Button>
-              <Button variant="tertiary" size="compact" onClick={onReject} disabled={busy}>
-                안 할래요
-              </Button>
-            </div>
-          )}
         </div>
+
+        {isHealth ? (
+          <p className="text-body-sm text-ink-muted mt-3">
+            기록을 모아 보여드릴 뿐이에요. 진단하지 않고, 식단이나 놀이를 정하지 않아요. 걱정되면
+            의료진에게 물어보세요.
+          </p>
+        ) : (
+          // 🚨 고르는 것은 위의 문장이 진다. 여기 남는 것은 **이 줄을 치우는 것**뿐이다.
+          <Button
+            variant="tertiary"
+            size="compact"
+            className="mt-3"
+            onClick={onReject}
+            disabled={busy}
+          >
+            안 할래요
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -358,70 +260,72 @@ function SuggestionRow({
  * 이유 두 줄. 라벨을 한 열로 맞춰 세운다 — 값이 길어 줄이 바뀌어도 라벨이 같은 세로선에 남아서
  * 두 줄이 한 덩어리로 읽힌다.
  *
- * 🚨 도메인 면 위의 글자는 전부 그 도메인 잉크다 (문서 §2-3). 회색 잉크를 얹으면 대비를
- *    `canvas` 기준으로 잘못 계산하게 되고, 색 바탕에 회색 글씨가 얹힌 것처럼 보인다.
+ * 🚨 **도메인 잉크를 쓰지 않는다.** 줄이 색 면을 입지 않게 되면서(위 머리말) 바탕이 `surface` 라,
+ *    도메인 잉크를 얹으면 대비가 그 면 기준으로 계산되지 않는다.
  */
 function Reasons({
   items,
-  ink,
+  className,
 }: {
   items: Array<{ term: string; value: string }>;
-  /** 도메인 면 위면 그 잉크, 아니면 뉴트럴. */
-  ink: string | null;
+  className?: string;
 }) {
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+    <dl className={cn("grid grid-cols-[auto_1fr] gap-x-3 gap-y-1", className)}>
       {items.map((item) => (
-        <ReasonRow key={item.term} term={item.term} ink={ink}>
-          {item.value}
-        </ReasonRow>
+        <Fragment key={item.term}>
+          <dt className="text-caption text-ink-subtle">{item.term}</dt>
+          <dd className="text-body-sm text-ink-muted">{item.value}</dd>
+        </Fragment>
       ))}
     </dl>
   );
 }
 
-function ReasonRow({
-  term,
-  ink,
-  children,
-}: {
-  term: string;
-  ink: string | null;
-  children: ReactNode;
-}) {
+/**
+ * 사용한 기록. 🚨 **칩이 아니라 목록이다.** 칩은 이름만 나르는데, 부모가 실제로 확인하는 것은
+ * "왜 그게 근거가 되는가" 다 — 반복 몇 회인지, 언제 것인지, 누가 말한 것인지.
+ *
+ * 🚨 **설명 줄은 서버 문구(`detail`)를 그대로 쓴다.** 근거 종류마다 뜻이 다르고(성향이면 반복
+ *    횟수, 급식 행이면 기관 기록, 알레르기면 규칙 확인), 화면이 종류별로 문장을 조립하려면
+ *    근거의 의미를 프론트가 알아야 한다 (CLAUDE.md §3). 서버가 안 보내면 **가진 것으로만**
+ *    만든다 — 날짜와 출처 라벨. 없는 것을 지어내지 않는다.
+ *
+ * 🚨 **접지 않는다.** 예전에는 4개를 넘으면 "+N" 으로 접었는데, 그건 칩 한 줄에 다 안 들어가서였다.
+ *    목록이 되면 접을 이유가 없고, 근거를 접는 것은 이 제품이 제일 하면 안 되는 일이다.
+ */
+function EvidenceList({ evidence }: { evidence: Evidence[] }) {
   return (
-    <>
-      <dt className={cn("text-caption", ink ?? "text-ink-subtle")}>{term}</dt>
-      <dd className={cn("text-body-sm", ink ?? "text-ink-muted")}>{children}</dd>
-    </>
+    <div>
+      {/* 🚨 질문형으로 쓰지 않는다. health 줄의 이유 라벨이 이미 "무엇을 봤나" 라서
+          같은 질문을 한 블록 안에서 두 번 하게 된다. */}
+      <p className="text-label text-ink-muted">사용한 기록 {evidence.length}건</p>
+
+      <ul className="mt-2 flex flex-col gap-2.5">
+        {evidence.map((item) => (
+          <li key={`${item.ref.kind}:${item.ref.id}`}>
+            <p className="text-body-sm text-ink">{item.label}</p>
+            <p className="text-caption text-ink-subtle mt-0.5">
+              {evidenceDetail(item)}
+              {/* 🚨 6개월 지난 근거는 단독으로 쓰지 않는다 (NF-08) — 그 사실을 글자로 말한다.
+                  색·점선 하나로는 단독 신호가 되고, 이 목록엔 칩이 없어서 얹을 자리도 없다. */}
+              {item.is_stale ? " · 6개월이 지난 기록이에요" : ""}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
 /**
- * 근거 칩 줄. 🚨 **4개를 넘으면 "+N" 으로 접는다** (문서 §7) — 근거를 숨기는 게 아니라
- * 카드에서 목록으로 옮기는 것이다. 목록(07 기억 화면)은 다음 이슈라, 지금은 건수만 남긴다.
+ * 🚨 **서버가 준 설명이 있으면 그것뿐이다.** 없을 때만 화면이 가진 값으로 만든다 —
+ *    ISO 날짜를 한국어 표기로 바꾸고 출처 enum 을 라벨로 옮기는 것이라 **조립이지 계산이 아니다**
+ *    (`lib/format.ts` 머리말과 같은 선). 반복 횟수처럼 없는 값은 만들지 않는다.
  */
-const EVIDENCE_VISIBLE = 4;
-
-function EvidenceList({ evidence }: { evidence: Evidence[] }) {
-  const visible = evidence.slice(0, EVIDENCE_VISIBLE);
-  const hidden = evidence.length - visible.length;
-
-  return (
-    <div>
-      {/* 🚨 질문형으로 쓰지 않는다. health 줄의 이유 라벨이 이미 "무엇을 봤나" 라서
-          같은 질문을 한 줄 안에서 두 번 하게 된다. 접힌 줄의 건수와도 같은 말을 쓴다. */}
-      <p className="text-caption text-ink-subtle">사용한 기록</p>
-      <EvidenceRow>
-        {visible.map((item) => (
-          <EvidenceChip
-            key={`${item.ref.kind}:${item.ref.id}`}
-            label={item.label}
-            stale={item.is_stale}
-          />
-        ))}
-        {hidden > 0 ? <CountChip>외 {hidden}건</CountChip> : null}
-      </EvidenceRow>
-    </div>
-  );
+function evidenceDetail(item: Evidence): string {
+  if (item.detail) return item.detail;
+  return [formatDay(item.observed_to), CONFIDENCE_LABEL[item.confidence_source]]
+    .filter(Boolean)
+    .join(" · ");
 }

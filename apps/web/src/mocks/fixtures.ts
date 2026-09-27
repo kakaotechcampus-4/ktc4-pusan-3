@@ -468,8 +468,31 @@ function evidenceFrom(a: Affinity): Evidence {
     label: a.merge_key,
     observed_to: a.last_observed_on,
     confidence_source: "parent_direct",
+    // 🚨 서버 문구다. 근거 종류마다 뜻이 달라서 화면이 조립하지 않는다 (`Evidence.detail` 참고).
+    detail: `반복 ${a.observation_count}회 · 출처 보호자`,
   };
 }
+
+/**
+ * 성향이 아닌 근거. 🚨 **근거는 `profile_affinity` 만이 아니다** — 급식 행과 규칙 확인도 근거로
+ *    나간다 (CLAUDE.md §5 "컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문").
+ *    픽스처에 성향만 있으면 화면이 그 한 종류만 그려 보고 통과한다.
+ */
+const mealEvidence: Evidence = {
+  ref: { kind: "daycare_meal", id: "dm_1" },
+  label: "오늘 급식: 계란말이, 미역국, 김",
+  observed_to: daysAgo(0),
+  confidence_source: "institution_notice",
+  detail: "어린이집에서 받음 · 기관 기록 · 오늘",
+};
+
+const safetyEvidence: Evidence = {
+  ref: { kind: "health_safety", id: "hs_none" },
+  label: "알레르기 제한 없음",
+  observed_to: daysAgo(0),
+  confidence_source: "parent_direct",
+  detail: "규칙 확인 · 보호자 입력값",
+};
 
 /** 🚨 evidence 0건인 suggestion 은 만들지 않는다 — 그건 서버가 버리고 scarcity 로 내린다. */
 /**
@@ -485,7 +508,7 @@ function personalized(
   content: string,
   whyThis: string,
   whyNow: string,
-  affinity: Affinity,
+  evidence: Evidence[],
 ): Suggestion {
   return {
     id,
@@ -497,8 +520,8 @@ function personalized(
     status: "draft",
     expires_at: hoursFromNow(24),
     feedback: null,
-    source_refs: [{ kind: "profile_affinity", id: affinity.id }],
-    evidence: [evidenceFrom(affinity)],
+    source_refs: evidence.map((e) => e.ref),
+    evidence,
   };
 }
 
@@ -510,7 +533,9 @@ export const suggestions: Suggestion[] = [
     "계란말이에 시금치를 조금 섞어 보세요",
     "계란 반찬을 서로 다른 3일에 찾았어요",
     "오늘 급식에 계란 반찬이 없어요",
-    affinities[0],
+    // 🚨 **근거는 제안마다 다르다.** 같은 배열을 셋에 복사하면 화면이 "근거가 제안마다 다르다" 를
+    //    한 번도 그려 보지 않고 통과한다 — 건수도 종류도 갈라 둔다.
+    [evidenceFrom(affinities[0]), mealEvidence, safetyEvidence],
   ),
   personalized(
     "s_2",
@@ -518,7 +543,7 @@ export const suggestions: Suggestion[] = [
     "두부를 부쳐서 한 조각 곁들여 보세요",
     "두부 반찬을 남기지 않았어요",
     "오늘 급식에 단백질 반찬이 적어요",
-    affinities[0],
+    [evidenceFrom(affinities[0]), safetyEvidence],
   ),
   personalized(
     "s_3",
@@ -526,7 +551,7 @@ export const suggestions: Suggestion[] = [
     "멸치볶음을 간을 약하게 해서 조금만",
     "짠 반찬은 한 번에 조금씩 먹었어요",
     "이번 주에 멸치 반찬이 없었어요",
-    affinities[0],
+    [mealEvidence],
   ),
   // 주말 놀이 3가지.
   personalized(
@@ -535,7 +560,7 @@ export const suggestions: Suggestion[] = [
     "주말에 실내 물놀이장은 어떨까요",
     "물놀이에서 오래 머물렀어요",
     "이번 주말 일정이 비어 있어요",
-    affinities[1],
+    [evidenceFrom(affinities[1])],
   ),
   personalized(
     "s_5",
@@ -543,7 +568,7 @@ export const suggestions: Suggestion[] = [
     "집 앞 놀이터에서 30분만 뛰어 보세요",
     "바깥 놀이 뒤에 잘 잤어요",
     "이번 주말 일정이 비어 있어요",
-    affinities[1],
+    [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
   ),
   personalized(
     "s_6",
@@ -551,7 +576,7 @@ export const suggestions: Suggestion[] = [
     "블록으로 높이 쌓기를 해 보세요",
     "손을 쓰는 놀이를 오래 했어요",
     "비 소식이 있어요",
-    affinities[1],
+    [evidenceFrom(affinities[1])],
   ),
 ];
 

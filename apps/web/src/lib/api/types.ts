@@ -21,6 +21,13 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * ⚠️ **계약서 v1 의 목록에 없다.** 최상위 `CLAUDE.md` §5 는 근거 컬럼 이름이 `memory_*` 가
+   *    아닌 이유를 "**문서 행·`daycare_meal` 도 가리키기 때문**" 이라고 적어 뒀는데, `Ref` 에는
+   *    그 종류가 없어서 급식 행을 근거로 다는 응답이 타입에 안 맞는다.
+   *    👉 `apps/api` Owner 협의 대상 (#151).
+   */
+  "daycare_meal",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -171,6 +178,21 @@ export interface Evidence {
    *    서버가 보내기 전까지는 항상 undefined 라서 점선 칩이 나오지 않는다.
    */
   is_stale?: boolean;
+  /**
+   * 근거 한 줄 설명 ("반복 5회 · 최근 5일 · 출처 보호자"). 🚨 **서버 문구다.**
+   *
+   * ⚠️ **계약서 v1 에 아직 없는 필드다.** 👉 `apps/api` Owner 협의 대상 (#151).
+   *
+   * 🚨 **왜 조립하지 않고 문구로 받나** — 근거는 종류가 여럿이다. 성향(`profile_affinity`)이면
+   *    반복 횟수가 뜻이 있고, 급식 행(`daycare_meal`)이면 "어린이집에서 받음 · 기관 기록" 이고,
+   *    알레르기 규칙이면 "규칙 확인 · 보호자 입력값" 이다. 화면이 종류마다 다른 문장을 조립하려면
+   *    **근거의 의미를 프론트가 알아야** 하고, 그러면 반복 횟수 같은 판단이 화면으로 샌다
+   *    (CLAUDE.md §3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
+   *    `Observation.observed_label` · `Affinity.state_reason` 과 같은 성격이다.
+   *
+   * 서버가 안 보내면 화면이 **가진 것으로만** 만든다 (`observed_to` 의 날짜 · 출처 라벨).
+   */
+  detail?: string;
 }
 
 /**

@@ -10,13 +10,9 @@ import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
+import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
-import {
-  isHealthObservation,
-  type Agent,
-  type ConfidenceSource,
-  type Observation,
-} from "@/lib/api/types";
+import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
 
 /**
  * 04 저장 결과 — run 이벤트를 화면으로 옮긴다.
@@ -261,14 +257,6 @@ export function RunResult({
     </div>
   );
 }
-
-/** 발화의 출처. 서버 enum 을 화면 문구로 옮기는 표다 — 추측을 섞지 않는다. */
-const CONFIDENCE_LABEL: Record<ConfidenceSource, string> = {
-  institution_notice: "기관 공지",
-  parent_direct: "보호자 직접",
-  parent_hedged: "보호자 추측",
-  parent_hearsay: "전해 들음",
-};
 
 /** 관찰 4테이블 ↔ 도메인. health 는 승격 파이프라인 밖이라 모양이 다르다. */
 const OBSERVATION_AGENT: Record<Observation["kind"], Agent> = {
