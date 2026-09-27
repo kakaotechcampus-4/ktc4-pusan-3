@@ -193,18 +193,10 @@ components:
     textColor: "{colors.ink}"
     rounded: "{rounded.card}"
     padding: "16px"
-  suggestion-row-open:
-    backgroundColor: "{colors.food-soft}"
-    textColor: "{colors.food-ink}"
-    padding: "12px 16px"
-  suggestion-row-base:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    padding: "16px"
-  suggestion-row-collapsed:
+  suggestion-row:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    padding: "12px 16px"
+    padding: "16px"
   card-general:
     backgroundColor: "{colors.canvas}"
     textColor: "{colors.ink}"
@@ -410,13 +402,15 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **chip-domain:** `{domain}-soft` 배경 + `{domain}-ink` 글자 + 아이콘 16 + 라벨
 - **chip-evidence:** `surface` + `line` 1px + `ink-muted` + caption. `is_stale`(6개월 초과) 근거는 **점선 + `ink-subtle`** 로 눌러 그린다
 - **chip-count:** 배경 없이 `ink-subtle` caption ("기록 12건")
-- 근거 칩이 4개를 넘으면 **"+N" 으로 접는다** — 숨기는 게 아니라 카드에서 목록으로 옮기는 것이다
+- 근거 칩이 4개를 넘으면 **"+N" 으로 접는다** — 숨기는 게 아니라 카드에서 목록으로 옮기는 것이다. ⚠️ 이건 근거를 **칩**으로 그릴 때의 규칙이고, 05 는 근거를 **목록**으로 그려서 접지 않는다. ⚠️ 근거 칩을 지금 쓰는 화면이 없다(`/design-system` 진열만 남았다)
 
 ### Cards / Containers
 
 - **Corner Style:** `card` 14px · 안쪽 여백 16 · 카드 사이 12
 - **card:** `surface` + `line` 1px. 그림자 없음
-- **suggestion-row (05 개인화):** 카드가 아니라 **목록 한 줄**. 접히면 도메인 칩 + 제안 문장(`body` · `ink`) + 기록 건수, 열리면 **두 칸** — 위 **`{domain}-soft`**(제안 `title` 20 · 이유 · 글자는 전부 `{domain}-ink` · 칩은 `surface` 로 띄운다) / 아래 **`canvas`**(**근거 칩 행 필수** · 고르는 버튼). 항상 한 줄만 열린다. 나누는 수단은 선이 아니라 바탕색이고, 아래 칸은 줄 가장자리까지 꽉 차서 카드 속 카드가 되지 않는다. 🚨 도메인 면 위 글자는 전부 그 도메인 `-ink` · 🚨 health 줄도 자기 색(플럼)을 쓴다 — 면의 뜻은 "고를 수 있음" 이 아니라 "어느 Agent" 다(다른 것은 고르는 버튼이 없다는 점) · 🚨 접힌 줄에도 기록 건수가 남는다 · 🚨 아래 칸이 `canvas` 인 것은 후보 사이 경계가 줄 안의 경계보다 세야 해서다(접힌 줄이 `surface`) · 누른 느낌은 그 줄이 열릴 색
+- **suggestion-row (05 개인화):** 카드가 아니라 **목록 한 줄**이고 **항상 펼쳐져 있다**. `surface` 바탕 · 줄 사이 `line` 1px · 안쪽 16 · 묶음마다 한 컨테이너. 한 줄 = 체크박스 + 제안(`title` 20) / 이유 두 줄 / 가는 선 / 근거 목록 / `안 할래요`. 🚨 **아코디언이 아니다** — Agent 당 후보가 3가지라 접으면 대안 비교가 안 되고, 하나만 열어 두면 그것이 추천처럼 보인다 · 🚨 **도메인 색 면도 칩도 줄에 없다** — 묶음 안은 전부 같은 도메인이라 정보가 0이고 펼쳐진 화면에서 색 면 여섯은 서로 싸운다. 도메인은 **묶음 머리줄의 칩**이 진다 · 🚨 **제안 문장이 체크박스의 라벨이다** — 줄마다 "이걸로" 버튼을 두면 초록이 여섯 개가 되어 "한 화면에 primary 하나" 가 깨진다 · 🚨 health 줄에는 체크박스가 없다(고를 수 있는 것이 아니다)
+- **묶음 머리줄 (05):** 도메인 칩 + "3가지 중에서"(`caption`) + 서버가 준 질문(`section`). 🚨 브랜드를 쓰지 않는다 — 이 구역을 가르는 것은 도메인이고, 초록을 얹으면 한 줄에서 색 하나가 두 뜻을 나른다
+- **근거 목록 (05):** "사용한 기록 N건"(`label`) 아래로 근거마다 제목(`body-sm`/`ink`) + 설명(`caption`/`ink-subtle`) 두 줄. 설명은 서버 문구(`Evidence.detail`)고, 없으면 화면이 가진 것(날짜 · 출처)으로만 만든다. 🚨 접지 않는다 · 🚨 `is_stale` 은 점선이 아니라 **글자로** 말한다(칩이 없어 모양 신호를 얹을 자리가 없다)
 - **제안 줄:** `surface` + `line` 1px + full + 높이 44, 도메인 칩 + 문구. 누른 느낌은 그 주제가 열릴 색(`{domain}-soft`). 배치 2종 — **list**(04, 세로로 쌓음) / **scroller**(03 채팅바 위, 가로 한 줄로 눕히고 넘치면 민다: 바 183 → 133px). scroller 는 화면 끝까지 흐르고 `overscroll-behavior-x: contain` 이 걸린다(웹뷰 뒤로가기 제스처 차단). 🚨 제안을 버튼으로 쌓지 않는다 — 고르는 것은 줄, 화면을 떠나는 것만 버튼
 - **card-general:** `canvas` 배경 · `line-strong` **1px 점선** · 머리줄에 도메인 칩 + "또래 기준 일반 추천" 라벨 + 기록 건수 **필수** · 제안 문장 `body`/`ink` · 기준 문구 `body-sm`/`ink-muted`. **고르는 버튼이 없다** — 승인 게이트 ㉠ 은 되돌릴 수 없는 캘린더 쓰기인데 이 추천은 이 아이의 기록에서 나온 것이 아니다
 - **card-failed:** `surface-muted` · `ink-muted` · 재시도는 tertiary 버튼
