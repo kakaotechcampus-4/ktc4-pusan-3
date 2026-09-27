@@ -1,12 +1,12 @@
-"""유사도 임계값 실험. 실제 임베딩 API 를 부른다 (-m live).
+"""유사도 임계값 실험 (실험 1 · 2). 실제 임베딩 API 를 부른다 (-m live).
 
-순서가 중요하다. 한 번에 다 돌리지 않는다.
-    1. 선정   pytest tests/eval/agents/curator/test_threshold.py -m live -k select
-              선정용 쌍으로 임계값을 쓸고 보고서를 남긴다. 판정하지 않는다
-    2. 반영   보고서를 보고 link_step.DEFAULT_THRESHOLD 를 고쳐 커밋한다
-    3. 검증   pytest tests/eval/agents/curator/test_threshold.py -m live -k "holdout or scenario"
-              고정된 DEFAULT_THRESHOLD 로 검증용 쌍 · 시나리오를 평가한다. 여기 결과로 임계값을
-              다시 고르지 않는다
+결론: 유사도만으로는 기준을 만족하는 임계값이 없다 (Notion 실험 1 · 2). 그래서 운영 연결은
+임계값이 아니라 동일 대상 판정기(Jev)로 바뀌었다 — 이 파일은 그 근거를 다시 재현하는 용도다.
+
+    선정   pytest tests/eval/agents/curator/test_threshold.py -m live -k select
+           선정용 쌍으로 임계값을 쓸고 보고서를 남긴다. 판정하지 않는다
+    검증   pytest tests/eval/agents/curator/test_threshold.py -m live -k holdout
+           THRESHOLD 로 검증용 쌍을 평가한다. 검증용은 실험 3 에서 이미 썼다
 
 보고서는 이 폴더의 threshold_*_result.txt 에 남는다 (gitignore 대상).
 
@@ -22,12 +22,10 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
-from uuid import UUID
 
 import pytest
 
-from app.agents.curator.embedding import DEFAULT_THRESHOLD, Embedder, link_observations
-from app.agents.curator.embedding.inmemory import InMemoryCuratorStore
+from app.agents.curator.embedding import Embedder
 from app.agents.curator.embedding.link_step import same_name_key
 from app.agents.curator.embedding.ports import CURATOR_DOMAINS
 from tests.eval.agents.curator.pairs import (
@@ -35,10 +33,8 @@ from tests.eval.agents.curator.pairs import (
     TUNE_PATH,
     AmbiguousPair,
     Pair,
-    Scenario,
     load_ambiguous,
     load_pairs,
-    load_scenarios,
 )
 
 pytestmark = pytest.mark.live
@@ -46,7 +42,8 @@ pytestmark = pytest.mark.live
 HERE = Path(__file__).parent
 MAX_MISS_RATE = 0.30
 GRID = [round(0.30 + i * 0.01, 2) for i in range(61)]  # 0.30 ~ 0.90
-CHILD = UUID("00000000-0000-0000-0000-00000000c0de")
+# 실험 1 · 2 당시 운영 코드의 임시 임계값. 운영 연결은 이제 판정기를 쓴다
+THRESHOLD = 0.5
 
 P = TypeVar("P", Pair, AmbiguousPair)
 
@@ -178,7 +175,7 @@ async def test_select_선정용으로_임계값을_쓴다() -> None:
     lines = [
         "# 임계값 선정 (pairs_tune.txt)",
         f"기준: 잘못 합침 0건 · 놓침 비율 ≤ {MAX_MISS_RATE:.0%}",
-        f"현재 DEFAULT_THRESHOLD={DEFAULT_THRESHOLD}",
+        f"현재 THRESHOLD={THRESHOLD}",
         _exact_summary(scored),
         f"같은 입력 두 번의 유사도 차이 최대 {drift:.6f}",
         "",
@@ -255,7 +252,7 @@ async def test_holdout_검증용에서_기준을_지킨다() -> None:
 
     lines = [
         "# 임계값 검증 (pairs_holdout.txt)",
-        f"DEFAULT_THRESHOLD={DEFAULT_THRESHOLD} · 기준: 잘못 합침 0건 · 놓침 ≤ {MAX_MISS_RATE:.0%}",
+        f"THRESHOLD={THRESHOLD} · 기준: 잘못 합침 0건 · 놓침 ≤ {MAX_MISS_RATE:.0%}",
         "⚠️ same 은 오타 · 띄어쓰기 · 다른 이름이 대부분이다.",
         "   의미가 비슷한 표현을 얼마나 잘 잇는가 전체로 넓혀 읽지 않는다",
         _exact_summary(scored),
@@ -264,7 +261,7 @@ async def test_holdout_검증용에서_기준을_지킨다() -> None:
     results = {}
     for domain in (*CURATOR_DOMAINS, "전체"):
         rows = _in(domain, scored)
-        results[domain] = score = _score(rows, DEFAULT_THRESHOLD)
+        results[domain] = score = _score(rows, THRESHOLD)
         lines.append(
             f"[{domain}] 잘못 합침 {score.false_merges}/{score.negatives} · "
             f"놓침 {score.misses}/{score.positives} ({score.miss_rate:.1%})"
@@ -273,79 +270,10 @@ async def test_holdout_검증용에서_기준을_지킨다() -> None:
             lines.append(f"  {label:<9} {_spread([r.sim for r in rows if r.pair.label == label])}")
     lines += ["", "틀린 쌍"]
     for r in scored:
-        if (r.pair.label == "same") != r.linked(DEFAULT_THRESHOLD):
+        if (r.pair.label == "same") != r.linked(THRESHOLD):
             lines.append(_line(r))
     path = _write("holdout", lines)
 
     total = results["전체"]
     assert total.false_merges == 0, f"잘못 합침 {total.false_merges}건. 보고서: {path}"
     assert total.miss_rate <= MAX_MISS_RATE, f"놓침 {total.miss_rate:.1%}. 보고서: {path}"
-
-
-# 3. 시나리오 ──────────────────────────────────────────────────────────────────
-
-
-def _orders(scenario: Scenario) -> list[tuple[int, ...]]:
-    """적힌 순서 · 뒤집은 순서 · 묶음 안의 표현마다 그 표현이 묶음에서 가장 먼저 오는 순서."""
-    written = tuple(range(1, len(scenario.steps) + 1))
-    orders = [written, written[::-1]]
-    for group in scenario.groups:
-        first_of: dict[str, int] = {}
-        for n in group:
-            first_of.setdefault(scenario.steps[n - 1].subject, n)
-        for n in first_of.values():
-            orders.append((n, *(m for m in written if m != n)))
-    return list(dict.fromkeys(orders))
-
-
-async def _run(
-    scenario: Scenario, order: tuple[int, ...], embedder: CachedEmbedder
-) -> set[frozenset[int]]:
-    store = InMemoryCuratorStore()
-    for n in order:
-        step = scenario.steps[n - 1]
-        store.add_observation(
-            child_id=CHILD,
-            domain=scenario.domain,
-            id=str(n),
-            subject=step.subject,
-            polarity=step.polarity,
-        )
-    result = await link_observations(store, embedder, child_id=CHILD)
-    assert not result.held, f"보류: {result.held}"
-    by_profile: dict[str, set[int]] = {}
-    for outcome in result.outcomes:
-        by_profile.setdefault(outcome.affinity_id or "", set()).add(int(outcome.key[1]))
-    return {frozenset(members) for members in by_profile.values()}
-
-
-async def test_scenario_순서를_바꿔도_기대한_묶음이_나온다() -> None:
-    embedder = CachedEmbedder(Embedder())
-    lines = [f"# 시나리오 (scenarios_holdout.txt) · DEFAULT_THRESHOLD={DEFAULT_THRESHOLD}", ""]
-    failures = []
-    for scenario in load_scenarios():
-        expected = {frozenset(group) for group in scenario.groups}
-        subjects = " · ".join(f"{s.polarity:+d} {s.subject}" for s in scenario.steps)
-        lines.append(f"[{scenario.id}] {scenario.domain}: {subjects}")
-        for order in _orders(scenario):
-            got = await _run(scenario, order, embedder)
-            ok = got == expected
-            shown = " | ".join(" ".join(map(str, sorted(g))) for g in sorted(got, key=min))
-            lines.append(
-                f"  {'통과' if ok else '실패'}  순서 {' '.join(map(str, order))} → {shown}"
-            )
-            if not ok:
-                failures.append(f"{scenario.id} 순서 {order}")
-    lines.append(f"\n임베딩 호출 {embedder.calls}회")
-    path = _write("scenario", lines)
-
-    assert not failures, f"기대와 다른 묶음 {len(failures)}건: {failures}. 보고서: {path}"
-
-
-def test_순서_목록은_각_표현이_먼저_오는_경우를_포함한다() -> None:
-    """_orders 자체 확인. API 를 부르지 않지만 이 파일은 live 라 같이 돈다."""
-    scenario = next(s for s in load_scenarios() if s.id == "S07")  # 떡뽁이 · 떡볶이 · 떡복이 | 떡국
-    firsts = {order[0] for order in _orders(scenario)}
-    assert {1, 2, 3, 4} <= firsts
-    assert all(sorted(order) == [1, 2, 3, 4] for order in _orders(scenario))
-    assert len(_orders(scenario)) == len(set(_orders(scenario)))
