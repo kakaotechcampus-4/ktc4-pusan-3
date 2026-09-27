@@ -22,9 +22,15 @@ export const REF_KINDS = [
   "event",
   "suggestion",
   /**
-   * ⚠️ **계약서 v1 의 목록에 없다.** 최상위 `CLAUDE.md` §5 는 근거 컬럼 이름이 `memory_*` 가
-   *    아닌 이유를 "**문서 행·`daycare_meal` 도 가리키기 때문**" 이라고 적어 뒀는데, `Ref` 에는
-   *    그 종류가 없어서 급식 행을 근거로 다는 응답이 타입에 안 맞는다.
+   * ⚠️ **계약서 v1 의 목록에 없다.** `docs/agents/data_model.md` 의 `suggestion_evidence`
+   *    (`source_kind`) 가 급식 행을 근거로 든다고 적어 뒀는데(2026-09-23 회의 확정) `Ref` 에
+   *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
+   *
+   * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
+   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` · `intake_daily` ·
+   *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
+   *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
+   *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.
    *    👉 `apps/api` Owner 협의 대상 (#151).
    */
   "daycare_meal",
@@ -183,9 +189,13 @@ export interface Evidence {
    */
   is_stale?: boolean;
   /**
-   * 근거 한 줄 설명 ("반복 5회 · 최근 5일 · 출처 보호자"). 🚨 **서버 문구다.**
+   * 그 근거 행에서 **추천 근거로 채택한 내용** ("계란말이 요청 · 지은 적음 · 반복 5회").
+   * Agent 가 쓰고 **보호자 화면에 그대로 나간다** (`docs/agents/data_model.md` ·
+   * `suggestion_evidence.note` · 2026-09-25 확정).
    *
-   * ⚠️ **계약서 v1 에 아직 없는 필드다.** 👉 `apps/api` Owner 협의 대상 (#151).
+   * 🚨 **필수다.** 그 문서가 `NOT NULL` 이고 "비면 그 후보를 거절한다" 이므로, `note` 없는
+   *    근거는 화면에 도달할 수 없다. optional 로 두고 화면이 대신 문장을 만들면 **거절됐어야
+   *    할 후보를 UI 가 덮는다** (근거 0건을 그리지 않는 것과 같은 규칙 · CLAUDE.md §2).
    *
    * 🚨 **왜 조립하지 않고 문구로 받나** — 근거는 종류가 여럿이다. 성향(`profile_affinity`)이면
    *    반복 횟수가 뜻이 있고, 급식 행(`daycare_meal`)이면 "어린이집에서 받음 · 기관 기록" 이고,
@@ -194,9 +204,10 @@ export interface Evidence {
    *    (CLAUDE.md §3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
    *    `Observation.observed_label` · `Affinity.state_reason` 과 같은 성격이다.
    *
-   * 서버가 안 보내면 화면이 **가진 것으로만** 만든다 (`observed_to` 의 날짜 · 출처 라벨).
+   * ⚠️ **계약서 v1(§02 `Evidence`)에는 아직 이 필드가 없다.** DB 문서에만 있다 —
+   *    응답에 실어 주는 것까지 확인이 필요하다. 👉 `apps/api` Owner 협의 대상 (#151).
    */
-  detail?: string;
+  note: string;
 }
 
 /**

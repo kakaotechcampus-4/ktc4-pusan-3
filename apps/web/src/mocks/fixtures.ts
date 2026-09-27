@@ -468,8 +468,8 @@ function evidenceFrom(a: Affinity): Evidence {
     label: a.merge_key,
     observed_to: a.last_observed_on,
     confidence_source: "parent_direct",
-    // 🚨 서버 문구다. 근거 종류마다 뜻이 달라서 화면이 조립하지 않는다 (`Evidence.detail` 참고).
-    detail: `반복 ${a.observation_count}회 · 출처 보호자`,
+    // 🚨 서버 문구다. 근거 종류마다 뜻이 달라서 화면이 조립하지 않는다 (`Evidence.note` 참고).
+    note: `반복 ${a.observation_count}회 · 출처 보호자`,
   };
 }
 
@@ -483,7 +483,7 @@ const mealEvidence: Evidence = {
   label: "오늘 급식: 계란말이, 미역국, 김",
   observed_to: daysAgo(0),
   confidence_source: "institution_notice",
-  detail: "어린이집에서 받음 · 기관 기록 · 오늘",
+  note: "어린이집에서 받음 · 기관 기록 · 오늘",
 };
 
 const safetyEvidence: Evidence = {
@@ -491,7 +491,7 @@ const safetyEvidence: Evidence = {
   label: "알레르기 제한 없음",
   observed_to: daysAgo(0),
   confidence_source: "parent_direct",
-  detail: "규칙 확인 · 보호자 입력값",
+  note: "규칙 확인 · 보호자 입력값",
 };
 
 /** 🚨 evidence 0건인 suggestion 은 만들지 않는다 — 그건 서버가 버리고 scarcity 로 내린다. */

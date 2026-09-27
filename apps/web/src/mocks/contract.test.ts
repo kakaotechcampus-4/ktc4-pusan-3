@@ -270,6 +270,22 @@ describe("일정 초안", () => {
     ).toBeUndefined();
   });
 
+  it("🚨 개인화 추천의 근거마다 화면에 나갈 문구가 붙어 온다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const data = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+
+    /**
+     * 🚨 `suggestion_evidence.note` 는 **Agent 가 쓰고 보호자 화면에 그대로 나간다**
+     *    (`docs/agents/data_model.md` · 2026-09-25). 비면 그 후보를 서버가 거절하므로
+     *    화면에 도달할 수 없다 — 화면이 대신 문장을 만들면 **거절됐어야 할 후보를 UI 가 덮는다.**
+     *    타입은 `note: string` 까지만 보고 **빈 문자열은 못 본다.** 그래서 여기서 건다.
+     */
+    for (const suggestion of data.suggestions) {
+      expect(suggestion.evidence.length).toBeGreaterThan(0);
+      for (const item of suggestion.evidence) expect(item.note.trim()).not.toBe("");
+    }
+  });
+
   it("🚨 일자 없이 제출하면 막는다 — 화면이 잠그는 것과 같은 규칙을 계약도 건다", async () => {
     const body = { ...draftBody(), event: { ...draftBody().event, starts_at: null } };
 

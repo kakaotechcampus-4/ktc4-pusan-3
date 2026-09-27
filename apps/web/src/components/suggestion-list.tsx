@@ -7,8 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import { CONFIDENCE_LABEL } from "@/lib/confidence";
-import { formatDay } from "@/lib/format";
 
 /**
  * 05 제안 후보 목록 — **한 결정에 대한 대안 셋.**
@@ -289,7 +287,7 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
           <li key={`${item.ref.kind}:${item.ref.id}`}>
             <p className="text-body-sm text-ink">{item.label}</p>
             <p className="text-caption text-ink-subtle mt-0.5">
-              {evidenceDetail(item)}
+              {item.note}
               {/* 🚨 6개월 지난 근거는 단독으로 쓰지 않는다 (NF-08) — 그 사실을 글자로 말한다.
                   색·점선 하나로는 단독 신호가 되고, 이 목록엔 칩이 없어서 얹을 자리도 없다. */}
               {item.is_stale ? " · 6개월이 지난 기록이에요" : ""}
@@ -299,16 +297,4 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
       </ul>
     </div>
   );
-}
-
-/**
- * 🚨 **서버가 준 설명이 있으면 그것뿐이다.** 없을 때만 화면이 가진 값으로 만든다 —
- *    ISO 날짜를 한국어 표기로 바꾸고 출처 enum 을 라벨로 옮기는 것이라 **조립이지 계산이 아니다**
- *    (`lib/format.ts` 머리말과 같은 선). 반복 횟수처럼 없는 값은 만들지 않는다.
- */
-function evidenceDetail(item: Evidence): string {
-  if (item.detail) return item.detail;
-  return [formatDay(item.observed_to), CONFIDENCE_LABEL[item.confidence_source]]
-    .filter(Boolean)
-    .join(" · ");
 }
