@@ -14,10 +14,22 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.agents.common.llm_client import LLMAuthError, LLMConfigError, LLMError
 from app.agents.curator.embedding.ports import CuratorDomain
 
 NONE = "none"
 UNCERTAIN = "uncertain"
+RESERVED = frozenset({NONE, UNCERTAIN})  # 후보 이름으로 쓰이면 답을 구분할 수 없다
+
+
+class JudgeQuotaError(LLMError):
+    """판정 계정 잔액 · 한도 소진. 이번 실행 안에서는 풀리지 않는다."""
+
+
+# 계정 문제라 이번 실행 안에서 어떤 관찰로 불러도 같은 결과가 나오는 오류.
+# 연결 단계는 이 중 하나가 나면 남은 관찰에 판정기를 더 부르지 않는다 (호출만 쌓이고 모두 실패한다).
+# 요청 거절(LLMBadRequestError)은 넣지 않는다 — 그 관찰의 입력 때문일 수 있어 다른 관찰은 된다
+STOP_ERRORS: tuple[type[LLMError], ...] = (LLMAuthError, LLMConfigError, JudgeQuotaError)
 
 # 판단 기준 문장. 실험 3 · 4 에서 검증한 문장(v1)과 글자까지 같아야 한다
 # (tests/unit/agents/curator/test_judge.py 가 확인). 바꾸면 실험을 다시 돌린다.

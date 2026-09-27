@@ -21,7 +21,13 @@ from app.agents.common.llm_client import (
     LLMRateLimitError,
     LLMUnavailableError,
 )
-from app.agents.curator.embedding.judge import NONE, PROMPT, UNCERTAIN, JudgeAnswer
+from app.agents.curator.embedding.judge import (
+    NONE,
+    PROMPT,
+    UNCERTAIN,
+    JudgeAnswer,
+    JudgeQuotaError,
+)
 from app.agents.curator.embedding.ports import CuratorDomain
 
 logger = logging.getLogger(__name__)
@@ -111,7 +117,7 @@ def _raise_for_status(status: int) -> None:
     if status in (401, 403):
         raise LLMAuthError(f"판정 인증 실패 (HTTP {status}). CURATOR_JUDGE_API_KEY 를 확인한다.")
     if status == 402:
-        raise LLMError("판정 계정 잔액 부족 (HTTP 402).")
+        raise JudgeQuotaError("판정 계정 잔액 부족 (HTTP 402).")
     if status == 429:
         raise LLMRateLimitError("판정 rate limit 초과 (HTTP 429).")
     if status >= 500:
