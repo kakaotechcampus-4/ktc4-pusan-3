@@ -1,0 +1,73 @@
+# 실험 5 최종 확인용 쌍. 5a 에서 고른 방식 하나를 한 번만 평가한다.
+#
+# 🚨 5a 결과를 보기 전에 정답을 확정하고 커밋한다. 이 결과로 방식을 다시 고르지 않는다.
+#    지금까지 쓴 데이터(pairs_tune · pairs_holdout · scenarios_holdout · pairs_ambiguous ·
+#    scale_tune)와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+#
+# 정답은 "애매한 대상의 동일성 기준 — 팀 논의"(Notion) 에서 정한 기준을 따른다.
+#   same  동의어 · 오타 · 띄어쓰기 · 범위를 좁히지 않는 말
+#   near  다른 대상. 원재료–가공품(A) · 넓은/좁은 개념(D) · 비슷한 활동(F) · 범위를 좁히는 말(G) 포함
+#   unrelated  같은 도메인 안의 무관한 대상
+# 이름만으로 구분 어려운 쌍(Memory Agent 에서 구분하기로 한 유형)은 넣지 않는다.
+#
+# 형식: 도메인 | 정답 | subject A | subject B
+
+# ── food ──
+food | same | 토마토 | 도마도
+food | same | 파인애플 | 파인애풀
+food | same | 메론 | 멜론
+food | same | 소보로빵 | 소보루빵
+food | same | 부침개 | 지짐이
+food | same | 닭강정 | 닭 강정
+
+food | near | 토마토 | 가지
+food | near | 파인애플 | 코코넛
+food | near | 멜론 | 복숭아
+food | near | 소보로빵 | 크림빵
+food | near | 부침개 | 만두
+food | near | 닭강정 | 닭꼬치
+food | near | 파인애플 | 파인애플주스
+food | near | 토마토 | 대추토마토
+
+food | unrelated | 토마토 | 닭꼬치
+food | unrelated | 복숭아 | 만두
+food | unrelated | 코코넛 | 소보로빵
+
+# ── activity ──
+activity | same | 줄다리기 | 줄 다리기
+activity | same | 캐치볼 | 캣치볼
+activity | same | 하모니카 | 하모니까
+activity | same | 스케이트보드 | 스케보
+activity | same | 물감놀이 | 물감 놀이
+activity | same | 구슬치기 | 구슬 치기
+
+activity | near | 줄다리기 | 달리기
+activity | near | 캐치볼 | 피구
+activity | near | 하모니카 | 리코더
+activity | near | 스케이트보드 | 인라인스케이트
+activity | near | 물감놀이 | 핑거페인팅
+activity | near | 구슬치기 | 공기놀이
+activity | near | 썰매 | 눈썰매장
+
+activity | unrelated | 줄다리기 | 하모니카
+activity | unrelated | 캐치볼 | 물감놀이
+activity | unrelated | 구슬치기 | 썰매
+
+# ── education ──
+education | same | 시계 보기 | 시계 읽기
+education | same | 그림일기 | 그림 일기
+education | same | 동물 소리 | 동물 울음소리
+education | same | 감정 카드 | 감정카드
+education | same | 한글 받침 | 받침
+
+education | near | 시계 보기 | 달력 보기
+education | near | 그림일기 | 독서록
+education | near | 동물 소리 | 동물 흉내
+education | near | 감정 카드 | 표정 그리기
+education | near | 받침 | 자음
+education | near | 로봇 코딩 | 블록 코딩
+education | near | 로봇 코딩 | 코딩 로봇
+
+education | unrelated | 시계 보기 | 동물 소리
+education | unrelated | 그림일기 | 로봇 코딩
+education | unrelated | 받침 | 감정 카드
