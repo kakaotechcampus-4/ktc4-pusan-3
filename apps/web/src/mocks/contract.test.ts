@@ -11,7 +11,16 @@ import {
   submitOnboarding,
   uploadPhoto,
 } from "@/lib/api/operations";
-import { streamRunEvents, type LaneEvent, type ParsedEvent } from "@/lib/api/sse";
+import {
+  streamRunEvents,
+  type GuidanceEvent,
+  type LaneEvent,
+  type NoteEvent,
+  type OfferEvent,
+  type ParsedEvent,
+  type RunEvent,
+  type UnavailableEvent,
+} from "@/lib/api/sse";
 import { toISODate } from "@/lib/format";
 import { api } from "@/lib/api/client";
 import type {
@@ -216,6 +225,142 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       expect((last?.data as { raw_text: string }).raw_text).toBe(text);
       // 저장된 게 없으니 saved 가 있으면 안 된다 (CLAUDE.md §4 — 다음 칸으로 전파하지 않는다).
       expect(events.map((e) => e.type)).not.toContain("saved");
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/* ── 04 안내 · 되묻기 · 준비 중 (#141) ───────────────────────────────── */
+
+describe("⑳ 안내는 실패가 아니다", () => {
+  /** 한 줄을 보내고 그 run 의 이벤트를 전부 모은다. */
+  async function runOf(text = "지어낸 한 줄"): Promise<RunEvent[]> {
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text, source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    const events: RunEvent[] = [];
+    for await (const event of streamRunEvents(run_id)) events.push(event);
+    return events;
+  }
+
+  it("ping 이 와도 스트림은 그대로 done 까지 간다", async () => {
+    const events = await runOf();
+    // 🚨 `:` 주석이 아니라 이벤트여야 한다 — parseFrame 이 data 없는 프레임을 버려서
+    //    주석으로는 20초 타이머가 안 되살아난다 (#140).
+    expect(events.map((e) => e.type)).toContain("ping");
+    expect(events.at(-1)?.type).toBe("done");
+  });
+
+  it("guidance 만 나간 run 은 저장 없이 done 으로 끝난다", async () => {
+    setScenario("guidance");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("guidance");
+      // 🚨 실패로 끝나지 않는다. 안내는 run 을 멈추지 않는다 (#141).
+      expect(types).not.toContain("failed");
+      expect(events.at(-1)?.type).toBe("done");
+      // 🚨 알레르기는 LLM 이 저장하지 않는다 (최상위 §2) — 그래서 saved 가 없는 것이 정상이다.
+      expect(types).not.toContain("saved");
+
+      const guidance = events.find((e) => e.type === "guidance")?.data as GuidanceEvent;
+      expect(guidance.code).toBe("safety_record");
+      expect(guidance.message.length).toBeGreaterThan(0);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("🚨 섞인 한 줄은 안내와 저장이 같이 온다 — 안내가 저장을 감추면 안 된다", async () => {
+    // "계란 잘 먹었어. 그리고 땅콩 알레르기 있어" — 앞은 저장되고 뒤는 안내로 돌아간다.
+    setScenario("guidance_mixed");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("guidance");
+      expect(types).toContain("saved");
+      // 안내는 라우팅이 내므로 Memory 의 저장보다 먼저다 (`pipeline.py`).
+      expect(types.indexOf("guidance")).toBeLessThan(types.indexOf("saved"));
+      expect(types).not.toContain("failed");
+      expect(events.at(-1)?.type).toBe("done");
+
+      // 🚨 같은 안내인데 두 시나리오가 다른 문구를 내면 화면이 두 경우를 다르게 그린다.
+      const guidance = events.find((e) => e.type === "guidance")?.data as GuidanceEvent;
+      expect(guidance.code).toBe("safety_record");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("unavailable 은 저장보다 먼저 오고, 저장을 지우지 않는다", async () => {
+    setScenario("unavailable");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      // 🚨 **이 순서가 요점이다.** 서버도 라우팅 직후 Memory 보다 먼저 보낸다 — 화면이 이걸
+      //    실패로 받아 버리면 바로 뒤에 오는 저장이 화면에서 사라진다 (NF-06 · 최상위 §2).
+      expect(types.indexOf("unavailable")).toBeLessThan(types.indexOf("saved"));
+      expect(types).toContain("saved");
+      expect(types).not.toContain("failed");
+      expect(events.at(-1)?.type).toBe("done");
+
+      const unavailable = events.find((e) => e.type === "unavailable")?.data as UnavailableEvent;
+      expect(unavailable.agents).toEqual(["activity"]);
+
+      // 🚨 준비 중이라고 말한 Agent 를 같은 화면에서 다시 권하지 않는다.
+      const offer = events.find((e) => e.type === "offer")?.data as OfferEvent | undefined;
+      expect(offer?.options.map((o) => o.agent)).not.toContain("activity");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("되묻기만 있는 run 도 done 으로 끝난다 — 화면이 그릴 것은 질문 하나다", async () => {
+    setScenario("note_question");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("note");
+      expect(types).not.toContain("saved");
+      expect(events.at(-1)?.type).toBe("done");
+
+      // 🚨 `kind` 가 없으면 화면은 질문으로 취급하지 않는다 (`sse.ts`) — 되묻기 동선이 통째로
+      //    사라지므로, 목이 이 필드를 빠뜨리면 여기서 잡힌다.
+      const note = events.find((e) => e.type === "note")?.data as NoteEvent;
+      expect(note.kind).toBe("question");
+      expect(note.text.length).toBeGreaterThan(0);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
+  it("같은 키로 다시 보내도 계속 429 다", async () => {
+    setScenario("daily_limit");
+    try {
+      const key = newIdempotencyKey();
+      const body = { text: "지어낸 한 줄", source: "home_input" as const };
+
+      for (const attempt of [1, 2]) {
+        // 🚨 4xx 는 래퍼가 저장하지 않으므로(`isReplayable`) 핸들러가 다시 돌고 또 429 다 —
+        //    화면에 "다시 시도" 버튼을 세우면 누를 때마다 같은 실패를 받는다 (#147).
+        const failure = await api
+          .post(idempotentPath.input("c1"), body, { idempotencyKey: key })
+          .then(() => null)
+          .catch((e: unknown) => e);
+
+        expect(isApiError(failure, "daily_input_limit"), `${attempt}번째 시도`).toBe(true);
+        expect((failure as ApiError).status).toBe(429);
+      }
     } finally {
       setScenario("default");
     }
