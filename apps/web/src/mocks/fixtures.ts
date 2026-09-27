@@ -11,6 +11,7 @@
 
 import type {
   Affinity,
+  Agent,
   CalendarDay,
   CalendarEvent,
   Evidence,
@@ -26,6 +27,7 @@ import type {
   ObservationHealth,
   ObservationPromotable,
   Suggestion,
+  SuggestionGroup,
 } from "@/lib/api/types";
 
 /* ── 날짜 ─────────────────────────────────────────────────────────────── */
@@ -470,60 +472,96 @@ function evidenceFrom(a: Affinity): Evidence {
 }
 
 /** 🚨 evidence 0건인 suggestion 은 만들지 않는다 — 그건 서버가 버리고 scarcity 로 내린다. */
+/**
+ * 🚨 **한 Agent 가 3가지씩 낸다.** 저녁 제안으로 김치찌개·계란말이·멸치볶음처럼, 셋은 서로 다른
+ *    제안이 아니라 **한 결정에 대한 대안**이다. Agent 는 최대 2개라(NF-01) 여기 6건이 담긴다.
+ *
+ * 🚨 **한 Agent 의 후보가 하나뿐이면 화면이 거짓말을 해도 안 들킨다** — "3가지 중에서" 머리줄도,
+ *    `food` 묶기도, 대안 사이에 기본 선택을 만들지 않는다는 규칙도 전부 후보가 여럿일 때만 돈다.
+ */
+function personalized(
+  id: string,
+  agent: Agent,
+  content: string,
+  whyThis: string,
+  whyNow: string,
+  affinity: Affinity,
+): Suggestion {
+  return {
+    id,
+    child_id: CHILD_ID,
+    agent,
+    kind: "personalized",
+    content,
+    reason: { why_this: whyThis, why_now: whyNow },
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    feedback: null,
+    source_refs: [{ kind: "profile_affinity", id: affinity.id }],
+    evidence: [evidenceFrom(affinity)],
+  };
+}
+
 export const suggestions: Suggestion[] = [
-  {
-    id: "s_1",
-    child_id: CHILD_ID,
-    agent: "food",
-    kind: "personalized",
-    content: "계란말이에 시금치를 조금 섞어 보세요",
-    reason: {
-      why_this: "계란 반찬을 서로 다른 3일에 찾았어요",
-      why_now: "오늘 급식에 계란 반찬이 없어요",
-    },
-    status: "draft",
-    expires_at: hoursFromNow(24),
-    feedback: null,
-    source_refs: [{ kind: "profile_affinity", id: "a_12" }],
-    evidence: [evidenceFrom(affinities[0])],
-  },
-  {
-    id: "s_2",
-    child_id: CHILD_ID,
-    agent: "activity",
-    kind: "personalized",
-    content: "주말에 실내 물놀이장은 어떨까요",
-    reason: {
-      why_this: "물놀이에서 오래 머물렀어요",
-      why_now: "이번 주말 일정이 비어 있어요",
-    },
-    status: "draft",
-    expires_at: hoursFromNow(24),
-    feedback: null,
-    source_refs: [{ kind: "profile_affinity", id: "a_20" }],
-    evidence: [evidenceFrom(affinities[1])],
-  },
-  /**
-   * 🚨 **식사 제안이 둘인 이유.** 05 는 여러 개를 고를 수 있고, 고른 `food` 제안들은 서버가
-   *    **한 끼로 묶어** 초안 1건으로 내려준다 — 식사가 하나뿐이면 그 규칙이 목에서 한 번도
-   *    돌지 않아, 묶기가 깨져도 화면이 멀쩡해 보인다.
-   */
-  {
-    id: "s_3",
-    child_id: CHILD_ID,
-    agent: "food",
-    kind: "personalized",
-    content: "두부를 부쳐서 한 조각 곁들여 보세요",
-    reason: {
-      why_this: "두부 반찬을 남기지 않았어요",
-      why_now: "오늘 급식에 단백질 반찬이 적어요",
-    },
-    status: "draft",
-    expires_at: hoursFromNow(24),
-    feedback: null,
-    source_refs: [{ kind: "profile_affinity", id: "a_12" }],
-    evidence: [evidenceFrom(affinities[0])],
-  },
+  // 저녁 반찬 3가지 — 고르면 "저녁 식사" 한 건으로 묶인다.
+  personalized(
+    "s_1",
+    "food",
+    "계란말이에 시금치를 조금 섞어 보세요",
+    "계란 반찬을 서로 다른 3일에 찾았어요",
+    "오늘 급식에 계란 반찬이 없어요",
+    affinities[0],
+  ),
+  personalized(
+    "s_2",
+    "food",
+    "두부를 부쳐서 한 조각 곁들여 보세요",
+    "두부 반찬을 남기지 않았어요",
+    "오늘 급식에 단백질 반찬이 적어요",
+    affinities[0],
+  ),
+  personalized(
+    "s_3",
+    "food",
+    "멸치볶음을 간을 약하게 해서 조금만",
+    "짠 반찬은 한 번에 조금씩 먹었어요",
+    "이번 주에 멸치 반찬이 없었어요",
+    affinities[0],
+  ),
+  // 주말 놀이 3가지.
+  personalized(
+    "s_4",
+    "activity",
+    "주말에 실내 물놀이장은 어떨까요",
+    "물놀이에서 오래 머물렀어요",
+    "이번 주말 일정이 비어 있어요",
+    affinities[1],
+  ),
+  personalized(
+    "s_5",
+    "activity",
+    "집 앞 놀이터에서 30분만 뛰어 보세요",
+    "바깥 놀이 뒤에 잘 잤어요",
+    "이번 주말 일정이 비어 있어요",
+    affinities[1],
+  ),
+  personalized(
+    "s_6",
+    "activity",
+    "블록으로 높이 쌓기를 해 보세요",
+    "손을 쓰는 놀이를 오래 했어요",
+    "비 소식이 있어요",
+    affinities[1],
+  ),
+];
+
+/**
+ * 묶음 머리말. 🚨 **문구는 서버가 만든다** — 무엇을 정하는 중인지는 후보를 만든 쪽만 안다.
+ * 🚨 `food` 만 `merges_into_one` 이다. 반찬 셋을 골라도 "저녁 식사" 한 건이 된다.
+ */
+export const suggestionGroups: SuggestionGroup[] = [
+  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true },
+  { agent: "activity", prompt: "주말에 뭐 하고 놀까요" },
 ];
 
 /**

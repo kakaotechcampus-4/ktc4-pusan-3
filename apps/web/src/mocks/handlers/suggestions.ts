@@ -7,6 +7,7 @@ import {
   mealDraft,
   staleSuggestion,
   suggestionDraft,
+  suggestionGroups,
   suggestions,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -60,6 +61,8 @@ export const suggestionHandlers = [
     if (scenario === "stale") {
       return HttpResponse.json({
         suggestions: [staleSuggestion],
+        // 묶음 머리말은 살아 있는 Agent 것만 온다 — 여기선 food 가 guard 에 막혀 activity 하나다.
+        groups: suggestionGroups.filter((g) => g.agent === staleSuggestion.agent),
         looked_at: "오늘 급식 · 확정 관심 0건",
         guards: [
           {
@@ -74,8 +77,12 @@ export const suggestionHandlers = [
     }
 
     // partial 이면 실패한 Agent 의 제안은 빠진 채로 온다. 화면은 성공한 쪽을 그린다.
+    // partial 이면 실패한 Agent 의 제안은 빠진 채로 온다 — 묶음 머리말도 같이 빠진다.
+    const alive =
+      scenario === "partial" ? suggestions.filter((s) => s.agent === "food") : suggestions;
     return HttpResponse.json({
-      suggestions: scenario === "partial" ? [suggestions[0]] : suggestions,
+      suggestions: alive,
+      groups: suggestionGroups.filter((g) => alive.some((s) => s.agent === g.agent)),
       looked_at: "오늘 급식 · 최근 3일 식사 · 확정 관심 2건",
       guards: [],
       scarcity: null,

@@ -133,6 +133,18 @@ function SuggestionsScreen() {
 
   const dismissedCount = (data?.suggestions ?? []).filter((s) => dismissed.includes(s.id)).length;
 
+  /**
+   * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
+   *    보호자가 둘을 맞춰 읽어야 한다.
+   */
+  const pickedByAgent = visible.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
+    if (!selectedIds.includes(s.id)) return acc;
+    const found = acc.find((g) => g.agent === s.agent);
+    if (found) found.count += 1;
+    else acc.push({ agent: s.agent, count: 1 });
+    return acc;
+  }, []);
+
   // 줄이 사라진 자리를 대신 받는다. 방금 접었을 때만 옮기고, 되돌리면 다시 목록으로 돌아간다.
   const dismissNoticeRef = useRef<HTMLDivElement>(null);
   const lastDismissed = useRef(0);
@@ -210,6 +222,7 @@ function SuggestionsScreen() {
           그 자리에서 연다 — 밤에 한 손으로 여는 화면에서 "둘 다 읽고 고르기" 는 인지 노동이다. */}
       <SuggestionList
         suggestions={visible}
+        groups={data?.groups ?? []}
         selectedIds={selectedIds}
         busy={createDrafts.isPending}
         onToggleSelect={(suggestion) =>
@@ -231,11 +244,17 @@ function SuggestionsScreen() {
       {visible.some((s) => s.agent !== "health") ? (
         <Card>
           <p className="text-section text-ink">이렇게 준비할게요</p>
+          {/* 🚨 **묶음별로 센다.** "3건" 만 말하면 보호자는 무엇을 셋 골랐는지 되짚어야 한다 —
+              대안이 Agent 당 셋이라 "식사 2가지 · 놀이 1가지" 가 실제로 고른 모양이다. */}
           <dl className="mt-3 flex flex-col gap-2">
             <div className="flex gap-2">
               <dt className="text-label text-ink-subtle w-14 shrink-0">고른 것</dt>
               <dd className="text-body-sm text-ink">
-                {selectedIds.length > 0 ? `${selectedIds.length}건` : "아직 없음"}
+                {selectedIds.length === 0
+                  ? "아직 없음"
+                  : pickedByAgent
+                      .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
+                      .join(" · ")}
               </dd>
             </div>
           </dl>
@@ -269,7 +288,9 @@ function SuggestionsScreen() {
               ? "준비하는 중이에요"
               : selectedIds.length === 0
                 ? "고른 것이 없어요"
-                : `고른 ${selectedIds.length}건으로 일정 만들기`}
+                : // 🚨 단위를 섞지 않는다 — 제안은 "가지"(한 결정의 대안), 일정은 "건" 이다.
+                  //    같은 화면에서 "3건 고름 → 일정 2건" 이 되면 같은 단위가 두 뜻을 나른다.
+                  `고른 ${selectedIds.length}가지로 일정 만들기`}
           </Button>
         </Card>
       ) : null}

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import type { Evidence, Suggestion } from "@/lib/api/types";
+import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
 /**
@@ -53,15 +53,47 @@ import { cn } from "@/lib/cn";
  *
  * 🚨 **일반 추천(`card-general`)을 이 컴포넌트에 플래그로 넣지 않는다** (CLAUDE.md §2).
  *    개인화와 일반이 한 컴포넌트가 되는 순간 근거 0건이 개인화로 그려질 길이 생긴다.
+ *
+ * ## 🚨 **Agent 마다 한 묶음이다. 평평한 목록이 아니다**
+ *
+ * 한 Agent 가 후보를 **3가지씩** 낸다 (저녁 제안으로 김치찌개 · 계란말이 · 멸치볶음).
+ * Agent 는 최대 2개라(NF-01) 화면에 여섯 줄이 서는데, **그 셋은 서로 다른 제안이 아니라 한
+ * 결정에 대한 대안**이다. 한 덩어리로 늘어놓으면 보호자는 여섯 개의 독립 제안으로 읽고,
+ * "지금 무엇을 정하는 중인가" 가 사라진다 — 그래서 묶음이 1차 구조다.
+ *
+ * 🚨 **묶음 안에서는 줄의 도메인 칩을 빼고 머리줄이 진다.** 디자인 시스템 §7 의 `suggestion-row`
+ *    는 "접히면 도메인 칩 + 제안 문장 + 기록 건수" 인데, 그건 후보가 Agent 당 하나씩이라 **줄마다
+ *    도메인이 달랐을 때**의 사양이다. 지금은 묶음 안이 전부 같은 도메인이라 줄의 칩이 나르는
+ *    정보가 0이고, 같은 칩이 셋씩 반복되면 훑는 눈이 매번 그것을 지나쳐야 한다.
+ *    색은 여전히 남는다 — **열린 줄의 면**이 도메인 색이다.
+ *
+ * 🚨 **묶음 머리줄에 브랜드를 쓰지 않는다.** 디자인 시스템 §7 의 "구역 머리줄" 은 라벨을
+ *    `label`/`brand` 로 정해 뒀지만, 이 화면의 구역은 **도메인**이고 도메인 색이 이미 그 구분을
+ *    진다. 초록을 얹으면 "어디서 왔나"(도메인)와 브랜드가 같은 줄에서 겹쳐 색 하나가 두 뜻을
+ *    나르게 된다 (§2-2). 머리줄이 쓰는 것은 `DomainChip` 과 뉴트럴 잉크다.
+ *
+ * 🚨 **시작할 때 아무 줄도 열지 않는다.** 후보가 Agent 당 하나였을 때는 첫 줄을 열어 뒀는데,
+ *    **대안이 셋이 되면 열어 둔 하나가 추천처럼 보인다** — 셋은 동등해야 한다.
+ *    접힌 줄도 제안 문장과 기록 건수를 지고 있어 훑기는 그대로 된다.
+ *    (방향 계약의 FIRST VIEWPORT 는 후보가 1개씩이던 때 쓴 것이라 여기서 갈라진다.)
+ *
+ * 🚨 **열리는 줄은 화면 전체에서 하나다.** 묶음마다 하나씩 열면 도메인 색 면이 둘 서고,
+ *    "한 화면에 도메인 색 2개" 상한(§3)이 칩이 아니라 **면**으로 채워진다.
  */
 export function SuggestionList({
   suggestions,
+  groups,
   selectedIds,
   onToggleSelect,
   busy,
   onReject,
 }: {
   suggestions: Suggestion[];
+  /**
+   * 묶음 머리말. ⚠️ 서버가 안 보내면 빈 배열이고, 그때 머리줄은 **도메인 라벨만** 쓴다 —
+   *    "오늘 저녁 뭐 먹을까요" 같은 문구도, "한 끼로 묶여요" 도 화면이 지어내지 않는다.
+   */
+  groups: SuggestionGroup[];
   /** 지금 고른 제안. 🚨 **여러 개다** — 고른 것을 한 번에 일정으로 만든다. */
   selectedIds: string[];
   onToggleSelect: (suggestion: Suggestion) => void;
@@ -81,38 +113,71 @@ export function SuggestionList({
   });
 
   /**
-   * 🚨 여는 줄을 `useState` **초기값**으로 잡지 않는다. 이 컴포넌트는 쿼리가 돌아오기 전에도
-   *    빈 배열로 한 번 렌더되는데, 그때 초기값이 `null` 로 굳어 **첫 줄이 영영 안 열렸다.**
-   *    상태는 "부모가 직접 고른 것" 만 들고, 실제로 열 줄은 렌더마다 파생한다.
-   *
-   *    `undefined` = 아직 아무것도 안 눌렀다(첫 줄을 연다) · `null` = 부모가 닫았다(전부 접힘) ·
-   *    문자열 = 그 줄. 열어 둔 줄이 "안 할래요" 로 사라지면 남은 첫 줄로 돌아간다.
+   * 열려 있는 줄. 🚨 **처음엔 아무것도 안 연다** (위 머리말) — 대안이 셋인데 하나를 열어 두면
+   *    그것이 추천처럼 보인다. 🚨 화면 전체에서 하나만 열린다 (도메인 색 면이 하나여야 한다).
    */
-  const [chosenId, setChosenId] = useState<string | null | undefined>(undefined);
-  const fallbackId = drawable[0]?.id ?? null;
-  const openId =
-    chosenId === undefined || (chosenId !== null && !drawable.some((s) => s.id === chosenId))
-      ? fallbackId
-      : chosenId;
+  const [chosenId, setChosenId] = useState<string | null>(null);
+  // 열어 둔 줄이 "안 할래요" 로 사라지면 전부 접힌 상태로 돌아간다.
+  const openId = chosenId !== null && drawable.some((s) => s.id === chosenId) ? chosenId : null;
 
   if (drawable.length === 0) return null;
 
+  /**
+   * 🚨 **순서는 서버가 준 순서다.** 화면이 도메인으로 정렬하지 않는다 — Supervisor 가 고른
+   *    Agent 순서에 "무엇을 먼저 묻는가" 가 들어 있다.
+   */
+  const order: Agent[] = [];
+  for (const s of drawable) if (!order.includes(s.agent)) order.push(s.agent);
+
   return (
-    <ul className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border">
-      {drawable.map((suggestion) => (
-        <li key={suggestion.id}>
-          <SuggestionRow
-            suggestion={suggestion}
-            open={openId === suggestion.id}
-            onToggle={() => setChosenId(openId === suggestion.id ? null : suggestion.id)}
-            selected={selectedIds.includes(suggestion.id)}
-            onToggleSelect={() => onToggleSelect(suggestion)}
-            busy={busy}
-            onReject={() => onReject(suggestion)}
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-6">
+      {order.map((agent) => {
+        const rows = drawable.filter((s) => s.agent === agent);
+        const group = groups.find((g) => g.agent === agent);
+        const chosen = rows.filter((s) => selectedIds.includes(s.id)).length;
+
+        return (
+          <section key={agent} className="flex flex-col gap-2">
+            {/* 🚨 머리줄은 **무엇을 정하는 중인가**를 말한다. 문구는 서버가 주고(`prompt`),
+                없으면 도메인 라벨만 쓴다 — 질문을 화면이 지어내지 않는다. */}
+            <div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <DomainChip agent={agent} />
+                <span className="text-caption text-ink-subtle">{rows.length}가지 중에서</span>
+              </div>
+              {group?.prompt ? (
+                <h3 className="text-section text-ink mt-1.5">{group.prompt}</h3>
+              ) : null}
+            </div>
+
+            <ul className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border">
+              {rows.map((suggestion) => (
+                <li key={suggestion.id}>
+                  <SuggestionRow
+                    suggestion={suggestion}
+                    open={openId === suggestion.id}
+                    onToggle={() => setChosenId(openId === suggestion.id ? null : suggestion.id)}
+                    selected={selectedIds.includes(suggestion.id)}
+                    onToggleSelect={() => onToggleSelect(suggestion)}
+                    busy={busy}
+                    onReject={() => onReject(suggestion)}
+                  />
+                </li>
+              ))}
+            </ul>
+
+            {/* 🚨 **묶인다는 것을 고르기 전에 말한다.** 셋을 고르고 일정 1건이 나오면 놀란다.
+                🚨 서버가 `merges_into_one` 을 안 보내면 **아무 말도 하지 않는다** — 어느 Agent 가
+                   묶이는지는 도메인 지식이라 화면이 알 수 없다. */}
+            {group?.merges_into_one && chosen > 1 ? (
+              <p role="status" className="text-body-sm text-ink-muted">
+                고른 {chosen}가지는 일정 하나로 묶여요.
+              </p>
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
@@ -180,11 +245,12 @@ function SuggestionRow({
             !open && domainPress(suggestion.agent),
           )}
         >
-          {/* 메타 줄 — 어느 Agent 인지와, 접혀 있는 동안 근거가 있다는 사실.
+          {/* 메타 줄 — 접혀 있는 동안 근거가 있다는 사실.
+            🚨 **도메인 칩은 묶음 머리줄이 진다** (위 머리말). 묶음 안은 전부 같은 도메인이라
+               줄마다 되풀이하면 같은 칩이 셋씩 서고, 훑는 눈이 매번 그것을 지나쳐야 한다.
             🚨 건수를 열린 줄에는 달지 않는다. 아래 칸이 근거를 실물로 보여주므로 두 번 말하게 된다 —
                건수는 **접혀 있는 동안** 그 사실을 지키려고 있는 것이다. */}
           <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-1">
-            <DomainChip agent={suggestion.agent} onField={onField} />
             {isHealth ? (
               <span className={cn("text-caption", onField ? ink : "text-ink-subtle")}>
                 참고용이에요. 진단이 아니에요

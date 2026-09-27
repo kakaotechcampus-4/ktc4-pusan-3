@@ -24,6 +24,7 @@ import { api } from "@/lib/api/client";
 import type {
   Affinity,
   AffinitiesResponse,
+  Agent,
   AuthSession,
   ChildParentsResponse,
   ConsentResponse,
@@ -49,6 +50,8 @@ import type {
   SafetyScanResponse,
   EventDraft,
   SubmitEventBody,
+  SuggestionsRequest,
+  SuggestionsResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
@@ -180,8 +183,18 @@ describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
 describe("일정 초안", () => {
   const makeDrafts = (ids: string[]) => createEventDrafts("c1", { suggestion_ids: ids });
 
+  /**
+   * 🚨 **제안 id 를 테스트에 박지 않는다.** 한 Agent 가 3가지씩 내게 되면서 픽스처 번호가 밀렸고,
+   *    `s_2` 를 놀이로 박아 뒀던 테스트가 조용히 식사를 고르고 있었다 — 픽스처에서 뽑는다.
+   */
+  const firstOf = (agent: Agent) => {
+    const found = suggestions.find((s) => s.agent === agent);
+    if (!found) throw new Error(`픽스처에 ${agent} 제안이 없다`);
+    return found.id;
+  };
+
   it("초안을 만드는 호출은 저장된 event 가 아니라 초안을 준다 — 아직 행이 아니다", async () => {
-    const created = await makeDrafts(["s_1"]);
+    const created = await makeDrafts([firstOf("food")]);
 
     // 🚨 id · status · expires_at 이 없다. 있으면 DB 에 쓴 것이고, 그건 승인 게이트를 건너뛴 것이다.
     expect(created.drafts.length).toBeGreaterThan(0);
@@ -195,7 +208,7 @@ describe("일정 초안", () => {
   });
 
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
-    const created = await makeDrafts(["s_1"]);
+    const created = await makeDrafts([firstOf("food")]);
     for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();
   });
 
@@ -217,8 +230,8 @@ describe("일정 초안", () => {
   });
 
   it("🚨 사전검사는 food 제안에만 붙고, 어느 초안 것인지 말한다", async () => {
-    const food = await makeDrafts(["s_1"]);
-    const activity = await makeDrafts(["s_2"]);
+    const food = await makeDrafts([firstOf("food")]);
+    const activity = await makeDrafts([firstOf("activity")]);
 
     const check = food.prechecks.find((p) => p.code === "unknown_ingredient");
     expect(check).toBeDefined();
@@ -230,6 +243,31 @@ describe("일정 초안", () => {
 
     // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 뜨면 안 된다.
     expect(activity.prechecks).toHaveLength(0);
+  });
+
+  it("🚨 Agent 마다 후보가 여럿이고, 묶음 머리말이 함께 온다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const data = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+
+    const byAgent = new Map<string, number>();
+    for (const s of data.suggestions) byAgent.set(s.agent, (byAgent.get(s.agent) ?? 0) + 1);
+
+    /**
+     * 🚨 한 Agent 가 **3가지씩** 낸다 — 그 셋은 서로 다른 제안이 아니라 한 결정에 대한 대안이다.
+     *    하나뿐이면 "3가지 중에서" 머리줄도 묶기도 화면에서 한 번도 돌지 않는다.
+     */
+    for (const [, count] of byAgent) expect(count).toBeGreaterThan(1);
+
+    // 🚨 머리말은 후보를 담지 않는다 — 묶는 것은 화면이 `agent` 로 한다.
+    for (const group of data.groups ?? []) {
+      expect(byAgent.has(group.agent)).toBe(true);
+      expect(group).not.toHaveProperty("suggestions");
+    }
+    // 🚨 `food` 만 묶인다. 이 값이 없으면 화면은 묶임을 **말하지 않는다**(지어내지 않는다).
+    expect((data.groups ?? []).find((g) => g.agent === "food")?.merges_into_one).toBe(true);
+    expect(
+      (data.groups ?? []).find((g) => g.agent === "activity")?.merges_into_one,
+    ).toBeUndefined();
   });
 
   it("🚨 일자 없이 제출하면 막는다 — 화면이 잠그는 것과 같은 규칙을 계약도 건다", async () => {
