@@ -48,6 +48,12 @@ class AgentLLMSettings(BaseSettings):
     EMBEDDING_BASE_URL: str = ""
     EMBEDDING_MODEL: str = ""
 
+    # Curator 동일 대상 판정 (OpenRouter Decisions API · Jev). 대화 모델이 아니라 AgentRole 밖
+    # 비어 있어도 서버는 뜬다 — 판정이 필요한 관찰만 연결을 미룬다
+    CURATOR_JUDGE_API_KEY: str = ""
+    CURATOR_JUDGE_BASE_URL: str = ""
+    CURATOR_JUDGE_MODEL: str = ""
+
     # 역할과 무관한 호출 튜닝값
     LLM_TIMEOUT_S: float = 60.0  # 한 번의 chat 호출 상한 (초)
     LLM_MAX_RETRIES: int = 2  # SDK 내부 재시도 (429, 5xx 대상)
