@@ -26,6 +26,11 @@ export const API_ERROR_CODES = [
   "invite_expired", // 410 코드 기한 만료
   "invite_not_found", // 404 없는 코드
   "too_many_attempts", // 429 🚨 코드 방식의 전제다 — 없으면 8자(40비트)가 뚫린다
+  // 🔶 429 `POST /children/{cid}/inputs` 하루 한도 (#147 · 계약서에 아직 없다). 한국 시간 자정
+  //    기준이고 횟수는 서버 설정값이라 바뀐다 — **화면이 숫자를 적지 않는다.**
+  //    🚨 다시 시도할 수 없는 429 다: 같은 본문은 같은 Idempotency-Key 로 나가서 자정까지 같은
+  //       응답이다. `too_many_attempts` 와 달리 기다림이 초 단위가 아니라 **날짜 단위**다.
+  "daily_input_limit",
   "validation_failed", // 422
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
 ] as const;

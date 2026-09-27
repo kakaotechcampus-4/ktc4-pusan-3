@@ -180,17 +180,7 @@ function HomeScreen() {
       bottomBar={
         <div className="flex flex-col gap-2">
           {submit.isError ? (
-            <CardFailed>
-              <p>{submit.error instanceof Error ? submit.error.message : "보내지 못했어요."}</p>
-              <Button
-                variant="tertiary"
-                size="compact"
-                className="mt-3"
-                onClick={() => submit.mutate()}
-              >
-                다시 시도
-              </Button>
-            </CardFailed>
+            <SubmitErrorCard error={submit.error} onRetry={() => submit.mutate()} />
           ) : null}
           <HomeComposer
             value={text}
@@ -255,6 +245,37 @@ function HomeScreen() {
         }}
       />
     </Screen>
+  );
+}
+
+/**
+ * 한 줄을 보내지 못했을 때 (#147).
+ *
+ * 🚨 **`daily_input_limit` 에는 "다시 시도" 를 두지 않는다.** 같은 본문은 같은 Idempotency-Key 로
+ *    나가고(`use-idempotency-key.ts`), 한도는 한국 시간 자정에 풀린다 — 버튼을 세워 두면 부모가
+ *    누를 때마다 같은 429 를 받는다. 누르면 같은 실패가 나오는 버튼을 만들지 않는다
+ *    (apps/web/CLAUDE.md §3 에러 — `consent_required` 를 일반 실패로 그리지 않는 것과 같은 이유다).
+ *
+ * 🚨 **문구는 서버 것을 그대로 쓴다.** 하루 몇 번인지는 서버 설정값이라 바뀐다 (#147) — 화면이
+ *    숫자를 따로 적으면 그날부터 둘이 어긋나고, 틀린 쪽은 언제나 화면이다.
+ */
+function SubmitErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const limited = isApiError(error, "daily_input_limit");
+
+  return (
+    <CardFailed>
+      <p>{error instanceof Error ? error.message : "보내지 못했어요."}</p>
+      {limited ? (
+        // 🚨 원문은 지우지 않는다 — 내일 이어서 보낼 한 줄이다 (`closeRun` 과 같은 규칙).
+        <p className="text-caption text-ink-subtle mt-2">
+          적어주신 말은 입력창에 그대로 남겨뒀어요.
+        </p>
+      ) : (
+        <Button variant="tertiary" size="compact" className="mt-3" onClick={onRetry}>
+          다시 시도
+        </Button>
+      )}
+    </CardFailed>
   );
 }
 
