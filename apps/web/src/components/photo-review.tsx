@@ -82,6 +82,7 @@ export interface PhotoReviewProps {
    *    서버가 보내는 `lane` 추측은 이 화면이 쓰지 않는다 — 계약서에 남아 있을 뿐이다.
    */
   lane: PhotoLane;
+  childId: string;
   parsed: ParsedEvent;
   /** 이 사진을 어느 날에 남기는지. 캘린더에서 들어왔으면 그날, 아니면 오늘이다. */
   date: string;
@@ -96,6 +97,7 @@ export interface PhotoReviewProps {
 
 export function PhotoReview({
   lane,
+  childId,
   parsed,
   date,
   onCommit,
@@ -111,6 +113,12 @@ export function PhotoReview({
   const [entries, setEntries] = useState<PhotoEntry[]>(() => parsed.entries ?? []);
   const [tags, setTags] = useState<string[]>([]);
   const [editing, setEditing] = useState<PhotoEntry | null>(null);
+  /**
+   * 이미 캘린더에 넣은 항목. 🚨 **저장(관찰)과 다른 축이다** — 일정은 고치기 시트의 승인 게이트가
+   *    그 자리에서 넣고, 아래 "이 내용으로 저장" 은 기록을 여러 건 한 번에 보낸다.
+   *    두 개를 한 상태로 묶으면 "일정만 넣고 기록은 안 남긴" 경우를 화면이 표현할 수 없다.
+   */
+  const [eventAdded, setEventAdded] = useState<string[]>([]);
   const [showChecked, setShowChecked] = useState(false);
 
   const copy = LANE[lane];
@@ -129,12 +137,17 @@ export function PhotoReview({
   const checked = entries.filter((e) => !e.needs_review);
 
   /**
-   * 🚨 **날짜를 만들지 않는다.** 문서는 확인된 항목이 들고 있는 날짜를, 활동은 화면이 들고 온
-   *    날짜를 그대로 쓴다 — 없으면 없는 대로 둔다 (apps/web/CLAUDE.md §4).
+   * 🚨 **`attach_to_calendar` 는 이제 활동 lane 만의 것이다** — 그 lane 에서는 "사진을 그날
+   *    캘린더에 함께 남길까" 라는 뜻이다 (계약서 §09 의 부수 효과 표).
+   *
+   * 🚨 **문서 lane 은 언제나 `false` 다.** 일정은 고치기 시트의 승인 게이트가 그 자리에서 넣는다 —
+   *    저장이 일정까지 만들면 같은 일을 두 곳이 하게 되고, 부모는 자기가 안 고른 일정이
+   *    캘린더에 들어간 것을 나중에 발견한다 (최상위 §2 — 되돌릴 수 없는 것은 사람이 고른다).
+   *
+   * 🚨 **날짜를 만들지 않는다.** 활동은 화면이 들고 온 날짜를 그대로 쓴다 (apps/web/CLAUDE.md §4).
    */
-  const attachDate =
-    lane === "document" ? (checked.find((e) => e.date !== null)?.date ?? null) : date;
-  const attachToCalendar = attachDate !== null;
+  const attachDate = lane === "activity" ? date : null;
+  const attachToCalendar = lane === "activity" && attachDate !== null;
 
   /**
    * 🚨 **활동 lane 은 태그를 하나도 안 고르면 저장할 수 없다.** 그 상태로 눌리면 화면이 바로
@@ -240,6 +253,18 @@ export function PhotoReview({
           />
         </dl>
 
+        {/* 🚨 **넣은 일정을 여기서도 말한다.** 일정은 시트에서 이미 캘린더에 들어갔는데,
+            요약이 기록만 세면 부모는 아직 아무 일정도 안 넣은 줄 안다. 반대로 이 줄이
+            "저장하면 들어가요" 라고 말해도 안 된다 — 이미 들어가 있다. */}
+        {eventAdded.length > 0 ? (
+          <p
+            role="status"
+            className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2"
+          >
+            일정 {eventAdded.length}건은 이미 캘린더에 넣었어요. 아래 저장과는 따로예요.
+          </p>
+        ) : null}
+
         {/* 🚨 **몇 건이 빠지는지 숫자로 말한다.** 확인 안 한 것이 조용히 사라지면
             "승인 전에는 저장되지 않아요" 의 반대말이 된다. */}
         {lane === "document" && needsReview.length > 0 ? (
@@ -264,11 +289,14 @@ export function PhotoReview({
         </Button>
 
         <p className="text-caption text-ink-subtle mt-2">
-          {attachDate
-            ? lane === "document"
-              ? `${formatDay(attachDate)} 일정 초안으로 함께 올라가요. 캘린더에 확정하는 것은 그 화면에서 따로 승인해요.`
-              : `저장하면 이 사진도 ${formatDay(attachDate)} 캘린더에 함께 남아요.`
-            : "읽어낸 일시가 없어서 일정은 만들지 않아요."}
+          {/* 🚨 **저장 버튼이 일정을 만들지 않는다고 분명히 말한다.** 한동안 "일정 초안으로 함께
+              올라가요" 라고 적어 뒀는데, 이제 일정은 고치기 시트에서만 들어간다 —
+              문구가 남으면 부모는 저장만 누르고 일정도 됐다고 믿는다. */}
+          {lane === "activity"
+            ? attachDate
+              ? `저장하면 이 사진도 ${formatDay(attachDate)} 캘린더에 함께 남아요.`
+              : "남길 날짜가 없어서 캘린더에는 붙이지 않아요."
+            : "여기서 저장하는 것은 기록이에요. 일정은 항목을 열어 따로 넣어요."}
         </p>
       </Card>
 
@@ -284,6 +312,9 @@ export function PhotoReview({
 
       <PhotoEntrySheet
         entry={editing}
+        childId={childId}
+        eventAdded={editing !== null && eventAdded.includes(editing.id)}
+        onEventAdded={(id) => setEventAdded((prev) => (prev.includes(id) ? prev : [...prev, id]))}
         onClose={() => setEditing(null)}
         onSave={saveEntry}
         onRemove={removeEntry}

@@ -7,7 +7,6 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
-import { EventDraftList } from "@/components/event-draft-list";
 import { PhotoReview } from "@/components/photo-review";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
@@ -259,6 +258,7 @@ function PhotosScreen() {
           parsed={run.state.parsed}
           date={date}
           previewUrl={photo.url}
+          childId={childId}
           onCommit={(body) => commit.mutate(body)}
           committing={commit.isPending}
           commitError={
@@ -450,15 +450,6 @@ function SavedResult({
           <img src={previewUrl} alt="저장한 사진" className="h-full w-full object-cover" />
         </PhotoCard>
       ) : null}
-
-      {/* 🚨 **기록은 저장됐고 일정은 아직이다.** 위 "저장했어요" 가 덮지 않게 목록이 자기 머리글로
-          선을 긋는다 — 읽어낸 일시마다 카드 한 장이고, 넣는 것은 보호자다 (승인 게이트 ㉠). */}
-      <EventDraftList
-        childId={childId}
-        incoming={result.drafts}
-        origin="photo"
-        found="사진에서 일정을 읽어냈어요."
-      />
 
       {/* 🚨 `Button` 의 클래스를 링크에 베껴 붙이지 않는다 — 같은 모양이 두 벌이 되는 순간
           한쪽이 뒤처진다 (한 화면에서 primary 버튼이 두 가지로 보이게 되는 길이다).

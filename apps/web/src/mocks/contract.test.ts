@@ -1337,28 +1337,23 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     expect("affinity" in observation && observation.affinity).toBeNull();
   });
 
-  it("문서 lane 이 만드는 일정은 draft 다 — 승인 게이트는 여전히 09 에 있다", async () => {
+  it("🚨 커밋은 일정을 만들지 않는다 — 관찰만 저장한다", async () => {
     const runId = await upload();
     const parsed = await parsedOf(runId);
 
     const saved: PhotoCommitResponse = await commitPhotoRun(runId, {
       lane: "document",
       entries: checked(parsed.entries ?? []),
-      attach_to_calendar: true,
+      attach_to_calendar: false,
     });
 
-    // 🚨 **초안이지 저장된 일정이 아니다** (#151). 여기서 캘린더에 쓰면 게이트를 건너뛴다.
-    expect(saved.drafts.length).toBeGreaterThan(0);
-    for (const draft of saved.drafts) {
-      expect(draft.op).toBe("create");
-      expect(draft.event_id).toBeNull();
-      expect(draft).not.toHaveProperty("id");
-      expect(draft).not.toHaveProperty("status");
-    }
-    // 🚨 **날짜를 읽은 `event` 항목마다 정확히 한 장이다** — 단수였을 때는 첫 항목만 일정이 됐다.
-    const dated = (parsed.entries ?? []).filter((e) => e.kind === "event" && e.date !== null);
-    expect(saved.drafts).toHaveLength(dated.length);
-    expect(saved.calendar_date).not.toBeNull();
+    /**
+     * 🚨 `event.status` 가 없어진 뒤(#118) 이 커밋이 **게이트 없이 캘린더에 쓰는 유일한 경로**
+     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 고치기 시트의 승인 게이트가 넣는다.
+     */
+    expect(saved).not.toHaveProperty("drafts");
+    expect(saved).not.toHaveProperty("event");
+    expect(saved.observations.length).toBeGreaterThan(0);
   });
 
   it("한 달치 식단표도 항목 배열로 온다 — 화면이 접어 두는 이유", async () => {
@@ -1366,27 +1361,6 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     try {
       const parsed = await parsedOf(await upload());
       expect((parsed.entries ?? []).length).toBeGreaterThan(20);
-    } finally {
-      setScenario("default");
-    }
-  });
-
-  it("🚨 식단표는 일정 초안을 만들지 않는다 — 급식은 일정이 아니다", async () => {
-    setScenario("photo_meal_plan");
-    try {
-      const runId = await upload();
-      const parsed = await parsedOf(runId);
-
-      const saved = await commitPhotoRun(runId, {
-        lane: "document",
-        entries: checked(parsed.entries ?? []),
-        attach_to_calendar: true,
-      });
-
-      // 급식 항목은 전부 날짜가 있다. `kind` 를 안 보면 여기서 초안 20장이 나오고,
-      // 화면에는 승인 버튼이 스무 개 선다.
-      expect(saved.drafts).toHaveLength(0);
-      expect(saved.observations.length).toBeGreaterThan(0);
     } finally {
       setScenario("default");
     }

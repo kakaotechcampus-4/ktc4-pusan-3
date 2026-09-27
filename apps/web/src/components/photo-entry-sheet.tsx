@@ -1,14 +1,21 @@
 "use client";
 
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useState } from "react";
 
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DateField } from "@/components/ui/date-field";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
+import { qk, submitEventDraft } from "@/lib/api";
 import type { PhotoEntry } from "@/lib/api/types";
+import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
+import { withSeoulDate } from "@/lib/event-draft";
+import { formatDay } from "@/lib/format";
 
 /**
  * 08 사진 — 읽어낸 항목 **하나**를 고치는 시트.
@@ -16,8 +23,19 @@ import type { PhotoEntry } from "@/lib/api/types";
  * 🚨 **여기서 고친 값이 저장되는 값이다.** 모델이 읽은 것을 부모가 덮어쓰는 유일한 자리고,
  *    확인을 누른 항목만 `commit` 에 실린다 (`photo-review.tsx`).
  *
- * 🚨 **승인 게이트가 아니다.** 08 의 저장은 `event` 를 `draft` 로만 만든다 (CLAUDE.md §2) —
- *    `btn-approve` 도 `caution` 도 쓰지 않는다. 확인 버튼은 그냥 primary 다.
+ * ## 🚨 이 시트 **안에** 승인 게이트 ㉠ 이 하나 있다
+ *
+ * "일정으로도 넣기" 를 켜고 **일정 넣기**를 누르면 그 자리에서 캘린더에 쓴다
+ * (`POST /children/{cid}/events`). 알림장 한 장에서 일정이 여러 건 나오는데, 고치는 자리와
+ * 일정으로 만드는 자리가 갈려 있으면 **같은 항목을 두 화면에서 두 번 확인**하게 된다 —
+ * 무엇을 넣는지 아는 자리가 바로 여기다.
+ *
+ * 🚨 **그래서 그 버튼만 `btn-approve` + `caution` 이다.** 아래 "이 내용으로 확인" 은 게이트가
+ *    아니라 목록에 반영하는 것이라 그냥 primary 다 — 둘을 같은 색으로 두면 무엇이 되돌릴 수
+ *    없는지가 사라진다.
+ *
+ * 🚨 **일정과 기록은 따로 간다.** 일정은 이 버튼이 그 자리에서 넣고, 기록(관찰)은 화면 맨 아래
+ *    "이 내용으로 저장" 이 여러 건을 한 번에 보낸다. 하나를 눌렀다고 다른 하나가 되지 않는다.
  *
  * 🚨 **화면 하나로 만들지 않는다.** 알림장 한 장에 항목이 여러 개라 고칠 때마다 화면을 옮기면
  *    목록에서의 자리를 잃는다 — 시트는 덮고 닫히면 있던 자리로 돌아온다.
@@ -27,12 +45,20 @@ import type { PhotoEntry } from "@/lib/api/types";
  */
 export function PhotoEntrySheet({
   entry,
+  childId,
+  eventAdded,
+  onEventAdded,
   onClose,
   onSave,
   onRemove,
 }: {
   /** `null` 이면 닫혀 있다. 열 때마다 새로 세우려고 호출부가 `key` 를 준다. */
   entry: PhotoEntry | null;
+  childId: string;
+  /** 이 항목이 **이미 캘린더에 들어갔는가.** 🚨 두 번 넣는 길을 막는다. */
+  eventAdded: boolean;
+  /** 넣고 나서 호출부에 알린다 — 목록·요약이 "일정 N건 넣음" 을 말해야 한다. */
+  onEventAdded: (entryId: string) => void;
   onClose: () => void;
   /** 고친 값. 호출부가 목록의 그 항목을 갈아 끼우고 **확인됨**으로 표시한다. */
   onSave: (next: PhotoEntry) => void;
@@ -48,7 +74,15 @@ export function PhotoEntrySheet({
     >
       {/* 🚨 열 때마다 처음 값에서 시작한다 — 앞 항목을 고치던 값이 남으면 다른 항목에 덮인다. */}
       {entry ? (
-        <EntryForm key={entry.id} entry={entry} onSave={onSave} onRemove={onRemove} />
+        <EntryForm
+          key={entry.id}
+          entry={entry}
+          childId={childId}
+          eventAdded={eventAdded}
+          onEventAdded={onEventAdded}
+          onSave={onSave}
+          onRemove={onRemove}
+        />
       ) : null}
     </BottomSheet>
   );
@@ -60,18 +94,36 @@ const TO_DATE = new Date(new Date().getFullYear() + 2, 11, 31);
 
 function EntryForm({
   entry,
+  childId,
+  eventAdded,
+  onEventAdded,
   onSave,
   onRemove,
 }: {
   entry: PhotoEntry;
+  childId: string;
+  eventAdded: boolean;
+  onEventAdded: (entryId: string) => void;
   onSave: (next: PhotoEntry) => void;
   onRemove: (id: string) => void;
 }) {
+  const queryClient = useQueryClient();
   const [title, setTitle] = useState(entry.title);
   const [date, setDate] = useState(entry.date ?? "");
   const [items, setItems] = useState(entry.items);
   const [adding, setAdding] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * 일정으로도 넣을 것인가. 🚨 **기본값은 꺼짐이다.** 알림장에서 날짜를 읽었다고 해서 그것이
+   *    캘린더에 넣을 일정이라는 뜻은 아니다 — 급식표는 전부 날짜가 있지만 일정이 아니다.
+   *    켜는 것은 보호자가 한다 (§3 — 되돌릴 수 없는 것은 사람이 정한다).
+   */
+  const [asEvent, setAsEvent] = useState(false);
+  const [allDay, setAllDay] = useState(entry.all_day ?? true);
+
+  /** 🚨 한 항목이 사용자 동작 하나다. 재시도는 같은 키로 간다. */
+  const eventKey = useIdempotencyKey();
 
   /** 급식은 준비물을 갖지 않는다 (위 🚨). */
   const showItems = entry.kind !== "meal";
@@ -83,6 +135,45 @@ function EntryForm({
     if (!items.includes(next)) setItems([...items, next]);
     setAdding("");
   }
+
+  /**
+   * 🚨 **승인 게이트 ㉠.** 여기서 캘린더에 쓴다 — 초안이 아니라 확정이다.
+   * 🚨 **여기서 보내는 것은 화면에 보이는 값**이다. 저장 버튼을 아직 안 눌렀어도 상관없다 —
+   *    일정과 기록은 서로 다른 것이고, 각자의 버튼이 각자를 확정한다.
+   */
+  const addEvent = useMutation({
+    mutationFn: () =>
+      submitEventDraft(
+        childId,
+        {
+          event: {
+            title: title.trim(),
+            starts_at: withSeoulDate(null, date, allDay),
+            ends_at: null,
+            all_day: allDay,
+            event_type: "episodic",
+            // 🚨 알림장에서 읽은 것은 기관이 알려준 일정이다 (계약서 §09 와 같은 출처 판정).
+            category: "institution",
+          },
+          items: showItems ? items.map((item) => ({ item_id: null, item_name: item })) : [],
+        },
+        eventKey.current(),
+      ),
+    onSuccess: async () => {
+      // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.
+      eventKey.rotate();
+      onEventAdded(entry.id);
+      await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+    },
+  });
+
+  /** 🚨 제목과 일자가 없으면 넣을 수 없다. 화면이 **왜** 잠겼는지 말한다. */
+  const eventLock =
+    title.trim().length === 0
+      ? "무엇인지 적어주셔야 넣을 수 있어요."
+      : date === ""
+        ? "날짜를 골라주셔야 넣을 수 있어요."
+        : null;
 
   function submit() {
     if (title.trim().length === 0) {
@@ -113,11 +204,12 @@ function EntryForm({
         }}
       />
 
-      {/* 🚨 날짜는 비워 둘 수 있다. 읽어내지 못한 것을 오늘로 채우지 않는다 —
-          날짜가 없으면 일정으로 올리지 않고 내용만 남긴다 (아래 안내). */}
+      {/* 🚨 날짜는 비워 둘 수 있다. 읽어내지 못한 것을 오늘로 채우지 않는다.
+          🚨 **"일정으로 올리지 않아요" 라고 쓰지 않는다** — 일정은 이제 아래 체크박스로 고르는
+             것이지 날짜가 정하는 것이 아니다. 날짜는 일정을 넣을 때 **필요한 값**일 뿐이다. */}
       <DateField
         label="언제"
-        hint="못 읽었으면 비워 둬도 돼요. 날짜가 없으면 일정으로 올리지 않아요."
+        hint="못 읽었으면 비워 둬도 돼요. 일정으로 넣으려면 날짜가 있어야 해요."
         value={date}
         onChange={setDate}
         fromDate={FROM_DATE}
@@ -171,6 +263,68 @@ function EntryForm({
               더하기
             </Button>
           </div>
+        </div>
+      ) : null}
+
+      {/* ── 🚨 승인 게이트 ㉠ — 여기서 캘린더에 쓴다 ──────────────────────────
+          🚨 **급식에는 세우지 않는다.** 식단표는 전부 날짜가 있지만 일정이 아니다 —
+             칸을 세우면 한 달치 급식마다 "일정으로 넣을까" 를 묻게 된다. */}
+      {showItems ? (
+        <div className="border-line rounded-card border p-4">
+          <Checkbox
+            checked={eventAdded || asEvent}
+            // 🚨 이미 넣은 것은 끌 수 없다 — 끈다고 캘린더에서 빠지지 않는다.
+            onChange={(next) => !eventAdded && setAsEvent(next)}
+            label="일정으로도 넣기"
+            description="켜면 이 내용이 캘린더에 들어가요. 기록으로 남기는 것과는 별개예요."
+          />
+
+          {eventAdded ? (
+            <p role="status" className="text-body-sm text-ink-muted mt-2">
+              캘린더에 넣었어요.{date ? ` ${formatDay(date)}.` : ""} 함께 보는 보호자에게도 보여요.
+            </p>
+          ) : asEvent ? (
+            <div className="mt-3 flex flex-col gap-3">
+              <Checkbox checked={allDay} onChange={setAllDay} label="하루 종일" />
+
+              {/* 🚨 시각을 고르는 칸은 없다 — 알림장에서 읽어낸 것에 시각이 없다.
+                  보호자가 시각을 정하는 경로는 09 캘린더 것이다. */}
+              {!allDay ? (
+                <p className="text-body-sm text-ink-muted">
+                  몇 시인지는 캘린더에서 고칠 수 있어요.
+                </p>
+              ) : null}
+
+              {addEvent.isError ? (
+                // 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3).
+                <p
+                  role="status"
+                  className="bg-surface-muted rounded-field text-body-sm text-ink-muted px-3 py-2"
+                >
+                  {addEvent.error instanceof Error ? addEvent.error.message : "넣지 못했어요."} 아직
+                  아무것도 넣지 않았어요.
+                </p>
+              ) : null}
+
+              {/* 🚨 **게이트의 마지막 확인은 버튼 옆에 선다** (`safety-scan-review.tsx` 선례).
+                  배너를 하나 더 세우지 않는다 — 색은 `caution` 을 쓰되 글자 한 덩이다. */}
+              <p
+                className={eventLock ? "text-body-sm text-ink-subtle" : "text-body-sm text-caution"}
+              >
+                {eventLock ?? "누르면 캘린더에 바로 들어가요. 아래 저장과는 따로예요."}
+              </p>
+
+              <Button
+                variant="approve"
+                disabled={eventLock !== null || addEvent.isPending}
+                aria-busy={addEvent.isPending}
+                onClick={() => addEvent.mutate()}
+              >
+                {addEvent.isPending ? <Spinner /> : null}
+                {addEvent.isPending ? "넣는 중이에요" : "확인했어요, 캘린더에 넣을게요"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
