@@ -40,6 +40,11 @@ location.replace("/");
 | 04 실패 · 원문 복원 | `/child/c1/home?scenario=failed` 에서 한 줄 남기기 |
 | 04 부분 결과 | `/child/c1/home?scenario=partial` 에서 한 줄 남기기 |
 | 04 결과 못 받음 (저장 여부 모름) | `/child/c1/home?scenario=disconnected` 에서 한 줄 남기기 |
+| 04 안내 — 알레르기는 대신 저장하지 않음 | `/child/c1/home?scenario=guidance` 에서 한 줄 남기기. 저장 0건이라 **제목이 "적어주신 말을 확인했어요"** 로 바뀌고, "직접 입력하러 가기" 가 11 프로필로 간다 |
+| 04 섞인 한 줄 — 안내 + 저장 | `?scenario=guidance_mixed` — "계란 잘 먹었어. 그리고 땅콩 알레르기 있어" 같은 경우. 🚨 안내 카드에 **"아래 기록은 그대로 저장했어요"** 가 붙고 기록 목록이 함께 서야 한다 |
+| 04 준비 중 Agent + 저장은 그대로 | `?scenario=unavailable` — 🚨 **준비 중 안내와 저장된 기록이 한 화면에 같이** 서야 한다 (NF-06). 안내만 남고 기록이 사라지면 회귀다 |
+| 04 되묻기 → 이어서 적기 | `?scenario=note_question` — 질문 카드의 **이어서 적기** 를 누르면 03 홈으로 돌아가고, 입력창 위에 질문이 따라와 있다. 🚨 **입력창에는 원문이 되돌아와 있어야 한다** (답은 새 run 이라 앞의 한 줄을 모른다) |
+| 03 한 줄 보내기 · 하루 한도 초과 | `?scenario=daily_limit` 에서 한 줄 남기기 — 🚨 **"다시 시도" 버튼이 없어야 한다** (같은 키로 보내면 자정까지 같은 429) |
 | 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
 | 05 · 근거 부족 (일반 추천 1건 + 질문 1개) | 위 주소에 `&scenario=scarcity` |
 | 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` |
