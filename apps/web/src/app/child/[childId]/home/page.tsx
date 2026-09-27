@@ -30,6 +30,7 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
 import { isRunConfirmed, useRunStream } from "@/hooks/use-run-stream";
 import { useDraftStore, useDraftText } from "@/stores/draft";
+import { usePendingQuestion, usePendingQuestionStore } from "@/stores/pending-question";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import {
   api,
@@ -84,6 +85,14 @@ function HomeScreen() {
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
   const run = useRunStream(childId);
 
+  /**
+   * Memory 가 되물은 질문. 04 결과에서 "이어서 적기" 를 누르면 여기로 따라온다 —
+   * run 은 그 순간 리셋되므로 질문이 run 상태에 남아 있으면 같이 사라진다 (#141).
+   */
+  const pendingQuestion = usePendingQuestion(childId);
+  const setQuestion = usePendingQuestionStore((s) => s.setQuestion);
+  const clearQuestion = usePendingQuestionStore((s) => s.clearQuestion);
+
   const home = useQuery({
     queryKey: qk.home(childId),
     queryFn: () => api.get<HomeResponse>(`/children/${childId}/home`),
@@ -111,6 +120,8 @@ function HomeScreen() {
     onSuccess: (res) => {
       setRunId(res.run_id);
       run.start(res.run_id);
+      // 되묻기에 답하러 왔든 다른 이야기를 적었든, 이 한 줄로 그 질문은 끝났다.
+      clearQuestion(childId);
     },
   });
 
@@ -141,6 +152,27 @@ function HomeScreen() {
     submit.mutate();
   }
 
+  /**
+   * 되묻는 질문에 답하러 03 홈으로 돌아간다 (#141).
+   *
+   * 🚨 **원문을 입력창에 되돌린다.** 답은 **새 한 줄**이라 앞의 run 을 모른다 (§5 run = 입력 1건).
+   *    "3일 전부터" 만 보내면 서버는 무슨 얘기인지 알 수 없고, 그 한 줄이 하루 5회 중 하나를
+   *    그냥 쓴다 (#147). 원문 뒤에 이어 적게 두면 한 번의 입력이 온전한 맥락을 갖는다.
+   *    👉 되묻기 답변을 한도에서 뺄지는 아직 안 정했다 (#141 에서 물어봤다).
+   *
+   * 🚨 **`closeRun()` 이 지우기 전에 원문을 붙든다.** run 이 `done` 이라 `closeRun` 은
+   *    확정으로 보고 draft 를 비운다 — 그 뒤에 되돌려야 순서가 맞는다.
+   * 🚨 **키는 `closeRun` 이 돌린 그대로 둔다.** 이어 적으면 본문이 달라져서 어차피 새 키가
+   *    나가고(`current(body.text)`), 같은 키를 남겨 두면 "같은 키 · 다른 본문" 이라 422 다.
+   */
+  function answerQuestion(question: string) {
+    const original = text;
+    setQuestion(childId, question);
+    closeRun();
+    // 공백 하나를 붙여 바로 이어 적게 한다. 보낼 때 `trim()` 되므로 남지 않는다.
+    setText(`${original.trimEnd()} `);
+  }
+
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
 
   function goToSuggestions(agents: Agent[]) {
@@ -163,11 +195,13 @@ function HomeScreen() {
       <Screen className="gap-6">
         <RunResult
           state={run.state}
+          childId={childId}
           inputText={text}
           onRetry={retry}
           onEdit={closeRun}
           onDone={closeRun}
           onPickOffer={goToSuggestions}
+          onAnswerQuestion={answerQuestion}
         />
       </Screen>
     );
@@ -179,6 +213,28 @@ function HomeScreen() {
       nav={<ChildNav active="home" />}
       bottomBar={
         <div className="flex flex-col gap-2">
+          {/* 🚨 **`accent` 가 아니다.** 이 화면의 accent 한 장은 "눈여겨볼 것" 이 이미 쓰고 있다
+              (`HomeBody`) — 두 장이 되면 강조가 아니라 장식이 된다 (`components/ui/card.tsx`). */}
+          {pendingQuestion ? (
+            <Card>
+              <p className="text-caption text-ink-subtle">한 가지만 더</p>
+              {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
+              <p className="text-body-sm text-ink mt-1">{pendingQuestion}</p>
+              {/* 입력창에 원문이 그대로 있는 이유를 여기서 말한다 — 안 그러면 보낸 줄 알았던
+                  말이 왜 다시 떠 있는지 모른다 (`answerQuestion`). */}
+              <p className="text-caption text-ink-subtle mt-2">
+                적어주신 말은 그대로 뒀어요. 뒤에 이어서 적어주세요.
+              </p>
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="mt-3"
+                onClick={() => clearQuestion(childId)}
+              >
+                나중에 할게요
+              </Button>
+            </Card>
+          ) : null}
           {submit.isError ? (
             <SubmitErrorCard error={submit.error} onRetry={() => submit.mutate()} />
           ) : null}
