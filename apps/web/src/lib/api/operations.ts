@@ -15,6 +15,8 @@
 import { api } from "./client";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
+  CreateEventDraftsRequest,
+  CreateEventDraftsResponse,
   HealthSafety,
   OnboardingRequest,
   OnboardingResponse,
@@ -147,6 +149,22 @@ export function addHealthSafety(
   idempotencyKey: IdempotencyKey,
 ): Promise<{ safety: HealthSafety }> {
   return api.post(idempotentPath.healthSafety(childId), body, { idempotencyKey });
+}
+
+/* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */
+
+/**
+ * 고른 제안들을 초안으로 바꾼다. 🚨 **승인 게이트가 아니다 — 아무것도 쓰지 않는다** (#121).
+ *    그래서 Idempotency-Key 를 받지 않는다. 두 번 불러도 초안이 두 벌 생길 뿐 DB 는 그대로다.
+ *
+ * 🚨 **고른 개수와 초안 개수가 1:1 이 아니다** — `food` 는 한 끼로 묶인다 (`types.ts` 참고).
+ * ⚠️ 경로가 계약서에 없다 (`CreateEventDraftsRequest` 의 ⚠️).
+ */
+export function createEventDrafts(
+  childId: string,
+  body: CreateEventDraftsRequest,
+): Promise<CreateEventDraftsResponse> {
+  return api.post(`/children/${childId}/suggestions/event-drafts`, body);
 }
 
 /* ── 🚨 승인 게이트 ㉠ — 캘린더 쓰기 ──────────────────────────────────── */

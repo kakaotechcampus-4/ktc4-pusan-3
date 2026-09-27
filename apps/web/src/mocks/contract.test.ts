@@ -6,6 +6,7 @@ import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import {
   addHealthSafety,
   commitPhotoRun,
+  createEventDrafts,
   submitEventDraft,
   photoFormData,
   submitOnboarding,
@@ -46,7 +47,6 @@ import type {
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
-  CreateEventResponse,
   EventDraft,
   SubmitEventBody,
   SuggestionFeedbackResponse,
@@ -54,6 +54,7 @@ import type {
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
+import { suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -177,28 +178,56 @@ describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
  * 🚨 타입은 모양만 본다. "쓰지 않는다" 와 "food 일 때만 묻는다" 는 동작이라 여기서 건다.
  */
 describe("일정 초안", () => {
+  const makeDrafts = (ids: string[]) => createEventDrafts("c1", { suggestion_ids: ids });
+
   it("초안을 만드는 호출은 저장된 event 가 아니라 초안을 준다 — 아직 행이 아니다", async () => {
-    const created = await api.post<CreateEventResponse>("/suggestions/s_1/event", {});
+    const created = await makeDrafts(["s_1"]);
 
     // 🚨 id · status · expires_at 이 없다. 있으면 DB 에 쓴 것이고, 그건 승인 게이트를 건너뛴 것이다.
-    expect(created.draft).toBeDefined();
-    expect(created.draft.draft_id).toBeTruthy();
-    expect(created.draft.op).toBe("create");
-    expect(created.draft.event_id).toBeNull();
-    expect(created.draft).not.toHaveProperty("id");
-    expect(created.draft).not.toHaveProperty("status");
+    expect(created.drafts.length).toBeGreaterThan(0);
+    for (const draft of created.drafts) {
+      expect(draft.draft_id).toBeTruthy();
+      expect(draft.op).toBe("create");
+      expect(draft.event_id).toBeNull();
+      expect(draft).not.toHaveProperty("id");
+      expect(draft).not.toHaveProperty("status");
+    }
   });
 
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
-    const created = await api.post<CreateEventResponse>("/suggestions/s_1/event", {});
-    expect(created.draft.event.starts_at).toBeNull();
+    const created = await makeDrafts(["s_1"]);
+    for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();
   });
 
-  it("🚨 사전검사는 food 제안에만 붙는다", async () => {
-    const food = await api.post<CreateEventResponse>("/suggestions/s_1/event", {});
-    const activity = await api.post<CreateEventResponse>("/suggestions/s_2/event", {});
+  it("🚨 food 제안 여러 건은 한 끼로 묶인다 — 고른 수와 초안 수가 1:1 이 아니다", async () => {
+    const foodIds = suggestions.filter((s) => s.agent === "food").map((s) => s.id);
+    // 🚨 픽스처에 식사 제안이 하나뿐이면 묶기가 깨져도 이 테스트가 통과한다.
+    expect(foodIds.length).toBeGreaterThan(1);
 
-    expect(food.prechecks.some((p) => p.code === "unknown_ingredient")).toBe(true);
+    const created = await makeDrafts(foodIds);
+    expect(created.drafts).toHaveLength(1);
+    // 🚨 묶인 초안은 **고른 제안 전부**를 달고 나간다. 단수로 두면 나머지가 draft 인 채 만료된다.
+    expect(created.drafts[0].suggestion_ids).toEqual(foodIds);
+  });
+
+  it("🚨 food 가 아닌 제안은 고른 수만큼 초안이 나온다", async () => {
+    const rest = suggestions.filter((s) => s.agent !== "food" && s.agent !== "health");
+    const created = await makeDrafts(rest.map((s) => s.id));
+    expect(created.drafts).toHaveLength(rest.length);
+  });
+
+  it("🚨 사전검사는 food 제안에만 붙고, 어느 초안 것인지 말한다", async () => {
+    const food = await makeDrafts(["s_1"]);
+    const activity = await makeDrafts(["s_2"]);
+
+    const check = food.prechecks.find((p) => p.code === "unknown_ingredient");
+    expect(check).toBeDefined();
+    /**
+     * 🚨 `draft_id` 가 없으면 화면은 식사 초안의 알레르기로 **놀이 초안까지** 막는다
+     *    (덜 막는 쪽으로 기울 수 없어서 전부 막는 쪽으로 읽는다).
+     */
+    expect(food.drafts.some((d) => d.draft_id === check?.draft_id)).toBe(true);
+
     // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 뜨면 안 된다.
     expect(activity.prechecks).toHaveLength(0);
   });

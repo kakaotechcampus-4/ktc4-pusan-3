@@ -428,10 +428,13 @@ export interface EventDraft {
   /** 왜 확인이 필요한지. 🚨 서버 문구다 — 프론트가 지어내지 않는다. */
   review_reason?: string;
   /**
-   * ⚠️ 이 초안이 어느 제안에서 왔는지. 제안 경로에만 있다 (#122 에서 모양이 미정으로 남은 자리).
-   *    제출받는 쪽이 `suggestion.status` 를 함께 바꿔야 해서 필요하다.
+   * ⚠️ 이 초안이 어느 제안(들)에서 왔는지. 제안 경로에만 있다 (#122 에서 모양이 미정으로 남은 자리).
+   *    제출받는 쪽이 그 `suggestion.status` 를 함께 `approved` 로 바꿔야 해서 필요하다.
+   *
+   * 🚨 **배열인 이유** — `food` 제안 여러 건이 한 끼로 묶여 초안 하나가 된다. 단수로 두면
+   *    묶인 나머지 제안이 `draft` 인 채로 남아 24시간 뒤 만료된다 (보호자는 골랐는데).
    */
-  suggestion_id?: string | null;
+  suggestion_ids?: string[];
 }
 
 /**
@@ -451,25 +454,33 @@ export interface SubmitEventBody {
   event: EventDraftFields;
   items: EventDraftItem[];
   /**
-   * 제출받는 쪽이 `suggestion.status` 를 함께 바꿔야 해서 필요하다. 제안 경로(create)에만 있다.
+   * 제출받는 쪽이 그 `suggestion.status` 를 `approved` 로 바꿔야 해서 필요하다.
+   * 제안 경로(create)에만 있다. 🚨 **배열이다** — `food` 제안 여러 건이 한 초안으로 묶인다.
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
-  suggestion_id?: string | null;
+  suggestion_ids?: string[];
 }
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
 
 /**
- * POST /suggestions/{sid}/event — 승인 게이트 ㉠ **준비**.
- * 여기서는 아직 캘린더에 쓰지 않는다. draft 만 만들고 24시간 뒤 만료된다 (NF-07).
+ * 고른 제안들을 일정 초안으로 바꾼다. 승인 게이트 ㉠ **준비**다 — 여기서는 아무것도 쓰지 않는다.
+ *
+ * ⚠️ **계약서에 없는 엔드포인트다.** 05 에서 제안을 **여러 개 고를 수 있게** 되면서 생겼다
+ *    (기존 `POST /suggestions/{sid}/event` 는 한 건짜리였다).
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+ *
+ * 🚨 **몇 장이 나오는지는 서버가 정한다.** 고른 개수와 초안 개수가 1:1 이 아니다 —
+ *    **`food` 제안들은 한 끼로 묶여 초안 1건**이 되고(저녁 식사 일정), 나머지 Agent 의 제안은
+ *    고른 수만큼 나온다. 묶는 판단은 도메인 지식이라 화면이 하지 않는다.
  *
  * ⚠️ `starts_at` 을 프론트가 만들지 않는다. 날짜를 계산하지 않는다는 규칙(CLAUDE.md §3) 때문에
- *    시각은 서버가 제안에서 정하고, 화면은 응답의 `event.starts_at` 을 표시만 한다.
- *    부모가 시각을 직접 고르는 경로는 09 캘린더 화면 것이다.
+ *    시각은 서버가 제안에서 정하고, 화면은 표시만 한다. 제안만으로 일자를 모르면 `null` 로 오고
+ *    보호자가 카드에서 고른다.
  */
-export interface CreateEventRequest {
-  title: string;
-  items?: string[];
+export interface CreateEventDraftsRequest {
+  /** 🚨 보호자가 고른 제안. 순서는 화면 순서이고 서버가 묶을 때 쓸 수 있다. */
+  suggestion_ids: string[];
 }
 
 /**
@@ -480,14 +491,22 @@ export interface Precheck {
   code: "unknown_ingredient" | (string & {});
   item: string;
   note: string;
+  /**
+   * ⚠️ **계약서에 아직 없는 필드다.** 어느 초안 때문에 묻는 것인지 — 초안이 여러 장이 되면서
+   *    필요해졌다. 없으면 화면은 **재료 하나에 전부를 막거나 아무것도 못 막는다**:
+   *    식사 초안의 알레르기 때문에 놀이 초안까지 못 넣게 되는 것은 규칙이 아니라 버그다.
+   *    👉 `apps/api` Owner 협의 대상. 서버가 안 보내면 화면은 **식사 초안만** 막는 쪽으로 읽는다.
+   */
+  draft_id?: string;
 }
 
-export interface CreateEventResponse {
+export interface CreateEventDraftsResponse {
   /**
    * 🚨 **저장된 `event` 가 아니라 초안이다** (#121 확정). `id` · `status` · `expires_at` 이 없다 —
    *    이 호출은 DB 에 쓰지 않으므로 아직 행이 아니다.
    */
-  draft: EventDraft;
+  drafts: EventDraft[];
+  /** 🚨 초안 전체에 대한 사전검사다. 어느 초안 것인지는 `draft_id` 가 말한다 (위 ⚠️). */
   prechecks: Precheck[];
 }
 

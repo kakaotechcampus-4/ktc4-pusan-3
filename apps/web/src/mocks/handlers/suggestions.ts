@@ -4,6 +4,7 @@ import {
   draftEvent,
   generalSuggestions,
   healthSafety,
+  mealDraft,
   staleSuggestion,
   suggestionDraft,
   suggestions,
@@ -88,26 +89,59 @@ export const suggestionHandlers = [
   }),
 
   /**
-   * 🚨 **아무것도 쓰지 않는다** (#121). 초안과 사전검사만 내려준다 —
-   *    저장은 제출(`POST /children/{cid}/events`) 하나뿐이고 그게 승인 게이트 ㉠ 이다.
+   * 고른 제안들 → 일정 초안. 🚨 **아무것도 쓰지 않는다** (#121) — 저장은 제출
+   * (`POST /children/{cid}/events`) 하나뿐이고 그게 승인 게이트 ㉠ 이다.
+   *
+   * 🚨 **`food` 는 한 끼로 묶는다.** 고른 개수와 초안 개수가 1:1 이 아니다 — 저녁 반찬 제안
+   *    두 건을 고르면 "저녁 식사" 일정 **한 건**이 된다. 묶는 판단은 도메인 지식이라
+   *    화면이 하지 않고 여기서 한다 (실제 서버도 그래야 한다).
+   *
+   * ⚠️ 경로가 계약서에 없다 (`types.ts` 의 `CreateEventDraftsRequest` 참고 · #151).
    */
-  http.post(url("/suggestions/:sid/event"), async ({ params }) => {
+  http.post(url("/children/:cid/suggestions/event-drafts"), async ({ request }) => {
     await networkDelay();
-    const sid = String(params.sid);
-    const suggestion = suggestions.find((s) => s.id === sid) ?? staleSuggestion;
+    const { suggestion_ids: ids } = (await request.json()) as { suggestion_ids: string[] };
+
+    const pool = [...suggestions, staleSuggestion];
+    const chosen = ids
+      .map((id) => pool.find((s) => s.id === id))
+      .filter((s): s is (typeof pool)[number] => s !== undefined);
+
+    if (chosen.length === 0) {
+      return apiError(400, "invalid_request", "고른 제안이 없어요");
+    }
+
+    const food = chosen.filter((s) => s.agent === "food");
+    const rest = chosen.filter((s) => s.agent !== "food");
+
+    const drafts = [
+      // 🚨 식사는 한 장으로 묶인다. 묶인 장은 `suggestion_ids` 가 여러 개다 —
+      //    제출할 때 그 제안들이 **전부** approved 로 바뀌어야 한다.
+      ...(food.length > 0 ? [mealDraft(food)] : []),
+      ...rest.map((s) => suggestionDraft(s)),
+    ];
 
     return HttpResponse.json(
       {
-        draft: suggestionDraft(suggestion),
+        drafts,
         /**
          * 🚨 **`food` 제안에만 붙는다.** 사전검사는 규칙이 만들고(최상위 §3 — 알레르기 필터는
          *    코드가 막는다) 모델은 관여하지 않는다. 물놀이 제안에 "닭고기를 먹어봤나요" 가 뜨면
          *    그건 계약 위반이지 화면이 걸러 낼 일이 아니다 — 화면은 오는 대로 그린다.
+         * 🚨 **어느 초안 것인지 `draft_id` 로 말한다.** 안 실으면 화면이 식사 초안의 알레르기로
+         *    놀이 초안까지 막는다 (`Precheck.draft_id` 의 ⚠️).
          * ⚠️ 기준이 `agent === "food"` 인지 "재료가 있을 때" 인지는 서버 쪽 결정이다 (#151).
          */
         prechecks:
-          suggestion.agent === "food"
-            ? [{ code: "unknown_ingredient", item: "닭고기", note: "첫 기록" }]
+          food.length > 0
+            ? [
+                {
+                  code: "unknown_ingredient",
+                  item: "닭고기",
+                  note: "첫 기록",
+                  draft_id: drafts[0].draft_id,
+                },
+              ]
             : [],
       },
       { status: 201 },

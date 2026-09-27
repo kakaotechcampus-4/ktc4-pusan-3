@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
-import { EventDraftCard, type DraftSubmitState } from "@/components/event-draft-card";
+import { EventDraftList } from "@/components/event-draft-list";
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
@@ -13,14 +13,11 @@ import {
   addHealthSafety,
   newIdempotencyKey,
   qk,
-  submitEventDraft,
-  type CreateEventResponse,
+  type CreateEventDraftsResponse,
   type CreateHealthSafetyRequest,
   type IdempotencyKey,
   type Precheck,
-  type Suggestion,
 } from "@/lib/api";
-import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 
 /**
  * 06 승인 시트 — **되돌릴 수 없는 두 곳이 여기 다 있다** (CLAUDE.md §2 · §3).
@@ -63,15 +60,16 @@ export function ApprovalSheet({
   open,
   onClose,
   childId,
-  suggestion,
-  draft,
+  result,
 }: {
   open: boolean;
   onClose: () => void;
   childId: string;
-  suggestion: Suggestion;
-  /** `POST /suggestions/{sid}/event` 의 응답. 🚨 초안과 사전검사가 온다 — 저장된 일정이 아니다. */
-  draft: CreateEventResponse;
+  /**
+   * 고른 제안들을 바꾼 결과. 🚨 초안과 사전검사가 온다 — 저장된 일정이 아니다.
+   * 🚨 **초안이 여러 장일 수 있다** — `food` 는 한 끼로 묶이고 나머지는 고른 수만큼이다.
+   */
+  result: CreateEventDraftsResponse;
 }) {
   const queryClient = useQueryClient();
 
@@ -85,7 +83,6 @@ export function ApprovalSheet({
    *    걸러내는 것은 저장이 끝나야 한다.
    */
   const [saveState, setSaveState] = useState<Record<string, SafetySaveState>>({});
-  const [submitted, setSubmitted] = useState(false);
 
   /**
    * 🚨 **재료 한 건이 사용자 동작 하나다.** 그래서 `useIdempotencyKey()`(동작 하나에 키 하나)가
@@ -93,10 +90,8 @@ export function ApprovalSheet({
    *    다른 키가 나간다. 하나로 묶으면 두 번째 재료가 "같은 키 · 다른 요청" 이라 422 다.
    */
   const safetyKeys = useRef(new Map<string, IdempotencyKey>());
-  /** 제출은 동작 하나다. 재시도는 같은 키, 성공한 뒤에만 다음 키로 넘어간다. */
-  const submitKey = useIdempotencyKey();
 
-  const ingredientChecks = draft.prechecks.filter((p) => p.code === "unknown_ingredient");
+  const ingredientChecks = result.prechecks.filter((p) => p.code === "unknown_ingredient");
   const answeredAll = ingredientChecks.every((p) => answers[p.item] !== undefined);
   /**
    * 🚨 알레르기가 확인된 재료. 하나라도 있으면 이 일정은 나가지 않는다 (문서 §11).
@@ -107,6 +102,20 @@ export function ApprovalSheet({
     .map((p) => p.item)
     .filter((item) => answers[item] === "has" || saveState[item] === "saved");
   const blocked = blockedItems.length > 0;
+  /**
+   * 🚨 **막히는 것은 그 재료가 든 초안뿐이다.** 초안이 여러 장이라, 식사 초안의 알레르기 때문에
+   *    놀이 초안까지 못 넣게 하면 그건 규칙이 아니라 버그다.
+   *    ⚠️ 서버가 `draft_id` 를 안 실으면 어느 초안 것인지 모른다 — 그때는 **재료 검사가 붙는
+   *    경로(식사)만** 막는 쪽으로 읽는다. 알레르기에서 덜 막는 쪽으로 기울면 안 되므로,
+   *    모르면 **초안 전체**를 막는다 (`Precheck.draft_id` 의 ⚠️).
+   */
+  const blockedDraftIds = blocked
+    ? ingredientChecks
+        .filter((p) => blockedItems.includes(p.item))
+        .map((p) => p.draft_id)
+        .filter((id): id is string => id !== undefined)
+    : [];
+  const blockAll = blocked && blockedDraftIds.length === 0;
   /** 막힌 재료가 전부 기록에 남았는가. 이것이 참일 때만 "앞으로도 걸러내요" 라고 말할 수 있다. */
   const recorded = blocked && blockedItems.every((item) => saveState[item] === "saved");
   const failedItems = blockedItems.filter((item) => saveState[item] === "failed");
@@ -132,25 +141,6 @@ export function ApprovalSheet({
     onError: (_error, item) => setSaveState((prev) => ({ ...prev, [item]: "failed" })),
   });
 
-  /**
-   * 승인 게이트 ㉠ — 되돌릴 수 없는 지점.
-   *
-   * 🚨 **`suggestion_id` 를 함께 싣는다.** 제출받는 쪽이 그 제안의 `status` 를 `approved` 로
-   *    바꿔야 한다 (#122 — 제안 경로에만 있는 필드다).
-   */
-  const submit = useMutation({
-    mutationFn: (body: Parameters<typeof submitEventDraft>[1]) =>
-      submitEventDraft(childId, body, submitKey.current()),
-    onSuccess: async () => {
-      // 🚨 다음 동작으로 넘어가는 것은 **성공 응답을 받은 뒤**다. 실패 뒤 다시 누르는 것은
-      //    같은 키로 가야 재시도로 취급된다.
-      submitKey.rotate();
-      setSubmitted(true);
-      // 일정 하나가 홈 카운트·캘린더·제안 상태를 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
-      await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
-    },
-  });
-
   function answer(item: string, value: SafetyAnswer) {
     setAnswers((prev) => ({ ...prev, [item]: value }));
     // 🚨 "있어요" 일 때만 저장한다. "괜찮았어요" 는 알레르기 기록이 아니고,
@@ -158,33 +148,21 @@ export function ApprovalSheet({
     if (value === "has") saveSafety.mutate(item);
   }
 
-  const saving = Object.values(saveState).some((state) => state === "saving");
-  const busy = submit.isPending || saving;
-
-  const cardState: DraftSubmitState = submitted
-    ? "submitted"
-    : submit.isPending
-      ? "submitting"
-      : submit.isError
-        ? "failed"
-        : "idle";
+  /** 🚨 알레르기 저장 중에는 닫지 않는다. 제출은 카드가 각자 자기 상태로 막는다. */
+  const busy = Object.values(saveState).some((state) => state === "saving");
 
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
       dismissible={false}
-      title={submitted ? "캘린더에 넣었어요" : "확인해 주세요"}
-      description={
-        submitted
-          ? "함께 보는 보호자에게도 공유됐어요."
-          : "승인하기 전에는 아무것도 저장되지 않아요."
-      }
+      title="확인해 주세요"
+      description="승인하기 전에는 아무것도 저장되지 않아요."
       footer={
         // 🚨 **넣는 버튼은 여기 없다.** 게이트 ㉠ 은 카드 안의 `btn-approve` 다 —
         //    시트 바닥에 하나 더 두면 같은 일을 하는 버튼이 한 화면에 둘이 된다.
         <Button variant="secondary" block onClick={onClose} disabled={busy}>
-          {submitted ? "닫기" : "안 넣기"}
+          닫기
         </Button>
       }
     >
@@ -202,25 +180,21 @@ export function ApprovalSheet({
               이 제안은 넣지 않아요. 다만 기록에 저장되기 전까지는 다음 제안에서 걸러내지 못해요.
             </Banner>
           )
-        ) : ingredientChecks.length > 0 && !submitted ? (
+        ) : ingredientChecks.length > 0 ? (
           <Banner tone="caution" title="처음 보는 재료가 있어요">
             아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
           </Banner>
         ) : null}
 
-        {/* 🚨 넣고 나면 확인 칸을 거둔다. 이미 지나간 관문이라, 남겨 두면 보호자가 아직 할 일이
-            있다고 읽는다. 알레르기로 막힌 경우는 배너가 그대로 남는다 (그건 결과다). */}
-        {!submitted
-          ? ingredientChecks.map((precheck) => (
-              <SafetyCheck
-                key={precheck.item}
-                precheck={precheck}
-                value={answers[precheck.item]}
-                onAnswer={(value) => answer(precheck.item, value)}
-                disabled={saveState[precheck.item] === "saving"}
-              />
-            ))
-          : null}
+        {ingredientChecks.map((precheck) => (
+          <SafetyCheck
+            key={precheck.item}
+            precheck={precheck}
+            value={answers[precheck.item]}
+            onAnswer={(value) => answer(precheck.item, value)}
+            disabled={saveState[precheck.item] === "saving"}
+          />
+        ))}
 
         {failedItems.length > 0 ? (
           // 🚨 예전에는 `saveSafety.reset()` 을 부르는 "다시 고르기" 였다 — 실패 안내만 지우고
@@ -244,27 +218,16 @@ export function ApprovalSheet({
           </CardFailed>
         ) : null}
 
-        {/* 세 경로가 공유하는 카드. 🚨 제출 버튼이 이 안에 있고, 그게 승인 게이트 ㉠ 이다. */}
-        <EventDraftCard
-          draft={draft.draft}
-          state={cardState}
-          error={
-            submit.error instanceof Error
-              ? submit.error.message
-              : submit.isError
-                ? "넣지 못했어요."
-                : undefined
-          }
-          blocked={blocked}
+        {/* 🚨 초안이 여러 장이면 **한 장씩 넘긴다** (`event-draft-list.tsx` 머리말).
+            제출 버튼이 그 안에 있고, 그게 승인 게이트 ㉠ 이다. */}
+        <EventDraftList
+          childId={childId}
+          incoming={result.drafts}
+          origin="suggestion"
+          found="고른 제안으로 저장될 내용을 만들었어요."
+          blockedDraftIds={blockAll ? result.drafts.map((d) => d.draft_id) : blockedDraftIds}
           // 🚨 `blocked`(안 넣는다)와 다른 값이다 — 아직 확인이 안 끝났을 뿐이라 "못 넣는다" 로 말한다.
           lockReason={!answeredAll ? "위의 확인이 끝나야 넣을 수 있어요." : undefined}
-          onSubmit={(final) =>
-            submit.mutate({
-              event: final.event,
-              items: final.items,
-              suggestion_id: suggestion.id,
-            })
-          }
         />
       </div>
     </BottomSheet>

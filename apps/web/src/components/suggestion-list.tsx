@@ -5,9 +5,9 @@ import { useId, useState, type ReactNode } from "react";
 
 import { DomainChip, domainInk, domainField, domainPress } from "@/components/domain-chip";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import { Spinner } from "@/components/ui/spinner";
 import type { Evidence, Suggestion } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
@@ -34,8 +34,19 @@ import { cn } from "@/lib/cn";
  *    같은 무게로 읽혀서 이 제품의 차별점인 근거가 본문에 묻힌다 — 색을 바꿔도 마찬가지다.
  *    나누는 수단은 선이 아니라 바탕색이고, 아래 칸은 줄 가장자리까지 꽉 찬다.
  *
- * 🚨 **고르는 버튼은 도메인 색을 따라가지 않는다.** 실행은 브랜드(`primary`)다 — 도메인 색은
- *    "어디서 왔나", 브랜드는 "무엇을 하는가" 라서 둘을 섞으면 두 신호가 같은 색이 된다.
+ * ## 🚨 **고르는 것과 읽는 것은 다른 축이다**
+ *
+ * 제안을 **여러 개 고를 수 있다.** 그렇다고 카드를 다 펼쳐 놓지는 않는다 — 위 머리말의
+ * "한 줄씩 훑고 하나만 연다" 는 **읽기**의 규칙이고, 고르기는 **접힌 줄에서도** 된다.
+ * 그래서 체크박스는 줄 왼쪽에 늘 서 있고, 펼침은 여전히 한 번에 하나다.
+ *
+ * 🚨 **체크박스를 여는 버튼 안에 넣지 않는다.** 넣으면 고르려다 펼쳐진다 — 줄 왼쪽의
+ *    **형제**로 세우고, 여는 버튼은 남은 폭을 가져간다.
+ *
+ * 🚨 **고르는 버튼을 줄마다 두지 않는다.** 예전에는 열린 줄마다 "이걸로" 가 있었는데,
+ *    여러 개를 고르는 화면에서 그 버튼은 "이거 하나만" 이라는 뜻이 되어 체크박스와 싸운다.
+ *    다음 행동은 목록 **아래 한 곳**이다 — 그래서 화면의 `primary` 도 다시 하나가 된다
+ *    (디자인 시스템 §7 의 "목록 항목 예외" 가 필요 없어졌다).
  *
  * 🚨 **근거가 없는 줄을 그릴 수 있는 경로를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가
  *    버리고 `scarcity` 로 내린다 — 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
@@ -45,14 +56,17 @@ import { cn } from "@/lib/cn";
  */
 export function SuggestionList({
   suggestions,
-  pendingId,
-  onApprove,
+  selectedIds,
+  onToggleSelect,
+  busy,
   onReject,
 }: {
   suggestions: Suggestion[];
-  /** 지금 초안을 만드는 중인 제안. 🚨 목록 전체를 잠그지 않는다 — 누른 줄만 기다린다. */
-  pendingId: string | null;
-  onApprove: (suggestion: Suggestion) => void;
+  /** 지금 고른 제안. 🚨 **여러 개다** — 고른 것을 한 번에 일정으로 만든다. */
+  selectedIds: string[];
+  onToggleSelect: (suggestion: Suggestion) => void;
+  /** 초안을 만드는 중. 고르기를 잠근다 — 보내는 값이 바뀌면 안 된다. */
+  busy: boolean;
   onReject: (suggestion: Suggestion) => void;
 }) {
   const drawable = suggestions.filter((s) => {
@@ -91,9 +105,9 @@ export function SuggestionList({
             suggestion={suggestion}
             open={openId === suggestion.id}
             onToggle={() => setChosenId(openId === suggestion.id ? null : suggestion.id)}
-            pending={pendingId === suggestion.id}
-            busy={pendingId !== null}
-            onApprove={() => onApprove(suggestion)}
+            selected={selectedIds.includes(suggestion.id)}
+            onToggleSelect={() => onToggleSelect(suggestion)}
+            busy={busy}
             onReject={() => onReject(suggestion)}
           />
         </li>
@@ -106,17 +120,17 @@ function SuggestionRow({
   suggestion,
   open,
   onToggle,
-  pending,
+  selected,
+  onToggleSelect,
   busy,
-  onApprove,
   onReject,
 }: {
   suggestion: Suggestion;
   open: boolean;
   onToggle: () => void;
-  pending: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
   busy: boolean;
-  onApprove: () => void;
   onReject: () => void;
 }) {
   const id = useId();
@@ -135,70 +149,86 @@ function SuggestionRow({
 
   return (
     <div>
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={onToggle}
-        className={cn(
-          "min-h-touch ease-standard flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors duration-120",
-          // 🚨 포커스 링을 안쪽에 그린다. 목록이 `overflow-hidden` 이라 바깥으로 그리면
-          //    첫 줄과 마지막 줄의 링이 모서리에서 잘린다 (키보드 사용자에게만 보이는 사고).
-          "focus-visible:-outline-offset-2",
-          onField && domainField(suggestion.agent),
-          // 🚨 누르면 **그 줄이 열릴 색**을 미리 보여준다. 뉴트럴 틴트로 누르면 눌린 색과 열린 색이
-          //    달라서 두 동작이 남남처럼 보인다. 열린 줄에는 얹지 않는다 — 이미 그 바탕이라 싸운다.
-          !open && domainPress(suggestion.agent),
-        )}
-      >
-        {/* 메타 줄 — 어느 Agent 인지와, 접혀 있는 동안 근거가 있다는 사실.
+      {/* 🚨 **고르는 것과 여는 것은 형제다.** 체크박스를 여는 버튼 안에 넣으면 고르려다 펼쳐진다.
+          🚨 **health 줄에는 체크박스가 없다.** 고를 수 있는 것이 아니라 모아 둔 기록을 보여주는
+             줄이라(진단하지 않는다 · CLAUDE.md §2), 고르는 칸을 주면 화면이 그 규칙을 뒤집는다.
+          🚨 면 색은 **여는 버튼만** 입는다 — 체크박스까지 칠하면 도메인 색이 "고를 수 있음" 의
+             신호가 되어 health 줄과 어긋난다. */}
+      <div className={cn("flex items-stretch", onField && domainField(suggestion.agent))}>
+        {!isHealth ? (
+          <div className="flex shrink-0 items-start py-3 pl-4">
+            <Checkbox
+              checked={selected}
+              onChange={() => !busy && onToggleSelect()}
+              label={<span className="sr-only">{suggestion.content} 고르기</span>}
+            />
+          </div>
+        ) : null}
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={onToggle}
+          className={cn(
+            "min-h-touch ease-standard flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors duration-120",
+            // 🚨 포커스 링을 안쪽에 그린다. 목록이 `overflow-hidden` 이라 바깥으로 그리면
+            //    첫 줄과 마지막 줄의 링이 모서리에서 잘린다 (키보드 사용자에게만 보이는 사고).
+            "focus-visible:-outline-offset-2",
+            onField && domainField(suggestion.agent),
+            // 🚨 누르면 **그 줄이 열릴 색**을 미리 보여준다. 뉴트럴 틴트로 누르면 눌린 색과 열린 색이
+            //    달라서 두 동작이 남남처럼 보인다. 열린 줄에는 얹지 않는다 — 이미 그 바탕이라 싸운다.
+            !open && domainPress(suggestion.agent),
+          )}
+        >
+          {/* 메타 줄 — 어느 Agent 인지와, 접혀 있는 동안 근거가 있다는 사실.
             🚨 건수를 열린 줄에는 달지 않는다. 아래 칸이 근거를 실물로 보여주므로 두 번 말하게 된다 —
                건수는 **접혀 있는 동안** 그 사실을 지키려고 있는 것이다. */}
-        <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-1">
-          <DomainChip agent={suggestion.agent} onField={onField} />
-          {isHealth ? (
-            <span className={cn("text-caption", onField ? ink : "text-ink-subtle")}>
-              참고용이에요. 진단이 아니에요
-            </span>
-          ) : null}
-          {open ? null : (
-            <span className="text-caption text-ink-subtle">
-              사용한 기록 {suggestion.evidence.length}건
-            </span>
-          )}
-        </span>
+          <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-1">
+            <DomainChip agent={suggestion.agent} onField={onField} />
+            {isHealth ? (
+              <span className={cn("text-caption", onField ? ink : "text-ink-subtle")}>
+                참고용이에요. 진단이 아니에요
+              </span>
+            ) : null}
+            {open ? null : (
+              <span className="text-caption text-ink-subtle">
+                사용한 기록 {suggestion.evidence.length}건
+              </span>
+            )}
+          </span>
 
-        {/* 목록을 끌고 가는 것은 이 문장이다. 열리면 카드 제목 크기로 올라선다.
+          {/* 목록을 끌고 가는 것은 이 문장이다. 열리면 카드 제목 크기로 올라선다.
             🚨 쉐브론이 이 줄에 붙는다. 메타 줄에 두면 **여는 표시가 여는 대상에서 한 줄 떨어지고**,
                접힌 줄이 세 단이 되어 훑는 목록이 불필요하게 길어진다. */}
-        <span className="flex w-full items-start gap-2">
-          <span
-            id={titleId}
-            className={cn(
-              "min-w-0 flex-1",
-              open ? "text-title" : "text-body",
-              onField ? ink : "text-ink",
+          <span className="flex w-full items-start gap-2">
+            <span
+              id={titleId}
+              className={cn(
+                "min-w-0 flex-1",
+                open ? "text-title" : "text-body",
+                onField ? ink : "text-ink",
+              )}
+            >
+              {suggestion.content}
+            </span>
+            {open ? (
+              <ChevronUp
+                aria-hidden
+                size={ICON_SIZE.md}
+                strokeWidth={ICON_STROKE}
+                className={cn("mt-1 shrink-0", onField ? ink : "text-ink-subtle")}
+              />
+            ) : (
+              <ChevronDown
+                aria-hidden
+                size={ICON_SIZE.md}
+                strokeWidth={ICON_STROKE}
+                className="text-ink-subtle mt-0.5 shrink-0"
+              />
             )}
-          >
-            {suggestion.content}
           </span>
-          {open ? (
-            <ChevronUp
-              aria-hidden
-              size={ICON_SIZE.md}
-              strokeWidth={ICON_STROKE}
-              className={cn("mt-1 shrink-0", onField ? ink : "text-ink-subtle")}
-            />
-          ) : (
-            <ChevronDown
-              aria-hidden
-              size={ICON_SIZE.md}
-              strokeWidth={ICON_STROKE}
-              className="text-ink-subtle mt-0.5 shrink-0"
-            />
-          )}
-        </span>
-      </button>
+        </button>
+      </div>
 
       {/* 🚨 접혔다고 DOM 에서 빼지 않는다. `aria-controls` 가 가리키는 id 가 사라져서
           보조기술에는 아무 데도 안 가리키는 버튼이 된다. 숨기는 것은 `hidden` 이 한다. */}
@@ -236,11 +266,16 @@ function SuggestionRow({
             </p>
           ) : (
             <div className="mt-4 flex items-center gap-2">
-              {/* 🚨 목록 항목의 primary 는 "한 화면에 하나" 의 예외다 (문서 §7). 열린 줄이 하나뿐이라
-                  화면에 초록 버튼도 하나다. 여기서 확정하지 않는다 — 승인 게이트는 이 버튼이 여는 시트다. */}
-              <Button size="compact" onClick={onApprove} disabled={busy}>
-                {pending ? <Spinner /> : null}
-                {pending ? "여는 중…" : "이걸로"}
+              {/* 🚨 **여기에 "이걸로" 를 두지 않는다.** 여러 개를 고르는 화면에서 줄마다 실행
+                  버튼이 있으면 "이거 하나만" 으로 읽혀 체크박스와 싸운다. 다음 행동은 목록
+                  아래 한 곳이고, 여기 남는 것은 **이 줄을 치우는 것**뿐이다. */}
+              <Button
+                size="compact"
+                variant={selected ? "secondary" : "primary"}
+                onClick={onToggleSelect}
+                disabled={busy}
+              >
+                {selected ? "고른 것에서 빼기" : "이걸로 고르기"}
               </Button>
               <Button variant="tertiary" size="compact" onClick={onReject} disabled={busy}>
                 안 할래요

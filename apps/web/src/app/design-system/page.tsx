@@ -990,7 +990,7 @@ const DS_DRAFT_FROM_SUGGESTION: EventDraft = {
   },
   before: null,
   items: [],
-  suggestion_id: "s_2",
+  suggestion_ids: ["s_2"],
 };
 
 const DS_DRAFT_CREATE: EventDraft = {

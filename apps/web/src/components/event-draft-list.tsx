@@ -61,6 +61,8 @@ export function EventDraftList({
   incoming,
   origin,
   found,
+  blockedDraftIds,
+  lockReason,
 }: {
   childId: string;
   incoming: EventDraft[];
@@ -75,6 +77,14 @@ export function EventDraftList({
    *    카드의 `hint` 에서 낸 것과 같은 사고라, 출처를 아는 쪽이 말하게 한다.
    */
   found: string;
+  /**
+   * 🚨 **넣지 않을 초안** (알레르기로 막힌 것). 그릇이 판정한다 — 사전검사에 답하는 자리는
+   *    목록 밖(승인 시트)이고, 여기는 결과만 받는다.
+   * 🚨 **막히는 것은 그 초안뿐이다.** 식사 초안의 알레르기 때문에 놀이 초안까지 막으면 버그다.
+   */
+  blockedDraftIds?: string[];
+  /** 아직 못 넣는 이유 (확인이 안 끝남). 🚨 `blockedDraftIds`(안 넣는다)와 다른 값이다. */
+  lockReason?: string;
 }) {
   const addDrafts = useEventDraftStore((s) => s.addDrafts);
   const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
@@ -139,6 +149,8 @@ export function EventDraftList({
         key={current.draft.draft_id}
         childId={childId}
         draft={current.draft}
+        blocked={blockedDraftIds?.includes(current.draft.draft_id) ?? false}
+        lockReason={lockReason}
         onSubmitted={(draftId) =>
           setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]))
         }
@@ -196,10 +208,14 @@ export function EventDraftList({
 function DraftRow({
   childId,
   draft,
+  blocked,
+  lockReason,
   onSubmitted,
 }: {
   childId: string;
   draft: EventDraft;
+  blocked: boolean;
+  lockReason?: string;
   onSubmitted: (draftId: string) => void;
 }) {
   const queryClient = useQueryClient();
@@ -219,7 +235,8 @@ function DraftRow({
       }
       return submitEventDraft(
         childId,
-        { ...body, ...(draft.suggestion_id ? { suggestion_id: draft.suggestion_id } : {}) },
+        // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 `approved` 로 바뀌어야 한다.
+        { ...body, ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}) },
         submitKey.current(),
       );
     },
@@ -247,6 +264,8 @@ function DraftRow({
     <EventDraftCard
       draft={draft}
       state={state}
+      blocked={blocked}
+      lockReason={lockReason}
       error={
         submit.isError
           ? submit.error instanceof Error

@@ -503,6 +503,27 @@ export const suggestions: Suggestion[] = [
     source_refs: [{ kind: "profile_affinity", id: "a_20" }],
     evidence: [evidenceFrom(affinities[1])],
   },
+  /**
+   * 🚨 **식사 제안이 둘인 이유.** 05 는 여러 개를 고를 수 있고, 고른 `food` 제안들은 서버가
+   *    **한 끼로 묶어** 초안 1건으로 내려준다 — 식사가 하나뿐이면 그 규칙이 목에서 한 번도
+   *    돌지 않아, 묶기가 깨져도 화면이 멀쩡해 보인다.
+   */
+  {
+    id: "s_3",
+    child_id: CHILD_ID,
+    agent: "food",
+    kind: "personalized",
+    content: "두부를 부쳐서 한 조각 곁들여 보세요",
+    reason: {
+      why_this: "두부 반찬을 남기지 않았어요",
+      why_now: "오늘 급식에 단백질 반찬이 적어요",
+    },
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    feedback: null,
+    source_refs: [{ kind: "profile_affinity", id: "a_12" }],
+    evidence: [evidenceFrom(affinities[0])],
+  },
 ];
 
 /**
@@ -634,6 +655,33 @@ export const runEventDrafts: EventDraft[] = [
   },
 ];
 
+/**
+ * 식사 제안 여러 건을 **한 끼로 묶은** 초안. 🚨 고른 개수와 초안 개수가 1:1 이 아니라는 것을
+ * 목이 실제로 보여주는 자리다 — 제안 둘을 고르면 "저녁 식사" 하나가 되고, 준비물로 각 제안이 붙는다.
+ *
+ * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 `approved` 로 바뀌어야 한다 —
+ *    단수로 두면 묶인 나머지가 `draft` 인 채 24시간 뒤 만료된다 (보호자는 골랐는데).
+ */
+export function mealDraft(items: Suggestion[]): EventDraft {
+  return {
+    draft_id: `d_meal_${items.map((s) => s.id).join("_")}`,
+    op: "create",
+    event_id: null,
+    event: {
+      title: "저녁 식사",
+      // 🚨 제안만으로는 언제인지 알 수 없다 — 보호자가 카드에서 고른다.
+      starts_at: null,
+      ends_at: null,
+      all_day: true,
+      event_type: "episodic",
+      category: "etc",
+    },
+    before: null,
+    items: items.map((s) => ({ item_id: null, item_name: s.content })),
+    suggestion_ids: items.map((s) => s.id),
+  };
+}
+
 export function suggestionDraft(suggestion: Suggestion): EventDraft {
   return {
     draft_id: `d_${suggestion.id}`,
@@ -649,7 +697,7 @@ export function suggestionDraft(suggestion: Suggestion): EventDraft {
     },
     before: null,
     items: [],
-    suggestion_id: suggestion.id,
+    suggestion_ids: [suggestion.id],
   };
 }
 

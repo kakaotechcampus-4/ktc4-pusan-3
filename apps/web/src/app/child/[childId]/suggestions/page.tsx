@@ -17,6 +17,7 @@ import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { useChildId } from "@/hooks/use-child-id";
 import {
   AGENTS,
@@ -25,10 +26,9 @@ import {
   qk,
   type Agent,
   type AnswerRequest,
-  type CreateEventRequest,
-  type CreateEventResponse,
+  createEventDrafts,
+  type CreateEventDraftsResponse,
   type Scarcity,
-  type Suggestion,
   type SuggestionsRequest,
   type SuggestionsResponse,
 } from "@/lib/api";
@@ -78,10 +78,12 @@ function SuggestionsScreen() {
   const agents = (searchParams.get("agents") ?? "").split(",").filter(isAgent).slice(0, 2);
 
   const [dismissed, setDismissed] = useState<string[]>([]);
-  const [approving, setApproving] = useState<{
-    suggestion: Suggestion;
-    draft: CreateEventResponse;
-  } | null>(null);
+  /**
+   * 🚨 **여러 개 고를 수 있다.** 고른 것을 한 번에 초안으로 바꾼다 —
+   *    `food` 제안들은 서버가 한 끼로 묶어 초안 1건으로 내려준다 (`types.ts` 참고).
+   */
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [approving, setApproving] = useState<CreateEventDraftsResponse | null>(null);
 
   const suggestions = useQuery({
     queryKey: qk.suggestions(childId, runId, agents),
@@ -99,14 +101,12 @@ function SuggestionsScreen() {
    *    아니라 초안 + 사전검사고, 쓰는 것은 시트 안 카드의 제출 하나다.
    *    (만료 문구를 쓰지 않는다: `event.status` 가 없어지면서 서버에 초안 행 자체가 없다 · #118.
    *     24시간 만료가 남아 있는 것은 `suggestion` 쪽이다.)
+   *
+   * 🚨 **고른 개수와 초안 개수가 다를 수 있다.** 화면은 세지 않고 응답이 준 장수를 그대로 쓴다 —
+   *    묶는 판단은 도메인 지식이라 서버가 한다.
    */
-  const createDraft = useMutation({
-    mutationFn: (suggestion: Suggestion) => {
-      const body: CreateEventRequest = { title: suggestion.content };
-      return api
-        .post<CreateEventResponse>(`/suggestions/${suggestion.id}/event`, body)
-        .then((draft) => ({ suggestion, draft }));
-    },
+  const createDrafts = useMutation({
+    mutationFn: (ids: string[]) => createEventDrafts(childId, { suggestion_ids: ids }),
     onSuccess: (result) => setApproving(result),
   });
 
@@ -210,10 +210,69 @@ function SuggestionsScreen() {
           그 자리에서 연다 — 밤에 한 손으로 여는 화면에서 "둘 다 읽고 고르기" 는 인지 노동이다. */}
       <SuggestionList
         suggestions={visible}
-        pendingId={createDraft.isPending ? (createDraft.variables?.id ?? null) : null}
-        onApprove={(suggestion) => createDraft.mutate(suggestion)}
-        onReject={(suggestion) => setDismissed((prev) => [...prev, suggestion.id])}
+        selectedIds={selectedIds}
+        busy={createDrafts.isPending}
+        onToggleSelect={(suggestion) =>
+          setSelectedIds((prev) =>
+            prev.includes(suggestion.id)
+              ? prev.filter((id) => id !== suggestion.id)
+              : [...prev, suggestion.id],
+          )
+        }
+        onReject={(suggestion) => {
+          setDismissed((prev) => [...prev, suggestion.id]);
+          // 🚨 접은 줄이 고른 채로 남으면 화면에 없는 제안이 일정이 된다.
+          setSelectedIds((prev) => prev.filter((id) => id !== suggestion.id));
+        }}
       />
+
+      {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
+          그래서 화면의 `primary` 도 하나다 — §7 의 "목록 항목 예외" 가 필요 없어졌다. */}
+      {visible.some((s) => s.agent !== "health") ? (
+        <Card>
+          <p className="text-section text-ink">이렇게 준비할게요</p>
+          <dl className="mt-3 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <dt className="text-label text-ink-subtle w-14 shrink-0">고른 것</dt>
+              <dd className="text-body-sm text-ink">
+                {selectedIds.length > 0 ? `${selectedIds.length}건` : "아직 없음"}
+              </dd>
+            </div>
+          </dl>
+
+          {/* 🚨 **몇 장이 될지 화면이 말하지 않는다.** food 제안들이 한 끼로 묶이는지는 서버가
+              정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때 거짓말이 된다. */}
+          <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
+            고른 제안으로 저장될 내용을 먼저 보여드려요. 승인 전에는 아무것도 넣지 않아요.
+          </p>
+
+          {createDrafts.isError ? (
+            <CardFailed className="mt-3">
+              <p>
+                {createDrafts.error instanceof Error
+                  ? createDrafts.error.message
+                  : "저장될 내용을 만들지 못했어요."}
+              </p>
+              <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+            </CardFailed>
+          ) : null}
+
+          <Button
+            block
+            className="mt-4"
+            disabled={selectedIds.length === 0 || createDrafts.isPending}
+            aria-busy={createDrafts.isPending}
+            onClick={() => createDrafts.mutate(selectedIds)}
+          >
+            {createDrafts.isPending ? <Spinner /> : null}
+            {createDrafts.isPending
+              ? "준비하는 중이에요"
+              : selectedIds.length === 0
+                ? "고른 것이 없어요"
+                : `고른 ${selectedIds.length}건으로 일정 만들기`}
+          </Button>
+        </Card>
+      ) : null}
 
       {/* 🚨 접은 것을 말없이 지우지 않는다. 줄이 그냥 사라지면 무슨 일이 일어났는지 알 수 없고,
           누르던 버튼이 언마운트돼 키보드·스크린리더 사용자는 자리까지 잃는다. 무슨 일이 있었는지
@@ -233,17 +292,6 @@ function SuggestionsScreen() {
             되돌리기
           </Button>
         </div>
-      ) : null}
-
-      {createDraft.isError ? (
-        <CardFailed>
-          <p>
-            {createDraft.error instanceof Error
-              ? createDraft.error.message
-              : "저장될 내용을 만들지 못했어요."}
-          </p>
-          <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
-        </CardFailed>
       ) : null}
 
       {/* NF-06 — 실패한 쪽도 같은 화면에 남긴다. 빨강이 아니다. */}
@@ -276,12 +324,8 @@ function SuggestionsScreen() {
         <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
       ) : null}
 
-      {/* 줄마다 반복하지 않고 목록 아래에 한 번만 둔다. */}
-      {visible.length > 0 ? (
-        <p className="text-caption text-ink-subtle">
-          고르면 저장될 내용을 먼저 보여드려요. 승인 전에는 아무것도 넣지 않아요.
-        </p>
-      ) : null}
+      {/* 🚨 "고르면 저장될 내용을 먼저 보여드려요" 를 여기 두지 않는다 — 바로 위 요약 카드가
+          이미 같은 말을 한다. 한 화면에서 두 번 하면 둘 다 흘려 읽게 된다. */}
 
       {/* 🚨 화면 바닥에 붙이지 않는다. 후보가 한두 개뿐인 화면에서 `mt-auto` 는 목록과 버튼 사이에
           빈 화면을 한 폭 만든다 — 나가는 버튼은 내용 바로 뒤를 따라간다. */}
@@ -294,11 +338,10 @@ function SuggestionsScreen() {
           open
           onClose={() => {
             setApproving(null);
-            createDraft.reset();
+            createDrafts.reset();
           }}
           childId={childId}
-          suggestion={approving.suggestion}
-          draft={approving.draft}
+          result={approving}
         />
       ) : null}
     </Screen>
