@@ -33,7 +33,9 @@ from app.agents.memory.schemas.task import MemoryTask, WorkType
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 7  # 복합 발화 대비
+# 복합 발화 대비. 세는 것은 **LLM 왕복 수**이지 tool 건수가 아니다 —
+# 한 왕복에 tool 이 여러 개 와도 그 바퀴에서 전부 실행하고 step 은 1만 올라간다.
+MAX_STEPS = 7
 MAX_COMPLETION_TOKENS = 1400
 
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
@@ -78,7 +80,7 @@ class ToolCallRecord:
 class MemoryAgentResult:
     final_message: str | None  # 끝내지 못했거나 조기 종료했으면 None
     completed: bool  # MAX_STEPS 안에 마쳤는지 여부
-    steps: int
+    steps: int  # LLM 왕복 수. tool 건수가 아니다 — 그건 len(calls)
     calls: list[ToolCallRecord] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
     # model: 모델이 tool 없이 답해서 끝남(되묻기/조회 답/알림 안내 등 final_message 있음)
@@ -236,11 +238,11 @@ async def _execute(
     arguments = _parse_arguments(call.function.arguments)
     if arguments is None:
         # registry는 dict를 전제
-        return _failed(name, {}, ErrorCode.VALIDATION_ERROR, _BAD_JSON)
+        return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
 
     key = _dedup_key(name, arguments)
     if key is not None and key in succeeded:
-        return _failed(name, arguments, ErrorCode.VALIDATION_ERROR, _ALREADY_DONE)
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _ALREADY_DONE)
 
     result = await execute_tool(name, arguments, context, allowed=allowed)
     if key is not None and result.success:

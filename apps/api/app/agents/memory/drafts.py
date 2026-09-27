@@ -110,7 +110,7 @@ class EventDraft:
         if self.op == "create":
             return {
                 "draft_id": self.draft_id,
-                "op": self.op, # TODO: 제안 경로가 일정 초안을 만들 때 source키 추가
+                "op": self.op,  # TODO: 제안 경로가 일정 초안을 만들 때 source키 추가
                 "event": event,
                 "items": items,
             }

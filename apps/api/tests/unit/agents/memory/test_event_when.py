@@ -137,7 +137,7 @@ async def test_종료가_시작보다_앞서면_고치지_않고_되묻게_한�
 
     assert result.success is False
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     row = await _row(context, event_id)
     assert row.ends_at is None  # 실패한 수정이 일정에 남지 않는다
 
@@ -171,7 +171,7 @@ async def test_만들_때도_종료가_시작보다_앞서면_초안을_만들�
 
     assert result.success is False
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert context.drafts.all() == ()
 
 
@@ -274,7 +274,7 @@ async def test_종일_일정에_종료_시각을_주면_반영하지_않는다(c
     )
     assert created.success is False
     assert created.error is not None
-    assert created.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert created.error["code"] == ErrorCode.INVALID_ARGS
     assert context.drafts.all() == ()
 
     event_id = await _create(context, starts_on="2026-09-17", starts_time="하루 종일")
@@ -283,7 +283,7 @@ async def test_종일_일정에_종료_시각을_주면_반영하지_않는다(c
     )
     assert updated.success is False
     assert updated.error is not None
-    assert updated.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert updated.error["code"] == ErrorCode.INVALID_ARGS
 
 
 async def test_끝나는_날짜만_주고_시각을_안_주면_되묻는다(context: AgentContext) -> None:
@@ -340,7 +340,7 @@ async def test_종료가_시작과_같으면_초안을_만들지_않는다(conte
 
     assert result.success is False
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert context.drafts.all() == ()
 
 

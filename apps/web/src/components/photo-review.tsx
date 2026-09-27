@@ -35,7 +35,7 @@ import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/l
  * 🚨 **사진과 읽어낸 글자는 한 카드다.** 부모가 확인해야 하는 것이 "사진에 있는 것" 과
  *    "읽어낸 것" 의 **대조**라서, 둘을 따로 세우면 그 관계가 배치가 아니라 문구로만 남는다.
  *
- * 🚨 **도메인 색을 쓰지 않는다.** lane 은 도메인(`food`·`activity`·`education`·`health`)이
+ * 🚨 **도메인 색을 쓰지 않는다.** lane 은 도메인(`food`·`activity`·`growth`·`health`)이
  *    아니다 — 이름이 겹치는 `activity` 가 있지만 여기서는 "아이 활동 사진" 이라는 읽기 방식이다.
  *
  * 🚨 **`raw_text` 는 OCR 로 들어온 외부 텍스트다.** 그대로 텍스트로만 그린다 —
