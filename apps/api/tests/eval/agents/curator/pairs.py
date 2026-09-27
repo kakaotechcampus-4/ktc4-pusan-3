@@ -4,6 +4,9 @@
     pairs_holdout.txt     검증용 쌍 — 고른 임계값을 평가만 한다
     scenarios_holdout.txt 검증용 시나리오 — 순서가 있는 관찰 흐름
     pairs_ambiguous.txt   팀이 정해야 하는 쌍 — 점수에 넣지 않고 유사도만 보고한다
+    scale_tune.txt        실험 5a — Profile 이 여러 개 쌓인 상태에서 새 관찰 하나 (방식 고르기)
+    pairs_final.txt       실험 5b — 최종 확인용 쌍 (한 번만 평가)
+    scenarios_final.txt   실험 5b — 최종 확인용 순서 시나리오
 
 파일 규칙(정답 값, 선정용 · 검증용 subject 겹침 등)은 test_pairs_data.py 가 확인한다.
 """
@@ -20,6 +23,9 @@ TUNE_PATH = HERE / "pairs_tune.txt"
 HOLDOUT_PATH = HERE / "pairs_holdout.txt"
 SCENARIOS_PATH = HERE / "scenarios_holdout.txt"
 AMBIGUOUS_PATH = HERE / "pairs_ambiguous.txt"
+SCALE_TUNE_PATH = HERE / "scale_tune.txt"
+FINAL_PATH = HERE / "pairs_final.txt"
+SCENARIOS_FINAL_PATH = HERE / "scenarios_final.txt"
 
 Label = Literal["same", "near", "unrelated"]
 AmbiguousKind = Literal["A", "B", "C", "D", "E", "F", "G"]
@@ -57,6 +63,22 @@ class Scenario:
     domain: CuratorDomain
     steps: tuple[Step, ...]
     groups: tuple[tuple[int, ...], ...]  # 같은 Profile 로 묶여야 하는 관찰 번호(1부터)
+
+
+@dataclass(frozen=True)
+class Ask:
+    subject: str
+    expected: str  # profiles 중 하나, 또는 "none"(새 Profile)
+
+
+@dataclass(frozen=True)
+class ScaleScenario:
+    """Profile 이 쌓인 상태에서 새 관찰 하나씩. ask 마다 따로 평가한다."""
+
+    id: str
+    domain: CuratorDomain
+    profiles: tuple[str, ...]
+    asks: tuple[Ask, ...]
 
 
 class DataError(ValueError):
@@ -107,7 +129,7 @@ def load_ambiguous(path: Path = AMBIGUOUS_PATH) -> list[AmbiguousPair]:
     return pairs
 
 
-_HEADER = re.compile(r"^\[(S\d+)\]\s+(\S+)$")
+_HEADER = re.compile(r"^\[([A-Z]\d+)\]\s+(\S+)$")
 _STEP = re.compile(r"^([+-]?[01])\s+(.+)$")
 
 
@@ -142,6 +164,39 @@ def load_scenarios(path: Path = SCENARIOS_PATH) -> list[Scenario]:
             raise DataError(f"{path.name}:{number} 알 수 없는 줄: {text!r}")
     if current is not None:
         raise DataError(f"{path.name} 마지막 시나리오에 expect 가 없다")
+    return scenarios
+
+
+def load_scale(path: Path = SCALE_TUNE_PATH) -> list[ScaleScenario]:
+    scenarios: list[ScaleScenario] = []
+    current: tuple[str, CuratorDomain] | None = None
+    profiles: tuple[str, ...] = ()
+    asks: list[Ask] = []
+
+    def close(number: int) -> None:
+        if current is None:
+            return
+        if not profiles or not asks:
+            raise DataError(f"{path.name}:{number} {current[0]} 에 profiles 와 ask 가 있어야 한다")
+        scenarios.append(ScaleScenario(current[0], current[1], profiles, tuple(asks)))
+
+    number = 0
+    for number, text in _lines(path):
+        if header := _HEADER.match(text):
+            close(number)
+            current, profiles, asks = (header[1], _domain(path, number, header[2])), (), []
+        elif text.startswith("profiles:"):
+            profiles = tuple(p.strip() for p in text.removeprefix("profiles:").split("|"))
+            if not all(profiles):
+                raise DataError(f"{path.name}:{number} 빈 profile 이름이 있다")
+        elif text.startswith("ask:"):
+            subject, sep, expected = text.removeprefix("ask:").partition("=")
+            if not sep or not subject.strip() or not expected.strip():
+                raise DataError(f"{path.name}:{number} 형식은 'ask: 새 관찰 = 기대' 다: {text!r}")
+            asks.append(Ask(subject.strip(), expected.strip()))
+        else:
+            raise DataError(f"{path.name}:{number} 알 수 없는 줄: {text!r}")
+    close(number)
     return scenarios
 
 

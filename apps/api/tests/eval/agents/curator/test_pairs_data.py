@@ -6,17 +6,25 @@
     - 🚨 선정용과 검증용(쌍 · 시나리오)은 subject 가 겹치지 않는다 — 겹치면 검증이 선정에 새어 든다
     - 한 쌍이 두 파일에 다른 정답으로 들어가지 않는다 (애매 목록 포함)
     - food subject 에 끼니 이름이 없다 — Memory Agent 가 subject 로 받지 않는 값이다
+    - 🚨 실험 5 최종 확인용(pairs_final · scenarios_final)은 지금까지 쓴 모든 데이터와 subject 가
+      겹치지 않는다 — 한 번이라도 본 이름이면 최종 확인이 아니다
+    - scale_tune 의 기대값은 profiles 에 있거나 none 이고, ask 는 profiles 와 이름이 같지 않다
 """
 
 from collections import Counter
 
+from app.agents.curator.embedding.link_step import same_name_key
 from app.agents.memory.tools.observation import MEAL_SLOTS
 from tests.eval.agents.curator.pairs import (
+    FINAL_PATH,
     HOLDOUT_PATH,
     LABELS,
+    SCENARIOS_FINAL_PATH,
+    SCENARIOS_PATH,
     TUNE_PATH,
     load_ambiguous,
     load_pairs,
+    load_scale,
     load_scenarios,
     subjects,
 )
@@ -87,3 +95,54 @@ def test_food_subject_에_끼니_이름이_없다() -> None:
 
     slots = sorted(food & MEAL_SLOTS)
     assert not slots, f"끼니 이름: {slots}"
+
+
+# 실험 5
+
+
+def _used_before_final() -> set[str]:
+    """실험 5 최종 확인 전에 한 번이라도 쓴 이름. 5a 의 scale_tune 도 포함한다."""
+    used = subjects(load_pairs(TUNE_PATH)) | subjects(load_pairs(HOLDOUT_PATH))
+    used |= {s for p in load_ambiguous() for s in (p.a, p.b)}
+    used |= {st.subject for sc in load_scenarios(SCENARIOS_PATH) for st in sc.steps}
+    used |= {name for sc in load_scale() for name in (*sc.profiles, *(a.subject for a in sc.asks))}
+    return {same_name_key(s) for s in used}
+
+
+def _final_subjects() -> set[str]:
+    names = subjects(load_pairs(FINAL_PATH))
+    names |= {st.subject for sc in load_scenarios(SCENARIOS_FINAL_PATH) for st in sc.steps}
+    return names
+
+
+def test_실험5_최종_확인용은_지금까지_쓴_이름과_겹치지_않는다() -> None:
+    """띄어쓰기만 다른 이름도 겹침으로 본다 — 이름 비교가 같은 것으로 잡기 때문이다."""
+    overlap = sorted(s for s in _final_subjects() if same_name_key(s) in _used_before_final())
+    assert not overlap, f"이미 쓴 이름: {overlap}"
+
+
+def test_실험5_최종_확인용_쌍의_규칙() -> None:
+    pairs = load_pairs(FINAL_PATH)
+    assert all(p.a != p.b for p in pairs)
+    counts = Counter(_key(p.domain, p.a, p.b) for p in pairs)
+    assert not [k for k, n in counts.items() if n > 1]
+    for domain in {p.domain for p in pairs}:
+        assert {p.label for p in pairs if p.domain == domain} == set(LABELS)
+    food = {s for p in pairs if p.domain == "food" for s in (p.a, p.b)}
+    assert not food & MEAL_SLOTS
+
+
+def test_scale_tune_기대값은_profiles_에_있거나_none_이다() -> None:
+    for sc in load_scale():
+        names = {same_name_key(p) for p in sc.profiles}
+        assert len(names) == len(sc.profiles), f"{sc.id} profiles 에 같은 이름이 있다"
+        for ask in sc.asks:
+            assert ask.expected == "none" or ask.expected in sc.profiles, f"{sc.id} {ask}"
+            # 이름이 같으면 판정기를 부르지 않는다 — 판정을 보려는 ask 가 아니다
+            assert same_name_key(ask.subject) not in names, f"{sc.id} {ask.subject}"
+
+
+def test_scale_tune_은_추리기_경로를_한_번_이상_탄다() -> None:
+    from app.agents.curator.embedding.link_step import MAX_CANDIDATES
+
+    assert any(len(sc.profiles) > MAX_CANDIDATES for sc in load_scale())
