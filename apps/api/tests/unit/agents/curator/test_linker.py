@@ -3,7 +3,7 @@
     - 한 번의 호출로 임베딩되고 연결된다
     - 임베딩이 실패해도 이미 벡터가 있는 관찰은 연결된다
     - 관찰마다 결과가 정확히 하나다
-    - 잘못된 threshold 는 API 를 부르기 전에 거절한다
+    - 판정기가 없어도 임베딩과 판정이 필요 없는 연결은 한다
     - 두 번 불러도 같은 일을 다시 하지 않는다
 
 단계별 세부 동작은 test_embed_step.py · test_link_step.py 에서 본다.
@@ -16,8 +16,10 @@ from uuid import UUID
 import pytest
 
 from app.agents.common.llm_client import LLMUnavailableError
-from app.agents.curator.embedding import LinkResult, link_observations
+from app.agents.curator.embedding import JudgeAnswer, LinkResult, link_observations
 from app.agents.curator.embedding.inmemory import InMemoryCuratorStore
+from app.agents.curator.embedding.judge import NONE
+from app.agents.curator.embedding.ports import CuratorDomain
 
 CHILD = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -27,8 +29,8 @@ def _at(deg: float) -> list[float]:
     return [math.cos(rad), math.sin(rad)]
 
 
-# subject → 벡터. 딸기·생딸기는 가깝고(유사도 ≈ 0.98) 레고는 멀다
-VECTORS = {"딸기": _at(0), "생딸기": _at(10), "레고": _at(90), "한글 자모": _at(180)}
+VECTORS = {"딸기": _at(0), "생딸기": _at(10), "레고": _at(90), "블루베리": _at(40)}
+SAME = {"생딸기": "딸기"}  # 가짜 판정기가 같은 대상이라고 답할 짝
 
 
 class FakeEmbedder:
@@ -43,6 +45,20 @@ class FakeEmbedder:
         return [VECTORS[text] for text in texts]
 
 
+class FakeJudge:
+    """SAME 에 있는 짝이 후보에 있으면 그것을, 아니면 none 을 답한다."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def judge(
+        self, *, subject: str, domain: CuratorDomain, candidates: Sequence[str]
+    ) -> JudgeAnswer:
+        self.calls += 1
+        match = SAME.get(subject)
+        return JudgeAnswer(match if match in candidates else NONE, model="fake")
+
+
 def _observe(
     store: InMemoryCuratorStore, id: str, subject: str, *, embedding: list[float] | None = None
 ) -> None:
@@ -51,8 +67,10 @@ def _observe(
     )
 
 
-async def _run(store: InMemoryCuratorStore, fake: FakeEmbedder, **kwargs: float) -> LinkResult:
-    return await link_observations(store, fake, child_id=CHILD, **kwargs)
+async def _run(
+    store: InMemoryCuratorStore, embedder: FakeEmbedder, judge: FakeJudge | None = None
+) -> LinkResult:
+    return await link_observations(store, embedder, judge or FakeJudge(), child_id=CHILD)
 
 
 def _by_id(result: LinkResult) -> dict[str, tuple[str, str | None]]:
@@ -64,16 +82,16 @@ async def test_한_번의_호출로_임베딩되고_연결된다() -> None:
     _observe(store, "1", "딸기")
     _observe(store, "2", "생딸기")
     _observe(store, "3", "레고")
-    fake = FakeEmbedder()
+    embedder = FakeEmbedder()
 
-    result = await _run(store, fake)
+    result = await _run(store, embedder)
 
-    assert fake.calls == [["딸기", "생딸기", "레고"]]
+    assert embedder.calls == [["딸기", "생딸기", "레고"]]
     assert result.embed_calls == 1
     assert [(o.key[1], o.status, o.match) for o in result.outcomes] == [
-        ("1", "created", "new"),
-        ("2", "linked", "similar"),  # 딸기에 붙는다
-        ("3", "created", "new"),
+        ("1", "created", "new"),  # 후보가 없어 판정기를 부르지 않았다
+        ("2", "linked", "judged"),  # 판정기가 딸기와 같은 대상이라고 답했다
+        ("3", "created", "new"),  # 판정기가 같은 후보가 없다고 답했다
     ]
     assert result.held == ()
 
@@ -103,14 +121,14 @@ async def test_빈_subject_는_empty_subject_로_나온다() -> None:
 async def test_문제_Profile_id_가_결과까지_전달된다() -> None:
     store = InMemoryCuratorStore()
     broken = store.add_profile(
-        child_id=CHILD, domain="food", merge_key="생딸기", polarity=1, embedding=None
+        child_id=CHILD, domain="food", merge_key=NONE, polarity=1, embedding=VECTORS["딸기"]
     )
     _observe(store, "1", "딸기")
 
     result = await _run(store, FakeEmbedder())
 
     [held] = result.held
-    assert (held.reason, held.invalid_profile_ids) == ("invalid_profile_embedding", (broken.id,))
+    assert (held.reason, held.invalid_profile_ids) == ("invalid_candidate_name", (broken.id,))
 
 
 async def test_관찰마다_결과가_정확히_하나다() -> None:
@@ -127,38 +145,42 @@ async def test_관찰마다_결과가_정확히_하나다() -> None:
     assert [o.reason for o in result.outcomes] == [None, "embedding_failed", "empty_subject"]
 
 
-@pytest.mark.parametrize("threshold", [math.nan, 1.5])
-async def test_잘못된_threshold_는_API_를_부르기_전에_거절한다(threshold: float) -> None:
+async def test_판정기가_없어도_임베딩과_판정이_필요_없는_연결은_한다() -> None:
     store = InMemoryCuratorStore()
-    _observe(store, "1", "딸기")
-    fake = FakeEmbedder()
+    store.add_profile(
+        child_id=CHILD, domain="food", merge_key="딸기", polarity=1, embedding=VECTORS["딸기"]
+    )
+    _observe(store, "1", "딸기")  # 이름이 같다 → 연결
+    _observe(store, "2", "생딸기")  # 판정이 필요하다 → 보류
+    embedder = FakeEmbedder()
 
-    with pytest.raises(ValueError, match="threshold"):
-        await _run(store, fake, threshold=threshold)
+    result = await link_observations(store, embedder, None, child_id=CHILD)
 
-    assert fake.calls == []
-    assert store.observation("food", "1").embedding is None
+    assert embedder.calls == [["딸기", "생딸기"]]
+    assert _by_id(result) == {"1": ("linked", None), "2": ("held", "judge_unavailable")}
+    assert store.observation("food", "2").embedding is not None  # 임베딩은 저장됐다
 
 
 async def test_대상이_없으면_아무것도_하지_않는다() -> None:
-    fake = FakeEmbedder()
-    result = await _run(InMemoryCuratorStore(), fake)
+    embedder, judge = FakeEmbedder(), FakeJudge()
+    result = await _run(InMemoryCuratorStore(), embedder, judge)
 
     assert result.outcomes == ()
     assert result.embed_calls == 0
-    assert fake.calls == []
+    assert (embedder.calls, judge.calls) == ([], 0)
 
 
 async def test_두_번_불러도_같은_일을_다시_하지_않는다() -> None:
     store = InMemoryCuratorStore()
     _observe(store, "1", "딸기")
+    _observe(store, "2", "생딸기")
     await _run(store, FakeEmbedder())
 
-    fake = FakeEmbedder()
-    again = await _run(store, fake)
+    embedder, judge = FakeEmbedder(), FakeJudge()
+    again = await _run(store, embedder, judge)
 
     assert again.outcomes == ()
-    assert fake.calls == []
+    assert (embedder.calls, judge.calls) == ([], 0)
     assert len(store.profiles) == 1
 
 

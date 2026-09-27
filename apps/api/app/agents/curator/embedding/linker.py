@@ -1,14 +1,16 @@
 """Curator 임베딩 파트의 입구. 임베딩 단계와 연결 단계를 차례로 돌리고 결과를 합친다.
 
-    from app.agents.curator.embedding import Embedder, link_observations
+    from app.agents.curator.embedding import Embedder, JevJudge, link_observations
 
-    result = await link_observations(store, Embedder(), child_id=child_id)
+    result = await link_observations(store, Embedder(), JevJudge(), child_id=child_id)
     result.affected_profile_ids  # 이번에 근거가 늘어난 Profile — 승격·감쇠가 다시 볼 대상
 
 부르는 쪽이 정할 것
     - 언제 부르는가: 관찰이 commit 된 뒤. 같은 트랜잭션에서 부르면 실패가 관찰 저장까지 되돌린다
     - 동시 실행: 같은 아이에 대해 두 번 동시에 돌지 않게 막는다 (DB 구현의 몫)
     - Embedder(): EMBEDDING_* 가 비면 LLMConfigError 를 낸다. 잡아서 건너뛸지는 부르는 쪽이 정한다
+    - JevJudge(): CURATOR_JUDGE_* 가 비면 LLMConfigError. 잡고 judge=None 으로 넘기면
+      이름이 같거나 후보가 없는 관찰만 처리하고, 나머지는 judge_unavailable 로 다음 실행에 미룬다
 
 저장소 오류와 LLMError 가 아닌 예외는 잡지 않고 올린다.
 
@@ -25,12 +27,8 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.agents.curator.embedding.embed_step import TextEmbedder, embed_pending
-from app.agents.curator.embedding.link_step import (
-    DEFAULT_THRESHOLD,
-    LinkOutcome,
-    check_threshold,
-    link_pending,
-)
+from app.agents.curator.embedding.judge import IdentityJudge
+from app.agents.curator.embedding.link_step import LinkOutcome, link_pending
 from app.agents.curator.embedding.ports import CuratorStore
 
 logger = logging.getLogger(__name__)
@@ -67,16 +65,13 @@ class LinkResult:
 async def link_observations(
     store: CuratorStore,
     embedder: TextEmbedder,
+    judge: IdentityJudge | None,
     *,
     child_id: UUID,
-    threshold: float = DEFAULT_THRESHOLD,
 ) -> LinkResult:
-    # 임베딩 API 를 부르고 저장한 뒤에 거절되지 않게 맨 앞에서 본다
-    check_threshold(threshold)
-
     embedded = await embed_pending(store, embedder, child_id=child_id)
     # 임베딩이 실패해도 돌린다 — 지난 실행에서 벡터만 저장되고 연결 전에 멈춘 관찰이 있다
-    linked = await link_pending(store, child_id=child_id, threshold=threshold)
+    linked = await link_pending(store, judge, child_id=child_id)
 
     outcomes = (
         *linked.outcomes,
