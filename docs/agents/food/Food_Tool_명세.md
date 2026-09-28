@@ -260,7 +260,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 ### `filter_food_safety` 매칭 규칙
 1. `health_safety.label` + `aliases` → **동의어표**로 19종 코드 정규화 (계란/달걀/난류 → 1)
 2. 메뉴 `allergen_codes` ∩ 아이 코드 ≠ ∅ → `blocked`
-3. 코드 매핑 안 되는 알레르기(예: "키위") → 공통 매처(`app/rules/term_match.py`, Activity와 동일: 공백 제거 부분 일치 + guards + 최엄격 우선)
+3. 코드 매핑 안 되는 알레르기(예: "키위")와 만성질환·식이제한 → 공통 매처(`app/rules/term_match.py`, Activity와 동일: 공백 제거 부분 일치 + guards + 최엄격 우선). 만성질환·식이제한은 보호자가 등록한 `restricted_foods`와 `chronic_restriction.yaml` 매핑의 합집합을 쓴다. 매핑은 질환 정의상 그 식품을 배제하는 것만 담는다(유당불내증·갈락토스혈증·셀리악병) — 당뇨·신장질환·고혈압처럼 관리·조절이 필요한 질환은 담지 않는다
 4. `unresolved` 메뉴 → `unchecked` (추천 풀에서는 제외, 급식 표시에는 "확인 못 함")
 5. 연령 규칙: `infant_*` 단계에서 꿀 포함 → `blocked`
 
