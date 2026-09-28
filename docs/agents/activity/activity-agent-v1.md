@@ -73,7 +73,8 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
     )
 ```
 
-- 경계값은 **`config/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). `MIN_MONTH` 는 registry 가 그 파일에서 읽는 자기 표다 — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
+- 경계값은 **`reference/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). 파일이 생기기 전까지 `MIN_MONTH` 는 `gating.py` 의 자기 표다 — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
+- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 18개월 값을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 · 날씨 개방 조건을 맡는다.
 - 월령은 **`app/rules/age.py` 의 `life_stage()`** 에서 온다. Activity 는 `stage.months` 만 쓴다.
 - **조산아는 따로 처리하지 않는다.** 교정연령을 쓰지 않는다 (9/25 결정).
 
@@ -180,7 +181,7 @@ class ActivityCandidate(ToolArgs):
 
 **읽는 쪽** — 이 3종은 추론이 아니라 **문자열 대조**다. Food 의 `filter_food_safety` 가 하는 일과 정확히 같고 의학적 판단이 한 톨도 없다. 밀 알레르기 아동에게 *"밀가루 점토 만들기"* 는 0–5세 실내 놀이의 단골이고, **밀가루 반죽은 먹지 않아도 접촉·흡입으로 반응이 난다.** 같은 구멍에 우유팩·달걀껍질 공예, 베이킹, 견과류 촉감놀이가 들어간다.
 
-대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `label`/`aliases` 를 `content` + `materials` 에 부분 일치. `involves_food = true` 면 **Food 의 `filter_food_safety` 를 그대로 호출한다.** Activity 판을 새로 구현하지 않는다 — 구현이 둘이면 언젠가 갈라진다.
+대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `label`/`aliases` 를 `content` + `materials` 에 부분 일치. `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
 
 **거르는 것은 `state = 'active'` 행뿐이다** (#138 `health_safety.state` 4값). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
 
@@ -188,7 +189,7 @@ class ActivityCandidate(ToolArgs):
 
 🚨 NF-09 가 **Agent role 에 `health_safety` write 를 부여하지 않는다.** 읽기 전용이 권한으로 강제된다.
 
-### D8. 외부 호출 **5개** · 적재 소스 **1개** · 순수 계산 **2개**
+### D8. 외부 호출 **4개** · 적재 소스 **4개** · 순수 계산 **2개**
 
 **런타임에 부르는 것** — 전부 실시간이고 캐시 테이블에 쌓지 않는다 (`Tool_공통.md` §1 실시간 행). `asyncio.gather` 로 병렬, 순차 체인 없음.
 
@@ -198,13 +199,19 @@ class ActivityCandidate(ToolArgs):
 | 대기질 | 에어코리아 **대기오염정보** `ArpltnInforInqireSvc` | 한국에서 *"밖에 나가도 되나"* 에 미세먼지가 빠지면 답한 게 아니다 |
 | 생활기상 | 기상청 **생활기상지수 3.0** (`data.go.kr/15085288`) | 자외선. 단기예보·에어코리아 어느 쪽도 주지 않는다 |
 | 특보 | 기상청 **기상특보** `WthrWrnInfoService/getWthrWrnList` | 폭염·한파·호우·강풍을 **발효 여부(boolean)로** 받는다. 12종 특보 · 178개 시군구 |
-| 장소 | **Kakao Local** `dapi.kakao.com/v2/local` (radius ≤ 20,000m) | 좌표+반경 검색이 되는 유일한 실용 선택지 |
+
+🚨 **보호자 좌표를 외부 API 로 보내지 않는다.** 밖으로 나가는 위치 파생값은 기상청 5km 격자 번호(`nx`,`ny`) · 생활기상지수와 특보의 지역 코드 · 에어코리아 측정소 이름뿐이다. 장소는 외부에 반경 질의를 맡기지 않고 전부 적재해 서버 안에서 거리를 계산한다 (D9).
 
 **적재하는 것** (런타임 호출 아님)
 
 | | 무엇 | 왜 |
 | --- | --- | --- |
-| 공원 | 🚩 **전국도시공원정보표준데이터** (`data.go.kr/15012890`) | `공원구분` 에 **`어린이공원`** 이 있다. 「도시공원 및 녹지법」의 **법정 구분값**이고 표본의 48% 다. Kakao 키워드가 못 하는 **구조적 필터**이고, 가격·예약·평점 필드가 하나도 없어 화이트리스트 작업이 0이다 |
+| 공원 | 🚩 **전국도시공원정보표준데이터** (`data.go.kr/15012890`) | `공원구분` 에 **`어린이공원`** 이 있다. 「도시공원 및 녹지법」의 **법정 구분값**이고 표본의 48% 다. 가격·예약·평점 필드가 하나도 없어 화이트리스트 작업이 0이다 |
+| 놀이터 · 실내 놀이터 | **행정안전부 전국어린이놀이시설정보** (`data.go.kr/15124519`) | 어린이놀이시설 안전관리 대상이라 도시공원 · 주택단지 놀이터와 키즈카페 실내놀이터(놀이제공영업소)가 같이 들어온다. 응답에 좌표가 없으면 **시설 주소**를 적재 때 한 번 좌표로 바꾼다 — 보호자 위치가 아니라 시설 주소라 위치정보 문제가 없다. 설치장소 구분 필드가 있는지는 활용신청 후 확인한다 |
+| 도서관 | **전국도서관표준데이터** (`data.go.kr/15013109`) | 위경도가 들어 있다. 비 오는 날의 실내 장소다 |
+| 대기질 측정소 | 에어코리아 **측정소정보** `MsrstnInfoInqireSvc/getMsrstnList` | 측정소 목록을 받아 두고 서버에서 가장 가까운 측정소를 고른다. 좌표로 근접 측정소를 묻는 `getNearbyMsrstnList` 는 좌표를 보내므로 쓰지 않는다 |
+
+`experience_center`(체험관 · 과학관) 는 아직 소스가 없다. 확인 전까지 이 종류는 결과가 0건이다.
 
 **순수 계산으로 푸는 것** (API 를 붙이지 않는다)
 
@@ -215,14 +222,13 @@ class ActivityCandidate(ToolArgs):
 
 🚨 **감기·천식·뇌졸중·피부질환 가능지수는 쓰지 않는다.** *"감기 가능성이 높으니 실내"* 는 건강 추론이고 D7 이 막는 것과 같다. 꽃가루 응답에 함께 오더라도 **파싱 단계에서 버린다.**
 
-**연결 방식** — `app/agents/` 는 `app/integrations/` 를 import 할 수 없다 (`apps/api/CLAUDE.md` 레이어 경계). Activity 는 **포트(Protocol)만 알고**, 어댑터는 `app/integrations/` 에 두고 **`app/api` 가 주입**한다. 격자 변환은 Agent 쪽에서 하고 `integrations` 에는 `(nx, ny)` 만 넘긴다 — 원좌표가 `integrations` 에 아예 들어가지 않는다 (4-3).
+**연결 방식** — `app/agents/` 는 `app/integrations/` 를 import 할 수 없다 (`apps/api/CLAUDE.md` 레이어 경계). Activity 는 **포트(Protocol)만 알고**, 어댑터는 `app/integrations/` 에 두고 **`app/api` 가 주입**한다. 격자 변환은 Agent 쪽에서 하고 `integrations` 에는 `(nx, ny)` 만 넘긴다 — 좌표가 `integrations` 에 아예 들어가지 않는다 (4-3).
 
 **키와 쿼터**
 
-- 키는 `DATA_GO_KR_SERVICE_KEY`(공공데이터포털 5개 API 공유) · `KAKAO_LOCAL_REST_API_KEY` · `PUBLIC_DATA_TIMEOUT_S`. `core/config.py` 의 `Settings` 가 `extra="forbid"` 라 **필드가 생기기 전에는 `.env` 에 두면 서버가 안 뜬다.**
-- 🚨 **`KAKAO_REST_API_KEY` 를 재사용하지 않는다.** 별도 앱 키를 판다 — 쿼터가 섞이면 장소 검색 과다 호출이 **로그인을 막는다.**
+- 키는 `DATA_GO_KR_SERVICE_KEY`(공공데이터포털 API 전부 공유) · `PUBLIC_DATA_TIMEOUT_S`. `core/config.py` 의 `Settings` 가 모르는 환경변수를 거부해서 **필드가 생기기 전에는 `.env` 에 두면 서버가 안 뜬다.**
 - 🚨 **에어코리아만 개발계정 500건/일**이고 운영계정은 심의승인이라 리드타임이 있다. 나머지는 자동승인 1만/일.
-- 🚨 **Kakao Local 의 `query` 에 LLM 이 만든 문자열을 넣지 않는다.** 보호자 발화 원문이 카카오 서버 로그에 남을 수 있다. `PlaceCategory` **닫힌 enum 5값**(`park`·`playground`·`library`·`indoor_playground`·`experience_center`)만 검색어가 된다.
+- 🚨 **모델이 만든 문자열로 장소를 찾지 않는다.** 장소 조회의 입력은 `PlaceCategory` **닫힌 enum 5값**(`park`·`playground`·`library`·`indoor_playground`·`experience_center`) 하나다.
 
 **타임아웃** connect 1.0s / read 2.0s / total 2.5s · **재시도 0회** (병렬이라 하나 실패해도 나머지는 온다. 재시도는 예산을 두 배로 쓴다).
 
@@ -235,13 +241,15 @@ class ActivityCandidate(ToolArgs):
 | 장소 검색 | 장소가 필요 없는 활동만 | **LLM 이 장소 이름을 지어내게 두는 것** |
 | 위치 미제공 | 야외 조회를 하지 않는다 | 기본 좌표로 대체 |
 
-### D9. 저장 형식 — 기준은 **"서버가 반경 질의를 해 주느냐"**
+### D9. 저장 형식 — 기준은 **"좌표를 밖으로 보내지 않고 반경 질의를 할 수 있느냐"**
+
+보호자 좌표를 외부 API 에 반경 질의로 보내면 위치정보법상 개인위치정보 **제3자 제공**으로 볼 수 있다. 그러면 약관 · 동의문에 받는 곳을 적고, 제공할 때마다 알리고, 제공 기록을 남겨야 한다. 그래서 장소는 외부 반경 질의를 쓰지 않고 전부 적재한다.
 
 | 데이터 | 서버가 반경 질의? | 결론 | 왜 |
 | --- | --- | --- | --- |
 | 날씨·미세먼지·자외선·특보 | (격자·지역 질의) | **저장하지 않는다** — 패스스루 + 프로세스 내 캐시 | 틀린 값이 남으면 근거처럼 보인다. **근거가 아니라 필터 조건**이다 |
-| Kakao Local | ✅ `x`·`y`·`radius` | **저장하지 않는다** | 요청 좌표를 그대로 넘기면 된다 |
-| 🚩 도시공원 표준데이터 | ❌ 전국 덤프 페이징 | 🚩 **테이블 적재** (`place`) | 패스스루가 **물리적으로 불가능**하다. 19,199행을 1,000행씩 20회 왕복하면 타임아웃 2.5s × 20 — 예산을 통째로 먹는다 |
+| 🚩 장소 3종 (공원 · 어린이놀이시설 · 도서관) | ❌ 전국 덤프 페이징 | 🚩 **테이블 적재** (`place`) | 좌표가 밖으로 나가지 않는다. 그리고 패스스루가 **물리적으로 불가능**하다 — 공원만 19,199행이고 1,000행씩 20회 왕복하면 타임아웃 2.5s × 20 으로 예산을 통째로 먹는다 |
+| 대기질 측정소 목록 | ❌ | **테이블 적재** | 가장 가까운 측정소를 서버에서 고른다 |
 | 위험 용어 사전 | — | 🚩 **상수 파일** (`reference/hazard_terms.yaml`) | 정적 사전이라 바뀔 때 사람이 PR 로 검수한다. 코드 곳곳에 문자열 목록으로 흩으면 **반드시 새는 게 나온다** — 파일 하나 · 로더 하나로만 읽는다 (3-5) |
 | 근거 문서 행 | — | 🚩 **테이블** (`activity_doc`) | 아래 |
 | 공휴일 | — | `app/rules/` 상수 | 정적 데이터 |
@@ -250,12 +258,12 @@ class ActivityCandidate(ToolArgs):
 
 **`place` 적재 규칙**
 
-- **테이블은 하나**(`place`), `source` 열로 구분한다. 소스마다 테이블을 만들면 정규화 레이어가 소스 수만큼 는다.
+- **테이블은 하나**(`place`), `source` 열(`city_park` · `kids_play_facility` · `library`)로 구분한다. 소스마다 테이블을 만들면 정규화 레이어가 소스 수만큼 는다.
 - 🚨 **화이트리스트를 "응답 파싱"이 아니라 "테이블 컬럼"으로 강제한다.** 컬럼이 없으면 샐 수 없다. `전화번호`·`관리기관명` 은 **가져오지 않는다**.
-- 🚨 **CSV 를 저장소에 커밋하지 않는다.** 19,000행은 리뷰가 불가능하고 저장소가 public 이다. 적재 스크립트만 커밋하고 실행은 수동 1회. Alembic 은 **스키마만** 맡는다.
-- 행마다 **`데이터기준일자`를 보관**하고 화면에 *"공공데이터 기준 YYYY-MM"* 을 붙인다. 갱신이 연 단위라 *"지금 열려 있어요"* 는 쓸 수 없고 *"근처에 있어요"* 까지다.
+- 🚨 **CSV 를 저장소에 커밋하지 않는다.** 수만 행은 리뷰가 불가능하고 저장소가 public 이다. 적재 스크립트만 커밋하고 실행은 수동 1회. Alembic 은 **스키마만** 맡는다.
+- 행마다 **`데이터기준일자`를 보관**하고 화면에 *"공공데이터 기준 YYYY-MM"* 을 붙인다. 갱신이 느려 문 닫은 키즈카페가 나올 수 있다 — *"지금 열려 있어요"* 는 쓸 수 없고 *"근처에 있어요"* 까지다.
 - 🚨 **장소 행을 근거(`suggestion_evidence`)에 넣지 않는다.** 장소는 날씨와 같은 **필터 조건**이다.
-- **PostGIS 는 필요 없다.** 5km 반경은 위경도 bounding box + haversine 으로 끝난다.
+- **PostGIS 는 필요 없다.** 5km 반경은 위경도 bounding box + haversine 으로 끝난다. 기준점은 휴대폰이 약 1km 로 흐려서 보낸 좌표다 (4-3).
 
 **캐시 키는 시계가 아니라 발표 시각 기준**(`nx`,`ny`,`base_date`,`base_time`)이다. 그래야 같은 발표분을 두 번 안 부르고 새 발표가 나오면 자동 무효화된다. 캐시는 `app/integrations/` 안에 가둔다 — Agent 가 캐시를 아는 순간 테스트가 시간에 의존한다. **Redis 를 새로 세우지 않는다.**
 
@@ -371,7 +379,8 @@ apps/api/app/agents/activity/
 ├── agent.py          run(task, context) — 밖으로 열린 유일한 함수. tool calling loop
 ├── context.py        ActivityContext — child_id · now · tz · gate + 포트
 ├── prompt.py         구획 상수 + build_system_prompt(context, examples)
-├── registry.py       tools_for · MIN_MONTH(age_gates.yaml) · TOOL_HANDLERS · CODE_TOOLS
+├── gating.py         MIN_MONTH · AFFINITY_MIN_MONTH · opens() — 월령 · 위치 · 날씨 개방 조건
+├── registry.py       tools_for · TOOL_HANDLERS · CODE_TOOLS · execute_tool
 ├── result.py         공통 ToolResult · ErrorCode 를 가져다 쓴다
 ├── schemas/          common · task · memory · outing · recommend · tool_defs
 ├── store/ports.py    Protocol + row dataclass + 예외. 모든 메서드가 child_id 를 받는다
@@ -434,7 +443,7 @@ async def run(task, context, *, client=None):
 
 **진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
 
-**⚠️ 실내 장소 소스가 늘면 게이팅을 바꾼다.** 지금은 비가 오면 `search_nearby_places` 를 **통째로 닫는다** — 실내 소스가 Kakao 키워드뿐이라 합당하다. 도서관 같은 실내 소스를 붙이는 순간 날씨가 나쁜 날에 장소가 사라지는 게 손해가 된다. 그때는 tool 을 닫는 대신 `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁힌다. 닫힌 enum 이라 *"LLM 이 만든 문자열을 `query` 에 넣지 않는다"* 는 그대로 유지된다.
+**⚠️ 장소 적재가 붙으면 게이팅을 바꾼다.** 지금 코드(`gating.py`)는 비가 오면 `search_nearby_places` 를 **통째로 닫는다.** 도서관 · 실내 놀이터를 적재하면 날씨가 나쁜 날에 장소가 사라지는 게 손해가 된다. 그때는 tool 을 닫는 대신 `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁힌다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
 
 **만들지 않는 것** — Age/Safety Filter 를 모델 tool 로(모델이 스스로 통과시킬 수 있다 — 대신 코드 tool 로) · 놀이 후기 기록(쓰기는 Memory 가 한다).
 
@@ -631,13 +640,15 @@ terms:
 
 ### 4-3. 위치 — 저장하지 않고 요청 시점에 1회
 
-권한 팝업으로 받는다. 좌표는 **요청 바디로만** 받고(쿼리스트링은 접근 로그에 남는다), 받는 즉시 **5km 격자(`nx`,`ny`)로 뭉개고 원좌표를 버린다.** 원좌표는 DB·로그·모델 입력·**예외 메시지** 어디에도 남기지 않는다.
+GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선택으로 받고, 휴대폰 권한 팝업은 놀이 추천을 처음 볼 때 띄운다. **휴대폰이 좌표를 약 1km 수준으로 흐려서** 보낸다 — 장소 추천에 쓸 만큼은 남기고 집 위치는 드러나지 않게 한다.
+
+좌표는 **요청 바디로만** 받는다(쿼리스트링은 접근 로그에 남는다). 서버는 그 요청 안에서 **격자 변환과 장소 거리 계산에만** 쓰고 버린다. 좌표는 DB·로그·모델 입력·**예외 메시지**·외부 API 어디에도 남기거나 보내지 않는다.
 
 권한을 거부하거나 위치가 없으면 야외 조회를 **아예 하지 않는다**(기본 좌표로 대체하지 않는다). Activity 는 실내 전용으로 정상 동작한다.
 
-**저장하지 않으므로 `ConsentScope` 에 항목이 늘지 않고 보관·삭제 범위도 넓어지지 않는다.**
+좌표를 저장하지 않으므로 보관 · 삭제 범위가 넓어지지 않는다. 위치기반서비스 신고와 위치 확인자료 보관은 배포 전 체크리스트(#166)가 맡는다.
 
-격자 변환은 **Agent 쪽에서** 하고 `app/integrations/` 에는 `(nx, ny)` 만 넘긴다 — **원좌표가 `integrations` 에 아예 들어가지 않아** 위 규칙이 구조로 지켜진다.
+격자 변환은 **Agent 쪽에서** 하고 `app/integrations/` 에는 `(nx, ny)` 만 넘긴다 — **좌표가 `integrations` 에 아예 들어가지 않아** 위 규칙이 구조로 지켜진다. 장소 거리 계산은 적재한 `place` 테이블을 읽는 포트 안에서 끝난다.
 
 ### 4-4. 실패 시나리오 — Activity 판 "브로콜리 빼드렸어요"
 
