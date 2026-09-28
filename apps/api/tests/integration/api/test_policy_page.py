@@ -9,8 +9,11 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from app.domains.consent.models import ConsentScope
 from app.domains.policy.repository import register_version
+from app.main import app
 
 TEXTS = Path(__file__).resolve().parents[3] / "alembic" / "policy_texts"
 
@@ -76,6 +79,29 @@ async def test_unknown_scope_is_422(db_client):
     response = await db_client.get(page_url("no_such_scope", "draft-1"))
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "version", ["draft%001", "a" * 65, "draft 1"], ids=["nul", "long", "space"]
+)
+async def test_malformed_version_is_422(db_client, version):
+    """🚨 버전 이름 모양이 아니면 DB 에 묻기 전에 422 다.
+
+    NUL 은 Postgres 가 받지 못해 조회에서 500 이 났다 (#172 리뷰).
+    """
+    response = await db_client.get(page_url("location", version))
+
+    assert response.status_code == 422
+
+
+def test_swagger_tells_the_screen_how_to_use_the_page():
+    """API 계약의 정본은 Swagger 다. 화면이 알아야 할 것(손대지 않고 띄운다)이 거기 보여야 한다."""
+    spec = app.openapi()
+    html_path = spec["components"]["schemas"]["PolicyResponse"]["properties"]["html_path"]
+    not_found = spec["paths"]["/api/v1/policies/{scope}/{version}"]["get"]["responses"]["404"]
+
+    assert "손대지 않고" in html_path["description"]
+    assert "application/json" in not_found["content"], "404 는 HTML 이 아니라 오류 봉투(JSON)다"
 
 
 async def test_list_points_to_each_page(db_client):

@@ -70,6 +70,17 @@ async def test_draft_1_page_is_the_committed_html(session, scope):
     assert row.content_html == page
 
 
+async def test_every_page_was_made_from_its_row_text(session):
+    """DB 의 모든 정본 HTML 은 같은 행의 원문(content)으로 만든 것이다 — 원문 해시가 새겨져 있다."""
+    rows = (
+        await session.scalars(select(PolicyVersion).where(PolicyVersion.content_html.is_not(None)))
+    ).all()
+
+    assert rows
+    for row in rows:
+        assert f'name="policy-source-sha256" content="{row.content_hash}"' in row.content_html
+
+
 @pytest.mark.parametrize("scope", REGISTERED, ids=lambda s: s.value)
 async def test_superseded_draft_0_is_marked_ended(session, scope):
     """② 옛 버전에 끝난 시각이 찍힌다 — 새 버전이 시작한 그 시각이다."""

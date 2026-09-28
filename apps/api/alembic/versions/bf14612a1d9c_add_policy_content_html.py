@@ -33,9 +33,9 @@ VERSION = "draft-1"
 PAGES = Path(__file__).resolve().parents[1] / "policy_texts" / VERSION
 
 DRAFT_1_HTML = {
-    "service_terms": "9857952b77229c7c6157b7de7f3d892816543dd8e246f591343a48afb76a5cae",
-    "privacy_account": "1c473d0c1481f1644f4ef30cc37965d29ab8a54a81d084212bdaa9d2768ffe39",
-    "location": "cd04e846b0f257a716df91538d62bb7c1ebe2fadf4a2c6438ce0f8664af3fb8a",
+    "service_terms": "32380fd2cca8abeb334108fb6d656d4db1cb2cc3c740dc501fa283f3cc437dd9",
+    "privacy_account": "ca6c49506ee7ab59b8fd26898465cb205f66b3653d66528fa27e6e3654eedef0",
+    "location": "bde0702709000467a6c02f1606b2b8ad9b2ca8f073f0bc499402b63cfd53bcad",
 }
 """scope → 정본 HTML 파일의 SHA-256. 파일이 이 값과 다르면 넣지 않는다."""
 
