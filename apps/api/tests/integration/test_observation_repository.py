@@ -545,7 +545,6 @@ async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, fa
             suggestion_id=suggestion.id,
             source_kind="observation_food",
             source_id=used.id,
-            source_updated_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
             note="사과를 먹었다",
         )
     )
