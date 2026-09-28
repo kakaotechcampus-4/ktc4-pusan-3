@@ -17,8 +17,10 @@ import uuid
 
 import pytest
 
+from app.agents.entrypoint import PendingMemoryContext
+from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency, quota
-from app.api.runs import registry, runner
+from app.api.runs import pending_reply, registry, runner
 from app.core.config import settings
 
 from .conftest import issue_bearer
@@ -34,11 +36,13 @@ def _clean_process_memory(monkeypatch):
     registry.clear()
     idempotency.clear()
     quota.clear()
+    pending_reply.clear()
     monkeypatch.setattr(runner, "DEMO_STEP_DELAY", 0.0)
     yield
     registry.clear()
     idempotency.clear()
     quota.clear()
+    pending_reply.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +108,15 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
 
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
-    assert agent_calls == [{"child_id": cid, "parent_id": parent_id, "raw_text": BODY["text"]}]
+    assert agent_calls == [
+        {
+            "child_id": cid,
+            "parent_id": parent_id,
+            "raw_text": BODY["text"],
+            "continuation": None,  # 일반 새 입력
+            "reply_to": None,
+        }
+    ]
 
 
 async def test_inputs_accepts_and_returns_run_id(db_client, bearer):
@@ -309,3 +321,99 @@ async def test_post_then_get_streams_steps_to_done(db_client, bearer):
     assert frames[0].startswith("event: step\n")
     assert frames[-1].startswith("event: done\n")
     assert f'"run_id":"{run_id}"' in frames[-1]
+
+
+# ── reply_to — Memory 가 물은 것에 대한 답 ──────────────────────
+_PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
+_ANSWER = {"text": "3일 전부터", "source": "home_input"}
+
+
+async def test_reply_to_가_이전_질문_맥락을_agent_로_넘긴다(db_client, bearer, agent_calls):
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_ANSWER, "reply_to": "r-prev"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 202
+    assert agent_calls[0]["continuation"] == _PENDING
+    assert agent_calls[0]["reply_to"] == "r-prev"
+
+
+async def test_없는_reply_to_는_400_이고_agent_를_부르지_않는다(db_client, bearer, agent_calls):
+    """맥락 없는 새 입력으로 강등하지 않는다 — "3일 전부터" 가 무엇의 3일 전인지 없이 남는다."""
+    headers, _ = bearer
+
+    response = await db_client.post(
+        INPUTS.format(cid=uuid.uuid4()),
+        json={**_ANSWER, "reply_to": "없는run"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reply_context_unavailable"
+    assert agent_calls == []
+
+
+async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls):
+    headers, _ = bearer
+    cid = uuid.uuid4()
+    pending_reply.put(run_id="r-other", parent_id=uuid.uuid4(), child_id=cid, context=_PENDING)
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_ANSWER, "reply_to": "r-other"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert agent_calls == []
+
+
+async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer, agent_calls):
+    headers, parent_id = bearer
+    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=uuid.uuid4(), context=_PENDING)
+
+    response = await db_client.post(
+        INPUTS.format(cid=uuid.uuid4()),
+        json={**_ANSWER, "reply_to": "r-prev"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert agent_calls == []
+
+
+async def test_같은_reply_to_를_두_번_쓰면_두_번째가_막힌다(db_client, bearer, agent_calls):
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    body = {**_ANSWER, "reply_to": "r-prev"}
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+    second = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+
+    assert first.status_code == 202
+    assert second.status_code == 400
+
+
+async def test_같은_키로_다시_누르면_400_이_아니라_같은_run_을_돌려준다(
+    db_client, bearer, agent_calls
+):
+    # 맥락은 재생 뒤에 꺼낸다. 순서가 바뀌면 두 번째 누름이 400 을 받는다
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    body = {**_ANSWER, "reply_to": "r-prev"}
+    keyed = with_key(headers)
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=keyed)
+    second = await db_client.post(INPUTS.format(cid=cid), json=body, headers=keyed)
+
+    assert first.status_code == second.status_code == 202
+    assert first.json()["run_id"] == second.json()["run_id"]
+    assert len(agent_calls) == 1
