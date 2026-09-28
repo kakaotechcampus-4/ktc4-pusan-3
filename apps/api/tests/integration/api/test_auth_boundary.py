@@ -26,8 +26,12 @@ PUBLIC_ALLOWLIST = {
     ("GET", "/api/v1/auth/{provider}/callback"),
     ("POST", "/api/v1/auth/{provider}"),
     ("POST", "/api/v1/auth/{provider}/signup"),
+    ("GET", "/api/v1/policies"),
 }
-"""루트 CLAUDE.md §9 의 무인증 5개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
+"""루트 CLAUDE.md §9 의 무인증 6개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
+
+`GET /policies` 는 로그인용은 아니지만 가입 전 동의 화면이 약관을 그리려고 부른다 (#91).
+약관은 누구나 읽을 수 있어야 하는 공개 문서다.
 
 아직 POST 둘은 구현 전이라 실제로 열린 것은 3개다. 그래서 "정확히 같다" 가 아니라
 "이 목록을 벗어나지 않는다" 로 건다 — 구현이 늘어도 테스트를 고칠 필요가 없고,
