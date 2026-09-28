@@ -9,8 +9,6 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
    - `Saved` — 화면은 관찰 내용 전체(`observations`)를 원하는데 id 만 실려 온다. 8단계에서 행을
      읽어 채울 때까지 보내지 않는다.
-   - `Unavailable`("준비 중" 안내) — 화면에 둘 자리를 아직 안 정했다. 🚨 pipeline 은 이것만
-     있어도 done 으로 끝나서, 정하기 전까지 화면에는 내용 없는 성공이 뜬다.
    - `FoodRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
    pipeline 에 이벤트가 새로 생기면 tests/unit/api/test_run_translate.py 가 실패해서 정하라고 한다.
@@ -30,6 +28,7 @@ from app.agents.entrypoint import (
     Guidance,
     MemoryNote,
     Step,
+    Unavailable,
 )
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
@@ -54,8 +53,11 @@ def to_sse(event: Event) -> sse.SseEvent | None:
         # 초안 모양은 AI 파트(drafts.py)가 정한다. 여기서 다시 적지 않는다
         return "event_draft", {"drafts": [draft.to_payload() for draft in event.drafts]}
     if isinstance(event, MemoryNote):
-        # kind=question 이면 화면이 "이어서 적기" 를 연다 (#158)
+        # kind=question 이면 화면이 "이어서 적기" 를 연다.
         return "note", {"text": event.text, "kind": event.kind}
+    if isinstance(event, Unavailable):
+        # "준비 중" 카드. 문구는 화면이 Agent 이름으로 만들고, 서버는 이름만 넘긴다
+        return "unavailable", {"agents": list(event.agents)}
     return None
 
 

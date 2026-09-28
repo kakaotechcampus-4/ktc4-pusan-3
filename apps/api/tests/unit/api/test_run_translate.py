@@ -43,9 +43,9 @@ from app.api.runs import registry, sse, translate
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
 
-SENT = {Step, Failed, Done, Guidance, EventDrafts, MemoryNote}
+SENT = {Step, Failed, Done, Guidance, EventDrafts, MemoryNote, Unavailable}
 """화면으로 보내는 것."""
-HELD = {Saved, PendingReply, Unavailable, FoodRouted, Unwritten, Rerouted}
+HELD = {Saved, PendingReply, FoodRouted, Unwritten, Rerouted}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 
@@ -171,6 +171,7 @@ def test_event_drafts_use_the_agents_payload_shape():
         Guidance(code="diagnosis", message="진단은 도와드릴 수 없어요."),
         EventDrafts((_create_draft(), _update_draft())),
         MemoryNote("언제부터였어요?", "question"),
+        Unavailable(("activity", "growth")),
     ],
     ids=lambda event: type(event).__name__,
 )
@@ -193,7 +194,6 @@ def test_sent_events_become_sse_frames(event):
         PendingReply(
             "run-1", PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
         ),
-        Unavailable(("activity",)),
         FoodRouted("meal_idea", "toddler", ("search",), True, "mock"),
         Unwritten(hints=1, tools=0, note=True),
         Rerouted(bounced=1),
@@ -273,4 +273,12 @@ def test_memory_note_carries_its_kind():
     assert translate.to_sse(MemoryNote("언제부터였어요?", "question")) == (
         "note",
         {"text": "언제부터였어요?", "kind": "question"},
+    )
+
+
+def test_unavailable_carries_agent_names_only():
+    # 문구는 화면이 만든다(#158 domainLabel). 서버는 아직 없는 Agent 이름만 넘긴다
+    assert translate.to_sse(Unavailable(("activity", "growth"))) == (
+        "unavailable",
+        {"agents": ["activity", "growth"]},
     )
