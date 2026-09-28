@@ -14,11 +14,14 @@ import type { Agent, HomeResponse } from "@/lib/api/types";
  * 부모는 이미 매일 아이 얘기를 하고 있고(배우자에게, 카톡으로) 우리는 **수신처만** 바꾼다
  * (CLAUDE.md §1). 그래서 입력이 폼이 아니라 대화창 모양이다 — 새 습관처럼 보이면 안 된다.
  *
- * 🚨 **사진·마이크는 지금 비활성이다.** 사진은 08 화면(`POST /photos` → OCR → 승인 후 commit)이
- *    없으면 올린 뒤 갈 곳이 없고(승인 전 저장 금지), 음성은 **외부 전달 범위가 아직 안 정해졌다**
- *    (CLAUDE.md §10). 브라우저 음성인식은 기기 안에서 끝나지 않고 음성이 벤더 서버로 나간다 —
- *    미정을 기본값으로 채우지 않는다. 눌리는 것처럼 보이는데 아무 일도 안 일어나는 버튼 대신
- *    **비활성 + 이유**를 남긴다 (00 로그인의 `ready:false` 와 같은 처리).
+ * 🚨 **사진은 08 화면으로 간다** (`POST /photos` → OCR → 승인 후 commit). 여기서 올리지 않는다 —
+ *    올린 뒤 읽어낸 것을 보호자가 확인해야 저장되는데(승인 전 저장 금지), 그 확인은 채팅바 위에
+ *    들어갈 크기가 아니다.
+ *
+ * 🚨 **마이크는 여전히 비활성이다.** 음성의 **외부 전달 범위가 아직 안 정해졌다** (CLAUDE.md §10).
+ *    브라우저 음성인식은 기기 안에서 끝나지 않고 음성이 벤더 서버로 나간다 — 미정을 기본값으로
+ *    채우지 않는다. 눌리는 것처럼 보이는데 아무 일도 안 일어나는 버튼 대신 **비활성 + 이유**를
+ *    남긴다 (00 로그인의 `ready:false` 와 같은 처리).
  *
  * 🚨 **제안 줄은 서버가 고른 것만 그린다** (`agent_prompts` · 시각대 규칙 F-15). 프론트가
  *    무엇을 물을지 고르지 않고, Agent 가 최대 2개라 도메인 색도 자연히 2개를 안 넘는다 (문서 §3).
@@ -29,6 +32,7 @@ export function HomeComposer({
   onSubmit,
   prompts,
   onPickPrompt,
+  onPickPhoto,
   pending,
 }: {
   value: string;
@@ -37,6 +41,8 @@ export function HomeComposer({
   /** 서버가 만든 "지금 도와드릴 수 있는 것". 없으면 줄 자체가 안 나온다. */
   prompts: HomeResponse["agent_prompts"];
   onPickPrompt: (agent: Agent) => void;
+  /** 08 사진 화면으로. 🚨 여기서 파일을 고르지 않는다 — 고르는 자리와 확인하는 자리가 같아야 한다. */
+  onPickPhoto: () => void;
   pending: boolean;
 }) {
   const canSubmit = value.trim().length > 0 && !pending;
@@ -51,7 +57,7 @@ export function HomeComposer({
 
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
       <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
-        <IconButton label="사진으로 적기 (사진 화면을 만드는 중이에요)" disabled>
+        <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={pending}>
           <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
         </IconButton>
         <IconButton label="말로 적기 (음성 처리 방침을 정하는 중이에요)" disabled>

@@ -7,7 +7,9 @@ import { qk } from "@/lib/api/queryKeys";
 import {
   streamRunEvents,
   type FailedEvent,
+  type LaneEvent,
   type OfferEvent,
+  type ParsedEvent,
   type PartialEvent,
   type PromotedEvent,
   type RunEvent,
@@ -16,7 +18,7 @@ import {
 import type { Observation } from "@/lib/api/types";
 
 /**
- * 04 저장 결과 — run 이벤트 스트림 상태.
+ * 04 저장 결과 · 08 사진 분석 — run 이벤트 스트림 상태.
  *
  * run 상태는 서버 상태(TanStack Query)도 클라이언트 상태(Zustand)도 아니다. 구독형이라
  * 둘 다 안 맞아서, 화면이 사는 동안만 useReducer 로 들고 끝날 때 Query 를 무효화한다.
@@ -48,6 +50,15 @@ export interface RunState {
   promoted: PromotedEvent["changes"];
   offers: OfferEvent["options"];
   /**
+   * 08 사진 — 이 사진을 어느 쪽으로 읽었는지 **추측**. 04 한 줄 입력 run 에서는 늘 `null` 이다.
+   * 🚨 확정이 아니다. lane 의 정본은 부모가 시트에서 고른 값이고, 08 화면은 이 값을 쓰지 않는다.
+   */
+  lane: LaneEvent | null;
+  /**
+   * 08 사진 — 사진에서 읽어낸 것. 🚨 **아직 저장된 것이 아니다** — `commit` 을 눌러야 저장된다.
+   */
+  parsed: ParsedEvent | null;
+  /**
    * 🚨 **서버가 보낸 것만 들어온다.** 채워져 있으면 성공·실패를 한 화면에 섞어 그린다 (NF-06).
    *    클라이언트가 스스로 끝낸 경우(`unconfirmed`)를 여기 넣지 않는다 — 어느 Agent 가 성공했는지
    *    모르는데 `failed: []` 를 채워 넣으면 화면이 빈 목록으로 "준비하지 못했어요" 를 그린다.
@@ -66,6 +77,8 @@ export const initialRunState: RunState = {
   observations: [],
   promoted: [],
   offers: [],
+  lane: null,
+  parsed: null,
   partial: null,
   failure: null,
 };
@@ -108,6 +121,13 @@ export function runReducer(state: RunState, action: RunAction): RunState {
       switch (action.event.type) {
         case "step":
           return { ...state, step: action.event.data as StepEvent };
+
+        // 08 사진 — 아래 둘은 **저장이 아니다.** 부모가 확인하고 commit 을 눌러야 저장된다.
+        case "lane":
+          return { ...state, lane: action.event.data as LaneEvent };
+
+        case "parsed":
+          return { ...state, parsed: action.event.data as ParsedEvent };
 
         case "saved":
           return {

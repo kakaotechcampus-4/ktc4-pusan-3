@@ -67,12 +67,19 @@
 
 ## Agent
 
-*아직 문서 없음.* Supervisor 라우팅(안전 사전검사 · 의도 분류), Food · Activity · Education · Health Agent, 공통 컨텍스트 주입.
+- [agents/README.md](agents/README.md) — **먼저 읽을 것.** 읽는 순서 · 나이 계산 · 디렉토리 구성 · Activity 담당자가 채울 빈칸
+- [agents/shared/](agents/shared/) — 네 Agent가 공유하는 규약. 공통규약 · `Tool_공통` · 연령별 전략 · RAG · 외부 연결
+- [agents/food/](agents/food/) · [agents/growth/](agents/growth/) · [agents/health/](agents/health/) — Agent별 명세 · Tool · 소유 테이블 · 구현 계획 · 테스트
+- [agents/data_model.md](agents/data_model.md) — DB 스키마 정본
+- [agents/memory-agent-v1.md](agents/memory-agent-v1.md) — Memory Agent
+
+Activity는 아직 비어 있다 (`agents/activity/`).
 
 ## API · 백엔드
 
-- [api/api-interface-v1.html](api/api-interface-v1.html) — 화면 01~10 을 그리는 최소 API 28개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 3건 (브라우저로 열기)
+- [api/api-interface-v1.html](api/api-interface-v1.html) — ⚠️ **초기 프로토타입 시점의 글이라 갱신하지 않는다.** 문서 안에는 "이 문서가 정본" 이라고 적혀 있지만 그대로 두고, **확정된 계약은 아래 기능 문서들이 대체한다** (§04 → `auth-kakao-v1.md`, §05 초대 → `invite-v1.md`). 화면이 무엇을 부르는지 훑는 용도로는 여전히 가장 빠르다 — 화면 01~10 을 그리는 최소 API 27개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 2건 (브라우저로 열기)
 - [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **서버 주도 인가 코드 흐름.** `redirect_uri` 를 API 오리진 하나로 고정(preview 도메인은 등록 불가) · 클라이언트는 1회용 코드를 받아 `{code, bind}` 로 교환하고 `bind` 가 그 홉을 지킨다 · **동의 전에는 `parent` 를 만들지 않는다**(`signup` 신설) · 계약서 §01 `Bearer` 유지, 무인증 5개와 302 엔드포인트 2개를 예외로 명시 · 불투명 세션 12시간, refresh 없음 · `session`·`auth_handoff` 테이블 신설안 · `parent.nickname` nullable
+- [api/invite-v1.md](api/invite-v1.md) — **초대를 링크가 아니라 코드로.** 카톡 링크는 인앱 브라우저에서 열려 `sessionStorage` 가 날아가면 `bind` 까지 잃고 **로그인 자체가 깨진다** · Crockford Base32 8자(`I`·`L`·`O`·`U` 제외) · 정규화한 값을 해시로 저장 · 24시간 · 1회용 · 🚨 **시도 제한이 이 선택의 전제**(40비트 · 확인과 수락이 같은 통) · 관계는 **받는 쪽이 수락할 때** 고른다 · 🔶 수락 전 확인 `GET /invites/{code}` 와 에러 5종은 협의 대상 · ⚠️ 계약서 §05 를 **대체한다**
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).
@@ -140,7 +147,7 @@
 | --- | --- | --- |
 | `overview/` | 기획·테크스펙·범위 등 제품 전반 문서 | 박재형 (PM) |
 | `memory/` | Child·Observation Memory 스키마, 3분류, Curator 승격·감쇠, Correction | 이시하 (AI) |
-| `agents/` | Supervisor 라우팅, Food · Activity · Education · Health Agent, 프롬프트·컨텍스트 | 이시하 (AI) |
+| `agents/` | Supervisor 라우팅, Food · Activity · Growth · Health Agent, 프롬프트·컨텍스트 | 이시하 (AI) · Activity는 별도 |
 | `api/` | 엔드포인트 계약, SSE, 승인 게이트, 외부 API 연동 | 김명성 (백엔드) |
 | `meal-plan/` | 급식표 입력(사진 · 엑셀 · 한글) → 구조화 JSON · 알레르기 번호 · 저장 | 박재형 (PM) |
 | `web/` | 화면 01~10, 컴포넌트, 디자인 토큰 | 고태영 (프론트) |

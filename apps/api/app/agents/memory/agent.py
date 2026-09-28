@@ -25,6 +25,7 @@ from typing import Any, Literal
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
@@ -32,7 +33,9 @@ from app.agents.memory.schemas.task import MemoryTask, WorkType
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 7  # 복합 발화 대비
+# 복합 발화 대비. 세는 것은 **LLM 왕복 수**이지 tool 건수가 아니다 —
+# 한 왕복에 tool 이 여러 개 와도 그 바퀴에서 전부 실행하고 step 은 1만 올라간다.
+MAX_STEPS = 7
 MAX_COMPLETION_TOKENS = 1400
 
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
@@ -43,9 +46,7 @@ EARLY_STOP = True
 _NEEDS_REPLY_CUES = ("알림", "알람")
 
 # 이 tool을 부른 run은 조기 종료하지 않음(후속 변경이 있을 수 있음)
-_OPEN_ENDED = frozenset(
-    {"create_event", "create_event_item", "update_event_item", "delete_event_item"}
-)
+_OPEN_ENDED = frozenset({"create_event_item", "update_event_item", "delete_event_item"})
 
 EndedBy = Literal["model", "coverage", "max_steps"]
 
@@ -79,13 +80,14 @@ class ToolCallRecord:
 class MemoryAgentResult:
     final_message: str | None  # 끝내지 못했거나 조기 종료했으면 None
     completed: bool  # MAX_STEPS 안에 마쳤는지 여부
-    steps: int
+    steps: int  # LLM 왕복 수. tool 건수가 아니다 — 그건 len(calls)
     calls: list[ToolCallRecord] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
     # model: 모델이 tool 없이 답해서 끝남(되묻기/조회 답/알림 안내 등 final_message 있음)
     # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
     # max_steps: 끝내지 못함
     ended_by: EndedBy = "model"
+    drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
 
     @property
     def tool_names(self) -> list[str]:
@@ -138,6 +140,7 @@ async def run(
                 steps=step + 1,
                 calls=calls,
                 usage=usage,
+                drafts=context.drafts.all(),
             )
 
         messages.append(_assistant_message(response.message))
@@ -163,6 +166,7 @@ async def run(
                 calls=calls,
                 usage=usage,
                 ended_by="coverage",
+                drafts=context.drafts.all(),
             )
 
     # 모델이 마무리 응답을 내지 않아 미완료된 것으로 간주
@@ -174,6 +178,7 @@ async def run(
         calls=calls,
         usage=usage,
         ended_by="max_steps",
+        drafts=context.drafts.all(),
     )
 
 
@@ -197,8 +202,7 @@ def _covered(
     다음 조건을 모두 만족
     - 이번 스텝에서 실행한 호출이 모두 성공
     - 이번 스텝의 호출이 모두 쓰기 작업
-    - run 전체에 일정·준비물 쓰기(_OPEN_ENDED)가 없음
-      준비물을 한 스텝에 하나씩 부르는 모델이면 첫 준비물 뒤에서 끊겨 나머지가 사라진다 (T13)
+    - run 전체에 기존 일정의 준비물 쓰기(_OPEN_ENDED)가 없음
     - 작업 종류별 성공한 쓰기 수가 run 전체의 힌트 수를 충족
     - 힌트가 하나 이상 있고 알림 요청 힌트는 없음
 
@@ -234,11 +238,11 @@ async def _execute(
     arguments = _parse_arguments(call.function.arguments)
     if arguments is None:
         # registry는 dict를 전제
-        return _failed(name, {}, ErrorCode.VALIDATION_ERROR, _BAD_JSON)
+        return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
 
     key = _dedup_key(name, arguments)
     if key is not None and key in succeeded:
-        return _failed(name, arguments, ErrorCode.VALIDATION_ERROR, _ALREADY_DONE)
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _ALREADY_DONE)
 
     result = await execute_tool(name, arguments, context, allowed=allowed)
     if key is not None and result.success:

@@ -1,16 +1,17 @@
 """event / event_item 의 tool argument 스키마.
 
 event 4 + event_item 3 = 7개.
-status · created_by · expires_at · child_id는 규칙이 채운다.
+created_by · child_id는 규칙이 채운다.
 
 알림은 Agent가 만들지 않는다. 발송은 등록된 일정을 기준으로 자동이다.
 """
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.agents.memory.schemas.common import (
+    ClearableUpdateArgs,
     DateExpr,
     Direction,
     EventCategory,
@@ -20,11 +21,11 @@ from app.agents.memory.schemas.common import (
     ToolArgs,
 )
 
-EventId = Annotated[str, Field(description="create_event / query_event 가 돌려준 event id")]
+EventId = Annotated[str, Field(description="query_event 가 돌려준 event id")]
 
 
 class EventCreate(ToolArgs):
-    """새 일정. 시작 시각이 있어야 등록한다. 모르면 부르지 말고 보호자에게 묻는다."""
+    """새 일정. 시작 시각이 있어야 초안을 만든다. 모르면 부르지 말고 보호자에게 묻는다."""
 
     title: Annotated[str, Field(description="일정 이름. 예: 운동회, 물놀이")]
     starts_on: DateExpr
@@ -70,6 +71,25 @@ class EventCreate(ToolArgs):
             description="기관 행사 institution, 병원 health, 활동 activity",
         ),
     ]
+    items: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description=(
+                "챙길 준비물 이름. 발화에 나온 준비물을 여기에 다 넣는다. "
+                '조사를 떼고 사물 이름만 넣는다 — "수영복이랑 여벌옷" → ["수영복", "여벌옷"]. '
+                "준비물 얘기가 없으면 비워 둔다"
+            ),
+        ),
+    ]
+
+    @field_validator("items")
+    @classmethod
+    def _named_items(cls, names: list[str]) -> list[str]:
+        cleaned = [name.strip() for name in names]
+        if not all(cleaned):
+            raise ValueError("준비물 이름이 비어 있다. 이름을 넣거나 items 에서 뺀다")
+        return cleaned
 
 
 class EventQuery(ToolArgs):
@@ -90,7 +110,10 @@ class EventQuery(ToolArgs):
     title_query: Annotated[str | None, Field(default=None, description="일정 이름에 포함된 키워드")]
 
 
-class EventUpdate(ToolArgs):
+class EventUpdate(ClearableUpdateArgs):
+    # ends_at 하나가 ends_on, ends_time 두 개의 인자로 나뉘어 들어오기 때문에
+    # 컬럼째로만 지우게 함
+    CLEARABLE: ClassVar[frozenset[str]] = frozenset({"ends_at"})
     event_id: EventId
     title: Annotated[str | None, Field(default=None, description="바꿀 이름")]
     starts_on: Annotated[DateExpr | None, Field(default=None, description="바꿀 시작 날짜 표현")]
@@ -107,15 +130,25 @@ class EventRef(ToolArgs):
 
 
 class EventItemCreate(ToolArgs):
-    """준비물 한 개. 여러 개면 item 마다 따로 호출한다."""
+    """이미 있는 일정의 준비물 한 개. 여러 개면 item마다 따로 호출한다."""
 
     event_id: EventId
-    item_name: Annotated[str, Field(description="준비물 이름. 예: 체육복, 수영복")]
+    item_name: Annotated[
+        str,
+        Field(
+            description=(
+                "준비물 이름. 조사를 떼고 사물 이름만 넣는다. "
+                '"물통도 챙겨야 해" → 물통, "체육복이랑" → 체육복'
+            )
+        ),
+    ]
 
 
 class EventItemUpdate(ToolArgs):
     item_id: Annotated[str, Field(description="query_event 결과의 items[].item_id")]
-    item_name: Annotated[str | None, Field(default=None, description="바꿀 이름")]
+    item_name: Annotated[
+        str | None, Field(default=None, description="바꿀 이름. 조사를 떼고 사물 이름만")
+    ]
     is_prepared: Annotated[bool | None, Field(default=None, description="준비 완료 여부")]
 
 

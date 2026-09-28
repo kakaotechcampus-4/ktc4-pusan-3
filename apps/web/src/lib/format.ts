@@ -33,6 +33,30 @@ const DATE_ONLY = new Intl.DateTimeFormat("ko-KR", {
   weekday: "short",
 });
 
+/**
+ * 🚨 **연도가 있고 요일이 없다.** `DATE_ONLY` 는 최근 날짜를 훑는 자리(측정 기록 · 캘린더)용이라
+ *    연도를 빼고 요일을 넣었는데, **생일에는 정확히 반대가 필요하다** — 어느 해에 태어났는지가
+ *    본체이고, 2021년 4월 2일이 금요일이었다는 것은 아무도 안 궁금하다.
+ *    한동안 생일에 `DATE_ONLY` 를 썼더니 화면에 "4월 2일 (금)" 이 떴다.
+ */
+const DATE_WITH_YEAR = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+/**
+ * 요일도 해도 없는 날짜 ("9월 12일". `DATE_ONLY` 와 달리 요일이 빠진다).
+ * 🚨 **축 눈금 전용이다.** 요일은 훑는 목록에서 쓸모가 있지만 그래프 가로축에서는 글자만
+ *    늘려서 눈금끼리 겹친다 — 겹친 눈금은 없는 눈금과 같다.
+ */
+const MONTH_DAY = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: TIME_ZONE,
+  month: "long",
+  day: "numeric",
+});
+
 const MONTH_ONLY = new Intl.DateTimeFormat("ko-KR", {
   timeZone: TIME_ZONE,
   year: "numeric",
@@ -54,6 +78,47 @@ export function formatDay(iso: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "";
   return DATE_ONLY.format(at);
+}
+
+/**
+ * 생일처럼 **해가 중요한 날짜** 한 줄 ("2021년 4월 2일"). `YYYY-MM-DD` 와 ISO 시각을 모두 받는다.
+ * 🚨 나이를 만들지 않는다 — `age_display` 는 서버 문구다 (apps/web/CLAUDE.md §4).
+ */
+export function formatDateWithYear(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return DATE_WITH_YEAR.format(at);
+}
+
+/**
+ * 날짜 하나를 요일 없이 ("9월 12일"). `YYYY-MM-DD` 와 밀리초 타임스탬프를 모두 받는다.
+ * 🚨 상대 표현("3일 전")을 만들지 않는다 — 그건 `measured_label` 이고 서버가 만든다.
+ */
+export function formatMonthDay(value: string | number): string {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return "";
+  return MONTH_DAY.format(at);
+}
+
+/**
+ * 그래프 가로축의 눈금 글자를 만드는 함수를 돌려준다. **축 전체의 범위를 보고** 형식을 고른다.
+ *
+ * 🚨 **해가 바뀌는 축에서 "9월 13일 … 9월 8일" 이 나오면 축이 거꾸로 읽힌다.** 왼쪽이
+ *    작년 9월, 오른쪽이 올해 9월인데 글자만 보면 뒤로 간 것처럼 보인다 — 실제로 그렇게 찍혔다.
+ *    그래서 두 해에 걸친 축에서는 **해를 붙이고 날은 뺀다**("2025년 9월"). 축 끝에 15글자짜리
+ *    날짜가 서면 세로축 숫자 위로 넘어오고, 정확한 날짜는 어차피 아래 목록과 점 설명이 진다.
+ */
+export function axisDayFormatter(from: string | number, to: string | number) {
+  const a = new Date(from);
+  const b = new Date(to);
+  const crossesYear =
+    !Number.isNaN(a.getTime()) && !Number.isNaN(b.getTime()) && a.getFullYear() !== b.getFullYear();
+
+  return (value: string | number): string => {
+    const at = new Date(value);
+    if (Number.isNaN(at.getTime())) return "";
+    return crossesYear ? MONTH_ONLY.format(at) : MONTH_DAY.format(at);
+  };
 }
 
 /** `Date` → "2026년 9월". 달력 머리에 쓴다. */

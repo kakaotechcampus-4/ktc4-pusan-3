@@ -19,6 +19,9 @@ import type {
   HealthSafety,
   OnboardingRequest,
   OnboardingResponse,
+  PhotoCommitRequest,
+  PhotoCommitResponse,
+  PhotoLane,
   SuggestionStatus,
 } from "./types";
 
@@ -62,15 +65,65 @@ export function submitOnboarding(
   return api.post(idempotentPath.onboarding(childId), body, { idempotencyKey });
 }
 
-/* ── 09 사진 ──────────────────────────────────────────────────────────── */
+/* ── 08 사진으로 적기 ────────────────────────────────────────────────── */
 
-/** multipart/form-data → 202 {run_id}. SSE 채널을 재사용한다. */
+/**
+ * multipart/form-data → 202 {run_id}. SSE 채널을 재사용한다.
+ *
+ * ⚠️ **계약서가 multipart 필드 이름을 정해 두지 않았다.** 화면은 `file` · `lane`(부모가 고른 값) ·
+ *    캘린더의 특정 날짜에서 들어온 경우 `date`(YYYY-MM-DD) 를 보낸다 —
+ *    `photoFormData()` 가 그 이름들을 한 곳에서 만든다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ */
 export function uploadPhoto(
   childId: string,
   form: FormData,
   idempotencyKey: IdempotencyKey,
 ): Promise<{ run_id: string }> {
   return api.post(idempotentPath.photo(childId), form, { idempotencyKey });
+}
+
+/**
+ * 위 ⚠️ 의 필드 이름을 만드는 **유일한 자리**. 화면이 FormData 를 직접 조립하지 않는다.
+ *
+ * 🚨 `lane` 은 **부모가 시트에서 고른 값**이다. 계약서 §09 는 서버가 추측해 `lane` 이벤트로
+ *    내려주게 되어 있는데, 부모가 먼저 선언하면 그 추측은 "다르게 읽혔다" 를 알리는 용도가 된다 —
+ *    무엇을 찍었는지는 찍은 사람이 안다. 문서와 활동은 저장 경로가 통째로 다르므로
+ *    (`institution_notice` vs 보호자 확인) 이 값을 추측에 맡기지 않는다.
+ *    ⚠️ 이 필드도 계약서에 없다. 👉 `apps/api` Owner 협의 대상.
+ */
+export function photoFormData(
+  file: File,
+  { lane, date }: { lane: PhotoLane; date?: string },
+): FormData {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("lane", lane);
+  // 🚨 날짜를 프론트가 계산하지 않는다. 캘린더에서 고른 날이 있을 때만 그 값을 그대로 싣고,
+  //    없으면 아예 보내지 않는다 — "오늘" 로 채우는 것은 서버가 할 일이다 (CLAUDE.md §3).
+  if (date) form.append("date", date);
+  return form;
+}
+
+/*
+ * ⚠️ `POST /photo-runs/{rid}/reanalyze`(힌트 한 줄로 다시 읽기) 를 부르는 함수는 **없다.**
+ *    화면에서 뺐기 때문이다 — 읽어낸 항목을 부모가 **그 자리에서 고칠 수 있게** 되면서
+ *    "빠진 것을 알려주고 모델에게 다시 맡기기" 가 더 먼 길이 됐다 (고치면 바로 끝난다).
+ *    엔드포인트는 계약서에 남아 있고, 필요해지면 여기 다시 만든다.
+ */
+
+/**
+ * 🚨 **사진 흐름에서 저장이 일어나는 유일한 지점.** 여기 오기 전까지는 아무것도 저장되지 않는다.
+ *
+ * 🚨 승인 게이트가 아니다 — 문서 lane 이 만드는 `event` 는 `draft` 다 (`types.ts` 의 주석).
+ * ⚠️ 계약서 §01 의 Idempotency 목록 밖이라 키를 받지 않는다. 두 번 보내면 두 번 쌓일 수 있고,
+ *    화면이 보내는 동안 버튼을 잠그는 것으로만 막고 있다. 👉 협의 대상.
+ */
+export function commitPhotoRun(
+  runId: string,
+  body: PhotoCommitRequest,
+): Promise<PhotoCommitResponse> {
+  return api.post(`/photo-runs/${runId}/commit`, body);
 }
 
 /* ── 🚨 승인 게이트 ㉡ — 알레르기·건강 기록 확정 ──────────────────────── */

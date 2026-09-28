@@ -45,8 +45,8 @@
 ### 기억
 
 - 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 또래 기준 일반 추천임을 **화면에 명시**하고, 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
-- 🚨 **개인화 추천에는 사용한 `memory_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
-- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 일반 추천은 근거 0행이 정상이지만, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
+- 🚨 **개인화 추천에는 사용한 `source_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
+- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다. 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
 - 🚨 **한 번의 관찰을 성향으로 확정하지 않는다.** 승격은 오직 Curator 의 반복 집계로만. LLM 이 `state` 를 직접 쓰지 않는다.
 - 🚨 **부모의 말은 아이의 Fact 가 아니다.** "요즘 산만하다"는 보호자 Observation(`caregiver_observation`). 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
 - 🚨 **6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다.**
@@ -54,13 +54,14 @@
 ### 실행
 
 - 🚨 **되돌릴 수 없는 것은 사람이 승인한다** — 승인 게이트는 **딱 2곳**: ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 기록 확정. 그 외에 승인을 늘리지 말 것(자동화가 무의미해진다), **줄이지도 말 것**.
-- 🚨 **자동 실행 경로를 코드에 만들지 않는다.** 승인 없는 draft 는 24시간 뒤 만료.
+- 🚨 **자동 실행 경로를 코드에 만들지 않는다.** 일정은 승인 전에는 저장하지 않는다 — Agent 는 초안까지만 만든다. 승인 없는 Suggestion 은 24시간 뒤 만료.
 - 🚨 **20초 초과 시 부분 결과로 전환.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 한 화면에 섞는다.
 
 ### 개인정보
 
 - 🚨 **로그에 원문 대신 `memory_id`.** 모델 입력에도 같은 원칙을 적용한다(이름 대신 별명/ID, Agent 별 필요 필드만).
-- 🚨 **수집은 이름(별명)·나이·알레르기 여부까지.** 프로필 질문을 늘리지 말 것.
+- 🚨 **수집은 이름(별명)·생일·알레르기와 건강 정보, 그리고 선택 항목인 성별·키·몸무게까지.** 필수 질문을 늘리지 말 것. 성별의 기본값은 "밝히지 않을래요"다.
+- 🚨 **키·몸무게는 잰 날짜가 달린 기록으로 둔다.** 추천을 만드는 데 쓸 수 있고, 그때는 외부 LLM 으로 보낼 수 있다. 아이 자신의 기록을 시간순으로 보여주는 그래프는 만든다 — 보호자가 넣은 숫자를 그대로 그리는 것이다. 다만 화면과 추천 결과 어디에도 **백분위·또래 비교·표준 성장곡선 겹치기·"빠르다/느리다/정상" 같은 평가 표현(색 포함)** 을 만들지 않는다 — 발달 평가로 읽힌다 (§1 안 만드는 것).
 
 ---
 
@@ -112,7 +113,7 @@
 
 | 용어                               | 뜻                                                                                                        | 어디에                                                       |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Observation Memory**             | 관찰 **1건**. 도메인별 4계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity`  |
+| **Observation Memory**             | 관찰 **1건**. 도메인별 5계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity` · `_routine` |
 | **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
 | **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
@@ -120,10 +121,10 @@
 | **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
-| **도메인 Agent**                   | `food` · `activity` · `education` · `health` **4종 고정**                                                 | `suggestion_agent`                                           |
+| **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
 | **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
-| **근거 (evidence)**                | 그 추천이 쓴 `memory_id` 목록. **0행이면 버그**                                                           | `suggestion_evidence`                                        |
-| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) ⚠️ / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. ⚠️ = 계약서 v1 에 없는 값(협의 대상) | `correction_verdict`                                         |
+| **근거 (evidence)**                | 그 추천이 쓴 `source_id` 목록. **0행이면 버그**. 컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문 | `suggestion_evidence`                                        |
+| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. | `correction_verdict`                                         |
 | **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
 | **승인 게이트**                    | 되돌릴 수 없는 2곳                                                                                        | §2 · §3                                                      |
 
@@ -140,7 +141,7 @@
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
 ├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
-├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run) · db-up / db-down / db-logs (deploy/docker)
+├── Makefile                  `make` 만 치면 전체 목록. 앞에 web- 이 붙으면 apps/web(pnpm), 안 붙으면 apps/api(uv), db-*·web-image/up/down/logs 는 docker (deploy/docker)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   ├── api/                  API 계약서 v1
@@ -151,6 +152,8 @@
 │   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
 │   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
 │   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
+│   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
@@ -172,10 +175,14 @@
 │       ├── app/
 │       │   ├── main.py       FastAPI 앱 진입점
 │       │   ├── core/         설정(pydantic-settings) — 김명성
+│       │   │   └── agent_config.py  역할별 LLM 키 선언 파일 — 이시하 (core, agents가 함께 상속)
 │       │   ├── api/          라우터 · 스키마 — 김명성
 │       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
-│       │   │   ├── deps/     (비어 있음) 인증 · 권한 · 동의 검사
-│       │   │   └── v1/       (비어 있음) 도메인 엔드포인트
+│       │   │   ├── deps/     인증 · 권한 · 동의 검사
+│       │   │   ├── idempotency.py  Idempotency-Key 기억 (같은 키 → 처음 응답 재생)
+│       │   │   ├── runs/     run 채널 · SSE · 백그라운드 러너 · Agent 이벤트 → 화면 이벤트 번역. v1/ 밖인 이유 — 계약서 버전과 무관하다
+│       │   │   │             🚨 둘 다 프로세스 메모리 — api 는 --workers 1 전제 (#134)
+│       │   │   └── v1/       도메인 엔드포인트
 │       │   ├── domains/      (비어 있음) 도메인 모델 · 리포지토리 — 김명성
 │       │   ├── agents/       (비어 있음) Agent — **내부 구조는 이시하가 결정**
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
@@ -184,11 +191,12 @@
 │       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · NEIS · MFDS)
 │       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
 │       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
-│       └── tests/            pytest (ASGITransport 통합 테스트)
+│       └── tests/            pytest — unit · integration · eval(라이브 LLM)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
-│   ├── docker/                로컬 개발 DB (Postgres+pgvector) docker-compose
-│   └── (미생성) nginx/, scripts/   배포용, 아직 없음
+│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector),
+│   │                          docker-compose.deploy.yml 은 배포(지금은 web 하나). .env 는 한 곳을 같이 쓴다
+│   └── nginx/, scripts/       (비어 있음) 배포용. web 을 nginx 뒤로 넣을 때 채운다
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
@@ -308,5 +316,6 @@
 
 - **개인정보 보관 범위·기간**, **삭제 범위** (Memory·원문·Inference·Embedding·로그까지)
 - **외부 LLM 전달 범위** — 공통 컨텍스트 강제 주입 구조상 무관한 Agent 에도 건강정보가 갈 수 있다
+- **키·몸무게를 어느 Agent 가 어떤 추천에 쓰는지** (#75) — 외부 LLM 으로 보낼 수 있다는 것까지는 정했다 (개인정보 처리방침에 전달 항목으로 적는다). 필요한 Agent 에만 넘길 수 있는지는 바로 위 항목(공통 컨텍스트 구조)과 같은 숙제다
 
 새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다.

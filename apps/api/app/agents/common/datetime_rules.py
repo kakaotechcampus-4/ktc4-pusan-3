@@ -62,6 +62,7 @@ class WhenPatch:
     ends_on: str | None = None
     ends_time: str | None = None
     direction: TemporalDirection = "nearest"
+    drop_end: bool = False  # 종료를 지움
 
     def is_empty(self) -> bool:
         """언제인지에 대해 아무 말도 하지 않았다면 시간 구간을 건드리지 않는다."""
@@ -70,6 +71,7 @@ class WhenPatch:
             and self.starts_time is None
             and self.ends_on is None
             and self.ends_time is None
+            and not self.drop_end
         )
 
 
@@ -272,6 +274,7 @@ def resolve_when(
     - all_day가 켜지면 00:00~23:59로 다시 계산한다.
     - all_day가 꺼지면 종일 일정에서 사용하던 종료 시각은 유지하지 않는다.
     - 종일 일정에 종료 시각이 오면 쓸 수 없으므로 check_when이 거부한다.
+    - drop_end면 시작은 그대로 두고 종료만 없앤다. 종일 일정은 check_when이 거부한다.
 
     새 일정인 경우 current는 None
     """
@@ -296,6 +299,16 @@ def resolve_when(
 
 def check_when(when: EventWhen, patch: WhenPatch) -> str | None:
     """구간이 성립하면 None, 아니면 모델에게 설명문을 돌려준다."""
+    if patch.drop_end and (patch.ends_on is not None or patch.ends_time is not None):
+        return (
+            "끝을 지우라는 요청과 끝을 새로 정하는 값이 함께 왔다. 끝을 없앨 거면 ends_on·"
+            "ends_time을 빼고, 새 끝을 정할 거면 지우기를 뺀다."
+        )
+    if when.all_day and patch.drop_end:
+        return (
+            "하루 종일 일정은 끝을 따로 지울 수 없다. 시각이 있는 일정으로 바꾸려면 "
+            "starts_time에 시작 시각을 넣는다. 그러면 끝은 비워진다."
+        )
     if when.all_day and patch.ends_time is not None:
         return (
             "하루 종일 일정은 시각을 갖지 않아 끝나는 시각을 쓸 수 없다. 시각이 있는 "
@@ -365,6 +378,8 @@ def _end_at(
     빠진 쪽은 지어내지 않고 기존 값에서 가져온다.
     날짜는 기존 종료일(없으면 시작일), 시각은 기존 종료 시각.
     """
+    if patch.drop_end:
+        return None
     previous = _previous_end(current)
     if patch.ends_on is None and patch.ends_time is None:
         if previous is None or current is None:

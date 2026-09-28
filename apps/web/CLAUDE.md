@@ -20,6 +20,7 @@ Owner: 고태영 (프론트 리드)
 | Zustand | 5.0.15 | 클라이언트 상태 전용 |
 | TanStack Query | 5.102.8 | 서버 상태 전용 |
 | Zod | 4.5.4 | 환경변수 검증 · (필요해지면) 응답 파싱 |
+| Recharts | 3.10.1 | 11-1 변화 그래프 **하나**에만 쓴다 — 아래 §3 컴포넌트 |
 | ESLint | 10.10.0 | `eslint-config-next` flat config |
 | Prettier | 3.9.6 | `prettier-plugin-tailwindcss` 로 클래스 정렬 |
 
@@ -48,9 +49,14 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   바꾸는 것이 전부고, 상대 시간·나이·기간은 여기서도 만들지 않는다 (§4)
 - `lib/auth/oauth-bind.ts` = bind 비밀. 만지기 전에 그 파일 주석을 읽는다 (§3 로그인)
 - `components/ui/` = 토큰만 아는 primitive. **도메인 타입을 import 하지 않는다** / `components/` = 도메인을 아는 조합
-- `mocks/` = MSW 목 서버, **개발 환경 전용** (§7)
+- `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
+  🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
+  서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
+- `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
-  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지
+  🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
+  🚨 `stores/photo-draft.ts`(**아이 사진 원본**) · `stores/safety-scan-draft.ts`(**알레르기 검사지
+  사진** — 의료 기록이다) 도 같다. 셋 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`)
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
@@ -65,24 +71,60 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | --- | --- |
 | 00 소개 · 로그인 | `/` |
 | 로그인 복귀 지점 (보여줄 내용 없음) | `/auth/callback` |
-| 가입 동의 (신규 회원만) | `/auth/consent` |
-| 01 첫 진입 (아이 만들기) | `/onboarding` |
-| 02 이야기 하나 | `/child/[childId]/onboarding` |
+| 가입 — 보호자 이름 + 계정 동의 2건 (신규 회원만) | `/auth/consent` |
+| 00-1 경로 고르기 (아이 0명) | `/start` |
+| 초대 — 코드 입력 → 아이 확인 → 수락 (2단계 · 라우트 하나) | `/invite` |
+| 01 첫 진입 (아이 만들기 + 아이 동의 2건) | `/onboarding` |
+| 02 아이 정보 (관계 · 성별 · 키 · 몸무게 · 알레르기 · 전부 선택) | `/child/[childId]/onboarding` |
+| └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
 | 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
+| 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
-| 10 설정 | `/child/[childId]/settings` (자리만 있고 내용은 다음 이슈) |
+| 10 설정 | `/child/[childId]/settings` |
+| 10 설정 › 고객센터 (읽는 화면) | `/child/[childId]/settings/help` |
+| 10 설정 › 탈퇴 (흐름 중인 화면) | `/child/[childId]/settings/withdraw` |
+| 11 아이 프로필 | `/child/[childId]/profile` |
+| 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
+| 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
-`/onboarding` 만 아이 스코프 **밖**이다 — `POST /children` 이 성공해야 `childId` 가 생기고, 그때 `/child/{cid}/onboarding` 으로 넘어간다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+`/onboarding` · `/start` · `/invite` 는 아이 스코프 **밖**이다 — `POST /children` 이나 초대 수락이
+성공해야 `childId` 가 생긴다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
+
+🚨 **아이가 0명이면 `/onboarding` 이 아니라 `/start` 로 보낸다** (#96). 초대를 기다리는 사람이
+아이 만들기에 바로 떨어지면 **같은 아이를 또 등록**하고, 아이는 보호자당 한 명이라 그 뒤로는
+초대를 수락할 수 없다 (`409 child_already_exists`). 되돌리는 길이 없어서 고르기 전에 묻는다.
+기준이 "신규 회원" 이 아니라 **아이 0명**인 이유는, 초대를 기다리는 기존 회원도 같은 화면이
+필요하기 때문이다.
 
 🚨 **`useSearchParams()` 를 쓰는 화면은 `<Suspense>` 경계 안에 둔다.** 경계가 없으면 프리렌더가
 CSR bailout 을 일으켜 **프로덕션 빌드가 그 화면에서 멈춘다** (`Missing Suspense boundary with useSearchParams`).
 `pnpm dev` 에서는 드러나지 않아서 `pnpm build` 로만 잡힌다 — 실제로 `/auth/callback` 이 그렇게 빠져 있었다 (PR #71 리뷰).
 위 표에서 `?` 가 붙은 화면(05 · 07 · 09)과 `/auth/callback` 이 대상이다. `fallback` 에는 그 화면이
 hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 정적 HTML 과 hydrate 결과가 한 번 어긋나 깜빡인다.
+
+🚨 **11-1 은 11 안의 시트가 아니라 라우트다.** 잰 기록이 쌓이면 목록이 길어져서 프로필의
+다른 두 구역(부르는 이름 · 알레르기)을 화면 밖으로 민다. 그래서 프로필은 **가장 최근 한 줄**만
+세우고 목록과 변화 그래프는 이 주소가 진다. 시트로 하지 않은 이유는 **뒤로가기**다 — 웹뷰의
+기기 뒤로가기가 히스토리 기반이라([`apps/mobile/App.tsx`](../mobile/App.tsx)) 시트는 그 버튼으로
+안 닫히거나, 닫히면서 앱을 벗어난다. 그 화면에서 뒤로 가는 길은 링크로도 함께 세운다
+(주소로 바로 들어오면 히스토리에 프로필이 없어서 `router.back()` 이 앱 밖으로 나간다).
+
+🚨 **11-2 도 시트가 아니라 라우트다. 다만 11-1 과 이유가 다르다.** 검사지 한 장에서 열 줄 넘게
+나오는데, 시트 높이 안에서는 `caution` 배너 · 검사지 사진 · 후보 목록 · 승인 버튼이 서로 자리를
+뺏는다 — 사진을 96px 까지 줄여야 목록이 보였다. 08 사진으로 적기와 같은 모양으로 화면을 내줬다.
+
+- 🚨 **네비를 붙이지 않는다** (11-1 과 반대다). 11-1 은 **가는 곳**이라 네비가 있지만 11-2 는
+  **흐름 중인 화면**이고 승인 게이트가 걸려 있다 — 고르다 마는 길을 만들지 않는다
+- 🚨 **여기는 승인 게이트 ㉡ 다.** 08 사진이 만드는 `event` 는 `draft` 라 `caution`·`btn-approve`
+  를 안 쓰지만, 11-2 의 등록은 되돌릴 수 없어서 **둘 다 쓴다.** 게이트를 늘린 것이 아니라
+  **있던 게이트가 시트에서 화면으로 옮겨온 것**이다 (최상위 §2 — 늘리지도 줄이지도 않는다)
+- 🚨 **고른 파일은 URL 로 못 넘긴다.** 화면 밖 스토어(`stores/safety-scan-draft.ts`)에 한 칸
+  두고 넘긴다. 라우트 이동이 사용자 제스처를 소비해서 도착한 뒤 `input.click()` 을 부르는
+  방법은 브라우저가 막는다. 🚨 그 스토어에 `persist` 를 붙이지 말 것 — **의료 기록 사진**이다
 
 🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
 `failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
@@ -99,7 +141,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
 
 ⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
-지금 보고 있는 아이 경로 아래에 붙여서 쓴다 (`/child/{childId}/settings/consent`).
+🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 지금 없는 경로(`settings/consents`)가 오기도 하고,
+외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 10 설정 한 곳(`/child/{childId}/settings`)이고,
+딥링크는 **어느 구역인지 힌트**로만 쓴다 (`ConsentRequiredCard`).
 
 클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
 **스토어를 읽어 화면을 그리지 않는다.**
@@ -109,21 +153,62 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 별도 UI 라이브러리를 쓰지 않는다. 토큰과 1:1 로 붙고 고치기 쉬운 쪽을 골랐다.
 사양은 [디자인 시스템 §7](../../docs/web/design-system-v1.md) 에 있다 — 없는 값을 즉석에서 만들지 않는다.
 
+🚨 **예외는 recharts 하나이고, 쓰는 자리도 하나다** (11-1 변화 그래프). 그리는 물건이 버튼이나
+입력이 아니라 **축 계산 · 눈금 배치 · 반응형 리사이즈**라서, 손으로 만들면 그게 곧 차트 라이브러리다.
+🚨 **recharts 로 화면 부품을 만들지 않는다** — 토큰과 1:1 로 안 붙는 물건이라 카드·칩·목록이
+거기 들어오는 순간 §5 스타일 규칙이 두 벌이 된다. 색·글자 크기는 그 안에서도
+`var(--color-*)` 로 넘긴다 (`GrowthChart`).
+
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `Tabs` · `Toast` · `Select`
+  `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
+  `BottomSheet` · `Tabs` · `Toast` · `ButtonLink` ·
+  `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
+  `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
-  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel`
+  `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
+  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
+  `ParentSection` · `AccountSection` ·
+  `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
+  `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
+  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
+  (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
+- 🚨 **`components/safety-scan-fields.ts` 는 컴포넌트가 아니다** — 11-2 의 확인 화면과 고치기
+  시트가 **같은 판단**(무엇이 확인이 필요한 줄인가)을 보게 두는 자리다. 양쪽에 따로 두면
+  목록이 "고를 수 있다" 고 본 줄을 시트가 "아직 아니다" 라고 보는 어긋남이 생기는데,
+  승인 게이트에서 그 어긋남은 **확인 안 한 것이 등록되는** 경로다
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
-- 🚨 **하단 네비(`ChildNav`)는 가는 곳 세 화면과 설정에만 붙인다.** 04 저장 결과·05 제안 후보처럼
-  흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7)
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 저장 결과·05 제안 후보처럼
+  흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7).
+  설정의 하위 화면 둘이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
+  있어서 안 붙인다**(빠져나가는 길은 자기 "그만두고 돌아가기" 하나다)
+- 🚨 **돌아가기 화살표는 `IconButtonLink` 다** (`components/ui/icon-button.tsx`). `IconButton` 과
+  **같은** 모양·톤 표를 쓴다. 🚨 `router.back()` 으로 만들지 않는다 — 히스토리는 어디서 왔는지에
+  따라 달라져서, 알림이나 링크로 바로 들어오면 돌아갈 데가 없다. 🚨 `label` 에 "뒤로" 가 아니라
+  **가는 곳**을 적는다("설정으로 돌아가기"). 🚨 **`PageTitle` 과 한 줄**에 세우고 `-ml-3` 를
+  **줄 전체**에 건다 — 44px 원 안에 20px 아이콘이 가운데 있어 좌우 12px 이 비고, 그대로 두면
+  화살표가 화면 왼쪽 기준선보다 안쪽에 선다.
+  ⚠️ 그러면 **제목만 왼쪽이 안 맞는다**(화살표 16 · 제목 52 · 나머지 전부 16). 가로로 붙이는 한
+  피할 수 없고(타깃 44 > 여백 16), 세로 44px 을 아끼는 값으로 받기로 했다 (제품 결정 · #89)
+- 🚨 **한 화면에 같은 이름의 링크를 둘 두지 않는다.** 고객센터 아래에 화살표와 같은 이름의
+  돌아가기를 하나 더 뒀더니 스크린리더 링크 목록에 같은 이름이 두 번 떴다 — 둘 다 같은 곳으로
+  갔다. 탈퇴 화면은 예외가 아니라 **다른 경우**다(아래 "그만두고 돌아가기" 는 흐름을 그만둔다는
+  뜻이라 이름도 하는 일도 화살표와 다르다)
+- 🚨 **버튼처럼 보이는 링크는 `ButtonLink` 다** (`components/ui/button.tsx`). `Button` 과 **같은**
+  변형·크기 표를 쓴다 — 두 벌이 되면 한쪽만 고쳐져 같은 자리에 선 둘이 달라진다.
+  🚨 `<button onClick={router.push}>` 로 대신하지 않는다(링크가 링크가 아니게 된다) ·
+  🚨 행동에 쓰지 않는다(누르면 값이 바뀌는 것은 `Button`) · 🚨 `disabled` 가 없다(`<a>` 에는
+  그 상태가 없다 — 못 가는 링크는 안 그린다)
+- 🚨 **탈퇴처럼 끝나면 세션이 없어지는 화면은 끝 상태를 `AuthGate` 밖에 둔다.** 안에 두면
+  게이트가 그 순간 `/` 로 튕겨서 "탈퇴했어요" 를 아무도 못 보고, 게이트가 **복귀 경로로 그
+  주소를 기억**해 둬서 다음 로그인이 탈퇴 화면으로 떨어진다 (실제로 그랬다)
 - 🚨 **네비는 `surface-muted` 면이고 위에 선이 없다.** 선을 하나 더 긋는 것으로는 채팅바와 안 갈린다 —
   `line` 1px 은 `canvas` 위에서 1.21:1 이고 03 홈에는 **같은 선이 27px 위에도** 있어서, 한 신호가
   "여기부터 고정" 과 "여기부터 다른 종류" 를 나눠 쓰면 하단이 줄 쳐진 슬래브 하나로 읽힌다
@@ -137,7 +222,48 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
-- `card-photo`(08)는 그 화면 이슈에서 만든다
+- 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 이 만드는 `event` 는 `draft` 고,
+  캘린더에 확정하는 것은 09 의 `POST /events/{eid}/confirm` 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
+  ⚠️ 디자인 시스템 §7 `card-photo` · §11 표가 한동안 `caution` 을 적어 뒀는데 최상위 §2 와 어긋나서
+  #60 에서 문서 쪽을 고쳤다. "승인 전에는 저장되지 않아요" 는 경고가 아니라 **사실**이라 중립 면이다
+- 🚨 **사진을 고르는 자리는 08 화면이 아니라 시트다** (`PhotoSourceSheet`). 03 홈의 카메라
+  버튼과 09 하루 패널의 "사진으로 적기" 가 **그 자리에서** 시트를 열고, 촬영/앨범을 고르면
+  바로 08 의 **읽는 중**으로 넘어간다 — 고르기만 하는 화면을 한 칸 두지 않는다.
+  시트는 세 곳이 **한 벌을 같이 쓴다**(08 의 "다른 사진 고르기" 도 같은 것을 연다) —
+  화면마다 다른 방식으로 고르게 하면 부모가 매번 다시 찾는다.
+  🚨 **파일 입력이 두 개인 이유는 `capture` 다.** 하나만 두면 우리 시트에서 고른 것을 OS 가 또 묻는다
+  - 🚨 **고른 파일은 `stores/photo-draft.ts` 로 넘긴다.** `File` 은 URL 에 못 싣고, 라우트 이동이
+    사용자 제스처를 소비해서 "08 에 도착한 뒤 파일 입력을 대신 눌러 주기" 도 막힌다.
+    **`persist` 금지** (아이 사진 원본 · `draft.ts` 와 같은 규칙) · 한 번 쓰면 `release` 로 뗀다
+    (안 떼면 08 을 다시 열 때 지난번 사진이 저절로 올라간다) · `childId` 를 함께 확인한다
+  - 🚨 **넘겨받은 사진은 effect 가 아니라 `useState` 초기값으로 받는다.** effect 에서 `setState`
+    하면 08 의 첫 프레임이 **사진 없는 화면**이라 "고르면 바로 읽는 화면" 이 한 번 깜빡인다
+    (lint 의 `react-hooks/set-state-in-effect` 가 같은 것을 잡는다). `peek` 은 순수한 읽기다
+  - 🚨 **objectURL 해제를 effect cleanup 에 걸지 않는다.** StrictMode 가 mount 직후 cleanup 을
+    한 번 돌려서 방금 넘겨받은 사진이 그 자리에서 해제된다 (`ERR_FILE_NOT_FOUND` 로 났다).
+    만드는 것도 해제하는 것도 스토어 한 곳이고, 해제는 **다음 사진**과 **로그아웃** 두 이벤트뿐이다 —
+    살아 있는 URL 은 언제나 최대 한 개다
+- 🚨 **`lane` 은 부모가 시트에서 **고른다.** 서버 추측이 정하지 않는다.** 계약서 §09 의 `lane`
+  이벤트는 추측이고, 무엇을 찍었는지는 찍은 사람이 안다 — 그래서 시트가 먼저 묻고
+  (`어떤 사진인가요?` 라디오 2칸) 고른 값을 업로드 multipart 의 `lane` 으로 싣는다.
+  🚨 **서버 추측은 선언을 덮지 않는다.** 어긋날 때만(`confidence >= 0.6`) 확인 화면에 한 줄이
+  서고, 바꾸는 버튼에는 "아니에요" 가 아니라 **바뀔 결과**를 쓴다(`아이 활동 사진이에요`).
+  🚨 **시트는 두 단계다. 한 화면에 쌓지 않는다** — ㉠ 어떤 사진인가 → ㉡ 어디서 가져오나
+  (최근 사진 · 촬영 · 앨범). 처음엔 한 화면에 셋을 세우고 앞을 안 고르면 뒤를 비활성으로 뒀는데,
+  **할 일이 하나인 순간에 세 덩어리를 보여 주고** 꺼진 것들이 "왜 안 눌리지" 를 먼저 묻게 만들었다.
+  🚨 **시트 제목이 지금 묻는 것**이다 (㉠ "어떤 사진인가요?" · ㉡ 고른 종류의 이름) — 같은 제목을
+  쓰면 넘어간 것이 화면에 안 보인다. 🚨 ㉠ 에 확인 버튼을 두지 않는다(고르면 바로 ㉡)
+- 🚨 **최근 사진 줄은 네이티브 셸이 있을 때만 선다** (`lib/native/recent-photos.ts`).
+  **웹은 기기 갤러리를 읽을 수 없다** — 파일 입력은 OS 피커를 열 뿐이고 목록을 먼저 가져오는
+  API 가 없다. 셸(`apps/mobile`)이 `expo-media-library` 로 읽어 `window.icatch.recentPhotos` 에
+  꽂아 주는 구조이고, 그 구현은 **별도 브랜치·별도 이슈**다.
+  🚨 **셸이 없으면 줄 자체를 그리지 않는다** — 빈 상자도 권한 안내도 띄우지 않는다
+  (브라우저에는 허용할 권한이 아예 없다). 개발 환경에서 화면을 보려면 목 스위치를 켠다
+  (`mocks/native-bridge.ts` 가 가짜 썸네일을 꽂는다)
+- 🚨 **08 의 문서 lane 은 항목을 미리 골라 두고, 활동 lane 은 하나도 고르지 않은 채로 시작한다.**
+  기관이 적어 준 글자를 옮긴 것과 모델이 아이에 대해 추측한 것을 같은 무게로 두지 않는다
+  (최상위 §2 "한 번의 관찰을 성향으로 확정하지 않는다"). 같은 이유로 활동 lane 은 태그를 하나도
+  안 고르면 저장 버튼이 눌리지 않는다 — 화면이 바로 위에서 한 말을 스스로 뒤집지 않게
 - 🚨 **07 의 도메인 색은 왼쪽 아이콘 타일 하나까지다** (디자인 시스템 §3 예외 ㉡). 도메인 색의 뜻을
   "어느 Agent 결과인가" 에서 **"어느 영역인가"** 로 넓히면서 열린 자리다 — 07 은 제안이 아니라
   쌓인 것을 훑는 화면이고, 목록이 네 영역을 섞어 내려주므로 "한 화면에 2개" 상한의 예외이기도 하다
@@ -199,8 +325,16 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   바깥 클릭이 전부 그 파일의 책임**이 된다. 그 파일의 🚨 를 지우지 말 것:
   ARIA 는 `combobox` + `listbox` 한 쌍 · 열 때 고른 항목으로 포커스가 들어가고 **닫을 때 버튼으로
   돌아온다**(안 그러면 포커스가 `<body>` 로 떨어진다 · 09 달력에서 낸 사고와 같다) ·
-  ESC · 바깥 클릭 · Tab · 스크롤에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
+  ESC · 바깥 클릭 · Tab 에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
   등장 애니메이션도 쉐브론 회전도 없다(방향은 아이콘을 갈아 끼워 말한다)
+  ⚠️ **스크롤에는 닫지 않는다.** 목록이 `relative` 루트 안의 `absolute` 라 트리거에 붙어 같이
+  움직이는데, 떨어질까 봐 넣었던 스크롤 가드가 **열릴 때 포커스가 일으킨 스크롤**을 잡아
+  자기를 닫고 있었다 — 바텀시트 안(본문이 `overflow-y-auto`)에서 상자가 **아예 안 열렸다.**
+  페이지가 긴 화면(07)에서는 스크롤이 안 나서 여태 안 보였다
+- 🚨 **접히는 질문(10 › 고객센터)은 네이티브 `<details>`/`<summary>` 다.** 펼침 상태·키보드·포커스를
+  브라우저가 준다 — `aria-expanded` 를 손으로 달지 않는다. 🚨 기본 마커를 지우고(`list-none` +
+  `::-webkit-details-marker`) 쉐브론은 **회전이 아니라 갈아 끼운다**. 🚨 `summary` 여백은 카드 밖으로
+  **네 방향 다** 되민다(`-m-4 p-4`) — 아래만 남기면 닫힌 카드에 32px 빈 띠가 생긴다
 - 🚨 **화면을 그리는 외부 라이브러리는 `<dialog>`(시트) 와 `react-day-picker`(달력) 둘뿐이다.**
   접근성을 손으로 짜면 반드시 빠뜨리는 것만 예외로 얹는다. 달력은 **기본 CSS 를 불러오지 않고**
   `classNames` 로 토큰만 입힌다 — 버튼·입력을 주는 UI 킷은 계속 쓰지 않는다 (디자인 시스템 §7).
@@ -244,12 +378,47 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **자리표시 코드는 개발 환경 + 목 서버일 때만 나간다.** 프로덕션 빌드에서 로그인이 되는 것처럼 보이는 경로를 만들지 않는다 (빌드 후 번들에서 문자열이 사라지는지 확인한다)
 - 🚨 **1회용 코드는 한 번만 교환한다.** StrictMode 의 이중 실행으로 두 번 소비하면 두 번째가 `401 invalid_handoff` 다 — `useRef` 가드를 둔다
 - 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다.** 토큰을 **얻으러** 가는 화면이라 감싸면 `/` 로 튕긴다
-- **신규 회원은 `/auth/consent` 로 보낸다.** 동의 4건을 받아야 계정이 만들어진다 — 계정 2건은 `signup`, 아이 2건은 `POST /consents` 다.
-  🚨 **아이 스코프를 아이보다 먼저 받는다** — `child_basic` 없이 `POST /children` 은 403 이다 (계약서 §04 "동의는 저장보다 먼저다")
+- **신규 회원은 `/auth/consent` 로 보낸다.** 필수 4건을 받아야 하지만 **화면이 둘로 갈린다** — 계정 2건은 `signup` 바디로(여기서 계정이 생긴다), 아이 2건 + 법정대리인 확인은 01 아이 만들기 화면이 `POST /children` 바디로 보낸다 (아이와 한 트랜잭션).
+  ⚠️ **아이 2건이 `POST /consents` 에서 옮겨 온 것은 #96 이고 계약 확정 전이다.** 동의를 **아이 단위**로 기록하기로 하면서 `child_id` 없이는 저장할 수 없게 됐는데, 그 id 는 `POST /children` 이 만든다 — 계약서 §04 의 "`child_basic` 없이 `POST /children` 은 403" 과 동시에 성립하는 모양은 이것뿐이다
+  🚨 **아이 동의를 가입 화면에서 받지 않는 두 번째 이유** — 가입만 끝내고 아이 만들기에서 나간 사람의 동의가 갈 곳 없이 사라진다. 값은 그 값이 쓰이는 화면에 둔다 (`lib/consent.ts` 의 `ACCOUNT_SIGNUP_CONSENTS` 주석)
+  🚨 **관계는 01 이 아니라 02 가 받는다.** 01 은 되돌리기 어려운 것(아이를 만드는 일 · 법정대리인
+  동의)만 받고 **고를 수 있는 것은 전부 02** 다 (관계 · 성별 · 키 · 몸무게 · 알레르기).
+  ⚠️ 그래서 `POST /children` 바디에서 `relation` 이 빠지고 `POST /children/{cid}/onboarding` 으로
+  옮겨 갔다 (계약 확정 전) — **같은 값을 두 엔드포인트가 받지 않는다.**
+  🚨 **02 는 11 아이 프로필과 같은 것을 쓴다** — 성별은 같은 `ChoiceField` 와 같은 목록
+  (`lib/gender.ts`), 키·몸무게는 같은 읽기 규칙(`lib/measurement.ts`), **알레르기는 구역 자체가
+  같은 컴포넌트**(`components/safety-section.tsx`)다.
+  🚨 **알레르기만 다른 버튼을 따라간다.** 나머지는 02 의 "다음" 이 한 번에 보내지만, 알레르기는
+  **승인 게이트 ㉡** 라 시트에서 확정하는 즉시 저장된다 — 그래서 02 에서 등록한 알레르기는
+  "건너뛰기" 를 눌러도 남는다. 🚨 그 대신 **쓰기 경로가 하나로 모였다**: 예전 02 는
+  `POST /children/{cid}/onboarding` 본문에 알레르기를 실어 보내서 **게이트를 지나지 않는 두 번째
+  경로**였다 (NF-03).
+  ⚠️ 그 대가로 `safety_status`(없음 / 잘 모르겠어요)를 **물을 자리가 지금 없다** — 목록 0건으로는
+  "확인했고 없다" 와 "아직 모른다" 를 가를 수 없고, 후자는 Food Agent 실행을 막는 신호다
+  (최상위 §2 · `OnboardingRequest` 주석). **열린 결정이다.**
+  🚨 **11 의 나머지 시트(별명·생일·성별 · 측정 기록)는 02 에 올리지 않는다** — 그 시트들은 열릴
+  때마다 각자 저장하고, `ChildIdentitySheet` 는 01 이 방금 받은 별명·생일을 다시 묻는다.
+  🚨 **아이와의 관계는 고를 수 있는 목록이 자리마다 다르다** (`lib/relation.ts`) — 01 등록 화면은
+  `mother` · `father` · `grandparent` **셋뿐**이고(관계를 묻는 자리는 이제 02 다), 초대 수락 화면은 5종 전부다. 편의가 아니라
+  **법정대리인 동의를 누가 하는가**의 문제다: 등록 화면은 그 동의를 같이 받으므로 시터가 설 수 없고,
+  수락 화면은 그 동의를 받지 않으므로 설 수 있다. 🚨 라벨을 화면에서 다시 쓰지 않는다 — 실제로
+  10 설정은 "돌봄 선생님", 01 은 "시터" 로 **같은 값이 다르게 보이고 있었다.**
+  🚨 **법정대리인 확인을 상수 `true` 로 보내지 않는다** — 체크박스 값 그대로다. 아무도 확인하지 않은 동의가 확인된 것으로 남으면 그 동의는 증빙이 아니다
+  ⚠️ **보호자 이름은 같은 화면에서 받는다.** 한동안 앞 화면으로 갈라 뒀다 — 법적 고지 화면에 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다는 규칙 때문이었다. 합친 이유는 **이름이 무관한 입력이 아니기 때문**이다: 이 화면이 만드는 것이 보호자 계정이고 동의 2건이 허락하는 것도 그 계정이다 (아이 정보였다면 갈랐을 것이고, 실제로 갈라 놨다). 대신 **이름 칸과 동의 구역을 제목으로 가르고** 동의는 항목마다 개별 체크 + 전문 시트를 유지한다 — 그 구조가 무너지면(한 덩어리로 묶거나 "전체 동의" 를 세우면) 합친 것이 그때는 문제가 된다 (⚠️ `signup` 바디의 `nickname` 은 계약 확정 전이다 · #96)
   🚨 **"전체 동의" 를 만들지 않는다** — 민감정보(`child_health`)는 다른 동의와 구분해서 받아야 한다 (개인정보보호법 제23조)
+  🚨 **필수와 선택을 같은 컨트롤로 그리지 않는다.** 필수는 `service_terms` · `privacy_account` ·
+  `child_basic` · `child_health` 넷이고, `location` 이 **선택**이다 (#89). 10 설정에서는 선택만 켜고 끄고,
+  필수에는 철회 버튼을 두지 않는다 — 나란히 두면 화면이 "다 끌 수 있다" 고 말하는 셈이고, 눌렀을 때와 다르다.
+  🔶 **`location` 은 가입 화면에서도 묻는다** (계정 스코프 · 보호자 기기의 위치라 아이 것이 아니다).
+  거기서도 필수와 **머리줄로 가르고**, 막는 기준은 `required` 뿐이다 — 선택이 하나 서면서 이 구분이
+  실제로 갈리는 자리가 됐다 (`ACCOUNT_SIGNUP_REQUIRED` / `ACCOUNT_SIGNUP_OPTIONAL`).
+  🚨 **막는 기준은 `required` 이지 개수가 아니다** — `SIGNUP_CONSENTS.length` 로 세면 선택 동의를
+  가입 화면에 올리는 날 조용히 그것까지 막는다. 정본은 `lib/consent.ts` 다.
+  ⚠️ `child_health` 를 선택으로 내려 봤다가 되돌렸다 — 계약서 §04 가 그 동의 없이 `POST /inputs` 도
+  403 이라고 못박고 있어서, 선택으로 두면 **한 줄 입력조차 안 되는데 화면은 "선택" 이라고 말한다**
   🚨 **승인 게이트가 아니다** — `btn-approve` · `caution` 을 쓰지 않는다. 그 둘은 되돌릴 수 없는 2곳 전용이다 (§2)
   스코프 목록·약관 버전의 정본은 `lib/consent.ts` 다. 10 설정의 동의 관리도 같은 파일을 쓴다
-- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 10 설정의 동의 화면이 아직 없다
+- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 남은 동의는 10 설정에서 켠다
 
 ### 세션 — `sessionStorage` 다
 
@@ -381,7 +550,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 🚨 **`failed` 는 `raw_text` 를 돌려준다.** 입력창에 그대로 남겨 놓는다 — 부모가 다시 타이핑하게 만들지 않는다.
 - 🚨 **날짜·나이를 프론트에서 계산하지 않는다.** `age_display` · `observed_label` · `state_reason` 은 서버가 만든 문구다 (§3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
   - 그래서 01 화면은 프로토타입의 **나이 드롭다운 대신 생일**을 받는다. 나이 → 생일 환산이 곧 날짜 계산이다.
-  - 같은 이유로 `GET /dev-screening/items` 에 `age_months` 를 만들어 보내지 않고 `child_id` 를 보낸다 (서버가 `birth_date` 로 환산한다 · 계약서 수정 대상).
+  - ⚠️ 같은 이유로 `GET /dev-screening/items` 에 `age_months` 대신 `child_id` 를 보내기로 했었다 — **지금은 화면이 그 경로를 아예 부르지 않는다.** 02 에서 발달 문항을 뺐다 (화면에 "발달 상태" 라는 말이 서면 그때부터 발달 평가로 읽힌다 · 최상위 §1). 타입과 목은 남아 있다.
   - 예외는 **표시가 아닌 입력 제약**뿐이다 — 달력에서 오늘 이후를 못 고르게 막는 것(`DateField` 의 `toDate`).
     🚨 `<input type="date">` 를 쓰지 않는다 — 브라우저·OS 마다 생김새가 달라 §7 입력 사양을 지킬 방법이 없다.
 - 🚨 **health 관찰은 모양이 다르다.** `subject` · `polarity` · `affinity` 키 자체가 없다. `null` 검사가 아니라 `kind === "observation_health"` 로 분기한다 (`isHealthObservation()`).
@@ -455,6 +624,34 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 
 🚨 `NEXT_PUBLIC_*` 는 **브라우저 번들에 그대로 박힌다.** 비밀은 여기 넣지 않는다 (§9 · NF-09).
 
+루트에서 `make` 를 치면 `web-*` 로 같은 스크립트를 부를 수 있다 (6명이 파트를 오갈 때 한 줄로 끝내기 위한 것이다).
+`make web-check` = typecheck + lint + test.
+
+🚨 **`make web-build` 를 PR 전에 한 번 돈다.** `pnpm dev` 가 통과하는데 프로덕션 빌드만 멈추는 자리가 있다
+(§3 라우팅의 `useSearchParams` Suspense 경계). dev 서버만 보고 올리면 그 화면은 배포에서만 죽는다.
+
+### 배포 — 이미지는 API 주소를 안고 굳는다
+
+[`Dockerfile`](Dockerfile) 3단계(deps → builder → runner) · [`deploy/docker/docker-compose.deploy.yml`](../../deploy/docker/docker-compose.deploy.yml) ·
+`make web-image` / `web-up` / `web-down` / `web-logs`.
+
+- 🚨 **`NEXT_PUBLIC_API_BASE_URL` 은 런타임 환경변수가 아니라 `--build-arg` 다.** 위 줄이 이유 전부다 —
+  빌드가 문자열로 박아 버리므로 컨테이너에 환경변수를 새로 꽂아도 바뀌지 않는다. 주소가 바뀌면
+  **다시 굽는다.** 값의 정본은 `deploy/docker/.env` 고, 비어 있으면 빌드가 그 자리에서 멈춘다
+  (조용히 잘못된 주소로 굳는 것보다 낫다 — `.env.local` 규칙과 같은 이유)
+- 🚨 **그 주소의 오리진은 서버의 `KAKAO_CALLBACK_URL` 오리진과 같아야 한다.** 다르면 `state` 쿠키가
+  콜백에 실리지 않는다 ([`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §5-5) —
+  **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과한다.** 이 값은 배포 기준으로 확인한다
+- 🚨 **목 서버는 이 이미지로 켤 수 없고, 켤 수 있는 척하지도 않는다.** `NEXT_PUBLIC_API_MOCKING` 을
+  빌드 인자로 열지 않고 `disabled` 로 고정해 뒀다 — 프로덕션 빌드에는 msw 가 통째로 빠져서(§7)
+  인자만 열어 두면 "배포에서 목이 안 뜬다" 를 디버깅하게 된다
+- 🚨 **`.dockerignore` 의 `.env*` 를 지우지 않는다.** 저장소엔 없지만 각자 로컬엔 `.env.local` 이 있고,
+  빌드 컨텍스트에 들어가면 Next 가 그것을 읽어 **개인 설정이 배포 이미지에 굳는다** (최상위 §9)
+- `output: "standalone"` 을 끄지 않는다 (`next.config.ts`). 끄면 `.next/standalone` 이 안 생겨서
+  Dockerfile 의 마지막 COPY 가 실패한다. 🚨 standalone 은 `public/` 과 `.next/static/` 을 **자기 안에
+  넣지 않는다** — Dockerfile 이 손으로 옮기고, 그 두 줄을 빼면 화면은 뜨는데 CSS 와 서브셋 폰트 92개가
+  전부 404 다 (§5 서체)
+
 ---
 
 ## 7. 목(mock) 서버
@@ -482,6 +679,11 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
 | `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
+| `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
+| `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
+
+🚨 **08 의 두 lane 은 시나리오가 아니다.** 시트에서 고르면 그대로 갈린다 — 시나리오가 만드는 것은
+**실서버로 못 만드는 상태**(안 읽히는 사진 · 어긋난 추측)뿐이다.
 
 주소에 `?scenario=partial` 을 붙이면 저장되고 그다음부터 유지된다. 되돌리려면 `?scenario=default`.
 
@@ -499,7 +701,16 @@ NEXT_PUBLIC_API_MOCKING=enabled
   🚨 **핸들러 안의 409 는 "새 요청으로 이미 끝난 걸 또 하려는 경우" 에만 쓴다.** 재시도는 래퍼가 먼저 가로챈다 — 둘을 한 응답으로 합치면 화면이 구분할 수 없다.
 - **핸들러에 없는 경로는 콘솔에 경고가 뜬다.** 조용히 통과시키지 않는다.
 - **백엔드가 붙어도 목을 지우지 않는다.** 위 7개 상태는 실서버로 만들기 어렵고, 화면 회귀 확인에 계속 쓴다.
-- 화면 00~07 · 09 가 덮여 있다. 08 사진 · 10 설정은 아직 없다.
+- 화면 00~11 이 덮여 있다. 이제 빠진 화면이 없다.
+  🚨 **`GET /runs/{rid}/events` 는 핸들러가 하나다** — 04 한 줄 입력 run 과 08 사진 run 이 같은 경로를
+  나눠 쓴다 (계약서 §09 "SSE 채널을 재사용한다"). 갈라 쓰는 지점은 `handlers/runs.ts` 한 곳이고,
+  `handlers/photos.ts` 가 run 등록부와 사진 대본을 내보낸다. 같은 경로에 핸들러를 두 개 등록하면
+  msw 가 먼저 등록된 쪽으로만 보내서 **사진 run 이 `saved` 를 흘린다** (저장한 적도 없는 관찰이 나온다).
+  🚨 **`/auth/*` 의 이름이 정해진 경로는 `:provider` 보다 앞에 둔다.** msw 는 배열 순서대로
+  맞추는데 `:provider` 가 `logout` · `withdraw` 까지 삼킨다 — 실제로 `POST /auth/logout` 이
+  교환 핸들러에 걸려 500 이었는데, 화면이 로컬 세션을 비우고 나가 버려서 아무도 몰랐다
+  🚨 **동의는 목이 상태를 들고 있다** (`handlers/settings.ts`). 켜고 끄는 화면이라 응답이 매번 같으면
+  무엇을 눌러도 화면이 안 변한다 — 새 상태를 더하면 리셋 함수를 `test/setup.ts` 에 건다 (§8).
 - 🚨 **실제 OAuth 왕복은 목으로 흉내 낼 수 없다** — 카카오로 나가는 전체 페이지 이동이라 서비스 워커가 못 잡는다.
   목이 덮는 것은 시작 전(`status`)과 돌아온 뒤(교환·가입)이고, 중간은 `lib/auth/oauth.ts` 의 `MOCK_ONLY` 분기가 건너뛴다.
 - 🚨 **`startMocks()` 는 한 번만 시작한다** (약속을 캐시한다). StrictMode 가 effect 를 두 번 돌리는데 두 번째 `worker.start()` 가

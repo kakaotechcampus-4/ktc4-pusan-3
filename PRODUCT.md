@@ -21,7 +21,7 @@ web
 **하는 일 (job)** — 흩어진 정보(알림장·급식·일정·과거 반응)를 직접 찾아 연결하고, 무엇이 지금 중요한지
 판단한 뒤, 다음 행동을 결정하는 일. 이 반복적인 **육아 인지 노동**을 대신 준비받는 것이 목적이다.
 
-**함께 보는 보호자** — 배우자·조부모·시터가 초대 링크로 같은 아이를 함께 볼 수 있다
+**함께 보는 보호자** — 배우자·조부모·시터가 초대 코드로 같은 아이를 함께 볼 수 있다
 (`POST /children/{cid}/invites`, 화면 10). 소유자(owner)와 초대받은 보호자의 권한은 구분된다.
 
 ## Product Purpose
@@ -51,7 +51,7 @@ web
 부족한 건 정보가 아니라 **연결**이다. 범용 AI 는 매번 아이의 나이·성향·과거 반응을 다시 설명해야 하지만,
 이 서비스는 그 맥락이 이미 아이 중심으로 쌓여 있다. 이웃 제품이 그대로 베낄 수 없는 지점은 두 가지다.
 
-- **근거를 달고 나가는 추천** — 개인화 추천에는 사용한 `memory_id` 가 반드시 첨부된다. 근거가 없으면
+- **근거를 달고 나가는 추천** — 개인화 추천에는 사용한 `source_id` 가 반드시 첨부된다. 근거가 없으면
   개인화인 척하지 않고 또래 기준 일반 추천임을 화면에 명시한다.
 - **되돌릴 수 없는 것만 사람이 승인한다** — 승인 게이트는 캘린더 쓰기와 건강·알레르기 기록 확정 딱 2곳.
   자동 실행 경로는 코드에 존재하지 않는다.
@@ -95,8 +95,8 @@ Agent 2개 중 1개만 성공해도 그 화면을 보여주고, **성공과 실�
 ## Capabilities and Constraints
 
 **만드는 것** — Child Memory 자동 구축(Fact / Observation / Inference 3분류), Curator 의 규칙 기반
-병합·집계·승격·감쇠, Supervisor 라우팅, 도메인 Agent 4종(`food` · `activity` · `education` · `health`),
-근거(memory_id) 첨부 추천, Correction 4버튼(`confirm` / `once_only` / `outdated` / `wrong`),
+병합·집계·승격·감쇠, Supervisor 라우팅, 도메인 Agent 4종(`food` · `activity` · `growth` · `health`),
+근거(source_id) 첨부 추천, Correction 4버튼(`confirm` / `once_only` / `outdated` / `wrong`),
 보호자 초대·공유, 캘린더 쓰기, 사진 입력.
 
 **안 만드는 것** — 진단·처방·발달 평가, 상품 추천, 대신 발송·예약·결제, 아이와 직접 대화하는 AI,
@@ -110,8 +110,8 @@ Agent 2개 중 1개만 성공해도 그 화면을 보여주고, **성공과 실�
 - 근거 Memory 가 없으면 일반 추천을 내고 **일반 추천임을 화면에 명시**한다. 되물을 때 질문은 최소 1개.
 - 한 번의 관찰을 성향으로 확정하지 않는다. 승격은 Curator 의 반복 집계로만.
 - 부모의 말은 아이의 Fact 가 아니다(`caregiver_observation`). 6개월 지난 관심 기록은 단독 근거 금지.
-- 되돌릴 수 없는 것은 사람이 승인한다. 승인 게이트는 2곳 — **늘리지도 줄이지도 않는다.** 승인 없는 draft 는 24시간 뒤 만료.
-- 로그·모델 입력에 원문 대신 `memory_id`. 수집은 이름(별명)·나이·알레르기 여부까지.
+- 되돌릴 수 없는 것은 사람이 승인한다. 승인 게이트는 2곳 — **늘리지도 줄이지도 않는다.** 일정은 승인 전에는 저장하지 않고, 승인 없는 Suggestion 은 24시간 뒤 만료.
+- 로그·모델 입력에 원문 대신 `memory_id`. 수집은 이름(별명)·생일·알레르기와 건강 정보, 선택 항목인 성별·키·몸무게까지 — 필수 질문을 늘리지 않는다. 키·몸무게는 날짜가 달린 기록으로 두고, 아이 자신의 기록을 시간순으로 그린 그래프로 보여준다 — 백분위·또래 비교·표준 성장곡선·평가 표현은 만들지 않는다.
 
 **용어** — Observation Memory / Child Memory / Curator / 승격 / 감쇠 / Supervisor / 의도 3형 /
 도메인 Agent / Suggestion / 근거(evidence) / Correction / run / 승인 게이트. 정의는 `CLAUDE.md` §5 가 정본이며
@@ -154,7 +154,7 @@ Agent 2개 중 1개만 성공해도 그 화면을 보여주고, **성공과 실�
 
 - `docs/overview/service-plan.md` — 페르소나 · 포지셔닝 · 안전 설계 · 성공 지표 · 첫 100명 채널
 - `docs/overview/tech-spec.md` — 요구사항 `F-01`~`F-15` · `NF-01`~`NF-09` · 리스크 · 테스트 전략
-- `docs/api/api-interface-v1.html` — 화면 01~10 을 그리는 API 28개 계약 (요청·응답·상태 전이·에러 코드)
+- `docs/api/api-interface-v1.html` — 화면 01~10 을 그리는 API 27개 계약 (요청·응답·상태 전이·에러 코드)
 - `docs/web/design-system-v1.md` · `/design-system` 라우트 — 토큰과 대비비가 실제로 렌더되는 살아 있는 버전
 - `docs/assets/prototype.html` — 화면 01~10 standalone 시연본
 - `docs/assets/agent-flow.png` — 처리 흐름도(실패 시나리오 포함)

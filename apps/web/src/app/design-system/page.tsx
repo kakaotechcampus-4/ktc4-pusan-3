@@ -1,6 +1,16 @@
 "use client";
 
-import { ArrowUp, CalendarDays, Camera, Mic, NotebookPen, Sprout, Utensils } from "lucide-react";
+import {
+  ArrowUp,
+  CalendarDays,
+  Camera,
+  Mic,
+  NotebookPen,
+  ShieldCheck,
+  Sprout,
+  UserRound,
+  Utensils,
+} from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { DomainChip } from "@/components/domain-chip";
@@ -10,6 +20,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ChoiceField } from "@/components/ui/choice-field";
 import { Chip, ChipRow, CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
 import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -28,6 +39,8 @@ import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import type { Agent } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
+import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
+
 import { COLOR_GROUPS, HEIGHT_TOKENS, NOT_BUILT, TYPE_STEPS, type ColorPair } from "./tokens";
 
 /**
@@ -451,6 +464,11 @@ const BUTTON_VARIANTS: Array<{ variant: ButtonVariant; use: string }> = [
   { variant: "kakao", use: "00 로그인 전용 (외부 브랜드)" },
 ];
 
+const DS_GENDER_OPTIONS = [
+  { value: "male", label: "남자아이" },
+  { value: "female", label: "여자아이" },
+] as const;
+
 const DS_DOMAIN_OPTIONS = [
   { value: "all", label: "전체" },
   { value: "food", label: "식사" },
@@ -465,7 +483,8 @@ const DS_STATE_OPTIONS = [
 
 function ComponentSection() {
   const toast = useToast();
-  const [sheet, setSheet] = useState<null | "normal" | "approval">(null);
+  const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
+  const [dsGender, setDsGender] = useState("male");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
   const [chip, setChip] = useState("공룡");
@@ -615,7 +634,7 @@ function ComponentSection() {
         비교하려고 모아 둔 내부 문서라 예외다.
       </p>
       <EvidenceRow>
-        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+        {(["food", "activity", "growth", "health"] as Agent[]).map((agent) => (
           <DomainChip key={agent} agent={agent} />
         ))}
       </EvidenceRow>
@@ -715,6 +734,23 @@ function ComponentSection() {
         />
       </div>
 
+      <SubTitle>고르는 칸 (둘 중 하나)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        반드시 하나를 고르는 칸이다. 🚨 선택지가 둘이면 드롭다운을 쓰지 않는다 — 있는 선택지를 상자
+        안에 감췄다가 탭 두 번으로 다시 보여줄 뿐이다. 🚨 chip-choice 도 아니다: 칩은 aria-pressed
+        토글이라 둘 다 꺼진 상태가 정상이고, 보조기술에 &quot;둘 중 하나&quot; 라는 관계가 안
+        드러난다. 그래서 네이티브 라디오를 sr-only 로 숨기고 표식만 그린다 — 그룹 · 방향키 이동 · 단
+        하나만 선택을 브라우저가 준다. 🚨 고른 것을 색 하나로 말하지 않는다(체크 아이콘 · §3) · 칸을
+        똑같이 나눈다(한쪽이 넓으면 기본값처럼 보인다) · min-h-field 로 같은 폼의 입력과 높이를
+        맞춘다.
+      </p>
+      <ChoiceField
+        label="성별"
+        value={dsGender}
+        options={DS_GENDER_OPTIONS}
+        onChange={setDsGender}
+      />
+
       <SubTitle>토스트</SubTitle>
       <p className="text-caption text-ink-subtle">
         화면 안에 자리가 없는 사실을 잠깐 띄운다. 🚨 성공을 알리지 않고(성공은 화면이 이미 말한다),
@@ -744,16 +780,28 @@ function ComponentSection() {
         <Button variant="secondary" onClick={() => setSheet("approval")}>
           승인 시트 (안 닫힘)
         </Button>
+        <Button variant="secondary" onClick={() => setSheet("document")}>
+          문서 시트 (font-doc)
+        </Button>
       </div>
       <BottomSheet
         open={sheet !== null}
         onClose={() => setSheet(null)}
         dismissible={sheet !== "approval"}
-        title={sheet === "approval" ? "승인 시트" : "일반 시트"}
+        variant={sheet === "document" ? "document" : "default"}
+        title={
+          sheet === "approval"
+            ? "승인 시트"
+            : sheet === "document"
+              ? "서비스 이용약관"
+              : "일반 시트"
+        }
         description={
           sheet === "approval"
             ? "스크림 탭·ESC 로 닫히지 않는다. 실수로 닫혀 draft 가 만료되는 경로를 만들지 않는다."
-            : "스크림 탭·ESC 로 닫힌다."
+            : sheet === "document"
+              ? "제목까지 통째로 font-doc 이다 — 한 화면 한 서체."
+              : "스크림 탭·ESC 로 닫힌다."
         }
         footer={
           <Button block onClick={() => setSheet(null)}>
@@ -762,9 +810,32 @@ function ComponentSection() {
         }
       >
         <p className="text-body-sm text-ink-muted">
-          내용이 넘치면 화면이 아니라 시트 안에서만 스크롤한다. 최대 높이 88dvh.
+          {sheet === "document"
+            ? "약관·동의 전문 전용이다. 제목만 손글씨로 남기면 size-adjust 때문에 같은 시트 안에서 글자 크기감이 어긋난다."
+            : "내용이 넘치면 화면이 아니라 시트 안에서만 스크롤한다. 최대 높이 88dvh."}
         </p>
       </BottomSheet>
+
+      <SubTitle>설정 줄 (10)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        한 덩어리 안에 line 1px 로 줄을 나눈다. 🚨 줄마다 카드를 두르지 않는다 (카드 속 카드). 🚨
+        상태를 글자로 단다 — 색·아이콘으로 대신하지 않는다. 되돌리기 어려운 행동이 달린 줄은 줄
+        전체를 버튼으로 만들지 않는다.
+      </p>
+      <SettingsGroup>
+        <SettingsLinkRow href="#" icon={UserRound} title="다른 화면으로 가는 줄" />
+        <SettingsInfoRow
+          icon={ShieldCheck}
+          title="행동이 따로 달린 줄"
+          status="동의함"
+          note="9월 5일 (토)에 동의했어요"
+          action={
+            <Button variant="tertiary" size="compact">
+              철회하기
+            </Button>
+          }
+        />
+      </SettingsGroup>
 
       <SubTitle>진행 오버레이 (04 · SSE)</SubTitle>
       <p className="text-caption text-ink-subtle">
@@ -798,7 +869,7 @@ function ComponentSection() {
         · strokeWidth 1.75 고정. 🚨 DomainIcon 은 aria-hidden 이라 의미는 옆의 라벨이 진다.
       </p>
       <ul className="flex flex-col gap-2">
-        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+        {(["food", "activity", "growth", "health"] as Agent[]).map((agent) => (
           <li key={agent} className="flex items-center gap-3">
             <span
               className={`flex size-10 items-center justify-center rounded-full ${softOf(agent)}`}
@@ -817,7 +888,7 @@ function softOf(agent: Agent): string {
   return {
     food: "bg-food-soft text-food-ink",
     activity: "bg-activity-soft text-activity-ink",
-    education: "bg-education-soft text-education-ink",
+    growth: "bg-growth-soft text-growth-ink",
     health: "bg-health-soft text-health-ink",
   }[agent];
 }

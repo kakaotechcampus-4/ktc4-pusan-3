@@ -173,7 +173,10 @@ function AuthCallbackScreen() {
           queryFn: () => api.get<Me>("/me"),
         });
         const first = me.children[0];
-        router.replace(first ? `/child/${first.child_id}/home` : "/onboarding");
+        // 🚨 아이가 없으면 01(아이 만들기)이 아니라 00-1 로 보낸다. 초대를 기다리는 사람이
+        //    바로 아이 만들기에 떨어지면 **같은 아이를 또 등록**하고, 그 뒤로는 초대를
+        //    수락할 수 없다 (아이는 보호자당 한 명 · #96).
+        router.replace(first ? `/child/${first.child_id}/home` : "/start");
       } catch (cause) {
         clearHandoff();
         if (isApiError(cause, "invalid_handoff")) {
