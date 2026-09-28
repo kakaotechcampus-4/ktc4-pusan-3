@@ -444,8 +444,8 @@ async def _issue_session(
     """
     parent = await find_parent(session, parent_id)
     if parent is None or parent.deleted_at is not None:
-        # A-19 · §10-1. 탈퇴 유예기간 중 재로그인을 어떻게 다룰지 정해지기 전까지
-        # 404 로 막아둔다. 세션을 내주지 않는다.
+        # A-19 · §10-1. 탈퇴는 유예 없이 즉시 삭제다 (삭제 정책 정본 §9 · #167) —
+        # 되살릴 계정이 아니므로 404 로 막고 세션을 내주지 않는다.
         raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 
     token = secrets.token_urlsafe(32)
