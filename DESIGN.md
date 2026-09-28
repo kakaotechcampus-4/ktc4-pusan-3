@@ -20,9 +20,9 @@ colors:
   activity: "#0F7084"
   activity-soft: "#E5EFF1"
   activity-ink: "#055766"
-  education: "#4E5AA0"
-  education-soft: "#E9EAF5"
-  education-ink: "#3B4680"
+  growth: "#4E5AA0"
+  growth-soft: "#E9EAF5"
+  growth-ink: "#3B4680"
   health: "#8A4E74"
   health-soft: "#F3E9EF"
   health-ink: "#6E3B5B"
@@ -286,7 +286,7 @@ components:
 
 - **테라코타** (`food` · 5.7:1): 식사
 - **틸** (`activity` · 5.4:1): 놀이. 216° 는 sRGB 가 채도를 가장 못 내는 구간이라 갈 수 있는 끝(0.086)에 붙여 나머지 셋과 동급으로 맞췄다
-- **인디고** (`education` · 6.1:1): 교육
+- **인디고** (`growth` · 6.1:1): 성장
 - **플럼** (`health` · 5.8:1): 건강
 
 각각 `-soft` 배경과 `-ink` 글자를 함께 가진다. **soft 배경 위 텍스트의 대비는 `canvas` 가 아니라 그 soft 색과 비교한다.**
@@ -353,7 +353,7 @@ components:
 
 콘텐츠 최대 폭은 **560px**, 그 이상에서는 가운데 정렬하고 양옆은 `canvas` 로 둔다. 좌우 여백은 16px, 폭 380px 미만 기기에서만 12px. 반응형은 세 구간뿐이고 **전 구간 1열**이다 — 폭이 남는다고 2열로 벌리지 않는다.
 
-상하 여백 32px 과 노치·홈 인디케이터는 `Screen` 컴포넌트가 `calc` 로 **함께** 소유한다. safe-area 유틸이 여백을 같이 받는 이유가 이것이다 (`pt-safe-8` = safe area + 32px) — 같은 padding 속성이라 `py-*` 를 나란히 쓰면 한쪽이 조용히 죽는다.
+상하 여백 32px 과 노치·상태바·홈 인디케이터는 `Screen` 컴포넌트가 `calc` 로 **함께** 소유한다. 🚨 그 자리는 **페이지가 칠한다** — 웹뷰 안에서는 네이티브 셸이 값(`--shell-inset-*`)만 넘기고, 셸이 대신 칠하면 화면마다 다른 아래 색(canvas / surface-muted / 딤)과 어긋나 흰 띠가 남는다 (#133). safe-area 유틸이 여백을 같이 받는 이유가 이것이다 (`pt-safe-8` = safe area + 32px) — 같은 padding 속성이라 `py-*` 를 나란히 쓰면 한쪽이 조용히 죽는다.
 
 터치 타깃은 승인 게이트 버튼 48×48 이상(전체 폭 · 높이 52), 일반 버튼·탭·칩 44×44, 인접 타깃 간격 8 이상. 칩 자체는 28px 이지만 위아래 8px 투명 여백으로 44px 을 채운다 — 그래서 **칩 줄에는 가로 gap 만 주고 세로 gap 은 주지 않는다.**
 

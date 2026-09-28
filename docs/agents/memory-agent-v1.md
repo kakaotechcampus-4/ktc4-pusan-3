@@ -25,6 +25,13 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 ```
 
 밖으로 열린 것은 **`run(raw_text, context, *, client, max_steps, task)` 하나**다.
+
+> **다음 이슈** — `observation_health` 에 체온 세 칸(`temperature` · `measured_at` · `measure_site`)이 들어오면
+> `ObservationHealthCreate` · `ObservationHealthUpdate` 에 필드를 더하고, 발화에서 숫자와 부위를 뽑도록 프롬프트를 고쳐야 한다.
+> `measured_at` 을 `observed_time` 처럼 자연어 시각 파싱에 태울지, `CLEARABLE` 에 넣을지가 함께 정해진다.
+> 컬럼만 생기고 Memory 가 안 채우면 Health 의 `build_fever_timeline` 이 읽을 게 없다.
+
+`max_steps`(기본 `MAX_STEPS = 7`)는 **LLM 왕복 수** 상한이지 tool 건수 상한이 아니다. 한 왕복에 tool 이 여러 개 와도 그 바퀴에서 전부 실행하고 `steps` 는 1만 올라간다 — 실행 건수는 `len(calls)` 다. run 예산(`model_calls`)은 이 루프를 몇 바퀴 돌았든 Memory 를 1로 센다 ([Agent_공통규약.md](shared/Agent_공통규약.md) §7).
 `apps/api/CLAUDE.md` §레이어 경계가 *"app/api — 허용: agents 진입점 / 금지: agents 내부 구현 직접 import"*
 라서 registry·prompt·client 는 전부 내부 구현으로 둔다. 초판에는 이 규칙을 import-linter 가 강제한다고
 적었는데 그런 설정은 저장소에 없다. 지금은 규칙 문서와 리뷰가 전부다.
@@ -153,15 +160,17 @@ reasoning 을 유지하려면 `/v1/responses` 로 옮겨야 하는데, 그때 �
 {"success": false, "operation": "update", "resource": "event", "error": {"code": "...", "message": "..."}}
 ```
 
-`error.code` 8종은 상수로 고정한다. 모델이 코드를 보고 다음 행동을 정하므로 문자열을 그때그때 지으면 안 된다.
+`error.code` 는 상수로 고정한다. 모델이 코드를 보고 다음 행동을 정하므로 문자열을 그때그때 지으면 안 된다.
+공통 코드는 `common/tool_runtime.py` 가 정본이고, Memory 전용 코드는 `memory/result.py` 가 상속해서 얹는다.
 
 | 코드 | 모델이 해야 할 일 |
 | --- | --- |
-| `VALIDATION_ERROR` | 인자를 고쳐 재호출 |
+| `INVALID_ARGS` (공통) | 인자를 고쳐 재호출 |
+| `TOOL_NOT_ALLOWED` (공통) | 이번 요청에 열린 tool 중에서 다시 고름 |
 | `TARGET_NOT_FOUND` | 조회 tool 을 먼저 |
 | `UNKNOWN_EVENT` | `query_event` 먼저 (D9 이후 `create_event` 는 id 를 돌려주지 않는다) |
 | `DATE_UNPARSEABLE` | 날짜·시각 표현을 고치거나 비움 |
-| `UNKNOWN_TOOL` · `TARGET_REQUIRED` · `AMBIGUOUS_TARGET` · `OUT_OF_SCOPE` | — |
+| `TARGET_REQUIRED` · `AMBIGUOUS_TARGET` · `OUT_OF_SCOPE` | 선언만 해 뒀고 아직 쓰는 자리가 없다 |
 
 ### D5. 모든 스키마 필드에 description
 
@@ -411,7 +420,7 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
   같은 규칙을 써야 한다. ai 브랜치에서 be 파트 폴더를 건드릴 수 없어 tool 에 둔 것이지 제자리가 아니다.
 - `common/datetime_rules.py` → `app/rules/` — 루트 §3 상 날짜 계산은 rules 소속이다. 표준 라이브러리만 쓰도록
   만들어 그대로 옮길 수 있다. 제출 API 가 `check_when` 을 다시 불러야 해서 이제는 필요가 더 분명해졌다.
-  `app/rules/` 는 공동 소유라 양쪽 리뷰가 필요하다.
+  `app/rules/` 는 공동 소유지만 파트 리드는 리뷰 없이 고칠 수 있다 (2026-09-23 합의).
 - `common/config.py` 의 `AgentSettings` → `app/core/config.py` — 인증·API 레이어가 붙을 때 협의.
 - `common/llm_client.py` 의 `openai` SDK 부분 → `app/providers/` — `apps/api/CLAUDE.md` 상 외부 모델 SDK 는
   providers 소속이다. 지금 agents 에 둔 건 providers 가 아직 비어 있어서지 설계 판단이 아니다.

@@ -288,7 +288,7 @@ def _resolve_when(
 
     problem = check_when(when, patch)
     if problem is not None:
-        return fail(operation, EVENT, ErrorCode.VALIDATION_ERROR, problem)
+        return fail(operation, EVENT, ErrorCode.INVALID_ARGS, problem)
     return when
 
 

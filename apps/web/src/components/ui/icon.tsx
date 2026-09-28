@@ -25,7 +25,7 @@ export const ICON_STROKE = 1.75;
 export const DOMAIN_ICON: Record<Agent, LucideIcon> = {
   food: Utensils,
   activity: Blocks,
-  education: BookOpen,
+  growth: BookOpen,
   health: Thermometer,
 };
 

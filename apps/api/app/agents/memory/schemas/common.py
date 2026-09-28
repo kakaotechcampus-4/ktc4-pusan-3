@@ -194,8 +194,11 @@ class ObservationCreateArgs(ToolArgs):
     ]
 
 
-class PromotableCreateArgs(ObservationCreateArgs):
-    """승격 파이프라인에 관여하는 도메인(food/education/activity/routine)의 추가 필드."""
+class SubjectCreateArgs(ObservationCreateArgs):
+    """`subject` · `polarity` 를 받는 네 도메인(food/education/activity/routine).
+
+    routine 은 승격되지 않지만 관찰 자체가 티어 3 근거로 인용돼 이 두 칸은 받는다.
+    """
 
     subject: Annotated[
         str,
@@ -212,6 +215,11 @@ class PromotableCreateArgs(ObservationCreateArgs):
         int,
         Field(default=0, ge=-1, le=1, description="좋아함 1 / 중립 0 / 싫어함 -1"),
     ]
+
+
+class PromotableCreateArgs(SubjectCreateArgs):
+    """승격까지 가는 셋(food/education/activity) 전용. routine 에는 이 칸이 없다."""
+
     strong_signals: Annotated[
         list[StrongSignal],
         Field(default_factory=list, description="발화에 근거가 있을 때만. 없으면 빈 배열"),

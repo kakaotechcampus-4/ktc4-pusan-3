@@ -84,7 +84,7 @@ export interface ParsedEvent {
   tags?: string[];
 }
 
-/** model_calls 가 3 을 넘으면 서버 알람이다 (NF-01). */
+/** model_calls 가 4 를 넘으면 서버 알람이다 (NF-01). Agent 진입 1회 + 재시도마다 +1 로 센다. */
 export interface DoneEvent {
   run_id: string;
   model_calls: number;

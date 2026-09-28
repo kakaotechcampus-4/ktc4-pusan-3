@@ -24,8 +24,7 @@ class FoodContext:
     child_id: UUID
     now: datetime  # timezone이 붙은 현재 시각
     timezone: tzinfo
-    # 실구현 때는 profile.birth_date 에서 코드가 계산한다
-    # (영아기/유아기 경계 개월 수는 미정)
+    # 실구현 때는 profile.birth_date 에서 코드가 계산한다 (app/rules/age.py 의 life_stage)
     stage: FeedingStage
     # 포트는 DB 연결 전까지 None
     memory: FoodMemoryReader | None = None
