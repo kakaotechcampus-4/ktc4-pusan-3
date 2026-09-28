@@ -39,6 +39,7 @@ from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
 from app.domains.consent.models import ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
+    REQUIRED_ACCOUNT_SCOPES,
     grant_account_scope,
     missing_account_scopes,
 )
@@ -352,7 +353,7 @@ async def signup(
     response.headers["Cache-Control"] = "no-store"
 
     granted = {consent.scope for consent in body.consents}
-    missing = [scope for scope in ACCOUNT_SCOPES if scope not in granted]
+    missing = [scope for scope in REQUIRED_ACCOUNT_SCOPES if scope not in granted]
     if missing:
         # 🚨 대기표를 소비하기 전에 본다. 필수 동의를 빼먹는 것은 공격이 아니라 사용자의
         #    선택이라, 여기서 소비하면 체크박스 하나 놓친 사람이 로그인부터 다시 해야

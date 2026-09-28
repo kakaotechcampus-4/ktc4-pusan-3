@@ -275,8 +275,17 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
     assert await changed(session, base) == {}
 
 
-async def register_newer_version(session, scope: ConsentScope, version: str = "draft-1") -> None:
-    """시드된 draft-0 보다 늦게 시작하는 버전 — 약관이 바뀐 상황."""
+NEWER_POLICY = "test-newer"
+"""마이그레이션이 등록한 어떤 버전과도 겹치지 않는 이름. `draft-N` 을 쓰면 다음 약관이
+등록되는 날 unique 제약에 걸린다."""
+
+
+async def register_newer_version(session, scope: ConsentScope, version: str = NEWER_POLICY) -> None:
+    """지금 등록된 어떤 버전보다 늦게 시작하는 버전 — 약관이 바뀐 상황.
+
+    시작 시각을 고정 날짜가 아니라 "방금" 으로 둔다. 고정 날짜는 그보다 늦은 약관이
+    마이그레이션으로 등록되는 순간 "더 새 버전" 이 아니게 된다.
+    """
     session.add(
         PolicyVersion(
             scope=scope,
@@ -284,7 +293,7 @@ async def register_newer_version(session, scope: ConsentScope, version: str = "d
             label="새 약관",
             content="새 약관",
             content_hash="new-hash",
-            effective_at=datetime(2026, 9, 1, tzinfo=UTC),
+            effective_at=datetime.now(UTC) - timedelta(minutes=1),
         )
     )
     await session.flush()
@@ -329,13 +338,62 @@ async def test_signup_with_current_policy_version_succeeds(db_client, session):
             "consent_code": consent_code,
             "bind": BIND,
             "consents": [
-                {"scope": "service_terms", "policy_version": "draft-1"},
+                {"scope": "service_terms", "policy_version": NEWER_POLICY},
                 {"scope": "privacy_account", "policy_version": POLICY},
             ],
         },
     )
 
     assert response.status_code == 200
+
+
+async def test_signup_records_optional_location_consent(db_client, session):
+    """위치 동의는 가입 화면의 선택 항목이다 — 고르면 보호자 본인의 동의로 남는다 (#172).
+
+    받는 위치는 보호자 휴대폰의 위치라 아이가 아니라 계정 동의다. 아이가 아직 없는 가입
+    시점에 받을 수 있는 것도 그래서다.
+    """
+    await register_newer_version(session, ConsentScope.LOCATION, version="test-location")
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "consents": [
+                *REQUIRED_CONSENTS,
+                {"scope": "location", "policy_version": "test-location"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["consent_required"] == []
+    assert (await changed(session, base))["Consent"] == 3
+    location = await session.scalar(select(Consent).where(Consent.scope == ConsentScope.LOCATION))
+    assert location.subject_parent_id == location.actor_ref
+    assert location.child_id is None
+
+
+async def test_location_is_not_a_required_consent(db_client, session):
+    """🚨 위치 동의를 안 골라도 가입되고, 뒤에 "동의가 더 필요하다" 고 되묻지도 않는다.
+
+    위치를 필수로 받으면 선택이어야 할 동의를 강제하는 것이 된다. 계정 동의 목록에
+    location 이 들어간 뒤에도 필수 목록은 그대로 둘이어야 한다.
+    """
+    parent = await seed_member(session)
+    await seed_handoff(session, code="handoff-code", parent_id=parent.id)
+
+    body = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()
+
+    assert ConsentScope.LOCATION.value not in body["consent_required"]
 
 
 async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, session):
