@@ -41,7 +41,9 @@ class JevJudge:
         settings: AgentSettings | None = None,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        prompt: str = PROMPT,
     ) -> None:
+        """prompt 는 실험에서 다른 판단 기준 문장을 비교할 때만 바꾼다. 운영은 기본값(PROMPT)."""
         s = settings or get_agent_settings()
         values = {
             "CURATOR_JUDGE_API_KEY": s.CURATOR_JUDGE_API_KEY.strip(),
@@ -57,6 +59,7 @@ class JevJudge:
         self._model = values["CURATOR_JUDGE_MODEL"]
         self._timeout = s.LLM_TIMEOUT_S
         self._transport = transport  # 테스트는 httpx.MockTransport 를 넣는다
+        self._prompt = prompt
 
     @property
     def model(self) -> str:
@@ -72,7 +75,7 @@ class JevJudge:
             "questions": {
                 "identity": {
                     "type": "choice",
-                    "instructions": PROMPT,
+                    "instructions": self._prompt,
                     "criteria": {
                         **{option: f"동일한 대상: {option}" for option in options},
                         NONE: "동일한 후보가 없다",
