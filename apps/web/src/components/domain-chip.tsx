@@ -30,6 +30,17 @@ const DOMAIN_FIELD: Record<Agent, string> = {
   health: "bg-health-soft text-health-ink",
 };
 
+/**
+ * 카드 왼쪽에 서는 **색 띠**. 🚨 `-soft` 가 아니라 **진한 쪽**이다 — 4px 밖에 안 되는 면이라
+ * 연한 색을 쓰면 `line`(1px 테두리)과 구분이 안 되고, 그러면 색이 있는지도 모르게 된다.
+ */
+const DOMAIN_BAR: Record<Agent, string> = {
+  food: "bg-food",
+  activity: "bg-activity",
+  growth: "bg-growth",
+  health: "bg-health",
+};
+
 const DOMAIN_PRESS: Record<Agent, string> = {
   food: "hover:bg-food-soft active:bg-food-soft",
   activity: "hover:bg-activity-soft active:bg-activity-soft",
@@ -44,6 +55,11 @@ export function domainLabel(agent: Agent): string {
 /** 색 면 하나 — `{domain}-soft` 바탕 + `{domain}-ink` 글자. 07 의 아이콘 타일이 이걸 입는다. */
 export function domainField(agent: Agent): string {
   return DOMAIN_FIELD[agent];
+}
+
+/** 카드 왼쪽 색 띠 (위 머리말). 🚨 띠는 **모양이 없는 면**이라 이름은 늘 글자가 따로 진다. */
+export function domainBar(agent: Agent): string {
+  return DOMAIN_BAR[agent];
 }
 
 /** 눌러서 가는 곳이 그 도메인의 제안이라, 누른 색을 그 도메인 색으로 준다. */

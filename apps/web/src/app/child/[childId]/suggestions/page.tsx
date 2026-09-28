@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
 import { AuthGate } from "@/components/auth-gate";
@@ -77,7 +77,6 @@ function SuggestionsScreen() {
   /** 🚨 최대 2개다 (NF-01). URL 로 더 넘어와도 잘라서 보낸다. */
   const agents = (searchParams.get("agents") ?? "").split(",").filter(isAgent).slice(0, 2);
 
-  const [dismissed, setDismissed] = useState<string[]>([]);
   /**
    * 🚨 **여러 개 고를 수 있다.** 고른 것을 한 번에 초안으로 바꾼다 —
    *    `food` 제안들은 서버가 한 끼로 묶어 초안 1건으로 내려준다 (`types.ts` 참고).
@@ -111,7 +110,7 @@ function SuggestionsScreen() {
   });
 
   const data = suggestions.data;
-  const visible = data?.suggestions.filter((s) => !dismissed.includes(s.id)) ?? [];
+  const visible = data?.suggestions ?? [];
   /**
    * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
    * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
@@ -131,8 +130,6 @@ function SuggestionsScreen() {
         )
       : [];
 
-  const dismissedCount = (data?.suggestions ?? []).filter((s) => dismissed.includes(s.id)).length;
-
   /**
    * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
    *    보호자가 둘을 맞춰 읽어야 한다.
@@ -144,14 +141,6 @@ function SuggestionsScreen() {
     else acc.push({ agent: s.agent, count: 1 });
     return acc;
   }, []);
-
-  // 줄이 사라진 자리를 대신 받는다. 방금 접었을 때만 옮기고, 되돌리면 다시 목록으로 돌아간다.
-  const dismissNoticeRef = useRef<HTMLDivElement>(null);
-  const lastDismissed = useRef(0);
-  useEffect(() => {
-    if (dismissedCount > lastDismissed.current) dismissNoticeRef.current?.focus();
-    lastDismissed.current = dismissedCount;
-  }, [dismissedCount]);
 
   const consentBlocked = isApiError(suggestions.error, "consent_required")
     ? suggestions.error
@@ -232,11 +221,6 @@ function SuggestionsScreen() {
               : [...prev, suggestion.id],
           )
         }
-        onReject={(suggestion) => {
-          setDismissed((prev) => [...prev, suggestion.id]);
-          // 🚨 접은 줄이 고른 채로 남으면 화면에 없는 제안이 일정이 된다.
-          setSelectedIds((prev) => prev.filter((id) => id !== suggestion.id));
-        }}
       />
 
       {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
@@ -293,26 +277,6 @@ function SuggestionsScreen() {
                   `고른 ${selectedIds.length}가지로 일정 만들기`}
           </Button>
         </Card>
-      ) : null}
-
-      {/* 🚨 접은 것을 말없이 지우지 않는다. 줄이 그냥 사라지면 무슨 일이 일어났는지 알 수 없고,
-          누르던 버튼이 언마운트돼 키보드·스크린리더 사용자는 자리까지 잃는다. 무슨 일이 있었는지
-          알리고(`role="status"`), 되돌릴 길을 같은 자리에 두고, 그 자리로 초점을 옮긴다.
-          전부 접으면 목록이 사라지는데, 그때 화면에 남는 설명도 이 줄이 진다. */}
-      {dismissedCount > 0 ? (
-        <div
-          ref={dismissNoticeRef}
-          role="status"
-          tabIndex={-1}
-          className="border-line rounded-card bg-surface flex flex-wrap items-center gap-2 border p-4"
-        >
-          <p className="text-body-sm text-ink-muted flex-1">
-            제안 {dismissedCount}건을 접어 뒀어요. 기억은 그대로예요.
-          </p>
-          <Button variant="tertiary" size="compact" onClick={() => setDismissed([])}>
-            되돌리기
-          </Button>
-        </div>
       ) : null}
 
       {/* NF-06 — 실패한 쪽도 같은 화면에 남긴다. 빨강이 아니다. */}

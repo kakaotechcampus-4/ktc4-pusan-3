@@ -1,10 +1,12 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
-import { DomainChip } from "@/components/domain-chip";
-import { Button } from "@/components/ui/button";
+import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DOMAIN_ICON } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
+import { PanelTabs } from "@/components/ui/tabs";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
@@ -66,7 +68,6 @@ export function SuggestionList({
   selectedIds,
   onToggleSelect,
   busy,
-  onReject,
 }: {
   suggestions: Suggestion[];
   /**
@@ -79,8 +80,14 @@ export function SuggestionList({
   onToggleSelect: (suggestion: Suggestion) => void;
   /** 초안을 만드는 중. 고르기를 잠근다 — 보내는 값이 바뀌면 안 된다. */
   busy: boolean;
-  onReject: (suggestion: Suggestion) => void;
 }) {
+  /**
+   * 지금 보고 있는 묶음. 🚨 **서버 상태가 아니라 화면 상태다** — 주소에 두지 않는다.
+   *    탭이 주소를 바꾸면 흐름 중인 화면에서 뒤로가기가 탭을 되짚느라 화면을 못 벗어난다
+   *    (`ui/tabs.tsx` 의 `PanelTabs` 머리말).
+   */
+  const [open, setOpen] = useState<Agent | null>(null);
+
   const drawable = suggestions.filter((s) => {
     if (s.evidence.length > 0) return true;
     if (process.env.NODE_ENV !== "production") {
@@ -101,68 +108,137 @@ export function SuggestionList({
   const order: Agent[] = [];
   for (const s of drawable) if (!order.includes(s.agent)) order.push(s.agent);
 
+  /**
+   * 🚨 **지운 묶음으로 남아 있지 않게 한다.** "안 할래요" 로 한 묶음이 통째로 비면 그 탭이
+   *    사라지는데, 고른 탭이 그것이면 화면에 아무것도 안 남는다.
+   */
+  const agent = open !== null && order.includes(open) ? open : order[0];
+  const rows = drawable.filter((s) => s.agent === agent);
+  const group = groups.find((g) => g.agent === agent);
+  const chosen = rows.filter((s) => selectedIds.includes(s.id)).length;
+
   return (
-    <div className="flex flex-col gap-6">
-      {order.map((agent) => {
-        const rows = drawable.filter((s) => s.agent === agent);
-        const group = groups.find((g) => g.agent === agent);
-        const chosen = rows.filter((s) => selectedIds.includes(s.id)).length;
+    <div className="flex flex-col gap-4">
+      {/* 🚨 **묶음이 하나면 탭을 세우지 않는다.** 고를 것이 없는 탭 줄은 자리만 먹고, 누를 수
+          있어 보이는데 아무 일도 안 일어난다. */}
+      {order.length > 1 ? (
+        <PanelTabs
+          label="어느 영역의 제안을 볼까요"
+          panelId={PANEL_ID}
+          active={agent}
+          onChange={(key) => setOpen(key as Agent)}
+          items={order.map((a) => ({
+            key: a,
+            /**
+             * 🚨 **도메인 색을 탭에 얹지 않는다.** 두 탭에 `-soft` 면을 깔면 꺼진 탭이 켜진
+             *    것처럼 보이고, 활성 신호(`brand` 밑줄 + 잉크)와 도메인 신호가 같은 줄에서
+             *    싸운다. 남는 것은 **아이콘 모양**이고 색은 탭의 상태색을 따라간다.
+             */
+            icon: a,
+            label: `${domainLabel(a)} ${drawable.filter((s) => s.agent === a).length}가지`,
+          }))}
+        />
+      ) : null}
 
-        return (
-          <section key={agent} className="flex flex-col gap-2">
-            {/* 🚨 머리줄은 **무엇을 정하는 중인가**를 말한다. 문구는 서버가 주고(`prompt`),
-                없으면 도메인 라벨만 쓴다 — 질문을 화면이 지어내지 않는다. */}
-            <div>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <DomainChip agent={agent} />
-                <span className="text-caption text-ink-subtle">{rows.length}가지 중에서</span>
-              </div>
-              {group?.prompt ? (
-                <h3 className="text-section text-ink mt-1.5">{group.prompt}</h3>
-              ) : null}
-            </div>
-
-            <ul className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border">
-              {rows.map((suggestion) => (
-                <li key={suggestion.id}>
-                  <SuggestionRow
-                    suggestion={suggestion}
-                    selected={selectedIds.includes(suggestion.id)}
-                    onToggleSelect={() => onToggleSelect(suggestion)}
-                    busy={busy}
-                    onReject={() => onReject(suggestion)}
-                  />
-                </li>
-              ))}
-            </ul>
-
-            {/* 🚨 **묶인다는 것을 고르기 전에 말한다.** 셋을 고르고 일정 1건이 나오면 놀란다.
-                🚨 서버가 `merges_into_one` 을 안 보내면 **아무 말도 하지 않는다** — 어느 Agent 가
-                   묶이는지는 도메인 지식이라 화면이 알 수 없다. */}
-            {group?.merges_into_one && chosen > 1 ? (
-              <p role="status" className="text-body-sm text-ink-muted">
-                고른 {chosen}가지는 일정 하나로 묶여요.
+      <section
+        id={PANEL_ID}
+        // 🚨 탭이 없으면 `tabpanel` 도 아니다 — 가리킬 탭이 없는 패널은 보조기술에 거짓말이다.
+        role={order.length > 1 ? "tabpanel" : undefined}
+        aria-labelledby={order.length > 1 ? `${PANEL_ID}-tab-${agent}` : undefined}
+        className="flex flex-col gap-2"
+      >
+        {/* 🚨 머리줄은 **무엇을 정하는 중인가**를 말한다. 문구는 서버가 주고(`prompt`) —
+            질문을 화면이 지어내지 않는다.
+            🚨 **질문이 후보보다 커야 한다** (`display` 24 > `title` 20). 이 셋이 **무엇에 대한
+            답인지**가 답보다 작게 서면 위계가 뒤집힌다. 본문 서체가 단일 웨이트라 굵기로는
+            못 만들고(§4), 위계를 지는 것은 크기뿐이다.
+            🚨 **`h2` 다** — 화면 제목(`h1`) 바로 아래 층이다. `h3` 로 두면 화면에서 제일 큰
+            글자가 건너뛴 층에 앉는다.
+            🚨 **도메인 색은 아이콘 타일 하나까지다** (문서 §3 예외 ㉡ 와 같은 값·같은 이유).
+            줄에서 색 면을 걷어낸 뒤로 이 화면에 도메인 색이 없었는데, 타일은 **한 화면에 한 개**라
+            여섯 면이 서로 싸우던 문제가 돌아오지 않는다. 🚨 타일이 지는 것은 `aria-hidden` 아이콘
+            하나라 **색이 단독 신호가 아니다** — 이름은 탭이(묶음이 하나면 아래 캡션이) 글자로 진다.
+            🚨 **브랜드를 쓰지 않는다** — 이 구역을 가르는 것은 도메인이다 (§2-2). */}
+        <div className="flex items-center gap-3">
+          <IconTile icon={DOMAIN_ICON[agent]} tone="plain" className={domainField(agent)} />
+          <div className="min-w-0">
+            {group?.prompt ? <h2 className="text-display text-ink">{group.prompt}</h2> : null}
+            {/* 🚨 탭이 있으면 이름·건수를 여기서 다시 말하지 않는다 — 탭이 "놀이 3가지" 로
+                이미 말해서 60px 안에 같은 말이 두 번 선다. 탭이 없을 때(묶음 하나)만 선다. */}
+            {order.length > 1 ? null : (
+              <p className="text-caption text-ink-subtle mt-0.5">
+                {domainLabel(agent)} · {rows.length}가지 중에서
               </p>
-            ) : null}
-          </section>
-        );
-      })}
+            )}
+          </div>
+        </div>
+
+        {/* 🚨 **후보는 각자 카드다.** 한 컨테이너 안에 선으로만 나눠 뒀더니 셋이 한 덩어리로
+            읽혀서, 고르는 대상이 **줄**인지 **묶음 전체**인지가 흐려졌다.
+            ⚠️ 원래 한 컨테이너였던 이유는 "카드 더미로 펼치면 흰 상자 여섯이 줄줄이 서서 무엇이
+            한 묶음인지 안 보인다" 였는데, **탭이 그 일을 가져갔다** — 한 번에 한 묶음만 서고
+            묶음의 이름과 질문은 탭과 머리줄이 말한다. 그래서 상자는 최대 셋이다. */}
+        <ul className="flex flex-col gap-3">
+          {rows.map((suggestion) => (
+            <li
+              key={suggestion.id}
+              /**
+               * 🚨 **고른 카드는 테두리가 `brand` 다.** 색의 뜻은 `chip-choice`(고르는 칩)와
+               *    같다 — "골랐음". `card-accent`("이 화면에서 먼저 읽을 한 장")와 모양이
+               *    비슷하지만 이 화면에는 accent 카드가 없고, 고르는 물건에 붙는 브랜드는
+               *    이미 이 시스템의 말이다.
+               * 🚨 **색만으로 말하지 않는다** — 체크 아이콘이 함께 선다 (문서 §3).
+               */
+              className={cn(
+                "rounded-card bg-surface flex overflow-hidden border",
+                selectedIds.includes(suggestion.id) ? "border-brand" : "border-line",
+              )}
+            >
+              {/* 🚨 **도메인 색은 왼쪽 띠 하나다.** 한동안 카드 머리를 `-soft` 면으로 칠했는데,
+                  면이 커지면 그 위의 글자가 전부 그 도메인의 `-ink` 가 되어야 해서(§2-3)
+                  제목·이유·근거의 회색 위계를 먹었다. 띠는 **글자를 하나도 건드리지 않으면서**
+                  같은 말을 한다.
+                  🚨 `aria-hidden` 이다 — 색은 단독 신호가 될 수 없고(§3), 어느 영역인지는
+                  탭과 머리줄이 글자로 진다. */}
+              <span aria-hidden className={cn("w-1.5 shrink-0", domainBar(suggestion.agent))} />
+              <div className="min-w-0 flex-1">
+                <SuggestionRow
+                  suggestion={suggestion}
+                  selected={selectedIds.includes(suggestion.id)}
+                  onToggleSelect={() => onToggleSelect(suggestion)}
+                  busy={busy}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        {/* 🚨 **묶인다는 것을 고르기 전에 말한다.** 셋을 고르고 일정 1건이 나오면 놀란다.
+            🚨 서버가 `merges_into_one` 을 안 보내면 **아무 말도 하지 않는다** — 어느 Agent 가
+               묶이는지는 도메인 지식이라 화면이 알 수 없다. */}
+        {group?.merges_into_one && chosen > 1 ? (
+          <p role="status" className="text-body-sm text-ink-muted">
+            고른 {chosen}가지는 일정 하나로 묶여요.
+          </p>
+        ) : null}
+      </section>
     </div>
   );
 }
+
+/** 탭과 패널을 잇는 id. 한 화면에 이 목록은 하나뿐이라 고정값으로 둔다. */
+const PANEL_ID = "suggestion-group";
 
 function SuggestionRow({
   suggestion,
   selected,
   onToggleSelect,
   busy,
-  onReject,
 }: {
   suggestion: Suggestion;
   selected: boolean;
   onToggleSelect: () => void;
   busy: boolean;
-  onReject: () => void;
 }) {
   /**
    * 🚨 Health Agent 는 진단하지 않는다 (CLAUDE.md §2). 그래서 이 줄에는 고르는 칸이 없다 —
@@ -177,9 +253,12 @@ function SuggestionRow({
       ) : null}
 
       {/* 🚨 **제안 문장이 고르는 칸이다.** 줄마다 "이걸로 고르기" 를 따로 두면 체크박스와 같은
-          일을 하는 버튼이 여섯 개가 되고(전부 펼쳐지니까), 화면이 초록으로 덮여 §7 "한 화면에
-          primary 하나" 가 깨진다. 고르는 대상이 곧 제안이므로 문장을 라벨로 준다 —
-          클릭 면적도 체크박스 20px 이 아니라 문장 전체가 된다. */}
+          일을 하는 버튼이 여섯 개가 되고, 화면이 초록으로 덮여 §7 "한 화면에 primary 하나" 가
+          깨진다. 고르는 대상이 곧 제안이므로 문장을 라벨로 준다 — 클릭 면적도 체크박스 20px 이
+          아니라 문장 전체가 된다.
+          🚨 **거절 버튼을 두지 않는다.** 고르는 칸이 체크박스라 **안 고르는 것이 곧 거절**이다
+          (있던 "안 할래요" 는 서버로 아무것도 보내지 않고 화면에서만 접었다). 제안에 대한
+          평가는 07 피드백이 **해 보고 나서** 받는다. */}
       {isHealth ? (
         <p className="text-title text-ink">{suggestion.content}</p>
       ) : (
@@ -220,18 +299,7 @@ function SuggestionRow({
             기록을 모아 보여드릴 뿐이에요. 진단하지 않고, 식단이나 놀이를 정하지 않아요. 걱정되면
             의료진에게 물어보세요.
           </p>
-        ) : (
-          // 🚨 고르는 것은 위의 문장이 진다. 여기 남는 것은 **이 줄을 치우는 것**뿐이다.
-          <Button
-            variant="tertiary"
-            size="compact"
-            className="mt-3"
-            onClick={onReject}
-            disabled={busy}
-          >
-            안 할래요
-          </Button>
-        )}
+        ) : null}
       </div>
     </div>
   );
