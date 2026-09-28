@@ -19,15 +19,16 @@
 @theme static {
   /* 🚨 본문 서체가 손글씨다 (문서 §4). Pretendard 는 폴백으로 남는다 —
    * 손글씨에 글리프가 없는 글자(한자·특수기호 등)가 두부(□)로 떨어지지 않게 받는 자리다.
-   * 손글씨는 Regular 400 단일 웨이트라 600~700 은 브라우저가 합성한다 (hakgyoansim.css 머리말). */
+   * 손글씨는 wght 400~700 가변폰트다 — 원본이 Regular 한 벌뿐이라 700 마스터를 우리가
+   * 만들어 구웠다. 아래 4단계가 전부 실물 외곽선이고 합성은 없다 (hakgyoansim.css 머리말). */
   --font-sans:
     "Hakgyoansim Nalgae R", "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
     system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 
   /* 🚨 `font-doc` 은 폴백이 아니라 **역할이 다른 자리**다 (문서 §4).
    * 이용약관 · 개인정보 처리방침 · 동의 전문처럼 **읽고 동의해야 하는 긴 법률 문서**는
-   * 온기가 아니라 판별성이 필요하다. 손글씨는 단일 웨이트라 굵기가 합성이고,
-   * 그 자리에서는 손해만 된다. 문서 화면은 통째로 이걸 쓴다 — 한 화면에서 섞지 않는다. */
+   * 온기가 아니라 판별성이 필요하다. 손글씨의 낮은 자소 판별성은 그 자리에서 손해만 된다
+   * (굵기가 실물이 된 지금도 그렇다). 문서 화면은 통째로 이걸 쓴다 — 한 화면에서 섞지 않는다. */
   --font-doc:
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
     "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
