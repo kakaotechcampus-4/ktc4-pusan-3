@@ -8,7 +8,7 @@
     검증   pytest tests/eval/agents/curator/test_exp1_2_threshold.py -m live -k holdout
            THRESHOLD 로 검증용 쌍을 평가한다. 검증용은 실험 3 에서 이미 썼다
 
-보고서는 이 폴더의 exp1_2_threshold_*_result.txt 에 남는다 (gitignore 대상).
+보고서는 이 폴더의 results/exp1_2/exp1_2_threshold_*_result.txt 에 남는다 (gitignore 대상).
 
 판정 기준
     - 잘못 합침: near · unrelated 쌍의 유사도가 임계값 이상 → 0건이어야 한다
@@ -35,11 +35,11 @@ from tests.eval.agents.curator.datasets import (
     Pair,
     load_disputed,
     load_pairs,
+    results_dir,
 )
 
 pytestmark = pytest.mark.live
 
-HERE = Path(__file__).parent
 MAX_MISS_RATE = 0.30
 GRID = [round(0.30 + i * 0.01, 2) for i in range(61)]  # 0.30 ~ 0.90
 # 실험 1 · 2 당시 운영 코드의 임시 임계값. 운영 연결은 이제 판정기를 쓴다
@@ -147,7 +147,7 @@ def _spread(values: list[float]) -> str:
 
 
 def _write(name: str, lines: list[str]) -> Path:
-    path = HERE / f"exp1_2_threshold_{name}_result.txt"
+    path = results_dir("exp1_2") / f"exp1_2_threshold_{name}_result.txt"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 

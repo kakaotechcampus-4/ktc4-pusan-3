@@ -12,7 +12,7 @@
 실험 3 과 다른 점: 같은 과제를 --repeat 번 반복해 호출 변동을 따로 본다.
 API 오류는 중단하지 않고 형식 오류로 센다 (정답으로 세지 않는다).
 
-결과는 이 폴더의 exp4_*_result.txt · exp4_*_results.jsonl (gitignore 대상).
+결과는 이 폴더의 results/exp4/exp4_*_result.txt · exp4_*_results.jsonl (gitignore 대상).
 """
 
 import argparse
@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 import httpx
 
 from app.agents.curator.embedding.link_step import same_name_key
-from tests.eval.agents.curator.datasets import RESULTS_DIR, TUNE_PAIRS_PATH, load_pairs
+from tests.eval.agents.curator.datasets import TUNE_PAIRS_PATH, load_pairs, results_dir
 from tests.eval.agents.curator.exp3_flow import cases
 from tests.eval.agents.curator.exp4_judge_models import (
     NONE,
@@ -66,8 +66,8 @@ async def run(args: argparse.Namespace) -> None:
     judge = make_judge(args.judge, prompt=args.prompt, reasoning_effort=args.reasoning)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     tag = f"{args.judge}-{args.prompt}" + (f"-{args.reasoning}" if args.reasoning else "")
-    log_path = RESULTS_DIR / f"exp4_{tag}_{stamp}_results.jsonl"
-    report_path = RESULTS_DIR / f"exp4_{tag}_{stamp}_result.txt"
+    log_path = results_dir("exp4") / f"exp4_{tag}_{stamp}_results.jsonl"
+    report_path = results_dir("exp4") / f"exp4_{tag}_{stamp}_result.txt"
     semaphore = asyncio.Semaphore(args.concurrency)
     rows: list[dict] = []
 

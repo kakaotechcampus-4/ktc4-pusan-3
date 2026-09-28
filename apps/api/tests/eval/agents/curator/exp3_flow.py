@@ -23,10 +23,10 @@ from app.agents.curator.embedding.link_step import same_name_key
 from tests.eval.agents.curator.datasets import (
     CHECK1_ORDERS_PATH,
     CHECK1_PAIRS_PATH,
-    RESULTS_DIR,
     TUNE_PAIRS_PATH,
     load_pairs,
     load_scenarios,
+    results_dir,
 )
 from tests.eval.agents.curator.exp3_compare import INSTRUCTIONS
 
@@ -69,8 +69,8 @@ async def run(live):
     if not key:
         raise SystemExit("OPENROUTER_API_KEY 미설정")
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    path = RESULTS_DIR / f"exp3_flow_{stamp}_results.jsonl"
-    report = RESULTS_DIR / f"exp3_flow_{stamp}_result.txt"
+    path = results_dir("exp3") / f"exp3_flow_{stamp}_results.jsonl"
+    report = results_dir("exp3") / f"exp3_flow_{stamp}_result.txt"
     records, calls, summaries = [], [], []
     semaphore = asyncio.Semaphore(4)
     with path.open("x", encoding="utf-8") as log:
