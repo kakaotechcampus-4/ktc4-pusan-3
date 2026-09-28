@@ -35,6 +35,11 @@ export const SCENARIOS = {
   //    저장된 기록이 화면에서 사라지는 것" 이다 (NF-06 과 같은 규칙).
   unavailable: "04 준비 중 — 없는 Agent 로 간 요청 + 저장은 그대로 (성공·실패 한 화면)",
   note_question: "04 되묻기 — Memory 질문 하나만 (저장 0건 · 이어서 적기 동선)",
+  // 🚨 **#158 리뷰가 짚은 빠진 경우다.** Memory 는 한 후보를 저장한 뒤 다른 후보의 정보가
+  //    모자라면 글로 되묻는다 — `Saved` 와 `MemoryNote` 가 한 run 에 같이 나간다
+  //    (`apps/api/app/agents/pipeline.py`). 이 대본이 없어서, 답할 때 원문을 되돌리면
+  //    **이미 저장된 조각이 또 저장된다**는 것을 못 봤다.
+  note_mixed: "04 일부 저장 + 되묻기 — 한 run 에 저장과 질문이 같이 (원문 재전송 금지 근거)",
   daily_limit: "03 한 줄 보내기 — 하루 한도 초과 429 (다시 시도 버튼이 없어야 한다)",
 } as const;
 

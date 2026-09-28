@@ -15,8 +15,28 @@ import { isPhotoRun, photoRunScript } from "./photos";
  *    화면은 그걸 입력창에 그대로 남긴다. 그래서 여기서 원문을 들고 있어야 한다.
  */
 
-/** 목 전용 아주 작은 상태. run_id → 그 run 을 만든 입력 원문. */
-const inputTextByRun = new Map<string, string>();
+/**
+ * 목 전용 아주 작은 상태. run_id → 그 run 을 만든 입력.
+ *
+ * `reply_to` 까지 들고 있는 이유는 **되묻기 답이 원문을 다시 보내지 않는지**를 테스트가 볼 수
+ * 있어야 해서다 (#158 리뷰). 서버가 그 필드로 이전 run 을 찾을 예정이라, 목은 받아 두기만 한다.
+ */
+interface SubmittedInput {
+  text: string;
+  replyTo?: string;
+}
+
+const inputByRun = new Map<string, SubmittedInput>();
+
+/** 테스트가 "답이 어느 run 을 가리키는가" 를 확인하는 자리. */
+export function submittedInput(runId: string): SubmittedInput | undefined {
+  return inputByRun.get(runId);
+}
+
+/** 목은 프로세스 수명만큼 산다 — 테스트 사이에 비운다 (`src/test/setup.ts`). */
+export function resetSubmittedInputs(): void {
+  inputByRun.clear();
+}
 
 function frame(event: string, data: unknown): Uint8Array {
   return new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -30,6 +50,9 @@ function sleep(ms: number): Promise<void> {
  * 안내 한 건. `guidance`(안내만) · `guidance_mixed`(안내 + 저장) 가 **같은 것**을 쓴다 —
  * 두 벌로 두면 한쪽만 고쳐져서 화면이 두 경우를 다르게 그리는지 알 수 없다.
  */
+/** 되묻는 질문. `note_question`(질문만) · `note_mixed`(저장 + 질문) 가 **같은 것**을 쓴다. */
+const NOTE_QUESTION = "언제부터 그랬는지 알려주시겠어요?";
+
 const SAFETY_GUIDANCE = {
   code: "safety_record",
   message: "알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
@@ -39,7 +62,7 @@ const SAFETY_GUIDANCE = {
 /** 실제 파이프라인 순서다 — saved 는 promoted 보다 항상 먼저 온다 (CLAUDE.md §4). */
 async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   const scenario = currentScenario();
-  const rawText = inputTextByRun.get(runId) ?? "";
+  const rawText = inputByRun.get(runId)?.text ?? "";
 
   yield frame("step", { index: 1, total: 3, label: "무슨 말인지 보고 있어요" });
   await sleep(600);
@@ -94,7 +117,27 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    **내용 없는 "다 됐어요"** 가 뜬다. 그게 #141 이 시작된 이유다.
    */
   if (scenario === "note_question") {
-    yield frame("note", { text: "언제부터 그랬는지 알려주시겠어요?", kind: "question" });
+    yield frame("note", { text: NOTE_QUESTION, kind: "question" });
+    await sleep(300);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
+
+  /**
+   * 🚨 **일부는 저장되고 질문이 같이 오는 run** (#158 리뷰). Memory 가 한 후보를 저장한 뒤
+   *    다른 후보의 정보가 모자라면 글로 되묻는다 — `Saved` 와 `MemoryNote` 가 한 run 에 같이
+   *    나간다 (`apps/api/app/agents/pipeline.py`).
+   *
+   *    이 대본이 지키는 것: 답을 보낼 때 화면이 **원문을 다시 보내지 않는다.** 되돌려 이어
+   *    적게 하면 위의 저장된 조각이 두 번 저장되고, 7일 승격 집계가 한 번의 관찰을 두 번으로
+   *    센다 (최상위 §2 · #154). 맥락은 `reply_to` 로 서버가 찾는다.
+   */
+  if (scenario === "note_mixed") {
+    yield frame("step", { index: 2, total: 3, label: "관찰을 나누고 있어요" });
+    await sleep(500);
+    yield frame("saved", { observations: [observations[0]] });
+    await sleep(300);
+    yield frame("note", { text: NOTE_QUESTION, kind: "question" });
     await sleep(300);
     yield frame("done", { run_id: runId, model_calls: 1 });
     return;
@@ -176,9 +219,11 @@ export const runHandlers = [
         );
       }
 
-      const body = (await request.json()) as { text: string };
+      const body = (await request.json()) as { text: string; reply_to?: string };
       const runId = `r_${Date.now()}`;
-      inputTextByRun.set(runId, body.text);
+      // 🚨 `reply_to` 는 그대로 받아 둔다 — 서버가 이전 run 의 원문·질문을 찾는 자리이고 (#158),
+      //    목은 "화면이 원문 대신 이 값을 보냈는가" 를 테스트가 확인할 수 있게만 한다.
+      inputByRun.set(runId, { text: body.text, replyTo: body.reply_to });
       // 즉시 202 로 run_id 만 준다. 결과는 전부 SSE 로 흐른다.
       return HttpResponse.json({ run_id: runId }, { status: 202 });
     }),

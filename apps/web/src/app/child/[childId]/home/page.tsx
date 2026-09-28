@@ -111,11 +111,19 @@ function HomeScreen() {
 
   const submit = useMutation({
     mutationFn: () => {
-      const body: InputRequest = { text: text.trim(), source: "home_input" };
+      const body: InputRequest = {
+        text: text.trim(),
+        source: "home_input",
+        // 🚨 되묻기에 답하는 중이면 **어느 run 에 대한 답인지**를 싣는다 (#158 리뷰).
+        //    원문을 다시 보내지 않는 이유는 `stores/pending-question.ts` 에 있다.
+        ...(pendingQuestion ? { reply_to: pendingQuestion.runId } : {}),
+      };
       // 🚨 키를 **본문에 묶는다.** 같은 본문의 재시도는 같은 키(중복 저장 방지), 고쳐 쓴 본문은
       //    새 키다. 서버가 처리했는데 응답만 유실되면 화면은 실패로 보이고 보호자는 한 줄을
       //    고쳐서 다시 보내는데, 키가 그대로면 "같은 키 · 다른 본문" 이라 계속 422 다 (PR #71 리뷰).
-      return submitInput(childId, body, idempotencyKey.current(body.text));
+      // 🚨 **`text` 만 묶으면 안 된다.** 서버는 본문 **전체**로 같은 요청인지 보므로(idempotency-v1),
+      //    같은 답을 다른 질문에 보내면 "같은 키 · 다른 본문" 이라 422 다 — `reply_to` 도 함께 묶는다.
+      return submitInput(childId, body, idempotencyKey.current(keyPayload(body)));
     },
     onSuccess: (res) => {
       setRunId(res.run_id);
@@ -153,24 +161,23 @@ function HomeScreen() {
   }
 
   /**
-   * 되묻는 질문에 답하러 03 홈으로 돌아간다 (#141).
+   * 되묻는 질문에 답하러 03 홈으로 돌아간다 (#141 · #158 리뷰).
    *
-   * 🚨 **원문을 입력창에 되돌린다.** 답은 **새 한 줄**이라 앞의 run 을 모른다 (§5 run = 입력 1건).
-   *    "3일 전부터" 만 보내면 서버는 무슨 얘기인지 알 수 없고, 그 한 줄이 하루 5회 중 하나를
-   *    그냥 쓴다 (#147). 원문 뒤에 이어 적게 두면 한 번의 입력이 온전한 맥락을 갖는다.
-   *    👉 되묻기 답변을 한도에서 뺄지는 아직 안 정했다 (#141 에서 물어봤다).
+   * 🚨 **원문을 입력창에 되돌리지 않는다.** 한동안 되돌려 놨었다 — 답은 새 한 줄이라 앞의 run 을
+   *    모르니 맥락을 화면이 만들어 주려던 것이었다. 그런데 **일부는 저장되고 질문이 같이 오는
+   *    run** 이 있어서("계란 잘 먹었어. 요즘 기침해" → 계란 저장 + 기침 되묻기 ·
+   *    `apps/api/app/agents/pipeline.py`), 원문을 다시 보내면 **계란이 두 번 저장된다.**
+   *    7일 승격 집계가 한 번의 관찰을 두 번으로 세게 되므로 최상위 §2 가 깨진다 (#154).
+   *    맥락은 서버가 `reply_to` 로 찾는다 (위 `submit`).
    *
-   * 🚨 **`closeRun()` 이 지우기 전에 원문을 붙든다.** run 이 `done` 이라 `closeRun` 은
-   *    확정으로 보고 draft 를 비운다 — 그 뒤에 되돌려야 순서가 맞는다.
-   * 🚨 **키는 `closeRun` 이 돌린 그대로 둔다.** 이어 적으면 본문이 달라져서 어차피 새 키가
-   *    나가고(`current(body.text)`), 같은 키를 남겨 두면 "같은 키 · 다른 본문" 이라 422 다.
+   * 🚨 **`runId` 를 질문과 함께 넘긴다.** `closeRun()` 이 `setRunId(null)` 로 지우므로 그 전에
+   *    붙들어야 한다. 순서가 바뀌면 `reply_to` 가 비어서 답이 맥락 없는 새 입력이 된다.
    */
   function answerQuestion(question: string) {
-    const original = text;
-    setQuestion(childId, question);
+    // 🚨 `closeRun()` 이 지우기 전에 붙든다.
+    const answeringRunId = runId;
+    if (answeringRunId) setQuestion(childId, { text: question, runId: answeringRunId });
     closeRun();
-    // 공백 하나를 붙여 바로 이어 적게 한다. 보낼 때 `trim()` 되므로 남지 않는다.
-    setText(`${original.trimEnd()} `);
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
@@ -219,11 +226,11 @@ function HomeScreen() {
             <Card>
               <p className="text-caption text-ink-subtle">한 가지만 더</p>
               {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
-              <p className="text-body-sm text-ink mt-1">{pendingQuestion}</p>
-              {/* 입력창에 원문이 그대로 있는 이유를 여기서 말한다 — 안 그러면 보낸 줄 알았던
-                  말이 왜 다시 떠 있는지 모른다 (`answerQuestion`). */}
+              <p className="text-body-sm text-ink mt-1">{pendingQuestion.text}</p>
+              {/* 🚨 **답만 적으라고 말한다.** 앞서 적은 말을 다시 쓰게 하면 이미 저장된 조각이
+                  또 저장된다 (#158 리뷰) — 앞 이야기는 서버가 `reply_to` 로 찾는다. */}
               <p className="text-caption text-ink-subtle mt-2">
-                적어주신 말은 그대로 뒀어요. 뒤에 이어서 적어주세요.
+                이 질문에 대한 답만 적어주세요. 앞서 적어주신 말은 저장돼 있어요.
               </p>
               <Button
                 variant="tertiary"
@@ -302,6 +309,18 @@ function HomeScreen() {
       />
     </Screen>
   );
+}
+
+/**
+ * Idempotency-Key 를 묶을 본문 지문.
+ *
+ * 🚨 **`text` 만으로는 부족하다.** 요청 지문은 `method + 경로 + 요청 본문` 이라
+ *    (`docs/api/idempotency-v1.md` §3-2), "네" 라는 같은 답을 서로 다른 질문에 보내면
+ *    같은 키에 다른 본문(`reply_to`)이 실려 `422 idempotency_key_reuse` 가 된다.
+ * 🚨 필드를 더하면 **여기도 같이** 더한다 — 빠뜨리면 그 필드만 바뀐 요청이 조용히 같은 키로 나간다.
+ */
+function keyPayload(body: InputRequest): string {
+  return `${body.reply_to ?? ""}|${body.source}|${body.text}`;
 }
 
 /**

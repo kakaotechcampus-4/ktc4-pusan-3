@@ -460,11 +460,11 @@ function NoteCard({ note, onAnswer }: { note: NoteEvent; onAnswer: (question: st
         <div className="min-w-0">
           <p className="text-caption text-ink-subtle">한 가지만 더</p>
           <p className="text-body text-ink mt-1">{note.text}</p>
-          {/* 🚨 일어난 일만 적는다 — 원문을 되돌려 두는 것은 화면이 실제로 하는 일이다
-              (03 홈 `answerQuestion`). 답은 **새 한 줄**이라 앞의 말이 없으면 서버가 무슨
-              얘기인지 모른다 (§5 run = 입력 1건). */}
+          {/* 🚨 **앞서 적은 말을 다시 쓰라고 하지 않는다** (#158 리뷰). 원문을 되돌려 이어 적게
+              했더니, 일부가 이미 저장된 run 에서는 그 조각이 **두 번 저장**됐다. 앞 이야기는
+              서버가 `reply_to` 로 찾으므로 화면은 답만 받는다 (03 홈 `answerQuestion`). */}
           <p className="text-body-sm text-ink-muted mt-2">
-            적어주신 말을 입력창에 그대로 되돌려 둘게요. 뒤에 이어서 적어주세요.
+            이 질문에 대한 답만 적어주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
           </p>
           <Button
             variant="secondary"

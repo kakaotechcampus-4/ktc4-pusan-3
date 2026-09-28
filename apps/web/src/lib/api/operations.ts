@@ -30,6 +30,18 @@ import type {
 export interface InputRequest {
   text: string;
   source: "home_input" | "chat" | "photo";
+  /**
+   * 🔶 **되묻기에 대한 답일 때만** 싣는다 — 그 질문이 나온 `run_id` 다 (#158 리뷰 · 계약 확정 전).
+   *
+   * 🚨 **원문을 다시 보내지 않기 위한 필드다.** 답만 보내면 서버가 맥락을 모르는데, 그렇다고
+   *    화면이 원문을 붙여 보내면 **이미 저장된 조각까지 다시 저장된다** — "계란 잘 먹었어.
+   *    요즘 기침해" 처럼 일부는 저장되고 질문이 같이 오는 run 이 있기 때문이다
+   *    (`apps/api/app/agents/pipeline.py` — `Saved` 와 `MemoryNote` 가 한 run 에 같이 나간다).
+   *    맥락은 서버가 이 `run_id` 로 찾는다.
+   *
+   * ⚠️ 서버 구현 전까지는 **모르는 필드라 무시된다** — 먼저 보내도 깨지지 않는다.
+   */
+  reply_to?: string;
 }
 
 /** 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다 (streamRunEvents). */

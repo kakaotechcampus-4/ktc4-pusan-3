@@ -54,6 +54,7 @@ import type {
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
+import { submittedInput } from "./handlers/runs";
 import { setScenario } from "./scenario";
 
 /**
@@ -320,6 +321,48 @@ describe("⑳ 안내는 실패가 아니다", () => {
     } finally {
       setScenario("default");
     }
+  });
+
+  it("🚨 일부만 저장되고 되묻기가 같이 오는 run 이 있다 — 답이 원문을 다시 보내면 안 되는 이유", async () => {
+    // Memory 가 한 후보를 저장한 뒤 다른 후보의 정보가 모자라면 글로 되묻는다 (`pipeline.py`).
+    // 이 대본이 없어서 #158 리뷰 전까지 "원문을 되돌려 이어 적기" 가 중복 저장을 만드는 걸 못 봤다.
+    setScenario("note_mixed");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("saved");
+      expect(types).toContain("note");
+      expect(types.indexOf("saved")).toBeLessThan(types.indexOf("note"));
+      expect(events.at(-1)?.type).toBe("done");
+
+      const note = events.find((e) => e.type === "note")?.data as NoteEvent;
+      expect(note.kind).toBe("question");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("답은 원문 대신 `reply_to` 로 이전 run 을 가리킨다", async () => {
+    const first = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text: "지어낸 한 줄", source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    // 🚨 답에는 **앞 문장이 들어 있지 않다.** 넣으면 이미 저장된 조각이 다시 저장된다 (#158).
+    const answer = "지어낸 답";
+    const second = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text: answer, source: "home_input", reply_to: first.run_id },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    const recorded = submittedInput(second.run_id);
+    expect(recorded?.text).toBe(answer);
+    expect(recorded?.replyTo).toBe(first.run_id);
+    // 앞 run 은 답을 가리키지 않는다 — 참조는 한 방향이다.
+    expect(submittedInput(first.run_id)?.replyTo).toBeUndefined();
   });
 
   it("되묻기만 있는 run 도 done 으로 끝난다 — 화면이 그릴 것은 질문 하나다", async () => {
