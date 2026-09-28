@@ -1,8 +1,8 @@
 """실험 5 — 운영 코드(link_pending + JevJudge + Embedder)로 판정 방식을 고르고 최종 확인한다.
 
 실행 (apps/api 에서, 유료):
-    5a 고르기   uv run python -m tests.eval.agents.curator.run_exp5 --live
-    5b 최종     uv run python -m tests.eval.agents.curator.run_exp5 --final --arm <고른 조건> --live
+    5a 고르기  uv run python -m tests.eval.agents.curator.exp5_scale_final --live
+    5b 최종    uv run python -m tests.eval.agents.curator.exp5_scale_final --final --arm X --live
 
 키: .env 의 CURATOR_JUDGE_API_KEY. CURATOR_JUDGE_BASE_URL · _MODEL 이 없으면 환경변수로 넘긴다.
     CURATOR_JUDGE_BASE_URL=https://openrouter.ai/api/alpha CURATOR_JUDGE_MODEL=typesafe/jev-1.13 ...
@@ -14,9 +14,9 @@
     v3        판단 기준을 명시한 문장 (B · C · E · F 를 예시와 함께 적음)
 
 과제
-    scale      scale_tune.txt — Profile 이 쌓인 상태에서 새 관찰 하나 (5a)
-    pairs      pairs_tune.txt (5a) / pairs_final.txt (5b) — 쌍마다 원래 · 역순 · 정답 제거
-    orders     scenarios_holdout.txt (5a) / scenarios_final.txt (5b) — 여러 순서로 관찰을 쌓는다
+    scale      tune_scale.txt — Profile 이 쌓인 상태에서 새 관찰 하나 (5a)
+    pairs      tune_pairs.txt (5a) / check2_pairs.txt (5b) — 쌍마다 원래 · 역순 · 정답 제거
+    orders     check1_orders.txt (5a) / check2_orders.txt (5b) — 여러 순서로 관찰을 쌓는다
 
 5b 는 조건 하나만, 한 번만 돌린다. 5b 결과를 보고 조건을 다시 고르지 않는다.
 결과는 이 폴더의 exp5_*_result.txt · exp5_*_results.jsonl (gitignore 대상).
@@ -45,19 +45,20 @@ from app.agents.curator.embedding.link_step import (
     same_name_key,
 )
 from app.agents.curator.embedding.ports import CuratorDomain
-from tests.eval.agents.curator.jev_flow import cases
-from tests.eval.agents.curator.pairs import (
-    FINAL_PATH,
-    SCENARIOS_FINAL_PATH,
-    SCENARIOS_PATH,
-    TUNE_PATH,
+from tests.eval.agents.curator.datasets import (
+    CHECK1_ORDERS_PATH,
+    CHECK2_ORDERS_PATH,
+    CHECK2_PAIRS_PATH,
+    RESULTS_DIR,
+    TUNE_PAIRS_PATH,
     Scenario,
     load_pairs,
     load_scale,
     load_scenarios,
 )
+from tests.eval.agents.curator.exp3_flow import cases
 
-HERE = TUNE_PATH.parent
+HERE = RESULTS_DIR
 CHILD = UUID("00000000-0000-0000-0000-0000000e0005")
 REVERSE_TOP = 3  # v1_back 이 방향을 바꿔 다시 물을 후보 수
 
@@ -292,8 +293,8 @@ async def run_orders(judge: IdentityJudge, vectors, path) -> list[dict[str, Any]
 
 def _names(final: bool) -> set[str]:
     names: set[str] = set()
-    pair_path = FINAL_PATH if final else TUNE_PATH
-    order_path = SCENARIOS_FINAL_PATH if final else SCENARIOS_PATH
+    pair_path = CHECK2_PAIRS_PATH if final else TUNE_PAIRS_PATH
+    order_path = CHECK2_ORDERS_PATH if final else CHECK1_ORDERS_PATH
     for p in load_pairs(pair_path):
         names |= {p.a.strip(), p.b.strip()}
     for sc in load_scenarios(order_path):
@@ -362,9 +363,11 @@ async def run(args: argparse.Namespace) -> None:
             rows = []
             if not args.final:
                 rows += await run_scale(judge, vectors)
-            rows += await run_pairs(judge, vectors, FINAL_PATH if args.final else TUNE_PATH)
+            rows += await run_pairs(
+                judge, vectors, CHECK2_PAIRS_PATH if args.final else TUNE_PAIRS_PATH
+            )
             rows += await run_orders(
-                judge, vectors, SCENARIOS_FINAL_PATH if args.final else SCENARIOS_PATH
+                judge, vectors, CHECK2_ORDERS_PATH if args.final else CHECK1_ORDERS_PATH
             )
             for row in rows:
                 log.write(json.dumps({"arm": arm, **row}, ensure_ascii=False, default=list) + "\n")

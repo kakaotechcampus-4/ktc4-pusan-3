@@ -1,10 +1,10 @@
 # 임계값 검증용 쌍. 임계값을 고른 뒤 평가에만 쓴다.
 #
-# 🚨 선정용(pairs_tune.txt) 결과를 보기 전에 정답을 확정하고 커밋한다.
+# 🚨 선정용(tune_pairs.txt) 결과를 보기 전에 정답을 확정하고 커밋한다.
 #    이 파일 결과를 보고 임계값을 다시 고르지 않는다 — 그러면 검증이 아니라 두 번째 선정이다.
 #
-# 정답 질문 · 형식 · 규칙은 pairs_tune.txt 와 같다.
-# pairs_tune.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+# 정답 질문 · 형식 · 규칙은 tune_pairs.txt 와 같다.
+# tune_pairs.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
 #
 # ⚠️ same 은 오타 · 띄어쓰기 · 다른 이름이 대부분이다. 이 결과를 "의미가 비슷한 표현을
 #    얼마나 잘 잇는가" 전체로 넓혀 해석하지 않는다.

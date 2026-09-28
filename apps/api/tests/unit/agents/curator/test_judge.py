@@ -30,7 +30,7 @@ from app.agents.curator.embedding.judge import (
     JudgeAnswer,
     JudgeQuotaError,
 )
-from tests.eval.agents.curator.jev_flow import PROMPT as EXPERIMENT_PROMPT
+from tests.eval.agents.curator.exp3_flow import PROMPT as EXPERIMENT_PROMPT
 
 BASE = "https://judge.invalid/api/alpha"
 

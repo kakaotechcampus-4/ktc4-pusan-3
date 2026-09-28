@@ -1,7 +1,7 @@
 # 순서가 있는 시나리오 (검증용). 아이 한 명의 관찰 흐름을 link_observations 로 돌린다.
 #
-# 🚨 pairs_holdout.txt 와 같이 선정용 결과를 보기 전에 확정한다.
-#    pairs_tune.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+# 🚨 check1_pairs.txt 와 같이 선정용 결과를 보기 전에 확정한다.
+#    tune_pairs.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
 #
 # 형식
 #   [S번호] 도메인

@@ -3,12 +3,12 @@
 결론: 유사도만으로는 기준을 만족하는 임계값이 없다 (Notion 실험 1 · 2). 그래서 운영 연결은
 임계값이 아니라 동일 대상 판정기(Jev)로 바뀌었다 — 이 파일은 그 근거를 다시 재현하는 용도다.
 
-    선정   pytest tests/eval/agents/curator/test_threshold.py -m live -k select
+    선정   pytest tests/eval/agents/curator/test_exp1_2_threshold.py -m live -k select
            선정용 쌍으로 임계값을 쓸고 보고서를 남긴다. 판정하지 않는다
-    검증   pytest tests/eval/agents/curator/test_threshold.py -m live -k holdout
+    검증   pytest tests/eval/agents/curator/test_exp1_2_threshold.py -m live -k holdout
            THRESHOLD 로 검증용 쌍을 평가한다. 검증용은 실험 3 에서 이미 썼다
 
-보고서는 이 폴더의 threshold_*_result.txt 에 남는다 (gitignore 대상).
+보고서는 이 폴더의 exp1_2_threshold_*_result.txt 에 남는다 (gitignore 대상).
 
 판정 기준
     - 잘못 합침: near · unrelated 쌍의 유사도가 임계값 이상 → 0건이어야 한다
@@ -28,12 +28,12 @@ import pytest
 from app.agents.curator.embedding import Embedder
 from app.agents.curator.embedding.link_step import same_name_key
 from app.agents.curator.embedding.ports import CURATOR_DOMAINS
-from tests.eval.agents.curator.pairs import (
-    HOLDOUT_PATH,
-    TUNE_PATH,
-    AmbiguousPair,
+from tests.eval.agents.curator.datasets import (
+    CHECK1_PAIRS_PATH,
+    TUNE_PAIRS_PATH,
+    DisputedPair,
     Pair,
-    load_ambiguous,
+    load_disputed,
     load_pairs,
 )
 
@@ -45,7 +45,7 @@ GRID = [round(0.30 + i * 0.01, 2) for i in range(61)]  # 0.30 ~ 0.90
 # 실험 1 · 2 당시 운영 코드의 임시 임계값. 운영 연결은 이제 판정기를 쓴다
 THRESHOLD = 0.5
 
-P = TypeVar("P", Pair, AmbiguousPair)
+P = TypeVar("P", Pair, DisputedPair)
 
 
 class CachedEmbedder:
@@ -69,7 +69,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
 
 
-def _texts(pairs: Iterable[Pair | AmbiguousPair]) -> list[str]:
+def _texts(pairs: Iterable[Pair | DisputedPair]) -> list[str]:
     return sorted({s.strip() for p in pairs for s in (p.a, p.b)})
 
 
@@ -133,7 +133,7 @@ def _exact_summary(rows: list[Scored[Pair]]) -> str:
     return f"exact 연결(이름 비교, 임계값과 무관): same {same}쌍 · 다름 {other}쌍"
 
 
-def _line(row: Scored[Pair] | Scored[AmbiguousPair], *, label: bool = True) -> str:
+def _line(row: Scored[Pair] | Scored[DisputedPair], *, label: bool = True) -> str:
     """보고서의 쌍 한 줄. exact 쌍은 표시한다."""
     kind = f"{row.pair.label:<9} " if label and isinstance(row.pair, Pair) else ""
     mark = " (exact)" if row.exact else ""
@@ -147,7 +147,7 @@ def _spread(values: list[float]) -> str:
 
 
 def _write(name: str, lines: list[str]) -> Path:
-    path = HERE / f"threshold_{name}_result.txt"
+    path = HERE / f"exp1_2_threshold_{name}_result.txt"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -162,7 +162,7 @@ def _in(domain: str, rows: list[Scored[Pair]]) -> list[Scored[Pair]]:
 async def test_select_선정용으로_임계값을_쓴다() -> None:
     """판정하지 않는다. 보고서를 남기고, 기준을 만족하는 가장 낮은 임계값을 알려 준다."""
     embedder = CachedEmbedder(Embedder())
-    tune = load_pairs(TUNE_PATH)
+    tune = load_pairs(TUNE_PAIRS_PATH)
     scored = await _similarities(embedder, tune)
 
     # 같은 입력을 한 번 더 보내 값이 흔들리는지 본다 (캐시를 거치지 않는다)
@@ -173,7 +173,7 @@ async def test_select_선정용으로_임계값을_쓴다() -> None:
     )
 
     lines = [
-        "# 임계값 선정 (pairs_tune.txt)",
+        "# 임계값 선정 (tune_pairs.txt)",
         f"기준: 잘못 합침 0건 · 놓침 비율 ≤ {MAX_MISS_RATE:.0%}",
         f"현재 THRESHOLD={THRESHOLD}",
         _exact_summary(scored),
@@ -230,7 +230,7 @@ async def test_select_선정용으로_임계값을_쓴다() -> None:
     )[:10]:
         lines.append(_line(r, label=False))
 
-    ambiguous = await _similarities(embedder, load_ambiguous())
+    ambiguous = await _similarities(embedder, load_disputed())
     lines += ["", "## 판단이 갈리는 쌍 (점수에 넣지 않음)"]
     for kind in sorted({r.pair.kind for r in ambiguous}):
         rows_a = [r for r in ambiguous if r.pair.kind == kind]
@@ -248,10 +248,10 @@ async def test_select_선정용으로_임계값을_쓴다() -> None:
 
 async def test_holdout_검증용에서_기준을_지킨다() -> None:
     embedder = CachedEmbedder(Embedder())
-    scored = await _similarities(embedder, load_pairs(HOLDOUT_PATH))
+    scored = await _similarities(embedder, load_pairs(CHECK1_PAIRS_PATH))
 
     lines = [
-        "# 임계값 검증 (pairs_holdout.txt)",
+        "# 임계값 검증 (check1_pairs.txt)",
         f"THRESHOLD={THRESHOLD} · 기준: 잘못 합침 0건 · 놓침 ≤ {MAX_MISS_RATE:.0%}",
         "⚠️ same 은 오타 · 띄어쓰기 · 다른 이름이 대부분이다.",
         "   의미가 비슷한 표현을 얼마나 잘 잇는가 전체로 넓혀 읽지 않는다",

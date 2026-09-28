@@ -4,14 +4,14 @@
 #   same       예 — 같은 Profile 에 연결돼야 한다
 #   near       아니오 — 비슷하지만 다른 대상. 실험의 핵심
 #   unrelated  아니오 — 같은 도메인 안의 무관한 대상
-# 범위가 다른 쌍(원재료–가공품, 상위–하위 등)은 여기 넣지 않고 pairs_ambiguous.txt 로.
+# 범위가 다른 쌍(원재료–가공품, 상위–하위 등)은 여기 넣지 않고 disputed_pairs.txt 로.
 #
 # subject 는 Memory Agent 규칙대로 쓴다 — 수식어 · 행동을 빼고 명사만.
 # food 에 끼니 이름(밥 · 점심 · 간식 등)은 쓰지 않는다 — Memory Agent 가 subject 로 받지 않는다.
-# 수식어가 실제 대상 범위를 바꾸면(햇감자, 잔멸치 등) 판단이 갈리는 쌍(pairs_ambiguous.txt, 유형 G)으로.
+# 수식어가 실제 대상 범위를 바꾸면(햇감자, 잔멸치 등) 판단이 갈리는 쌍(disputed_pairs.txt, 유형 G)으로.
 # 범위가 그대로면(영어 알파벳, 장난감 기차) same 이다 — 수식어가 있다는 것만으로 옮기지 않는다.
 # 가상 데이터다. 실제 사용자 발화나 아이 정보를 넣지 않는다 (루트 CLAUDE.md §9).
-# pairs_holdout.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+# check1_pairs.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
 #
 # 형식: 도메인 | 정답 | subject A | subject B
 
