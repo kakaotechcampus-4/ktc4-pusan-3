@@ -3,7 +3,7 @@
 Owner: 고태영 (프론트 리드)
 
 > 이 파일은 **프론트에서만 지키는 규칙**이다. 파트 경계를 넘는 규칙은 [최상위 CLAUDE.md](../../CLAUDE.md) §2 에 있다.
-> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) (무엇을 부르는가) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
+> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → API 서버의 **Swagger `/docs`** (무엇을 부르는가 — 계약 정본, 09-20 회의) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
 > 로그인은 계약서 §04 가 아니라 [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) (서버 정본) · [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) (프론트) 를 본다.
 > 되돌릴 수 없는 5개를 건드린다면 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md) 도 읽는다 (승인 게이트 2곳이 거기 있다).
 
@@ -59,7 +59,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   사진** — 의료 기록이다) 도 같다. 셋 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`)
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
-화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
+화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
 
 ---
 
