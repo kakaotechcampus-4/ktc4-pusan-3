@@ -1,4 +1,4 @@
-"""선정용+애매 쌍 비교. holdout은 읽지 않는다. --live로 유료 API 실행.
+"""선정용 + 판단이 갈리는 쌍 비교. holdout은 읽지 않는다. --live로 유료 API 실행.
 
 실행 (apps/api 에서): uv run python -m tests.eval.agents.curator.jev_compare --live
 키: 환경변수 OPENROUTER_API_KEY. apps/api/.env 에 두면 서버 설정이 거부한다.
@@ -74,7 +74,9 @@ def metrics(rows, mode):
 async def run(live):
     pairs = load_pairs(TUNE_PATH)
     ambiguous = load_ambiguous()
-    print(f"선정용 {len(pairs)}쌍 + 애매 {len(ambiguous)}쌍; holdout 미사용", flush=True)
+    print(
+        f"선정용 {len(pairs)}쌍 + 판단이 갈리는 쌍 {len(ambiguous)}쌍; holdout 미사용", flush=True
+    )
     if not live:
         print("DRY RUN. --live를 지정해야 API를 호출합니다.")
         return
@@ -195,7 +197,7 @@ async def run(live):
             or r["choice"] == "uncertain"
         ):
             lines.append(json.dumps(r, ensure_ascii=False))
-    lines.append("\n애매 목록 — 점수 제외, 정책 미확정:")
+    lines.append("\n판단이 갈리는 쌍 — 점수 제외:")
     lines.extend(json.dumps(r, ensure_ascii=False) for r in rows if r["label"] == "ambiguous")
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines[:22]))

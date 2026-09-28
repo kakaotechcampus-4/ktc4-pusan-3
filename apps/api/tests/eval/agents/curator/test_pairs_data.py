@@ -4,7 +4,7 @@
     - 형식 · 정답 값 · 도메인이 맞다 (읽기만 해도 DataError 로 드러난다)
     - 같은 쌍이 두 번 나오지 않고, 한 쌍의 두 subject 가 같지 않다
     - 🚨 선정용과 검증용(쌍 · 시나리오)은 subject 가 겹치지 않는다 — 겹치면 검증이 선정에 새어 든다
-    - 한 쌍이 두 파일에 다른 정답으로 들어가지 않는다 (애매 목록 포함)
+    - 한 쌍이 두 파일에 다른 정답으로 들어가지 않는다 (판단이 갈리는 쌍 포함)
     - food subject 에 끼니 이름이 없다 — Memory Agent 가 subject 로 받지 않는 값이다
     - 🚨 실험 5 최종 확인용(pairs_final · scenarios_final)은 지금까지 쓴 모든 데이터와 subject 가
       겹치지 않는다 — 한 번이라도 본 이름이면 최종 확인이 아니다
@@ -146,3 +146,12 @@ def test_scale_tune_은_추리기_경로를_한_번_이상_탄다() -> None:
     from app.agents.curator.embedding.link_step import MAX_CANDIDATES
 
     assert any(len(sc.profiles) > MAX_CANDIDATES for sc in load_scale())
+
+
+def test_exp5_v3_예시는_실험_데이터에_없는_이름이다() -> None:
+    """데이터에 있는 이름을 예시로 쓰면 v3 조건만 정답 힌트를 보고 푸는 셈이 된다."""
+    from tests.eval.agents.curator.run_exp5 import V3_EXAMPLES
+
+    used = _used_before_final() | {same_name_key(s) for s in _final_subjects()}
+    leaked = sorted(e for e in V3_EXAMPLES if same_name_key(e) in used)
+    assert not leaked, f"데이터에 있는 예시: {leaked}"
