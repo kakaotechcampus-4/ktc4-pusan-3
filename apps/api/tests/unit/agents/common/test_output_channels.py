@@ -27,9 +27,6 @@ from app.agents.common.suggestion import (
 KST = timezone(timedelta(hours=9))
 
 
-SEEN_AT = datetime(2026, 9, 20, 9, 0, tzinfo=KST)
-
-
 def evidence(*, kind="observation_food", polarity=1, label="당근"):
     return RankedEvidence(
         ref=Ref(kind=kind, id=uuid4()),
@@ -44,7 +41,6 @@ def citation(*, kind="observation_food", polarity=1, label="당근", note="지�
     return cite(
         evidence(kind=kind, polarity=polarity, label=label),
         note=note,
-        source_updated_at=SEEN_AT,
     )
 
 
@@ -130,7 +126,6 @@ class TestNoteRequired:
                 citations=(
                     EvidenceCitation(
                         ref=Ref(kind="growth_doc", id=uuid4()),
-                        source_updated_at=SEEN_AT,
                         note="",
                     ),
                 ),
