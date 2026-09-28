@@ -59,8 +59,14 @@ export function PhotoEntrySheet({
   childId: string;
   /** 이 항목이 **이미 캘린더에 들어갔는가.** 🚨 두 번 넣는 길을 막는다. */
   eventAdded: boolean;
-  /** 넣고 나서 호출부에 알린다 — 목록·요약이 "일정 N건 넣음" 을 말해야 한다. */
-  onEventAdded: (entryId: string) => void;
+  /**
+   * 넣고 나서 호출부에 알린다 — 목록·요약이 "일정 N건 넣음" 을 말해야 한다.
+   *
+   * 🚨 **무엇이 들어갔는지 함께 올린다.** id 만 넘기면 목록은 "넣었다" 까지만 말할 수 있고,
+   *    **언제로** 넣었는지는 이 시트를 닫는 순간 사라진다 — 방금 고른 일시를 확인하려고
+   *    캘린더까지 가야 한다.
+   */
+  onEventAdded: (entryId: string, added: AddedEventInput) => void;
   onClose: () => void;
   /** 고친 값. 호출부가 목록의 그 항목을 갈아 끼우고 **확인됨**으로 표시한다. */
   onSave: (next: PhotoEntry) => void;
@@ -71,7 +77,13 @@ export function PhotoEntrySheet({
     <BottomSheet
       open={entry !== null}
       onClose={onClose}
-      title="읽은 내용 고치기"
+      /**
+       * 🚨 **제목이 이 시트에서 할 수 있는 일을 다 말한다.** "고치기" 만 적어 두니 캘린더에
+       *    넣는 일이 이 안에 있다는 것이 어디에도 안 보였다 — 부모는 열어 보고 나서야 안다.
+       * 🚨 급식은 예외다 — 일정 칸을 아예 세우지 않는 종류라(아래 `showItems`) 제목이
+       *    없는 기능을 약속하면 안 된다.
+       */
+      title={entry && entry.kind !== "meal" ? "고치기 · 일정 넣기" : "읽은 내용 고치기"}
       description="여기서 고친 값이 저장돼요. 고치기 전에는 아무것도 저장되지 않아요."
     >
       {/* 🚨 열 때마다 처음 값에서 시작한다 — 앞 항목을 고치던 값이 남으면 다른 항목에 덮인다. */}
@@ -90,6 +102,24 @@ export function PhotoEntrySheet({
   );
 }
 
+/**
+ * 캘린더에 넣으면서 호출부에 올리는 것.
+ *
+ * 🚨 **넣은 일시만이 아니라 확인한 값 전체를 올린다.** 부모가 승인 게이트를 지난 값인데
+ *    목록이 계속 "못 읽었어요 · 고쳐야 저장돼요" 라고 하면, 화면이 **방금 부모가 확인한 것을
+ *    못 본 척**한다 (실제로 그렇게 보였다 — 캘린더 줄에는 날짜가 서 있는데 바로 위에서
+ *    날짜를 못 읽었다고 했다).
+ * 🚨 **저장(관찰)까지 하는 것은 아니다.** 기록은 여전히 화면 맨 아래 버튼이 한 번에 보낸다 —
+ *    여기서 옮기는 것은 "이 값으로 확인했다" 까지다.
+ */
+export type AddedEventInput = {
+  starts_at: string;
+  all_day: boolean;
+  title: string;
+  date: string;
+  items: string[];
+};
+
 /** 고를 수 있는 날의 범위. 🚨 알림장은 **다음 주 일정**을 싣기 때문에 미래를 막지 않는다. */
 const FROM_DATE = new Date(2020, 0, 1);
 const TO_DATE = new Date(new Date().getFullYear() + 2, 11, 31);
@@ -105,7 +135,7 @@ function EntryForm({
   entry: PhotoEntry;
   childId: string;
   eventAdded: boolean;
-  onEventAdded: (entryId: string) => void;
+  onEventAdded: (entryId: string, added: AddedEventInput) => void;
   onSave: (next: PhotoEntry) => void;
   onRemove: (id: string) => void;
 }) {
@@ -150,13 +180,17 @@ function EntryForm({
    *    일정과 기록은 서로 다른 것이고, 각자의 버튼이 각자를 확정한다.
    */
   const addEvent = useMutation({
-    mutationFn: () =>
+    /**
+     * 🚨 **보낸 시각을 뮤테이션 변수로 들고 간다.** `onSuccess` 에서 다시 조립하면 그 사이
+     *    칸을 만진 값이 잡혀서, **캘린더에 들어간 것과 목록이 말하는 것이 달라진다.**
+     */
+    mutationFn: (startsAt: string) =>
       submitEventDraft(
         childId,
         {
           event: {
             title: title.trim(),
-            starts_at: withSeoulDateTime(date, time, allDay),
+            starts_at: startsAt,
             ends_at: null,
             all_day: allDay,
             event_type: "episodic",
@@ -167,13 +201,26 @@ function EntryForm({
         },
         eventKey.current(),
       ),
-    onSuccess: async () => {
+    onSuccess: async (_res, startsAt) => {
       // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.
       eventKey.rotate();
-      onEventAdded(entry.id);
+      onEventAdded(entry.id, {
+        starts_at: startsAt,
+        all_day: allDay,
+        title: title.trim(),
+        date,
+        // 🚨 급식은 준비물 칸 자체가 없으니 원래 값을 그대로 둔다 (`submit` 과 같은 규칙).
+        items: showItems ? items : entry.items,
+      });
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
   });
+
+  /** 🚨 잠금이 그대로면 버튼이 비활성이라 여기 못 온다 — 타입을 좁히는 자리다. */
+  function addToCalendar() {
+    const startsAt = withSeoulDateTime(date, time, allDay);
+    if (startsAt !== null) addEvent.mutate(startsAt);
+  }
 
   /**
    * 🚨 제목과 일시가 없으면 넣을 수 없다. 화면이 **왜** 잠겼는지 말한다.
@@ -336,7 +383,7 @@ function EntryForm({
                 variant="approve"
                 disabled={eventLocks.length > 0 || addEvent.isPending}
                 aria-busy={addEvent.isPending}
-                onClick={() => addEvent.mutate()}
+                onClick={addToCalendar}
               >
                 {addEvent.isPending ? <Spinner /> : null}
                 {addEvent.isPending ? "넣는 중이에요" : "확인했어요, 캘린더에 넣을게요"}

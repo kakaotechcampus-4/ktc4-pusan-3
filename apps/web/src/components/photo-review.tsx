@@ -3,7 +3,7 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 
-import { PhotoEntrySheet } from "@/components/photo-entry-sheet";
+import { PhotoEntrySheet, type AddedEventInput } from "@/components/photo-entry-sheet";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
@@ -11,7 +11,7 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { PhotoCard } from "@/components/ui/photo-card";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
-import { formatDay } from "@/lib/format";
+import { formatDay, formatEventTime, formatTimeOfDay } from "@/lib/format";
 import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/lib/api";
 
 /**
@@ -76,6 +76,21 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
   meal: "급식",
 };
 
+/**
+ * 줄을 여는 버튼의 문구.
+ *
+ * 🚨 **이 버튼이 여는 곳에서 캘린더에 쓴다.** "고치기" 만 적어 두니 그 일이 이 안에 있다는 것이
+ *    목록 어디에도 안 보였다 — 부모는 열어 보고 나서야 알고, 안 열어 본 줄은 못 넣는다.
+ * 🚨 **급식에는 일정 칸이 아예 없다** (`photo-entry-sheet.tsx` — 식단표는 전부 날짜가 있지만
+ *    일정이 아니다). 없는 기능을 문구로 약속하지 않는다.
+ * 🚨 **이미 넣은 줄도 약속하지 않는다.** 두 번 넣는 길은 시트가 막아 뒀고, 그 줄에서 남은 일은
+ *    고치는 것뿐이다.
+ */
+function editLabel(entry: PhotoEntry, added: boolean): string {
+  if (entry.kind === "meal" || added) return "고치기";
+  return "고치기 · 일정 넣기";
+}
+
 export interface PhotoReviewProps {
   /**
    * 🚨 **부모가 시트에서 고른 값.** 이 화면의 정본이고 **여기서 바뀌지 않는다** (위 주석).
@@ -114,11 +129,15 @@ export function PhotoReview({
   const [tags, setTags] = useState<string[]>([]);
   const [editing, setEditing] = useState<PhotoEntry | null>(null);
   /**
-   * 이미 캘린더에 넣은 항목. 🚨 **저장(관찰)과 다른 축이다** — 일정은 고치기 시트의 승인 게이트가
-   *    그 자리에서 넣고, 아래 "이 내용으로 저장" 은 기록을 여러 건 한 번에 보낸다.
-   *    두 개를 한 상태로 묶으면 "일정만 넣고 기록은 안 남긴" 경우를 화면이 표현할 수 없다.
+   * 이미 캘린더에 넣은 항목 → **넣은 일시.** 🚨 **저장(관찰)과 다른 축이다** — 일정은 고치기
+   *    시트의 승인 게이트가 그 자리에서 넣고, 아래 "이 내용으로 저장" 은 기록을 여러 건 한 번에
+   *    보낸다. 두 개를 한 상태로 묶으면 "일정만 넣고 기록은 안 남긴" 경우를 표현할 수 없다.
+   *
+   * 🚨 **건수만 들지 않는다.** 목록의 그 줄이 "언제로 넣었는지" 까지 말해야 부모가 확인하러
+   *    캘린더에 가지 않는다 — 시트를 닫으면 방금 고른 일시는 화면 어디에도 안 남는다.
    */
-  const [eventAdded, setEventAdded] = useState<string[]>([]);
+  const [eventAdded, setEventAdded] = useState<Record<string, AddedEventInput>>({});
+  const addedCount = Object.keys(eventAdded).length;
   const [showChecked, setShowChecked] = useState(false);
 
   const copy = LANE[lane];
@@ -126,6 +145,41 @@ export function PhotoReview({
   function saveEntry(next: PhotoEntry) {
     setEntries((prev) => prev.map((e) => (e.id === next.id ? next : e)));
     setEditing(null);
+  }
+
+  /**
+   * 캘린더에 넣었다 — 목록의 그 줄을 **넣은 것으로** 표시하고, 넣으면서 확인한 값을 얹는다.
+   *
+   * 🚨 **`saveEntry` 를 쓰지 않는다** — 그쪽은 시트를 닫는다. 여기서 닫으면 부모는 방금 넣은
+   *    결과("캘린더에 넣었어요")를 못 보고, 같은 시트에서 이어 하려던 일이 끊긴다.
+   * 🚨 **확인한 것으로 넘긴다** (`needs_review: false`). 승인 게이트를 지난 값이라 시트의
+   *    "이 내용으로 확인" 보다 무거운 확인이다 — 그대로 두면 화면이 **방금 부모가 확인한 날짜**를
+   *    "못 읽었어요 · 고쳐야 저장돼요" 라고 계속 말한다.
+   * 🚨 **그래도 기록이 저장되는 것은 아니다.** 저장은 아래 버튼 하나이고, 빼고 싶으면 시트의
+   *    "이 항목은 저장하지 않기" 가 그대로 있다 — 두 축은 여전히 따로다.
+   */
+  function markEventAdded(id: string, added: AddedEventInput) {
+    setEventAdded((prev) => ({ ...prev, [id]: added }));
+    /**
+     * 🚨 **줄이 어디로 갔는지 보여준다.** 확인된 줄은 접힌 "잘 읽었어요" 로 옮겨 가는데,
+     *    그대로 두면 방금 캘린더에 넣은 줄이 **화면에서 사라진 것처럼** 보인다 — 넣었다는
+     *    표시를 달아 놓고 그 표시를 접어 두는 셈이다.
+     */
+    setShowChecked(true);
+    setEntries((prev) =>
+      prev.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              title: added.title,
+              date: added.date === "" ? null : added.date,
+              items: added.items,
+              needs_review: false,
+              review_reason: undefined,
+            }
+          : entry,
+      ),
+    );
   }
 
   function removeEntry(id: string) {
@@ -215,9 +269,10 @@ export function PhotoReview({
         <TagPicker tags={parsed.tags ?? []} selected={tags} onChange={setTags} busy={committing} />
       ) : (
         <>
-          <NeedsReviewGroup entries={needsReview} onEdit={setEditing} />
+          <NeedsReviewGroup entries={needsReview} added={eventAdded} onEdit={setEditing} />
           <CheckedGroup
             entries={checked}
+            added={eventAdded}
             open={showChecked}
             onToggle={() => setShowChecked((v) => !v)}
             onEdit={setEditing}
@@ -236,10 +291,23 @@ export function PhotoReview({
           {lane === "activity" ? (
             <PreviewRow term="활동" value={tags.length > 0 ? tags.join(", ") : "고른 것 없음"} />
           ) : (
-            <PreviewRow
-              term="확인한 것"
-              value={checked.length > 0 ? `${checked.length}건` : "아직 없음"}
-            />
+            <>
+              <PreviewRow
+                term="확인한 것"
+                value={checked.length > 0 ? `${checked.length}건` : "아직 없음"}
+              />
+              {/* 🚨 **몇 건이 빠지는지 숫자로 말한다.** 확인 안 한 것이 조용히 사라지면
+                  "승인 전에는 저장되지 않아요" 의 반대말이 된다.
+                  🚨 **회색 면을 따로 두지 않고 이 목록의 한 줄로 둔다** — "확인한 것" 과 같은
+                  질문("무엇이 저장되나")의 나머지 절반이라 나란히 서야 읽힌다. 면을 하나 더
+                  세우면 이 카드에 회색 상자가 세 겹으로 쌓이고, 그러면 아무도 안 읽는다. */}
+              {needsReview.length > 0 ? (
+                <PreviewRow
+                  term="확인 안 한 것"
+                  value={`${needsReview.length}건 · 저장하지 않아요`}
+                />
+              ) : null}
+            </>
           )}
           {attachDate ? (
             <PreviewRow
@@ -252,26 +320,6 @@ export function PhotoReview({
             value={lane === "document" ? "기관이 보낸 문서" : "사진 태그 · 보호자 확인"}
           />
         </dl>
-
-        {/* 🚨 **넣은 일정을 여기서도 말한다.** 일정은 시트에서 이미 캘린더에 들어갔는데,
-            요약이 기록만 세면 부모는 아직 아무 일정도 안 넣은 줄 안다. 반대로 이 줄이
-            "저장하면 들어가요" 라고 말해도 안 된다 — 이미 들어가 있다. */}
-        {eventAdded.length > 0 ? (
-          <p
-            role="status"
-            className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2"
-          >
-            일정 {eventAdded.length}건은 이미 캘린더에 넣었어요. 아래 저장과는 따로예요.
-          </p>
-        ) : null}
-
-        {/* 🚨 **몇 건이 빠지는지 숫자로 말한다.** 확인 안 한 것이 조용히 사라지면
-            "승인 전에는 저장되지 않아요" 의 반대말이 된다. */}
-        {lane === "document" && needsReview.length > 0 ? (
-          <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
-            확인하지 않은 {needsReview.length}건은 저장하지 않아요.
-          </p>
-        ) : null}
 
         {commitError ? (
           // 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3).
@@ -288,15 +336,20 @@ export function PhotoReview({
           {committing ? "저장하는 중이에요" : "이 내용으로 저장"}
         </Button>
 
+        {/* 🚨 **저장 버튼이 일정을 만들지 않는다고 분명히 말한다.** 한동안 "일정 초안으로 함께
+            올라가요" 라고 적어 뒀는데, 이제 일정은 고치기 시트에서만 들어간다 —
+            문구가 남으면 부모는 저장만 누르고 일정도 됐다고 믿는다.
+            🚨 **넣은 일정도 여기서 함께 말한다.** 요약이 기록만 세면 부모는 아직 아무 일정도
+            안 넣은 줄 안다. 회색 면을 따로 세우지 않는 것은 같은 줄에 들어가는 말이기 때문이다 —
+            "저장 버튼이 무엇을 하고 무엇을 안 하는가" 한 문장이다. */}
         <p className="text-caption text-ink-subtle mt-2">
-          {/* 🚨 **저장 버튼이 일정을 만들지 않는다고 분명히 말한다.** 한동안 "일정 초안으로 함께
-              올라가요" 라고 적어 뒀는데, 이제 일정은 고치기 시트에서만 들어간다 —
-              문구가 남으면 부모는 저장만 누르고 일정도 됐다고 믿는다. */}
           {lane === "activity"
             ? attachDate
               ? `저장하면 이 사진도 ${formatDay(attachDate)} 캘린더에 함께 남아요.`
               : "남길 날짜가 없어서 캘린더에는 붙이지 않아요."
-            : "여기서 저장하는 것은 기록이에요. 일정은 항목을 열어 따로 넣어요."}
+            : addedCount > 0
+              ? `여기서 저장하는 것은 기록이에요. 일정 ${addedCount}건은 이미 캘린더에 넣었어요(저장과는 따로예요).`
+              : "여기서 저장하는 것은 기록이에요. 일정은 항목을 열어 따로 넣어요."}
         </p>
       </Card>
 
@@ -313,8 +366,8 @@ export function PhotoReview({
       <PhotoEntrySheet
         entry={editing}
         childId={childId}
-        eventAdded={editing !== null && eventAdded.includes(editing.id)}
-        onEventAdded={(id) => setEventAdded((prev) => (prev.includes(id) ? prev : [...prev, id]))}
+        eventAdded={editing !== null && editing.id in eventAdded}
+        onEventAdded={markEventAdded}
         onClose={() => setEditing(null)}
         onSave={saveEntry}
         onRemove={removeEntry}
@@ -331,9 +384,11 @@ export function PhotoReview({
  */
 function NeedsReviewGroup({
   entries,
+  added,
   onEdit,
 }: {
   entries: PhotoEntry[];
+  added: Record<string, AddedEventInput>;
   onEdit: (entry: PhotoEntry) => void;
 }) {
   if (entries.length === 0) return null;
@@ -347,7 +402,7 @@ function NeedsReviewGroup({
       <ul className="flex flex-col gap-2">
         {entries.map((entry) => (
           <li key={entry.id}>
-            <EntryRow entry={entry} onEdit={onEdit} />
+            <EntryRow entry={entry} added={added[entry.id]} onEdit={onEdit} />
           </li>
         ))}
       </ul>
@@ -364,11 +419,13 @@ function NeedsReviewGroup({
  */
 function CheckedGroup({
   entries,
+  added,
   open,
   onToggle,
   onEdit,
 }: {
   entries: PhotoEntry[];
+  added: Record<string, AddedEventInput>;
   open: boolean;
   onToggle: () => void;
   onEdit: (entry: PhotoEntry) => void;
@@ -433,7 +490,7 @@ function CheckedGroup({
         >
           {entries.map((entry) => (
             <li key={entry.id}>
-              <EntryRow entry={entry} onEdit={onEdit} />
+              <EntryRow entry={entry} added={added[entry.id]} onEdit={onEdit} />
             </li>
           ))}
         </ul>
@@ -444,7 +501,16 @@ function CheckedGroup({
 
 /* ── 항목 한 줄 ───────────────────────────────────────────────────────── */
 
-function EntryRow({ entry, onEdit }: { entry: PhotoEntry; onEdit: (entry: PhotoEntry) => void }) {
+function EntryRow({
+  entry,
+  added,
+  onEdit,
+}: {
+  entry: PhotoEntry;
+  /** 이 줄을 캘린더에 넣었다면 **넣은 일시.** 안 넣었으면 `undefined` 다. */
+  added?: AddedEventInput;
+  onEdit: (entry: PhotoEntry) => void;
+}) {
   return (
     <div
       className={cn(
@@ -456,11 +522,22 @@ function EntryRow({ entry, onEdit }: { entry: PhotoEntry; onEdit: (entry: PhotoE
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-caption text-ink-subtle">{ENTRY_KIND_LABEL[entry.kind]}</p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-caption text-ink-subtle">{ENTRY_KIND_LABEL[entry.kind]}</p>
+            {/* 🚨 **넣은 줄은 목록에서 바로 갈린다.** 시트를 열어야만 알 수 있으면, 스무 줄짜리
+                알림장에서 부모는 어디까지 넣었는지 세지 못한다.
+                🚨 **색으로만 가르지 않는다** — 칩이 글자를 지고 있어서 색 없이도 읽힌다
+                (디자인 시스템 §3). 일정 초안 카드의 "넣었어요" 칩과 같은 모양·같은 뜻이다. */}
+            {added ? (
+              <span className="text-caption text-brand-ink bg-brand-soft rounded-field px-2 py-0.5">
+                캘린더에 넣었어요
+              </span>
+            ) : null}
+          </div>
           <p className="text-body text-ink mt-0.5">{entry.title}</p>
         </div>
         <Button variant="tertiary" size="compact" onClick={() => onEdit(entry)}>
-          고치기
+          {editLabel(entry, added !== undefined)}
         </Button>
       </div>
 
@@ -470,6 +547,9 @@ function EntryRow({ entry, onEdit }: { entry: PhotoEntry; onEdit: (entry: PhotoE
           value={entry.date ? formatDay(entry.date) : "못 읽었어요"}
           missing={entry.date === null}
         />
+        {/* 🚨 **기록의 일자와 다른 줄에 둔다.** 위는 아직 저장 안 한 기록의 값이고 이건 이미
+            캘린더에 들어간 값이다 — 한 줄에 합치면 저장하지도 않은 것이 들어간 것처럼 읽힌다. */}
+        {added ? <EntryMeta term="캘린더" value={calendarValue(entry, added)} /> : null}
         {entry.items.length > 0 ? <EntryMeta term="준비물" value={entry.items.join(", ")} /> : null}
       </dl>
 
@@ -481,6 +561,20 @@ function EntryRow({ entry, onEdit }: { entry: PhotoEntry; onEdit: (entry: PhotoE
       ) : null}
     </div>
   );
+}
+
+/**
+ * 캘린더 줄에 뭐라고 쓰나.
+ *
+ * 🚨 **바로 위 칸이 이미 말한 날짜를 다시 쓰지 않는다** — 같은 날이면 시각만 낸다
+ *    (`formatTimeOfDay` 가 있는 이유 그대로다 · `lib/format.ts` 머리말).
+ * 🚨 **다르면 날짜까지 쓴다.** 기록의 일자를 나중에 고치면 캘린더에 들어간 날과 갈릴 수 있고,
+ *    그때 시각만 보여주면 **다른 날에 들어간 일정**을 같은 날인 것처럼 읽게 된다.
+ */
+function calendarValue(entry: PhotoEntry, added: AddedEventInput): string {
+  const sameDay = entry.date !== null && entry.date === added.date;
+  if (!sameDay) return formatEventTime(added.starts_at, added.all_day);
+  return added.all_day ? "하루 종일" : formatTimeOfDay(added.starts_at);
 }
 
 function EntryMeta({

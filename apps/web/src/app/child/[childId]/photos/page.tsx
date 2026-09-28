@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Camera, ChevronLeft } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -24,9 +24,9 @@ import {
   commitPhotoRun,
   isApiError,
   photoFormData,
+  qk,
   uploadPhoto,
   type PhotoCommitRequest,
-  type PhotoCommitResponse,
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { formatDay, parseISODate, toISODate } from "@/lib/format";
@@ -75,6 +75,7 @@ function PhotosScreen() {
   const childId = useChildId();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
 
   /**
    * 이 사진을 어느 날에 남기는지. 캘린더에서 들어오면 그날, 홈에서 들어오면 오늘이다.
@@ -97,7 +98,7 @@ function PhotosScreen() {
   const [photo, setPhoto] = useState<PendingPhoto | null>(() =>
     usePhotoDraftStore.getState().peek(childId),
   );
-  const [saved, setSaved] = useState<PhotoCommitResponse | null>(null);
+
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const run = useRunStream(childId);
@@ -147,8 +148,24 @@ function PhotosScreen() {
       if (!runId) throw new Error("저장할 사진이 없어요.");
       return commitPhotoRun(runId, body);
     },
-    // 🚨 낙관적 업데이트를 하지 않는다. 응답을 받은 뒤에 "저장했어요" 를 그린다.
-    onSuccess: (res) => setSaved(res),
+    /**
+     * 🚨 **저장하면 바로 03 홈이다.** 결과 화면을 한 칸 두지 않는다 — 여기서 할 일은 끝났고,
+     *    저장한 것은 홈·07·09 가 이미 보여준다. 확인만 하는 화면이 하나 더 서면 부모는
+     *    **끝난 일을 한 번 더 닫아야** 한다.
+     *
+     * 🚨 **낙관적으로 옮기지 않는다.** 응답을 받은 뒤에 움직인다 — 실패하면 이 화면에 남아서
+     *    같은 자리에서 다시 시도한다 ("저장했어요" 를 서버보다 먼저 말하지 않는다).
+     *
+     * 🚨 **무효화를 여기서 한다.** run 이 끝날 때 도는 무효화는 이 요청보다 **먼저** 돌고,
+     *    관찰을 만드는 것은 이 요청이다 — 안 하면 방금 저장한 것이 없는 홈으로 간다.
+     *
+     * 🚨 `replace` 다. `push` 로 가면 뒤로가기가 **이미 저장을 끝낸 확인 화면**으로 돌아오고,
+     *    거기서 저장을 또 누를 수 있다 (웹뷰의 기기 뒤로가기가 히스토리 기반이다).
+     */
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+      router.replace(`/child/${childId}/home`);
+    },
   });
 
   /**
@@ -173,25 +190,6 @@ function PhotosScreen() {
   }, [photo, startUpload]);
 
   /**
-   * 다른 사진으로 바꾼다. 저장된 것이 없으므로 되돌릴 것도 없다.
-   *
-   * 부모가 방금 "다른 사진" 을 요구했으니 시트를 바로 연다 — 고르는 칸을 한 번 더 거치게
-   * 하면 같은 뜻의 버튼을 두 번 누르는 화면이 된다.
-   */
-  function pickAnother() {
-    run.reset();
-    upload.reset();
-    commit.reset();
-    setRunId(null);
-    setSaved(null);
-    // 앞 사진의 objectURL 은 위의 cleanup 이 해제한다 (상태가 바뀌면 그때 돈다).
-    setPhoto(null);
-    // 🚨 여기서 돌린다. 다음 요청은 **다른 사진**이라 같은 키로 보내면 422 다.
-    idempotencyKey.rotate();
-    setSheetOpen(true);
-  }
-
-  /**
    * 저장하지 않고 03 홈으로. 🚨 **확인을 묻지 않는다** — 여기까지 저장된 것이 없어서
    *    잃을 것이 없고, 승인 게이트는 딱 2곳이다 (CLAUDE.md §2).
    */
@@ -212,15 +210,7 @@ function PhotosScreen() {
         </div>
       </header>
 
-      {saved ? (
-        <SavedResult
-          result={saved}
-          childId={childId}
-          fallbackDate={date}
-          previewUrl={photo?.url ?? null}
-          onAnother={pickAnother}
-        />
-      ) : consentBlocked ? (
+      {consentBlocked ? (
         <ConsentRequiredCard
           childId={childId}
           error={consentBlocked}
@@ -386,80 +376,6 @@ function Failed({
         <Button onClick={onRetry}>다시 시도</Button>
         <Button variant="secondary" onClick={onGoHome}>
           메인으로 돌아가기
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/* ── 저장한 뒤 ────────────────────────────────────────────────────────── */
-
-/**
- * 🚨 **저장한 것을 화면에 그대로 세운다.** 처음에는 "저장했어요" 한 줄과 버튼 둘만 남겼는데,
- *    방금까지 확인하던 사진과 항목이 통째로 사라지면서 **무엇을 저장했는지 알 수 없는 빈 화면**이
- *    됐다. 이 화면이 이미 아는 사실을 07·09 에 가서 확인하게 만들지 않는다.
- *
- * 🚨 사진은 그대로 두되 `accent` 는 떼어낸다 — 확인할 것이 더 없는 자리라, 이제 무게를 가져가는
- *    것은 다음에 갈 곳이다 (문서 §7 "한 화면에 한 장" 도 이렇게 유지된다).
- */
-function SavedResult({
-  result,
-  childId,
-  fallbackDate,
-  previewUrl,
-  onAnother,
-}: {
-  result: PhotoCommitResponse;
-  childId: string;
-  /** 서버가 `calendar_date` 를 안 줬을 때 캘린더가 열 날. 화면이 들고 온 날짜다. */
-  fallbackDate: string;
-  /** 저장한 사진. 화면을 떠나기 전까지는 살아 있다 (`revokeObjectURL` 은 언마운트에서). */
-  previewUrl: string | null;
-  onAnother: () => void;
-}) {
-  const router = useRouter();
-  const day = result.calendar_date ?? fallbackDate;
-  /** 🚨 서버가 저장한 것을 그대로 읽는다 — 화면이 들고 있던 선택 목록을 다시 쓰지 않는다. */
-  const savedItems = result.observations.flatMap((observation) => {
-    const fields = observation.domain_fields;
-    const list = fields.items ?? fields.tags;
-    return Array.isArray(list) ? (list as string[]) : [];
-  });
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-title text-ink">저장했어요</h2>
-        <p className="text-body-sm text-ink-muted mt-2">
-          기록 {result.observations.length}건을 남겼어요.
-        </p>
-      </div>
-
-      {previewUrl ? (
-        <PhotoCard
-          footer={
-            savedItems.length > 0 ? (
-              <div>
-                <p className="text-caption text-ink-subtle">함께 남긴 것</p>
-                <p className="text-body-sm text-ink mt-1">{savedItems.join(", ")}</p>
-              </div>
-            ) : undefined
-          }
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={previewUrl} alt="저장한 사진" className="h-full w-full object-cover" />
-        </PhotoCard>
-      ) : null}
-
-      {/* 🚨 `Button` 의 클래스를 링크에 베껴 붙이지 않는다 — 같은 모양이 두 벌이 되는 순간
-          한쪽이 뒤처진다 (한 화면에서 primary 버튼이 두 가지로 보이게 되는 길이다).
-          이동은 03 홈이 쓰는 것과 같은 `router.push` 다. */}
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={() => router.push(`/child/${childId}/calendar?date=${day}`)}>
-          캘린더에서 보기
-        </Button>
-        <Button variant="secondary" onClick={onAnother}>
-          사진 하나 더 넣기
         </Button>
       </div>
     </div>
