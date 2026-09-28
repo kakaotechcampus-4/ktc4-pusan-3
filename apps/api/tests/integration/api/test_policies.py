@@ -48,6 +48,7 @@ async def test_policies_come_in_display_order_with_labels(db_client):
             "required",
             "sensitive",
             "content",
+            "html_path",
         }
         assert item["label"]
         # 🚨 위치는 선택이다. 필수로 내려가면 화면이 그 체크 없이는 가입을 막는다 (#172).

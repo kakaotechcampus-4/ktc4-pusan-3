@@ -22,3 +22,11 @@ class PolicyResponse(BaseModel):
     required: bool
     sensitive: bool
     content: str
+    html_path: str | None
+    """"전문 보기" 가 여는 정본 HTML 페이지의 경로 (#172). `/api/v1` 아래 경로라 API 클라이언트의
+    다른 경로와 같은 기준이다 — 예: `/policies/location/draft-1`.
+
+    🚨 화면은 이 페이지를 **손대지 않고** 띄운다 (웹뷰 · 새 창 · iframe). 서버가 저장한 완성본을
+       그대로 보여 줘야 "저장된 정본 = 보호자가 본 것" 이 된다 (멘토 #71-4).
+    null 이면 정본이 없는 자리 표시 글(draft-0)이다.
+    """

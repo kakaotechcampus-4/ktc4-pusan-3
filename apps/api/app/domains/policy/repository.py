@@ -25,6 +25,7 @@ async def register_version(
     effective_at: datetime,
     legal_basis: str | None = None,
     ended_at: datetime | None = None,
+    content_html: str | None = None,
 ) -> PolicyVersion:
     """정책 버전 1건을 등록한다. `scope`+`version` 조합은 DB unique 제약으로 유일해야 한다."""
     policy_version = PolicyVersion(
@@ -34,6 +35,7 @@ async def register_version(
         legal_basis=legal_basis,
         content=content,
         content_hash=content_hash,
+        content_html=content_html,
         effective_at=effective_at,
         ended_at=ended_at,
     )
@@ -82,6 +84,20 @@ async def find_active_versions(session: AsyncSession, *, now: datetime) -> list[
     for row in await session.scalars(stmt):
         latest.setdefault(row.scope, row)
     return list(latest.values())
+
+
+async def find_version(
+    session: AsyncSession, *, scope: ConsentScope, version: str
+) -> PolicyVersion | None:
+    """`scope`+`version` 으로 등록된 행 하나 — 적용 기간과 상관없이 (#172).
+
+    정본 HTML 을 내줄 때 쓴다. 끝난 옛 약관도 읽을 수 있어야 한다 — 그 글에 동의한 기록이
+    남아 있고, 보호자가 "변경 전 약관" 을 볼 수 있어야 한다.
+    """
+    stmt = select(PolicyVersion).where(
+        PolicyVersion.scope == scope, PolicyVersion.version == version
+    )
+    return await session.scalar(stmt)
 
 
 def _is_active(now: datetime):

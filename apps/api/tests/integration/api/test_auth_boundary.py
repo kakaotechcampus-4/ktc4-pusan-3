@@ -27,10 +27,12 @@ PUBLIC_ALLOWLIST = {
     ("POST", "/api/v1/auth/{provider}"),
     ("POST", "/api/v1/auth/{provider}/signup"),
     ("GET", "/api/v1/policies"),
+    ("GET", "/api/v1/policies/{scope}/{version}"),
 }
-"""루트 CLAUDE.md §9 의 무인증 6개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
+"""루트 CLAUDE.md §9 의 무인증 7개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
 
 `GET /policies` 는 로그인용은 아니지만 가입 전 동의 화면이 약관을 그리려고 부른다 (#91).
+`GET /policies/{scope}/{version}` 은 그 화면의 "전문 보기" 가 여는 정본 HTML 이다 (#172).
 약관은 누구나 읽을 수 있어야 하는 공개 문서다.
 
 아직 POST 둘은 구현 전이라 실제로 열린 것은 3개다. 그래서 "정확히 같다" 가 아니라
