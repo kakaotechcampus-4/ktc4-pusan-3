@@ -1,4 +1,6 @@
-"""observation 5테이블(food / health / education / activity / routine)의 CRUD tool 20개.
+"""observation 5테이블(food / health / education / activity / routine)의 tool 15개.
+
+create / query / update 3종. 삭제는 update 에 status=deleted 로 온다 (soft delete).
 
 각 tool 흐름:
   - 날짜·시각 표현을 datetime_rules 로 확정 -> context 값 주입 -> NOT NULL 기본값 채움
@@ -31,14 +33,13 @@ from app.agents.memory.schemas.observation import (
     ObservationQueryArgs,
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
-    RecordRef,
 )
 
 # create 인자 중 store가 따로 받는 것들. fields에 중복으로 넣지 않는다
 _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
 
-# update도 날짜를 바꿀 수 있다. 이 셋은 fields로 내려보내지 않고 따로 푼다
-_UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction", "clear"}
+# update도 날짜를 바꿀 수 있다. 이 넷은 fields로 내려보내지 않고 따로 푼다
+_UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction", "clear", "status"}
 
 # 음식 이름이 아니라 끼니 이름
 MEAL_SLOTS = frozenset(
@@ -141,6 +142,8 @@ async def _update(
     resolve_observed_time: bool = False,
 ) -> ToolResult:
     resource = _resource(domain)
+    if args.status == "deleted":
+        return await _delete(context, args, domain=domain)
     current = await context.store.get_observation(domain=domain, observation_id=args.observation_id)
     if current is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
@@ -183,14 +186,15 @@ async def _update(
     return ok("update", resource, id=row.id, observed_on=row.observed_on.isoformat(), **cleared)
 
 
-async def _delete(context: AgentContext, args: RecordRef, *, domain: str) -> ToolResult:
+async def _delete(context: AgentContext, args: Any, *, domain: str) -> ToolResult:
+    """update 의 status=deleted. 행은 남고 status 만 바뀐다. 이미 지운 행은 없는 행과 같다."""
     resource = _resource(domain)
     deleted = await context.store.delete_observation(
         domain=domain, observation_id=args.observation_id
     )
     if not deleted:
-        return fail("delete", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
-    return ok("delete", resource, id=args.observation_id)
+        return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
+    return ok("update", resource, id=args.observation_id, status="deleted")
 
 
 def _not_found(domain: str) -> str:
@@ -243,9 +247,6 @@ async def update_observation_food(context: AgentContext, args: ObservationFoodUp
     return await _update(context, args, domain="food")
 
 
-async def delete_observation_food(context: AgentContext, args: RecordRef) -> ToolResult:
-    return await _delete(context, args, domain="food")
-
 
 # health
 async def create_observation_health(
@@ -259,9 +260,6 @@ async def update_observation_health(
 ) -> ToolResult:
     return await _update(context, args, domain="health", resolve_observed_time=True)
 
-
-async def delete_observation_health(context: AgentContext, args: RecordRef) -> ToolResult:
-    return await _delete(context, args, domain="health")
 
 
 # education
@@ -277,9 +275,6 @@ async def update_observation_education(
     return await _update(context, args, domain="education")
 
 
-async def delete_observation_education(context: AgentContext, args: RecordRef) -> ToolResult:
-    return await _delete(context, args, domain="education")
-
 
 # activity
 async def create_observation_activity(
@@ -293,9 +288,6 @@ async def update_observation_activity(
 ) -> ToolResult:
     return await _update(context, args, domain="activity")
 
-
-async def delete_observation_activity(context: AgentContext, args: RecordRef) -> ToolResult:
-    return await _delete(context, args, domain="activity")
 
 
 # routine
@@ -311,9 +303,6 @@ async def update_observation_routine(
     return await _update(context, args, domain="routine")
 
 
-async def delete_observation_routine(context: AgentContext, args: RecordRef) -> ToolResult:
-    return await _delete(context, args, domain="routine")
-
 
 query_observation_food = _query_handler("food")
 query_observation_health = _query_handler("health")
@@ -325,21 +314,16 @@ OBSERVATION_HANDLERS = {
     "create_observation_food": create_observation_food,
     "query_observation_food": query_observation_food,
     "update_observation_food": update_observation_food,
-    "delete_observation_food": delete_observation_food,
     "create_observation_health": create_observation_health,
     "query_observation_health": query_observation_health,
     "update_observation_health": update_observation_health,
-    "delete_observation_health": delete_observation_health,
     "create_observation_education": create_observation_education,
     "query_observation_education": query_observation_education,
     "update_observation_education": update_observation_education,
-    "delete_observation_education": delete_observation_education,
     "create_observation_activity": create_observation_activity,
     "query_observation_activity": query_observation_activity,
     "update_observation_activity": update_observation_activity,
-    "delete_observation_activity": delete_observation_activity,
     "create_observation_routine": create_observation_routine,
     "query_observation_routine": query_observation_routine,
     "update_observation_routine": update_observation_routine,
-    "delete_observation_routine": delete_observation_routine,
 }

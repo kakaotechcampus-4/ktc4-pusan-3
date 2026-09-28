@@ -31,12 +31,13 @@ RECORD_BASE: frozenset[str] = frozenset(
     }
 )
 
-# 조회·수정·삭제 묶음: 관찰 query·update·delete 15 + 일정·준비물 update·delete 4
+# 조회·수정·삭제 묶음: 관찰 query·update 10 + 일정·준비물 update·delete 4
+# 관찰 삭제는 update 의 status=deleted 라 관찰 delete tool 은 없다
 LOOKUP_EDIT: frozenset[str] = frozenset(
     {
         *(
             f"{operation}_observation_{domain}"
-            for operation in ("query", "update", "delete")
+            for operation in ("query", "update")
             for domain in _DOMAINS
         ),
         "update_event",

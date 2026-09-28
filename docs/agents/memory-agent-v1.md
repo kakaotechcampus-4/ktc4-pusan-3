@@ -39,20 +39,25 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 pipeline 을 거치는 경로에서는 `pipeline.handle_input()` 이 Supervisor → Memory → Food 순서로 부른다.
 `run()` 을 직접 부르는 것은 Supervisor 없이 Memory 만 잴 때다.
 
-### tool 27개
+### tool 22개
 
 | 묶음 | 개수 | 이름 |
 | --- | --- | --- |
-| observation | 20 | `create/query/update/delete_observation_{food,health,education,activity,routine}` |
+| observation | 15 | `create/query/update_observation_{food,health,education,activity,routine}` |
 | event | 4 | `create/query/update/delete_event` |
 | event_item | 3 | `create/update/delete_event_item` |
 
 `routine` 은 #107 에서 다섯 번째 도메인으로 붙었다. 생활 행동(양치·정리·인사)이 `activity` 에 섞여
 들어가던 것을 뗀 것이다.
 
-27개를 한꺼번에 열지 않는다. `bundles.py` 가 작업 종류에 따라 두 묶음으로 나눈다 —
-기록 기본 묶음 `RECORD_BASE` 8개는 항상 열고, 수정·삭제 묶음 `LOOKUP_EDIT` 19개는 Supervisor 가
-`lookup_edit` 조각을 짚었을 때만 더한다. Supervisor 없이 `run()` 을 직접 부르면 27개를 다 연다.
+관찰에는 delete tool 이 없다. 보호자가 지워 달라고 하면 `update_observation_*` 에 `status=deleted` 만
+넣어 부른다. 행과 원문은 남고 status 만 바뀌며, 지운 행은 조회·수정·목록·집계 어디에도 걸리지 않는다.
+update 가 status 로 여는 값은 `deleted` 하나다. `stand_alone` · `inactive` 는 Correction 결과라 모델에게
+열지 않는다. 지우는 호출에 다른 필드 수정이나 `clear` 를 섞으면 스키마가 거절한다.
+
+22개를 한꺼번에 열지 않는다. `bundles.py` 가 작업 종류에 따라 두 묶음으로 나눈다 —
+기록 기본 묶음 `RECORD_BASE` 8개는 항상 열고, 수정·삭제 묶음 `LOOKUP_EDIT` 14개는 Supervisor 가
+`lookup_edit` 조각을 짚었을 때만 더한다. Supervisor 없이 `run()` 을 직접 부르면 22개를 다 연다.
 
 `event_item` 에는 조회 tool 이 없다. `query_event` 가 딸린 준비물을 함께 돌려준다 —
 "기존 일정에 준비물 추가" 가 조회 한 번으로 끝나야 하기 때문이다.
