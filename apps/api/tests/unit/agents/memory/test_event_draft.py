@@ -37,6 +37,7 @@ from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft, EventSnap
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.store import InMemoryStore
+from app.agents.memory.tools import schedule
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 15, 9, 0, tzinfo=KST)  # 2026-09-15 화요일
@@ -686,3 +687,46 @@ async def test_수정_뒤_체크해도_준비물이_바뀐_것으로_잡히지_�
     draft = context.drafts.get(event_id)
     assert draft is not None
     assert draft.changed == ("starts_at",)  # items 는 붙지 않는다
+
+
+async def test_이름과_챙김을_같이_주면_둘_다_반영된다(context: AgentContext) -> None:
+    # "체육복 이름 고치고 챙겼어": 한 호출에 둘이 같이 온다. 이름은 초안, 챙김은 바로 쓰기
+    event_id = await _seed_event(context, "체육복")
+
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복 상의", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is True, result.error
+    assert result.data["is_prepared"] is True
+    assert result.data["item_name"] == "체육복 상의"
+    stored = await context.store.get_event_item(item_id="event_item-1")
+    assert stored is not None and stored.is_prepared is True
+    assert stored.prepared_at is not None
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert [(item.item_name, item.is_prepared) for item in draft.items] == [("체육복 상의", True)]
+    assert draft.to_payload()["items"] == [{"item_id": "event_item-1", "item_name": "체육복 상의"}]
+
+
+async def test_챙김_쓰기가_성공하면_이름_초안이_실패해도_체크는_남는다(
+    context: AgentContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 되돌리지 않는다. 체크는 승인 게이트 밖이라 이미 반영된 사실이다
+    await _seed_event(context, "체육복")
+
+    async def no_draft(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(schedule, "current_draft", no_draft)
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복 상의", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is False
+    stored = await context.store.get_event_item(item_id="event_item-1")
+    assert stored is not None and stored.is_prepared is True
