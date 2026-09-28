@@ -25,7 +25,7 @@ update_event:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -38,6 +38,7 @@ from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory.tools import schedule
+from app.core.event_draft import CreateEventDraft, UpdateEventDraft
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 15, 9, 0, tzinfo=KST)  # 2026-09-15 화요일
@@ -730,3 +731,45 @@ async def test_챙김_쓰기가_성공하면_이름_초안이_실패해도_체�
     assert result.success is False
     stored = await context.store.get_event_item(item_id="event_item-1")
     assert stored is not None and stored.is_prepared is True
+
+
+def test_create_초안은_공통_스키마로_검증된다() -> None:
+    draft = _draft(op="create", items=(DraftItem(item_id=None, item_name="수건"),))
+
+    payload = draft.to_payload()
+
+    assert CreateEventDraft.model_validate(payload).op == "create"
+    assert payload == {
+        "draft_id": None,
+        "op": "create",
+        "event": {
+            "title": "물놀이",
+            "starts_at": "2026-09-25T10:00:00+09:00",
+            "ends_at": None,
+            "all_day": False,
+            "event_type": "episodic",
+            "category": "activity",
+        },
+        "items": [{"item_id": None, "item_name": "수건"}],
+    }
+
+
+def test_update_초안도_공통_스키마로_검증된다() -> None:
+    draft = _draft(op="update", event_id="event-1", before=_snapshot())
+
+    payload = draft.to_payload()
+
+    assert UpdateEventDraft.model_validate(payload).event_id == "event-1"
+    assert payload["before"]["title"] == "운동회"
+    assert payload["event"]["starts_at"] == "2026-09-25T10:00:00+09:00"
+
+
+def test_UTC_시각도_isoformat_표기를_지킨다() -> None:
+    # DB(timestamptz)에서 읽은 before 는 UTC 로 온다. pydantic 기본 직렬화는 "Z" 로 바꿔 써서
+    # 옮기기 전 표기("+00:00")와 갈린다. 화면이 before 와 event 를 문자열로 비교한다
+    moment = datetime(2026, 9, 25, 1, 0, tzinfo=timezone.utc)
+    draft = _draft(op="update", event_id="event-1", ends_at=moment, before=_snapshot())
+
+    payload = draft.to_payload()
+
+    assert payload["event"]["ends_at"] == "2026-09-25T01:00:00+00:00"

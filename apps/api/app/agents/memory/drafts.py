@@ -4,12 +4,20 @@
 run 단위 버퍼(DraftBook)에 모아 두고, pipeline이 run 끝에 한 번 내보낸다.
 저장은 보호자가 초안을 제출한 뒤 백엔드가 한다.
 
-to_payload() 는 SSE로 나갈 JSON 모양을 정한다.
+to_payload() 는 SSE로 나갈 JSON 을 만든다. 모양의 정본은 app/core/event_draft.py 다.
 """
 
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
+
+from app.core.event_draft import (
+    CreateEventDraft,
+    DraftItemPayload,
+    EventBefore,
+    EventBody,
+    UpdateEventDraft,
+)
 
 DraftOp = Literal["create", "update"]
 
@@ -94,34 +102,35 @@ class EventDraft:
     def to_payload(self) -> dict[str, Any]:
         """op에 따라 모양이 갈린다. create는 POST, update는 PATCH.
 
-        create 초안은 event_id와 before가 언제나 null이라 싣지 않는다.
+        모양의 정본은 app/core/event_draft.py 다. 여기서 dict를 직접 만들지 않는다.
         op는 두 모양 모두에 남기고, 화면이 이 값으로 부를 엔드포인트를 고른다.
         """
-        event = {
-            "title": self.title,
-            "starts_at": _moment(self.starts_at),
-            "ends_at": _moment(self.ends_at),
-            "all_day": self.all_day,
-            "event_type": self.event_type,
-            "category": self.category,
-        }
-        items = [item.to_payload() for item in self.items]
-        # 제안에서 온 초안만 출처를 채운다. Memory는 그 경로를 거치지 않아 언제나 null
+        event = EventBody(
+            title=self.title,
+            starts_at=self.starts_at,
+            ends_at=self.ends_at,
+            all_day=self.all_day,
+            event_type=self.event_type,
+            category=self.category,
+        )
+        items = [
+            DraftItemPayload(item_id=item.item_id, item_name=item.item_name) for item in self.items
+        ]
+        draft: CreateEventDraft | UpdateEventDraft
         if self.op == "create":
-            return {
-                "draft_id": self.draft_id,
-                "op": self.op,  # TODO: 제안 경로가 일정 초안을 만들 때 source키 추가
-                "event": event,
-                "items": items,
-            }
-        return {
-            "draft_id": self.draft_id,
-            "op": self.op,
-            "event_id": self.event_id,
-            "event": event,
-            "before": self.before.to_payload() if self.before is not None else None,
-            "items": items,
-        }
+            # TODO: 제안 경로가 일정 초안을 만들 때 source 키 추가. Memory 는 언제나 null
+            draft = CreateEventDraft(draft_id=self.draft_id, op="create", event=event, items=items)
+        else:
+            before = self.before
+            draft = UpdateEventDraft(
+                draft_id=self.draft_id,
+                op="update",
+                event_id=self.event_id,
+                event=event,
+                before=EventBefore.model_validate(before.to_payload()) if before else None,
+                items=items,
+            )
+        return draft.model_dump(mode="json")
 
 
 class DraftBook:
