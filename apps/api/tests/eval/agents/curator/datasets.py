@@ -11,7 +11,7 @@ from typing import Literal, cast, get_args
 from app.agents.curator.embedding.ports import CURATOR_DOMAINS, CuratorDomain
 
 HERE = Path(__file__).parent
-RESULTS_DIR = HERE  # 실험 결과 파일(gitignore 대상)은 실험 코드 옆에 남긴다
+RESULTS_DIR = HERE / "results"  # 실험 결과 파일. gitignore 대상이라 이 컴퓨터에만 남는다
 DATA_DIR = HERE / "data"
 TUNE_PAIRS_PATH = DATA_DIR / "tune_pairs.txt"
 TUNE_SCALE_PATH = DATA_DIR / "tune_scale.txt"
@@ -20,6 +20,14 @@ CHECK1_ORDERS_PATH = DATA_DIR / "check1_orders.txt"
 CHECK2_PAIRS_PATH = DATA_DIR / "check2_pairs.txt"
 CHECK2_ORDERS_PATH = DATA_DIR / "check2_orders.txt"
 DISPUTED_PAIRS_PATH = DATA_DIR / "disputed_pairs.txt"
+
+
+def results_dir(experiment: str) -> Path:
+    """실험별 결과 폴더 (예: results/exp3). 없으면 만든다."""
+    path = RESULTS_DIR / experiment
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 Label = Literal["same", "near", "unrelated"]
 AmbiguousKind = Literal["A", "B", "C", "D", "E", "F", "G"]

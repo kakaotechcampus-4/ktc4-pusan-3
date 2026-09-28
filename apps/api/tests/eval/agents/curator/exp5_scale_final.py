@@ -19,7 +19,7 @@
     orders     check1_orders.txt (5a) / check2_orders.txt (5b) — 여러 순서로 관찰을 쌓는다
 
 5b 는 조건 하나만, 한 번만 돌린다. 5b 결과를 보고 조건을 다시 고르지 않는다.
-결과는 이 폴더의 exp5_*_result.txt · exp5_*_results.jsonl (gitignore 대상).
+결과는 이 폴더의 results/exp5/exp5_*_result.txt · exp5_*_results.jsonl (gitignore 대상).
 """
 
 import argparse
@@ -49,16 +49,15 @@ from tests.eval.agents.curator.datasets import (
     CHECK1_ORDERS_PATH,
     CHECK2_ORDERS_PATH,
     CHECK2_PAIRS_PATH,
-    RESULTS_DIR,
     TUNE_PAIRS_PATH,
     Scenario,
     load_pairs,
     load_scale,
     load_scenarios,
+    results_dir,
 )
 from tests.eval.agents.curator.exp3_flow import cases
 
-HERE = RESULTS_DIR
 CHILD = UUID("00000000-0000-0000-0000-0000000e0005")
 REVERSE_TOP = 3  # v1_back 이 방향을 바꿔 다시 물을 후보 수
 
@@ -349,8 +348,8 @@ async def run(args: argparse.Namespace) -> None:
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     tag = "final" if args.final else "select"
-    log_path = HERE / f"exp5_{tag}_{stamp}_results.jsonl"
-    report_path = HERE / f"exp5_{tag}_{stamp}_result.txt"
+    log_path = results_dir("exp5") / f"exp5_{tag}_{stamp}_results.jsonl"
+    report_path = results_dir("exp5") / f"exp5_{tag}_{stamp}_result.txt"
     lines = [
         f"# 실험 5 {stage}",
         f"MAX_CANDIDATES={MAX_CANDIDATES} · REVERSE_TOP={REVERSE_TOP}",

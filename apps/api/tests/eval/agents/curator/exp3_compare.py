@@ -26,10 +26,10 @@ from app.agents.curator.embedding import Embedder
 from app.agents.curator.embedding.link_step import same_name_key
 from tests.eval.agents.curator.datasets import (
     DISPUTED_PAIRS_PATH,
-    RESULTS_DIR,
     TUNE_PAIRS_PATH,
     load_disputed,
     load_pairs,
+    results_dir,
 )
 
 API_ENV = Path(__file__).resolve().parents[4] / ".env"  # apps/api/.env
@@ -89,8 +89,8 @@ async def run(live):
     texts = list(dict.fromkeys(s.strip() for p in all_pairs for s in (p.a, p.b)))
     vectors = dict(zip(texts, await embedder.embed(texts), strict=True))
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    output = RESULTS_DIR / f"exp3_compare_{timestamp}_results.jsonl"
-    report = RESULTS_DIR / f"exp3_compare_{timestamp}_result.txt"
+    output = results_dir("exp3") / f"exp3_compare_{timestamp}_results.jsonl"
+    report = results_dir("exp3") / f"exp3_compare_{timestamp}_result.txt"
     semaphore = asyncio.Semaphore(4)
     rows = []
     metadata = {
