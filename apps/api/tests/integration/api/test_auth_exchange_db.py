@@ -23,6 +23,8 @@ from app.domains.policy.models import PolicyVersion
 BIND = "A" * 43
 OTHER_BIND = "B" * 43
 KAKAO_USER_ID = "1234567890"
+NICKNAME = "테스트 보호자"
+"""가입 화면의 "부르는 이름". 실제 사람 이름을 픽스처에 넣지 않는다 (루트 CLAUDE.md §9)."""
 POLICY = "draft-1"
 """계정 동의 둘(service_terms · privacy_account)의 지금 버전 — 약관 초안 draft-1 (#172).
 
@@ -140,7 +142,12 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
 
     response = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert response.status_code == 200
@@ -176,7 +183,12 @@ async def test_signup_rejects_a_code_issued_for_another_provider(db_client, sess
 
     response = await db_client.post(
         "/api/v1/auth/google/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert response.status_code == 401
@@ -195,7 +207,12 @@ async def test_rejected_provider_mismatch_leaves_the_ticket_usable(db_client, se
     consent_code = (
         await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
     ).json()["consent_code"]
-    body = {"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS}
+    body = {
+        "consent_code": consent_code,
+        "bind": BIND,
+        "nickname": NICKNAME,
+        "consents": REQUIRED_CONSENTS,
+    }
 
     await db_client.post("/api/v1/auth/google/signup", json=body)
     response = await db_client.post("/api/v1/auth/kakao/signup", json=body)
@@ -233,6 +250,7 @@ async def test_signup_without_required_scope_creates_nothing(db_client, session)
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [{"scope": "service_terms", "policy_version": POLICY}],
         },
     )
@@ -260,6 +278,7 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [
                 {"scope": "service_terms", "policy_version": UNREGISTERED_POLICY},
                 {"scope": "privacy_account", "policy_version": UNREGISTERED_POLICY},
@@ -313,7 +332,12 @@ async def test_signup_with_superseded_policy_version_is_rejected(db_client, sess
 
     response = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert response.status_code == 400
@@ -335,6 +359,7 @@ async def test_signup_with_current_policy_version_succeeds(db_client, session):
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [
                 {"scope": "service_terms", "policy_version": NEWER_POLICY},
                 {"scope": "privacy_account", "policy_version": POLICY},
@@ -363,6 +388,7 @@ async def test_signup_records_optional_location_consent(db_client, session):
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [
                 *REQUIRED_CONSENTS,
                 {"scope": "location", "policy_version": "test-location"},
@@ -376,6 +402,60 @@ async def test_signup_records_optional_location_consent(db_client, session):
     location = await session.scalar(select(Consent).where(Consent.scope == ConsentScope.LOCATION))
     assert location.subject_parent_id == location.actor_ref
     assert location.child_id is None
+
+
+async def test_signup_saves_the_name_the_guardian_typed(db_client, session):
+    """가입 화면의 "부르는 이름" 이 계정에 남고 세션 응답에도 실린다 (#172).
+
+    예전에는 스키마에 칸이 없어 화면이 보낸 이름을 서버가 조용히 버렸다. 동의문 1 이
+    "부르는 이름을 받는다" 고 알리므로, 받지 않으면 동의문이 사실이 아니다.
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": f"  {NICKNAME}  ",
+            "consents": REQUIRED_CONSENTS,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parent"]["nickname"] == NICKNAME, "앞뒤 공백은 떼고 저장한다"
+    parent = await session.get(Parent, response.json()["parent"]["id"])
+    assert parent.nickname == NICKNAME
+
+
+@pytest.mark.parametrize(
+    "nickname",
+    [None, "", "   ", "가" * 21],
+    ids=["missing", "empty", "blank", "too-long"],
+)
+async def test_signup_without_a_usable_name_creates_nothing(db_client, session, nickname):
+    """이름이 없거나 비었거나 화면 상한(20자)을 넘으면 400 이고 아무것도 만들지 않는다.
+
+    화면이 이미 막는 값이지만 서버가 다시 본다 — 화면을 거치지 않은 요청도 있다.
+    대기표도 태우지 않는다. 형식 오류는 공격이 아니라 고쳐서 다시 보내면 되는 일이다.
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+    body = {"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS}
+    if nickname is not None:
+        body["nickname"] = nickname
+
+    response = await db_client.post("/api/v1/auth/kakao/signup", json=body)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert await changed(session, base) == {}
 
 
 async def test_location_is_not_a_required_consent(db_client, session):
@@ -409,6 +489,7 @@ async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, s
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [
                 {"scope": "service_terms", "policy_version": UNREGISTERED_POLICY},
                 {"scope": "privacy_account", "policy_version": UNREGISTERED_POLICY},
@@ -418,7 +499,12 @@ async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, s
 
     retry = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert retry.status_code == 200
@@ -433,7 +519,12 @@ async def test_signup_links_consent_to_the_registered_policy_version(db_client, 
     ).json()["consent_code"]
     await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     rows = (await session.execute(select(Consent))).scalars().all()
@@ -456,12 +547,17 @@ async def test_missing_consent_leaves_the_ticket_usable(db_client, session):
     ).json()["consent_code"]
     await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": []},
+        json={"consent_code": consent_code, "bind": BIND, "nickname": NICKNAME, "consents": []},
     )
 
     retry = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert retry.status_code == 200
@@ -485,6 +581,7 @@ async def test_token_responses_are_never_cached(db_client, session):
         json={
             "consent_code": exchanged.json()["consent_code"],
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": REQUIRED_CONSENTS,
         },
     )
@@ -608,7 +705,12 @@ async def issue_session(db_client, session) -> str:
     return (
         await db_client.post(
             "/api/v1/auth/kakao/signup",
-            json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+            json={
+                "consent_code": consent_code,
+                "bind": BIND,
+                "nickname": NICKNAME,
+                "consents": REQUIRED_CONSENTS,
+            },
         )
     ).json()["token"]
 

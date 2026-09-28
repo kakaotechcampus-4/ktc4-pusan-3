@@ -406,7 +406,7 @@ async def signup(
         # 테이블에 살고 둘 중 하나만 차 있으므로 여기서 갈린다.
         raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
 
-    parent = await create_parent(session)
+    parent = await create_parent(session, nickname=body.nickname)
     await create_identity(
         session,
         parent_id=parent.id,

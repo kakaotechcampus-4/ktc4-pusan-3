@@ -21,6 +21,16 @@ BIND_PATTERN = r"^[A-Za-z0-9_-]{43}$"
 
 Bind = Annotated[str, StringConstraints(pattern=BIND_PATTERN)]
 
+NICKNAME_MAX = 20
+"""가입 화면(apps/web/src/app/auth/consent/page.tsx MAX_NICKNAME)과 같은 상한.
+
+한쪽만 바꾸지 않는다."""
+
+Nickname = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NICKNAME_MAX)
+]
+"""앞뒤 공백을 떼고 1자 이상. 공백만 보낸 이름은 이름이 아니다."""
+
 
 class AuthStatusResponse(BaseModel):
     """GET /auth/{provider}/status — 명세 §3-1.
@@ -74,6 +84,13 @@ class SignupRequest(BaseModel):
     bind: Bind
     """여기서도 요구한다 — consent_code 만으로 계정이 만들어지는 것을 막는다 (§3-5)."""
 
+    nickname: Nickname
+    """가입 화면의 "부르는 이름" (필수, 실명이 아니어도 된다). parent.nickname 에 저장한다.
+
+    동의문 1 이 "부르는 이름을 받는다" 고 알린다 — 칸이 없던 동안은 화면이 보낸 값을
+    서버가 조용히 버려 그 문장이 사실이 아니었다 (#172).
+    """
+
     consents: list[ConsentInput]
 
 
@@ -82,7 +99,8 @@ class ParentSummary(BaseModel):
 
     id: UUID
     nickname: str | None = None
-    """null 일 수 있다. 카카오에서 가져오지 않고 온보딩에서도 받지 않는다 (§5-2)."""
+    """가입 화면에서 받는다. 카카오에서 가져오지 않는다. 이름 칸이 생기기 전(#172)에 가입한
+    계정은 null 일 수 있다 (§5-2)."""
 
 
 class SessionResponse(BaseModel):
