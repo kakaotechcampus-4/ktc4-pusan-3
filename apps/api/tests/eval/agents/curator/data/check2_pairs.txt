@@ -1,8 +1,8 @@
 # 실험 5 최종 확인용 쌍. 5a 에서 고른 방식 하나를 한 번만 평가한다.
 #
 # 🚨 5a 결과를 보기 전에 정답을 확정하고 커밋한다. 이 결과로 방식을 다시 고르지 않는다.
-#    지금까지 쓴 데이터(pairs_tune · pairs_holdout · scenarios_holdout · pairs_ambiguous ·
-#    scale_tune)와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+#    지금까지 쓴 데이터(tune_pairs · check1_pairs · check1_orders · disputed_pairs ·
+#    tune_scale)와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
 #
 # 정답은 "애매한 대상의 동일성 기준 — 팀 논의"(Notion) 에서 정한 기준을 따른다.
 #   same  동의어 · 오타 · 띄어쓰기 · 범위를 좁히지 않는 말

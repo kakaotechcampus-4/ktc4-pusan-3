@@ -1,14 +1,6 @@
-"""임계값 실험 데이터 읽기. 데이터는 옆의 .txt 파일에 있다.
+"""실험 데이터 읽기. 데이터는 data/ 폴더에 있다 — 어느 실험에 쓰였는지는 data/README.md.
 
-    pairs_tune.txt        선정용 쌍 — 임계값을 고른다
-    pairs_holdout.txt     검증용 쌍 — 고른 임계값을 평가만 한다
-    scenarios_holdout.txt 검증용 시나리오 — 순서가 있는 관찰 흐름
-    pairs_ambiguous.txt   팀이 정해야 하는 쌍 — 점수에 넣지 않고 유사도만 보고한다
-    scale_tune.txt        실험 5a — Profile 이 여러 개 쌓인 상태에서 새 관찰 하나 (방식 고르기)
-    pairs_final.txt       실험 5b — 최종 확인용 쌍 (한 번만 평가)
-    scenarios_final.txt   실험 5b — 최종 확인용 순서 시나리오
-
-파일 규칙(정답 값, 선정용 · 검증용 subject 겹침 등)은 test_pairs_data.py 가 확인한다.
+파일 규칙(정답 값, 조정용 · 확인용 subject 겹침 등)은 test_pairs_data.py 가 확인한다.
 """
 
 import re
@@ -19,13 +11,15 @@ from typing import Literal, cast, get_args
 from app.agents.curator.embedding.ports import CURATOR_DOMAINS, CuratorDomain
 
 HERE = Path(__file__).parent
-TUNE_PATH = HERE / "pairs_tune.txt"
-HOLDOUT_PATH = HERE / "pairs_holdout.txt"
-SCENARIOS_PATH = HERE / "scenarios_holdout.txt"
-AMBIGUOUS_PATH = HERE / "pairs_ambiguous.txt"
-SCALE_TUNE_PATH = HERE / "scale_tune.txt"
-FINAL_PATH = HERE / "pairs_final.txt"
-SCENARIOS_FINAL_PATH = HERE / "scenarios_final.txt"
+RESULTS_DIR = HERE  # 실험 결과 파일(gitignore 대상)은 실험 코드 옆에 남긴다
+DATA_DIR = HERE / "data"
+TUNE_PAIRS_PATH = DATA_DIR / "tune_pairs.txt"
+TUNE_SCALE_PATH = DATA_DIR / "tune_scale.txt"
+CHECK1_PAIRS_PATH = DATA_DIR / "check1_pairs.txt"
+CHECK1_ORDERS_PATH = DATA_DIR / "check1_orders.txt"
+CHECK2_PAIRS_PATH = DATA_DIR / "check2_pairs.txt"
+CHECK2_ORDERS_PATH = DATA_DIR / "check2_orders.txt"
+DISPUTED_PAIRS_PATH = DATA_DIR / "disputed_pairs.txt"
 
 Label = Literal["same", "near", "unrelated"]
 AmbiguousKind = Literal["A", "B", "C", "D", "E", "F", "G"]
@@ -43,7 +37,7 @@ class Pair:
 
 
 @dataclass(frozen=True)
-class AmbiguousPair:
+class DisputedPair:
     kind: AmbiguousKind
     domain: CuratorDomain
     a: str
@@ -118,14 +112,14 @@ def load_pairs(path: Path) -> list[Pair]:
     return pairs
 
 
-def load_ambiguous(path: Path = AMBIGUOUS_PATH) -> list[AmbiguousPair]:
+def load_disputed(path: Path = DISPUTED_PAIRS_PATH) -> list[DisputedPair]:
     pairs = []
     for number, text in _lines(path):
         kind, domain, a, b = _cells(path, number, text, 4)
         if kind not in AMBIGUOUS_KINDS:
             raise DataError(f"{path.name}:{number} 유형은 {AMBIGUOUS_KINDS} 중 하나: {kind!r}")
         domain_ = _domain(path, number, domain)
-        pairs.append(AmbiguousPair(cast(AmbiguousKind, kind), domain_, a, b, number))
+        pairs.append(DisputedPair(cast(AmbiguousKind, kind), domain_, a, b, number))
     return pairs
 
 
@@ -133,7 +127,7 @@ _HEADER = re.compile(r"^\[([A-Z]\d+)\]\s+(\S+)$")
 _STEP = re.compile(r"^([+-]?[01])\s+(.+)$")
 
 
-def load_scenarios(path: Path = SCENARIOS_PATH) -> list[Scenario]:
+def load_scenarios(path: Path = CHECK1_ORDERS_PATH) -> list[Scenario]:
     scenarios: list[Scenario] = []
     current: tuple[str, CuratorDomain] | None = None
     steps: list[Step] = []
@@ -167,7 +161,7 @@ def load_scenarios(path: Path = SCENARIOS_PATH) -> list[Scenario]:
     return scenarios
 
 
-def load_scale(path: Path = SCALE_TUNE_PATH) -> list[ScaleScenario]:
+def load_scale(path: Path = TUNE_SCALE_PATH) -> list[ScaleScenario]:
     scenarios: list[ScaleScenario] = []
     current: tuple[str, CuratorDomain] | None = None
     profiles: tuple[str, ...] = ()

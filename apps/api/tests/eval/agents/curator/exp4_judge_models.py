@@ -1,9 +1,9 @@
 """동일 대상 판정기. 모델만 바꿔 끼울 수 있게 모양을 하나로 둔다.
 
 판정 한 번 = "subject 와 같은 대상인 후보를 하나 고른다. 없으면 none, 모호하면 uncertain".
-이름이 같은 후보 · 후보 없음은 판정기를 부르기 전에 코드가 처리한다 (run_judge.py).
+이름이 같은 후보 · 후보 없음은 판정기를 부르기 전에 코드가 처리한다 (exp4_judges.py).
 판정 규칙 문장은 두 판이 있다 (PROMPTS). 모델마다 같은 판을 넣어야 비교가 공정하다.
-    v1  실험 3 의 jev_flow.PROMPT 그대로
+    v1  실험 3 의 exp3_flow.PROMPT 그대로
     v2  v1 에서 보류(uncertain) 조건 두 문장만 좁혔다. 나머지는 같다.
         실험 4 에서 Gemini 가 "다른 대상"에도 uncertain 을 많이 고른 것을 보고 만들었다 —
         선정용을 보고 고친 문장이라 최종 평가는 새 미사용 데이터로 한다.
@@ -24,7 +24,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from tests.eval.agents.curator.jev_flow import PROMPT as PROMPT_V1
+from tests.eval.agents.curator.exp3_flow import PROMPT as PROMPT_V1
 
 API_ENV = Path(__file__).resolve().parents[4] / ".env"  # apps/api/.env
 
@@ -90,7 +90,7 @@ def env_key(name: str) -> str:
 
 
 class JevJudge:
-    """실험 3 의 jev_flow.decide 와 같은 요청."""
+    """실험 3 의 exp3_flow.decide 와 같은 요청."""
 
     url = "https://openrouter.ai/api/alpha/decisions"
 

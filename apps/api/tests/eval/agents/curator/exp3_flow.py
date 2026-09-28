@@ -1,6 +1,6 @@
 """고정 정책 Jev eval: tune 후보/순서/누락 → holdout 쌍/순차 연결.
 
-실행 (apps/api 에서): uv run python -m tests.eval.agents.curator.jev_flow --live
+실행 (apps/api 에서): uv run python -m tests.eval.agents.curator.exp3_flow --live
 키: 환경변수 OPENROUTER_API_KEY. apps/api/.env 에 두면 서버 설정이 거부한다.
 운영 DB 사용 없음. 후보 방해항은 해당 subject와 다르다고 라벨된 표현만 사용.
 API 오류는 즉시 중단, 재시도 없음. 결과는 gitignored 파일에 즉시 기록.
@@ -20,14 +20,15 @@ import httpx
 from dotenv import dotenv_values
 
 from app.agents.curator.embedding.link_step import same_name_key
-from tests.eval.agents.curator.jev_compare import INSTRUCTIONS
-from tests.eval.agents.curator.pairs import (
-    HOLDOUT_PATH,
-    SCENARIOS_PATH,
-    TUNE_PATH,
+from tests.eval.agents.curator.datasets import (
+    CHECK1_ORDERS_PATH,
+    CHECK1_PAIRS_PATH,
+    RESULTS_DIR,
+    TUNE_PAIRS_PATH,
     load_pairs,
     load_scenarios,
 )
+from tests.eval.agents.curator.exp3_compare import INSTRUCTIONS
 
 API_ENV = Path(__file__).resolve().parents[4] / ".env"  # apps/api/.env
 MODEL = "typesafe/jev-1.13"
@@ -58,7 +59,7 @@ def cases(pairs):
 
 
 async def run(live):
-    tune = load_pairs(TUNE_PATH)
+    tune = load_pairs(TUNE_PAIRS_PATH)
     print(f"선정용 {len(tune)}쌍. 고정 정책: exact 우선, 최고 선택값, confidence 게이트 없음.")
     if not live:
         sample = list(cases(tune))
@@ -68,8 +69,8 @@ async def run(live):
     if not key:
         raise SystemExit("OPENROUTER_API_KEY 미설정")
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    path = TUNE_PATH.parent / f"jev_flow_{stamp}_results.jsonl"
-    report = TUNE_PATH.parent / f"jev_flow_{stamp}_result.txt"
+    path = RESULTS_DIR / f"exp3_flow_{stamp}_results.jsonl"
+    report = RESULTS_DIR / f"exp3_flow_{stamp}_result.txt"
     records, calls, summaries = [], [], []
     semaphore = asyncio.Semaphore(4)
     with path.open("x", encoding="utf-8") as log:
@@ -85,7 +86,7 @@ async def run(live):
                 "policy": "exact-first; no confidence gate",
                 "hashes": {
                     p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                    for p in (TUNE_PATH, HOLDOUT_PATH, SCENARIOS_PATH)
+                    for p in (TUNE_PAIRS_PATH, CHECK1_PAIRS_PATH, CHECK1_ORDERS_PATH)
                 },
             }
         )
@@ -159,7 +160,7 @@ async def run(live):
                 records.append(row)
                 save(row)
 
-            for split, pairs in (("tune", tune), ("holdout", load_pairs(HOLDOUT_PATH))):
+            for split, pairs in (("tune", tune), ("holdout", load_pairs(CHECK1_PAIRS_PATH))):
                 await asyncio.gather(*(evaluate(split, c) for c in cases(pairs)))
                 for variant in ("original", "reversed", "absent"):
                     rows = [r for r in records if r["split"] == split and r["variant"] == variant]

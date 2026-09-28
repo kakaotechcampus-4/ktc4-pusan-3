@@ -1,18 +1,18 @@
 """동일 대상 판정기 비교 (실험 4). 선정용만 쓴다 — 검증용은 실험 3 에서 이미 썼다.
 
 실행 (apps/api 에서, 유료):
-    uv run python -m tests.eval.agents.curator.run_judge --judge gemini-flash-lite --live
-    uv run python -m tests.eval.agents.curator.run_judge --judge jev --live   # OPENROUTER_API_KEY
+    uv run python -m tests.eval.agents.curator.exp4_judges --judge gemini-flash-lite --live
+    uv run python -m tests.eval.agents.curator.exp4_judges --judge jev --live   # OPENROUTER_API_KEY
 
-조건은 실험 3 의 jev_flow.py 후보 선택 평가와 같다.
-    - 과제: jev_flow.cases — 선정용 쌍마다 원래 순서 · 후보 역순 · 정답 후보 제거
-    - 판정 규칙 문장: judge.PROMPTS[--prompt] (v1 = jev_flow.PROMPT)
+조건은 실험 3 의 exp3_flow.py 후보 선택 평가와 같다.
+    - 과제: exp3_flow.cases — 선정용 쌍마다 원래 순서 · 후보 역순 · 정답 후보 제거
+    - 판정 규칙 문장: exp4_judge_models.PROMPTS[--prompt] (v1 = exp3_flow.PROMPT)
     - 이름이 같은 후보 → exact, 후보 없음 → none 은 판정기를 부르지 않고 코드가 처리한다
     - confidence 게이트 없음
 실험 3 과 다른 점: 같은 과제를 --repeat 번 반복해 호출 변동을 따로 본다.
 API 오류는 중단하지 않고 형식 오류로 센다 (정답으로 세지 않는다).
 
-결과는 이 폴더의 judge_*_result.txt · judge_*_results.jsonl (gitignore 대상).
+결과는 이 폴더의 exp4_*_result.txt · exp4_*_results.jsonl (gitignore 대상).
 """
 
 import argparse
@@ -27,8 +27,9 @@ from datetime import UTC, datetime
 import httpx
 
 from app.agents.curator.embedding.link_step import same_name_key
-from tests.eval.agents.curator.jev_flow import cases
-from tests.eval.agents.curator.judge import (
+from tests.eval.agents.curator.datasets import RESULTS_DIR, TUNE_PAIRS_PATH, load_pairs
+from tests.eval.agents.curator.exp3_flow import cases
+from tests.eval.agents.curator.exp4_judge_models import (
     NONE,
     PROMPTS,
     UNCERTAIN,
@@ -36,7 +37,6 @@ from tests.eval.agents.curator.judge import (
     Judge,
     make_judge,
 )
-from tests.eval.agents.curator.pairs import TUNE_PATH, load_pairs
 
 VARIANTS = ("original", "reversed", "absent")
 
@@ -56,7 +56,7 @@ def _percentile(values: list[float], q: float) -> float:
 
 
 async def run(args: argparse.Namespace) -> None:
-    tune = load_pairs(TUNE_PATH)
+    tune = load_pairs(TUNE_PAIRS_PATH)
     tasks = list(cases(tune))
     print(f"선정용 {len(tune)}쌍 · 과제 {len(tasks)}건 × 반복 {args.repeat} · 검증용 미사용")
     if not args.live:
@@ -66,8 +66,8 @@ async def run(args: argparse.Namespace) -> None:
     judge = make_judge(args.judge, prompt=args.prompt, reasoning_effort=args.reasoning)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     tag = f"{args.judge}-{args.prompt}" + (f"-{args.reasoning}" if args.reasoning else "")
-    log_path = TUNE_PATH.parent / f"judge_{tag}_{stamp}_results.jsonl"
-    report_path = TUNE_PATH.parent / f"judge_{tag}_{stamp}_result.txt"
+    log_path = RESULTS_DIR / f"exp4_{tag}_{stamp}_results.jsonl"
+    report_path = RESULTS_DIR / f"exp4_{tag}_{stamp}_result.txt"
     semaphore = asyncio.Semaphore(args.concurrency)
     rows: list[dict] = []
 
@@ -79,7 +79,7 @@ async def run(args: argparse.Namespace) -> None:
                     "prompt_version": args.prompt,
                     "prompt": PROMPTS[args.prompt],
                     "repeat": args.repeat,
-                    "tune_sha256": hashlib.sha256(TUNE_PATH.read_bytes()).hexdigest(),
+                    "tune_sha256": hashlib.sha256(TUNE_PAIRS_PATH.read_bytes()).hexdigest(),
                 },
                 ensure_ascii=False,
             )
@@ -120,7 +120,7 @@ async def run(args: argparse.Namespace) -> None:
     lines = [
         f"# 동일 대상 판정 — {judge.name}",
         f"선정용 {len(tune)}쌍 · 과제 {len(tasks)}건 × 반복 {args.repeat} · 검증용 미사용",
-        f"조건: 실험 3(jev_flow) 과 같은 과제 · 판정 규칙 {args.prompt}",
+        f"조건: 실험 3(exp3_flow) 과 같은 과제 · 판정 규칙 {args.prompt}",
         "exact · 빈 후보는 판정기를 부르지 않고 코드가 처리",
         "",
         "## 반복별 · 과제 종류별",

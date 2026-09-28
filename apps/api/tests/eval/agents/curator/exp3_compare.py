@@ -1,6 +1,6 @@
 """선정용 + 판단이 갈리는 쌍 비교. holdout은 읽지 않는다. --live로 유료 API 실행.
 
-실행 (apps/api 에서): uv run python -m tests.eval.agents.curator.jev_compare --live
+실행 (apps/api 에서): uv run python -m tests.eval.agents.curator.exp3_compare --live
 키: 환경변수 OPENROUTER_API_KEY. apps/api/.env 에 두면 서버 설정이 거부한다.
 
 쌍당 독립 요청, 최대 동시 4개, 자동 재시도 없음. 정답은 모델에 보내지 않는다.
@@ -24,10 +24,11 @@ from dotenv import dotenv_values
 
 from app.agents.curator.embedding import Embedder
 from app.agents.curator.embedding.link_step import same_name_key
-from tests.eval.agents.curator.pairs import (
-    AMBIGUOUS_PATH,
-    TUNE_PATH,
-    load_ambiguous,
+from tests.eval.agents.curator.datasets import (
+    DISPUTED_PAIRS_PATH,
+    RESULTS_DIR,
+    TUNE_PAIRS_PATH,
+    load_disputed,
     load_pairs,
 )
 
@@ -72,8 +73,8 @@ def metrics(rows, mode):
 
 
 async def run(live):
-    pairs = load_pairs(TUNE_PATH)
-    ambiguous = load_ambiguous()
+    pairs = load_pairs(TUNE_PAIRS_PATH)
+    ambiguous = load_disputed()
     print(
         f"선정용 {len(pairs)}쌍 + 판단이 갈리는 쌍 {len(ambiguous)}쌍; holdout 미사용", flush=True
     )
@@ -88,8 +89,8 @@ async def run(live):
     texts = list(dict.fromkeys(s.strip() for p in all_pairs for s in (p.a, p.b)))
     vectors = dict(zip(texts, await embedder.embed(texts), strict=True))
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    output = TUNE_PATH.parent / f"jev_compare_{timestamp}_results.jsonl"
-    report = TUNE_PATH.parent / f"jev_compare_{timestamp}_result.txt"
+    output = RESULTS_DIR / f"exp3_compare_{timestamp}_results.jsonl"
+    report = RESULTS_DIR / f"exp3_compare_{timestamp}_result.txt"
     semaphore = asyncio.Semaphore(4)
     rows = []
     metadata = {
@@ -98,7 +99,8 @@ async def run(live):
         "criteria": CRITERIA,
         "started_at": timestamp,
         "data_sha256": {
-            p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (TUNE_PATH, AMBIGUOUS_PATH)
+            p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in (TUNE_PAIRS_PATH, DISPUTED_PAIRS_PATH)
         },
         "policy": "pairwise; raw choice (no confidence threshold); exact override separately",
     }

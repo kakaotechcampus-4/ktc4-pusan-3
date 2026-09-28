@@ -1,6 +1,6 @@
 """Jev 판정기. OpenRouter Decisions API 로 동일 대상 여부를 묻는다.
 
-요청 모양은 실험 3 · 4 와 같다 (tests/eval/agents/curator/jev_flow.py).
+요청 모양은 실험 3 · 4 와 같다 (tests/eval/agents/curator/exp3_flow.py).
 보내는 값은 subject · 도메인 · 후보 merge_key 뿐이다. 원문 · 아이 id 는 보내지 않는다.
 재시도하지 않는다 — 실패하면 연결 단계가 보류하고 다음 실행에서 다시 시도한다.
 """

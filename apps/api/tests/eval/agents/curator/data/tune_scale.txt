@@ -4,7 +4,7 @@
 # ask 마다 따로 평가한다 (앞 ask 의 결과가 다음 ask 에 영향을 주지 않는다).
 # food 는 Profile 이 30개를 넘어 벡터로 후보를 추리는 경로를 탄다.
 #
-# pairs_final.txt · scenarios_final.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+# check2_pairs.txt · check2_orders.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
 #
 # 형식
 #   [R번호] 도메인
