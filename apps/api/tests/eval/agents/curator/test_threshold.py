@@ -231,7 +231,7 @@ async def test_select_선정용으로_임계값을_쓴다() -> None:
         lines.append(_line(r, label=False))
 
     ambiguous = await _similarities(embedder, load_ambiguous())
-    lines += ["", "## 애매 목록 (점수에 넣지 않음)"]
+    lines += ["", "## 판단이 갈리는 쌍 (점수에 넣지 않음)"]
     for kind in sorted({r.pair.kind for r in ambiguous}):
         rows_a = [r for r in ambiguous if r.pair.kind == kind]
         lines.append(f"[{kind}] {_spread([r.sim for r in rows_a])}")
