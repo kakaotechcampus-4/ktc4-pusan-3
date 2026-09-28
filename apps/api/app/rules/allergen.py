@@ -32,11 +32,7 @@ ALLERGEN_NAMES: dict[int, str] = {
 # 원문자 ① ~ ⑳ (U+2460 ~ U+2473) → 1 ~ 20
 CIRCLED: dict[str, int] = {chr(0x2460 + i): i + 1 for i in range(20)}
 
-# 숫자 묶음 하나 = 알레르기 번호 나열. `5` · `1,5,6,16` · `1.5.6` · `1 , 5` 전부 한 묶음.
-#   앞에 숫자·`/`·`~`·`-` 가 없고, 뒤에 글자·숫자·`/`·`~`·`-` 가 오지 않아야 한다.
-#   모듬버섯된장국5,6 → 5,6     연근조림★5,6 → 5,6     빵(식빵2,5,6&잼) → 2,5,6
-#   3색나물 → 없음 (글자가 뒤에)  백미밥1/2 → 없음 (반 공기)  만 1~2세 → 없음 (범위)
-# (?>…) 는 원자 그룹: `1.5배` 에서 `1.5` 가 막혔다고 `1` 만 떼어 맞추지 못하게 막는다.
+# 숫자 묶음 하나 = 알레르기 번호 나열.
 _RUN = re.compile(r"(?<![\d/~-])(?>\d+(?:\s*[,.]\s*\d+)*)(?![\w/~-])")
 _NUMBER = re.compile(r"\d+")
 
@@ -51,6 +47,12 @@ class ParsedAllergens:
 
     codes: tuple[int, ...]
     unknown: tuple[int, ...]
+
+
+def strip_allergen_marks(raw: str) -> str:
+    """메뉴 원문에서 알레르기 번호 표기를 지운 문자열. """
+    stripped = _RUN.sub("", raw)
+    return "".join(ch for ch in stripped if ch not in CIRCLED)
 
 
 def parse_allergens(raw: str) -> ParsedAllergens:
