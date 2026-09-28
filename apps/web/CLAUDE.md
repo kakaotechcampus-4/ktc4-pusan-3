@@ -78,7 +78,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 02 아이 정보 (관계 · 성별 · 키 · 몸무게 · 알레르기 · 전부 선택) | `/child/[childId]/onboarding` |
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
-| 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
@@ -169,7 +169,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
+  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
@@ -340,6 +340,27 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를 나눈다.
   대신 일기 구역은 빈 날에도 **다른 날과 같은 모양으로** 선다 (빈 날에만 다른 버튼을 찾게 하지 않는다).
   같은 이유로 요약 줄은 빈 날에 아무 말도 하지 않는다 — 바로 아래가 같은 말을 더 크게 한다
+- 🚨 **05 는 고르기와 일정 만들기가 다른 단계다** (#151). ① 고른 것을 **채택**하고
+  (`POST /children/{cid}/suggestions/approve` · ⚠️ 계약서에 없다) ② "일정으로도 만들까요?" 를
+  따로 묻는다. 버튼 하나로 합치면 **"이걸로 할 건데 캘린더엔 안 넣을래"** 를 표현할 방법이 없고,
+  고르기만 하고 나간 선택은 24시간 뒤 `expired` 로 사라진다.
+  - 🚨 **채택은 승인 게이트가 아니다** — 캘린더를 안 쓰고 되돌릴 수 있다. `btn-approve` ·
+    `caution` 을 쓰지 않고 `Idempotency-Key` 도 받지 않는다(되돌릴 수 없는 5곳에 여섯 번째를
+    더하지 않는다). 🚨 **"기억해 뒀어요" 라고 쓰지 않는다** — "기억" 은 `profile_affinity` 를
+    가리키는 화면 용어인데 채택은 그것을 만들지 않는다
+  - 🚨 **채택 뒤에는 고르기를 잠근다**(`SuggestionList` 의 `busy`) — 서버가 받은 것과 화면이
+    달라지면 안 된다. 다음 단계에 쓰는 id 는 **응답이 준 것**이지 화면이 들고 있던 것이 아니다
+  - 🚨 **"안 만들래요" 버튼을 두지 않는다** — 안 만들 사람은 그냥 나간다(하단 "홈으로").
+    아무 일도 안 하는 것을 한 번 더 확인시키는 칸이다. 대신 **나가도 된다는 사실을 글자로** 말한다
+- 🚨 **알레르기 확인(게이트 ㉡)은 채택보다 먼저다** (`SafetyCheckSheet` · #151). 한동안 초안을
+  만든 뒤 승인 시트 안에서 물었는데, 채택과 일정 만들기가 갈리면서 **일정을 안 만드는
+  보호자에게는 영영 안 묻게** 됐다 — 알레르기는 캘린더가 아니라 **그 음식을 먹이는 일**의 위험이다.
+  - 🚨 **채택을 되돌리는 길이 없어서 먼저 묻는다.** 알레르기가 확인된 제안은 **채택 자체를
+    안 한다** — 그러면 초안도 안 생기고 "막힌 초안" 이라는 상태도 필요 없어진다
+  - 🚨 **시트를 승인 시트와 합치지 않는다.** 게이트 ㉡ 와 ㉠ 은 다른 단계라, 한 시트에 두면
+    "알레르기를 확인했다" 와 "캘린더에 넣었다" 가 한 화면에서 섞인다
+  - 🚨 **고른 것에 걸린 검사만 묻는다.** 🚨 `suggestion_id` 가 없어 어느 제안인지 모르면
+    **고른 것 전부를 막는다** — 알레르기에서 덜 막는 쪽으로 기울 수 없다
 - 🚨 **일반 추천(`GeneralSuggestionCard`)과 개인화 목록(`SuggestionList`)은 다른 컴포넌트 · 다른 타입 ·
   응답의 다른 필드다.** 한 곳에 플래그로 섞으면 언젠가 근거 0건인 것이 개인화로 그려지고, 그러면
   "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다 (최상위 §2).

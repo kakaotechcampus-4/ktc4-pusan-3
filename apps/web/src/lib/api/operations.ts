@@ -15,6 +15,8 @@
 import { api } from "./client";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
+  ApproveSuggestionsRequest,
+  ApproveSuggestionsResponse,
   CreateEventDraftsRequest,
   CreateEventDraftsResponse,
   HealthSafety,
@@ -154,7 +156,20 @@ export function addHealthSafety(
 /* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */
 
 /**
- * 고른 제안들을 초안으로 바꾼다. 🚨 **승인 게이트가 아니다 — 아무것도 쓰지 않는다** (#121).
+ * 고른 제안을 **채택한다** (`status: approved`). 🚨 **일정과 다른 축이다** — 캘린더에는 아무것도
+ * 안 들어가고, 일정으로 만들지는 그다음에 따로 묻는다 (`ApproveSuggestionsRequest` 의 ⚠️).
+ *
+ * 🚨 Idempotency-Key 를 받지 않는다 — 같은 id 를 두 번 보내도 결과가 같은 상태 전환이다.
+ */
+export function approveSuggestions(
+  childId: string,
+  body: ApproveSuggestionsRequest,
+): Promise<ApproveSuggestionsResponse> {
+  return api.post(`/children/${childId}/suggestions/approve`, body);
+}
+
+/**
+ * 채택한 제안들을 초안으로 바꾼다. 🚨 **승인 게이트가 아니다 — 아무것도 쓰지 않는다** (#121).
  *    그래서 Idempotency-Key 를 받지 않는다. 두 번 불러도 초안이 두 벌 생길 뿐 DB 는 그대로다.
  *
  * 🚨 **고른 개수와 초안 개수가 1:1 이 아니다** — `food` 는 한 끼로 묶인다 (`types.ts` 참고).

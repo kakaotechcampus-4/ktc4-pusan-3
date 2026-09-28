@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
+import { SafetyCheckSheet } from "@/components/safety-check-sheet";
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
@@ -26,6 +27,7 @@ import {
   qk,
   type Agent,
   type AnswerRequest,
+  approveSuggestions,
   createEventDrafts,
   type CreateEventDraftsResponse,
   type Scarcity,
@@ -82,6 +84,20 @@ function SuggestionsScreen() {
    *    `food` 제안들은 서버가 한 끼로 묶어 초안 1건으로 내려준다 (`types.ts` 참고).
    */
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /**
+   * 채택한 제안. `null` 이면 아직 고르는 중이다.
+   *
+   * 🚨 **고르기와 일정 만들기는 다른 단계다** (#151). 한동안 "고른 것으로 일정 만들기" 버튼
+   *    하나였는데, 그러면 **"이걸로 할 건데 캘린더엔 안 넣을래"** 를 표현할 방법이 없었다 —
+   *    고르기만 하고 나가면 그 선택이 24시간 뒤 `expired` 로 사라지고 §4 ⑤(선택을 Memory 로
+   *    되돌려 기록)가 배우는 것이 없다. 채택을 먼저 남기고, 일정은 **그다음에 따로 묻는다.**
+   */
+  const [approvedIds, setApprovedIds] = useState<string[] | null>(null);
+  /**
+   * 알레르기 확인 시트가 열려 있다. 🚨 **채택보다 먼저다** — 채택을 되돌리는 길이 없어서,
+   *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
+   */
+  const [checkingSafety, setCheckingSafety] = useState(false);
   const [approving, setApproving] = useState<CreateEventDraftsResponse | null>(null);
 
   const suggestions = useQuery({
@@ -109,7 +125,48 @@ function SuggestionsScreen() {
     onSuccess: (result) => setApproving(result),
   });
 
+  /**
+   * 🚨 **채택은 캘린더와 무관하다.** `suggestion.status` 만 `approved` 로 바뀐다 —
+   *    승인 게이트가 아니라서 `btn-approve` 도 `caution` 도 쓰지 않는다 (최상위 §2).
+   * 🚨 **응답이 준 id 로 다음 단계를 연다.** 화면이 들고 있던 `selectedIds` 를 그대로 쓰면,
+   *    서버가 일부만 채택했을 때 화면과 서버가 갈린다.
+   */
+  const approve = useMutation({
+    mutationFn: (ids: string[]) => approveSuggestions(childId, { suggestion_ids: ids }),
+    onSuccess: (result) => setApprovedIds(result.suggestions.map((s) => s.id)),
+  });
+
   const data = suggestions.data;
+
+  /**
+   * 고른 것에 걸린 알레르기 사전검사. 🚨 **고른 것만 묻는다** — 안 고른 제안의 재료까지 물으면
+   *    보호자는 자기가 고르지도 않은 것에 답하게 된다.
+   * ⚠️ `suggestion_id` 가 없으면 어느 제안 것인지 모른다 — 그때는 **고른 것 전부**에 걸린
+   *    것으로 본다 (알레르기에서 덜 막는 쪽으로 기울 수 없다 · `Precheck` 의 ⚠️).
+   */
+  const prechecks = (data?.prechecks ?? []).filter(
+    (p) => p.suggestion_id === undefined || selectedIds.includes(p.suggestion_id),
+  );
+
+  /** 🚨 물을 것이 있으면 **묻고 나서** 채택한다. 없으면 바로 채택한다. */
+  function startApprove() {
+    if (prechecks.length > 0) setCheckingSafety(true);
+    else approve.mutate(selectedIds);
+  }
+
+  /**
+   * 확인이 끝났다. 🚨 **알레르기가 걸린 제안은 빼고** 나머지만 채택한다 —
+   *    `null` 은 "어느 제안인지 모른다" 라서 고른 것 전부를 뺀다(= 채택할 것이 없다).
+   */
+  function afterSafety(blockedSuggestionIds: string[] | null) {
+    setCheckingSafety(false);
+    const keep =
+      blockedSuggestionIds === null
+        ? []
+        : selectedIds.filter((id) => !blockedSuggestionIds.includes(id));
+    setSelectedIds(keep);
+    if (keep.length > 0) approve.mutate(keep);
+  }
   const visible = data?.suggestions ?? [];
   /**
    * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
@@ -213,7 +270,8 @@ function SuggestionsScreen() {
         suggestions={visible}
         groups={data?.groups ?? []}
         selectedIds={selectedIds}
-        busy={createDrafts.isPending}
+        // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
+        busy={approve.isPending || approvedIds !== null}
         onToggleSelect={(suggestion) =>
           setSelectedIds((prev) =>
             prev.includes(suggestion.id)
@@ -224,10 +282,12 @@ function SuggestionsScreen() {
       />
 
       {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
-          그래서 화면의 `primary` 도 하나다 — §7 의 "목록 항목 예외" 가 필요 없어졌다. */}
+          그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
       {visible.some((s) => s.agent !== "health") ? (
         <Card>
-          <p className="text-section text-ink">이렇게 준비할게요</p>
+          <p className="text-section text-ink">
+            {approvedIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
+          </p>
           {/* 🚨 **묶음별로 센다.** "3건" 만 말하면 보호자는 무엇을 셋 골랐는지 되짚어야 한다 —
               대안이 Agent 당 셋이라 "식사 2가지 · 놀이 1가지" 가 실제로 고른 모양이다. */}
           <dl className="mt-3 flex flex-col gap-2">
@@ -243,39 +303,81 @@ function SuggestionsScreen() {
             </div>
           </dl>
 
-          {/* 🚨 **몇 장이 될지 화면이 말하지 않는다.** food 제안들이 한 끼로 묶이는지는 서버가
-              정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때 거짓말이 된다. */}
-          <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
-            고른 제안으로 저장될 내용을 먼저 보여드려요. 승인 전에는 아무것도 넣지 않아요.
-          </p>
-
-          {createDrafts.isError ? (
-            <CardFailed className="mt-3">
-              <p>
-                {createDrafts.error instanceof Error
-                  ? createDrafts.error.message
-                  : "저장될 내용을 만들지 못했어요."}
+          {approvedIds === null ? (
+            /* ── ① 고르는 중 — 채택부터 한다 ─────────────────────────────── */
+            <>
+              {/* 🚨 **여기서 캘린더 얘기를 하지 않는다.** 이 버튼이 하는 일은 "이걸로 할게요"
+                  하나고, 일정은 다음 단계가 따로 묻는다. 한 버튼이 둘을 하면 부모는
+                  **일정을 안 만들려면 고르지도 말아야** 한다고 읽는다. */}
+              <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
+                고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
               </p>
-              <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
-            </CardFailed>
-          ) : null}
 
-          <Button
-            block
-            className="mt-4"
-            disabled={selectedIds.length === 0 || createDrafts.isPending}
-            aria-busy={createDrafts.isPending}
-            onClick={() => createDrafts.mutate(selectedIds)}
-          >
-            {createDrafts.isPending ? <Spinner /> : null}
-            {createDrafts.isPending
-              ? "준비하는 중이에요"
-              : selectedIds.length === 0
-                ? "고른 것이 없어요"
-                : // 🚨 단위를 섞지 않는다 — 제안은 "가지"(한 결정의 대안), 일정은 "건" 이다.
-                  //    같은 화면에서 "3건 고름 → 일정 2건" 이 되면 같은 단위가 두 뜻을 나른다.
-                  `고른 ${selectedIds.length}가지로 일정 만들기`}
-          </Button>
+              {approve.isError ? (
+                <CardFailed className="mt-3">
+                  <p>
+                    {approve.error instanceof Error
+                      ? approve.error.message
+                      : "고른 것을 남기지 못했어요."}
+                  </p>
+                  <p className="mt-1">아직 아무것도 저장되지 않았어요.</p>
+                </CardFailed>
+              ) : null}
+
+              <Button
+                block
+                className="mt-4"
+                disabled={selectedIds.length === 0 || approve.isPending}
+                aria-busy={approve.isPending}
+                onClick={startApprove}
+              >
+                {approve.isPending ? <Spinner /> : null}
+                {approve.isPending
+                  ? "남기는 중이에요"
+                  : selectedIds.length === 0
+                    ? "고른 것이 없어요"
+                    : // 🚨 단위는 "가지" 다 — 제안은 한 결정의 대안이고, 일정이 "건" 이다.
+                      `이 ${selectedIds.length}가지로 할게요`}
+              </Button>
+            </>
+          ) : (
+            /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
+            <>
+              <p className="text-body-sm text-ink mt-3">일정으로도 만들까요?</p>
+              {/* 🚨 **안 만드는 버튼을 두지 않는다.** 안 만들 사람은 그냥 나간다(아래 "홈으로") —
+                  "아니요" 버튼은 **아무 일도 안 하는 것을 한 번 더 확인시키는** 칸이고,
+                  고른 것은 이미 남아 있다. 대신 나가도 된다는 사실을 글자로 말한다.
+                  🚨 **몇 장이 될지 화면이 말하지 않는다.** food 제안들이 한 끼로 묶이는지는
+                  서버가 정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때
+                  거짓말이 된다. */}
+              <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
+                저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도 고른
+                것은 그대로 남아요.
+              </p>
+
+              {createDrafts.isError ? (
+                <CardFailed className="mt-3">
+                  <p>
+                    {createDrafts.error instanceof Error
+                      ? createDrafts.error.message
+                      : "저장될 내용을 만들지 못했어요."}
+                  </p>
+                  <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+                </CardFailed>
+              ) : null}
+
+              <Button
+                block
+                className="mt-4"
+                disabled={createDrafts.isPending}
+                aria-busy={createDrafts.isPending}
+                onClick={() => createDrafts.mutate(approvedIds)}
+              >
+                {createDrafts.isPending ? <Spinner /> : null}
+                {createDrafts.isPending ? "준비하는 중이에요" : "일정으로 만들기"}
+              </Button>
+            </>
+          )}
         </Card>
       ) : null}
 
@@ -317,6 +419,16 @@ function SuggestionsScreen() {
       <Button variant="secondary" block onClick={() => router.push(`/child/${childId}/home`)}>
         홈으로
       </Button>
+
+      {/* 🚨 **승인 게이트 ㉡ 는 여기다** — 채택 **전**에 묻는다 (`safety-check-sheet.tsx`).
+          채택을 되돌리는 길이 없어서, 알레르기가 확인된 제안은 채택 자체를 하지 않는다. */}
+      <SafetyCheckSheet
+        open={checkingSafety}
+        childId={childId}
+        prechecks={prechecks}
+        onCancel={() => setCheckingSafety(false)}
+        onConfirm={afterSafety}
+      />
 
       {approving ? (
         <ApprovalSheet

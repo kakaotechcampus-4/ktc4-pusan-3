@@ -11,6 +11,7 @@ import {
   suggestions,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
+import type { ApproveSuggestionsRequest, ApproveSuggestionsResponse } from "@/lib/api/types";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 
@@ -21,9 +22,16 @@ import { withIdempotency } from "./idempotency";
  */
 const submittedSuggestions = new Set<string>();
 
+/**
+ * 채택된 제안. 🚨 **일정과 다른 축이다** — 여기 있다고 캘린더에 들어간 것이 아니다.
+ *    실서버는 `suggestion.status` 한 칸이고, 목은 그 칸을 이 집합으로 흉내 낸다.
+ */
+const approvedSuggestions = new Set<string>();
+
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
 export function resetSubmittedEvents(): void {
   submittedSuggestions.clear();
+  approvedSuggestions.clear();
 }
 
 /** 05 제안 · 06 승인. */
@@ -80,12 +88,32 @@ export const suggestionHandlers = [
     // partial 이면 실패한 Agent 의 제안은 빠진 채로 온다 — 묶음 머리말도 같이 빠진다.
     const alive =
       scenario === "partial" ? suggestions.filter((s) => s.agent === "food") : suggestions;
+    /**
+     * 알레르기 사전검사. 🚨 **규칙이 만든다** — 모델은 관여하지 않는다 (최상위 §3).
+     *
+     * 🚨 **어느 제안 것인지 `suggestion_id` 로 말한다.** 안 실으면 화면은 재료 하나로 고른 것
+     *    전부를 막는다 — 알레르기에서 덜 막는 쪽으로 기울 수 없기 때문이다 (`Precheck` 의 ⚠️).
+     * 🚨 **채택할 때 묻는다.** 초안을 만든 뒤가 아니다 — 일정을 안 만들면 영영 안 묻게 된다.
+     * ⚠️ 기준이 `agent === "food"` 인지 "재료가 있을 때" 인지는 서버 쪽 결정이다 (#151).
+     */
+    const firstFood = alive.find((s) => s.agent === "food");
+
     return HttpResponse.json({
       suggestions: alive,
       groups: suggestionGroups.filter((g) => alive.some((s) => s.agent === g.agent)),
       looked_at: "오늘 급식 · 최근 3일 식사 · 확정 관심 2건",
       guards: [],
       scarcity: null,
+      prechecks: firstFood
+        ? [
+            {
+              code: "unknown_ingredient",
+              item: "닭고기",
+              note: "첫 기록",
+              suggestion_id: firstFood.id,
+            },
+          ]
+        : [],
     });
   }),
 
@@ -96,7 +124,38 @@ export const suggestionHandlers = [
   }),
 
   /**
-   * 고른 제안들 → 일정 초안. 🚨 **아무것도 쓰지 않는다** (#121) — 저장은 제출
+   * 고른 제안을 **채택한다** (`status: approved`).
+   *
+   * 🚨 **캘린더에는 아무것도 안 들어간다.** 일정으로 만들지는 다음 단계가 따로 묻는다 —
+   *    두 축을 한 호출로 묶으면 "이걸로 할 건데 캘린더엔 안 넣을래" 를 표현할 방법이 없어진다.
+   * 🚨 **모르는 id 는 조용히 넘기지 않는다** — 화면이 안 보이는 제안을 채택했다는 뜻이라 버그다.
+   *
+   * ⚠️ 경로가 계약서에 없다 (`types.ts` 의 `ApproveSuggestionsRequest` 참고 · #151).
+   */
+  http.post(url("/children/:cid/suggestions/approve"), async ({ request }) => {
+    await networkDelay(400);
+    if (currentScenario() === "consent") return consentRequired("child_health");
+
+    const body = (await request.json()) as ApproveSuggestionsRequest;
+    const ids = body.suggestion_ids ?? [];
+    if (ids.length === 0) return apiError(400, "invalid_request", "고른 제안이 없어요.");
+
+    const picked = suggestions.filter((s) => ids.includes(s.id));
+    if (picked.length !== ids.length) {
+      return apiError(400, "invalid_request", "없는 제안이 섞여 있어요.");
+    }
+
+    for (const id of ids) approvedSuggestions.add(id);
+
+    const response: ApproveSuggestionsResponse = {
+      // 🚨 바뀐 행을 그대로 돌려준다 — 화면이 `status` 를 지어내지 않는다.
+      suggestions: picked.map((s) => ({ ...s, status: "approved" as const })),
+    };
+    return HttpResponse.json(response, { status: 200 });
+  }),
+
+  /**
+   * 채택한 제안들 → 일정 초안. 🚨 **아무것도 쓰지 않는다** (#121) — 저장은 제출
    * (`POST /children/{cid}/events`) 하나뿐이고 그게 승인 게이트 ㉠ 이다.
    *
    * 🚨 **`food` 는 한 끼로 묶는다.** 고른 개수와 초안 개수가 1:1 이 아니다 — 저녁 반찬 제안
@@ -131,25 +190,6 @@ export const suggestionHandlers = [
     return HttpResponse.json(
       {
         drafts,
-        /**
-         * 🚨 **`food` 제안에만 붙는다.** 사전검사는 규칙이 만들고(최상위 §3 — 알레르기 필터는
-         *    코드가 막는다) 모델은 관여하지 않는다. 물놀이 제안에 "닭고기를 먹어봤나요" 가 뜨면
-         *    그건 계약 위반이지 화면이 걸러 낼 일이 아니다 — 화면은 오는 대로 그린다.
-         * 🚨 **어느 초안 것인지 `draft_id` 로 말한다.** 안 실으면 화면이 식사 초안의 알레르기로
-         *    놀이 초안까지 막는다 (`Precheck.draft_id` 의 ⚠️).
-         * ⚠️ 기준이 `agent === "food"` 인지 "재료가 있을 때" 인지는 서버 쪽 결정이다 (#151).
-         */
-        prechecks:
-          food.length > 0
-            ? [
-                {
-                  code: "unknown_ingredient",
-                  item: "닭고기",
-                  note: "첫 기록",
-                  draft_id: drafts[0].draft_id,
-                },
-              ]
-            : [],
       },
       { status: 201 },
     );

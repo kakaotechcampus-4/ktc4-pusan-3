@@ -5,6 +5,7 @@ import { ApiError, isApiError } from "@/lib/api/errors";
 import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import {
   addHealthSafety,
+  approveSuggestions,
   commitPhotoRun,
   createEventDrafts,
   submitEventDraft,
@@ -229,20 +230,67 @@ describe("일정 초안", () => {
     expect(created.drafts).toHaveLength(rest.length);
   });
 
-  it("🚨 사전검사는 food 제안에만 붙고, 어느 초안 것인지 말한다", async () => {
-    const food = await makeDrafts([firstOf("food")]);
-    const activity = await makeDrafts([firstOf("activity")]);
+  it("🚨 사전검사는 **고르는 응답**에 실리고, 어느 제안 것인지 말한다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const data = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
 
-    const check = food.prechecks.find((p) => p.code === "unknown_ingredient");
-    expect(check).toBeDefined();
     /**
-     * 🚨 `draft_id` 가 없으면 화면은 식사 초안의 알레르기로 **놀이 초안까지** 막는다
-     *    (덜 막는 쪽으로 기울 수 없어서 전부 막는 쪽으로 읽는다).
+     * 🚨 **채택할 때 물어야 해서 고르는 화면이 미리 들고 있어야 한다** (#151).
+     *    초안을 만든 뒤에 물으면 **일정을 안 만드는 보호자에게는 영영 안 묻는다.**
      */
-    expect(food.drafts.some((d) => d.draft_id === check?.draft_id)).toBe(true);
+    const check = (data.prechecks ?? []).find((p) => p.code === "unknown_ingredient");
+    expect(check).toBeDefined();
 
-    // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 뜨면 안 된다.
-    expect(activity.prechecks).toHaveLength(0);
+    /**
+     * 🚨 `suggestion_id` 가 없으면 화면은 재료 하나로 **고른 것 전부**를 막는다
+     *    (알레르기에서 덜 막는 쪽으로 기울 수 없다).
+     */
+    const target = data.suggestions.find((s) => s.id === check?.suggestion_id);
+    expect(target).toBeDefined();
+    // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 붙으면 안 된다.
+    expect(target?.agent).toBe("food");
+  });
+
+  it("🚨 초안 응답은 사전검사를 지지 않는다 — 물어보는 자리가 아니다", async () => {
+    const created = await makeDrafts([firstOf("food")]);
+    expect(created).not.toHaveProperty("prechecks");
+  });
+
+  it("🚨 채택은 캘린더와 다른 축이다 — status 만 바뀌고 일정은 안 생긴다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const listed = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+    const picked = listed.suggestions.filter((s) => s.agent === "activity").slice(0, 2);
+
+    const approved = await approveSuggestions("c1", {
+      suggestion_ids: picked.map((s) => s.id),
+    });
+
+    /**
+     * 🚨 **바뀐 행을 그대로 돌려준다.** 화면이 `status` 를 지어내면 서버가 일부만 채택했을 때
+     *    화면과 서버가 갈린다.
+     */
+    expect(approved.suggestions.map((s) => s.id)).toEqual(picked.map((s) => s.id));
+    for (const s of approved.suggestions) expect(s.status).toBe("approved");
+
+    /**
+     * 🚨 **채택했다고 일정이 생기지 않는다.** 이 축이 무너지면 "이걸로 할 건데 캘린더엔
+     *    안 넣을래" 가 표현 불가능해지고, 캘린더 쓰기가 게이트 없이 일어난다 (최상위 §2).
+     */
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: monthOf(new Date()) },
+    });
+    const days = month.days.filter((d) => d.has_event).length;
+    await approveSuggestions("c1", { suggestion_ids: picked.map((s) => s.id) });
+    const after = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: monthOf(new Date()) },
+    });
+    expect(after.days.filter((d) => d.has_event).length).toBe(days);
+  });
+
+  it("🚨 없는 제안을 채택하면 막는다 — 화면에 없는 것이 승인되지 않게", async () => {
+    await expect(
+      approveSuggestions("c1", { suggestion_ids: ["s_1", "s_does_not_exist"] }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "invalid_request"));
   });
 
   it("🚨 Agent 마다 후보가 여럿이고, 묶음 머리말이 함께 온다", async () => {
