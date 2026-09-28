@@ -417,7 +417,14 @@ async def _rename_event_item(
     )
     items = tuple(renamed if item.item_id == current.item_id else item for item in parent.items)
     if items == parent.items and not parent.changed:
-        return ok("update", EVENT_ITEM, draft=False, item_id=current.item_id, changed=[])
+        return ok(
+            "update",
+            EVENT_ITEM,
+            draft=False,
+            item_id=current.item_id,
+            changed=[],
+            is_prepared=current.is_prepared,
+        )
 
     context.drafts.put(_with_items(parent, current.event_id, items))
     return ok(

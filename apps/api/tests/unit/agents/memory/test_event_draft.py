@@ -31,6 +31,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import ValidationError
 
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft, EventSnapshot
@@ -773,3 +774,70 @@ def test_UTC_시각도_isoformat_표기를_지킨다() -> None:
     payload = draft.to_payload()
 
     assert payload["event"]["ends_at"] == "2026-09-25T01:00:00+00:00"
+
+
+
+async def test_일정_수정_뒤에_이름과_챙김이_같이_와도_before_는_원래_이름이다(
+    context: AgentContext,
+) -> None:
+    # "운동회 5시로 옮겨줘" 다음 "체육복 이름 고치고 챙겼어". 버퍼에 초안이 있는 상태에서
+    # 챙김을 먼저 써야 _sync_checked 가 before 까지 맞추고, 이름 초안이 그 위에 얹힌다
+    event_id = await _seed_event(context, "체육복")
+    await _update(context, event_id, starts_time="오후 5시")
+
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복 상의", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is True, result.error
+    draft = context.drafts.get(event_id)
+    assert draft is not None and draft.before is not None
+    assert [(item.item_name, item.is_prepared) for item in draft.items] == [("체육복 상의", True)]
+    assert [(item.item_name, item.is_prepared) for item in draft.before.items] == [("체육복", True)]
+    assert draft.changed == ("starts_at", "items")  # 이름이 바뀌어서 items 가 붙는다
+
+
+async def test_이름은_그대로고_챙김만_바뀌어도_응답에_챙김이_실린다(context: AgentContext) -> None:
+    # 모델이 원래 이름을 item_name 에 다시 넣어 부르는 경우. 이름은 바뀐 게 없어 초안이 없고,
+    # 챙김은 저장된다. 응답이 챙김을 빼면 모델은 체크가 됐는지 모른다
+    await _seed_event(context, "체육복")
+
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is True, result.error
+    stored = await context.store.get_event_item(item_id="event_item-1")
+    assert stored is not None and stored.is_prepared is True
+    assert context.drafts.all() == ()
+    assert result.data["is_prepared"] is True
+
+
+def test_공통_스키마는_계약_밖의_키를_거부한다() -> None:
+    # is_prepared 가 다시 실리면 제출할 때 PATCH 로 누른 체크가 풀린다.
+    # create 에 event_id 가 실리면 화면이 create 를 update 로 읽을 수 있다
+    update = _draft(op="update", event_id="event-1", before=_snapshot()).to_payload()
+    update["items"] = [{"item_id": "event_item-1", "item_name": "체육복", "is_prepared": True}]
+    create = {**_draft().to_payload(), "event_id": None}
+
+    with pytest.raises(ValidationError):
+        UpdateEventDraft.model_validate(update)
+    with pytest.raises(ValidationError):
+        CreateEventDraft.model_validate(create)
+
+
+async def test_tool_이_만든_초안은_JSON_왕복_뒤에도_같은_모양이다(context: AgentContext) -> None:
+    # SSE 로 나간 글자를 다시 읽어 검증해도 통과하고, 다시 직렬화하면 같은 글자여야 한다.
+    # 제안·OCR 경로가 붙으면 같은 검사를 그 경로의 초안에도 돌린다
+    event_id = await _seed_event(context, "체육복")
+    await _create_event(context, items=["수영복"])
+    await _update(context, event_id, starts_time="오후 5시")
+
+    for draft in context.drafts.all():
+        loaded = json.loads(json.dumps(draft.to_payload()))
+        model = CreateEventDraft if loaded["op"] == "create" else UpdateEventDraft
+        assert model.model_validate(loaded).model_dump(mode="json") == loaded
