@@ -80,7 +80,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `medication_schedule` · `medication_dose` · `medication_dose_log` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 복용 기록과 중단(`status='stopped'`) | Food·Activity·Growth는 읽지 않는다 |
 | `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
 | `health_safety` | **앱 API가 보호자 권한으로만.** Agent는 후보도 제시하지 않는다 (알레르기 후보 감지는 v1에서 뺐다) | 손대지 않음 |
-| `*_doc` · `hazard_term` · 기준 상수 | 배치·마이그레이션 | 읽기만 |
+| `*_doc` · 기준 상수(`reference/*.yaml` — `hazard_terms.yaml` 포함) | 배치·마이그레이션 · 상수 파일은 저장소 PR | 읽기만 |
 
 기준은 **누가 쓰느냐가 아니라 누가 읽느냐**다. 여러 Agent가 읽는 테이블은 통로가 하나여야 한다.
 

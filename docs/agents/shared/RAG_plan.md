@@ -311,7 +311,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 3 | `meal_pattern` · `nutrient_note` | `learning_activity` 60행 | 검진·접종 문구 |
 | 4 | lint · 검수 · 적재 · recall 평가 | 동일 | 의료 검수 · 규칙 1:1 테스트 |
 
-공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference_refs` 컬럼 · `hazard_term` 적재 (Growth lint가 사용).
+공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference_refs` 컬럼 · `reference/hazard_terms.yaml` (Growth lint가 사용).
 
 ---
 

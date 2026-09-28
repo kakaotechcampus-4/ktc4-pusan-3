@@ -83,7 +83,7 @@ Activity 것이라 비워 뒀던 칸이다. 답은 전부 [activity/activity-age
 
 **근거 소비 규칙.** 다른 도메인과 같다 — `candidate` affinity는 티어 2, 최근 14일 관찰은 티어 3로 쓴다. [shared/Agent_공통규약.md](shared/Agent_공통규약.md) §4 표가 이미 이렇게 되어 있다. `search_activity_memory` 가 `rank_evidence` 결과를 id와 함께 돌려준다 (D3).
 
-**`hazard_term` 스키마.** §3-5. 축 9개 · `aliases` · `guards` · 월령 두 칸 · `source`. 월령과 출처는 시드 YAML의 축에만 적고 적재할 때 행에 복사한다. 아래 §5의 Growth 요구 네 가지를 채운다.
+**`hazard_term` 스키마.** §3-5. 테이블이 아니라 상수 파일 `reference/hazard_terms.yaml` 이다 — Food 의 `allergen_terms.yaml` 과 같은 로더로 읽는다. 축 9개에 월령 두 칸 · `source` 를 적고, 용어는 `axis` · `label` · `aliases` · `guards` 만 갖는다. 아래 §5의 Growth 요구 네 가지를 채운다.
 
 **`filter_activity_safety`.** §3-3 · §4-1. `content` + `materials` 를 `hazard_term` 으로 스캔해 월령과 대조하고, 0–17개월은 경고도 차단으로 올린다. `health_safety` 는 `active` 만 거른다 (D7).
 

@@ -242,7 +242,7 @@ class ActivityCandidate(ToolArgs):
 | 날씨·미세먼지·자외선·특보 | (격자·지역 질의) | **저장하지 않는다** — 패스스루 + 프로세스 내 캐시 | 틀린 값이 남으면 근거처럼 보인다. **근거가 아니라 필터 조건**이다 |
 | Kakao Local | ✅ `x`·`y`·`radius` | **저장하지 않는다** | 요청 좌표를 그대로 넘기면 된다 |
 | 🚩 도시공원 표준데이터 | ❌ 전국 덤프 페이징 | 🚩 **테이블 적재** (`place`) | 패스스루가 **물리적으로 불가능**하다. 19,199행을 1,000행씩 20회 왕복하면 타임아웃 2.5s × 20 — 예산을 통째로 먹는다 |
-| 위험 용어 사전 | — | 🚩 **테이블** (`hazard_term`) | 안전 필터가 런타임에 조인한다. 문자열 상수 목록으로 두면 **반드시 새는 게 나온다** |
+| 위험 용어 사전 | — | 🚩 **상수 파일** (`reference/hazard_terms.yaml`) | 정적 사전이라 바뀔 때 사람이 PR 로 검수한다. 코드 곳곳에 문자열 목록으로 흩으면 **반드시 새는 게 나온다** — 파일 하나 · 로더 하나로만 읽는다 (3-5) |
 | 근거 문서 행 | — | 🚩 **테이블** (`activity_doc`) | 아래 |
 | 공휴일 | — | `app/rules/` 상수 | 정적 데이터 |
 
@@ -263,7 +263,7 @@ class ActivityCandidate(ToolArgs):
 
 놀이 자료를 **원문 청킹이 아니라 사람이 읽고 재구성한 행**으로 담는다. Food(`food_doc`)·Growth(`growth_doc`)와 같은 모양이다 (`RAG_plan.md`).
 
-- 시드는 **YAML 로 버전 관리하고 Alembic 이 `doc_key` 기준 upsert** 한다. `hazard_term` 과 같은 방식이다.
+- 시드는 **YAML 로 버전 관리하고 Alembic 이 `doc_key` 기준 upsert** 한다. 의미 검색을 하려면 `embedding` 이 있어야 해서 `hazard_term` 과 달리 테이블이다.
 - 행마다 원문 출처(`source`, `source_page`)를 열로 남긴다. 라이선스가 문제되면 `DELETE WHERE source = ?` 한 줄로 뺀다 (D10).
 - 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 의미 검색 상위 5행을 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
 - **근거(`suggestion_evidence`)에는 넣되 개인화 근거로 세지 않는다.** `refs.py` 가 `activity_doc` 을 `DocKind` 로 따로 두고 `count_child_records()` 가 아이 기록만 센다. 넣어두면 어느 문서 행을 봤는지 추적되고, 문서 행만 달고 나간 추천은 자동으로 `general` 이 된다.
@@ -475,48 +475,52 @@ SuggestionKind = Literal["general", "personalized"]    # common/suggestion.py
 
 둘은 직교한다 — 날씨는 실패했지만 개인화 근거는 있는 run 이 `degraded` + `personalized` 다. 합치면 루트 §2 의 *"일반 추천과 개인화 추천은 타입으로 구분한다"* 가 성공/실패 축에 오염된다.
 
-### 3-5. `hazard_term` 테이블
+### 3-5. `hazard_term` — 상수 파일 `reference/hazard_terms.yaml`
 
-4-1 의 위험 축 9개를 **행으로 옮긴 것**이다. 매칭은 Food 의 `label`/`aliases` 부분 일치를 그대로 재사용한다. **Activity 소유이고 Growth 도 읽는다** — `growth_doc` 적재 시점에 한 번, 활동 후보 출력 사후에 한 번. 구현을 두 벌 두지 않는다 (`README.md` §2).
+4-1 의 위험 축 9개를 **용어 목록으로 옮긴 것**이다. DB 테이블이 아니라 저장소의 상수 파일이다 — Food 의 `reference/allergen_terms.yaml` 과 같은 자리 · 같은 로더(`app/agents/common/reference.py`)를 쓴다. **Activity 소유이고 Growth 도 읽는다** — `growth_doc` 적재 시점에 한 번, 활동 후보 출력 사후에 한 번. 구현을 두 벌 두지 않는다 (`README.md` §2).
 
-```sql
-CREATE TABLE hazard_term (
-    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    axis               text NOT NULL,        -- 4-1 의 축 9개 중 하나 (small_parts / water / ...)
-    label              text NOT NULL,        -- 대표어: "구슬"
-    aliases            text[] NOT NULL DEFAULT '{}',   -- "비즈","물먹는 구슬","워터비즈"
-    guards             text[] NOT NULL DEFAULT '{}',   -- 오탐 취소 문구: "비눗방울","큰 블록"
-    block_below_month  smallint,             -- 이 월령 미만 차단. NULL = 차단 없음 (축 값 복사)
-    warn_below_month   smallint,             -- 이 월령 미만 경고 (축 값 복사)
-    source             text NOT NULL,        -- 법령·AAP·질병관리청 URL (축 값 복사). 출처 없는 행은 넣지 않는다
-    CONSTRAINT uq_hazard_term UNIQUE (axis, label),
-    CONSTRAINT ck_hazard_term_order
-        CHECK (block_below_month IS NULL OR warn_below_month IS NULL
-               OR warn_below_month >= block_below_month)
-);
-CREATE INDEX ix_hazard_term_aliases ON hazard_term USING GIN (aliases);
+**테이블로 두지 않는 이유** — 정적 사전이라 런타임에 바뀌지 않고, 바뀌면 사람이 PR 로 검수해야 한다. 파일이면 마이그레이션 없이 리뷰 diff 가 곧 변경 이력이 되고, 로더가 출처 없는 파일을 거부한다. 부팅 시 1회 읽어 캐시하는 것은 테이블일 때와 같다.
+
+```yaml
+source: 어린이제품 공통안전기준 외 — 축별 출처는 axes.*.source
+version: "2026.1"
+fetched_at: 2026-09-28
+pending_axes: [strangulation, chemical, sharp]   # 이름만 남긴 축 (4-1)
+axes:
+  small_parts:
+    block_below_month: 36          # 이 월령 미만 차단. 없으면 차단 없음
+    warn_below_month: 72           # 이 월령 미만 경고
+    source: 「어린이제품 공통안전기준」 3.2.1.1 · 3.2.1.2 · 3.2.4
+  trampoline:
+    block_below_month: 72
+    source: AAP 6세 미만 금지 권고 · 한국소비자원 가정 사고 통계
+  # ... 4-1 의 9축
+terms:
+  - axis: small_parts
+    label: 구슬
+    aliases: [구슬, 비즈, 물먹는 구슬, 워터비즈]
+    guards: []
+  - axis: small_parts
+    label: 자석
+    aliases: [자석, 네오디뮴 자석]
+    guards: [자석칠판]             # "자석" 이 나온 자리를 덮으면 취소
 ```
 
-**축 9개 · 용어 159행**(alias 포함 매칭 대상 약 700개). 축별 행수는 4-1 표 순서로 52 / 14 / 21 / 22 / 12 / 9 / 6 / 3 / 20.
+**축 9개 · 용어 159개**(alias 포함 매칭 대상 약 700개). 축별 용어 수는 4-1 표 순서로 52 / 14 / 21 / 22 / 12 / 9 / 6 / 3 / 20.
 
-- 🚨 **월령 값은 시드 YAML 의 축에만 적는다.** 행의 `block/warn_below_month` · `source` 는 적재할 때 축 값을 복사한 것이다. 행마다 월령을 적게 두면 그 순간부터 사람(또는 LLM)이 행 단위로 월령을 판단하게 된다. 큐레이터는 *"몇 개월부터?"*(판단)를 안 하고 *"작은 부품이 있나?"*(관찰)만 답한다. 행에 복사해 두는 것은 매처와 Growth 가 용어 하나로 최소 월령을 바로 읽게 하려는 것이다 (`README.md` §5).
+- 🚨 **월령과 출처는 축에만 적는다. 용어에는 적지 않는다.** 용어마다 월령을 적게 두면 그 순간부터 사람(또는 LLM)이 용어 단위로 월령을 판단하게 된다. 큐레이터는 *"몇 개월부터?"*(판단)를 안 하고 *"작은 부품이 있나?"*(관찰)만 답한다. 로더가 용어를 읽을 때 축의 값을 이어 붙이므로 Growth 도 용어 하나로 최소 월령을 바로 얻는다 (`README.md` §5).
 - 🚨 **`block/warn_below_month` 는 사람이 정한다.** LLM 초안을 쓰지 않는다 — 법령·AAP·질병관리청이 이미 출처를 달고 정한 값이고, LLM 이 다시 판단하면 **출처가 끊긴다.** 반대로 `label`·`aliases` 는 LLM 초안 + 사람 검수가 가능하다 — 틀려도 사람이 읽으면 바로 안다.
-- 시드는 저장소의 **YAML**(JSON 아님 — 주석으로 행 옆에 출처를 적을 수 있다)로 버전 관리하고 Alembic 이 upsert 한다. 스키마와 시드를 **두 revision 으로 나눈다** — `enum`·`CHECK` 는 `--autogenerate` 가 못 잡으므로 손으로 쓴다.
+- **로더가 막는 것** — 파일에 `source`·`version`·`fetched_at` 이 없음 · 용어의 `axis` 가 `axes` 에 없음 · 축에 월령이 둘 다 없음 · 축에 `source` 가 없음 · `warn_below_month < block_below_month` · `aliases` 에 `label` 자신이 없음 · 같은 `(axis, label)` 이 두 번. 하나라도 걸리면 예외다.
 
-#### 매칭 — 한국어라서 세 가지를 따로 푼다
+#### 매칭 — 공통 매처를 쓴다
 
-```python
-def NORM(t):   # NFKC → casefold → 구두점·이모지를 공백으로 → 연속 공백 1개
-def DENSE(t):  # NORM 후 공백을 전부 제거
-haystack = DENSE(content) + SEP + SEP.join(DENSE(m) for m in materials)
-```
+`app/rules/term_match.py` 의 `match_terms()` 다. 공백 제거 부분 일치 + `guards` + 가장 엄한 판정 우선이고, Food 알레르기 필터와 같은 구현이다.
 
-- **조사**(을/를/로) — 공백 제거 한 줄이 같이 푼다. `"구슬을 꿰기"` → `"구슬을꿰기"` 이고 `"구슬"` 이 접두 부분 일치로 잡힌다. 조사 목록을 관리하거나 형태소 분석기를 부를 필요가 없다 (`app/rules/` 는 표준 라이브러리만 쓴다).
-- **띄어쓰기 변이** — 같은 한 줄. `"물 놀이터"`·`"물놀이터"` → 둘 다 `"물놀이터"`.
+- **조사**(을/를/로) — 공백 제거가 같이 푼다. `"구슬을 꿰기"` → `"구슬을꿰기"` 이고 `"구슬"` 이 부분 일치로 잡힌다. 조사 목록을 관리하거나 형태소 분석기를 부를 필요가 없다 (`app/rules/` 는 표준 라이브러리만 쓴다).
+- **띄어쓰기 변이** — 같은 규칙. `"물 놀이터"`·`"물놀이터"` → 둘 다 `"물놀이터"`.
 - **어간 변화**(타기/타고/탔어요) — **정규화로 풀지 않는다.** 활용 규칙을 코드로 되돌리면 틀릴 때 과차단이다. **`aliases` 에 활용형을 나열한다** — 사전이 데이터니까 데이터로 푼다.
-- 🚨 **`materials` 항목 사이에 경계문자(`SEP`)를 넣는다.** 그냥 이으면 `["작은", "블록 담는 통"]` 이 `"작은블록담는통"` 이 되어 **없는 위험을 만든다.**
-- 🚨 **NFKC 를 쓰되 한글 자모 분해(NFD)는 쓰지 않는다.** NFD 로 내리면 `"각"` 이 `"ㄱㅏㄱ"` 이 되어 다른 글자의 받침과 우연히 이어 붙는다.
-- **최장일치로 짧은 용어를 억누르지 않는다.** `"전동킥보드 타기"` 는 `"킥보드"`(경고)와 `"전동킥보드"`(차단)에 **둘 다 걸린 채로** 가장 엄한 판정을 고른다. 최장일치를 넣으면 `"전동킥보드"` 행이 오타로 못 걸리는 날 **`"킥보드"` 가 잡아 주는 이중 안전망이 사라진다.**
+- 🚨 **`content` 와 `materials` 의 각 항목을 따로 넘긴다.** 이어 붙이면 `["작은", "블록 담는 통"]` 이 `"작은블록담는통"` 이 되어 **없는 위험을 만든다.**
+- **최장일치로 짧은 용어를 억누르지 않는다.** `"전동킥보드 타기"` 는 `"킥보드"`(경고)와 `"전동킥보드"`(차단)에 **둘 다 걸린 채로** 가장 엄한 판정을 고른다. 최장일치를 넣으면 `"전동킥보드"` 용어가 오타로 못 걸리는 날 **`"킥보드"` 가 잡아 주는 이중 안전망이 사라진다.**
 
 #### 🚨 과차단 방지 — 용어만 넣으면 정상 놀이가 사라진다
 
@@ -531,29 +535,25 @@ haystack = DENSE(content) + SEP + SEP.join(DENSE(m) for m in materials)
 | `촛불`·`생일초` | ~~`초`~~ | 초콜릿, 초록, 초승달 |
 | (등록 안 함) | ~~`물`~~·~~`실`~~·~~`알`~~ | 물티슈·물감 / 실내·실뜨기 / 알록달록 |
 
-**겹 ② — `guards` 칸.** Food `allergen_term.guards` 와 같은 모양이고 공통 매처 `app/rules/term_match.py` 가 같이 쓴다. 수식어로 못 가르는 오탐은 "걸렸지만 취소하는 안전 문구"로 뺀다. 매칭 구간이 guard 문구 안에 완전히 들어가면 그 hit 을 버린다. 🚨 **가장 중요한 항목이 `가위바위보`다** — 없으면 0–5세 최빈출 놀이가 통째로 사라진다. 그 밖에 `비눗방울`·`방울토마토`·`큰 블록`·`콩주머니`·`랩송`·`자석칠판`·`보행 연습` 등.
+**겹 ② — `guards`.** Food `allergen_terms.yaml` 의 `guards` 와 같은 모양이고 공통 매처가 같이 쓴다. 수식어로 못 가르는 오탐은 "걸렸지만 취소하는 안전 문구"로 뺀다. 매칭 구간이 guard 문구 안에 완전히 들어가면 그 hit 을 버린다. 🚨 **가장 중요한 항목이 `가위바위보`다** — 없으면 0–5세 최빈출 놀이가 통째로 사라진다. 그 밖에 `비눗방울`·`방울토마토`·`큰 블록`·`콩주머니`·`랩송`·`자석칠판`·`보행 연습` 등.
 
 🚨 **guard 에 "더 위험한 표현"을 넣지 않는다.** `"킥보드"` 를 취소하려고 `"전동킥보드"` 를 guard 에 넣으면 최엄격 규칙이 무력화된다. 테스트로 강제한다 — **모든 guard 문구를 guard 없이 스캔했을 때 `PASS` 여야 한다.**
 
-🚨 **guards 를 다음 PR 로 미루지 않는다.** 용어만 먼저 배포하면 **과차단이 먼저 나간다.** 같은 revision 에 들어간다.
+🚨 **guards 를 다음 PR 로 미루지 않는다.** 용어만 먼저 배포하면 **과차단이 먼저 나간다.** 같은 PR 에 들어간다.
 
 **겹 ③ — 남는 오탐은 받아들인다.** `"자전거 그림 그리기"` 는 `wheeled_manual` 에 걸려 경고 문구가 붙는다. 고치지 않는다 — 문맥 판정을 넣는 순간 그 판정을 누가 하느냐(= LLM)로 돌아간다.
 
-#### 조회 실패
+#### 로드 실패
 
-```python
-if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지 않는다
-```
+파일이 없거나 로더 검사에 걸리면 예외를 그대로 올린다. `terms = []` 로 폴백하면 **전 후보가 조용히 통과한다.** 사전은 정적이라 처음 읽을 때 캐시하고, **읽지 못하면 Activity Agent 를 실행하지 않는다.** Growth 는 같은 예외를 받아 활동 추천을 닫는다 (`README.md` §5).
 
-`terms = []` 로 폴백하면 **전 후보가 조용히 통과한다.** 사전은 정적이라 부팅 시 1회 로드해 캐시하고, **로드 실패 시 Activity Agent 를 비활성화**한다.
+#### 사전 제작
 
-#### 시드 제작
+용어당 3.5분(용어 발상 2.0 + **과차단 검토 1.0** + 교차 검수 0.5) · 159개 ≈ **9.3시간.**
 
-행당 3.5분(용어 발상 2.0 + **과차단 검토 1.0** + 교차 검수 0.5) · 159행 ≈ **9.3시간.**
+**용어가 아니라 축 단위로 나눈다** — 용어로 나누면 두 사람이 같은 용어를 쓰고 로더의 `(axis, label)` 중복 검사에 걸린다. 축이면 겹칠 수가 없다. 혼자 못 하면 **축 전체를 통째로 빼고** `pending_axes:` 에 남긴다. **절반만 채운 축이 제일 위험하다**(있는 줄 알고 안 본다).
 
-**행이 아니라 축 단위로 나눈다** — 행으로 나누면 두 사람이 같은 용어를 쓰고 `UNIQUE(axis, label)` 이 머지 충돌로 터진다. 축이면 겹칠 수가 없다. 혼자 못 하면 **축 전체를 통째로 빼고** `pending_axes:` 에 남긴다. **절반만 채운 축이 제일 위험하다**(있는 줄 알고 안 본다).
-
-우선순위 — **P0** `small_parts`·`water`·`trampoline`·`wheeled_motorized`·`infant_walker`(91행 · 사망·영구손상) → **P1** `height`·`wheeled_manual`·`suffocation_film`(48행) → **P2** `heat_burn`(20행).
+우선순위 — **P0** `small_parts`·`water`·`trampoline`·`wheeled_motorized`·`infant_walker`(91개 · 사망·영구손상) → **P1** `height`·`wheeled_manual`·`suffocation_film`(48개) → **P2** `heat_burn`(20개).
 
 ---
 
@@ -593,7 +593,7 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 | `infant_walker` | AAP 제조·판매 금지 권고 — 미국 15개월 미만 231,000명 응급실, 사고의 2/3 가 계단 추락, **손상의 75%가 어른이 지켜보는 중 발생.** 마지막 수치가 결정적이다: 우리 기준이 *"감독으로 위험이 제거되면 경고"* 인데 **감독이 위험을 제거하지 못한다는 증거가 출처 안에 있다** → 차단 |
 | `heat_burn` | 공정위·한국소비자원 — 고온 물질 화상 2021년 354건 → 2024년 561건(+58.5%), **걸음마기(1–3세)가 58.0%** |
 
-**축 9개로 한정한다.** `strangulation`(끈·줄)은 「공통안전기준」에 끈 길이 조항이 없고, `chemical`(슬라임·접착제)은 유아용 물감·풀까지 걸려 과차단이 크다. `sharp`(가위·칼)은 **유아용 안전가위가 존재해 "가위" 자체가 위험어가 아니고** `가위바위보`까지 걸린다. 셋 다 시드 YAML 에 `pending_axes:` 로 이름만 남긴다.
+**축 9개로 한정한다.** `strangulation`(끈·줄)은 「공통안전기준」에 끈 길이 조항이 없고, `chemical`(슬라임·접착제)은 유아용 물감·풀까지 걸려 과차단이 크다. `sharp`(가위·칼)은 **유아용 안전가위가 존재해 "가위" 자체가 위험어가 아니고** `가위바위보`까지 걸린다. 셋 다 `hazard_terms.yaml` 의 `pending_axes` 에 이름만 남긴다.
 
 **차단과 경고를 가르는 기준** — 되돌릴 수 없는 신체 위해가 그 자리에서 발생 가능하고 판정이 애매함 없이 결정되면 **차단**. 보호자 감독으로 위험이 실질적으로 제거되면 **경고**.
 
@@ -729,7 +729,7 @@ if terms is None:  raise HazardDictUnavailable   # 빈 리스트로 대체하지
 | H-06 | `content: "전동킥보드 타기"` / 40개월 | **탈락** — 두 용어에 걸리고 엄한 쪽이 이긴다 |
 | H-07 | 밀 알레르기(`active`) + `content: "밀가루 점토 만들기"` | 탈락 |
 | **H-08** | `content: "블록 쌓기"`(크기 미상) / 8개월 | 🚨 **통과한다 — 알려진 구멍이다.** 이 테스트는 구멍의 위치를 코드에 고정하는 용도다. "블록"을 위험어로 등록해 이 테스트를 통과시키면 H-02 가 깨진다 |
-| H-09 | `hazard_term` 조회 실패 | 명시적 오류. **조용히 통과시키지 않는다** |
+| H-09 | `hazard_terms.yaml` 로드 실패 (파일 없음 · 로더 검사 실패) | 예외. Activity 를 실행하지 않는다. **빈 사전으로 통과시키지 않는다** |
 | H-10 | `activity_doc` 80행 전수 | 전부 `PASS` (D10) |
 
 추가로 — 지어낸 id, evidence id ⊂ `rank_evidence` 상위 10, `archived` 비근거, 경계 월령(17/18 · 35/36 · 71/72), 17개월 관찰 있음 → `personalized`, 날씨/장소 실패, 중복 제거, guard 문구 전수 `PASS`.
