@@ -12,6 +12,7 @@ required · sensitive 는 서버가 지키는 **규칙**이라 여기(코드)에
    응답을 그리게 되면(#90) 그쪽 상수를 지운다 — 그때부터 제목 · 근거의 출처는 policy_version 하나다.
 
 🚨 순서가 화면 순서다. 계정 동의 → 아이 동의, 민감정보(child_health)는 마지막이다.
+   위치(location)는 선택이지만 보호자 본인의 동의라 계정 동의 무리의 끝에 둔다.
 🚨 여기 없는 scope 는 약관이 등록돼 있어도 응답에 나가지 않는다. 동의를 받지 않는
    scope(`quality_improve`)가 화면에 새어 나가지 않게 하려는 것이다.
 """
@@ -32,6 +33,8 @@ class ScopeInfo:
 SCOPE_CATALOG: dict[ConsentScope, ScopeInfo] = {
     ConsentScope.SERVICE_TERMS: ScopeInfo(required=True, sensitive=False),
     ConsentScope.PRIVACY_ACCOUNT: ScopeInfo(required=True, sensitive=False),
+    # 🚨 선택이다. 필수로 받으면 선택이어야 할 동의를 강제하는 것이 된다 (#172).
+    ConsentScope.LOCATION: ScopeInfo(required=False, sensitive=False),
     ConsentScope.CHILD_BASIC: ScopeInfo(required=True, sensitive=False),
     ConsentScope.CHILD_HEALTH: ScopeInfo(required=True, sensitive=True),
 }

@@ -1,0 +1,14 @@
+{
+  "service_terms": {
+    "label": "서비스 이용약관",
+    "legal_basis": null
+  },
+  "privacy_account": {
+    "label": "개인정보 수집·이용 (보호자 본인)",
+    "legal_basis": null
+  },
+  "location": {
+    "label": "위치정보 수집·이용",
+    "legal_basis": "위치정보의 보호 및 이용 등에 관한 법률 제19조 (개인위치정보의 이용·제공)"
+  }
+}

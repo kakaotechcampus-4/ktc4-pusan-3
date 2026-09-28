@@ -23,13 +23,11 @@ from app.domains.policy.models import PolicyVersion
 BIND = "A" * 43
 OTHER_BIND = "B" * 43
 KAKAO_USER_ID = "1234567890"
-POLICY = "draft-0"
-"""🚨 계약서 §3-5 예시는 "2026-09-01" 이지만 그건 등록된 버전이 아니다.
+POLICY = "draft-1"
+"""계정 동의 둘(service_terms · privacy_account)의 지금 버전 — 약관 초안 draft-1 (#172).
 
-가입은 이제 policy_version 테이블에 등록되고 적용 기간 안인 버전만 받는다 (PR C).
-지금 등록된 것은 PR B 마이그레이션이 시드한 placeholder "draft-0" 하나뿐이라 여기서도
-그 값을 쓴다. 실제 약관이 확정되면 새 버전을 등록하고 이 상수와 계약서 예시를 함께
-바꾼다 — 한쪽만 바꾸면 이 테스트가 그 사실을 잡는다.
+가입은 GET /policies 가 지금 보여 주는 버전만 받는다 (#91). 새 약관을 등록하면 이 상수를
+함께 바꾼다 — 한쪽만 바꾸면 이 파일의 가입 테스트가 전부 400 으로 그 사실을 잡는다.
 """
 
 UNREGISTERED_POLICY = "2026-09-01"

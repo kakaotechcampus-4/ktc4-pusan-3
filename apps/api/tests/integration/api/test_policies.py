@@ -17,7 +17,8 @@ from app.domains.policy.models import PolicyVersion
 from app.domains.policy.repository import register_version
 
 URL = "/api/v1/policies"
-DISPLAY_ORDER = ["service_terms", "privacy_account", "child_basic", "child_health"]
+DISPLAY_ORDER = ["service_terms", "privacy_account", "location", "child_basic", "child_health"]
+OPTIONAL = {"location"}
 
 
 async def test_policies_are_readable_without_login(db_client):
@@ -47,7 +48,8 @@ async def test_policies_come_in_display_order_with_labels(db_client):
             "content",
         }
         assert item["label"]
-        assert item["required"] is True
+        # 🚨 위치는 선택이다. 필수로 내려가면 화면이 그 체크 없이는 가입을 막는다 (#172).
+        assert item["required"] is (item["scope"] not in OPTIONAL)
 
     health = next(item for item in body if item["scope"] == "child_health")
     assert health["sensitive"] is True
@@ -62,17 +64,18 @@ async def test_newer_version_replaces_older_one(db_client, session):
     await register_version(
         session,
         scope=ConsentScope.SERVICE_TERMS,
-        version="draft-1",
+        version="test-newer",
         label="서비스 이용약관",
         content="# 새 약관",
         content_hash="hash",
-        effective_at=datetime(2026, 9, 1, tzinfo=UTC),
+        # 고정 날짜가 아니라 "방금" — 마이그레이션이 더 늦은 약관을 등록해도 이 행이 가장 새것이다.
+        effective_at=datetime.now(UTC) - timedelta(minutes=1),
     )
 
     body = (await db_client.get(URL)).json()
     terms = next(item for item in body if item["scope"] == "service_terms")
 
-    assert terms["version"] == "draft-1"
+    assert terms["version"] == "test-newer"
     assert terms["content"] == "# 새 약관"
 
 
