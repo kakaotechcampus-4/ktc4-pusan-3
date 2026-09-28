@@ -22,6 +22,8 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
@@ -29,7 +31,13 @@ from app.agents.memory.drafts import EventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
-from app.agents.memory.schemas.task import MemoryTask, WorkType
+from app.agents.memory.schemas.reply import REPLY_FORMAT, ReplyKind, ReplyOutput
+from app.agents.memory.schemas.task import (
+    MemoryHint,
+    MemoryTask,
+    PendingMemoryContext,
+    WorkType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +60,21 @@ EndedBy = Literal["model", "coverage", "max_steps"]
 
 _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
+_CONTINUATION_HEADER = """[이어서 처리할 것]
+아래 조각만 보호자의 새 답으로 보완한다. 이전에 이미 저장한 다른 기록은 다시 저장하지 않는다.
+새 답만 따로 관찰로 저장하지 않는다. 여전히 필요한 값이 없으면 질문 하나만 다시 한다."""
+
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
 
 # 모델이 tool도 안 부르고 답도 비운 턴을 내면 사용자는 아무것도 못 봄.
 # run 당 한 번만 다시 묻게 한다
 _EMPTY_TURN = (
     "답이 비어 있다. 한 문장으로 답한다 — 무엇을 했는지, 저장하지 않았으면 무엇을 물어봐야 하는지."
+)
+# 되묻는데 이어 붙일 조각을 잘못 지목했을 때 run 당 한 번만 다시 고르게 한다
+_PENDING_RETRY = (
+    "pending_hint 가 아직 저장하지 않은 기록 후보가 아니다. 후보 중에서 그대로 하나를 골라 "
+    "다시 답한다."
 )
 _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
@@ -76,22 +93,37 @@ class ToolCallRecord:
         return bool(self.result.get("success"))
 
 
+@dataclass(frozen=True)
+class MemoryReply:
+    """보호자에게 나가는 문장 하나. text 와 kind 는 항상 같이 움직인다."""
+
+    text: str
+    kind: ReplyKind
+
+
 @dataclass
 class MemoryAgentResult:
-    final_message: str | None  # 끝내지 못했거나 조기 종료했으면 None
+    reply: MemoryReply | None  # 끝내지 못했거나 조기 종료했으면 None
     completed: bool  # MAX_STEPS 안에 마쳤는지 여부
     steps: int  # LLM 왕복 수. tool 건수가 아니다 — 그건 len(calls)
     calls: list[ToolCallRecord] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
-    # model: 모델이 tool 없이 답해서 끝남(되묻기/조회 답/알림 안내 등 final_message 있음)
+    # model: 모델이 tool 없이 말하고 끝남. 되묻기·조회 답·알림 안내가 전부 여기라
+    #   질문 여부를 이 값으로 가르지 않는다 — reply.kind 를 본다
     # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
     # max_steps: 끝내지 못함
     ended_by: EndedBy = "model"
     drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
+    pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
 
     @property
     def tool_names(self) -> list[str]:
         return [call.name for call in self.calls]
+
+    @property
+    def final_message(self) -> str | None:
+        """이전 이름. pipeline 로그와 eval 이 이걸로 본다."""
+        return self.reply.text if self.reply is not None else None
 
 
 async def run(
@@ -101,12 +133,22 @@ async def run(
     client: LLMClient | None = None,
     max_steps: int = MAX_STEPS,
     task: MemoryTask | None = None,
+    continuation: PendingMemoryContext | None = None,
 ) -> MemoryAgentResult:
     """발화 한 건을 처리한다.
 
     task는 Supervisor 경로로, raw_text는 task.raw_text와 같아야 한다.
+    continuation은 이전 run의 되묻기를 이어받는 경로다. raw_text는 보호자의 새 답이고,
+    task는 미완료 조각으로 코드가 만든다.
     """
-    if task is not None and task.raw_text != raw_text:
+    if continuation is not None:
+        if task is not None:
+            raise ValueError("continuation 과 task 를 같이 넘기지 않는다")
+        task = MemoryTask(
+            raw_text=continuation.hint_text,
+            hints=(MemoryHint(text=continuation.hint_text, work=continuation.work),),
+        )
+    elif task is not None and task.raw_text != raw_text:
         raise ValueError("task.raw_text와 raw_text가 다르다")
 
     llm = client or LLMClient(role="memory")
@@ -114,28 +156,74 @@ async def run(
     tools = specs_for(allowed) if allowed is not None else TOOL_SPECS
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(context)},
-        {"role": "user", "content": _user_message(raw_text, task)},
+        {
+            "role": "user",
+            "content": (
+                _continuation_message(raw_text, continuation)
+                if continuation is not None
+                else _user_message(raw_text, task)
+            ),
+        },
     ]
     calls: list[ToolCallRecord] = []
     usage: dict[str, int] = {}
     succeeded: set[tuple[str, str]] = set()
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
+    nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
 
     for step in range(max_steps):
         response = await llm.chat(
-            messages=messages, tools=tools, max_completion_tokens=MAX_COMPLETION_TOKENS
+            messages=messages,
+            tools=tools,
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
+            # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
+            response_format=REPLY_FORMAT,
         )
         _accumulate(usage, response.usage)
 
         tool_calls = getattr(response.message, "tool_calls", None) or []
         if not tool_calls:
-            if not (response.message.content or "").strip() and not nudged:
+            content = (response.message.content or "").strip()
+            if not content and not nudged:
                 # 빈 턴. 응답 문구는 화면이 지어내지 않으므로 모델에게 한 번 더 묻는다
                 nudged = True
                 messages.append({"role": "user", "content": _EMPTY_TURN})
                 continue
+            parsed = _parse_reply(content)
+            if parsed is not None:
+                replied = MemoryReply(text=parsed.text, kind=parsed.kind)
+                pending = _pending(
+                    replied, parsed.pending_hint, task, continuation, raw_text, calls
+                )
+                misnamed = (
+                    replied.kind == "question"
+                    and pending is None
+                    and continuation is None
+                    and task is not None
+                    and len(task.hints) > 1
+                    and bool(_open_hints(task, calls))
+                )
+                if misnamed and not nudged_hint:
+                    # 이어 붙일 조각을 잘못 지목했다. 한 번만 다시 고르게 한다
+                    nudged_hint = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _PENDING_RETRY})
+                    continue
+                return MemoryAgentResult(
+                    reply=replied,
+                    completed=True,
+                    steps=step + 1,
+                    calls=calls,
+                    usage=usage,
+                    drafts=context.drafts.all(),
+                    pending=pending,
+                )
+            if content:
+                # 스키마와 안 맞는 답. provider가 형식을 무시했을 수 있어 warning으로 남긴다 —
+                # 이게 반복되면 모든 되묻기가 message로 나가 "이어서 적기" 가 안 열린다
+                logger.warning("응답이 스키마와 맞지 않아 message 로 둔다 steps=%d", step + 1)
             return MemoryAgentResult(
-                final_message=response.message.content,
+                reply=MemoryReply(text=content, kind="message") if content else None,
                 completed=True,
                 steps=step + 1,
                 calls=calls,
@@ -160,7 +248,7 @@ async def run(
         if task is not None and EARLY_STOP and _covered(task, step_records, calls):
             # 모델에게 "무엇을 했는지" 요약을 받으려고 한 번 더 부르지 않는다
             return MemoryAgentResult(
-                final_message=None,
+                reply=None,
                 completed=True,
                 steps=step + 1,
                 calls=calls,
@@ -172,7 +260,7 @@ async def run(
     # 모델이 마무리 응답을 내지 않아 미완료된 것으로 간주
     logger.warning("memory agent 미완료 max_steps=%d tools=%s", max_steps, [c.name for c in calls])
     return MemoryAgentResult(
-        final_message=None,
+        reply=None,
         completed=False,
         steps=max_steps,
         calls=calls,
@@ -192,6 +280,46 @@ def _user_message(raw_text: str, task: MemoryTask | None) -> str:
         return raw_text
     candidates = "\n".join(f"- {hint.text}" for hint in task.hints)
     return f"[보호자 발화]\n{raw_text}\n\n{_HINT_HEADER}\n{candidates}"
+
+
+def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
+    """이번 run 에서 저장에 성공한 관찰의 raw_text."""
+    return [
+        _squash(str(call.arguments.get("raw_text", "")))
+        for call in calls
+        if call.success and call.name.startswith("create_observation_")
+    ]
+
+
+def _open_hints(task: MemoryTask, calls: list[ToolCallRecord]) -> list[MemoryHint]:
+    """아직 저장하지 않은 후보. 관찰 조각만 저장 여부를 가릴 수 있고 나머지는 그대로 둔다."""
+    written = _written_texts(calls)
+
+    def kept(hint: MemoryHint) -> bool:
+        text = _squash(hint.text)
+        return any(text and done and (text in done or done in text) for done in written)
+
+    return [
+        hint for hint in task.hints if WorkType(hint.work) is not WorkType.OBSERVE or not kept(hint)
+    ]
+
+
+def _squash(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
+    """미완료 조각 · 이전 질문 · 새 답을 역할을 갈라 넣는다. 원문 전체는 넣지 않는다."""
+    rounds = ""
+    if pending.transcript:
+        lines = "\n".join(pending.transcript)
+        rounds = f"\n\n[앞서 주고받은 것]\n{lines}"
+    return (
+        f"{_CONTINUATION_HEADER}{rounds}\n\n"
+        f"[아직 저장하지 못한 조각]\n{pending.hint_text}\n\n"
+        f"[직전에 물은 것]\n{pending.question}\n\n"
+        f"[보호자의 답]\n{answer}"
+    )
 
 
 def _covered(
@@ -225,6 +353,70 @@ def _covered(
     return all(
         sum(name.startswith(WRITES_FOR[work]) for name in written) >= count
         for work, count in needed.items()
+    )
+
+
+def _parse_reply(content: str) -> ReplyOutput | None:
+    """말하는 턴의 content를 스키마로 읽는다. 안 맞으면 None -> 호출부가 message 로 둔다."""
+    if not content:
+        return None
+    try:
+        return ReplyOutput.model_validate_json(content)
+    except ValidationError:
+        return None
+
+
+def _pending(
+    reply: MemoryReply,
+    named: str | None,
+    task: MemoryTask | None,
+    continuation: PendingMemoryContext | None = None,
+    answer: str = "",
+    calls: list[ToolCallRecord] | None = None,
+) -> PendingMemoryContext | None:
+    """되묻기로 끝났을 때 이어 붙일 조각을 고른다. 없으면 None.
+
+    - 이어받기 중이면 조각은 그대로 두고 방금 실패한 질문과 답을 transcript에 쌓는다.
+    - 이번 run 에서 이미 저장한 관찰 조각은 고르지 않는다.
+    - 후보가 하나뿐이면 모델에게 묻지 않고 그것을 쓴다.
+    - 후보가 없으면(강등 경로) 원문 전체가 한 조각인데,
+      그중 일부라도 저장했으면 조각을 가를 수 없어 pending을 만들지 않는다.
+    - 둘 이상이면 모델이 지목한 문장이 아직 저장하지 않은 후보여야 한다.
+    """
+    calls = calls or []
+    if reply.kind != "question":
+        return None
+    if continuation is not None:
+        return PendingMemoryContext(
+            hint_text=continuation.hint_text,
+            question=reply.text,
+            work=continuation.work,
+            transcript=(*continuation.transcript, continuation.question, answer),
+        )
+    if task is None:
+        return None
+    if not task.hints:
+        if _written_texts(calls):
+            return None
+        # 작업 종류를 모른다. observe로 두면 이어받기가 수정·삭제 tool을 열지 않는다
+        return PendingMemoryContext(
+            hint_text=task.raw_text, question=reply.text, work=WorkType.OBSERVE
+        )
+    open_hints = _open_hints(task, calls)
+    if len(task.hints) == 1:
+        if not open_hints:
+            return None
+        hint = open_hints[0]
+        return PendingMemoryContext(
+            hint_text=hint.text, question=reply.text, work=WorkType(hint.work)
+        )
+
+    chosen = next((hint for hint in open_hints if hint.text == named), None)
+    if chosen is None:
+        logger.info("pending_hint 가 후보에 없다 hints=%d", len(task.hints))
+        return None
+    return PendingMemoryContext(
+        hint_text=chosen.text, question=reply.text, work=WorkType(chosen.work)
     )
 
 

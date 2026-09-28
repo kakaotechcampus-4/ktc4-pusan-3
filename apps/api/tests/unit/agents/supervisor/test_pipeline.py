@@ -25,12 +25,14 @@ from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FeedingStage, FoodTaskType
 from app.agents.memory.context import AgentContext
+from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.pipeline import (
     Done,
     Failed,
     FoodRouted,
     MemoryNote,
+    PendingReply,
     Rerouted,
     Saved,
     Step,
@@ -165,6 +167,11 @@ def _tools(*calls: SimpleNamespace) -> LLMResponse:
 def _call(call_id: str, name: str, arguments: dict[str, Any] | str) -> SimpleNamespace:
     raw = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
     return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=raw))
+
+
+def _answer(reply: dict[str, Any]) -> LLMResponse:
+    """모델의 마지막 말. structured output 이라 content 가 스키마 JSON 이다."""
+    return _reply(json.dumps({"pending_hint": None, **reply}, ensure_ascii=False))
 
 
 def _supervisor_llm(case_id: str) -> FakeLLM:
@@ -722,3 +729,220 @@ async def test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는�
     assert memory_llm.calls == 4  # 실제 왕복은 네 번
     assert result.model_calls == 2  # Supervisor 1 + Memory 1
     assert "model_calls 예산 초과" not in caplog.text
+
+
+# ── 되묻기 · pending ────────────────────────────────────────────
+# RC04 = "오늘 2시에 모래놀이하고 떡볶이 먹었어." — OBSERVE 두 조각. 하나는 저장하고 하나는 되묻는다
+# raw_text 가 조각 문장을 담아야 _bounced_hints 가 "적은 조각" 으로 본다
+_SAND = {
+    "raw_text": "오늘 2시에 모래놀이하고",
+    "observed_on": "오늘",
+    "subject": "모래놀이",
+    "activity": "모래놀이",
+}
+_TTEOKBOKKI = {"raw_text": "떡볶이 먹었어", "observed_on": "오늘", "subject": "떡볶이"}
+
+
+def _ask_second(case_id: str = "RC04") -> dict[str, Any]:
+    second = answer_output(CASES_BY_ID[case_id]).segments[1].text
+    return {"text": "무엇을 먹었어요?", "kind": "question", "pending_hint": second}
+
+
+async def test_되묻기_run_은_note_와_pending_을_같이_낸다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    supervisor = _supervisor_llm("RC04")
+    memory = FakeLLM(
+        _tools(
+            _call("m1", "create_observation_activity", _SAND),
+        ),
+        _answer(_ask_second()),
+    )
+
+    result = await handle_input(
+        CASES_BY_ID["RC04"].text,
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=supervisor,
+        memory_client=memory,
+        emit=events.append,
+    )
+
+    note = next(event for event in events if isinstance(event, MemoryNote))
+    pending = next(event for event in events if isinstance(event, PendingReply))
+    done = next(event for event in events if isinstance(event, Done))
+    assert note.kind == "question"
+    assert pending.run_id == RUN_ID
+    assert pending.context.hint_text == "떡볶이 먹었어"
+    assert events.index(pending) < events.index(done)
+    assert result.memory is not None and result.memory.pending is not None
+    # 되묻는 중인 조각은 "위임이 어긋난 것" 이 아니다. 다시 나누지 않는다
+    assert supervisor.calls == 1
+    assert result.rerouted is None
+    assert result.model_calls == 2
+
+
+async def test_saved_가_note_보다_먼저_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _tools(
+            _call("m1", "create_observation_activity", _SAND),
+        ),
+        _answer(_ask_second()),
+    )
+
+    await handle_input(
+        CASES_BY_ID["RC04"].text,
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=_supervisor_llm("RC04"),
+        memory_client=memory,
+        emit=events.append,
+    )
+
+    names = [type(event).__name__ for event in events]
+    assert names.index("Saved") < names.index("MemoryNote") < names.index("Done")
+
+
+# ── 이어받기 ────────────────────────────────────────────────────
+_COUGH_PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
+
+
+async def test_이어받기는_supervisor_와_food_를_타지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    supervisor = FakeLLM()  # 부르면 안 된다
+    memory = FakeLLM(
+        _tools(
+            _call("m1", "create_observation_health", _RASH),
+        ),
+        _answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=supervisor,
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    assert supervisor.calls == 0
+    assert result.food == ()
+    assert result.model_calls == 1
+    done = next(event for event in events if isinstance(event, Done))
+    assert done.model_calls == 1
+    assert not any(isinstance(event, FoodRouted) for event in events)
+    rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
+    assert len(rows) == 1
+
+
+async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=FakeLLM(LLMUnavailableError("down")),
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    assert result.failed is not None and result.failed.reason == "llm_unavailable"
+    assert any(isinstance(event, Failed) for event in events)
+
+
+async def test_이어받기에_무관한_말이_섞이면_memory_가_그것까지_처리한다(
+    memory_context: AgentContext, food_context: FoodContext
+) -> None:
+    # Supervisor 를 안 타므로 나눠지지 않는다. 현상 고정 — 분리는 후속 이슈다
+    memory = FakeLLM(
+        _tools(
+            _call("m1", "create_observation_health", _RASH),
+            _call("m2", "create_observation_activity", _POOL),
+        ),
+        _answer({"text": "둘 다 적어 둘게요.", "kind": "message"}),
+    )
+
+    await handle_input(
+        "3일 전부터. 그리고 오늘 수영장 다녀왔어",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        continuation=_COUGH_PENDING,
+    )
+
+    activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
+    assert len(activity) == 1
+
+
+async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장하지_않는다(
+    memory_context: AgentContext, food_context: FoodContext
+) -> None:
+    # 이슈의 "계란 잘 먹었어. 요즘 기침해" 를 RC04 로 옮긴 것 — 모래놀이는 저장, 떡볶이는 되묻기.
+    # 두 run 이 같은 memory_context 를 써서 store 가 이어진다
+    before = await handle_input(
+        CASES_BY_ID["RC04"].text,
+        memory_context,
+        food_context,
+        run_id="run-a",
+        supervisor_client=_supervisor_llm("RC04"),
+        memory_client=FakeLLM(
+            _tools(
+                _call("m1", "create_observation_activity", _SAND),
+            ),
+            _answer(_ask_second()),
+        ),
+    )
+    assert before.memory is not None and before.memory.pending is not None
+
+    after = await handle_input(
+        "떡볶이 먹었어",
+        memory_context,
+        food_context,
+        run_id="run-b",
+        supervisor_client=FakeLLM(),
+        memory_client=FakeLLM(
+            _tools(
+                _call("m3", "create_observation_food", _TTEOKBOKKI),
+            ),
+            _answer({"text": "기록해 둘게요.", "kind": "message"}),
+        ),
+        continuation=before.memory.pending,
+    )
+
+    activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
+    food = await memory_context.store.query_observations(domain="food", child_id=CHILD)
+    assert len(activity) == 1  # 2 면 실패다 — 이미 저장한 조각이 다시 저장된 것
+    assert len(food) == 1
+    assert after.model_calls == 1
+
+
+async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # done 으로 끝나면 runner 가 맥락을 되돌리지 않아 보호자의 답이 빈 성공으로 사라진다
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=FakeLLM(_reply(""), _reply("")),  # 빈 턴 두 번
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    assert result.failed is not None and result.failed.reason == "unparsable"
+    assert any(isinstance(event, Failed) for event in events)
