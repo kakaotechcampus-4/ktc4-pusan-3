@@ -185,13 +185,15 @@
 | polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용 |
 | strong_signals | text[] | NOT NULL, DEFAULT `'{}'`. 허용값: `resistance_to_redirect`, `self_initiated`, `comparative_choice`, `asks_questions`, `role_extension` |
 | confidence_source | text | NOT NULL. `institution_notice / parent_direct / parent_hedged / parent_hearsay` |
-| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive`  |
+| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive / deleted`  |
 | observed_range | daterange | NOT NULL, 빈 범위 불가, 상한이 무한대인 범위 불가 |
 | source_writer | uuid  |  FK → `parent.id`  set null  |
 | source_notice_id | uuid | FK → `notice.id`, nullable. 값이 존재하면 기관 공지 기반 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
+- `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
+- 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` · `embedding` 도 그대로 남는다. 되살리는 경로는 없다.
 
 ### 1. observation_food (섭취·영양)
 
