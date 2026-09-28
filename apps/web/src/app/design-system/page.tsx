@@ -290,7 +290,7 @@ function TypeSection() {
     <div ref={root}>
       <Section
         title="타이포"
-        note="8단계 · 본문 16px / 1.6 · 학교안심 날개 R 자체 호스팅. 단일 웨이트라 600·700 은 브라우저 합성이고, 500 은 400 과 똑같이 나온다. 아래 '실측' 은 지금 화면에서 읽은 값이다."
+        note="8단계 · 본문 16px / 1.6 · 학교안심 날개 R 자체 호스팅. wght 400–700 가변폰트라 아래 네 굵기가 전부 실물이고 브라우저 합성은 없다. 아래 '실측' 은 지금 화면에서 읽은 값이다."
       >
         <ul className="flex flex-col gap-4">
           {TYPE_STEPS.map((step) => (
@@ -324,7 +324,7 @@ function TypeSection() {
               cls: "font-sans",
               name: "font-sans",
               use: "기본값 · 화면 대부분",
-              note: "학교안심 날개 R · Regular 400 하나뿐이라 아래 굵기는 합성이다",
+              note: "학교안심 날개 R · 원본이 Regular 하나뿐이라 700 마스터를 만들어 구운 wght 400–700 가변폰트다",
             },
             {
               cls: "font-doc",
@@ -687,8 +687,8 @@ function ComponentSection() {
         />
       </div>
       <p className="text-caption text-ink-subtle">
-        활성은 ink + brand 2px 밑줄입니다. 🚨 굵기로 구분하지 않습니다 — 본문 서체가 단일 웨이트라
-        label 500 과 600 이 화면에서 같습니다 (§4). 전환은 URL 에 남깁니다.
+        활성은 ink + brand 2px 밑줄입니다. 🚨 굵기 하나로 구분하지 않습니다 — 13px 손글씨에서 label
+        500 과 600 의 차이는 활성/비활성을 혼자 나르기엔 약합니다 (§4). 전환은 URL 에 남깁니다.
       </p>
 
       <SubTitle>캘린더 표식 (09)</SubTitle>
