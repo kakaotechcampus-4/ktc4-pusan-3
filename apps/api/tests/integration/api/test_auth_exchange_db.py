@@ -275,6 +275,68 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
     assert await changed(session, base) == {}
 
 
+async def register_newer_version(session, scope: ConsentScope, version: str = "draft-1") -> None:
+    """시드된 draft-0 보다 늦게 시작하는 버전 — 약관이 바뀐 상황."""
+    session.add(
+        PolicyVersion(
+            scope=scope,
+            version=version,
+            content="새 약관",
+            content_hash="new-hash",
+            effective_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    )
+    await session.flush()
+
+
+async def test_signup_with_superseded_policy_version_is_rejected(db_client, session):
+    """🚨 더 새 버전이 나오면 옛 버전으로는 가입할 수 없다 (#91).
+
+    옛 버전 행에 ended_at 을 찍는 것을 잊어도 막혀야 한다. 받아 주는 버전은 GET /policies 가
+    지금 보여 주는 그 버전 하나다 — 보여 주지 않는 글에 "동의했다" 는 기록이 남지 않게.
+    대기표를 태우기 전에 거절하므로 동의 화면을 다시 불러오면 된다.
+    """
+    await register_newer_version(session, ConsentScope.SERVICE_TERMS)
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "policy_version_invalid"
+    assert response.json()["error"]["detail"]["scope"] == "service_terms"
+    assert await changed(session, base) == {}
+
+
+async def test_signup_with_current_policy_version_succeeds(db_client, session):
+    """GET /policies 가 내려준 최신 버전을 그대로 실으면 가입된다."""
+    await register_newer_version(session, ConsentScope.SERVICE_TERMS)
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "consents": [
+                {"scope": "service_terms", "policy_version": "draft-1"},
+                {"scope": "privacy_account", "policy_version": POLICY},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+
+
 async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, session):
     """낡은 화면은 공격이 아니다 — 대기표를 태우지 않는다.
 

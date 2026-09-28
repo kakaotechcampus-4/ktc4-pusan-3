@@ -65,9 +65,9 @@ async def find_active_versions(session: AsyncSession, *, now: datetime) -> list[
     등록하면서 이전 행에 `ended_at` 을 찍는 것을 잊어도 새 버전이 나가게 하려는 것이다.
     유효한 행이 없는 scope 는 결과에 없다.
 
-    `find_active_version` 은 화면이 보낸 버전이 유효한지 **확인**하는 쪽이고, 이 함수는
-    화면에 보여줄 버전을 **고르는** 쪽이다. 둘이 같은 유효 조건(`_is_active`)을 써야
-    "여기서 내려준 버전이 가입 검사에서 떨어지는" 일이 없다.
+    🚨 GET /policies(보여 주는 쪽)와 가입 검사(받아 주는 쪽)가 **둘 다 이 함수**를 쓴다.
+       그래서 "보여 준 버전이 가입에서 떨어지는" 일도, "보여 주지 않는 옛 버전이 가입에서
+       통과하는" 일도 없다 (#91).
     """
     stmt = (
         select(PolicyVersion)
