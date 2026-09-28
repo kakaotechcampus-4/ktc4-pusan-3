@@ -7,7 +7,11 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.domains.consent.models import ConsentScope
-from app.domains.policy.repository import find_active_version, register_version
+from app.domains.policy.repository import (
+    find_active_version,
+    find_active_versions,
+    register_version,
+)
 
 SEEDED_SCOPES = (
     ConsentScope.SERVICE_TERMS,
@@ -75,6 +79,56 @@ async def test_find_active_version_respects_effective_window(session):
         await find_active_version(session, scope=scope, version="nonexistent", now=effective_at)
         is None
     )
+
+
+async def test_find_active_versions_returns_one_current_row_per_scope(session):
+    """GET /policies 의 재료 (#91). scope 마다 지금 유효한 행 하나 — 여럿이면 가장 늦게 시작한 것.
+
+    시드된 draft-0 은 2026-01-01 부터 유효하다. 그 뒤에 시작한 버전이 있으면 그쪽이 이기고,
+    이미 끝났거나 아직 시작하지 않은 버전은 후보에서 빠진다.
+    """
+    now = datetime(2026, 9, 29, tzinfo=UTC)
+    await register_version(
+        session,
+        scope=ConsentScope.SERVICE_TERMS,
+        version="draft-1",
+        content="newer",
+        content_hash="newer-hash",
+        effective_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    await register_version(
+        session,
+        scope=ConsentScope.PRIVACY_ACCOUNT,
+        version="ended",
+        content="ended",
+        content_hash="ended-hash",
+        effective_at=datetime(2026, 8, 1, tzinfo=UTC),
+        ended_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    await register_version(
+        session,
+        scope=ConsentScope.CHILD_BASIC,
+        version="future",
+        content="future",
+        content_hash="future-hash",
+        effective_at=now + timedelta(days=1),
+    )
+
+    rows = await find_active_versions(session, now=now)
+    by_scope = {row.scope: row.version for row in rows}
+
+    assert len(rows) == len(by_scope), "scope 마다 한 행만"
+    assert by_scope[ConsentScope.SERVICE_TERMS] == "draft-1"
+    assert by_scope[ConsentScope.PRIVACY_ACCOUNT] == SEEDED_VERSION
+    assert by_scope[ConsentScope.CHILD_BASIC] == SEEDED_VERSION
+    assert by_scope[ConsentScope.CHILD_HEALTH] == SEEDED_VERSION
+
+
+async def test_find_active_versions_skips_scope_without_current_row(session):
+    """등록된 행이 없는 scope 는 결과에 없다 (#91)."""
+    rows = await find_active_versions(session, now=datetime(2026, 9, 29, tzinfo=UTC))
+
+    assert ConsentScope.QUALITY_IMPROVE not in {row.scope for row in rows}
 
 
 async def test_policy_version_repository_has_no_mutation_functions():

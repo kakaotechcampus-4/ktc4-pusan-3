@@ -7,7 +7,7 @@ policy_version 은 정책 본문의 정본이라 immutable 하다. 문구가 바
 
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.consent.models import ConsentScope
@@ -53,7 +53,36 @@ async def find_active_version(
     stmt = select(PolicyVersion).where(
         PolicyVersion.scope == scope,
         PolicyVersion.version == version,
+        _is_active(now),
+    )
+    return await session.scalar(stmt)
+
+
+async def find_active_versions(session: AsyncSession, *, now: datetime) -> list[PolicyVersion]:
+    """scope 마다 `now` 시점에 유효한 행을 하나씩 돌려준다 — GET /policies 의 재료 (#91).
+
+    같은 scope 에 유효한 행이 여럿이면 `effective_at` 이 가장 늦은 것을 고른다. 새 버전을
+    등록하면서 이전 행에 `ended_at` 을 찍는 것을 잊어도 새 버전이 나가게 하려는 것이다.
+    유효한 행이 없는 scope 는 결과에 없다.
+
+    `find_active_version` 은 화면이 보낸 버전이 유효한지 **확인**하는 쪽이고, 이 함수는
+    화면에 보여줄 버전을 **고르는** 쪽이다. 둘이 같은 유효 조건(`_is_active`)을 써야
+    "여기서 내려준 버전이 가입 검사에서 떨어지는" 일이 없다.
+    """
+    stmt = (
+        select(PolicyVersion)
+        .where(_is_active(now))
+        .order_by(PolicyVersion.scope, PolicyVersion.effective_at.desc())
+    )
+    latest: dict[ConsentScope, PolicyVersion] = {}
+    for row in await session.scalars(stmt):
+        latest.setdefault(row.scope, row)
+    return list(latest.values())
+
+
+def _is_active(now: datetime):
+    """`now` 가 적용 기간 안인가 — 시작은 포함, 끝은 포함하지 않는다."""
+    return and_(
         PolicyVersion.effective_at <= now,
         or_(PolicyVersion.ended_at.is_(None), PolicyVersion.ended_at > now),
     )
-    return await session.scalar(stmt)
