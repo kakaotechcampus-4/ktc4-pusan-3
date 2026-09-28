@@ -5,13 +5,14 @@
 
 # 인덱스 의존
 #   count_active, page: ix_observation_{domain}_child_status (child_id, status)
-#   find/update/delete: PK (id) + child_id 필터
+#   find/update/delete: PK (id) + child_id 필터. delete 는 status=deleted 로 바꾸는 UPDATE
 #   query date overlap: (child_id, status) 인덱스 후 observed_range post-filter
 """
 
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.domains.child.models import Child
@@ -22,6 +23,7 @@ from app.domains.memory.observation.models import (
     RoutineCategory,
 )
 from app.domains.memory.observation.repository import (
+    _MODEL_BY_DOMAIN,
     ObservationDomain,
     count_active_observations,
     create_observation,
@@ -29,6 +31,7 @@ from app.domains.memory.observation.repository import (
     find_observation,
     page_observations,
     query_observations,
+    set_observation_status,
     update_observation,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
@@ -248,6 +251,96 @@ async def test_find_update_delete_are_scoped_to_child_id(session, family):
     )
 
 
+@pytest.mark.parametrize("domain", list(ObservationDomain))
+async def test_delete_keeps_row_as_deleted_and_hides_it_everywhere(session, family, domain):
+    """delete는 soft delete. 행과 원문은 남고 status 만 deleted 로 바뀐다.
+
+    - 지운 행은 find · query · update · 교정 · 목록(active, inactive) · 홈 집계 어디에도 안 걸린다
+    - 두 번 지우면 False
+    """
+    writer, child, _ = family
+    day = date(2026, 9, 1)
+    record = await add_observation(session, writer, child, domain, day, "지울 기록")
+    model = _MODEL_BY_DOMAIN[domain]
+
+    assert await delete_observation(
+        session, domain=domain, child_id=child.id, observation_id=record.id
+    )
+
+    stored = (await session.execute(
+        select(model.status, model.raw_text).where(model.id == record.id)
+    )).one()
+    assert stored.status == ObservationStatus.DELETED
+    assert stored.raw_text == "지울 기록 원문"
+
+    assert await find_observation(
+        session, domain=domain, child_id=child.id, observation_id=record.id
+    ) is None
+    assert await query_observations(session, domain=domain, child_id=child.id) == []
+    assert await update_observation(
+        session,
+        domain=domain,
+        child_id=child.id,
+        observation_id=record.id,
+        fields={"confidence_source": ConfidenceSource.PARENT_HEDGED},
+    ) is None
+    assert await set_observation_status(
+        session,
+        domain=domain,
+        child_id=child.id,
+        observation_id=record.id,
+        status=ObservationStatus.INACTIVE,
+    ) is None
+    for status in (ObservationStatus.ACTIVE, ObservationStatus.INACTIVE):
+        page = await page_observations(session, child_id=child.id, status=status)
+        assert page.total == 0
+    counts = await count_active_observations(
+        session, child_id=child.id, period_start=day, period_end=day + timedelta(days=1)
+    )
+    assert counts.total_count == 0
+
+    assert not await delete_observation(
+        session, domain=domain, child_id=child.id, observation_id=record.id
+    )
+
+
+async def test_page_rejects_deleted_status_filter(session, family):
+    """deleted 는 목록 필터로 열지 않는다."""
+    _, child, _ = family
+    with pytest.raises(ValueError, match="deleted"):
+        await page_observations(session, child_id=child.id, status=ObservationStatus.DELETED)
+
+
+async def test_create_and_update_reject_status_in_fields(session, family):
+    """status 는 교정과 삭제만 쓴다. fields 로는 어떤 값도 넣을 수 없다."""
+    writer, child, _ = family
+    with pytest.raises(ValueError, match="지원하지 않는 관찰 필드"):
+        await create_observation(
+            session,
+            domain="food",
+            child_id=child.id,
+            source_writer=writer.id,
+            raw_text="원문",
+            observed_range=observed(date(2026, 9, 1)),
+            fields={
+                **required_fields(ObservationDomain.FOOD, "사과"),
+                "status": ObservationStatus.STAND_ALONE,
+            },
+        )
+    record = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과"
+    )
+    for status in ObservationStatus:
+        with pytest.raises(ValueError, match="지원하지 않는 관찰 필드"):
+            await update_observation(
+                session,
+                domain="food",
+                child_id=child.id,
+                observation_id=record.id,
+                fields={"status": status},
+            )
+
+
 async def test_count_active_merges_five_tables_excludes_inactive_and_other_child(session, family):
     """count_active는 5테이블 UNION ALL + status='active' + child_id 필터.
 
@@ -281,12 +374,12 @@ async def test_count_active_merges_five_tables_excludes_inactive_and_other_child
     inactive = await add_observation(
         session, writer, child, ObservationDomain.ROUTINE, period_start, "비활성 기록"
     )
-    await update_observation(
+    await set_observation_status(
         session,
         domain=inactive.domain,
         child_id=child.id,
         observation_id=inactive.id,
-        fields={"status": ObservationStatus.STAND_ALONE},
+        status=ObservationStatus.STAND_ALONE,
     )
     await add_observation(
         session, writer, other_child, ObservationDomain.HEALTH, period_start, "다른 아이"
@@ -379,12 +472,12 @@ async def test_page_merges_five_domains_with_cursor_and_status_filter(session, f
     routine = await add_observation(
         session, writer, child, ObservationDomain.ROUTINE, date(2026, 9, 4), "양치"
     )
-    await update_observation(
+    await set_observation_status(
         session,
         domain="routine",
         child_id=child.id,
         observation_id=routine.id,
-        fields={"status": ObservationStatus.STAND_ALONE},
+        status=ObservationStatus.STAND_ALONE,
     )
     await add_observation(
         session, writer, other_child, ObservationDomain.ACTIVITY, date(2026, 9, 3), "다른 아이"

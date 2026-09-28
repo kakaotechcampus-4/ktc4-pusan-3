@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -86,7 +86,9 @@ async def find_observation(
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
     row = await session.scalar(
-        select(model).where(model.id == observation_id, model.child_id == child_id)
+        select(model).where(
+            model.id == observation_id, model.child_id == child_id, _not_deleted(model)
+        )
     )
     return _to_record(resolved, row) if row is not None else None
 
@@ -99,7 +101,10 @@ async def set_observation_status(
     observation_id: uuid.UUID,
     status: ObservationStatus,
 ) -> ObservationRecord | None:
-    """교정의 once_only/wrong 결과만 반영한다. 이력·성향 재계산은 호출자가 묶는다."""
+    """교정의 once_only/wrong 결과만 반영한다. 이력·성향 재계산은 호출자가 묶는다.
+
+    지운(deleted) 행은 교정 대상이 아니라 None 이다.
+    """
     status = ObservationStatus(status)
     if status not in {ObservationStatus.STAND_ALONE, ObservationStatus.INACTIVE}:
         raise ValueError("교정으로 설정할 수 없는 observation 상태다")
@@ -107,7 +112,7 @@ async def set_observation_status(
     model = _MODEL_BY_DOMAIN[resolved]
     row = await session.scalar(
         update(model)
-        .where(model.id == observation_id, model.child_id == child_id)
+        .where(model.id == observation_id, model.child_id == child_id, _not_deleted(model))
         .values(status=status)
         .returning(model)
     )
@@ -144,13 +149,18 @@ async def page_observations(
     cursor: ObservationCursor | None = None,
     limit: int = 20,
 ) -> ObservationPage:
-    """5종 병합 목록: 기간 overlap, 상태/성향/근거사용 필터, 역순 커서."""
+    """5종 병합 목록: 기간 overlap, 상태/성향/근거사용 필터, 역순 커서.
+
+    deleted 는 목록 필터로 열지 않는다. 보호자에게 보이지 않는 상태다.
+    """
     if not 1 <= limit <= 100:
         raise ValueError("limit은 1~100이어야 한다")
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from은 date_to보다 늦을 수 없다")
     resolved = ObservationDomain(domain) if domain is not None else None
     status = ObservationStatus(status)
+    if status is ObservationStatus.DELETED:
+        raise ValueError("deleted 는 목록으로 조회할 수 없는 상태다")
     result = (await session.execute(
         _PAGE_SQL,
         {
@@ -206,10 +216,25 @@ def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
     )
 
 
+def _not_deleted(model: type[Any]) -> Any:
+    """지운 행은 조회·수정·교정 어디에도 걸리지 않는다."""
+    return model.status != ObservationStatus.DELETED
+
+
 # -- 필드 검증 --
 
+# status 는 set_observation_status(교정)와 delete_observation(삭제)만 쓴다
 _MANAGED_FIELDS = frozenset(
-    {"id", "child_id", "raw_text", "observed_range", "created_at", "updated_at", "source_writer"}
+    {
+        "id",
+        "child_id",
+        "raw_text",
+        "observed_range",
+        "created_at",
+        "updated_at",
+        "source_writer",
+        "status",
+    }
 )
 
 
@@ -270,7 +295,7 @@ async def query_observations(
         raise ValueError("date_from은 date_to보다 늦을 수 없다")
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
-    stmt = select(model).where(model.child_id == child_id)
+    stmt = select(model).where(model.child_id == child_id, _not_deleted(model))
     # date_to는 inclusive — InMemoryStore(inmemory.py:79)의 observed_on <= date_to 와 일치
     dto_exclusive = date_to + timedelta(days=1) if date_to is not None else None
     if date_from is not None and dto_exclusive is not None:
@@ -306,7 +331,7 @@ async def update_observation(
         )
     row = await session.scalar(
         update(model)
-        .where(model.id == observation_id, model.child_id == child_id)
+        .where(model.id == observation_id, model.child_id == child_id, _not_deleted(model))
         .values(**values)
         .returning(model)
     )
@@ -320,11 +345,16 @@ async def delete_observation(
     child_id: uuid.UUID,
     observation_id: uuid.UUID,
 ) -> bool:
+    """행과 원문은 남기고 status 만 deleted 로 바꾼다.
+
+    이미 지운 행은 대상이 아니라 False 다.
+    """
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
     result = await session.scalar(
-        delete(model)
-        .where(model.id == observation_id, model.child_id == child_id)
+        update(model)
+        .where(model.id == observation_id, model.child_id == child_id, _not_deleted(model))
+        .values(status=ObservationStatus.DELETED)
         .returning(model.id)
     )
     return result is not None
