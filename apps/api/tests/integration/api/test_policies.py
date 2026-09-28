@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domains.consent.models import ConsentScope
+from app.domains.consent.repository import ACCOUNT_SCOPES, REQUIRED_ACCOUNT_SCOPES
+from app.domains.policy.catalog import SCOPE_CATALOG
 from app.domains.policy.models import PolicyVersion
 from app.domains.policy.repository import register_version
 
@@ -54,6 +56,17 @@ async def test_policies_come_in_display_order_with_labels(db_client):
     health = next(item for item in body if item["scope"] == "child_health")
     assert health["sensitive"] is True
     assert "제23조" in health["legal_basis"]
+
+
+def test_catalog_required_matches_what_signup_blocks_on():
+    """화면이 필수로 그리는 계정 동의 = 가입이 빠지면 막는 계정 동의.
+
+    "필수" 가 catalog(화면에 내려가는 값)와 REQUIRED_ACCOUNT_SCOPES(가입 검사) 두 곳에 있다.
+    한쪽만 바꾸면 화면은 선택이라 하는데 가입은 막히거나, 그 반대가 된다.
+    """
+    shown_required = {scope for scope in ACCOUNT_SCOPES if SCOPE_CATALOG[scope].required}
+
+    assert shown_required == set(REQUIRED_ACCOUNT_SCOPES)
 
 
 async def test_newer_version_replaces_older_one(db_client, session):

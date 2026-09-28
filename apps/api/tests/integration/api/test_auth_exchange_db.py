@@ -404,6 +404,30 @@ async def test_signup_records_optional_location_consent(db_client, session):
     assert location.child_id is None
 
 
+async def test_signup_accepts_the_registered_location_draft(db_client, session):
+    """마이그레이션이 등록한 위치 약관(draft-1)을 그대로 실으면 가입된다.
+
+    🚨 선택 동의라도 버전이 틀리면 가입 전체가 400 이다 — 보여 주지 않은 글에 "동의했다" 고
+       남기지 않는다. 그래서 화면은 위치 버전도 GET /policies 에서 받아야 한다 (#90).
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": [*REQUIRED_CONSENTS, {"scope": "location", "policy_version": POLICY}],
+        },
+    )
+
+    assert response.status_code == 200
+
+
 async def test_signup_saves_the_name_the_guardian_typed(db_client, session):
     """가입 화면의 "부르는 이름" 이 계정에 남고 세션 응답에도 실린다 (#172).
 
@@ -433,14 +457,17 @@ async def test_signup_saves_the_name_the_guardian_typed(db_client, session):
 
 @pytest.mark.parametrize(
     "nickname",
-    [None, "", "   ", "가" * 21],
-    ids=["missing", "empty", "blank", "too-long"],
+    [None, "", "   ", "가" * 21, "이\x00름", "이\n름"],
+    ids=["missing", "empty", "blank", "too-long", "nul", "newline"],
 )
 async def test_signup_without_a_usable_name_creates_nothing(db_client, session, nickname):
     """이름이 없거나 비었거나 화면 상한(20자)을 넘으면 400 이고 아무것도 만들지 않는다.
 
     화면이 이미 막는 값이지만 서버가 다시 본다 — 화면을 거치지 않은 요청도 있다.
     대기표도 태우지 않는다. 형식 오류는 공격이 아니라 고쳐서 다시 보내면 되는 일이다.
+
+    🚨 제어문자도 형식 오류다. NUL 은 Postgres text 에 들어가지 못해 그대로 두면 저장에서
+       500 이 나고, 줄바꿈은 이름 한 줄을 여러 줄로 그린다 (리뷰에서 찾음).
     """
     await seed_handoff(session, code="handoff-code")
     consent_code = (

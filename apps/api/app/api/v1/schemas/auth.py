@@ -27,9 +27,19 @@ NICKNAME_MAX = 20
 한쪽만 바꾸지 않는다."""
 
 Nickname = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=NICKNAME_MAX)
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=NICKNAME_MAX,
+        pattern=r"^[^\x00-\x1F\x7F]+$",
+    ),
 ]
-"""앞뒤 공백을 떼고 1자 이상. 공백만 보낸 이름은 이름이 아니다."""
+"""앞뒤 공백을 떼고 1자 이상. 공백만 보낸 이름은 이름이 아니다.
+
+🚨 제어문자(NUL · 줄바꿈 등)를 막는다. NUL 은 Postgres text 에 들어가지 못해 저장에서
+   500 이 나고, 줄바꿈은 한 줄짜리 이름을 여러 줄로 그린다.
+"""
 
 
 class AuthStatusResponse(BaseModel):
@@ -116,7 +126,11 @@ class SessionResponse(BaseModel):
     is_new: bool
     parent: ParentSummary
     consent_required: list[ConsentScope]
-    """아직 granted 가 아닌 계정 동의 스코프. 기존 회원도 약관이 바뀌면 채워진다."""
+    """아직 granted 가 아닌 계정 **필수** 동의 스코프. 선택 동의(location)는 여기 나오지 않는다.
+
+    🚨 지금은 "한 번이라도 동의했는가" 만 본다 — 약관 버전이 바뀌어도 기존 회원에게 다시 묻지
+    않는다. 약관 제3조 ⑥ 의 재동의는 배포 전에 만들 일이다 (docs/safety/consent-texts-v1.md).
+    """
 
 
 class ConsentRequiredResponse(BaseModel):

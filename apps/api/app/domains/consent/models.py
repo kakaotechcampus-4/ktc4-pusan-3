@@ -19,7 +19,7 @@ class ConsentScope(enum.StrEnum):
     QUALITY_IMPROVE = "quality_improve"
     LOCATION = "location"
     """보호자 휴대폰의 대략적인 위치 — 선택 동의 (#172). 아이가 아니라 보호자 본인의 정보라
-    계정 동의다. 본문은 위치기반서비스 이용약관 한 글이다 (위치정보법 제18·19조)."""
+    계정 동의다. 본문은 위치기반서비스 이용약관 한 글이다 (위치정보법 제19조)."""
 
 
 class ConsentAction(enum.StrEnum):
