@@ -17,6 +17,7 @@ dependencies = [
     "openai>=1.60",
     "tzdata>=2026.3",
     "openpyxl>=3.1.5",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
