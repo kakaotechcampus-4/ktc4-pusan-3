@@ -18,6 +18,7 @@ SUPERVISOR_MODEL · SUPERVISOR_BASE_URL 이 비면 MEMORY_* 를 쓴다 — 기�
 """
 
 import asyncio
+import calendar
 import json
 import os
 import time
@@ -35,7 +36,8 @@ import pytest
 from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRange
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.context import FoodContext
-from app.agents.food.schemas.common import FeedingStage, FoodTaskType
+from app.agents.food.schemas.common import FoodTaskType
+from app.agents.food.store import InMemoryProfile, in_memory_ports
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
@@ -45,6 +47,7 @@ from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 t
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
+from app.rules.age import Stage
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
@@ -71,6 +74,23 @@ _PINNED = os.getenv("EVAL_NOW")
 TODAY = date.fromisoformat(_PINNED) if _PINNED else datetime.now(KST).date()
 NOW = datetime(TODAY.year, TODAY.month, TODAY.day, 9, 0, tzinfo=KST)
 CHILD = UUID("00000000-0000-7000-8000-000000000001")
+
+# LiveCase.stage(Stage) → FoodContext 에 넣을 생일. build_gate 가 life_stage() 로 되돌려
+# 계산하므로, 각 단계 안에서 경계와 떨어진 안전한 월령을 하나씩 고른다.
+_STAGE_MONTHS: dict[Stage, int] = {
+    "infant_milk": 1,
+    "infant_weaning": 6,
+    "toddler": 24,
+    "preschool": 48,
+}
+
+
+def _birth_date_for(stage: Stage) -> date:
+    months = _STAGE_MONTHS[stage]
+    year, month = divmod(TODAY.year * 12 + TODAY.month - 1 - months, 12)
+    return date(year, month + 1, min(TODAY.day, calendar.monthrange(year, month + 1)[1]))
+
+
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
 DOMAINS = ("food", "health", "education", "activity", "routine")
 RESULT_PATH = Path(
@@ -127,7 +147,7 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
 @dataclass(frozen=True)
 class LiveCase:
     case: RoutingCase
-    stage: FeedingStage
+    stage: Stage
     label: str  # 변형이면 접미사가 붙는다 (RC20-i)
 
 
@@ -180,7 +200,7 @@ _CLEAR_CASES: tuple[RoutingCase, ...] = (
 _E2E_CASES: tuple[LiveCase, ...] = (
     *(LiveCase(case, case.stage, case.case_id) for case in RC_CASES),
     # 같은 입력을 영아기로 한 번 더 — 식이 단계는 발화가 아니라 아이 나이에서 코드가 정한다
-    LiveCase(CASES_BY_ID["RC20"], FeedingStage.INFANT, "RC20-i"),
+    LiveCase(CASES_BY_ID["RC20"], "infant_weaning", "RC20-i"),
     # T14 는 test_memory.py 에도 있지만 거기서는 Memory 만 돈다.
     # "저녁에는 뭘 먹이면 좋을까?" 가 Food 로 떨어지는지는 여기서만 실제로 확인된다
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
@@ -347,14 +367,11 @@ async def _run_once(
     )
     food_context = FoodContext(
         child_id=CHILD,
+        run_id=f"live-{live.label}",
         now=NOW,
         timezone=KST,
-        stage=live.stage,
-        memory=None,  # type: ignore[arg-type]
-        profile=None,  # type: ignore[arg-type]
-        safety=None,  # type: ignore[arg-type]
-        menu=None,  # type: ignore[arg-type]
-        nutrition=None,  # type: ignore[arg-type]
+        # 실 DB 포트는 아직 없다. birth_date 만 심어 build_gate 가 live.stage 를 되계산하게 한다
+        ports=in_memory_ports(profile=InMemoryProfile({CHILD: _birth_date_for(live.stage)})),
     )
     seed = _SEEDS.get(live.case.case_id)
     if seed is not None:

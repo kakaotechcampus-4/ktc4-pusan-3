@@ -10,9 +10,10 @@ Supervisor 출력은 routing_cases 의 정답(RC01 등)을 그대로 쓴다 — 
   이벤트  step · saved · guidance · food_routed · rerouted · failed · done
 """
 
+import calendar
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -23,7 +24,13 @@ import pytest
 from app.agents import pipeline
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.food.context import FoodContext
-from app.agents.food.schemas.common import FeedingStage, FoodTaskType
+from app.agents.food.schemas.common import FoodTaskType
+from app.agents.food.store import (
+    DaycareMealRow,
+    InMemoryDaycareMeals,
+    InMemoryProfile,
+    in_memory_ports,
+)
 from app.agents.memory.context import AgentContext
 from app.agents.memory.store import InMemoryStore
 from app.agents.pipeline import (
@@ -39,6 +46,7 @@ from app.agents.pipeline import (
     handle_input,
 )
 from app.agents.supervisor.routing import Guidance
+from app.rules.age import Stage
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
 
 KST = ZoneInfo("Asia/Seoul")
@@ -96,18 +104,34 @@ def memory_context() -> AgentContext:
     )
 
 
-def _food_context(stage: FeedingStage = FeedingStage.TODDLER) -> FoodContext:
-    return FoodContext(
-        child_id=CHILD,
-        now=NOW,
-        timezone=KST,
-        stage=stage,
-        memory=None,  # type: ignore[arg-type]
-        profile=None,  # type: ignore[arg-type]
-        safety=None,  # type: ignore[arg-type]
-        menu=None,  # type: ignore[arg-type]
-        nutrition=None,  # type: ignore[arg-type]
+def _birth_date_for(stage: Stage) -> date:
+    """`life_stage(생일, NOW.date()).stage` 가 이 값이 되는 생일. 경계에서 떨어진 안전한 월령."""
+    months = {"infant_milk": 1, "infant_weaning": 6, "toddler": 24, "preschool": 48}[stage]
+    today = NOW.date()
+    year, month = divmod(today.year * 12 + today.month - 1 - months, 12)
+    return date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
+
+
+def _food_context(stage: Stage = "toddler", *, daycare: bool = True) -> FoodContext:
+    """급식 행은 기본으로 하나 심어 둔다 — 기존 테스트의 tool 개수(5·7개)를 그대로 유지한다."""
+    rows = (
+        [
+            DaycareMealRow(
+                id=UUID(int=900),
+                child_id=CHILD,
+                serve_date=NOW.date(),
+                meal_slot="lunch",
+                menu_keys=("test",),
+            )
+        ]
+        if daycare
+        else []
     )
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: _birth_date_for(stage)}),
+        daycare=InMemoryDaycareMeals(rows),
+    )
+    return FoodContext(child_id=CHILD, run_id=RUN_ID, now=NOW, timezone=KST, ports=ports)
 
 
 @pytest.fixture
@@ -258,7 +282,7 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
     routed = _of(events, FoodRouted)[0]
     assert routed.task_type == FoodTaskType.MEAL_RECOMMENDATION
-    assert (routed.stage, routed.status) == (FeedingStage.TODDLER, "mock")
+    assert (routed.stage, routed.status) == ("toddler", "mock")
     assert len(routed.tools) == 5  # 식단 추천 × 유아기
     assert routed.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
 
@@ -301,7 +325,7 @@ async def test_RC21_영아기에는_영양소_분석을_하지_않는다(
         "RC21",
         memory_llm=memory_llm,
         memory_context=memory_context,
-        food_context=_food_context(FeedingStage.INFANT),
+        food_context=_food_context("infant_weaning"),
         events=events,
     )
 
