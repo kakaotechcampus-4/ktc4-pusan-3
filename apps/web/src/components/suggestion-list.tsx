@@ -183,10 +183,14 @@ export function SuggestionList({
             <li
               key={suggestion.id}
               /**
-               * 🚨 **고른 카드는 테두리가 `brand` 다.** 색의 뜻은 `chip-choice`(고르는 칩)와
-               *    같다 — "골랐음". `card-accent`("이 화면에서 먼저 읽을 한 장")와 모양이
-               *    비슷하지만 이 화면에는 accent 카드가 없고, 고르는 물건에 붙는 브랜드는
-               *    이미 이 시스템의 말이다.
+               * 🚨 **고른 카드는 테두리와 띠가 **함께** `brand` 가 된다.** 색의 뜻은
+               *    `chip-choice`(고르는 칩)와 같은 "골랐음" 이다.
+               * 🚨 **띠만 도메인 색으로 남기지 않는다.** 그렇게 두면 왼쪽에서 초록 테두리와
+               *    도메인 띠가 맞닿아 **띠가 두 줄로 보이고**, 둥근 모서리에서 띠가 잘려
+               *    턱이 생긴다 (실제로 그렇게 보였다). 프레임은 한 가지 색으로 한 가지를 말한다.
+               * 🚨 **도메인이 사라지는 것이 아니다** — 어느 영역인지는 탭과 머리줄이 글자로
+               *    지고 있고, 같은 묶음 안 카드는 전부 같은 도메인이다. 고른 카드의 프레임이
+               *    말하는 것은 **지금 고른 것**이다.
                * 🚨 **색만으로 말하지 않는다** — 체크 아이콘이 함께 선다 (문서 §3).
                */
               className={cn(
@@ -200,7 +204,13 @@ export function SuggestionList({
                   같은 말을 한다.
                   🚨 `aria-hidden` 이다 — 색은 단독 신호가 될 수 없고(§3), 어느 영역인지는
                   탭과 머리줄이 글자로 진다. */}
-              <span aria-hidden className={cn("w-1.5 shrink-0", domainBar(suggestion.agent))} />
+              <span
+                aria-hidden
+                className={cn(
+                  "w-1.5 shrink-0",
+                  selectedIds.includes(suggestion.id) ? "bg-brand" : domainBar(suggestion.agent),
+                )}
+              />
               <div className="min-w-0 flex-1">
                 <SuggestionRow
                   suggestion={suggestion}
@@ -274,7 +284,7 @@ function SuggestionRow({
           health 줄은 체크박스가 없으니 들여쓰지 않는다. */}
       <div className={isHealth ? "" : "pl-8"}>
         <Reasons
-          className="mt-2"
+          className="mt-4"
           items={
             isHealth
               ? [
