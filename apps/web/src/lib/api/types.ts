@@ -811,6 +811,17 @@ export interface PhotoCommitRequest {
  * 🚨 활동 lane 의 태그는 `affinity_id` 를 달지 않는다 — 사진 한 장을 성향으로 확정하지 않는다.
  */
 export interface PhotoCommitResponse {
+  /**
+   * ⚠️ **저장 대상이 계약서와 AI 파트 문서에서 다르다.** 계약서 §09 의 lane 표는 문서 lane 을
+   *    `observation_education 또는 event 만` 으로 적어 뒀는데, `docs/agents/data_model.md`
+   *    (2026-09-26)는 기관 문서를 **별도 테이블**로 뒀다 — `notice`(OCR 3갈래 분류의 일반 공지 ·
+   *    테이블 신설) · `daycare_meal`(INSERT 는 OCR·급식 배치만). 즉 문서 lane 이 만드는 것은
+   *    **아이 기록이 아닐 수 있다.**
+   *
+   * 🚨 **화면은 이 응답을 쓰지 않는다** — 저장하면 바로 홈이라(#151) 지금은 타입만 남아 있다.
+   *    응답 모양을 고치기 전에 **무엇이 저장되는지부터** 정해야 한다.
+   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+   */
   observations: Observation[];
   /**
    * 🚨 **일정은 여기서 만들어지지 않는다** (#151). 커밋이 만드는 것은 **관찰**이고, 일정은
