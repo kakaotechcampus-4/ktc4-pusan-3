@@ -211,10 +211,10 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 0회 경로 | 게이트 닫힘 · Growth 성장 추이 · Health 검진/병원/전달 서류 · 안전 조회 실패 |
 | **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 |
 | 그 외 출력 tool 거절 | 재호출하지 않는다 (2026-09-22 — 이전의 "거절 시 run당 1회 재시도"는 위 규칙으로 대체) |
-| 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음이라는 순서만 유지 |
+| 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
 | Activity | 진입 수를 **Activity 문서에서 따로 정한다.** 조회를 전부 사전 조회로 돌리면 모델을 부르는 자리가 출력 tool 하나뿐이라 위 표와 달라질 수 있다 — 담당자(이도헌)가 이 줄을 그 값으로 바꾼다 |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
-| 20초 초과 | 부분 결과로 전환 |
+| 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
 

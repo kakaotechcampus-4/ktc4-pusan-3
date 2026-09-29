@@ -9,7 +9,7 @@ LLM이 만들면 안 되는 값(child_id, 식이 단계)과 날짜 계산의 기
 한 값(Gate)으로 판단한다.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
@@ -47,6 +47,13 @@ class FoodContext:
     @property
     def today(self) -> date:
         return today_of(self.now, self.timezone)
+
+    def for_task(self) -> "FoodContext":
+        """task 하나 몫의 context. run state만 새로 만든다.
+
+        한 run에 Food task가 둘이면(식단 추천 + 영양소 분석) pipeline이 동시에 돌린다.
+        """
+        return replace(self, state=FoodRunState())
 
 
 async def build_gate(context: FoodContext) -> Gate:

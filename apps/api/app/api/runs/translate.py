@@ -12,7 +12,9 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
    - `MemoryNote`(Memory 가 한 말 — 되묻는 질문 포함) · `Unavailable`("준비 중" 안내) — 화면에 둘
      자리를 아직 안 정했다 (docs/event/event-draft-flow-v1.md §6 의 `note`). 🚨 pipeline 은 이 둘만
      있어도 done 으로 끝나서, 정하기 전까지 화면에는 내용 없는 성공이 뜬다.
-   - `FoodRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
+   - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
+   - `Partial` — 화면 계약에는 있지만 추천 카드가 아직 안 나가서 보낼 자리가 없다.
+     카드 번역과 같이 연다.
    pipeline 에 이벤트가 새로 생기면 tests/unit/api/test_run_translate.py 가 실패해서 정하라고 한다.
 
 🚨 필드를 하나씩 옮겨 적는다 (`dataclasses.asdict` 로 통째로 넘기지 않는다). agents 가 이벤트에

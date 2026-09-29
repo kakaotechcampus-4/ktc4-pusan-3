@@ -13,13 +13,14 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.pipeline import (
+    DomainRouted,
     Done,
     Emit,
     Event,
     EventDrafts,
     Failed,
-    FoodRouted,
     MemoryNote,
+    Partial,
     PipelineResult,
     Ref,
     Rerouted,
@@ -34,17 +35,18 @@ from app.agents.supervisor.routing import Guidance
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "DomainRouted",
     "Done",
     "Emit",
     "Event",
     "EventDraft",
     "EventDrafts",
     "Failed",
-    "FoodRouted",
     "Guidance",
     "InMemoryStore",
     "MemoryNote",
     "MemoryStore",
+    "Partial",
     "PipelineResult",
     "Ref",
     "Rerouted",
@@ -109,7 +111,7 @@ async def handle_input(
     return await _handle_input(
         raw_text,
         memory_context,
-        food_context,
+        {"food": food_context},
         run_id=run_id,
         emit=emit,
     )

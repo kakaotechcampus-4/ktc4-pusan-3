@@ -13,6 +13,7 @@ import pytest
 from app.agents import entrypoint, pipeline
 from app.agents.food.store import FoodPorts
 from app.agents.memory.store import InMemoryStore
+from app.agents.supervisor import routing
 from app.rules.age import life_stage
 
 CHILD = UUID(int=1)
@@ -22,8 +23,8 @@ PARENT = UUID(int=2)
 async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
-    async def fake(raw_text: str, memory_context: Any, food_context: Any, **kwargs: Any) -> str:
-        seen.update(raw_text=raw_text, memory=memory_context, food=food_context, **kwargs)
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(raw_text=raw_text, memory=memory_context, contexts=contexts, **kwargs)
         return "RESULT"
 
     # import 시점에 이름이 박히므로 pipeline 쪽을 바꿔 끼우면 안 먹는다
@@ -47,7 +48,7 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
     assert seen["run_id"] == "run-1"
     assert seen["emit"] is emit
 
-    memory, food = seen["memory"], seen["food"]
+    memory, food = seen["memory"], seen["contexts"]["food"]
     assert memory.child_id == CHILD
     assert memory.source_writer == PARENT  # 보호자 발화가 아이 것으로 저장되지 않게
     assert isinstance(memory.store, InMemoryStore)
@@ -60,6 +61,8 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
     assert memory.now == food.now  # 기준일이 두 Agent 사이에서 갈리지 않게
     assert memory.timezone is food.timezone is entrypoint.KST
     assert memory.now.tzinfo is entrypoint.KST
+    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다
+    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS
 
 
 def test_이벤트_타입이_전부_밖으로_나간다() -> None:
@@ -73,7 +76,7 @@ async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch
     """api 가 만든 store 에 써야 저장된 행을 api 가 다시 읽을 수 있다."""
     seen: dict[str, Any] = {}
 
-    async def fake(raw_text: str, memory_context: Any, food_context: Any, **kwargs: Any) -> str:
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
         seen["memory"] = memory_context
         return "RESULT"
 
@@ -113,8 +116,8 @@ async def test_생일을_주면_월령에서_단계를_고른다(
 ) -> None:
     seen: dict[str, Any] = {}
 
-    async def fake(raw_text: str, memory_context: Any, food_context: Any, **kwargs: Any) -> str:
-        seen["food"] = food_context
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen["food"] = contexts["food"]
         return "RESULT"
 
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
