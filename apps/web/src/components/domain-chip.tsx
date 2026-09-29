@@ -7,11 +7,13 @@ import { cn } from "@/lib/cn";
  * primitive 는 토큰만 알아야 한다 (apps/web/CLAUDE.md §2).
  *
  * 🚨 **도메인 색은 "이 제안이 어느 Agent 에서 왔는가" 하나만 뜻한다** (문서 §3). 칩으로도 쓰고
- *    열린 제안 줄의 **바탕**으로도 쓰지만, 뜻은 같다 — 예쁘라고 칠하는 자리는 없다.
+ *    아이콘 타일의 바탕으로도 쓰지만, 뜻은 같다 — 예쁘라고 칠하는 자리는 없다.
  * 🚨 **단독 신호가 될 수 없다.** 항상 아이콘 + 텍스트 라벨과 함께 나간다. 적록색약에서
  *    food(테라코타)와 health(플럼)가 가까워지는 자리를 라벨이 받는다.
- * 🚨 **한 화면에 도메인 색은 2개까지.** Agent 가 최대 2개(NF-01)라 자연히 지켜지고,
- *    제안 줄은 한 번에 하나만 열리므로 색 면은 항상 하나다.
+ * 🚨 **한 화면에 도메인 색은 2개까지.** Agent 가 최대 2개(NF-01)라 자연히 지켜진다.
+ * 🚨 **큰 면을 이 색으로 칠하려면 그 화면에 그 면이 몇 개까지 서는지 먼저 센다.**
+ *    05 의 열린 제안 줄이 이 바탕을 입고 있었는데, Agent 당 후보가 3가지가 되면서 면이 여섯이
+ *    됐다 — "한 화면에 2개" 는 칩을 세던 규칙이라 면으로 채우면 화면이 색 덩어리가 된다 (#151).
  */
 const DOMAIN_LABEL: Record<Agent, string> = {
   food: "식사",
@@ -28,11 +30,15 @@ const DOMAIN_FIELD: Record<Agent, string> = {
   health: "bg-health-soft text-health-ink",
 };
 
-const DOMAIN_INK: Record<Agent, string> = {
-  food: "text-food-ink",
-  activity: "text-activity-ink",
-  growth: "text-growth-ink",
-  health: "text-health-ink",
+/**
+ * 카드 왼쪽에 서는 **색 띠**. 🚨 `-soft` 가 아니라 **진한 쪽**이다 — 4px 밖에 안 되는 면이라
+ * 연한 색을 쓰면 `line`(1px 테두리)과 구분이 안 되고, 그러면 색이 있는지도 모르게 된다.
+ */
+const DOMAIN_BAR: Record<Agent, string> = {
+  food: "bg-food",
+  activity: "bg-activity",
+  growth: "bg-growth",
+  health: "bg-health",
 };
 
 const DOMAIN_PRESS: Record<Agent, string> = {
@@ -46,17 +52,17 @@ export function domainLabel(agent: Agent): string {
   return DOMAIN_LABEL[agent];
 }
 
-/** 색 면 하나 — `{domain}-soft` 바탕 + `{domain}-ink` 글자. 열린 제안 줄의 머리가 이걸 입는다. */
+/** 색 면 하나 — `{domain}-soft` 바탕 + `{domain}-ink` 글자. 07 의 아이콘 타일이 이걸 입는다. */
 export function domainField(agent: Agent): string {
   return DOMAIN_FIELD[agent];
 }
 
-/** 그 면 위의 글자. 🚨 회색 잉크를 얹지 않는다 — 대비를 `canvas` 기준으로 잘못 계산하게 된다. */
-export function domainInk(agent: Agent): string {
-  return DOMAIN_INK[agent];
+/** 카드 왼쪽 색 띠 (위 머리말). 🚨 띠는 **모양이 없는 면**이라 이름은 늘 글자가 따로 진다. */
+export function domainBar(agent: Agent): string {
+  return DOMAIN_BAR[agent];
 }
 
-/** 누르면 그 줄이 무슨 색으로 열릴지 미리 보여준다. */
+/** 눌러서 가는 곳이 그 도메인의 제안이라, 누른 색을 그 도메인 색으로 준다. */
 export function domainPress(agent: Agent): string {
   return DOMAIN_PRESS[agent];
 }
@@ -64,23 +70,16 @@ export function domainPress(agent: Agent): string {
 /**
  * 디자인 시스템 §7 `chip-domain`.
  *
- * `onField` 는 **자기 도메인 색 위에 앉을 때**다. 같은 `-soft` 바탕이면 칩이 통째로 사라지므로
- * 바탕만 `surface` 로 바꿔 띄운다 (글자색은 그대로 자기 도메인 잉크다).
+ * ⚠️ 자기 도메인 색 위에 앉을 때 바탕만 `surface` 로 바꿔 띄우는 `onField` 가 있었다.
+ * 그 자리(05 의 열린 제안 줄 머리)가 없어져서 뗐다 (#151) — 같은 `-soft` 위에 같은 `-soft` 칩을
+ * 놓는 자리가 다시 생기면 그때 되살린다.
  */
-export function DomainChip({
-  agent,
-  onField = false,
-  className,
-}: {
-  agent: Agent;
-  onField?: boolean;
-  className?: string;
-}) {
+export function DomainChip({ agent, className }: { agent: Agent; className?: string }) {
   return (
     <span
       className={cn(
         "text-label min-h-chip inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5",
-        onField ? cn("bg-surface", DOMAIN_INK[agent]) : DOMAIN_FIELD[agent],
+        DOMAIN_FIELD[agent],
         className,
       )}
     >

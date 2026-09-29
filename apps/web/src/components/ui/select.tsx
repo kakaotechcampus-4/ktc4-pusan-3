@@ -31,6 +31,19 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  * 🚨 **등장 애니메이션이 없다** (문서 §8). 쉐브론도 회전시키지 않는다 — 상호작용 전환은
  *    "색만 바꾸고 크기·위치는 건드리지 않는다" 라서, 방향은 아이콘을 갈아 끼워 말한다.
  * 🚨 **라벨을 지우지 않는다.** 좁은 화면에서 상자만 남기면 무엇을 고르는 상자인지 사라진다.
+ *    ⚠️ `labelHidden` 은 그 예외가 아니라 **자리를 옮기는 것**이다 — 라벨은 DOM 에 그대로 남아
+ *    (`sr-only`) 보조기술이 읽고, 눈에 보이는 이름은 **바깥 묶음**이 진다. 시각 칸(`TimeField`)
+ *    처럼 상자 둘이 한 값을 이루고 값 자체가 단위를 지고 있을 때만 쓴다("오전 9시" · "05분").
+ *    상자 하나가 홀로 설 때는 쓰지 않는다 — 그때는 위 규칙 그대로다.
+ *
+ * 🚨 **`placeholder` 는 "아직 안 골랐다" 를 말한다.** 이 값이 없으면 목록에 없는 `value` 가 와도
+ *    **첫 항목이 골라진 것처럼** 보인다 (`findIndex` 가 -1 이라 0 으로 떨어졌다) — 아무도 고르지
+ *    않은 값이 화면에 서는 길이라, 고르지 않은 상태가 있는 칸은 이걸 반드시 넘긴다.
+ *
+ * ⚠️ **`shape` 는 이 상자가 어디에 서는가다.** 기본값 `pill` 은 §7 "고르기 상자" 사양
+ *    (`full` · `min-h-touch`) 그대로고, `field` 는 **폼 칸**이라 `input`·`date-field` 와 같은
+ *    모양·높이(`rounded-field` · `min-h-field`)를 쓴다. 한 폼 안에서 한 칸만 알약이고 8px 낮으면
+ *    그 칸이 입력이 아니라 필터로 읽힌다 (문서 §7 "`min-h-field` 다" 와 같은 이유).
  *
  * 🚨 **사유(`error`)는 상자에 붙인다** (`TextInput` 과 같은 처리 · 문서 §7 입력).
  *    상자 밖에 떠 있는 문단으로 두면 보조기술이 그 문구를 **어느 칸의 문제인지** 잇지 못한다.
@@ -44,13 +57,23 @@ export function Select<T extends string>({
   options,
   onChange,
   error,
+  labelHidden = false,
+  placeholder,
+  shape = "pill",
 }: {
   label: string;
-  value: T;
+  /** 🚨 빈 문자열은 "아직 안 골랐다" 다 — 그때는 `placeholder` 가 선다. */
+  value: T | "";
   options: ReadonlyArray<{ value: T; label: string }>;
   onChange: (value: T) => void;
   /** 고르지 않았거나 잘못 고른 이유. 🚨 상자 밖 문단으로 대신하지 않는다 (위 머리말). */
   error?: string | null;
+  /** 라벨을 `sr-only` 로 옮긴다. 🚨 지우는 것이 아니다 (위 머리말). */
+  labelHidden?: boolean;
+  /** 아직 안 골랐을 때의 문구. 🚨 없으면 첫 항목이 골라진 것처럼 보인다 (위 머리말). */
+  placeholder?: string;
+  /** 필터·고르기 자리는 `pill`, 폼 칸은 `field` (위 머리말). */
+  shape?: "pill" | "field";
 }) {
   const id = useId();
   const listId = `${id}-list`;
@@ -62,11 +85,10 @@ export function Select<T extends string>({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
-  const selectedIndex = Math.max(
-    0,
-    options.findIndex((option) => option.value === value),
-  );
-  const current = options[selectedIndex];
+  const index = options.findIndex((option) => option.value === value);
+  const current = index < 0 ? undefined : options[index];
+  /** 🚨 안 골랐으면 **첫 항목에서** 시작한다 — 포커스는 어딘가에 있어야 한다. 고른 것은 아니다. */
+  const selectedIndex = Math.max(0, index);
 
   /** 🚨 닫을 때는 **항상** 버튼으로 돌아온다 — 고르든 그만두든. */
   const close = useCallback((focusTrigger = true) => {
@@ -146,7 +168,7 @@ export function Select<T extends string>({
 
   return (
     <div ref={rootRef} className="relative flex min-w-0 flex-1 flex-col gap-1">
-      <span id={labelId} className="text-caption text-ink-subtle">
+      <span id={labelId} className={labelHidden ? "sr-only" : "text-caption text-ink-subtle"}>
         {label}
       </span>
 
@@ -170,16 +192,22 @@ export function Select<T extends string>({
           }
         }}
         className={cn(
-          "border-line-strong bg-surface text-body-sm text-ink ease-standard min-h-touch flex w-full items-center justify-between gap-2 rounded-full py-2 pr-3 pl-3.5 text-left transition-colors duration-120",
-          "hover:bg-surface-muted active:bg-surface-muted",
+          "bg-surface text-ink ease-standard flex w-full items-center justify-between gap-2 py-2 pr-3 pl-3.5 text-left transition-colors duration-120",
           "border focus-visible:-outline-offset-2",
-          // 🚨 `cn()` 은 tailwind-merge 가 아니다 — 위에서 깐 `border-line-strong` 과 같은
-          //    속성이라 **한 번에 하나만** 고를 수 없어서, 사유가 있을 때만 덮어쓴다.
-          error ? "border-danger" : null,
+          // 🚨 `cn()` 은 tailwind-merge 가 아니다 — 모양마다 **통째로** 고른다.
+          shape === "field"
+            ? "text-body rounded-field min-h-field"
+            : "text-body-sm min-h-touch rounded-full",
+          // 🚨 누른 느낌도 모양을 따라간다 — 폼 칸은 `date-field` 와 같은 테두리 반응이다.
+          shape === "field"
+            ? "hover:border-ink-subtle"
+            : "hover:bg-surface-muted active:bg-surface-muted",
+          error ? "border-danger" : "border-line-strong",
         )}
       >
-        <span id={`${id}-value`} className="truncate">
-          {current?.label}
+        {/* 🚨 안 고른 자리는 `ink-subtle` 이다 — `date-field` 의 placeholder 와 같은 처리다. */}
+        <span id={`${id}-value`} className={cn("truncate", current ? null : "text-ink-subtle")}>
+          {current?.label ?? placeholder}
         </span>
         {open ? (
           <ChevronUp

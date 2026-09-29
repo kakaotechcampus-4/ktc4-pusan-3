@@ -63,8 +63,8 @@ export function ChildNav({ active, onRoute = true }: { active: ChildTab; onRoute
                 className={cn(
                   "min-h-touch ease-standard flex flex-col items-center justify-center gap-1 py-1 transition-colors duration-120",
                   // 🚨 켜진 칸의 신호를 **색 하나로 두지 않는다.** `brand` 와 `ink-subtle` 은
-                  //    휘도 차가 1.15:1 이라 그레이스케일·적록색약에서 거의 같고, 본문 서체가
-                  //    단일 웨이트라 굵기로도 못 만든다 (문서 §3 · §4). 그래서 모양을 하나 더 준다 —
+                  //    휘도 차가 1.15:1 이라 그레이스케일·적록색약에서 거의 같고, 손글씨는 굵기
+                  //    대비가 약해 굵기로도 못 만든다 (문서 §3 · §4). 그래서 모양을 하나 더 준다 —
                   //    07 탭이 이미 쓰는 `brand` 2px 선이라 새 언어가 아니다 (문서 §7).
                   //    자리는 늘 차지하게 두께만 깔아 두고 색은 아래 분기가 준다 —
                   //    켜질 때 칸이 밀리면 안 된다. 🚨 `border-transparent` 를 여기 두고
