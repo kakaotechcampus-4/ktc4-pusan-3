@@ -6,6 +6,7 @@ import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import type { WithdrawResponse } from "@/lib/api/types";
 import { currentMe } from "./membership";
+import { invalidPolicyVersion } from "./policies";
 import { consentEffective, recordConsent } from "./settings";
 
 /**
@@ -112,9 +113,19 @@ export const authHandlers = [
     if (missing.length > 0) {
       return apiError(403, "consent_required", "먼저 동의가 필요해요", { scopes: missing });
     }
-    // ⚠️ `nickname` 은 계약 확정 전이다 (#96 · `AuthSignupRequest` 주석). 목이라고 아무거나
-    //    200 으로 돌려주지 않는다 — 화면이 앞 화면에서 받아 온 값을 실제로 보내는지 건다.
-    //    서버가 이 필드를 안 받기로 하면 여기와 이름 화면을 함께 지운다.
+
+    /**
+     * 🚨 **등록된 버전이 아니면 계정을 만들지 않는다** (실서버와 같은 검사 · #91).
+     *    재현할 수 없는 문구에 "동의했다" 고 적지 않는 것이 이 검사의 이유다.
+     *    🚨 대기표는 **소비하지 않는다** — 낡은 화면은 공격이 아니라 사용자다. 다시 받아
+     *       확인만 하면 되고, 로그인부터 다시 하게 만들지 않는다 (§3-5).
+     */
+    const invalid = invalidPolicyVersion(body.consents ?? []);
+    if (invalid) {
+      return apiError(400, "policy_version_invalid", "동의 화면을 다시 불러와 주세요", invalid);
+    }
+    // 목이라고 아무거나 200 으로 돌려주지 않는다 — 화면이 앞 화면에서 받아 온 이름을
+    // 실제로 보내는지 건다 (서버도 이 필드를 받는다 · #90).
     if (!body.nickname) {
       return apiError(400, "validation_failed", "nickname 이 필요해요");
     }
@@ -151,6 +162,19 @@ export const authHandlers = [
     };
     if (!body.policy_version) {
       return apiError(400, "validation_failed", "policy_version 이 필요해요");
+    }
+    // 🚨 가입·아이 등록과 **같은 검사**다. 설정에서 켤 때만 낡은 버전을 받아 주면,
+    //    같은 동의가 어디서 켜졌는지에 따라 다른 글에 묶인다.
+    const staleVersion = invalidPolicyVersion([
+      { scope: body.scope, policy_version: body.policy_version },
+    ]);
+    if (staleVersion) {
+      return apiError(
+        400,
+        "policy_version_invalid",
+        "동의 화면을 다시 불러와 주세요",
+        staleVersion,
+      );
     }
     // 🚨 effective 를 여기서 손으로 만들지 않는다. 10 설정의 `GET /consents` 와 같은 표를
     //    써야 "설정에서 껐는데 다시 켜져 있다" 가 안 생긴다 (handlers/settings.ts).
