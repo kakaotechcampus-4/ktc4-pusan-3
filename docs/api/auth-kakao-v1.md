@@ -287,7 +287,9 @@ Cache-Control: no-store
 - `nickname` — 보호자가 가입 화면에 적은 **부르는 이름**. 필수, 앞뒤 공백을 떼고 1~20자(화면 상한과 같다), 실명이 아니어도 된다. 없거나 비었거나 길면 `400 validation_failed` 이고 대기표는 태우지 않는다 (#172).
 - `location` — **선택**이다. 고른 경우에만 싣는다. 빠져도 가입되고 `consent_required` 에도 나오지 않는다. 필수는 `service_terms` · `privacy_account` 둘뿐이다.
 
-🚨 **`policy_version` 을 클라이언트에 하드코딩하지 않는다.** 위 `draft-1` 은 예시일 뿐이다. 동의 화면은 **`GET /policies`**(무인증, #91)로 scope 마다 지금 유효한 `version` 과 본문을 받아 그리고, 받은 `version` 을 그대로 여기에 싣는다. 새 버전이 등록되면 그 응답이 바뀌므로 화면을 고칠 필요가 없다.
+🚨 **`policy_version` 을 클라이언트에 하드코딩하지 않는다.** 위 `draft-1` 은 예시일 뿐이다. 동의 화면은 **`GET /policies`**(무인증, #91)로 scope 마다 지금 유효한 `version` 과 정본 주소 `html_path` 를 받고, 받은 `version` 을 그대로 여기에 싣는다. 새 버전이 등록되면 그 응답이 바뀌므로 화면을 고칠 필요가 없다.
+
+🚨 **"전문 보기" 는 `html_path` 의 정본 페이지(`GET /policies/{scope}/{version}`)를 손대지 않고 연다** (#172). 그래서 `GET /policies` 는 원문을 내려보내지 않는다 — 화면이 원문을 직접 그리면 문단을 숨기거나 바꿀 수 있어 "보호자가 본 글" 을 증명하지 못한다 (멘토 #71-4).
 
 **응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 

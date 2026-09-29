@@ -47,8 +47,8 @@ async def test_policies_come_in_display_order_with_labels(db_client):
             "legal_basis",
             "required",
             "sensitive",
-            "content",
-        }
+            "html_path",
+        }, "원문(content)은 내려보내지 않는다 — 화면이 직접 그릴 일을 없앤다 (#179)"
         assert item["label"]
         # 🚨 위치는 선택이다. 필수로 내려가면 화면이 그 체크 없이는 가입을 막는다 (#172).
         assert item["required"] is (item["scope"] not in OPTIONAL)
@@ -81,6 +81,7 @@ async def test_newer_version_replaces_older_one(db_client, session):
         label="서비스 이용약관",
         content="# 새 약관",
         content_hash="hash",
+        content_html="<!doctype html><p>새 약관</p>",
         # 고정 날짜가 아니라 "방금" — 마이그레이션이 더 늦은 약관을 등록해도 이 행이 가장 새것이다.
         effective_at=datetime.now(UTC) - timedelta(minutes=1),
     )
@@ -89,7 +90,7 @@ async def test_newer_version_replaces_older_one(db_client, session):
     terms = next(item for item in body if item["scope"] == "service_terms")
 
     assert terms["version"] == "test-newer"
-    assert terms["content"] == "# 새 약관"
+    assert terms["html_path"] == "/policies/service_terms/test-newer"
 
 
 async def test_title_belongs_to_the_version_the_guardian_saw(db_client, session):
