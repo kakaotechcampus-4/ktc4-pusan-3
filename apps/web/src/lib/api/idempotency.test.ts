@@ -8,7 +8,21 @@ import {
   newIdempotencyKey,
   requiresIdempotencyKey,
 } from "./idempotency";
-import { confirmEvent, submitInput } from "./operations";
+import { submitEventDraft, submitInput } from "./operations";
+import type { SubmitEventBody } from "./types";
+
+/** 제출 본문 한 벌. 🚨 일자가 있어야 목이 받는다 (화면이 막는 것과 같은 규칙). */
+const DRAFT_BODY: SubmitEventBody = {
+  event: {
+    title: "지어낸 일정",
+    starts_at: "2026-09-18T10:00:00+09:00",
+    ends_at: null,
+    all_day: false,
+    event_type: "episodic",
+    category: "activity",
+  },
+  items: [],
+};
 
 /**
  * 클라이언트 쪽 강제.
@@ -30,8 +44,8 @@ describe("되돌릴 수 없는 경로 판정", () => {
       "/children/c1/observations",
       "/children/c1/inputs/extra",
       "/children/c1/health-safety/hs_1",
-      "/events/e1/cancel",
-      "/events/e1/confirm/again",
+      "/children/c1/events/e1",
+      "/children/c1/events/e1/items",
     ]) {
       expect(requiresIdempotencyKey(path)).toBe(false);
     }
@@ -42,7 +56,7 @@ describe("키 없는 호출", () => {
   it("요청을 보내지 않고 던진다 — 환경을 가리지 않는다", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    await expect(api.post(idempotentPath.confirmEvent("e1"))).rejects.toBeInstanceOf(
+    await expect(api.post(idempotentPath.submitEvent("c1"))).rejects.toBeInstanceOf(
       IdempotencyKeyRequiredError,
     );
     // 🚨 서버의 400 에 기대지 않는다. fetch 자체가 호출되지 않아야 한다.
@@ -71,8 +85,8 @@ describe("전용 함수", () => {
 
   it("같은 키를 다시 넘기면 같은 응답을 받는다 (재시도)", async () => {
     const key = newIdempotencyKey();
-    const first = await confirmEvent("e_retry", key);
-    const second = await confirmEvent("e_retry", key);
+    const first = await submitEventDraft("c1", DRAFT_BODY, key);
+    const second = await submitEventDraft("c1", DRAFT_BODY, key);
     expect(second).toEqual(first);
   });
 });
@@ -103,7 +117,7 @@ describe("키 수명 — 본문에 묶인 키", () => {
     expect(holder.current("한 줄 A")).not.toBe(first);
   });
 
-  it("본문을 안 넘기는 동작(확정 · 승인)은 예전 그대로다", () => {
+  it("본문을 안 넘기는 동작(제출 · 승인)은 예전 그대로다", () => {
     const holder = createIdempotencyKeyHolder();
     expect(holder.current()).toBe(holder.current());
   });

@@ -3,7 +3,7 @@
 Owner: 고태영 (프론트 리드)
 
 > 이 파일은 **프론트에서만 지키는 규칙**이다. 파트 경계를 넘는 규칙은 [최상위 CLAUDE.md](../../CLAUDE.md) §2 에 있다.
-> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) (무엇을 부르는가) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
+> 작업 전에 읽을 것: 최상위 `CLAUDE.md` (§2·§3·§5) → 이 파일 → API 서버의 **Swagger `/docs`** (무엇을 부르는가 — 계약 정본, 09-20 회의) → [`docs/web/design-system-v1.md`](../../docs/web/design-system-v1.md) (무엇으로 그리는가).
 > 로그인은 계약서 §04 가 아니라 [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) (서버 정본) · [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) (프론트) 를 본다.
 > 되돌릴 수 없는 5개를 건드린다면 [`docs/api/idempotency-v1.md`](../../docs/api/idempotency-v1.md) 도 읽는다 (승인 게이트 2곳이 거기 있다).
 
@@ -60,7 +60,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   그대로 들어 있다) 도 같다. 넷 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`)
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
-화면을 붙일 때는 [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 의 **화면 → 호출** 표를 기준으로 잡는다.
+화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
 
 ---
 
@@ -79,7 +79,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 02 아이 정보 (관계 · 성별 · 키 · 몸무게 · 알레르기 · 전부 선택) | `/child/[childId]/onboarding` |
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
-| 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
@@ -163,14 +163,14 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
-  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `TimeField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
-  `BottomSheet` · `Tabs` · `Toast` · `ButtonLink` ·
+  `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
   `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
+  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
@@ -214,7 +214,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   `line` 1px 은 `canvas` 위에서 1.21:1 이고 03 홈에는 **같은 선이 27px 위에도** 있어서, 한 신호가
   "여기부터 고정" 과 "여기부터 다른 종류" 를 나눠 쓰면 하단이 줄 쳐진 슬래브 하나로 읽힌다
 - 🚨 **켜진 탭에 모양 신호를 함께 준다** (칸 위쪽 `brand` 2px). `brand` 와 `ink-subtle` 은 휘도 차가
-  1.15:1 이고 본문 서체가 단일 웨이트라 굵기로도 못 만든다 — 색만 두면 단독 신호가 된다 (디자인 시스템 §3)
+  1.15:1 이고 손글씨는 굵기 대비가 약해 굵기로도 못 만든다 — 색만 두면 단독 신호가 된다 (디자인 시스템 §3)
 - 🚨 **설정에서 `aria-current` 를 붙이지 않는다** (`onRoute={false}`). 홈 칸을 켜 두는 것은 시각적
   결정이고, 제목이 "설정" 인 화면에서 "홈, 현재 페이지" 라고 읽히면 그건 사실이 아니다
 - 🚨 **네비가 가리키는 곳에는 라우트가 먼저 있어야 한다.** 07·09·10 은 내용이 생기기 전에도 화면을 뒀다 —
@@ -223,10 +223,39 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
-- 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 이 만드는 `event` 는 `draft` 고,
-  캘린더에 확정하는 것은 09 의 `POST /events/{eid}/confirm` 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
+- 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 은 **캘린더에 쓰지 않고**,
+  일정은 보호자가 항목의 시트에서 넣는다 (#151) — 화면의 저장 버튼에 `btn-approve` 도
+  `caution` 도 쓰지 않는다. 그 둘은 시트의 제출 버튼이 가져간다.
+  ⚠️ **커밋이 무엇을 만드는지는 확정 전이다.** 한동안 여기 "관찰을 만든다" 고 적어 뒀는데,
+  AI 파트 문서(`docs/agents/data_model.md` 2026-09-26)는 기관 문서를 **별도 테이블**로 뒀다 —
+  `notice` · `daycare_meal`. 계약서 §09 의 lane 표(문서 lane → `observation_education 또는 event`)와
+  어긋난다. 🚨 **그래서 문서 lane 화면에서 "기록" 이라고 쓰지 않는다** — 이 제품에서 "기록" 은
+  관찰을 가리키는 말이라(위 "화면에서 부르는 말"), 기관 문서를 그렇게 부르면 07 기록 탭에
+  올라온다고 약속하는 셈이다.
+  ⚠️ **`commit` 이 게이트인지는 미결이다** (#121 에서 제기, 답 없음 · PM 최종 결정).
+  초안만 내는 쪽으로 짠 이유는 `docs/web/event-draft-ui-v1.md` §4 — 결정이 반대로 나면
+  08 을 승인 화면으로 되돌리고 이 줄과 최상위 §2 를 함께 고친다.
   ⚠️ 디자인 시스템 §7 `card-photo` · §11 표가 한동안 `caution` 을 적어 뒀는데 최상위 §2 와 어긋나서
   #60 에서 문서 쪽을 고쳤다. "승인 전에는 저장되지 않아요" 는 경고가 아니라 **사실**이라 중립 면이다
+- 🚨 **08 은 저장하면 바로 홈이다.** 저장 결과 화면도 "사진 하나 더 넣기" 도 두지 않는다 (#151) —
+  여기서 할 일은 끝났고 저장한 것은 홈·07·09 가 이미 보여준다. 확인만 하는 화면이 한 칸 더 서면
+  부모는 **끝난 일을 한 번 더 닫아야** 한다.
+  - 🚨 **`replace` 로 간다.** `push` 면 뒤로가기가 **저장을 끝낸 확인 화면**으로 돌아오고, 거기서
+    같은 것을 또 누를 수 있다 (웹뷰의 기기 뒤로가기가 히스토리 기반이다 · [`apps/mobile/App.tsx`](../mobile/App.tsx))
+  - 🚨 **커밋 성공에서 `qk.child` 를 무효화한다.** run 이 끝날 때 도는 무효화는 커밋보다 **먼저**
+    돌고 관찰을 만드는 것은 커밋이라, 안 하면 **방금 저장한 것이 없는 홈**으로 간다
+- 🚨 **목록의 버튼 문구가 그 시트에서 할 수 있는 일을 다 말한다** — "고치기" 만 적어 두니 캘린더에
+  쓰는 일(게이트 ㉠)이 그 안에 있다는 것이 목록 어디에도 안 보였다. 급식은 예외다(일정 칸을 아예
+  안 세운다) · 이미 넣은 항목도 "고치기" 로 돌아간다(그 줄에서 넣을 일이 없다).
+  - 🚨 **넣은 항목은 목록에서 갈린다** — 칩 + **넣은 일시** 한 줄. 일시까지 세우는 이유는 시트를
+    닫으면 방금 고른 일시가 화면 어디에도 안 남기 때문이다. 🚨 위 칸이 같은 날을 이미 말하고
+    있으면 **시각만** 낸다 (`formatTimeOfDay` 가 있는 이유 · §4)
+  - 🚨 **넣으면서 확인한 값을 그 줄에도 얹는다**(`needs_review: false`). 승인 게이트를 지난 값이라
+    시트의 "이 내용으로 확인" 보다 무거운 확인이고, 안 얹으면 화면이 **방금 부모가 확인한 날짜**를
+    "못 읽었어요 · 고쳐야 저장돼요" 라고 계속 말한다. 🚨 그래도 **기록이 저장되는 것은 아니다** —
+    저장은 맨 아래 버튼 하나이고 빼는 길("이 항목은 저장하지 않기")도 그대로다
+  - 🚨 확인된 줄은 접힌 "잘 읽었어요" 로 옮겨 가므로 **그때 그 묶음을 펼친다** — 안 그러면 방금
+    넣은 줄이 화면에서 사라진 것처럼 보인다 (넣었다는 표시를 달고 그 표시를 접는 셈이다)
 - 🚨 **사진을 고르는 자리는 08 화면이 아니라 시트다** (`PhotoSourceSheet`). 03 홈의 카메라
   버튼과 09 하루 패널의 "사진으로 적기" 가 **그 자리에서** 시트를 열고, 촬영/앨범을 고르면
   바로 08 의 **읽는 중**으로 넘어간다 — 고르기만 하는 화면을 한 칸 두지 않는다.
@@ -268,8 +297,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **07 의 도메인 색은 왼쪽 아이콘 타일 하나까지다** (디자인 시스템 §3 예외 ㉡). 도메인 색의 뜻을
   "어느 Agent 결과인가" 에서 **"어느 영역인가"** 로 넓히면서 열린 자리다 — 07 은 제안이 아니라
   쌓인 것을 훑는 화면이고, 목록이 네 영역을 섞어 내려주므로 "한 화면에 2개" 상한의 예외이기도 하다
-  (그 상한은 제안 화면의 규칙이다). 🚨 **색 면을 타일 밖으로 넓히지 않는다** — 줄 전체를 칠하면
-  05 의 열린 제안 줄과 같은 언어가 되어 "고를 수 있는 것" 으로 읽힌다.
+  (그 상한은 제안 화면의 규칙이다). 🚨 **색 면을 타일 밖으로 넓히지 않는다** — 목록에서 줄 전체를 칠하면
+  화면이 색 덩어리가 된다. 05 의 열린 제안 줄이 그렇게 칠하고 있었는데, Agent 당 후보가 3가지가
+  되면서 면이 여섯이 되어 **거기서도 걷어냈다** (#151 · 도메인은 묶음 머리줄의 칩이 진다).
   🚨 **영역 이름은 항상 글자로 함께 선다** (색이 단독 신호가 될 수 없다).
   🚨 **브랜드는 여전히 못 쓴다** — "어디서 왔나"(도메인) 와 "무엇을 하는가"(브랜드) 를 같은 색으로 쓰지 않는다
 - 🚨 **09 월 그리드의 표식은 색이 아니라 모양이다** (디자인 시스템 §7 캘린더 그리드). 전부
@@ -311,6 +341,27 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를 나눈다.
   대신 일기 구역은 빈 날에도 **다른 날과 같은 모양으로** 선다 (빈 날에만 다른 버튼을 찾게 하지 않는다).
   같은 이유로 요약 줄은 빈 날에 아무 말도 하지 않는다 — 바로 아래가 같은 말을 더 크게 한다
+- 🚨 **05 는 고르기와 일정 만들기가 다른 단계다** (#151). ① 고른 것을 **채택**하고
+  (`POST /children/{cid}/suggestions/approve` · ⚠️ 계약서에 없다) ② "일정으로도 만들까요?" 를
+  따로 묻는다. 버튼 하나로 합치면 **"이걸로 할 건데 캘린더엔 안 넣을래"** 를 표현할 방법이 없고,
+  고르기만 하고 나간 선택은 24시간 뒤 `expired` 로 사라진다.
+  - 🚨 **채택은 승인 게이트가 아니다** — 캘린더를 안 쓰고 되돌릴 수 있다. `btn-approve` ·
+    `caution` 을 쓰지 않고 `Idempotency-Key` 도 받지 않는다(되돌릴 수 없는 5곳에 여섯 번째를
+    더하지 않는다). 🚨 **"기억해 뒀어요" 라고 쓰지 않는다** — "기억" 은 `profile_affinity` 를
+    가리키는 화면 용어인데 채택은 그것을 만들지 않는다
+  - 🚨 **채택 뒤에는 고르기를 잠근다**(`SuggestionList` 의 `busy`) — 서버가 받은 것과 화면이
+    달라지면 안 된다. 다음 단계에 쓰는 id 는 **응답이 준 것**이지 화면이 들고 있던 것이 아니다
+  - 🚨 **"안 만들래요" 버튼을 두지 않는다** — 안 만들 사람은 그냥 나간다(하단 "홈으로").
+    아무 일도 안 하는 것을 한 번 더 확인시키는 칸이다. 대신 **나가도 된다는 사실을 글자로** 말한다
+- 🚨 **알레르기 확인(게이트 ㉡)은 채택보다 먼저다** (`SafetyCheckSheet` · #151). 한동안 초안을
+  만든 뒤 승인 시트 안에서 물었는데, 채택과 일정 만들기가 갈리면서 **일정을 안 만드는
+  보호자에게는 영영 안 묻게** 됐다 — 알레르기는 캘린더가 아니라 **그 음식을 먹이는 일**의 위험이다.
+  - 🚨 **채택을 되돌리는 길이 없어서 먼저 묻는다.** 알레르기가 확인된 제안은 **채택 자체를
+    안 한다** — 그러면 초안도 안 생기고 "막힌 초안" 이라는 상태도 필요 없어진다
+  - 🚨 **시트를 승인 시트와 합치지 않는다.** 게이트 ㉡ 와 ㉠ 은 다른 단계라, 한 시트에 두면
+    "알레르기를 확인했다" 와 "캘린더에 넣었다" 가 한 화면에서 섞인다
+  - 🚨 **고른 것에 걸린 검사만 묻는다.** 🚨 `suggestion_id` 가 없어 어느 제안인지 모르면
+    **고른 것 전부를 막는다** — 알레르기에서 덜 막는 쪽으로 기울 수 없다
 - 🚨 **일반 추천(`GeneralSuggestionCard`)과 개인화 목록(`SuggestionList`)은 다른 컴포넌트 · 다른 타입 ·
   응답의 다른 필드다.** 한 곳에 플래그로 섞으면 언젠가 근거 0건인 것이 개인화로 그려지고, 그러면
   "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다 (최상위 §2).
@@ -456,7 +507,11 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
 
-`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · `POST /events/{eid}/confirm`(게이트 ㉠).
+`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · **초안 제출**(게이트 ㉠).
+
+⚠️ 게이트 ㉠ 이 `POST /events/{eid}/confirm` 에서 **초안 제출로 옮겨왔다** (#121 · #151). 초안을 만드는
+호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다. **경로는 확정 전이고**
+(`docs/event/event-draft-flow-v1.md` §6), `idempotentPath.submitEvent` 한 줄만 고치면 따라온다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
 경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
@@ -464,7 +519,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 ```tsx
 const idem = useIdempotencyKey();                       // @/lib/api/use-idempotency-key
 const mutation = useMutation({
-  mutationFn: () => confirmEvent(eventId, idem.current()),
+  mutationFn: () => submitEventDraft(childId, body, idem.current()),
   onSuccess: () => { idem.rotate(); },                  // 🚨 성공한 뒤에만
 });
 ```
@@ -503,6 +558,35 @@ const mutation = useMutation({
   재조회도 그 값을 받아 화면까지 되돌린다 (PR #71 리뷰). 버튼을 잠가서 막지 않는다 — 왕복을 기다리는 체크박스는
   낙관적 업데이트를 쓰는 이유 자체를 없앤다. 화면은 즉시 바뀌고 **요청만** 줄을 선다.
   재조회(`onSettled`)는 줄의 **마지막** 요청에서만 부른다.
+
+### 에러 바운더리 — API 실패와 다른 것을 잡는다
+
+바운더리가 잡는 것은 **렌더 도중 던져진 예외** 하나뿐이다. `useQuery` 의 실패도, 이벤트 핸들러
+안에서 난 예외도 도달하지 않는다. 그래서 위의 `ApiError` 규칙과 **겹치지 않고 서로를 대신하지도
+못한다.**
+
+| | 누가 | 어떻게 보이나 |
+| --- | --- | --- |
+| API 실패 | 화면이 `isError` → `CardFailed` | 그 자리만 바뀌고 나머지는 그대로 |
+| 화면을 그리다 터짐 | `app/error.tsx` · `child/[childId]/error.tsx` | 화면이 통째로 바뀜 |
+| 루트 레이아웃이 터짐 | `app/global-error.tsx` | 문서 전체를 대체 (Providers 없음) |
+| 없는 주소 | `app/not-found.tsx` | 404 로 응답한다 |
+| 한 구역만 터짐 | `components/app-error-boundary.tsx` | 그 구역만 `CardFailed` |
+
+- 🚨 **`throwOnError` 를 켜서 쿼리 실패를 바운더리로 올리지 않는다.** 부분 실패가 화면 전체 교체가
+  되어 "Agent 2개 중 1개만 성공해도 그 화면을 보여준다"(NF-06)가 깨진다.
+- 🚨 **에러 메시지를 화면에도 콘솔에도 내보내지 않는다.** `lib/report-render-error.ts` 한 곳을 쓰고,
+  남기는 것은 `name` 과 `digest` 뿐이다 — 이 경로에는 서버 문구와 보호자가 방금 친 한 줄이 실릴 수
+  있다 (최상위 §2).
+  ⚠️ **React 자체가 잡힌 예외를 콘솔에 한 번 찍는 것은 우리가 못 막는다.** 그래서 규칙은
+  "로그를 조심한다" 가 아니라 **`new Error()` 에 사용자 입력을 넣지 않는다** 다.
+- 🚨 **승인 게이트 2곳에 `AppErrorBoundary` 를 붙이지 않는다.** 승인 시트가 조용히 작은 회색 카드로
+  바뀌면 보호자가 "확정됐다 / 안 됐다" 를 구분할 수 없다. 되돌릴 수 없는 것 앞에서는 화면째
+  실패하는 편이 안전하다.
+- ⚠️ **개발 서버에서는 Next 에러 오버레이가 이 화면들을 덮는다.** 눈으로 확인할 때는
+  `pnpm build && pnpm start` 다. 404 는 `/web-smoke` 가 매번 확인한다 (`routes.json` 의 `status`).
+- `react-error-boundary` 는 §4 의 "UI 킷을 쓰지 않는다" 에 걸리지 않는다 — **화면을 그리지 않는**
+  라이브러리라 `es-hangul` 과 같은 칸이다. fallback 은 우리 primitive 로 그린다.
 
 ### SSE
 
@@ -643,14 +727,16 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - **서체는 두 벌이고 쓰는 자리가 다르다** (디자인 시스템 §4). 둘 다 자체 호스팅 · 92개 동적 서브셋이다.
   - `font-sans` = **학교안심 날개 R.** 기본값이라 따로 붙일 일이 없다.
   - 🚨 `font-doc` = **Pretendard.** 이용약관 · 개인정보 처리방침 · 동의 전문처럼 **읽고 동의해야 하는 긴 법률 문서** 화면에 쓴다.
-    폴백이 아니라 역할이다 — 손글씨는 단일 웨이트라 굵기가 브라우저 합성이고, 불리한 조항을 놓치지 않고 읽어야 하는 글에서는 손해만 된다.
+    폴백이 아니라 역할이다 — 손글씨는 자소 판별성이 낮아서, 불리한 조항을 놓치지 않고 읽어야 하는 글에서는 손해만 된다.
     **문서 화면은 통째로 `font-doc` 이다.** 제목만 손글씨로 두는 식으로 한 화면에서 섞지 않는다.
   - 🚨 `src/app/hakgyoansim.css` · `pretendard.css` 를 **손으로 고치지 않는다.** 각각 `scripts/build-hakgyoansim-subset.py` 와
     `pretendard` 패키지에서 뽑은 파일이고, 올릴 때 다시 뽑는다 (prettier 대상에서도 뺐다).
   - 🚨 **폰트 CDN 을 쓰지 않는다.** 둘 다 자체 호스팅이다 (최상위 §9). 새 폰트를 넣을 때는
     **라이선스가 woff2 변환과 재배포를 허용하는지 먼저 확인한다** — 금지면 자체 호스팅 자체가 불가능해진다.
-  - ⚠️ 본문 서체는 단일 웨이트라 **`label`(500)이 `body`(400)와 똑같이 나온다** (브라우저는 600 이상만 합성).
-    칩·탭·폼 라벨을 굵기로 구분하려 하지 말 것.
+  - 본문 서체는 **`wght 400–700` 가변폰트**다. 원본(학교안심 날개)이 Regular 한 벌뿐이라 빌드 스크립트가 700 마스터를
+    만들어 굽는다 — 선언한 네 굵기가 전부 실물이고 브라우저 합성은 없다.
+    ⚠️ 그래도 **굵기 하나에 신호를 걸지 말 것.** 손글씨는 굵기 대비가 약해서 13px 에서 500 과 600 의 차이는
+    활성/비활성을 혼자 나르지 못한다 — 색·크기와 함께 건다.
   - 근거와 실측치는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
 - 🚨 **`cursor` 는 `globals.css` 가 한 번에 건다.** Tailwind 4 preflight 는 버튼에 `cursor` 를 주지 않아서(v3 와 달라진 점) 전부 기본 화살표였다. 컴포넌트마다 붙이면 빠뜨린다 — 실제로 칩만 `not-allowed` 였다.
 - **상호작용 상태는 primitive 안에 있다** (디자인 시스템 §8 표). 화면에서 `hover:`·`active:` 를 따로 붙이지 않는다.
@@ -661,7 +747,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - **등장·스크롤 애니메이션을 만들지 않는다** (디자인 시스템 §8). 하루에 여러 번 지친 상태로 여는 화면이라, 처음엔 살아 있어 보여도 100번째엔 매번 기다려야 하는 것이 된다.
 - 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 추천이 없어서 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
-- 노치·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 웹뷰 안에서는 네이티브 셸이 이미 처리해서 0 이 되고, 모바일 브라우저 직접 접속에서만 값이 생긴다.
+- 노치·상태바·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 값의 출처는 둘이다 — 웹뷰 안에서는 네이티브 셸이 꽂아 주는 `--shell-inset-*`, 모바일 브라우저 직접 접속에서는 `env(safe-area-inset-*)`. 🚨 **셸이 그 자리를 대신 칠하게 두지 않는다** — 화면마다 아래 색이 달라서(네비 · 시트 · 그냥 화면) 셸이 한 색으로 칠하면 흰 띠가 남는다 (#133).
   `pt-safe` / `pb-safe` 유틸은 **safe area 만** 필요한 곳(하단 고정 바 등)에 남겨 뒀다 — 여백과 같이 주려면 위 §3 의 경고를 볼 것.
 
 ---

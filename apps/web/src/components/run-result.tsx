@@ -14,19 +14,16 @@ import {
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { domainLabel, observationAgent } from "@/components/domain-chip";
+import { EventDraftList } from "@/components/event-draft-list";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
+import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type { GuidanceEvent, NoteEvent } from "@/lib/api/sse";
-import {
-  isHealthObservation,
-  type Agent,
-  type ConfidenceSource,
-  type Observation,
-} from "@/lib/api/types";
+import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
 
 /**
  * 04 저장 결과 — run 이벤트를 화면으로 옮긴다.
@@ -153,7 +150,12 @@ export function RunResult({
   }
 
   const noChildObservation = state.observations.length === 0;
-  const savedAnything = state.observations.length > 0 || state.promoted.length > 0;
+  /**
+   * 🚨 **저장한 것이 없으면 "저장했어요" 라고 하지 않는다.** "이번 주말에 공원 산책 가기" 처럼
+   *    앞으로의 계획만 말한 한 줄은 아이에 대한 관찰이 아니라서 쌓을 것이 없고, 일정도 아직
+   *    **초안**이라 캘린더에 없다 — 그 화면에서 제목이 "저장했어요" 면 화면이 거짓말을 한다.
+   */
+  const savedSomething = !noChildObservation;
   /**
    * 🚨 **안내가 이미 이유를 말했으면 "기록을 찾지 못했어요" 를 겹쳐 세우지 않는다.**
    *    "땅콩 알레르기 있어" 는 못 읽은 한 줄이 아니라 **저장하면 안 되는 한 줄**이다 (최상위 §2).
@@ -166,21 +168,11 @@ export function RunResult({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 🚨 저장된 것이 없으면 "이렇게 저장했어요" 는 **사실이 아니다.** 안내만 나간 run
-          (알레르기·진단·구매 대행)과 되묻기만 한 run 이 그렇다 — 제목이 화면 내용을 앞질러
-          말하면 아래 카드가 전부 그 말을 뒤집는 꼴이 된다.
-          🚨 되묻기만 있는 run 에서는 **제목이 곧 할 일**이다. 화면에 남는 것이 질문 하나뿐이라
-             "확인했어요" 로 받으면 다 끝난 것처럼 읽힌다 — 최소 질문 1개라는 규칙(최상위 §2)이
-             화면에서는 "한 가지만" 이라는 말로 선다. */}
       <div>
         <h2 className="text-title text-ink">
-          {savedAnything
-            ? "이렇게 저장했어요"
-            : askingMore
-              ? "한 가지만 더 알려주세요"
-              : "적어주신 말을 확인했어요"}
+          {resultTitle({ savedSomething, askingMore, noticedWhy })}
         </h2>
-        {askingMore && !savedAnything ? (
+        {askingMore && !savedSomething ? (
           // 일어난 일만 적는다 — "답하면 저장돼요" 는 예측이라 쓰지 않는다 (§4).
           <p className="text-body-sm text-ink-muted mt-2">
             적어주신 말만으로는 아직 기록으로 남기지 않았어요.
@@ -210,12 +202,12 @@ export function RunResult({
           key={guidance.code}
           childId={childId}
           guidance={guidance}
-          savedAlongside={savedAnything}
+          savedAlongside={savedSomething}
         />
       ))}
 
       {state.unavailable.length > 0 ? (
-        <UnavailableCard agents={state.unavailable} savedAlongside={savedAnything} />
+        <UnavailableCard agents={state.unavailable} savedAlongside={savedSomething} />
       ) : null}
 
       {state.note ? <NoteCard note={state.note} onAnswer={onAnswerQuestion} /> : null}
@@ -236,8 +228,9 @@ export function RunResult({
         noticedWhy ? null : (
           <CardFailed>
             <p>
-              아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지
-              않았어요.
+              {state.drafts.length > 0
+                ? "일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."
+                : "아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지 않았어요."}
             </p>
           </CardFailed>
         )
@@ -271,8 +264,18 @@ export function RunResult({
         </section>
       ) : null}
 
-      {/* 저장된 것이 없으면 승격 정책을 말할 자리가 아니다 — 셀 것이 없다. */}
-      {savedAnything ? (
+      {/* 🚨 **일정 초안은 저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이 아래는
+          **보호자가 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게
+          저장했어요" 라는 제목이 아직 저장 안 된 것까지 덮는다 — 그래서 머리글로 가른다. */}
+      <EventDraftList
+        childId={childId}
+        incoming={state.drafts}
+        origin="input"
+        found="적어주신 말에서 일정을 찾았어요."
+      />
+
+      {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
+      {savedSomething ? (
         <p className="text-caption text-ink-subtle">
           한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
         </p>
@@ -291,8 +294,12 @@ export function RunResult({
             onPick={(agent) => onPickOffer([agent])}
             layout="list"
           />
+          {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** 일정만 말한 한 줄에는
+              쌓인 기록이 없다 — 남은 것을 안 세고 같은 문구를 쓰면 화면이 두 번 거짓말한다. */}
           <p className="text-caption text-ink-subtle mt-1">
-            고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요.
+            {savedSomething
+              ? "고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요."
+              : "고르지 않아도 괜찮아요. 기본값은 아무것도 더 하지 않는 거예요."}
           </p>
         </section>
       ) : null}
@@ -302,6 +309,32 @@ export function RunResult({
       </Button>
     </div>
   );
+}
+
+/**
+ * 04 의 제목. 🚨 **제목이 화면 내용을 앞질러 말하면 아래 카드가 전부 그 말을 뒤집는다.**
+ *
+ * 네 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
+ * - 저장됨 → 있는 그대로.
+ * - 되묻기만 (#141) → **제목이 곧 할 일**이다. 화면에 남는 것이 질문 하나뿐이라 "확인했어요" 로
+ *   받으면 다 끝난 것처럼 읽힌다. 최소 질문 1개라는 규칙(최상위 §2)이 화면에서는 "한 가지만" 이다.
+ * - 안내만 (#141 · 알레르기 · 진단 · 구매 대행) → 저장하지 **않기로 한** 한 줄이다. 읽고 판단까지
+ *   했다는 뜻으로 "확인했어요".
+ * - 일정 초안만 (#151) → 아이에 대한 관찰이 아니라 쌓을 것이 없고 일정도 아직 초안이다 (게이트 ㉠).
+ */
+function resultTitle({
+  savedSomething,
+  askingMore,
+  noticedWhy,
+}: {
+  savedSomething: boolean;
+  askingMore: boolean;
+  noticedWhy: boolean;
+}): string {
+  if (savedSomething) return "이렇게 저장했어요";
+  if (askingMore) return "한 가지만 더 알려주세요";
+  if (noticedWhy) return "적어주신 말을 확인했어요";
+  return "이렇게 이해했어요";
 }
 
 /**
@@ -479,14 +512,6 @@ function NoteCard({ note, onAnswer }: { note: NoteEvent; onAnswer: (question: st
     </Card>
   );
 }
-
-/** 발화의 출처. 서버 enum 을 화면 문구로 옮기는 표다 — 추측을 섞지 않는다. */
-const CONFIDENCE_LABEL: Record<ConfidenceSource, string> = {
-  institution_notice: "기관 공지",
-  parent_direct: "보호자 직접",
-  parent_hedged: "보호자 추측",
-  parent_hearsay: "전해 들음",
-};
 
 function ObservationRow({ observation }: { observation: Observation }) {
   const agent = observationAgent(observation.kind);

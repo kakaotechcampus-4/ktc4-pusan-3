@@ -5,7 +5,9 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import { qk } from "@/lib/api/queryKeys";
 import {
+  isDraftEvent,
   streamRunEvents,
+  type EventDraftsEvent,
   type FailedEvent,
   type GuidanceEvent,
   type LaneEvent,
@@ -18,7 +20,7 @@ import {
   type StepEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
-import type { Agent, Observation } from "@/lib/api/types";
+import type { Agent, EventDraft, Observation } from "@/lib/api/types";
 
 /**
  * 04 저장 결과 · 08 사진 분석 — run 이벤트 스트림 상태.
@@ -86,6 +88,11 @@ export interface RunState {
    */
   unavailable: Agent[];
   /**
+   * Agent 가 만든 일정 초안 묶음. 🚨 **아직 저장된 것이 아니다** — 보호자가 카드에서 제출해야
+   *    캘린더에 들어간다 (승인 게이트 ㉠). 08 사진 run 에서는 늘 빈 배열이다.
+   */
+  drafts: EventDraft[];
+  /**
    * 🚨 **서버가 `failed` 로 말한 실패만 들어온다.** 연결이 끊긴 경우는 여기 오지 않는다 —
    *    그건 `unconfirmed` 다. 둘을 섞으면 화면이 "아무것도 저장하지 않았어요" 라고 단정한다.
    */
@@ -104,6 +111,7 @@ export const initialRunState: RunState = {
   guidance: [],
   note: null,
   unavailable: [],
+  drafts: [],
   failure: null,
 };
 
@@ -205,6 +213,16 @@ export function runReducer(state: RunState, action: RunAction): RunState {
           return { ...state, status: state.partial ? "partial" : "done" };
 
         default:
+          /**
+           * 🚨 **초안 프레임은 이름이 확정되기 전이라 `isDraftEvent()` 로 받는다** (#151).
+           *    `case` 로 박아 두면 이름이 바뀌는 날 초안이 조용히 안 그려진다.
+           * 🚨 **덮어쓰지 않고 이어 붙인다** — 한 run 이 여러 프레임을 보낼 수 있고,
+           *    `DraftBook` 이 같은 일정을 이미 한 장으로 합쳐 보낸다 (#122 §5-1).
+           */
+          if (isDraftEvent(action.event.type)) {
+            const { drafts } = action.event.data as EventDraftsEvent;
+            return { ...state, drafts: [...state.drafts, ...drafts] };
+          }
           return state;
       }
   }

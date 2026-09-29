@@ -5,14 +5,18 @@ import { ApiError, isApiError } from "@/lib/api/errors";
 import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import {
   addHealthSafety,
+  approveSuggestions,
   commitPhotoRun,
-  confirmEvent,
+  createEventDrafts,
+  submitEventDraft,
   photoFormData,
   submitOnboarding,
   uploadPhoto,
 } from "@/lib/api/operations";
 import {
+  isDraftEvent,
   streamRunEvents,
+  type EventDraftsEvent,
   type GuidanceEvent,
   type LaneEvent,
   type NoteEvent,
@@ -26,6 +30,7 @@ import { api } from "@/lib/api/client";
 import type {
   Affinity,
   AffinitiesResponse,
+  Agent,
   AuthSession,
   ChildParentsResponse,
   ConsentResponse,
@@ -49,12 +54,18 @@ import type {
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
+  EventDraft,
+  SubmitEventBody,
+  SuggestionsRequest,
+  SuggestionsResponse,
   SuggestionFeedbackResponse,
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { submittedInput } from "./handlers/runs";
+
+import { suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -66,6 +77,25 @@ import { setScenario } from "./scenario";
  * 그래서 타입 검사(시드가 lib/api/types.ts 를 만족하는가)와 **별개로** 여기서 동작을 건다.
  * 이 파일이 통과한다는 건 화면이 개발 중에 보는 그 목이 아래를 지킨다는 뜻이다.
  */
+
+/**
+ * 초안 제출 본문. 🚨 **일자가 있어야 목이 받는다** — 화면이 잠그는 것과 같은 규칙을 계약도 건다.
+ * `suggestion_id` 를 넘기면 그 제안이 "이미 넣은 것" 으로 표시된다 (중복 제출 판정 대상).
+ */
+function draftBody(suggestionId?: string): SubmitEventBody {
+  return {
+    event: {
+      title: "지어낸 일정",
+      starts_at: "2026-09-18T10:00:00+09:00",
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "activity",
+    },
+    items: [],
+    ...(suggestionId ? { suggestion_id: suggestionId } : {}),
+  };
+}
 
 /** 목이 계약서 경로를 그대로 쓰는지 확인하려면 URL 을 직접 만들어야 할 때가 있다. */
 function raw(path: string, init?: RequestInit): Promise<Response> {
@@ -91,14 +121,13 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
   it("처음 응답을 그대로 돌려주고, 처리는 한 번만 한다", async () => {
     const key = newIdempotencyKey();
 
-    const first = await confirmEvent("e_1", key);
-    const second = await confirmEvent("e_1", key);
+    const body = draftBody("s_retry");
+    const first = await submitEventDraft("c1", body, key);
+    const second = await submitEventDraft("c1", body, key);
 
     expect(first.event.status).toBe("confirmed");
-    expect(second).toEqual(first);
-
     // 두 번째가 409 로 오면 "성공했는데 응답을 못 받은" 경우가 실패처럼 보인다 — 그걸 막는 줄이다.
-    expect(second.event.id).toBe("e_1");
+    expect(second).toEqual(first);
   });
 });
 
@@ -114,7 +143,7 @@ describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
 
   it("다른 엔드포인트에 같은 키를 돌려써도 거부한다", async () => {
     const key = newIdempotencyKey();
-    await confirmEvent("e_2", key);
+    await submitEventDraft("c1", draftBody(), key);
 
     await expect(
       addHealthSafety("c1", { type: "allergy", label: "지어낸항목", category: "식품" }, key),
@@ -126,10 +155,11 @@ describe("④ 같은 키 · 동시 요청", () => {
   it("한 번만 실행되고 나머지는 409 idempotency_in_progress", async () => {
     const key = newIdempotencyKey();
 
+    const body = draftBody("s_concurrent");
     const results = await Promise.allSettled([
-      confirmEvent("e_3", key),
-      confirmEvent("e_3", key),
-      confirmEvent("e_3", key),
+      submitEventDraft("c1", body, key),
+      submitEventDraft("c1", body, key),
+      submitEventDraft("c1", body, key),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -144,15 +174,205 @@ describe("④ 같은 키 · 동시 요청", () => {
 });
 
 describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
-  it("새 키로 이미 확정된 일정을 또 확정하면 409 already_confirmed", async () => {
-    await confirmEvent("e_4", newIdempotencyKey());
+  it("새 키로 이미 넣은 제안을 또 넣으면 409 already_confirmed", async () => {
+    await submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey());
 
-    // 같은 이벤트, 새 사용자 동작(= 새 키). 이건 재시도가 아니라 중복 확정 시도다.
-    await expect(confirmEvent("e_4", newIdempotencyKey())).rejects.toSatisfy(
+    // 같은 제안, 새 사용자 동작(= 새 키). 이건 재시도가 아니라 중복 제출이다.
+    await expect(submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey())).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "already_confirmed") && e.status === 409,
     );
   });
+});
 
+/**
+ * 초안 경로 — #121 · #122 에서 정한 것이 목에서도 지켜지는지.
+ * 🚨 타입은 모양만 본다. "쓰지 않는다" 와 "food 일 때만 묻는다" 는 동작이라 여기서 건다.
+ */
+describe("일정 초안", () => {
+  const makeDrafts = (ids: string[]) => createEventDrafts("c1", { suggestion_ids: ids });
+
+  /**
+   * 🚨 **제안 id 를 테스트에 박지 않는다.** 한 Agent 가 3가지씩 내게 되면서 픽스처 번호가 밀렸고,
+   *    `s_2` 를 놀이로 박아 뒀던 테스트가 조용히 식사를 고르고 있었다 — 픽스처에서 뽑는다.
+   */
+  const firstOf = (agent: Agent) => {
+    const found = suggestions.find((s) => s.agent === agent);
+    if (!found) throw new Error(`픽스처에 ${agent} 제안이 없다`);
+    return found.id;
+  };
+
+  it("초안을 만드는 호출은 저장된 event 가 아니라 초안을 준다 — 아직 행이 아니다", async () => {
+    const created = await makeDrafts([firstOf("food")]);
+
+    // 🚨 id · status · expires_at 이 없다. 있으면 DB 에 쓴 것이고, 그건 승인 게이트를 건너뛴 것이다.
+    expect(created.drafts.length).toBeGreaterThan(0);
+    for (const draft of created.drafts) {
+      expect(draft.draft_id).toBeTruthy();
+      expect(draft.op).toBe("create");
+      expect(draft.event_id).toBeNull();
+      expect(draft).not.toHaveProperty("id");
+      expect(draft).not.toHaveProperty("status");
+    }
+  });
+
+  it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
+    const created = await makeDrafts([firstOf("food")]);
+    for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();
+  });
+
+  it("🚨 food 제안 여러 건은 한 끼로 묶인다 — 고른 수와 초안 수가 1:1 이 아니다", async () => {
+    const foodIds = suggestions.filter((s) => s.agent === "food").map((s) => s.id);
+    // 🚨 픽스처에 식사 제안이 하나뿐이면 묶기가 깨져도 이 테스트가 통과한다.
+    expect(foodIds.length).toBeGreaterThan(1);
+
+    const created = await makeDrafts(foodIds);
+    expect(created.drafts).toHaveLength(1);
+    // 🚨 묶인 초안은 **고른 제안 전부**를 달고 나간다. 단수로 두면 나머지가 draft 인 채 만료된다.
+    expect(created.drafts[0].suggestion_ids).toEqual(foodIds);
+  });
+
+  it("🚨 food 가 아닌 제안은 고른 수만큼 초안이 나온다", async () => {
+    const rest = suggestions.filter((s) => s.agent !== "food" && s.agent !== "health");
+    const created = await makeDrafts(rest.map((s) => s.id));
+    expect(created.drafts).toHaveLength(rest.length);
+  });
+
+  it("🚨 사전검사는 **고르는 응답**에 실리고, 어느 제안 것인지 말한다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const data = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+
+    /**
+     * 🚨 **채택할 때 물어야 해서 고르는 화면이 미리 들고 있어야 한다** (#151).
+     *    초안을 만든 뒤에 물으면 **일정을 안 만드는 보호자에게는 영영 안 묻는다.**
+     */
+    const check = (data.prechecks ?? []).find((p) => p.code === "unknown_ingredient");
+    expect(check).toBeDefined();
+
+    /**
+     * 🚨 `suggestion_id` 가 없으면 화면은 재료 하나로 **고른 것 전부**를 막는다
+     *    (알레르기에서 덜 막는 쪽으로 기울 수 없다).
+     */
+    const target = data.suggestions.find((s) => s.id === check?.suggestion_id);
+    expect(target).toBeDefined();
+    // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 붙으면 안 된다.
+    expect(target?.agent).toBe("food");
+  });
+
+  it("🚨 초안 응답은 사전검사를 지지 않는다 — 물어보는 자리가 아니다", async () => {
+    const created = await makeDrafts([firstOf("food")]);
+    expect(created).not.toHaveProperty("prechecks");
+  });
+
+  it("🚨 채택은 캘린더와 다른 축이다 — status 만 바뀌고 일정은 안 생긴다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const listed = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+    const picked = listed.suggestions.filter((s) => s.agent === "activity").slice(0, 2);
+
+    const approved = await approveSuggestions("c1", {
+      suggestion_ids: picked.map((s) => s.id),
+    });
+
+    /**
+     * 🚨 **바뀐 행을 그대로 돌려준다.** 화면이 `status` 를 지어내면 서버가 일부만 채택했을 때
+     *    화면과 서버가 갈린다.
+     */
+    expect(approved.suggestions.map((s) => s.id)).toEqual(picked.map((s) => s.id));
+    for (const s of approved.suggestions) expect(s.status).toBe("approved");
+
+    /**
+     * 🚨 **채택했다고 일정이 생기지 않는다.** 이 축이 무너지면 "이걸로 할 건데 캘린더엔
+     *    안 넣을래" 가 표현 불가능해지고, 캘린더 쓰기가 게이트 없이 일어난다 (최상위 §2).
+     */
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: monthOf(new Date()) },
+    });
+    const days = month.days.filter((d) => d.has_event).length;
+    await approveSuggestions("c1", { suggestion_ids: picked.map((s) => s.id) });
+    const after = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: monthOf(new Date()) },
+    });
+    expect(after.days.filter((d) => d.has_event).length).toBe(days);
+  });
+
+  it("🚨 없는 제안을 채택하면 막는다 — 화면에 없는 것이 승인되지 않게", async () => {
+    await expect(
+      approveSuggestions("c1", { suggestion_ids: ["s_1", "s_does_not_exist"] }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "invalid_request"));
+  });
+
+  it("🚨 Agent 마다 후보가 여럿이고, 묶음 머리말이 함께 온다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const data = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+
+    const byAgent = new Map<string, number>();
+    for (const s of data.suggestions) byAgent.set(s.agent, (byAgent.get(s.agent) ?? 0) + 1);
+
+    /**
+     * 🚨 한 Agent 가 **3가지씩** 낸다 — 그 셋은 서로 다른 제안이 아니라 한 결정에 대한 대안이다.
+     *    하나뿐이면 "3가지 중에서" 머리줄도 묶기도 화면에서 한 번도 돌지 않는다.
+     */
+    for (const [, count] of byAgent) expect(count).toBeGreaterThan(1);
+
+    // 🚨 머리말은 후보를 담지 않는다 — 묶는 것은 화면이 `agent` 로 한다.
+    for (const group of data.groups ?? []) {
+      expect(byAgent.has(group.agent)).toBe(true);
+      expect(group).not.toHaveProperty("suggestions");
+    }
+    // 🚨 `food` 만 묶인다. 이 값이 없으면 화면은 묶임을 **말하지 않는다**(지어내지 않는다).
+    expect((data.groups ?? []).find((g) => g.agent === "food")?.merges_into_one).toBe(true);
+    expect(
+      (data.groups ?? []).find((g) => g.agent === "activity")?.merges_into_one,
+    ).toBeUndefined();
+  });
+
+  it("🚨 개인화 추천의 근거마다 화면에 나갈 문구가 붙어 온다", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const data = await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+
+    /**
+     * 🚨 `suggestion_evidence.note` 는 **Agent 가 쓰고 보호자 화면에 그대로 나간다**
+     *    (`docs/agents/data_model.md` · 2026-09-25). 비면 그 후보를 서버가 거절하므로
+     *    화면에 도달할 수 없다 — 화면이 대신 문장을 만들면 **거절됐어야 할 후보를 UI 가 덮는다.**
+     *    타입은 `note: string` 까지만 보고 **빈 문자열은 못 본다.** 그래서 여기서 건다.
+     */
+    for (const suggestion of data.suggestions) {
+      expect(suggestion.evidence.length).toBeGreaterThan(0);
+      for (const item of suggestion.evidence) expect(item.note.trim()).not.toBe("");
+    }
+  });
+
+  it("🚨 일자 없이 제출하면 막는다 — 화면이 잠그는 것과 같은 규칙을 계약도 건다", async () => {
+    const body = { ...draftBody(), event: { ...draftBody().event, starts_at: null } };
+
+    await expect(
+      submitEventDraft("c1", body as SubmitEventBody, newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "invalid_request"));
+  });
+
+  it("🚨 items 는 최종 목록이다 — 보낸 것만 저장된다", async () => {
+    const body: SubmitEventBody = {
+      ...draftBody("s_items"),
+      items: [{ item_id: null, item_name: "수영복" }],
+    };
+    const saved = await submitEventDraft("c1", body, newIdempotencyKey());
+
+    expect(saved.event.items.map((i) => i.item_name)).toEqual(["수영복"]);
+    // 🚨 새 준비물의 체크는 언제나 false 다 — 초안이 정하는 것은 INSERT 초기값뿐이다.
+    expect(saved.event.items.every((i) => !i.is_prepared)).toBe(true);
+  });
+
+  it("제출하면 확인한 값 그대로 저장된다 — 게이트가 거짓말하지 않는다", async () => {
+    const body = draftBody("s_same");
+    const saved = await submitEventDraft("c1", body, newIdempotencyKey());
+
+    expect(saved.event.title).toBe(body.event.title);
+    expect(saved.event.starts_at).toBe(body.event.starts_at);
+    expect(saved.event.status).toBe("confirmed");
+    expect(saved.suggestion_status).toBe("approved");
+  });
+});
+
+describe("승인 게이트 ㉡", () => {
   it("승인 게이트 ㉡ 도 같은 구조다", async () => {
     const item = { type: "allergy", label: "지어낸알레르기", category: "식품" };
 
@@ -206,6 +426,70 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     expect(seen).toContain("promoted");
     expect(seen.indexOf("saved")).toBeLessThan(seen.indexOf("promoted"));
     expect(seen.at(-1)).toBe("done");
+  });
+
+  it("일정 초안은 한 프레임에 배열로 온다 — 저장 뒤 · done 전", async () => {
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text: "지어낸 한 줄", source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    const seen: string[] = [];
+    let drafts: EventDraft[] = [];
+    for await (const event of streamRunEvents(run_id)) {
+      seen.push(event.type);
+      if (isDraftEvent(event.type)) drafts = (event.data as EventDraftsEvent).drafts;
+    }
+
+    // 🚨 프레임이 하나다. 초안마다 한 장씩 오면 화면이 묶음을 한 번에 못 그린다.
+    expect(seen.filter(isDraftEvent)).toHaveLength(1);
+    expect(drafts.length).toBeGreaterThan(0);
+
+    // 🚨 한 run 이 create 와 update 를 같이 낼 수 있다 — 화면이 op 로 엔드포인트를 가른다.
+    expect(drafts.some((d) => d.op === "create")).toBe(true);
+    const update = drafts.find((d) => d.op === "update");
+    expect(update?.event_id).toBeTruthy();
+    // 🚨 update 초안은 `before` 가 원본 전체다 — 없으면 "오후 3시 → 오후 5시" 를 못 그린다.
+    expect(update?.before?.items).toBeDefined();
+
+    // 🚨 초안은 저장된 게 아니다. id·status 가 붙으면 승인 게이트를 건너뛴 것이다.
+    for (const d of drafts) {
+      expect(d).not.toHaveProperty("id");
+      expect(d).not.toHaveProperty("status");
+      // 🚨 `is_prepared` 는 payload 에 없다 — 체크는 PATCH /event-items/{iid} 만의 몫이다 (#122).
+      for (const item of d.items) expect(item).not.toHaveProperty("is_prepared");
+    }
+  });
+
+  /**
+   * 🚨 한 줄이 무엇을 만드는지는 발화에 달려 있다 (CLAUDE.md §5 의도 3형). 목이 늘 둘 다 내면
+   *    "기록만 남는 한 줄" 과 "일정이 되는 한 줄" 의 화면을 따로 볼 수 없다.
+   *    낱말 규칙은 목의 것이고 진짜 판정은 Supervisor 의 일이다 — 여기서 거는 것은
+   *    **두 경로가 실제로 갈리는가**뿐이다.
+   */
+  it.each([
+    ["기록형", "오늘 그림놀이 했대", { observations: true, drafts: false }],
+    ["일정형", "이번 주말에 공원 산책 가기 저장해줘", { observations: false, drafts: true }],
+    ["혼합형", "지어낸 한 줄", { observations: true, drafts: true }],
+  ] as const)("%s 발화는 그에 맞는 것만 흘린다", async (_name, text, expected) => {
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text, source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    let observations = 0;
+    let drafts = 0;
+    for await (const event of streamRunEvents(run_id)) {
+      if (event.type === "saved") {
+        observations += (event.data as { observations: unknown[] }).observations.length;
+      }
+      if (isDraftEvent(event.type)) drafts += (event.data as EventDraftsEvent).drafts.length;
+    }
+
+    expect(observations > 0).toBe(expected.observations);
+    expect(drafts > 0).toBe(expected.drafts);
   });
 
   it("failed 시나리오는 원문을 돌려주고 거기서 끝난다", async () => {
@@ -1485,20 +1769,23 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     expect("affinity" in observation && observation.affinity).toBeNull();
   });
 
-  it("문서 lane 이 만드는 일정은 draft 다 — 승인 게이트는 여전히 09 에 있다", async () => {
+  it("🚨 커밋은 일정을 만들지 않는다 — 관찰만 저장한다", async () => {
     const runId = await upload();
     const parsed = await parsedOf(runId);
 
     const saved: PhotoCommitResponse = await commitPhotoRun(runId, {
       lane: "document",
       entries: checked(parsed.entries ?? []),
-      attach_to_calendar: true,
+      attach_to_calendar: false,
     });
 
-    expect(saved.event).not.toBeNull();
-    // 🚨 confirmed 로 만들면 승인 게이트가 3곳이 된다 (CLAUDE.md §2).
-    expect(saved.event?.status).toBe("draft");
-    expect(saved.calendar_date).not.toBeNull();
+    /**
+     * 🚨 `event.status` 가 없어진 뒤(#118) 이 커밋이 **게이트 없이 캘린더에 쓰는 유일한 경로**
+     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 고치기 시트의 승인 게이트가 넣는다.
+     */
+    expect(saved).not.toHaveProperty("drafts");
+    expect(saved).not.toHaveProperty("event");
+    expect(saved.observations.length).toBeGreaterThan(0);
   });
 
   it("한 달치 식단표도 항목 배열로 온다 — 화면이 접어 두는 이유", async () => {
