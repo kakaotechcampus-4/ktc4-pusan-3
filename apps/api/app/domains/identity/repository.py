@@ -159,10 +159,13 @@ async def consume_handoff(
     return HandoffRow(*row) if row is not None else None
 
 
-async def create_parent(session: AsyncSession) -> Parent:
-    """보호자 1건. 닉네임은 받지 않는다 — 카카오에서 가져오지 않고 동의 화면에서도
-    묻지 않는다 (§5-2 · NF-04 최소 수집). 설정 화면에서만 채운다."""
-    parent = Parent()
+async def create_parent(session: AsyncSession, *, nickname: str) -> Parent:
+    """보호자 1건. 이름은 가입 화면에서 보호자가 직접 적은 "부르는 이름" 이다 (#172).
+
+    카카오에서 가져오지 않는다 (§5-2 · NF-04 최소 수집) — 카카오 닉네임을 쓰면 보호자가
+    적지 않은 값이 저장되고, 동의문 1 이 "카카오에 요청하지 않는 것" 으로 알린 약속이 깨진다.
+    """
+    parent = Parent(nickname=nickname)
     session.add(parent)
     await session.flush()
     return parent

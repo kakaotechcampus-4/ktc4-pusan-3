@@ -21,6 +21,26 @@ BIND_PATTERN = r"^[A-Za-z0-9_-]{43}$"
 
 Bind = Annotated[str, StringConstraints(pattern=BIND_PATTERN)]
 
+NICKNAME_MAX = 20
+"""가입 화면(apps/web/src/app/auth/consent/page.tsx MAX_NICKNAME)과 같은 상한.
+
+한쪽만 바꾸지 않는다."""
+
+Nickname = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=NICKNAME_MAX,
+        pattern=r"^[^\x00-\x1F\x7F]+$",
+    ),
+]
+"""앞뒤 공백을 떼고 1자 이상. 공백만 보낸 이름은 이름이 아니다.
+
+🚨 제어문자(NUL · 줄바꿈 등)를 막는다. NUL 은 Postgres text 에 들어가지 못해 저장에서
+   500 이 나고, 줄바꿈은 한 줄짜리 이름을 여러 줄로 그린다.
+"""
+
 
 class AuthStatusResponse(BaseModel):
     """GET /auth/{provider}/status — 명세 §3-1.
@@ -74,6 +94,13 @@ class SignupRequest(BaseModel):
     bind: Bind
     """여기서도 요구한다 — consent_code 만으로 계정이 만들어지는 것을 막는다 (§3-5)."""
 
+    nickname: Nickname
+    """가입 화면의 "부르는 이름" (필수, 실명이 아니어도 된다). parent.nickname 에 저장한다.
+
+    동의문 1 이 "부르는 이름을 받는다" 고 알린다 — 칸이 없던 동안은 화면이 보낸 값을
+    서버가 조용히 버려 그 문장이 사실이 아니었다 (#172).
+    """
+
     consents: list[ConsentInput]
 
 
@@ -82,7 +109,8 @@ class ParentSummary(BaseModel):
 
     id: UUID
     nickname: str | None = None
-    """null 일 수 있다. 카카오에서 가져오지 않고 온보딩에서도 받지 않는다 (§5-2)."""
+    """가입 화면에서 받는다. 카카오에서 가져오지 않는다. 이름 칸이 생기기 전(#172)에 가입한
+    계정은 null 일 수 있다 (§5-2)."""
 
 
 class SessionResponse(BaseModel):
@@ -98,7 +126,11 @@ class SessionResponse(BaseModel):
     is_new: bool
     parent: ParentSummary
     consent_required: list[ConsentScope]
-    """아직 granted 가 아닌 계정 동의 스코프. 기존 회원도 약관이 바뀌면 채워진다."""
+    """아직 granted 가 아닌 계정 **필수** 동의 스코프. 선택 동의(location)는 여기 나오지 않는다.
+
+    🚨 지금은 "한 번이라도 동의했는가" 만 본다 — 약관 버전이 바뀌어도 기존 회원에게 다시 묻지
+    않는다. 약관 제3조 ⑥ 의 재동의는 배포 전에 만들 일이다 (docs/safety/consent-texts-v1.md).
+    """
 
 
 class ConsentRequiredResponse(BaseModel):

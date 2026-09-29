@@ -275,14 +275,19 @@ Cache-Control: no-store
 {
   "consent_code": "<가입 대기표>",
   "bind": "<같은 비밀>",
+  "nickname": "<부르는 이름>",
   "consents": [
-    { "scope": "service_terms",   "policy_version": "draft-0" },
-    { "scope": "privacy_account", "policy_version": "draft-0" }
+    { "scope": "service_terms",   "policy_version": "draft-1" },
+    { "scope": "privacy_account", "policy_version": "draft-1" },
+    { "scope": "location",        "policy_version": "draft-1" }
   ]
 }
 ```
 
-🚨 **`draft-0` 은 임시 placeholder 다.** 실제 약관·처리방침 본문이 확정되기 전이라 `policy_version` 테이블에 등록된 버전이 이것 하나뿐이다. 확정되면 새 버전이 등록되고 이 값은 바뀌므로 **클라이언트에 하드코딩하지 않는다** — 유효한 버전을 서버에서 받아오는 정책 조회 API 는 다음 Issue 에서 붙인다.
+- `nickname` — 보호자가 가입 화면에 적은 **부르는 이름**. 필수, 앞뒤 공백을 떼고 1~20자(화면 상한과 같다), 실명이 아니어도 된다. 없거나 비었거나 길면 `400 validation_failed` 이고 대기표는 태우지 않는다 (#172).
+- `location` — **선택**이다. 고른 경우에만 싣는다. 빠져도 가입되고 `consent_required` 에도 나오지 않는다. 필수는 `service_terms` · `privacy_account` 둘뿐이다.
+
+🚨 **`policy_version` 을 클라이언트에 하드코딩하지 않는다.** 위 `draft-1` 은 예시일 뿐이다. 동의 화면은 **`GET /policies`**(무인증, #91)로 scope 마다 지금 유효한 `version` 과 본문을 받아 그리고, 받은 `version` 을 그대로 여기에 싣는다. 새 버전이 등록되면 그 응답이 바뀌므로 화면을 고칠 필요가 없다.
 
 **응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 
@@ -340,7 +345,7 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 
 ### 4-4. 보호자 표시 이름
 
-`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 온보딩에서도 받지 않는다 — 보호자 닉네임을 받는 화면은 **10 설정의 `PATCH /parents`** 뿐이다.
+`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 보호자가 **가입 화면에 직접 적은 "부르는 이름"** 을 `signup` 요청(§3-5)으로 받는다 (#172). 바꾸는 곳은 **10 설정의 `PATCH /parents`** 다.
 
 **값이 없으면 화면이 "보호자"로 폴백한다.** 근거는 §5-2.
 
@@ -392,6 +397,11 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 | 동의 화면에서 함께 받는다 | ✕ **동의의 명확성이 흐려진다.** 법적 고지를 읽고 체크하는 화면에 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가"를 다투기 나빠진다. 리스크 ④(법정대리인 동의)가 걸린 화면이라 특히 그렇다 |
 | 빈 문자열 | ✕ "아직 입력 안 함"과 "빈 이름이 잘못 저장됨"을 구분할 수 없고, `length > 0` CHECK 제약도 걸 수 없다 |
 | 카카오 프로필 닉네임을 기본값으로 | ✕ NF-04 최소 수집과 부딪힌다 |
+
+> ⚠️ **뒤에 바뀌었다 (#172).** 가입 화면이 "부르는 이름" 을 동의와 같은 화면에서 필수로 받게 됐고(합친 이유는
+> [`apps/web/src/app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) 머리 주석 — 이름 칸과 동의 구역을
+> 제목으로 가르고 동의는 항목마다 따로 체크한다), 서버도 `signup` 에서 그 값을 받아 저장한다. 컬럼은 **계속 nullable** 이다 —
+> 이름 칸이 생기기 전에 가입한 계정이 있다.
 
 **계약서와 프론트가 이미 nullable 이다** — §04 응답 예시가 `parent: { id: "p1", nickname: null }` 이고 `apps/web/src/lib/api/types.ts` 도 `string | null` 이다. NOT NULL 로 두면 그 둘을 함께 되돌려야 한다.
 

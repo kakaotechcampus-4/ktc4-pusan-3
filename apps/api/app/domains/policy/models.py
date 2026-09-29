@@ -26,6 +26,16 @@ class PolicyVersion(Base, UUIDPk):
     version: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    """체크박스 옆 제목 · 전문의 제목. 본문처럼 그 버전의 글이다 (#168 리뷰).
+
+    코드에 두면 제목을 바꾸는 순간 옛 버전에 동의한 기록에도 새 제목이 소급 적용된다.
+    """
+    legal_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """화면에 그대로 보여 주는 근거 조문. 제목과 같은 이유로 버전마다 둔다.
+
+    없으면 보여 주지 않는다.
+    """
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
