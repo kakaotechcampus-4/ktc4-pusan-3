@@ -17,13 +17,14 @@ import pytest
 
 from app.agents import entrypoint
 from app.agents.entrypoint import (
+    DomainRouted,
     Done,
     EventDraft,
     EventDrafts,
     Failed,
-    FoodRouted,
     Guidance,
     MemoryNote,
+    Partial,
     Ref,
     Rerouted,
     Saved,
@@ -42,7 +43,7 @@ PARENT = uuid.UUID(int=1)
 
 SENT = {Step, Failed, Done, Guidance, EventDrafts}
 """화면으로 보내는 것."""
-HELD = {Saved, MemoryNote, Unavailable, FoodRouted, Unwritten, Rerouted}
+HELD = {Saved, MemoryNote, Unavailable, DomainRouted, Unwritten, Rerouted, Partial}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 
@@ -187,7 +188,8 @@ def test_sent_events_become_sse_frames(event):
     [
         MemoryNote("기록해 둘게요"),
         Unavailable(("activity",)),
-        FoodRouted("meal_idea", "toddler", ("search",), True, "mock"),
+        DomainRouted("food", "meal_recommendation", "mock", 0),
+        Partial("agent_error", ("food",), ("activity",)),
         Unwritten(hints=1, tools=0, note=True),
         Rerouted(bounced=1),
         # 화면은 관찰 내용 전체를 원하는데 Saved 는 id 만 준다 — 8단계에서 행을 읽어 채운다

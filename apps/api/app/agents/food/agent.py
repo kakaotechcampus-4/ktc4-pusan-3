@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.agents.common.llm_client import LLMClient
+from app.agents.common.schemas.task import DomainTask
 from app.agents.food.context import FoodContext, build_gate
 from app.agents.food.registry import closed_readout_key, requires_safety_check, tools_for
 from app.agents.food.schemas.common import FoodTaskType
-from app.agents.food.schemas.task import FoodTask
+from app.agents.food.schemas.task import task_type_of
 from app.rules.age import Stage
 
 # mock: 라우팅 확인용.
@@ -31,10 +32,11 @@ class FoodAgentResult:
     tools: tuple[str, ...]  # 이번 task에 모델에게 열리는 tool
     requires_safety_check: bool
     model_calls: int = 0  # Agent 진입 수 — 0(게이트 닫힘) · 1 · 2(안전 필터 후 재호출)
+    agent: Literal["food"] = "food"  # pipeline 이 DomainOutcome 으로 읽는다
 
 
 async def run(
-    task: FoodTask, context: FoodContext, *, client: LLMClient | None = None
+    task: DomainTask, context: FoodContext, *, client: LLMClient | None = None
 ) -> FoodAgentResult:
     """Food Agent 진입점."""
     # DB 연결 후 처리 순서
@@ -48,13 +50,14 @@ async def run(
     # 6. 규칙 기반 검사를 거쳐 응답.
     #    - 식단 추천: 금지 음식 필터링, 근거 확인, suggestion 형식 변환
     #    - 영양소 분석: 제안성 문장이나 불필요하게 정확한 수치가 포함됐는지 확인
+    task_type = task_type_of(task)
     gate = await build_gate(context)
-    key = closed_readout_key(task.task_type, gate)
+    key = closed_readout_key(task_type, gate)
     return FoodAgentResult(
-        task_type=task.task_type,
+        task_type=task_type,
         stage=gate.stage.stage,
         status="mock" if key is None else "unsupported_stage",
         request_texts=task.request_texts,
-        tools=tools_for(task.task_type, gate),
-        requires_safety_check=requires_safety_check(task.task_type),
+        tools=tools_for(task_type, gate),
+        requires_safety_check=requires_safety_check(task_type),
     )

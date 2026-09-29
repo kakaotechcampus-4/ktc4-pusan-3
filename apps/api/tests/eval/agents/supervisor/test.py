@@ -382,7 +382,7 @@ async def _run_once(
     result = await handle_input(
         live.case.text,
         memory_context,
-        food_context,
+        {"food": food_context},
         run_id=f"live-{live.label}",
         supervisor_client=supervisor_client,
         memory_client=memory_client,
@@ -434,7 +434,8 @@ def _judge(observed: Observed) -> None:
     }
     stray = sum(
         1
-        for task in result.routing.food_tasks
+        for task in result.routing.domain_tasks
+        if task.agent == "food"
         for text in task.request_texts
         if normalize(text) not in allowed
     )
@@ -442,10 +443,10 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"Food 가 food 요청이 아닌 조각을 받았다 ({stray}건)")
 
     expected = _expected_food_tasks(observed)
-    if len(result.food) != expected:
-        observed.failures.append(f"Food 호출 {len(result.food)}회 ≠ food 유형 {expected}개")
+    if len(_food(result)) != expected:
+        observed.failures.append(f"Food 호출 {len(_food(result))}회 ≠ food 유형 {expected}개")
 
-    for food in result.food:
+    for food in _food(result):
         # S3 · S6 — 분석에 식품 제안이 열리면 안 되고, 안전 필터는 모델에게 보이면 안 된다
         if (
             food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
@@ -456,13 +457,13 @@ def _judge(observed: Observed) -> None:
             observed.failures.append("filter_food_safety 가 모델에게 보인다")
 
     if observed.live.label == "RC20-i":
-        status = result.food[0].status if result.food else "(호출 없음)"
+        status = _food(result)[0].status if _food(result) else "(호출 없음)"
         if status != "unsupported_stage":
             observed.failures.append(f"영아기 영양소 분석이 unsupported_stage 가 아니다: {status}")
 
     # 루트 §4 — 저장이 검색보다 먼저
-    if "FoodRouted" in observed.order and "Saved" in observed.order:
-        if observed.order.index("FoodRouted") < observed.order.index("Saved"):
+    if "DomainRouted" in observed.order and "Saved" in observed.order:
+        if observed.order.index("DomainRouted") < observed.order.index("Saved"):
             observed.failures.append("Food 가 저장보다 먼저 불렸다")
 
     memory = result.memory
@@ -622,6 +623,11 @@ def _report(observed: Observed) -> None:
         observed.reports.append(f"{observed.live.case.case_id} 구간={stored or '(일정 없음)'}")
 
 
+def _food(result: PipelineResult) -> list[Any]:
+    """도메인 결과 중 Food 몫. mock 결과라 tools · stage 를 그대로 읽는다."""
+    return [item for item in result.domain if item.agent == "food"]
+
+
 def _expected_food_tasks(observed: Observed) -> int:
     """Supervisor 출력이 낸 food 유형 수. agent 상한에 걸려 food 가 빠지면 0 이다."""
     if "food" in observed.result.routing.dropped_agents:
@@ -652,7 +658,7 @@ def _print_case(observed: Observed, attempt: int) -> None:
     if result.rerouted:
         print(
             f"      다시 나눔: Memory 가 적지 않은 조각 {result.rerouted.bounced}개 → "
-            f"Food {list(result.rerouted.food_tasks)} (위 조각은 다시 나눈 결과)"
+            f"Food {list(result.rerouted.domain_tasks)} (위 조각은 다시 나눈 결과)"
         )
 
     memory = result.memory
@@ -665,7 +671,7 @@ def _print_case(observed: Observed, attempt: int) -> None:
             f"ended_by={memory.ended_by}{note}"
         )
         print(f"      저장 {_saved_summary(observed)}")
-    for food in result.food:
+    for food in _food(result):
         safety = "health_safety 사전 확인 대상" if food.requires_safety_check else "사전 확인 없음"
         print(
             f"    F {food.task_type}·{food.stage} ← {list(food.request_texts)} · "
@@ -754,7 +760,7 @@ def _record(observed: Observed) -> dict[str, Any]:
                 "tools": len(food.tools),
                 "requires_safety_check": food.requires_safety_check,
             }
-            for food in result.food
+            for food in _food(result)
         ],
         "guidance": [guidance.code for guidance in result.routing.guidance],
         "unavailable": list(result.routing.unavailable_agents),
