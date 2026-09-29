@@ -56,7 +56,6 @@ async def list_policies(session: SessionDep) -> list[PolicyResponse]:
             legal_basis=row.legal_basis,
             required=info.required,
             sensitive=info.sensitive,
-            content=row.content,
             html_path=(
                 f"/policies/{scope.value}/{row.version}" if row.content_html is not None else None
             ),
