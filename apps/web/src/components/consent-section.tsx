@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, MapPin, ShieldCheck, UserRound } from "lucide-react";
+import { FileText, MapPin, ShieldCheck, UserRound, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
@@ -10,19 +10,22 @@ import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { usePolicies } from "@/hooks/use-policies";
 import {
   api,
+  isApiError,
   qk,
   type ConsentRequest,
   type ConsentResponse,
   type ConsentsResponse,
 } from "@/lib/api";
 import {
-  CONSENT_POLICY_VERSION,
+  consentChoices,
+  consentTarget,
   LEGAL_DOCUMENTS,
-  OPTIONAL_CONSENTS,
+  policyHref,
   TERMS_NOT_FINAL,
-  type ConsentItem,
+  type ConsentChoice,
   type LegalDocument,
 } from "@/lib/consent";
 import { formatDay } from "@/lib/format";
@@ -51,6 +54,10 @@ import { formatDay } from "@/lib/format";
  * 🚨 **끄는 쪽과 켜는 쪽에 다른 목록을 보여준다** (`blocks` / `enables`). `blocks` 를 켜는
  *    시트에 돌려 쓰면 "동의하면 동작해요" 아래에 "이 기능이 멈춰요" 가 붙는다.
  *
+ * 🚨 **무엇이 선택인지, 어느 버전인지는 서버가 정한다** (#90 · `GET /policies`). 화면이 필수/선택
+ *    표를 따로 들고 있으면 서버의 판단과 어긋나고, 버전을 상수로 들고 있으면 등록되지 않은
+ *    버전으로 동의를 보내게 된다 (`400 policy_version_invalid`).
+ *
  * 🚨 **확인 시트는 예측을 쓰지 않는다.** 일어날 일만 적는다. 되살리는 길을 넓게 약속하지도
  *    않는다 — 다시 켜는 것은 되지만, 그 사이에 안 만들어진 제안은 안 돌아온다.
  *
@@ -66,19 +73,21 @@ import { formatDay } from "@/lib/format";
  *    타일이 없다. 그래도 표는 다섯 스코프를 다 든다: `ConsentScope` 로 인덱싱하므로 빠진
  *    키가 있으면 타입이 막고, 어느 줄이 타일을 쓰게 되든 여기 한 곳만 보면 된다.
  */
-const CONSENT_ICON = {
+const CONSENT_ICON: Record<string, LucideIcon> = {
   service_terms: FileText,
   privacy_account: UserRound,
   child_basic: FileText,
   child_health: ShieldCheck,
   location: MapPin,
-} as const;
+};
 
-type Pending = { item: ConsentItem; next: "granted" | "withdrawn" };
+/** 🚨 서버가 우리가 모르는 scope 를 주더라도 줄은 그린다 — 타일이 없다고 빼지 않는다. */
+const FALLBACK_ICON = FileText;
+
+type Pending = { choice: ConsentChoice; next: "granted" | "withdrawn" };
 
 export function ConsentSection({ childId }: { childId: string }) {
   const queryClient = useQueryClient();
-  const [detail, setDetail] = useState<ConsentItem | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   /**
    * 🚨 **바뀐 것을 소리로도 알린다.** 시트가 닫히고 줄의 글자가 바뀌는 것이 전부라, 화면을
@@ -87,19 +96,24 @@ export function ConsentSection({ childId }: { childId: string }) {
    */
   const [announcement, setAnnouncement] = useState("");
 
+  const policies = usePolicies();
+
   const consents = useQuery({
     queryKey: qk.consents(childId),
     queryFn: () => api.get<ConsentsResponse>("/consents", { query: { child_id: childId } }),
   });
 
   const change = useMutation({
-    mutationFn: ({ item, next }: Pending) => {
+    mutationFn: ({ choice: { policy }, next }: Pending) => {
       const body: ConsentRequest = {
-        scope: item.scope,
+        scope: policy.scope,
         action: next,
-        policy_version: CONSENT_POLICY_VERSION,
+        // 🚨 지금 화면이 보여준 약관의 버전이다 — 상수가 아니다 (#90).
+        policy_version: policy.version,
         // 아이 스코프는 보호자임을 확인한 표시를 함께 보낸다 (계약서 §04).
-        ...(item.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
+        ...(consentTarget(policy.scope) === "child"
+          ? { child_id: childId, guardian_attested: true }
+          : {}),
       };
       return api.post<ConsentResponse>("/consents", body);
     },
@@ -108,9 +122,16 @@ export function ConsentSection({ childId }: { childId: string }) {
     onSuccess: (_data, variables) => {
       setPending(null);
       setAnnouncement(
-        `${variables.item.shortLabel} 동의를 ${variables.next === "granted" ? "받았어요" : "철회했어요"}.`,
+        `${consentName(variables.choice)} 동의를 ${variables.next === "granted" ? "받았어요" : "철회했어요"}.`,
       );
       void queryClient.invalidateQueries({ queryKey: qk.consents(childId) });
+    },
+    /**
+     * 🚨 약관이 바뀌었으면 **바꾸지 않고 다시 받아 온다.** 화면이 보여준 글과 서버가 기록할
+     *    글이 다른 채로 동의를 남기지 않는다 (`400 policy_version_invalid`).
+     */
+    onError: (cause) => {
+      if (isApiError(cause, "policy_version_invalid")) void policies.refetch();
     },
   });
 
@@ -120,11 +141,14 @@ export function ConsentSection({ childId }: { childId: string }) {
   const withdrawnAt = (scope: string) =>
     consents.data?.history.find((h) => h.scope === scope && h.action === "withdrawn")?.acted_at;
 
-  if (consents.isPending) {
+  /** 🚨 선택 동의만 이 구역이 든다. 그 판단도 서버 값(`required`)이다. */
+  const optional = consentChoices(policies.data).filter(({ policy }) => !policy.required);
+
+  if (consents.isPending || policies.isPending) {
     return <SkeletonBlock label="동의 현황을 불러오는 중" />;
   }
 
-  if (consents.isError) {
+  if (consents.isError || policies.isError) {
     return (
       <CardFailed>
         <p>동의 현황을 불러오지 못했어요.</p>
@@ -142,16 +166,17 @@ export function ConsentSection({ childId }: { childId: string }) {
 
       <div>
         <SettingsGroup>
-          {OPTIONAL_CONSENTS.map((item) => {
-            const on = effective[item.scope] === true;
-            const at = on ? grantedAt(item.scope) : withdrawnAt(item.scope);
-            const busy = change.isPending && pending?.item.scope === item.scope;
+          {optional.map((choice) => {
+            const { policy } = choice;
+            const on = effective[policy.scope] === true;
+            const at = on ? grantedAt(policy.scope) : withdrawnAt(policy.scope);
+            const busy = change.isPending && pending?.choice.policy.scope === policy.scope;
 
             return (
               <SettingsInfoRow
-                key={item.scope}
-                icon={CONSENT_ICON[item.scope]}
-                title={item.shortLabel}
+                key={policy.scope}
+                icon={CONSENT_ICON[policy.scope] ?? FALLBACK_ICON}
+                title={consentName(choice)}
                 /* 🚨 상태를 색이 아니라 글자로 낸다 — 옆에 버튼이 있어서 색만으로는
                  "지금 켜짐" 과 "누르면 켜짐" 이 구분되지 않는다. */
                 status={on ? "동의함" : "동의하지 않음"}
@@ -164,14 +189,16 @@ export function ConsentSection({ childId }: { childId: string }) {
                    있어야 하는데, 켜고 끄는 버튼만 두면 **읽으려고 철회를 눌러야** 한다.
                    가입 화면은 이미 전문을 보여주므로, 없으면 설정이 가입보다 약해진다.
                    🚨 그 길을 오른쪽 버튼으로 **쌓지 않는다** — 줄이 내용의 두 배로 늘고
-                   오른쪽 열이 줄마다 하나와 둘을 오간다 (`SettingsInfoRow` 주석). */
-                onTitleClick={() => setDetail(item)}
+                   오른쪽 열이 줄마다 하나와 둘을 오간다 (`SettingsInfoRow` 주석).
+                   🚨 가입 화면과 **같은 페이지**를 연다 (서버 정본 HTML). 정본이 아직 없으면
+                      링크를 걸지 않는다 — 대신 보여줄 글을 만들지 않는다. */
+                titleHref={policyHref(policy) ?? undefined}
                 action={
                   <Button
                     variant="tertiary"
                     size="compact"
                     disabled={change.isPending}
-                    onClick={() => setPending({ item, next: on ? "withdrawn" : "granted" })}
+                    onClick={() => setPending({ choice, next: on ? "withdrawn" : "granted" })}
                   >
                     {busy ? <Spinner /> : null}
                     {on ? "철회하기" : "동의하기"}
@@ -183,24 +210,6 @@ export function ConsentSection({ childId }: { childId: string }) {
         </SettingsGroup>
       </div>
 
-      {/* 내용 보기 — 되돌릴 수 있는 시트라 스크림 탭·ESC 로 닫힌다. */}
-      <BottomSheet
-        open={detail !== null}
-        onClose={() => setDetail(null)}
-        variant="document"
-        title={detail?.label ?? ""}
-        description={detail?.legalBasis}
-        footer={
-          /* 🚨 가입 동의 화면과 **같은 시트, 같은 버튼**이다. 한쪽만 채운 버튼이면
-             같은 것을 여는 두 화면이 다른 무게로 읽힌다. */
-          <Button block variant="secondary" onClick={() => setDetail(null)}>
-            닫기
-          </Button>
-        }
-      >
-        {detail ? <ConsentDetail item={detail} /> : null}
-      </BottomSheet>
-
       {/* 켜고 끄기 확정 */}
       <BottomSheet
         open={pending !== null}
@@ -209,8 +218,8 @@ export function ConsentSection({ childId }: { childId: string }) {
         }}
         title={
           pending?.next === "withdrawn"
-            ? `${pending.item.shortLabel} 동의를 철회할까요?`
-            : `${pending?.item.shortLabel ?? ""} 동의를 받을까요?`
+            ? `${consentName(pending.choice)} 동의를 철회할까요?`
+            : `${pending ? consentName(pending.choice) : ""} 동의를 받을까요?`
         }
         description={
           pending?.next === "withdrawn"
@@ -244,10 +253,12 @@ export function ConsentSection({ childId }: { childId: string }) {
       >
         {pending ? (
           <div className="flex flex-col gap-4">
+            {/* 🚨 문구가 없는 scope(서버가 새로 추가한 것)면 목록 대신 아무 말도 하지 않는다 —
+                지어내지 않는다. 무엇에 동의하는지는 위 줄의 전문 보기가 답한다. */}
             <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
               {(pending.next === "withdrawn"
-                ? pending.item.blocks
-                : (pending.item.enables ?? pending.item.blocks)
+                ? (pending.choice.copy?.blocks ?? [])
+                : (pending.choice.copy?.enables ?? pending.choice.copy?.blocks ?? [])
               ).map((line) => (
                 <li key={line}>{line}</li>
               ))}
@@ -265,14 +276,27 @@ export function ConsentSection({ childId }: { childId: string }) {
 }
 
 /**
+ * 목록 줄에 쓰는 이름. 문구가 있으면 짧은 이름을, 없으면 서버가 준 법적 표기를 쓴다.
+ *
+ * 🚨 짧은 이름이 **법적 표기를 대신하지 않는다** — 무엇에 동의하는지의 정본은 그 줄이 여는
+ *    전문이다 (`lib/consent.ts` 의 `ConsentCopy.shortLabel`).
+ */
+function consentName(choice: ConsentChoice): string {
+  return choice.copy?.shortLabel ?? choice.policy.label;
+}
+
+/**
  * 🚨 약관 전문이 아니다. 보관 기간·삭제 범위가 미정이라(최상위 CLAUDE.md §10) 정식 문구를
  *    쓸 수 없고, 없는 조항을 지어 넣으면 그대로 배포된다. 확정된 사실만 보여주고 아직
- *    최종본이 아니라는 것을 화면에 밝힌다 (가입 동의 화면과 같은 규칙).
+ *    최종본이 아니라는 것을 화면에 밝힌다.
+ *
+ * 🚨 **동의 스코프는 이 시트를 쓰지 않는다** (#90). 그쪽 전문은 서버 정본 HTML 이고, 여기 남은
+ *    것은 서버에 아직 없는 개인정보 처리방침 하나뿐이다 — 올라오면 이 함수도 같이 지운다.
  */
-function ConsentDetail({ item }: { item: Pick<ConsentItem, "details"> }) {
+function ConsentDetail({ details }: { details: NonNullable<LegalDocument["details"]> }) {
   return (
     <div className="flex flex-col gap-5">
-      {item.details.map((section) => (
+      {details.map((section) => (
         <section key={section.heading}>
           <h3 className="text-section text-ink">{section.heading}</h3>
           <ul className="text-body-sm text-ink-muted marker:text-ink-subtle mt-2 flex list-disc flex-col gap-1.5 pl-5">
@@ -303,30 +327,64 @@ function ConsentDetail({ item }: { item: Pick<ConsentItem, "details"> }) {
  *
  * 🚨 **컴팩트한 줄이다** — 아이콘 타일이 없다. 여기 줄들은 "무엇을 하는 곳" 이 아니라
  *    **문서 목록**이라 훑는 속도가 먼저고, 타일을 세우면 손대는 구역들과 같은 무게로 읽힌다.
+ *
+ * 🚨 **이용약관은 사본이 아니라 서버 정본을 연다** (#90). 가입 화면이 여는 것과 같은 페이지라,
+ *    부모가 동의한 글과 나중에 다시 읽는 글이 같다는 것이 구조로 보장된다. 개인정보 처리방침만
+ *    아직 서버에 없어서 화면 안 시트로 남아 있다 — 올라오면 이 갈래가 없어진다.
  */
 export function LegalDocumentSection() {
   const [detail, setDetail] = useState<LegalDocument | null>(null);
+  const policies = usePolicies();
+
+  /** 문서에 붙는 서버 정본. 없으면(아직 못 받았거나 정본이 없으면) 링크를 걸지 않는다. */
+  const documentPolicy = (doc: LegalDocument) =>
+    doc.scope === undefined
+      ? undefined
+      : policies.data?.find((policy) => policy.scope === doc.scope);
 
   return (
     <>
       <SettingsGroup>
-        {LEGAL_DOCUMENTS.map((doc) => (
-          <li key={doc.id} className="px-4">
-            {/* 🚨 이름이 유일한 조작이다. 줄 전체를 버튼으로 만들지 않는 것은 다른 설정 줄과
-                같지만, 여기서는 **누를 것이 이것뿐**이라 밑줄이 더 중요하다. */}
-            <button
-              type="button"
-              onClick={() => setDetail(doc)}
-              className="text-body text-ink ease-standard decoration-line-strong hover:decoration-ink-muted active:text-ink-muted min-h-touch block max-w-full py-2 text-left underline decoration-1 underline-offset-4 transition-colors duration-120 focus-visible:-outline-offset-2"
-            >
-              {doc.label}
-            </button>
-          </li>
-        ))}
-      </SettingsGroup>
+        {LEGAL_DOCUMENTS.map((doc) => {
+          const policy = documentPolicy(doc);
+          const href = policy ? policyHref(policy) : null;
 
-      {/* 어느 판인지. 🚨 약관을 고치면 이 값부터 올라간다 (`lib/consent.ts`). */}
-      <p className="text-caption text-ink-subtle">{CONSENT_POLICY_VERSION} 판이에요.</p>
+          return (
+            <li key={doc.id} className="px-4 py-1">
+              {/* 🚨 이름이 유일한 조작이다. 줄 전체를 버튼으로 만들지 않는 것은 다른 설정 줄과
+                  같지만, 여기서는 **누를 것이 이것뿐**이라 밑줄이 더 중요하다. */}
+              {href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={LEGAL_LINK}
+                  aria-describedby={`${doc.id}-version`}
+                >
+                  {doc.label}
+                </a>
+              ) : doc.details ? (
+                <button type="button" onClick={() => setDetail(doc)} className={LEGAL_LINK}>
+                  {doc.label}
+                </button>
+              ) : (
+                /* 🚨 **못 여는 링크를 그리지 않는다.** 정본을 못 받았을 때 누르면 아무 일도
+                   안 일어나는 밑줄이 서는 대신, 왜 못 여는지를 아래 줄이 말한다. */
+                <span className="text-body text-ink-subtle block py-2">{doc.label}</span>
+              )}
+
+              {/* 어느 판인지. 🚨 문서마다 다르다 — 약관은 저마다 버전을 갖는다 (#168). */}
+              <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
+                {policy
+                  ? `${policy.version} 판이에요.`
+                  : doc.scope !== undefined
+                    ? "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."
+                    : "아직 정식 문서가 아니에요."}
+              </p>
+            </li>
+          );
+        })}
+      </SettingsGroup>
 
       <BottomSheet
         open={detail !== null}
@@ -340,8 +398,12 @@ export function LegalDocumentSection() {
           </Button>
         }
       >
-        {detail ? <ConsentDetail item={detail} /> : null}
+        {detail?.details ? <ConsentDetail details={detail.details} /> : null}
       </BottomSheet>
     </>
   );
 }
+
+/** 문서 목록의 밑줄 글자. 링크든 버튼이든 같은 모양이어야 한다 — 하는 일이 같다(읽는다). */
+const LEGAL_LINK =
+  "text-body text-ink ease-standard decoration-line-strong hover:decoration-ink-muted active:text-ink-muted min-h-touch block max-w-full py-2 text-left underline decoration-1 underline-offset-4 transition-colors duration-120 focus-visible:-outline-offset-2";

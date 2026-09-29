@@ -1,18 +1,30 @@
 "use client";
 
-import { useState } from "react";
-
-import { BottomSheet } from "@/components/ui/bottom-sheet";
-import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { TERMS_NOT_FINAL, type ConsentItem, type ConsentScope } from "@/lib/consent";
+import {
+  isConsentChecked,
+  policyHref,
+  POLICY_TEXT_PENDING,
+  type ConsentChecked,
+  type ConsentChoice,
+} from "@/lib/consent";
+import type { Policy } from "@/lib/api";
 
 /**
- * 동의 항목 목록 + 전문 시트. **가입 동의(계정 2건)와 01 아이 만들기(아이 2건)가 같이 쓴다.**
+ * 동의 항목 목록. **가입 동의(계정)와 01 아이 만들기(아이)가 같이 쓴다.**
  *
  * 왜 한 컴포넌트인가 — 두 화면이 묻는 것은 다르지만 **묻는 방식은 같아야 한다.** 한쪽만
- * 전문 시트가 없거나 `[필수]` 표기가 다르면, 부모는 같은 종류의 물음을 두 가지 무게로 읽는다.
+ * 전문 보기가 없거나 `[필수]` 표기가 다르면, 부모는 같은 종류의 물음을 두 가지 무게로 읽는다.
+ *
+ * 🚨 **그리는 값은 전부 서버가 준다** (#90). 제목 · 근거 조문 · 필수 여부 · 순서 · 그리고
+ *    동의로 기록될 버전까지 `GET /policies` 의 응답이다. 화면이 들고 있는 것은 체크박스 밑
+ *    한 줄(`copy.description`)뿐이다.
+ *
+ * 🚨 **전문은 화면이 그리지 않는다.** 서버가 저장해 둔 정본 HTML 을 새 창으로 연다 —
+ *    화면이 본문을 직접 그리면 문단을 숨기거나 순서를 바꿀 수 있어 "보호자가 본 글" 을
+ *    증명하지 못한다 (멘토 #71-4 · #179). 정본이 아직 없으면 **버튼을 숨긴다.**
  *
  * 🚨 **"전체 동의" 를 두지 않는다.** 민감정보(`child_health`)는 다른 동의와 **구분해서**
  *    받아야 한다 (개인정보보호법 제23조). 한 번에 쓸어 담는 버튼이 그 구분을 없앤다.
@@ -21,100 +33,57 @@ import { TERMS_NOT_FINAL, type ConsentItem, type ConsentScope } from "@/lib/cons
  *    없는 2곳(캘린더 쓰기 · 건강 기록 확정) 전용이다 (최상위 CLAUDE.md §2).
  */
 export function ConsentChecklist({
-  items,
+  choices,
   checked,
   onChange,
 }: {
-  items: ConsentItem[];
-  checked: Partial<Record<ConsentScope, boolean>>;
-  onChange: (scope: ConsentScope, next: boolean) => void;
+  choices: ConsentChoice[];
+  checked: ConsentChecked;
+  /** 🚨 체크는 boolean 이 아니라 **어느 버전에 동의했는가**로 기록된다 (`lib/consent.ts`). */
+  onChange: (policy: Policy, next: boolean) => void;
 }) {
-  /** 전문을 펼쳐 볼 항목. null 이면 시트가 닫혀 있다. */
-  const [detail, setDetail] = useState<ConsentItem | null>(null);
-
   return (
-    <>
-      <div className="flex flex-col gap-3">
-        {items.map((item) => (
-          <Card key={item.scope}>
+    <div className="flex flex-col gap-3">
+      {choices.map(({ policy, copy }) => {
+        const href = policyHref(policy);
+
+        return (
+          <Card key={policy.scope}>
             <Checkbox
-              checked={checked[item.scope] === true}
-              onChange={(next) => onChange(item.scope, next)}
+              checked={isConsentChecked(policy, checked)}
+              onChange={(next) => onChange(policy, next)}
               label={
                 <>
-                  <span className="text-ink-muted">{item.required ? "[필수] " : "[선택] "}</span>
-                  {item.label}
+                  {/* 🚨 서버의 `required` 만 본다. 화면이 따로 표를 들고 있으면 두 곳이 어긋난다. */}
+                  <span className="text-ink-muted">{policy.required ? "[필수] " : "[선택] "}</span>
+                  {policy.label}
                 </>
               }
-              description={item.description}
+              description={copy?.description}
             />
-            {item.legalBasis ? (
-              <p className="text-caption text-ink-subtle mt-1 pl-8">{item.legalBasis}</p>
+            {policy.legal_basis ? (
+              <p className="text-caption text-ink-subtle mt-1 pl-8">{policy.legal_basis}</p>
             ) : null}
-            <div className="pl-6">
-              {/* 🚨 10 설정과 **같은 말**을 쓴다. 같은 시트를 같은 `details` 로 여는데
-                  화면마다 이름이 다르면 두 곳을 오가는 사람이 다른 것으로 읽는다. */}
-              <Button variant="tertiary" size="compact" onClick={() => setDetail(item)}>
-                내용 보기
-              </Button>
-            </div>
+            {href ? (
+              /* 🚨 10 설정과 **같은 말**을 쓴다. 같은 페이지를 여는데 화면마다 이름이 다르면
+                 두 곳을 오가는 사람이 다른 것으로 읽는다.
+                 🚨 새 창이다 — 전문을 읽고 돌아왔을 때 체크가 그대로 있어야 한다. */
+              <div className="pl-6">
+                <ButtonLink external href={href} variant="tertiary" size="compact">
+                  전문 보기
+                </ButtonLink>
+              </div>
+            ) : (
+              /* 🚨 **대신 보여줄 글을 만들지 않는다.** 예전에는 화면이 들고 있던 요약을
+                 폈는데, 그건 서버가 기록하는 글이 아니라서 "보호자가 본 글" 과 어긋났다.
+                 지금 사실은 "아직 없다" 하나뿐이고, 그대로 말한다.
+                 🚨 설명·근거와 **같은 들여쓰기**로 세운다. 버튼 자리(`pl-6`)에 두면 법적 근거
+                    줄과 한 칸 어긋나 같은 문단이 두 번 꺾인 것처럼 보인다. */
+              <p className="text-caption text-ink-subtle mt-2 pl-8">{POLICY_TEXT_PENDING}</p>
+            )}
           </Card>
-        ))}
-      </div>
-
-      <BottomSheet
-        open={detail !== null}
-        onClose={() => setDetail(null)}
-        /* 🚨 약관 전문은 통째로 `font-doc` 이다. 제목만 손글씨로 남기지 않는다. */
-        variant="document"
-        title={detail?.label ?? ""}
-        description={detail?.legalBasis}
-        footer={
-          /* 🚨 10 설정의 전문 시트와 **같은 버튼**이다. 같은 시트를 여는 두 화면에서
-             한쪽만 채운 버튼이면 같은 행동이 다른 무게로 읽힌다. */
-          <Button block variant="secondary" onClick={() => setDetail(null)}>
-            닫기
-          </Button>
-        }
-      >
-        {detail ? <ConsentDetail item={detail} /> : null}
-      </BottomSheet>
-    </>
-  );
-}
-
-/**
- * 🚨 약관 전문이 아니다. 보관 기간·삭제 범위가 아직 미정이라(최상위 CLAUDE.md §10) 정식
- *    문구를 쓸 수 없고, 없는 조항을 지어 넣으면 그대로 배포된다. 확정된 사실만 보여주고
- *    아직 최종본이 아니라는 것을 화면에 밝힌다.
- */
-function ConsentDetail({ item }: { item: ConsentItem }) {
-  return (
-    <div className="flex flex-col gap-5">
-      {item.details.map((section) => (
-        <section key={section.heading}>
-          <h3 className="text-section text-ink">{section.heading}</h3>
-          <ul className="text-body-sm text-ink-muted marker:text-ink-subtle mt-2 flex list-disc flex-col gap-1.5 pl-5">
-            {section.lines.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        </section>
-      ))}
-      <p className="text-caption text-ink-subtle border-line border-t pt-4">{TERMS_NOT_FINAL}</p>
+        );
+      })}
     </div>
   );
-}
-
-/**
- * 필수 항목이 전부 체크됐는가.
- *
- * 🚨 **막는 것은 `required` 뿐이다.** 목록 길이로 세지 않는다 — 선택 동의를 이 화면에
- *    올리는 날 조용히 그것까지 막게 된다. 필수/선택의 정본은 `lib/consent.ts` 다.
- */
-export function requiredConsentsChecked(
-  items: ConsentItem[],
-  checked: Partial<Record<ConsentScope, boolean>>,
-): boolean {
-  return items.filter((i) => i.required).every((item) => checked[item.scope] === true);
 }

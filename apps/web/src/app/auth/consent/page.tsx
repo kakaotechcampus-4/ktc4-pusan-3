@@ -3,14 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { ConsentChecklist, requiredConsentsChecked } from "@/components/consent-checklist";
+import { ConsentChecklist } from "@/components/consent-checklist";
 import { Button } from "@/components/ui/button";
-import { CardFailed } from "@/components/ui/card";
+import { Card, CardFailed } from "@/components/ui/card";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
-import { api, type AuthSession, type AuthSignupRequest } from "@/lib/api";
+import { usePolicies } from "@/hooks/use-policies";
+import { api, isApiError, type AuthSession, type AuthSignupRequest } from "@/lib/api";
 import {
   clearBind,
   clearConsentCode,
@@ -20,16 +21,22 @@ import {
   readProvider,
 } from "@/lib/auth";
 import {
-  ACCOUNT_SIGNUP_CONSENTS,
-  ACCOUNT_SIGNUP_OPTIONAL,
-  ACCOUNT_SIGNUP_REQUIRED,
-  CONSENT_POLICY_VERSION,
-  type ConsentScope,
+  consentChoices,
+  consentPayload,
+  POLICY_CHANGED_MESSAGE,
+  requiredConsentsChecked,
+  toggleConsent,
+  type ConsentChecked,
 } from "@/lib/consent";
 import { useSessionStore } from "@/stores/session";
 
 /**
  * 가입 — 보호자 이름과 계정 동의. **여기를 통과해야 계정이 만들어진다.**
+ *
+ * 🚨 **무엇을 묻는지는 서버가 정한다** (#90 · `GET /policies`). 화면은 응답에 온 계정 스코프를
+ *    순서대로 그리고, 동의에 **응답이 준 버전 그대로**를 실어 보낸다. 상수로 들고 있으면
+ *    서버에 등록된 버전과 어긋나 `400 policy_version_invalid` 로 가입이 막히고, 목에는 그
+ *    검사가 없어서 화면 작업 중에는 드러나지 않는다 (#90 본문).
  *
  * 🚨 **아이 동의(`child_basic` · `child_health`)는 이 화면에 없다** (#96). 그 둘은 01 아이
  *    만들기 화면이 아이 정보와 **한 트랜잭션**으로 보낸다 — 동의를 아이 단위로 기록하기로
@@ -43,7 +50,7 @@ import { useSessionStore } from "@/stores/session";
  *      허락하는 것도 그 계정이다. 아이 정보였다면 갈랐을 것이다 (그래서 실제로 갈라 놨다).
  *    ② 나눠 두니 **화면 하나에 입력칸 하나**만 남아, 가운데가 빈 채로 버튼만 바닥에 붙었다.
  *    🚨 대신 **무엇에 동의하는지는 체크박스가 각자 말한다** — 이름 칸과 동의 구역을 제목으로
- *      가르고, 동의는 항목마다 개별 체크에 전문 시트가 붙는다. 그 구조가 무너지면(예: 이름과
+ *      가르고, 동의는 항목마다 개별 체크에 전문 보기가 붙는다. 그 구조가 무너지면(예: 이름과
  *      동의를 한 덩어리로 묶거나 "전체 동의" 를 세우면) 합친 것이 그때는 문제가 된다.
  */
 
@@ -55,10 +62,12 @@ export default function AuthConsentPage() {
   const signIn = useSessionStore((s) => s.signIn);
   const hydrated = useSessionStore((s) => s.hydrated);
 
+  const policies = usePolicies();
+
   const [nickname, setNickname] = useState("");
   const [nicknameError, setNicknameError] = useState<string | null>(null);
   /** 🚨 선택 동의도 기본값은 **꺼짐**이다. 미리 체크해 두면 "고르지 않음" 이 동의가 된다. */
-  const [checked, setChecked] = useState<Partial<Record<ConsentScope, boolean>>>({});
+  const [checked, setChecked] = useState<ConsentChecked>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,15 +79,22 @@ export default function AuthConsentPage() {
     if (!consentCode.current) router.replace("/");
   }, [hydrated, router]);
 
+  const choices = consentChoices(policies.data, "account");
+  const required = choices.filter(({ policy }) => policy.required);
+  const optional = choices.filter(({ policy }) => !policy.required);
+
   /**
    * 🚨 **막는 것은 `required` 뿐이다.** 이 화면에 선택 동의(`location`)가 서면서 실제로
    *    갈리는 자리가 됐다 — 목록 길이로 세면 선택까지 필수가 된다.
+   * 🚨 **목록이 비었으면 제출할 수 없다.** 빈 목록은 "필수가 전부 체크됨" 을 공짜로 통과시킨다
+   *    (아무것도 없으니까). 약관을 못 받은 채로 동의 0건을 보내면 서버는 403 으로 막지만,
+   *    그 전에 이 화면이 **무엇에 동의하는지 보여주지 않은 것**이 문제다.
    */
-  const requiredChecked = requiredConsentsChecked(ACCOUNT_SIGNUP_CONSENTS, checked);
+  const canSubmit = required.length > 0 && requiredConsentsChecked(choices, checked);
 
   async function submit() {
     const code = consentCode.current;
-    if (!code || !requiredChecked) return;
+    if (!code || !canSubmit) return;
 
     const name = nickname.trim();
     if (!name) {
@@ -93,12 +109,7 @@ export default function AuthConsentPage() {
         consent_code: code,
         bind: readBind(),
         nickname: name,
-        // 🚨 **고른 것만 보낸다.** 선택을 안 고른 스코프까지 실어 보내면 화면이 물어본
-        //    것과 서버에 남는 것이 달라진다.
-        consents: ACCOUNT_SIGNUP_CONSENTS.filter((i) => checked[i.scope] === true).map((i) => ({
-          scope: i.scope,
-          policy_version: CONSENT_POLICY_VERSION,
-        })),
+        consents: consentPayload(choices, checked),
       };
       const session = await api.post<AuthSession>(`/auth/${readProvider()}/signup`, body);
       signIn(session.token, session.expires_in);
@@ -112,6 +123,17 @@ export default function AuthConsentPage() {
       //    여기서 01 로 바로 보내면 초대받은 사람이 같은 아이를 또 등록하게 된다 (#96).
       router.replace("/start");
     } catch (cause) {
+      /**
+       * 🚨 **다시 시도 버튼을 주지 않는다.** 같은 값을 다시 보내면 또 400 이다. 약관이
+       *    바뀐 것이라, 화면을 다시 받아 **바뀐 항목만** 다시 확인받는다 — 체크가 버전을
+       *    들고 있어서 바뀐 것만 저절로 풀린다 (`lib/consent.ts` 의 `ConsentChecked`).
+       * 🚨 대기표는 **비우지 않는다.** 서버가 소비 전에 막았으므로 살아 있다 (§3-5).
+       */
+      if (isApiError(cause, "policy_version_invalid")) {
+        await policies.refetch();
+        setError(POLICY_CHANGED_MESSAGE);
+        return;
+      }
       setError(cause instanceof Error ? cause.message : "동의를 저장하지 못했어요.");
     } finally {
       setPending(false);
@@ -150,23 +172,50 @@ export default function AuthConsentPage() {
             아래 항목들이 각자 말해야 한다 (위 머리말 ⚠️). */}
         <p className="text-section text-ink">보호자 계정에 대한 동의</p>
 
-        {/* 🚨 **필수와 선택을 한 무리로 그리지 않는다** (디자인 시스템 §7 동의 목록).
-            같은 체크박스가 죽 늘어서 있으면 선택도 채워야 넘어가는 칸으로 읽히고,
-            반대로 필수가 골라도 되는 것처럼 읽힌다. 머리줄로 가른다. */}
-        <p className="text-label text-ink-muted">필수</p>
-        <ConsentChecklist
-          items={ACCOUNT_SIGNUP_REQUIRED}
-          checked={checked}
-          onChange={(scope, next) => setChecked((prev) => ({ ...prev, [scope]: next }))}
-        />
+        {policies.isPending ? (
+          <Card>
+            <p className="text-body text-ink-muted flex items-center gap-2">
+              <Spinner />
+              동의 항목을 불러오는 중…
+            </p>
+          </Card>
+        ) : null}
 
-        {ACCOUNT_SIGNUP_OPTIONAL.length > 0 ? (
+        {/* 🚨 **기본값으로 그리지 않는다.** 약관을 못 받았으면 무엇에 동의하는지 모르는
+            것이고, 그 상태로 체크박스를 세우면 화면이 지어낸 것에 동의를 받는 셈이다. */}
+        {!policies.isPending && required.length === 0 ? (
+          <>
+            <CardFailed>
+              <p>동의 항목을 불러오지 못했어요.</p>
+              <p className="mt-1">잠시 뒤에 다시 불러와 주세요. 로그인은 그대로예요.</p>
+            </CardFailed>
+            <Button variant="secondary" onClick={() => void policies.refetch()}>
+              다시 불러오기
+            </Button>
+          </>
+        ) : null}
+
+        {required.length > 0 ? (
+          <>
+            {/* 🚨 **필수와 선택을 한 무리로 그리지 않는다** (디자인 시스템 §7 동의 목록).
+                같은 체크박스가 죽 늘어서 있으면 선택도 채워야 넘어가는 칸으로 읽히고,
+                반대로 필수가 골라도 되는 것처럼 읽힌다. 머리줄로 가른다. */}
+            <p className="text-label text-ink-muted">필수</p>
+            <ConsentChecklist
+              choices={required}
+              checked={checked}
+              onChange={(policy, next) => setChecked((prev) => toggleConsent(prev, policy, next))}
+            />
+          </>
+        ) : null}
+
+        {optional.length > 0 ? (
           <>
             <p className="text-label text-ink-muted mt-2">선택</p>
             <ConsentChecklist
-              items={ACCOUNT_SIGNUP_OPTIONAL}
+              choices={optional}
               checked={checked}
-              onChange={(scope, next) => setChecked((prev) => ({ ...prev, [scope]: next }))}
+              onChange={(policy, next) => setChecked((prev) => toggleConsent(prev, policy, next))}
             />
             {/* 🚨 "지금 안 해도 된다" 를 **고르기 전에** 말한다. 선택 동의를 가입 화면에
                 올리는 대가가 "필수처럼 보이는 것" 이라, 그 대가를 여기서 갚는다. */}
@@ -180,7 +229,7 @@ export default function AuthConsentPage() {
       <div className="mt-auto flex flex-col gap-3 pt-2">
         {error ? <CardFailed>{error}</CardFailed> : null}
 
-        <Button block onClick={submit} disabled={!requiredChecked || pending}>
+        <Button block onClick={submit} disabled={!canSubmit || pending}>
           {pending ? <Spinner /> : null}
           {pending ? "저장하는 중…" : "동의하고 시작하기"}
         </Button>

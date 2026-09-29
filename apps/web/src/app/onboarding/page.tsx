@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
-import { ConsentChecklist, requiredConsentsChecked } from "@/components/consent-checklist";
+import { ConsentChecklist } from "@/components/consent-checklist";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,8 +14,16 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
-import { api, qk, type CreateChildRequest, type CreateChildResponse } from "@/lib/api";
-import { CHILD_SIGNUP_CONSENTS, CONSENT_POLICY_VERSION, type ConsentScope } from "@/lib/consent";
+import { usePolicies } from "@/hooks/use-policies";
+import { api, isApiError, qk, type CreateChildRequest, type CreateChildResponse } from "@/lib/api";
+import {
+  consentChoices,
+  consentPayload,
+  POLICY_CHANGED_MESSAGE,
+  requiredConsentsChecked,
+  toggleConsent,
+  type ConsentChecked,
+} from "@/lib/consent";
 import { toISODate } from "@/lib/format";
 
 /**
@@ -54,12 +62,17 @@ function CreateChildScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
+  const policies = usePolicies();
+  const choices = consentChoices(policies.data, "child");
+
   const [nickname, setNickname] = useState("");
   const [birthDate, setBirthDate] = useState("");
   /** 🚨 기본값은 **꺼짐**이다. 미리 체크해 두면 "고르지 않음" 이 동의가 된다. */
-  const [consents, setConsents] = useState<Partial<Record<ConsentScope, boolean>>>({});
+  const [consents, setConsents] = useState<ConsentChecked>({});
   const [attested, setAttested] = useState(false);
   const [errors, setErrors] = useState<{ nickname?: string; birthDate?: string }>({});
+  /** 약관이 바뀌어 다시 확인받아야 할 때만 찬다 (`policy_version_invalid`). */
+  const [policyChanged, setPolicyChanged] = useState(false);
 
   const createChild = useMutation({
     mutationFn: (body: CreateChildRequest) => api.post<CreateChildResponse>("/children", body),
@@ -67,9 +80,24 @@ function CreateChildScreen() {
       await queryClient.invalidateQueries({ queryKey: qk.me() });
       router.replace(`/child/${child.id}/onboarding`);
     },
+    /**
+     * 🚨 가입 동의 화면과 **같은 처리**다 — 약관이 바뀐 것이지 고장이 아니라서, 다시 받아
+     *    **바뀐 항목만** 다시 확인받는다 (체크가 버전을 들고 있어 저절로 풀린다).
+     *    아이는 아직 만들어지지 않았다 — 서버가 저장 전에 막는다.
+     */
+    onError: async (cause) => {
+      if (!isApiError(cause, "policy_version_invalid")) return;
+      setPolicyChanged(true);
+      await policies.refetch();
+    },
   });
 
-  const consentsReady = requiredConsentsChecked(CHILD_SIGNUP_CONSENTS, consents) && attested;
+  /**
+   * 🚨 **목록이 비었으면 만들 수 없다.** 빈 목록은 "필수가 전부 체크됨" 을 공짜로 통과시킨다 —
+   *    약관을 못 받은 채로 아이를 만들면 동의 없이 아이가 생기거나(그건 사고다) 403 이다.
+   */
+  const consentsReady =
+    choices.length > 0 && requiredConsentsChecked(choices, consents) && attested;
 
   function submit() {
     const next: typeof errors = {};
@@ -82,15 +110,13 @@ function CreateChildScreen() {
     setErrors(next);
     if (Object.keys(next).length > 0 || !consentsReady) return;
 
+    setPolicyChanged(false);
     createChild.mutate({
       nickname: nickname.trim(),
       birth_date: birthDate,
-      // 🚨 **고른 것만 보낸다.** 안 고른 스코프까지 실어 보내면 화면이 물어본 것과
-      //    서버에 남는 것이 달라진다.
-      consents: CHILD_SIGNUP_CONSENTS.filter((i) => consents[i.scope] === true).map((i) => ({
-        scope: i.scope,
-        policy_version: CONSENT_POLICY_VERSION,
-      })),
+      // 🚨 **고른 것만, 화면이 그린 버전 그대로 보낸다** (`GET /policies`). 상수로 들고 있으면
+      //    서버에 등록된 버전과 어긋나 400 이고, 화면이 물어본 것과 서버에 남는 것도 달라진다.
+      consents: consentPayload(choices, consents),
       // 🚨 상수 true 를 보내지 않는다. 체크박스 값 그대로다 — 아무도 확인하지 않은 동의가
       //    확인된 것으로 남으면 그 동의는 증빙이 아니다.
       guardian_attested: attested,
@@ -144,10 +170,33 @@ function CreateChildScreen() {
           </p>
         </div>
 
+        {policies.isPending ? (
+          <Card>
+            <p className="text-body text-ink-muted flex items-center gap-2">
+              <Spinner />
+              동의 항목을 불러오는 중…
+            </p>
+          </Card>
+        ) : null}
+
+        {/* 🚨 **기본값으로 그리지 않는다.** 약관을 못 받았으면 무엇에 동의하는지 모르는 것이고,
+            그 상태로 아이를 만들면 근거 없는 동의가 아이와 함께 저장된다. */}
+        {!policies.isPending && choices.length === 0 ? (
+          <>
+            <CardFailed>
+              <p>동의 항목을 불러오지 못했어요.</p>
+              <p className="mt-1">잠시 뒤에 다시 불러와 주세요. 적으신 것은 그대로예요.</p>
+            </CardFailed>
+            <Button variant="secondary" onClick={() => void policies.refetch()}>
+              다시 불러오기
+            </Button>
+          </>
+        ) : null}
+
         <ConsentChecklist
-          items={CHILD_SIGNUP_CONSENTS}
+          choices={choices}
           checked={consents}
-          onChange={(scope, next) => setConsents((prev) => ({ ...prev, [scope]: next }))}
+          onChange={(policy, next) => setConsents((prev) => toggleConsent(prev, policy, next))}
         />
 
         {/*
@@ -173,9 +222,13 @@ function CreateChildScreen() {
       <div className="mt-auto flex flex-col gap-3 pt-6">
         {createChild.isError ? (
           <CardFailed>
-            {createChild.error instanceof Error
-              ? createChild.error.message
-              : "아이를 만들지 못했어요."}
+            {/* 🚨 약관이 바뀐 400 은 "만들지 못했어요" 가 아니다 — 무엇을 해야 하는지가 다르다
+                (다시 시도가 아니라 **다시 확인**이다). */}
+            {policyChanged
+              ? POLICY_CHANGED_MESSAGE
+              : createChild.error instanceof Error
+                ? createChild.error.message
+                : "아이를 만들지 못했어요."}
           </CardFailed>
         ) : null}
 
