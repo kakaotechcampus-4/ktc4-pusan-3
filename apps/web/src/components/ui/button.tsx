@@ -117,7 +117,6 @@ export function ButtonLink({
   size = "default",
   block = false,
   className,
-  external = false,
   children,
 }: {
   href: string;
@@ -125,36 +124,19 @@ export function ButtonLink({
   size?: ButtonSize;
   block?: boolean;
   className?: string;
-  /**
-   * 앱 밖 주소를 **새 창**으로 연다 (약관 정본 페이지 — API 서버가 내려주는 HTML).
-   *
-   * 🚨 이 경우 `next/link` 를 쓰지 않는다. 라우터가 알 수 있는 경로가 아니라 prefetch 할
-   *    것이 없고, 필요한 것은 `target`·`rel` 이다.
-   * 🚨 지금 화면을 **떠나지 않는 것**이 요점이다. 동의 화면에서 전문을 열었다가 돌아오면
-   *    체크가 남아 있어야 한다. 앱 껍데기(apps/mobile)는 이 이동을 가로채 시스템
-   *    브라우저로 넘긴다 (`App.tsx` 의 `onShouldStartLoadWithRequest`).
-   */
-  external?: boolean;
   children: ReactNode;
 }) {
-  const classes = cn(
-    "text-button ease-standard inline-flex items-center justify-center gap-2 py-2 text-center transition-colors duration-120",
-    variant === "approve" ? null : SIZE[size],
-    VARIANT[variant],
-    block && variant !== "approve" && "w-full",
-    className,
-  );
-
-  if (external) {
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" className={classes}>
-        {children}
-      </a>
-    );
-  }
-
   return (
-    <Link href={href} className={classes}>
+    <Link
+      href={href}
+      className={cn(
+        "text-button ease-standard inline-flex items-center justify-center gap-2 py-2 text-center transition-colors duration-120",
+        variant === "approve" ? null : SIZE[size],
+        VARIANT[variant],
+        block && variant !== "approve" && "w-full",
+        className,
+      )}
+    >
       {children}
     </Link>
   );

@@ -1,6 +1,5 @@
 "use client";
 
-import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -65,14 +64,29 @@ export function ConsentChecklist({
               <p className="text-caption text-ink-subtle mt-1 pl-8">{policy.legal_basis}</p>
             ) : null}
             {href ? (
-              /* 🚨 10 설정과 **같은 말**을 쓴다. 같은 페이지를 여는데 화면마다 이름이 다르면
-                 두 곳을 오가는 사람이 다른 것으로 읽는다.
-                 🚨 새 창이다 — 전문을 읽고 돌아왔을 때 체크가 그대로 있어야 한다. */
-              <div className="pl-6">
-                <ButtonLink external href={href} variant="tertiary" size="compact">
-                  전문 보기
-                </ButtonLink>
-              </div>
+              /**
+               * 🚨 **상자가 아니라 밑줄 친 글자다** (디자인 시스템 §7 동의 목록 — "전문으로 가는
+               *    길은 줄의 이름이다"). 하는 일이 **읽으러 가는 것**이라 10 설정이 같은 약관을
+               *    여는 방식과 같아야 하고, 카드 안에서 제일 무거운 것이 이 길이 되면 안 된다
+               *    (84×44 상자가 12~15px 글자뿐인 카드에서 그랬다).
+               * 🚨 **밑줄을 지우지 않는다** — 이 시스템에는 누를 수 있는 글자가 거의 없어서
+               *    표시가 없으면 아무도 안 누른다 (색은 단독 신호가 될 수 없다 · 문서 §3).
+               * 🚨 **보이는 것은 글자지만 누르는 자리는 44px 이다** (`py-3`). 칩이 28px 표식에
+               *    투명 여백으로 44 를 채우는 것과 같은 방식이다 (문서 §9).
+               * 🚨 위 글자와 **같은 들여쓰기**(`ml-8`)로 선다. 상자였을 때는 테두리를 맞추려고
+               *    `pl-6` 이었는데, 그러면 글자끼리는 8px 어긋난다.
+               * 🚨 10 설정과 **같은 말**을 쓴다 — 같은 페이지를 여는데 화면마다 이름이 다르면
+               *    두 곳을 오가는 사람이 다른 것으로 읽는다.
+               * 🚨 새 창이다 — 전문을 읽고 돌아왔을 때 체크가 그대로 있어야 한다.
+               */
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-body-sm text-ink ease-standard decoration-line-strong hover:decoration-ink-muted active:text-ink-muted mt-1 -mb-2 ml-8 inline-block py-3 underline decoration-1 underline-offset-4 transition-colors duration-120 focus-visible:-outline-offset-2"
+              >
+                전문 보기
+              </a>
             ) : (
               /* 🚨 **대신 보여줄 글을 만들지 않는다.** 예전에는 화면이 들고 있던 요약을
                  폈는데, 그건 서버가 기록하는 글이 아니라서 "보호자가 본 글" 과 어긋났다.
