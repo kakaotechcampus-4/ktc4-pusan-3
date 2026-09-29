@@ -35,13 +35,18 @@ SSE 로 내보내는 데까지 하고, 저장은 제출 API 가 한다.
 
 Memory 의 `EventDraft` 클래스를 다른 경로가 가져다 쓰지는 않는다. `app/agents/memory/` 안이라
 `apps/api/CLAUDE.md` 레이어 경계상 `app/api` 가 import 할 수 없고, 추천 카드를 누르는 건 발화가 아니라
-Memory Agent 가 돌 일도 없다. **각자 만들되 JSON 모양을 맞춘다.**
+Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py` 의 스키마로 검증한다.**
+`EventDraft` 는 run 안에서 값을 쌓는 조립용으로 남고, `to_payload()` 가 공통 모델을 채워 직렬화한다.
+문서만 보고 모양을 맞추면 필드 이름이나 타입이 갈려도 아무 데서도 걸리지 않는다 (멘토 리뷰).
 
 ---
 
 ## 3. 초안 payload 계약
 
-정본은 `app/agents/memory/drafts.py` 의 `EventDraft.to_payload()` 다.
+정본은 `app/core/event_draft.py` 의 `CreateEventDraft` · `UpdateEventDraft` 다. 모르는 키는 거부한다(`extra="forbid"`).
+`event_type` 은 `core` · `episodic`, `category` 는 `institution` · `health` · `activity` · `etc` 만 받는다
+(`domains/schedule/models.py` 와 같은 값). 시간대가 없는 시각도 거부한다.
+시각은 `isoformat()` 표기 그대로다. pydantic 기본값처럼 UTC 를 `Z` 로 바꾸지 않고 기존 payload 표기를 그대로 둔다.
 `op` 에 따라 두 모양이고, create 는 `POST`, update 는 `PATCH` 로 간다 (9/21 결정).
 
 ### create
@@ -98,8 +103,8 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 JSON 모양을 맞춘다.
 **`changed` 는 payload 에 없다.** `EventDraft` dataclass 에는 남아 있지만 tool 결과와 "바뀐 게 없으면
 초안을 만들지 않는다" 판정에만 쓴다. 화면은 `before` 와 비교해 직접 구한다.
 
-**`is_prepared` 는 payload 에 없다.** `DraftItem.to_payload()` 가 `item_id` 와 `item_name` 둘만 낸다.
-`before.items` 도 같은 함수를 탄다.
+**`is_prepared` 는 payload 에 없다.** 공통 스키마의 `DraftItemPayload` 가 `item_id` 와 `item_name` 둘만 갖는다.
+`before.items` 도 같은 모델을 쓴다.
 
 **`source`(출처)는 아직 없다.** 제안 경로가 초안을 만들 때 `suggestion_id` 를 실을 자리가 필요한데,
 Memory 는 채울 값이 영원히 `null` 이라 이번에 넣지 않았다. §6 참고.
@@ -218,7 +223,8 @@ Agent 가 조사를 떼고 사물 이름만 넣는다. `"수영복이랑 여벌�
 
 | | |
 | --- | --- |
-| 초안 모델 · payload | `apps/api/app/agents/memory/drafts.py` |
+| 초안 payload 스키마 | `apps/api/app/core/event_draft.py` |
+| 초안 모델 (Memory 조립용) | `apps/api/app/agents/memory/drafts.py` |
 | 일정 tool 7개 | `apps/api/app/agents/memory/tools/schedule.py` |
 | SSE 이벤트 `EventDrafts` | `apps/api/app/agents/pipeline.py` |
 | ORM | `apps/api/app/domains/schedule/models.py` (`Event` · `EventItem`) |

@@ -37,7 +37,8 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 - **금지**: fastapi, agents, providers, integrations
 
 ### `app/agents/`
-- **허용**: domains, rules, providers
+- **허용**: domains, rules, providers, core
+  — core 는 역할별 LLM 설정(`core/agent_config.py`)과 일정 초안 payload 계약(`core/event_draft.py`)을 쓴다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
