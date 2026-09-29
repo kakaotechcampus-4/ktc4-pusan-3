@@ -60,20 +60,17 @@ export const authHandlers = [
    * ⚠️ **계약서에도 `docs/api/auth-kakao-v1.md` 에도 없다** (`lib/api/types.ts` 의
    *    `WithdrawRequest` 주석). 화면을 끝까지 돌려 보려고 목에만 세운 제안이다.
    *
-   * 🚨 목이라고 **아무거나 200 으로 돌려주지 않는다.** 화면이 읽은 유예기간을 같이 받고 안
-   *    보내면 막는다 — 실서버가 그 값을 남겨야 "부모가 무엇을 읽고 눌렀는가" 를 알 수 있다.
+   * 🚨 목이라고 **아무거나 200 으로 돌려주지 않는다.** 화면의 읽음 표시를 같이 받고 안 보내면
+   *    막는다 — 유예 없이 지우는 요청이라(#167), 실서버가 그 값을 남겨야 "부모가 무엇을 읽고
+   *    눌렀는가" 를 알 수 있다.
    */
   http.post(url("/auth/withdraw"), async ({ request }) => {
     await networkDelay();
-    const body = (await request.json()) as { acknowledged_grace_days?: number };
-    if (typeof body.acknowledged_grace_days !== "number") {
-      return apiError(400, "validation_failed", "acknowledged_grace_days 가 필요해요");
+    const body = (await request.json()) as { acknowledged_immediate_deletion?: boolean };
+    if (body.acknowledged_immediate_deletion !== true) {
+      return apiError(400, "validation_failed", "acknowledged_immediate_deletion 이 필요해요");
     }
-    const res: WithdrawResponse = {
-      purge_after: new Date(
-        Date.now() + body.acknowledged_grace_days * 24 * 60 * 60 * 1000,
-      ).toISOString(),
-    };
+    const res: WithdrawResponse = { deleted_at: new Date().toISOString() };
     return HttpResponse.json(res);
   }),
 

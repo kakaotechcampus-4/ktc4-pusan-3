@@ -494,14 +494,16 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(res.status).toBe(204);
   });
 
-  it("탈퇴는 화면이 읽은 유예기간을 같이 받는다 — 없으면 막힌다", async () => {
+  it("탈퇴는 화면의 읽음 표시를 같이 받는다 — 없으면 막힌다", async () => {
     const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
     expect(isApiError(caught, "validation_failed")).toBe(true);
 
+    // 🚨 유예가 없다 (#167). 응답이 "언제 지워질 예정" 이 아니라 **지워진 시각**이라,
+    //    화면이 미래 시각을 받아 날짜를 약속할 방법 자체가 없다.
     const res = await api.post<WithdrawResponse>("/auth/withdraw", {
-      acknowledged_grace_days: 30,
+      acknowledged_immediate_deletion: true,
     });
-    expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(res.deleted_at).getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it("relation 없이 초대해도 코드가 나온다", async () => {
