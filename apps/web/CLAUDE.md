@@ -78,7 +78,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 02 아이 정보 (관계 · 성별 · 키 · 몸무게 · 알레르기 · 전부 선택) | `/child/[childId]/onboarding` |
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
-| 05 제안 후보 | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
@@ -162,14 +162,14 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
-  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `TimeField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
-  `BottomSheet` · `Tabs` · `Toast` · `ButtonLink` ·
+  `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
   `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `ApprovalSheet` · `ConsentRequiredCard` ·
+  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
@@ -222,10 +222,39 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   초록을 넣으면 "색 하나 = 뜻 하나" 가 무너진다. `brand-soft` 로 **큰 면을 칠하지 않는다** —
   제안이 앉는 색 면은 **그 제안의 도메인 색**이고(§2-3), 브랜드는 고르는 버튼이 가져간다.
   "어디서 왔나"(도메인)와 "무엇을 하는가"(브랜드)를 같은 색으로 쓰지 않는다
-- 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 이 만드는 `event` 는 `draft` 고,
-  캘린더에 확정하는 것은 09 의 `POST /events/{eid}/confirm` 하나다 — `btn-approve` 도 `caution` 도 쓰지 않는다.
+- 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 은 **캘린더에 쓰지 않고**,
+  일정은 보호자가 항목의 시트에서 넣는다 (#151) — 화면의 저장 버튼에 `btn-approve` 도
+  `caution` 도 쓰지 않는다. 그 둘은 시트의 제출 버튼이 가져간다.
+  ⚠️ **커밋이 무엇을 만드는지는 확정 전이다.** 한동안 여기 "관찰을 만든다" 고 적어 뒀는데,
+  AI 파트 문서(`docs/agents/data_model.md` 2026-09-26)는 기관 문서를 **별도 테이블**로 뒀다 —
+  `notice` · `daycare_meal`. 계약서 §09 의 lane 표(문서 lane → `observation_education 또는 event`)와
+  어긋난다. 🚨 **그래서 문서 lane 화면에서 "기록" 이라고 쓰지 않는다** — 이 제품에서 "기록" 은
+  관찰을 가리키는 말이라(위 "화면에서 부르는 말"), 기관 문서를 그렇게 부르면 07 기록 탭에
+  올라온다고 약속하는 셈이다.
+  ⚠️ **`commit` 이 게이트인지는 미결이다** (#121 에서 제기, 답 없음 · PM 최종 결정).
+  초안만 내는 쪽으로 짠 이유는 `docs/web/event-draft-ui-v1.md` §4 — 결정이 반대로 나면
+  08 을 승인 화면으로 되돌리고 이 줄과 최상위 §2 를 함께 고친다.
   ⚠️ 디자인 시스템 §7 `card-photo` · §11 표가 한동안 `caution` 을 적어 뒀는데 최상위 §2 와 어긋나서
   #60 에서 문서 쪽을 고쳤다. "승인 전에는 저장되지 않아요" 는 경고가 아니라 **사실**이라 중립 면이다
+- 🚨 **08 은 저장하면 바로 홈이다.** 저장 결과 화면도 "사진 하나 더 넣기" 도 두지 않는다 (#151) —
+  여기서 할 일은 끝났고 저장한 것은 홈·07·09 가 이미 보여준다. 확인만 하는 화면이 한 칸 더 서면
+  부모는 **끝난 일을 한 번 더 닫아야** 한다.
+  - 🚨 **`replace` 로 간다.** `push` 면 뒤로가기가 **저장을 끝낸 확인 화면**으로 돌아오고, 거기서
+    같은 것을 또 누를 수 있다 (웹뷰의 기기 뒤로가기가 히스토리 기반이다 · [`apps/mobile/App.tsx`](../mobile/App.tsx))
+  - 🚨 **커밋 성공에서 `qk.child` 를 무효화한다.** run 이 끝날 때 도는 무효화는 커밋보다 **먼저**
+    돌고 관찰을 만드는 것은 커밋이라, 안 하면 **방금 저장한 것이 없는 홈**으로 간다
+- 🚨 **목록의 버튼 문구가 그 시트에서 할 수 있는 일을 다 말한다** — "고치기" 만 적어 두니 캘린더에
+  쓰는 일(게이트 ㉠)이 그 안에 있다는 것이 목록 어디에도 안 보였다. 급식은 예외다(일정 칸을 아예
+  안 세운다) · 이미 넣은 항목도 "고치기" 로 돌아간다(그 줄에서 넣을 일이 없다).
+  - 🚨 **넣은 항목은 목록에서 갈린다** — 칩 + **넣은 일시** 한 줄. 일시까지 세우는 이유는 시트를
+    닫으면 방금 고른 일시가 화면 어디에도 안 남기 때문이다. 🚨 위 칸이 같은 날을 이미 말하고
+    있으면 **시각만** 낸다 (`formatTimeOfDay` 가 있는 이유 · §4)
+  - 🚨 **넣으면서 확인한 값을 그 줄에도 얹는다**(`needs_review: false`). 승인 게이트를 지난 값이라
+    시트의 "이 내용으로 확인" 보다 무거운 확인이고, 안 얹으면 화면이 **방금 부모가 확인한 날짜**를
+    "못 읽었어요 · 고쳐야 저장돼요" 라고 계속 말한다. 🚨 그래도 **기록이 저장되는 것은 아니다** —
+    저장은 맨 아래 버튼 하나이고 빼는 길("이 항목은 저장하지 않기")도 그대로다
+  - 🚨 확인된 줄은 접힌 "잘 읽었어요" 로 옮겨 가므로 **그때 그 묶음을 펼친다** — 안 그러면 방금
+    넣은 줄이 화면에서 사라진 것처럼 보인다 (넣었다는 표시를 달고 그 표시를 접는 셈이다)
 - 🚨 **사진을 고르는 자리는 08 화면이 아니라 시트다** (`PhotoSourceSheet`). 03 홈의 카메라
   버튼과 09 하루 패널의 "사진으로 적기" 가 **그 자리에서** 시트를 열고, 촬영/앨범을 고르면
   바로 08 의 **읽는 중**으로 넘어간다 — 고르기만 하는 화면을 한 칸 두지 않는다.
@@ -267,8 +296,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **07 의 도메인 색은 왼쪽 아이콘 타일 하나까지다** (디자인 시스템 §3 예외 ㉡). 도메인 색의 뜻을
   "어느 Agent 결과인가" 에서 **"어느 영역인가"** 로 넓히면서 열린 자리다 — 07 은 제안이 아니라
   쌓인 것을 훑는 화면이고, 목록이 네 영역을 섞어 내려주므로 "한 화면에 2개" 상한의 예외이기도 하다
-  (그 상한은 제안 화면의 규칙이다). 🚨 **색 면을 타일 밖으로 넓히지 않는다** — 줄 전체를 칠하면
-  05 의 열린 제안 줄과 같은 언어가 되어 "고를 수 있는 것" 으로 읽힌다.
+  (그 상한은 제안 화면의 규칙이다). 🚨 **색 면을 타일 밖으로 넓히지 않는다** — 목록에서 줄 전체를 칠하면
+  화면이 색 덩어리가 된다. 05 의 열린 제안 줄이 그렇게 칠하고 있었는데, Agent 당 후보가 3가지가
+  되면서 면이 여섯이 되어 **거기서도 걷어냈다** (#151 · 도메인은 묶음 머리줄의 칩이 진다).
   🚨 **영역 이름은 항상 글자로 함께 선다** (색이 단독 신호가 될 수 없다).
   🚨 **브랜드는 여전히 못 쓴다** — "어디서 왔나"(도메인) 와 "무엇을 하는가"(브랜드) 를 같은 색으로 쓰지 않는다
 - 🚨 **09 월 그리드의 표식은 색이 아니라 모양이다** (디자인 시스템 §7 캘린더 그리드). 전부
@@ -310,6 +340,27 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를 나눈다.
   대신 일기 구역은 빈 날에도 **다른 날과 같은 모양으로** 선다 (빈 날에만 다른 버튼을 찾게 하지 않는다).
   같은 이유로 요약 줄은 빈 날에 아무 말도 하지 않는다 — 바로 아래가 같은 말을 더 크게 한다
+- 🚨 **05 는 고르기와 일정 만들기가 다른 단계다** (#151). ① 고른 것을 **채택**하고
+  (`POST /children/{cid}/suggestions/approve` · ⚠️ 계약서에 없다) ② "일정으로도 만들까요?" 를
+  따로 묻는다. 버튼 하나로 합치면 **"이걸로 할 건데 캘린더엔 안 넣을래"** 를 표현할 방법이 없고,
+  고르기만 하고 나간 선택은 24시간 뒤 `expired` 로 사라진다.
+  - 🚨 **채택은 승인 게이트가 아니다** — 캘린더를 안 쓰고 되돌릴 수 있다. `btn-approve` ·
+    `caution` 을 쓰지 않고 `Idempotency-Key` 도 받지 않는다(되돌릴 수 없는 5곳에 여섯 번째를
+    더하지 않는다). 🚨 **"기억해 뒀어요" 라고 쓰지 않는다** — "기억" 은 `profile_affinity` 를
+    가리키는 화면 용어인데 채택은 그것을 만들지 않는다
+  - 🚨 **채택 뒤에는 고르기를 잠근다**(`SuggestionList` 의 `busy`) — 서버가 받은 것과 화면이
+    달라지면 안 된다. 다음 단계에 쓰는 id 는 **응답이 준 것**이지 화면이 들고 있던 것이 아니다
+  - 🚨 **"안 만들래요" 버튼을 두지 않는다** — 안 만들 사람은 그냥 나간다(하단 "홈으로").
+    아무 일도 안 하는 것을 한 번 더 확인시키는 칸이다. 대신 **나가도 된다는 사실을 글자로** 말한다
+- 🚨 **알레르기 확인(게이트 ㉡)은 채택보다 먼저다** (`SafetyCheckSheet` · #151). 한동안 초안을
+  만든 뒤 승인 시트 안에서 물었는데, 채택과 일정 만들기가 갈리면서 **일정을 안 만드는
+  보호자에게는 영영 안 묻게** 됐다 — 알레르기는 캘린더가 아니라 **그 음식을 먹이는 일**의 위험이다.
+  - 🚨 **채택을 되돌리는 길이 없어서 먼저 묻는다.** 알레르기가 확인된 제안은 **채택 자체를
+    안 한다** — 그러면 초안도 안 생기고 "막힌 초안" 이라는 상태도 필요 없어진다
+  - 🚨 **시트를 승인 시트와 합치지 않는다.** 게이트 ㉡ 와 ㉠ 은 다른 단계라, 한 시트에 두면
+    "알레르기를 확인했다" 와 "캘린더에 넣었다" 가 한 화면에서 섞인다
+  - 🚨 **고른 것에 걸린 검사만 묻는다.** 🚨 `suggestion_id` 가 없어 어느 제안인지 모르면
+    **고른 것 전부를 막는다** — 알레르기에서 덜 막는 쪽으로 기울 수 없다
 - 🚨 **일반 추천(`GeneralSuggestionCard`)과 개인화 목록(`SuggestionList`)은 다른 컴포넌트 · 다른 타입 ·
   응답의 다른 필드다.** 한 곳에 플래그로 섞으면 언젠가 근거 0건인 것이 개인화로 그려지고, 그러면
   "개인화인데 근거 0행이면 버그" 라는 하드 기준이 무의미해진다 (최상위 §2).
@@ -455,7 +506,11 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
 
-`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · `POST /events/{eid}/confirm`(게이트 ㉠).
+`POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · **초안 제출**(게이트 ㉠).
+
+⚠️ 게이트 ㉠ 이 `POST /events/{eid}/confirm` 에서 **초안 제출로 옮겨왔다** (#121 · #151). 초안을 만드는
+호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다. **경로는 확정 전이고**
+(`docs/event/event-draft-flow-v1.md` §6), `idempotentPath.submitEvent` 한 줄만 고치면 따라온다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
 경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
@@ -463,7 +518,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 ```tsx
 const idem = useIdempotencyKey();                       // @/lib/api/use-idempotency-key
 const mutation = useMutation({
-  mutationFn: () => confirmEvent(eventId, idem.current()),
+  mutationFn: () => submitEventDraft(childId, body, idem.current()),
   onSuccess: () => { idem.rotate(); },                  // 🚨 성공한 뒤에만
 });
 ```
