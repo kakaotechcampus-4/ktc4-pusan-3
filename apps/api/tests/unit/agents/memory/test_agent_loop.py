@@ -506,6 +506,16 @@ async def test_힌트가_없으면_원문_전체를_pending_으로_쓴다(contex
     result = await run("요즘 기침해", context, client=llm, task=MemoryTask(raw_text="요즘 기침해"))
 
     assert result.pending is not None and result.pending.hint_text == "요즘 기침해"
+    assert result.pending.whole is True
+
+
+async def test_나눈_조각의_pending_은_원문_전체가_아니다(context: AgentContext) -> None:
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    llm = FakeLLM(_answer({**_ASK_WHEN, "pending_hint": "요즘 기침해"}))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.pending is not None and result.pending.whole is False
 
 
 # ── continuation ────────────────────────────────────────────────
@@ -564,6 +574,45 @@ async def test_두_번째_이어받기는_앞서_주고받은_것도_넣는다(c
 
     sent = llm.seen[0][-1]["content"]
     assert "며칠 됐어요" in sent
+
+
+_WHOLE_PENDING = PendingMemoryContext(
+    hint_text="모래놀이하고 뭐 좀 먹었어",
+    question="무엇을 먹었어요?",
+    work=WorkType.OBSERVE,
+    whole=True,
+)
+
+
+async def test_원문_전체_조각을_이어받으면_조각_안의_기록을_모두_저장하라고_알린다(
+    context: AgentContext,
+) -> None:
+    # 앞 run 이 무엇이든 저장했으면 원문 전체를 맥락으로 남기지 않는다. 그래서 조각 안의 기록은
+    # 아직 하나도 저장되지 않았다. 알려 주지 않으면 물은 음식만 저장하고 모래놀이를 빠뜨린다
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("떡볶이", context, client=llm, continuation=_WHOLE_PENDING)
+
+    sent = llm.seen[0][-1]["content"]
+    assert "나누지 못한 원문 전체" in sent
+
+
+async def test_나눈_조각을_이어받을_때는_원문_전체라고_알리지_않는다(context: AgentContext) -> None:
+    # 헤더 전체에 "조각 안의 기록을 전부 저장한다" 를 넣으면 섞인 말까지 저장했다 (C02)
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    sent = llm.seen[0][-1]["content"]
+    assert "나누지 못한 원문 전체" not in sent
+
+
+async def test_원문_전체_조각에서_또_물으면_표시가_이어진다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "어떤 음식이었어요?", "kind": "question"}))
+
+    result = await run("뭐였더라", context, client=llm, continuation=_WHOLE_PENDING)
+
+    assert result.pending is not None and result.pending.whole is True
 
 
 async def test_이어받기는_기록_묶음만_연다(context: AgentContext) -> None:
@@ -689,6 +738,22 @@ async def test_강등_경로에서_이미_저장했으면_원문을_pending_으�
 
     result = await run(raw, context, client=llm, task=MemoryTask(raw_text=raw))
 
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
+
+
+async def test_강등_경로에서_일정_초안을_만들었으면_원문을_pending_으로_쓰지_않는다(
+    context: AgentContext,
+) -> None:
+    # 원문 전체 맥락은 "조각 안의 기록은 하나도 저장하지 않았다" 로 넘어간다.
+    # 관찰만 세면 이어받기가 같은 일정 초안을 한 번 더 만든다
+    raw = "모레 운동회 있어. 요즘 기침해"
+    event = {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"}
+    llm = FakeLLM(_tools(_call("c1", "create_event", event)), _answer(_ASK_WHEN))
+
+    result = await run(raw, context, client=llm, task=MemoryTask(raw_text=raw))
+
+    assert result.calls[0].success is True
     assert result.reply is not None and result.reply.kind == "question"
     assert result.pending is None
 

@@ -114,7 +114,7 @@ class Unavailable:
 @dataclass(frozen=True)
 class MemoryNote:
     text: str  # Memory 응답 메시지
-    kind: ReplyKind  # question 이면 화면이 "이어서 적기" 를 연다
+    kind: ReplyKind  # question 이면 화면이 "이어서 적기" 를 연다. 맥락이 있을 때만 question
 
 
 @dataclass(frozen=True)
@@ -274,8 +274,9 @@ async def handle_input(
             # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
-            if memory.reply is not None:
-                send(MemoryNote(text=memory.reply.text, kind=memory.reply.kind))
+            note = _memory_note(memory)
+            if note is not None:
+                send(note)
             if memory.pending is not None:
                 send(PendingReply(run_id, memory.pending))
             unwritten = _unwritten(routing.memory_task, memory)
@@ -360,6 +361,30 @@ LEFTOVER_NOTE = "답변과 함께 적은 다른 내용은 반영하지 않았어
 LEFTOVER_NOTE_QUESTION = (
     "적어 주신 다른 내용은 반영하지 않았어요. 이 질문에 먼저 답한 뒤 따로 한 줄로 보내 주세요."
 )
+# 맥락(pending) 없이 묻는 질문. question으로 내보내면 화면이 "이어서 적기"를 열고,
+# 그 답은 reply_to로 가서 400을 받는다. message로 내리고 새 한 줄로 받는다
+NO_CONTEXT_NOTE = "답은 무엇에 대한 것인지 함께 적어 따로 한 줄로 보내 주세요."
+LEFTOVER_NOTE_NO_CONTEXT = (
+    "적어 주신 다른 내용은 반영하지 않았어요. 그 내용과 이 질문의 답은 각각 따로 한 줄로 "
+    "보내 주세요. 답에는 무엇에 대한 것인지 함께 적어 주세요."
+)
+
+
+def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
+    """Memory 의 마지막 말을 note로 만든다. 뒤에 붙는 문장은 코드가 정한다.
+
+    화면은 kind 만 보고 "이어서 적기" 를 연다. 그래서 question은 맥락이 있을 때만 내보낸다.
+    """
+    reply = memory.reply
+    if reply is None:
+        return None
+    if reply.kind == "question" and memory.pending is None:
+        suffix = LEFTOVER_NOTE_NO_CONTEXT if memory.leftover else NO_CONTEXT_NOTE
+        return MemoryNote(text=f"{reply.text} {suffix}", kind="message")
+    if memory.leftover:
+        suffix = LEFTOVER_NOTE_QUESTION if reply.kind == "question" else LEFTOVER_NOTE
+        return MemoryNote(text=f"{reply.text} {suffix}", kind=reply.kind)
+    return MemoryNote(text=reply.text, kind=reply.kind)
 
 
 async def _handle_continuation(
@@ -390,12 +415,9 @@ async def _handle_continuation(
             send(Saved(refs))
         if memory.drafts:
             send(EventDrafts(memory.drafts))
-        if memory.reply is not None:
-            text = memory.reply.text
-            if memory.leftover:
-                asking = memory.reply.kind == "question"
-                text = f"{text} {LEFTOVER_NOTE_QUESTION if asking else LEFTOVER_NOTE}"
-            send(MemoryNote(text=text, kind=memory.reply.kind))
+        note = _memory_note(memory)
+        if note is not None:
+            send(note)
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
 

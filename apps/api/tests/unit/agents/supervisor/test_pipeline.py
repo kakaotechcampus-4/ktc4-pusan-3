@@ -940,6 +940,91 @@ async def test_섞인_말이_없으면_안내를_붙이지_않는다(
     assert [note.text for note in _of(events, MemoryNote)] == ["기록해 둘게요."]
 
 
+_LUNCH_PENDING = PendingMemoryContext("점심 먹었어", "점심에 무엇을 먹었어요?", WorkType.OBSERVE)
+
+
+async def test_이어받기가_저장한_뒤_물으면_message_로_내리고_따로_보내라고_한다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 저장한 뒤라 맥락이 안 생긴다. question으로 내보내면 화면이 "이어서 적기" 를 열고,
+    # 보호자가 그 질문에 답하면 reply_to 가 400 을 받는다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_food", _TTEOKBOKKI)),
+        _cont_answer({"text": "떡볶이를 기록했어요. 내일 소풍은 몇 시예요?", "kind": "question"}),
+    )
+
+    await handle_input(
+        "떡볶이. 그리고 내일 소풍 있어",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_LUNCH_PENDING,
+    )
+
+    note = _of(events, MemoryNote)[0]
+    assert note.kind == "message"
+    assert note.text == f"떡볶이를 기록했어요. 내일 소풍은 몇 시예요? {pipeline.NO_CONTEXT_NOTE}"
+    assert not _of(events, PendingReply)
+
+
+async def test_맥락_없이_물을_때_섞인_말이_있으면_안내를_한_번만_붙인다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # LEFTOVER_NOTE_QUESTION 은 "이 질문에 먼저 답한 뒤" 라서 답할 수 없는 질문에 붙으면 안 된다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_food", _TTEOKBOKKI)),
+        _cont_answer(
+            {"text": "떡볶이를 기록했어요. 매웠나요?", "kind": "question", "leftover": True}
+        ),
+    )
+
+    await handle_input(
+        "떡볶이. 그리고 오늘 수영장 다녀왔어",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_LUNCH_PENDING,
+    )
+
+    note = _of(events, MemoryNote)[0]
+    assert note.kind == "message"
+    assert note.text == f"떡볶이를 기록했어요. 매웠나요? {pipeline.LEFTOVER_NOTE_NO_CONTEXT}"
+    assert not _of(events, PendingReply)
+
+
+async def test_첫_run_에서도_맥락_없이_묻는_질문은_message_로_내린다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 이어 붙일 조각을 두 번 다 잘못 지목하면 맥락이 안 생긴다
+    wrong = {"text": "무엇을 먹었어요?", "kind": "question", "pending_hint": "후보에 없는 문장"}
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_activity", _SAND)),
+        _answer(wrong),
+        _answer(wrong),
+    )
+
+    await handle_input(
+        CASES_BY_ID["RC04"].text,
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=_supervisor_llm("RC04"),
+        memory_client=memory,
+        emit=events.append,
+    )
+
+    note = _of(events, MemoryNote)[0]
+    assert note.kind == "message"
+    assert note.text == f"무엇을 먹었어요? {pipeline.NO_CONTEXT_NOTE}"
+    assert not _of(events, PendingReply)
+
+
 async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_끝난다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:

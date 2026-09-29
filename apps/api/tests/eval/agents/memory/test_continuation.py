@@ -1,4 +1,4 @@
-"""이어받기 라이브 eval. 답에 다른 말이 섞였을 때 Memory 가 그 부분을 남기는지 본다 (PR #175).
+"""이어받기 라이브 eval. 답에 섞인 다른 말을 Memory 가 조용히 버리지 않는지 본다 (PR #175).
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
     uv run pytest tests/eval/agents/memory/test_continuation.py -m live -s
 
@@ -75,7 +75,9 @@ _CLINIC = PendingMemoryContext(
     "다음 주 수요일 병원 예약 있어", "병원 예약은 몇 시예요?", WorkType.SCHEDULE
 )
 # Supervisor 가 실패하면 원문 전체가 한 조각이 된다. 조각 안의 두 기록은 섞인 말이 아니다
-_WHOLE = PendingMemoryContext("모래놀이하고 뭐 좀 먹었어", "무엇을 먹었어요?", WorkType.OBSERVE)
+_WHOLE = PendingMemoryContext(
+    "모래놀이하고 뭐 좀 먹었어", "무엇을 먹었어요?", WorkType.OBSERVE, whole=True
+)
 
 
 @dataclass(frozen=True)
@@ -83,11 +85,12 @@ class Case:
     case_id: str
     pending: PendingMemoryContext
     answer: str
-    rows: dict[str, int]  # 끝난 뒤 도메인별 관찰 수. 적지 않은 도메인은 0
-    leftover: bool
+    rows: dict[str, int]  # 섞인 말을 빼고 끝난 뒤 도메인별 관찰 수. 적지 않은 도메인은 0
+    leftover: bool  # 답에 조각과 상관없는 말이 섞였는지
     kind: str | None = None  # 기대하는 reply.kind. None 이면 보지 않는다
-    checks: tuple[Check, ...] = ()  # 답이 반영됐는지. 흔들리는 케이스에서도 실패로 막는다
-    drafts: int = 0  # 끝난 뒤 일정 초안 수
+    checks: tuple[Check, ...] = ()  # 답이 반영됐는지
+    drafts: int = 0  # 섞인 말을 빼고 끝난 뒤 일정 초안 수
+    mixed: str = ""  # 섞인 말을 가리키는 낱말. 모델이 그것을 되물었는지 볼 때 쓴다
 
 
 _COUGH_ANSWERED = (_observed_on("health", TWO_DAYS_AGO),)
@@ -101,9 +104,18 @@ CASES = [
         {"health": 1},
         True,
         checks=_COUGH_ANSWERED,
+        mixed="수영장",
     ),
-    Case("C03", _COUGH, "그저께부터. 저녁 뭐 먹일까?", {"health": 1}, True, checks=_COUGH_ANSWERED),
-    Case("C04", _COUGH, "저녁 뭐 먹일까?", {}, True, kind="question"),
+    Case(
+        "C03",
+        _COUGH,
+        "그저께부터. 저녁 뭐 먹일까?",
+        {"health": 1},
+        True,
+        checks=_COUGH_ANSWERED,
+        mixed="저녁",
+    ),
+    Case("C04", _COUGH, "저녁 뭐 먹일까?", {}, True, kind="question", mixed="저녁"),
     # 모델이 tool 없이 "기록했어요" 라고만 답한 적이 있다(19번 중 1번). 그때도 실패로 막는다
     Case(
         "C05",
@@ -121,6 +133,7 @@ CASES = [
         {"health": 1},
         True,
         checks=_COUGH_ANSWERED,
+        mixed="수영장",
     ),
     # 같은 기침에 대한 설명은 섞인 말이 아니다. 따로 보내라고 하면 보호자가 쓴 말을 두 번 쓴다
     Case("C07", _COUGH, "그저께부터. 밤에 더 심해", {"health": 1}, False, checks=_COUGH_ANSWERED),
@@ -132,6 +145,7 @@ CASES = [
         {"food": 1},
         True,
         checks=(_field_has("food", "김밥"),),
+        mixed="소풍",
     ),
     # 일정 조각의 답은 초안 시각으로 들어가고, 섞인 기록은 저장하지 않는다
     Case(
@@ -142,6 +156,7 @@ CASES = [
         True,
         checks=(_draft_at(NEXT_WEDNESDAY, 10),),
         drafts=1,
+        mixed="수영장",
     ),
     # 숫자로 센 날짜. 날짜 규칙이 "3일 전" 을 못 읽던 때는 DATE_UNPARSEABLE 로 다시 물었다
     Case(
@@ -152,19 +167,18 @@ CASES = [
         False,
         checks=(_observed_on("health", THREE_DAYS_AGO),),
     ),
+    # 원문 전체 조각은 "조각 안의 기록을 모두 저장한다" 를 받는다.
+    # 그 말이 답에 섞인 수영장까지 번지는지 확인한다
+    Case(
+        "C11",
+        _WHOLE,
+        "떡볶이. 그리고 오늘 수영장 다녀왔어",
+        {"activity": 1, "food": 1},
+        True,
+        checks=(_field_has("food", "떡볶이"), _field_has("activity", "모래")),
+        mixed="수영장",
+    ),
 ]
-
-# 결과가 흔들리는 케이스(2026-09-29 측정). 답 반영과 중복 저장 방지는 그래도 실패로 막고,
-# "섞인 말은 남기고 leftover 로 알린다" 를 못 지킨 것만 xfail 로 둔다.
-# 못 지킨 경우는 전부 섞인 말까지 처리하고 leftover=False 로 답했다. 저장과 안내가 맞아서
-# 두 번 저장되지는 않는다
-_FLAKY = {
-    # 강등 경로 조각. "조각 안의 기록을 전부 저장한다" 를 헤더에 넣어 보면 C02 에서 섞인 기록까지
-    # 저장해서(8번 중 5번) 넣지 않았다
-    "C05": "조각 안의 두 번째 기록을 빠뜨릴 때가 있다 (19번 중 9번 통과)",
-    "C06": "답이 뒤에 오면 앞의 섞인 기록까지 저장할 때가 있다 (9번 중 5번 통과)",
-    "C08": "섞인 일정의 시각을 묻거나 초안을 만들 때가 있다 (9번 중 2번 통과)",
-}
 
 
 def _client() -> LLMClient:
@@ -209,18 +223,26 @@ def test_이어받기_답에_섞인_말(case: Case) -> None:
         assert all(counts[domain] <= expected[domain] for domain in DOMAINS), "섞인 것을 저장"
         assert len(result.drafts) <= case.drafts, "섞인 일정으로 초안을 만듦"
 
-    # 바라는 동작: 섞인 말은 처리하지 않고 leftover 로 알린다. 묻는다면 답할 맥락이 있는 질문이다
-    # (저장한 뒤 섞인 일정의 시각을 물으면 맥락이 없어 보호자의 답이 400 을 받는다)
-    answerable = result.reply.kind != "question" or result.pending is not None
-    kept = (
-        counts == expected
-        and len(result.drafts) == case.drafts
-        and result.leftover is case.leftover
-        and answerable
+    if not case.leftover:
+        # 섞인 말이 없으면 따로 보내라고 하지 않는다. 하면 보호자가 쓴 말을 두 번 쓴다
+        assert counts == expected
+        assert len(result.drafts) == case.drafts
+        assert result.leftover is False, "섞인 말이 없는데 따로 보내라고 함"
+        return
+
+    # 섞인 말은 둘 중 하나로 끝나면 된다.
+    #   남긴다: 처리하지 않고 leftover 로 알린다. 코드가 "따로 보내 주세요" 를 붙인다
+    #   처리한다: 저장하거나 초안을 만든다. 04 결과에 서서 보호자가 보고, 안내가 안 붙어
+    #            다시 보내지도 않는다. 프롬프트로 막으면 아래의 조용한 누락이 늘 수 있다
+    # 맥락 없이 되물은 것도 처리한 쪽이다. pipeline 이 message 로 내리고 따로 보내라고 한다
+    assert all(counts[domain] >= expected[domain] for domain in DOMAINS), "조각의 기록이 빠짐"
+    stored = (
+        any(counts[domain] > expected[domain] for domain in DOMAINS)
+        or len(result.drafts) > case.drafts
     )
-    if not kept and case.case_id in _FLAKY:
-        pytest.xfail(_FLAKY[case.case_id])
-    assert counts == expected
-    assert len(result.drafts) == case.drafts
-    assert result.leftover is case.leftover
-    assert answerable, "답할 맥락이 없는 질문"
+    asked = (
+        result.reply.kind == "question"
+        and result.pending is None
+        and case.mixed in result.reply.text
+    )
+    assert result.leftover or stored or asked, "섞인 말을 처리도 안내도 하지 않음"
