@@ -8,7 +8,7 @@ downgrade 는 deleted 행을 hard delete 한 뒤 CHECK 를 되돌린다. inactiv
 보호자가 지운 기록이 "잘못된 기록" 목록에 다시 나타난다.
 
 Revision ID: a7e3c91d5f20
-Revises: c5a81f0d3b62
+Revises: bf14612a1d9c
 Create Date: 2026-09-29
 """
 
@@ -17,7 +17,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "a7e3c91d5f20"
-down_revision: Union[str, Sequence[str], None] = "c5a81f0d3b62"
+down_revision: Union[str, Sequence[str], None] = "bf14612a1d9c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
