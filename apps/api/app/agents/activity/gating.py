@@ -1,8 +1,9 @@
 """Activity 의 월령 · 위치 · 날씨 게이트 값.
 
 Growth 와 같은 눈금 방식이다 — tool 마다 열리는 월령이 다르고 배타적인 tool 이 없다.
-**Activity 에는 닫힌 조합이 없다.** 어느 월령에서도 놀이 추천은 나간다. 월령이 바꾸는 것은
-근거를 어디서 모으느냐와 후보에 장소가 붙느냐뿐이다 (docs/agents/shared/연령별_Tool_전략.md §5-1).
+**월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 놀이 추천은 나간다. 월령이 바꾸는
+것은 근거를 어디서 모으느냐와 후보에 장소가 붙느냐뿐이다 (docs/agents/shared/연령별_Tool_전략.md
+§5-1). 알레르기 조회 실패로 전부 닫히는 것은 registry 의 `closed_readout_key` 가 따로 본다 (D7).
 
 registry 와 tool 이 같이 읽는 값이라 따로 둔다 — registry 는 tool 을 import 하므로
 여기 값을 registry 에 두면 tool 쪽에서 되돌아 import 할 수 없다.

@@ -17,6 +17,7 @@ from app.agents.activity.store.ports import (
     Advisories,
     AffinityRecord,
     AirQuality,
+    CoarseLocation,
     Forecast,
     PlaceRow,
     SafetyEntry,
@@ -153,7 +154,7 @@ class InMemoryPlaces:
         self._fail = fail
 
     async def nearby(
-        self, *, grid: WeatherGrid, category: PlaceCategory, radius_m: int
+        self, *, location: CoarseLocation, category: PlaceCategory, radius_m: int
     ) -> list[PlaceRow]:
         if self._fail:
             raise UpstreamUnavailable("장소 조회 실패 (테스트 주입)")

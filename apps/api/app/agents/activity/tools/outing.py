@@ -47,11 +47,12 @@ async def search_nearby_places(
 ) -> ToolResult:
     """근처 장소를 종류로 찾는다. 36개월 이상 · 위치 있음 · 야외 가능일 때만 열린다.
 
-    외부 API 연결 후:
-    - `context.grid` 와 args.category, PLACE_RADIUS_M 만 포트에 넘긴다.
-      🚨 검색어는 닫힌 enum 하나다. 모델이 만든 문자열을 넣지 않는다.
+    장소 적재 후:
+    - `context.location` · args.category · PLACE_RADIUS_M 만 포트에 넘긴다. 포트는 적재한
+      place 테이블에서 거리를 계산한다 — 외부 API 를 부르지 않는다 (D9).
+      🚨 검색 조건은 닫힌 enum 하나다. 모델이 만든 문자열로 찾지 않는다.
     - 결과에는 이름 · 종류 · 거리만 싣는다. 모델은 이 이름만 place_name 에 쓸 수 있다.
     - 실패하면 UPSTREAM_ERROR. 모델은 장소가 필요 없는 활동만 낸다.
     - 장소 행은 근거(suggestion_evidence)에 넣지 않는다. 날씨처럼 필터 조건이다.
     """
-    raise NotImplementedError("외부 API 연결 후 구현")
+    raise NotImplementedError("장소 적재 후 구현")

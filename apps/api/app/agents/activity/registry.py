@@ -7,10 +7,12 @@
     36개월+    memory · weather · schedule · (places) · propose
 
 - `(places)` 는 위치가 있고(`has_location`) 야외가 가능할 때(`outdoor_ok`)만 더해진다.
-  비가 오면 통째로 닫는다 — 실내 장소 소스가 Kakao 키워드뿐이라서다 (3-2).
-- **닫힌 조합이 없다.** 어느 월령에서도 출력 tool 이 열린다. 빈 튜플이 나오면 버그다.
-- `safety_ok` · `consent_child_health` 는 어느 tool 도 닫지 않는다. 조회 실패면 재료를 쓰는
-  후보만 빼고 고지한다 (D7) — 그건 출력 검증의 일이다.
+  지금은 비가 오면 통째로 닫는다. 장소 적재가 붙으면 실내 종류로 좁히는 쪽으로 바꾼다 (3-2).
+- **월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 출력 tool 이 열린다.
+- **알레르기 조회에 실패하면 전부 닫는다** (`safety_ok=False`). `closed_readout_key` 가
+  `blocked.safety` 를 돌려주고 모델을 부르지 않는다 (D7). 재료를 쓰는 후보만 빼서는
+  꽃가루 · 동물털 같은 환경 알레르기를 못 막는다.
+- `consent_child_health` 는 어느 tool 도 닫지 않는다 — 동의가 없으면 읽을 것이 없는 상태다.
 - 안전 필터 · 중복 제거 · 문서 행 조회는 `CODE_TOOLS` 라 모델이 부를 수 없다.
 """
 
@@ -21,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.gating import opens
+from app.agents.activity.readouts import BLOCKED_SAFETY
 from app.agents.activity.result import ErrorCode, ToolResult, fail
 from app.agents.activity.schemas.task import ActivityTaskType
 from app.agents.activity.schemas.tool_defs import TOOL_DEFINITIONS
@@ -69,8 +72,23 @@ OUTPUT_TOOL: dict[ActivityTaskType, str] = {
 }
 
 
+def closed_readout_key(task: ActivityTaskType, gate: Gate) -> str | None:
+    """이 (task, gate) 가 닫혀 있으면 코드 문구 키를, 열려 있으면 None 을 돌려준다.
+
+    닫힌 경로는 모델을 0회 부른다 — `tools_for` 도 이 값이 있으면 빈 튜플을 낸다.
+    """
+    if not gate.safety_ok:
+        return BLOCKED_SAFETY
+    return None
+
+
 def tools_for(task: ActivityTaskType, gate: Gate) -> tuple[str, ...]:
-    """이번 task에 모델에게 열 tool. 순서는 `TOOL_DEFINITIONS` 순서를 따른다."""
+    """이번 task에 모델에게 열 tool. 닫혀 있으면 빈 튜플 — 모델을 부르지 않는다.
+
+    순서는 `TOOL_DEFINITIONS` 순서를 따른다.
+    """
+    if closed_readout_key(task, gate) is not None:
+        return ()
     names = TASK_TOOLS[task]
     return tuple(d.name for d in TOOL_DEFINITIONS if d.name in names and opens(d.name, gate))
 

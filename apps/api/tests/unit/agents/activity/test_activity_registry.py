@@ -2,7 +2,8 @@
 
 - `tools_for` — 설계 문서 D2 게이팅 표의 칸마다 한 케이스. 경계 월령 17/18 · 35/36 양쪽을 덮는다.
 - 장소 조회는 월령과 별개로 위치 · 날씨가 둘 다 참이어야 열린다.
-- **닫힌 조합이 없다.** 어느 월령에서도 출력 tool 이 열린다.
+- **월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 출력 tool 이 열린다.
+- 알레르기 조회에 실패하면 전부 닫힌다 (D7).
 - `execute_tool` — 허용 목록 밖 · 코드 tool · 잘못된 인자는 실행되지 않는다.
 """
 
@@ -18,6 +19,7 @@ from app.agents.activity.registry import (
     OUTPUT_TOOL,
     TOOL_HANDLERS,
     TOOL_SPECS,
+    closed_readout_key,
     execute_tool,
     tools_for,
 )
@@ -86,18 +88,23 @@ class TestToolsFor:
         assert tools_for(TASK, gate(40, has_location=False)) == BASE
 
     def test_야외가_안_되면_장소_조회가_닫힌다(self):
-        """비가 오면 통째로 닫는다. 실내 장소 소스가 Kakao 키워드뿐이라서다 (3-2)."""
+        """지금은 비가 오면 통째로 닫는다. 장소 적재가 붙으면 실내 종류로 좁힌다 (3-2)."""
         assert tools_for(TASK, gate(40, outdoor_ok=False)) == BASE
 
-    def test_안전_조회가_실패해도_tool_을_닫지_않는다(self):
-        """재료를 쓰는 후보만 빼고 고지한다 (D7). 그건 출력 검증의 일이다."""
-        assert tools_for(TASK, gate(40, safety_ok=False)) == WITH_PLACES
+    def test_알레르기_조회에_실패하면_전부_닫는다(self):
+        """재료 후보만 빼서는 환경 알레르기를 못 막는다 (D7). 모델을 부르지 않는다."""
+        closed = gate(40, safety_ok=False)
+        assert tools_for(TASK, closed) == ()
+        assert closed_readout_key(TASK, closed) == "blocked.safety"
+
+    def test_열려_있으면_닫힘_문구가_없다(self):
+        assert closed_readout_key(TASK, gate(40)) is None
 
     def test_동의가_없어도_tool_을_닫지_않는다(self):
         assert tools_for(TASK, gate(40, consent_child_health=False)) == WITH_PLACES
 
     @pytest.mark.parametrize("months", range(0, 72))
-    def test_닫힌_조합이_없다(self, months):
+    def test_월령_위치_날씨로는_닫히지_않는다(self, months):
         """어느 월령에서도 놀이 추천은 나간다. 출력 tool 이 빠지면 버그다."""
         opened = tools_for(TASK, gate(months, has_location=False, outdoor_ok=False))
         assert OUTPUT_TOOL[TASK] in opened
@@ -153,7 +160,7 @@ class TestExecuteTool:
         assert result.error["code"] == ErrorCode.TOOL_NOT_ALLOWED
 
     async def test_닫힌_enum_밖의_검색어는_거절한다(self):
-        """장소 검색어는 닫힌 값이다. 모델이 만든 문자열이 Kakao 로 가지 않는다 (D8)."""
+        """장소 조회 조건은 닫힌 값이다. 모델이 만든 문자열로 장소를 찾지 않는다 (D8)."""
         result = await execute_tool(
             "search_nearby_places",
             {"category": "우리동네 키즈카페"},
