@@ -66,7 +66,7 @@ import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { submittedInput } from "./handlers/runs";
 
-import { suggestions } from "./fixtures";
+import { confirmedEvent, suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -982,8 +982,12 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 
   it("월 조회의 has_event 는 confirmed 만 센다", async () => {
     const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
-      query: { month: monthOf(new Date()) },
+      query: { month: monthOf(new Date(confirmedEvent.starts_at)) },
     });
+    // 🚨 **"이번 달" 로 묻지 않는다.** 픽스처의 일정은 지금부터 +72시간이라 월말에는 다음
+    //    달로 넘어간다 — 그러면 아래 반복문이 한 번도 안 돌아 아무것도 걸지 못한다
+    //    (실제로 9월 29일에 이 파일이 깨졌다).
+    expect(month.days.some((day) => day.has_event)).toBe(true);
 
     // 05·06 이 만드는 draft(e_draft_1)는 아직 캘린더에 쓴 것이 아니다.
     for (const day of month.days) {
@@ -997,7 +1001,8 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     await api.patch("/event-items/i_1", { is_prepared: true });
 
     const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
-      query: { month: monthOf(new Date()) },
+      // 🚨 일정이 실제로 걸린 달을 묻는다 (바로 위 테스트의 주석과 같은 이유).
+      query: { month: monthOf(new Date(confirmedEvent.starts_at)) },
     });
     const eventDay = month.days.find((day) => day.has_event);
     expect(eventDay).toBeDefined();
