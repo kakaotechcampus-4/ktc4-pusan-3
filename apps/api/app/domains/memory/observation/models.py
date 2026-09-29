@@ -209,7 +209,7 @@ class ObservationLinkHold(Base, UUIDPk, Timestamps):
     관찰은 도메인마다 테이블이 달라서 FK 칸을 셋 두고 하나만 채운다 (exclusive arc).
     `correction` · `suggestion_evidence` 처럼 FK 없이 두지 않는 이유는 삭제다 — 관찰이 지워지면
     이 기록도 지워져야 하고(subject 해시가 남는다), 그것을 코드가 아니라 DB 가 보장하게 한다.
-    UNIQUE 는 관찰 하나에 행 하나를 지키고, CASCADE 삭제가 쓰는 인덱스도 된다.
+    UNIQUE 는 관찰 하나에 행 하나를 지키고 CASCADE 삭제가 쓰는 인덱스도 된다.
 
     관찰이 Profile 에 연결되면 행을 지운다. 남는 것은 지금 보류 중인 관찰의 기록뿐이다.
     원문 subject 는 저장하지 않는다. subject_hash 는 subject 가 바뀌었는지 알아차리는 데에만 쓴다.
