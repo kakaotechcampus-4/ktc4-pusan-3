@@ -219,7 +219,10 @@ function CreateChildScreen() {
         </Card>
       </div>
 
-      <div className="mt-auto flex flex-col gap-3 pt-6">
+      {/* 🚨 **바닥에 붙이지 않는다** — 가입 동의 화면과 같은 이유다 (디자인 시스템 §5).
+          폰에서는 내용이 넘쳐서 `mt-auto` 가 무의미하고(390×844 에서 문서 1123px), 뷰포트가
+          길어지면 본문과 버튼 사이만 벌어진다(1280×1400 에서 335px). 버튼은 내용 바로 뒤다. */}
+      <div className="flex flex-col gap-3 pt-6">
         {createChild.isError ? (
           <CardFailed>
             {/* 🚨 약관이 바뀐 400 은 "만들지 못했어요" 가 아니다 — 무엇을 해야 하는지가 다르다

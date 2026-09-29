@@ -226,7 +226,14 @@ export default function AuthConsentPage() {
         ) : null}
       </div>
 
-      <div className="mt-auto flex flex-col gap-3 pt-2">
+      {/* 🚨 **바닥에 붙이지 않는다** (디자인 시스템 §5). `mt-auto` 는 남는 높이를 **본문과
+          버튼 사이** 한 곳으로 몬다 — 폰에서는 내용이 이미 넘쳐서 아무 일도 안 하지만
+          (390×844 에서 문서 1138px), 뷰포트가 내용보다 길어지는 순간 그 빈칸이 화면에서
+          제일 큰 간격이 된다 (1280×1400 에서 354px). 규칙의 전제가 "스크롤이 생기는 폼" 이라,
+          전제가 깨지는 높이에서는 규칙도 같이 깨진다.
+          🚨 버튼은 **내용 바로 뒤**를 따라가고 화면은 그냥 끝난다. 아래가 비는 것과
+          가운데가 비는 것은 다르게 읽힌다 (05 제안 후보 · 00-1 · 초대 코드와 같은 처리). */}
+      <div className="flex flex-col gap-3 pt-2">
         {error ? <CardFailed>{error}</CardFailed> : null}
 
         <Button block onClick={submit} disabled={!canSubmit || pending}>
