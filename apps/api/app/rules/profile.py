@@ -4,6 +4,11 @@
 
 상태는 (O, W, G, last_observed_on, today) 만으로 계산되는 공식 하나로 고정하고,
 strength 는 Agent 추천 우선순위 용도로만 분리한다.
+
+W 는 profile correction 의 wrong 만 센다. observation wrong 은 세지 않는다.
+  - observation wrong → 즉시 inactive → O 에서 빠짐 (이미 반영됨)
+  - profile wrong → W 증가 + strength 감소 (성향 자체에 대한 의심)
+둘은 의미가 다르다. observation wrong 을 W 에 넣으면 구분이 없어진다.
 """
 
 from datetime import date
