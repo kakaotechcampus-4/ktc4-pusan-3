@@ -22,6 +22,10 @@ from app.infra.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
+# asyncio 는 태스크를 약하게만 잡는다. 여기 잡아두지 않으면 GC 가 도중에 거둬
+# Curator 가 조용히 사라진다 (runner.py 주석 참고).
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 async def _run_curator(
     child_id: UUID,
@@ -59,4 +63,6 @@ def trigger_curator_background(
         _run_curator(child_id, today, embedder, judge),
         name=f"curator:{child_id}",
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return task

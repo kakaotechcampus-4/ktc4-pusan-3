@@ -34,8 +34,12 @@ async def recompute_after_linking(
         latest = await get_latest_active_observed_on(
             session, affinity_id=pid, domain=profile.domain,
         )
-        if latest is not None and latest != profile.last_observed_on:
-            profile.last_observed_on = latest
-            await session.flush()
+        if latest is not None:
+            if latest != profile.last_observed_on:
+                profile.last_observed_on = latest
+                await session.flush()
+        # latest=None: active 관찰이 모두 사라졌다 (연결 후 교정/삭제가 끼어든 경우).
+        # last_observed_on 을 건드리지 않는다 — recompute 가 O=0 으로 candidate 를 유지하고,
+        # 이후 시간이 지나면 archived 로 내려간다.
 
         await recompute_profile(session, profile_id=pid, today=today)

@@ -159,12 +159,15 @@ Phase E  통합 테스트
 
 | 파일 | 변경 |
 | --- | --- |
-| `app/domains/memory/curator/db_store.py` | 신규. DB CuratorStore |
 | `app/domains/memory/curator/__init__.py` | 신규. 패키지 |
-| `alembic/versions/b901cf42a99f_*.py` | `down_revision` 변경 |
-| 실행 흐름 파일 (위치 미정) | Curator 호출 + recompute 배선 |
-| `tests/integration/test_curator_db_store.py` | 신규 |
-| `tests/integration/test_curator_recompute_chain.py` | 신규 |
+| `app/domains/memory/curator/db_store.py` | 신규. DB CuratorStore (Phase A) |
+| `app/domains/memory/curator/recompute.py` | 신규. 연결 후 last_observed_on + recompute (Phase B) |
+| `app/domains/memory/curator/trigger.py` | 신규. 백그라운드 트리거 (Phase C) |
+| `app/agents/pipeline.py` | 호출 지점 TODO 추가 (Phase C) |
+| `alembic/versions/b901cf42a99f_*.py` | `down_revision` 변경 (Phase D) |
+| `tests/integration/test_curator_db_store.py` | 신규. DB Store 스펙 18건 |
+| `tests/integration/test_curator_recompute_chain.py` | 신규. 연결→승격 체인 9건 |
+| `tests/integration/test_curator_stages.py` | 신규. 단계별 독립 검증 + E2E 15건 |
 
 ---
 
