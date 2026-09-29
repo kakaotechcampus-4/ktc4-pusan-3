@@ -682,7 +682,7 @@ target_id_type=user_id&target_id={provider_user_id}
 | 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
 | 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |
-| 404 | `not_found` | `deleted_at` 이 찍힌 parent (→ §10-1) | |
+| 404 | `not_found` | `deleted_at` 이 찍힌 parent (→ §10 1번 — 즉시 삭제로 확정) | |
 | 422 | `validation_failed` | `provider` 가 enum 밖 | |
 | 502 | `oauth_provider_error` | 카카오 API 5xx·타임아웃, 코드 교환 실패 | 🆕 |
 
@@ -739,7 +739,7 @@ icatch://auth?error=oauth_denied
 | A-16 | 카카오 API 가 500 | `302 …?error=oauth_provider_error`, `parent` 미생성 |
 | A-17 | 사용자가 카카오에서 취소 | `302 …?error=oauth_denied` |
 | A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
-| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10-1) |
+| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10 1번) |
 | A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
 
 **A-05 · A-08 · A-15 가 이 목록의 이유다.** A-05 가 실패하면 §7-2 가 무의미하고, A-08 이 실패하면 로그인 CSRF 가 열리며, A-15 가 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
@@ -753,7 +753,7 @@ icatch://auth?error=oauth_denied
 | M-01 | 🚨 **시작과 콜백이 같은 오리진인지 배포 환경에서 확인.** 다르면 `state` 쿠키가 콜백에 실리지 않는다. **로컬은 포트가 달라도 우연히 통과한다** (§5-5) | 김명성 · 고태영 |
 | M-02 | **앱에서 로그인 → `icatch://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
 
-배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 §3 의 5개뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
+배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 루트 CLAUDE.md §9 의 7개(§3 의 로그인 5개 + 약관 `GET /policies` · `GET /policies/{scope}/{version}`)뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
 
 ---
 
@@ -761,7 +761,7 @@ icatch://auth?error=oauth_denied
 
 | # | 무엇 | 왜 지금 못 정하나 | 누구 |
 | --- | --- | --- | --- |
-| 1 | **탈퇴 유예기간 중 재로그인** — 복구인가 신규인가 | 유예기간 N일(노션 논의 ⑤)이 미정. 그전까지 `404 not_found` 로 막아둔다 | 팀 · 9월 2주 |
+| 1 | ~~탈퇴 유예기간 중 재로그인 — 복구인가 신규인가~~ | ✅ **확정: 유예 없이 즉시 삭제** (삭제 정책 정본 §9 · #167). 되살릴 계정이 없으므로 탈퇴 후 다시 로그인하면 **신규 가입**이다. `deleted_at` 이 찍힌 계정이 보이면 세션을 내주지 않고 `404 not_found` 로 막는 방어는 그대로 둔다 | 확정 09-29 |
 | 2 | **세션 수명 12시간이 맞는지** | `M-02` 결과에 달렸다. 측정한 값이 아니다 | 고태영 |
 | 3 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 이 흐름은 provider 별 모양이 같아 추가가 쉽다 | 박재형 |
 | 4 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
