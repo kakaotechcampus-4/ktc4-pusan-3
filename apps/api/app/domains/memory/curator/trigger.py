@@ -43,9 +43,13 @@ async def _run_curator(
                 await recompute_after_linking(session, result=result, today=today)
 
             await session.commit()
-        except Exception:
+        except Exception as exc:
             await session.rollback()
-            logger.exception("curator 실행 실패 child_id=%s", child_id)
+            # logger.exception 은 traceback 을 찍는데, 그 안에 subject(관찰 대상 이름)가
+            # 포함될 수 있다. 에러 타입만 남긴다 (CLAUDE.md §2 개인정보).
+            logger.error(
+                "curator 실행 실패 child_id=%s error=%s", child_id, type(exc).__name__,
+            )
 
 
 def trigger_curator_background(

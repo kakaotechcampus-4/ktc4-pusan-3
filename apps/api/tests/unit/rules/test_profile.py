@@ -368,7 +368,7 @@ class TestScenario:
         assert s == pytest.approx(0.55 * 0.93 * 0.90)
 
     def test_윈도우_밖으로_관찰이_빠지면_자연_하강(self):
-        """7일 윈도우 안 관찰이 3→2건으로 줄면 confirmed→candidate"""
+        """승격 윈도우 안 관찰이 3→2건으로 줄면 confirmed→candidate"""
         # 승격 중이었음
         assert (
             compute_profile_status(

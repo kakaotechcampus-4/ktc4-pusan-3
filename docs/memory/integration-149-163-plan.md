@@ -178,3 +178,13 @@ Phase E  통합 테스트
 - 동시 실행 제어 — 현실적으로 낮은 확률. 문제 발생 시 후속
 - `merge_key` 변경 (보호자가 Profile 이름을 고치는 것) — 별도 이슈
 - 배치 recompute (시간 경과에 의한 archived 전이) — #154 TODO 로 기록됨
+
+## 6. PR 리뷰 포인트
+
+### 이 PR 에서 다루지 않았지만 확인이 필요한 것
+
+| 항목 | 상태 | 비고 |
+| --- | --- | --- |
+| `ports.py:100` docstring "strength 기본값 0.3" → 0.5 | 이시하님 코드 | #163 리뷰에서 언급 필요 |
+| CLAUDE.md §2 "6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다" | **미구현** | 절대 규칙. Agent 가 evidence 를 가져올 때 6개월 필터가 없으면 §2 위반. 현재 `ARCHIVED_WINDOW_DAYS=21` 만 있고 180일 감쇠 규칙은 코드에 없다. Agent evidence 조회 경로에서 후속 이슈로 처리해야 한다 |
+| education 도메인 DB Store 테스트 | 미작성 | `ObservationEducation.topic` 필수 필드 때문에 별도 헬퍼 필요 |

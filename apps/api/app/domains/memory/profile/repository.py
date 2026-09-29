@@ -85,7 +85,7 @@ async def count_active_in_window(
     domain: MemoryDomain,
     today: date,
 ) -> int:
-    """승격 윈도우(7일) 안의 active 관찰 건수 (= O)."""
+    """승격 윈도우(PROMOTION_WINDOW_DAYS) 안의 active 관찰 건수 (= O)."""
     model = _PROMOTABLE_BY_DOMAIN.get(domain)
     if model is None:
         return 0
