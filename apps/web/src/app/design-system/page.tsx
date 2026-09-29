@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { DomainChip } from "@/components/domain-chip";
 import { DayMarkLegend } from "@/components/month-grid";
 import { Banner } from "@/components/ui/banner";
@@ -481,6 +482,12 @@ const DS_STATE_OPTIONS = [
   { value: "candidate", label: "후보" },
 ] as const;
 
+/** 에러 바운더리 예시용. 렌더 도중 던져야 바운더리가 잡는다 (이벤트 핸들러 안은 안 잡힌다). */
+function Boom({ on }: { on: boolean }) {
+  if (on) throw new Error("design-system boundary demo");
+  return null;
+}
+
 function ComponentSection() {
   const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
@@ -493,6 +500,7 @@ function ComponentSection() {
   const [text, setText] = useState("");
   const [area, setArea] = useState("");
   const [bar, setBar] = useState("");
+  const [boom, setBoom] = useState(false);
 
   return (
     <Section title="컴포넌트" note="지금 코드에 있는 것만. 사양은 §7, 없는 것은 맨 아래에.">
@@ -672,6 +680,29 @@ function ComponentSection() {
       <CardFailed>
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.
       </CardFailed>
+
+      <SubTitle>에러 바운더리</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        서브트리 하나만 격리한다. 아래 버튼을 누르면 카드 안쪽이 렌더 도중 예외를 던지는데, 이
+        구역만 card-failed 로 바뀌고 이 화면의 나머지는 그대로 산다. 🚨 승인 게이트 2곳에는 붙이지
+        않는다 — 승인 시트가 조용히 작은 카드로 바뀌면 보호자가 확정됐는지 아닌지를 알 수 없다. 🚨
+        API 실패는 여기로 오지 않는다(바운더리는 렌더 중 예외만 잡는다). 그건 화면이 그 자리에
+        card-failed 로 그린다.
+      </p>
+      <AppErrorBoundary
+        label="이 부분을 그리지 못했어요."
+        resetKeys={[boom]}
+        onReset={() => setBoom(false)}
+      >
+        <Card>
+          <p className="text-body-sm text-ink-muted">
+            정상일 때는 이 카드가 보입니다. <Boom on={boom} />
+          </p>
+          <Button variant="tertiary" size="compact" className="mt-3" onClick={() => setBoom(true)}>
+            터뜨리기
+          </Button>
+        </Card>
+      </AppErrorBoundary>
 
       <SubTitle>탭 (07)</SubTitle>
       {/* 링크는 이 화면 안의 앵커다 — 내부 문서에서 다른 화면으로 새 나가지 않게. */}

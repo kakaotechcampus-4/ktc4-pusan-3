@@ -494,6 +494,35 @@ const mutation = useMutation({
   낙관적 업데이트를 쓰는 이유 자체를 없앤다. 화면은 즉시 바뀌고 **요청만** 줄을 선다.
   재조회(`onSettled`)는 줄의 **마지막** 요청에서만 부른다.
 
+### 에러 바운더리 — API 실패와 다른 것을 잡는다
+
+바운더리가 잡는 것은 **렌더 도중 던져진 예외** 하나뿐이다. `useQuery` 의 실패도, 이벤트 핸들러
+안에서 난 예외도 도달하지 않는다. 그래서 위의 `ApiError` 규칙과 **겹치지 않고 서로를 대신하지도
+못한다.**
+
+| | 누가 | 어떻게 보이나 |
+| --- | --- | --- |
+| API 실패 | 화면이 `isError` → `CardFailed` | 그 자리만 바뀌고 나머지는 그대로 |
+| 화면을 그리다 터짐 | `app/error.tsx` · `child/[childId]/error.tsx` | 화면이 통째로 바뀜 |
+| 루트 레이아웃이 터짐 | `app/global-error.tsx` | 문서 전체를 대체 (Providers 없음) |
+| 없는 주소 | `app/not-found.tsx` | 404 로 응답한다 |
+| 한 구역만 터짐 | `components/app-error-boundary.tsx` | 그 구역만 `CardFailed` |
+
+- 🚨 **`throwOnError` 를 켜서 쿼리 실패를 바운더리로 올리지 않는다.** 부분 실패가 화면 전체 교체가
+  되어 "Agent 2개 중 1개만 성공해도 그 화면을 보여준다"(NF-06)가 깨진다.
+- 🚨 **에러 메시지를 화면에도 콘솔에도 내보내지 않는다.** `lib/report-render-error.ts` 한 곳을 쓰고,
+  남기는 것은 `name` 과 `digest` 뿐이다 — 이 경로에는 서버 문구와 보호자가 방금 친 한 줄이 실릴 수
+  있다 (최상위 §2).
+  ⚠️ **React 자체가 잡힌 예외를 콘솔에 한 번 찍는 것은 우리가 못 막는다.** 그래서 규칙은
+  "로그를 조심한다" 가 아니라 **`new Error()` 에 사용자 입력을 넣지 않는다** 다.
+- 🚨 **승인 게이트 2곳에 `AppErrorBoundary` 를 붙이지 않는다.** 승인 시트가 조용히 작은 회색 카드로
+  바뀌면 보호자가 "확정됐다 / 안 됐다" 를 구분할 수 없다. 되돌릴 수 없는 것 앞에서는 화면째
+  실패하는 편이 안전하다.
+- ⚠️ **개발 서버에서는 Next 에러 오버레이가 이 화면들을 덮는다.** 눈으로 확인할 때는
+  `pnpm build && pnpm start` 다. 404 는 `/web-smoke` 가 매번 확인한다 (`routes.json` 의 `status`).
+- `react-error-boundary` 는 §4 의 "UI 킷을 쓰지 않는다" 에 걸리지 않는다 — **화면을 그리지 않는**
+  라이브러리라 `es-hangul` 과 같은 칸이다. fallback 은 우리 primitive 로 그린다.
+
 ### SSE
 
 `EventSource` 를 쓰지 않는다. Authorization 헤더를 못 붙여서 NF-09 를 깬다.
