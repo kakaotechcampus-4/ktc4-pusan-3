@@ -13,11 +13,14 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domains.consent.models import ConsentScope
+from app.domains.consent.repository import ACCOUNT_SCOPES, REQUIRED_ACCOUNT_SCOPES
+from app.domains.policy.catalog import SCOPE_CATALOG
 from app.domains.policy.models import PolicyVersion
 from app.domains.policy.repository import register_version
 
 URL = "/api/v1/policies"
-DISPLAY_ORDER = ["service_terms", "privacy_account", "child_basic", "child_health"]
+DISPLAY_ORDER = ["service_terms", "privacy_account", "location", "child_basic", "child_health"]
+OPTIONAL = {"location"}
 
 
 async def test_policies_are_readable_without_login(db_client):
@@ -44,14 +47,26 @@ async def test_policies_come_in_display_order_with_labels(db_client):
             "legal_basis",
             "required",
             "sensitive",
-            "content",
-        }
+            "html_path",
+        }, "원문(content)은 내려보내지 않는다 — 화면이 직접 그릴 일을 없앤다 (#179)"
         assert item["label"]
-        assert item["required"] is True
+        # 🚨 위치는 선택이다. 필수로 내려가면 화면이 그 체크 없이는 가입을 막는다 (#172).
+        assert item["required"] is (item["scope"] not in OPTIONAL)
 
     health = next(item for item in body if item["scope"] == "child_health")
     assert health["sensitive"] is True
     assert "제23조" in health["legal_basis"]
+
+
+def test_catalog_required_matches_what_signup_blocks_on():
+    """화면이 필수로 그리는 계정 동의 = 가입이 빠지면 막는 계정 동의.
+
+    "필수" 가 catalog(화면에 내려가는 값)와 REQUIRED_ACCOUNT_SCOPES(가입 검사) 두 곳에 있다.
+    한쪽만 바꾸면 화면은 선택이라 하는데 가입은 막히거나, 그 반대가 된다.
+    """
+    shown_required = {scope for scope in ACCOUNT_SCOPES if SCOPE_CATALOG[scope].required}
+
+    assert shown_required == set(REQUIRED_ACCOUNT_SCOPES)
 
 
 async def test_newer_version_replaces_older_one(db_client, session):
@@ -62,18 +77,20 @@ async def test_newer_version_replaces_older_one(db_client, session):
     await register_version(
         session,
         scope=ConsentScope.SERVICE_TERMS,
-        version="draft-1",
+        version="test-newer",
         label="서비스 이용약관",
         content="# 새 약관",
         content_hash="hash",
-        effective_at=datetime(2026, 9, 1, tzinfo=UTC),
+        content_html="<!doctype html><p>새 약관</p>",
+        # 고정 날짜가 아니라 "방금" — 마이그레이션이 더 늦은 약관을 등록해도 이 행이 가장 새것이다.
+        effective_at=datetime.now(UTC) - timedelta(minutes=1),
     )
 
     body = (await db_client.get(URL)).json()
     terms = next(item for item in body if item["scope"] == "service_terms")
 
-    assert terms["version"] == "draft-1"
-    assert terms["content"] == "# 새 약관"
+    assert terms["version"] == "test-newer"
+    assert terms["html_path"] == "/policies/service_terms/test-newer"
 
 
 async def test_title_belongs_to_the_version_the_guardian_saw(db_client, session):

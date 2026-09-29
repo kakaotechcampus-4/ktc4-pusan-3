@@ -1,7 +1,7 @@
 """인증 경계와 CORS — 루트 CLAUDE.md §9 · 이슈 #34
 
 여기서 지키는 것 둘.
-    ① 무인증으로 열린 경로가 보안 목록 5개를 넘지 않는다
+    ① 무인증으로 열린 경로가 보안 목록 7개를 넘지 않는다
     ② 브라우저가 부를 수 있는 오리진이 환경변수로 정한 목록뿐이다
 
 ①이 중요한 이유 — 인증을 라우터마다 손으로 다는 구조에서는 한 번 깜빡한 엔드포인트가
@@ -27,15 +27,15 @@ PUBLIC_ALLOWLIST = {
     ("POST", "/api/v1/auth/{provider}"),
     ("POST", "/api/v1/auth/{provider}/signup"),
     ("GET", "/api/v1/policies"),
+    ("GET", "/api/v1/policies/{scope}/{version}"),
 }
-"""루트 CLAUDE.md §9 의 무인증 6개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
+"""루트 CLAUDE.md §9 의 무인증 7개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
 
 `GET /policies` 는 로그인용은 아니지만 가입 전 동의 화면이 약관을 그리려고 부른다 (#91).
+`GET /policies/{scope}/{version}` 은 그 화면의 "전문 보기" 가 여는 정본 HTML 이다 (#172).
 약관은 누구나 읽을 수 있어야 하는 공개 문서다.
 
-아직 POST 둘은 구현 전이라 실제로 열린 것은 3개다. 그래서 "정확히 같다" 가 아니라
-"이 목록을 벗어나지 않는다" 로 건다 — 구현이 늘어도 테스트를 고칠 필요가 없고,
-목록 밖이 열리는 순간 실패한다.
+"정확히 같다" 가 아니라 "이 목록을 벗어나지 않는다" 로 건다 — 목록 밖이 열리는 순간 실패한다.
 """
 
 ALLOWED_ORIGIN = "https://app.example.test"
@@ -48,21 +48,48 @@ def dependency_calls(dependant):
         yield from dependency_calls(sub)
 
 
+def all_routes(routes, prefix: str = "", inherited: tuple = ()):
+    """(전체 경로, 라우트, 위 라우터들이 건 의존성) 을 끝까지 풀어서 낸다.
+
+    🚨 FastAPI 0.14x 부터 include_router 가 라우트를 펼쳐 넣지 않고 한 겹 감싼다
+       (`_IncludedRouter`). app.routes 만 훑으면 /api/v1 라우트가 하나도 안 보여서, 이 파일의
+       검사가 빈 집합을 보고 늘 통과했다 (#172 리뷰에서 찾음). 감싼 것을 한 겹씩 풀고, 각
+       겹이 건 prefix 와 의존성(protected_router 의 인증이 여기 있다)을 이어 붙인다.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield prefix + route.path, route, inherited
+        elif hasattr(route, "original_router"):
+            ctx = route.include_context
+            router = route.original_router
+            deps = tuple(d.dependency for d in (*ctx.dependencies, *router.dependencies))
+            yield from all_routes(router.routes, prefix + ctx.prefix, inherited + deps)
+
+
 def public_routes() -> set[tuple[str, str]]:
     """/api/v1 아래에서 인증 의존성을 거치지 않는 (메서드, 경로) 집합."""
     found = set()
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or not route.path.startswith(API_V1_PREFIX):
+    for path, route, inherited in all_routes(app.routes):
+        if not path.startswith(API_V1_PREFIX):
             continue
-        if get_current_parent in set(dependency_calls(route.dependant)):
+        if get_current_parent in {*inherited, *dependency_calls(route.dependant)}:
             continue
         for method in route.methods - {"HEAD", "OPTIONS"}:
-            found.add((method, route.path))
+            found.add((method, path))
     return found
 
 
+def test_route_walk_actually_sees_the_routes():
+    """🚨 검사 도구부터 검사한다 — 라우트를 못 찾으면 아래 테스트는 빈 집합으로 늘 통과한다."""
+    public = public_routes()
+    every = {path for path, _, _ in all_routes(app.routes)}
+
+    assert ("GET", "/api/v1/policies") in public
+    assert "/api/v1/auth/logout" in every, "보호 라우트도 보여야 한다"
+
+
 def test_public_routes_never_exceed_the_security_allowlist():
-    """🚨 무인증으로 열린 경로는 로그인용 5개를 넘지 않는다 (루트 CLAUDE.md §9)."""
+    """🚨 무인증으로 열린 경로는 §9 의 7개를 넘지 않는다 (루트 CLAUDE.md §9)."""
     assert public_routes() <= PUBLIC_ALLOWLIST
 
 

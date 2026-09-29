@@ -36,6 +36,15 @@ class PolicyVersion(Base, UUIDPk):
 
     없으면 보여 주지 않는다.
     """
+    content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """content 로 만든 정본 HTML — 보호자가 "전문 보기" 에서 보는 그 페이지 (#172, 멘토 #71-4).
+
+    서버가 만든 완성본을 저장하고 화면은 손대지 않고 띄운다. 보여 줄 때마다 새로 만들지 않는다 —
+    변환기가 바뀌어도 이미 동의받은 글의 모양이 따라 바뀌면 안 된다. 원고와 함께
+    `alembic/policy_texts/<버전>/<scope>.html` 로 커밋하고 마이그레이션이 그대로 넣는다.
+
+    null 이면 정본이 없다 — draft-0 은 "TODO" 자리 표시 글이라 만들지 않았다.
+    """
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

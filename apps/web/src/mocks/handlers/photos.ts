@@ -9,7 +9,7 @@ import type {
 } from "@/lib/api/types";
 import { PHOTO_LANES } from "@/lib/api/types";
 
-import { CHILD_ID, daysAgo, draftEvent } from "../fixtures";
+import { CHILD_ID, daysAgo } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -366,13 +366,6 @@ export const photoHandlers = [
     const attaching = body.attach_to_calendar;
     const attachedDate = body.lane === "document" ? when : run.date;
 
-    /**
-     * 🚨 **항목마다 일정을 만들지 않는다.** 계약서 §09 의 응답은 `event` 하나라, 지금은
-     *    날짜가 있는 첫 항목만 초안이 된다. 한 장에서 일정이 여러 개 나오면 `event` 도
-     *    배열이어야 한다 — 👉 `apps/api` Owner 협의 대상 (types.ts 의 ⚠️ 와 같은 줄기).
-     */
-    const forEvent = body.lane === "document" ? entries.find((e) => e.date !== null) : undefined;
-
     const response: PhotoCommitResponse = {
       observations:
         body.lane === "document"
@@ -382,27 +375,6 @@ export const photoHandlers = [
           : tags.length > 0
             ? [activityObservation(tags, attachedDate)]
             : [],
-      // 🚨 문서 lane 이 일시를 읽어냈을 때만 일정이 생기고, 그것도 **draft** 다.
-      //    확정은 09 화면의 `POST /events/{eid}/confirm`(승인 게이트 ㉠) 뿐이다.
-      event:
-        forEvent && attaching && forEvent.date
-          ? draftEvent({
-              id: `e_photo_${Date.now()}`,
-              title: forEvent.title,
-              starts_at: `${forEvent.date}T00:00:00+09:00`,
-              all_day: true,
-              category: "institution",
-              created_by: "agent",
-              source_notice_id: `n_${params.rid}`,
-              source_refs: [],
-              items: forEvent.items.map((name, i) => ({
-                item_id: `i_photo_${i}`,
-                item_name: name,
-                is_prepared: false,
-                prepared_at: null,
-              })),
-            })
-          : null,
       calendar_date: attaching ? attachedDate : null,
     };
 

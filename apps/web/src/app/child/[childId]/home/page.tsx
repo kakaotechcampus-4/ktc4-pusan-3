@@ -30,6 +30,11 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
 import { isRunConfirmed, useRunStream } from "@/hooks/use-run-stream";
 import { useDraftStore, useDraftText } from "@/stores/draft";
+import {
+  usePendingQuestion,
+  usePendingQuestionStore,
+  type PendingQuestion,
+} from "@/stores/pending-question";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import {
   api,
@@ -84,6 +89,14 @@ function HomeScreen() {
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
   const run = useRunStream(childId);
 
+  /**
+   * Memory 가 되물은 질문. 04 결과에서 "이어서 적기" 를 누르면 여기로 따라온다 —
+   * run 은 그 순간 리셋되므로 질문이 run 상태에 남아 있으면 같이 사라진다 (#141).
+   */
+  const pendingQuestion = usePendingQuestion(childId);
+  const setQuestion = usePendingQuestionStore((s) => s.setQuestion);
+  const clearQuestion = usePendingQuestionStore((s) => s.clearQuestion);
+
   const home = useQuery({
     queryKey: qk.home(childId),
     queryFn: () => api.get<HomeResponse>(`/children/${childId}/home`),
@@ -100,17 +113,40 @@ function HomeScreen() {
    */
   const idempotencyKey = useIdempotencyKey();
 
+  /**
+   * 변수는 **이 한 줄이 답하는 질문**이다 (없으면 `null`).
+   *
+   * 🚨 **다시 시도는 `submit.variables` 를 그대로 넘긴다.** 그 순간의 스토어가 아니다 — 보낸 요청과
+   *    다시 보내는 요청이 같아야 같은 키가 나가고, 답이 어느 질문에 대한 것인지도 그대로 간다.
+   */
   const submit = useMutation({
-    mutationFn: () => {
-      const body: InputRequest = { text: text.trim(), source: "home_input" };
+    mutationFn: (answering: PendingQuestion | null) => {
+      const body: InputRequest = {
+        text: text.trim(),
+        source: "home_input",
+        // 🚨 되묻기에 답하는 중이면 **어느 run 에 대한 답인지**를 싣는다 (#158 리뷰).
+        //    원문을 다시 보내지 않는 이유는 `stores/pending-question.ts` 에 있다.
+        ...(answering ? { reply_to: answering.runId } : {}),
+      };
       // 🚨 키를 **본문에 묶는다.** 같은 본문의 재시도는 같은 키(중복 저장 방지), 고쳐 쓴 본문은
       //    새 키다. 서버가 처리했는데 응답만 유실되면 화면은 실패로 보이고 보호자는 한 줄을
       //    고쳐서 다시 보내는데, 키가 그대로면 "같은 키 · 다른 본문" 이라 계속 422 다 (PR #71 리뷰).
-      return submitInput(childId, body, idempotencyKey.current(body.text));
+      // 🚨 **`text` 만 묶으면 안 된다.** 서버는 본문 **전체**로 같은 요청인지 보므로(idempotency-v1),
+      //    같은 답을 다른 질문에 보내면 "같은 키 · 다른 본문" 이라 422 다 — `reply_to` 도 함께 묶는다.
+      return submitInput(childId, body, idempotencyKey.current(keyPayload(body)));
     },
+    // 🚨 **202 에서 질문을 지우지 않는다** (#175 리뷰). 이어받기 run 이 `failed` 로 끝나면 서버는
+    //    맥락을 원래 `reply_to` 자리에 되돌려 두는데, 여기서 지우면 "다시 시도" · "고쳐 쓰기" 뒤의
+    //    요청에 `reply_to` 가 빠져서 "3일 전부터" 만 맥락 없는 새 입력으로 나간다.
+    //    질문이 끝나는 때는 서버가 run 을 끝까지 처리했다고 말한 때다 (`closeRun`).
     onSuccess: (res) => {
       setRunId(res.run_id);
       run.start(res.run_id);
+    },
+    // 🚨 **맥락을 못 찾았으면 질문을 놓는다** (#175). 들고 있으면 다음 한 줄에도 같은 `reply_to`
+    //    가 실려서 몇 번을 보내도 같은 400 이다. 놓으면 본문이 바뀌어 새 키가 저절로 나간다.
+    onError: (error) => {
+      if (isApiError(error, "reply_context_unavailable")) clearQuestion(childId);
     },
   });
 
@@ -133,12 +169,37 @@ function HomeScreen() {
     //    (`current(body.text)`) 저절로 새 키가 나간다.
     idempotencyKey.rotate();
     clearDraft(childId);
+    // 되묻기에 답하러 왔든 다른 이야기를 적었든, 서버가 이 한 줄을 끝까지 처리했으니 그 질문은 끝났다.
+    // 🚨 이 run 이 또 되물었으면 `answerQuestion` 이 **이 뒤에** 새 질문을 넣는다.
+    clearQuestion(childId);
   }
 
   function retry() {
     run.reset();
-    // 같은 입력의 재시도다. Idempotency-Key 를 유지한 채 다시 보낸다.
-    submit.mutate();
+    // 같은 입력의 재시도다. Idempotency-Key 를 유지한 채 다시 보낸다 — 답하던 질문도 같이.
+    submit.mutate(submit.variables ?? null);
+  }
+
+  /**
+   * 되묻는 질문에 답하러 03 홈으로 돌아간다 (#141 · #158 리뷰).
+   *
+   * 🚨 **원문을 입력창에 되돌리지 않는다.** 한동안 되돌려 놨었다 — 답은 새 한 줄이라 앞의 run 을
+   *    모르니 맥락을 화면이 만들어 주려던 것이었다. 그런데 **일부는 저장되고 질문이 같이 오는
+   *    run** 이 있어서("계란 잘 먹었어. 요즘 기침해" → 계란 저장 + 기침 되묻기 ·
+   *    `apps/api/app/agents/pipeline.py`), 원문을 다시 보내면 **계란이 두 번 저장된다.**
+   *    7일 승격 집계가 한 번의 관찰을 두 번으로 세게 되므로 최상위 §2 가 깨진다 (#154).
+   *    맥락은 서버가 `reply_to` 로 찾는다 (위 `submit`).
+   *
+   * 🚨 **`runId` 를 질문과 함께 넘긴다.** `closeRun()` 이 `setRunId(null)` 로 지우므로 그 전에
+   *    붙들어야 한다. 순서가 바뀌면 `reply_to` 가 비어서 답이 맥락 없는 새 입력이 된다.
+   */
+  function answerQuestion(question: string) {
+    // 🚨 `closeRun()` 이 지우기 전에 붙든다.
+    const answeringRunId = runId;
+    // 🚨 **`closeRun()` 다음에 넣는다.** closeRun 이 앞 질문을 지우므로, 먼저 넣으면 방금 받은
+    //    질문까지 지워진다 — 답을 이어받은 run 이 또 되묻는 경우다.
+    closeRun();
+    if (answeringRunId) setQuestion(childId, { text: question, runId: answeringRunId });
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
@@ -163,11 +224,13 @@ function HomeScreen() {
       <Screen className="gap-6">
         <RunResult
           state={run.state}
+          childId={childId}
           inputText={text}
           onRetry={retry}
           onEdit={closeRun}
           onDone={closeRun}
           onPickOffer={goToSuggestions}
+          onAnswerQuestion={answerQuestion}
         />
       </Screen>
     );
@@ -179,23 +242,39 @@ function HomeScreen() {
       nav={<ChildNav active="home" />}
       bottomBar={
         <div className="flex flex-col gap-2">
-          {submit.isError ? (
-            <CardFailed>
-              <p>{submit.error instanceof Error ? submit.error.message : "보내지 못했어요."}</p>
+          {/* 🚨 **`accent` 가 아니다.** 이 화면의 accent 한 장은 "눈여겨볼 것" 이 이미 쓰고 있다
+              (`HomeBody`) — 두 장이 되면 강조가 아니라 장식이 된다 (`components/ui/card.tsx`). */}
+          {pendingQuestion ? (
+            <Card>
+              <p className="text-caption text-ink-subtle">한 가지만 더</p>
+              {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
+              <p className="text-body-sm text-ink mt-1">{pendingQuestion.text}</p>
+              {/* 🚨 **답만 적으라고 말한다.** 앞서 적은 말을 다시 쓰게 하면 이미 저장된 조각이
+                  또 저장된다 (#158 리뷰) — 앞 이야기는 서버가 `reply_to` 로 찾는다. */}
+              <p className="text-caption text-ink-subtle mt-2">
+                이 질문에 대한 답만 적어주세요. 앞서 적어주신 말은 저장돼 있어요.
+              </p>
               <Button
                 variant="tertiary"
                 size="compact"
                 className="mt-3"
-                onClick={() => submit.mutate()}
+                onClick={() => clearQuestion(childId)}
               >
-                다시 시도
+                나중에 할게요
               </Button>
-            </CardFailed>
+            </Card>
+          ) : null}
+          {submit.isError ? (
+            <SubmitErrorCard
+              error={submit.error}
+              question={submit.variables?.text ?? null}
+              onRetry={() => submit.mutate(submit.variables ?? null)}
+            />
           ) : null}
           <HomeComposer
             value={text}
             onChange={setText}
-            onSubmit={() => submit.mutate()}
+            onSubmit={() => submit.mutate(pendingQuestion)}
             prompts={home.data?.agent_prompts ?? []}
             onPickPrompt={(agent) => goToSuggestions([agent])}
             onPickPhoto={() => setPhotoSheetOpen(true)}
@@ -255,6 +334,75 @@ function HomeScreen() {
         }}
       />
     </Screen>
+  );
+}
+
+/**
+ * Idempotency-Key 를 묶을 본문 지문.
+ *
+ * 🚨 **`text` 만으로는 부족하다.** 요청 지문은 `method + 경로 + 요청 본문` 이라
+ *    (`docs/api/idempotency-v1.md` §3-2), "네" 라는 같은 답을 서로 다른 질문에 보내면
+ *    같은 키에 다른 본문(`reply_to`)이 실려 `422 idempotency_key_reuse` 가 된다.
+ * 🚨 필드를 더하면 **여기도 같이** 더한다 — 빠뜨리면 그 필드만 바뀐 요청이 조용히 같은 키로 나간다.
+ */
+function keyPayload(body: InputRequest): string {
+  return `${body.reply_to ?? ""}|${body.source}|${body.text}`;
+}
+
+/**
+ * 한 줄을 보내지 못했을 때 (#147).
+ *
+ * 🚨 **`daily_input_limit` 에는 "다시 시도" 를 두지 않는다.** 같은 본문은 같은 Idempotency-Key 로
+ *    나가고(`use-idempotency-key.ts`), 한도는 한국 시간 자정에 풀린다 — 버튼을 세워 두면 부모가
+ *    누를 때마다 같은 429 를 받는다. 누르면 같은 실패가 나오는 버튼을 만들지 않는다
+ *    (apps/web/CLAUDE.md §3 에러 — `consent_required` 를 일반 실패로 그리지 않는 것과 같은 이유다).
+ *
+ * 🚨 **문구는 서버 것을 그대로 쓴다.** 하루 몇 번인지는 서버 설정값이라 바뀐다 (#147) — 화면이
+ *    숫자를 따로 적으면 그날부터 둘이 어긋나고, 틀린 쪽은 언제나 화면이다.
+ *
+ * 🚨 **`reply_context_unavailable` 에도 "다시 시도" 를 두지 않는다** (#175). 서버가 앞 이야기를
+ *    놓쳤으니 같은 답은 몇 번을 보내도 같은 400 이다. 대신 무엇을 물었는지 이 카드가 대신 들고
+ *    있는다 — 질문 카드는 이미 놓았고(`onError`), 입력창의 "3일 전부터" 만으로는 보호자도
+ *    무엇에 대한 답이었는지 다시 적을 수 없다.
+ *    🚨 **"다 다시 적어 주세요" 라고 하지 않는다.** 앞서 저장된 이야기까지 다시 적으면 그 조각이
+ *    두 번 저장된다 (`answerQuestion` 과 같은 이유 · #158).
+ */
+function SubmitErrorCard({
+  error,
+  question,
+  onRetry,
+}: {
+  error: unknown;
+  /** 이 한 줄이 답하던 질문. 답이 아니었으면 `null`. */
+  question: string | null;
+  onRetry: () => void;
+}) {
+  const limited = isApiError(error, "daily_input_limit");
+  const lostContext = isApiError(error, "reply_context_unavailable");
+
+  return (
+    <CardFailed>
+      <p>{error instanceof Error ? error.message : "보내지 못했어요."}</p>
+      {lostContext ? (
+        <>
+          {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
+          {question ? <p className="text-body-sm text-ink mt-2">{question}</p> : null}
+          <p className="text-caption text-ink-subtle mt-2">
+            적어주신 답은 입력창에 그대로 있어요. 무엇에 대한 답인지 함께 적어 보내 주세요. 앞서
+            저장된 이야기는 다시 적지 않아도 돼요.
+          </p>
+        </>
+      ) : limited ? (
+        // 🚨 원문은 지우지 않는다 — 내일 이어서 보낼 한 줄이다 (`closeRun` 과 같은 규칙).
+        <p className="text-caption text-ink-subtle mt-2">
+          적어주신 말은 입력창에 그대로 남겨뒀어요.
+        </p>
+      ) : (
+        <Button variant="tertiary" size="compact" className="mt-3" onClick={onRetry}>
+          다시 시도
+        </Button>
+      )}
+    </CardFailed>
   );
 }
 
