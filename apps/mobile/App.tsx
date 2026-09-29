@@ -105,6 +105,11 @@ function Shell() {
             onHttpError={({ nativeEvent }) => {
               if (nativeEvent.statusCode >= 500) setFailed(true);
             }}
+            // 🚨 `target="_blank"` 를 **이 웹뷰의 이동으로 만든다.** 안드로이드 기본값(true)이면
+            //    새 창을 띄울 곳이 없어 링크가 **아무 일도 하지 않는다** — 동의 화면의 "전문 보기"
+            //    가 그렇게 죽는다. false 로 두면 아래 `onShouldStartLoadWithRequest` 를 거쳐
+            //    앱 밖 주소로 판정되고 시스템 브라우저로 넘어간다.
+            setSupportMultipleWindows={false}
             // 앱 밖 링크(약관·소셜 로그인 등)는 웹뷰에 가두지 않고 시스템 브라우저로 넘긴다.
             onShouldStartLoadWithRequest={(request) => {
               if (isInternalUrl(request.url)) return true;
