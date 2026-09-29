@@ -47,6 +47,7 @@ async def test_policies_come_in_display_order_with_labels(db_client):
             "legal_basis",
             "required",
             "sensitive",
+            "target",
             "html_path",
         }, "원문(content)은 내려보내지 않는다 — 화면이 직접 그릴 일을 없앤다 (#179)"
         assert item["label"]
@@ -56,6 +57,26 @@ async def test_policies_come_in_display_order_with_labels(db_client):
     health = next(item for item in body if item["scope"] == "child_health")
     assert health["sensitive"] is True
     assert "제23조" in health["legal_basis"]
+
+
+async def test_each_policy_says_which_screen_asks_it(db_client):
+    """계정 동의는 가입 화면이, 아이 동의는 아이 등록 화면이 묻는다 — 서버가 알려 준다.
+
+    화면이 scope 이름으로 무리를 나누면, 새 scope 가 생기는 날 어느 쪽인지 몰라 추측해야 한다
+    (#189 리뷰). 가입 검사가 쓰는 계정 동의 목록(ACCOUNT_SCOPES)과 같은 기준이다.
+    """
+    body = (await db_client.get(URL)).json()
+    targets = {item["scope"]: item["target"] for item in body}
+
+    assert targets == {
+        "service_terms": "account",
+        "privacy_account": "account",
+        "location": "account",
+        "child_basic": "child",
+        "child_health": "child",
+    }
+    for item in body:
+        assert (item["target"] == "account") is (item["scope"] in ACCOUNT_SCOPES)
 
 
 def test_catalog_required_matches_what_signup_blocks_on():
