@@ -294,13 +294,15 @@
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
-  위한 아래 5개만 인증 없이 호출한다. 새 예외가 필요하면 구현 전에 이 목록과 API 계약을
-  함께 변경한다.
+  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` · `GET /policies/{scope}/{version}` 만 인증 없이 호출한다.
+  새 예외가 필요하면 구현 전에 이 목록과 API 계약을 함께 변경한다.
   - `GET /auth/{provider}/status`
   - `GET /auth/{provider}`
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
+  - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
+  - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
 - 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**
