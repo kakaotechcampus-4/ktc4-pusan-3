@@ -15,6 +15,7 @@ from app.agents.activity.store.ports import ActivityPorts, SafetyLookupError, We
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import Gate, SafetyState
+from app.agents.common.suggestion import SuggestionDraft
 from app.rules.age import life_stage
 
 
@@ -28,6 +29,8 @@ class ActivityRunState:
 
     seen_evidence: dict[UUID, tuple[RankedEvidence, datetime]] = field(default_factory=dict)
     gate: Gate | None = None
+    # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
+    suggestions: tuple[SuggestionDraft, ...] = ()
 
 
 @dataclass(frozen=True)
