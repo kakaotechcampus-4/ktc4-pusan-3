@@ -121,6 +121,27 @@ async def count_wrong_in_window(
     return (await session.scalar(stmt)) or 0
 
 
+async def get_latest_active_observed_on(
+    session: AsyncSession,
+    *,
+    affinity_id: uuid.UUID,
+    domain: MemoryDomain,
+) -> date | None:
+    """해당 profile 에 연결된 active 관찰 중 가장 최근 시작일을 반환한다."""
+    model = _PROMOTABLE_BY_DOMAIN.get(domain)
+    if model is None:
+        return None
+    stmt = (
+        select(func.max(func.lower(model.observed_range)))
+        .select_from(model)
+        .where(
+            model.affinity_id == affinity_id,
+            model.status == ObservationStatus.ACTIVE,
+        )
+    )
+    return await session.scalar(stmt)
+
+
 async def has_strong_signals(
     session: AsyncSession,
     *,

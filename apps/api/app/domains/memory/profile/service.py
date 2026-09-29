@@ -21,10 +21,12 @@ from app.domains.correction.repository import append_correction
 from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import ObservationDomain, set_observation_status
 from app.domains.memory.profile.models import ProfileAffinity
+from app.domains.memory.profile.models import MemoryDomain
 from app.domains.memory.profile.repository import (
     count_active_in_window,
     count_wrong_in_window,
     find_affinity,
+    get_latest_active_observed_on,
     has_strong_signals,
 )
 from app.rules.profile import apply_correction, apply_transition, compute_profile_status
@@ -122,9 +124,19 @@ async def handle_observation_correction(
     if record is None:
         raise ValueError("관찰을 찾을 수 없다")
 
-    # 3. 해당 observation 에 연결된 profile 재계산
+    # 3. last_observed_on 재계산 — 교정으로 최신 관찰이 빠졌을 수 있다
     affinity_id = record.fields.get("affinity_id")
     if affinity_id is not None:
+        latest = await get_latest_active_observed_on(
+            session, affinity_id=affinity_id, domain=MemoryDomain(domain),
+        )
+        if latest is not None:
+            profile = await session.get(ProfileAffinity, affinity_id)
+            if profile is not None:
+                profile.last_observed_on = latest
+                await session.flush()
+
+        # 4. profile 상태 재계산
         await recompute_profile(session, profile_id=affinity_id, today=today)
 
 
