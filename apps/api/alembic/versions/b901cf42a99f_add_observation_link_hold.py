@@ -14,7 +14,7 @@ Curator 연결 단계에서 판정기가 "모르겠음(uncertain)"이라 답해 
 CHECK 두 개는 autogenerate 가 잡지 않아 손으로 넣었다 (apps/api/CLAUDE.md §Alembic).
 
 Revision ID: b901cf42a99f
-Revises: c5a81f0d3b62
+Revises: bf14612a1d9c
 Create Date: 2026-09-30
 """
 
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b901cf42a99f"
-down_revision: Union[str, Sequence[str], None] = "c5a81f0d3b62"
+down_revision: Union[str, Sequence[str], None] = "bf14612a1d9c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
