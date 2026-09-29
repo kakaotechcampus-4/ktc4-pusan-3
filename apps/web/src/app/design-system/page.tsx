@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { DomainChip } from "@/components/domain-chip";
 import { DayMarkLegend } from "@/components/month-grid";
 import { Banner } from "@/components/ui/banner";
@@ -37,7 +38,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
-import type { Agent } from "@/lib/api/types";
+import { TimeField } from "@/components/ui/time-field";
+import { EventDraftCard } from "@/components/event-draft-card";
+import type { Agent, EventDraft, EventDraftFields } from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
 import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
 
@@ -74,6 +77,7 @@ export default function DesignSystemPage() {
       <TypeSection />
       <ShapeSection />
       <ComponentSection />
+      <EventDraftSection />
       <MotionSection />
       <NotBuiltSection />
     </Screen>
@@ -290,7 +294,7 @@ function TypeSection() {
     <div ref={root}>
       <Section
         title="타이포"
-        note="8단계 · 본문 16px / 1.6 · 학교안심 날개 R 자체 호스팅. 단일 웨이트라 600·700 은 브라우저 합성이고, 500 은 400 과 똑같이 나온다. 아래 '실측' 은 지금 화면에서 읽은 값이다."
+        note="8단계 · 본문 16px / 1.6 · 학교안심 날개 R 자체 호스팅. wght 400–700 가변폰트라 아래 네 굵기가 전부 실물이고 브라우저 합성은 없다. 아래 '실측' 은 지금 화면에서 읽은 값이다."
       >
         <ul className="flex flex-col gap-4">
           {TYPE_STEPS.map((step) => (
@@ -324,7 +328,7 @@ function TypeSection() {
               cls: "font-sans",
               name: "font-sans",
               use: "기본값 · 화면 대부분",
-              note: "학교안심 날개 R · Regular 400 하나뿐이라 아래 굵기는 합성이다",
+              note: "학교안심 날개 R · 원본이 Regular 하나뿐이라 700 마스터를 만들어 구운 wght 400–700 가변폰트다",
             },
             {
               cls: "font-doc",
@@ -481,18 +485,27 @@ const DS_STATE_OPTIONS = [
   { value: "candidate", label: "후보" },
 ] as const;
 
+/** 에러 바운더리 예시용. 렌더 도중 던져야 바운더리가 잡는다 (이벤트 핸들러 안은 안 잡힌다). */
+function Boom({ on }: { on: boolean }) {
+  if (on) throw new Error("design-system boundary demo");
+  return null;
+}
+
 function ComponentSection() {
   const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
   const [dsGender, setDsGender] = useState("male");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
+  const [dsTime, setDsTime] = useState("");
+  const [dsTimeRead, setDsTimeRead] = useState("10:23");
   const [chip, setChip] = useState("공룡");
   const [date, setDate] = useState("");
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
   const [area, setArea] = useState("");
   const [bar, setBar] = useState("");
+  const [boom, setBoom] = useState(false);
 
   return (
     <Section title="컴포넌트" note="지금 코드에 있는 것만. 사양은 §7, 없는 것은 맨 아래에.">
@@ -634,7 +647,7 @@ function ComponentSection() {
         비교하려고 모아 둔 내부 문서라 예외다.
       </p>
       <EvidenceRow>
-        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+        {(["food", "activity", "growth", "health"] as Agent[]).map((agent) => (
           <DomainChip key={agent} agent={agent} />
         ))}
       </EvidenceRow>
@@ -673,6 +686,29 @@ function ComponentSection() {
         card-failed — 🚨 실패를 빨강으로 칠하지 않는다. danger 는 알레르기에만.
       </CardFailed>
 
+      <SubTitle>에러 바운더리</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        서브트리 하나만 격리한다. 아래 버튼을 누르면 카드 안쪽이 렌더 도중 예외를 던지는데, 이
+        구역만 card-failed 로 바뀌고 이 화면의 나머지는 그대로 산다. 🚨 승인 게이트 2곳에는 붙이지
+        않는다 — 승인 시트가 조용히 작은 카드로 바뀌면 보호자가 확정됐는지 아닌지를 알 수 없다. 🚨
+        API 실패는 여기로 오지 않는다(바운더리는 렌더 중 예외만 잡는다). 그건 화면이 그 자리에
+        card-failed 로 그린다.
+      </p>
+      <AppErrorBoundary
+        label="이 부분을 그리지 못했어요."
+        resetKeys={[boom]}
+        onReset={() => setBoom(false)}
+      >
+        <Card>
+          <p className="text-body-sm text-ink-muted">
+            정상일 때는 이 카드가 보입니다. <Boom on={boom} />
+          </p>
+          <Button variant="tertiary" size="compact" className="mt-3" onClick={() => setBoom(true)}>
+            터뜨리기
+          </Button>
+        </Card>
+      </AppErrorBoundary>
+
       <SubTitle>탭 (07)</SubTitle>
       {/* 링크는 이 화면 안의 앵커다 — 내부 문서에서 다른 화면으로 새 나가지 않게. */}
       <div id="design-system-tabs">
@@ -687,8 +723,8 @@ function ComponentSection() {
         />
       </div>
       <p className="text-caption text-ink-subtle">
-        활성은 ink + brand 2px 밑줄입니다. 🚨 굵기로 구분하지 않습니다 — 본문 서체가 단일 웨이트라
-        label 500 과 600 이 화면에서 같습니다 (§4). 전환은 URL 에 남깁니다.
+        활성은 ink + brand 2px 밑줄입니다. 🚨 굵기 하나로 구분하지 않습니다 — 13px 손글씨에서 label
+        500 과 600 의 차이는 활성/비활성을 혼자 나르기엔 약합니다 (§4). 전환은 URL 에 남깁니다.
       </p>
 
       <SubTitle>캘린더 표식 (09)</SubTitle>
@@ -732,6 +768,22 @@ function ComponentSection() {
           options={DS_STATE_OPTIONS}
           onChange={setSelectState}
         />
+      </div>
+
+      <SubTitle>시각 고르기</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        고르기 상자 둘로 만든 한 칸이다 — 시(24개 · &quot;오전 9시&quot;) · 분(5분 단위). 🚨 시각
+        라이브러리를 얹지 않았다: 달력에 react-day-picker 를 얹은 이유(그리드 ARIA · 방향키 · 월
+        경계 · 로케일) 중 여기 해당하는 것이 없고, 후보였던 react-time-picker 는 오전/오후를
+        네이티브 &lt;select&gt; 로 그린다. 🚨 덜 고른 것은 고른 것이 아니다 — 시만 고르면 값은 아직
+        비어 있고, 무엇이 남았는지 글자로 말한다. 🚨 상자의 라벨은 sr-only 로 남기고(지우는 것이
+        아니다) 보이는 이름은 묶음이 진다. 🚨 폼 칸이라 알약이 아니라 min-h-field · rounded-field
+        다(shape=&quot;field&quot;).
+      </p>
+      <div className="flex flex-col gap-4">
+        <TimeField label="시작 시간" value={dsTime} onChange={setDsTime} />
+        {/* 🚨 눈금(5분) 밖 값도 목록에 선다 — 알림장에서 읽은 10:23 을 반올림하지 않는다. */}
+        <TimeField label="읽어온 값이 눈금 밖일 때" value={dsTimeRead} onChange={setDsTimeRead} />
       </div>
 
       <SubTitle>고르는 칸 (둘 중 하나)</SubTitle>
@@ -869,7 +921,7 @@ function ComponentSection() {
         · strokeWidth 1.75 고정. 🚨 DomainIcon 은 aria-hidden 이라 의미는 옆의 라벨이 진다.
       </p>
       <ul className="flex flex-col gap-2">
-        {(["food", "activity", "education", "health"] as Agent[]).map((agent) => (
+        {(["food", "activity", "growth", "health"] as Agent[]).map((agent) => (
           <li key={agent} className="flex items-center gap-3">
             <span
               className={`flex size-10 items-center justify-center rounded-full ${softOf(agent)}`}
@@ -888,10 +940,154 @@ function softOf(agent: Agent): string {
   return {
     food: "bg-food-soft text-food-ink",
     activity: "bg-activity-soft text-activity-ink",
-    education: "bg-education-soft text-education-ink",
+    growth: "bg-growth-soft text-growth-ink",
     health: "bg-health-soft text-health-ink",
   }[agent];
 }
+
+/* ── 일정 초안 ─────────────────────────────────────────────────────────── */
+
+/**
+ * `EventDraftCard` 는 초안이 만들어지는 **세 경로가 같이 쓰는 한 벌**이라, 경로별로 다른 모양이
+ * 나오는지를 여기서 나란히 놓고 본다. 카드는 한 벌이고 그릇(04 레이어 · 05 시트 · 08 화면)만 셋이다.
+ */
+function EventDraftSection() {
+  return (
+    <Section
+      title="일정 초안"
+      note="한 줄 입력 · 제안 카드 · 사진 셋이 같은 카드를 쓴다. 제출이 승인 게이트 ㉠ 다."
+    >
+      <SubTitle>제안에서 온 초안 — 일자가 비어 있다</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 제안 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
+        채우지 않고, 보호자가 고르기 전에는 제출 버튼이 잠긴다. 🚨 알레르기 사전검사는 이 카드가
+        아니라 **승인 시트**가 진다 — 게이트 ㉡ 이고 제안 경로에만 오기 때문이다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_FROM_SUGGESTION} onSubmit={() => {}} />
+
+      <SubTitle>그릇이 잠근 초안</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 `lockReason`(아직 못 넣는다)과 `blocked`(안 넣는다)는 다른 값이다. 재료 확인이 안 끝난
+        것을 &ldquo;이 일정은 넣지 않을게요&rdquo; 라고 말하면 화면이 거짓말을 한다.
+      </p>
+      <EventDraftCard
+        draft={DS_DRAFT_CREATE}
+        lockReason="위의 확인이 끝나야 넣을 수 있어요."
+        onSubmit={() => {}}
+      />
+
+      <SubTitle>한 줄 입력에서 온 새 일정</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        준비물은 `item_id: null` 이라 아직 저장 전이다. 빼면 배열에서 빠지고, 그게 삭제를 표현하는
+        유일한 방법이다 (#122).
+      </p>
+      <EventDraftCard draft={DS_DRAFT_CREATE} onSubmit={() => {}} />
+
+      <SubTitle>수정 초안 — 무엇이 달라지는지</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 바뀐 필드 **이름**이 아니라 값의 변화를 그린다. `before` 와 지금 값을 화면이 직접
+        비교한다 — 서버가 준 `changed` 는 보호자가 값을 고치는 순간 못 쓴다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_UPDATE} onSubmit={() => {}} />
+
+      <SubTitle>사진에서 온 초안 — 확인이 필요한 것</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        왜 확인이 필요한지는 서버 문구(`review_reason`)를 그대로 쓴다. 프론트가 지어내지 않는다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_NEEDS_REVIEW} onSubmit={() => {}} />
+
+      <SubTitle>제출 상태 — 건별이다</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        9/21 회의 결정으로 초안은 한 장씩 제출한다. 그래서 성공도 실패도 카드마다 따로 선다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_CREATE} state="submitting" onSubmit={() => {}} />
+      <EventDraftCard draft={DS_DRAFT_CREATE} state="submitted" onSubmit={() => {}} />
+      <EventDraftCard
+        draft={DS_DRAFT_CREATE}
+        state="failed"
+        error="넣지 못했어요. 잠시 뒤 다시 시도해 주세요."
+        onSubmit={() => {}}
+      />
+
+      <SubTitle>알레르기로 막힌 초안</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 여기만 `danger` 다. 실패는 빨강이 아니고(§3), 알레르기만 빨강이다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_FROM_SUGGESTION} blocked onSubmit={() => {}} />
+    </Section>
+  );
+}
+
+const DS_FIELDS: EventDraftFields = {
+  title: "물놀이",
+  starts_at: "2026-09-18T10:00:00+09:00",
+  ends_at: null,
+  all_day: false,
+  event_type: "episodic",
+  category: "activity",
+};
+
+/** 제안에서 온 초안. 🚨 일자를 모른다. */
+const DS_DRAFT_FROM_SUGGESTION: EventDraft = {
+  draft_id: "d0",
+  op: "create",
+  event_id: null,
+  event: {
+    ...DS_FIELDS,
+    title: "주말에 실내 물놀이장은 어떨까요",
+    starts_at: null,
+    all_day: true,
+  },
+  before: null,
+  items: [],
+  suggestion_ids: ["s_2"],
+};
+
+const DS_DRAFT_CREATE: EventDraft = {
+  draft_id: "d1",
+  op: "create",
+  event_id: null,
+  event: DS_FIELDS,
+  before: null,
+  items: [
+    { item_id: null, item_name: "수영복" },
+    { item_id: null, item_name: "여벌옷" },
+  ],
+};
+
+const DS_DRAFT_UPDATE: EventDraft = {
+  draft_id: "d2",
+  op: "update",
+  event_id: "ev_1",
+  event: {
+    ...DS_FIELDS,
+    title: "운동회",
+    starts_at: "2026-09-18T17:00:00+09:00",
+    category: "institution",
+  },
+  before: {
+    ...DS_FIELDS,
+    title: "운동회",
+    starts_at: "2026-09-18T15:00:00+09:00",
+    category: "institution",
+    items: [{ item_id: "ei_1", item_name: "체육복" }],
+  },
+  items: [
+    { item_id: "ei_1", item_name: "체육복" },
+    { item_id: null, item_name: "모자" },
+  ],
+};
+
+const DS_DRAFT_NEEDS_REVIEW: EventDraft = {
+  draft_id: "d3",
+  op: "create",
+  event_id: null,
+  event: { ...DS_FIELDS, title: "가을 소풍", starts_at: null, all_day: true },
+  before: null,
+  items: [{ item_id: null, item_name: "도시락" }],
+  needs_review: true,
+  review_reason: "알림장에서 날짜를 읽지 못했어요. 사진을 보고 채워 주세요.",
+};
 
 /* ── 모션 ──────────────────────────────────────────────────────────────── */
 

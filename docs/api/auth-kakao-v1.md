@@ -275,14 +275,21 @@ Cache-Control: no-store
 {
   "consent_code": "<가입 대기표>",
   "bind": "<같은 비밀>",
+  "nickname": "<부르는 이름>",
   "consents": [
-    { "scope": "service_terms",   "policy_version": "draft-0" },
-    { "scope": "privacy_account", "policy_version": "draft-0" }
+    { "scope": "service_terms",   "policy_version": "draft-1" },
+    { "scope": "privacy_account", "policy_version": "draft-1" },
+    { "scope": "location",        "policy_version": "draft-1" }
   ]
 }
 ```
 
-🚨 **`draft-0` 은 임시 placeholder 다.** 실제 약관·처리방침 본문이 확정되기 전이라 `policy_version` 테이블에 등록된 버전이 이것 하나뿐이다. 확정되면 새 버전이 등록되고 이 값은 바뀌므로 **클라이언트에 하드코딩하지 않는다** — 유효한 버전을 서버에서 받아오는 정책 조회 API 는 다음 Issue 에서 붙인다.
+- `nickname` — 보호자가 가입 화면에 적은 **부르는 이름**. 필수, 앞뒤 공백을 떼고 1~20자(화면 상한과 같다), 실명이 아니어도 된다. 없거나 비었거나 길면 `400 validation_failed` 이고 대기표는 태우지 않는다 (#172).
+- `location` — **선택**이다. 고른 경우에만 싣는다. 빠져도 가입되고 `consent_required` 에도 나오지 않는다. 필수는 `service_terms` · `privacy_account` 둘뿐이다.
+
+🚨 **`policy_version` 을 클라이언트에 하드코딩하지 않는다.** 위 `draft-1` 은 예시일 뿐이다. 동의 화면은 **`GET /policies`**(무인증, #91)로 scope 마다 지금 유효한 `version` 과 정본 주소 `html_path` 를 받고, 받은 `version` 을 그대로 여기에 싣는다. 새 버전이 등록되면 그 응답이 바뀌므로 화면을 고칠 필요가 없다.
+
+🚨 **"전문 보기" 는 `html_path` 의 정본 페이지(`GET /policies/{scope}/{version}`)를 손대지 않고 연다** (#172). 그래서 `GET /policies` 는 원문을 내려보내지 않는다 — 화면이 원문을 직접 그리면 문단을 숨기거나 바꿀 수 있어 "보호자가 본 글" 을 증명하지 못한다 (멘토 #71-4).
 
 **응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
 
@@ -340,7 +347,7 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 
 ### 4-4. 보호자 표시 이름
 
-`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 온보딩에서도 받지 않는다 — 보호자 닉네임을 받는 화면은 **10 설정의 `PATCH /parents`** 뿐이다.
+`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 보호자가 **가입 화면에 직접 적은 "부르는 이름"** 을 `signup` 요청(§3-5)으로 받는다 (#172). 바꾸는 곳은 **10 설정의 `PATCH /parents`** 다.
 
 **값이 없으면 화면이 "보호자"로 폴백한다.** 근거는 §5-2.
 
@@ -393,6 +400,11 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 | 빈 문자열 | ✕ "아직 입력 안 함"과 "빈 이름이 잘못 저장됨"을 구분할 수 없고, `length > 0` CHECK 제약도 걸 수 없다 |
 | 카카오 프로필 닉네임을 기본값으로 | ✕ NF-04 최소 수집과 부딪힌다 |
 
+> ⚠️ **뒤에 바뀌었다 (#172).** 가입 화면이 "부르는 이름" 을 동의와 같은 화면에서 필수로 받게 됐고(합친 이유는
+> [`apps/web/src/app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) 머리 주석 — 이름 칸과 동의 구역을
+> 제목으로 가르고 동의는 항목마다 따로 체크한다), 서버도 `signup` 에서 그 값을 받아 저장한다. 컬럼은 **계속 nullable** 이다 —
+> 이름 칸이 생기기 전에 가입한 계정이 있다.
+
 **계약서와 프론트가 이미 nullable 이다** — §04 응답 예시가 `parent: { id: "p1", nickname: null }` 이고 `apps/web/src/lib/api/types.ts` 도 `string | null` 이다. NOT NULL 로 두면 그 둘을 함께 되돌려야 한다.
 
 → **PR #8 이 develop 에 머지되기 전이면 모델과 마이그레이션을 같이 고치면 되고 새 리비전이 안 붙는다.** ([PR #8 코멘트](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/8#pullrequestreview-5148979830))
@@ -419,7 +431,7 @@ CREATE INDEX ON session (expires_at);
 | --- | --- |
 | 로그아웃 | 그 행 1건 |
 | 계정 탈퇴 · 아이 파기 | `parent_id` 로 전부 |
-| 만료 | 배치로 `expires_at < now()` 전부 |
+| 만료 | 배치로 `expires_at <= now()` 전부 — 세션 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 주기 실행은 배포 구성이 정해진 뒤) |
 
 ### 5-4. `auth_handoff` — 신설 🔶 협의 대상
 
@@ -475,7 +487,7 @@ RETURNING *;
 
 **Postgres 로 하는 근거** — 로그인 빈도에 TTL 2분이면 동시 존재 행이 사실상 없다. 인프라가 t3.medium 1대(4GB)에 DB·백엔드·프론트를 함께 올리는 구성이라 Redis 를 지금 얹을 이유가 없다. 나중에 Redis 가 들어오면 이 테이블만 옮기면 된다.
 
-만료 행은 배치로 지운다. **배치가 늦어도 위 SQL 의 `expires_at > now()` 가 막는다** — 배치는 청소지 방어가 아니다.
+만료 행은 배치로 지운다 (`app/workers/auth_cleanup.py`, #46). **배치가 늦어도 위 SQL 의 `expires_at > now()` 가 막는다** — 배치는 청소지 방어가 아니다.
 
 ### 5-5. `oauth_state` 는 쿠키다 — 테이블을 만들지 않는다
 
@@ -672,7 +684,7 @@ target_id_type=user_id&target_id={provider_user_id}
 | 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
 | 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |
-| 404 | `not_found` | `deleted_at` 이 찍힌 parent (→ §10-1) | |
+| 404 | `not_found` | `deleted_at` 이 찍힌 parent (→ §10 1번 — 즉시 삭제로 확정) | |
 | 422 | `validation_failed` | `provider` 가 enum 밖 | |
 | 502 | `oauth_provider_error` | 카카오 API 5xx·타임아웃, 코드 교환 실패 | 🆕 |
 
@@ -729,7 +741,7 @@ icatch://auth?error=oauth_denied
 | A-16 | 카카오 API 가 500 | `302 …?error=oauth_provider_error`, `parent` 미생성 |
 | A-17 | 사용자가 카카오에서 취소 | `302 …?error=oauth_denied` |
 | A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
-| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10-1) |
+| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10 1번) |
 | A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
 
 **A-05 · A-08 · A-15 가 이 목록의 이유다.** A-05 가 실패하면 §7-2 가 무의미하고, A-08 이 실패하면 로그인 CSRF 가 열리며, A-15 가 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
@@ -743,7 +755,7 @@ icatch://auth?error=oauth_denied
 | M-01 | 🚨 **시작과 콜백이 같은 오리진인지 배포 환경에서 확인.** 다르면 `state` 쿠키가 콜백에 실리지 않는다. **로컬은 포트가 달라도 우연히 통과한다** (§5-5) | 김명성 · 고태영 |
 | M-02 | **앱에서 로그인 → `icatch://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
 
-배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 §3 의 5개뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
+배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 루트 CLAUDE.md §9 의 7개(§3 의 로그인 5개 + 약관 `GET /policies` · `GET /policies/{scope}/{version}`)뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
 
 ---
 
@@ -751,7 +763,7 @@ icatch://auth?error=oauth_denied
 
 | # | 무엇 | 왜 지금 못 정하나 | 누구 |
 | --- | --- | --- | --- |
-| 1 | **탈퇴 유예기간 중 재로그인** — 복구인가 신규인가 | 유예기간 N일(노션 논의 ⑤)이 미정. 그전까지 `404 not_found` 로 막아둔다 | 팀 · 9월 2주 |
+| 1 | ~~탈퇴 유예기간 중 재로그인 — 복구인가 신규인가~~ | ✅ **확정: 유예 없이 즉시 삭제** (삭제 정책 정본 §9 · #167). 되살릴 계정이 없으므로 탈퇴 후 다시 로그인하면 **신규 가입**이다. `deleted_at` 이 찍힌 계정이 보이면 세션을 내주지 않고 `404 not_found` 로 막는 방어는 그대로 둔다 | 확정 09-29 |
 | 2 | **세션 수명 12시간이 맞는지** | `M-02` 결과에 달렸다. 측정한 값이 아니다 | 고태영 |
 | 3 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 이 흐름은 provider 별 모양이 같아 추가가 쉽다 | 박재형 |
 | 4 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
@@ -809,7 +821,7 @@ CLAUDE.md §8 의 결정 방식상 **영역 간 인터페이스 = 관련 Owner �
 
 | # | 무엇 | 왜 구멍인가 |
 | --- | --- | --- |
-| 1 | **간접 식별자에서 소유 아이를 역추적해 검사한다** — `run_id` · `memory_id` · `suggestion_id` 만 받는 API | 노션 권한표는 `/children/{cid}/*` 만 다룬다. 계약서에는 `GET /runs/{rid}/events` 처럼 child_id 가 경로에 없는 엔드포인트가 있다 |
+| 1 | **간접 식별자에서 소유 아이를 역추적해 검사한다** — `run_id` · `source_id` · `suggestion_id` 만 받는 API | 노션 권한표는 `/children/{cid}/*` 만 다룬다. 계약서에는 `GET /runs/{rid}/events` 처럼 child_id 가 경로에 없는 엔드포인트가 있다 |
 | 2 | **AI 도구의 아이 범위는 서버가 주입한다.** 모델이 넘긴 child_id 를 믿지 않는다 | Agent 가 `memory.search` 를 직접 부르는 구조에서 도구 인자를 신뢰하면 **프롬프트 인젝션이 곧 권한 상승**이 된다 |
 | 3 | **동의 철회 시 실행 중 작업을 외부 전달·저장 직전에 재검사한다** | NF-06 부분 결과 구조에서 시작 시점 검사만으로는 부족하다 |
 | 4 | **SSE 재연결이 새 run 을 만들지 않는다.** 이벤트 ID 로 재개 커서를 잡는다 | 갱신 후 스트림을 다시 열 때 AI 실행이 중복되면 비용과 기록이 이중으로 쌓인다 |

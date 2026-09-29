@@ -1,6 +1,7 @@
 import { authHandlers } from "./auth";
 import { calendarHandlers } from "./calendar";
 import { childrenHandlers } from "./children";
+import { inviteHandlers } from "./invites";
 import { memoryHandlers } from "./memories";
 import { photoHandlers } from "./photos";
 import { profileHandlers } from "./profile";
@@ -33,4 +34,6 @@ export const handlers = [
   ...memoryHandlers,
   ...calendarHandlers,
   ...settingsHandlers,
+  // `/invites/{code}/accept` 는 아이 스코프 밖이라 어느 핸들러와도 경로가 겹치지 않는다.
+  ...inviteHandlers,
 ];

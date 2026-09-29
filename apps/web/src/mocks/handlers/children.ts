@@ -1,23 +1,23 @@
 import { http, HttpResponse } from "msw";
 
-import type { HealthSafety } from "@/lib/api/types";
+import type { HealthSafety, Relation } from "@/lib/api/types";
 
 import {
-  affinities,
   CHILD_ID,
   daysAgo,
   emptyHome,
   healthSafety,
   home,
   hoursFromNow,
+  me,
   newHealthSafety,
-  observations,
   safetyScan,
   staleAffinities,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
+import { joinChild } from "./membership";
 
 /**
  * 등록된 안전 정보. 🚨 **예전에는 Set 하나였다** — 등록 여부만 알면 409 를 낼 수 있어서였다.
@@ -45,9 +45,48 @@ export function resetSafetyState(): void {
 
 /** 01·02 첫 진입 · 온보딩, 03 홈. */
 export const childrenHandlers = [
+  /**
+   * 🚨 **아이와 아이 동의가 한 트랜잭션이다** (#96 · ⚠️ 계약 확정 전).
+   *    동의를 아이 단위로 기록하면 `POST /consents` 로는 저장할 수 없다 — 그 엔드포인트는
+   *    `child_id` 를 받는데 이 호출 전에는 그 id 가 없다. 계약서 §04 는 `child_basic` 없이
+   *    이 호출이 403 이라고 말하므로, 둘을 동시에 만족시키는 모양은 이것뿐이다.
+   *
+   * 🚨 목이라고 **아무거나 201 로 돌려주지 않는다.** 동의가 빠지면 막는다 — 화면이 체크값을
+   *    실제로 실어 보내는지, 법정대리인 확인을 상수 true 로 굳혀 두지 않았는지를 여기서 건다.
+   */
   http.post(url("/children"), async ({ request }) => {
     await networkDelay();
-    const body = (await request.json()) as { nickname: string };
+    const body = (await request.json()) as {
+      nickname: string;
+      consents?: Array<{ scope: string }>;
+      guardian_attested?: boolean;
+    };
+
+    const scopes = (body.consents ?? []).map((c) => c.scope);
+    const missing = ["child_basic", "child_health"].filter((s) => !scopes.includes(s));
+    if (missing.length > 0) {
+      return apiError(403, "consent_required", "아이 정보에 대한 동의가 필요해요", {
+        scopes: missing,
+      });
+    }
+    // 법정대리인 확인은 그 동의의 **유효 요건**이다 (개인정보보호법 제22조의2) —
+    // 없으면 동의가 있어도 저장하지 않는다.
+    if (body.guardian_attested !== true) {
+      return apiError(403, "consent_required", "법정대리인 확인이 필요해요", {
+        scopes: ["child_basic"],
+      });
+    }
+
+    // 🚨 관계를 여기서 정하지 않는다 — 01 은 더 이상 보내지 않고 02 가 받는다.
+    //    그때까지는 비어 있는 것이 사실이라, 목이 "엄마" 로 채워 두지 않는다.
+    joinChild({
+      child_id: CHILD_ID,
+      nickname: body.nickname,
+      age_display: "만 4세",
+      relation: "other",
+      role: "owner",
+      consent_required: [],
+    });
     return HttpResponse.json(
       { id: CHILD_ID, nickname: body.nickname, age_display: "만 4세", role: "owner" },
       { status: 201 },
@@ -82,17 +121,46 @@ export const childrenHandlers = [
     });
   }),
 
-  // 전부 선택이다. 모두 건너뛰어도 200 이다.
+  /**
+   * 02 아이 정보. 전부 선택이라 모두 건너뛰어도 200 이다.
+   *
+   * ⚠️ **본문이 계약서 §05 와 달라졌다** (확정 전) — `relation` · `gender` · `height_cm` ·
+   *    `weight_kg` 가 들어오고 `interests` · `dev_answers` 가 빠졌다 (`OnboardingRequest`).
+   *
+   * 🚨 **관심사가 없으므로 `affinities` 를 돌려주지 않는다.** 예전에는 시드를 그대로 실어
+   *    보냈는데, 이제 보낸 적 없는 관심이 저장된 것처럼 보인다 — 목이 화면에 거짓말하는
+   *    경우다. 보낸 값에서 나올 수 있는 것만 돌려준다.
+   * ⚠️ **알레르기가 이 본문에서 빠졌다.** 02 가 11 과 같은 구역을 쓰면서 등록이 승인 게이트
+   *    ㉡ 로만 간다 (`components/safety-section.tsx`). `safety_status`(없음/잘 모르겠어요)를
+   *    물을 자리가 지금 없는 것은 **열린 결정**이다 (`OnboardingRequest` 주석).
+   */
   http.post(
     url("/children/:cid/onboarding"),
-    withIdempotency(async () => {
+    withIdempotency(async ({ request }) => {
       await networkDelay(400);
       if (currentScenario() === "consent") return consentRequired("child_health");
+
+      const body = (await request.json()) as { relation?: Relation };
+
+      // 관계는 `parent_child` 행의 값이다 — 보냈으면 `GET /me` 에도 그 값으로 서야 한다.
+      if (body.relation) {
+        joinChild({
+          child_id: CHILD_ID,
+          nickname: me.children[0]?.nickname ?? "민준",
+          age_display: "만 4세",
+          relation: body.relation,
+          role: "owner",
+          consent_required: [],
+        });
+      }
+
+      // 🚨 알레르기는 이 경로로 오지 않는다 — 승인 게이트 ㉡ 가 유일한 쓰기 경로다.
+      //    관심사도 없으니 돌려줄 관찰·프로필도 없다. 보낸 값에서 나올 수 있는 것만 답한다.
       return HttpResponse.json({
-        observations: observations.slice(0, 1),
-        affinities: affinities.slice(1),
-        safety: healthSafety,
-        skipped: ["dev_answers"],
+        observations: [],
+        affinities: [],
+        safety: [],
+        skipped: [],
         run_id: "r01",
       });
     }),
@@ -154,7 +222,8 @@ export const childrenHandlers = [
 
   http.get(url("/children/:cid/health-safety"), async () => {
     await networkDelay();
-    if (currentScenario() === "empty") return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
+    if (currentScenario() === "empty")
+      return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
     return HttpResponse.json({ items: activeSafety(), updated_at: daysAgo(3) });
   }),
 

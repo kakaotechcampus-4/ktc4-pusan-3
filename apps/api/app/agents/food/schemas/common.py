@@ -20,7 +20,11 @@ class FoodTaskType(StrEnum):
 
 
 class FeedingStage(StrEnum):
-    """식이 단계. 발화가 아니라 아이의 나이에서 코드가 계산한다 (경계 개월 수는 미정)."""
+    """식이 단계. 발화가 아니라 아이의 나이에서 코드가 계산한다.
+
+    값이 app/rules/age.py 의 Band 와 같은 문자열이라 FeedingStage(life_stage(...).big) 으로
+    바로 만든다. 경계 월령은 그쪽 _STAGE_BOUNDARIES 한 곳에만 둔다.
+    """
 
     INFANT = "infant"  # 영아기: 분유/수유 · 이유식 · 식재료 도입
     TODDLER = "toddler"  # 유아기: 기관 급식 · 섭취 분석 · 영양성분 · 균형 · 반복 메뉴
@@ -48,10 +52,21 @@ class EvidenceRef(ToolArgs):
     """근거 Ref 모양. 조회 tool이 돌려준 id를 그대로 쓴다."""
 
     kind: Annotated[
-        Literal["observation_food", "profile_affinity"],
+        Literal["observation_food", "profile_affinity", "food_doc"],
         Field(description="근거가 있는 테이블. 조회 결과의 kind를 그대로 쓴다"),
     ]
     id: Annotated[str, Field(description="조회 결과에 있던 id만. 지어내지 않는다")]
+    note: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "그 행에서 근거로 채택한 내용을 한 줄로. "
+                "예: 어제 유치원에서 영어단어 맞추기를 재밌어함. "
+                "보호자 화면에 그대로 나간다"
+            ),
+        ),
+    ]
 
 
 Period = Annotated[

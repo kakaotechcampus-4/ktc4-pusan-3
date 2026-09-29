@@ -274,7 +274,7 @@
           "#B6FCFF"
         ]
       },
-      "education": {
+      "growth": {
         "role": "secondary",
         "displayName": "인디고",
         "canonical": "oklch(49.2% 0.112 274.2)",
@@ -289,7 +289,7 @@
           "#D7E9FF"
         ]
       },
-      "education-soft": {
+      "growth-soft": {
         "role": "secondary",
         "displayName": "인디고 소프트",
         "canonical": "oklch(93.9% 0.015 281.9)",
@@ -304,7 +304,7 @@
           "#ECEDF9"
         ]
       },
-      "education-ink": {
+      "growth-ink": {
         "role": "secondary",
         "displayName": "인디고 잉크",
         "canonical": "oklch(41.4% 0.097 273.3)",
@@ -666,9 +666,9 @@
       "name": "Personalized Suggestion Row",
       "kind": "list-row",
       "refersTo": "suggestion-row",
-      "description": "05 제안 후보의 개인화 추천 한 줄. 카드가 아니라 목록 줄이고, 화면에서 한 줄만 열린다. 열린 줄은 두 칸 — 위 {domain}-soft(제안 · 이유 · 글자는 전부 {domain}-ink) · 아래 canvas(근거 칩 · 고르는 버튼). 색 면의 뜻은 '어느 Agent 에서 왔는가' 이고 '개인화됨' 이 아니다. 근거 칩 행이 없으면 이 줄을 쓸 수 없다. 고르는 버튼은 도메인 색을 따라가지 않는다 — 실행은 브랜드다.",
-      "html": "<li class=\"ds-srow\"><div class=\"ds-srow-head\"><span class=\"ds-chip-domain-s\">놀이</span><p class=\"ds-srow-title\">쌓기가 계속되고 있어요. 종이컵 탑을 같이 세워 보는 건 어때요?</p><dl class=\"ds-srow-why\"><dt>왜 이걸</dt><dd>블록 쌓기를 서로 다른 3일에 찾았어요</dd><dt>왜 지금</dt><dd>이번 주말 일정이 비어 있어요</dd></dl></div><div class=\"ds-srow-base\"><p class=\"ds-srow-meta\">사용한 기록</p><span class=\"ds-chip-evidence\">블록 쌓기</span></div></li>",
-      "css": ".ds-srow{display:block;list-style:none;font-family:var(--font-sans);border:1px solid var(--color-line);border-radius:var(--radius-card);overflow:hidden}.ds-srow-head{background:var(--color-activity-soft);padding:12px 16px}.ds-chip-domain-s{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;font-size:0.8125rem;font-weight:500;background:var(--color-surface);color:var(--color-activity-ink)}.ds-srow-title{margin:6px 0 0;font-size:1.25rem;font-weight:700;line-height:1.35;letter-spacing:-0.01em;color:var(--color-activity-ink)}.ds-srow-why{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:12px 0 0}.ds-srow-why dt{font-size:0.75rem;line-height:1.4;color:var(--color-activity-ink)}.ds-srow-why dd{margin:0;font-size:0.875rem;line-height:1.55;color:var(--color-activity-ink)}.ds-srow-base{background:var(--color-canvas);padding:16px}.ds-srow-meta{margin:0 0 6px;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-chip-evidence{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:9999px;border:1px solid var(--color-line);background:var(--color-surface);font-size:0.75rem;color:var(--color-ink-muted)}"
+      "description": "05 제안 후보의 개인화 추천 한 장. 후보마다 카드 한 장이고 항상 펼쳐져 있다 — Agent 당 후보가 3가지라 접으면 대안 비교가 안 되고, 하나만 열어 두면 그것이 추천처럼 보인다. 도메인 색은 카드 왼쪽의 6px 세로 띠 하나이고 나머지는 흰 면이다. -soft 가 아니라 진한 쪽을 쓴다(6px 면이라 연한 색은 1px 테두리와 구분이 안 된다). 사이에 머리를 -soft 면으로 칠해 봤는데, 면 위의 글자가 전부 그 도메인의 -ink 가 되면서 제안·이유·근거의 회색 위계를 먹어서 띠로 바꿨다. 띠는 aria-hidden 이고, 어느 영역인지는 탭과 머리줄이 글자로 진다. 고른 카드는 테두리가 brand 이고 체크 아이콘이 함께 선다. 제안 문장이 체크박스의 라벨이다: 줄마다 '이걸로' 버튼을 두면 초록이 여섯 개가 되어 '한 화면에 primary 하나' 가 깨진다. 근거 목록이 없으면 이 줄을 쓸 수 없고, 근거는 제목 + 설명 두 줄이며 접지 않는다. 묶음(Agent)은 탭으로 갈려서 한 번에 한 묶음만 서고, 그 묶음의 질문은 카드 위에 display(24) h2 로 선다 — 후보 제목(20)보다 커야 무엇에 대한 답인지가 답보다 크게 읽힌다. 거절 버튼은 두지 않는다 — 고르는 칸이 체크박스라 안 고르는 것이 곧 거절이고, 있던 '안 할래요' 는 서버로 아무것도 보내지 않고 화면에서만 접었다.",
+      "html": "<li class=\"ds-srow\"><span class=\"ds-srow-bar\" aria-hidden=\"true\"></span><div class=\"ds-srow-body\"><label class=\"ds-srow-pick\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/></svg><span class=\"ds-srow-title\">종이컵 탑 쌓기</span></label><dl class=\"ds-srow-why\"><dt>왜 이걸</dt><dd>블록 쌓기를 서로 다른 3일에 찾았어요</dd><dt>왜 지금</dt><dd>이번 주말 일정이 비어 있어요</dd></dl><div class=\"ds-srow-ev\"><p class=\"ds-srow-meta\">사용한 기록 2건</p><ul class=\"ds-srow-evlist\"><li><p class=\"ds-ev-t\">블록 쌓기</p><p class=\"ds-ev-d\">좋아함 · 반복 3회 · 최근 9일 · 출처 보호자</p></li><li><p class=\"ds-ev-t\">종이 만들기</p><p class=\"ds-ev-d\">좋아함 · 반복 2회 · 최근 4일 · 출처 보호자</p></li></ul></div></div></li>",
+      "css": ".ds-srow{display:flex;list-style:none;font-family:var(--font-sans);background:var(--color-surface);border:1px solid var(--color-line);border-radius:var(--radius-card);overflow:hidden}.ds-srow-bar{width:6px;flex:none;background:var(--color-activity)}.ds-srow-body{flex:1;min-width:0;padding:16px}.ds-srow-pick{display:flex;align-items:flex-start;gap:12px;color:var(--color-ink-subtle);cursor:pointer}.ds-srow-title{font-size:1.25rem;font-weight:700;line-height:1.35;letter-spacing:-0.01em;color:var(--color-ink)}.ds-srow-why{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:12px 0 0}.ds-srow-why dt{font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-srow-why dd{margin:0;font-size:0.875rem;line-height:1.55;color:var(--color-ink-muted)}.ds-srow-ev{margin:12px 0 0;padding:12px 0 0;border-top:1px solid var(--color-line)}.ds-srow-meta{margin:0 0 8px;font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-subtle)}.ds-srow-evlist{margin:0;padding:0;list-style:none;display:grid;gap:8px}.ds-ev-t{margin:0;font-size:0.875rem;line-height:1.55;color:var(--color-ink)}.ds-ev-d{margin:2px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}"
     },
     {
       "name": "General Suggestion Card",

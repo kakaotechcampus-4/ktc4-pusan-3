@@ -45,7 +45,7 @@ async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArg
 
     DB 연결 후:
     - findings에 음식 추천, 근거 없는 정확한 수치, 진단 표현이 포함됐는지 확인한다.
-      허용하지 않는 내용이 있으면 VALIDATION_ERROR를 반환한다.
+      허용하지 않는 내용이 있으면 INVALID_ARGS를 반환한다.
     - evidence가 이번 실행에서 실제로 조회한 ref인지 확인하고,
       확인되지 않은 ref는 결과에서 제외한다.
     - 저장할 테이블이 정해지기 전까지는 분석 결과만 반환한다.

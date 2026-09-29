@@ -37,7 +37,8 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 - **금지**: fastapi, agents, providers, integrations
 
 ### `app/agents/`
-- **허용**: domains, rules, providers
+- **허용**: domains, rules, providers, core
+  — core 는 역할별 LLM 설정(`core/agent_config.py`)과 일정 초안 payload 계약(`core/event_draft.py`)을 쓴다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
@@ -52,6 +53,8 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 ### `app/api/`
 - **허용**: domains, core, agents 진입점, integrations
 - **금지**: agents 내부 구현 직접 import
+- **agents 진입점은 `app/agents/entrypoint.py` 하나다.** `handle_input` 과 그 입출력·이벤트 타입을
+  여기서 내보낸다. `pipeline` 이나 `memory`·`food` 하위 모듈을 직접 import 하지 않는다.
 - **DB 예외**: `app/api/deps/db.py` 한 곳만 `app/infra/db/session.py` 를 import 한다.
   라우터는 엔진이나 `get_session` 을 직접 가져오지 않고 `SessionDep` 를 받는다.
 - FastAPI 전용 오류 모델·예외 핸들러는 `app/api/errors.py` 에 둔다. `app/core/` 에
@@ -82,7 +85,7 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 |------|-------|
 | `app/api/`, `app/domains/`, `app/infra/`, `app/core/` | 김명성 |
 | `app/agents/` | 이시하 |
-| `app/rules/` | **공동** — 변경 시 양쪽 리뷰 필수 |
+| `app/rules/` | **공동** — 파트 리드는 리뷰 없이 수정 가능, 그 외에는 양쪽 리뷰 (2026-09-23 합의) |
 | `eval/` (루트) | 오현식 · 이도헌 |
 
 경계를 넘는 변경은 두 Owner 협의 대상이다.
@@ -160,6 +163,10 @@ make lint
   롤백하므로 테스트끼리 데이터를 공유하지 않는다.
 - 카카오 서버를 실제 호출하는 테스트는 만들지 않는다. integration 응답을 스텁으로 바꾸고
   호출 여부와 입력값을 함께 검증한다.
+- 🚨 FastAPI 0.14x 부터 `include_router` 가 라우트를 펼치지 않고 한 겹 감싼다(`_IncludedRouter`).
+  `app.routes` 만 훑으면 `/api/v1` 라우트가 하나도 안 보여서, 인증 경계 테스트가 빈 목록을 보고
+  늘 통과했다(#179). 라우트 목록이 필요하면 `tests/integration/api/test_auth_boundary.py` 의
+  `all_routes()` 를 쓰고, **검사 도구가 라우트를 실제로 보는지부터 확인하는 테스트**를 같이 둔다.
 - M-01은 배포 환경의 시작 URL과 콜백 URL이 같은 오리진인지 확인한다.
 - M-02는 iOS·Android 실기기에서 앱 복귀와 웹뷰 세션 생성을 확인한다.
 

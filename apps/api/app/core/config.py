@@ -61,6 +61,9 @@ class Settings(AgentLLMSettings):
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600
 
+    # 보호자별 하루 한 줄 입력 횟수 (app/api/quota.py). 모델 크레딧 보호용 — 테스트용 숫자.
+    INPUT_DAILY_LIMIT: int = 5
+
     @field_validator("AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP")
     @classmethod
     def _require_return_url(cls, raw: str, info: ValidationInfo) -> str:

@@ -1,13 +1,16 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
 
 import { resetCalendarState } from "@/mocks/handlers/calendar";
+import { resetInviteState } from "@/mocks/handlers/invites";
+import { resetMembership } from "@/mocks/handlers/membership";
 import { resetSafetyState } from "@/mocks/handlers/children";
 import { resetMemoryState } from "@/mocks/handlers/memories";
 import { resetProfileState } from "@/mocks/handlers/profile";
 import { resetIdempotencyStore } from "@/mocks/handlers/idempotency";
 import { resetPhotoRuns } from "@/mocks/handlers/photos";
+import { resetSubmittedInputs } from "@/mocks/handlers/runs";
 import { resetConsentState, resetParentState } from "@/mocks/handlers/settings";
-import { resetConfirmedEvents } from "@/mocks/handlers/suggestions";
+import { resetSubmittedEvents } from "@/mocks/handlers/suggestions";
 import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
 
@@ -23,15 +26,18 @@ beforeAll(() => {
 afterEach(() => {
   server.resetHandlers();
   resetIdempotencyStore();
-  resetConfirmedEvents();
+  resetSubmittedEvents();
   resetSafetyState();
   resetMemoryState();
   resetCalendarState();
   resetPhotoRuns();
+  resetSubmittedInputs();
   resetProfileState();
   resetDiaries();
   resetConsentState();
   resetParentState();
+  resetInviteState();
+  resetMembership();
 });
 
 afterAll(() => {

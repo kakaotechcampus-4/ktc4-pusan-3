@@ -192,6 +192,10 @@ async def _rows(context: Any) -> dict[str, Any] | None:
                 "items": [item.item_name for item in items],
             }
         )
+    # 일정은 저장되지 않고 승인을 기다리는 초안을 따로 만든다
+    drafts = getattr(context, "drafts", None)
+    for draft in drafts.all() if drafts is not None else ():
+        rows.setdefault("event_draft", []).append(draft.to_payload())
     return rows
 
 

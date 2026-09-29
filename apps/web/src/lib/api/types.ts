@@ -21,6 +21,19 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * ⚠️ **계약서 v1 의 목록에 없다.** `docs/agents/data_model.md` 의 `suggestion_evidence`
+   *    (`source_kind`) 가 급식 행을 근거로 든다고 적어 뒀는데(2026-09-23 회의 확정) `Ref` 에
+   *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
+   *
+   * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
+   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` · `intake_daily` ·
+   *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
+   *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
+   *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.
+   *    👉 `apps/api` Owner 협의 대상 (#151).
+   */
+  "daycare_meal",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -31,8 +44,12 @@ export interface Ref {
 
 /* ── 도메인 enum ──────────────────────────────────────────────────────── */
 
-/** 🚨 코드에서는 play/interest 가 아니라 activity 로 통일한다 (CLAUDE.md §5). */
-export const AGENTS = ["food", "activity", "education", "health"] as const;
+/**
+ * 🚨 코드에서는 play/interest 가 아니라 activity 로 통일한다 (CLAUDE.md §5).
+ * 🚨 `growth` 는 관찰 테이블 이름과 다르다 — 이 Agent 가 `observation_education` 과
+ *    `observation_routine` 둘을 읽는다. 접미사로 서로를 유추하지 말 것.
+ */
+export const AGENTS = ["food", "activity", "growth", "health"] as const;
 export type Agent = (typeof AGENTS)[number];
 
 /** 승격 상태. LLM 이 직접 쓰지 않는다 — Curator 의 반복 집계로만 바뀐다 (CLAUDE.md §2). */
@@ -171,6 +188,26 @@ export interface Evidence {
    *    서버가 보내기 전까지는 항상 undefined 라서 점선 칩이 나오지 않는다.
    */
   is_stale?: boolean;
+  /**
+   * 그 근거 행에서 **추천 근거로 채택한 내용** ("계란말이 요청 · 지은 적음 · 반복 5회").
+   * Agent 가 쓰고 **보호자 화면에 그대로 나간다** (`docs/agents/data_model.md` ·
+   * `suggestion_evidence.note` · 2026-09-25 확정).
+   *
+   * 🚨 **필수다.** 그 문서가 `NOT NULL` 이고 "비면 그 후보를 거절한다" 이므로, `note` 없는
+   *    근거는 화면에 도달할 수 없다. optional 로 두고 화면이 대신 문장을 만들면 **거절됐어야
+   *    할 후보를 UI 가 덮는다** (근거 0건을 그리지 않는 것과 같은 규칙 · CLAUDE.md §2).
+   *
+   * 🚨 **왜 조립하지 않고 문구로 받나** — 근거는 종류가 여럿이다. 성향(`profile_affinity`)이면
+   *    반복 횟수가 뜻이 있고, 급식 행(`daycare_meal`)이면 "어린이집에서 받음 · 기관 기록" 이고,
+   *    알레르기 규칙이면 "규칙 확인 · 보호자 입력값" 이다. 화면이 종류마다 다른 문장을 조립하려면
+   *    **근거의 의미를 프론트가 알아야** 하고, 그러면 반복 횟수 같은 판단이 화면으로 샌다
+   *    (CLAUDE.md §3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
+   *    `Observation.observed_label` · `Affinity.state_reason` 과 같은 성격이다.
+   *
+   * ⚠️ **계약서 v1(§02 `Evidence`)에는 아직 이 필드가 없다.** DB 문서에만 있다 —
+   *    응답에 실어 주는 것까지 확인이 필요하다. 👉 `apps/api` Owner 협의 대상 (#151).
+   */
+  note: string;
 }
 
 /**
@@ -274,9 +311,16 @@ export interface HomeResponse {
  * POST /children/{cid}/inputs — 즉시 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다.
  * 🚨 Idempotency-Key 가 필수다. 재시도할 때 키를 새로 만들지 않는다.
  */
+/**
+ * ⚠️ **화면이 실제로 쓰는 것은 `operations.ts` 의 `InputRequest` 다.** 계약서 §04 를 옮긴 이
+ * 타입과 두 벌로 갈려 있고 `source` 의 열거도 다르다 — 합치는 것은 별도 정리 대상이다.
+ * 새 필드는 **양쪽에 같이** 넣는다.
+ */
 export interface CreateInputRequest {
   text: string;
   source: "home_input" | "photo" | (string & {});
+  /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
+  reply_to?: string;
 }
 
 export interface CreateInputResponse {
@@ -324,12 +368,47 @@ export interface Scarcity {
  */
 
 /**
+ * 한 Agent 가 낸 후보 묶음의 **머리말**. 🚨 후보 자체는 `suggestions` 에 평평하게 담기고,
+ * 화면이 `agent` 로 묶는다 — 여기 담기는 것은 그 묶음에 대해 **서버만 아는 것**뿐이다.
+ *
+ * 🚨 **왜 묶음이 필요한가** — 한 Agent 가 후보를 **3가지씩** 낸다 (저녁 제안으로 김치찌개 ·
+ *    계란말이 · 멸치볶음). 그 셋은 서로 다른 제안이 아니라 **한 결정에 대한 대안**이다.
+ *    평평한 목록으로 그리면 보호자는 여섯 개의 독립 제안으로 읽고, "무엇을 정하는 중인가" 가 사라진다.
+ *
+ * ⚠️ **계약서 v1 에 아직 없다.** 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+ *    서버가 안 보내면 화면은 도메인 라벨로만 머리줄을 만들고, 묶임은 **말하지 않는다**.
+ */
+export interface SuggestionGroup {
+  agent: Agent;
+  /**
+   * 이 묶음이 무엇을 정하는 중인가 ("오늘 저녁 뭐 먹을까요"). 🚨 **서버 문구다** —
+   * 무엇을 묻는 중인지는 후보를 만든 쪽만 안다. 프론트가 지어내지 않는다.
+   * (03 홈의 `agent_prompts` · 04 의 `offer.label` 과 같은 성격이다.)
+   */
+  prompt?: string;
+  /**
+   * 🚨 **이 묶음에서 고른 것들이 일정 하나로 묶이는가.** `food` 가 그렇다 — 반찬 셋을 골라도
+   *    "저녁 식사" 한 건이 된다. 묶는 판단은 도메인 지식이라 서버가 하고, 화면은 **미리 말하기만** 한다.
+   *    말하지 않으면 보호자는 3건을 고르고 일정 3건을 기대하는데 1건이 나온다.
+   */
+  merges_into_one?: boolean;
+}
+
+/**
  * 🚨 `suggestions` 가 비어 있는데 `scarcity` 도 null 인 응답은 없다.
  *    둘 다 비면 화면에 그릴 것이 없다는 뜻이고, 그건 서버 버그다.
  */
 export interface SuggestionsResponse {
-  /** 🚨 개인화만 담는다. 일반 추천은 아래 `general` 이다 — 한 배열에 섞지 않는다. */
+  /**
+   * 🚨 개인화만 담는다. 일반 추천은 아래 `general` 이다 — 한 배열에 섞지 않는다.
+   * 🚨 **한 Agent 가 3가지씩 낸다.** Agent 는 최대 2개라(NF-01) 여기 최대 6건이 담긴다.
+   */
   suggestions: Suggestion[];
+  /**
+   * 묶음 머리말. ⚠️ 계약서에 아직 없다 (`SuggestionGroup` 참고).
+   * 🚨 후보를 담지 않는다 — 묶는 것은 화면이 `agent` 로 한다.
+   */
+  groups?: SuggestionGroup[];
   /**
    * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
    * 둘이 같이 나오지 않는다). 위 ⚠️ 참고 — 계약서에 아직 없어서 optional 이다.
@@ -339,6 +418,16 @@ export interface SuggestionsResponse {
   looked_at: string;
   guards: Guard[];
   scarcity: Scarcity | null;
+  /**
+   * 알레르기 사전검사. 🚨 **고르는 화면이 미리 들고 있어야 한다** — 채택 버튼을 누른 그 자리에서
+   *    물어야 하고, 그러려면 물어볼 것이 화면에 이미 있어야 한다 (`Precheck` 머리말 · #151).
+   *
+   * ⚠️ **계약서에 아직 없다.** 계약서는 이 검사를 초안을 만드는 응답에 실어 뒀는데, 그 자리가
+   *    "일정을 만들기로 한 뒤" 라서 **일정을 안 만들면 영영 안 묻는다.**
+   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+   *    서버가 안 보내면 빈 배열이고, 화면은 묻지 않는다 — 🚨 **그때는 "확인했다" 고 말하지도 않는다.**
+   */
+  prechecks?: Precheck[];
 }
 
 /** 되묻는 질문의 답. 관찰 1건으로 저장된다 (confidence_source: parent_direct). */
@@ -347,42 +436,213 @@ export interface AnswerRequest {
   answer: string;
 }
 
-/* ── 06 승인 ─────────────────────────────────────────────────────────── */
+/* ── 일정 초안 (event draft) ─────────────────────────────────────────── */
 
 /**
- * POST /suggestions/{sid}/event — 승인 게이트 ㉠ **준비**.
- * 여기서는 아직 캘린더에 쓰지 않는다. draft 만 만들고 24시간 뒤 만료된다 (NF-07).
+ * 🚨 **초안이 만들어지는 경로는 셋인데 payload 는 한 벌이다** (#121 · #122 합의).
  *
- * ⚠️ `starts_at` 을 프론트가 만들지 않는다. 날짜를 계산하지 않는다는 규칙(CLAUDE.md §3) 때문에
- *    시각은 서버가 제안에서 정하고, 화면은 응답의 `event.starts_at` 을 표시만 한다.
- *    부모가 시각을 직접 고르는 경로는 09 캘린더 화면 것이다.
+ *   ㉠ 한 줄 입력   "금요일에 물놀이 있어"        → Memory Agent  → SSE `event_draft`
+ *   ㉡ 제안 카드    activity 제안 "나들이"        → suggestion 도메인 (서버)
+ *   ㉢ 사진(알림장) 한 장에 일정 여러 건          → OCR 파이프라인
+ *
+ * 모양이 갈리면 화면이 여러 벌이 된다. 그래서 세 경로가 같은 JSON 을 내고 화면은
+ * `EventDraftCard` 한 벌로 그린다. 정본은 `apps/api/app/agents/memory/drafts.py` 의
+ * `EventDraft.to_payload()` 이고, 문서는 [`docs/event/event-draft-flow-v1.md`] 다.
+ *
+ * 🚨 **초안은 DB 에 없다.** 9/17 에 `event.status` 가 없어지면서 승인 전 행을 두지 않기로 했다 —
+ *    `event` 테이블에는 보호자가 제출한 행만 들어간다. 초안은 SSE 와 응답에만 존재한다.
+ * 🚨 **제출이 승인 게이트 ㉠ 이다** (`POST /children/{cid}/events`). 초안을 만드는 호출은
+ *    아무것도 쓰지 않는다 — `POST /suggestions/{sid}/event` 도 #121 에서 쓰기를 뗐다.
+ * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
  */
-export interface CreateEventRequest {
+
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `status` · `reminders` 가 없다 — 아직 행이 아니다. */
+export interface EventDraftFields {
   title: string;
-  items?: string[];
+  /**
+   * ⚠️ **`null` 이 될 수 있는 것이 `CalendarEvent` 와 다른 점이다.** 제안에서 온 초안은
+   *    제안 문장만으로 일자를 알 수 없어서 비워서 내려온다 — 🚨 **프론트가 오늘로 채우지 않는다**
+   *    (`PhotoEntry.date` 와 같은 규칙). 보호자가 채우기 전에는 제출할 수 없다.
+   */
+  starts_at: string | null;
+  ends_at: string | null;
+  all_day: boolean;
+  event_type: CalendarEvent["event_type"];
+  category: CalendarEvent["category"];
 }
 
 /**
- * 06 화면 상단 "확인해 주세요" 배너. 🚨 규칙이 만들고 모델은 관여하지 않는다.
+ * 초안의 준비물 한 줄.
+ *
+ * 🚨 **`is_prepared` 가 없다** (#122 확정). 체크 상태는 `PATCH /event-items/{iid}` 만의 몫이고,
+ *    초안이 정하는 것은 새 준비물(`item_id: null`)의 초기값뿐이다. payload 에 실으면
+ *    SSE 가 나간 뒤 보호자가 체크한 것이 제출하는 순간 풀린다.
+ */
+export interface EventDraftItem {
+  /** 🚨 `null` = 아직 저장 전인 새 준비물. 값이 있으면 기존 행이다. */
+  item_id: string | null;
+  item_name: string;
+}
+
+/** 수정 초안의 **원본 전체**. 화면이 "오후 3시 → 오후 5시" 를 그리는 데 쓴다. */
+export interface EventDraftBefore extends EventDraftFields {
+  items: EventDraftItem[];
+}
+
+export interface EventDraft {
+  /**
+   * 🚨 **화면 전용 키다** (#122 재리뷰). 서버는 이 값을 읽지 않고, 제출 요청에도 싣지 않는다.
+   *    화면이 카드를 가리키고 세션 스토리지 키로 쓴다 — 배열 인덱스로는 한 장 제출 뒤 나머지가 밀린다.
+   */
+  draft_id: string;
+  /** 화면이 부를 엔드포인트를 이 값으로 고른다. */
+  op: "create" | "update";
+  /** 🚨 `create` 는 언제나 `null` 이다. */
+  event_id: string | null;
+  event: EventDraftFields;
+  /** 🚨 `create` 는 `null`. `update` 면 준비물까지 포함한 원본 전체다. */
+  before: EventDraftBefore | null;
+  /**
+   * 🚨 **제출 시점의 최종 목록이다.** 항목별 op 가 없어서, 배열에서 빠진 `item_id` 가
+   *    삭제를 표현하는 유일한 방법이다 (#122 확정).
+   */
+  items: EventDraftItem[];
+  /**
+   * ⚠️ **계약서에 아직 없는 필드다.** 값을 못 읽었거나 서버가 자신이 없을 때 참이다 —
+   *    사진 경로의 `PhotoEntry.needs_review` 와 **같은 모양으로 맞추자는 제안**이다.
+   *    세 경로가 빈 필드를 저마다 다른 방식으로 말하면 카드가 경로별로 분기한다.
+   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+   */
+  needs_review?: boolean;
+  /** 왜 확인이 필요한지. 🚨 서버 문구다 — 프론트가 지어내지 않는다. */
+  review_reason?: string;
+  /**
+   * ⚠️ 이 초안이 어느 제안(들)에서 왔는지. 제안 경로에만 있다 (#122 에서 모양이 미정으로 남은 자리).
+   *    제출받는 쪽이 그 `suggestion.status` 를 함께 `approved` 로 바꿔야 해서 필요하다.
+   *
+   * 🚨 **배열인 이유** — `food` 제안 여러 건이 한 끼로 묶여 초안 하나가 된다. 단수로 두면
+   *    묶인 나머지 제안이 `draft` 인 채로 남아 24시간 뒤 만료된다 (보호자는 골랐는데).
+   */
+  suggestion_ids?: string[];
+}
+
+/**
+ * 초안 제출 본문 — 🚨 **승인 게이트 ㉠. 되돌릴 수 없는 지점.**
+ *
+ * 🚨 **`op` 에 따라 엔드포인트가 갈린다** (9/21 회의): create 는 `POST`, update 는 `PATCH`.
+ *    그래서 본문에 `op` 도 `event_id` 도 싣지 않는다 — 어느 일정인지는 경로가 말한다.
+ * ⚠️ **경로와 요청 스키마는 아직 미정이다** ([`docs/event/event-draft-flow-v1.md`] §6).
+ *    아래는 확정된 payload 계약(#122)에서 **화면이 되돌려 보낼 수 있는 부분만** 추린 잠정형이다.
+ *
+ * 🚨 **보호자가 확인한 최종 상태를 통째로 보낸다** (#122 확정). 부분 갱신이 아니라서
+ *    `items` 배열에서 빠진 `item_id` 가 삭제로 처리된다.
+ * 🚨 `draft_id` 를 싣지 않는다 (§4-4 — 화면 전용 키고 서버는 읽지 않는다).
+ * 🚨 `items` 에 `is_prepared` 가 없다 (§4-3 — 체크는 `PATCH /event-items/{iid}` 만의 몫).
+ */
+export interface SubmitEventBody {
+  event: EventDraftFields;
+  items: EventDraftItem[];
+  /**
+   * 제출받는 쪽이 그 `suggestion.status` 를 `approved` 로 바꿔야 해서 필요하다.
+   * 제안 경로(create)에만 있다. 🚨 **배열이다** — `food` 제안 여러 건이 한 초안으로 묶인다.
+   * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
+   */
+  suggestion_ids?: string[];
+}
+
+/* ── 06 승인 ─────────────────────────────────────────────────────────── */
+
+/**
+ * 고른 제안을 **채택한다** — `suggestion.status` 를 `approved` 로 바꾼다.
+ *
+ * 🚨 **일정과 다른 축이다.** 이걸 부른다고 캘린더에 아무것도 안 들어간다. 부모가 "이걸로 할게요"
+ *    라고 말한 것을 남기는 자리이고, 일정으로 만들지는 **그다음에** 따로 묻는다.
+ *
+ * ⚠️ **계약서에 없는 엔드포인트다.** 지금 계약에서 `approved` 가 되는 경로는 **초안 제출 하나**
+ *    뿐이라(`SubmitEventBody.suggestion_ids`), 고르기만 하고 일정을 안 만들면 그 선택이
+ *    **24시간 뒤 `expired`** 로 사라지고 §4 ⑤(선택·거절을 Memory 로 되돌려 기록)가 배우는 것이
+ *    없다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+ *    ⚠️ 합의가 ㉯(새 상태 `chosen`)로 나면 이 응답의 `status` 값만 바뀐다.
+ *
+ * 🚨 **승인 게이트가 아니다.** 되돌릴 수 없는 2곳은 캘린더 쓰기와 건강·알레르기 확정뿐이라
+ *    (최상위 §2), 이 버튼에 `btn-approve` 도 `caution` 도 쓰지 않는다.
+ * 🚨 **Idempotency-Key 를 쓰지 않는다.** 같은 id 를 두 번 보내도 결과가 같은 상태 전환이고,
+ *    되돌릴 수 없는 5곳에 여섯 번째를 더하지 않는다 (`lib/api/idempotency.ts`).
+ */
+export interface ApproveSuggestionsRequest {
+  suggestion_ids: string[];
+}
+
+/** 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다. */
+export interface ApproveSuggestionsResponse {
+  suggestions: Suggestion[];
+}
+
+/**
+ * 채택한 제안들을 일정 초안으로 바꾼다. 승인 게이트 ㉠ **준비**다 — 여기서는 아무것도 쓰지 않는다.
+ *
+ * ⚠️ **계약서에 없는 엔드포인트다.** 05 에서 제안을 **여러 개 고를 수 있게** 되면서 생겼다
+ *    (기존 `POST /suggestions/{sid}/event` 는 한 건짜리였다).
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+ *
+ * 🚨 **몇 장이 나오는지는 서버가 정한다.** 고른 개수와 초안 개수가 1:1 이 아니다 —
+ *    **`food` 제안들은 한 끼로 묶여 초안 1건**이 되고(저녁 식사 일정), 나머지 Agent 의 제안은
+ *    고른 수만큼 나온다. 묶는 판단은 도메인 지식이라 화면이 하지 않는다.
+ *
+ * ⚠️ `starts_at` 을 프론트가 만들지 않는다. 날짜를 계산하지 않는다는 규칙(CLAUDE.md §3) 때문에
+ *    시각은 서버가 제안에서 정하고, 화면은 표시만 한다. 제안만으로 일자를 모르면 `null` 로 오고
+ *    보호자가 카드에서 고른다.
+ */
+export interface CreateEventDraftsRequest {
+  /** 🚨 보호자가 고른 제안. 순서는 화면 순서이고 서버가 묶을 때 쓸 수 있다. */
+  suggestion_ids: string[];
+}
+
+/**
+ * 알레르기 사전검사. 🚨 규칙이 만들고 모델은 관여하지 않는다 (최상위 §3).
  * `unknown_ingredient` = 알레르기 기록에 없는 재료 — 보호자에게 물어야 한다.
+ *
+ * 🚨 **묻는 자리는 제안을 채택할 때다** (#151). 한동안 초안을 만든 뒤(=일정을 만들기로 한 뒤)
+ *    물었는데, 채택과 일정 만들기가 갈리면서 **일정을 안 만들면 영영 안 묻는** 구멍이 생겼다.
+ *    알레르기는 캘린더가 아니라 **그 음식을 먹이는 일**에 걸린 위험이다.
+ * 🚨 **채택을 되돌리는 길이 없으므로 채택보다 먼저 묻는다.** 알레르기가 확인된 제안은
+ *    채택 자체를 하지 않는다 — 그러면 초안도 안 생기고, 막을 것도 남지 않는다.
  */
 export interface Precheck {
   code: "unknown_ingredient" | (string & {});
   item: string;
   note: string;
+  /**
+   * ⚠️ **계약서에 아직 없는 필드다.** 어느 제안 때문에 묻는 것인지 — 여러 개를 고를 수 있게
+   *    되면서 필요해졌다. 없으면 화면은 **재료 하나로 고른 것 전부를 막는다**:
+   *    식사 제안의 알레르기 때문에 놀이 제안까지 못 고르는 것은 규칙이 아니라 버그지만,
+   *    알레르기에서 **덜 막는 쪽으로 기울 수는 없어서** 모르면 전부 막는다.
+   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+   */
+  suggestion_id?: string;
 }
 
-export interface CreateEventResponse {
-  event: CalendarEvent;
-  /** draft 만료 시각. 지나면 승인할 수 없다. */
-  expires_at: string;
-  prechecks: Precheck[];
+export interface CreateEventDraftsResponse {
+  /**
+   * ⚠️ **여기 있던 `prechecks` 를 뺐다** (#151). 알레르기는 **채택할 때** 묻는다
+   *    (`SuggestionsResponse.prechecks`) — 일정을 안 만들면 영영 안 묻게 되기 때문이다.
+   *    서버가 여기 계속 실어도 화면은 읽지 않는다.
+   */
+  /**
+   * 🚨 **저장된 `event` 가 아니라 초안이다** (#121 확정). `id` · `status` · `expires_at` 이 없다 —
+   *    이 호출은 DB 에 쓰지 않으므로 아직 행이 아니다.
+   */
+  drafts: EventDraft[];
 }
 
-/** 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점. 이미 확정이면 409 already_confirmed. */
-export interface ConfirmEventResponse {
+/**
+ * 제출 응답. 🚨 **승인 게이트 ㉠ 을 지난 뒤**라 여기 오는 `event` 는 실제로 저장된 행이다.
+ * 제안에서 온 초안이면 그 `suggestion.status` 도 함께 바뀐다.
+ */
+export interface SubmitEventResponse {
   event: CalendarEvent;
-  suggestion_status: SuggestionStatus;
+  /** 제안 경로에서만 의미가 있다. 다른 두 경로는 서버가 안 싣는다. */
+  suggestion_status?: SuggestionStatus;
 }
 
 /**
@@ -604,9 +864,27 @@ export interface PhotoCommitRequest {
  * 🚨 활동 lane 의 태그는 `affinity_id` 를 달지 않는다 — 사진 한 장을 성향으로 확정하지 않는다.
  */
 export interface PhotoCommitResponse {
+  /**
+   * ⚠️ **저장 대상이 계약서와 AI 파트 문서에서 다르다.** 계약서 §09 의 lane 표는 문서 lane 을
+   *    `observation_education 또는 event 만` 으로 적어 뒀는데, `docs/agents/data_model.md`
+   *    (2026-09-26)는 기관 문서를 **별도 테이블**로 뒀다 — `notice`(OCR 3갈래 분류의 일반 공지 ·
+   *    테이블 신설) · `daycare_meal`(INSERT 는 OCR·급식 배치만). 즉 문서 lane 이 만드는 것은
+   *    **아이 기록이 아닐 수 있다.**
+   *
+   * 🚨 **화면은 이 응답을 쓰지 않는다** — 저장하면 바로 홈이라(#151) 지금은 타입만 남아 있다.
+   *    응답 모양을 고치기 전에 **무엇이 저장되는지부터** 정해야 한다.
+   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+   */
   observations: Observation[];
-  /** 문서 lane 에서 일시를 읽어냈을 때만 온다. `status` 는 `draft` 다. */
-  event: CalendarEvent | null;
+  /**
+   * 🚨 **일정은 여기서 만들어지지 않는다** (#151). 커밋이 만드는 것은 **관찰**이고, 일정은
+   *    고치기 시트의 승인 게이트(`POST /children/{cid}/events`)가 그 자리에서 넣는다 —
+   *    무엇을 넣는지 아는 자리와 넣는 자리를 갈라 두면 같은 항목을 두 화면에서 두 번 확인하게 된다.
+   *
+   *    `event.status` 가 없어진 뒤(#118) 이 커밋이 게이트 없이 캘린더에 쓰는 유일한 경로였는데,
+   *    일정을 아예 안 만들면 그 경로 자체가 사라진다.
+   */
+
   /** YYYY-MM-DD. 저장 뒤 "캘린더에서 보기" 가 여는 날짜다 — 프론트가 계산하지 않는다. */
   calendar_date: string | null;
 }
@@ -746,6 +1024,15 @@ export interface AuthSignupRequest {
   consent_code: string;
   /** ② 에서 만든 것과 같은 값. consent_code 만으로 계정이 만들어지는 것을 막는다. */
   bind: string;
+  /**
+   * ⚠️ **`docs/api/auth-kakao-v1.md` §3-5 에 없다** (#96 에서 추가 요청 중 · 확정 전).
+   *
+   * 계정이 여기서 만들어지는데 이름을 받을 다른 엔드포인트가 없다 — 계약서에 `PATCH /me`
+   * 가 없어서, 이 바디에 싣지 않으면 보호자 이름을 저장할 길 자체가 없다.
+   * 🚨 서버가 거절하기로 하면 화면이 아니라 **계약을 먼저 고친다.** 이름 화면을 지우고
+   *    `parent.nickname` 을 null 로 두는 것도 선택지다 (그 필드는 nullable 이다 · §5-2).
+   */
+  nickname: string;
   consents: Array<{ scope: string; policy_version: string }>;
 }
 
@@ -758,7 +1045,32 @@ export interface CreateChildRequest {
   nickname: string;
   /** YYYY-MM-DD. 나이가 아니라 생일을 받는다 — 나이는 서버가 계산한다. */
   birth_date: string;
-  relation?: Relation;
+  /**
+   * ⚠️ **`relation` 이 여기서 빠졌다** (계약서 §05 에는 아직 있다 · 확정 전).
+   *    02 온보딩으로 옮겼다 — 01 은 **되돌리기 어려운 것**(별명·생일·법정대리인 동의)만
+   *    받고, 고를 수 있는 것은 전부 다음 화면이 받는다.
+   *    🚨 두 곳에서 받지 않는다. 같은 값을 두 엔드포인트가 쓰면 어느 쪽이 정본인지 사라진다.
+   */
+  /**
+   * 아이 스코프 동의 2건 (`child_basic` · `child_health`).
+   *
+   * ⚠️ **계약서 §05 의 바디에 없다** (#96 에서 추가 요청 중 · 확정 전).
+   *
+   * 🚨 **아이를 만드는 것과 같은 트랜잭션이어야 한다.** 동의를 아이 단위로 기록하기로
+   *    하면서(#96) 닭-달걀이 생겼다 — `POST /consents` 는 `child_id` 를 받는데 그
+   *    `child_id` 는 이 호출 전에는 없고, 계약서 §04 는 `child_basic` 없이 이 호출이
+   *    403 이라고 말한다. 둘을 동시에 만족시키는 모양은 이것뿐이다.
+   */
+  consents: Array<{ scope: string; policy_version: string }>;
+  /**
+   * 법정대리인임을 보호자가 확인한 표시 (개인정보보호법 제22조의2).
+   *
+   * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 — 그러면
+   *    아무도 확인하지 않은 동의가 확인된 것으로 남는다.
+   * 🚨 초대로 들어온 보호자는 이 값을 보낼 일이 없다. 법정대리인 동의는 아이당 한 번,
+   *    아이를 등록하는 보호자가 한다 (#96).
+   */
+  guardian_attested: boolean;
 }
 
 export interface CreateChildResponse {
@@ -830,7 +1142,15 @@ export interface SafetyScanResponse {
  *    ⚠️ 01 첫 진입은 아직 성별을 받지 않는다 — 새로 만든 아이의 성별을 무엇으로 둘지는
  *    서버 계약과 함께 정해야 한다 (지금은 목이 `male` 로 들고 있다).
  */
-export type Gender = "male" | "female";
+/**
+ * 🚨 **`undisclosed` 가 기본값이다** (최상위 `CLAUDE.md` §2 — "성별의 기본값은
+ *    '밝히지 않을래요' 다"). 한동안 `male | female` 둘만 두고 필수값으로 뒀다가(#75)
+ *    되돌렸다 — 둘 중 하나를 고르게 만들면 **안 밝히는 선택지가 화면에서 사라진다.**
+ *
+ * 🚨 **"모름" 이 아니라 "밝히지 않음" 이다.** 보호자는 아이 성별을 알고 있고, 이 값은
+ *    *우리에게 알려 줄지*를 고르는 것이다 — 문구를 "잘 모르겠어요" 로 쓰지 않는다.
+ */
+export type Gender = "male" | "female" | "undisclosed";
 
 export interface ChildProfile {
   id: string;
@@ -920,7 +1240,13 @@ export interface HealthSafetyListResponse {
 
 /* ── 02 이야기 하나 ──────────────────────────────────────────────────── */
 
-/** 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다. */
+/**
+ * 🚨 발달 검사가 아니다. 보호자가 고른 값만 저장하고 AI 는 평가하지 않는다.
+ *
+ * ⚠️ **화면이 더 이상 부르지 않는다.** 02 에서 발달 문항을 뺐다 — 화면에 "발달 상태" 라는
+ *    말이 서는 순간 발달 평가로 읽히고, 그건 이 제품이 안 만들기로 한 것이다 (최상위 §1).
+ *    계약서에는 남아 있어 타입과 목은 유지한다 (서버가 지울지는 팀 결정).
+ */
 export interface DevScreeningItem {
   item_id: string;
   text: string;
@@ -949,9 +1275,43 @@ export interface OnboardingSafetyInput {
   reactions?: string[];
 }
 
-/** 전부 선택이다. 모두 건너뛰어도 200 이다. */
+/**
+ * 전부 선택이다. 모두 건너뛰어도 200 이다.
+ *
+ * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
+ *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
+ *    - 들어온 것: `relation`(01 에서 이동) · `gender` · `height_cm` · `weight_kg`
+ *    - 빠진 것: `interests` · `dev_answers`
+ *
+ * 🚨 **`interests` 를 뺀 자리를 다른 것으로 채우지 않았다.** 관심사는 03 홈의 한 줄에서
+ *    관찰로 쌓이는 값이고(그게 이 제품의 방식이다), 가입 첫날 칩으로 고른 여덟 개는
+ *    **보호자가 짐작한 목록**이다. 발달 문항도 같은 이유로 뺐다 — 화면에 "발달 상태" 라는
+ *    말이 서면 그때부터 발달 평가로 읽힌다 (최상위 §2 · 스펙 아웃).
+ */
 export interface OnboardingRequest {
-  interests?: string[];
+  /**
+   * 🚨 **아이가 아니라 나와 아이 사이의 값이다** (`parent_child` 행). `POST /children` 에서
+   *    옮겨 왔다 — 01 은 되돌리기 어려운 것(별명·생일·법정대리인 동의)만 받는다.
+   */
+  relation?: Relation;
+  gender?: Gender;
+  /**
+   * 🚨 **잰 날은 서버가 찍는다.** 프론트가 "오늘" 을 만들어 보내지 않는다 (CLAUDE.md §4 —
+   *    날짜 계산은 서버가 한다). 다른 날 잰 값은 11-1 에서 날짜를 골라 적는다.
+   * 🚨 둘 다 비면 아예 보내지 않는다 — 잰 것이 없는 기록을 만들지 않는다.
+   */
+  height_cm?: number;
+  weight_kg?: number;
+  /**
+   * ⚠️ **화면에서 보내지 않는다.** 02 의 알레르기 구역이 11 아이 프로필과 같은 것이 되면서
+   * (`components/safety-section.tsx`) 등록이 **승인 게이트 ㉡**(`POST /children/{cid}/health-safety`)
+   * 로만 간다 — 알레르기의 쓰기 경로를 둘로 두지 않는다 (NF-03).
+   *
+   * 🚨 **그래서 `safety_status` 를 물을 자리가 지금 없다.** 목록이 0건인 것만으로는
+   *    "확인했고 없다"(`none`)와 "아직 모른다"(`unknown`)를 가를 수 없는데, 계약서 §05 는
+   *    후자를 `guards.safety_unknown` 으로 받아 Food Agent 실행 자체를 막는다 (최상위 §2).
+   *    **어디서 그 선언을 받을지는 팀 결정이다** — 계약서에 남아 있어 타입만 유지한다.
+   */
   safety_status?: SafetyStatus;
   safety?: OnboardingSafetyInput[];
   /**
@@ -959,7 +1319,6 @@ export interface OnboardingRequest {
    * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
    */
   one_line?: string;
-  dev_answers?: Array<{ item_id: string; level: number }>;
 }
 
 export interface OnboardingResponse {
@@ -1034,23 +1393,79 @@ export interface ChildParentsResponse {
 }
 
 /**
- * POST /children/{cid}/invites (계약서 §08).
+ * POST /children/{cid}/invites — 정본은 `docs/api/invite-v1.md` 다.
  *
  * 🚨 **한 링크는 한 번만 쓴다.** `used_at` 이 찍히면 재사용 409 `invite_used`,
  *    기한이 지나면 410 이다. 화면이 "언제든 쓸 수 있는 링크" 처럼 보이게 하지 않는다.
  */
-export interface InviteRequest {
+/**
+ * `POST /children/{cid}/invites` 의 본문. 🚨 **비어 있는 것이 맞다.**
+ *
+ * 관계는 **받는 쪽이 수락 화면에서 고른다** (#89 · #96) — 잘못 찍으면 받는 쪽이 자기 프로필을
+ * 고치러 가야 하고, 그 값은 기록마다 "누가 적었나" 로 남는다. `invite-v1.md` §3-1 도 발행 요청을
+ * `{}` 로, 수락 요청이 `relation` 을 싣는 것으로 확정했다 (`InviteAcceptRequest`).
+ */
+export type InviteRequest = Record<string, never>;
+
+export interface InviteResponse {
   /**
-   * ⚠️ **프론트는 보내지 않는다.** 계약서 §08 은 발행할 때 관계를 지정하면 수락자에게
-   * 프리필된다고 적지만, 아이와 어떤 사이인지는 **받는 쪽이 자기 입으로 말할 값**이다
-   * (#89). 서버가 필수로 요구하면 계약을 고친다 — 그때까지 타입만 남겨 둔다.
+   * `docs/api/invite-v1.md` §3-1 확정. 형식·정규화는 `lib/invite-code.ts` — 그 파일 머리말에
+   * 왜 링크가 아닌지 적어 뒀다.
+   * 🚨 **보낼 때는 정규화한 값이다.** 화면의 `ABCD-1234` 는 읽기 편하라고 끊은 표시 형식이다.
    */
+  invite_code: string;
+  expires_at: string;
+}
+
+/**
+ * GET /invites/{code} — 🔶 **아직 제안이다** (#96). 수락 **전에** 어느 아이인지
+ * 보여주려고 신설했다. 코드 방식 자체는 확정됐고 **이 조회만 아직 열려 있다**
+ * (`docs/api/invite-v1.md` §3-2 · §7 열린 결정 01).
+ *
+ * 🚨 **이 호출은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
+ *    쓸 수 있는 코드라 다시 받아야 한다. 소비는 `accept` 하나만 한다.
+ *
+ * 🚨 **여기서 아이의 건강·알레르기를 내리지 않는다.** 아직 연결되지 않은 사람이고
+ *    (`parent_child` 행이 없다), 코드만 알면 누구나 부를 수 있는 창구다 — 별명·나이와
+ *    초대한 보호자까지다 (최상위 §2 개인정보 · 최소 수집).
+ * 🚨 **그래서 이 경로도 시도 제한에 함께 걸린다.** 수락보다 **더 좋은 추측 도구**다 —
+ *    맞는 코드를 찾는 데 계정 상태도 필요 없다.
+ */
+export interface InvitePreviewResponse {
+  child: {
+    nickname: string;
+    /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+    age_display: string;
+  };
+  /** 누가 불렀는지. 🚨 별명만 — 초대한 보호자의 다른 정보는 내리지 않는다. */
+  invited_by: { nickname: string | null };
+  expires_at: string;
+}
+
+/**
+ * POST /invites/{code}/accept 의 본문.
+ *
+ * 🚨 **관계는 받는 쪽이 고른다.** 발행할 때 지정하지 않는다 (#89) — 아이와 어떤 사이인지는
+ *    자기 입으로 말할 값이고, 그 값이 기록마다 "누가 적었나" 로 남는다.
+ *    안 골랐으면 **필드를 아예 빼고 보낸다** (01 아이 등록과 같은 처리).
+ */
+export interface InviteAcceptRequest {
   relation?: Relation;
 }
 
-export interface InviteResponse {
-  invite_url: string;
-  expires_at: string;
+/**
+ * POST /invites/{code}/accept — 수락하면 `parent_child` 행이 **바로** 생긴다.
+ * 🚨 승인 대기 상태가 없다 (계약서 §02 `GET /me`). 화면에 "대기 중" 칸을 만들지 않는다.
+ *
+ * ⚠️ **응답 모양이 계약서에 없다.** 화면은 수락한 뒤 그 아이 홈으로 가야 해서 `child_id`
+ *    가 필요하다 — 없으면 `GET /me` 를 한 번 더 부르게 된다. 목이 이 모양으로 답한다.
+ */
+export interface InviteAcceptResponse {
+  child_id: string;
+  nickname: string;
+  /** 서버가 만든 문구. 프론트에서 다시 계산하지 않는다. */
+  age_display: string;
+  role: "owner" | "member";
 }
 
 /**

@@ -34,7 +34,7 @@ from app.domains.schedule.repository import (
     set_event_item_prepared,
     update_event,
 )
-from app.domains.suggestion.models import SuggestionAgent, SuggestionFeedback
+from app.domains.suggestion.models import SuggestionAgent, SuggestionFeedback, SuggestionKind
 from app.domains.suggestion.repository import (
     create_suggestion,
     list_suggestions_using_observation,
@@ -283,9 +283,17 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
         session,
         child_id=child.id,
         agent=SuggestionAgent.ACTIVITY,
+        kind=SuggestionKind.PERSONALIZED,
         content="블록 놀이",
-        reason=None,
-        source_refs=[{"kind": "observation_activity", "id": str(observation_id)}],
+        reason="블록을 쌓는 걸 좋아해서요",
+        citations=[
+            {
+                "source_kind": "observation_activity",
+                "source_id": str(observation_id),
+                "source_updated_at": datetime(2026, 9, 2, tzinfo=timezone.utc),
+                "note": "블록을 쌓고 놀았다",
+            }
+        ],
         expires_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
     )
     assert [

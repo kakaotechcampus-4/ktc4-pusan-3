@@ -28,7 +28,7 @@ class FoodAgentResult:
     request_texts: tuple[str, ...]
     tools: tuple[str, ...]  # 이번 task에 모델에게 열리는 tool
     requires_safety_check: bool
-    model_calls: int = 0  # LLMClient.chat() 호출 수(입력 run 의 done.model_calls에 더해짐)
+    model_calls: int = 0  # Agent 진입 수 — 0(게이트 닫힘) · 1 · 2(안전 필터 후 재호출)
 
 
 async def run(
