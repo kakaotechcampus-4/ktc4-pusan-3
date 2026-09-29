@@ -20,11 +20,23 @@ from app.domains.consent.models import Consent, ConsentAction, ConsentScope
 ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
     ConsentScope.SERVICE_TERMS,
     ConsentScope.PRIVACY_ACCOUNT,
+    ConsentScope.LOCATION,
 )
-"""계정 단위 필수 동의 (§6-2 ② requireAccountConsent).
+"""계정 단위 동의 — 동의 대상이 보호자 본인이다. 가입 요청에서 저장하는 것이 이 목록이다.
 
 아이 단위(child_basic · child_health)는 여기 없다 — 모델의 CHECK 가 그 둘은 child_id 를
 요구하고, 가입 시점에는 아이가 없다. 모델의 _ACCOUNT_SCOPE_SQL 과 같은 분류를 쓴다.
+"""
+
+REQUIRED_ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
+    ConsentScope.SERVICE_TERMS,
+    ConsentScope.PRIVACY_ACCOUNT,
+)
+"""계정 단위 **필수** 동의 (§6-2 ② requireAccountConsent). 빠지면 가입을 막는다.
+
+🚨 ACCOUNT_SCOPES 와 같은 목록이 아니다. location 은 계정 동의지만 선택이다 — 필수로
+   받으면 선택이어야 할 동의를 강제하는 것이 된다 (#172). 두 목록을 하나로 합치면
+   위치에 동의하지 않은 보호자가 가입도, 로그인 뒤 사용도 막힌다.
 """
 
 
@@ -54,14 +66,14 @@ async def missing_account_scopes(
     *,
     parent_id: uuid.UUID,
 ) -> list[ConsentScope]:
-    """아직 granted 가 아닌 계정 동의 스코프 (§3-4 의 consent_required).
+    """아직 granted 가 아닌 계정 **필수** 동의 스코프 (§3-4 의 consent_required).
 
     계정 동의의 대상은 subject_parent_id 다 — actor 가 아니다. 남이 대신 눌러준 동의도
-    그 계정의 동의로 센다.
+    그 계정의 동의로 센다. 선택 동의(location)는 빠져 있어도 되묻지 않는다.
     """
     return [
         scope
-        for scope in ACCOUNT_SCOPES
+        for scope in REQUIRED_ACCOUNT_SCOPES
         if await latest_action(session, scope=scope, subject_parent_id=parent_id)
         is not ConsentAction.GRANTED
     ]

@@ -15,7 +15,11 @@ class ConsentScope(enum.StrEnum):
     PRIVACY_ACCOUNT = "privacy_account"
     CHILD_BASIC = "child_basic"
     CHILD_HEALTH = "child_health"
+    # 쓰지 않는다 (09-05 테크스펙에서 온 값). 쓰려면 목적·동의문·약관·화면부터 — 약관 제20조 ⑤.
     QUALITY_IMPROVE = "quality_improve"
+    LOCATION = "location"
+    """보호자 휴대폰의 대략적인 위치 — 선택 동의 (#172). 아이가 아니라 보호자 본인의 정보라
+    계정 동의다. 본문은 위치기반서비스 이용약관 한 글이다 (위치정보법 제19조)."""
 
 
 class ConsentAction(enum.StrEnum):
@@ -23,7 +27,7 @@ class ConsentAction(enum.StrEnum):
     WITHDRAWN = "withdrawn"
 
 
-_ACCOUNT_SCOPE_SQL = "'service_terms','privacy_account'"
+_ACCOUNT_SCOPE_SQL = "'service_terms','privacy_account','location'"
 """CHECK 안에서 쓰는 계정 scope 목록.
 
 repository 의 ACCOUNT_SCOPES 와 같은 분류다. 한쪽만 늘어나면 DB 가 막는 것과 코드가
