@@ -124,10 +124,12 @@ async def count_active_observations(
     """홈의 전체 active 수와 지정 기간 겹침 수. 종료일은 열린 경계다."""
     if period_start >= period_end:
         raise ValueError("집계 기간은 시작일보다 종료일이 늦어야 한다")
-    row = (await session.execute(
-        _COUNT_ACTIVE_SQL,
-        {"child_id": child_id, "period_start": period_start, "period_end": period_end},
-    )).one()
+    row = (
+        await session.execute(
+            _COUNT_ACTIVE_SQL,
+            {"child_id": child_id, "period_start": period_start, "period_end": period_end},
+        )
+    ).one()
     return ActiveObservationCounts(total_count=row.total_count, period_count=row.period_count)
 
 
@@ -151,22 +153,24 @@ async def page_observations(
         raise ValueError("date_from은 date_to보다 늦을 수 없다")
     resolved = ObservationDomain(domain) if domain is not None else None
     status = ObservationStatus(status)
-    result = (await session.execute(
-        _PAGE_SQL,
-        {
-            "child_id": child_id,
-            "domain": resolved.value if resolved else None,
-            "date_from": date_from,
-            "date_to_exclusive": date_to + timedelta(days=1) if date_to else None,
-            "status": status.value,
-            "affinity_id": affinity_id,
-            "unused_in_suggestions": unused_in_suggestions,
-            "cursor_upper": cursor.observed_to_exclusive if cursor else None,
-            "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
-            "cursor_id": cursor.id if cursor else None,
-            "fetch_limit": limit + 1,
-        },
-    )).all()
+    result = (
+        await session.execute(
+            _PAGE_SQL,
+            {
+                "child_id": child_id,
+                "domain": resolved.value if resolved else None,
+                "date_from": date_from,
+                "date_to_exclusive": date_to + timedelta(days=1) if date_to else None,
+                "status": status.value,
+                "affinity_id": affinity_id,
+                "unused_in_suggestions": unused_in_suggestions,
+                "cursor_upper": cursor.observed_to_exclusive if cursor else None,
+                "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
+                "cursor_id": cursor.id if cursor else None,
+                "fetch_limit": limit + 1,
+            },
+        )
+    ).all()
     total = result[0].total if result else 0
     page_rows = [row for row in result if row.id is not None]
     has_more = len(page_rows) > limit
@@ -177,9 +181,11 @@ async def page_observations(
         current_domain = ObservationDomain(kind.removeprefix("observation_"))
         model = _MODEL_BY_DOMAIN[current_domain]
         ids = [row.id for row in page_rows if row.kind == kind]
-        for observation in (await session.scalars(
-            select(model).where(model.child_id == child_id, model.id.in_(ids))
-        )).all():
+        for observation in (
+            await session.scalars(
+                select(model).where(model.child_id == child_id, model.id.in_(ids))
+            )
+        ).all():
             records[(kind, observation.id)] = _to_record(current_domain, observation)
     items = [records[(row.kind, row.id)] for row in page_rows]
     last = page_rows[-1] if has_more else None
@@ -189,7 +195,8 @@ async def page_observations(
             domain=ObservationDomain(last.kind.removeprefix("observation_")),
             id=last.id,
         )
-        if last is not None else None
+        if last is not None
+        else None
     )
     return ObservationPage(items=items, total=total, next_cursor=next_cursor)
 
@@ -201,8 +208,13 @@ def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
         if column.key not in {"id", "child_id", "raw_text", "observed_range", "created_at"}
     }
     return ObservationRecord(
-        id=row.id, domain=domain, child_id=row.child_id, raw_text=row.raw_text,
-        observed_range=row.observed_range, created_at=row.created_at, fields=fields,
+        id=row.id,
+        domain=domain,
+        child_id=row.child_id,
+        raw_text=row.raw_text,
+        observed_range=row.observed_range,
+        created_at=row.created_at,
+        fields=fields,
     )
 
 
@@ -333,6 +345,4 @@ async def delete_observation(
 _COUNT_ACTIVE_SQL = text(
     Path(__file__).with_name("count_active_observations.sql").read_text(encoding="utf-8")
 )
-_PAGE_SQL = text(
-    Path(__file__).with_name("page_observations.sql").read_text(encoding="utf-8")
-)
+_PAGE_SQL = text(Path(__file__).with_name("page_observations.sql").read_text(encoding="utf-8"))

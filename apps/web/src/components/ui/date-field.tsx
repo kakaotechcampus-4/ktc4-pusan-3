@@ -158,7 +158,13 @@ export function DateField({
             onSelect={setDraft}
             fromDate={fromDate}
             toDate={toDate}
-            initialMonth={selected ?? toDate}
+            /**
+             * 🚨 **비어 있으면 `toDate` 가 아니라 오늘에서 연다.** 한동안 `toDate` 였는데,
+             *    그건 `toDate` 가 오늘인 화면(생일)에만 맞는 기본값이었다 — 고를 수 있는 날이
+             *    미래까지 열린 화면(08 사진 · 일정 초안)에서는 **2년 뒤 달**이 열려서 보호자가
+             *    매번 되돌아와야 했다. 범위 밖이면 `clampMonth` 가 가장 가까운 끝으로 당긴다.
+             */
+            initialMonth={selected ?? new Date()}
           />
         ) : null}
       </BottomSheet>

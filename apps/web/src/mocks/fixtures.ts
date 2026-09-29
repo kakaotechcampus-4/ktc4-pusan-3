@@ -11,9 +11,11 @@
 
 import type {
   Affinity,
+  Agent,
   CalendarDay,
   CalendarEvent,
   Evidence,
+  EventDraft,
   ChildProfile,
   GeneralSuggestion,
   GrowthLog,
@@ -25,6 +27,7 @@ import type {
   ObservationHealth,
   ObservationPromotable,
   Suggestion,
+  SuggestionGroup,
 } from "@/lib/api/types";
 
 /* ── 날짜 ─────────────────────────────────────────────────────────────── */
@@ -465,43 +468,125 @@ function evidenceFrom(a: Affinity): Evidence {
     label: a.merge_key,
     observed_to: a.last_observed_on,
     confidence_source: "parent_direct",
+    // 🚨 서버 문구다. 근거 종류마다 뜻이 달라서 화면이 조립하지 않는다 (`Evidence.note` 참고).
+    note: `반복 ${a.observation_count}회 · 출처 보호자`,
   };
 }
 
+/**
+ * 성향이 아닌 근거. 🚨 **근거는 `profile_affinity` 만이 아니다** — 급식 행과 규칙 확인도 근거로
+ *    나간다 (CLAUDE.md §5 "컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문").
+ *    픽스처에 성향만 있으면 화면이 그 한 종류만 그려 보고 통과한다.
+ */
+const mealEvidence: Evidence = {
+  ref: { kind: "daycare_meal", id: "dm_1" },
+  label: "오늘 급식: 계란말이, 미역국, 김",
+  observed_to: daysAgo(0),
+  confidence_source: "institution_notice",
+  note: "어린이집에서 받음 · 기관 기록 · 오늘",
+};
+
+const safetyEvidence: Evidence = {
+  ref: { kind: "health_safety", id: "hs_none" },
+  label: "알레르기 제한 없음",
+  observed_to: daysAgo(0),
+  confidence_source: "parent_direct",
+  note: "규칙 확인 · 보호자 입력값",
+};
+
 /** 🚨 evidence 0건인 suggestion 은 만들지 않는다 — 그건 서버가 버리고 scarcity 로 내린다. */
+/**
+ * 🚨 **한 Agent 가 3가지씩 낸다.** 저녁 제안으로 김치찌개·계란말이·멸치볶음처럼, 셋은 서로 다른
+ *    제안이 아니라 **한 결정에 대한 대안**이다. Agent 는 최대 2개라(NF-01) 여기 6건이 담긴다.
+ *
+ * 🚨 **한 Agent 의 후보가 하나뿐이면 화면이 거짓말을 해도 안 들킨다** — "3가지 중에서" 머리줄도,
+ *    `food` 묶기도, 대안 사이에 기본 선택을 만들지 않는다는 규칙도 전부 후보가 여럿일 때만 돈다.
+ */
+function personalized(
+  id: string,
+  agent: Agent,
+  content: string,
+  whyThis: string,
+  whyNow: string,
+  evidence: Evidence[],
+): Suggestion {
+  return {
+    id,
+    child_id: CHILD_ID,
+    agent,
+    kind: "personalized",
+    content,
+    reason: { why_this: whyThis, why_now: whyNow },
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    feedback: null,
+    source_refs: evidence.map((e) => e.ref),
+    evidence,
+  };
+}
+
 export const suggestions: Suggestion[] = [
-  {
-    id: "s_1",
-    child_id: CHILD_ID,
-    agent: "food",
-    kind: "personalized",
-    content: "계란말이에 시금치를 조금 섞어 보세요",
-    reason: {
-      why_this: "계란 반찬을 서로 다른 3일에 찾았어요",
-      why_now: "오늘 급식에 계란 반찬이 없어요",
-    },
-    status: "draft",
-    expires_at: hoursFromNow(24),
-    feedback: null,
-    source_refs: [{ kind: "profile_affinity", id: "a_12" }],
-    evidence: [evidenceFrom(affinities[0])],
-  },
-  {
-    id: "s_2",
-    child_id: CHILD_ID,
-    agent: "activity",
-    kind: "personalized",
-    content: "주말에 실내 물놀이장은 어떨까요",
-    reason: {
-      why_this: "물놀이에서 오래 머물렀어요",
-      why_now: "이번 주말 일정이 비어 있어요",
-    },
-    status: "draft",
-    expires_at: hoursFromNow(24),
-    feedback: null,
-    source_refs: [{ kind: "profile_affinity", id: "a_20" }],
-    evidence: [evidenceFrom(affinities[1])],
-  },
+  // 저녁 반찬 3가지 — 고르면 "저녁 식사" 한 건으로 묶인다.
+  personalized(
+    "s_1",
+    "food",
+    "계란말이에 시금치를 조금 섞어 보세요",
+    "계란 반찬을 서로 다른 3일에 찾았어요",
+    "오늘 급식에 계란 반찬이 없어요",
+    // 🚨 **근거는 제안마다 다르다.** 같은 배열을 셋에 복사하면 화면이 "근거가 제안마다 다르다" 를
+    //    한 번도 그려 보지 않고 통과한다 — 건수도 종류도 갈라 둔다.
+    [evidenceFrom(affinities[0]), mealEvidence, safetyEvidence],
+  ),
+  personalized(
+    "s_2",
+    "food",
+    "두부를 부쳐서 한 조각 곁들여 보세요",
+    "두부 반찬을 남기지 않았어요",
+    "오늘 급식에 단백질 반찬이 적어요",
+    [evidenceFrom(affinities[0]), safetyEvidence],
+  ),
+  personalized(
+    "s_3",
+    "food",
+    "멸치볶음을 간을 약하게 해서 조금만",
+    "짠 반찬은 한 번에 조금씩 먹었어요",
+    "이번 주에 멸치 반찬이 없었어요",
+    [mealEvidence],
+  ),
+  // 주말 놀이 3가지.
+  personalized(
+    "s_4",
+    "activity",
+    "주말에 실내 물놀이장은 어떨까요",
+    "물놀이에서 오래 머물렀어요",
+    "이번 주말 일정이 비어 있어요",
+    [evidenceFrom(affinities[1])],
+  ),
+  personalized(
+    "s_5",
+    "activity",
+    "집 앞 놀이터에서 30분만 뛰어 보세요",
+    "바깥 놀이 뒤에 잘 잤어요",
+    "이번 주말 일정이 비어 있어요",
+    [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
+  ),
+  personalized(
+    "s_6",
+    "activity",
+    "블록으로 높이 쌓기를 해 보세요",
+    "손을 쓰는 놀이를 오래 했어요",
+    "비 소식이 있어요",
+    [evidenceFrom(affinities[1])],
+  ),
+];
+
+/**
+ * 묶음 머리말. 🚨 **문구는 서버가 만든다** — 무엇을 정하는 중인지는 후보를 만든 쪽만 안다.
+ * 🚨 `food` 만 `merges_into_one` 이다. 반찬 셋을 골라도 "저녁 식사" 한 건이 된다.
+ */
+export const suggestionGroups: SuggestionGroup[] = [
+  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true },
+  { agent: "activity", prompt: "주말에 뭐 하고 놀까요" },
 ];
 
 /**
@@ -573,6 +658,111 @@ export const emptyHome: HomeResponse = {
 };
 
 /* ── 캘린더 초안 (승인 게이트 ㉠) ─────────────────────────────────────── */
+
+/**
+ * 제안에서 온 일정 초안. 🚨 **`starts_at` 이 `null` 이다** — 제안 문장만으로는 언제인지 알 수 없다.
+ *    보호자가 승인 시트에서 고르기 전에는 제출할 수 없다 (최상위 §3 — 화면이 날짜를 지어내지 않는다).
+ *
+ * 🚨 `id` · `status` · `expires_at` 이 없다. 이 응답은 DB 에 쓰지 않으므로 아직 행이 아니다 (#121).
+ */
+/**
+ * 한 줄 입력 run 이 내보내는 초안 묶음. 🚨 **`create` 와 `update` 가 섞여 있다** —
+ * "금요일에 물놀이 있어. 그리고 운동회는 5시로 옮겨줘" 같은 한 줄이 그렇게 갈린다 (#122).
+ * 화면이 `op` 로 엔드포인트를 가르는지, `before` 로 변화를 그리는지 이 픽스처가 확인한다.
+ */
+export const runEventDrafts: EventDraft[] = [
+  {
+    draft_id: "d1",
+    op: "create",
+    event_id: null,
+    event: {
+      title: "물놀이",
+      starts_at: hoursFromNow(72),
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "activity",
+    },
+    before: null,
+    items: [
+      { item_id: null, item_name: "수영복" },
+      { item_id: null, item_name: "여벌옷" },
+    ],
+  },
+  {
+    draft_id: "d2",
+    op: "update",
+    event_id: "ev_1",
+    event: {
+      title: "운동회",
+      starts_at: hoursFromNow(120),
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "institution",
+    },
+    /** 🚨 **원본 전체**다. 바뀐 필드 이름만으로는 "오후 3시 → 오후 5시" 를 그릴 수 없다 (#122). */
+    before: {
+      title: "운동회",
+      starts_at: hoursFromNow(118),
+      ends_at: null,
+      all_day: false,
+      event_type: "episodic",
+      category: "institution",
+      items: [{ item_id: "ei_1", item_name: "체육복" }],
+    },
+    items: [
+      { item_id: "ei_1", item_name: "체육복" },
+      { item_id: null, item_name: "모자" },
+    ],
+  },
+];
+
+/**
+ * 식사 제안 여러 건을 **한 끼로 묶은** 초안. 🚨 고른 개수와 초안 개수가 1:1 이 아니라는 것을
+ * 목이 실제로 보여주는 자리다 — 제안 둘을 고르면 "저녁 식사" 하나가 되고, 준비물로 각 제안이 붙는다.
+ *
+ * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 `approved` 로 바뀌어야 한다 —
+ *    단수로 두면 묶인 나머지가 `draft` 인 채 24시간 뒤 만료된다 (보호자는 골랐는데).
+ */
+export function mealDraft(items: Suggestion[]): EventDraft {
+  return {
+    draft_id: `d_meal_${items.map((s) => s.id).join("_")}`,
+    op: "create",
+    event_id: null,
+    event: {
+      title: "저녁 식사",
+      // 🚨 제안만으로는 언제인지 알 수 없다 — 보호자가 카드에서 고른다.
+      starts_at: null,
+      ends_at: null,
+      all_day: true,
+      event_type: "episodic",
+      category: "etc",
+    },
+    before: null,
+    items: items.map((s) => ({ item_id: null, item_name: s.content })),
+    suggestion_ids: items.map((s) => s.id),
+  };
+}
+
+export function suggestionDraft(suggestion: Suggestion): EventDraft {
+  return {
+    draft_id: `d_${suggestion.id}`,
+    op: "create",
+    event_id: null,
+    event: {
+      title: suggestion.content,
+      starts_at: null,
+      ends_at: null,
+      all_day: true,
+      event_type: "episodic",
+      category: suggestion.agent === "health" ? "health" : "activity",
+    },
+    before: null,
+    items: [],
+    suggestion_ids: [suggestion.id],
+  };
+}
 
 export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
   return {
