@@ -136,7 +136,7 @@ class TestRecomputeProfile:
         assert result.state == ProfileState.CONFIRMED
 
     async def test_윈도우_밖_관찰은_O에_안_잡힌다(self, session, family):
-        """7일 윈도우 밖 관찰이 있어도 O 에 포함되지 않는다"""
+        """14일 윈도우 밖 관찰이 있어도 O 에 포함되지 않는다"""
         _, child = family
         today = date(2026, 9, 26)
         profile = _profile(child.id, last_observed_on=today)
@@ -146,8 +146,8 @@ class TestRecomputeProfile:
         # 윈도우 안 2건
         for i in range(2):
             session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
-        # 윈도우 밖 1건 (8일 전)
-        session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=8)))
+        # 윈도우 밖 1건 (15일 전)
+        session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=15)))
         await session.flush()
 
         from app.domains.memory.profile.service import recompute_profile

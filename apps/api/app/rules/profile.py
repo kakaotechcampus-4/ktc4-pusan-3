@@ -13,7 +13,7 @@ from typing import Literal
 # 정책 상수 — 매직넘버 금지. 바꿀 때 여기 한 곳만 고친다.
 # ---------------------------------------------------------------------------
 
-PROMOTION_WINDOW_DAYS: int = 7
+PROMOTION_WINDOW_DAYS: int = 14
 """승격 윈도우. active 관찰을 세는 최근 일수."""
 
 ARCHIVED_WINDOW_DAYS: int = 21

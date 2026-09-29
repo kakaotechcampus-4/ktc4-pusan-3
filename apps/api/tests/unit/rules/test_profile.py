@@ -26,8 +26,8 @@ from app.rules.profile import (
 
 
 class TestPolicyConstants:
-    def test_승격_윈도우는_7일(self):
-        assert PROMOTION_WINDOW_DAYS == 7
+    def test_승격_윈도우는_14일(self):
+        assert PROMOTION_WINDOW_DAYS == 14
 
     def test_archived_윈도우는_21일(self):
         assert ARCHIVED_WINDOW_DAYS == 21
