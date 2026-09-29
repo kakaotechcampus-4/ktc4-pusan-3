@@ -1,6 +1,6 @@
 """Curator 임베딩 파트의 저장소 계약. 구현체는 이 Protocol 만 만족하면 된다.
 
-관찰과 Profile 을 읽고, 벡터·연결·새 candidate 만 쓴다.
+관찰과 Profile 을 읽고, 벡터·연결·새 candidate · 보류 기록만 쓴다.
 Profile 의 state · strength 는 쓰지 않는다 — 승격·감쇠 파트의 값이다.
 
 조회 조건을 둘로 나눈다.
@@ -98,4 +98,21 @@ class CuratorStore(Protocol):
         last_observed_on: date,
     ) -> ProfileItem:
         """새 candidate Profile. strength 는 기본값(0.3) 그대로 둔다."""
+        ...
+
+    async def record_uncertain(
+        self, *, domain: CuratorDomain, observation_id: str, subject_hash: str
+    ) -> int:
+        """판정기가 uncertain 이라 답해 보류된 것을 센다. 센 뒤의 횟수를 돌려준다.
+
+        기록이 없거나 subject_hash 가 저장된 값과 다르면(subject 가 바뀌었다) 1 부터 다시 센다.
+        관찰이 지워지면 기록도 같이 지워져야 한다 (DB 는 FK ON DELETE CASCADE).
+        """
+        ...
+
+    async def clear_hold(self, *, domain: CuratorDomain, observation_id: str) -> None:
+        """보류 기록을 지운다. 관찰이 Profile 에 연결될 때 부른다. 기록이 없으면 아무것도 안 한다.
+
+        DB 구현은 link 와 같은 트랜잭션에서 지운다 — 연결된 관찰의 기록이 남으면 지울 곳이 없다.
+        """
         ...

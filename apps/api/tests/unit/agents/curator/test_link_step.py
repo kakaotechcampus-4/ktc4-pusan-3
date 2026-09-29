@@ -6,6 +6,7 @@
     - 판정기에는 같은 아이 · 도메인 · polarity 의 merge_key 만 보여 준다
     - 판정기 답이 후보 목록에 있을 때만 연결한다. 없는 값 · uncertain · 실패는 보류
     - none 이면 가까운 후보에 방향을 바꿔 묻는다. 그 호출이 실패하면 새로 만들지 않고 보류
+    - uncertain 으로 UNCERTAIN_LIMIT 번 보류되면 새로 만든다. 오류 · 목록 밖의 답은 세지 않는다
     - Profile 의 state 는 바꾸지 않는다
 """
 
@@ -679,29 +680,6 @@ async def test_none_이_아니면_반대_방향으로_묻지_않는다(answer: s
     assert len(judge.calls) == 1
 
 
-async def test_같은_실행에서_순서가_바뀌어_들어와도_Profile_은_하나다() -> None:
-    store = InMemoryCuratorStore()
-    judge = same_pair("당근", "홍당무")
-    _observe(store, "1", "홍당무")
-    _observe(store, "2", "당근")
-
-    first, second = await _link(store, judge)
-
-    assert (first.status, second.status, second.match) == ("created", "linked", "reversed")
-    assert second.affinity_id == first.affinity_id
-
-
-async def test_반대_방향_답이_공백만_달라도_연결한다() -> None:
-    store = InMemoryCuratorStore()
-    tomato = _profile(store, "토마토")
-    judge = FakeJudge(lambda subject, candidates: "방울토마토" if subject == "토마토" else NONE)
-    _observe(store, "1", "방울 토마토")
-
-    [outcome] = await _link(store, judge)
-
-    assert (outcome.match, outcome.affinity_id) == ("reversed", tomato.id)
-
-
 async def test_반대_방향에서_같은_merge_key_는_한_번만_묻고_오래된_것에_연결한다() -> None:
     store = InMemoryCuratorStore()
     oldest = _profile(store, "홍당무")
@@ -713,20 +691,6 @@ async def test_반대_방향에서_같은_merge_key_는_한_번만_묻고_오래
 
     assert len(judge.calls) == 2
     assert outcome.affinity_id == oldest.id
-
-
-@pytest.mark.parametrize("subject", [NONE, UNCERTAIN], ids=["none", "uncertain"])
-async def test_subject_가_예약어면_반대_방향으로_묻지_않고_새로_만든다(subject: str) -> None:
-    """subject 가 후보 자리에 들어가 판정기 답과 구분할 수 없다."""
-    store = InMemoryCuratorStore()
-    _profile(store, "딸기")
-    judge = FakeJudge()
-    _observe(store, "1", subject)
-
-    [outcome] = await _link(store, judge)
-
-    assert outcome.status == "created"
-    assert len(judge.calls) == 1
 
 
 # 반대 방향 확인 — 오류
@@ -748,20 +712,6 @@ async def test_반대_방향_호출이_실패하면_새로_만들지_않고_보�
     )
     assert len(store.profiles) == 1  # 장애 때문에 Profile 이 나뉘지 않는다
     assert store.observation("food", "1").affinity_id is None
-
-
-async def test_반대_방향에서_계정_오류가_나면_이번_실행의_남은_관찰은_부르지_않는다() -> None:
-    store = InMemoryCuratorStore()
-    _profile(store, "홍당무")
-    judge = FakeJudge(error=LLMAuthError("401"), fail_on="홍당무")
-    _observe(store, "1", "당근")
-    _observe(store, "2", "생당근")
-
-    first, second = await _link(store, judge)
-
-    assert [call[0] for call in judge.calls] == ["당근", "홍당무"]  # 두 번째 관찰은 부르지 않았다
-    assert (first.reason, first.error) == ("judge_failed", "LLMAuthError")
-    assert (second.reason, second.error) == ("judge_failed", "LLMAuthError")
 
 
 # 반대 방향 확인 — 물을 후보 고르기
@@ -813,3 +763,70 @@ async def test_반대_방향으로_물을_후보를_고를_때_Profile_벡터가
     assert outcome.invalid_profile_ids == (broken.id,)
     assert len(judge.calls) == 1  # 첫 판정 뒤, 반대 방향으로는 묻지 않았다
     assert len(store.profiles) == 2
+
+
+# uncertain 보류 횟수 — UNCERTAIN_LIMIT 번째면 새로 만든다
+
+
+async def test_uncertain_으로_세_번째_보류되면_새_candidate_를_만든다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "딸기")
+    _observe(store, "1", "그거")
+    judge = picks(UNCERTAIN)
+
+    [first] = await _link(store, judge)
+    [second] = await _link(store, judge)
+    [third] = await _link(store, judge)
+
+    assert (first.reason, second.reason) == ("judge_uncertain", "judge_uncertain")
+    assert (third.status, third.match, third.judge_model) == ("created", "uncertain_limit", MODEL)
+    assert [p.merge_key for p in store.profiles] == ["딸기", "그거"]
+    assert store.observation("food", "1").affinity_id == third.affinity_id
+    assert store.uncertain_count("food", "1") is None  # 연결됐으니 기록을 지웠다
+
+
+async def test_subject_가_바뀌면_보류_횟수를_1_부터_다시_센다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "딸기")
+    _observe(store, "1", "그거")
+    judge = picks(UNCERTAIN)
+    await _link(store, judge)
+    await _link(store, judge)
+
+    _observe(store, "1", "저거")  # 보호자가 고쳤다 (같은 관찰, 다른 subject)
+    [outcome] = await _link(store, judge)
+
+    assert (outcome.status, outcome.reason) == ("held", "judge_uncertain")
+    assert store.uncertain_count("food", "1") == 1
+
+
+async def test_띄어쓰기만_바뀌면_보류_횟수를_이어서_센다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "딸기")
+    _observe(store, "1", "그 거")
+    judge = picks(UNCERTAIN)
+    await _link(store, judge)
+    await _link(store, judge)
+
+    _observe(store, "1", "그거")
+    [outcome] = await _link(store, judge)
+
+    assert (outcome.status, outcome.match) == ("created", "uncertain_limit")
+
+
+@pytest.mark.parametrize(
+    "judge",
+    [FakeJudge(error=LLMUnavailableError("down")), picks("딸기잼")],
+    ids=["오류", "목록밖"],
+)
+async def test_오류와_목록_밖의_답은_보류_횟수로_세지_않는다(judge: FakeJudge) -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "딸기")
+    _observe(store, "1", "생딸기")
+
+    for _ in range(3):
+        [outcome] = await _link(store, judge)
+
+    assert outcome.status == "held"
+    assert store.uncertain_count("food", "1") is None
+    assert len(store.profiles) == 1

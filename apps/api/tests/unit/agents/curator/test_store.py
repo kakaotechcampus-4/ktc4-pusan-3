@@ -7,6 +7,7 @@ DB 구현이 붙으면 같은 기대를 그쪽에도 걸어야 한다 — 여기
     - 다른 아이 · 다른 도메인 · 다른 polarity 의 Profile 은 후보가 아니다
     - Profile 후보도 저장된 순서로 돌려준다 (동점이면 오래된 Profile 을 고르는 근거)
     - archived Profile 도 조회 후보다 (연결할지는 연결 로직이 정한다)
+    - uncertain 보류는 관찰마다 센다. subject_hash 가 바뀌면 1 부터 다시 센다
 
 인메모리 계약만 본다. DB 의 날짜 정렬 · 벡터 타입 · 동시성은 DB 구현이 붙을 때 검증한다.
 """
@@ -171,3 +172,30 @@ async def test_새_Profile_은_candidate_로_만들어지고_바로_후보가_�
     assert await store.list_profiles(child_id=CHILD, domain="food", polarity=1) == [created]
     assert store.observation("food", "1").affinity_id == created.id
     assert await store.list_unlinked(child_id=CHILD) == []
+
+
+# 보류 기록
+
+
+async def test_uncertain_보류는_같은_subject_면_이어서_세고_바뀌면_1_부터_센다() -> None:
+    store = InMemoryCuratorStore()
+    store.add_observation(child_id=CHILD, domain="food", id="1", subject="그거")
+
+    counts = [
+        await store.record_uncertain(domain="food", observation_id="1", subject_hash=h)
+        for h in ("old", "old", "new")
+    ]
+
+    assert counts == [1, 2, 1]
+
+
+async def test_보류는_관찰마다_따로_센다() -> None:
+    store = InMemoryCuratorStore()
+    store.add_observation(child_id=CHILD, domain="food", id="1", subject="그거")
+    store.add_observation(child_id=CHILD, domain="activity", id="1", subject="그거")
+    await store.record_uncertain(domain="food", observation_id="1", subject_hash="h")
+
+    # 도메인이 다르면 id 가 같아도 다른 관찰이다
+    count = await store.record_uncertain(domain="activity", observation_id="1", subject_hash="h")
+
+    assert count == 1
