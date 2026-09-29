@@ -22,11 +22,6 @@ from app.core.event_draft import (
 DraftOp = Literal["create", "update"]
 
 
-def _moment(value: datetime | None) -> str | None:
-    """before와 event의 시각 직렬화를 한 곳에서 맞춘다."""
-    return value.isoformat() if value is not None else None
-
-
 @dataclass(frozen=True)
 class DraftItem:
     """초안에 딸린 준비물. 아직 저장 전인 준비물은 item_id가 None이다."""
@@ -42,9 +37,6 @@ class DraftItem:
     않는다"를 판정하고, _sync_checked가 이 값을 맞춘다.
     """
 
-    def to_payload(self) -> dict[str, Any]:
-        return {"item_id": self.item_id, "item_name": self.item_name}
-
 
 @dataclass(frozen=True)
 class EventSnapshot:
@@ -57,17 +49,6 @@ class EventSnapshot:
     event_type: str
     category: str
     items: tuple[DraftItem, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "title": self.title,
-            "starts_at": _moment(self.starts_at),
-            "ends_at": _moment(self.ends_at),
-            "all_day": self.all_day,
-            "event_type": self.event_type,
-            "category": self.category,
-            "items": [item.to_payload() for item in self.items],
-        }
 
 
 @dataclass(frozen=True)
@@ -113,24 +94,38 @@ class EventDraft:
             event_type=self.event_type,
             category=self.category,
         )
-        items = [
-            DraftItemPayload(item_id=item.item_id, item_name=item.item_name) for item in self.items
-        ]
+        items = _item_payloads(self.items)
         draft: CreateEventDraft | UpdateEventDraft
         if self.op == "create":
             # TODO: 제안 경로가 일정 초안을 만들 때 source 키 추가. Memory 는 언제나 null
             draft = CreateEventDraft(draft_id=self.draft_id, op="create", event=event, items=items)
         else:
-            before = self.before
             draft = UpdateEventDraft(
                 draft_id=self.draft_id,
                 op="update",
                 event_id=self.event_id,
                 event=event,
-                before=EventBefore.model_validate(before.to_payload()) if before else None,
+                before=_before_payload(self.before) if self.before else None,
                 items=items,
             )
         return draft.model_dump(mode="json")
+
+
+def _before_payload(before: EventSnapshot) -> EventBefore:
+    return EventBefore(
+        title=before.title,
+        starts_at=before.starts_at,
+        ends_at=before.ends_at,
+        all_day=before.all_day,
+        event_type=before.event_type,
+        category=before.category,
+        items=_item_payloads(before.items),
+    )
+
+
+def _item_payloads(items: tuple[DraftItem, ...]) -> list[DraftItemPayload]:
+    """is_prepared는 싣지 않는다."""
+    return [DraftItemPayload(item_id=item.item_id, item_name=item.item_name) for item in items]
 
 
 class DraftBook:

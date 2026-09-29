@@ -44,8 +44,9 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 ## 3. 초안 payload 계약
 
 정본은 `app/core/event_draft.py` 의 `CreateEventDraft` · `UpdateEventDraft` 다. 모르는 키는 거부한다(`extra="forbid"`).
-시각은 `isoformat()` 표기 그대로다 — pydantic 기본값처럼 UTC 를 `Z` 로 바꾸지 않는다. 화면이 `before` 와
-`event` 를 문자열로 비교해서다.
+`event_type` 은 `core` · `episodic`, `category` 는 `institution` · `health` · `activity` · `etc` 만 받는다
+(`domains/schedule/models.py` 와 같은 값). 시간대가 없는 시각도 거부한다.
+시각은 `isoformat()` 표기 그대로다. pydantic 기본값처럼 UTC 를 `Z` 로 바꾸지 않고 기존 payload 표기를 그대로 둔다.
 `op` 에 따라 두 모양이고, create 는 `POST`, update 는 `PATCH` 로 간다 (9/21 결정).
 
 ### create

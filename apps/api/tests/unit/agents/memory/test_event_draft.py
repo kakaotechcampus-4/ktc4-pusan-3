@@ -26,8 +26,9 @@ update_event:
 
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -38,9 +39,17 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft, EventSnapshot
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
+from app.agents.memory.schemas.common import EventCategory, EventType
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory.tools import schedule
-from app.core.event_draft import CreateEventDraft, UpdateEventDraft
+from app.core.event_draft import (
+    CreateEventDraft,
+    EventCategoryValue,
+    EventTypeValue,
+    UpdateEventDraft,
+)
+from app.domains.schedule.models import EventCategory as TableEventCategory
+from app.domains.schedule.models import EventType as TableEventType
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 15, 9, 0, tzinfo=KST)  # 2026-09-15 화요일
@@ -167,7 +176,7 @@ def test_수정_초안은_PATCH_용_모양이다() -> None:
 
 
 def test_before_와_event_의_시각_표기가_같다() -> None:
-    # 표기가 갈리면 화면이 안 바뀐 필드를 바뀌었다고 읽는다
+    # before 와 event 는 같은 직렬화를 거쳐 같은 순간이면 같은 글자로 나간다
     moment = datetime(2026, 9, 25, 10, 0, tzinfo=KST)
     before = EventSnapshot(
         title="운동회",
@@ -852,14 +861,13 @@ def test_update_초안도_공통_스키마로_검증된다() -> None:
 
 def test_UTC_시각도_isoformat_표기를_지킨다() -> None:
     # DB(timestamptz)에서 읽은 before 는 UTC 로 온다. pydantic 기본 직렬화는 "Z" 로 바꿔 써서
-    # 옮기기 전 표기("+00:00")와 갈린다. 화면이 before 와 event 를 문자열로 비교한다
+    # 옮기기 전 표기("+00:00")와 갈린다
     moment = datetime(2026, 9, 25, 1, 0, tzinfo=timezone.utc)
     draft = _draft(op="update", event_id="event-1", ends_at=moment, before=_snapshot())
 
     payload = draft.to_payload()
 
     assert payload["event"]["ends_at"] == "2026-09-25T01:00:00+00:00"
-
 
 
 async def test_일정_수정_뒤에_이름과_챙김이_같이_와도_before_는_원래_이름이다(
@@ -931,6 +939,31 @@ def test_공통_스키마는_계약_밖의_키를_거부한다() -> None:
         UpdateEventDraft.model_validate(update)
     with pytest.raises(ValidationError):
         CreateEventDraft.model_validate(create)
+
+
+@pytest.mark.parametrize(("field", "value"), [("event_type", "Episodic"), ("category", "play")])
+def test_정해진_분류_밖의_값은_SSE_로_나가기_전에_막힌다(field: str, value: str) -> None:
+    draft = replace(_draft(), **{field: value})
+
+    with pytest.raises(ValidationError):
+        draft.to_payload()
+
+
+def test_시간대_없는_시각은_SSE_로_나가기_전에_막힌다() -> None:
+    draft = replace(_draft(), starts_at=datetime(2026, 9, 25, 10, 0))
+
+    with pytest.raises(ValidationError):
+        draft.to_payload()
+
+
+def test_분류_값은_일정_테이블과_tool_스키마의_enum_과_같다() -> None:
+    event_types = set(get_args(EventTypeValue))
+    categories = set(get_args(EventCategoryValue))
+
+    assert event_types == {value.value for value in TableEventType}
+    assert event_types == {value.value for value in EventType}
+    assert categories == {value.value for value in TableEventCategory}
+    assert categories == {value.value for value in EventCategory}
 
 
 async def test_tool_이_만든_초안은_JSON_왕복_뒤에도_같은_모양이다(context: AgentContext) -> None:

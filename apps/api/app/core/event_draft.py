@@ -7,17 +7,21 @@
 - FastAPI·Starlette를 import 하지 않는다.
 """
 
-from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import AwareDatetime, BaseModel, ConfigDict, PlainSerializer
 
-Moment = Annotated[datetime, PlainSerializer(lambda value: value.isoformat(), return_type=str)]
-"""시각은 isoformat 그대로 낸다.
+Moment = Annotated[AwareDatetime, PlainSerializer(lambda value: value.isoformat(), return_type=str)]
+"""시각은 isoformat 그대로 낸다. 시간대가 없는 값은 받지 않는다.
 
-pydantic 기본 직렬화는 UTC 를 "Z" 로 바꿔 쓴다. DB 에서 읽은 before 는 UTC 로 오고
-화면은 before 와 event 를 문자열로 비교하므로, 표기가 옮기기 전과 달라지지 않게 고정한다.
+pydantic 기본 직렬화는 UTC 를 "Z" 로 바꿔 쓴다. DB 에서 읽은 before 는 UTC 로 오므로
+기존 payload 표기("+00:00")를 그대로 두려고 고정한다.
 """
+
+# domains/schedule/models.py 의 EventType · EventCategory 와 같은 값.
+# core는 domains를 import 하지 않아 값을 다시 적음
+EventTypeValue = Literal["core", "episodic"]
+EventCategoryValue = Literal["institution", "health", "activity", "etc"]
 
 
 class DraftBase(BaseModel):
@@ -34,8 +38,8 @@ class EventBody(DraftBase):
     starts_at: Moment
     ends_at: Moment | None
     all_day: bool
-    event_type: str
-    category: str
+    event_type: EventTypeValue
+    category: EventCategoryValue
 
 
 class EventBefore(EventBody):
