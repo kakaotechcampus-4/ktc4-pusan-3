@@ -417,3 +417,60 @@ async def test_같은_키로_다시_누르면_400_이_아니라_같은_run_을_�
     assert first.status_code == second.status_code == 202
     assert first.json()["run_id"] == second.json()["run_id"]
     assert len(agent_calls) == 1
+
+
+async def test_한도에_걸린_답은_맥락을_지우지_않는다(db_client, bearer, monkeypatch, agent_calls):
+    # 429 는 접수 전이다. 여기서 맥락을 지우면 한도가 풀려도 이어 적을 수 없다
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_ANSWER, "reply_to": "r-prev"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 429
+    assert pending_reply.get(run_id="r-prev", parent_id=parent_id, child_id=cid) == _PENDING
+    assert len(agent_calls) == 1  # 한도를 채운 첫 입력만 Agent 까지 갔다
+
+
+async def test_한도가_풀리면_남겨_둔_맥락으로_이어_적는다(
+    db_client, bearer, monkeypatch, agent_calls
+):
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
+    headers, parent_id = bearer
+    cid = uuid.uuid4()
+    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    body = {**_ANSWER, "reply_to": "r-prev"}
+    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+    blocked = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+
+    quota.clear()  # 날짜가 바뀐 것과 같다
+    accepted = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+
+    assert blocked.status_code == 429
+    assert accepted.status_code == 202
+    assert agent_calls[-1]["continuation"] == _PENDING
+
+
+async def test_맥락_없는_reply_to_는_한도를_쓰지_않는다(
+    db_client, bearer, monkeypatch, agent_calls
+):
+    # 확인이 한도보다 앞이어야 잘못된 reply_to 가 하루 횟수를 쓰지 않는다
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
+    headers, _ = bearer
+    cid = uuid.uuid4()
+
+    rejected = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_ANSWER, "reply_to": "없는run"},
+        headers=with_key(headers),
+    )
+    accepted = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert rejected.status_code == 400
+    assert accepted.status_code == 202
