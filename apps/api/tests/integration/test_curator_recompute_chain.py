@@ -5,6 +5,8 @@ Curator 가 관찰을 Profile 에 연결한 뒤 recompute_profile 이 돌아
 
 구현 대상: Phase B (recompute 배선) + Phase C (실행 흐름)
 Embedder 와 Judge 는 가짜를 쓴다 — 외부 API 의존 없이 DB 체인만 본다.
+
+PR #178 반영: 연결된 관찰이 soft delete 되면 O 가 줄어 상태가 내려가야 한다.
 """
 
 from datetime import date, timedelta
@@ -233,3 +235,180 @@ class TestRecomputeIdempotency:
 
         assert profile.state == state1
         assert profile.strength == strength1
+
+
+# ---------------------------------------------------------------------------
+# PR #178 — 연결된 관찰 삭제 후 상태 변화
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteLinkedObservation:
+    """연결된 관찰이 soft delete 되면 O 가 줄어 Profile 상태가 내려가야 한다."""
+
+    async def test_confirmed_에서_관찰_삭제로_candidate_강등(self, session, family):
+        """O=3 confirmed → 관찰 1건 deleted → O=2 → candidate."""
+        _, child = family
+        today = date(2026, 9, 26)
+        observations = []
+        for i in range(3):
+            obs = _food(child.id, subject="사과", observed_on=today - timedelta(days=i))
+            session.add(obs)
+            observations.append(obs)
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+
+        from app.domains.memory.curator.recompute import recompute_after_linking
+
+        await recompute_after_linking(session, result=result, today=today)
+
+        profile_id = result.affected_profile_ids[0]
+        profile = await session.get(ProfileAffinity, UUID(profile_id))
+        assert profile.state == ProfileState.CONFIRMED
+
+        # 관찰 1건 soft delete
+        observations[0].status = ObservationStatus.DELETED
+        await session.flush()
+
+        # recompute 다시 — 이제 O=2
+        from app.domains.memory.profile.service import recompute_profile
+
+        await recompute_profile(session, profile_id=UUID(profile_id), today=today)
+
+        await session.refresh(profile)
+        assert profile.state == ProfileState.CANDIDATE
+
+    async def test_모든_관찰_삭제해도_profile_자체는_남는다(self, session, family):
+        """관찰이 모두 deleted 돼도 Profile 행은 남는다 (soft delete 이므로 FK SET NULL 안 됨).
+        상태는 O=0 이므로 candidate, 21일 지나면 archived."""
+        _, child = family
+        today = date(2026, 9, 26)
+        observations = []
+        for i in range(3):
+            obs = _food(child.id, subject="사과", observed_on=today - timedelta(days=i))
+            session.add(obs)
+            observations.append(obs)
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+
+        from app.domains.memory.curator.recompute import recompute_after_linking
+
+        await recompute_after_linking(session, result=result, today=today)
+
+        profile_id = result.affected_profile_ids[0]
+
+        # 전부 삭제
+        for obs in observations:
+            obs.status = ObservationStatus.DELETED
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        await recompute_profile(session, profile_id=UUID(profile_id), today=today)
+
+        profile = await session.get(ProfileAffinity, UUID(profile_id))
+        assert profile is not None  # 행은 남아있다
+        assert profile.state == ProfileState.CANDIDATE  # O=0
+
+
+# ---------------------------------------------------------------------------
+# correction + recompute 체인
+# ---------------------------------------------------------------------------
+
+
+class TestCorrectionAfterLinking:
+    """연결된 관찰에 correction 이 들어오면 상태가 재계산돼야 한다."""
+
+    async def test_wrong_교정으로_O가_줄어_candidate_강등(self, session, family):
+        """O=3 confirmed → 관찰 1건 wrong(inactive) → O=2 → candidate."""
+        _, child = family
+        today = date(2026, 9, 26)
+        observations = []
+        for i in range(3):
+            obs = _food(child.id, subject="사과", observed_on=today - timedelta(days=i))
+            session.add(obs)
+            observations.append(obs)
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+
+        from app.domains.memory.curator.recompute import recompute_after_linking
+
+        await recompute_after_linking(session, result=result, today=today)
+
+        profile_id = result.affected_profile_ids[0]
+        profile = await session.get(ProfileAffinity, UUID(profile_id))
+        assert profile.state == ProfileState.CONFIRMED
+
+        # wrong correction
+        owner, _ = family
+        from app.domains.memory.profile.service import handle_observation_correction
+
+        await handle_observation_correction(
+            session,
+            domain="food",
+            child_id=child.id,
+            observation_id=observations[0].id,
+            verdict="wrong",
+            parent_id=owner.id,
+            today=today,
+        )
+
+        await session.refresh(profile)
+        assert profile.state == ProfileState.CANDIDATE  # O=2
+
+    async def test_once_only_교정은_집계에서_빠지고_검색은_남는다(self, session, family):
+        """once_only → stand_alone: Curator 집계(O)에서 빠지지만 검색에는 남는다."""
+        _, child = family
+        today = date(2026, 9, 26)
+        observations = []
+        for i in range(3):
+            obs = _food(child.id, subject="사과", observed_on=today - timedelta(days=i))
+            session.add(obs)
+            observations.append(obs)
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+
+        from app.domains.memory.curator.recompute import recompute_after_linking
+
+        await recompute_after_linking(session, result=result, today=today)
+
+        # once_only correction
+        owner, _ = family
+        from app.domains.memory.profile.service import handle_observation_correction
+
+        await handle_observation_correction(
+            session,
+            domain="food",
+            child_id=child.id,
+            observation_id=observations[0].id,
+            verdict="once_only",
+            parent_id=owner.id,
+            today=today,
+        )
+
+        profile_id = result.affected_profile_ids[0]
+        profile = await session.get(ProfileAffinity, UUID(profile_id))
+        assert profile.state == ProfileState.CANDIDATE  # O=2
+
+        # 관찰 자체는 stand_alone 으로 남아있다
+        await session.refresh(observations[0])
+        assert observations[0].status == ObservationStatus.STAND_ALONE

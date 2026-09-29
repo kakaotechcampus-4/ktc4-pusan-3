@@ -2,6 +2,10 @@
 
 인메모리 구현(inmemory.py)과 동일한 동작을 보장한다.
 구현 대상: app/domains/memory/curator/db_store.py (Phase A)
+
+PR #178 (observation soft delete) 반영:
+  deleted 관찰은 list_unembedded · list_unlinked 에서 제외돼야 한다.
+  관찰이 soft delete 되면 보류 기록(hold)도 정리돼야 한다.
 """
 
 from datetime import date
@@ -88,6 +92,34 @@ class TestListUnembedded:
         assert str(obs2.id) not in ids
         assert str(obs3.id) not in ids
 
+    async def test_deleted_관찰은_제외(self, session, family, store):
+        """PR #178: soft delete 된 관찰은 임베딩 대상이 아니다."""
+        _, child = family
+        active = _food(child.id, subject="사과")
+        deleted = _food(child.id, subject="배", status=ObservationStatus.DELETED)
+        session.add_all([active, deleted])
+        await session.flush()
+
+        result = await store.list_unembedded(child_id=child.id)
+
+        ids = [item.id for item in result]
+        assert str(active.id) in ids
+        assert str(deleted.id) not in ids
+
+    async def test_stand_alone_관찰은_제외(self, session, family, store):
+        """stand_alone 은 검색에는 남지만 Curator 집계 대상이 아니다."""
+        _, child = family
+        active = _food(child.id, subject="사과")
+        stand_alone = _food(child.id, subject="배", status=ObservationStatus.STAND_ALONE)
+        session.add_all([active, stand_alone])
+        await session.flush()
+
+        result = await store.list_unembedded(child_id=child.id)
+
+        ids = [item.id for item in result]
+        assert str(active.id) in ids
+        assert str(stand_alone.id) not in ids
+
     async def test_여러_도메인을_합쳐_created_at_오름차순(self, session, family, store):
         _, child = family
         food = _food(child.id, subject="사과")
@@ -131,6 +163,21 @@ class TestSaveEmbeddings:
 
 
 class TestListUnlinked:
+    async def test_deleted_관찰은_벡터_있어도_제외(self, session, family, store):
+        """PR #178: soft delete 된 관찰은 연결 대상이 아니다."""
+        _, child = family
+        vec = [0.1] * 1536
+        active = _food(child.id, subject="사과", embedding=vec)
+        deleted = _food(child.id, subject="배", embedding=vec, status=ObservationStatus.DELETED)
+        session.add_all([active, deleted])
+        await session.flush()
+
+        result = await store.list_unlinked(child_id=child.id)
+
+        ids = [item.id for item in result]
+        assert str(active.id) in ids
+        assert str(deleted.id) not in ids
+
     async def test_벡터_있고_연결_안_된_관찰만_반환(self, session, family, store):
         _, child = family
         vec = [0.1] * 1536
@@ -289,3 +336,116 @@ class TestHoldRecords:
             domain="food", observation_id=str(obs.id), subject_hash="abc",
         )
         assert count == 1
+
+    async def test_clear_hold_기록_없어도_에러_안_남(self, session, family, store):
+        _, child = family
+        obs = _food(child.id, embedding=[0.1] * 1536)
+        session.add(obs)
+        await session.flush()
+
+        # 보류 기록이 없어도 예외 없이 통과
+        await store.clear_hold(domain="food", observation_id=str(obs.id))
+
+
+# ---------------------------------------------------------------------------
+# soft delete + hold 정리 (PR #178 대응)
+# ---------------------------------------------------------------------------
+
+
+class TestSoftDeleteHoldCleanup:
+    """PR #178: observation 이 soft delete 되면 보류 기록도 정리돼야 한다.
+
+    FK CASCADE 가 soft delete 에서는 발동하지 않으므로
+    삭제 시점에 코드가 hold 행을 지워야 한다.
+    """
+
+    async def test_관찰_삭제_시_보류_기록도_사라진다(self, session, family, store):
+        """soft delete 후 해당 관찰의 hold 행이 남아 있으면 안 된다."""
+        from sqlalchemy import select
+
+        _, child = family
+        obs = _food(child.id, embedding=[0.1] * 1536)
+        session.add(obs)
+        await session.flush()
+
+        # 보류 기록 생성
+        await store.record_uncertain(domain="food", observation_id=str(obs.id), subject_hash="abc")
+
+        # soft delete
+        from app.domains.memory.observation.repository import ObservationDomain, delete_observation
+
+        await delete_observation(session, domain=ObservationDomain.FOOD,
+                                 child_id=child.id, observation_id=obs.id)
+
+        # hold 행이 사라져야 한다
+        hold = await session.scalar(
+            select(ObservationLinkHold).where(ObservationLinkHold.food_id == obs.id)
+        )
+        assert hold is None
+
+    async def test_삭제된_관찰은_다음_Curator_실행에서_무시(self, session, family, store):
+        """deleted 관찰은 list_unembedded / list_unlinked 모두에서 빠져야 한다."""
+        _, child = family
+        obs = _food(child.id, subject="사과")
+        session.add(obs)
+        await session.flush()
+
+        # soft delete
+        obs.status = ObservationStatus.DELETED
+        await session.flush()
+
+        assert await store.list_unembedded(child_id=child.id) == []
+        assert await store.list_unlinked(child_id=child.id) == []
+
+
+# ---------------------------------------------------------------------------
+# 다른 아이의 데이터 격리
+# ---------------------------------------------------------------------------
+
+
+class TestChildIsolation:
+    async def test_다른_아이_관찰은_조회되지_않는다(self, session, store):
+        p = Parent()
+        session.add(p)
+        await session.flush()
+        child_a = Child(owner_parent_id=p.id, nickname="A", birth_date=date(2023, 1, 1))
+        child_b = Child(owner_parent_id=p.id, nickname="B", birth_date=date(2023, 6, 1))
+        session.add_all([child_a, child_b])
+        await session.flush()
+
+        obs_a = _food(child_a.id, subject="사과")
+        obs_b = _food(child_b.id, subject="배")
+        session.add_all([obs_a, obs_b])
+        await session.flush()
+
+        result = await store.list_unembedded(child_id=child_a.id)
+        ids = [item.id for item in result]
+        assert str(obs_a.id) in ids
+        assert str(obs_b.id) not in ids
+
+    async def test_다른_아이_profile은_후보에_안_나온다(self, session, store):
+        p = Parent()
+        session.add(p)
+        await session.flush()
+        child_a = Child(owner_parent_id=p.id, nickname="A", birth_date=date(2023, 1, 1))
+        child_b = Child(owner_parent_id=p.id, nickname="B", birth_date=date(2023, 6, 1))
+        session.add_all([child_a, child_b])
+        await session.flush()
+
+        pa = ProfileAffinity(
+            child_id=child_a.id, merge_key="사과", domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE, polarity=1, strength=0.5,
+            last_observed_on=date(2026, 9, 26),
+        )
+        pb = ProfileAffinity(
+            child_id=child_b.id, merge_key="배", domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE, polarity=1, strength=0.5,
+            last_observed_on=date(2026, 9, 26),
+        )
+        session.add_all([pa, pb])
+        await session.flush()
+
+        result = await store.list_profiles(child_id=child_a.id, domain="food", polarity=1)
+        ids = [item.id for item in result]
+        assert str(pa.id) in ids
+        assert str(pb.id) not in ids
