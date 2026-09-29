@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings
 
 # LLM을 부르는 역할
 # 역할 확장 -> 이 줄과 아래 AgentLLMSettings의 키 4줄을 함께 더함
-AgentRole = Literal["memory", "supervisor", "food"]
+AgentRole = Literal["memory", "supervisor", "food", "activity", "growth", "health"]
 
 # env 키 접두사. AgentRole 에서 만든다 — 두 곳에 적으면 어긋난다
 AGENT_ROLES: tuple[str, ...] = tuple(role.upper() for role in get_args(AgentRole))
@@ -41,6 +41,21 @@ class AgentLLMSettings(BaseSettings):
     FOOD_BASE_URL: str = ""
     FOOD_MODEL: str = ""
     FOOD_REASONING_EFFORT: str = ""
+
+    ACTIVITY_API_KEY: str = ""
+    ACTIVITY_BASE_URL: str = ""
+    ACTIVITY_MODEL: str = ""
+    ACTIVITY_REASONING_EFFORT: str = ""
+
+    GROWTH_API_KEY: str = ""
+    GROWTH_BASE_URL: str = ""
+    GROWTH_MODEL: str = ""
+    GROWTH_REASONING_EFFORT: str = ""
+
+    HEALTH_API_KEY: str = ""
+    HEALTH_BASE_URL: str = ""
+    HEALTH_MODEL: str = ""
+    HEALTH_REASONING_EFFORT: str = ""
 
     # 역할과 무관한 호출 튜닝값
     LLM_TIMEOUT_S: float = 60.0  # 한 번의 chat 호출 상한 (초)
