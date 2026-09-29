@@ -31,7 +31,13 @@ from app.agents.memory.drafts import EventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
-from app.agents.memory.schemas.reply import REPLY_FORMAT, ReplyKind, ReplyOutput
+from app.agents.memory.schemas.reply import (
+    CONTINUATION_REPLY_FORMAT,
+    REPLY_FORMAT,
+    ContinuationReplyOutput,
+    ReplyKind,
+    ReplyOutput,
+)
 from app.agents.memory.schemas.task import (
     MemoryHint,
     MemoryTask,
@@ -62,7 +68,10 @@ _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있�
 
 _CONTINUATION_HEADER = """[이어서 처리할 것]
 아래 조각만 보호자의 새 답으로 보완한다. 이전에 이미 저장한 다른 기록은 다시 저장하지 않는다.
-새 답만 따로 관찰로 저장하지 않는다. 여전히 필요한 값이 없으면 질문 하나만 다시 한다."""
+새 답만 따로 관찰로 저장하지 않는다. 여전히 필요한 값이 없으면 질문 하나만 다시 한다.
+답에 조각과 상관없는 기록이나 요청이 섞여 있으면 그 부분은 저장하지도 답하지도 않고
+leftover를 true로 둔다. 따로 보내 달라는 안내는 따로 붙으니 text 에 쓰지 않는다.
+답이 조각과 상관없는 말뿐이면 직전에 물은 것을 다시 묻는다. text 를 비우지 않는다."""
 
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
 
@@ -115,6 +124,7 @@ class MemoryAgentResult:
     ended_by: EndedBy = "model"
     drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
+    leftover: bool = False  # 이어받기에서 답에 섞인 다른 기록·요청을 처리하지 않고 남겼는지.
 
     @property
     def tool_names(self) -> list[str]:
@@ -170,6 +180,11 @@ async def run(
     succeeded: set[tuple[str, str]] = set()
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
+    # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
+    reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
+    reply_model: type[ReplyOutput] = (
+        ContinuationReplyOutput if continuation is not None else ReplyOutput
+    )
 
     for step in range(max_steps):
         response = await llm.chat(
@@ -177,7 +192,7 @@ async def run(
             tools=tools,
             max_completion_tokens=MAX_COMPLETION_TOKENS,
             # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
-            response_format=REPLY_FORMAT,
+            response_format=reply_format,
         )
         _accumulate(usage, response.usage)
 
@@ -189,7 +204,7 @@ async def run(
                 nudged = True
                 messages.append({"role": "user", "content": _EMPTY_TURN})
                 continue
-            parsed = _parse_reply(content)
+            parsed = _parse_reply(content, reply_model)
             if parsed is not None:
                 replied = MemoryReply(text=parsed.text, kind=parsed.kind)
                 pending = _pending(
@@ -217,6 +232,7 @@ async def run(
                     usage=usage,
                     drafts=context.drafts.all(),
                     pending=pending,
+                    leftover=isinstance(parsed, ContinuationReplyOutput) and parsed.leftover,
                 )
             if content:
                 # 스키마와 안 맞는 답. provider가 형식을 무시했을 수 있어 warning으로 남긴다 —
@@ -245,7 +261,14 @@ async def run(
                 }
             )
 
-        if task is not None and EARLY_STOP and _covered(task, step_records, calls):
+        # 이어받기는 조기 종료하지 않는다. 조각이 하나라 저장 한 번에 끝나 버리면
+        # leftover를 받을 턴이 없다
+        if (
+            task is not None
+            and continuation is None
+            and EARLY_STOP
+            and _covered(task, step_records, calls)
+        ):
             # 모델에게 "무엇을 했는지" 요약을 받으려고 한 번 더 부르지 않는다
             return MemoryAgentResult(
                 reply=None,
@@ -356,12 +379,12 @@ def _covered(
     )
 
 
-def _parse_reply(content: str) -> ReplyOutput | None:
+def _parse_reply(content: str, model: type[ReplyOutput] = ReplyOutput) -> ReplyOutput | None:
     """말하는 턴의 content를 스키마로 읽는다. 안 맞으면 None -> 호출부가 message 로 둔다."""
     if not content:
         return None
     try:
-        return ReplyOutput.model_validate_json(content)
+        return model.model_validate_json(content)
     except ValidationError:
         return None
 
@@ -377,6 +400,7 @@ def _pending(
     """되묻기로 끝났을 때 이어 붙일 조각을 고른다. 없으면 None.
 
     - 이어받기 중이면 조각은 그대로 두고 방금 실패한 질문과 답을 transcript에 쌓는다.
+      이번 run 에서 무엇이든 썼으면 그 조각은 끝난 것으로 보고 pending을 만들지 않는다.
     - 이번 run 에서 이미 저장한 관찰 조각은 고르지 않는다.
     - 후보가 하나뿐이면 모델에게 묻지 않고 그것을 쓴다.
     - 후보가 없으면(강등 경로) 원문 전체가 한 조각인데,
@@ -387,6 +411,10 @@ def _pending(
     if reply.kind != "question":
         return None
     if continuation is not None:
+        # 저장한 조각을 남기면 다음 답에서 한 번 더 저장된다.
+        # 이어받기는 조기 종료하지 않아서 저장한 뒤에 묻는 경우가 생긴다
+        if any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls):
+            return None
         return PendingMemoryContext(
             hint_text=continuation.hint_text,
             question=reply.text,

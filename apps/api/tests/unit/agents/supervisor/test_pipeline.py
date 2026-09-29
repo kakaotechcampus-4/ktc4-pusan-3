@@ -811,6 +811,11 @@ async def test_saved_가_note_보다_먼저_나간다(
 _COUGH_PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
 
 
+def _cont_answer(reply: dict[str, Any]) -> LLMResponse:
+    """이어받기 run 의 마지막 말. 일반 스키마에 leftover 가 더 붙는다."""
+    return _answer({"leftover": False, **reply})
+
+
 async def test_이어받기는_supervisor_와_food_를_타지_않는다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
@@ -819,7 +824,7 @@ async def test_이어받기는_supervisor_와_food_를_타지_않는다(
         _tools(
             _call("m1", "create_observation_health", _RASH),
         ),
-        _answer({"text": "기록해 둘게요.", "kind": "message"}),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
     )
 
     result = await handle_input(
@@ -861,16 +866,13 @@ async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
     assert any(isinstance(event, Failed) for event in events)
 
 
-async def test_이어받기에_무관한_말이_섞이면_memory_가_그것까지_처리한다(
-    memory_context: AgentContext, food_context: FoodContext
+async def test_이어받기에_다른_말이_섞이면_따로_보내라는_안내를_붙인다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
-    # Supervisor 를 안 타므로 나눠지지 않는다. 현상 고정 — 분리는 후속 이슈다
+    # 섞인 말은 처리하지 않는다. 처리한 것처럼 보이면 보호자가 다시 보내 두 번 저장된다
     memory = FakeLLM(
-        _tools(
-            _call("m1", "create_observation_health", _RASH),
-            _call("m2", "create_observation_activity", _POOL),
-        ),
-        _answer({"text": "둘 다 적어 둘게요.", "kind": "message"}),
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message", "leftover": True}),
     )
 
     await handle_input(
@@ -880,11 +882,90 @@ async def test_이어받기에_무관한_말이_섞이면_memory_가_그것까�
         run_id=RUN_ID,
         supervisor_client=FakeLLM(),
         memory_client=memory,
+        emit=events.append,
         continuation=_COUGH_PENDING,
     )
 
-    activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
-    assert len(activity) == 1
+    notes = _of(events, MemoryNote)
+    assert [note.text for note in notes] == [f"기록해 둘게요. {pipeline.LEFTOVER_NOTE}"]
+    assert notes[0].kind == "message"
+
+
+async def test_다시_물을_때_붙인_안내는_다음_질문_맥락에_들어가지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _cont_answer({"text": "정확히 며칠 전이에요?", "kind": "question", "leftover": True}),
+    )
+
+    await handle_input(
+        "저녁 뭐 먹일까?",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    # 다시 묻는 중이면 화면이 다음 한 줄을 이 질문의 답으로 보낸다. "따로 보내 주세요" 만 있으면
+    # 보호자가 섞인 말을 또 답으로 보내 같은 질문이 돌아온다
+    note = _of(events, MemoryNote)[0]
+    pending = _of(events, PendingReply)[0]
+    assert note.kind == "question"
+    assert note.text == f"정확히 며칠 전이에요? {pipeline.LEFTOVER_NOTE_QUESTION}"
+    assert pending.context.question == "정확히 며칠 전이에요?"
+
+
+async def test_섞인_말이_없으면_안내를_붙이지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    await handle_input(
+        "3일 전부터",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    assert [note.text for note in _of(events, MemoryNote)] == ["기록해 둘게요."]
+
+
+async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 섞인 말을 남겼다고 답까지 실패로 치면 runner 가 맥락을 되돌리고, 같은 답이 두 번 저장된다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message", "leftover": True}),
+    )
+
+    result = await handle_input(
+        "그저께부터. 그리고 오늘 수영장 다녀왔어",
+        memory_context,
+        food_context,
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
+    assert len(rows) == 1
+    assert [len(saved.refs) for saved in _of(events, Saved)] == [1]
+    assert result.failed is None
+    assert _order(events)[-1] == "Done"
+    assert not _of(events, Failed)
 
 
 async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장하지_않는다(
@@ -917,7 +998,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             _tools(
                 _call("m3", "create_observation_food", _TTEOKBOKKI),
             ),
-            _answer({"text": "기록해 둘게요.", "kind": "message"}),
+            _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
         ),
         continuation=before.memory.pending,
     )

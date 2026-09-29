@@ -50,3 +50,28 @@ REPLY_FORMAT: dict[str, Any] = {
         "strict": True,
     },
 }
+
+
+class ContinuationReplyOutput(ReplyOutput):
+    """이어받기 run의 마지막 말. 답에 다른 말이 섞여 왔는지를 더 받는다."""
+
+    leftover: Annotated[
+        bool,
+        Field(
+            description=(
+                "보호자의 답에 이어서 처리할 조각과 상관없는 기록이나 요청이 "
+                "섞여 있었으면 true. 그 부분은 저장하지도 답하지도 않는다. "
+                "따로 보내 달라는 말은 text 에 쓰지 않는다"
+            )
+        ),
+    ]
+
+
+CONTINUATION_REPLY_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "MemoryContinuationReply",
+        "schema": to_strict_json_schema(ContinuationReplyOutput),
+        "strict": True,
+    },
+}

@@ -515,12 +515,17 @@ _COUGH_PENDING = PendingMemoryContext(
 _COUGH = {"raw_text": "3일 전부터 기침해", "observed_on": "오늘", "symptom": ["기침"]}
 
 
+def _cont_answer(reply: dict[str, Any]) -> LLMResponse:
+    """이어받기 run 의 마지막 말. 일반 스키마에 leftover 가 더 붙는다."""
+    return _answer({"leftover": False, **reply})
+
+
 async def test_이어받기는_조각과_질문과_답을_같이_넣는다(context: AgentContext) -> None:
     llm = FakeLLM(
         _tools(
             _call("c1", "create_observation_health", _COUGH),
         ),
-        _answer({"text": "기록해 둘게요.", "kind": "message"}),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
     )
 
     result = await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
@@ -536,7 +541,7 @@ async def test_이어받기는_조각과_질문과_답을_같이_넣는다(conte
 
 async def test_이어받기에서_또_물으면_pending_이_갱신된다(context: AgentContext) -> None:
     ask = {"text": "정확히 며칠 전인지 기억나세요?", "kind": "question"}
-    llm = FakeLLM(_answer(ask))
+    llm = FakeLLM(_cont_answer(ask))
 
     result = await run("며칠 됐어요", context, client=llm, continuation=_COUGH_PENDING)
 
@@ -553,7 +558,7 @@ async def test_두_번째_이어받기는_앞서_주고받은_것도_넣는다(c
         work=WorkType.OBSERVE,
         transcript=("기침은 언제부터였어요?", "며칠 됐어요"),
     )
-    llm = FakeLLM(_answer({"text": "기록해 둘게요.", "kind": "message"}))
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
 
     await run("3일 전부터요", context, client=llm, continuation=again)
 
@@ -562,7 +567,7 @@ async def test_두_번째_이어받기는_앞서_주고받은_것도_넣는다(c
 
 
 async def test_이어받기는_기록_묶음만_연다(context: AgentContext) -> None:
-    llm = FakeLLM(_answer({"text": "기록해 둘게요.", "kind": "message"}))
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
 
     await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
 
@@ -580,6 +585,68 @@ async def test_task_와_continuation_을_같이_주면_거부한다(context: Age
             task=MemoryTask(raw_text="3일 전부터"),
             continuation=_COUGH_PENDING,
         )
+
+
+async def test_이어받기_요청에는_leftover_가_든_응답_형식이_실린다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    schema = llm.seen_kwargs[0]["response_format"]["json_schema"]["schema"]
+    assert "leftover" in schema["required"]
+
+
+async def test_일반_요청의_응답_형식에는_leftover_가_없다(context: AgentContext) -> None:
+    llm = FakeLLM(_answer(_ASK_WHEN))
+
+    await run("요즘 기침해", context, client=llm)
+
+    schema = llm.seen_kwargs[0]["response_format"]["json_schema"]["schema"]
+    assert "leftover" not in schema["properties"]
+
+
+async def test_이어받기는_저장한_뒤에도_말하는_턴까지_간다(context: AgentContext) -> None:
+    # 조기 종료하면 저장 한 번에 끝나서 leftover 를 받을 턴이 없다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.ended_by == "model"
+    assert result.steps == 2
+    assert result.reply is not None and result.reply.text == "기록해 둘게요."
+    assert result.leftover is False
+
+
+async def test_답에_섞인_말을_남겼으면_leftover_로_알린다(context: AgentContext) -> None:
+    answer = "3일 전부터. 그리고 오늘 수영장 다녀왔어"
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message", "leftover": True}),
+    )
+
+    result = await run(answer, context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.leftover is True
+    assert result.reply is not None and result.reply.kind == "message"
+
+
+async def test_이어받기에서_저장한_뒤_또_물으면_pending_을_남기지_않는다(
+    context: AgentContext,
+) -> None:
+    # 저장한 조각을 pending 으로 남기면 다음 답에서 그 조각이 한 번 더 저장된다
+    answer = "그저께부터. 내일 소풍 있어"
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "내일 소풍은 몇 시에 시작하나요?", "kind": "question"}),
+    )
+
+    result = await run(answer, context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
 
 
 # ── 리뷰 반영: 결과를 보기 전에 말하지 않는다 ─────────────────────

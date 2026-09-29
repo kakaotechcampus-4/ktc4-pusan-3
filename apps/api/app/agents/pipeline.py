@@ -352,6 +352,15 @@ async def handle_input(
 # 이어받기 run의 routing 자리. 안내·준비 중 agent가 없어 _did_anything에는 쓴 것과 말만 남는다
 _NO_ROUTING = Routing(intent_type="record", memory_task=None)
 
+# 이어받기 답에 섞여 온 다른 말은 처리하지 않는다.
+# 다시 보내도 두 번 저장되지 않게 반영하지 않았다는 것까지 알린다.
+LEFTOVER_NOTE = "답변과 함께 적은 다른 내용은 반영하지 않았어요. 따로 한 줄로 보내 주세요."
+# 다시 묻는 중이면 화면이 note 전체를 질문으로 잡고 다음 한 줄을 그 답으로 보낸다.
+# 따로 보낼 것은 질문에 답한 뒤에 보내게 한다
+LEFTOVER_NOTE_QUESTION = (
+    "적어 주신 다른 내용은 반영하지 않았어요. 이 질문에 먼저 답한 뒤 따로 한 줄로 보내 주세요."
+)
+
 
 async def _handle_continuation(
     answer: str,
@@ -382,7 +391,11 @@ async def _handle_continuation(
         if memory.drafts:
             send(EventDrafts(memory.drafts))
         if memory.reply is not None:
-            send(MemoryNote(text=memory.reply.text, kind=memory.reply.kind))
+            text = memory.reply.text
+            if memory.leftover:
+                asking = memory.reply.kind == "question"
+                text = f"{text} {LEFTOVER_NOTE_QUESTION if asking else LEFTOVER_NOTE}"
+            send(MemoryNote(text=text, kind=memory.reply.kind))
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
 
