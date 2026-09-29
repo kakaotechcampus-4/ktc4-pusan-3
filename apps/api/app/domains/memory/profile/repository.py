@@ -185,7 +185,8 @@ async def list_confirmed_profiles(
     domain: MemoryDomain | None = None,
     limit: int = PROFILE_LIMIT_PER_DOMAIN,
 ) -> list[ProfileAffinity]:
-    """confirmed + strength 내림차순. domain 당 limit 제한."""
+    """confirmed + strength 내림차순. domain 을 넘기면 해당 도메인에서,
+    넘기지 않으면 전체 도메인에서 합산 limit 개를 반환한다."""
     stmt = select(ProfileAffinity).where(
         ProfileAffinity.child_id == child_id,
         ProfileAffinity.state == ProfileState.CONFIRMED,
