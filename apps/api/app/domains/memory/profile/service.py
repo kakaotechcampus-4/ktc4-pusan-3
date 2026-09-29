@@ -150,7 +150,9 @@ async def handle_profile_correction(
     today: date,
 ) -> None:
     """profile correction → strength 감소 → 이력 저장 → 재계산."""
-    profile = await find_affinity(session, child_id=child_id, affinity_id=profile_id)
+    profile = await find_affinity(
+        session, child_id=child_id, affinity_id=profile_id, for_update=True,
+    )
     if profile is None:
         raise ValueError("프로필을 찾을 수 없다")
 

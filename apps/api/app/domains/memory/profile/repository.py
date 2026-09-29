@@ -48,13 +48,18 @@ async def list_affinities(
 
 
 async def find_affinity(
-    session: AsyncSession, *, child_id: uuid.UUID, affinity_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    affinity_id: uuid.UUID,
+    for_update: bool = False,
 ) -> ProfileAffinity | None:
-    return await session.scalar(
-        select(ProfileAffinity).where(
-            ProfileAffinity.child_id == child_id, ProfileAffinity.id == affinity_id
-        )
+    stmt = select(ProfileAffinity).where(
+        ProfileAffinity.child_id == child_id, ProfileAffinity.id == affinity_id
     )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return await session.scalar(stmt)
 
 
 async def rename_affinity(
