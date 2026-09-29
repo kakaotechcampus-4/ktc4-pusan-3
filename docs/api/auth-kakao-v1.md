@@ -429,7 +429,7 @@ CREATE INDEX ON session (expires_at);
 | --- | --- |
 | 로그아웃 | 그 행 1건 |
 | 계정 탈퇴 · 아이 파기 | `parent_id` 로 전부 |
-| 만료 | 배치로 `expires_at < now()` 전부 |
+| 만료 | 배치로 `expires_at <= now()` 전부 — 세션 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 주기 실행은 배포 구성이 정해진 뒤) |
 
 ### 5-4. `auth_handoff` — 신설 🔶 협의 대상
 
@@ -485,7 +485,7 @@ RETURNING *;
 
 **Postgres 로 하는 근거** — 로그인 빈도에 TTL 2분이면 동시 존재 행이 사실상 없다. 인프라가 t3.medium 1대(4GB)에 DB·백엔드·프론트를 함께 올리는 구성이라 Redis 를 지금 얹을 이유가 없다. 나중에 Redis 가 들어오면 이 테이블만 옮기면 된다.
 
-만료 행은 배치로 지운다. **배치가 늦어도 위 SQL 의 `expires_at > now()` 가 막는다** — 배치는 청소지 방어가 아니다.
+만료 행은 배치로 지운다 (`app/workers/auth_cleanup.py`, #46). **배치가 늦어도 위 SQL 의 `expires_at > now()` 가 막는다** — 배치는 청소지 방어가 아니다.
 
 ### 5-5. `oauth_state` 는 쿠키다 — 테이블을 만들지 않는다
 
