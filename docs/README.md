@@ -63,7 +63,9 @@
 
 ## Memory
 
-*아직 문서 없음.* Child / Observation Memory 스키마, Fact·Observation·Inference 3분류, Curator 승격·감쇠, Correction 루프.
+- [memory/curator-linking-v1.md](memory/curator-linking-v1.md) — 같은 대상 판단은 유사도가 아니라 **판정기(Jev)** · `none` 이면 가까운 후보 3개에 **반대 방향으로 다시** 묻기 · 같은 관찰이 `uncertain` 으로 **3번** 보류되면 새 candidate (오류 · 목록 밖 답은 세지 않음) · 보류 기록은 `observation_link_hold`(FK 칸 셋 · CASCADE) · 판단이 갈리는 쌍은 다른 대상 · 🔶 Jev 로 나가는 항목을 처리방침에 추가
+
+그 밖에 *아직 문서 없음.* Child / Observation Memory 스키마, Fact·Observation·Inference 3분류, Curator 승격·감쇠, Correction 루프.
 
 ## Agent
 

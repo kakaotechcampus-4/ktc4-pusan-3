@@ -6,7 +6,7 @@ Curator 연결 단계에서 판정기가 "모르겠음(uncertain)"이라 답해 
 
 관찰이 도메인마다 테이블이 달라서 FK 칸을 셋(food · activity · education) 두고 하나만 채운다.
 `correction.target_id` · `suggestion_evidence.source_id` 처럼 FK 없이 두지 않는 이유는 삭제다.
-이 행에는 subject 해시가 있어서 관찰이 지워지면 같이 지워져야 하고, 그것을 DB 가 보장한다.
+이 행에는 subject 해시가 있어서 관찰이 지워지면 같이 지워져야 하고 그것을 DB 가 보장한다.
 
 세는 것은 uncertain 뿐이다. 오류 · 목록 밖의 답은 세지 않는다. 판정 모델 · confidence 처럼
 판정 품질을 보는 값은 두지 않는다 — 처리방침 8장(품질 평가에 쓰지 않는다)과 맞춘다.
