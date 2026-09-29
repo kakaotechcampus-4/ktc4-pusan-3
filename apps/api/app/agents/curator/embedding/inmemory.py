@@ -38,6 +38,8 @@ class InMemoryCuratorStore:
         self._observations: dict[ObservationKey, _StoredObservation] = {}
         self._profiles: dict[str, _StoredProfile] = {}
         self._profile_seq = 0
+        # 관찰 → (uncertain 횟수, subject_hash)
+        self._holds: dict[ObservationKey, tuple[int, str]] = {}
 
     # 테스트용 초기 상태
     def add_observation(
@@ -95,6 +97,11 @@ class InMemoryCuratorStore:
     def profiles(self) -> list[ProfileItem]:
         return [stored.item for stored in self._profiles.values()]
 
+    def uncertain_count(self, domain: CuratorDomain, id: str) -> int | None:
+        """테스트가 결과를 확인할 때 쓴다. 보류 기록이 없으면 None."""
+        hold = self._holds.get((domain, id))
+        return hold[0] if hold else None
+
     # CuratorStore
     async def list_unembedded(self, *, child_id: UUID) -> list[ObservationItem]:
         return [item for item in self._active(child_id) if item.embedding is None]
@@ -149,6 +156,20 @@ class InMemoryCuratorStore:
             embedding=list(embedding),
             last_observed_on=last_observed_on,
         )
+
+    async def record_uncertain(
+        self, *, domain: CuratorDomain, observation_id: str, subject_hash: str
+    ) -> int:
+        key = (domain, observation_id)
+        if key not in self._observations:
+            raise KeyError(key)  # DB 의 FK 위반에 해당한다
+        count, stored_hash = self._holds.get(key, (0, subject_hash))
+        count = count + 1 if stored_hash == subject_hash else 1
+        self._holds[key] = (count, subject_hash)
+        return count
+
+    async def clear_hold(self, *, domain: CuratorDomain, observation_id: str) -> None:
+        self._holds.pop((domain, observation_id), None)
 
     def _active(self, child_id: UUID) -> list[ObservationItem]:
         return [

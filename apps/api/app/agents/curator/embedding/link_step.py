@@ -8,6 +8,7 @@
          후보 하나 → 그 후보가 목록에 있는지 코드가 확인하고 연결
          none      → 5. 반대 방향 확인
          uncertain · 오류 · 목록에 없는 값 → 보류. 다음 실행에서 다시 시도한다
+           (같은 관찰이 uncertain 으로 UNCERTAIN_LIMIT 번째 보류되면 새 candidate)
     5. 가까운 후보 REVERSE_TOP 개에 방향을 바꿔 한 번씩 묻는다 ("홍당무와 같은 것이 당근인가?")
          그렇다 → 그 후보에 연결
          모두 아니다 → 새 candidate
@@ -26,12 +27,14 @@
     - 새 candidate 에 관찰 벡터를 복사한다 (Agent 검색 · 추리기에 쓰인다)
 관찰 벡터의 본래 쓰임은 도메인 Agent 의 검색(memory.search)이다.
 
-바꾸는 것은 관찰의 affinity_id 와 새 Profile 뿐이다.
+바꾸는 것은 관찰의 affinity_id, 새 Profile, 보류 기록(uncertain 횟수)뿐이다.
+보류 기록은 관찰이 연결되면 지운다 — 남는 것은 지금 보류 중인 관찰의 기록이다.
 Profile 의 state · strength · last_observed_on 은 건드리지 않는다 — 다시 승격할지는
 승격 규칙이 정한다. 기존 Profile 에 연결할 때 last_observed_on 을 누가 갱신할지는
-PR 에서 제안한다 (연결된 active 관찰 중 가장 늦은 observed_on 으로 다시 계산하는 안).
+이 단계의 범위 밖이다 (연결된 active 관찰 중 가장 늦은 observed_on 으로 다시 계산하는 안이 있다).
 """
 
+import hashlib
 import logging
 import math
 from collections.abc import Sequence
@@ -66,8 +69,13 @@ MAX_CANDIDATES = 30
 # 실험 5 와 같은 값이다. 유사도가 글자 겹침을 따라가서 같은 대상이 여기에 못 들 수 있다
 REVERSE_TOP = 3
 
+# 같은 관찰이 uncertain 으로 이만큼 보류되면 새 candidate 를 만든다. 기다려도 답이 바뀌지 않는다.
+# 이때 생기는 실수는 같은 대상이 두 Profile 로 나뉘는 것뿐이다. 다른 대상의 기록은 섞이지 않는다.
+# 오류 · 목록에 없는 답은 세지 않는다. 기다리면 풀리는데, 세면 장애 때문에 Profile 이 나뉜다
+UNCERTAIN_LIMIT = 3
+
 LinkStatus = Literal["linked", "created", "held"]
-Match = Literal["exact", "judged", "reversed", "new"]
+Match = Literal["exact", "judged", "reversed", "new", "uncertain_limit"]
 HoldReason = Literal[
     "embedding_failed",  # 임베딩 API 실패. 다음 실행이 자동으로 다시 시도한다 (임베딩 단계)
     "empty_subject",  # subject 가 빈 문자열. 고칠 때까지 계속 보류된다 (임베딩 단계)
@@ -75,7 +83,7 @@ HoldReason = Literal[
     "invalid_profile_embedding",  # 추리거나 고를 Profile 벡터가 잘못됐다. invalid_profile_ids
     "invalid_candidate_name",  # 후보 merge_key 가 비었거나 none · uncertain. invalid_profile_ids
     "judge_unavailable",  # 판정기가 없다 (CURATOR_JUDGE_* 미설정). 설정하면 다음 실행에서 풀린다
-    "judge_uncertain",  # 판정기가 판단할 수 없다고 답했다
+    "judge_uncertain",  # 판정기가 판단할 수 없다고 답했다. 횟수를 센다 (UNCERTAIN_LIMIT)
     "judge_failed",  # 판정기 호출 실패 (LLMError, error 참고). 다음 실행이 다시 시도한다
     "judge_invalid",  # 판정기가 후보 목록에 없는 값을 답했다
 ]
@@ -151,7 +159,7 @@ async def _link_one(
     # 저장된 순서라 첫 번째가 가장 오래된 Profile 이다
     same_name = next((p for p in profiles if same_name_key(p.merge_key) == name), None)
     if same_name is not None:
-        await store.link(domain=item.domain, observation_id=item.id, affinity_id=same_name.id)
+        await _attach(store, item, same_name.id)
         return LinkOutcome(item.key, "linked", affinity_id=same_name.id, match="exact")
 
     # 여기부터는 벡터가 필요할 수 있다 — 새 Profile 에 복사하거나 후보를 추린다
@@ -212,7 +220,7 @@ async def _link_one(
             )
         key, back = found
         chosen = oldest[key]
-        await store.link(domain=item.domain, observation_id=item.id, affinity_id=chosen.id)
+        await _attach(store, item, chosen.id)
         return LinkOutcome(
             item.key,
             "linked",
@@ -222,6 +230,19 @@ async def _link_one(
             confidence=back.confidence,
         )
     if answer.choice == UNCERTAIN:
+        count = await store.record_uncertain(
+            domain=item.domain, observation_id=item.id, subject_hash=hold_hash(subject)
+        )
+        if count >= UNCERTAIN_LIMIT:
+            return await _create(
+                store,
+                item,
+                vector,
+                child_id=child_id,
+                match="uncertain_limit",
+                judge_model=model,
+                confidence=confidence,
+            )
         return LinkOutcome(
             item.key, "held", reason="judge_uncertain", judge_model=model, confidence=confidence
         )
@@ -232,7 +253,7 @@ async def _link_one(
             item.key, "held", reason="judge_invalid", judge_model=model, confidence=confidence
         )
 
-    await store.link(domain=item.domain, observation_id=item.id, affinity_id=chosen.id)
+    await _attach(store, item, chosen.id)
     return LinkOutcome(
         item.key,
         "linked",
@@ -249,6 +270,7 @@ async def _create(
     vector: list[float],
     *,
     child_id: UUID,
+    match: Match = "new",
     judge_model: str | None = None,
     confidence: float | None = None,
 ) -> LinkOutcome:
@@ -260,15 +282,21 @@ async def _create(
         embedding=vector,
         last_observed_on=item.observed_on,
     )
-    await store.link(domain=item.domain, observation_id=item.id, affinity_id=created.id)
+    await _attach(store, item, created.id)
     return LinkOutcome(
         item.key,
         "created",
         affinity_id=created.id,
-        match="new",
+        match=match,
         judge_model=judge_model,
         confidence=confidence,
     )
+
+
+async def _attach(store: CuratorStore, item: ObservationItem, affinity_id: str) -> None:
+    """관찰을 Profile 에 연결하고 보류 기록을 지운다. 연결되면 더 셀 것이 없다."""
+    await store.link(domain=item.domain, observation_id=item.id, affinity_id=affinity_id)
+    await store.clear_hold(domain=item.domain, observation_id=item.id)
 
 
 class _JudgeFailed(Exception):
@@ -382,8 +410,18 @@ def same_name_key(text: str) -> str:
     띄어쓰기만 다른 쌍은 유사도가 0.78~0.92 로 흩어져 임계값에 따라 놓칠 수 있다
     (임계값 실험, tune_pairs.txt). 규칙으로 잡으면 확실하고 잘못 합침도 늘지 않는다.
     merge_key 에는 공백을 지우지 않은 subject 를 그대로 저장한다 — 사람이 읽는 값이다.
+    그래서 저장 · 전송하는 값은 .strip() 만 하고, 비교할 때만 이 키를 쓴다.
     """
     return "".join(text.split())
+
+
+def hold_hash(subject: str) -> str:
+    """보류 기록에 남기는 subject 해시. subject 가 바뀌었는지 알아차리는 데에만 쓴다.
+
+    same_name_key 로 다듬은 뒤 해시한다 — 띄어쓰기만 바뀐 것은 같은 이름이라 이어서 센다.
+    익명화가 아니다. 짧은 단어는 해시로 원래 값을 찾을 수 있다 — 관찰과 함께 지워지는 기록에만 쓴다.
+    """
+    return hashlib.sha256(same_name_key(subject).encode()).hexdigest()
 
 
 def _valid(vector: list[float] | None) -> TypeGuard[list[float]]:
