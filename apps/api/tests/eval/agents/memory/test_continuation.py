@@ -33,6 +33,7 @@ DOMAINS = ("food", "health", "education", "activity", "routine")
 TODAY = datetime.now(KST).date()
 NOW = datetime(TODAY.year, TODAY.month, TODAY.day, 9, tzinfo=KST)
 TWO_DAYS_AGO = TODAY - timedelta(days=2)  # "그저께"
+THREE_DAYS_AGO = TODAY - timedelta(days=3)  # "3일 전"
 # "다음 주 수요일" 은 이번 주 월요일에서 센다 (test_memory._weekday 와 같은 규칙)
 NEXT_WEDNESDAY = TODAY - timedelta(days=TODAY.weekday()) + timedelta(days=9)
 
@@ -91,8 +92,6 @@ class Case:
 
 _COUGH_ANSWERED = (_observed_on("health", TWO_DAYS_AGO),)
 
-# 답의 날짜는 datetime_rules 가 읽는 표현으로 둔다. "3일 전" 은 아직 못 읽어서
-# DATE_UNPARSEABLE 로 되묻게 되고, 그러면 섞인 말이 아니라 날짜 해석을 재게 된다
 CASES = [
     Case("C01", _COUGH, "그저께부터", {"health": 1}, False, checks=_COUGH_ANSWERED),
     Case(
@@ -105,7 +104,15 @@ CASES = [
     ),
     Case("C03", _COUGH, "그저께부터. 저녁 뭐 먹일까?", {"health": 1}, True, checks=_COUGH_ANSWERED),
     Case("C04", _COUGH, "저녁 뭐 먹일까?", {}, True, kind="question"),
-    Case("C05", _WHOLE, "떡볶이", {"activity": 1, "food": 1}, False),
+    # 모델이 tool 없이 "기록했어요" 라고만 답한 적이 있다(19번 중 1번). 그때도 실패로 막는다
+    Case(
+        "C05",
+        _WHOLE,
+        "떡볶이",
+        {"activity": 1, "food": 1},
+        False,
+        checks=(_field_has("food", "떡볶이"),),
+    ),
     # 답이 뒤에 와도 답은 반영한다
     Case(
         "C06",
@@ -136,6 +143,15 @@ CASES = [
         checks=(_draft_at(NEXT_WEDNESDAY, 10),),
         drafts=1,
     ),
+    # 숫자로 센 날짜. 날짜 규칙이 "3일 전" 을 못 읽던 때는 DATE_UNPARSEABLE 로 다시 물었다
+    Case(
+        "C10",
+        _COUGH,
+        "3일 전부터",
+        {"health": 1},
+        False,
+        checks=(_observed_on("health", THREE_DAYS_AGO),),
+    ),
 ]
 
 # 결과가 흔들리는 케이스(2026-09-29 측정). 답 반영과 중복 저장 방지는 그래도 실패로 막고,
@@ -145,7 +161,7 @@ CASES = [
 _FLAKY = {
     # 강등 경로 조각. "조각 안의 기록을 전부 저장한다" 를 헤더에 넣어 보면 C02 에서 섞인 기록까지
     # 저장해서(8번 중 5번) 넣지 않았다
-    "C05": "조각 안의 두 번째 기록을 빠뜨릴 때가 있다 (11번 중 6번 통과)",
+    "C05": "조각 안의 두 번째 기록을 빠뜨릴 때가 있다 (19번 중 9번 통과)",
     "C06": "답이 뒤에 오면 앞의 섞인 기록까지 저장할 때가 있다 (9번 중 5번 통과)",
     "C08": "섞인 일정의 시각을 묻거나 초안을 만들 때가 있다 (9번 중 2번 통과)",
 }
@@ -176,7 +192,8 @@ def test_이어받기_답에_섞인_말(case: Case) -> None:
     print(
         f"\n[{case.case_id}] rows={counts} drafts={len(result.drafts)} "
         f"leftover={result.leftover} kind={result.reply.kind if result.reply else None} "
-        f"pending={result.pending is not None} {result.final_message!r}"
+        f"pending={result.pending is not None} tools={result.tool_names} "
+        f"{result.final_message!r}"
     )
 
     # 어느 케이스든 지킨다. 답까지 leftover 로 버리지 않았는지는 checks 가 본다
