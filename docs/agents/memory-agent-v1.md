@@ -225,7 +225,7 @@ description 이 없는 필드는 테스트가 잡는다.
 결과가 같다. `changed` 에는 모델이 넘긴 인자가 아니라 현재 값과 실제로 다른 필드만 적는다 —
 같은 제목으로 "바꾸면" 바뀐 게 없고, 그때는 초안을 만들지 않는다.
 
-초안 payload 모양은 `app/agents/memory/drafts.py` 의 `EventDraft.to_payload()` 가 정본이다.
+초안 payload 모양은 `app/core/event_draft.py` 가 정본이고, `EventDraft.to_payload()` 가 그 모델로 직렬화한다.
 9/22 회의에서 **`op` 별로 두 모양**으로 확정했다 — create 는 `POST`, update 는 `PATCH` 로 가기 때문이다.
 
 ```
