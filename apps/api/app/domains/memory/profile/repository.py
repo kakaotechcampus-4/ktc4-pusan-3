@@ -1,10 +1,12 @@
 """관찰에서 파생된 성향의 API 조회·라벨 수정·상태 전이 집계."""
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+_KST = timezone(timedelta(hours=9))
 
 from app.domains.correction.models import Correction, CorrectionTargetKind, CorrectionVerdict
 from app.domains.memory.observation.models import (
@@ -103,10 +105,8 @@ async def count_wrong_in_window(
     today: date,
 ) -> int:
     """하강 윈도우(21일) 안의 wrong correction 수 (= W)."""
-    from datetime import datetime, timezone
-
     window_start = datetime.combine(
-        today - timedelta(days=DEMOTION_WINDOW_DAYS), datetime.min.time(), tzinfo=timezone.utc,
+        today - timedelta(days=DEMOTION_WINDOW_DAYS - 1), datetime.min.time(), tzinfo=_KST,
     )
     stmt = (
         select(func.count())
