@@ -5,6 +5,7 @@
     - 이름이 같거나 후보가 없으면 판정기를 부르지 않는다
     - 판정기에는 같은 아이 · 도메인 · polarity 의 merge_key 만 보여 준다
     - 판정기 답이 후보 목록에 있을 때만 연결한다. 없는 값 · uncertain · 실패는 보류
+    - none 이면 가까운 후보에 방향을 바꿔 묻는다. 그 호출이 실패하면 새로 만들지 않고 보류
     - Profile 의 state 는 바꾸지 않는다
 """
 
@@ -38,23 +39,28 @@ def _at(deg: float) -> list[float]:
 
 
 class FakeJudge:
-    """answer(subject, candidates) 가 돌려준 값을 답한다. 받은 질문을 기록한다."""
+    """answer(subject, candidates) 가 돌려준 값을 답한다. 받은 질문을 기록한다.
+
+    error 를 주면 실패한다. fail_on 을 함께 주면 그 subject 를 물을 때만 실패한다.
+    """
 
     def __init__(
         self,
         answer: Callable[[str, list[str]], str] | None = None,
         *,
         error: Exception | None = None,
+        fail_on: str | None = None,
     ) -> None:
         self.calls: list[tuple[str, str, list[str]]] = []
         self._answer = answer or (lambda subject, candidates: NONE)
         self._error = error
+        self._fail_on = fail_on
 
     async def judge(
         self, *, subject: str, domain: CuratorDomain, candidates: Sequence[str]
     ) -> JudgeAnswer:
         self.calls.append((subject, domain, list(candidates)))
-        if self._error is not None:
+        if self._error is not None and self._fail_on in (None, subject):
             raise self._error
         return JudgeAnswer(self._answer(subject, list(candidates)), model=MODEL, confidence=0.9)
 
@@ -176,7 +182,7 @@ async def test_판정기에는_subject_와_후보_merge_key_만_보여_준다() 
 
     await _link(store, judge)
 
-    assert judge.calls == [("생딸기", "food", ["딸기", "블루베리"])]  # 저장된 순서
+    assert judge.calls[0] == ("생딸기", "food", ["딸기", "블루베리"])  # 저장된 순서
 
 
 async def test_판정기가_고른_Profile_에_연결한다() -> None:
@@ -615,3 +621,195 @@ async def test_후보가_정확히_상한이면_추리지_않는다(monkeypatch:
     await _link(store, judge)
 
     assert judge.calls[0][2] == ["블루베리", "딸기"]  # 저장된 순서 그대로, 둘 다 보여 준다
+
+
+# 반대 방향 확인 — 판정기가 none 이면 방향을 바꿔 한 번 더 묻는다
+
+
+def same_pair(a: str, b: str) -> FakeJudge:
+    """a 를 물으면 none, b 를 물으면 a 를 고른다. 순서에 따라 답이 갈리는 판정기."""
+    return FakeJudge(lambda subject, candidates: a if subject == b and a in candidates else NONE)
+
+
+async def test_none_이면_방향을_바꿔_묻고_그렇다면_연결한다() -> None:
+    store = InMemoryCuratorStore()
+    carrot = _profile(store, "홍당무")
+    judge = same_pair("당근", "홍당무")
+    _observe(store, "1", "당근")
+
+    [outcome] = await _link(store, judge)
+
+    assert judge.calls == [
+        ("당근", "food", ["홍당무"]),
+        ("홍당무", "food", ["당근"]),  # 후보가 subject 로, subject 가 유일한 후보로
+    ]
+    assert (outcome.status, outcome.match, outcome.affinity_id) == (
+        "linked",
+        "reversed",
+        carrot.id,
+    )
+    assert (outcome.judge_model, outcome.confidence) == (MODEL, 0.9)
+    assert len(store.profiles) == 1
+
+
+async def test_반대_방향도_모두_아니면_새_candidate_를_만든다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "블루베리")
+    _profile(store, "레고")
+    judge = FakeJudge()
+    _observe(store, "1", "딸기")
+
+    [outcome] = await _link(store, judge)
+
+    assert (outcome.status, outcome.match) == ("created", "new")
+    assert [call[0] for call in judge.calls] == ["딸기", "블루베리", "레고"]
+
+
+@pytest.mark.parametrize(
+    "answer", ["딸기", UNCERTAIN, "딸기잼"], ids=["후보", "uncertain", "목록밖"]
+)
+async def test_none_이_아니면_반대_방향으로_묻지_않는다(answer: str) -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "딸기")
+    judge = picks(answer)
+    _observe(store, "1", "생딸기")
+
+    await _link(store, judge)
+
+    assert len(judge.calls) == 1
+
+
+async def test_같은_실행에서_순서가_바뀌어_들어와도_Profile_은_하나다() -> None:
+    store = InMemoryCuratorStore()
+    judge = same_pair("당근", "홍당무")
+    _observe(store, "1", "홍당무")
+    _observe(store, "2", "당근")
+
+    first, second = await _link(store, judge)
+
+    assert (first.status, second.status, second.match) == ("created", "linked", "reversed")
+    assert second.affinity_id == first.affinity_id
+
+
+async def test_반대_방향_답이_공백만_달라도_연결한다() -> None:
+    store = InMemoryCuratorStore()
+    tomato = _profile(store, "토마토")
+    judge = FakeJudge(lambda subject, candidates: "방울토마토" if subject == "토마토" else NONE)
+    _observe(store, "1", "방울 토마토")
+
+    [outcome] = await _link(store, judge)
+
+    assert (outcome.match, outcome.affinity_id) == ("reversed", tomato.id)
+
+
+async def test_반대_방향에서_같은_merge_key_는_한_번만_묻고_오래된_것에_연결한다() -> None:
+    store = InMemoryCuratorStore()
+    oldest = _profile(store, "홍당무")
+    _profile(store, "홍당무")
+    judge = same_pair("당근", "홍당무")
+    _observe(store, "1", "당근")
+
+    [outcome] = await _link(store, judge)
+
+    assert len(judge.calls) == 2
+    assert outcome.affinity_id == oldest.id
+
+
+@pytest.mark.parametrize("subject", [NONE, UNCERTAIN], ids=["none", "uncertain"])
+async def test_subject_가_예약어면_반대_방향으로_묻지_않고_새로_만든다(subject: str) -> None:
+    """subject 가 후보 자리에 들어가 판정기 답과 구분할 수 없다."""
+    store = InMemoryCuratorStore()
+    _profile(store, "딸기")
+    judge = FakeJudge()
+    _observe(store, "1", subject)
+
+    [outcome] = await _link(store, judge)
+
+    assert outcome.status == "created"
+    assert len(judge.calls) == 1
+
+
+# 반대 방향 확인 — 오류
+
+
+async def test_반대_방향_호출이_실패하면_새로_만들지_않고_보류한다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "홍당무")
+    judge = FakeJudge(error=LLMUnavailableError("down"), fail_on="홍당무")
+    _observe(store, "1", "당근")
+
+    [outcome] = await _link(store, judge)
+
+    assert [call[0] for call in judge.calls] == ["당근", "홍당무"]
+    assert (outcome.status, outcome.reason, outcome.error) == (
+        "held",
+        "judge_failed",
+        "LLMUnavailableError",
+    )
+    assert len(store.profiles) == 1  # 장애 때문에 Profile 이 나뉘지 않는다
+    assert store.observation("food", "1").affinity_id is None
+
+
+async def test_반대_방향에서_계정_오류가_나면_이번_실행의_남은_관찰은_부르지_않는다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "홍당무")
+    judge = FakeJudge(error=LLMAuthError("401"), fail_on="홍당무")
+    _observe(store, "1", "당근")
+    _observe(store, "2", "생당근")
+
+    first, second = await _link(store, judge)
+
+    assert [call[0] for call in judge.calls] == ["당근", "홍당무"]  # 두 번째 관찰은 부르지 않았다
+    assert (first.reason, first.error) == ("judge_failed", "LLMAuthError")
+    assert (second.reason, second.error) == ("judge_failed", "LLMAuthError")
+
+
+# 반대 방향 확인 — 물을 후보 고르기
+
+
+async def test_후보가_REVERSE_TOP_이하면_벡터를_보지_않고_모두_묻는다() -> None:
+    store = InMemoryCuratorStore()
+    _profile(store, "블루베리", [0.0, 0.0])  # 잘못된 벡터지만 고르기를 하지 않으니 상관없다
+    _profile(store, "레고")
+    _profile(store, "홍당무")
+    judge = same_pair("당근", "홍당무")
+    _observe(store, "1", "당근")
+
+    [outcome] = await _link(store, judge)
+
+    assert [call[0] for call in judge.calls] == ["당근", "블루베리", "레고", "홍당무"]
+    assert outcome.match == "reversed"
+
+
+async def test_후보가_REVERSE_TOP_을_넘으면_가까운_순서로_골라_묻는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(link_step, "REVERSE_TOP", 2)
+    store = InMemoryCuratorStore()
+    _profile(store, "레고", _at(80))
+    _profile(store, "블루베리", _at(40))
+    _profile(store, "홍당무", _at(10))
+    judge = FakeJudge()
+    _observe(store, "1", "당근", _at(0))
+
+    await _link(store, judge)
+
+    assert [call[0] for call in judge.calls] == ["당근", "홍당무", "블루베리"]
+
+
+async def test_반대_방향으로_물을_후보를_고를_때_Profile_벡터가_잘못되면_보류한다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(link_step, "REVERSE_TOP", 1)
+    store = InMemoryCuratorStore()
+    broken = _profile(store, "블루베리", [0.0, 0.0])
+    _profile(store, "홍당무", _at(10))
+    judge = FakeJudge()
+    _observe(store, "1", "당근", _at(0))
+
+    [outcome] = await _link(store, judge)
+
+    assert (outcome.status, outcome.reason) == ("held", "invalid_profile_embedding")
+    assert outcome.invalid_profile_ids == (broken.id,)
+    assert len(judge.calls) == 1  # 첫 판정 뒤, 반대 방향으로는 묻지 않았다
+    assert len(store.profiles) == 2
