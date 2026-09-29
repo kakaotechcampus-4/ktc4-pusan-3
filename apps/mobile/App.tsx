@@ -88,6 +88,22 @@ function Shell() {
    */
   const handleMessage = useCallback(
     async (event: WebViewMessageEvent) => {
+      /*
+       * 🚨 **보낸 쪽이 우리 페이지인지 먼저 본다** (#144 리뷰).
+       *
+       * 여기는 아이 사진 **원본이 기기 밖으로 나가는 유일한 문**이다. 탐색 제한
+       * (`onShouldStartLoadWithRequest`) 한 겹에만 기대면, 리다이렉트 같은 예외 경로로 그것이
+       * 한 번이라도 뚫렸을 때 외부 페이지가 사진을 받아 간다.
+       *
+       * 이 `url` 은 **보낸 프레임** 기준이다 — iOS 는 `frameInfo.request.URL`, Android 는
+       * `WebMessageListener` 의 `sourceOrigin`. 그래서 크로스 오리진 iframe 이 부르는 것까지 막힌다.
+       *
+       * ⚠️ WebViewClient 가 붙기 전·떨어진 뒤의 찰나에는 이벤트에 `url` 이 안 실린다. 그때는
+       *    여기서 걸러져 **요청이 조용히 버려진다** — 창구가 아직 살아 있지 않다는 뜻이라 맞는 동작이고,
+       *    웹은 응답이 없으면 타임아웃으로 빈 값을 받는다 (`src/native/bridge.ts`).
+       */
+      if (!isInternalUrl(event.nativeEvent.url)) return;
+
       const request = parseBridgeRequest(event.nativeEvent.data);
       if (!request) return;
 

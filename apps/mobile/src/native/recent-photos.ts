@@ -47,6 +47,18 @@ const THUMBNAIL_WIDTH = 240;
 const THUMBNAIL_QUALITY = 0.6;
 
 /**
+ * HEIC 를 JPEG 로 바꿀 때만 쓰는 화질 (아래 `asJpeg`).
+ * 🚨 이 사진으로 **알림장 글자를 읽는다.** 썸네일과 달리 아끼면 안 된다.
+ */
+const JPEG_QUALITY = 0.9;
+
+/**
+ * 원본을 그대로 넘기지 **못하는** 형식. 여기 있는 것만 JPEG 로 바꾼다.
+ * 🚨 늘리지 말 것 — 늘리는 만큼 "원본 그대로" 가 아니게 된다 (`readRecentPhoto` 머리말).
+ */
+const RECODE_TO_JPEG = ["image/heic", "image/heif"];
+
+/**
  * 이보다 큰 사진은 읽지 않고 `null` 로 답한다.
  * 🚨 원본 바이트는 base64 로 부풀어(≈4/3배) 웹뷰 경계를 넘어간다. 한도 없이 넘기면
  *    큰 사진 한 장에 앱이 멈춘 것처럼 보인다 — 그때는 "앨범에서 고르기" 가 더 빠른 길이고,
@@ -147,6 +159,11 @@ export async function listRecentPhotos(limit: number): Promise<NativeRecentPhoto
  * 🚨 **줄이거나 다시 압축하지 않는다.** 이 사진은 알림장 글자를 읽는 데 쓰인다 — 08 의
  *    "앨범에서 고르기" 가 넘기는 것도 원본이라, 여기만 줄이면 **같은 사진인데 경로에 따라
  *    분석 결과가 달라진다.**
+ *
+ * 🚨 **예외는 HEIC 하나다. 그리고 그 예외의 이유도 위 규칙과 같다** (#144 리뷰).
+ *    iOS 의 "앨범에서 고르기"(`<input type="file">`)는 HEIC 를 **JPEG 로 바꿔서** 준다. 여기만
+ *    원본을 고집하면 두 경로가 서로 다른 형식을 주게 되어, 지키려던 "경로가 달라도 같은 사진" 이
+ *    오히려 깨진다. 그래서 HEIC/HEIF 일 때만 맞춰서 바꾼다 — Android 는 지금도 같아서 안 거친다.
  */
 export async function readRecentPhoto(id: string): Promise<NativeOriginalPhoto | null> {
   // 🚨 목록에 없던 id 는 읽지 않는다. 우리가 내보낸 적 없는 파일을 열어 주는 창구가 되면 안 된다.
@@ -160,15 +177,40 @@ export async function readRecentPhoto(id: string): Promise<NativeOriginalPhoto |
     const file = new File(uri);
     if (!file.exists || file.size <= 0 || file.size > MAX_ORIGINAL_BYTES) return null;
 
-    return {
-      base64: await file.base64(),
-      // `file.type` 이 비면 확장자로 넘겨짚는다. 웹은 이 값을 그대로 업로드에 싣는다.
-      mimeType: file.type || guessMimeType(listed.filename),
-      filename: listed.filename,
-    };
+    // `file.type` 이 비면 확장자로 넘겨짚는다. 웹은 이 값을 그대로 업로드에 싣는다.
+    const mimeType = file.type || guessMimeType(listed.filename);
+    if (RECODE_TO_JPEG.includes(mimeType)) return await asJpeg(uri, listed.filename);
+
+    return { base64: await file.base64(), mimeType, filename: listed.filename };
   } catch {
     return null;
   }
+}
+
+/**
+ * HEIC 한 장을 JPEG 로 바꿔서 돌려준다. 실패하면 `null` — 화면은 "그 사진을 못 읽었어요" 로 간다.
+ *
+ * 🚨 **크기는 건드리지 않는다.** 형식만 맞추는 것이지 줄이는 것이 아니다.
+ * 🚨 `saveAsync()` 가 캐시에 남기는 복사본은 바로 지운다 (`makeThumbnail` 과 같은 이유 · §2).
+ */
+async function asJpeg(uri: string, filename: string): Promise<NativeOriginalPhoto | null> {
+  const image = await ImageManipulator.manipulate(uri).renderAsync();
+  const saved = await image.saveAsync({
+    format: SaveFormat.JPEG,
+    compress: JPEG_QUALITY,
+    base64: true,
+  });
+
+  deleteQuietly(saved.uri);
+  if (!saved.base64) return null;
+
+  return { base64: saved.base64, mimeType: "image/jpeg", filename: toJpegName(filename) };
+}
+
+/** `알림장.HEIC` → `알림장.jpg`. 확장자가 없으면 붙인다. */
+function toJpegName(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return `${dot > 0 ? filename.slice(0, dot) : filename}.jpg`;
 }
 
 /**

@@ -83,6 +83,13 @@ app.json                     Expo 설정 (name · scheme · bundle id · 권한 
   여기에 안내 화면을 만들면 화면이 두 벌이 된다 (§1).
 - 🚨 **원본을 줄이지 않는다.** 이 사진으로 알림장 글자를 읽는다. "앨범에서 고르기" 는 원본을 그대로 넘기므로,
   여기만 줄이면 **같은 사진인데 경로에 따라 분석 결과가 달라진다.**
+  ⚠️ **예외는 HEIC 하나이고, 그 이유도 같은 규칙이다** (#144 리뷰). iOS 의 `<input type="file">` 은 HEIC 를
+  JPEG 로 바꿔서 주기 때문에, 여기만 원본을 고집하면 두 경로가 **서로 다른 형식**을 준다. 그래서 HEIC/HEIF
+  일 때만 JPEG 로 맞춘다 — 크기는 안 건드린다. Android 는 지금도 같아서 이 길을 안 지난다.
+- 🚨 **웹이 보낸 메시지는 보낸 쪽 주소부터 본다** (`App.tsx` 의 `handleMessage`). 여기가 사진 원본이 기기 밖으로
+  나가는 유일한 문이라, 탐색 제한(`onShouldStartLoadWithRequest`) 한 겹에만 기대지 않는다. 그 `url` 은 보낸
+  **프레임** 기준이라(iOS `frameInfo.request.URL` · Android `WebMessageListener` 의 `sourceOrigin`)
+  크로스 오리진 iframe 이 부르는 것까지 막힌다.
 - 🚨 **고른 사진의 주소를 `getAssetInfoAsync(id)` 로 다시 묻지 않는다.** 그 함수는 EXIF 를 열기 때문에
   Android 에서 `ACCESS_MEDIA_LOCATION`(사진이 **찍힌 장소**)을 요구하고, 없으면 호출 자체가 거절된다.
   이 앱은 그 권한을 받을 이유가 없으므로, 목록을 만들 때 쥐고 있던 주소를 셸이 기억해 뒀다가 쓴다.
