@@ -143,6 +143,11 @@ function HomeScreen() {
       setRunId(res.run_id);
       run.start(res.run_id);
     },
+    // 🚨 **맥락을 못 찾았으면 질문을 놓는다** (#175). 들고 있으면 다음 한 줄에도 같은 `reply_to`
+    //    가 실려서 몇 번을 보내도 같은 400 이다. 놓으면 본문이 바뀌어 새 키가 저절로 나간다.
+    onError: (error) => {
+      if (isApiError(error, "reply_context_unavailable")) clearQuestion(childId);
+    },
   });
 
   // 🚨 실패해도 입력창에 원문이 남는 방법은 **지우지 않는 것**이다 (apps/web/CLAUDE.md §3).
@@ -262,6 +267,7 @@ function HomeScreen() {
           {submit.isError ? (
             <SubmitErrorCard
               error={submit.error}
+              question={submit.variables?.text ?? null}
               onRetry={() => submit.mutate(submit.variables ?? null)}
             />
           ) : null}
@@ -353,14 +359,40 @@ function keyPayload(body: InputRequest): string {
  *
  * 🚨 **문구는 서버 것을 그대로 쓴다.** 하루 몇 번인지는 서버 설정값이라 바뀐다 (#147) — 화면이
  *    숫자를 따로 적으면 그날부터 둘이 어긋나고, 틀린 쪽은 언제나 화면이다.
+ *
+ * 🚨 **`reply_context_unavailable` 에도 "다시 시도" 를 두지 않는다** (#175). 서버가 앞 이야기를
+ *    놓쳤으니 같은 답은 몇 번을 보내도 같은 400 이다. 대신 무엇을 물었는지 이 카드가 대신 들고
+ *    있는다 — 질문 카드는 이미 놓았고(`onError`), 입력창의 "3일 전부터" 만으로는 보호자도
+ *    무엇에 대한 답이었는지 다시 적을 수 없다.
+ *    🚨 **"다 다시 적어 주세요" 라고 하지 않는다.** 앞서 저장된 이야기까지 다시 적으면 그 조각이
+ *    두 번 저장된다 (`answerQuestion` 과 같은 이유 · #158).
  */
-function SubmitErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+function SubmitErrorCard({
+  error,
+  question,
+  onRetry,
+}: {
+  error: unknown;
+  /** 이 한 줄이 답하던 질문. 답이 아니었으면 `null`. */
+  question: string | null;
+  onRetry: () => void;
+}) {
   const limited = isApiError(error, "daily_input_limit");
+  const lostContext = isApiError(error, "reply_context_unavailable");
 
   return (
     <CardFailed>
       <p>{error instanceof Error ? error.message : "보내지 못했어요."}</p>
-      {limited ? (
+      {lostContext ? (
+        <>
+          {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
+          {question ? <p className="text-body-sm text-ink mt-2">{question}</p> : null}
+          <p className="text-caption text-ink-subtle mt-2">
+            적어주신 답은 입력창에 그대로 있어요. 무엇에 대한 답인지 함께 적어 보내 주세요. 앞서
+            저장된 이야기는 다시 적지 않아도 돼요.
+          </p>
+        </>
+      ) : limited ? (
         // 🚨 원문은 지우지 않는다 — 내일 이어서 보낼 한 줄이다 (`closeRun` 과 같은 규칙).
         <p className="text-caption text-ink-subtle mt-2">
           적어주신 말은 입력창에 그대로 남겨뒀어요.

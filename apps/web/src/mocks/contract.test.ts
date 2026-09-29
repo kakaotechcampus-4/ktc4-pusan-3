@@ -442,6 +442,29 @@ describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", ()
     }
   });
 
+  it("맥락을 놓친 400 은 같은 키로 다시 보내도 계속 400 이다 — 다시 시도로 풀리지 않는다", async () => {
+    setScenario("reply_unavailable");
+    try {
+      const asked = await askedRun();
+      const key = newIdempotencyKey();
+
+      for (const attempt of [1, 2]) {
+        const failure = await failureOf(answerTo(asked, "지어낸 답", { key }));
+        expect(isApiError(failure, "reply_context_unavailable"), `${attempt}번째 시도`).toBe(true);
+      }
+
+      // 🚨 질문을 놓고 새 입력으로 보내면 받는다 — 화면이 가는 길이 이것이다.
+      const { run_id } = await api.post<{ run_id: string }>(
+        idempotentPath.input("c1"),
+        { text: "지어낸 한 줄과 답", source: "home_input" },
+        { idempotencyKey: newIdempotencyKey() },
+      );
+      expect(submittedInput(run_id)?.replyTo).toBeUndefined();
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("다른 아이의 질문에는 답할 수 없다", async () => {
     setScenario("note_question");
     try {

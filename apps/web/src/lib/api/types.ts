@@ -286,7 +286,7 @@ export interface HomeResponse {
 export interface CreateInputRequest {
   text: string;
   source: "home_input" | "photo" | (string & {});
-  /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 계약 확정 전). */
+  /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
   reply_to?: string;
 }
 

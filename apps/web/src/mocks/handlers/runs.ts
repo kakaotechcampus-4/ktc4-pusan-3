@@ -180,7 +180,11 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    (`apps/api/app/agents/memory/agent.py` — `final_message`), 화면에 자리가 없으면
    *    **내용 없는 "다 됐어요"** 가 뜬다. 그게 #141 이 시작된 이유다.
    */
-  if (scenario === "note_question" || scenario === "reply_failed") {
+  if (
+    scenario === "note_question" ||
+    scenario === "reply_failed" ||
+    scenario === "reply_unavailable"
+  ) {
     if (input) pendingReplies.set(runId, input.childId);
     yield frame("note", { text: NOTE_QUESTION, kind: "question" });
     await sleep(300);
@@ -277,7 +281,11 @@ export const runHandlers = [
       // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
       //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
       //    때문이다 (#175 리뷰에서 서버에도 이 순서를 요청했다).
-      if (body.reply_to !== undefined && pendingReplies.get(body.reply_to) !== childId) {
+      // `reply_unavailable` 은 방금 물었어도 못 찾는다 — 15분 만료 · 서버 재시작을 흉내 낸다.
+      if (
+        body.reply_to !== undefined &&
+        (currentScenario() === "reply_unavailable" || pendingReplies.get(body.reply_to) !== childId)
+      ) {
         return replyUnavailable();
       }
 
