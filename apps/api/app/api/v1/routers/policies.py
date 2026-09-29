@@ -27,8 +27,8 @@ async def list_policies(session: SessionDep) -> list[PolicyResponse]:
         PolicyResponse(
             scope=scope,
             version=row.version,
-            label=info.label,
-            legal_basis=info.legal_basis,
+            label=row.label,
+            legal_basis=row.legal_basis,
             required=info.required,
             sensitive=info.sensitive,
             content=row.content,

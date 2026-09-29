@@ -19,15 +19,19 @@ async def register_version(
     *,
     scope: ConsentScope,
     version: str,
+    label: str,
     content: str,
     content_hash: str,
     effective_at: datetime,
+    legal_basis: str | None = None,
     ended_at: datetime | None = None,
 ) -> PolicyVersion:
     """정책 버전 1건을 등록한다. `scope`+`version` 조합은 DB unique 제약으로 유일해야 한다."""
     policy_version = PolicyVersion(
         scope=scope,
         version=version,
+        label=label,
+        legal_basis=legal_basis,
         content=content,
         content_hash=content_hash,
         effective_at=effective_at,

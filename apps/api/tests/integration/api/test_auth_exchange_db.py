@@ -281,6 +281,7 @@ async def register_newer_version(session, scope: ConsentScope, version: str = "d
         PolicyVersion(
             scope=scope,
             version=version,
+            label="새 약관",
             content="새 약관",
             content_hash="new-hash",
             effective_at=datetime(2026, 9, 1, tzinfo=UTC),

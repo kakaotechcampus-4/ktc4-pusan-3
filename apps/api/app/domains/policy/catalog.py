@@ -1,11 +1,15 @@
-"""동의 종류(scope)마다 정해지는 표시 정보 — GET /policies 가 본문과 함께 내려준다 (#91).
+"""동의 종류(scope)마다 정해지는 규칙 — GET /policies 가 본문과 함께 내려준다 (#91).
 
-label · legal_basis · required · sensitive 는 버전이 아니라 scope 로 정해지는 값이라
-`policy_version` 컬럼으로 두지 않는다. 프론트에도 같은 값을 적어두면 두 곳이 어긋나므로
-여기 한 곳에만 두고 서버가 채워 준다.
+required · sensitive 는 서버가 지키는 **규칙**이라 여기(코드)에 둔다. 가입 검사가 이 값과 같은
+기준으로 막아야 하고, 규칙은 옛 버전이 아니라 지금 값이 맞다. 프론트에도 같은 값을 적어두면
+두 곳이 어긋나므로 여기 한 곳에만 두고 서버가 채워 준다.
 
-값은 동의 화면(`apps/web/src/lib/consent.ts` CONSENT_ITEMS)의 label · legalBasis ·
-required · sensitive 를 옮긴 것이다. 화면이 이 응답을 그리게 되면(#90) 그쪽 상수를 지운다.
+제목(label) · 법적 근거(legal_basis)는 여기 없다 — 보호자가 **본 글**이라 본문처럼 버전마다
+`policy_version` 에 저장한다 (#168 리뷰). 코드에 두면 제목을 바꾸는 순간 옛 버전에 동의한
+기록에도 새 제목이 소급 적용된다.
+
+⚠️ 동의 화면(`apps/web/src/lib/consent.ts` CONSENT_ITEMS)에도 같은 값이 아직 적혀 있다. 화면이 이
+   응답을 그리게 되면(#90) 그쪽 상수를 지운다 — 그때부터 제목 · 근거의 출처는 policy_version 하나다.
 
 🚨 순서가 화면 순서다. 계정 동의 → 아이 동의, 민감정보(child_health)는 마지막이다.
 🚨 여기 없는 scope 는 약관이 등록돼 있어도 응답에 나가지 않는다. 동의를 받지 않는
@@ -19,10 +23,6 @@ from app.domains.consent.models import ConsentScope
 
 @dataclass(frozen=True)
 class ScopeInfo:
-    label: str
-    """법적 표기. 동의 화면의 체크박스 라벨이고 전문 시트의 제목이다."""
-    legal_basis: str | None
-    """화면에 그대로 보여주는 근거 조문. 없으면 보여주지 않는다."""
     required: bool
     """없으면 서비스가 성립하지 않는가. 제출을 막는 것은 이 값뿐이다."""
     sensitive: bool
@@ -30,29 +30,9 @@ class ScopeInfo:
 
 
 SCOPE_CATALOG: dict[ConsentScope, ScopeInfo] = {
-    ConsentScope.SERVICE_TERMS: ScopeInfo(
-        label="서비스 이용약관",
-        legal_basis=None,
-        required=True,
-        sensitive=False,
-    ),
-    ConsentScope.PRIVACY_ACCOUNT: ScopeInfo(
-        label="개인정보 수집·이용 (보호자 본인)",
-        legal_basis=None,
-        required=True,
-        sensitive=False,
-    ),
-    ConsentScope.CHILD_BASIC: ScopeInfo(
-        label="개인정보 수집·이용 (아이 기본정보)",
-        legal_basis="개인정보보호법 제22조의2 (만 14세 미만 아동의 법정대리인 동의)",
-        required=True,
-        sensitive=False,
-    ),
-    ConsentScope.CHILD_HEALTH: ScopeInfo(
-        label="민감정보 처리 (아이 건강·알레르기)",
-        legal_basis="개인정보보호법 제23조 (민감정보의 처리, 별도 동의)",
-        required=True,
-        sensitive=True,
-    ),
+    ConsentScope.SERVICE_TERMS: ScopeInfo(required=True, sensitive=False),
+    ConsentScope.PRIVACY_ACCOUNT: ScopeInfo(required=True, sensitive=False),
+    ConsentScope.CHILD_BASIC: ScopeInfo(required=True, sensitive=False),
+    ConsentScope.CHILD_HEALTH: ScopeInfo(required=True, sensitive=True),
 }
 """dict 는 넣은 순서를 지킨다 — 이 순서가 응답 순서다."""
