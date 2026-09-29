@@ -5,7 +5,7 @@ import type { Agent, Observation } from "@/lib/api/types";
 import { healthObservation, observations } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
-import { withIdempotency } from "./idempotency";
+import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
 
 /**
@@ -22,11 +22,30 @@ import { isPhotoRun, photoRunScript } from "./photos";
  * 있어야 해서다 (#158 리뷰). 서버가 그 필드로 이전 run 을 찾을 예정이라, 목은 받아 두기만 한다.
  */
 interface SubmittedInput {
+  childId: string;
   text: string;
   replyTo?: string;
 }
 
 const inputByRun = new Map<string, SubmittedInput>();
+
+/**
+ * 되물은 run → 그 질문이 어느 아이 것인가. 서버의 pending store 를 흉내 낸다
+ * (`apps/api/app/api/runs/pending_reply.py` · #175).
+ *
+ * - 질문을 내보내기 **직전에** 넣는다 — 서버도 `done` 앞에 넣어서, `note` 를 받자마자 보낸 답도 찾는다
+ * - 답이 오면 **한 번만** 꺼낸다 — 같은 질문에 두 번 답하면 관찰이 두 행이 된다
+ * - 이어받기 run 이 `failed` 로 끝나면 되돌려 둔다 — 같은 답으로 다시 시도할 수 있어야 한다
+ * - 15분 만료 · 재시작은 흉내 내지 않는다. 그 400 은 `reply_unavailable` 시나리오가 만든다
+ */
+const pendingReplies = new Map<string, string>();
+
+/**
+ * `reply_failed` 에서 이미 한 번 실패시킨 질문. 🚨 **한 번만 실패시킨다** — 늘 실패하면
+ * "다시 시도가 같은 `reply_to` 를 실었는가" 를 화면에서 볼 수 없다 (실으면 저장되고,
+ * 빠뜨리면 맥락 없는 새 입력이라 질문이 또 뜬다).
+ */
+const failedOnce = new Set<string>();
 
 /** 테스트가 "답이 어느 run 을 가리키는가" 를 확인하는 자리. */
 export function submittedInput(runId: string): SubmittedInput | undefined {
@@ -36,6 +55,17 @@ export function submittedInput(runId: string): SubmittedInput | undefined {
 /** 목은 프로세스 수명만큼 산다 — 테스트 사이에 비운다 (`src/test/setup.ts`). */
 export function resetSubmittedInputs(): void {
   inputByRun.clear();
+  pendingReplies.clear();
+  failedOnce.clear();
+}
+
+/** 없는 run · 다른 아이 · 이미 답한 질문을 하나로 합친다 — 서버와 같은 한 코드다 (#175). */
+function replyUnavailable() {
+  return apiError(
+    400,
+    "reply_context_unavailable",
+    "이전 질문을 이어서 확인할 수 없어요. 내용을 한 번만 다시 적어 주세요.",
+  );
 }
 
 function frame(event: string, data: unknown): Uint8Array {
@@ -59,16 +89,50 @@ const SAFETY_GUIDANCE = {
   deeplink: "settings/health-safety",
 } as const;
 
+/**
+ * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
+ * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계도 짧고 추천 제안(`offer`)도 없다.
+ */
+async function* continuationScript(
+  runId: string,
+  input: SubmittedInput & { replyTo: string },
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 1, total: 2, label: "앞 이야기에 답을 이어 붙이고 있어요" });
+  await sleep(600);
+
+  if (currentScenario() === "reply_failed" && !failedOnce.has(input.replyTo)) {
+    failedOnce.add(input.replyTo);
+    // 🚨 `failed` 보다 **먼저** 되돌린다. 화면이 받자마자 다시 시도해도 맥락과 키가 이미 풀려 있다.
+    pendingReplies.set(input.replyTo, input.childId);
+    forgetRun(runId);
+    yield frame("failed", { reason: "internal_error", raw_text: input.text });
+    return;
+  }
+
+  yield frame("step", { index: 2, total: 2, label: "기억을 정리하고 있어요" });
+  await sleep(500);
+  yield frame("saved", { observations: [healthObservation] });
+  await sleep(300);
+  yield frame("done", { run_id: runId, model_calls: 1 });
+}
+
 /** 실제 파이프라인 순서다 — saved 는 promoted 보다 항상 먼저 온다 (CLAUDE.md §4). */
 async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   const scenario = currentScenario();
-  const rawText = inputByRun.get(runId)?.text ?? "";
+  const input = inputByRun.get(runId);
+  const rawText = input?.text ?? "";
+
+  if (input?.replyTo !== undefined) {
+    yield* continuationScript(runId, { ...input, replyTo: input.replyTo });
+    return;
+  }
 
   yield frame("step", { index: 1, total: 3, label: "무슨 말인지 보고 있어요" });
   await sleep(600);
 
   if (scenario === "failed") {
     // 여기서 스트림이 끝난다. 저장된 게 없으니 다음 칸으로 전파하지 않는다.
+    forgetRun(runId);
     yield frame("failed", { reason: "unparsable", raw_text: rawText });
     return;
   }
@@ -116,7 +180,8 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    (`apps/api/app/agents/memory/agent.py` — `final_message`), 화면에 자리가 없으면
    *    **내용 없는 "다 됐어요"** 가 뜬다. 그게 #141 이 시작된 이유다.
    */
-  if (scenario === "note_question") {
+  if (scenario === "note_question" || scenario === "reply_failed") {
+    if (input) pendingReplies.set(runId, input.childId);
     yield frame("note", { text: NOTE_QUESTION, kind: "question" });
     await sleep(300);
     yield frame("done", { run_id: runId, model_calls: 1 });
@@ -137,6 +202,7 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     await sleep(500);
     yield frame("saved", { observations: [observations[0]] });
     await sleep(300);
+    if (input) pendingReplies.set(runId, input.childId);
     yield frame("note", { text: NOTE_QUESTION, kind: "question" });
     await sleep(300);
     yield frame("done", { run_id: runId, model_calls: 1 });
@@ -203,8 +269,17 @@ export const runHandlers = [
   // 🚨 키가 없으면 400 이다 — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는 지점.
   http.post(
     url("/children/:cid/inputs"),
-    withIdempotency(async ({ request }) => {
+    withIdempotency(async ({ request, params }) => {
       await networkDelay();
+      const childId = String(params.cid);
+      const body = (await request.json()) as { text: string; reply_to?: string };
+
+      // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
+      //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
+      //    때문이다 (#175 리뷰에서 서버에도 이 순서를 요청했다).
+      if (body.reply_to !== undefined && pendingReplies.get(body.reply_to) !== childId) {
+        return replyUnavailable();
+      }
 
       /**
        * 🚨 **재시도해도 계속 429 다** (#147). 래퍼가 4xx 를 저장하지 않아서(`isReplayable`)
@@ -219,11 +294,12 @@ export const runHandlers = [
         );
       }
 
-      const body = (await request.json()) as { text: string; reply_to?: string };
+      if (body.reply_to !== undefined) pendingReplies.delete(body.reply_to);
+
       const runId = `r_${Date.now()}`;
-      // 🚨 `reply_to` 는 그대로 받아 둔다 — 서버가 이전 run 의 원문·질문을 찾는 자리이고 (#158),
-      //    목은 "화면이 원문 대신 이 값을 보냈는가" 를 테스트가 확인할 수 있게만 한다.
-      inputByRun.set(runId, { text: body.text, replyTo: body.reply_to });
+      // 🚨 `reply_to` 는 그대로 받아 둔다 — 이어받기 run 을 가르는 값이고 (#175),
+      //    테스트가 "화면이 원문 대신 이 값을 보냈는가" 를 확인하는 자리다.
+      inputByRun.set(runId, { childId, text: body.text, replyTo: body.reply_to });
       // 즉시 202 로 run_id 만 준다. 결과는 전부 SSE 로 흐른다.
       return HttpResponse.json({ run_id: runId }, { status: 202 });
     }),

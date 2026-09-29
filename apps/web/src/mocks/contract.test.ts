@@ -344,25 +344,22 @@ describe("⑳ 안내는 실패가 아니다", () => {
   });
 
   it("답은 원문 대신 `reply_to` 로 이전 run 을 가리킨다", async () => {
-    const first = await api.post<{ run_id: string }>(
-      idempotentPath.input("c1"),
-      { text: "지어낸 한 줄", source: "home_input" },
-      { idempotencyKey: newIdempotencyKey() },
-    );
+    setScenario("note_question");
+    try {
+      const first = await askedRun();
 
-    // 🚨 답에는 **앞 문장이 들어 있지 않다.** 넣으면 이미 저장된 조각이 다시 저장된다 (#158).
-    const answer = "지어낸 답";
-    const second = await api.post<{ run_id: string }>(
-      idempotentPath.input("c1"),
-      { text: answer, source: "home_input", reply_to: first.run_id },
-      { idempotencyKey: newIdempotencyKey() },
-    );
+      // 🚨 답에는 **앞 문장이 들어 있지 않다.** 넣으면 이미 저장된 조각이 다시 저장된다 (#158).
+      const answer = "지어낸 답";
+      const second = await answerTo(first, answer);
 
-    const recorded = submittedInput(second.run_id);
-    expect(recorded?.text).toBe(answer);
-    expect(recorded?.replyTo).toBe(first.run_id);
-    // 앞 run 은 답을 가리키지 않는다 — 참조는 한 방향이다.
-    expect(submittedInput(first.run_id)?.replyTo).toBeUndefined();
+      const recorded = submittedInput(second);
+      expect(recorded?.text).toBe(answer);
+      expect(recorded?.replyTo).toBe(first);
+      // 앞 run 은 답을 가리키지 않는다 — 참조는 한 방향이다.
+      expect(submittedInput(first)?.replyTo).toBeUndefined();
+    } finally {
+      setScenario("default");
+    }
   });
 
   it("되묻기만 있는 run 도 done 으로 끝난다 — 화면이 그릴 것은 질문 하나다", async () => {
@@ -380,6 +377,102 @@ describe("⑳ 안내는 실패가 아니다", () => {
       const note = events.find((e) => e.type === "note")?.data as NoteEvent;
       expect(note.kind).toBe("question");
       expect(note.text.length).toBeGreaterThan(0);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/** 되묻는 run 을 하나 끝까지 받는다. 🚨 스트림까지 받아야 목이 그 질문을 맡아 둔다 (서버와 같다). */
+async function askedRun(childId = "c1"): Promise<string> {
+  const { run_id } = await api.post<{ run_id: string }>(
+    idempotentPath.input(childId),
+    { text: "지어낸 한 줄", source: "home_input" },
+    { idempotencyKey: newIdempotencyKey() },
+  );
+  for await (const event of streamRunEvents(run_id)) void event;
+  return run_id;
+}
+
+/** 그 run 의 질문에 답한다. 202 가 아니면 던진다. */
+async function answerTo(
+  replyTo: string,
+  text = "지어낸 답",
+  { childId = "c1", key = newIdempotencyKey() } = {},
+): Promise<string> {
+  const { run_id } = await api.post<{ run_id: string }>(
+    idempotentPath.input(childId),
+    { text, source: "home_input", reply_to: replyTo },
+    { idempotencyKey: key },
+  );
+  return run_id;
+}
+
+async function eventTypesOf(runId: string): Promise<string[]> {
+  const types: string[] = [];
+  for await (const event of streamRunEvents(runId)) types.push(event.type);
+  return types;
+}
+
+function failureOf(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(() => null).catch((e: unknown) => e);
+}
+
+describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", () => {
+  it("되물은 적 없는 run 에 답하면 400 reply_context_unavailable 이다", async () => {
+    // default 대본은 되묻지 않는다 — 가리킬 질문이 없다.
+    const plain = await askedRun();
+    const failure = await failureOf(answerTo(plain));
+
+    expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("같은 질문에 두 번 답하면 두 번째는 400 이다 — 관찰이 두 행이 되지 않게", async () => {
+    setScenario("note_question");
+    try {
+      const asked = await askedRun();
+      await answerTo(asked);
+
+      // 🚨 새 키다 — 같은 키면 재생이라 400 이 아니라 처음 run 이 돌아온다 (아래 재시도 테스트).
+      const failure = await failureOf(answerTo(asked, "또 다른 답"));
+      expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("다른 아이의 질문에는 답할 수 없다", async () => {
+    setScenario("note_question");
+    try {
+      const asked = await askedRun("c1");
+      const failure = await failureOf(answerTo(asked, "지어낸 답", { childId: "c2" }));
+      expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("🚨 이어받기 run 이 실패하면 같은 키 · 같은 `reply_to` 로 다시 보내 저장할 수 있다", async () => {
+    // 화면의 "다시 시도" 가 `reply_to` 를 잃으면 안 되는 이유다. 서버는 실패한 run 의 맥락을
+    // 원래 자리에 되돌려 두고 키도 놓아준다 (`runner.py`) — 같은 요청이 새 run 으로 다시 돈다.
+    setScenario("reply_failed");
+    try {
+      const asked = await askedRun();
+      const key = newIdempotencyKey();
+
+      const firstTry = await answerTo(asked, "지어낸 답", { key });
+      expect((await eventTypesOf(firstTry)).at(-1)).toBe("failed");
+
+      const retry = await answerTo(asked, "지어낸 답", { key });
+      expect(retry).not.toBe(firstTry);
+      expect(submittedInput(retry)?.replyTo).toBe(asked);
+
+      const types = await eventTypesOf(retry);
+      expect(types).toContain("saved");
+      // 🚨 이어받은 답은 또 묻지 않는다 — `reply_to` 가 빠졌다면 새 입력이라 질문이 다시 떴다.
+      expect(types).not.toContain("note");
+      expect(types.at(-1)).toBe("done");
     } finally {
       setScenario("default");
     }

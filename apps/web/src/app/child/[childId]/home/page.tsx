@@ -30,7 +30,11 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
 import { isRunConfirmed, useRunStream } from "@/hooks/use-run-stream";
 import { useDraftStore, useDraftText } from "@/stores/draft";
-import { usePendingQuestion, usePendingQuestionStore } from "@/stores/pending-question";
+import {
+  usePendingQuestion,
+  usePendingQuestionStore,
+  type PendingQuestion,
+} from "@/stores/pending-question";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import {
   api,
@@ -109,14 +113,20 @@ function HomeScreen() {
    */
   const idempotencyKey = useIdempotencyKey();
 
+  /**
+   * 변수는 **이 한 줄이 답하는 질문**이다 (없으면 `null`).
+   *
+   * 🚨 **다시 시도는 `submit.variables` 를 그대로 넘긴다.** 그 순간의 스토어가 아니다 — 보낸 요청과
+   *    다시 보내는 요청이 같아야 같은 키가 나가고, 답이 어느 질문에 대한 것인지도 그대로 간다.
+   */
   const submit = useMutation({
-    mutationFn: () => {
+    mutationFn: (answering: PendingQuestion | null) => {
       const body: InputRequest = {
         text: text.trim(),
         source: "home_input",
         // 🚨 되묻기에 답하는 중이면 **어느 run 에 대한 답인지**를 싣는다 (#158 리뷰).
         //    원문을 다시 보내지 않는 이유는 `stores/pending-question.ts` 에 있다.
-        ...(pendingQuestion ? { reply_to: pendingQuestion.runId } : {}),
+        ...(answering ? { reply_to: answering.runId } : {}),
       };
       // 🚨 키를 **본문에 묶는다.** 같은 본문의 재시도는 같은 키(중복 저장 방지), 고쳐 쓴 본문은
       //    새 키다. 서버가 처리했는데 응답만 유실되면 화면은 실패로 보이고 보호자는 한 줄을
@@ -125,11 +135,13 @@ function HomeScreen() {
       //    같은 답을 다른 질문에 보내면 "같은 키 · 다른 본문" 이라 422 다 — `reply_to` 도 함께 묶는다.
       return submitInput(childId, body, idempotencyKey.current(keyPayload(body)));
     },
+    // 🚨 **202 에서 질문을 지우지 않는다** (#175 리뷰). 이어받기 run 이 `failed` 로 끝나면 서버는
+    //    맥락을 원래 `reply_to` 자리에 되돌려 두는데, 여기서 지우면 "다시 시도" · "고쳐 쓰기" 뒤의
+    //    요청에 `reply_to` 가 빠져서 "3일 전부터" 만 맥락 없는 새 입력으로 나간다.
+    //    질문이 끝나는 때는 서버가 run 을 끝까지 처리했다고 말한 때다 (`closeRun`).
     onSuccess: (res) => {
       setRunId(res.run_id);
       run.start(res.run_id);
-      // 되묻기에 답하러 왔든 다른 이야기를 적었든, 이 한 줄로 그 질문은 끝났다.
-      clearQuestion(childId);
     },
   });
 
@@ -152,12 +164,15 @@ function HomeScreen() {
     //    (`current(body.text)`) 저절로 새 키가 나간다.
     idempotencyKey.rotate();
     clearDraft(childId);
+    // 되묻기에 답하러 왔든 다른 이야기를 적었든, 서버가 이 한 줄을 끝까지 처리했으니 그 질문은 끝났다.
+    // 🚨 이 run 이 또 되물었으면 `answerQuestion` 이 **이 뒤에** 새 질문을 넣는다.
+    clearQuestion(childId);
   }
 
   function retry() {
     run.reset();
-    // 같은 입력의 재시도다. Idempotency-Key 를 유지한 채 다시 보낸다.
-    submit.mutate();
+    // 같은 입력의 재시도다. Idempotency-Key 를 유지한 채 다시 보낸다 — 답하던 질문도 같이.
+    submit.mutate(submit.variables ?? null);
   }
 
   /**
@@ -176,8 +191,10 @@ function HomeScreen() {
   function answerQuestion(question: string) {
     // 🚨 `closeRun()` 이 지우기 전에 붙든다.
     const answeringRunId = runId;
-    if (answeringRunId) setQuestion(childId, { text: question, runId: answeringRunId });
+    // 🚨 **`closeRun()` 다음에 넣는다.** closeRun 이 앞 질문을 지우므로, 먼저 넣으면 방금 받은
+    //    질문까지 지워진다 — 답을 이어받은 run 이 또 되묻는 경우다.
     closeRun();
+    if (answeringRunId) setQuestion(childId, { text: question, runId: answeringRunId });
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
@@ -243,12 +260,15 @@ function HomeScreen() {
             </Card>
           ) : null}
           {submit.isError ? (
-            <SubmitErrorCard error={submit.error} onRetry={() => submit.mutate()} />
+            <SubmitErrorCard
+              error={submit.error}
+              onRetry={() => submit.mutate(submit.variables ?? null)}
+            />
           ) : null}
           <HomeComposer
             value={text}
             onChange={setText}
-            onSubmit={() => submit.mutate()}
+            onSubmit={() => submit.mutate(pendingQuestion)}
             prompts={home.data?.agent_prompts ?? []}
             onPickPrompt={(agent) => goToSuggestions([agent])}
             onPickPhoto={() => setPhotoSheetOpen(true)}
