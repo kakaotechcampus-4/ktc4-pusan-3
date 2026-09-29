@@ -439,9 +439,15 @@ CASES: list[EvalCase] = [
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
         seed=_seed_apple,
-        required_tools={"query_observation_food": 1, "update_observation_food": 1},
-        forbidden_tools={"create_observation_food"},
-        checks=(("음식 기록이 지워졌다", lambda s: s.rows("food") == []),),
+        # 조회 결과가 한 건이어도 바로 지우지 않는다. 지운 기록은 보호자가 되살릴 수 없어서
+        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 것은 이어받기 경로의 몫이다
+        required_tools={"query_observation_food": 1},
+        forbidden_tools={"create_observation_food", "update_observation_food"},
+        expect_clarification=True,
+        checks=(
+            ("아직 지우지 않았다", lambda s: len(s.rows("food")) == 1),
+            ("지울 기록을 짚어 물었다", lambda s: s.said(("사과",))),
+        ),
     ),
     EvalCase(
         "T11",

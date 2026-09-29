@@ -55,6 +55,10 @@ pipeline 을 거치는 경로에서는 `pipeline.handle_input()` 이 Supervisor 
 update 가 status 로 여는 값은 `deleted` 하나다. `stand_alone` · `inactive` 는 Correction 결과라 모델에게
 열지 않는다. 지우는 호출에 다른 필드 수정이나 `clear` 를 섞으면 스키마가 거절한다.
 
+관찰은 조회 결과가 한 건이어도 바로 지우지 않는다. "어제 사과 먹은 기록을 삭제할까요?" 처럼 찾은 기록을
+짚어 한 번 묻고, 보호자가 지우라고 답한 다음 입력에서 지운다. 조회 결과가 한 건이라는 것과 보호자가 그 한 건을
+지우려 했다는 것은 다른 문제이고, 지운 관찰은 보호자가 되살릴 경로가 없다 (#177 리뷰). 일정 삭제는 D10 을 따른다.
+
 22개를 한꺼번에 열지 않는다. `bundles.py` 가 작업 종류에 따라 두 묶음으로 나눈다 —
 기록 기본 묶음 `RECORD_BASE` 8개는 항상 열고, 수정·삭제 묶음 `LOOKUP_EDIT` 14개는 Supervisor 가
 `lookup_edit` 조각을 짚었을 때만 더한다. Supervisor 없이 `run()` 을 직접 부르면 22개를 다 연다.
