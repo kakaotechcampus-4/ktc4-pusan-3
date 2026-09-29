@@ -39,6 +39,7 @@ from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
 from app.domains.consent.models import ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
+    REQUIRED_ACCOUNT_SCOPES,
     grant_account_scope,
     missing_account_scopes,
 )
@@ -352,7 +353,7 @@ async def signup(
     response.headers["Cache-Control"] = "no-store"
 
     granted = {consent.scope for consent in body.consents}
-    missing = [scope for scope in ACCOUNT_SCOPES if scope not in granted]
+    missing = [scope for scope in REQUIRED_ACCOUNT_SCOPES if scope not in granted]
     if missing:
         # 🚨 대기표를 소비하기 전에 본다. 필수 동의를 빼먹는 것은 공격이 아니라 사용자의
         #    선택이라, 여기서 소비하면 체크박스 하나 놓친 사람이 로그인부터 다시 해야
@@ -405,7 +406,7 @@ async def signup(
         # 테이블에 살고 둘 중 하나만 차 있으므로 여기서 갈린다.
         raise ApiError(401, "invalid_handoff", "로그인을 다시 시도해 주세요")
 
-    parent = await create_parent(session)
+    parent = await create_parent(session, nickname=body.nickname)
     await create_identity(
         session,
         parent_id=parent.id,
@@ -443,8 +444,8 @@ async def _issue_session(
     """
     parent = await find_parent(session, parent_id)
     if parent is None or parent.deleted_at is not None:
-        # A-19 · §10-1. 탈퇴 유예기간 중 재로그인을 어떻게 다룰지 정해지기 전까지
-        # 404 로 막아둔다. 세션을 내주지 않는다.
+        # A-19 · §10-1. 탈퇴는 유예 없이 즉시 삭제다 (삭제 정책 정본 §9 · #167) —
+        # 되살릴 계정이 아니므로 404 로 막고 세션을 내주지 않는다.
         raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 
     token = secrets.token_urlsafe(32)
