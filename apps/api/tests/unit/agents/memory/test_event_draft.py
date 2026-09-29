@@ -25,6 +25,7 @@ update_event:
 """
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -734,6 +735,90 @@ async def test_챙김_쓰기가_성공하면_이름_초안이_실패해도_체�
     assert stored is not None and stored.is_prepared is True
 
 
+async def _no_draft(*args: Any, **kwargs: Any) -> None:
+    return None
+
+
+async def test_챙김_뒤_이름_초안이_실패하면_있었던_순서대로_알린다(
+    context: AgentContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "그 준비물이 없다" 만 받으면 모델은 챙김도 안 된 줄 안다
+    await _seed_event(context, "체육복")
+    monkeypatch.setattr(schedule, "current_draft", _no_draft)
+
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복 상의", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert result.error["message"] == schedule._ITEM_GONE_AFTER_CHECK
+
+
+async def test_챙김_뒤_준비물을_다시_못_읽어도_같은_안내다(
+    context: AgentContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 다른 보호자가 같은 순간 준비물을 지운 경우. 두 번째 조회부터 없다
+    await _seed_event(context, "체육복")
+    real_get = context.store.get_event_item
+    calls = 0
+
+    async def gone_after_first(**kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return await real_get(**kwargs) if calls == 1 else None
+
+    monkeypatch.setattr(context.store, "get_event_item", gone_after_first)
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복 상의", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error["message"] == schedule._ITEM_GONE_AFTER_CHECK
+
+
+async def test_챙김_뒤_실패는_item_id_만_담아_경고로_남긴다(
+    context: AgentContext, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 정상 흐름에서는 오지 않는 분기라 버그 추적용. 준비물 이름은 로그에 남기지 않는다
+    await _seed_event(context, "체육복")
+    monkeypatch.setattr(schedule, "current_draft", _no_draft)
+    caplog.set_level(logging.WARNING, logger="app.agents")
+
+    await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복 상의", "is_prepared": True},
+        context,
+    )
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "event_item-1" in warnings[0].getMessage()
+    assert "체육복" not in caplog.text
+
+
+async def test_이름만_바꾸다_실패하면_원래_안내_그대로다(
+    context: AgentContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 챙김을 쓰지 않았으니 "먼저 반영했다" 고 말하면 안 된다
+    await _seed_event(context, "체육복")
+    monkeypatch.setattr(schedule, "current_draft", _no_draft)
+
+    result = await execute_tool(
+        "update_event_item", {"item_id": "event_item-1", "item_name": "체육복 상의"}, context
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error["message"] == schedule._item_not_found()
+
+
 def test_create_초안은_공통_스키마로_검증된다() -> None:
     draft = _draft(op="create", items=(DraftItem(item_id=None, item_name="수건"),))
 
@@ -815,6 +900,24 @@ async def test_이름은_그대로고_챙김만_바뀌어도_응답에_챙김이
     assert stored is not None and stored.is_prepared is True
     assert context.drafts.all() == ()
     assert result.data["is_prepared"] is True
+
+
+async def test_원래_이름으로_챙김만_하면_이미_되어_있다고_알리지_않는다(
+    context: AgentContext,
+) -> None:
+    # changed=[] 는 "이미 그렇게 되어 있어요" 로 답하는 신호. 방금 체크한 것을
+    # "이미 체크돼 있었어요" 로 말하지 않게, 챙김만 한 호출과 같은 결과를 낸다
+    await _seed_event(context, "체육복")
+
+    result = await execute_tool(
+        "update_event_item",
+        {"item_id": "event_item-1", "item_name": "체육복", "is_prepared": True},
+        context,
+    )
+
+    assert result.success is True, result.error
+    assert "changed" not in result.data
+    assert result.data == {"draft": False, "item_id": "event_item-1", "is_prepared": True}
 
 
 def test_공통_스키마는_계약_밖의_키를_거부한다() -> None:

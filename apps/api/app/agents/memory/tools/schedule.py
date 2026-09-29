@@ -19,6 +19,7 @@ created_by / child_id 는 규칙이 채운다.
 알림은 등록된 일정을 기준으로 자동 설정되므로 Agent는 일정만 만들고 안내한다.
 """
 
+import logging
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -48,6 +49,8 @@ from app.agents.memory.schemas.schedule import (
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow
 
+logger = logging.getLogger(__name__)
+
 EVENT = "event"
 EVENT_ITEM = "event_item"
 
@@ -62,6 +65,10 @@ _NEEDS_START_TIME = (
 _NEEDS_END_TIME = (
     "끝나는 날짜는 있는데 끝나는 시각이 없다. ends_time에 끝나는 시각을 넣거나, "
     "모르면 보호자에게 묻는다. 끝을 비워 둘 거면 ends_on도 함께 뺀다."
+)
+_ITEM_GONE_AFTER_CHECK = (
+    "챙김 표시를 먼저 반영한 뒤 이름 초안을 만들다 준비물을 찾지 못했다. "
+    "query_event 로 준비물이 남아 있는지 확인한다."
 )
 
 
@@ -349,8 +356,20 @@ async def update_event_item(context: AgentContext, args: EventItemUpdate) -> Too
             return checked
         current = await context.store.get_event_item(item_id=args.item_id)
         if current is None:
-            return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
+            return _gone_after_check(args.item_id)
+        renamed = await _rename_event_item(context, current, args)
+        if not renamed.success:
+            return _gone_after_check(args.item_id)
+        # 이름이 그대로면 결과는 챙김만 한 호출과 같다. 이름 쪽의 changed=[] 를 내면
+        # 모델이 방금 한 체크를 "이미 되어 있었다"로 읽는다
+        return checked if renamed.data.get("changed") == [] else renamed
     return await _rename_event_item(context, current, args)
+
+
+def _gone_after_check(item_id: str) -> ToolResult:
+    """챙김을 쓴 뒤 준비물이 사라졌다. 정상 흐름에서는 오지 않아 경고로 남긴다."""
+    logger.warning("챙김 처리 뒤 준비물을 찾지 못함 item_id=%s", item_id)
+    return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _ITEM_GONE_AFTER_CHECK)
 
 
 async def _check_event_item(
