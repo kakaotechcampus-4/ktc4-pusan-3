@@ -8,7 +8,8 @@ from datetime import date, timedelta
 import pytest
 
 from app.rules.profile import (
-    DEMOTION_WINDOW_DAYS,
+    ARCHIVED_WINDOW_DAYS,
+    WRONG_COUNT_WINDOW_DAYS,
     PROMOTION_THRESHOLD,
     PROMOTION_THRESHOLD_WITH_G,
     PROMOTION_WINDOW_DAYS,
@@ -28,8 +29,11 @@ class TestPolicyConstants:
     def test_승격_윈도우는_7일(self):
         assert PROMOTION_WINDOW_DAYS == 7
 
-    def test_하강_윈도우는_21일(self):
-        assert DEMOTION_WINDOW_DAYS == 21
+    def test_archived_윈도우는_21일(self):
+        assert ARCHIVED_WINDOW_DAYS == 21
+
+    def test_wrong_집계_윈도우는_21일(self):
+        assert WRONG_COUNT_WINDOW_DAYS == 21
 
     def test_승격_기준은_3(self):
         assert PROMOTION_THRESHOLD == 3

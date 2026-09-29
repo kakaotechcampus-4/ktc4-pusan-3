@@ -17,9 +17,9 @@ from app.domains.memory.observation.models import (
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.rules.profile import (
-    DEMOTION_WINDOW_DAYS,
     PROFILE_LIMIT_PER_DOMAIN,
     PROMOTION_WINDOW_DAYS,
+    WRONG_COUNT_WINDOW_DAYS,
 )
 
 _PROMOTABLE_BY_DOMAIN = {
@@ -111,7 +111,7 @@ async def count_wrong_in_window(
 ) -> int:
     """하강 윈도우(21일) 안의 wrong correction 수 (= W)."""
     window_start = datetime.combine(
-        today - timedelta(days=DEMOTION_WINDOW_DAYS - 1), datetime.min.time(), tzinfo=_KST,
+        today - timedelta(days=WRONG_COUNT_WINDOW_DAYS - 1), datetime.min.time(), tzinfo=_KST,
     )
     stmt = (
         select(func.count())

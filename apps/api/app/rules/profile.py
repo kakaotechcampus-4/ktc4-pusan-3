@@ -16,8 +16,11 @@ from typing import Literal
 PROMOTION_WINDOW_DAYS: int = 7
 """승격 윈도우. active 관찰을 세는 최근 일수."""
 
-DEMOTION_WINDOW_DAYS: int = 21
-"""하강 윈도우. 이 기간 동안 관찰이 없으면 archived."""
+ARCHIVED_WINDOW_DAYS: int = 21
+"""archived 판정 윈도우. 이 기간 동안 관찰이 없으면 archived."""
+
+WRONG_COUNT_WINDOW_DAYS: int = 21
+"""W 집계 윈도우. wrong correction 을 세는 최근 일수."""
 
 PROMOTION_THRESHOLD: int = 3
 """G 없이 confirmed 로 올라가는 데 필요한 최소 O (W=0 기준)."""
@@ -77,13 +80,13 @@ def compute_profile_status(
 
     이슈 표기: O = obs_count, W = wrong_count, G = has_signal
 
-    1. today - last_observed_on > DEMOTION_WINDOW_DAYS  →  archived
+    1. today - last_observed_on > ARCHIVED_WINDOW_DAYS  →  archived
     2. obs_count >= PROMOTION_THRESHOLD + wrong_count  또는
        (obs_count >= PROMOTION_THRESHOLD_WITH_G + wrong_count 그리고 has_signal)  →  confirmed
     3. 그 외  →  candidate
     """
     days_since = (today - last_observed_on).days
-    if days_since > DEMOTION_WINDOW_DAYS:
+    if days_since > ARCHIVED_WINDOW_DAYS:
         return "archived"
 
     if obs_count >= PROMOTION_THRESHOLD + wrong_count:
