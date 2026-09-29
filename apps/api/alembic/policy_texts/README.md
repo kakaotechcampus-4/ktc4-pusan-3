@@ -14,9 +14,10 @@
 ## 새 버전을 만드는 순서
 
 1. `<새 버전>/<scope>.md` 원고를 넣는다 (바탕화면 원고의 `본문 시작`~`본문 끝` 사이만)
-2. `cd apps/api && uv run python -m scripts.render_policy_html <새 버전>` — 옆에 `.html` 이 생긴다
-3. 두 파일의 해시를 고정하는 마이그레이션을 만든다 (`50ceeb7cedfe` · `bf14612a1d9c` 참고). 옛 버전 행에는 `ended_at`
-4. 생성된 HTML 을 브라우저로 열어 한 번 읽어 본다 — 서버가 보호자에게 내주는 페이지가 이것이다.
+2. `<새 버전>/meta.json` 에 scope 마다 제목(`label`) · 법적 근거(`legal_basis`)를 적는다 — 제목을 안 바꿔도 새로 적는다
+3. `cd apps/api && uv run python -m scripts.render_policy_html <새 버전>` — 옆에 `.html` 이 생긴다 (제목은 meta.json 에서)
+4. 원고 · meta.json · HTML 의 해시를 고정하는 마이그레이션을 만든다 (`50ceeb7cedfe` · `bf14612a1d9c` 참고). 옛 버전 행에는 `ended_at`
+5. 생성된 HTML 을 브라우저로 열어 한 번 읽어 본다 — 서버가 보호자에게 내주는 페이지가 이것이다.
    글꼴 · 줄바꿈 · 밝은/어두운 화면은 기기마다 달라도 **글(내용)은 같다.** 서버가 증명할 수 있는 것은
    "무엇을 내줬는가" 이고, 그 글이 이 파일이다
 
