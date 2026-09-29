@@ -92,6 +92,10 @@ class TestListUnembedded:
         assert str(obs2.id) not in ids
         assert str(obs3.id) not in ids
 
+    @pytest.mark.xfail(
+        not hasattr(ObservationStatus, "DELETED"),
+        reason="PR #178 머지 후 ObservationStatus.DELETED 가 생기면 통과",
+    )
     async def test_deleted_관찰은_제외(self, session, family, store):
         """PR #178: soft delete 된 관찰은 임베딩 대상이 아니다."""
         _, child = family
@@ -163,6 +167,10 @@ class TestSaveEmbeddings:
 
 
 class TestListUnlinked:
+    @pytest.mark.xfail(
+        not hasattr(ObservationStatus, "DELETED"),
+        reason="PR #178 머지 후 ObservationStatus.DELETED 가 생기면 통과",
+    )
     async def test_deleted_관찰은_벡터_있어도_제외(self, session, family, store):
         """PR #178: soft delete 된 관찰은 연결 대상이 아니다."""
         _, child = family
@@ -359,6 +367,10 @@ class TestSoftDeleteHoldCleanup:
     삭제 시점에 코드가 hold 행을 지워야 한다.
     """
 
+    @pytest.mark.xfail(
+        not hasattr(ObservationStatus, "DELETED"),
+        reason="PR #178 머지 후 delete_observation 이 soft delete 가 되면 통과",
+    )
     async def test_관찰_삭제_시_보류_기록도_사라진다(self, session, family, store):
         """soft delete 후 해당 관찰의 hold 행이 남아 있으면 안 된다."""
         from sqlalchemy import select
@@ -383,6 +395,10 @@ class TestSoftDeleteHoldCleanup:
         )
         assert hold is None
 
+    @pytest.mark.xfail(
+        not hasattr(ObservationStatus, "DELETED"),
+        reason="PR #178 머지 후 ObservationStatus.DELETED 가 생기면 통과",
+    )
     async def test_삭제된_관찰은_다음_Curator_실행에서_무시(self, session, family, store):
         """deleted 관찰은 list_unembedded / list_unlinked 모두에서 빠져야 한다."""
         _, child = family
