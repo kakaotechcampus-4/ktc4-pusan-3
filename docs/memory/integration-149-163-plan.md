@@ -1,7 +1,7 @@
 # Curator ↔ Profile 상태 전이 통합 계획
 
 PR #154 (프로필 상태 전이 규칙) + PR #163 (Curator 임베딩·연결 단계) 통합.
-작업 브랜치: `integrate/149-163-curator` (base: `feat/be-149-up-down`)
+작업 브랜치: `feat/be-163-curator-integration` (base: `feat/be-149-up-down`)
 
 작성일: 2026-09-30
 담당: 김명성
