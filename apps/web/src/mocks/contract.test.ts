@@ -17,8 +17,13 @@ import {
   isDraftEvent,
   streamRunEvents,
   type EventDraftsEvent,
+  type GuidanceEvent,
   type LaneEvent,
+  type NoteEvent,
+  type OfferEvent,
   type ParsedEvent,
+  type RunEvent,
+  type UnavailableEvent,
 } from "@/lib/api/sse";
 import { toISODate } from "@/lib/format";
 import { api } from "@/lib/api/client";
@@ -57,6 +62,8 @@ import type {
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
+
+import { submittedInput } from "./handlers/runs";
 
 import { suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
@@ -503,6 +510,300 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       expect((last?.data as { raw_text: string }).raw_text).toBe(text);
       // 저장된 게 없으니 saved 가 있으면 안 된다 (CLAUDE.md §4 — 다음 칸으로 전파하지 않는다).
       expect(events.map((e) => e.type)).not.toContain("saved");
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/* ── 04 안내 · 되묻기 · 준비 중 (#141) ───────────────────────────────── */
+
+describe("⑳ 안내는 실패가 아니다", () => {
+  /** 한 줄을 보내고 그 run 의 이벤트를 전부 모은다. */
+  async function runOf(text = "지어낸 한 줄"): Promise<RunEvent[]> {
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text, source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+
+    const events: RunEvent[] = [];
+    for await (const event of streamRunEvents(run_id)) events.push(event);
+    return events;
+  }
+
+  it("ping 이 와도 스트림은 그대로 done 까지 간다", async () => {
+    const events = await runOf();
+    // 🚨 `:` 주석이 아니라 이벤트여야 한다 — parseFrame 이 data 없는 프레임을 버려서
+    //    주석으로는 20초 타이머가 안 되살아난다 (#140).
+    expect(events.map((e) => e.type)).toContain("ping");
+    expect(events.at(-1)?.type).toBe("done");
+  });
+
+  it("guidance 만 나간 run 은 저장 없이 done 으로 끝난다", async () => {
+    setScenario("guidance");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("guidance");
+      // 🚨 실패로 끝나지 않는다. 안내는 run 을 멈추지 않는다 (#141).
+      expect(types).not.toContain("failed");
+      expect(events.at(-1)?.type).toBe("done");
+      // 🚨 알레르기는 LLM 이 저장하지 않는다 (최상위 §2) — 그래서 saved 가 없는 것이 정상이다.
+      expect(types).not.toContain("saved");
+
+      const guidance = events.find((e) => e.type === "guidance")?.data as GuidanceEvent;
+      expect(guidance.code).toBe("safety_record");
+      expect(guidance.message.length).toBeGreaterThan(0);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("🚨 섞인 한 줄은 안내와 저장이 같이 온다 — 안내가 저장을 감추면 안 된다", async () => {
+    // "계란 잘 먹었어. 그리고 땅콩 알레르기 있어" — 앞은 저장되고 뒤는 안내로 돌아간다.
+    setScenario("guidance_mixed");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("guidance");
+      expect(types).toContain("saved");
+      // 안내는 라우팅이 내므로 Memory 의 저장보다 먼저다 (`pipeline.py`).
+      expect(types.indexOf("guidance")).toBeLessThan(types.indexOf("saved"));
+      expect(types).not.toContain("failed");
+      expect(events.at(-1)?.type).toBe("done");
+
+      // 🚨 같은 안내인데 두 시나리오가 다른 문구를 내면 화면이 두 경우를 다르게 그린다.
+      const guidance = events.find((e) => e.type === "guidance")?.data as GuidanceEvent;
+      expect(guidance.code).toBe("safety_record");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("unavailable 은 저장보다 먼저 오고, 저장을 지우지 않는다", async () => {
+    setScenario("unavailable");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      // 🚨 **이 순서가 요점이다.** 서버도 라우팅 직후 Memory 보다 먼저 보낸다 — 화면이 이걸
+      //    실패로 받아 버리면 바로 뒤에 오는 저장이 화면에서 사라진다 (NF-06 · 최상위 §2).
+      expect(types.indexOf("unavailable")).toBeLessThan(types.indexOf("saved"));
+      expect(types).toContain("saved");
+      expect(types).not.toContain("failed");
+      expect(events.at(-1)?.type).toBe("done");
+
+      const unavailable = events.find((e) => e.type === "unavailable")?.data as UnavailableEvent;
+      expect(unavailable.agents).toEqual(["activity"]);
+
+      // 🚨 준비 중이라고 말한 Agent 를 같은 화면에서 다시 권하지 않는다.
+      const offer = events.find((e) => e.type === "offer")?.data as OfferEvent | undefined;
+      expect(offer?.options.map((o) => o.agent)).not.toContain("activity");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("🚨 일부만 저장되고 되묻기가 같이 오는 run 이 있다 — 답이 원문을 다시 보내면 안 되는 이유", async () => {
+    // Memory 가 한 후보를 저장한 뒤 다른 후보의 정보가 모자라면 글로 되묻는다 (`pipeline.py`).
+    // 이 대본이 없어서 #158 리뷰 전까지 "원문을 되돌려 이어 적기" 가 중복 저장을 만드는 걸 못 봤다.
+    setScenario("note_mixed");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("saved");
+      expect(types).toContain("note");
+      expect(types.indexOf("saved")).toBeLessThan(types.indexOf("note"));
+      expect(events.at(-1)?.type).toBe("done");
+
+      const note = events.find((e) => e.type === "note")?.data as NoteEvent;
+      expect(note.kind).toBe("question");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("답은 원문 대신 `reply_to` 로 이전 run 을 가리킨다", async () => {
+    setScenario("note_question");
+    try {
+      const first = await askedRun();
+
+      // 🚨 답에는 **앞 문장이 들어 있지 않다.** 넣으면 이미 저장된 조각이 다시 저장된다 (#158).
+      const answer = "지어낸 답";
+      const second = await answerTo(first, answer);
+
+      const recorded = submittedInput(second);
+      expect(recorded?.text).toBe(answer);
+      expect(recorded?.replyTo).toBe(first);
+      // 앞 run 은 답을 가리키지 않는다 — 참조는 한 방향이다.
+      expect(submittedInput(first)?.replyTo).toBeUndefined();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("되묻기만 있는 run 도 done 으로 끝난다 — 화면이 그릴 것은 질문 하나다", async () => {
+    setScenario("note_question");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain("note");
+      expect(types).not.toContain("saved");
+      expect(events.at(-1)?.type).toBe("done");
+
+      // 🚨 `kind` 가 없으면 화면은 질문으로 취급하지 않는다 (`sse.ts`) — 되묻기 동선이 통째로
+      //    사라지므로, 목이 이 필드를 빠뜨리면 여기서 잡힌다.
+      const note = events.find((e) => e.type === "note")?.data as NoteEvent;
+      expect(note.kind).toBe("question");
+      expect(note.text.length).toBeGreaterThan(0);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/** 되묻는 run 을 하나 끝까지 받는다. 🚨 스트림까지 받아야 목이 그 질문을 맡아 둔다 (서버와 같다). */
+async function askedRun(childId = "c1"): Promise<string> {
+  const { run_id } = await api.post<{ run_id: string }>(
+    idempotentPath.input(childId),
+    { text: "지어낸 한 줄", source: "home_input" },
+    { idempotencyKey: newIdempotencyKey() },
+  );
+  for await (const event of streamRunEvents(run_id)) void event;
+  return run_id;
+}
+
+/** 그 run 의 질문에 답한다. 202 가 아니면 던진다. */
+async function answerTo(
+  replyTo: string,
+  text = "지어낸 답",
+  { childId = "c1", key = newIdempotencyKey() } = {},
+): Promise<string> {
+  const { run_id } = await api.post<{ run_id: string }>(
+    idempotentPath.input(childId),
+    { text, source: "home_input", reply_to: replyTo },
+    { idempotencyKey: key },
+  );
+  return run_id;
+}
+
+async function eventTypesOf(runId: string): Promise<string[]> {
+  const types: string[] = [];
+  for await (const event of streamRunEvents(runId)) types.push(event.type);
+  return types;
+}
+
+function failureOf(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(() => null).catch((e: unknown) => e);
+}
+
+describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", () => {
+  it("되물은 적 없는 run 에 답하면 400 reply_context_unavailable 이다", async () => {
+    // default 대본은 되묻지 않는다 — 가리킬 질문이 없다.
+    const plain = await askedRun();
+    const failure = await failureOf(answerTo(plain));
+
+    expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("같은 질문에 두 번 답하면 두 번째는 400 이다 — 관찰이 두 행이 되지 않게", async () => {
+    setScenario("note_question");
+    try {
+      const asked = await askedRun();
+      await answerTo(asked);
+
+      // 🚨 새 키다 — 같은 키면 재생이라 400 이 아니라 처음 run 이 돌아온다 (아래 재시도 테스트).
+      const failure = await failureOf(answerTo(asked, "또 다른 답"));
+      expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("맥락을 놓친 400 은 같은 키로 다시 보내도 계속 400 이다 — 다시 시도로 풀리지 않는다", async () => {
+    setScenario("reply_unavailable");
+    try {
+      const asked = await askedRun();
+      const key = newIdempotencyKey();
+
+      for (const attempt of [1, 2]) {
+        const failure = await failureOf(answerTo(asked, "지어낸 답", { key }));
+        expect(isApiError(failure, "reply_context_unavailable"), `${attempt}번째 시도`).toBe(true);
+      }
+
+      // 🚨 질문을 놓고 새 입력으로 보내면 받는다 — 화면이 가는 길이 이것이다.
+      const { run_id } = await api.post<{ run_id: string }>(
+        idempotentPath.input("c1"),
+        { text: "지어낸 한 줄과 답", source: "home_input" },
+        { idempotencyKey: newIdempotencyKey() },
+      );
+      expect(submittedInput(run_id)?.replyTo).toBeUndefined();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("다른 아이의 질문에는 답할 수 없다", async () => {
+    setScenario("note_question");
+    try {
+      const asked = await askedRun("c1");
+      const failure = await failureOf(answerTo(asked, "지어낸 답", { childId: "c2" }));
+      expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("🚨 이어받기 run 이 실패하면 같은 키 · 같은 `reply_to` 로 다시 보내 저장할 수 있다", async () => {
+    // 화면의 "다시 시도" 가 `reply_to` 를 잃으면 안 되는 이유다. 서버는 실패한 run 의 맥락을
+    // 원래 자리에 되돌려 두고 키도 놓아준다 (`runner.py`) — 같은 요청이 새 run 으로 다시 돈다.
+    setScenario("reply_failed");
+    try {
+      const asked = await askedRun();
+      const key = newIdempotencyKey();
+
+      const firstTry = await answerTo(asked, "지어낸 답", { key });
+      expect((await eventTypesOf(firstTry)).at(-1)).toBe("failed");
+
+      const retry = await answerTo(asked, "지어낸 답", { key });
+      expect(retry).not.toBe(firstTry);
+      expect(submittedInput(retry)?.replyTo).toBe(asked);
+
+      const types = await eventTypesOf(retry);
+      expect(types).toContain("saved");
+      // 🚨 이어받은 답은 또 묻지 않는다 — `reply_to` 가 빠졌다면 새 입력이라 질문이 다시 떴다.
+      expect(types).not.toContain("note");
+      expect(types.at(-1)).toBe("done");
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
+  it("같은 키로 다시 보내도 계속 429 다", async () => {
+    setScenario("daily_limit");
+    try {
+      const key = newIdempotencyKey();
+      const body = { text: "지어낸 한 줄", source: "home_input" as const };
+
+      for (const attempt of [1, 2]) {
+        // 🚨 4xx 는 래퍼가 저장하지 않으므로(`isReplayable`) 핸들러가 다시 돌고 또 429 다 —
+        //    화면에 "다시 시도" 버튼을 세우면 누를 때마다 같은 실패를 받는다 (#147).
+        const failure = await api
+          .post(idempotentPath.input("c1"), body, { idempotencyKey: key })
+          .then(() => null)
+          .catch((e: unknown) => e);
+
+        expect(isApiError(failure, "daily_input_limit"), `${attempt}번째 시도`).toBe(true);
+        expect((failure as ApiError).status).toBe(429);
+      }
     } finally {
       setScenario("default");
     }

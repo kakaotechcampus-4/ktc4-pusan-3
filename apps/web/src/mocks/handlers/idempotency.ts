@@ -44,6 +44,19 @@ export function resetIdempotencyStore(): void {
 }
 
 /**
+ * `failed` 로 끝난 run 의 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
+ *
+ * 🚨 서버가 이렇게 한다 (`apps/api/app/api/runs/runner.py` 의 `forget_run`). 목이 안 놓으면
+ *    재시도가 **실패한 run 을 재생**해서 핸들러가 다시 돌지 않고, 재시도 요청에 무엇이 실렸는지
+ *    (특히 `reply_to`) 를 목이 볼 수 없다.
+ */
+export function forgetRun(runId: string): void {
+  for (const [key, stored] of completed) {
+    if (stored.body.includes(`"run_id":"${runId}"`)) completed.delete(key);
+  }
+}
+
+/**
  * 요청 지문. multipart 는 본문을 그대로 쓸 수 없다 —
  * boundary 가 요청마다 새로 생성돼서 같은 파일을 다시 올려도 문자열이 달라진다.
  * 파트 이름·파일명·크기로 지문을 만든다.

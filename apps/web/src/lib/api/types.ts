@@ -311,9 +311,16 @@ export interface HomeResponse {
  * POST /children/{cid}/inputs — 즉시 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다.
  * 🚨 Idempotency-Key 가 필수다. 재시도할 때 키를 새로 만들지 않는다.
  */
+/**
+ * ⚠️ **화면이 실제로 쓰는 것은 `operations.ts` 의 `InputRequest` 다.** 계약서 §04 를 옮긴 이
+ * 타입과 두 벌로 갈려 있고 `source` 의 열거도 다르다 — 합치는 것은 별도 정리 대상이다.
+ * 새 필드는 **양쪽에 같이** 넣는다.
+ */
 export interface CreateInputRequest {
   text: string;
   source: "home_input" | "photo" | (string & {});
+  /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
+  reply_to?: string;
 }
 
 export interface CreateInputResponse {

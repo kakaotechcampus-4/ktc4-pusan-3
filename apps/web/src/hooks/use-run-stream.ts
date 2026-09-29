@@ -9,15 +9,18 @@ import {
   streamRunEvents,
   type EventDraftsEvent,
   type FailedEvent,
+  type GuidanceEvent,
   type LaneEvent,
+  type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
   type PartialEvent,
   type PromotedEvent,
   type RunEvent,
   type StepEvent,
+  type UnavailableEvent,
 } from "@/lib/api/sse";
-import type { EventDraft, Observation } from "@/lib/api/types";
+import type { Agent, EventDraft, Observation } from "@/lib/api/types";
 
 /**
  * 04 저장 결과 · 08 사진 분석 — run 이벤트 스트림 상태.
@@ -67,6 +70,24 @@ export interface RunState {
    */
   partial: PartialEvent | null;
   /**
+   * "이건 대신 해 드릴 수 없어요" 안내 (#141). 🚨 **실패가 아니다** — 채워져 있어도 run 은
+   *    그대로 끝나고, 같은 run 에서 저장된 기록과 **한 화면에** 선다.
+   * 🚨 **같은 `code` 는 한 번만 담는다.** 서버도 재분배 때 새로 생긴 안내만 보내지만
+   *    (`apps/api/app/agents/pipeline.py`), 같은 말을 두 장 세우는 것은 화면이 막는다.
+   */
+  guidance: GuidanceEvent[];
+  /**
+   * Memory 가 한 말 (#141). **run 당 최대 하나다** — Memory 는 한 run 에서 한 번만 돌고
+   * 위임이 어긋나 다시 나눌 때도 다시 돌리지 않는다 (`pipeline.py`).
+   */
+  note: NoteEvent | null;
+  /**
+   * 아직 없는 Agent 로 간 요청 (#141). 🚨 **저장과 같이 올 수 있다** — 라우팅 직후 Memory 가
+   *    돌기 전에 나가서, 혼합형 한 줄이면 `observations` 와 같은 run 에 실린다.
+   * 🚨 **합쳐서 담는다.** 재분배로 한 번 더 올 수 있는데 덮어쓰면 처음 것이 사라진다.
+   */
+  unavailable: Agent[];
+  /**
    * Agent 가 만든 일정 초안 묶음. 🚨 **아직 저장된 것이 아니다** — 보호자가 카드에서 제출해야
    *    캘린더에 들어간다 (승인 게이트 ㉠). 08 사진 run 에서는 늘 빈 배열이다.
    */
@@ -87,6 +108,9 @@ export const initialRunState: RunState = {
   lane: null,
   parsed: null,
   partial: null,
+  guidance: [],
+  note: null,
+  unavailable: [],
   drafts: [],
   failure: null,
 };
@@ -151,6 +175,31 @@ export function runReducer(state: RunState, action: RunAction): RunState {
 
         case "offer":
           return { ...state, offers: (action.event.data as OfferEvent).options };
+
+        // 🚨 아래 셋도 **끝이 아니다.** 스트림은 done 까지 이어진다 — 안내가 왔다고 실패로
+        //    떨어뜨리면 같은 run 에서 저장된 기록이 화면에서 사라진다 (최상위 §2).
+        case "guidance": {
+          const guidance = action.event.data as GuidanceEvent;
+          if (state.guidance.some((g) => g.code === guidance.code)) return state;
+          return { ...state, guidance: [...state.guidance, guidance] };
+        }
+
+        // 🚨 마지막 것이 남는다. run 당 하나뿐이라(위 주석) 실제로는 덮이지 않는다.
+        case "note":
+          return { ...state, note: action.event.data as NoteEvent };
+
+        case "unavailable": {
+          const { agents } = action.event.data as UnavailableEvent;
+          const added = agents.filter((agent) => !state.unavailable.includes(agent));
+          if (added.length === 0) return state;
+          return { ...state, unavailable: [...state.unavailable, ...added] };
+        }
+
+        // 🚨 **아무것도 하지 않는 것이 맞다** (#140). 조용한 채널의 하트비트라 담을 것이 없고,
+        //    20초 타이머는 `pumpRunEvents` 의 `onEvent` 가 이미 되살렸다. 여기서 state 를 새로
+        //    만들면 10초마다 04 화면이 통째로 다시 그려진다.
+        case "ping":
+          return state;
 
         case "partial":
           // 🚨 여기서 끝내지 않는다. 스트림은 done 까지 이어지고, 화면은 성공한 쪽을 그린다.
