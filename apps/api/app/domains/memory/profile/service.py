@@ -2,6 +2,13 @@
 
 상태를 바꾸는 코드 경로는 이 모듈의 recompute_profile 하나뿐이다.
 grep 으로 직접 `.state =` 대입이 이 함수 밖에 없어야 한다.
+
+TODO(#149-followup): recompute_profile 호출 시점이 아직 없다.
+  현재는 correction 핸들러에서만 호출되므로, 시간 경과에 의한
+  상태 변화(예: 21일 무관찰 → archived)가 자동 반영되지 않는다.
+  Agent(agents/common/evidence.py)는 DB 의 state 를 그대로 읽기 때문에
+  오래 전에 confirmed 된 성향이 계속 개인화 근거로 쓰일 수 있다.
+  후보 시점: 관찰 저장 직후 / 일 배치 / Agent 조회 시(lazy).
 """
 
 import uuid
