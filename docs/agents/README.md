@@ -42,7 +42,7 @@ memory-agent-v1.md
 
 **기피(polarity −1)는 제외 필터가 아니라 근거다.** "미끄럼틀을 싫어해서 이걸 골랐어요"가 되어야 한다. 후보에서 지워버리면 무엇을 피해 골랐는지 화면에 말할 수 없다. 기피 근거를 인용했으면 `reason`에 무엇을 피했는지 쓴다. 후보 풀에서 지우는 것은 안전뿐이다 — `hazard_term`에 걸리는 것.
 
-**다만 기피 대상 자체가 후보로 나오면 출력에서 거절한다.** 근거로 쓰는 것과 그 활동을 다시 내지 않는 것은 별개다. Food 는 영양 때문에 기피 식품을 내야 할 때가 있지만 Activity 에는 그런 대항 요인이 없고, 모델에게 기피 근거를 주고 안 내기를 기대하는 것은 프롬프트에 맡기는 것이라 보장이 아니다. 기피 근거와 `merge_key` 가 같은 후보는 출력 tool 이 거절한다 — 풀에서 지우는 제거 필터가 아니라 출력 검증이라 위 문장과 부딪히지 않는다. 자리는 `Activity_Tool_명세.md` 의 출력 검증이고, 공통 규약에는 [shared/Tool_공통.md](shared/Tool_공통.md) §5-5 가 원칙("후보를 지우는 공통 규칙은 안전뿐")과 Food·Activity 대비를 적어 두었다.
+**다만 기피 대상 자체가 후보로 나오면 출력에서 거절한다.** 근거로 쓰는 것과 그 활동을 다시 내지 않는 것은 별개다. Food 는 영양 때문에 기피 식품을 내야 할 때가 있지만 Activity 에는 그런 대항 요인이 없고, 모델에게 기피 근거를 주고 안 내기를 기대하는 것은 프롬프트에 맡기는 것이라 보장이 아니다. 기피 근거와 `merge_key` 가 같은 후보는 출력 tool 이 거절한다 — 풀에서 지우는 제거 필터가 아니라 출력 검증이라 위 문장과 부딪히지 않는다. 자리는 [activity/activity-agent-v1.md](activity/activity-agent-v1.md) §3-3 출력 검증이고, 공통 규약에는 [shared/Tool_공통.md](shared/Tool_공통.md) §5-5 가 원칙("후보를 지우는 공통 규칙은 안전뿐")과 Food·Activity 대비를 적어 두었다.
 
 **승인된 추천은 `observation_activity`로 간다.** 보호자가 승인하면 Memory Agent가 `suggestion`을 관찰로 재구조화해 저장하고, feedback(`liked`/`disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)를 갱신한다. `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음"이다.
 
@@ -79,17 +79,17 @@ Growth 와의 경계는 [supervisor-agent-v1.md](supervisor-agent-v1.md) §3-1 �
 
 ## 3. 채워야 할 빈칸
 
-Activity 것이라 비워 뒀다.
+Activity 것이라 비워 뒀던 칸이다. 답은 전부 [activity/activity-agent-v1.md](activity/activity-agent-v1.md)에 있다.
 
-**근거 소비 규칙 두 칸.** [shared/Agent_공통규약.md](shared/Agent_공통규약.md) §4 표에 Activity 칸이 있다. 지금은 `candidate` affinity를 안 쓰고 최근 14일 관찰도 안 쓰는 것으로 되어 있다. 그대로 갈지 정해 달라. 관찰을 안 쓰면 id도 반환하지 않는다.
+**근거 소비 규칙.** 다른 도메인과 같다 — `candidate` affinity는 티어 2, 최근 14일 관찰은 티어 3로 쓴다. [shared/Agent_공통규약.md](shared/Agent_공통규약.md) §4 표가 이미 이렇게 되어 있다. `search_activity_memory` 가 `rank_evidence` 결과를 id와 함께 돌려준다 (D3).
 
-**`hazard_term` 스키마.** 지금 어느 문서에도 필드가 없다. Growth가 이미 읽고 있어서 이게 먼저 필요하다.
+**`hazard_term` 스키마.** §3-5. 테이블이 아니라 상수 파일 `reference/hazard_terms.yaml` 이다 — Food 의 `allergen_terms.yaml` 과 같은 로더로 읽는다. 축 9개에 월령 두 칸 · `source` 를 적고, 용어는 `axis` · `label` · `aliases` · `guards` 만 갖는다. 아래 §5의 Growth 요구 네 가지를 채운다.
 
-**`filter_activity_safety`.** 이름만 코드 tool 목록에 있고 규칙이 없다. Food의 `filter_food_safety`([food/Food_Tool_명세.md](food/Food_Tool_명세.md) §3)가 같은 자리의 선례다.
+**`filter_activity_safety`.** §3-3 · §4-1. `content` + `materials` 를 `hazard_term` 으로 스캔해 월령과 대조하고, 0–17개월은 경고도 차단으로 올린다. `health_safety` 는 `active` 만 거른다 (D7).
 
-**쓰기 테이블이 있는지.** Food는 `daycare_meal`을 고치고 Health는 `medication_*`을 쓴다. Growth는 쓰기가 없다. Activity가 쓰기를 갖는다면 공통규약 §2 표와 테스트 규약(§13 "쓰기 tool 없음")을 같이 고쳐야 하니 정해지면 알려 달라.
+**쓰기 테이블이 있는지.** 없다. 공통규약 §2 표와 테스트 규약(§13 "쓰기 tool 없음")을 고치지 않아도 된다. 추천 → 일정 초안은 서버가 만들고(D11), 승인된 추천을 관찰로 옮기는 것은 Memory다.
 
-**날씨·장소 포트.** [shared/외부연결_계획.md](shared/외부연결_계획.md) §3에 소스와 실패 처리가 적혀 있다. 어댑터는 `app/integrations/`에 BE가 만들고 Agent는 포트만 받는다.
+**날씨·장소 포트.** D8 · D9. 날씨 쪽 실시간 조회 4개를 포트로 받고, 어댑터는 `app/integrations/`에 BE가 만든다. 장소는 외부 API 를 부르지 않고 공공데이터 3종(공원 · 어린이놀이시설 · 도서관)을 적재해 서버 안에서 거리를 계산한다 — 보호자 좌표를 밖으로 보내지 않는다. 실패 처리는 [shared/외부연결_계획.md](shared/외부연결_계획.md) §3과 같다.
 
 ---
 
@@ -116,7 +116,7 @@ def life_stage(birth_date: date, today: date) -> LifeStage
 | Food | `stage`를 배타적 범주로. 수유기와 유아식기는 먹을 수 있는 것이 질적으로 달라 tool이 겹치지 않는다 |
 | Growth | tool별 `min_month` 눈금. 열리는 시점만 다르고 배타적인 tool이 없다 |
 | Health | 가르지 않는다. 연령이 여는 tool이 없고 검진 차수·접종 시기라는 계산 방식만 바뀐다 |
-| Activity | 미정. 날씨·위치가 더 큰 축일 수도 있다 |
+| Activity | tool별 `min_month` 눈금 (Growth와 같다). 날씨·위치는 `Gate.outdoor_ok` · `has_location` 으로 장소 조회 tool 하나만 여닫는다 |
 
 아래는 방식과 무관하게 지켜야 한다. 안 지키면 게이트가 어긋난다.
 
@@ -189,13 +189,15 @@ app/agents/activity/
 
 테스트는 `test_input_activity.txt`(입력 40건 남짓)와 `test_expected_activity.md`(입력별 기대·실패 조건)로 둔다. [growth/test_expected_growth.md](growth/test_expected_growth.md)가 형식 예시다.
 
+Activity는 지금 한 장이다 — [activity/activity-agent-v1.md](activity/activity-agent-v1.md). 네 장으로 나누는 것은 구현하면서 필요해지면 한다. 테스트 목록은 그 문서 §5에 있다.
+
 ---
 
 ## 8. 넘기기 전에 알아둘 것
 
 문구를 코드 상수로 관리한다. 판정·안내·경고·미지원 문구와 일반 추천 이유는 전부 상수이고, 테스트가 글자 단위로 비교한다. 모델이 쓰는 것은 개인화 이유와 서술뿐이다.
 
-로그에는 `{kind, id}`만 남긴다. 발화 원문·장소명·활동명을 남기지 않는다. 월령 대신 밴드를 남긴다. 좌표는 요청 바디로만 받고 즉시 격자로 뭉갠다 — DB·로그·모델 입력·예외 메시지 어디에도 원좌표가 없어야 한다.
+로그에는 `{kind, id}`만 남긴다. 발화 원문·장소명·활동명을 남기지 않는다. 월령 대신 밴드를 남긴다. 좌표는 휴대폰이 약 1km 로 흐려서 요청 바디로만 보낸다. 서버는 그 요청 안에서 격자 변환과 장소 거리 계산에만 쓴다 — DB·로그·모델 입력·예외 메시지·외부 API 어디에도 좌표가 없어야 한다.
 
 모델 호출은 run당 최대 5회, 도메인 Agent당 1회 이내다. 재호출 예외만 2회다. 게이트가 닫혔으면 모델을 부르지 않고 코드 readout으로 끝낸다.
 

@@ -80,7 +80,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `medication_schedule` · `medication_dose` · `medication_dose_log` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 복용 기록과 중단(`status='stopped'`) | Food·Activity·Growth는 읽지 않는다 |
 | `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
 | `health_safety` | **앱 API가 보호자 권한으로만.** Agent는 후보도 제시하지 않는다 (알레르기 후보 감지는 v1에서 뺐다) | 손대지 않음 |
-| `*_doc` · `hazard_term` · 기준 상수 | 배치·마이그레이션 | 읽기만 |
+| `*_doc` · 기준 상수(`reference/*.yaml` — `hazard_terms.yaml` 포함) | 배치·마이그레이션 · 상수 파일은 저장소 PR | 읽기만 |
 
 기준은 **누가 쓰느냐가 아니라 누가 읽느냐**다. 여러 Agent가 읽는 테이블은 통로가 하나여야 한다.
 
@@ -212,7 +212,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 (잠정 — C-8 미결) |
 | 그 외 출력 tool 거절 | 재호출하지 않는다 (2026-09-22 — 이전의 "거절 시 run당 1회 재시도"는 위 규칙으로 대체) |
 | 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
-| Activity | 진입 수를 **Activity 문서에서 따로 정한다.** 조회를 전부 사전 조회로 돌리면 모델을 부르는 자리가 출력 tool 하나뿐이라 위 표와 달라질 수 있다 — 담당자(이도헌)가 이 줄을 그 값으로 바꾼다 |
+| Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
@@ -278,7 +278,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 
 - 로그에는 `{kind, id}`만. 발화 원문·약명·증상·메뉴명을 남기지 않는다.
 - 월령 대신 밴드를 남긴다(월령은 준식별자).
-- 좌표는 요청 바디로만 받고 즉시 격자로 뭉갠다. DB·로그·모델 입력·**예외 메시지** 어디에도 원좌표가 없다.
+- 좌표는 휴대폰이 약 1km 로 흐려서 요청 바디로만 보낸다. 서버는 그 요청 안에서 격자 변환과 장소 거리 계산에만 쓴다. DB·로그·모델 입력·**예외 메시지**·외부 API 어디에도 좌표가 없다.
 - 외부 API 쿼리에 보호자 발화를 넣지 않는다. 닫힌 enum·정규화 키만.
 - 민감정보(키·몸무게·건강) 읽기는 `child_health` 동의가 살아 있을 때만. 성별은 수집·사용하지 않는다.
 
