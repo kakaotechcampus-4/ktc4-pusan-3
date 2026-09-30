@@ -20,8 +20,7 @@ from app.domains.correction.models import CorrectionTargetKind, CorrectionVerdic
 from app.domains.correction.repository import append_correction
 from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import ObservationDomain, set_observation_status
-from app.domains.memory.profile.models import ProfileAffinity
-from app.domains.memory.profile.models import MemoryDomain
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
 from app.domains.memory.profile.repository import (
     count_active_in_window,
     count_wrong_in_window,

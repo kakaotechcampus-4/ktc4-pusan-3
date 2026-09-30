@@ -6,8 +6,6 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_KST = timezone(timedelta(hours=9))
-
 from app.domains.correction.models import Correction, CorrectionTargetKind, CorrectionVerdict
 from app.domains.memory.observation.models import (
     ObservationActivity,
@@ -21,6 +19,8 @@ from app.rules.profile import (
     PROMOTION_WINDOW_DAYS,
     WRONG_COUNT_WINDOW_DAYS,
 )
+
+_KST = timezone(timedelta(hours=9))
 
 _PROMOTABLE_BY_DOMAIN = {
     MemoryDomain.FOOD: ObservationFood,

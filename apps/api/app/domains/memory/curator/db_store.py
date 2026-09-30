@@ -92,7 +92,9 @@ class DbCuratorStore:
             rows = (await self._session.execute(stmt)).all()
             per_domain.append([(domain, r) for r in rows])
 
-        merged = list(heapmerge(*per_domain, key=lambda pair: (pair[1].created_at, str(pair[1].id))))
+        merged = list(heapmerge(
+            *per_domain, key=lambda pair: (pair[1].created_at, str(pair[1].id)),
+        ))
         return [
             ObservationItem(
                 id=str(row.id),
