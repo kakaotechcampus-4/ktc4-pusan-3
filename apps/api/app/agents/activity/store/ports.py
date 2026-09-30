@@ -120,8 +120,9 @@ class Forecast:
 
 @dataclass(frozen=True)
 class AirQuality:
-    pm10: int | None  # ㎍/㎥
-    pm25: int | None
+    # 측정기가 멈춘 값("-" · 사유 flag)은 None 이다. 0 으로 채우면 "좋음"이 된다 (weather.parse_air)
+    pm10: float | None  # ㎍/㎥
+    pm25: float | None
     ozone_ppm: float | None
 
 
@@ -201,11 +202,23 @@ class WeatherSource(Protocol):
 
     async def air_quality(self, *, grid: WeatherGrid) -> AirQuality: ...
 
-    async def uv_grade(self, *, grid: WeatherGrid, day: date) -> str | None:
-        """API 가 주는 자외선 등급 문자열 그대로. 우리가 다시 분류하지 않는다."""
+    async def uv_index(self, *, grid: WeatherGrid, day: date) -> int | None:
+        """생활기상지수 자외선(`LivingWthrIdxServiceV5/getUVIdxV5`)의 지수. API 는 숫자만 준다 —
+        등급은 `weather.uv_grade` 가 기상청 등급표로 나눈다.
+        """
         ...
 
-    async def advisories(self, *, grid: WeatherGrid) -> Advisories: ...
+    async def advisories(self, *, grid: WeatherGrid) -> Advisories:
+        """기상특보 특보코드조회(`getPwnCd`)를 이 위치의 특보구역으로 읽은 결과.
+
+        - 발효 중인 특보가 없으면 API 가 resultCode `03 NO_DATA` 를 준다. **실패가 아니라 전부
+          none 이다.** 실패로 올리면 특보 없는 날이 전부 실내가 된다. 그 밖의 코드는 실패다.
+        - 발표와 해제가 따로 한 행씩 온다. (구역, 종류)마다 가장 최근 행을 보고 `endTime` 이
+          "0" 이면 발효 중이다. 기간 없이 부르면 지난 발표분이 빠지므로 기간을 넉넉히 준다.
+        - `warnStress` 0 = 주의보 · 1 = 경보. 발표 이력인 `getWthrWrnList` 는 쓰지 않는다 —
+          해제된 특보도 목록에 남는다.
+        """
+        ...
 
 
 class PlaceSource(Protocol):

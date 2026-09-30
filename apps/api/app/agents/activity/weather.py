@@ -9,6 +9,7 @@
 🚨 실패를 기본값으로 메우지 않는다. 예보 실패는 "맑음"이 아니고 미세먼지 실패는 "좋음"이 아니다.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -29,8 +30,15 @@ RAIN_HEAVY_MM = 15.0
 # 유일한 관례값 — eval 로 조정한다
 POP_CAUTION_PERCENT = 60
 
-# 기상청 자외선 지수 등급. API 가 준 등급을 그대로 쓰고 다시 분류하지 않는다
-UV_GRADES = ("낮음", "보통", "높음", "매우높음", "위험")
+# 기상청 자외선지수 등급 (아래 끝, 등급). API 는 지수만 주고 등급은 주지 않는다 —
+# 경계는 기상청 표를 옮겨 적은 것이고 우리가 정한 값이 아니다
+UV_GRADE_FLOORS: tuple[tuple[int, str], ...] = (
+    (11, "위험"),
+    (8, "매우높음"),
+    (6, "높음"),
+    (3, "보통"),
+    (0, "낮음"),
+)
 
 # ── 화면 문구 키 ────────────────────────────────────────────────────────────
 WEATHER_UNCHECKED = "weather.unchecked"
@@ -82,7 +90,7 @@ def judge_weather(
     *,
     forecast: Forecast | None,
     air: AirQuality | None,
-    uv_grade: str | None,
+    uv_index: int | None,
     advisories: Advisories | None,
     after_sunset: bool,
 ) -> WeatherBrief:
@@ -132,13 +140,14 @@ def judge_weather(
         elif _at_least(air.ozone_ppm, OZONE_ADVISORY_PPM):
             notices.append(OZONE_ADVISORY)
 
-    if uv_grade not in UV_GRADES:
+    uv = uv_grade(uv_index)
+    if uv is None:
         notices.append(UV_UNCHECKED)
     else:
-        labels["uv"] = uv_grade
-        if uv_grade == "위험":
+        labels["uv"] = uv
+        if uv == "위험":
             block = True
-        elif uv_grade == "매우높음":
+        elif uv == "매우높음":
             notices.append(UV_VERY_HIGH)
 
     if after_sunset or block:
@@ -153,7 +162,8 @@ def judge_weather(
 # ── 파서 ────────────────────────────────────────────────────────────────────
 # 기상청 단기예보 1시간 강수량(PCP)은 문자열로 온다 (단기예보 조회서비스 활용가이드)
 #   "강수없음" · "1.0mm 미만" · "3.0mm" · "30.0~50.0mm" · "50.0mm 이상"
-# TODO: 실호출로 형식을 한 번 더 확인한다 — 2026-09-29 기준 키가 이 API 에 열리지 않아 403
+# 2026-09-30 실호출: 비가 없으면 "강수없음", 발표 3일 뒤 시각부터는 "0" 으로 온다
+# TODO: 비 오는 날의 구간 형식을 실호출로 확인한다 — 확인한 날은 비가 없었다
 _RANGE = re.compile(r"^(\d+(?:\.\d+)?)\s*~\s*(\d+(?:\.\d+)?)\s*mm$")
 _BELOW = re.compile(r"^(\d+(?:\.\d+)?)\s*mm\s*미만$")
 _ABOVE = re.compile(r"^(\d+(?:\.\d+)?)\s*mm\s*이상$")
@@ -190,11 +200,40 @@ def parse_pop(value: str | None) -> int | None:
     return number if 0 <= number <= 100 else None
 
 
+def parse_uv(value: str | None) -> int | None:
+    """자외선지수 문자열을 정수로. 3시간 간격 칸(h0 · h3 · …)의 먼 시각은 "" 로 온다 — None."""
+    if value is None or not value.strip().isdigit():
+        return None
+    return int(value.strip())
+
+
+def uv_grade(index: int | None) -> str | None:
+    """지수를 기상청 등급으로. 모르거나 음수면 None — "낮음"으로 채우지 않는다."""
+    if index is None or index < 0:
+        return None
+    return next(grade for floor, grade in UV_GRADE_FLOORS if index >= floor)
+
+
+def parse_air(value: str | None, flag: str | None = None) -> float | None:
+    """에어코리아 측정값 문자열을 숫자로.
+
+    측정기가 멈추면 값이 "-" 로 오고 `pm10Flag` 같은 칸에 사유("통신장애" 등)가 붙는다.
+    사유가 붙었거나 숫자가 아니면 None — 0 으로 읽으면 고장 난 날이 "좋음"이 된다.
+    """
+    if flag or value is None:
+        return None
+    try:
+        number = float(value.strip())
+    except ValueError:
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
 def _at_least(value: float | None, threshold: float) -> bool:
     return value is not None and value >= threshold
 
 
-def _pm_grade(value: int, *, good: int, bad: int, very_bad: int) -> str:
+def _pm_grade(value: float, *, good: int, bad: int, very_bad: int) -> str:
     if value >= very_bad:
         return "매우나쁨"
     if value >= bad:

@@ -116,7 +116,7 @@ class InMemoryWeather:
         *,
         forecast: Forecast | None = None,
         air: AirQuality | None = None,
-        uv: str | None = None,
+        uv: int | None = None,
         advisories: Advisories | None = None,
         fail: frozenset[str] = frozenset(),
     ) -> None:
@@ -138,8 +138,8 @@ class InMemoryWeather:
         self._check("air_quality")
         return self._air
 
-    async def uv_grade(self, *, grid: WeatherGrid, day: date) -> str | None:
-        self._check("uv_grade")
+    async def uv_index(self, *, grid: WeatherGrid, day: date) -> int | None:
+        self._check("uv_index")
         return self._uv
 
     async def advisories(self, *, grid: WeatherGrid) -> Advisories:

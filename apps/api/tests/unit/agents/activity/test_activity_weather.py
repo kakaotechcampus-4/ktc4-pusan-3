@@ -23,8 +23,11 @@ from app.agents.activity.weather import (
     UV_VERY_HIGH,
     WEATHER_UNCHECKED,
     judge_weather,
+    parse_air,
     parse_pop,
     parse_precip,
+    parse_uv,
+    uv_grade,
 )
 
 CLEAR = Forecast(sky="맑음", precip_mm_per_h=0.0, pop_percent=10)
@@ -33,7 +36,7 @@ CALM = Advisories(heat="none", cold="none", severe=False)
 
 
 def judge(**kwargs):
-    base = dict(forecast=CLEAR, air=CLEAN_AIR, uv_grade="보통", advisories=CALM, after_sunset=False)
+    base = dict(forecast=CLEAR, air=CLEAN_AIR, uv_index=4, advisories=CALM, after_sunset=False)
     return judge_weather(**{**base, **kwargs})
 
 
@@ -125,16 +128,35 @@ class TestAir:
 
 
 class TestUv:
-    def test_위험은_차단(self):
-        assert judge(uv_grade="위험").outdoor_ok is False
+    @pytest.mark.parametrize(
+        ("index", "grade"),
+        [
+            (0, "낮음"),
+            (2, "낮음"),
+            (3, "보통"),
+            (5, "보통"),
+            (6, "높음"),
+            (7, "높음"),
+            (8, "매우높음"),
+            (10, "매우높음"),
+            (11, "위험"),
+            (15, "위험"),
+        ],
+    )
+    def test_지수는_기상청_등급표로_나눈다(self, index, grade):
+        """API 는 숫자만 준다. 경계 양쪽을 본다."""
+        assert uv_grade(index) == grade
+        assert judge(uv_index=index).labels["uv"] == grade
 
-    def test_매우높음은_경고(self):
-        brief = judge(uv_grade="매우높음")
+    @pytest.mark.parametrize(("index", "ok"), [(10, True), (11, False)])
+    def test_위험은_차단(self, index, ok):
+        assert judge(uv_index=index).outdoor_ok is ok
+
+    @pytest.mark.parametrize(("index", "caution"), [(7, False), (8, True)])
+    def test_매우높음은_경고(self, index, caution):
+        brief = judge(uv_index=index)
         assert brief.outdoor_ok is True
-        assert UV_VERY_HIGH in brief.notices
-
-    def test_등급은_받은_그대로_쓴다(self):
-        assert judge(uv_grade="높음").labels["uv"] == "높음"
+        assert (UV_VERY_HIGH in brief.notices) is caution
 
 
 class TestFailures:
@@ -164,9 +186,9 @@ class TestFailures:
         brief = judge(air=AirQuality(pm10=None, pm25=None, ozone_ppm=0.03))
         assert AIR_UNCHECKED in brief.notices
 
-    @pytest.mark.parametrize("grade", [None, "알수없음"])
-    def test_자외선을_모르면_허용하고_알린다(self, grade):
-        brief = judge(uv_grade=grade)
+    @pytest.mark.parametrize("index", [None, -1])
+    def test_자외선을_모르면_허용하고_알린다(self, index):
+        brief = judge(uv_index=index)
         assert brief.outdoor_ok is True
         assert UV_UNCHECKED in brief.notices
         assert "uv" not in brief.labels
@@ -180,7 +202,7 @@ class TestBlocked:
 
     def test_막히면_주의_안내는_빼고_확인_못_한_것만_남긴다(self):
         """야외를 막았는데 "우산 챙기세요"가 붙으면 이상하다."""
-        brief = judge(forecast=Forecast("비", 20.0, 90), air=None, uv_grade="매우높음")
+        brief = judge(forecast=Forecast("비", 20.0, 90), air=None, uv_index=9)
         assert brief.outdoor_ok is False
         assert brief.notices == (AIR_UNCHECKED, OUTDOOR_BLOCKED)
 
@@ -191,7 +213,7 @@ class TestModelPayload:
         brief = judge(
             forecast=Forecast("흐림", 4.2, 70),
             air=AirQuality(pm10=95, pm25=40, ozone_ppm=0.13),
-            uv_grade="매우높음",
+            uv_index=9,
         )
         payload = brief.to_model_payload()
         assert payload["outdoor_ok"] is True
@@ -200,7 +222,7 @@ class TestModelPayload:
                 assert not any(ch.isdigit() for ch in value), value
 
     def test_안내_문구는_모두_정의돼_있다(self):
-        brief = judge(forecast=Forecast("흐림", 4.0, 70), air=None, uv_grade=None)
+        brief = judge(forecast=Forecast("흐림", 4.0, 70), air=None, uv_index=None)
         assert brief.notice_texts() == tuple(NOTICES[key] for key in brief.notices)
 
 
@@ -209,6 +231,7 @@ class TestParsePrecip:
         ("raw", "mm"),
         [
             ("강수없음", 0.0),
+            ("0", 0.0),  # 발표 3일 뒤 시각부터는 "강수없음" 대신 이렇게 온다 (09-30 실호출)
             ("1.0mm 미만", 0.5),
             ("3.0mm", 3.0),
             ("30.0~50.0mm", 30.0),
@@ -239,3 +262,42 @@ class TestParsePop:
     @pytest.mark.parametrize("raw", [None, "", "101", "-1", "60%"])
     def test_범위_밖이나_형식이_다르면_None(self, raw):
         assert parse_pop(raw) is None
+
+
+class TestParseUv:
+    @pytest.mark.parametrize(("raw", "index"), [("0", 0), ("6", 6), ("11", 11), (" 7 ", 7)])
+    def test_정수로_읽는다(self, raw, index):
+        assert parse_uv(raw) == index
+
+    @pytest.mark.parametrize("raw", [None, "", " ", "-1", "6.5", "높음"])
+    def test_비었거나_형식이_다르면_None(self, raw):
+        """먼 시각 칸은 "" 로 온다. "낮음"으로 채우지 않는다."""
+        assert parse_uv(raw) is None
+
+
+class TestParseAir:
+    @pytest.mark.parametrize(("raw", "value"), [("19", 19.0), ("0.056", 0.056), ("0", 0.0)])
+    def test_숫자로_읽는다(self, raw, value):
+        assert parse_air(raw) == value
+
+    @pytest.mark.parametrize(
+        ("raw", "flag"),
+        [
+            ("-", "통신장애"),  # 09-30 실호출에서 나온 모양
+            ("-", None),
+            ("19", "통신장애"),  # 사유가 붙으면 숫자가 있어도 믿지 않는다
+            ("", None),
+            (None, None),
+            ("-3", None),
+            ("nan", None),
+        ],
+    )
+    def test_측정기가_멈춘_값은_None(self, raw, flag):
+        """0 으로 읽으면 고장 난 날이 "좋음"이 된다."""
+        assert parse_air(raw, flag) is None
+
+    def test_멈춘_값은_판정에서_확인_못_함이다(self):
+        air = AirQuality(pm10=parse_air("-", "통신장애"), pm25=parse_air("-"), ozone_ppm=None)
+        brief = judge(air=air)
+        assert AIR_UNCHECKED in brief.notices
+        assert "pm10" not in brief.labels
