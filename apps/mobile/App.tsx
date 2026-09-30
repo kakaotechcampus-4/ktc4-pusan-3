@@ -12,9 +12,18 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView, type WebViewNavigation } from "react-native-webview";
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
 import { WEB_URL, isInternalUrl } from "./src/config";
+import {
+  BRIDGE_SCRIPT,
+  chunkScript,
+  parseBridgeRequest,
+  settleScript,
+  splitIntoChunks,
+  type BridgeSettlement,
+} from "./src/native/bridge";
+import { listRecentPhotos, readRecentPhoto } from "./src/native/recent-photos";
 import { SAFE_AREA_SCRIPT, safeAreaScript } from "./src/native/safe-area";
 
 /**
@@ -55,6 +64,81 @@ function Shell() {
   const onNavigationStateChange = useCallback((state: WebViewNavigation) => {
     canGoBackRef.current = state.canGoBack;
   }, []);
+
+  /**
+   * 브릿지의 답을 웹에 돌려준다. 큰 값은 조각으로 먼저 보내고 마지막에 끝을 알린다
+   * (`src/native/bridge.ts` 머리말).
+   */
+  const respond = useCallback((settlement: BridgeSettlement, body?: string) => {
+    const webView = webViewRef.current;
+    if (!webView) return;
+    if (body) {
+      for (const chunk of splitIntoChunks(body)) {
+        webView.injectJavaScript(chunkScript(settlement.id, chunk));
+      }
+    }
+    webView.injectJavaScript(settleScript(settlement));
+  }, []);
+
+  /**
+   * 웹이 `window.icatch.recentPhotos` 로 부른 것을 받는다.
+   *
+   * 🚨 **어떤 경우에도 답은 돌려준다.** 답이 없으면 08 시트의 썸네일이 누른 채로 멈춘다 —
+   *    실패는 `kind: "empty"` 로 알리고, 웹은 그걸 "줄을 안 그린다 / 그 사진을 못 읽었어요" 로 받는다.
+   */
+  const handleMessage = useCallback(
+    async (event: WebViewMessageEvent) => {
+      /*
+       * 🚨 **보낸 쪽이 우리 페이지인지 먼저 본다** (#144 리뷰).
+       *
+       * 여기는 아이 사진 **원본이 기기 밖으로 나가는 유일한 문**이다. 탐색 제한
+       * (`onShouldStartLoadWithRequest`) 한 겹에만 기대면, 리다이렉트 같은 예외 경로로 그것이
+       * 한 번이라도 뚫렸을 때 외부 페이지가 사진을 받아 간다.
+       *
+       * 이 `url` 은 **보낸 프레임** 기준이다 — iOS 는 `frameInfo.request.URL`, Android 는
+       * `WebMessageListener` 의 `sourceOrigin`. 그래서 크로스 오리진 iframe 이 부르는 것까지 막힌다.
+       *
+       * ⚠️ WebViewClient 가 붙기 전·떨어진 뒤의 찰나에는 이벤트에 `url` 이 안 실린다. 그때는
+       *    여기서 걸러져 **요청이 조용히 버려진다** — 창구가 아직 살아 있지 않다는 뜻이라 맞는 동작이고,
+       *    웹은 응답이 없으면 타임아웃으로 빈 값을 받는다 (`src/native/bridge.ts`).
+       */
+      if (!isInternalUrl(event.nativeEvent.url)) return;
+
+      const request = parseBridgeRequest(event.nativeEvent.data);
+      if (!request) return;
+
+      try {
+        if (request.method === "recentPhotos.list") {
+          const photos = await listRecentPhotos(request.limit);
+          if (photos.length === 0) {
+            respond({ id: request.id, kind: "empty" });
+            return;
+          }
+          respond({ id: request.id, kind: "json" }, JSON.stringify(photos));
+          return;
+        }
+
+        const original = await readRecentPhoto(request.photoId);
+        if (!original) {
+          respond({ id: request.id, kind: "empty" });
+          return;
+        }
+        respond(
+          {
+            id: request.id,
+            kind: "file",
+            mimeType: original.mimeType,
+            filename: original.filename,
+          },
+          original.base64,
+        );
+      } catch {
+        // 🚨 무엇이 터졌는지 찍지 않는다 — 예외 메시지에 사진 경로가 섞여 들어온다 (CLAUDE.md §2).
+        respond({ id: request.id, kind: "empty" });
+      }
+    },
+    [respond],
+  );
 
   const reload = useCallback(() => {
     setFailed(false);
@@ -111,8 +195,14 @@ function Shell() {
               void Linking.openURL(request.url);
               return false;
             }}
-            // 상태바·제스처바가 먹는 자리를 페이지에 알려 준다 (`src/native/safe-area.ts`).
-            injectedJavaScriptBeforeContentLoaded={SAFE_AREA_SCRIPT + safeAreaScript(insets)}
+            // 페이지가 뜨기 전에 꽂는 것 둘 — 최근 사진 창구(`src/native/bridge.ts`)와
+            // 상태바·제스처바가 먹는 자리(`src/native/safe-area.ts`). 각 스크립트가 자기 끝을
+            // `true;` 로 닫으므로 이어 붙여도 서로를 건드리지 않는다.
+            // 🚨 `...BeforeContentLoaded` 여야 웹의 개발용 가짜 브릿지보다 먼저 자리를 잡는다.
+            injectedJavaScriptBeforeContentLoaded={
+              BRIDGE_SCRIPT + SAFE_AREA_SCRIPT + safeAreaScript(insets)
+            }
+            onMessage={handleMessage}
             // 08 사진 분석 — <input type="file"> 이 동작하려면 필요하다.
             allowFileAccess
             allowsInlineMediaPlayback

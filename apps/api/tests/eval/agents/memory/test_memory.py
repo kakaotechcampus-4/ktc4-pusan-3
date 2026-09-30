@@ -105,21 +105,6 @@ _INPUT_DEFAULT = Path(__file__).resolve().parents[1] / "test_input.txt"
 INPUT_PATH = Path(os.getenv("EVAL_INPUT_PATH", str(_INPUT_DEFAULT)))
 EVAL_MODELS = [x.strip() for x in os.getenv("EVAL_MODELS", "").split(",") if x.strip()]
 
-# 되묻는 말은 어미가 실행마다 다르다. "할까요" 만 두면 "지울까요"·"맞나요" 가 떨어진다 —
-# 동작은 맞는데 판정이 틀리는 경우다. 물음 어미를 묶어서 본다
-_CLARIFY = (
-    "무엇을",
-    "어떤",
-    "몇 시",
-    "알려주",
-    "말씀해",
-    "확인이 필요",
-    "골라",
-    "선택",
-    "까요",  # 할까요 · 지울까요 · 맞을까요
-    "나요",  # 인가요 · 맞나요 · 시작하나요
-    "정해 주",  # "시간을 정해 주세요" 도 되묻는 말이다
-)
 # 모델이 쓰는 말이 실행마다 조금씩 다르다. "직접 입력" 하나만 두면 "직접 등록해 주세요" 가
 # 떨어진다. (동작은 맞는데 판정이 틀리는 경우라 표현을 넓힘)
 _OUT_OF_SCOPE = (
@@ -133,6 +118,7 @@ _OUT_OF_SCOPE = (
     "하지 않",
     "드릴 수 없",
     "어려워",
+    "어려우",  # "판단하기 어려우니" — 어려워 와 같은 말의 활용형
 )
 
 # 모델이 내부 추론을 그대로 final_message에 흘리는 경우를 잡는다.
@@ -467,7 +453,11 @@ CASES: list[EvalCase] = [
         # 알림 요청으로는 일정을 만들지도 고치지도 않는다.
         # 라이브에서 모델이 알림 시각(전날 저녁 8시)에 맞춰 update_event 를 부른 적이 있다
         forbidden_tools={MUTATING},
-        checks=(_REMINDER_NOTICE,),
+        checks=(
+            _REMINDER_NOTICE,
+            # 알림은 일정 기준으로 자동으로 간다. "8시에 알려드릴게요" 는 지키지 못할 약속이다
+            ("따로 알려 주겠다고 약속하지 않았다", lambda s: not s.said(("알려드릴", "알려 드릴"))),
+        ),
     ),
     EvalCase(
         "T13",
@@ -856,8 +846,11 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
     if MEMORY_MODE == "solo" and case.expect_out_of_scope and not snapshot.said(_OUT_OF_SCOPE):
         failures.append(f"범위 밖이라고 안내하지 않음: {snapshot.result.final_message!r}")
 
-    if case.expect_clarification and not snapshot.said(_CLARIFY):
-        failures.append(f"되묻지 않음: {snapshot.result.final_message!r}")
+    # 되묻기는 문장 어미가 아니라 reply.kind 로 본다. 어미로 보면 표현마다 판정이 흔들린다
+    reply = snapshot.result.reply
+    if case.expect_clarification and (reply is None or reply.kind != "question"):
+        kind = reply.kind if reply else None
+        failures.append(f"되묻지 않음: kind={kind} {snapshot.result.final_message!r}")
 
     for label, predicate in case.checks:
         try:
