@@ -987,6 +987,14 @@ export interface Policy {
   /** 민감정보라 다른 동의와 구분해서 받아야 하는가 (개인정보보호법 제23조). */
   sensitive: boolean;
   /**
+   * 누구의 동의라서 **어느 화면이 묻는가** (#190). `account` 는 가입 화면이 묻고 가입 요청에
+   * 싣고, `child` 는 01 아이 만들기 화면이 아이와 한 트랜잭션으로 보낸다.
+   *
+   * 🚨 **화면이 scope 이름으로 무리를 나누지 않는다.** 서버가 가입 검사에 쓰는 것과 같은
+   *    기준(`ACCOUNT_SCOPES`)이라, 새 동의가 생겨도 화면이 추측할 일이 없다 (#189 리뷰).
+   */
+  target: "account" | "child";
+  /**
    * "전문 보기" 가 여는 정본 HTML 의 경로. `API_BASE_URL` 뒤에 그대로 붙인다
    * (`policyHref()` · `lib/consent.ts`).
    *

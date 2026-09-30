@@ -1273,6 +1273,32 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
     expect(policies.every((p) => !("content" in p))).toBe(true);
   });
 
+  /**
+   * 🚨 **어느 화면이 묻는지는 서버가 말한다** (#190). 화면이 scope 이름으로 가르던 추측을
+   *    이 값으로 바꿨으므로, 목도 실서버와 같은 기준(`ACCOUNT_SCOPES`)으로 답해야 한다.
+   */
+  it("동의마다 target 이 오고, 가입에 실리는 것과 같은 기준이다", async () => {
+    const policies = await api.get<Policy[]>("/policies");
+    const byTarget = Object.fromEntries(policies.map((p) => [p.scope, p.target]));
+
+    expect(byTarget).toEqual({
+      service_terms: "account",
+      privacy_account: "account",
+      location: "account",
+      child_basic: "child",
+      child_health: "child",
+    });
+
+    // 🚨 가입은 계정 동의만 받는다 — 그 세 건으로 실제로 가입이 된다.
+    const session = await api.post<AuthSession>("/auth/kakao/signup", {
+      consent_code: "cc_mock",
+      bind: "b",
+      nickname: "테스터",
+      consents: await agreed(policies.filter((p) => p.target === "account").map((p) => p.scope)),
+    });
+    expect(session.is_new).toBe(true);
+  });
+
   /** 🚨 필수/선택이 섞여 있다. 화면이 목록 길이로 제출을 막으면 선택까지 필수가 된다. */
   it("location 은 선택이고 child_health 는 민감정보다", async () => {
     const policies = await api.get<Policy[]>("/policies");

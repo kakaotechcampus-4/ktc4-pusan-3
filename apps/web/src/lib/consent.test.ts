@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   consentChoices,
   consentPayload,
-  consentTarget,
   isConsentChecked,
   policyHref,
   requiredConsentsChecked,
@@ -28,6 +27,7 @@ function policy(scope: string, over: Partial<Policy> = {}): Policy {
     legal_basis: null,
     required: true,
     sensitive: false,
+    target: "account",
     html_path: `/policies/${scope}/draft-1`,
     ...over,
   };
@@ -110,27 +110,53 @@ describe("보내는 것은 고른 것뿐이다", () => {
   });
 });
 
-describe("어느 화면이 묻는가", () => {
-  it("아이 스코프 둘만 아이 화면이다", () => {
-    expect(consentTarget("child_basic")).toBe("child");
-    expect(consentTarget("child_health")).toBe("child");
-    expect(consentTarget("location")).toBe("account");
+describe("어느 화면이 묻는가 — 서버가 말한다", () => {
+  /**
+   * 🚨 **scope 이름으로 가르지 않는다** (#190). 예전에는 프론트가 `child_basic`·`child_health`
+   *    목록을 들고 나머지를 계정으로 넘겼는데, 그 목록과 서버의 분류가 어긋나면 동의가
+   *    엉뚱한 화면에 선다. 이제 응답의 `target` 하나만 본다.
+   */
+  it("`target` 으로 갈린다 — scope 이름이 아니다", () => {
+    const policies = [
+      policy("service_terms", { target: "account" }),
+      policy("child_health", { target: "child" }),
+    ];
+
+    expect(consentChoices(policies, "account").map((c) => c.policy.scope)).toEqual([
+      "service_terms",
+    ]);
+    expect(consentChoices(policies, "child").map((c) => c.policy.scope)).toEqual(["child_health"]);
   });
 
   /**
-   * 🚨 **모르는 scope 는 계정 쪽이다.** 아이 쪽에 넣으면 새로 생긴 필수 계정 동의를 아무도
-   *    못 켜서 가입 자체가 막힌다 (`lib/consent.ts` 의 `CHILD_CONSENT_SCOPES` 주석).
+   * 🚨 **이름이 아이처럼 생겼어도 서버가 계정이라면 계정이다.** 화면이 이름으로 한 번 더
+   *    판단하면 서버와 어긋나는 자리가 되살아난다 — 그 어긋남은 아이 동의가 `child_id`
+   *    없이 가입 요청에 실리는(또는 그 반대의) 경로다.
    */
-  it("모르는 scope 는 가입 화면에 선다", () => {
+  it("이름을 보고 서버 값을 뒤집지 않는다", () => {
+    const choices = consentChoices([policy("child_new_scope", { target: "account" })], "account");
+    expect(choices.map((c) => c.policy.scope)).toEqual(["child_new_scope"]);
+  });
+
+  it("문구를 모르는 scope 도 그린다 — 빠뜨리면 필수 동의가 화면에서 사라진다", () => {
     const choices = consentChoices([policy("some_new_scope")], "account");
     expect(choices).toHaveLength(1);
     expect(choices[0]!.copy).toBeUndefined();
   });
 
+  it("생략하면 응답 전체다 — 10 설정은 한 목록에 두고 required 로만 가른다", () => {
+    const policies = [
+      policy("service_terms", { target: "account" }),
+      policy("child_health", { target: "child" }),
+    ];
+    expect(consentChoices(policies)).toHaveLength(2);
+  });
+
   it("응답 순서를 그대로 둔다 — 정렬하지 않는다", () => {
-    const scopes = consentChoices([policy("child_health"), policy("child_basic")], "child").map(
-      (c) => c.policy.scope,
-    );
+    const scopes = consentChoices(
+      [policy("child_health", { target: "child" }), policy("child_basic", { target: "child" })],
+      "child",
+    ).map((c) => c.policy.scope);
     expect(scopes).toEqual(["child_health", "child_basic"]);
   });
 });

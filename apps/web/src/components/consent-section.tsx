@@ -21,7 +21,6 @@ import {
 } from "@/lib/api";
 import {
   consentChoices,
-  consentTarget,
   LEGAL_DOCUMENTS,
   policyHref,
   TERMS_NOT_FINAL,
@@ -111,9 +110,8 @@ export function ConsentSection({ childId }: { childId: string }) {
         // 🚨 지금 화면이 보여준 약관의 버전이다 — 상수가 아니다 (#90).
         policy_version: policy.version,
         // 아이 스코프는 보호자임을 확인한 표시를 함께 보낸다 (계약서 §04).
-        ...(consentTarget(policy.scope) === "child"
-          ? { child_id: childId, guardian_attested: true }
-          : {}),
+        // 🚨 **어느 쪽인지는 서버가 말한다** (`target` · #190). scope 이름으로 가르지 않는다.
+        ...(policy.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
       };
       return api.post<ConsentResponse>("/consents", body);
     },

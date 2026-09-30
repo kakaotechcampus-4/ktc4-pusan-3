@@ -28,24 +28,19 @@ export const CONSENT_SCOPES = [
 export type ConsentScope = (typeof CONSENT_SCOPES)[number];
 
 /**
- * **아이 단위로 기록되는 동의.** 01 아이 만들기 화면이 아이와 한 트랜잭션으로 보낸다 (#96) —
- * 동의를 아이 단위로 기록하면 `child_id` 없이는 저장할 수 없고, 그 id 는 아이를 만들어야 생긴다.
+ * 이 동의가 **누구의 것이라서 어느 화면이 묻는가** — `Policy.target` 의 값이다.
  *
- * 🚨 **여기 없는 scope 는 전부 계정 동의로 본다** (`consentChoices`). 서버가 아는 scope 를 프론트가
- *    모를 수 있어서, 모르는 것을 어느 쪽에 넣느냐가 실제로 갈린다 —
- *    ㉠ 계정 쪽에 넣으면 새 계정 동의가 가입 화면에 그냥 나온다 (아이 동의였다면 서버가
- *      `POST /auth/{provider}/signup` 에서 계정 scope 가 아닌 것을 무시하므로 손해가 없다),
- *    ㉡ 아이 쪽에 넣으면 새 **필수** 계정 동의를 아무도 못 켜서 **가입 자체가 막힌다.**
- *    되돌릴 수 있는 쪽으로 둔다.
+ * - `account` — 보호자 본인의 동의. 가입 화면이 묻고 `POST /auth/{provider}/signup` 에 싣는다
+ * - `child` — 아이에 대한 동의. 01 아이 만들기 화면이 아이와 **한 트랜잭션**으로 보낸다 (#96).
+ *   동의를 아이 단위로 기록하면 `child_id` 없이는 저장할 수 없고, 그 id 는 아이를 만들어야 생긴다
+ *
+ * 🚨 **scope 이름으로 추측하지 않는다** (#189 리뷰 · 서버 #190). 한동안 프론트가
+ *    `["child_basic", "child_health"]` 를 들고 나머지를 전부 계정 쪽으로 넘겼다 — 새 필수 계정
+ *    동의가 생겼을 때 가입이 막히지 않는 쪽으로 기울인 기본값이었지만, 결국 화면이 서버의
+ *    분류를 흉내 내는 구조였다. 서버가 가입 검사에 쓰는 것과 **같은 기준**(`ACCOUNT_SCOPES`)을
+ *    내려주므로 그 값을 그대로 쓴다.
  */
-export const CHILD_CONSENT_SCOPES: readonly string[] = ["child_basic", "child_health"];
-
-/** 이 동의가 어느 화면에서 만들어지는 것에 붙는가. */
-export type ConsentTarget = "account" | "child";
-
-export function consentTarget(scope: string): ConsentTarget {
-  return CHILD_CONSENT_SCOPES.includes(scope) ? "child" : "account";
-}
+export type ConsentTarget = Policy["target"];
 
 /* ── 화면 문구 ────────────────────────────────────────────────────────── */
 
@@ -158,7 +153,7 @@ export function consentChoices(
   target?: ConsentTarget,
 ): ConsentChoice[] {
   return (policies ?? [])
-    .filter((policy) => target === undefined || consentTarget(policy.scope) === target)
+    .filter((policy) => target === undefined || policy.target === target)
     .map((policy) => ({ policy, copy: consentCopy(policy.scope) }));
 }
 

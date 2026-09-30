@@ -25,6 +25,7 @@ const BASE: Policy[] = [
     legal_basis: null,
     required: true,
     sensitive: false,
+    target: "account",
     html_path: "/policies/service_terms/draft-1",
   },
   {
@@ -34,6 +35,7 @@ const BASE: Policy[] = [
     legal_basis: null,
     required: true,
     sensitive: false,
+    target: "account",
     html_path: "/policies/privacy_account/draft-1",
   },
   {
@@ -44,6 +46,7 @@ const BASE: Policy[] = [
     legal_basis: "위치정보의 보호 및 이용 등에 관한 법률 제19조 (개인위치정보의 이용·제공)",
     required: false,
     sensitive: false,
+    target: "account",
     html_path: "/policies/location/draft-1",
   },
   {
@@ -54,6 +57,7 @@ const BASE: Policy[] = [
     legal_basis: "개인정보보호법 제22조의2 (만 14세 미만 아동의 법정대리인 동의)",
     required: true,
     sensitive: false,
+    target: "child",
     html_path: null,
   },
   {
@@ -63,6 +67,7 @@ const BASE: Policy[] = [
     legal_basis: "개인정보보호법 제23조 (민감정보의 처리, 별도 동의)",
     required: true,
     sensitive: true,
+    target: "child",
     html_path: null,
   },
 ];
