@@ -50,7 +50,8 @@ def to_sse(event: Event) -> sse.SseEvent | None:
             "deeplink": event.deeplink,
         }
     if isinstance(event, EventDrafts):
-        # 초안 모양은 AI 파트(drafts.py)가 정한다. 여기서 다시 적지 않는다
+        # 초안 모양은 app/core/event_draft.py 가 정하고 to_payload 가 그 모델로 직렬화한다.
+        # 여기서 다시 적지 않는다
         return "event_draft", {"drafts": [draft.to_payload() for draft in event.drafts]}
     if isinstance(event, MemoryNote):
         # kind=question 이면 화면이 "이어서 적기" 를 연다.

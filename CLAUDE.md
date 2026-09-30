@@ -163,10 +163,11 @@
 │   │       └── test/         Vitest 셋업 (`pnpm test`) — 목이 계약대로 "행동" 하는지
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
-│   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
+│   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면 · 주입 배선
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만. 지금은 safe area 크기를 CSS 변수로 넘기는 것 하나
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 최근 사진(`window.icatch.recentPhotos`).
+│   │                         🚨 최근 사진 계약 정본은 웹(`apps/web/src/lib/native/`)이고 여기는 구현이다
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
@@ -294,7 +295,7 @@
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
-  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` 만 인증 없이 호출한다.
+  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` · `GET /policies/{scope}/{version}` 만 인증 없이 호출한다.
   새 예외가 필요하면 구현 전에 이 목록과 API 계약을 함께 변경한다.
   - `GET /auth/{provider}/status`
   - `GET /auth/{provider}`
@@ -302,6 +303,7 @@
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
+  - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
 - 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**

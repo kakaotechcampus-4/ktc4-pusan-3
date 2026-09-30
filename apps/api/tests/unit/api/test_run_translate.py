@@ -35,7 +35,7 @@ from app.agents.entrypoint import (
 )
 
 # 초안을 만들 부품이라 진입점이 내보내지 않는다. app/api 코드가 아니라 픽스처를 만드는 테스트라
-# 레이어 경계(api 는 진입점만) 밖이다 — 화면으로 가는 모양은 EventDraft.to_payload() 가 정한다.
+# 레이어 경계(api는 진입점만) 밖이다. 화면으로 가는 모양은 app/core/event_draft.py가 정한다.
 from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.agents.memory.schemas.task import WorkType
 from app.api.runs import registry, sse, translate
@@ -153,7 +153,7 @@ def test_guidance_without_deeplink_sends_null():
 
 
 def test_event_drafts_use_the_agents_payload_shape():
-    """초안 모양은 AI 파트(drafts.py `to_payload`)가 정한다. 여기서 모양을 다시 적지 않는다."""
+    """초안 모양은 app/core/event_draft.py가 정한다. 여기서 모양을 다시 적지 않는다."""
     create, update = _create_draft(), _update_draft()
 
     assert translate.to_sse(EventDrafts((create, update))) == (

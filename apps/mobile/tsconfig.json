@@ -2,5 +2,7 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
-  }
+  },
+  // 테스트는 앱 번들에 들어가지 않고 Node 위에서만 돈다 — 타입도 따로 본다 (tsconfig.test.json).
+  "exclude": ["node_modules", "src/**/*.test.ts"]
 }
