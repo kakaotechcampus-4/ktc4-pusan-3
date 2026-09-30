@@ -267,30 +267,37 @@ async def test_delete_keeps_row_as_deleted_and_hides_it_everywhere(session, fami
         session, domain=domain, child_id=child.id, observation_id=record.id
     )
 
-    stored = (await session.execute(
-        select(model.status, model.raw_text).where(model.id == record.id)
-    )).one()
+    stored = (
+        await session.execute(select(model.status, model.raw_text).where(model.id == record.id))
+    ).one()
     assert stored.status == ObservationStatus.DELETED
     assert stored.raw_text == "지울 기록 원문"
 
-    assert await find_observation(
-        session, domain=domain, child_id=child.id, observation_id=record.id
-    ) is None
+    assert (
+        await find_observation(session, domain=domain, child_id=child.id, observation_id=record.id)
+        is None
+    )
     assert await query_observations(session, domain=domain, child_id=child.id) == []
-    assert await update_observation(
-        session,
-        domain=domain,
-        child_id=child.id,
-        observation_id=record.id,
-        fields={"confidence_source": ConfidenceSource.PARENT_HEDGED},
-    ) is None
-    assert await set_observation_status(
-        session,
-        domain=domain,
-        child_id=child.id,
-        observation_id=record.id,
-        status=ObservationStatus.INACTIVE,
-    ) is None
+    assert (
+        await update_observation(
+            session,
+            domain=domain,
+            child_id=child.id,
+            observation_id=record.id,
+            fields={"confidence_source": ConfidenceSource.PARENT_HEDGED},
+        )
+        is None
+    )
+    assert (
+        await set_observation_status(
+            session,
+            domain=domain,
+            child_id=child.id,
+            observation_id=record.id,
+            status=ObservationStatus.INACTIVE,
+        )
+        is None
+    )
     for status in (ObservationStatus.ACTIVE, ObservationStatus.INACTIVE):
         page = await page_observations(session, child_id=child.id, status=status)
         assert page.total == 0
