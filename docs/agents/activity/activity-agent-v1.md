@@ -156,7 +156,7 @@ class ActivityCandidate(ToolArgs):
     evidence: list[EvidencePick] = []   # id ⊂ rank_evidence 상위 10
 ```
 
-**모델은 `id` 를 고르고 `note` 만 쓴다.** 출력 tool 이 `EvidencePick` 을 공통 `EvidenceCitation`(`common/refs.py`)으로 바꾼다 — `ref`(`source_kind` + `id`) · `source_updated_at` · `polarity` · `label` 은 그 `id` 를 돌려준 조회 결과에서 채운다. 조회 결과에 없는 `id` 면 그 후보를 거절한다.
+**모델은 `id` 를 고르고 `note` 만 쓴다.** 출력 tool 이 `EvidencePick` 을 공통 `EvidenceCitation`(`common/refs.py`)으로 바꾼다 — `ref`(`source_kind` + `id`) · `polarity` · `label` 은 그 `id` 를 돌려준 조회 결과에서 채운다. 조회 결과에 없는 `id` 면 그 후보를 거절한다.
 
 **스캔 대상은 `content` + `materials` 둘 다.** `materials` 만 보면 *"구슬 꿰기"* 처럼 재료가 문장 안에 있는 후보를 놓친다.
 
@@ -335,7 +335,6 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 | 컬럼 | 누가 채우나 |
 | --- | --- |
 | `source_kind` · `source_id` | `search_activity_memory` 가 돌려준 값. 모델은 `id` 만 고른다 |
-| `source_updated_at` | **인용할 때 읽은 근거 행의 `updated_at`** (문서 행은 `written_at`). 근거를 읽은 Agent 만 아는 값이라 `EvidenceCitation` 이 실어 보낸다 (9/25 결정) |
 | `note` | **모델이 쓴다** (아래) |
 
 #### `note` — 추천 카드에 보이는 근거 문장
