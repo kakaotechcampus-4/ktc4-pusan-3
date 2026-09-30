@@ -153,7 +153,8 @@ def test_관찰_delete_tool_은_없다() -> None:
 def test_update_스펙의_status_는_deleted_하나만_연다() -> None:
     for domain in _DOMAINS:
         spec = next(
-            spec for spec in TOOL_SPECS
+            spec
+            for spec in TOOL_SPECS
             if spec["function"]["name"] == f"update_observation_{domain}"
         )
         status = spec["function"]["parameters"]["properties"]["status"]

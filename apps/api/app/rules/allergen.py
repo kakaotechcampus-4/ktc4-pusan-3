@@ -50,7 +50,7 @@ class ParsedAllergens:
 
 
 def strip_allergen_marks(raw: str) -> str:
-    """메뉴 원문에서 알레르기 번호 표기를 지운 문자열. """
+    """메뉴 원문에서 알레르기 번호 표기를 지운 문자열."""
     stripped = _RUN.sub("", raw)
     return "".join(ch for ch in stripped if ch not in CIRCLED)
 
