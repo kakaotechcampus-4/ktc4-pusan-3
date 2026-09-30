@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, SmallInteger, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -207,3 +207,51 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     suspected_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_taken: Mapped[str | None] = mapped_column(Text, nullable=True)
     observed_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ObservationLinkHold(Base, UUIDPk, Timestamps):
+    """Curator 연결 단계의 보류 기록. 판정기가 uncertain 이라 답한 횟수를 관찰마다 센다.
+
+    관찰은 도메인마다 테이블이 달라서 FK 칸을 셋 두고 하나만 채운다 (exclusive arc).
+    `correction` · `suggestion_evidence` 처럼 FK 없이 두지 않는 이유는 삭제다 — 관찰이 지워지면
+    이 기록도 지워져야 하고(subject 해시가 남는다), 그것을 코드가 아니라 DB 가 보장하게 한다.
+    UNIQUE 는 관찰 하나에 행 하나를 지키고 CASCADE 삭제가 쓰는 인덱스도 된다.
+
+    관찰이 Profile 에 연결되면 행을 지운다. 남는 것은 지금 보류 중인 관찰의 기록뿐이다.
+    원문 subject 는 저장하지 않는다. subject_hash 는 subject 가 바뀌었는지 알아차리는 데에만 쓴다.
+    규칙과 해시는 app/agents/curator/embedding/link_step.py (UNCERTAIN_LIMIT · hold_hash).
+    """
+
+    __tablename__ = "observation_link_hold"
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(food_id, activity_id, education_id) = 1",
+            name="observation_link_hold_one_target",
+        ),
+        # 상한은 link_step.UNCERTAIN_LIMIT 와 같다. 그 횟수에 닿으면 새 Profile 을 만들고
+        # 행을 지우므로 더 커질 수 없다. 규칙을 바꾸면 이 제약도 마이그레이션으로 바꾼다
+        CheckConstraint(
+            "uncertain_count BETWEEN 1 AND 3", name="observation_link_hold_uncertain_count"
+        ),
+    )
+
+    food_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("observation_food.id", ondelete="CASCADE"),
+        nullable=True,
+        unique=True,
+    )
+    activity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("observation_activity.id", ondelete="CASCADE"),
+        nullable=True,
+        unique=True,
+    )
+    education_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("observation_education.id", ondelete="CASCADE"),
+        nullable=True,
+        unique=True,
+    )
+    uncertain_count: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    subject_hash: Mapped[str] = mapped_column(Text, nullable=False)
