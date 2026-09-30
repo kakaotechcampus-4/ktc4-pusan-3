@@ -85,14 +85,19 @@ async def count_active_in_window(
     domain: MemoryDomain,
     today: date,
 ) -> int:
-    """승격 윈도우(PROMOTION_WINDOW_DAYS) 안의 active 관찰 건수 (= O)."""
+    """승격 윈도우(PROMOTION_WINDOW_DAYS) 안의 active 관찰 일수 (= O).
+
+    같은 날 같은 Profile 에 연결된 관찰 여러 건은 1일로 센다.
+    §2 "한 번의 관찰을 성향으로 확정하지 않는다" — 입력 한 번에
+    Memory Agent 가 관찰 여러 건을 만들어도 바로 승격되지 않게 한다.
+    """
     model = _PROMOTABLE_BY_DOMAIN.get(domain)
     if model is None:
         return 0
     window_start = today - timedelta(days=PROMOTION_WINDOW_DAYS - 1)
     window_end = today + timedelta(days=1)  # 열린 상한
     stmt = (
-        select(func.count())
+        select(func.count(func.distinct(func.lower(model.observed_range))))
         .select_from(model)
         .where(
             model.affinity_id == affinity_id,

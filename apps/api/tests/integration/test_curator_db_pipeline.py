@@ -147,13 +147,13 @@ class TestDbRepositoryToCurator:
         owner, child = family
         today = date(2026, 9, 26)
 
-        for subject in ["사과", "사과", "사과", "당근"]:
+        for i, subject in enumerate(["사과", "사과", "사과", "당근"]):
             await _save_observation(
                 session,
                 child_id=child.id,
                 parent_id=owner.id,
                 subject=subject,
-                observed_on=today,
+                observed_on=today - timedelta(days=i),
             )
 
         result = await _run_curator(session, child.id, today)

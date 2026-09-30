@@ -123,6 +123,18 @@ async def handle_observation_correction(
     if record is None:
         raise ValueError("관찰을 찾을 수 없다")
 
+    # 2.5. Curator 보류 기록(hold) 정리 — 교정된 관찰은 다시 연결 대상이 안 되므로
+    from sqlalchemy import delete
+
+    from app.domains.memory.observation.models import ObservationLinkHold
+
+    await session.execute(
+        delete(ObservationLinkHold).where(
+            ObservationLinkHold.domain == domain,
+            ObservationLinkHold.observation_id == observation_id,
+        )
+    )
+
     # 3. last_observed_on 재계산 — 교정으로 최신 관찰이 빠졌을 수 있다
     affinity_id = record.fields.get("affinity_id")
     if affinity_id is not None:
