@@ -1,21 +1,29 @@
 "use client";
 
-import { PenLine, Sprout } from "lucide-react";
+import {
+  Hand,
+  Hourglass,
+  Info,
+  MessageCircleQuestion,
+  PenLine,
+  ShieldCheck,
+  Sprout,
+  Stethoscope,
+  type LucideIcon,
+} from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { domainLabel, observationAgent } from "@/components/domain-chip";
-import { Button } from "@/components/ui/button";
+import { EventDraftList } from "@/components/event-draft-list";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
+import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
-import {
-  isHealthObservation,
-  type Agent,
-  type ConfidenceSource,
-  type Observation,
-} from "@/lib/api/types";
+import type { GuidanceEvent, NoteEvent } from "@/lib/api/sse";
+import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
 
 /**
  * 04 저장 결과 — run 이벤트를 화면으로 옮긴다.
@@ -56,19 +64,25 @@ export function RunProgress({ state }: { state: RunState }) {
 
 export function RunResult({
   state,
+  childId,
   inputText,
   onRetry,
   onEdit,
   onDone,
   onPickOffer,
+  onAnswerQuestion,
 }: {
   state: RunState;
+  /** 안내의 목적지를 아이 경로 아래에 붙이는 데 쓴다 (`GUIDANCE_DESTINATION`). */
+  childId: string;
   /** 부모가 적은 원문. 🚨 훅이 아니라 입력 화면이 들고 있는 값이다. */
   inputText: string;
   onRetry: () => void;
   onEdit: () => void;
   onDone: () => void;
   onPickOffer: (agents: Agent[]) => void;
+  /** 되묻는 질문에 답하러 03 홈으로. 질문은 홈까지 따라간다 (`stores/pending-question.ts`). */
+  onAnswerQuestion: (question: string) => void;
 }) {
   // 🚨 서버가 끝을 말하지 않고 끝난 run 이다 (20초 침묵 · 끊긴 스트림 · 연결 실패).
   //    **저장 여부를 모른다** — "저장했어요" 도 "저장하지 않았어요" 도 말하지 않는다
@@ -136,10 +150,35 @@ export function RunResult({
   }
 
   const noChildObservation = state.observations.length === 0;
+  /**
+   * 🚨 **저장한 것이 없으면 "저장했어요" 라고 하지 않는다.** "이번 주말에 공원 산책 가기" 처럼
+   *    앞으로의 계획만 말한 한 줄은 아이에 대한 관찰이 아니라서 쌓을 것이 없고, 일정도 아직
+   *    **초안**이라 캘린더에 없다 — 그 화면에서 제목이 "저장했어요" 면 화면이 거짓말을 한다.
+   */
+  const savedSomething = !noChildObservation;
+  /**
+   * 🚨 **안내가 이미 이유를 말했으면 "기록을 찾지 못했어요" 를 겹쳐 세우지 않는다.**
+   *    "땅콩 알레르기 있어" 는 못 읽은 한 줄이 아니라 **저장하면 안 되는 한 줄**이다 (최상위 §2).
+   *    두 장을 나란히 두면 같은 자리에서 서로 다른 이유를 대고, 아래쪽이 위쪽을 부정한다.
+   *    Memory 가 되물은 경우도 같다 — 아직 못 정한 것이지 못 읽은 것이 아니다.
+   */
+  const noticedWhy = state.guidance.length > 0 || state.note !== null;
+  /** Memory 가 답을 기다리는 중. 🚨 `kind` 를 모르면 질문으로 보지 않는다 (`NoteCard`). */
+  const askingMore = state.note?.kind === "question";
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-title text-ink">이렇게 저장했어요</h2>
+      <div>
+        <h2 className="text-title text-ink">
+          {resultTitle({ savedSomething, askingMore, noticedWhy })}
+        </h2>
+        {askingMore && !savedSomething ? (
+          // 일어난 일만 적는다 — "답하면 저장돼요" 는 예측이라 쓰지 않는다 (§4).
+          <p className="text-body-sm text-ink-muted mt-2">
+            적어주신 말만으로는 아직 기록으로 남기지 않았어요.
+          </p>
+        ) : null}
+      </div>
 
       {/* 이 화면의 주인공은 결과 카드가 아니라 **부모가 적은 말**이다 (관찰 노트).
           화면에서 한 장만 쓰는 `card-accent` 를 여기 쓴다 — 아래는 전부 거기서 나온 것이다. */}
@@ -155,6 +194,24 @@ export function RunResult({
         </Card>
       ) : null}
 
+      {/* 🚨 **안내를 맨 위에 둔다.** "땅콩 알레르기 있어" 라고 적은 보호자가 제일 먼저 알아야
+          하는 것은 **그 말이 저장되지 않았다**는 사실이다 (최상위 §2). 아래 기록 목록보다
+          뒤에 두면 스크롤해야 보이고, 그 사이에 부모는 저장된 줄 안다. */}
+      {state.guidance.map((guidance) => (
+        <GuidanceCard
+          key={guidance.code}
+          childId={childId}
+          guidance={guidance}
+          savedAlongside={savedSomething}
+        />
+      ))}
+
+      {state.unavailable.length > 0 ? (
+        <UnavailableCard agents={state.unavailable} savedAlongside={savedSomething} />
+      ) : null}
+
+      {state.note ? <NoteCard note={state.note} onAnswer={onAnswerQuestion} /> : null}
+
       {/* 🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
           클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다. */}
       {state.partial ? (
@@ -167,12 +224,16 @@ export function RunResult({
       ) : null}
 
       {noChildObservation ? (
-        <CardFailed>
-          <p>
-            아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지
-            않았어요.
-          </p>
-        </CardFailed>
+        // 위 `noticedWhy` 주석 — 안내·되묻기가 이미 이유를 말했으면 이 카드를 세우지 않는다.
+        noticedWhy ? null : (
+          <CardFailed>
+            <p>
+              {state.drafts.length > 0
+                ? "일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."
+                : "아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지 않았어요."}
+            </p>
+          </CardFailed>
+        )
       ) : (
         <section>
           <h3 className="text-label text-brand">기록 {state.observations.length}건 저장됨</h3>
@@ -203,9 +264,22 @@ export function RunResult({
         </section>
       ) : null}
 
-      <p className="text-caption text-ink-subtle">
-        한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
-      </p>
+      {/* 🚨 **일정 초안은 저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이 아래는
+          **보호자가 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게
+          저장했어요" 라는 제목이 아직 저장 안 된 것까지 덮는다 — 그래서 머리글로 가른다. */}
+      <EventDraftList
+        childId={childId}
+        incoming={state.drafts}
+        origin="input"
+        found="적어주신 말에서 일정을 찾았어요."
+      />
+
+      {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
+      {savedSomething ? (
+        <p className="text-caption text-ink-subtle">
+          한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
+        </p>
+      ) : null}
 
       {/* 🚨 제안을 버튼으로 쌓지 않는다. 예전에는 [제안][제안][아니요] 3개가 같은 무게로 서서
           무엇이 다음 행동인지가 없었다 — 고르는 것은 줄(`AgentPromptRow`)이고, 화면을 떠나는
@@ -220,8 +294,12 @@ export function RunResult({
             onPick={(agent) => onPickOffer([agent])}
             layout="list"
           />
+          {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** 일정만 말한 한 줄에는
+              쌓인 기록이 없다 — 남은 것을 안 세고 같은 문구를 쓰면 화면이 두 번 거짓말한다. */}
           <p className="text-caption text-ink-subtle mt-1">
-            고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요.
+            {savedSomething
+              ? "고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요."
+              : "고르지 않아도 괜찮아요. 기본값은 아무것도 더 하지 않는 거예요."}
           </p>
         </section>
       ) : null}
@@ -233,13 +311,207 @@ export function RunResult({
   );
 }
 
-/** 발화의 출처. 서버 enum 을 화면 문구로 옮기는 표다 — 추측을 섞지 않는다. */
-const CONFIDENCE_LABEL: Record<ConfidenceSource, string> = {
-  institution_notice: "기관 공지",
-  parent_direct: "보호자 직접",
-  parent_hedged: "보호자 추측",
-  parent_hearsay: "전해 들음",
+/**
+ * 04 의 제목. 🚨 **제목이 화면 내용을 앞질러 말하면 아래 카드가 전부 그 말을 뒤집는다.**
+ *
+ * 네 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
+ * - 저장됨 → 있는 그대로.
+ * - 되묻기만 (#141) → **제목이 곧 할 일**이다. 화면에 남는 것이 질문 하나뿐이라 "확인했어요" 로
+ *   받으면 다 끝난 것처럼 읽힌다. 최소 질문 1개라는 규칙(최상위 §2)이 화면에서는 "한 가지만" 이다.
+ * - 안내만 (#141 · 알레르기 · 진단 · 구매 대행) → 저장하지 **않기로 한** 한 줄이다. 읽고 판단까지
+ *   했다는 뜻으로 "확인했어요".
+ * - 일정 초안만 (#151) → 아이에 대한 관찰이 아니라 쌓을 것이 없고 일정도 아직 초안이다 (게이트 ㉠).
+ */
+function resultTitle({
+  savedSomething,
+  askingMore,
+  noticedWhy,
+}: {
+  savedSomething: boolean;
+  askingMore: boolean;
+  noticedWhy: boolean;
+}): string {
+  if (savedSomething) return "이렇게 저장했어요";
+  if (askingMore) return "한 가지만 더 알려주세요";
+  if (noticedWhy) return "적어주신 말을 확인했어요";
+  return "이렇게 이해했어요";
+}
+
+/**
+ * 안내 한 장을 그리는 데 필요한 것 — **`code` 로 정하는 것은 이것뿐이다.**
+ *
+ * 🚨 **`message` 는 여기 없다.** 안내 문장은 정책이라(최상위 §2) 서버가 주는 것을 그대로 쓴다 —
+ *    화면이 code 별 문구를 따로 만들면 정책과 화면이 두 곳에서 갈린다. 여기 있는 `label` 은
+ *    **어떤 종류의 안내인가**를 붙이는 이름표고, `CONFIDENCE_LABEL` 과 같은 성격의 표다.
+ *
+ * 🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다** (apps/web/CLAUDE.md §3). 서버 문자열이라
+ *    지금 없는 경로가 오기도 하고, 외부 주소가 오면 화면이 앱 밖으로 나간다. 딥링크는
+ *    **어느 구역인지 힌트**로만 쓰고, 실제로 가는 곳은 이 표가 정한다.
+ *
+ * ⚠️ **서버 힌트와 실제 자리가 다르다.** `safety_record` 의 딥링크는 `settings/health-safety`
+ *    인데, 알레르기·건강 기록을 직접 넣는 구역(`components/safety-section.tsx`)은 10 설정이
+ *    아니라 **11 아이 프로필**에 있다. 힌트를 그대로 썼으면 아무것도 없는 화면으로 보냈을 것이다.
+ *    👉 이름을 맞출지는 `apps/api` Owner 협의 대상이다 (최상위 §8 · #141).
+ *
+ * 🚨 `to` 가 없는 안내에는 **버튼을 세우지 않는다** — 진단·구매 대행은 갈 곳이 없는 안내고,
+ *    없는 길을 만들어 주는 것보다 말만 하고 마는 쪽이 맞다.
+ */
+const GUIDANCE_KIND: Record<
+  string,
+  { label: string; icon: LucideIcon; to?: { path: string; label: string } }
+> = {
+  safety_record: {
+    label: "안전 정보",
+    icon: ShieldCheck,
+    to: { path: "profile", label: "직접 입력하러 가기" },
+  },
+  diagnosis: { label: "진단·처방", icon: Stethoscope },
+  out_of_scope: { label: "서비스 범위", icon: Hand },
 };
+
+/** 모르는 code 가 와도 카드는 선다 — `message` 만 있으면 그릴 수 있다. */
+const GUIDANCE_FALLBACK = { label: "안내", icon: Info } as const;
+
+/**
+ * "이건 대신 해 드릴 수 없어요" 한 장 (#141).
+ *
+ * 🚨 **`CardFailed` 가 아니다.** 고장이 아니라 **경계**다 — 알레르기를 LLM 이 저장하지 않는 것은
+ *    이 서비스가 그렇게 만들어진 것이고(최상위 §2), 실패로 그리면 다시 시도하면 될 일로 읽힌다.
+ *    `ConsentRequiredCard` 가 같은 이유로 `Card` 다.
+ *
+ * 모양은 위의 "적어주신 한 줄" 카드와 **같은 구조**다 (타일 · 이름표 · 본문). 저장이 0건인 run
+ * 에서는 화면에 이 카드 하나만 남는데, 글자 한 덩이만 있으면 무엇을 보는 화면인지 읽히지 않는다 —
+ * `IconTile` 은 색을 아껴 쓰는 이 화면에 브랜드를 들여보내라고 만든 자리다 (`icon-tile.tsx`).
+ */
+function GuidanceCard({
+  childId,
+  guidance,
+  savedAlongside,
+}: {
+  childId: string;
+  guidance: GuidanceEvent;
+  /**
+   * 같은 run 에서 저장된 것이 있는가. 🚨 **한 줄에 두 얘기가 섞여 들어오는 경우가 실제로 있다** —
+   * "계란 잘 먹었어. 그리고 땅콩 알레르기 있어" 면 서버는 앞은 저장하고 뒤는 안내로 돌린다
+   * (`pipeline.py` — 안내는 라우팅이 내고 Memory 는 기록 조각만 받는다).
+   * 그때 안내 카드만 읽고 **전부 저장 안 된 줄 아는 것**을 막는 자리다.
+   */
+  savedAlongside: boolean;
+}) {
+  const kind = GUIDANCE_KIND[guidance.code] ?? GUIDANCE_FALLBACK;
+  const to = "to" in kind ? kind.to : undefined;
+
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <IconTile icon={kind.icon} />
+        <div className="min-w-0">
+          <p className="text-caption text-ink-subtle">{kind.label}</p>
+          <p className="text-body text-ink mt-1">{guidance.message}</p>
+          {/* `partial` 카드와 같은 말이다 ("아래 결과는 그대로 저장됐어요") — 한 화면에서
+              못 한 것과 한 것을 갈라 말하는 방식을 두 벌 만들지 않는다. */}
+          {savedAlongside ? (
+            <p className="text-body-sm text-ink-muted mt-2">아래 기록은 그대로 저장했어요.</p>
+          ) : null}
+          {to ? (
+            <ButtonLink
+              href={`/child/${childId}/${to.path}`}
+              variant="secondary"
+              size="compact"
+              className="mt-3"
+            >
+              {to.label}
+            </ButtonLink>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * 아직 없는 Agent 로 간 요청 (#141).
+ *
+ * 🚨 **`partial` 과 같은 카드를 쓰지 않는다.** `partial` 은 Agent 가 해 보다 **실패한** 것이고,
+ *    이건 Agent 가 **아직 없는** 것이다 — 고장이 아니라 알려진 빈칸이라, 회색 각주로 깔아 두면
+ *    놀이 추천을 기대한 보호자가 아무 답도 못 받은 것처럼 읽는다. 그래서 안내 카드와 같은
+ *    구조(타일 · 이름표 · 본문)로 세운다.
+ * 🚨 **타일은 `neutral` 이다.** 안내(`GuidanceCard`)는 보호자가 할 일이 있어서 브랜드 타일이
+ *    서지만, 여기는 **할 수 있는 일이 없다** — 같은 색을 주면 눌러 볼 것이 있는 줄 안다.
+ * 🚨 **화면을 대체하지 않는다.** 라우팅 직후에 오는 이벤트라 저장과 같은 run 에 실리는데,
+ *    실패 화면으로 빼면 방금 저장된 기록이 사라진다 (최상위 §2 · NF-06).
+ */
+function UnavailableCard({ agents, savedAlongside }: { agents: Agent[]; savedAlongside: boolean }) {
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <IconTile icon={Hourglass} tone="neutral" />
+        <div className="min-w-0">
+          <p className="text-caption text-ink-subtle">아직 준비 중</p>
+          {/* 문구는 화면이 만든다 — 서버가 주는 것은 Agent 이름뿐이고, `partial` 과 같은
+              `domainLabel` 표를 쓴다. */}
+          <p className="text-body text-ink mt-1">
+            {agents.map(domainLabel).join(", ")} 쪽은 아직 만들고 있어요. 준비되면 여기에서 바로 쓸
+            수 있어요.
+          </p>
+          {savedAlongside ? (
+            <p className="text-body-sm text-ink-muted mt-2">아래 기록은 그대로 저장했어요.</p>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Memory 가 한 말 (#141).
+ *
+ * 🚨 **`kind` 를 모르면 질문으로 취급하지 않는다** (`sse.ts` 의 `NoteEvent`). 서버가 종류를
+ *    실어 주기 전에는 요약 문장까지 "이어서 적기" 를 달게 되고, 화면이 답을 재촉하게 된다.
+ * 🚨 **답하라고 떠미는 자리가 아니다.** 버튼은 `secondary` 하나고, 그냥 홈으로 가는 길도
+ *    아래에 그대로 있다 — 답하려면 한 줄을 새로 보내야 해서 하루 입력 횟수를 한 번 더 쓴다 (#147).
+ * 🚨 **LLM 출력이라 HTML 로 그리지 않는다** (apps/web/CLAUDE.md §4). `{}` 로 넣어 React 가
+ *    이스케이프하게 둔다 — `dangerouslySetInnerHTML` 을 쓰지 않는다.
+ *
+ * "한 가지만 더" 는 최소 질문 1개 규칙(최상위 §2)을 화면에서 말하는 자리이기도 하다 — 질문이
+ * 하나뿐이라는 것을 부모가 먼저 알면, 답하는 것이 끝없는 문답처럼 보이지 않는다.
+ */
+function NoteCard({ note, onAnswer }: { note: NoteEvent; onAnswer: (question: string) => void }) {
+  if (note.kind !== "question") {
+    // 되묻기가 아닌 말은 안내 문장 한 줄이다 — 이름표도 버튼도 붙이지 않는다.
+    return (
+      <Card>
+        <p className="text-body text-ink">{note.text}</p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <IconTile icon={MessageCircleQuestion} />
+        <div className="min-w-0">
+          <p className="text-caption text-ink-subtle">한 가지만 더</p>
+          <p className="text-body text-ink mt-1">{note.text}</p>
+          {/* 🚨 **앞서 적은 말을 다시 쓰라고 하지 않는다** (#158 리뷰). 원문을 되돌려 이어 적게
+              했더니, 일부가 이미 저장된 run 에서는 그 조각이 **두 번 저장**됐다. 앞 이야기는
+              서버가 `reply_to` 로 찾으므로 화면은 답만 받는다 (03 홈 `answerQuestion`). */}
+          <p className="text-body-sm text-ink-muted mt-2">
+            이 질문에 대한 답만 적어주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
+          </p>
+          <Button
+            variant="secondary"
+            size="compact"
+            className="mt-3"
+            onClick={() => onAnswer(note.text)}
+          >
+            이어서 적기
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 function ObservationRow({ observation }: { observation: Observation }) {
   const agent = observationAgent(observation.kind);

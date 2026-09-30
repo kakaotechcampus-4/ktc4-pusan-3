@@ -8,9 +8,12 @@ Agent 를 추가할 때(activity · growth · health) 한쪽만 고치는 실수
 
 import re
 from pathlib import Path
+from typing import get_args
+
+import pytest
 
 from app.agents.common.config import AgentSettings
-from app.core.agent_config import AgentLLMSettings
+from app.core.agent_config import AgentLLMSettings, AgentRole
 from app.core.config import Settings
 
 _ENV_EXAMPLE = Path(__file__).resolve().parents[3] / ".env.example"
@@ -59,3 +62,24 @@ def test_blank_max_retries_falls_back_to_default() -> None:
     """LLM_MAX_RETRIES 가 빈 문자열이면 기본값 2 를 쓴다."""
     s = AgentLLMSettings(LLM_MAX_RETRIES="", _env_file=None)
     assert s.LLM_MAX_RETRIES == 2
+
+
+def test_도메인_Agent_역할이_전부_있다() -> None:
+    assert {"food", "activity", "growth", "health"} <= set(get_args(AgentRole))
+
+
+@pytest.mark.parametrize("role", ["activity", "growth", "health"])
+def test_도메인_역할은_비워_두면_Memory_설정을_쓴다(role: str) -> None:
+    settings = AgentSettings(
+        MEMORY_API_KEY="k",
+        MEMORY_BASE_URL="https://example.invalid",
+        MEMORY_MODEL="m",
+        MEMORY_REASONING_EFFORT="none",
+        _env_file=None,
+    )
+    profile = settings.profile(role)  # type: ignore[arg-type]
+    assert (profile.model, profile.base_url, profile.api_key) == (
+        "m",
+        "https://example.invalid",
+        "k",
+    )

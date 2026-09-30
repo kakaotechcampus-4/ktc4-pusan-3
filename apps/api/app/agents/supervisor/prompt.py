@@ -41,10 +41,12 @@ _RECORD = """
 _REQUEST = """
 [request — 도메인 Agent 요청]
 - agent 는 food · activity(놀이·여가) · growth(학습·발달) · health 중 하나다.
-- food 로 보내는 건 두 가지다.
+- food로 보내는 건 세 가지다.
   meal_recommendation  뭘 먹일까 · 메뉴 · 간식 · 도시락 · 이유식 · 뭘 챙겨 먹이면 좋을까
   nutrient_analysis    영양이 괜찮은지 · 영양소 · 골고루 먹었는지 · 과잉/부족
-- 둘이 애매하면 meal_recommendation 으로 보낸다.
+  daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
+                       기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다
+- meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
 """.strip()
 
 _GUARDED = """
@@ -74,6 +76,10 @@ _EXAMPLES = """
 - "간식이랑 주말 나들이 추천해줘."
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth
+- "어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal
+- "오늘 급식 대신 두유 받았대" → request/food/daycare_meal
+- "내일모레는 어린이집 빠져" → request/food/daycare_meal
+- "집에서 계란말이 먹였어" → record/observe (급식이 아니라 observation_food)
 - "땅콩 알레르기 등록해줘." → guarded/safety_record
 - "어제부터 기침하는데 무슨 병일까?"
   → record/observe "어제부터 기침하는데" + guarded/diagnosis "무슨 병일까?"

@@ -9,7 +9,8 @@ EventDraft로 만들어 context.drafts에 넣고, 저장은 보호자가 초안�
 같은 초안에 얹는다.
 
 바로 쓰는 것은 셋이다. 준비물 챙김 표시(is_prepared)는 되돌릴 수 있고,
-일정 삭제와 준비물 삭제는 9/17 결정대로 승인 없이 지운다.
+일정 삭제와 준비물 삭제는 승인 없이 지운다.
+이름과 챙김 표시가 한 호출에 같이 오면 챙김을 먼저 쓰고 이름 초안을 그 위에 얹는다.
 
 기존 일정을 가리키는 event_id 는 query_event가 돌려준 값이어야 하고,
 없는 id 면 UNKNOWN_EVENT 로 되돌려 모델이 먼저 일정을 찾게 한다.
@@ -18,6 +19,7 @@ created_by / child_id 는 규칙이 채운다.
 알림은 등록된 일정을 기준으로 자동 설정되므로 Agent는 일정만 만들고 안내한다.
 """
 
+import logging
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -47,6 +49,8 @@ from app.agents.memory.schemas.schedule import (
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow
 
+logger = logging.getLogger(__name__)
+
 EVENT = "event"
 EVENT_ITEM = "event_item"
 
@@ -61,6 +65,10 @@ _NEEDS_START_TIME = (
 _NEEDS_END_TIME = (
     "끝나는 날짜는 있는데 끝나는 시각이 없다. ends_time에 끝나는 시각을 넣거나, "
     "모르면 보호자에게 묻는다. 끝을 비워 둘 거면 ends_on도 함께 뺀다."
+)
+_ITEM_GONE_AFTER_CHECK = (
+    "챙김 표시를 먼저 반영한 뒤 이름 초안을 만들다 준비물을 찾지 못했다. "
+    "query_event 로 준비물이 남아 있는지 확인한다."
 )
 
 
@@ -340,7 +348,28 @@ async def update_event_item(context: AgentContext, args: EventItemUpdate) -> Too
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
     if args.item_name is None:
         return await _check_event_item(context, current, args.is_prepared)
+    if args.is_prepared is not None:
+        # 챙김 표시를 먼저 쓴다. _sync_checked가 버퍼를 맞춘 뒤 이름 초안이 그 값을 읽어야
+        # 같은 run 의 동시 체크를 덮어쓰지 않는다
+        checked = await _check_event_item(context, current, args.is_prepared)
+        if not checked.success:
+            return checked
+        current = await context.store.get_event_item(item_id=args.item_id)
+        if current is None:
+            return _gone_after_check(args.item_id)
+        renamed = await _rename_event_item(context, current, args)
+        if not renamed.success:
+            return _gone_after_check(args.item_id)
+        # 이름이 그대로면 결과는 챙김만 한 호출과 같다. 이름 쪽의 changed=[] 를 내면
+        # 모델이 방금 한 체크를 "이미 되어 있었다"로 읽는다
+        return checked if renamed.data.get("changed") == [] else renamed
     return await _rename_event_item(context, current, args)
+
+
+def _gone_after_check(item_id: str) -> ToolResult:
+    """챙김을 쓴 뒤 준비물이 사라졌다. 정상 흐름에서는 오지 않아 경고로 남긴다."""
+    logger.warning("챙김 처리 뒤 준비물을 찾지 못함 item_id=%s", item_id)
+    return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _ITEM_GONE_AFTER_CHECK)
 
 
 async def _check_event_item(
@@ -392,7 +421,10 @@ def _sync_checked(context: AgentContext, row: EventItemRow) -> None:
 async def _rename_event_item(
     context: AgentContext, current: EventItemRow, args: EventItemUpdate
 ) -> ToolResult:
-    """이름 변경과 is_prepared는 보호자가 초안에서 확인하고 제출한다."""
+    """이름 변경은 보호자가 초안에서 확인하고 제출한다.
+
+    update_event_item이 먼저 쓴 챙김 표시가 반영된 current의 is_prepared를 그대로 옮긴다.
+    """
     parent = await current_draft(context, current.event_id)
     if parent is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
@@ -400,15 +432,27 @@ async def _rename_event_item(
     renamed = DraftItem(
         item_id=current.item_id,
         item_name=args.item_name or current.item_name,
-        is_prepared=current.is_prepared if args.is_prepared is None else args.is_prepared,
+        is_prepared=current.is_prepared,
     )
     items = tuple(renamed if item.item_id == current.item_id else item for item in parent.items)
     if items == parent.items and not parent.changed:
-        return ok("update", EVENT_ITEM, draft=False, item_id=current.item_id, changed=[])
+        return ok(
+            "update",
+            EVENT_ITEM,
+            draft=False,
+            item_id=current.item_id,
+            changed=[],
+            is_prepared=current.is_prepared,
+        )
 
     context.drafts.put(_with_items(parent, current.event_id, items))
     return ok(
-        "update", EVENT_ITEM, draft=True, item_id=current.item_id, item_name=renamed.item_name
+        "update",
+        EVENT_ITEM,
+        draft=True,
+        item_id=current.item_id,
+        item_name=renamed.item_name,
+        is_prepared=renamed.is_prepared,
     )
 
 
