@@ -18,6 +18,7 @@ import { currentScenario } from "../scenario";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 import { joinChild } from "./membership";
+import { invalidPolicyVersion } from "./policies";
 
 /**
  * 등록된 안전 정보. 🚨 **예전에는 Set 하나였다** — 등록 여부만 알면 409 를 낼 수 있어서였다.
@@ -58,7 +59,7 @@ export const childrenHandlers = [
     await networkDelay();
     const body = (await request.json()) as {
       nickname: string;
-      consents?: Array<{ scope: string }>;
+      consents?: Array<{ scope: string; policy_version?: string }>;
       guardian_attested?: boolean;
     };
 
@@ -75,6 +76,13 @@ export const childrenHandlers = [
       return apiError(403, "consent_required", "법정대리인 확인이 필요해요", {
         scopes: ["child_basic"],
       });
+    }
+
+    // 🚨 **등록된 약관 버전이어야 한다** (실서버 · #91). 아이가 만들어지기 전에 막는다 —
+    //    아이는 남고 동의만 어긋나는 상태를 만들지 않는다.
+    const invalid = invalidPolicyVersion(body.consents ?? []);
+    if (invalid) {
+      return apiError(400, "policy_version_invalid", "동의 화면을 다시 불러와 주세요", invalid);
     }
 
     // 🚨 관계를 여기서 정하지 않는다 — 01 은 더 이상 보내지 않고 02 가 받는다.

@@ -960,6 +960,51 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
+/* ── 약관 조회 ────────────────────────────────────────────────────────── */
+
+/**
+ * GET /policies — 동의 화면이 그릴 약관 목록 (#91 · #172).
+ *
+ * 🚨 **무인증이다.** 동의 화면은 계정이 만들어지기 전에 뜬다 (최상위 CLAUDE.md §9 의 예외 목록).
+ * 🚨 **배열 순서가 화면 순서다.** 서버가 계정 동의 → 아이 동의 순으로, 민감정보를 마지막에
+ *    둔다 (`app/domains/policy/catalog.py`). 프론트에서 다시 정렬하지 않는다.
+ * 🚨 **여기 없는 scope 는 화면에 세우지 않는다.** 동의를 받지 않는 scope 가 있고, 그건
+ *    응답에 담기지 않는다.
+ */
+export interface Policy {
+  scope: string;
+  /**
+   * 🚨 동의를 보낼 때 **그대로 싣는 값**이다 (`consents[].policy_version`). 프론트가 상수로
+   *    들고 있지 않는다 — 서버가 등록해 둔 버전과 다르면 `400 policy_version_invalid` 다.
+   */
+  version: string;
+  /** 법적 표기. 체크박스 라벨이자 전문 페이지의 제목이다. */
+  label: string;
+  /** 근거 조문. 없으면 보여주지 않는다. */
+  legal_basis: string | null;
+  /** 🚨 제출을 막는 것은 이 값뿐이다 — 목록 길이로 세지 않는다. */
+  required: boolean;
+  /** 민감정보라 다른 동의와 구분해서 받아야 하는가 (개인정보보호법 제23조). */
+  sensitive: boolean;
+  /**
+   * 누구의 동의라서 **어느 화면이 묻는가** (#190). `account` 는 가입 화면이 묻고 가입 요청에
+   * 싣고, `child` 는 01 아이 만들기 화면이 아이와 한 트랜잭션으로 보낸다.
+   *
+   * 🚨 **화면이 scope 이름으로 무리를 나누지 않는다.** 서버가 가입 검사에 쓰는 것과 같은
+   *    기준(`ACCOUNT_SCOPES`)이라, 새 동의가 생겨도 화면이 추측할 일이 없다 (#189 리뷰).
+   */
+  target: "account" | "child";
+  /**
+   * "전문 보기" 가 여는 정본 HTML 의 경로. `API_BASE_URL` 뒤에 그대로 붙인다
+   * (`policyHref()` · `lib/consent.ts`).
+   *
+   * 🚨 **`null` 이면 정본이 아직 없다** (개정 중인 아이 동의 2건). 그때는 전문 보기를
+   *    **숨긴다** — 다른 글을 대신 보여주지 않는다. 화면이 약관 본문을 직접 그리지 않는
+   *    이유가 "보호자가 본 글" 을 서버가 증명할 수 있어야 해서다 (멘토 #71-4 · #179).
+   */
+  html_path: string | null;
+}
+
 /* ── 00 로그인 ────────────────────────────────────────────────────────── */
 
 /**
@@ -1025,14 +1070,16 @@ export interface AuthSignupRequest {
   /** ② 에서 만든 것과 같은 값. consent_code 만으로 계정이 만들어지는 것을 막는다. */
   bind: string;
   /**
-   * ⚠️ **`docs/api/auth-kakao-v1.md` §3-5 에 없다** (#96 에서 추가 요청 중 · 확정 전).
-   *
    * 계정이 여기서 만들어지는데 이름을 받을 다른 엔드포인트가 없다 — 계약서에 `PATCH /me`
    * 가 없어서, 이 바디에 싣지 않으면 보호자 이름을 저장할 길 자체가 없다.
-   * 🚨 서버가 거절하기로 하면 화면이 아니라 **계약을 먼저 고친다.** 이름 화면을 지우고
-   *    `parent.nickname` 을 null 로 두는 것도 선택지다 (그 필드는 nullable 이다 · §5-2).
+   * 서버가 받기로 했다 (#90 · `SignupRequest.nickname`).
    */
   nickname: string;
+  /**
+   * 🚨 `policy_version` 은 **`GET /policies` 가 방금 준 값**이다. 상수로 들고 있지 않는다 —
+   *    서버는 지금 유효한 그 버전 하나만 받고, 다르면 `400 policy_version_invalid` 로
+   *    돌려보낸다 (대기표는 살아 있으니 화면만 다시 불러오면 된다).
+   */
   consents: Array<{ scope: string; policy_version: string }>;
 }
 

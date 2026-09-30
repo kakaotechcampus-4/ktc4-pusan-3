@@ -1,11 +1,22 @@
 /**
- * 동의 스코프 정본. 화면(가입 동의 · 10 설정)이 같은 목록을 두 벌 갖지 않게 여기 모은다.
+ * 동의 화면이 쓰는 것 중 **서버가 주지 않는 것**만 여기 둔다.
  *
- * 근거: 계약서 §04 `POST /consents` · `GET /consents` · docs/api/auth-kakao-v1.md §3-5 · 개인정보보호법.
+ * 🚨 **정본은 `GET /policies` 다** (#90 · #91 · #172). 무엇을 묻는지(scope 목록) · 어떤 순서로
+ *    묻는지 · 제목 · 법적 근거 · 필수 여부 · 민감정보 여부 · 그리고 **동의로 기록될 버전**은
+ *    전부 그 응답이 정한다. 예전에는 이 파일이 다 들고 있었는데, 그러면 보호자가 읽은 글과
+ *    서버에 기록되는 글이 같은지 확인할 방법이 없다 (멘토 #71-4).
+ *
+ * 🚨 **약관 전문을 이 파일에 두지 않는다.** 전문은 서버가 저장해 둔 정본 HTML 이고
+ *    (`policy.html_path`), 화면은 그 페이지를 **손대지 않고** 새 창으로 연다. 화면이 본문을
+ *    직접 그리면 문단을 숨기거나 순서를 바꿀 수 있어 "보호자가 본 글" 을 증명하지 못한다.
+ *
+ * 그래서 여기 남는 것은 **약관이 아닌 안내 문구**뿐이다 — 체크박스 밑 한 줄, 설정 목록의
+ * 짧은 이름, 켜고 끌 때 무엇이 달라지는지. 이건 서비스 화면의 말이라 약관 버전과 함께
+ * 움직이지 않는다.
  */
 
-/** 서버가 이 값으로 어느 버전에 동의했는지 기록한다. 약관을 고치면 여기부터 올린다. */
-export const CONSENT_POLICY_VERSION = "2026-09-01";
+import { API_BASE_URL } from "@/lib/env";
+import type { Policy } from "@/lib/api/types";
 
 export const CONSENT_SCOPES = [
   "service_terms",
@@ -16,52 +27,39 @@ export const CONSENT_SCOPES = [
 ] as const;
 export type ConsentScope = (typeof CONSENT_SCOPES)[number];
 
-export interface ConsentItem {
-  scope: ConsentScope;
-  /**
-   * 어디로 보내는가. **화면도 이 값으로 갈린다** (아래 `ACCOUNT_SIGNUP_CONSENTS` 주석).
-   * - `account` → `POST /auth/{provider}/signup` 의 `consents` (계정이 그때 만들어진다)
-   * - `child`   → `POST /children` 의 `consents` (아이와 **한 트랜잭션**) ·
-   *               설정에서 켜고 끌 때는 `POST /consents` (그때는 `child_id` 가 있다)
-   *
-   * ⚠️ `child` 쪽이 `POST /consents` 에서 `POST /children` 으로 옮겨 온 이유는 #96 이다 —
-   *    동의를 아이 단위로 기록하면 `child_id` 없이는 저장할 수 없고, 그 id 는 아이를
-   *    만들어야 생긴다. `CreateChildRequest.consents` 주석에 같은 내용이 있다.
-   */
-  target: "account" | "child";
-  /**
-   * 🚨 **필수 = 이게 없으면 서비스가 성립하지 않는다.** 편의상 붙이는 딱지가 아니다.
-   *    필수로 두려면 "없으면 무엇이 아예 안 되는가" 를 한 문장으로 댈 수 있어야 하고,
-   *    그 문장이 `blocks` 다. 못 대면 선택이다.
-   */
-  required: boolean;
-  /**
-   * 가입 **흐름**에서 묻는가 (어느 화면인지는 `target` 이 가른다). `required` 와 **같은
-   * 축이 아니다** — 지금은 필수 4건이 전부 가입 때 묻고 선택(`location`)은 안 묻지만,
-   * 그건 우연이 아니라 각각의 이유 때문이다.
-   * 위치정보는 놀이 제안을 처음 볼 때까지 쓸 일이 없어서 쓰지도 않을 시점에 미리 받지 않는다.
-   * 🚨 선택 동의를 가입 화면에 올리더라도 **제출을 막는 것은 `required` 뿐**이다.
-   */
-  askAtSignup: boolean;
-  /** 법적 표기. 동의 전문 시트의 제목이고, 가입 화면의 체크박스 라벨이다. */
-  label: string;
+/**
+ * 이 동의가 **누구의 것이라서 어느 화면이 묻는가** — `Policy.target` 의 값이다.
+ *
+ * - `account` — 보호자 본인의 동의. 가입 화면이 묻고 `POST /auth/{provider}/signup` 에 싣는다
+ * - `child` — 아이에 대한 동의. 01 아이 만들기 화면이 아이와 **한 트랜잭션**으로 보낸다 (#96).
+ *   동의를 아이 단위로 기록하면 `child_id` 없이는 저장할 수 없고, 그 id 는 아이를 만들어야 생긴다
+ *
+ * 🚨 **scope 이름으로 추측하지 않는다** (#189 리뷰 · 서버 #190). 한동안 프론트가
+ *    `["child_basic", "child_health"]` 를 들고 나머지를 전부 계정 쪽으로 넘겼다 — 새 필수 계정
+ *    동의가 생겼을 때 가입이 막히지 않는 쪽으로 기울인 기본값이었지만, 결국 화면이 서버의
+ *    분류를 흉내 내는 구조였다. 서버가 가입 검사에 쓰는 것과 **같은 기준**(`ACCOUNT_SCOPES`)을
+ *    내려주므로 그 값을 그대로 쓴다.
+ */
+export type ConsentTarget = Policy["target"];
+
+/* ── 화면 문구 ────────────────────────────────────────────────────────── */
+
+/**
+ * 🚨 **약관이 아니다.** 법적 표기(`label`) · 근거 조문(`legal_basis`) · 전문은 서버가 준다.
+ *    여기 있는 것은 그 옆에 붙는 **우리 화면의 말**이다.
+ */
+export interface ConsentCopy {
   /**
    * 목록 줄에서 쓰는 짧은 이름. 🚨 **법적 표기를 대신하는 값이 아니다** — 줄에는 오른쪽에
    * 버튼이 서 있어서 긴 라벨이 두 줄로 접히는데, 접힌 라벨은 읽히지 않고 자리만 먹는다.
-   * 무엇에 동의하는지의 정본은 그 줄에서 여는 전문 시트(`label` + `details`)다.
+   * 무엇에 동의하는지의 정본은 그 줄에서 여는 **전문**(서버 정본 HTML)이다.
    */
   shortLabel: string;
+  /** 체크박스 밑 한 줄. 전문을 대신하지 않는다 — 요약이다. */
   description: string;
-  /** 화면에 그대로 보여준다 — 무엇에 동의하는지 근거를 숨기지 않는다. */
-  legalBasis?: string;
-  /**
-   * 🚨 민감정보는 다른 동의와 **구분해서** 받아야 한다 (개인정보보호법 제23조).
-   * 그래서 어느 화면에도 "전체 동의" 가 없다 — 한 번에 쓸어 담으면 그 구분이 사라진다.
-   */
-  sensitive?: boolean;
   /**
    * 이 동의가 없을 때 **무엇이 멈추는가.** 10 설정의 철회 확인 시트가 이 문장들을 그대로
-   * 보여준다 — 끄기 전에 결과를 먼저 읽는 것이 이 화면의 일이다.
+   * 보여준다 — 끄기 전에 결과를 먼저 읽는 것이 그 시트의 일이다.
    *
    * 🚨 필수 동의의 것은 "멈춘다" 가 아니라 "계정이 없어진다" 에 가깝다. 같은 필드에 담되
    *    화면이 다르게 말한다 (필수는 철회 버튼 자체가 없다).
@@ -74,131 +72,33 @@ export interface ConsentItem {
    *    올리면 "동의하면 이 기능이 동작해요" 아래에 "이 기능이 멈춰요" 가 붙는다 (실제로 그랬다).
    */
   enables?: string[];
-  /** 전문 시트에 펼쳐 보여줄 내용. */
-  details: Array<{ heading: string; lines: string[] }>;
 }
 
 /**
- * 🚨 **이건 약관 전문이 아니다.** 지금 확정된 사실만 적었다.
- *    동의 전문 · 이용약관 · 개인정보 처리방침 **셋에 다 붙는다** — 그래서 "약관" 이라고
- *    특정해 쓰지 않는다.
- *
- * 보관 기간·삭제 범위가 아직 팀 미정이라(최상위 CLAUDE.md §10) 최종 약관을 쓸 수 없다.
- * 없는 조항을 그럴듯하게 지어 넣으면 그대로 배포되고, 아동 건강정보를 다루는 서비스에서
- * 그건 사고다. **확정되면 여기에 정식 문구를 넣고 이 안내를 지운다.**
+ * 🚨 **필수/선택이 여기 없다.** 그건 서버가 지키는 규칙이고(`app/domains/policy/catalog.py`),
+ *    같은 값을 두 곳에 적으면 어긋난다. 화면은 `policy.required` 만 본다.
  */
-export const TERMS_NOT_FINAL =
-  "확정된 내용만 적어 뒀어요. 보관 기간과 삭제 범위가 정해지면 정식 문서로 바뀝니다.";
-
-/**
- * 🚨 **필수 동의에는 "언제든 철회할 수 있어요" 를 쓰지 않는다.**
- *
- * 필수 4건은 하나라도 철회하면 서비스가 성립하지 않는다 — `child_basic` 없이는 아이를
- * 등록할 수 없고(`POST /children` → 403), `child_health` 없이는 한 줄 입력조차 저장되지
- * 않으며(`POST /inputs` → 403 · 계약서 §04), 계정 스코프 둘은 계정 자체의 근거다.
- * 즉 그 철회는 "설정에서 스위치 하나 끄기" 가 아니라 **탈퇴에 가깝다.**
- * 가벼운 문구로 말하면 실제로 눌렀을 때와 다르다. 그래서 10 설정은 필수 4건에
- * **철회 버튼을 두지 않고**, 대신 왜 못 끄는지를 글자로 적는다.
- *
- * 선택은 반대다. 화면에서 켜고 끌 수 있고, 바꾸기 전에 무엇이 달라지는지(`blocks`/`enables`)를
- * 먼저 보여준 뒤 확정받는다. 지금은 `location` 하나다.
- */
-export const CONSENT_ITEMS: ConsentItem[] = [
-  {
-    scope: "service_terms",
-    target: "account",
-    required: true,
-    askAtSignup: true,
+export const CONSENT_COPY: Record<ConsentScope, ConsentCopy> = {
+  service_terms: {
     shortLabel: "서비스 이용약관",
-    label: "서비스 이용약관",
     description: "보호자 계정으로 이 서비스를 쓰는 데 동의해요. 보호자마다 한 번만 받아요.",
     blocks: ["계정 자체가 이 동의 위에 있어서, 철회하면 서비스를 쓸 수 없어요."],
-    details: [
-      {
-        heading: "무엇에 동의하나요",
-        lines: [
-          "보호자 계정으로 이 서비스를 이용하는 데 동의합니다.",
-          "계정 단위 동의라 보호자마다 한 번만 받습니다.",
-        ],
-      },
-      {
-        heading: "이 서비스가 하지 않는 것",
-        lines: [
-          "진단하거나 약을 권하지 않습니다.",
-          "상품을 추천하거나 광고를 넣지 않습니다.",
-          "보호자를 대신해 예약·발송·결제를 하지 않습니다.",
-          "아이와 직접 대화하지 않습니다.",
-        ],
-      },
-    ],
   },
-  {
-    scope: "privacy_account",
-    target: "account",
-    required: true,
-    askAtSignup: true,
+  privacy_account: {
     shortLabel: "보호자 개인정보",
-    label: "개인정보 수집·이용 (보호자 본인)",
     description:
       "로그인에 쓰는 계정 식별값만 저장해요. 이메일·프로필 사진은 받아도 저장하지 않아요.",
     blocks: ["로그인을 할 수 없게 돼요. 계정을 알아볼 방법이 이것뿐이에요."],
-    details: [
-      { heading: "받는 것", lines: ["카카오 회원번호 (로그인 식별용)"] },
-      {
-        heading: "받아도 저장하지 않는 것",
-        lines: ["이메일 주소", "프로필 사진", "카카오 접근 토큰 (교환 즉시 폐기합니다)"],
-      },
-      { heading: "쓰는 곳", lines: ["로그인과 세션 유지. 그 밖의 용도로 쓰지 않습니다."] },
-      { heading: "제3자 제공", lines: ["하지 않습니다."] },
-    ],
   },
-  {
-    scope: "child_basic",
-    target: "child",
-    required: true,
-    askAtSignup: true,
+  child_basic: {
     shortLabel: "아이 기본정보",
-    label: "개인정보 수집·이용 (아이 기본정보)",
     description: "별명, 생일, 관계까지만 받아요. 이 동의가 없으면 아이를 등록할 수 없어요.",
-    legalBasis: "개인정보보호법 제22조의2 (만 14세 미만 아동의 법정대리인 동의)",
     blocks: ["아이를 등록할 수 없어요. 이 서비스의 모든 기능이 아이 등록 위에 있어요."],
-    details: [
-      { heading: "받는 것", lines: ["별명 (실명이 아니어도 됩니다)", "생일", "아이와의 관계"] },
-      {
-        heading: "쓰는 곳",
-        lines: [
-          "나이에 맞는 제안을 고르고 일정을 계산하는 데 씁니다.",
-          "나이는 저장하지 않고 생일로 그때그때 계산합니다.",
-        ],
-      },
-      { heading: "받지 않는 것", lines: ["실명", "주민등록번호", "주소", "연락처"] },
-      {
-        heading: "이 동의가 없으면",
-        lines: ["아이를 등록할 수 없습니다. 서비스의 모든 기능이 아이 등록 위에 있습니다."],
-      },
-    ],
   },
-  {
-    scope: "child_health",
-    target: "child",
-    /**
-     * 🚨 **필수다** (팀 결정 · #89). 한동안 선택으로 내려 봤지만 계약서 §04 가
-     *    `child_health` 없이 `POST /inputs` 도 403 이라고 못박고 있어서, 선택으로 두면
-     *    이 동의를 끈 보호자는 **한 줄 입력조차 못 한다** — 그러면 "선택" 이라는 말이
-     *    화면에서 거짓이 된다. 막히는 범위를 좁히는 대신 필수로 되돌렸다.
-     *
-     * 🚨 그래도 **다른 동의와 묶어 한 번에 받지 않는다.** 민감정보는 별도 동의여야 하고
-     *    (제23조), 이 파일에 "전체 동의" 가 없는 이유가 그것이다. 필수라는 것과
-     *    구분해서 받는다는 것은 다른 이야기다.
-     */
-    required: true,
-    askAtSignup: true,
+  child_health: {
     shortLabel: "아이 건강·알레르기",
-    label: "민감정보 처리 (아이 건강·알레르기)",
     description:
       "알레르기와 건강 기록은 식사 제안을 걸러내고 증상을 정리하는 데만 써요. 이 동의가 없으면 식사·건강 기능이 동작하지 않아요.",
-    legalBasis: "개인정보보호법 제23조 (민감정보의 처리, 별도 동의)",
-    sensitive: true,
     /**
      * 🚨 **`blocks[0]` 이 10 설정의 줄에 그대로 나간다.** 필수 줄이 말해야 하는 것은
      *    "왜 못 끄는가" 라서 서비스 수준의 결과가 먼저 온다 (선택 동의는 반대로
@@ -209,73 +109,11 @@ export const CONSENT_ITEMS: ConsentItem[] = [
       "식사 제안이 멈춰요. 알레르기를 모르는 채로 먹을 것을 권하지 않아요.",
       "건강 기록 정리와 증상 반복 알림이 멈춰요.",
     ],
-    details: [
-      {
-        heading: "받는 것",
-        lines: [
-          "보호자가 직접 입력한 알레르기 · 식품 제한",
-          "보호자가 남긴 증상 기록",
-          "보호자가 올린 의료 기록",
-        ],
-      },
-      {
-        heading: "AI 가 만들지 않습니다",
-        lines: [
-          "알레르기와 건강 정보는 AI 가 생성하거나 추론하거나 고치지 않습니다.",
-          "보호자가 입력한 값과 의료 기록만 저장합니다.",
-        ],
-      },
-      {
-        heading: "쓰는 곳",
-        lines: [
-          "식사 제안에서 못 먹는 것을 걸러냅니다. 이 걸러내기는 AI 가 아니라 코드가 합니다.",
-          "증상 기록을 정리해서 보여줍니다.",
-        ],
-      },
-      {
-        heading: "하지 않는 것",
-        lines: [
-          "진단하지 않습니다. 같은 증상이 세 번 반복되면 추천을 멈추고 병원 확인을 권합니다.",
-          "약을 권하지 않습니다.",
-          "발달을 평가하지 않습니다.",
-        ],
-      },
-      {
-        heading: "동의하지 않으면",
-        lines: [
-          "식사와 건강 기능이 동작하지 않습니다. 알레르기를 모르는 채로 식사를 제안하지 않습니다.",
-          "나머지 기능(놀이 · 교육 · 기록)은 그대로 씁니다.",
-        ],
-      },
-    ],
   },
-  {
-    scope: "location",
-    /**
-     * 🚨 **아이가 아니라 계정 스코프다.** 받는 값은 **보호자 기기의 위치**이고, 위치정보법
-     *    제19조의 개인위치정보주체도 보호자 본인이다 — 놀이 제안에 쓰인다고 해서 아이의
-     *    개인정보가 되지 않는다 (최상위 §2 "부모의 말은 아이의 Fact 가 아니다" 와 같은 갈래).
-     *
-     * 실무적으로도 이래야 성립한다 — 가입 화면에는 아직 아이가 없어서 `child_id` 를 실을
-     * 수 없다. 아이 스코프로 두면 `POST /consents` 가 저장할 자리를 못 찾는다.
-     */
-    target: "account",
-    required: false,
-    /**
-     * ⚠️ **가입 때 묻는 것으로 바뀌었다.** 처음에는 "놀이 제안을 처음 볼 때까지 쓸 일이
-     *    없으니 쓰지도 않을 시점에 미리 받지 않는다" 로 두고 설정에서만 켜게 했었다 (#89).
-     *
-     * 🚨 그래서 **막는 것은 여전히 `required` 뿐이다.** 가입 화면에 선택이 처음으로 서는
-     *    자리라, 목록 길이로 제출을 막으면 이 항목까지 필수가 된다 (`requiredConsentsChecked`).
-     * 🚨 가입 화면에서 **필수와 같은 무리로 그리지 않는다** — 머리줄로 가른다
-     *    (디자인 시스템 §7 동의 목록).
-     */
-    askAtSignup: true,
+  location: {
     shortLabel: "위치정보",
-    label: "위치정보 수집·이용",
     description:
       "지금 있는 지역의 날씨와 계절에 맞춰 놀이를 제안해요. 위치를 기록으로 저장하지는 않아요.",
-    legalBasis: "위치정보의 보호 및 이용 등에 관한 법률 제19조 (개인위치정보의 이용·제공)",
     blocks: [
       "놀이 제안이 날씨와 계절을 못 봐요. 밖에서 놀 수 있는 날인지 판단하지 않고 제안해요.",
       "놀이 제안 자체는 그대로 나와요.",
@@ -285,108 +123,136 @@ export const CONSENT_ITEMS: ConsentItem[] = [
       "시·군·구 수준까지만 봐요. 정확한 좌표도, 이동 경로도 받지 않아요.",
       "위치를 아이의 기억으로 저장하지 않아요. 제안을 고를 때 한 번 쓰고 버려요.",
     ],
-    details: [
-      {
-        heading: "받는 것",
-        lines: [
-          "기기가 알려주는 대략적인 위치 (시·군·구 수준)",
-          "정확한 좌표를 요구하지 않습니다.",
-        ],
-      },
-      {
-        heading: "쓰는 곳",
-        lines: [
-          "그 지역의 날씨와 계절을 보고 놀이 제안을 고릅니다.",
-          "실내에서 할 것인지 밖에서 할 것인지를 가르는 데만 씁니다.",
-        ],
-      },
-      {
-        heading: "저장하지 않는 것",
-        lines: [
-          "이동 경로 · 방문한 장소",
-          "위치를 아이의 기억으로 저장하지 않습니다. 제안을 고를 때 한 번 쓰고 버립니다.",
-        ],
-      },
-      {
-        heading: "동의하지 않으면",
-        lines: [
-          "놀이 제안이 날씨와 계절을 보지 않습니다. 제안 자체는 그대로 나옵니다.",
-          "나머지 기능은 아무 영향이 없습니다.",
-        ],
-      },
-    ],
   },
-];
+};
 
-/**
- * 가입 흐름에서 묻는 것. 🚨 **화면이 둘로 갈린다** — `target` 이 그 기준이다.
- *
- * 왜 한 화면에서 넷을 다 받지 않는가 (#96) — 계정은 동의 직후에 만들어지고
- * (`auth-kakao-v1.md` §6-1) 아이는 그 다음 화면에서 만들어진다. 아이 동의를 계정 동의와
- * 같은 화면에서 받으면, **가입은 끝났는데 아이를 만들기 전에 나간 사람**의 동의가 화면
- * 상태로만 남아 있다가 사라진다. 다시 들어오면 아이 만들기 화면이 그 값을 다시 묻지
- * 않으므로 `POST /children` 에 실을 것이 없다. 각 동의를 **그 동의가 쓰이는 화면**에 두면
- * 이탈해도 값이 늘 같은 자리에 있다.
- *
- * 🚨 **제출을 막는 것은 `required` 인 것들뿐이다** — 목록 길이가 아니다. 선택 동의를
- *    이 화면들에 올리는 날 조용히 그것까지 막지 않게.
- */
-export const ACCOUNT_SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter(
-  (i) => i.askAtSignup && i.target === "account",
-);
-
-/** 가입 화면의 **필수** 무리. 이게 비면 계정이 만들어지지 않는다. */
-export const ACCOUNT_SIGNUP_REQUIRED: ConsentItem[] = ACCOUNT_SIGNUP_CONSENTS.filter(
-  (i) => i.required,
-);
-
-/**
- * 가입 화면의 **선택** 무리. 🚨 안 골라도 계정이 만들어진다 — 이 목록이 제출을 막지 않는다.
- * 머리줄로 필수와 갈라 그린다 (디자인 시스템 §7 동의 목록).
- */
-export const ACCOUNT_SIGNUP_OPTIONAL: ConsentItem[] = ACCOUNT_SIGNUP_CONSENTS.filter(
-  (i) => !i.required,
-);
-
-/**
- * 01 아이 만들기 화면이 함께 묻는 것. `POST /children` 바디로 간다 (아이와 한 트랜잭션).
- *
- * 🚨 **초대로 들어온 보호자는 이것을 묻지 않는다.** 그 아이에 대한 법정대리인 동의는
- *    아이를 등록한 보호자가 이미 했다 (#96). 초대받은 사람에게 또 물으면, 법정대리인이
- *    아닌 사람에게서 법정대리인 동의를 받는 것이 된다.
- */
-export const CHILD_SIGNUP_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter(
-  (i) => i.askAtSignup && i.target === "child",
-);
-
-/** 10 설정에서 현황만 보여주고 철회 버튼을 두지 않는 것. */
-export const REQUIRED_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => i.required);
-
-/** 10 설정에서 켜고 끌 수 있는 것. */
-export const OPTIONAL_CONSENTS: ConsentItem[] = CONSENT_ITEMS.filter((i) => !i.required);
-
-export function consentItem(scope: string): ConsentItem | undefined {
-  return CONSENT_ITEMS.find((i) => i.scope === scope);
+export function consentCopy(scope: string): ConsentCopy | undefined {
+  return (CONSENT_COPY as Record<string, ConsentCopy>)[scope];
 }
+
+/* ── 서버 응답 + 화면 문구 ────────────────────────────────────────────── */
+
+/** 화면이 그리는 동의 한 줄 — 서버가 준 약관 + 그 옆에 붙는 우리 말. */
+export interface ConsentChoice {
+  policy: Policy;
+  /**
+   * 🚨 **없을 수 있다.** 서버가 새 scope 를 추가하면 문구가 아직 없다. 그때도 줄은 그린다 —
+   *    제목 · 근거 · 전문은 서버가 주므로 **동의를 받을 수 있는 최소한은 갖춰져 있고**,
+   *    모른다고 빼면 필수 동의가 화면에서 사라져 가입이 막힌다.
+   */
+  copy?: ConsentCopy;
+}
+
+/**
+ * 그 화면이 물어볼 것만 골라 낸다. **정렬하지 않는다** — 배열 순서가 곧 서버가 정한 화면
+ * 순서다 (계정 → 아이, 민감정보는 마지막).
+ */
+export function consentChoices(
+  policies: readonly Policy[] | undefined,
+  /** 생략하면 응답 전체. 10 설정은 계정·아이를 한 목록에 두고 `required` 로만 가른다. */
+  target?: ConsentTarget,
+): ConsentChoice[] {
+  return (policies ?? [])
+    .filter((policy) => target === undefined || policy.target === target)
+    .map((policy) => ({ policy, copy: consentCopy(policy.scope) }));
+}
+
+/**
+ * 전문 보기가 여는 주소. `html_path` 는 `/api/v1` 아래 경로라 기준 주소 뒤에 그대로 붙인다.
+ *
+ * 🚨 **`null` 이면 열 곳이 없다** — 화면은 버튼을 **숨긴다**. 다른 글로 대신하지 않는다.
+ */
+export function policyHref(policy: Policy): string | null {
+  return policy.html_path === null ? null : `${API_BASE_URL}${policy.html_path}`;
+}
+
+/**
+ * 지금까지 고른 동의 — **scope 마다 "어느 버전에 동의했는가"** 를 들고 있다.
+ *
+ * 🚨 boolean 이 아닌 이유가 핵심이다. 약관이 바뀌면 화면을 다시 불러오는데, 그때 체크가
+ *    boolean 이면 **옛 글을 읽고 누른 체크가 새 글의 동의로 넘어간다.** 버전을 담아 두면
+ *    바뀐 항목만 저절로 풀린다 (`isConsentChecked` 가 지금 버전과 비교한다).
+ */
+export type ConsentChecked = Partial<Record<string, string>>;
+
+export function isConsentChecked(policy: Policy, checked: ConsentChecked): boolean {
+  return checked[policy.scope] === policy.version;
+}
+
+/** 체크 한 번. 켜면 **그때 화면에 있던 버전**을 적어 두고, 끄면 지운다. */
+export function toggleConsent(
+  checked: ConsentChecked,
+  policy: Policy,
+  next: boolean,
+): ConsentChecked {
+  const updated = { ...checked };
+  if (next) updated[policy.scope] = policy.version;
+  else delete updated[policy.scope];
+  return updated;
+}
+
+/**
+ * 필수 항목이 전부 체크됐는가.
+ *
+ * 🚨 **막는 것은 `required` 뿐이다.** 목록 길이로 세지 않는다 — 선택 동의(`location`)가
+ *    가입 화면에 서 있어서, 길이로 세면 그것까지 필수가 된다.
+ */
+export function requiredConsentsChecked(
+  choices: readonly ConsentChoice[],
+  checked: ConsentChecked,
+): boolean {
+  return choices
+    .filter(({ policy }) => policy.required)
+    .every(({ policy }) => isConsentChecked(policy, checked));
+}
+
+/**
+ * 요청 바디에 실을 동의 목록.
+ *
+ * 🚨 **고른 것만 보낸다.** 안 고른 scope 까지 실어 보내면 화면이 물어본 것과 서버에 남는
+ *    것이 달라진다.
+ * 🚨 버전은 **지금 화면이 그린 그 버전**이다 (`policy.version`). 체크는 이미 같은 값으로
+ *    비교해 걸러졌다.
+ */
+export function consentPayload(
+  choices: readonly ConsentChoice[],
+  checked: ConsentChecked,
+): Array<{ scope: string; policy_version: string }> {
+  return choices
+    .filter(({ policy }) => isConsentChecked(policy, checked))
+    .map(({ policy }) => ({ scope: policy.scope, policy_version: policy.version }));
+}
+
+/**
+ * 400 `policy_version_invalid` — 화면이 낡았다는 뜻이다 (대기표는 살아 있다 ·
+ * `docs/api/auth-kakao-v1.md` §3-5). 다시 불러오고 **바뀐 항목만** 다시 받는다.
+ */
+export const POLICY_CHANGED_MESSAGE = "약관이 바뀌었어요. 바뀐 항목을 다시 확인하고 동의해 주세요.";
+
+/** 전문이 아직 없는 동의에 붙이는 한 줄. 🚨 없는 글을 지어 보여주는 대신 없다고 말한다. */
+export const POLICY_TEXT_PENDING = "전문을 다듬고 있어요. 준비되면 여기에서 볼 수 있어요.";
 
 /* ── 법적 문서 ────────────────────────────────────────────────────────── */
 
 /**
  * 10 설정의 **약관과 방침**이 보여주는 것.
  *
- * 🚨 **동의 스코프와 다른 개념이다.** 위의 `CONSENT_ITEMS` 는 *무엇에 동의를 받는가* 이고,
- *    가입 화면의 체크박스가 그것이다. 여기 둘은 *보호자가 언제든 다시 읽는 문서* 다.
- *    설정에 동의 스코프 네 개를 늘어놓으면 가입 화면을 한 번 더 그리는 셈이고, 부모가
- *    거기서 하려는 일(약관 읽기)과도 어긋난다.
+ * 🚨 **동의 스코프와 다른 개념이다.** 동의 목록은 *무엇에 동의를 받는가* 이고, 여기 둘은
+ *    *보호자가 언제든 다시 읽는 문서* 다. 설정에 동의 스코프를 늘어놓으면 가입 화면을 한 번
+ *    더 그리는 셈이고, 부모가 거기서 하려는 일(약관 읽기)과도 어긋난다.
  *
- * 🚨 **이용약관의 내용은 `service_terms` 스코프와 같은 글을 쓴다.** 두 벌로 두면 한쪽만
- *    고쳐진다 — 아래에서 참조로 가져온다.
+ * 🚨 **이용약관은 사본을 두지 않는다** — `service_terms` 의 정본 HTML 을 그대로 연다.
+ *    개인정보 처리방침만 아직 서버에 없어서(`docs/safety/consent-texts-v1.md` 머리말)
+ *    화면이 들고 있고, 그래서 아래 `details` 가 남아 있다. **서버에 올라오면 지운다.**
  */
 export interface LegalDocument {
   id: "service_terms" | "privacy_policy";
   label: string;
   legalBasis?: string;
-  details: Array<{ heading: string; lines: string[] }>;
+  /** 서버 정본이 있는 문서. 이 scope 의 `html_path` 를 새 창으로 연다. */
+  scope?: ConsentScope;
+  /** 서버 정본이 아직 없는 문서만. 화면 안 시트로 보여준다. */
+  details?: Array<{ heading: string; lines: string[] }>;
 }
 
 /**
@@ -395,9 +261,9 @@ export interface LegalDocument {
  * 정식 방침에는 보관 기간 · 파기 절차 · 개인정보 보호책임자 · 안전성 확보조치 · 권리 행사
  * 방법이 들어가야 하는데, 그중 **보관 기간·삭제 범위·외부 모델 전달 범위**가 아직 팀 미정이다
  * (최상위 CLAUDE.md §10). 없는 조항을 그럴듯하게 지어 넣으면 그대로 배포되고, 아동 건강정보를
- * 다루는 서비스에서 그건 사고다. **확정되면 여기에 정식 문구를 넣고 이 주석을 지운다.**
+ * 다루는 서비스에서 그건 사고다. **확정되면 서버에 정본으로 올리고 이 상수를 지운다.**
  */
-const PRIVACY_POLICY_DETAILS: LegalDocument["details"] = [
+const PRIVACY_POLICY_DETAILS: NonNullable<LegalDocument["details"]> = [
   {
     heading: "받는 것",
     lines: [
@@ -443,12 +309,19 @@ const PRIVACY_POLICY_DETAILS: LegalDocument["details"] = [
   },
 ];
 
+/**
+ * 🚨 개인정보 처리방침 시트에만 붙는다. 이용약관은 서버 정본이라 이 안내가 필요 없다 —
+ *    거기 적힌 것은 지어낸 문장이 아니라 **보호자가 동의한 그 글**이다.
+ */
+export const TERMS_NOT_FINAL =
+  "확정된 내용만 적어 뒀어요. 보관 기간과 삭제 범위가 정해지면 정식 문서로 바뀝니다.";
+
 export const LEGAL_DOCUMENTS: LegalDocument[] = [
   {
     id: "service_terms",
     label: "서비스 이용약관",
-    // 🚨 `service_terms` 스코프와 **같은 글**이다. 복사하지 않고 가져온다.
-    details: consentItem("service_terms")?.details ?? [],
+    // 🚨 사본을 두지 않는다 — 가입 화면이 여는 것과 **같은 페이지**를 연다.
+    scope: "service_terms",
   },
   {
     id: "privacy_policy",
