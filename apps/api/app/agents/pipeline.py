@@ -329,6 +329,10 @@ async def handle_input(
                 send(note)
             if memory.pending is not None:
                 send(PendingReply(run_id, memory.pending))
+            # TODO(#149-integration): DB 저장소가 붙으면 여기서 Curator 를 백그라운드로 띄운다.
+            #   관찰이 커밋된 뒤 호출해야 하므로 InMemoryStore 에서는 동작하지 않는다.
+            #   from app.domains.memory.curator.trigger import trigger_curator_background
+            #   trigger_curator_background(child_id, today, embedder, judge)
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
