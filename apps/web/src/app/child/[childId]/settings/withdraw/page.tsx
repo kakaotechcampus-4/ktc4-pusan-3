@@ -15,7 +15,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { useChildId } from "@/hooks/use-child-id";
-import { api, type WithdrawRequest, type WithdrawResponse } from "@/lib/api";
+import { api, ApiError, type WithdrawRequest, type WithdrawResponse } from "@/lib/api";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -139,11 +139,22 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
               🚨 **가장 무거운 결과가 맨 위다.** 로그아웃부터 읽히면 아이 기록이 지워진다는
               말이 세 번째 줄에서 나온다 — 읽다 마는 사람이 그것을 못 보고 나간다. */}
           <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-3 pl-5">
+            {/* 🚨 **등록 보호자와 함께 보는 보호자가 서로 다른 일을 겪는다** (삭제 정책 정본
+                §9 · #182 리뷰). 한 줄로 합쳐 "기록이 지워져요" 라고만 쓰면, 초대로 들어온
+                보호자에게는 **일어나지 않는 일**을 예고하는 화면이 된다. 서버가 붙는 날
+                바로 생기는 경우라(초대 화면은 이미 있다) 지금 두 줄로 갈라 둔다.
+                // 넘기기(이관)가 생기면 여기서 먼저 권한다 — 약관 제9조 ③ */}
             <li>
               아이를 등록한 보호자라면, 아이와 쌓인 기록이 함께 지워져요.
               <span className="text-body-sm text-ink-muted mt-1 block">
                 함께 보던 보호자도 이 아이를 더는 볼 수 없게 돼요. 그분들에게 따로 알림이 가지는
                 않으니 먼저 말씀해 주시는 편이 좋아요.
+              </span>
+            </li>
+            <li>
+              함께 보는 보호자라면, 공동 기록은 아이에게 남고 쓴 사람 이름만 사라져요.
+              <span className="text-body-sm text-ink-muted mt-1 block">
+                아이와 등록 보호자 쪽은 그대로예요. 대신 내가 이 아이를 보는 연결이 끊겨요.
               </span>
             </li>
             <li>
@@ -153,14 +164,18 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
               </span>
             </li>
             <li>
-              지워진 기록은 되돌릴 수 없어요.
+              지워진 것은 되돌릴 수 없어요.
               <span className="text-body-sm text-ink-muted mt-1 block">
-                다시 로그인해도 돌아오지 않아요. 아이에 대해 쌓인 기억을 처음부터 다시 만들어야
-                해요.
+                다시 로그인해도 돌아오지 않아요. 계정을 새로 만들고, 아이도 다시 등록하거나
+                초대를 다시 받아야 해요.
               </span>
             </li>
           </ul>
-          {/* 🚨 정해지지 않은 것을 정해진 것처럼 쓰지 않는다 (약관의 같은 처리). */}
+          {/* 🚨 정해지지 않은 것을 정해진 것처럼 쓰지 않는다 (약관의 같은 처리).
+              🚨 **여기에 "한 톨도 남지 않아요" 를 쓰지 않는다.** 동의문 1 이 백업 사본을
+                 최대 30일, 약관 제9조 ② 가 동의 기록을 1년 보관한다고 약속한다 (#182 리뷰) —
+                 그 API 가 생기는 날 이 문단을 그 숫자에 맞춘다. 지금 "전부 지워져요" 로
+                 단정하면 그때 화면이 약관과 어긋난 채로 남는다. */}
           <p className="border-line text-caption text-ink-subtle mt-4 border-t pt-4">
             무엇을 어디까지 지우는지는 아직 정리하고 있어요. 정해지면 이 안내를 먼저 고칩니다.
           </p>
@@ -172,7 +187,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
           <Checkbox
             checked={acknowledged}
             onChange={setAcknowledged}
-            label="위 내용을 읽었고, 지금 지워지면 되돌릴 수 없다는 것을 알고 있어요"
+            label="위 내용을 읽었고, 지금 지워지고 되돌릴 수 없다는 것을 알고 있어요"
           />
         </Card>
         {/* 🚨 읽었다고 표시하기 전에는 못 누른다. 비활성은 브랜드색을 흐리게 만드는 것이
@@ -216,16 +231,48 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
       >
         <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
           <li>아이를 등록한 보호자라면 아이와 쌓인 기록이 함께 지워져요.</li>
+          <li>함께 보는 보호자라면 공동 기록은 아이에게 남고, 이 아이를 보는 연결이 끊겨요.</li>
           <li>되살릴 방법이 없어요. 다시 쓰시려면 처음부터 다시 만들어야 해요.</li>
         </ul>
-        {withdraw.isError ? (
-          <CardFailed className="mt-4">
-            <p>탈퇴를 처리하지 못했어요. 계정은 그대로예요.</p>
-            <p className="mt-1">다시 눌러 주세요.</p>
-          </CardFailed>
-        ) : null}
+        {withdraw.isError ? <WithdrawFailed error={withdraw.error} /> : null}
       </BottomSheet>
     </Screen>
+  );
+}
+
+/**
+ * 확정 시트의 실패 자리.
+ *
+ * 🚨 **서버가 거절한 것과 응답을 못 받은 것을 같은 말로 하지 않는다** (#182 리뷰).
+ *    유예가 없어서 요청이 서버에 닿았다면 그 순간 지워지는데(#167), 연결이 끊겨 응답만
+ *    못 받은 경우에 "계정은 그대로예요" 라고 하면 **이미 지워진 사람에게 거짓말**이 된다.
+ *
+ * 가르는 선은 **서버가 답을 줬는가**다. 4xx 는 서버가 요청을 받고 거절한 것이라 계정이
+ * 그대로지만, 5xx · 네트워크 실패는 무엇이 저장됐는지 모르는 상태다 —
+ * `useRunStream` 이 `unconfirmed` 를 따로 두는 것과 같은 구분이다.
+ *
+ * 🚨 **실패를 빨강으로 칠하지 않는다** (디자인 시스템 §7). `CardFailed` 가 중립 면이다.
+ */
+function WithdrawFailed({ error }: { error: unknown }) {
+  const refusedByServer = error instanceof ApiError && error.status < 500;
+
+  if (refusedByServer) {
+    return (
+      <CardFailed className="mt-4">
+        <p>탈퇴를 처리하지 못했어요. 계정은 그대로예요.</p>
+        <p className="mt-1">다시 눌러 주세요.</p>
+      </CardFailed>
+    );
+  }
+
+  return (
+    <CardFailed className="mt-4">
+      <p>처리됐는지 확인하지 못했어요.</p>
+      <p className="mt-1">
+        연결이 끊겨서 지워졌는지 알 수 없어요. 다시 눌러 주세요. 이미 지워졌다면 처음 화면으로
+        돌아가요.
+      </p>
+    </CardFailed>
   );
 }
 
@@ -245,9 +292,13 @@ function WithdrawDone() {
           시작하는 문장은 무엇이든 없는 것을 가리킨다 (#167). 같은 카카오 계정으로 다시
           시작할 수는 있지만 그건 **새 계정**이고, 그 말은 처음 화면이 할 말이다. */}
       <Card>
-        <p className="text-body text-ink">쌓인 기록은 지워졌어요. 되돌릴 수 없어요.</p>
+        <p className="text-body text-ink">계정이 지워졌어요. 되돌릴 수 없어요.</p>
+        {/* 🚨 **역할을 모른 채 "기록이 지워졌어요" 라고 단정하지 않는다** (#182 리뷰).
+            함께 보는 보호자였다면 공동 기록은 아이에게 남는다 — 이 화면은 세션이 이미
+            없어서 물어볼 곳도 없다. 그래서 두 경우를 **그대로 적는다.** */}
         <p className="text-body-sm text-ink-muted mt-2">
-          다시 시작하실 때는 아이에 대한 기억을 처음부터 새로 만들게 돼요.
+          아이를 등록한 보호자였다면 아이와 쌓인 기록도 함께 지워졌고, 함께 보는 보호자였다면
+          공동 기록은 아이에게 남아요.
         </p>
       </Card>
 
