@@ -79,7 +79,7 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5개. 승인 게이트 2곳(㉠ confirmEvent · ㉡ healthSafety)이 여기 포함된다.
+ * 계약서 §01 의 5개. 승인 게이트 2곳(㉠ submitEvent · ㉡ healthSafety)이 여기 포함된다.
  * 여기에 줄을 더하면 아래 정규식과 operations.ts 가 자동으로 따라온다.
  */
 export const idempotentPath = {
@@ -89,8 +89,18 @@ export const idempotentPath = {
   photo: (childId: string) => `/children/${childId}/photos`,
   /** 🚨 승인 게이트 ㉡ — 알레르기·건강 기록 확정. */
   healthSafety: (childId: string) => `/children/${childId}/health-safety`,
-  /** 🚨 승인 게이트 ㉠ — 캘린더 쓰기. */
-  confirmEvent: (eventId: string) => `/events/${eventId}/confirm`,
+  /**
+   * 🚨 승인 게이트 ㉠ — 캘린더 쓰기. 초안 **제출**이 이 자리다 (#121).
+   *
+   * ⚠️ **경로가 아직 미정이다** ([`docs/event/event-draft-flow-v1.md`] §6). #121 에서
+   *    `POST /children/{cid}/events` 로 합의했고 BE 가 동의했지만 계약서 갱신은 보류됐다 —
+   *    확정되면 **이 한 줄만** 고치면 차단·목·테스트가 따라온다.
+   *
+   * 🚨 **update 초안(`PATCH /events/{eid}`)은 여기 없다.** 9/21 에 op 별로 엔드포인트를 가르기로
+   *    했는데, PATCH 는 `items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같다(멱등) —
+   *    새 행을 만드는 POST 만 키가 필요하다. 이 판단이 틀리면 표에 줄을 하나 더한다.
+   */
+  submitEvent: (childId: string) => `/children/${childId}/events`,
 } as const satisfies Record<string, (id: string) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;

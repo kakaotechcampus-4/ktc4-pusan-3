@@ -22,7 +22,8 @@ from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
-from app.agents.memory.schemas.task import MemoryTask, WorkType
+from app.agents.memory.schemas.reply import ReplyKind
+from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.routing import Guidance, Routing, route
@@ -113,6 +114,18 @@ class Unavailable:
 @dataclass(frozen=True)
 class MemoryNote:
     text: str  # Memory 응답 메시지
+    kind: ReplyKind  # question 이면 화면이 "이어서 적기" 를 연다. 맥락이 있을 때만 question
+
+
+@dataclass(frozen=True)
+class PendingReply:
+    """되묻기로 끝난 run. API가 run_id에 매달아 두고 다음 입력의 reply_to로 찾는다.
+
+    받는 쪽은 API의 pending store이다.
+    """
+
+    run_id: str
+    context: PendingMemoryContext
 
 
 @dataclass(frozen=True)
@@ -156,6 +169,7 @@ Event = (
     | Unavailable
     | Guidance
     | MemoryNote
+    | PendingReply
     | Unwritten
     | Rerouted
     | Failed
@@ -208,14 +222,27 @@ async def handle_input(
     supervisor_client: LLMClient | None = None,
     memory_client: LLMClient | None = None,
     emit: Emit | None = None,
+    continuation: PendingMemoryContext | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
     food_context.stage는 호출 전에 아이 나이를 기준으로 계산해 전달한다.
+    continuation 이 있으면 raw_text 는 이전 run 의 질문에 대한 답이다 (_handle_continuation).
     """
     started = time.perf_counter()
     send = emit or _ignore
     _safety_precheck(raw_text)
+
+    if continuation is not None:
+        return await _handle_continuation(
+            raw_text,
+            memory_context,
+            run_id=run_id,
+            continuation=continuation,
+            memory_client=memory_client,
+            send=send,
+            started=started,
+        )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
     supervisor = await run_supervisor(raw_text, client=supervisor_client)
@@ -247,8 +274,11 @@ async def handle_input(
             # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
-            if memory.final_message:
-                send(MemoryNote(memory.final_message))
+            note = _memory_note(memory)
+            if note is not None:
+                send(note)
+            if memory.pending is not None:
+                send(PendingReply(run_id, memory.pending))
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
@@ -259,7 +289,10 @@ async def handle_input(
     bounced = _bounced_hints(routing.memory_task, memory) if failed is None else ()
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
     stranded = not routing.food_tasks and not routing.unavailable_agents
-    if bounced and stranded and REROUTE_MISDELEGATED:
+    # 되묻고 있는 조각은 위임이 어긋난 게 아니라 답을 기다리는 것이다. 다시 나누면 Supervisor
+    # 호출을 한 번 더 쓰고, 그 조각이 도메인 Agent로 옮겨가 답이 와도 이어 붙일 자리가 없어진다
+    waiting = memory is not None and memory.pending is not None
+    if bounced and stranded and REROUTE_MISDELEGATED and not waiting:
         retry = await run_supervisor(
             raw_text, client=supervisor_client, feedback=_reroute_feedback(bounced)
         )
@@ -310,6 +343,97 @@ async def handle_input(
         rerouted=rerouted,
         failed=failed,
         disagreement=_disagreement(routing, memory),
+        model_calls=model_calls,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+    )
+    _log(result)
+    return result
+
+
+# 이어받기 run의 routing 자리. 안내·준비 중 agent가 없어 _did_anything에는 쓴 것과 말만 남는다
+_NO_ROUTING = Routing(intent_type="record", memory_task=None)
+
+# 이어받기 답에 섞여 온 다른 말은 처리하지 않는다.
+# 다시 보내도 두 번 저장되지 않게 반영하지 않았다는 것까지 알린다.
+LEFTOVER_NOTE = "답변과 함께 적은 다른 내용은 반영하지 않았어요. 따로 한 줄로 보내 주세요."
+# 다시 묻는 중이면 화면이 note 전체를 질문으로 잡고 다음 한 줄을 그 답으로 보낸다.
+# 따로 보낼 것은 질문에 답한 뒤에 보내게 한다
+LEFTOVER_NOTE_QUESTION = (
+    "적어 주신 다른 내용은 반영하지 않았어요. 이 질문에 먼저 답한 뒤 따로 한 줄로 보내 주세요."
+)
+# 맥락(pending) 없이 묻는 질문. question으로 내보내면 화면이 "이어서 적기"를 열고,
+# 그 답은 reply_to로 가서 400을 받는다. message로 내리고 새 한 줄로 받는다
+NO_CONTEXT_NOTE = "답은 무엇에 대한 것인지 함께 적어 따로 한 줄로 보내 주세요."
+LEFTOVER_NOTE_NO_CONTEXT = (
+    "적어 주신 다른 내용은 반영하지 않았어요. 그 내용과 이 질문의 답은 각각 따로 한 줄로 "
+    "보내 주세요. 답에는 무엇에 대한 것인지 함께 적어 주세요."
+)
+
+
+def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
+    """Memory 의 마지막 말을 note로 만든다. 뒤에 붙는 문장은 코드가 정한다.
+
+    화면은 kind 만 보고 "이어서 적기" 를 연다. 그래서 question은 맥락이 있을 때만 내보낸다.
+    """
+    reply = memory.reply
+    if reply is None:
+        return None
+    if reply.kind == "question" and memory.pending is None:
+        suffix = LEFTOVER_NOTE_NO_CONTEXT if memory.leftover else NO_CONTEXT_NOTE
+        return MemoryNote(text=f"{reply.text} {suffix}", kind="message")
+    if memory.leftover:
+        suffix = LEFTOVER_NOTE_QUESTION if reply.kind == "question" else LEFTOVER_NOTE
+        return MemoryNote(text=f"{reply.text} {suffix}", kind=reply.kind)
+    return MemoryNote(text=reply.text, kind=reply.kind)
+
+
+async def _handle_continuation(
+    answer: str,
+    memory_context: AgentContext,
+    *,
+    run_id: str,
+    continuation: PendingMemoryContext,
+    memory_client: LLMClient | None,
+    send: Emit,
+    started: float,
+) -> PipelineResult:
+    """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
+    send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
+    memory: MemoryAgentResult | None = None
+    failed: Failed | None = None
+    model_calls = 0
+    try:
+        memory = await run_memory(
+            answer, memory_context, client=memory_client, continuation=continuation
+        )
+    except LLMError:
+        failed = Failed("llm_unavailable", answer)
+    else:
+        model_calls = 1
+        refs = _saved_refs(memory)
+        if refs:
+            send(Saved(refs))
+        if memory.drafts:
+            send(EventDrafts(memory.drafts))
+        note = _memory_note(memory)
+        if note is not None:
+            send(note)
+        if memory.pending is not None:
+            send(PendingReply(run_id, memory.pending))
+
+    # 쓴 것도 한 말도 없으면 실패 처리
+    if failed is None and not _did_anything(memory, [], _NO_ROUTING):
+        failed = Failed("unparsable", answer)
+    if failed is not None:
+        send(failed)
+    send(Done(run_id, model_calls))
+
+    result = PipelineResult(
+        run_id=run_id,
+        supervisor=SupervisorResult(output=None),
+        routing=_NO_ROUTING,
+        memory=memory,
+        failed=failed,
         model_calls=model_calls,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )

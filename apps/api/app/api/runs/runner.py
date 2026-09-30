@@ -26,7 +26,7 @@ from uuid import UUID
 
 from app.agents import entrypoint
 from app.api import idempotency
-from app.api.runs import sse, translate
+from app.api.runs import pending_reply, sse, translate
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
@@ -49,12 +49,24 @@ RUN_DEADLINE_SECONDS = 60.0
 """
 
 
-def agent_job(*, child_id: UUID, parent_id: UUID, raw_text: str) -> Job:
+def agent_job(
+    *,
+    child_id: UUID,
+    parent_id: UUID,
+    raw_text: str,
+    continuation: entrypoint.PendingMemoryContext | None = None,
+    reply_to: str | None = None,
+) -> Job:
     """진짜 Agent(entrypoint.handle_input)를 돌리는 job 을 만든다. 진행 이벤트는 번역해서 채널로.
 
     - 저장소는 넘기지 않는다 — 지금은 run 마다 메모리 저장소다. DB 저장은 7단계.
     - 생일도 아직 안 넘긴다 — 아이 정보를 읽는 9단계에서. 그 전까지 식이 단계는 진입점의 기본값.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
+    - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
+    - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
+      done 앞에 들어가야 화면이 note 를 받은 직후 보낸 답도 맥락을 찾는다.
+    - 이어받기 run 이 done 없이 끝나면(실패 · 시간 초과 · 예외) 창구가 꺼낸 맥락을 reply_to 로
+      되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
       끊는 순간 진행 중인 모델 호출도 취소된다.
 
@@ -62,6 +74,19 @@ def agent_job(*, child_id: UUID, parent_id: UUID, raw_text: str) -> Job:
     """
 
     async def job(channel: RunChannel) -> None:
+        relay = translate.relay(channel)
+
+        def emit(event: entrypoint.Event) -> None:
+            if isinstance(event, entrypoint.PendingReply):
+                pending_reply.put(
+                    run_id=event.run_id,
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    context=event.context,
+                )
+                return
+            relay(event)
+
         try:
             async with asyncio.timeout(RUN_DEADLINE_SECONDS):
                 await entrypoint.handle_input(
@@ -69,13 +94,20 @@ def agent_job(*, child_id: UUID, parent_id: UUID, raw_text: str) -> Job:
                     parent_id=parent_id,
                     raw_text=raw_text,
                     run_id=channel.run_id,
-                    emit=translate.relay(channel),
+                    emit=emit,
+                    continuation=continuation,
                 )
         except TimeoutError:
             log.warning(
                 "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
             )
             channel.publish(sse.failed_event("timeout", raw_text))
+        finally:
+            # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다. done 이 아니면 전부 되돌린다
+            if continuation is not None and reply_to is not None and channel.ended_with != "done":
+                pending_reply.put(
+                    run_id=reply_to, parent_id=parent_id, child_id=child_id, context=continuation
+                )
 
     return job
 

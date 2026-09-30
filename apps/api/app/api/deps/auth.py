@@ -70,7 +70,8 @@ async def get_current_parent(
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
 
     # A-19 만 다른 곳으로 간다. 탈퇴한 계정은 세션 만료를 기다리지 않고 즉시 끊는다.
-    # 유예기간 N일이 미정이라 그전까지 404 로 막아둔다 (§8-1 · §10-1).
+    # 탈퇴는 유예 없이 즉시 삭제로 정했다 (삭제 정책 정본 §9 · #167) — 되살릴 계정이
+    # 아니므로 404 로 막는다 (§8-1 · §10-1).
     if row.parent_deleted_at is not None:
         raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 

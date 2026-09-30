@@ -15,14 +15,18 @@
 import { api } from "./client";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
-  CalendarEvent,
+  ApproveSuggestionsRequest,
+  ApproveSuggestionsResponse,
+  CreateEventDraftsRequest,
+  CreateEventDraftsResponse,
   HealthSafety,
   OnboardingRequest,
   OnboardingResponse,
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
-  SuggestionStatus,
+  SubmitEventBody,
+  SubmitEventResponse,
 } from "./types";
 
 /* ── 04 한 줄 입력 ────────────────────────────────────────────────────── */
@@ -30,6 +34,20 @@ import type {
 export interface InputRequest {
   text: string;
   source: "home_input" | "chat" | "photo";
+  /**
+   * 🔶 **되묻기에 대한 답일 때만** 싣는다 — 그 질문이 나온 `run_id` 다 (#158 리뷰 · 서버 #175 머지 전).
+   *
+   * 🚨 **원문을 다시 보내지 않기 위한 필드다.** 답만 보내면 서버가 맥락을 모르는데, 그렇다고
+   *    화면이 원문을 붙여 보내면 **이미 저장된 조각까지 다시 저장된다** — "계란 잘 먹었어.
+   *    요즘 기침해" 처럼 일부는 저장되고 질문이 같이 오는 run 이 있기 때문이다
+   *    (`apps/api/app/agents/pipeline.py` — `Saved` 와 `MemoryNote` 가 한 run 에 같이 나간다).
+   *    맥락은 서버가 이 `run_id` 로 찾는다.
+   *
+   * 🚨 **서버가 그 질문을 못 찾으면 `400 reply_context_unavailable` 이다** (#175) — 만료(15분) ·
+   *    재시작 · 이미 답한 질문. 같은 `reply_to` 는 계속 400 이라 화면은 질문을 놓는다 (03 홈 `onError`).
+   * ⚠️ #175 머지 전 서버는 **모르는 필드라 무시한다** — 먼저 보내도 깨지지 않는다.
+   */
+  reply_to?: string;
 }
 
 /** 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다 (streamRunEvents). */
@@ -149,18 +167,71 @@ export function addHealthSafety(
   return api.post(idempotentPath.healthSafety(childId), body, { idempotencyKey });
 }
 
+/* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */
+
+/**
+ * 고른 제안을 **채택한다** (`status: approved`). 🚨 **일정과 다른 축이다** — 캘린더에는 아무것도
+ * 안 들어가고, 일정으로 만들지는 그다음에 따로 묻는다 (`ApproveSuggestionsRequest` 의 ⚠️).
+ *
+ * 🚨 Idempotency-Key 를 받지 않는다 — 같은 id 를 두 번 보내도 결과가 같은 상태 전환이다.
+ */
+export function approveSuggestions(
+  childId: string,
+  body: ApproveSuggestionsRequest,
+): Promise<ApproveSuggestionsResponse> {
+  return api.post(`/children/${childId}/suggestions/approve`, body);
+}
+
+/**
+ * 채택한 제안들을 초안으로 바꾼다. 🚨 **승인 게이트가 아니다 — 아무것도 쓰지 않는다** (#121).
+ *    그래서 Idempotency-Key 를 받지 않는다. 두 번 불러도 초안이 두 벌 생길 뿐 DB 는 그대로다.
+ *
+ * 🚨 **고른 개수와 초안 개수가 1:1 이 아니다** — `food` 는 한 끼로 묶인다 (`types.ts` 참고).
+ * ⚠️ 경로가 계약서에 없다 (`CreateEventDraftsRequest` 의 ⚠️).
+ */
+export function createEventDrafts(
+  childId: string,
+  body: CreateEventDraftsRequest,
+): Promise<CreateEventDraftsResponse> {
+  return api.post(`/children/${childId}/suggestions/event-drafts`, body);
+}
+
 /* ── 🚨 승인 게이트 ㉠ — 캘린더 쓰기 ──────────────────────────────────── */
 
 /**
- * 되돌릴 수 없는 지점. event.status → confirmed, 연결된 suggestion.status → approved.
+ * 초안을 캘린더에 **넣는다.** 되돌릴 수 없는 지점이다 —
+ * 여기 오기 전까지 초안은 SSE 와 응답에만 있고 DB 에 행이 없다 (#118 · #121).
  *
+ * 🚨 본문은 **보호자가 확인한 최종 상태 전체**다 (#122). 부분 갱신이 아니라서
+ *    `items` 에서 빠진 `item_id` 가 삭제로 처리된다.
  * 🚨 낙관적 업데이트 금지 (apps/web/CLAUDE.md §3). 응답을 받은 뒤에 캐시를 갱신한다.
- * 409 already_confirmed 는 "다른 요청이 이미 확정한 일정" 이라는 뜻이다 —
- * 같은 키로 다시 보낸 재시도는 409 가 아니라 처음 응답을 그대로 받는다.
+ * 🚨 재시도는 **같은 키**로 간다. 새 키를 만들면 일정이 두 건 생긴다.
  */
-export function confirmEvent(
-  eventId: string,
+export function submitEventDraft(
+  childId: string,
+  body: SubmitEventBody,
   idempotencyKey: IdempotencyKey,
-): Promise<{ event: CalendarEvent; suggestion_status: SuggestionStatus }> {
-  return api.post(idempotentPath.confirmEvent(eventId), undefined, { idempotencyKey });
+): Promise<SubmitEventResponse> {
+  return api.post(idempotentPath.submitEvent(childId), body, { idempotencyKey });
+}
+
+/**
+ * 수정 초안을 반영한다. 🚨 **이것도 캘린더 쓰기라 게이트 ㉠ 이고, 키를 받는다.**
+ *
+ * 🚨 한동안 키 없이 뒀다 — `items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같다고 봤다.
+ *    **`item_id: null` 인 새 준비물에는 그 말이 성립하지 않는다:** 재시도가 같은 null 행을 다시
+ *    보내는데 서버는 그게 이미 들어간 것인지 알 방법이 없다. 서버가 저장하고 응답만 유실되면
+ *    카드가 실패로 보이고, 보호자가 한 번 더 누르면 **"모자" 가 두 줄** 들어간다.
+ *
+ * ⚠️ 경로가 미정이다 (`docs/event/event-draft-flow-v1.md` §6 — op 별로 가른다는 것까지만 정했다).
+ *    🚨 그래서 `idempotentPath` 표에는 **아직 넣지 않았다** — 그 표는 POST 차단과 계약 테스트
+ *    ①(키 없으면 400)을 함께 돌리는데, `POST /events/{eid}` 는 존재하지 않는 경로다.
+ *    경로가 확정되면 표로 옮긴다.
+ */
+export function updateEventDraft(
+  eventId: string,
+  body: SubmitEventBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitEventResponse> {
+  return api.patch(`/events/${eventId}`, body, { idempotencyKey });
 }

@@ -10,9 +10,9 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, qk } from "@/lib/api";
+import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type {
   Affinity,
-  ConfidenceSource,
   CorrectionRequest,
   CorrectionResponse,
   CorrectionVerdict,
@@ -38,14 +38,6 @@ import { formatDay } from "@/lib/format";
  */
 export type MemoryTarget =
   { type: "observation"; observation: Observation } | { type: "affinity"; affinity: Affinity };
-
-/** 무엇을 보고 저장한 관찰인가. 서버 enum 을 화면 말로 옮기는 표다. */
-const CONFIDENCE_LABEL: Record<ConfidenceSource, string> = {
-  institution_notice: "기관 공지에서",
-  parent_direct: "보호자가 직접 확인",
-  parent_hedged: "보호자가 조심스럽게",
-  parent_hearsay: "전해 들은 말",
-};
 
 /** 🚨 지난 교정 이력에도 쓰이므로 **화면 버튼에서 빠진 값(`confirm`)까지** 담는다. */
 const VERDICT_LABEL: Record<CorrectionVerdict, string> = {
