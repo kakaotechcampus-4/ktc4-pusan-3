@@ -13,7 +13,16 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from app.agents.activity.store.ports import Advisories, AirQuality, Forecast
+from app.agents.activity.store.ports import (
+    Advisories,
+    AdvisoryLevel,
+    AirQuality,
+    Forecast,
+    RawAdvisories,
+    RawAdvisoryRow,
+    RawAir,
+    RawForecast,
+)
 
 # ── 임계 (4-2) ──────────────────────────────────────────────────────────────
 # 에어코리아 통합 예보 등급 경계 (㎍/㎥). 나쁨은 경고, 매우나쁨은 차단
@@ -227,6 +236,92 @@ def parse_air(value: str | None, flag: str | None = None) -> float | None:
     except ValueError:
         return None
     return number if math.isfinite(number) and number >= 0 else None
+
+
+# ── 원문 → 판정 입력 ────────────────────────────────────────────────────────
+# 포트는 원문 문자열을 준다. 어댑터(app/integrations)가 이 파일을 import 할 수 없어서
+# 해석은 여기 한 곳에서만 한다.
+
+# 단기예보 하늘상태(SKY) 코드 (활용가이드). 실응답에서 "1" · "3" 을 봤다
+SKY_LABELS: dict[str, str] = {"1": "맑음", "3": "구름많음", "4": "흐림"}
+
+# 특보코드조회(getPwnCd) 코드 (활용가이드). 실응답에서 호우 "2" · 발표 "1" · 해제 "2" 를 봤다
+KMA_OK = "00"
+KMA_NO_DATA = "03"  # 발효 중인 특보가 없다. 실패가 아니다
+_WARN_HEAT = "12"  # 폭염
+_WARN_COLD = "3"  # 한파
+_WARN_SEVERE = frozenset({"1", "2", "7", "8"})  # 강풍 · 호우 · 태풍 · 대설
+_IN_EFFECT = frozenset({"1", "3", "6", "7"})  # 발표 · 연장 · 정정 · 변경발표
+_CLEARED = frozenset({"2", "8"})  # 해제 · 변경해제
+_STRESS: dict[str, AdvisoryLevel] = {
+    "0": "advisory",
+    "1": "warning",
+    "2": "warning",
+}  # 2 = 중대경보
+
+
+def read_forecast(raw: RawForecast) -> Forecast:
+    return Forecast(
+        sky=SKY_LABELS.get((raw.sky or "").strip()),
+        precip_mm_per_h=parse_precip(raw.pcp),
+        pop_percent=parse_pop(raw.pop),
+    )
+
+
+def read_air(raw: RawAir) -> AirQuality:
+    return AirQuality(
+        pm10=parse_air(raw.pm10, raw.pm10_flag),
+        pm25=parse_air(raw.pm25, raw.pm25_flag),
+        ozone_ppm=parse_air(raw.o3, raw.o3_flag),
+    )
+
+
+def read_advisories(raw: RawAdvisories) -> Advisories | None:
+    """특보 행을 발효 여부로. None 은 "모른다"이고 judge_weather 가 실내만으로 처리한다.
+
+    - `03 NO_DATA` 는 발효 중인 특보가 없다는 뜻이다. 그 밖의 결과 코드는 실패다.
+    - 발표와 해제가 따로 한 행씩 온다. (구역, 종류)마다 가장 최근 행의 command 로 본다.
+    - 모르는 command · 등급이 있으면 None — 모르는 특보를 "없음"으로 넘기지 않는다.
+    """
+    code = raw.result_code.strip()
+    if code == KMA_NO_DATA:
+        return Advisories(heat="none", cold="none", severe=False)
+    if code != KMA_OK:
+        return None
+
+    latest: dict[tuple[str, str], RawAdvisoryRow] = {}
+    for row in raw.rows:
+        key = (row.area_code.strip(), row.warn_var.strip())
+        if key not in latest or _issued(row) > _issued(latest[key]):
+            latest[key] = row
+
+    heat: AdvisoryLevel = "none"
+    cold: AdvisoryLevel = "none"
+    severe = False
+    for (_, warn_var), row in latest.items():
+        command = row.command.strip()
+        if command in _CLEARED:
+            continue
+        level = _STRESS.get(row.warn_stress.strip())
+        if command not in _IN_EFFECT or level is None:
+            return None
+        if warn_var == _WARN_HEAT:
+            heat = _stronger(heat, level)
+        elif warn_var == _WARN_COLD:
+            cold = _stronger(cold, level)
+        elif warn_var in _WARN_SEVERE:
+            severe = True
+    return Advisories(heat=heat, cold=cold, severe=severe)
+
+
+def _issued(row: RawAdvisoryRow) -> tuple[str, int]:
+    seq = row.tm_seq.strip()
+    return row.tm_fc.strip(), int(seq) if seq.isdigit() else -1
+
+
+def _stronger(current: AdvisoryLevel, new: AdvisoryLevel) -> AdvisoryLevel:
+    order = ("none", "advisory", "warning")
+    return new if order.index(new) > order.index(current) else current
 
 
 def _at_least(value: float | None, threshold: float) -> bool:

@@ -8,7 +8,15 @@ from dataclasses import replace
 
 import pytest
 
-from app.agents.activity.store.ports import Advisories, AirQuality, Forecast
+from app.agents.activity.store.ports import (
+    Advisories,
+    AirQuality,
+    Forecast,
+    RawAdvisories,
+    RawAdvisoryRow,
+    RawAir,
+    RawForecast,
+)
 from app.agents.activity.weather import (
     AFTER_SUNSET,
     AIR_BAD,
@@ -27,6 +35,9 @@ from app.agents.activity.weather import (
     parse_pop,
     parse_precip,
     parse_uv,
+    read_advisories,
+    read_air,
+    read_forecast,
     uv_grade,
 )
 
@@ -301,3 +312,114 @@ class TestParseAir:
         brief = judge(air=air)
         assert AIR_UNCHECKED in brief.notices
         assert "pm10" not in brief.labels
+
+
+class TestReadForecast:
+    def test_원문을_판정_입력으로_바꾼다(self):
+        forecast = read_forecast(RawForecast(sky="3", pcp="1.0mm 미만", pop="60"))
+        assert forecast == Forecast(sky="구름많음", precip_mm_per_h=0.5, pop_percent=60)
+
+    def test_모르는_하늘_코드는_라벨을_비운다(self):
+        """하늘상태는 라벨일 뿐 판정에 쓰지 않는다. 지어내지 않고 비운다."""
+        assert read_forecast(RawForecast(sky="9", pcp="강수없음", pop="0")).sky is None
+
+    def test_강수량을_못_읽으면_실내만(self):
+        forecast = read_forecast(RawForecast(sky="1", pcp="비 많이", pop="90"))
+        assert judge(forecast=forecast).notices == (WEATHER_UNCHECKED,)
+
+
+class TestReadAir:
+    def test_원문을_판정_입력으로_바꾼다(self):
+        raw = RawAir(pm10="45", pm10_flag=None, pm25="19", pm25_flag=None, o3="0.056", o3_flag=None)
+        assert read_air(raw) == AirQuality(pm10=45.0, pm25=19.0, ozone_ppm=0.056)
+
+    def test_측정기가_멈춘_값만_비운다(self):
+        """실응답 모양 — PM10 만 "-" + "통신장애" 이고 PM2.5 는 정상이었다."""
+        raw = RawAir(
+            pm10="-", pm10_flag="통신장애", pm25="19", pm25_flag=None, o3="0.056", o3_flag=None
+        )
+        air = read_air(raw)
+        assert air.pm10 is None
+        assert air.pm25 == 19.0
+
+
+def row(warn_var="2", stress="0", command="1", tm_fc="202609290650", seq="131", area="L1073120"):
+    return RawAdvisoryRow(
+        area_code=area,
+        warn_var=warn_var,
+        warn_stress=stress,
+        command=command,
+        tm_fc=tm_fc,
+        tm_seq=seq,
+    )
+
+
+def advisories(*rows, code="00"):
+    return read_advisories(RawAdvisories(result_code=code, rows=rows))
+
+
+CLEAR_SKY = Advisories(heat="none", cold="none", severe=False)
+
+
+class TestReadAdvisories:
+    def test_NO_DATA_는_특보_없음이다(self):
+        """실패로 읽으면 특보 없는 평범한 날이 전부 실내가 된다."""
+        result = read_advisories(RawAdvisories(result_code="03"))
+        assert result == CLEAR_SKY
+        assert judge(advisories=result).outdoor_ok is True
+
+    @pytest.mark.parametrize("code", ["02", "99", ""])
+    def test_그_밖의_결과_코드는_실패다(self, code):
+        assert advisories(code=code) is None
+
+    def test_해제된_특보는_발효가_아니다(self):
+        """실응답 모양 — 경주시동부 호우주의보가 06:50 발표 · 08:00 해제 두 행으로 왔다."""
+        issued = row(command="1", tm_fc="202609290650", seq="131")
+        cleared = row(command="2", tm_fc="202609290800", seq="132")
+        assert advisories(issued, cleared) == CLEAR_SKY
+
+    def test_가장_최근_행으로_본다_목록_순서가_아니다(self):
+        issued = row(command="1", tm_fc="202609290650", seq="131")
+        cleared = row(command="2", tm_fc="202609290800", seq="132")
+        assert advisories(cleared, issued) == CLEAR_SKY
+
+    def test_발표만_있으면_발효_중이다(self):
+        assert advisories(row(warn_var="2", command="1")).severe is True
+
+    @pytest.mark.parametrize("warn_var", ["1", "2", "7", "8"])
+    def test_강풍_호우_태풍_대설은_차단_신호다(self, warn_var):
+        assert advisories(row(warn_var=warn_var)).severe is True
+
+    @pytest.mark.parametrize(
+        ("stress", "level"), [("0", "advisory"), ("1", "warning"), ("2", "warning")]
+    )
+    def test_폭염_등급(self, stress, level):
+        """중대경보(2)는 경보보다 약하게 읽지 않는다."""
+        assert advisories(row(warn_var="12", stress=stress)).heat == level
+
+    def test_한파주의보(self):
+        assert advisories(row(warn_var="3", stress="0")).cold == "advisory"
+
+    def test_연장은_발효_중이다(self):
+        issued = row(warn_var="12", command="1", tm_fc="202608010600", seq="1")
+        extended = row(warn_var="12", command="3", tm_fc="202608030600", seq="5")
+        assert advisories(issued, extended).heat == "advisory"
+
+    def test_같은_구역의_주의보와_경보는_센_쪽이다(self):
+        other = row(warn_var="12", stress="1", area="L1010100")
+        assert advisories(row(warn_var="12", stress="0"), other).heat == "warning"
+
+    @pytest.mark.parametrize("warn_var", ["4", "9", "13"])
+    def test_놀이와_무관한_특보는_보지_않는다(self, warn_var):
+        """건조 · 황사 · 열대야. 황사는 미세먼지 값으로 따로 본다."""
+        assert advisories(row(warn_var=warn_var)) == CLEAR_SKY
+
+    @pytest.mark.parametrize(("command", "stress"), [("5", "0"), ("1", "9")])
+    def test_모르는_코드가_섞이면_모른다고_한다(self, command, stress):
+        """모르는 특보를 "없음"으로 넘기지 않는다 — 실내만으로 간다."""
+        result = advisories(row(command=command, stress=stress))
+        assert result is None
+        assert judge(advisories=result).outdoor_ok is False
+
+    def test_정상인데_행이_없으면_특보_없음(self):
+        assert advisories() == CLEAR_SKY
