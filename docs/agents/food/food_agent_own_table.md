@@ -4,6 +4,8 @@
 > 관련: [`Food_Agent_명세.md`](Food_Agent_명세.md) · [`Food_Tool_명세.md`](Food_Tool_명세.md) · [`Agent_공통규약.md`](../shared/Agent_공통규약.md) §2
 >
 > **2026-09-22 갱신** — `child_growth_log` 다시 읽음(권장 열량, 성별 제외) · 급식은 `daycare_meal`(Food 소유, CRUD) · `intake_daily`는 집에서 먹은 것만 · 끼니 슬롯 폐지
+>
+> **2026-09-27 갱신** — `ingredients`가 빈 배열인 행도 후보 풀에서 제외
 
 ---
 
@@ -57,7 +59,7 @@ DB 권한: Agent role에 `intake_daily` write · **`daycare_meal` UPDATE/DELETE*
 | `synced_at` | timestamptz | NOT NULL |
 
 **규칙**
-- `resolved=false` 행은 **후보 풀에서 제외**되고, 급식 표시에서는 "알레르기 확인 못 함"이 된다.
+- `resolved=false` 행과 `ingredients`가 빈 배열인 행은 **후보 풀에서 제외**되고, 급식 표시에서는 "알레르기 확인 못 함"이 된다. `ingredients`가 비는 것이 곧 "재료를 모른다"는 뜻이고, 별도 컬럼을 두지 않는다. 영양성분DB에는 있고 레시피DB에는 없는 메뉴가 많은데, 재료가 비면 메뉴명 사전만으로 알레르기를 보게 되어 "크림수프"의 우유가 빠진다(F-1). 이름으로 걸리는 알레르기는 재료가 없어도 걸러진다 — "새우볶음밥"은 재료가 비어도 이름에서 새우가 걸린다.
 - `allergen_codes`는 재료에서 뽑은 것과 메뉴명 사전에서 뽑은 것의 **합집합**이다. 한쪽만 쓰면 "크림수프"의 우유가 빠진다(F-1).
 - `stage_min`이 비면 `toddler`로 간주한다 — **보수적인 쪽**(이유기 아이에게 나가지 않는다).
 - 운영 트래픽을 API에 직접 걸지 않는다. 야간 배치 + 캐시 미스 시 1회.

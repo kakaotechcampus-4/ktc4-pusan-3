@@ -5,7 +5,7 @@
 
 import pytest
 
-from app.rules.allergen import ALLERGEN_NAMES, parse_allergens
+from app.rules.allergen import ALLERGEN_NAMES, parse_allergens, strip_allergen_marks
 
 
 def test_parses_parenthesized_comma_list():
@@ -144,3 +144,22 @@ def test_fractions_and_counts_are_not_allergens(raw):
 
     assert result.codes == ()
     assert result.unknown == ()
+
+
+# ── strip_allergen_marks — 이름 기반 매칭에 넘기기 전 번호 표기 제거 ───────────
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("모듬버섯된장국5,6", "모듬버섯된장국"),
+        ("연근조림★5,6", "연근조림★"),
+        ("돈까스 ①②⑤⑬", "돈까스 "),
+        ("쇠고기무국 (1,5,6,16)", "쇠고기무국 ()"),
+        ("차수수밥", "차수수밥"),
+        ("백미밥1/2", "백미밥1/2"),  # 분수는 번호가 아니므로 그대로 남는다
+        ("", ""),
+    ],
+)
+def test_strip_allergen_marks(raw, expected):
+    assert strip_allergen_marks(raw) == expected

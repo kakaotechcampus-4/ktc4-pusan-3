@@ -18,6 +18,11 @@ class CreateInputRequest(BaseModel):
     source: Annotated[str, StringConstraints(min_length=1, max_length=32)]
     """어디서 온 입력인가 — home_input · photo 등. 계약서가 값을 고정하지 않아 문자열로 받는다."""
 
+    reply_to: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
+    """직전 run 에서 Memory가 물은 것에 대한 답이면 그 run_id. 없으면 일반 새 입력이다.
+
+      값이 있는데 맥락을 못 찾으면 400 이다."""
+
 
 class CreateInputResponse(BaseModel):
     """202 — run_id 만. 결과는 전부 GET /runs/{rid}/events 로 흐른다."""

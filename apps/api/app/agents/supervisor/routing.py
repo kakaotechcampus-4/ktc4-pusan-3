@@ -10,9 +10,10 @@
       원문 전체와 RECORD 조각 힌트를 전달한다.
       원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
 
-  - FoodTask
-      agent=food인 REQUEST 조각을
-      식단 추천 / 영양소 분석 유형별로 묶어 전달한다.
+  - DomainTask
+      구현된 agent 로 간 REQUEST 조각을 agent × task_type 당 하나로 묶는다.
+      task_type 은 Supervisor 라벨 문자열 그대로다. enum 변환은 각 Agent 의 task_type_of 가 한다.
+      라벨이 없는 Agent(activity)는 None 이다.
 
   - 미구현 Agent 처리
       activity / growth / health 로 라우팅된 조각은
@@ -27,20 +28,19 @@
 
   - 강등(fallback)
       Supervisor 처리에 실패하면 Memory만 호출한다.
-      이때 RECORD 힌트와 Food 호출은 사용하지 않는다.
+      이때 RECORD 힌트와 도메인 Agent 호출은 사용하지 않는다.
 
 이 모듈에서 결정하지 않는 것:
   - 식이 단계: 아이 나이를 바탕으로 각 pipeline에서 계산
   - Memory가 사용할 테이블
-  - Food가 사용할 tool
+  - 도메인 Agent가 사용할 tool
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Literal
 
-from app.agents.food.schemas.common import FoodTaskType
-from app.agents.food.schemas.task import FoodTask
+from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
 from app.agents.memory.schemas.task import MemoryHint, MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.schemas import (
@@ -56,7 +56,6 @@ logger = logging.getLogger(__name__)
 
 IntentType = Literal["record", "request", "mixed"]
 
-MAX_DOMAIN_AGENTS = 2  # 한 입력에서 부르는 도메인 Agent 상한
 IMPLEMENTED_AGENTS: frozenset[str] = frozenset({DomainAgentName.FOOD.value})
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
@@ -110,7 +109,7 @@ _AGENT_LIMIT = Guidance(
 class Routing:
     intent_type: IntentType
     memory_task: MemoryTask | None  # None은 SKIP_MEMORY_FOR_PURE_REQUEST가 켜졌을 때만
-    food_tasks: tuple[FoodTask, ...] = ()
+    domain_tasks: tuple[DomainTask, ...] = ()  # 구현된 agent 몫만
     unavailable_agents: tuple[str, ...] = ()  # 이동하려 했지만 아직 없는 agent
     dropped_agents: tuple[str, ...] = ()  # 호출 상한을 넘어 제외된 agent
     guidance: tuple[Guidance, ...] = ()
@@ -139,16 +138,15 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     wanted = list(dict.fromkeys(str(s.agent) for s in requests))
     selected, dropped = wanted[:MAX_DOMAIN_AGENTS], wanted[MAX_DOMAIN_AGENTS:]
 
-    food_tasks: tuple[FoodTask, ...] = ()
-    if DomainAgentName.FOOD.value in selected:
-        food_tasks = _food_tasks(
-            [s for s in requests if s.agent == DomainAgentName.FOOD], run_id=run_id
-        )
+    domain_tasks = _domain_tasks(
+        [s for s in requests if str(s.agent) in selected and str(s.agent) in IMPLEMENTED_AGENTS],
+        run_id=run_id,
+    )
 
     routing = Routing(
         intent_type=_intent(has_record=bool(records), has_request=bool(requests)),
         memory_task=memory_task,
-        food_tasks=food_tasks,
+        domain_tasks=domain_tasks,
         unavailable_agents=tuple(a for a in selected if a not in IMPLEMENTED_AGENTS),
         dropped_agents=tuple(dropped),
         guidance=_guidance(result.output, dropped=bool(dropped)),
@@ -164,15 +162,25 @@ def _intent(*, has_record: bool, has_request: bool) -> IntentType:
     return "record"
 
 
-def _food_tasks(segments: list, *, run_id: str) -> tuple[FoodTask, ...]:
-    """유형별로 하나씩 — 식단 추천 1개 / 영양소 분석 1개까지. 처음 나온 순서를 따른다."""
-    texts: dict[FoodTaskType, list[str]] = {}
+def _domain_tasks(segments: list, *, run_id: str) -> tuple[DomainTask, ...]:
+    """agent × task_type 당 하나. 처음 나온 순서를 따른다."""
+    texts: dict[tuple[str, str | None], list[str]] = {}
     for segment in segments:
-        texts.setdefault(FoodTaskType(segment.food_task), []).append(segment.text)
+        texts.setdefault((str(segment.agent), _task_label(segment)), []).append(segment.text)
     return tuple(
-        FoodTask(run_id=run_id, task_type=task_type, request_texts=tuple(items))
-        for task_type, items in texts.items()
+        DomainTask(run_id=run_id, agent=agent, task_type=task_type, request_texts=tuple(items))
+        for (agent, task_type), items in texts.items()
     )
+
+
+def _task_label(segment) -> str | None:
+    """Supervisor 가 agent 별로 붙이는 라벨. 지금은 food_task 하나뿐이다.
+
+    TODO: Activity·Growth·Health 라벨이 Supervisor 스키마에 생기면 여기만 늘린다.
+    """
+    if segment.agent == DomainAgentName.FOOD:
+        return str(segment.food_task)
+    return None
 
 
 def _guidance(output: SupervisorOutput, *, dropped: bool = False) -> tuple[Guidance, ...]:
@@ -215,13 +223,13 @@ def _log(routing: Routing, supervisor_error: str | None) -> None:
     """원문·조각 없이 개수와 라벨만"""
     logger.info(
         "routing intent=%s degraded=%s supervisor_error=%s hints=%d lookup_edit=%s "
-        "food_tasks=%s unavailable=%s dropped=%s guidance=%s memory=%s",
+        "domain_tasks=%s unavailable=%s dropped=%s guidance=%s memory=%s",
         routing.intent_type,
         routing.degraded,
         supervisor_error,
         len(routing.memory_task.hints) if routing.memory_task else 0,
         routing.memory_task.open_lookup_edit if routing.memory_task else False,
-        [str(task.task_type) for task in routing.food_tasks],
+        [f"{task.agent}:{task.task_type}" for task in routing.domain_tasks],
         list(routing.unavailable_agents),
         list(routing.dropped_agents),
         [guidance.code for guidance in routing.guidance],
