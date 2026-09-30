@@ -247,7 +247,6 @@ async def update_observation_food(context: AgentContext, args: ObservationFoodUp
     return await _update(context, args, domain="food")
 
 
-
 # health
 async def create_observation_health(
     context: AgentContext, args: ObservationHealthCreate
@@ -259,7 +258,6 @@ async def update_observation_health(
     context: AgentContext, args: ObservationHealthUpdate
 ) -> ToolResult:
     return await _update(context, args, domain="health", resolve_observed_time=True)
-
 
 
 # education
@@ -275,7 +273,6 @@ async def update_observation_education(
     return await _update(context, args, domain="education")
 
 
-
 # activity
 async def create_observation_activity(
     context: AgentContext, args: ObservationActivityCreate
@@ -289,7 +286,6 @@ async def update_observation_activity(
     return await _update(context, args, domain="activity")
 
 
-
 # routine
 async def create_observation_routine(
     context: AgentContext, args: ObservationRoutineCreate
@@ -301,7 +297,6 @@ async def update_observation_routine(
     context: AgentContext, args: ObservationRoutineUpdate
 ) -> ToolResult:
     return await _update(context, args, domain="routine")
-
 
 
 query_observation_food = _query_handler("food")

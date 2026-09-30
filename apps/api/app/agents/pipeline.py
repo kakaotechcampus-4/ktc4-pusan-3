@@ -1,22 +1,22 @@
-"""사용자 입력을 Supervisor, Memory, Food 순서로 처리한다.
+"""사용자 입력을 Supervisor, Memory, 도메인 Agent 순서로 처리한다.
 
-Memory 저장이 끝난 뒤 Food를 실행해 같은 요청에서 저장된 관찰도 바로 조회할 수 있게 한다.
+Memory 저장이 끝난 뒤 도메인 Agent를 실행해 같은 요청에서 저장된 관찰도 바로 조회할 수 있게 한다.
 Supervisor 실패 시에는 Memory가 원문을 처리하고, Memory 실패 시 전체 요청을 실패로 처리한다.
 
 Supervisor가 요청을 기록으로 잘못 나누면 그 조각은 어디서도 처리되지 않는다.
 Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 돌려주고 한 번만 다시 나눈다.
 """
 
+import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Protocol, Self
 
 from app.agents.common.llm_client import LLMClient, LLMError
-from app.agents.food.agent import FoodAgentResult
+from app.agents.common.schemas.task import DomainTask
 from app.agents.food.agent import run as run_food
-from app.agents.food.context import FoodContext
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
@@ -27,7 +27,7 @@ from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, Wor
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.routing import Guidance, Routing, route
-from app.agents.supervisor.schemas import normalize
+from app.agents.supervisor.schemas import DomainAgentName, normalize
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 # Agent 안의 루프는 각자의 상한이 막는다 (Memory는 MAX_STEPS=7).
 MAX_MODEL_CALLS = 4
 
+# NF-06 — 입력부터 이만큼 지나면 도메인 Agent를 끊고 있는 결과로 끝낸다.
+# Supervisor·Memory는 끊지 않는다. 저장을 중간에 자르면 기록이 반만 남는다.
+# 둘이 쓴 만큼 도메인 몫이 줄고, 이미 다 썼으면 도메인 Agent는 시작하자마자 끊긴다
+RUN_DEADLINE_S = 20.0
+
 # Memory 가 기록하지 않은 RECORD 조각이 있으면 Supervisor 에게 이유를 주고 한 번 더 나눠 본다.
 # 조각을 잘못 위임하면 그 요청은 아무 데서도 처리되지 않는다 — 호출 하나를 더 쓰는 값이 있다.
 # 다시 나누는 것은 run 당 한 번뿐이고, 그때만 예산이 MAX_MODEL_CALLS + 1 이 된다
@@ -48,6 +53,36 @@ REROUTE_MISDELEGATED = True
 
 # no_child_observation 판정 기준은 추후 추가
 FailReason = Literal["unparsable", "llm_unavailable"]
+
+
+class DomainOutcome(Protocol):
+    """pipeline 이 도메인 Agent 결과에서 읽는 것."""
+
+    @property
+    def agent(self) -> str: ...
+    @property
+    def task_type(self) -> str | None: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def model_calls(self) -> int: ...
+
+
+DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
+
+
+class DomainContext(Protocol):
+    def for_task(self) -> Self:
+        """task 하나 몫의 context. 같은 Agent 의 task 둘이 동시에 돌아서 run state 를 나눈다."""
+        ...
+
+
+PartialReason = Literal["timeout_20s", "agent_error"]
+
+# 구현된 도메인 Agent 의 실행 함수. routing.IMPLEMENTED_AGENTS 와 키가 같아야 한다
+_RUNNERS: dict[str, DomainRunner] = {
+    DomainAgentName.FOOD.value: run_food,
+}
 
 
 # 이벤트
@@ -96,14 +131,13 @@ class EventDrafts:
 
 
 @dataclass(frozen=True)
-class FoodRouted:
-    """Food 라우팅 결과를 담는 내부 이벤트."""
+class DomainRouted:
+    """도메인 Agent 하나가 결과를 냈을 때 로그·지표용. 화면에 보내는 건 app/api가 정한다."""
 
-    task_type: str
-    stage: str
-    tools: tuple[str, ...]
-    requires_safety_check: bool
+    agent: str
+    task_type: str | None
     status: str
+    model_calls: int
 
 
 @dataclass(frozen=True)
@@ -146,7 +180,20 @@ class Rerouted:
     """Memory 가 기록하지 않은 조각을 Supervisor 에게 돌려주고 다시 나눈 것."""
 
     bounced: int  # 되돌린 조각 수. 원문은 싣지 않는다 (S10)
-    food_tasks: tuple[str, ...] = ()  # 다시 나눈 뒤의 Food 작업 유형
+    domain_tasks: tuple[str, ...] = ()  # 다시 나눈 뒤의 도메인 작업. "food:meal_recommendation" 꼴
+
+
+@dataclass(frozen=True)
+class Partial:
+    """도메인 Agent 일부가 결과를 못 낸 run. SSE 이름은 partial.
+
+    화면 계약(apps/web/src/lib/api/sse.ts 의 PartialEvent)과 같은 모양으로,
+    한 Agent의 task 둘 중 하나만 실패하면 그 Agent는 succeeded와 failed 양쪽에 들어간다.
+    """
+
+    reason: PartialReason
+    succeeded: tuple[str, ...]
+    failed: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -165,20 +212,21 @@ Event = (
     Step
     | Saved
     | EventDrafts
-    | FoodRouted
+    | DomainRouted
     | Unavailable
     | Guidance
     | MemoryNote
     | PendingReply
     | Unwritten
     | Rerouted
+    | Partial
     | Failed
     | Done
 )
 Emit = Callable[[Event], None]
 
 _LABELS = ("입력을 살펴보고 있어요", "관찰을 나누고 있어요", "다음 행동을 준비하고 있어요")
-# Food 작업이 없으면 세 번째 단계는 생략한다
+# 도메인 작업이 없으면 세 번째 단계는 생략
 _TOTAL_STEPS = len(_LABELS)
 
 
@@ -201,8 +249,9 @@ class PipelineResult:
     supervisor: SupervisorResult  # 원문 조각은 로그나 저장소에 남기지 않는다
     routing: Routing
     memory: MemoryAgentResult | None  # Memory 미실행 또는 실패 시 None
-    food: tuple[FoodAgentResult, ...] = ()
+    domain: tuple[DomainOutcome, ...] = ()  # 결과를 낸 도메인 Agent
     rerouted: Rerouted | None = None  # 다시 나눴으면 그 결과. routing 은 다시 나눈 쪽이다
+    partial: Partial | None = None  # 도메인 Agent가 일부 빠진 경우
     failed: Failed | None = None
     disagreement: Disagreement = Disagreement()
     model_calls: int = 0
@@ -216,7 +265,7 @@ class PipelineResult:
 async def handle_input(
     raw_text: str,
     memory_context: AgentContext,
-    food_context: FoodContext,
+    contexts: Mapping[str, DomainContext],
     *,
     run_id: str,
     supervisor_client: LLMClient | None = None,
@@ -226,8 +275,9 @@ async def handle_input(
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
-    food_context.stage는 호출 전에 아이 나이를 기준으로 계산해 전달한다.
     continuation 이 있으면 raw_text 는 이전 run 의 질문에 대한 답이다 (_handle_continuation).
+    contexts는 도메인 Agent 이름 → 그 Agent 의 context.
+    구현된 Agent 몫은 전부 있어야 하고, 포트는 호출 전에 만들어 넘긴다.
     """
     started = time.perf_counter()
     send = emit or _ignore
@@ -292,7 +342,7 @@ async def handle_input(
     rerouted: Rerouted | None = None
     bounced = _bounced_hints(routing.memory_task, memory) if failed is None else ()
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
-    stranded = not routing.food_tasks and not routing.unavailable_agents
+    stranded = not routing.domain_tasks and not routing.unavailable_agents
     # 되묻고 있는 조각은 위임이 어긋난 게 아니라 답을 기다리는 것이다. 다시 나누면 Supervisor
     # 호출을 한 번 더 쓰고, 그 조각이 도메인 Agent로 옮겨가 답이 와도 이어 붙일 자리가 없어진다
     waiting = memory is not None and memory.pending is not None
@@ -314,28 +364,32 @@ async def handle_input(
             )
             if appeared:
                 send(Unavailable(appeared))
-            rerouted = Rerouted(len(bounced), tuple(str(t.task_type) for t in routing.food_tasks))
+            rerouted = Rerouted(
+                len(bounced), tuple(_label(t.agent, t.task_type) for t in routing.domain_tasks)
+            )
             send(rerouted)
         else:
             logger.info("reroute 실패 run_id=%s error=%s", run_id, retry.error)
 
-    food: list[FoodAgentResult] = []
-    # 도메인 Agent는 지금 Food 하나뿐이라 이 블록도 Food 전용.
-    # activity·growth·health가 생기면 agent 이름별 실행 함수를 도는 구조로 바꾼다
-    # 도메인 Agent 끼리는 순서가 없으니 asyncio.gather로 묶어도 됨
-    if failed is None and routing.food_tasks:
-        # Memory가 성공한 뒤 Food를 실행한다
+    domain: list[DomainOutcome] = []
+    partial: Partial | None = None
+    if failed is None and routing.domain_tasks:
+        # Memory 가 성공한 뒤에 돈다. 방금 저장한 관찰이 도메인 Agent 조회에 잡혀야 한다
         send(Step(3, _TOTAL_STEPS, _LABELS[2]))
-        for task in routing.food_tasks:
-            result = await run_food(task, food_context)
-            food.append(result)
-            model_calls += result.model_calls
-            send(_food_routed(result))
+        remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
+        outcomes, partial = await _run_domain(routing.domain_tasks, contexts, timeout=remaining)
+        for outcome in outcomes:
+            domain.append(outcome)
+            model_calls += outcome.model_calls
+            send(_routed(outcome))
 
-    if failed is None and not _did_anything(memory, food, routing):
-        failed = Failed("unparsable", raw_text)
+    if failed is None and not _did_anything(memory, domain, routing):
+        # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
+        failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
     if failed is not None:
         send(failed)
+    elif partial is not None:
+        send(partial)
     send(Done(run_id, model_calls))
 
     result = PipelineResult(
@@ -343,8 +397,9 @@ async def handle_input(
         supervisor=supervisor,
         routing=routing,
         memory=memory,
-        food=tuple(food),
+        domain=tuple(domain),
         rerouted=rerouted,
+        partial=partial,
         failed=failed,
         disagreement=_disagreement(routing, memory),
         model_calls=model_calls,
@@ -445,6 +500,60 @@ async def _handle_continuation(
     return result
 
 
+async def _run_domain(
+    tasks: tuple[DomainTask, ...],
+    contexts: Mapping[str, DomainContext],
+    *,
+    timeout: float | None,
+) -> tuple[list[DomainOutcome], Partial | None]:
+    """도메인 task 를 전부 동시에 돌린다. 하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06).
+
+    결과는 끝난 순서가 아니라 task 순서로 돌려준다.
+    """
+    # 표에 없는 agent·빠진 context 는 배선 버그다. 부분 실패로 숨기지 않고 시작 전에 올린다
+    prepared = [(task, _RUNNERS[task.agent], contexts[task.agent]) for task in tasks]
+    settled = await asyncio.gather(
+        *(
+            asyncio.wait_for(runner(task, context.for_task()), timeout)
+            for task, runner, context in prepared
+        ),
+        return_exceptions=True,
+    )
+
+    outcomes: list[DomainOutcome] = []
+    succeeded: list[str] = []
+    failed: list[str] = []
+    timed_out = False
+    for task, item in zip(tasks, settled, strict=True):
+        if isinstance(item, TimeoutError):
+            timed_out = True
+            failed.append(task.agent)
+            logger.warning("도메인 Agent 시간 초과 run_id=%s agent=%s", task.run_id, task.agent)
+        elif isinstance(item, (Exception, asyncio.CancelledError)):
+            failed.append(task.agent)
+            # 예외 메시지에는 발화 조각이 섞일 수 있다. 종류만 남긴다
+            logger.error(
+                "도메인 Agent 실패 run_id=%s agent=%s error=%s",
+                task.run_id,
+                task.agent,
+                type(item).__name__,
+            )
+        elif isinstance(item, BaseException):
+            raise item  # KeyboardInterrupt·SystemExit 는 부분 실패가 아니다
+        else:
+            outcomes.append(item)
+            succeeded.append(task.agent)
+
+    if not failed:
+        return outcomes, None
+    partial = Partial(
+        reason="timeout_20s" if timed_out else "agent_error",
+        succeeded=tuple(dict.fromkeys(succeeded)),
+        failed=tuple(dict.fromkeys(failed)),
+    )
+    return outcomes, partial
+
+
 def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
@@ -465,14 +574,14 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
     )
 
 
-def _food_routed(result: FoodAgentResult) -> FoodRouted:
-    return FoodRouted(
-        task_type=str(result.task_type),
-        stage=str(result.stage),
-        tools=tuple(result.tools),
-        requires_safety_check=result.requires_safety_check,
-        status=result.status,
-    )
+def _routed(outcome: DomainOutcome) -> DomainRouted:
+    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    return DomainRouted(outcome.agent, task_type, str(outcome.status), outcome.model_calls)
+
+
+def _label(agent: str, task_type: object) -> str:
+    """로그용 이름. 라벨이 없는 Agent 는 이름만."""
+    return agent if task_type is None else f"{agent}:{task_type}"
 
 
 def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten | None:
@@ -530,7 +639,7 @@ def _reroute_feedback(bounced: tuple[str, ...]) -> str:
 
 
 def _did_anything(
-    memory: MemoryAgentResult | None, food: list[FoodAgentResult], routing: Routing
+    memory: MemoryAgentResult | None, domain: list[DomainOutcome], routing: Routing
 ) -> bool:
     """저장, 추천, 안내, 메모 중 하나라도 처리됐는지 확인한다.
 
@@ -540,7 +649,9 @@ def _did_anything(
         call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
     )
     note = memory is not None and bool(memory.final_message)
-    return wrote or note or bool(food) or bool(routing.guidance) or bool(routing.unavailable_agents)
+    return (
+        wrote or note or bool(domain) or bool(routing.guidance) or bool(routing.unavailable_agents)
+    )
 
 
 def _disagreement(routing: Routing, memory: MemoryAgentResult | None) -> Disagreement:
@@ -568,8 +679,9 @@ def _log(result: PipelineResult) -> None:
     memory = result.memory
     logger.info(
         "pipeline run_id=%s intent=%s degraded=%s supervisor_error=%s hints=%d steps=%s "
-        "ended_by=%s saved=%d drafts=%d food=%s guidance=%s unavailable=%s note=%s "
-        "rerouted=%s failed=%s memory_only=%s supervisor_only=%s model_calls=%d latency_ms=%d",
+        "ended_by=%s saved=%d drafts=%d domain=%s guidance=%s unavailable=%s note=%s "
+        "rerouted=%s partial=%s failed=%s memory_only=%s supervisor_only=%s "
+        "model_calls=%d latency_ms=%d",
         result.run_id,
         result.routing.intent_type,
         result.routing.degraded,
@@ -579,11 +691,12 @@ def _log(result: PipelineResult) -> None:
         memory.ended_by if memory else None,
         len(_saved_refs(memory)) if memory else 0,
         len(memory.drafts) if memory else 0,
-        [str(item.task_type) for item in result.food],
+        [_label(item.agent, item.task_type) for item in result.domain],
         [guidance.code for guidance in result.routing.guidance],
         list(result.routing.unavailable_agents),
         bool(memory and memory.final_message),
         result.rerouted.bounced if result.rerouted else 0,
+        (result.partial.reason, list(result.partial.failed)) if result.partial else None,
         result.failed.reason if result.failed else None,
         list(result.disagreement.memory_only),
         list(result.disagreement.supervisor_only),

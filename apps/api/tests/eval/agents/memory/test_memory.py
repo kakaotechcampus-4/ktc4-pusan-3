@@ -905,7 +905,7 @@ def _expected_text(case: EvalCase) -> str:
     parts.append(f"tool 거절은 {RETRY_BUDGET}회까지 (고쳐 부르면 통과)")
     # 요청 조각이 어디로 갔는지 남긴다 — 이 파일은 Memory 만 돌리므로 그 조각의 "동작" 은
     # 여기 결과에 안 보인다. 끝까지 도는 것은 test.py 다
-    for task in _routing_for(case).food_tasks:
+    for task in _routing_for(case).domain_tasks:
         parts.append(
             f"요청 조각 {len(task.request_texts)}개는 Food({task.task_type}) 로 간다"
             " — 이 파일은 Memory 만 돌린다 (끝까지는 test.py)"
