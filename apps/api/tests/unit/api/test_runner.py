@@ -15,9 +15,19 @@ import uuid
 import pytest
 
 from app.agents import entrypoint
-from app.agents.entrypoint import Done, EventDrafts, Failed, MemoryNote, Step
+from app.agents.entrypoint import (
+    Done,
+    EventDrafts,
+    Failed,
+    MemoryNote,
+    PendingMemoryContext,
+    PendingReply,
+    Step,
+    Unwritten,
+)
+from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency
-from app.api.runs import registry, runner
+from app.api.runs import pending_reply, registry, runner
 
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
@@ -49,7 +59,7 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
         seen.update(kwargs)
         emit = kwargs["emit"]
         emit(Step(1, 3, "입력을 살펴보고 있어요"))
-        emit(MemoryNote("기록해 둘게요"))  # 번역기가 보내지 않는 것
+        emit(Unwritten(hints=1, tools=0, note=False))  # 번역기가 보내지 않는 것
         emit(Done(kwargs["run_id"], 2))
 
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
@@ -246,3 +256,114 @@ async def test_fake_job_walks_three_steps_then_done():
     assert names(channel) == ["step", "step", "step", "done"]
     assert [p["index"] for n, p in channel.events if n == "step"] == [1, 2, 3]
     assert all(p["total"] == 3 for n, p in channel.events if n == "step")
+
+
+_PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
+
+
+async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_로_간다(monkeypatch):
+    # 조각 원문이 들어 있다. 화면으로 흘리지 않고 다음 입력의 reply_to 가 찾을 곳에 둔다
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(MemoryNote("언제부터였어요?", "question"))
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["note", "done"]
+    stored = pending_reply.consume(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
+    assert stored == _PENDING
+    pending_reply.clear()
+
+
+async def test_이어받기_맥락을_진입점에_넘긴다(monkeypatch):
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text="3일 전부터", continuation=_PENDING
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    assert seen["continuation"] is _PENDING
+
+
+async def test_이어받기_run_이_실패하면_맥락을_되돌려_둔다(monkeypatch):
+    # 창구가 맥락을 꺼낸 뒤 Agent 가 실패하면 "다시 시도" 가 400 을 받는다.
+    # 되돌려 둬야 같은 답으로 재시도가 된다
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        kwargs["emit"](Failed("llm_unavailable", "3일 전부터"))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    pending_reply.clear()
+
+
+async def test_이어받기_run_이_끝나면_맥락을_되돌리지_않는다(monkeypatch):
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
+
+
+async def test_이어받기_run_이_예외로_죽어도_맥락을_되돌려_둔다(monkeypatch):
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    assert channel.ended_with == "failed"
+    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    pending_reply.clear()
