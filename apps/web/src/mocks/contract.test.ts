@@ -957,8 +957,11 @@ describe("⑪ 일기는 관찰이 아니다", () => {
   });
 
   it("월 조회의 has_event 는 confirmed 만 센다", async () => {
+    // 🚨 **일정이 있는 달에서 건다.** 이번 달로 고정하면 일정이 다음 달에 있는 이틀 동안
+    //    빈 목록을 훑고 아무것도 확인하지 않은 채 통과한다 (아래 `findEventDay` 주석).
+    const eventDay = await findEventDay();
     const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
-      query: { month: monthOf(new Date()) },
+      query: { month: eventDay.date.slice(0, 7) },
     });
 
     // 05·06 이 만드는 draft(e_draft_1)는 아직 캘린더에 쓴 것이 아니다.
@@ -972,13 +975,8 @@ describe("⑪ 일기는 관찰이 아니다", () => {
   it("준비물 체크는 다시 읽어도 남아 있다", async () => {
     await api.patch("/event-items/i_1", { is_prepared: true });
 
-    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
-      query: { month: monthOf(new Date()) },
-    });
-    const eventDay = month.days.find((day) => day.has_event);
-    expect(eventDay).toBeDefined();
-
-    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
+    const eventDay = await findEventDay();
+    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
   });
@@ -1082,14 +1080,16 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(res.status).toBe(204);
   });
 
-  it("탈퇴는 화면이 읽은 유예기간을 같이 받는다 — 없으면 막힌다", async () => {
+  it("탈퇴는 화면의 읽음 표시를 같이 받는다 — 없으면 막힌다", async () => {
     const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
     expect(isApiError(caught, "validation_failed")).toBe(true);
 
+    // 🚨 유예가 없다 (#167). 응답이 "언제 지워질 예정" 이 아니라 **지워진 시각**이라,
+    //    화면이 미래 시각을 받아 날짜를 약속할 방법 자체가 없다.
     const res = await api.post<WithdrawResponse>("/auth/withdraw", {
-      acknowledged_grace_days: 30,
+      acknowledged_immediate_deletion: true,
     });
-    expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(res.deleted_at).getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it("relation 없이 초대해도 코드가 나온다", async () => {
@@ -1899,4 +1899,27 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
 /** 목이 만든 달을 그대로 물어보기 위한 키. 표시가 아니라 쿼리 파라미터다. */
 function monthOf(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * 일정이 걸린 날 하나. 목의 확정 일정은 **다가오는 것 하나**(모레)라, 이번 달만 물어보면
+ * **매달 마지막 이틀에는 그 일정이 다음 달에 있어서** 빈 달이 돌아온다. 실제로 9/29 에
+ * 깨졌다 — 화면 버그가 아니라 "이번 달에 일정이 있다" 를 테스트가 전제한 것이 문제였다.
+ *
+ * 🚨 **픽스처를 import 해서 날짜를 가져오지 않는다.** 이 파일은 목을 밖에서 부르는 계약
+ *    테스트라, 목이 들고 있는 값을 직접 읽으면 "계약대로 답하는가" 가 아니라 "픽스처와
+ *    같은가" 를 재게 된다. 달을 하나 더 물어보는 쪽이 부르는 사람의 방법이다.
+ */
+async function findEventDay(): Promise<CalendarMonthResponse["days"][number]> {
+  const now = new Date();
+  const months = [monthOf(now), monthOf(new Date(now.getFullYear(), now.getMonth() + 1, 1))];
+
+  for (const month of months) {
+    const res = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month },
+    });
+    const day = res.days.find((d) => d.has_event);
+    if (day) return day;
+  }
+  throw new Error(`일정이 걸린 날이 ${months.join(" · ")} 어디에도 없다`);
 }
