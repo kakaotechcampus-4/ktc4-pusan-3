@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from app.agents.food.schemas.common import FoodTaskType
+from app.agents.food.schemas.task import task_type_of
 from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.agent import BAD_JSON, SupervisorResult
@@ -44,8 +45,8 @@ def test_RC01_혼합형은_기록_힌트와_식단_추천으로_나뉜다() -> N
     works = [hint.work for hint in routing.memory_task.hints]
     assert works == [WorkType.OBSERVE, WorkType.OBSERVE, WorkType.SCHEDULE]  # [1][2][4]
     assert routing.memory_task.open_lookup_edit is False  # 수정 묶음 닫힘
-    assert [task.task_type for task in routing.food_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
-    assert routing.food_tasks[0].request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
+    assert [task.task_type for task in routing.domain_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
+    assert routing.domain_tasks[0].request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
 
 
 def test_RC01_Memory_는_원문_전체를_받는다() -> None:
@@ -64,12 +65,12 @@ def test_REQUEST_조각은_Memory_힌트에_넣지_않는다() -> None:
 
 def test_RC21_영양소_분석으로_간다() -> None:
     routing = _route_case("RC21")
-    assert [task.task_type for task in routing.food_tasks] == [FoodTaskType.NUTRIENT_ANALYSIS]
+    assert [task.task_type for task in routing.domain_tasks] == [FoodTaskType.NUTRIENT_ANALYSIS]
 
 
 def test_RC16_미구현_agent_는_부르지_않고_남긴다() -> None:
     routing = _route_case("RC16")
-    assert [task.task_type for task in routing.food_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
+    assert [task.task_type for task in routing.domain_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
     assert routing.unavailable_agents == ("activity",)
     assert routing.dropped_agents == ()
 
@@ -87,7 +88,7 @@ def test_RC10_알레르기_등록은_안내하고_증상_기록은_살린다() -
     assert routing.guidance[0].deeplink == "settings/health-safety"
     assert routing.memory_task is not None
     assert [hint.work for hint in routing.memory_task.hints] == [WorkType.OBSERVE]
-    assert routing.food_tasks == ()
+    assert routing.domain_tasks == ()
 
 
 def test_RC11_진단_문의는_안내만() -> None:
@@ -104,7 +105,7 @@ def test_RC12_범위_밖_요청도_안내한다() -> None:
 def test_RC19_일정_조회는_기록형이고_Food_를_부르지_않는다() -> None:
     routing = _route_case("RC19")
     assert routing.intent_type == "record"
-    assert routing.food_tasks == ()
+    assert routing.domain_tasks == ()
     assert routing.memory_task is not None
     assert routing.memory_task.open_lookup_edit is True
 
@@ -113,14 +114,14 @@ def test_RC24_식사_알림은_일정_힌트_하나() -> None:
     routing = _route_case("RC24")
     assert routing.memory_task is not None
     assert [hint.work for hint in routing.memory_task.hints] == [WorkType.SCHEDULE]
-    assert routing.food_tasks == ()
+    assert routing.domain_tasks == ()
 
 
 def test_RC07_순수_요청형() -> None:
     routing = _route_case("RC07")
     assert routing.intent_type == "request"
     assert routing.unavailable_agents == ("activity",)
-    assert routing.food_tasks == ()
+    assert routing.domain_tasks == ()
 
 
 def test_T19_알레르기_등록_요청은_안내만_남긴다() -> None:
@@ -145,7 +146,7 @@ def test_모델이_말을_붙여_적어도_저장한_것으로_본다() -> None:
     assert covered_by(case, span, ["오늘 도서관에서 책 읽고"]) is False
 
 
-# ── FoodTask 묶기 ───────────────────────────────────────────────
+# ── DomainTask 묶기 ───────────────────────────────────────────────
 def test_식단_추천과_영양소_분석이_둘_다_있으면_FoodTask_2개() -> None:
     raw = "영양 골고루 먹었는지 봐줘. 내일 간식은 뭐가 좋을까?"
     output = _output(
@@ -164,11 +165,11 @@ def test_식단_추천과_영양소_분석이_둘_다_있으면_FoodTask_2개() 
     )
     routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
 
-    assert [task.task_type for task in routing.food_tasks] == [
+    assert [task.task_type for task in routing.domain_tasks] == [
         FoodTaskType.NUTRIENT_ANALYSIS,  # 처음 나온 순서
         FoodTaskType.MEAL_RECOMMENDATION,
     ]
-    assert all(task.run_id == RUN_ID for task in routing.food_tasks)
+    assert all(task.run_id == RUN_ID for task in routing.domain_tasks)
 
 
 def test_같은_유형의_요청은_한_FoodTask_로_묶는다() -> None:
@@ -189,17 +190,34 @@ def test_같은_유형의_요청은_한_FoodTask_로_묶는다() -> None:
     )
     routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
 
-    assert len(routing.food_tasks) == 1
-    assert routing.food_tasks[0].request_texts == (
+    assert len(routing.domain_tasks) == 1
+    assert routing.domain_tasks[0].request_texts == (
         "내일 간식은 뭐가 좋을까?",
         "저녁 메뉴도 추천해줘",
     )
 
 
-def test_food_유형은_enum_으로_바꿔_넘긴다() -> None:
-    # Supervisor 출력은 문자열이다 (use_enum_values). Food 는 FoodTaskType 을 받는다
-    routing = _route_case("RC02")
-    assert isinstance(routing.food_tasks[0].task_type, FoodTaskType)
+def test_라벨은_문자열로_넘기고_enum_변환은_Agent_가_한다() -> None:
+    # routing 이 Agent 의 enum 을 알면 Agent 가 늘 때마다 여기를 고쳐야 한다
+    task = _route_case("RC02").domain_tasks[0]
+    assert type(task.task_type) is str
+    assert task_type_of(task) is FoodTaskType(task.task_type)
+
+
+def test_RC16_구현된_agent_몫만_DomainTask_가_된다() -> None:
+    routing = _route_case("RC16")  # 저녁 메뉴(food) + 주말 놀이(activity)
+    assert [task.agent for task in routing.domain_tasks] == ["food"]
+    assert routing.unavailable_agents == ("activity",)
+
+
+def test_RC16_라벨이_없는_agent_는_task_type_이_None(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food", "activity"}))
+    routing = _route_case("RC16")
+    assert [(task.agent, task.task_type) for task in routing.domain_tasks] == [
+        ("food", "meal_recommendation"),
+        ("activity", None),
+    ]
+    assert routing.unavailable_agents == ()
 
 
 def test_힌트의_작업_종류도_enum_이다() -> None:
@@ -213,7 +231,7 @@ def test_RC17_agent_가_셋이면_뒤의_것을_뺀다() -> None:
     routing = _route_case("RC17")
 
     assert MAX_DOMAIN_AGENTS == 2
-    assert [task.task_type for task in routing.food_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
+    assert [task.task_type for task in routing.domain_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
     assert routing.unavailable_agents == ("activity",)
     assert routing.dropped_agents == ("growth",)
 
@@ -242,7 +260,7 @@ def test_상한을_넘은_food_는_부르지_않는다() -> None:
     )
     routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
 
-    assert routing.food_tasks == ()
+    assert routing.domain_tasks == ()
     assert routing.dropped_agents == ("food",)
 
 
@@ -256,7 +274,7 @@ def test_Supervisor_가_실패하면_Memory_단독으로_간다() -> None:
     assert routing.memory_task.raw_text == raw
     assert routing.memory_task.hints == ()  # 힌트 없음
     assert routing.memory_task.open_lookup_edit is False  # 수정 묶음 닫힘
-    assert routing.food_tasks == ()  # Food 호출 없음
+    assert routing.domain_tasks == ()  # Food 호출 없음
     assert routing.guidance == ()
 
 

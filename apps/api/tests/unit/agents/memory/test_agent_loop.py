@@ -17,6 +17,12 @@ from app.agents.common.llm_client import LLMResponse
 from app.agents.memory.agent import run
 from app.agents.memory.context import AgentContext
 from app.agents.memory.result import ErrorCode
+from app.agents.memory.schemas.task import (
+    MemoryHint,
+    MemoryTask,
+    PendingMemoryContext,
+    WorkType,
+)
 from app.agents.memory.store import InMemoryStore
 
 KST = ZoneInfo("Asia/Seoul")
@@ -41,9 +47,13 @@ class FakeLLM:
     def __init__(self, *responses: LLMResponse) -> None:
         self._queue = list(responses)
         self.seen: list[list[dict[str, Any]]] = []
+        self.seen_tools: list[list[dict[str, Any]]] = []  # 매 호출에 열린 tool 스펙
+        self.seen_kwargs: list[dict[str, Any]] = []  # messages 밖의 인자 (tools · response_format)
 
-    async def chat(self, messages: list[dict[str, Any]], **_: Any) -> LLMResponse:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         self.seen.append([dict(message) for message in messages])
+        self.seen_tools.append(list(kwargs.get("tools") or []))
+        self.seen_kwargs.append(dict(kwargs))
         if self._queue:
             return self._queue.pop(0)
         return _reply("끝냈어요.")
@@ -68,6 +78,11 @@ def _reply(content: str, usage: dict[str, int] | None = None) -> LLMResponse:
         usage=usage or {"prompt_tokens": 100, "completion_tokens": 20},
         latency_ms=1,
     )
+
+
+def _answer(reply: dict[str, Any]) -> LLMResponse:
+    """모델의 마지막 말. structured output 이라 content 가 스키마 JSON 이다."""
+    return _reply(json.dumps({"pending_hint": None, **reply}, ensure_ascii=False))
 
 
 _APPLE = {"raw_text": "사과 먹었어", "observed_on": "오늘", "subject": "사과"}
@@ -353,3 +368,426 @@ async def test_usage_를_step_마다_합산한다(context: AgentContext) -> None
 
     assert result.usage["prompt_tokens"] == 250
     assert result.usage["completion_tokens"] == 30
+
+
+# ── 마지막 말 (structured output) ───────────────────────────────
+_ASK_WHEN = {"text": "기침은 언제부터였어요?", "kind": "question"}
+
+
+async def test_요청에_strict_응답_형식이_실린다(context: AgentContext) -> None:
+    llm = FakeLLM(_answer(_ASK_WHEN))
+
+    await run("요즘 기침해", context, client=llm)
+
+    response_format = llm.seen_kwargs[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert llm.seen_kwargs[0]["tools"]  # tool 과 같이 보낸다
+
+
+async def test_질문으로_답하면_question_으로_표시된다(context: AgentContext) -> None:
+    llm = FakeLLM(_answer(_ASK_WHEN))
+
+    result = await run("요즘 기침해", context, client=llm)
+
+    assert result.reply is not None
+    assert result.reply.kind == "question"
+    assert result.reply.text == "기침은 언제부터였어요?"
+    assert result.completed is True
+    assert result.steps == 1
+
+
+async def test_저장한_뒤_다음_턴에_되묻는다(context: AgentContext) -> None:
+    # 말은 tool 호출이 없는 턴에만 나온다. 모델은 저장 결과를 본 뒤에 말한다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_food", _APPLE)),
+        _answer(_ASK_WHEN),
+    )
+
+    result = await run("사과 먹었어. 요즘 기침해", context, client=llm)
+
+    assert [call.name for call in result.calls] == ["create_observation_food"]
+    assert result.calls[0].success is True
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.steps == 2
+
+
+async def test_문장으로만_끝나면_일반_메시지로_본다(context: AgentContext) -> None:
+    # provider 가 형식을 무시하고 평문을 낸 경우. kind 를 모르니 message 로 둔다
+    result = await run("알림 오나요", context, client=FakeLLM(_reply("일정 알림은 자동으로 가요.")))
+
+    assert result.reply is not None
+    assert result.reply.kind == "message"
+    assert result.final_message == "일정 알림은 자동으로 가요."
+
+
+async def test_스키마와_맞지_않는_답은_message_로_둔다(context: AgentContext) -> None:
+    llm = FakeLLM(_reply('{"text": "몇 시예요?", "kind": "ask", "pending_hint": null}'))
+
+    result = await run("모레 운동회가 있어", context, client=llm)
+
+    assert result.reply is not None and result.reply.kind == "message"
+    assert result.steps == 1  # 다시 묻지 않는다
+
+
+# ── pending ─────────────────────────────────────────────────────
+def _task(*hints: tuple[str, str], raw: str = "") -> MemoryTask:
+    return MemoryTask(
+        raw_text=raw or " ".join(text for text, _ in hints),
+        hints=tuple(MemoryHint(text=text, work=WorkType(work)) for text, work in hints),
+    )
+
+
+async def test_질문이면_미완료_조각만_pending_에_담는다(context: AgentContext) -> None:
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_food", _APPLE),
+        ),
+        _answer({**_ASK_WHEN, "pending_hint": "요즘 기침해"}),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.pending is not None
+    assert result.pending.hint_text == "요즘 기침해"  # 원문 전체가 아니다
+    assert result.pending.question == "기침은 언제부터였어요?"
+    assert result.pending.work is WorkType.OBSERVE
+    assert result.pending.transcript == ()
+
+
+async def test_일반_메시지에는_pending_이_없다(context: AgentContext) -> None:
+    task = _task(("알림 오나요", "observe"))
+    llm = FakeLLM(_answer({"text": "자동으로 가요.", "kind": "message"}))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.pending is None
+
+
+async def test_조각이_하나면_pending_hint_를_안_줘도_된다(context: AgentContext) -> None:
+    task = _task(("요즘 기침해", "observe"))
+    llm = FakeLLM(_answer(_ASK_WHEN))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.pending is not None and result.pending.hint_text == "요즘 기침해"
+
+
+async def test_없는_조각을_지목하면_한_번_다시_묻는다(context: AgentContext) -> None:
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    llm = FakeLLM(
+        _answer({**_ASK_WHEN, "pending_hint": "머리 아프대"}),
+        _answer({**_ASK_WHEN, "pending_hint": "요즘 기침해"}),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.steps == 2
+    assert result.pending is not None and result.pending.hint_text == "요즘 기침해"
+
+
+async def test_두_번_틀리면_질문만_내보낸다(context: AgentContext) -> None:
+    # 여기서 멈추지 않는다. 질문은 보여주고 이어 적기만 막힌다 (서버가 400 으로 안내)
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    bad = {**_ASK_WHEN, "pending_hint": "머리 아프대"}
+    llm = FakeLLM(_answer(bad), _answer(bad))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
+
+
+async def test_힌트가_없으면_원문_전체를_pending_으로_쓴다(context: AgentContext) -> None:
+    # Supervisor 강등 경로 — 조각이 없다. 원문이 한 조각인 셈이라 그대로 담는다
+    llm = FakeLLM(_answer(_ASK_WHEN))
+
+    result = await run("요즘 기침해", context, client=llm, task=MemoryTask(raw_text="요즘 기침해"))
+
+    assert result.pending is not None and result.pending.hint_text == "요즘 기침해"
+    assert result.pending.whole is True
+
+
+async def test_나눈_조각의_pending_은_원문_전체가_아니다(context: AgentContext) -> None:
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    llm = FakeLLM(_answer({**_ASK_WHEN, "pending_hint": "요즘 기침해"}))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.pending is not None and result.pending.whole is False
+
+
+# ── continuation ────────────────────────────────────────────────
+_COUGH_PENDING = PendingMemoryContext(
+    hint_text="요즘 기침해", question="기침은 언제부터였어요?", work=WorkType.OBSERVE
+)
+_COUGH = {"raw_text": "3일 전부터 기침해", "observed_on": "오늘", "symptom": ["기침"]}
+
+
+def _cont_answer(reply: dict[str, Any]) -> LLMResponse:
+    """이어받기 run 의 마지막 말. 일반 스키마에 leftover 가 더 붙는다."""
+    return _answer({"leftover": False, **reply})
+
+
+async def test_이어받기는_조각과_질문과_답을_같이_넣는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_health", _COUGH),
+        ),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    sent = llm.seen[0][-1]["content"]
+    assert "요즘 기침해" in sent
+    assert "기침은 언제부터였어요?" in sent
+    assert "3일 전부터" in sent
+    rows = await context.store.query_observations(domain="health", child_id=context.child_id)
+    assert len(rows) == 1
+    assert result.pending is None
+
+
+async def test_이어받기에서_또_물으면_pending_이_갱신된다(context: AgentContext) -> None:
+    ask = {"text": "정확히 며칠 전인지 기억나세요?", "kind": "question"}
+    llm = FakeLLM(_cont_answer(ask))
+
+    result = await run("며칠 됐어요", context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.pending is not None
+    assert result.pending.hint_text == "요즘 기침해"  # 조각은 그대로
+    assert result.pending.question == "정확히 며칠 전인지 기억나세요?"
+    assert result.pending.transcript == ("기침은 언제부터였어요?", "며칠 됐어요")
+
+
+async def test_두_번째_이어받기는_앞서_주고받은_것도_넣는다(context: AgentContext) -> None:
+    again = PendingMemoryContext(
+        hint_text="요즘 기침해",
+        question="정확히 며칠 전인지 기억나세요?",
+        work=WorkType.OBSERVE,
+        transcript=("기침은 언제부터였어요?", "며칠 됐어요"),
+    )
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("3일 전부터요", context, client=llm, continuation=again)
+
+    sent = llm.seen[0][-1]["content"]
+    assert "며칠 됐어요" in sent
+
+
+_WHOLE_PENDING = PendingMemoryContext(
+    hint_text="모래놀이하고 뭐 좀 먹었어",
+    question="무엇을 먹었어요?",
+    work=WorkType.OBSERVE,
+    whole=True,
+)
+
+
+async def test_원문_전체_조각을_이어받으면_조각_안의_기록을_모두_저장하라고_알린다(
+    context: AgentContext,
+) -> None:
+    # 앞 run 이 무엇이든 저장했으면 원문 전체를 맥락으로 남기지 않는다. 그래서 조각 안의 기록은
+    # 아직 하나도 저장되지 않았다. 알려 주지 않으면 물은 음식만 저장하고 모래놀이를 빠뜨린다
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("떡볶이", context, client=llm, continuation=_WHOLE_PENDING)
+
+    sent = llm.seen[0][-1]["content"]
+    assert "나누지 못한 원문 전체" in sent
+
+
+async def test_나눈_조각을_이어받을_때는_원문_전체라고_알리지_않는다(context: AgentContext) -> None:
+    # 헤더 전체에 "조각 안의 기록을 전부 저장한다" 를 넣으면 섞인 말까지 저장했다 (C02)
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    sent = llm.seen[0][-1]["content"]
+    assert "나누지 못한 원문 전체" not in sent
+
+
+async def test_원문_전체_조각에서_또_물으면_표시가_이어진다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "어떤 음식이었어요?", "kind": "question"}))
+
+    result = await run("뭐였더라", context, client=llm, continuation=_WHOLE_PENDING)
+
+    assert result.pending is not None and result.pending.whole is True
+
+
+async def test_이어받기는_기록_묶음만_연다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    names = {spec["function"]["name"] for spec in llm.seen_tools[0]}
+    assert "create_observation_health" in names
+    assert "delete_observation_health" not in names
+
+
+async def test_task_와_continuation_을_같이_주면_거부한다(context: AgentContext) -> None:
+    with pytest.raises(ValueError):
+        await run(
+            "3일 전부터",
+            context,
+            client=FakeLLM(),
+            task=MemoryTask(raw_text="3일 전부터"),
+            continuation=_COUGH_PENDING,
+        )
+
+
+async def test_이어받기_요청에는_leftover_가_든_응답_형식이_실린다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "기록해 둘게요.", "kind": "message"}))
+
+    await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    schema = llm.seen_kwargs[0]["response_format"]["json_schema"]["schema"]
+    assert "leftover" in schema["required"]
+
+
+async def test_일반_요청의_응답_형식에는_leftover_가_없다(context: AgentContext) -> None:
+    llm = FakeLLM(_answer(_ASK_WHEN))
+
+    await run("요즘 기침해", context, client=llm)
+
+    schema = llm.seen_kwargs[0]["response_format"]["json_schema"]["schema"]
+    assert "leftover" not in schema["properties"]
+
+
+async def test_이어받기는_저장한_뒤에도_말하는_턴까지_간다(context: AgentContext) -> None:
+    # 조기 종료하면 저장 한 번에 끝나서 leftover 를 받을 턴이 없다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await run("3일 전부터", context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.ended_by == "model"
+    assert result.steps == 2
+    assert result.reply is not None and result.reply.text == "기록해 둘게요."
+    assert result.leftover is False
+
+
+async def test_답에_섞인_말을_남겼으면_leftover_로_알린다(context: AgentContext) -> None:
+    answer = "3일 전부터. 그리고 오늘 수영장 다녀왔어"
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message", "leftover": True}),
+    )
+
+    result = await run(answer, context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.leftover is True
+    assert result.reply is not None and result.reply.kind == "message"
+
+
+async def test_이어받기에서_저장한_뒤_또_물으면_pending_을_남기지_않는다(
+    context: AgentContext,
+) -> None:
+    # 저장한 조각을 pending 으로 남기면 다음 답에서 그 조각이 한 번 더 저장된다
+    answer = "그저께부터. 내일 소풍 있어"
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "내일 소풍은 몇 시에 시작하나요?", "kind": "question"}),
+    )
+
+    result = await run(answer, context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
+
+
+# ── 리뷰 반영: 결과를 보기 전에 말하지 않는다 ─────────────────────
+async def test_쓰기가_실패하면_결과를_보고_고친_뒤에_답한다(context: AgentContext) -> None:
+    # tool 방식에서는 쓰기와 "기록했어요" 가 한 응답에 와서 실패해도 그대로 나갔다
+    broken = {"raw_text": "사과 먹었어", "observed_on": "오늘"}  # subject 누락
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_food", broken)),
+        _tools(_call("c2", "create_observation_food", _APPLE)),
+        _answer({"text": "사과 먹은 것 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("사과 먹었어", context, client=llm)
+
+    assert result.steps == 3
+    rows = await context.store.query_observations(domain="food", child_id=context.child_id)
+    assert len(rows) == 1
+
+
+async def test_조회_결과를_본_뒤에_답한다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {})),
+        _answer({"text": "사과 기록이 한 건 있어요.", "kind": "message"}),
+    )
+
+    result = await run("뭐 먹었는지 보여줘", context, client=llm)
+
+    assert result.steps == 2
+    assert any(message["role"] == "tool" for message in llm.seen[1])
+    assert result.reply is not None and result.reply.text == "사과 기록이 한 건 있어요."
+
+
+# ── 리뷰 반영: 이미 저장한 조각은 pending 이 아니다 ──────────────
+async def test_강등_경로에서_이미_저장했으면_원문을_pending_으로_쓰지_않는다(
+    context: AgentContext,
+) -> None:
+    # 원문 전체를 pending 으로 두면 이어받기에서 사과가 한 번 더 저장된다
+    raw = "사과 먹었어. 요즘 기침해"
+    llm = FakeLLM(_tools(_call("c1", "create_observation_food", _APPLE)), _answer(_ASK_WHEN))
+
+    result = await run(raw, context, client=llm, task=MemoryTask(raw_text=raw))
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
+
+
+async def test_강등_경로에서_일정_초안을_만들었으면_원문을_pending_으로_쓰지_않는다(
+    context: AgentContext,
+) -> None:
+    # 원문 전체 맥락은 "조각 안의 기록은 하나도 저장하지 않았다" 로 넘어간다.
+    # 관찰만 세면 이어받기가 같은 일정 초안을 한 번 더 만든다
+    raw = "모레 운동회 있어. 요즘 기침해"
+    event = {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"}
+    llm = FakeLLM(_tools(_call("c1", "create_event", event)), _answer(_ASK_WHEN))
+
+    result = await run(raw, context, client=llm, task=MemoryTask(raw_text=raw))
+
+    assert result.calls[0].success is True
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
+
+
+async def test_하나뿐인_조각이_이미_저장됐으면_pending_이_없다(context: AgentContext) -> None:
+    # Supervisor 가 "요즘 기침해" 를 빠뜨려 후보가 저장한 조각 하나뿐인 경우.
+    # 조회를 같이 불러 조기 종료를 피한다 — 저장만 하면 coverage 로 끝나 말할 턴이 없다
+    task = _task(("사과 먹었어", "observe"), raw="사과 먹었어. 요즘 기침해")
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_food", _APPLE),
+            _call("q1", "query_observation_health", {}),
+        ),
+        _answer(_ASK_WHEN),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.steps == 2  # 고를 다른 후보가 없으니 다시 묻지 않는다
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is None
+
+
+async def test_이미_저장한_조각을_지목하면_다시_고르게_한다(context: AgentContext) -> None:
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_food", _APPLE),
+        ),
+        _answer({**_ASK_WHEN, "pending_hint": "사과 먹었어"}),
+        _answer({**_ASK_WHEN, "pending_hint": "요즘 기침해"}),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.steps == 3  # 답 → 다시 고르라는 요청 → 답
+    assert result.pending is not None and result.pending.hint_text == "요즘 기침해"
