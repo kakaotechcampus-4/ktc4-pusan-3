@@ -73,6 +73,15 @@ _CONTINUATION_HEADER = """[이어서 처리할 것]
 leftover를 true로 둔다. 따로 보내 달라는 안내는 따로 붙으니 text 에 쓰지 않는다.
 답이 조각과 상관없는 말뿐이면 직전에 물은 것을 다시 묻는다. text 를 비우지 않는다."""
 
+# 강등 경로의 조각은 나누지 못한 원문이다. 코드가 앞 run 에서 아무것도 쓰지 않았을 때만
+# 이 맥락을 남기므로 "하나도 저장하지 않았다" 는 사실이다.
+# 저장할 범위를 "이 글에 적힌 기록" 으로 묶는다.
+_WHOLE_FRAGMENT = (
+    "(나누지 못한 원문 전체다. 이 글에 적힌 기록은 아직 하나도 저장하지 않았다. "
+    "물은 것과 상관없는 것도 이 글에 적힌 기록이면 하나씩 모두 저장한다. "
+    "보호자의 답에만 있고 이 글에 없는 기록은 섞인 말이다)"
+)
+
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
 
 # 모델이 tool도 안 부르고 답도 비운 턴을 내면 사용자는 아무것도 못 봄.
@@ -314,6 +323,11 @@ def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
     ]
 
 
+def _wrote(calls: list[ToolCallRecord]) -> bool:
+    """이번 run 에서 성공한 쓰기가 하나라도 있는지. 일정 초안도 센다."""
+    return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
+
+
 def _open_hints(task: MemoryTask, calls: list[ToolCallRecord]) -> list[MemoryHint]:
     """아직 저장하지 않은 후보. 관찰 조각만 저장 여부를 가릴 수 있고 나머지는 그대로 둔다."""
     written = _written_texts(calls)
@@ -337,9 +351,11 @@ def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
     if pending.transcript:
         lines = "\n".join(pending.transcript)
         rounds = f"\n\n[앞서 주고받은 것]\n{lines}"
+    # 헤더가 아니라 원문 전체 조각에만 붙인다. 헤더에 두면 답에 섞인 말까지 저장했다
+    whole = f"\n{_WHOLE_FRAGMENT}" if pending.whole else ""
     return (
         f"{_CONTINUATION_HEADER}{rounds}\n\n"
-        f"[아직 저장하지 못한 조각]\n{pending.hint_text}\n\n"
+        f"[아직 저장하지 못한 조각]\n{pending.hint_text}{whole}\n\n"
         f"[직전에 물은 것]\n{pending.question}\n\n"
         f"[보호자의 답]\n{answer}"
     )
@@ -404,7 +420,7 @@ def _pending(
     - 이번 run 에서 이미 저장한 관찰 조각은 고르지 않는다.
     - 후보가 하나뿐이면 모델에게 묻지 않고 그것을 쓴다.
     - 후보가 없으면(강등 경로) 원문 전체가 한 조각인데,
-      그중 일부라도 저장했으면 조각을 가를 수 없어 pending을 만들지 않는다.
+      일정 초안까지 무엇이든 썼으면 조각을 가를 수 없어 pending을 만들지 않는다.
     - 둘 이상이면 모델이 지목한 문장이 아직 저장하지 않은 후보여야 한다.
     """
     calls = calls or []
@@ -413,22 +429,25 @@ def _pending(
     if continuation is not None:
         # 저장한 조각을 남기면 다음 답에서 한 번 더 저장된다.
         # 이어받기는 조기 종료하지 않아서 저장한 뒤에 묻는 경우가 생긴다
-        if any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls):
+        if _wrote(calls):
             return None
         return PendingMemoryContext(
             hint_text=continuation.hint_text,
             question=reply.text,
             work=continuation.work,
             transcript=(*continuation.transcript, continuation.question, answer),
+            whole=continuation.whole,
         )
     if task is None:
         return None
     if not task.hints:
-        if _written_texts(calls):
+        # whole 은 "조각 안의 기록은 하나도 저장하지 않았다" 로 이어받기에 넘어간다.
+        # 관찰만 세면 일정 초안을 만든 run 도 맥락이 남아 같은 초안이 한 번 더 생긴다
+        if _wrote(calls):
             return None
         # 작업 종류를 모른다. observe로 두면 이어받기가 수정·삭제 tool을 열지 않는다
         return PendingMemoryContext(
-            hint_text=task.raw_text, question=reply.text, work=WorkType.OBSERVE
+            hint_text=task.raw_text, question=reply.text, work=WorkType.OBSERVE, whole=True
         )
     open_hints = _open_hints(task, calls)
     if len(task.hints) == 1:

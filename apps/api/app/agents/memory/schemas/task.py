@@ -40,6 +40,7 @@ class PendingMemoryContext:
     """되묻고 멈춘 자리. 다음 입력이 이 맥락 위에 얹힌다.
 
     hint_text 는 아직 저장하지 못한 조각 하나다. 발화 원문 전체를 담지 않는다.
+    다만 Supervisor 가 조각을 못 나눈 강등 경로에서는 원문 전체가 한 조각이고, whole 이 True 다.
     transcript는 이전 (질문, 답)을 순서대로 담는다. 코드가 채우고 모델이 쓰지 않는다.
     """
 
@@ -47,3 +48,6 @@ class PendingMemoryContext:
     question: str
     work: WorkType
     transcript: tuple[str, ...] = ()
+    # 원문 전체가 한 조각. 그중 하나라도 저장했으면 맥락을 만들지 않으므로,
+    # True 면 조각 안의 기록은 아직 하나도 저장되지 않았다
+    whole: bool = False
