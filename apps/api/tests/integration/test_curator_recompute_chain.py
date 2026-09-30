@@ -242,13 +242,9 @@ class TestRecomputeIdempotency:
 # ---------------------------------------------------------------------------
 
 
-_HAS_DELETED = hasattr(ObservationStatus, "DELETED")
-
-
 class TestDeleteLinkedObservation:
     """연결된 관찰이 soft delete 되면 O 가 줄어 Profile 상태가 내려가야 한다."""
 
-    @pytest.mark.xfail(not _HAS_DELETED, reason="PR #178 머지 후 ObservationStatus.DELETED 가 생기면 통과")
     async def test_confirmed_에서_관찰_삭제로_candidate_강등(self, session, family):
         """O=3 confirmed → 관찰 1건 deleted → O=2 → candidate."""
         _, child = family
@@ -286,7 +282,6 @@ class TestDeleteLinkedObservation:
         await session.refresh(profile)
         assert profile.state == ProfileState.CANDIDATE
 
-    @pytest.mark.xfail(not _HAS_DELETED, reason="PR #178 머지 후 ObservationStatus.DELETED 가 생기면 통과")
     async def test_모든_관찰_삭제해도_profile_자체는_남는다(self, session, family):
         """관찰이 모두 deleted 돼도 Profile 행은 남는다 (soft delete 이므로 FK SET NULL 안 됨).
         상태는 O=0 이므로 candidate, 21일 지나면 archived."""

@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -360,6 +360,8 @@ async def delete_observation(
     """행과 원문은 남기고 status 만 deleted 로 바꾼다.
 
     이미 지운 행은 대상이 아니라 False 다.
+    soft delete 라 FK CASCADE 가 발동하지 않으므로, Curator 보류 기록(observation_link_hold)을
+    코드에서 직접 지운다.
     """
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
@@ -369,6 +371,18 @@ async def delete_observation(
         .values(status=ObservationStatus.DELETED)
         .returning(model.id)
     )
+    if result is not None:
+        # Curator 보류 기록 정리 — soft delete 에서 CASCADE 가 안 먹히므로 코드가 지운다
+        from app.domains.memory.observation.models import ObservationLinkHold
+
+        _HOLD_FK = {"food": "food_id", "activity": "activity_id", "education": "education_id"}
+        fk_col = _HOLD_FK.get(resolved.value)
+        if fk_col is not None:
+            await session.execute(
+                delete(ObservationLinkHold).where(
+                    getattr(ObservationLinkHold, fk_col) == observation_id
+                )
+            )
     return result is not None
 
 
