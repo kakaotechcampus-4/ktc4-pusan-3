@@ -26,6 +26,25 @@ class PolicyVersion(Base, UUIDPk):
     version: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    """체크박스 옆 제목 · 전문의 제목. 본문처럼 그 버전의 글이다 (#168 리뷰).
+
+    코드에 두면 제목을 바꾸는 순간 옛 버전에 동의한 기록에도 새 제목이 소급 적용된다.
+    """
+    legal_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """화면에 그대로 보여 주는 근거 조문. 제목과 같은 이유로 버전마다 둔다.
+
+    없으면 보여 주지 않는다.
+    """
+    content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """content 로 만든 정본 HTML — 보호자가 "전문 보기" 에서 보는 그 페이지 (#172, 멘토 #71-4).
+
+    서버가 만든 완성본을 저장하고 화면은 손대지 않고 띄운다. 보여 줄 때마다 새로 만들지 않는다 —
+    변환기가 바뀌어도 이미 동의받은 글의 모양이 따라 바뀌면 안 된다. 원고와 함께
+    `alembic/policy_texts/<버전>/<scope>.html` 로 커밋하고 마이그레이션이 그대로 넣는다.
+
+    null 이면 정본이 없다 — draft-0 은 "TODO" 자리 표시 글이라 만들지 않았다.
+    """
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

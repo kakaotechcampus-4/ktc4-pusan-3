@@ -1,0 +1,81 @@
+source: 식품 등의 표시기준 알레르기 유발물질 표시 대상
+version: "2026"
+fetched_at: 2026-09-27
+# 확신 없는 별칭은 뺐다. 사람 교차 검수가 필요한 항목은 task-34-report.md 참고.
+terms:
+  - code: 1
+    label: 난류
+    aliases: [난류, 알류, 계란, 달걀, 메추리알, 난백, 난황, 마요네즈]
+    guards: []
+  - code: 2
+    label: 우유
+    aliases: [우유, 유제품, 분유, 치즈, 버터, 생크림, 연유, 요거트, 요구르트]
+    guards: []
+  - code: 3
+    label: 메밀
+    aliases: [메밀, 메밀가루, 메밀면]
+    guards: []
+  - code: 4
+    label: 땅콩
+    aliases: [땅콩, 땅콩버터, 땅콩가루]
+    guards: [땅콩호박]
+  - code: 5
+    label: 대두
+    aliases: [대두, 두부, 된장, 간장, 두유, 콩나물]
+    guards: []
+  - code: 6
+    label: 밀
+    aliases: [밀, 밀가루, 소맥, 부침가루, 튀김가루]
+    guards: [밀크, 밀키, 밀감]
+  - code: 7
+    label: 고등어
+    aliases: [고등어]
+    guards: []
+  - code: 8
+    label: 게
+    aliases: [게, 꽃게, 대게]
+    guards: []
+  - code: 9
+    label: 새우
+    aliases: [새우, 새우젓, 건새우]
+    guards: []
+  - code: 10
+    label: 돼지고기
+    aliases: [돼지고기, 돈육, 삼겹살, 목살, 돈까스]
+    guards: []
+  - code: 11
+    label: 복숭아
+    aliases: [복숭아, 황도, 백도]
+    guards: []
+  - code: 12
+    label: 토마토
+    aliases: [토마토, 방울토마토, 케첩]
+    guards: []
+  - code: 13
+    label: 아황산류
+    aliases: [아황산류, 아황산나트륨, 이산화황, 무수아황산]
+    guards: []
+  - code: 14
+    label: 호두
+    aliases: [호두, 호두과자]
+    guards: []
+  - code: 15
+    label: 닭고기
+    aliases: [닭고기, 닭, 계육, 치킨]
+    guards: []
+  - code: 16
+    label: 쇠고기
+    aliases: [쇠고기, 소고기, 우육]
+    guards: []
+  - code: 17
+    label: 오징어
+    aliases: [오징어, 오징어채, 마른오징어]
+    guards: []
+  - code: 18
+    label: 조개류
+    aliases: [조개류, 조개]
+    guards: []
+  - code: 19
+    label: 잣
+    aliases: [잣, 잣가루]
+    guards: []

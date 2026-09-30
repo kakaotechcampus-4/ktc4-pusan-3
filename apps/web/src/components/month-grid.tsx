@@ -260,7 +260,7 @@ const CALENDAR_CLASSES = {
     "text-body-sm text-ink ease-standard rounded-field focus-visible:-outline-offset-2 hover:bg-surface-muted active:bg-surface-muted flex min-h-touch w-full flex-col items-center justify-center gap-1 py-1.5 transition-colors duration-120",
   selected: "[&_button]:bg-brand [&_button]:text-white [&_button]:hover:bg-brand-hover",
   // 🚨 오늘을 **색 하나로** 표시하지 않는다. `brand` 와 `ink` 는 그레이스케일에서 가깝고
-  //    본문 서체가 단일 웨이트라 굵기로도 못 만든다 (문서 §3 · §4) — 테두리를 함께 준다.
+  //    손글씨는 굵기 대비가 약해 굵기로도 못 만든다 (문서 §3 · §4) — 테두리를 함께 준다.
   //    고른 날이 오늘이면 `selected` 의 채움이 이긴다(둘 다 걸려도 읽는 데 문제가 없다).
   today: "[&_button]:text-brand [&_button]:border [&_button]:border-brand",
   hidden: "invisible",

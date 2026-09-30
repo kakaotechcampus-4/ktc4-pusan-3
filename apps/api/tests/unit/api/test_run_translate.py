@@ -17,13 +17,16 @@ import pytest
 
 from app.agents import entrypoint
 from app.agents.entrypoint import (
+    DomainRouted,
     Done,
     EventDraft,
     EventDrafts,
     Failed,
-    FoodRouted,
     Guidance,
     MemoryNote,
+    Partial,
+    PendingMemoryContext,
+    PendingReply,
     Ref,
     Rerouted,
     Saved,
@@ -33,16 +36,17 @@ from app.agents.entrypoint import (
 )
 
 # 초안을 만들 부품이라 진입점이 내보내지 않는다. app/api 코드가 아니라 픽스처를 만드는 테스트라
-# 레이어 경계(api 는 진입점만) 밖이다 — 화면으로 가는 모양은 EventDraft.to_payload() 가 정한다.
+# 레이어 경계(api는 진입점만) 밖이다. 화면으로 가는 모양은 app/core/event_draft.py가 정한다.
 from app.agents.memory.drafts import DraftItem, EventSnapshot
+from app.agents.memory.schemas.task import WorkType
 from app.api.runs import registry, sse, translate
 
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
 
-SENT = {Step, Failed, Done, Guidance, EventDrafts}
+SENT = {Step, Failed, Done, Guidance, EventDrafts, MemoryNote, Unavailable}
 """화면으로 보내는 것."""
-HELD = {Saved, MemoryNote, Unavailable, FoodRouted, Unwritten, Rerouted}
+HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted, Partial}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 
@@ -150,7 +154,7 @@ def test_guidance_without_deeplink_sends_null():
 
 
 def test_event_drafts_use_the_agents_payload_shape():
-    """초안 모양은 AI 파트(drafts.py `to_payload`)가 정한다. 여기서 모양을 다시 적지 않는다."""
+    """초안 모양은 app/core/event_draft.py가 정한다. 여기서 모양을 다시 적지 않는다."""
     create, update = _create_draft(), _update_draft()
 
     assert translate.to_sse(EventDrafts((create, update))) == (
@@ -167,6 +171,8 @@ def test_event_drafts_use_the_agents_payload_shape():
         Done("r1", 2),
         Guidance(code="diagnosis", message="진단은 도와드릴 수 없어요."),
         EventDrafts((_create_draft(), _update_draft())),
+        MemoryNote("언제부터였어요?", "question"),
+        Unavailable(("activity", "growth")),
     ],
     ids=lambda event: type(event).__name__,
 )
@@ -185,9 +191,12 @@ def test_sent_events_become_sse_frames(event):
 @pytest.mark.parametrize(
     "event",
     [
-        MemoryNote("기록해 둘게요"),
-        Unavailable(("activity",)),
-        FoodRouted("meal_idea", "toddler", ("search",), True, "mock"),
+        # 조각 원문이 들어 있다. API 의 pending store 로만 간다 (runner.py)
+        PendingReply(
+            "run-1", PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
+        ),
+        DomainRouted("food", "meal_recommendation", "mock", 0),
+        Partial("agent_error", ("food",), ("activity",)),
         Unwritten(hints=1, tools=0, note=True),
         Rerouted(bounced=1),
         # 화면은 관찰 내용 전체를 원하는데 Saved 는 id 만 준다 — 8단계에서 행을 읽어 채운다
@@ -204,7 +213,7 @@ def test_relay_puts_translated_events_on_the_channel():
     emit = translate.relay(channel)
 
     emit(Step(1, 3, "시작"))
-    emit(MemoryNote("내부용"))
+    emit(Unwritten(hints=1, tools=0, note=True))
     emit(Done(channel.run_id, 2))
     emit(Step(2, 3, "끝난 뒤에 온 것"))
 
@@ -259,3 +268,19 @@ def test_relay_raises_on_an_event_it_cannot_translate(draft):
         emit(EventDrafts((draft,)))
 
     assert channel.events == []
+
+
+def test_memory_note_carries_its_kind():
+    # kind=question 이면 화면이 "이어서 적기" 를 연다 (#158)
+    assert translate.to_sse(MemoryNote("언제부터였어요?", "question")) == (
+        "note",
+        {"text": "언제부터였어요?", "kind": "question"},
+    )
+
+
+def test_unavailable_carries_agent_names_only():
+    # 문구는 화면이 만든다(#158 domainLabel). 서버는 아직 없는 Agent 이름만 넘긴다
+    assert translate.to_sse(Unavailable(("activity", "growth"))) == (
+        "unavailable",
+        {"agents": ["activity", "growth"]},
+    )

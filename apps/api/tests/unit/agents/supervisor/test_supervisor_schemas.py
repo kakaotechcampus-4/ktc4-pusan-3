@@ -342,8 +342,12 @@ def test_정답_구간이_원문에_있다() -> None:
     assert check_cases() == []
 
 
-def test_food_유형은_두_가지다() -> None:
-    assert {member.value for member in FoodTaskType} == {"meal_recommendation", "nutrient_analysis"}
+def test_food_유형은_세_가지다() -> None:
+    assert {member.value for member in FoodTaskType} == {
+        "meal_recommendation",
+        "nutrient_analysis",
+        "daycare_meal",
+    }
 
 
 def test_kind_와_guard_값() -> None:
