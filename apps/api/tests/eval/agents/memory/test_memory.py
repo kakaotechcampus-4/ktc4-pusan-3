@@ -426,7 +426,7 @@ CASES: list[EvalCase] = [
         "어제 사과 먹었다고 저장한 기록 지워줘.",
         seed=_seed_apple,
         # 조회 결과가 한 건이어도 바로 지우지 않는다. 지운 기록은 보호자가 되살릴 수 없어서
-        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 것은 이어받기 경로의 몫이다
+        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 테스트는 test_delete_confirm
         required_tools={"query_observation_food": 1},
         forbidden_tools={"create_observation_food", "update_observation_food"},
         expect_clarification=True,
