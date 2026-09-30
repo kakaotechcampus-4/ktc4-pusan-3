@@ -13,7 +13,6 @@
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
@@ -37,7 +36,7 @@ MIN_AVOIDED_LABEL = 2
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
 GENERAL_REASON = "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요."
 
-Seen = Mapping[UUID, tuple[RankedEvidence, datetime]]
+Seen = Mapping[UUID, RankedEvidence]
 
 
 class RejectReason(StrEnum):
@@ -90,7 +89,7 @@ def review_candidates(
     """
     avoided = tuple(
         label
-        for ranked, _ in seen.values()
+        for ranked in seen.values()
         if ranked.is_avoidance
         and len(label := normalize_activity(ranked.label)) >= MIN_AVOIDED_LABEL
     )
@@ -132,27 +131,24 @@ def _check(
         return RejectReason.EVALUATIVE, ()
 
     # 3. Activity 검증
-    resolved: list[tuple[EvidencePick, RankedEvidence, datetime]] = []
+    resolved: list[tuple[EvidencePick, RankedEvidence]] = []
     for pick in candidate.evidence:
-        entry = _lookup(seen, pick.id)
-        if entry is None:
+        ranked = _lookup(seen, pick.id)
+        if ranked is None:
             return RejectReason.UNKNOWN_EVIDENCE, ()
-        resolved.append((pick, *entry))
+        resolved.append((pick, ranked))
 
     content_key = normalize_activity(candidate.content)
     if any(label in content_key for label in avoided):
         return RejectReason.AVOIDED, ()
-    if any(overstates(pick.note) and ranked.tier != 1 for pick, ranked, _ in resolved):
+    if any(overstates(pick.note) and ranked.tier != 1 for pick, ranked in resolved):
         return RejectReason.OVERSTATED_NOTE, ()
     if is_recent_duplicate(candidate.content, recent):
         return RejectReason.RECENT_DUPLICATE, ()
     if months < TOGETHER_ONLY_BELOW_MONTH and candidate.caregiver_role != CaregiverRole.TOGETHER:
         return RejectReason.CAREGIVER_ROLE, ()
 
-    citations = tuple(
-        cite(ranked, note=pick.note, source_updated_at=updated_at)
-        for pick, ranked, updated_at in resolved
-    )
+    citations = tuple(cite(ranked, note=pick.note) for pick, ranked in resolved)
     return None, citations
 
 
@@ -169,7 +165,7 @@ def _build(
     )
 
 
-def _lookup(seen: Seen, raw_id: str) -> tuple[RankedEvidence, datetime] | None:
+def _lookup(seen: Seen, raw_id: str) -> RankedEvidence | None:
     try:
         key = UUID(raw_id)
     except ValueError:

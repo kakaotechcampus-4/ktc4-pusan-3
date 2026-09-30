@@ -27,7 +27,7 @@ class ActivityRunState:
     이번 run 에서 실제로 조회한 것만 인용할 수 있다. 없는 id 는 후보를 거절한다 (D6).
     """
 
-    seen_evidence: dict[UUID, tuple[RankedEvidence, datetime]] = field(default_factory=dict)
+    seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     gate: Gate | None = None
     # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
     suggestions: tuple[SuggestionDraft, ...] = ()

@@ -30,7 +30,6 @@ from app.agents.common.refs import Ref
 CHILD = UUID(int=1)
 TODAY = date(2026, 9, 29)
 NOW = datetime(2026, 9, 29, 3, 0, tzinfo=UTC)
-UPDATED = datetime(2026, 9, 27, tzinfo=UTC)
 
 SAND = UUID(int=11)  # 모래놀이를 즐김 — 관찰(티어 3)
 BLOCKS = UUID(int=12)  # 블록 — 확정 관심(티어 1)
@@ -46,10 +45,10 @@ def ranked(uid: UUID, *, label: str, tier: int, polarity: int) -> RankedEvidence
 
 
 SEEN = {
-    SAND: (ranked(SAND, label="모래놀이", tier=3, polarity=1), UPDATED),
-    BLOCKS: (ranked(BLOCKS, label="블록", tier=1, polarity=1), UPDATED),
-    WATER: (ranked(WATER, label="물놀이", tier=1, polarity=-1), UPDATED),
-    BALL: (ranked(BALL, label="공", tier=1, polarity=-1), UPDATED),
+    SAND: ranked(SAND, label="모래놀이", tier=3, polarity=1),
+    BLOCKS: ranked(BLOCKS, label="블록", tier=1, polarity=1),
+    WATER: ranked(WATER, label="물놀이", tier=1, polarity=-1),
+    BALL: ranked(BALL, label="공", tier=1, polarity=-1),
 }
 
 
@@ -84,7 +83,7 @@ class TestPass:
         assert draft.kind == "personalized"
         (citation,) = draft.citations
         assert citation.ref.id == BLOCKS
-        assert citation.source_updated_at == UPDATED  # 모델이 아니라 조회 결과에서 채운다
+        assert citation.label == "블록"  # 모델이 아니라 조회 결과에서 채운다
         assert citation.note == "블록 쌓기를 즐겨 했어요"
 
     def test_근거가_없으면_일반_추천이고_이유를_코드_문구로_덮는다(self):
@@ -223,7 +222,6 @@ class TestOutputTool:
                         subject=name,
                         activity=name,
                         polarity=1,
-                        updated_at=UPDATED,
                     )
                     for i, (name, days) in enumerate(recent)
                 ]
