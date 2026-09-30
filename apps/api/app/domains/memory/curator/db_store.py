@@ -10,7 +10,7 @@ from datetime import date
 from heapq import merge as heapmerge
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,14 +36,6 @@ _MODEL_BY_DOMAIN: dict[str, type] = {
     "activity": ObservationActivity,
     "education": ObservationEducation,
 }
-
-# observation_link_hold 의 FK 칸 이름
-_HOLD_FK: dict[str, str] = {
-    "food": "food_id",
-    "activity": "activity_id",
-    "education": "education_id",
-}
-
 
 class DbCuratorStore:
     def __init__(self, session: AsyncSession) -> None:
@@ -192,26 +184,26 @@ class DbCuratorStore:
     async def record_uncertain(
         self, *, domain: CuratorDomain, observation_id: str, subject_hash: str
     ) -> int:
-        fk_col = _HOLD_FK[domain]
+        model = _MODEL_BY_DOMAIN[domain]
         obs_uuid = uuid.UUID(observation_id)
 
         # UPSERT: 있으면 갱신, 없으면 삽입
         stmt = (
             pg_insert(ObservationLinkHold)
-            .values(**{fk_col: obs_uuid, "uncertain_count": 1, "subject_hash": subject_hash})
+            .values(
+                child_id=select(model.child_id).where(model.id == obs_uuid).scalar_subquery(),
+                domain=domain,
+                observation_id=obs_uuid,
+                uncertain_count=1,
+                subject_hash=subject_hash,
+            )
             .on_conflict_do_update(
-                index_elements=[fk_col],
+                index_elements=["domain", "observation_id"],
                 set_={
-                    "uncertain_count": func.coalesce(
-                        # hash 같으면 +1, 다르면 1로 리셋
-                        select(ObservationLinkHold.uncertain_count + 1)
-                        .where(
-                            getattr(ObservationLinkHold, fk_col) == obs_uuid,
-                            ObservationLinkHold.subject_hash == subject_hash,
-                        )
-                        .correlate(ObservationLinkHold)
-                        .scalar_subquery(),
-                        1,
+                    "uncertain_count": case(
+                        (ObservationLinkHold.subject_hash == subject_hash,
+                         ObservationLinkHold.uncertain_count + 1),
+                        else_=1,
                     ),
                     "subject_hash": subject_hash,
                 },
@@ -223,10 +215,10 @@ class DbCuratorStore:
         return count  # type: ignore[return-value]
 
     async def clear_hold(self, *, domain: CuratorDomain, observation_id: str) -> None:
-        fk_col = _HOLD_FK[domain]
         await self._session.execute(
             delete(ObservationLinkHold).where(
-                getattr(ObservationLinkHold, fk_col) == uuid.UUID(observation_id)
+                ObservationLinkHold.domain == domain,
+                ObservationLinkHold.observation_id == uuid.UUID(observation_id)
             )
         )
         await self._session.flush()

@@ -379,7 +379,8 @@ class TestSoftDeleteHoldCleanup:
 
         # hold 행이 사라져야 한다
         hold = await session.scalar(
-            select(ObservationLinkHold).where(ObservationLinkHold.food_id == obs.id)
+            select(ObservationLinkHold).where(ObservationLinkHold.domain == "food",
+                ObservationLinkHold.observation_id == obs.id)
         )
         assert hold is None
 
@@ -453,3 +454,45 @@ class TestChildIsolation:
         ids = [item.id for item in result]
         assert str(pa.id) in ids
         assert str(pb.id) not in ids
+
+
+async def test_hold_저장과_해제는_같은_UUID의_도메인을_구분한다(session, family, store):
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    from app.domains.memory.observation.models import ObservationEducation
+
+    _, child = family
+    observation_id = uuid4()
+    session.add_all([
+        _food(child.id, id=observation_id),
+        _activity(child.id, id=observation_id),
+        ObservationEducation(
+            id=observation_id, child_id=child.id, raw_text="test", subject="수학",
+            topic="수학", confidence_source=ConfidenceSource.PARENT_DIRECT,
+            observed_range=Range(date(2026, 9, 26), date(2026, 9, 27)),
+        ),
+    ])
+    await session.flush()
+
+    for domain in ("food", "activity", "education"):
+        assert await store.record_uncertain(
+            domain=domain, observation_id=str(observation_id), subject_hash="same",
+        ) == 1
+    assert await store.record_uncertain(
+        domain="food", observation_id=str(observation_id), subject_hash="same",
+    ) == 2
+    holds = (await session.scalars(select(ObservationLinkHold).where(
+        ObservationLinkHold.observation_id == observation_id,
+    ))).all()
+    assert {h.domain: h.uncertain_count for h in holds} == {
+        "food": 2, "activity": 1, "education": 1,
+    }
+    assert all(h.child_id == child.id for h in holds)
+
+    await store.clear_hold(domain="food", observation_id=str(observation_id))
+    remaining = (await session.scalars(select(ObservationLinkHold.domain).where(
+        ObservationLinkHold.observation_id == observation_id,
+    ))).all()
+    assert set(remaining) == {"activity", "education"}

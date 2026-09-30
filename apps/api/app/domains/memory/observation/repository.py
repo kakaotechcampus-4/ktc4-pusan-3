@@ -375,14 +375,12 @@ async def delete_observation(
         # Curator 보류 기록 정리 — soft delete 에서 CASCADE 가 안 먹히므로 코드가 지운다
         from app.domains.memory.observation.models import ObservationLinkHold
 
-        _HOLD_FK = {"food": "food_id", "activity": "activity_id", "education": "education_id"}
-        fk_col = _HOLD_FK.get(resolved.value)
-        if fk_col is not None:
-            await session.execute(
-                delete(ObservationLinkHold).where(
-                    getattr(ObservationLinkHold, fk_col) == observation_id
-                )
+        await session.execute(
+            delete(ObservationLinkHold).where(
+                ObservationLinkHold.domain == resolved.value,
+                ObservationLinkHold.observation_id == observation_id,
             )
+        )
     return result is not None
 
 
