@@ -6,7 +6,6 @@
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -73,13 +72,10 @@ class EvidenceCitation:
     `note`는 Agent가 쓰므로, 문서 행이든 아이 기록이든 비워 둘 수 없다.
     "보호자 화면에 그대로 나가는 값"이다.
 
-    `source_updated_at`은 인용할 때 읽은 원본의 시각이다. 아이 기록은 그 행의
-    `updated_at`, 문서 행은 `written_at`이 들어온다.
     `polarity` 와 `label` 은 기피 검사에만 쓴다. 문서 행은 기본값 그대로다.
     """
 
     ref: Ref
-    source_updated_at: datetime
     note: str
     polarity: int = 0
     label: str = ""
@@ -93,7 +89,6 @@ class EvidenceCitation:
         return {
             "source_kind": self.ref.kind,
             "source_id": str(self.ref.id),
-            "source_updated_at": self.source_updated_at.isoformat(),
             "note": self.note,
         }
 

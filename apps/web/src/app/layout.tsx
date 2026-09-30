@@ -22,7 +22,19 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="ko">
+    /*
+     * 🚨 `suppressHydrationWarning` 은 이 태그 **하나**에만 걸린다 (한 겹 깊이).
+     *
+     * 웹뷰 셸이 페이지가 뜨기 전에 `<html>` 인라인 스타일로 safe area 크기를 꽂는다
+     * (`--shell-inset-top`/`--shell-inset-bottom` — apps/mobile/src/native/safe-area.ts).
+     * 서버가 그려 보낸 HTML 에는 그 속성이 없으니 하이드레이션 때 **속성이 다르다**고 React 가 경고하고,
+     * 웹뷰로 열 때마다 개발 오버레이에 "1 Issue" 가 떠서 **진짜 문제가 그 뒤에 묻힌다.**
+     *
+     * 값을 서버가 알 방법이 없어서(상태바 높이는 기기가 안다) 경고를 없애려면 이 태그에서 꺼야 한다.
+     * 🚨 범위를 좁게 두려고 `<html>` 에만 건다 — 여기 있는 다른 속성은 `lang` 하나뿐이다.
+     *    `<body>` 나 그 아래로 내리면 화면 코드의 진짜 불일치까지 같이 가려진다.
+     */
+    <html lang="ko" suppressHydrationWarning>
       <body className="antialiased">
         <Providers>{children}</Providers>
       </body>

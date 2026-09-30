@@ -1,14 +1,27 @@
-"""Food tool 이름 -> 함수 매핑, 인자 검증, task × 식이 단계 묶음.
+"""Food tool 이름 -> 함수 매핑, 인자 검증, task × Gate로 여닫는 tool 묶음.
 
-어떤 tool 을 열지는 모델이 아니라 여기 코드가 정한다.
+어떤 tool을 열지는 모델이 아니라 여기 코드가 정한다.
 
-  식단 추천 × 유아기   search · analyze · repeated · daycare_menu · propose (5)
-  식단 추천 × 영아기   search · weaning · propose (3)
-  영양소 분석 × 유아기 search · analyze · repeated · daycare_menu · nutrition · balance · report (7)
-  영양소 분석 × 영아기 없음
+  라벨: meal_recommendation
+    infant_milk(0–3)       닫힘
+    infant_weaning(4–11)   search·weaning·propose
+    toddler·preschool(12+) search·analyze·repeated·(daycare)·propose
+  라벨: nutrient_analysis
+    infant_milk·infant_weaning(0–11)  닫힘
+    toddler·preschool(12+)            search·analyze·repeated·(daycare)·
+                                       nutrition·balance·report
+  라벨: daycare_meal — 단계로 닫지 않음
+    급식 행 있음  lookup·update·delete
+    급식 행 없음  닫힘
 
-- 식품을 제안하는 tool(propose_meal_candidates)은 식단 추천에만 있다.
-- filter_food_safety는 CODE_TOOLS로, TOOL_SPECS, TOOL_HANDLERS에 없어서 모델이 부를 수 없음
+
+- `meal_recommendation`은 `safety_ok=False`면 단계와 무관하게 닫힌다(`blocked.safety`) —
+  알레르기 필터를 걸 수 없어서다. `nutrient_analysis`·`daycare_meal`은 영향받지 않는다.
+- `consent_child_health`는 어느 라벨도 닫지 않는다. 동의가 없으면 `build_gate`가
+  `allergy_states`를 빈 튜플로 채울 뿐이다.
+- `(daycare)`는 `toddler`·`preschool` 에서만, 급식 행이 있을 때만 더해지는 tool이다.
+  `infant_weaning`의 `meal_recommendation` 묶음은 급식 행과 무관하게 고정 3개다.
+- `filter_food_safety`는 `CODE_TOOLS`.
 """
 
 from collections.abc import Awaitable, Callable, Collection
@@ -16,13 +29,18 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
 from app.agents.food.result import ErrorCode, ToolResult, fail
-from app.agents.food.schemas.common import FeedingStage, FoodTaskType
+from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.food.tools.infant import guide_weaning_stage
-from app.agents.food.tools.menu import lookup_daycare_menu
+from app.agents.food.tools.menu import (
+    delete_daycare_meal,
+    lookup_daycare_menu,
+    update_daycare_meal,
+)
 from app.agents.food.tools.nutrition import (
     compare_diet_balance,
     lookup_nutrition,
@@ -43,6 +61,8 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "analyze_meal_records": analyze_meal_records,
     "check_repeated_menus": check_repeated_menus,
     "lookup_daycare_menu": lookup_daycare_menu,
+    "update_daycare_meal": update_daycare_meal,
+    "delete_daycare_meal": delete_daycare_meal,
     "lookup_nutrition": lookup_nutrition,
     "compare_diet_balance": compare_diet_balance,
     "guide_weaning_stage": guide_weaning_stage,
@@ -59,62 +79,79 @@ TOOL_SPECS: list[dict[str, Any]] = build_tool_specs(
 )
 _SPECS_BY_NAME: dict[str, dict[str, Any]] = {spec["function"]["name"]: spec for spec in TOOL_SPECS}
 
-# ── 묶음 — food.md "연령별 Tool 변화" ────────────────────────────
-COMMON: tuple[str, ...] = ("search_food_memory", "propose_meal_candidates")
-STAGE_TOOLS: dict[FeedingStage, tuple[str, ...]] = {
-    FeedingStage.INFANT: ("guide_weaning_stage",),
-    FeedingStage.TODDLER: (
+# 라벨별로 열리는 tool 이름
+_DAYCARE_TOOLS: frozenset[str] = frozenset(
+    {"lookup_daycare_menu", "update_daycare_meal", "delete_daycare_meal"}
+)
+_WEANING_MEAL: frozenset[str] = frozenset(
+    {"search_food_memory", "guide_weaning_stage", "propose_meal_candidates"}
+)
+_TODDLER_MEAL_BASE: frozenset[str] = frozenset(
+    {
+        "search_food_memory",
         "analyze_meal_records",
         "check_repeated_menus",
-        "lookup_daycare_menu",
+        "propose_meal_candidates",
+    }
+)
+_TODDLER_NUTRIENT_BASE: frozenset[str] = frozenset(
+    {
+        "search_food_memory",
+        "analyze_meal_records",
+        "check_repeated_menus",
         "lookup_nutrition",
         "compare_diet_balance",
         "report_nutrient_analysis",
-    ),
-}
-TASK_TOOLS: dict[FoodTaskType, frozenset[str]] = {
-    FoodTaskType.MEAL_RECOMMENDATION: frozenset(
-        {
-            "search_food_memory",
-            "analyze_meal_records",
-            "check_repeated_menus",
-            "lookup_daycare_menu",
-            "guide_weaning_stage",
-            "propose_meal_candidates",
-        }
-    ),
-    FoodTaskType.NUTRIENT_ANALYSIS: frozenset(
-        {
-            "search_food_memory",
-            "analyze_meal_records",
-            "check_repeated_menus",
-            "lookup_daycare_menu",
-            "lookup_nutrition",
-            "compare_diet_balance",
-            "report_nutrient_analysis",
-        }
-    ),
-}
-# task 마다 마지막에 한 번 부르는 출력 tool. 이게 열리지 않으면 그 조합은 지원하지 않는다
-OUTPUT_TOOL: dict[FoodTaskType, str] = {
-    FoodTaskType.MEAL_RECOMMENDATION: "propose_meal_candidates",
-    FoodTaskType.NUTRIENT_ANALYSIS: "report_nutrient_analysis",
-}
+    }
+)
+
+# life_stage() 의 네 값 중 영아기 둘. 영양소 분석은 이 두 단계 전부에서 닫힌다
+_INFANT_STAGES = ("infant_milk", "infant_weaning")
 
 
-def _bundle(task: FoodTaskType, stage: FeedingStage) -> tuple[str, ...]:
-    """(COMMON ∪ STAGE_TOOLS[stage]) ∩ TASK_TOOLS[task]. 순서는 TOOL_DEFINITIONS 를 따른다."""
-    opened = (set(COMMON) | set(STAGE_TOOLS[stage])) & TASK_TOOLS[task]
+def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
+    """이 (task, gate) 조합이 닫혀 있으면 코드 문구 키를, 열려 있으면 None 을 돌려준다.
+
+    닫힌 경로는 모델을 0회 부른다 — `tools_for` 도 이 값이 있으면 빈 튜플을 낸다.
+    문구는 `docs/agents/food/Food_Tool_명세.md` §4 에 있다.
+    """
+    stage = gate.stage.stage
+    if task == FoodTaskType.MEAL_RECOMMENDATION:
+        if stage == "infant_milk":
+            return "unsupported.milk_meal"
+        if not gate.safety_ok:
+            return "blocked.safety"
+        return None
+    if task == FoodTaskType.NUTRIENT_ANALYSIS:
+        return "unsupported.infant_nutrient" if stage in _INFANT_STAGES else None
+    if task == FoodTaskType.DAYCARE_MEAL:
+        return None if gate.data.daycare_meal else "closed.no_daycare"
+    raise AssertionError(f"모르는 FoodTaskType: {task}")  # pragma: no cover
+
+
+def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
+    """이번 task에 모델에게 열 tool. 닫혀 있으면 빈 튜플 — 모델을 부르지 않는다.
+
+    순서는 `TOOL_DEFINITIONS` 순서를 따른다.
+    """
+    if closed_readout_key(task, gate) is not None:
+        return ()
+
+    if task == FoodTaskType.DAYCARE_MEAL:
+        opened = set(_DAYCARE_TOOLS)
+    elif task == FoodTaskType.MEAL_RECOMMENDATION:
+        if gate.stage.stage == "infant_weaning":
+            opened = set(_WEANING_MEAL)
+        else:  # toddler · preschool — infant_milk 는 위에서 이미 닫혔다
+            opened = set(_TODDLER_MEAL_BASE)
+            if gate.data.daycare_meal:
+                opened.add("lookup_daycare_menu")
+    else:  # NUTRIENT_ANALYSIS — infant_* 는 위에서 이미 닫혔다
+        opened = set(_TODDLER_NUTRIENT_BASE)
+        if gate.data.daycare_meal:
+            opened.add("lookup_daycare_menu")
+
     return tuple(d.name for d in TOOL_DEFINITIONS if d.name in opened)
-
-
-def supports(task: FoodTaskType, stage: FeedingStage) -> bool:
-    return OUTPUT_TOOL[task] in _bundle(task, stage)
-
-
-def tools_for(task: FoodTaskType, stage: FeedingStage) -> tuple[str, ...]:
-    """이번 task 에 모델에게 열 tool. 지원하지 않는 조합이면 빈 튜플 — 모델을 부르지 않는다."""
-    return _bundle(task, stage) if supports(task, stage) else ()
 
 
 def requires_safety_check(task: FoodTaskType) -> bool:

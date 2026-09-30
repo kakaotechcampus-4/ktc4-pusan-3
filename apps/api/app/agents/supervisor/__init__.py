@@ -1,7 +1,7 @@
 """Supervisor. 발화 한 줄을 조각으로 나누고 어디로 보낼지 라벨을 붙인다.
 
 밖으로 열린 것은 `run(raw_text)` 하나고,
-조각을 MemoryTask · FoodTask 로 바꾸는 건 routing(규칙),
+조각을 MemoryTask · DomainTask 로 바꾸는 건 routing(규칙),
 그 둘을 실제로 부르는 건 pipeline 이다.
 
 Supervisor 가 하는 것:

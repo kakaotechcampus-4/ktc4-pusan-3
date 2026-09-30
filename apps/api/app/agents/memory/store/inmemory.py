@@ -2,6 +2,7 @@
 재현 가능한 테스트를 위해 id는 도메인별 순번(observation_food-1)으로 만든다.
 """
 
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -13,6 +14,10 @@ from app.agents.memory.store.ports import (
     ObservationDomain,
     ObservationRow,
 )
+
+
+def _is_deleted(row: ObservationRow) -> bool:
+    return row.fields.get("status") == "deleted"
 
 
 class InMemoryStore:
@@ -71,7 +76,9 @@ class InMemoryStore:
         rows = [
             row
             for row in self._observations.values()
-            if row.domain == domain and row.fields.get("child_id") == str(child_id)
+            if row.domain == domain
+            and row.fields.get("child_id") == str(child_id)
+            and not _is_deleted(row)
         ]
         if date_from is not None:
             rows = [row for row in rows if row.observed_on >= date_from]
@@ -85,7 +92,9 @@ class InMemoryStore:
         self, *, domain: ObservationDomain, observation_id: str
     ) -> ObservationRow | None:
         row = self._observations.get(observation_id)
-        return row if row is not None and row.domain == domain else None
+        if row is None or row.domain != domain or _is_deleted(row):
+            return None
+        return row
 
     async def update_observation(
         self,
@@ -112,10 +121,13 @@ class InMemoryStore:
         return updated
 
     async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
+        # DB 와 같이 행을 남기고 status 만 바꾼다. 조회는 _is_deleted 로 걸러낸다
         row = await self.get_observation(domain=domain, observation_id=observation_id)
         if row is None:
             return False
-        del self._observations[observation_id]
+        self._observations[observation_id] = replace(
+            row, fields={**row.fields, "status": "deleted"}
+        )
         return True
 
     # ── event ───────────────────────────────────────────────────
