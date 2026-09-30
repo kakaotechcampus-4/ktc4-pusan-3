@@ -132,9 +132,7 @@ class MemoryStore(Protocol):
         """
         ...
 
-    async def delete_observation(
-        self, *, domain: ObservationDomain, observation_id: str
-    ) -> bool:
+    async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
         """soft delete. 행을 지우지 않고 status 를 deleted 로 바꾼다. 없거나 이미 지웠으면 False.
 
         지운 행은 query · get · update 어디에도 걸리지 않는다.

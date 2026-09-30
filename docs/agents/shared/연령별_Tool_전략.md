@@ -15,7 +15,7 @@
    - Health = **가르지 않는다.** 연령이 여는 tool이 없고 계산 방식만 바뀐다(§5). 검진 차수·접종 시기가 월령 함수일 뿐이다.
    - Activity = **tool별 `min_month` 임계값.** Growth와 같은 방식이다. 배타적인 tool이 없고 열리는 시점만 다르다 (§5-1).
 4. **닫힌 조합은 모델을 부르지 않는다.** `tools_for()`가 빈 튜플이면 코드 readout으로 끝난다(모델 호출 0회).
-5. **경계값은 한 곳에만 있다.** `config/age_gates.yaml`. 코드·프롬프트·문서에 숫자를 복제하지 않는다.
+5. **경계값은 한 곳에만 있다.** `reference/age_gates.yaml`. 코드·프롬프트·문서에 숫자를 복제하지 않는다.
 
 ```python
 tools_for(task_type, gate: Gate) -> tuple[str, ...]

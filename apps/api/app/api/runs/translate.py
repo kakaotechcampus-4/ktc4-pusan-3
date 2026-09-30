@@ -9,7 +9,9 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
    - `Saved` — 화면은 관찰 내용 전체(`observations`)를 원하는데 id 만 실려 온다. 8단계에서 행을
      읽어 채울 때까지 보내지 않는다.
-   - `FoodRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
+   - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
+   - `Partial` — 화면 계약에는 있지만 추천 카드가 아직 안 나가서 보낼 자리가 없다.
+     카드 번역과 같이 연다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
    pipeline 에 이벤트가 새로 생기면 tests/unit/api/test_run_translate.py 가 실패해서 정하라고 한다.
 
