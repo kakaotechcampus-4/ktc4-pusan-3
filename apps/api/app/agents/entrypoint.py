@@ -9,8 +9,10 @@ from zoneinfo import ZoneInfo
 
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FeedingStage
+from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
+from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.pipeline import (
     Done,
@@ -20,6 +22,7 @@ from app.agents.pipeline import (
     Failed,
     FoodRouted,
     MemoryNote,
+    PendingReply,
     PipelineResult,
     Ref,
     Rerouted,
@@ -45,7 +48,10 @@ __all__ = [
     "Guidance",
     "InMemoryStore",
     "MemoryNote",
+    "MemoryReply",
     "MemoryStore",
+    "PendingMemoryContext",
+    "PendingReply",
     "PipelineResult",
     "Ref",
     "Rerouted",
@@ -71,12 +77,15 @@ async def handle_input(
     birth_date: date | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
+    continuation: PendingMemoryContext | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
     - birth_date를 넘기면 식이 단계를 월령에서 계산한다.
     - store를 넘기면 그것에 쓴다.
     - agents는 infra에 직접 닿지 않으므로 DB 어댑터는 api가 만들어 넘긴다.
+    - continuation을 넘기면 raw_text는 이전 질문에 대한 보호자의 답이다. api는 reply_to를
+      검증·복원한 뒤 이 값만 넘긴다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -114,4 +123,5 @@ async def handle_input(
         food_context,
         run_id=run_id,
         emit=emit,
+        continuation=continuation,
     )

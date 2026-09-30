@@ -33,3 +33,17 @@ class MemoryTask:
     def open_lookup_edit(self) -> bool:
         """수정/삭제 묶음을 열지 여부. 조각 중 lookup_edit이 있을 때만 연다."""
         return any(hint.work == WorkType.LOOKUP_EDIT for hint in self.hints)
+
+
+@dataclass(frozen=True)
+class PendingMemoryContext:
+    """되묻고 멈춘 자리. 다음 입력이 이 맥락 위에 얹힌다.
+
+    hint_text 는 아직 저장하지 못한 조각 하나다. 발화 원문 전체를 담지 않는다.
+    transcript는 이전 (질문, 답)을 순서대로 담는다. 코드가 채우고 모델이 쓰지 않는다.
+    """
+
+    hint_text: str
+    question: str
+    work: WorkType
+    transcript: tuple[str, ...] = ()
