@@ -12,6 +12,7 @@ import pytest
 
 from app.agents import entrypoint, pipeline
 from app.agents.food.store import FoodPorts
+from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.supervisor import routing
 from app.rules.age import life_stage
@@ -135,3 +136,39 @@ async def test_생일을_주면_월령에서_단계를_고른다(
     stored_birth_date = await food.ports.profile.birth_date(child_id=CHILD)
     assert stored_birth_date == birth_date
     assert life_stage(birth_date, food.today).stage == expected_stage
+
+
+async def test_이어받기_맥락을_pipeline_에_그대로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(raw_text=raw_text, **kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    pending = entrypoint.PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        run_id="run-2",
+        continuation=pending,
+    )
+
+    assert seen["raw_text"] == "3일 전부터"
+    assert seen["continuation"] is pending
+
+
+async def test_이어받기가_없으면_none_을_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
+
+    assert seen["continuation"] is None
