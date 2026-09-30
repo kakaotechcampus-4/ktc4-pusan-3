@@ -7,7 +7,7 @@ last_transition_at / last_transition_from — 재계산 멱등성을 위해 마�
 strength 기본값 0.3 → 0.5: 이슈 #149 스펙. 기존 행은 건드리지 않는다.
 
 Revision ID: a2b3c4d5e6f7
-Revises: bf14612a1d9c
+Revises: b901cf42a99f
 Create Date: 2026-09-26
 """
 
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a2b3c4d5e6f7"
-down_revision: Union[str, Sequence[str], None] = "bf14612a1d9c"
+down_revision: Union[str, Sequence[str], None] = "b901cf42a99f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
