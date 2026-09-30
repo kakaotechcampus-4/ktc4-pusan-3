@@ -209,7 +209,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 예산을 넘으면 | 실행을 끊지 않는다. `pipeline._log` 가 경고를 남길 뿐이다 — 재시도가 붙었다는 신호이지 잘못이 아니다 |
 | 도메인 Agent당 | **1회 이내** — 아래 재호출 예외만 2회 |
 | 0회 경로 | 게이트 닫힘 · Growth 성장 추이 · Health 검진/병원/전달 서류 · 안전 조회 실패 |
-| **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 |
+| **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 (잠정 — C-8 미결) |
 | 그 외 출력 tool 거절 | 재호출하지 않는다 (2026-09-22 — 이전의 "거절 시 run당 1회 재시도"는 위 규칙으로 대체) |
 | 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
 | Activity | 진입 수를 **Activity 문서에서 따로 정한다.** 조회를 전부 사전 조회로 돌리면 모델을 부르는 자리가 출력 tool 하나뿐이라 위 표와 달라질 수 있다 — 담당자(이도헌)가 이 줄을 그 값으로 바꾼다 |
@@ -293,7 +293,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | task_type | `<명사>_<명사>` 소문자 | `meal_recommendation` |
 | readout key | `<상태>.<주제>` | `unsupported.milk_meal` |
 | 문서 행 키 | `<도메인>.<유형>.<주제>.<범위>` | `growth.routine.self_care.toothbrush.step2` |
-| 설정 파일 | `config/<주제>.yaml` · `reference/<출처>_<연도>.*` | `reference/vaccine_2026.yaml` |
+| 설정 파일 | `apps/api/reference/` 한 곳. `<주제>.yaml` · `<출처>_<연도>.*` | `reference/age_gates.yaml` · `reference/vaccine_2026.yaml` |
 
 `confirmed`·`candidate`·`archived` 같은 상태값은 **코드가 정본**이다.
 
@@ -327,9 +327,9 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | C-5 | ✅ 닫힘 — **그대로 둔다.** 24시간이면 만료되므로 무효화 배치를 두지 않는다 |
 | C-6 | ✅ 폐기 — 알레르기 후보 감지를 v1에서 뺐다. `safety_confirmations` 채널도 함께 사라졌다 |
 | C-7 | ✅ 닫힘 — **`confidence_source`로 갈음**한다. 별도 `type` 컬럼을 두지 않는다 |
-| C-8 | ✅ 닫힘 — **남은 만큼만** 낸다(§7) |
+| C-8 | **미결** (2026-09-30 다시 엶) — 재호출 후에도 3개를 못 채우거나 후보 풀이 처음부터 3개 미만일 때 남은 만큼(1~2개)을 낼지 정하지 않았다. 지금 코드는 잠정으로 남은 만큼 내고 0개만 거절한다(`check_count(after_retry=True)`, §7) |
 | C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`liked`/`disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
 
-미결이 전부 닫혔다. 새로 열리는 것은 이 표에 다시 적는다.
+C-8 을 다시 열었다. 새로 열리는 것은 이 표에 다시 적는다.
 
 > **API 계약서 v1(`docs/api/api-interface-v1.html`)은 레거시다.** 어긋나는 곳이 있어도 이 문서들이 정본이다.
