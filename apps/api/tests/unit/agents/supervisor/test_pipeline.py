@@ -14,7 +14,7 @@ import asyncio
 import calendar
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -37,6 +37,7 @@ from app.agents.food.store import (
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
+from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
     DomainRouted,
     Done,
@@ -51,6 +52,7 @@ from app.agents.pipeline import (
     Unwritten,
     handle_input,
 )
+from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
@@ -119,8 +121,13 @@ def _birth_date_for(stage: Stage) -> date:
     return date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
 
 
-def _food_context(stage: Stage = "toddler", *, daycare: bool = True) -> FoodContext:
-    """급식 행은 기본으로 하나 심어 둔다 — 기존 테스트의 tool 개수(5·7개)를 그대로 유지한다."""
+def _food_context(
+    stage: Stage = "toddler", *, daycare: bool = True, store: InMemoryStore | None = None
+) -> FoodContext:
+    """급식 행은 기본으로 하나 심어 둔다 — 기존 테스트의 tool 개수(5·7개)를 그대로 유지한다.
+
+    store 를 주면 기억 포트가 그 store 를 읽는다 (entrypoint 와 같은 연결).
+    """
     rows = (
         [
             DaycareMealRow(
@@ -134,9 +141,11 @@ def _food_context(stage: Stage = "toddler", *, daycare: bool = True) -> FoodCont
         if daycare
         else []
     )
+    memory: dict[str, Any] = {} if store is None else {"memory": StoreFoodMemory(store)}
     ports = in_memory_ports(
         profile=InMemoryProfile({CHILD: _birth_date_for(stage)}),
         daycare=InMemoryDaycareMeals(rows),
+        **memory,
     )
     return FoodContext(child_id=CHILD, run_id=RUN_ID, now=NOW, timezone=KST, ports=ports)
 
@@ -218,6 +227,7 @@ async def _handle(
     events: list[Any],
     supervisor_llm: FakeLLM | None = None,
     contexts: dict[str, Any] | None = None,
+    commit: Any = None,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         CASES_BY_ID[case_id].text,
@@ -227,6 +237,7 @@ async def _handle(
         supervisor_client=supervisor_llm or _supervisor_llm(case_id),
         memory_client=memory_llm,
         emit=events.append,
+        commit=commit,
     )
 
 
@@ -299,6 +310,37 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
     assert (food.stage, food.status) == ("toddler", "mock")
     assert len(food.tools) == 5  # 식단 추천 × 유아기
     assert food.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
+
+
+async def test_T07_Memory_가_저장한_관찰을_같은_run_의_Food_가_기억_포트로_읽는다(
+    monkeypatch: pytest.MonkeyPatch, memory_context: AgentContext, events: list[Any]
+) -> None:
+    # Food 는 Memory store 를 직접 보지 않는다. 자기 기억 포트로 읽어도 방금 저장한 것이 보여야 한다
+    seen: list[list[str]] = []
+    real = pipeline._RUNNERS["food"]
+
+    async def reading(task: Any, context: Any, **kwargs: Any) -> Any:
+        rows = await context.ports.memory.observations(
+            child_id=CHILD, date_from=NOW.date(), date_to=NOW.date()
+        )
+        seen.append([row.subject for row in rows])
+        return await real(task, context, **kwargs)
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", reading)
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=_food_context(store=memory_context.store),
+        events=events,
+    )
+
+    assert seen == [["딸기"]]
 
 
 async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르다(
@@ -784,13 +826,17 @@ class _FakeContext:
         return _FakeContext()
 
 
-def _runner(agent: str, *, delay: float = 0.0, log: list[str] | None = None) -> Any:
+def _runner(
+    agent: str, *, delay: float = 0.0, log: list[str] | None = None, name: str | None = None
+) -> Any:
+    label = name or agent
+
     async def run(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
         if log is not None:
-            log.append(f"{agent} 시작")
+            log.append(f"{label} 시작")
         await asyncio.sleep(delay)
         if log is not None:
-            log.append(f"{agent} 끝")
+            log.append(f"{label} 끝")
         return _Outcome(agent, task.task_type)
 
     return run
@@ -1049,12 +1095,287 @@ async def test_끊긴_Agent_는_뒤에서_계속_돌지_않는다(monkeypatch: p
     monkeypatch.setitem(pipeline._RUNNERS, "food", slow)
     task = DomainTask(run_id=RUN_ID, agent="food", task_type=None, request_texts=("x",))
 
-    outcomes, partial = await pipeline._run_domain((task,), {"food": _FakeContext()}, timeout=0.05)
+    ran = await pipeline._run_domain((task,), {"food": _FakeContext()}, timeout=0.05)
     await asyncio.sleep(0.3)
 
     assert log == ["시작"]  # 시작은 했고, 끊긴 뒤 뒤에서 이어 돌지 않았다
-    assert outcomes == []
-    assert partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+    assert ran.outcomes == ()
+    assert ran.partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+
+
+# 같은 Agent 의 task 둘. 하나는 급식을 고치고, 하나는 그 급식을 읽어 추천한다
+_MEAL = DomainTask(
+    run_id=RUN_ID, agent="food", task_type="daycare_meal", request_texts=("급식 대신 두유 받았대",)
+)
+_DINNER = DomainTask(
+    run_id=RUN_ID,
+    agent="food",
+    task_type="meal_recommendation",
+    request_texts=("저녁 뭐 먹일까?",),
+)
+_MEAL_AND_DINNER_RAW = "급식 대신 두유 받았대. 저녁 뭐 먹일까?"
+
+
+def _by_type(**runners: Any) -> Any:
+    """task_type 마다 다른 가짜 실행 함수. 같은 Agent 의 쓰는 task 와 읽는 task 를 나눠 본다."""
+
+    async def run(task: DomainTask, context: Any, **kwargs: Any) -> Any:
+        return await runners[str(task.task_type)](task, context, **kwargs)
+
+    return run
+
+
+def _food_requests(*pairs: tuple[str, str]) -> FakeLLM:
+    """food 요청 조각만 있는 Supervisor 출력. (조각, food_task) 쌍을 순서대로 받는다."""
+    output = {
+        "segments": [
+            {"text": text, "kind": "request", "agent": "food", "food_task": label}
+            for text, label in pairs
+        ]
+    }
+    return FakeLLM(_tools(_call("s1", "route", output)))
+
+
+def test_daycare_meal_은_쓰는_task_다() -> None:
+    assert pipeline._WRITING_TASKS["food"] == frozenset({"daycare_meal"})
+    # 실행 함수 표에 없는 agent를 쓰는 쪽으로 표시하면 배선이 어긋난 것
+    assert set(pipeline._WRITING_TASKS) <= set(pipeline._RUNNERS)
+
+
+async def test_쓰는_task_가_끝난_뒤에_읽는_task_가_시작한다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log: list[str] = []
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(
+            daycare_meal=_runner("food", delay=0.01, log=log, name="갱신"),
+            meal_recommendation=_runner("food", log=log, name="추천"),
+        ),
+    )
+
+    # 쓰는 task가 뒤에 와도 먼저 돈다
+    ran = await pipeline._run_domain((_DINNER, _MEAL), {"food": _FakeContext()}, timeout=1.0)
+
+    assert log == ["갱신 시작", "갱신 끝", "추천 시작", "추천 끝"]
+    # 결과는 끝난 순서가 아니라 task 순서
+    assert [item.task_type for item in ran.outcomes] == ["meal_recommendation", "daycare_meal"]
+    assert ran.partial is None
+
+
+async def test_쓰는_task_가_죽어도_읽는_task_는_돈다(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(
+            daycare_meal=_failing(RuntimeError("부서졌다")),
+            meal_recommendation=_runner("food"),
+        ),
+    )
+
+    ran = await pipeline._run_domain((_MEAL, _DINNER), {"food": _FakeContext()}, timeout=1.0)
+
+    assert [item.task_type for item in ran.outcomes] == ["meal_recommendation"]
+    assert ran.partial == Partial("agent_error", succeeded=("food",), failed=("food",))
+
+
+async def test_쓰는_task_도_20초_안에서_센다(monkeypatch: pytest.MonkeyPatch) -> None:
+    log: list[str] = []
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(
+            daycare_meal=_runner("food", delay=5, log=log, name="갱신"),
+            meal_recommendation=_runner("food", log=log, name="추천"),
+        ),
+    )
+
+    ran = await pipeline._run_domain((_MEAL, _DINNER), {"food": _FakeContext()}, timeout=0.1)
+
+    # 쓰는 쪽이 제한을 다 써서 끊겼고, 읽는 쪽은 남은 몫이 없어 시작도 안 했다
+    assert log == ["갱신 시작"]
+    assert ran.outcomes == ()
+    assert ran.partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+
+
+async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    seen: list[tuple[str, ...]] = []
+    today = NOW.date()
+
+    async def update_meal(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        await asyncio.sleep(0.01)  # 동시에 돌면 그 사이 추천이 먼저 읽는다
+        (row,) = await context.ports.daycare.rows(child_id=CHILD, date_from=today, date_to=today)
+        await context.ports.daycare.update(replace(row, menu_keys=("두유",)))
+        return _Outcome("food", task.task_type)
+
+    async def recommend(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        rows = await context.ports.daycare.rows(child_id=CHILD, date_from=today, date_to=today)
+        seen.append(rows[0].menu_keys)
+        return _Outcome("food", task.task_type)
+
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(daycare_meal=update_meal, meal_recommendation=recommend),
+    )
+
+    result = await handle_input(
+        _MEAL_AND_DINNER_RAW,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests(
+            ("급식 대신 두유 받았대", "daycare_meal"), ("저녁 뭐 먹일까?", "meal_recommendation")
+        ),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+    )
+
+    assert seen == [("두유",)]
+    assert [item.task_type for item in result.domain] == ["daycare_meal", "meal_recommendation"]
+    assert result.partial is None
+
+
+_MEAL_ONLY = "급식 대신 두유 받았대"
+
+
+def _recorded(food_context: FoodContext) -> tuple[FoodContext, RunWrites]:
+    """entrypoint 와 같이 Food 쓰기 포트를 감싼다. 표시는 포트 호출이 성공한 뒤에만 남는다."""
+    writes = RunWrites()
+    return replace(food_context, ports=record_food_writes(food_context.ports, writes)), writes
+
+
+async def _handle_meal_only(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any], writes: RunWrites
+) -> pipeline.PipelineResult:
+    return await handle_input(
+        _MEAL_ONLY,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests((_MEAL_ONLY, "daycare_meal")),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+        writes=writes,
+    )
+
+
+async def test_추천_직전_영양_구간을_저장했어도_모델이_실패하면_failed_다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 질문만 한 run이다. 영양 구간 · 메뉴 카탈로그는 계산이 남기는 값이라 보호자 말이 반영된 게
+    # 아니고, 덮어쓰기라 다시 보내도 같다. 원문을 돌려줘야 다시 물을 수 있다
+    raw = "저녁 뭐 먹일까?"
+
+    async def save_band_then_die(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        await context.ports.bands.save(child_id=CHILD, bands={"iron": "low"})
+        raise RuntimeError("모델 호출 실패")
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", save_band_then_die)
+    context, writes = _recorded(food_context)
+
+    result = await handle_input(
+        raw,
+        memory_context,
+        {"food": context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests((raw, "meal_recommendation")),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+        writes=writes,
+    )
+
+    assert result.committed is False
+    assert result.failed == Failed("llm_unavailable", raw)
+    assert _order(events)[-2:] == ["Failed", "Done"]
+
+
+async def test_급식을_고친_뒤_죽으면_failed_가_아니라_partial_로_끝난다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 급식은 이미 바뀌었다. failed로 끝내면 화면이 원문을 돌려주고 다시 보내게 한다
+    today = NOW.date()
+
+    async def update_then_die(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        (row,) = await context.ports.daycare.rows(child_id=CHILD, date_from=today, date_to=today)
+        await context.ports.daycare.update(replace(row, menu_keys=("두유",)))
+        raise RuntimeError("부서졌다")
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", update_then_die)
+    context, writes = _recorded(food_context)
+
+    result = await _handle_meal_only(memory_context, context, events, writes)
+
+    assert result.failed is None
+    assert result.committed is True
+    assert result.partial == Partial("agent_error", succeeded=(), failed=("food",))
+    assert _order(events)[-2:] == ["Partial", "Done"]
+
+
+async def test_쓰기_전에_모델_호출이_실패하면_commit_이_없어_failed_다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 쓰는 task가 시작은 했지만 포트를 부르기 전에 죽었다. 원문을 돌려줘야 한다
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _failing(RuntimeError("모델 호출 실패")))
+    context, writes = _recorded(food_context)
+
+    result = await _handle_meal_only(memory_context, context, events, writes)
+
+    assert result.committed is False
+    assert result.failed == Failed("llm_unavailable", _MEAL_ONLY)
+    assert _order(events)[-2:] == ["Failed", "Done"]
+
+
+async def test_쓰기_전에_시간이_다_되면_commit_이_없어_failed_다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 예산이 조금 남아 쓰는 task 가 시작했고, 모델 호출 중에 끊겼다. 포트는 불리지 않았다
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.05)
+    log: list[str] = []
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=1, log=log))
+    context, writes = _recorded(food_context)
+
+    result = await _handle_meal_only(memory_context, context, events, writes)
+
+    assert log == ["food 시작"]  # 시작은 했다
+    assert result.committed is False
+    assert result.failed == Failed("llm_unavailable", _MEAL_ONLY)
+
+
+async def test_쓰는_task_가_시작도_못_하고_끊기면_commit_이_없어_failed_다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 앞 단계가 제한을 다 썼다. 아무것도 안 썼으니 failed 로 끝내 원문을 돌려줘야 한다
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.0)
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=1))
+    context, writes = _recorded(food_context)
+
+    result = await _handle_meal_only(memory_context, context, events, writes)
+
+    assert result.committed is False
+    assert result.failed == Failed("llm_unavailable", _MEAL_ONLY)
+    assert _order(events)[-2:] == ["Failed", "Done"]
 
 
 # ── 되묻기 · pending ────────────────────────────────────────────
@@ -1438,3 +1759,140 @@ async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
 
     assert result.failed is not None and result.failed.reason == "unparsable"
     assert any(isinstance(event, Failed) for event in events)
+
+
+@dataclass(frozen=True)
+class _Committed:
+    """가짜 commit 이 events 에 남기는 표시. 이벤트 사이에서 commit 시점을 본다."""
+
+
+def _commit_into(events: list[Any]) -> Any:
+    async def commit() -> None:
+        events.append(_Committed())
+
+    return commit
+
+
+async def test_Memory_다음에_commit_하고_Saved_는_그_뒤에_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    names = _order(events)
+    assert names.count("_Committed") == 1
+    assert (
+        names.index("_Committed")
+        < names.index("Saved")
+        < names.index("MemoryNote")
+        < names.index("DomainRouted")
+    )
+    assert result.committed is True
+
+
+async def test_Memory_가_쓰다가_죽으면_commit_하지_않고_failed_로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 한 건을 쓴 뒤 다음 호출에서 죽는다. 확정 전이라 러너가 되돌린다
+    # (InMemory 는 되돌리지 못하므로 store 는 보지 않는다)
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        LLMUnavailableError("망"),
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    assert not _of(events, _Committed)
+    assert not _of(events, Saved)
+    assert result.failed == Failed("llm_unavailable", CASES_BY_ID["RC01"].text)
+    assert result.committed is False
+
+
+async def test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나가지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    async def broken() -> None:
+        raise RuntimeError("연결 끊김")
+
+    # RC04 는 하나를 저장하고 하나를 되묻는다 — 성공했다면 Saved · note · pending 이 다 나간다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_activity", _SAND)), _answer(_ask_second())
+    )
+
+    with pytest.raises(RuntimeError):
+        await handle_input(
+            CASES_BY_ID["RC04"].text,
+            memory_context,
+            {"food": food_context},
+            run_id=RUN_ID,
+            supervisor_client=_supervisor_llm("RC04"),
+            memory_client=memory,
+            emit=events.append,
+            commit=broken,
+        )
+
+    # 확정된 게 없다. 끝 신호는 러너가 failed 로 붙인다
+    assert not _of(events, Saved)
+    assert not _of(events, MemoryNote)
+    assert not _of(events, PendingReply)
+    assert not _of(events, Done)
+
+
+async def test_기록할_조각이_없으면_commit_을_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply("불리면 안 된다")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    assert not _of(events, _Committed)
+    assert result.committed is False
+
+
+async def test_이어받기도_Memory_다음에_commit_하고_Saved_는_그_뒤에_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_commit_into(events),
+    )
+
+    names = _order(events)
+    assert names.count("_Committed") == 1
+    assert names.index("_Committed") < names.index("Saved")
+    assert result.committed is True

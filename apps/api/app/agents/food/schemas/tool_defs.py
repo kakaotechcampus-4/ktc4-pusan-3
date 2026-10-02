@@ -59,7 +59,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         ),
         args=DaycareMenuArgs,
     ),
-    # daycare_meal — 급식 갱신. Food가 직접 쓰는 유일한 테이블(update만, insert 없음)
+    # daycare_meal — 급식 갱신. Food가 보호자 말을 반영해 쓰는 유일한 테이블(update만, insert 없음)
     ToolDefinition(
         name="update_daycare_meal",
         description=(

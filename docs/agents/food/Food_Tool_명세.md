@@ -25,8 +25,8 @@
 ### 0-2. 연결 구조
 
 ```
-메뉴명 ──normalize──▶ menu_key ──▶ menu_catalog (로컬 캐시)
-                                     │ 미스
+메뉴명 ──normalize──▶ menu_key ──▶ menu_catalog (메뉴 카탈로그)
+                                     │ 카탈로그에 없음(캐시 미스)
                                      ▼
           ① 식약처 식품영양성분DB정보 (음식 분류) ── 1인분 영양
           ② 식약처 조리식품 레시피 DB (COOKRCP01) ── 재료 목록 · 영양
@@ -37,7 +37,7 @@
           식품분류 → 6개 식품군 매핑 (코드 사전)
 ```
 
-### 0-3. `menu_catalog` (캐시 테이블)
+### 0-3. `menu_catalog` (메뉴 카탈로그)
 
 | 필드 | 설명 |
 | --- | --- |
@@ -53,7 +53,7 @@
 | `resolved` | bool |
 | `source_version` · `synced_at` | 데이터 기준일 |
 
-- 동기화: 야간 배치 + 캐시 미스 시 즉시 1회 호출. 운영 트래픽을 API에 직접 걸지 않는다.
+- 동기화: 야간 배치 + 카탈로그에 없을 때(캐시 미스) 즉시 1회 호출. 운영 트래픽을 API에 직접 걸지 않는다. **TODO: 확정 필요** — 캐시 미스를 누가 채우는지(Food / 배치만 / 캐시 미스만 넘기고 백엔드)는 아직 정하지 않았다. 이 줄은 Food 가 채우는 안으로 읽힌다. 안은 [`food_agent_own_table.md`](food_agent_own_table.md) §1 · FT-13.
 - `unresolved` 메뉴는 **영양 계산에서 빠지고 기록 행 수에서 빠진다**된다. 알레르기 판정은 "확인 못 함".
 
 ### 0-4. 수치는 내부, 출력은 구간 — 계산 설계
@@ -180,7 +180,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | Tool | 호출 시점 | 입력 → 출력 | 실패 |
 | --- | --- | --- | --- |
 | `resolve_meal_date` | `update`·`delete_daycare_meal` 인자 검증 | `date_span` + `today` → date | 사전에 없으면 `needs_observation` · 과거 30일 밖이면 거절 |
-| `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | API 실패 → 캐시만 사용, 미스는 `unresolved` |
+| `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | API 실패 → 카탈로그만 사용, 캐시 미스는 `unresolved` |
 | `filter_food_safety` | 모델 호출 전(풀) · 후(출력) · 급식 조회 | `menus`, `health_safety`, `stage` → `(passed, blocked, unchecked)` | `health_safety` 조회 실패 → `SAFETY_UNAVAILABLE` (식단 추천 중단) |
 | `rank_evidence` | `search_food_memory` 내부 | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | – |
 | `build_candidate_pool` | 식단 추천 모델 호출 전 | §0-5 | 풀 0개 → 일반 추천 템플릿 없이 "조건에 맞는 메뉴가 없어요". **기피로는 아무것도 빼지 않는다** — 빠지는 것은 알레르기·연령 금지 재료뿐 |

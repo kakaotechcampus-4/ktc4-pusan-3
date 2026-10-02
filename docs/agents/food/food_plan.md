@@ -138,7 +138,7 @@ DoD: mock `run()`이 포트·클라이언트를 **건드리지 않고** `DomainA
 
 | 순서 | tool | DoD |
 | --- | --- | --- |
-| 5-1 | `resolve_menu` | 캐시 미스 → API 1회 → upsert · 실패는 `unresolved`(추정 0건) |
+| 5-1 | `resolve_menu` | 카탈로그에 없으면(캐시 미스) → API 1회 → upsert · 실패는 `unresolved`(추정 0건) |
 | 5-2 | `filter_food_safety` | 19종 교집합 · `term_match` · **연령 규칙(꿀·질식)** · 조회 실패 → `SAFETY_UNAVAILABLE` |
 | 5-2a | `resolve_meal_date` | 사전 표 그대로 · 기준일은 `Gate.today` · 과거 30일 밖 거절 · 미해결은 되묻기 |
 | 5-3 | `compute_intake_daily` | 결측 행 생성 0건 · `catalog_version` 기록 |
