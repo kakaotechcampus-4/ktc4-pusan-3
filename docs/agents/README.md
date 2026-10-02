@@ -116,7 +116,7 @@ def life_stage(birth_date: date, today: date) -> LifeStage
 | Food | `stage`를 배타적 범주로. 수유기와 유아식기는 먹을 수 있는 것이 질적으로 달라 tool이 겹치지 않는다 |
 | Growth | tool별 `min_month` 눈금. 열리는 시점만 다르고 배타적인 tool이 없다 |
 | Health | 가르지 않는다. 연령이 여는 tool이 없고 검진 차수·접종 시기라는 계산 방식만 바뀐다 |
-| Activity | tool별 `min_month` 눈금 (Growth와 같다). 날씨·위치는 `Gate.outdoor_ok` · `has_location` 으로 장소 조회 tool 하나만 여닫는다 |
+| Activity | tool별 `min_month` 눈금 (Growth와 같다). 위치(`has_location`)가 장소 조회 tool 하나만 여닫고, 날씨(`outdoor_ok`)는 그 tool 이 찾는 종류를 실내로 좁힌다 |
 
 아래는 방식과 무관하게 지켜야 한다. 안 지키면 게이트가 어긋난다.
 
