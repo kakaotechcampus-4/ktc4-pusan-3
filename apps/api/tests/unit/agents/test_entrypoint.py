@@ -243,5 +243,8 @@ async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴
 
     writes = seen["writes"]
     assert writes.wrote is False
+    # 영양 구간 저장은 표시를 세우지 않지만 급식 삭제는 세운다 (없는 id 는 조용히 넘어간다)
     await seen["food"].ports.bands.save(child_id=CHILD, bands={"iron": "low"})
+    assert writes.wrote is False
+    await seen["food"].ports.daycare.delete(child_id=CHILD, row_ids=(UUID(int=9),))
     assert writes.wrote is True

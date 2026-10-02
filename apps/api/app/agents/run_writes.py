@@ -3,6 +3,12 @@
 쓰기 성공 후 실패한 run이 재전송되어 같은 작업이 중복되는 것을 막기 위해 사용한다.
 Agent는 이 상태를 모르며 entrypoint가 쓰기 포트를 감싸서 관리한다.
 
+[감싸는 기준] 쓰기 포트를 더할 때 이 기준으로 선택:
+- 감싼다: 보호자 말을 반영한 쓰기. 급식 수정·삭제, Health 복약 기록.
+- 감싸지 않는다: 요청하지 않아도 계산 중에 생기는 내부 값이면서 덮어써도 같은 값이 되는
+  쓰기. 영양 구간(`bands.save`)·메뉴 캐시(`catalog.put`).
+  덮어쓰기가 아니라 쓰기(INSERT)라면 내부 값이어도 감싸거나 중복 방지키를 둔다.
+
 한계: commit 응답을 기다리는 중에 취소되면 실제로는 들어갔어도 표시가 남지 않는다.
 다시 보내도 안전하게 하는 건 쓰기 쪽 몫 — UPDATE는 같은 갱신을 두 번 적용해도
 결과가 같게, INSERT는 도메인 값으로 만든 중복 방지키로 막는다(포트 계약).
@@ -12,19 +18,11 @@ from dataclasses import replace
 from datetime import date
 from uuid import UUID
 
-from app.agents.food.store.ports import (
-    DaycareMealRow,
-    DaycareMealStore,
-    FoodPorts,
-    MenuCatalogRow,
-    MenuCatalogStore,
-    NutrientBand,
-    NutrientBandStore,
-)
+from app.agents.food.store.ports import DaycareMealRow, DaycareMealStore, FoodPorts
 
 
 class RunWrites:
-    """run 하나 동안 도메인 쓰기 포트가 성공한 적이 있는지."""
+    """run 하나 동안 보호자 말을 반영한 도메인 쓰기가 성공한 적이 있는지."""
 
     def __init__(self) -> None:
         self.wrote = False
@@ -53,40 +51,6 @@ class _RecordedDaycareMeals:
         self._writes.mark()
 
 
-class _RecordedNutrientBands:
-    def __init__(self, inner: NutrientBandStore, writes: RunWrites) -> None:
-        self._inner = inner
-        self._writes = writes
-
-    async def last(self, *, child_id: UUID) -> dict[str, NutrientBand]:
-        return await self._inner.last(child_id=child_id)
-
-    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None:
-        await self._inner.save(child_id=child_id, bands=bands)
-        self._writes.mark()
-
-
-class _RecordedMenuCatalog:
-    def __init__(self, inner: MenuCatalogStore, writes: RunWrites) -> None:
-        self._inner = inner
-        self._writes = writes
-
-    async def get(self, menu_key: str) -> MenuCatalogRow | None:
-        return await self._inner.get(menu_key)
-
-    async def put(self, row: MenuCatalogRow) -> None:
-        await self._inner.put(row)
-        self._writes.mark()
-
-    async def all_resolved(self) -> list[MenuCatalogRow]:
-        return await self._inner.all_resolved()
-
-
 def record_food_writes(ports: FoodPorts, writes: RunWrites) -> FoodPorts:
-    """Food 쓰기 포트 셋(급식 · 영양 구간 · 메뉴 캐시)만 감싼다. 나머지 포트는 그대로다."""
-    return replace(
-        ports,
-        daycare=_RecordedDaycareMeals(ports.daycare, writes),
-        bands=_RecordedNutrientBands(ports.bands, writes),
-        catalog=_RecordedMenuCatalog(ports.catalog, writes),
-    )
+    """Food 에서 보호자 말을 반영한 쓰기 포트(급식)만 감싼다."""
+    return replace(ports, daycare=_RecordedDaycareMeals(ports.daycare, writes))

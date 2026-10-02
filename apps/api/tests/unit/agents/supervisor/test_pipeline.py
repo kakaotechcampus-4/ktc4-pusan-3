@@ -1266,6 +1266,39 @@ async def _handle_meal_only(
     )
 
 
+async def test_추천_직전_영양_구간을_저장했어도_모델이_실패하면_failed_다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 질문만 한 run이다. 영양 구간 · 메뉴 캐시는 계산이 남기는 값이라 보호자 말이 반영된 게
+    # 아니고, 덮어쓰기라 다시 보내도 같다. 원문을 돌려줘야 다시 물을 수 있다
+    raw = "저녁 뭐 먹일까?"
+
+    async def save_band_then_die(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        await context.ports.bands.save(child_id=CHILD, bands={"iron": "low"})
+        raise RuntimeError("모델 호출 실패")
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", save_band_then_die)
+    context, writes = _recorded(food_context)
+
+    result = await handle_input(
+        raw,
+        memory_context,
+        {"food": context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests((raw, "meal_recommendation")),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+        writes=writes,
+    )
+
+    assert result.committed is False
+    assert result.failed == Failed("llm_unavailable", raw)
+    assert _order(events)[-2:] == ["Failed", "Done"]
+
+
 async def test_급식을_고친_뒤_죽으면_failed_가_아니라_partial_로_끝난다(
     monkeypatch: pytest.MonkeyPatch,
     memory_context: AgentContext,

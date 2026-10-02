@@ -103,6 +103,13 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
   갱신을 두 번 적용해도 결과가 같아야 한다. INSERT(예: Health 복약 기록)는 도메인 값으로 만든 중복 방지키로
   보장한다 — 다시 보내면 run 이 새로 생기므로 run 단위 값은 키가 될 수 없다. 어떤 값이 같으면 같은 기록인지는
   포트 계약(docstring)에 Agent 팀이 적고, unique 제약 · `ON CONFLICT` 같은 DB 구현은 백엔드가 한다.
+- 쓰기 포트를 더할 때 — commit 판정 표시(`run_writes`)로 감쌀지 아래 기준으로 고른다. 감싸는 건 entrypoint 가 한다.
+  - 감싼다: 보호자 말을 반영한 쓰기. 이 쓰기가 끝난 run 을 `failed`("저장 없음")로 끝내면 거짓 안내가 된다.
+    지금은 급식 수정 · 삭제, 나중엔 Health 복약 기록.
+  - 감싸지 않는다: 요청하지 않아도 계산 중에 생기는 내부 값이면서 덮어써도 같은 값이 되는 쓰기. 지금은
+    영양 구간 · 메뉴 캐시. 감싸면 질문만 한 run 이 모델 실패에도 `done` 이 되어 원문이 입력창에 돌아가지 않는다.
+  - 덮어쓰기인지만으로는 가르지 않는다 — 급식 수정도 덮어쓰기지만 보호자 말을 반영해서 감싼다. 반대로 내부
+    값이어도 쌓이는 쓰기(INSERT)면 다시 보낼 때 중복이 생기므로 감싸거나 중복 방지키를 둔다.
 - 추천(`suggestion`) — Agent 가 결과로 돌려주고 pipeline 이 저장한다. 되돌릴 수 없는 것은 승인 게이트
   뒤에서만 쓴다.
 - 순서 — 기록 단계 → 쓰는 도메인 task → 읽는 도메인 task. 조회는 앞 단계가 commit 된 뒤라 그대로 보인다.
@@ -238,7 +245,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
-| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 쓰기 포트 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run 은 `failed` |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 영양 구간 · 메뉴 캐시만 저장한 run 은 `failed` |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.

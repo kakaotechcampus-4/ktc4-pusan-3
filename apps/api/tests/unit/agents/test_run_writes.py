@@ -45,23 +45,31 @@ async def test_쓰기가_예외로_끝나면_표시가_남지_않는다() -> Non
     assert writes.wrote is False
 
 
-async def test_급식_삭제_영양_구간_메뉴_캐시_쓰기도_표시가_남는다() -> None:
-    for write in (
-        lambda p: p.daycare.delete(child_id=CHILD, row_ids=(_ROW.id,)),
-        lambda p: p.bands.save(child_id=CHILD, bands={"iron": "low"}),
-        lambda p: p.catalog.put(
-            MenuCatalogRow(
-                menu_key="두유",
-                display_name="두유",
-                source="manual",
-                resolved=True,
-                synced_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
-            )
-        ),
-    ):
-        writes, ports = _recorded()
-        await write(ports)
-        assert writes.wrote is True
+async def test_급식_삭제도_표시가_남는다() -> None:
+    writes, ports = _recorded()
+
+    await ports.daycare.delete(child_id=CHILD, row_ids=(_ROW.id,))  # type: ignore[attr-defined]
+
+    assert writes.wrote is True
+
+
+async def test_영양_구간_메뉴_캐시_저장은_표시를_남기지_않는다() -> None:
+    # 보호자 말을 반영한 쓰기가 아니라 추천 직전 계산이 남기는 내부 값이다. 덮어쓰기라
+    # 다시 보내도 같은 값이 된다. 표시를 세우면 질문만 한 run이 모델 실패에도 done이 된다
+    writes, ports = _recorded()
+
+    await ports.bands.save(child_id=CHILD, bands={"iron": "low"})  # type: ignore[attr-defined]
+    await ports.catalog.put(  # type: ignore[attr-defined]
+        MenuCatalogRow(
+            menu_key="두유",
+            display_name="두유",
+            source="manual",
+            resolved=True,
+            synced_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
+        )
+    )
+
+    assert writes.wrote is False
 
 
 async def test_조회는_표시를_남기지_않는다() -> None:
@@ -86,4 +94,7 @@ def test_쓰기_포트가_아닌_포트는_그대로_둔다() -> None:
 
     assert recorded.memory is original.memory
     assert recorded.safety is original.safety
+    # 계산 · 캐시 저장 포트는 감싸지 않는다
+    assert recorded.bands is original.bands
+    assert recorded.catalog is original.catalog
     assert recorded.daycare is not original.daycare
