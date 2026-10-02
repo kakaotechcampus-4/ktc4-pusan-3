@@ -109,3 +109,28 @@ async def test_profile_affinity_는_Memory_store_에_없어_빈_목록이다() -
 
     assert await StoreFoodMemory(store).affinities(child_id=CHILD) == []
     assert await StoreActivityMemory(store).affinities(child_id=CHILD) == []
+
+
+class _NoStatusStore:
+    """status 를 fields 에 싣지 않는 store. 어댑터가 빠뜨려도 근거로 새면 안 된다."""
+
+    async def query_observations(self, **_: Any) -> list[ObservationRow]:
+        return [
+            ObservationRow(
+                id="x-1",
+                domain="food",
+                raw_text="배 기록",
+                created_at=NOW,
+                observed_on=TODAY,
+                fields={"subject": "배"},
+            )
+        ]
+
+
+async def test_status_가_없는_관찰은_읽지_않는다() -> None:
+    # 모르는 상태를 active 로 보면 inactive("잘못된 기록") 가 근거로 돌아올 수 있다
+    rows = await StoreFoodMemory(_NoStatusStore()).observations(  # type: ignore[arg-type]
+        child_id=CHILD, date_from=TODAY, date_to=TODAY
+    )
+
+    assert rows == []

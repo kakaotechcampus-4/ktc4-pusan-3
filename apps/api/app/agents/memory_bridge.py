@@ -46,7 +46,8 @@ async def _rows(
     rows = await store.query_observations(
         domain=domain, child_id=child_id, date_from=date_from, date_to=date_to
     )
-    return [row for row in rows if row.fields.get("status", "active") in statuses]
+    # status가 없으면 읽지 않는다
+    return [row for row in rows if row.fields.get("status") in statuses]
 
 
 class StoreFoodMemory:
@@ -84,7 +85,6 @@ class StoreFoodMemory:
 
 
 class StoreActivityMemory:
-
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
