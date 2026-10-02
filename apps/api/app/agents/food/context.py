@@ -15,7 +15,7 @@ from uuid import UUID
 
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import DataReady, Gate, SafetyState
-from app.agents.food.store.ports import FoodPorts, SafetyLookupError
+from app.agents.food.store.ports import FoodPorts, SafetyEntry, SafetyLookupError
 from app.rules.age import life_stage
 
 
@@ -33,6 +33,9 @@ class FoodRunState:
     blocked_keys: set[str] = field(default_factory=set)
     basis_keys: set[str] = field(default_factory=set)  # compare_diet_balance가 돌려준 항목
     gate: Gate | None = None
+    # build_gate가 task 시작에 한 번 읽은 health_safety
+    # () = 동의가 없어 읽지 않음(거를 것 없음), None = 조회 실패("알레르기 확인 못 함")
+    safety: tuple[SafetyEntry, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,7 @@ async def build_gate(context: FoodContext) -> Gate:
     - 동의가 있는데 조회가 실패하면(`SafetyLookupError`) `safety_ok=False`가 되고 이 값만
       식단 추천을 닫는다. 실패를 빈 목록으로 숨기지 않는다.
     - `DataReady.daycare_meal`은 `has_rows()` 원본
+    - 읽은 안전 정보는 `context.state.safety`에 남긴다. 이 task의 필터는 전부 이 값을 쓴다.
     """
     ports = context.ports
     birth_date = await ports.profile.birth_date(child_id=context.child_id)
@@ -73,13 +77,16 @@ async def build_gate(context: FoodContext) -> Gate:
 
     safety_ok = True
     allergy_states: tuple[SafetyState, ...] = ()
+    safety: tuple[SafetyEntry, ...] | None = ()
     if consent:
         try:
-            entries = await ports.safety.food_safety(child_id=context.child_id)
+            safety = tuple(await ports.safety.food_safety(child_id=context.child_id))
         except SafetyLookupError:
             safety_ok = False
+            safety = None
         else:
-            allergy_states = tuple(entry.state for entry in entries if entry.kind == "allergy")
+            allergy_states = tuple(entry.state for entry in safety if entry.kind == "allergy")
+    context.state.safety = safety
 
     daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
 

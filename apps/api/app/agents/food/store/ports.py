@@ -25,8 +25,8 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 캐시·참고 문서·영양성분)라 둘 다 해당하지 않는다. `SafetyEntry`(`health_safety`)도
 `child_id` 가 없다 — Food 는 이 행을 쓰지 않고(①에 해당 안 함) `ChildRecordKind` 에도
 없어 근거 행이 되지 않는다(②에도 해당 안 함). 안전 게이팅 경로는
-`SafetyReader.food_safety(child_id=...)` 를 한 번 불러 그 결과만 판단에 쓰고 다른 곳으로
-전달하지 않으므로, 아이가 섞일 자리 자체가 없다.
+`build_gate`가 `SafetyReader.food_safety(child_id=...)` 를 한 번 불러 그 결과를 같은 task 의
+`FoodRunState.safety` 에만 두고 쓰므로, 아이가 섞일 자리 자체가 없다.
 
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
@@ -283,9 +283,8 @@ class FoodPorts:
     """Food Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음.
 
     포트는 DB 연결을 쥐고 있지 않다. 조회는 호출마다 짧은 세션으로 읽어서 한 task 안에서도
-    두 조회의 시점이 다를 수 있다. 그래서 안전 정보는 task 시작에 `build_gate`가 한 번 읽고,
-    게이트와 필터가 그 값을 같이 써야 한다. 필터가 다시 읽으면 게이트를 통과한 값과 다른
-    값으로 거를 수 있다.
+    두 조회의 시점이 다를 수 있다. 그래서 안전 정보는 task 시작에 `build_gate` 가 한 번 읽어
+    `FoodRunState.safety` 에 두고, 게이트와 필터가 그 값을 같이 쓴다.
     """
 
     profile: ChildProfileReader
