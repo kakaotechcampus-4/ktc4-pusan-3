@@ -100,7 +100,9 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 - 기록 단계 — Memory 의 쓰기와 되묻기 맥락을 트랜잭션 하나로 묶고, Memory 가 끝나면 pipeline 이 러너가
   넘긴 `commit` 을 부른다. 저장 안내는 그 뒤에 나간다.
 - 도메인 쓰기 — 테이블 주인이 쓴다. 쓰기 포트 호출 하나가 짧은 트랜잭션 하나로 바로 commit 되고, 같은
-  갱신을 두 번 적용해도 결과가 같아야 한다.
+  갱신을 두 번 적용해도 결과가 같아야 한다. INSERT(예: Health 복약 기록)는 도메인 값으로 만든 중복 방지키로
+  보장한다 — 다시 보내면 run 이 새로 생기므로 run 단위 값은 키가 될 수 없다. 어떤 값이 같으면 같은 기록인지는
+  포트 계약(docstring)에 Agent 팀이 적고, unique 제약 · `ON CONFLICT` 같은 DB 구현은 백엔드가 한다.
 - 추천(`suggestion`) — Agent 가 결과로 돌려주고 pipeline 이 저장한다. 되돌릴 수 없는 것은 승인 게이트
   뒤에서만 쓴다.
 - 순서 — 기록 단계 → 쓰는 도메인 task → 읽는 도메인 task. 조회는 앞 단계가 commit 된 뒤라 그대로 보인다.
@@ -236,7 +238,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
-| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 쓰는 task 는 시작만 해도 commit 이 있었던 것으로 본다 |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 쓰기 포트 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run 은 `failed` |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
