@@ -35,6 +35,7 @@ from app.agents.pipeline import (
     Unwritten,
 )
 from app.agents.pipeline import handle_input as _handle_input
+from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.supervisor.routing import Guidance
 
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
@@ -119,6 +120,9 @@ async def handle_input(
         profile=InMemoryProfile({child_id: resolved_birth_date}),
         memory=StoreFoodMemory(store),
     )
+    # 쓰기 포트는 호출마다 바로 commit
+    writes = RunWrites()
+    food_ports = record_food_writes(food_ports, writes)
 
     food_context = FoodContext(
         child_id=child_id,
@@ -136,4 +140,5 @@ async def handle_input(
         emit=emit,
         continuation=continuation,
         commit=commit,
+        writes=writes,
     )

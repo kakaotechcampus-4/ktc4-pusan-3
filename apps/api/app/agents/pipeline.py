@@ -28,6 +28,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
+from app.agents.run_writes import RunWrites
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.routing import Guidance, Routing, route
@@ -266,9 +267,6 @@ class _DomainRun:
 
     outcomes: tuple[DomainOutcome, ...]  # 결과를 낸 것만, task 순서
     partial: Partial | None
-    # 쓰는 task 중 본문이 시작된 것이 있었는가. 쓰기 포트가 호출마다 commit하므로
-    # 시작한 뒤에 죽었어도 commit이 있었을 수 있다
-    wrote: bool = False
 
 
 @dataclass(frozen=True)
@@ -303,6 +301,7 @@ async def handle_input(
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
     commit: Commit | None = None,
+    writes: RunWrites | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
@@ -312,6 +311,7 @@ async def handle_input(
     commit은 Memory가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
     TODO: 러너가 DB 세션을 붙이면 기본값 None을 없앤다. 지금은 run 마다 InMemoryStore라
       확정할 것이 없어 러너가 넘기지 않는다.
+    writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     """
     started = time.perf_counter()
     send = emit or _ignore
@@ -417,15 +417,13 @@ async def handle_input(
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
         ran = await _run_domain(routing.domain_tasks, contexts, timeout=remaining)
         partial = ran.partial
-        committed = committed or ran.wrote
+        # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다
+        committed = committed or (writes is not None and writes.wrote)
         for outcome in ran.outcomes:
             domain.append(outcome)
             model_calls += outcome.model_calls
             send(_routed(outcome))
 
-    # TODO_CHECK: commit 된 쓰기가 있으면 보여 줄 게 없어도 failed로 끝내지 않는다.
-    #   failed 는 "저장 없음" 이라 화면이 원문을 돌려주고, 다시 보내면 두 번 저장된다.
-    #   이때는 도메인 Agent가 실패한 것이라 partial이 함께 나간다
     if failed is None and not committed and not _did_anything(memory, domain, routing):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
         failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
@@ -564,10 +562,8 @@ async def _run_domain(
     deadline = None if timeout is None else time.perf_counter() + timeout
     writers = [index for index, task in enumerate(tasks) if _writes(task)]
     readers = [index for index, task in enumerate(tasks) if not _writes(task)]
-    began: set[int] = set()
 
     async def run_one(index: int) -> DomainOutcome:
-        began.add(index)  # wait_for(…, 0) 으로 끊긴 task 는 여기 오지 않는다
         task, runner, context = prepared[index]
         return await runner(task, context.for_task())
 
@@ -609,17 +605,14 @@ async def _run_domain(
             outcomes.append(item)
             succeeded.append(task.agent)
 
-    # TODO_CHECK: 쓰는 task는 시작했으면 commit이 있었던 것으로 본다. pipeline은 쓰기
-    #   포트가 실제로 commit 했는지 모른다. 시작도 못 하고 끊긴 것만 commit 없음이다
-    wrote = any(index in began for index in writers)
     if not failed:
-        return _DomainRun(tuple(outcomes), None, wrote)
+        return _DomainRun(tuple(outcomes), None)
     partial = Partial(
         reason="timeout_20s" if timed_out else "agent_error",
         succeeded=tuple(dict.fromkeys(succeeded)),
         failed=tuple(dict.fromkeys(failed)),
     )
-    return _DomainRun(tuple(outcomes), partial, wrote)
+    return _DomainRun(tuple(outcomes), partial)
 
 
 def _writes(task: DomainTask) -> bool:
@@ -643,12 +636,6 @@ async def _commit_record(memory: MemoryAgentResult, commit: Commit | None) -> bo
 
     commit 이 예외를 내면 잡지 않는다. 확정된 것이 없으니 러너가 failed 로 끝낸다.
     """
-    # CHECK(리뷰2) 멘토 제안(세션 하나로 run 전체를 묶고 실패하면 전부 rollback)과 달리
-    #   단계마다 commit 한다. 추천이 실패하거나 20초를 넘겨도 기록은 남아야 하고
-    #   (#196 리뷰 5번), 모델 호출이 도는 동안 연결과 행 잠금을 쥐지 않기 위해서다.
-    # CHECK(리뷰3) 기록 단계 전체를 트랜잭션 하나로 묶는다. Memory 가 tool 을 7번 다 쓰면
-    #   25초 안팎 연결을 쥔다. 쓰기마다 commit 하면 짧아지지만 Memory 가 중간에 죽을 때
-    #   일부만 남아 중복 가드(RC08)에 기대야 한다. 실측 전이라 묶는 쪽으로 시작한다.
     if commit is not None:
         await commit()
     return _memory_wrote(memory)

@@ -225,3 +225,23 @@ async def test_commit_을_pipeline_에_그대로_넘긴다(monkeypatch: pytest.M
     )
 
     assert seen["commit"] is commit
+
+
+async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """급식 갱신이 성공하면 같은 run의 표시가 남아야 pipeline이 failed로 끝내지 않는다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(food=contexts["food"], **kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="두유", run_id="r")
+
+    writes = seen["writes"]
+    assert writes.wrote is False
+    await seen["food"].ports.bands.save(child_id=CHILD, bands={"iron": "low"})
+    assert writes.wrote is True
