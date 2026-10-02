@@ -266,6 +266,9 @@ class _DomainRun:
 
     outcomes: tuple[DomainOutcome, ...]  # 결과를 낸 것만, task 순서
     partial: Partial | None
+    # 쓰는 task 중 본문이 시작된 것이 있었는가. 쓰기 포트가 호출마다 commit하므로
+    # 시작한 뒤에 죽었어도 commit이 있었을 수 있다
+    wrote: bool = False
 
 
 @dataclass(frozen=True)
@@ -414,12 +417,16 @@ async def handle_input(
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
         ran = await _run_domain(routing.domain_tasks, contexts, timeout=remaining)
         partial = ran.partial
+        committed = committed or ran.wrote
         for outcome in ran.outcomes:
             domain.append(outcome)
             model_calls += outcome.model_calls
             send(_routed(outcome))
 
-    if failed is None and not _did_anything(memory, domain, routing):
+    # TODO_CHECK: commit 된 쓰기가 있으면 보여 줄 게 없어도 failed로 끝내지 않는다.
+    #   failed 는 "저장 없음" 이라 화면이 원문을 돌려주고, 다시 보내면 두 번 저장된다.
+    #   이때는 도메인 Agent가 실패한 것이라 partial이 함께 나간다
+    if failed is None and not committed and not _did_anything(memory, domain, routing):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
         failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
     if failed is not None:
@@ -557,8 +564,10 @@ async def _run_domain(
     deadline = None if timeout is None else time.perf_counter() + timeout
     writers = [index for index, task in enumerate(tasks) if _writes(task)]
     readers = [index for index, task in enumerate(tasks) if not _writes(task)]
+    began: set[int] = set()
 
     async def run_one(index: int) -> DomainOutcome:
+        began.add(index)  # wait_for(…, 0) 으로 끊긴 task 는 여기 오지 않는다
         task, runner, context = prepared[index]
         return await runner(task, context.for_task())
 
@@ -600,14 +609,17 @@ async def _run_domain(
             outcomes.append(item)
             succeeded.append(task.agent)
 
+    # TODO_CHECK: 쓰는 task는 시작했으면 commit이 있었던 것으로 본다. pipeline은 쓰기
+    #   포트가 실제로 commit 했는지 모른다. 시작도 못 하고 끊긴 것만 commit 없음이다
+    wrote = any(index in began for index in writers)
     if not failed:
-        return _DomainRun(tuple(outcomes), None)
+        return _DomainRun(tuple(outcomes), None, wrote)
     partial = Partial(
         reason="timeout_20s" if timed_out else "agent_error",
         succeeded=tuple(dict.fromkeys(succeeded)),
         failed=tuple(dict.fromkeys(failed)),
     )
-    return _DomainRun(tuple(outcomes), partial)
+    return _DomainRun(tuple(outcomes), partial, wrote)
 
 
 def _writes(task: DomainTask) -> bool:

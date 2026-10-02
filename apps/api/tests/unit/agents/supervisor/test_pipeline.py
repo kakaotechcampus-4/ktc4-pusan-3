@@ -1241,6 +1241,70 @@ async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는�
     assert result.partial is None
 
 
+async def test_쓰는_task_를_시작했는지를_돌려준다(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(daycare_meal=_runner("food"), meal_recommendation=_runner("food")),
+    )
+
+    only_read = await pipeline._run_domain((_DINNER,), {"food": _FakeContext()}, timeout=1.0)
+    with_write = await pipeline._run_domain((_DINNER, _MEAL), {"food": _FakeContext()}, timeout=1.0)
+
+    assert only_read.wrote is False
+    assert with_write.wrote is True
+
+
+async def test_쓰는_task_가_시작한_뒤_죽으면_failed_가_아니라_partial_로_끝난다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 급식을 고친 뒤에 죽었을 수 있다. failed 로 끝내면 화면이 원문을 돌려주고 다시 보내게 한다
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _failing(RuntimeError("부서졌다")))
+
+    result = await handle_input(
+        "급식 대신 두유 받았대",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests(("급식 대신 두유 받았대", "daycare_meal")),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+    )
+
+    assert result.failed is None
+    assert result.committed is True
+    assert result.partial == Partial("agent_error", succeeded=(), failed=("food",))
+    assert _order(events)[-2:] == ["Partial", "Done"]
+
+
+async def test_쓰는_task_가_시작도_못_하고_끊기면_commit_이_없어_failed_다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 앞 단계가 제한을 다 썼다. 아무것도 안 썼으니 failed 로 끝내 원문을 돌려줘야 한다
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.0)
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=1))
+
+    result = await handle_input(
+        "급식 대신 두유 받았대",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests(("급식 대신 두유 받았대", "daycare_meal")),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+    )
+
+    assert result.committed is False
+    assert result.failed == Failed("llm_unavailable", "급식 대신 두유 받았대")
+    assert _order(events)[-2:] == ["Failed", "Done"]
+
+
 # ── 되묻기 · pending ────────────────────────────────────────────
 # RC04 = "오늘 2시에 모래놀이하고 떡볶이 먹었어." — OBSERVE 두 조각. 하나는 저장하고 하나는 되묻는다
 # raw_text 가 조각 문장을 담아야 _bounced_hints 가 "적은 조각" 으로 본다
