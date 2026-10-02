@@ -53,7 +53,7 @@ async def test_급식_삭제도_표시가_남는다() -> None:
     assert writes.wrote is True
 
 
-async def test_영양_구간_메뉴_캐시_저장은_표시를_남기지_않는다() -> None:
+async def test_영양_구간_메뉴_카탈로그_저장은_표시를_남기지_않는다() -> None:
     # 보호자 말을 반영한 쓰기가 아니라 추천 직전 계산이 남기는 내부 값이다. 덮어쓰기라
     # 다시 보내도 같은 값이 된다. 표시를 세우면 질문만 한 run이 모델 실패에도 done이 된다
     writes, ports = _recorded()
