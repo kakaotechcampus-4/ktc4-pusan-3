@@ -63,6 +63,16 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 ```
 
 - Agent는 **DB를 모른다.** 읽기 포트(Protocol)와 writer를 주입받는다. 구현체는 `app/api`가 붙인다.
+- Agent가 받는 것은 DTO(frozen dataclass)뿐이다. 세션 · 트랜잭션 · ORM 객체는 백엔드에 남는다 — 포트도
+  `FoodObservation` · `EventRow` 같은 DTO 를 돌려준다. pipeline 이 기록 단계에서 부르는 `commit` 도 러너가 만든
+  함수이고, pipeline 은 부르는 시점만 정한다.
+- 데이터는 성격에 따라 두 길로 받는다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다. 발화에 따라
+  무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를 미리 넘기려면
+  범위를 넉넉히 잡아 읽어야 해서다. 어느 값을 값으로 옮길지는 생일 · 동의 포트를 `common/ports.py` 로 옮기는
+  작업에서 정한다.
+- Agent는 run 내내 DB 연결을 쥐지 않는다. 조회 포트는 호출마다 짧은 세션으로 읽고, 쓰기 포트는 호출 하나가
+  짧은 트랜잭션 하나로 바로 commit 된다. 그래서 한 task 안에서도 두 조회의 시점이 다를 수 있다 — 안전 정보는
+  task 시작(`build_gate`)에 한 번 읽고 게이트와 필터가 그 값을 같이 쓴다.
 - Agent는 다른 Agent 패키지를 **import하지 않는다.** 남의 테이블이 필요하면 포트 주입이다.
 - 의존 방향: `supervisor → 어휘만` · `<domain> → common만` · `pipeline → 전부`.
 - 밖으로 열린 함수는 `run` 하나.
@@ -76,6 +86,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `observation_*` · `profile_affinity` · `event` | **Memory** (공유 테이블 단일 writer). OCR이 일정성 공지로 분류한 것도 추출 원문을 Memory가 받아 초안 payload로 만든다 — `event` 행은 보호자가 제출할 때 생긴다 | 읽기만 |
 | `notice` (일반 기관 공지) | **OCR 파이프라인**. 텍스트로 붙여넣은 일반 공지의 저장 경로는 미정 | Growth만 읽음 (보조) |
 | `daycare_meal` | **OCR 파이프라인·급식 배치**가 INSERT · **Food**가 UPDATE/DELETE (도메인 전용 — 아무도 안 읽는다). Food에 INSERT를 주지 않아 없는 급식을 지어낼 수 없다. 승인 게이트 없음 | Memory·Activity·Growth·Health는 읽지 않는다 |
+| 영양소 구간 · 메뉴 캐시 | **Food** (도메인 전용). 메뉴 캐시는 아이와 무관한 공용 데이터다 | 읽지 않는다 |
 | `prescription_draft` | **OCR 파이프라인**(처방전·약봉투) | Health만 읽음 |
 | `medication_schedule` · `medication_dose` · `medication_dose_log` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 복용 기록과 중단(`status='stopped'`) | Food·Activity·Growth는 읽지 않는다 |
 | `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
@@ -83,6 +94,16 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `*_doc` · 기준 상수(`reference/*.yaml` — `hazard_terms.yaml` 포함) | 배치·마이그레이션 · 상수 파일은 저장소 PR | 읽기만 |
 
 기준은 **누가 쓰느냐가 아니라 누가 읽느냐**다. 여러 Agent가 읽는 테이블은 통로가 하나여야 한다.
+
+**쓰는 시점** (#201)
+
+- 기록 단계 — Memory 의 쓰기와 되묻기 맥락을 트랜잭션 하나로 묶고, Memory 가 끝나면 pipeline 이 러너가
+  넘긴 `commit` 을 부른다. 저장 안내는 그 뒤에 나간다.
+- 도메인 쓰기 — 테이블 주인이 쓴다. 쓰기 포트 호출 하나가 짧은 트랜잭션 하나로 바로 commit 되고, 같은
+  갱신을 두 번 적용해도 결과가 같아야 한다.
+- 추천(`suggestion`) — Agent 가 결과로 돌려주고 pipeline 이 저장한다. 되돌릴 수 없는 것은 승인 게이트
+  뒤에서만 쓴다.
+- 순서 — 기록 단계 → 쓰는 도메인 task → 읽는 도메인 task. 조회는 앞 단계가 commit 된 뒤라 그대로 보인다.
 
 ---
 
@@ -211,9 +232,11 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 0회 경로 | 게이트 닫힘 · Growth 성장 추이 · Health 검진/병원/전달 서류 · 안전 조회 실패 |
 | **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 (잠정 — C-8 미결) |
 | 그 외 출력 tool 거절 | 재호출하지 않는다 (2026-09-22 — 이전의 "거절 시 run당 1회 재시도"는 위 규칙으로 대체) |
-| 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
+| 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음 · 쓰는 task 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
+| 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 쓰는 task 는 시작만 해도 commit 이 있었던 것으로 본다 |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
