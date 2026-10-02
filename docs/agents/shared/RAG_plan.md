@@ -1,7 +1,7 @@
 # RAG_plan — 도메인별 근거 문서 테이블 전처리 계획
 
 > 대상: Food · Growth · Health (Activity는 `activity_doc` 선례로 함께 정렬)
-> 관련: `activity/`(Activity 담당자 몫 — 아직 없음) D6·D10 · [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) · [`Growth_Tool_명세.md`](../growth/Growth_Tool_명세.md) · [`Health_Tool_명세.md`](../health/Health_Tool_명세.md)
+> 관련: [activity-agent-v1.md](../activity/activity-agent-v1.md) D9·D10 · [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) · [`Growth_Tool_명세.md`](../growth/Growth_Tool_명세.md) · [`Health_Tool_명세.md`](../health/Health_Tool_명세.md)
 
 ---
 
@@ -311,7 +311,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 3 | `meal_pattern` · `nutrient_note` | `learning_activity` 60행 | 검진·접종 문구 |
 | 4 | lint · 검수 · 적재 · recall 평가 | 동일 | 의료 검수 · 규칙 1:1 테스트 |
 
-공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference_refs` 컬럼 · `hazard_term` 적재 (Growth lint가 사용).
+공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference_refs` 컬럼 · `reference/hazard_terms.yaml` (Growth lint가 사용).
 
 ---
 
