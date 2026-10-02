@@ -2,8 +2,10 @@
 
   1. 안전 필터       위험 용어 사전 PR 에서 여기 붙는다. 걸린 후보는 거절이 아니라 풀에서 뺀다
   2. 평가 표현       content · why_this · why_now · note
-  3. Activity 검증   근거 id · 기피 대상 · note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
-  4. build()         아이 기록 근거 행 수로 kind 를 정한다. 모델이 고르지 않는다
+  3. Activity 검증   근거 id · 장소 이름 · 기피 대상 · note 반복 표현 · 최근 중복 ·
+                     0–17개월 보호자 동반
+  4. build()         아이 기록 근거 행 수로 kind 를 정한다. 모델이 고르지 않는다.
+                     장소 이름은 코드가 content 앞에 붙인다
   5. check_count()   정확히 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
@@ -46,6 +48,7 @@ class RejectReason(StrEnum):
     OVERSTATED_NOTE = "overstated_note"
     RECENT_DUPLICATE = "recent_duplicate"
     CAREGIVER_ROLE = "caregiver_role"
+    UNKNOWN_PLACE = "unknown_place"
     BUILD = "build_rejected"
 
 
@@ -59,6 +62,9 @@ GUIDANCE: dict[RejectReason, str] = {
     ),
     RejectReason.RECENT_DUPLICATE: "최근에 한 활동이다. 다른 활동으로 바꾼다.",
     RejectReason.CAREGIVER_ROLE: "이 월령은 보호자가 같이 하는 활동(together)만 낸다.",
+    RejectReason.UNKNOWN_PLACE: (
+        "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
+    ),
     RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 why_this 에 쓴다.",
 }
 
@@ -81,11 +87,13 @@ def review_candidates(
     months: int,
     seen: Seen,
     recent_activities: Collection[str],
+    places: Collection[str] = (),
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
+    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소 이름이다.
     """
     avoided = tuple(
         label
@@ -93,15 +101,22 @@ def review_candidates(
         if ranked.is_avoidance
         and len(label := normalize_activity(ranked.label)) >= MIN_AVOIDED_LABEL
     )
+    # 띄어쓰기만 다르게 써도 같은 곳으로 본다. 붙일 때는 조회 결과의 이름을 그대로 쓴다
+    known_places = {key: name for name in places if (key := normalize_activity(name))}
     drafts: list[SuggestionDraft] = []
     rejections: list[Rejection] = []
     for index, candidate in enumerate(candidates):
-        reason, citations = _check(
-            candidate, months=months, seen=seen, avoided=avoided, recent=recent_activities
+        reason, citations, place = _check(
+            candidate,
+            months=months,
+            seen=seen,
+            places=known_places,
+            avoided=avoided,
+            recent=recent_activities,
         )
         if reason is None:
             try:
-                drafts.append(_build(candidate, citations))
+                drafts.append(_build(candidate, citations, place))
             except SuggestionRejected:
                 reason = RejectReason.BUILD
         if reason is not None:
@@ -119,50 +134,64 @@ def _check(
     *,
     months: int,
     seen: Seen,
+    places: Mapping[str, str],
     avoided: tuple[str, ...],
     recent: Collection[str],
-) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...]]:
+) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], str | None]:
     # 1. 안전 필터 — 위험 용어 사전 PR 에서 여기에 붙는다
 
     # 2. 평가 표현
     texts = (candidate.content, candidate.why_this, candidate.why_now)
     notes = tuple(pick.note for pick in candidate.evidence)
     if any(find_evaluative(text) for text in (*texts, *notes)):
-        return RejectReason.EVALUATIVE, ()
+        return RejectReason.EVALUATIVE, (), None
 
     # 3. Activity 검증
     resolved: list[tuple[EvidencePick, RankedEvidence]] = []
     for pick in candidate.evidence:
         ranked = _lookup(seen, pick.id)
         if ranked is None:
-            return RejectReason.UNKNOWN_EVIDENCE, ()
+            return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, ranked))
+
+    place: str | None = None
+    if candidate.place_name and candidate.place_name.strip():
+        place = places.get(normalize_activity(candidate.place_name))
+        if place is None:
+            return RejectReason.UNKNOWN_PLACE, (), None
 
     content_key = normalize_activity(candidate.content)
     if any(label in content_key for label in avoided):
-        return RejectReason.AVOIDED, ()
+        return RejectReason.AVOIDED, (), None
     if any(overstates(pick.note) and ranked.tier != 1 for pick, ranked in resolved):
-        return RejectReason.OVERSTATED_NOTE, ()
+        return RejectReason.OVERSTATED_NOTE, (), None
     if is_recent_duplicate(candidate.content, recent):
-        return RejectReason.RECENT_DUPLICATE, ()
+        return RejectReason.RECENT_DUPLICATE, (), None
     if months < TOGETHER_ONLY_BELOW_MONTH and candidate.caregiver_role != CaregiverRole.TOGETHER:
-        return RejectReason.CAREGIVER_ROLE, ()
+        return RejectReason.CAREGIVER_ROLE, (), None
 
     citations = tuple(cite(ranked, note=pick.note) for pick, ranked in resolved)
-    return None, citations
+    return None, citations, place
 
 
 def _build(
-    candidate: ActivityCandidate, citations: tuple[EvidenceCitation, ...]
+    candidate: ActivityCandidate, citations: tuple[EvidenceCitation, ...], place: str | None
 ) -> SuggestionDraft:
     reason = f"{candidate.why_this} {candidate.why_now}".strip()
     return build(
         agent="activity",
-        content=candidate.content,
+        content=_with_place(candidate.content, place),
         reason=reason,
         citations=citations,
         general_reason=GENERAL_REASON,
     )
+
+
+def _with_place(content: str, place: str | None) -> str:
+    """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다."""
+    if place is None or normalize_activity(place) in normalize_activity(content):
+        return content
+    return f"{place}에서 {content}"
 
 
 def _lookup(seen: Seen, raw_id: str) -> RankedEvidence | None:

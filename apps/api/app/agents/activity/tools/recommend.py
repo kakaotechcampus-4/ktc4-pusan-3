@@ -40,6 +40,7 @@ async def propose_activity_candidates(
         args.candidates,
         months=gate.stage.months,
         seen=context.state.seen_evidence,
+        places=context.state.seen_places,
         recent_activities=[row.activity for row in observations],
     )
     if review.rejections:

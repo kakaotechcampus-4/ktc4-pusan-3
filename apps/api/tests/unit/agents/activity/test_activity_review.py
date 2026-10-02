@@ -3,6 +3,7 @@
 - 검사마다 거절 · 통과 양쪽을 본다.
 - 지어낸 근거 id 는 거절된다. 통과한 근거는 공통 EvidenceCitation 으로 바뀐다.
 - 거절 사유를 모델에게 돌려줄 때 활동명 · 근거 문장을 싣지 않는다.
+- 장소 이름은 이번 run 장소 조회 결과에 있어야 하고, 통과하면 코드가 문장 앞에 붙인다.
 """
 
 from datetime import UTC, date, datetime, timedelta
@@ -20,9 +21,10 @@ from app.agents.activity.review import (
     review_candidates,
 )
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
+from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.store.inmemory import InMemoryActivityMemory, in_memory_ports
-from app.agents.activity.store.ports import ActivityObservation
+from app.agents.activity.store.ports import ActivityObservation, PlaceRow
 from app.agents.activity.tools.recommend import propose_activity_candidates
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.refs import Ref
@@ -67,8 +69,13 @@ def candidate(**kwargs) -> ActivityCandidate:
     return ActivityCandidate.model_validate({**base, **kwargs})
 
 
-def review(*candidates, months=40, seen=SEEN, recent=()):
-    return review_candidates(candidates, months=months, seen=seen, recent_activities=recent)
+PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
+
+
+def review(*candidates, months=40, seen=SEEN, recent=(), places=(PARK,)):
+    return review_candidates(
+        candidates, months=months, seen=seen, recent_activities=recent, places=places
+    )
 
 
 def reason_of(result) -> RejectReason | None:
@@ -210,6 +217,33 @@ class TestExplain:
         assert "지어낸 근거" not in text
 
 
+class TestPlace:
+    def test_조회한_장소는_코드가_문장_앞에_붙인다(self):
+        (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+
+    @pytest.mark.parametrize("places", [(PARK,), ()])
+    def test_조회_결과에_없는_장소는_거절(self, places):
+        """장소를 조회하지 않았거나 결과에 없는 이름이면 지어낸 것으로 본다."""
+        result = review(candidate(place_name="해운대 키즈파크"), places=places)
+        assert reason_of(result) is RejectReason.UNKNOWN_PLACE
+        assert "해운대" not in explain(result.rejections)  # 장소 이름은 로그로 흘러가지 않는다
+
+    def test_띄어쓰기만_다르면_같은_곳이고_조회_결과의_이름을_붙인다(self):
+        (draft,) = review(candidate(content="모래성 쌓기", place_name="사직 어린이공원")).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+
+    def test_문장에_이미_있으면_다시_붙이지_않는다(self):
+        content = "사직어린이공원 모래놀이터에서 모래성 쌓기"
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == content
+
+    @pytest.mark.parametrize("place_name", [None, "", "  "])
+    def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
+        (draft,) = review(candidate(place_name=place_name)).drafts
+        assert draft.content == "큰 블록으로 탑 쌓기"
+
+
 class TestOutputTool:
     async def context(self, *, recent=()):
         memory = InMemoryActivityMemory(
@@ -254,6 +288,21 @@ class TestOutputTool:
         assert result.success is True
         assert result.data["kinds"] == ["personalized", "general", "general"]
         assert len(ctx.state.suggestions) == 3
+
+    async def test_장소_조회가_돌려준_곳을_붙여서_담는다(self):
+        ctx = await self.context()
+        ctx.state.seen_places[PARK] = PlaceRow(
+            name=PARK, category=PlaceCategory.PARK, distance_m=800, source="city_park"
+        )
+        await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래성 쌓기", evidence=[], place_name=PARK),
+                candidate(content="종이컵 탑 쌓기", evidence=[]),
+            ),
+        )
+        assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
 
     async def test_하나라도_걸리면_사유를_돌려주고_아무것도_담지_않는다(self):
         ctx = await self.context()

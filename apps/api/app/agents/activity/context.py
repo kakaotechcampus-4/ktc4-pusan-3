@@ -11,7 +11,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
-from app.agents.activity.store.ports import ActivityPorts, SafetyLookupError, WeatherGrid
+from app.agents.activity.store.ports import (
+    ActivityPorts,
+    PlaceRow,
+    SafetyLookupError,
+    WeatherGrid,
+)
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import Gate, SafetyState
@@ -25,9 +30,11 @@ class ActivityRunState:
 
     출력 tool 이 `EvidencePick.id`를 공통 `EvidenceCitation`으로 바꿀 때 이 표를 본다 —
     이번 run 에서 실제로 조회한 것만 인용할 수 있다. 없는 id 는 후보를 거절한다 (D6).
+    `place_name` 도 같다 — `search_nearby_places` 가 돌려준 이름만 쓸 수 있다.
     """
 
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
+    seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
     gate: Gate | None = None
     # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
     suggestions: tuple[SuggestionDraft, ...] = ()
