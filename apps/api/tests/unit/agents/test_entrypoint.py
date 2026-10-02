@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from app.agents import entrypoint, pipeline
+from app.agents.common.datetime_rules import build_observed_range
 from app.agents.food.store import FoodPorts
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
@@ -172,3 +173,34 @@ async def test_이어받기가_없으면_none_을_넘긴다(monkeypatch: pytest.
     await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
 
     assert seen["continuation"] is None
+
+
+async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """방금 저장한 관찰이 같은 run 의 Food 근거로 잡혀야 한다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(memory=memory_context, food=contexts["food"])
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기 잘 먹었어", run_id="run-1"
+    )
+
+    memory, food = seen["memory"], seen["food"]
+    today = food.today
+    await memory.store.create_observation(
+        domain="food",
+        child_id=CHILD,
+        source_writer=PARENT,
+        raw_text="딸기 잘 먹었어",
+        observed_on=today,
+        observed_range=build_observed_range(today),
+        fields={"subject": "딸기"},
+    )
+    rows = await food.ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
+    assert [row.subject for row in rows] == ["딸기"]

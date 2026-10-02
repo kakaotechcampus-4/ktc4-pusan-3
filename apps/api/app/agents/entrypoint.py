@@ -14,6 +14,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
+from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
     DomainRouted,
     Done,
@@ -104,10 +105,15 @@ async def handle_input(
     )
 
     # Food 포트는 아직 DB 에 연결되지 않았다. birth_date 를 InMemoryProfile 에 심어
-    # build_gate 가 LifeStage 를 계산할 수 있게만 해 둔다 — 나머지 포트는 빈 기본값이다.
+    # build_gate 가 LifeStage 를 계산하게 하고, 기억 포트는 같은 run 의 store 를 읽게 한다.
+    # 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
+    # 나머지 포트는 빈 기본값이다.
     # TODO: 실제 DB 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다.
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
-    food_ports = in_memory_ports(profile=InMemoryProfile({child_id: resolved_birth_date}))
+    food_ports = in_memory_ports(
+        profile=InMemoryProfile({child_id: resolved_birth_date}),
+        memory=StoreFoodMemory(store),
+    )
 
     food_context = FoodContext(
         child_id=child_id,

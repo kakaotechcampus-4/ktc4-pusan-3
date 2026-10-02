@@ -37,6 +37,7 @@ from app.agents.food.store import (
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
+from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
     DomainRouted,
     Done,
@@ -119,8 +120,13 @@ def _birth_date_for(stage: Stage) -> date:
     return date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
 
 
-def _food_context(stage: Stage = "toddler", *, daycare: bool = True) -> FoodContext:
-    """급식 행은 기본으로 하나 심어 둔다 — 기존 테스트의 tool 개수(5·7개)를 그대로 유지한다."""
+def _food_context(
+    stage: Stage = "toddler", *, daycare: bool = True, store: InMemoryStore | None = None
+) -> FoodContext:
+    """급식 행은 기본으로 하나 심어 둔다 — 기존 테스트의 tool 개수(5·7개)를 그대로 유지한다.
+
+    store 를 주면 기억 포트가 그 store 를 읽는다 (entrypoint 와 같은 연결).
+    """
     rows = (
         [
             DaycareMealRow(
@@ -134,9 +140,11 @@ def _food_context(stage: Stage = "toddler", *, daycare: bool = True) -> FoodCont
         if daycare
         else []
     )
+    memory: dict[str, Any] = {} if store is None else {"memory": StoreFoodMemory(store)}
     ports = in_memory_ports(
         profile=InMemoryProfile({CHILD: _birth_date_for(stage)}),
         daycare=InMemoryDaycareMeals(rows),
+        **memory,
     )
     return FoodContext(child_id=CHILD, run_id=RUN_ID, now=NOW, timezone=KST, ports=ports)
 
@@ -299,6 +307,37 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
     assert (food.stage, food.status) == ("toddler", "mock")
     assert len(food.tools) == 5  # 식단 추천 × 유아기
     assert food.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
+
+
+async def test_T07_Memory_가_저장한_관찰을_같은_run_의_Food_가_기억_포트로_읽는다(
+    monkeypatch: pytest.MonkeyPatch, memory_context: AgentContext, events: list[Any]
+) -> None:
+    # Food 는 Memory store 를 직접 보지 않는다. 자기 기억 포트로 읽어도 방금 저장한 것이 보여야 한다
+    seen: list[list[str]] = []
+    real = pipeline._RUNNERS["food"]
+
+    async def reading(task: Any, context: Any, **kwargs: Any) -> Any:
+        rows = await context.ports.memory.observations(
+            child_id=CHILD, date_from=NOW.date(), date_to=NOW.date()
+        )
+        seen.append([row.subject for row in rows])
+        return await real(task, context, **kwargs)
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", reading)
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=_food_context(store=memory_context.store),
+        events=events,
+    )
+
+    assert seen == [["딸기"]]
 
 
 async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르다(

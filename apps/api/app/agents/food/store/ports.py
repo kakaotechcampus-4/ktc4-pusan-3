@@ -4,9 +4,13 @@
 DB·외부 API가 연결된 뒤에 붙인다 — 이번 커밋은 포트와 테스트·eval 용 InMemory
 구현까지만 다룬다.
 
-Food는 쓰기 포트를 `daycare_meal` 하나만 갖고, 그마저도 수정·삭제뿐이다. 없는
-급식을 새로 만드는 INSERT 는 Food 의 권한 밖이다 — 기록은 Memory 가, 급식 원본은
-기관 공지·NEIS 동기화가 채운다.
+Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제, 영양소 구간
+(`NutrientBandStore.save`), 메뉴 캐시(`MenuCatalogStore.put`). 없는 급식을 새로 만드는
+INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OCR 분석이 채운다.
+
+쓰기 포트는 호출 하나가 짧은 트랜잭션 하나로 바로 commit된다. 같은 run의 뒤에 오는
+조회(다른 task 포함)가 그 결과를 읽어야 해서다. 조회 포트도 호출마다 짧은
+세션으로 읽는다. Food는 run 내내 DB 연결을 쥐지 않는다.
 
 `child_id` 를 갖는 기준은 둘 중 하나다 — ① Food 가 그 행을 쓰기(update·delete)까지 하는가,
 ② `suggestion_evidence` 의 근거 행이 될 수 있는가(`app/agents/common/refs.py` 의
@@ -213,7 +217,10 @@ class FoodMemoryReader(Protocol):
 
 class MenuCatalogStore(Protocol):
     async def get(self, menu_key: str) -> MenuCatalogRow | None: ...
-    async def put(self, row: MenuCatalogRow) -> None: ...
+    async def put(self, row: MenuCatalogRow) -> None:
+        """menu_key 로 덮어쓴다. 호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다."""
+        ...
+
     async def all_resolved(self) -> list[MenuCatalogRow]:
         """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다."""
         ...
@@ -239,12 +246,18 @@ class DaycareMealStore(Protocol):
 
         `row.child_id` 가 이미 아이 축을 들고 있다 — 어댑터는 `WHERE id = ? AND child_id = ?`
         로 갈 수 있다. 그래서 이 메서드는 `child_id` 를 따로 받지 않는다.
+
+        호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다. 같은 run의 읽는 task가 갱신된
+        행을 본다. 행을 통째로 바꾸므로 같은 갱신을 두 번 적용해도 결과가 같다.
         """
         ...
 
     async def delete(self, *, child_id: UUID, row_ids: tuple[UUID, ...]) -> None:
         """`child_id` 가 다른 행은 지우지 않는다 — `row_ids` 만으로 지우면 다른 아이의
-        급식 id 가 섞여 들어와도 그대로 지워진다."""
+        급식 id 가 섞여 들어와도 그대로 지워진다.
+
+        호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다.
+        """
         ...
 
 
@@ -260,12 +273,20 @@ class SuggestionHistoryReader(Protocol):
 
 class NutrientBandStore(Protocol):
     async def last(self, *, child_id: UUID) -> dict[str, NutrientBand]: ...
-    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None: ...
+    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None:
+        """아이의 구간 묶음을 통째로 바꾼다. 호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다."""
+        ...
 
 
 @dataclass(frozen=True)
 class FoodPorts:
-    """Food Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음."""
+    """Food Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음.
+
+    포트는 DB 연결을 쥐고 있지 않다. 조회는 호출마다 짧은 세션으로 읽어서 한 task 안에서도
+    두 조회의 시점이 다를 수 있다. 그래서 안전 정보는 task 시작에 `build_gate`가 한 번 읽고,
+    게이트와 필터가 그 값을 같이 써야 한다. 필터가 다시 읽으면 게이트를 통과한 값과 다른
+    값으로 거를 수 있다.
+    """
 
     profile: ChildProfileReader
     consent: ConsentReader
