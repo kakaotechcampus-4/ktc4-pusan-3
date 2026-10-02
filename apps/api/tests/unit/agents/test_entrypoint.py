@@ -173,6 +173,7 @@ async def test_이어받기가_없으면_none_을_넘긴다(monkeypatch: pytest.
     await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
 
     assert seen["continuation"] is None
+    assert seen["commit"] is None
 
 
 async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
@@ -204,3 +205,23 @@ async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
     )
     rows = await food.ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
     assert [row.subject for row in rows] == ["딸기"]
+
+
+async def test_commit_을_pipeline_에_그대로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """기록 단계를 확정하는 함수는 러너가 만든다. agents 는 받아서 부르기만 한다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    async def commit() -> None:
+        return None
+
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=commit
+    )
+
+    assert seen["commit"] is commit

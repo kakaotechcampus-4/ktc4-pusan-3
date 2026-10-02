@@ -16,6 +16,7 @@ from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
+    Commit,
     DomainRouted,
     Done,
     Emit,
@@ -39,6 +40,7 @@ from app.agents.supervisor.routing import Guidance
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "Commit",
     "DomainRouted",
     "Done",
     "Emit",
@@ -81,6 +83,7 @@ async def handle_input(
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
+    commit: Commit | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -89,6 +92,8 @@ async def handle_input(
     - agents는 infra에 직접 닿지 않으므로 DB 어댑터는 api가 만들어 넘긴다.
     - continuation을 넘기면 raw_text는 이전 질문에 대한 보호자의 답이다. api는 reply_to를
       검증·복원한 뒤 이 값만 넘긴다.
+    - commit을 넘기면 Memory가 끝난 직후 한 번 부른다. 기록 단계(Memory 의 쓰기 + 되묻기
+      맥락)를 확정하는 함수이고, 러너가 run 마다 만든다. 저장 안내는 그 뒤에 나간다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -130,4 +135,5 @@ async def handle_input(
         run_id=run_id,
         emit=emit,
         continuation=continuation,
+        commit=commit,
     )

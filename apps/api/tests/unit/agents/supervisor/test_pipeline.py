@@ -226,6 +226,7 @@ async def _handle(
     events: list[Any],
     supervisor_llm: FakeLLM | None = None,
     contexts: dict[str, Any] | None = None,
+    commit: Any = None,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         CASES_BY_ID[case_id].text,
@@ -235,6 +236,7 @@ async def _handle(
         supervisor_client=supervisor_llm or _supervisor_llm(case_id),
         memory_client=memory_llm,
         emit=events.append,
+        commit=commit,
     )
 
 
@@ -1620,3 +1622,140 @@ async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
 
     assert result.failed is not None and result.failed.reason == "unparsable"
     assert any(isinstance(event, Failed) for event in events)
+
+
+@dataclass(frozen=True)
+class _Committed:
+    """가짜 commit 이 events 에 남기는 표시. 이벤트 사이에서 commit 시점을 본다."""
+
+
+def _commit_into(events: list[Any]) -> Any:
+    async def commit() -> None:
+        events.append(_Committed())
+
+    return commit
+
+
+async def test_Memory_다음에_commit_하고_Saved_는_그_뒤에_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    names = _order(events)
+    assert names.count("_Committed") == 1
+    assert (
+        names.index("_Committed")
+        < names.index("Saved")
+        < names.index("MemoryNote")
+        < names.index("DomainRouted")
+    )
+    assert result.committed is True
+
+
+async def test_Memory_가_쓰다가_죽으면_commit_하지_않고_failed_로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 한 건을 쓴 뒤 다음 호출에서 죽는다. 확정 전이라 러너가 되돌린다
+    # (InMemory 는 되돌리지 못하므로 store 는 보지 않는다)
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        LLMUnavailableError("망"),
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    assert not _of(events, _Committed)
+    assert not _of(events, Saved)
+    assert result.failed == Failed("llm_unavailable", CASES_BY_ID["RC01"].text)
+    assert result.committed is False
+
+
+async def test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나가지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    async def broken() -> None:
+        raise RuntimeError("연결 끊김")
+
+    # RC04 는 하나를 저장하고 하나를 되묻는다 — 성공했다면 Saved · note · pending 이 다 나간다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_activity", _SAND)), _answer(_ask_second())
+    )
+
+    with pytest.raises(RuntimeError):
+        await handle_input(
+            CASES_BY_ID["RC04"].text,
+            memory_context,
+            {"food": food_context},
+            run_id=RUN_ID,
+            supervisor_client=_supervisor_llm("RC04"),
+            memory_client=memory,
+            emit=events.append,
+            commit=broken,
+        )
+
+    # 확정된 게 없다. 끝 신호는 러너가 failed 로 붙인다
+    assert not _of(events, Saved)
+    assert not _of(events, MemoryNote)
+    assert not _of(events, PendingReply)
+    assert not _of(events, Done)
+
+
+async def test_기록할_조각이_없으면_commit_을_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply("불리면 안 된다")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    assert not _of(events, _Committed)
+    assert result.committed is False
+
+
+async def test_이어받기도_Memory_다음에_commit_하고_Saved_는_그_뒤에_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_commit_into(events),
+    )
+
+    names = _order(events)
+    assert names.count("_Committed") == 1
+    assert names.index("_Committed") < names.index("Saved")
+    assert result.committed is True

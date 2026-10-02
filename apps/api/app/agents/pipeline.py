@@ -3,6 +3,9 @@
 Memory 저장이 끝난 뒤 도메인 Agent를 실행해 같은 요청에서 저장된 관찰도 바로 조회할 수 있게 한다.
 Supervisor 실패 시에는 Memory가 원문을 처리하고, Memory 실패 시 전체 요청을 실패로 처리한다.
 
+Memory 가 끝나면 러너가 넘긴 commit 으로 기록 단계를 확정하고, 저장 안내는 그 뒤에 낸다.
+도메인 단계는 쓰는 task 를 먼저 끝낸 뒤 읽는 task 를 돌린다 (issue1005).
+
 Supervisor가 요청을 기록으로 잘못 나누면 그 조각은 어디서도 처리되지 않는다.
 Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 돌려주고 한 번만 다시 나눈다.
 """
@@ -70,6 +73,13 @@ class DomainOutcome(Protocol):
 
 
 DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
+
+# 기록 단계를 확정하는 함수. 러너가 run마다 만들어 넘기고, pipeline은 Memory 다음에 한 번 부른다.
+# 세션과 commit 구현은 러너(백엔드). pipeline은 기록 단계가 끝난 시점만 알린다.
+# TODO_CHECK: 러너 약속 — commit이 한 번이라도 끝난 run은 failed로 끝내지 않는다.
+#   60초 안전망은 pipeline 결과 없이 끝나므로, 러너는 이 함수 안에서 commit 여부를 직접
+#   표시해 두고 _guarded · 안전망 · forget_run 이 그 표시를 본다 (러너 구현은 백엔드 몫)
+Commit = Callable[[], Awaitable[None]]
 
 
 class DomainContext(Protocol):
@@ -268,6 +278,8 @@ class PipelineResult:
     rerouted: Rerouted | None = None  # 다시 나눴으면 그 결과. routing 은 다시 나눈 쪽이다
     partial: Partial | None = None  # 도메인 Agent가 일부 빠진 경우
     failed: Failed | None = None
+    # 이 run 에서 확정된 쓰기가 있었는지. True면 failed가 아니다
+    committed: bool = False
     disagreement: Disagreement = Disagreement()
     model_calls: int = 0
     latency_ms: int = 0
@@ -287,12 +299,16 @@ async def handle_input(
     memory_client: LLMClient | None = None,
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
+    commit: Commit | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
     continuation 이 있으면 raw_text 는 이전 run 의 질문에 대한 답이다 (_handle_continuation).
     contexts는 도메인 Agent 이름 → 그 Agent 의 context.
     구현된 Agent 몫은 전부 있어야 하고, 포트는 호출 전에 만들어 넘긴다.
+    commit은 Memory가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
+    TODO: 러너가 DB 세션을 붙이면 기본값 None을 없앤다. 지금은 run 마다 InMemoryStore라
+      확정할 것이 없어 러너가 넘기지 않는다.
     """
     started = time.perf_counter()
     send = emit or _ignore
@@ -307,6 +323,7 @@ async def handle_input(
             memory_client=memory_client,
             send=send,
             started=started,
+            commit=commit,
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
@@ -321,6 +338,7 @@ async def handle_input(
 
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
+    committed = False
     # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
     if routing.memory_task is not None:
         send(Step(2, _TOTAL_STEPS, _LABELS[1]))
@@ -329,10 +347,16 @@ async def handle_input(
                 raw_text, memory_context, client=memory_client, task=routing.memory_task
             )
         except LLMError:
-            # Memory 실패 시 기본값으로 대체하지 않는다
+            # Memory 실패 시 기본값으로 대체하지 않는다. commit 전이라 러너가 되돌린다
             failed = Failed("llm_unavailable", raw_text)
         else:
             model_calls += 1  # Agent 하나가 1. 루프를 몇 바퀴 돌았는지는 memory.steps
+            # 기록 단계를 먼저 확정한다. 저장 안내 · 되묻기 맥락은 확정된 것만 나간다
+            committed = await _commit_record(memory, commit)
+            # TODO(#149-integration): DB 저장소가 붙으면 여기서 Curator 를 백그라운드로 띄운다.
+            #   관찰이 commit 된 바로 뒤다. InMemoryStore 에서는 동작하지 않는다.
+            #   from app.domains.memory.curator.trigger import trigger_curator_background
+            #   trigger_curator_background(child_id, today, embedder, judge)
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
@@ -344,10 +368,6 @@ async def handle_input(
                 send(note)
             if memory.pending is not None:
                 send(PendingReply(run_id, memory.pending))
-            # TODO(#149-integration): DB 저장소가 붙으면 여기서 Curator 를 백그라운드로 띄운다.
-            #   관찰이 커밋된 뒤 호출해야 하므로 InMemoryStore 에서는 동작하지 않는다.
-            #   from app.domains.memory.curator.trigger import trigger_curator_background
-            #   trigger_curator_background(child_id, today, embedder, judge)
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
@@ -417,6 +437,7 @@ async def handle_input(
         rerouted=rerouted,
         partial=partial,
         failed=failed,
+        committed=committed,
         disagreement=_disagreement(routing, memory),
         model_calls=model_calls,
         latency_ms=int((time.perf_counter() - started) * 1000),
@@ -471,11 +492,13 @@ async def _handle_continuation(
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
+    commit: Commit | None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
     send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
+    committed = False
     model_calls = 0
     try:
         memory = await run_memory(
@@ -485,6 +508,7 @@ async def _handle_continuation(
         failed = Failed("llm_unavailable", answer)
     else:
         model_calls = 1
+        committed = await _commit_record(memory, commit)
         refs = _saved_refs(memory)
         if refs:
             send(Saved(refs))
@@ -509,6 +533,7 @@ async def _handle_continuation(
         routing=_NO_ROUTING,
         memory=memory,
         failed=failed,
+        committed=committed,
         model_calls=model_calls,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
@@ -601,6 +626,29 @@ def _safety_precheck(raw_text: str) -> None:
     """
 
 
+async def _commit_record(memory: MemoryAgentResult, commit: Commit | None) -> bool:
+    """기록 단계(Memory 의 쓰기 + 되묻기 맥락)를 확정한다. 확정된 쓰기가 있으면 True.
+
+    commit 이 예외를 내면 잡지 않는다. 확정된 것이 없으니 러너가 failed 로 끝낸다.
+    """
+    # CHECK(리뷰2) 멘토 제안(세션 하나로 run 전체를 묶고 실패하면 전부 rollback)과 달리
+    #   단계마다 commit 한다. 추천이 실패하거나 20초를 넘겨도 기록은 남아야 하고
+    #   (#196 리뷰 5번), 모델 호출이 도는 동안 연결과 행 잠금을 쥐지 않기 위해서다.
+    # CHECK(리뷰3) 기록 단계 전체를 트랜잭션 하나로 묶는다. Memory 가 tool 을 7번 다 쓰면
+    #   25초 안팎 연결을 쥔다. 쓰기마다 commit 하면 짧아지지만 Memory 가 중간에 죽을 때
+    #   일부만 남아 중복 가드(RC08)에 기대야 한다. 실측 전이라 묶는 쪽으로 시작한다.
+    if commit is not None:
+        await commit()
+    return _memory_wrote(memory)
+
+
+def _memory_wrote(memory: MemoryAgentResult | None) -> bool:
+    """Memory 가 성공한 쓰기를 하나라도 했는가."""
+    return memory is not None and any(
+        call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
+    )
+
+
 def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
     """성공한 관찰 저장 결과만 반환"""
     return tuple(
@@ -624,7 +672,7 @@ def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten 
     """기록할 조각을 짚었는데 쓰기가 하나도 없으면 남긴다. 판정은 하지 않는다."""
     if task is None or not task.hints:
         return None
-    if any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls):
+    if _memory_wrote(memory):
         return None
 
     event = Unwritten(len(task.hints), len(memory.calls), bool(memory.final_message))
@@ -681,9 +729,7 @@ def _did_anything(
 
     순수 요청형+구현중인 에이전트로 분기했을 경우 화면에 "준비 중" 을 띄울 수 있다.
     """
-    wrote = memory is not None and any(
-        call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
-    )
+    wrote = _memory_wrote(memory)
     note = memory is not None and bool(memory.final_message)
     return (
         wrote or note or bool(domain) or bool(routing.guidance) or bool(routing.unavailable_agents)
@@ -716,7 +762,7 @@ def _log(result: PipelineResult) -> None:
     logger.info(
         "pipeline run_id=%s intent=%s degraded=%s supervisor_error=%s hints=%d steps=%s "
         "ended_by=%s saved=%d drafts=%d domain=%s guidance=%s unavailable=%s note=%s "
-        "rerouted=%s partial=%s failed=%s memory_only=%s supervisor_only=%s "
+        "rerouted=%s partial=%s failed=%s committed=%s memory_only=%s supervisor_only=%s "
         "model_calls=%d latency_ms=%d",
         result.run_id,
         result.routing.intent_type,
@@ -734,6 +780,7 @@ def _log(result: PipelineResult) -> None:
         result.rerouted.bounced if result.rerouted else 0,
         (result.partial.reason, list(result.partial.failed)) if result.partial else None,
         result.failed.reason if result.failed else None,
+        result.committed,
         list(result.disagreement.memory_only),
         list(result.disagreement.supervisor_only),
         result.model_calls,
