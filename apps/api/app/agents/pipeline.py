@@ -17,6 +17,7 @@ from typing import Any, Literal, Protocol, Self
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food.agent import run as run_food
+from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
@@ -82,6 +83,12 @@ PartialReason = Literal["timeout_20s", "agent_error"]
 # 구현된 도메인 Agent 의 실행 함수. routing.IMPLEMENTED_AGENTS 와 키가 같아야 한다
 _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
+}
+
+# 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.
+# 이 task를 먼저 끝낸 뒤 나머지를 동시에 돌린다(기록 단계 → 쓰는 task → 읽는 task)
+_WRITING_TASKS: dict[str, frozenset[str]] = {
+    DomainAgentName.FOOD.value: frozenset(task.value for task in FOOD_WRITING_TASKS),
 }
 
 
@@ -244,6 +251,14 @@ class Disagreement:
 
 
 @dataclass(frozen=True)
+class _DomainRun:
+    """_run_domain 결과."""
+
+    outcomes: tuple[DomainOutcome, ...]  # 결과를 낸 것만, task 순서
+    partial: Partial | None
+
+
+@dataclass(frozen=True)
 class PipelineResult:
     run_id: str
     supervisor: SupervisorResult  # 원문 조각은 로그나 저장소에 남기지 않는다
@@ -377,8 +392,9 @@ async def handle_input(
         # Memory 가 성공한 뒤에 돈다. 방금 저장한 관찰이 도메인 Agent 조회에 잡혀야 한다
         send(Step(3, _TOTAL_STEPS, _LABELS[2]))
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
-        outcomes, partial = await _run_domain(routing.domain_tasks, contexts, timeout=remaining)
-        for outcome in outcomes:
+        ran = await _run_domain(routing.domain_tasks, contexts, timeout=remaining)
+        partial = ran.partial
+        for outcome in ran.outcomes:
             domain.append(outcome)
             model_calls += outcome.model_calls
             send(_routed(outcome))
@@ -505,26 +521,41 @@ async def _run_domain(
     contexts: Mapping[str, DomainContext],
     *,
     timeout: float | None,
-) -> tuple[list[DomainOutcome], Partial | None]:
-    """도메인 task 를 전부 동시에 돌린다. 하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06).
+) -> _DomainRun:
+    """쓰는 task 를 먼저 끝내고 읽는 task 를 동시에 돌린다.
 
-    결과는 끝난 순서가 아니라 task 순서로 돌려준다.
+    하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06). 쓰는 task 도 같은 timeout 안에서 센다.
+    쓰는 쪽이 늦으면 읽는 쪽 몫이 준다. 결과는 끝난 순서가 아니라 task 순서로 돌려준다.
     """
     # 표에 없는 agent·빠진 context 는 배선 버그다. 부분 실패로 숨기지 않고 시작 전에 올린다
     prepared = [(task, _RUNNERS[task.agent], contexts[task.agent]) for task in tasks]
-    settled = await asyncio.gather(
-        *(
-            asyncio.wait_for(runner(task, context.for_task()), timeout)
-            for task, runner, context in prepared
-        ),
-        return_exceptions=True,
-    )
+    deadline = None if timeout is None else time.perf_counter() + timeout
+    writers = [index for index, task in enumerate(tasks) if _writes(task)]
+    readers = [index for index, task in enumerate(tasks) if not _writes(task)]
+
+    async def run_one(index: int) -> DomainOutcome:
+        task, runner, context = prepared[index]
+        return await runner(task, context.for_task())
+
+    settled: dict[int, DomainOutcome | BaseException] = {}
+    # 읽는 task 가 갱신된 행을 보게 쓰는 task 를 먼저 끝낸다.
+    # CHECK(추가) 쓰는 task 가 실패하거나 끊겨도 읽는 task 는 돈다 (부분 결과 원칙)
+    for group in (writers, readers):
+        if not group:
+            continue
+        remaining = None if deadline is None else max(0.0, deadline - time.perf_counter())
+        results = await asyncio.gather(
+            *(asyncio.wait_for(run_one(index), remaining) for index in group),
+            return_exceptions=True,
+        )
+        settled.update(zip(group, results, strict=True))
 
     outcomes: list[DomainOutcome] = []
     succeeded: list[str] = []
     failed: list[str] = []
     timed_out = False
-    for task, item in zip(tasks, settled, strict=True):
+    for index, task in enumerate(tasks):
+        item = settled[index]
         if isinstance(item, TimeoutError):
             timed_out = True
             failed.append(task.agent)
@@ -545,13 +576,18 @@ async def _run_domain(
             succeeded.append(task.agent)
 
     if not failed:
-        return outcomes, None
+        return _DomainRun(tuple(outcomes), None)
     partial = Partial(
         reason="timeout_20s" if timed_out else "agent_error",
         succeeded=tuple(dict.fromkeys(succeeded)),
         failed=tuple(dict.fromkeys(failed)),
     )
-    return outcomes, partial
+    return _DomainRun(tuple(outcomes), partial)
+
+
+def _writes(task: DomainTask) -> bool:
+    """같은 run 의 다른 task 가 읽는 행을 쓰는 task 인가."""
+    return task.task_type in _WRITING_TASKS.get(task.agent, frozenset())
 
 
 def _ignore(event: Event) -> None:
