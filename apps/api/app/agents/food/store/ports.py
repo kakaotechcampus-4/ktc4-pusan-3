@@ -5,8 +5,10 @@ DB·외부 API가 연결된 뒤에 붙인다 — 이번 커밋은 포트와 테�
 구현까지만 다룬다.
 
 Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제, 영양소 구간
-(`NutrientBandStore.save`), 메뉴 캐시(`MenuCatalogStore.put`). 없는 급식을 새로 만드는
+(`NutrientBandStore.save`), 메뉴 카탈로그(`MenuCatalogStore.put`). 없는 급식을 새로 만드는
 INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OCR 분석이 채운다.
+TODO: 확정 필요
+카탈로그에 없는 메뉴(캐시 미스)를 Food가 채울지(배치만 채우면 put은 빠진다)
 
 쓰기 포트는 호출 하나가 짧은 트랜잭션 하나로 바로 commit된다. 같은 run의 뒤에 오는
 조회(다른 task 포함)가 그 결과를 읽어야 해서다. 조회 포트도 호출마다 짧은
@@ -21,8 +23,8 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 ①과 같은 이유로 `child_id` 를 받는다 — 아이 축 없이 `id` 만으로 쓰면 잘못된 id 하나가
 남의 아이 급식 행을 고치거나 지울 수 있다.
 
-`MenuCatalogRow`·`FoodDocRow`·`NutritionFacts` 는 아이와 무관한 공용 데이터(급식 메뉴
-캐시·참고 문서·영양성분)라 둘 다 해당하지 않는다. `SafetyEntry`(`health_safety`)도
+`MenuCatalogRow`·`FoodDocRow`·`NutritionFacts` 는 아이와 무관한 공용 데이터(메뉴
+카탈로그·참고 문서·영양성분)라 둘 다 해당하지 않는다. `SafetyEntry`(`health_safety`)도
 `child_id` 가 없다 — Food 는 이 행을 쓰지 않고(①에 해당 안 함) `ChildRecordKind` 에도
 없어 근거 행이 되지 않는다(②에도 해당 안 함). 안전 게이팅 경로는
 `build_gate`가 `SafetyReader.food_safety(child_id=...)` 를 한 번 불러 그 결과를 같은 task 의
@@ -34,12 +36,12 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | SafetyReader | health_safety — allergy · chronic_disease · dietary_restriction |
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
-| MenuCatalogStore | 급식 메뉴명 → 식품코드·영양성분 캐시 |
+| MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 급식 메뉴명 → 식품코드·영양성분 |
 | MenuSource | 식약처 등 외부 영양성분·레시피 조회 |
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
 | SuggestionHistoryReader | 최근 제안한 menu_key (반복 회피용) |
-| NutrientBandStore | 영양소 구간 히스테리시스 기준값 |
+| NutrientBandStore | 직전 영양소 구간 (히스테리시스 기준값). 저장 위치는 TODO: 확정 필요 |
 """
 
 from dataclasses import dataclass, field
@@ -68,7 +70,8 @@ class SafetyLookupError(Exception):
 class MenuSourceError(Exception):
     """외부 영양성분·레시피 API 호출 실패.
 
-    결과가 0건인 것(정말 없음)과 다르다. 호출부는 이 예외를 캐시 미스로 뭉개지 않는다.
+    결과가 0건인 것(정말 없음)과 다르다. 호출부는 이 예외를 카탈로그에 없는 것
+    (캐시 미스)처럼 뭉개지 않는다.
     """
 
 
@@ -127,7 +130,7 @@ class NutritionFacts:
 
 @dataclass(frozen=True)
 class MenuCatalogRow:
-    """급식 메뉴명 → 식품코드·영양성분 캐시 한 행."""
+    """메뉴 카탈로그(`menu_catalog`) 한 행 — 급식 메뉴명 → 식품코드·영양성분."""
 
     menu_key: str
     display_name: str
@@ -297,4 +300,4 @@ class FoodPorts:
     docs: FoodDocReader
     suggestions: SuggestionHistoryReader
     bands: NutrientBandStore
-    menu_source: MenuSource | None = None  # None 이면 캐시만 쓴다 (API 키 없음)
+    menu_source: MenuSource | None = None  # None 이면 카탈로그만 쓴다 (API 키 없음)

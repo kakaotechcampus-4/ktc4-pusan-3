@@ -86,7 +86,7 @@ class InMemoryFoodMemory:
 
 
 class InMemoryMenuCatalog:
-    """메뉴명 → 영양성분 캐시. 아이 무관, 전역 하나다."""
+    """메뉴 카탈로그 — 메뉴명 → 영양성분. 아이 무관, 전역 하나다."""
 
     def __init__(self, rows: Sequence[MenuCatalogRow] = ()) -> None:
         self._rows: dict[str, MenuCatalogRow] = {row.menu_key: row for row in rows}

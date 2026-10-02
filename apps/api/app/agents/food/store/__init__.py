@@ -1,6 +1,6 @@
 """Food Agent와 DB·외부 데이터 사이 통로.
 구현체는 ORM·외부 API 가 연결된 뒤 같은 Protocol로 붙인다.
-Food 의 쓰기 포트는 자기만 쓰고 읽는 셋(`daycare_meal` 수정·삭제 · 영양소 구간 · 메뉴 캐시)이고,
+Food 의 쓰기 포트는 자기만 쓰고 읽는 셋(`daycare_meal` 수정·삭제 · 영양소 구간 · 메뉴 카탈로그)이고,
 호출마다 바로 commit 된다.
 """
 
