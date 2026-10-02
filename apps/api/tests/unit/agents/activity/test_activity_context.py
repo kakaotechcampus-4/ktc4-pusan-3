@@ -97,10 +97,15 @@ class TestMockRun:
         assert result.request_texts == ("주말에 뭐 하지",)
         assert ctx.state.gate is not None
 
-    async def test_날씨를_아직_모르면_장소_조회를_열지_않는다(self):
-        """날씨 조회가 없으면 조회 실패와 같게 본다 — 실내만 (D8). 맑음으로 가정하지 않는다."""
-        result = await run(task(), context())
-        assert "search_nearby_places" not in result.tools
+    async def test_날씨를_아직_모르면_실내만이다(self):
+        """날씨 조회가 없으면 조회 실패와 같게 본다 — 실내만 (D8). 맑음으로 가정하지 않는다.
+
+        장소 조회는 닫지 않는다. tool 이 실내 종류로 좁힌다.
+        """
+        ctx = context()
+        result = await run(task(), ctx)
+        assert ctx.state.gate is not None and ctx.state.gate.outdoor_ok is False
+        assert "search_nearby_places" in result.tools
         assert "propose_activity_candidates" in result.tools
 
     async def test_다른_Agent_의_task_는_받지_않는다(self):
@@ -114,6 +119,9 @@ class TestMockRun:
         assert result.tools == ()
         assert result.model_calls == 0
         assert [r.body for r in result.readouts] == [READOUTS.get("blocked.safety").template]
+        assert result.readouts[0].body == (
+            "지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
+        )
         assert result.readouts[0].authored_by == "code"
 
     async def test_동의가_없으면_닫지_않는다(self):

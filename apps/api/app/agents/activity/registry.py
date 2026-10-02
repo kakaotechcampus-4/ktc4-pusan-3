@@ -3,11 +3,10 @@
 어떤 tool을 열지는 모델이 아니라 여기 코드가 정한다. 값은 gating.py 에 있다.
 
   라벨: activity_recommendation (하나뿐)
-    0–35개월   memory · weather · schedule · propose
-    36개월+    memory · weather · schedule · (places) · propose
+    전 월령   memory · weather · schedule · (places) · propose
 
-- `(places)` 는 위치가 있고(`has_location`) 야외가 가능할 때(`outdoor_ok`)만 더해진다.
-  지금은 비가 오면 통째로 닫는다. 장소 적재가 붙으면 실내 종류로 좁히는 쪽으로 바꾼다 (3-2).
+- `(places)` 는 위치가 있을 때(`has_location`)만 더해진다. 월령으로는 닫지 않는다.
+  날씨가 나쁘면(`outdoor_ok=False`) 닫지 않고 tool 이 실내 종류로 좁힌다 (3-2).
 - **월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 출력 tool 이 열린다.
 - **알레르기 조회에 실패하면 전부 닫는다** (`safety_ok=False`). `closed_readout_key` 가
   `blocked.safety` 를 돌려주고 모델을 부르지 않는다 (D7). 재료를 쓰는 후보만 빼서는

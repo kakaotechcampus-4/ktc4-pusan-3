@@ -14,6 +14,7 @@ from uuid import UUID
 from app.agents.activity.store.ports import (
     ActivityPorts,
     CoarseLocation,
+    PlaceRow,
     SafetyLookupError,
     WeatherGrid,
 )
@@ -29,9 +30,11 @@ class ActivityRunState:
 
     출력 tool 이 `EvidencePick.id`를 공통 `EvidenceCitation`으로 바꿀 때 이 표를 본다 —
     이번 run 에서 실제로 조회한 것만 인용할 수 있다. 없는 id 는 후보를 거절한다 (D6).
+    `place_name` 도 같다 — `search_nearby_places` 가 돌려준 이름만 쓸 수 있다.
     """
 
     seen_evidence: dict[UUID, tuple[RankedEvidence, datetime]] = field(default_factory=dict)
+    seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
     gate: Gate | None = None
 
 
@@ -65,8 +68,8 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다.
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
     - `has_location` 은 좌표가 있는가. 없으면 장소 조회가 닫힌다.
-    - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. tool 목록은 모델을 부르기 전에
-      확정되는데 장소 조회를 열지 말지가 이 값에 걸려 있어서다 (3-2).
+    - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
+      좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
     ports = context.ports
     birth_date = await ports.profile.birth_date(child_id=context.child_id)

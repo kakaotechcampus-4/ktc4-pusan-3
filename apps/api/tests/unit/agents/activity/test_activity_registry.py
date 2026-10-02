@@ -1,7 +1,7 @@
 """Gate 로 Activity tool 을 여닫는 registry 검증.
 
-- `tools_for` — 설계 문서 D2 게이팅 표의 칸마다 한 케이스. 경계 월령 17/18 · 35/36 양쪽을 덮는다.
-- 장소 조회는 월령과 별개로 위치 · 날씨가 둘 다 참이어야 열린다.
+- `tools_for` — 설계 문서 D2 게이팅 표의 칸마다 한 케이스.
+- 장소 조회는 위치만 본다. 월령으로 닫지 않고, 날씨가 나쁘면 tool 이 실내 종류로 좁힌다.
 - **월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 출력 tool 이 열린다.
 - 알레르기 조회에 실패하면 전부 닫힌다 (D7).
 - `execute_tool` — 허용 목록 밖 · 코드 tool · 잘못된 인자는 실행되지 않는다.
@@ -74,22 +74,18 @@ def context() -> ActivityContext:
 
 
 class TestToolsFor:
-    @pytest.mark.parametrize("months", [0, 17, 18, 35])
-    def test_36개월_미만은_장소_조회가_닫힌다(self, months):
-        """위치와 날씨가 다 있어도 월령이 먼저 닫는다."""
-        assert tools_for(TASK, gate(months)) == BASE
-
-    @pytest.mark.parametrize("months", [36, 71])
-    def test_36개월부터_장소_조회가_열린다(self, months):
+    @pytest.mark.parametrize("months", [0, 17, 35, 36, 71])
+    def test_장소_조회는_월령으로_닫지_않는다(self, months):
+        """공원 · 놀이터는 보호자와 같이 간다. 위치가 있으면 어느 월령에서도 열린다."""
         assert tools_for(TASK, gate(months)) == WITH_PLACES
 
     def test_위치가_없으면_장소_조회가_닫힌다(self):
         """기본 좌표로 대체하지 않는다. 실내 전용으로 정상 동작한다 (4-3)."""
         assert tools_for(TASK, gate(40, has_location=False)) == BASE
 
-    def test_야외가_안_되면_장소_조회가_닫힌다(self):
-        """지금은 비가 오면 통째로 닫는다. 장소 적재가 붙으면 실내 종류로 좁힌다 (3-2)."""
-        assert tools_for(TASK, gate(40, outdoor_ok=False)) == BASE
+    def test_야외가_안_돼도_장소_조회는_열린다(self):
+        """비 오는 날엔 도서관 · 실내 놀이터를 찾는다. 좁히는 것은 tool 이 한다 (3-2)."""
+        assert tools_for(TASK, gate(40, outdoor_ok=False)) == WITH_PLACES
 
     def test_알레르기_조회에_실패하면_전부_닫는다(self):
         """재료 후보만 빼서는 환경 알레르기를 못 막는다 (D7). 모델을 부르지 않는다."""
