@@ -290,7 +290,6 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             {
                 "source_kind": "observation_activity",
                 "source_id": str(observation_id),
-                "source_updated_at": datetime(2026, 9, 2, tzinfo=timezone.utc),
                 "note": "블록을 쌓고 놀았다",
             }
         ],

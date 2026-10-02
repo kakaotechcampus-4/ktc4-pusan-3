@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | `growth_doc` | 마이그레이션 시드 | Growth | 문서 행 (교육과정·루틴 자료를 **재작성한** 행) — **핵심 기능의 재료**. 별도 KB 인덱스는 없다 |
 | `book_catalog` · `book_query_cache` | 동기화 배치 (`integrations`) | Growth | 도서 API 캐시 |
-| `hazard_term` · `hazard_guard` | **Activity 소유** | Activity · **Growth** | 안전 사전 — 구현은 하나만 |
+| `hazard_term` (상수 파일 `reference/hazard_terms.yaml`) | **Activity 소유** | Activity · **Growth** | 안전 사전 — 구현은 하나만 |
 | `notice` | **OCR 파이프라인** (일반 기관 공지). 텍스트 일반 공지 경로 미정 | Growth | 읽기만 · **보조** |
 
 | 읽기만 하는 공유 테이블 | 소유 |
