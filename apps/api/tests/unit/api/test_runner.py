@@ -20,6 +20,7 @@ from app.agents.entrypoint import (
     EventDrafts,
     Failed,
     MemoryNote,
+    Partial,
     PendingMemoryContext,
     PendingReply,
     Step,
@@ -172,6 +173,28 @@ async def test_failed_from_the_agents_releases_the_key(monkeypatch):
 
     assert names(channel) == ["failed"]
     assert idempotency.recall(**scope) is None
+
+
+async def test_부분_결과는_done_으로_끝나고_키를_놓지_않는다(monkeypatch):
+    """추천 일부가 빠져도 기록은 저장됐다. 키를 놓으면 다시 눌렀을 때 두 번 저장된다."""
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(Step(3, 3, "다음 행동을 준비하고 있어요"))
+        emit(Partial("timeout_20s", ("activity",), ("food",)))
+        emit(Done(kwargs["run_id"], 3))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
+    idempotency.remember(**scope, run_id=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["step", "partial", "done"]
+    assert channel.ended_with == "done"
+    assert idempotency.recall(**scope) == channel.run_id
 
 
 async def test_start_runs_job_attaches_task_and_closes_channel():
