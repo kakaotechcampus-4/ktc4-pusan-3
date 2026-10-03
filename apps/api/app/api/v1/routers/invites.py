@@ -55,6 +55,9 @@ _INVITE_TTL = timedelta(hours=24)
 # child_already_exists 는 세지 않는다 — 코드의 유효 여부와 무관한 호출자 상태다.
 _COUNTED_FAILURES = frozenset({"invite_not_found", "invite_used", "invite_expired"})
 
+# 확인과 수락이 내는 에러. Swagger 문서용.
+_CODE_ERRORS = {status: {"model": ErrorEnvelope} for status in (404, 409, 410, 429)}
+
 
 def generate_invite_code() -> str:
     """예측할 수 없는 8자. 🚨 random 이 아니라 secrets 다 — 8자(40비트)라 시도 제한과 함께 쓴다."""
@@ -69,10 +72,6 @@ def normalize_invite_code(raw: str) -> str:
     """
     upper = raw.upper().translate(str.maketrans({"O": "0", "I": "1", "L": "1"}))
     return "".join(c for c in upper if c in _ALPHABET)
-
-
-def hash_invite_code(raw: str) -> bytes:
-    return hash_token(normalize_invite_code(raw))
 
 
 @router.post(
@@ -101,7 +100,8 @@ async def issue_invite(
         session,
         child_id=child.id,
         created_by=parent.parent_id,
-        code_hash=hash_invite_code(code),
+        # 발행한 코드는 이미 정규화된 모양이다 — 받을 때와 같은 해시가 된다.
+        code_hash=hash_token(code),
         expires_at=expires_at,
     )
     await session.commit()
@@ -166,12 +166,7 @@ async def _find_open_invite(
 
 @router.get(
     "/invites/{code}",
-    responses={
-        404: {"model": ErrorEnvelope},
-        409: {"model": ErrorEnvelope},
-        410: {"model": ErrorEnvelope},
-        429: {"model": ErrorEnvelope},
-    },
+    responses=_CODE_ERRORS,
 )
 async def preview_invite(
     code: str, parent: CurrentParent, session: SessionDep, request: Request
@@ -195,12 +190,7 @@ async def preview_invite(
 
 @router.post(
     "/invites/{code}/accept",
-    responses={
-        404: {"model": ErrorEnvelope},
-        409: {"model": ErrorEnvelope},
-        410: {"model": ErrorEnvelope},
-        429: {"model": ErrorEnvelope},
-    },
+    responses=_CODE_ERRORS,
 )
 async def accept_invite(
     code: str,

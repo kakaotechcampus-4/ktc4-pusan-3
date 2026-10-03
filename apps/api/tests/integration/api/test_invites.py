@@ -151,17 +151,6 @@ async def test_확인_실패(db_client, session, family, case, status, code):
     assert res.json()["error"]["code"] == code
 
 
-async def test_아이가_있는_보호자는_코드를_보기_전에_409(db_client, session, family):
-    """코드가 맞든 틀리든 같은 409 다 — 코드의 유효 여부를 알려 주지 않는다."""
-    child, owner_headers, owner_id, _, _ = family
-    await _seed_invite(session, child, owner_id)
-
-    for path_code in (CODE, "ZZZZ9999"):
-        res = await db_client.get(PREVIEW.format(code=path_code), headers=owner_headers)
-        assert res.status_code == 409
-        assert res.json()["error"]["code"] == "child_already_exists"
-
-
 async def test_확인_뒤_수락하면_member_로_바로_연결된다(db_client, session, family):
     child, _, owner_id, _, stranger_headers = family
     invite = await _seed_invite(session, child, owner_id)
@@ -308,11 +297,15 @@ async def test_계정을_바꿔도_같은_IP_에서_30회를_넘으면_429(db_cl
     assert statuses[30:] == [429] * 5
 
 
-async def test_아이가_있는_보호자의_409_는_실패로_세지_않는다(db_client, session, family):
+async def test_아이가_있는_보호자는_코드를_보기_전에_409_이고_실패로_세지_않는다(
+    db_client, session, family
+):
+    """코드가 맞든 틀리든 같은 409 다 — 코드의 유효 여부를 알려 주지 않으니 세지도 않는다."""
     child, owner_headers, owner_id, _, _ = family
     await _seed_invite(session, child, owner_id)
 
-    statuses = [await _fail(db_client, "preview", owner_headers) for _ in range(6)]
-
-    assert statuses == [409] * 6
+    for path_code in (CODE, "ZZZZ9999") * 3:
+        res = await db_client.get(PREVIEW.format(code=path_code), headers=owner_headers)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "child_already_exists"
     assert invite_attempts._failures == {}
