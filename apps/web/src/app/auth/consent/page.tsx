@@ -236,6 +236,22 @@ export default function AuthConsentPage() {
       <div className="flex flex-col gap-3 pt-2">
         {error ? <CardFailed>{error}</CardFailed> : null}
 
+        {/* 개인정보 처리방침 — 가입하기 **전에** 볼 수 있어야 한다 (개인정보보호법 제30조 공개).
+            🚨 **"동의한 것으로 간주" 라고 쓰지 않는다.** 처리방침은 동의받는 글이 아니라 알리는
+               글이고(10 설정 `LegalDocumentSection` 머리말), 동의는 위 체크박스가 항목마다 받는다.
+               버튼 위에서 "계속하면 동의" 라고 말하면 개별 체크로 받은 동의가 한 문장으로 묶인다.
+            🚨 이용약관은 여기 다시 걸지 않는다 — 바로 위 카드의 "전문 보기" 가 같은 문서를 연다.
+            ⚠️ **아직 주소가 없다.** 처리방침 정본은 백엔드가 링크로 주기로 했고, 그 전까지는
+               `href` 없는 자리표시 링크다(누르면 아무 일도 없다). 주소가 오면 `href` 와
+               `target="_blank"` · `rel` 을 더한다 — 동의 카드의 "전문 보기" 와 같은 새 창이다. */}
+        <p className="text-caption text-ink-subtle text-center">
+          가입하면{" "}
+          <a className="text-ink-muted decoration-line-strong -my-3 inline-block py-3 underline decoration-1 underline-offset-4">
+            개인정보 처리방침
+          </a>
+          에 따라 개인정보를 다뤄요.
+        </p>
+
         <Button block onClick={submit} disabled={!canSubmit || pending}>
           {pending ? <Spinner /> : null}
           {pending ? "저장하는 중…" : "동의하고 시작하기"}

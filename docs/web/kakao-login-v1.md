@@ -345,40 +345,50 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 ### 5-1. 시작 URL 만 예외로 뺀다
 
-[`src/config.ts`](../../apps/mobile/src/config.ts) 의 `isInternalUrl()` 이 외부 URL 을 전부 시스템 브라우저로 넘기는 게 [#23](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/23) 에서 걸린 지점이다. 로그인 시작 URL 하나만 앞에서 걸러낸다.
+[`src/config.ts`](../../apps/mobile/src/config.ts) 의 `isInternalUrl()` 이 외부 URL 을 전부 시스템 브라우저로 넘기는 게 [#23](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/23) 에서 걸린 지점이다. 로그인 시작 URL 하나만 앞에서 걸러낸다 ([#210](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/210)).
 
 ```ts
 // App.tsx — onShouldStartLoadWithRequest
 if (isInternalUrl(request.url)) return true;
-if (isAuthStartUrl(request.url)) {                 // pathname 이 /auth/<provider> 로 끝나는지
-  void WebBrowser.openAuthSessionAsync(request.url, "icatch://auth")
-    .then((r) => { if (r.type === "success") loadCallback(r.url); });
+if (isAuthStartUrl(request.url)) {                 // 경로가 /api/v1/auth/<provider> 로 끝나는 것만
+  void openAuthSession(request.url);               // openAuthSessionAsync(url, "icatch://auth")
   return false;
 }
-void Linking.openURL(request.url);                 // 그 외 외부 링크는 기존 동작 그대로
+void openExternal(request.url);                    // 그 외 외부 링크 — in-app 브라우저 (#212)
 return false;
 ```
 
-`expo-web-browser` 의 `openAuthSessionAsync` 가 Android = Custom Tabs, iOS = `ASWebAuthenticationSession` 으로 갈라주고 양쪽 다 복귀 URL 을 promise 로 돌려준다. **네이티브 코드를 직접 짜지 않는다** — config plugin 도 필요 없고 CNG 가 처리한다.
+판정 · 주소 조립은 [`src/native/auth-session.ts`](../../apps/mobile/src/native/auth-session.ts) 의 순수 함수이고 `pnpm test` 가 본다.
+
+- **경로를 끝까지 맞춘다.** `/auth/kakao/callback` 까지 걸리면 세션 안에서 세션이 또 열린다. 오리진은 보지 않는다 — 셸은 API 주소를 모르고, 경로가 같은 엉뚱한 주소가 걸려도 인앱 브라우저로 열릴 뿐 웹뷰에 들어오지 않는다.
+- `expo-web-browser` 의 `openAuthSessionAsync` 가 Android = Custom Tabs, iOS = `ASWebAuthenticationSession` 으로 갈라주고 양쪽 다 복귀 URL 을 promise 로 돌려준다. **네이티브 코드를 직접 짜지 않는다** — `expo install` 이 `app.json` 에 넣는 config plugin 하나로 CNG 가 처리한다.
+- ⚠️ **Android 는 흉내 구현이다.** Custom Tabs 를 열어 두고 `Linking` 의 `url`(→ `success`)과 앱이 다시 앞으로 온 것(`AppState` → `dismiss`) 중 **먼저 온 쪽**을 결과로 쓴다. 복귀 때는 `onNewIntent` 가 `onResume` 보다 먼저라 `success` 가 이긴다. 순서가 뒤집히면 코드가 조용히 사라지므로 셸을 고치면 기기에서 다시 본다.
+- Custom Tab 은 별도 태스크의 중계 화면(`BrowserProxyActivity`)을 거쳐 뜬다 — 셸의 `MainActivity` 가 `singleTask` 라 바로 띄우면 앱이 앞으로 올 때 탭이 죽는다. 복귀 인텐트가 들어오면 라이브러리가 그 태스크를 치워서 **탭이 저절로 닫힌다.**
+- 카카오의 [하이브리드 앱 가이드](https://developers.kakao.com/docs/ko/javascript/hybrid)(`intent://` 해석 · 팝업 웹뷰 · `<queries>` 의 `com.kakao.talk`)는 **JS SDK 를 웹뷰 안에서 돌릴 때**의 것이라 여기 해당하지 않는다. 카카오 페이지는 Custom Tabs(진짜 Chrome)에서 뜨므로 "카카오톡으로 로그인" 의 `intent://` 도 Chrome 이 처리한다.
 
 `scheme: "icatch"` 는 [`app.json`](../../apps/mobile/app.json) 에 이미 있다. **이 스킴을 카카오 콘솔에 등록하지 않는다** — `icatch://auth` 는 우리 서버가 302 하는 대상이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다.
 
 ### 5-2. 복귀 URL 을 웹뷰에 싣는다
 
 ```ts
-function loadCallback(url: string) {
+// src/native/auth-session.ts
+export function callbackUrlFromReturn(returnUrl: string, webUrl: string): string | null {
   // ⚠️ 커스텀 스킴을 URL 로 파싱하지 않는다 (§7)
-  const PREFIX = "icatch://auth";
-  if (!url.startsWith(PREFIX)) return;
-  const query = url.slice(PREFIX.length);
-  if (query && !query.startsWith("?")) return;      // icatch://authXXX 는 남이다
-  setWebViewUri(`${WEB_URL}/auth/callback${query}`);
+  if (!returnUrl.startsWith("icatch://auth")) return null;
+  const query = returnUrl.slice("icatch://auth".length);
+  if (query !== "" && !query.startsWith("?")) return null;   // icatch://authXXX 는 남이다
+  return `${webUrl}/auth/callback${query}`;
 }
+
+// App.tsx — success 일 때만
+webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location.replace
 ```
 
 - 돌아갈 오리진은 **지금 웹뷰가 보고 있는 곳**(`WEB_URL`)이다. 개발 빌드에서 프로덕션 주소로 고정하면 로컬 서버가 발급한 코드를 라이브 사이트가 받게 되는데, 코드도 bind 도 그쪽 컨텍스트엔 없어서 반드시 실패한다.
-- **웹뷰를 remount 하지 않는다.** `source` 의 uri 만 바꿔 같은 컨텍스트에서 이동시킨다 — `key` 를 바꿔 다시 만들면 `sessionStorage` 의 bind 가 사라진다 (§4-3).
-- `Linking` 복귀 경로는 지금 처리하지 않는다. 추가하려면 §4-3 의 재검토 조건을 같이 본다.
+- **웹뷰를 remount 하지 않는다.** 같은 웹뷰 안에서 이동시킨다 — `key` 를 바꿔 다시 만들면 `sessionStorage` 의 bind 가 사라진다 (§4-3).
+- **`source` 의 uri 를 바꾸지 않는다** (설계안에서 바뀐 곳). 같은 오류로 두 번 돌아오면(`?error=invalid_state` 등) 주소가 문자열까지 같아서 React 가 바뀐 것으로 보지 않고 웹뷰는 제자리에 남는다. 그래서 `location.replace` 를 주입한다. `replace` 인 이유는 복귀 화면이 교환 뒤 스스로 넘어가는 경유지라 기록에 남길 게 없어서다.
+- X 로 닫은 것(`cancel` · `dismiss`)에는 셸이 할 일이 없다 — 00 화면이 `visibilitychange` 로 버튼을 되살린다 (§4-6).
+- `Linking` 복귀 경로(앱이 꺼진 상태로 돌아오는 것)는 지금 처리하지 않는다. 추가하려면 §4-3 의 재검토 조건을 같이 본다.
 
 ### 5-3. Expo Go 로는 확인할 수 없다
 
@@ -457,8 +467,10 @@ function loadCallback(url: string) {
 서버가 붙어야 확인 가능한 것:
 
 - [ ] 웹 브라우저 전체 왕복
-- [ ] 앱(개발 빌드) 전체 왕복 — Android · iOS 각각
-- [ ] 인앱 브라우저에서 X → 버튼이 원래대로 돌아옴
+- [x] 앱(개발 빌드) 전체 왕복 — **Android 에뮬레이터** (#210). 시작 → Custom Tab → 카카오 → `icatch://auth?code=` → 탭이 저절로 닫힘 → `/auth/callback` 교환 `200` → 가입 동의 화면. 5회 연속 `success` 로 돌아옴
+- [ ] 앱 전체 왕복 — iOS · **실기기 "카카오톡으로 로그인"**(에뮬레이터에 카카오톡이 없다)
+- [x] 인앱 브라우저에서 X → 00 으로 돌아오고 버튼이 원래대로 · 이어서 다시 누르면 정상 왕복 (Android)
+- [x] 로그인 시작이 아닌 외부 링크("전문 보기")는 인증 세션으로 열리지 않음 (Android) — #212 부터 in-app 브라우저
 - [ ] bind 를 지우고 교환 → `401 invalid_handoff`
 - [ ] 앱 콜드 스타트 후 재로그인 체감 (§9-2)
 
