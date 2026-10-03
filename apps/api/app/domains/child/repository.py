@@ -6,7 +6,7 @@ from datetime import date, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import Child, ParentChild, ParentChildRelation
+from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
 
 
 async def list_children_for_parent(session: AsyncSession, *, parent_id: uuid.UUID) -> list[Child]:
@@ -103,3 +103,20 @@ async def list_connected_parents(
         .order_by(ParentChild.connected_at, ParentChild.id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def create_invite(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    created_by: uuid.UUID,
+    code_hash: bytes,
+    expires_at: datetime,
+) -> Invite:
+    """초대 코드 1건. 원문 코드는 받지 않는다 — 해시만 저장한다."""
+    row = Invite(
+        child_id=child_id, created_by=created_by, code_hash=code_hash, expires_at=expires_at
+    )
+    session.add(row)
+    await session.flush()
+    return row
