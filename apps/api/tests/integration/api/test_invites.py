@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.api import invite_attempts
 from app.api.deps.auth import hash_token
 from app.api.quota import today_kst
+from app.api.v1.routers import invites as invites_router
 from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
 from app.domains.child.repository import create_child, create_invite
 from app.domains.identity.models import Parent
@@ -211,25 +212,29 @@ async def test_한_번_쓴_코드는_다른_보호자가_못_쓴다(db_client, s
     assert second.json()["error"]["code"] == "invite_used"
 
 
-async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_client, session, family):
-    """확인과 연결 사이에 아이가 생긴 경우. 보관된 아이의 parent_child 행으로 재현한다 —
-    보유 확인은 보관된 아이를 세지 않지만 유니크 제약은 그 행에 걸린다."""
+async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_client, session, family, monkeypatch):
+    """아이 보유 확인을 지난 뒤 연결하기 전에 이 보호자에게 아이가 생긴 경우.
+
+    그 사이를 테스트에서 만들 수 없어 사전 확인을 건너뛰게 바꿔 끼운다.
+    """
     child, _, owner_id, _, stranger_headers = family
     invite = await _seed_invite(session, child, owner_id)
-    _, stranger_id = await issue_bearer(session, token="archived-token")
-    headers = {"Authorization": "Bearer archived-token"}
-    archived = await create_child(
+    racer_headers, racer_id = await issue_bearer(session, token="racer-token")
+    await create_child(
         session,
-        owner_parent_id=stranger_id,
-        nickname="보관",
+        owner_parent_id=racer_id,
+        nickname="방금",
         birth_date=date(2023, 1, 1),
         relation=ParentChildRelation.MOTHER,
     )
-    archived.deleted_at = datetime.now(UTC)
     # 핸들러의 rollback 이 여기까지 되감지 않게 심은 것을 확정한다 (바깥 트랜잭션은 끝에 롤백)
     await session.commit()
 
-    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=headers)
+    async def skip_check(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(invites_router, "_reject_if_has_child", skip_check)
+    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=racer_headers)
 
     assert res.status_code == 409
     assert res.json()["error"]["code"] == "child_already_exists"
@@ -238,6 +243,30 @@ async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_cl
     # 코드가 남아 있어 다른 보호자는 쓸 수 있다
     ok = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
     assert ok.status_code == 200
+
+
+async def test_보관된_아이만_있어도_확인에서_409(db_client, session, family):
+    """보관해도 parent_child 행이 남아 수락이 막힌다.
+
+    그러니 확인에서 아이를 보여 주기 전에 막는다.
+    """
+    child, _, owner_id, _, _ = family
+    await _seed_invite(session, child, owner_id)
+    headers, parent_id = await issue_bearer(session, token="archived-token")
+    archived = await create_child(
+        session,
+        owner_parent_id=parent_id,
+        nickname="보관",
+        birth_date=date(2023, 1, 1),
+        relation=ParentChildRelation.MOTHER,
+    )
+    archived.deleted_at = datetime.now(UTC)
+    await session.flush()
+
+    res = await db_client.get(PREVIEW.format(code=CODE), headers=headers)
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "child_already_exists"
 
 
 async def _fail(client, how: str, headers) -> int:

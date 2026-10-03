@@ -37,7 +37,7 @@ from app.domains.child.repository import (
     create_invite,
     find_accessible_child,
     find_invite_with_child,
-    list_children_for_parent,
+    has_child_link,
 )
 from app.rules.age import age_display
 
@@ -138,8 +138,11 @@ async def _reject_if_has_child(session: AsyncSession, parent_id: UUID) -> None:
 
     코드의 유효 여부를 알려 주지 않으므로 시도 제한의 실패로 세지 않는다 (#198).
     연결되지 않을 아이의 별명 · 나이를 보여 준 뒤에 거절하는 일도 막는다 (invite-v1.md §5).
+
+    🚨 보관된 아이와의 연결도 센다 — 수락의 유니크 제약과 같은 기준이어야 한다. 보관된 아이를
+       건너뛰면 확인은 200 으로 아이를 보여 주고 수락은 매번 409 가 된다 (#198 리뷰).
     """
-    if await list_children_for_parent(session, parent_id=parent_id):
+    if await has_child_link(session, parent_id=parent_id):
         raise ApiError(409, "child_already_exists", "이미 등록한 아이가 있어요")
 
 

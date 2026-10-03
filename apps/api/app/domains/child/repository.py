@@ -3,7 +3,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
@@ -18,6 +18,14 @@ async def list_children_for_parent(session: AsyncSession, *, parent_id: uuid.UUI
         .order_by(Child.created_at, Child.id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
+    """이 보호자에게 parent_child 행이 있는가. 보관된 아이와의 연결도 센다.
+
+    uq_parent_child_parent_id 와 같은 기준이다 — 보관해도 행이 남아 새 연결을 막기 때문이다.
+    """
+    return bool(await session.scalar(select(exists().where(ParentChild.parent_id == parent_id))))
 
 
 async def find_accessible_child(
