@@ -5,14 +5,18 @@
 🚨 원문 코드는 저장하지 않는다. 정규화한 값의 SHA-256 만 둔다 (session · auth_handoff 와 같다).
 """
 
+import logging
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import invite_attempts
 from app.api.deps.auth import CurrentParent, hash_token
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
@@ -37,6 +41,8 @@ from app.domains.child.repository import (
 )
 from app.rules.age import age_display
 
+log = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # Crockford Base32 — 옮겨 적다 헷갈리는 I · L · O · U 가 없다.
@@ -44,6 +50,10 @@ router = APIRouter()
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _CODE_LENGTH = 8
 _INVITE_TTL = timedelta(hours=24)
+
+# 시도 제한에서 실패로 세는 응답. 만료 · 사용된 코드도 "그 코드가 있었다" 를 알려 준다 (#198).
+# child_already_exists 는 세지 않는다 — 코드의 유효 여부와 무관한 호출자 상태다.
+_COUNTED_FAILURES = frozenset({"invite_not_found", "invite_used", "invite_expired"})
 
 
 def generate_invite_code() -> str:
@@ -98,6 +108,31 @@ async def issue_invite(
     return CreateInviteResponse(invite_code=code, expires_at=expires_at)
 
 
+@asynccontextmanager
+async def _limited_attempt(parent_id: UUID, request: Request) -> AsyncIterator[None]:
+    """확인 · 수락을 시도 제한 안에서 돌린다.
+
+    한도면 429. 실패로 셀 응답이 아니면(성공 · 아이 보유 409 등) 잡은 한 건을 돌려준다.
+    """
+    ip = invite_attempts.ip_bucket(request.client.host if request.client else None)
+    now = datetime.now(UTC)
+    if not invite_attempts.acquire(parent_id=parent_id, ip=ip, now=now):
+        raise ApiError(429, "too_many_attempts", "여러 번 틀렸어요. 잠시 후 다시 시도해 주세요")
+    try:
+        yield
+    except ApiError as exc:
+        if exc.code in _COUNTED_FAILURES:
+            # 원문 코드는 남기지 않는다.
+            log.info("초대 코드 실패 parent_id=%s reason=%s", parent_id, exc.code)
+            raise
+        invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+        raise
+    except BaseException:
+        invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+        raise
+    invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+
+
 async def _reject_if_has_child(session: AsyncSession, parent_id: UUID) -> None:
     """이미 아이가 있는 보호자는 코드를 보기 전에 돌려보낸다.
 
@@ -132,17 +167,20 @@ async def _find_open_invite(
         404: {"model": ErrorEnvelope},
         409: {"model": ErrorEnvelope},
         410: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
     },
 )
 async def preview_invite(
-    code: str, parent: CurrentParent, session: SessionDep
+    code: str, parent: CurrentParent, session: SessionDep, request: Request
 ) -> InvitePreviewResponse:
     """수락 전 확인 — 어느 아이에 붙는지 보여 준다.
 
     🚨 코드를 소비하지 않는다. 확인하고 그만둔 사람이 코드를 다시 받지 않게 한다.
+    🚨 수락과 같은 시도 제한에 걸린다. 순서는 제한 → 아이 보유 → 코드 (#198).
     """
-    await _reject_if_has_child(session, parent.parent_id)
-    invite, child, inviter_nickname = await _find_open_invite(session, code)
+    async with _limited_attempt(parent.parent_id, request):
+        await _reject_if_has_child(session, parent.parent_id)
+        invite, child, inviter_nickname = await _find_open_invite(session, code)
     return InvitePreviewResponse(
         child=InvitePreviewChild(
             nickname=child.nickname, age_display=age_display(child.birth_date, today_kst())
@@ -158,13 +196,25 @@ async def preview_invite(
         404: {"model": ErrorEnvelope},
         409: {"model": ErrorEnvelope},
         410: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
     },
 )
 async def accept_invite(
-    code: str, body: AcceptInviteRequest, parent: CurrentParent, session: SessionDep
+    code: str,
+    body: AcceptInviteRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
 ) -> AcceptInviteResponse:
     """수락 — 코드 소비와 parent_child 생성을 한 트랜잭션으로. 수락하면 바로 member 다."""
-    await _reject_if_has_child(session, parent.parent_id)
+    async with _limited_attempt(parent.parent_id, request):
+        return await _accept(code, body, parent.parent_id, session)
+
+
+async def _accept(
+    code: str, body: AcceptInviteRequest, parent_id: UUID, session: AsyncSession
+) -> AcceptInviteResponse:
+    await _reject_if_has_child(session, parent_id)
 
     normalized = normalize_invite_code(code)
     invite = None
@@ -172,7 +222,7 @@ async def accept_invite(
         invite = await consume_invite(
             session,
             code_hash=hash_token(normalized),
-            parent_id=parent.parent_id,
+            parent_id=parent_id,
             now=datetime.now(UTC),
         )
     if invite is None:
@@ -185,7 +235,7 @@ async def accept_invite(
         await connect_parent(
             session,
             child_id=invite.child_id,
-            parent_id=parent.parent_id,
+            parent_id=parent_id,
             relation=body.relation or ParentChildRelation.OTHER,
         )
     except IntegrityError as exc:

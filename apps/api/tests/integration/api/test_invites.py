@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.api import invite_attempts
 from app.api.deps.auth import hash_token
 from app.api.quota import today_kst
 from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
@@ -20,6 +21,14 @@ PREVIEW = "/api/v1/invites/{code}"
 ACCEPT = "/api/v1/invites/{code}/accept"
 CODE = "ABCD1234"
 ALPHABET = set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+
+
+@pytest.fixture(autouse=True)
+def _clear_attempts():
+    """시도 카운터는 프로세스 메모리라 테스트 사이에 샌다 — 같은 IP 버킷을 함께 쓴다."""
+    invite_attempts.clear()
+    yield
+    invite_attempts.clear()
 
 
 @pytest.fixture
@@ -229,3 +238,52 @@ async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_cl
     # 코드가 남아 있어 다른 보호자는 쓸 수 있다
     ok = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
     assert ok.status_code == 200
+
+
+async def _fail(client, how: str, headers) -> int:
+    """없는 코드로 한 번 실패한다. how 는 확인(preview) 또는 수락(accept)."""
+    if how == "preview":
+        res = await client.get(PREVIEW.format(code="ZZZZ9999"), headers=headers)
+    else:
+        res = await client.post(ACCEPT.format(code="ZZZZ9999"), json={}, headers=headers)
+    return res.status_code
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        ["preview"] * 6,
+        ["accept"] * 6,
+        ["preview", "accept", "preview", "accept", "preview", "accept"],
+    ],
+    ids=["확인만", "수락만", "섞어서"],
+)
+async def test_확인과_수락의_실패를_합쳐_5회면_6번째가_429(db_client, family, pattern):
+    _, _, _, _, stranger_headers = family
+
+    statuses = [await _fail(db_client, how, stranger_headers) for how in pattern]
+
+    assert statuses == [404] * 5 + [429]
+
+
+async def test_계정을_바꿔도_같은_IP_에서_30회를_넘으면_429(db_client, session):
+    """X-Forwarded-For 를 매번 바꿔 보내도 버킷이 바뀌지 않는다 — 그 헤더를 믿지 않는다."""
+    statuses = []
+    for n in range(7):
+        headers, _ = await issue_bearer(session, token=f"ip-token-{n}")
+        for m in range(5):
+            spoofed = headers | {"X-Forwarded-For": f"10.0.{n}.{m}"}
+            statuses.append(await _fail(db_client, "preview", spoofed))
+
+    assert statuses[:30] == [404] * 30
+    assert statuses[30:] == [429] * 5
+
+
+async def test_아이가_있는_보호자의_409_는_실패로_세지_않는다(db_client, session, family):
+    child, owner_headers, owner_id, _, _ = family
+    await _seed_invite(session, child, owner_id)
+
+    statuses = [await _fail(db_client, "preview", owner_headers) for _ in range(6)]
+
+    assert statuses == [409] * 6
+    assert invite_attempts._failures == {}
