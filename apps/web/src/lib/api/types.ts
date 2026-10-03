@@ -518,10 +518,11 @@ export interface EventDraft {
   review_reason?: string;
   /**
    * ⚠️ 이 초안이 어느 제안(들)에서 왔는지. 제안 경로에만 있다 (#122 에서 모양이 미정으로 남은 자리).
-   *    제출받는 쪽이 그 `suggestion.status` 를 함께 `approved` 로 바꿔야 해서 필요하다.
+   *    제출받는 쪽이 **제안 ↔ 일정 연결**을 남기려고 필요하다 (#206). 🚨 상태를 바꾸려는 것이 아니다 —
+   *    초안이 되는 제안은 이미 채택(`approved`)된 것이다.
    *
-   * 🚨 **배열인 이유** — `food` 제안 여러 건이 한 끼로 묶여 초안 하나가 된다. 단수로 두면
-   *    묶인 나머지 제안이 `draft` 인 채로 남아 24시간 뒤 만료된다 (보호자는 골랐는데).
+   * 🚨 **배열인 이유** — `food` 제안 여러 건이 한 끼로 묶여 초안 하나가 된다. 연결이 N:1 이라
+   *    단수로 두면 묶인 나머지 제안은 일정이 됐다는 사실이 남지 않는다.
    */
   suggestion_ids?: string[];
 }
@@ -543,7 +544,7 @@ export interface SubmitEventBody {
   event: EventDraftFields;
   items: EventDraftItem[];
   /**
-   * 제출받는 쪽이 그 `suggestion.status` 를 `approved` 로 바꿔야 해서 필요하다.
+   * 제출받는 쪽이 제안 ↔ 일정 연결을 남기려고 필요하다 (#206). 🚨 제안의 `status` 는 바뀌지 않는다.
    * 제안 경로(create)에만 있다. 🚨 **배열이다** — `food` 제안 여러 건이 한 초안으로 묶인다.
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
@@ -558,11 +559,12 @@ export interface SubmitEventBody {
  * 🚨 **일정과 다른 축이다.** 이걸 부른다고 캘린더에 아무것도 안 들어간다. 부모가 "이걸로 할게요"
  *    라고 말한 것을 남기는 자리이고, 일정으로 만들지는 **그다음에** 따로 묻는다.
  *
- * ⚠️ **계약서에 없는 엔드포인트다.** 지금 계약에서 `approved` 가 되는 경로는 **초안 제출 하나**
- *    뿐이라(`SubmitEventBody.suggestion_ids`), 고르기만 하고 일정을 안 만들면 그 선택이
- *    **24시간 뒤 `expired`** 로 사라지고 §4 ⑤(선택·거절을 Memory 로 되돌려 기록)가 배우는 것이
- *    없다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
- *    ⚠️ 합의가 ㉯(새 상태 `chosen`)로 나면 이 응답의 `status` 값만 바뀐다.
+ * 🚨 **`approved` 의 뜻은 "보호자가 채택했다" 하나다** (#196 멘토 리뷰 · #206). 새 상태(`chosen`)를
+ *    두지 않는다. 일정이 됐는지는 상태가 아니라 **제안 ↔ 일정 연결**로 본다 — 그래서 일정을 제출해도
+ *    `status` 는 그대로고, 일정이 나중에 지워져도 채택은 남는다. 실제로 했는지는 `feedback` 이 따로 받는다.
+ *    24시간 만료는 **`draft` 에만** 걸린다 (고르지 않은 제안).
+ *
+ * ⚠️ **계약서에 없는 엔드포인트다.** 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
  *
  * 🚨 **승인 게이트가 아니다.** 되돌릴 수 없는 2곳은 캘린더 쓰기와 건강·알레르기 확정뿐이라
  *    (최상위 §2), 이 버튼에 `btn-approve` 도 `caution` 도 쓰지 않는다.
@@ -637,12 +639,12 @@ export interface CreateEventDraftsResponse {
 
 /**
  * 제출 응답. 🚨 **승인 게이트 ㉠ 을 지난 뒤**라 여기 오는 `event` 는 실제로 저장된 행이다.
- * 제안에서 온 초안이면 그 `suggestion.status` 도 함께 바뀐다.
+ *
+ * 🚨 **제안의 `status` 를 싣지 않는다** (#206). 제출은 제안 상태를 바꾸지 않는다 — 초안이 된
+ *    제안은 이미 `approved` 고, 제출이 남기는 것은 제안 ↔ 일정 연결이다.
  */
 export interface SubmitEventResponse {
   event: CalendarEvent;
-  /** 제안 경로에서만 의미가 있다. 다른 두 경로는 서버가 안 싣는다. */
-  suggestion_status?: SuggestionStatus;
 }
 
 /**
