@@ -4,8 +4,12 @@
 """
 
 from datetime import datetime
+from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel
+
+from app.domains.child.models import ParentChildRelation
 
 
 class CreateInviteRequest(BaseModel):
@@ -46,3 +50,20 @@ class InvitePreviewResponse(BaseModel):
     child: InvitePreviewChild
     invited_by: InvitePreviewInviter
     expires_at: datetime
+
+
+class AcceptInviteRequest(BaseModel):
+    """POST /invites/{code}/accept — 관계는 받는 쪽이 고른다. 안 고르면 필드를 뺀다."""
+
+    relation: ParentChildRelation | None = None
+    """안 고르면 other 로 저장한다 (#131)."""
+
+
+class AcceptInviteResponse(BaseModel):
+    """200 — 화면이 수락 뒤 그 아이 홈으로 가려면 child_id 가 필요하다."""
+
+    child_id: UUID
+    nickname: str
+    age_display: str
+    role: Literal["member"]
+    """초대로 들어온 보호자는 owner 가 아니다. 승인 대기 상태 없이 바로 연결된다."""

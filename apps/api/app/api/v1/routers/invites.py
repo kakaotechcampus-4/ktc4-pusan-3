@@ -1,4 +1,4 @@
-"""보호자 초대 — docs/api/invite-v1.md §3. 지금은 코드 발행 · 수락 전 확인.
+"""보호자 초대 — docs/api/invite-v1.md §3. 코드 발행 · 수락 전 확인 · 수락.
 
 인증은 router.py 의 protected_router 가 건다. 세 엔드포인트 모두 Bearer 다.
 
@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.auth import CurrentParent, hash_token
@@ -17,14 +18,18 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
 from app.api.v1.schemas.invites import (
+    AcceptInviteRequest,
+    AcceptInviteResponse,
     CreateInviteRequest,
     CreateInviteResponse,
     InvitePreviewChild,
     InvitePreviewInviter,
     InvitePreviewResponse,
 )
-from app.domains.child.models import Child, Invite
+from app.domains.child.models import Child, Invite, ParentChildRelation
 from app.domains.child.repository import (
+    connect_parent,
+    consume_invite,
     create_invite,
     find_accessible_child,
     find_invite_with_child,
@@ -144,4 +149,59 @@ async def preview_invite(
         ),
         invited_by=InvitePreviewInviter(nickname=inviter_nickname),
         expires_at=invite.expires_at,
+    )
+
+
+@router.post(
+    "/invites/{code}/accept",
+    responses={
+        404: {"model": ErrorEnvelope},
+        409: {"model": ErrorEnvelope},
+        410: {"model": ErrorEnvelope},
+    },
+)
+async def accept_invite(
+    code: str, body: AcceptInviteRequest, parent: CurrentParent, session: SessionDep
+) -> AcceptInviteResponse:
+    """수락 — 코드 소비와 parent_child 생성을 한 트랜잭션으로. 수락하면 바로 member 다."""
+    await _reject_if_has_child(session, parent.parent_id)
+
+    normalized = normalize_invite_code(code)
+    invite = None
+    if len(normalized) == _CODE_LENGTH:
+        invite = await consume_invite(
+            session,
+            code_hash=hash_token(normalized),
+            parent_id=parent.parent_id,
+            now=datetime.now(UTC),
+        )
+    if invite is None:
+        # 소비하지 못했다. 다시 읽어 왜인지 가른다 — 없음 404 · 사용됨 409 · 만료 410.
+        await _find_open_invite(session, normalized)
+        # 다시 읽었는데 쓸 수 있게 보이는 경우는 논리상 없다. 오면 쓸 수 없는 코드로 답한다.
+        raise ApiError(409, "invite_used", "이미 사용된 코드예요")
+
+    try:
+        await connect_parent(
+            session,
+            child_id=invite.child_id,
+            parent_id=parent.parent_id,
+            relation=body.relation or ParentChildRelation.OTHER,
+        )
+    except IntegrityError as exc:
+        # 앞의 확인과 여기 사이에 이 보호자에게 아이가 생겼다 (아이 등록 · 다른 초대 수락).
+        # 롤백하면 코드 소비도 되돌아간다 — 코드는 다른 사람이 쓸 수 있게 남는다.
+        await session.rollback()
+        # asyncpg 의 원래 예외(UniqueViolationError)가 제약 이름을 들고 있다.
+        if getattr(exc.orig.__cause__, "constraint_name", None) != "uq_parent_child_parent_id":
+            raise
+        raise ApiError(409, "child_already_exists", "이미 등록한 아이가 있어요") from exc
+
+    child = await session.get(Child, invite.child_id)
+    await session.commit()
+    return AcceptInviteResponse(
+        child_id=child.id,
+        nickname=child.nickname,
+        age_display=age_display(child.birth_date, today_kst()),
+        role="member",
     )

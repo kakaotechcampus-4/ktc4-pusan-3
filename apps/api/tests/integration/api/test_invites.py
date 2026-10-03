@@ -1,4 +1,4 @@
-"""보호자 초대 — docs/api/invite-v1.md §3. 지금은 코드 발행(§3-1) · 수락 전 확인(§3-2)."""
+"""보호자 초대 — docs/api/invite-v1.md §3. 코드 발행(§3-1) · 수락 전 확인(§3-2) · 수락(§3-3)."""
 
 import hashlib
 from datetime import UTC, date, datetime, timedelta
@@ -17,6 +17,7 @@ from .conftest import issue_bearer
 
 ISSUE = "/api/v1/children/{cid}/invites"
 PREVIEW = "/api/v1/invites/{code}"
+ACCEPT = "/api/v1/invites/{code}/accept"
 CODE = "ABCD1234"
 ALPHABET = set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 
@@ -149,3 +150,82 @@ async def test_아이가_있는_보호자는_코드를_보기_전에_409(db_clie
         res = await db_client.get(PREVIEW.format(code=path_code), headers=owner_headers)
         assert res.status_code == 409
         assert res.json()["error"]["code"] == "child_already_exists"
+
+
+async def test_확인_뒤_수락하면_member_로_바로_연결된다(db_client, session, family):
+    child, _, owner_id, _, stranger_headers = family
+    invite = await _seed_invite(session, child, owner_id)
+
+    assert (
+        await db_client.get(PREVIEW.format(code=CODE), headers=stranger_headers)
+    ).status_code == 200
+    res = await db_client.post(
+        ACCEPT.format(code=CODE), json={"relation": "sitter"}, headers=stranger_headers
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["child_id"] == str(child.id)
+    assert body["role"] == "member"
+    await session.refresh(invite)
+    link = await session.scalar(
+        select(ParentChild).where(
+            ParentChild.child_id == child.id, ParentChild.parent_id == invite.used_by
+        )
+    )
+    assert link.relation == ParentChildRelation.SITTER
+    assert invite.used_at is not None
+
+
+async def test_relation_없이_수락하면_other(db_client, session, family):
+    child, _, owner_id, _, stranger_headers = family
+    invite = await _seed_invite(session, child, owner_id)
+
+    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+
+    assert res.status_code == 200
+    await session.refresh(invite)
+    link = await session.scalar(select(ParentChild).where(ParentChild.parent_id == invite.used_by))
+    assert link.relation == ParentChildRelation.OTHER
+
+
+async def test_한_번_쓴_코드는_다른_보호자가_못_쓴다(db_client, session, family):
+    child, _, owner_id, _, stranger_headers = family
+    await _seed_invite(session, child, owner_id)
+    other_headers, _ = await issue_bearer(session, token="other-token")
+
+    first = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+    second = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=other_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "invite_used"
+
+
+async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_client, session, family):
+    """확인과 연결 사이에 아이가 생긴 경우. 보관된 아이의 parent_child 행으로 재현한다 —
+    보유 확인은 보관된 아이를 세지 않지만 유니크 제약은 그 행에 걸린다."""
+    child, _, owner_id, _, stranger_headers = family
+    invite = await _seed_invite(session, child, owner_id)
+    _, stranger_id = await issue_bearer(session, token="archived-token")
+    headers = {"Authorization": "Bearer archived-token"}
+    archived = await create_child(
+        session,
+        owner_parent_id=stranger_id,
+        nickname="보관",
+        birth_date=date(2023, 1, 1),
+        relation=ParentChildRelation.MOTHER,
+    )
+    archived.deleted_at = datetime.now(UTC)
+    # 핸들러의 rollback 이 여기까지 되감지 않게 심은 것을 확정한다 (바깥 트랜잭션은 끝에 롤백)
+    await session.commit()
+
+    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=headers)
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "child_already_exists"
+    await session.refresh(invite)
+    assert invite.used_at is None
+    # 코드가 남아 있어 다른 보호자는 쓸 수 있다
+    ok = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+    assert ok.status_code == 200

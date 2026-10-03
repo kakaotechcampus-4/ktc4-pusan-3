@@ -139,3 +139,36 @@ async def find_invite_with_child(
         )
     ).first()
     return None if row is None else (row[0], row[1], row[2])
+
+
+async def consume_invite(
+    session: AsyncSession, *, code_hash: bytes, parent_id: uuid.UUID, now: datetime
+) -> Invite | None:
+    """쓸 수 있는 초대를 한 번만 소비한다. 쓸 수 없으면 None.
+
+    조건부 UPDATE 한 번이라 같은 코드로 동시에 와도 한쪽만 행을 받는다.
+    만료 · 사용 여부를 이 시점에 다시 본다 — 확인 화면과 수락 사이에 바뀌었을 수 있다.
+    """
+    return await session.scalar(
+        update(Invite)
+        .where(
+            Invite.code_hash == code_hash,
+            Invite.used_at.is_(None),
+            Invite.expires_at > now,
+            Invite.child_id.in_(select(Child.id).where(Child.deleted_at.is_(None))),
+        )
+        .values(used_at=now, used_by=parent_id)
+        .returning(Invite)
+    )
+
+
+async def connect_parent(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    relation: ParentChildRelation,
+) -> None:
+    """보호자를 아이에 member 로 잇는다. 이미 아이가 있으면 uq_parent_child_parent_id 위반."""
+    session.add(ParentChild(parent_id=parent_id, child_id=child_id, relation=relation))
+    await session.flush()
