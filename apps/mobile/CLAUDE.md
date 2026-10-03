@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 · 외부 링크를 시스템 브라우저로 · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 · 외부 링크를 시스템 브라우저로 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 토큰을 들고 있지 않다. 상태를 관리하지 않는다.
 
@@ -31,6 +31,7 @@ Owner: 고태영 (프론트 리드)
 | expo-dev-client | 57.0.19 | 개발 빌드 런처 — Expo Go 로는 사진을 못 본다 (아래) |
 | expo-image-manipulator | 57.0.19 | 썸네일 축소 |
 | expo-file-system | 57.0.7 | 원본 base64 읽기 |
+| expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) |
 | TypeScript | 6.0.3 | |
 
 ### ⚠️ 네이티브 패키지는 npm 최신 ≠ 맞는 버전
@@ -57,6 +58,7 @@ src/config.ts                WEB_URL · 허용 출처 판정
 src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다
 src/native/bridge.ts         웹뷰에 꽂는 창구 — 주입 스크립트 · 요청 파싱 · 조각 전송
 src/native/recent-photos.ts  최근 사진을 실제로 읽는 곳 (권한 · 썸네일 · 원본)
+src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth/callback 변환
 app.json                     Expo 설정 (name · scheme · bundle id · 권한 플러그인)
 ```
 
@@ -115,6 +117,7 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
 ## 4. 규칙
 
 - **허용 출처 밖은 웹뷰에 가두지 않는다.** `onShouldStartLoadWithRequest` 에서 `isInternalUrl()` 로 거르고, 아니면 `Linking.openURL` 로 시스템 브라우저에 넘긴다. 소셜 로그인·약관 페이지가 웹뷰 안에서 열리면 사용자가 주소창을 못 봐서 피싱과 구분할 수 없다.
+- 🚨 **로그인 시작 URL 만 예외다** (`isAuthStartUrl()` · #210). 시스템 브라우저로 내보내면 앱 밖으로 두 번 전환되고 `icatch://auth` 복귀를 받을 곳이 없다. `openAuthSessionAsync` 로 열고, `success` 일 때만 복귀 쿼리를 `/auth/callback` 에 붙여 **같은 웹뷰를 `location.replace` 로 옮긴다** — 웹뷰를 다시 만들면 `sessionStorage` 의 bind 가 사라진다. 셸은 URL 을 열고 돌려받을 뿐 코드 교환 · 토큰은 웹이 한다 (§1). 흐름 정본은 [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) §5.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
 - 🚨 **웹에서 온 메시지를 믿지 않는다.** `parseBridgeRequest()` 를 거치지 않은 값으로 네이티브를 부르지 않는다.
   웹뷰는 우리 페이지만 띄우지만(`isInternalUrl`), 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
@@ -143,7 +146,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 브릿지 왕복 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 브릿지 왕복 · 로그인 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
@@ -163,6 +166,7 @@ Metro · Next 는 WSL 에서 도는데, WSL2 가 Windows 의 `localhost` 를 WSL
 ```bash
 adb.exe reverse tcp:8081 tcp:8081   # Metro
 adb.exe reverse tcp:3000 tcp:3000   # apps/web
+adb.exe reverse tcp:8000 tcp:8000   # apps/api — 실서버 로그인을 볼 때. 카카오 콜백이 localhost:8000 이라 인증 세션도 여기로 온다
 ```
 
 `.env.local` 은 `EXPO_PUBLIC_WEB_URL=http://localhost:3000` 그대로 두고,
