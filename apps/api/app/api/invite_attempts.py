@@ -38,6 +38,10 @@ def ip_bucket(host: str | None) -> str:
         address = ipaddress.ip_address(host)
     except ValueError:
         return host
+    # 듀얼 스택 소켓(--host ::)은 IPv4 를 ::ffff:1.2.3.4 로 넘긴다. /64 로 묶으면 IPv4 전체가
+    # ::/64 한 버킷이 되므로 IPv4 로 되돌린다.
+    if address.version == 6 and address.ipv4_mapped:
+        return str(address.ipv4_mapped)
     if address.version == 6:
         return str(ipaddress.ip_network(f"{address}/64", strict=False))
     return str(address)
