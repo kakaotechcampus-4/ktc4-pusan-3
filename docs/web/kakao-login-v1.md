@@ -354,7 +354,7 @@ if (isAuthStartUrl(request.url)) {                 // 경로가 /api/v1/auth/<pr
   void openAuthSession(request.url);               // openAuthSessionAsync(url, "icatch://auth")
   return false;
 }
-void Linking.openURL(request.url);                 // 그 외 외부 링크는 기존 동작 그대로
+void openExternal(request.url);                    // 그 외 외부 링크 — in-app 브라우저 (#212)
 return false;
 ```
 
@@ -470,7 +470,7 @@ webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location
 - [x] 앱(개발 빌드) 전체 왕복 — **Android 에뮬레이터** (#210). 시작 → Custom Tab → 카카오 → `icatch://auth?code=` → 탭이 저절로 닫힘 → `/auth/callback` 교환 `200` → 가입 동의 화면. 5회 연속 `success` 로 돌아옴
 - [ ] 앱 전체 왕복 — iOS · **실기기 "카카오톡으로 로그인"**(에뮬레이터에 카카오톡이 없다)
 - [x] 인앱 브라우저에서 X → 00 으로 돌아오고 버튼이 원래대로 · 이어서 다시 누르면 정상 왕복 (Android)
-- [x] 로그인 시작이 아닌 외부 링크("전문 보기")는 그대로 시스템 브라우저로 (Android)
+- [x] 로그인 시작이 아닌 외부 링크("전문 보기")는 인증 세션으로 열리지 않음 (Android) — #212 부터 in-app 브라우저
 - [ ] bind 를 지우고 교환 → `401 invalid_handoff`
 - [ ] 앱 콜드 스타트 후 재로그인 체감 (§9-2)
 
