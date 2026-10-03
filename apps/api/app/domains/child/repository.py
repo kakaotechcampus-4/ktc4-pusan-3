@@ -21,9 +21,9 @@ async def list_children_for_parent(session: AsyncSession, *, parent_id: uuid.UUI
 
 
 async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
-    """이 보호자에게 parent_child 행이 있는가. 보관된 아이와의 연결도 센다.
+    """이 보호자에게 parent_child 행이 있는가. 삭제(soft delete)된 아이와의 연결도 센다.
 
-    uq_parent_child_parent_id 와 같은 기준이다 — 보관해도 행이 남아 새 연결을 막기 때문이다.
+    uq_parent_child_parent_id 와 같은 기준이다 — soft delete 해도 행이 남아 새 연결을 막는다.
     """
     return bool(await session.scalar(select(exists().where(ParentChild.parent_id == parent_id))))
 
@@ -136,7 +136,7 @@ async def find_invite_with_child(
 ) -> tuple[Invite, Child, str | None] | None:
     """코드 해시로 초대 · 그 아이 · 초대한 보호자 별명을 한 번에 찾는다.
 
-    보관된 아이의 초대는 없는 것으로 본다. 만료 · 사용 여부는 호출하는 쪽이 가른다.
+    삭제(soft delete)된 아이의 초대는 없는 것으로 본다. 만료 · 사용 여부는 호출하는 쪽이 가른다.
     """
     row = (
         await session.execute(

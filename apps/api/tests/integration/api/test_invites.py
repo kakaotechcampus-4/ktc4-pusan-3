@@ -122,7 +122,7 @@ async def test_확인은_별명_나이만_내리고_코드를_쓰지_않는다(d
     [
         ("없는 코드", 404, "invite_not_found"),
         ("짧은 코드", 404, "invite_not_found"),
-        ("보관된 아이", 404, "invite_not_found"),
+        ("삭제된 아이", 404, "invite_not_found"),
         ("사용됨", 409, "invite_used"),
         ("만료", 410, "invite_expired"),
     ],
@@ -135,7 +135,7 @@ async def test_확인_실패(db_client, session, family, case, status, code):
         path_code = "ZZZZ9999"
     elif case == "짧은 코드":
         path_code = "ABCD123"
-    elif case == "보관된 아이":
+    elif case == "삭제된 아이":
         (await session.get(Child, child.id)).deleted_at = now
     await _seed_invite(
         session,
@@ -234,22 +234,22 @@ async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_cl
     assert ok.status_code == 200
 
 
-async def test_보관된_아이만_있어도_확인에서_409(db_client, session, family):
-    """보관해도 parent_child 행이 남아 수락이 막힌다.
+async def test_삭제된_아이만_있어도_확인에서_409(db_client, session, family):
+    """아이를 soft delete 해도 parent_child 행이 남아 수락이 막힌다.
 
     그러니 확인에서 아이를 보여 주기 전에 막는다.
     """
     child, _, owner_id, _, _ = family
     await _seed_invite(session, child, owner_id)
-    headers, parent_id = await issue_bearer(session, token="archived-token")
-    archived = await create_child(
+    headers, parent_id = await issue_bearer(session, token="deleted-token")
+    deleted = await create_child(
         session,
         owner_parent_id=parent_id,
-        nickname="보관",
+        nickname="삭제",
         birth_date=date(2023, 1, 1),
         relation=ParentChildRelation.MOTHER,
     )
-    archived.deleted_at = datetime.now(UTC)
+    deleted.deleted_at = datetime.now(UTC)
     await session.flush()
 
     res = await db_client.get(PREVIEW.format(code=CODE), headers=headers)

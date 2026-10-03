@@ -21,8 +21,8 @@ class ParentChild(Base, UUIDPk):
     __tablename__ = "parent_child"
     # 보호자당 아이 1명. 아이 등록(#92)과 초대 수락(#198)이 이 위반을
     # 409 child_already_exists 로 바꾼다.
-    # 아이를 보관(archive)해도 이 행은 남는다 — 그 보호자는 재등록·수락이 막힌다
-    # (#198 에서 물을 것).
+    # 아이를 soft delete(archive_child)하면 이 행이 남아 그 보호자는 재등록·수락이 막힌다.
+    # hard delete(purge_child)면 CASCADE 로 함께 지워진다 (invite-v1.md §7 남은 질문).
     __table_args__ = (UniqueConstraint("parent_id", name="uq_parent_child_parent_id"),)
 
     parent_id: Mapped[uuid.UUID] = mapped_column(
