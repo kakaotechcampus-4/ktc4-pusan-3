@@ -1,4 +1,4 @@
-"""보호자 초대 — docs/api/invite-v1.md §3. 지금은 코드 발행 하나.
+"""보호자 초대 — docs/api/invite-v1.md §3. 지금은 코드 발행 · 수락 전 확인.
 
 인증은 router.py 의 protected_router 가 건다. 세 엔드포인트 모두 Bearer 다.
 
@@ -10,12 +10,27 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.auth import CurrentParent, hash_token
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
-from app.api.v1.schemas.invites import CreateInviteRequest, CreateInviteResponse
-from app.domains.child.repository import create_invite, find_accessible_child
+from app.api.quota import today_kst
+from app.api.v1.schemas.invites import (
+    CreateInviteRequest,
+    CreateInviteResponse,
+    InvitePreviewChild,
+    InvitePreviewInviter,
+    InvitePreviewResponse,
+)
+from app.domains.child.models import Child, Invite
+from app.domains.child.repository import (
+    create_invite,
+    find_accessible_child,
+    find_invite_with_child,
+    list_children_for_parent,
+)
+from app.rules.age import age_display
 
 router = APIRouter()
 
@@ -76,3 +91,57 @@ async def issue_invite(
     )
     await session.commit()
     return CreateInviteResponse(invite_code=code, expires_at=expires_at)
+
+
+async def _reject_if_has_child(session: AsyncSession, parent_id: UUID) -> None:
+    """이미 아이가 있는 보호자는 코드를 보기 전에 돌려보낸다.
+
+    코드의 유효 여부를 알려 주지 않으므로 시도 제한의 실패로 세지 않는다 (#198).
+    연결되지 않을 아이의 별명 · 나이를 보여 준 뒤에 거절하는 일도 막는다 (invite-v1.md §5).
+    """
+    if await list_children_for_parent(session, parent_id=parent_id):
+        raise ApiError(409, "child_already_exists", "이미 등록한 아이가 있어요")
+
+
+async def _find_open_invite(
+    session: AsyncSession, raw_code: str
+) -> tuple[Invite, Child, str | None]:
+    """쓸 수 있는 초대를 찾는다. 없음 404 · 사용됨 409 · 만료 410."""
+    code = normalize_invite_code(raw_code)
+    found = None
+    if len(code) == _CODE_LENGTH:
+        found = await find_invite_with_child(session, code_hash=hash_token(code))
+    if found is None:
+        raise ApiError(404, "invite_not_found", "이 코드를 찾을 수 없어요")
+    invite = found[0]
+    if invite.used_at is not None:
+        raise ApiError(409, "invite_used", "이미 사용된 코드예요")
+    if invite.expires_at <= datetime.now(UTC):
+        raise ApiError(410, "invite_expired", "코드 기한이 지났어요")
+    return found
+
+
+@router.get(
+    "/invites/{code}",
+    responses={
+        404: {"model": ErrorEnvelope},
+        409: {"model": ErrorEnvelope},
+        410: {"model": ErrorEnvelope},
+    },
+)
+async def preview_invite(
+    code: str, parent: CurrentParent, session: SessionDep
+) -> InvitePreviewResponse:
+    """수락 전 확인 — 어느 아이에 붙는지 보여 준다.
+
+    🚨 코드를 소비하지 않는다. 확인하고 그만둔 사람이 코드를 다시 받지 않게 한다.
+    """
+    await _reject_if_has_child(session, parent.parent_id)
+    invite, child, inviter_nickname = await _find_open_invite(session, code)
+    return InvitePreviewResponse(
+        child=InvitePreviewChild(
+            nickname=child.nickname, age_display=age_display(child.birth_date, today_kst())
+        ),
+        invited_by=InvitePreviewInviter(nickname=inviter_nickname),
+        expires_at=invite.expires_at,
+    )

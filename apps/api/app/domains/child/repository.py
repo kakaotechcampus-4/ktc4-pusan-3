@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
+from app.domains.identity.models import Parent
 
 
 async def list_children_for_parent(session: AsyncSession, *, parent_id: uuid.UUID) -> list[Child]:
@@ -120,3 +121,21 @@ async def create_invite(
     session.add(row)
     await session.flush()
     return row
+
+
+async def find_invite_with_child(
+    session: AsyncSession, *, code_hash: bytes
+) -> tuple[Invite, Child, str | None] | None:
+    """코드 해시로 초대 · 그 아이 · 초대한 보호자 별명을 한 번에 찾는다.
+
+    보관된 아이의 초대는 없는 것으로 본다. 만료 · 사용 여부는 호출하는 쪽이 가른다.
+    """
+    row = (
+        await session.execute(
+            select(Invite, Child, Parent.nickname)
+            .join(Child, Child.id == Invite.child_id)
+            .outerjoin(Parent, Parent.id == Invite.created_by)
+            .where(Invite.code_hash == code_hash, Child.deleted_at.is_(None))
+        )
+    ).first()
+    return None if row is None else (row[0], row[1], row[2])

@@ -24,3 +24,25 @@ class CreateInviteResponse(BaseModel):
 
     expires_at: datetime
     """발행 후 24시간. 1회용이라 이 전에도 한 번 쓰이면 닫힌다."""
+
+
+class InvitePreviewChild(BaseModel):
+    nickname: str
+    age_display: str
+    """서버가 만든 나이 문구. 프론트는 다시 계산하지 않는다."""
+
+
+class InvitePreviewInviter(BaseModel):
+    nickname: str | None
+    """초대한 보호자의 별명만. 다른 정보는 내리지 않는다."""
+
+
+class InvitePreviewResponse(BaseModel):
+    """GET /invites/{code} — 수락 전에 어느 아이에 붙는지 보여 준다.
+
+    🚨 건강 · 알레르기를 싣지 않는다. 아직 연결되지 않은 사람이 코드만으로 부르는 창구다 (NF-04).
+    """
+
+    child: InvitePreviewChild
+    invited_by: InvitePreviewInviter
+    expires_at: datetime
