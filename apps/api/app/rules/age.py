@@ -31,6 +31,14 @@ _STAGE_BOUNDARIES: tuple[tuple[int, Stage], ...] = (
     (0, "infant_milk"),
 )
 
+# 화면에 내리는 나이 문구의 경계. 월령이 이 값보다 작으면 그 단위로 부른다.
+#   _DAYS_BEFORE_MONTHS 미만   → "생후 N일"
+#   _MONTHS_BEFORE_YEARS 미만  → "N개월"
+#   그 뒤                       → "만 N세"
+# 부르는 단위는 정해진 표준이 없어 잠정값이다 (#198). 바꾸면 이 두 숫자만 고친다.
+_DAYS_BEFORE_MONTHS = 3
+_MONTHS_BEFORE_YEARS = 24
+
 _BANDS: dict[Stage, Band] = {
     "infant_milk": "infant",
     "infant_weaning": "infant",
@@ -78,6 +86,22 @@ def months_between(birth_date: date, today: date) -> int:
     if today.day < birth_date.day and not _is_month_end_anniversary(birth_date, today):
         months -= 1
     return months
+
+
+def age_display(birth_date: date, today: date) -> str:
+    """화면에 그대로 보여 줄 나이 문구. 프론트는 나이를 계산하지 않고 이 값을 쓴다.
+
+    today 는 KST 날짜를 넘긴다 — 이유는 life_stage() 와 같다.
+    "생후 N일" 은 태어난 날을 1일로 센다 — 백일과 같은 기념일식이고, 국내 육아 앱
+    (BabyTime · 베베스냅 · 조이로그)도 이렇게 센다. 의료 · 영유아 검진의 "생후 N일" 은
+    지난 날 수(태어난 날 0일)라 같은 날이 하루 다르게 불린다 (#198 에서 물을 것).
+    """
+    months = months_between(birth_date, today)
+    if months < _DAYS_BEFORE_MONTHS:
+        return f"생후 {(today - birth_date).days + 1}일"
+    if months < _MONTHS_BEFORE_YEARS:
+        return f"{months}개월"
+    return f"만 {months // 12}세"
 
 
 def stage_of(months: int) -> Stage:
