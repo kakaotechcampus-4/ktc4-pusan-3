@@ -12,6 +12,7 @@ Supervisor 출력은 routing_cases 의 정답(RC01 등)을 그대로 쓴다 — 
 
 import asyncio
 import calendar
+import gc
 import json
 import logging
 from dataclasses import dataclass, replace
@@ -804,6 +805,99 @@ async def test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는�
     assert "model_calls 예산 초과" not in caplog.text
 
 
+async def test_단계마다_걸린_시간을_남긴다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # 도메인 단계에 최소 예산을 줄지는 이 값을 보고 정한다 (#202 범위 밖)
+    caplog.set_level(logging.INFO, logger="app.agents.pipeline")
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=0.05))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    times = result.times
+    assert times.supervisor_ms is not None
+    assert times.memory_ms is not None
+    assert times.budget_ms is not None and times.budget_ms <= pipeline.RUN_DEADLINE_S * 1000
+    assert times.writers_ms is None  # 쓰는 task 가 없었다
+    lines = [r.getMessage() for r in caplog.records if r.name == pipeline.__name__]
+    assert any("readers_ms=" in line and "budget_ms=" in line for line in lines)
+    task_lines = [line for line in lines if line.startswith("도메인 task ")]
+    assert len(task_lines) == 2  # task 마다 한 줄
+    assert all("result=ok" in line and " ms=" in line for line in task_lines)
+    # 묶음 시간은 늦은 쪽까지 기다린 값이다. 둘 다 perf_counter 라 루프 시계와 어긋나지 않는다
+    slowest = max(int(line.rsplit("ms=", 1)[1]) for line in task_lines)
+    assert times.readers_ms is not None and times.readers_ms >= slowest
+    assert all("수영장" not in line for line in lines)  # 조각은 남기지 않는다
+
+
+async def test_Memory_를_건너뛴_run_은_기록_단계_시간이_없다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # RC20 은 순수 요청형이라 Memory 를 부르지 않는다
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply("불리면 안 된다")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.times.supervisor_ms is not None
+    assert result.times.memory_ms is None
+    assert result.times.readers_ms is not None
+
+
+async def test_이어받기는_기록_단계_시간만_남긴다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+    )
+
+    assert result.times.memory_ms is not None
+    assert result.times == pipeline.StageTimes(memory_ms=result.times.memory_ms)
+
+
+async def test_시작도_못_하고_끊긴_task_는_ms_가_없다(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 앞 단계가 20초를 다 쓴 run. 0ms 로 남기면 "Agent 가 빨랐다" 로 읽힌다
+    caplog.set_level(logging.INFO, logger="app.agents.pipeline")
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=1))
+
+    ran = await pipeline._run_domain((_FOOD_TASK,), _FAKE_CONTEXTS, timeout=0.0)
+
+    assert ran.partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+    assert ran.readers_ms is not None  # 묶음은 돌았다(바로 끊겼다)
+    (line,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("도메인 task ")]
+    assert "result=timeout" in line
+    assert line.endswith("ms=None")
+
+
 def test_구현된_agent_마다_실행_함수가_있다() -> None:
     # 한쪽만 늘리면 routing 이 보낸 task 를 pipeline 이 못 찾는다
     assert set(pipeline._RUNNERS) == routing_module.IMPLEMENTED_AGENTS
@@ -1197,6 +1291,259 @@ async def test_쓰는_task_도_20초_안에서_센다(monkeypatch: pytest.Monkey
     assert log == ["갱신 시작"]
     assert ran.outcomes == ()
     assert ran.partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+
+
+# 끝나는 대로 넘기기
+_FOOD_TASK = DomainTask(run_id=RUN_ID, agent="food", task_type=None, request_texts=("x",))
+_ACTIVITY_TASK = DomainTask(run_id=RUN_ID, agent="activity", task_type=None, request_texts=("y",))
+
+
+async def test_읽는_task_결과는_끝나는_대로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 늦은 쪽을 기다리지 않는다. 돌려주는 outcomes는 그대로 task 순서
+    # food는 activity 결과가 넘어간 뒤에야 끝난다. 다 끝난 뒤 몰아서 넘기면 food가 끊긴다
+    activity_passed = asyncio.Event()
+
+    async def food_after_activity(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        await activity_passed.wait()
+        return _Outcome("food", task.task_type)
+
+    def record(outcome: Any) -> None:
+        passed.append(outcome.agent)
+        if outcome.agent == "activity":
+            activity_passed.set()
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food_after_activity)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
+    passed: list[str] = []
+
+    ran = await pipeline._run_domain(
+        (_FOOD_TASK, _ACTIVITY_TASK), _FAKE_CONTEXTS, timeout=1.0, on_outcome=record
+    )
+
+    assert passed == ["activity", "food"]  # 끝난 순서
+    assert [item.agent for item in ran.outcomes] == ["food", "activity"]  # task 순서
+
+
+async def test_쓰는_task_결과는_읽는_task_가_시작하기_전에_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log: list[str] = []
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(
+            daycare_meal=_runner("food", delay=0.01, log=log, name="갱신"),
+            meal_recommendation=_runner("food", log=log, name="추천"),
+        ),
+    )
+
+    await pipeline._run_domain(
+        (_DINNER, _MEAL),
+        {"food": _FakeContext()},
+        timeout=1.0,
+        on_outcome=lambda outcome: log.append(f"넘김 {outcome.task_type}"),
+    )
+
+    assert log == [
+        "갱신 시작",
+        "갱신 끝",
+        "넘김 daycare_meal",
+        "추천 시작",
+        "추천 끝",
+        "넘김 meal_recommendation",
+    ]
+
+
+async def test_같이_끝난_결과는_task_순서로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 같은 틱에 끝나면 순서가 run 마다 흔들리지 않게 task 순서로 넘긴다
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food"))
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
+    passed: list[str] = []
+
+    await pipeline._run_domain(
+        (_FOOD_TASK, _ACTIVITY_TASK),
+        _FAKE_CONTEXTS,
+        timeout=1.0,
+        on_outcome=lambda outcome: passed.append(outcome.agent),
+    )
+
+    assert passed == ["food", "activity"]
+
+
+async def test_결과를_넘기다_터지면_숨기지_않고_남은_Agent_를_끊는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 넘기는 쪽은 화면 번역이다. 번역 버그를 부분 실패로 바꾸면 화면에서 조용히 빠진다
+    log: list[str] = []
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=0.2, log=log))
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", log=log))
+
+    def broken(outcome: Any) -> None:
+        raise ValueError("번역 실패")
+
+    with pytest.raises(ValueError):
+        await pipeline._run_domain(
+            (_FOOD_TASK, _ACTIVITY_TASK), _FAKE_CONTEXTS, timeout=1.0, on_outcome=broken
+        )
+    await asyncio.sleep(0.3)
+
+    assert "activity 끝" in log  # 먼저 끝난 쪽을 넘기다 터졌다
+    assert "food 끝" not in log  # 남은 쪽은 뒤에서 이어 돌지 않았다
+
+
+async def test_넘기다_터져도_같이_끝난_Agent_의_예외_메시지는_로그에_남지_않는다(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 같이 끝난 묶음에서 앞 결과를 넘기다 터지면 뒤 task 의 예외는 꺼내지 못한 채 남는다.
+    # 안 꺼내면 asyncio가 GC 때 예외 메시지째 찍는다
+    async def fail_late(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        await asyncio.sleep(0)  # activity 와 같은 틱에 끝나게
+        raise RuntimeError("민준이 수영장")
+
+    def broken(outcome: Any) -> None:
+        raise ValueError("번역 실패")
+
+    caplog.set_level(logging.ERROR)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", fail_late)
+
+    with pytest.raises(ValueError):
+        await pipeline._run_domain(
+            (_ACTIVITY_TASK, _FOOD_TASK), _FAKE_CONTEXTS, timeout=1.0, on_outcome=broken
+        )
+    await asyncio.sleep(0.05)
+    gc.collect()  # 버려진 task 가 여기서 거둬진다
+
+    assert "민준이" not in caplog.text
+
+
+async def test_바깥에서_취소되면_도메인_Agent_도_같이_끊긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 러너의 60초 안전망이 run 을 끊는 경우다. gather 는 자식을 같이 취소했지만 wait 는 안 한다
+    log: list[str] = []
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=0.2, log=log))
+
+    running = asyncio.create_task(pipeline._run_domain((_FOOD_TASK,), _FAKE_CONTEXTS, timeout=1.0))
+    await asyncio.sleep(0.05)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    await asyncio.sleep(0.3)
+
+    assert log == ["food 시작"]
+
+
+async def test_RC16_먼저_끝난_Agent_의_결과가_먼저_나간다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # food 는 activity 의 DomainRouted 가 나간 뒤에야 끝난다. 몰아서 내보내면 food가 끊긴다
+    async def food_after_activity(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        while not _of(events, DomainRouted):
+            await asyncio.sleep(0)
+        return _Outcome("food", task.task_type)
+
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 1.0)  # 깨지면 20초를 돌지 않게
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food_after_activity)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert [event.agent for event in _of(events, DomainRouted)] == ["activity", "food"]
+    assert [item.agent for item in result.domain] == ["food", "activity"]  # 결과는 task 순서
+    assert _order(events)[-1] == "Done"
+
+
+@pytest.mark.parametrize(
+    ("food_runner", "reason"),
+    [
+        (_runner("food", delay=5), "timeout_20s"),
+        (_failing(RuntimeError("부서졌다")), "agent_error"),
+    ],
+    ids=["시간_초과", "실패"],
+)
+async def test_202_먼저_끝난_추천이_나가고_빠진_쪽은_partial_이며_기록은_남는다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    food_runner: Any,
+    reason: str,
+) -> None:
+    # 이슈 완료 기준. 음식·놀이 추천을 같이 돌렸고 놀이는 끝나고 음식은 20초를 넘기거나 죽는다.
+    # 추천이 빠져도 기록은 commit 된 뒤라 done + partial 로 끝나고 관찰이 남는다
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.5)  # 앞 단계는 FakeLLM 이라 수 ms
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food_runner)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", delay=0.01))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        commit=_commit_into(events),
+    )
+
+    names = _order(events)
+    assert (
+        names.index("_Committed")
+        < names.index("Saved")
+        < names.index("DomainRouted")
+        < names.index("Partial")
+        < names.index("Done")
+    )
+    assert [event.agent for event in _of(events, DomainRouted)] == ["activity"]
+    assert _of(events, Partial) == [Partial(reason, succeeded=("activity",), failed=("food",))]
+    assert result.failed is None  # 끝 신호는 done
+    assert result.committed is True
+    rows = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
+    assert len(rows) == 1  # 추천이 빠져도 기록은 남는다
+
+
+async def test_쓰는_task_가_죽어도_읽는_task_결과는_나가고_partial_은_맨_끝에_한_번(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(
+            daycare_meal=_failing(RuntimeError("부서졌다")),
+            meal_recommendation=_runner("food"),
+        ),
+    )
+
+    await handle_input(
+        _MEAL_AND_DINNER_RAW,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=_food_requests(
+            ("급식 대신 두유 받았대", "daycare_meal"), ("저녁 뭐 먹일까?", "meal_recommendation")
+        ),
+        memory_client=FakeLLM(_reply("불리면 안 된다")),
+        emit=events.append,
+    )
+
+    assert [event.task_type for event in _of(events, DomainRouted)] == ["meal_recommendation"]
+    assert _order(events)[-3:] == ["DomainRouted", "Partial", "Done"]
+    assert _order(events).count("Partial") == 1
 
 
 async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는다(
