@@ -2,10 +2,10 @@
 
 Agent 파트가 지킬 원칙 세 가지와 거기서 나온 할 일을 적는다. 원칙마다 지금 코드가 어디까지 지키는지와 빈 곳을 같이 적었다.
 
-작성일: 2026-10-02
+작성일: 2026-10-04
 선행: 루트 [CLAUDE.md](CLAUDE.md) §2·§3 · [Agent_공통규약](docs/agents/shared/Agent_공통규약.md) · [일정 초안 흐름 v1](docs/event/event-draft-flow-v1.md)
 
-다른 문서에 이미 있는 열린 항목(공통규약 C-8, 공통_구현_계획 K-1~K-11, 일정 초안 흐름 §6)은 다시 적지 않는다.
+다른 문서에 이미 있는 열린 항목(공통규약 C-8, 공통_구현_계획 K-1~K-10, 일정 초안 흐름 §6)은 다시 적지 않는다.
 
 ---
 
@@ -23,7 +23,7 @@ LLM 이 `child_id` 를 채우게 하면 지어낸 id 하나, 발화에 섞인 �
 POST /children/{cid}/inputs         경로에서 받는다            children.py:23
   → runner.agent_job(child_id=cid)  접수할 때 클로저에 잡는다   children.py:84-90
   → entrypoint.handle_input(...)                               runner.py:92-99
-  → AgentContext.child_id           tool 은 이 값만 읽는다      entrypoint.py:98-104
+  → AgentContext.child_id           tool 은 이 값만 읽는다      entrypoint.py:107-113
 ```
 
 헤더로 받지 않는 이유는 멱등 범위다. 범위가 `parent_id + method + path + key` 라서 경로에 있는 아이가 저절로 들어간다([children.py:41-46](apps/api/app/api/v1/routers/children.py#L41-L46)). 아이를 헤더로 옮기면 같은 키로 다른 아이 요청이 왔을 때 앞 아이의 run 이 재생되고 뒤 입력은 저장되지 않는다.
@@ -94,7 +94,7 @@ Agent 쪽에서 들고 갈 안은 이렇다.
 
 ### 2-5. 응급 신호를 규칙으로 잡는다
 
-`_safety_precheck` 는 아무것도 하지 않는다([pipeline.py:561](apps/api/app/agents/pipeline.py#L561), 호출은 [pipeline.py:284](apps/api/app/agents/pipeline.py#L284)). Supervisor 의 `guarded` 에도 응급 라벨이 없다. 알레르기 등록과 진단 문의 둘뿐이다([supervisor/prompt.py:52-57](apps/api/app/agents/supervisor/prompt.py#L52-L57)). 그래서 지금은 응급 신호를 아무 데서도 잡지 않는다. "증상은 잘라서 record 로 보낸다"는 프롬프트 규칙을 따르면 "숨을 못 쉬어"는 관찰 기록으로 갈 것이다. 실제로 돌려 보지는 않았다.
+`_safety_precheck` 는 아무것도 하지 않는다([pipeline.py:750](apps/api/app/agents/pipeline.py#L750), 호출은 [pipeline.py:339](apps/api/app/agents/pipeline.py#L339)). Supervisor 의 `guarded` 에도 응급 라벨이 없다. 알레르기 등록과 진단 문의 둘뿐이다([supervisor/prompt.py:52-57](apps/api/app/agents/supervisor/prompt.py#L52-L57)). 그래서 지금은 응급 신호를 아무 데서도 잡지 않는다. "증상은 잘라서 record 로 보낸다"는 프롬프트 규칙을 따르면 "숨을 못 쉬어"는 관찰 기록으로 갈 것이다. 실제로 돌려 보지는 않았다.
 
 루트 §4 와 공통규약 §9 는 규칙이 Agent 라우팅보다 먼저 잡도록 정했다. Health 명세도 응급 신호는 Agent 를 거치면 늦다고 적었다([Health_Agent_명세.md:70](docs/agents/health/Health_Agent_명세.md)). health_plan S10 에 잡혀 있지만 Health 가 올리는 순서의 마지막이라 그때까지 비어 있게 된다.
 
@@ -102,12 +102,14 @@ Agent 쪽에서 들고 갈 안은 이렇다.
 
 ### 2-6. 생일 기본값을 없앤다
 
-`birth_date` 를 못 받으면 만 2세로 가정하고 Food 를 연다([entrypoint.py:68-70](apps/api/app/agents/entrypoint.py#L68-L70), [entrypoint.py:109](apps/api/app/agents/entrypoint.py#L109)). 아이 정보를 실제로 읽기 전까지 쓰는 임시값이다. 월령으로 식이 단계와 tool 묶음이 갈리니, 실제 아이 정보가 붙은 뒤에는 생일을 못 읽은 run 에서 Food 를 돌리지 않아야 한다. 루트 §2 가 알레르기 조회 실패에 "기본값으로 넘기지 말 것"이라고 한 것과 같은 이유다.
+`birth_date` 를 못 받으면 만 2세로 가정하고 Food 를 연다([entrypoint.py:74-76](apps/api/app/agents/entrypoint.py#L74-L76), [entrypoint.py:120](apps/api/app/agents/entrypoint.py#L120)). 아이 정보를 실제로 읽기 전까지 쓰는 임시값이다. 월령으로 식이 단계와 tool 묶음이 갈리니, 실제 아이 정보가 붙은 뒤에는 생일을 못 읽은 run 에서 Food 를 돌리지 않아야 한다. 루트 §2 가 알레르기 조회 실패에 "기본값으로 넘기지 말 것"이라고 한 것과 같은 이유다.
 
-[entrypoint.py:108](apps/api/app/agents/entrypoint.py#L108) 의 TODO 는 FoodPorts 교체만 적고 있다. fallback 상수도 같이 지운다는 걸 TODO 에 더해 두면 9단계에서 빠뜨리지 않는다.
+[entrypoint.py:119](apps/api/app/agents/entrypoint.py#L119) 의 TODO 는 FoodPorts 교체만 적고 있다. fallback 상수도 같이 지운다는 걸 TODO 에 더해 두면 9단계에서 빠뜨리지 않는다.
 
-### 2-7. partial 을 추천 카드와 같은 PR 에서 연다
+### 2-7. partial은 추천 카드보다 먼저 열었다 
 
-pipeline 은 도메인 Agent 일부가 실패하거나 20초를 넘기면 `Partial` 을 만든다([pipeline.py:549](apps/api/app/agents/pipeline.py#L549)). SSE 번역은 추천 카드가 아직 안 나가서 이걸 보내지 않는다([translate.py:13](apps/api/app/api/runs/translate.py#L13)). 루트 §2 의 "성공과 실패를 한 화면에"는 카드와 `Partial` 이 같이 나가야 성립한다.
+처음에는 카드와 `Partial` 을 같은 PR 에서 열려고 했다. #196 멘토 리뷰(5번)에서 끝난 결과부터 보여 주고 추천이 빠진 이유를 안내하자는 의견을 받아, #202 에서 `Partial` 만 먼저 화면으로 보낸다([translate.py:75](apps/api/app/api/runs/translate.py#L75)). 문구는 모델이 아니라 `PARTIAL_MESSAGES` 코드 상수다([translate.py:44](apps/api/app/api/runs/translate.py#L44)). pipeline 은 도메인 단계가 다 끝나거나 20초가 된 뒤 `Partial` 을 한 번 낸다([pipeline.py:682](apps/api/app/agents/pipeline.py#L682)).
 
-공통_구현_계획 §4-3 의 채널 처리를 할 때 `translate.py` 를 가진 BE 와 같은 PR 로 묶는다. 따로 열면 카드만 나가고 실패한 Agent 는 화면에 보이지 않는 구간이 생긴다.
+그래서 카드가 붙기 전까지는 앞서 걱정한 것과 반대 구간이 생긴다. 실패한 Agent 는 `partial` 로 화면에 보이고, 성공한 Agent 의 추천은 아직 나가지 않는다(`DomainRouted` 는 로그용이다). 루트 §2 의 "성공과 실패를 한 화면에"는 카드가 붙어야 다 성립한다. 카드 번역은 그대로 공통_구현_계획 §4-3 의 채널 처리 때 `translate.py` 를 가진 BE 와 같이 연다.
+
+남은 것은 화면 문구다. 부분 결과 카드는 저장된 게 없어도 "아래 결과는 그대로 저장됐어요" 를 띄운다([run-result.tsx:217-224](apps/web/src/components/run-result.tsx#L217-L224)). 순수 요청형 run 이나 급식 수정만 실패한 run 에서는 틀린 말이라, 서버 `message` 를 쓰거나 저장 여부로 조건을 거는 걸 FE(고태영)와 정한다.
