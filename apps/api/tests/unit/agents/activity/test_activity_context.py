@@ -99,3 +99,23 @@ class TestMockRun:
     async def test_다른_Agent_의_task_는_받지_않는다(self):
         with pytest.raises(ValueError):
             await run(task(agent="growth"), context())
+
+
+class TestForTask:
+    """pipeline 이 Agent 를 부르기 전에 늘 부른다. task 마다 run state 가 따로 산다 (#195 리뷰)."""
+
+    def test_run_state_만_새로_만든다(self):
+        ctx = context()
+        ctx.state.seen_places["사직어린이공원"] = None  # type: ignore[assignment]
+        fresh = ctx.for_task()
+        assert fresh.state is not ctx.state
+        assert fresh.state.seen_evidence == {}
+        assert fresh.state.seen_places == {}
+        assert fresh.state.suggestions == ()
+        assert (fresh.child_id, fresh.run_id, fresh.ports) == (ctx.child_id, ctx.run_id, ctx.ports)
+
+    def test_한_task_가_쓴_값이_다른_task_에_보이지_않는다(self):
+        ctx = context()
+        first, second = ctx.for_task(), ctx.for_task()
+        first.state.seen_places["사직어린이공원"] = None  # type: ignore[assignment]
+        assert second.state.seen_places == {}

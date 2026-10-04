@@ -7,7 +7,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 위치 격자)과 날짜 계�
 `ports.profile.birth_date`에서 `LifeStage`를 계산해 `Gate`로 넘긴다.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
@@ -54,6 +54,14 @@ class ActivityContext:
     @property
     def today(self) -> date:
         return today_of(self.now, self.timezone)
+
+    def for_task(self) -> "ActivityContext":
+        """task 하나 몫의 context. run state 만 새로 만든다.
+
+        pipeline 이 Agent 를 부르기 전에 늘 부른다 (`DomainContext` 프로토콜). task 둘이 동시에
+        돌아도 `seen_evidence` · `seen_places` · `suggestions` 가 섞이지 않는다.
+        """
+        return replace(self, state=ActivityRunState())
 
 
 async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
