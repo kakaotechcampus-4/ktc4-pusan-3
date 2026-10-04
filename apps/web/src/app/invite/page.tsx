@@ -88,19 +88,25 @@ function InviteScreen() {
    * 확인된 초대. 있으면 2단계다.
    * 🚨 `useQuery` 가 아니다 — 버튼을 눌러야 조회하는 것이고, 코드를 고칠 때마다 다시
    *    부르면 **틀린 코드로 시도 제한을 스스로 소모한다** (`429`).
+   * 🚨 **조회한 코드를 미리보기와 함께 들고 있고, 수락은 그 코드로 한다** (#150 멘토 리뷰).
+   *    입력창의 `code` 로 수락하면 A 로 확인하는 사이 B 로 고쳤을 때 **A 의 아이를 보고 B 의
+   *    아이에 연결된다.** 보여 준 것과 연결되는 것이 같다는 보장은 이 한 쌍이 진다.
    */
-  const [preview, setPreview] = useState<InvitePreviewResponse | null>(null);
+  const [preview, setPreview] = useState<{ code: string; invite: InvitePreviewResponse } | null>(
+    null,
+  );
   const [relation, setRelation] = useState<Relation | null>(null);
 
   const check = useMutation({
     mutationFn: (value: string) =>
       api.get<InvitePreviewResponse>(`/invites/${encodeURIComponent(value)}`),
-    onSuccess: (data) => setPreview(data),
+    // 🚨 `variables` 가 조회에 쓴 코드다 — 응답이 온 시점의 입력창 값이 아니다.
+    onSuccess: (invite, value) => setPreview({ code: value, invite }),
   });
 
   const accept = useMutation({
-    mutationFn: (body: InviteAcceptRequest) =>
-      api.post<InviteAcceptResponse>(`/invites/${encodeURIComponent(code)}/accept`, body),
+    mutationFn: ({ code: confirmed, body }: { code: string; body: InviteAcceptRequest }) =>
+      api.post<InviteAcceptResponse>(`/invites/${encodeURIComponent(confirmed)}/accept`, body),
     onSuccess: async (child) => {
       await queryClient.invalidateQueries({ queryKey: qk.me() });
       router.replace(`/child/${child.child_id}/home`);
@@ -115,6 +121,7 @@ function InviteScreen() {
   }
 
   if (preview) {
+    const { invite } = preview;
     return (
       <Screen className="gap-6">
         <div>
@@ -132,11 +139,11 @@ function InviteScreen() {
         {/* 🚨 **별명과 나이까지다.** 아직 연결되지 않은 사람이라 건강·알레르기를 여기
             보여주지 않는다 (`InvitePreviewResponse` 주석 · 최상위 §2 개인정보). */}
         <Card tone="accent">
-          <p className="text-title text-ink">{preview.child.nickname}</p>
-          <p className="text-body-sm text-ink-muted mt-1">{preview.child.age_display}</p>
-          {preview.invited_by.nickname ? (
+          <p className="text-title text-ink">{invite.child.nickname}</p>
+          <p className="text-body-sm text-ink-muted mt-1">{invite.child.age_display}</p>
+          {invite.invited_by.nickname ? (
             <p className="text-body-sm text-ink-muted border-line mt-3 border-t pt-3">
-              {preview.invited_by.nickname} 님이 초대했어요
+              {invite.invited_by.nickname} 님이 초대했어요
             </p>
           ) : null}
         </Card>
@@ -176,7 +183,9 @@ function InviteScreen() {
 
           <Button
             block
-            onClick={() => accept.mutate(relation ? { relation } : {})}
+            onClick={() =>
+              accept.mutate({ code: preview.code, body: relation ? { relation } : {} })
+            }
             disabled={accept.isPending}
           >
             {accept.isPending ? <Spinner /> : null}
@@ -213,6 +222,10 @@ function InviteScreen() {
         label="초대 코드"
         hint="대소문자와 하이픈은 신경 쓰지 않아도 돼요."
         value={formatInviteCode(code)}
+        // 🚨 확인하는 동안 코드를 못 바꾼다 (#150 멘토 리뷰). 수락은 이미 조회한 코드로 나가지만,
+        //    응답이 오면 입력창과 다른 코드의 아이가 뜨는 화면 자체를 만들지 않는다.
+        //    `disabled` 가 아니라 `readOnly` 다 — 모바일에서 포커스와 키보드가 날아가지 않는다.
+        readOnly={check.isPending}
         onChange={(e) => {
           setCode(normalizeInviteCode(e.target.value));
           if (check.isError) check.reset();
