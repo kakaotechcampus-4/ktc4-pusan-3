@@ -24,7 +24,7 @@ from app.agents.activity.tools.outing import (
 
 CHILD = UUID(int=1)
 NOW = datetime(2026, 10, 2, 10, tzinfo=UTC)
-LOCATION = CoarseLocation.of(35.18, 129.08)
+LOCATION = CoarseLocation(lat=35.18, lon=129.08)
 
 
 def park(name: str, distance_m: int) -> PlaceRow:

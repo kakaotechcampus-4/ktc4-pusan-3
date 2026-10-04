@@ -24,7 +24,7 @@ KST = ZoneInfo("Asia/Seoul")
 # KST 9/28 01:00 = UTC 9/27 16:00. UTC 날짜로 세면 하루가 어긋나는 시간대다
 NOW = datetime(2026, 9, 27, 16, 0, tzinfo=UTC)
 BIRTH_36_IN_KST = date(2023, 9, 28)  # KST 로는 36개월 당일, UTC 로는 35개월
-LOCATION = CoarseLocation.of(35.177, 129.077)  # 부산광역시 대표점 → 격자 (98, 76)
+LOCATION = CoarseLocation(lat=35.177, lon=129.077)  # 부산광역시 대표점 → 격자 (98, 76)
 
 
 def context(birth: date = BIRTH_36_IN_KST, *, location=LOCATION, **ports) -> ActivityContext:
@@ -133,13 +133,13 @@ class TestMockRun:
 
 class TestCoarseLocation:
     def test_받은_좌표를_둘째_자리로_자른다(self):
-        """클라이언트가 덜 흐려 보내도 서버에서 한 번 더 자른다."""
-        loc = CoarseLocation.of(35.177019, 129.076952)
+        """클라이언트가 덜 흐려 보내도 서버에서 한 번 더 자른다. 생성자 하나라 우회할 길이 없다."""
+        loc = CoarseLocation(lat=35.177019, lon=129.076952)
         assert (loc.lat, loc.lon) == (35.18, 129.08)
 
     def test_repr_에_좌표가_없다(self):
         """context 를 로그나 예외에 찍어도 좌표가 새지 않는다."""
-        text = repr(CoarseLocation.of(35.177019, 129.076952))
+        text = repr(CoarseLocation(lat=35.177019, lon=129.076952))
         assert "35" not in text
         assert "129" not in text
 

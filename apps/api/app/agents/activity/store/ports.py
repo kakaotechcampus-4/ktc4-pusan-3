@@ -123,7 +123,9 @@ class CoarseLocation:
     """휴대폰이 약 1km 로 흐려서 보낸 좌표. 요청 하나 동안만 산다.
 
     `repr` 에 값을 싣지 않는다 — context 를 로그나 예외에 찍어도 좌표가 새지 않게.
-    받은 값은 `of()` 로 한 번 더 자른다. 클라이언트가 덜 흐려 보내도 서버에서 막힌다.
+    만들 때 `COARSE_DECIMALS` 자리로 한 번 더 자른다. 클라이언트가 덜 흐려 보내도 서버에서
+    막힌다. 거절하지 않고 자른다 — 휴대폰이 흐린 위치도 소수점 아래가 길게 와서, 거절하면
+    정상 요청이 막힌다.
     """
 
     lat: float = field(repr=False)
@@ -132,10 +134,9 @@ class CoarseLocation:
     def __post_init__(self) -> None:
         if not (-90.0 <= self.lat <= 90.0) or not (-180.0 <= self.lon <= 180.0):
             raise ValueError("위경도가 범위를 벗어났다")  # 값은 싣지 않는다
-
-    @classmethod
-    def of(cls, lat: float, lon: float) -> "CoarseLocation":
-        return cls(lat=round(lat, COARSE_DECIMALS), lon=round(lon, COARSE_DECIMALS))
+        # frozen 이라 직접 대입할 수 없다. 어떤 방식으로 만들어도 같은 정밀도만 남게 여기서 자른다
+        object.__setattr__(self, "lat", round(self.lat, COARSE_DECIMALS))
+        object.__setattr__(self, "lon", round(self.lon, COARSE_DECIMALS))
 
     @property
     def grid(self) -> WeatherGrid:
