@@ -318,8 +318,10 @@ class TestOutputTool:
         assert result.error["code"] == ErrorCode.CANDIDATE_REJECTED
         assert ctx.state.suggestions == ()
 
-    async def test_최근_7일_안에_한_활동은_거절(self):
-        ctx = await self.context(recent=[("종이컵 탑 쌓기", 6)])
+    @pytest.mark.parametrize("days_ago", [0, 6])
+    async def test_오늘을_포함한_7일_안에_한_활동은_거절(self, days_ago):
+        """창은 오늘과 앞 6일이다. 6일 전이 마지막 날이다."""
+        ctx = await self.context(recent=[("종이컵 탑 쌓기", days_ago)])
         result = await propose_activity_candidates(
             ctx,
             self.args(
@@ -331,8 +333,10 @@ class TestOutputTool:
         assert result.success is False
         assert "3번 후보" in result.error["message"]
 
-    async def test_7일이_지난_활동은_다시_낼_수_있다(self):
-        ctx = await self.context(recent=[("종이컵 탑 쌓기", 8)])
+    @pytest.mark.parametrize("days_ago", [7, 8])
+    async def test_7일_전에_한_활동은_다시_낼_수_있다(self, days_ago):
+        """정확히 7일 전이 경계다 — 창 밖이다 (#195 리뷰)."""
+        ctx = await self.context(recent=[("종이컵 탑 쌓기", days_ago)])
         result = await propose_activity_candidates(
             ctx,
             self.args(

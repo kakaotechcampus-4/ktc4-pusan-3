@@ -7,7 +7,8 @@ import re
 import unicodedata
 from collections.abc import Iterable
 
-# 최근 이 기간 안에 한 활동은 다시 추천하지 않는다. 잠정값 — eval 로 조정한다
+# 최근 이 기간 안에 한 활동은 다시 추천하지 않는다. 오늘을 포함한 날 수다 — 7이면 오늘과 앞 6일.
+# 잠정값 — eval 로 조정한다
 DUPLICATE_WINDOW_DAYS = 7
 
 _NOT_WORD = re.compile(r"[\W_]+")

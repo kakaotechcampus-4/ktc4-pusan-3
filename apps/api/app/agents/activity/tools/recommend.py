@@ -33,7 +33,8 @@ async def propose_activity_candidates(
     today = context.today
     observations = await context.ports.memory.observations(
         child_id=context.child_id,
-        date_from=today - timedelta(days=DUPLICATE_WINDOW_DAYS),
+        # 오늘을 포함한 7일 — 오늘과 앞 6일. 포트는 양끝을 포함한다
+        date_from=today - timedelta(days=DUPLICATE_WINDOW_DAYS - 1),
         date_to=today,
     )
     review = review_candidates(
