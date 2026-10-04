@@ -4,6 +4,7 @@ import { childrenHandlers } from "./children";
 import { inviteHandlers } from "./invites";
 import { memoryHandlers } from "./memories";
 import { photoHandlers } from "./photos";
+import { policyHandlers } from "./policies";
 import { profileHandlers } from "./profile";
 import { runHandlers } from "./runs";
 import { settingsHandlers } from "./settings";
@@ -20,6 +21,8 @@ import { suggestionHandlers } from "./suggestions";
  *    사라지지 않게 파일을 나눠 뒀다.
  */
 export const handlers = [
+  // 🚨 무인증 엔드포인트다 — 가입 동의 화면이 로그인 전에 부른다 (#91).
+  ...policyHandlers,
   ...authHandlers,
   ...childrenHandlers,
   // 🚨 `childrenHandlers` **뒤**여야 한다. msw 는 먼저 등록된 핸들러가 이기는데,

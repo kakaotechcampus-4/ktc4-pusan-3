@@ -5,8 +5,13 @@
  * 그래야 아이를 바꿀 때 invalidateQueries({ queryKey: qk.child(cid) }) 한 번으로 끝난다.
  */
 export const qk = {
-  /** GET /auth/{provider}/status — 로그인 전에도 부르는 유일한 쿼리다 (00 화면 prefetch). */
+  /** GET /auth/{provider}/status — 00 화면 prefetch. */
   authStatus: (provider: string) => ["auth-status", provider] as const,
+  /**
+   * GET /policies — 가입 동의 화면이 로그인 **전에** 부른다 (#91).
+   * 아이 스코프까지 한 응답에 오므로 아이별로 키를 나누지 않는다.
+   */
+  policies: () => ["policies"] as const,
 
   me: () => ["me"] as const,
   consents: (childId?: string) => ["consents", childId ?? null] as const,

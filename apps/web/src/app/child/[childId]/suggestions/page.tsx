@@ -2,9 +2,10 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
+import { SafetyCheckSheet } from "@/components/safety-check-sheet";
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
@@ -17,6 +18,7 @@ import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { useChildId } from "@/hooks/use-child-id";
 import {
   AGENTS,
@@ -25,10 +27,10 @@ import {
   qk,
   type Agent,
   type AnswerRequest,
-  type CreateEventRequest,
-  type CreateEventResponse,
+  approveSuggestions,
+  createEventDrafts,
+  type CreateEventDraftsResponse,
   type Scarcity,
-  type Suggestion,
   type SuggestionsRequest,
   type SuggestionsResponse,
 } from "@/lib/api";
@@ -77,11 +79,26 @@ function SuggestionsScreen() {
   /** 🚨 최대 2개다 (NF-01). URL 로 더 넘어와도 잘라서 보낸다. */
   const agents = (searchParams.get("agents") ?? "").split(",").filter(isAgent).slice(0, 2);
 
-  const [dismissed, setDismissed] = useState<string[]>([]);
-  const [approving, setApproving] = useState<{
-    suggestion: Suggestion;
-    draft: CreateEventResponse;
-  } | null>(null);
+  /**
+   * 🚨 **여러 개 고를 수 있다.** 고른 것을 한 번에 초안으로 바꾼다 —
+   *    `food` 제안들은 서버가 한 끼로 묶어 초안 1건으로 내려준다 (`types.ts` 참고).
+   */
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /**
+   * 채택한 제안. `null` 이면 아직 고르는 중이다.
+   *
+   * 🚨 **고르기와 일정 만들기는 다른 단계다** (#151). 한동안 "고른 것으로 일정 만들기" 버튼
+   *    하나였는데, 그러면 **"이걸로 할 건데 캘린더엔 안 넣을래"** 를 표현할 방법이 없었다 —
+   *    고르기만 하고 나가면 그 선택이 24시간 뒤 `expired` 로 사라지고 §4 ⑤(선택을 Memory 로
+   *    되돌려 기록)가 배우는 것이 없다. 채택을 먼저 남기고, 일정은 **그다음에 따로 묻는다.**
+   */
+  const [approvedIds, setApprovedIds] = useState<string[] | null>(null);
+  /**
+   * 알레르기 확인 시트가 열려 있다. 🚨 **채택보다 먼저다** — 채택을 되돌리는 길이 없어서,
+   *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
+   */
+  const [checkingSafety, setCheckingSafety] = useState(false);
+  const [approving, setApproving] = useState<CreateEventDraftsResponse | null>(null);
 
   const suggestions = useQuery({
     queryKey: qk.suggestions(childId, runId, agents),
@@ -94,19 +111,63 @@ function SuggestionsScreen() {
     },
   });
 
-  /** 승인 게이트가 아니다 — 초안은 24시간 뒤 만료되는 되돌릴 수 있는 상태다. */
-  const createDraft = useMutation({
-    mutationFn: (suggestion: Suggestion) => {
-      const body: CreateEventRequest = { title: suggestion.content };
-      return api
-        .post<CreateEventResponse>(`/suggestions/${suggestion.id}/event`, body)
-        .then((draft) => ({ suggestion, draft }));
-    },
+  /**
+   * 🚨 **승인 게이트가 아니다 — 이 호출은 아무것도 쓰지 않는다** (#121). 응답은 저장된 일정이
+   *    아니라 초안 + 사전검사고, 쓰는 것은 시트 안 카드의 제출 하나다.
+   *    (만료 문구를 쓰지 않는다: `event.status` 가 없어지면서 서버에 초안 행 자체가 없다 · #118.
+   *     24시간 만료가 남아 있는 것은 `suggestion` 쪽이다.)
+   *
+   * 🚨 **고른 개수와 초안 개수가 다를 수 있다.** 화면은 세지 않고 응답이 준 장수를 그대로 쓴다 —
+   *    묶는 판단은 도메인 지식이라 서버가 한다.
+   */
+  const createDrafts = useMutation({
+    mutationFn: (ids: string[]) => createEventDrafts(childId, { suggestion_ids: ids }),
     onSuccess: (result) => setApproving(result),
   });
 
+  /**
+   * 🚨 **채택은 캘린더와 무관하다.** `suggestion.status` 만 `approved` 로 바뀐다 —
+   *    승인 게이트가 아니라서 `btn-approve` 도 `caution` 도 쓰지 않는다 (최상위 §2).
+   * 🚨 **응답이 준 id 로 다음 단계를 연다.** 화면이 들고 있던 `selectedIds` 를 그대로 쓰면,
+   *    서버가 일부만 채택했을 때 화면과 서버가 갈린다.
+   */
+  const approve = useMutation({
+    mutationFn: (ids: string[]) => approveSuggestions(childId, { suggestion_ids: ids }),
+    onSuccess: (result) => setApprovedIds(result.suggestions.map((s) => s.id)),
+  });
+
   const data = suggestions.data;
-  const visible = data?.suggestions.filter((s) => !dismissed.includes(s.id)) ?? [];
+
+  /**
+   * 고른 것에 걸린 알레르기 사전검사. 🚨 **고른 것만 묻는다** — 안 고른 제안의 재료까지 물으면
+   *    보호자는 자기가 고르지도 않은 것에 답하게 된다.
+   * ⚠️ `suggestion_id` 가 없으면 어느 제안 것인지 모른다 — 그때는 **고른 것 전부**에 걸린
+   *    것으로 본다 (알레르기에서 덜 막는 쪽으로 기울 수 없다 · `Precheck` 의 ⚠️).
+   */
+  const prechecks = (data?.prechecks ?? []).filter(
+    (p) => p.suggestion_id === undefined || selectedIds.includes(p.suggestion_id),
+  );
+
+  /** 🚨 물을 것이 있으면 **묻고 나서** 채택한다. 없으면 바로 채택한다. */
+  function startApprove() {
+    if (prechecks.length > 0) setCheckingSafety(true);
+    else approve.mutate(selectedIds);
+  }
+
+  /**
+   * 확인이 끝났다. 🚨 **알레르기가 걸린 제안은 빼고** 나머지만 채택한다 —
+   *    `null` 은 "어느 제안인지 모른다" 라서 고른 것 전부를 뺀다(= 채택할 것이 없다).
+   */
+  function afterSafety(blockedSuggestionIds: string[] | null) {
+    setCheckingSafety(false);
+    const keep =
+      blockedSuggestionIds === null
+        ? []
+        : selectedIds.filter((id) => !blockedSuggestionIds.includes(id));
+    setSelectedIds(keep);
+    if (keep.length > 0) approve.mutate(keep);
+  }
+  const visible = data?.suggestions ?? [];
   /**
    * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
    * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
@@ -126,15 +187,17 @@ function SuggestionsScreen() {
         )
       : [];
 
-  const dismissedCount = (data?.suggestions ?? []).filter((s) => dismissed.includes(s.id)).length;
-
-  // 줄이 사라진 자리를 대신 받는다. 방금 접었을 때만 옮기고, 되돌리면 다시 목록으로 돌아간다.
-  const dismissNoticeRef = useRef<HTMLDivElement>(null);
-  const lastDismissed = useRef(0);
-  useEffect(() => {
-    if (dismissedCount > lastDismissed.current) dismissNoticeRef.current?.focus();
-    lastDismissed.current = dismissedCount;
-  }, [dismissedCount]);
+  /**
+   * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
+   *    보호자가 둘을 맞춰 읽어야 한다.
+   */
+  const pickedByAgent = visible.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
+    if (!selectedIds.includes(s.id)) return acc;
+    const found = acc.find((g) => g.agent === s.agent);
+    if (found) found.count += 1;
+    else acc.push({ agent: s.agent, count: 1 });
+    return acc;
+  }, []);
 
   const consentBlocked = isApiError(suggestions.error, "consent_required")
     ? suggestions.error
@@ -205,40 +268,117 @@ function SuggestionsScreen() {
           그 자리에서 연다 — 밤에 한 손으로 여는 화면에서 "둘 다 읽고 고르기" 는 인지 노동이다. */}
       <SuggestionList
         suggestions={visible}
-        pendingId={createDraft.isPending ? (createDraft.variables?.id ?? null) : null}
-        onApprove={(suggestion) => createDraft.mutate(suggestion)}
-        onReject={(suggestion) => setDismissed((prev) => [...prev, suggestion.id])}
+        groups={data?.groups ?? []}
+        selectedIds={selectedIds}
+        // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
+        busy={approve.isPending || approvedIds !== null}
+        onToggleSelect={(suggestion) =>
+          setSelectedIds((prev) =>
+            prev.includes(suggestion.id)
+              ? prev.filter((id) => id !== suggestion.id)
+              : [...prev, suggestion.id],
+          )
+        }
       />
 
-      {/* 🚨 접은 것을 말없이 지우지 않는다. 줄이 그냥 사라지면 무슨 일이 일어났는지 알 수 없고,
-          누르던 버튼이 언마운트돼 키보드·스크린리더 사용자는 자리까지 잃는다. 무슨 일이 있었는지
-          알리고(`role="status"`), 되돌릴 길을 같은 자리에 두고, 그 자리로 초점을 옮긴다.
-          전부 접으면 목록이 사라지는데, 그때 화면에 남는 설명도 이 줄이 진다. */}
-      {dismissedCount > 0 ? (
-        <div
-          ref={dismissNoticeRef}
-          role="status"
-          tabIndex={-1}
-          className="border-line rounded-card bg-surface flex flex-wrap items-center gap-2 border p-4"
-        >
-          <p className="text-body-sm text-ink-muted flex-1">
-            제안 {dismissedCount}건을 접어 뒀어요. 기억은 그대로예요.
+      {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
+          그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
+      {visible.some((s) => s.agent !== "health") ? (
+        <Card>
+          <p className="text-section text-ink">
+            {approvedIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
           </p>
-          <Button variant="tertiary" size="compact" onClick={() => setDismissed([])}>
-            되돌리기
-          </Button>
-        </div>
-      ) : null}
+          {/* 🚨 **묶음별로 센다.** "3건" 만 말하면 보호자는 무엇을 셋 골랐는지 되짚어야 한다 —
+              대안이 Agent 당 셋이라 "식사 2가지 · 놀이 1가지" 가 실제로 고른 모양이다. */}
+          <dl className="mt-3 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <dt className="text-label text-ink-subtle w-14 shrink-0">고른 것</dt>
+              <dd className="text-body-sm text-ink">
+                {selectedIds.length === 0
+                  ? "아직 없음"
+                  : pickedByAgent
+                      .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
+                      .join(" · ")}
+              </dd>
+            </div>
+          </dl>
 
-      {createDraft.isError ? (
-        <CardFailed>
-          <p>
-            {createDraft.error instanceof Error
-              ? createDraft.error.message
-              : "저장될 내용을 만들지 못했어요."}
-          </p>
-          <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
-        </CardFailed>
+          {approvedIds === null ? (
+            /* ── ① 고르는 중 — 채택부터 한다 ─────────────────────────────── */
+            <>
+              {/* 🚨 **여기서 캘린더 얘기를 하지 않는다.** 이 버튼이 하는 일은 "이걸로 할게요"
+                  하나고, 일정은 다음 단계가 따로 묻는다. 한 버튼이 둘을 하면 부모는
+                  **일정을 안 만들려면 고르지도 말아야** 한다고 읽는다. */}
+              <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
+                고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
+              </p>
+
+              {approve.isError ? (
+                <CardFailed className="mt-3">
+                  <p>
+                    {approve.error instanceof Error
+                      ? approve.error.message
+                      : "고른 것을 남기지 못했어요."}
+                  </p>
+                  <p className="mt-1">아직 아무것도 저장되지 않았어요.</p>
+                </CardFailed>
+              ) : null}
+
+              <Button
+                block
+                className="mt-4"
+                disabled={selectedIds.length === 0 || approve.isPending}
+                aria-busy={approve.isPending}
+                onClick={startApprove}
+              >
+                {approve.isPending ? <Spinner /> : null}
+                {approve.isPending
+                  ? "남기는 중이에요"
+                  : selectedIds.length === 0
+                    ? "고른 것이 없어요"
+                    : // 🚨 단위는 "가지" 다 — 제안은 한 결정의 대안이고, 일정이 "건" 이다.
+                      `이 ${selectedIds.length}가지로 할게요`}
+              </Button>
+            </>
+          ) : (
+            /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
+            <>
+              <p className="text-body-sm text-ink mt-3">일정으로도 만들까요?</p>
+              {/* 🚨 **안 만드는 버튼을 두지 않는다.** 안 만들 사람은 그냥 나간다(아래 "홈으로") —
+                  "아니요" 버튼은 **아무 일도 안 하는 것을 한 번 더 확인시키는** 칸이고,
+                  고른 것은 이미 남아 있다. 대신 나가도 된다는 사실을 글자로 말한다.
+                  🚨 **몇 장이 될지 화면이 말하지 않는다.** food 제안들이 한 끼로 묶이는지는
+                  서버가 정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때
+                  거짓말이 된다. */}
+              <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
+                저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도 고른
+                것은 그대로 남아요.
+              </p>
+
+              {createDrafts.isError ? (
+                <CardFailed className="mt-3">
+                  <p>
+                    {createDrafts.error instanceof Error
+                      ? createDrafts.error.message
+                      : "저장될 내용을 만들지 못했어요."}
+                  </p>
+                  <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+                </CardFailed>
+              ) : null}
+
+              <Button
+                block
+                className="mt-4"
+                disabled={createDrafts.isPending}
+                aria-busy={createDrafts.isPending}
+                onClick={() => createDrafts.mutate(approvedIds)}
+              >
+                {createDrafts.isPending ? <Spinner /> : null}
+                {createDrafts.isPending ? "준비하는 중이에요" : "일정으로 만들기"}
+              </Button>
+            </>
+          )}
+        </Card>
       ) : null}
 
       {/* NF-06 — 실패한 쪽도 같은 화면에 남긴다. 빨강이 아니다. */}
@@ -271,12 +411,8 @@ function SuggestionsScreen() {
         <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
       ) : null}
 
-      {/* 줄마다 반복하지 않고 목록 아래에 한 번만 둔다. */}
-      {visible.length > 0 ? (
-        <p className="text-caption text-ink-subtle">
-          고르면 저장될 내용을 먼저 보여드려요. 승인 전에는 아무것도 넣지 않아요.
-        </p>
-      ) : null}
+      {/* 🚨 "고르면 저장될 내용을 먼저 보여드려요" 를 여기 두지 않는다 — 바로 위 요약 카드가
+          이미 같은 말을 한다. 한 화면에서 두 번 하면 둘 다 흘려 읽게 된다. */}
 
       {/* 🚨 화면 바닥에 붙이지 않는다. 후보가 한두 개뿐인 화면에서 `mt-auto` 는 목록과 버튼 사이에
           빈 화면을 한 폭 만든다 — 나가는 버튼은 내용 바로 뒤를 따라간다. */}
@@ -284,16 +420,25 @@ function SuggestionsScreen() {
         홈으로
       </Button>
 
+      {/* 🚨 **승인 게이트 ㉡ 는 여기다** — 채택 **전**에 묻는다 (`safety-check-sheet.tsx`).
+          채택을 되돌리는 길이 없어서, 알레르기가 확인된 제안은 채택 자체를 하지 않는다. */}
+      <SafetyCheckSheet
+        open={checkingSafety}
+        childId={childId}
+        prechecks={prechecks}
+        onCancel={() => setCheckingSafety(false)}
+        onConfirm={afterSafety}
+      />
+
       {approving ? (
         <ApprovalSheet
           open
           onClose={() => {
             setApproving(null);
-            createDraft.reset();
+            createDrafts.reset();
           }}
           childId={childId}
-          suggestion={approving.suggestion}
-          draft={approving.draft}
+          result={approving}
         />
       ) : null}
     </Screen>

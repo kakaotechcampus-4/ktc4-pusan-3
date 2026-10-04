@@ -22,7 +22,7 @@ Band = Literal["infant", "toddler"]
 
 # 단계 경계. 월령 내림차순으로 훑어 처음 걸리는 칸이 그 아이의 stage 다.
 # docs/agents/shared/Tool_공통.md §2 의 표와 같은 값이어야 한다.
-# 문서는 config/age_gates.yaml 을 정본으로 적어 뒀지만 그 파일은 아직 없다.
+# TODO: reference/age_gates.yaml이 정본(새로 생성하기)
 # 파일이 생기기 전까지 여기가 유일한 자리다 — 코드·프롬프트 어디에도 숫자를 복제하지 않는다.
 _STAGE_BOUNDARIES: tuple[tuple[int, Stage], ...] = (
     (36, "preschool"),

@@ -85,8 +85,6 @@ class SuggestionEvidence(Base):
     # 다형 참조라 FK가 아니다. 대상이 있는지와 같은 child_id 인지는 서버가 본다.
     source_kind: Mapped[str] = mapped_column(Text, primary_key=True)
     source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    # 인용할 때 읽은 원본의 시각. 아이 기록은 그 행의 updated_at, 문서 행은 written_at.
-    source_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # 그 행에서 추천 근거로 채택한 내용. Agent가 쓰고 보호자 화면에 나간다.
     note: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

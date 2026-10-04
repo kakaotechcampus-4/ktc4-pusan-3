@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
 import type { ApiError } from "@/lib/api";
-import { consentItem } from "@/lib/consent";
+import { consentCopy } from "@/lib/consent";
 
 /**
  * `403 consent_required` 를 만났을 때. **저장이 아예 안 된 상태**다 (계약서 §04 "동의는 저장보다 먼저다").
@@ -34,9 +34,12 @@ export function ConsentRequiredCard({
   what: string;
 }) {
   // 🚨 스코프 코드를 화면에 그대로 내지 않는다 — `child_health` 는 부모가 읽을 말이 아니다.
+  //    🚨 여기서는 **약관을 부르지 않는다.** 이 카드는 아무 화면에서나 뜰 수 있는 실패 안내라,
+  //       이름 하나 쓰자고 요청을 하나 더 내보내지 않는다. 모르는 scope 는 그냥 뺀다 —
+  //       가는 곳(10 설정)은 어차피 같고, 거기서 무엇이 꺼져 있는지 보인다.
   const scopes = error.detail?.scopes;
   const missing = (Array.isArray(scopes) ? scopes : [])
-    .map((s) => (typeof s === "string" ? consentItem(s)?.label : undefined))
+    .map((s) => (typeof s === "string" ? consentCopy(s)?.shortLabel : undefined))
     .filter((label): label is string => Boolean(label));
 
   return (

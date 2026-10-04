@@ -30,7 +30,7 @@ async def create_suggestion(
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
     `citations`는 `SuggestionDraft.to_payload()`의 `citations`를 그대로 받는다 —
-    `source_kind` · `source_id` · `source_updated_at` · `note` 네 칸이다.
+    `source_kind` · `source_id` · `note` 세 칸이다.
     """
     row = Suggestion(
         child_id=child_id,
@@ -49,7 +49,6 @@ async def create_suggestion(
                 suggestion_id=row.id,
                 source_kind=item["source_kind"],
                 source_id=uuid.UUID(str(item["source_id"])),
-                source_updated_at=item["source_updated_at"],
                 note=item["note"],
             )
         )

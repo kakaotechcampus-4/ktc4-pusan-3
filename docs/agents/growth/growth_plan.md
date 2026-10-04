@@ -40,7 +40,7 @@
 | 1 | ~~`child_growth_log` 단위·NOT NULL~~ | ✅ 닫힘(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | – |
 | 2 | `child_health` 동의 게이팅 포트 | 키·몸무게 읽기가 법적으로 막힘 | BE |
 | 3 | `suggestion.kind` + `suggestion_evidence` 테이블 | 개인화/일반 표시 불가 · 근거를 셀 수 없음 | BE |
-| 4 | `hazard_term` 적재 (Activity 소유) | 활동 행 안전 검사 불가 | Activity |
+| 4 | `reference/hazard_terms.yaml` (Activity 소유) | 활동 행 안전 검사 불가 | Activity |
 | 5 | 연령 경계 확정 — 예절 24 · 습관 36 (G-7). **성장폭에는 연령 경계를 두지 않는다** | 설정값으로 시작 가능 | PM |
 
 `notice` 테이블은 **하드 선행이 아닙니다.** 없으면 `lookup_notice`만 닫고 나머지는 동작합니다.

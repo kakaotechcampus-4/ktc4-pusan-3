@@ -8,8 +8,10 @@ import { resetMemoryState } from "@/mocks/handlers/memories";
 import { resetProfileState } from "@/mocks/handlers/profile";
 import { resetIdempotencyStore } from "@/mocks/handlers/idempotency";
 import { resetPhotoRuns } from "@/mocks/handlers/photos";
+import { resetPolicyState } from "@/mocks/handlers/policies";
+import { resetSubmittedInputs } from "@/mocks/handlers/runs";
 import { resetConsentState, resetParentState } from "@/mocks/handlers/settings";
-import { resetConfirmedEvents } from "@/mocks/handlers/suggestions";
+import { resetSubmittedEvents } from "@/mocks/handlers/suggestions";
 import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
 
@@ -25,14 +27,16 @@ beforeAll(() => {
 afterEach(() => {
   server.resetHandlers();
   resetIdempotencyStore();
-  resetConfirmedEvents();
+  resetSubmittedEvents();
   resetSafetyState();
   resetMemoryState();
   resetCalendarState();
   resetPhotoRuns();
+  resetSubmittedInputs();
   resetProfileState();
   resetDiaries();
   resetConsentState();
+  resetPolicyState();
   resetParentState();
   resetInviteState();
   resetMembership();

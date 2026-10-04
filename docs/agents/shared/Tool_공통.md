@@ -36,7 +36,7 @@ def life_stage(birth_date: date, today: date) -> LifeStage
 | `preschool` | 36+ | 유아기 |
 
 - **공통이 강제하는 것은 월령 계산까지다.** `life_stage()`가 `months` · `stage`를 돌려주지만, 그 값으로 tool을 어떻게 가를지는 **도메인마다 다르다** — Food는 `stage`를 배타적 범주로 쓰고, Growth는 tool별 `min_month` 눈금을 쓰고, Health는 tool을 여닫지 않고 계산 방식만 바꾼다. `stage`는 참고값이지 공통 게이팅 축이 아니다.
-- 경계값은 `config/life_stage.yaml` 한 곳
+- 경계값은 `reference/age_gates.yaml` 한 곳
 - **`age_months`는 민법 기준 달력 계산이다.** `(today - birth).days // 30` 금지 — 6년이면 두 달 앞서 열린다. 구현은 `app/rules/age.py` 하나
 - **`FeedingStage`는 별도 enum이 아니다.** Food 문서가 쓰던 `milk` · `weaning` · `toddler_meal`은 이 표의 값을 부르는 다른 이름이었다. 축이 하나인데 이름이 둘이면 `stage_min` 같은 컬럼에 두 집합이 섞인다 — **`LifeStage.stage` 네 값으로 통일한다.**
 
@@ -112,7 +112,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 2개 이하나 4개 이상이면 거절한다. 예외는 하나뿐이다.
 
 - 안전 필터(1번) 뒤에 3개 미만이 되면 **그 Agent 만 모델을 1회 재호출**한다. 걸러진 항목을 제외 목록으로 넣되 **사유는 넣지 않는다** — 알레르기 목록을 프롬프트로 되돌려 보내는 셈이 된다.
-- 재호출은 1회로 끝난다. 그래도 못 채우면 **남은 만큼만** 낸다. `check_count(after_retry=True)` 가 이 경우만 통과시키고, 0개는 여전히 거절이다.
+- 재호출은 1회로 끝난다. 그래도 못 채우면 **남은 만큼만** 낸다 (잠정 — C-8 미결). `check_count(after_retry=True)` 가 이 경우만 통과시키고, 0개는 여전히 거절이다.
 - 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다.
 - 이때만 그 Agent 의 진입 수가 2가 된다 ([Agent_공통규약.md](Agent_공통규약.md) §7).
 - `note` 가 비어 후보가 빠지면 개수가 3개 아래로 내려간다. 재호출 사유는 안전 필터뿐이라 지금은 묶음이 거절된다. 금지 표현 필터(5-1 의 2번)도 같은 자리에 있어 새로 생긴 문제는 아니다. 재호출 사유를 늘릴지는 아직 안 정했다 (2026-09-25).
