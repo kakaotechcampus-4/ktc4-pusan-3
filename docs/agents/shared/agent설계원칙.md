@@ -108,8 +108,10 @@ Agent 쪽에서 들고 갈 안은 이렇다.
 
 ### 2-7. partial은 추천 카드보다 먼저 열었다 
 
-처음에는 카드와 `Partial` 을 같은 PR 에서 열려고 했다. #196 멘토 리뷰(5번)에서 끝난 결과부터 보여 주고 추천이 빠진 이유를 안내하자는 의견을 받아, #202 에서 `Partial` 만 먼저 화면으로 보낸다([translate.py:75](apps/api/app/api/runs/translate.py#L75)). 문구는 모델이 아니라 `PARTIAL_MESSAGES` 코드 상수다([translate.py:44](apps/api/app/api/runs/translate.py#L44)). pipeline 은 도메인 단계가 다 끝나거나 20초가 된 뒤 `Partial` 을 한 번 낸다([pipeline.py:682](apps/api/app/agents/pipeline.py#L682)).
+처음에는 카드와 `Partial` 을 같은 PR 에서 열려고 했다. 다만 끝난 결과부터 보여 주고 추천이 빠진 이유를 안내하자는 의견을 받아, 에서 `Partial` 만 먼저 화면으로 보낸다([translate.py:64](apps/api/app/api/runs/translate.py#L64)). 서버는 `reason` 과 Agent 이름만 보내고 문구는 화면이 만든다. `agent_error` 문구("추천을 준비하지 못했어요")가 급식 갱신만 실패한 run 에서는 틀리고, 화면과 서버 두 곳에 문구가 있으면 어느 쪽이 정본인지 갈린다. 모델이 문구를 만들지 않는다는 점은 화면 상수로도 그대로다. pipeline 은 도메인 단계가 다 끝나거나 20초가 된 뒤 `Partial` 을 한 번 낸다([pipeline.py:682](apps/api/app/agents/pipeline.py#L682)).
 
 그래서 카드가 붙기 전까지는 앞서 걱정한 것과 반대 구간이 생긴다. 실패한 Agent 는 `partial` 로 화면에 보이고, 성공한 Agent 의 추천은 아직 나가지 않는다(`DomainRouted` 는 로그용이다). 루트 §2 의 "성공과 실패를 한 화면에"는 카드가 붙어야 다 성립한다. 카드 번역은 그대로 공통_구현_계획 §4-3 의 채널 처리 때 `translate.py` 를 가진 BE 와 같이 연다.
 
-남은 것은 화면 문구다. 부분 결과 카드는 저장된 게 없어도 "아래 결과는 그대로 저장됐어요" 를 띄운다([run-result.tsx:217-224](apps/web/src/components/run-result.tsx#L217-L224)). 순수 요청형 run 이나 급식 수정만 실패한 run 에서는 틀린 말이라, 서버 `message` 를 쓰거나 저장 여부로 조건을 거는 걸 FE(고태영)와 정한다.
+부분 결과 카드는 저장된 게 없어도 "아래 결과는 그대로 저장됐어요" 를 띄웠다([run-result.tsx:217-224](apps/web/src/components/run-result.tsx#L217-L224)). 순수 요청형 run 이나 급식 수정만 실패한 run 에서는 틀린 말이라 #215 리뷰에서 FE(고태영)가 고치기로 했다 — 저장이 없을 때는 붙이지 않고, 같은 Agent 가 양쪽에 있는 경우와 급식 갱신만 실패한 경우까지 "처리하지 못했어요" 로 바꾼다.
+
+추천 결과를 화면으로 보내는 일(`DomainRouted` 번역)은 아직 남았다. 그때 이벤트 모양(agent · task_type · 추천 이유 한 문장 · 후보 id)을 BE · FE 와 같이 정한다. 카드 순서는 서버도 화면도 보장하지 않는다(공통_구현_계획 §5 9번).

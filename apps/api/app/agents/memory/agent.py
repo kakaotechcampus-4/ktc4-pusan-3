@@ -208,12 +208,14 @@ async def run(
         tool_calls = getattr(response.message, "tool_calls", None) or []
         if not tool_calls:
             content = (response.message.content or "").strip()
-            if not content and not nudged:
+            parsed = _parse_reply(content, reply_model)
+            # structured output 이라 빈 턴은 text 가 빈 JSON 으로도 온다 (라이브 RC26)
+            spoken = parsed.text.strip() if parsed is not None else content
+            if not spoken and not nudged:
                 # 빈 턴. 응답 문구는 화면이 지어내지 않으므로 모델에게 한 번 더 묻는다
                 nudged = True
                 messages.append({"role": "user", "content": _EMPTY_TURN})
                 continue
-            parsed = _parse_reply(content, reply_model)
             if parsed is not None:
                 replied = MemoryReply(text=parsed.text, kind=parsed.kind)
                 pending = _pending(
