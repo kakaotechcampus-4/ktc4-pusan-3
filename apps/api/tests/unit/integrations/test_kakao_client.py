@@ -3,12 +3,14 @@
 카카오 서버를 부르지 않는다. httpx.MockTransport 로 응답을 바꿔 끼우고 **호출 여부와
 입력값을 함께** 검증한다 (apps/api/CLAUDE.md 자동 검증).
 
-여기서 지키는 것 셋.
+여기서 지키는 것 넷.
     ① 교환 요청이 명세대로 나간다 — redirect_uri 는 콘솔 등록값 그대로
     ② 카카오가 어떻게 실패하든 KakaoApiError 하나로 모인다 (§8-1 의 502 로 갈 자리)
     ③ 토큰 폐기는 실패해도 로그인을 되돌리지 않는다 (§7-4)
+    ④ 실패 사유는 카카오의 분류값까지만 남긴다 — 설명 글 · 본문은 버린다 (#197 · §7-5)
 """
 
+import logging
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -88,7 +90,10 @@ async def test_exchange_code_sends_spec_form_and_returns_token():
 
 @pytest.mark.parametrize("status", [400, 401, 500, 503])
 async def test_exchange_code_turns_any_kakao_failure_into_one_error(status):
-    """4xx(교환 실패)도 5xx 도 같은 예외다. 사유를 구분해 흘리지 않는다 (§8-1)."""
+    """4xx(교환 실패)도 5xx 도 같은 예외다. 화면에는 사유를 구분해 흘리지 않는다 (§8-1).
+
+    사유(카카오 분류값)는 예외 문구에 실려 로그로만 간다 (#197).
+    """
     with pytest.raises(KakaoApiError):
         await build_client(json_handler({"error": "invalid_grant"}, status)).exchange_code("c")
 
@@ -120,6 +125,75 @@ async def test_error_message_does_not_leak_response_body():
     assert "leaked-token" not in message
     assert "secret reason" not in message
     assert "authorization-code" not in message
+
+
+async def test_error_message_carries_kakao_error_code_but_not_description():
+    """#197. 토큰 받기(kauth) 실패는 분류값을 싣고 설명은 버린다.
+
+    error_description 에는 인가 코드가 그대로 들어간다 — 카카오 예시
+    "authorization code not found for code=..." (§7-5).
+    """
+    body = {
+        "error": "invalid_grant",
+        "error_description": "authorization code not found for code=SECRET-AUTH-CODE",
+        "error_code": "KOE320",
+    }
+
+    with pytest.raises(KakaoApiError) as caught:
+        await build_client(json_handler(body, 400)).exchange_code("SECRET-AUTH-CODE")
+
+    message = str(caught.value)
+    assert "token" in message
+    assert "400" in message
+    assert "invalid_grant" in message
+    assert "KOE320" in message
+    assert "SECRET-AUTH-CODE" not in message
+    assert "not found" not in message
+
+
+async def test_error_message_carries_kakao_api_code_but_not_msg():
+    """#197. kapi(토큰 정보 · 로그아웃) 는 {code, msg} 로 답한다. code 만 싣는다.
+
+    msg 에는 앱 키가 들어갈 수 있다 — 카카오 예시 "...by using app_key(${APP_KEY})."
+    """
+    body = {"code": -401, "msg": "This api is not allowed by using app_key(test-rest-api-key)."}
+
+    with pytest.raises(KakaoApiError) as caught:
+        await build_client(json_handler(body, 401)).fetch_user_id("kakao-access-token")
+
+    message = str(caught.value)
+    assert "token_info" in message
+    assert "-401" in message
+    assert "test-rest-api-key" not in message
+    assert "kakao-access-token" not in message
+
+
+async def test_error_message_drops_values_that_are_not_short_codes():
+    """분류값 자리에 줄바꿈 · 긴 글이 오면 버린다.
+
+    그대로 실으면 가짜 로그 줄이나 설명 글이 들어오는 통로가 된다.
+    """
+    body = {"error": "invalid_grant", "error_code": "KOE320\nFORGED LOG LINE", "code": "x" * 65}
+
+    with pytest.raises(KakaoApiError) as caught:
+        await build_client(json_handler(body, 400)).exchange_code("c")
+
+    message = str(caught.value)
+    assert "invalid_grant" in message
+    assert "FORGED LOG LINE" not in message
+    assert "x" * 65 not in message
+
+
+async def test_error_without_json_body_is_still_one_error():
+    """프록시 장애처럼 본문이 JSON 이 아니어도 같은 예외다 — 분류값을 꺼내다 터지면 안 된다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="<html>Bad Gateway</html>")
+
+    with pytest.raises(KakaoApiError) as caught:
+        await build_client(handler).exchange_code("c")
+
+    assert "502" in str(caught.value)
 
 
 async def test_fetch_user_id_uses_token_info_and_returns_string():
@@ -167,3 +241,15 @@ async def test_revoke_token_swallows_failure():
     사용자의 로그인을 되돌리면 더 나쁘다 (§7-4).
     """
     await build_client(json_handler({"msg": "down"}, 500)).revoke_token("kakao-access-token")
+
+
+async def test_revoke_failure_log_says_which_call_and_why(caplog):
+    """#197. 폐기 실패 로그에도 어느 호출 · 상태 · 분류값이 남는다. 토큰은 남지 않는다."""
+    body = {"code": -401, "msg": "InvalidTokenException"}
+
+    with caplog.at_level(logging.WARNING, logger="app.integrations.kakao.client"):
+        await build_client(json_handler(body, 401)).revoke_token("kakao-access-token")
+
+    assert "logout" in caplog.text
+    assert "-401" in caplog.text
+    assert "kakao-access-token" not in caplog.text
