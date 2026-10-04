@@ -30,6 +30,8 @@ from uuid import UUID
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.gate import SafetyState
+from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
+from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
 from app.rules.kma_grid import latlon_to_grid
 
 
@@ -107,14 +109,6 @@ class ActivityDocRow:
     written_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
 
 
-@dataclass(frozen=True)
-class WeatherGrid:
-    """기상청 5km 격자. 날씨 포트는 좌표 대신 이 값만 받는다."""
-
-    nx: int
-    ny: int
-
-
 # 좌표를 자르는 자리수. 소수점 둘째 자리는 위도 약 1.1km · 경도 약 0.9km (북위 36° 기준)
 COARSE_DECIMALS = 2
 
@@ -172,46 +166,6 @@ class Advisories:
     heat: AdvisoryLevel
     cold: AdvisoryLevel
     severe: bool  # 강풍 · 호우 · 대설 · 태풍 · 폭풍해일 중 하나라도 발효 중
-
-
-# ── 날씨 포트가 돌려주는 원문. 어댑터는 값을 해석하지 않고 문자열 그대로 싣는다 ──────────────
-@dataclass(frozen=True)
-class RawForecast:
-    """단기예보(`getVilageFcst`) 지금 시각 칸의 `fcstValue` 원문."""
-
-    sky: str | None  # SKY — "1" · "3" · "4"
-    pcp: str | None  # PCP — "강수없음" · "1.0mm 미만" · "0" …
-    pop: str | None  # POP — "0" ~ "100"
-
-
-@dataclass(frozen=True)
-class RawAir:
-    """에어코리아 측정소별 실시간(`getMsrstnAcctoRltmMesureDnsty`) 최근 한 시각의 원문."""
-
-    pm10: str | None  # pm10Value — 측정기가 멈추면 "-"
-    pm10_flag: str | None  # pm10Flag — 정상이면 None, 멈추면 "통신장애" 등
-    pm25: str | None
-    pm25_flag: str | None
-    o3: str | None
-    o3_flag: str | None
-
-
-@dataclass(frozen=True)
-class RawAdvisoryRow:
-    """특보코드조회(`getPwnCd`) 한 행. 숫자로 와도 문자열로 바꿔 싣는다."""
-
-    area_code: str  # areaCode — 특보구역
-    warn_var: str  # warnVar — 특보 종류
-    warn_stress: str  # warnStress — 주의보 · 경보 · 중대경보
-    command: str  # command — 발표 · 해제 · 연장 …
-    tm_fc: str  # tmFc — 발표 시각 YYYYMMDDHHMM
-    tm_seq: str  # tmSeq — 같은 시각이면 순번으로 가른다
-
-
-@dataclass(frozen=True)
-class RawAdvisories:
-    result_code: str  # header.resultCode 그대로. "03"(NO_DATA)도 실패로 올리지 않는다
-    rows: tuple[RawAdvisoryRow, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -277,7 +231,8 @@ class WeatherSource(Protocol):
 
     해석("-" · NO_DATA · 강수 문자열)은 `weather.py` 가 테스트와 함께 맡는다. 어댑터가 들어갈
     `app/integrations/` 는 agents 를 import 할 수 없어서, 해석을 거기 두면 같은 규칙을 테스트
-    밖에서 한 번 더 짜게 된다.
+    밖에서 한 번 더 짜게 된다. 같은 이유로 원문 모양(`Raw*` · `WeatherGrid`)은
+    `app/core/weather_raw.py` 에 있다 — 어댑터는 거기서 import 한다.
 
     네 조회는 따로 실패한다. 하나가 죽어도 나머지는 온다 — 미세먼지만 실패하면 야외는 허용하되
     고지한다 (D8). 호출 자체의 실패(타임아웃 · HTTP 오류)는 각자 UpstreamUnavailable.
