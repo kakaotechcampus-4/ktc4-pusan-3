@@ -318,6 +318,34 @@ class TestOutputTool:
         assert result.error["code"] == ErrorCode.CANDIDATE_REJECTED
         assert ctx.state.suggestions == ()
 
+    async def test_지어낸_근거_id_는_EVIDENCE_REQUIRED(self):
+        ctx = await self.context()
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(evidence=[{"id": str(UUID(int=999)), "note": "블록을 즐겨 했어요"}]),
+                candidate(content="모래성 쌓기", evidence=[]),
+                candidate(content="종이컵 탑 쌓기", evidence=[]),
+            ),
+        )
+        assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
+        assert ctx.state.suggestions == ()
+
+    async def test_사유가_섞이면_EVIDENCE_REQUIRED_가_대표이고_설명은_후보마다_싣는다(self):
+        """로그는 대표 코드 하나로 세고, 모델은 후보마다 고칠 방향을 받는다 (#195 리뷰)."""
+        ctx = await self.context()
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(content="아파트 물놀이터 가기", evidence=[]),
+                candidate(evidence=[{"id": str(UUID(int=999)), "note": "블록을 즐겨 했어요"}]),
+                candidate(content="종이컵 탑 쌓기", evidence=[]),
+            ),
+        )
+        assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
+        assert "1번 후보" in result.error["message"]
+        assert "2번 후보" in result.error["message"]
+
     @pytest.mark.parametrize("days_ago", [0, 6])
     async def test_오늘을_포함한_7일_안에_한_활동은_거절(self, days_ago):
         """창은 오늘과 앞 6일이다. 6일 전이 마지막 날이다."""

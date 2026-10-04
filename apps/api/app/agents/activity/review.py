@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
+from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import CaregiverRole, EvidencePick
 from app.agents.activity.schemas.recommend import ActivityCandidate
@@ -122,6 +123,19 @@ def review_candidates(
         if reason is not None:
             rejections.append(Rejection(index=index, reason=reason))
     return Review(drafts=tuple(drafts), rejections=tuple(rejections))
+
+
+def error_code(rejections: Sequence[Rejection]) -> str:
+    """거절 묶음의 대표 오류 코드. 로그 집계용이다.
+
+    모델에게 가는 설명은 `explain()` 이 후보마다 싣는다.
+
+    조회하지 않은 근거 id 가 하나라도 있으면 공통 `EVIDENCE_REQUIRED` 다. 모델이 id 를 지어낸
+    것이라 다른 거절과 따로 세야 한다 (Food 도 같은 코드를 쓴다). 나머지는 `CANDIDATE_REJECTED`.
+    """
+    if any(r.reason is RejectReason.UNKNOWN_EVIDENCE for r in rejections):
+        return ErrorCode.EVIDENCE_REQUIRED
+    return ErrorCode.CANDIDATE_REJECTED
 
 
 def explain(rejections: Sequence[Rejection]) -> str:

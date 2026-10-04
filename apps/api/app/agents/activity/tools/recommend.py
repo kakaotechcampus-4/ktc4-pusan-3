@@ -3,8 +3,8 @@
 from datetime import timedelta
 
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
-from app.agents.activity.review import explain, review_candidates
+from app.agents.activity.result import ToolResult, fail, ok
+from app.agents.activity.review import error_code, explain, review_candidates
 from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS
 from app.agents.activity.schemas.recommend import ProposeActivityCandidatesArgs
 from app.agents.common.suggestion import check_count
@@ -19,7 +19,8 @@ async def propose_activity_candidates(
 
     - 개수(정확히 3개)는 인자 검증이 이미 막았다.
     - 걸린 후보가 하나라도 있으면 사유와 함께 돌려준다. 모델은 고쳐서 3개를 다시 낸다 —
-      같은 진입 안의 루프라 model_calls 가 늘지 않는다.
+      같은 진입 안의 루프라 model_calls 가 늘지 않는다. 오류 코드는 지어낸 근거 id 가 있으면
+      EVIDENCE_REQUIRED, 아니면 CANDIDATE_REJECTED (`review.error_code`).
     - 통과하면 `context.state.suggestions` 에 담는다. 저장 · 발송 · 예약은 하지 않는다.
       status 와 expires_at 은 인자에 없다.
 
@@ -45,7 +46,8 @@ async def propose_activity_candidates(
         recent_activities=[row.activity for row in observations],
     )
     if review.rejections:
-        return fail("propose", _NAME, ErrorCode.CANDIDATE_REJECTED, explain(review.rejections))
+        code = error_code(review.rejections)
+        return fail("propose", _NAME, code, explain(review.rejections))
 
     check_count(review.drafts)
     context.state.suggestions = review.drafts
