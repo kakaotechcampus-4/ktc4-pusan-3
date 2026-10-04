@@ -208,14 +208,25 @@ async def callback(
         denied = error == "access_denied"
         if not denied:
             # 취소가 아니면 원인을 남긴다 (#197). 쿼리는 누구나 만들 수 있어 분류값 모양만 싣는다.
-            log.warning("카카오가 인가 단계 실패를 돌려줬다: error=%s", loggable_code(error))
+            # 걸러진 값은 "(형식 밖)" 으로 — None 으로 찍으면 "error 가 없었다" 로 읽힌다.
+            log.warning(
+                "카카오가 인가 단계 실패를 돌려줬다: provider=%s error=%s",
+                provider.value,
+                loggable_code(error) or "(형식 밖)",
+            )
         return _expire_state(
             _error_redirect(target, "oauth_denied" if denied else "oauth_provider_error")
         )
 
     if code is None or not _is_ready(provider):
         # error 도 code 도 없이 왔거나 그사이 설정이 비었다. 정상 경로에선 오지 않는다 (#197).
-        log.warning("콜백을 이어갈 수 없다: %s", "인가 코드 없음" if code is None else "설정 없음")
+        # provider 를 같이 남긴다 — 미구현 provider 주소로 들어와도 "설정 없음" 으로 찍혀서,
+        # 그것 없이는 .env 부터 뒤지게 된다.
+        log.warning(
+            "콜백을 이어갈 수 없다: provider=%s %s",
+            provider.value,
+            "인가 코드 없음" if code is None else "설정 없음",
+        )
         return _expire_state(_error_redirect(target, "oauth_provider_error"))
 
     try:

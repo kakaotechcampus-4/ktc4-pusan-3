@@ -19,7 +19,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 from urllib.parse import urlencode
 
 import httpx
@@ -141,7 +141,7 @@ class KakaoClient:
         method: str,
         url: str,
         *,
-        where: str,
+        where: Literal["token", "token_info", "logout"],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """호출 1건 + 실패를 전부 KakaoApiError 로 모은다.

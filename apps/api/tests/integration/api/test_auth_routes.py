@@ -3,7 +3,7 @@
 DB 를 보지 않는 경로만 여기 있다. 콜백의 성공 경로는 auth_handoff 를 쓰므로 Postgres 가
 필요해 db_client 로 따로 덮는다 (A-01~A-05).
 
-여기서 지키는 것 넷.
+여기서 지키는 것 다섯.
     ① 죽은 버튼을 만들지 않는다 — ready 와 start_url (§3-1 · A-20)
     ② 실패도 302 다. 봉투가 새어 나오면 안 된다 (§8-2 · A-06 · A-07 · A-10)
     ③ state 가 어긋나면 인가 코드 교환을 시도하지 않는다 (A-08 · A-09)
@@ -95,6 +95,14 @@ async def start_and_take_cookie(client, target: str = "web") -> tuple[str, str]:
     cookie = response.headers["set-cookie"].split(";")[0].split("=", 1)[1]
     _, query = redirect_query(response)
     return cookie, query["state"][0]
+
+
+AUTH_LOGGER = "app.api.v1.routers.auth"
+
+
+def auth_warnings(caplog) -> list[logging.LogRecord]:
+    """인증 라우터가 남긴 warning 만 (#197)."""
+    return [r for r in caplog.records if r.name == AUTH_LOGGER and r.levelno == logging.WARNING]
 
 
 # ── §3-1 상태 조회 ────────────────────────────────────────────────────────────
@@ -235,20 +243,27 @@ async def test_callback_with_mismatched_state_never_exchanges(client, configured
     assert fake.calls == []
 
 
-async def test_callback_passes_user_cancel_through_as_denied(client, configured, monkeypatch):
-    """A-17. 사용자가 동의 화면에서 취소한 것은 장애와 구분해 내려준다."""
+async def test_callback_passes_user_cancel_through_as_denied(
+    client, configured, monkeypatch, caplog
+):
+    """A-17. 사용자가 동의 화면에서 취소한 것은 장애와 구분해 내려준다.
+
+    취소는 정상 동작이라 warning 을 남기지 않는다 — 쌓이면 진짜 원인이 그 속에 묻힌다 (#197).
+    """
     fake = patch_kakao(monkeypatch, FakeKakao())
     cookie, state = await start_and_take_cookie(client)
 
-    response = await client.get(
-        f"/api/v1/auth/kakao/callback?error=access_denied&state={state}",
-        headers={"Cookie": f"oauth_state={cookie}"},
-    )
+    with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
+        response = await client.get(
+            f"/api/v1/auth/kakao/callback?error=access_denied&state={state}",
+            headers={"Cookie": f"oauth_state={cookie}"},
+        )
 
     base, params = redirect_query(response)
     assert base == RETURN_WEB
     assert params["error"] == ["oauth_denied"]
     assert fake.calls == []
+    assert auth_warnings(caplog) == []
 
 
 async def test_callback_returns_to_app_scheme(client, configured, monkeypatch):
@@ -305,12 +320,6 @@ async def test_callback_error_never_carries_a_message(client, configured, monkey
 
 # ── #197 실패 사유 로그 ───────────────────────────────────────────────────────
 
-AUTH_LOGGER = "app.api.v1.routers.auth"
-
-
-def auth_warnings(caplog) -> list[logging.LogRecord]:
-    return [r for r in caplog.records if r.name == AUTH_LOGGER and r.levelno == logging.WARNING]
-
 
 async def test_callback_logs_why_kakao_failed(client, configured, monkeypatch, caplog):
     """#197. 카카오 호출 실패 사유를 로그에 남긴다 — 09-30 의 5번 중 2번을 못 본 자리.
@@ -351,6 +360,7 @@ async def test_callback_logs_kakao_error_param_without_description(
     _, params = redirect_query(response)
     assert params["error"] == ["oauth_provider_error"]
     assert len(auth_warnings(caplog)) == 1
+    assert "provider=kakao" in caplog.text
     assert "server_error" in caplog.text
     assert "SECRET-DESC" not in caplog.text
 
@@ -373,6 +383,8 @@ async def test_callback_log_does_not_copy_a_forged_error_value(
 
     assert len(auth_warnings(caplog)) == 1
     assert "FORGED-LINE" not in caplog.text
+    # 걸러진 값은 "error 가 없었다" 로 읽히지 않게 따로 표시한다.
+    assert "(형식 밖)" in caplog.text
 
 
 async def test_callback_without_code_logs_why(client, configured, monkeypatch, caplog):
@@ -393,3 +405,29 @@ async def test_callback_without_code_logs_why(client, configured, monkeypatch, c
     assert params["error"] == ["oauth_provider_error"]
     assert fake.calls == []
     assert len(auth_warnings(caplog)) == 1
+    assert "provider=kakao" in caplog.text
+    assert "인가 코드 없음" in caplog.text
+
+
+async def test_callback_after_settings_vanish_logs_why(client, configured, monkeypatch, caplog):
+    """#197. 시작 뒤에 설정이 비면 콜백도 oauth_provider_error 다 — "설정 없음" 으로 남긴다.
+
+    "인가 코드 없음" 과 문구가 섞이면 엉뚱한 곳(.env 대 카카오)부터 뒤지게 된다.
+    """
+    fake = patch_kakao(monkeypatch, FakeKakao())
+    cookie, state = await start_and_take_cookie(client)
+    monkeypatch.setattr(settings, "KAKAO_REST_API_KEY", None)
+
+    with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
+        response = await client.get(
+            f"/api/v1/auth/kakao/callback?code=authorization-code&state={state}",
+            headers={"Cookie": f"oauth_state={cookie}"},
+        )
+
+    _, params = redirect_query(response)
+    assert params["error"] == ["oauth_provider_error"]
+    assert fake.calls == []
+    assert len(auth_warnings(caplog)) == 1
+    assert "provider=kakao" in caplog.text
+    assert "설정 없음" in caplog.text
+    assert "authorization-code" not in caplog.text

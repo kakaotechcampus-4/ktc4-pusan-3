@@ -3,7 +3,7 @@
 카카오 서버를 부르지 않는다. httpx.MockTransport 로 응답을 바꿔 끼우고 **호출 여부와
 입력값을 함께** 검증한다 (apps/api/CLAUDE.md 자동 검증).
 
-여기서 지키는 것 셋.
+여기서 지키는 것 넷.
     ① 교환 요청이 명세대로 나간다 — redirect_uri 는 콘솔 등록값 그대로
     ② 카카오가 어떻게 실패하든 KakaoApiError 하나로 모인다 (§8-1 의 502 로 갈 자리)
     ③ 토큰 폐기는 실패해도 로그인을 되돌리지 않는다 (§7-4)
@@ -90,7 +90,10 @@ async def test_exchange_code_sends_spec_form_and_returns_token():
 
 @pytest.mark.parametrize("status", [400, 401, 500, 503])
 async def test_exchange_code_turns_any_kakao_failure_into_one_error(status):
-    """4xx(교환 실패)도 5xx 도 같은 예외다. 사유를 구분해 흘리지 않는다 (§8-1)."""
+    """4xx(교환 실패)도 5xx 도 같은 예외다. 화면에는 사유를 구분해 흘리지 않는다 (§8-1).
+
+    사유(카카오 분류값)는 예외 문구에 실려 로그로만 간다 (#197).
+    """
     with pytest.raises(KakaoApiError):
         await build_client(json_handler({"error": "invalid_grant"}, status)).exchange_code("c")
 
