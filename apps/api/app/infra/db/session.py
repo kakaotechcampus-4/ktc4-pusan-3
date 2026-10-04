@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.infra.db import registry  # noqa: F401
 from app.infra.db.url import build_url
 
-engine = create_async_engine(build_url("postgresql+asyncpg"))
+# hide_parameters — DB 오류 글 끝의 [parameters: (...)] 를 숨긴다. INSERT 의 모든 값(부르는 이름 ·
+# 원문)이 실리는 줄이다. 🚨 PostgreSQL 이 보낸 DETAIL 줄의 값은 못 숨긴다 — 그건 API 의
+# DB 오류 처리기가 글을 아예 찍지 않는 것으로 막는다 (app/api/errors.py).
+engine = create_async_engine(build_url("postgresql+asyncpg"), hide_parameters=True)
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
