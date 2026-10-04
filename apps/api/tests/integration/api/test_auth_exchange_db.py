@@ -147,6 +147,12 @@ async def test_second_tab_signup_does_not_leak_the_member_number(db_client, sess
     assert second.json()["error"]["code"] == "internal_error"
     assert KAKAO_USER_ID not in second.text
     assert KAKAO_USER_ID not in caplog.text
+    # 로그가 실제로 잡혔고, 원인을 찾을 만큼은 남는다 — 위 "없다" 단언이 빈 로그로 통과하지 않게.
+    # constraint 가 None 이 아니면 asyncpg 의 원래 예외까지 닿은 것이다.
+    # (제약 이름은 자동 생성이라 글자를 박지 않는다.)
+    assert "sqlstate=23505" in caplog.text
+    assert "table=auth_identity" in caplog.text
+    assert "constraint=None" not in caplog.text
 
 
 # ── A-01 · A-02 신규 가입 ─────────────────────────────────────────────────────
