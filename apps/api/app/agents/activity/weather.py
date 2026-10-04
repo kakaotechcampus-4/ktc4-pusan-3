@@ -13,6 +13,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from app.agents.activity.readouts import READOUTS
 from app.agents.activity.store.ports import (
     Advisories,
     AdvisoryLevel,
@@ -50,6 +51,7 @@ UV_GRADE_FLOORS: tuple[tuple[int, str], ...] = (
 )
 
 # ── 화면 문구 키 ────────────────────────────────────────────────────────────
+# 문구는 activity.readout.yaml 에 있다 (공통규약 §10). 여기는 키만 둔다
 WEATHER_UNCHECKED = "weather.unchecked"
 AIR_UNCHECKED = "weather.air_unchecked"
 UV_UNCHECKED = "weather.uv_unchecked"
@@ -62,20 +64,6 @@ OZONE_ADVISORY = "weather.ozone_advisory"
 UV_VERY_HIGH = "weather.uv_very_high"
 RAIN_LIKELY = "weather.rain_likely"
 
-NOTICES: dict[str, str] = {
-    WEATHER_UNCHECKED: "날씨를 확인하지 못해 실내 놀이만 골랐어요.",
-    AIR_UNCHECKED: "미세먼지는 확인하지 못했어요.",
-    UV_UNCHECKED: "자외선은 확인하지 못했어요.",
-    OUTDOOR_BLOCKED: "오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요.",
-    AFTER_SUNSET: "해가 져서 실내 놀이만 골랐어요.",
-    HEAT_ADVISORY: "폭염주의보가 내려져 있어요. 한낮은 피해 주세요.",
-    COLD_ADVISORY: "한파주의보가 내려져 있어요. 따뜻하게 입혀 주세요.",
-    AIR_BAD: "미세먼지가 나빠요. 바깥 활동은 짧게 해 주세요.",
-    OZONE_ADVISORY: "오존이 높아요. 오후 바깥 활동은 짧게 해 주세요.",
-    UV_VERY_HIGH: "자외선이 매우 높아요. 그늘과 모자를 챙겨 주세요.",
-    RAIN_LIKELY: "비가 올 수 있어요. 우산을 챙겨 주세요.",
-}
-
 # 야외를 막아도 남겨야 하는 안내 — 무엇을 확인 못 했는지는 막혀도 알린다
 _UNCHECKED = frozenset({AIR_UNCHECKED, UV_UNCHECKED})
 
@@ -86,13 +74,13 @@ class WeatherBrief:
 
     outdoor_ok: bool
     labels: dict[str, str] = field(default_factory=dict)  # 등급 라벨. 수치는 없다
-    notices: tuple[str, ...] = ()  # 화면에 붙는 문구 키 (NOTICES)
+    notices: tuple[str, ...] = ()  # 화면에 붙는 문구 키 (activity.readout.yaml)
 
     def to_model_payload(self) -> dict[str, object]:
         return {"outdoor_ok": self.outdoor_ok, **self.labels}
 
     def notice_texts(self) -> tuple[str, ...]:
-        return tuple(NOTICES[key] for key in self.notices)
+        return tuple(READOUTS.get(key).template for key in self.notices)
 
 
 def judge_weather(

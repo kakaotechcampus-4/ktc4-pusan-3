@@ -8,6 +8,8 @@ from dataclasses import replace
 
 import pytest
 
+from app.agents.activity import weather
+from app.agents.activity.readouts import READOUTS
 from app.agents.activity.store.ports import (
     Advisories,
     AirQuality,
@@ -23,7 +25,6 @@ from app.agents.activity.weather import (
     AIR_UNCHECKED,
     COLD_ADVISORY,
     HEAT_ADVISORY,
-    NOTICES,
     OUTDOOR_BLOCKED,
     OZONE_ADVISORY,
     RAIN_LIKELY,
@@ -232,9 +233,18 @@ class TestModelPayload:
             if isinstance(value, str):
                 assert not any(ch.isdigit() for ch in value), value
 
-    def test_안내_문구는_모두_정의돼_있다(self):
+    def test_안내_문구는_카탈로그에서_읽는다(self):
         brief = judge(forecast=Forecast("흐림", 4.0, 70), air=None, uv_index=None)
-        assert brief.notice_texts() == tuple(NOTICES[key] for key in brief.notices)
+        assert brief.notice_texts() == tuple(READOUTS.get(key).template for key in brief.notices)
+        assert "미세먼지는 확인하지 못했어요." in brief.notice_texts()
+
+    def test_weather_py_의_문구_키가_카탈로그에_모두_있다(self):
+        """키만 있고 문구가 없으면 판정이 그 키를 낼 때 KeyError 다 — 부팅 전에 잡는다."""
+        keys = {v for k, v in vars(weather).items() if k.isupper() and isinstance(v, str)}
+        notice_keys = {key for key in keys if key.startswith("weather.")}
+        assert len(notice_keys) == 11
+        for key in notice_keys:
+            assert READOUTS.get(key).kind == "notice"
 
 
 class TestParsePrecip:
