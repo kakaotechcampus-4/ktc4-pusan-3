@@ -386,9 +386,11 @@ class TestReadAdvisories:
     def test_발표만_있으면_발효_중이다(self):
         assert advisories(row(warn_var="2", command="1")).severe is True
 
-    @pytest.mark.parametrize("warn_var", ["1", "2", "7", "8"])
-    def test_강풍_호우_태풍_대설은_차단_신호다(self, warn_var):
-        assert advisories(row(warn_var=warn_var)).severe is True
+    @pytest.mark.parametrize("warn_var", ["1", "2", "5", "7", "8"])
+    def test_강풍_호우_폭풍해일_태풍_대설은_차단_신호다(self, warn_var):
+        result = advisories(row(warn_var=warn_var))
+        assert result.severe is True
+        assert judge(advisories=result).outdoor_ok is False
 
     @pytest.mark.parametrize(
         ("stress", "level"), [("0", "advisory"), ("1", "warning"), ("2", "warning")]
@@ -409,10 +411,22 @@ class TestReadAdvisories:
         other = row(warn_var="12", stress="1", area="L1010100")
         assert advisories(row(warn_var="12", stress="0"), other).heat == "warning"
 
-    @pytest.mark.parametrize("warn_var", ["4", "9", "13"])
-    def test_놀이와_무관한_특보는_보지_않는다(self, warn_var):
-        """건조 · 황사 · 열대야. 황사는 미세먼지 값으로 따로 본다."""
-        assert advisories(row(warn_var=warn_var)) == CLEAR_SKY
+    @pytest.mark.parametrize("warn_var", ["4", "6", "9"])
+    def test_일부러_빼는_특보는_판정에_영향이_없다(self, warn_var):
+        """건조 · 풍랑 · 황사. 황사는 미세먼지 값으로 따로 본다."""
+        result = advisories(row(warn_var=warn_var, stress="1"))
+        assert result == CLEAR_SKY
+        assert judge(advisories=result).outdoor_ok is True
+
+    @pytest.mark.parametrize("warn_var", ["999", "13", "10", ""])
+    def test_처음_보는_특보_종류가_발효_중이면_모른다고_한다(self, warn_var):
+        """모르는 종류를 "없음"으로 넘기면 다른 조건이 좋을 때 야외가 열린다 (#194 리뷰)."""
+        result = advisories(row(warn_var=warn_var, command="1", stress="1"))
+        assert result is None
+        assert judge(advisories=result).outdoor_ok is False
+
+    def test_처음_보는_종류라도_해제된_행은_넘긴다(self):
+        assert advisories(row(warn_var="999", command="2")) == CLEAR_SKY
 
     @pytest.mark.parametrize(("command", "stress"), [("5", "0"), ("1", "9")])
     def test_모르는_코드가_섞이면_모른다고_한다(self, command, stress):

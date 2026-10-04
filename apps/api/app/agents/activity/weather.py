@@ -245,12 +245,18 @@ def parse_air(value: str | None, flag: str | None = None) -> float | None:
 # 단기예보 하늘상태(SKY) 코드 (활용가이드). 실응답에서 "1" · "3" 을 봤다
 SKY_LABELS: dict[str, str] = {"1": "맑음", "3": "구름많음", "4": "흐림"}
 
-# 특보코드조회(getPwnCd) 코드 (활용가이드). 실응답에서 호우 "2" · 발표 "1" · 해제 "2" 를 봤다
+# 특보코드조회(getPwnCd) 코드 (활용가이드). 실응답에서 호우 "2" · 발표 "1" · 해제 "2" 를 봤다.
+# 종류(warnVar)는 강풍 1 · 호우 2 · 한파 3 · 건조 4 · 폭풍해일 5 · 풍랑 6 · 태풍 7 · 대설 8 ·
+# 황사 9 · 폭염 12 다. 이 표에 없는 종류가 발효 중이면 모른다고 한다 (read_advisories)
 KMA_OK = "00"
 KMA_NO_DATA = "03"  # 발효 중인 특보가 없다. 실패가 아니다
 _WARN_HEAT = "12"  # 폭염
 _WARN_COLD = "3"  # 한파
-_WARN_SEVERE = frozenset({"1", "2", "7", "8"})  # 강풍 · 호우 · 태풍 · 대설
+# 바깥 활동을 막는다. 폭풍해일은 해안 육지 구역에도 발표되고 태풍 없이도 온다 (저기압 + 만조)
+_WARN_SEVERE = frozenset({"1", "2", "5", "7", "8"})  # 강풍 · 호우 · 폭풍해일 · 태풍 · 대설
+# 일부러 보지 않는다 — 건조는 산불 예방용이라 놀이 위험이 아니고, 풍랑은 바다 구역에만 발표되고,
+# 황사는 에어코리아 미세먼지 값이 따로 판정한다
+_WARN_IGNORED = frozenset({"4", "6", "9"})  # 건조 · 풍랑 · 황사
 _IN_EFFECT = frozenset({"1", "3", "6", "7"})  # 발표 · 연장 · 정정 · 변경발표
 _CLEARED = frozenset({"2", "8"})  # 해제 · 변경해제
 _STRESS: dict[str, AdvisoryLevel] = {
@@ -281,7 +287,8 @@ def read_advisories(raw: RawAdvisories) -> Advisories | None:
 
     - `03 NO_DATA` 는 발효 중인 특보가 없다는 뜻이다. 그 밖의 결과 코드는 실패다.
     - 발표와 해제가 따로 한 행씩 온다. (구역, 종류)마다 가장 최근 행의 command 로 본다.
-    - 모르는 command · 등급이 있으면 None — 모르는 특보를 "없음"으로 넘기지 않는다.
+    - 모르는 command · 등급 · 종류가 발효 중이면 None — 모르는 특보를 "없음"으로 넘기지 않는다.
+      해제된 행은 종류를 몰라도 넘긴다. 끝난 특보다.
     """
     code = raw.result_code.strip()
     if code == KMA_NO_DATA:
@@ -300,7 +307,7 @@ def read_advisories(raw: RawAdvisories) -> Advisories | None:
     severe = False
     for (_, warn_var), row in latest.items():
         command = row.command.strip()
-        if command in _CLEARED:
+        if command in _CLEARED or warn_var in _WARN_IGNORED:
             continue
         level = _STRESS.get(row.warn_stress.strip())
         if command not in _IN_EFFECT or level is None:
@@ -311,6 +318,8 @@ def read_advisories(raw: RawAdvisories) -> Advisories | None:
             cold = _stronger(cold, level)
         elif warn_var in _WARN_SEVERE:
             severe = True
+        else:
+            return None  # 처음 보는 종류
     return Advisories(heat=heat, cold=cold, severe=severe)
 
 

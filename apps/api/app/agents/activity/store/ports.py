@@ -171,7 +171,7 @@ class Advisories:
 
     heat: AdvisoryLevel
     cold: AdvisoryLevel
-    severe: bool  # 강풍 · 호우 · 대설 · 태풍 중 하나라도 발효 중
+    severe: bool  # 강풍 · 호우 · 대설 · 태풍 · 폭풍해일 중 하나라도 발효 중
 
 
 # ── 날씨 포트가 돌려주는 원문. 어댑터는 값을 해석하지 않고 문자열 그대로 싣는다 ──────────────
