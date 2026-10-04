@@ -8,8 +8,10 @@ DB 를 보지 않는 경로만 여기 있다. 콜백의 성공 경로는 auth_ha
     ② 실패도 302 다. 봉투가 새어 나오면 안 된다 (§8-2 · A-06 · A-07 · A-10)
     ③ state 가 어긋나면 인가 코드 교환을 시도하지 않는다 (A-08 · A-09)
     ④ 카카오가 죽으면 기본값으로 넘기지 않는다 (A-16 · A-17)
+    ⑤ oauth_provider_error 로 끝나는 콜백은 사유를 로그에 남긴다 — 코드 · 설명은 빼고 (#197)
 """
 
+import logging
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse
 
@@ -299,3 +301,95 @@ async def test_callback_error_never_carries_a_message(client, configured, monkey
     _, params = redirect_query(response)
     assert set(params) == {"error"}
     assert "비밀스러운" not in response.headers["location"]
+
+
+# ── #197 실패 사유 로그 ───────────────────────────────────────────────────────
+
+AUTH_LOGGER = "app.api.v1.routers.auth"
+
+
+def auth_warnings(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.name == AUTH_LOGGER and r.levelno == logging.WARNING]
+
+
+async def test_callback_logs_why_kakao_failed(client, configured, monkeypatch, caplog):
+    """#197. 카카오 호출 실패 사유를 로그에 남긴다 — 09-30 의 5번 중 2번을 못 본 자리.
+
+    화면으로 가는 것은 그대로 oauth_provider_error 하나다. 인가 코드는 로그에도 없다.
+    """
+    reason = "token: 카카오가 400 로 답했다 (error=invalid_grant error_code=KOE320)"
+    patch_kakao(monkeypatch, FakeKakao(fail=KakaoApiError(reason)))
+    cookie, state = await start_and_take_cookie(client)
+
+    with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
+        response = await client.get(
+            f"/api/v1/auth/kakao/callback?code=SECRET-AUTH-CODE&state={state}",
+            headers={"Cookie": f"oauth_state={cookie}"},
+        )
+
+    _, params = redirect_query(response)
+    assert params["error"] == ["oauth_provider_error"]
+    assert len(auth_warnings(caplog)) == 1
+    assert "KOE320" in caplog.text
+    assert "SECRET-AUTH-CODE" not in caplog.text
+
+
+async def test_callback_logs_kakao_error_param_without_description(
+    client, configured, monkeypatch, caplog
+):
+    """#197. 취소가 아닌데 카카오가 error 로 돌려보냈으면 그 분류값을 남긴다. 설명은 버린다."""
+    patch_kakao(monkeypatch, FakeKakao())
+    cookie, state = await start_and_take_cookie(client)
+
+    with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
+        response = await client.get(
+            "/api/v1/auth/kakao/callback"
+            f"?error=server_error&error_description=SECRET-DESC&state={state}",
+            headers={"Cookie": f"oauth_state={cookie}"},
+        )
+
+    _, params = redirect_query(response)
+    assert params["error"] == ["oauth_provider_error"]
+    assert len(auth_warnings(caplog)) == 1
+    assert "server_error" in caplog.text
+    assert "SECRET-DESC" not in caplog.text
+
+
+async def test_callback_log_does_not_copy_a_forged_error_value(
+    client, configured, monkeypatch, caplog
+):
+    """콜백 쿼리는 누구나 만들 수 있다. 분류값 모양이 아니면 로그에 옮기지 않는다.
+
+    줄바꿈을 넣어 가짜 로그 줄을 끼우는 것을 막는다.
+    """
+    patch_kakao(monkeypatch, FakeKakao())
+    cookie, state = await start_and_take_cookie(client)
+
+    with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
+        await client.get(
+            f"/api/v1/auth/kakao/callback?error=evil%0AFORGED-LINE&state={state}",
+            headers={"Cookie": f"oauth_state={cookie}"},
+        )
+
+    assert len(auth_warnings(caplog)) == 1
+    assert "FORGED-LINE" not in caplog.text
+
+
+async def test_callback_without_code_logs_why(client, configured, monkeypatch, caplog):
+    """#197. 코드도 error 도 없이 돌아온 콜백도 oauth_provider_error 다.
+
+    여기도 남기지 않으면 화면엔 같은 오류가 뜨는데 원인을 또 못 본다.
+    """
+    fake = patch_kakao(monkeypatch, FakeKakao())
+    cookie, state = await start_and_take_cookie(client)
+
+    with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
+        response = await client.get(
+            f"/api/v1/auth/kakao/callback?state={state}",
+            headers={"Cookie": f"oauth_state={cookie}"},
+        )
+
+    _, params = redirect_query(response)
+    assert params["error"] == ["oauth_provider_error"]
+    assert fake.calls == []
+    assert len(auth_warnings(caplog)) == 1

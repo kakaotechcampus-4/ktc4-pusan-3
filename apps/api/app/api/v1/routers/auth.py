@@ -55,7 +55,12 @@ from app.domains.identity.repository import (
     find_parent_id_by_identity,
 )
 from app.domains.policy.repository import find_active_versions
-from app.integrations.kakao.client import KakaoApiError, build_authorize_url, kakao_client
+from app.integrations.kakao.client import (
+    KakaoApiError,
+    build_authorize_url,
+    kakao_client,
+    loggable_code,
+)
 
 log = logging.getLogger(__name__)
 
@@ -201,11 +206,16 @@ async def callback(
         # 카카오가 실패를 돌려줬다. 사용자가 동의 화면에서 취소한 것만 따로 구분한다 —
         # 프론트가 "취소했어요" 와 "카카오가 이상해요" 를 다르게 말해야 한다 (A-17).
         denied = error == "access_denied"
+        if not denied:
+            # 취소가 아니면 원인을 남긴다 (#197). 쿼리는 누구나 만들 수 있어 분류값 모양만 싣는다.
+            log.warning("카카오가 인가 단계 실패를 돌려줬다: error=%s", loggable_code(error))
         return _expire_state(
             _error_redirect(target, "oauth_denied" if denied else "oauth_provider_error")
         )
 
     if code is None or not _is_ready(provider):
+        # error 도 code 도 없이 왔거나 그사이 설정이 비었다. 정상 경로에선 오지 않는다 (#197).
+        log.warning("콜백을 이어갈 수 없다: %s", "인가 코드 없음" if code is None else "설정 없음")
         return _expire_state(_error_redirect(target, "oauth_provider_error"))
 
     try:
@@ -214,9 +224,11 @@ async def callback(
             provider_user_id = await kakao.fetch_user_id(access_token)
             # 회원번호만 얻으면 볼일이 끝난다. 저장하지 않으므로 바로 버린다 (§7-4).
             await kakao.revoke_token(access_token)
-    except KakaoApiError:
+    except KakaoApiError as exc:
         # 🚨 기본값으로 대체하지 않는다. 카카오가 죽었을 때 로그인을 통과시키는 경로는
         #    존재하지 않는다 (§8-1 · A-16).
+        #    사유는 로그에만 남긴다. 문구는 client 가 분류값까지만 담아 만든다 (§7-5 · #197).
+        log.warning("카카오 호출 실패: %s", exc)
         return _expire_state(_error_redirect(target, "oauth_provider_error"))
 
     parent_id = await find_parent_id_by_identity(
