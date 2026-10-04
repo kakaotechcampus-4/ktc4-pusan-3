@@ -198,6 +198,22 @@ async def test_빈_턴이_오면_한_번_다시_묻는다(context: AgentContext)
     assert "답이 비어 있다" in llm.seen[1][-1]["content"]
 
 
+async def test_문장이_빈_JSON_도_빈_턴으로_보고_다시_묻는다(context: AgentContext) -> None:
+    """라이브 RC26 — structured output 이라 빈 턴이 빈 content 가 아니라 text 가 빈 JSON 으로 온다.
+
+    스키마에는 맞아서 그대로 끝나면 pipeline 이 메모 없음으로 보고 입력을 그대로 돌려준다.
+    """
+    llm = FakeLLM(
+        _answer({"text": "", "kind": "message"}),
+        _answer({"text": "급식 기록을 찾지 못했어요.", "kind": "message"}),
+    )
+    result = await run("오늘 급식 뭐야?", context, client=llm)
+
+    assert result.final_message == "급식 기록을 찾지 못했어요."
+    assert len(llm.seen) == 2
+    assert "답이 비어 있다" in llm.seen[1][-1]["content"]
+
+
 async def test_다시_물어도_비면_그대로_끝낸다(context: AgentContext) -> None:
     # 한 번만 다시 묻는다. 계속 물으면 호출만 쌓인다
     llm = FakeLLM(_reply(""), _reply("   "))

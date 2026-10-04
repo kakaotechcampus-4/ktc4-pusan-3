@@ -286,22 +286,16 @@ def test_unavailable_carries_agent_names_only():
     )
 
 
-def test_partial_goes_out_with_a_code_message():
-    """NF-06 — 성공과 실패를 한 화면에. 문구는 모델이 아니라 코드 상수"""
+def test_partial_carries_agent_names_only():
+    """NF-06 — 성공과 실패를 한 화면에. 문구는 unavailable 처럼 화면이 Agent 이름으로 만든다"""
     assert translate.to_sse(Partial("timeout_20s", ("activity",), ("food",))) == (
         "partial",
         {
             "reason": "timeout_20s",
             "succeeded": ["activity"],
             "failed": ["food"],
-            "message": "시간 안에 추천을 준비하지 못했어요.",
         },
     )
-
-
-def test_every_partial_reason_has_a_message():
-    # 이유가 늘면 여기서 실패한다. 문구 없이 나가면 KeyError로 run이 failed가 된다
-    assert set(translate.PARTIAL_MESSAGES) == set(get_args(entrypoint.PartialReason))
 
 
 def test_partial_keeps_an_agent_on_both_sides():
