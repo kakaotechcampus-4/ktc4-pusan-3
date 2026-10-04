@@ -10,12 +10,14 @@ FastAPI 기본 에러 응답은 {"detail": "..."} 인데 계약은
 """
 
 import logging
+import traceback
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 log = logging.getLogger(__name__)
@@ -92,6 +94,18 @@ _FRAMEWORK_CODE: dict[int, str] = {
     404: "not_found",
 }
 
+
+def _db_cause(exc: DBAPIError) -> BaseException:
+    """드라이버(asyncpg)가 던진 원래 예외. SQLAlchemy 가 어댑터 예외로 한 겹 더 감싸 둔다.
+
+    sqlstate · constraint_name 은 원래 예외에만 있다. 못 찾으면 받은 예외 그대로.
+    """
+    orig = exc.orig
+    if orig is None:
+        return exc
+    return orig.__cause__ or orig
+
+
 _METHOD_NOT_ALLOWED = 405
 """405 는 404 로 바꿔 내린다.
 
@@ -145,6 +159,27 @@ def register_error_handlers(app: FastAPI) -> None:
             "요청 형식이 올바르지 않아요",
             {"fields": fields},
         )
+
+    @app.exception_handler(DBAPIError)
+    async def _db_error(_: Request, exc: DBAPIError) -> JSONResponse:
+        # 🚨 DB 오류는 글을 로그에 싣지 않는다. PostgreSQL 은 오류 글 자체에 값을 넣어 보낸다 —
+        #    중복 키면 "DETAIL: Key (provider, provider_user_id)=(kakao, 회원번호)", CHECK 위반이면
+        #    "Failing row contains (...)" 로 행 전체를 (명세 §7-5 · 루트 §2). 엔진의
+        #    hide_parameters 는 [parameters] 줄만 숨겨서 이걸 못 막는다.
+        #    남기는 것은 분류(종류 · SQLSTATE · 제약 이름)와 코드 위치뿐이다
+        #    — runner._guarded 와 같은 방식.
+        # 🚨 아래 마지막 그물(Exception)로 보내지 않는 이유 — 그쪽은 Starlette 이 응답을 보낸 뒤
+        #    예외를 다시 던지고, uvicorn 이 받아서 글 전체를 한 번 더 찍는다. 예외 종류를 콕 집은
+        #    이 처리기는 다시 던지지 않는다 (Starlette 이 500 · Exception 처리기만 따로 다룬다).
+        cause = _db_cause(exc)
+        log.error(
+            "DB 오류 %s sqlstate=%s constraint=%s\n%s",
+            type(cause).__name__,
+            getattr(cause, "sqlstate", None),
+            getattr(cause, "constraint_name", None),
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
+        return envelope(500, "internal_error", "잠시 후 다시 시도해 주세요")
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

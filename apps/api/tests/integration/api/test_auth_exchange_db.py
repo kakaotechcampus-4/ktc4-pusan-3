@@ -10,6 +10,7 @@
     ④ 세션 무효화는 즉시다 (A-15) — 탈퇴는 401 이 아니라 404 (A-19)
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -108,6 +109,44 @@ async def changed(session, base: dict) -> dict:
     return {
         model.__name__: now[model] - base[model] for model in TRACKED if now[model] != base[model]
     }
+
+
+# ── DB 오류가 회원번호를 흘리지 않는다 ───────────────────────────────────────
+
+
+async def test_second_tab_signup_does_not_leak_the_member_number(db_client, session, caplog):
+    """🚨 같은 카카오 계정으로 두 탭에서 가입하면 두 번째 탭은 DB 중복 오류로 끝난다.
+
+    PostgreSQL 은 그 오류 글 자체에 회원번호를 싣는다
+    ("DETAIL: Key (provider, provider_user_id)=(kakao, 1234567890) already exists").
+    로그에도 응답에도 나가면 안 된다 (명세 §7-5 · 루트 §2). 응답은 지금처럼 500 이다.
+    """
+    consent_codes = []
+    for code in ("tab-1", "tab-2"):
+        await seed_handoff(session, code=code)
+        exchanged = await db_client.post("/api/v1/auth/kakao", json={"code": code, "bind": BIND})
+        consent_codes.append(exchanged.json()["consent_code"])
+
+    def signup_body(consent_code: str) -> dict:
+        return {
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        }
+
+    first = await db_client.post("/api/v1/auth/kakao/signup", json=signup_body(consent_codes[0]))
+    assert first.status_code == 200
+
+    with caplog.at_level(logging.INFO):
+        second = await db_client.post(
+            "/api/v1/auth/kakao/signup", json=signup_body(consent_codes[1])
+        )
+
+    assert second.status_code == 500
+    assert second.json()["error"]["code"] == "internal_error"
+    assert KAKAO_USER_ID not in second.text
+    assert KAKAO_USER_ID not in caplog.text
 
 
 # ── A-01 · A-02 신규 가입 ─────────────────────────────────────────────────────
