@@ -18,6 +18,9 @@ export const SCENARIOS = {
   disconnected: "종료 이벤트 없이 스트림이 끊김 — 저장 여부를 모르는 상태",
   consent: "필수 동의 미완료 — 신규 가입 대기 · 403 consent_required 로 저장 차단",
   auth_unready: "로그인 미연결 — GET /auth/kakao/status 가 ready: false",
+  // 🚨 **받아 간 뒤에 바뀐 것**이라 정적으로 만들 수 없다 (`handlers/policies.ts`). 첫 제출이
+  //    버전을 올려 400 을 만들고, 화면은 다시 받아 **바뀐 항목만** 체크를 풀어야 한다.
+  policy_bumped: "가입 동의 — 제출 직전에 약관이 새 판으로 (400 policy_version_invalid)",
   stale: "6개월 지난 근거 — is_stale 인 기억만 남은 상태 (NF-08)",
   photo_unreadable: "08 사진 — 읽어낼 게 없는 사진 (failed · 저장된 것 없음)",
   // 🚨 **화면에는 아무 차이도 안 난다.** 08 은 시트에서 고른 lane 을 그대로 쓰고 서버 추측을

@@ -43,6 +43,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="search_nearby_places",
         description=(
             "근처 공원·놀이터·도서관 등을 종류로 찾는다. 나들이 후보를 낼 때 부른다. "
+            "바깥 활동이 어려운 날은 library · indoor_playground · experience_center 만 찾는다. "
             "place_name 에는 이 결과에 있는 이름만 쓴다."
         ),
         args=SearchNearbyPlacesArgs,

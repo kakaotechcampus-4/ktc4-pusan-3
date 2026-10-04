@@ -5,8 +5,11 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 만든다 (D11). 외부 API 어댑터는 `app/integrations/`에 두고 `app/api`가 주입한다
 (`app/agents/`는 `integrations`를 import할 수 없다 — D8).
 
-🚨 **원좌표는 여기까지 오지 않는다.** 좌표는 요청 바디로만 받아 받는 즉시 5km 격자로 뭉갠다.
-포트는 `WeatherGrid`만 받는다 — 원좌표가 DB·로그·모델 입력·예외 메시지 어디에도 없게 한다 (4-3).
+🚨 **좌표는 휴대폰이 약 1km 로 흐려서 보낸 값(`CoarseLocation`)만 받는다.** 서버는 그 요청 안에서
+격자 변환과 장소 거리 계산에만 쓰고, DB·로그·모델 입력·예외 메시지·외부 API 어디에도 남기거나
+보내지 않는다 (4-3). 거리 계산 결과도 모델에 주지 않는다 — 모델은 장소 이름 · 종류만 본다.
+날씨 포트는 `WeatherGrid` 만 받는다 — 좌표가 `app/integrations/` 에 아예
+들어가지 않는다.
 
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
@@ -16,10 +19,10 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 | ScheduleReader | 아이 일정 — 읽기 전용 |
 | ActivityDocReader | activity_doc — 월령 슬라이스 + 의미 검색 |
 | WeatherSource | 기상청 단기예보 · 에어코리아 · 생활기상지수 · 기상특보 |
-| PlaceSource | Kakao Local · 도시공원 표준데이터 적재분 |
+| PlaceSource | 적재한 place 테이블 — 공원 · 어린이놀이시설 · 도서관. 외부 API 없음 (D9) |
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal, Protocol
 from uuid import UUID
@@ -27,6 +30,7 @@ from uuid import UUID
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.gate import SafetyState
+from app.rules.kma_grid import latlon_to_grid
 
 
 class SafetyLookupError(Exception):
@@ -105,10 +109,40 @@ class ActivityDocRow:
 
 @dataclass(frozen=True)
 class WeatherGrid:
-    """기상청 5km 격자. 원좌표는 이 값으로 뭉갠 뒤 버린다."""
+    """기상청 5km 격자. 날씨 포트는 좌표 대신 이 값만 받는다."""
 
     nx: int
     ny: int
+
+
+# 좌표를 자르는 자리수. 소수점 둘째 자리는 위도 약 1.1km · 경도 약 0.9km (북위 36° 기준)
+COARSE_DECIMALS = 2
+
+
+@dataclass(frozen=True)
+class CoarseLocation:
+    """휴대폰이 약 1km 로 흐려서 보낸 좌표. 요청 하나 동안만 산다.
+
+    `repr` 에 값을 싣지 않는다 — context 를 로그나 예외에 찍어도 좌표가 새지 않게.
+    만들 때 `COARSE_DECIMALS` 자리로 한 번 더 자른다. 클라이언트가 덜 흐려 보내도 서버에서
+    막힌다. 거절하지 않고 자른다 — 휴대폰이 흐린 위치도 소수점 아래가 길게 와서, 거절하면
+    정상 요청이 막힌다.
+    """
+
+    lat: float = field(repr=False)
+    lon: float = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not (-90.0 <= self.lat <= 90.0) or not (-180.0 <= self.lon <= 180.0):
+            raise ValueError("위경도가 범위를 벗어났다")  # 값은 싣지 않는다
+        # frozen 이라 직접 대입할 수 없다. 어떤 방식으로 만들어도 같은 정밀도만 남게 여기서 자른다
+        object.__setattr__(self, "lat", round(self.lat, COARSE_DECIMALS))
+        object.__setattr__(self, "lon", round(self.lon, COARSE_DECIMALS))
+
+    @property
+    def grid(self) -> WeatherGrid:
+        nx, ny = latlon_to_grid(self.lat, self.lon)
+        return WeatherGrid(nx=nx, ny=ny)
 
 
 @dataclass(frozen=True)
@@ -182,12 +216,15 @@ class RawAdvisories:
 
 @dataclass(frozen=True)
 class PlaceRow:
-    """장소 한 곳. 화이트리스트 필드만 — 전화번호 · 관리기관 · 가격 · 평점은 싣지 않는다."""
+    """장소 한 곳. 화이트리스트 필드만 — 전화번호 · 관리기관 · 가격 · 평점은 싣지 않는다.
+
+    `distance_m` 은 적재한 행의 위경도와 `CoarseLocation` 사이를 서버가 계산한 값이다.
+    """
 
     name: str
     category: PlaceCategory
     distance_m: int
-    source: Literal["kakao_local", "city_park"]
+    source: Literal["city_park", "kids_play_facility", "library"]
 
 
 class ChildProfileReader(Protocol):
@@ -265,9 +302,12 @@ class WeatherSource(Protocol):
 
 class PlaceSource(Protocol):
     async def nearby(
-        self, *, grid: WeatherGrid, category: PlaceCategory, radius_m: int
+        self, *, location: CoarseLocation, category: PlaceCategory, radius_m: int
     ) -> list[PlaceRow]:
-        """🚨 검색어는 category 하나다. 모델이 만든 문자열을 받지 않는다 (D8)."""
+        """적재한 place 테이블에서 찾는다. 외부 API 를 부르지 않는다 (D9).
+
+        🚨 검색 조건은 category 하나다. 모델이 만든 문자열을 받지 않는다 (D8).
+        """
         ...
 
 

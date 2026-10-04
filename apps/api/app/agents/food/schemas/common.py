@@ -13,21 +13,15 @@ class ToolArgs(BaseModel):
 
 
 class FoodTaskType(StrEnum):
-    """Supervisor가 고르는 Food의 일. health_safety 사전 확인과 tool 묶음이 여기서 갈린다."""
+    """Supervisor가 고르는 Food의 일. health_safety 사전 확인과 tool 묶음이 여기서 갈린다.
+
+    게이팅은 stage(FeedingStage 두 값)가 아니라 `app/rules/age.py`의 `LifeStage.stage`
+    네 값. 수유기(0–3)와 이유기(4–11)는 먹을 수 있는 것이 질적으로 다르다.
+    """
 
     MEAL_RECOMMENDATION = "meal_recommendation"  # 식단 추천: health_safety 사전 확인 대상
     NUTRIENT_ANALYSIS = "nutrient_analysis"  # 영양소 분석: 식단 기반 비중까지
-
-
-class FeedingStage(StrEnum):
-    """식이 단계. 발화가 아니라 아이의 나이에서 코드가 계산한다.
-
-    값이 app/rules/age.py 의 Band 와 같은 문자열이라 FeedingStage(life_stage(...).big) 으로
-    바로 만든다. 경계 월령은 그쪽 _STAGE_BOUNDARIES 한 곳에만 둔다.
-    """
-
-    INFANT = "infant"  # 영아기: 분유/수유 · 이유식 · 식재료 도입
-    TODDLER = "toddler"  # 유아기: 기관 급식 · 섭취 분석 · 영양성분 · 균형 · 반복 메뉴
+    DAYCARE_MEAL = "daycare_meal"  # 기관 급식 갱신·삭제. Food 가 직접 쓰는 유일한 테이블
 
 
 class MealSlot(StrEnum):

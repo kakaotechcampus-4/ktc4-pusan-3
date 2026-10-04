@@ -1,0 +1,107 @@
+# 임계값 선정용 쌍. 이 파일로 임계값을 고른다.
+#
+# 정답 질문: "두 관찰을 같은 대상의 반복 근거로 집계해도 되는가?"
+#   same       예 — 같은 Profile 에 연결돼야 한다
+#   near       아니오 — 비슷하지만 다른 대상. 실험의 핵심
+#   unrelated  아니오 — 같은 도메인 안의 무관한 대상
+# 범위가 다른 쌍(원재료–가공품, 상위–하위 등)은 여기 넣지 않고 disputed_pairs.txt 로.
+#
+# subject 는 Memory Agent 규칙대로 쓴다 — 수식어 · 행동을 빼고 명사만.
+# food 에 끼니 이름(밥 · 점심 · 간식 등)은 쓰지 않는다 — Memory Agent 가 subject 로 받지 않는다.
+# 수식어가 실제 대상 범위를 바꾸면(햇감자, 잔멸치 등) 판단이 갈리는 쌍(disputed_pairs.txt, 유형 G)으로.
+# 범위가 그대로면(영어 알파벳, 장난감 기차) same 이다 — 수식어가 있다는 것만으로 옮기지 않는다.
+# 가상 데이터다. 실제 사용자 발화나 아이 정보를 넣지 않는다 (루트 CLAUDE.md §9).
+# check1_pairs.txt 와 subject 가 겹치면 안 된다 (test_pairs_data.py 가 확인).
+#
+# 형식: 도메인 | 정답 | subject A | subject B
+
+# ── food ──
+food | same | 딸기 | 생딸기
+food | same | 요거트 | 요구르트
+food | same | 방울토마토 | 방울 토마토
+food | same | 소시지 | 소세지
+food | same | 브로콜리 | 브로컬리
+food | same | 계란 | 달걀
+food | same | 귤 | 감귤
+food | same | 주먹밥 | 오니기리
+food | same | 미숫가루 | 미싯가루
+food | same | 오므라이스 | 오무라이스
+
+food | near | 딸기 | 블루베리
+food | near | 우유 | 두유
+food | near | 사과 | 배
+food | near | 감자 | 고구마
+food | near | 소시지 | 햄
+food | near | 계란 | 메추리알
+food | near | 귤 | 오렌지
+food | near | 멸치 | 새우
+food | near | 브로콜리 | 콜리플라워
+food | near | 수박 | 참외
+food | near | 옥수수 | 완두콩
+food | near | 우동 | 라면
+
+food | unrelated | 딸기 | 미역국
+food | unrelated | 감자 | 요거트
+food | unrelated | 우유 | 멸치
+food | unrelated | 귤 | 소시지
+
+# ── activity ──
+activity | same | 비눗방울 | 비누방울
+activity | same | 트램펄린 | 방방
+activity | same | 킥보드 | 씽씽이
+activity | same | 종이접기 | 종이 접기
+activity | same | 클레이 | 점토
+activity | same | 숨바꼭질 | 숨박꼭질
+activity | same | 소꿉놀이 | 소꿉장난
+activity | same | 기차 장난감 | 장난감 기차
+activity | same | 딱지치기 | 딱지놀이
+activity | same | 모래놀이 | 모래 놀이
+
+activity | near | 미끄럼틀 | 그네
+activity | near | 비눗방울 | 풍선
+activity | near | 킥보드 | 자전거
+activity | near | 종이접기 | 색칠
+activity | near | 클레이 | 슬라임
+activity | near | 숨바꼭질 | 술래잡기
+activity | near | 소꿉놀이 | 병원놀이
+activity | near | 장난감 기차 | 장난감 비행기
+activity | near | 축구 | 농구
+activity | near | 줄넘기 | 훌라후프
+activity | near | 퍼즐 | 보드게임
+activity | near | 공룡 인형 | 곰 인형
+
+activity | unrelated | 미끄럼틀 | 종이접기
+activity | unrelated | 클레이 | 킥보드
+activity | unrelated | 숨바꼭질 | 퍼즐
+activity | unrelated | 축구 | 소꿉놀이
+
+# ── education ──
+education | same | 구구단 | 곱셈구구
+education | same | 알파벳 | 영어 알파벳
+education | same | 동요 | 어린이 노래
+education | same | 받아쓰기 | 받아 쓰기
+education | same | 영어 단어 | 영단어
+education | same | 수 세기 | 숫자 세기
+education | same | 색깔 이름 | 색 이름
+education | same | 자연 관찰 | 자연관찰
+education | same | 공룡 이름 | 공룡 명칭
+education | same | 요일 | 요일 이름
+education | same | 계절 | 사계절
+
+education | near | 구구단 | 덧셈
+education | near | 알파벳 | 한글
+education | near | 동요 | 동화
+education | near | 받아쓰기 | 읽기
+education | near | 영단어 | 한자
+education | near | 수 세기 | 도형
+education | near | 도형 | 색깔 이름
+education | near | 공룡 이름 | 동물 이름
+education | near | 요일 | 달 이름
+education | near | 계절 | 날씨
+education | near | 자연 관찰 | 과학 실험
+education | near | 영어 동요 | 영어 단어
+
+education | unrelated | 구구단 | 동요
+education | unrelated | 알파벳 | 계절
+education | unrelated | 받아쓰기 | 공룡 이름
+education | unrelated | 도형 | 요일

@@ -50,6 +50,7 @@ import type {
   HealthSafetyListResponse,
   Observation,
   ObservationsResponse,
+  Policy,
   PhotoCommitResponse,
   PhotoEntry,
   PhotoLane,
@@ -80,9 +81,11 @@ import { setScenario } from "./scenario";
 
 /**
  * 초안 제출 본문. 🚨 **일자가 있어야 목이 받는다** — 화면이 잠그는 것과 같은 규칙을 계약도 건다.
- * `suggestion_id` 를 넘기면 그 제안이 "이미 넣은 것" 으로 표시된다 (중복 제출 판정 대상).
+ * 제안 id 를 넘기면 그 제안이 일정에 연결된다 (중복 제출 판정 대상 · #206).
+ * 🚨 화면과 **같은 키**(`suggestion_ids` 배열)로 보낸다 — 한동안 단수 키로 보내서, 화면이 보내는
+ *    배열을 목이 못 읽는 것을 이 테스트가 덮고 있었다.
  */
-function draftBody(suggestionId?: string): SubmitEventBody {
+function draftBody(...suggestionIds: string[]): SubmitEventBody {
   return {
     event: {
       title: "지어낸 일정",
@@ -93,13 +96,36 @@ function draftBody(suggestionId?: string): SubmitEventBody {
       category: "activity",
     },
     items: [],
-    ...(suggestionId ? { suggestion_id: suggestionId } : {}),
+    ...(suggestionIds.length > 0 ? { suggestion_ids: suggestionIds } : {}),
   };
 }
 
 /** 목이 계약서 경로를 그대로 쓰는지 확인하려면 URL 을 직접 만들어야 할 때가 있다. */
 function raw(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${API_BASE_URL}${path}`, { method: "POST", ...init });
+}
+
+/**
+ * 지금 유효한 약관 버전 (#90).
+ *
+ * 🚨 **테스트도 상수를 쓰지 않는다.** 화면과 같은 순서로 — 받아서, 그 값을 그대로 실어 —
+ *    보내야 "프론트가 버전을 상수로 들고 있다" 는 회귀를 여기서도 잡는다. 목은 실서버와
+ *    같은 검사를 걸고 있어서 (`handlers/policies.ts`), 상수를 쓰면 400 으로 떨어진다.
+ */
+async function policyVersion(scope: string): Promise<string> {
+  const policy = (await api.get<Policy[]>("/policies")).find((p) => p.scope === scope);
+  if (!policy) throw new Error(`GET /policies 에 ${scope} 가 없다`);
+  return policy.version;
+}
+
+/** 화면이 보내는 모양 그대로의 동의 목록. */
+async function agreed(scopes: readonly string[]) {
+  const policies = await api.get<Policy[]>("/policies");
+  return scopes.map((scope) => {
+    const policy = policies.find((p) => p.scope === scope);
+    if (!policy) throw new Error(`GET /policies 에 ${scope} 가 없다`);
+    return { scope, policy_version: policy.version };
+  });
 }
 
 describe("① 키 누락 — 표에 있는 5개 전부", () => {
@@ -181,6 +207,15 @@ describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
     await expect(submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey())).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "already_confirmed") && e.status === 409,
     );
+  });
+
+  it("묶인 초안은 제안 하나만 겹쳐도 409 already_confirmed", async () => {
+    await submitEventDraft("c1", draftBody("s_meal_a", "s_meal_b"), newIdempotencyKey());
+
+    // 🚨 일부만 받아 주면 같은 제안이 일정 두 개에 걸린다.
+    await expect(
+      submitEventDraft("c1", draftBody("s_meal_b", "s_meal_c"), newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_confirmed") && e.status === 409);
   });
 });
 
@@ -368,7 +403,12 @@ describe("일정 초안", () => {
     expect(saved.event.title).toBe(body.event.title);
     expect(saved.event.starts_at).toBe(body.event.starts_at);
     expect(saved.event.status).toBe("confirmed");
-    expect(saved.suggestion_status).toBe("approved");
+  });
+
+  it("🚨 제출은 제안 상태를 바꾸지 않는다 — approved 는 채택이 이미 만들었다 (#206)", async () => {
+    const saved = await submitEventDraft("c1", draftBody("s_status"), newIdempotencyKey());
+
+    expect(saved).not.toHaveProperty("suggestion_status");
   });
 });
 
@@ -957,9 +997,16 @@ describe("⑪ 일기는 관찰이 아니다", () => {
   });
 
   it("월 조회의 has_event 는 confirmed 만 센다", async () => {
+    // 🚨 **일정이 있는 달에서 건다.** 이번 달로 고정하면 일정이 다음 달에 있는 이틀 동안
+    //    빈 목록을 훑고 아무것도 확인하지 않은 채 통과한다 (아래 `findEventDay` 주석).
+    const eventDay = await findEventDay();
     const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
-      query: { month: monthOf(new Date()) },
+      query: { month: eventDay.date.slice(0, 7) },
     });
+    // 🚨 **"이번 달" 로 묻지 않는다.** 픽스처의 일정은 지금부터 +72시간이라 월말에는 다음
+    //    달로 넘어간다 — 그러면 아래 반복문이 한 번도 안 돌아 아무것도 걸지 못한다
+    //    (실제로 9월 29일에 이 파일이 깨졌다).
+    expect(month.days.some((day) => day.has_event)).toBe(true);
 
     // 05·06 이 만드는 draft(e_draft_1)는 아직 캘린더에 쓴 것이 아니다.
     for (const day of month.days) {
@@ -972,13 +1019,8 @@ describe("⑪ 일기는 관찰이 아니다", () => {
   it("준비물 체크는 다시 읽어도 남아 있다", async () => {
     await api.patch("/event-items/i_1", { is_prepared: true });
 
-    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
-      query: { month: monthOf(new Date()) },
-    });
-    const eventDay = month.days.find((day) => day.has_event);
-    expect(eventDay).toBeDefined();
-
-    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay!.date}`);
+    const eventDay = await findEventDay();
+    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
   });
@@ -998,7 +1040,7 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
       scope: "child_health",
       action: "withdrawn",
       child_id: "c1",
-      policy_version: "2026-09-01",
+      policy_version: await policyVersion("child_health"),
     });
 
     const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
@@ -1014,7 +1056,7 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
         scope: "location",
         action,
         child_id: "c1",
-        policy_version: "2026-09-01",
+        policy_version: await policyVersion("location"),
       });
     }
 
@@ -1028,7 +1070,7 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
       scope: "location",
       action: "granted",
       child_id: "c1",
-      policy_version: "2026-09-01",
+      policy_version: await policyVersion("location"),
     });
     const fetched = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
     expect(fetched.effective).toEqual(posted.effective);
@@ -1082,14 +1124,16 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(res.status).toBe(204);
   });
 
-  it("탈퇴는 화면이 읽은 유예기간을 같이 받는다 — 없으면 막힌다", async () => {
+  it("탈퇴는 화면의 읽음 표시를 같이 받는다 — 없으면 막힌다", async () => {
     const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
     expect(isApiError(caught, "validation_failed")).toBe(true);
 
+    // 🚨 유예가 없다 (#167). 응답이 "언제 지워질 예정" 이 아니라 **지워진 시각**이라,
+    //    화면이 미래 시각을 받아 날짜를 약속할 방법 자체가 없다.
     const res = await api.post<WithdrawResponse>("/auth/withdraw", {
-      acknowledged_grace_days: 30,
+      acknowledged_immediate_deletion: true,
     });
-    expect(new Date(res.purge_after).getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(res.deleted_at).getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it("relation 없이 초대해도 코드가 나온다", async () => {
@@ -1225,6 +1269,150 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
  * 가입 흐름. ⚠️ `signup` 의 `nickname` 과 `POST /children` 의 `consents` 둘 다
  * **계약 확정 전이다** (#96).
  */
+describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
+  it("동의마다 버전 · 제목 · 필수 여부가 함께 오고, 배열 순서가 화면 순서다", async () => {
+    const policies = await api.get<Policy[]>("/policies");
+
+    // 🚨 순서는 서버가 정한다 — 계정 동의 → 아이 동의, 민감정보가 마지막이다.
+    expect(policies.map((p) => p.scope)).toEqual([
+      "service_terms",
+      "privacy_account",
+      "location",
+      "child_basic",
+      "child_health",
+    ]);
+    for (const policy of policies) {
+      expect(policy.version).toBeTruthy();
+      expect(policy.label).toBeTruthy();
+    }
+    // 🚨 **본문은 오지 않는다.** 전문은 html_path 의 정본 페이지다 (멘토 #71-4 · #179).
+    expect(policies.every((p) => !("content" in p))).toBe(true);
+  });
+
+  /**
+   * 🚨 **어느 화면이 묻는지는 서버가 말한다** (#190). 화면이 scope 이름으로 가르던 추측을
+   *    이 값으로 바꿨으므로, 목도 실서버와 같은 기준(`ACCOUNT_SCOPES`)으로 답해야 한다.
+   */
+  it("동의마다 target 이 오고, 가입에 실리는 것과 같은 기준이다", async () => {
+    const policies = await api.get<Policy[]>("/policies");
+    const byTarget = Object.fromEntries(policies.map((p) => [p.scope, p.target]));
+
+    expect(byTarget).toEqual({
+      service_terms: "account",
+      privacy_account: "account",
+      location: "account",
+      child_basic: "child",
+      child_health: "child",
+    });
+
+    // 🚨 가입은 계정 동의만 받는다 — 그 세 건으로 실제로 가입이 된다.
+    const session = await api.post<AuthSession>("/auth/kakao/signup", {
+      consent_code: "cc_mock",
+      bind: "b",
+      nickname: "테스터",
+      consents: await agreed(policies.filter((p) => p.target === "account").map((p) => p.scope)),
+    });
+    expect(session.is_new).toBe(true);
+  });
+
+  /** 🚨 필수/선택이 섞여 있다. 화면이 목록 길이로 제출을 막으면 선택까지 필수가 된다. */
+  it("location 은 선택이고 child_health 는 민감정보다", async () => {
+    const policies = await api.get<Policy[]>("/policies");
+    const byScope = new Map(policies.map((p) => [p.scope, p]));
+
+    expect(byScope.get("location")?.required).toBe(false);
+    expect(byScope.get("child_health")?.sensitive).toBe(true);
+    expect(policies.filter((p) => p.required)).toHaveLength(4);
+  });
+
+  /**
+   * 🚨 **전문이 없는 자리가 있다.** 아이 동의 둘은 아직 정본이 없어서 `html_path` 가 null 이고,
+   *    화면은 그때 전문 보기를 **숨긴다** — 대신 보여줄 글을 만들지 않는다.
+   */
+  it("아이 동의 둘은 전문 주소가 비어 있다", async () => {
+    const policies = await api.get<Policy[]>("/policies");
+    const empty = policies.filter((p) => p.html_path === null).map((p) => p.scope);
+    expect(empty).toEqual(["child_basic", "child_health"]);
+
+    const terms = policies.find((p) => p.scope === "service_terms");
+    // `/api/v1` 아래 경로다 — 절대 주소는 기준 주소 + 이 값 (`policyHref`).
+    expect(terms?.html_path).toBe(`/policies/service_terms/${terms?.version}`);
+  });
+
+  it("등록되지 않은 버전으로 가입하면 400 이고 계정이 만들어지지 않는다", async () => {
+    const caught = await api
+      .post("/auth/kakao/signup", {
+        consent_code: "cc_mock",
+        bind: "b",
+        nickname: "테스터",
+        consents: [
+          { scope: "service_terms", policy_version: "2026-09-01" },
+          { scope: "privacy_account", policy_version: "2026-09-01" },
+        ],
+      })
+      .catch((e) => e);
+
+    expect(isApiError(caught, "policy_version_invalid")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+    // 어느 항목이 어긋났는지 말해 준다 — 화면이 그 항목만 다시 받는다.
+    expect((caught as ApiError).detail).toMatchObject({ scope: "service_terms" });
+  });
+
+  it("아이 등록도 같은 검사를 받는다 — 동의가 어긋난 채로 아이가 생기지 않는다", async () => {
+    const caught = await api
+      .post("/children", {
+        nickname: "테스트",
+        birth_date: "2021-04-02",
+        consents: [
+          { scope: "child_basic", policy_version: "draft-0" },
+          { scope: "child_health", policy_version: "옛날판" },
+        ],
+        guardian_attested: true,
+      })
+      .catch((e) => e);
+
+    expect(isApiError(caught, "policy_version_invalid")).toBe(true);
+    expect((caught as ApiError).detail).toMatchObject({ scope: "child_health" });
+  });
+
+  /**
+   * 🚨 **받아 간 뒤에 바뀌는 경우**가 화면이 실제로 겪는 것이다 (`policy_bumped` 시나리오).
+   *    화면은 다시 받아서 **바뀐 항목만** 체크를 풀고 다시 확인받는다 — 그 뒤 같은 대기표로
+   *    가입이 된다. 로그인부터 다시 시키지 않는 것이 이 흐름의 요점이다 (§3-5).
+   */
+  it("제출 직전에 약관이 바뀌면 400 이고, 다시 받은 버전으로는 가입된다", async () => {
+    setScenario("policy_bumped");
+    try {
+      const stale = await agreed(["service_terms", "privacy_account"]);
+
+      const caught = await api
+        .post("/auth/kakao/signup", {
+          consent_code: "cc_mock",
+          bind: "b",
+          nickname: "테스터",
+          consents: stale,
+        })
+        .catch((e) => e);
+      expect(isApiError(caught, "policy_version_invalid")).toBe(true);
+
+      const fresh = await agreed(["service_terms", "privacy_account"]);
+      // 바뀐 것만 버전이 다르다 — 화면에서 체크가 풀리는 것도 이 항목뿐이다.
+      expect(fresh[0]?.policy_version).not.toBe(stale[0]?.policy_version);
+      expect(fresh[1]?.policy_version).toBe(stale[1]?.policy_version);
+
+      const session = await api.post<AuthSession>("/auth/kakao/signup", {
+        consent_code: "cc_mock",
+        bind: "b",
+        nickname: "테스터",
+        consents: fresh,
+      });
+      expect(session.is_new).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
 describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는다", () => {
   it("계정 동의가 빠지면 signup 이 403 이다", async () => {
     const caught = await api
@@ -1232,7 +1420,7 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
         consent_code: "cc_mock",
         bind: "b",
         nickname: "테스터",
-        consents: [{ scope: "service_terms", policy_version: "2026-09-01" }],
+        consents: await agreed(["service_terms"]),
       })
       .catch((e) => e);
     expect(isApiError(caught, "consent_required")).toBe(true);
@@ -1247,10 +1435,7 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
       consent_code: "cc_mock",
       bind: "b",
       nickname: "테스터",
-      consents: [
-        { scope: "service_terms", policy_version: "2026-09-01" },
-        { scope: "privacy_account", policy_version: "2026-09-01" },
-      ],
+      consents: await agreed(["service_terms", "privacy_account"]),
     });
     expect(res.is_new).toBe(true);
 
@@ -1264,11 +1449,7 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
       consent_code: "cc_mock",
       bind: "b",
       nickname: "테스터",
-      consents: [
-        { scope: "service_terms", policy_version: "2026-09-01" },
-        { scope: "privacy_account", policy_version: "2026-09-01" },
-        { scope: "location", policy_version: "2026-09-01" },
-      ],
+      consents: await agreed(["service_terms", "privacy_account", "location"]),
     });
 
     const consents = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
@@ -1283,10 +1464,7 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
       .post("/auth/kakao/signup", {
         consent_code: "cc_mock",
         bind: "b",
-        consents: [
-          { scope: "service_terms", policy_version: "2026-09-01" },
-          { scope: "privacy_account", policy_version: "2026-09-01" },
-        ],
+        consents: await agreed(["service_terms", "privacy_account"]),
       })
       .catch((e) => e);
     expect(isApiError(caught, "validation_failed")).toBe(true);
@@ -1301,7 +1479,7 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
       .post("/children", {
         nickname: "테스트",
         birth_date: "2021-04-02",
-        consents: [{ scope: "child_basic", policy_version: "2026-09-01" }],
+        consents: await agreed(["child_basic"]),
         guardian_attested: true,
       })
       .catch((e) => e);
@@ -1313,10 +1491,7 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
       .post("/children", {
         nickname: "테스트",
         birth_date: "2021-04-02",
-        consents: [
-          { scope: "child_basic", policy_version: "2026-09-01" },
-          { scope: "child_health", policy_version: "2026-09-01" },
-        ],
+        consents: await agreed(["child_basic", "child_health"]),
         guardian_attested: false,
       })
       .catch((e) => e);
@@ -1899,4 +2074,27 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
 /** 목이 만든 달을 그대로 물어보기 위한 키. 표시가 아니라 쿼리 파라미터다. */
 function monthOf(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * 일정이 걸린 날 하나. 목의 확정 일정은 **다가오는 것 하나**(모레)라, 이번 달만 물어보면
+ * **매달 마지막 이틀에는 그 일정이 다음 달에 있어서** 빈 달이 돌아온다. 실제로 9/29 에
+ * 깨졌다 — 화면 버그가 아니라 "이번 달에 일정이 있다" 를 테스트가 전제한 것이 문제였다.
+ *
+ * 🚨 **픽스처를 import 해서 날짜를 가져오지 않는다.** 이 파일은 목을 밖에서 부르는 계약
+ *    테스트라, 목이 들고 있는 값을 직접 읽으면 "계약대로 답하는가" 가 아니라 "픽스처와
+ *    같은가" 를 재게 된다. 달을 하나 더 물어보는 쪽이 부르는 사람의 방법이다.
+ */
+async function findEventDay(): Promise<CalendarMonthResponse["days"][number]> {
+  const now = new Date();
+  const months = [monthOf(now), monthOf(new Date(now.getFullYear(), now.getMonth() + 1, 1))];
+
+  for (const month of months) {
+    const res = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month },
+    });
+    const day = res.days.find((d) => d.has_event);
+    if (day) return day;
+  }
+  throw new Error(`일정이 걸린 날이 ${months.join(" · ")} 어디에도 없다`);
 }

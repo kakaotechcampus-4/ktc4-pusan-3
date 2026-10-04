@@ -1,5 +1,7 @@
 """GET /policies 응답 — 이슈 #91 · #172."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from app.domains.consent.models import ConsentScope
@@ -31,6 +33,16 @@ class PolicyResponse(BaseModel):
     """필수 동의인가. 가입 버튼을 막는 것은 이 값뿐이다 (위치는 선택)."""
     sensitive: bool
     """민감정보라 다른 동의와 구분해서 받아야 하는가 (개인정보 보호법 제23조)."""
+    target: Literal["account", "child"]
+    """누구의 동의인가 — 그래서 어느 화면이 묻는가.
+
+    - `account`: 보호자 본인의 동의. **가입 화면**이 묻고 가입 요청
+      (`POST /auth/{provider}/signup`)에 싣는다
+    - `child`: 아이에 대한 동의. **아이 등록 화면**이 묻고 `child_id` 와 함께 저장한다
+
+    화면은 scope 이름으로 무리를 나누지 않고 이 값을 따른다 — 새 동의가 생겨도 화면이 추측하지
+    않게 하려는 것이다 (#189 리뷰). 서버의 가입 검사와 같은 기준(`ACCOUNT_SCOPES`)이다.
+    """
     html_path: str | None
     """"전문 보기" 가 여는 정본 HTML 페이지의 경로 (#172). 화면은 이 페이지를 손대지 않고 띄운다.
 

@@ -238,7 +238,7 @@ function DraftRow({
       }
       return submitEventDraft(
         childId,
-        // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 `approved` 로 바뀌어야 한다.
+        // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
         { ...body, ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}) },
         submitKey.current(),
       );

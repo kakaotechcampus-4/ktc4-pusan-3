@@ -14,6 +14,7 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError
 from app.api.v1.schemas.policies import PolicyResponse
 from app.domains.consent.models import ConsentScope
+from app.domains.consent.repository import ACCOUNT_SCOPES
 from app.domains.policy.catalog import SCOPE_CATALOG
 from app.domains.policy.repository import find_active_versions, find_version
 
@@ -56,6 +57,7 @@ async def list_policies(session: SessionDep) -> list[PolicyResponse]:
             legal_basis=row.legal_basis,
             required=info.required,
             sensitive=info.sensitive,
+            target="account" if scope in ACCOUNT_SCOPES else "child",
             html_path=(
                 f"/policies/{scope.value}/{row.version}" if row.content_html is not None else None
             ),

@@ -185,13 +185,15 @@
 | polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용 |
 | strong_signals | text[] | NOT NULL, DEFAULT `'{}'`. 허용값: `resistance_to_redirect`, `self_initiated`, `comparative_choice`, `asks_questions`, `role_extension` |
 | confidence_source | text | NOT NULL. `institution_notice / parent_direct / parent_hedged / parent_hearsay` |
-| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive`  |
+| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive / deleted`  |
 | observed_range | daterange | NOT NULL, 빈 범위 불가, 상한이 무한대인 범위 불가 |
 | source_writer | uuid  |  FK → `parent.id`  set null  |
 | source_notice_id | uuid | FK → `notice.id`, nullable. 값이 존재하면 기관 공지 기반 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
+- `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
+- 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` · `embedding` 도 그대로 남는다. 되살리는 경로는 없다.
 
 ### 1. observation_food (섭취·영양)
 
@@ -374,14 +376,12 @@
 | suggestion_id | uuid | FK → `suggestion.id`, NOT NULL, `ON DELETE CASCADE` |
 | source_kind | text | NOT NULL. 아래 두 무리 중 하나 |
 | source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
-| source_updated_at | timestamptz | NOT NULL. **인용할 때 읽은 원본의 시각**을 그대로 박는다. 아이 기록은 그 행의 `updated_at`, 문서 행은 `written_at` 이다 |
 | note | text | NOT NULL. 그 행에서 추천 근거로 채택한 내용. Agent 가 쓰고 **보호자 화면에 그대로 나간다**. 비면 그 후보를 거절한다 |
 | created_at | timestamptz | NOT NULL, default `now()` |
 
 - `PRIMARY KEY (suggestion_id, source_kind, source_id)`
 - `source_kind` 인덱스를 따로 둔다 — 품질 지표가 kind로 거르기 때문
 - **이름이 `memory_*`가 아니라 `source_*`인 이유** — 가리키는 대상이 Memory 소유 테이블만이 아니다. 문서 행(`*_doc`)과 Food 소유인 `daycare_meal`도 들어온다 (2026-09-23 회의 확정).
-- **`source_updated_at` 을 두는 이유** — 근거는 추천이 나간 뒤에도 바뀐다. 보호자가 관찰을 `once_only`로 고치거나 `wrong`으로 내리면 그 추천이 인용한 근거가 인용 시점의 그것이 아니다. 인용할 때의 `updated_at`을 박아 두면 원본과 한 번 비교해 "이 추천이 본 것과 지금이 다르다"를 알 수 있다 — 이력을 되짚지 않아도 된다.
 
 **`source_kind`는 두 무리다.**
 
@@ -575,7 +575,7 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 
 - `child_growth_log` — 나중에 도입한다. 이 문서에는 계획만 둔다. `Gate.growth_log_count` 가 이 테이블의 측정 건수를 센다
 - `notice` — `observation_*.source_notice_id` 가 가리키는데 테이블이 없어 FK 를 못 건다. 지금은 plain uuid 다
-- 문서 행 `food_doc` · `growth_doc` · `activity_doc` — `suggestion_evidence.source_updated_at` 에 넣을 `written_at` 컬럼도 이 테이블과 같이 생긴다
+- 문서 행 `food_doc` · `growth_doc` · `activity_doc`
 
 **컬럼이 없다**
 

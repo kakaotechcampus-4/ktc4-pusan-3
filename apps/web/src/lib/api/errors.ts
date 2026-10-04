@@ -36,6 +36,11 @@ export const API_ERROR_CODES = [
   //    🚨 다시 시도할 수 없는 400 이다: 맥락이 서버에서 사라졌으니 같은 `reply_to` 는 계속 400 이다.
   //       화면은 질문을 놓고, 보호자가 무엇에 대한 답인지까지 적어 **새 입력**으로 보내게 한다.
   "reply_context_unavailable",
+  // 400 가입 · 아이 등록 · 동의 변경이 **지금 유효하지 않은 약관 버전**을 보냈다 (#91 · #172).
+  // 🚨 고장이 아니라 화면이 낡은 것이다 — `GET /policies` 를 다시 받아 **바뀐 항목만** 다시
+  //    확인받는다. 대기표(`consent_code`)는 살아 있어서 로그인부터 다시 하지 않는다
+  //    (`docs/api/auth-kakao-v1.md` §3-5).
+  "policy_version_invalid",
   "validation_failed", // 422
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
 ] as const;

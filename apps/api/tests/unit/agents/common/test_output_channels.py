@@ -27,9 +27,6 @@ from app.agents.common.suggestion import (
 KST = timezone(timedelta(hours=9))
 
 
-SEEN_AT = datetime(2026, 9, 20, 9, 0, tzinfo=KST)
-
-
 def evidence(*, kind="observation_food", polarity=1, label="당근"):
     return RankedEvidence(
         ref=Ref(kind=kind, id=uuid4()),
@@ -44,7 +41,6 @@ def citation(*, kind="observation_food", polarity=1, label="당근", note="지�
     return cite(
         evidence(kind=kind, polarity=polarity, label=label),
         note=note,
-        source_updated_at=SEEN_AT,
     )
 
 
@@ -130,7 +126,6 @@ class TestNoteRequired:
                 citations=(
                     EvidenceCitation(
                         ref=Ref(kind="growth_doc", id=uuid4()),
-                        source_updated_at=SEEN_AT,
                         note="",
                     ),
                 ),
@@ -219,6 +214,38 @@ class TestReadout:
         assert catalog.render("a").body == "가"
         with pytest.raises(KeyError, match="정의되지 않은 readout 키"):
             catalog.render("b")
+
+
+class TestReadoutYaml:
+    """`*.readout.yaml` 로더. 모양이 틀리면 import 때 바로 실패한다."""
+
+    def test_키마다_문구와_종류를_읽는다(self, tmp_path):
+        path = tmp_path / "x.readout.yaml"
+        path.write_text(
+            "closed.consent:\n  kind: closed\n  template: 동의가 필요해요.\n", encoding="utf-8"
+        )
+        text = ReadoutCatalog.from_yaml(path).get("closed.consent")
+        assert (text.key, text.kind, text.template) == (
+            "closed.consent",
+            "closed",
+            "동의가 필요해요.",
+        )
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "",
+            "a:\n  template: 가\n",  # kind 없음
+            "a:\n  kind: closed\n  template: '  '\n",  # 빈 문구
+            "a:\n  kind: closed\n  template: 가\n  extra: 1\n",  # 모르는 칸
+            "a: 가\n",
+        ],
+    )
+    def test_모양이_틀리면_실패한다(self, tmp_path, body):
+        path = tmp_path / "x.readout.yaml"
+        path.write_text(body, encoding="utf-8")
+        with pytest.raises(ValueError):
+            ReadoutCatalog.from_yaml(path)
 
 
 class TestDomainAgentResult:
