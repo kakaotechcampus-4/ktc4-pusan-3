@@ -11,10 +11,12 @@
 
 🚨 인가 코드 · access token · 회원번호를 예외 메시지에도 로그에도 싣지 않는다 (§7-5).
    카카오 응답 본문에는 토큰이 들어 있으므로 본문을 그대로 남기지 않는다. 남기는 것은
-   "어느 호출이 몇 번 상태로 실패했는가" 까지다.
+   "어느 호출이 몇 번 상태로 실패했는가" 와 카카오의 분류값(error · error_code · code)
+   까지다 (#197).
 """
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -31,6 +33,9 @@ TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 TOKEN_INFO_URL = "https://kapi.kakao.com/v1/user/access_token_info"
 LOGOUT_URL = "https://kapi.kakao.com/v1/user/logout"
 
+_LOGGABLE_CODE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
+"""카카오 분류값의 모양 — invalid_grant · KOE320 · -401. 공백 · 줄바꿈이 섞이면 분류값이 아니다."""
+
 
 class KakaoApiError(Exception):
     """카카오 호출이 실패했다 — 5xx · 타임아웃 · 교환 실패 · 응답 모양 불량.
@@ -38,7 +43,26 @@ class KakaoApiError(Exception):
     실패 사유를 나누지 않는다. 라우터에서 전부 같은 곳(502 oauth_provider_error)으로
     가고, 명세 §8-1 이 "기본값으로 대체하지 않는다" 로 못박은 대상이다 — 카카오가
     죽었을 때 로그인을 통과시키는 경로는 존재하지 않는다.
+
+    문구는 로그에 그대로 남는다 (콜백 라우터 · revoke_token). 그래서 어느 호출인지 · 상태
+    코드 · 카카오 분류값까지만 담는다 — 문구를 만드는 곳은 이 모듈 안뿐이다 (#197).
     """
+
+
+def loggable_code(value: object) -> str | None:
+    """카카오가 준 분류값이 로그에 남겨도 되는 모양이면 글자로 돌려준다. 아니면 None.
+
+    error · error_code · code 는 정해진 짧은 값이다. 그 자리에 긴 글이나 줄바꿈이 오면
+    버린다 — 설명 글(인가 코드 · 앱 키가 섞인다)이 실리거나 가짜 로그 줄이 끼는 통로가 된다.
+    콜백 쿼리의 error 처럼 누구나 만들 수 있는 값에도 같은 검사를 쓴다.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        value = str(value)
+    if isinstance(value, str) and _LOGGABLE_CODE.fullmatch(value):
+        return value
+    return None
 
 
 @dataclass(frozen=True)
@@ -109,8 +133,8 @@ class KakaoClient:
         """
         try:
             await self._request("POST", LOGOUT_URL, where="logout", headers=_bearer(access_token))
-        except KakaoApiError:
-            log.warning("카카오 토큰 폐기에 실패했다 — 로그인은 계속한다")
+        except KakaoApiError as exc:
+            log.warning("카카오 토큰 폐기에 실패했다 — 로그인은 계속한다: %s", exc)
 
     async def _request(
         self,
@@ -132,10 +156,13 @@ class KakaoClient:
             raise KakaoApiError(f"{where}: 연결 실패") from exc
 
         if response.status_code >= 400:
-            # 🚨 본문을 싣지 않는다 — 토큰이 들어 있을 수 있다 (§7-5).
+            # 🚨 본문을 싣지 않는다 — 토큰 · 인가 코드 · 앱 키가 들어 있을 수 있다 (§7-5).
+            #    카카오의 분류값만 꺼내 싣는다. 이게 없으면 실패 원인을 볼 길이 없다 (#197).
             #    4xx 도 여기서 끝낸다. 교환 실패는 사용자가 고칠 수 있는 것이 아니고,
-            #    카카오의 사유를 그대로 흘리면 정찰에 쓰인다 (§8-1).
-            raise KakaoApiError(f"{where}: 카카오가 {response.status_code} 로 답했다")
+            #    카카오의 사유를 화면에 흘리면 정찰에 쓰인다 (§8-1) — 사유는 로그에만 남는다.
+            raise KakaoApiError(
+                f"{where}: 카카오가 {response.status_code} 로 답했다{_reason(response)}"
+            )
 
         try:
             payload = response.json()
@@ -169,6 +196,27 @@ def build_authorize_url(*, rest_api_key: str, callback_url: str, state: str) -> 
 
 def _bearer(access_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {access_token}"}
+
+
+def _reason(response: httpx.Response) -> str:
+    """실패 응답에서 카카오의 분류값만 꺼낸다. 없으면 빈 글.
+
+    토큰 받기(kauth)는 error · error_code(KOE…) 로, 토큰 정보 · 로그아웃(kapi)은 code(-401)
+    로 답한다. error_description · msg 는 읽지도 않는다 — 앞에는 인가 코드가, 뒤에는 앱 키가
+    들어간다 (카카오 문서의 예시).
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    parts = [
+        f"{key}={value}"
+        for key in ("error", "error_code", "code")
+        if (value := loggable_code(payload.get(key))) is not None
+    ]
+    return f" ({' '.join(parts)})" if parts else ""
 
 
 @asynccontextmanager
