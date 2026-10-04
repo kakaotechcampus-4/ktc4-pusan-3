@@ -74,13 +74,12 @@ class TestNearest:
         result = await search_nearby_places(await context(rows), args(PlaceCategory.PARK))
         assert names(result) == ["먼 공원"]
 
-    async def test_이름_종류_거리만_싣는다(self):
+    async def test_이름과_종류만_싣고_거리는_주지_않는다(self):
+        """이름 여러 곳과 거리를 같이 주면 위치를 거꾸로 짐작할 수 있다 (약관 제8조 ③)."""
         result = await search_nearby_places(
             await context([park("○○어린이공원", 800)]), args(PlaceCategory.PARK)
         )
-        assert result.data["places"] == [
-            {"name": "○○어린이공원", "category": "park", "distance_m": 800}
-        ]
+        assert result.data["places"] == [{"name": "○○어린이공원", "category": "park"}]
 
     async def test_돌려준_장소만_run_state_에_남는다(self):
         """출력 검증이 place_name 을 이 표와 대조한다. 안 돌려준 곳은 남기지 않는다."""

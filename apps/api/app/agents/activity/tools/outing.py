@@ -64,8 +64,11 @@ async def search_nearby_places(
       🚨 검색 조건은 닫힌 enum 하나다. 모델이 만든 문자열로 찾지 않는다.
     - 바깥 활동이 어려운 날은 실내 종류만 찾는다. 바깥 종류를 고르면 INVALID_ARGS 이고
       모델이 실내 종류로 고쳐 다시 부른다.
-    - 가까운 순 `PLACE_TOP_K` 곳의 이름 · 종류 · 거리만 싣는다. 돌려준 장소는
-      `context.state.seen_places` 에 적는다 — 출력 검증이 place_name 을 이 표와 대조한다.
+    - 가까운 순 `PLACE_TOP_K` 곳의 이름 · 종류만 싣는다. 🚨 거리는 모델에 주지 않는다 —
+      이름 여러 곳과 거리를 같이 주면 위치를 거꾸로 짐작할 수 있고, 약관(draft-1 제8조 ③)이
+      인공지능에 전달된다고 적은 것은 장소 이름뿐이다. 정렬은 여기서 끝낸다.
+      돌려준 장소는 `context.state.seen_places` 에 적는다 — 출력 검증이 place_name 을 이 표와
+      대조한다.
     - 실패하면 UPSTREAM_ERROR. 모델은 장소가 필요 없는 활동만 낸다.
     - 장소 행은 근거(suggestion_evidence)에 넣지 않는다. 날씨처럼 필터 조건이다.
     """
@@ -101,8 +104,5 @@ async def search_nearby_places(
     return ok(
         "query",
         _PLACES,
-        places=[
-            {"name": row.name, "category": row.category.value, "distance_m": row.distance_m}
-            for row in nearest
-        ],
+        places=[{"name": row.name, "category": row.category.value} for row in nearest],
     )
