@@ -722,8 +722,8 @@ export const runEventDrafts: EventDraft[] = [
  * 식사 제안 여러 건을 **한 끼로 묶은** 초안. 🚨 고른 개수와 초안 개수가 1:1 이 아니라는 것을
  * 목이 실제로 보여주는 자리다 — 제안 둘을 고르면 "저녁 식사" 하나가 되고, 준비물로 각 제안이 붙는다.
  *
- * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 `approved` 로 바뀌어야 한다 —
- *    단수로 두면 묶인 나머지가 `draft` 인 채 24시간 뒤 만료된다 (보호자는 골랐는데).
+ * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 이 일정에 연결된다 (#206) —
+ *    단수로 두면 묶인 나머지는 일정이 됐다는 사실이 안 남는다.
  */
 export function mealDraft(items: Suggestion[]): EventDraft {
   return {
