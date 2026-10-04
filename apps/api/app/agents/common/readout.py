@@ -5,7 +5,10 @@
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
+
+import yaml
 
 from app.agents.common.refs import Ref
 
@@ -66,6 +69,26 @@ class ReadoutCatalog:
     """한 Agent 의 상수 문구 묶음. 키로 꺼내고 없으면 즉시 실패한다."""
 
     texts: dict[str, ReadoutText] = field(default_factory=dict)
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> "ReadoutCatalog":
+        """`*.readout.yaml` 을 읽는다. 최상위 키가 readout 키이고 값에 `template` · `kind` 가 있다.
+
+        파일이 없거나 모양이 틀리면 import 때 바로 실패한다 — 문구가 빈 채로 서버가 뜨지 않게.
+        """
+        with path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict) or not data:
+            raise ValueError(f"{path.name} 에 문구가 없다")
+        texts: dict[str, ReadoutText] = {}
+        for key, entry in data.items():
+            if not isinstance(entry, dict) or set(entry) != {"template", "kind"}:
+                raise ValueError(f"{path.name} 의 {key!r} 는 template · kind 두 칸이어야 한다")
+            template = entry["template"]
+            if not isinstance(template, str) or not template.strip():
+                raise ValueError(f"{path.name} 의 {key!r} 문구가 비었다")
+            texts[key] = ReadoutText(key=key, template=template, kind=entry["kind"])
+        return cls(texts=texts)
 
     def get(self, key: str) -> ReadoutText:
         text = self.texts.get(key)
