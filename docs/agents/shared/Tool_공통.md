@@ -102,7 +102,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 | # | 무엇 | 대상 | 통과 못 하면 |
 | --- | --- | --- | --- |
 | 1 | 안전 필터 (알레르기 · 연령 금지식품 · `hazard_term`) | 후보 풀 | 그 후보를 **풀에서 뺀다**. 거절이 아니라 제거다 |
-| 2 | 금지 표현 필터 (Agent별 목록) | 후보 하나 | 그 후보 **삭제** |
+| 2 | 금지 표현 필터 (공통 목록 [`app/rules/evaluative.py`](../../../apps/api/app/rules/evaluative.py)) | 후보 하나 | 그 후보 **삭제** |
 | 3 | 도메인별 출력 검증 | 후보 하나 | 그 후보 **거절** (5-5) |
 | 4 | `build()` — 근거와 문구 | 후보 하나 | 그 후보 **거절** |
 | 5 | `check_count()` — 개수 | 묶음 | **묶음 거절** → 재호출 판단 (5-2) |
