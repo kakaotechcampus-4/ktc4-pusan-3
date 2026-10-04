@@ -44,9 +44,9 @@ from app.api.runs import registry, sse, translate
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
 
-SENT = {Step, Failed, Done, Guidance, EventDrafts, MemoryNote, Unavailable}
+SENT = {Step, Failed, Done, Guidance, EventDrafts, MemoryNote, Unavailable, Partial}
 """화면으로 보내는 것."""
-HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted, Partial}
+HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 
@@ -173,6 +173,7 @@ def test_event_drafts_use_the_agents_payload_shape():
         EventDrafts((_create_draft(), _update_draft())),
         MemoryNote("언제부터였어요?", "question"),
         Unavailable(("activity", "growth")),
+        Partial("timeout_20s", ("activity",), ("food",)),
     ],
     ids=lambda event: type(event).__name__,
 )
@@ -196,7 +197,6 @@ def test_sent_events_become_sse_frames(event):
             "run-1", PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
         ),
         DomainRouted("food", "meal_recommendation", "mock", 0),
-        Partial("agent_error", ("food",), ("activity",)),
         Unwritten(hints=1, tools=0, note=True),
         Rerouted(bounced=1),
         # 화면은 관찰 내용 전체를 원하는데 Saved 는 id 만 준다 — 8단계에서 행을 읽어 채운다
@@ -284,3 +284,35 @@ def test_unavailable_carries_agent_names_only():
         "unavailable",
         {"agents": ["activity", "growth"]},
     )
+
+
+def test_partial_carries_agent_names_only():
+    """NF-06 — 성공과 실패를 한 화면에. 문구는 unavailable 처럼 화면이 Agent 이름으로 만든다"""
+    assert translate.to_sse(Partial("timeout_20s", ("activity",), ("food",))) == (
+        "partial",
+        {
+            "reason": "timeout_20s",
+            "succeeded": ["activity"],
+            "failed": ["food"],
+        },
+    )
+
+
+def test_partial_keeps_an_agent_on_both_sides():
+    # 같은 Agent의 task 둘 중 하나만 실패하면 그 Agent는 양쪽에 다 있다 (화면 계약 PartialEvent)
+    _, payload = translate.to_sse(Partial("agent_error", ("food",), ("food",)))
+
+    assert payload["succeeded"] == ["food"]
+    assert payload["failed"] == ["food"]
+
+
+def test_partial_is_not_an_end_signal():
+    # 뒤에 done이 와야 화면이 "부분 결과" 로 닫는다 (use-run-stream.ts 의 case "done")
+    channel = registry.open_run(parent_id=PARENT)
+    emit = translate.relay(channel)
+
+    emit(Partial("timeout_20s", ("activity",), ("food",)))
+    emit(Done(channel.run_id, 3))
+
+    assert [name for name, _ in channel.events] == ["partial", "done"]
+    assert channel.ended_with == "done"
