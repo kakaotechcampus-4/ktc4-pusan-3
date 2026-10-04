@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, LifeBuoy, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -14,6 +15,7 @@ import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
+import { api, qk, type Me } from "@/lib/api";
 
 /**
  * 10 설정 — **지금 이렇게 되어 있어요.**
@@ -60,6 +62,13 @@ export default function SettingsPage() {
 function SettingsScreen() {
   const childId = useChildId();
   const [inviteOpen, setInviteOpen] = useState(false);
+  /**
+   * 🚨 **초대 버튼은 owner 에게만 그린다.** 서버는 member 발행을 `403 owner_only` 로 막는다
+   *    (#198) — 버튼을 그렸다가 눌러야 실패를 알려주는 경로를 만들지 않는다 (연결 끊기와 같은 원칙,
+   *    `ParentSection` 주석). role 을 모르는 동안(로딩 · 실패)에도 그리지 않는다.
+   */
+  const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
+  const role = me.data?.children.find((child) => child.child_id === childId)?.role;
 
   return (
     <Screen className="gap-6" nav={<ChildNav active="home" onRoute={false} />}>
@@ -81,11 +90,21 @@ function SettingsScreen() {
 
       <Section
         title="함께 보는 보호자"
-        description="같은 아이를 함께 보는 사람이에요. 초대는 링크 하나로 해요."
+        description={
+          role === "member"
+            ? "같은 아이를 함께 보는 사람이에요. 초대는 아이를 등록한 보호자가 해요."
+            : "같은 아이를 함께 보는 사람이에요. 초대는 코드 하나로 해요."
+        }
         action={
-          <IconButton label="보호자 초대하기" onClick={() => setInviteOpen(true)} className="-my-1">
-            <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-          </IconButton>
+          role === "owner" ? (
+            <IconButton
+              label="보호자 초대하기"
+              onClick={() => setInviteOpen(true)}
+              className="-my-1"
+            >
+              <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+            </IconButton>
+          ) : null
         }
       >
         <ParentSection

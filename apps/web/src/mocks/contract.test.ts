@@ -1133,6 +1133,30 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     const res = await api.post<InviteResponse>("/children/c1/invites", {});
     expect(normalizeInviteCode(res.invite_code)).toBe(res.invite_code);
   });
+
+  /**
+   * 🚨 **발행은 owner 만 한다** (#198). 화면은 member 에게 버튼을 안 그리지만, 낡은 캐시로
+   *    시트가 열리면 이 403 을 받아 이유를 말해야 한다 — 연결 없음과 코드가 갈려야 문구가 갈린다.
+   */
+  it("초대로 들어온 member 가 발행하면 403 owner_only", async () => {
+    setScenario("consent");
+    try {
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      expect(joined.role).toBe("member");
+
+      const caught = await api.post(`/children/${joined.child_id}/invites`, {}).catch((e) => e);
+      expect(isApiError(caught, "owner_only")).toBe(true);
+      expect((caught as ApiError).status).toBe(403);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("연결되지 않은 아이에 발행하면 403 child_access_denied", async () => {
+    const caught = await api.post("/children/c-unknown/invites", {}).catch((e) => e);
+    expect(isApiError(caught, "child_access_denied")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+  });
 });
 
 /**
