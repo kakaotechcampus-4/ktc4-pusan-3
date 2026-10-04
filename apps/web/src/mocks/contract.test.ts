@@ -1208,6 +1208,41 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     expect(isApiError(caught, "child_already_exists")).toBe(true);
   });
 
+  /**
+   * 🚨 **순서는 아이 보유 → 코드다** (서버 #198). 아이가 있는 보호자에게 틀린 코드를 404 로
+   *    답하면 그 응답이 곧 "이 코드는 없다" 는 정보가 된다 — 코드가 맞든 틀리든 같은 409 다.
+   */
+  it("아이가 있으면 틀린 코드여도 409 다 — 코드의 유효 여부를 알려 주지 않는다", async () => {
+    for (const code of ["ABC", "MKWASTED", "MKPAST12"]) {
+      const caught = await api.get(`/invites/${code}`).catch((e) => e);
+      expect(isApiError(caught, "child_already_exists")).toBe(true);
+    }
+  });
+
+  /**
+   * 🚨 **아이 보유 409 는 시도 제한에 세지 않는다.** 코드와 무관한 호출자 상태라, 세면
+   *    아이가 있는 보호자가 화면을 몇 번 오가는 것만으로 스스로 429 에 갇힌다.
+   */
+  it("아이 보유 409 는 몇 번이어도 429 로 바뀌지 않는다", async () => {
+    for (let i = 0; i < 6; i += 1) {
+      const caught = await api.get("/invites/MKWASTED").catch((e) => e);
+      expect(isApiError(caught, "child_already_exists")).toBe(true);
+    }
+  });
+
+  it("수락 사이에 아이가 생긴 409 도 실패로 세지 않는다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 6; i += 1) {
+        await api.post("/invites/MKTAKEN2/accept", {}).catch(() => null);
+      }
+      const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      expect(res.child_id).toBe("c1");
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("받는 쪽이 고른 관계가 보호자 목록에 들어간다", async () => {
     setScenario("consent");
     try {
