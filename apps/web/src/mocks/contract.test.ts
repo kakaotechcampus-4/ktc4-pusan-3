@@ -81,9 +81,11 @@ import { setScenario } from "./scenario";
 
 /**
  * 초안 제출 본문. 🚨 **일자가 있어야 목이 받는다** — 화면이 잠그는 것과 같은 규칙을 계약도 건다.
- * `suggestion_id` 를 넘기면 그 제안이 "이미 넣은 것" 으로 표시된다 (중복 제출 판정 대상).
+ * 제안 id 를 넘기면 그 제안이 일정에 연결된다 (중복 제출 판정 대상 · #206).
+ * 🚨 화면과 **같은 키**(`suggestion_ids` 배열)로 보낸다 — 한동안 단수 키로 보내서, 화면이 보내는
+ *    배열을 목이 못 읽는 것을 이 테스트가 덮고 있었다.
  */
-function draftBody(suggestionId?: string): SubmitEventBody {
+function draftBody(...suggestionIds: string[]): SubmitEventBody {
   return {
     event: {
       title: "지어낸 일정",
@@ -94,7 +96,7 @@ function draftBody(suggestionId?: string): SubmitEventBody {
       category: "activity",
     },
     items: [],
-    ...(suggestionId ? { suggestion_id: suggestionId } : {}),
+    ...(suggestionIds.length > 0 ? { suggestion_ids: suggestionIds } : {}),
   };
 }
 
@@ -205,6 +207,15 @@ describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
     await expect(submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey())).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "already_confirmed") && e.status === 409,
     );
+  });
+
+  it("묶인 초안은 제안 하나만 겹쳐도 409 already_confirmed", async () => {
+    await submitEventDraft("c1", draftBody("s_meal_a", "s_meal_b"), newIdempotencyKey());
+
+    // 🚨 일부만 받아 주면 같은 제안이 일정 두 개에 걸린다.
+    await expect(
+      submitEventDraft("c1", draftBody("s_meal_b", "s_meal_c"), newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_confirmed") && e.status === 409);
   });
 });
 
@@ -392,7 +403,12 @@ describe("일정 초안", () => {
     expect(saved.event.title).toBe(body.event.title);
     expect(saved.event.starts_at).toBe(body.event.starts_at);
     expect(saved.event.status).toBe("confirmed");
-    expect(saved.suggestion_status).toBe("approved");
+  });
+
+  it("🚨 제출은 제안 상태를 바꾸지 않는다 — approved 는 채택이 이미 만들었다 (#206)", async () => {
+    const saved = await submitEventDraft("c1", draftBody("s_status"), newIdempotencyKey());
+
+    expect(saved).not.toHaveProperty("suggestion_status");
   });
 });
 

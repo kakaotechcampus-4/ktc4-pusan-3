@@ -16,11 +16,12 @@ import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 
 /**
- * 제출된 일정. 🚨 **같은 키 재시도는 `withIdempotency` 가 먼저 가로채** 처음 응답을 재생한다.
+ * 일정에 연결된 제안. 실서버의 제안 ↔ 일정 연결을 흉내 낸다 (#206) — 🚨 제안의 `status` 가 아니다.
+ * 🚨 **같은 키 재시도는 `withIdempotency` 가 먼저 가로채** 처음 응답을 재생한다.
  *    여기 있다고 무조건 409 를 주면 안 된다 — 이 목록은 **새 요청으로 같은 초안을 또 내는 경우**를
  *    가릴 때만 쓴다.
  */
-const submittedSuggestions = new Set<string>();
+const linkedSuggestions = new Set<string>();
 
 /**
  * 채택된 제안. 🚨 **일정과 다른 축이다** — 여기 있다고 캘린더에 들어간 것이 아니다.
@@ -30,7 +31,7 @@ const approvedSuggestions = new Set<string>();
 
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
 export function resetSubmittedEvents(): void {
-  submittedSuggestions.clear();
+  linkedSuggestions.clear();
   approvedSuggestions.clear();
 }
 
@@ -182,7 +183,7 @@ export const suggestionHandlers = [
 
     const drafts = [
       // 🚨 식사는 한 장으로 묶인다. 묶인 장은 `suggestion_ids` 가 여러 개다 —
-      //    제출할 때 그 제안들이 **전부** approved 로 바뀌어야 한다.
+      //    제출하면 그 제안들이 **전부** 이 일정에 연결된다.
       ...(food.length > 0 ? [mealDraft(food)] : []),
       ...rest.map((s) => suggestionDraft(s)),
     ];
@@ -239,7 +240,7 @@ export const suggestionHandlers = [
       const body = (await request.json()) as {
         event: { title: string; starts_at: string | null; all_day: boolean };
         items: Array<{ item_id: string | null; item_name: string }>;
-        suggestion_id?: string | null;
+        suggestion_ids?: string[];
       };
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
@@ -247,12 +248,13 @@ export const suggestionHandlers = [
         return apiError(400, "invalid_request", "일자가 없는 일정은 만들 수 없어요");
       }
 
-      const sid = body.suggestion_id ?? null;
+      const sids = body.suggestion_ids ?? [];
       // 여기까지 왔다는 건 처음 보는 키라는 뜻이다 — 즉 새 요청이다.
-      if (sid && submittedSuggestions.has(sid)) {
+      // 🚨 묶인 초안은 **하나라도** 이미 연결돼 있으면 막는다. 일부만 넣으면 같은 제안이 일정 둘에 걸린다.
+      if (sids.some((sid) => linkedSuggestions.has(sid))) {
         return apiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요");
       }
-      if (sid) submittedSuggestions.add(sid);
+      for (const sid of sids) linkedSuggestions.add(sid);
 
       /**
        * 🚨 **보호자가 확인한 값을 그대로 돌려준다.** 제목이나 시각이 바뀌어 돌아오면
@@ -272,10 +274,8 @@ export const suggestionHandlers = [
         })),
       });
 
-      return HttpResponse.json({
-        event,
-        ...(sid ? { suggestion_status: "approved" as const } : {}),
-      });
+      // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).
+      return HttpResponse.json({ event });
     }),
   ),
 ];

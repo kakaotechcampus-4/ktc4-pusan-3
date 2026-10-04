@@ -21,7 +21,7 @@
 | 실내·야외 놀이 후보 생성 | 발달 평가 · 또래 비교 · 진단 |
 | 월령 기반 안전 차단·경고 | 예약 · 결제 · 대신 연락 |
 | 날씨·대기질로 야외 가부 판정 | 상품·클래스 추천 |
-| 주변 장소 이름 제시 (36개월~) | 습관 교정 · 학습 커리큘럼 |
+| 주변 장소 이름 제시 | 습관 교정 · 학습 커리큘럼 |
 | `Why this` / `Why now` / 근거 문장(`note`) | 아이와 직접 대화 |
 
 **Growth Agent 와의 경계** — Activity 는 `observation_activity` 를, Growth 는 `observation_education`·`observation_routine` 을 담당한다 (F-06 · F-07).
@@ -61,7 +61,9 @@ Growth 와 같은 방식이다 (`연령별_Tool_전략.md` §5-1).
 | --- | --- | --- |
 | 놀이 후보 생성 · 최근 놀이 조회 · 날씨 · 일정 | 0 | – |
 | 관심 프로필 조회 (`search_activity_memory` 안의 affinity 부분) | **18** | affinity 조회를 건너뛴다. 관찰(티어 3)로만 근거를 만든다 |
-| 주변 장소 조회 (`search_nearby_places`) | **36** | 장소가 필요 없는 활동만 후보로 |
+| 주변 장소 조회 (`search_nearby_places`) | 0 — **위치가 있을 때만** | 위치가 없으면 장소가 필요 없는 활동만 후보로 |
+
+장소 조회는 월령으로 닫지 않는다. 공원 · 놀이터는 보호자와 같이 가는 곳이라 36개월 같은 문턱을 둘 이유가 없다. 날씨가 나쁜 날도 닫지 않고 실내 종류로 좁힌다 (3-2).
 
 ```python
 def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
@@ -69,18 +71,18 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
     return tuple(
         name for name in TASK_TOOLS[task_type]
         if months >= MIN_MONTH[name]
-        and (name != "search_nearby_places" or (gate.has_location and gate.outdoor_ok))
+        and (name != "search_nearby_places" or gate.has_location)
     )
 ```
 
 - 경계값은 **`reference/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). 파일이 생기기 전까지 `MIN_MONTH` 는 `gating.py` 의 자기 표다 — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
-- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 18개월 값을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 · 날씨 개방 조건을 맡는다.
+- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 18개월 값을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 개방 조건을 맡는다.
 - 월령은 **`app/rules/age.py` 의 `life_stage()`** 에서 온다. Activity 는 `stage.months` 만 쓴다.
 - **조산아는 따로 처리하지 않는다.** 교정연령을 쓰지 않는다 (9/25 결정).
 
 **범주에는 enum, 눈금에는 임계값.** Food 의 `LifeStage.stage` 는 진짜 범주형이다 — *"분유를 먹는가 / 일반식을 먹는가"* 는 질적 구분이고 `guide_weaning_stage` 와 `lookup_daycare_menu` 는 서로 배타적이다. Activity 의 18·36 은 **같은 축 위의 눈금**이고 배타적인 게 하나도 없다. 전부 *"이 월령부터 열린다"* 다.
 
-**월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 놀이 추천은 나간다. 월령이 바꾸는 것은 근거를 어디서 모으느냐와 후보에 장소가 붙느냐뿐이다. 닫히는 경우는 알레르기 조회 실패 하나다 (D7). **18개월은 근거 모드를 가르지 않는다** — 그 아래는 `profile_affinity` 가 없어 티어 1·2 가 0행일 뿐이고, 관찰이 있으면 `kind="personalized"` 가 나간다.
+**월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 놀이 추천은 나간다. 월령이 바꾸는 것은 근거를 어디서 모으느냐뿐이다. 장소 조회는 월령이 아니라 위치로 여닫는다. 닫히는 경우는 알레르기 조회 실패 하나다 (D7). **18개월은 근거 모드를 가르지 않는다** — 그 아래는 `profile_affinity` 가 없어 티어 1·2 가 0행일 뿐이고, 관찰이 있으면 `kind="personalized"` 가 나간다.
 
 `ActivityBand(EARLY / LATE)` 는 **로그·리포트 전용**이고 게이팅에 쓰지 않는다. 경계는 Curator 구간에 맞춰 **`0–35` / `36–71`** 두 칸이다. `observation/models.py` 가 1차 배포 타겟을 ≤71개월로 못 박았으므로 72+ 칸은 만들지 않는다.
 
@@ -186,7 +188,7 @@ class ActivityCandidate(ToolArgs):
 
 **거르는 것은 `state = 'active'` 행뿐이다** (#138 `health_safety.state` 4값). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
 
-**조회 실패는 0행과 다르다.** 조회 자체가 실패하면 **Activity 를 실행하지 않는다** — Food 와 같다. 모델을 부르지 않고 코드 문구 `blocked.safety` 로 끝낸다(모델 0회): *"알레르기 정보를 확인할 수 없어서 놀이를 추천해 드릴 수 없어요."* 재료를 쓰는 후보만 빼는 방식으로는 꽃가루 · 동물털 · 잔디 같은 환경 알레르기(`environmental`)를 못 막는다. 이 위험은 재료가 아니라 장소와 계절에 걸려 있다. 조회 실패는 드물어서 멈추는 쪽의 손해가 작다.
+**조회 실패는 0행과 다르다.** 조회 자체가 실패하면 **Activity 를 실행하지 않는다** — Food 와 같다. 모델을 부르지 않고 코드 문구 `blocked.safety` 로 끝낸다(모델 0회): *"지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."* (문구는 `activity.readout.yaml` — 공통규약 §10 `*.readout.yaml`) 재료를 쓰는 후보만 빼는 방식으로는 꽃가루 · 동물털 · 잔디 같은 환경 알레르기(`environmental`)를 못 막는다. 이 위험은 재료가 아니라 장소와 계절에 걸려 있다. 조회 실패는 드물어서 멈추는 쪽의 손해가 작다.
 
 🚨 NF-09 가 **Agent role 에 `health_safety` write 를 부여하지 않는다.** 읽기 전용이 권한으로 강제된다.
 
@@ -268,7 +270,8 @@ class ActivityCandidate(ToolArgs):
 - 🚨 **CSV 를 저장소에 커밋하지 않는다.** 수만 행은 리뷰가 불가능하고 저장소가 public 이다. 적재 스크립트만 커밋하고 실행은 수동 1회. Alembic 은 **스키마만** 맡는다.
 - 행마다 **`데이터기준일자`를 보관**하고 화면에 *"공공데이터 기준 YYYY-MM"* 을 붙인다. 갱신이 느려 문 닫은 키즈카페가 나올 수 있다 — *"지금 열려 있어요"* 는 쓸 수 없고 *"근처에 있어요"* 까지다.
 - 🚨 **장소 행을 근거(`suggestion_evidence`)에 넣지 않는다.** 장소는 날씨와 같은 **필터 조건**이다.
-- **PostGIS 는 필요 없다.** 5km 반경은 위경도 bounding box + haversine 으로 끝난다. 기준점은 휴대폰이 약 1km 로 흐려서 보낸 좌표다 (4-3).
+- **PostGIS 는 필요 없다.** 최대 20km 반경도 위경도 bounding box + haversine 으로 끝난다. 기준점은 휴대폰이 약 1km 로 흐려서 보낸 좌표다 (4-3).
+- **넓게 찾고 가까운 순으로 몇 곳만 준다.** 최대 20km 안에서 가까운 순 5곳(`PLACE_MAX_RADIUS_M` · `PLACE_TOP_K`, 둘 다 잠정 — eval 로 조정). 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에 장소가 빠진다. "공원에만" 같은 요구는 `category` 로 받는다.
 
 **캐시 키는 시계가 아니라 발표 시각 기준**(`nx`,`ny`,`base_date`,`base_time`)이다. 그래야 같은 발표분을 두 번 안 부르고 새 발표가 나오면 자동 무효화된다. 캐시는 `app/integrations/` 안에 가둔다 — Agent 가 캐시를 아는 순간 테스트가 시간에 의존한다. **Redis 를 새로 세우지 않는다.**
 
@@ -417,14 +420,14 @@ async def run(task, context, *, client=None):
     gate = context.gate.with_outdoor(weather.outdoor_ok if weather else False)
     examples = await search_activity_doc(context, months=gate.stage.months)   # 상위 5행
 
-    # ② 월령 + outdoor_ok 로 열 tool 을 정한다
+    # ② 월령 + 위치로 열 tool 을 정한다. outdoor_ok 는 장소 조회가 실내로 좁힐지에 쓴다
     tools = tools_for(task.task_type, gate)
 
     # ③ 모델을 부른다. tool 을 부르고 결과를 받아 다시 판단하는 루프
     ...
 ```
 
-**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 `search_nearby_places` 를 열지 말지 정하는데, tool 목록은 모델을 부르기 전에 확정된다. `lookup_weather` tool 은 그대로 두고 모델은 `why_now` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
+**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 장소 조회를 실내 종류로 좁힐지를 정한다. `lookup_weather` tool 은 그대로 두고 모델은 `why_now` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
 
 **모델에게 보이는 tool** — 이름은 Food 관례(동사 + 목적어). `description` 에는 *무엇을 하는가*가 아니라 ***언제 부르는가***를 적는다.
 
@@ -433,7 +436,7 @@ async def run(task, context, *, client=None):
 | `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. 18개월 미만은 affinity 조회를 건너뛴다 | 0 |
 | `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
 | `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용** | 0 |
-| `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다** | **36** · `outdoor_ok` |
+| `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다.** 바깥 활동이 어려운 날은 실내 종류만 | 0 · 위치 있을 때 |
 | `propose_activity_candidates` | **마지막에 한 번.** `candidates[3]` 제출 (OUTPUT_TOOL) | 0 |
 
 **코드 tool** — `TOOL_SPECS` 에 없어서 모델이 이름으로도 못 부른다.
@@ -447,7 +450,7 @@ async def run(task, context, *, client=None):
 
 **진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
 
-**⚠️ 장소 적재가 붙으면 게이팅을 바꾼다.** 지금 코드(`gating.py`)는 비가 오면 `search_nearby_places` 를 **통째로 닫는다.** 도서관 · 실내 놀이터를 적재하면 날씨가 나쁜 날에 장소가 사라지는 게 손해가 된다. 그때는 tool 을 닫는 대신 `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁힌다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
+**날씨가 나쁜 날은 장소 조회를 닫지 않고 실내 종류로 좁힌다.** 도서관 · 실내 놀이터를 적재하니 비 오는 날에 장소가 사라지는 게 손해다. `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁히고, 바깥 종류를 고르면 `INVALID_ARGS` 로 돌려 모델이 실내 종류로 고쳐 다시 부른다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
 
 **만들지 않는 것** — Age/Safety Filter 를 모델 tool 로(모델이 스스로 통과시킬 수 있다 — 대신 코드 tool 로) · 놀이 후기 기록(쓰기는 Memory 가 한다).
 
@@ -464,6 +467,8 @@ async def run(task, context, *, client=None):
                         ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
                         ─ 0–17개월은 caregiver_role = together 만
                         ─ evidence id ⊂ rank_evidence 상위 10
+                        ─ place_name ⊂ 이번 run 의 search_nearby_places 결과 → 아니면 거절
+                          통과하면 코드가 content 앞에 붙인다 ("○○어린이공원에서 …")
 4. build()              근거 행 수로 kind · general 이면 reason 을 템플릿으로 덮어씀
                         · 기피를 인용했으면 reason 에 무엇을 피했는지
 5. check_count()        정확히 3개. 안전 필터로 모자라면 재호출 1회, 그래도 부족하면 남은 만큼
@@ -658,7 +663,11 @@ GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선
 
 좌표는 **요청 바디로만** 받는다(쿼리스트링은 접근 로그에 남는다). 서버는 그 요청 안에서 **격자 변환과 장소 거리 계산에만** 쓰고 버린다. 좌표는 DB·로그·모델 입력·**예외 메시지**·외부 API 어디에도 남기거나 보내지 않는다.
 
+🚨 **거리 계산 결과도 모델에 주지 않는다.** `search_nearby_places` 는 모델에 장소 **이름 · 종류만** 돌려준다. 이름 여러 곳과 거리를 같이 주면 좌표를 직접 주지 않아도 위치를 거꾸로 짐작할 수 있고, 위치 약관(draft-1 제8조 ③)이 인공지능에 전달될 수 있다고 적은 것도 장소 이름뿐이다. 가까운 순 정렬은 코드가 끝낸다 (#193 리뷰).
+
 권한을 거부하거나 위치가 없으면 야외 조회를 **아예 하지 않는다**(기본 좌표로 대체하지 않는다). Activity 는 실내 전용으로 정상 동작한다.
+
+외출을 콕 집어 요청했는데 위치가 없을 때 *"위치를 허용하시면 가까운 곳을 찾아드려요"* 같은 안내를 붙일지는 **파이프라인을 연결할 때 정한다.** 외출 요청인지 코드가 알려면 Supervisor 가 의도를 넘겨줘야 하고, 위치 동의를 거절한 보호자에게는 반복해서 묻지 않아야 한다.
 
 좌표를 저장하지 않으므로 보관 · 삭제 범위가 넓어지지 않는다. 위치기반서비스 신고와 위치 확인자료 보관은 배포 전 체크리스트(#166)가 맡는다.
 

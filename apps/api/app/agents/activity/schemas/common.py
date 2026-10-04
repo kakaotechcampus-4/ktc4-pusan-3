@@ -33,9 +33,9 @@ class CaregiverRole(StrEnum):
 
 
 class PlaceCategory(StrEnum):
-    """장소 검색어가 되는 닫힌 값. 모델이 만든 문자열은 Kakao `query`에 넣지 않는다 (D8).
+    """장소 조회의 입력이 되는 닫힌 값. 모델이 만든 문자열로 장소를 찾지 않는다 (D8).
 
-    보호자 발화 원문이 외부 서버 로그에 남을 수 있어서다.
+    적재한 place 테이블의 category 칼럼과 같은 값이다.
     """
 
     PARK = "park"

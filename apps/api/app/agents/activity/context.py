@@ -13,6 +13,7 @@ from uuid import UUID
 
 from app.agents.activity.store.ports import (
     ActivityPorts,
+    CoarseLocation,
     PlaceRow,
     SafetyLookupError,
     WeatherGrid,
@@ -47,13 +48,18 @@ class ActivityContext:
     now: datetime  # timezone이 붙은 현재 시각
     timezone: tzinfo
     ports: ActivityPorts
-    # 위치 권한이 없으면 None. 원좌표는 받는 즉시 격자로 뭉개고 버린다 (4-3)
-    grid: WeatherGrid | None = None
+    # 위치 동의나 권한이 없으면 None. 저장하지 않고 이 요청 안에서만 쓴다 (4-3)
+    location: CoarseLocation | None = None
     state: ActivityRunState = field(default_factory=ActivityRunState)
 
     @property
     def today(self) -> date:
         return today_of(self.now, self.timezone)
+
+    @property
+    def grid(self) -> WeatherGrid | None:
+        """날씨 포트에 넘길 기상청 격자. 좌표 대신 이것만 밖으로 나간다."""
+        return self.location.grid if self.location is not None else None
 
     def for_task(self) -> "ActivityContext":
         """task 하나 몫의 context. run state 만 새로 만든다.
@@ -71,10 +77,10 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     - 동의(`consent_child_health`)가 없으면 `health_safety`를 아예 읽지 않는다.
       읽을 것이 없는 상태라 allergy_states가 빈 튜플이다.
     - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다.
-      Activity 는 이 값으로 tool 을 닫지 않는다 — 재료를 쓰는 후보만 빼고 고지한다 (D7).
-    - `has_location` 은 격자가 있는가. 없으면 장소 조회가 닫힌다.
-    - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. tool 목록은 모델을 부르기 전에
-      확정되는데 장소 조회를 열지 말지가 이 값에 걸려 있어서다 (3-2).
+      이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
+    - `has_location` 은 좌표가 있는가. 없으면 장소 조회가 닫힌다.
+    - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
+      좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
     ports = context.ports
     birth_date = await ports.profile.birth_date(child_id=context.child_id)
@@ -96,6 +102,6 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
         consent_child_health=consent,
         safety_ok=safety_ok,
         allergy_states=allergy_states,
-        has_location=context.grid is not None,
+        has_location=context.location is not None,
         outdoor_ok=outdoor_ok,
     )

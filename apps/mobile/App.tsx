@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
 import { StatusBar } from "expo-status-bar";
+import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,6 +16,12 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
 import { WEB_URL, isInternalUrl } from "./src/config";
+import {
+  AUTH_RETURN_URL,
+  callbackUrlFromReturn,
+  isAuthStartUrl,
+  navigateScript,
+} from "./src/native/auth-session";
 import {
   BRIDGE_SCRIPT,
   chunkScript,
@@ -140,6 +147,28 @@ function Shell() {
     [respond],
   );
 
+  /**
+   * 로그인 시작 URL 을 인앱 인증 세션으로 열고, 돌아오면 웹의 복귀 화면으로 옮긴다
+   * (`src/native/auth-session.ts` 머리말).
+   *
+   * `success` 일 때만 옮긴다. X 로 닫은 것(`cancel` · `dismiss`)은 셸이 할 일이 없다 —
+   * 00 화면이 `visibilitychange` 로 "로그인하는 중…" 을 스스로 푼다.
+   *
+   * ⚠️ Android 의 결과는 `Linking` 으로 들어온 복귀 URL(→ `success`)과 앱이 다시 앞으로 온 것
+   *    (→ `dismiss`) 중 **먼저 온 쪽**이다. 복귀 때는 `onNewIntent` 가 `onResume` 보다 먼저라
+   *    `success` 가 이긴다. 이 순서가 뒤집히면 코드가 조용히 사라지니, 셸을 고치면 기기에서 다시 본다.
+   */
+  const openAuthSession = useCallback(async (url: string) => {
+    try {
+      const result = await WebBrowser.openAuthSessionAsync(url, AUTH_RETURN_URL);
+      if (result.type !== "success") return;
+      const callbackUrl = callbackUrlFromReturn(result.url, WEB_URL);
+      if (callbackUrl) webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));
+    } catch {
+      // 세션이 이미 열려 있다(연타) — 먼저 연 세션이 복귀를 받는다.
+    }
+  }, []);
+
   const reload = useCallback(() => {
     setFailed(false);
     setLoading(true);
@@ -194,9 +223,14 @@ function Shell() {
             //    가 그렇게 죽는다. false 로 두면 아래 `onShouldStartLoadWithRequest` 를 거쳐
             //    앱 밖 주소로 판정되고 시스템 브라우저로 넘어간다.
             setSupportMultipleWindows={false}
-            // 앱 밖 링크(약관·소셜 로그인 등)는 웹뷰에 가두지 않고 시스템 브라우저로 넘긴다.
+            // 앱 밖 링크(약관 등)는 웹뷰에 가두지 않고 시스템 브라우저로 넘긴다.
+            // 🚨 로그인 시작만 예외다 — 시스템 브라우저로 나가면 복귀를 받을 곳이 없다 (#210).
             onShouldStartLoadWithRequest={(request) => {
               if (isInternalUrl(request.url)) return true;
+              if (isAuthStartUrl(request.url)) {
+                void openAuthSession(request.url);
+                return false;
+              }
               void Linking.openURL(request.url);
               return false;
             }}

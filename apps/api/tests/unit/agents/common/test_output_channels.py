@@ -216,6 +216,38 @@ class TestReadout:
             catalog.render("b")
 
 
+class TestReadoutYaml:
+    """`*.readout.yaml` 로더. 모양이 틀리면 import 때 바로 실패한다."""
+
+    def test_키마다_문구와_종류를_읽는다(self, tmp_path):
+        path = tmp_path / "x.readout.yaml"
+        path.write_text(
+            "closed.consent:\n  kind: closed\n  template: 동의가 필요해요.\n", encoding="utf-8"
+        )
+        text = ReadoutCatalog.from_yaml(path).get("closed.consent")
+        assert (text.key, text.kind, text.template) == (
+            "closed.consent",
+            "closed",
+            "동의가 필요해요.",
+        )
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "",
+            "a:\n  template: 가\n",  # kind 없음
+            "a:\n  kind: closed\n  template: '  '\n",  # 빈 문구
+            "a:\n  kind: closed\n  template: 가\n  extra: 1\n",  # 모르는 칸
+            "a: 가\n",
+        ],
+    )
+    def test_모양이_틀리면_실패한다(self, tmp_path, body):
+        path = tmp_path / "x.readout.yaml"
+        path.write_text(body, encoding="utf-8")
+        with pytest.raises(ValueError):
+            ReadoutCatalog.from_yaml(path)
+
+
 class TestDomainAgentResult:
     def test_되묻기는_하나만(self):
         with pytest.raises(ValueError, match="되묻기는 하나만"):
