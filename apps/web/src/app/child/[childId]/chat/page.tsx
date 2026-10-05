@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ChatThread } from "@/components/chat-thread";
+import { ChatRouteTransition } from "@/components/route-transition";
 import { EventDraftList } from "@/components/event-draft-list";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
@@ -21,6 +22,7 @@ import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Agent, type Me } from "@/lib/api";
 import { formatDay, toSeoulDateKey } from "@/lib/format";
+import { TRANSITION_TYPE } from "@/lib/view-transition";
 import {
   isBusy,
   sendLine,
@@ -104,97 +106,106 @@ function ChatScreen() {
   }
 
   return (
-    <Screen
-      className="gap-6"
-      topBar={
-        // 🚨 **머리를 붙여 둔다.** 대화는 아래로 자라서, 돌아가는 화살표가 본문에 있으면 몇 번만 주고받아도
-        //    화면 밖으로 밀린다 — 흐름 화면이라 네비가 없어서 나가는 길이 그것 하나다.
-        // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 10 › 고객센터와 같다).
-        <header className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기">
-            <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-          </IconButtonLink>
-          <div className="min-w-0">
-            {/* 자정을 넘겨 켜 둔 앱에서 어제 대화를 "오늘" 이라고 부르지 않는다. */}
-            <PageTitle>{shownDay === today ? "오늘 대화" : "대화"}</PageTitle>
-            {/* 누구의 어느 날 대화인지. 🚨 날짜 머리줄은 날이 둘 이상일 때만 본문에 선다
+    <ChatRouteTransition side="chat">
+      <Screen
+        className="gap-6"
+        topBar={
+          // 🚨 **머리를 붙여 둔다.** 대화는 아래로 자라서, 돌아가는 화살표가 본문에 있으면 몇 번만 주고받아도
+          //    화면 밖으로 밀린다 — 흐름 화면이라 네비가 없어서 나가는 길이 그것 하나다.
+          // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 10 › 고객센터와 같다).
+          <header className="-ml-3 flex items-center gap-1">
+            <IconButtonLink
+              href={`/child/${childId}/home`}
+              label="홈으로 돌아가기"
+              transitionTypes={[TRANSITION_TYPE.chatClose]}
+            >
+              <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+            </IconButtonLink>
+            <div className="min-w-0">
+              {/* 자정을 넘겨 켜 둔 앱에서 어제 대화를 "오늘" 이라고 부르지 않는다. */}
+              <PageTitle>{shownDay === today ? "오늘 대화" : "대화"}</PageTitle>
+              {/* 누구의 어느 날 대화인지. 🚨 날짜 머리줄은 날이 둘 이상일 때만 본문에 선다
                 (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
-            <p className="text-caption text-ink-subtle">
-              {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
-            </p>
+              <p className="text-caption text-ink-subtle">
+                {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
+              </p>
+            </div>
+          </header>
+        }
+        bottomBar={
+          <div className="flex flex-col gap-2">
+            {conversation.answering ? (
+              <AnsweringBar
+                question={conversation.answering}
+                onStop={() => stopAnswering(childId)}
+              />
+            ) : null}
+            <HomeComposer
+              value={text}
+              onChange={setText}
+              onSubmit={send}
+              // 제안 줄은 홈의 것이다 — 서버가 시각대로 고른 "지금 도와드릴 것" 이라 여기서는 안 세운다.
+              prompts={[]}
+              onPickPrompt={() => {}}
+              onPickPhoto={() => setPhotoSheetOpen(true)}
+              pending={busy}
+              busyLabel="답을 기다리는 중이에요"
+            />
           </div>
-        </header>
-      }
-      bottomBar={
-        <div className="flex flex-col gap-2">
-          {conversation.answering ? (
-            <AnsweringBar question={conversation.answering} onStop={() => stopAnswering(childId)} />
-          ) : null}
-          <HomeComposer
-            value={text}
-            onChange={setText}
-            onSubmit={send}
-            // 제안 줄은 홈의 것이다 — 서버가 시각대로 고른 "지금 도와드릴 것" 이라 여기서는 안 세운다.
-            prompts={[]}
-            onPickPrompt={() => {}}
-            onPickPhoto={() => setPhotoSheetOpen(true)}
-            pending={busy}
-            busyLabel="답을 기다리는 중이에요"
-          />
-        </div>
-      }
-    >
-      {conversation.turns.length === 0 ? (
-        // 🚨 지난 대화가 남지 않는다는 것을 숨기지 않는다 — 앱을 끄면 사라진다 (#228 전까지).
-        <EmptyState
-          icon={MessagesSquare}
-          title="아래에 한 줄 적으면 여기서 이어져요"
-          description="이 대화는 앱을 닫으면 사라져요. 적어주신 기록은 기록 화면에 그대로 남아요."
-          count={0}
-          countLabel="오늘 보낸 한 줄"
-        />
-      ) : (
-        <ChatThread
-          childId={childId}
-          turns={conversation.turns}
-          answering={conversation.answering}
-          onOpenDrafts={setDraftsOf}
-          onPickOffer={goToSuggestions}
-        />
-      )}
-
-      {/* 🚨 **승인 게이트 ㉠ 이 이 시트 안의 카드에 있다.** 시트에는 등장 애니메이션이 없다
-          (디자인 시스템 §8). 닫아도 초안은 남는다 — 넣지 않은 장은 다시 열면 그대로 선다. */}
-      <BottomSheet
-        open={draftsOf !== null}
-        onClose={() => setDraftsOf(null)}
-        // 🚨 설명을 달지 않는다 — 목록이 자기 머리글("일정으로 만들까요?" · 넣기 전에는 안 들어간다)을
-        //    이미 세운다. 시트 머리에도 같은 말을 두면 한 화면에 같은 두 줄이 겹쳐 선다.
-        title="찾은 일정"
+        }
       >
-        {draftsOf ? (
-          // 🚨 `key` 로 답마다 새로 그린다 — 안 그러면 앞 답의 넘김 위치 · 넣은 표시가 남는다.
-          <EventDraftList
-            key={draftsOf.id}
-            childId={childId}
-            incoming={[]}
-            draftIds={draftsOf.run.drafts.map((d) => d.draft_id)}
-            origin="input"
-            found="적어주신 말에서 일정을 찾았어요."
+        {conversation.turns.length === 0 ? (
+          // 🚨 지난 대화가 남지 않는다는 것을 숨기지 않는다 — 앱을 끄면 사라진다 (#228 전까지).
+          <EmptyState
+            icon={MessagesSquare}
+            title="아래에 한 줄 적으면 여기서 이어져요"
+            description="이 대화는 앱을 닫으면 사라져요. 적어주신 기록은 기록 화면에 그대로 남아요."
+            count={0}
+            countLabel="오늘 보낸 한 줄"
           />
-        ) : null}
-      </BottomSheet>
+        ) : (
+          <ChatThread
+            childId={childId}
+            turns={conversation.turns}
+            answering={conversation.answering}
+            onOpenDrafts={setDraftsOf}
+            onPickOffer={goToSuggestions}
+          />
+        )}
 
-      <PhotoSourceSheet
-        open={photoSheetOpen}
-        onClose={() => setPhotoSheetOpen(false)}
-        onPick={({ file, lane }) => {
-          putPhoto(childId, file, lane);
-          setPhotoSheetOpen(false);
-          router.push(`/child/${childId}/photos`);
-        }}
-      />
-    </Screen>
+        {/* 🚨 **승인 게이트 ㉠ 이 이 시트 안의 카드에 있다.** 시트에는 등장 애니메이션이 없다
+          (디자인 시스템 §8). 닫아도 초안은 남는다 — 넣지 않은 장은 다시 열면 그대로 선다. */}
+        <BottomSheet
+          open={draftsOf !== null}
+          onClose={() => setDraftsOf(null)}
+          // 🚨 설명을 달지 않는다 — 목록이 자기 머리글("일정으로 만들까요?" · 넣기 전에는 안 들어간다)을
+          //    이미 세운다. 시트 머리에도 같은 말을 두면 한 화면에 같은 두 줄이 겹쳐 선다.
+          title="찾은 일정"
+        >
+          {draftsOf ? (
+            // 🚨 `key` 로 답마다 새로 그린다 — 안 그러면 앞 답의 넘김 위치 · 넣은 표시가 남는다.
+            <EventDraftList
+              key={draftsOf.id}
+              childId={childId}
+              incoming={[]}
+              draftIds={draftsOf.run.drafts.map((d) => d.draft_id)}
+              origin="input"
+              found="적어주신 말에서 일정을 찾았어요."
+            />
+          ) : null}
+        </BottomSheet>
+
+        <PhotoSourceSheet
+          open={photoSheetOpen}
+          onClose={() => setPhotoSheetOpen(false)}
+          onPick={({ file, lane }) => {
+            putPhoto(childId, file, lane);
+            setPhotoSheetOpen(false);
+            router.push(`/child/${childId}/photos`);
+          }}
+        />
+      </Screen>
+    </ChatRouteTransition>
   );
 }
 

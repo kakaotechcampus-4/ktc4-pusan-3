@@ -150,8 +150,12 @@
   /* 그림자는 바텀시트에만. 카드 경계는 line 이 만든다 (문서 §6) */
   --shadow-sheet: 0 -2px 16px rgb(34 31 27 / 0.08);
 
-  /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms */
+  /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms · screen 400ms */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  /* 화면 전환 전용 (문서 §8 "허용하는 화면 전환"). 들어오는 것은 빨리 출발해 길게 멈추고(감속),
+   * 나가는 것은 천천히 출발해 빨리 사라진다(가속) — 눈이 따라가야 하는 쪽이 들어오는 화면이라서다. */
+  --ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
 
   /* 스켈레톤 깜빡임 (문서 §7).
    * 🚨 Tailwind 기본 `animate-pulse` 를 쓰지 않는다 — 2s · opacity 1↔0.5 라 문서 값(1.2s ·
@@ -266,19 +270,24 @@
 
 /* 화면 전환 — 03 홈 ↔ 04 대화 (#226 · 문서 §8 "허용하는 화면 전환").
  *
- * 이름이 없는 것은 전부 루트 크로스페이드고, 이름 쌍(`lib/view-transition.ts`)은 위치를 이어 붙인다.
- * 둘 다 `base`(200ms) + `--ease-standard` 다. 브라우저 기본값(250ms · ease)을 그대로 두면 이 앱의
- * 다른 움직임과 박자가 어긋난다.
+ * 움직임은 세 겹이다.
+ *   ① 이름 없는 나머지 — 루트 크로스페이드 (`base` 200ms). 방향 값 없는 이동(기기 뒤로가기)은 이것뿐이다
+ *   ② 화면 통째로 — 방향 값(`chat-open` · `chat-close`)이 붙은 이동만. `ChatRouteTransition` 이 클래스를 단다
+ *   ③ 이름 쌍 — 채팅바 · 막 보낸 한 줄이 제자리를 찾아 옮겨 간다 (`lib/view-transition.ts`)
  *
- * 🚨 **reduced-motion 에서는 위치를 옮기지 않는다** — `group` 이 위치·크기를 옮기는 자리라 그 애니메이션만
- *    끄고, `old`/`new` 의 크로스페이드는 남긴다 (문서 §8 "transform 을 끄고 opacity 만").
+ * 🚨 **움직이는 속성은 `translate` · `opacity` (이름 쌍은 브라우저가 크기를 옮긴다) 뿐이다.** 셋 다 합성(compositor)에서 끝나서
+ *    레이아웃을 다시 계산하지 않는다 — 웹뷰에서 프레임이 떨어지는 것은 대개 높이 · 위치를 직접 바꾸는
+ *    애니메이션이다. 이 셋을 벗어나는 속성(`height` · `top` · `filter: blur`)을 더하지 않는다.
+ * 🚨 **reduced-motion 에서는 ②③ 의 위치 · 크기를 전부 끄고 크로스페이드만 남긴다** (아래 미디어 쿼리).
  *    위 base 레이어의 `*` 규칙은 이 가상 요소들에 닿지 않아서 여기서 따로 끈다.
- * 🚨 **전환 중에도 화면을 누를 수 있게 둔다.** 겹쳐 그린 층이 누르기를 가로채면 넘어가는 200ms 동안
- *    누른 것이 사라진다 (Next 문서 `view-transitions.md`). */
+ * 🚨 **전환 중에도 화면을 누를 수 있게 둔다.** 겹쳐 그린 층이 누르기를 가로채면 넘어가는 동안 누른 것이
+ *    사라진다 (Next 문서 `view-transitions.md`). */
 ::view-transition {
   pointer-events: none;
 }
 
+/* ① 기본값 — 따로 정하지 않은 것은 전부 base 200ms 크로스페이드다. 브라우저 기본값(250ms · ease)을
+ *    그대로 두면 이 앱의 다른 움직임과 박자가 어긋난다. */
 ::view-transition-group(*),
 ::view-transition-old(*),
 ::view-transition-new(*) {
@@ -286,9 +295,105 @@
   animation-timing-function: var(--ease-standard);
 }
 
+/* ② 홈 → 대화: 대화가 72px 오른쪽에서 들어오고, 홈은 24px 왼쪽으로 비켜나며 사라진다.
+ *    앞으로 가는 이동이라 오른쪽에서 온다 — 기기의 기본 전환 · 가로 스와이프 뒤로가기와 같은 방향이다.
+ *    🚨 **화면 폭 전체를 가로지르지 않는다.** 거리는 72px · 24px 까지고 나머지는 페이드가 진다 (문서 §8). */
+::view-transition-old(.home-out) {
+  animation:
+    160ms var(--ease-exit) both vt-fade-out,
+    400ms var(--ease-enter) both vt-to-left;
+}
+::view-transition-new(.chat-in) {
+  animation:
+    240ms var(--ease-enter) 60ms both vt-fade-in,
+    400ms var(--ease-enter) both vt-from-right;
+}
+
+/* ② 대화 → 홈: 반대로. 대화가 오른쪽으로 빠지고 홈이 왼쪽에서 제자리로 온다. 닫는 쪽은 짧다(280ms) —
+ *    나가는 사람을 기다리게 하지 않는다. */
+::view-transition-old(.chat-out) {
+  animation:
+    160ms var(--ease-exit) both vt-fade-out,
+    240ms var(--ease-exit) both vt-to-right;
+}
+::view-transition-new(.home-in) {
+  animation:
+    200ms var(--ease-enter) 40ms both vt-fade-in,
+    280ms var(--ease-enter) both vt-from-left;
+}
+
+/* ③ 이름 쌍 — 화면보다 조금 앞서 도착하지 않게 같은 400ms · 같은 감속 곡선으로 옮긴다.
+ *    막 보낸 한 줄이 입력창에서 말풍선 자리로 날아가는 것이 이 전환의 주인공이다. */
+::view-transition-group(chat-bar),
+::view-transition-group(sent-line) {
+  animation-duration: 400ms;
+  animation-timing-function: var(--ease-enter);
+}
+/* 🚨 **날아가는 한 줄은 폭이 아니라 높이로 맞춘다.** 브라우저 기본은 그림을 그룹 **폭**에 맞춰 늘리는데,
+ *    출발점인 입력창은 글자 길이와 상관없이 206px 이고 도착점 말풍선은 글자만큼(짧으면 120px 안팎)이라,
+ *    출발 순간 말풍선 그림이 1.6배로 부풀었다 줄어든다 — 실제로 "말풍선이 너무 커진다" 로 보였다.
+ *    높이는 둘이 비슷해서(입력 44 · 말풍선 50) 높이로 맞추면 크기가 거의 안 변하고 자리만 옮겨 간다.
+ * 🚨 **페이지보다 위에 그린다.** 안 그러면 올라가는 도중 대화 화면의 첫 카드 밑으로 지나간다. */
+::view-transition-group(sent-line) {
+  z-index: 1;
+}
+::view-transition-old(sent-line),
+::view-transition-new(sent-line) {
+  block-size: 100%;
+  inline-size: auto;
+}
+/* 회색 입력창 글자 → 초록 말풍선. 둘이 겹쳐 보이는 시간을 짧게 해서 중간에 탁한 색이 안 남게 한다. */
+::view-transition-old(sent-line) {
+  animation: 90ms var(--ease-exit) both vt-fade-out;
+}
+::view-transition-new(sent-line) {
+  animation: 200ms var(--ease-enter) both vt-fade-in;
+}
+
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-from-right {
+  from {
+    translate: 72px 0;
+  }
+}
+@keyframes vt-to-right {
+  to {
+    translate: 72px 0;
+  }
+}
+@keyframes vt-to-left {
+  to {
+    translate: -24px 0;
+  }
+}
+@keyframes vt-from-left {
+  from {
+    translate: -24px 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*) {
     animation: none;
+  }
+  ::view-transition-old(.home-out),
+  ::view-transition-old(.chat-out),
+  ::view-transition-old(sent-line) {
+    animation: 200ms var(--ease-standard) both vt-fade-out;
+  }
+  ::view-transition-new(.chat-in),
+  ::view-transition-new(.home-in),
+  ::view-transition-new(sent-line) {
+    animation: 200ms var(--ease-standard) both vt-fade-in;
   }
 }
 

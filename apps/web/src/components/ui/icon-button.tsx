@@ -74,16 +74,25 @@ export function IconButtonLink({
   label,
   tone = "ghost",
   className,
+  transitionTypes,
   children,
 }: {
   href: string;
   label: string;
   tone?: IconButtonTone;
   className?: string;
+  /** 이 이동이 어떤 화면 전환인지 (`lib/view-transition.ts` 의 `TRANSITION_TYPE`). 없으면 움직임 없음. */
+  transitionTypes?: string[];
   children: ReactNode;
 }) {
   return (
-    <Link href={href} aria-label={label} title={label} className={cn(SHAPE, TONE[tone], className)}>
+    <Link
+      href={href}
+      aria-label={label}
+      title={label}
+      transitionTypes={transitionTypes}
+      className={cn(SHAPE, TONE[tone], className)}
+    >
       {children}
     </Link>
   );

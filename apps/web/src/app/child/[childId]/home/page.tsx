@@ -20,6 +20,7 @@ import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { PROMPT_PILL } from "@/components/agent-prompts";
+import { ChatRouteTransition } from "@/components/route-transition";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -35,6 +36,7 @@ import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, isApiError, qk, type Agent, type HomeResponse, type Me } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { TRANSITION_TYPE } from "@/lib/view-transition";
 
 /**
  * 03 홈 · 한 줄 입력.
@@ -109,7 +111,7 @@ function HomeScreen() {
     // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
     setLeaving(line);
     clearDraft(childId);
-    router.push(chatHref);
+    router.push(chatHref, { transitionTypes: [TRANSITION_TYPE.chatOpen] });
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
@@ -120,83 +122,90 @@ function HomeScreen() {
   }
 
   return (
-    <Screen
-      className="gap-5"
-      nav={<ChildNav active="home" />}
-      bottomBar={
-        <div className="flex flex-col gap-2">
-          <HomeComposer
-            value={leaving ?? text}
-            onChange={setText}
-            onSubmit={send}
-            prompts={home.data?.agent_prompts ?? []}
-            onPickPrompt={(agent) => goToSuggestions([agent])}
-            onPickPhoto={() => setPhotoSheetOpen(true)}
-            pending={busy || leaving !== null}
-            busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
-            sentLine={leaving !== null}
-            lead={
-              // 🚨 **대화가 있을 때만 선다.** 앱을 끄면 그날 대화가 사라져서(#228 전까지) 빈 대화로
-              //    가는 문을 세우지 않는다.
-              conversation.turns.length > 0 ? (
-                <ChatEntryLink href={chatHref} asking={hasOpenQuestion(conversation)} />
-              ) : undefined
-            }
+    <ChatRouteTransition side="home">
+      <Screen
+        className="gap-5"
+        nav={<ChildNav active="home" />}
+        bottomBar={
+          <div className="flex flex-col gap-2">
+            <HomeComposer
+              value={leaving ?? text}
+              onChange={setText}
+              onSubmit={send}
+              prompts={home.data?.agent_prompts ?? []}
+              onPickPrompt={(agent) => goToSuggestions([agent])}
+              onPickPhoto={() => setPhotoSheetOpen(true)}
+              pending={busy || leaving !== null}
+              busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
+              sentLine={leaving !== null}
+              lead={
+                // 🚨 **대화가 있을 때만 선다.** 앱을 끄면 그날 대화가 사라져서(#228 전까지) 빈 대화로
+                //    가는 문을 세우지 않는다.
+                conversation.turns.length > 0 ? (
+                  <ChatEntryLink href={chatHref} asking={hasOpenQuestion(conversation)} />
+                ) : undefined
+              }
+            />
+          </div>
+        }
+      >
+        <header className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
+            <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
+            {home.data ? (
+              <p className="text-body-sm text-ink-subtle mt-2">
+                지금까지 함께 쌓은 기록 {home.data.observation_count}건
+              </p>
+            ) : null}
+          </div>
+          {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+          <IconButton label="설정" onClick={() => router.push(`/child/${childId}/settings`)}>
+            <Settings aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButton>
+        </header>
+
+        {home.isPending ? (
+          <Card>
+            <SkeletonBlock label="홈을 불러오는 중" />
+          </Card>
+        ) : consentBlocked ? (
+          // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
+          //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
+          <ConsentRequiredCard
+            childId={childId}
+            error={consentBlocked}
+            what="오늘 기록을 보여드릴 수 없어요."
           />
-        </div>
-      }
-    >
-      <header className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
-          <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
-          {home.data ? (
-            <p className="text-body-sm text-ink-subtle mt-2">
-              지금까지 함께 쌓은 기록 {home.data.observation_count}건
-            </p>
-          ) : null}
-        </div>
-        {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
-        <IconButton label="설정" onClick={() => router.push(`/child/${childId}/settings`)}>
-          <Settings aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-        </IconButton>
-      </header>
+        ) : home.isError ? (
+          <CardFailed>
+            <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
+            <Button
+              variant="tertiary"
+              size="compact"
+              className="mt-3"
+              onClick={() => home.refetch()}
+            >
+              다시 시도
+            </Button>
+          </CardFailed>
+        ) : home.data ? (
+          <HomeBody data={home.data} />
+        ) : null}
 
-      {home.isPending ? (
-        <Card>
-          <SkeletonBlock label="홈을 불러오는 중" />
-        </Card>
-      ) : consentBlocked ? (
-        // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
-        //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
-        <ConsentRequiredCard
-          childId={childId}
-          error={consentBlocked}
-          what="오늘 기록을 보여드릴 수 없어요."
-        />
-      ) : home.isError ? (
-        <CardFailed>
-          <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
-          <Button variant="tertiary" size="compact" className="mt-3" onClick={() => home.refetch()}>
-            다시 시도
-          </Button>
-        </CardFailed>
-      ) : home.data ? (
-        <HomeBody data={home.data} />
-      ) : null}
-
-      {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
+        {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
-      <PhotoSourceSheet
-        open={photoSheetOpen}
-        onClose={() => setPhotoSheetOpen(false)}
-        onPick={({ file, lane }) => {
-          putPhoto(childId, file, lane);
-          setPhotoSheetOpen(false);
-          router.push(`/child/${childId}/photos`);
-        }}
-      />
-    </Screen>
+        <PhotoSourceSheet
+          open={photoSheetOpen}
+          onClose={() => setPhotoSheetOpen(false)}
+          onPick={({ file, lane }) => {
+            putPhoto(childId, file, lane);
+            setPhotoSheetOpen(false);
+            router.push(`/child/${childId}/photos`);
+          }}
+        />
+      </Screen>
+    </ChatRouteTransition>
   );
 }
 
@@ -211,6 +220,7 @@ function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
     <Link
       href={href}
+      transitionTypes={[TRANSITION_TYPE.chatOpen]}
       className={cn(
         PROMPT_PILL,
         "hover:bg-surface-muted active:bg-surface-muted whitespace-nowrap",
