@@ -5,5 +5,5 @@
  *    primitive 안에서 변형(variant)을 통째로 골라 쓰고, 바깥에서 색·크기를 덮어쓰지 않는다.
  */
 export function cn(...classes: Array<string | false | null | undefined>): string {
-  return classes.filter(Boolean).join( " " );
+  return classes.filter(Boolean).join(" ");
 }
