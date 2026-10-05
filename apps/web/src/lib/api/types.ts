@@ -1111,6 +1111,7 @@ export interface CreateChildRequest {
   consents: Array<{ scope: string; policy_version: string }>;
   /**
    * 법정대리인임을 보호자가 확인한 표시 (개인정보보호법 제22조의2).
+   * **만 19세 이상 표시를 겸한다** — 화면 문항이 약관 제6조 ② 문장 그대로 둘을 함께 묻는다 (#166).
    *
    * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 — 그러면
    *    아무도 확인하지 않은 동의가 확인된 것으로 남는다.
