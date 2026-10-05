@@ -158,6 +158,25 @@ export function toISODate(date: Date): string {
 }
 
 /**
+ * 절대 시각 → **한국 시간 기준** `YYYY-MM-DD`. 대화를 하루 단위로 가르는 키다 (#226).
+ *
+ * 🚨 **`toISODate` 를 쓰지 않는다.** 그건 기기 시간대의 날짜라, 해외 로밍이나 잘못된 설정에서
+ *    한국 자정과 다른 시각에 대화가 갈린다. 서버의 하루 한도(#147)도 한국 자정에 풀린다 —
+ *    둘이 다른 자정을 쓰면 "오늘 대화" 와 "오늘 보낸 횟수" 가 다른 날을 센다.
+ * ⚠️ 표시가 아니라 키다. 상대 날짜("어제")를 만들지 않는다.
+ */
+const SEOUL_DATE_KEY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function toSeoulDateKey(at: Date): string {
+  return SEOUL_DATE_KEY.format(at);
+}
+
+/**
  * `YYYY-MM-DD` → `Date`(로컬 자정). 🚨 `new Date("2026-09-12")` 는 **UTC 자정**으로 읽어서
  * 한국에서는 같은 날이지만 시간대에 따라 전날이 된다 — 위 `toISODate` 와 짝이다.
  * 잘못된 값이면 `null` 이다. 화면이 조용히 오늘로 대체하지 않게 판단은 호출부가 한다.

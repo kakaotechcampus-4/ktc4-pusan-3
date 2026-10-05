@@ -9,7 +9,7 @@ import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
 
 /**
- * 04 저장 결과 — 입력 한 줄과 run 스트림.
+ * 04 대화 — 입력 한 줄과 run 스트림.
  *
  * 🚨 실패는 200 + 빈 배열이 아니다. failed 이벤트가 raw_text 를 돌려주고,
  *    화면은 그걸 입력창에 그대로 남긴다. 그래서 여기서 원문을 들고 있어야 한다.
@@ -47,6 +47,15 @@ const pendingReplies = new Map<string, string>();
  */
 const failedOnce = new Set<string>();
 
+/**
+ * `reply_asks_again` 에서 이미 한 번 되물은 대화의 **처음 질문**. 🚨 **한 번만 더 묻는다** —
+ * 늘 물으면 끝나지 않는다. 서버에도 재질문 상한이 들어올 예정이다(그 문구의 목은 서버 PR 뒤).
+ */
+const askedAgain = new Set<string>();
+
+/** `send_failed` 에서 이미 한 번 끊어 본 Idempotency-Key. 🚨 키마다 한 번만 끊는다 — 다시 시도가 닿아야 한다. */
+const droppedSends = new Set<string>();
+
 /** 테스트가 "답이 어느 run 을 가리키는가" 를 확인하는 자리. */
 export function submittedInput(runId: string): SubmittedInput | undefined {
   return inputByRun.get(runId);
@@ -57,12 +66,14 @@ export function resetSubmittedInputs(): void {
   inputByRun.clear();
   pendingReplies.clear();
   failedOnce.clear();
+  askedAgain.clear();
+  droppedSends.clear();
 }
 
 /**
  * 없는 run · 다른 아이 · 이미 답한 질문을 하나로 합친다 — 서버와 같은 한 코드다 (#175).
  * 🚨 **문구는 상황만 말한다** (서버 `routers/children.py` 와 같은 글자). 무엇을 다시 보낼지는
- *    화면(`SubmitErrorCard`)이 이 아래에 적는다 — 여기서 "다시 적어 주세요" 를 말하면 바로 아래의
+ *    화면(`components/chat-thread.tsx` 의 `SendFailure`)이 이 아래에 적는다 — 여기서 "다시 적어 주세요" 를 말하면 바로 아래의
  *    "앞서 저장된 이야기는 다시 적지 않아도 돼요" 와 한 카드에서 부딪친다 (#208).
  */
 function replyUnavailable() {
@@ -93,6 +104,9 @@ const SAFETY_GUIDANCE = {
 /** 이어받기 run 이 저장한 뒤 Memory 가 하는 말. 🚨 질문이 아니다 — 이어받은 답은 또 묻지 않는다. */
 const CONTINUATION_NOTE = "말씀해 주신 시점까지 함께 기록해 두었어요.";
 
+/** `reply_asks_again` — 이어받기 run 이 한 번 더 묻는 말. 처음 질문과 **다른 문장**이라 화면에서 갈린다. */
+const FOLLOW_UP_QUESTION = "하루에 몇 번 정도 그랬는지 알려주시겠어요?";
+
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
  * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계가 하나고 추천 제안(`offer`)도 없다
@@ -114,17 +128,42 @@ async function* continuationScript(
     return;
   }
 
+  /**
+   * 🚨 **이어받은 답이 또 모자라면 또 묻는다** (#226). 서버는 이 run 을 새 대기 자리에 넣으므로
+   *    다음 답의 `reply_to` 는 **이 run** 이다 — 처음 질문의 run 은 위 핸들러가 이미 한 번 꺼냈다.
+   *    어느 질문의 답인지는 처음 질문(`rootQuestion`)으로 센다 — 한 대화에서 한 번만 더 묻는다.
+   */
+  const rootQuestion = rootOf(input.replyTo);
+  if (currentScenario() === "reply_asks_again" && !askedAgain.has(rootQuestion)) {
+    askedAgain.add(rootQuestion);
+    pendingReplies.set(runId, input.childId);
+    yield frame("note", { text: FOLLOW_UP_QUESTION, kind: "question" });
+    await sleep(300);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
+
   yield frame("saved", { observations: [healthObservation] });
   await sleep(300);
   /**
    * 🚨 **저장 뒤에 말이 한 번 더 온다** (#208). 서버는 이어받기에서 조기 종료를 껐다 — 답에 다른
    *    말이 섞였는지(leftover) 받을 턴이 있어야 해서다 (`apps/api/app/agents/memory/agent.py`).
    *    그래서 저장한 뒤 Memory 가 한 번 더 말하고 그게 `note` 로 나간다. `kind` 가 `message` 라
-   *    화면은 "이어서 적기" 를 열지 않는다 — 열면 끝난 답에 또 답을 재촉한다.
+   *    화면은 답할 자리("이 질문에 답하기")를 열지 않는다 — 열면 끝난 답에 또 답을 재촉한다.
    */
   yield frame("note", { text: CONTINUATION_NOTE, kind: "message" });
   await sleep(300);
   yield frame("done", { run_id: runId, model_calls: 1 });
+}
+
+/** 이어받기가 이어진 대화의 처음 run. 답의 답을 따라 처음 질문까지 거슬러 올라간다. */
+function rootOf(runId: string): string {
+  let current = runId;
+  for (let replyTo = inputByRun.get(current)?.replyTo; replyTo;) {
+    current = replyTo;
+    replyTo = inputByRun.get(current)?.replyTo;
+  }
+  return current;
 }
 
 /**
@@ -221,6 +260,7 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (
     scenario === "note_question" ||
     scenario === "reply_failed" ||
+    scenario === "reply_asks_again" ||
     scenario === "reply_unavailable"
   ) {
     if (input) pendingReplies.set(runId, input.childId);
@@ -332,6 +372,19 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
 }
 
 export const runHandlers = [
+  /**
+   * 🚨 **`send_failed` — 서버에 닿기 전에 끊긴다** (#231 리뷰). 그래서 아래 `withIdempotency` **앞**에 둔다 —
+   *    래퍼 안에서 끊으면 서버가 받은 것이 되어 같은 키의 다시 시도가 저장된 응답을 재생할 수 없다.
+   *    아무것도 돌려주지 않으면 msw 가 다음 핸들러로 넘긴다.
+   */
+  http.post(url("/children/:cid/inputs"), ({ request }) => {
+    if (currentScenario() !== "send_failed") return;
+    const key = request.headers.get("Idempotency-Key");
+    if (!key || droppedSends.has(key)) return;
+    droppedSends.add(key);
+    return HttpResponse.error();
+  }),
+
   // 🚨 키가 없으면 400 이다 — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는 지점.
   http.post(
     url("/children/:cid/inputs"),

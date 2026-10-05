@@ -823,7 +823,7 @@ describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", ()
       expect(types).toContain("saved");
       // 🚨 이어받은 답은 또 묻지 않는다 — `reply_to` 가 빠졌다면 새 입력이라 질문이 다시 떴다.
       //    note 자체는 온다: 서버가 이어받기에서 조기 종료를 꺼서 저장 뒤에 한 번 더 말한다 (#208).
-      //    그 말이 **질문이 아니어야** 한다 — 질문이면 화면이 끝난 답에 "이어서 적기" 를 또 연다.
+      //    그 말이 **질문이 아니어야** 한다 — 질문이면 화면이 끝난 답에 답할 자리를 또 연다.
       const notes = events.filter((e) => e.type === "note").map((e) => e.data as NoteEvent);
       expect(notes.length).toBeGreaterThan(0);
       expect(notes.every((note) => note.kind !== "question")).toBe(true);
