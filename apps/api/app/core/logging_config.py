@@ -11,14 +11,45 @@ app 로그는 루트로도 올라간다(propagate). pytest 의 caplog 가 루트
 누가 루트에 처리기를 달면 app 로그가 두 줄씩 찍힌다 — 예: OPENAI_LOG 환경변수를 켜면 openai
 SDK 가 basicConfig 를 부른다.
 
+uvicorn 의 접근 로그(요청마다 한 줄)는 쿼리 문자열과 초대 코드를 가린다 — `_RedactAccessLog`.
+
 모듈 이름이 logging 이 아닌 이유 — 표준 라이브러리 logging 과 헷갈리지 않게.
 """
 
+import logging
 import logging.config
+import re
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S%z"
 """시간대(+0900 등)까지. 개발 맥은 한국 시간, 컨테이너는 보통 UTC 라 말없이 9시간 어긋난다."""
+
+_INVITE_CODE = re.compile(r"(/invites/)[^/?]+")
+"""초대 코드는 경로에 들어 있다 — /invites/{code} · /invites/{code}/accept.
+
+발행 주소(/children/{cid}/invites — /invites 로 끝남)는 해당 없다."""
+
+
+class _RedactAccessLog(logging.Filter):
+    """uvicorn 접근 로그에서 쿼리 문자열과 초대 코드를 가린다 (#214 리뷰).
+
+    🚨 uvicorn 은 주소를 쿼리째 찍는다. 카카오 콜백의 인가 코드 · state, 로그인 시작의 bind 원문이
+       쿼리에 있고, 초대 코드는 경로에 있다 (auth-kakao-v1 §7-5 "콜백 URL 전체를 로깅하지 않는다").
+       경로 · 상태 코드 · id(아이 · run)는 남긴다 — 어느 주소가 어떻게 끝났는지는 운영에 필요하다.
+
+    uvicorn 은 `'%s - "%s %s HTTP/%s" %d'` 에 값 5개(주소 · 메서드 · 경로 · 버전 · 상태)를 넘긴다.
+    세 번째만 바꾼다 — uvicorn 의 AccessFormatter 도 이 5개를 그대로 풀어 쓴다.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+            path, has_query, _ = args[2].partition("?")
+            path = _INVITE_CODE.sub(r"\1[redacted]", path)
+            if has_query:
+                path += "?[redacted]"
+            record.args = (args[0], args[1], path, args[3], args[4])
+        return True
 
 
 def configure_logging() -> None:
@@ -45,3 +76,8 @@ def configure_logging() -> None:
             "loggers": {"app": {"level": "INFO", "handlers": ["stderr"]}},
         }
     )
+    # uvicorn 이 자기 로그를 먼저 설정한 뒤라, 그 로거에 거름망만 더한다(설정을 다시 하지 않는다).
+    # 여러 번 불려도 하나만 단다.
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _RedactAccessLog) for f in access.filters):
+        access.addFilter(_RedactAccessLog())

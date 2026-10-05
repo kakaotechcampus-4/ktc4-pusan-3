@@ -30,13 +30,27 @@ import app.main  # 그다음에 앱을 불러온다
 logging.getLogger("app.probe").info("app-probe-line")
 logging.getLogger("uvicorn.error").warning("uvicorn-probe-line")
 logging.getLogger("httpx").info("https://open.example.test/hub?KEY=secret-key")
+
+access = logging.getLogger("uvicorn.access")
+line = '%s - "%s %s HTTP/%s" %d'  # uvicorn 이 접근 로그를 찍는 모양 그대로
+access.info(line, "127.0.0.1:5000", "GET",
+            "/api/v1/auth/kakao/callback?code=SECRET-AUTH-CODE&state=SECRET-STATE", "1.1", 302)
+access.info(line, "127.0.0.1:5000", "GET",
+            "/api/v1/auth/kakao?client=web&bind=SECRET-BIND", "1.1", 302)
+access.info(line, "127.0.0.1:5000", "POST", "/api/v1/invites/SECRETCD/accept", "1.1", 200)
+access.info(line, "127.0.0.1:5000", "POST",
+            "/api/v1/children/0b6f5c1e-0000-4000-8000-000000000001/inputs", "1.1", 202)
 """
 """표시 글자는 영문이다 — 파이프 인코딩이 UTF-8 이 아닌 환경에서 엉뚱한 이유로 깨지지 않게."""
 
 
 @pytest.fixture(scope="module")
-def stderr() -> str:
-    """서버를 띄울 때와 같은 순서로 불러온 뒤 로그를 남기고, 찍힌 것을 돌려준다."""
+def output() -> str:
+    """서버를 띄울 때와 같은 순서로 불러온 뒤 로그를 남기고, 찍힌 것을 돌려준다.
+
+    stdout 과 stderr 를 합친다 — uvicorn 기본 설정은 접근 로그를 stdout 으로, 나머지를 stderr 로
+    보낸다. 한쪽만 보면 접근 로그의 "없다" 단언이 빈 화면을 보고 통과한다.
+    """
     result = subprocess.run(
         [sys.executable, "-c", PROBE],
         cwd=API_ROOT,
@@ -46,15 +60,15 @@ def stderr() -> str:
     )
     # 실패하면 새 프로세스의 오류 내용을 그대로 보여 준다 (check=True 는 그걸 버린다).
     assert result.returncode == 0, result.stderr
-    return result.stderr
+    return result.stdout + result.stderr
 
 
-def test_app_info_log_is_shown_with_time_level_and_name(stderr):
+def test_app_info_log_is_shown_with_time_level_and_name(output):
     """info 가 버려지지 않고, 언제(시간대까지) · 어느 레벨 · 어느 모듈인지가 한 줄에 찍힌다.
 
     시간대를 붙이는 이유 — 개발 맥은 한국 시간, 컨테이너는 보통 UTC 라 말없이 9시간 어긋난다.
     """
-    lines = [line for line in stderr.splitlines() if "app-probe-line" in line]
+    lines = [line for line in output.splitlines() if "app-probe-line" in line]
 
     assert len(lines) == 1
     assert "INFO" in lines[0]
@@ -62,18 +76,35 @@ def test_app_info_log_is_shown_with_time_level_and_name(stderr):
     assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{4}", lines[0])
 
 
-def test_uvicorn_logs_survive_app_logging_setup(stderr):
+def test_uvicorn_logs_survive_app_logging_setup(output):
     """🚨 앱 로그 설정이 uvicorn 의 로거를 끄지 않는다.
 
     끄면 서버의 시작 줄 · 요청 줄 · "Exception in ASGI application" 오류가 말없이 사라진다.
     dictConfig 의 disable_existing_loggers 기본값이 바로 그렇게 한다.
     """
-    assert "uvicorn-probe-line" in stderr
+    assert "uvicorn-probe-line" in output
 
 
-def test_library_info_log_stays_hidden(stderr):
+def test_library_info_log_stays_hidden(output):
     """🚨 루트 로거는 WARNING 그대로다 — 라이브러리의 info 까지 열지 않는다.
 
     httpx 는 INFO 로 요청 주소를 찍는데, 주소에 키를 싣는 API 가 있다 (NEIS 의 KEY=).
     """
-    assert "secret-key" not in stderr
+    assert "secret-key" not in output
+
+
+def test_access_log_hides_query_strings_and_invite_codes(output):
+    """🚨 uvicorn 접근 로그는 주소를 쿼리째 찍는다 — 인가 코드 · state · bind 원문이 쿼리에 있다.
+
+    초대 코드는 경로에 있다 (/invites/{code}). 둘 다 가리고 경로 · 상태 코드는 남긴다
+    (auth-kakao-v1 §7-5 "콜백 URL 전체를 로깅하지 않는다", #214 리뷰).
+    """
+    for secret in ("SECRET-AUTH-CODE", "SECRET-STATE", "SECRET-BIND", "SECRETCD"):
+        assert secret not in output
+    assert "/api/v1/auth/kakao/callback?[redacted]" in output
+    assert "/api/v1/invites/[redacted]/accept" in output
+
+
+def test_access_log_keeps_ids_in_paths(output):
+    """아이 id · run id 는 남긴다 — 원문이 아니라 id 다 (루트 CLAUDE.md §2)."""
+    assert "/api/v1/children/0b6f5c1e-0000-4000-8000-000000000001/inputs" in output
