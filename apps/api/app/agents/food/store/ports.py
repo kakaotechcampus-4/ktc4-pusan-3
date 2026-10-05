@@ -34,7 +34,7 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
 | ConsentReader | consent(scope=child_health) 최신 행 |
-| SafetyReader | health_safety — allergy · chronic_disease · dietary_restriction |
+| SafetyReader | health_safety — allergy · chronic_disease (dietary_restriction 은 10/4 삭제) |
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
 | MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 급식 메뉴명 → 식품코드·영양성분 |
@@ -80,13 +80,21 @@ class MenuSourceError(Exception):
 class SafetyEntry:
     """health_safety 한 행에서 필터에 필요한 것만 뽑아 모델에게 전달."""
 
+    # TODO: health_safety 10/4 확정안에 맞춘다 (스키마 이슈에서는 TODO 만).
+    #   - aliases 가 DB 에서 빠졌다. 정규화는 label 하나로 allergen_terms.yaml 에 대조한다
+    #   - kind 에서 dietary_restriction 이 빠졌다
+    #   - state → status, 값은 active/retracted/none.
+    #     unknown 은 "행이 없음" 이라 DB 에서 오지 않는다
+    #   - category(food/drug/environment 목록)를 더해 환경·약물만 있는 행을 필터에서 뺀다.
+    #     NULL·빈 목록은 거른다 (#156 Q1, docs/agents/data_model.md health_safety 제약)
+    #   - management 가 text 가 돼서 restricted_foods 를 키로 꺼낼 수 없다
     kind: Literal["allergy", "chronic_disease", "dietary_restriction"]
     label: str  # 예: 우유
     state: SafetyState  # active·retracted·none·unknown
     allergen_code: int | None = None  # 19종이면 1..19, 그 밖은 None
     aliases: tuple[str, ...] = ()  # 매칭 폭을 넓히는 별칭
-    # 보호자가 management 에 적은 제한 식품. management 의 어느 키에서 오는지는 아직
-    # 미정이고, 이 값을 채우는 입력 경로가 DB·API·화면 어디에도 없어 지금은 항상 ()로
+    # 보호자가 적은 제한 식품. management 가 text 라(10/4) 키로 꺼낼 수 없고,
+    # 이 값을 채우는 입력 경로가 DB·API·화면 어디에도 없어 지금은 항상 ()로
     # 온다. 그래서 유당불내증·갈락토스혈증·셀리악병처럼 질환 정의상 배제되는 식품은
     # chronic_restriction_terms() 매핑이 대신 채우고, 이 값과는 합집합으로 쓰인다
     # (app/agents/food/tools/safety.py `_restriction_terms`).

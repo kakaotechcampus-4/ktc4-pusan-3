@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
@@ -56,6 +56,12 @@ class Suggestion(Base, UUIDPk, Timestamps):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 그 추천에 들어 있는 알레르기 항목의 정식 명칭. 상태(없음/모름)는 담지 않는다 —
+    # 추천이 draft로 사는 24시간 사이에 보호자가 답할 수 있어서
+    # 승인할 때 health_safety를 다시 읽는다.
+    allergens: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    # 일정으로 만들 때 준비물(event_item.item_name) 하나씩. 알레르기 판단에는 쓰지 않는다.
+    items: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     status: Mapped[SuggestionStatus] = mapped_column(
         enum_col_py(SuggestionStatus, name="suggestion_status"),
         nullable=False,

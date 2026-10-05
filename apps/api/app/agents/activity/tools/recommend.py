@@ -26,6 +26,11 @@ async def propose_activity_candidates(
 
     안전 필터는 아직 없다 (위험 용어 사전 PR). 붙으면 걸린 후보는 거절이 아니라 풀에서 빠지고,
     3개 미만이면 Agent 가 재호출 1회를 한다 — 그때는 걸린 사유를 모델에게 주지 않는다.
+
+    TODO: suggestion.allergens · items 를 채운다 (10/4 스키마 이슈).
+    채워서 넘기는 곳은 `review._build` 의 `build()` 호출이다.
+    - allergens 는 19종 밖(쑥 등)도 이름으로 담는다
+    - items 는 준비물(수영복 등)
     """
     gate = context.state.gate
     if gate is None:

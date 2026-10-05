@@ -27,6 +27,10 @@ class SuggestionDraft:
     content: str
     reason: str
     citations: tuple[EvidenceCitation, ...] = ()
+    # 그 추천에 들어 있는 알레르기 항목의 정식 명칭. 승인할 때 안내에 쓴다
+    allergens: tuple[str, ...] = ()
+    # 일정으로 만들 때 준비물 하나씩
+    items: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -35,6 +39,8 @@ class SuggestionDraft:
             "content": self.content,
             "reason": self.reason,
             "citations": [item.to_payload() for item in self.citations],
+            "allergens": list(self.allergens),
+            "items": list(self.items),
         }
 
 
@@ -45,6 +51,8 @@ def build(
     reason: str,
     citations: tuple[EvidenceCitation, ...] = (),
     general_reason: str | None = None,
+    allergens: tuple[str, ...] = (),
+    items: tuple[str, ...] = (),
 ) -> SuggestionDraft:
     """아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
@@ -72,6 +80,8 @@ def build(
             content=content,
             reason=general_reason,
             citations=citations,
+            allergens=allergens,
+            items=items,
         )
 
     if not reason.strip():
@@ -79,7 +89,13 @@ def build(
     if any(item.is_avoidance for item in citations) and not _mentions_avoidance(reason, citations):
         raise SuggestionRejected(f"{agent}: 기피 근거를 인용했는데 무엇을 피했는지가 이유에 없다")
     return SuggestionDraft(
-        agent=agent, kind="personalized", content=content, reason=reason, citations=citations
+        agent=agent,
+        kind="personalized",
+        content=content,
+        reason=reason,
+        citations=citations,
+        allergens=allergens,
+        items=items,
     )
 
 

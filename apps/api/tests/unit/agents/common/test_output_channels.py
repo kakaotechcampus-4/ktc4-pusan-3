@@ -162,6 +162,48 @@ class TestAvoidanceMustBeStated:
         assert draft.kind == "personalized"
 
 
+class TestSuggestionLists:
+    """`allergens` · `items` 는 판정에 관여하지 않고 그대로 실린다.
+
+    채우는 쪽은 각 Agent 의 출력 tool 이다.
+    """
+
+    def test_기본은_빈_목록(self):
+        draft = build(
+            agent="food", content="된장찌개", reason="", citations=(), general_reason="또래 기준"
+        )
+        assert draft.allergens == ()
+        assert draft.items == ()
+        assert draft.to_payload()["allergens"] == []
+        assert draft.to_payload()["items"] == []
+
+    def test_일반_추천도_그대로_싣는다(self):
+        draft = build(
+            agent="food",
+            content="된장찌개",
+            reason="",
+            citations=(),
+            general_reason="또래 기준",
+            allergens=("대두",),
+            items=("된장", "두부"),
+        )
+        assert draft.kind == "general"
+        payload = draft.to_payload()
+        assert payload["allergens"] == ["대두"]
+        assert payload["items"] == ["된장", "두부"]
+
+    def test_개인화_추천도_그대로_싣는다(self):
+        draft = build(
+            agent="activity",
+            content="수영하기",
+            reason="물놀이를 좋아해서요",
+            citations=(citation(kind="observation_activity", label="물놀이"),),
+            items=("수영복",),
+        )
+        assert draft.kind == "personalized"
+        assert draft.items == ("수영복",)
+
+
 class TestCount:
     def test_정확히_3개(self):
         drafts = tuple(

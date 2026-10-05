@@ -14,7 +14,7 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
 | ConsentReader | consent(scope=child_health) 최신 행 |
-| SafetyReader | health_safety — allergy · dietary_restriction · environmental (D7) |
+| SafetyReader | health_safety — allergy · environmental (D7). dietary_restriction 은 10/4 삭제 |
 | ActivityMemoryReader | profile_affinity(domain=activity) · observation_activity |
 | ScheduleReader | 아이 일정 — 읽기 전용 |
 | ActivityDocReader | activity_doc — 월령 슬라이스 + 의미 검색 |
@@ -50,6 +50,8 @@ class UpstreamUnavailable(Exception):
     """
 
 
+# TODO: health_safety 10/4 확정안 — dietary_restriction 은 kind 에서 빠졌고, aliases 도 없다.
+#   state 는 status(active/retracted/none)로 바뀌고 unknown 은 "행이 없음" 이다.
 # 읽는 health_safety kind. 나머지 셋(chronic_disease · behavioral · other_medical)은 읽지 않는다 —
 # "천식이면 야외 금지" 같은 표가 곧 LLM 없는 자동 진단이다 (D7)
 SafetyKind = Literal["allergy", "dietary_restriction", "environmental"]

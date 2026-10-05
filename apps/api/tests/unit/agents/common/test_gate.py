@@ -13,7 +13,7 @@ from app.rules.age import life_stage
 
 STAGE = life_stage(date(2022, 9, 22), date(2026, 9, 22))  # 48개월
 
-# 온보딩이 19행을 만든다. 테스트에서는 개수보다 state 분포가 중요해 짧게 쓴다.
+# 테스트에서는 행 개수보다 state 분포가 중요해 짧게 쓴다.
 ALL_NONE = ("none",) * 3
 HAS_ONE = ("active", "none", "none")
 

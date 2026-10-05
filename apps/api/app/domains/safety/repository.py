@@ -1,17 +1,25 @@
 """보호자가 확정한 안전정보의 저장 경로. Agent 쓰기 경로에서는 호출하지 않는다."""
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.safety.models import HealthSafety, SafetyKind, SafetySeverity, SafetyState
+from app.domains.safety.models import (
+    ALLERGY_SEVERITIES,
+    HealthSafety,
+    SafetyCategory,
+    SafetyKind,
+    SafetySeverity,
+    SafetyStatus,
+)
 
 
 async def list_active_safety(session: AsyncSession, *, child_id: uuid.UUID) -> list[HealthSafety]:
     stmt = (
         select(HealthSafety)
-        .where(HealthSafety.child_id == child_id, HealthSafety.state == SafetyState.ACTIVE)
+        .where(HealthSafety.child_id == child_id, HealthSafety.status == SafetyStatus.ACTIVE)
         .order_by(HealthSafety.created_at.desc(), HealthSafety.id.desc())
     )
     return list((await session.scalars(stmt)).all())
@@ -32,26 +40,37 @@ async def create_safety(
     parent_id: uuid.UUID,
     kind: SafetyKind,
     label: str,
-    aliases: list[str] | None = None,
-    category: str | None = None,
+    category: Sequence[SafetyCategory] = (),
     severity: SafetySeverity | None = None,
     reactions: list[str] | None = None,
-    management: dict | None = None,
+    management: str | None = None,
     notes: str | None = None,
 ) -> HealthSafety:
-    """보호자 승인·동의·접근권한 검증을 마친 호출자만 사용한다."""
+    """보호자 승인·동의·접근권한 검증을 마친 호출자만 사용한다.
+
+    category는 kind='allergy' 만 받는다. severity는 allergy면 class_0~6, 나머지는
+    mild~anaphylaxis만 받는다. DB CHECK도 같은 것을 막지만, 여기서 먼저 ValueError로
+    돌려 호출자가 IntegrityError를 해석하지 않게 한다.
+    """
+    kind = SafetyKind(kind)
+    categories = [SafetyCategory(value) for value in category]
+    if categories and kind is not SafetyKind.ALLERGY:
+        raise ValueError(f"category 는 kind='allergy' 행만 갖는다. 받은 kind: {kind}")
+    if severity is not None:
+        severity = SafetySeverity(severity)
+        if (kind is SafetyKind.ALLERGY) != (severity in ALLERGY_SEVERITIES):
+            raise ValueError(f"severity {severity} 는 kind {kind} 에 쓸 수 없다")
     row = HealthSafety(
         child_id=child_id,
         created_by=parent_id,
-        kind=SafetyKind(kind),
+        kind=kind,
         label=label,
-        aliases=aliases or [],
-        category=category,
-        severity=SafetySeverity(severity) if severity is not None else None,
+        category=categories,
+        severity=severity,
         reactions=reactions or [],
-        management=management or {},
+        management=management,
         notes=notes,
-        state=SafetyState.ACTIVE,
+        status=SafetyStatus.ACTIVE,
     )
     session.add(row)
     await session.flush()
@@ -71,9 +90,9 @@ async def retract_safety(
         .where(
             HealthSafety.child_id == child_id,
             HealthSafety.id == safety_id,
-            HealthSafety.state == SafetyState.ACTIVE,
+            HealthSafety.status == SafetyStatus.ACTIVE,
         )
-        .values(state=SafetyState.RETRACTED, updated_by=parent_id)
+        .values(status=SafetyStatus.RETRACTED, updated_by=parent_id)
         .returning(HealthSafety)
     )
     return await session.scalar(stmt)

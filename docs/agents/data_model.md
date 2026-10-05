@@ -298,21 +298,22 @@
 
 ## Saftey
 
-### health_safety (안전·제약) — 알레르기 + 만성질환, 강등 없음
+### health_safety (안전·제약) — 알레르기 + 만성질환, 강등 없음 · AI 를 거치지 않는 입력
+
+10/4 리드 회의·투표로 확정했다.
 
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
 | id | uuid | PK |
 | child_id | uuid | NOT NULL. FK → `child.id`, `ON DELETE CASCADE` |
-| kind | enum | allergy / chronic_disease / dietary_restriction / behavioral / environmental / other_medical, NOT NULL |
+| kind | enum | `allergy` / `chronic_disease` / `behavioral` / `environmental`(고소공포 등) / `other_medical`, NOT NULL |
 | label | text | 아이가 앓고 있는 만성 질환 및 알레르기 종류 이름. "우유" / "소아 당뇨" / "천식" / "고소공포", NOT NULL |
-| aliases | text[] | 별칭 배열, default '{}' |
-| category | text | nullable. kind별로 달라지는 하위 분류. allergy → "식품"/"약물"/"환경", chronic_disease → "내분비"/"호흡기" 등 — kind마다 값 집합이 달라 enum 대신 text로 구현, 검증은 애플리케이션 레이어 |
-| severity | enum | mild / moderate / severe / anaphylaxis (nullable) |
+| category | enum[] | nullable, DEFAULT `'{}'`. **`kind='allergy'` 일 때만** `food`(식품) / `drug`(약물) / `environment`(환경) 중에서 고른다. 쑥처럼 식품이면서 환경인 것은 둘 다 넣는다. NULL 과 `'{}'` 는 같은 뜻(분류 없음) |
+| severity | enum | nullable. **`kind='allergy'` 는 검사 결과의 `class_0` ~ `class_6`**, 나머지 kind 는 `mild` / `moderate` / `severe` / `anaphylaxis`. 어긋나면 CHECK `health_safety_severity_by_kind` 가 막는다 |
 | reactions | text[] | 알레르기 반응 목록, 예: ["두드러기","호흡곤란"], default '{}' |
-| management | jsonb | 만성질환 관리 정보. 예: `{insulin:"식전", carb_limit_g:150, meds:[…]}`, NOT NULL, default '{}' |
+| management | text | nullable. 알레르기·질환 등 관리 정보 |
 | notes | text | 보호자 자유 기술 |
-| state | enum | `active` / `retracted` / `none` / `unknown`, NOT NULL, DEFAULT `unknown`. 감쇠 없음 — 보호자만 바꾼다. `none` 은 "확인했고 없다", `unknown` 은 "아직 부모가 확인하지 못했다" |
+| status | enum | `active` / `retracted` / `none`, NOT NULL, DEFAULT `active`. 감쇠 없음 — 보호자만 바꾼다 |
 | created_by | uuid | nullable. FK → `parent.id`, `ON DELETE SET NULL`. 최초 등록 보호자 |
 | updated_by | uuid | nullable. FK → `parent.id`, `ON DELETE SET NULL`. 마지막 수정 보호자 |
 | created_at | timestamptz | default now() |
@@ -320,30 +321,31 @@
 
 제약:
 
-- **`child` 를 만들 때 `kind='allergy'` 19행을 전부 `state='unknown'` 으로 넣는다.** `allergen_term` 의 식약처 표시 대상 19종이다.
-  보호자가 온보딩에서 답하면 각 행이 `none`(없다) 또는 `active`(있다) 로 바뀐다.
-  **19종 밖의 알레르기**(특정 약물 등)는 보호자가 행을 추가하는 것이고, 추가 자체가 "있다" 이므로 `active` 로 들어간다.
-- **거르는 것은 `state='active'` 뿐이다** (F-4). `unknown` 은 추천을 막지 않는다 — 아직 안 물어본 항목일 뿐이라,
-  추천은 그대로 내보내고 "이 알레르기가 있는지 확인해 주세요" 안내를 함께 띄운다.
-  모르는 항목 때문에 추천을 통째로 닫으면 답을 미룬 보호자가 서비스를 못 쓴다.
+- **`unknown` 은 저장하지 않는다. 매칭되는 행이 없는 것이 곧 `unknown` 이다** (2026-10-04). 아이를 만들 때 알레르기 19행을 미리 깔지 않는다.
+- `active` 는 고려 대상, `retracted` 는 과거에 `active` 였고 지금은 아님, `none` 은 확인했고 없음. 필터에서 `retracted` 와 `none` 은 같다 — 구분은 이력을 위한 것이다.
+- **거르는 것은 `status='active'` 뿐이다.** 행이 없는(`unknown`) 알레르기는 필터에서 거르지 않고, 추천을 승인할 때
+  "이 음식에는 땅콩이 들어가요. 땅콩 알레르기가 있는지 확인해주세요" 로 안내한다. 그래서 추천에 무엇이 들어 있는지를
+  `suggestion.allergens` 에 남긴다. 모르는 항목 때문에 추천을 통째로 닫으면 답을 미룬 보호자가 서비스를 못 쓴다.
 - **0행도 추천을 막지 않는다.** 건강정보 동의를 안 한 보호자는 이 테이블에 행이 쌓이지 않는데,
   그렇다고 식단을 못 받으면 안 된다 — 알레르기 없는 아이 기준의 일반 식단으로 간다. `active` 행이 없으니 거를 것도 없다.
+  동의는 했지만 아직 아무것도 답하지 않은 아이도 0행이다 — 이때는 19종이 전부 `unknown` 이라 승인 때 확인 안내가 붙는다.
 - **막는 것은 조회 실패 하나다.** 실패를 빈 목록으로 숨기지 않는다 (루트 CLAUDE.md §2).
-- **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고, 나머지 `kind`(만성질환·식이제한·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
-  비대칭에는 이유가 있다 — 알레르기는 안전 필터의 입력이라 "모름"과 "없음"을 갈라야 하고, 나머지는 추천을 막는 값이 아니라 관리 정보다.
-- 필터에서 `retracted` 는 `none` 과 같다. 보호자가 취소한 것이고 지금은 해당 없음이다. 구분은 이력을 위한 것이다.
+- **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
+- `category` 는 `kind='allergy'` 행만 갖는다 — CHECK `health_safety_category_allergy_only`. 값 집합은 CHECK `health_safety_category_values`.
+- 🚨 **Food 필터는 `food` 가 없고 `drug`·`environment` 만 있는 행만 뺀다.** `category` 가 NULL 이거나 `'{}'`(분류 없음)인 알레르기 행은 **거른다** (#156 Q1). "`food` 가 있는 행만 거른다" 로 구현하면 분류가 빠진 식품 알레르기가 아무 신호 없이 필터에서 빠진다 — 분류가 빠지거나 틀렸을 때는 과하게 막는 쪽이 안전하다. 마이그레이션도 세 값 밖의 옛 분류를 `'{}'` 로 옮긴다.
 - `UNIQUE(child_id, kind, label)`
-- 안전 조회는 항상 `state='active'` 필터
+- 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
 
 **구현 메모 (Safety — health_safety)**
 
-- `state` 컬럼을 표에 추가 — "안전 조회는 항상 state='active' 필터" 문구를 실제 컬럼으로 구현한 것 (감쇠 없음 — 보호자만 바꾼다)
-- `state` 는 네 값이고 **DEFAULT 는 `unknown`** 이다. `active`(있다) / `retracted`(보호자가 취소했다) / `none`(확인했고 없다) / `unknown`(아직 못 물어봤다). `child` 를 만들 때 `kind='allergy'` 19행이 전부 `unknown` 으로 들어간다.
-  `none` 과 `unknown` 을 가르는 이유는 0행이 "없다"인지 "모른다"인지를 Food 게이트가 봐야 하기 때문이다 — 조회 실패만 추천을 막고 `unknown` 은 확인 안내만 붙인다 ([Tool_공통.md](shared/Tool_공통.md) §3 F-4)
-- `category`: kind마다 값 집합이 달라 enum이 아니라 text로 구현, 검증은 애플리케이션 레이어
-- `management`: 구현은 NOT NULL, default `{}`
-- `child_id`(CASCADE) / `created_by`(RESTRICT) / `updated_by`(SET NULL) FK 추가 완료 (이전엔 plain uuid) — `created_by`가 RESTRICT인 건 child 섹션의 "감사용 FK는 SET NULL" 원칙과 다름, 의도적인지 확인 필요
+- `aliases` 제거 (10/4). 매칭 폭은 `allergen_terms.yaml` 동의어표가 맡는다.
+- `kind` 에서 `dietary_restriction` 제거 (10/4 투표 4:0). 종교·식습관으로 안 먹는 경우가 극소수이고, 결국 알레르기와 같은 필터로 들어간다.
+- `category` 는 enum list (10/4 투표 3:2). enum 하나면 쑥(식품+환경)을 행 두 개로 넣어야 한다. `varchar(32)[]` + CHECK 두 개로 구현.
+- `state` → `status` 로 이름을 바꾸고 `unknown` 을 값에서 뺐다. DEFAULT 는 `active`.
+- `management` 는 jsonb → text.
+- `severity` 는 같은 칸에 `class_0`~`class_6` 을 더했다 (10/4). 알레르기는 Class 만, 나머지 kind 는 mild~anaphylaxis 만 쓴다. 마이그레이션은 알레르기 행에 옛 값이 있으면 멈춘다 — Class 로 옮길 근거가 없다.
+- `child_id`(CASCADE) / `created_by`(SET NULL) / `updated_by`(SET NULL) FK. `created_by` 는 처음에 RESTRICT 였다가 `e7b2a9c4f013` 에서 SET NULL 로 바뀌었다 — 등록한 보호자 계정이 지워져도 안전 정보는 남는다
 
 ### Food 영양소 — 이 문서에 두지 않는다
 
@@ -364,6 +366,8 @@
 | agent | enum | `food` / `activity` / `growth` / `health` |
 | content | text | NOT NULL. 실제로 추천하는 내용 |
 | reason | text | nullable. 근거 문구 |
+| allergens | text[] | NOT NULL, default `'{}'`. 그 추천에 들어 있는 알레르기 항목의 정식 명칭(`allergen_terms.yaml`, 예: `새우` · `난류`). 19종 밖(예: Activity 의 `쑥`)도 이름으로 담는다. 상태(없음/모름)는 담지 않는다 — 승인할 때 `health_safety` 를 다시 읽는다 |
+| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
 | status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
 | created_at | timestamptz | NOT NULL, default now() |
@@ -580,7 +584,6 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 **컬럼이 없다**
 
 - `observation_health` 의 체온 세 칸 — `temperature` · `measured_at` · `measure_site`
-- `health_safety.state` — ORM `SafetyState` 는 `active` · `retracted` 둘뿐이다. 문서는 네 값에 DEFAULT `unknown` 이라 `none` · `unknown` 을 더해야 한다. VARCHAR + CHECK 라 마이그레이션이 붙는다
 
 **제약이 없다**
 

@@ -139,17 +139,17 @@ menu_catalog
 
 Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨이 닫힌다. Growth 는 `growth_review` 만 readout 으로 내려간다.
 
-`kind='allergy'` 행들의 `state`(F-4 확정)별 동작 —
+`kind='allergy'` 행들의 `status`(F-4 확정)별 동작 —
 
 | 행 상태 | 식단 추천 |
 | --- | --- |
 | 조회 실패 | `()` — 빈 목록으로 숨기지 않는다. **막는 것은 이것뿐** |
-| 0행 | **연다** — 건강정보 동의를 안 해 행이 없다. 알레르기 없는 아이 기준 일반 식단 |
-| `unknown` 이 하나라도 | **연다** + 확인 안내 — 추천은 내보내고 그 항목만 되묻는다 |
+| 0행 | **연다** — 동의를 안 했거나 아직 아무것도 답하지 않았다. 알레르기 없는 아이 기준 일반 식단 (답하지 않은 항목은 아래 `unknown` 줄을 따른다) |
+| 매칭되는 행이 없는 알레르기(`unknown`) | **연다** + 확인 안내 — 추천은 내보내고 그 항목만 되묻는다 |
 | 전부 `none` | **연다.** 없다고 확인한 아이다 |
 | `active` 있음 | 연다 (그 행들로 필터) |
 
-`child` 를 만들 때 19종이 전부 `unknown` 으로 들어가고 보호자 답에 따라 `none`·`active` 가 된다. 그래서 **"아직 안 물어봤다"가 `unknown` 이라는 값으로 남아** "없다고 확인함"과 갈린다 — `child.allergy_status` 는 필요 없다.
+`unknown` 은 저장하지 않는다 — 매칭되는 행이 없는 것이 곧 `unknown` 이다 (2026-10-04). 아이를 만들 때 19종을 미리 깔지 않고, 보호자가 답한 항목만 `none`·`active` 행이 된다. 확인 안내는 추천 승인 때 `suggestion.allergens` 와 `health_safety` 를 대조해서 띄운다 — `child.allergy_status` 는 필요 없다.
 
 **거르는 것은 `active` 뿐이다.** `unknown` 은 게이트가 아니라 안내 신호다 — 모르는 항목 때문에 추천을 닫으면 답을 미룬 보호자가 서비스를 못 쓴다. 19종 밖은 추가할 때 `active` 로 들어가고, `retracted` 는 필터에서 `none` 과 같다.
 
@@ -258,9 +258,10 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 이것이 추천 경로와 다른 점이다. 추천은 위험한 후보를 **지우고**, 기록은 위험해 보여도 **남기고 알린다.**
 
 ### `filter_food_safety` 매칭 규칙
-1. `health_safety.label` + `aliases` → **동의어표**로 19종 코드 정규화 (계란/달걀/난류 → 1)
+1. `health_safety.label` → **동의어표**로 19종 코드 정규화 (계란/달걀/난류 → 1)
+   - ⚠️ TODO (10/4 확정안, 코드는 아직): `category` 에 `food` 가 없고 `drug`·`environment` 만 있는 행은 뺀다. NULL·빈 목록은 거른다 ([data_model.md](../data_model.md) health_safety 제약)
 2. 메뉴 `allergen_codes` ∩ 아이 코드 ≠ ∅ → `blocked`
-3. 코드 매핑 안 되는 알레르기(예: "키위")와 만성질환·식이제한 → 공통 매처(`app/rules/term_match.py`, Activity와 동일: 공백 제거 부분 일치 + guards + 최엄격 우선). 만성질환·식이제한은 보호자가 등록한 `restricted_foods`와 `chronic_restriction.yaml` 매핑의 합집합을 쓴다. 매핑은 질환 정의상 그 식품을 배제하는 것만 담는다(유당불내증·갈락토스혈증·셀리악병) — 당뇨·신장질환·고혈압처럼 관리·조절이 필요한 질환은 담지 않는다
+3. 코드 매핑 안 되는 알레르기(예: "키위")와 만성질환 → 공통 매처(`app/rules/term_match.py`, Activity와 동일: 공백 제거 부분 일치 + guards + 최엄격 우선). 만성질환은 보호자가 등록한 `restricted_foods`와 `chronic_restriction.yaml` 매핑의 합집합을 쓴다(`management` 가 text 라(10/4) `restricted_foods` 를 채울 경로는 아직 없다). 매핑은 질환 정의상 그 식품을 배제하는 것만 담는다(유당불내증·갈락토스혈증·셀리악병) — 당뇨·신장질환·고혈압처럼 관리·조절이 필요한 질환은 담지 않는다
 4. `unresolved` 메뉴 → `unchecked` (추천 풀에서는 제외, 급식 표시에는 "확인 못 함")
 5. 연령 규칙: `infant_*` 단계에서 꿀 포함 → `blocked`
 
