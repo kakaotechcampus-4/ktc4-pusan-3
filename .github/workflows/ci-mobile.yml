@@ -1,0 +1,66 @@
+name: Mobile CI
+# apps/mobile(웹뷰 셸)을 바꾼 PR 에서 typecheck · test 를 돈다 (#225).
+#
+# 네이티브 빌드(expo run:android)는 돌리지 않는다 — 셸의 로직은 src/ 의 순수 함수(브릿지 왕복 ·
+# 로그인 URL 판정)에 모여 있고, 그건 Node 내장 러너로 잡힌다. 개발 빌드는 사람이 기기에서 확인한다.
+#
+# ⚠️ `paths` 필터 때문에 셸을 안 건드린 PR 에는 이 체크가 안 뜬다 (ci-web.yml 머리말과 같은 주의).
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - apps/mobile/**
+      - .github/workflows/ci-mobile.yml
+  push:
+    branches:
+      - develop
+    paths:
+      - apps/mobile/**
+      - .github/workflows/ci-mobile.yml
+
+concurrency:
+  group: >-
+    ${{ github.ref == 'refs/heads/develop'
+        && format('{0}-{1}', github.workflow, github.sha)
+        || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/mobile
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 🚨 pnpm 버전의 정본은 package.json 의 `packageManager` 하나다.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/mobile/package.json
+
+      # `pnpm test` 가 .ts 를 Node 로 바로 돌린다 (타입 제거) — 웹과 같은 Node 24 에 맞춘다.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test

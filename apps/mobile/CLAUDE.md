@@ -153,6 +153,9 @@ pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버�
 pnpm doctor          # expo-doctor 전체 점검
 ```
 
+PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 다시 돈다 (`apps/mobile/**` 를 바꾼 PR 만).
+네이티브 빌드는 CI 가 하지 않는다 — 개발 빌드는 기기에서 확인한다.
+
 **최초 세팅** — `cp .env.example .env.local`.
 
 🚨 **실기기로 개발할 때 `localhost` 는 안 된다.** 폰 입장에서 localhost 는 폰 자신이다.
