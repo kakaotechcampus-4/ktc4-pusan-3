@@ -7,7 +7,7 @@
 확인된 id 를 쓴다.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -18,7 +18,7 @@ from app.api import idempotency, quota
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
-from app.api.errors import ApiError, constraint_name
+from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
 from app.api.runs import pending_reply, registry, runner
 from app.api.v1.schemas.children import (
@@ -38,7 +38,11 @@ from app.rules.age import age_display
 router = APIRouter()
 
 
-@router.post("/children", status_code=201)
+@router.post(
+    "/children",
+    status_code=201,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 409)},
+)
 async def register_child(
     body: CreateChildRequest,
     parent: CurrentParent,
@@ -50,13 +54,18 @@ async def register_child(
        하나라도 막히면 아무것도 남지 않는다 — 동의 없는 아이 행이 남는 것이 막으려는 상태다.
        consent 의 CHECK 가 아이 동의에 child_id 를 요구해서, 동의는 아이를 만든 뒤 같은
        트랜잭션에서 기록한다 (#92 결정 1번).
-    순서는 화면 목(apps/web/src/mocks/handlers/children.ts)과 같다.
+    오류 (순서대로): 400 validation_failed(생일) → 403 consent_required(동의 · 법정대리인) →
+    400 policy_version_invalid → 409 child_already_exists. 가운데 셋은 화면 목
+    (apps/web/src/mocks/handlers/children.ts)과 같은 순서이고, 앞뒤 둘을 서버가 더했다.
     """
     today = today_kst()
-    if body.birth_date > today:
-        # 나이 계산(age_display · life_stage)은 미래 생일에서 터진다. 화면도 막지만 기기 날짜다.
+    # 나이 계산(age_display · life_stage)은 미래 생일에서 터지고, 너무 옛 생일은 "만 2025세" 로
+    # 저장돼 Agent 에도 넘어간다. 화면 달력과 같은 범위다 (onboarding EARLIEST_BIRTH_DATE) —
+    # 화면도 막지만 기기 날짜라 서버가 다시 본다.
+    earliest = date(today.year - 20, 1, 1)
+    if not earliest <= body.birth_date <= today:
         raise ApiError(
-            400, "validation_failed", "생일은 오늘보다 뒤일 수 없어요", {"fields": ["birth_date"]}
+            400, "validation_failed", "생일을 다시 확인해 주세요", {"fields": ["birth_date"]}
         )
 
     granted = {consent.scope for consent in body.consents}
@@ -81,6 +90,8 @@ async def register_child(
     current = {row.scope: row for row in await find_active_versions(session, now=datetime.now(UTC))}
     versions: dict[ConsentScope, UUID] = {}
     for consent in body.consents:
+        # 🚨 REQUIRED_CHILD_SCOPES 가 지금은 "아이 동의 전부" 이기도 하다. 아이 쪽에 선택 동의가
+        #    생기면 이 줄이 그것을 조용히 버린다 — 그때 계정처럼 목록을 둘로 나눈다 (#172 location).
         if consent.scope not in REQUIRED_CHILD_SCOPES:
             continue
         registered = current.get(consent.scope)
@@ -119,7 +130,7 @@ async def register_child(
             scope=scope,
             action=ConsentAction.GRANTED,
             policy_version_id=policy_version_id,
-            guardian_attested=True,
+            guardian_attested=body.guardian_attested,
         )
 
     # 응답은 commit 전에 만든다 — commit 뒤에 터지면 저장됐는데 실패로 보인다 (#214 리뷰 ⑤)

@@ -8,7 +8,7 @@ from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StrictBool, StringConstraints
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
 
@@ -20,12 +20,19 @@ class CreateChildRequest(BaseModel):
     """POST /children — 아이 정보와 아이 동의를 한 요청에 (#92 결정, 2026-09-18)."""
 
     nickname: Nickname = Field(description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자")
-    birth_date: date = Field(description="생일 (YYYY-MM-DD). 한국 날짜로 오늘보다 뒤면 400")
+    birth_date: date = Field(
+        description=(
+            "생일 (YYYY-MM-DD). 한국 날짜로 오늘보다 뒤거나 올해 - 20년의 1월 1일보다 앞이면 400"
+        )
+    )
     consents: list[ConsentInput] = Field(
         description="아이 동의 — child_basic · child_health 둘 다 필수. 버전은 GET /policies 의 것"
     )
-    guardian_attested: bool = Field(
-        description="'나는 이 아이의 법정대리인이며 만 19세 이상입니다' 체크. true 가 아니면 403"
+    guardian_attested: StrictBool = Field(
+        description=(
+            "'나는 이 아이의 법정대리인이며 만 19세 이상입니다' 체크. JSON true · false 만 받는다"
+            " (법적 증빙 — 'yes' · 1 은 400). false 면 403"
+        )
     )
 
 

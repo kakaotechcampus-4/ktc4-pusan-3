@@ -29,7 +29,9 @@ TODAY = date(2026, 10, 5)
 """나이 문구가 날짜에 따라 바뀌어서 "오늘" 을 고정한다."""
 
 CHILD_POLICY = "draft-0"
-"""아이 동의 둘(child_basic · child_health)의 지금 버전. 동의문 2 · 3 을 새로 등록하면 같이 바꾼다."""
+"""아이 동의 둘(child_basic · child_health)의 지금 버전.
+
+동의문 2 · 3 을 새로 등록하면 같이 바꾼다."""
 
 CHILD_CONSENTS = [
     {"scope": "child_basic", "policy_version": CHILD_POLICY},
@@ -249,3 +251,61 @@ async def test_보관된_아이는_보이지_않는다(db_client, session, beare
     response = await db_client.get(ME, headers=headers)
 
     assert response.json()["children"] == []
+
+
+# ── 리뷰 반영 ──────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("birth_date", ["0001-01-01", "2005-12-31"])
+async def test_화면_달력보다_오래된_생일은_400(db_client, session, bearer, birth_date):
+    """화면 달력은 올해 - 20년의 1월 1일부터다 (onboarding EARLIEST_BIRTH_DATE).
+
+    하한이 없으면 "만 2025세" 가 저장되고, Agent 에도 그 나이로 넘어간다.
+    """
+    headers, parent_id = bearer
+
+    response = await db_client.post(
+        CHILDREN, json=register_body(birth_date=birth_date), headers=headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert await children_of(session, parent_id) == []
+
+
+async def test_법정대리인_확인은_진짜_true_만_받는다(db_client, session, bearer):
+    """법적 증빙이다 (제22조의2 ①). "yes" · 1 같은 값을 true 로 바꿔 받지 않는다."""
+    headers, parent_id = bearer
+
+    response = await db_client.post(
+        CHILDREN, json=register_body(guardian_attested="yes"), headers=headers
+    )
+
+    assert response.status_code == 400
+    assert await children_of(session, parent_id) == []
+
+
+async def test_법정대리인_403_은_child_basic_을_가리킨다(db_client, bearer):
+    headers, _ = bearer
+
+    response = await db_client.post(
+        CHILDREN, json=register_body(guardian_attested=False), headers=headers
+    )
+
+    assert response.json()["error"]["detail"] == {"scopes": ["child_basic"]}
+
+
+async def test_아이_동의가_아닌_scope_는_기록하지_않는다(db_client, session, bearer):
+    """계정 동의는 가입에서만 받는다. 아이 등록 요청에 실려 와도 이 아이의 동의로 남기지 않는다."""
+    headers, _ = bearer
+    consents = [*CHILD_CONSENTS, {"scope": "service_terms", "policy_version": "draft-1"}]
+
+    response = await db_client.post(
+        CHILDREN, json=register_body(consents=consents), headers=headers
+    )
+
+    child_id = response.json()["id"]
+    scopes = (
+        await session.scalars(select(Consent.scope).where(Consent.child_id == child_id))
+    ).all()
+    assert sorted(scopes) == [ConsentScope.CHILD_BASIC, ConsentScope.CHILD_HEALTH]

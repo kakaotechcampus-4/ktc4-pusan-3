@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.api.v1.schemas.children import Role
+from app.domains.child.models import ParentChildRelation
 from app.domains.consent.models import ConsentScope
 
 
@@ -17,9 +18,7 @@ class MeChild(BaseModel):
     child_id: UUID
     nickname: str
     age_display: str = Field(description="화면에 그대로 쓰는 나이 문구 (생후 N일 · N개월 · 만 N세)")
-    relation: str = Field(
-        description="이 보호자와 아이의 관계 — mother · father · grandparent · sitter · other"
-    )
+    relation: ParentChildRelation = Field(description="이 보호자와 아이의 관계")
     role: Role
     consent_required: list[ConsentScope] = Field(
         description="아직 동의하지 않은 아이 필수 동의. 비어 있지 않으면 화면이 동의를 다시 받는다"

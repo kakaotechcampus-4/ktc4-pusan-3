@@ -27,7 +27,7 @@ async def read_me(parent: CurrentParent, session: SessionDep) -> MeResponse:
             child_id=child.id,
             nickname=child.nickname,
             age_display=age_display(child.birth_date, today),
-            relation=relation.value,
+            relation=relation,
             role="owner" if child.owner_parent_id == parent.parent_id else "member",
             consent_required=await missing_child_scopes(session, child_id=child.id),
         )
