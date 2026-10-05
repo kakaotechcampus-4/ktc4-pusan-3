@@ -11,6 +11,7 @@ HTTP 없이 채널과 태스크만 본다.
 
 import asyncio
 import uuid
+from datetime import date
 
 import pytest
 
@@ -322,6 +323,28 @@ async def test_이어받기_맥락을_진입점에_넘긴다(monkeypatch):
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
     assert seen["continuation"] is _PENDING
+
+
+async def test_아이_생일을_진입점에_넘긴다(monkeypatch):
+    """9단계 — 창구가 확인한 아이의 생일로 식이 단계를 정한다 (09-23 결정, 12개월 경계).
+
+    안 넘기면 진입점이 "만 2세" 기본값을 써서 12개월 미만 아기도 유아 단계가 된다.
+    """
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT, birth_date=date(2025, 11, 1)
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["birth_date"] == date(2025, 11, 1)
 
 
 async def test_이어받기_run_이_실패하면_맥락을_되돌려_둔다(monkeypatch):
