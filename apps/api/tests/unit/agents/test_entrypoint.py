@@ -4,7 +4,7 @@ pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 """
 
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, get_args
 from uuid import UUID
 
@@ -12,7 +12,7 @@ import pytest
 
 from app.agents import entrypoint, pipeline
 from app.agents.common.datetime_rules import build_observed_range
-from app.agents.food.store import FoodPorts
+from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.supervisor import routing
@@ -243,8 +243,17 @@ async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴
 
     writes = seen["writes"]
     assert writes.wrote is False
-    # 영양 구간 저장은 표시를 세우지 않지만 급식 삭제는 세운다 (없는 id 는 조용히 넘어간다)
-    await seen["food"].ports.bands.save(child_id=CHILD, bands={"iron": "low"})
+    # 메뉴 카탈로그 저장은 표시를 세우지 않지만 급식 삭제는 세운다
+    # (없는 id 는 조용히 넘어간다)
+    await seen["food"].ports.catalog.put(
+        MenuCatalogRow(
+            menu_key="두유",
+            display_name="두유",
+            source="manual",
+            resolved=True,
+            synced_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
+        )
+    )
     assert writes.wrote is False
     await seen["food"].ports.daycare.delete(child_id=CHILD, row_ids=(UUID(int=9),))
     assert writes.wrote is True

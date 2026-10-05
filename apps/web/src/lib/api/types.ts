@@ -27,7 +27,7 @@ export const REF_KINDS = [
    *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
    *
    * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
-   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` · `intake_daily` ·
+   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` ·
    *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
    *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
    *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.

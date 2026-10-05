@@ -4,7 +4,7 @@
 `update`·`delete` 모두 그 값으로 아이 경계를 지킨다. `child_id` 가 없는 공용 데이터
 포트(catalog·docs·menu_source)는 한 인스턴스가 한 시나리오 몫의 데이터만 쥔다고 보고
 `child_id` 인자를 받지 않는다. `child_id` 없이는 행을 구분할 수 없는 포트
-(profile·consent·memory·suggestions·bands)는 딕셔너리로 나눈다.
+(profile·consent·memory·suggestions)는 딕셔너리로 나눈다.
 """
 
 from collections.abc import Sequence
@@ -20,7 +20,6 @@ from app.agents.food.store.ports import (
     Measurement,
     MenuCatalogRow,
     MenuSourceError,
-    NutrientBand,
     NutritionFacts,
     SafetyEntry,
     SafetyLookupError,
@@ -93,6 +92,10 @@ class InMemoryMenuCatalog:
 
     async def get(self, menu_key: str) -> MenuCatalogRow | None:
         return self._rows.get(menu_key)
+
+    async def get_many(self, menu_keys: tuple[str, ...]) -> dict[str, MenuCatalogRow]:
+        """있는 행만 돌려준다. `resolved=False` 행도 넣는다 — `all_resolved` 와 다르다."""
+        return {key: self._rows[key] for key in menu_keys if key in self._rows}
 
     async def put(self, row: MenuCatalogRow) -> None:
         self._rows.setdefault(row.menu_key, row)
@@ -201,19 +204,6 @@ class InMemorySuggestionHistory:
         return self._recent.get(child_id, frozenset())
 
 
-class InMemoryNutrientBands:
-    def __init__(self, bands: dict[UUID, dict[str, NutrientBand]] | None = None) -> None:
-        self._bands: dict[UUID, dict[str, NutrientBand]] = {
-            child_id: dict(value) for child_id, value in (bands or {}).items()
-        }
-
-    async def last(self, *, child_id: UUID) -> dict[str, NutrientBand]:
-        return dict(self._bands.get(child_id, {}))
-
-    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None:
-        self._bands[child_id] = dict(bands)
-
-
 def in_memory_ports(**overrides: object) -> FoodPorts:
     """`FoodPorts` 를 기본 InMemory 구현으로 채운다. 필요한 포트만 override 로 바꿔 끼운다."""
     defaults: dict[str, object] = {
@@ -226,7 +216,6 @@ def in_memory_ports(**overrides: object) -> FoodPorts:
         "daycare": InMemoryDaycareMeals(),
         "docs": InMemoryFoodDocs(),
         "suggestions": InMemorySuggestionHistory(),
-        "bands": InMemoryNutrientBands(),
         "menu_source": InMemoryMenuSource(),
     }
     defaults.update(overrides)

@@ -33,6 +33,7 @@ from app.agents.food.store import (
     DaycareMealRow,
     InMemoryDaycareMeals,
     InMemoryProfile,
+    MenuCatalogRow,
     in_memory_ports,
 )
 from app.agents.memory.agent import MAX_STEPS
@@ -1614,21 +1615,29 @@ async def _handle_meal_only(
     )
 
 
-async def test_추천_직전_영양_구간을_저장했어도_모델이_실패하면_failed_다(
+async def test_메뉴_카탈로그만_저장했어도_모델이_실패하면_failed_다(
     monkeypatch: pytest.MonkeyPatch,
     memory_context: AgentContext,
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # 질문만 한 run이다. 영양 구간 · 메뉴 카탈로그는 계산이 남기는 값이라 보호자 말이 반영된 게
-    # 아니고, 덮어쓰기라 다시 보내도 같다. 원문을 돌려줘야 다시 물을 수 있다
+    # 질문만 한 run이다. 메뉴 카탈로그는 계산 중에 생기는 값이라 보호자 말이 반영된 게
+    # 아니고, 없을 때만 넣어서 다시 보내도 한 행이다. 원문을 돌려줘야 다시 물을 수 있다
     raw = "저녁 뭐 먹일까?"
 
-    async def save_band_then_die(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
-        await context.ports.bands.save(child_id=CHILD, bands={"iron": "low"})
+    async def put_catalog_then_die(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        await context.ports.catalog.put(
+            MenuCatalogRow(
+                menu_key="두유",
+                display_name="두유",
+                source="manual",
+                resolved=True,
+                synced_at=NOW,
+            )
+        )
         raise RuntimeError("모델 호출 실패")
 
-    monkeypatch.setitem(pipeline._RUNNERS, "food", save_band_then_die)
+    monkeypatch.setitem(pipeline._RUNNERS, "food", put_catalog_then_die)
     context, writes = _recorded(food_context)
 
     result = await handle_input(

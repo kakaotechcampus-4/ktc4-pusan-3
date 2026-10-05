@@ -4,13 +4,21 @@ docs/agents/shared/Agent_공통규약.md §3 · §10
 """
 
 from datetime import date, datetime, timedelta, timezone
+from typing import get_args
 from uuid import uuid4
 
 import pytest
 
+from app.agents.common import refs
 from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.readout import Readout, ReadoutCatalog, ReadoutText
-from app.agents.common.refs import EvidenceCitation, Ref, count_child_records
+from app.agents.common.refs import (
+    ChildRecordKind,
+    DocKind,
+    EvidenceCitation,
+    Ref,
+    count_child_records,
+)
 from app.agents.common.result import (
     DomainAgentResult,
     EventRequest,
@@ -59,6 +67,15 @@ class TestRefs:
     )
     def test_아이_기록_종류(self, kind):
         assert Ref(kind=kind, id=uuid4()).is_child_record is True
+
+    def test_근거_종류와_개인화_판정_목록이_같다(self):
+        """refs.py 에 같은 목록이 두 번 적혀 있다. 한쪽만 고치면 근거가 조용히 안 세지거나,
+        타입에서 뺀 종류가 계속 개인화로 세진다."""
+        assert refs._CHILD_RECORD_KINDS == frozenset(get_args(ChildRecordKind))
+        for kind in get_args(ChildRecordKind):
+            assert Ref(kind=kind, id=uuid4()).is_child_record is True, kind
+        for kind in get_args(DocKind):
+            assert Ref(kind=kind, id=uuid4()).is_child_record is False, kind
 
 
 class TestSuggestionBuild:
