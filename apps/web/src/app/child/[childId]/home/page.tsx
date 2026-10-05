@@ -152,8 +152,10 @@ function HomeScreen() {
       >
         <header className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
-            <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
+            {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다.
+                🚨 이름 뒤에 "이" 를 붙이지 않는다 — 별명은 보호자가 정한 그대로 부르는 말이라
+                ("민준이" 처럼 이미 붙어 있거나 받침이 없으면) 붙인 글자가 이름을 바꾼다. */}
+            <PageTitle>{nickname ? `오늘 ${nickname}` : "오늘"}</PageTitle>
             {home.data ? (
               <p className="text-body-sm text-ink-subtle mt-2">
                 지금까지 함께 쌓은 기록 {home.data.observation_count}건
