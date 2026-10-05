@@ -150,7 +150,16 @@
   /* 그림자는 바텀시트에만. 카드 경계는 line 이 만든다 (문서 §6) */
   --shadow-sheet: 0 -2px 16px rgb(34 31 27 / 0.08);
 
-  /* 모션 (문서 §8) — fast 120ms · base 200ms · sheet 280ms · screen 400ms */
+  /* 모션 (문서 §8 토큰 표). 🚨 화면 전환(`::view-transition-*`)은 시간을 숫자로 쓰지 않고 이 변수만 쓴다 —
+   * 한동안 160 · 240 · 90ms 가 규칙마다 흩어져 있어서 표에 없는 값이 생겼다 (#231 리뷰).
+   * fast 120 · base 200 은 Tailwind `duration-120` · `duration-200` 으로도 쓴다. */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-sheet: 280ms;
+  --motion-screen: 400ms;
+  --motion-exit: 160ms;
+  --motion-stagger: 60ms;
+  --motion-swap: 90ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   /* 화면 전환 전용 (문서 §8 "허용하는 화면 전환"). 들어오는 것은 빨리 출발해 길게 멈추고(감속),
    * 나가는 것은 천천히 출발해 빨리 사라진다(가속) — 눈이 따라가야 하는 쪽이 들어오는 화면이라서다. */
@@ -291,7 +300,7 @@
 ::view-transition-group(*),
 ::view-transition-old(*),
 ::view-transition-new(*) {
-  animation-duration: 200ms;
+  animation-duration: var(--motion-base);
   animation-timing-function: var(--ease-standard);
 }
 
@@ -300,33 +309,33 @@
  *    🚨 **화면 폭 전체를 가로지르지 않는다.** 거리는 72px · 24px 까지고 나머지는 페이드가 진다 (문서 §8). */
 ::view-transition-old(.home-out) {
   animation:
-    160ms var(--ease-exit) both vt-fade-out,
-    400ms var(--ease-enter) both vt-to-left;
+    var(--motion-exit) var(--ease-exit) both vt-fade-out,
+    var(--motion-screen) var(--ease-enter) both vt-to-left;
 }
 ::view-transition-new(.chat-in) {
   animation:
-    240ms var(--ease-enter) 60ms both vt-fade-in,
-    400ms var(--ease-enter) both vt-from-right;
+    var(--motion-base) var(--ease-enter) var(--motion-stagger) both vt-fade-in,
+    var(--motion-screen) var(--ease-enter) both vt-from-right;
 }
 
-/* ② 대화 → 홈: 반대로. 대화가 오른쪽으로 빠지고 홈이 왼쪽에서 제자리로 온다. 닫는 쪽은 짧다(280ms) —
+/* ② 대화 → 홈: 반대로. 대화가 오른쪽으로 빠지고 홈이 왼쪽에서 제자리로 온다. 닫는 쪽은 짧다(`sheet` 280ms) —
  *    나가는 사람을 기다리게 하지 않는다. */
 ::view-transition-old(.chat-out) {
   animation:
-    160ms var(--ease-exit) both vt-fade-out,
-    240ms var(--ease-exit) both vt-to-right;
+    var(--motion-exit) var(--ease-exit) both vt-fade-out,
+    var(--motion-sheet) var(--ease-exit) both vt-to-right;
 }
 ::view-transition-new(.home-in) {
   animation:
-    200ms var(--ease-enter) 40ms both vt-fade-in,
-    280ms var(--ease-enter) both vt-from-left;
+    var(--motion-base) var(--ease-enter) var(--motion-stagger) both vt-fade-in,
+    var(--motion-sheet) var(--ease-enter) both vt-from-left;
 }
 
 /* ③ 이름 쌍 — 화면보다 조금 앞서 도착하지 않게 같은 400ms · 같은 감속 곡선으로 옮긴다.
  *    막 보낸 한 줄이 입력창에서 말풍선 자리로 날아가는 것이 이 전환의 주인공이다. */
 ::view-transition-group(chat-bar),
 ::view-transition-group(sent-line) {
-  animation-duration: 400ms;
+  animation-duration: var(--motion-screen);
   animation-timing-function: var(--ease-enter);
 }
 /* 🚨 **날아가는 한 줄은 폭이 아니라 높이로 맞춘다.** 브라우저 기본은 그림을 그룹 **폭**에 맞춰 늘리는데,
@@ -344,10 +353,10 @@
 }
 /* 회색 입력창 글자 → 초록 말풍선. 둘이 겹쳐 보이는 시간을 짧게 해서 중간에 탁한 색이 안 남게 한다. */
 ::view-transition-old(sent-line) {
-  animation: 90ms var(--ease-exit) both vt-fade-out;
+  animation: var(--motion-swap) var(--ease-exit) both vt-fade-out;
 }
 ::view-transition-new(sent-line) {
-  animation: 200ms var(--ease-enter) both vt-fade-in;
+  animation: var(--motion-base) var(--ease-enter) both vt-fade-in;
 }
 
 @keyframes vt-fade-in {
@@ -388,12 +397,12 @@
   ::view-transition-old(.home-out),
   ::view-transition-old(.chat-out),
   ::view-transition-old(sent-line) {
-    animation: 200ms var(--ease-standard) both vt-fade-out;
+    animation: var(--motion-base) var(--ease-standard) both vt-fade-out;
   }
   ::view-transition-new(.chat-in),
   ::view-transition-new(.home-in),
   ::view-transition-new(sent-line) {
-    animation: 200ms var(--ease-standard) both vt-fade-in;
+    animation: var(--motion-base) var(--ease-standard) both vt-fade-in;
   }
 }
 
