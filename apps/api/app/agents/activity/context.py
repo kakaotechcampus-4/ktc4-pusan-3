@@ -7,7 +7,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 위치 격자)과 날짜 계�
 `ports.profile.birth_date`에서 `LifeStage`를 계산해 `Gate`로 넘긴다.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
@@ -21,6 +21,7 @@ from app.agents.activity.store.ports import (
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import Gate, SafetyState
+from app.agents.common.suggestion import SuggestionDraft
 from app.rules.age import life_stage
 
 
@@ -33,9 +34,11 @@ class ActivityRunState:
     `place_name` 도 같다 — `search_nearby_places` 가 돌려준 이름만 쓸 수 있다.
     """
 
-    seen_evidence: dict[UUID, tuple[RankedEvidence, datetime]] = field(default_factory=dict)
+    seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
     gate: Gate | None = None
+    # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
+    suggestions: tuple[SuggestionDraft, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,14 @@ class ActivityContext:
     def grid(self) -> WeatherGrid | None:
         """날씨 포트에 넘길 기상청 격자. 좌표 대신 이것만 밖으로 나간다."""
         return self.location.grid if self.location is not None else None
+
+    def for_task(self) -> "ActivityContext":
+        """task 하나 몫의 context. run state 만 새로 만든다.
+
+        pipeline 이 Agent 를 부르기 전에 늘 부른다 (`DomainContext` 프로토콜). task 둘이 동시에
+        돌아도 `seen_evidence` · `seen_places` · `suggestions` 가 섞이지 않는다.
+        """
+        return replace(self, state=ActivityRunState())
 
 
 async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:

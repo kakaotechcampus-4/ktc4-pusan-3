@@ -71,19 +71,6 @@ class ActivityObservation:
     subject: str  # 병합 판정 입력 (정규화된 값)
     activity: str  # 사람이 읽는 원문. 예: 레고 조립
     polarity: int  # -1 / 0 / +1
-    updated_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
-
-
-@dataclass(frozen=True)
-class AffinityRecord:
-    """`profile_affinity`(domain=activity) 한 행.
-
-    공통 `AffinityRow`에는 `updated_at`이 없다. 인용하려면 `source_updated_at`이 필요해서
-    여기서 같이 싣는다.
-    """
-
-    row: AffinityRow
-    updated_at: datetime
 
 
 @dataclass(frozen=True)
@@ -104,7 +91,6 @@ class ActivityDocRow:
     body: str
     min_month: int
     max_month: int | None
-    written_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
 
 
 @dataclass(frozen=True)
@@ -206,7 +192,7 @@ class SafetyReader(Protocol):
 
 
 class ActivityMemoryReader(Protocol):
-    async def affinities(self, *, child_id: UUID) -> list[AffinityRecord]:
+    async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         """`profile_affinity`(domain=activity). common/evidence.py 가 순위를 매긴다."""
         ...
 
