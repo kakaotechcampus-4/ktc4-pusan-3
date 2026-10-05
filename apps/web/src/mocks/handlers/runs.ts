@@ -9,7 +9,7 @@ import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
 
 /**
- * 04 저장 결과 — 입력 한 줄과 run 스트림.
+ * 04 대화 — 입력 한 줄과 run 스트림.
  *
  * 🚨 실패는 200 + 빈 배열이 아니다. failed 이벤트가 raw_text 를 돌려주고,
  *    화면은 그걸 입력창에 그대로 남긴다. 그래서 여기서 원문을 들고 있어야 한다.
@@ -73,7 +73,7 @@ export function resetSubmittedInputs(): void {
 /**
  * 없는 run · 다른 아이 · 이미 답한 질문을 하나로 합친다 — 서버와 같은 한 코드다 (#175).
  * 🚨 **문구는 상황만 말한다** (서버 `routers/children.py` 와 같은 글자). 무엇을 다시 보낼지는
- *    화면(`SubmitErrorCard`)이 이 아래에 적는다 — 여기서 "다시 적어 주세요" 를 말하면 바로 아래의
+ *    화면(`components/chat-thread.tsx` 의 `SendFailure`)이 이 아래에 적는다 — 여기서 "다시 적어 주세요" 를 말하면 바로 아래의
  *    "앞서 저장된 이야기는 다시 적지 않아도 돼요" 와 한 카드에서 부딪친다 (#208).
  */
 function replyUnavailable() {
@@ -149,7 +149,7 @@ async function* continuationScript(
    * 🚨 **저장 뒤에 말이 한 번 더 온다** (#208). 서버는 이어받기에서 조기 종료를 껐다 — 답에 다른
    *    말이 섞였는지(leftover) 받을 턴이 있어야 해서다 (`apps/api/app/agents/memory/agent.py`).
    *    그래서 저장한 뒤 Memory 가 한 번 더 말하고 그게 `note` 로 나간다. `kind` 가 `message` 라
-   *    화면은 "이어서 적기" 를 열지 않는다 — 열면 끝난 답에 또 답을 재촉한다.
+   *    화면은 답할 자리("이 질문에 답하기")를 열지 않는다 — 열면 끝난 답에 또 답을 재촉한다.
    */
   yield frame("note", { text: CONTINUATION_NOTE, kind: "message" });
   await sleep(300);
