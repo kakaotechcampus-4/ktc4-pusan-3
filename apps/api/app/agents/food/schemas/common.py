@@ -21,7 +21,8 @@ class FoodTaskType(StrEnum):
 
     MEAL_RECOMMENDATION = "meal_recommendation"  # 식단 추천: health_safety 사전 확인 대상
     NUTRIENT_ANALYSIS = "nutrient_analysis"  # 영양소 분석: 식단 기반 비중까지
-    DAYCARE_MEAL = "daycare_meal"  # 기관 급식 갱신·삭제. Food 가 직접 쓰는 유일한 테이블
+    # 기관 급식 갱신·삭제. Food 가 보호자 말을 반영해 쓰는 유일한 테이블
+    DAYCARE_MEAL = "daycare_meal"
 
 
 class MealSlot(StrEnum):

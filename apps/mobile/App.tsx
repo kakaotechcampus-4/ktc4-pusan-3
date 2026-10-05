@@ -30,6 +30,7 @@ import {
   splitIntoChunks,
   type BridgeSettlement,
 } from "./src/native/bridge";
+import { isWebUrl } from "./src/native/in-app-browser";
 import { listRecentPhotos, readRecentPhoto } from "./src/native/recent-photos";
 import { SAFE_AREA_SCRIPT, safeAreaScript } from "./src/native/safe-area";
 
@@ -169,6 +170,25 @@ function Shell() {
     }
   }, []);
 
+  /**
+   * 앱 밖 링크를 연다 — 웹 주소는 앱 위에 얹는 in-app 브라우저로, 그 밖은 OS 에 (`src/native/in-app-browser.ts`).
+   *
+   * 🚨 in-app 브라우저를 못 열면 `Linking` 으로 넘긴다 — Custom Tabs 를 지원하는 브라우저가 없는 기기에서
+   *    링크가 아무 일도 안 하게 두지 않는다. 지금까지의 동작이 곧 이 대체 경로다.
+   */
+  const openExternal = useCallback(async (url: string) => {
+    if (isWebUrl(url)) {
+      try {
+        // 제목을 띄운다 — 약관 주소(`…/policies/service_terms/draft-1`)보다 문서 제목이 무엇을 여는지 말해 준다.
+        await WebBrowser.openBrowserAsync(url, { showTitle: true });
+        return;
+      } catch {
+        // 아래로 — 시스템 브라우저
+      }
+    }
+    void Linking.openURL(url);
+  }, []);
+
   const reload = useCallback(() => {
     setFailed(false);
     setLoading(true);
@@ -221,17 +241,17 @@ function Shell() {
             // 🚨 `target="_blank"` 를 **이 웹뷰의 이동으로 만든다.** 안드로이드 기본값(true)이면
             //    새 창을 띄울 곳이 없어 링크가 **아무 일도 하지 않는다** — 동의 화면의 "전문 보기"
             //    가 그렇게 죽는다. false 로 두면 아래 `onShouldStartLoadWithRequest` 를 거쳐
-            //    앱 밖 주소로 판정되고 시스템 브라우저로 넘어간다.
+            //    앱 밖 주소로 판정되고 in-app 브라우저로 넘어간다.
             setSupportMultipleWindows={false}
-            // 앱 밖 링크(약관 등)는 웹뷰에 가두지 않고 시스템 브라우저로 넘긴다.
-            // 🚨 로그인 시작만 예외다 — 시스템 브라우저로 나가면 복귀를 받을 곳이 없다 (#210).
+            // 앱 밖 링크(약관 등)는 웹뷰에 가두지 않고 in-app 브라우저로 앱 위에 얹는다 (#212).
+            // 🚨 로그인 시작은 따로 — 복귀(`icatch://auth`)를 받아야 해서 인증 세션으로 연다 (#210).
             onShouldStartLoadWithRequest={(request) => {
               if (isInternalUrl(request.url)) return true;
               if (isAuthStartUrl(request.url)) {
                 void openAuthSession(request.url);
                 return false;
               }
-              void Linking.openURL(request.url);
+              void openExternal(request.url);
               return false;
             }}
             // 페이지가 뜨기 전에 꽂는 것 둘 — 최근 사진 창구(`src/native/bridge.ts`)와
