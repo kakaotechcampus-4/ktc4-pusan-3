@@ -107,6 +107,15 @@ def _db_cause(exc: DBAPIError) -> BaseException:
     return orig.__cause__ or orig
 
 
+def constraint_name(exc: DBAPIError) -> str | None:
+    """DB 제약 위반의 제약 이름. 라우터가 "어느 제약에 걸렸나" 로 409 를 가를 때 쓴다.
+
+    예: uq_parent_child_parent_id 위반 → 409 child_already_exists. 글(DETAIL)은 보지 않는다 —
+    값이 실려 있다 (위 _db_error).
+    """
+    return getattr(_db_cause(exc), "constraint_name", None)
+
+
 _METHOD_NOT_ALLOWED = 405
 """405 는 404 로 바꿔 내린다.
 

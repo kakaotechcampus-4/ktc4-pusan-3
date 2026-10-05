@@ -14,7 +14,6 @@ from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityObservation,
     ActivityPorts,
-    AffinityRecord,
     CoarseLocation,
     PlaceRow,
     RawAdvisories,
@@ -26,6 +25,7 @@ from app.agents.activity.store.ports import (
     UpstreamUnavailable,
     WeatherGrid,
 )
+from app.agents.common.evidence import AffinityRow
 
 
 class InMemoryProfile:
@@ -61,13 +61,13 @@ class InMemorySafety:
 class InMemoryActivityMemory:
     def __init__(
         self,
-        affinities: dict[UUID, Sequence[AffinityRecord]] | None = None,
+        affinities: dict[UUID, Sequence[AffinityRow]] | None = None,
         observations: dict[UUID, Sequence[ActivityObservation]] | None = None,
     ) -> None:
         self._affinities = {k: list(v) for k, v in (affinities or {}).items()}
         self._observations = {k: list(v) for k, v in (observations or {}).items()}
 
-    async def affinities(self, *, child_id: UUID) -> list[AffinityRecord]:
+    async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         return list(self._affinities.get(child_id, ()))
 
     async def observations(

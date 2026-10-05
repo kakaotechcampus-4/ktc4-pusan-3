@@ -16,3 +16,6 @@ src/app/pretendard.css
 
 # 스크립트가 생성한 본문 폰트 CSS. 손으로 고치지 않는다 (파일 머리말 참고).
 src/app/hakgyoansim.css
+
+# impeccable(디자인 도구)의 로컬 캐시. git 은 무시하지만(루트 .gitignore) prettier 는 읽는다.
+.impeccable/

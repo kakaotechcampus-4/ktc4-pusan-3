@@ -44,7 +44,9 @@ from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory.store.ports import ObservationRow
 from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 tool 이 정본이다
+from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
+from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
 from app.rules.age import Stage
@@ -365,13 +367,20 @@ async def _run_once(
     memory_context = AgentContext(
         child_id=CHILD, source_writer=WRITER, now=NOW, timezone=KST, store=store
     )
+    # birth_date만 심어 build_gate가 live.stage를 재계산하게 한다.
+    # 기억 포트 · 쓰기 표시는 entrypoint 와 같게 묶는다 — Food 실구현이 붙으면 같은 run에
+    # 저장한 관찰을 읽고, 급식만 고친 run이 failed가 아니라 done으로 끝나게 한다
+    writes = RunWrites()
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: _birth_date_for(live.stage)}),
+        memory=StoreFoodMemory(store),
+    )
     food_context = FoodContext(
         child_id=CHILD,
         run_id=f"live-{live.label}",
         now=NOW,
         timezone=KST,
-        # 실 DB 포트는 아직 없다. birth_date 만 심어 build_gate 가 live.stage 를 되계산하게 한다
-        ports=in_memory_ports(profile=InMemoryProfile({CHILD: _birth_date_for(live.stage)})),
+        ports=record_food_writes(ports, writes),
     )
     seed = _SEEDS.get(live.case.case_id)
     if seed is not None:
@@ -387,6 +396,7 @@ async def _run_once(
         supervisor_client=supervisor_client,
         memory_client=memory_client,
         emit=emitted.append,
+        writes=writes,
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 

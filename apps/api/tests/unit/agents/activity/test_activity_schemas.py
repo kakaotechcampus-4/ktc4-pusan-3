@@ -82,7 +82,7 @@ class TestEvidencePick:
             EvidencePick.model_validate({"id": "x", "note": ""})
 
     def test_출처_칸은_모델이_채우지_않는다(self):
-        """source_kind · source_updated_at 은 출력 tool 이 조회 결과에서 채운다 (D6)."""
+        """source_kind · polarity · label 은 출력 tool 이 조회 결과에서 채운다 (D6)."""
         with pytest.raises(ValidationError):
             EvidencePick.model_validate(
                 {"id": "x", "note": "모래놀이를 오래 했어요", "source_kind": "observation_activity"}

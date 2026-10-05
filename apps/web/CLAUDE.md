@@ -777,10 +777,22 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 🚨 `NEXT_PUBLIC_*` 는 **브라우저 번들에 그대로 박힌다.** 비밀은 여기 넣지 않는다 (§9 · NF-09).
 
 루트에서 `make` 를 치면 `web-*` 로 같은 스크립트를 부를 수 있다 (6명이 파트를 오갈 때 한 줄로 끝내기 위한 것이다).
-`make web-check` = typecheck + lint + test.
+`make web-check` = format(검사만) + typecheck + lint + test.
 
 🚨 **`make web-build` 를 PR 전에 한 번 돈다.** `pnpm dev` 가 통과하는데 프로덕션 빌드만 멈추는 자리가 있다
 (§3 라우팅의 `useSearchParams` Suspense 경계). dev 서버만 보고 올리면 그 화면은 배포에서만 죽는다.
+
+### CI — PR 마다 같은 검사를 다시 돈다
+
+[`.github/workflows/ci-web.yml`](../../.github/workflows/ci-web.yml) 이 `apps/web/**` 를 바꾼 PR(→ `develop` · `main`)과
+`develop` push 에서 `format:check → lint → typecheck → test → build` 를 돈다. `make web-check` + `make web-build` 와 같다.
+셸은 [`ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 돈다.
+
+- 🚨 **pnpm · Node 버전을 워크플로에 적지 않는다.** pnpm 은 `package.json` 의 `packageManager` 를 읽고,
+  Node 는 `Dockerfile` 의 메이저(24)와 같다 — 베이스 이미지를 올리면 워크플로의 `node-version` 도 같이 올린다
+- `build` 단계의 `NEXT_PUBLIC_API_BASE_URL` 은 더미다. `lib/env.ts` 가 값이 없으면 import 시점에 던져서
+  넣는 것이고, 빌드는 그 주소로 요청하지 않는다
+- 포맷이 어긋나 빨간불이면 `make web-fmt` 로 고쳐서 **별도 커밋**으로 올린다 (로직 변경과 섞지 않는다 · CONTRIBUTING §3)
 
 ### 배포 — 이미지는 API 주소를 안고 굳는다
 

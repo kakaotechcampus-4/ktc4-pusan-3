@@ -206,8 +206,8 @@ function HealthSafetyRow({
           <p className="text-body-sm text-ink-muted">
             {/* 🚨 라벨에 조사를 박지 않는다 — 받침으로 고르는 것은 `josa` 다
                 (apps/web/CLAUDE.md §3 · 옵션 키는 받침형이 앞이다). */}
-            {josa(item.label, "이/가")} 안전 정보에서 빠져요. 앞으로 식사 제안이 이 항목을
-            거르지 않아요.
+            {josa(item.label, "이/가")} 안전 정보에서 빠져요. 앞으로 식사 제안이 이 항목을 거르지
+            않아요.
           </p>
           {/* 🚨 **실패를 빨강으로 칠하지 않는다** (디자인 시스템 §3 · §5). `danger` 는
               알레르기·건강 중단·파괴적 확정에만 쓰고, 실패는 `ink-muted` 다.
@@ -295,10 +295,7 @@ export function HealthSafetySheet({
    */
   const update = useMutation({
     mutationFn: (body: UpdateHealthSafetyRequest) =>
-      api.patch<UpdateHealthSafetyResponse>(
-        `/children/${childId}/health-safety/${item?.id}`,
-        body,
-      ),
+      api.patch<UpdateHealthSafetyResponse>(`/children/${childId}/health-safety/${item?.id}`, body),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
       reset();
@@ -340,7 +337,11 @@ export function HealthSafetySheet({
       setType((TYPE_LABEL[item.type] ? item.type : "allergy") as TypeValue);
       setLabel(item.label);
       setCategory((item.category || "기타") as CategoryValue);
-      setSeverity((item.severity && SEVERITY_LABEL[item.severity] ? item.severity : "unknown") as SeverityValue);
+      setSeverity(
+        (item.severity && SEVERITY_LABEL[item.severity]
+          ? item.severity
+          : "unknown") as SeverityValue,
+      );
       setReactions(item.reactions.join(", "));
       setNotes(item.notes ?? "");
       setLabelError(null);
@@ -507,7 +508,6 @@ export function HealthSafetySheet({
           onChange={(e) => setNotes(e.target.value)}
           autoComplete="off"
         />
-
       </div>
     </BottomSheet>
   );
