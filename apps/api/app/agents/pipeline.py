@@ -760,17 +760,22 @@ def _ms_since(started: float) -> int:
 
 
 async def _commit_record(memory: MemoryAgentResult, commit: Commit | None) -> bool:
-    """기록 단계(Memory 의 쓰기 + 되묻기 맥락)를 확정한다. 확정된 쓰기가 있으면 True.
+    """기록 단계를 확정한다. DB 에 실제로 쓴 것이 있으면 True.
 
-    commit 이 예외를 내면 잡지 않는다. 확정된 것이 없으니 러너가 failed 로 끝낸다.
+    일정 초안 · 바뀐 것 없는 성공은 세지 않는다(`MemoryAgentResult.persisted`) — 보호자가
+    다시 보내도 두 번 저장될 것이 없다. commit 이 예외를 내면 잡지 않고 러너에 올린다.
+    결과를 모르는 commit(연결이 끊긴 경우)을 어떻게 닫을지는 러너 계약에서 정한다.
     """
     if commit is not None:
         await commit()
-    return _memory_wrote(memory)
+    return memory.persisted
 
 
 def _memory_wrote(memory: MemoryAgentResult | None) -> bool:
-    """Memory 가 성공한 쓰기를 하나라도 했는가."""
+    """Memory 가 성공한 쓰기 tool 을 하나라도 불렀는가. 일정 초안도 센다.
+
+    처리한 일이 있었는지를 볼 때 쓴다. 저장됐는지는 `MemoryAgentResult.persisted` 로 본다.
+    """
     return memory is not None and any(
         call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
     )

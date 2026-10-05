@@ -2148,6 +2148,37 @@ async def test_Memory_다음에_commit_하고_Saved_는_그_뒤에_나간다(
     assert result.committed is True
 
 
+async def test_일정_초안만_만든_run_은_commit_된_쓰기가_없다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 초안은 보호자가 제출할 때 저장된다. 쓰기 tool이 성공했어도 확정된 저장은 없다
+    # tool 성공만으로 저장 완료를 판단하지 않는다
+    memory_llm = FakeLLM(
+        _tools(
+            _call(
+                "a",
+                "create_event",
+                {"title": "아침 식사", "starts_on": "내일", "starts_time": "오전 8시"},
+            )
+        ),
+        _reply("일정 초안을 만들었어요."),
+    )
+
+    result = await _handle(
+        "RC18",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    assert _of(events, _Committed)  # 기록 단계 확정은 그대로 부른다
+    assert result.memory is not None and result.memory.drafts
+    assert result.committed is False
+    assert result.failed is None  # 초안이 나갔으니 실패는 아니다
+
+
 async def test_Memory_가_쓰다가_죽으면_commit_하지_않고_failed_로_끝난다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
