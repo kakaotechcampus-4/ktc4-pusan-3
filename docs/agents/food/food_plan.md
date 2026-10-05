@@ -137,10 +137,10 @@ DoD: mock `run()`이 포트·클라이언트를 **건드리지 않고** `DomainA
 
 | 순서 | tool | DoD |
 | --- | --- | --- |
-| 5-1 | `resolve_menu` | 카탈로그에 없으면(캐시 미스) → API 1회 → 없을 때만 넣기 · 정말 없음은 `resolved=false` 로 남김 · API 장애는 남기지 않고 그 run 에서만 `unresolved`(추정 0건) |
+| 5-1 | `resolve_menu` | 카탈로그에 없으면(캐시 미스) → API 1회 → 이름이 정확히 같은 결과만 없을 때만 넣기 · 못 찾거나 장애면 남기지 않고 그 run 에서만 `unresolved`(추정 0건) · 판정 한 번의 외부 조회 상한 · 못 찾은 이름은 프로세스 메모리에 짧게 기억 |
 | 5-2 | `filter_food_safety` | 19종 교집합 · `term_match` · **연령 규칙(꿀·질식)** · 조회 실패 → `SAFETY_UNAVAILABLE` |
 | 5-2a | `resolve_meal_date` | 사전 표 그대로 · 기준일은 `Gate.today` · 과거 30일 밖 거절 · 미해결은 되묻기 |
-| 5-4 | `select_kdri_group` · `evaluate_nutrient_bands` | EAR 기준 · 히스테리시스(전날 구간은 7일 다시 판정) · 행 수 미달 → `insufficient` · 원본 14일 읽기 · 메뉴 조회는 `get_many` 한 번 · 영양 합계·구간 저장 0건 |
+| 5-4 | `select_kdri_group` · `evaluate_nutrient_bands` | EAR 기준 · 히스테리시스(전날 구간은 7일 다시 판정) · 행 수 미달 → `insufficient` · 원본 14일 읽기 · 메뉴 조회는 `get_many` 한 번 · 외부 조회는 처음 보는 이름만(상한 안) · 그날 급식이 있으면 기관 출처 관찰 빼기(N-10) · 영양 합계·구간 저장 0건 |
 | 5-5 | `build_candidate_pool` | 알레르기·연령 금지·반복·단계 필터 순서 고정 · **기피로는 아무것도 빼지 않음** |
 | 5-6 | `sample_candidates` | `seed=run_id` 재현 · 다양성 제약 · **필터 뒤에 위치** · 가중치 **부족 식품군 > 선호 > 기피** |
 | 5-7 | `search_food_doc` | 단계 필터 → 의미 검색 top-3 · 쿼리에 보호자 발화 없음 |
@@ -265,4 +265,4 @@ DoD: 혼합형 입력("오늘 당근 먹었어. 저녁 뭐 줄까?")에서 **Mem
 
 ## 12. 열린 항목
 
-F-1 · F-2 · F-3 · F-6 · F-13 · F-16~18 ([`Food_Agent_명세.md`](Food_Agent_명세.md) §10) · FT-1 · FT-3~7 · FT-9~11 · FT-14~16 ([`food_agent_own_table.md`](food_agent_own_table.md) §10) · N-1~4 · N-6 · N-8~13 ([`영양소_계산_설계.md`](영양소_계산_설계.md) §9)
+F-1 · F-2 · F-3 · F-6 · F-13 · F-16~18 ([`Food_Agent_명세.md`](Food_Agent_명세.md) §10) · FT-1 · FT-3~7 · FT-9~11 · FT-17 ([`food_agent_own_table.md`](food_agent_own_table.md) §10) · N-1~4 · N-6 · N-8 · N-9 · N-12 · N-13 ([`영양소_계산_설계.md`](영양소_계산_설계.md) §9)

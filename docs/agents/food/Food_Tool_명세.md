@@ -6,7 +6,7 @@
 >
 > **2026-09-27 갱신** — 재호출·풀 부족 시 남은 만큼만 냄(0개는 거절, 잠정 — C-8 미결) · 급식 대체 입력을 `removed_spans[]`·`added_spans[]`로 분리, 뺄 메뉴 없으면 되묻기 · "남겼대"는 0.5·`amount_known=false` · 영양 서술 숫자 금지 기준을 단위 동반 표현으로 좁힘(횟수 표현 허용) · 알레르기·금지식품 라벨을 모델 입력에서 제외 · 출력 상수 표 정리
 >
-> **2026-10-05 갱신** — 섭취 파생 테이블과 그것을 채우던 tool 삭제(#205). 영양 판정은 원본(`observation_food` · `daycare_meal`)에서 매번 계산하고 저장하지 않는다 · 기록 행 수도 두 원본으로 센다 · 해석 실패(정말 없음)는 `resolved=false` 로 남긴다
+> **2026-10-05 갱신** — 섭취 파생 테이블과 그것을 채우던 tool 삭제(#205). 영양 판정은 원본(`observation_food` · `daycare_meal`)에서 매번 계산하고 저장하지 않는다 · 기록 행 수도 두 원본으로 센다 · 캐시 미스는 이름이 정확히 같은 결과만 쌓고 해석 실패는 남기지 않는다
 
 ---
 
@@ -31,9 +31,9 @@
                                      │ 카탈로그에 없음(캐시 미스)
                                      ▼
           ① 식약처 식품영양성분DB정보 (음식 분류) ── 1인분 영양
-          ② 식약처 조리식품 레시피 DB (COOKRCP01) ── 재료 목록 · 영양
-          ③ 둘 다 없음 → resolved=false 행으로 남김 + status="unresolved" (모델 추정 금지)
-             외부 API 장애(MenuSourceError) → 남기지 않음. 그 run 에서만 "unresolved"
+          ② 식약처 조리식품 레시피 DB (COOKRCP01) ── 재료 목록만 (영양 칸은 쓰지 않음)
+          ③ 둘 다 없음 · 외부 API 장애 → status="unresolved" (모델 추정 금지). 카탈로그에 남기지 않음
+             이름이 정확히 같은 결과만 받는다 — 비슷한 메뉴 추정 금지 (급식 · 판정 · 집 식사 모두)
                                      │
                                      ▼
           재료 → 알레르기 19종 코드 매핑 (코드 사전)
@@ -48,15 +48,15 @@
 | `food_code` | 식약처 식품코드 (없으면 NULL) |
 | `source` | `mfds_nutri` · `mfds_recipe` · `manual` |
 | `serving_g` | 1인분 중량 — **성인 기준** |
-| `nutrients` | jsonb — 에너지·탄수화물·단백질·지방·당류·나트륨·칼슘·철 … (100g 기준 + 1인분) |
-| `ingredients` | text[] — 레시피 DB 재료 |
+| `nutrients` | jsonb — 에너지·탄수화물·단백질·지방·당류·나트륨·칼슘·철 … (100g 기준 + 1인분). 식품영양성분DB 에서만 채운다 |
+| `ingredients` | text[] — 레시피 DB 재료 텍스트(`RCP_PARTS_DTLS`)를 파싱한 것 |
 | `allergen_codes` | smallint[] — 19종 코드 (재료 + 메뉴명 사전 **합집합**) |
 | `food_groups` | text[] — 곡류 · 고기생선달걀콩 · 채소 · 과일 · 우유유제품 · 유지당류 |
 | `stage_min` | 이 메뉴가 가능한 최소 단계 — `LifeStage.stage` 네 값 중 하나 (수동 태깅) |
 | `resolved` | bool |
 | `source_version` · `synced_at` | 데이터 기준일 |
 
-- 동기화: 야간 배치 + 카탈로그에 없을 때(캐시 미스) 즉시 1회 호출. 운영 트래픽을 API에 직접 걸지 않는다. 캐시 미스 1회는 Food 요청 중에 부르고, 결과는 백엔드 어댑터가 없을 때만 넣는다(`ON CONFLICT DO NOTHING`) — [`food_agent_own_table.md`](food_agent_own_table.md) §1 · FT-13 (10-04 닫힘). DB 권한 방식은 백엔드가 정한다.
+- 동기화: 야간 배치 + 카탈로그에 없을 때(캐시 미스) 즉시 1회 호출. 운영 트래픽을 API에 직접 걸지 않는다. 캐시 미스 1회는 Food 요청 중에 부르고(판정 한 번의 외부 조회 수는 묶는다 — food_agent_own_table §1), 결과는 백엔드 어댑터가 없을 때만 넣는다(`ON CONFLICT DO NOTHING`) — [`food_agent_own_table.md`](food_agent_own_table.md) §1 · FT-13 (10-04 닫힘). DB 권한 방식은 백엔드가 정한다.
 - `unresolved` 메뉴는 **영양 계산에서 빠진다**. 알레르기 판정은 "확인 못 함". 기록 행 수에서도 뺀다고 적어 왔지만 [`영양소_계산_설계.md`](영양소_계산_설계.md) §5 는 행은 세고 해석률을 따로 본다 — 어느 쪽으로 맞출지는 미결이다(N-13).
 
 ### 0-4. 수치는 내부, 출력은 구간 — 계산 설계
@@ -111,7 +111,7 @@ menu_catalog
 | --- | --- | --- | --- |
 | 식약처 **식품영양성분DB정보** — data.go.kr/data/15127578 | 식품코드·분류·영양성분·1회 섭취참고량 | `menu_catalog.nutrients` | REST, 무료. 구 API 폐기 후 통합본 |
 | 식약처 **K-FIND** 식품영양성분 DB | 동일 DB 검색 서비스 (130여 종 성분) | 수동 검수 | 2026-07 출범 |
-| 식약처 **조리식품 레시피 DB** (COOKRCP01) — foodsafetykorea.go.kr | 메뉴명·재료·1인분 영양 | `ingredients` · 알레르기 | 재료가 텍스트라 파싱 필요 |
+| 식약처 **조리식품 레시피 DB** (COOKRCP01) — foodsafetykorea.go.kr | 레시피 1,156건(10-06 받은 CSV 기준) — 메뉴명 · 요리 종류 · 조리법 · 재료 텍스트 · 1인분 영양 5항목(열량 · 탄수화물 · 단백질 · 지방 · 나트륨, 중량은 285건만) · 조리 순서 · 저감 조리 팁 | `ingredients` · 알레르기 — **재료 목록만 쓴다** | 영양 칸은 쓰지 않는다 — 칼슘 · 철 · 당류 · 포화지방이 없어 판정 항목을 다 채우지 못한다. 메뉴명이 일상 메뉴명이 아니라 변형 레시피 이름이다(FT-17). 재료가 텍스트라 파싱 필요(FT-7) |
 | 식약처 알레르기 표시 대상 19종 | 알류·우유·메밀·땅콩·대두·밀·고등어·게·새우·돼지고기·복숭아·토마토·아황산류·호두·닭고기·쇠고기·오징어·조개류·잣 | `ALLERGEN_CODES` 상수 | 번호 = 이 순서 (급식 표기와 동일 여부 확인) |
 | NEIS 교육정보 개방포털 급식식단정보 — open.neis.go.kr | 학교 급식 + 알레르기 번호 | `daycare_meal` (학교·일부 유치원) | **어린이집 미포함** |
 | 기관 공지 OCR | 식단표 이미지 | `daycare_meal` (어린이집 주경로) | 파이프라인 산출물 읽기만. 저장 직후 대체·제외 메뉴 확인 안내 |
@@ -183,13 +183,13 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | Tool | 호출 시점 | 입력 → 출력 | 실패 |
 | --- | --- | --- | --- |
 | `resolve_meal_date` | `update`·`delete_daycare_meal` 인자 검증 | `date_span` + `today` → date | 사전에 없으면 `needs_observation` · 과거 30일 밖이면 거절 |
-| `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | API 실패 → 카탈로그만 사용, 캐시 미스는 `unresolved`(카탈로그에 남기지 않는다). 정말 없음(두 조회 모두 `None`) → `resolved=false` 행으로 남긴다 — [`food_agent_own_table.md`](food_agent_own_table.md) §1 |
+| `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | 캐시 미스면 외부 조회(이름이 정확히 같은 결과만). 못 찾거나 API 실패 → `unresolved`, 카탈로그에 남기지 않는다. 판정에서는 한 번에 조회 수 상한 — [`food_agent_own_table.md`](food_agent_own_table.md) §1 |
 | `filter_food_safety` | 모델 호출 전(풀) · 후(출력) · 급식 조회 | `menus`, `health_safety`, `stage` → `(passed, blocked, unchecked)` | `health_safety` 조회 실패 → `SAFETY_UNAVAILABLE` (식단 추천 중단) |
 | `rank_evidence` | `search_food_memory` 내부 | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | – |
 | `build_candidate_pool` | 식단 추천 모델 호출 전 | §0-5 | 풀 0개 → 일반 추천 템플릿 없이 "조건에 맞는 메뉴가 없어요". **기피로는 아무것도 빼지 않는다** — 빠지는 것은 알레르기·연령 금지 재료뿐 |
 | `select_kdri_group` | `compare_diet_balance` 내부 | `age_months` → `"1-2y"\|"3-5y"` (`nutrient_reference.age_group`과 같은 값) | – |
 | `compute_energy_target` | `compare_diet_balance` 내부 | `age_months` + 최근 `height`·`weight` → 권장 열량(내부 전용) | 측정 없음 → 연령군 일반값. 성별 입력 없음. 계산식 미정(성별 없는 식 선정 필요) |
-| `evaluate_nutrient_bands` | `compare_diet_balance` 내부 · **식단 추천에서도 `build_candidate_pool` 직전** | `observation_food` + `daycare_meal`(오늘 이전) 14일 치 + `menu_catalog` + `nutrient_reference` → 항목별 구간. **저장하지 않는다** — 결과는 run state 에만([`영양소_계산_설계.md`](영양소_계산_설계.md) §3) | **7일에 10행 미만이면** 구간 없이 `insufficient`(설정값). 식단 추천에서는 가중치를 주지 않고 평소 순위로 간다 |
+| `evaluate_nutrient_bands` | `compare_diet_balance` 내부 · **식단 추천에서도 `build_candidate_pool` 직전** | `observation_food` + `daycare_meal`(오늘 이전) 14일 치 + `menu_catalog` + `nutrient_reference` → 항목별 구간. 카탈로그에 없는 메뉴는 `resolve_menu` 로 찾고(상한 안), 그날 급식이 있으면 기관 출처 관찰은 뺀다(N-10). **저장하지 않는다** — 결과는 run state 에만([`영양소_계산_설계.md`](영양소_계산_설계.md) §3) | **7일에 10행 미만이면** 구간 없이 `insufficient`(설정값). 식단 추천에서는 가중치를 주지 않고 평소 순위로 간다 |
 | `search_food_doc` | run 시작 시 자동 | 단계·`row_type` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 키). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='food_doc'`으로 담는다 |
 | `sample_candidates` | 후보 풀 직후 · 재호출 전 | 풀 → 10~15개 (가중 샘플링 + 식품군 다양성, `seed=run_id`). 가중치는 **부족 식품군 > 선호 > 기피** 순 — 기피는 가중치를 낮출 뿐 0으로 만들지 않는다 | 풀 < 3 → 재호출 없음 · 남은 만큼만 (잠정, C-8) |
 
@@ -206,7 +206,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `amount_span` | "엄청 많이" · "반만" | 아래 사전 → `amount_factor` |
 
 - 모델이 **날짜를 직접 계산하지 않는다.** "내일모레"를 2026-09-24로 바꾸는 순간 기준일을 모델이 정하게 된다
-- `added_spans`가 `unresolved`여도 저장한다. 그 키가 `menu_keys`에 들어가고 영양 계산에서만 빠진다. 정말 없는 메뉴면 `menu_catalog`에 `resolved=false` 행이 생기고, 외부 API 장애였으면 행 없이 키만 들어가 다음 판정에서 다시 찾는다 ([`food_agent_own_table.md`](food_agent_own_table.md) §1)
+- `added_spans`가 `unresolved`여도 저장한다. 그 키가 `menu_keys`에 들어가고 영양 계산에서만 빠진다. 못 찾으면(장애 포함) 카탈로그에는 남기지 않는다 — 다음에 다시 찾는다 ([`food_agent_own_table.md`](food_agent_own_table.md) §1)
 - **넣을 메뉴만 있고 뺄 메뉴가 발화에 없으면 되묻는다.** "어떤 메뉴 대신 받았나요?" 전체 교체로 처리하면 그날 실제로 먹은 밥·국까지 사라지기 때문이다
 
 ### `resolve_meal_date` — 코드

@@ -321,8 +321,8 @@ async def test_menu_catalog_get_many_는_있는_행만_menu_key_로_돌려준다
 
 
 async def test_menu_catalog_get_many_는_resolved_False_행도_돌려준다() -> None:
-    # 해석 실패(정말 없음)도 카탈로그에 남긴다. 이 행이 빠지면 캐시 미스로 보여
-    # 판정할 때마다 같은 메뉴로 외부 API를 다시 부른다 — all_resolved와 다른 점이다
+    # get처럼 resolved와 무관하게 있는 행은 돌려준다. 해석 여부는 호출부가
+    # resolved로 가른다 — all_resolved와 다른 점.
     unresolved = MenuCatalogRow(
         menu_key="모름메뉴",
         display_name="모름메뉴",

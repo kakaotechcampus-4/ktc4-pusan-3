@@ -8,9 +8,10 @@ Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제와 �
 (`MenuCatalogStore.put`) 둘이다. 영양 합계·구간은 저장하지 않고 판정할 때마다 원본
 (`observation_food` · `daycare_meal`)에서 계산한다. 없는 급식을 새로 만드는
 INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OCR 분석이 채운다.
-메뉴 카탈로그는 캐시 미스 때 Food 요청 안에서 `MenuSource` 로 외부 조회하고, 결과를 받은
-뒤 백엔드 어댑터가 짧게 저장한다. 외부 API 를 기다리는 동안 DB 트랜잭션을 쥐지 않는다
-(멘토 #196 답변 · food_agent_own_table §1). DB 권한 방식은 백엔드가 정한다.
+메뉴 카탈로그는 캐시 미스 때 Food 요청 안에서 `MenuSource` 로 외부 조회하고(급식 · 영양
+판정 · 집 식사 이름 모두), 결과를 받은 뒤 백엔드 어댑터가 짧게 저장한다. 외부 API 를
+기다리는 동안 DB 트랜잭션을 쥐지 않는다(food_agent_own_table §1). DB 권한 방식은 백엔드가
+정한다. 이름이 정확히 같은 결과만 넣고, 해석 실패는 넣지 않는다.
 
 쓰기 포트는 호출 하나가 짧은 트랜잭션 하나로 바로 commit된다. 같은 run의 뒤에 오는
 조회(다른 task 포함)가 그 결과를 읽어야 해서다. 조회 포트도 호출마다 짧은
@@ -38,7 +39,7 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | SafetyReader | health_safety — allergy · chronic_disease (dietary_restriction 은 10/4 삭제) |
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
-| MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 메뉴명(급식 · 집 식사) → 식품코드·영양성분 |
+| MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 메뉴명(공개 DB · 급식표) → 식품코드·영양성분 |
 | MenuSource | 식약처 등 외부 영양성분·레시피 조회 |
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
@@ -57,8 +58,11 @@ from app.rules.age import Stage
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
 # 계획서 "전체에 걸린 값"). app/rules/age.py 의 Band(연령대)와는 다른 축이라 이름을 겹치지
 # 않게 NutrientBand 로 둔다. 판정 결과에만 쓰고 저장하지 않는다 — 전날 구간도 7일 전부터
-# 하루씩 다시 판정해서 얻는다(영양소_계산_설계 §3, #205).
+# 하루씩 다시 판정해서 얻는다(영양소_계산_설계 §3).
 NutrientBand = Literal["low", "ok", "high"]
+
+# observation_food.confidence_source 값. Memory 가 정한다(memory/schemas/common.py 와 같은 값).
+ConfidenceSource = Literal["institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"]
 
 
 class SafetyLookupError(Exception):
@@ -104,7 +108,12 @@ class SafetyEntry:
 
 @dataclass(frozen=True)
 class FoodObservation:
-    """`observation_food` 한 행."""
+    """`observation_food` 한 행.
+
+    `confidence_source` · `source_notice_id` 는 기관 식사가 `daycare_meal` 과 겹치는지
+    가르는 데 쓴다. 그날 급식이 있으면 기관에서 온 관찰은 영양 합계에서 뺀다
+    (영양소_계산_설계 §3 · N-10). 어댑터는 DB 의 같은 이름 칸을 그대로 채운다.
+    """
 
     id: UUID
     child_id: UUID
@@ -113,6 +122,8 @@ class FoodObservation:
     amount_text: str | None
     polarity: int
     updated_at: datetime
+    confidence_source: ConfidenceSource | None = None
+    source_notice_id: UUID | None = None  # 알림장 · 기관 공지에서 온 기록이면 그 notice id
 
 
 @dataclass(frozen=True)
@@ -140,7 +151,7 @@ class NutritionFacts:
 
 @dataclass(frozen=True)
 class MenuCatalogRow:
-    """메뉴 카탈로그(`menu_catalog`) 한 행 — 메뉴명(급식 · 집 식사) → 식품코드·영양성분."""
+    """메뉴 카탈로그(`menu_catalog`) 한 행 — 메뉴명(공개 DB · 급식표) → 식품코드·영양성분."""
 
     menu_key: str
     display_name: str
@@ -227,7 +238,8 @@ class FoodMemoryReader(Protocol):
         """`observation_food` 구간 조회. `active` · `stand_alone` 행만 돌려준다.
 
         `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. "잘못된 기록"(`inactive`)과 삭제한
-        행은 근거로도, 영양 판정 합계로도 쓰지 않는다(영양소_계산_설계 §3).
+        행은 근거로도, 영양 판정 합계로도 쓰지 않는다(영양소_계산_설계 §3). 출처 두 칸
+        (`confidence_source` · `source_notice_id`)도 채운다 — `FoodObservation` 참고.
         """
         ...
 
@@ -238,9 +250,9 @@ class MenuCatalogStore(Protocol):
         """여러 메뉴를 조회 한 번으로 읽는다. 영양 판정이 14일 치 메뉴를 찾을 때 쓴다.
 
         카탈로그에 있는 행만 `menu_key` 를 키로 돌려준다. 없는 키(캐시 미스)는 빠진다.
-        `resolved=False` 행도 돌려준다 — 이미 찾아봤는데 없다는 표시다. 이 행을 빼면 캐시
-        미스로 보여 판정할 때마다 외부 API 를 다시 부른다(`all_resolved` 와 다른 점).
-        빈 튜플이면 빈 dict 다. 어댑터는 `WHERE menu_key = ANY(:keys)` 한 문장이다.
+        `get` 처럼 `resolved` 와 무관하게 있는 행은 다 돌려준다 — 해석 여부는 호출부가
+        `resolved` 로 가른다(`all_resolved` 와 다른 점). 빈 튜플이면 빈 dict 다.
+        어댑터는 `WHERE menu_key = ANY(:keys)` 한 문장이다.
         """
         ...
 
@@ -252,9 +264,10 @@ class MenuCatalogStore(Protocol):
         commit 된다. 있는 행을 고치거나 지우는 길은 포트에 없다. DB 권한 방식은 백엔드가
         정한다.
 
-        해석 실패(두 조회 모두 정말 없음)도 `resolved=False` 행으로 넣는다. 영양 판정이
-        같은 메뉴로 외부 API 를 다시 부르지 않게 하려는 것이다. `MenuSourceError`(외부 API
-        장애)면 넣지 않는다 — 잠깐의 장애가 영구 해석 실패가 된다(food_agent_own_table §1).
+        해석 실패는 넣지 않는다 — 정말 없음도, `MenuSourceError`(외부 API 장애)도. 남기면
+        보호자 말에서 나온 이름이 `child_id` 없이 전역 테이블에 남는다. 넣는 행은 외부 DB 에
+        이름이 정확히 같은 결과뿐이라 `menu_key` 가 공개 DB 에 있는 이름이다
+        (food_agent_own_table §1).
         """
         ...
 
@@ -265,6 +278,10 @@ class MenuCatalogStore(Protocol):
 
 class MenuSource(Protocol):
     """외부 영양성분 · 레시피 조회. 실패하거나 정보가 부족하면 그 메뉴는 unresolved 로 둔다.
+
+    `name`(정규화한 메뉴 이름)과 이름이 정확히 같은 결과만 돌려준다 — 비슷한 이름만 있으면
+    None 이다(된장찌개를 물었는데 부대된장찌개를 주지 않는다). 받은 결과가 그대로 카탈로그에
+    쌓여서다(food_agent_own_table §1).
 
     unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
     (`tools/safety.py` 의 unchecked).

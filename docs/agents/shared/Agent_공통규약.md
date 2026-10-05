@@ -86,7 +86,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `observation_*` · `profile_affinity` · `event` | **Memory** (공유 테이블 단일 writer). OCR이 일정성 공지로 분류한 것도 추출 원문을 Memory가 받아 초안 payload로 만든다 — `event` 행은 보호자가 제출할 때 생긴다 | 읽기만 |
 | `notice` (일반 기관 공지) | **OCR 파이프라인**. 텍스트로 붙여넣은 일반 공지의 저장 경로는 미정 | Growth만 읽음 (보조) |
 | `daycare_meal` | **OCR 파이프라인·급식 배치**가 INSERT · **Food**가 UPDATE/DELETE (도메인 전용 — 아무도 안 읽는다). Food에 INSERT를 주지 않아 없는 급식을 지어낼 수 없다. 승인 게이트 없음 | Memory·Activity·Growth·Health는 읽지 않는다 |
-| 메뉴 카탈로그 | **Food** (도메인 전용 — 포트 기준). 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 넣는다(10-04, [food_agent_own_table.md](../food/food_agent_own_table.md) §1). DB 권한 방식은 백엔드가 정한다. 영양 합계 · 구간은 저장하지 않는다 — 판정할 때마다 원본에서 계산한다(10-05, #205, [영양소_계산_설계.md](../food/영양소_계산_설계.md) §3) | 읽지 않는다 |
+| 메뉴 카탈로그 | **Food** (도메인 전용 — 포트 기준). 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 넣는다(10-04, [food_agent_own_table.md](../food/food_agent_own_table.md) §1). DB 권한 방식은 백엔드가 정한다. 영양 합계 · 구간은 저장하지 않는다 — 판정할 때마다 원본에서 계산한다(10-05, [영양소_계산_설계.md](../food/영양소_계산_설계.md) §3) | 읽지 않는다 |
 | `prescription_draft` | **OCR 파이프라인**(처방전·약봉투) | Health만 읽음 |
 | `medication_schedule` · `medication_dose` · `medication_dose_log` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 복용 기록과 중단(`status='stopped'`) | Food·Activity·Growth는 읽지 않는다 |
 | `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
