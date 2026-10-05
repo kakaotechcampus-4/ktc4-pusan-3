@@ -242,10 +242,13 @@ async def _accept(
         raise ApiError(409, "child_already_exists", "이미 등록한 아이가 있어요") from exc
 
     child = await session.get(Child, invite.child_id)
-    await session.commit()
-    return AcceptInviteResponse(
+    # 응답을 commit 전에 만든다 — 뒤에서 실패하면 연결은 저장됐는데 500 이고,
+    # 다시 누르면 409 child_already_exists 가 된다 (#198 리뷰).
+    response = AcceptInviteResponse(
         child_id=child.id,
         nickname=child.nickname,
         age_display=age_display(child.birth_date, today_kst()),
         role="member",
     )
+    await session.commit()
+    return response
