@@ -2,16 +2,17 @@
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
-🚨 3단계 — 아이 소유 확인(403)은 아직 없다 (#134 9단계). cid 는 아무 UUID 나 받는다.
+아이 접근은 `AccessibleChild` 가 본문보다 먼저 확인한다 — 연결된 보호자가 아니면 403
+`child_access_denied` (#134 9단계, deps/child.py). 본문은 경로의 cid 대신 확인된 id 를 쓴다.
 """
 
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
 
 from app.api import idempotency, quota
 from app.api.deps.auth import CurrentParent
+from app.api.deps.child import AccessibleChild
 from app.api.errors import ApiError
 from app.api.runs import pending_reply, registry, runner
 from app.api.v1.schemas.children import CreateInputRequest, CreateInputResponse
@@ -22,7 +23,7 @@ router = APIRouter()
 
 @router.post("/children/{cid}/inputs", status_code=202)
 async def create_input(
-    cid: UUID,
+    child_id: AccessibleChild,
     body: CreateInputRequest,
     parent: CurrentParent,
     request: Request,
@@ -30,7 +31,8 @@ async def create_input(
 ) -> CreateInputResponse:
     """접수만 한다 — 채널을 열고 러너를 뒤에서 띄우고 바로 202. Agent 를 기다리지 않는다.
 
-    순서: 키 확인 → 재생 → 맥락 확인 → 한도 → 맥락 꺼내기 → 채널 열기 → 키 기억 → 러너 시작.
+    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 맥락 확인 → 한도 → 맥락 꺼내기 →
+    채널 열기 → 키 기억 → 러너 시작.
     키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
     재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
     맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 꺼내는 건 한도를 통과한 뒤다.
@@ -52,7 +54,7 @@ async def create_input(
     if body.reply_to is not None:
         # 확인만 한다. 한도에 걸려 429 로 끝나도 맥락은 남아야 한다
         continuation = pending_reply.get(
-            run_id=body.reply_to, parent_id=parent.parent_id, child_id=cid
+            run_id=body.reply_to, parent_id=parent.parent_id, child_id=child_id
         )
         if continuation is None:
             # 없는 run · 남의 run · 다른 아이 · 이미 답한 질문 · 만료를 하나로 합친다.
@@ -75,14 +77,14 @@ async def create_input(
     if body.reply_to is not None:
         # get 과 여기 사이에 await 가 없어서 같은 reply_to 로 온 다른 요청이 끼어들지 못한다.
         # 한 번만 쓴다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다
-        pending_reply.consume(run_id=body.reply_to, parent_id=parent.parent_id, child_id=cid)
+        pending_reply.consume(run_id=body.reply_to, parent_id=parent.parent_id, child_id=child_id)
 
     channel = registry.open_run(parent_id=parent.parent_id)
     idempotency.remember(**scope, run_id=channel.run_id)
     # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
     # 되지 않는다 (§2).
     job = runner.agent_job(
-        child_id=cid,
+        child_id=child_id,
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,

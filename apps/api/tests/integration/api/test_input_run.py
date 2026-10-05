@@ -8,12 +8,14 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 프론트 mutation 은 retry: false 라 중복은 보호자가 버튼을 다시 누를 때만 생기는데,
 그때 재생이 없으면 관찰이 두 번 저장되고 홈 숫자가 2배가 된다.
 
-🚨 3단계에서는 아이 소유 확인(403)을 하지 않는다 — 9단계. cid 는 아무 UUID 나 받는다.
+🚨 아이 주소는 연결된 보호자만 쓴다 (9단계 — 아니면 403 child_access_denied). 그래서 접수
+   테스트는 `cid` 픽스처(bearer 보호자에게 연결된 아이)로 보낸다.
 🚨 진짜 Agent(LLM)는 부르지 않는다 — `agent_job` 을 가짜 러너로 바꿔 끼운다(`agent_calls`).
 """
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,8 +24,9 @@ from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency, quota
 from app.api.runs import pending_reply, registry, runner
 from app.core.config import settings
+from app.domains.child.models import Child
 
-from .conftest import issue_bearer
+from .conftest import issue_bearer, link_child
 
 INPUTS = "/api/v1/children/{cid}/inputs"
 EVENTS = "/api/v1/runs/{rid}/events"
@@ -73,22 +76,22 @@ async def test_inputs_requires_authentication(db_client):
     assert response.json()["error"]["code"] == "unauthenticated"
 
 
-async def test_inputs_rejects_missing_idempotency_key(db_client, bearer):
+async def test_inputs_rejects_missing_idempotency_key(db_client, bearer, cid):
     """계약서 §01 — 되돌릴 수 없는 POST 는 헤더가 없으면 400."""
     headers, _ = bearer
 
-    response = await db_client.post(INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=headers)
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "idempotency_key_required"
 
 
-async def test_inputs_rejects_empty_text(db_client, bearer):
+async def test_inputs_rejects_empty_text(db_client, bearer, cid):
     """빈 줄을 Agent 에 보내면 모델 호출 한 번이 그냥 낭비다. 본문 오류라 400 validation_failed."""
     headers, _ = bearer
 
     response = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()),
+        INPUTS.format(cid=cid),
         json={"text": "   ", "source": "home_input"},
         headers=with_key(headers),
     )
@@ -97,14 +100,13 @@ async def test_inputs_rejects_empty_text(db_client, bearer):
     assert response.json()["error"]["code"] == "validation_failed"
 
 
-async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls):
+async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls, cid):
     """5단계 — 접수 창구가 진짜 Agent 에 넘긴다. 누구(보호자)의 어느 아이 이야기인지를 같이.
 
     보호자는 본문이 아니라 토큰에서 온다. Memory 가 이 값을 작성자로 적어서, 보호자의 말이
     아이의 사실로 저장되지 않는다 (§2 "부모의 말은 아이의 Fact 가 아니다").
     """
     headers, parent_id = bearer
-    cid = uuid.uuid4()
 
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
@@ -119,23 +121,21 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
     ]
 
 
-async def test_inputs_accepts_and_returns_run_id(db_client, bearer):
+async def test_inputs_accepts_and_returns_run_id(db_client, bearer, cid):
     """202 에 본문이 있어야 한다 — 프론트가 202 도 JSON 으로 파싱한다 (client.ts).
 
     빈 본문을 주면 화면에서 `res.run_id` 를 읽는 순간 터진다.
     """
     headers, _ = bearer
 
-    response = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
-    )
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
     assert response.status_code == 202
     run_id = response.json()["run_id"]
     assert registry.get(run_id) is not None  # 채널이 열려 있어야 GET 이 붙을 수 있다
 
 
-async def test_same_key_replays_the_same_run_id(db_client, bearer, agent_calls):
+async def test_same_key_replays_the_same_run_id(db_client, bearer, agent_calls, cid):
     """같은 키로 다시 오면 새 run 을 만들지 않고 처음 응답을 그대로 준다.
 
     보호자가 버튼을 두 번 누른 경우다. 새 run 이 생기면 관찰이 두 번 저장되고, 모델도 두 번
@@ -144,7 +144,6 @@ async def test_same_key_replays_the_same_run_id(db_client, bearer, agent_calls):
     """
     headers, _ = bearer
     keyed = with_key(headers)
-    cid = uuid.uuid4()
 
     first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
     second = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
@@ -154,7 +153,7 @@ async def test_same_key_replays_the_same_run_id(db_client, bearer, agent_calls):
     assert len(agent_calls) == 1  # Agent 를 다시 부르지 않았다
 
 
-async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
+async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch, cid):
     """실패로 끝난 run 의 키는 지운다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
 
     프론트는 실패 뒤 재시도에 같은 키를 쓴다(home/page.tsx `retry()`). 키가 남아 있으면
@@ -168,7 +167,6 @@ async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
     monkeypatch.setattr(runner, "fake_job", boom)
     headers, _ = bearer
     keyed = with_key(headers)
-    cid = uuid.uuid4()
 
     first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
     await asyncio.wait_for(registry.get(first.json()["run_id"]).task, timeout=2)
@@ -178,7 +176,9 @@ async def test_failed_run_forgets_its_key(db_client, bearer, monkeypatch):
     assert retried.json()["run_id"] != first.json()["run_id"]
 
 
-async def test_finished_run_keeps_its_key_even_if_it_crashes_after(db_client, bearer, monkeypatch):
+async def test_finished_run_keeps_its_key_even_if_it_crashes_after(
+    db_client, bearer, monkeypatch, cid
+):
     """🚨 done 까지 나간 run 은 저장이 끝난 run 이다. 그 뒤에 터져도 키를 놓지 않는다.
 
     놓으면 같은 키로 다시 누를 때 새 run 이 떠서 관찰이 두 번 저장된다. pipeline 은 done 을
@@ -192,7 +192,6 @@ async def test_finished_run_keeps_its_key_even_if_it_crashes_after(db_client, be
     monkeypatch.setattr(runner, "fake_job", done_then_boom)
     headers, _ = bearer
     keyed = with_key(headers)
-    cid = uuid.uuid4()
 
     first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
     await asyncio.wait_for(registry.get(first.json()["run_id"]).task, timeout=2)
@@ -202,7 +201,7 @@ async def test_finished_run_keeps_its_key_even_if_it_crashes_after(db_client, be
 
 
 async def test_inputs_over_the_daily_limit_are_rejected(
-    db_client, bearer, monkeypatch, agent_calls
+    db_client, bearer, monkeypatch, agent_calls, cid
 ):
     """보호자별 하루 입력 횟수를 넘으면 429 — Agent 를 부르기 전에 막는다 (월 크레딧 보호).
 
@@ -213,7 +212,7 @@ async def test_inputs_over_the_daily_limit_are_rejected(
 
     responses = []
     for _ in range(3):
-        url = INPUTS.format(cid=uuid.uuid4())
+        url = INPUTS.format(cid=cid)
         responses.append(await db_client.post(url, json=BODY, headers=with_key(headers)))
 
     assert [r.status_code for r in responses] == [202, 202, 429]
@@ -222,7 +221,7 @@ async def test_inputs_over_the_daily_limit_are_rejected(
 
 
 async def test_replay_is_not_counted_and_still_works_after_the_limit(
-    db_client, bearer, monkeypatch
+    db_client, bearer, monkeypatch, cid
 ):
     """같은 키 재생은 새 입력이 아니다 — 세지 않고, 한도에 걸린 뒤에도 처음 run 을 돌려준다.
 
@@ -232,7 +231,6 @@ async def test_replay_is_not_counted_and_still_works_after_the_limit(
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, _ = bearer
     keyed = with_key(headers)
-    cid = uuid.uuid4()
 
     first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
     replayed = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
@@ -241,36 +239,34 @@ async def test_replay_is_not_counted_and_still_works_after_the_limit(
     assert replayed.json() == first.json()
 
 
-async def test_different_key_starts_a_new_run(db_client, bearer):
+async def test_different_key_starts_a_new_run(db_client, bearer, cid):
     headers, _ = bearer
 
-    first = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
-    )
-    second = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
-    )
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+    second = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
     assert first.json()["run_id"] != second.json()["run_id"]
 
 
-async def test_key_is_scoped_per_parent(db_client, bearer, session):
+async def test_key_is_scoped_per_parent(db_client, bearer, session, cid):
     """키 스코프는 (parent_id, method, path, key) — 보호자 사이에 키가 섞이지 않는다.
 
     (idempotency-v1 §3-5) 다른 보호자가 우연히 같은 키를 보내도 남의 run_id 를 받아 가면 안 된다.
     """
     headers_a, _ = bearer
-    headers_b, _ = await issue_bearer(session, token="test-token-other-parent")
+    headers_b, parent_b = await issue_bearer(session, token="test-token-other-parent")
+    # 같은 아이를 함께 보는 보호자 — 연결이 없으면 키를 보기 전에 403 으로 끝난다 (9단계)
+    await link_child(session, parent_id=parent_b, child_id=cid)
     key = str(uuid.uuid4())
-    cid = uuid.uuid4()
 
     a = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers_a, key))
     b = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers_b, key))
 
+    assert a.status_code == b.status_code == 202
     assert a.json()["run_id"] != b.json()["run_id"]
 
 
-async def test_other_parent_cannot_open_the_run(db_client, bearer, session, monkeypatch):
+async def test_other_parent_cannot_open_the_run(db_client, bearer, session, monkeypatch, cid):
     """🚨 run 은 만든 보호자만 연다. 남의 run 은 없는 run 과 똑같이 404 — 있다는 것도 흘리지 않는다.
 
     `failed` 는 보호자가 적은 문장(raw_text)을 그대로 싣는다. 로그인만 했으면 남의 run_id 로
@@ -285,9 +281,7 @@ async def test_other_parent_cannot_open_the_run(db_client, bearer, session, monk
     headers_a, _ = bearer
     headers_b, _ = await issue_bearer(session, token="test-token-other-parent")
 
-    accepted = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers_a)
-    )
+    accepted = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers_a))
     run_id = accepted.json()["run_id"]
     await asyncio.wait_for(registry.get(run_id).task, timeout=2)
 
@@ -298,16 +292,14 @@ async def test_other_parent_cannot_open_the_run(db_client, bearer, session, monk
     assert BODY["text"] not in response.text
 
 
-async def test_post_then_get_streams_steps_to_done(db_client, bearer):
+async def test_post_then_get_streams_steps_to_done(db_client, bearer, cid):
     """서버 쪽 관통 — 접수하고 이어서 GET 하면 step → … → done 이 흐른다.
 
     🚨 GET 전에 러너 태스크를 기다린다. 채널이 닫혀야 응답이 끝나고, 안 닫히면 테스트가 멈춘다.
     """
     headers, _ = bearer
 
-    accepted = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
-    )
+    accepted = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
     run_id = accepted.json()["run_id"]
     channel = registry.get(run_id)
     # 태스크를 채널에 매달지 않으면 GC 가 거둬 run 이 조용히 사라진다
@@ -328,9 +320,8 @@ _PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", Wo
 _ANSWER = {"text": "3일 전부터", "source": "home_input"}
 
 
-async def test_reply_to_가_이전_질문_맥락을_agent_로_넘긴다(db_client, bearer, agent_calls):
+async def test_reply_to_가_이전_질문_맥락을_agent_로_넘긴다(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    cid = uuid.uuid4()
     pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
 
     response = await db_client.post(
@@ -344,12 +335,14 @@ async def test_reply_to_가_이전_질문_맥락을_agent_로_넘긴다(db_clien
     assert agent_calls[0]["reply_to"] == "r-prev"
 
 
-async def test_없는_reply_to_는_400_이고_agent_를_부르지_않는다(db_client, bearer, agent_calls):
+async def test_없는_reply_to_는_400_이고_agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, cid
+):
     """맥락 없는 새 입력으로 강등하지 않는다 — "3일 전부터" 가 무엇의 3일 전인지 없이 남는다."""
     headers, _ = bearer
 
     response = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()),
+        INPUTS.format(cid=cid),
         json={**_ANSWER, "reply_to": "없는run"},
         headers=with_key(headers),
     )
@@ -359,9 +352,8 @@ async def test_없는_reply_to_는_400_이고_agent_를_부르지_않는다(db_c
     assert agent_calls == []
 
 
-async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls):
+async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls, cid):
     headers, _ = bearer
-    cid = uuid.uuid4()
     pending_reply.put(run_id="r-other", parent_id=uuid.uuid4(), child_id=cid, context=_PENDING)
 
     response = await db_client.post(
@@ -374,12 +366,12 @@ async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls):
     assert agent_calls == []
 
 
-async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer, agent_calls):
+async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
     pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=uuid.uuid4(), context=_PENDING)
 
     response = await db_client.post(
-        INPUTS.format(cid=uuid.uuid4()),
+        INPUTS.format(cid=cid),
         json={**_ANSWER, "reply_to": "r-prev"},
         headers=with_key(headers),
     )
@@ -388,9 +380,8 @@ async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer
     assert agent_calls == []
 
 
-async def test_같은_reply_to_를_두_번_쓰면_두_번째가_막힌다(db_client, bearer, agent_calls):
+async def test_같은_reply_to_를_두_번_쓰면_두_번째가_막힌다(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    cid = uuid.uuid4()
     pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
 
@@ -402,11 +393,10 @@ async def test_같은_reply_to_를_두_번_쓰면_두_번째가_막힌다(db_cli
 
 
 async def test_같은_키로_다시_누르면_400_이_아니라_같은_run_을_돌려준다(
-    db_client, bearer, agent_calls
+    db_client, bearer, agent_calls, cid
 ):
     # 맥락은 재생 뒤에 꺼낸다. 순서가 바뀌면 두 번째 누름이 400 을 받는다
     headers, parent_id = bearer
-    cid = uuid.uuid4()
     pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
     keyed = with_key(headers)
@@ -419,11 +409,12 @@ async def test_같은_키로_다시_누르면_400_이_아니라_같은_run_을_�
     assert len(agent_calls) == 1
 
 
-async def test_한도에_걸린_답은_맥락을_지우지_않는다(db_client, bearer, monkeypatch, agent_calls):
+async def test_한도에_걸린_답은_맥락을_지우지_않는다(
+    db_client, bearer, monkeypatch, agent_calls, cid
+):
     # 429 는 접수 전이다. 여기서 맥락을 지우면 한도가 풀려도 이어 적을 수 없다
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, parent_id = bearer
-    cid = uuid.uuid4()
     pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
@@ -439,11 +430,10 @@ async def test_한도에_걸린_답은_맥락을_지우지_않는다(db_client, 
 
 
 async def test_한도가_풀리면_남겨_둔_맥락으로_이어_적는다(
-    db_client, bearer, monkeypatch, agent_calls
+    db_client, bearer, monkeypatch, agent_calls, cid
 ):
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, parent_id = bearer
-    cid = uuid.uuid4()
     pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
@@ -458,12 +448,11 @@ async def test_한도가_풀리면_남겨_둔_맥락으로_이어_적는다(
 
 
 async def test_맥락_없는_reply_to_는_한도를_쓰지_않는다(
-    db_client, bearer, monkeypatch, agent_calls
+    db_client, bearer, monkeypatch, agent_calls, cid
 ):
     # 확인이 한도보다 앞이어야 잘못된 reply_to 가 하루 횟수를 쓰지 않는다
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, _ = bearer
-    cid = uuid.uuid4()
 
     rejected = await db_client.post(
         INPUTS.format(cid=cid),
@@ -473,4 +462,73 @@ async def test_맥락_없는_reply_to_는_한도를_쓰지_않는다(
     accepted = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
     assert rejected.status_code == 400
+    assert accepted.status_code == 202
+
+
+# ── 9단계 — 아이 주소는 연결된 보호자만 ─────────────────────────────
+
+
+async def test_남의_아이에게는_적을_수_없다(db_client, bearer, session, agent_calls):
+    """🚨 로그인만 했으면 남의 아이 id 로 그 아이의 기억에 적을 수 있었다 (#134 9단계)."""
+    headers, _ = bearer
+    _, other_parent = await issue_bearer(session, token="test-token-other-parent")
+    others_child = await link_child(session, parent_id=other_parent)
+
+    response = await db_client.post(
+        INPUTS.format(cid=others_child), json=BODY, headers=with_key(headers)
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "child_access_denied"
+    assert agent_calls == []
+
+
+async def test_없는_아이도_남의_아이와_같은_403(db_client, bearer, agent_calls):
+    """404 를 주면 "그 id 의 아이가 있다 / 없다" 가 드러난다. 둘을 구분하지 않는다."""
+    headers, _ = bearer
+
+    response = await db_client.post(
+        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "child_access_denied"
+    assert agent_calls == []
+
+
+async def test_보관된_아이에게는_적을_수_없다(db_client, bearer, session, cid, agent_calls):
+    headers, _ = bearer
+    (await session.get(Child, cid)).deleted_at = datetime.now(UTC)
+    await session.flush()
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert response.status_code == 403
+    assert agent_calls == []
+
+
+async def test_함께_보는_보호자도_적을_수_있다(db_client, bearer, session, cid, agent_calls):
+    """owner 만이 아니다 — 초대로 연결된 보호자(member)도 같은 아이에게 적는다."""
+    member_headers, member = await issue_bearer(session, token="test-token-member")
+    await link_child(session, parent_id=member, child_id=cid)
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid), json=BODY, headers=with_key(member_headers)
+    )
+
+    assert response.status_code == 202
+    assert agent_calls[0]["parent_id"] == member
+
+
+async def test_막힌_요청은_하루_횟수를_쓰지_않는다(db_client, bearer, cid, monkeypatch):
+    """접근 확인이 한도보다 앞이다 — 남의 아이 id 로 보낸 요청이 내 하루 횟수를 깎지 않는다."""
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
+    headers, _ = bearer
+
+    denied = await db_client.post(
+        INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
+    )
+    accepted = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert denied.status_code == 403
     assert accepted.status_code == 202
