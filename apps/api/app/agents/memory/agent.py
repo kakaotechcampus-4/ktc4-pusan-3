@@ -144,6 +144,11 @@ class MemoryAgentResult:
         """이전 이름. pipeline 로그와 eval 이 이걸로 본다."""
         return self.reply.text if self.reply is not None else None
 
+    @property
+    def persisted(self) -> bool:
+        """DB 에 실제로 쓴 호출이 하나라도 있는가. 일정 초안만 만든 run 은 False."""
+        return any(persisted_write(call) for call in self.calls)
+
 
 async def run(
     raw_text: str,
@@ -208,12 +213,14 @@ async def run(
         tool_calls = getattr(response.message, "tool_calls", None) or []
         if not tool_calls:
             content = (response.message.content or "").strip()
-            if not content and not nudged:
+            parsed = _parse_reply(content, reply_model)
+            # structured output 이라 빈 턴은 text 가 빈 JSON 으로도 온다 (라이브 RC26)
+            spoken = parsed.text.strip() if parsed is not None else content
+            if not spoken and not nudged:
                 # 빈 턴. 응답 문구는 화면이 지어내지 않으므로 모델에게 한 번 더 묻는다
                 nudged = True
                 messages.append({"role": "user", "content": _EMPTY_TURN})
                 continue
-            parsed = _parse_reply(content, reply_model)
             if parsed is not None:
                 replied = MemoryReply(text=parsed.text, kind=parsed.kind)
                 pending = _pending(
@@ -326,6 +333,25 @@ def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
 def _wrote(calls: list[ToolCallRecord]) -> bool:
     """이번 run 에서 성공한 쓰기가 하나라도 있는지. 일정 초안도 센다."""
     return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
+
+
+def persisted_write(call: ToolCallRecord) -> bool:
+    """DB 에 실제로 쓴 호출인가. 일정 초안과 바뀐 것 없는 성공은 세지 않는다.
+
+    일정 · 준비물의 create/update 는 초안만 만든다(`draft=True`). 같은 값으로 바꾸거나
+    이미 있는 준비물이면 아무것도 쓰지 않는다(`changed=[]` · `added=False`).
+    준비물 챙김 표시는 바로 쓰고, 이름 변경과 한 호출에 와도 먼저 쓴다 — 그때 결과가
+    이름 초안(`draft=True`)이어도 쓴 것이다. 결과 모양은 `tools/schedule.py` 가 정한다.
+    쓰기 tool 을 더하면 test_persisted_write.py 의 CASES 에 그 tool 을 같이 넣는다.
+    """
+    if not call.success or not call.name.startswith(MUTATING_PREFIXES):
+        return False
+    if call.name == "update_event_item" and call.arguments.get("is_prepared") is not None:
+        return True
+    data = call.result.get("data") or {}
+    if data.get("draft") is True:
+        return False
+    return data.get("changed") != [] and data.get("added") is not False
 
 
 def _open_hints(task: MemoryTask, calls: list[ToolCallRecord]) -> list[MemoryHint]:

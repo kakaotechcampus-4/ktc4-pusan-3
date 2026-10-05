@@ -273,6 +273,28 @@ async def test_menu_catalog_get_put_은_menu_key_로_찾는다() -> None:
     assert await store.get("된장국") == row
 
 
+async def test_menu_catalog_put_은_이미_있는_행을_덮지_않는다() -> None:
+    # 캐시 미스 저장은 카탈로그에 없을 때만 넣는다(어댑터는 ON CONFLICT DO NOTHING).
+    # 같은 메뉴를 두 run 이 채우거나 사람이 넣은 행이 이미 있어도 한 행이 남고 덮이지 않는다
+    manual = MenuCatalogRow(
+        menu_key="된장국", display_name="된장국", source="manual", resolved=True, synced_at=NOW
+    )
+    fetched = MenuCatalogRow(
+        menu_key="된장국",
+        display_name="된장국(조회)",
+        source="mfds_nutri",
+        resolved=True,
+        synced_at=NOW,
+    )
+    store = InMemoryMenuCatalog([manual])
+
+    await store.put(fetched)
+    await store.put(fetched)
+
+    assert await store.get("된장국") == manual
+    assert await store.all_resolved() == [manual]
+
+
 # ── menu source: 외부 API 실패는 전용 예외 ─────────────────────────
 async def test_menu_source_fail_이면_MenuSourceError() -> None:
     source = InMemoryMenuSource(fail=True)

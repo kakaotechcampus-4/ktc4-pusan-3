@@ -4,9 +4,16 @@
 DB·외부 API가 연결된 뒤에 붙인다 — 이번 커밋은 포트와 테스트·eval 용 InMemory
 구현까지만 다룬다.
 
-Food는 쓰기 포트를 `daycare_meal` 하나만 갖고, 그마저도 수정·삭제뿐이다. 없는
-급식을 새로 만드는 INSERT 는 Food 의 권한 밖이다 — 기록은 Memory 가, 급식 원본은
-기관 공지·NEIS 동기화가 채운다.
+Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제, 영양소 구간
+(`NutrientBandStore.save`), 메뉴 카탈로그(`MenuCatalogStore.put`). 없는 급식을 새로 만드는
+INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OCR 분석이 채운다.
+메뉴 카탈로그는 캐시 미스 때 Food 요청 안에서 `MenuSource` 로 외부 조회하고, 결과를 받은
+뒤 백엔드 어댑터가 짧게 저장한다. 외부 API 를 기다리는 동안 DB 트랜잭션을 쥐지 않는다
+(멘토 #196 답변 · food_agent_own_table §1). DB 권한 방식은 백엔드가 정한다.
+
+쓰기 포트는 호출 하나가 짧은 트랜잭션 하나로 바로 commit된다. 같은 run의 뒤에 오는
+조회(다른 task 포함)가 그 결과를 읽어야 해서다. 조회 포트도 호출마다 짧은
+세션으로 읽는다. Food는 run 내내 DB 연결을 쥐지 않는다.
 
 `child_id` 를 갖는 기준은 둘 중 하나다 — ① Food 가 그 행을 쓰기(update·delete)까지 하는가,
 ② `suggestion_evidence` 의 근거 행이 될 수 있는가(`app/agents/common/refs.py` 의
@@ -17,12 +24,12 @@ Food는 쓰기 포트를 `daycare_meal` 하나만 갖고, 그마저도 수정·�
 ①과 같은 이유로 `child_id` 를 받는다 — 아이 축 없이 `id` 만으로 쓰면 잘못된 id 하나가
 남의 아이 급식 행을 고치거나 지울 수 있다.
 
-`MenuCatalogRow`·`FoodDocRow`·`NutritionFacts` 는 아이와 무관한 공용 데이터(급식 메뉴
-캐시·참고 문서·영양성분)라 둘 다 해당하지 않는다. `SafetyEntry`(`health_safety`)도
+`MenuCatalogRow`·`FoodDocRow`·`NutritionFacts` 는 아이와 무관한 공용 데이터(메뉴
+카탈로그·참고 문서·영양성분)라 둘 다 해당하지 않는다. `SafetyEntry`(`health_safety`)도
 `child_id` 가 없다 — Food 는 이 행을 쓰지 않고(①에 해당 안 함) `ChildRecordKind` 에도
 없어 근거 행이 되지 않는다(②에도 해당 안 함). 안전 게이팅 경로는
-`SafetyReader.food_safety(child_id=...)` 를 한 번 불러 그 결과만 판단에 쓰고 다른 곳으로
-전달하지 않으므로, 아이가 섞일 자리 자체가 없다.
+`build_gate`가 `SafetyReader.food_safety(child_id=...)` 를 한 번 불러 그 결과를 같은 task 의
+`FoodRunState.safety` 에만 두고 쓰므로, 아이가 섞일 자리 자체가 없다.
 
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
@@ -30,12 +37,12 @@ Food는 쓰기 포트를 `daycare_meal` 하나만 갖고, 그마저도 수정·�
 | SafetyReader | health_safety — allergy · chronic_disease · dietary_restriction |
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
-| MenuCatalogStore | 급식 메뉴명 → 식품코드·영양성분 캐시 |
+| MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 급식 메뉴명 → 식품코드·영양성분 |
 | MenuSource | 식약처 등 외부 영양성분·레시피 조회 |
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
 | SuggestionHistoryReader | 최근 제안한 menu_key (반복 회피용) |
-| NutrientBandStore | 영양소 구간 히스테리시스 기준값 |
+| NutrientBandStore | 직전 영양소 구간 (히스테리시스 기준값). 저장 위치는 TODO: 확정 필요 (#205) |
 """
 
 from dataclasses import dataclass, field
@@ -64,7 +71,8 @@ class SafetyLookupError(Exception):
 class MenuSourceError(Exception):
     """외부 영양성분·레시피 API 호출 실패.
 
-    결과가 0건인 것(정말 없음)과 다르다. 호출부는 이 예외를 캐시 미스로 뭉개지 않는다.
+    결과가 0건인 것(정말 없음)과 다르다. 호출부는 이 예외를 카탈로그에 없는 것
+    (캐시 미스)처럼 뭉개지 않는다.
     """
 
 
@@ -123,7 +131,7 @@ class NutritionFacts:
 
 @dataclass(frozen=True)
 class MenuCatalogRow:
-    """급식 메뉴명 → 식품코드·영양성분 캐시 한 행."""
+    """메뉴 카탈로그(`menu_catalog`) 한 행 — 급식 메뉴명 → 식품코드·영양성분."""
 
     menu_key: str
     display_name: str
@@ -213,13 +221,28 @@ class FoodMemoryReader(Protocol):
 
 class MenuCatalogStore(Protocol):
     async def get(self, menu_key: str) -> MenuCatalogRow | None: ...
-    async def put(self, row: MenuCatalogRow) -> None: ...
+    async def put(self, row: MenuCatalogRow) -> None:
+        """카탈로그에 없을 때만 넣는다 — 어댑터는 `ON CONFLICT (menu_key) DO NOTHING`.
+
+        같은 메뉴를 두 run 이 동시에 채워도 한 행만 남고, 사람이 넣은 행(manual ·
+        center_standard)을 덮지 않는다. 외부 조회 결과를 받은 뒤 짧은 트랜잭션 하나로 바로
+        commit 된다. 있는 행을 고치거나 지우는 길은 포트에 없다. DB 권한 방식은 백엔드가
+        정한다.
+        """
+        ...
+
     async def all_resolved(self) -> list[MenuCatalogRow]:
         """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다."""
         ...
 
 
 class MenuSource(Protocol):
+    """외부 영양성분 · 레시피 조회. 실패하거나 정보가 부족하면 그 메뉴는 unresolved 로 둔다.
+
+    unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
+    (`tools/safety.py` 의 unchecked).
+    """
+
     async def nutrition(self, *, name: str) -> NutritionFacts | None:
         """실패는 MenuSourceError. None 은 그 이름의 영양성분이 정말 없다는 뜻."""
         ...
@@ -239,12 +262,18 @@ class DaycareMealStore(Protocol):
 
         `row.child_id` 가 이미 아이 축을 들고 있다 — 어댑터는 `WHERE id = ? AND child_id = ?`
         로 갈 수 있다. 그래서 이 메서드는 `child_id` 를 따로 받지 않는다.
+
+        호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다. 같은 run의 읽는 task가 갱신된
+        행을 본다. 행을 통째로 바꾸므로 같은 갱신을 두 번 적용해도 결과가 같다.
         """
         ...
 
     async def delete(self, *, child_id: UUID, row_ids: tuple[UUID, ...]) -> None:
         """`child_id` 가 다른 행은 지우지 않는다 — `row_ids` 만으로 지우면 다른 아이의
-        급식 id 가 섞여 들어와도 그대로 지워진다."""
+        급식 id 가 섞여 들어와도 그대로 지워진다.
+
+        호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다.
+        """
         ...
 
 
@@ -260,12 +289,19 @@ class SuggestionHistoryReader(Protocol):
 
 class NutrientBandStore(Protocol):
     async def last(self, *, child_id: UUID) -> dict[str, NutrientBand]: ...
-    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None: ...
+    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None:
+        """아이의 구간 묶음을 통째로 바꾼다. 호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다."""
+        ...
 
 
 @dataclass(frozen=True)
 class FoodPorts:
-    """Food Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음."""
+    """Food Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음.
+
+    포트는 DB 연결을 쥐고 있지 않다. 조회는 호출마다 짧은 세션으로 읽어서 한 task 안에서도
+    두 조회의 시점이 다를 수 있다. 그래서 안전 정보는 task 시작에 `build_gate` 가 한 번 읽어
+    `FoodRunState.safety` 에 두고, 게이트와 필터가 그 값을 같이 쓴다.
+    """
 
     profile: ChildProfileReader
     consent: ConsentReader
@@ -277,4 +313,4 @@ class FoodPorts:
     docs: FoodDocReader
     suggestions: SuggestionHistoryReader
     bands: NutrientBandStore
-    menu_source: MenuSource | None = None  # None 이면 캐시만 쓴다 (API 키 없음)
+    menu_source: MenuSource | None = None  # None 이면 카탈로그만 쓴다 (API 키 없음)

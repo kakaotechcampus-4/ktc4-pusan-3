@@ -3,15 +3,14 @@
 pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보내고, 화면은 정해진 이름의 SSE
 글자만 알아듣는다. 화면이 아는 이름은 프론트 `apps/web/src/lib/api/sse.ts` 의 `RunEvent` 를 기준으로
 본다 — HTML 계약서는 9/21 부터 갱신을 보류했고, SSE 는 스웨거로 그리기 어렵다.
-⚠️ `event_draft` · `guidance` 는 아직 `RunEvent` 에 없다 (#141 에서 추가 중). 그 전까지 화면은
-   모르는 이벤트로 보고 건너뛴다 — 깨지지는 않는다.
 
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
    - `Saved` — 화면은 관찰 내용 전체(`observations`)를 원하는데 id 만 실려 온다. 8단계에서 행을
      읽어 채울 때까지 보내지 않는다.
+     🚨 보내기 시작할 때도 기록 단계 commit 뒤여야 한다. pipeline은 commit 이 끝난 뒤에
+        `Saved` 를 낸다. 여기서는 받은 순서대로 보내기만 하고, 미리 만들어 앞당겨 보내지 않는다.
+        화면이 "저장됐어요"로 본 기록은 DB에 있어야 한다.
    - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
-   - `Partial` — 화면 계약에는 있지만 추천 카드가 아직 안 나가서 보낼 자리가 없다.
-     카드 번역과 같이 연다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
    pipeline 에 이벤트가 새로 생기면 tests/unit/api/test_run_translate.py 가 실패해서 정하라고 한다.
 
@@ -29,6 +28,7 @@ from app.agents.entrypoint import (
     Failed,
     Guidance,
     MemoryNote,
+    Partial,
     Step,
     Unavailable,
 )
@@ -61,6 +61,15 @@ def to_sse(event: Event) -> sse.SseEvent | None:
     if isinstance(event, Unavailable):
         # "준비 중" 카드. 문구는 화면이 Agent 이름으로 만들고, 서버는 이름만 넘긴다
         return "unavailable", {"agents": list(event.agents)}
+    if isinstance(event, Partial):
+        # 끝 신호가 아니다. 뒤에 done 이 오고, 화면은 그때 "부분 결과" 로 닫는다.
+        # 같은 Agent 가 succeeded · failed 양쪽에 있을 수 있다(task 둘 중 하나만 실패)
+        # 문구는 unavailable 처럼 화면이 Agent 이름으로 만든다. 서버 문구를 두면 정본이 두 곳이 된다
+        return "partial", {
+            "reason": event.reason,
+            "succeeded": list(event.succeeded),
+            "failed": list(event.failed),
+        }
     return None
 
 

@@ -22,6 +22,7 @@
 - `(daycare)`는 `toddler`·`preschool` 에서만, 급식 행이 있을 때만 더해지는 tool이다.
   `infant_weaning`의 `meal_recommendation` 묶음은 급식 행과 무관하게 고정 3개다.
 - `filter_food_safety`는 `CODE_TOOLS`.
+- `daycare_meal` 은 쓰는 라벨이다(`WRITING_TASKS`). 같은 run 의 다른 Food task 보다 먼저 끝난다.
 """
 
 from collections.abc import Awaitable, Callable, Collection
@@ -72,6 +73,10 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
 
 # 모델에게 보이지 않는 코드 tool. 코드가 정해진 지점에서 직접 부른다 (S6)
 CODE_TOOLS: dict[str, Callable[..., Any]] = {"filter_food_safety": filter_food_safety}
+
+# 같은 run의 다른 task가 읽는 행을 쓰는 라벨. pipeline이 이 task를 먼저 끝낸 뒤 나머지를 돌림
+# ("급식 대신 두유 받았대. 저녁 뭐 먹일까?" 의 추천이 갱신된 급식을 읽어야 함)
+WRITING_TASKS: frozenset[FoodTaskType] = frozenset({FoodTaskType.DAYCARE_MEAL})
 
 _DEFINITIONS: dict[str, ToolDefinition] = {d.name: d for d in TOOL_DEFINITIONS}
 TOOL_SPECS: list[dict[str, Any]] = build_tool_specs(

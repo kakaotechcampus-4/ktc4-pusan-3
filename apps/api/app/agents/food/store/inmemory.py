@@ -86,7 +86,7 @@ class InMemoryFoodMemory:
 
 
 class InMemoryMenuCatalog:
-    """메뉴명 → 영양성분 캐시. 아이 무관, 전역 하나다."""
+    """메뉴 카탈로그 — 메뉴명 → 영양성분. 아이 무관, 전역 하나다."""
 
     def __init__(self, rows: Sequence[MenuCatalogRow] = ()) -> None:
         self._rows: dict[str, MenuCatalogRow] = {row.menu_key: row for row in rows}
@@ -95,7 +95,7 @@ class InMemoryMenuCatalog:
         return self._rows.get(menu_key)
 
     async def put(self, row: MenuCatalogRow) -> None:
-        self._rows[row.menu_key] = row
+        self._rows.setdefault(row.menu_key, row)
 
     async def all_resolved(self) -> list[MenuCatalogRow]:
         """`resolved=True` 행만 돌려준다. 재료(ingredients) 유무는 여기서 거르지 않는다."""
