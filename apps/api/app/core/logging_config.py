@@ -24,31 +24,39 @@ _FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S%z"
 """시간대(+0900 등)까지. 개발 맥은 한국 시간, 컨테이너는 보통 UTC 라 말없이 9시간 어긋난다."""
 
-_INVITE_CODE = re.compile(r"(/invites/)[^/?]+")
+_INVITE_CODE = re.compile(r"(/invites/+)[^/?]+", re.IGNORECASE)
 """초대 코드는 경로에 들어 있다 — /invites/{code} · /invites/{code}/accept.
 
-발행 주소(/children/{cid}/invites — /invites 로 끝남)는 해당 없다."""
+대소문자 · 빗금 여러 개도 잡는다(라우트에는 안 맞아 404 지만 원문은 찍힌다). 발행 주소
+(/children/{cid}/invites — /invites 로 끝남)는 해당 없다. 나중에 /invites/{id} 모양의 주소가 생기면
+그 id 도 가려진다 — 덜 가리는 것보다 낫다.
+"""
+
+
+def _redact(text: str) -> str:
+    """쿼리 문자열 전체와 초대 코드를 가린다. 경로는 남긴다."""
+    path, has_query, _ = text.partition("?")
+    path = _INVITE_CODE.sub(r"\1[redacted]", path)
+    return f"{path}?[redacted]" if has_query else path
 
 
 class _RedactAccessLog(logging.Filter):
-    """uvicorn 접근 로그에서 쿼리 문자열과 초대 코드를 가린다 (#214 리뷰).
+    """uvicorn 접근 로그에서 쿼리 문자열과 초대 코드를 가린다 (#214 리뷰 · #239).
 
     🚨 uvicorn 은 주소를 쿼리째 찍는다. 카카오 콜백의 인가 코드 · state, 로그인 시작의 bind 원문이
        쿼리에 있고, 초대 코드는 경로에 있다 (auth-kakao-v1 §7-5 "콜백 URL 전체를 로깅하지 않는다").
        경로 · 상태 코드 · id(아이 · run)는 남긴다 — 어느 주소가 어떻게 끝났는지는 운영에 필요하다.
 
-    uvicorn 은 `'%s - "%s %s HTTP/%s" %d'` 에 값 5개(주소 · 메서드 · 경로 · 버전 · 상태)를 넘긴다.
-    세 번째만 바꾼다 — uvicorn 의 AccessFormatter 도 이 5개를 그대로 풀어 쓴다.
+    uvicorn 은 `'%s - "%s %s HTTP/%s" %d'` 에 값 5개(주소 · 메서드 · 경로 · 버전 · 상태)를 넘기지만,
+    그 모양에 기대지 않고 **글자 값 전부**에 같은 가리기를 건다. uvicorn 을 올려 모양이 바뀌어도
+    원문이 조용히 새지 않게(안전한 쪽으로 실패하게) — 주소 · 메서드 · 버전에는 `?` 도 `/invites/` 도
+    없어서 엉뚱한 값이 가려지지 않는다. 값 개수는 그대로라 uvicorn 의 AccessFormatter 도
+    그대로 푼다.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        args = record.args
-        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
-            path, has_query, _ = args[2].partition("?")
-            path = _INVITE_CODE.sub(r"\1[redacted]", path)
-            if has_query:
-                path += "?[redacted]"
-            record.args = (args[0], args[1], path, args[3], args[4])
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact(a) if isinstance(a, str) else a for a in record.args)
         return True
 
 

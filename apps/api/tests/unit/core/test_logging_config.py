@@ -38,6 +38,11 @@ access.info(line, "127.0.0.1:5000", "GET",
 access.info(line, "127.0.0.1:5000", "GET",
             "/api/v1/auth/kakao?client=web&bind=SECRET-BIND", "1.1", 302)
 access.info(line, "127.0.0.1:5000", "POST", "/api/v1/invites/SECRETCD/accept", "1.1", 200)
+access.info(line, "127.0.0.1:5000", "GET", "/api/v1/invites/SECRETPV", "1.1", 200)
+access.info(line, "127.0.0.1:5000", "GET", "/api/v1/Invites/SECRETUP", "1.1", 404)
+access.info(line, "127.0.0.1:5000", "GET", "/api/v1/invites//SECRETDS", "1.1", 404)
+# uvicorn 이 값 모양(개수 · 순서)을 바꿔도 가려야 한다 — 모양이 다르면 그냥 통과시키지 않는다
+access.info("%s %s", "GET", "/api/v1/auth/kakao?bind=SECRET-SHAPE")
 access.info(line, "127.0.0.1:5000", "POST",
             "/api/v1/children/0b6f5c1e-0000-4000-8000-000000000001/inputs", "1.1", 202)
 """
@@ -99,10 +104,21 @@ def test_access_log_hides_query_strings_and_invite_codes(output):
     초대 코드는 경로에 있다 (/invites/{code}). 둘 다 가리고 경로 · 상태 코드는 남긴다
     (auth-kakao-v1 §7-5 "콜백 URL 전체를 로깅하지 않는다", #214 리뷰).
     """
-    for secret in ("SECRET-AUTH-CODE", "SECRET-STATE", "SECRET-BIND", "SECRETCD"):
+    secrets = (
+        "SECRET-AUTH-CODE",
+        "SECRET-STATE",
+        "SECRET-BIND",
+        "SECRETCD",
+        "SECRETPV",
+        "SECRETUP",
+        "SECRETDS",
+        "SECRET-SHAPE",
+    )
+    for secret in secrets:
         assert secret not in output
     assert "/api/v1/auth/kakao/callback?[redacted]" in output
     assert "/api/v1/invites/[redacted]/accept" in output
+    assert "/api/v1/invites/[redacted] HTTP" in output  # 수락 전 확인 — 코드가 경로 끝
 
 
 def test_access_log_keeps_ids_in_paths(output):
