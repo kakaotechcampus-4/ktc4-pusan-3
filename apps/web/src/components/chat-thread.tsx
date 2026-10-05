@@ -42,12 +42,17 @@ export function ChatThread({
   onPickOffer: (agents: Agent[], runId: string) => void;
 }) {
   const last = turns.at(-1);
+  const days = groupByDay(turns);
+  /** 하루뿐이면 머리(`chat/page.tsx`)가 날짜를 이미 말한다 — 같은 날짜를 두 번 세우지 않는다. */
+  const dividers = days.length > 1;
 
   return (
     <div className="flex flex-col gap-8">
-      {groupByDay(turns).map(([day, dayTurns]) => (
+      {days.map(([day, dayTurns]) => (
         <section key={day} aria-label={`${formatDay(day)} 대화`} className="flex flex-col gap-6">
-          <h2 className="text-caption text-ink-subtle text-center">{formatDay(day)}</h2>
+          {dividers ? (
+            <h2 className="text-caption text-ink-subtle text-center">{formatDay(day)}</h2>
+          ) : null}
           <ol className="flex flex-col gap-6">
             {dayTurns.map((turn) => (
               <li key={turn.id} className="flex flex-col gap-3">
@@ -87,16 +92,22 @@ function groupByDay(turns: ChatTurn[]): Array<[string, ChatTurn[]]> {
 
 /**
  * 부모가 보낸 한 줄. 🚨 **원문의 자리다** — 서버가 끝을 말하기 전에는 사라지지 않는다
- * (`stores/conversation.ts`). 면 색은 채팅바와 같은 `surface-muted` 다 — 홈 입력창에서 막 보낸 한 줄이
- * 이 자리로 이어 붙는데(`VIEW_TRANSITION.sentLine`), 면이 바뀌면 이어진 것이 아니라 바뀐 것으로 보인다.
+ * (`stores/conversation.ts`).
+ *
+ * 🚨 **`brand` 면 + 흰 글자다** (디자인 시스템 §2-2 의 여섯째 자리). 이 화면의 주인공은 답 묶음이 아니라
+ *    **부모가 적은 말**이다 (예전 04 에서 `card-accent` 한 장을 받던 "적어주신 한 줄"). 답 묶음이 전부
+ *    `surface` 카드라서, 보낸 한 줄까지 뉴트럴이면 주고받음 하나가 어디서 시작되는지가 안 보인다.
+ *    🚨 **꼬리 · 그림자를 달지 않는다** — 주 버튼과 같은 색이라, 누를 수 있는 것처럼 보이지 않게
+ *    모양은 카드 그대로 두고 누르는 반응도 주지 않는다.
  *
  * @param named 막 보낸 한 줄인가. 🚨 이름은 **하나에만** 준다 — 같은 이름이 둘이면 전환이 건너뛴다.
  */
 function SentBubble({ turn, named }: { turn: ChatTurn; named: boolean }) {
   const bubble = (
-    <div className="bg-surface-muted rounded-card max-w-[85%] px-4 py-3">
-      {turn.answering ? <p className="text-caption text-ink-subtle mb-1">질문에 대한 답</p> : null}
-      <p className="text-body text-ink break-words whitespace-pre-wrap">{turn.body.text}</p>
+    // 흰 글자 6.2:1 (§2-2 `brand` 행) — 캡션도 같은 흰색이다. 흐리게 낮추면 4.5:1 아래로 내려간다.
+    <div className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
+      {turn.answering ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
+      <p className="text-body break-words whitespace-pre-wrap">{turn.body.text}</p>
     </div>
   );
 

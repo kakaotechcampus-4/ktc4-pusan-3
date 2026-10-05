@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, MessagesSquare } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -18,7 +19,8 @@ import { IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
-import type { Agent } from "@/lib/api";
+import { api, qk, type Agent, type Me } from "@/lib/api";
+import { formatDay, toSeoulDateKey } from "@/lib/format";
 import {
   isBusy,
   sendLine,
@@ -57,6 +59,16 @@ function ChatScreen() {
   const conversation = useConversation(childId);
   const busy = isBusy(conversation);
 
+  // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
+  const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
+  const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
+  /**
+   * 머리에 세우는 날. 🚨 **마지막 한 줄의 날이다** — 앱을 켜 둔 채 자정을 넘기면 "오늘" 과 화면에 있는
+   * 대화의 날이 다르다. 대화가 없을 때만 오늘(한국 시간)이다.
+   */
+  const [today] = useState(() => toSeoulDateKey(new Date()));
+  const shownDay = conversation.turns.at(-1)?.day ?? today;
+
   // 🚨 `useState` 가 아니다 — 홈과 같은 입력창이다. 네비로 다녀와도 쓰던 글이 살아 있다.
   const [text, setText] = useDraftText(childId);
   const clearDraft = useDraftStore((s) => s.clearDraft);
@@ -94,6 +106,25 @@ function ChatScreen() {
   return (
     <Screen
       className="gap-6"
+      topBar={
+        // 🚨 **머리를 붙여 둔다.** 대화는 아래로 자라서, 돌아가는 화살표가 본문에 있으면 몇 번만 주고받아도
+        //    화면 밖으로 밀린다 — 흐름 화면이라 네비가 없어서 나가는 길이 그것 하나다.
+        // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 10 › 고객센터와 같다).
+        <header className="-ml-3 flex items-center gap-1">
+          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기">
+            <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButtonLink>
+          <div className="min-w-0">
+            {/* 자정을 넘겨 켜 둔 앱에서 어제 대화를 "오늘" 이라고 부르지 않는다. */}
+            <PageTitle>{shownDay === today ? "오늘 대화" : "대화"}</PageTitle>
+            {/* 누구의 어느 날 대화인지. 🚨 날짜 머리줄은 날이 둘 이상일 때만 본문에 선다
+                (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
+            <p className="text-caption text-ink-subtle">
+              {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
+            </p>
+          </div>
+        </header>
+      }
       bottomBar={
         <div className="flex flex-col gap-2">
           {conversation.answering ? (
@@ -113,13 +144,6 @@ function ChatScreen() {
         </div>
       }
     >
-      <header className="-ml-3 flex items-center gap-1">
-        <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기">
-          <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-        </IconButtonLink>
-        <PageTitle>오늘 대화</PageTitle>
-      </header>
-
       {conversation.turns.length === 0 ? (
         // 🚨 지난 대화가 남지 않는다는 것을 숨기지 않는다 — 앱을 끄면 사라진다 (#228 전까지).
         <EmptyState
