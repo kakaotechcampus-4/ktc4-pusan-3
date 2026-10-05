@@ -136,6 +136,7 @@ function HomeScreen() {
               onPickPrompt={(agent) => goToSuggestions([agent])}
               onPickPhoto={() => setPhotoSheetOpen(true)}
               pending={busy || leaving !== null}
+              locked={leaving !== null}
               busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
               sentLine={leaving !== null}
               lead={

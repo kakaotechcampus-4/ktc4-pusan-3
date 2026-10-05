@@ -39,6 +39,7 @@ export function HomeComposer({
   onPickPrompt,
   onPickPhoto,
   pending,
+  locked = false,
   busyLabel = "보내는 중이에요",
   sentLine = false,
   lead,
@@ -51,7 +52,18 @@ export function HomeComposer({
   onPickPrompt: (agent: Agent) => void;
   /** 08 사진 화면으로. 🚨 여기서 파일을 고르지 않는다 — 고르는 자리와 확인하는 자리가 같아야 한다. */
   onPickPhoto: () => void;
+  /**
+   * 보내기만 막는다 — 답을 기다리는 중 (`isBusy`). 🚨 **입력은 열어 둔다** (#231 리뷰). 최대 60초 동안
+   * 아무것도 못 쓰면 다음 한 줄을 잊는다 — Claude · ChatGPT 도 막는 것은 보내기뿐이다.
+   * 🚨 그래서 입력창에 글이 있는 채로 실패가 오는 일이 흔하다 — 원문을 입력창에 옮기는 쪽이 그 글을
+   *    덮지 않아야 한다 (`stores/conversation.ts` 의 `canHandBack`).
+   */
   pending: boolean;
+  /**
+   * 입력까지 통째로 잠근다. 🚨 **03 홈이 막 보내고 대화 화면으로 넘어가는 한 순간에만** 쓴다 — 그때
+   * 입력창은 막 보낸 글자를 든 그림이라(`sentLine`) 고칠 수 있으면 안 된다.
+   */
+  locked?: boolean;
   /** 기다리는 동안 보내기 버튼의 이름. 대화 화면은 보낸 뒤 답을 기다리는 시간이 길다. */
   busyLabel?: string;
   /**
@@ -63,7 +75,7 @@ export function HomeComposer({
   /** 제안 줄 맨 앞에 서는 문 하나 — 03 의 "오늘 대화 이어보기" (`AgentPrompts` 의 `lead`). */
   lead?: ReactNode;
 }) {
-  const canSubmit = value.trim().length > 0 && !pending;
+  const canSubmit = value.trim().length > 0 && !pending && !locked;
 
   const input = (
     <TextArea
@@ -76,7 +88,7 @@ export function HomeComposer({
       placeholder="말하듯 적어주세요"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      disabled={pending}
+      disabled={locked}
     />
   );
 
@@ -89,7 +101,7 @@ export function HomeComposer({
       <AgentPrompts
         items={prompts}
         onPick={onPickPrompt}
-        disabled={pending}
+        disabled={locked}
         layout="scroller"
         lead={lead}
       />
@@ -97,7 +109,7 @@ export function HomeComposer({
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
       <Named name={VIEW_TRANSITION.chatBar}>
         <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
-          <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={pending}>
+          <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
             <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButton>
           <IconButton label="말로 적기 (음성 처리 방침을 정하는 중이에요)" disabled>
