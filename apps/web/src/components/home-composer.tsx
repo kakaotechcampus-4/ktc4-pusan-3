@@ -88,6 +88,18 @@ export function HomeComposer({
       placeholder="말하듯 적어주세요"
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      // 모바일 키보드의 Enter 자리에 "보내기" 가 뜬다 — 아래 Enter 동작과 같은 말을 한다.
+      enterKeyHint="send"
+      onKeyDown={(e) => {
+        // Enter 는 보내기, Shift+Enter 는 줄바꿈이다 (03 홈 · 04 대화 공통).
+        // 🚨 **한글 조합 중의 Enter 는 보내지 않는다.** 그 Enter 는 마지막 글자를 확정하는 키라, 여기서
+        //    보내면 끝 글자가 빠진 채 나가거나 조합이 끝나며 한 번 더 나간다 (`isComposing` · 일부 브라우저는 229).
+        if (e.key !== "Enter" || e.shiftKey) return;
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        // 보낼 수 없을 때(빈 입력 · 답을 기다리는 중)도 줄바꿈으로 새지 않게 막기만 한다.
+        if (canSubmit) onSubmit();
+      }}
       disabled={locked}
     />
   );
