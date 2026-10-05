@@ -61,7 +61,8 @@ from app.rules.age import Stage
 # 하루씩 다시 판정해서 얻는다(영양소_계산_설계 §3).
 NutrientBand = Literal["low", "ok", "high"]
 
-# observation_food.confidence_source 값. Memory 가 정한다(memory/schemas/common.py 와 같은 값).
+# observation_food.confidence_source 값(memory/schemas/common.py 와 같은 값).
+# 보호자 말은 Memory Agent 가 저장할 때 고르고, OCR 분석이 쓰는 관찰은 그 경로가 따로 정한다.
 ConfidenceSource = Literal["institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"]
 
 
@@ -112,7 +113,8 @@ class FoodObservation:
 
     `confidence_source` · `source_notice_id` 는 기관 식사가 `daycare_meal` 과 겹치는지
     가르는 데 쓴다. 그날 급식이 있으면 기관에서 온 관찰은 영양 합계에서 뺀다
-    (영양소_계산_설계 §3 · N-10). 어댑터는 DB 의 같은 이름 칸을 그대로 채운다.
+    (영양소_계산_설계 §3 · N-10). 값은 저장하는 쪽이 정하고, 어댑터는 DB 의 같은 이름 칸을
+    그대로 읽어 넘긴다.
     """
 
     id: UUID
@@ -239,7 +241,7 @@ class FoodMemoryReader(Protocol):
 
         `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. "잘못된 기록"(`inactive`)과 삭제한
         행은 근거로도, 영양 판정 합계로도 쓰지 않는다(영양소_계산_설계 §3). 출처 두 칸
-        (`confidence_source` · `source_notice_id`)도 채운다 — `FoodObservation` 참고.
+        (`confidence_source` · `source_notice_id`)도 읽어 온다 — `FoodObservation` 참고.
         """
         ...
 
