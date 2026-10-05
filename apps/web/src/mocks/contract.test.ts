@@ -732,10 +732,10 @@ async function answerTo(
   return run_id;
 }
 
-async function eventTypesOf(runId: string): Promise<string[]> {
-  const types: string[] = [];
-  for await (const event of streamRunEvents(runId)) types.push(event.type);
-  return types;
+async function eventsOf(runId: string): Promise<RunEvent[]> {
+  const events: RunEvent[] = [];
+  for await (const event of streamRunEvents(runId)) events.push(event);
+  return events;
 }
 
 function failureOf(promise: Promise<unknown>): Promise<unknown> {
@@ -750,6 +750,9 @@ describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", ()
 
     expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
     expect((failure as ApiError).status).toBe(400);
+    // 🚨 서버 문구와 같은 글자다 (`routers/children.py`). 상황만 말하고, 무엇을 다시 보낼지는
+    //    화면이 이 아래에 적는다 — "다시 적어 주세요" 가 섞이면 화면의 "다시 적지 않아도 돼요" 와 부딪친다 (#208).
+    expect((failure as ApiError).message).toBe("이전 질문을 이어서 확인할 수 없어요.");
   });
 
   it("같은 질문에 두 번 답하면 두 번째는 400 이다 — 관찰이 두 행이 되지 않게", async () => {
@@ -809,16 +812,22 @@ describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", ()
       const key = newIdempotencyKey();
 
       const firstTry = await answerTo(asked, "지어낸 답", { key });
-      expect((await eventTypesOf(firstTry)).at(-1)).toBe("failed");
+      expect((await eventsOf(firstTry)).at(-1)?.type).toBe("failed");
 
       const retry = await answerTo(asked, "지어낸 답", { key });
       expect(retry).not.toBe(firstTry);
       expect(submittedInput(retry)?.replyTo).toBe(asked);
 
-      const types = await eventTypesOf(retry);
+      const events = await eventsOf(retry);
+      const types = events.map((e) => e.type);
       expect(types).toContain("saved");
       // 🚨 이어받은 답은 또 묻지 않는다 — `reply_to` 가 빠졌다면 새 입력이라 질문이 다시 떴다.
-      expect(types).not.toContain("note");
+      //    note 자체는 온다: 서버가 이어받기에서 조기 종료를 꺼서 저장 뒤에 한 번 더 말한다 (#208).
+      //    그 말이 **질문이 아니어야** 한다 — 질문이면 화면이 끝난 답에 "이어서 적기" 를 또 연다.
+      const notes = events.filter((e) => e.type === "note").map((e) => e.data as NoteEvent);
+      expect(notes.length).toBeGreaterThan(0);
+      expect(notes.every((note) => note.kind !== "question")).toBe(true);
+      expect(types.indexOf("saved")).toBeLessThan(types.indexOf("note"));
       expect(types.at(-1)).toBe("done");
     } finally {
       setScenario("default");
