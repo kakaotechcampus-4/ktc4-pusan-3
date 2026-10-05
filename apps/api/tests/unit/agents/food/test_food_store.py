@@ -295,7 +295,51 @@ async def test_menu_catalog_put_은_이미_있는_행을_덮지_않는다() -> N
     assert await store.all_resolved() == [manual]
 
 
-# ── menu source: 외부 API 실패는 전용 예외 ─────────────────────────
+# menu catalog: get_many 는 조회 한 번으로 여러 메뉴를 읽는다
+async def test_menu_catalog_get_many_는_있는_행만_menu_key_로_돌려준다() -> None:
+    kimchi = MenuCatalogRow(
+        menu_key="김치찌개",
+        display_name="김치찌개",
+        source="mfds_nutri",
+        resolved=True,
+        synced_at=NOW,
+    )
+    doenjang = MenuCatalogRow(
+        menu_key="된장국",
+        display_name="된장국",
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+    )
+    store = InMemoryMenuCatalog([kimchi, doenjang])
+
+    # 묻지 않은 행(된장국)과 없는 키(캐시 미스)는 빠지고,
+    # 같은 키를 두 번 넣어도 한 번만 나온다
+    result = await store.get_many(("김치찌개", "없는메뉴", "김치찌개"))
+
+    assert result == {"김치찌개": kimchi}
+
+
+async def test_menu_catalog_get_many_는_resolved_False_행도_돌려준다() -> None:
+    # 해석 실패(정말 없음)도 카탈로그에 남긴다. 이 행이 빠지면 캐시 미스로 보여
+    # 판정할 때마다 같은 메뉴로 외부 API를 다시 부른다 — all_resolved와 다른 점이다
+    unresolved = MenuCatalogRow(
+        menu_key="모름메뉴",
+        display_name="모름메뉴",
+        source="manual",
+        resolved=False,
+        synced_at=NOW,
+    )
+    store = InMemoryMenuCatalog([unresolved])
+
+    assert await store.get_many(("모름메뉴",)) == {"모름메뉴": unresolved}
+
+
+async def test_menu_catalog_get_many_는_빈_입력이면_빈_dict() -> None:
+    assert await InMemoryMenuCatalog().get_many(()) == {}
+
+
+# menu source: 외부 API 실패는 전용 예외
 async def test_menu_source_fail_이면_MenuSourceError() -> None:
     source = InMemoryMenuSource(fail=True)
 
@@ -311,7 +355,7 @@ async def test_menu_source_레시피_없음은_None() -> None:
     assert await source.ingredients(name="없는메뉴") is None
 
 
-# ── in_memory_ports: FoodPorts 와 필드가 같다 ──────────────────────
+# in_memory_ports: FoodPorts와 필드가 같다
 def test_in_memory_ports_의_필드가_FoodPorts_필드와_같다() -> None:
     ports = in_memory_ports()
 
@@ -327,3 +371,8 @@ def test_in_memory_ports_는_override_를_받는다() -> None:
 
     assert ports.safety is safety
     assert isinstance(ports.daycare, InMemoryDaycareMeals)
+
+
+def test_영양_구간을_저장하는_포트가_없다() -> None:
+    # 영양 합계·구간은 판정할 때마다 원본에서 계산하고 저장하지 않는다
+    assert "bands" not in {f.name for f in fields(FoodPorts)}

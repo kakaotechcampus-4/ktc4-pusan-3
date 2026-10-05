@@ -53,12 +53,11 @@ async def test_급식_삭제도_표시가_남는다() -> None:
     assert writes.wrote is True
 
 
-async def test_영양_구간_메뉴_카탈로그_저장은_표시를_남기지_않는다() -> None:
-    # 보호자 말을 반영한 쓰기가 아니라 추천 직전 계산이 남기는 내부 값이다. 덮어쓰기라
-    # 다시 보내도 같은 값이 된다. 표시를 세우면 질문만 한 run이 모델 실패에도 done이 된다
+async def test_메뉴_카탈로그_저장은_표시를_남기지_않는다() -> None:
+    # 보호자 말을 반영한 쓰기가 아니라 계산 중에 생기는 내부 값이다. 없을 때만 넣어서
+    # 다시 보내도 한 행이다. 표시를 세우면 질문만 한 run이 모델 실패에도 done이 된다
     writes, ports = _recorded()
 
-    await ports.bands.save(child_id=CHILD, bands={"iron": "low"})  # type: ignore[attr-defined]
     await ports.catalog.put(  # type: ignore[attr-defined]
         MenuCatalogRow(
             menu_key="두유",
@@ -79,8 +78,8 @@ async def test_조회는_표시를_남기지_않는다() -> None:
     rows = await ports.daycare.rows(  # type: ignore[attr-defined]
         child_id=CHILD, date_from=DAY, date_to=DAY
     )
-    await ports.bands.last(child_id=CHILD)  # type: ignore[attr-defined]
     await ports.catalog.get("두유")  # type: ignore[attr-defined]
+    await ports.catalog.get_many(("두유",))  # type: ignore[attr-defined]
     await ports.catalog.all_resolved()  # type: ignore[attr-defined]
 
     assert rows == [_ROW]
@@ -94,7 +93,6 @@ def test_쓰기_포트가_아닌_포트는_그대로_둔다() -> None:
 
     assert recorded.memory is original.memory
     assert recorded.safety is original.safety
-    # 계산 · 캐시 저장 포트는 감싸지 않는다
-    assert recorded.bands is original.bands
+    # 메뉴 카탈로그 저장 포트는 감싸지 않는다
     assert recorded.catalog is original.catalog
     assert recorded.daycare is not original.daycare

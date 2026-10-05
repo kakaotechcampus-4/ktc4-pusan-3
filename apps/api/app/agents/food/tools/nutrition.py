@@ -48,7 +48,7 @@ async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArg
       허용하지 않는 내용이 있으면 INVALID_ARGS를 반환한다.
     - evidence가 이번 실행에서 실제로 조회한 ref인지 확인하고,
       확인되지 않은 ref는 결과에서 제외한다.
-    - 저장할 테이블이 정해지기 전까지는 분석 결과만 반환한다.
+    - 분석 결과는 저장하지 않고 반환만 한다. 영양 판정은 그 task의 run state에만 둔다.
     - 결핍 진단, 치료식, 영양제 관련 요청은 이 단계에서 처리하지 않는다.
     """
     raise NotImplementedError("DB 연결 후 구현")

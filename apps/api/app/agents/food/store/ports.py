@@ -4,8 +4,9 @@
 DB·외부 API가 연결된 뒤에 붙인다 — 이번 커밋은 포트와 테스트·eval 용 InMemory
 구현까지만 다룬다.
 
-Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제, 영양소 구간
-(`NutrientBandStore.save`), 메뉴 카탈로그(`MenuCatalogStore.put`). 없는 급식을 새로 만드는
+Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제와 메뉴 카탈로그
+(`MenuCatalogStore.put`) 둘이다. 영양 합계·구간은 저장하지 않고 판정할 때마다 원본
+(`observation_food` · `daycare_meal`)에서 계산한다. 없는 급식을 새로 만드는
 INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OCR 분석이 채운다.
 메뉴 카탈로그는 캐시 미스 때 Food 요청 안에서 `MenuSource` 로 외부 조회하고, 결과를 받은
 뒤 백엔드 어댑터가 짧게 저장한다. 외부 API 를 기다리는 동안 DB 트랜잭션을 쥐지 않는다
@@ -37,12 +38,11 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | SafetyReader | health_safety — allergy · chronic_disease (dietary_restriction 은 10/4 삭제) |
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
-| MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 급식 메뉴명 → 식품코드·영양성분 |
+| MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 메뉴명(급식 · 집 식사) → 식품코드·영양성분 |
 | MenuSource | 식약처 등 외부 영양성분·레시피 조회 |
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
 | SuggestionHistoryReader | 최근 제안한 menu_key (반복 회피용) |
-| NutrientBandStore | 직전 영양소 구간 (히스테리시스 기준값). 저장 위치는 TODO: 확정 필요 (#205) |
 """
 
 from dataclasses import dataclass, field
@@ -56,7 +56,8 @@ from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
 # 계획서 "전체에 걸린 값"). app/rules/age.py 의 Band(연령대)와는 다른 축이라 이름을 겹치지
-# 않게 NutrientBand 로 둔다.
+# 않게 NutrientBand 로 둔다. 판정 결과에만 쓰고 저장하지 않는다 — 전날 구간도 7일 전부터
+# 하루씩 다시 판정해서 얻는다(영양소_계산_설계 §3, #205).
 NutrientBand = Literal["low", "ok", "high"]
 
 
@@ -139,7 +140,7 @@ class NutritionFacts:
 
 @dataclass(frozen=True)
 class MenuCatalogRow:
-    """메뉴 카탈로그(`menu_catalog`) 한 행 — 급식 메뉴명 → 식품코드·영양성분."""
+    """메뉴 카탈로그(`menu_catalog`) 한 행 — 메뉴명(급식 · 집 식사) → 식품코드·영양성분."""
 
     menu_key: str
     display_name: str
@@ -223,12 +224,26 @@ class FoodMemoryReader(Protocol):
     async def observations(
         self, *, child_id: UUID, date_from: date, date_to: date
     ) -> list[FoodObservation]:
-        """`observation_food` 구간 조회."""
+        """`observation_food` 구간 조회. `active` · `stand_alone` 행만 돌려준다.
+
+        `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. "잘못된 기록"(`inactive`)과 삭제한
+        행은 근거로도, 영양 판정 합계로도 쓰지 않는다(영양소_계산_설계 §3).
+        """
         ...
 
 
 class MenuCatalogStore(Protocol):
     async def get(self, menu_key: str) -> MenuCatalogRow | None: ...
+    async def get_many(self, menu_keys: tuple[str, ...]) -> dict[str, MenuCatalogRow]:
+        """여러 메뉴를 조회 한 번으로 읽는다. 영양 판정이 14일 치 메뉴를 찾을 때 쓴다.
+
+        카탈로그에 있는 행만 `menu_key` 를 키로 돌려준다. 없는 키(캐시 미스)는 빠진다.
+        `resolved=False` 행도 돌려준다 — 이미 찾아봤는데 없다는 표시다. 이 행을 빼면 캐시
+        미스로 보여 판정할 때마다 외부 API 를 다시 부른다(`all_resolved` 와 다른 점).
+        빈 튜플이면 빈 dict 다. 어댑터는 `WHERE menu_key = ANY(:keys)` 한 문장이다.
+        """
+        ...
+
     async def put(self, row: MenuCatalogRow) -> None:
         """카탈로그에 없을 때만 넣는다 — 어댑터는 `ON CONFLICT (menu_key) DO NOTHING`.
 
@@ -236,6 +251,10 @@ class MenuCatalogStore(Protocol):
         center_standard)을 덮지 않는다. 외부 조회 결과를 받은 뒤 짧은 트랜잭션 하나로 바로
         commit 된다. 있는 행을 고치거나 지우는 길은 포트에 없다. DB 권한 방식은 백엔드가
         정한다.
+
+        해석 실패(두 조회 모두 정말 없음)도 `resolved=False` 행으로 넣는다. 영양 판정이
+        같은 메뉴로 외부 API 를 다시 부르지 않게 하려는 것이다. `MenuSourceError`(외부 API
+        장애)면 넣지 않는다 — 잠깐의 장애가 영구 해석 실패가 된다(food_agent_own_table §1).
         """
         ...
 
@@ -295,13 +314,6 @@ class SuggestionHistoryReader(Protocol):
     async def recent_menu_keys(self, *, child_id: UUID, since: date) -> frozenset[str]: ...
 
 
-class NutrientBandStore(Protocol):
-    async def last(self, *, child_id: UUID) -> dict[str, NutrientBand]: ...
-    async def save(self, *, child_id: UUID, bands: dict[str, NutrientBand]) -> None:
-        """아이의 구간 묶음을 통째로 바꾼다. 호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다."""
-        ...
-
-
 @dataclass(frozen=True)
 class FoodPorts:
     """Food Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음.
@@ -320,5 +332,4 @@ class FoodPorts:
     daycare: DaycareMealStore
     docs: FoodDocReader
     suggestions: SuggestionHistoryReader
-    bands: NutrientBandStore
     menu_source: MenuSource | None = None  # None 이면 카탈로그만 쓴다 (API 키 없음)
