@@ -32,7 +32,7 @@
 | 1 | ~~`health_safety` 온보딩 19행 생성 + `state` 에 `none`·`unknown`~~ (10-04 철회 — 행 없음이 unknown) | **알레르기 없는 아이가 추천을 영영 못 받음** | PM · BE |
 | 2 | 온보딩에 `child_health` 동의 단계 | 알레르기 수집이 법적으로 성립 안 함 | PM |
 | 3 | `suggestion`에 `kind` · `task_type` · `content jsonb` · `reference_refs` | "또래 기준" 표시 불가 | BE |
-| 4 | 급식 경로 = **기관 공지 OCR 우선** + 대체·제외 메뉴 확인 흐름(`intake_daily` 급식 행) | 유아기 tool 절반이 죽음 · 급식을 먹은 것으로 잘못 셈 | PM · OCR |
+| 4 | 급식 경로 = **기관 공지 OCR 우선** + 대체·제외 메뉴 확인 흐름(`daycare_meal` 행) | 유아기 tool 절반이 죽음 · 급식을 먹은 것으로 잘못 셈 | PM · OCR |
 | 5 | 이유기 시작 월령(4개월) · 질식 주의 해제(48개월) 근거 | 게이팅 숫자가 근거 없음 | 의학 자료 담당 |
 | 6 | 기록 행 수 임계(7일 10행) · 분석 윈도우(7일) | 설정값으로 시작 가능 — **문서에만 기록** | AI |
 
@@ -65,8 +65,7 @@ DoD: `test_evidence_ranking.py` 통과 · `//30` 나눗셈 0건 · import-linter
 2) menu_catalog → menu_alias
 3) nutrient_reference
 4) food_doc
-6) intake_daily
-6a) daycare_meal
+6) daycare_meal
 7) ~~health_safety 온보딩 19행~~ (10-04 철회 — 행 없음이 unknown)   (S0-1)
 8) suggestion 컬럼 추가                        (S0-3)
 ```
@@ -77,7 +76,7 @@ DDL은 [`food_agent_own_table.md`](food_agent_own_table.md) §7.
 
 | role | 부여 |
 | --- | --- |
-| agent | `intake_daily` INSERT/UPDATE · **`daycare_meal` UPDATE/DELETE** · 나머지 SELECT |
+| agent | **`daycare_meal` UPDATE/DELETE** · 나머지 SELECT |
 | batch | `menu_catalog` · `menu_alias` · `nutrient_reference` · `food_doc` UPSERT · **`daycare_meal` INSERT**(OCR 최초 적재) |
 | agent | `health_safety` write **비부여** |
 
@@ -119,7 +118,7 @@ app/agents/food/
 └── tools/
 ```
 
-**포트**: `observation_food` · `profile_affinity(food)` · `health_safety` · `child` · `menu_catalog` · `intake_daily` · **`daycare_meal`(읽기+쓰기)** · `food_doc` · `SuggestionWriter`
+**포트**: `observation_food` · `profile_affinity(food)` · `health_safety` · `child` · `menu_catalog` · **`daycare_meal`(읽기+쓰기)** · `food_doc` · `SuggestionWriter`
 
 **게이팅** ([`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §3)
 
@@ -138,11 +137,10 @@ DoD: mock `run()`이 포트·클라이언트를 **건드리지 않고** `DomainA
 
 | 순서 | tool | DoD |
 | --- | --- | --- |
-| 5-1 | `resolve_menu` | 카탈로그에 없으면(캐시 미스) → API 1회 → upsert · 실패는 `unresolved`(추정 0건) |
+| 5-1 | `resolve_menu` | 카탈로그에 없으면(캐시 미스) → API 1회 → 없을 때만 넣기 · 정말 없음은 `resolved=false` 로 남김 · API 장애는 남기지 않고 그 run 에서만 `unresolved`(추정 0건) |
 | 5-2 | `filter_food_safety` | 19종 교집합 · `term_match` · **연령 규칙(꿀·질식)** · 조회 실패 → `SAFETY_UNAVAILABLE` |
 | 5-2a | `resolve_meal_date` | 사전 표 그대로 · 기준일은 `Gate.today` · 과거 30일 밖 거절 · 미해결은 되묻기 |
-| 5-3 | `compute_intake_daily` | 결측 행 생성 0건 · `catalog_version` 기록 |
-| 5-4 | `select_kdri_group` · `evaluate_nutrient_bands` | EAR 기준 · 히스테리시스 · 행 수 미달 → `insufficient` |
+| 5-4 | `select_kdri_group` · `evaluate_nutrient_bands` | EAR 기준 · 히스테리시스(전날 구간은 7일 다시 판정) · 행 수 미달 → `insufficient` · 원본 14일 읽기 · 메뉴 조회는 `get_many` 한 번 · 영양 합계·구간 저장 0건 |
 | 5-5 | `build_candidate_pool` | 알레르기·연령 금지·반복·단계 필터 순서 고정 · **기피로는 아무것도 빼지 않음** |
 | 5-6 | `sample_candidates` | `seed=run_id` 재현 · 다양성 제약 · **필터 뒤에 위치** · 가중치 **부족 식품군 > 선호 > 기피** |
 | 5-7 | `search_food_doc` | 단계 필터 → 의미 검색 top-3 · 쿼리에 보호자 발화 없음 |
@@ -249,7 +247,7 @@ DoD: 혼합형 입력("오늘 당근 먹었어. 저녁 뭐 줄까?")에서 **Mem
 `IMPLEMENTED_AGENTS`에서 `food` 제거 → Supervisor가 라우팅하지 않음. 스키마는 되돌리지 않습니다(읽기 전용이라 무해).
 
 ### 10-5. 관측
-`{run_id, child_id, stage, task_type, model_calls, coverage, blocked_count, evidence_mode, latency_ms}` — **메뉴명·알레르기 라벨 원문은 남기지 않습니다**(NF-05).
+`{run_id, child_id, stage, task_type, model_calls, blocked_count, evidence_mode, latency_ms}` — **메뉴명·알레르기 라벨 원문은 남기지 않습니다**(NF-05). 영양 판정 결과(구간 · 식품군 · 기록 행 수)도 남기지 않습니다 — run state 에만 둡니다([`영양소_계산_설계.md`](영양소_계산_설계.md) §3).
 
 ---
 
@@ -267,4 +265,4 @@ DoD: 혼합형 입력("오늘 당근 먹었어. 저녁 뭐 줄까?")에서 **Mem
 
 ## 12. 열린 항목
 
-F-1 · F-2 · F-3 · F-6 · F-13 · F-16~18 ([`Food_Agent_명세.md`](Food_Agent_명세.md) §10) · FT-1~7 ([`food_agent_own_table.md`](food_agent_own_table.md) §10) · N-1~8 ([`영양소_계산_설계.md`](영양소_계산_설계.md) §9)
+F-1 · F-2 · F-3 · F-6 · F-13 · F-16~18 ([`Food_Agent_명세.md`](Food_Agent_명세.md) §10) · FT-1 · FT-3~7 · FT-9~11 · FT-14~16 ([`food_agent_own_table.md`](food_agent_own_table.md) §10) · N-1~4 · N-6 · N-8~13 ([`영양소_계산_설계.md`](영양소_계산_설계.md) §9)
