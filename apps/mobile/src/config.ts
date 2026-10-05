@@ -13,7 +13,7 @@ if (!rawUrl) {
 
 export const WEB_URL = rawUrl.replace(/\/$/, "");
 
-/** 웹뷰 안에 머물러도 되는 출처. 여기 밖은 시스템 브라우저로 넘긴다. */
+/** 웹뷰 안에 머물러도 되는 출처. 여기 밖은 앱 밖(in-app 브라우저 · 인증 세션 · OS)으로 넘긴다. */
 export const ALLOWED_ORIGIN = new URL(WEB_URL).origin;
 
 export function isInternalUrl(url: string): boolean {
