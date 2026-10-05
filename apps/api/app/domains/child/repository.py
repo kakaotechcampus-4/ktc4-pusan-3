@@ -20,6 +20,19 @@ async def list_children_for_parent(session: AsyncSession, *, parent_id: uuid.UUI
     return list((await session.scalars(stmt)).all())
 
 
+async def list_child_links_for_parent(
+    session: AsyncSession, *, parent_id: uuid.UUID
+) -> list[tuple[Child, ParentChildRelation]]:
+    """보호자에게 연결된 아이와 그 관계 — GET /me 의 재료 (#92). 보관된 아이는 뺀다."""
+    stmt = (
+        select(Child, ParentChild.relation)
+        .join(ParentChild, ParentChild.child_id == Child.id)
+        .where(ParentChild.parent_id == parent_id, Child.deleted_at.is_(None))
+        .order_by(Child.created_at, Child.id)
+    )
+    return [(child, relation) for child, relation in (await session.execute(stmt)).all()]
+
+
 async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
     """이 보호자에게 parent_child 행이 있는가. 삭제(soft delete)된 아이와의 연결도 센다.
 
