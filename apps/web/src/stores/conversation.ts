@@ -9,11 +9,7 @@ import {
   type RunState,
 } from "@/hooks/use-run-stream";
 import { isApiError } from "@/lib/api/errors";
-import {
-  createIdempotencyKeyHolder,
-  type IdempotencyKey,
-  type IdempotencyKeyHolder,
-} from "@/lib/api/idempotency";
+import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
 import { qk } from "@/lib/api/queryKeys";
 import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
@@ -52,6 +48,11 @@ import { useEventDraftStore } from "@/stores/event-draft";
  * 보내기 전에는 `stores/draft.ts`(입력창), 보낸 뒤에는 **그 한 줄의 말풍선**(`ChatTurn.body.text`)이다.
  * 둘 다 메모리 전용이고 로그아웃에서 지운다. 🚨 말풍선은 서버가 끝을 말하기 전에 사라지지 않는다 —
  * 실패하면 그 자리에서 다시 시도하거나, "고쳐 쓰기" 로 입력창에 되돌린다.
+ *
+ * 🚨 **말풍선을 지우는 길은 하나다 — 원문을 입력창에 옮겼을 때** (`handedBack` · #231 리뷰). 한동안
+ *    "서버에 닿지 못한 실패" 를 다음 한 줄이 통째로 대체했는데, 거기 네트워크 · 5xx 가 들어 있었다.
+ *    그건 응답만 못 받은 것이라 서버가 받았을 수 있고, 입력창은 보낼 때 비웠으니 **원문이 어디에도 안
+ *    남았다.** 🚨 입력창에 쓰던 글이 있으면 옮기지 않는다 — 덮으면 그 글이, 안 옮기고 지우면 이 글이 사라진다.
  *
  * ## 한 번에 하나
  *
@@ -95,8 +96,11 @@ export interface ChatTurn {
   send: SendState;
   run: RunState;
   question: QuestionState | null;
-  /** "고쳐 쓰기" 로 입력창에 넘긴 뒤 — 같은 자리의 다시 시도 버튼을 내린다. */
-  rewritten: boolean;
+  /**
+   * 원문을 입력창에 옮겼다 ("고쳐 쓰기" · 429 · 403). 🚨 **이게 참일 때만 말풍선을 지울 수 있다** —
+   * 202 를 못 받은 말풍선은 다음 한 줄이 대체하고, 202 를 받은 말풍선은 남기고 다시 시도만 내린다.
+   */
+  handedBack: boolean;
 }
 
 interface ChildConversation {
@@ -118,7 +122,7 @@ export const useConversationStore = create<ConversationState>()((set) => ({
   clearAll: () => {
     for (const unsubscribe of streams.values()) unsubscribe();
     streams.clear();
-    keyHolders.clear();
+    keyBooks.clear();
     seededDrafts.clear();
     set({ byChild: {} });
   },
@@ -130,21 +134,40 @@ export const useConversationStore = create<ConversationState>()((set) => ({
 const streams = new Map<string, () => void>();
 
 /**
- * childId → 한 줄 입력의 키. 🚨 **본문에 묶는다** (`current(keyPayload(body))` · PR #71 리뷰).
- * 고쳐 쓴 본문은 새 키, 그대로 다시 보낸 본문은 같은 키다. 서버가 끝을 말했을 때만 돌린다.
+ * childId → (본문 지문 → 키). 🚨 **본문에 묶는다** (`keyPayload` · PR #71 리뷰). 고쳐 쓴 본문은 새 키,
+ * 그대로 다시 보낸 본문은 같은 키다. 🚨 **서버가 그 줄을 끝까지 처리했다고 말했을 때만 그 항목을 지운다.**
+ *
+ * 🚨 **아이당 한 칸이 아니라 표다** (#231 리뷰). 한동안 본문 하나만 기억하는 보관함이었는데,
+ *    줄1 "A" 결과 미확인 → 줄2 "B" 보냄(보관함이 B 로 바뀜) → 줄1 을 고쳐 쓰기로 꺼내 그대로 보내면
+ *    **새 키**가 나갔다. 서버가 줄1 을 이미 저장했다면 같은 관찰이 두 번 들어가고, Curator 가 반복
+ *    횟수를 두 번으로 센다 (최상위 §2 "한 번의 관찰을 성향으로 확정하지 않는다").
  */
-const keyHolders = new Map<string, IdempotencyKeyHolder>();
+const keyBooks = new Map<string, Map<string, IdempotencyKey>>();
 
 /** 일정 초안을 `stores/event-draft.ts` 에 얹은 적이 있는 `draft_id`. 아래 `seedDrafts` 참고. */
 const seededDrafts = new Set<string>();
 
-function keyHolder(childId: string): IdempotencyKeyHolder {
-  let holder = keyHolders.get(childId);
-  if (!holder) {
-    holder = createIdempotencyKeyHolder();
-    keyHolders.set(childId, holder);
+/**
+ * 이 본문의 키. 처음 보는 본문이면 새로 만든다.
+ * 🚨 `mutationFn` 안에서 키를 새로 만드는 것과 다르다 — 같은 본문이면 몇 번을 불러도 같은 키다.
+ */
+function keyFor(childId: string, payload: string): IdempotencyKey {
+  let book = keyBooks.get(childId);
+  if (!book) {
+    book = new Map();
+    keyBooks.set(childId, book);
   }
-  return holder;
+  let key = book.get(payload);
+  if (!key) {
+    key = newIdempotencyKey();
+    book.set(payload, key);
+  }
+  return key;
+}
+
+/** 이 본문은 끝났다 — 다음에 같은 문장을 보내면 새 동작이라 새 키다. */
+function releaseKey(childId: string, payload: string): void {
+  keyBooks.get(childId)?.delete(payload);
 }
 
 let turnSeq = 0;
@@ -155,11 +178,15 @@ export function conversationOf(state: ConversationState, childId: string): Child
   return state.byChild[childId] ?? EMPTY;
 }
 
-/** 답을 기다리는 중인가 — 보내는 중이거나 run 이 도는 중. */
+/**
+ * 답을 기다리는 중인가 — 보내는 중이거나 run 이 도는 줄이 **하나라도** 있는가.
+ * 🚨 마지막 줄만 보지 않는다 (#231 리뷰). 앞 줄을 다시 시도하는 동안 마지막 줄은 이미 끝나 있어서,
+ *    마지막만 보면 그 사이에 새 줄이 나가 run 이 겹친다 — 위 "한 번에 하나" 가 막으려는 바로 그 경우다.
+ */
 export function isBusy(conversation: ChildConversation): boolean {
-  const last = conversation.turns.at(-1);
-  if (!last) return false;
-  return last.send.status === "sending" || last.run.status === "streaming";
+  return conversation.turns.some(
+    (turn) => turn.send.status === "sending" || turn.run.status === "streaming",
+  );
 }
 
 /** 아직 답할 수 있는 질문이 있는가 — 03 홈 입구 문구가 이걸로 바뀐다. */
@@ -168,12 +195,12 @@ export function hasOpenQuestion(conversation: ChildConversation): boolean {
 }
 
 /**
- * 서버에 **닿지 못한** 실패인가 — 보내기 실패 · 400 · 429 · 403 (#226 "실패 표시" 표).
- * 🚨 이 말풍선은 다음 한 줄 · 다시 시도 · 고쳐 쓰기가 **대체**한다. run 이 없어서 대화에 남길 답이
- *    없다. `unconfirmed` 는 다르다 — run 이 돌았고 서버가 저장했을 수 있어 그대로 둔다.
+ * 다음 한 줄이 이 말풍선을 **대체**해도 되는가 — 202 를 못 받았고, 원문을 이미 입력창에 옮겼다.
+ * 🚨 202 를 못 받은 것만으로는 안 된다. 네트워크 · 5xx 는 서버가 받았을 수 있고, 원문을 안 옮겼으면
+ *    지우는 순간 원문이 사라진다 (#231 리뷰). 그런 말풍선은 다시 시도 · 고쳐 쓰기로만 정리된다.
  */
-export function isUnreached(turn: ChatTurn): boolean {
-  return turn.send.status === "error";
+export function isReplaceable(turn: ChatTurn): boolean {
+  return turn.send.status === "error" && turn.handedBack;
 }
 
 /**
@@ -181,7 +208,7 @@ export function isUnreached(turn: ChatTurn): boolean {
  * 🚨 429 · 400 · 403 은 아니다 — 같은 키 · 같은 본문이면 몇 번을 보내도 같은 답이다 (#147 · #175).
  */
 export function canRetry(turn: ChatTurn): boolean {
-  if (turn.rewritten) return false;
+  if (turn.handedBack) return false;
   if (turn.send.status === "error") {
     const { error } = turn.send;
     return !(
@@ -261,19 +288,19 @@ export function sendLine(
     day: askedOn ?? toSeoulDateKey(new Date()),
     body,
     answering,
-    // 🚨 `newIdempotencyKey()` 가 아니다 — 같은 본문이면 같은 키라야 응답만 잃은 한 줄을 고쳐 쓰지
-    //    않고 그대로 다시 보냈을 때 두 번 저장되지 않는다 (`use-idempotency-key.ts`).
-    key: keyHolder(childId).current(keyPayload(body)),
+    // 🚨 늘 새 키가 아니다 — 같은 본문이면 같은 키라야 응답만 잃은 한 줄을 고쳐 쓰지 않고 그대로
+    //    다시 보냈을 때 두 번 저장되지 않는다 (`keyBooks`).
+    key: keyFor(childId, keyPayload(body)),
     send: { status: "sending" },
     run: initialRunState,
     question: null,
-    rewritten: false,
+    handedBack: false,
   };
 
   update(childId, (c) => ({
     ...c,
-    // 서버에 닿지 못한 말풍선은 다음 한 줄이 대체한다 (`isUnreached`).
-    turns: [...c.turns.filter((t) => !isUnreached(t)), turn],
+    // 원문을 이미 입력창에 넘긴 실패 말풍선만 다음 한 줄이 대체한다 (`isReplaceable`).
+    turns: [...c.turns.filter((t) => !isReplaceable(t)), turn],
   }));
   void submit(childId, turn.id);
   return turn.id;
@@ -290,19 +317,20 @@ export function retryTurn(childId: string, turnId: string): void {
 /**
  * 원문을 입력창에 되돌린다 ("고쳐 쓰기").
  *
- * - 서버에 닿지 못한 말풍선은 지운다 — 고쳐 쓴 한 줄이 그 자리를 대체한다.
- * - 🚨 `failed` · `unconfirmed` 는 **남긴다.** 특히 `unconfirmed` 는 서버가 저장했을 수 있어서,
- *   말풍선을 지우면 "저장됐는지 모르는 한 줄" 이 대화에서 사라진다. 다시 시도 버튼만 내린다.
+ * - 202 를 못 받은 말풍선은 지운다 — 원문이 입력창으로 갔으니 고쳐 쓴 한 줄이 그 자리를 대체한다.
+ * - 🚨 202 를 받은 말풍선(`failed` · `unconfirmed`)은 **남긴다.** 특히 `unconfirmed` 는 서버가 저장했을
+ *   수 있어서, 지우면 "저장됐는지 모르는 한 줄" 이 대화에서 사라진다. 다시 시도 버튼만 내린다.
  * - 답하던 질문이 아직 열려 있으면 입력창의 대상으로 되돌린다 — 고쳐 쓴 한 줄도 그 질문의 답이다.
  *
- * 🚨 입력창에 쓰던 글이 있으면 덮지 않는다. 덮으면 그 글이 사라진다.
+ * 🚨 **입력창에 쓰던 글이 있으면 아무것도 하지 않는다** (#231 리뷰). 덮으면 그 글이 사라지고, 안 덮고
+ *    말풍선만 지우면 이 글이 사라진다. 화면은 그때 버튼을 잠그고 이유를 말한다 (`canHandBack`).
+ * @returns 옮겼으면 `true`.
  */
-export function rewriteTurn(childId: string, turnId: string): void {
+export function rewriteTurn(childId: string, turnId: string): boolean {
   const turn = findTurn(childId, turnId);
-  if (!turn) return;
+  if (!turn || turn.handedBack || !canHandBack(childId)) return false;
 
-  const drafts = useDraftStore.getState();
-  if (!(drafts.byChild[childId] ?? "").trim()) drafts.setDraft(childId, turn.body.text);
+  useDraftStore.getState().setDraft(childId, turn.body.text);
 
   update(childId, (c) => {
     const stillOpen =
@@ -315,11 +343,18 @@ export function rewriteTurn(childId: string, turnId: string): void {
       );
     return {
       answering: stillOpen ? turn.answering : c.answering,
-      turns: isUnreached(turn)
-        ? c.turns.filter((t) => t.id !== turnId)
-        : c.turns.map((t) => (t.id === turnId ? { ...t, rewritten: true } : t)),
+      turns:
+        turn.send.status === "error"
+          ? c.turns.filter((t) => t.id !== turnId)
+          : c.turns.map((t) => (t.id === turnId ? { ...t, handedBack: true } : t)),
     };
   });
+  return true;
+}
+
+/** 입력창이 비어 있어서 원문을 옮길 수 있는가. 🚨 공백만 있는 것도 빈 것으로 본다. */
+export function canHandBack(childId: string): boolean {
+  return !(useDraftStore.getState().byChild[childId] ?? "").trim();
 }
 
 /** 열린 질문 하나를 입력창의 대상으로 고른다 (대화 안의 "이 질문에 답하기"). */
@@ -346,7 +381,9 @@ async function submit(childId: string, turnId: string): Promise<void> {
 
   streams.get(turnId)?.();
   streams.delete(turnId);
-  updateTurn(childId, turnId, (t) => ({ ...t, send: { status: "sending" }, run: initialRunState }));
+  // 🚨 run 은 202 를 받을 때까지 지우지 않는다 — 결과 미확인 줄을 다시 시도하다 실패하면 "여기까지 받은
+  //    기록" 이 같이 사라졌다 (#231 리뷰). 보내는 동안 화면은 진행 표시를 그린다 (`ChatThread`).
+  updateTurn(childId, turnId, (t) => ({ ...t, send: { status: "sending" } }));
 
   let runId: string;
   try {
@@ -354,6 +391,20 @@ async function submit(childId: string, turnId: string): Promise<void> {
   } catch (error) {
     // 로그아웃으로 대화가 비워졌으면 쓸 자리가 없다.
     if (!findTurn(childId, turnId)) return;
+    /**
+     * 🚨 **한 번이라도 202 를 받은 줄은 다시 시도가 네트워크 · 5xx 로 실패해도 결과 미확인으로 남긴다**
+     *    (#231 리뷰). 앞 run 이 이미 무언가를 저장했을 수 있는데, 보내기 실패로 바꾸면 그 줄이 "다음 한 줄이
+     *    대체하는 말풍선" 쪽으로 넘어간다. 서버가 분명히 거절한 4xx 만 보내기 실패로 그린다.
+     */
+    if (turn.send.status === "sent" && !isRejected(error)) {
+      const { runId: previousRunId } = turn.send;
+      updateTurn(childId, turnId, (t) => ({
+        ...t,
+        send: { status: "sent", runId: previousRunId },
+        run: { ...t.run, status: "unconfirmed" },
+      }));
+      return;
+    }
     failSend(childId, turn, error);
     return;
   }
@@ -382,30 +433,34 @@ async function submit(childId: string, turnId: string): Promise<void> {
   );
 }
 
+/** 서버가 **분명히 거절한** 실패인가 (4xx). 네트워크 · 5xx 는 서버가 받았을 수 있다. */
+export function isRejected(error: unknown): boolean {
+  return isApiError(error) && error.status < 500;
+}
+
 /**
- * 202 를 못 받았다. 🚨 키를 돌리지 않는다 — 실패 뒤 다시 누르는 것이 재시도다.
+ * 202 를 못 받았다. 🚨 키를 지우지 않는다 — 실패 뒤 다시 누르는 것이 재시도다.
  *
  * - 400 `reply_context_unavailable` — 🚨 **질문을 놓는다** (#175). 들고 있으면 다음 한 줄에도 같은
  *   `reply_to` 가 실려 몇 번을 보내도 같은 400 이다. 놓으면 본문이 바뀌어 새 키가 저절로 나간다.
- * - 429 · 403 — 🚨 **원문을 입력창에 되돌린다.** 다시 시도가 없어서(같은 키라 같은 답이다) 말풍선에만
- *   두면 다음 한 줄이 그 말풍선을 대체할 때 원문이 사라진다. 429 는 내일 보낼 한 줄이다.
+ * - 429 · 403 — 🚨 **원문을 입력창에 되돌린다.** 다시 시도가 없어서(같은 키라 같은 답이다) 입력창이
+ *   그 한 줄을 이어 맡는다. 429 는 내일 보낼 한 줄이다. 🚨 **입력창에 쓰던 글이 있으면 옮기지 않고 말풍선을
+ *   남긴다** — 그때는 말풍선이 원문의 자리이고, 화면은 "고쳐 쓰기" 로 나중에 꺼내게 한다 (#231 리뷰).
  */
 function failSend(childId: string, turn: ChatTurn, error: unknown): void {
   const lostContext = isApiError(error, "reply_context_unavailable");
   const keepInComposer =
     isApiError(error, "daily_input_limit") || isApiError(error, "consent_required");
 
-  if (keepInComposer) {
-    const drafts = useDraftStore.getState();
-    if (!(drafts.byChild[childId] ?? "").trim()) drafts.setDraft(childId, turn.body.text);
-  }
+  const handedBack = keepInComposer && canHandBack(childId);
+  if (handedBack) useDraftStore.getState().setDraft(childId, turn.body.text);
 
   update(childId, (c) => {
     const droppedRunId = lostContext ? turn.answering?.runId : undefined;
     return {
       answering: droppedRunId && c.answering?.runId === droppedRunId ? null : c.answering,
       turns: c.turns.map((t) => {
-        if (t.id === turn.id) return { ...t, send: { status: "error", error } };
+        if (t.id === turn.id) return { ...t, send: { status: "error", error }, handedBack };
         if (droppedRunId && t.send.status === "sent" && t.send.runId === droppedRunId) {
           return { ...t, question: "dropped" };
         }
@@ -418,7 +473,7 @@ function failSend(childId: string, turn: ChatTurn, error: unknown): void {
 /**
  * 스트림이 끝났다. 🚨 **서버가 끝을 말한 경우에만** 정리한다 (위 규칙 3).
  *
- * 정리하는 것 — 키를 돌린다(다음 한 줄은 새 동작) · 이 한 줄이 답한 질문을 닫는다 ·
+ * 정리하는 것 — 이 본문의 키를 놓는다(같은 문장을 다시 보내면 새 동작) · 이 한 줄이 답한 질문을 닫는다 ·
  * 이 run 이 또 물었으면 그 질문이 입력창의 새 대상이 된다 (이어받기 run 이 또 물으면 그 run).
  */
 function settle(childId: string, turnId: string): void {
@@ -427,7 +482,7 @@ function settle(childId: string, turnId: string): void {
   const turn = findTurn(childId, turnId);
   if (!turn || !isRunConfirmed(turn.run.status)) return;
 
-  keyHolder(childId).rotate();
+  releaseKey(childId, keyPayload(turn.body));
   const answeredRunId = turn.answering?.runId;
   const asked: ChatQuestion | null =
     turn.run.note?.kind === "question" && turn.send.status === "sent"

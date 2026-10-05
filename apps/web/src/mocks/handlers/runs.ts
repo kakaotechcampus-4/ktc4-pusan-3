@@ -53,6 +53,9 @@ const failedOnce = new Set<string>();
  */
 const askedAgain = new Set<string>();
 
+/** `send_failed` 에서 이미 한 번 끊어 본 Idempotency-Key. 🚨 키마다 한 번만 끊는다 — 다시 시도가 닿아야 한다. */
+const droppedSends = new Set<string>();
+
 /** 테스트가 "답이 어느 run 을 가리키는가" 를 확인하는 자리. */
 export function submittedInput(runId: string): SubmittedInput | undefined {
   return inputByRun.get(runId);
@@ -64,6 +67,7 @@ export function resetSubmittedInputs(): void {
   pendingReplies.clear();
   failedOnce.clear();
   askedAgain.clear();
+  droppedSends.clear();
 }
 
 /**
@@ -368,6 +372,19 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
 }
 
 export const runHandlers = [
+  /**
+   * 🚨 **`send_failed` — 서버에 닿기 전에 끊긴다** (#231 리뷰). 그래서 아래 `withIdempotency` **앞**에 둔다 —
+   *    래퍼 안에서 끊으면 서버가 받은 것이 되어 같은 키의 다시 시도가 저장된 응답을 재생할 수 없다.
+   *    아무것도 돌려주지 않으면 msw 가 다음 핸들러로 넘긴다.
+   */
+  http.post(url("/children/:cid/inputs"), ({ request }) => {
+    if (currentScenario() !== "send_failed") return;
+    const key = request.headers.get("Idempotency-Key");
+    if (!key || droppedSends.has(key)) return;
+    droppedSends.add(key);
+    return HttpResponse.error();
+  }),
+
   // 🚨 키가 없으면 400 이다 — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는 지점.
   http.post(
     url("/children/:cid/inputs"),

@@ -2,12 +2,15 @@
 
 import { Named } from "@/components/home-composer";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { RewriteButton } from "@/components/rewrite-button";
 import { RunReply } from "@/components/run-result";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
+import { initialRunState } from "@/hooks/use-run-stream";
 import { isApiError, type Agent } from "@/lib/api";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
+import { useDraftText } from "@/stores/draft";
 import {
   answerQuestion,
   canRetry,
@@ -132,6 +135,7 @@ function TurnReply({
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const runId = turn.send.status === "sent" ? turn.send.runId : null;
+  const rewriteBlocked = useRewriteBlocked(childId);
   const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
   const remainingDrafts = stored.filter(
     (d) => d.origin === "input" && turn.run.drafts.some((r) => r.draft_id === d.draft.draft_id),
@@ -140,12 +144,15 @@ function TurnReply({
   return (
     <RunReply
       childId={childId}
-      run={turn.run}
+      // 🚨 다시 보내는 동안에는 진행 표시다. 앞 run 은 지우지 않고 들고 있다가 202 를 받으면 갈아 끼운다
+      //    — 다시 시도가 실패해도 "여기까지 받은 기록" 이 남는다 (`stores/conversation.ts` 의 `submit`).
+      run={turn.send.status === "sending" ? SENDING : turn.run}
       question={turn.question}
       answeringNow={runId !== null && answering?.runId === runId}
       remainingDrafts={remainingDrafts}
       onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
-      onRewrite={turn.rewritten ? undefined : () => rewriteTurn(childId, turn.id)}
+      onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
+      rewriteBlocked={rewriteBlocked}
       onAnswer={() => {
         if (runId) answerQuestion(childId, runId);
       }}
@@ -155,11 +162,24 @@ function TurnReply({
   );
 }
 
+/** 보내는 동안 그리는 run. 진행 표시 첫 칸이다. */
+const SENDING = { ...initialRunState, status: "streaming" as const };
+
 /**
- * 서버에 **닿지 못한** 실패 — 202 를 못 받았다. 400 · 429 · 403 은 서버가 거절한 것이고, 네트워크 ·
- * 5xx 는 서버가 받았는데 응답만 잃었을 수 있다 (그래서 그 경우의 다시 시도는 같은 키다).
+ * "고쳐 쓰기" 를 지금 못 하는가 — 입력창에 쓰던 글이 있다 (`canHandBack`).
+ * 🚨 덮으면 그 글이 사라지고, 안 덮고 말풍선만 지우면 이 글이 사라진다 (#231 리뷰). 그래서 잠그고 이유를 말한다.
+ */
+function useRewriteBlocked(childId: string): boolean {
+  const [draft] = useDraftText(childId);
+  return draft.trim().length > 0;
+}
+
+/**
+ * 202 를 못 받은 실패. 400 · 429 · 403 은 서버가 거절한 것이고, 네트워크 · 5xx 는 서버가 받았는데
+ * 응답만 잃었을 수 있다 (그래서 그 경우의 다시 시도는 같은 키다).
  *
- * 🚨 **다시 시도 · 고쳐 쓰기가 이 말풍선을 대체한다** (`isUnreached`). 대화에 남길 것이 없다.
+ * 🚨 **이 말풍선은 원문을 입력창에 옮긴 뒤에만 사라진다** (`isReplaceable` · #231 리뷰). 네트워크 · 5xx
+ *    실패를 다음 한 줄이 대체하면, 보낼 때 입력창을 비웠으니 원문이 어디에도 안 남는다.
  * 🚨 **`daily_input_limit` · `reply_context_unavailable` 에는 "다시 시도" 를 두지 않는다**
  *    (#147 · #175). 같은 본문은 같은 키로 나가서 몇 번을 눌러도 같은 답이다 — 누르면 같은 실패가
  *    나오는 버튼을 만들지 않는다 (`consent_required` 를 일반 실패로 그리지 않는 것과 같은 이유).
@@ -176,6 +196,11 @@ function SendFailure({
   turn: ChatTurn;
   error: unknown;
 }) {
+  const rewriteBlocked = useRewriteBlocked(childId);
+  const rewrite = () => rewriteTurn(childId, turn.id);
+  /** 429 · 403 에서 원문을 입력창에 옮겼는가 — 못 옮겼으면 말풍선이 원문의 자리다 (`failSend`). */
+  const keptHere = !turn.handedBack;
+
   if (isApiError(error, "consent_required")) {
     return (
       <div className="flex flex-col gap-2">
@@ -185,7 +210,11 @@ function SendFailure({
           error={error}
           what="적어주신 말을 저장할 수 없어요."
         />
-        <p className="text-caption text-ink-subtle">적어주신 말은 입력창에 그대로 남겨뒀어요.</p>
+        {keptHere ? (
+          <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
+        ) : (
+          <p className="text-caption text-ink-subtle">적어주신 말은 입력창에 그대로 남겨뒀어요.</p>
+        )}
       </div>
     );
   }
@@ -194,10 +223,17 @@ function SendFailure({
     return (
       <CardFailed>
         <p>{error.message}</p>
-        {/* 🚨 원문은 입력창에 되돌려 뒀다 — 내일 보낼 한 줄이다 (`failSend`). */}
-        <p className="text-caption text-ink-subtle mt-2">
-          적어주신 말은 입력창에 그대로 남겨뒀어요.
-        </p>
+        {/* 🚨 원문은 입력창에 되돌려 뒀다 — 내일 보낼 한 줄이다 (`failSend`). 입력창에 쓰던 글이 있어서
+            못 옮겼으면 여기서 꺼내 간다. */}
+        {keptHere ? (
+          <div className="mt-3">
+            <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
+          </div>
+        ) : (
+          <p className="text-caption text-ink-subtle mt-2">
+            적어주신 말은 입력창에 그대로 남겨뒀어요.
+          </p>
+        )}
       </CardFailed>
     );
   }
@@ -215,14 +251,9 @@ function SendFailure({
           고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇에 대한 답인지 함께 적어 보내
           주세요. 앞서 저장된 이야기는 다시 적지 않아도 돼요.
         </p>
-        <Button
-          variant="tertiary"
-          size="compact"
-          className="mt-3"
-          onClick={() => rewriteTurn(childId, turn.id)}
-        >
-          고쳐 쓰기
-        </Button>
+        <div className="mt-3">
+          <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
+        </div>
       </CardFailed>
     );
   }
@@ -234,14 +265,12 @@ function SendFailure({
       <p>
         보내지 못했어요. 다시 시도하면 같은 한 줄로 보내요. 이미 닿았다면 두 번 저장되지 않아요.
       </p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-start gap-2">
         {/* 같은 키로 나가는 재시도라 실제로 두 번 저장되지 않는다 (lib/api/idempotency.ts). */}
         <Button variant="secondary" size="compact" onClick={() => retryTurn(childId, turn.id)}>
           다시 시도
         </Button>
-        <Button variant="tertiary" size="compact" onClick={() => rewriteTurn(childId, turn.id)}>
-          고쳐 쓰기
-        </Button>
+        <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
       </div>
     </CardFailed>
   );

@@ -62,6 +62,8 @@ async function until(check: () => boolean, timeoutMs = 10_000): Promise<void> {
 async function settled(id: string): Promise<ChatTurn> {
   await until(() => {
     const t = turn(id);
+    // 🚨 다시 보내는 동안에는 앞 run 이 그대로 남아 있다 — 보내기가 끝났는지부터 본다.
+    if (t.send.status === "sending") return false;
     return t.send.status === "error" || !["idle", "streaming"].includes(t.run.status);
   });
   return turn(id);
@@ -259,7 +261,7 @@ describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기
 
     rewriteTurn(CHILD, id);
     // 서버가 저장했을 수 있어서 대화에서 지우지 않는다. 같은 자리의 다시 시도만 내린다.
-    expect(turn(id).rewritten).toBe(true);
+    expect(turn(id).handedBack).toBe(true);
     expect(canRetry(turn(id))).toBe(false);
 
     // 🚨 고치지 않고 그대로 다시 보내면 같은 키다 — 새 키면 서버가 이미 저장한 한 줄이 두 번 저장된다.
@@ -278,6 +280,112 @@ describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기
       await settled(second);
     },
     TWO_RUNS,
+  );
+});
+
+describe("🚨 원문은 입력창에 옮겼을 때만 말풍선을 떠난다 (#231 리뷰)", () => {
+  it(
+    "응답을 못 받은 말풍선은 다음 한 줄이 대체하지 않는다 · 같은 키로 다시 시도하면 닿는다",
+    async () => {
+      scenario("send_failed");
+      const lost = send("지어낸 한 줄");
+      const failed = await settled(lost);
+      expect(failed.send.status).toBe("error");
+      expect(canRetry(failed)).toBe(true);
+
+      // 예전엔 여기서 줄1 이 지워졌다 — 보낼 때 입력창을 비웠으니 원문이 어디에도 안 남았다.
+      const next = send("다른 한 줄");
+      await settled(next);
+      expect(turn(lost).body.text).toBe("지어낸 한 줄");
+
+      const key = turn(lost).key;
+      retryTurn(CHILD, lost);
+      const retried = await settled(lost);
+      expect(retried.key).toBe(key);
+      expect(retried.run.status).toBe("done");
+    },
+    TWO_RUNS,
+  );
+
+  it("입력창에 쓰던 글이 있으면 고쳐 쓰기가 아무것도 하지 않는다 (덮지도 지우지도 않는다)", async () => {
+    scenario("send_failed");
+    const lost = send("지어낸 한 줄");
+    await settled(lost);
+    useDraftStore.getState().setDraft(CHILD, "쓰던 글");
+
+    expect(rewriteTurn(CHILD, lost)).toBe(false);
+    expect(useDraftStore.getState().byChild[CHILD]).toBe("쓰던 글");
+    expect(turn(lost).body.text).toBe("지어낸 한 줄");
+  });
+
+  it("429 에 입력창이 차 있으면 원문을 옮기지 않고 말풍선에 남긴다", async () => {
+    scenario("daily_limit");
+    useDraftStore.getState().setDraft(CHILD, "쓰던 글");
+    const id = send("지어낸 한 줄");
+    const failed = await settled(id);
+
+    expect(failed.handedBack).toBe(false);
+    expect(useDraftStore.getState().byChild[CHILD]).toBe("쓰던 글");
+    // 다음 한 줄도 이 말풍선을 지우지 않는다 — 여기가 원문의 자리다.
+    const next = send("또 한 줄");
+    await settled(next);
+    expect(turn(id).body.text).toBe("지어낸 한 줄");
+  });
+
+  it("202 를 받은 줄은 다시 시도가 네트워크로 실패해도 결과 미확인으로 남는다", async () => {
+    scenario("disconnected");
+    const id = send("지어낸 한 줄");
+    const lost = await settled(id);
+    expect(lost.run.status).toBe("unconfirmed");
+    const runId = runIdOf(id);
+
+    scenario("send_failed");
+    retryTurn(CHILD, id);
+    const again = await settled(id);
+    expect(again.send).toEqual({ status: "sent", runId });
+    expect(again.run.status).toBe("unconfirmed");
+    expect(canRetry(again)).toBe(true);
+  });
+});
+
+describe("🚨 같은 본문은 끝나기 전까지 같은 키 · 한 번에 한 run (#231 리뷰)", () => {
+  it(
+    "결과 미확인 줄이 있는데 다른 줄을 보낸 뒤 그 줄을 그대로 다시 보내도 같은 키다",
+    async () => {
+      scenario("disconnected");
+      const first = send("지어낸 한 줄");
+      const lost = await settled(first);
+
+      scenario("default");
+      const other = send("다른 한 줄");
+      await settled(other);
+
+      // 한동안 키 보관함이 본문 하나만 기억해서 여기서 새 키가 나갔다 — 서버가 줄1 을 저장했다면 두 번 저장.
+      rewriteTurn(CHILD, first);
+      const again = send(useDraftStore.getState().byChild[CHILD] ?? "");
+      expect(turn(again).key).toBe(lost.key);
+      await settled(again);
+    },
+    TWO_RUNS * 2,
+  );
+
+  it(
+    "앞 줄을 다시 시도하는 동안에는 마지막 줄이 끝나 있어도 새 줄을 못 보낸다",
+    async () => {
+      scenario("disconnected");
+      const first = send("지어낸 한 줄");
+      await settled(first);
+
+      scenario("default");
+      const other = send("다른 한 줄");
+      await settled(other);
+
+      retryTurn(CHILD, first);
+      expect(isBusy(conversation())).toBe(true);
+      expect(sendLine(CHILD, "또 한 줄", { asReply: false, source: "home_input" })).toBeNull();
+      await settled(first);
+    },
+    TWO_RUNS * 2,
   );
 });
 

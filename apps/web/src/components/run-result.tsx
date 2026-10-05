@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
+import { RewriteButton } from "@/components/rewrite-button";
 import { domainLabel, observationAgent } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -52,6 +53,7 @@ export function RunReply({
   remainingDrafts,
   onRetry,
   onRewrite,
+  rewriteBlocked,
   onAnswer,
   onOpenDrafts,
   onPickOffer,
@@ -69,6 +71,8 @@ export function RunReply({
   onRetry?: () => void;
   /** "고쳐 쓰기" 를 이미 했으면 `undefined`. */
   onRewrite?: () => void;
+  /** 입력창에 쓰던 글이 있어서 지금은 고쳐 쓸 수 없다 (`RewriteButton`). */
+  rewriteBlocked: boolean;
   onAnswer: () => void;
   onOpenDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
@@ -98,7 +102,7 @@ export function RunReply({
             연결이 끊겨서 결과를 받지 못했어요. 다시 시도하면 같은 한 줄로 확인해요. 이미 저장됐다면
             두 번 저장되지 않아요.
           </p>
-          <RetryActions onRetry={onRetry} onRewrite={onRewrite} />
+          <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
         </CardFailed>
 
         {run.observations.length > 0 ? (
@@ -122,7 +126,7 @@ export function RunReply({
       <CardFailed>
         <p className="text-body text-ink">읽지 못했어요</p>
         <p className="mt-1">잘못 저장하지 않으려고 아무것도 저장하지 않았어요.</p>
-        <RetryActions onRetry={onRetry} onRewrite={onRewrite} />
+        <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
       </CardFailed>
     );
   }
@@ -270,20 +274,24 @@ export function RunReply({
  * 실패한 run 의 두 길. 🚨 **다시 시도는 같은 키다** — 같은 본문 · 같은 답하던 질문으로 같은 자리에서
  * 다시 보낸다 (`retryTurn`). 고쳐 쓰기는 원문을 입력창에 되돌린다.
  */
-function RetryActions({ onRetry, onRewrite }: { onRetry?: () => void; onRewrite?: () => void }) {
+function RetryActions({
+  onRetry,
+  onRewrite,
+  rewriteBlocked,
+}: {
+  onRetry?: () => void;
+  onRewrite?: () => void;
+  rewriteBlocked: boolean;
+}) {
   if (!onRetry && !onRewrite) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
+    <div className="mt-3 flex flex-wrap items-start gap-2">
       {onRetry ? (
         <Button variant="secondary" size="compact" onClick={onRetry}>
           다시 시도
         </Button>
       ) : null}
-      {onRewrite ? (
-        <Button variant="tertiary" size="compact" onClick={onRewrite}>
-          고쳐 쓰기
-        </Button>
-      ) : null}
+      {onRewrite ? <RewriteButton blocked={rewriteBlocked} onClick={onRewrite} /> : null}
     </div>
   );
 }
