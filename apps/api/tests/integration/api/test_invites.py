@@ -188,6 +188,34 @@ async def test_relation_없이_수락하면_other(db_client, session, family):
     assert link.relation == ParentChildRelation.OTHER
 
 
+@pytest.mark.parametrize(
+    ("case", "status", "code"),
+    [("만료", 410, "invite_expired"), ("삭제된 아이", 404, "invite_not_found")],
+)
+async def test_수락은_만료_삭제를_다시_보고_코드를_쓰지_않는다(
+    db_client, session, family, case, status, code
+):
+    """확인 화면과 수락 사이에 코드가 만료되거나 아이가 삭제될 수 있다 (#150 멘토 답변)."""
+    child, _, owner_id, _, stranger_headers = family
+    now = datetime.now(UTC)
+    invite = await _seed_invite(
+        session,
+        child,
+        owner_id,
+        expires_at=now - timedelta(seconds=1) if case == "만료" else now + timedelta(hours=1),
+    )
+    if case == "삭제된 아이":
+        (await session.get(Child, child.id)).deleted_at = now
+        await session.flush()
+
+    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+
+    assert res.status_code == status
+    assert res.json()["error"]["code"] == code
+    await session.refresh(invite)
+    assert invite.used_at is None
+
+
 async def test_한_번_쓴_코드는_다른_보호자가_못_쓴다(db_client, session, family):
     child, _, owner_id, _, stranger_headers = family
     await _seed_invite(session, child, owner_id)
