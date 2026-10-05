@@ -12,6 +12,11 @@ from app.api.errors import register_error_handlers
 from app.api.v1.router import v1_router
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
+from app.core.logging_config import configure_logging
+
+# 앱 로그(app.*)를 시간 · 레벨 · 이름과 함께 찍는다. uvicorn 은 자기 로거만 설정해서, 이게
+# 없으면 info 는 버려지고 경고도 언제 난 건지 모르는 글자만 남는다 (#197 후속).
+configure_logging()
 
 app = FastAPI(title=settings.APP_NAME)
 

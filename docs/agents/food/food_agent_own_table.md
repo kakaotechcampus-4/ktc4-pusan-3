@@ -6,19 +6,29 @@
 > **2026-09-22 갱신** — `child_growth_log` 다시 읽음(권장 열량, 성별 제외) · 급식은 `daycare_meal`(Food 소유, CRUD) · `intake_daily`는 집에서 먹은 것만 · 끼니 슬롯 폐지
 >
 > **2026-09-27 갱신** — `ingredients`가 빈 배열인 행도 후보 풀에서 제외
+>
+> **2026-10-03 갱신** — 포트(`app/agents/food/store/ports.py`)와의 차이를 정리했다(#203 리뷰). 포트에는 Food 쓰기가 셋(급식 수정·삭제 · 영양 구간 · 메뉴 카탈로그)인데 이 문서는 급식만 다뤘다. 영양 구간 저장 위치와 메뉴 카탈로그를 채우는 주체는 **TODO: 확정 필요** — 가능한 안만 적었다(§1 · §2-2 · FT-12 · FT-13). 영양 구간 포트(`NutrientBandStore`, 09-28)가 이 문서(09-22) 뒤에 들어오면서 생긴 차이다
+>
+> **2026-10-04 갱신** — 메뉴 카탈로그를 누가 채우는지 정했다(FT-13 닫힘). 캐시 미스면 Food 요청 안에서 외부 조회를 하고, 결과를 받은 뒤 백엔드 어댑터가 없을 때만 넣는다. DB 권한 방식은 명성 님이 정한다(§0 권한 줄 TODO). 영양 구간 저장 위치(FT-12)는 추후 정리한다.
 
 ---
 
 ## 0. 무엇이 Food 소유인가
 
-**Food가 직접 쓰는 것은 `daycare_meal` 하나입니다.** 나머지는 전부 참조·캐시·파생이고, 아이의 관찰·프로필은 손대지 않습니다.
+**Food의 쓰기 포트는 셋입니다** — `daycare_meal` 수정·삭제(`DaycareMealStore`), 영양 구간(`NutrientBandStore.save`), 메뉴 카탈로그(`MenuCatalogStore.put`). 이 문서에서 테이블·권한까지 정해진 것은 `daycare_meal` 과 메뉴 카탈로그(10-04, §1)입니다. 나머지는 참조·파생이고, 아이의 관찰·프로필은 손대지 않습니다.
+
+> **TODO: 확정 필요** (#203 리뷰) — 영양 구간을 어디에 저장하나 — 안은 §2-2 (FT-12). 저장하는 안이면 아이 데이터라 보관·삭제 정책 대상이다. #205 에서 저장하지 않고 판정할 때마다 원본에서 계산하는 쪽으로 정리 중이다. 메뉴 카탈로그를 누가 채우나(FT-13)는 10-04 에 닫았다(§1).
+
+셋 중 **보호자 말을 반영한 쓰기는 `daycare_meal` 하나**이다. 영양 구간과 메뉴 카탈로그는 추천·분석을 계산하는 중에 생기는 내부 값이다. 둘 다 다시 보내도 결과가 같아야 하고(영양 구간은 덮어쓰기, 메뉴 카탈로그는 없을 때만 넣기), `run_writes`로 감싸지 않는다 — 보호자 말을 반영한 쓰기만 감싸서 run의 commit 판정을 가른다([`Agent_공통규약.md`](../shared/Agent_공통규약.md) §2 "쓰는 시점"). 영양 구간 TODO가 어느 안으로 정해져도 이 구분은 동일하다.
 
 `daycare_meal`이 예외인 이유는 Health의 `medication_*`과 같습니다 — **다른 Agent가 읽지 않는 도메인 전용 테이블**이라 공유 테이블의 단일 writer 원칙에 걸리지 않습니다.
 
 | 테이블 | 쓰는 주체 | 읽는 주체 | 성격 |
 | --- | --- | --- | --- |
-| `menu_catalog` · `menu_alias` | 동기화 배치 (`integrations`) | Food | 외부 API 캐시 |
+| `menu_catalog` | 동기화 배치 (`integrations`) · 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 INSERT (§1) | Food | 메뉴 카탈로그 — 외부 API 결과 + 수동 태깅 |
+| `menu_alias` | 동기화 배치 (`integrations`) | Food | 표기 사전 |
 | `intake_daily` | `compute_intake_daily` (코드) | Food | **파생** — 언제든 재계산 |
+| (영양 구간) | Food — 저장 위치 **TODO: 확정 필요** (§2-2) | Food | 저장하면 **아이 데이터** |
 | **`daycare_meal`** | 최초 적재는 OCR·급식 배치(INSERT) · 이후 갱신·삭제는 **Food** | Food | **도메인 전용** — 아무도 안 읽는다 |
 | `nutrient_reference` | 마이그레이션 시드 | Food | 참조 상수 |
 | `food_doc` | 마이그레이션 시드 | Food | 문서 행 |
@@ -34,13 +44,26 @@
 
 > `child_growth_log`는 **권장 열량 계산 입력으로 읽습니다**(2026-09-22, 개정 2 번복). 영양소 기준은 연령군 일반값이고, **권장 열량만** 키·몸무게로 조정합니다. 측정이 없으면 연령군 일반값을 씁니다. 계산 결과는 내부 전용이고, 측정값으로 과체중·저체중을 판정하지 않습니다. **성별은 읽지 않습니다.**
 
-DB 권한: Agent role에 `intake_daily` write · **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) · OCR·배치 role에 `daycare_meal` INSERT 부여 · `menu_catalog`·`nutrient_reference`·`food_doc`·`allergen_term` write **비부여**(배치 role만) · `health_safety` write **비부여**.
+DB 권한: Agent role에 `intake_daily` write · **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) · OCR·배치 role에 `daycare_meal` INSERT 부여 · `menu_catalog` 는 배치와 캐시 미스 저장 어댑터(없을 때만 INSERT)만 쓴다 · `nutrient_reference`·`food_doc`·`allergen_term` write **비부여**(배치 role만) · `health_safety` write **비부여**.
+
+> **TODO: 확정 필요** — 캐시 미스 저장 어댑터의 권한을 DB 에서도 좁힐지는 명성 님이 정한다. 계정 하나로 두고 포트로 막는 안(#203 재형 님 코멘트)과, 어댑터 트랜잭션 안에서만 `SET LOCAL ROLE` 로 INSERT 만 가진 역할로 바꾸는 안이 있다. 영양 구간을 저장할 권한은 아직 없다 — FT-12(#205)가 저장하지 않는 쪽으로 닫히면 그대로 간다. 실제 GRANT 는 백엔드가 만든다.
 
 ---
 
-## 1. `menu_catalog` — 메뉴 해석 캐시
+## 1. `menu_catalog` — 메뉴 카탈로그 (메뉴 해석)
 
-메뉴명 문자열을 식품코드·재료·영양으로 바꾸는 유일한 경로. 미스일 때만 외부 API를 부르고 결과를 여기 쌓는다.
+메뉴명 문자열을 식품코드·재료·영양으로 바꾸는 유일한 경로. 카탈로그에 없을 때(캐시 미스)만 외부 API를 부르고 결과를 여기 쌓는다.
+
+외부 API 결과를 쌓는다는 점에서는 캐시지만, 사람이 넣은 행(`source`가 `manual` · `center_standard`)과 수동 태깅(`stage_min`)이 있어 지우고 다시 채울 수 있는 순수 캐시는 아니다. 그래서 **메뉴 카탈로그**라고 부르고, 카탈로그에 없는 메뉴를 찾는 경우만 "캐시 미스" 라고 한다.
+
+**정함 (2026-10-04, FT-13)** — 캐시 미스면 Food 요청 안에서 `MenuSource` 로 외부 조회를 하고, 결과를 받은 뒤 **백엔드 어댑터가 제한된 권한으로 짧게 저장**한다([멘토 #196 답변](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/196#issuecomment-5976970529)).
+
+- 외부 API 를 기다리는 동안 DB 트랜잭션을 쥐지 않는다. 저장은 결과를 받은 뒤 짧은 트랜잭션 하나다.
+- 없을 때만 넣는다 — `INSERT ... ON CONFLICT (menu_key) DO NOTHING`. 같은 메뉴를 두 run 이 동시에 채워도 한 행만 남고, 사람이 넣은 행(`manual` · `center_standard`)과 수동 태깅(`stage_min`)을 덮지 않는다. 있는 행을 고치거나 지우는 길은 포트에 없다. DB 권한까지 좁힐지는 명성 님이 정한다(§0 권한 줄 TODO).
+- 외부 조회에 실패하거나(`MenuSourceError`) 정보가 부족하면 그 run 에서 그 메뉴는 unresolved 다. 알레르기는 "확인 못 함"이고 안전한 것으로 보지 않는다. 해석 실패를 카탈로그에 남길지(`resolved=false`)는 추후 정한다.
+- 검토한 안 B(배치만 채움) · C(캐시 미스만 넘기고 백엔드가 채움)는 처음 보는 메뉴가 다음 배치 전까지 그날 "확인 못 함" 이 돼서 접었다.
+
+지금 코드는 `menu_source` 포트가 없으면(API 키 없음) 카탈로그만 쓰고 캐시 미스는 unresolved로 둔다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
@@ -62,7 +85,7 @@ DB 권한: Agent role에 `intake_daily` write · **`daycare_meal` UPDATE/DELETE*
 - `resolved=false` 행과 `ingredients`가 빈 배열인 행은 **후보 풀에서 제외**되고, 급식 표시에서는 "알레르기 확인 못 함"이 된다. `ingredients`가 비는 것이 곧 "재료를 모른다"는 뜻이고, 별도 컬럼을 두지 않는다. 영양성분DB에는 있고 레시피DB에는 없는 메뉴가 많은데, 재료가 비면 메뉴명 사전만으로 알레르기를 보게 되어 "크림수프"의 우유가 빠진다(F-1). 이름으로 걸리는 알레르기는 재료가 없어도 걸러진다 — "새우볶음밥"은 재료가 비어도 이름에서 새우가 걸린다.
 - `allergen_codes`는 재료에서 뽑은 것과 메뉴명 사전에서 뽑은 것의 **합집합**이다. 한쪽만 쓰면 "크림수프"의 우유가 빠진다(F-1).
 - `stage_min`이 비면 `toddler`로 간주한다 — **보수적인 쪽**(이유기 아이에게 나가지 않는다).
-- 운영 트래픽을 API에 직접 걸지 않는다. 야간 배치 + 캐시 미스 시 1회.
+- 운영 트래픽을 API에 직접 걸지 않는다. 야간 배치 + 카탈로그에 없을 때(캐시 미스) 1회 — 그 1회는 Food 요청 중에 부르고, 저장은 어댑터가 한다.
 
 ### `menu_alias` — 표기 흔들림 흡수
 
@@ -112,6 +135,21 @@ DB 권한: Agent role에 `intake_daily` write · **`daycare_meal` UPDATE/DELETE*
 - 하루 평균 1.5행이다. 급식이 있는 아이는 평일만으로 채워지고, 집에서만 먹는 아이도 하루 2건이면 닿는다.
 - 메뉴 해석률(`unresolved_count`)은 따로 본다 — 행은 있는데 메뉴를 못 읽으면 그것도 결론을 막는다.
 
+### 2-2. 영양 구간 저장 — TODO: 확정 필요 (#203 리뷰, FT-12)
+
+구간 판정에는 히스테리시스가 있다 — 한 번 `low`로 표시한 항목은 EAR의 1.1배를 넘어야 `ok`로 돌아간다([`영양소_계산_설계.md`](영양소_계산_설계.md) §6). 그래서 직전 판정을 알아야 한다. 포트(`NutrientBandStore.last` · `save`, 09-28)는 그 값을 저장하는 쪽으로 만들어졌지만, 저장할 테이블은 이 문서에 없다. 하나로 정한 뒤 §0 · §7 · 포트를 같이 맞춘다.
+
+| 안 | 내용 | 좋은 점 | 걸리는 점 |
+| --- | --- | --- | --- |
+| A. 전용 테이블 · 항목당 한 행 | `nutrient_band(id, child_id FK CASCADE, nutrient, band, updated_at)` · `UNIQUE (child_id, nutrient)` · `band`는 `low`/`ok`/`high` CHECK. `save`는 그 아이의 행을 한 트랜잭션에서 통째로 바꾼다 | 값에 CHECK를 걸 수 있다. 다른 아이 데이터 테이블(`intake_daily` · `daycare_meal`)과 모양이 같다 | 아이 데이터 테이블이 하나 늘어 보관 기간 · 동의 철회 범위를 정해야 한다 |
+| B. 전용 테이블 · 아이당 한 행 | `nutrient_band(child_id PK FK CASCADE, bands jsonb, updated_at)`. `save`는 upsert 한 문장 | 통째로 바꾸는 게 한 문장이라 단순하다 | 값 검증이 코드에만 있다. 보관 · 삭제는 A와 같다 |
+| C. 저장하지 않고 다시 판정 | 판정 기간 앞쪽 N일 전(예: 7일 — 원본은 판정 창 7일 + 7일 = 14일 치)부터 하루씩 다시 판정해 전날 구간을 얻고, 오늘 판정에 히스테리시스를 건다. `NutrientBandStore`는 빼거나 계산 함수로 바꾼다 | 새 아이 데이터가 생기지 않아 보관 · 삭제 정책에 걸리지 않는다. 근거가 지워진 판정을 끌고 가지 않는다 | 다시 판정할 때마다 몇 주 치 원본을 메뉴 매칭한다 — 무거운 외부 API 는 메뉴 카탈로그가 맡아서, 해석 실패도 카탈로그에 남기고 한 번에 조회하면 조회 몇 번이면 된다. 일평균이 N일 내내 EAR과 1.1배 사이에 머문 경우만 기본 기준으로 돌아가 저장한 판정과 갈린다 — 히스테리시스는 그 사이에 머무는 동안만 과거를 기억하고, 벗어나는 날 판정이 새로 정해진다 |
+
+> `intake_daily`를 없애고 영양 판정은 판정할 때마다 원본(`observation_food` · `daycare_meal`)에서 계산하는 방향을 별도 이슈로 정리하고 있다. 그 방향이면 이 TODO는 C로 닫힌다.
+
+- 어느 안이든 이 쓰기는 보호자 말을 반영한 게 아니라 commit 판정 표시(`run_writes`)로 감싸지 않는다(§0). 저장하는 안이면 덮어쓰기여야 한다.
+- 저장하는 안(A · B)은 아이 데이터라 파기·보관 정책 대상이다. 아이를 지우면 다른 아이 데이터처럼 FK CASCADE로 지워지지만, 보관 기간과 동의 철회 때의 처리 범위는 정책이 정해지기 전에 기본값을 두지 않는다(루트 CLAUDE.md §10).
+
 ---
 
 ## 3. `nutrient_reference` — 섭취기준
@@ -153,7 +191,7 @@ DB 권한: Agent role에 `intake_daily` write · **`daycare_meal` UPDATE/DELETE*
 
 ## 5. `daycare_meal` — 기관에서 먹는 것 (Food가 고치는 테이블)
 
-**Food가 직접 쓰는 유일한 테이블이다.** 단 **INSERT는 못 한다** — 행을 만드는 것은 OCR·급식 배치뿐이고, Food는 이미 있는 행을 고치거나 지울 뿐이다. 없는 급식을 지어내는 경로를 애초에 열지 않는다. 다른 Agent가 읽지 않는 도메인 전용 테이블이라 "공유 테이블의 단일 writer는 Memory" 원칙에 걸리지 않는다 — Health의 `medication_*`과 같은 자리다. 기준은 누가 쓰느냐가 아니라 **누가 읽느냐**다.
+**Food가 보호자 말을 반영해 고치는 유일한 테이블이다**(영양 구간·메뉴 카탈로그는 계산이 남기는 내부 값이다 — §0). 단 **INSERT는 못 한다** — 행을 만드는 것은 OCR·급식 배치뿐이고, Food는 이미 있는 행을 고치거나 지울 뿐이다. 없는 급식을 지어내는 경로를 애초에 열지 않는다. 다른 Agent가 읽지 않는 도메인 전용 테이블이라 "공유 테이블의 단일 writer는 Memory" 원칙에 걸리지 않는다 — Health의 `medication_*`과 같은 자리다. 기준은 누가 쓰느냐가 아니라 **누가 읽느냐**다.
 
 어린이집 급식은 전국 단일 API가 없다. **기관 공지 OCR이 주 경로**이고, 학교·해당 유치원은 NEIS, 그 외에는 지역 센터 표준식단을 참고로 쓴다.
 
@@ -243,6 +281,7 @@ CREATE TABLE menu_catalog (
 );
 CREATE INDEX menu_catalog_stage_idx ON menu_catalog (stage_min) WHERE resolved;
 CREATE INDEX menu_catalog_allergen_idx ON menu_catalog USING gin (allergen_codes);
+-- 캐시 미스 저장(백엔드 어댑터): INSERT ... ON CONFLICT (menu_key) DO NOTHING — 권한 방식은 §0 TODO
 
 CREATE TABLE menu_alias (
     alias      text        PRIMARY KEY,
@@ -331,7 +370,7 @@ CREATE TABLE nutrient_reference (
 ## 9. 구현 메모
 
 - PK 기본값 `uuidv7()`, enum은 VARCHAR + CHECK — 다른 도메인과 통일
-- `menu_catalog`는 아이 데이터가 아니다(개인정보 아님). `intake_daily`는 아이 데이터다 — 파기·보관 정책 대상
+- `menu_catalog`는 아이 데이터가 아니다(개인정보 아님). `intake_daily`는 아이 데이터다 — 파기·보관 정책 대상. 영양 구간도 저장하는 안으로 정해지면 같다(§2-2)
 - `intake_daily.nutrients`는 **내부 전용**이다. tool 결과 밖으로 나가지 않는다
 - 재계산 배치: `catalog_version` 불일치 행만 다시 계산 → 카탈로그 갱신이 과거 분석을 조용히 바꾸지 않게 로그를 남긴다
 - 로그에는 `{kind, id}`만. **메뉴명·알레르기 라벨 원문을 남기지 않는다**(NF-05)
@@ -353,3 +392,5 @@ CREATE TABLE nutrient_reference (
 | FT-9 | **성별 없는 권장 열량 계산식** | 흔히 쓰는 필요추정량 공식 중 유아기부터 성별로 나뉘는 것이 있어 선정 필요 |
 | FT-10 | `nutrient_reference.sex` | 성별 미사용 확정 → 조회는 `sex IS NULL` 행만. 영유아 구간에 성별 구분 행이 있는 지표의 처리 |
 | FT-11 | **급식 행의 보존 기간** | 과거 30일 + 미래 전부로 시작. 지난 급식표를 언제까지 둘지는 보관 정책 확정 후 |
+| FT-12 | **영양 구간 저장 위치** — TODO: 확정 필요 | 안 A(전용 테이블 · 항목당 한 행) · B(아이당 jsonb 한 행) · C(저장 없이 재계산) — §2-2. 저장하는 안이면 보관 기간 · 동의 철회 범위도 같이(NF-04) |
+| FT-13 | ✅ **닫힘(10-04)** — 캐시 미스는 Food 요청 중 외부 조회, 저장은 백엔드 어댑터가 없을 때만(`ON CONFLICT DO NOTHING`). DB 권한 방식은 명성 님 결정 대기(§0). 멘토 #196 답변 — §1 |

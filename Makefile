@@ -2,7 +2,7 @@
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
-        web-install web-dev web-build web-start web-test web-lint web-fmt \
+        web-install web-dev web-build web-start web-test web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-image web-up web-down web-logs
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
@@ -28,7 +28,8 @@ help:
 	@echo "  make web-typecheck  타입 검사 (next typegen + tsc)"
 	@echo "  make web-lint       코드 검사 (eslint)"
 	@echo "  make web-fmt        코드 포맷팅 (prettier)"
-	@echo "  make web-check      typecheck + lint + test — PR 올리기 전"
+	@echo "  make web-fmt-check  포맷 검사만 (고치지 않는다 — CI 가 보는 것)"
+	@echo "  make web-check      format + typecheck + lint + test — PR 올리기 전 (CI 와 같은 검사, build 만 빠짐)"
 	@echo ""
 	@echo "── 로컬 개발 DB (deploy/docker) ──"
 	@echo "  make db-up        로컬 Postgres+pgvector 기동 (최초 1회 deploy/docker/.env 필요)"
@@ -99,7 +100,11 @@ web-lint:
 web-fmt:
 	cd apps/web && pnpm format
 
-web-check: web-typecheck web-lint web-test
+web-fmt-check:
+	cd apps/web && pnpm format:check
+
+# CI(.github/workflows/ci-web.yml)와 같은 검사. 거기에 build 하나가 더 붙는다.
+web-check: web-fmt-check web-typecheck web-lint web-test
 
 db-up:
 	$(COMPOSE_DEV) up -d

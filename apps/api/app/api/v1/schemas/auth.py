@@ -24,7 +24,8 @@ Bind = Annotated[str, StringConstraints(pattern=BIND_PATTERN)]
 NICKNAME_MAX = 20
 """가입 화면(apps/web/src/app/auth/consent/page.tsx MAX_NICKNAME)과 같은 상한.
 
-한쪽만 바꾸지 않는다."""
+아이 등록(POST /children)의 아이 이름도 이 값을 쓴다 — 01 화면(apps/web/src/app/onboarding/page.tsx
+maxLength). 세 곳 중 한쪽만 바꾸지 않는다."""
 
 Nickname = Annotated[
     str,

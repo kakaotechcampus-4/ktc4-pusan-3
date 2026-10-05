@@ -1,0 +1,82 @@
+name: Web CI
+# apps/web 를 바꾼 PR 에서 `make web-check` + `make web-build` 와 같은 검사를 돈다 (#225).
+#
+# 🚨 build 를 빼지 않는다. `useSearchParams` 의 Suspense 경계가 빠지면 dev · typecheck · lint 는
+#    전부 통과하고 프로덕션 빌드만 멈춘다 (apps/web/CLAUDE.md §3 라우팅 · PR #71 리뷰).
+#
+# ⚠️ `paths` 필터가 걸려 있어서 프론트를 안 건드린 PR 에는 이 체크가 아예 안 뜬다.
+#    브랜치 보호의 "필수 체크" 로 지정하면 그런 PR 이 체크를 기다리다 멈춘다 — 지정 전에 팀과 정할 것.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - apps/web/**
+      - .github/workflows/ci-web.yml
+  push:
+    branches:
+      - develop
+    paths:
+      - apps/web/**
+      - .github/workflows/ci-web.yml
+
+# PR 은 새 커밋이 오면 이전 실행을 끊고, develop push 는 커밋마다 끝까지 돈다 (ci-api.yml 과 같은 규칙).
+concurrency:
+  group: >-
+    ${{ github.ref == 'refs/heads/develop'
+        && format('{0}-{1}', github.workflow, github.sha)
+        || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      # lib/env.ts 는 값이 없으면 import 시점에 던진다. 빌드가 이 주소로 요청하지는 않는다 — 더미다.
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 🚨 pnpm 버전을 여기 적지 않는다. 정본은 package.json 의 `packageManager` 하나다 (Dockerfile 과 같은 이유).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
+
+      # Node 는 배포 이미지(Dockerfile 의 node:24.x)와 같은 메이저. 베이스 이미지를 올리면 여기도 같이 올린다.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      # pnpm-workspace.yaml 의 allowBuilds 가 msw postinstall 을 막는다 — 커밋된 워커 파일을 덮어쓰지 않는다.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

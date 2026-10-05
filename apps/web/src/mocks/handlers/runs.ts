@@ -59,13 +59,14 @@ export function resetSubmittedInputs(): void {
   failedOnce.clear();
 }
 
-/** 없는 run · 다른 아이 · 이미 답한 질문을 하나로 합친다 — 서버와 같은 한 코드다 (#175). */
+/**
+ * 없는 run · 다른 아이 · 이미 답한 질문을 하나로 합친다 — 서버와 같은 한 코드다 (#175).
+ * 🚨 **문구는 상황만 말한다** (서버 `routers/children.py` 와 같은 글자). 무엇을 다시 보낼지는
+ *    화면(`SubmitErrorCard`)이 이 아래에 적는다 — 여기서 "다시 적어 주세요" 를 말하면 바로 아래의
+ *    "앞서 저장된 이야기는 다시 적지 않아도 돼요" 와 한 카드에서 부딪친다 (#208).
+ */
 function replyUnavailable() {
-  return apiError(
-    400,
-    "reply_context_unavailable",
-    "이전 질문을 이어서 확인할 수 없어요. 내용을 한 번만 다시 적어 주세요.",
-  );
+  return apiError(400, "reply_context_unavailable", "이전 질문을 이어서 확인할 수 없어요.");
 }
 
 function frame(event: string, data: unknown): Uint8Array {
@@ -89,15 +90,19 @@ const SAFETY_GUIDANCE = {
   deeplink: "settings/health-safety",
 } as const;
 
+/** 이어받기 run 이 저장한 뒤 Memory 가 하는 말. 🚨 질문이 아니다 — 이어받은 답은 또 묻지 않는다. */
+const CONTINUATION_NOTE = "말씀해 주신 시점까지 함께 기록해 두었어요.";
+
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
- * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계도 짧고 추천 제안(`offer`)도 없다.
+ * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계가 하나고 추천 제안(`offer`)도 없다
+ * (`apps/api/app/agents/pipeline.py` 의 `_handle_continuation`).
  */
 async function* continuationScript(
   runId: string,
   input: SubmittedInput & { replyTo: string },
 ): AsyncGenerator<Uint8Array> {
-  yield frame("step", { index: 1, total: 2, label: "앞 이야기에 답을 이어 붙이고 있어요" });
+  yield frame("step", { index: 1, total: 1, label: "이어서 적은 내용을 살펴보고 있어요" });
   await sleep(600);
 
   if (currentScenario() === "reply_failed" && !failedOnce.has(input.replyTo)) {
@@ -109,9 +114,15 @@ async function* continuationScript(
     return;
   }
 
-  yield frame("step", { index: 2, total: 2, label: "기억을 정리하고 있어요" });
-  await sleep(500);
   yield frame("saved", { observations: [healthObservation] });
+  await sleep(300);
+  /**
+   * 🚨 **저장 뒤에 말이 한 번 더 온다** (#208). 서버는 이어받기에서 조기 종료를 껐다 — 답에 다른
+   *    말이 섞였는지(leftover) 받을 턴이 있어야 해서다 (`apps/api/app/agents/memory/agent.py`).
+   *    그래서 저장한 뒤 Memory 가 한 번 더 말하고 그게 `note` 로 나간다. `kind` 가 `message` 라
+   *    화면은 "이어서 적기" 를 열지 않는다 — 열면 끝난 답에 또 답을 재촉한다.
+   */
+  yield frame("note", { text: CONTINUATION_NOTE, kind: "message" });
   await sleep(300);
   yield frame("done", { run_id: runId, model_calls: 1 });
 }

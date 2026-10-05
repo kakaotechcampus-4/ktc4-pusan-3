@@ -81,9 +81,11 @@ import { setScenario } from "./scenario";
 
 /**
  * 초안 제출 본문. 🚨 **일자가 있어야 목이 받는다** — 화면이 잠그는 것과 같은 규칙을 계약도 건다.
- * `suggestion_id` 를 넘기면 그 제안이 "이미 넣은 것" 으로 표시된다 (중복 제출 판정 대상).
+ * 제안 id 를 넘기면 그 제안이 일정에 연결된다 (중복 제출 판정 대상 · #206).
+ * 🚨 화면과 **같은 키**(`suggestion_ids` 배열)로 보낸다 — 한동안 단수 키로 보내서, 화면이 보내는
+ *    배열을 목이 못 읽는 것을 이 테스트가 덮고 있었다.
  */
-function draftBody(suggestionId?: string): SubmitEventBody {
+function draftBody(...suggestionIds: string[]): SubmitEventBody {
   return {
     event: {
       title: "지어낸 일정",
@@ -94,7 +96,7 @@ function draftBody(suggestionId?: string): SubmitEventBody {
       category: "activity",
     },
     items: [],
-    ...(suggestionId ? { suggestion_id: suggestionId } : {}),
+    ...(suggestionIds.length > 0 ? { suggestion_ids: suggestionIds } : {}),
   };
 }
 
@@ -205,6 +207,15 @@ describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
     await expect(submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey())).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "already_confirmed") && e.status === 409,
     );
+  });
+
+  it("묶인 초안은 제안 하나만 겹쳐도 409 already_confirmed", async () => {
+    await submitEventDraft("c1", draftBody("s_meal_a", "s_meal_b"), newIdempotencyKey());
+
+    // 🚨 일부만 받아 주면 같은 제안이 일정 두 개에 걸린다.
+    await expect(
+      submitEventDraft("c1", draftBody("s_meal_b", "s_meal_c"), newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_confirmed") && e.status === 409);
   });
 });
 
@@ -392,7 +403,12 @@ describe("일정 초안", () => {
     expect(saved.event.title).toBe(body.event.title);
     expect(saved.event.starts_at).toBe(body.event.starts_at);
     expect(saved.event.status).toBe("confirmed");
-    expect(saved.suggestion_status).toBe("approved");
+  });
+
+  it("🚨 제출은 제안 상태를 바꾸지 않는다 — approved 는 채택이 이미 만들었다 (#206)", async () => {
+    const saved = await submitEventDraft("c1", draftBody("s_status"), newIdempotencyKey());
+
+    expect(saved).not.toHaveProperty("suggestion_status");
   });
 });
 
@@ -716,10 +732,10 @@ async function answerTo(
   return run_id;
 }
 
-async function eventTypesOf(runId: string): Promise<string[]> {
-  const types: string[] = [];
-  for await (const event of streamRunEvents(runId)) types.push(event.type);
-  return types;
+async function eventsOf(runId: string): Promise<RunEvent[]> {
+  const events: RunEvent[] = [];
+  for await (const event of streamRunEvents(runId)) events.push(event);
+  return events;
 }
 
 function failureOf(promise: Promise<unknown>): Promise<unknown> {
@@ -734,6 +750,9 @@ describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", ()
 
     expect(isApiError(failure, "reply_context_unavailable")).toBe(true);
     expect((failure as ApiError).status).toBe(400);
+    // 🚨 서버 문구와 같은 글자다 (`routers/children.py`). 상황만 말하고, 무엇을 다시 보낼지는
+    //    화면이 이 아래에 적는다 — "다시 적어 주세요" 가 섞이면 화면의 "다시 적지 않아도 돼요" 와 부딪친다 (#208).
+    expect((failure as ApiError).message).toBe("이전 질문을 이어서 확인할 수 없어요.");
   });
 
   it("같은 질문에 두 번 답하면 두 번째는 400 이다 — 관찰이 두 행이 되지 않게", async () => {
@@ -793,16 +812,22 @@ describe("㉒ 되묻기 답은 그 질문에 한 번만 이어진다 (#175)", ()
       const key = newIdempotencyKey();
 
       const firstTry = await answerTo(asked, "지어낸 답", { key });
-      expect((await eventTypesOf(firstTry)).at(-1)).toBe("failed");
+      expect((await eventsOf(firstTry)).at(-1)?.type).toBe("failed");
 
       const retry = await answerTo(asked, "지어낸 답", { key });
       expect(retry).not.toBe(firstTry);
       expect(submittedInput(retry)?.replyTo).toBe(asked);
 
-      const types = await eventTypesOf(retry);
+      const events = await eventsOf(retry);
+      const types = events.map((e) => e.type);
       expect(types).toContain("saved");
       // 🚨 이어받은 답은 또 묻지 않는다 — `reply_to` 가 빠졌다면 새 입력이라 질문이 다시 떴다.
-      expect(types).not.toContain("note");
+      //    note 자체는 온다: 서버가 이어받기에서 조기 종료를 꺼서 저장 뒤에 한 번 더 말한다 (#208).
+      //    그 말이 **질문이 아니어야** 한다 — 질문이면 화면이 끝난 답에 "이어서 적기" 를 또 연다.
+      const notes = events.filter((e) => e.type === "note").map((e) => e.data as NoteEvent);
+      expect(notes.length).toBeGreaterThan(0);
+      expect(notes.every((note) => note.kind !== "question")).toBe(true);
+      expect(types.indexOf("saved")).toBeLessThan(types.indexOf("note"));
       expect(types.at(-1)).toBe("done");
     } finally {
       setScenario("default");
