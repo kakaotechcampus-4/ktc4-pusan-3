@@ -8,7 +8,6 @@ from sqlalchemy.dialects.postgresql import Range
 
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import (
-    archive_child,
     create_child,
     find_accessible_child,
     list_children_for_parent,
@@ -64,29 +63,13 @@ async def family(session):
     return owner, stranger, child, other
 
 
-async def test_child_access_and_archive(session, family):
+async def test_child_access(session, family):
     owner, stranger, child, _ = family
     assert await find_accessible_child(session, child_id=child.id, parent_id=owner.id)
     assert await find_accessible_child(session, child_id=child.id, parent_id=stranger.id) is None
     assert [row.id for row in await list_children_for_parent(session, parent_id=owner.id)] == [
         child.id
     ]
-    assert (
-        await archive_child(
-            session,
-            child_id=child.id,
-            owner_parent_id=stranger.id,
-            archived_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
-        )
-        is None
-    )
-    assert await archive_child(
-        session,
-        child_id=child.id,
-        owner_parent_id=owner.id,
-        archived_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
-    )
-    assert await list_children_for_parent(session, parent_id=owner.id) == []
 
 
 async def test_safety_retraction_keeps_history_but_hides_active(session, family):

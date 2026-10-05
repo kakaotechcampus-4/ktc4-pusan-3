@@ -83,26 +83,6 @@ async def update_child(
     )
 
 
-async def archive_child(
-    session: AsyncSession,
-    *,
-    child_id: uuid.UUID,
-    owner_parent_id: uuid.UUID,
-    archived_at: datetime,
-) -> Child | None:
-    """삭제 대신 보관 처리. owner 외에는 WHERE 절에서 차단한다."""
-    return await session.scalar(
-        update(Child)
-        .where(
-            Child.id == child_id,
-            Child.owner_parent_id == owner_parent_id,
-            Child.deleted_at.is_(None),
-        )
-        .values(deleted_at=archived_at, deleted_by=owner_parent_id)
-        .returning(Child)
-    )
-
-
 async def list_connected_parents(
     session: AsyncSession, *, child_id: uuid.UUID
 ) -> list[ParentChild]:

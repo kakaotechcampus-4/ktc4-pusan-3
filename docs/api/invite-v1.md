@@ -189,7 +189,7 @@
 
 ---
 
-## 7. 결정 (2026-10-04 닫음)
+## 7. 결정 (01~04 는 2026-10-04 · 05 는 2026-10-05 닫음)
 
 | | 무엇 | 결정 | 근거 |
 | --- | --- | --- | --- |
@@ -197,10 +197,4 @@
 | 02 | 시도 제한의 N 과 기준 키 | **계정 5회 · IP 30회 / 1시간** (§4) | #131 코멘트 2 · #150 멘토 답변 |
 | 03 | 에러 코드 5종의 이름 | **프론트 제안 그대로.** 서버 구현에서 `owner_only` 하나가 더해졌다 (§5) | #198 |
 | 04 | `relation` 을 안 고른 보호자가 `GET /children/{cid}/parents` 에 무엇으로 서는지 | **`other`.** 관계를 나중에 고치는 엔드포인트는 이번 범위가 아니다 (추후) | #131 코멘트 3 · 태영님 답변 |
-
-### 남은 질문
-
-- **아이 삭제를 soft delete 로 하면 그 보호자는 아이 재등록도 초대 수락도 못 한다.** 아이 삭제 경로가 둘 있다.
-  - `purge_child()` (`domains/consent/retention.py` · #47) — 동의 증빙을 옮기고 child 를 **hard delete** 한다. `parent_child` 는 CASCADE 로 함께 지워져 문제가 없다. 삭제 정책 정본 §9 의 "MVP 는 복구 없는 hard delete" 와 맞는 쪽이다.
-  - `archive_child()` (`domains/child/repository.py` · #130) — `child.deleted_at` 만 채우는 soft delete 다. `parent_child` 행이 남아 `parent_id` 유니크 제약에 계속 걸린다.
-  - 아이 삭제 API 는 아직 없어 실제로 일어나지 않는다. 그 API 가 어느 경로를 쓸지 정할 때 함께 닫는다.
+| 05 | 아이 삭제를 soft delete 로 할지 hard delete 로 할지 | **hard delete — `purge_child()` (`domains/consent/retention.py` · #47).** `parent_child` 가 CASCADE 로 함께 지워져 그 보호자는 다시 등록 · 수락할 수 있다. `child.deleted_at` 만 채우던 `archive_child()` (#130) 는 부르는 곳이 없어 지웠다 — 남은 `parent_child` 행이 `parent_id` 유니크 제약에 계속 걸리기 때문이다 | 삭제 정책 정본 §9 · #167 · #198 명성님 답변 |
