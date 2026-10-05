@@ -15,7 +15,7 @@
 | C48-milk | 48개월 | `health_safety`에 **우유 알레르기** 등록 |
 | C48-noconsent | 48개월 | `child_health` 동의 **철회** — `health_safety`·`child_growth_log` 를 못 읽는다 |
 | C48-safetyfail | 48개월 | `health_safety` 조회가 **예외로 실패** |
-| C48-unconfirmed | 48개월 | `kind='allergy'` 행에 `unknown` 이 섞여 있음 (아직 안 물어본 항목) |
+| C48-unconfirmed | 48개월 | 19종 중 일부에 행이 없음 (아직 안 물어본 항목) |
 | C48-norows | 48개월 | `kind='allergy'` **0행** — 건강정보 동의를 안 해 행이 안 쌓인 경우 |
 | C48-empty | 48개월 | 기록 0건 · affinity 0행 (**Curator 없음**) |
 | C48-narrow | 48개월 | 풀은 정상 — 모델이 후보를 고르는 동안 그중 한 메뉴의 `menu_catalog.allergen_codes`가 야간 배치 재동기화로 갱신돼, 사후 안전 필터에서 후보가 **2개**로 줄어듦 |

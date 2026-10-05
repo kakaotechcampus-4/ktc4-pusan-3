@@ -174,19 +174,21 @@ class ActivityCandidate(ToolArgs):
 
 완화는 프롬프트가 한다 — *"활동에 쓰는 물건을 빠짐없이 적는다"*. 하지만 **프롬프트는 보장이 아니므로** 코드 필터를 빼지 않는다.
 
-### D7. `health_safety` 는 **kind 3종만** 읽는다
+### D7. `health_safety` 는 **kind 2종만** 읽는다
 
 | 읽는다 | 읽지 않는다 |
 | --- | --- |
-| `allergy` · `dietary_restriction` · `environmental` | `chronic_disease` · `behavioral` · `other_medical` |
+| `allergy` · `environmental` | `chronic_disease` · `behavioral` · `other_medical` |
+
+`dietary_restriction` 은 10/4 확정안에서 kind 자체가 빠졌다. 코드의 `SafetyKind` 에는 아직 남아 있다 (TODO).
 
 **읽지 않는 쪽** — *"천식이면 야외 금지"* 같은 표를 만들면 그게 곧 LLM 없는 자동 진단이다. 특히 `behavioral`(*"분리불안"* 한 단어)로 활동을 좁히는 것은 발달 개입이고 스펙 아웃이다. 그리고 그 한 단어는 대개 보호자의 해석이지 아이의 Fact 가 아니다.
 
-**읽는 쪽** — 이 3종은 추론이 아니라 **문자열 대조**다. Food 의 `filter_food_safety` 가 하는 일과 정확히 같고 의학적 판단이 한 톨도 없다. 밀 알레르기 아동에게 *"밀가루 점토 만들기"* 는 0–5세 실내 놀이의 단골이고, **밀가루 반죽은 먹지 않아도 접촉·흡입으로 반응이 난다.** 같은 구멍에 우유팩·달걀껍질 공예, 베이킹, 견과류 촉감놀이가 들어간다.
+**읽는 쪽** — 이 2종은 추론이 아니라 **문자열 대조**다. Food 의 `filter_food_safety` 가 하는 일과 정확히 같고 의학적 판단이 한 톨도 없다. 밀 알레르기 아동에게 *"밀가루 점토 만들기"* 는 0–5세 실내 놀이의 단골이고, **밀가루 반죽은 먹지 않아도 접촉·흡입으로 반응이 난다.** 같은 구멍에 우유팩·달걀껍질 공예, 베이킹, 견과류 촉감놀이가 들어간다.
 
-대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `label`/`aliases` 를 `content` + `materials` 에 부분 일치. `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
+대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `label` 을 `content` + `materials` 에 부분 일치. `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
 
-**거르는 것은 `state = 'active'` 행뿐이다** (#138 `health_safety.state` 4값). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
+**거르는 것은 `status = 'active'` 행뿐이다** (10/4 확정안 — `status` 3값, 행 없음이 `unknown`). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
 
 **조회 실패는 0행과 다르다.** 조회 자체가 실패하면 **Activity 를 실행하지 않는다** — Food 와 같다. 모델을 부르지 않고 코드 문구 `blocked.safety` 로 끝낸다(모델 0회): *"지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."* (문구는 `activity.readout.yaml` — 공통규약 §10 `*.readout.yaml`) 재료를 쓰는 후보만 빼는 방식으로는 꽃가루 · 동물털 · 잔디 같은 환경 알레르기(`environmental`)를 못 막는다. 이 위험은 재료가 아니라 장소와 계절에 걸려 있다. 조회 실패는 드물어서 멈추는 쪽의 손해가 작다.
 
@@ -445,7 +447,7 @@ async def run(task, context, *, client=None):
 | --- | --- |
 | `rank_evidence` | `search_activity_memory` 내부. 공통 (`Tool_공통.md` §4) |
 | `search_activity_doc` | 모델 호출 전 사전 조회. 월령 슬라이스 → 의미 검색 상위 5 → `[예시]` |
-| `filter_activity_safety` | 🚩 `content` + `materials` 를 `hazard_term` 으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 3종(`active`) 대조도 여기서 |
+| `filter_activity_safety` | 🚩 `content` + `materials` 를 `hazard_term` 으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 2종(`active`) 대조도 여기서 |
 | `filter_recent_duplicates` | 최근 창 안에 한 활동 거절 (Activity 출력 검증) |
 
 **진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
@@ -748,7 +750,7 @@ GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선
 | A-13 | 안전 필터 뒤 후보 2개 | 재호출 1회 · 걸러진 항목만 제외 목록으로 · 사유는 안 줌 | 어휘 회피를 가르침 / 예산 초과 |
 | A-14 | 재호출 뒤에도 2개 | 2개로 끝남 (0개는 거절) | 개수 규칙의 유일한 예외가 깨짐 |
 | A-16 | `health_safety` 조회 실패 | Activity 실행 안 함 — 모델 0회 · `blocked.safety` 문구. **기본값("제한 없음") 금지** | 루트 §2 첫 줄 |
-| A-17 | `health_safety` 가 `unknown` · 0행 | 막지 않음 | 동의 안 한 아이가 놀이를 못 받음 |
+| A-17 | `health_safety` 가 행 없음(`unknown`) · 0행 | 막지 않음 | 동의 안 한 아이가 놀이를 못 받음 |
 | A-23 | `expires_at` · `kind` | **tool 인자 스키마에 둘 다 없음** | 모델이 만료나 개인화 여부를 정함 |
 
 **D6 전용 테스트를 따로 둔다.**
