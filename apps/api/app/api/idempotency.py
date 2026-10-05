@@ -16,15 +16,16 @@ docs/api/idempotency-v1.md 가 그 위에 제안한 동작 중 **"같은 키 · 
 
 from uuid import UUID
 
-_seen: dict[tuple[UUID, str, str, str], str] = {}
+_seen: dict[tuple[UUID, str, str, str], str | dict] = {}
 
 
-def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | None:
-    """이 보호자가 이 창구에 이 키로 보낸 적이 있으면 그때의 run_id."""
+def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | dict | None:
+    """이 보호자가 이 창구에 이 키로 보낸 적이 있으면 그때의 run_id(str) 또는 응답(dict)."""
     return _seen.get((parent_id, method, path, key))
 
 
-def remember(*, parent_id: UUID, method: str, path: str, key: str, run_id: str) -> None:
+def remember(*, parent_id: UUID, method: str, path: str, key: str, run_id: str | dict) -> None:
+    """run_id(str) 또는 응답 전체(dict)를 기억한다. 일정 제출은 응답 재생이 필요해 dict."""
     _seen[(parent_id, method, path, key)] = run_id
 
 
