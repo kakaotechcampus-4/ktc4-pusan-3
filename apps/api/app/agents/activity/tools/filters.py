@@ -23,7 +23,7 @@ def filter_activity_safety(
       빈 사전으로 통과시키면 전 후보가 조용히 나간다.
     - content 와 materials 의 각 항목을 **따로** match_terms 에 넘긴다. 이어 붙이지 않는다.
     - 걸린 축의 block/warn 월령과 대조한다. 0–17개월은 경고도 차단으로 올린다 (D6 규칙 ②).
-    - health_safety 는 state='active' 행만 같은 방식으로 대조한다 (D7). 알레르기 별칭은
+    - health_safety 는 status='active' 행만 같은 방식으로 대조한다 (D7). 알레르기 별칭은
       Food 와 같은 `reference/allergen_terms.yaml` 을 공통 로더로 읽는다 — food 패키지를
       import 하지 않는다 (docs/agents/README.md §6). 매처도 사전도 하나라 갈라지지 않는다.
     - 로그에는 걸린 건수와 축만 남긴다. 활동명 · 재료 원문은 남기지 않는다.

@@ -138,6 +138,8 @@ def _normalize_to_code(entry: SafetyEntry, canonical: Sequence[Term]) -> int | N
 
     "이 문자열 안에 이 용어가 있나"(`match_terms`)가 아니라 "이 label 자체가 어느
     코드의 별칭인가"를 보는 반대 방향이라 정규화(`normalize`) 값으로 직접 비교한다.
+
+    TODO: health_safety 에서 aliases 가 빠졌다(10/4). label 하나로 대조하게 바꾼다.
     """
     candidates = {normalize(entry.label)} | {normalize(a) for a in entry.aliases if a}
     candidates.discard("")

@@ -24,5 +24,9 @@ async def propose_activity_candidates(
     5. `check_count()` — 안전 필터로 모자라면 재호출 1회. 재호출 때 걸러진 사유는 주지 않는다.
 
     저장 · 발송 · 예약은 하지 않는다. status 와 expires_at 은 인자에 없다.
+
+    TODO: suggestion.allergens · items 를 채운다 (10/4 스키마 이슈).
+    - allergens 는 19종 밖(쑥 등)도 이름으로 담는다
+    - items 는 준비물(수영복 등)
     """
     raise NotImplementedError("출력 검증 구현 후")

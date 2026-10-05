@@ -11,12 +11,17 @@ from typing import Literal
 
 from app.rules.age import LifeStage
 
-# `health_safety.state`. child 를 만들 때 `allergen_term` 19종이 전부 unknown 으로 들어가고,
-# 보호자가 온보딩에서 답하면 none/active 로 바뀐다. 19종 밖은 추가할 때 active 로 들어간다.
+# `health_safety.status`(active/retracted/none)에 "매칭되는 행 없음" 인 unknown 을 더한 값.
+# unknown 은 DB 에 저장되지 않는다 — 아이를 만들 때 19종을 미리 깔지 않고,
+# 보호자가 답한 항목만 none/active 행이 된다 (10/4 확정안). 19종 밖은 추가할 때 active 다.
 #
 # **거르는 것은 active 뿐이다.** unknown 은 추천을 막지 않고 "이 알레르기가 있는지
 # 확인해 주세요" 안내만 붙인다 — 모르는 항목 때문에 추천을 통째로 닫으면
 # 답을 미룬 보호자가 서비스를 못 쓴다. 건강정보 동의를 안 해 0행인 경우도 같다.
+#
+# TODO: 10/4 확정안부터 unknown 은 DB 값이 아니라 "매칭되는 행이 없음" 이다. DB 를 붙이면
+#   allergy_states 에 unknown 이 올 일이 없어 allergy_unconfirmed 가 늘 False 가 된다.
+#   확인 안내는 추천 승인 때 suggestion.allergens 와 health_safety 를 대조하는 쪽으로 옮긴다.
 SafetyState = Literal["active", "retracted", "none", "unknown"]
 
 
@@ -68,6 +73,6 @@ class Gate:
         """아직 안 물어본 알레르기 항목이 있는가.
 
         참이면 추천과 함께 "이 알레르기가 있는지 확인해 주세요" 안내를 띄운다.
-        항목 이름이 필요하면 tool 이 `state='unknown'` 행을 따로 조회한다 — Gate 는 상태만 든다.
+        항목 이름이 필요하면 tool 이 19종 중 행이 없는 것을 따로 본다 — Gate 는 상태만 든다.
         """
         return "unknown" in self.allergy_states

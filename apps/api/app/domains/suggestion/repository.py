@@ -1,6 +1,7 @@
 """제안 표시·피드백과 관찰 상세의 근거 역조회."""
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import select, update
@@ -26,11 +27,13 @@ async def create_suggestion(
     reason: str | None,
     citations: list[dict],
     expires_at: datetime,
+    allergens: Sequence[str] = (),
+    items: Sequence[str] = (),
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
-    `citations`는 `SuggestionDraft.to_payload()`의 `citations`를 그대로 받는다 —
-    `source_kind` · `source_id` · `note` 세 칸이다.
+    `citations` · `allergens` · `items` 는 `SuggestionDraft.to_payload()` 의 같은 이름 칸을
+    그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
     """
     row = Suggestion(
         child_id=child_id,
@@ -38,6 +41,8 @@ async def create_suggestion(
         kind=SuggestionKind(kind),
         content=content,
         reason=reason,
+        allergens=list(allergens),
+        items=list(items),
         expires_at=expires_at,
         status=SuggestionStatus.DRAFT,
     )
