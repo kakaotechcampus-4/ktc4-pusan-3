@@ -1,24 +1,136 @@
-"""아이 스코프 엔드포인트 — 계약서 §06. 지금은 `POST /children/{cid}/inputs` 하나.
+"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
-아이 접근은 `AccessibleChild` 가 본문보다 먼저 확인한다 — 연결된 보호자가 아니면 403
-`child_access_denied` (#134 9단계, deps/child.py). 본문은 경로의 cid 대신 확인된 id 를 쓴다.
+아이 주소(`/children/{cid}/*`)는 `AccessibleChild` 가 본문보다 먼저 확인한다 — 연결된
+보호자가 아니면 403 `child_access_denied` (#134 9단계, deps/child.py). 본문은 경로의 cid 대신
+확인된 id 를 쓴다.
 """
 
+from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
+from sqlalchemy.exc import IntegrityError
 
 from app.api import idempotency, quota
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
-from app.api.errors import ApiError
+from app.api.deps.db import SessionDep
+from app.api.errors import ApiError, constraint_name
+from app.api.quota import today_kst
 from app.api.runs import pending_reply, registry, runner
-from app.api.v1.schemas.children import CreateInputRequest, CreateInputResponse
+from app.api.v1.schemas.children import (
+    CreateChildRequest,
+    CreateChildResponse,
+    CreateInputRequest,
+    CreateInputResponse,
+)
 from app.core.config import settings
+from app.domains.child.models import ParentChildRelation
+from app.domains.child.repository import create_child, has_child_link
+from app.domains.consent.models import ConsentAction, ConsentScope
+from app.domains.consent.repository import REQUIRED_CHILD_SCOPES, record_consent
+from app.domains.policy.repository import find_active_versions
+from app.rules.age import age_display
 
 router = APIRouter()
+
+
+@router.post("/children", status_code=201)
+async def register_child(
+    body: CreateChildRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+) -> CreateChildResponse:
+    """아이를 등록한다 — 아이 · 연결(owner) · 아이 동의 2건을 한 트랜잭션에 (#92).
+
+    🚨 동의 · 법정대리인 확인 · 약관 버전 · "이미 아이가 있음" 을 전부 아이를 만들기 전에 본다.
+       하나라도 막히면 아무것도 남지 않는다 — 동의 없는 아이 행이 남는 것이 막으려는 상태다.
+       consent 의 CHECK 가 아이 동의에 child_id 를 요구해서, 동의는 아이를 만든 뒤 같은
+       트랜잭션에서 기록한다 (#92 결정 1번).
+    순서는 화면 목(apps/web/src/mocks/handlers/children.ts)과 같다.
+    """
+    today = today_kst()
+    if body.birth_date > today:
+        # 나이 계산(age_display · life_stage)은 미래 생일에서 터진다. 화면도 막지만 기기 날짜다.
+        raise ApiError(
+            400, "validation_failed", "생일은 오늘보다 뒤일 수 없어요", {"fields": ["birth_date"]}
+        )
+
+    granted = {consent.scope for consent in body.consents}
+    missing = [scope for scope in REQUIRED_CHILD_SCOPES if scope not in granted]
+    if missing:
+        raise ApiError(
+            403,
+            "consent_required",
+            "아이 정보에 대한 동의가 필요해요",
+            {"scopes": [scope.value for scope in missing]},
+        )
+    if not body.guardian_attested:
+        # 동의와 법정대리인 확인은 별개 의무다 (개인정보보호법 제22조의2 ①, #92 결정 2번)
+        raise ApiError(
+            403,
+            "consent_required",
+            "법정대리인 확인이 필요해요",
+            {"scopes": [ConsentScope.CHILD_BASIC.value]},
+        )
+
+    # 가입과 같은 규칙 — GET /policies 가 지금 보여 주는 버전만 받는다 (#91 · #168)
+    current = {row.scope: row for row in await find_active_versions(session, now=datetime.now(UTC))}
+    versions: dict[ConsentScope, UUID] = {}
+    for consent in body.consents:
+        if consent.scope not in REQUIRED_CHILD_SCOPES:
+            continue
+        registered = current.get(consent.scope)
+        if registered is None or registered.version != consent.policy_version:
+            raise ApiError(
+                400,
+                "policy_version_invalid",
+                "동의 화면을 다시 불러와 주세요",
+                {"scope": consent.scope.value, "policy_version": consent.policy_version},
+            )
+        versions[consent.scope] = registered.id
+
+    # 보호자당 아이 1명. 먼저 보고, 동시에 온 두 요청은 DB 제약(uq_parent_child_parent_id)이 막는다
+    if await has_child_link(session, parent_id=parent.parent_id):
+        raise ApiError(409, "child_already_exists", "이미 등록한 아이가 있어요")
+    try:
+        child = await create_child(
+            session,
+            owner_parent_id=parent.parent_id,
+            nickname=body.nickname,
+            birth_date=body.birth_date,
+            # 관계는 02 화면이 받는다 — 01 에서는 정하지 않은 것이 사실이다 (현식님 #92 댓글)
+            relation=ParentChildRelation.OTHER,
+        )
+    except IntegrityError as exc:
+        if constraint_name(exc) != "uq_parent_child_parent_id":
+            raise
+        await session.rollback()
+        raise ApiError(409, "child_already_exists", "이미 등록한 아이가 있어요") from exc
+
+    for scope, policy_version_id in versions.items():
+        await record_consent(
+            session,
+            actor_parent_id=parent.parent_id,
+            child_id=child.id,
+            scope=scope,
+            action=ConsentAction.GRANTED,
+            policy_version_id=policy_version_id,
+            guardian_attested=True,
+        )
+
+    # 응답은 commit 전에 만든다 — commit 뒤에 터지면 저장됐는데 실패로 보인다 (#214 리뷰 ⑤)
+    response = CreateChildResponse(
+        id=child.id,
+        nickname=child.nickname,
+        age_display=age_display(child.birth_date, today),
+        role="owner",
+    )
+    await session.commit()
+    return response
 
 
 @router.post("/children/{cid}/inputs", status_code=202)

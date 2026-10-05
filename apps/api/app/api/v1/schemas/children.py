@@ -1,12 +1,41 @@
-"""아이 스코프 엔드포인트의 요청·응답 — 계약서 §06.
+"""아이 엔드포인트의 요청·응답 — 계약서 §04 · §06.
 
-🚨 프론트 apps/web/src/lib/api/types.ts 의 CreateInputRequest · CreateInputResponse 와
-   같은 모양이어야 한다.
+🚨 프론트 apps/web/src/lib/api/types.ts 의 CreateChildRequest · CreateChildResponse ·
+   CreateInputRequest · CreateInputResponse 와 같은 모양이어야 한다.
 """
 
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
+
+from app.api.v1.schemas.auth import ConsentInput, Nickname
+
+Role = Literal["owner", "member"]
+"""아이의 owner(등록한 보호자)인가, 초대로 연결된 member 인가 — child.owner_parent_id 와 비교."""
+
+
+class CreateChildRequest(BaseModel):
+    """POST /children — 아이 정보와 아이 동의를 한 요청에 (#92 결정, 2026-09-18)."""
+
+    nickname: Nickname = Field(description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자")
+    birth_date: date = Field(description="생일 (YYYY-MM-DD). 한국 날짜로 오늘보다 뒤면 400")
+    consents: list[ConsentInput] = Field(
+        description="아이 동의 — child_basic · child_health 둘 다 필수. 버전은 GET /policies 의 것"
+    )
+    guardian_attested: bool = Field(
+        description="'나는 이 아이의 법정대리인이며 만 19세 이상입니다' 체크. true 가 아니면 403"
+    )
+
+
+class CreateChildResponse(BaseModel):
+    """201 — 등록한 아이. 등록한 보호자는 항상 owner 다."""
+
+    id: UUID
+    nickname: str
+    age_display: str = Field(description="화면에 그대로 쓰는 나이 문구 (생후 N일 · N개월 · 만 N세)")
+    role: Role
 
 
 class CreateInputRequest(BaseModel):
