@@ -95,7 +95,7 @@ class InMemoryMenuCatalog:
         return self._rows.get(menu_key)
 
     async def put(self, row: MenuCatalogRow) -> None:
-        self._rows[row.menu_key] = row
+        self._rows.setdefault(row.menu_key, row)
 
     async def all_resolved(self) -> list[MenuCatalogRow]:
         """`resolved=True` 행만 돌려준다. 재료(ingredients) 유무는 여기서 거르지 않는다."""

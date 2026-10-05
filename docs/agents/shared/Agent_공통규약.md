@@ -86,7 +86,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `observation_*` · `profile_affinity` · `event` | **Memory** (공유 테이블 단일 writer). OCR이 일정성 공지로 분류한 것도 추출 원문을 Memory가 받아 초안 payload로 만든다 — `event` 행은 보호자가 제출할 때 생긴다 | 읽기만 |
 | `notice` (일반 기관 공지) | **OCR 파이프라인**. 텍스트로 붙여넣은 일반 공지의 저장 경로는 미정 | Growth만 읽음 (보조) |
 | `daycare_meal` | **OCR 파이프라인·급식 배치**가 INSERT · **Food**가 UPDATE/DELETE (도메인 전용 — 아무도 안 읽는다). Food에 INSERT를 주지 않아 없는 급식을 지어낼 수 없다. 승인 게이트 없음 | Memory·Activity·Growth·Health는 읽지 않는다 |
-| 영양소 구간 · 메뉴 카탈로그 | **Food** (도메인 전용 — 포트 기준). 영양 구간을 어디에 저장할지, 메뉴 카탈로그에 없는 메뉴(캐시 미스)를 Food 가 채울지는 **TODO: 확정 필요** — 안은 [food_agent_own_table.md](../food/food_agent_own_table.md) §1 · §2-2. 영양 구간을 저장하면 아이 데이터라 보관 · 삭제 정책 대상이다 | 읽지 않는다 |
+| 영양소 구간 · 메뉴 카탈로그 | **Food** (도메인 전용 — 포트 기준). 메뉴 카탈로그 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 넣는다(10-04, [food_agent_own_table.md](../food/food_agent_own_table.md) §1). DB 권한 방식은 백엔드가 정한다. 영양 구간을 어디에 저장할지는 **TODO: 확정 필요** — §2-2, #205 에서 저장하지 않는 쪽으로 정리 중. 저장하면 아이 데이터라 보관 · 삭제 정책 대상이다 | 읽지 않는다 |
 | `prescription_draft` | **OCR 파이프라인**(처방전·약봉투) | Health만 읽음 |
 | `medication_schedule` · `medication_dose` · `medication_dose_log` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 복용 기록과 중단(`status='stopped'`) | Food·Activity·Growth는 읽지 않는다 |
 | `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
@@ -97,8 +97,10 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 
 **쓰는 시점** (#201)
 
-- 기록 단계 — Memory 의 쓰기와 되묻기 맥락을 트랜잭션 하나로 묶고, Memory 가 끝나면 pipeline 이 러너가
-  넘긴 `commit` 을 부른다. 저장 안내는 그 뒤에 나간다.
+- 기록 단계 — Memory 의 쓰기를 트랜잭션 하나로 묶고, Memory 가 끝나면 pipeline 이 러너가 넘긴 `commit` 을
+  부른다. 저장 안내는 그 뒤에 나간다. 되묻기 맥락은 이 트랜잭션에 넣지 않는다 — commit 뒤 `PendingReply` 로
+  나가 러너가 프로세스 메모리에 둔다(15분, 팀 합의). Memory 가 반복 상한에 걸려 기록을 다 끝내지 못하면
+  commit 하지 않고 `failed` 로 끝낸다 — 일부만 남기지 않는다.
 - 도메인 쓰기 — 테이블 주인이 쓴다. 쓰기 포트 호출 하나가 짧은 트랜잭션 하나로 바로 commit 되고, 같은
   갱신을 두 번 적용해도 결과가 같아야 한다. INSERT(예: Health 복약 기록)는 도메인 값으로 만든 중복 방지키로
   보장한다 — 다시 보내면 run 이 새로 생기므로 run 단위 값은 키가 될 수 없다. 어떤 값이 같으면 같은 기록인지는
@@ -107,14 +109,13 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
   - 감싼다: 보호자 말을 반영한 쓰기. 이 쓰기가 끝난 run 을 `failed`("저장 없음")로 끝내면 거짓 안내가 된다.
     지금은 급식 수정 · 삭제, 나중엔 Health 복약 기록.
   - 감싸지 않는다: 요청하지 않아도 계산 중에 생기는 내부 값. 지금은 영양 구간(`NutrientBandStore.save`) · 메뉴 카탈로그
-    (`MenuCatalogStore.put`). 채우는 주체는 아직 TODO 다(food_agent_own_table §1 · §2-2). 감싸면 질문만
+    (`MenuCatalogStore.put`). 메뉴 카탈로그는 백엔드 어댑터가 없을 때만 넣는다(food_agent_own_table §1, 10-04). 영양 구간 저장은 #205. 감싸면 질문만
     한 run 이 모델 실패에도 `done` 이 되어 원문이 입력창에 돌아가지 않는다.
   - 감싸지 않는 쓰기는 다시 보내도 안전해야 한다. 덮어쓰기면 그대로 두고, 쌓이는 쓰기(INSERT)면 **감싸지 않고
-    중복 방지키를 둔다.** 지금 설계에는 이런 INSERT 가 없다 — 질문만 한 run 의 쓰기는 영양 구간 · 메뉴 카탈로그 ·
-    `intake_daily` 재계산 모두 덮어쓰기다. 메뉴 카탈로그를 "캐시 미스만 넘기고 백엔드가 채우는" 안
-    ([food_agent_own_table.md](../food/food_agent_own_table.md) §1 안 C)으로 정하면 캐시 미스 `menu_key` 를 쌓는 큐가 그
-    예이고, `menu_key` unique 로 막는다. 덮어쓰기인지는 감쌀지를 가르는 기준이 아니다 — 급식 수정도 덮어쓰기지만
-    보호자 말을 반영해서 감싼다.
+    중복 방지키를 둔다.** 메뉴 카탈로그가 그 예다 — 없을 때만 넣고(`ON CONFLICT (menu_key) DO NOTHING`)
+    `menu_key` 가 PK 라 다시 보내도 한 행이다([food_agent_own_table.md](../food/food_agent_own_table.md) §1).
+    영양 구간 · `intake_daily` 재계산은 덮어쓰기다. 덮어쓰기인지는 감쌀지를 가르는 기준이 아니다 — 급식 수정도
+    덮어쓰기지만 보호자 말을 반영해서 감싼다.
   - 추천(`suggestion`) 저장은 이 기준의 대상이 아니다. 도메인 쓰기 포트가 아니라 pipeline 이 결과를 저장하는
     것이고, 저장됐으면 보여 줄 결과가 있다는 뜻이라 어차피 `done` 이다 (§3).
 - 추천(`suggestion`) — Agent 가 결과로 돌려주고 pipeline 이 저장한다. 되돌릴 수 없는 것은 승인 게이트
@@ -252,7 +253,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
-| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 영양 구간 · 메뉴 카탈로그만 저장한 run 은 `failed` |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 영양 구간 · 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 `failed` 로 확정하지 않고 Idempotency 키도 풀지 않는 방향이다. — 러너 계약에서 확정한다 |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.

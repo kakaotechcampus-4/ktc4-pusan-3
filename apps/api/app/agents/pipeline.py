@@ -78,9 +78,12 @@ DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
 
 # 기록 단계를 확정하는 함수. 러너가 run마다 만들어 넘기고, pipeline은 Memory 다음에 한 번 부른다.
 # 세션과 commit 구현은 러너(백엔드). pipeline은 기록 단계가 끝난 시점만 알린다.
-# TODO_CHECK: 러너 약속 — commit이 한 번이라도 끝난 run은 failed로 끝내지 않는다.
-#   60초 안전망은 pipeline 결과 없이 끝나므로, 러너는 이 함수 안에서 commit 여부를 직접
-#   표시해 두고 _guarded · 안전망 · forget_run 이 그 표시를 본다 (러너 구현은 백엔드 몫)
+# 러너 약속 — commit이 한 번이라도 끝난 run은 failed로 끝내지 않는다. 60초 안전망은
+#   pipeline 결과 없이 끝나므로, 러너는 이 함수 안에서 commit 여부를 직접 표시해 두고
+#   _guarded · 안전망 · forget_run 이 그 표시를 본다 (러너 구현은 백엔드 몫).
+# TODO(러너 계약): commit 도중 연결이 끊겨 결과를 모르면 failed 로 확정하지 않고
+#   Idempotency 키도 풀지 않는다. 요청 식별자와 처리 결과를 DB 에 남겨 같은 키로 다시
+#   보내면 기존 결과를 확인한다(멘토 #196 답변). 모양은 러너 DB 세션 작업 전에 정한다.
 Commit = Callable[[], Awaitable[None]]
 
 
@@ -641,7 +644,7 @@ async def _run_domain(
     settled: dict[int, DomainOutcome | BaseException] = {}
     group_ms: list[int | None] = []
     # 읽는 task 가 갱신된 행을 보게 쓰는 task 를 먼저 끝낸다.
-    # 쓰는 task 가 실패하거나 끊겨도 읽는 task 는 돈다 (부분 결과 원칙)
+    # 쓰는 task 가 실패하거나 끊겨도 읽는 task 는 돈다 (부분 결과 원칙 · 공통규약 §7)
     for group in (writers, readers):
         if not group:
             group_ms.append(None)

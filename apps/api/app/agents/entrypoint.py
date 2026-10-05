@@ -93,8 +93,11 @@ async def handle_input(
     - agents는 infra에 직접 닿지 않으므로 DB 어댑터는 api가 만들어 넘긴다.
     - continuation을 넘기면 raw_text는 이전 질문에 대한 보호자의 답이다. api는 reply_to를
       검증·복원한 뒤 이 값만 넘긴다.
-    - commit을 넘기면 Memory가 끝난 직후 한 번 부른다. 기록 단계(Memory 의 쓰기 + 되묻기
-      맥락)를 확정하는 함수이고, 러너가 run 마다 만든다. 저장 안내는 그 뒤에 나간다.
+    - commit을 넘기면 Memory가 끝난 직후 한 번 부른다. 기록 단계(Memory 의 쓰기)를
+      확정하는 함수이고, 러너가 run 마다 만든다. 저장 안내는 그 뒤에 나간다. 되묻기 맥락은
+      같은 트랜잭션에 넣지 않는다 — commit 뒤 PendingReply 로 나가 러너가 프로세스 메모리에
+      둔다(팀 합의). Memory 가 반복 상한에 걸려 기록을 다 끝내지 못하면 commit 을 부르지
+      않는다. 러너는 commit 되지 않은 세션을 되돌린다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서

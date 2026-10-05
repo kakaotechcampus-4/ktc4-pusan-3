@@ -53,7 +53,7 @@
 | `resolved` | bool |
 | `source_version` · `synced_at` | 데이터 기준일 |
 
-- 동기화: 야간 배치 + 카탈로그에 없을 때(캐시 미스) 즉시 1회 호출. 운영 트래픽을 API에 직접 걸지 않는다. **TODO: 확정 필요** — 캐시 미스를 누가 채우는지(Food / 배치만 / 캐시 미스만 넘기고 백엔드)는 아직 정하지 않았다. 이 줄은 Food 가 채우는 안으로 읽힌다. 안은 [`food_agent_own_table.md`](food_agent_own_table.md) §1 · FT-13.
+- 동기화: 야간 배치 + 카탈로그에 없을 때(캐시 미스) 즉시 1회 호출. 운영 트래픽을 API에 직접 걸지 않는다. 캐시 미스 1회는 Food 요청 중에 부르고, 결과는 백엔드 어댑터가 없을 때만 넣는다(`ON CONFLICT DO NOTHING`) — [`food_agent_own_table.md`](food_agent_own_table.md) §1 · FT-13 (10-04 닫힘). DB 권한 방식은 백엔드가 정한다.
 - `unresolved` 메뉴는 **영양 계산에서 빠지고 기록 행 수에서 빠진다**된다. 알레르기 판정은 "확인 못 함".
 
 ### 0-4. 수치는 내부, 출력은 구간 — 계산 설계

@@ -21,8 +21,8 @@ from app.agents.memory.store.ports import MemoryStore, ObservationRow
 # 검색에 남는 status. stand_alone 은 Correction once_only("이번만 그랬어요") 라
 # Curator 집계에서만 빠진다 (data_model §observation). inactive · deleted 는 읽지 않는다
 FOOD_STATUSES = frozenset({"active", "stand_alone"})
-# CHECK(추가) 이슈 본문은 Activity 도 active + stand_alone 이라고 적었다. Activity 포트
-#   (ActivityObservation 주석)와 activity-agent-v1 A-10 은 stand_alone 을 근거에서 뺀다
+# Activity는 active만 읽는다. Activity 포트(ActivityObservation 주석)와 activity-agent-v1
+#   A-10 이 stand_alone을 근거에서 뺀다 — "이번만 그랬어요" 로 고친 기록이 근거로 돌아오지 않게
 ACTIVITY_STATUSES = frozenset({"active"})
 
 

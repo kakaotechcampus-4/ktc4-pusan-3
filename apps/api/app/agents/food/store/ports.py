@@ -7,8 +7,9 @@ DB·외부 API가 연결된 뒤에 붙인다 — 이번 커밋은 포트와 테�
 Food가 쓰는 것은 자기만 쓰고 읽는 `daycare_meal` 수정·삭제, 영양소 구간
 (`NutrientBandStore.save`), 메뉴 카탈로그(`MenuCatalogStore.put`). 없는 급식을 새로 만드는
 INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OCR 분석이 채운다.
-TODO: 확정 필요
-카탈로그에 없는 메뉴(캐시 미스)를 Food가 채울지(배치만 채우면 put은 빠진다)
+메뉴 카탈로그는 캐시 미스 때 Food 요청 안에서 `MenuSource` 로 외부 조회하고, 결과를 받은
+뒤 백엔드 어댑터가 짧게 저장한다. 외부 API 를 기다리는 동안 DB 트랜잭션을 쥐지 않는다
+(멘토 #196 답변 · food_agent_own_table §1). DB 권한 방식은 백엔드가 정한다.
 
 쓰기 포트는 호출 하나가 짧은 트랜잭션 하나로 바로 commit된다. 같은 run의 뒤에 오는
 조회(다른 task 포함)가 그 결과를 읽어야 해서다. 조회 포트도 호출마다 짧은
@@ -41,7 +42,7 @@ TODO: 확정 필요
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
 | SuggestionHistoryReader | 최근 제안한 menu_key (반복 회피용) |
-| NutrientBandStore | 직전 영양소 구간 (히스테리시스 기준값). 저장 위치는 TODO: 확정 필요 |
+| NutrientBandStore | 직전 영양소 구간 (히스테리시스 기준값). 저장 위치는 TODO: 확정 필요 (#205) |
 """
 
 from dataclasses import dataclass, field
@@ -221,7 +222,13 @@ class FoodMemoryReader(Protocol):
 class MenuCatalogStore(Protocol):
     async def get(self, menu_key: str) -> MenuCatalogRow | None: ...
     async def put(self, row: MenuCatalogRow) -> None:
-        """menu_key 로 덮어쓴다. 호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다."""
+        """카탈로그에 없을 때만 넣는다 — 어댑터는 `ON CONFLICT (menu_key) DO NOTHING`.
+
+        같은 메뉴를 두 run 이 동시에 채워도 한 행만 남고, 사람이 넣은 행(manual ·
+        center_standard)을 덮지 않는다. 외부 조회 결과를 받은 뒤 짧은 트랜잭션 하나로 바로
+        commit 된다. 있는 행을 고치거나 지우는 길은 포트에 없다. DB 권한 방식은 백엔드가
+        정한다.
+        """
         ...
 
     async def all_resolved(self) -> list[MenuCatalogRow]:
@@ -230,6 +237,12 @@ class MenuCatalogStore(Protocol):
 
 
 class MenuSource(Protocol):
+    """외부 영양성분 · 레시피 조회. 실패하거나 정보가 부족하면 그 메뉴는 unresolved 로 둔다.
+
+    unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
+    (`tools/safety.py` 의 unchecked).
+    """
+
     async def nutrition(self, *, name: str) -> NutritionFacts | None:
         """실패는 MenuSourceError. None 은 그 이름의 영양성분이 정말 없다는 뜻."""
         ...
