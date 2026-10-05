@@ -5,3 +5,39 @@
 blocked.safety:
   kind: blocked
   template: 지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.
+
+# ── 날씨 안내 (weather.py 의 화면 문구 키). 날씨 판정이 붙이고 추천과 함께 화면에 나간다 ──
+# 무엇을 확인 못 했는지는 야외를 막아도 알린다 (D8)
+weather.unchecked:
+  kind: notice
+  template: 날씨를 확인하지 못해 실내 놀이만 골랐어요.
+weather.air_unchecked:
+  kind: notice
+  template: 미세먼지는 확인하지 못했어요.
+weather.uv_unchecked:
+  kind: notice
+  template: 자외선은 확인하지 못했어요.
+weather.outdoor_blocked:
+  kind: notice
+  template: 오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요.
+weather.after_sunset:
+  kind: notice
+  template: 해가 져서 실내 놀이만 골랐어요.
+weather.heat_advisory:
+  kind: notice
+  template: 폭염주의보가 내려져 있어요. 한낮은 피해 주세요.
+weather.cold_advisory:
+  kind: notice
+  template: 한파주의보가 내려져 있어요. 따뜻하게 입혀 주세요.
+weather.air_bad:
+  kind: notice
+  template: 미세먼지가 나빠요. 바깥 활동은 짧게 해 주세요.
+weather.ozone_advisory:
+  kind: notice
+  template: 오존이 높아요. 오후 바깥 활동은 짧게 해 주세요.
+weather.uv_very_high:
+  kind: notice
+  template: 자외선이 매우 높아요. 그늘과 모자를 챙겨 주세요.
+weather.rain_likely:
+  kind: notice
+  template: 비가 올 수 있어요. 우산을 챙겨 주세요.

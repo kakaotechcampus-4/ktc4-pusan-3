@@ -116,20 +116,22 @@ const mutation = useMutation({
 ### 3-1. 판정 순서
 
 ```
-① Idempotency-Key 헤더가 있나           없으면 → 400 idempotency_key_required
-② 인증                                  없으면 → 401 unauthenticated
-③ 이 키(parent_id 스코프)로 저장된 응답이 있나
+① 인증                                  없으면 → 401 unauthenticated
+② 아이 접근 (/children/{cid}/* 만)      연결 없으면 → 403 child_access_denied
+③ Idempotency-Key 헤더가 있나           없으면 → 400 idempotency_key_required
+④ 이 키(parent_id 스코프)로 저장된 응답이 있나
    ├ 있고 요청 지문이 같다              → 저장된 응답 재생 (아래를 전부 건너뛴다)
    └ 있고 요청 지문이 다르다            → 422 idempotency_key_reuse
-④ 이 키가 처리 중인가                   → 409 idempotency_in_progress
-⑤ 동의·권한 검사 → 처리 → 2xx 면 응답을 저장한다
+⑤ 이 키가 처리 중인가                   → 409 idempotency_in_progress
+⑥ 동의 검사 → 처리 → 2xx 면 응답을 저장한다
 ```
 
-**① 은 인증보다 먼저**다 — 헤더가 있는지 보는 데는 아무것도 필요 없고, 키 없는 요청은 처리를 시작하지 않는다.
+**① · ② 는 서버가 라우터 본문보다 먼저 건다** (10-05, #229 — 처음 쓴 순서에서 바꿨다). 인증은 `/api/v1` 전체에 라우터 단에서, 아이 접근은 의존성 `AccessibleChild`(`apps/api/app/api/deps/child.py`)로 돈다. 그래서 키가 없는 요청도 로그인하지 않았으면 401, 연결된 아이가 아니면 403 이다. 막힌 요청은 키 기억 · 하루 입력 횟수를 건드리지 않는다.
+- 대가: 처리가 끝난 뒤 그 아이와의 연결이 끊긴 상태에서 같은 키로 다시 누르면, 재생 대신 403 이다. 지금은 연결을 끊는 기능이 없어 생기지 않는다. 연결 끊기가 생기면 이 줄을 다시 본다.
 
-**③ 은 인증 뒤**여야 한다. 키는 보호자 단위로 스코프되므로(§3-5) `parent_id` 를 모르면 조회할 수 없다. 남의 키로 남의 응답을 재생받는 구멍이 여기서 열린다.
+**④ 는 인증 뒤**여야 한다. 키는 보호자 단위로 스코프되므로(§3-5) `parent_id` 를 모르면 조회할 수 없다. 남의 키로 남의 응답을 재생받는 구멍이 여기서 열린다.
 
-**③ 은 동의·권한 검사보다 앞**이다. 재생은 이미 끝난 처리의 결과를 돌려주는 것이라 아무것도 다시 실행하지 않는다 — 동의 검사도 포함해서다.
+**④ 는 동의 검사보다 앞**이다. 재생은 이미 끝난 처리의 결과를 돌려주는 것이라 아무것도 다시 실행하지 않는다 — 동의 검사도 포함해서다.
 
 ### 3-2. 요청 지문 (fingerprint)
 
@@ -202,7 +204,7 @@ UNIQUE (parent_id, method, path, key)
 
 ### 6-1. 목이 서버 절반을 대신한다
 
-[`apps/web/src/mocks/handlers/idempotency.ts`](../../apps/web/src/mocks/handlers/idempotency.ts) 의 `withIdempotency()` 가 §3 의 ①~④ 를 그대로 구현하고, 되돌릴 수 없는 5개 핸들러에 걸려 있다.
+[`apps/web/src/mocks/handlers/idempotency.ts`](../../apps/web/src/mocks/handlers/idempotency.ts) 의 `withIdempotency()` 가 §3 의 키 확인 · 재생 · 재사용 거부 · 처리 중(§3-1 의 ③~⑤, 맨 위 표의 서버 보장 ①~④)을 그대로 구현하고, 되돌릴 수 없는 5개 핸들러에 걸려 있다. 인증 · 아이 접근(§3-1 의 ① · ②)은 목이 흉내 내지 않는다.
 
 ### 6-2. 타입 검사로는 안 되는 것
 

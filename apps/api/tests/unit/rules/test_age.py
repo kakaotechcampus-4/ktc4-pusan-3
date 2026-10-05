@@ -10,6 +10,7 @@ import pytest
 
 from app.rules.age import (
     LifeStage,
+    age_display,
     life_stage,
     months_between,
     stage_of,
@@ -82,6 +83,22 @@ class TestStageBoundaries:
         birth = date(2020, 1, 1)
         today = date(2020 + months // 12, 1 + months % 12, 1)
         assert life_stage(birth, today).big == band
+
+
+class TestAgeDisplay:
+    @pytest.mark.parametrize(
+        ("today", "expected"),
+        [
+            (date(2026, 1, 15), "생후 1일"),  # 태어난 날 = 1일 (기념일식)
+            (date(2026, 4, 14), "생후 90일"),  # 3개월 전날
+            (date(2026, 4, 15), "3개월"),
+            (date(2028, 1, 14), "23개월"),  # 24개월 전날
+            (date(2028, 1, 15), "만 2세"),  # 24개월
+            (date(2030, 1, 14), "만 3세"),  # 만 4세 전날
+        ],
+    )
+    def test_경계_양쪽(self, today, expected):
+        assert age_display(date(2026, 1, 15), today) == expected
 
 
 class TestDateTypeGuard:

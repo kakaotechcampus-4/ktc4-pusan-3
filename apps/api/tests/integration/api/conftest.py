@@ -1,12 +1,13 @@
 """이 폴더의 API 테스트가 같이 쓰는 픽스처."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.auth import hash_token
+from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.identity.repository import create_session
 
@@ -37,3 +38,32 @@ async def issue_bearer(session: AsyncSession, *, token: str = "test-token-api") 
 @pytest.fixture
 async def bearer(session: AsyncSession) -> Bearer:
     return await issue_bearer(session)
+
+
+async def link_child(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID | None = None,
+    relation: ParentChildRelation = ParentChildRelation.OTHER,
+) -> uuid.UUID:
+    """보호자를 아이에 잇는다. child_id 를 안 주면 그 보호자를 owner 로 아이를 새로 만든다.
+
+    아이 주소(`/children/{cid}/*`)는 연결된 보호자만 쓴다 (#134 9단계 — 아니면 403).
+    별명 · 생일은 가짜 값이다 — 실제 아이 정보를 픽스처에 넣지 않는다 (루트 CLAUDE.md §9).
+    """
+    if child_id is None:
+        child = Child(owner_parent_id=parent_id, nickname="테스트아이", birth_date=date(2023, 1, 1))
+        session.add(child)
+        await session.flush()
+        child_id = child.id
+    session.add(ParentChild(parent_id=parent_id, child_id=child_id, relation=relation))
+    await session.flush()
+    return child_id
+
+
+@pytest.fixture
+async def cid(session: AsyncSession, bearer: Bearer) -> uuid.UUID:
+    """bearer 보호자에게 연결된 아이 하나 — 아이 주소를 부르는 테스트가 쓴다."""
+    _, parent_id = bearer
+    return await link_child(session, parent_id=parent_id)

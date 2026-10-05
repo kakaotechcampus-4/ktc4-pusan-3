@@ -1113,6 +1113,7 @@ export interface CreateChildRequest {
   consents: Array<{ scope: string; policy_version: string }>;
   /**
    * 법정대리인임을 보호자가 확인한 표시 (개인정보보호법 제22조의2).
+   * **만 19세 이상 표시를 겸한다** — 화면 문항이 약관 제6조 ② 문장 그대로 둘을 함께 묻는다 (#166).
    *
    * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 — 그러면
    *    아무도 확인하지 않은 동의가 확인된 것으로 남는다.
@@ -1500,6 +1501,16 @@ export interface InvitePreviewResponse {
  */
 export interface InviteAcceptRequest {
   relation?: Relation;
+  /**
+   * 만 19세 이상임을 받는 쪽이 직접 표시한 것 (약관 제5조 ④ · 제7조 ② · #166).
+   *
+   * 🔶 **이름과 기록 방식은 프론트 제안이다** — 서버 `AcceptInviteRequest` 에 아직 없다.
+   *    지금 서버는 모르는 필드를 버리므로 먼저 실어 보내도 수락이 깨지지 않는다.
+   * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 (`guardian_attested` 와 같은 이유).
+   * 🚨 `guardian_attested` 가 아니다. 초대받은 사람은 법정대리인이 아닐 수 있어서 그 표시를
+   *    받지 않는다 (약관 제7조 ②) — 나이만 받는다.
+   */
+  adult_attested: boolean;
 }
 
 /**

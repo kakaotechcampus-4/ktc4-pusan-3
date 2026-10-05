@@ -1158,6 +1158,32 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     const res = await api.post<InviteResponse>("/children/c1/invites", {});
     expect(normalizeInviteCode(res.invite_code)).toBe(res.invite_code);
   });
+
+  /**
+   * 🚨 **발행은 owner 만 한다** (#198). 화면은 member 에게 버튼을 안 그리지만, 낡은 캐시로
+   *    시트가 열리면 이 403 을 받아 이유를 말해야 한다 — 연결 없음과 코드가 갈려야 문구가 갈린다.
+   */
+  it("초대로 들어온 member 가 발행하면 403 owner_only", async () => {
+    setScenario("consent");
+    try {
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        adult_attested: true,
+      });
+      expect(joined.role).toBe("member");
+
+      const caught = await api.post(`/children/${joined.child_id}/invites`, {}).catch((e) => e);
+      expect(isApiError(caught, "owner_only")).toBe(true);
+      expect((caught as ApiError).status).toBe(403);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("연결되지 않은 아이에 발행하면 403 child_access_denied", async () => {
+    const caught = await api.post("/children/c-unknown/invites", {}).catch((e) => e);
+    expect(isApiError(caught, "child_access_denied")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+  });
 });
 
 /**
@@ -1165,6 +1191,9 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
  * 응답 모양은 아직 제안이다** (같은 문서 §7 열린 결정). 서버가 붙으면 이 표를 실서버에도 건다.
  */
 describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
+  /** 🚨 연결이 성공해야 하는 호출은 전부 만 19세 표시를 싣는다 — 화면이 그렇게 보낸다. */
+  const ADULT = { adult_attested: true } as const;
+
   /**
    * 🚨 **확인은 코드를 쓰지 않는다.** 확인 화면에서 그만둔 사람의 코드가 소비되면, 한 번만
    *    쓸 수 있는 코드라 다시 받아야 한다 — 이 테스트가 그 회귀를 잡는다.
@@ -1176,7 +1205,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       expect(first.child.nickname).toBeTruthy();
       await api.get<InvitePreviewResponse>("/invites/MKGRAND1");
 
-      const accepted = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      const accepted = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
       expect(accepted.child_id).toBe("c1");
     } finally {
       setScenario("default");
@@ -1209,10 +1238,48 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     expect(isApiError(caught, "child_already_exists")).toBe(true);
   });
 
+  /**
+   * 🚨 **순서는 아이 보유 → 코드다** (서버 #198). 아이가 있는 보호자에게 틀린 코드를 404 로
+   *    답하면 그 응답이 곧 "이 코드는 없다" 는 정보가 된다 — 코드가 맞든 틀리든 같은 409 다.
+   */
+  it("아이가 있으면 틀린 코드여도 409 다 — 코드의 유효 여부를 알려 주지 않는다", async () => {
+    for (const code of ["ABC", "MKWASTED", "MKPAST12"]) {
+      const caught = await api.get(`/invites/${code}`).catch((e) => e);
+      expect(isApiError(caught, "child_already_exists")).toBe(true);
+    }
+  });
+
+  /**
+   * 🚨 **아이 보유 409 는 시도 제한에 세지 않는다.** 코드와 무관한 호출자 상태라, 세면
+   *    아이가 있는 보호자가 화면을 몇 번 오가는 것만으로 스스로 429 에 갇힌다.
+   */
+  it("아이 보유 409 는 몇 번이어도 429 로 바뀌지 않는다", async () => {
+    for (let i = 0; i < 6; i += 1) {
+      const caught = await api.get("/invites/MKWASTED").catch((e) => e);
+      expect(isApiError(caught, "child_already_exists")).toBe(true);
+    }
+  });
+
+  it("수락 사이에 아이가 생긴 409 도 실패로 세지 않는다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 6; i += 1) {
+        await api.post("/invites/MKTAKEN2/accept", {}).catch(() => null);
+      }
+      const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
+      expect(res.child_id).toBe("c1");
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("받는 쪽이 고른 관계가 보호자 목록에 들어간다", async () => {
     setScenario("consent");
     try {
-      await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", { relation: "sitter" });
+      await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        ...ADULT,
+        relation: "sitter",
+      });
       const me = await api.get<Me>("/me");
       expect(me.children[0]?.relation).toBe("sitter");
     } finally {
@@ -1223,7 +1290,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   it("아이가 없는 계정은 코드로 연결된다", async () => {
     setScenario("consent");
     try {
-      const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {});
+      const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
       expect(res.child_id).toBe("c1");
       // 🚨 초대받은 보호자는 owner 가 아니다. 이게 뒤집히면 10 설정에서 남을 끊을 수 있다.
       expect(res.role).toBe("member");
@@ -1235,6 +1302,30 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       setScenario("default");
     }
   });
+
+  /**
+   * 🚨 **만 19세 표시 없이는 연결되지 않는다** (약관 제7조 ② · #166). 목이 통과시키면 화면이
+   *    체크값을 빠뜨리거나 상수로 굳혀도 아무도 모른다.
+   */
+  it.each([{}, { adult_attested: false }])(
+    "만 19세 표시가 없으면 연결되지 않는다 (%o)",
+    async (body) => {
+      setScenario("consent");
+      try {
+        const caught = await api.post("/invites/MKGRAND1/accept", body).catch((e) => e);
+        expect(isApiError(caught, "validation_failed")).toBe(true);
+
+        const me = await api.get<Me>("/me");
+        expect(me.children).toHaveLength(0);
+
+        // 코드를 쓰지 않았다 — 표시를 하고 다시 누르면 그대로 연결된다.
+        const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
+        expect(res.child_id).toBe("c1");
+      } finally {
+        setScenario("default");
+      }
+    },
+  );
 
   it("이미 아이가 있으면 수락이 막힌다", async () => {
     // default 시나리오는 아이가 하나 있는 계정이다.

@@ -21,7 +21,7 @@ retracted 로 내린다(둘 다 필터에서 거르지 않는 값이다). manage
 감싼다. class_* severity 는 NULL 이 된다. aliases 는 '{}' 로 되살아난다.
 
 Revision ID: 4c7e2b9d1a63
-Revises: c37a8e1d902f
+Revises: 3e7a9c1d5b20
 Create Date: 2026-10-05
 """
 
@@ -32,7 +32,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "4c7e2b9d1a63"
-down_revision: Union[str, Sequence[str], None] = "c37a8e1d902f"
+down_revision: Union[str, Sequence[str], None] = "3e7a9c1d5b20"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

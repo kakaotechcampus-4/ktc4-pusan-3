@@ -13,7 +13,7 @@ profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
 from datetime import date
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from app.agents.activity.store.ports import ActivityObservation, AffinityRecord
+from app.agents.activity.store.ports import ActivityObservation
 from app.agents.common.evidence import AffinityRow
 from app.agents.food.store.ports import FoodObservation
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
@@ -88,7 +88,7 @@ class StoreActivityMemory:
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
-    async def affinities(self, *, child_id: UUID) -> list[AffinityRecord]:
+    async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         return []
 
     async def observations(
@@ -110,7 +110,6 @@ class StoreActivityMemory:
                 subject=row.fields["subject"],
                 activity=row.fields["activity"],
                 polarity=int(row.fields.get("polarity") or 0),
-                updated_at=row.created_at,
             )
             for row in rows
         ]

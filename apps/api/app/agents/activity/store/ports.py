@@ -30,6 +30,8 @@ from uuid import UUID
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.gate import SafetyState
+from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
+from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
 from app.rules.kma_grid import latlon_to_grid
 
 
@@ -73,19 +75,6 @@ class ActivityObservation:
     subject: str  # 병합 판정 입력 (정규화된 값)
     activity: str  # 사람이 읽는 원문. 예: 레고 조립
     polarity: int  # -1 / 0 / +1
-    updated_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
-
-
-@dataclass(frozen=True)
-class AffinityRecord:
-    """`profile_affinity`(domain=activity) 한 행.
-
-    공통 `AffinityRow`에는 `updated_at`이 없다. 인용하려면 `source_updated_at`이 필요해서
-    여기서 같이 싣는다.
-    """
-
-    row: AffinityRow
-    updated_at: datetime
 
 
 @dataclass(frozen=True)
@@ -106,15 +95,6 @@ class ActivityDocRow:
     body: str
     min_month: int
     max_month: int | None
-    written_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
-
-
-@dataclass(frozen=True)
-class WeatherGrid:
-    """기상청 5km 격자. 날씨 포트는 좌표 대신 이 값만 받는다."""
-
-    nx: int
-    ny: int
 
 
 # 좌표를 자르는 자리수. 소수점 둘째 자리는 위도 약 1.1km · 경도 약 0.9km (북위 36° 기준)
@@ -149,15 +129,18 @@ class CoarseLocation:
 
 @dataclass(frozen=True)
 class Forecast:
-    sky: str | None  # 기상청 하늘상태 라벨 그대로. None = 확인 못 함
+    """날씨 판정의 입력. `weather.read_forecast` 가 아래 `RawForecast` 를 읽어 만든다."""
+
+    sky: str | None  # 하늘상태 라벨("맑음" 등). None = 확인 못 함
     precip_mm_per_h: float | None  # 파싱 실패도 None 이다 — "강수없음"과 다르다
     pop_percent: int | None  # 강수확률
 
 
 @dataclass(frozen=True)
 class AirQuality:
-    pm10: int | None  # ㎍/㎥
-    pm25: int | None
+    # 측정기가 멈춘 값("-" · 사유 flag)은 None 이다. 0 으로 채우면 "좋음"이 된다
+    pm10: float | None  # ㎍/㎥
+    pm25: float | None
     ozone_ppm: float | None
 
 
@@ -170,7 +153,7 @@ class Advisories:
 
     heat: AdvisoryLevel
     cold: AdvisoryLevel
-    severe: bool  # 강풍 · 호우 · 대설 · 태풍 중 하나라도 발효 중
+    severe: bool  # 강풍 · 호우 · 대설 · 태풍 · 폭풍해일 중 하나라도 발효 중
 
 
 @dataclass(frozen=True)
@@ -208,7 +191,7 @@ class SafetyReader(Protocol):
 
 
 class ActivityMemoryReader(Protocol):
-    async def affinities(self, *, child_id: UUID) -> list[AffinityRecord]:
+    async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         """`profile_affinity`(domain=activity). common/evidence.py 가 순위를 매긴다."""
         ...
 
@@ -232,19 +215,32 @@ class ActivityDocReader(Protocol):
 
 
 class WeatherSource(Protocol):
-    """네 조회는 따로 실패한다. 하나가 죽어도 나머지는 온다 — 미세먼지만 실패하면 야외는 허용하되
-    고지한다 (D8). 실패는 각자 UpstreamUnavailable.
+    """어댑터는 호출 · 타임아웃 · 지금 시각 칸 고르기까지만 하고 값은 원문 그대로 넘긴다.
+
+    해석("-" · NO_DATA · 강수 문자열)은 `weather.py` 가 테스트와 함께 맡는다. 어댑터가 들어갈
+    `app/integrations/` 는 agents 를 import 할 수 없어서, 해석을 거기 두면 같은 규칙을 테스트
+    밖에서 한 번 더 짜게 된다. 같은 이유로 원문 모양(`Raw*` · `WeatherGrid`)은
+    `app/core/weather_raw.py` 에 있다 — 어댑터는 거기서 import 한다.
+
+    네 조회는 따로 실패한다. 하나가 죽어도 나머지는 온다 — 미세먼지만 실패하면 야외는 허용하되
+    고지한다 (D8). 호출 자체의 실패(타임아웃 · HTTP 오류)는 각자 UpstreamUnavailable.
     """
 
-    async def forecast(self, *, grid: WeatherGrid, day: date) -> Forecast: ...
+    async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast: ...
 
-    async def air_quality(self, *, grid: WeatherGrid) -> AirQuality: ...
+    async def air_quality(self, *, grid: WeatherGrid) -> RawAir: ...
 
-    async def uv_grade(self, *, grid: WeatherGrid, day: date) -> str | None:
-        """API 가 주는 자외선 등급 문자열 그대로. 우리가 다시 분류하지 않는다."""
+    async def uv(self, *, grid: WeatherGrid, day: date) -> str | None:
+        """생활기상지수 자외선(`getUVIdxV5`) 지금 시각 칸(`h0` · `h3` · …)의 지수 원문."""
         ...
 
-    async def advisories(self, *, grid: WeatherGrid) -> Advisories: ...
+    async def advisories(self, *, grid: WeatherGrid) -> RawAdvisories:
+        """특보코드조회(`getPwnCd`)를 이 위치의 특보구역으로. 결과 코드와 행을 그대로 넘긴다.
+
+        기간 없이 부르면 지난 발표분이 빠진다 — 며칠 전 발표돼 아직 발효 중인 특보를 놓치지 않게
+        기간을 넉넉히 준다. 발표 이력인 `getWthrWrnList` 는 쓰지 않는다 (해제된 특보도 남는다).
+        """
+        ...
 
 
 class PlaceSource(Protocol):

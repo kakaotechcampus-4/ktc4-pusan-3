@@ -6,6 +6,7 @@
 
 from collections.abc import Sequence
 
+from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 
@@ -34,11 +35,9 @@ def filter_activity_safety(
 def filter_recent_duplicates(
     candidates: Sequence[ActivityCandidate], *, recent: Sequence[str]
 ) -> tuple[ActivityCandidate, ...]:
-    """최근 창 안에 한 활동과 같은 후보를 뺀다.
+    """최근 창(`rules.DUPLICATE_WINDOW_DAYS`) 안에 한 활동과 같은 후보를 뺀다.
 
-    구현:
-    - 정규화 후 완전 일치다. 유사도 임계값은 쓰지 않는다 — `블록쌓기/블럭쌓기`(0.750)가
-      `물놀이/물감놀이`(0.857)보다 점수가 낮아 어떤 단일 임계값도 둘을 가르지 못한다.
-    - 정규화는 NFKC + casefold + 공백·문장부호 제거까지. 조사는 떼지 않는다.
+    판정은 `rules.is_recent_duplicate` — 정규화 후 완전 일치다. 출력 검증(`review.py`)은 같은
+    판정으로 후보를 거절하고, 이 함수는 사전 조회한 후보 풀에서 미리 뺄 때 쓴다.
     """
-    raise NotImplementedError("출력 검증 구현 후")
+    return tuple(c for c in candidates if not is_recent_duplicate(c.content, recent))
