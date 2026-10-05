@@ -380,6 +380,12 @@ async def handle_input(
             failed = Failed("llm_unavailable", raw_text)
         else:
             model_calls += 1  # Agent 하나가 1. 루프를 몇 바퀴 돌았는지는 memory.steps
+        if memory is not None and not memory.completed:
+            memory_ms = _ms_since(record_started)
+            # 반복 상한에 걸려 기록을 다 끝내지 못하면 일부만 남지 않게 commit 하지 않고
+            # (러너가 되돌린다) failed로 끝낸다. 저장 안내/되묻기 맥락도 내지 않는다
+            failed = Failed("unparsable", raw_text)
+        elif memory is not None:
             # 기록 단계를 먼저 확정한다. 저장 안내 · 되묻기 맥락은 확정된 것만 나간다
             committed = await _commit_record(memory, commit)
             memory_ms = _ms_since(record_started)  # 기록 단계 = Memory + commit
@@ -562,6 +568,11 @@ async def _handle_continuation(
         failed = Failed("llm_unavailable", answer)
     else:
         model_calls = 1
+    if memory is not None and not memory.completed:
+        memory_ms = _ms_since(record_started)
+        # 반복 상한 — 일반 run과 같이 commit 하지 않고 failed로 끝냄
+        failed = Failed("unparsable", answer)
+    elif memory is not None:
         committed = await _commit_record(memory, commit)
         memory_ms = _ms_since(record_started)
         refs = _saved_refs(memory)

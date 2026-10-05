@@ -35,6 +35,7 @@ from app.agents.food.store import (
     InMemoryProfile,
     in_memory_ports,
 )
+from app.agents.memory.agent import MAX_STEPS
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
@@ -2232,6 +2233,63 @@ async def test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나�
     assert not _of(events, MemoryNote)
     assert not _of(events, PendingReply)
     assert not _of(events, Done)
+
+
+async def test_Memory_가_반복_상한에_걸리면_commit_하지_않고_failed_로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # RC04 는 조각이 둘이라 하나를 쓴 뒤에도 다 덮이지 않아 루프가 이어진다. 남은 턴을 조회만
+    # 하다 상한에 걸리면, 이미 성공한 쓰기가 있어도 확정하지 않는다(일부만 남기지 않는다)
+    memory_llm = FakeLLM(
+        _tools(_call("m1", "create_observation_activity", _SAND)),
+        *[_tools(_call(f"q{i}", "query_observation_activity", {})) for i in range(MAX_STEPS - 1)],
+    )
+
+    result = await _handle(
+        "RC04",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        commit=_commit_into(events),
+    )
+
+    assert result.memory is not None and result.memory.completed is False
+    assert not _of(events, _Committed)
+    assert not _of(events, Saved)
+    assert not _of(events, MemoryNote)
+    assert not _of(events, PendingReply)
+    assert "DomainRouted" not in _order(events)
+    assert result.failed == Failed("unparsable", CASES_BY_ID["RC04"].text)
+    assert result.committed is False
+
+
+async def test_이어받기도_반복_상한에_걸리면_commit_하지_않고_failed_로_끝난다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 이어받기는 조기 종료가 없어서 쓴 뒤에도 상한까지 돈다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        *[_tools(_call(f"q{i}", "query_observation_health", {})) for i in range(MAX_STEPS - 1)],
+    )
+
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_commit_into(events),
+    )
+
+    assert result.memory is not None and result.memory.completed is False
+    assert not _of(events, _Committed)
+    assert not _of(events, Saved)
+    assert result.failed == Failed("unparsable", "3일 전부터")
+    assert result.committed is False
 
 
 async def test_기록할_조각이_없으면_commit_을_부르지_않는다(
