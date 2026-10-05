@@ -41,6 +41,7 @@ export function HomeComposer({
   pending,
   busyLabel = "보내는 중이에요",
   sentLine = false,
+  lead,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -59,6 +60,8 @@ export function HomeComposer({
    *    빨려 들어간다.
    */
   sentLine?: boolean;
+  /** 제안 줄 맨 앞에 서는 문 하나 — 03 의 "오늘 대화 이어보기" (`AgentPrompts` 의 `lead`). */
+  lead?: ReactNode;
 }) {
   const canSubmit = value.trim().length > 0 && !pending;
 
@@ -83,7 +86,13 @@ export function HomeComposer({
           화면에서 **입력창이 그만큼 화면 아래로 밀린다.** 넘치는 만큼은 밀어서 본다 —
           디자인 시스템 §7 이 "칩 줄은 가로 스크롤하지 않는다" 고 못박은 것은 **근거 칩**이고,
           거기서 가리면 부모가 판단할 정보가 사라진다. 이 줄은 들어가는 문이라 밀어도 잃는 게 없다. */}
-      <AgentPrompts items={prompts} onPick={onPickPrompt} disabled={pending} layout="scroller" />
+      <AgentPrompts
+        items={prompts}
+        onPick={onPickPrompt}
+        disabled={pending}
+        layout="scroller"
+        lead={lead}
+      />
 
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
       <Named name={VIEW_TRANSITION.chatBar}>

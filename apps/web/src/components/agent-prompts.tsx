@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { DomainChip, domainPress } from "@/components/domain-chip";
 import type { Agent } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -21,6 +23,14 @@ import { cn } from "@/lib/cn";
  */
 const MAX_PROMPTS = 2;
 
+/**
+ * 이 줄에 서는 알약의 모양. 🚨 **한 줄에 서는 것은 모양이 같아야 한다** — 03 의 "오늘 대화 이어보기"
+ * (`ChatEntryLink`)가 이 줄 맨 앞에 같은 알약으로 선다. 따로 그렸더니 각진 버튼 하나가 알약 줄 위에
+ * 혼자 떠서 어디에도 안 붙어 보였다 (#226). 누를 때 색만 각자 정한다.
+ */
+export const PROMPT_PILL =
+  "border-line bg-surface disabled:bg-surface-muted ease-standard min-h-touch flex items-center gap-2 rounded-full border px-2 py-1.5 text-left transition-colors duration-120";
+
 export interface AgentPrompt {
   agent: Agent;
   text: string;
@@ -31,14 +41,20 @@ export function AgentPrompts({
   onPick,
   disabled,
   layout,
+  lead,
 }: {
   items: AgentPrompt[];
   onPick: (agent: Agent) => void;
   disabled?: boolean;
   layout: "list" | "scroller";
+  /**
+   * `scroller` 맨 앞에 서는 다른 문 하나 (03 의 대화 이어보기). 제안이 없어도 이것만으로 줄이 선다.
+   * 🚨 모양은 `PROMPT_PILL` 로 맞춘다.
+   */
+  lead?: ReactNode;
 }) {
   const shown = items.slice(0, MAX_PROMPTS);
-  if (shown.length === 0) return null;
+  if (shown.length === 0 && !(layout === "scroller" && lead)) return null;
 
   if (layout === "list") {
     return (
@@ -60,6 +76,7 @@ export function AgentPrompts({
     // 🚨 `overscroll-x-contain` — 웹뷰에서 가로 스와이프가 끝까지 가면 네이티브 뒤로가기
     //    제스처로 넘어간다. 제안을 밀다가 화면이 뒤로 가면 안 된다.
     <ul className="-mx-3 flex gap-2 overflow-x-auto overscroll-x-contain px-3 min-[380px]:-mx-4 min-[380px]:px-4">
+      {lead ? <li className="shrink-0">{lead}</li> : null}
       {shown.map((prompt) => (
         <li key={prompt.agent} className="shrink-0">
           <PromptButton prompt={prompt} onPick={onPick} disabled={disabled} />
@@ -86,7 +103,7 @@ function PromptButton({
       onClick={() => onPick(prompt.agent)}
       disabled={disabled}
       className={cn(
-        "border-line bg-surface disabled:bg-surface-muted ease-standard min-h-touch flex items-center gap-2 rounded-full border px-2 py-1.5 text-left transition-colors duration-120",
+        PROMPT_PILL,
         // 🚨 누르면 **그 주제가 열릴 색**이다 (05 제안 줄과 같은 규칙). 뉴트럴 틴트로 누르면
         //    눌린 색과 다음 화면의 색이 달라서 두 동작이 남남처럼 보인다.
         domainPress(prompt.agent),

@@ -145,6 +145,8 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - ⚠️ **앱을 끄면 그날 대화가 사라진다** — 메모리 전용이다. 남기는 것은 #228 이다
 - 화면 전환은 디자인 시스템 §8 "허용하는 화면 전환" — 채팅바와 막 보낸 한 줄만 이어 붙인다
   (`lib/view-transition.ts`)
+- 🚨 **03 의 "오늘 대화 이어보기" 는 제안 줄 맨 앞의 알약이다** (`HomeComposer` 의 `lead` · `PROMPT_PILL`).
+  따로 한 줄을 주면 각진 버튼 하나가 알약 줄 위에 혼자 떠 보인다
 
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.

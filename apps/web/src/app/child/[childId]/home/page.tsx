@@ -10,6 +10,7 @@ import {
   Utensils,
   type LucideIcon,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -18,7 +19,8 @@ import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
-import { Button, ButtonLink } from "@/components/ui/button";
+import { PROMPT_PILL } from "@/components/agent-prompts";
+import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
@@ -32,6 +34,7 @@ import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/con
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, isApiError, qk, type Agent, type HomeResponse, type Me } from "@/lib/api";
+import { cn } from "@/lib/cn";
 
 /**
  * 03 홈 · 한 줄 입력.
@@ -122,15 +125,6 @@ function HomeScreen() {
       nav={<ChildNav active="home" />}
       bottomBar={
         <div className="flex flex-col gap-2">
-          {/* 🚨 **대화가 있을 때만 선다.** 앱을 끄면 그날 대화가 사라져서(#228 전까지) 빈 대화로
-              가는 문을 세우지 않는다. 답을 기다리는 질문이 있으면 그 사실을 문 이름이 말한다 —
-              질문 자체는 여기서 보여주지 않는다 (답하는 자리는 대화 화면이다). */}
-          {conversation.turns.length > 0 ? (
-            <ButtonLink href={chatHref} variant="tertiary" size="compact" className="self-start">
-              <MessagesSquare aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
-              {hasOpenQuestion(conversation) ? "답을 기다리는 질문이 있어요" : "오늘 대화 이어보기"}
-            </ButtonLink>
-          ) : null}
           <HomeComposer
             value={leaving ?? text}
             onChange={setText}
@@ -141,6 +135,13 @@ function HomeScreen() {
             pending={busy || leaving !== null}
             busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
             sentLine={leaving !== null}
+            lead={
+              // 🚨 **대화가 있을 때만 선다.** 앱을 끄면 그날 대화가 사라져서(#228 전까지) 빈 대화로
+              //    가는 문을 세우지 않는다.
+              conversation.turns.length > 0 ? (
+                <ChatEntryLink href={chatHref} asking={hasOpenQuestion(conversation)} />
+              ) : undefined
+            }
           />
         </div>
       }
@@ -196,6 +197,33 @@ function HomeScreen() {
         }}
       />
     </Screen>
+  );
+}
+
+/**
+ * 03 → 04 대화로 가는 문 (#226). 🚨 **제안 줄 맨 앞의 알약이다** — 따로 한 줄을 주면 각진 버튼 하나가
+ * 알약 줄 위에 혼자 떠 보였다. 같은 줄 · 같은 모양(`PROMPT_PILL`)이라 "들어가는 문들" 로 같이 읽힌다.
+ * 🚨 **누르는 색은 뉴트럴이다** — 제안은 누르면 그 도메인 색이 되는데(열릴 화면의 색), 대화는 도메인이 없다.
+ * 🚨 **질문은 여기서 보여주지 않는다.** 답하는 자리는 대화 화면이고, 문 이름만 바뀐다 — 그때 글자를
+ *    `ink` 로 올려 다른 문보다 먼저 읽히게 한다 (색만이 아니라 문구가 같이 바뀐다).
+ */
+function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        PROMPT_PILL,
+        "hover:bg-surface-muted active:bg-surface-muted whitespace-nowrap",
+      )}
+    >
+      {/* `chip` 높이(28)의 아이콘 원 — 옆 제안 알약의 도메인 칩과 같은 자리 · 같은 크기다. */}
+      <span className="bg-brand-soft text-brand-ink min-h-chip flex aspect-square items-center justify-center rounded-full">
+        <MessagesSquare aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
+      </span>
+      <span className={cn("text-body-sm pr-1", asking ? "text-ink" : "text-ink-muted")}>
+        {asking ? "답을 기다리는 질문이 있어요" : "오늘 대화 이어보기"}
+      </span>
+    </Link>
   );
 }
 
