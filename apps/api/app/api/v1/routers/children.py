@@ -23,7 +23,7 @@ router = APIRouter()
 
 @router.post("/children/{cid}/inputs", status_code=202)
 async def create_input(
-    child_id: AccessibleChild,
+    child: AccessibleChild,
     body: CreateInputRequest,
     parent: CurrentParent,
     request: Request,
@@ -54,7 +54,7 @@ async def create_input(
     if body.reply_to is not None:
         # 확인만 한다. 한도에 걸려 429 로 끝나도 맥락은 남아야 한다
         continuation = pending_reply.get(
-            run_id=body.reply_to, parent_id=parent.parent_id, child_id=child_id
+            run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
         )
         if continuation is None:
             # 없는 run · 남의 run · 다른 아이 · 이미 답한 질문 · 만료를 하나로 합친다.
@@ -77,14 +77,17 @@ async def create_input(
     if body.reply_to is not None:
         # get 과 여기 사이에 await 가 없어서 같은 reply_to 로 온 다른 요청이 끼어들지 못한다.
         # 한 번만 쓴다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다
-        pending_reply.consume(run_id=body.reply_to, parent_id=parent.parent_id, child_id=child_id)
+        pending_reply.consume(
+            run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
+        )
 
     channel = registry.open_run(parent_id=parent.parent_id)
     idempotency.remember(**scope, run_id=channel.run_id)
     # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
     # 되지 않는다 (§2).
     job = runner.agent_job(
-        child_id=child_id,
+        child_id=child.child_id,
+        birth_date=child.birth_date,
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,

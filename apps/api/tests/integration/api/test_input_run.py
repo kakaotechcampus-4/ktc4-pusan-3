@@ -15,7 +15,7 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -113,6 +113,8 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
     assert agent_calls == [
         {
             "child_id": cid,
+            # 확인한 아이의 생일 — 식이 단계(12개월 경계)를 진입점이 여기서 계산한다 (9단계)
+            "birth_date": date(2023, 1, 1),
             "parent_id": parent_id,
             "raw_text": BODY["text"],
             "continuation": None,  # 일반 새 입력
@@ -483,16 +485,23 @@ async def test_남의_아이에게는_적을_수_없다(db_client, bearer, sessi
     assert agent_calls == []
 
 
-async def test_없는_아이도_남의_아이와_같은_403(db_client, bearer, agent_calls):
-    """404 를 주면 "그 id 의 아이가 있다 / 없다" 가 드러난다. 둘을 구분하지 않는다."""
+async def test_없는_아이와_남의_아이는_응답으로_구분되지_않는다(
+    db_client, bearer, session, agent_calls
+):
+    """404 를 주면 "그 id 의 아이가 있다 / 없다" 가 드러난다. 응답 전체가 같아야 한다."""
     headers, _ = bearer
+    _, other_parent = await issue_bearer(session, token="test-token-other-parent")
+    others_child = await link_child(session, parent_id=other_parent)
 
-    response = await db_client.post(
+    missing = await db_client.post(
         INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=with_key(headers)
     )
+    others = await db_client.post(
+        INPUTS.format(cid=others_child), json=BODY, headers=with_key(headers)
+    )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "child_access_denied"
+    assert missing.status_code == others.status_code == 403
+    assert missing.json() == others.json()
     assert agent_calls == []
 
 
@@ -504,7 +513,21 @@ async def test_보관된_아이에게는_적을_수_없다(db_client, bearer, se
     response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
     assert response.status_code == 403
+    assert response.json()["error"]["code"] == "child_access_denied"
     assert agent_calls == []
+
+
+async def test_아이_접근_확인이_키_확인보다_먼저다(db_client, bearer):
+    """연결되지 않은 아이로 키 없이 보내면 400 이 아니라 403 — 판정 순서를 고정한다.
+
+    인증 → 아이 접근 → 키 → 재생 (docs/api/idempotency-v1.md §3-1, #229 에서 정함).
+    """
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=uuid.uuid4()), json=BODY, headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "child_access_denied"
 
 
 async def test_함께_보는_보호자도_적을_수_있다(db_client, bearer, session, cid, agent_calls):

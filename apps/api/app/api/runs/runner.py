@@ -22,6 +22,7 @@ import asyncio
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
+from datetime import date
 from uuid import UUID
 
 from app.agents import entrypoint
@@ -54,13 +55,15 @@ def agent_job(
     child_id: UUID,
     parent_id: UUID,
     raw_text: str,
+    birth_date: date | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
 ) -> Job:
     """진짜 Agent(entrypoint.handle_input)를 돌리는 job 을 만든다. 진행 이벤트는 번역해서 채널로.
 
     - 저장소는 넘기지 않는다 — 지금은 run 마다 메모리 저장소다. DB 저장은 7단계.
-    - 생일도 아직 안 넘긴다 — 아이 정보를 읽는 9단계에서. 그 전까지 식이 단계는 진입점의 기본값.
+    - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
+      None 이면 진입점의 기본값을 쓴다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
@@ -93,6 +96,7 @@ def agent_job(
                     child_id=child_id,
                     parent_id=parent_id,
                     raw_text=raw_text,
+                    birth_date=birth_date,
                     run_id=channel.run_id,
                     emit=emit,
                     continuation=continuation,
