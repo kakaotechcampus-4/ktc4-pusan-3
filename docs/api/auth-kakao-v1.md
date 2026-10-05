@@ -645,6 +645,7 @@ target_id_type=user_id&target_id={provider_user_id}
 
 - 남기는 "카카오 에러 코드" 는 분류값 세 칸이다 — 토큰 받기(kauth)의 `error` · `error_code`(KOE…), 토큰 정보 · 로그아웃(kapi)의 `code`. 설명 칸(`error_description` · `msg`)은 읽지도 않는다. 카카오 문서 예시상 앞에는 인가 코드가, 뒤에는 앱 키가 실린다. 분류값도 짧은 영문 · 숫자 모양(`[A-Za-z0-9_-]`, 64자까지)일 때만 남긴다 (#197)
 - 콜백 쿼리의 `error` 는 누구나 만들 수 있다. 같은 모양 검사를 거치고, 걸러지면 `(형식 밖)` 으로 남긴다. 사용자가 취소한 `access_denied` 는 정상 동작이라 남기지 않는다
+- uvicorn 접근 로그(요청마다 한 줄)는 주소를 쿼리째 찍는다 — 시작의 `bind` · 콜백의 `code` · `state` 가 실린다. `app/core/logging_config.py` 의 `_RedactAccessLog` 가 쿼리 문자열 전체를 `?[redacted]` 로 가린다 (#239). nginx 접근 로그는 배포 작업에서 같은 규칙으로
 
 ### 7-6. 비밀 관리 (NF-09)
 
