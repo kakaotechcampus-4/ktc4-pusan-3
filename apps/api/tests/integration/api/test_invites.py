@@ -1,6 +1,7 @@
 """보호자 초대 — docs/api/invite-v1.md §3. 코드 발행(§3-1) · 수락 전 확인(§3-2) · 수락(§3-3)."""
 
 import hashlib
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -310,6 +311,46 @@ async def test_확인과_수락의_실패를_합쳐_5회면_6번째가_429(db_cl
     statuses = [await _fail(db_client, how, stranger_headers) for how in pattern]
 
     assert statuses == [404] * 5 + [429]
+
+
+async def test_성공한_확인은_실패로_세지_않는다(db_client, session, family):
+    """확인하고 그만뒀다가 다시 여는 사람이 한도에 걸리지 않는다."""
+    child, _, owner_id, _, stranger_headers = family
+    await _seed_invite(session, child, owner_id)
+
+    statuses = [
+        (await db_client.get(PREVIEW.format(code=CODE), headers=stranger_headers)).status_code
+        for _ in range(6)
+    ]
+
+    assert statuses == [200] * 6
+
+
+@pytest.mark.parametrize(("case", "status"), [("사용됨", 409), ("만료", 410)])
+async def test_사용됨_만료도_실패로_세고_로그에는_원문_코드가_없다(
+    db_client, session, family, caplog, case, status
+):
+    """둘 다 "그 코드가 있었다" 를 알려 주므로 없는 코드와 같이 센다 (invite-v1.md §4)."""
+    child, _, owner_id, _, _ = family
+    now = datetime.now(UTC)
+    await _seed_invite(
+        session,
+        child,
+        owner_id,
+        used_at=now if case == "사용됨" else None,
+        expires_at=now - timedelta(seconds=1) if case == "만료" else now + timedelta(hours=1),
+    )
+    headers, parent_id = await issue_bearer(session, token="guess-token")
+
+    with caplog.at_level(logging.INFO, logger=invites_router.__name__):
+        statuses = [
+            (await db_client.get(PREVIEW.format(code=CODE), headers=headers)).status_code
+            for _ in range(6)
+        ]
+
+    assert statuses == [status] * 5 + [429]
+    assert str(parent_id) in caplog.text
+    assert CODE not in caplog.text
 
 
 async def test_계정을_바꿔도_같은_IP_에서_30회를_넘으면_429(db_client, session):
