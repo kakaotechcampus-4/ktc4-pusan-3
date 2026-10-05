@@ -264,6 +264,34 @@
   }
 }
 
+/* 화면 전환 — 03 홈 ↔ 04 대화 (#226 · 문서 §8 "허용하는 화면 전환").
+ *
+ * 이름이 없는 것은 전부 루트 크로스페이드고, 이름 쌍(`lib/view-transition.ts`)은 위치를 이어 붙인다.
+ * 둘 다 `base`(200ms) + `--ease-standard` 다. 브라우저 기본값(250ms · ease)을 그대로 두면 이 앱의
+ * 다른 움직임과 박자가 어긋난다.
+ *
+ * 🚨 **reduced-motion 에서는 위치를 옮기지 않는다** — `group` 이 위치·크기를 옮기는 자리라 그 애니메이션만
+ *    끄고, `old`/`new` 의 크로스페이드는 남긴다 (문서 §8 "transform 을 끄고 opacity 만").
+ *    위 base 레이어의 `*` 규칙은 이 가상 요소들에 닿지 않아서 여기서 따로 끈다.
+ * 🚨 **전환 중에도 화면을 누를 수 있게 둔다.** 겹쳐 그린 층이 누르기를 가로채면 넘어가는 200ms 동안
+ *    누른 것이 사라진다 (Next 문서 `view-transitions.md`). */
+::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 200ms;
+  animation-timing-function: var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*) {
+    animation: none;
+  }
+}
+
 /* 웹뷰 노치·홈 인디케이터 영역. @utility 는 중첩할 수 없어 @layer 밖에 둔다.
  *
  * 🚨 **여백을 함께 받는다.** 예전에는 safe area 만 넣는 `pt-safe`/`pb-safe` 였는데,

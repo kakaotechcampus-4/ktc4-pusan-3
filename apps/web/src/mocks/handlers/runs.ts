@@ -47,6 +47,12 @@ const pendingReplies = new Map<string, string>();
  */
 const failedOnce = new Set<string>();
 
+/**
+ * `reply_asks_again` 에서 이미 한 번 되물은 대화의 **처음 질문**. 🚨 **한 번만 더 묻는다** —
+ * 늘 물으면 끝나지 않는다. 서버에도 재질문 상한이 들어올 예정이다(그 문구의 목은 서버 PR 뒤).
+ */
+const askedAgain = new Set<string>();
+
 /** 테스트가 "답이 어느 run 을 가리키는가" 를 확인하는 자리. */
 export function submittedInput(runId: string): SubmittedInput | undefined {
   return inputByRun.get(runId);
@@ -57,6 +63,7 @@ export function resetSubmittedInputs(): void {
   inputByRun.clear();
   pendingReplies.clear();
   failedOnce.clear();
+  askedAgain.clear();
 }
 
 /**
@@ -93,6 +100,9 @@ const SAFETY_GUIDANCE = {
 /** 이어받기 run 이 저장한 뒤 Memory 가 하는 말. 🚨 질문이 아니다 — 이어받은 답은 또 묻지 않는다. */
 const CONTINUATION_NOTE = "말씀해 주신 시점까지 함께 기록해 두었어요.";
 
+/** `reply_asks_again` — 이어받기 run 이 한 번 더 묻는 말. 처음 질문과 **다른 문장**이라 화면에서 갈린다. */
+const FOLLOW_UP_QUESTION = "하루에 몇 번 정도 그랬는지 알려주시겠어요?";
+
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
  * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계가 하나고 추천 제안(`offer`)도 없다
@@ -114,6 +124,21 @@ async function* continuationScript(
     return;
   }
 
+  /**
+   * 🚨 **이어받은 답이 또 모자라면 또 묻는다** (#226). 서버는 이 run 을 새 대기 자리에 넣으므로
+   *    다음 답의 `reply_to` 는 **이 run** 이다 — 처음 질문의 run 은 위 핸들러가 이미 한 번 꺼냈다.
+   *    어느 질문의 답인지는 처음 질문(`rootQuestion`)으로 센다 — 한 대화에서 한 번만 더 묻는다.
+   */
+  const rootQuestion = rootOf(input.replyTo);
+  if (currentScenario() === "reply_asks_again" && !askedAgain.has(rootQuestion)) {
+    askedAgain.add(rootQuestion);
+    pendingReplies.set(runId, input.childId);
+    yield frame("note", { text: FOLLOW_UP_QUESTION, kind: "question" });
+    await sleep(300);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
+
   yield frame("saved", { observations: [healthObservation] });
   await sleep(300);
   /**
@@ -125,6 +150,16 @@ async function* continuationScript(
   yield frame("note", { text: CONTINUATION_NOTE, kind: "message" });
   await sleep(300);
   yield frame("done", { run_id: runId, model_calls: 1 });
+}
+
+/** 이어받기가 이어진 대화의 처음 run. 답의 답을 따라 처음 질문까지 거슬러 올라간다. */
+function rootOf(runId: string): string {
+  let current = runId;
+  for (let replyTo = inputByRun.get(current)?.replyTo; replyTo;) {
+    current = replyTo;
+    replyTo = inputByRun.get(current)?.replyTo;
+  }
+  return current;
 }
 
 /**
@@ -221,6 +256,7 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (
     scenario === "note_question" ||
     scenario === "reply_failed" ||
+    scenario === "reply_asks_again" ||
     scenario === "reply_unavailable"
   ) {
     if (input) pendingReplies.set(runId, input.childId);

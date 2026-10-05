@@ -56,8 +56,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
   🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
   🚨 `stores/photo-draft.ts`(**아이 사진 원본**) · `stores/safety-scan-draft.ts`(**알레르기 검사지
-  사진** — 의료 기록이다) · `stores/pending-question.ts`(**Memory 가 되물은 질문** — 아이 이야기가
-  그대로 들어 있다) 도 같다. 넷 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`)
+  사진** — 의료 기록이다) · `stores/conversation.ts`(**그날 대화** — 보낸 원문 · run 결과 · 되물은
+  질문이 그대로 들어 있다) 도 같다. 넷 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
+  대화 스토어는 로그아웃에서 **도는 스트림도 끊는다**
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
 화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
@@ -78,7 +79,8 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 01 첫 진입 (아이 만들기 + 아이 동의 2건) | `/onboarding` |
 | 02 아이 정보 (관계 · 성별 · 키 · 몸무게 · 알레르기 · 전부 선택) | `/child/[childId]/onboarding` |
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
-| 03 홈 + **04 진행·저장 결과** | `/child/[childId]/home` |
+| 03 홈 | `/child/[childId]/home` |
+| 04 대화 (한 줄 입력의 결과 · 되묻기 답 · 하루 단위) | `/child/[childId]/chat` |
 | 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
@@ -127,10 +129,22 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   두고 넘긴다. 라우트 이동이 사용자 제스처를 소비해서 도착한 뒤 `input.click()` 을 부르는
   방법은 브라우저가 막는다. 🚨 그 스토어에 `persist` 를 붙이지 말 것 — **의료 기록 사진**이다
 
-🚨 **04 저장 결과에 라우트를 만들지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
-`failed` 일 때 입력창에 되돌릴 **원문의 정본은 03 홈이 들고 있는 `text`** 다 (아래 run 상태 항목).
-라우트를 나누면 그 값이 언마운트와 함께 죽는다 — 그래서 03 이 run 이 도는 동안 본문만 바꿔 그린다.
-프로토타입에서 04 가 별도 화면으로 보이는 것은 뒤로가기 화살표 때문이지 주소가 달라서가 아니다.
+🚨 **04 대화는 라우트다** (#226). 한동안 03 홈 위의 레이어였다 — 화면을 벗어나면 스트림과 원문이
+같이 죽어서였는데, 지금은 보내기 · 구독 · 끝 처리가 **화면 밖**(`stores/conversation.ts`)에 있어서
+그 이유가 사라졌다. 라우트여야 하는 이유는 **뒤로가기**다 — 웹뷰의 기기 뒤로가기가 히스토리 기반이라
+레이어로 덮으면 대화 중 뒤로가기가 앱 밖으로 나갈 수 있다 (11-1 과 같은 이유).
+
+- 🚨 **보내는 순간 넘어간다.** 202 를 기다리지 않는다 — 말풍선이 먼저 서고 요청은 뒤에서 나간다.
+  그래서 **보내기 실패는 홈에서 보냈든 대화에서 보냈든 늘 대화 화면의 그 말풍선 아래에** 선다.
+  03 홈에는 실패 카드가 없다
+- 🚨 **흐름 화면이라 네비가 없다.** 돌아가기는 `IconButtonLink`("홈으로 돌아가기") 하나다
+- 🚨 **대화는 하루에 하나다.** 날짜 경계는 한국 시간 자정이고 코드가 정한다(`toSeoulDateKey` —
+  기기 시간대가 아니다). 보낸 순간에 그 한 줄의 날이 정해지고, **답은 질문이 나온 날을 물려받는다**
+- 🚨 **03 홈에서 보낸 한 줄은 질문의 답이 아니다** (`asReply: false`). 답은 질문이 화면에 떠 있는
+  대화 화면에서만 나간다 — 홈은 "답을 기다리는 질문이 있어요" 입구로 그리로 부른다
+- ⚠️ **앱을 끄면 그날 대화가 사라진다** — 메모리 전용이다. 남기는 것은 #228 이다
+- 화면 전환은 디자인 시스템 §8 "허용하는 화면 전환" — 채팅바와 막 보낸 한 줄만 이어 붙인다
+  (`lib/view-transition.ts`)
 
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
@@ -170,7 +184,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton`
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `RunProgress`/`RunResult` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
+  `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
@@ -186,7 +200,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 - 🚨 **화면 하단 고정 바는 `Screen` 의 `bottomBar` · `nav` 로 넘긴다.** 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
-- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 저장 결과·05 제안 후보처럼
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 대화·05 제안 후보처럼
   흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7).
   설정의 하위 화면 둘이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
   있어서 안 붙인다**(빠져나가는 길은 자기 "그만두고 돌아가기" 하나다)
@@ -612,20 +626,30 @@ const controller = new AbortController();
 for await (const e of streamRunEvents(runId, controller.signal)) { ... }
 ```
 
-### run 상태 — `useRunStream`
+### run 상태 — `runReducer` · `subscribeRun`
 
 run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독형이라 위 이분법에 안 맞는다.
-`hooks/use-run-stream.ts` 가 `useReducer` 로 들고, 끝날 때 Query 를 무효화한다.
+리듀서와 구독(20초 침묵 · EOF 처리)은 `hooks/use-run-stream.ts` 한 벌이고, **누가 들고 있는가**만 갈린다.
+
+| | 누가 | 화면을 떠나면 |
+| --- | --- | --- |
+| 04 대화 | `stores/conversation.ts` (run 여러 개 · 말풍선마다 하나) | 🚨 **끊지 않는다** — 홈에 갔다 와도 결과가 빠짐없이 그려져야 한다 |
+| 08 사진 | `useRunStream` 훅 (run 하나) | 끊는다 — 커밋 전에는 저장된 것이 없다 |
+
+- 🚨 **대화 스토어는 끝난 run 을 굳혀 둔다.** 서버는 끝난 채널을 5분만 보관한다
+  (`apps/api/app/api/runs/registry.py` 의 `sweep`) — 다시 구독해서 그리는 구조로 만들면 5분 뒤에 빈 답이 된다
+- 🚨 **한 번에 하나** (`isBusy`). 답을 기다리는 동안에는 다음 한 줄을 못 보낸다 — 두 run 이 겹치면
+  어느 쪽이 질문의 답인지, 질문을 언제 닫는지가 도착 순서에 달린다
 
 - `runReducer` 는 순수 함수다. 훅 없이 이벤트 배열만 흘려서 검증할 수 있다
 - 끝나면 **`qk.child(cid)` 를 통째로** 무효화한다 — run 하나가 홈·관찰·프로필을 동시에 바꾼다
 - 🚨 **`partial` 이 왔으면 `done` 이 와도 부분 결과다.** 성공 화면으로 덮지 않는다 (NF-06)
 - 🚨 **`guidance` · `note` · `unavailable` 은 실패가 아니다** (#141). 셋 다 `done` 으로 끝나는
-  run 에 실려 오고, 04 결과 화면 안의 카드로 선다 — 실패 화면으로 빼면 **같은 run 에서 저장된
+  run 에 실려 오고, 04 답 묶음 안의 카드로 선다 — 실패 화면으로 빼면 **같은 run 에서 저장된
   기록이 화면에서 사라진다.** 특히 `unavailable` 은 라우팅 직후 Memory 보다 **먼저** 나가서
   (`apps/api/app/agents/pipeline.py`) 혼합형 한 줄이면 `saved` 와 같이 온다
 - 🚨 **셋 중 하나라도 있으면 "아이에 관한 기록은 찾지 못했어요" 를 세우지 않는다.** 안내가 이미
-  이유를 말했는데 그 아래에서 다른 이유를 대면 화면이 자기 말을 뒤집는다 (`RunResult` 의 `noticedWhy`).
+  이유를 말했는데 그 아래에서 다른 이유를 대면 화면이 자기 말을 뒤집는다 (`RunReply` 의 `noticedWhy`).
   같은 이유로 저장이 0건이면 제목도 "이렇게 저장했어요" 가 아니다
 - 🚨 **안내·준비 중 카드는 같은 run 에서 저장된 것이 있으면 그 사실을 함께 말한다**
   ("아래 기록은 그대로 저장했어요" · `partial` 카드와 같은 문장이다). 한 줄에 두 얘기가 섞여
@@ -636,25 +660,31 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   아무 답도 못 받은 것으로 읽는다. 🚨 다만 타일은 `neutral` 이다: 안내와 달리 **할 수 있는 일이
   없어서**, 브랜드 타일을 주면 눌러 볼 것이 있는 줄 안다
 - 🚨 **`note.kind` 가 없으면 질문으로 취급하지 않는다.** 서버가 종류를 실어 주기 전까지는
-  요약 문장과 되묻기를 가를 수 없는데, 모르는 채로 "이어서 적기" 를 세우면 화면이 답을 재촉한다.
+  요약 문장과 되묻기를 가를 수 없는데, 모르는 채로 답할 자리를 열면 화면이 답을 재촉한다.
   ⚠️ `kind` 는 #141 에서 요청한 값이다 — 👉 `apps/api` Owner 협의 대상 (최상위 §8)
 - 🚨 **되묻기에 답하는 것은 새 한 줄이다** — 같은 run 에 이어 붙이는 경로가 서버에 없어서
   (§5 run = 입력 1건) 하루 입력 횟수(#147)를 한 번 더 쓴다. 그래서 답을 떠미는 화면을 만들지 않는다.
-  질문은 run 밖(`stores/pending-question.ts`)으로 옮겨 03 홈 입력창 위까지 따라간다 — run 은
-  그 순간 리셋되므로 run 상태에 두면 같이 사라진다
-- 🚨 **"이어서 적기" 는 원문을 입력창에 되돌리지 않는다** (`answerQuestion` · #158 리뷰).
+  **답은 대화 화면 안에서 한다** (#226) — 질문이 오면 입력창이 그 질문을 기본 대상으로 잡고 위에
+  "위 질문에 답하는 중" 이 선다. 예전엔 질문을 `stores/pending-question.ts` 에 옮겨 담아 03 홈까지
+  끌고 갔는데, 그 왕복에서 리뷰 버그가 세 번 났다 (#141 · #158 · #175)
+  - 🚨 **답을 강요하지 않는다.** "답하지 않고 새로 적기" 로 내려놓을 수 있고, 내려놓아도 질문은
+    대화에 **열린 채로** 남아 "이 질문에 답하기" 로 다시 고른다. 예전 "나중에 할게요" 는 질문과
+    `runId` 를 지워서 실제로는 그만두기였다 — 서버는 15분 기다리는데 화면이 잊었다
+  - 🚨 **이어받기 run 이 또 물으면 다음 답의 `reply_to` 는 그 run 이다** — 처음 run 은 서버가 이미
+    한 번 꺼내 썼다 (목 `?scenario=reply_asks_again`)
+- 🚨 **답할 때 원문을 입력창에 되돌리지 않는다** (#158 리뷰).
   한동안 되돌려 놨었다 — 답이 새 run 이라 앞의 한 줄을 모르니 맥락을 화면이 만들어 주려던
   것이었다. 그런데 **일부는 저장되고 질문이 같이 오는 run** 이 있다("계란 잘 먹었어. 요즘 기침해"
   → 계란 저장 + 기침 되묻기 · `apps/api/app/agents/pipeline.py` 의 `Saved` + `MemoryNote`).
   원문을 다시 보내면 **계란이 두 번 저장되고**, 7일 승격 집계가 한 번의 관찰을 두 번으로 센다
-  (최상위 §2 · #154). 같은 이유로 "나중에 할게요" 도 입력창에 아무것도 남기지 않는다.
+  (최상위 §2 · #154).
   - 🚨 **맥락은 `reply_to` 로 서버가 찾는다** — 답에 그 질문이 나온 `run_id` 를 싣는다.
-    그래서 `stores/pending-question.ts` 가 질문 문자열이 아니라 `{ text, runId }` 를 든다
+    그래서 대화 스토어의 질문(`ChatQuestion`)이 문자열이 아니라 `{ text, runId }` 다
     (서버 구현 #175 — 서버는 그 run 이 남긴 조각 하나를 **한 번만** 꺼내 답을 붙인다)
-  - 🚨 **질문은 202 가 아니라 run 이 끝까지 처리됐을 때 지운다** (`closeRun` 의 `isRunConfirmed`).
-    이어받기 run 이 `failed` 로 끝나면 서버가 맥락을 원래 자리에 되돌려 두는데, 202 에서 지우면
+  - 🚨 **질문은 202 가 아니라 run 이 끝까지 처리됐을 때 닫는다** (`settle` 의 `isRunConfirmed`).
+    이어받기 run 이 `failed` 로 끝나면 서버가 맥락을 원래 자리에 되돌려 두는데, 202 에서 닫으면
     "다시 시도" · "고쳐 쓰기" 뒤의 요청에 `reply_to` 가 빠져 답만 맥락 없는 새 입력으로 나간다.
-    같은 이유로 다시 시도는 **그때의 스토어가 아니라 `submit.variables`** (보냈던 질문)를 싣는다
+    같은 이유로 다시 시도는 **그때의 입력창이 아니라 그 말풍선의 본문 · 키**를 그대로 싣는다
   - 🚨 **화면은 "답만 적으면 된다" 고 말한다.** 앞서 적은 말을 다시 쓰게 하면 부모가 손으로
     중복을 만든다 — 앞 이야기가 이미 저장돼 있다는 것을 같이 알린다
   - 🚨 **Idempotency-Key 를 `text` 에만 묶지 않는다** (`keyPayload`). 서버는 본문 **전체**로 같은
@@ -662,7 +692,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
     본문에 필드를 더하면 `keyPayload` 에도 같이 더한다
 - 🚨 **`ping` 은 아무것도 하지 않는다** (#140). 20초 타이머는 `pumpRunEvents` 의 `onEvent` 가
   되살리고, 리듀서에서 새 state 를 만들면 조용한 채널에서 10초마다 04 가 다시 그려진다
-- 🚨 **20초 안전망이 훅 안에 있다.** 전체 시간이 아니라 *조용한 시간*을 잰다 —
+- 🚨 **20초 안전망이 `subscribeRun` 안에 있다.** 전체 시간이 아니라 *조용한 시간*을 잰다 —
   전환의 정본은 서버가 보내는 `partial` 이고, 이건 스트림이 멎었을 때의 그물이다
 - 🚨 **서버가 말한 끝과 클라이언트가 스스로 끝낸 것을 섞지 않는다.** `done` · `partial` · `failed` 는
   서버가 말한 끝이고, `unconfirmed` 하나만 다르다 — 20초 침묵 · 종료 이벤트 없는 EOF · 연결 실패라
@@ -671,9 +701,15 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - 🚨 **종료 이벤트 없이 스트림이 닫히는 경우를 반드시 처리한다.** `for await` 는 EOF 에서 예외 없이
   끝난다 — 거기서 아무것도 안 하면 status 가 `streaming` 에 남고, idle 타이머까지 해제된 뒤라
   20초 전환조차 돌지 않아 진행 화면이 영원히 돈다. `pumpRunEvents()` 가 그 자리를 막는다
-- 🚨 **입력 원문을 훅에 두지 않는다.** 화면을 벗어나면 스트림을 끊는데, 실패 시 원문을 입력창에
-  되돌려야 한다. `failed` 이벤트가 `raw_text` 를 실어 주지만 네트워크가 끊기면 그것도 못 받는다 —
-  **원문의 정본은 `stores/draft.ts` 다.**
+- 🚨 **입력 원문을 run 상태에 두지 않는다.** 실패 시 원문을 입력창에 되돌려야 하는데, `failed`
+  이벤트의 `raw_text` 는 네트워크가 끊기면 못 받는다. **원문의 정본은 보내기 전엔 `stores/draft.ts`,
+  보낸 뒤엔 그 한 줄의 말풍선**(`ChatTurn.body.text`)이다 — 둘 다 메모리 전용이다.
+  🚨 **말풍선은 서버가 끝을 말하기 전에 사라지지 않는다.** "고쳐 쓰기" 는 그 원문을 입력창에 되돌리고,
+  서버에 닿지 못한 실패(보내기 실패 · 400 · 429 · 403)의 말풍선만 대체한다. `unconfirmed` 는 서버가
+  저장했을 수 있어서 말풍선을 남기고 다시 시도 버튼만 내린다
+  - 🚨 **키는 말풍선에 붙들어 둔다** — 다시 시도는 그 키 그대로다. 새 한 줄의 키는 아이별 홀더가
+    **본문에 묶어** 내고(`keyPayload`), 서버가 끝을 말했을 때만 돌린다. 그래서 `unconfirmed` 뒤에
+    고치지 않고 그대로 다시 보낸 한 줄도 같은 키다
 - 🚨 **아직 안 보낸 한 줄은 화면 로컬 상태로 두지 않는다** (`stores/draft.ts`). 하단 네비가 보내기 버튼
   21px 아래에 다른 화면으로 가는 문을 세 개 열어서, `useState` 로 두면 잘못 누른 한 번에 쓰던 글이
   언마운트와 함께 죽는다. 승인을 하나 더 다는 건 답이 아니다 (최상위 §2 — 승인 게이트는 딱 2곳).
@@ -681,6 +717,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   (최상위 §2 개인정보). 로그아웃에서 `clearAll()` 로 지운다
 
 목의 `?scenario=partial` · `failed` · `disconnected` 로 세 경로를 바로 확인할 수 있다 (§7).
+대화 스토어의 규칙은 `stores/conversation.test.ts` 가 목 서버와 실제로 돌려서 건다 (§8).
 
 ---
 
@@ -847,11 +884,12 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `guidance` | 04 안내 — 알레르기를 대신 저장하지 않음 (저장 0건 · 직접 입력 안내) |
 | `guidance_mixed` | 04 섞인 한 줄 — 앞은 저장하고 뒤는 안내. **둘 다 한 화면에** |
 | `unavailable` | 04 준비 중 Agent — **저장과 한 화면에** 선다 (NF-06 과 같은 규칙) |
-| `note_question` | 04 되묻기 하나만 — 이어서 적기 동선 |
+| `note_question` | 04 되묻기 하나만 — 대화 안에서 답하는 동선 |
 | `note_mixed` | 04 **일부 저장 + 되묻기가 한 run 에** — 답이 원문을 다시 보내면 안 되는 근거 (#158) |
 | `reply_failed` | 04 되묻기에 답한 run 이 **한 번 실패** — 다시 시도가 `reply_to` 를 잃으면 저장 대신 질문이 또 뜬다 (#175) |
-| `reply_unavailable` | 03 되묻기 답이 400 `reply_context_unavailable` — **다시 시도 없이 질문을 놓고**, 물었던 질문은 오류 카드에 |
-| `daily_limit` | 03 한 줄 보내기 하루 한도 429 — **다시 시도 버튼이 없어야 한다** |
+| `reply_asks_again` | 04 이어받기 run 이 **한 번 더 묻는다** — 다음 답의 `reply_to` 가 그 run 이어야 한다 (#226) |
+| `reply_unavailable` | 04 되묻기 답이 400 `reply_context_unavailable` — **다시 시도 없이 질문을 놓고**, 물었던 질문은 말풍선 아래 오류에 |
+| `daily_limit` | 04 한 줄 보내기 하루 한도 429 — **다시 시도 버튼이 없어야 한다** · 원문은 입력창으로 |
 | `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
 | `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
 
@@ -910,6 +948,8 @@ pnpm test:watch
 
 - `src/mocks/contract.test.ts` — 목의 동작
 - `src/lib/api/idempotency.test.ts` — 클라이언트의 차단
+- `src/stores/conversation.test.ts` — 04 대화가 **어느 run 에 답하는가 · 질문을 언제 닫는가 · 다시 시도가
+  같은 키인가** (#141 · #158 · #175 의 세 버그 자리). 화면이 아니라 스토어를 목 서버와 실제로 돌린다
 
 ### 규칙
 

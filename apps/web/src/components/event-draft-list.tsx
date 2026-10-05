@@ -66,6 +66,7 @@ export function EventDraftList({
   found,
   blockedDraftIds,
   lockReason,
+  draftIds,
 }: {
   childId: string;
   incoming: EventDraft[];
@@ -88,6 +89,12 @@ export function EventDraftList({
   blockedDraftIds?: string[];
   /** 아직 못 넣는 이유 (확인이 안 끝남). 🚨 `blockedDraftIds`(안 넣는다)와 다른 값이다. */
   lockReason?: string;
+  /**
+   * 스토어에서 되읽을 장을 **이 run 의 것으로** 좁힌다 (04 대화 · #226). 대화에는 run 이 여럿이라
+   * `origin` 만으로 거르면 한 답의 시트에 다른 답의 초안까지 선다. 🚨 이때는 `incoming` 을 비워
+   * 넘긴다 — 얹는 것은 대화 스토어가 도착할 때 한 번 했다 (`stores/conversation.ts` 의 `seedDrafts`).
+   */
+  draftIds?: string[];
 }) {
   const addDrafts = useEventDraftStore((s) => s.addDrafts);
   const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
@@ -100,7 +107,11 @@ export function EventDraftList({
    * 🚨 **같은 경로의 것만 되읽는다** (위 `origin`). 처음엔 아이 것을 통째로 seed 했는데,
    *    그러면 04 의 초안이 08 화면에 다른 문구를 달고 섰다.
    */
-  const [rows, setRows] = useState<StoredDraft[]>(() => stored.filter((d) => d.origin === origin));
+  const [rows, setRows] = useState<StoredDraft[]>(() =>
+    stored.filter(
+      (d) => d.origin === origin && (draftIds === undefined || draftIds.includes(d.draft.draft_id)),
+    ),
+  );
 
   /**
    * 🚨 이미 얹은 초안을 다시 얹지 않는다. 제출하고 스토어에서 뺀 장이 effect 가 다시 돌 때
