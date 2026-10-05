@@ -51,6 +51,8 @@ export function RunReply({
   question,
   answeringNow,
   remainingDrafts,
+  draftsReplaced,
+  followUp,
   onRetry,
   onRewrite,
   rewriteBlocked,
@@ -67,6 +69,10 @@ export function RunReply({
   answeringNow: boolean;
   /** 이 run 이 낸 일정 초안 중 아직 안 넣은 것. */
   remainingDrafts: number;
+  /** 뒤 run 이 같은 초안을 다시 냈다 — 남은 것이 0 이어도 "넣었다" 가 아니다. */
+  draftsReplaced: boolean;
+  /** 이어받기 run 의 답이다 (질문에 대한 답을 보낸 줄). */
+  followUp: boolean;
   /** 🚨 같은 자리에서 다시 보낼 수 없으면 `undefined` — 버튼을 세우지 않는다. */
   onRetry?: () => void;
   /** "고쳐 쓰기" 를 이미 했으면 `undefined`. */
@@ -152,7 +158,7 @@ export function RunReply({
     <div className="flex flex-col gap-3">
       <div>
         <h3 className="text-body text-ink">
-          {resultTitle({ savedSomething, askingMore, noticedWhy })}
+          {resultTitle({ savedSomething, askingMore, noticedWhy, followUp })}
         </h3>
         {askingMore && !savedSomething ? (
           // 일어난 일만 적는다 — "답하면 저장돼요" 는 예측이라 쓰지 않는다 (§4).
@@ -181,6 +187,7 @@ export function RunReply({
       {run.note ? (
         <NoteCard
           note={run.note}
+          followUp={followUp}
           question={question}
           answeringNow={answeringNow}
           onAnswer={onAnswer}
@@ -237,7 +244,12 @@ export function RunReply({
       ) : null}
 
       {run.drafts.length > 0 ? (
-        <DraftsCard found={run.drafts.length} remaining={remainingDrafts} onOpen={onOpenDrafts} />
+        <DraftsCard
+          found={run.drafts.length}
+          remaining={remainingDrafts}
+          replaced={draftsReplaced}
+          onOpen={onOpenDrafts}
+        />
       ) : null}
 
       {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
@@ -327,10 +339,12 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
 function DraftsCard({
   found,
   remaining,
+  replaced,
   onOpen,
 }: {
   found: number;
   remaining: number;
+  replaced: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -355,7 +369,10 @@ function DraftsCard({
               </>
             ) : (
               <p className="text-body text-ink">
-                남은 일정 초안이 없어요. 넣은 일정은 캘린더에서 볼 수 있어요.
+                {/* 🚨 뒤 답이 같은 초안을 다시 냈으면 "넣었다" 고 하지 않는다 — 넣은 적이 없다 (#231 리뷰). */}
+                {replaced
+                  ? "이 일정은 아래 답에서 다시 찾은 초안으로 바뀌었어요."
+                  : "남은 일정 초안이 없어요. 넣은 일정은 캘린더에서 볼 수 있어요."}
               </p>
             )}
           </div>
@@ -380,13 +397,16 @@ function resultTitle({
   savedSomething,
   askingMore,
   noticedWhy,
+  followUp,
 }: {
   savedSomething: boolean;
   askingMore: boolean;
   noticedWhy: boolean;
+  followUp: boolean;
 }): string {
   if (savedSomething) return "이렇게 저장했어요";
-  if (askingMore) return "한 가지만 더 알려주세요";
+  // 🚨 이어받기 run 이 또 물었으면 "한 가지만 더" 를 두 번 말하지 않는다 — 앞에서 한 말을 스스로 깬다.
+  if (askingMore) return followUp ? "이어서 조금만 더 알려주세요" : "한 가지만 더 알려주세요";
   if (noticedWhy) return "적어주신 말을 확인했어요";
   return "이렇게 이해했어요";
 }
@@ -533,11 +553,14 @@ function UnavailableCard({ agents, savedAlongside }: { agents: Agent[]; savedAlo
  */
 function NoteCard({
   note,
+  followUp,
   question,
   answeringNow,
   onAnswer,
 }: {
   note: NoteEvent;
+  /** 이어받기 run 이 또 물은 질문인가. 🚨 그때는 "한 가지만 더" 를 붙이지 않는다 (#231 리뷰). */
+  followUp: boolean;
   question: QuestionState | null;
   answeringNow: boolean;
   onAnswer: () => void;
@@ -556,7 +579,9 @@ function NoteCard({
       <div className="flex items-start gap-3">
         <IconTile icon={MessageCircleQuestion} />
         <div className="min-w-0">
-          <p className="text-caption text-ink-subtle">한 가지만 더</p>
+          <p className="text-caption text-ink-subtle">
+            {followUp ? "이어서 여쭤봐요" : "한 가지만 더"}
+          </p>
           <p className="text-body text-ink mt-1">{note.text}</p>
           {question === "open" ? (
             <>

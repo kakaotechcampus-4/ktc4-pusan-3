@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { partialMessage } from "@/components/run-result";
-import { isApiError } from "@/lib/api/errors";
+import { ApiError, NetworkError, isApiError } from "@/lib/api/errors";
+import { initialRunState } from "@/hooks/use-run-stream";
+import { newIdempotencyKey } from "@/lib/api/idempotency";
 import { submittedInput } from "@/mocks/handlers/runs";
 import { setScenario, type Scenario } from "@/mocks/scenario";
 import { useDraftStore } from "@/stores/draft";
@@ -387,6 +389,38 @@ describe("🚨 같은 본문은 끝나기 전까지 같은 키 · 한 번에 한
     },
     TWO_RUNS * 2,
   );
+});
+
+describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰)", () => {
+  function failedWith(error: unknown): ChatTurn {
+    return {
+      id: "t",
+      day: "2026-10-05",
+      body: { text: "지어낸 한 줄", source: "home_input" },
+      answering: null,
+      key: newIdempotencyKey(),
+      send: { status: "error", error },
+      run: initialRunState,
+      question: null,
+      handedBack: false,
+    };
+  }
+
+  it("서버가 거절한 4xx 에는 다시 시도가 없다 (형식 · 권한 · 한도 · 맥락)", () => {
+    for (const error of [
+      new ApiError(422, "validation_error", "2000자를 넘을 수 없어요"),
+      new ApiError(403, "child_access_denied", "이 아이를 볼 수 없어요"),
+      new ApiError(429, "daily_input_limit", "오늘은 더 적을 수 없어요"),
+      new ApiError(400, "reply_context_unavailable", "이어서 확인할 수 없어요"),
+    ]) {
+      expect(canRetry(failedWith(error)), error.code).toBe(false);
+    }
+  });
+
+  it("네트워크 · 5xx 에는 있다 — 서버가 받았을 수 있어 같은 키로 다시 보낸다", () => {
+    expect(canRetry(failedWith(new NetworkError(new Error("끊김"))))).toBe(true);
+    expect(canRetry(failedWith(new ApiError(503, "llm_unavailable", "잠시 뒤에")))).toBe(true);
+  });
 });
 
 describe("부분 결과 문구 (PR #215 리뷰)", () => {

@@ -14,6 +14,7 @@ import { useDraftText } from "@/stores/draft";
 import {
   answerQuestion,
   canRetry,
+  isRejected,
   retryTurn,
   rewriteTurn,
   type ChatQuestion,
@@ -66,6 +67,7 @@ export function ChatThread({
                   <TurnReply
                     childId={childId}
                     turn={turn}
+                    later={turns.slice(turns.indexOf(turn) + 1)}
                     answering={answering}
                     onOpenDrafts={() => onOpenDrafts(turn)}
                     onPickOffer={(agents) => {
@@ -124,12 +126,15 @@ function SentBubble({ turn, named }: { turn: ChatTurn; named: boolean }) {
 function TurnReply({
   childId,
   turn,
+  later,
   answering,
   onOpenDrafts,
   onPickOffer,
 }: {
   childId: string;
   turn: ChatTurn;
+  /** 이 줄 뒤에 보낸 줄들 — 뒤 run 이 같은 일정 초안을 다시 냈는지 본다. */
+  later: ChatTurn[];
   answering: ChatQuestion | null;
   onOpenDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
@@ -140,6 +145,7 @@ function TurnReply({
   const remainingDrafts = stored.filter(
     (d) => d.origin === "input" && turn.run.drafts.some((r) => r.draft_id === d.draft.draft_id),
   ).length;
+  const draftsReplaced = replacedByLater(turn, later);
 
   return (
     <RunReply
@@ -150,6 +156,9 @@ function TurnReply({
       question={turn.question}
       answeringNow={runId !== null && answering?.runId === runId}
       remainingDrafts={remainingDrafts}
+      draftsReplaced={draftsReplaced}
+      // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
+      followUp={turn.answering !== null}
       onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
       onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
       rewriteBlocked={rewriteBlocked}
@@ -159,6 +168,22 @@ function TurnReply({
       onOpenDrafts={onOpenDrafts}
       onPickOffer={onPickOffer}
     />
+  );
+}
+
+/**
+ * 이 줄의 일정 초안을 뒤 run 이 **같은 초안으로 다시 냈는가**. 스토어가 같은 `draft_id` · `event_id` 를 새 장으로
+ * 갈아 끼우므로(`mergeDrafts`), 그때 이 줄의 남은 초안이 0 이 되는데 그건 "넣었다" 가 아니다 (#231 리뷰).
+ */
+function replacedByLater(turn: ChatTurn, later: ChatTurn[]): boolean {
+  const ids = new Set(turn.run.drafts.map((d) => d.draft_id));
+  const events = new Set(
+    turn.run.drafts.map((d) => d.event_id).filter((id): id is string => id !== null),
+  );
+  return later.some((t) =>
+    t.run.drafts.some(
+      (d) => ids.has(d.draft_id) || (d.event_id !== null && events.has(d.event_id)),
+    ),
   );
 }
 
@@ -251,6 +276,19 @@ function SendFailure({
           고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇에 대한 답인지 함께 적어 보내
           주세요. 앞서 저장된 이야기는 다시 적지 않아도 돼요.
         </p>
+        <div className="mt-3">
+          <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
+        </div>
+      </CardFailed>
+    );
+  }
+
+  // 🚨 **그 밖의 거절(4xx)은 다시 시도가 없다** — 형식 거절(2000자 초과) · 권한 없음 같은 것이라 같은 본문은
+  //    몇 번을 보내도 같은 답이다 (`canRetry` · #231 리뷰). 서버 문구를 그대로 쓰고 고쳐 쓰기만 둔다.
+  if (isRejected(error)) {
+    return (
+      <CardFailed>
+        <p>{isApiError(error) ? error.message : "보내지 못했어요."}</p>
         <div className="mt-3">
           <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
         </div>

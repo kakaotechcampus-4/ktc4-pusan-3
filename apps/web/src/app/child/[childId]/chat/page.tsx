@@ -21,7 +21,8 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Agent, type Me } from "@/lib/api";
-import { formatDay, toSeoulDateKey } from "@/lib/format";
+import { useSeoulToday } from "@/hooks/use-seoul-today";
+import { formatDay } from "@/lib/format";
 import { TRANSITION_TYPE } from "@/lib/view-transition";
 import {
   isBusy,
@@ -66,9 +67,9 @@ function ChatScreen() {
   const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
   /**
    * 머리에 세우는 날. 🚨 **마지막 한 줄의 날이다** — 앱을 켜 둔 채 자정을 넘기면 "오늘" 과 화면에 있는
-   * 대화의 날이 다르다. 대화가 없을 때만 오늘(한국 시간)이다.
+   * 대화의 날이 다르다. 대화가 없을 때만 오늘(한국 시간)이다. 🚨 `today` 도 자정을 따라 바뀐다.
    */
-  const [today] = useState(() => toSeoulDateKey(new Date()));
+  const today = useSeoulToday();
   const shownDay = conversation.turns.at(-1)?.day ?? today;
 
   // 🚨 `useState` 가 아니다 — 홈과 같은 입력창이다. 네비로 다녀와도 쓰던 글이 살아 있다.
@@ -137,6 +138,7 @@ function ChatScreen() {
             {conversation.answering ? (
               <AnsweringBar
                 question={conversation.answering}
+                savedAlongside={savedAlongside(conversation.turns, conversation.answering.runId)}
                 onStop={() => stopAnswering(childId)}
               />
             ) : null}
@@ -181,6 +183,13 @@ function ChatScreen() {
           // 🚨 설명을 달지 않는다 — 목록이 자기 머리글("일정으로 만들까요?" · 넣기 전에는 안 들어간다)을
           //    이미 세운다. 시트 머리에도 같은 말을 두면 한 화면에 같은 두 줄이 겹쳐 선다.
           title="찾은 일정"
+          // 🚨 **닫는 버튼을 세운다** (디자인 시스템 §7 — 웹뷰에는 ESC 가 없다). 승인 시트(06)와 달리 스크림으로도
+          //    닫히는데, 닫아도 초안은 남고 넣는 것은 카드마다의 버튼이라 실수로 닫혀도 잃는 것이 없다 (§7 예외).
+          footer={
+            <Button variant="secondary" block onClick={() => setDraftsOf(null)}>
+              닫기
+            </Button>
+          }
         >
           {draftsOf ? (
             // 🚨 `key` 로 답마다 새로 그린다 — 안 그러면 앞 답의 넘김 위치 · 넣은 표시가 남는다.
@@ -218,18 +227,38 @@ function ChatScreen() {
  *    (#158 리뷰) — 앞 이야기는 서버가 `reply_to` 로 찾는다.
  * 🚨 `accent` 카드가 아니다. 이 화면에서 브랜드 테두리를 받을 "지금 볼 것" 은 답 묶음이다.
  */
-function AnsweringBar({ question, onStop }: { question: ChatQuestion; onStop: () => void }) {
+function AnsweringBar({
+  question,
+  savedAlongside,
+  onStop,
+}: {
+  question: ChatQuestion;
+  /** 그 질문을 낸 run 이 저장한 것이 있는가. */
+  savedAlongside: boolean;
+  onStop: () => void;
+}) {
   return (
     <Card>
       <p className="text-caption text-ink-subtle">위 질문에 답하는 중</p>
       {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
       <p className="text-body-sm text-ink mt-1">{question.text}</p>
+      {/* 🚨 **저장 여부에 따라 말한다** (#231 리뷰). 저장 0건인 질문에 "앞서 적어주신 말은 저장돼 있어요" 를
+          세웠더니, 바로 위 답의 "아직 기록으로 남기지 않았어요" 와 한 화면에서 부딪쳤다 (예전엔 03 · 04 로
+          화면이 갈려서 안 보였다). 앞 이야기는 저장 여부와 상관없이 서버가 `reply_to` 로 찾는다. */}
       <p className="text-caption text-ink-subtle mt-2">
-        이 질문에 대한 답만 적어주세요. 앞서 적어주신 말은 저장돼 있어요.
+        {savedAlongside
+          ? "이 질문에 대한 답만 적어주세요. 앞서 적어주신 말 중 기록할 것은 저장돼 있어요."
+          : "이 질문에 대한 답만 적어주세요. 앞서 적어주신 말은 이어서 같이 볼게요."}
       </p>
       <Button variant="tertiary" size="compact" className="mt-3" onClick={onStop}>
         답하지 않고 새로 적기
       </Button>
     </Card>
   );
+}
+
+/** 그 질문을 낸 run 이 저장한 것이 있는가 — 입력창 위 문장이 이걸로 갈린다 (`AnsweringBar`). */
+function savedAlongside(turns: ChatTurn[], runId: string): boolean {
+  const asked = turns.find((t) => t.send.status === "sent" && t.send.runId === runId);
+  return (asked?.run.observations.length ?? 0) > 0;
 }
