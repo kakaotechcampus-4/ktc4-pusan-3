@@ -59,10 +59,9 @@ test("분류를 못 읽은 줄은 사람이 채우기 전에는 고를 수 없�
   await expect(page.getByRole("button", { name: "확인했어요, 6건 등록할게요" })).toBeVisible();
 });
 
-// 발견 ② (#242) — 체크가 `isComplete` 만 보고 `needsReview` 를 안 본다. 원문과 대조하지 않은 줄이
-// 체크 한 번으로 승인 목록에 들어가고, 요약은 여전히 "등록하지 않아요" 라고 말한다.
+// 한동안 체크가 칸이 찼는지만 봐서, 원문과 대조하지 않은 줄이 체크 한 번으로 승인 목록에 들어갔다.
+// 요약은 그때도 "확인하지 않은 2건은 등록하지 않아요" 라고 말했다 (#242).
 test("원문을 못 읽은 줄도 고치기에서 확인하기 전에는 고를 수 없다", async ({ page }) => {
-  test.fail(true, "#242 발견 ② — safety-scan-review.tsx 의 체크가 needsReview 를 보지 않는다");
   await openScan(page);
   const mite = page.getByRole("checkbox", { name: /^집먼지진드기/ });
   await mite.click({ force: true });
@@ -70,6 +69,25 @@ test("원문을 못 읽은 줄도 고치기에서 확인하기 전에는 고를 
   await expect(page.getByRole("button", { name: "확인했어요, 7건 등록할게요" })).toBeVisible({
     timeout: 2_000,
   });
+});
+
+test("원문을 못 읽은 줄은 고치기에서 보고 확인하면 그때 승인 목록에 들어간다", async ({ page }) => {
+  await openScan(page);
+  const mite = page.getByRole("checkbox", { name: /^집먼지진드기/ });
+  await mite
+    .locator("xpath=ancestor::div[contains(@class,'rounded-card')][1]")
+    .getByRole("button", { name: "고치기" })
+    .click();
+  const sheet = page.getByRole("dialog", { name: "옮겨 적은 것 고치기" });
+  await expect(
+    sheet.getByText("이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어주세요."),
+  ).toBeVisible();
+  await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
+
+  await expect(sheet).toBeHidden();
+  await expect(mite).toBeChecked();
+  await expect(page.getByRole("button", { name: "확인했어요, 8건 등록할게요" })).toBeVisible();
+  await expect(page.getByText("확인하지 않은 1건은 등록하지 않아요.")).toBeVisible();
 });
 
 test("승인하면 고른 줄마다 서로 다른 Idempotency-Key 로 등록하고, 다른 쓰기 경로는 없다", async ({
