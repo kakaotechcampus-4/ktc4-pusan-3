@@ -68,28 +68,41 @@ async def approve_suggestions(
     if not ids:
         raise ApiError(400, "validation_failed", "suggestion_ids가 비어 있어요")
 
-    # 먼저 존재 + 소유 확인
+    # 존재 + 소유 확인, 이미 approved면 멱등 처리
     found = []
+    already_approved = []
     for sid in ids:
         row = await suggestion_repo.find_suggestion(
             session, child_id=child.child_id, suggestion_id=sid
         )
         if row is None:
             raise ApiError(404, "not_found", "제안을 찾을 수 없어요")
+        if row.status == SuggestionStatus.APPROVED:
+            already_approved.append(row)
+            continue
         if row.status != SuggestionStatus.DRAFT:
             raise ApiError(409, "not_draft", "이미 처리된 제안이 포함돼 있어요")
         if row.expires_at <= datetime.now(timezone.utc):
             raise ApiError(409, "suggestion_expired", "만료된 제안이 포함돼 있어요")
         found.append(row)
 
+    # 전부 이미 approved면 그대로 돌려준다 (멱등)
+    if not found:
+        return ApproveSuggestionsResponse(
+            suggestions=[_suggestion_out(s) for s in already_approved]
+        )
+
+    to_approve = [s.id for s in found]
     approved = await suggestion_repo.approve_suggestions(
-        session, child_id=child.child_id, suggestion_ids=ids
+        session, child_id=child.child_id, suggestion_ids=to_approve
     )
     if not approved:
         raise ApiError(409, "not_draft", "이미 처리된 제안이 포함돼 있어요")
 
     await session.commit()
-    return ApproveSuggestionsResponse(suggestions=[_suggestion_out(s) for s in approved])
+    return ApproveSuggestionsResponse(
+        suggestions=[_suggestion_out(s) for s in approved + already_approved]
+    )
 
 
 # ── 일정 초안 ─────────────────────────────────────────────────────────────

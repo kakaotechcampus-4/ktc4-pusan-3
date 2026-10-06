@@ -79,10 +79,10 @@ async def test_approve_not_found(
     assert resp.json()["error"]["code"] == "not_found"
 
 
-async def test_approve_already_approved(
+async def test_approve_already_approved_is_idempotent(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """이미 approved인 제안 → 409 not_draft."""
+    """이미 approved인 제안을 다시 보내면 200으로 그대로 돌려준다 (멱등)."""
     s = await _make_suggestion(session, child_id=cid, status=SuggestionStatus.APPROVED)
     headers, _ = bearer
     resp = await db_client.post(
@@ -90,8 +90,8 @@ async def test_approve_already_approved(
         json={"suggestion_ids": [str(s.id)]},
         headers=headers,
     )
-    assert resp.status_code == 409
-    assert resp.json()["error"]["code"] == "not_draft"
+    assert resp.status_code == 200
+    assert resp.json()["suggestions"][0]["status"] == "approved"
 
 
 async def test_approve_expired(
