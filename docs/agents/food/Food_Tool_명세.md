@@ -4,9 +4,11 @@
 >
 > **2026-09-22 갱신** — 식사 후보 3개 · 필터 후 3개 미만 시 재샘플링 + 재호출 1회 · 급식 대체·제외 메뉴 반영 · 권장 열량에 키·몸무게 반영(성별 미사용)
 >
-> **2026-09-27 갱신** — 재호출·풀 부족 시 남은 만큼만 냄(0개는 거절, 잠정 — C-8 미결) · 급식 대체 입력을 `removed_spans[]`·`added_spans[]`로 분리, 뺄 메뉴 없으면 되묻기 · "남겼대"는 0.5·`amount_known=false` · 영양 서술 숫자 금지 기준을 단위 동반 표현으로 좁힘(횟수 표현 허용) · 알레르기·금지식품 라벨을 모델 입력에서 제외 · 출력 상수 표 정리
+> **2026-09-27 갱신** — 재호출·풀 부족 시 남은 만큼만 냄(0개는 거절 — C-8 은 10-06 에 닫힘) · 급식 대체 입력을 `removed_spans[]`·`added_spans[]`로 분리, 뺄 메뉴 없으면 되묻기 · "남겼대"는 0.5·`amount_known=false` · 영양 서술 숫자 금지 기준을 단위 동반 표현으로 좁힘(횟수 표현 허용) · 알레르기·금지식품 라벨을 모델 입력에서 제외 · 출력 상수 표 정리
 >
 > **2026-10-05 갱신** — 섭취 파생 테이블과 그것을 채우던 tool 삭제(#205). 영양 판정은 원본(`observation_food` · `daycare_meal`)에서 매번 계산하고 저장하지 않는다 · 기록 행 수도 두 원본으로 센다 · 캐시 미스는 이름이 정확히 같은 결과만 쌓고 해석 실패는 남기지 않는다
+>
+> **2026-10-06 갱신** — 추천은 최대 3개(C-8 닫힘) · 1~2개면 `suggestion.partial` 안내 · 0개면 추천 없이 `pool.empty` — 실패 아님 (§0-5) · 이미 추천한 메뉴가 다시 나오는 문제 TODO (§0-5)
 
 ---
 
@@ -102,7 +104,8 @@ menu_catalog
 - **기피는 풀에서 빼지 않는다.** 기피는 가중치를 낮추고 `reason`을 쓰는 값이지 후보를 지우는 값이 아니다. 풀에서 빼는 것은 알레르기·연령 금지 재료뿐이다.
 - **부족 식품군은 기피보다 세다.** `evaluate_nutrient_bands`가 `low`로 판정한 식품군은 기피 가중치를 상쇄하고 풀 상단에 남는다. 채소 기피 아이에게 채소가 부족하면 채소가 든 메뉴가 후보에 올라와야 하고, 모델은 그중 선호(계란 등)와 겹치는 형태를 고른다 — [`Food_Agent_명세.md`](Food_Agent_명세.md) §6.
 - 모델은 **풀 밖 메뉴를 낼 수 없다** (`menu_key` 검증). F-1 해소: 재료는 모델이 아니라 카탈로그에서 온다.
-- 풀 자체가 3개 미만이면 재호출해도 채울 수 없으므로 **재호출하지 않고 남은 만큼만 낸다** (잠정 — C-8 미결). [`Tool_공통.md`](../shared/Tool_공통.md) §5-2 가 재호출 후 부족한 경우를 "남은 만큼"으로 정했으니 풀 부족도 같게 간다. 0개는 여전히 거절이다.
+- 풀 자체가 3개 미만이면 재호출해도 채울 수 없으므로 **재호출하지 않고 남은 만큼만 낸다** — 추천은 최대 3개다(C-8 닫힘, [`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 3개를 채우려고 풀 밖 메뉴를 만들지 않는다. 1~2개면 `suggestion.partial` 안내를 붙인다. 풀이 0개면 모델을 부르지 않고 추천 없이 `pool.empty` 만 낸다 — 재호출 뒤 0개도 같다. 실패가 아니다.
+- ⚠️ TODO (추천 엔드포인트 이슈 #249 에서 정함): 이미 추천한 메뉴(만료 전 `draft`)는 풀에서 빼지 않는다. `sample_candidates` 의 seed 가 `run_id` 라 같은 `run_id` 로 다시 요청하면 같은 후보가 모델에게 가서, 다시 시도나 화면 재진입에서 같은 메뉴가 다시 나오기 쉽다. 풀에서 draft 메뉴를 뺄지, 모자랄 때 제외를 풀지, seed 를 무엇으로 할지는 [공통_구현_계획.md](../shared/공통_구현_계획.md) §6 TODO 에 모아 뒀다.
 - 이유기는 카탈로그 대신 **이유식 재료 KB**(단계별 질감 · 도입 재료)에서 풀을 만든다. 공식 API가 없어 코드 상수.
 
 ### 0-6. 외부 데이터 소스
@@ -173,7 +176,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `guide_weaning_stage` | `topic: WeaningTopic` | 단계별 질감 · 도입 가능 재료 · 이미 도입한 재료 | infant_weaning 전용 |
 | `update_daycare_meal` | `date_span`, `slot?`, `removed_spans[]?`, `added_spans[]?`, `amount_span?` | 갱신된 `daycare_meal` 행 + `Readout(code, "daycare_updated")` | **span은 발화 원문의 부분 문자열**(코드 검증) · 날짜 해석은 코드 · 대상 행 없으면 `NOT_FOUND`, 여럿이면 `needs_observation` · 승인 게이트 없음 |
 | `delete_daycare_meal` | `date_span`, `slot?` | 행 삭제 + `Readout(code, "daycare_absent")` | 결석 처리. 대상 날짜가 모호하면 **반드시 되묻는다** · 되돌리려면 OCR 재적재가 필요하다 |
-| `propose_meal_candidates` | `candidates[3]: {menu_key, evidence_ids[], reason}`, `summary?` | `SuggestionDraft[]` + `summary`가 있으면 `Readout(model, kind="meal_note")` | **샘플링된 후보 목록 밖** `menu_key` 거절 · 사후 `filter_food_safety` · 안전 필터 후 3개 미만 → 재호출 1회 · 아이 기록 0 → general · 인용마다 `note` 필수 · **기피 근거(`polarity=-1`)를 인용했으면 `reason`에 무엇을 피했는지가 있어야 한다** (없으면 거절) |
+| `propose_meal_candidates` | `candidates[1~3]: {menu_key, evidence_ids[], reason}`, `summary?` | `SuggestionDraft[]` + `summary`가 있으면 `Readout(model, kind="meal_note")` | **샘플링된 후보 목록 밖** `menu_key` 거절 · 사후 `filter_food_safety` · 안전 필터 후 3개 미만 → 재호출 1회 · 그래도 모자라면 남은 만큼(0개면 `pool.empty`) · 아이 기록 0 → general · 인용마다 `note` 필수 · **기피 근거(`polarity=-1`)를 인용했으면 `reason`에 무엇을 피했는지가 있어야 한다** (없으면 거절) |
 | `report_nutrient_analysis` | `findings[]: {band: "low"\|"ok"\|"high", target, food_group_action, basis_ref}`, `summary` | `Readout(model)` | `basis_ref`는 `compare_diet_balance` 결과 항목 필수 · **숫자 뒤에 `%`·`g`·`mg`·`kcal`이 붙은 표현과 "퍼센트"·"칼로리"를 쓰면 거절**(횟수 표현은 통과) · `insufficient=True`면 `findings` 비워야 함 |
 
 `WeaningTopic`: `texture` · `new_ingredient` · `portion_rhythm` · `refusal`
@@ -191,7 +194,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `compute_energy_target` | `compare_diet_balance` 내부 | `age_months` + 최근 `height`·`weight` → 권장 열량(내부 전용) | 측정 없음 → 연령군 일반값. 성별 입력 없음. 계산식 미정(성별 없는 식 선정 필요) |
 | `evaluate_nutrient_bands` | `compare_diet_balance` 내부 · **식단 추천에서도 `build_candidate_pool` 직전** | `observation_food` + `daycare_meal`(오늘 이전) 14일 치 + `menu_catalog` + `nutrient_reference` → 항목별 구간. 카탈로그에 없는 메뉴는 `resolve_menu` 로 찾고(상한 안), 그날 급식이 있으면 기관 출처 관찰은 뺀다(N-10). **저장하지 않는다** — 결과는 run state 에만([`영양소_계산_설계.md`](영양소_계산_설계.md) §3) | **7일에 10행 미만이면** 구간 없이 `insufficient`(설정값). 식단 추천에서는 가중치를 주지 않고 평소 순위로 간다 |
 | `search_food_doc` | run 시작 시 자동 | 단계·`row_type` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 키). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='food_doc'`으로 담는다 |
-| `sample_candidates` | 후보 풀 직후 · 재호출 전 | 풀 → 10~15개 (가중 샘플링 + 식품군 다양성, `seed=run_id`). 가중치는 **부족 식품군 > 선호 > 기피** 순 — 기피는 가중치를 낮출 뿐 0으로 만들지 않는다 | 풀 < 3 → 재호출 없음 · 남은 만큼만 (잠정, C-8) |
+| `sample_candidates` | 후보 풀 직후 · 재호출 전 | 풀 → 10~15개 (가중 샘플링 + 식품군 다양성, `seed=run_id`). 가중치는 **부족 식품군 > 선호 > 기피** 순 — 기피는 가중치를 낮출 뿐 0으로 만들지 않는다 | 풀 < 3 → 재호출 없음 · 남은 만큼만 (§0-5) |
 
 ### 급식 갱신의 입력은 span이다
 

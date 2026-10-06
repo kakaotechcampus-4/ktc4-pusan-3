@@ -156,7 +156,7 @@ DoD: mock `run()` · Activity 패키지 import 0건(import-linter) · `test_grow
 
 | 채널 | 내용 |
 | --- | --- |
-| `suggestions` | 교육 활동 · 루틴 · 도서 (draft +24h) · **3개** · 필터 후 3개 미만이면 재호출 1회 · 저장 즉시 추천 카드 화면 |
+| `suggestions` | 교육 활동 · 루틴 · 도서 (draft +24h) · **최대 3개** · 필터 후 3개 미만이면 재호출 1회 · 다 못 채우면 개수 안내(`suggestion.partial` · 0개면 `suggestion.empty`) · 저장 즉시 추천 카드 화면 |
 | `readouts` | `growth_delta`(code) · 닫힘 안내(code) |
 | `needs_observation` | `trigger` 질문 또는 습관 현재 여부 — 한 번에 하나 |
 | `event_requests` | 없음 |

@@ -5,19 +5,31 @@ tool 인자에 두지 않는다 — 모델이 만료나 승인 상태를 정할 
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
+from app.agents.common.readout import Readout, ReadoutCatalog, ReadoutText, code_readout
 from app.agents.common.refs import EvidenceCitation, count_child_records
 
 SuggestionKind = Literal["general", "personalized"]
 
-# 요청 1건당 정확히 이 개수. 2개 이하나 4개 이상이면 출력 tool 이 거절한다.
-# 안전 필터 뒤에 모자라면 재호출 1회, 그래도 못 채우면 남은 만큼만 낸다 (유일한 예외).
-REQUIRED_COUNT = 3
+# 요청 1건당 최대 이 개수 (Tool_공통.md §5-2). 채울 수 있으면 다 채운다. 덜 내도 되는 것은
+# 더 채울 길이 없을 때뿐이다 — 안전 필터 뒤 재호출 1회를 했거나, 후보 풀이 처음부터 모자라다.
+MAX_SUGGESTIONS = 3
+
+# 개수 안내. 다 채우지 못했을 때만 추천과 함께 나간다 — 문구는 yaml 에, 고르는 것은 count_notice
+_NOTICES = ReadoutCatalog.from_yaml(Path(__file__).with_name("suggestion.readout.yaml"))
+PARTIAL_NOTICE: ReadoutText = _NOTICES.get("suggestion.partial")
+EMPTY_NOTICE: ReadoutText = _NOTICES.get("suggestion.empty")
 
 
 class SuggestionRejected(ValueError):
-    """출력 tool 이 후보를 거절했다. 모델에게 사유와 함께 돌려준다."""
+    """출력 tool 이 후보를 거절했다. 모델에게 사유와 함께 돌려준다.
+
+    `check_count` 의 거절 중 하나는 모델에게 돌려주지 않는다 (Tool_공통.md §5) — 안전 필터로
+    모자라졌으면 사유 없이 재호출 1회를 한다. 더 채울 길이 없는데 0개인 것은 거절이 아니다 —
+    `check_count` 가 통과시키고 추천 없이 `count_notice(0)` 안내로 끝난다.
+    """
 
 
 @dataclass(frozen=True)
@@ -99,13 +111,39 @@ def build(
     )
 
 
-def check_count(drafts: tuple[SuggestionDraft, ...], *, after_retry: bool = False) -> None:
-    """개수 검사. 재호출까지 하고도 모자란 경우만 예외다."""
-    if len(drafts) == REQUIRED_COUNT:
-        return
-    if after_retry and 0 < len(drafts) < REQUIRED_COUNT:
-        return  # 풀이 고갈됐다. 남은 만큼만 낸다
-    raise SuggestionRejected(f"추천은 정확히 {REQUIRED_COUNT}개여야 한다. 받은 것: {len(drafts)}개")
+def check_count(drafts: tuple[SuggestionDraft, ...], *, exhausted: bool = False) -> None:
+    """개수 검사. 추천은 최대 `MAX_SUGGESTIONS` 개다 (Tool_공통.md §5-2).
+
+    - 넘치면 거절한다.
+    - 모자라면(0개 포함) `exhausted` 일 때만 통과한다. 더 채울 길이 없다는 뜻이다 — 안전 필터
+      뒤 재호출 1회를 이미 했거나, 후보 풀이 처음부터 모자라 재호출해도 못 채운다.
+      아니면 거절한다. 채울 수 있는데 덜 낸 것을 통과시키지 않는다 — 안전 필터로 빠졌으면
+      호출부가 사유 없이 재호출 1회를 하고, 모델이 덜 냈으면 사유와 함께 모델에게 돌려준다.
+    - 더 채울 길이 없는데 0개여도 예외를 던지지 않는다. 0개는 실패가 아니라 안전 조건을 통과한
+      후보가 없다는 결과라, 호출부는 이어서 `count_notice(len(drafts))` 로 안내만 붙이면 된다.
+      예외로 두면 호출부가 놓쳤을 때 pipeline 이 Agent 실패로 세고 화면에 다시 시도가 뜬다.
+    """
+    count = len(drafts)
+    if count > MAX_SUGGESTIONS:
+        raise SuggestionRejected(f"추천은 최대 {MAX_SUGGESTIONS}개다. 받은 것: {count}개")
+    if count < MAX_SUGGESTIONS and not exhausted:
+        raise SuggestionRejected(f"추천을 {MAX_SUGGESTIONS}개 채울 수 있는데 {count}개만 받았다")
+
+
+def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | None:
+    """다 채우지 못한 추천에 붙일 안내 한 줄. 다 채웠으면 없다 (Tool_공통.md §5-2).
+
+    `count` 는 `check_count` 를 거친 뒤 실제로 나가는 개수다. 0개는 실패가 아니라 안전 조건을
+    통과한 후보가 없다는 뜻이라, 그 Agent 는 추천 없이 이 안내만 낸다. Food 처럼 0개 문구가
+    따로 있는 Agent 는 `empty` 로 넘긴다.
+    """
+    if not 0 <= count <= MAX_SUGGESTIONS:
+        raise ValueError(f"추천 개수는 0~{MAX_SUGGESTIONS} 이다. 받은 것: {count}")
+    if count == MAX_SUGGESTIONS:
+        return None
+    if count == 0:
+        return code_readout(empty)
+    return code_readout(PARTIAL_NOTICE, count=count)
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:
