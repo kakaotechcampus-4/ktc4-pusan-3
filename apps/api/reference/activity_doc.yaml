@@ -1,0 +1,197 @@
+# activity_doc 시드 — 프롬프트 [예시] 에 들어가는 놀이 예시 행 (D9 · RAG_plan Activity 절)
+#
+# 🚨 사실만 읽고 문장은 새로 쓴다. 원문 문장을 옮기지 않는다 (D10).
+# 지금 판의 출처는 「제4차 어린이집 표준보육과정」 고시 본문 하나다(public_law — 법령 · 고시는
+# 저작권 보호 대상이 아니다). 고시 본문은 「제4차 어린이집 표준보육과정 해설서」(보건복지부, 2020)
+# 부록에 실린 것으로 대조했다 — 해설서 본문 · 사례(저작물)는 쓰지 않았다.
+# source_locator 는 "연령 영역 · 내용범주 · 내용" 을 고시 문구 그대로 적는다.
+#
+# 행마다 테스트가 보는 것 (tests/unit/agents/activity/test_activity_doc_seed.py)
+# - 그 행의 min_month 에서 위험 용어 사전이 title · body · 재료 어디에도 걸리지 않는다(경고 포함)
+# - min_month < 18 이면 caregiver_role: together
+# - 평가 표현(app/rules/evaluative.py)이 없다
+# - 0–71개월 모든 월령이 행으로 덮인다
+#
+# 검수 — authored_by: ai-draft 는 AI 가 쓴 초안이다. 검수자가 고시 원문을 펴 놓고 사실 · 월령 ·
+# 출처 위치를 확인한 뒤 status: approved 와 reviewed_by · reviewed_at 을 채운다.
+# 서비스는 approved 만 쓴다.
+
+source: 보건복지부 고시 제2020-75호 「제4차 어린이집 표준보육과정」 — 행마다 source_* 칸
+version: "2026.1-draft"
+fetched_at: 2026-10-06
+
+rows:
+  # ── 0–5개월 ──────────────────────────────────────────────────────────
+  - doc_key: activity.play.m0_5.tummy_hanky
+    row_type: play_idea
+    title: 엎드려 고개 들고 손수건 따라 보기
+    body: >-
+      아기가 깨어 있을 때 바닥에 엎드리게 하고, 눈높이에서 손수건을 천천히 흔들어
+      고개를 들어 따라 보게 한다. 힘들어하면 바로 눕혀 쉬게 한다.
+    min_month: 0
+    max_month: 6
+    setting: indoor
+    materials: [손수건]
+    caregiver_role: together
+    physical_intensity: low
+    involves_food: false
+    area: physical_health
+    tags: [sensory, gross_motor]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 0~1세 신체운동 · 감각과 신체 인식하기 · 감각적 자극에 반응한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
+
+  # ── 6–11개월 ─────────────────────────────────────────────────────────
+  - doc_key: activity.play.m6_11.hanky_peekaboo
+    row_type: play_idea
+    title: 손수건 까꿍 놀이
+    body: >-
+      어른이 손수건으로 자기 얼굴을 가렸다가 "까꿍" 하며 걷어 보인다. 익숙해지면 손수건 끝을
+      아기 손에 쥐여 주고 아기가 직접 걷어 내게 한다.
+    min_month: 6
+    max_month: 12
+    setting: indoor
+    materials: [손수건]
+    caregiver_role: together
+    physical_intensity: low
+    involves_food: false
+    area: social
+    tags: [attachment, turn_taking]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 0~1세 사회관계 · 더불어 생활하기 · 안정적인 애착을 형성한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
+
+  # ── 12–17개월 ────────────────────────────────────────────────────────
+  - doc_key: activity.play.m12_17.pot_drum
+    row_type: play_idea
+    title: 냄비 북 두드리기
+    body: >-
+      빈 냄비를 엎어 바닥에 놓고 어른이 나무 숟가락으로 먼저 "둥둥" 두드려 보인 뒤 아이가
+      따라 두드리게 한다. 아는 노래에 맞춰 박자를 바꿔 가며 함께 두드린다.
+    min_month: 12
+    max_month: 18
+    setting: indoor
+    materials: [냄비, 나무 숟가락]
+    caregiver_role: together
+    physical_intensity: medium
+    involves_food: false
+    area: art
+    tags: [music, rhythm]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 0~1세 예술경험 · 창의적으로 표현하기 · 소리와 리듬, 노래로 표현한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
+
+  # ── 18–23개월 ────────────────────────────────────────────────────────
+  - doc_key: activity.play.m18_23.cushion_crawl
+    row_type: play_idea
+    title: 쿠션 길 기어 넘기
+    body: >-
+      거실 바닥에 쿠션을 두세 개 늘어놓아 낮은 언덕을 만들고, 어른이 끝에서 불러 주면
+      기어서 넘어오게 한다.
+    min_month: 18
+    max_month: 24
+    setting: indoor
+    materials: [쿠션]
+    caregiver_role: together
+    physical_intensity: medium
+    involves_food: false
+    area: physical_health
+    tags: [gross_motor]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 0~1세 신체운동 · 신체활동 즐기기 · 기본 운동을 시도한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
+
+  # ── 24–35개월 ────────────────────────────────────────────────────────
+  - doc_key: activity.play.m24_35.leaf_sizes
+    row_type: play_idea
+    title: 산책길 나뭇잎 크기 나눠 보기
+    body: >-
+      공원 산책길에서 떨어진 나뭇잎을 몇 장 주워 큰 잎과 작은 잎으로 나눠 놓아 본다.
+      잎을 손바닥에 대어 보며 "내 손보다 커" 처럼 말로 견주어 본다.
+    min_month: 24
+    max_month: 36
+    setting: outdoor
+    materials: [나뭇잎]
+    caregiver_role: together
+    physical_intensity: low
+    involves_food: false
+    area: nature
+    tags: [nature, sorting]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 2세 자연탐구 · 생활 속에서 탐구하기 · 주변 사물을 같고 다름에 따라 구분한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
+
+  # ── 36–47개월 ────────────────────────────────────────────────────────
+  - doc_key: activity.play.m36_47.cup_pyramid
+    row_type: play_idea
+    title: 종이컵 피라미드 쌓기
+    body: >-
+      종이컵을 엎어 한 줄로 늘어놓고 그 위에 한 층씩 올려 피라미드 모양 탑을 쌓는다.
+      무너지면 다시 쌓으며 몇 층까지 올렸는지 같이 세어 본다.
+    min_month: 36
+    max_month: 48
+    setting: indoor
+    materials: [종이컵]
+    caregiver_role: nearby
+    physical_intensity: low
+    involves_food: false
+    area: physical_health
+    tags: [fine_motor, counting]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 3~5세 신체운동·건강 · 신체활동 즐기기 · 신체 움직임을 조절한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
+
+  # ── 48–71개월 ────────────────────────────────────────────────────────
+  - doc_key: activity.play.m48_71.shadow_tag
+    row_type: play_idea
+    title: 그림자 밟기 놀이
+    body: >-
+      해가 나 있는 날 공원 넓은 곳에서 서로의 그림자를 밟으러 다닌다. 밟히면 술래를 바꾸고,
+      그늘에 들어가면 그림자가 사라지는 것도 함께 살펴본다.
+    min_month: 48
+    max_month: 72
+    setting: outdoor
+    materials: []
+    caregiver_role: nearby
+    physical_intensity: high
+    involves_food: false
+    area: physical_health
+    tags: [gross_motor, nature]
+    source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+    source_org: 보건복지부
+    source_year: 2020
+    source_locator: 3~5세 신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동에 자발적으로 참여한다
+    license_basis: public_law
+    status: draft
+    authored_by: ai-draft
+    version: 1
