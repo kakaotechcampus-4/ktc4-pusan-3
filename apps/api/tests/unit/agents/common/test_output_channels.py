@@ -231,26 +231,24 @@ class TestSuggestionLists:
 
 
 class TestCount:
-    """추천은 최대 3개 (Tool_공통.md §5-2). 동작은 C-8 닫힘 전과 같고 이름 · 문구만 바뀌었다."""
+    """추천은 최대 3개 (Tool_공통.md §5-2). 더 채울 길이가 없으면 0~2개도 통과한다."""
 
     def test_3개면_통과(self):
         check_count(general_drafts(MAX_SUGGESTIONS))
 
-    @pytest.mark.parametrize("count", [1, 2, 3])
-    def test_더_채울_길이_없으면_1개부터_통과(self, count):
+    @pytest.mark.parametrize("count", [0, 1, 2, 3])
+    def test_더_채울_길이_없으면_0개부터_통과(self, count):
+        """0개도 예외 없이 통과한다. 호출부가 0개를 따로 거르지 않아도 count_notice 로 끝난다.
+
+        예외로 두면 호출부가 놓쳤을 때 pipeline 까지 올라가 Agent 실패로 세진다 (#245 리뷰).
+        """
         check_count(general_drafts(count), exhausted=True)
 
-    @pytest.mark.parametrize("count", [1, 2])
+    @pytest.mark.parametrize("count", [0, 1, 2])
     def test_채울_수_있는데_모자라면_거절(self, count):
         """여기서 통과시키면 더 채우지 않고 끝나서, "최대" 가 "아무 개수나" 가 된다."""
         with pytest.raises(SuggestionRejected, match="채울 수 있는데"):
             check_count(general_drafts(count))
-
-    @pytest.mark.parametrize("exhausted", [False, True])
-    def test_0개는_거절(self, exhausted):
-        """0개는 추천이 아니다. 호출부가 추천 없이 안내(count_notice)로 끝낸다."""
-        with pytest.raises(SuggestionRejected, match="0개"):
-            check_count((), exhausted=exhausted)
 
     @pytest.mark.parametrize("exhausted", [False, True])
     @pytest.mark.parametrize("count", [4, 5])

@@ -26,9 +26,9 @@ EMPTY_NOTICE: ReadoutText = _NOTICES.get("suggestion.empty")
 class SuggestionRejected(ValueError):
     """출력 tool 이 후보를 거절했다. 모델에게 사유와 함께 돌려준다.
 
-    `check_count` 의 거절 중 둘은 모델에게 돌려주지 않는다 (Tool_공통.md §5) — 안전 필터로
-    모자라졌으면 사유 없이 재호출 1회를 하고, 더 채울 길이 없는데 0개면 추천 없이
-    `count_notice(0)` 안내로 끝낸다.
+    `check_count` 의 거절 중 하나는 모델에게 돌려주지 않는다 (Tool_공통.md §5) — 안전 필터로
+    모자라졌으면 사유 없이 재호출 1회를 한다. 더 채울 길이 없는데 0개인 것은 거절이 아니다 —
+    `check_count` 가 통과시키고 추천 없이 `count_notice(0)` 안내로 끝난다.
     """
 
 
@@ -115,19 +115,17 @@ def check_count(drafts: tuple[SuggestionDraft, ...], *, exhausted: bool = False)
     """개수 검사. 추천은 최대 `MAX_SUGGESTIONS` 개다 (Tool_공통.md §5-2).
 
     - 넘치면 거절한다.
-    - 0개는 추천이 아니라서 `exhausted` 와 상관없이 거절한다. 더 채울 길이 없으면 호출부는
-      모델에게 돌려주지 않고 추천 없이 `count_notice(0)` 안내로 끝낸다.
-      실패가 아니다 — 안전 조건을 통과한 후보가 없다는 결과다.
-    - 모자라면 `exhausted` 일 때만 통과한다. 더 채울 길이 없다는 뜻이다 — 안전 필터 뒤
-      재호출 1회를 이미 했거나, 후보 풀이 처음부터 모자라 재호출해도 못 채운다.
+    - 모자라면(0개 포함) `exhausted` 일 때만 통과한다. 더 채울 길이 없다는 뜻이다 — 안전 필터
+      뒤 재호출 1회를 이미 했거나, 후보 풀이 처음부터 모자라 재호출해도 못 채운다.
       아니면 거절한다. 채울 수 있는데 덜 낸 것을 통과시키지 않는다 — 안전 필터로 빠졌으면
       호출부가 사유 없이 재호출 1회를 하고, 모델이 덜 냈으면 사유와 함께 모델에게 돌려준다.
+    - 더 채울 길이 없는데 0개여도 예외를 던지지 않는다. 0개는 실패가 아니라 안전 조건을 통과한
+      후보가 없다는 결과라, 호출부는 이어서 `count_notice(len(drafts))` 로 안내만 붙이면 된다.
+      예외로 두면 호출부가 놓쳤을 때 pipeline 이 Agent 실패로 세고 화면에 다시 시도가 뜬다.
     """
     count = len(drafts)
     if count > MAX_SUGGESTIONS:
         raise SuggestionRejected(f"추천은 최대 {MAX_SUGGESTIONS}개다. 받은 것: {count}개")
-    if count == 0:
-        raise SuggestionRejected("추천이 0개다. 추천 대신 개수 안내로 끝낸다")
     if count < MAX_SUGGESTIONS and not exhausted:
         raise SuggestionRejected(f"추천을 {MAX_SUGGESTIONS}개 채울 수 있는데 {count}개만 받았다")
 
