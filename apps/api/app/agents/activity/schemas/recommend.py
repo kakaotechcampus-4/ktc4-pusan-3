@@ -16,7 +16,7 @@ from app.agents.activity.schemas.common import (
     Intensity,
     ToolArgs,
 )
-from app.agents.common.suggestion import REQUIRED_COUNT
+from app.agents.common.suggestion import MAX_SUGGESTIONS
 
 
 class ActivityCandidate(ToolArgs):
@@ -70,12 +70,13 @@ class ActivityCandidate(ToolArgs):
 
 
 class ProposeActivityCandidatesArgs(ToolArgs):
-    # 개수는 공통 상수 하나. 2개 이하나 4개 이상이면 인자 검증에서 거절된다
+    # 모델은 늘 최대 개수만큼 낸다. 2개 이하나 4개 이상이면 인자 검증에서 거절된다.
+    # 보호자에게 1~2개가 가는 것은 안전 필터로 빠진 뒤의 일이다 (Tool_공통.md §5-2)
     candidates: Annotated[
         list[ActivityCandidate],
         Field(
-            min_length=REQUIRED_COUNT,
-            max_length=REQUIRED_COUNT,
-            description=f"놀이 후보 정확히 {REQUIRED_COUNT}개",
+            min_length=MAX_SUGGESTIONS,
+            max_length=MAX_SUGGESTIONS,
+            description=f"놀이 후보 {MAX_SUGGESTIONS}개",
         ),
     ]

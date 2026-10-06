@@ -1,0 +1,13 @@
+# 추천 개수 안내 (Tool_공통.md §5-2). 다 채우지 못했을 때 추천과 함께 화면에 그대로 나간다.
+# 테스트가 글자 단위로 비교한다. 문구를 바꾸면 Tool_공통.md §5-2 표도 같이 고친다.
+
+# 1 ~ 2개. {count} 는 실제로 나간 추천 수
+suggestion.partial:
+  kind: notice
+  template: 조건에 맞는 추천을 {count}개 준비했어요.
+
+# 0개. 실패가 아니다 — 안전 조건을 통과한 후보가 하나도 없다.
+# 0개 문구가 따로 있는 Agent 는 그 문구를 쓴다 (Food 의 pool.empty)
+suggestion.empty:
+  kind: notice
+  template: 조건에 맞는 추천이 없어요.

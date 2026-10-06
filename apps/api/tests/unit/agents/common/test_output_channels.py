@@ -25,11 +25,12 @@ from app.agents.common.result import (
     MedicationDraft,
 )
 from app.agents.common.suggestion import (
-    REQUIRED_COUNT,
+    MAX_SUGGESTIONS,
     SuggestionDraft,
     SuggestionRejected,
     build,
     check_count,
+    count_notice,
 )
 
 KST = timezone(timedelta(hours=9))
@@ -49,6 +50,14 @@ def citation(*, kind="observation_food", polarity=1, label="당근", note="지�
     return cite(
         evidence(kind=kind, polarity=polarity, label=label),
         note=note,
+    )
+
+
+def general_drafts(count):
+    """근거 없는 일반 추천 count 개. 개수 검사는 내용을 보지 않는다."""
+    return tuple(
+        build(agent="food", content=f"{i}", reason="", citations=(), general_reason="또래 기준")
+        for i in range(count)
     )
 
 
@@ -222,33 +231,73 @@ class TestSuggestionLists:
 
 
 class TestCount:
-    def test_정확히_3개(self):
-        drafts = tuple(
-            build(agent="food", content=f"{i}", reason="", citations=(), general_reason="또래 기준")
-            for i in range(REQUIRED_COUNT)
-        )
-        check_count(drafts)
+    """추천은 최대 3개 (Tool_공통.md §5-2). 동작은 C-8 닫힘 전과 같고 이름 · 문구만 바뀌었다."""
 
-    @pytest.mark.parametrize("count", [0, 1, 2, 4, 5])
-    def test_개수가_다르면_거절(self, count):
-        drafts = tuple(
-            build(agent="food", content=f"{i}", reason="", citations=(), general_reason="또래 기준")
-            for i in range(count)
-        )
-        with pytest.raises(SuggestionRejected, match="정확히 3개"):
-            check_count(drafts)
+    def test_3개면_통과(self):
+        check_count(general_drafts(MAX_SUGGESTIONS))
 
-    def test_재호출_뒤_모자라면_남은_만큼만(self):
-        drafts = (
-            build(
-                agent="food", content="하나", reason="", citations=(), general_reason="또래 기준"
-            ),
-        )
-        check_count(drafts, after_retry=True)
+    @pytest.mark.parametrize("count", [1, 2, 3])
+    def test_더_채울_길이_없으면_1개부터_통과(self, count):
+        check_count(general_drafts(count), exhausted=True)
 
-    def test_재호출_뒤에도_0개면_거절(self):
-        with pytest.raises(SuggestionRejected):
-            check_count((), after_retry=True)
+    @pytest.mark.parametrize("count", [1, 2])
+    def test_채울_수_있는데_모자라면_거절(self, count):
+        """여기서 통과시키면 더 채우지 않고 끝나서, "최대" 가 "아무 개수나" 가 된다."""
+        with pytest.raises(SuggestionRejected, match="채울 수 있는데"):
+            check_count(general_drafts(count))
+
+    @pytest.mark.parametrize("exhausted", [False, True])
+    def test_0개는_거절(self, exhausted):
+        """0개는 추천이 아니다. 호출부가 추천 없이 안내(count_notice)로 끝낸다."""
+        with pytest.raises(SuggestionRejected, match="0개"):
+            check_count((), exhausted=exhausted)
+
+    @pytest.mark.parametrize("exhausted", [False, True])
+    @pytest.mark.parametrize("count", [4, 5])
+    def test_넘치면_거절(self, count, exhausted):
+        with pytest.raises(SuggestionRejected, match="최대 3개"):
+            check_count(general_drafts(count), exhausted=exhausted)
+
+
+class TestCountNotice:
+    """다 못 채운 추천에 붙는 안내 (Tool_공통.md §5-2). 상수 문구라 글자 단위로 비교한다."""
+
+    # Food 의 0개 문구(pool.empty)와 같은 모양. Food 의 상수 카탈로그는 아직 코드에 없다
+    POOL_EMPTY = ReadoutText(key="pool.empty", template="조건에 맞는 메뉴가 없어요.", kind="notice")
+
+    def test_다_채우면_안내가_없다(self):
+        assert count_notice(MAX_SUGGESTIONS) is None
+
+    @pytest.mark.parametrize("count", [1, 2])
+    def test_모자라면_나간_개수를_알린다(self, count):
+        notice = count_notice(count)
+        assert notice is not None
+        assert notice.body == f"조건에 맞는 추천을 {count}개 준비했어요."
+        assert notice.kind == "notice"
+        assert notice.authored_by == "code"
+
+    def test_0개면_추천이_없다고_알린다(self):
+        notice = count_notice(0)
+        assert notice is not None
+        assert notice.body == "조건에 맞는 추천이 없어요."
+        assert notice.kind == "notice"
+        assert notice.authored_by == "code"
+
+    def test_0개_문구가_따로_있는_Agent_는_그_문구를_쓴다(self):
+        notice = count_notice(0, empty=self.POOL_EMPTY)
+        assert notice is not None
+        assert notice.body == "조건에 맞는 메뉴가 없어요."
+
+    def test_0개_문구는_모자랄_때_쓰지_않는다(self):
+        notice = count_notice(2, empty=self.POOL_EMPTY)
+        assert notice is not None
+        assert notice.body == "조건에 맞는 추천을 2개 준비했어요."
+
+    @pytest.mark.parametrize("count", [-1, MAX_SUGGESTIONS + 1])
+    def test_개수_밖이면_ValueError(self, count):
+        """check_count 를 거친 개수만 들어온다. 밖이면 호출부 버그다."""
+        with pytest.raises(ValueError, match="추천 개수"):
+            count_notice(count)
 
 
 class TestReadout:

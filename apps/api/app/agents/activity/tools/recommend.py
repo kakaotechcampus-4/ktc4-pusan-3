@@ -17,7 +17,7 @@ async def propose_activity_candidates(
 ) -> ToolResult:
     """놀이 후보 3개를 검증하고 suggestion 초안으로 바꾼다 (설계 3-3).
 
-    - 개수(정확히 3개)는 인자 검증이 이미 막았다.
+    - 모델이 낸 개수(3개)는 인자 검증이 이미 막았다.
     - 걸린 후보가 하나라도 있으면 사유와 함께 돌려준다. 모델은 고쳐서 3개를 다시 낸다 —
       같은 진입 안의 루프라 model_calls 가 늘지 않는다. 오류 코드는 지어낸 근거 id 가 있으면
       EVIDENCE_REQUIRED, 아니면 CANDIDATE_REJECTED (`review.error_code`).
@@ -26,6 +26,8 @@ async def propose_activity_candidates(
 
     안전 필터는 아직 없다 (위험 용어 사전 PR). 붙으면 걸린 후보는 거절이 아니라 풀에서 빠지고,
     3개 미만이면 Agent 가 재호출 1회를 한다 — 그때는 걸린 사유를 모델에게 주지 않는다.
+    재호출 뒤에도 모자라면 `check_count(..., exhausted=True)` 로 남은 만큼 내고, 0개면 추천 없이
+    `count_notice(0)` 안내로 끝낸다 (Tool_공통.md §5-2).
 
     TODO: suggestion.allergens · items 를 채운다 (10/4 스키마 이슈).
     채워서 넘기는 곳은 `review._build` 의 `build()` 호출이다.

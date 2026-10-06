@@ -1,6 +1,7 @@
 """모델 tool 인자 스키마 검증.
 
-- 후보는 정확히 3개 — 2개 이하나 4개 이상이면 인자 검증에서 거절된다.
+- 모델은 후보를 `MAX_SUGGESTIONS`(3)개 낸다 — 2개 이하나 4개 이상이면 인자 검증에서
+  거절된다. 보호자에게 1~2개가 가는 것은 안전 필터로 빠진 뒤의 일이다.
 - 근거는 `EvidencePick(id, note)`. note 가 비면 보호자 화면에 빈 근거가 나가므로 거절한다.
 - `materials` 는 비어도 받는다 — 필수로 만들면 모델이 재료를 지어낸다 (D6).
 """
@@ -17,7 +18,7 @@ from app.agents.activity.schemas.recommend import (
 )
 from app.agents.activity.schemas.task import ActivityTaskType, task_type_of
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.suggestion import REQUIRED_COUNT
+from app.agents.common.suggestion import MAX_SUGGESTIONS
 
 
 def candidate(**kwargs) -> dict:
@@ -40,7 +41,7 @@ def propose(count: int) -> dict:
 
 class TestCandidateCount:
     def test_개수는_공통_상수를_따른다(self):
-        assert REQUIRED_COUNT == 3
+        assert MAX_SUGGESTIONS == 3
 
     @pytest.mark.parametrize("count", [0, 1, 2, 4])
     def test_3개가_아니면_거절한다(self, count):
@@ -55,7 +56,7 @@ class TestCandidateCount:
         """검증 규칙과 모델 스펙이 같은 Pydantic 모델에서 나온다."""
         spec = next(s for s in TOOL_SPECS if s["function"]["name"] == "propose_activity_candidates")
         candidates = spec["function"]["parameters"]["properties"]["candidates"]
-        assert candidates["minItems"] == candidates["maxItems"] == REQUIRED_COUNT
+        assert candidates["minItems"] == candidates["maxItems"] == MAX_SUGGESTIONS
         assert candidates["items"]["additionalProperties"] is False
 
 
