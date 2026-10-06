@@ -51,7 +51,6 @@ class EventBefore(EventBody):
 class CreateEventDraft(DraftBase):
     """POST 로 간다. event_id 와 before 는 언제나 null 이라 싣지 않는다."""
 
-    # 전체에서 유일한 uuid. 화면은 같은 draft_id 를 같은 장으로 갈아 끼운다 (#250)
     draft_id: str | None
     op: Literal["create"]
     event: EventBody
@@ -61,7 +60,6 @@ class CreateEventDraft(DraftBase):
 class UpdateEventDraft(DraftBase):
     """PATCH 로 간다."""
 
-    # 전체에서 유일한 uuid. 화면은 같은 draft_id 를 같은 장으로 갈아 끼운다 (#250)
     draft_id: str | None
     op: Literal["update"]
     event_id: str
