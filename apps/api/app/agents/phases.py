@@ -2,6 +2,7 @@
 
 handle_input 의 흐름을 DB 트랜잭션 경계 단위로 직렬화한다.
 모델 호출(LLM API)은 별도 Phase 가 아니라 해당 Phase 안의 부작용이다.
+Curator 는 모델 호출 분리를 위해 embed / link / recompute 세 Phase 로 쪼갠다.
 """
 
 from __future__ import annotations
@@ -60,12 +61,32 @@ class PipelinePhase(Enum):
         모델 호출: 포함 (도메인 Agent). 상태 전환 단위가 아님
         비고: 쓰는 task 를 먼저 끝낸 뒤 읽는 task 동시 실행. 20초 deadline 적용
 
-    CURATOR
+    ── Curator (백그라운드, 3 Phase) ───────────────────────────
+    Memory commit 직후 백그라운드로 실행. run 결과를 기다리지 않는다.
+    현재는 한 트랜잭션이지만, 모델 호출을 트랜잭션 밖으로 빼려면
+    아래 세 Phase 로 쪼개야 한다.
+
+    CURATOR_EMBED
+        DB 성격: read -> write
+        트랜잭션: list_unembedded (read) → commit → embedder.embed (tx 밖)
+                  → save_embeddings (write) → commit
+        실패 시: 벡터 미저장, 다음 run 이 다시 집는다
+        모델 호출: embedder.embed (트랜잭션 밖으로 분리 가능)
+
+    CURATOR_LINK
+        DB 성격: read -> write
+        트랜잭션: list_unlinked + list_profiles (read) → commit
+                  → judge.judge (tx 밖) → link + create_profile (write) → commit
+        실패 시: 미연결, 다음 run 이 다시 집는다
+        모델 호출: judge.judge (트랜잭션 밖으로 분리 가능)
+
+    CURATOR_RECOMPUTE
         DB 성격: read + write
-        트랜잭션: Memory commit 이후 별도 background transaction
-        실패 시: rollback, 다음 run 이 다시 집어감
-        모델 호출: 포함 (embedder.embed, judge.judge). 상태 전환 단위가 아님
-        비고: 관찰 commit 직후 백그라운드로 실행. run 결과를 기다리지 않는다
+        트랜잭션: 짧은 transaction → commit
+        실패 시: 상태 미갱신, 다음 run 이 다시 계산
+        모델 호출: 없음
+
+    ── 공통 ────────────────────────────────────────────────────
 
     FINALIZE
         DB 성격: none
@@ -81,7 +102,8 @@ class PipelinePhase(Enum):
         트랜잭션: RECORD 와 동일 (하나의 transaction -> commit)
         실패 시: 전부 rollback -> failed
         모델 호출: 포함 (Memory Agent). 상태 전환 단위가 아님
-        비고: Supervisor/도메인 Agent 를 타지 않음. RECORD_EMIT -> CURATOR -> FINALIZE 로 이어짐
+        비고: Supervisor/도메인 Agent 를 타지 않음.
+              RECORD_EMIT -> CURATOR_EMBED -> FINALIZE 로 이어짐
     """
 
     # 일반 run
@@ -92,7 +114,12 @@ class PipelinePhase(Enum):
     RECORD_EMIT = "record_emit"
     REROUTE = "reroute"
     DOMAIN = "domain"
-    CURATOR = "curator"
+
+    # Curator (백그라운드, 3 Phase)
+    CURATOR_EMBED = "curator_embed"
+    CURATOR_LINK = "curator_link"
+    CURATOR_RECOMPUTE = "curator_recompute"
+
     FINALIZE = "finalize"
 
     # 이어받기 run
@@ -103,20 +130,33 @@ class PipelinePhase(Enum):
 # None 은 종료. 조건 분기는 런타임이 정한다.
 TRANSITIONS: dict[PipelinePhase, tuple[PipelinePhase | None, ...]] = {
     # 일반 run
-    PipelinePhase.SAFETY_PRECHECK: (PipelinePhase.SUPERVISE, PipelinePhase.CONTINUATION_RECORD),
+    PipelinePhase.SAFETY_PRECHECK: (
+        PipelinePhase.SUPERVISE, PipelinePhase.CONTINUATION_RECORD,
+    ),
     PipelinePhase.SUPERVISE: (PipelinePhase.ROUTE,),
-    PipelinePhase.ROUTE: (PipelinePhase.RECORD, PipelinePhase.DOMAIN, PipelinePhase.FINALIZE),
+    PipelinePhase.ROUTE: (
+        PipelinePhase.RECORD, PipelinePhase.DOMAIN, PipelinePhase.FINALIZE,
+    ),
     PipelinePhase.RECORD: (PipelinePhase.RECORD_EMIT, PipelinePhase.FINALIZE),
     PipelinePhase.RECORD_EMIT: (
         PipelinePhase.REROUTE, PipelinePhase.DOMAIN,
-        PipelinePhase.CURATOR, PipelinePhase.FINALIZE,
+        PipelinePhase.CURATOR_EMBED, PipelinePhase.FINALIZE,
     ),
     PipelinePhase.REROUTE: (PipelinePhase.DOMAIN, PipelinePhase.FINALIZE),
     PipelinePhase.DOMAIN: (PipelinePhase.FINALIZE,),
-    PipelinePhase.CURATOR: (PipelinePhase.FINALIZE,),
+    # Curator 체인
+    PipelinePhase.CURATOR_EMBED: (
+        PipelinePhase.CURATOR_LINK, PipelinePhase.FINALIZE,
+    ),
+    PipelinePhase.CURATOR_LINK: (
+        PipelinePhase.CURATOR_RECOMPUTE, PipelinePhase.FINALIZE,
+    ),
+    PipelinePhase.CURATOR_RECOMPUTE: (PipelinePhase.FINALIZE,),
     PipelinePhase.FINALIZE: (None,),
     # 이어받기 run
-    PipelinePhase.CONTINUATION_RECORD: (PipelinePhase.RECORD_EMIT, PipelinePhase.FINALIZE),
+    PipelinePhase.CONTINUATION_RECORD: (
+        PipelinePhase.RECORD_EMIT, PipelinePhase.FINALIZE,
+    ),
 }
 
 
