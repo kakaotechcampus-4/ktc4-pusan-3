@@ -3,10 +3,11 @@
 > 모든 도메인 Agent(Food · Activity · Growth · Health)가 지키는 규칙. Agent별 문서가 이 규약을 어기면 **이 문서가 이긴다.**
 >
 > **2026-09-22 갱신** — 쓰기 주체(OCR · suggestion 이관) · suggestion 3개 · 필터 후 재호출 1회 · 복약 승인 게이트 · 성장 판정 제거 · 성별 미사용
-> **2026-09-22 (3차)** — **기피(−1)는 근거이지 제외 필터가 아니다**(§4) · Food는 영양이 선호보다 앞선다 · 복약 초안은 DB 저장 없이 payload(§2·§3) · **suggestion은 정확히 3개**(2~4 범위 폐지)
+> **2026-09-22 (3차)** — **기피(−1)는 근거이지 제외 필터가 아니다**(§4) · Food는 영양이 선호보다 앞선다 · 복약 초안은 DB 저장 없이 payload(§2·§3) · **suggestion은 3개로 고정**(2~4 범위 폐지 · 10-06 에 최대 3개로 바뀜)
 > **2026-09-22 (4차)** — 알레르기 후보 감지 제거(`safety_confirmations` 폐기) · 근거는 `suggestion_evidence` 테이블 · `daycare_menu`를 섭취 파생 테이블로 흡수 · 승인 시 Memory가 관찰 생성 · 복약 중단 soft delete · **API 계약서 v1은 레거시**(이 문서들이 정본)
 > **2026-09-22 (5차)** — 급식은 `daycare_meal`로 다시 분리하고 **Food 소유(UPDATE/DELETE)** · Food 라벨 3개(`daycare_meal` 신설) · 섭취 파생 테이블에서 끼니 슬롯 폐지(테이블은 10-05 폐기) · 기록 충분 판정을 행 수로
 > **2026-09-22 (6차)** — Growth 문서 조회를 `search_growth_doc` 하나로(별도 KB 없음) · `rhythm_info`는 readout · 승인 이관은 라벨로 · **Health는 문서 테이블 대신 상수 파일** · `event_requests`도 초안 payload · Health 근거 규칙 명시
+> **2026-10-06** — 추천은 **최대 3개**(C-8 닫힘, #216) · 다 못 채우면 남은 만큼 + 개수 안내, 0개면 안내만 — 실패가 아니다 (§3 · §7)
 > 하위 문서: [`Tool_공통.md`](Tool_공통.md)(tool 실행 세부) · [`연령별_Tool_전략.md`](연령별_Tool_전략.md)(게이팅 정본) · [`RAG_plan.md`](RAG_plan.md)(문서 행) · [`외부연결_계획.md`](외부연결_계획.md)(API·출처)
 
 ---
@@ -26,7 +27,7 @@
   Food   Activity   Growth    Health │
   └─────────┼─────────┴─────────┘    │
         ↓                            │
-   suggestion (draft, 3개) ── 사용자 승인
+   suggestion (draft, 최대 3개) ── 사용자 승인
    readout / event 이관 / 역질의
         ↓
     Curator (Agent 아님, 배치)
@@ -141,7 +142,7 @@ class DomainAgentResult:
 
 | 채널 | 저장 | 승인 | 쓰는 Agent |
 | --- | --- | --- | --- |
-| `suggestions` | `suggestion` draft +24h · **요청 1건당 정확히 3개** | 사용자 → 승인 시 Memory 이관 | Food · Activity · Growth |
+| `suggestions` | `suggestion` draft +24h · **요청 1건당 최대 3개** — 모자라면 개수 안내 ([Tool_공통.md](Tool_공통.md) §5-2) | 사용자 → 승인 시 Memory 이관 | Food · Activity · Growth |
 | `readouts` | **안 함** (세션 한정) | – | 전부 |
 | `event_requests` | **저장 안 함** — pipeline이 Memory의 일정 tool을 코드로 불러 초안 payload로 내보낸다 | 사용자 | Health |
 | `needs_observation` | 안 함 — 화면이 한 줄로 묻는다 | – | 전부 |
@@ -152,6 +153,7 @@ class DomainAgentResult:
 - **되묻기는 한 번에 하나.** 후보가 여럿이면 순위가 가장 높은 하나만 낸다.
 - **초안은 저장하지 않는다.** `medication_drafts`는 Memory의 `event` 초안과 같다 — run 단위 버퍼에 모였다가 JSON payload로 한 번에 나가고, run이 끝나면 사라진다. 비어 있는 NOT NULL 칸 목록(`missing`)을 함께 실어 화면이 제출을 막는다. **만들자마자 행을 쓰는 `suggestion`과 혼동하지 말 것** — 복약은 행이 있다는 것 자체가 승인의 증거다.
 - suggestion은 **저장(commit)이 끝난 뒤에** 화면이 추천 카드로 전환된다. 카드의 승인 · 거절 · 피드백이 저장된 행의 id로 동작하고, 개인화 추천은 `suggestion_evidence`가 함께 저장돼 있어야 해서다(루트 §2). 보여 주면서 동시에 저장을 요청하지 않는다. 저장에 실패하면 그 Agent 카드는 내보내지 않고 `partial`로 둔다. 카드 화면은 그 run의 응답을 그대로 쓴다(묶음 키 없음). 별도의 suggestion 목록 화면은 `expires_at > now()`인 suggestion 전부를 보여준다.
+- **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2).
 
 ---
 
@@ -246,7 +248,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 예산을 넘으면 | 실행을 끊지 않는다. `pipeline._log` 가 경고를 남길 뿐이다 — 재시도가 붙었다는 신호이지 잘못이 아니다 |
 | 도메인 Agent당 | **1회 이내** — 아래 재호출 예외만 2회 |
 | 0회 경로 | 게이트 닫힘 · Growth 성장 추이 · Health 검진/병원/전달 서류 · 안전 조회 실패 |
-| **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 (잠정 — C-8 미결) |
+| **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼(1~2개)만 내고, 0개면 추천 없이 안내만 낸다** — 추천은 최대 3개다 (C-8 닫힘, [Tool_공통.md](Tool_공통.md) §5-2) |
 | 그 외 출력 tool 거절 | 재호출하지 않는다 (2026-09-22 — 이전의 "거절 시 run당 1회 재시도"는 위 규칙으로 대체) |
 | 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음 · 쓰는 task 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
@@ -366,9 +368,9 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | C-5 | ✅ 닫힘 — **그대로 둔다.** 24시간이면 만료되므로 무효화 배치를 두지 않는다 |
 | C-6 | ✅ 폐기 — 알레르기 후보 감지를 v1에서 뺐다. `safety_confirmations` 채널도 함께 사라졌다 |
 | C-7 | ✅ 닫힘 — **`confidence_source`로 갈음**한다. 별도 `type` 컬럼을 두지 않는다 |
-| C-8 | **미결** (2026-09-30 다시 엶) — 재호출 후에도 3개를 못 채우거나 후보 풀이 처음부터 3개 미만일 때 남은 만큼(1~2개)을 낼지 정하지 않았다. 지금 코드는 잠정으로 남은 만큼 내고 0개만 거절한다(`check_count(after_retry=True)`, §7) |
+| C-8 | ✅ 닫힘(10-06) — **추천은 최대 3개.** 재호출 후에도 못 채우거나 후보 풀이 처음부터 3개 미만이면 남은 만큼(1~2개)을 개수 안내와 함께 낸다. 0개면 추천 없이 안내만 — 실패가 아니다. 3개를 채우려고 안전 조건을 늦추지 않는다 (멘토 [#196 답변](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/196#issuecomment-5933562473) · #216). `check_count(exhausted=True)` · `count_notice()` — [Tool_공통.md](Tool_공통.md) §5-2 |
 | C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`liked`/`disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
 
-C-8 을 다시 열었다. 새로 열리는 것은 이 표에 다시 적는다.
+새로 열리는 것은 이 표에 다시 적는다.
 
 > **API 계약서 v1(`docs/api/api-interface-v1.html`)은 레거시다.** 어긋나는 곳이 있어도 이 문서들이 정본이다.
