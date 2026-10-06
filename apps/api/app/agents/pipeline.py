@@ -524,6 +524,12 @@ LEFTOVER_NOTE_NO_CONTEXT = (
     "적어 주신 다른 내용은 반영하지 않았어요. 그 내용과 이 질문의 답은 각각 따로 한 줄로 "
     "보내 주세요. 답에는 무엇에 대한 것인지 함께 적어 주세요."
 )
+# 재질문 상한에 닿은 이어받기 run. 모델이 또 물은 질문 대신 이 문구를 message 로 낸다.
+# NO_CONTEXT_NOTE 처럼 답을 따로 보내라고 하면 같은 답이 다시 와서 상한이 의미가 없어진다.
+# 상한은 그 run 에서 쓴 것이 없을 때만 걸려서, "저장하지 않았어요" 가 같은 run 의
+# 저장과 부딪히지 않는다. 화면은 저장 없이 message 만 온 run 에 "적어주신 말을 확인했어요"
+# 제목을 달고 이 문장이 상한 문구인지 가리지 못해서, 여기에 "확인" 을 쓰지 않는다(#246 프론트 리뷰)
+ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요."
 
 
 def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
@@ -534,6 +540,10 @@ def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
     reply = memory.reply
     if reply is None:
         return None
+    if memory.ask_limit_reached:
+        # 질문은 내보내지 않는다. 답에 섞인 말을 남겼으면 그것만 따로 보내라고 알린다
+        text = f"{ASK_LIMIT_NOTE} {LEFTOVER_NOTE}" if memory.leftover else ASK_LIMIT_NOTE
+        return MemoryNote(text=text, kind="message")
     if reply.kind == "question" and memory.pending is None:
         suffix = LEFTOVER_NOTE_NO_CONTEXT if memory.leftover else NO_CONTEXT_NOTE
         return MemoryNote(text=f"{reply.text} {suffix}", kind="message")

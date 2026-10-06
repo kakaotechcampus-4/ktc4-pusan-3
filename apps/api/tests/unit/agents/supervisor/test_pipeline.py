@@ -36,7 +36,7 @@ from app.agents.food.store import (
     MenuCatalogRow,
     in_memory_ports,
 )
-from app.agents.memory.agent import MAX_STEPS
+from app.agents.memory.agent import MAX_QUESTIONS, MAX_STEPS
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
@@ -1972,6 +1972,63 @@ async def test_이어받기가_저장한_뒤_물으면_message_로_내리고_따
     assert note.kind == "message"
     assert note.text == f"떡볶이를 기록했어요. 내일 소풍은 몇 시예요? {pipeline.NO_CONTEXT_NOTE}"
     assert not _of(events, PendingReply)
+
+
+# 기침 조각에 이미 상한만큼 물은 맥락. 이 run 에서 또 물으면 상한이다
+_COUGH_AT_LIMIT = replace(
+    _COUGH_PENDING,
+    transcript=tuple(
+        text for n in range(1, MAX_QUESTIONS) for text in (f"{n}번째 질문", f"{n}번째 답")
+    ),
+)
+
+
+async def test_재질문_상한에_닿으면_질문_대신_상수_문구를_message_로_낸다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(_cont_answer({"text": "정확히 며칠 전이에요?", "kind": "question"}))
+
+    await handle_input(
+        "잘 모르겠어요",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_AT_LIMIT,
+    )
+
+    # "따로 보내 주세요" 가 붙으면 보호자가 같은 답을 다시 보내 상한이 의미가 없어진다
+    notes = [(note.text, note.kind) for note in _of(events, MemoryNote)]
+    assert notes == [(pipeline.ASK_LIMIT_NOTE, "message")]
+    # 순서 전체로 본다. Done 은 실패한 run 도 마지막에 내서 있다는 것만으로는 성공이 아니다.
+    # PendingReply 가 끼면 질문이 또 열리고, Failed 가 끼면 화면이 다시 시도를 띄워 같은 답이
+    # 또 상한에 닿는다
+    assert _order(events) == ["Step", "MemoryNote", "Done"]
+
+
+async def test_재질문_상한에서_섞인_말이_있으면_따로_보내라는_안내만_붙인다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory = FakeLLM(
+        _cont_answer({"text": "정확히 며칠 전이에요?", "kind": "question", "leftover": True})
+    )
+
+    await handle_input(
+        "모르겠어. 그리고 내일 소풍 있어",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_AT_LIMIT,
+    )
+
+    note = _of(events, MemoryNote)[0]
+    assert note.kind == "message"
+    assert note.text == f"{pipeline.ASK_LIMIT_NOTE} {pipeline.LEFTOVER_NOTE}"
 
 
 async def test_맥락_없이_물을_때_섞인_말이_있으면_안내를_한_번만_붙인다(
