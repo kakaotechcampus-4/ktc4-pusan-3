@@ -1,12 +1,19 @@
 """이어받기 라이브 eval. 답에 섞인 다른 말을 Memory 가 조용히 버리지 않는지 본다 (PR #175).
+답이 계속 모자라도 재질문 상한 안에서 끝나는지도 본다 (#246).
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
     uv run pytest tests/eval/agents/memory/test_continuation.py -m live -s
+    uv run pytest tests/eval/agents/memory/test_continuation.py -m live -k 상한 -s -rs
+
+상한 쪽은 run 을 한 번만 잇고 세 테스트가 나눠 본다. 모델이 상한 전에 그만 물으면 상한 표시를
+보는 테스트는 skip 된다. 상한을 확인하지 못한 실행이라는 뜻이고, -rs 가 그 사유를 보여 준다.
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
 """
 
 import asyncio
 import json
+import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -17,7 +24,8 @@ import pytest
 
 from app.agents.common.config import AgentSettings
 from app.agents.common.llm_client import LLMClient
-from app.agents.memory.agent import MemoryAgentResult, run
+from app.agents.memory.agent import MAX_QUESTIONS, MemoryAgentResult, run
+from app.agents.memory.bundles import MUTATING_PREFIXES
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
@@ -246,3 +254,141 @@ def test_이어받기_답에_섞인_말(case: Case) -> None:
         and case.mixed in result.reply.text
     )
     assert result.leftover or stored or asked, "섞인 말을 처리도 안내도 하지 않음"
+
+
+# ── 재질문 상한 (#246) ──────────────────────────────────────────────────
+# 답이 계속 모자라면 다시 묻는다. 처음 질문(_COUGH) 뒤로 답할 기회는 상한만큼이고, 그 안에서
+# 맥락이 끝나야 한다. run 은 한 번만 잇고 세 테스트가 나눠 본다. 끝나는지는 늘 보고, 상한 표시는
+# 모델이 상한에서 또 물은 실행에서만 본다(그 전에 그만 물으면 skip). 말로 끝났으면 저장하지 않고
+# 저장했다고 하지 않는지도 본다
+_VAGUE_ANSWERS = ("잘 모르겠어요", "기억이 잘 안 나요", "글쎄요", "모르겠어요")
+# 저장했다는 말. 말투가 여러 가지라 다 잡지는 못한다. "기록하지 못했어요" 는 걸리지 않고,
+# "알려 주시면 기록할게요" 처럼 나중 일을 말하는 문장은 _LATER 로 뺀다
+_SAVE_CLAIM = re.compile(
+    r"(기록|저장)(할게|했|해 ?(두|둘|뒀|놓|놨|드릴))|남겨 ?(둘|두었|뒀|놓|놨)|것으로 (해 ?)?둘게"
+)
+_LATER = re.compile(r"면\b|그때|나중에|다음에")
+
+
+def _wrote(result: MemoryAgentResult) -> bool:
+    """그 run 에서 성공한 쓰기가 있는가. 실패한 쓰기는 저장이 아니다."""
+    return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in result.calls)
+
+
+def _claims_save(text: str) -> bool:
+    """지금 저장한 것처럼 말하는 문장이 있는가."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return any(_SAVE_CLAIM.search(s) and not _LATER.search(s) for s in sentences)
+
+
+class _Warnings(logging.Handler):
+    """Memory 가 남긴 경고. 이어받기에서는 스키마 불일치 · 반복 상한뿐이라 있으면 비정상 종료다."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+@dataclass(frozen=True)
+class Chain:
+    results: list[MemoryAgentResult]  # 답 하나에 run 하나. 맥락이 끝나면 멈춘다
+    warnings: list[str]
+
+    @property
+    def last(self) -> MemoryAgentResult:
+        return self.results[-1]
+
+    @property
+    def asked_at_limit(self) -> bool:
+        """상한만큼 답한 뒤에도 모델이 또 물었는가. 상한 표시는 이 실행에서만 볼 수 있다."""
+        reply = self.last.reply
+        return len(self.results) == MAX_QUESTIONS and reply is not None and reply.kind == "question"
+
+
+async def _run_until_settled(client: LLMClient) -> list[MemoryAgentResult]:
+    store = InMemoryStore(now=NOW)
+    context = AgentContext(child_id=CHILD, source_writer=WRITER, now=NOW, timezone=KST, store=store)
+    pending: PendingMemoryContext | None = _COUGH
+    results: list[MemoryAgentResult] = []
+    for answer in _VAGUE_ANSWERS:
+        if pending is None:
+            break
+        result = await run(answer, context, client=client, continuation=pending)
+        results.append(result)
+        pending = result.pending
+    return results
+
+
+@pytest.fixture(scope="module")
+def vague_chain() -> Chain:
+    client = _client()
+    # 스키마 불일치는 message 로 끝나서 결과만으로는 모델이 말로 끝낸 것과 가를 수 없다
+    memory_logger = logging.getLogger(run.__module__)
+    warnings = _Warnings()
+    memory_logger.addHandler(warnings)
+    try:
+        results = asyncio.run(_run_until_settled(client))
+    finally:
+        memory_logger.removeHandler(warnings)
+    for n, result in enumerate(results, start=1):
+        print(
+            f"\n[상한 {n}] kind={result.reply.kind if result.reply else None} "
+            f"pending={result.pending is not None} limit={result.ask_limit_reached} "
+            f"tools={result.tool_names} {result.final_message!r}"
+        )
+    return Chain(results, warnings.messages)
+
+
+def test_답이_계속_모자라면_재질문_상한_안에서_끝난다(vague_chain: Chain) -> None:
+    assert len(_VAGUE_ANSWERS) == MAX_QUESTIONS, "답이 상한보다 적으면 상한까지 이어 볼 수 없음"
+    # 반복 상한 · 스키마 불일치로 끝난 run 도 맥락이 없다. 상한 안에서 끝난 게 아니라 망가진 것이다
+    assert not vague_chain.warnings, f"Memory 가 비정상으로 끝남: {vague_chain.warnings}"
+    for n, result in enumerate(vague_chain.results, start=1):
+        assert result.completed, f"{n}번째 run 이 반복 상한에 걸림"
+        assert result.reply is not None, f"{n}번째 run 이 말 없이 끝남"
+        assert result.reply.text.strip(), f"{n}번째 run 의 말이 비었음"
+
+    # 이어 간 run 은 맥락에 (질문, 답) 을 한 쌍씩 쌓는다. 상한은 이 길이로 세서, 안 쌓이면 상한에
+    # 닿지 않는다
+    question = _COUGH.question
+    for n, result in enumerate(vague_chain.results[:-1], start=1):
+        pending = result.pending
+        assert pending is not None  # 맥락이 끝나면 run 을 더 잇지 않아 마지막 전에는 늘 있다
+        assert pending.hint_text == _COUGH.hint_text, f"{n}번째 맥락의 조각이 바뀜"
+        assert pending.transcript[-2:] == (question, _VAGUE_ANSWERS[n - 1]), f"{n}번째 답이 안 쌓임"
+        assert len(pending.transcript) == 2 * n, f"{n}번째 맥락의 칸 수가 틀림"
+        assert not result.ask_limit_reached, f"상한 전({n}번째)에 상한 표시"
+        question = pending.question
+
+    last = vague_chain.last
+    assert last.pending is None, "상한까지 답했는데 맥락이 남음"
+    if not vague_chain.asked_at_limit:
+        assert not last.ask_limit_reached, "상한에서 또 묻지 않았는데 상한 표시"
+
+
+def test_상한에서_또_물으면_저장하지_않은_run_만_상한으로_센다(vague_chain: Chain) -> None:
+    last = vague_chain.last
+    if not vague_chain.asked_at_limit:
+        kind = last.reply.kind if last.reply else None
+        n = len(vague_chain.results)
+        pytest.skip(
+            f"모델이 {n}번째 답에서 끝냄(kind={kind}). 상한에서 또 묻지 않아 이번엔 확인 못 함"
+        )
+    # 저장한 뒤 물었으면 상한이 아니다. 그 조각은 끝났고 pipeline 이 맥락 없는 질문으로 내린다
+    if _wrote(last):
+        assert not last.ask_limit_reached, "저장한 run 을 상한으로 셈"
+    else:
+        assert last.ask_limit_reached, "상한에서 또 물었는데 표시가 없음"
+
+
+def test_상한_사슬이_저장_없이_말로_끝나면_저장했다고_하지_않는다(vague_chain: Chain) -> None:
+    # "기록할게요" 라고 하고 저장하지 않으면 보호자는 기록된 줄 안다(C05 와 같은 기준).
+    # 질문으로 끝났거나 저장하고 끝났으면 볼 것이 없다
+    last = vague_chain.last
+    reply = last.reply
+    if reply is None or reply.kind != "message" or _wrote(last):
+        return
+    assert not _claims_save(reply.text), f"저장 없이 저장했다고 말함: {reply.text!r}"
