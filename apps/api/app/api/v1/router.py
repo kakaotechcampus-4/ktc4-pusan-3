@@ -13,7 +13,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps.auth import get_current_parent
-from app.api.v1.routers import auth, children, invites, me, policies, runs
+from app.api.v1.routers import auth, children, invites, me, policies, runs, suggestions
 
 public_router = APIRouter()
 """무인증. 로그인 자체를 시작·완료하는 5개와, 가입 전 동의 화면이 약관을 읽는
@@ -31,6 +31,7 @@ protected_router.include_router(children.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(runs.router)
+protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)
 public_router.include_router(policies.router)
 

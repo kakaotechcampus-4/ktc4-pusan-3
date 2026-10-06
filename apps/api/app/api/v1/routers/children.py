@@ -161,7 +161,7 @@ async def create_input(
     맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 꺼내는 건 한도를 통과한 뒤다.
     """
     if not idempotency_key:
-        raise ApiError(400, "idempotency_key_required", "Idempotency-Key 헤더가 필요해요")
+        raise ApiError(400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요")
 
     scope = {
         "parent_id": parent.parent_id,
@@ -205,7 +205,7 @@ async def create_input(
         )
 
     channel = registry.open_run(parent_id=parent.parent_id)
-    idempotency.remember(**scope, run_id=channel.run_id)
+    idempotency.remember(**scope, replay=channel.run_id)
     # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
     # 되지 않는다 (§2).
     job = runner.agent_job(
