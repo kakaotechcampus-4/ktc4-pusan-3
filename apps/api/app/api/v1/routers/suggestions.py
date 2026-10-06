@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, Request
@@ -108,13 +109,11 @@ async def approve_suggestions(
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 _AGENT_CATEGORY = {"activity": "activity", "health": "health"}
-_counter = 0
 
 
 def _next_draft_id() -> str:
-    global _counter
-    _counter += 1
-    return f"d{_counter}"
+    """초안 번호. 아이의 모든 초안 사이에서 유일해야 한다 (Agent SSE 초안 포함)."""
+    return str(_uuid.uuid4())
 
 
 @router.post(

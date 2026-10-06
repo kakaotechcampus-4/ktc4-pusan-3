@@ -187,6 +187,35 @@ async def test_event_drafts_food_grouped(
     assert len(data["drafts"][0]["suggestion_ids"]) == 2
 
 
+async def test_event_drafts_ids_are_unique_uuids(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """draft_id는 UUID 형식이고 호출마다 겹치지 않는다."""
+    s1 = await _make_suggestion(session, child_id=cid, status=SuggestionStatus.APPROVED)
+    s2 = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=SuggestionStatus.APPROVED
+    )
+    headers, _ = bearer
+
+    resp1 = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s1.id)]},
+        headers=headers,
+    )
+    resp2 = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s2.id)]},
+        headers=headers,
+    )
+    id1 = resp1.json()["drafts"][0]["draft_id"]
+    id2 = resp2.json()["drafts"][0]["draft_id"]
+    # UUID 형식 검증
+    uuid.UUID(id1)
+    uuid.UUID(id2)
+    # 서로 다름
+    assert id1 != id2
+
+
 async def test_event_drafts_not_approved(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
