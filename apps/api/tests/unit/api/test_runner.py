@@ -93,7 +93,7 @@ async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
     monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.05)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, run_id=channel.run_id)
+    idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
@@ -141,7 +141,7 @@ async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, run_id=channel.run_id)
+    idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
@@ -167,7 +167,7 @@ async def test_failed_from_the_agents_releases_the_key(monkeypatch):
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, run_id=channel.run_id)
+    idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
@@ -188,7 +188,7 @@ async def test_부분_결과는_done_으로_끝나고_키를_놓지_않는다(mo
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, run_id=channel.run_id)
+    idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
