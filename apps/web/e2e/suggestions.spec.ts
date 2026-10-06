@@ -221,7 +221,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     const saved = writes(calls, "POST", /\/health-safety$/);
     expect(saved).toHaveLength(1);
     expect(saved[0].idempotencyKey).toBeTruthy();
-    expect(saved[0].body).toMatchObject({ type: "allergy", label: "닭고기" });
+    expect(saved[0].body).toMatchObject({ type: "allergy", label: "계란" });
 
     await sheet.getByRole("button", { name: "알레르기가 있는 건 빼고 고를게요" }).click();
     // s_1 만 골랐으므로 채택할 것이 남지 않는다.
@@ -236,6 +236,37 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
   });
+
+  test("놀이 제안이어도 먹을 것이 들어 있으면 묻는다 — 기준은 agent 가 아니다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    await page.getByText("놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await expect(sheet.getByText("땅콩 (알레르기 기록에 없음)")).toBeVisible();
+  });
+});
+
+test.describe("승인 게이트 ㉡ — 화면이 모르는 사전검사", () => {
+  test.use({ scenario: "precheck_unknown_code" });
+
+  test("묻지 못하는 검사가 걸린 제안은 채택하지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    await page.getByText("주말에 실내 물놀이장은 어떨까요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+
+    // 🚨 예전에는 시트가 아무것도 묻지 않은 채 "확인했어요" 로 그대로 채택했다.
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await expect(sheet.getByText("여기서 확인할 수 없는 항목이 있어요")).toBeVisible();
+    await expect(sheet.getByRole("button", { name: "확인했어요" })).toHaveCount(0);
+    await sheet.getByRole("button", { name: "확인하지 못한 건 빼고 고를게요" }).click();
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+    expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
+  });
 });
 
 test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 게이트 ㉠ 은 초안 제출", () => {
@@ -247,7 +278,8 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     await page.getByRole("tab", { name: "놀이 3가지" }).click();
     await page.getByText("주말에 실내 물놀이장은 어떨까요").click();
 
-    // 채택 — 재료 확인은 food 만이라 시트 없이 바로 간다. 게이트가 아니라 표식도 키도 없다.
+    // 채택 — 이 제안엔 알레르기 항목(`allergens`)이 없어서 시트 없이 바로 간다.
+    // 게이트가 아니라 표식도 키도 없다.
     await expectNoGate(page);
     await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
     await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();

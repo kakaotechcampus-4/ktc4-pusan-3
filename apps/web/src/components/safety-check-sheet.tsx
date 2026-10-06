@@ -67,8 +67,8 @@ export function SafetyCheckSheet({
   /** 그만두기. 🚨 아무것도 채택되지 않는다 (알레르기 기록은 이미 저장된 것만 남는다). */
   onCancel: () => void;
   /**
-   * 확인 끝. 🚨 **알레르기가 있는 재료가 걸린 제안 id 를 함께 준다** — 그릇은 그것을 빼고
-   *    나머지만 채택한다.
+   * 확인 끝. 🚨 **알레르기가 있는 재료나 화면이 모르는 검사가 걸린 제안 id 를 함께 준다** —
+   *    그릇은 그것을 빼고 나머지만 채택한다.
    * 🚨 **`null` 이면 어느 제안인지 모른다는 뜻이다**(서버가 `suggestion_id` 를 안 실었다).
    *    그때는 **전부 막는다** — 알레르기에서 덜 막는 쪽으로 기울 수 없다.
    */
@@ -95,6 +95,12 @@ export function SafetyCheckSheet({
   const safetyKeys = useRef(new Map<string, IdempotencyKey>());
 
   const ingredientChecks = prechecks.filter((p) => p.code === "unknown_ingredient");
+  /**
+   * 🚨 **화면이 모르는 `code` 는 묻지 못하니 그 제안을 막는다.** 예전에는 시트만 열리고 아무것도
+   *    묻지 않은 채 그 제안이 그대로 채택됐다 — 서버가 새 검사를 보냈는데 화면이 덜 막는 쪽으로
+   *    기울면, 알레르기 필터를 규칙이 아니라 화면 버전이 정하게 된다 (최상위 §3).
+   */
+  const unhandledChecks = prechecks.filter((p) => p.code !== "unknown_ingredient");
   const answeredAll = ingredientChecks.every((p) => answers[p.item] !== undefined);
   /**
    * 🚨 알레르기가 확인된 재료. 저장까지 끝난 재료는 **선택을 바꿔도 계속 막는다** — 기록이 이미
@@ -103,9 +109,10 @@ export function SafetyCheckSheet({
   const blockedItems = ingredientChecks
     .map((p) => p.item)
     .filter((item) => answers[item] === "has" || saveState[item] === "saved");
-  const blocked = blockedItems.length > 0;
+  const allergyBlocked = blockedItems.length > 0;
+  const blocked = allergyBlocked || unhandledChecks.length > 0;
   /** 막힌 재료가 전부 기록에 남았는가. 이것이 참일 때만 "앞으로도 걸러내요" 라고 말할 수 있다. */
-  const recorded = blocked && blockedItems.every((item) => saveState[item] === "saved");
+  const recorded = allergyBlocked && blockedItems.every((item) => saveState[item] === "saved");
   const failedItems = blockedItems.filter((item) => saveState[item] === "failed");
 
   /** 승인 게이트 ㉡ — 보호자가 확인한 값만 들어간다. LLM 이 추론한 값은 여기 오지 않는다 (NF-03). */
@@ -144,9 +151,10 @@ export function SafetyCheckSheet({
       onConfirm([]);
       return;
     }
-    const ids = ingredientChecks
-      .filter((p) => blockedItems.includes(p.item))
-      .map((p) => p.suggestion_id);
+    const ids = [
+      ...ingredientChecks.filter((p) => blockedItems.includes(p.item)),
+      ...unhandledChecks,
+    ].map((p) => p.suggestion_id);
     // 🚨 하나라도 어느 제안인지 모르면 **전부 막는다** (위 `onConfirm` 머리말).
     onConfirm(ids.some((id) => id === undefined) ? null : (ids as string[]));
   }
@@ -166,7 +174,11 @@ export function SafetyCheckSheet({
            *    이어 가는 것**뿐이라 `btn-approve` 도 `caution` 도 쓰지 않는다.
            */}
           <Button block disabled={!answeredAll || busy} aria-busy={busy} onClick={confirm}>
-            {blocked ? "알레르기가 있는 건 빼고 고를게요" : "확인했어요"}
+            {allergyBlocked
+              ? "알레르기가 있는 건 빼고 고를게요"
+              : blocked
+                ? "확인하지 못한 건 빼고 고를게요"
+                : "확인했어요"}
           </Button>
           <Button variant="tertiary" block onClick={onCancel} disabled={busy}>
             그만두기
@@ -175,7 +187,13 @@ export function SafetyCheckSheet({
       }
     >
       <div className="flex flex-col gap-4">
-        {blocked ? (
+        {unhandledChecks.length > 0 ? (
+          <Banner tone="danger" title="여기서 확인할 수 없는 항목이 있어요">
+            {unhandledChecks.map((p) => p.item).join(", ")} — 이 항목이 걸린 제안은 고르지 않아요.
+          </Banner>
+        ) : null}
+
+        {allergyBlocked ? (
           // 🚨 두 문구를 가르는 것은 보호자의 선택이 아니라 **서버 저장 결과**다.
           //    저장 전에 "앞으로도 걸러내요" 라고 말하면, 저장이 실패한 채로 닫은 보호자가
           //    다음 제안에서도 걸러진다고 믿는다 (PR #71 리뷰).

@@ -58,6 +58,9 @@ export const SCENARIOS = {
   send_failed:
     "04 보내기 실패 (네트워크) — 키마다 처음 한 번은 서버에 닿지 않는다 (같은 키로 다시 시도하면 닿는다)",
   daily_limit: "04 한 줄 보내기 — 하루 한도 초과 429 (다시 시도 버튼이 없어야 한다)",
+  // 🚨 **서버가 화면보다 먼저 새 검사를 붙인 날이다** (#233 후속). 화면은 물을 수 없으니 그 제안을
+  //    막아야 한다 — 예전에는 시트만 열리고 아무것도 안 물은 채 그대로 채택됐다.
+  precheck_unknown_code: "05 사전검사 — 화면이 모르는 code (그 제안은 고르지 않아야 한다)",
 } as const;
 
 export type Scenario = keyof typeof SCENARIOS;
