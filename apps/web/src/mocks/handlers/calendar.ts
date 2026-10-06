@@ -124,7 +124,6 @@ export const calendarHandlers = [
           title: body.event.title,
           starts_at: body.event.starts_at,
           all_day: body.event.all_day,
-          status: "confirmed" as const,
           items: body.items.map((item, index) => ({
             item_id: item.item_id ?? `i_new_${index}`,
             item_name: item.item_name,

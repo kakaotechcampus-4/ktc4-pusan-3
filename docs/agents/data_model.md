@@ -349,8 +349,9 @@
 
 ### Food 영양소 — 이 문서에 두지 않는다
 
-`intake_daily` · `nutrient_reference` · `menu_catalog` 는 Food 만 읽는 도메인 전용 테이블이다.
-필드와 DDL 은 [food_agent_own_table.md](food/food_agent_own_table.md) §2 · §3 에 있다.
+`nutrient_reference` · `menu_catalog` 는 Food 만 읽는 도메인 전용 테이블이다.
+필드와 DDL 은 [food_agent_own_table.md](food/food_agent_own_table.md) §1 · §3 에 있다.
+영양 합계 · 구간은 저장하지 않는다 — 판정할 때마다 원본(`observation_food` · `daycare_meal`)에서 계산한다([영양소_계산_설계.md](food/영양소_계산_설계.md) §3).
 
 ## Suggestion
 
@@ -391,7 +392,7 @@
 
 | 무리 | 값 | 개인화 근거로 셈 |
 | --- | --- | --- |
-| 아이 기록 | `observation_food` · `observation_health` · `observation_education` · `observation_activity` · `observation_routine` · `profile_affinity` · `child_growth_log` · `notice` · `intake_daily` | ✅ |
+| 아이 기록 | `observation_food` · `observation_health` · `observation_education` · `observation_activity` · `observation_routine` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal` | ✅ |
 | 문서 행 | `food_doc` · `growth_doc` · `activity_doc` | ❌ 참고만 (Health는 문서 행을 쓰지 않는다 — 상수 파일이다) |
 
 🚨 **품질 지표는 아이 기록만 센다.** `kind='personalized'`인데 아이 기록 행이 0이면 버그다 — 문서 행만 달고 나가면 COUNT는 통과하지만 근거 없는 추천이다.
@@ -531,7 +532,7 @@
 Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요청" 을 한자리에 모았다.
 
 도메인 전용 테이블은 여기 두지 않는다 — 다른 Agent 가 읽지 않는 테이블은 소유 Agent 문서에 있다.
-`daycare_meal` · `intake_daily` · `menu_catalog` · `nutrient_reference` · `food_doc` · `allergen_term` 은 [food_agent_own_table.md](food/food_agent_own_table.md),
+`daycare_meal` · `menu_catalog` · `nutrient_reference` · `food_doc` · `allergen_term` 은 [food_agent_own_table.md](food/food_agent_own_table.md),
 `medication_schedule` · `medication_dose` · `medication_dose_log` · `prescription_draft` 은 [health_agent_own_table.md](health/health_agent_own_table.md),
 `growth_doc` · `book_catalog` 은 [growth_agent_own_table.md](growth/growth_agent_own_table.md).
 
@@ -559,7 +560,7 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 `observation_*.source_notice_id` 가 이미 이 테이블을 가리키는데 테이블이 없어서 FK 가 안 걸려 있다.
 `suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다.
 
-소유는 Memory · OCR 파이프라인이다. Growth 가 기관 맥락 연결에 읽고, Food 는 `intake_daily.source_notice_id` 로 건다.
+소유는 Memory · OCR 파이프라인이다. Growth 가 기관 맥락 연결에 읽고, Food 는 `daycare_meal.source_notice_id` 로 건다.
 Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 돈다.
 
 필드는 아직 정하지 않았다. OCR 3갈래 분류에서 "일반 공지" 로 빠지는 것을 담는다.

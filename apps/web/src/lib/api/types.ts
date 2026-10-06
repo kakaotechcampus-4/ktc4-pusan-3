@@ -27,7 +27,7 @@ export const REF_KINDS = [
    *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
    *
    * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
-   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` · `intake_daily` ·
+   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` ·
    *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
    *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
    *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.
@@ -74,7 +74,6 @@ export type CorrectionVerdict =
   "confirm" | "once_only" | "need_more_observation" | "outdated" | "wrong";
 
 export type SuggestionStatus = "draft" | "approved" | "rejected" | "expired";
-export type EventStatus = "draft" | "confirmed" | "cancelled";
 
 /* ── Observation ──────────────────────────────────────────────────────── */
 
@@ -272,6 +271,10 @@ export interface Reminder {
   sent: boolean;
 }
 
+/**
+ * 🚨 **`status` 가 없다** (#118). `event` 테이블에는 보호자가 제출한 행만 들어가서
+ *    `draft` 와 `confirmed` 를 가를 일이 없다. 초안은 `EventDraft` 로 따로 오고 행이 아니다.
+ */
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -280,8 +283,6 @@ export interface CalendarEvent {
   ends_at: string | null;
   all_day: boolean;
   category: "institution" | "health" | "activity" | "etc";
-  /** draft 는 24h 만료. confirmed 로 가는 길목이 승인 게이트 ㉠ 이다. */
-  status: EventStatus;
   created_by: "agent" | "caregiver";
   source_notice_id: string | null;
   source_refs: Ref[];
@@ -456,7 +457,7 @@ export interface AnswerRequest {
  * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
  */
 
-/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `status` · `reminders` 가 없다 — 아직 행이 아니다. */
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminders` 가 없다 — 아직 행이 아니다. */
 export interface EventDraftFields {
   title: string;
   /**

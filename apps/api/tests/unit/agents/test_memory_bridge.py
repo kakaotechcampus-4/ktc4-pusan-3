@@ -53,6 +53,30 @@ async def test_Food_포트는_저장한_food_관찰을_FoodObservation_으로_�
     assert again[0].id == row.id
 
 
+async def test_Food_포트는_관찰의_출처를_같이_넘긴다() -> None:
+    # 기관 식사가 daycare_meal 과 겹치는지는 출처로 가른다(영양소_계산_설계 N-10)
+    store = InMemoryStore(now=NOW)
+    notice = UUID(int=50)
+    await _save(store, "food", subject="카레", confidence_source="parent_hearsay")
+    await _save(
+        store,
+        "food",
+        subject="미역국",
+        confidence_source="institution_notice",
+        source_notice_id=notice,
+    )
+    await _save(store, "food", subject="딸기")
+
+    rows = await StoreFoodMemory(store).observations(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+
+    by_subject = {row.subject: (row.confidence_source, row.source_notice_id) for row in rows}
+    assert by_subject == {
+        "카레": ("parent_hearsay", None),
+        "미역국": ("institution_notice", notice),
+        "딸기": (None, None),
+    }
+
+
 async def test_Food_는_stand_alone_까지_읽고_inactive_deleted_는_읽지_않는다() -> None:
     store = InMemoryStore(now=NOW)
     await _save(store, "food", subject="딸기")

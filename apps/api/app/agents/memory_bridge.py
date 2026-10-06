@@ -79,6 +79,8 @@ class StoreFoodMemory:
                 amount_text=row.fields.get("amount"),
                 polarity=int(row.fields.get("polarity") or 0),
                 updated_at=row.created_at,
+                confidence_source=row.fields.get("confidence_source"),
+                source_notice_id=row.fields.get("source_notice_id"),
             )
             for row in rows
         ]

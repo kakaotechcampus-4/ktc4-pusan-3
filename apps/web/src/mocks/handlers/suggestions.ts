@@ -35,6 +35,23 @@ export function resetSubmittedEvents(): void {
   approvedSuggestions.clear();
 }
 
+/**
+ * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
+ *    없는 제안 404 → 채택 안 된 제안 422. 화면은 이 경로의 `message` 를 그대로 띄운다.
+ * 🚨 **모르는 id 를 조용히 걸러 내지 않는다.** 화면에 없는 제안이 섞였다는 뜻이라 버그다.
+ */
+function refuseUnapproved(ids: string[]) {
+  for (const id of ids) {
+    if (!suggestions.some((s) => s.id === id)) {
+      return apiError(404, "not_found", "제안을 찾을 수 없어요");
+    }
+    if (!approvedSuggestions.has(id)) {
+      return apiError(422, "not_approved", "채택되지 않은 제안이 포함돼 있어요");
+    }
+  }
+  return null;
+}
+
 /** 05 제안 · 06 승인. */
 export const suggestionHandlers = [
   http.post(url("/children/:cid/suggestions"), async () => {
@@ -138,13 +155,15 @@ export const suggestionHandlers = [
     if (currentScenario() === "consent") return consentRequired("child_health");
 
     const body = (await request.json()) as ApproveSuggestionsRequest;
-    const ids = body.suggestion_ids ?? [];
-    if (ids.length === 0) return apiError(400, "invalid_request", "고른 제안이 없어요.");
+    const ids = [...new Set(body.suggestion_ids ?? [])];
+    if (ids.length === 0) return apiError(400, "validation_failed", "제안을 선택해 주세요");
 
     const picked = suggestions.filter((s) => ids.includes(s.id));
     if (picked.length !== ids.length) {
-      return apiError(400, "invalid_request", "없는 제안이 섞여 있어요.");
+      return apiError(404, "not_found", "제안을 찾을 수 없어요");
     }
+    // ⚠️ 실서버의 `409 not_draft`(거절된 제안) · `409 suggestion_expired`(24시간 지남)는 여기서
+    //    안 난다 — 목의 제안은 늘 `draft` 이고 만료되지 않는다. 이미 채택한 것은 서버도 그대로 200 이다.
 
     for (const id of ids) approvedSuggestions.add(id);
 
@@ -167,16 +186,18 @@ export const suggestionHandlers = [
    */
   http.post(url("/children/:cid/suggestions/event-drafts"), async ({ request }) => {
     await networkDelay();
-    const { suggestion_ids: ids } = (await request.json()) as { suggestion_ids: string[] };
+    const body = (await request.json()) as { suggestion_ids: string[] };
+    const ids = [...new Set(body.suggestion_ids)];
+    if (ids.length === 0) return apiError(400, "validation_failed", "제안을 선택해 주세요");
+
+    // 🚨 **채택한 것만 일정이 된다** — 고르기와 일정 만들기는 다른 단계다 (#151).
+    const refused = refuseUnapproved(ids);
+    if (refused) return refused;
 
     const pool = [...suggestions, staleSuggestion];
     const chosen = ids
       .map((id) => pool.find((s) => s.id === id))
       .filter((s): s is (typeof pool)[number] => s !== undefined);
-
-    if (chosen.length === 0) {
-      return apiError(400, "invalid_request", "고른 제안이 없어요");
-    }
 
     const food = chosen.filter((s) => s.agent === "food");
     const rest = chosen.filter((s) => s.agent !== "food");
@@ -244,11 +265,17 @@ export const suggestionHandlers = [
       };
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
+      //    실서버는 스키마가 `starts_at` 을 필수로 걸어 공통 검증 오류로 낸다.
       if (!body.event.starts_at) {
-        return apiError(400, "invalid_request", "일자가 없는 일정은 만들 수 없어요");
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["event.starts_at"],
+        });
       }
 
-      const sids = body.suggestion_ids ?? [];
+      const sids = [...new Set(body.suggestion_ids ?? [])];
+      const refused = refuseUnapproved(sids);
+      if (refused) return refused;
+
       // 여기까지 왔다는 건 처음 보는 키라는 뜻이다 — 즉 새 요청이다.
       // 🚨 묶인 초안은 **하나라도** 이미 연결돼 있으면 막는다. 일부만 넣으면 같은 제안이 일정 둘에 걸린다.
       if (sids.some((sid) => linkedSuggestions.has(sid))) {
@@ -265,7 +292,9 @@ export const suggestionHandlers = [
         title: body.event.title,
         starts_at: body.event.starts_at,
         all_day: body.event.all_day,
-        status: "confirmed",
+        // 실서버와 같다 (#241) — 제안에서 온 일정만 `agent` 이고, 출처 참조는 이 경로가 채우지 않는다.
+        created_by: sids.length > 0 ? "agent" : "caregiver",
+        source_refs: [],
         items: body.items.map((item, index) => ({
           item_id: item.item_id ?? `i_new_${index}`,
           item_name: item.item_name,
@@ -275,7 +304,8 @@ export const suggestionHandlers = [
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).
-      return HttpResponse.json({ event });
+      // 201 은 실서버와 같다 (#241). 같은 키 재시도도 `withIdempotency` 가 이 코드 그대로 재생한다.
+      return HttpResponse.json({ event }, { status: 201 });
     }),
   ),
 ];
