@@ -214,6 +214,89 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 ---
 
+## 4-1. Activity — `activity_doc`
+
+설계 근거는 [activity-agent-v1.md](../activity/activity-agent-v1.md) D9 · D10. 이 절은 행 모양과 제작 규칙이다.
+
+### 무엇을 담나
+
+| `row_type` | 답하는 질문 | 쓰는 곳 | 단계 |
+| --- | --- | --- | --- |
+| `play_idea` | 이 월령에 지금 바로 해 볼 놀이 하나는 어떤 모양인가? | `search_activity_doc` → 프롬프트 `[예시]` 5행 | 0–71개월 |
+
+종류는 하나다. Activity 는 `[예시]` 한 곳에서만 쓰여서 종류로 나눌 곳이 없다.
+
+**넣지 않는 것** → 발달 이정표 · "이 나이면 ~할 수 있다" 식 문장(Growth 와 같은 이유) · 위험 월령(`reference/hazard_terms.yaml`) · 장소 목록(`place` 테이블).
+
+### 도메인 컬럼 — 출력 후보와 같은 칸
+
+예시가 출력 모양을 그대로 보여 주도록 `ActivityCandidate` 와 같은 칸을 둔다. 재료를 따로 적어야 위험 용어 검사가 후보와 같은 방식(문장 · 재료 따로)으로 돈다.
+
+| 컬럼 | 비고 |
+| --- | --- |
+| `setting` | `indoor` · `outdoor` · `either` |
+| `materials` | text[] — **`hazard_term` 스캔 대상.** 없으면 `[]` |
+| `caregiver_role` | `together` · `nearby` · `independent`. `min_month < 18` 이면 `together` 만 |
+| `physical_intensity` | `low` · `medium` · `high` |
+| `involves_food` | boolean |
+| `area` | 고시 영역 — `basic_life` · `physical_health` · `communication` · `social` · `art` · `nature` (신체운동 · 신체운동·건강은 하나로) |
+
+### 소스
+
+🚨 **규칙은 하나다 — 사실만 읽고 문장은 새로 쓴다** (D10).
+
+| 소스 | 쓸 곳 | 라이선스 |
+| --- | --- | --- |
+| 「제4차 어린이집 표준보육과정」 고시 (보건복지부 고시 제2020-75호, 0~1세 · 2세 · 3~5세) | 행마다 영역 · 내용범주 · 내용 | 고시 본문 = `public_law`. 해설서 부록에 실린 본문으로 대조했다 |
+| 표준보육과정 · 누리과정 **해설서 · 사례집** 본문 | 구체 놀이 아이디어 | 저작물 → `fact_rewrite` 만 (Growth 와 같다) |
+| i-누리 · 육아종합지원센터 놀이자료 · 누리과정 놀이자료(공공누리 제4유형) | – | **보류.** Activity D10 은 `fact_rewrite` 로 읽을 수 있다고 봤고 Growth(§4)는 사용 안 함으로 정해서 규칙이 둘이다. 하나로 맞춘 뒤 정한다 |
+
+### 행 예시
+
+```yaml
+- doc_key: activity.play.m18_23.cushion_crawl
+  row_type: play_idea
+  title: 쿠션 길 기어 넘기
+  body: 거실 바닥에 쿠션을 두세 개 늘어놓아 낮은 언덕을 만들고, 어른이 끝에서 불러 주면 기어서 넘어오게 한다.
+  min_month: 18
+  max_month: 24              # 미만
+  setting: indoor
+  materials: [쿠션]
+  caregiver_role: together
+  physical_intensity: medium
+  involves_food: false
+  area: physical_health
+  tags: [gross_motor]
+  source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
+  source_org: 보건복지부
+  source_year: 2020
+  source_locator: 0~1세 신체운동 · 신체활동 즐기기 · 기본 운동을 시도한다
+  license_basis: public_law
+  status: draft
+  authored_by: ai-draft      # AI 초안. 검수자가 원문을 펴 놓고 확인한 뒤 approved
+  version: 1
+```
+
+시드 파일은 `apps/api/reference/activity_doc.yaml`, 로더는 `app/agents/activity/doc_seed.py` (공통 칸 검사는 `app/agents/common/reference.py` `parse_doc_meta`). `search_text` 는 로더가 `title + tags` 로 만든다 — YAML 에 적지 않는다.
+
+### 분량
+
+| 월령 | 0–5 | 6–11 | 12–17 | 18–23 | 24–35 | 36–47 | 48–71 | 합계 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 행 | 8 | 10 | 12 | 12 | 14 | 12 | 12 | **80** |
+| 실내 / 바깥·어디서나 | 8 / 0 | 7 / 3 | 8 / 4 | 8 / 4 | 9 / 5 | 8 / 4 | 8 / 4 | |
+
+구간 경계는 판정 경계(18 보호자 동반 · 36 작은 부품 · 48 질식 음식)와 맞췄다. 첫 판은 구간마다 1행(7행)이고, 80행을 채우면 아래 커버리지 기준을 5행으로 올린다.
+
+### 전처리 추가 검사 (테스트로 고정 — `test_activity_doc_seed.py`)
+- **위험 용어** — 그 행의 `min_month` 에서 `title` · `body` · 재료 각각이 **아무 축에도 걸리지 않는다(경고 포함).** 예시가 출력 검증에 걸리는 모양이면 모델에게 거절될 문장을 가르친다. 축 판정은 나이가 많을수록 약해져서 가장 어린 월령만 보면 된다.
+- **보호자 역할** — `min_month < 18` 이면 `together`.
+- **평가 표현** — `app/rules/evaluative.py` 공통 목록.
+- **커버리지** — 0–71개월 모든 월령에서 덮는 행이 기준 이상.
+- 원문과 8어절 이상 겹치는지(§6)는 원문이 저장소 밖이라 검수자가 본다.
+
+---
+
 ## 5. ~~Health — `health_doc`~~ → 상수 파일로
 
 **테이블을 만들지 않는다**(2026-09-22). Health가 쓰는 문구는 임베딩도 의미 검색도 없이 **키 정확 일치**로만 꺼낸다. 그러면 YAML 상수 파일과 다를 게 없고, Health의 다른 기준표(검진 주기·접종 일정)가 이미 `reference/*.yaml`이라 둘로 나눌 이유가 없다.
@@ -291,14 +374,14 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | Agent | 조회 tool | 필터 → 순위 | k | 들어가는 곳 | 출력 표시 |
 | --- | --- | --- | --- | --- | --- |
-| Food | `search_food_doc` (**코드 tool**, run 시작 시 자동 조회) | 단계 · `row_type` → 의미 검색 | 3 | 프롬프트 `[예시]` | `reference_refs` → "참고: ○○ 자료" |
+| Food | `search_food_doc` (**코드 tool**, run 시작 시 자동 조회) | 단계 · `row_type` → 의미 검색 | 3 | 프롬프트 `[예시]` | `suggestion_evidence`(`*_doc`) → "참고: ○○ 자료" |
 | Growth | `search_growth_doc` (코드 tool) | 단계 · 영역 · `routine_category` · `trigger_tags` → 의미 검색 | 3 | 프롬프트 `[예시]` | 동일 |
 | Activity | `search_activity_doc` (코드 tool) | 월령 슬라이스 → 의미 검색 | 5 | 프롬프트 `[예시]` | 동일 |
 | Health | `get_health_phrase(kind, key, months)` — 상수 파일 | 키 정확 일치 | 1 | readout 본문 그대로 | 출처 한 줄 고정 |
 
 - 조회는 **코드 tool**로 둔다. 모델에게 검색 tool을 주면 쿼리를 자유 문장으로 만들면서 아이 발화를 넣을 수 있고, 조회 결과 수와 조회 여부를 테스트로 고정하기 어렵다.
 - 의미 검색 쿼리는 **코드가 조립**한다: 라벨 · 단계 · 관심사 `merge_key` · 루틴 카테고리. 보호자 원문은 넣지 않는다.
-- `suggestion`에 `reference_refs jsonb` 컬럼 추가 필요 (`[{kind: "food_doc", id}]`). `source_refs`와 분리.
+- 문서 행은 `suggestion` 에 칸을 따로 두지 않고 `suggestion_evidence` 에 `source_kind='*_doc'` 으로 쌓는다 (§0-3). `source_kind` 가 텍스트라 스키마 변경이 없고, 개인화 근거 집계에서는 `count_child_records()` 가 뺀다. (이전 판의 `reference_refs` 컬럼 계획은 이것으로 대체됐다.)
 
 ---
 
@@ -311,7 +394,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 3 | `meal_pattern` · `nutrient_note` | `learning_activity` 60행 | 검진·접종 문구 |
 | 4 | lint · 검수 · 적재 · recall 평가 | 동일 | 의료 검수 · 규칙 1:1 테스트 |
 
-공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference_refs` 컬럼 · `reference/hazard_terms.yaml` (Growth lint가 사용).
+공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference/hazard_terms.yaml` (Growth lint가 사용). 시드 공통 칸 검사는 `app/agents/common/reference.py` `parse_doc_meta` 가 있다 (Activity 가 먼저 씀).
 
 ---
 
@@ -322,5 +405,5 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | R-2 | 공공 발간물별 공공누리 유형 실제 확인 (특히 급식관리지원센터 · 학회 자료) |
 | R-3 | Health 의료 검수자 확보 여부. 없으면 `emergency_sign`은 국가건강정보포털 문구 범위로만 제한 |
 | R-4 | 원문 복제 검사 기준 (8어절) 확정 |
-| R-5 | `reference_refs`를 화면에 노출할지 (출처 표시 UI) |
+| R-5 | 문서 근거(`suggestion_evidence` 의 `*_doc` 행)를 화면에 노출할지 (출처 표시 UI) |
 | R-6 | 임베딩 모델·차원 — 기존 `vector(1536)`과 통일 |
