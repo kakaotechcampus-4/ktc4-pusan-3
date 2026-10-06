@@ -194,6 +194,13 @@ def test_before_와_event_의_시각_표기가_같다() -> None:
     assert payload["before"]["ends_at"] == payload["event"]["ends_at"] is None
 
 
+def _is_uuid(value: str | None) -> bool:
+    try:
+        return value is not None and str(UUID(value)) == value
+    except ValueError:
+        return False
+
+
 def test_같은_일정에_두_번_쌓으면_초안은_하나다() -> None:
     # update_event 뒤에 create_event_item 이 같은 일정에 오는 경우
     book = DraftBook()
@@ -505,8 +512,23 @@ async def test_초안마다_draft_id_가_붙는다(context: AgentContext) -> Non
     await _update(context, event_id, title="가을 운동회")
 
     ids = [draft.draft_id for draft in context.drafts.all()]
-    assert ids == ["d1", "d2"]
+    assert len(set(ids)) == 2
+    # 추천 쪽 초안(`_next_draft_id`)과 같은 uuid 문자열이다. 프로세스 안에서 세는 번호는
+    # 서버를 다시 켜면 처음부터 다시 세서, 화면 세션 스토리지에 남은 초안과 또 겹친다
+    assert all(_is_uuid(draft_id) for draft_id in ids)
     assert all(draft.to_payload()["draft_id"] for draft in context.drafts.all())
+
+
+def test_run_이_달라도_draft_id_는_겹치지_않는다() -> None:
+    # 화면은 아이의 모든 초안을 한 스토어에 두고 draft_id 가 같으면 같은 장으로 갈아 끼운다.
+    # DraftBook 은 run 마다 새로 생기니, 번호를 run 안에서만 세면
+    # 앞 run 의 안 넣은 초안이 덮인다 (#250)
+    first_run, second_run = DraftBook(), DraftBook()
+
+    first = first_run.put(_draft(title="금요일 물놀이"))
+    second = second_run.put(_draft(title="다음주 화요일 병원"))
+
+    assert first.draft_id != second.draft_id
 
 
 async def test_같은_일정을_두_번_고쳐도_draft_id_는_그대로다(context: AgentContext) -> None:

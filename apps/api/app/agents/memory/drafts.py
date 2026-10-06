@@ -10,6 +10,7 @@ to_payload() 는 SSE로 나갈 JSON 을 만든다. 모양의 정본은 app/core/
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
+from uuid import uuid4
 
 from app.core.event_draft import (
     CreateEventDraft,
@@ -78,7 +79,7 @@ class EventDraft:
     items: tuple[DraftItem, ...] = ()
     changed: tuple[str, ...] = ()
     before: EventSnapshot | None = None  # create면 None
-    draft_id: str | None = None  # DraftBook이 채운다
+    draft_id: str | None = None  # DraftBook이 uuid로 채운다. 아이의 모든 초안 사이에서 유일
 
     def to_payload(self) -> dict[str, Any]:
         """op에 따라 모양이 갈린다. create는 POST, update는 PATCH.
@@ -136,15 +137,17 @@ class DraftBook:
     create_event_item이 같은 일정에 오면 나중 것이 앞의 것을 덮기 때문이다.
     all()은 넣은 순서를 지킨다. 보호자 화면의 초안 순서가 발화 순서와 같아야 한다.
 
-    draft_id 는 여기서 붙인다. 화면이 초안을 가리키고 제출 요청에 되돌려 보낼 키다.
+    draft_id 는 여기서 붙인다. 화면이 초안을 가리키는 키다(제출 요청에는 싣지 않는다).
     배열 인덱스로는 안 된다 — 세 장 중 한 장만 제출하면 나머지 인덱스가 밀린다.
     같은 일정에 두 번째 호출이 와도 id 는 유지한다.
+    아이의 모든 초안 사이에서 유일해야 해서 uuid 로 붙인다. 화면은 run 을 가리지 않고
+    draft_id 가 같으면 같은 장으로 갈아 끼우는데, DraftBook 은 run 마다 새로 생겨서
+    run 안에서만 세면 앞 run 의 안 넣은 초안이 덮인다(#250). 제안 초안(`_next_draft_id`)과 같다.
     """
 
     def __init__(self) -> None:
         self._drafts: dict[tuple[str, str | int], EventDraft] = {}
         self._creates = 0
-        self._issued = 0
 
     def put(self, draft: EventDraft) -> EventDraft:
         """초안을 넣고 draft_id 가 붙은 값을 돌려준다."""
@@ -156,8 +159,7 @@ class DraftBook:
             key = ("update", draft.event_id)
 
         kept = self._drafts.get(key)
-        self._issued += 1 if kept is None else 0
-        draft_id = kept.draft_id if kept is not None else f"d{self._issued}"
+        draft_id = kept.draft_id if kept is not None else str(uuid4())
         stored = replace(draft, draft_id=draft_id)
         self._drafts[key] = stored
         return stored
