@@ -13,6 +13,8 @@ import logging
 from datetime import date
 from uuid import UUID
 
+from sqlalchemy import text
+
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.curator.embedding.linker import link_observations
@@ -36,6 +38,12 @@ async def _run_curator(
     """별도 세션·트랜잭션에서 Curator 를 돌리고 recompute 한다."""
     async with async_session_factory() as session:
         try:
+            # 같은 아이의 동시 curator 실행을 직렬화한다.
+            # xact_lock 이라 트랜잭션이 끝나면 자동으로 풀린다.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": child_id.int % (2**63)},
+            )
             store = DbCuratorStore(session)
             result = await link_observations(store, embedder, judge, child_id=child_id)
 
