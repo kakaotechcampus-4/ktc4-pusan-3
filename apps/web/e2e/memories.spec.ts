@@ -75,13 +75,12 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
     await page.getByText("6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await expect(
-      sheet.getByText("이 프로필만으로는 추천을 만들지 않아요", { exact: false }),
+      sheet.getByText("이 기억만으로는 추천을 만들지 않아요", { exact: false }),
     ).toBeVisible();
   });
 
-  // 발견 ⑤ (#242) — `confirm` 은 화면에서 묻지 않기로 했는데(§5) 안내가 그 버튼을 누르라고 한다.
+  // `confirm` 은 화면에서 묻지 않는다(§5). 한동안 안내가 "맞아요를 눌러주세요" 였다 (#242).
   test("상세 안내가 화면에 없는 버튼을 가리키지 않는다", async ({ page }) => {
-    test.fail(true, '#242 발견 ⑤ — memory-detail-sheet.tsx 의 "맞아요를 눌러주세요"');
     await page.goto(`${MEMORIES}?tab=profile`);
     await page.getByText("6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
