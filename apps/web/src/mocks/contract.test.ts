@@ -250,6 +250,16 @@ describe("일정 초안", () => {
     }
   });
 
+  it("🚨 같은 제안으로 다시 만들면 초안 id 가 달라진다 — 서버는 요청마다 새로 붙인다 (#241)", async () => {
+    // 목이 제안에서 id 를 지어내면 화면이 같은 장으로 합치는 것을 우연히 통과한다.
+    // 합치는 것은 `mergeDrafts` 의 일이다 (`stores/event-draft.test.ts`).
+    const [first] = (await makeDrafts([firstOf("activity")])).drafts;
+    const [again] = (await makeDrafts([firstOf("activity")])).drafts;
+
+    expect(again.draft_id).not.toBe(first.draft_id);
+    expect(again.suggestion_ids).toEqual(first.suggestion_ids);
+  });
+
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
     const created = await makeDrafts([firstOf("food")]);
     for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();

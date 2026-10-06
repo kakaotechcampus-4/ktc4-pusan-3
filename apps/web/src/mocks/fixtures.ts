@@ -727,7 +727,9 @@ export const runEventDrafts: EventDraft[] = [
  */
 export function mealDraft(items: Suggestion[]): EventDraft {
   return {
-    draft_id: `d_meal_${items.map((s) => s.id).join("_")}`,
+    // 🚨 **요청마다 새 id 다** (#241 · 서버는 `uuid4`). 제안에서 지어내면 같은 제안으로 다시 만든
+    //    초안이 우연히 같은 장으로 합쳐져서, 실서버에서만 두 장이 서는 것을 목이 가린다.
+    draft_id: crypto.randomUUID(),
     op: "create",
     event_id: null,
     event: {
@@ -747,7 +749,7 @@ export function mealDraft(items: Suggestion[]): EventDraft {
 
 export function suggestionDraft(suggestion: Suggestion): EventDraft {
   return {
-    draft_id: `d_${suggestion.id}`,
+    draft_id: crypto.randomUUID(), // 🚨 요청마다 새 id 다 (위 `mealDraft` 와 같은 이유)
     op: "create",
     event_id: null,
     event: {
