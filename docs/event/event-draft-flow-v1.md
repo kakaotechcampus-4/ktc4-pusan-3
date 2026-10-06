@@ -57,7 +57,7 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 
 ```json
 {
-  "draft_id": "d1",
+  "draft_id": "6f1c2a9e-3b7d-4c55-9a1e-2d8f0b4c7e31",
   "op": "create",
   "event": {
     "title": "물놀이",
@@ -78,7 +78,7 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 
 ```json
 {
-  "draft_id": "d2",
+  "draft_id": "b2e47d08-91c6-4f3a-8d25-7c0e5a6b1f94",
   "op": "update",
   "event_id": "ev_1",
   "event":  { "title": "운동회", "starts_at": "2026-09-18T17:00:00+09:00",
@@ -97,7 +97,7 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 
 | 필드 | 뜻 | 근거 |
 | --- | --- | --- |
-| `draft_id` | 화면이 카드를 가리키고 세션 스토리지 키로 쓴다. run 안에서만 유일 (제안·OCR 경로에는 run 이 없다 — 그때는 "한 응답 안에서만 유일" 로 읽는다) | 배열 인덱스로는 한 장 제출 뒤 나머지가 밀린다 |
+| `draft_id` | 화면이 카드를 가리키고 세션 스토리지 키로 쓴다. **전체에서 유일한 uuid** 다 — 화면은 아이의 모든 초안을 한 스토어에 두고 `draft_id` 가 같으면 같은 장으로 갈아 끼워서, run 안에서만 유일하면 앞 run 의 안 넣은 초안이 조용히 덮인다. Memory 초안(`DraftBook`)과 제안 초안(`_next_draft_id`)이 같은 규칙이다 (#250) | 배열 인덱스로는 한 장 제출 뒤 나머지가 밀린다 |
 | `op` | `create` / `update` 둘뿐. 화면이 부를 엔드포인트를 이 값으로 고른다 | 9/21 결정 |
 | `event_id` · `before` | update 에만 있다. create 는 언제나 null 이라 싣지 않는다 | payload 를 op 별로 나눈 결과 |
 | `before` | 수정 전 원본 **전체**(준비물 포함) | 화면이 "오후 3시 → 오후 5시" 를 그린다. 바뀐 필드 이름만으로는 보호자가 시트에서 값을 고치는 순간 못 쓰게 된다 |

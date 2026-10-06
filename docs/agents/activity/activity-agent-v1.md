@@ -323,7 +323,7 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 - 🚩 **추천 → 일정 초안을 만드는 곳은 서버다.** `POST /suggestions/{sid}/event` 가 suggestion 을 읽어 `{ draft, prechecks }` 를 돌려주고, **이 엔드포인트는 쓰기를 하지 않는다.** Activity Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Agent 가 돌지 않는다.
 - **Activity 는 `prechecks` 가 없다.** 알레르기 사전검사는 Food 만 해당하고, Activity 의 안전 판정(`hazard_term`)은 추천을 만들 때 이미 끝났다.
 - **여러 제안을 승인해도 합치지 않는다 — 제안 1개 = 일정 1개.** Food 의 *"저녁 메뉴 제육 + 김치찌개"* 는 한 끼니라 합치는 게 자연스럽지만, Activity 의 *"토요일 공원 + 일요일 도서관"* 은 다른 날 · 다른 장소라 합치면 오히려 이상하다. 처리 방식은 도메인마다 다르다 (9/25 결정).
-- `draft_id` 는 *"한 응답 안에서만 유일"* 로 읽는다 — 제안 경로에는 run 이 없다.
+- `draft_id` 는 전체에서 유일한 uuid 다(`_next_draft_id`, #241). Memory 초안과 같은 규칙이다 — 화면은 `draft_id` 가 같으면 같은 장으로 갈아 끼운다 (#250).
 - `op` 는 `create` 하나다. 추천에서 생기는 일정은 언제나 새 일정이라 `event_id`·`before` 가 없다.
 
 **준비물(`items`)** — 지금은 **필드만 넘긴다** (`items: []`). 초안을 만드는 시점에 Agent 가 돌지 않으므로 Agent 가 채우려면 suggestion 에 준비물 필드가 새로 필요해서다. 나중에 채울 때는 **`ActivityCandidate.materials` 를 옮기고** 도시락·여벌옷 같은 외출용품만 코드 상수로 붙인다. `materials` 는 모델이 이미 후보마다 쓰는 필드라 새로 만들 것이 없다.
