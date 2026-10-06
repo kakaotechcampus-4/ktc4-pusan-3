@@ -61,7 +61,8 @@ def agent_job(
 ) -> Job:
     """진짜 Agent(entrypoint.handle_input)를 돌리는 job 을 만든다. 진행 이벤트는 번역해서 채널로.
 
-    - 저장소는 넘기지 않는다 — 지금은 run 마다 메모리 저장소다. DB 저장은 7단계.
+    - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
+      async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
       None 이면 진입점의 기본값을 쓴다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
@@ -90,28 +91,43 @@ def agent_job(
                 return
             relay(event)
 
-        try:
-            async with asyncio.timeout(RUN_DEADLINE_SECONDS):
-                await entrypoint.handle_input(
-                    child_id=child_id,
-                    parent_id=parent_id,
-                    raw_text=raw_text,
-                    birth_date=birth_date,
-                    run_id=channel.run_id,
-                    emit=emit,
-                    continuation=continuation,
+        from app.domains.memory.store.db_store import DbMemoryStore
+        from app.infra.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            store = DbMemoryStore(session)
+
+            async def commit() -> None:
+                await session.commit()
+
+            try:
+                async with asyncio.timeout(RUN_DEADLINE_SECONDS):
+                    await entrypoint.handle_input(
+                        child_id=child_id,
+                        parent_id=parent_id,
+                        raw_text=raw_text,
+                        birth_date=birth_date,
+                        run_id=channel.run_id,
+                        emit=emit,
+                        continuation=continuation,
+                        store=store,
+                        commit=commit,
+                    )
+            except TimeoutError:
+                log.warning(
+                    "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
-        except TimeoutError:
-            log.warning(
-                "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
-            )
-            channel.publish(sse.failed_event("timeout", raw_text))
-        finally:
-            # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다. done 이 아니면 전부 되돌린다
-            if continuation is not None and reply_to is not None and channel.ended_with != "done":
-                pending_reply.put(
-                    run_id=reply_to, parent_id=parent_id, child_id=child_id, context=continuation
-                )
+                channel.publish(sse.failed_event("timeout", raw_text))
+            finally:
+                # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다
+                not_done = channel.ended_with != "done"
+                if continuation is not None and reply_to is not None and not_done:
+                    pending_reply.put(
+                        run_id=reply_to,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        context=continuation,
+                    )
 
     return job
 
@@ -150,8 +166,9 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         #    "확인하지 못했어요" 로 떨어지고 키도 안 풀려 다시 눌러도 닫힌 run 만 재생된다.
         #    이미 나갔으면(done 뒤 결과 기록에서 터진 경우) 붙이지 않는다 — 화면은 이미 결과를
         #    받았다.
-        # 🚨 failed 는 "저장 없음" 이어야 한다. 7단계 러너 세션은 done 일 때만 확정(commit)하고
-        #    나머지는 전부 되돌린다(rollback) — Memory 가 저장한 뒤 터져도 이 약속이 지켜진다.
+        # 🚨 failed 는 "저장 없음" 이어야 한다. 러너 세션은 done 일 때만 확정(commit)하고
+        #    나머지는 전부 되돌린다(implicit rollback) — Memory 가 저장한 뒤 터져도
+        #    이 약속이 지켜진다.
         if channel.ended_with is None:
             channel.publish(sse.failed_event("internal_error", raw_text))
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
