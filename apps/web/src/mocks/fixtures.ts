@@ -622,7 +622,10 @@ export const generalSuggestions: GeneralSuggestion[] = [
  *    점선 근거 칩(NF-08)을 확인할 방법이 목뿐이다.
  */
 export const staleSuggestion: Suggestion = {
-  ...suggestions[1],
+  // 🚨 **번호로 고르지 않는다.** food 는 이 시나리오에서 guard 에 막혀 있다. 원래 `suggestions[1]`
+  //    이었는데 Agent 당 3가지로 바뀐 뒤(0194a79) 그 자리가 food 가 돼서, 막았다는 배너 아래
+  //    식사 제안이 그대로 섰다 (#242). 화면 테스트 `e2e/suggestions.spec.ts` 가 건다.
+  ...suggestions.find((s) => s.agent === "activity")!,
   evidence: [{ ...evidenceFrom(staleAffinities[1]), is_stale: true }],
 };
 

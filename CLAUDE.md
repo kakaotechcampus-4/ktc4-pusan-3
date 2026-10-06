@@ -154,6 +154,7 @@
 │   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
+│   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패

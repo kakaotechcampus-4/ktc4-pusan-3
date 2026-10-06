@@ -104,6 +104,17 @@ export function needsReview(row: ScanRow): boolean {
   return row.sourceText === null && !row.confirmed;
 }
 
+/**
+ * **승인 목록에 넣을 수 있는 줄인가.** 확인이 필요한 줄은 ㉠ · ㉡ **둘 다** 고를 수 없다.
+ *
+ * 🚨 `isComplete` 만 보면 ㉡ 이 샌다 — 칸이 다 찬 원문 없는 줄이 체크 한 번으로 승인 목록에
+ *    들어가고, 요약은 여전히 "확인하지 않은 N건은 등록하지 않아요" 라고 말했다. 원문 대조 없이
+ *    알레르기가 확정되는 길이었다 (#242).
+ */
+export function isSelectable(row: ScanRow): boolean {
+  return isComplete(row) && !needsReview(row);
+}
+
 /** 왜 확인이 필요한지. 🚨 두 사유가 섞이지 않게 **하나만** 고른다. */
 export function reviewReason(row: ScanRow): string {
   if (row.label.trim() === "" && row.category === "") {

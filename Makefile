@@ -2,7 +2,7 @@
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
-        web-install web-dev web-build web-start web-test web-lint web-fmt web-fmt-check \
+        web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-image web-up web-down web-logs
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
@@ -25,6 +25,7 @@ help:
 	@echo "  make web-build      프로덕션 빌드 (프리렌더까지 — dev 에서 안 보이는 에러가 여기서 난다)"
 	@echo "  make web-start      빌드 결과를 로컬에서 실행 (web-build 먼저)"
 	@echo "  make web-test       테스트 실행 (vitest)"
+	@echo "  make web-e2e        화면 규칙 테스트 (Playwright · 목 서버로 개발 서버를 띄운다)"
 	@echo "  make web-typecheck  타입 검사 (next typegen + tsc)"
 	@echo "  make web-lint       코드 검사 (eslint)"
 	@echo "  make web-fmt        코드 포맷팅 (prettier)"
@@ -90,6 +91,10 @@ web-start:
 
 web-test:
 	cd apps/web && pnpm test
+
+# 개발 서버가 떠 있으면 그것을 쓰고, 없으면 목 모드로 띄웠다 내린다 (playwright.config.ts).
+web-e2e:
+	cd apps/web && pnpm test:e2e
 
 web-typecheck:
 	cd apps/web && pnpm typecheck

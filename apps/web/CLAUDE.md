@@ -838,6 +838,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 
 [`.github/workflows/ci-web.yml`](../../.github/workflows/ci-web.yml) 이 `apps/web/**` 를 바꾼 PR(→ `develop` · `main`)과
 `develop` push 에서 `format:check → lint → typecheck → test → build` 를 돈다. `make web-check` + `make web-build` 와 같다.
+같은 워크플로의 `e2e` job 이 화면 규칙 테스트(`make web-e2e`)를 따로 돈다 — 목은 개발 서버에서만 떠서 build 결과를 쓸 수 없다 (§8).
 셸은 [`ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 돈다.
 
 - 🚨 **pnpm · Node 버전을 워크플로에 적지 않는다.** pnpm 은 `package.json` 의 `packageManager` 를 읽고,
@@ -952,13 +953,15 @@ msw 버전을 올리면 워커를 다시 만들어야 한다 — `pnpm exec msw 
 ## 8. 테스트
 
 ```bash
-pnpm test          # vitest run
+pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:watch
+pnpm test:e2e      # Playwright — 화면 규칙 (make web-e2e)
 ```
 
-**지금 있는 건 계약 회귀 테스트 하나다.** 화면 테스트(RTL·jsdom)는 컴포넌트가 생길 때 붙인다.
+두 벌이다. **Vitest** 는 node 에서 목 · 스토어를 직접 돌리고, **Playwright** 는 목 서버로 띄운 화면을
+실제 브라우저로 연다 (#242). 실서버 E2E 가 아니다 — 그건 API 가 붙은 뒤 따로 더한다.
 
-### 무엇을 거는가
+### 무엇을 거는가 — Vitest
 
 목이 **계약대로 행동하는지**를 건다. 타입 검사가 못 보는 것들이다 — 키 누락 · 재시도 · 동시 요청 · 권한 부족 · 상태 전이 · SSE 이벤트 순서.
 
@@ -966,6 +969,30 @@ pnpm test:watch
 - `src/lib/api/idempotency.test.ts` — 클라이언트의 차단
 - `src/stores/conversation.test.ts` — 04 대화가 **어느 run 에 답하는가 · 질문을 언제 닫는가 · 다시 시도가
   같은 키인가** (#141 · #158 · #175 의 세 버그 자리). 화면이 아니라 스토어를 목 서버와 실제로 돌린다
+
+- `src/test/approval-gates.test.ts` — 승인 게이트를 **어디서 부를 수 있는가**를 파일 목록으로 고정한다.
+  브라우저로는 "다른 화면에서는 안 뜬다" 를 모든 경로를 돌아야 증명할 수 있어서 코드로 막는다.
+  🚨 깨졌다면 목록을 고치기 전에 **게이트를 늘리는 변경인지**부터 본다 (최상위 §2 — 늘리지도 줄이지도 않는다)
+
+### 무엇을 거는가 — Playwright (`e2e/`)
+
+최상위 §2 가 **화면에서** 지켜지는지를 건다. 일반 추천의 "또래 기준" 라벨 · 개인화 추천의 근거 건수 ·
+게이트 2곳의 표식과 Idempotency-Key · 부분 결과가 저장과 한 화면에 서는가 · 11-1 그래프의 평가 요소 · 원문이
+디스크에 남지 않는가. 문구 · 버튼이 그 상태를 **어떻게 그리는가**가 대상이고, 상태 전이 자체는 위 Vitest 가 건다.
+
+- 🚨 **`next dev` 로만 돈다.** 목은 `NODE_ENV=development` 에서만 뜬다 (§7). Next 16 은 같은 폴더에서
+  dev 서버를 둘 못 띄우므로 **이미 떠 있으면 그것을 쓴다** — 그 서버가 목을 끈 채면 모든 테스트가
+  "목을 통과한 요청" 으로 실패한다. 서버가 없으면 `playwright.config.ts` 가 목 모드로 띄웠다 내린다
+- 🚨 **목 상태는 탭 안에만 산다.** 테스트 중간의 `page.goto` · `reload` 는 목 상태와 대화 스토어를
+  같이 지운다. "등록한 뒤 다른 화면에서 보인다" 는 화면 안의 링크로 이어 간다
+- 🚨 **`page.route` 로 응답을 바꿀 수 없다.** MSW 가 서비스 워커로 응답해서 Playwright 가 가로채지
+  못한다. 실패를 만들고 싶으면 목 시나리오를 더한다 (아래 "테스트 전용 핸들러를 만들지 않는다")
+- 게이트는 role 로 구분되지 않는다. `e2e/fixtures.ts` 의 `gateMarks` 가 **토큰**(approve 높이 ·
+  caution 색)으로 찾는다 — 색 값은 그때 `globals.css` 에서 읽는다. 테스트에 `#hex` 를 박지 않는다
+- 지금 깨져 있는 규칙은 `test.fail` · `it.fails` 로 표시하고 이유에 이슈 번호를 단다. 고치면 그 테스트가
+  "예상과 달리 통과" 로 알려 준다 — 그때 표시를 지운다
+- `@playwright/test` 를 올리면 `/web-smoke` 의 `playwright-core` 와 크로미움도 같은 버전을 쓴다
+  (스킬이 이 패키지를 먼저 찾는다)
 
 ### 규칙
 
