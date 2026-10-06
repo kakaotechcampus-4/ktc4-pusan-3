@@ -12,7 +12,7 @@ import { domainLabel } from "@/components/domain-chip";
 import { GeneralSuggestionCard } from "@/components/general-suggestion-card";
 import { SuggestionList } from "@/components/suggestion-list";
 import { Banner } from "@/components/ui/banner";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
@@ -213,18 +213,28 @@ function SuggestionsScreen() {
       </header>
 
       {/* 🚨 배너는 화면 최상단 **한 곳**에만 둔다 (문서 §7). guard 가 여럿이어도 배너는 하나고,
-          안에서 줄로 나눈다. 도메인 이름은 `blocked_agents` 에서 만든다 — 문구에 박지 않는다. */}
+          안에서 줄로 나눈다. 도메인 이름은 `blocked_agents` 에서 만든다 — 문구에 박지 않는다.
+          🚨 **`danger` 다** — guard 는 "막혔다" 다 (문서 §7 배너). `caution` 은 "내가 확인해야
+          한다" 라서 승인 게이트 2곳 전용이고, 여기서 쓰면 보호자가 무언가를 승인해야 하는 줄 안다 (#242).
+          🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다** (apps/web/CLAUDE.md §3). 알레르기를 적는 곳은
+          11 프로필 한 곳이다 — 04 의 안전 정보 안내와 같은 곳으로 보낸다. */}
       {data && data.guards.length > 0 ? (
         <Banner
-          tone="caution"
+          tone="danger"
           title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
         >
           {data.guards.map((guard) => (
             <p key={guard.code}>{guard.message}</p>
           ))}
-          <p className="text-caption mt-1">
-            알레르기를 알려주시면 식사 제안도 함께 준비해요. 알려주는 화면은 준비 중이에요.
-          </p>
+          <p className="text-caption mt-1">알레르기를 알려주시면 식사 제안도 함께 준비해요.</p>
+          <ButtonLink
+            href={`/child/${childId}/profile`}
+            variant="secondary"
+            size="compact"
+            className="mt-3"
+          >
+            알레르기 적으러 가기
+          </ButtonLink>
         </Banner>
       ) : null}
 

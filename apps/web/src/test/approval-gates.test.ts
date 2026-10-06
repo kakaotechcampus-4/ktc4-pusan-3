@@ -89,20 +89,11 @@ describe("게이트 표식은 게이트 안에만", () => {
     // primitive — tone 을 받아 그리기만 한다.
     "components/ui/banner.tsx",
   ];
-  /** 알려진 위반. 고치면 아래 `it.fails` 가 알려 준다 — 그때 여기서 지운다. */
-  const CAUTION_KNOWN_VIOLATION = "app/child/[childId]/suggestions/page.tsx";
-
+  // 한동안 05 의 guard 배너("식사 제안을 만들지 않았어요")가 caution 이었다 (#242). "막혔다" 는 danger 다.
   it("caution 색은 게이트를 그리는 컴포넌트에만 쓴다", () => {
-    expect(
-      filesMatching(CAUTION).filter(
-        (path) => !DESIGN_SYSTEM.test(path) && path !== CAUTION_KNOWN_VIOLATION,
-      ),
-    ).toEqual(CAUTION_ALLOWED);
-  });
-
-  // #242 발견 ③ — 05 의 guard 배너("식사 제안을 만들지 않았어요")가 caution 이다.
-  it.fails("05 guard 배너는 caution 을 쓰지 않는다 (#242 발견 ③)", () => {
-    expect(CAUTION.test(sources.get(CAUTION_KNOWN_VIOLATION)!)).toBe(false);
+    expect(filesMatching(CAUTION).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual(
+      CAUTION_ALLOWED,
+    );
   });
 
   it("approve 높이 토큰은 Button primitive 한 곳에서만 쓴다", () => {

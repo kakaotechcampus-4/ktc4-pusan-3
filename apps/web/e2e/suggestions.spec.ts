@@ -158,12 +158,18 @@ test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않�
     await expect(page.getByText("6개월이 지난 기록이에요", { exact: false })).toBeVisible();
   });
 
-  // 발견 ③ (#242) — caution 은 승인 게이트 2곳 전용인데 guard 배너가 caution 이다.
-  test("guard 배너는 승인 게이트 색을 쓰지 않는다", async ({ page }) => {
-    test.fail(true, '#242 발견 ③ — suggestions/page.tsx 의 guard 배너가 tone="caution"');
+  // caution 은 승인 게이트 2곳 전용이다. 한동안 guard 배너가 caution 이었다 (#242).
+  test("guard 배너는 승인 게이트 색을 쓰지 않고, 알레르기를 적는 곳으로 보낸다", async ({
+    page,
+  }) => {
     await page.goto(SUGGESTIONS);
     await expect(page.getByText("식사 제안을 만들지 않았어요")).toBeVisible();
     await expectNoGate(page);
+    // 서버 deeplink(settings/health-safety)를 주소로 쓰지 않는다 — 알레르기는 11 프로필에서 적는다.
+    await expect(page.getByRole("link", { name: "알레르기 적으러 가기" })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/profile`,
+    );
   });
 });
 
