@@ -118,7 +118,7 @@ def _next_draft_id() -> str:
 
 @router.post(
     "/children/{cid}/suggestions/event-drafts",
-    status_code=200,
+    status_code=201,
     responses={status: {"model": ErrorEnvelope} for status in (404, 422)},
 )
 async def create_event_drafts(

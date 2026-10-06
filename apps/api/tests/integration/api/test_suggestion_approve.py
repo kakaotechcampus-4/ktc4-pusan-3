@@ -155,7 +155,7 @@ async def test_event_drafts_from_approved(
         json={"suggestion_ids": [str(s.id)]},
         headers=headers,
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
     assert len(data["drafts"]) == 1
     draft = data["drafts"][0]
@@ -180,7 +180,7 @@ async def test_event_drafts_food_grouped(
         json={"suggestion_ids": [str(s1.id), str(s2.id)]},
         headers=headers,
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
     assert len(data["drafts"]) == 1
     assert data["drafts"][0]["event"]["title"] == "저녁 식사"
