@@ -98,6 +98,15 @@ _PENDING_RETRY = (
     "pending_hint 가 아직 저장하지 않은 기록 후보가 아니다. 후보 중에서 그대로 하나를 골라 "
     "다시 답한다."
 )
+# 이어받기에서 저장에 성공한 것 없이 말로 끝낸 턴. 아무것도 저장하지 않았는데 "기록할게요" 처럼
+# 저장한 것으로 들리게 끝낸 적이 있다(#246 라이브). 말하는 턴에서 run 이 끝나 그 말은 지켜지지
+# 않는다. 프롬프트에 규칙을 더하면 tool 을 부르는 다른 이어받기(원문 전체 조각 저장)가 흔들려서,
+# 이 턴만 코드가 집어 run 당 한 번 다시 확인하게 한다
+_UNSAVED_REPLY = (
+    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
+    "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
+    "저장했다거나 기록하겠다는 말은 넣지 않는다. 필요한 값이 없으면 그 값을 묻는다."
+)
 _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
@@ -201,6 +210,7 @@ async def run(
     succeeded: set[tuple[str, str]] = set()
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
+    rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
     reply_model: type[ReplyOutput] = (
@@ -251,6 +261,18 @@ async def run(
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _PENDING_RETRY})
                     continue
+                # 조회 · 수정은 "지우지 않을게요" 처럼 저장 없이 끝나는 말이 정상이라 보지 않는다
+                recording = (
+                    continuation is not None and continuation.work is not WorkType.LOOKUP_EDIT
+                )
+                if recording and replied.kind == "message" and not _wrote(calls):
+                    if not rechecked:
+                        # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다.
+                        # 실패한 쓰기도 저장이 아니다
+                        rechecked = True
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({"role": "user", "content": _UNSAVED_REPLY})
+                        continue
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,

@@ -640,7 +640,9 @@ async def test_상한이어도_이번에_저장했으면_상한으로_세지_않
 
 
 async def test_상한이어도_묻지_않고_끝나면_상한으로_세지_않는다(context: AgentContext) -> None:
-    llm = FakeLLM(_cont_answer({"text": "알겠어요. 생각나면 알려 주세요.", "kind": "message"}))
+    # tool 없이 말로 끝내면 한 번 다시 확인한다. 그래도 같은 말로 끝낸 경우다
+    said = {"text": "알겠어요. 생각나면 알려 주세요.", "kind": "message"}
+    llm = FakeLLM(_cont_answer(said), _cont_answer(said))
 
     result = await run(
         "잘 모르겠어요", context, client=llm, continuation=_asked_so_far(MAX_QUESTIONS)
@@ -741,6 +743,79 @@ async def test_이어받기는_저장한_뒤에도_말하는_턴까지_간다(co
     assert result.steps == 2
     assert result.reply is not None and result.reply.text == "기록해 둘게요."
     assert result.leftover is False
+
+
+async def test_이어받기에서_저장_없이_말로_끝내면_한_번_다시_확인하게_한다(
+    context: AgentContext,
+) -> None:
+    # 라이브에서 날짜를 모른다는 답에 tool 없이 "모르시는 것으로 기록할게요." 로 끝낸 적이 있다.
+    # 말하는 턴에서 run 이 끝나 그 말은 지켜지지 않는다
+    llm = FakeLLM(
+        _cont_answer({"text": "모르시는 것으로 기록할게요.", "kind": "message"}),
+        _cont_answer({"text": "기침은 대략 언제부터였어요?", "kind": "question"}),
+    )
+
+    result = await run("잘 모르겠어요", context, client=llm, continuation=_COUGH_PENDING)
+
+    assert len(llm.seen) == 2
+    assert "아무것도 저장하지 않았고" in llm.seen[1][-1]["content"]
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is not None
+
+
+async def test_저장_tool_이_실패한_뒤_말로_끝내도_다시_확인하게_한다(context: AgentContext) -> None:
+    # "날짜 없이 저장할까요?" 에 "응" 이라고 하면 날짜를 못 읽어 저장이 실패한다.
+    # 실패한 쓰기는 저장이 아니라서, 그 뒤에 "기록했어요" 라고 해도 지켜지지 않는다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", {**_COUGH, "observed_on": "모름"})),
+        _cont_answer({"text": "기록했어요.", "kind": "message"}),
+        _cont_answer({"text": "기침은 언제부터였어요?", "kind": "question"}),
+    )
+
+    result = await run("응", context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.calls[0].success is False
+    assert len(llm.seen) == 3
+    assert "아무것도 저장하지 않았고" in llm.seen[2][-1]["content"]
+    assert result.reply is not None and result.reply.kind == "question"
+
+
+async def test_다시_확인해도_말로_끝내면_그_말로_끝낸다(context: AgentContext) -> None:
+    # 한 번만 확인한다. 못 했다고 사실대로 한 말은 그대로 나간다
+    said = {"text": "날짜를 몰라 기록하지 못했어요.", "kind": "message"}
+    llm = FakeLLM(_cont_answer(said), _cont_answer(said))
+
+    result = await run("잘 모르겠어요", context, client=llm, continuation=_COUGH_PENDING)
+
+    assert result.steps == 2
+    assert result.final_message == "날짜를 몰라 기록하지 못했어요."
+
+
+async def test_처음_run_은_tool_없이_말로_끝나도_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    # 알림 안내 · 조회 답처럼 tool 없이 말로 끝나는 것이 정상인 run 이다
+    llm = FakeLLM(_answer({"text": "자동으로 가요.", "kind": "message"}))
+
+    await run("알림 오나요", context, client=llm)
+
+    assert len(llm.seen) == 1
+
+
+async def test_조회_수정_이어받기는_tool_없이_말로_끝나도_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    # 지울지 물었는데 그냥 두라고 하면 tool 없이 말로 끝나는 것이 맞다
+    asked = PendingMemoryContext(
+        hint_text="어제 사과 먹은 기록 지워줘",
+        question="어제 사과 먹은 기록을 삭제할까요?",
+        work=WorkType.LOOKUP_EDIT,
+    )
+    llm = FakeLLM(_cont_answer({"text": "알겠어요. 그대로 둘게요.", "kind": "message"}))
+
+    await run("아니, 그냥 둬", context, client=llm, continuation=asked)
+
+    assert len(llm.seen) == 1
 
 
 async def test_답에_섞인_말을_남겼으면_leftover_로_알린다(context: AgentContext) -> None:
