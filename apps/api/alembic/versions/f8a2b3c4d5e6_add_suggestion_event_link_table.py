@@ -40,6 +40,7 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("suggestion_id", "event_id"),
+        sa.UniqueConstraint("suggestion_id", name="uq_suggestion_event_suggestion_id"),
     )
     op.create_index("ix_suggestion_event_event_id", "suggestion_event", ["event_id"])
 

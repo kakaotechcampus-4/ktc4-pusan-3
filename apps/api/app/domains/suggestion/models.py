@@ -2,6 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import DateTime, ForeignKey, Index, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,13 +70,17 @@ class Suggestion(Base, UUIDPk, Timestamps):
 
 
 class SuggestionEvent(Base):
-    """추천 ↔ 일정 연결. 같은 추천이 같은 일정에 두 번 연결되지 않는다.
+    """추천 ↔ 일정 연결. 한 추천은 일정 하나에만 연결된다.
 
+    suggestion_id UNIQUE — 같은 추천이 일정 두 개에 걸리지 않는다.
     event_id ON DELETE CASCADE — 일정 삭제(hard delete) 시 연결만 사라지고
     추천은 approved 로 남는다 (멘토 합의).
     """
 
     __tablename__ = "suggestion_event"
+    __table_args__ = (
+        sa.UniqueConstraint("suggestion_id", name="uq_suggestion_event_suggestion_id"),
+    )
 
     suggestion_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
