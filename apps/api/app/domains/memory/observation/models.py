@@ -3,7 +3,17 @@ import uuid
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, Text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, DATERANGE, UUID, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,10 +34,15 @@ class ObservationStatus(enum.StrEnum):
       active       Memory Search O · Curator 집계 O
       stand_alone  Memory Search O · Curator 집계 X
       inactive     Memory Search X · Curator 집계 X
+      deleted      Memory Search X · Curator 집계 X · 목록/상세 X
 
     stand_alone 은 Correction once_only("이번만 그랬어요") 가 만드는 상태다.
     관찰 자체는 실제로 있었던 일이라 검색에는 남기고, 성향으로 집계되는 것만 막는다.
     active / inactive 둘뿐이면 이 둘을 한 번에 빼거나 한 번에 남길 수밖에 없다.
+
+    deleted 는 보호자의 삭제 요청이 만든다. 행을 지우지 않고 이 값으로 바꾼다.
+    inactive(Correction wrong)는 "잘못된 기록" 으로 목록에 남지만 deleted 는 보호자에게
+    어디서도 보이지 않는다. 되살리는 경로는 없다.
 
     누가 이 값을 읽는지는 아직 코드에 없다 — 검색 필터와 Curator 집계는 후속 이슈다.
     """
@@ -35,6 +50,7 @@ class ObservationStatus(enum.StrEnum):
     ACTIVE = "active"
     STAND_ALONE = "stand_alone"
     INACTIVE = "inactive"
+    DELETED = "deleted"
 
 
 class EngagementLevel(enum.StrEnum):
@@ -91,21 +107,14 @@ STRONG_SIGNALS = (
 
 
 class ObservationCommon:
-    """food · education · activity 공통 컬럼. health 는 상속하지 않는다."""
+    """food · education · activity · routine 공통 컬럼. health 는 상속하지 않는다."""
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
-    subject: Mapped[str] = mapped_column(Text, nullable=False)  # 정규화 대상. 임베딩·병합 판정 입력
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
-    affinity_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="SET NULL"), nullable=True
-    )
+    subject: Mapped[str] = mapped_column(Text, nullable=False)  # 정규화 대상. 병합 판정 입력
     polarity: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
-    strong_signals: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, server_default="{}"
-    )
     confidence_source: Mapped[ConfidenceSource] = mapped_column(confidence_source, nullable=False)
     status: Mapped[ObservationStatus] = mapped_column(
         observation_status, nullable=False, server_default="active"
@@ -117,16 +126,30 @@ class ObservationCommon:
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
-class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon):
+class Promotable:
+    """`profile_affinity` 로 올리기 위한 세 칸. routine 은 상속하지 않는다."""
+
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    affinity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profile_affinity.id", ondelete="SET NULL"), nullable=True
+    )
+    strong_signals: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
+
+
+class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_food"
+    __table_args__ = (Index("ix_observation_food_child_status", "child_id", "status"),)
 
     action: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[str | None] = mapped_column(Text, nullable=True)
     reaction: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
+class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_education"
+    __table_args__ = (Index("ix_observation_education_child_status", "child_id", "status"),)
 
     topic: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     session_type: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -136,8 +159,9 @@ class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon):
     )
 
 
-class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
+class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_activity"
+    __table_args__ = (Index("ix_observation_activity_child_status", "child_id", "status"),)
 
     activity: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -149,7 +173,10 @@ class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon):
 
 
 class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
+    """승격 대상이 아니라 Promotable을 상속하지 않는다."""
+
     __tablename__ = "observation_routine"
+    __table_args__ = (Index("ix_observation_routine_child_status", "child_id", "status"),)
 
     routine_category: Mapped[RoutineCategory] = mapped_column(routine_category, nullable=False)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -166,6 +193,7 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다."""
 
     __tablename__ = "observation_health"
+    __table_args__ = (Index("ix_observation_health_child_status", "child_id", "status"),)
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -189,3 +217,35 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     suspected_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_taken: Mapped[str | None] = mapped_column(Text, nullable=True)
     observed_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ObservationLinkHold(Base, UUIDPk, Timestamps):
+    """Curator 의 uncertain 횟수와 subject 해시를 관찰별로 보관한다.
+
+    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 delete_observation 이 정리한다.
+    관찰 참조는 correction.target_id 처럼 FK 없이 domain 과 observation_id 로 식별한다.
+    Profile 에 연결되면 행을 지우며 원문 subject 는 저장하지 않는다.
+    """
+
+    __tablename__ = "observation_link_hold"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain", "observation_id", name="observation_link_hold_domain_observation_key"
+        ),
+        CheckConstraint(
+            "domain IN ('food', 'activity', 'education')",
+            name="observation_link_hold_domain",
+        ),
+        # link_step.UNCERTAIN_LIMIT 에 닿으면 새 Profile 을 만들고 행을 지운다.
+        CheckConstraint(
+            "uncertain_count BETWEEN 1 AND 3", name="observation_link_hold_uncertain_count"
+        ),
+    )
+
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    domain: Mapped[str] = mapped_column(String, nullable=False)
+    observation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    uncertain_count: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    subject_hash: Mapped[str] = mapped_column(Text, nullable=False)

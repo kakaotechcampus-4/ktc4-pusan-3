@@ -1,0 +1,202 @@
+"""관찰에서 파생된 성향의 API 조회·라벨 수정·상태 전이 집계."""
+
+import uuid
+from datetime import date, datetime, timedelta, timezone
+
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domains.correction.models import Correction, CorrectionTargetKind, CorrectionVerdict
+from app.domains.memory.observation.models import (
+    ObservationActivity,
+    ObservationEducation,
+    ObservationFood,
+    ObservationStatus,
+)
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
+from app.rules.profile import (
+    PROFILE_LIMIT_PER_DOMAIN,
+    PROMOTION_WINDOW_DAYS,
+    WRONG_COUNT_WINDOW_DAYS,
+)
+
+_KST = timezone(timedelta(hours=9))
+
+_PROMOTABLE_BY_DOMAIN = {
+    MemoryDomain.FOOD: ObservationFood,
+    MemoryDomain.ACTIVITY: ObservationActivity,
+    MemoryDomain.EDUCATION: ObservationEducation,
+}
+
+
+async def list_affinities(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    domain: MemoryDomain | None = None,
+    state: ProfileState | None = None,
+) -> list[ProfileAffinity]:
+    stmt = select(ProfileAffinity).where(ProfileAffinity.child_id == child_id)
+    if domain is not None:
+        stmt = stmt.where(ProfileAffinity.domain == MemoryDomain(domain))
+    if state is not None:
+        stmt = stmt.where(ProfileAffinity.state == ProfileState(state))
+    else:
+        stmt = stmt.where(ProfileAffinity.state != ProfileState.ARCHIVED)
+    stmt = stmt.order_by(ProfileAffinity.last_observed_on.desc(), ProfileAffinity.id.desc())
+    return list((await session.scalars(stmt)).all())
+
+
+async def find_affinity(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    affinity_id: uuid.UUID,
+    for_update: bool = False,
+) -> ProfileAffinity | None:
+    stmt = select(ProfileAffinity).where(
+        ProfileAffinity.child_id == child_id, ProfileAffinity.id == affinity_id
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return await session.scalar(stmt)
+
+
+async def rename_affinity(
+    session: AsyncSession, *, child_id: uuid.UUID, affinity_id: uuid.UUID, merge_key: str
+) -> ProfileAffinity | None:
+    return await session.scalar(
+        update(ProfileAffinity)
+        .where(ProfileAffinity.child_id == child_id, ProfileAffinity.id == affinity_id)
+        .values(merge_key=merge_key)
+        .returning(ProfileAffinity)
+    )
+
+
+# ---------------------------------------------------------------------------
+# 상태 전이 집계 — recompute_profile 이 쓴다
+# ---------------------------------------------------------------------------
+
+
+async def count_active_in_window(
+    session: AsyncSession,
+    *,
+    affinity_id: uuid.UUID,
+    domain: MemoryDomain,
+    today: date,
+) -> int:
+    """승격 윈도우(PROMOTION_WINDOW_DAYS) 안의 active 관찰 일수 (= O).
+
+    같은 날 같은 Profile 에 연결된 관찰 여러 건은 1일로 센다.
+    §2 "한 번의 관찰을 성향으로 확정하지 않는다" — 입력 한 번에
+    Memory Agent 가 관찰 여러 건을 만들어도 바로 승격되지 않게 한다.
+    """
+    model = _PROMOTABLE_BY_DOMAIN.get(domain)
+    if model is None:
+        return 0
+    window_start = today - timedelta(days=PROMOTION_WINDOW_DAYS - 1)
+    window_end = today + timedelta(days=1)  # 열린 상한
+    stmt = (
+        select(func.count(func.distinct(func.lower(model.observed_range))))
+        .select_from(model)
+        .where(
+            model.affinity_id == affinity_id,
+            model.status == ObservationStatus.ACTIVE,
+            model.observed_range.op("&&")(func.daterange(window_start, window_end, "[)")),
+        )
+    )
+    return (await session.scalar(stmt)) or 0
+
+
+async def count_wrong_in_window(
+    session: AsyncSession,
+    *,
+    profile_id: uuid.UUID,
+    today: date,
+) -> int:
+    """하강 윈도우(21일) 안의 wrong correction 수 (= W)."""
+    window_start = datetime.combine(
+        today - timedelta(days=WRONG_COUNT_WINDOW_DAYS - 1), datetime.min.time(), tzinfo=_KST,
+    )
+    stmt = (
+        select(func.count())
+        .select_from(Correction)
+        .where(
+            Correction.target_kind == CorrectionTargetKind.PROFILE_AFFINITY,
+            Correction.target_id == profile_id,
+            Correction.verdict == CorrectionVerdict.WRONG,
+            Correction.created_at >= window_start,
+        )
+    )
+    return (await session.scalar(stmt)) or 0
+
+
+async def get_latest_active_observed_on(
+    session: AsyncSession,
+    *,
+    affinity_id: uuid.UUID,
+    domain: MemoryDomain,
+) -> date | None:
+    """해당 profile 에 연결된 active 관찰 중 가장 최근 시작일을 반환한다."""
+    model = _PROMOTABLE_BY_DOMAIN.get(domain)
+    if model is None:
+        return None
+    stmt = (
+        select(func.max(func.lower(model.observed_range)))
+        .select_from(model)
+        .where(
+            model.affinity_id == affinity_id,
+            model.status == ObservationStatus.ACTIVE,
+        )
+    )
+    return await session.scalar(stmt)
+
+
+async def has_strong_signals(
+    session: AsyncSession,
+    *,
+    affinity_id: uuid.UUID,
+    domain: MemoryDomain,
+    today: date,
+) -> bool:
+    """승격 윈도우 안의 active 관찰 중 strong_signals 가 있는지 (= G)."""
+    model = _PROMOTABLE_BY_DOMAIN.get(domain)
+    if model is None:
+        return False
+    window_start = today - timedelta(days=PROMOTION_WINDOW_DAYS - 1)
+    window_end = today + timedelta(days=1)
+    stmt = (
+        select(func.count())
+        .select_from(model)
+        .where(
+            model.affinity_id == affinity_id,
+            model.status == ObservationStatus.ACTIVE,
+            model.observed_range.op("&&")(func.daterange(window_start, window_end, "[)")),
+            func.array_length(model.strong_signals, 1) > 0,
+        )
+    )
+    return ((await session.scalar(stmt)) or 0) > 0
+
+
+# ---------------------------------------------------------------------------
+# 조회 필터 — Agent / 프론트가 쓴다
+# ---------------------------------------------------------------------------
+
+
+async def list_confirmed_profiles(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    domain: MemoryDomain | None = None,
+    limit: int = PROFILE_LIMIT_PER_DOMAIN,
+) -> list[ProfileAffinity]:
+    """confirmed + strength 내림차순. domain 을 넘기면 해당 도메인에서,
+    넘기지 않으면 전체 도메인에서 합산 limit 개를 반환한다."""
+    stmt = select(ProfileAffinity).where(
+        ProfileAffinity.child_id == child_id,
+        ProfileAffinity.state == ProfileState.CONFIRMED,
+    )
+    if domain is not None:
+        stmt = stmt.where(ProfileAffinity.domain == MemoryDomain(domain))
+    stmt = stmt.order_by(ProfileAffinity.strength.desc(), ProfileAffinity.id.desc()).limit(limit)
+    return list((await session.scalars(stmt)).all())

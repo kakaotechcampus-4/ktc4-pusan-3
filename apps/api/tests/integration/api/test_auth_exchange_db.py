@@ -10,6 +10,7 @@
     ④ 세션 무효화는 즉시다 (A-15) — 탈퇴는 401 이 아니라 404 (A-19)
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -23,13 +24,13 @@ from app.domains.policy.models import PolicyVersion
 BIND = "A" * 43
 OTHER_BIND = "B" * 43
 KAKAO_USER_ID = "1234567890"
-POLICY = "draft-0"
-"""🚨 계약서 §3-5 예시는 "2026-09-01" 이지만 그건 등록된 버전이 아니다.
+NICKNAME = "테스트 보호자"
+"""가입 화면의 "부르는 이름". 실제 사람 이름을 픽스처에 넣지 않는다 (루트 CLAUDE.md §9)."""
+POLICY = "draft-1"
+"""계정 동의 둘(service_terms · privacy_account)의 지금 버전 — 약관 초안 draft-1 (#172).
 
-가입은 이제 policy_version 테이블에 등록되고 적용 기간 안인 버전만 받는다 (PR C).
-지금 등록된 것은 PR B 마이그레이션이 시드한 placeholder "draft-0" 하나뿐이라 여기서도
-그 값을 쓴다. 실제 약관이 확정되면 새 버전을 등록하고 이 상수와 계약서 예시를 함께
-바꾼다 — 한쪽만 바꾸면 이 테스트가 그 사실을 잡는다.
+가입은 GET /policies 가 지금 보여 주는 버전만 받는다 (#91). 새 약관을 등록하면 이 상수를
+함께 바꾼다 — 한쪽만 바꾸면 이 파일의 가입 테스트가 전부 400 으로 그 사실을 잡는다.
 """
 
 UNREGISTERED_POLICY = "2026-09-01"
@@ -110,6 +111,50 @@ async def changed(session, base: dict) -> dict:
     }
 
 
+# ── DB 오류가 회원번호를 흘리지 않는다 ───────────────────────────────────────
+
+
+async def test_second_tab_signup_does_not_leak_the_member_number(db_client, session, caplog):
+    """🚨 같은 카카오 계정으로 두 탭에서 가입하면 두 번째 탭은 DB 중복 오류로 끝난다.
+
+    PostgreSQL 은 그 오류 글 자체에 회원번호를 싣는다
+    ("DETAIL: Key (provider, provider_user_id)=(kakao, 1234567890) already exists").
+    로그에도 응답에도 나가면 안 된다 (명세 §7-5 · 루트 §2). 응답은 지금처럼 500 이다.
+    """
+    consent_codes = []
+    for code in ("tab-1", "tab-2"):
+        await seed_handoff(session, code=code)
+        exchanged = await db_client.post("/api/v1/auth/kakao", json={"code": code, "bind": BIND})
+        consent_codes.append(exchanged.json()["consent_code"])
+
+    def signup_body(consent_code: str) -> dict:
+        return {
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        }
+
+    first = await db_client.post("/api/v1/auth/kakao/signup", json=signup_body(consent_codes[0]))
+    assert first.status_code == 200
+
+    with caplog.at_level(logging.INFO):
+        second = await db_client.post(
+            "/api/v1/auth/kakao/signup", json=signup_body(consent_codes[1])
+        )
+
+    assert second.status_code == 500
+    assert second.json()["error"]["code"] == "internal_error"
+    assert KAKAO_USER_ID not in second.text
+    assert KAKAO_USER_ID not in caplog.text
+    # 로그가 실제로 잡혔고, 원인을 찾을 만큼은 남는다 — 위 "없다" 단언이 빈 로그로 통과하지 않게.
+    # constraint 가 None 이 아니면 asyncpg 의 원래 예외까지 닿은 것이다.
+    # (제약 이름은 자동 생성이라 글자를 박지 않는다.)
+    assert "sqlstate=23505" in caplog.text
+    assert "table=auth_identity" in caplog.text
+    assert "constraint=None" not in caplog.text
+
+
 # ── A-01 · A-02 신규 가입 ─────────────────────────────────────────────────────
 
 
@@ -142,7 +187,12 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
 
     response = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert response.status_code == 200
@@ -178,7 +228,12 @@ async def test_signup_rejects_a_code_issued_for_another_provider(db_client, sess
 
     response = await db_client.post(
         "/api/v1/auth/google/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert response.status_code == 401
@@ -197,7 +252,12 @@ async def test_rejected_provider_mismatch_leaves_the_ticket_usable(db_client, se
     consent_code = (
         await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
     ).json()["consent_code"]
-    body = {"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS}
+    body = {
+        "consent_code": consent_code,
+        "bind": BIND,
+        "nickname": NICKNAME,
+        "consents": REQUIRED_CONSENTS,
+    }
 
     await db_client.post("/api/v1/auth/google/signup", json=body)
     response = await db_client.post("/api/v1/auth/kakao/signup", json=body)
@@ -235,6 +295,7 @@ async def test_signup_without_required_scope_creates_nothing(db_client, session)
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [{"scope": "service_terms", "policy_version": POLICY}],
         },
     )
@@ -262,6 +323,7 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [
                 {"scope": "service_terms", "policy_version": UNREGISTERED_POLICY},
                 {"scope": "privacy_account", "policy_version": UNREGISTERED_POLICY},
@@ -273,6 +335,215 @@ async def test_signup_with_unregistered_policy_version_is_rejected(db_client, se
     assert response.json()["error"]["code"] == "policy_version_invalid"
     # 🚨 parent 도 동의도 만들어지지 않았다. 대기표조차 태우지 않는다.
     assert await changed(session, base) == {}
+
+
+NEWER_POLICY = "test-newer"
+"""마이그레이션이 등록한 어떤 버전과도 겹치지 않는 이름. `draft-N` 을 쓰면 다음 약관이
+등록되는 날 unique 제약에 걸린다."""
+
+
+async def register_newer_version(session, scope: ConsentScope, version: str = NEWER_POLICY) -> None:
+    """지금 등록된 어떤 버전보다 늦게 시작하는 버전 — 약관이 바뀐 상황.
+
+    시작 시각을 고정 날짜가 아니라 "방금" 으로 둔다. 고정 날짜는 그보다 늦은 약관이
+    마이그레이션으로 등록되는 순간 "더 새 버전" 이 아니게 된다.
+    """
+    session.add(
+        PolicyVersion(
+            scope=scope,
+            version=version,
+            label="새 약관",
+            content="새 약관",
+            content_hash="new-hash",
+            effective_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+    )
+    await session.flush()
+
+
+async def test_signup_with_superseded_policy_version_is_rejected(db_client, session):
+    """🚨 더 새 버전이 나오면 옛 버전으로는 가입할 수 없다 (#91).
+
+    옛 버전 행에 ended_at 을 찍는 것을 잊어도 막혀야 한다. 받아 주는 버전은 GET /policies 가
+    지금 보여 주는 그 버전 하나다 — 보여 주지 않는 글에 "동의했다" 는 기록이 남지 않게.
+    대기표를 태우기 전에 거절하므로 동의 화면을 다시 불러오면 된다.
+    """
+    await register_newer_version(session, ConsentScope.SERVICE_TERMS)
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "policy_version_invalid"
+    assert response.json()["error"]["detail"]["scope"] == "service_terms"
+    assert await changed(session, base) == {}
+
+
+async def test_signup_with_current_policy_version_succeeds(db_client, session):
+    """GET /policies 가 내려준 최신 버전을 그대로 실으면 가입된다."""
+    await register_newer_version(session, ConsentScope.SERVICE_TERMS)
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": [
+                {"scope": "service_terms", "policy_version": NEWER_POLICY},
+                {"scope": "privacy_account", "policy_version": POLICY},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+
+
+async def test_signup_records_optional_location_consent(db_client, session):
+    """위치 동의는 가입 화면의 선택 항목이다 — 고르면 보호자 본인의 동의로 남는다 (#172).
+
+    받는 위치는 보호자 휴대폰의 위치라 아이가 아니라 계정 동의다. 아이가 아직 없는 가입
+    시점에 받을 수 있는 것도 그래서다.
+    """
+    await register_newer_version(session, ConsentScope.LOCATION, version="test-location")
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": [
+                *REQUIRED_CONSENTS,
+                {"scope": "location", "policy_version": "test-location"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["consent_required"] == []
+    assert (await changed(session, base))["Consent"] == 3
+    location = await session.scalar(select(Consent).where(Consent.scope == ConsentScope.LOCATION))
+    assert location.subject_parent_id == location.actor_ref
+    assert location.child_id is None
+
+
+async def test_signup_accepts_the_registered_location_draft(db_client, session):
+    """마이그레이션이 등록한 위치 약관(draft-1)을 그대로 실으면 가입된다.
+
+    🚨 선택 동의라도 버전이 틀리면 가입 전체가 400 이다 — 보여 주지 않은 글에 "동의했다" 고
+       남기지 않는다. 그래서 화면은 위치 버전도 GET /policies 에서 받아야 한다 (#90).
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": [*REQUIRED_CONSENTS, {"scope": "location", "policy_version": POLICY}],
+        },
+    )
+
+    assert response.status_code == 200
+
+
+async def test_signup_saves_the_name_the_guardian_typed(db_client, session):
+    """가입 화면의 "부르는 이름" 이 계정에 남고 세션 응답에도 실린다 (#172).
+
+    예전에는 스키마에 칸이 없어 화면이 보낸 이름을 서버가 조용히 버렸다. 동의문 1 이
+    "부르는 이름을 받는다" 고 알리므로, 받지 않으면 동의문이 사실이 아니다.
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": f"  {NICKNAME}  ",
+            "consents": REQUIRED_CONSENTS,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parent"]["nickname"] == NICKNAME, "앞뒤 공백은 떼고 저장한다"
+    parent = await session.get(Parent, response.json()["parent"]["id"])
+    assert parent.nickname == NICKNAME
+
+
+@pytest.mark.parametrize(
+    "nickname",
+    [None, "", "   ", "가" * 21, "이\x00름", "이\n름"],
+    ids=["missing", "empty", "blank", "too-long", "nul", "newline"],
+)
+async def test_signup_without_a_usable_name_creates_nothing(db_client, session, nickname):
+    """이름이 없거나 비었거나 화면 상한(20자)을 넘으면 400 이고 아무것도 만들지 않는다.
+
+    화면이 이미 막는 값이지만 서버가 다시 본다 — 화면을 거치지 않은 요청도 있다.
+    대기표도 태우지 않는다. 형식 오류는 공격이 아니라 고쳐서 다시 보내면 되는 일이다.
+
+    🚨 제어문자도 형식 오류다. NUL 은 Postgres text 에 들어가지 못해 그대로 두면 저장에서
+       500 이 나고, 줄바꿈은 이름 한 줄을 여러 줄로 그린다 (리뷰에서 찾음).
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    base = await snapshot(session)
+    body = {"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS}
+    if nickname is not None:
+        body["nickname"] = nickname
+
+    response = await db_client.post("/api/v1/auth/kakao/signup", json=body)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert await changed(session, base) == {}
+
+
+async def test_location_is_not_a_required_consent(db_client, session):
+    """🚨 위치 동의를 안 골라도 가입되고, 뒤에 "동의가 더 필요하다" 고 되묻지도 않는다.
+
+    위치를 필수로 받으면 선택이어야 할 동의를 강제하는 것이 된다. 계정 동의 목록에
+    location 이 들어간 뒤에도 필수 목록은 그대로 둘이어야 한다.
+    """
+    parent = await seed_member(session)
+    await seed_handoff(session, code="handoff-code", parent_id=parent.id)
+
+    body = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()
+
+    assert ConsentScope.LOCATION.value not in body["consent_required"]
 
 
 async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, session):
@@ -290,6 +561,7 @@ async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, s
         json={
             "consent_code": consent_code,
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": [
                 {"scope": "service_terms", "policy_version": UNREGISTERED_POLICY},
                 {"scope": "privacy_account", "policy_version": UNREGISTERED_POLICY},
@@ -299,7 +571,12 @@ async def test_unregistered_policy_version_leaves_the_ticket_usable(db_client, s
 
     retry = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert retry.status_code == 200
@@ -314,7 +591,12 @@ async def test_signup_links_consent_to_the_registered_policy_version(db_client, 
     ).json()["consent_code"]
     await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     rows = (await session.execute(select(Consent))).scalars().all()
@@ -337,12 +619,17 @@ async def test_missing_consent_leaves_the_ticket_usable(db_client, session):
     ).json()["consent_code"]
     await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": []},
+        json={"consent_code": consent_code, "bind": BIND, "nickname": NICKNAME, "consents": []},
     )
 
     retry = await db_client.post(
         "/api/v1/auth/kakao/signup",
-        json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
     )
 
     assert retry.status_code == 200
@@ -366,6 +653,7 @@ async def test_token_responses_are_never_cached(db_client, session):
         json={
             "consent_code": exchanged.json()["consent_code"],
             "bind": BIND,
+            "nickname": NICKNAME,
             "consents": REQUIRED_CONSENTS,
         },
     )
@@ -489,7 +777,12 @@ async def issue_session(db_client, session) -> str:
     return (
         await db_client.post(
             "/api/v1/auth/kakao/signup",
-            json={"consent_code": consent_code, "bind": BIND, "consents": REQUIRED_CONSENTS},
+            json={
+                "consent_code": consent_code,
+                "bind": BIND,
+                "nickname": NICKNAME,
+                "consents": REQUIRED_CONSENTS,
+            },
         )
     ).json()["token"]
 

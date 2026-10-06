@@ -13,7 +13,7 @@
 비울 수 있는 필드 목록(_CLEARABLE)은 store_plan D3 의 표 그대로다.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -22,6 +22,7 @@ import pytest
 
 import app.domains.memory.observation.models  # noqa: F401  observation 테이블을 metadata 에 올림
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.registry import TOOL_SPECS, execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.common import ClearableUpdateArgs
@@ -128,14 +129,28 @@ async def _fields(context: AgentContext, domain: str, observation_id: str) -> di
 
 
 async def _create_event(context: AgentContext, **args: Any) -> str:
+    """create_event 는 초안만 만든다. 수정 케이스가 쓸 행은 그 값으로 직접 시드한다."""
     result = await execute_tool(
         "create_event", {"title": "운동회", "starts_on": "2026-09-17", **args}, context
     )
     assert result.success is True, result.error
-    return result.data["id"]
+    draft = context.drafts.all()[-1]
+    row = await context.store.create_event(
+        child_id=context.child_id,
+        title=draft.title,
+        starts_at=draft.starts_at,
+        ends_at=draft.ends_at,
+        all_day=draft.all_day,
+        fields={"event_type": draft.event_type, "category": draft.category},
+    )
+    return row.id
 
 
-async def _event(context: AgentContext, event_id: str) -> EventRow:
+async def _event(context: AgentContext, event_id: str) -> EventRow | EventDraft:
+    """update_event 는 store 를 고치지 않는다. 수정 초안이 있으면 그것을 본다."""
+    draft = context.drafts.get(event_id)
+    if draft is not None:
+        return draft
     row = await context.store.get_event(event_id=event_id)
     assert row is not None
     return row
@@ -236,7 +251,7 @@ async def test_비울_수_없는_필드를_적으면_거부하고_저장도_바�
 
     assert result.success is False
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     # 다시 부를 수 있게 허용 목록을 알려준다
     assert all(allowed in result.error["message"] for allowed in _CLEARABLE[domain])
     assert await _fields(context, domain, observation_id) == before
@@ -253,7 +268,7 @@ async def test_거부_문구에_모델이_보낸_이름을_되풀이하지_않�
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert leaked not in result.error["message"]
 
 
@@ -268,7 +283,7 @@ async def test_같은_필드에_새_값과_지우기가_같이_오면_거부한�
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert await _fields(context, "health", observation_id) == before
 
 
@@ -300,17 +315,20 @@ async def test_일정_종료는_clear_로만_지워진다(
     assert result.data.get("cleared") == (["ends_at"] if mode == "clear" else None)
 
 
-async def test_종료를_지운_일정은_다시_승인을_받는다(context: AgentContext) -> None:
+async def test_종료를_지워도_저장된_행은_그대로다(context: AgentContext) -> None:
+    # 지우는 것도 보호자가 제출해야 반영된다
     event_id = await _create_event(context, **_TIMED)
-    await context.store.update_event(
-        event_id=event_id, fields={"status": "confirmed", "expires_at": NOW}
-    )
+    saved = await context.store.get_event(event_id=event_id)
+    assert saved is not None and saved.ends_at is not None
 
     await execute_tool("update_event", {"event_id": event_id, "clear": ["ends_at"]}, context)
 
-    row = await _event(context, event_id)
-    assert row.fields["status"] == "draft"
-    assert row.fields["expires_at"] == NOW + timedelta(hours=24)
+    still = await context.store.get_event(event_id=event_id)
+    assert still is not None and still.ends_at == saved.ends_at
+    draft = context.drafts.get(event_id)
+    assert draft is not None
+    assert draft.ends_at is None
+    assert draft.changed == ("ends_at",)
 
 
 async def test_종일_일정의_종료는_지울_수_없다(context: AgentContext) -> None:
@@ -322,7 +340,7 @@ async def test_종일_일정의_종료는_지울_수_없다(context: AgentContex
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert await _event(context, event_id) == before
 
 
@@ -338,7 +356,7 @@ async def test_종료를_지우면서_새_종료를_주면_거부한다(
     )
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert await _event(context, event_id) == before
 
 
@@ -349,7 +367,7 @@ async def test_일정은_ends_at_말고는_비울_수_없다(context: AgentConte
     result = await execute_tool("update_event", {"event_id": event_id, "clear": [name]}, context)
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
     assert "ends_at" in result.error["message"]
 
 
@@ -371,7 +389,7 @@ async def test_clear_는_수정_tool_에만_있다(
     result = await execute_tool(tool, args, context)
 
     assert result.error is not None
-    assert result.error["code"] == ErrorCode.VALIDATION_ERROR
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
 
 
 def test_tool_스펙에는_clear_만_나가고_허용_목록은_안_나간다() -> None:

@@ -1,4 +1,4 @@
-"""tool 28개의 이름 · 호출 조건 · argument 모델 정의.
+"""tool 22개의 이름 · 호출 조건 · argument 모델 정의.
 
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
@@ -16,7 +16,6 @@ from app.agents.memory.schemas.observation import (
     ObservationQueryArgs,
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
-    RecordRef,
 )
 from app.agents.memory.schemas.schedule import (
     EventCreate,
@@ -29,6 +28,7 @@ from app.agents.memory.schemas.schedule import (
 )
 
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
+_CAN_DELETE = "기록 한 건을 통째로 지울 때도 이 tool 이다. status=deleted 만 넣는다."
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
     # observation_food
@@ -47,13 +47,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_food",
-        description=f"이미 저장된 음식 기록의 내용을 고친다. {_NEEDS_QUERY}",
+        description=f"이미 저장된 음식 기록의 내용을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
         args=ObservationFoodUpdate,
-    ),
-    ToolDefinition(
-        name="delete_observation_food",
-        description=f"음식 기록 한 건을 지운다. {_NEEDS_QUERY}",
-        args=RecordRef,
     ),
     # observation_health
     ToolDefinition(
@@ -71,13 +66,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_health",
-        description=f"이미 저장된 증상 기록을 고친다. {_NEEDS_QUERY}",
+        description=f"이미 저장된 증상 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
         args=ObservationHealthUpdate,
-    ),
-    ToolDefinition(
-        name="delete_observation_health",
-        description=f"증상 기록 한 건을 지운다. {_NEEDS_QUERY}",
-        args=RecordRef,
     ),
     # observation_education
     ToolDefinition(
@@ -95,13 +85,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_education",
-        description=f"이미 저장된 학습 기록을 고친다. {_NEEDS_QUERY}",
+        description=f"이미 저장된 학습 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
         args=ObservationEducationUpdate,
-    ),
-    ToolDefinition(
-        name="delete_observation_education",
-        description=f"학습 기록 한 건을 지운다. {_NEEDS_QUERY}",
-        args=RecordRef,
     ),
     # observation_activity
     ToolDefinition(
@@ -119,13 +104,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_activity",
-        description=f"이미 저장된 활동 기록을 고친다. {_NEEDS_QUERY}",
+        description=f"이미 저장된 활동 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
         args=ObservationActivityUpdate,
-    ),
-    ToolDefinition(
-        name="delete_observation_activity",
-        description=f"활동 기록 한 건을 지운다. {_NEEDS_QUERY}",
-        args=RecordRef,
     ),
     # observation_routine
     ToolDefinition(
@@ -144,19 +124,16 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_routine",
-        description=f"이미 저장된 생활 행동 기록을 고친다. {_NEEDS_QUERY}",
+        description=f"이미 저장된 생활 행동 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
         args=ObservationRoutineUpdate,
-    ),
-    ToolDefinition(
-        name="delete_observation_routine",
-        description=f"생활 행동 기록 한 건을 지운다. {_NEEDS_QUERY}",
-        args=RecordRef,
     ),
     # event
     ToolDefinition(
         name="create_event",
         description=(
-            "앞으로의 일정을 등록한다. 운동회·병원·참관수업처럼 날짜가 있는 예정에 쓴다. "
+            "앞으로의 일정을 초안으로 만든다. 운동회·병원·참관수업처럼 날짜가 있는 예정에 쓴다. "
+            "챙길 준비물이 같이 나오면 items 에 모두 넣는다. 이 tool 한 번으로 끝내고 "
+            "준비물을 따로 부르지 않는다. "
             "이미 지난 일을 기록하는 건 observation이다."
         ),
         args=EventCreate,
@@ -172,7 +149,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="update_event",
         description=(
-            "이미 등록된 일정의 정보를 고친다. "
+            "이미 저장된 일정을 고친 초안을 만든다. 보호자가 확인해야 반영된다. "
             f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY}'
         ),
         args=EventUpdate,
@@ -186,15 +163,18 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="create_event_item",
         description=(
-            "일정에 챙길 준비물을 하나 추가한다. "
-            "준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. "
-            "event_id 는 create_event 나 query_event 결과에서 가져온다."
+            "이미 있는 일정에 챙길 준비물을 하나 추가한다. "
+            "새 일정이면 create_event의 items를 쓴다. "
+            f"준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. {_NEEDS_QUERY}"
         ),
         args=EventItemCreate,
     ),
     ToolDefinition(
         name="update_event_item",
-        description=f"준비물 이름을 고치거나 챙김 여부를 표시한다. {_NEEDS_QUERY}",
+        description=(
+            "준비물 이름을 고치거나 챙김 여부를 표시한다. "
+            f"이름을 고치면 보호자 확인을 거치고, 챙김 표시는 바로 반영된다. {_NEEDS_QUERY}"
+        ),
         args=EventItemUpdate,
     ),
     ToolDefinition(

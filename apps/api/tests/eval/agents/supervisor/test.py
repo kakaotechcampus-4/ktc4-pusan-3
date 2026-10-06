@@ -10,14 +10,15 @@
 SUPERVISOR_MODEL · SUPERVISOR_BASE_URL 이 비면 MEMORY_* 를 쓴다 — 기준선이 그 상태다.
 후보 모델은 셸 환경변수로 바꿔 끼운다: $env:SUPERVISOR_MODEL / $env:SUPERVISOR_BASE_URL
 
-  split        Supervisor 만 부른다 (Step 5). 조각을 어떻게 나누고 어디로 보내는지
-  end_to_end   Supervisor → Memory(task 모드) → Food 를 끝까지 (Step 9).
+  split        Supervisor만 호출: 조각을 어떻게 나누고 어디로 보내는지
+  end_to_end   Supervisor → Memory(task 모드) → Food까지
                Food 는 테스트 가짜가 아니라 agents/food 의 mock 그대로다 —
                실구현이 들어오면 이 테스트가 그대로 회귀 테스트가 된다
 
 """
 
 import asyncio
+import calendar
 import json
 import os
 import time
@@ -35,15 +36,20 @@ import pytest
 from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRange
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.context import FoodContext
-from app.agents.food.schemas.common import FeedingStage, FoodTaskType
+from app.agents.food.schemas.common import FoodTaskType
+from app.agents.food.store import InMemoryProfile, in_memory_ports
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory.store.ports import EventRow, ObservationRow
+from app.agents.memory.store.ports import ObservationRow
 from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 tool 이 정본이다
+from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
+from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
+from app.rules.age import Stage
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
@@ -70,6 +76,23 @@ _PINNED = os.getenv("EVAL_NOW")
 TODAY = date.fromisoformat(_PINNED) if _PINNED else datetime.now(KST).date()
 NOW = datetime(TODAY.year, TODAY.month, TODAY.day, 9, 0, tzinfo=KST)
 CHILD = UUID("00000000-0000-7000-8000-000000000001")
+
+# LiveCase.stage(Stage) → FoodContext 에 넣을 생일. build_gate 가 life_stage() 로 되돌려
+# 계산하므로, 각 단계 안에서 경계와 떨어진 안전한 월령을 하나씩 고른다.
+_STAGE_MONTHS: dict[Stage, int] = {
+    "infant_milk": 1,
+    "infant_weaning": 6,
+    "toddler": 24,
+    "preschool": 48,
+}
+
+
+def _birth_date_for(stage: Stage) -> date:
+    months = _STAGE_MONTHS[stage]
+    year, month = divmod(TODAY.year * 12 + TODAY.month - 1 - months, 12)
+    return date(year, month + 1, min(TODAY.day, calendar.monthrange(year, month + 1)[1]))
+
+
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
 DOMAINS = ("food", "health", "education", "activity", "routine")
 RESULT_PATH = Path(
@@ -126,7 +149,7 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
 @dataclass(frozen=True)
 class LiveCase:
     case: RoutingCase
-    stage: FeedingStage
+    stage: Stage
     label: str  # 변형이면 접미사가 붙는다 (RC20-i)
 
 
@@ -179,7 +202,7 @@ _CLEAR_CASES: tuple[RoutingCase, ...] = (
 _E2E_CASES: tuple[LiveCase, ...] = (
     *(LiveCase(case, case.stage, case.case_id) for case in RC_CASES),
     # 같은 입력을 영아기로 한 번 더 — 식이 단계는 발화가 아니라 아이 나이에서 코드가 정한다
-    LiveCase(CASES_BY_ID["RC20"], FeedingStage.INFANT, "RC20-i"),
+    LiveCase(CASES_BY_ID["RC20"], "infant_weaning", "RC20-i"),
     # T14 는 test_memory.py 에도 있지만 거기서는 Memory 만 돈다.
     # "저녁에는 뭘 먹이면 좋을까?" 가 Food 로 떨어지는지는 여기서만 실제로 확인된다
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
@@ -229,13 +252,7 @@ async def _seed_sports_day(context: AgentContext) -> None:
         starts_at=_SPORTS_DAY_START,
         ends_at=_SPORTS_DAY_START + timedelta(hours=2),
         all_day=False,
-        fields={
-            "event_type": "episodic",
-            "category": "institution",
-            "status": "draft",
-            "created_by": "agent",
-            "expires_at": NOW + timedelta(hours=24),
-        },
+        fields={"event_type": "episodic", "category": "institution", "created_by": "agent"},
     )
 
 
@@ -250,7 +267,7 @@ class Observed:
     result: PipelineResult
     score: SplitScore
     observations: dict[str, list[ObservationRow]]
-    events: list[tuple[EventRow, int]]  # 일정과 그 준비물 수
+    events: tuple[EventDraft, ...]  # 제출을 기다리는 일정 초안. 저장된 행이 아니다
     order: list[str]  # 이벤트 종류 순서
     elapsed_ms: int
     failures: list[str] = field(default_factory=list)
@@ -350,16 +367,20 @@ async def _run_once(
     memory_context = AgentContext(
         child_id=CHILD, source_writer=WRITER, now=NOW, timezone=KST, store=store
     )
+    # birth_date만 심어 build_gate가 live.stage를 재계산하게 한다.
+    # 기억 포트 · 쓰기 표시는 entrypoint 와 같게 묶는다 — Food 실구현이 붙으면 같은 run에
+    # 저장한 관찰을 읽고, 급식만 고친 run이 failed가 아니라 done으로 끝나게 한다
+    writes = RunWrites()
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: _birth_date_for(live.stage)}),
+        memory=StoreFoodMemory(store),
+    )
     food_context = FoodContext(
         child_id=CHILD,
+        run_id=f"live-{live.label}",
         now=NOW,
         timezone=KST,
-        stage=live.stage,
-        memory=None,  # type: ignore[arg-type]
-        profile=None,  # type: ignore[arg-type]
-        safety=None,  # type: ignore[arg-type]
-        menu=None,  # type: ignore[arg-type]
-        nutrition=None,  # type: ignore[arg-type]
+        ports=record_food_writes(ports, writes),
     )
     seed = _SEEDS.get(live.case.case_id)
     if seed is not None:
@@ -370,21 +391,20 @@ async def _run_once(
     result = await handle_input(
         live.case.text,
         memory_context,
-        food_context,
+        {"food": food_context},
         run_id=f"live-{live.label}",
         supervisor_client=supervisor_client,
         memory_client=memory_client,
         emit=emitted.append,
+        writes=writes,
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     observations = {
         domain: await store.query_observations(domain=domain, child_id=CHILD) for domain in DOMAINS
     }
-    events = [
-        (row, len(await store.list_event_items(event_id=row.id)))
-        for row in await store.query_events(child_id=CHILD)
-    ]
+    # 일정은 저장되지 않으니 memory가 만든 초안을 본다
+    events = result.memory.drafts if result.memory else ()
     observed = Observed(
         live=live,
         result=result,
@@ -424,7 +444,8 @@ def _judge(observed: Observed) -> None:
     }
     stray = sum(
         1
-        for task in result.routing.food_tasks
+        for task in result.routing.domain_tasks
+        if task.agent == "food"
         for text in task.request_texts
         if normalize(text) not in allowed
     )
@@ -432,10 +453,10 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"Food 가 food 요청이 아닌 조각을 받았다 ({stray}건)")
 
     expected = _expected_food_tasks(observed)
-    if len(result.food) != expected:
-        observed.failures.append(f"Food 호출 {len(result.food)}회 ≠ food 유형 {expected}개")
+    if len(_food(result)) != expected:
+        observed.failures.append(f"Food 호출 {len(_food(result))}회 ≠ food 유형 {expected}개")
 
-    for food in result.food:
+    for food in _food(result):
         # S3 · S6 — 분석에 식품 제안이 열리면 안 되고, 안전 필터는 모델에게 보이면 안 된다
         if (
             food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
@@ -446,13 +467,13 @@ def _judge(observed: Observed) -> None:
             observed.failures.append("filter_food_safety 가 모델에게 보인다")
 
     if observed.live.label == "RC20-i":
-        status = result.food[0].status if result.food else "(호출 없음)"
+        status = _food(result)[0].status if _food(result) else "(호출 없음)"
         if status != "unsupported_stage":
             observed.failures.append(f"영아기 영양소 분석이 unsupported_stage 가 아니다: {status}")
 
     # 루트 §4 — 저장이 검색보다 먼저
-    if "FoodRouted" in observed.order and "Saved" in observed.order:
-        if observed.order.index("FoodRouted") < observed.order.index("Saved"):
+    if "DomainRouted" in observed.order and "Saved" in observed.order:
+        if observed.order.index("DomainRouted") < observed.order.index("Saved"):
             observed.failures.append("Food 가 저장보다 먼저 불렸다")
 
     memory = result.memory
@@ -533,18 +554,18 @@ def _judge_clear(observed: Observed) -> None:
 
     if case_id == "CL02":
         if len(observed.events) != 1:
-            observed.failures.append(f"일정이 1건이 아니다 ({len(observed.events)}건)")
+            observed.failures.append(f"일정 초안이 1건이 아니다 ({len(observed.events)}건)")
             return
-        row, _ = observed.events[0]
-        if row.ends_at is not None:
-            observed.failures.append(f"일정의 끝이 지워지지 않았다 ({_interval(row)})")
-        if row.starts_at != _SPORTS_DAY_START:
-            observed.failures.append(f"일정의 시작이 바뀌었다 ({_interval(row)})")
+        draft = observed.events[0]
+        if draft.ends_at is not None:
+            observed.failures.append(f"초안의 끝이 지워지지 않았다 ({_interval(draft)})")
+        if draft.starts_at != _SPORTS_DAY_START:
+            observed.failures.append(f"초안의 시작이 바뀌었다 ({_interval(draft)})")
 
 
 def _judge_event_intervals(observed: Observed) -> None:
-    """저장된 일정의 시간 구간이 성립하는지 확인한다."""
-    for row, _ in observed.events:
+    """초안의 시간 구간이 성립하는지 확인한다. 보호자에게 올라가기 전 마지막 관문이다."""
+    for row in observed.events:
         start = row.starts_at.astimezone(KST)
         end = row.ends_at.astimezone(KST) if row.ends_at else None
 
@@ -557,8 +578,8 @@ def _judge_event_intervals(observed: Observed) -> None:
             observed.failures.append(f"종일 일정이 00:00~23:59가 아니다 ({_interval(row)})")
 
 
-def _interval(row: EventRow) -> str:
-    """저장된 시간 구간 한 줄. 하루 안에 끝나면 끝 날짜를 생략한다."""
+def _interval(row: EventDraft) -> str:
+    """초안의 시간 구간 한 줄. 하루 안에 끝나면 끝 날짜를 생략한다."""
     start = row.starts_at.astimezone(KST)
     end = row.ends_at.astimezone(KST) if row.ends_at else None
     if row.all_day and end is not None:
@@ -603,13 +624,18 @@ def _report(observed: Observed) -> None:
         observed.reports.append(f"failed={result.failed.reason}")
     if observed.live.case.case_id == "RC24":
         # Step 1 규칙의 첫 측정 — 매일 반복되는 식사 일과는 core 일정이어야 한다
-        types = [str(row.fields.get("event_type")) for row, _ in observed.events]
+        types = [str(draft.event_type) for draft in observed.events]
         observed.reports.append(f"RC24 event_type={types or '(일정 없음)'}")
     if observed.live.case.case_id.startswith("SC"):
         # 저장된 구간을 그대로 남긴다 — 모델이 ends_on을 썼는지 확인 가능하다.
         # 일정이 없으면 규칙이 되묻고 모델이 고치지 못한 것이다
-        stored = " · ".join(_interval(row) for row, _ in observed.events)
+        stored = " · ".join(_interval(draft) for draft in observed.events)
         observed.reports.append(f"{observed.live.case.case_id} 구간={stored or '(일정 없음)'}")
+
+
+def _food(result: PipelineResult) -> list[Any]:
+    """도메인 결과 중 Food 몫. mock 결과라 tools · stage 를 그대로 읽는다."""
+    return [item for item in result.domain if item.agent == "food"]
 
 
 def _expected_food_tasks(observed: Observed) -> int:
@@ -642,7 +668,7 @@ def _print_case(observed: Observed, attempt: int) -> None:
     if result.rerouted:
         print(
             f"      다시 나눔: Memory 가 적지 않은 조각 {result.rerouted.bounced}개 → "
-            f"Food {list(result.rerouted.food_tasks)} (위 조각은 다시 나눈 결과)"
+            f"Food {list(result.rerouted.domain_tasks)} (위 조각은 다시 나눈 결과)"
         )
 
     memory = result.memory
@@ -655,7 +681,7 @@ def _print_case(observed: Observed, attempt: int) -> None:
             f"ended_by={memory.ended_by}{note}"
         )
         print(f"      저장 {_saved_summary(observed)}")
-    for food in result.food:
+    for food in _food(result):
         safety = "health_safety 사전 확인 대상" if food.requires_safety_check else "사전 확인 없음"
         print(
             f"    F {food.task_type}·{food.stage} ← {list(food.request_texts)} · "
@@ -691,9 +717,10 @@ def _tool_summary(names: list[str]) -> str:
 
 def _saved_summary(observed: Observed) -> str:
     parts = [f"{domain} {len(rows)}" for domain, rows in observed.observations.items() if rows]
-    for row, items in observed.events:
+    for draft in observed.events:
         parts.append(
-            f"일정 {row.title!r}({row.fields.get('event_type')}, {_interval(row)}, 준비물 {items})"
+            f"초안 {draft.title!r}({draft.event_type}, {_interval(draft)}, "
+            f"준비물 {len(draft.items)})"
         )
     return " · ".join(parts) or "없음"
 
@@ -718,20 +745,22 @@ def _record(observed: Observed) -> dict[str, Any]:
         "memory_ended_by": memory.ended_by if memory else None,
         "memory_tools": memory.tool_names if memory else [],
         "saved": {domain: len(rows) for domain, rows in observed.observations.items()},
-        "events": [
+        "event_drafts": [
             {
-                "event_type": str(row.fields.get("event_type")),
-                "items": items,
+                "op": draft.op,
+                "event_type": str(draft.event_type),
+                "items": len(draft.items),
+                "changed": list(draft.changed),
                 # 구간까지 남겨서 실행마다 다른 시각이 나오는지 결과에서 확인
-                "all_day": row.all_day,
-                "starts_at": row.starts_at.astimezone(KST).isoformat(timespec="minutes"),
+                "all_day": draft.all_day,
+                "starts_at": draft.starts_at.astimezone(KST).isoformat(timespec="minutes"),
                 "ends_at": (
-                    row.ends_at.astimezone(KST).isoformat(timespec="minutes")
-                    if row.ends_at
+                    draft.ends_at.astimezone(KST).isoformat(timespec="minutes")
+                    if draft.ends_at
                     else None
                 ),
             }
-            for row, items in observed.events
+            for draft in observed.events
         ],
         "food": [
             {
@@ -741,7 +770,7 @@ def _record(observed: Observed) -> dict[str, Any]:
                 "tools": len(food.tools),
                 "requires_safety_check": food.requires_safety_check,
             }
-            for food in result.food
+            for food in _food(result)
         ],
         "guidance": [guidance.code for guidance in result.routing.guidance],
         "unavailable": list(result.routing.unavailable_agents),

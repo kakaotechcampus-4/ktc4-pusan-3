@@ -55,7 +55,7 @@ export const COLOR_GROUPS: TokenGroup[] = [
   {
     title: "도메인 4종",
     swatches: [],
-    pairs: (["food", "activity", "education", "health"] as const).flatMap((d) => [
+    pairs: (["food", "activity", "growth", "health"] as const).flatMap((d) => [
       { fg: d, bg: "canvas", kind: "text" as const },
       { fg: `${d}-ink`, bg: `${d}-soft`, kind: "text" as const, note: "soft 배경 위" },
     ]),

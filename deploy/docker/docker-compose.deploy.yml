@@ -1,0 +1,32 @@
+# 배포용. 로컬 개발 DB 는 옆의 docker-compose.yml 이고, 이 파일과 섞지 않는다 —
+# 개발 DB 는 "내 노트북에서 apps/api 를 돌리기 위한 것" 이고, 여기 있는 것은 "서버에서 서비스되는 것" 이다.
+#
+#   cp .env.example .env    (최초 1회, 값 채우기)
+#   make web-image          이미지 굽기
+#   make web-up             띄우기
+#
+# 지금은 web 하나다. api 와 nginx 가 여기 합류한다 — 그때 web 의 ports 를 지우고
+# nginx 뒤로 넣는다 (지금은 앞에 아무것도 없어서 포트를 직접 낸다).
+# 🚨 api 는 --workers 1 이다. run 진행 상황과 Idempotency-Key 가 프로그램 메모리에 있어서 (#134)
+#    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
+services:
+  web:
+    build:
+      context: ../../apps/web
+      args:
+        # 🚨 이 값은 빌드 시점에 번들에 박힌다. 바꾸면 컨테이너 재시작이 아니라 재빌드다
+        #    (apps/web/Dockerfile 머리말).
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    image: ktc4-web:${WEB_IMAGE_TAG:-local}
+    container_name: ktc4-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT}:3000"
+    healthcheck:
+      # 00 로그인 화면. 서버 렌더만으로 그려져서 API 가 죽어 있어도 200 이 나온다 —
+      # 여기서 보려는 것은 "Next 가 떠 있는가" 뿐이다.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

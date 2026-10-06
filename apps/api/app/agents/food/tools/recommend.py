@@ -22,5 +22,11 @@ async def propose_meal_candidates(
     agent, content, reason, source_refs, status를 채우고 expires_at은 백엔드에서 설정한다.
     ingredients는 suggestion 결과에 포함하지 않는다.
     - 이 tool에서는 결과만 반환하며 저장, 발송, 예약은 처리하지 않는다.
+
+    TODO: suggestion.allergens · items 를 채운다 (10/4 스키마 이슈).
+    - allergens 는 모델이 쓴 ingredients 가 아니라 카탈로그 allergen_codes 를
+      allergen_terms.yaml 정식 명칭으로 바꿔 채운다
+    - items 는 일정 준비물로 쓸 재료 이름(된장 · 두부). 위의 "ingredients는 suggestion 결과에
+      포함하지 않는다" 와 어긋나니 구현할 때 같이 정리한다
     """
     raise NotImplementedError("DB 연결 후 구현")

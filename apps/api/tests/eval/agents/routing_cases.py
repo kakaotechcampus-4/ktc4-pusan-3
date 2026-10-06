@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.agents.food.schemas.common import FeedingStage, FoodTaskType
+from app.agents.food.schemas.common import FoodTaskType
 from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor.schemas import (
     DomainAgentName,
@@ -24,6 +24,7 @@ from app.agents.supervisor.schemas import (
     align_segment,
     normalize,
 )
+from app.rules.age import Stage
 
 INPUT_PATH = Path(__file__).with_name("test_input.txt")
 
@@ -81,7 +82,7 @@ class RoutingCase:
     case_id: str
     text: str
     spans: tuple[Span, ...]
-    stage: FeedingStage = FeedingStage.TODDLER
+    stage: Stage = "toddler"
     seed: str | None = None  # Step 9 에서 미리 넣어 둘 기록 (지금은 설명만)
     watch: str = ""  # 이 케이스로 무엇을 보는가
 
@@ -168,6 +169,15 @@ T_SPANS: dict[str, tuple[Span, ...]] = {
         R("블록으로 성 만들고 나서", OBSERVE),
         R("정리는 안 하겠대", OBSERVE),
     ),
+    # 이미 있는 일정에 준비물만 붙이는 발화(query_event로 찾아 create_event_item)
+    "T31": (R("운동회에 물통이랑 모자도 챙겨야 해", SCHEDULE),),
+    # 일정 초안 엣지(한 일정에 수정과 준비물이 같이)
+    "T32": (
+        R("운동회에 물통이랑 모자도 챙기고", SCHEDULE),
+        R("시간은 오전 10시로 바꿔줘", LOOKUP_EDIT),
+    ),
+    "T33": (R("운동회 준비물 체육복을 체육복 상의로 바꿔줘", LOOKUP_EDIT),),
+    "T34": (R("운동회 준비물 체육복 챙겼다고 체크해줘", LOOKUP_EDIT),),
 }
 
 T_CASES: tuple[RoutingCase, ...] = tuple(
@@ -335,7 +345,7 @@ RC_CASES: tuple[RoutingCase, ...] = (
             R("이유식 중기인데", OBSERVE, strict=False),
             Q("이번 주에 뭘 새로 먹여 볼까?", FOOD, REC),
         ),
-        stage=FeedingStage.INFANT,
+        stage="infant_weaning",
         watch="영아기 묶음(guide_weaning_stage)",
     ),
     RoutingCase(

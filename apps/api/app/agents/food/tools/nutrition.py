@@ -15,13 +15,15 @@ from app.agents.food.schemas.nutrition import (
 async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> ToolResult:
     """음식이나 식재료의 영양성분을 조회한다.
 
-    외부 API 연결 후:
-    - context.nutrition.facts(food_names)로 식약처 식품영양성분 DB를 조회한다.
+    DB · 외부 API 연결 후:
+    - 메뉴 카탈로그(`MenuCatalogStore.get_many`)에서 먼저 찾고, 없는 이름만 `resolve_menu` 로
+      외부에서 찾는다. 이름이 정확히 같은 결과만 받고, 못 찾으면 남기지 않는다
+      (food_agent_own_table §1).
     - 조회되지 않은 음식은 별도로 반환하고, 비슷한 음식의 값으로 대체하지 않는다.
     - 영양성분 수치는 조회된 원본 값을 그대로 사용한다.
       모델이 값을 추정하거나 보정하지 않는다.
     """
-    raise NotImplementedError("외부 API 연결 후 구현")
+    raise NotImplementedError("DB·외부 API 연결 후 구현")
 
 
 async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArgs) -> ToolResult:
@@ -45,10 +47,10 @@ async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArg
 
     DB 연결 후:
     - findings에 음식 추천, 근거 없는 정확한 수치, 진단 표현이 포함됐는지 확인한다.
-      허용하지 않는 내용이 있으면 VALIDATION_ERROR를 반환한다.
+      허용하지 않는 내용이 있으면 INVALID_ARGS를 반환한다.
     - evidence가 이번 실행에서 실제로 조회한 ref인지 확인하고,
       확인되지 않은 ref는 결과에서 제외한다.
-    - 저장할 테이블이 정해지기 전까지는 분석 결과만 반환한다.
+    - 분석 결과는 저장하지 않고 반환만 한다. 영양 판정은 그 task의 run state에만 둔다.
     - 결핍 진단, 치료식, 영양제 관련 요청은 이 단계에서 처리하지 않는다.
     """
     raise NotImplementedError("DB 연결 후 구현")

@@ -97,6 +97,12 @@ _YEAR_OFFSETS = {"올해": 0, "금년": 0, "작년": -1, "지난해": -1, "전�
 # 기준 일정이 있어야 뜻이 정해지는 표현
 _ANCHOR_RELATIVE = {"전날", "전일", "다음날", "익일", "당일", "하루전", "이틀전", "하루뒤"}
 
+# 숫자로 센 며칠 전. 보호자가 말한 날(오늘) 기준:
+# "3일 전부터 기침" 처럼 관찰이 시작된 날을 말할 때 쓴다.
+# 뒤·후는 "걸리고 3일 뒤에 나았어" 처럼 다른 사건 기준으로 쓰는 경우가 많아
+# 받지 않고 되묻는다. 한글로 센 하루전·이틀전은 위 기준 일정 표현으로 둔다
+_DAYS_AGO_RE = re.compile(r"^(?P<days>\d{1,4})일전$")
+
 _WEEKDAY_INDEX = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 _WEEK_OFFSET = {
     "이번주": 0,
@@ -160,6 +166,10 @@ def resolve_date(value: str, *, today: date, direction: TemporalDirection = "nea
         )
     if key in _DAY_OFFSETS:
         return today + timedelta(days=_DAY_OFFSETS[key])
+    matched = _DAYS_AGO_RE.match(key)
+    if matched is not None:
+        # "전" 이 방향을 말하므로 direction 은 보지 않는다
+        return today - timedelta(days=int(matched.group("days")))
 
     resolved = _try_year_month_day(key)
     if resolved is not None:

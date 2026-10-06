@@ -126,7 +126,9 @@
 | [`lib/auth/oauth.ts`](../../apps/web/src/lib/auth/oauth.ts) | 로그인 **시작**. `ready` 확인 → bind 생성 → 절대 `start_url` 로 이동. provider·복귀경로 기억 | ✅ 신설 (`lib/auth/kakao.ts` 삭제) |
 | [`lib/auth/oauth-bind.ts`](../../apps/web/src/lib/auth/oauth-bind.ts) | bind 비밀 생성·보관·소비 | ✅ 신설 |
 | [`app/auth/callback/page.tsx`](../../apps/web/src/app/auth/callback/page.tsx) | 돌아온 코드를 교환하고 다음 화면으로 보냄 | ✅ 신설 |
-| [`app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) | 가입 동의 4건 → `POST /auth/kakao/signup` + `POST /consents` × 2 | ✅ 신설 |
+| [`app/auth/consent/page.tsx`](../../apps/web/src/app/auth/consent/page.tsx) | 가입 — 보호자 이름 + **계정 2건** → `POST /auth/kakao/signup` | ✅ 신설 · 🔶 #96 에서 4건 → 2건 |
+| [`app/start/page.tsx`](../../apps/web/src/app/start/page.tsx) | 00-1 — 아이 0명일 때 "새로 등록 / 초대로 참여" | 🔶 #96 |
+| [`app/invite/page.tsx`](../../apps/web/src/app/invite/page.tsx) | 코드 입력 → `GET /invites/{code}` 로 **어느 아이인지 보여주고** → `POST /invites/{code}/accept` | 🔶 #96 |
 | [`lib/consent.ts`](../../apps/web/src/lib/consent.ts) | 스코프 정본 · 약관 버전 · 어느 엔드포인트로 가는지 | ✅ 신설 |
 | [`app/page.tsx`](../../apps/web/src/app/page.tsx) | 버튼 → 시작 함수. status prefetch. 성공 처리는 콜백 화면으로 이사 | ✅ 수정 |
 | [`stores/session.ts`](../../apps/web/src/stores/session.ts) | 저장소 `localStorage` → **`sessionStorage`**, `expiresAt` 보관, `hasLiveSession()` | ✅ 수정 |
@@ -242,35 +244,58 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 콜백이 `consent_code` 를 `sessionStorage` 에 넣고 `/auth/consent` 로 보낸다 — 🚨 **가입 대기표를 주소창·브라우저 기록에 남기지 않으려고** URL 이 아니라 저장소를 쓴다. 대기표 없이 이 주소로 들어오면 00 으로 되돌린다.
 
-#### 항목 4건 — 보내는 곳이 갈린다
+#### 항목 5건 — 보내는 곳이 갈린다 (🔶 #96 에서 바뀌었다)
 
-| 스코프 | 대상 | 어디로 | 근거 |
-| --- | --- | --- | --- |
-| `service_terms` | 계정 | `POST /auth/{provider}/signup` | 보호자 각자 1회 |
-| `privacy_account` | 계정 | 〃 | 보호자 본인 개인정보 |
-| `child_basic` | 아이 | `POST /consents` | 개인정보보호법 제22조의2 |
-| `child_health` | 아이 | 〃 | 제23조 — 민감정보 **별도 동의** |
+| 스코프 | 필수 | 대상 | 어디로 | 어느 화면 | 근거 |
+| --- | --- | --- | --- | --- | --- |
+| `service_terms` | 필수 | 계정 | `POST /auth/{provider}/signup` | 가입 | 보호자 각자 1회 |
+| `privacy_account` | 필수 | 계정 | 〃 | 〃 | 보호자 본인 개인정보 |
+| `location` | **선택** | 계정 | 〃 | 〃 | 위치정보법 제19조 — 🔶 아래 |
+| `child_basic` | 필수 | 아이 | 🔶 `POST /children` | 01 아이 만들기 | 개인정보보호법 제22조의2 |
+| `child_health` | 필수 | 아이 | 〃 | 〃 | 제23조 — 민감정보 **별도 동의** |
+| `guardian_attested` | 필수 | 아이 | 〃 | 〃 | 위 두 동의의 **유효 요건** (제22조의2) |
 
-**아이 스코프를 아이가 생기기 전에 받는 이유** — 계약서 §04 가 "동의는 저장보다 먼저다" 로 못박았고 **`child_basic` 없이 `POST /children` 은 403** 이다. 즉 01 화면(아이 만들기)보다 앞서야 한다. 그래서 이 화면에서 4건을 다 받는다.
+🔶 **`location` 이 가입 화면으로 올라왔고, 대상도 아이 → 계정으로 바뀌었다.** 처음에는 "놀이 제안을
+처음 볼 때까지 쓸 일이 없으니 미리 받지 않는다" 로 두고 설정에서만 켜게 했었다 (#89).
+
+- **왜 계정 스코프인가** — 받는 값은 **보호자 기기의 위치**고 위치정보법 제19조의 개인위치정보주체도
+  보호자 본인이다. 놀이 제안에 쓰인다고 아이의 개인정보가 되지 않는다.
+- **실무적으로도 이래야 성립한다** — 가입 화면에는 아직 아이가 없어서 `child_id` 를 실을 수 없다.
+  아이 스코프로 두면 `POST /consents` 가 저장할 자리를 못 찾는다 (아이 2건이 `POST /children` 으로
+  옮겨 간 것과 같은 닭-달걀).
+- 🚨 **선택이 하나라도 서면 "제출을 막는 기준" 이 실제로 갈린다.** `required` 만 센다 —
+  목록 길이로 세면 선택까지 필수가 된다 (`requiredConsentsChecked()`).
+
+**왜 아이 2건이 `POST /consents` 에서 옮겨 갔나** — 동의를 **아이 단위**로 기록하기로 하면서(#96) 닭-달걀이 생겼다. `POST /consents` 는 `child_id` 를 받는데 그 id 는 `POST /children` 이 만들고, 계약서 §04 는 `child_basic` 없이 그 호출이 403 이라고 말한다. **둘을 동시에 만족시키는 모양은 "아이와 동의를 한 트랜잭션" 뿐이다.** ⚠️ 계약서 §05 의 바디에는 아직 없다 — 확정 전이다.
+
+두 번째 이유는 이탈이다. 가입 화면에서 4건을 다 받으면 **가입만 끝내고 01 에서 나간 사람**의 아이 동의가 화면 상태로만 남아 있다가 사라지고, 다시 들어와도 01 이 그 값을 묻지 않아 보낼 것이 없다. 값을 **그 값이 쓰이는 화면**에 두면 이탈해도 늘 같은 자리에 있다.
 
 ```
-① POST /auth/kakao/signup { consent_code, bind, consents: [계정 2건] }   ← 계정이 여기서 생긴다
+① POST /auth/kakao/signup { consent_code, bind, nickname, consents: [계정 2건] }  ← 계정이 여기서 생긴다 (이름도 이 화면에서 받는다)
 ② signIn(token, expires_in) · consent_code · bind 정리
-③ POST /consents × 2  { scope, action: "granted", policy_version, guardian_attested }
-④ /onboarding 으로 — 방금 만든 계정이라 아이가 없다. /me 를 물어볼 것도 없다
+③ /start 로 — 아이가 없다. 새로 등록할지 초대를 받을지 거기서 고른다 (#96)
+④ 01 에서 POST /children { …아이, consents: [아이 2건], guardian_attested }  ← 아이와 동의가 한 트랜잭션
 ```
 
-🚨 **①이 성공한 뒤 ③이 실패하면 계정만 남는다.** 그 상태로 01 화면에 가면 `POST /children` 이 403 이다. 그래서 화면이 단계를 들고 있다가 **재시도할 때 ①을 다시 돌리지 않고 ③만 다시 보낸다.**
+🚨 **③에서 01 로 바로 보내지 않는다.** 초대를 기다리는 사람이 아이 만들기에 떨어지면 같은 아이를 또 등록하고, 아이는 보호자당 한 명이라 그 뒤로는 초대를 수락할 수 없다.
+
+🚨 **부분 실패가 없어졌다.** 예전에는 ①이 성공한 뒤 `POST /consents` 가 실패하면 **계정만 남고 01 이 403** 이었고, 화면이 단계를 들고 있다가 재시도할 때 ①을 건너뛰어야 했다. 지금은 계정과 아이가 각자 한 번의 호출로 끝나서 그 중간 상태 자체가 없다.
 
 #### 화면 규칙
 
 - 🚨 **"전체 동의" 를 두지 않는다.** 민감정보(`child_health`)는 다른 동의와 **구분해서** 받아야 한다 (개인정보보호법 제23조). 한 번에 쓸어 담는 버튼이 그 구분을 없앤다. 4건이라 개별 체크로 충분하다.
 - 🚨 **승인 게이트가 아니다.** `btn-approve` 와 `caution` 색을 쓰지 않는다 — 그 둘은 되돌릴 수 없는 2곳 전용이다 (CLAUDE.md §2). 제출은 `btn-primary`.
-- 🚨 **"언제든 철회할 수 있어요" 를 쓰지 않는다.** 네 건이 전부 필수라 하나라도 철회하면 서비스가 성립하지 않는다 — `child_basic` 없이는 아이를 등록할 수 없고 `child_health` 없이는 입력조차 저장되지 않는다(둘 다 403). 철회는 스위치 하나 끄기가 아니라 **탈퇴에 가깝고**, 무엇을 지우는지는 아직 미정이다(최상위 CLAUDE.md §10). 지금은 **아무 약속도 하지 않는다.**
+- 🚨 **"언제든 철회할 수 있어요" 를 쓰지 않는다.** 가입 흐름의 네 건이 전부 필수라 하나라도 철회하면 서비스가 성립하지 않는다 — `child_basic` 없이는 아이를 등록할 수 없고 `child_health` 없이는 입력조차 저장되지 않는다(둘 다 403). 철회는 스위치 하나 끄기가 아니라 **탈퇴에 가깝고**, 무엇을 지우는지는 아직 미정이다(최상위 CLAUDE.md §10). 지금은 **아무 약속도 하지 않는다.**
 - **각 항목에 "상세 보기" 가 있다.** 바텀시트로 확정된 사실만 펼친다 — 받는 것 · 쓰는 곳 · 하지 않는 것 · 동의하지 않으면. 🚨 **약관 전문을 지어내지 않는다**: 보관 기간·삭제 범위가 미정이라 정식 문구를 쓸 수 없고, 없는 조항을 그럴듯하게 넣으면 그대로 배포된다. 시트 하단에 최종본이 아님을 항상 밝힌다.
-- 🚨 **다른 입력을 섞지 않는다.** 법적 고지를 읽고 확인하는 화면인데 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다 (테크스펙 리스크 ④). 보호자 닉네임을 여기서 받지 않기로 한 것도 같은 이유다 ([명세 §4-4](../api/auth-kakao-v1.md)).
+- 🚨 **무관한 입력을 섞지 않는다.** 법적 고지를 읽고 확인하는 화면인데 무관한 입력이 같은 제출 버튼에 묶이면 "무엇에 동의한 것인가" 가 흐려진다 (테크스펙 리스크 ④).
+  ⚠️ **보호자 이름은 이 화면에서 받는다** — 한동안 앞 화면(`/auth/profile`)으로 갈라 뒀다가 합쳤다. 이 화면이 만드는 것이 **보호자 계정**이고 동의 2건이 허락하는 것도 그 계정이라, 이름은 무관한 입력이 아니다. 아이 정보였다면 갈랐을 것이고 실제로 갈라 놨다 (아이 2건은 01 화면이 받는다). 갈라 둔 화면은 입력칸 하나만 남아 가운데가 비기도 했다 (디자인 시스템 §5 "바닥에 붙이는 것").
+  🚨 **합친 대가로 지켜야 하는 것** — 이름 칸과 동의 구역을 **제목으로 가르고**, 동의는 항목마다 개별 체크에 전문 시트를 붙인다. 한 덩어리로 묶거나 "전체 동의" 를 세우면 위 규칙이 그때 깨진다.
+  🚨 01 아이 만들기도 예외가 아니다. 거기서 묻는 것은 **그 화면이 입력받는 대상(아이)에 대한 동의**다.
 - **근거 법조문을 화면에 그대로 보여준다.** 무엇에 동의하는지 숨기지 않는다.
-- 4건이 전부 필수라 하나라도 빠지면 제출 버튼이 비활성이다. 필수는 **색이 아니라 `[필수]` 라벨**로 표시한다.
+- 필수 2건 중 하나라도 빠지면 제출 버튼이 비활성이다. 필수는 **색이 아니라 `[필수]` 라벨**로 표시한다.
+  🚨 막는 기준은 **`required`** 이지 목록 길이가 아니다 — `location` 이 이 화면에 서면서 실제로 갈리는 자리가 됐다 (`requiredConsentsChecked()`).
+- 🚨 **필수와 선택을 한 무리로 그리지 않는다.** 머리줄(`label`/`ink-muted`)로 가른다 (디자인 시스템 §7 동의 목록) — 같은 체크박스가 죽 늘어서 있으면 선택도 채워야 넘어가는 칸으로 읽히고, 반대로 필수가 골라도 되는 것처럼 읽힌다.
+  선택 무리 아래에 **"지금 켜지 않아도 돼요"** 를 고르기 **전에** 적는다. 선택을 가입 화면에 올리는 대가가 "필수처럼 보이는 것" 이라, 그 대가를 거기서 갚는다.
 - `consent_code` TTL 이 10분이다. 만료되면 00 으로 되돌려 다시 시작하게 한다.
 
 ### 4-6. 00 화면에서 손볼 것
@@ -320,40 +345,50 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 ### 5-1. 시작 URL 만 예외로 뺀다
 
-[`src/config.ts`](../../apps/mobile/src/config.ts) 의 `isInternalUrl()` 이 외부 URL 을 전부 시스템 브라우저로 넘기는 게 [#23](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/23) 에서 걸린 지점이다. 로그인 시작 URL 하나만 앞에서 걸러낸다.
+[`src/config.ts`](../../apps/mobile/src/config.ts) 의 `isInternalUrl()` 이 외부 URL 을 전부 시스템 브라우저로 넘기는 게 [#23](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/23) 에서 걸린 지점이다. 로그인 시작 URL 하나만 앞에서 걸러낸다 ([#210](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/210)).
 
 ```ts
 // App.tsx — onShouldStartLoadWithRequest
 if (isInternalUrl(request.url)) return true;
-if (isAuthStartUrl(request.url)) {                 // pathname 이 /auth/<provider> 로 끝나는지
-  void WebBrowser.openAuthSessionAsync(request.url, "icatch://auth")
-    .then((r) => { if (r.type === "success") loadCallback(r.url); });
+if (isAuthStartUrl(request.url)) {                 // 경로가 /api/v1/auth/<provider> 로 끝나는 것만
+  void openAuthSession(request.url);               // openAuthSessionAsync(url, "icatch://auth")
   return false;
 }
-void Linking.openURL(request.url);                 // 그 외 외부 링크는 기존 동작 그대로
+void openExternal(request.url);                    // 그 외 외부 링크 — in-app 브라우저 (#212)
 return false;
 ```
 
-`expo-web-browser` 의 `openAuthSessionAsync` 가 Android = Custom Tabs, iOS = `ASWebAuthenticationSession` 으로 갈라주고 양쪽 다 복귀 URL 을 promise 로 돌려준다. **네이티브 코드를 직접 짜지 않는다** — config plugin 도 필요 없고 CNG 가 처리한다.
+판정 · 주소 조립은 [`src/native/auth-session.ts`](../../apps/mobile/src/native/auth-session.ts) 의 순수 함수이고 `pnpm test` 가 본다.
+
+- **경로를 끝까지 맞춘다.** `/auth/kakao/callback` 까지 걸리면 세션 안에서 세션이 또 열린다. 오리진은 보지 않는다 — 셸은 API 주소를 모르고, 경로가 같은 엉뚱한 주소가 걸려도 인앱 브라우저로 열릴 뿐 웹뷰에 들어오지 않는다.
+- `expo-web-browser` 의 `openAuthSessionAsync` 가 Android = Custom Tabs, iOS = `ASWebAuthenticationSession` 으로 갈라주고 양쪽 다 복귀 URL 을 promise 로 돌려준다. **네이티브 코드를 직접 짜지 않는다** — `expo install` 이 `app.json` 에 넣는 config plugin 하나로 CNG 가 처리한다.
+- ⚠️ **Android 는 흉내 구현이다.** Custom Tabs 를 열어 두고 `Linking` 의 `url`(→ `success`)과 앱이 다시 앞으로 온 것(`AppState` → `dismiss`) 중 **먼저 온 쪽**을 결과로 쓴다. 복귀 때는 `onNewIntent` 가 `onResume` 보다 먼저라 `success` 가 이긴다. 순서가 뒤집히면 코드가 조용히 사라지므로 셸을 고치면 기기에서 다시 본다.
+- Custom Tab 은 별도 태스크의 중계 화면(`BrowserProxyActivity`)을 거쳐 뜬다 — 셸의 `MainActivity` 가 `singleTask` 라 바로 띄우면 앱이 앞으로 올 때 탭이 죽는다. 복귀 인텐트가 들어오면 라이브러리가 그 태스크를 치워서 **탭이 저절로 닫힌다.**
+- 카카오의 [하이브리드 앱 가이드](https://developers.kakao.com/docs/ko/javascript/hybrid)(`intent://` 해석 · 팝업 웹뷰 · `<queries>` 의 `com.kakao.talk`)는 **JS SDK 를 웹뷰 안에서 돌릴 때**의 것이라 여기 해당하지 않는다. 카카오 페이지는 Custom Tabs(진짜 Chrome)에서 뜨므로 "카카오톡으로 로그인" 의 `intent://` 도 Chrome 이 처리한다.
 
 `scheme: "icatch"` 는 [`app.json`](../../apps/mobile/app.json) 에 이미 있다. **이 스킴을 카카오 콘솔에 등록하지 않는다** — `icatch://auth` 는 우리 서버가 302 하는 대상이지 카카오의 `redirect_uri` 가 아니다. 카카오는 API 오리진만 안다.
 
 ### 5-2. 복귀 URL 을 웹뷰에 싣는다
 
 ```ts
-function loadCallback(url: string) {
+// src/native/auth-session.ts
+export function callbackUrlFromReturn(returnUrl: string, webUrl: string): string | null {
   // ⚠️ 커스텀 스킴을 URL 로 파싱하지 않는다 (§7)
-  const PREFIX = "icatch://auth";
-  if (!url.startsWith(PREFIX)) return;
-  const query = url.slice(PREFIX.length);
-  if (query && !query.startsWith("?")) return;      // icatch://authXXX 는 남이다
-  setWebViewUri(`${WEB_URL}/auth/callback${query}`);
+  if (!returnUrl.startsWith("icatch://auth")) return null;
+  const query = returnUrl.slice("icatch://auth".length);
+  if (query !== "" && !query.startsWith("?")) return null;   // icatch://authXXX 는 남이다
+  return `${webUrl}/auth/callback${query}`;
 }
+
+// App.tsx — success 일 때만
+webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location.replace
 ```
 
 - 돌아갈 오리진은 **지금 웹뷰가 보고 있는 곳**(`WEB_URL`)이다. 개발 빌드에서 프로덕션 주소로 고정하면 로컬 서버가 발급한 코드를 라이브 사이트가 받게 되는데, 코드도 bind 도 그쪽 컨텍스트엔 없어서 반드시 실패한다.
-- **웹뷰를 remount 하지 않는다.** `source` 의 uri 만 바꿔 같은 컨텍스트에서 이동시킨다 — `key` 를 바꿔 다시 만들면 `sessionStorage` 의 bind 가 사라진다 (§4-3).
-- `Linking` 복귀 경로는 지금 처리하지 않는다. 추가하려면 §4-3 의 재검토 조건을 같이 본다.
+- **웹뷰를 remount 하지 않는다.** 같은 웹뷰 안에서 이동시킨다 — `key` 를 바꿔 다시 만들면 `sessionStorage` 의 bind 가 사라진다 (§4-3).
+- **`source` 의 uri 를 바꾸지 않는다** (설계안에서 바뀐 곳). 같은 오류로 두 번 돌아오면(`?error=invalid_state` 등) 주소가 문자열까지 같아서 React 가 바뀐 것으로 보지 않고 웹뷰는 제자리에 남는다. 그래서 `location.replace` 를 주입한다. `replace` 인 이유는 복귀 화면이 교환 뒤 스스로 넘어가는 경유지라 기록에 남길 게 없어서다.
+- X 로 닫은 것(`cancel` · `dismiss`)에는 셸이 할 일이 없다 — 00 화면이 `visibilitychange` 로 버튼을 되살린다 (§4-6).
+- `Linking` 복귀 경로(앱이 꺼진 상태로 돌아오는 것)는 지금 처리하지 않는다. 추가하려면 §4-3 의 재검토 조건을 같이 본다.
 
 ### 5-3. Expo Go 로는 확인할 수 없다
 
@@ -432,8 +467,10 @@ function loadCallback(url: string) {
 서버가 붙어야 확인 가능한 것:
 
 - [ ] 웹 브라우저 전체 왕복
-- [ ] 앱(개발 빌드) 전체 왕복 — Android · iOS 각각
-- [ ] 인앱 브라우저에서 X → 버튼이 원래대로 돌아옴
+- [x] 앱(개발 빌드) 전체 왕복 — **Android 에뮬레이터** (#210). 시작 → Custom Tab → 카카오 → `icatch://auth?code=` → 탭이 저절로 닫힘 → `/auth/callback` 교환 `200` → 가입 동의 화면. 5회 연속 `success` 로 돌아옴
+- [ ] 앱 전체 왕복 — iOS · **실기기 "카카오톡으로 로그인"**(에뮬레이터에 카카오톡이 없다)
+- [x] 인앱 브라우저에서 X → 00 으로 돌아오고 버튼이 원래대로 · 이어서 다시 누르면 정상 왕복 (Android)
+- [x] 로그인 시작이 아닌 외부 링크("전문 보기")는 인증 세션으로 열리지 않음 (Android) — #212 부터 in-app 브라우저
 - [ ] bind 를 지우고 교환 → `401 invalid_handoff`
 - [ ] 앱 콜드 스타트 후 재로그인 체감 (§9-2)
 

@@ -6,6 +6,7 @@ Memory가 관리.
 """
 
 from app.agents.common.tool_schema import ToolDefinition
+from app.agents.food.schemas.daycare import DeleteDaycareMealArgs, UpdateDaycareMealArgs
 from app.agents.food.schemas.infant import GuideWeaningStageArgs
 from app.agents.food.schemas.menu import DaycareMenuArgs
 from app.agents.food.schemas.nutrition import (
@@ -57,6 +58,24 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "급식까지 포함해 분석할 때 부른다. 아이에게 위험한 식품 표시가 함께 온다."
         ),
         args=DaycareMenuArgs,
+    ),
+    # daycare_meal — 급식 갱신. Food가 보호자 말을 반영해 쓰는 유일한 테이블(update만, insert 없음)
+    ToolDefinition(
+        name="update_daycare_meal",
+        description=(
+            "이미 기록된 기관 급식을 고친다. 대체식을 받았거나 평소보다 많이/적게 먹었다는 "
+            "말일 때 부른다. 날짜·메뉴·양은 발화 원문의 부분 문자열만 담는다."
+        ),
+        args=UpdateDaycareMealArgs,
+    ),
+    # daycare_meal — 급식 삭제(결석)
+    ToolDefinition(
+        name="delete_daycare_meal",
+        description=(
+            "그날 기관 급식 기록을 지운다. 어린이집·유치원을 빠졌다는 말일 때 부른다. "
+            "대상 날짜가 모호하면 되묻는다."
+        ),
+        args=DeleteDaycareMealArgs,
     ),
     # 유아기 — 식품 영양성분 조회 · Nutrition Lookup
     ToolDefinition(

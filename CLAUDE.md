@@ -45,8 +45,8 @@
 ### 기억
 
 - 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 또래 기준 일반 추천임을 **화면에 명시**하고, 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
-- 🚨 **개인화 추천에는 사용한 `memory_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
-- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 일반 추천은 근거 0행이 정상이지만, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
+- 🚨 **개인화 추천에는 사용한 `source_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
+- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다. 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
 - 🚨 **한 번의 관찰을 성향으로 확정하지 않는다.** 승격은 오직 Curator 의 반복 집계로만. LLM 이 `state` 를 직접 쓰지 않는다.
 - 🚨 **부모의 말은 아이의 Fact 가 아니다.** "요즘 산만하다"는 보호자 Observation(`caregiver_observation`). 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
 - 🚨 **6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다.**
@@ -54,7 +54,7 @@
 ### 실행
 
 - 🚨 **되돌릴 수 없는 것은 사람이 승인한다** — 승인 게이트는 **딱 2곳**: ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 기록 확정. 그 외에 승인을 늘리지 말 것(자동화가 무의미해진다), **줄이지도 말 것**.
-- 🚨 **자동 실행 경로를 코드에 만들지 않는다.** 승인 없는 draft 는 24시간 뒤 만료.
+- 🚨 **자동 실행 경로를 코드에 만들지 않는다.** 일정은 승인 전에는 저장하지 않는다 — Agent 는 초안까지만 만든다. 승인 없는 Suggestion 은 24시간 뒤 만료.
 - 🚨 **20초 초과 시 부분 결과로 전환.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 한 화면에 섞는다.
 
 ### 개인정보
@@ -101,7 +101,7 @@
 
 **설계상 중요한 두 가지**
 
-- **저장이 검색보다 먼저다.** 방금 저장한 "5일째"가 같은 run 의 검색 결과에 잡혀야 혼합형이 성립한다. 그래서 쓰기 배치 캐싱을 하지 않는다.
+- **저장이 검색보다 먼저다.** 방금 저장한 "5일째"가 같은 run 의 검색 결과에 잡혀야 혼합형이 성립한다. 그래서 쓰기 배치 캐싱을 하지 않는다. 도메인 Agent 의 쓰기(급식 갱신 등)도 같은 run 의 읽기보다 먼저 끝난다.
 - **검색과 행동은 한 칸이다.** 각 Agent 가 직접 `memory.search` 를 부른다. 별도 검색 단계를 만들지 말 것.
 
 ---
@@ -109,11 +109,11 @@
 ## 5. 용어 — 같은 단어를 같은 뜻으로
 
 6명이 병렬로 만들기 때문에 **여기서 어긋나면 통합에서 터진다.**
-스키마·인터페이스 정본은 **저장소 밖**에 있다(테크스펙에서 분리). 확정되면 `docs/api/` 에 기능 문서로 고정한다.
+**API 계약 정본은 Swagger** 다 — 서버 코드(라우터 · Pydantic 스키마)에서 자동으로 만들어지고 API 서버의 `/docs` 에서 본다 (09-20 회의). `docs/api/api-interface-v1.html` 은 초안 · 참고용이라 **손으로 갱신하지 않는다.** 필드의 뜻은 스키마의 docstring · `Field(description=...)` 에 적으면 Swagger 에 그대로 나온다. 흐름 · 보안 이유처럼 Swagger 가 담지 못하는 것만 `docs/api/` 기능 문서로 남긴다.
 
 | 용어                               | 뜻                                                                                                        | 어디에                                                       |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Observation Memory**             | 관찰 **1건**. 도메인별 4계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity`  |
+| **Observation Memory**             | 관찰 **1건**. 도메인별 5계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity` · `_routine` |
 | **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
 | **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
@@ -121,10 +121,10 @@
 | **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
-| **도메인 Agent**                   | `food` · `activity` · `education` · `health` **4종 고정**                                                 | `suggestion_agent`                                           |
+| **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
 | **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
-| **근거 (evidence)**                | 그 추천이 쓴 `memory_id` 목록. **0행이면 버그**                                                           | `suggestion_evidence`                                        |
-| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) ⚠️ / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. ⚠️ = 계약서 v1 에 없는 값(협의 대상) | `correction_verdict`                                         |
+| **근거 (evidence)**                | 그 추천이 쓴 `source_id` 목록. **0행이면 버그**. 컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문 | `suggestion_evidence`                                        |
+| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. | `correction_verdict`                                         |
 | **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
 | **승인 게이트**                    | 되돌릴 수 없는 2곳                                                                                        | §2 · §3                                                      |
 
@@ -141,7 +141,7 @@
 ```
 ├── CLAUDE.md                 ← 이 파일 (전원 공유 컨텍스트)
 ├── CONTRIBUTING.md           브랜치 · 커밋 · PR · 리뷰 규칙
-├── Makefile                  install / dev / test / lint / fmt (apps/api 안에서 uv run) · db-up / db-down / db-logs (deploy/docker)
+├── Makefile                  `make` 만 치면 전체 목록. 앞에 web- 이 붙으면 apps/web(pnpm), 안 붙으면 apps/api(uv), db-*·web-image/up/down/logs 는 docker (deploy/docker)
 ├── docs/                     기능별 결정·근거·검증 → docs/README.md 인덱스
 │   ├── overview/             기획 최종안 · 테크스펙 (Notion export 원문)
 │   ├── api/                  API 계약서 v1
@@ -152,6 +152,8 @@
 │   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
 │   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
 │   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
+│   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
@@ -161,8 +163,11 @@
 │   │       └── test/         Vitest 셋업 (`pnpm test`) — 목이 계약대로 "행동" 하는지
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
-│   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면
-│   │   └── src/config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
+│   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면 · 주입 배선
+│   │   └── src/
+│   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 최근 사진(`window.icatch.recentPhotos`).
+│   │                         🚨 최근 사진 계약 정본은 웹(`apps/web/src/lib/native/`)이고 여기는 구현이다
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
@@ -176,8 +181,11 @@
 │       │   │   └── agent_config.py  역할별 LLM 키 선언 파일 — 이시하 (core, agents가 함께 상속)
 │       │   ├── api/          라우터 · 스키마 — 김명성
 │       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
-│       │   │   ├── deps/     (비어 있음) 인증 · 권한 · 동의 검사
-│       │   │   └── v1/       (비어 있음) 도메인 엔드포인트
+│       │   │   ├── deps/     인증 · 권한 · 동의 검사
+│       │   │   ├── idempotency.py  Idempotency-Key 기억 (같은 키 → 처음 응답 재생)
+│       │   │   ├── runs/     run 채널 · SSE · 백그라운드 러너 · Agent 이벤트 → 화면 이벤트 번역. v1/ 밖인 이유 — 계약서 버전과 무관하다
+│       │   │   │             🚨 둘 다 프로세스 메모리 — api 는 --workers 1 전제 (#134)
+│       │   │   └── v1/       도메인 엔드포인트
 │       │   ├── domains/      (비어 있음) 도메인 모델 · 리포지토리 — 김명성
 │       │   ├── agents/       (비어 있음) Agent — **내부 구조는 이시하가 결정**
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
@@ -189,8 +197,9 @@
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
-│   ├── docker/                로컬 개발 DB (Postgres+pgvector) docker-compose
-│   └── (미생성) nginx/, scripts/   배포용, 아직 없음
+│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector),
+│   │                          docker-compose.deploy.yml 은 배포(지금은 web 하나). .env 는 한 곳을 같이 쓴다
+│   └── nginx/, scripts/       (비어 있음) 배포용. web 을 nginx 뒤로 넣을 때 채운다
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
@@ -286,13 +295,15 @@
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
-  위한 아래 5개만 인증 없이 호출한다. 새 예외가 필요하면 구현 전에 이 목록과 API 계약을
-  함께 변경한다.
+  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` · `GET /policies/{scope}/{version}` 만 인증 없이 호출한다.
+  새 예외가 필요하면 구현 전에 이 목록과 API 계약을 함께 변경한다.
   - `GET /auth/{provider}/status`
   - `GET /auth/{provider}`
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
+  - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
+  - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
 - 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**

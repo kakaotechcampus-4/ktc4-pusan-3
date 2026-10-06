@@ -71,6 +71,23 @@ export function formatEventTime(iso: string, allDay = false): string {
 }
 
 /**
+ * 시각만 ("오전 10:00"). 🚨 **날짜를 이미 다른 칸이 말하고 있을 때** 쓴다 —
+ * 일정 초안 카드는 날짜를 `DateField` 가 지고 있어서, 여기서 `formatEventTime` 을 쓰면
+ * 같은 날짜가 두 가지 표기로 두 번 선다 ("2026년 9월 18일" 바로 아래 "9월 18일 (금) 오전 10:00").
+ */
+const TIME_ONLY = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: TIME_ZONE,
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export function formatTimeOfDay(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return TIME_ONLY.format(at);
+}
+
+/**
  * 날짜 하나를 한국어 표기로 ("9월 12일 (토)"). `YYYY-MM-DD` 와 ISO 시각을 모두 받는다.
  * 🚨 상대 표현("3일 전")을 만들지 않는다 — 그건 `observed_label` 이고 서버가 만든다.
  */
@@ -138,6 +155,25 @@ export function toMonthKey(date: Date): string {
 export function toISODate(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * 절대 시각 → **한국 시간 기준** `YYYY-MM-DD`. 대화를 하루 단위로 가르는 키다 (#226).
+ *
+ * 🚨 **`toISODate` 를 쓰지 않는다.** 그건 기기 시간대의 날짜라, 해외 로밍이나 잘못된 설정에서
+ *    한국 자정과 다른 시각에 대화가 갈린다. 서버의 하루 한도(#147)도 한국 자정에 풀린다 —
+ *    둘이 다른 자정을 쓰면 "오늘 대화" 와 "오늘 보낸 횟수" 가 다른 날을 센다.
+ * ⚠️ 표시가 아니라 키다. 상대 날짜("어제")를 만들지 않는다.
+ */
+const SEOUL_DATE_KEY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function toSeoulDateKey(at: Date): string {
+  return SEOUL_DATE_KEY.format(at);
 }
 
 /**

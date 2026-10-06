@@ -168,12 +168,32 @@ function AuthCallbackScreen() {
           return;
         }
 
-        const me = await queryClient.fetchQuery({
-          queryKey: qk.me(),
-          queryFn: () => api.get<Me>("/me"),
-        });
+        /**
+         * 🚨 **여기서부터는 이미 로그인된 상태다** (`signIn()` 이 위에서 끝났다). 이 요청은
+         *    "어느 화면으로 보낼까" 를 고르려고 부르는 것이라, 실패해도 **로그인 실패가
+         *    아니다.** 아래 catch 로 흘려보내면 토큰을 쥔 채로 "로그인하지 못했어요" 를
+         *    읽게 되고, 다시 시도해도 같은 자리에서 또 막힌다 — 실서버 연결에서 실제로
+         *    그랬다 (`GET /me` 가 아직 없어 404 · #92).
+         *
+         * 🚨 그래서 모르는 것만 인정하고 00-1 로 보낸다. 그 화면은 `/me` 실패를 이미
+         *    감당한다 — 아이가 있는지 모를 뿐이고, 두 갈래는 그대로 고를 수 있다.
+         */
+        let me: Me;
+        try {
+          me = await queryClient.fetchQuery({
+            queryKey: qk.me(),
+            queryFn: () => api.get<Me>("/me"),
+          });
+        } catch {
+          router.replace("/start");
+          return;
+        }
+
         const first = me.children[0];
-        router.replace(first ? `/child/${first.child_id}/home` : "/onboarding");
+        // 🚨 아이가 없으면 01(아이 만들기)이 아니라 00-1 로 보낸다. 초대를 기다리는 사람이
+        //    바로 아이 만들기에 떨어지면 **같은 아이를 또 등록**하고, 그 뒤로는 초대를
+        //    수락할 수 없다 (아이는 보호자당 한 명 · #96).
+        router.replace(first ? `/child/${first.child_id}/home` : "/start");
       } catch (cause) {
         clearHandoff();
         if (isApiError(cause, "invalid_handoff")) {

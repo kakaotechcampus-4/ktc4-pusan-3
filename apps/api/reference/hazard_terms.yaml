@@ -1,0 +1,476 @@
+# Activity 위험 용어 사전 — reference/hazard_terms.yaml
+# 설계: docs/agents/activity/activity-agent-v1.md §3-5 · §4-1
+#
+# 🚨 월령(block/warn_below_month)과 출처는 축에만 적는다. 용어는 axis · label · aliases · guards 만 갖는다.
+#    용어마다 월령을 적게 두면 그 순간부터 사람(또는 LLM)이 용어 단위로 월령을 판단하게 된다.
+# 🚨 block/warn_below_month 는 사람이 정한다. 출처가 이미 정한 값을 옮긴 것이다.
+# 🚨 위험이 형용사에 실린 말은 수식어를 포함해서만 등록한다 (작은 블록 O · 블록 X).
+# 🚨 guard 에 "더 위험한 표현"을 넣지 않는다. guard 문구만 스캔하면 그 용어의 축에는 걸리지 않아야 한다.
+#    다른 축으로 넘기는 guard 는 된다 (풍선 → 풍선껌은 food_choking 이 잡는다). 그 축이 잡으니 숨지 않는다.
+# 0–17개월은 경고가 차단으로 올라간다 — 코드 상수 SAFETY_PROMOTE_BELOW_MONTH(18)이지 이 파일 값이 아니다.
+
+source: 어린이제품 공통안전기준 · 완구 안전기준 · 도로교통법 · AAP · 질병관리청 · 식약처 — 축별 출처는 axes.*.source
+version: "2026.1-p0"
+fetched_at: 2026-10-02   # 축 출처 원문 확인일 — food_choking · suffocation_film 은 10-02, 나머지 축은 09-19 (round3 조사)
+
+# 이 판에 없는 축. 있는 줄 알고 안 보는 일이 없게 이름을 남긴다.
+pending_axes:
+  height: P1 — 다음 판 (배포 전에 넣는다. 0–17개월 경고→차단 승격이 아기 그네를 막지 않게 따로 설계한다)
+  wheeled_manual: P1 — 다음 판
+  heat_burn: P2 — 다음 판
+  strangulation: 보류 — 공통안전기준 본문에 끈 길이 조항이 없다 (임계값 출처 0)
+  chemical: 보류 — 유아용 물감·풀까지 걸려 과차단이 크다. 성분별 근거 필요
+  sharp: 보류 — 유아용 안전가위가 있어 "가위" 자체가 위험어가 아니다
+
+axes:
+  small_parts:
+    block_below_month: 36
+    warn_below_month: 72
+    source: >-
+      어린이제품 공통안전기준 3.2.1.1(36개월 미만 — 작은 부품 실린더에 완전히 들어가면 안 됨) ·
+      3.2.1.2(36~72개월 미만 — 경고표시) · 3.2.4(자석)
+      https://law.go.kr/행정규칙/어린이제품공통안전기준
+    warning_text: 작은 부품은 삼킬 수 있어요. 아이 입에 들어가지 않는 크기인지 먼저 확인해 주세요.
+
+  water:
+    warn_below_month: 72
+    source: >-
+      질병관리청 2021–25 응급실 익수 505명 중 154명 사망, 0–9세가 여름철 익수의 51.1% ·
+      영유아는 수심 5cm 에서도 익수 (임계 월령 없음 — 통계 근거)
+      https://v.daum.net/v/20260725110210349
+      http://hqcenter.snu.ac.kr/archives/jiphyunjeon/안전한-물놀이1-익수-사고-예방-및-대처법
+    warning_text: 물놀이는 아이에게서 팔이 닿는 거리에서 한순간도 눈을 떼지 말아 주세요. 깊이 5cm 에서도 사고가 납니다.
+
+  wheeled_motorized:
+    block_below_month: 192
+    source: >-
+      도로교통법 — 원동기장치자전거면허는 16세 이상부터 취득 가능, 16세 미만은 전동킥보드 등 운전 불가
+      https://easylaw.go.kr/CSP/OnhunqueansInfoRetrieve.laf?onhunqnaAstSeq=90&onhunqueSeq=5687
+
+  trampoline:
+    block_below_month: 72
+    source: >-
+      AAP — 6세 미만 트램펄린 사용 금지, 가정 설치 강력 비권장
+      https://publications.aap.org/pediatrics/article/130/4/774/30158/Trampoline-Safety-in-Childhood-and-Adolescence
+      (국내: 한국소비자원 가정 내 트램펄린 사고 220건 중 1–3세 56.4%)
+
+  infant_walker:
+    block_below_month: 72   # AAP 는 연령 무관 전면 금지 — 서비스 상한(72)으로 "전 구간 차단"을 옮긴 값
+    source: >-
+      AAP — 제조·판매 금지 권고, 1990–2014 미국 15개월 미만 약 231,000명 응급실, 사고의 2/3 가 계단 추락,
+      손상의 75% 가 어른이 지켜보는 중 발생
+      https://www.healthychildren.org/English/safety-prevention/at-home/Pages/baby-walkers-a-dangerous-choice.aspx
+      | 국내 근거 없음 — 한국소비자원·질병관리청·KC 안전확인 기준에서 연령 권고 미확인 (2026-09-19 조사)
+
+  food_choking:
+    warn_below_month: 48
+    source: >-
+      AAP 정책성명 "Prevention of Choking Among Children" (Pediatrics 2010) — 4세 미만에게 통포도 ·
+      견과류 · 팝콘 · 딱딱한 사탕 · 마시멜로 · 핫도그 · 껌 등을 주지 않는다 (잘게 자르지 않은 둥글고 단단한 음식)
+      https://publications.aap.org/aapnews/article/32/4/16/10099/Preventing-choking-in-childrenMany-factors |
+      식약처 — 곤약 젤리는 어린이 · 노약자 질식 위험으로 수입 불허 |
+      Food 의 "질식 주의 식품 48개월"(연령별_Tool_전략.md §2 설정값)과 같은 값이다
+    warning_text: 통째로 먹으면 목에 걸릴 수 있어요. 아주 작게 잘라 주고, 먹는 동안 곁에 있어 주세요.
+
+  suffocation_film:
+    warn_below_month: 96   # 8세 미만 — 서비스 상한(72)보다 커서 전 구간 경고
+    source: >-
+      안전확인대상 어린이제품의 안전기준 부속서 6(완구) 풍선 의무 경고표시 — "8세 미만의 어린이는
+      부풀리지 않은 풍선 또는 터진 풍선에 의해 기도가 막혀 질식할 수 있음. 성인의 통제를 요함"
+      https://www.law.go.kr/LSW/admRulLsInfoP.do?admRulSeq=2100000216783 |
+      미국 16 CFR 1500.19 도 같은 8세 경고를 의무로 둔다 https://ecfr.io/Title-16/Section-1500.19 |
+      어린이제품 공통안전기준 — 포장용 비닐은 두께 0.038mm 이상 (얇은 비닐이 코 · 입에 붙어 질식, 조항 번호 원문 대조 필요)
+    warning_text: 터진 풍선 조각과 비닐은 입에 넣거나 얼굴에 쓰지 않게 지켜봐 주세요. 놀이가 끝나면 손이 닿지 않는 곳에 치워 주세요.
+
+terms:
+  # 검수로 뺀 것 — 다시 넣지 않는다. test_hazard_terms.py 의 MUST_PASS 가 막는다.
+  #   감독하면 위험이 없어지는 놀이다. 작은 부품 축은 36개월 미만이 차단이라 목록에 남기면 보호자가
+  #   옆에 있어도 추천이 막힌다 (설계 4-1 "감독으로 위험이 실질적으로 제거되면 경고").
+  #   10-02  생쌀(쌀 촉감놀이) · 물웅덩이(비 온 뒤 첨벙 놀이) · 볼트 · 너트 · 나사(큰 플라스틱 조립 장난감)
+  #   09-29  면봉 · 모루 · 반짝이 가루 · 시리얼 · 탱탱볼 · 전동 카트
+  #   예외(guard)로 돌린 것은 각 용어의 guards 에 있다 — 자석 낚시 · 레고 듀플로 · 호수공원 · 강변 산책 등
+  # 남겨 둔 것 — 마른 콩 · 마카로니 · 단추는 삼키면 기도를 막는 크기라 그대로 차단이다.
+
+  # ── small_parts ─────────────────────────────────────────────────────────
+  - axis: small_parts
+    label: 구슬
+    aliases: [구슬, 비즈, 유리구슬, 구슬 꿰기]
+    guards: [구슬비, 구슬땀]
+  # 물을 먹으면 커지는 구슬. 삼키면 장 안에서 부푼다
+  - axis: small_parts
+    label: 수정토
+    aliases: [수정토, 워터비즈, 물먹는 구슬, 개구리알]
+    guards: [개구리알 관찰]
+  - axis: small_parts
+    label: 단추
+    aliases: [단추, 옷단추, 단추 끼우기, 단추 꿰기]
+    guards: []
+  - axis: small_parts
+    label: 동전
+    aliases: [동전, 주화, 십원짜리, 백원짜리, 오백원짜리]
+    guards: []
+  - axis: small_parts
+    label: 작은 블록
+    aliases: [작은 블록, 미니 블록, 소형 블록, 나노블록, 작은 레고, 미니 레고]
+    guards: []
+  - axis: small_parts
+    label: 스팽글
+    aliases: [스팽글, 시퀸, 반짝이 조각, 장식 조각]
+    guards: []
+  - axis: small_parts
+    label: 뿅뿅이
+    aliases: [뿅뿅이, 폼폼, 폼폼이, 방울솜]
+    guards: []
+  - axis: small_parts
+    label: 작은 방울
+    aliases: [작은 방울, 워낭, 종방울, 쇠방울]
+    guards: []
+  - axis: small_parts
+    label: 자석
+    aliases: [자석, 네오디뮴 자석, 자석 구슬, 자석볼, 말랑 자석, 자석알, 자석 글자]
+    guards: [자석칠판, 자석 그림판, 자석 낚시]   # 자석 낚시 — 자석이 크고 몸체에 고정된 영유아 장난감
+  - axis: small_parts
+    label: 단추형 전지
+    aliases: [단추형 전지, 수은전지, 코인전지, 버튼전지, 동전전지, 리튬 코인셀]
+    guards: []
+  - axis: small_parts
+    label: 압정
+    aliases: [압정, 시침핀, 옷핀, 안전핀, 누름핀]
+    guards: []
+  - axis: small_parts
+    label: 종이클립
+    aliases: [종이클립, 클립 꽂기, 집게핀]
+    guards: []
+  - axis: small_parts
+    label: 고무줄
+    aliases: [고무줄, 머리끈, 고무밴드, 실리콘 밴드]
+    guards: [고무줄놀이]
+  - axis: small_parts
+    label: 병뚜껑
+    aliases: [병뚜껑, 페트병 뚜껑, 우유 뚜껑, 뚜껑 모으기]
+    guards: []
+  - axis: small_parts
+    label: 빨대 조각
+    aliases: [빨대 조각, 자른 빨대, 빨대 꿰기, 빨대 토막]
+    guards: []
+  - axis: small_parts
+    label: 미니 지우개
+    aliases: [미니 지우개, 조각 지우개, 향기 지우개, 지우개 가루]
+    guards: []
+  - axis: small_parts
+    label: 조개껍데기
+    aliases: [조개껍데기, 조개껍질, 소라껍데기, 고둥껍데기]
+    guards: []
+  - axis: small_parts
+    label: 도토리
+    aliases: [도토리, 상수리, 도토리 줍기]
+    guards: []
+  - axis: small_parts
+    label: 작은 돌
+    aliases: [작은 돌, 자갈, 조약돌, 작은 돌멩이]
+    guards: []
+  - axis: small_parts
+    label: 스티로폼 알갱이
+    aliases: [스티로폼 알갱이, 스티로폼 볼, 스티로폼 구슬, 완충재 알갱이]
+    guards: []
+  - axis: small_parts
+    label: 장난감 반지
+    aliases: [장난감 반지, 미니 반지]
+    guards: []
+  - axis: small_parts
+    label: 귀걸이
+    aliases: [귀걸이, 피어싱, 귀걸이 만들기]
+    guards: []
+  - axis: small_parts
+    label: 작은 주사위
+    aliases: [작은 주사위, 미니 주사위, 보드게임 말]
+    guards: []
+  - axis: small_parts
+    label: 바둑돌
+    aliases: [바둑돌, 바둑알, 오목알, 알돌]
+    guards: []
+  - axis: small_parts
+    label: 체스말
+    aliases: [체스말, 장기알, 체스 피스]
+    guards: []
+  - axis: small_parts
+    label: 작은 퍼즐
+    aliases: [작은 퍼즐, 미니 퍼즐, 작은 퍼즐 조각]
+    guards: []
+  - axis: small_parts
+    label: 인형 눈
+    aliases: [인형 눈, 인형 눈알, 눈알 스티커, 움직이는 눈알, 구슬 눈]
+    guards: []
+  - axis: small_parts
+    label: 이쑤시개
+    aliases: [이쑤시개, 꼬치, 산적 꼬치, 나무 꼬치]
+    guards: []
+  - axis: small_parts
+    label: 솜뭉치
+    aliases: [솜뭉치, 탈지면, 화장솜, 솜 조각]
+    guards: []
+  - axis: small_parts
+    label: 나사못
+    aliases: [나사못, 쇠못]   # 볼트 · 너트 · 나사는 넣지 않는다 — 큰 플라스틱 조립 장난감까지 걸린다
+    guards: []
+  - axis: small_parts
+    label: 마른 콩
+    aliases: [마른 콩, 말린 콩, 콩알, 콩 촉감놀이]
+    guards: []
+  - axis: small_parts
+    label: 마카로니
+    aliases: [마카로니, 파스타면, 마카로니 꿰기, 펜네]
+    guards: []
+  - axis: small_parts
+    label: 지퍼 슬라이더
+    aliases: [지퍼 슬라이더, 지퍼 고리, 지퍼 손잡이]
+    guards: []
+  - axis: small_parts
+    label: 머리핀
+    aliases: [머리핀, 실핀, 똑딱핀, 헤어 집게]
+    guards: []
+  - axis: small_parts
+    label: 큐빅
+    aliases: [큐빅, 보석 스티커, 큐빅 스티커, 스티커 알갱이]
+    guards: []
+  - axis: small_parts
+    label: 낚시 추
+    aliases: [낚시 추, 봉돌, 자석 낚시 추]
+    guards: []
+  - axis: small_parts
+    label: 작은 공
+    aliases: [작은 공, 슈퍼볼, 구슬 공, 미니볼]
+    guards: []
+  - axis: small_parts
+    label: 미니 피규어
+    aliases: [미니 피규어, 동물 피규어, 가챠 피규어]
+    guards: []
+  - axis: small_parts
+    label: 이어폰
+    aliases: [이어폰, 이어팁, 무선 이어폰, 에어팟]
+    guards: []
+  - axis: small_parts
+    label: 알약
+    aliases: [알약, 영양제 알, 캡슐]
+    guards: [타임캡슐]
+  - axis: small_parts
+    label: 건전지
+    aliases: [건전지, AA 건전지, AAA 건전지, 배터리 알]
+    guards: []
+  - axis: small_parts
+    label: 빵끈
+    aliases: [빵끈, 트위스트 타이, 철끈]
+    guards: []
+  - axis: small_parts
+    label: 부서진 조각
+    aliases: [부서진 조각, 부러진 크레파스, 깨진 조각]
+    guards: []
+
+  - axis: small_parts
+    label: 비비탄
+    aliases: [비비탄, BB탄, 비비탄 총알]
+    guards: []
+  # 일반 레고는 4세 이상용이다. 듀플로 · 큰 블록은 크기가 커서 뺀다
+  - axis: small_parts
+    label: 레고
+    aliases: [레고, 레고 블록, 레고 조립]
+    guards: [레고 듀플로, 듀플로 레고, 큰 레고, 대형 레고]
+
+  # ── food_choking ─────────────────────────────────────────────────────────
+  - axis: food_choking
+    label: 팝콘
+    aliases: [팝콘, 옥수수알, 강냉이]
+    guards: []
+  - axis: food_choking
+    label: 견과류
+    aliases: [견과류, 땅콩, 아몬드, 호두, 잣알, 캐슈넛, 피스타치오]
+    guards: [호두까기, 땅콩호박]
+  - axis: food_choking
+    label: 미니 젤리
+    aliases: [미니 젤리, 곤약 젤리, 컵 젤리]
+    guards: []
+  - axis: food_choking
+    label: 알사탕
+    aliases: [알사탕, 막대사탕, 구슬 사탕, 눈깔사탕]
+    guards: []
+  - axis: food_choking
+    label: 포도알
+    aliases: [포도알, 통포도, 방울토마토 알, 청포도 알]
+    guards: []
+  - axis: food_choking
+    label: 마시멜로
+    aliases: [마시멜로, 마시멜로우, 머시멜로]
+    guards: []
+  - axis: food_choking
+    label: 통 소시지
+    aliases: [통 소시지, 비엔나 소시지, 소시지 꼬치, 핫도그]
+    guards: []
+  - axis: food_choking
+    label: 풍선껌
+    aliases: [풍선껌, 껌 씹기, 껌 불기, 츄잉껌]
+    guards: []
+
+  # ── suffocation_film ─────────────────────────────────────────────────────
+  - axis: suffocation_film
+    label: 풍선
+    aliases: [풍선, 고무풍선, 풍선 놀이, 풍선 불기, 물풍선]
+    guards: [풍선껌]   # 껌은 풍선이 아니다 — food_choking 의 풍선껌이 잡는다
+  - axis: suffocation_film
+    label: 비닐봉지
+    aliases: [비닐봉지, 비닐봉투, 비닐 낙하산, 지퍼백, 위생백, 비닐장갑]
+    guards: []
+  # "랩" 단독은 넣지 않는다 — 랩 따라 부르기 (3-5 겹 ①)
+  - axis: suffocation_film
+    label: 비닐랩
+    aliases: [비닐랩, 랩 포장, 주방 랩, 크린랩, 랩으로 감싸기, 랩 씌우기]
+    guards: []
+
+  # ── water ───────────────────────────────────────────────────────────────
+  - axis: water
+    label: 물놀이
+    aliases: [물놀이, 물놀이터, 물장난, 물놀이장, 워터파크]
+    guards: []
+  - axis: water
+    label: 수영장
+    aliases: [수영장, 실내 수영장, 야외 수영장, 유아풀, 키즈풀, 풀장]
+    guards: []
+  - axis: water
+    label: 욕조
+    aliases: [욕조, 목욕통, 아기 욕조, 욕조 놀이, 목욕 놀이, 목욕물, 반신욕]
+    guards: []
+  - axis: water
+    label: 대야
+    aliases: [대야, 고무대야, 세숫대야, 다라이, 대야 물놀이]
+    guards: []
+  - axis: water
+    label: 워터테이블
+    aliases: [워터테이블, 물 테이블, 워터플레이 테이블, 아쿠아 테이블]
+    guards: []
+  - axis: water
+    label: 물놀이 튜브
+    aliases: [물놀이 튜브, 도넛 튜브, 목튜브, 암튜브, 튜브 타기]
+    guards: []
+  - axis: water
+    label: 계곡
+    aliases: [계곡, 개울, 시냇물, 물가, 계곡 물놀이]
+    guards: []
+  - axis: water
+    label: 바닷가
+    aliases: [바닷가, 해수욕장, 해변, 바닷물, 바다 물놀이, 바다 수영, 파도타기]
+    guards: []
+  - axis: water
+    label: 강가
+    aliases: [강가, 하천, 냇가, 강변, 둔치]
+    guards: [강변공원, 강변 산책, 강변 산책로, 하천 산책로, 둔치 산책]
+  - axis: water
+    label: 연못
+    aliases: [연못, 저수지, 호수, 습지]
+    guards: [호수공원, 호수 산책]   # 산책은 물놀이가 아니다. "호수공원에서 물놀이"는 물놀이로 걸린다
+  - axis: water
+    label: 분수
+    aliases: [분수, 바닥분수, 음악분수, 분수대, 분수 물놀이]
+    guards: [분수 구경]
+  - axis: water
+    label: 갯벌
+    aliases: [갯벌, 조개잡이, 머드 체험, 갯벌 체험]
+    guards: []
+  - axis: water
+    label: 수영
+    aliases: [수영, 수영 강습, 아기 수영, 베이비스윔, 생존수영]
+    guards: [수영복, 수영모]
+  - axis: water
+    label: 온천
+    aliases: [온천, 노천탕, 온천욕]
+    guards: []
+  - axis: water
+    label: 미니풀
+    aliases: [미니풀, 에어풀, 조립식 풀, 간이 수영장, 베란다 풀]
+    guards: []
+  - axis: water
+    label: 물미끄럼틀
+    aliases: [물미끄럼틀, 워터슬라이드, 슬라이드 풀]
+    guards: []
+  - axis: water
+    label: 싱크대 물놀이
+    aliases: [싱크대 물놀이, 세면대 물놀이, 설거지 놀이]
+    guards: []
+  - axis: water
+    label: 논두렁
+    aliases: [논두렁, 수로, 농수로, 논 물놀이]
+    guards: []
+  - axis: water
+    label: 얼음물
+    aliases: [얼음물, 아이스박스 물, 얼음 대야]
+    guards: []
+  - axis: water
+    label: 배수구
+    aliases: [배수구, 빗물받이, 맨홀, 하수구]
+    guards: []
+
+  # ── wheeled_motorized ───────────────────────────────────────────────────
+  - axis: wheeled_motorized
+    label: 전동킥보드
+    aliases: [전동킥보드, 전동 퀵보드, 전동 스쿠터, 개인형 이동장치, 공유 킥보드]
+    guards: []
+  - axis: wheeled_motorized
+    label: 전동휠
+    aliases: [전동휠, 원휠, 전동 외발, 세그웨이, 나인봇]
+    guards: []
+  - axis: wheeled_motorized
+    label: 전동보드
+    aliases: [전동보드, 전동 스케이트보드, 전동 롱보드]
+    guards: []
+  - axis: wheeled_motorized
+    label: 전기자전거
+    aliases: [전기자전거, 전동 자전거, 이바이크, 모터 자전거]
+    guards: []
+  - axis: wheeled_motorized
+    label: 오토바이
+    aliases: [오토바이, 이륜차, 미니 오토바이, 포켓바이크]
+    guards: [장난감 오토바이, 오토바이 장난감, 오토바이 그리기, 오토바이 그림, 오토바이 구경]
+  - axis: wheeled_motorized
+    label: 사륜 오토바이
+    aliases: [사륜 오토바이, ATV, 버기카, 사발이]
+    guards: []
+  - axis: wheeled_motorized
+    label: 전동 바이크
+    aliases: [전동 바이크, 전동 미니바이크, 어린이 전동차 도로주행]
+    guards: []
+  - axis: wheeled_motorized
+    label: 호버보드
+    aliases: [호버보드, 전동 호버보드, 전동 밸런스보드]
+    guards: []
+
+  # ── trampoline ──────────────────────────────────────────────────────────
+  - axis: trampoline
+    label: 트램펄린
+    aliases: [트램펄린, 트램폴린, 트렘폴린, 트램플린, 점핑 베드]
+    guards: []
+  - axis: trampoline
+    label: 방방
+    aliases: [방방, 방방이, 방방 놀이터]
+    guards: [방방곡곡]
+  - axis: trampoline
+    label: 점핑매트
+    aliases: [점핑매트, 점프 매트, 바운스 매트]
+    guards: []
+  - axis: trampoline
+    label: 에어바운스
+    aliases: [에어바운스, 에어바운서, 에어파크, 에어 점핑]
+    guards: []
+  - axis: trampoline
+    label: 트램펄린파크
+    aliases: [트램펄린파크, 점핑 파크, 점핑존, 바운스 파크]
+    guards: []
+  - axis: trampoline
+    label: 번지 트램펄린
+    aliases: [번지 트램펄린, 번지 점핑대, 스카이 점프]
+    guards: []
+
+  # ── infant_walker ───────────────────────────────────────────────────────
+  # 쏘서 · 점퍼루(제자리 놀이기구)는 넣지 않는다 — AAP 가 보행기의 대안으로 권고한 물건이다.
+  # 밀고 걷는 걸음마 장난감(푸시 워커)도 넣지 않는다 — AAP 금지 대상은 앉아서 타는 바퀴 보행기다.
+  - axis: infant_walker
+    label: 보행기
+    aliases: [보행기, 아기 보행기, 베이비워커, 워커 태우기, 롤링 워커]
+    guards: []

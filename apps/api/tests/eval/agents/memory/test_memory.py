@@ -35,9 +35,10 @@ from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
 from app.agents.memory.context import AgentContext
+from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory.store.ports import EventItemRow, EventRow, ObservationRow
+from app.agents.memory.store.ports import EventItemRow, ObservationRow
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.routing import Routing, route
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
@@ -104,20 +105,25 @@ _INPUT_DEFAULT = Path(__file__).resolve().parents[1] / "test_input.txt"
 INPUT_PATH = Path(os.getenv("EVAL_INPUT_PATH", str(_INPUT_DEFAULT)))
 EVAL_MODELS = [x.strip() for x in os.getenv("EVAL_MODELS", "").split(",") if x.strip()]
 
-_CLARIFY = (
-    "무엇을",
-    "어떤",
-    "몇 시",
-    "알려주",
-    "말씀해",
-    "확인이 필요",
-    "골라",
-    "선택",
-    "할까요",
-    "인가요",
-    "정해 주",  # "시간을 정해 주세요" 도 되묻는 말이다
+# 모델이 쓰는 말이 실행마다 조금씩 다르다. "직접 입력" 하나만 두면 "직접 등록해 주세요" 가
+# 떨어진다. (동작은 맞는데 판정이 틀리는 경우라 표현을 넓힘)
+_OUT_OF_SCOPE = (
+    "범위",
+    "추천",
+    "진단",
+    "직접 입력",
+    "직접 등록",
+    "직접 추가",
+    "할 수 없",
+    "하지 않",
+    "드릴 수 없",
+    "어려워",
+    "어려우",  # "판단하기 어려우니" — 어려워 와 같은 말의 활용형
 )
-_OUT_OF_SCOPE = ("범위", "추천", "진단", "직접 입력", "할 수 없", "하지 않", "드릴 수 없", "어려워")
+
+# 모델이 내부 추론을 그대로 final_message에 흘리는 경우를 잡는다.
+# 영문 단어가 다섯 개 넘게 이어지면 한국어 답변이 아니다.
+_REASONING_LEAK = re.compile(r"[A-Za-z]{2,}(?:[ ,.'\"?!:;()]+[A-Za-z]{2,}){4,}")
 
 
 # ── 결과 스냅샷 ─────────────────────────────────────────────────
@@ -127,7 +133,8 @@ class Snapshot:
 
     result: MemoryAgentResult
     observations: dict[str, list[ObservationRow]]
-    events: list[tuple[EventRow, list[EventItemRow]]]
+    drafts: tuple[EventDraft, ...]  # 일정은 저장되지 않으니 제출 전 초안을 본다
+    stored_items: list[EventItemRow]  # 승인 없이 바로 쓰는 것(is_prepared)을 볼 곳
 
     def count(self, tool: str) -> int:
         return sum(1 for call in self.result.calls if call.name == tool)
@@ -142,16 +149,16 @@ class Snapshot:
         return [row.observed_on.isoformat() for row in self.rows(domain)]
 
     def starts_at(self) -> str:
-        first = self.events[0][0] if self.events else None
+        first = self.drafts[0] if self.drafts else None
         return first.starts_at.astimezone(KST).isoformat() if first else ""
 
     @property
     def item_names(self) -> list[str]:
-        return [item.item_name for _, items in self.events for item in items]
+        return [item.item_name for draft in self.drafts for item in draft.items]
 
     @property
     def wrote_anything(self) -> bool:
-        return any(self.observations[domain] for domain in DOMAINS) or bool(self.events)
+        return any(self.observations[domain] for domain in DOMAINS) or bool(self.drafts)
 
     def said(self, needles: tuple[str, ...]) -> bool:
         text = self.result.final_message or ""
@@ -233,10 +240,17 @@ async def _seed_sports_day(context: AgentContext) -> None:
         title="운동회",
         starts_at=_at(2),  # 모레 오전 9시
         ends_at=None,
-        # 시각이 있으니 all_day 가 아니다. all_day 는 하루 종일 행사(00:00~23:59)다 (D9-1)
+        # 시각이 있으니 all_day 가 아니다. all_day 는 하루 종일 행사(00:00~23:59)
         all_day=False,
-        fields={"status": "draft", "created_by": "caregiver", "category": "institution"},
+        fields={"created_by": "caregiver", "category": "institution"},
     )
+
+
+async def _seed_sports_day_items(context: AgentContext) -> None:
+    """운동회 + 이미 저장된 준비물 하나. 준비물 경로를 재는 케이스가 쓴다."""
+    await _seed_sports_day(context)
+    events = await context.store.query_events(child_id=CHILD)
+    await context.store.create_event_item(event_id=events[0].id, item_name="체육복")
 
 
 def _no_guess(domain: str, key: str) -> Check:
@@ -256,7 +270,6 @@ def _routine(category: str) -> Check:
     )
 
 
-# 알림 tool 은 없다 (계약서 §07).
 # 일정이 등록되면 알림을 받기로 한 보호자에게 자동으로 간다고 안내한다
 _REMINDER_NOTICE: Check = (
     "일정으로 알림이 간다고 안내했다",
@@ -362,14 +375,14 @@ CASES: list[EvalCase] = [
             "create_observation_food": 1,
             "create_observation_activity": 1,
             "create_event": 1,
-            "create_event_item": 1,
             "query_event": 1,
         },
-        # 알림 tool 은 없고, 알림 요청 때문에 일정을 고치지도 않는다
-        forbidden_tools={"create_reminder", "update_event"},
+        # 알림 tool 은 없고, 알림 요청 때문에 일정을 고치지도 않는다.
+        # 새 일정의 준비물은 create_event 의 items 로 간다 — 뒤이어 부를 것이 없다
+        forbidden_tools={"create_reminder", "update_event", "create_event_item"},
         checks=(
             (
-                "운동회가 모레 15:00 으로 저장됐다",
+                "운동회 초안이 모레 15:00 이다",
                 lambda s: s.starts_at().startswith(f"{_date(2)}T15:00"),
             ),
             ("체육복이 준비물에 있다", lambda s: any("체육복" in name for name in s.item_names)),
@@ -398,21 +411,29 @@ CASES: list[EvalCase] = [
         "어제 블록놀이를 20분 했다고 기록했는데 40분으로 바꿔줘.",
         seed=_seed_block_play,
         required_tools={"query_observation_activity": 1, "update_observation_activity": 1},
-        forbidden_tools={"create_observation_activity", "delete_observation_activity"},
+        forbidden_tools={"create_observation_activity"},
         checks=(
             (
                 "40분으로 바뀌었다",
                 lambda s: [f.get("duration_min") for f in s.fields("activity")] == [40],
             ),
+            # 스냅샷은 지운 행을 빼고 읽는다. 수정이 삭제로 새면 여기서 0건이 된다
+            ("기록이 지워지지 않았다", lambda s: len(s.rows("activity")) == 1),
         ),
     ),
     EvalCase(
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
         seed=_seed_apple,
-        required_tools={"query_observation_food": 1, "delete_observation_food": 1},
-        forbidden_tools={"create_observation_food"},
-        checks=(("음식 기록이 지워졌다", lambda s: s.rows("food") == []),),
+        # 조회 결과가 한 건이어도 바로 지우지 않는다. 지운 기록은 보호자가 되살릴 수 없어서
+        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 테스트는 test_delete_confirm
+        required_tools={"query_observation_food": 1},
+        forbidden_tools={"create_observation_food", "update_observation_food"},
+        expect_clarification=True,
+        checks=(
+            ("아직 지우지 않았다", lambda s: len(s.rows("food")) == 1),
+            ("지울 기록을 짚어 물었다", lambda s: s.said(("사과",))),
+        ),
     ),
     EvalCase(
         "T11",
@@ -421,7 +442,8 @@ CASES: list[EvalCase] = [
         required_tools={"query_event": 1, "update_event": 1},
         forbidden_tools={"create_event", "delete_event"},
         checks=(
-            ("모레 10:00 으로 바뀌었다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
+            ("초안이 모레 10:00 이다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
+            ("바뀐 필드가 starts_at 이다", lambda s: "starts_at" in s.drafts[0].changed),
         ),
     ),
     EvalCase(
@@ -431,17 +453,24 @@ CASES: list[EvalCase] = [
         # 알림 요청으로는 일정을 만들지도 고치지도 않는다.
         # 라이브에서 모델이 알림 시각(전날 저녁 8시)에 맞춰 update_event 를 부른 적이 있다
         forbidden_tools={MUTATING},
-        checks=(_REMINDER_NOTICE,),
+        checks=(
+            _REMINDER_NOTICE,
+            # 알림은 일정 기준으로 자동으로 간다. "8시에 알려드릴게요" 는 지키지 못할 약속이다
+            ("따로 알려 주겠다고 약속하지 않았다", lambda s: not s.said(("알려드릴", "알려 드릴"))),
+        ),
     ),
     EvalCase(
         "T13",
         "금요일 오전 10시에 어린이집 물놀이가 있어. 수영복이랑 여벌옷을 챙겨야 해.",
-        required_tools={"create_event": 1, "create_event_item": 2},
+        required_tools={"create_event": 1},
+        # 준비물 둘이 create_event의 items로 한 번에 와야 한다
+        forbidden_tools={"create_event_item"},
         checks=(
             (
-                "금요일 10:00 로 저장됐다",
+                "금요일 10:00 초안이다",
                 lambda s: s.starts_at().startswith(f"{_weekday('금')}T10:00"),
             ),
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
             ("수영복이 있다", lambda s: any("수영복" in name for name in s.item_names)),
             ("여벌옷이 있다", lambda s: any("여벌옷" in name for name in s.item_names)),
         ),
@@ -641,6 +670,75 @@ CASES: list[EvalCase] = [
             # 스키마 기준(아이의 발언 = parent_direct)과 hearsay 어느 쪽으로도 읽힌다
         ),
     ),
+    EvalCase(
+        "T31",
+        "운동회에 물통이랑 모자도 챙겨야 해.",
+        seed=_seed_sports_day,
+        # 이미 있는 일정을 찾아 그 일정의 수정 초안에 준비물을 붙인다
+        required_tools={"query_event": 1, "create_event_item": 2},
+        forbidden_tools={"create_event"},
+        checks=(
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
+            ("수정 초안이다", lambda s: s.drafts[0].op == "update"),
+            ("물통이 있다", lambda s: any("물통" in name for name in s.item_names)),
+            ("모자가 있다", lambda s: any("모자" in name for name in s.item_names)),
+            (
+                "시각은 그대로 모레 09:00 이다",
+                lambda s: s.starts_at().startswith(f"{_date(2)}T09:00"),
+            ),
+            ("바뀐 필드가 items 뿐이다", lambda s: s.drafts[0].changed == ("items",)),
+        ),
+    ),
+    EvalCase(
+        "T32",
+        "운동회에 물통이랑 모자도 챙기고, 시간은 오전 10시로 바꿔줘.",
+        seed=_seed_sports_day,
+        # 수정과 준비물 추가가 한 일정에 같이
+        required_tools={"query_event": 1, "update_event": 1, "create_event_item": 2},
+        forbidden_tools={"create_event"},
+        checks=(
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
+            ("모레 10:00 이다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
+            ("물통과 모자가 둘 다 있다", lambda s: {"물통", "모자"} <= set(s.item_names)),
+            (
+                "바뀐 필드가 starts_at 과 items 다",
+                lambda s: s.drafts[0].changed == ("starts_at", "items"),
+            ),
+        ),
+    ),
+    EvalCase(
+        "T33",
+        "운동회 준비물 체육복을 체육복 상의로 바꿔줘.",
+        seed=_seed_sports_day_items,
+        # 준비물 이름 변경은 보호자가 초안에서 확인
+        required_tools={"query_event": 1, "update_event_item": 1},
+        forbidden_tools={"create_event", "create_event_item", "delete_event_item"},
+        checks=(
+            ("초안이 하나다", lambda s: len(s.drafts) == 1),
+            ("초안 이름이 바뀌었다", lambda s: any("상의" in name for name in s.item_names)),
+            ("바뀐 필드가 items 뿐이다", lambda s: s.drafts[0].changed == ("items",)),
+            (
+                "저장된 이름은 그대로다",
+                lambda s: [item.item_name for item in s.stored_items] == ["체육복"],
+            ),
+        ),
+    ),
+    EvalCase(
+        "T34",
+        "운동회 준비물 체육복 챙겼다고 체크해줘.",
+        seed=_seed_sports_day_items,
+        # 체크는 되돌릴 수 있어 승인 게이트에 넣지 않고 바로 쓴다
+        required_tools={"query_event": 1, "update_event_item": 1},
+        forbidden_tools={"create_event", "update_event", "create_event_item"},
+        checks=(
+            ("초안을 만들지 않았다", lambda s: s.drafts == ()),
+            ("바로 체크됐다", lambda s: all(item.is_prepared for item in s.stored_items)),
+            (
+                "챙긴 시각이 남았다",
+                lambda s: all(item.prepared_at == NOW for item in s.stored_items),
+            ),
+        ),
+    ),
 ]
 
 
@@ -682,14 +780,20 @@ async def _snapshot(case: EvalCase, client: LLMClient) -> Snapshot:
     task = _task_for(case) if MEMORY_MODE == "task" else None
     result = await run(case.text, context, client=client, task=task)
 
-    events = [
-        (event, await store.list_event_items(event_id=event.id))
-        for event in await store.query_events(child_id=CHILD)
-    ]
     observations = {
         domain: await store.query_observations(domain=domain, child_id=CHILD) for domain in DOMAINS
     }
-    return Snapshot(result=result, observations=observations, events=events)
+    stored_items = [
+        item
+        for event in await store.query_events(child_id=CHILD)
+        for item in await store.list_event_items(event_id=event.id)
+    ]
+    return Snapshot(
+        result=result,
+        observations=observations,
+        drafts=result.drafts,
+        stored_items=stored_items,
+    )
 
 
 def _routing_for(case: EvalCase) -> Routing:
@@ -733,12 +837,20 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
         if used:
             failures.append(f"금지된 호출: {sorted(set(used))}")
 
+    message = snapshot.result.final_message or ""
+    if _REASONING_LEAK.search(message):
+        # 기대 문구가 어딘가 들어 있으면 통과하던 자리라, 답변이 엉망이어도 못 잡았다
+        failures.append(f"내부 추론이 답변에 섞임: {message[:80]!r}")
+
     # task 모드에서 범위 밖 안내는 Supervisor(routing guidance) 몫이라 Memory 에게 묻지 않는다
     if MEMORY_MODE == "solo" and case.expect_out_of_scope and not snapshot.said(_OUT_OF_SCOPE):
         failures.append(f"범위 밖이라고 안내하지 않음: {snapshot.result.final_message!r}")
 
-    if case.expect_clarification and not snapshot.said(_CLARIFY):
-        failures.append(f"되묻지 않음: {snapshot.result.final_message!r}")
+    # 되묻기는 문장 어미가 아니라 reply.kind 로 본다. 어미로 보면 표현마다 판정이 흔들린다
+    reply = snapshot.result.reply
+    if case.expect_clarification and (reply is None or reply.kind != "question"):
+        kind = reply.kind if reply else None
+        failures.append(f"되묻지 않음: kind={kind} {snapshot.result.final_message!r}")
 
     for label, predicate in case.checks:
         try:
@@ -793,7 +905,7 @@ def _expected_text(case: EvalCase) -> str:
     parts.append(f"tool 거절은 {RETRY_BUDGET}회까지 (고쳐 부르면 통과)")
     # 요청 조각이 어디로 갔는지 남긴다 — 이 파일은 Memory 만 돌리므로 그 조각의 "동작" 은
     # 여기 결과에 안 보인다. 끝까지 도는 것은 test.py 다
-    for task in _routing_for(case).food_tasks:
+    for task in _routing_for(case).domain_tasks:
         parts.append(
             f"요청 조각 {len(task.request_texts)}개는 Food({task.task_type}) 로 간다"
             " — 이 파일은 Memory 만 돌린다 (끝까지는 test.py)"

@@ -2,6 +2,7 @@
 재현 가능한 테스트를 위해 id는 도메인별 순번(observation_food-1)으로 만든다.
 """
 
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -13,6 +14,10 @@ from app.agents.memory.store.ports import (
     ObservationDomain,
     ObservationRow,
 )
+
+
+def _is_deleted(row: ObservationRow) -> bool:
+    return row.fields.get("status") == "deleted"
 
 
 class InMemoryStore:
@@ -71,7 +76,9 @@ class InMemoryStore:
         rows = [
             row
             for row in self._observations.values()
-            if row.domain == domain and row.fields.get("child_id") == str(child_id)
+            if row.domain == domain
+            and row.fields.get("child_id") == str(child_id)
+            and not _is_deleted(row)
         ]
         if date_from is not None:
             rows = [row for row in rows if row.observed_on >= date_from]
@@ -85,7 +92,9 @@ class InMemoryStore:
         self, *, domain: ObservationDomain, observation_id: str
     ) -> ObservationRow | None:
         row = self._observations.get(observation_id)
-        return row if row is not None and row.domain == domain else None
+        if row is None or row.domain != domain or _is_deleted(row):
+            return None
+        return row
 
     async def update_observation(
         self,
@@ -112,10 +121,13 @@ class InMemoryStore:
         return updated
 
     async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
+        # DB 와 같이 행을 남기고 status 만 바꾼다. 조회는 _is_deleted 로 걸러낸다
         row = await self.get_observation(domain=domain, observation_id=observation_id)
         if row is None:
             return False
-        del self._observations[observation_id]
+        self._observations[observation_id] = replace(
+            row, fields={**row.fields, "status": "deleted"}
+        )
         return True
 
     # ── event ───────────────────────────────────────────────────
@@ -129,6 +141,7 @@ class InMemoryStore:
         all_day: bool,
         fields: dict[str, Any],
     ) -> EventRow:
+        """테스트 시드 전용."""
         row = EventRow(
             id=self._next_id("event"),
             title=title,
@@ -164,6 +177,7 @@ class InMemoryStore:
     async def update_event(
         self, *, event_id: str, fields: dict[str, Any], when: EventWhen | None = None
     ) -> EventRow | None:
+        """테스트 시드 전용."""
         row = self._events.get(event_id)
         if row is None:
             return None
@@ -191,14 +205,19 @@ class InMemoryStore:
 
     # event_item
     async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow:
+        """테스트 시드 전용."""
         row = EventItemRow(
             item_id=self._next_id("event_item"),
             event_id=event_id,
             item_name=item_name,
             is_prepared=False,
+            prepared_at=None,
         )
         self._items[row.item_id] = row
         return row
+
+    async def get_event_item(self, *, item_id: str) -> EventItemRow | None:
+        return self._items.get(item_id)
 
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]:
         rows = [item for item in self._items.values() if item.event_id == event_id]
@@ -216,6 +235,8 @@ class InMemoryStore:
             event_id=row.event_id,
             item_name=fields.get("item_name", row.item_name),
             is_prepared=fields.get("is_prepared", row.is_prepared),
+            # 언제로 둘지는 tool 이 정해서 넘긴다. 여기서는 받은 값을 그대로 쓴다
+            prepared_at=fields.get("prepared_at", row.prepared_at),
         )
         self._items[row.item_id] = updated
         return updated

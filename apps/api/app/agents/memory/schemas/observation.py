@@ -1,6 +1,6 @@
 """observation 5테이블(food / health / education / activity / routine)의 tool argument 스키마.
 
-각 테이블마다 create / query / update / delete 4종 = 20개.
+각 테이블마다 create / query / update 3종 = 15개. 삭제는 update 의 status=deleted 다.
 LLM 이 채우지 않는 필드(id · child_id · source_writer · observed_range 등)는 노출하지 않는다.
 """
 
@@ -21,9 +21,9 @@ from app.agents.memory.schemas.common import (
     ObservationUpdateArgs,
     PromotableCreateArgs,
     RawText,
-    RecordRef,
     RoutineCategory,
     Severity,
+    SubjectCreateArgs,
 )
 
 _DURATION = Field(
@@ -140,7 +140,7 @@ _ASSISTANCE = _optional(
 _COMPLETION = _optional("completed / partial / refused / interrupted. 해냈는지 드러날 때만")
 
 
-class ObservationRoutineCreate(PromotableCreateArgs):
+class ObservationRoutineCreate(SubjectCreateArgs):
     """생활 행동·자립 수행·습관·사회적 생활기술. 습관은 증상이 아니다."""
 
     subject: Annotated[str, Field(description=_ROUTINE_SUBJECT)]
@@ -186,5 +186,4 @@ __all__ = [
     "ObservationRoutineUpdate",
     "ObservationUpdateArgs",
     "RawText",
-    "RecordRef",
 ]

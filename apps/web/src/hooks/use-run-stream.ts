@@ -5,28 +5,34 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import { qk } from "@/lib/api/queryKeys";
 import {
+  isDraftEvent,
   streamRunEvents,
+  type EventDraftsEvent,
   type FailedEvent,
+  type GuidanceEvent,
   type LaneEvent,
+  type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
   type PartialEvent,
   type PromotedEvent,
   type RunEvent,
   type StepEvent,
+  type UnavailableEvent,
 } from "@/lib/api/sse";
-import type { Observation } from "@/lib/api/types";
+import type { Agent, EventDraft, Observation } from "@/lib/api/types";
 
 /**
- * 04 저장 결과 · 08 사진 분석 — run 이벤트 스트림 상태.
+ * 04 대화 · 08 사진 분석 — run 이벤트 스트림 상태.
  *
  * run 상태는 서버 상태(TanStack Query)도 클라이언트 상태(Zustand)도 아니다. 구독형이라
- * 둘 다 안 맞아서, 화면이 사는 동안만 useReducer 로 들고 끝날 때 Query 를 무효화한다.
+ * 둘 다 안 맞아서, 리듀서로 들고 끝날 때 Query 를 무효화한다. 리듀서와 구독(`subscribeRun`)은
+ * 하나고, **누가 들고 있는가**만 갈린다 — 08 은 이 파일의 훅이, 04 대화는 `stores/conversation.ts`
+ * 가 든다 (#226 — 대화는 화면을 떠나도 스트림을 끊지 않는다).
  *
- * 🚨 입력 원문(raw_text)을 이 훅에 두지 않는다. 화면을 벗어나면 스트림을 끊는데,
- *    실패 시 입력창에 원문을 되돌려야 해서(CLAUDE.md §2) 원문이 훅과 함께 죽으면 안 된다.
- *    failed 이벤트가 raw_text 를 실어 주지만, 네트워크가 끊기면 그것도 못 받는다 —
- *    **원문의 정본은 입력 화면이 들고 있는 값이다.**
+ * 🚨 입력 원문(raw_text)을 run 상태에 두지 않는다. 실패 시 입력창에 원문을 되돌려야 하는데
+ *    (CLAUDE.md §2), failed 이벤트의 raw_text 는 네트워크가 끊기면 못 받는다 —
+ *    **원문의 정본은 보낸 쪽이 들고 있는 값이다** (대화는 그 한 줄의 말풍선).
  */
 
 /** 스트림이 이 시간 동안 조용하면 기다리기를 멈추고 지금까지 받은 것으로 끝낸다. */
@@ -65,6 +71,29 @@ export interface RunState {
    */
   partial: PartialEvent | null;
   /**
+   * "이건 대신 해 드릴 수 없어요" 안내 (#141). 🚨 **실패가 아니다** — 채워져 있어도 run 은
+   *    그대로 끝나고, 같은 run 에서 저장된 기록과 **한 화면에** 선다.
+   * 🚨 **같은 `code` 는 한 번만 담는다.** 서버도 재분배 때 새로 생긴 안내만 보내지만
+   *    (`apps/api/app/agents/pipeline.py`), 같은 말을 두 장 세우는 것은 화면이 막는다.
+   */
+  guidance: GuidanceEvent[];
+  /**
+   * Memory 가 한 말 (#141). **run 당 최대 하나다** — Memory 는 한 run 에서 한 번만 돌고
+   * 위임이 어긋나 다시 나눌 때도 다시 돌리지 않는다 (`pipeline.py`).
+   */
+  note: NoteEvent | null;
+  /**
+   * 아직 없는 Agent 로 간 요청 (#141). 🚨 **저장과 같이 올 수 있다** — 라우팅 직후 Memory 가
+   *    돌기 전에 나가서, 혼합형 한 줄이면 `observations` 와 같은 run 에 실린다.
+   * 🚨 **합쳐서 담는다.** 재분배로 한 번 더 올 수 있는데 덮어쓰면 처음 것이 사라진다.
+   */
+  unavailable: Agent[];
+  /**
+   * Agent 가 만든 일정 초안 묶음. 🚨 **아직 저장된 것이 아니다** — 보호자가 카드에서 제출해야
+   *    캘린더에 들어간다 (승인 게이트 ㉠). 08 사진 run 에서는 늘 빈 배열이다.
+   */
+  drafts: EventDraft[];
+  /**
    * 🚨 **서버가 `failed` 로 말한 실패만 들어온다.** 연결이 끊긴 경우는 여기 오지 않는다 —
    *    그건 `unconfirmed` 다. 둘을 섞으면 화면이 "아무것도 저장하지 않았어요" 라고 단정한다.
    */
@@ -80,6 +109,10 @@ export const initialRunState: RunState = {
   lane: null,
   parsed: null,
   partial: null,
+  guidance: [],
+  note: null,
+  unavailable: [],
+  drafts: [],
   failure: null,
 };
 
@@ -144,6 +177,31 @@ export function runReducer(state: RunState, action: RunAction): RunState {
         case "offer":
           return { ...state, offers: (action.event.data as OfferEvent).options };
 
+        // 🚨 아래 셋도 **끝이 아니다.** 스트림은 done 까지 이어진다 — 안내가 왔다고 실패로
+        //    떨어뜨리면 같은 run 에서 저장된 기록이 화면에서 사라진다 (최상위 §2).
+        case "guidance": {
+          const guidance = action.event.data as GuidanceEvent;
+          if (state.guidance.some((g) => g.code === guidance.code)) return state;
+          return { ...state, guidance: [...state.guidance, guidance] };
+        }
+
+        // 🚨 마지막 것이 남는다. run 당 하나뿐이라(위 주석) 실제로는 덮이지 않는다.
+        case "note":
+          return { ...state, note: action.event.data as NoteEvent };
+
+        case "unavailable": {
+          const { agents } = action.event.data as UnavailableEvent;
+          const added = agents.filter((agent) => !state.unavailable.includes(agent));
+          if (added.length === 0) return state;
+          return { ...state, unavailable: [...state.unavailable, ...added] };
+        }
+
+        // 🚨 **아무것도 하지 않는 것이 맞다** (#140). 조용한 채널의 하트비트라 담을 것이 없고,
+        //    20초 타이머는 `pumpRunEvents` 의 `onEvent` 가 이미 되살렸다. 여기서 state 를 새로
+        //    만들면 10초마다 04 화면이 통째로 다시 그려진다.
+        case "ping":
+          return state;
+
         case "partial":
           // 🚨 여기서 끝내지 않는다. 스트림은 done 까지 이어지고, 화면은 성공한 쪽을 그린다.
           return { ...state, partial: action.event.data as PartialEvent };
@@ -156,6 +214,16 @@ export function runReducer(state: RunState, action: RunAction): RunState {
           return { ...state, status: state.partial ? "partial" : "done" };
 
         default:
+          /**
+           * 🚨 **초안 프레임은 이름이 확정되기 전이라 `isDraftEvent()` 로 받는다** (#151).
+           *    `case` 로 박아 두면 이름이 바뀌는 날 초안이 조용히 안 그려진다.
+           * 🚨 **덮어쓰지 않고 이어 붙인다** — 한 run 이 여러 프레임을 보낼 수 있고,
+           *    `DraftBook` 이 같은 일정을 이미 한 장으로 합쳐 보낸다 (#122 §5-1).
+           */
+          if (isDraftEvent(action.event.type)) {
+            const { drafts } = action.event.data as EventDraftsEvent;
+            return { ...state, drafts: [...state.drafts, ...drafts] };
+          }
           return state;
       }
   }
@@ -194,70 +262,99 @@ export async function pumpRunEvents(
   if (!ended) dispatch({ type: "closed" });
 }
 
+/**
+ * run 하나를 구독한다 — 20초 침묵 · 종료 이벤트 없는 EOF · 연결 실패를 **한 곳에서** 액션으로 옮긴다.
+ *
+ * 08 사진(`useRunStream`)과 04 대화(`stores/conversation.ts`)가 같이 쓴다. 대화는 화면을 떠나도
+ * 스트림을 끊지 않아야 해서(#226) 훅 밖에서 구독하는데, 타이머와 EOF 처리를 그쪽에 한 벌 더
+ * 두면 한쪽만 고쳐진다 — PR #71 리뷰가 잡은 "진행 화면이 영원히 도는" 사고가 그 한쪽에서 다시 난다.
+ *
+ * @param onSettled 스트림이 어떻게 끝났든 마지막에 한 번 부른다 (끊은 경우 포함).
+ * @returns 구독을 끊는 함수. 🚨 끊어도 `onSettled` 는 불린다.
+ */
+export function subscribeRun(
+  runId: string,
+  dispatch: (action: RunAction) => void,
+  onSettled: () => void = () => {},
+): () => void {
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearIdleTimer = () => {
+    if (idleTimer !== null) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+
+  // 이벤트가 올 때마다 다시 건다 — 전체 시간이 아니라 "조용한 시간"을 잰다.
+  const armIdleTimer = () => {
+    clearIdleTimer();
+    idleTimer = setTimeout(() => {
+      dispatch({ type: "timeout" });
+      controller.abort();
+    }, RUN_IDLE_TIMEOUT_MS);
+  };
+
+  void (async () => {
+    try {
+      armIdleTimer();
+      // 중단(abort)은 여기서 throw 로 나간다 — closed 가 아니라 아래 catch 로 간다.
+      await pumpRunEvents(streamRunEvents(runId, controller.signal), dispatch, armIdleTimer);
+    } catch (cause) {
+      const aborted = cause instanceof DOMException && cause.name === "AbortError";
+      if (!aborted) dispatch({ type: "error" });
+    } finally {
+      clearIdleTimer();
+      onSettled();
+    }
+  })();
+
+  return () => {
+    clearIdleTimer();
+    controller.abort();
+  };
+}
+
 export interface UseRunStream {
   state: RunState;
-  /** POST /children/{cid}/inputs 가 준 run_id 로 구독을 시작한다. */
+  /** run_id 로 구독을 시작한다. */
   start: (runId: string) => void;
   stop: () => void;
   reset: () => void;
 }
 
+/**
+ * 화면이 사는 동안만 run 하나를 구독한다 — **08 사진 전용**이다.
+ *
+ * 🚨 **04 한 줄 입력은 이 훅을 쓰지 않는다** (#226). 대화 화면을 떠났다 와도 결과가 빠짐없이
+ *    그려져야 해서 구독이 화면보다 오래 산다 (`stores/conversation.ts`). 08 은 화면이 곧 흐름이라
+ *    떠나면 끊는 쪽이 맞다 — 커밋 전에는 저장된 것이 없다.
+ */
 export function useRunStream(childId: string): UseRunStream {
   const [state, dispatch] = useReducer(runReducer, initialRunState);
   const queryClient = useQueryClient();
 
-  const abortRef = useRef<AbortController | null>(null);
-  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearIdleTimer = useCallback(() => {
-    if (idleTimerRef.current !== null) {
-      clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = null;
-    }
-  }, []);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   const stop = useCallback(() => {
-    clearIdleTimer();
-    abortRef.current?.abort();
-    abortRef.current = null;
-  }, [clearIdleTimer]);
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = null;
+  }, []);
 
-  // 화면을 벗어나면 스트림을 끊는다. 원문은 이 훅 밖에 있어야 한다 (위 주석).
+  // 화면을 벗어나면 스트림을 끊는다.
   useEffect(() => stop, [stop]);
 
   const start = useCallback(
     (runId: string) => {
       stop();
       dispatch({ type: "start" });
-
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      // 이벤트가 올 때마다 다시 건다 — 전체 시간이 아니라 "조용한 시간"을 잰다.
-      const armIdleTimer = () => {
-        clearIdleTimer();
-        idleTimerRef.current = setTimeout(() => {
-          dispatch({ type: "timeout" });
-          controller.abort();
-        }, RUN_IDLE_TIMEOUT_MS);
-      };
-
-      void (async () => {
-        try {
-          armIdleTimer();
-          // 중단(abort)은 여기서 throw 로 나간다 — closed 가 아니라 아래 catch 로 간다.
-          await pumpRunEvents(streamRunEvents(runId, controller.signal), dispatch, armIdleTimer);
-        } catch (cause) {
-          const aborted = cause instanceof DOMException && cause.name === "AbortError";
-          if (!aborted) dispatch({ type: "error" });
-        } finally {
-          clearIdleTimer();
-          // 🚨 run 하나가 홈·관찰·프로필을 동시에 바꾼다. 골라서 무효화하면 빠뜨린 쪽이 낡는다.
-          void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
-        }
-      })();
+      unsubscribeRef.current = subscribeRun(runId, dispatch, () => {
+        // 🚨 run 하나가 홈·관찰·프로필을 동시에 바꾼다. 골라서 무효화하면 빠뜨린 쪽이 낡는다.
+        void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+      });
     },
-    [childId, clearIdleTimer, queryClient, stop],
+    [childId, queryClient, stop],
   );
 
   const reset = useCallback(() => {

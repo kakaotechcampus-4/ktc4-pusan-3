@@ -13,10 +13,11 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps.auth import get_current_parent
-from app.api.v1.routers import auth
+from app.api.v1.routers import auth, children, invites, me, policies, runs, suggestions
 
 public_router = APIRouter()
-"""무인증. 로그인 자체를 시작·완료하는 5개만 (루트 CLAUDE.md §9).
+"""무인증. 로그인 자체를 시작·완료하는 5개와, 가입 전 동의 화면이 약관을 읽는
+GET /policies 하나 (루트 CLAUDE.md §9 · #91).
 
 여기에 라우터를 붙이는 것은 보안 예외 목록을 늘리는 일이다. 늘려야 한다면 구현 전에
 그 목록과 API 계약을 먼저 고친다.
@@ -26,7 +27,13 @@ protected_router = APIRouter(dependencies=[Depends(get_current_parent)])
 """나머지 전부. 앞으로 추가되는 도메인 라우터는 여기에 붙인다."""
 
 protected_router.include_router(auth.fixed_router)
+protected_router.include_router(children.router)
+protected_router.include_router(invites.router)
+protected_router.include_router(me.router)
+protected_router.include_router(runs.router)
+protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)
+public_router.include_router(policies.router)
 
 v1_router = APIRouter()
 

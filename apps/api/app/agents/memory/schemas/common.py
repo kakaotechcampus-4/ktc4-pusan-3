@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 from enum import StrEnum
-from typing import Annotated, ClassVar, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -194,8 +194,11 @@ class ObservationCreateArgs(ToolArgs):
     ]
 
 
-class PromotableCreateArgs(ObservationCreateArgs):
-    """승격 파이프라인에 관여하는 도메인(food/education/activity/routine)의 추가 필드."""
+class SubjectCreateArgs(ObservationCreateArgs):
+    """`subject` · `polarity` 를 받는 네 도메인(food/education/activity/routine).
+
+    routine 은 승격되지 않지만 관찰 자체가 티어 3 근거로 인용돼 이 두 칸은 받는다.
+    """
 
     subject: Annotated[
         str,
@@ -212,6 +215,11 @@ class PromotableCreateArgs(ObservationCreateArgs):
         int,
         Field(default=0, ge=-1, le=1, description="좋아함 1 / 중립 0 / 싫어함 -1"),
     ]
+
+
+class PromotableCreateArgs(SubjectCreateArgs):
+    """승격까지 가는 셋(food/education/activity) 전용. routine 에는 이 칸이 없다."""
+
     strong_signals: Annotated[
         list[StrongSignal],
         Field(default_factory=list, description="발화에 근거가 있을 때만. 없으면 빈 배열"),
@@ -219,7 +227,15 @@ class PromotableCreateArgs(ObservationCreateArgs):
 
 
 class ObservationUpdateArgs(ClearableUpdateArgs):
-    """observation update 가 공유하는 필드. 날짜도 고칠 수 있다."""
+    """observation update가 공유하는 필드. 날짜도 고칠 수 있고, 기록을 지울 수도 있다.
+
+    status로 열리는 값은 deleted 하나다. stand_alone · inactive 는 Correction 결과라
+    모델이 쓰지 않는다. 지우는 호출에는 다른 수정을 섞지 않는다.
+    """
+
+    _NOT_A_CHANGE: ClassVar[frozenset[str]] = frozenset(
+        {"observation_id", "status", "temporal_direction", "clear"}
+    )
 
     observation_id: RecordId
     observed_on: Annotated[
@@ -227,6 +243,33 @@ class ObservationUpdateArgs(ClearableUpdateArgs):
         Field(default=None, description="바꿀 관찰 날짜 표현. 날짜를 안 바꾸면 비운다"),
     ]
     temporal_direction: Direction
+    status: Annotated[
+        Literal["deleted"] | None,
+        Field(
+            default=None,
+            description=(
+                "보호자가 기록 한 건을 통째로 지워 달라고 할 때만 deleted. "
+                "이때 다른 필드와 clear 는 모두 비운다. 내용을 고칠 때는 비워 둔다"
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _delete_alone(self) -> Self:
+        if self.status is None:
+            return self
+        changed = [
+            name
+            for name in type(self).model_fields
+            if name not in self._NOT_A_CHANGE and getattr(self, name) is not None
+        ]
+        if changed or self.clear:
+            raise ValueError(
+                "status=deleted 는 기록을 통째로 지운다. "
+                f"{_joined([*changed, *self.clear])} 수정과 한 번에 보내지 않는다. "
+                "지울 거면 status 만, 고칠 거면 status 를 비운다"
+            )
+        return self
 
 
 class ObservationQueryArgs(ToolArgs):
@@ -249,9 +292,3 @@ class ObservationQueryArgs(ToolArgs):
         str | None, Field(default=None, description="관찰 일자 끝. 표현 또는 YYYY-MM-DD")
     ]
     raw_text_query: Annotated[str | None, Field(default=None, description="원문에 포함된 키워드")]
-
-
-class RecordRef(ToolArgs):
-    """삭제처럼 대상 지정만 필요한 tool."""
-
-    observation_id: RecordId

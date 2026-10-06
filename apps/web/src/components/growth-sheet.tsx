@@ -9,6 +9,7 @@ import { DateField } from "@/components/ui/date-field";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { EARLIEST_BIRTH_DATE, toToday } from "@/lib/date-bounds";
+import { parseMeasurement } from "@/lib/measurement";
 import {
   api,
   qk,
@@ -197,16 +198,4 @@ export function GrowthSheet({
       </div>
     </BottomSheet>
   );
-}
-
-/**
- * 빈 칸은 `null`, 숫자가 아니면 `"invalid"`.
- * 🚨 잘못 적은 값을 조용히 0 이나 `NaN` 으로 넘기지 않는다 — 아이 몸무게가 0kg 으로 쌓인다.
- */
-function parseMeasurement(value: string): number | null | "invalid" {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed <= 0) return "invalid";
-  return parsed;
 }
