@@ -25,7 +25,7 @@ ROW = {
     "source_locator": "0~1세 신체운동 · 신체활동 즐기기",
     "license_basis": "public_law",
     "status": "draft",
-    "authored_by": "ai-draft",
+    "authored_by": "03leedo",
     "version": 1,
     "setting": "indoor",  # 도메인 칸 — 공통 검사는 domain_keys 로 통과시킨다
 }
@@ -65,7 +65,7 @@ class TestValid:
 
     def test_approved_는_검수자와_검수일이_있으면_통과(self):
         meta = parse(
-            broken(status="approved", reviewed_by="03leedo", reviewed_at=date(2026, 10, 7))
+            broken(status="approved", reviewed_by="nnhhlee", reviewed_at=date(2026, 10, 7))
         )
         assert meta.status == "approved"
 
@@ -86,8 +86,8 @@ class TestBroken:
             ({"source_year": "2020"}, "source_year"),
             ({"license_basis": "kogl_5"}, "license_basis"),
             ({"status": "done"}, "status"),
-            ({"reviewed_by": "ai-draft"}, "같다"),
-            ({"status": "approved", "reviewed_by": "03leedo"}, "검수일"),
+            ({"reviewed_by": "03leedo"}, "같다"),
+            ({"status": "approved", "reviewed_by": "nnhhlee"}, "검수일"),
             ({"tags": "gross_motor"}, "tags"),
             ({"version": 0}, "version"),
         ],

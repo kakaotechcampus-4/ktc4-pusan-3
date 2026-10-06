@@ -273,7 +273,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
   source_locator: 0~1세 신체운동 · 신체활동 즐기기 · 기본 운동을 시도한다
   license_basis: public_law
   status: draft
-  authored_by: ai-draft      # AI 초안. 검수자가 원문을 펴 놓고 확인한 뒤 approved
+  authored_by: 03leedo       # 검수는 다른 사람이 원문을 펴 놓고 확인한 뒤 approved
   version: 1
 ```
 
