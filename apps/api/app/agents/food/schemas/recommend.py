@@ -7,6 +7,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.food.schemas.common import EvidenceRef, MealSlot, ToolArgs
 
 
@@ -41,7 +42,13 @@ class MealCandidate(ToolArgs):
 
 
 class ProposeMealCandidatesArgs(ToolArgs):
+    # 후보 풀이 처음부터 모자라면 모델이 고를 수 있는 것도 모자라서 1개부터 받는다.
+    # 채울 수 있는데 덜 낸 것은 출력 tool 의 check_count 가 막는다 (Tool_공통.md §5-2)
     candidates: Annotated[
         list[MealCandidate],
-        Field(min_length=1, max_length=3, description="식사·간식 후보. 최대 3개"),
+        Field(
+            min_length=1,
+            max_length=MAX_SUGGESTIONS,
+            description=f"식사·간식 후보. 최대 {MAX_SUGGESTIONS}개",
+        ),
     ]
