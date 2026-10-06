@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.common.llm_client import LLMResponse
-from app.agents.memory.agent import run
+from app.agents.memory.agent import MAX_QUESTIONS, run
 from app.agents.memory.context import AgentContext
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.task import (
@@ -590,6 +590,64 @@ async def test_두_번째_이어받기는_앞서_주고받은_것도_넣는다(c
 
     sent = llm.seen[0][-1]["content"]
     assert "며칠 됐어요" in sent
+
+
+def _asked_so_far(times: int) -> PendingMemoryContext:
+    """기침 조각에 이미 times 번 물은 맥락. 마지막 질문이 question 이고 앞의 것은 transcript 다."""
+    rounds = tuple(text for n in range(1, times) for text in (f"{n}번째 질문", f"{n}번째 답"))
+    return PendingMemoryContext(
+        hint_text="요즘 기침해",
+        question=f"{times}번째 질문",
+        work=WorkType.OBSERVE,
+        transcript=rounds,
+    )
+
+
+async def test_재질문_상한_직전에는_또_물으면_맥락을_만든다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "정확히 며칠 전이에요?", "kind": "question"}))
+    before = _asked_so_far(MAX_QUESTIONS - 1)
+
+    result = await run("잘 모르겠어요", context, client=llm, continuation=before)
+
+    assert result.pending is not None
+    assert len(result.pending.transcript) == 2 * (MAX_QUESTIONS - 1)
+    assert result.ask_limit_reached is False
+
+
+async def test_재질문_상한에_닿으면_맥락을_만들지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "정확히 며칠 전이에요?", "kind": "question"}))
+
+    result = await run(
+        "잘 모르겠어요", context, client=llm, continuation=_asked_so_far(MAX_QUESTIONS)
+    )
+
+    assert result.pending is None
+    assert result.ask_limit_reached is True
+
+
+async def test_상한이어도_이번에_저장했으면_상한으로_세지_않는다(context: AgentContext) -> None:
+    # 저장한 조각은 원래 맥락을 만들지 않는다. 여기서 상한 문구가 나가면 방금 저장한 것을
+    # "저장하지 않았어요" 라고 말하게 된다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _COUGH)),
+        _cont_answer({"text": "열도 있었어요?", "kind": "question"}),
+    )
+
+    result = await run("3일 전부터", context, client=llm, continuation=_asked_so_far(MAX_QUESTIONS))
+
+    assert result.pending is None
+    assert result.ask_limit_reached is False
+
+
+async def test_상한이어도_묻지_않고_끝나면_상한으로_세지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(_cont_answer({"text": "알겠어요. 생각나면 알려 주세요.", "kind": "message"}))
+
+    result = await run(
+        "잘 모르겠어요", context, client=llm, continuation=_asked_so_far(MAX_QUESTIONS)
+    )
+
+    assert result.pending is None
+    assert result.ask_limit_reached is False
 
 
 _WHOLE_PENDING = PendingMemoryContext(
