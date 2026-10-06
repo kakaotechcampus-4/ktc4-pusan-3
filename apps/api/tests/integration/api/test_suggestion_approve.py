@@ -457,13 +457,13 @@ async def test_submit_event_duplicate_suggestion_ids(
 async def test_expire_only_affects_draft(
     session: AsyncSession, cid: uuid.UUID
 ):
-    """만료 처리는 draft만 — approved는 만료 대상이 아님."""
+    """만료 처리는 draft만 — approved는 만료 대상이 아님. 만료된 draft는 안 보인다."""
     from app.domains.suggestion import repository as repo
 
     expired_time = datetime.now(UTC) - timedelta(hours=1)
 
     # 만료된 draft
-    await _make_suggestion(session, child_id=cid, expires_at=expired_time)
+    s_expired = await _make_suggestion(session, child_id=cid, expires_at=expired_time)
     # 만료됐지만 approved
     s_approved = await _make_suggestion(
         session, child_id=cid, status=SuggestionStatus.APPROVED, expires_at=expired_time
@@ -474,8 +474,84 @@ async def test_expire_only_affects_draft(
     drafts = await repo.list_suggestions(session, child_id=cid, status=SuggestionStatus.DRAFT)
     draft_ids = {s.id for s in drafts}
     assert s_alive.id in draft_ids  # 살아있는 draft는 보인다
+    assert s_expired.id not in draft_ids  # 만료된 draft는 안 보인다
 
     all_approved = await repo.list_suggestions(
         session, child_id=cid, status=SuggestionStatus.APPROVED
     )
     assert s_approved.id in {s.id for s in all_approved}  # approved는 만료 무관
+
+
+# ── 남의 아이 제안 방어 ───────────────────────────────────────────────────
+
+
+async def test_event_drafts_other_childs_suggestion(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """남의 아이 제안으로 초안 요청 → 404."""
+    _, parent_id = bearer
+    other_cid = await link_child(session, parent_id=parent_id)
+    s = await _make_suggestion(session, child_id=other_cid, status=SuggestionStatus.APPROVED)
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_submit_event_other_childs_suggestion(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """남의 아이 제안으로 일정 제출 → 404."""
+    idempotency.clear()
+    _, parent_id = bearer
+    other_cid = await link_child(session, parent_id=parent_id)
+    s = await _make_suggestion(session, child_id=other_cid, status=SuggestionStatus.APPROVED)
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {
+                "title": "남의 제안",
+                "starts_at": "2026-10-10T15:00:00+09:00",
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "suggestion_ids": [str(s.id)],
+        },
+        headers={**headers, "Idempotency-Key": "other-child"},
+    )
+    assert resp.status_code == 404
+
+
+# ── items 포함 제출 ───────────────────────────────────────────────────────
+
+
+async def test_submit_event_with_items(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
+):
+    """준비물이 있는 일정 제출."""
+    idempotency.clear()
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {
+                "title": "소풍",
+                "starts_at": "2026-10-15T09:00:00+09:00",
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "items": [
+                {"item_id": None, "item_name": "도시락"},
+                {"item_id": None, "item_name": "물통"},
+            ],
+        },
+        headers={**headers, "Idempotency-Key": "items-test"},
+    )
+    assert resp.status_code == 201
+    items = resp.json()["event"]["items"]
+    assert len(items) == 2
+    assert {i["item_name"] for i in items} == {"도시락", "물통"}
