@@ -773,7 +773,6 @@ export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEven
     ends_at: null,
     all_day: false,
     category: "activity",
-    status: "draft",
     created_by: "agent",
     source_notice_id: null,
     source_refs: [{ kind: "suggestion", id: "s_2" }],
@@ -816,7 +815,7 @@ export const receivedSuggestions: Suggestion[] = [
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
-/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다 (`confirmed`). draft 는 여기 오지 않는다. */
+/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다. 초안은 `event` 행이 아니라 여기 오지 않는다 (#118). */
 export const confirmedEvent: CalendarEvent = {
   id: "e_3",
   title: "물놀이",
@@ -825,7 +824,6 @@ export const confirmedEvent: CalendarEvent = {
   ends_at: null,
   all_day: false,
   category: "institution",
-  status: "confirmed",
   created_by: "agent",
   source_notice_id: null,
   source_refs: [],

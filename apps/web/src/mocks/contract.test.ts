@@ -151,7 +151,7 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
     const first = await submitEventDraft("c1", body, key);
     const second = await submitEventDraft("c1", body, key);
 
-    expect(first.event.status).toBe("confirmed");
+    expect(first.event.id).toBeTruthy();
     // 두 번째가 409 로 오면 "성공했는데 응답을 못 받은" 경우가 실패처럼 보인다 — 그걸 막는 줄이다.
     expect(second).toEqual(first);
   });
@@ -402,7 +402,20 @@ describe("일정 초안", () => {
 
     expect(saved.event.title).toBe(body.event.title);
     expect(saved.event.starts_at).toBe(body.event.starts_at);
-    expect(saved.event.status).toBe("confirmed");
+    // 🚨 `event.status` 는 없어진 필드다 (#118). 목이 계속 채우면 화면이 기대도 모르게 기댄다.
+    expect(saved.event).not.toHaveProperty("status");
+  });
+
+  it("제출은 201 이고, 같은 키 재시도도 같은 201 을 재생한다 (#241)", async () => {
+    const init = {
+      headers: { "Content-Type": "application/json", "Idempotency-Key": newIdempotencyKey() },
+      body: JSON.stringify(draftBody("s_created")),
+    };
+    const first = await raw(idempotentPath.submitEvent("c1"), init);
+    const replayed = await raw(idempotentPath.submitEvent("c1"), init);
+
+    expect(first.status).toBe(201);
+    expect(replayed.status).toBe(201);
   });
 
   it("🚨 제출은 제안 상태를 바꾸지 않는다 — approved 는 채택이 이미 만들었다 (#206)", async () => {
@@ -1005,7 +1018,7 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     expect(day.diary?.text).toBe("지어낸 일기 한 줄");
   });
 
-  it("월 조회의 has_event 는 confirmed 만 센다", async () => {
+  it("월 조회의 has_event 는 그날 일정이 실제로 있는 날만 켠다", async () => {
     // 🚨 **일정이 있는 달에서 건다.** 이번 달로 고정하면 일정이 다음 달에 있는 이틀 동안
     //    빈 목록을 훑고 아무것도 확인하지 않은 채 통과한다 (아래 `findEventDay` 주석).
     const eventDay = await findEventDay();
@@ -1017,11 +1030,11 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     //    (실제로 9월 29일에 이 파일이 깨졌다).
     expect(month.days.some((day) => day.has_event)).toBe(true);
 
-    // 05·06 이 만드는 draft(e_draft_1)는 아직 캘린더에 쓴 것이 아니다.
+    // 🚨 초안은 `event` 행이 아니라서(#118) 여기 셀 것이 없다 — 표식이 선 날은 하루 조회에도 일정이 있어야 한다.
     for (const day of month.days) {
       if (!day.has_event) continue;
       const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
-      expect(detail.events.every((event) => event.status === "confirmed")).toBe(true);
+      expect(detail.events.length).toBeGreaterThan(0);
     }
   });
 

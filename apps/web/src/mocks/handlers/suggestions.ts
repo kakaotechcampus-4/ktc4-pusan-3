@@ -265,7 +265,6 @@ export const suggestionHandlers = [
         title: body.event.title,
         starts_at: body.event.starts_at,
         all_day: body.event.all_day,
-        status: "confirmed",
         items: body.items.map((item, index) => ({
           item_id: item.item_id ?? `i_new_${index}`,
           item_name: item.item_name,
@@ -275,7 +274,8 @@ export const suggestionHandlers = [
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).
-      return HttpResponse.json({ event });
+      // 201 은 실서버와 같다 (#241). 같은 키 재시도도 `withIdempotency` 가 이 코드 그대로 재생한다.
+      return HttpResponse.json({ event }, { status: 201 });
     }),
   ),
 ];
