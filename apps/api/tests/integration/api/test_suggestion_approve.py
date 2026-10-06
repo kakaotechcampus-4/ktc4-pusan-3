@@ -381,6 +381,47 @@ async def test_submit_event_not_approved_suggestion(
     assert resp.json()["error"]["code"] == "not_approved"
 
 
+# ── 중복 suggestion_ids 방어 ───────────────────────────────────────────────
+
+
+async def test_approve_duplicate_ids(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """같은 id 두 번 → 중복 제거돼서 정상 처리."""
+    s = await _make_suggestion(session, child_id=cid)
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/approve",
+        json={"suggestion_ids": [str(s.id), str(s.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["suggestions"]) == 1
+
+
+async def test_submit_event_duplicate_suggestion_ids(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """같은 suggestion_id 두 번 → 500이 아니라 정상 처리."""
+    idempotency.clear()
+    s = await _make_suggestion(session, child_id=cid, status=SuggestionStatus.APPROVED)
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {
+                "title": "중복 테스트",
+                "starts_at": "2026-10-10T15:00:00+09:00",
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "suggestion_ids": [str(s.id), str(s.id)],
+        },
+        headers={**headers, "Idempotency-Key": "dup-test"},
+    )
+    assert resp.status_code == 201
+
+
 # ── 만료 처리 (멘토 합의: draft에만) ──────────────────────────────────────
 
 

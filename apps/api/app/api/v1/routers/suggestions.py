@@ -64,12 +64,13 @@ async def approve_suggestions(
     body: ApproveSuggestionsRequest,
     session: SessionDep,
 ) -> ApproveSuggestionsResponse:
-    if not body.suggestion_ids:
+    ids = list(dict.fromkeys(body.suggestion_ids))  # 중복 제거, 순서 유지
+    if not ids:
         raise ApiError(400, "validation_failed", "suggestion_ids가 비어 있어요")
 
     # 먼저 존재 + 소유 확인
     found = []
-    for sid in body.suggestion_ids:
+    for sid in ids:
         row = await suggestion_repo.find_suggestion(
             session, child_id=child.child_id, suggestion_id=sid
         )
@@ -82,7 +83,7 @@ async def approve_suggestions(
         found.append(row)
 
     approved = await suggestion_repo.approve_suggestions(
-        session, child_id=child.child_id, suggestion_ids=body.suggestion_ids
+        session, child_id=child.child_id, suggestion_ids=ids
     )
     if not approved:
         raise ApiError(409, "not_draft", "이미 처리된 제안이 포함돼 있어요")
@@ -113,11 +114,12 @@ async def create_event_drafts(
     body: CreateEventDraftsRequest,
     session: SessionDep,
 ) -> CreateEventDraftsResponse:
-    if not body.suggestion_ids:
+    draft_ids = list(dict.fromkeys(body.suggestion_ids))  # 중복 제거
+    if not draft_ids:
         raise ApiError(400, "validation_failed", "suggestion_ids가 비어 있어요")
 
     suggestions = []
-    for sid in body.suggestion_ids:
+    for sid in draft_ids:
         row = await suggestion_repo.find_suggestion(
             session, child_id=child.child_id, suggestion_id=sid
         )
@@ -198,8 +200,8 @@ async def submit_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
-    # suggestion_ids 검증
-    suggestion_ids = body.suggestion_ids or []
+    # suggestion_ids 검증 (중복 제거)
+    suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
     if suggestion_ids:
         for sid in suggestion_ids:
             row = await suggestion_repo.find_suggestion(
