@@ -11,12 +11,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.api import idempotency
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
-from app.api.errors import ApiError, ErrorEnvelope
+from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.v1.schemas.suggestions import (
     ApproveSuggestionsRequest,
     ApproveSuggestionsResponse,
@@ -119,7 +120,7 @@ def _next_draft_id() -> str:
 @router.post(
     "/children/{cid}/suggestions/event-drafts",
     status_code=201,
-    responses={status: {"model": ErrorEnvelope} for status in (404, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 422)},
 )
 async def create_event_drafts(
     child: AccessibleChild,
@@ -189,7 +190,7 @@ async def create_event_drafts(
     "/children/{cid}/events",
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -228,8 +229,6 @@ async def submit_event(
             raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요")
 
     # Event INSERT
-    starts_at = datetime.fromisoformat(body.event.starts_at)
-    ends_at = datetime.fromisoformat(body.event.ends_at) if body.event.ends_at else None
     created_by = EventCreatedBy.AGENT if suggestion_ids else EventCreatedBy.CAREGIVER
 
     event = await schedule_repo.create_event(
@@ -237,8 +236,8 @@ async def submit_event(
         child_id=child.child_id,
         title=body.event.title,
         event_type=EventType(body.event.event_type),
-        starts_at=starts_at,
-        ends_at=ends_at,
+        starts_at=body.event.starts_at,
+        ends_at=body.event.ends_at,
         all_day=body.event.all_day,
         category=EventCategory(body.event.category),
         created_by=created_by,
@@ -259,7 +258,13 @@ async def submit_event(
             session, suggestion_ids=suggestion_ids, event_id=event.id
         )
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if constraint_name(exc) == "uq_suggestion_event_suggestion_id":
+            raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요") from exc
+        raise
 
     response_data = SubmitEventResponse(
         event=CalendarEventOut(
@@ -285,5 +290,5 @@ async def submit_event(
     )
 
     response_dict = response_data.model_dump(mode="json")
-    idempotency.remember(**scope, run_id=response_dict)
+    idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=201, content=response_dict)
