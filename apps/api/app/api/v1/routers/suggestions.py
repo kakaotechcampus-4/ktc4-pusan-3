@@ -67,7 +67,7 @@ async def approve_suggestions(
 ) -> ApproveSuggestionsResponse:
     ids = list(dict.fromkeys(body.suggestion_ids))  # 중복 제거, 순서 유지
     if not ids:
-        raise ApiError(400, "validation_failed", "suggestion_ids가 비어 있어요")
+        raise ApiError(400, "validation_failed", "제안을 선택해 주세요")
 
     # 존재 + 소유 확인, 이미 approved면 멱등 처리
     found = []
@@ -128,7 +128,7 @@ async def create_event_drafts(
 ) -> CreateEventDraftsResponse:
     draft_ids = list(dict.fromkeys(body.suggestion_ids))  # 중복 제거
     if not draft_ids:
-        raise ApiError(400, "validation_failed", "suggestion_ids가 비어 있어요")
+        raise ApiError(400, "validation_failed", "제안을 선택해 주세요")
 
     suggestions = []
     for sid in draft_ids:
@@ -200,7 +200,7 @@ async def submit_event(
     idempotency_key: str | None = Header(alias="Idempotency-Key", default=None),
 ) -> JSONResponse:
     if idempotency_key is None:
-        raise ApiError(400, "idempotency_key_required", "Idempotency-Key 헤더가 필요해요")
+        raise ApiError(400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요")
 
     scope = {
         "parent_id": parent.parent_id,
