@@ -100,6 +100,18 @@ function draftBody(...suggestionIds: string[]): SubmitEventBody {
   };
 }
 
+/**
+ * 제안을 **채택해 두고** 그 제안에 연결되는 제출 본문을 만든다.
+ * 🚨 실서버처럼 목도 채택 안 된 제안은 422, 없는 제안은 404 로 막는다 (#241) — 지어낸 id 를 넣으면
+ *    재시도 · 중복 판정까지 가기 전에 거기서 떨어진다.
+ */
+async function approvedDraftBody(...suggestionIds: string[]): Promise<SubmitEventBody> {
+  if (suggestionIds.length > 0) {
+    await approveSuggestions("c1", { suggestion_ids: suggestionIds });
+  }
+  return draftBody(...suggestionIds);
+}
+
 /** 목이 계약서 경로를 그대로 쓰는지 확인하려면 URL 을 직접 만들어야 할 때가 있다. */
 function raw(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${API_BASE_URL}${path}`, { method: "POST", ...init });
@@ -147,7 +159,7 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
   it("처음 응답을 그대로 돌려주고, 처리는 한 번만 한다", async () => {
     const key = newIdempotencyKey();
 
-    const body = draftBody("s_retry");
+    const body = await approvedDraftBody("s_4");
     const first = await submitEventDraft("c1", body, key);
     const second = await submitEventDraft("c1", body, key);
 
@@ -181,7 +193,7 @@ describe("④ 같은 키 · 동시 요청", () => {
   it("한 번만 실행되고 나머지는 409 idempotency_in_progress", async () => {
     const key = newIdempotencyKey();
 
-    const body = draftBody("s_concurrent");
+    const body = await approvedDraftBody("s_4");
     const results = await Promise.allSettled([
       submitEventDraft("c1", body, key),
       submitEventDraft("c1", body, key),
@@ -201,20 +213,22 @@ describe("④ 같은 키 · 동시 요청", () => {
 
 describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
   it("새 키로 이미 넣은 제안을 또 넣으면 409 already_confirmed", async () => {
-    await submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey());
+    const body = await approvedDraftBody("s_4");
+    await submitEventDraft("c1", body, newIdempotencyKey());
 
     // 같은 제안, 새 사용자 동작(= 새 키). 이건 재시도가 아니라 중복 제출이다.
-    await expect(submitEventDraft("c1", draftBody("s_dup"), newIdempotencyKey())).rejects.toSatisfy(
+    await expect(submitEventDraft("c1", body, newIdempotencyKey())).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "already_confirmed") && e.status === 409,
     );
   });
 
   it("묶인 초안은 제안 하나만 겹쳐도 409 already_confirmed", async () => {
-    await submitEventDraft("c1", draftBody("s_meal_a", "s_meal_b"), newIdempotencyKey());
+    await approveSuggestions("c1", { suggestion_ids: ["s_1", "s_2", "s_3"] });
+    await submitEventDraft("c1", draftBody("s_1", "s_2"), newIdempotencyKey());
 
     // 🚨 일부만 받아 주면 같은 제안이 일정 두 개에 걸린다.
     await expect(
-      submitEventDraft("c1", draftBody("s_meal_b", "s_meal_c"), newIdempotencyKey()),
+      submitEventDraft("c1", draftBody("s_2", "s_3"), newIdempotencyKey()),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_confirmed") && e.status === 409);
   });
 });
@@ -224,7 +238,11 @@ describe("⑤ 재시도와 '이미 확정' 을 구분한다", () => {
  * 🚨 타입은 모양만 본다. "쓰지 않는다" 와 "food 일 때만 묻는다" 는 동작이라 여기서 건다.
  */
 describe("일정 초안", () => {
-  const makeDrafts = (ids: string[]) => createEventDrafts("c1", { suggestion_ids: ids });
+  /** 🚨 **채택한 뒤에 만든다** — 화면 순서 그대로다. 안 하면 422 `not_approved` 다 (#241). */
+  const makeDrafts = async (ids: string[]) => {
+    await approveSuggestions("c1", { suggestion_ids: ids });
+    return createEventDrafts("c1", { suggestion_ids: ids });
+  };
 
   /**
    * 🚨 **제안 id 를 테스트에 박지 않는다.** 한 Agent 가 3가지씩 내게 되면서 픽스처 번호가 밀렸고,
@@ -258,6 +276,21 @@ describe("일정 초안", () => {
 
     expect(again.draft_id).not.toBe(first.draft_id);
     expect(again.suggestion_ids).toEqual(first.suggestion_ids);
+  });
+
+  it("🚨 채택하지 않은 제안은 초안이 되지 않는다 — 422 not_approved (#241)", async () => {
+    await expect(
+      createEventDrafts("c1", { suggestion_ids: [firstOf("activity")] }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_approved") && e.status === 422);
+  });
+
+  it("🚨 없는 제안이 섞이면 걸러 내지 않고 404 not_found 다", async () => {
+    const id = firstOf("activity");
+    await approveSuggestions("c1", { suggestion_ids: [id] });
+
+    await expect(
+      createEventDrafts("c1", { suggestion_ids: [id, "s_does_not_exist"] }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found") && e.status === 404);
   });
 
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
@@ -342,7 +375,7 @@ describe("일정 초안", () => {
   it("🚨 없는 제안을 채택하면 막는다 — 화면에 없는 것이 승인되지 않게", async () => {
     await expect(
       approveSuggestions("c1", { suggestion_ids: ["s_1", "s_does_not_exist"] }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "invalid_request"));
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found") && e.status === 404);
   });
 
   it("🚨 Agent 마다 후보가 여럿이고, 묶음 머리말이 함께 온다", async () => {
@@ -391,12 +424,24 @@ describe("일정 초안", () => {
 
     await expect(
       submitEventDraft("c1", body as SubmitEventBody, newIdempotencyKey()),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "invalid_request"));
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+  });
+
+  it("🚨 채택하지 않은 제안을 제출하면 422 not_approved — 캘린더에 쓰지 않는다 (#241)", async () => {
+    await expect(submitEventDraft("c1", draftBody("s_4"), newIdempotencyKey())).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "not_approved") && e.status === 422,
+    );
+  });
+
+  it("🚨 없는 제안을 제출하면 404 not_found", async () => {
+    await expect(
+      submitEventDraft("c1", draftBody("s_does_not_exist"), newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found") && e.status === 404);
   });
 
   it("🚨 items 는 최종 목록이다 — 보낸 것만 저장된다", async () => {
     const body: SubmitEventBody = {
-      ...draftBody("s_items"),
+      ...(await approvedDraftBody("s_4")),
       items: [{ item_id: null, item_name: "수영복" }],
     };
     const saved = await submitEventDraft("c1", body, newIdempotencyKey());
@@ -407,7 +452,7 @@ describe("일정 초안", () => {
   });
 
   it("제출하면 확인한 값 그대로 저장된다 — 게이트가 거짓말하지 않는다", async () => {
-    const body = draftBody("s_same");
+    const body = await approvedDraftBody("s_4");
     const saved = await submitEventDraft("c1", body, newIdempotencyKey());
 
     expect(saved.event.title).toBe(body.event.title);
@@ -419,7 +464,7 @@ describe("일정 초안", () => {
   it("제출은 201 이고, 같은 키 재시도도 같은 201 을 재생한다 (#241)", async () => {
     const init = {
       headers: { "Content-Type": "application/json", "Idempotency-Key": newIdempotencyKey() },
-      body: JSON.stringify(draftBody("s_created")),
+      body: JSON.stringify(await approvedDraftBody("s_4")),
     };
     const first = await raw(idempotentPath.submitEvent("c1"), init);
     const replayed = await raw(idempotentPath.submitEvent("c1"), init);
@@ -429,7 +474,7 @@ describe("일정 초안", () => {
   });
 
   it("🚨 제출은 제안 상태를 바꾸지 않는다 — approved 는 채택이 이미 만들었다 (#206)", async () => {
-    const saved = await submitEventDraft("c1", draftBody("s_status"), newIdempotencyKey());
+    const saved = await submitEventDraft("c1", await approvedDraftBody("s_4"), newIdempotencyKey());
 
     expect(saved).not.toHaveProperty("suggestion_status");
   });
