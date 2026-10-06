@@ -175,7 +175,7 @@ DoD: 가짜 LLM으로 9개 tool 전부 1회 호출 경로 통과 · `model_calls
 
 | 채널 | 내용 |
 | --- | --- |
-| `suggestions` | **3개** · `draft` · `+24h` · `kind` 필수 · 사후 필터 후 3개 미만이면 재샘플링 + 재호출 1회 · 저장 즉시 추천 카드 화면 |
+| `suggestions` | **최대 3개** · `draft` · `+24h` · `kind` 필수 · 사후 필터 후 3개 미만이면 재샘플링 + 재호출 1회 · 다 못 채우면 개수 안내(`suggestion.partial` · 0개면 `pool.empty`) · 저장 즉시 추천 카드 화면 |
 | `readouts` | 영양 서술(model) · 미지원·기록 부족 안내(**code**) |
 | `needs_observation` | `polarity IS NULL` candidate 1개만 |
 | `event_requests` | **없음** (식사 알림은 Memory 프롬프트 규칙) |
