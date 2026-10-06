@@ -727,7 +727,9 @@ export const runEventDrafts: EventDraft[] = [
  */
 export function mealDraft(items: Suggestion[]): EventDraft {
   return {
-    draft_id: `d_meal_${items.map((s) => s.id).join("_")}`,
+    // 🚨 **요청마다 새 id 다** (#241 · 서버는 `uuid4`). 제안에서 지어내면 같은 제안으로 다시 만든
+    //    초안이 우연히 같은 장으로 합쳐져서, 실서버에서만 두 장이 서는 것을 목이 가린다.
+    draft_id: crypto.randomUUID(),
     op: "create",
     event_id: null,
     event: {
@@ -747,7 +749,7 @@ export function mealDraft(items: Suggestion[]): EventDraft {
 
 export function suggestionDraft(suggestion: Suggestion): EventDraft {
   return {
-    draft_id: `d_${suggestion.id}`,
+    draft_id: crypto.randomUUID(), // 🚨 요청마다 새 id 다 (위 `mealDraft` 와 같은 이유)
     op: "create",
     event_id: null,
     event: {
@@ -773,7 +775,6 @@ export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEven
     ends_at: null,
     all_day: false,
     category: "activity",
-    status: "draft",
     created_by: "agent",
     source_notice_id: null,
     source_refs: [{ kind: "suggestion", id: "s_2" }],
@@ -816,7 +817,7 @@ export const receivedSuggestions: Suggestion[] = [
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
-/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다 (`confirmed`). draft 는 여기 오지 않는다. */
+/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다. 초안은 `event` 행이 아니라 여기 오지 않는다 (#118). */
 export const confirmedEvent: CalendarEvent = {
   id: "e_3",
   title: "물놀이",
@@ -825,7 +826,6 @@ export const confirmedEvent: CalendarEvent = {
   ends_at: null,
   all_day: false,
   category: "institution",
-  status: "confirmed",
   created_by: "agent",
   source_notice_id: null,
   source_refs: [],
