@@ -139,6 +139,9 @@ class DbMemoryStore:
     def __init__(self, session: AsyncSession, *, child_id: UUID) -> None:
         self._session = session
         self._child_id = child_id
+        self.wrote = False
+        """create / update / delete 가 DB 에 실제로 쓴 적이 있으면 True.
+        runner 가 commit 표시를 세울지 판단하는 데 쓴다."""
 
     # ── observation ─────────────────────────────────────────────
 
@@ -170,6 +173,7 @@ class DbMemoryStore:
         )
         self._session.add(orm)
         await self._session.flush()
+        self.wrote = True
         return _row_from_orm(domain, orm)
 
     async def query_observations(
@@ -255,7 +259,10 @@ class DbMemoryStore:
             .values(**values)
             .returning(model)
         )
-        return _row_from_orm(domain, orm) if orm is not None else None
+        if orm is not None:
+            self.wrote = True
+            return _row_from_orm(domain, orm)
+        return None
 
     async def delete_observation(
         self, *, domain: ObservationDomain, observation_id: str
@@ -286,7 +293,10 @@ class DbMemoryStore:
                     ObservationLinkHold.observation_id == uid,
                 )
             )
-        return result is not None
+        deleted = result is not None
+        if deleted:
+            self.wrote = True
+        return deleted
 
     # ── event ───────────────────────────────────────────────────
 

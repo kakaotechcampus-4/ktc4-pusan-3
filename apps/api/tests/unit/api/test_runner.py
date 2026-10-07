@@ -400,6 +400,7 @@ async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
 
     async def fake_handle_input(**kwargs):
         kwargs["emit"](Step(1, 3, "입력을 살펴보고 있어요"))
+        kwargs["store"].wrote = True  # Memory Agent 가 관찰을 저장한 것으로 표시
         await kwargs["commit"]()  # Memory commit
         raise RuntimeError("commit 뒤에 터졌다")
 
@@ -417,6 +418,36 @@ async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
     # 키가 풀리지 않는다 — 같은 키로 재시도하면 기존 run 이 재생된다
     assert idempotency.recall(**scope) == channel.run_id
     assert channel.closed
+
+
+async def test_이어받기_commit_후_예외가_나도_맥락을_복구하지_않는다(monkeypatch):
+    """이어받기 run 에서 commit 뒤 터지면 맥락을 되돌리지 않는다.
+    이미 답이 저장됐으니 맥락을 복구하면 같은 답을 다시 보내게 된다.
+    """
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        kwargs["store"].wrote = True
+        await kwargs["commit"]()
+        raise RuntimeError("commit 뒤에 터졌다")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    # commit 됐으므로 done 으로 끝남
+    assert channel.ended_with == "done"
+    # 맥락이 복구되지 않음 — 이미 저장됐으니 다시 보낼 필요 없음
+    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
+    pending_reply.clear()
 
 
 async def test_이어받기_run_이_예외로_죽어도_맥락을_되돌려_둔다(monkeypatch):

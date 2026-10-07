@@ -101,7 +101,8 @@ def agent_job(
 
             async def commit() -> None:
                 await session.commit()
-                channel.memory_committed = True
+                if store.wrote:
+                    channel.memory_committed = True
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
@@ -120,11 +121,22 @@ def agent_job(
                 log.warning(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
-                channel.publish(sse.failed_event("timeout", raw_text))
+                if channel.memory_committed:
+                    done = ("done", {"run_id": channel.run_id,
+                                     "model_calls": 0, "completed": False})
+                    channel.publish(done)
+                else:
+                    channel.publish(sse.failed_event("timeout", raw_text))
             finally:
                 # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다
                 not_done = channel.ended_with != "done"
-                if continuation is not None and reply_to is not None and not_done:
+                should_restore = (
+                    continuation is not None
+                    and reply_to is not None
+                    and not_done
+                    and not channel.memory_committed
+                )
+                if should_restore:
                     pending_reply.put(
                         run_id=reply_to,
                         parent_id=parent_id,
@@ -175,7 +187,9 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
             if channel.memory_committed:
                 # commit 이후에 터졌다. 관찰은 이미 DB 에 있으므로 done 으로 끝낸다.
                 # failed 로 끝내면 키가 풀려 재시도 시 두 번 저장된다.
-                channel.publish(("done", {"run_id": channel.run_id, "model_calls": -1}))
+                done = ("done", {"run_id": channel.run_id,
+                                 "model_calls": 0, "completed": False})
+                channel.publish(done)
             else:
                 channel.publish(sse.failed_event("internal_error", raw_text))
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.

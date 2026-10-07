@@ -186,3 +186,74 @@ class TestEventQueryKST:
             child_id=child_a.id, date_from=date(2026, 10, 6), date_to=date(2026, 10, 6)
         )
         assert len(rows_wrong) == 0
+
+    async def test_event_row_시각이_KST로_변환된다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        """_event_row 의 starts_at 이 +09:00 으로 나오는지."""
+        owner, child_a, _ = family
+        utc_ts = datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc)
+        event = Event(
+            child_id=child_a.id,
+            title="시간대 변환 테스트",
+            event_type=EventType.EPISODIC,
+            starts_at=utc_ts,
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+
+        store = DbMemoryStore(session, child_id=child_a.id)
+        rows = await store.query_events(
+            child_id=child_a.id, date_from=date(2026, 10, 7), date_to=date(2026, 10, 7)
+        )
+        assert len(rows) == 1
+        # starts_at 이 KST (+09:00) 로 변환돼야 한다
+        assert rows[0].starts_at.utcoffset() == timedelta(hours=9)
+        assert rows[0].starts_at.hour == 0  # UTC 15시 = KST 0시
+
+
+class TestEventChildIdIsolation:
+    """일정·준비물의 child_id 필터 검증."""
+
+    async def test_다른_아이의_일정을_get하면_None(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, child_b = family
+        event = Event(
+            child_id=child_a.id,
+            title="아이A 수영장",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+
+        store_b = DbMemoryStore(session, child_id=child_b.id)
+        result = await store_b.get_event(event_id=str(event.id))
+        assert result is None
+
+    async def test_다른_아이의_일정을_delete하면_False(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, child_b = family
+        event = Event(
+            child_id=child_a.id,
+            title="아이A 병원",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.HEALTH,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+
+        store_b = DbMemoryStore(session, child_id=child_b.id)
+        result = await store_b.delete_event(event_id=str(event.id))
+        assert result is False
