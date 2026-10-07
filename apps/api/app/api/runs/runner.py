@@ -94,6 +94,8 @@ def agent_job(
         from app.domains.memory.store.db_store import DbMemoryStore
         from app.infra.db.session import async_session_factory
 
+        # TODO: 도메인 Agent 가 DB 포트를 쓰면 이 세션을 동시에 타서
+        #   AsyncSession 에러가 난다. task 마다 별도 세션을 열어야 한다.
         async with async_session_factory() as session:
             store = DbMemoryStore(session, child_id=child_id)
 
