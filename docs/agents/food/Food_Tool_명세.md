@@ -9,6 +9,8 @@
 > **2026-10-05 갱신** — 섭취 파생 테이블과 그것을 채우던 tool 삭제(#205). 영양 판정은 원본(`observation_food` · `daycare_meal`)에서 매번 계산하고 저장하지 않는다 · 기록 행 수도 두 원본으로 센다 · 캐시 미스는 이름이 정확히 같은 결과만 쌓고 해석 실패는 남기지 않는다
 >
 > **2026-10-06 갱신** — 추천은 최대 3개(C-8 닫힘) · 1~2개면 `suggestion.partial` 안내 · 0개면 추천 없이 `pool.empty` — 실패 아님 (§0-5) · 이미 추천한 메뉴가 다시 나오는 문제 TODO (§0-5)
+>
+> **2026-10-08 갱신** — 안전 필터를 health_safety 10/4 확정안에 맞춤: `SafetyEntry` 는 `kind` · `label` · `status` · `category` 만, 포트는 active 행만 · `category` 에 `food` 가 없는 알레르기 행은 뺌 · 통과한 메뉴에 든 19종 이름을 `SafetyVerdict.allergens` 로 돌려줌 · `notice.allergy_unconfirmed` 는 Food 가 내지 않음(승인 때 안내) (§3 · §4)
 
 ---
 
@@ -141,7 +143,7 @@ menu_catalog
 
 닫힘 조건 추가: `safety_ok=False` → `meal_recommendation`만 `()`.
 
-**`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — `allergy_states` 가 빈 튜플로 오고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
+**`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — 읽은 안전 정보(`FoodRunState.safety`)가 빈 튜플이고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
 
 Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨이 닫힌다. Growth 는 `growth_review` 만 readout 으로 내려간다.
 
@@ -266,7 +268,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 
 막는 것은 코드가 한다. 모델에게 묻지 않는다(루트 §2 · §3). **애매하면 막는다** — 넣을지 망설여지는 이름은 사전에 넣고, guard(오탐 취소)에는 그 성분이 확실히 없는 것만 넣는다. 사례는 `apps/api/tests/unit/agents/food/test_food_safety_cases.py` 에 표로 있다.
 
-**입력** — 메뉴 행들, 이 task 시작에 읽은 `health_safety` 행들(`FoodRunState.safety`), 아이 단계와 월령. 월령을 모르면 그 단계가 시작하는 월령으로 본다(가장 어린 쪽이라 규칙을 덜 풀지 않는다).
+**입력** — 메뉴 행들, 이 task 시작에 읽은 `health_safety` 행들(`FoodRunState.safety`), 아이 단계와 월령. 안전 행은 `status='active'` 만 온다(`SafetyReader.food_safety` 계약, 백엔드는 `list_active_safety`). 행이 없는 것이 unknown 이라 빈 목록이 정상이고, 읽기에 실패하면 `SafetyLookupError` 다. `SafetyEntry` 는 `kind` · `label` · `status` · `category` 만 갖는다 — `severity` 는 싣지 않는다(보호자가 active 로 둔 알레르기를 검사 등급 class_0 이어도 거른다. 코드가 등급을 보고 낮추면 의료 판단이다). `management` 도 싣지 않는다(자유 텍스트라 제한 식품을 코드나 LLM 이 뽑으면 루트 §2 에 걸린다). 월령을 모르면 그 단계가 시작하는 월령으로 본다(가장 어린 쪽이라 규칙을 덜 풀지 않는다).
 
 **1. 보호자가 적은 이름을 읽는다** — `resolve_safety`, 공통 규칙은 `app/agents/common/allergy.py`
 
@@ -278,10 +280,9 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 - 이름 사전은 공용 `reference/allergen_terms.yaml`(19종의 이름 · 묶음 이름) + Food 전용 `reference/food_safety_terms.yaml`(그 성분이 든 음식 · 19종 밖 알레르기) + `reference/chronic_restriction.yaml`(질환)이다. 검사지에 흔한 영어 이름(Cheese · Butter · Almond · Codfish · Salmon · Rice · Yeast · Potato …)과 흔한 오타("게란")도 사전에 있다.
 - **묶음 이름**은 코드 여럿과 그 묶음의 19종 밖 식품으로 편다 — 갑각류(게 · 새우 + 가재 · 랍스터 …), 연체류(오징어 · 조개류 + 문어 · 낙지 …), 생선(고등어 + 연어 · 명태 …), 해산물(생선 + 갑각류 + 연체류), 견과류(땅콩 · 호두 · 잣 + 아몬드 · 밤 …), 콩류(콩 + 땅콩 + 녹두 · 팥 …), 육류, 글루텐(밀 + 보리 · 호밀 · 귀리 …). 묶음 이름은 그 글자 그대로도 막는다 — 레시피 재료에 "다진 견과류" · "해물믹스" 처럼 나온다. 포함한 묶음의 이름도 같이 막는다(해산물 → 생선 · 갑각류 · 연체류).
 - **"콩"** 은 대두(5)로 읽고, 콩이 든 메뉴는 대두가 아니어도(강낭콩 · 완두콩 · 땅콩) 다 막는다 — 보호자가 콩류 전체를 뜻했을 수 있다. "대두" 로 등록하면 대두만 막는다.
-- kind 와 상관없이 같은 사전으로 읽는다 — 알레르기 칸에 적은 "유당불내증", 질환 칸에 적은 "우유 알레르기" 도 막는다. 질환은 정의상 빼는 19종 코드도 막는다(유당불내증 · 갈락토스혈증 → 우유, 셀리악병 → 밀). 질환의 줄임말 · 영어 이름(셀리악 · celiac · lactose intolerance)도 같은 질환으로 읽는다.
-- 거르지 않는 상태는 `retracted` · `none` · `unknown` 셋뿐이다. 모르는 상태값도 거른다 — 어댑터가 status 를 잘못 옮겨도 필터가 꺼지지 않는다.
-- `allergen_code` 가 있으면 이름에서 읽은 것과 합친다. `restricted_foods` 는 적힌 그대로 막는다.
-- ⚠️ TODO (10/4 확정안, 코드는 아직): `category` 에 `food` 가 없고 `drug`·`environment` 만 있는 행은 뺀다. NULL·빈 목록은 거른다 ([data_model.md](../data_model.md) health_safety 제약). 그전까지는 category 를 보지 않고 다 거른다 — 더 막는 쪽이다.
+- kind 와 상관없이 같은 사전으로 읽는다 — 알레르기 칸에 적은 "유당불내증", 질환 칸에 적은 "우유 알레르기" 도 막는다. 질환은 정의상 빼는 19종 코드도 막는다(유당불내증 · 갈락토스혈증 → 우유, 셀리악병 → 밀). 질환의 줄임말 · 영어 이름(셀리악 · celiac · lactose intolerance)도 같은 질환으로 읽는다. `kind` 는 `allergy` · `chronic_disease` · `behavioral` · `environmental` · `other_medical` 다 — 사전에 없는 이름(당뇨 · 고소공포 · 편식)은 식품을 유도하지 않는다. `other_medical` 갈락토스혈증도 우유를 막는다.
+- 거르지 않는 상태는 `retracted` · `none` 둘뿐이다. 포트가 active 만 주지만 여기서 한 번 더 본다 — 어댑터가 `none` 행을 섞어 보내도 알레르기로 읽지 않는다. 모르는 상태값은 거른다 — 어댑터가 status 를 잘못 옮겨도("ACTIVE") 필터가 꺼지지 않는다. unknown 은 저장하지 않는 값이라 이 칸에 오면 어댑터 버그이고, 모르는 값으로 거른다.
+- **`category`** ([data_model.md](../data_model.md) health_safety 제약, #156 Q1) — `kind='allergy'` 행 중 `food` 가 없고 `drug` · `environment` 만 있는 행은 뺀다(페니실린 · 환경으로만 분류한 쑥). `food` 와 `environment` 가 같이 있으면(쑥) 식품이기도 해서 읽는다. **비어 있거나 NULL 이면 거른다** — "food 가 있는 행만 거른다" 로 만들면 분류가 빠진 식품 알레르기가 아무 신호 없이 필터에서 빠진다. 분류가 빠졌거나 틀렸을 때는 덜 막는 쪽보다 과하게 막는 쪽이 안전하다. `category` 는 알레르기 행만 갖는다 — 질환 행은 `category` 가 아니라 위의 `label` 읽기로 가른다.
 
 **2. 메뉴가 무엇을 담았는지 본다**
 
@@ -297,6 +298,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `unchecked` | 위에 안 걸렸는데 `resolved=False` 거나 재료를 모름(재료가 없거나 빈 글자 · 기호뿐) — 안전하다고 보지 않는다 |
 | `passed` | 나머지 |
 | `cautions` | 판정과 따로 붙는다. 질식 주의 식품이 나오면 막지 않고 `guide.choking_caution` 을 붙이라고 알린다 |
+| `allergens` | `passed` 행만. 그 메뉴에 든 19종 정식 명칭(`ALLERGEN_NAMES` — 난류 · 우유 · …, 코드 순). 든 것이 없으면 키가 없다. 메뉴 코드(저장된 코드 ∪ 메뉴명 · 재료를 훑은 코드)로 만들어서 저장 코드만 쓰면 빠지는 성분(크림 → 우유)도 든다. 추천의 `suggestion.allergens` 를 채우는 값이다 — 실제로 채우는 곳(`propose_meal_candidates`)은 식단 추천 구현에서 한다. 승인할 때 서버가 `health_safety` 와 대조해 "이 음식에는 땅콩이 들어가요. 땅콩 알레르기가 있는지 확인해주세요" 를 띄운다 |
 
 **4. 연령 · 아이 금지 식품** — `food_safety_terms.yaml` 의 `age_rules`. 출처는 항목마다 적었다.
 
@@ -343,7 +345,6 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `unsupported.milk_meal` | 이 시기에는 모유나 분유만 먹어요. 이유식은 보통 생후 4~6개월에 시작해요. |
 | `unsupported.infant_nutrient` | 돌 전에는 영양소 분석을 지원하지 않아요. |
 | `blocked.safety` | 알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요. |
-| `notice.allergy_unconfirmed` | 아직 확인하지 않은 알레르기 항목이 있어요. 알려주시면 걸러서 추천해 드릴게요. |
 | `pool.empty` | 조건에 맞는 메뉴가 없어요. |
 | `general.reason.toddler` | 또래 아이들이 많이 먹는 메뉴예요. |
 | `general.reason.weaning` | 이 시기 아기들이 많이 먹는 재료예요. |
@@ -368,4 +369,4 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `daycare.not_found` | 급식 정보를 못 찾았어요. |
 | `daycare.replaced_unknown` | 어떤 메뉴 대신 받았나요? |
 
-`notice.allergy_unconfirmed`는 추천과 함께 나간다. `closed.no_daycare`는 급식 행이 없어 `daycare_meal` 라벨이 닫힐 때, `daycare.not_found`는 급식을 못 찾았을 때(§8), `pool.empty`는 후보 풀이 비었을 때(§0-5), `followup.preference`는 `polarity`를 모르는 candidate를 되물을 때 쓴다.
+확인하지 않은 알레르기 항목(unknown) 안내는 Food 가 내지 않는다(`notice.allergy_unconfirmed` 삭제, 10-08). 행이 없는 것이 unknown 이라 Food 가 셀 수 없고, 추천을 승인할 때 `suggestion.allergens` 와 `health_safety` 를 대조해서 서버가 묻는다. `closed.no_daycare`는 급식 행이 없어 `daycare_meal` 라벨이 닫힐 때, `daycare.not_found`는 급식을 못 찾았을 때(§8), `pool.empty`는 후보 풀이 비었을 때(§0-5), `followup.preference`는 `polarity`를 모르는 candidate를 되물을 때 쓴다.

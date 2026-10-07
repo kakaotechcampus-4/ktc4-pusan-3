@@ -238,11 +238,11 @@ async def test_알레르기_이름과_메뉴(
         AllergyCase,
     )
 
-    canonical = [SafetyEntry(kind=kind, label=name, state="active")]  # type: ignore[arg-type]
+    canonical = [SafetyEntry(kind=kind, label=name, status="active")]  # type: ignore[arg-type]
     probe_row = _row(*probe)
     missed_labels = []
     for label in data.labels:
-        entries = [SafetyEntry(kind=kind, label=label, state="active")]  # type: ignore[arg-type]
+        entries = [SafetyEntry(kind=kind, label=label, status="active")]  # type: ignore[arg-type]
         verdict, _ = _verdict(probe_row, entries, OLDER)
         if verdict != "blocked":
             missed_labels.append(label)
