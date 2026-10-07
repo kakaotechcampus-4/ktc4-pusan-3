@@ -245,6 +245,8 @@ function Shell() {
             setSupportMultipleWindows={false}
             // 앱 밖 링크(약관 등)는 웹뷰에 가두지 않고 in-app 브라우저로 앱 위에 얹는다 (#212).
             // 🚨 로그인 시작은 따로 — 복귀(`icatch://auth`)를 받아야 해서 인증 세션으로 연다 (#210).
+            // 🚨 출처가 같아도 `/api/…` 는 웹뷰 밖이다 (#273) — 안 그러면 nginx 로 API 를 웹 주소 아래에
+            //    둔 날 로그인 시작이 아래 두 번째 분기까지 오지 못한다 (`src/native/internal-url.ts`).
             onShouldStartLoadWithRequest={(request) => {
               if (isInternalUrl(request.url)) return true;
               if (isAuthStartUrl(request.url)) {
