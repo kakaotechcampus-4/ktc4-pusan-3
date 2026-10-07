@@ -164,6 +164,41 @@ describe("되묻기에 대화 안에서 답한다", () => {
     expect(hasOpenQuestion(conversation())).toBe(false);
   });
 
+  it("🚨 네 번 묻고 나면 질문 대신 안내로 끝나고, 열린 질문이 남지 않는다 (재질문 상한 #246)", async () => {
+    scenario("reply_ask_limit");
+    const asked = send("어제부터 기침해");
+    await settled(asked);
+
+    // 처음 질문까지 넷이다. 답할 때마다 이어받은 run 이 또 묻고, 다음 답은 그 run 을 가리킨다.
+    let previous = asked;
+    for (const answer of ["사흘 전부터", "하루 세 번쯤", "밤에도"]) {
+      const reply = send(answer, true);
+      expect(turn(reply).body.reply_to).toBe(runIdOf(previous));
+      await settled(reply);
+      expect(turn(reply).question).toBe("open");
+      previous = reply;
+    }
+
+    const last = send("집에서", true);
+    expect(turn(last).body.reply_to).toBe(runIdOf(previous));
+    const done = await settled(last);
+
+    // 🚨 질문이 아니라 안내다 — 답할 자리를 열면 상한이 의미가 없어진다.
+    expect(done.run.status).toBe("done");
+    expect(done.run.note?.kind).toBe("message");
+    expect(done.run.note?.text).toContain("저장하지 않았어요");
+    expect(done.run.observations).toHaveLength(0);
+    expect(done.question).toBeNull();
+    expect(turn(previous).question).toBe("answered");
+    expect(conversation().answering).toBeNull();
+    expect(hasOpenQuestion(conversation())).toBe(false);
+
+    // 다음 한 줄은 답이 아니라 새 이야기다 — 맥락이 없으니 `reply_to` 를 실으면 400 이다.
+    const next = send("새 이야기", true);
+    expect(turn(next).body.reply_to).toBeUndefined();
+    await settled(next);
+  }, 30_000);
+
   it("🚨 답을 내려놓아도 질문은 열린 채로 남고, 다시 골라 답할 수 있다", async () => {
     scenario("note_question");
     const asked = send("어제부터 기침해");
