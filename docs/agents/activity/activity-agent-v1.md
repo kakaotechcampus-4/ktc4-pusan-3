@@ -180,15 +180,19 @@ class ActivityCandidate(ToolArgs):
 | --- | --- |
 | `allergy` · `environmental` | `chronic_disease` · `behavioral` · `other_medical` |
 
-`dietary_restriction` 은 10/4 확정안에서 kind 자체가 빠졌다. 코드의 `SafetyKind` 에는 아직 남아 있다 (TODO).
+`dietary_restriction` 은 10/4 확정안에서 kind 자체가 빠졌다. 포트(`SafetyEntry`)도 10/4 확정안 모양이다 — `status`(active · retracted · none) · `category` 목록, 별칭 칸 없음.
 
 **읽지 않는 쪽** — *"천식이면 야외 금지"* 같은 표를 만들면 그게 곧 LLM 없는 자동 진단이다. 특히 `behavioral`(*"분리불안"* 한 단어)로 활동을 좁히는 것은 발달 개입이고 스펙 아웃이다. 그리고 그 한 단어는 대개 보호자의 해석이지 아이의 Fact 가 아니다.
 
 **읽는 쪽** — 이 2종은 추론이 아니라 **문자열 대조**다. Food 의 `filter_food_safety` 가 하는 일과 정확히 같고 의학적 판단이 한 톨도 없다. 밀 알레르기 아동에게 *"밀가루 점토 만들기"* 는 0–5세 실내 놀이의 단골이고, **밀가루 반죽은 먹지 않아도 접촉·흡입으로 반응이 난다.** 같은 구멍에 우유팩·달걀껍질 공예, 베이킹, 견과류 촉감놀이가 들어간다.
 
-대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `label` 을 `content` + `materials` 에 부분 일치. `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
+대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `content` 와 `materials` 각 항목에 부분 일치(`tools/filters.py`). 별칭 칸이 DB 에서 빠져서 **19종 알레르기는 `label` 로 사전을 찾아 그 별칭으로 넓혀 대조**한다 — "밀" 로 등록돼 있으면 "밀가루 점토" 도 걸린다. 다만 사전의 **한 글자 별칭(밀 · 게 · 닭 · 잣)은 쓰지 않는다** — 사전이 메뉴 이름용이라 놀이 문장에서는 "공 밀기" · "카드 게임" · "비밀 상자" 가 걸린다. "밀가루" · "꽃게" · "닭고기" · "잣가루" 가 실제 위험을 잡는다. 19종 밖과 `environmental` 은 보호자가 적은 `label` 그대로 대조한다. `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
 
 **거르는 것은 `status = 'active'` 행뿐이다** (10/4 확정안 — `status` 3값, 행 없음이 `unknown`). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
+
+**`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 정식 명칭이고, 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
+
+🚨 **`health_safety` 는 run 당 한 번만 읽는다.** `build_gate` 가 읽은 행을 run state(`safety_entries`)에 담고, 출력 검증의 안전 필터는 그 값만 받는 순수 함수다. 출력 검증 때 다시 읽으면 같은 run 안에서 게이트와 필터가 다른 행을 볼 수 있다. 테스트가 출력 검증 동안 `SafetyReader` 호출 0회를 고정한다.
 
 **조회 실패는 0행과 다르다.** 조회 자체가 실패하면 **Activity 를 실행하지 않는다** — Food 와 같다. 모델을 부르지 않고 코드 문구 `blocked.safety` 로 끝낸다(모델 0회): *"지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."* (문구는 `activity.readout.yaml` — 공통규약 §10 `*.readout.yaml`) 재료를 쓰는 후보만 빼는 방식으로는 꽃가루 · 동물털 · 잔디 같은 환경 알레르기(`environmental`)를 못 막는다. 이 위험은 재료가 아니라 장소와 계절에 걸려 있다. 조회 실패는 드물어서 멈추는 쪽의 손해가 작다.
 
@@ -462,13 +466,16 @@ async def run(task, context, *, client=None):
 
 ```
 1. 안전 필터            filter_activity_safety — hazard_term · health_safety(active)
-                        → 후보를 풀에서 뺀다 (거절이 아니라 제거)
+                        → 후보를 풀에서 뺀다 (거절이 아니라 제거). 모델에게 돌려주지 않는다 —
+                          통과한 초안 · 빠진 후보(excluded) · 경고 문구(warnings)를 run state 에 담고,
+                          3개 미만이면 run() 이 제외 목록으로 재호출 1회
 2. 금지 표현 필터        content · why_this · why_now · note
 3. Activity 출력 검증    ─ 기피 근거의 라벨이 들어 있는 후보 → 거절          (D4)
                         ─ note 의 반복·성향 표현은 Tier 1 근거일 때만           (D12)
                         ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
                         ─ 0–17개월은 caregiver_role = together 만
                         ─ evidence id ⊂ rank_evidence 상위 10
+                        ─ 바깥 활동이 어려운 날(outdoor_ok=False)의 setting=outdoor → 거절 (either 는 통과)
                         ─ place_name ⊂ 이번 run 의 search_nearby_places 결과 → 아니면 거절
                           통과하면 코드가 content 앞에 붙인다 ("○○어린이공원에서 …")
 4. build()              근거 행 수로 kind · general 이면 reason 을 템플릿으로 덮어씀
