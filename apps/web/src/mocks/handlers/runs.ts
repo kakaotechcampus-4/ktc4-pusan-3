@@ -49,7 +49,7 @@ const failedOnce = new Set<string>();
 
 /**
  * `reply_asks_again` 에서 이미 한 번 되물은 대화의 **처음 질문**. 🚨 **한 번만 더 묻는다** —
- * 늘 물으면 끝나지 않는다. 서버에도 재질문 상한이 들어올 예정이다(그 문구의 목은 서버 PR 뒤).
+ * 늘 물으면 끝나지 않는다. 상한까지 묻는 대화는 `reply_ask_limit` 이 따로 만든다.
  */
 const askedAgain = new Set<string>();
 
@@ -108,6 +108,26 @@ const CONTINUATION_NOTE = "말씀해 주신 시점까지 함께 기록해 두었
 const FOLLOW_UP_QUESTION = "하루에 몇 번 정도 그랬는지 알려주시겠어요?";
 
 /**
+ * `reply_ask_limit` — 상한 전까지 이어받기 run 이 차례로 묻는 말. 처음 질문이 첫째라 여기는 둘째부터다.
+ * 🚨 매번 **다른 문장**이다 — 같으면 화면에서 어느 질문이 닫히고 열렸는지 가를 수 없다.
+ */
+const LIMIT_FOLLOW_UPS = [
+  FOLLOW_UP_QUESTION,
+  "밤에도 그랬는지 알려주시겠어요?",
+  "어디에서 그랬는지 알려주시겠어요?",
+];
+
+/** 한 조각에 처음 질문까지 포함해 묻는 횟수의 상한 (서버 `memory/agent.py` 의 `MAX_QUESTIONS`). */
+const MAX_QUESTIONS = 4;
+
+/**
+ * 상한에 닿은 run 이 질문 대신 내는 말 (서버 `pipeline.py` 의 `ASK_LIMIT_NOTE` 와 같은 글자).
+ * 🚨 **"확인" 이 들어가지 않는다** — 저장 없이 message 만 온 run 의 제목이 "적어주신 말을 확인했어요" 라서
+ *    "확인하지 못해" 가 그 바로 아래 서면 한 화면에서 말이 부딪힌다 (#251 리뷰).
+ */
+const ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요.";
+
+/**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
  * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계가 하나고 추천 제안(`offer`)도 없다
  * (`apps/api/app/agents/pipeline.py` 의 `_handle_continuation`).
@@ -143,6 +163,24 @@ async function* continuationScript(
     return;
   }
 
+  /**
+   * 🚨 **상한에 닿으면 질문 대신 안내 문장으로 끝난다** (#246 · 서버 #251). 저장도 맥락도 없다 —
+   *    `pendingReplies` 에 넣지 않으므로 이 run 에 답하면 400 이다. 단계는 `step → note → done` 이다.
+   *    상한 전에는 매번 다른 문장으로 또 묻고, 다음 답의 `reply_to` 는 그 run 이다.
+   */
+  if (currentScenario() === "reply_ask_limit") {
+    const asked = questionsAsked(input.replyTo);
+    if (asked >= MAX_QUESTIONS) {
+      yield frame("note", { text: ASK_LIMIT_NOTE, kind: "message" });
+    } else {
+      pendingReplies.set(runId, input.childId);
+      yield frame("note", { text: LIMIT_FOLLOW_UPS[asked - 1], kind: "question" });
+    }
+    await sleep(300);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
+
   yield frame("saved", { observations: [healthObservation] });
   await sleep(300);
   /**
@@ -154,6 +192,16 @@ async function* continuationScript(
   yield frame("note", { text: CONTINUATION_NOTE, kind: "message" });
   await sleep(300);
   yield frame("done", { run_id: runId, model_calls: 1 });
+}
+
+/**
+ * 이 답이 가리킨 질문까지 그 조각에 물은 횟수. 처음 질문이 1이고, 답을 거슬러 올라갈 때마다 하나씩 는다.
+ * 서버는 같은 수를 되묻기 맥락의 `transcript` 로 센다 (`1 + len(transcript) // 2`).
+ */
+function questionsAsked(replyTo: string): number {
+  let asked = 1;
+  for (let r = inputByRun.get(replyTo)?.replyTo; r; r = inputByRun.get(r)?.replyTo) asked += 1;
+  return asked;
 }
 
 /** 이어받기가 이어진 대화의 처음 run. 답의 답을 따라 처음 질문까지 거슬러 올라간다. */
@@ -261,6 +309,7 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     scenario === "note_question" ||
     scenario === "reply_failed" ||
     scenario === "reply_asks_again" ||
+    scenario === "reply_ask_limit" ||
     scenario === "reply_unavailable"
   ) {
     if (input) pendingReplies.set(runId, input.childId);
