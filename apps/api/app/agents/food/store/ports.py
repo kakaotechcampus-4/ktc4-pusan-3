@@ -103,7 +103,7 @@ class SafetyEntry:
     # 이 값을 채우는 입력 경로가 DB·API·화면 어디에도 없어 지금은 항상 ()로
     # 온다. 그래서 유당불내증·갈락토스혈증·셀리악병처럼 질환 정의상 배제되는 식품은
     # chronic_restriction_terms() 매핑이 대신 채우고, 이 값과는 합집합으로 쓰인다
-    # (app/agents/food/tools/safety.py `_restriction_terms`).
+    # (app/agents/food/tools/safety.py `resolve_safety`).
     restricted_foods: tuple[str, ...] = ()
 
 

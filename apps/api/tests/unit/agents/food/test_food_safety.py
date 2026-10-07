@@ -4,12 +4,15 @@
 그대로 검증한다. 실제 DB 없음 — MenuCatalogRow·SafetyEntry 를 직접 구성한다.
 """
 
+import shutil
 from datetime import datetime, timezone
 
 import pytest
 
+from app.agents.common import allergy, reference
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import filter_food_safety
+from app.agents.food.tools import safety
+from app.agents.food.tools.safety import filter_food_safety, menu_codes, resolve_safety
 
 NOW = datetime(2026, 9, 27, tzinfo=timezone.utc)
 
@@ -173,8 +176,9 @@ def test_유당_불내증_공백_섞인_라벨도_정규화로_매핑에_걸린�
     assert result.blocked == (row,)
 
 
-def test_셀리악병_밀크티는_guards가_취소해서_passed() -> None:
-    row = _row("밀크티", ingredients=("홍차",))
+def test_셀리악병_밀크푸딩은_guards가_취소해서_passed() -> None:
+    # 밀크티로 보던 테스트다. 밀크티는 홍차라 카페인 규칙(#258)으로 모든 아이에게 막힌다
+    row = _row("밀크푸딩", ingredients=("우유", "밀크"))
     entries = [_restriction("셀리악병", restricted_foods=())]
 
     result = filter_food_safety([row], entries, "toddler")
@@ -327,3 +331,132 @@ def test_hits는_menu_key만_키로_갖고_로그성_원문을_남기지_않는�
     result = filter_food_safety([row], entries, "toddler")
 
     assert set(result.hits.keys()) == {"키위주스"}
+
+
+def test_저장된_코드가_없어도_메뉴명과_재료를_훑어_막는다() -> None:
+    # 오래된 카탈로그 행 · 코드를 빠뜨린 행도 막는다 — 저장된 코드만 믿지 않는다
+    row = _row("콩국수", ingredients=("소면", "콩국"))
+
+    result = filter_food_safety([row], [_allergy("밀", code=None)], "toddler")
+
+    assert result.hits["콩국수"] == ("6",)
+
+
+def test_글자가_없어도_저장된_코드로_막는다() -> None:
+    row = _row("오늘의 국", ingredients=("육수",), allergen_codes=frozenset({9}))
+
+    result = filter_food_safety([row], [_allergy("새우", code=None)], "toddler")
+
+    assert result.blocked == (row,)
+
+
+def test_menu_codes는_메뉴명과_재료에서_19종_코드를_찾는다() -> None:
+    assert menu_codes(("바지락칼국수", "바지락", "칼국수면")) == {6, 18}
+    assert menu_codes(("강낭콩밥", "쌀", "강낭콩")) == set()
+
+
+@pytest.mark.parametrize("state", ["ACTIVE", "confirmed", ""])
+def test_모르는_상태값은_active_로_보고_거른다(state: str) -> None:
+    # 어댑터가 status를 잘못 옮겨도 필터가 조용히 꺼지지 않는다
+    row = _row("크림수프", ingredients=("우유",))
+
+    result = filter_food_safety([row], [_allergy("우유", code=None, state=state)], "toddler")
+
+    assert result.blocked == (row,)
+
+
+def test_allergen_code와_이름에서_읽은_코드를_합친다() -> None:
+    rules = resolve_safety([_allergy("갑각류", code=9)])
+
+    assert rules.codes == {8, 9}
+
+
+def test_질환_칸에_적은_알레르기도_같은_사전으로_읽는다() -> None:
+    rules = resolve_safety([_restriction("우유 알레르기", restricted_foods=())])
+
+    assert rules.codes == {2}
+
+
+@pytest.mark.parametrize(("months", "blocked"), [(11, True), (12, False)])
+def test_꿀은_12개월_미만에만_막는다(months: int, blocked: bool) -> None:
+    row = _row("꿀떡", ingredients=("찹쌀", "꿀"))
+
+    result = filter_food_safety([row], [], "toddler", months=months)
+
+    assert (result.blocked == (row,)) is blocked
+
+
+def test_월령을_모르면_그_단계에서_가장_어린_월령으로_본다() -> None:
+    # preschool 은 36개월부터다. 48개월 미만 질식 주의가 붙어야 한다
+    row = _row("떡국", ingredients=("떡", "소고기"))
+
+    result = filter_food_safety([row], [], "preschool")
+
+    assert result.cautions == {"떡국": ("질식 주의 식품",)}
+
+
+@pytest.mark.parametrize(("months", "cautioned"), [(47, True), (48, False)])
+def test_질식_주의는_막지_않고_안내만_단다(months: int, cautioned: bool) -> None:
+    row = _row("포도", ingredients=("포도",))
+
+    result = filter_food_safety([row], [], "preschool", months=months)
+
+    assert result.passed == (row,)
+    assert ("포도" in result.cautions) is cautioned
+
+
+@pytest.fixture
+def broken_reference(tmp_path, monkeypatch):
+    """사전 파일을 임시 폴더로 옮겨 깨뜨린다.
+
+    앞뒤로 캐시를 비워 다른 테스트가 깨진 값을 보지 않게 한다.
+    """
+    caches = (
+        reference.allergen_terms,
+        reference.allergen_groups,
+        reference.food_safety_terms,
+        reference.chronic_restriction_terms,
+        reference.chronic_restriction_codes,
+        allergy.shared_book,
+        safety.food_book,
+        safety._code_matcher,
+    )
+    for name in ("allergen_terms.yaml", "chronic_restriction.yaml", "food_safety_terms.yaml"):
+        shutil.copy(reference.REFERENCE_DIR / name, tmp_path / name)
+    monkeypatch.setattr(reference, "REFERENCE_DIR", tmp_path)
+    for loader in caches:
+        loader.cache_clear()
+    yield tmp_path
+    for loader in caches:
+        loader.cache_clear()
+
+
+def test_사전을_읽지_못하면_통과시키지_않고_예외를_올린다(broken_reference) -> None:
+    (broken_reference / "food_safety_terms.yaml").write_text("source: 깨짐\n", encoding="utf-8")
+    row = _row("크림수프", ingredients=("우유",))
+
+    with pytest.raises(ValueError, match="필수 키"):
+        filter_food_safety([row], [_allergy("우유", code=None)], "toddler")
+
+
+@pytest.mark.parametrize("ingredients", [("",), (" ", "-")])
+def test_빈_재료_글자만_있으면_재료를_모르는_것으로_본다(ingredients: tuple[str, ...]) -> None:
+    # 어댑터가 빈 재료 문자열을 나눠 넣어도 통과가 아니라 '확인 못 함'이다
+    row = _row("오늘의 국", ingredients=ingredients)
+
+    result = filter_food_safety([row], [_allergy("우유", code=None)], "toddler")
+
+    assert result.unchecked == (row,)
+
+
+def test_술과_카페인은_메뉴명에서만_본다() -> None:
+    # 재료 속 양념(커피 1g · 와인)은 조리로 대부분 날아가거나 양이 적다.
+    # 마시는 메뉴만 막는다
+    cake = _row("고구마 케이크", ingredients=("고구마", "커피 1g"))
+    steak = _row("스테이크", ingredients=("소고기", "레드와인"))
+    coffee = _row("아이스 아메리카노", ingredients=("에스프레소", "물"))
+
+    result = filter_food_safety([cake, steak, coffee], [], "preschool", months=60)
+
+    assert result.passed == (cake, steak)
+    assert result.blocked == (coffee,)
