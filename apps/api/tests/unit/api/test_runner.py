@@ -107,7 +107,7 @@ async def test_job_that_returns_without_an_end_signal_ends_with_failed():
     """러너의 약속 — 무슨 일이 있어도 끝 신호는 하나다. 끝 신호 없이 돌아온 job 에 failed 를 붙인다.
 
     안 붙이면 화면은 "확인하지 못했어요" 로 떨어지고 키도 안 풀려서, 다시 눌러도 닫힌 run 만
-    재생된다. 7단계에서 러너 세션은 done 일 때만 확정하므로 이 failed 는 "저장 없음" 이 맞다.
+    재생된다. Memory 단계 전이라 commit 이 안 됐으므로 이 failed 는 "저장 없음" 이 맞다.
     """
     channel = registry.open_run(parent_id=PARENT)
 
@@ -123,8 +123,9 @@ async def test_job_that_returns_without_an_end_signal_ends_with_failed():
 async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
     """번역이 터지면 run 전체가 failed 로 끝난다 — 조용히 빠지지 않고 화면에 드러난다.
 
-    그래도 데이터는 안전하다. 러너 세션은 done 일 때만 확정하고 나머지는 되돌리므로(7단계)
-    failed 는 "저장 없음" 이고, 키가 풀려 다시 보내도 두 번 저장되지 않는다.
+    그래도 데이터는 안전하다. Memory 단계가 끝나면 commit 하고, commit 이후에 터져도
+    저장된 관찰은 되돌리지 않는다. commit 된 run 은 done 으로 끝내고 키를 놓지 않아
+    다시 보내도 두 번 저장되지 않는다.
     로그에는 예외 종류와 위치만 남고 원문은 남지 않는다 (루트 §2).
     """
     secret = RAW_TEXT
@@ -390,6 +391,32 @@ async def test_이어받기_run_이_끝나면_맥락을_되돌리지_않는다(m
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
     assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
+
+
+async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
+    """Memory 단계에서 commit 이 됐는데 그 뒤(번역·도메인 Agent 등)에서 터지면,
+    _guarded 는 done 으로 끝내고 키를 놓지 않는다 — 놓으면 재시도가 두 번 저장한다.
+    """
+
+    async def fake_handle_input(**kwargs):
+        kwargs["emit"](Step(1, 3, "입력을 살펴보고 있어요"))
+        await kwargs["commit"]()  # Memory commit
+        raise RuntimeError("commit 뒤에 터졌다")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-commit"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    # commit 된 run 은 done 으로 끝난다
+    assert channel.ended_with == "done"
+    assert names(channel) == ["step", "done"]
+    # 키가 풀리지 않는다 — 같은 키로 재시도하면 기존 run 이 재생된다
+    assert idempotency.recall(**scope) == channel.run_id
+    assert channel.closed
 
 
 async def test_이어받기_run_이_예외로_죽어도_맥락을_되돌려_둔다(monkeypatch):

@@ -31,6 +31,9 @@ class RunChannel:
         self.events = []
         self.ended_with: str | None = None
         """나간 끝 신호의 이름(failed · done). 아직 없으면 None."""
+        self.memory_committed = False
+        """Memory 단계의 commit 이 끝났으면 True. commit 이후에 터져도 저장된 관찰은
+        되돌리지 않는다 — _guarded 가 이 값을 보고 done/failed 를 정한다."""
         self.closed = False
         self.closed_at = None
         self._changed = asyncio.Event()

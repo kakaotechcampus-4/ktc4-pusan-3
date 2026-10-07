@@ -99,6 +99,7 @@ def agent_job(
 
             async def commit() -> None:
                 await session.commit()
+                channel.memory_committed = True
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
@@ -166,11 +167,15 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         #    "확인하지 못했어요" 로 떨어지고 키도 안 풀려 다시 눌러도 닫힌 run 만 재생된다.
         #    이미 나갔으면(done 뒤 결과 기록에서 터진 경우) 붙이지 않는다 — 화면은 이미 결과를
         #    받았다.
-        # 🚨 failed 는 "저장 없음" 이어야 한다. 러너 세션은 done 일 때만 확정(commit)하고
-        #    나머지는 전부 되돌린다(implicit rollback) — Memory 가 저장한 뒤 터져도
-        #    이 약속이 지켜진다.
+        # 🚨 Memory 단계가 끝나면 commit 한다. commit 이후에 터져도 저장된 관찰은
+        #    되돌리지 않는다 — commit 된 run 은 done 으로 끝내고 키를 놓지 않는다.
         if channel.ended_with is None:
-            channel.publish(sse.failed_event("internal_error", raw_text))
+            if channel.memory_committed:
+                # commit 이후에 터졌다. 관찰은 이미 DB 에 있으므로 done 으로 끝낸다.
+                # failed 로 끝내면 키가 풀려 재시도 시 두 번 저장된다.
+                channel.publish(("done", {"run_id": channel.run_id, "model_calls": -1}))
+            else:
+                channel.publish(sse.failed_event("internal_error", raw_text))
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
         # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.
         # 🚨 publish 와 여기 사이에 await 가 없어야 한다. 화면이 failed 를 받자마자 재시도해도
