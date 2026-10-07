@@ -118,7 +118,7 @@ class TestMemoryToCurator:
     ) -> None:
         owner, child = family
 
-        store = DbMemoryStore(session)
+        store = DbMemoryStore(session, child_id=child.id)
 
         memory_context = AgentContext(
             child_id=child.id,

@@ -95,7 +95,7 @@ def agent_job(
         from app.infra.db.session import async_session_factory
 
         async with async_session_factory() as session:
-            store = DbMemoryStore(session)
+            store = DbMemoryStore(session, child_id=child_id)
 
             async def commit() -> None:
                 await session.commit()

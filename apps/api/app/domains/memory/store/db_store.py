@@ -120,8 +120,9 @@ def _event_item_row(orm: EventItem) -> EventItemRow:
 class DbMemoryStore:
     """MemoryStore Protocol 구현. 세션 하나가 run 하나를 의미한다."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, child_id: UUID) -> None:
         self._session = session
+        self._child_id = child_id
 
     # ── observation ─────────────────────────────────────────────
 
@@ -136,6 +137,7 @@ class DbMemoryStore:
         observed_range: DateRange,
         fields: dict[str, Any],
     ) -> ObservationRow:
+        assert child_id == self._child_id, "child_id mismatch"
         model = _MODEL_BY_DOMAIN[domain]
         # fields 에서 상위 파라미터로 이미 받는 키를 빼고 도메인 컬럼만 남긴다
         col_fields = {
@@ -163,6 +165,7 @@ class DbMemoryStore:
         date_to: date | None = None,
         raw_text_query: str | None = None,
     ) -> list[ObservationRow]:
+        assert child_id == self._child_id, "child_id mismatch"
         model = _MODEL_BY_DOMAIN[domain]
         stmt = select(model).where(
             model.child_id == child_id,
@@ -192,12 +195,11 @@ class DbMemoryStore:
         orm = await self._session.scalar(
             select(model).where(
                 model.id == UUID(observation_id),
+                model.child_id == self._child_id,
                 model.status != ObservationStatus.DELETED,
             )
         )
         if orm is None:
-            return None
-        if orm.__tablename__ != f"observation_{domain}":
             return None
         return _row_from_orm(domain, orm)
 
@@ -230,6 +232,7 @@ class DbMemoryStore:
             update(model)
             .where(
                 model.id == UUID(observation_id),
+                model.child_id == self._child_id,
                 model.status != ObservationStatus.DELETED,
             )
             .values(**values)
@@ -245,6 +248,7 @@ class DbMemoryStore:
             update(model)
             .where(
                 model.id == UUID(observation_id),
+                model.child_id == self._child_id,
                 model.status != ObservationStatus.DELETED,
             )
             .values(status=ObservationStatus.DELETED)
@@ -271,6 +275,7 @@ class DbMemoryStore:
         date_to: date | None = None,
         title_query: str | None = None,
     ) -> list[EventRow]:
+        assert child_id == self._child_id, "child_id mismatch"
         stmt = select(Event).where(Event.child_id == child_id)
         if date_from is not None:
             stmt = stmt.where(func.date(Event.starts_at) >= date_from)
@@ -283,11 +288,15 @@ class DbMemoryStore:
         return [_event_row(r) for r in rows]
 
     async def get_event(self, *, event_id: str) -> EventRow | None:
-        orm = await self._session.get(Event, UUID(event_id))
+        orm = await self._session.scalar(
+            select(Event).where(Event.id == UUID(event_id), Event.child_id == self._child_id)
+        )
         return _event_row(orm) if orm is not None else None
 
     async def delete_event(self, *, event_id: str) -> bool:
-        orm = await self._session.get(Event, UUID(event_id))
+        orm = await self._session.scalar(
+            select(Event).where(Event.id == UUID(event_id), Event.child_id == self._child_id)
+        )
         if orm is None:
             return False
         await self._session.delete(orm)
@@ -297,14 +306,20 @@ class DbMemoryStore:
     # ── event_item ──────────────────────────────────────────────
 
     async def get_event_item(self, *, item_id: str) -> EventItemRow | None:
-        orm = await self._session.get(EventItem, UUID(item_id))
+        # EventItem has no child_id; join through Event to enforce ownership.
+        orm = await self._session.scalar(
+            select(EventItem)
+            .join(Event, EventItem.event_id == Event.id)
+            .where(EventItem.item_id == UUID(item_id), Event.child_id == self._child_id)
+        )
         return _event_item_row(orm) if orm is not None else None
 
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]:
         rows = (
             await self._session.scalars(
                 select(EventItem)
-                .where(EventItem.event_id == UUID(event_id))
+                .join(Event, EventItem.event_id == Event.id)
+                .where(EventItem.event_id == UUID(event_id), Event.child_id == self._child_id)
                 .order_by(EventItem.item_id)
             )
         ).all()
@@ -313,7 +328,12 @@ class DbMemoryStore:
     async def update_event_item(
         self, *, item_id: str, fields: dict[str, Any]
     ) -> EventItemRow | None:
-        orm = await self._session.get(EventItem, UUID(item_id))
+        # EventItem has no child_id; join through Event to enforce ownership.
+        orm = await self._session.scalar(
+            select(EventItem)
+            .join(Event, EventItem.event_id == Event.id)
+            .where(EventItem.item_id == UUID(item_id), Event.child_id == self._child_id)
+        )
         if orm is None:
             return None
         for k, v in fields.items():
@@ -322,7 +342,12 @@ class DbMemoryStore:
         return _event_item_row(orm)
 
     async def delete_event_item(self, *, item_id: str) -> bool:
-        orm = await self._session.get(EventItem, UUID(item_id))
+        # EventItem has no child_id; join through Event to enforce ownership.
+        orm = await self._session.scalar(
+            select(EventItem)
+            .join(Event, EventItem.event_id == Event.id)
+            .where(EventItem.item_id == UUID(item_id), Event.child_id == self._child_id)
+        )
         if orm is None:
             return False
         await self._session.delete(orm)
