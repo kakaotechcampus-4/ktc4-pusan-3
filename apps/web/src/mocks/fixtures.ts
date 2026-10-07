@@ -565,7 +565,8 @@ export const suggestions: Suggestion[] = [
   personalized(
     "s_5",
     "activity",
-    "집 앞 놀이터에서 30분만 뛰어 보세요",
+    // 🚨 놀이 제안에도 먹을 것이 붙는다 — 사전검사가 `agent` 가 아니라 `allergens` 로 걸리는 경로.
+    "놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요",
     "바깥 놀이 뒤에 잘 잤어요",
     "이번 주말 일정이 비어 있어요",
     [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
@@ -579,6 +580,23 @@ export const suggestions: Suggestion[] = [
     [evidenceFrom(affinities[1])],
   ),
 ];
+
+/**
+ * 제안에 든 알레르기 항목 이름 — 서버의 `suggestion.allergens` 를 흉내 낸다 (#233).
+ *
+ * 🚨 **화면 타입(`Suggestion`)에 넣지 않는다.** 무엇을 물을지는 서버가 이 값과 `health_safety` 를
+ *    다시 읽어 정하고, 화면은 그 결과(`prechecks`)만 받는다 — 화면이 이 값으로 거르기 시작하면
+ *    알레르기 필터가 규칙이 아니라 화면 코드가 된다 (최상위 §3).
+ * 🚨 **`agent` 와 무관하다.** 놀이 제안의 간식(`s_5`)도 걸린다. 비어 있는 제안은 묻지 않는다.
+ */
+export const suggestionAllergens: Record<string, string[]> = {
+  s_1: ["계란"],
+  s_2: ["대두"],
+  s_3: [],
+  s_4: [],
+  s_5: ["땅콩"],
+  s_6: [],
+};
 
 /**
  * 묶음 머리말. 🚨 **문구는 서버가 만든다** — 무엇을 정하는 중인지는 후보를 만든 쪽만 안다.
