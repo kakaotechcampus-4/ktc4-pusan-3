@@ -282,7 +282,7 @@ class ActivityCandidate(ToolArgs):
 놀이 자료를 **원문 청킹이 아니라 사람이 읽고 재구성한 행**으로 담는다. Food(`food_doc`)·Growth(`growth_doc`)와 같은 모양이다 (`RAG_plan.md`).
 
 - 시드는 **YAML(`apps/api/reference/activity_doc.yaml`)로 버전 관리하고 Alembic 이 `doc_key` 기준 upsert** 한다. 테이블이 생기기 전에는 `InMemoryActivityDocs.from_seed()` 가 이 파일의 `approved` 행을 읽는다. 행 모양 · 소스 · 검사는 [`RAG_plan.md`](../shared/RAG_plan.md) §4-1. 의미 검색을 하려면 `embedding` 이 있어야 해서 `hazard_term` 과 달리 테이블이다.
-- 행마다 원문 출처(`source`, `source_page`)를 열로 남긴다. 라이선스가 문제되면 `DELETE WHERE source = ?` 한 줄로 뺀다 (D10).
+- 행마다 원문 출처(`source_title`, `source_locator`)를 열로 남긴다 (`RAG_plan.md` §1). 라이선스가 문제되면 `DELETE WHERE source_title = ?` 한 줄로 뺀다 (D10).
 - 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 의미 검색 상위 5행을 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
 - **근거(`suggestion_evidence`)에는 넣되 개인화 근거로 세지 않는다.** `refs.py` 가 `activity_doc` 을 `DocKind` 로 따로 두고 `count_child_records()` 가 아이 기록만 센다. 넣어두면 어느 문서 행을 봤는지 추적되고, 문서 행만 달고 나간 추천은 자동으로 `general` 이 된다.
 - **커버리지는 행 수가 아니라 월령 구간을 빠짐없이 덮는 것이 기준이다.** 행마다 `min_month`·`max_month` 가 있으므로, 행이 적어도 0–71개월을 빈틈없이 덮으면 문서 행이 0개인 경우가 거의 생기지 않는다.
@@ -294,7 +294,7 @@ class ActivityCandidate(ToolArgs):
 
 i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이사랑은 `ALL RIGHTS RESERVED` 다.
 
-> ⚠️ **위 두 줄의 자료는 지금 보류다 (10-06).** Growth(`RAG_plan.md` §4)는 같은 자료를 "사용 안 함"으로 정해서 Agent 마다 규칙이 둘이 됐다. 하나로 맞출 때까지 첫 판은 표준보육과정 · 누리과정 **고시 본문**(`public_law`)과 해설서 · 사례집의 사실만 쓴다 (`RAG_plan.md` §4-1 소스 표).
+> ⚠️ **위 두 줄의 자료는 지금 보류다 (10-06).** Growth(`RAG_plan.md` §4)는 같은 자료를 "사용 안 함"으로 정해서 Agent 마다 규칙이 둘이 됐다. 표준보육과정 · 누리과정 **해설서 · 사례집**도 판권면에 "무단 복제를 금합니다"가 있어 같은 줄로 본다. 하나로 맞출 때까지(PM 결정, #256) 첫 판은 **고시 본문**(`public_law`)만 쓴다 (`RAG_plan.md` §4-1 소스 표).
 
 **사람이 읽고 `activity_doc` 행으로 옮긴다 — 유일하게 남는 합법 경로다.** 사실(*"18개월은 큰 블록 쌓기를 한다"*)은 저작물이 아니고, 문장은 우리가 새로 쓴다.
 

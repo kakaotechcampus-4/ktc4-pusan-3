@@ -37,14 +37,14 @@
 | `body` | text | NOT NULL. **우리가 새로 쓴 문장.** 원문 복사 금지 |
 | `min_month` · `max_month` | smallint | NOT NULL. 적용 월령 (이상·미만) |
 | `tags` | text[] | 필터·검색용 (`indoor`, `self_care`, `protein` …) |
-| `search_text` | text | NOT NULL. 임베딩 입력 = title + 요약 + tags. `body` 전체를 넣지 않음 |
+| `search_text` | text | NOT NULL. 임베딩 입력 = **title + tags. 로더가 만들고 시드 YAML 에 적지 않는다** — 손으로 적으면 본문을 고칠 때 어긋난다. 검색에 걸려야 하는 말은 title 이나 tags 에 넣는다. `body` 전체를 넣지 않음 |
 | `embedding` | vector(1536) | nullable. Health는 NULL |
 | `source_title` · `source_org` · `source_year` | text · text · smallint | NOT NULL |
 | `source_locator` | text | 쪽 · 조항 · 절. "p.42" / "제3장 2절" |
 | `source_url` | text | nullable |
 | `license_basis` | varchar + CHECK | `public_law`(법령·고시) · `kogl_1`~`kogl_4`(공공누리) · `fact_rewrite`(사실만 추출해 재작성) · `permission`(허락 받음) |
 | `status` | varchar + CHECK | `draft` · `approved` · `retired`. **조회는 `approved`만** |
-| `authored_by` · `reviewed_by` | text | 작성자 · 검수자 (서로 달라야 함, CHECK) |
+| `authored_by` · `reviewed_by` | text | 작성자 · 검수자 (서로 달라야 함, CHECK). **GitHub 아이디로 적는다** — 이름과 아이디가 섞이면 같은 사람을 다른 사람으로 본다. 로더는 앞뒤 공백을 지운 뒤 비교한다 |
 | `reviewed_at` | date | `approved`면 NOT NULL |
 | `version` | smallint | 원문 개정 시 +1, 이전 행은 `retired` |
 
@@ -55,7 +55,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 ```
 
 - 시드는 **YAML**(행 옆 주석에 원문 발췌 위치)로 버전 관리 → Alembic이 `doc_key` 기준 upsert. 스키마·시드 revision 분리.
-- 임베딩은 시드 반영 후 배치로 채운다. `search_text`가 바뀌면 다시 계산.
+- 임베딩은 시드 반영 후 배치로 채운다. `title` · `tags` 가 바뀌면(= `search_text` 가 바뀌면) 다시 계산.
 
 ---
 
@@ -248,7 +248,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 소스 | 쓸 곳 | 라이선스 |
 | --- | --- | --- |
 | 「제4차 어린이집 표준보육과정」 고시 (보건복지부 고시 제2020-75호, 0~1세 · 2세 · 3~5세) | 행마다 영역 · 내용범주 · 내용 | 고시 본문 = `public_law`. 해설서 부록에 실린 본문으로 대조했다 |
-| 표준보육과정 · 누리과정 **해설서 · 사례집** 본문 | 구체 놀이 아이디어 | 저작물 → `fact_rewrite` 만 (Growth 와 같다) |
+| 표준보육과정 · 누리과정 **해설서 · 사례집** 본문 | – | **보류.** 해설서 판권면에 "사전승인 없이 무단 복제를 금합니다"(0~2세 해설서)가 있어 아래 놀이자료와 같은 줄로 본다. 이번 판은 해설서 **부록에 실린 고시 본문**만 썼다 — 고시는 법령이라 영향 없음 |
 | i-누리 · 육아종합지원센터 놀이자료 · 누리과정 놀이자료(공공누리 제4유형) | – | **보류.** Activity D10 은 `fact_rewrite` 로 읽을 수 있다고 봤고 Growth(§4)는 사용 안 함으로 정해서 규칙이 둘이다. 하나로 맞춘 뒤 정한다 |
 
 ### 행 예시
@@ -277,7 +277,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
   version: 1
 ```
 
-시드 파일은 `apps/api/reference/activity_doc.yaml`, 로더는 `app/agents/activity/doc_seed.py` (공통 칸 검사는 `app/agents/common/reference.py` `parse_doc_meta`). `search_text` 는 로더가 `title + tags` 로 만든다 — YAML 에 적지 않는다.
+시드 파일은 `apps/api/reference/activity_doc.yaml`, 로더는 `app/agents/activity/doc_seed.py` (공통 칸 검사는 `app/agents/common/reference_docs.py` `parse_doc_meta`). `search_text` 는 로더가 `title + tags` 로 만든다 — YAML 에 적지 않는다.
 
 ### 분량
 
@@ -394,7 +394,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 3 | `meal_pattern` · `nutrient_note` | `learning_activity` 60행 | 검진·접종 문구 |
 | 4 | lint · 검수 · 적재 · recall 평가 | 동일 | 의료 검수 · 규칙 1:1 테스트 |
 
-공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference/hazard_terms.yaml` (Growth lint가 사용). 시드 공통 칸 검사는 `app/agents/common/reference.py` `parse_doc_meta` 가 있다 (Activity 가 먼저 씀).
+공통 선행: `*_doc` 스키마 PR · lint 스크립트 · `reference/hazard_terms.yaml` (Growth lint가 사용). 시드 공통 칸 검사는 `app/agents/common/reference_docs.py` `parse_doc_meta` 가 있다 (Activity 가 먼저 씀).
 
 ---
 
