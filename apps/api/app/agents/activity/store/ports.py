@@ -29,7 +29,6 @@ from uuid import UUID
 
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.common.evidence import AffinityRow
-from app.agents.common.gate import SafetyState
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
 from app.rules.kma_grid import latlon_to_grid
@@ -50,19 +49,26 @@ class UpstreamUnavailable(Exception):
     """
 
 
-# TODO: health_safety 10/4 확정안 — dietary_restriction 은 kind 에서 빠졌고, aliases 도 없다.
-#   state 는 status(active/retracted/none)로 바뀌고 unknown 은 "행이 없음" 이다.
-# 읽는 health_safety kind. 나머지 셋(chronic_disease · behavioral · other_medical)은 읽지 않는다 —
-# "천식이면 야외 금지" 같은 표가 곧 LLM 없는 자동 진단이다 (D7)
-SafetyKind = Literal["allergy", "dietary_restriction", "environmental"]
+# 읽는 health_safety kind (D7 · 10/4 확정안). 나머지 셋(chronic_disease · behavioral ·
+# other_medical)은 읽지 않는다 — "천식이면 야외 금지" 같은 표가 곧 LLM 없는 자동 진단이다
+SafetyKind = Literal["allergy", "environmental"]
+# 10/4 확정안의 status. 행이 없는 항목이 unknown 이라 이 값으로는 오지 않는다
+SafetyStatus = Literal["active", "retracted", "none"]
+# kind='allergy' 행의 분류 목록. 쑥처럼 식품이면서 환경인 것은 둘 다 갖는다
+SafetyCategory = Literal["food", "drug", "environment"]
 
 
 @dataclass(frozen=True)
 class SafetyEntry:
+    """`health_safety` 한 행 (10/4 확정안). 보호자 입력만 — AI 를 거치지 않는다.
+
+    별칭 칸은 DB 에서 빠졌다. 19종 알레르기는 `reference/allergen_terms.yaml` 로 넓혀 대조한다.
+    """
+
     kind: SafetyKind
-    label: str  # 예: 밀
-    state: SafetyState  # 거르는 것은 active 뿐이다
-    aliases: tuple[str, ...] = ()
+    label: str  # 예: 밀 · 쑥
+    status: SafetyStatus  # 거르는 것은 active 뿐이다
+    category: tuple[SafetyCategory, ...] = ()  # kind='allergy' 만 갖는다
 
 
 @dataclass(frozen=True)
@@ -183,9 +189,14 @@ class ConsentReader(Protocol):
 
 class SafetyReader(Protocol):
     async def activity_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
-        """SafetyKind 세 가지를 state 무관하게 돌려준다. 거르는 것은 호출부다.
+        """`allergy` · `environmental` 행을 status 무관하게 돌려준다. 거르는 것은 호출부다.
 
+        행이 없는 항목은 unknown 이라 오지 않는다 (10/4 확정안 — unknown 은 저장하지 않는다).
         읽기에 실패하면 SafetyLookupError. 빈 목록을 대신 돌려주지 않는다.
+
+        🚨 run 당 한 번만 부른다 — `build_gate` 가 읽어 run state 에 담고, 출력 검증은 그 값을 쓴다.
+        출력 검증 때 다시 읽으면 같은 run 안에서 다른 답이 나올 수 있다 (게이트는 통과했는데
+        필터는 다른 행으로 거르는 경우).
         """
         ...
 
