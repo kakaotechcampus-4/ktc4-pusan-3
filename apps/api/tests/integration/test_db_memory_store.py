@@ -364,6 +364,94 @@ class TestEventItemChildIdIsolationUpdateDelete:
 class TestWroteFlag:
     """create / update / delete 후 wrote 플래그 검증."""
 
+    async def test_create_후_wrote가_True(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        assert store.wrote is False
+        await store.create_observation(
+            domain="food",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="딸기 잘 먹었어",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"subject": "딸기", "polarity": 1, "confidence_source": "parent_direct"},
+        )
+        assert store.wrote is True
+
+    async def test_delete_event_후_wrote가_True(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        _, child_a, _ = family
+        event = Event(
+            child_id=child_a.id,
+            title="삭제 테스트",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+
+        store = DbMemoryStore(session, child_id=child_a.id)
+        assert store.wrote is False
+        await store.delete_event(event_id=str(event.id))
+        assert store.wrote is True
+
+    async def test_update_event_item_후_wrote가_True(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        _, child_a, _ = family
+        event = Event(
+            child_id=child_a.id,
+            title="준비물 테스트",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+        item = EventItem(event_id=event.id, item_name="수건", is_prepared=False)
+        session.add(item)
+        await session.flush()
+
+        store = DbMemoryStore(session, child_id=child_a.id)
+        assert store.wrote is False
+        await store.update_event_item(
+            item_id=str(item.item_id), fields={"is_prepared": True}
+        )
+        assert store.wrote is True
+
+    async def test_delete_event_item_후_wrote가_True(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        _, child_a, _ = family
+        event = Event(
+            child_id=child_a.id,
+            title="준비물 삭제 테스트",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+        item = EventItem(event_id=event.id, item_name="모자", is_prepared=False)
+        session.add(item)
+        await session.flush()
+
+        store = DbMemoryStore(session, child_id=child_a.id)
+        assert store.wrote is False
+        await store.delete_event_item(item_id=str(item.item_id))
+        assert store.wrote is True
+
     async def test_update_후_wrote가_True(
         self, session: AsyncSession, family: tuple
     ) -> None:

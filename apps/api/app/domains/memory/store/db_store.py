@@ -342,6 +342,7 @@ class DbMemoryStore:
             return False
         await self._session.delete(orm)
         await self._session.flush()
+        self.wrote = True
         return True
 
     # ── event_item ──────────────────────────────────────────────
@@ -389,6 +390,7 @@ class DbMemoryStore:
         for k, v in fields.items():
             setattr(orm, k, v)
         await self._session.flush()
+        self.wrote = True
         return _event_item_row(orm)
 
     async def delete_event_item(self, *, item_id: str) -> bool:
@@ -405,4 +407,5 @@ class DbMemoryStore:
             return False
         await self._session.delete(orm)
         await self._session.flush()
+        self.wrote = True
         return True
