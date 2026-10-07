@@ -52,6 +52,10 @@ logger = logging.getLogger(__name__)
 MAX_STEPS = 7
 MAX_COMPLETION_TOKENS = 1400
 
+# 재질문 상한. 한 조각에 처음 질문까지 포함해 이만큼 물었으면 이어받기 run 이 또 물어도 되묻기
+# 맥락을 만들지 않고 끝낸다(`ask_limit_reached`).
+MAX_QUESTIONS = 4
+
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
 
@@ -94,6 +98,15 @@ _PENDING_RETRY = (
     "pending_hint 가 아직 저장하지 않은 기록 후보가 아니다. 후보 중에서 그대로 하나를 골라 "
     "다시 답한다."
 )
+# 이어받기에서 저장에 성공한 것 없이 말로 끝낸 턴. 아무것도 저장하지 않았는데 "기록할게요" 처럼
+# 저장한 것으로 들리게 끝낸 적이 있다(#246 라이브). 말하는 턴에서 run 이 끝나 그 말은 지켜지지
+# 않는다. 프롬프트에 규칙을 더하면 tool 을 부르는 다른 이어받기(원문 전체 조각 저장)가 흔들려서,
+# 이 턴만 코드가 집어 run 당 한 번 다시 확인하게 한다
+_UNSAVED_REPLY = (
+    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
+    "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
+    "저장했다거나 기록하겠다는 말은 넣지 않는다. 필요한 값이 없으면 그 값을 묻는다."
+)
 _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
@@ -134,6 +147,9 @@ class MemoryAgentResult:
     drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
     leftover: bool = False  # 이어받기에서 답에 섞인 다른 기록·요청을 처리하지 않고 남겼는지.
+    # 재질문 상한에 닿아 또 물으려던 질문을 맥락 없이 끝냈는지.
+    # pipeline 이 질문 대신 상수 문구를 낸다
+    ask_limit_reached: bool = False
 
     @property
     def tool_names(self) -> list[str]:
@@ -194,6 +210,7 @@ async def run(
     succeeded: set[tuple[str, str]] = set()
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
+    rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
     reply_model: type[ReplyOutput] = (
@@ -223,8 +240,12 @@ async def run(
                 continue
             if parsed is not None:
                 replied = MemoryReply(text=parsed.text, kind=parsed.kind)
-                pending = _pending(
-                    replied, parsed.pending_hint, task, continuation, raw_text, calls
+                # 재질문 상한은 여기서 한 번만 판정한다. 상한이면 맥락을 만들지 않고 표시만 싣는다
+                at_limit = _at_ask_limit(replied, continuation, calls)
+                pending = (
+                    None
+                    if at_limit
+                    else _pending(replied, parsed.pending_hint, task, continuation, raw_text, calls)
                 )
                 misnamed = (
                     replied.kind == "question"
@@ -240,6 +261,18 @@ async def run(
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _PENDING_RETRY})
                     continue
+                # 조회 · 수정은 "지우지 않을게요" 처럼 저장 없이 끝나는 말이 정상이라 보지 않는다
+                recording = (
+                    continuation is not None and continuation.work is not WorkType.LOOKUP_EDIT
+                )
+                if recording and replied.kind == "message" and not _wrote(calls):
+                    if not rechecked:
+                        # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다.
+                        # 실패한 쓰기도 저장이 아니다
+                        rechecked = True
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({"role": "user", "content": _UNSAVED_REPLY})
+                        continue
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,
@@ -249,6 +282,7 @@ async def run(
                     drafts=context.drafts.all(),
                     pending=pending,
                     leftover=isinstance(parsed, ContinuationReplyOutput) and parsed.leftover,
+                    ask_limit_reached=at_limit,
                 )
             if content:
                 # 스키마와 안 맞는 답. provider가 형식을 무시했을 수 있어 warning으로 남긴다 —
@@ -333,6 +367,33 @@ def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
 def _wrote(calls: list[ToolCallRecord]) -> bool:
     """이번 run 에서 성공한 쓰기가 하나라도 있는지. 일정 초안도 센다."""
     return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
+
+
+def _asked(continuation: PendingMemoryContext) -> int:
+    """그 조각에 지금까지 물은 횟수. 처음 질문에 이어받은 (질문, 답) 쌍 수를 더한다.
+
+    transcript 는 (질문, 답) 을 평평하게 이어 붙여서 두 칸이 한 번이다.
+    """
+    return 1 + len(continuation.transcript) // 2
+
+
+def _at_ask_limit(
+    reply: MemoryReply,
+    continuation: PendingMemoryContext | None,
+    calls: list[ToolCallRecord],
+) -> bool:
+    """이어받기에서 또 물으려는데 그 조각에 이미 상한만큼 물었는가.
+
+    상한 판정은 이것 하나다. run() 이 이 값으로 맥락을 만들지 않을지와 ask_limit_reached 를
+    함께 정한다. 이번 run 에서 무엇이든 썼으면 상한이 아니다. 그 조각은 끝난 것으로 보고
+    맥락을 원래 만들지 않으며, pipeline 은 맥락 없는 질문으로 다룬다.
+    """
+    return (
+        reply.kind == "question"
+        and continuation is not None
+        and not _wrote(calls)
+        and _asked(continuation) >= MAX_QUESTIONS
+    )
 
 
 def persisted_write(call: ToolCallRecord) -> bool:
@@ -443,6 +504,7 @@ def _pending(
 
     - 이어받기 중이면 조각은 그대로 두고 방금 실패한 질문과 답을 transcript에 쌓는다.
       이번 run 에서 무엇이든 썼으면 그 조각은 끝난 것으로 보고 pending을 만들지 않는다.
+      재질문 상한은 run() 이 _at_ask_limit 로 먼저 보고, 상한이면 이 함수를 부르지 않는다.
     - 이번 run 에서 이미 저장한 관찰 조각은 고르지 않는다.
     - 후보가 하나뿐이면 모델에게 묻지 않고 그것을 쓴다.
     - 후보가 없으면(강등 경로) 원문 전체가 한 조각인데,
