@@ -26,7 +26,7 @@ rows:
     title: 엎드려 고개 들고 손수건 따라 보기
     body: >-
       아기가 깨어 있을 때 바닥에 엎드리게 하고, 눈높이에서 손수건을 천천히 흔들어
-      고개를 들어 따라 보게 한다. 힘들어하면 바로 눕혀 쉬게 한다.
+      고개를 들어 따라 보게 한다. 힘들어하거나 졸려 하면 바로 등을 대고 눕힌다.
     min_month: 0
     max_month: 6
     setting: indoor
@@ -181,7 +181,7 @@ rows:
     max_month: 72
     setting: outdoor
     materials: []
-    caregiver_role: nearby
+    caregiver_role: together
     physical_intensity: high
     involves_food: false
     area: physical_health
