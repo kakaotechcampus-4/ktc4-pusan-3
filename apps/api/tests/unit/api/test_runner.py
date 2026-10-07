@@ -471,3 +471,48 @@ async def test_이어받기_run_이_예외로_죽어도_맥락을_되돌려_둔�
     assert channel.ended_with == "failed"
     assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
     pending_reply.clear()
+
+
+async def test_timeout이_commit_뒤에_걸려도_done으로_끝난다(monkeypatch):
+    """60초 안전망이 commit 뒤에 걸리면 failed가 아니라 done으로 끝나고 키를 안 풀어야 한다."""
+
+    async def fake_handle_input(**kwargs):
+        kwargs["store"].wrote = True
+        await kwargs["commit"]()
+        await asyncio.sleep(999)  # timeout 유발
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-timeout-commit"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=2)
+
+    assert channel.ended_with == "done"
+    # 키가 풀리지 않는다 — commit 된 run 이니까
+    assert idempotency.recall(**scope) == channel.run_id
+    assert channel.closed
+
+
+async def test_저장_안_한_run의_commit_후_예외는_failed로_끝난다(monkeypatch):
+    """되묻기만 한 run에서 commit 후 터지면 wrote=False라 failed로 끝나야 한다.
+    키가 풀려야 보호자가 다시 보낼 수 있다."""
+
+    async def fake_handle_input(**kwargs):
+        # store.wrote = False (저장 안 함)
+        await kwargs["commit"]()
+        raise RuntimeError("commit 뒤에 터졌다")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-no-write"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert channel.ended_with == "failed"
+    # 키가 풀려야 한다 — 저장한 게 없으니 재시도해도 안전하다
+    assert idempotency.recall(**scope) is None

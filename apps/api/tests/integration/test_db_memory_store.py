@@ -16,7 +16,7 @@ from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ObservationFood
 from app.domains.memory.store.db_store import DbMemoryStore
-from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, EventType
+from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, EventItem, EventType
 
 
 @pytest.fixture
@@ -257,3 +257,109 @@ class TestEventChildIdIsolation:
         store_b = DbMemoryStore(session, child_id=child_b.id)
         result = await store_b.delete_event(event_id=str(event.id))
         assert result is False
+
+
+class TestEventItemChildIdIsolation:
+    """준비물(event_item)의 child_id 격리 검증."""
+
+    async def test_다른_아이의_준비물을_get하면_None(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, child_b = family
+        event = Event(
+            child_id=child_a.id,
+            title="아이A 소풍",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+        item = EventItem(event_id=event.id, item_name="수영복", is_prepared=False)
+        session.add(item)
+        await session.flush()
+
+        store_b = DbMemoryStore(session, child_id=child_b.id)
+        result = await store_b.get_event_item(item_id=str(item.item_id))
+        assert result is None
+
+    async def test_다른_아이의_준비물_목록은_빈_리스트(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, child_b = family
+        event = Event(
+            child_id=child_a.id,
+            title="아이A 캠프",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+        item = EventItem(event_id=event.id, item_name="물통", is_prepared=False)
+        session.add(item)
+        await session.flush()
+
+        store_b = DbMemoryStore(session, child_id=child_b.id)
+        result = await store_b.list_event_items(event_id=str(event.id))
+        assert result == []
+
+
+class TestWroteFlag:
+    """create / update / delete 후 wrote 플래그 검증."""
+
+    async def test_update_후_wrote가_True(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        row = await store.create_observation(
+            domain="food",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="사과 잘 먹었어",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"subject": "사과", "polarity": 1, "confidence_source": "parent_direct"},
+        )
+        # create 에서 wrote=True 가 되므로 새 store 로 테스트
+        store2 = DbMemoryStore(session, child_id=child_a.id)
+        assert store2.wrote is False
+        await store2.update_observation(
+            domain="food", observation_id=row.id, fields={"subject": "배"}
+        )
+        assert store2.wrote is True
+
+    async def test_delete_후_wrote가_True(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        row = await store.create_observation(
+            domain="food",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="바나나 좋아해",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"subject": "바나나", "polarity": 1, "confidence_source": "parent_direct"},
+        )
+        store.wrote = False  # 리셋
+        await store.delete_observation(domain="food", observation_id=row.id)
+        assert store.wrote is True
+
+
+class TestInvalidUuidUpdateDefence:
+    async def test_잘못된_id로_update하면_None(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        _, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        result = await store.update_observation(
+            domain="food", observation_id="bad", fields={"subject": "x"}
+        )
+        assert result is None
