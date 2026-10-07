@@ -496,6 +496,72 @@ async def test_timeout이_commit_뒤에_걸려도_done으로_끝난다(monkeypat
     assert channel.closed
 
 
+async def test_commit_전_timeout은_failed로_끝나고_키가_풀린다(monkeypatch):
+    """commit 전에 timeout이 걸리면 저장된 것이 없으니 failed + 키 풀림이 맞다."""
+
+    async def fake_handle_input(**kwargs):
+        await asyncio.sleep(999)  # commit 전에 timeout
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-timeout-pre"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=2)
+
+    assert channel.ended_with == "failed"
+    assert idempotency.recall(**scope) is None  # 키 풀림
+    assert channel.closed
+
+
+async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥락_복구_안_함(monkeypatch):
+    """이어받기 run에서 commit 후 timeout → done + 맥락 복구 안 함."""
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        kwargs["store"].wrote = True
+        await kwargs["commit"]()
+        await asyncio.sleep(999)
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text="3일 전부터",
+        continuation=_PENDING, reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
+
+    assert channel.ended_with == "done"
+    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
+    pending_reply.clear()
+
+
+async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_맥락_복구(monkeypatch):
+    """이어받기 run에서 commit 전 timeout → failed + 맥락 복구."""
+    pending_reply.clear()
+
+    async def fake_handle_input(**kwargs):
+        await asyncio.sleep(999)  # commit 전에 timeout
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text="3일 전부터",
+        continuation=_PENDING, reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
+
+    assert channel.ended_with == "failed"
+    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    pending_reply.clear()
+
+
 async def test_저장_안_한_run의_commit_후_예외는_failed로_끝난다(monkeypatch):
     """되묻기만 한 run에서 commit 후 터지면 wrote=False라 failed로 끝나야 한다.
     키가 풀려야 보호자가 다시 보낼 수 있다."""
