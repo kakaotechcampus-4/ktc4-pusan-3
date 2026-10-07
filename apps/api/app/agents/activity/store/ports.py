@@ -27,7 +27,12 @@ from datetime import date, datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.schemas.common import (
+    ActivitySetting,
+    CaregiverRole,
+    Intensity,
+    PlaceCategory,
+)
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.gate import SafetyState
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
@@ -88,13 +93,24 @@ class ScheduleBlock:
 
 @dataclass(frozen=True)
 class ActivityDocRow:
-    """`activity_doc` 한 행. 사람이 읽고 재구성한 놀이 자료 (D9)."""
+    """`activity_doc` 한 행. 사람이 읽고 재구성한 놀이 자료 (D9 · RAG_plan Activity 절).
+
+    프롬프트 `[예시]` 에 들어가는 칸만 싣는다. 출력 후보(`ActivityCandidate`)와 같은 칸을 둬서
+    예시가 출력 모양을 그대로 보여 준다 — 재료를 빠뜨리지 않는 모양까지.
+    월령은 `min_month` 이상 `max_month` **미만**이다 (RAG_plan §1).
+    """
 
     id: UUID
     doc_key: str
+    title: str
     body: str
     min_month: int
-    max_month: int | None
+    max_month: int
+    setting: ActivitySetting
+    materials: tuple[str, ...]
+    caregiver_role: CaregiverRole
+    physical_intensity: Intensity
+    involves_food: bool
 
 
 # 좌표를 자르는 자리수. 소수점 둘째 자리는 위도 약 1.1km · 경도 약 0.9km (북위 36° 기준)
@@ -210,7 +226,10 @@ class ScheduleReader(Protocol):
 
 class ActivityDocReader(Protocol):
     async def search(self, *, months: int, query: str, limit: int) -> list[ActivityDocRow]:
-        """`min_month <= months <= max_month` 로 거른 뒤 의미 검색 상위 `limit` 행."""
+        """`min_month <= months < max_month` 로 거른 뒤 의미 검색 상위 `limit` 행.
+
+        `status='approved'` 행만 돌려준다 — 검수 전 초안(`draft`)은 예시로 쓰지 않는다.
+        """
         ...
 
 
