@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.agents.common.llm_client import LLMClient
+from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food.context import FoodContext, build_gate
 from app.agents.food.registry import closed_readout_key, requires_safety_check, tools_for
@@ -33,6 +34,10 @@ class FoodAgentResult:
     requires_safety_check: bool
     model_calls: int = 0  # Agent 진입 수 — 0(게이트 닫힘) · 1 · 2(안전 필터 후 재호출)
     agent: Literal["food"] = "food"  # pipeline 이 DomainOutcome 으로 읽는다
+    # 화면에 보낼 것 (pipeline 의 AgentResult). mock 은 아직 아무것도 싣지 않는다 —
+    # 닫힘 문구(unsupported_stage)를 readout 으로 내는 것은 실구현에서 한다
+    readouts: tuple[Readout, ...] = ()
+    needs_observation: tuple[str, ...] = ()
 
 
 async def run(

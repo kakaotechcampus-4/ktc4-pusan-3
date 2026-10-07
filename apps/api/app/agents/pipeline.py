@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
 from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
@@ -73,6 +74,10 @@ class DomainOutcome(Protocol):
     def status(self) -> str: ...
     @property
     def model_calls(self) -> int: ...
+    @property
+    def readouts(self) -> tuple[Readout, ...]: ...
+    @property
+    def needs_observation(self) -> tuple[str, ...]: ...
 
 
 DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
@@ -170,6 +175,25 @@ class DomainRouted:
 
 
 @dataclass(frozen=True)
+class AgentResult:
+    """도메인 Agent 결과 중 화면에 보낼 것 (#227). SSE 이름은 agent_result.
+
+    Agent 결과 한 건에 하나씩, `DomainRouted` 바로 뒤에 나간다. 추천이 없는 결과(성장 추이 ·
+    닫힘 안내 · 개수 안내 · 되묻기)도 여기 실린다 — 저장할 것이 없어서 끝나는 대로 보낸다.
+    결과를 못 낸 Agent(예외 · 시간 초과)는 이 이벤트가 없고 `Partial.failed` 로만 알린다.
+
+    추천(`suggestion_ids` · 근거 모드 · 이유 문장)은 아직 싣지 않는다. 저장이 끝난 id만 보내야해서(공통규약 §3)
+    저장 콜백이 생길 때 더한다. 그 전에 빈 목록을 보내면 화면이 "0개" 로 읽는다.
+    """
+
+    agent: str
+    task_type: str | None
+    status: str
+    readouts: tuple[Readout, ...]
+    question: str | None  # needs_observation 하나. 되묻기는 한 번에 하나다 (DomainAgentResult)
+
+
+@dataclass(frozen=True)
 class Unavailable:
     agents: tuple[str, ...]  # 아직 지원하지 않는 도메인 Agent
 
@@ -242,6 +266,7 @@ Event = (
     | Saved
     | EventDrafts
     | DomainRouted
+    | AgentResult
     | Unavailable
     | Guidance
     | MemoryNote
@@ -464,12 +489,14 @@ async def handle_input(
         send(Step(3, _TOTAL_STEPS, _LABELS[2]))
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
         budget_ms = int(remaining * 1000)
-        # 결과는 끝나는 대로 내보낸다 (K-11). Partial 은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+
+        # 결과는 끝나는 대로 내보낸다 (K-11). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+        def on_outcome(outcome: DomainOutcome) -> None:
+            send(_routed(outcome))  # 로그 · 지표용
+            send(_result(outcome))  # 화면용 — readout · 되묻기 (#227)
+
         ran = await _run_domain(
-            routing.domain_tasks,
-            contexts,
-            timeout=remaining,
-            on_outcome=lambda outcome: send(_routed(outcome)),
+            routing.domain_tasks, contexts, timeout=remaining, on_outcome=on_outcome
         )
         partial = ran.partial
         writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
@@ -830,6 +857,14 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
 def _routed(outcome: DomainOutcome) -> DomainRouted:
     task_type = None if outcome.task_type is None else str(outcome.task_type)
     return DomainRouted(outcome.agent, task_type, str(outcome.status), outcome.model_calls)
+
+
+def _result(outcome: DomainOutcome) -> AgentResult:
+    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    question = outcome.needs_observation[0] if outcome.needs_observation else None
+    return AgentResult(
+        outcome.agent, task_type, str(outcome.status), tuple(outcome.readouts), question
+    )
 
 
 def _label(agent: str, task_type: object) -> str:
