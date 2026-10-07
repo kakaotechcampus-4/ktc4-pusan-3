@@ -3,8 +3,10 @@
 코드가 모델 호출 전에 후보 풀에서 위험한 것을 빼고,
 모델이 답을 낸 후에 다시 한 번 거른다. 급식 조회도 같은 함수를 쓴다.
 
-호출부(SafetyReader.food_safety)는 `state` 무관 전체 행을 돌려준다.
-거르지 않는 것은 `retracted` · `none` · `unknown` 셋뿐이고, 그 밖의 값은 전부 거른다.
+호출부(SafetyReader.food_safety)는 `status='active'` 행만 돌려주지만 여기서 한 번 더 본다.
+거르지 않는 것은 `retracted` · `none` 둘뿐이고, 그 밖의 값은 모르는 값이라도 거른다.
+어댑터가 `none` 행을 섞어 보내면 그 행을 알레르기로 읽지 않고, status 를 잘못 옮겨도 필터가
+조용히 꺼지지 않는다. unknown 은 저장하지 않는 값(행이 없는 것)이라 이 칸에 오면 어댑터 버그다.
 
 규칙의 정본은 docs/agents/food/Food_Tool_명세.md §3 "음식 안전 수칙" 이다.
 """
@@ -32,12 +34,12 @@ from app.agents.common.reference import (
 )
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 from app.rules.age import Stage, first_month_of
-from app.rules.allergen import strip_allergen_marks
+from app.rules.allergen import ALLERGEN_NAMES, strip_allergen_marks
 from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, prepare_fields
 
 # 거르지 않는 상태. 이 밖의 값은 모르는 값이라도 거른다 — 어댑터가 status 를 잘못 옮겨도
 # 필터가 조용히 꺼지지 않게(fail closed).
-_INACTIVE_STATES = frozenset({"retracted", "none", "unknown"})
+_INACTIVE_STATUSES = frozenset({"retracted", "none"})
 
 # 연령 규칙의 exact 는 메뉴명에서 급식표의 알레르기 번호 · 괄호 · 양을 뗀 뒤 비교한다
 # ("우유 2,5" · "우유(2)" · "우유(200ml)" · "우유 한 컵" 은 마시는 우유다)
@@ -56,6 +58,11 @@ class SafetyVerdict:
     # menu_key → 주의 규칙 label. 막지 않고 안내만 붙인다(질식 주의 → guide.choking_caution).
     # 나뉜 묶음과 따로 본다 — passed 행에도 붙는다
     cautions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # menu_key → 그 메뉴에 든 19종 정식 명칭(ALLERGEN_NAMES, 코드 순). passed 행만 싣고, 든 것이
+    # 없으면 키가 없다. 추천의 `suggestion.allergens` 를 채우는 값이다.
+    # 승인 때 health_safety 와 대조해서 "이 음식에는 땅콩이 들어가요. 땅콩 알레르기가 있는지 확인해주세요" 를 띄운다.
+    # 막지 않은 알레르기 성분(등록하지 않았거나 아직 답하지 않은 것)이 대상이라 passed 행에만 있다
+    allergens: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -85,7 +92,8 @@ def filter_food_safety(
        action=block 이면 blocked, caution 이면 `cautions` 에 남긴다.
        scope=name 인 규칙(술 · 카페인)은 메뉴명만 본다.
     5. 위에 안 걸렸는데 `resolved=False` 거나 재료가 없으면(빈 글자 · 기호뿐이어도) unchecked.
-    6. 나머지 passed.
+    6. 나머지 passed. passed 행에는 든 19종 정식 명칭도 `allergens` 로 같이 돌려준다. 2번의 메뉴
+       코드와 같은 값이라 저장 코드만 쓰면 빠지는 성분(크림 → 우유)도 들어간다.
 
     months 를 모르면 그 단계가 시작하는 월령으로 본다 — 가장 어린 쪽이라 규칙을 덜 풀지 않는다.
     사전(yaml)을 읽지 못하면 예외를 그대로 올린다. 호출부는 잡아서 넘기지 않는다.
@@ -104,9 +112,10 @@ def filter_food_safety(
     unchecked: list[MenuCatalogRow] = []
     hits: dict[str, tuple[str, ...]] = {}
     cautions: dict[str, tuple[str, ...]] = {}
+    allergens: dict[str, tuple[str, ...]] = {}
 
     for row in rows:
-        row_hits, row_cautions = _row_hits(row, rules, age_rules, matchers)
+        row_hits, row_cautions, row_codes = _row_hits(row, rules, age_rules, matchers)
         if row_cautions:
             cautions[row.menu_key] = row_cautions
         if row_hits:
@@ -117,6 +126,11 @@ def filter_food_safety(
             unchecked.append(row)
         else:
             passed.append(row)
+            names = tuple(
+                ALLERGEN_NAMES[code] for code in sorted(row_codes) if code in ALLERGEN_NAMES
+            )
+            if names:
+                allergens[row.menu_key] = names
 
     return SafetyVerdict(
         passed=tuple(passed),
@@ -124,18 +138,22 @@ def filter_food_safety(
         unchecked=tuple(unchecked),
         hits=hits,
         cautions=cautions,
+        allergens=allergens,
     )
 
 
 def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
     """health_safety 행들을 막을 것으로 바꾼다. 급식 조회는 `codes` 를 인쇄된 번호와도 대조한다.
 
-    - `retracted` · `none` · `unknown` 이 아닌 행을 다 읽는다.
-    - kind 와 상관없이 label · aliases 를 같은 사전으로 읽는다 — 알레르기 칸에 적은 "유당불내증",
-      질환 칸에 적은 "우유 알레르기" 도 그대로 막는다.
-    - `allergen_code` 가 있으면 그 코드도 더한다(이름에서 읽은 것과 합친다).
+    - `retracted` · `none` 이 아닌 행을 다 읽는다.
+    - 알레르기 행은 `category` 에 `food` 가 있거나 비어 있어야 읽는다. `environment` · `drug`
+      만 있는 행(쑥 · 페니실린)은 뺀다. `food` 와 `environment` 가 같이 있으면(쑥) 식품이기도
+      해서 읽는다.
+    - kind 와 상관없이 label 을 같은 사전으로 읽는다 — 알레르기 칸에 적은 "유당불내증",
+      질환 칸에 적은 "우유 알레르기" 도 그대로 막는다. 질환은 label 이
+      `chronic_restriction.yaml` 매핑에 있을 때만 그 식품을 막고, 없는 label(당뇨 · 고소공포)은
+      식품을 유도하지 않는다.
     - 사전에서 정확히 같은 이름을 못 찾은 조각은 그 글자 그대로도 막는다(키위 → "키위").
-    - `restricted_foods` 는 보호자가 적은 그대로 막는다.
     """
     book = food_book()
     codes: set[int] = set()
@@ -146,20 +164,18 @@ def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
             terms.append(term)
 
     for entry in entries:
-        if entry.state in _INACTIVE_STATES:
+        if entry.status in _INACTIVE_STATUSES:
             continue
-        if entry.allergen_code is not None:
-            codes.add(entry.allergen_code)
-        for name in (entry.label, *entry.aliases):
-            found, rest = read_label(name, book)
-            codes |= found.codes
-            for term in found.terms:
-                add(term)
-            if rest:
-                add(Term(key=entry.label, aliases=rest))
-        restricted = tuple(food for food in entry.restricted_foods if food)
-        if restricted:
-            add(Term(key=entry.label, aliases=restricted))
+        if entry.kind == "allergy" and entry.category and "food" not in entry.category:
+            # 환경 · 약물로만 분류된 알레르기는 식품 필터의 대상이 아니다. 분류가 비어 있으면
+            # 거른다 — 빠졌거나 틀렸을 때 덜 막는 쪽보다 과하게 막는 쪽이 안전하다
+            continue
+        found, rest = read_label(entry.label, book)
+        codes |= found.codes
+        for term in found.terms:
+            add(term)
+        if rest:
+            add(Term(key=entry.label, aliases=rest))
     return SafetyRules(codes=frozenset(codes), terms=tuple(terms))
 
 
@@ -204,8 +220,11 @@ class _Matchers:
 
 def _row_hits(
     row: MenuCatalogRow, rules: SafetyRules, age_rules: tuple[AgeRule, ...], matchers: _Matchers
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """(막는 key, 주의 key). 막는 key 는 코드 → 글자 Term → 연령 규칙 순서다."""
+) -> tuple[tuple[str, ...], tuple[str, ...], frozenset[int]]:
+    """(막는 key, 주의 key, 메뉴 코드). 막는 key 는 코드 → 글자 Term → 연령 규칙 순서다.
+
+    메뉴 코드는 저장된 코드와 메뉴명 · 재료를 훑은 코드의 합집합이다.
+    """
     prepared = prepare_fields((row.display_name, *row.ingredients))
     blocked: list[str] = []
 
@@ -213,7 +232,8 @@ def _row_hits(
         if key not in found:
             found.append(key)
 
-    for code in sorted((row.allergen_codes | _codes_in(prepared)) & rules.codes):
+    row_codes = row.allergen_codes | _codes_in(prepared)
+    for code in sorted(row_codes & rules.codes):
         add(blocked, str(code))
     for key in matchers.rules.match(prepared):
         add(blocked, key)
@@ -225,7 +245,7 @@ def _row_hits(
     for rule in age_rules:
         if name in rule.exact or name.endswith(tuple(rule.ends)) or rule.term.key in age_hits:
             add(blocked if rule.action == "block" else cautions, rule.term.key)
-    return tuple(blocked), tuple(cautions)
+    return tuple(blocked), tuple(cautions), row_codes
 
 
 def _core_name(name: str) -> str:

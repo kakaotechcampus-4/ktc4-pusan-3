@@ -36,7 +36,7 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
 | ConsentReader | consent(scope=child_health) 최신 행 |
-| SafetyReader | health_safety — allergy · chronic_disease (dietary_restriction 은 10/4 삭제) |
+| SafetyReader | health_safety — status='active' 행. kind 는 전부(allergy · chronic_disease · …) |
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
 | MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 메뉴명(공개 DB · 급식표) → 식품코드·영양성분 |
@@ -52,7 +52,6 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
-from app.agents.common.gate import SafetyState
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -82,29 +81,27 @@ class MenuSourceError(Exception):
     """
 
 
+# health_safety 10/4 확정안(app/domains/safety/models.py)과 같은 값. Agent 마다 필요한 칸이
+# 달라서 Food가 따로 둔다. unknown 은 없다 — 행이 없는 것이 unknown 이라 DB 에서 오지 않는다
+SafetyKind = Literal["allergy", "chronic_disease", "behavioral", "environmental", "other_medical"]
+SafetyStatus = Literal["active", "retracted", "none"]
+SafetyCategory = Literal["food", "drug", "environment"]
+
+
 @dataclass(frozen=True)
 class SafetyEntry:
-    """health_safety 한 행에서 필터에 필요한 것만 뽑아 모델에게 전달."""
+    """health_safety 한 행에서 필터에 필요한 것만 뽑아 모델에게 전달.
 
-    # TODO: health_safety 10/4 확정안에 맞춘다 (스키마 이슈에서는 TODO 만).
-    #   - aliases 가 DB 에서 빠졌다. 정규화는 label 하나로 allergen_terms.yaml 에 대조한다
-    #   - kind 에서 dietary_restriction 이 빠졌다
-    #   - state → status, 값은 active/retracted/none.
-    #     unknown 은 "행이 없음" 이라 DB 에서 오지 않는다
-    #   - category(food/drug/environment 목록)를 더해 환경·약물만 있는 행을 필터에서 뺀다.
-    #     NULL·빈 목록은 거른다 (#156 Q1, docs/agents/data_model.md health_safety 제약)
-    #   - management 가 text 가 돼서 restricted_foods 를 키로 꺼낼 수 없다
-    kind: Literal["allergy", "chronic_disease", "dietary_restriction"]
-    label: str  # 예: 우유
-    state: SafetyState  # active·retracted·none·unknown
-    allergen_code: int | None = None  # 19종이면 1..19, 그 밖은 None
-    aliases: tuple[str, ...] = ()  # 매칭 폭을 넓히는 별칭
-    # 보호자가 적은 제한 식품. management 가 text 라(10/4) 키로 꺼낼 수 없고,
-    # 이 값을 채우는 입력 경로가 DB·API·화면 어디에도 없어 지금은 항상 ()로
-    # 온다. 그래서 유당불내증·갈락토스혈증·셀리악병처럼 질환 정의상 배제되는 식품은
-    # chronic_restriction_terms() 매핑이 대신 채우고, 이 값과는 합집합으로 쓰인다
-    # (app/agents/food/tools/safety.py `resolve_safety`).
-    restricted_foods: tuple[str, ...] = ()
+    `severity`는 싣지 않는다. 필터가 쓰지 않는다 — 보호자가 active 로 둔 알레르기는 검사
+    등급(class_0 이어도)과 상관없이 거른다. (코드가 등급을 보고 낮추면 의료 판단)
+    질환의 제한 식품은 chronic_restriction.yaml 매핑만 쓴다.
+    """
+
+    kind: SafetyKind
+    label: str  # 예: 보호자가 적은 자유 입력
+    status: SafetyStatus
+    # kind='allergy' 만 갖는다. 빈 튜플은 분류 없음(NULL · '{}' 같은 뜻)이고 거른다
+    category: tuple[SafetyCategory, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -216,8 +213,10 @@ class ConsentReader(Protocol):
 
 class SafetyReader(Protocol):
     async def food_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
-        """state 무관 전체 행을 돌려준다. 필터는 호출부가 state 로 가른다.
+        """`status='active'` 행만 돌려준다. kind 는 전부다.
 
+        데이터 모델의 "안전 조회는 항상 status='active'"와 같다. 백엔드 어댑터는 repository 의
+        `list_active_safety`를 그대로 쓰면 된다. 행이 없는 것은 unknown 이라 빈 목록이 정상이다.
         읽기에 실패하면 SafetyLookupError. 빈 목록을 대신 돌려주지 않는다.
         """
         ...
