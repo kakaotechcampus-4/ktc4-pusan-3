@@ -37,8 +37,12 @@ class ObservationOut(BaseModel):
     subject: str
     polarity: int = Field(description="-1 싫어함 · 0 갈림 · 1 좋아함")
     strong_signals: list[str] = Field(description="routine 은 승격 대상이 아니라 늘 빈 배열이다")
-    confidence_source: str
-    status: str
+    confidence_source: Literal[
+        "institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"
+    ]
+    status: Literal["active", "stand_alone", "inactive"] = Field(
+        description='deleted 는 응답에 나오지 않는다. stand_alone 은 "이번만 그랬어요" 를 누른 기록'
+    )
     observed_from: date
     observed_to: date = Field(description="포함 날짜. DB 의 열린 상한에서 하루 뺀 값")
     observed_label: str = Field(description='observed_to 기준 "오늘" · "3일 전". 서버 문구다')
@@ -61,12 +65,12 @@ class ObservationsResponse(BaseModel):
 class UsedInOut(BaseModel):
     suggestion_id: str
     content: str
-    status: str
+    status: Literal["draft", "approved", "rejected", "expired"]
 
 
 class CorrectionOut(BaseModel):
     id: str
-    verdict: str
+    verdict: Literal["confirm", "once_only", "need_more_observation", "outdated", "wrong"]
     created_at: datetime
 
 
