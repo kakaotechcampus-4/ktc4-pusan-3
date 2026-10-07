@@ -124,8 +124,8 @@ async def test_approve_other_childs_suggestion(
 ):
     """남의 아이의 제안 → 404."""
     # 남의 아이 — 다른 보호자의 아이로 만든다. 같은 보호자에게 하나 더 이으면
-    # "보호자당 아이 1명" 유니크 제약(#214)에 막힌다
-    _, other_parent_id = await issue_bearer(session, token="test-token-other")
+    # "보호자당 아이 1명" 유니크 제약(#198 · #214)에 막힌다
+    _, other_parent_id = await issue_bearer(session, token="test-token-other-parent")
     other_cid = await link_child(session, parent_id=other_parent_id)
     s = await _make_suggestion(session, child_id=other_cid)
     headers, _ = bearer
@@ -135,6 +135,7 @@ async def test_approve_other_childs_suggestion(
         headers=headers,
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 # ── 일정 초안 API ─────────────────────────────────────────────────────────
@@ -483,7 +484,7 @@ async def test_event_drafts_other_childs_suggestion(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     """남의 아이 제안으로 초안 요청 → 404."""
-    _, other_parent_id = await issue_bearer(session, token="test-token-other")
+    _, other_parent_id = await issue_bearer(session, token="test-token-other-parent")
     other_cid = await link_child(session, parent_id=other_parent_id)
     s = await _make_suggestion(session, child_id=other_cid, status=SuggestionStatus.APPROVED)
     headers, _ = bearer
@@ -493,6 +494,7 @@ async def test_event_drafts_other_childs_suggestion(
         headers=headers,
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 async def test_submit_event_other_childs_suggestion(
@@ -500,7 +502,7 @@ async def test_submit_event_other_childs_suggestion(
 ):
     """남의 아이 제안으로 일정 제출 → 404."""
     idempotency.clear()
-    _, other_parent_id = await issue_bearer(session, token="test-token-other")
+    _, other_parent_id = await issue_bearer(session, token="test-token-other-parent")
     other_cid = await link_child(session, parent_id=other_parent_id)
     s = await _make_suggestion(session, child_id=other_cid, status=SuggestionStatus.APPROVED)
     headers, _ = bearer
@@ -518,6 +520,7 @@ async def test_submit_event_other_childs_suggestion(
         headers={**headers, "Idempotency-Key": "other-child"},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 # ── items 포함 제출 ───────────────────────────────────────────────────────
