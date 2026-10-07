@@ -154,3 +154,47 @@ async def test_이어받기에서도_curator_trigger_가_불린다(memory_contex
     else:
         # Memory 가 저장하지 않았으면 trigger 가 안 불려야 한다
         assert triggered == []
+
+
+def _memory_llm_no_save() -> FakeLLM:
+    """Memory 가 아무것도 저장하지 않고 답만 하는 출력."""
+    return FakeLLM(_reply("특별히 기록할 게 없어요."))
+
+
+# T7 — committed=False 이면 curator_trigger 를 부르지 않는다
+async def test_저장하지_않으면_curator_trigger_안_불린다(memory_context: AgentContext) -> None:
+    triggered: list[UUID] = []
+
+    def trigger(child_id: UUID) -> None:
+        triggered.append(child_id)
+
+    result = await handle_input(
+        "딸기 잘 먹었어",
+        memory_context,
+        {},
+        run_id=RUN_ID,
+        supervisor_client=_supervisor_llm_record(),
+        memory_client=_memory_llm_no_save(),
+        curator_trigger=trigger,
+    )
+
+    assert not result.committed
+    assert triggered == []
+
+
+# T8 — curator_trigger 예외가 run 을 죽이지 않는다
+async def test_curator_trigger_예외가_run을_죽이지_않는다(memory_context: AgentContext) -> None:
+    def boom(child_id: UUID) -> None:
+        raise RuntimeError("curator 폭발")
+
+    result = await handle_input(
+        "딸기 잘 먹었어",
+        memory_context,
+        {},
+        run_id=RUN_ID,
+        supervisor_client=_supervisor_llm_record(),
+        memory_client=_memory_llm_saves(),
+        curator_trigger=boom,
+    )
+
+    assert result.ok

@@ -398,8 +398,11 @@ async def handle_input(
             # 기록 단계를 먼저 확정한다. 저장 안내 · 되묻기 맥락은 확정된 것만 나간다
             committed = await _commit_record(memory, commit)
             memory_ms = _ms_since(record_started)  # 기록 단계 = Memory + commit
-            if curator_trigger is not None:
-                curator_trigger(memory_context.child_id)
+            if committed and curator_trigger is not None:
+                try:
+                    curator_trigger(memory_context.child_id)
+                except Exception as exc:
+                    logger.error("curator trigger 실패 error=%s", type(exc).__name__)
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
@@ -583,8 +586,11 @@ async def _handle_continuation(
     elif memory is not None:
         committed = await _commit_record(memory, commit)
         memory_ms = _ms_since(record_started)
-        if curator_trigger is not None:
-            curator_trigger(memory_context.child_id)
+        if committed and curator_trigger is not None:
+            try:
+                curator_trigger(memory_context.child_id)
+            except Exception as exc:
+                logger.error("curator trigger 실패 error=%s", type(exc).__name__)
         refs = _saved_refs(memory)
         if refs:
             send(Saved(refs))
