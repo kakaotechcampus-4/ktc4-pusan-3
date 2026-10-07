@@ -33,8 +33,8 @@ def _menu(name: str, *ingredients: str, resolved: bool = True) -> MenuCatalogRow
     )
 
 
-def _entries(*labels: str, kind: str = "allergy", state: str = "active") -> list[SafetyEntry]:
-    return [SafetyEntry(kind=kind, label=label, state=state) for label in labels]  # type: ignore[arg-type]
+def _entries(*labels: str, kind: str = "allergy", status: str = "active") -> list[SafetyEntry]:
+    return [SafetyEntry(kind=kind, label=label, status=status) for label in labels]  # type: ignore[arg-type]
 
 
 def _judge(entries: list[SafetyEntry], row: MenuCatalogRow, months: int = OLDER) -> str:
@@ -533,22 +533,23 @@ def test_재료를_모르는_통밀_크래커는_메뉴명으로_막는다() -> 
     assert _judge(_entries("셀리악병", kind="chronic_disease"), _menu("통밀 크래커")) == "blocked"
 
 
-# ── 6. 상태 — 거르지 않는 것은 셋뿐이다 ──────────────────────────────────────
+# ── 6. 상태 — 거르지 않는 것은 retracted · none 둘뿐이다 ───────────────────────
+# unknown 은 저장하지 않는다(행이 없는 것). 이 칸에 오면 어댑터 버그라 모르는 값으로 거른다
 
 
 @pytest.mark.parametrize(
-    ("state", "expected"),
+    ("status", "expected"),
     [
         ("active", "blocked"),
         ("retracted", "passed"),
         ("none", "passed"),
-        ("unknown", "passed"),
+        ("unknown", "blocked"),
         ("ACTIVE", "blocked"),
         ("confirmed", "blocked"),
     ],
 )
-def test_상태값(state: str, expected: str) -> None:
-    assert _judge(_entries("우유", state=state), _menu("크림수프", "우유")) == expected
+def test_상태값(status: str, expected: str) -> None:
+    assert _judge(_entries("우유", status=status), _menu("크림수프", "우유")) == expected
 
 
 # ── 7. 연령 · 아이 금지 식품 ─────────────────────────────────────────────────
@@ -678,8 +679,8 @@ def test_알레르기가_없으면_흔한_메뉴는_통과한다() -> None:
 
 def test_취소한_항목은_빼고_나머지는_막는다() -> None:
     entries = [
-        SafetyEntry(kind="allergy", label="우유", state="active"),
-        SafetyEntry(kind="allergy", label="땅콩", state="retracted"),
+        SafetyEntry(kind="allergy", label="우유", status="active"),
+        SafetyEntry(kind="allergy", label="땅콩", status="retracted"),
     ]
 
     assert _judge(entries, _menu("우유푸딩", "우유", "설탕")) == "blocked"
