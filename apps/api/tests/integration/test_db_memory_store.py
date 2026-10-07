@@ -309,6 +309,58 @@ class TestEventItemChildIdIsolation:
         assert result == []
 
 
+class TestEventItemChildIdIsolationUpdateDelete:
+    """준비물 update/delete의 child_id 격리 검증."""
+
+    async def test_다른_아이의_준비물을_update하면_None(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, child_b = family
+        event = Event(
+            child_id=child_a.id,
+            title="아이A 운동회",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+        item = EventItem(event_id=event.id, item_name="체육복", is_prepared=False)
+        session.add(item)
+        await session.flush()
+
+        store_b = DbMemoryStore(session, child_id=child_b.id)
+        result = await store_b.update_event_item(
+            item_id=str(item.item_id), fields={"is_prepared": True}
+        )
+        assert result is None
+
+    async def test_다른_아이의_준비물을_delete하면_False(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, child_b = family
+        event = Event(
+            child_id=child_a.id,
+            title="아이A 소풍",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 7, 10, 0, tzinfo=_KST),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        session.add(event)
+        await session.flush()
+        item = EventItem(event_id=event.id, item_name="도시락", is_prepared=False)
+        session.add(item)
+        await session.flush()
+
+        store_b = DbMemoryStore(session, child_id=child_b.id)
+        result = await store_b.delete_event_item(item_id=str(item.item_id))
+        assert result is False
+
+
 class TestWroteFlag:
     """create / update / delete 후 wrote 플래그 검증."""
 
@@ -351,6 +403,35 @@ class TestWroteFlag:
         store.wrote = False  # 리셋
         await store.delete_observation(domain="food", observation_id=row.id)
         assert store.wrote is True
+
+
+class TestWroteFlagStaysFalse:
+    """대상이 없거나 실패하면 wrote가 False를 유지하는지."""
+
+    async def test_update_대상_없으면_wrote_False(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        _, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        result = await store.update_observation(
+            domain="food",
+            observation_id="00000000-0000-0000-0000-000000000099",
+            fields={"subject": "없는 관찰"},
+        )
+        assert result is None
+        assert store.wrote is False
+
+    async def test_delete_대상_없으면_wrote_False(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        _, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        result = await store.delete_observation(
+            domain="food",
+            observation_id="00000000-0000-0000-0000-000000000099",
+        )
+        assert result is False
+        assert store.wrote is False
 
 
 class TestInvalidUuidUpdateDefence:
