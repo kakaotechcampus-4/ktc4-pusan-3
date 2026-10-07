@@ -6,6 +6,7 @@ DB 가 붙으면 도메인 Agent 는 백엔드 조회 함수로 읽는다. 이 �
 
 Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity
 포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
+Curator 는 DB 전환 완료로 DbCuratorStore 를 직접 쓴다 (trigger.py).
 
 profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
 """

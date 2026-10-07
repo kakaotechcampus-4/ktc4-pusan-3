@@ -13,6 +13,8 @@ import logging
 from datetime import date
 from uuid import UUID
 
+from sqlalchemy import text
+
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.curator.embedding.linker import link_observations
@@ -21,6 +23,10 @@ from app.domains.memory.curator.recompute import recompute_after_linking
 from app.infra.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
+
+_CURATOR_LOCK_NS = 1
+"""pg_advisory_xact_lock(int4, int4) 의 첫 번째 인자.
+다른 기능이 advisory lock 을 쓸 때 다른 값을 준다."""
 
 # asyncio 는 태스크를 약하게만 잡는다. 여기 잡아두지 않으면 GC 가 도중에 거둬
 # Curator 가 조용히 사라진다 (runner.py 주석 참고).
@@ -36,6 +42,13 @@ async def _run_curator(
     """별도 세션·트랜잭션에서 Curator 를 돌리고 recompute 한다."""
     async with async_session_factory() as session:
         try:
+            # 같은 아이의 동시 curator 실행을 직렬화한다.
+            # xact_lock 이라 트랜잭션이 끝나면 자동으로 풀린다.
+            # 두 int4 오버로드 — ns 로 curator 잠금과 다른 기능의 잠금이 겹치지 않는다.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:ns, :key)"),
+                {"ns": _CURATOR_LOCK_NS, "key": child_id.int % (2**31)},
+            )
             store = DbCuratorStore(session)
             result = await link_observations(store, embedder, judge, child_id=child_id)
 

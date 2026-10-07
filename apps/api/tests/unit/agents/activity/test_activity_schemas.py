@@ -17,8 +17,10 @@ from app.agents.activity.schemas.recommend import (
     ProposeActivityCandidatesArgs,
 )
 from app.agents.activity.schemas.task import ActivityTaskType, task_type_of
+from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import MAX_SUGGESTIONS
+from app.rules.term_match import match_terms
 
 
 def candidate(**kwargs) -> dict:
@@ -75,6 +77,14 @@ class TestCandidate:
     def test_근거는_비어도_받는다(self):
         """아이 기록이 0행이면 코드가 일반 추천으로 분류한다. 모델이 막을 일이 아니다."""
         assert ActivityCandidate.model_validate(candidate()).evidence == []
+
+    @pytest.mark.parametrize("field", ["content", "materials"])
+    def test_설명의_예시는_위험_용어에_걸리지_않는다(self, field):
+        """이 스키마는 0개월부터 매 호출에 같이 나간다. 예시가 걸리는 문장이면 모델이 그 문장을
+        기준으로 삼는다 — activity_doc 예시에서 경고까지 뺀 것과 같은 이유다 (#256 리뷰).
+        """
+        description = ActivityCandidate.model_fields[field].description or ""
+        assert match_terms(description, hazard_terms().terms) == ()
 
 
 class TestEvidencePick:

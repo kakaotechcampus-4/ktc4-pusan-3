@@ -6,7 +6,6 @@ PR #196 멘토 합의: approved = "보호자가 채택했다", 일정은 연결 
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +18,7 @@ from app.domains.suggestion.models import (
     SuggestionKind,
     SuggestionStatus,
 )
-from tests.integration.api.conftest import Bearer, link_child
+from tests.integration.api.conftest import Bearer, issue_bearer, link_child
 
 
 async def _make_suggestion(
@@ -65,9 +64,7 @@ async def test_approve_draft_to_approved(
     assert data["suggestions"][0]["status"] == "approved"
 
 
-async def test_approve_not_found(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_approve_not_found(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """없는 suggestion_id → 404."""
     headers, _ = bearer
     resp = await db_client.post(
@@ -111,9 +108,7 @@ async def test_approve_expired(
     assert resp.json()["error"]["code"] == "suggestion_expired"
 
 
-async def test_approve_empty_ids(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_approve_empty_ids(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """빈 suggestion_ids → 400."""
     headers, _ = bearer
     resp = await db_client.post(
@@ -128,9 +123,10 @@ async def test_approve_other_childs_suggestion(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     """남의 아이의 제안 → 404."""
-    # 다른 아이 생성
-    _, parent_id = bearer
-    other_cid = await link_child(session, parent_id=parent_id)
+    # 남의 아이 — 다른 보호자의 아이로 만든다. 같은 보호자에게 하나 더 이으면
+    # "보호자당 아이 1명" 유니크 제약(#198 · #214)에 막힌다
+    _, other_parent_id = await issue_bearer(session, token="test-token-other-parent")
+    other_cid = await link_child(session, parent_id=other_parent_id)
     s = await _make_suggestion(session, child_id=other_cid)
     headers, _ = bearer
     resp = await db_client.post(
@@ -139,6 +135,7 @@ async def test_approve_other_childs_suggestion(
         headers=headers,
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 # ── 일정 초안 API ─────────────────────────────────────────────────────────
@@ -454,9 +451,7 @@ async def test_submit_event_duplicate_suggestion_ids(
 # ── 만료 처리 (멘토 합의: draft에만) ──────────────────────────────────────
 
 
-async def test_expire_only_affects_draft(
-    session: AsyncSession, cid: uuid.UUID
-):
+async def test_expire_only_affects_draft(session: AsyncSession, cid: uuid.UUID):
     """만료 처리는 draft만 — approved는 만료 대상이 아님. 만료된 draft는 안 보인다."""
     from app.domains.suggestion import repository as repo
 
@@ -489,8 +484,8 @@ async def test_event_drafts_other_childs_suggestion(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     """남의 아이 제안으로 초안 요청 → 404."""
-    _, parent_id = bearer
-    other_cid = await link_child(session, parent_id=parent_id)
+    _, other_parent_id = await issue_bearer(session, token="test-token-other-parent")
+    other_cid = await link_child(session, parent_id=other_parent_id)
     s = await _make_suggestion(session, child_id=other_cid, status=SuggestionStatus.APPROVED)
     headers, _ = bearer
     resp = await db_client.post(
@@ -499,6 +494,7 @@ async def test_event_drafts_other_childs_suggestion(
         headers=headers,
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 async def test_submit_event_other_childs_suggestion(
@@ -506,8 +502,8 @@ async def test_submit_event_other_childs_suggestion(
 ):
     """남의 아이 제안으로 일정 제출 → 404."""
     idempotency.clear()
-    _, parent_id = bearer
-    other_cid = await link_child(session, parent_id=parent_id)
+    _, other_parent_id = await issue_bearer(session, token="test-token-other-parent")
+    other_cid = await link_child(session, parent_id=other_parent_id)
     s = await _make_suggestion(session, child_id=other_cid, status=SuggestionStatus.APPROVED)
     headers, _ = bearer
     resp = await db_client.post(
@@ -524,14 +520,13 @@ async def test_submit_event_other_childs_suggestion(
         headers={**headers, "Idempotency-Key": "other-child"},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 # ── items 포함 제출 ───────────────────────────────────────────────────────
 
 
-async def test_submit_event_with_items(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_submit_event_with_items(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """준비물이 있는 일정 제출."""
     idempotency.clear()
     headers, _ = bearer
