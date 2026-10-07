@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps.auth import get_current_parent
 from app.api.v1.routers import (
+    affinities,
     auth,
     children,
     invites,
@@ -40,6 +41,7 @@ protected_router.include_router(children.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(observations.router)
+protected_router.include_router(affinities.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)
