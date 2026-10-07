@@ -15,6 +15,7 @@ from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.review import (
     GENERAL_REASON,
+    GUIDANCE,
     MIN_AVOIDED_LABEL,
     RejectReason,
     explain,
@@ -23,10 +24,16 @@ from app.agents.activity.review import (
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
-from app.agents.activity.store.inmemory import InMemoryActivityMemory, in_memory_ports
-from app.agents.activity.store.ports import ActivityObservation, PlaceRow
+from app.agents.activity.store.inmemory import (
+    InMemoryActivityMemory,
+    InMemorySafety,
+    in_memory_ports,
+)
+from app.agents.activity.store.ports import ActivityObservation, PlaceRow, SafetyEntry
+from app.agents.activity.tools.filters import safety_terms
 from app.agents.activity.tools.recommend import propose_activity_candidates
 from app.agents.common.evidence import RankedEvidence
+from app.agents.common.reference import hazard_terms
 from app.agents.common.refs import Ref
 
 CHILD = UUID(int=1)
@@ -72,9 +79,17 @@ def candidate(**kwargs) -> ActivityCandidate:
 PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
 
 
-def review(*candidates, months=40, seen=SEEN, recent=(), places=(PARK,)):
+def review(
+    *candidates, months=40, seen=SEEN, recent=(), places=(PARK,), safety=(), outdoor_ok=True
+):
     return review_candidates(
-        candidates, months=months, seen=seen, recent_activities=recent, places=places
+        candidates,
+        months=months,
+        seen=seen,
+        recent_activities=recent,
+        places=places,
+        safety=safety_terms(safety),
+        outdoor_ok=outdoor_ok,
     )
 
 
@@ -244,8 +259,68 @@ class TestPlace:
         assert draft.content == "큰 블록으로 탑 쌓기"
 
 
+class TestSafety:
+    """안전 필터가 맨 앞이다. 걸린 후보는 거절이 아니라 제거 — 모델에게 사유가 가지 않는다."""
+
+    def test_걸린_후보는_거절이_아니라_제거된다(self):
+        result = review(candidate(), candidate(content="구슬 꿰기", evidence=[]), months=20)
+        assert [r.index for r in result.removed] == [1]
+        assert result.removed[0].hits == ("small_parts",)
+        assert result.rejections == ()
+        assert len(result.drafts) == 1
+
+    def test_안전이_평가_표현보다_먼저다(self):
+        """위험하면서 평가 표현도 있으면 제거만 된다. 거절 사유로 모델에게 돌아가지 않는다."""
+        risky = candidate(content="또래보다 잘하는 구슬 꿰기", evidence=[])
+        result = review(risky, months=20)
+        assert [r.index for r in result.removed] == [0]
+        assert result.rejections == ()
+
+    def test_제거된_후보는_모델_설명에_나오지_않는다(self):
+        result = review(
+            candidate(content="구슬 꿰기", evidence=[]),
+            candidate(content="또래보다 잘하는 블록 놀이", evidence=[]),
+            months=20,
+        )
+        assert explain(result.rejections) == "2번 후보: " + GUIDANCE[RejectReason.EVALUATIVE]
+
+    def test_active_알레르기에_걸린_후보도_제거된다(self):
+        entry = SafetyEntry(kind="allergy", label="밀", status="active", category=("food",))
+        result = review(candidate(content="밀가루 점토 놀이", evidence=[]), safety=[entry])
+        assert result.removed[0].hits == ("health_safety",)
+
+    def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
+        result = review(candidate(), candidate(content="구슬 꿰기", evidence=[]), months=40)
+        small_parts = hazard_terms().axes["small_parts"].warning_text
+        assert result.warnings == ((), (small_parts,))
+
+    def test_allergens_와_items_를_코드가_채운다(self):
+        """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
+        result = review(
+            candidate(content="밀가루 반죽 놀이", materials=["밀가루", "밀대"], evidence=[])
+        )
+        (draft,) = result.drafts
+        assert draft.allergens == ("밀",)
+        assert draft.items == ("밀가루", "밀대")
+
+
+class TestOutdoor:
+    """날씨 판정이 야외를 막은 날(D8)에는 야외 후보를 거절한다. 모델이 실내로 고친다."""
+
+    def test_바깥_활동이_어려운_날_야외_후보는_거절(self):
+        result = review(candidate(setting="outdoor"), outdoor_ok=False)
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    @pytest.mark.parametrize("setting", ["indoor", "either"])
+    def test_실내나_어디서든은_통과(self, setting):
+        assert review(candidate(setting=setting), outdoor_ok=False).rejections == ()
+
+    def test_바깥이_괜찮은_날은_야외도_통과(self):
+        assert review(candidate(setting="outdoor"), outdoor_ok=True).rejections == ()
+
+
 class TestOutputTool:
-    async def context(self, *, recent=()):
+    async def context(self, *, recent=(), safety=None, outdoor_ok=True):
         memory = InMemoryActivityMemory(
             observations={
                 CHILD: [
@@ -266,9 +341,9 @@ class TestOutputTool:
             run_id="run-1",
             now=NOW,
             timezone=UTC,
-            ports=in_memory_ports(CHILD, date(2023, 1, 1), memory=memory),
+            ports=in_memory_ports(CHILD, date(2023, 1, 1), memory=memory, safety=safety),
         )
-        ctx.state.gate = await build_gate(ctx, outdoor_ok=True)
+        ctx.state.gate = await build_gate(ctx, outdoor_ok=outdoor_ok)
         ctx.state.seen_evidence.update(SEEN)
         return ctx
 
@@ -374,3 +449,41 @@ class TestOutputTool:
             ),
         )
         assert result.success is True
+
+    async def test_안전_필터로_빠지면_모델에게_돌려주지_않고_남은_것과_제외_목록을_담는다(self):
+        """재호출 1회는 run() 이 제외 목록으로 한다. 사유는 넣지 않는다 (Tool_공통.md §5-2)."""
+        entry = SafetyEntry(kind="allergy", label="밀", status="active", category=("food",))
+        ctx = await self.context(safety=InMemorySafety([entry]))
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="밀가루 점토 놀이", evidence=[]),
+                candidate(content="종이컵 탑 쌓기", evidence=[]),
+            ),
+        )
+        assert result.success is True
+        assert result.data["count"] == 2
+        assert len(ctx.state.suggestions) == 2
+        assert ctx.state.excluded == ("밀가루 점토 놀이",)
+
+    async def test_출력_검증_동안_안전_정보를_다시_읽지_않는다(self):
+        """build_gate 가 한 번 읽은 값을 쓴다. 다시 읽으면 게이트와 필터가 다른 행을 볼 수 있다."""
+        safety = InMemorySafety([])
+        ctx = await self.context(safety=safety)
+        assert safety.calls == 1
+        await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래성 쌓기", evidence=[]),
+                candidate(content="종이컵 탑 쌓기", evidence=[]),
+            ),
+        )
+        assert safety.calls == 1
+
+    async def test_build_gate_전에_불리면_실패한다(self):
+        ctx = await self.context()
+        ctx.state.safety_entries = None
+        with pytest.raises(RuntimeError):
+            await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
