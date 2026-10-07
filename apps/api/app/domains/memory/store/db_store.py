@@ -52,9 +52,14 @@ _MODEL_BY_DOMAIN: dict[str, type] = {
 }
 
 # 관찰 모델에서 fields dict 를 만들 때 제외하는 키.
-# ObservationRow 의 최상위 속성(id, domain, raw_text, created_at, observed_on)에
-# 대응하는 ORM 컬럼이다.
-_ROW_TOP_KEYS = frozenset({"id", "raw_text", "created_at"})
+# ObservationRow 의 최상위 속성 + Agent 에 넘길 필요 없는 내부 컬럼.
+_ROW_EXCLUDE_KEYS = frozenset({
+    "id", "raw_text", "created_at",
+    "updated_at",    # ORM 내부 타임스탬프
+    "embedding",     # 1536차원 벡터 — Curator 전용, Agent 에 불필요
+    "affinity_id",   # Curator 가 채우는 Profile 연결 — Agent 에 불필요
+    "strong_signals",  # Promotable 내부 — Agent 에 불필요
+})
 
 
 def _daterange_to_psycopg(dr: DateRange) -> Range[date]:
@@ -74,7 +79,7 @@ def _row_from_orm(domain: str, orm: Any) -> ObservationRow:
     fields: dict[str, Any] = {}
     for col in orm.__table__.columns:
         key = col.key
-        if key in _ROW_TOP_KEYS:
+        if key in _ROW_EXCLUDE_KEYS:
             continue
         val = getattr(orm, key)
         if key == "child_id":
