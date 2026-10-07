@@ -2,80 +2,146 @@ source: 식품 등의 표시기준 알레르기 유발물질 표시 대상
 version: "2026"
 fetched_at: 2026-09-27
 # 확신 없는 별칭은 뺐다. 사람 교차 검수가 필요한 항목은 task-34-report.md 참고.
+#
+# 이 파일은 Food · Activity · Health 가 같이 읽는 "알레르기 이름 사전" 이다.
+#   - aliases 에는 그 알레르기 식품 자체를 부르는 이름을 둔다 — 동의어 · 지역말 · 맞춤법 변형 · 외래어 ·
+#     영어 이름(검사지에 영어로 적혀 온다) · 표시기준이 그 항목에 넣는 것(조개류의 굴 · 전복 · 홍합).
+#     앞쪽의 가공식품 이름(두부 · 치즈 · 마요네즈 …)은 예전부터 있던 것이라 그대로 둔다.
+#   - 그 성분이 든 음식 이름(빵 · 라면 · 어묵 …)은 여기 넣지 않는다. Food 전용
+#     food_safety_terms.yaml 에 둔다 — 여기 넣으면 Activity 놀이 문장 · 문서 문장 검사도 같이 넓어진다.
+#   - guards 는 별칭이 나온 자리를 덮는 "그 알레르기가 아닌 것" 이다. 그 알레르기 식품이 확실히
+#     없는 것만 넣는다. 대두인 콩(메주콩 · 쥐눈이콩 · 검은콩)을 콩의 guard 에 넣으면 미탐이다.
 terms:
   - code: 1
     label: 난류
-    aliases: [난류, 알류, 계란, 달걀, 메추리알, 난백, 난황, 마요네즈]
-    guards: []
+    aliases: [난류, 알류, 계란, 달걀, 메추리알, 난백, 난황, 마요네즈, 전란, 오리알, 거위알, 에그, egg, ovalbumin, ovomucoid, 오보뮤코이드, 오보알부민, 흰자, 노른자, 게란]
+    guards: [에그플랜트, eggplant, veggie]
   - code: 2
     label: 우유
-    aliases: [우유, 유제품, 분유, 치즈, 버터, 생크림, 연유, 요거트, 요구르트]
-    guards: []
+    aliases: [우유, 유제품, 분유, 치즈, 버터, 생크림, 연유, 요거트, 요구르트, 밀크, 카제인, 유청, milk, dairy, casein, whey, lactalbumin, lactoglobulin, 카세인, 락토글로불린, 락트알부민, 락토알부민, cheese, butter, yogurt, yoghurt]
+    guards: [카카오버터, 코코아버터, cocoa butter, cacao butter, 코코넛 밀크, 아몬드 밀크, 오트 밀크, coconut milk, almond milk, oat milk, soy milk]
   - code: 3
     label: 메밀
-    aliases: [메밀, 메밀가루, 메밀면]
+    aliases: [메밀, 메밀가루, 메밀면, 모밀, buckwheat, fagopyrum esculentum]
     guards: []
   - code: 4
     label: 땅콩
-    aliases: [땅콩, 땅콩버터, 땅콩가루]
+    aliases: [땅콩, 땅콩버터, 땅콩가루, 피넛, 낙화생, peanut, groundnut, arachis hypogaea]
     guards: [땅콩호박]
+  # "콩" 은 대두로 본다. 대두가 아닌 콩은 guard 로 뺀다 (#258)
   - code: 5
     label: 대두
-    aliases: [대두, 두부, 된장, 간장, 두유, 콩나물]
-    guards: []
+    aliases: [대두, 콩, 두부, 된장, 간장, 두유, 콩나물, 서리태, 백태, 흑태, 서목태, soy, soybean, soya, glycine max]
+    guards: [강낭콩, 강남콩, 완두콩, 땅콩, 병아리콩, 렌틸콩, 작두콩, 울타리콩, 호랑이콩, 동부콩, 커피콩, 콩카세, 홍콩]
   - code: 6
     label: 밀
-    aliases: [밀, 밀가루, 소맥, 부침가루, 튀김가루]
-    guards: [밀크, 밀키, 밀감]
+    aliases: [밀, 밀가루, 소맥, 부침가루, 튀김가루, 통밀, 글루텐, 글리아딘, wheat, gluten, gliadin, triticum aestivum]
+    guards: [밀크, 밀키, 밀감, 글루텐 프리, 무글루텐, gluten free]
   - code: 7
     label: 고등어
-    aliases: [고등어]
+    aliases: [고등어, mackerel]
     guards: []
+  # "게" 는 다른 낱말 안에 흔하다 — "~게"(얇게 · 맛있게) · 외래어(스파게티 · 바게트) · 게가 아닌
+  # 해산물(멍게 · 성게) · 흔한 오타(게란 · 게피 · 닭게장 · 육게장) · 조사(아이에게). 레시피에서 찾은 것을 덮는다 (#258)
   - code: 8
     label: 게
-    aliases: [게, 꽃게, 대게]
-    guards: []
+    aliases: [게, 꽃게, 대게, 홍게, 털게, 크랩, crab]
+    guards: [에게, 스파게티, 스파게띠, 바게트, 바게뜨, 가라아게, 아게다시, 게르킨, 멍게, 성게, 게란, 게피, 게절, 닭게장, 육게장, 가게, 무게, 하게, 얇게, 굵게, 잘게, 곱게, 작게, 크게, 길게, 짧게, 넓게, 맵게, 짜게, 달게, 좋게, 깊게, 높게, 낮게, 많게, 적게, 묽게, 되게, 맞게, 있게, 럽게, 겁게, 갑게, 볍게, 쉽게, 랗게, 갛게, 얗게, 맣게, 늘게]
   - code: 9
     label: 새우
-    aliases: [새우, 새우젓, 건새우]
+    aliases: [새우, 새우젓, 건새우, 대하, 중하, 쉬림프, shrimp, prawn]
     guards: []
   - code: 10
     label: 돼지고기
-    aliases: [돼지고기, 돈육, 삼겹살, 목살, 돈까스]
-    guards: []
+    aliases: [돼지고기, 돈육, 삼겹살, 목살, 돈까스, 돼지, 포크, pork]
+    guards: [돼지감자, 우삼겹살]
   - code: 11
     label: 복숭아
-    aliases: [복숭아, 황도, 백도]
+    aliases: [복숭아, 황도, 백도, 천도복숭아, 넥타린, 피치, peach, nectarine, prunus persica]
     guards: []
   - code: 12
     label: 토마토
-    aliases: [토마토, 방울토마토, 케첩]
+    aliases: [토마토, 토마도, 방울토마토, 케첩, tomato, solanum lycopersicum]
     guards: []
   - code: 13
     label: 아황산류
-    aliases: [아황산류, 아황산나트륨, 이산화황, 무수아황산]
+    aliases: [아황산류, 아황산나트륨, 이산화황, 무수아황산, 아황산, sulfite, sulphite]
     guards: []
   - code: 14
     label: 호두
-    aliases: [호두, 호두과자]
+    aliases: [호두, 호두과자, 호도, 월넛, walnut, juglans regia]
     guards: []
   - code: 15
     label: 닭고기
-    aliases: [닭고기, 닭, 계육, 치킨]
+    aliases: [닭고기, 닭, 계육, 치킨, chicken]
     guards: []
   - code: 16
     label: 쇠고기
-    aliases: [쇠고기, 소고기, 우육]
+    aliases: [쇠고기, 소고기, 우육, 한우, 비프, beef]
     guards: []
   - code: 17
     label: 오징어
-    aliases: [오징어, 오징어채, 마른오징어]
+    aliases: [오징어, 오징어채, 마른오징어, 한치, 꼴뚜기, squid]
     guards: []
+  # 표시기준이 조개류에 굴 · 전복 · 홍합을 넣는다
   - code: 18
     label: 조개류
-    aliases: [조개류, 조개]
-    guards: []
+    aliases: [조개류, 조개, 굴, 전복, 홍합, 패류, clam, oyster, mussel, abalone, scallop]
+    guards: [굴비, 굴림, 굴린, 굴려, 굴라쉬, 굴라시, 얼굴]
   - code: 19
     label: 잣
-    aliases: [잣, 잣가루]
+    aliases: [잣, 잣가루, 파인넛, pine nut, 잦, pinus koraiensis]
+    guards: [겨잣, 겨잣가루]
+
+# 묶음 이름 → 19종 코드 여럿. 보호자가 등록한 이름을 읽을 때만 쓴다 — 메뉴를 훑는 별칭이 아니다.
+#   - includes 는 다른 묶음을 통째로 포함한다(해산물 = 생선 + 갑각류 + 연체류).
+#   - 묶음 이름이 위 terms 의 별칭과 같으면(콩 · 글루텐) 그 별칭의 코드를 codes 에 꼭 넣는다 — 묶음이 더 넓어야 한다.
+#   - guards 는 이름 안에서 묶음 이름을 찾을 때 덮는 것이다("coconut" 은 견과류가 아니다).
+#   - 19종 밖 식품(가재 · 아몬드 · 연어 …)은 Food 전용 food_safety_terms.yaml 의 group_foods 에 둔다.
+#   - 새 묶음 · 묶음 구성은 의료 검수를 거친다. 넣을지 애매하면 넣는다.
+groups:
+  - label: 갑각류
+    aliases: [갑각류, crustacean, crustaceans]
+    codes: [8, 9]
+    includes: []
     guards: []
+  - label: 연체류
+    aliases: [연체류, 두족류, mollusk, mollusc]
+    codes: [17, 18]
+    includes: []
+    guards: []
+  - label: 생선
+    aliases: [생선, 어류, 물고기, 생선류, fish]
+    codes: [7]
+    includes: []
+    guards: []
+  - label: 해산물
+    aliases: [해산물, 해물, 어패류, 수산물, 씨푸드, 시푸드, seafood, shellfish]
+    codes: []
+    includes: [생선, 갑각류, 연체류]
+    guards: []
+  - label: 견과류
+    aliases: [견과류, 견과, 너트류, tree nut, nut, nuts]
+    codes: [4, 14, 19]
+    includes: []
+    guards: [coconut, nutmeg, donut, doughnut, butternut]
+  - label: 콩
+    aliases: [콩]
+    codes: [5]
+    includes: []
+    guards: []
+  - label: 콩류
+    aliases: [콩류, 두류, legume, legumes]
+    codes: [4]
+    includes: [콩]
+    guards: []
+  - label: 육류
+    aliases: [육류, 고기, 고기류, 육고기, meat]
+    codes: [10, 15, 16]
+    includes: []
+    guards: [물고기]
+  - label: 글루텐
+    aliases: [글루텐]
+    codes: [6]
+    includes: []
+    guards: [글루텐 프리, 무글루텐]
