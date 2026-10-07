@@ -1,22 +1,26 @@
 import { http, HttpResponse } from "msw";
 
-import type {
-  AffinitiesResponse,
-  Affinity,
-  CorrectionRequest,
-  CorrectionResponse,
-  Observation,
-  ObservationDetailResponse,
-  ObservationsResponse,
-  SuggestionFeedback,
-  SuggestionFeedbackResponse,
-  SuggestionListResponse,
+import {
+  isHealthObservation,
+  type AffinitiesResponse,
+  type Affinity,
+  type Agent,
+  type CorrectionRequest,
+  type CorrectionResponse,
+  type Observation,
+  type ObservationKind,
+  type ObservationDetailResponse,
+  type ObservationsResponse,
+  type SuggestionFeedback,
+  type SuggestionFeedbackResponse,
+  type SuggestionListResponse,
 } from "@/lib/api/types";
 
 import {
   affinities,
   allObservations,
   healthSafety,
+  manyObservations,
   receivedSuggestions,
   staleAffinities,
 } from "../fixtures";
@@ -35,6 +39,41 @@ const feedbackBySuggestion = new Map<string, SuggestionFeedback>();
 
 /** 교정으로 비활성이 된 관찰. `wrong` · `outdated` 는 행을 지우지 않고 `inactive` 로 내린다. */
 const inactivatedObservations = new Set<string>();
+
+/**
+ * 화면의 분류(Agent) → 읽을 관찰 테이블. 서버(#266 `_DOMAINS_BY_AGENT`)와 같은 표다.
+ *
+ * 🚨 **`observation_${domain}` 으로 유추하지 않는다.** `growth` 는 education 과 routine 두 테이블이고,
+ *    그렇게 찾으면 없는 테이블(`observation_growth`)을 찾아 "성장" 이 늘 비었다 (#269).
+ * 🚨 **건강은 첫 배포 범위 밖이다** (#259). 서버는 목록에서 빼고 `domain=health` 에 빈 목록을 준다.
+ */
+const KINDS_BY_AGENT: Record<Agent, readonly ObservationKind[]> = {
+  food: ["observation_food"],
+  activity: ["observation_activity"],
+  growth: ["observation_education", "observation_routine"],
+  health: [],
+};
+const VISIBLE_KINDS: readonly ObservationKind[] = Object.values(KINDS_BY_AGENT).flat();
+
+/** 서버의 기본 장 크기. 화면은 `limit` 을 보내지 않는다. */
+const OBSERVATION_PAGE_SIZE = 20;
+
+/**
+ * 🚨 **화면에게 커서는 불투명한 문자열이다.** 서버는 `(observed_to, kind, id)` 를 base64 로 싸고,
+ *    목은 위치(offset)를 싼다. 화면이 받은 값을 그대로 돌려주기만 하면 둘 다 맞게 돈다.
+ */
+function encodeCursor(offset: number): string {
+  return btoa(JSON.stringify({ offset }));
+}
+
+function decodeCursor(cursor: string): number | null {
+  try {
+    const { offset } = JSON.parse(atob(cursor)) as { offset?: unknown };
+    return typeof offset === "number" && Number.isInteger(offset) && offset >= 0 ? offset : null;
+  } catch {
+    return null;
+  }
+}
 
 export function resetMemoryState(): void {
   feedbackBySuggestion.clear();
@@ -55,9 +94,10 @@ function scenarioAffinities(): Affinity[] {
  * 교정을 되돌리는 기능을 주지 않기로 해서, 뺀 것을 다시 꺼내 보는 길도 두지 않는다.
  */
 function scenarioObservations(inactiveOnly = false): Observation[] {
-  if (currentScenario() === "empty") return [];
+  const scenario = currentScenario();
+  if (scenario === "empty") return [];
   return (
-    allObservations
+    (scenario === "observations_many" ? manyObservations : allObservations)
       .filter((o) => inactivatedObservations.has(`${o.kind}:${o.id}`) === inactiveOnly)
       // 목록이 내려주는 status 도 실제 상태와 맞춰 둔다 — 화면이 이 값으로 갈리는 날 어긋나지 않게.
       .map((o) => (inactiveOnly ? { ...o, status: "inactive" as const } : o))
@@ -72,15 +112,26 @@ export const memoryHandlers = [
     const domain = params.get("domain");
     const unusedOnly = params.get("unused_in_suggestions") === "true";
     const inactiveOnly = params.get("status") === "inactive";
+    const limit = Number(params.get("limit") ?? OBSERVATION_PAGE_SIZE);
+    const cursor = params.get("cursor");
 
-    let items = scenarioObservations(inactiveOnly);
-    if (domain) items = items.filter((o) => o.kind === `observation_${domain}`);
-    // "제안에서 빠진 기억" — 목에서는 프로필에 묶이지 않은 것을 그 자리에 둔다.
-    if (unusedOnly) {
-      items = items.filter((o) => o.kind === "observation_health" || o.affinity === null);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return apiError(400, "validation_failed", "limit 은 1~100 이에요");
     }
+    const offset = cursor === null ? 0 : decodeCursor(cursor);
+    if (offset === null) return apiError(400, "validation_failed", "목록 위치가 올바르지 않아요");
 
-    const body: ObservationsResponse = { items, next_cursor: null, total: items.length };
+    const kinds = domain === null ? VISIBLE_KINDS : KINDS_BY_AGENT[domain as Agent];
+    if (!kinds) return apiError(400, "validation_failed", "모르는 분류예요");
+
+    let items = scenarioObservations(inactiveOnly).filter((o) => kinds.includes(o.kind));
+    // "제안에서 빠진 기억" — 목에서는 프로필에 묶이지 않은 것을 그 자리에 둔다.
+    // 건강은 위에서 이미 빠졌다 — `affinity` 키가 없는 모양이라 여기 닿지 않는다.
+    if (unusedOnly) items = items.filter((o) => !isHealthObservation(o) && o.affinity === null);
+
+    const page = items.slice(offset, offset + limit);
+    const next = offset + limit < items.length ? encodeCursor(offset + limit) : null;
+    const body: ObservationsResponse = { items: page, next_cursor: next, total: items.length };
     return HttpResponse.json(body);
   }),
 

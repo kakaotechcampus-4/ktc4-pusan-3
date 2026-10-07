@@ -49,6 +49,7 @@ import type {
   HealthSafety,
   HealthSafetyListResponse,
   Observation,
+  ObservationDetailResponse,
   ObservationsResponse,
   Policy,
   PhotoCommitResponse,
@@ -985,12 +986,13 @@ describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
-  it("도메인을 생략하면 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+  it("도메인을 생략하면 건강을 뺀 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const kinds = new Set(page.items.map((item) => item.kind));
     expect(kinds.size).toBeGreaterThan(1);
-    expect(kinds).toContain("observation_health");
+    // 🚨 건강 관찰은 첫 배포 범위 밖이다 — 서버(#266)가 목록에서 뺀다 (#259).
+    expect(kinds).not.toContain("observation_health");
     expect(page.total).toBe(page.items.length);
 
     const dates = page.items.map((item) => item.observed_to);
@@ -1006,6 +1008,70 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(page.items.every((item) => item.kind === "observation_food")).toBe(true);
   });
 
+  // 🚨 `observation_${domain}` 으로 찾으면 없는 테이블(`observation_growth`)을 찾아 늘 비었다 (#269).
+  it("growth 는 education 과 routine 두 테이블을 같이 내려준다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "growth" },
+    });
+
+    expect(new Set(page.items.map((item) => item.kind))).toEqual(
+      new Set(["observation_education", "observation_routine"]),
+    );
+  });
+
+  it("health 는 오류가 아니라 빈 목록이다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "health" },
+    });
+
+    expect(page).toEqual({ items: [], next_cursor: null, total: 0 });
+  });
+
+  it("next_cursor 를 그대로 돌려주면 빠지거나 겹치는 기록 없이 끝까지 넘어간다", async () => {
+    const whole = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ObservationsResponse = await api.get<ObservationsResponse>(
+        "/children/c1/observations",
+        { query: { limit: 2, cursor } },
+      );
+      expect(page.total).toBe(whole.total);
+      seen.push(...page.items.map((item) => `${item.kind}:${item.id}`));
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+
+    expect(seen).toEqual(whole.items.map((item) => `${item.kind}:${item.id}`));
+  });
+
+  it("기본 한 장은 20건이고, 넘치면 next_cursor 가 온다", async () => {
+    setScenario("observations_many");
+    try {
+      const first = await api.get<ObservationsResponse>("/children/c1/observations");
+      expect(first.items).toHaveLength(20);
+      expect(first.total).toBe(25);
+      expect(first.next_cursor).not.toBeNull();
+
+      const second = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { cursor: first.next_cursor },
+      });
+      expect(second.items).toHaveLength(5);
+      expect(second.next_cursor).toBeNull();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("깨진 커서는 400 validation_failed 다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { cursor: "깨진값" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
   it("프로필은 affinities 한 배열이고 safety 가 따로 온다", async () => {
     const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
 
@@ -1014,11 +1080,11 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(body.safety.length).toBeGreaterThan(0);
   });
 
+  // 목록에서는 빠졌지만 캘린더와 run 결과에는 아직 선다 — 그 화면들이 같은 시트를 연다.
   it("health 관찰에는 subject · polarity · affinity 키가 아예 없다", async () => {
-    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
-      query: { domain: "health" },
-    });
-    const health = page.items[0];
+    const { observation: health } = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_health/o_h1",
+    );
 
     expect(health.kind).toBe("observation_health");
     expect("subject" in health).toBe(false);

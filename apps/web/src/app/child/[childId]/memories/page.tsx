@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Notebook, Sprout, ThumbsUp } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
@@ -59,8 +59,18 @@ function isTab(value: string | null): value is MemoryTab {
   return value !== null && (TAB_KEYS as readonly string[]).includes(value);
 }
 
-function isAgent(value: string | null): value is Agent {
-  return value !== null && (AGENTS as readonly string[]).includes(value);
+/**
+ * 두 목록이 받는 분류. 🚨 **health 가 없다** — 이유가 탭마다 다르다.
+ * - 기억: `Affinity.domain` 이 health 를 뺀 3종이다 (승격 파이프라인 밖).
+ * - 기록: 건강 관찰은 첫 배포 범위 밖이라 서버가 늘 빈 목록을 준다 (#259). 그대로 두면
+ *   "이 조건에 맞는 기록이 없어요" 가 떠서, 건강 이야기를 남긴 보호자에게 사실과 다른 말이 된다 (#269).
+ *
+ * 주소에 `?domain=health` 가 남아 있어도 "전체" 로 읽는다 — 고를 수 없는 값이 고른 채로 서지 않게.
+ */
+type ListDomain = Exclude<Agent, "health">;
+
+function isListDomain(value: string | null): value is ListDomain {
+  return value !== null && value !== "health" && (AGENTS as readonly string[]).includes(value);
 }
 
 /* ── 필터 ─────────────────────────────────────────────────────────────── */
@@ -78,15 +88,10 @@ function isFilterState(value: string | null): value is AffinityFilterState {
   return value !== null && (FILTER_STATES as readonly string[]).includes(value);
 }
 
+/** 🚨 health 가 없다 — `isListDomain` 의 이유. 기록과 기억이 같은 선택지를 쓴다. */
 const DOMAIN_OPTIONS = [
   { value: "all", label: "전체" },
-  ...AGENTS.map((agent) => ({ value: agent, label: domainLabel(agent) })),
-] as const;
-
-/** 🚨 기억에는 health 가 없다 — `Affinity.domain` 이 health 를 뺀 3종이다 (승격 파이프라인 밖). */
-const AFFINITY_DOMAIN_OPTIONS = [
-  { value: "all", label: "전체" },
-  ...AGENTS.filter((agent) => agent !== "health").map((agent) => ({
+  ...AGENTS.filter((agent): agent is ListDomain => agent !== "health").map((agent) => ({
     value: agent,
     label: domainLabel(agent),
   })),
@@ -132,7 +137,7 @@ function MemoriesScreen() {
   const tabParam = searchParams.get("tab");
   const tab: MemoryTab = isTab(tabParam) ? tabParam : "observations";
   const domainParam = searchParams.get("domain");
-  const domain: Agent | null = isAgent(domainParam) ? domainParam : null;
+  const domain: ListDomain | null = isListDomain(domainParam) ? domainParam : null;
   const unusedOnly = searchParams.get("unused") === "1";
   /**
    * 기억 탭의 승격 상태 필터. 🚨 **`archived` 는 고르게 두지 않는다** — 교정으로 내려간 기억을
@@ -157,7 +162,7 @@ function MemoriesScreen() {
    *    뜻이어도 고른 자리가 다르다 — 탭 링크는 필터 없는 주소를 가리킨다.
    */
   function setFilter(next: {
-    domain?: Agent | null;
+    domain?: ListDomain | null;
     unused?: boolean;
     state?: AffinityFilterState;
   }) {
@@ -216,6 +221,37 @@ function MemoriesScreen() {
 
 /* ── 관찰 ─────────────────────────────────────────────────────────────── */
 
+/**
+ * 다음 장 불러오기.
+ *
+ * 🚨 **전체 폭 `secondary` 로 두지 않는다** (문서 §버튼). 목록 상자 바로 밑에 같은 실루엣의 상자가
+ *    하나 더 서면 상자의 나열이 된다 — 내용 폭의 `tertiary` 를 가운데에 둔다.
+ * 🚨 **스크롤로 저절로 불러오지 않는다.** 누를 때만 부른다 — 끝이 어디인지, 몇 건을 보고 있는지를
+ *    보호자가 놓치지 않게. 위의 "기록 N건" 이 전체 수를 말하고 있다.
+ */
+function MoreObservations({
+  loading,
+  failed,
+  onMore,
+}: {
+  loading: boolean;
+  failed: boolean;
+  onMore: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      {failed ? (
+        <p role="status" className="text-body-sm text-ink-muted">
+          기록을 더 불러오지 못했어요. 다시 눌러 주세요.
+        </p>
+      ) : null}
+      <Button variant="tertiary" size="compact" onClick={onMore} disabled={loading}>
+        {loading ? "불러오는 중" : "기록 더 보기"}
+      </Button>
+    </div>
+  );
+}
+
 function ObservationsTab({
   childId,
   domain,
@@ -224,24 +260,34 @@ function ObservationsTab({
   onOpen,
 }: {
   childId: string;
-  domain: Agent | null;
+  domain: ListDomain | null;
   unusedOnly: boolean;
-  onFilter: (next: { domain?: Agent | null; unused?: boolean }) => void;
+  onFilter: (next: { domain?: ListDomain | null; unused?: boolean }) => void;
   onOpen: (observation: Observation) => void;
 }) {
   const router = useRouter();
   const filters = { domain, unusedOnly };
 
-  const observations = useQuery({
+  /**
+   * 🚨 **서버는 한 번에 20건만 준다.** 첫 장만 부르면 "기록 21건" 이라고 쓰고 20건만 그린다 (#269).
+   *    다음 장은 받은 `next_cursor` 를 그대로 돌려줘서 받는다 — 커서는 화면이 풀어 보지 않는 값이다.
+   */
+  const observations = useInfiniteQuery({
     queryKey: qk.observations(childId, filters),
-    queryFn: () =>
+    queryFn: ({ pageParam }) =>
       api.get<ObservationsResponse>(`/children/${childId}/observations`, {
         query: {
           ...(domain ? { domain } : {}),
           ...(unusedOnly ? { unused_in_suggestions: "true" } : {}),
+          cursor: pageParam,
         },
       }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
   });
+  const items = observations.data?.pages.flatMap((page) => page.items) ?? [];
+  /** 🚨 건수는 첫 장의 것이다 — 장마다 오지만 같은 필터의 같은 수다. 받아 온 줄 수가 아니다. */
+  const total = observations.data?.pages[0]?.total ?? 0;
 
   const filtered = domain !== null || unusedOnly;
 
@@ -267,12 +313,13 @@ function ObservationsTab({
 
       {observations.isPending ? <SkeletonBlock label="기록을 불러오는 중" /> : null}
 
-      {observations.isError ? (
+      {/* 다음 장만 실패한 것은 여기가 아니다 — 받아 둔 목록을 지우지 않고 버튼 옆에서 말한다. */}
+      {observations.isError && !observations.isFetchNextPageError ? (
         <LoadFailed what="기록을" childId={childId} error={observations.error} />
       ) : null}
 
       {observations.data ? (
-        observations.data.items.length === 0 ? (
+        items.length === 0 ? (
           filtered ? (
             <EmptyState
               icon={Notebook}
@@ -305,8 +352,15 @@ function ObservationsTab({
         ) : (
           <>
             {/* 🚨 건수를 숨기지 않는다 (문서 §7). 필터를 걸면 그 필터의 건수다. */}
-            <p className="text-caption text-ink-subtle">기록 {observations.data.total}건</p>
-            <ObservationList observations={observations.data.items} onOpen={onOpen} />
+            <p className="text-caption text-ink-subtle">기록 {total}건</p>
+            <ObservationList observations={items} onOpen={onOpen} />
+            {observations.hasNextPage ? (
+              <MoreObservations
+                loading={observations.isFetchingNextPage}
+                failed={observations.isFetchNextPageError}
+                onMore={() => void observations.fetchNextPage()}
+              />
+            ) : null}
           </>
         )
       ) : null}
@@ -324,9 +378,9 @@ function ProfileTab({
   onOpen,
 }: {
   childId: string;
-  domain: Agent | null;
+  domain: ListDomain | null;
   state: AffinityFilterState;
-  onFilter: (next: { domain?: Agent | null; state?: AffinityFilterState }) => void;
+  onFilter: (next: { domain?: ListDomain | null; state?: AffinityFilterState }) => void;
   onOpen: (affinity: Affinity) => void;
 }) {
   const filters = { domain, state };
@@ -351,7 +405,7 @@ function ProfileTab({
         <Select
           label="분류"
           value={domain ?? "all"}
-          options={AFFINITY_DOMAIN_OPTIONS}
+          options={DOMAIN_OPTIONS}
           onChange={(value) => onFilter({ domain: value === "all" ? null : value })}
         />
         <Select

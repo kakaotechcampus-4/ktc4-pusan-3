@@ -101,6 +101,7 @@ const OBSERVATION_AGENT: Record<ObservationKind, Agent> = {
   observation_health: "health",
   observation_education: "growth",
   observation_activity: "activity",
+  observation_routine: "growth",
 };
 
 export function observationAgent(kind: ObservationKind): Agent {
