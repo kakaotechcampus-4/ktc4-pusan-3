@@ -17,6 +17,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self
+from uuid import UUID
 
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.schemas.task import DomainTask
@@ -85,6 +86,9 @@ DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
 #   Idempotency 키도 풀지 않는다. 요청 식별자와 처리 결과를 DB 에 남겨 같은 키로 다시
 #   보내면 기존 결과를 확인한다(멘토 #196 답변). 모양은 러너 DB 세션 작업 전에 정한다.
 Commit = Callable[[], Awaitable[None]]
+
+# child_id 를 받아 백그라운드로 Curator 를 띄우는 콜백. 구현은 entrypoint 가 결정한다.
+CuratorTrigger = Callable[[UUID], None]
 
 
 class DomainContext(Protocol):
@@ -326,6 +330,7 @@ async def handle_input(
     continuation: PendingMemoryContext | None = None,
     commit: Commit | None = None,
     writes: RunWrites | None = None,
+    curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
@@ -351,6 +356,7 @@ async def handle_input(
             send=send,
             started=started,
             commit=commit,
+            curator_trigger=curator_trigger,
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
@@ -392,10 +398,11 @@ async def handle_input(
             # 기록 단계를 먼저 확정한다. 저장 안내 · 되묻기 맥락은 확정된 것만 나간다
             committed = await _commit_record(memory, commit)
             memory_ms = _ms_since(record_started)  # 기록 단계 = Memory + commit
-            # TODO(#149-integration): DB 저장소가 붙으면 여기서 Curator 를 백그라운드로 띄운다.
-            #   관찰이 commit 된 바로 뒤다. InMemoryStore 에서는 동작하지 않는다.
-            #   from app.domains.memory.curator.trigger import trigger_curator_background
-            #   trigger_curator_background(child_id, today, embedder, judge)
+            if committed and curator_trigger is not None:
+                try:
+                    curator_trigger(memory_context.child_id)
+                except Exception as exc:
+                    logger.error("curator trigger 실패 error=%s", type(exc).__name__)
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
@@ -563,6 +570,7 @@ async def _handle_continuation(
     send: Emit,
     started: float,
     commit: Commit | None,
+    curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
     send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
@@ -588,6 +596,11 @@ async def _handle_continuation(
     elif memory is not None:
         committed = await _commit_record(memory, commit)
         memory_ms = _ms_since(record_started)
+        if committed and curator_trigger is not None:
+            try:
+                curator_trigger(memory_context.child_id)
+            except Exception as exc:
+                logger.error("curator trigger 실패 error=%s", type(exc).__name__)
         refs = _saved_refs(memory)
         if refs:
             send(Saved(refs))

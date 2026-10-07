@@ -31,6 +31,11 @@ _STAGE_BOUNDARIES: tuple[tuple[int, Stage], ...] = (
     (0, "infant_milk"),
 )
 
+# v1 범위 상한 — 이 월령 미만(만 6세 전)까지가 서비스가 다루는 범위다
+# (docs/agents/shared/연령별_Tool_전략.md §2 "72 · v1 범위 상한"). 아이 등록을 막는 값이 아니다 —
+# 검진 · 접종 안내가 끝나는 경계이고, 문서 행 월령의 끝이다 (A-6).
+V1_MONTH_LIMIT = 72
+
 # 화면에 내리는 나이 문구의 경계. 월령이 이 값보다 작으면 그 단위로 부른다.
 #   _DAYS_BEFORE_MONTHS 미만   → "생후 N일"
 #   _MONTHS_BEFORE_YEARS 미만  → "N개월"

@@ -3,6 +3,7 @@
 api 레이어는 이 모듈만 import한다. 밖으로는 handle_input 과 그 입출력·이벤트 타입만 내보낸다.
 """
 
+import logging
 from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -67,11 +68,40 @@ __all__ = [
     "handle_input",
 ]
 
+logger = logging.getLogger(__name__)
+
 KST = ZoneInfo("Asia/Seoul")
 
 # 생일을 못 받았을 때만 쓰는 fallback. 만 2세로 가정해 확실히 toddler 단계로 연다
 # (LifeStage.stage 네 값 중 toddler·preschool 은 Food 의 tool 묶음이 같다)
 _FALLBACK_BIRTH_OFFSET = timedelta(days=365 * 2)
+
+
+def _build_curator_deps() -> tuple:
+    """Embedder · JevJudge 를 만든다. 키가 없으면 (None, None).
+
+    한 번 만들면 프로세스가 살아 있는 동안 재사용한다 — HTTP 클라이언트를
+    매 요청마다 만들면 연결 풀이 낭비되고 누수 가능성이 있다.
+    """
+    if hasattr(_build_curator_deps, "_cached"):
+        return _build_curator_deps._cached  # type: ignore[attr-defined]
+
+    from app.agents.common.llm_client import LLMConfigError
+    from app.agents.curator.embedding.embedder import Embedder
+    from app.agents.curator.embedding.jev import JevJudge
+
+    embedder = None
+    judge = None
+    try:
+        embedder = Embedder()
+    except LLMConfigError:
+        logger.debug("EMBEDDING_* 미설정 — curator embedder 비활성")
+    try:
+        judge = JevJudge()
+    except LLMConfigError:
+        logger.debug("CURATOR_JUDGE_* 미설정 — curator judge 비활성")
+    _build_curator_deps._cached = (embedder, judge)  # type: ignore[attr-defined]
+    return embedder, judge
 
 
 async def handle_input(
@@ -135,6 +165,17 @@ async def handle_input(
         ports=food_ports,
     )
 
+    # Curator — DB 세션을 열어 백그라운드로 돌린다.
+    # embedder 가 None 이면 trigger 를 안 만들어 pipeline 이 건너뛴다.
+    embedder, judge = _build_curator_deps()
+
+    def curator_trigger(cid: UUID) -> None:
+        if embedder is None:
+            return
+        from app.domains.memory.curator.trigger import trigger_curator_background
+
+        trigger_curator_background(cid, now.date(), embedder, judge)
+
     return await _handle_input(
         raw_text,
         memory_context,
@@ -144,4 +185,5 @@ async def handle_input(
         continuation=continuation,
         commit=commit,
         writes=writes,
+        curator_trigger=curator_trigger,
     )
