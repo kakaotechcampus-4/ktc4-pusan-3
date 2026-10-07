@@ -153,14 +153,19 @@ export function RunReply({
   const noticedWhy = run.guidance.length > 0 || run.note !== null;
   /** Memory 가 답을 기다리는 중. 🚨 `kind` 를 모르면 질문으로 보지 않는다 (`NoteCard`). */
   const askingMore = run.note?.kind === "question";
+  /**
+   * 저장한 뒤에 끊긴 run (#271). 🚨 **받은 기록이 없어도 저장한 것이 있다** — 서버는 쓴 것이 있을
+   *    때만 이 길로 닫는다. 그래서 아래의 "저장하지 않았어요" 류 문장을 전부 세우지 않는다.
+   */
+  const interrupted = run.interrupted;
 
   return (
     <div className="flex flex-col gap-3">
       <div>
         <h3 className="text-body text-ink">
-          {resultTitle({ savedSomething, askingMore, noticedWhy, followUp })}
+          {resultTitle({ savedSomething, interrupted, askingMore, noticedWhy, followUp })}
         </h3>
-        {askingMore && !savedSomething ? (
+        {askingMore && !savedSomething && !interrupted ? (
           // 일어난 일만 적는다 — "답하면 저장돼요" 는 예측이라 쓰지 않는다 (§4).
           <p className="text-body-sm text-ink-muted mt-1">
             적어주신 말만으로는 아직 기록으로 남기지 않았어요.
@@ -194,9 +199,12 @@ export function RunReply({
         />
       ) : null}
 
+      {interrupted ? <InterruptedCard savedSomething={savedSomething} /> : null}
+
       {/* 🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
-          클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다. */}
-      {run.partial ? (
+          클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다.
+          🚨 끊긴 run 이면 세우지 않는다 — 위 카드와 같은 자리에서 "처리하지 못했어요" 를 두 번 말한다. */}
+      {run.partial && !interrupted ? (
         <CardFailed>
           <p>{partialMessage(run.partial, savedSomething)}</p>
         </CardFailed>
@@ -204,7 +212,8 @@ export function RunReply({
 
       {noChildObservation ? (
         // 위 `noticedWhy` 주석 — 안내·되묻기가 이미 이유를 말했으면 이 카드를 세우지 않는다.
-        noticedWhy ? null : (
+        // 🚨 끊긴 run 도 세우지 않는다 — 서버는 저장했는데 "저장하지 않았어요" 가 된다 (#271).
+        noticedWhy || interrupted ? null : (
           <CardFailed>
             <p>
               {run.drafts.length > 0
@@ -309,6 +318,35 @@ function RetryActions({
 }
 
 /**
+ * 저장한 뒤에 끊긴 run 의 안내 (#253 · #271). 🚨 **실패 화면이 아니다** — 제목과 받은 기록은 그대로
+ * 서고, 이 카드는 그 아래에서 **빠진 것이 있다**는 것만 말한다.
+ *
+ * - 🚨 **무엇이 빠졌는지 단정하지 않는다.** 끊긴 곳이 추천일 수도, 화면에 보내는 번역이나 일정 초안일
+ *   수도 있고, 추천을 요청하지 않은 한 줄일 수도 있다. "추천을 만들지 못했어요" 라고 쓰면 거짓이 되는
+ *   경우가 있다.
+ * - 🚨 **다시 시도 · 고쳐 쓰기를 세우지 않는다.** 서버가 키를 놓지 않아서 같은 키로는 닫힌 run 이
+ *   재생될 뿐이고, 새 키로 같은 말을 보내면 **두 번 저장된다.** 그래서 다시 보내지 않아도 된다는
+ *   말을 글자로 한다.
+ * - 🚨 **받은 기록이 없으면 확인할 곳을 말한다.** `saved` 를 보내기 전에 끊겼으면 화면은 무엇이
+ *   저장됐는지 모른다. 저장된 것이 관찰이 아니라 일정 변경일 수도 있어서 두 곳을 같이 적는다.
+ */
+function InterruptedCard({ savedSomething }: { savedSomething: boolean }) {
+  return (
+    <CardFailed>
+      <p className="text-body text-ink">나머지는 마무리하지 못했어요</p>
+      <p className="mt-1">
+        {savedSomething
+          ? "위 기록은 그대로 저장됐어요. 같은 말을 다시 보내지 않아도 돼요."
+          : "적어주신 내용은 이미 반영됐어요. 같은 말을 다시 보내지 않아도 돼요."}
+      </p>
+      {savedSomething ? null : (
+        <p className="mt-1">반영된 내용은 기록 탭이나 달력에서 확인할 수 있어요.</p>
+      )}
+    </CardFailed>
+  );
+}
+
+/**
  * 부분 결과 한 줄 (PR #215 리뷰). 🚨 **문구는 화면 상수다** — 서버 `partial.message` 를 읽지 않는다.
  *
  * - 🚨 **저장 여부로 나눈다.** 저장한 것이 없는데 "아래 결과는 그대로 저장됐어요" 를 붙이면 거짓이다.
@@ -385,26 +423,32 @@ function DraftsCard({
 /**
  * 04 의 제목. 🚨 **제목이 화면 내용을 앞질러 말하면 아래 카드가 전부 그 말을 뒤집는다.**
  *
- * 네 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
+ * 다섯 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
  * - 저장됨 → 있는 그대로.
  * - 되묻기만 (#141) → **제목이 곧 할 일**이다. 화면에 남는 것이 질문 하나뿐이라 "확인했어요" 로
  *   받으면 다 끝난 것처럼 읽힌다. 최소 질문 1개라는 규칙(최상위 §2)이 화면에서는 "한 가지만" 이다.
  * - 안내만 (#141 · 알레르기 · 진단 · 구매 대행) → 저장하지 **않기로 한** 한 줄이다. 읽고 판단까지
  *   했다는 뜻으로 "확인했어요".
  * - 일정 초안만 (#151) → 아이에 대한 관찰이 아니라 쌓을 것이 없고 일정도 아직 초안이다 (게이트 ㉠).
+ * - 저장한 뒤 끊김 (#271) → 서버는 무언가 썼는데 화면은 받은 기록이 없다. 무엇을 썼는지 모르니
+ *   "저장" 대신 "반영" 이다 — 쓴 것이 일정 삭제일 수도 있다. 🚨 되묻기보다 앞선다: 서버가 쓴 것이
+ *   있는데 "한 가지만 더" 로 받으면 아직 아무것도 안 남은 것처럼 읽힌다.
  */
 function resultTitle({
   savedSomething,
+  interrupted,
   askingMore,
   noticedWhy,
   followUp,
 }: {
   savedSomething: boolean;
+  interrupted: boolean;
   askingMore: boolean;
   noticedWhy: boolean;
   followUp: boolean;
 }): string {
   if (savedSomething) return "이렇게 저장했어요";
+  if (interrupted) return "적어주신 내용은 반영했어요";
   // 🚨 이어받기 run 이 또 물었으면 "한 가지만 더" 를 두 번 말하지 않는다 — 앞에서 한 말을 스스로 깬다.
   if (askingMore) return followUp ? "이어서 조금만 더 알려주세요" : "한 가지만 더 알려주세요";
   if (noticedWhy) return "적어주신 말을 확인했어요";

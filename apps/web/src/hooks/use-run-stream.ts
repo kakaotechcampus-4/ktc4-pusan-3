@@ -7,6 +7,7 @@ import { qk } from "@/lib/api/queryKeys";
 import {
   isDraftEvent,
   streamRunEvents,
+  type DoneEvent,
   type EventDraftsEvent,
   type FailedEvent,
   type GuidanceEvent,
@@ -98,6 +99,15 @@ export interface RunState {
    *    그건 `unconfirmed` 다. 둘을 섞으면 화면이 "아무것도 저장하지 않았어요" 라고 단정한다.
    */
   failure: FailedEvent | null;
+  /**
+   * **저장한 뒤에 끊긴 run** — `done` 이 `completed: false` 로 왔다 (#253 · #271).
+   *
+   * 🚨 **실패가 아니다.** 서버는 무언가 실제로 쓴 뒤 끊겼을 때만 이 길로 닫고 Idempotency 키와
+   *    이어받기 맥락을 놓지 않는다. 그래서 `status` 는 그대로 `done`(또는 `partial`)이고
+   *    `isRunConfirmed` 도 참이다 — 화면도 끝난 run 으로 정리한다(질문을 닫는다).
+   * 🚨 **무엇이 저장됐는지는 모른다.** `observations` 가 비어 있어도 "저장하지 않았어요" 가 아니다.
+   */
+  interrupted: boolean;
 }
 
 export const initialRunState: RunState = {
@@ -114,6 +124,7 @@ export const initialRunState: RunState = {
   unavailable: [],
   drafts: [],
   failure: null,
+  interrupted: false,
 };
 
 export type RunAction =
@@ -211,7 +222,12 @@ export function runReducer(state: RunState, action: RunAction): RunState {
 
         case "done":
           // partial 이 왔었다면 done 이 와도 "부분 결과"다. 성공 화면으로 덮지 않는다.
-          return { ...state, status: state.partial ? "partial" : "done" };
+          // 🚨 `completed` 는 `false` 일 때만 끊김이다 — 정상 done 에는 키가 없다 (#271).
+          return {
+            ...state,
+            status: state.partial ? "partial" : "done",
+            interrupted: (action.event.data as DoneEvent).completed === false,
+          };
 
         default:
           /**
