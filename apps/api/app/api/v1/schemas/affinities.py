@@ -18,7 +18,9 @@ class AffinityOut(BaseModel):
     domain: Literal["food", "activity", "growth"] = Field(
         description="화면이 쓰는 Agent 값. 기억 표의 education 은 growth 로 내려간다"
     )
-    state: str
+    state: Literal["candidate", "confirmed", "archived"] = Field(
+        description="상태는 Curator 규칙만 바꾼다. 목록은 기본으로 archived 를 뺀다"
+    )
     polarity: int | None = Field(
         description="-1 싫어함 · 0 갈림 · 1 좋아함. candidate 면 null 일 수 있다"
     )
