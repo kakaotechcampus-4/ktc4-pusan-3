@@ -11,7 +11,8 @@ from app.agents.activity.doc_seed import activity_doc_seed, parse_activity_doc
 from app.agents.activity.review import TOGETHER_ONLY_BELOW_MONTH
 from app.agents.activity.schemas.common import CaregiverRole
 from app.agents.activity.store.inmemory import InMemoryActivityDocs
-from app.agents.common.reference import DOC_MONTH_LIMIT, hazard_terms
+from app.agents.common.reference import hazard_terms
+from app.agents.common.reference_docs import DOC_MONTH_LIMIT
 from app.rules.evaluative import find_evaluative
 from app.rules.term_match import match_terms
 

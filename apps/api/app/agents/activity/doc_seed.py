@@ -4,7 +4,7 @@ YAML 이 원본이다. DB 가 생기면 Alembic 이 이 파일을 `doc_key` 기�
 그 전까지는 `InMemoryActivityDocs.from_seed()` 가 읽어 eval · 개발에 쓴다.
 
 모양이 틀리면 읽을 때 바로 실패한다. 공통 칸(출처 · 월령 · 상태 · 작성자/검수자)은
-`common/reference.parse_doc_meta` 가, 출력 후보와 같은 칸과 고시 영역은 여기서 본다.
+`common/reference_docs.parse_doc_meta` 가, 출력 후보와 같은 칸과 고시 영역은 여기서 본다.
 내용 검사(위험 용어 · 보호자 역할 · 평가 표현 · 커버리지)는 테스트가 한다 —
 `tests/unit/agents/activity/test_activity_doc_seed.py`.
 """
@@ -17,12 +17,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, Intensity
 from app.agents.activity.store.ports import ActivityDocRow
-from app.agents.common.reference import (
-    DocMeta,
-    check_unique_doc_keys,
-    load_reference,
-    parse_doc_meta,
-)
+from app.agents.common.reference import load_reference
+from app.agents.common.reference_docs import DocMeta, check_unique_doc_keys, parse_doc_meta
 
 SEED_FILE = "activity_doc.yaml"
 KEY_PREFIX = "activity."

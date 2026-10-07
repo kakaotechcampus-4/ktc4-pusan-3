@@ -9,7 +9,8 @@ from datetime import date
 
 import pytest
 
-from app.agents.common.reference import check_unique_doc_keys, parse_doc_meta
+from app.agents.common.reference_docs import DOC_MONTH_LIMIT, check_unique_doc_keys, parse_doc_meta
+from app.rules.age import V1_MONTH_LIMIT
 
 ROW = {
     "doc_key": "activity.play.m18_23.cushion_crawl",
@@ -96,7 +97,21 @@ class TestBroken:
         with pytest.raises(ValueError, match=message):
             parse(broken(**change))
 
+    @pytest.mark.parametrize("reviewer", [" 03leedo", "03leedo ", "	03leedo"])
+    def test_공백만_다른_같은_사람도_작성자와_검수자가_같다고_본다(self, reviewer):
+        """작성자 · 검수자는 GitHub 아이디로 적는다 (RAG_plan §1). 비교 전에 앞뒤 공백을 지운다."""
+        with pytest.raises(ValueError, match="같다"):
+            parse(broken(reviewed_by=reviewer))
+
+    def test_검수자도_공백을_지워_저장한다(self):
+        assert parse(broken(reviewed_by=" nnhhlee ")).reviewed_by == "nnhhlee"
+
     def test_doc_key_가_겹치면_실패한다(self):
         meta = parse(ROW)
         with pytest.raises(ValueError, match="겹친다"):
             check_unique_doc_keys([meta, meta], file="t.yaml")
+
+
+def test_월령_끝은_v1_범위_상한이다():
+    """72 를 여기서 따로 정하지 않는다 — 나이 경계는 app/rules/age.py 한 곳에 있다."""
+    assert DOC_MONTH_LIMIT == V1_MONTH_LIMIT
