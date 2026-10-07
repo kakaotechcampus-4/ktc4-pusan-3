@@ -43,6 +43,9 @@ function activeSafety(): HealthSafety[] {
  * 알레르기 항목 하나의 지금 상태 — 제안 목록의 사전검사(`handlers/suggestions.ts`)가 읽는다.
  * `null` 은 행이 없다는 뜻이다 (서버의 `unknown` · 저장하지 않는 상태).
  * ⚠️ 서버의 `none` 은 아직 목 모양(`HealthSafety`)에 없다 — 옛 모양이라 #87 때 같이 맞춘다.
+ * ⚠️ **label 이 항목 이름과 글자로 같을 때만 짝짓는다** — 픽스처가 정식 이름만 쓰는 전제다.
+ *    실제 label 은 보호자의 자유 입력("우유 알레르기" · "Milk" · "우유, 땅콩")이라 서버는
+ *    문자열 비교가 아니라 알레르기 사전으로 짝짓는다 (#264). 이 함수를 서버 구현의 본으로 삼지 말 것.
  */
 export function allergyStatus(label: string): "active" | "retracted" | null {
   const rows = safetyState.filter(
