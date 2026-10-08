@@ -90,6 +90,7 @@ async def update_event(
     child_id: uuid.UUID,
     event_id: uuid.UUID,
     title: str,
+    event_type: EventType,
     starts_at: datetime,
     ends_at: datetime | None,
     all_day: bool,
@@ -101,6 +102,7 @@ async def update_event(
         .where(Event.child_id == child_id, Event.id == event_id)
         .values(
             title=title,
+            event_type=EventType(event_type),
             starts_at=starts_at,
             ends_at=ends_at,
             all_day=all_day,
@@ -137,6 +139,52 @@ async def create_event_item(
     session.add(row)
     await session.flush()
     return row
+
+
+async def replace_event_items(
+    session: AsyncSession,
+    *,
+    event_id: uuid.UUID,
+    items: list[dict],
+) -> list[EventItem]:
+    """items를 최종 목록으로 교체한다. 기존 item_id가 있으면 is_prepared를 보존한다.
+
+    items: [{"item_id": str | None, "item_name": str}, ...]
+    item_id가 None이면 새 항목, 있으면 기존 항목 유지.
+    새 목록에 없는 기존 항목은 삭제한다.
+    """
+    keep_ids = [uuid.UUID(i["item_id"]) for i in items if i.get("item_id") is not None]
+
+    # 새 목록에 없는 기존 item 삭제
+    if keep_ids:
+        await session.execute(
+            delete(EventItem).where(
+                EventItem.event_id == event_id,
+                EventItem.item_id.notin_(keep_ids),
+            )
+        )
+    else:
+        await session.execute(
+            delete(EventItem).where(EventItem.event_id == event_id)
+        )
+
+    # item_id가 null인 것만 새로 INSERT
+    for i in items:
+        if i.get("item_id") is None:
+            session.add(EventItem(event_id=event_id, item_name=i["item_name"]))
+
+    await session.flush()
+
+    # 최종 목록 반환 (기존 item의 is_prepared 보존된 채로)
+    return list(
+        (
+            await session.scalars(
+                select(EventItem)
+                .where(EventItem.event_id == event_id)
+                .order_by(EventItem.created_at, EventItem.item_id)
+            )
+        ).all()
+    )
 
 
 async def set_event_item_prepared(
