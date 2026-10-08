@@ -37,8 +37,8 @@ interface VerdictSpec {
 }
 
 /**
- * 🚨 **여기 없는 판정은 화면에 서지 않는다.** `CorrectionVerdict` 타입에는 `confirm` 도 있지만
- *    그건 지난 이력에 실려 오는 값이라 남겨 둔 것이고, 묻는 자리에는 넣지 않는다.
+ * 🚨 **여기 없는 판정은 화면에 서지 않는다.** 서버도 대상마다 받는 값이 갈린다 — 기록에
+ *    `need_more_observation` · `outdated` 를 보내면 400 이다 (#277).
  */
 const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
   observation: [

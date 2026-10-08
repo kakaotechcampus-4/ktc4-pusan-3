@@ -60,23 +60,21 @@ export type Agent = (typeof AGENTS)[number];
 /** 승격 상태. LLM 이 직접 쓰지 않는다 — Curator 의 반복 집계로만 바뀐다 (CLAUDE.md §2). */
 export type AffinityState = "candidate" | "confirmed" | "archived";
 
-/** "맞아요" 교정으로 상향된다. */
+/** 고치기(`POST /corrections`)는 이 값을 바꾸지 않는다 — 기록의 `status` 만 내린다. */
 export type ConfidenceSource =
   "institution_notice" | "parent_direct" | "parent_hedged" | "parent_hearsay";
 
 /**
  * 교정 판정 (CLAUDE.md §5 Correction).
  *
- * 🚨 **화면이 쓰는 것과 타입에 있는 것이 다르다.** 여기는 계약서 enum 이라 지난 교정 이력
- *    (`ObservationDetailResponse.corrections`)에 실려 오는 값을 전부 담아야 한다. 어떤 버튼을
- *    보여줄지는 `CorrectionButtons` 의 표가 정한다 — 기록과 기억이 서로 다른 것을 묻는다.
+ * 서버 `correction_verdict` 와 같은 4개다. **대상마다 쓸 수 있는 값이 다르다** — 기록은
+ * `once_only` · `wrong`, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
+ * 어떤 버튼을 보여줄지는 `CorrectionButtons` 의 표가 정한다.
  *
- * ⚠️ `need_more_observation` 은 **계약서 v1 에 아직 없다.** "아직 확정하지 말고 더 지켜보자" 는
- *    기억에만 있는 판정인데 v1 에는 그 자리가 없어서(`once_only` 는 관찰 한 건에 대한 말이다)
- *    제안 형태로 두고 목에 먼저 세웠다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ * 🚨 **`confirm`(맞아요)은 없다.** 동의는 아무것도 바꾸지 않아서 서버가 이력으로도 남기지 않는다
+ *    (docs/agents/data_model.md). 보내면 400 이고, 지난 이력에도 실려 오지 않는다 (#277).
  */
-export type CorrectionVerdict =
-  "confirm" | "once_only" | "need_more_observation" | "outdated" | "wrong";
+export type CorrectionVerdict = "once_only" | "need_more_observation" | "outdated" | "wrong";
 
 export type SuggestionStatus = "draft" | "approved" | "rejected" | "expired";
 
@@ -749,7 +747,7 @@ export interface AffinitiesResponse {
 
 /**
  * `POST /corrections` — 관찰이든 프로필이든 같은 엔드포인트.
- * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 422.
+ * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 400 (본문 검증 실패는 400 이다).
  */
 export interface CorrectionRequest {
   target_ref: Ref;

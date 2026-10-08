@@ -37,8 +37,14 @@ import { apiError, networkDelay, url } from "./helpers";
 /** 07 피드백 탭이 보낸 평가. 🚨 목은 프로세스 수명만큼 사는 상태를 들고 있다. */
 const feedbackBySuggestion = new Map<string, SuggestionFeedback>();
 
-/** 교정으로 비활성이 된 관찰. `wrong` · `outdated` 는 행을 지우지 않고 `inactive` 로 내린다. */
-const inactivatedObservations = new Set<string>();
+/**
+ * 교정으로 상태가 바뀐 관찰. 행을 지우지 않고 상태만 내린다 — 서버(#277)와 같은 표다.
+ * `once_only` → `stand_alone` · `wrong` → `inactive`.
+ *
+ * ⚠️ `stand_alone` 은 목록에 남긴다 — "이번만 그랬어요" 의 안내 문구("기록은 목록에 그대로 남아요")를
+ *    따랐다. 서버 목록은 `active` 만 내려서 빠진다. 어느 쪽이 맞는지 #277 에 물어 둔 상태다.
+ */
+const correctedObservations = new Map<string, "stand_alone" | "inactive">();
 
 /**
  * 화면의 분류(Agent) → 읽을 관찰 테이블. 서버(#266 `_DOMAINS_BY_AGENT`)와 같은 표다.
@@ -77,7 +83,7 @@ function decodeCursor(cursor: string): number | null {
 
 export function resetMemoryState(): void {
   feedbackBySuggestion.clear();
-  inactivatedObservations.clear();
+  correctedObservations.clear();
 }
 
 function scenarioAffinities(): Affinity[] {
@@ -98,9 +104,11 @@ function scenarioObservations(inactiveOnly = false): Observation[] {
   if (scenario === "empty") return [];
   return (
     (scenario === "observations_many" ? manyObservations : allObservations)
-      .filter((o) => inactivatedObservations.has(`${o.kind}:${o.id}`) === inactiveOnly)
+      .filter(
+        (o) => (correctedObservations.get(`${o.kind}:${o.id}`) === "inactive") === inactiveOnly,
+      )
       // 목록이 내려주는 status 도 실제 상태와 맞춰 둔다 — 화면이 이 값으로 갈리는 날 어긋나지 않게.
-      .map((o) => (inactiveOnly ? { ...o, status: "inactive" as const } : o))
+      .map((o) => ({ ...o, status: correctedObservations.get(`${o.kind}:${o.id}`) ?? o.status }))
   );
 }
 
@@ -185,8 +193,9 @@ export const memoryHandlers = [
     await networkDelay();
     const body = (await request.json()) as CorrectionRequest;
 
+    // 서버는 본문 검증 실패를 400 으로 돌려준다 (422 는 경로 값이 틀렸을 때다)
     if (Array.isArray(body.target_ref)) {
-      return apiError(422, "validation_failed", "target_ref 는 객체 1개예요");
+      return apiError(400, "validation_failed", "target_ref 는 객체 1개예요");
     }
 
     if (body.target_ref.kind === "profile_affinity") {
@@ -202,7 +211,7 @@ export const memoryHandlers = [
         target: nextAffinity(target, body.verdict),
         cascade: {
           affinities_recomputed: [{ kind: "profile_affinity", id: target.id }],
-          suggestions_recalculated: body.verdict === "confirm" ? [] : ["s_1"],
+          suggestions_recalculated: ["s_1"],
         },
       };
       return HttpResponse.json(response, { status: 201 });
@@ -214,9 +223,8 @@ export const memoryHandlers = [
     if (!target) return apiError(404, "not_found", "그 기억을 찾지 못했어요");
 
     // 🚨 하드 삭제가 아니다 — `status` 를 내린다. 행이 남아야 제안의 source_refs 가 안 끊긴다.
-    if (body.verdict === "outdated" || body.verdict === "wrong") {
-      inactivatedObservations.add(`${target.kind}:${target.id}`);
-    }
+    const status = body.verdict === "once_only" ? "stand_alone" : "inactive";
+    correctedObservations.set(`${target.kind}:${target.id}`, status);
 
     const response: CorrectionResponse = {
       correction: {
@@ -224,11 +232,7 @@ export const memoryHandlers = [
         verdict: body.verdict,
         created_at: new Date().toISOString(),
       },
-      target: {
-        ...target,
-        status: body.verdict === "confirm" || body.verdict === "once_only" ? "active" : "inactive",
-        confidence_source: body.verdict === "confirm" ? "parent_direct" : target.confidence_source,
-      },
+      target: { ...target, status },
       cascade: {
         affinities_recomputed:
           target.kind === "observation_health"
@@ -236,7 +240,7 @@ export const memoryHandlers = [
             : target.affinity
               ? [{ kind: "profile_affinity", id: target.affinity.id }]
               : [],
-        suggestions_recalculated: body.verdict === "confirm" ? [] : ["s_1"],
+        suggestions_recalculated: ["s_1"],
       },
     };
     return HttpResponse.json(response, { status: 201 });
@@ -281,13 +285,10 @@ export const memoryHandlers = [
 /**
  * 기억 교정의 효과 표 (계약서 §08). 프론트가 추측하지 않게 목도 그대로 따른다.
  *
- * ⚠️ `need_more_observation` 은 계약서 v1 에 없는 값이다 (types.ts 의 ⚠️). "아직 확정하지 말고
- *    더 지켜보자" 라서 **한 단계만** 내린다 — v1 에서 `once_only` 가 하던 자리와 같다.
+ * `need_more_observation` 은 "아직 확정하지 말고 더 지켜보자" 라서 **한 단계만** 내린다 —
+ * v1 에서 `once_only` 가 하던 자리와 같다.
  */
 function nextAffinity(target: Affinity, verdict: CorrectionRequest["verdict"]): Affinity {
-  if (verdict === "confirm") {
-    return { ...target, strength: Math.min(1, target.strength + 0.1) };
-  }
   if (verdict === "need_more_observation" || verdict === "once_only") {
     return target.state === "confirmed" ? { ...target, state: "candidate" } : target;
   }

@@ -39,9 +39,8 @@ import { formatDay } from "@/lib/format";
 export type MemoryTarget =
   { type: "observation"; observation: Observation } | { type: "affinity"; affinity: Affinity };
 
-/** 🚨 지난 교정 이력에도 쓰이므로 **화면 버튼에서 빠진 값(`confirm`)까지** 담는다. */
+/** 지난 교정 이력에 쓴다. 버튼 문구는 `CorrectionButtons` 의 표가 따로 든다. */
 const VERDICT_LABEL: Record<CorrectionVerdict, string> = {
-  confirm: "맞아요",
   once_only: "이번만 그랬어요",
   need_more_observation: "기록이 더 필요해요",
   outdated: "지금은 달라요",
