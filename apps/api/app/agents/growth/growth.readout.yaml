@@ -1,0 +1,68 @@
+# Growth 코드 상수 문구 (Growth_Tool_명세.md §4). 모델을 거치지 않고 화면에 그대로 나간다.
+# 테스트(test_growth_readouts.py)가 명세 §4 표와 글자 단위로 비교한다. 문구를 바꾸면 명세도 같이 고친다.
+# `{name}` 자리는 코드가 만든 값으로만 채운다 (subject · metric · label).
+
+# ── 닫힘 · 안내 — 게이트와 라벨 규칙이 닫을 때 (모델 0회) ──
+closed.infant_learning:
+  kind: closed
+  template: "돌 전에는 놀이가 곧 배움이에요. 놀이 추천에서 함께 알려드릴게요."
+closed.habit_under36:
+  kind: closed
+  template: "이 시기에는 흔히 보이는 행동이라 교정보다 지켜보는 걸 권해요. 걱정되면 영유아 검진 때 상담해 보세요."
+closed.manner_under24:
+  kind: closed
+  template: "예절 연습은 두 돌쯤부터 알려드릴게요. 지금은 어른이 보여주는 것만으로 충분해요."
+closed.book_api:
+  kind: closed
+  template: "지금은 도서 정보를 불러오지 못했어요. 잠시 뒤에 다시 시도해 주세요."
+closed.consent:
+  kind: closed
+  template: "키·몸무게를 보려면 건강정보 동의가 필요해요."
+closed.medical_routine:
+  kind: closed
+  template: "약이나 처치 방법은 처방한 병원이나 약국에 여쭤보시는 게 가장 정확해요."
+closed.symptom_habit:
+  kind: closed
+  template: "이런 행동은 집에서 고치는 방법을 알려드리기 어려워요. 걱정되면 영유아 검진 때나 소아청소년과에서 상담해 보세요."
+blocked.safety:
+  kind: blocked
+  template: "지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
+
+# ── 성장 추이 (growth_review). 요약 뒤에 붙는 줄들도 이 상수다 ──
+delta.need_more:
+  kind: growth_delta
+  template: "성장폭을 보려면 측정 기록이 두 번 이상 필요해요. 최근에 재보실래요?"
+delta.one_metric:
+  kind: growth_delta
+  template: "{metric}는 두 번 이상 재면 변화도 함께 알려드릴게요."
+delta.posture_hint:
+  kind: growth_delta
+  template: "두 돌 무렵에는 누워서 재다가 서서 재기 시작해서, 재는 방법에 따라 키가 조금 다르게 나올 수 있어요."
+delta.checkup_hint:
+  kind: growth_delta
+  template: "성장 평가는 영유아 건강검진에서 확인해 보세요."
+
+# ── 안전 · 근거 안내 ──
+caution.environmental:
+  kind: notice
+  template: "등록된 알레르기({label})가 있어요. 장소랑 재료를 한 번 확인해 주세요."
+doc.no_row:
+  kind: notice
+  template: "이 시기에 맞는 자료가 아직 없어서 또래 기준으로 알려드려요."
+rhythm.no_row:
+  kind: rhythm_info
+  template: "아직 이 시기 리듬 안내를 준비하지 못했어요."
+next_step.chain_end:
+  kind: notice
+  template: "이건 이미 혼자 잘 하고 있어요. 다음 단계는 준비되면 알려드릴게요."
+
+# ── 되묻기 — needs_observation 에 한 줄로 실린다 ──
+ask.habit_trigger:
+  kind: ask
+  template: "{subject}은(는) 주로 어떤 상황에서 하나요?"
+ask.habit_current:
+  kind: ask
+  template: "요즘도 {subject} 하나요?"
+ask.routine_current:
+  kind: ask
+  template: "{subject}은(는) 요즘 어느 정도까지 혼자 하나요?"
