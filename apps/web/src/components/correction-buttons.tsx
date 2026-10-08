@@ -41,7 +41,7 @@ interface VerdictSpec {
    *    목록에 남는 판정에도 "목록에서 빠지고" 가 붙어, 바로 위 `effect` 와 반대말을 했다 (#270 리뷰).
    * 🚨 **되돌릴 수 있다고 말하지 않는다.** 교정 자체는 append-only 라 데이터가 지워지지는 않지만,
    *    화면에는 되돌리는 기능이 없다(제품 결정). "다시 고칠 수 있어요" 라고 쓰면 부모가 찾지 못할
-   *    길을 약속하는 것이다. 서버도 한 번 고친 기록은 다시 받지 않는다(400).
+   *    길을 약속하는 것이다. 서버도 한 번 고친 기록은 다시 받지 않는다(409 `already_corrected`).
    * 🚨 **Agent 마다 다른 것은 적지 않는다.** `stand_alone` 은 Food 는 검색하고 Activity 는 안 해서
    *    "제안의 근거로 쓰이지 않아요" 가 반만 맞다 — 확실한 "기억으로 세지 않는다" 만 적는다.
    */
@@ -99,6 +99,27 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
       after: "한동안은 이 기억이 확인되려면 기록이 더 쌓여야 해요.",
     },
   ],
+};
+
+/**
+ * 고친 기록의 상태 → 무엇으로 고쳤나, 그래서 어떻게 되나. 목록 줄과 상세 시트가 같이 쓴다.
+ *
+ * 🚨 **고친 기록도 목록에 남는다** (#266). 서버는 `deleted` 만 빼고 내려서, 화면이 `status` 로
+ *    갈라 그리지 않으면 고친 기록과 아닌 기록이 같은 줄로 선다 — "이번만 그랬어요" 로 고친 기록이
+ *    기억에 묶인 칩을 단 채 서 있으면 부모는 여전히 기억으로 세는 줄 안다.
+ * 🚨 `label` 은 위 `VERDICTS.observation` 의 라벨과 같은 말이어야 한다 — 누른 버튼의 이름이
+ *    그대로 줄에 남아야 무엇을 눌렀는지 알아본다. `note` 는 그 판정의 `after` 에서 "되돌릴 수
+ *    없어요" 를 뺀 것이다 (이미 일어난 일이라).
+ */
+export const CORRECTED_OBSERVATION: Record<
+  "stand_alone" | "inactive",
+  { label: string; note: string }
+> = {
+  stand_alone: { label: "이번만 그랬어요", note: "아이의 기억으로는 세지 않아요." },
+  inactive: {
+    label: "잘못된 기록",
+    note: "제안의 근거로도, 아이의 기억으로도 쓰이지 않아요.",
+  },
 };
 
 export function CorrectionButtons({

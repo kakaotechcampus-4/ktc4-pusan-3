@@ -41,10 +41,12 @@ const feedbackBySuggestion = new Map<string, SuggestionFeedback>();
  * 교정으로 상태가 바뀐 관찰. 행을 지우지 않고 상태만 내린다 — 서버(#277)와 같은 표다.
  * `once_only` → `stand_alone` · `wrong` → `inactive`.
  *
- * ⚠️ 서버는 `stand_alone` · `inactive` 둘 다 목록에 내리기로 했다 (#270 리뷰 · 서버 반영 전).
- *    목은 아직 `stand_alone` 만 남기고 `inactive` 는 뺀다.
+ * 🚨 **고친 기록도 목록에 남는다** (#266). 서버는 `deleted` 만 빼고 세 상태를 모두 내리고,
+ *    화면이 `status` 로 갈라 그린다. 고치기는 `active` 기록만 받는다 — 아니면 409 `already_corrected`.
  */
 const correctedObservations = new Map<string, "stand_alone" | "inactive">();
+/** 기록 상세의 `corrections` — 서버처럼 고친 이력을 상세가 돌려준다. */
+const correctionHistory = new Map<string, ObservationDetailResponse["corrections"]>();
 
 /**
  * 기억 고치기가 남긴 것. 서버(#277)처럼 **상태를 직접 쓰지 않는다** — `wrong` 수와 `strength` 만
@@ -102,6 +104,7 @@ function decodeCursor(cursor: string): number | null {
 export function resetMemoryState(): void {
   feedbackBySuggestion.clear();
   correctedObservations.clear();
+  correctionHistory.clear();
   wrongsByAffinity.clear();
   strengthByAffinity.clear();
 }
@@ -149,22 +152,20 @@ function currentAffinity(affinity: Affinity): Affinity {
 }
 
 /**
- * 목록의 기본은 **살아 있는 기록**이다. 교정으로 내려간 것은 빠진다 (계약서 §08).
- *
- * `status=inactive` 는 계약서에 있는 파라미터라 목도 받아 둔다. 다만 **화면은 쓰지 않는다** —
- * 교정을 되돌리는 기능을 주지 않기로 해서, 뺀 것을 다시 꺼내 보는 길도 두지 않는다.
+ * 기록 목록. 서버(#266)처럼 고친 기록(`stand_alone` · `inactive`)도 **빼지 않고** `status` 만
+ * 고친 값으로 내린다 — 화면이 그 값으로 줄을 갈라 그린다. `total` 도 세 상태를 모두 센다.
  */
-function scenarioObservations(inactiveOnly = false): Observation[] {
+function scenarioObservations(): Observation[] {
   const scenario = currentScenario();
   if (scenario === "empty") return [];
-  return (
-    (scenario === "observations_many" ? manyObservations : allObservations)
-      .filter(
-        (o) => (correctedObservations.get(`${o.kind}:${o.id}`) === "inactive") === inactiveOnly,
-      )
-      // 목록이 내려주는 status 도 실제 상태와 맞춰 둔다 — 화면이 이 값으로 갈리는 날 어긋나지 않게.
-      .map((o) => ({ ...o, status: correctedObservations.get(`${o.kind}:${o.id}`) ?? o.status }))
+  return (scenario === "observations_many" ? manyObservations : allObservations).map(
+    withCorrectedStatus,
   );
+}
+
+function withCorrectedStatus<T extends Observation>(observation: T): T {
+  const status = correctedObservations.get(`${observation.kind}:${observation.id}`);
+  return status ? { ...observation, status } : observation;
 }
 
 export const memoryHandlers = [
@@ -174,7 +175,6 @@ export const memoryHandlers = [
     const params = new URL(request.url).searchParams;
     const domain = params.get("domain");
     const unusedOnly = params.get("unused_in_suggestions") === "true";
-    const inactiveOnly = params.get("status") === "inactive";
     const limit = Number(params.get("limit") ?? OBSERVATION_PAGE_SIZE);
     const cursor = params.get("cursor");
 
@@ -187,7 +187,7 @@ export const memoryHandlers = [
     const kinds = domain === null ? VISIBLE_KINDS : KINDS_BY_AGENT[domain as Agent];
     if (!kinds) return apiError(400, "validation_failed", "모르는 분류예요");
 
-    let items = scenarioObservations(inactiveOnly).filter((o) => kinds.includes(o.kind));
+    let items = scenarioObservations().filter((o) => kinds.includes(o.kind));
     // "제안에서 빠진 기억" — 목에서는 프로필에 묶이지 않은 것을 그 자리에 둔다.
     // 건강은 위에서 이미 빠졌다 — `affinity` 키가 없는 모양이라 여기 닿지 않는다.
     if (unusedOnly) items = items.filter((o) => !isHealthObservation(o) && o.affinity === null);
@@ -201,8 +201,9 @@ export const memoryHandlers = [
   http.get(url("/children/:cid/observations/:kind/:id"), async ({ params }) => {
     await networkDelay();
 
-    const observation = allObservations.find((o) => o.kind === params.kind && o.id === params.id);
-    if (!observation) return apiError(404, "not_found", "그 기억을 찾지 못했어요");
+    const found = allObservations.find((o) => o.kind === params.kind && o.id === params.id);
+    if (!found) return apiError(404, "not_found", "그 기록을 찾지 못했어요");
+    const observation = withCorrectedStatus(found);
 
     /** 🚨 `used_in` 이 빈 배열이면 화면은 "제안 근거에서 빠져 있어요" 를 그린다. */
     const usedIn =
@@ -219,7 +220,7 @@ export const memoryHandlers = [
     const body: ObservationDetailResponse = {
       observation,
       used_in: usedIn,
-      corrections: [],
+      corrections: correctionHistory.get(`${found.kind}:${found.id}`) ?? [],
     };
     return HttpResponse.json(body);
   }),
@@ -290,18 +291,28 @@ export const memoryHandlers = [
     const target = allObservations.find(
       (o) => o.kind === body.target_ref.kind && o.id === body.target_ref.id,
     );
-    if (!target) return apiError(404, "not_found", "그 기억을 찾지 못했어요");
+    if (!target) return apiError(404, "not_found", "그 기록을 찾지 못했어요");
+    if (body.verdict !== "once_only" && body.verdict !== "wrong") {
+      return apiError(400, "validation_failed", "이 대상에는 쓸 수 없는 고치기예요");
+    }
+    // 🚨 고치기는 `active` 기록만 받는다 (#277). 값이 틀린 400 과 코드가 다르다 — 화면은 이 409 를
+    //    "이미 고친 기록" 으로 읽고 버튼을 거둔다.
+    if (correctedObservations.has(`${target.kind}:${target.id}`)) {
+      return apiError(409, "already_corrected", "이미 고친 기록이에요");
+    }
 
     // 🚨 하드 삭제가 아니다 — `status` 를 내린다. 행이 남아야 제안의 source_refs 가 안 끊긴다.
     const status = body.verdict === "once_only" ? "stand_alone" : "inactive";
     correctedObservations.set(`${target.kind}:${target.id}`, status);
+    const correction = {
+      id: `cr_${Date.now()}`,
+      verdict: body.verdict,
+      created_at: new Date().toISOString(),
+    };
+    correctionHistory.set(`${target.kind}:${target.id}`, [correction]);
 
     const response: CorrectionResponse = {
-      correction: {
-        id: `cr_${Date.now()}`,
-        verdict: body.verdict,
-        created_at: new Date().toISOString(),
-      },
+      correction,
       target: { ...target, status },
       cascade: {
         affinities_recomputed:
