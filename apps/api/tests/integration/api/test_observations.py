@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,7 @@ from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
+    ObservationStatus,
     RoutineCategory,
 )
 from app.domains.memory.observation.repository import create_observation
@@ -91,6 +93,27 @@ async def test_list_maps_agent_to_tables_and_hides_health(
     assert health == {"items": [], "next_cursor": None, "total": 0}
     assert everything["total"] == 4
     assert "observation_health" not in {i["kind"] for i in everything["items"]}
+
+
+async def test_list_keeps_corrected_observations_but_not_deleted_ones(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """고친 기록(이번만 · 잘못된 기록)은 목록에 남고 status 로 구분된다. 지운 것만 빠진다."""
+    headers, parent_id = bearer
+    kept = {}
+    for status in ObservationStatus:
+        record = await _observe(session, cid, parent_id, "food")
+        await session.execute(
+            update(ObservationFood).where(ObservationFood.id == record.id).values(status=status)
+        )
+        kept[str(record.id)] = status.value
+
+    listed = (await db_client.get(f"/api/v1/children/{cid}/observations", headers=headers)).json()
+
+    assert {i["id"]: i["status"] for i in listed["items"]} == {
+        id_: status for id_, status in kept.items() if status != "deleted"
+    }
+    assert listed["total"] == 3
 
 
 async def test_cursor_pages_through_without_gaps(

@@ -12,7 +12,7 @@ WITH observations AS (
     SELECT kind, id, observed_range
     FROM observations AS o
     WHERE child_id = :child_id
-      AND status = :status
+      AND status = ANY(CAST(:statuses AS text[]))
       AND (CAST(:kinds AS text[]) IS NULL OR kind = ANY(CAST(:kinds AS text[])))
       AND (CAST(:date_from AS date) IS NULL OR observed_range && daterange(CAST(:date_from AS date), NULL, '[)'))
       AND (CAST(:date_to_exclusive AS date) IS NULL OR observed_range && daterange(NULL, CAST(:date_to_exclusive AS date), '[)'))
