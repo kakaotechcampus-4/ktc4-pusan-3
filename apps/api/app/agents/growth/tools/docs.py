@@ -48,13 +48,17 @@ class DocHit:
 def doc_row_type(
     task_type: GrowthTaskType, months: int, routine_category: str | None
 ) -> GrowthDocType:
-    """라벨 · 월령 · 카테고리가 읽을 row_type 을 정한다. 모델이 고르지 않는다."""
+    """라벨 · 월령 · 카테고리가 읽을 row_type 을 정한다. 모델이 고르지 않는다.
+
+    `growth_review` 는 모델 0회 · tool 0개라 문서를 조회하지 않는다(Growth_Agent_명세 §5) —
+    `ValueError`. `measure_guide` 는 `delta.need_more` 옆에 붙는 행이라 이 경로로 읽지 않는다.
+    """
     if task_type is GrowthTaskType.LEARNING_SUGGESTION:
         return "learning_activity"
     if task_type is GrowthTaskType.BOOK_SUGGESTION:
         return "book_guide"
     if task_type is GrowthTaskType.GROWTH_REVIEW:
-        return "measure_guide"
+        raise ValueError(f"{task_type.value} 는 문서를 조회하지 않는다")
     mode = routine_mode(months, routine_category)
     if mode == "rhythm_info":
         return "rhythm_info"

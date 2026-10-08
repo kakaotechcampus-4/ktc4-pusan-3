@@ -194,11 +194,17 @@ class TestRowType:
             (ROUTINE, 30, "social_manner", "manner_practice"),
             (ROUTINE, 40, "habit", "habit_strategy"),
             (GrowthTaskType.BOOK_SUGGESTION, 20, None, "book_guide"),
-            (GrowthTaskType.GROWTH_REVIEW, 20, None, "measure_guide"),
         ],
     )
     def test_라벨_월령_카테고리가_종류를_정한다(self, task_type, months, category, expected):
         assert doc_row_type(task_type, months, category) == expected
+
+    async def test_성장_추이는_문서를_조회하지_않는다(self):
+        """`growth_review` 는 모델 0회 · tool 0개다 (Agent_명세 §5). 문서 행을 읽을 이유가 없다."""
+        spy = SpyDocs()
+        with pytest.raises(ValueError, match="growth_review"):
+            await search_growth_doc(spy, task_type=GrowthTaskType.GROWTH_REVIEW, months=20)
+        assert spy.calls == []
 
     async def test_포트에_넘기는_종류는_코드가_정한_값이다(self):
         spy = SpyDocs()
