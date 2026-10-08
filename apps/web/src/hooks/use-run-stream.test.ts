@@ -252,7 +252,9 @@ describe("도메인 Agent 결과(agent_result) — #227", () => {
       agent: "growth",
       task_type: "growth_review",
       status: "completed",
-      readouts: [{ kind: "growth_delta", title: "", body: "지어낸 추이", authored_by: "code" }],
+      readouts: [
+        { kind: "growth_delta", title: "", body: "지어낸 추이", authored_by: "code", code: null },
+      ],
       question: null,
     },
   };
@@ -272,7 +274,9 @@ describe("도메인 Agent 결과(agent_result) — #227", () => {
       agent: "food",
       task_type: "meal_recommendation",
       status: "completed",
-      readouts: [{ kind: "notice", title: "", body: "지어낸 안내", authored_by: "code" }],
+      readouts: [
+        { kind: "notice", title: "", body: "지어낸 안내", authored_by: "code", code: "empty" },
+      ],
       question: null,
     },
   };

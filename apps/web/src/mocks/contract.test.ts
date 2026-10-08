@@ -723,7 +723,27 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
       ]);
       // ⚠️ 추천 칸은 3단계 전이라 없다. 있으면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
       expect(data).not.toHaveProperty("suggestion_ids");
+      for (const readout of data.readouts) {
+        expect(Object.keys(readout).sort()).toEqual([
+          "authored_by",
+          "body",
+          "code",
+          "kind",
+          "title",
+        ]);
+      }
     }
+  });
+
+  it("🚨 개수 안내는 code 로 찾는다 — 날씨 안내와 같은 kind 라서다 (#276)", async () => {
+    const readouts = (await eventsOf("agent_readout"))
+      .filter((e) => e.type === "agent_result")
+      .flatMap((e) => (e.data as AgentResultEvent).readouts);
+
+    // 3단계 전까지 04 로 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 나와서 서버가 걸러 낸다.
+    expect(readouts.filter((r) => r.code !== null).map((r) => r.code)).toEqual(["empty"]);
+    // 개수와 상관없는 readout(성장 추이)은 null 이다.
+    expect(readouts.find((r) => r.kind === "growth_delta")?.code).toBeNull();
   });
 
   it("🚨 결과를 못 낸 Agent 는 agent_result 없이 partial 에만 오고, partial 은 결과 뒤 · done 앞이다", async () => {
