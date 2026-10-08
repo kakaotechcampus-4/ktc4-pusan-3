@@ -53,8 +53,16 @@ interface VerdictSpec {
  *    `need_more_observation` · `outdated` 를 보내면 400 이다 (#277).
  *
  * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` · `inactive`
- * 둘 다 목록에 내린다). 기억은 `outdated` · `wrong` 이 `archived` 라 목록에서 빠지고,
- * `need_more_observation` 은 `candidate` 로 내려갈 뿐이라 남는다.
+ * 둘 다 목록에 내린다).
+ *
+ * 🚨 **기억 고치기는 명령이 아니라 의견이다.** 서버(#277)는 판정으로 기억의 상태를 바꾸지 않고,
+ *    상태는 쌓인 기록 수로만 다시 센다 (최상위 §2 "승격은 Curator 의 반복 집계로만"). 세 판정 모두
+ *    기억을 목록에 남긴다. `need_more_observation` · `outdated` 는 `strength` 만 조금 낮추고,
+ *    `wrong` 은 한동안 확인됨이 되는 기준을 올려서 기록 수가 모자라면 후보로 내려간다.
+ *    그래서 누르기 전에는 **어느 기억에서든 확실한 것만** 말하고, 실제로 무엇이 바뀌었는지는
+ *    누른 뒤 응답으로 말한다 (`MemoryDetailSheet` 의 `CascadeResult`).
+ * 🚨 기간·건수(21일 · 1건)를 쓰지 않는다 — 서버 설정값이라 바뀐다. "추천에 덜 쓰여요" 도 쓰지
+ *    않는다 — 확인된 기억은 `strength` 와 상관없이 근거가 되어서 기억마다 사실 여부가 갈린다.
  */
 const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
   observation: [
@@ -75,19 +83,20 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
     {
       verdict: "need_more_observation",
       label: "기록이 더 필요해요",
-      effect: "아직 확정하지 않고 더 지켜봐요. 쌓인 기록은 그대로 둬요.",
+      effect: "아직 이르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
+      after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
     },
     {
       verdict: "outdated",
       label: "지금은 달라요",
-      effect: "지금은 다르다고 표시하고 이 기억을 목록에서 빼요.",
-      after: "빠진 기억은 되돌릴 수 없어요.",
+      effect: "지금은 다르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
+      after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
     },
     {
       verdict: "wrong",
       label: "잘못된 기록",
-      effect: "이 기억을 목록에서 빼요. 쌓인 기록은 그대로 남아요.",
-      after: "빠진 기억은 되돌릴 수 없어요.",
+      effect: "잘못된 기억이라는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
+      after: "한동안은 이 기억이 확인되려면 기록이 더 쌓여야 해요.",
     },
   ],
 };

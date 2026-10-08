@@ -47,6 +47,24 @@ const feedbackBySuggestion = new Map<string, SuggestionFeedback>();
 const correctedObservations = new Map<string, "stand_alone" | "inactive">();
 
 /**
+ * 기억 고치기가 남긴 것. 서버(#277)처럼 **상태를 직접 쓰지 않는다** — `wrong` 수와 `strength` 만
+ * 들고, 상태는 `currentAffinity` 가 기록 수로 다시 센다.
+ */
+const wrongsByAffinity = new Map<string, number>();
+const strengthByAffinity = new Map<string, number>();
+
+/**
+ * 서버 `rules/profile.py` 의 두 값. 🚨 화면은 이 값을 모른다 — 목이 서버와 같은 결과를 내려고만 둔다.
+ * `PROMOTION_THRESHOLD`: 확인됨이 되려면 묶인 기록이 이만큼 + 21일 안의 기억 `wrong` 수.
+ */
+const PROMOTION_THRESHOLD = 3;
+const VERDICT_DECAY: Record<"need_more_observation" | "outdated" | "wrong", number> = {
+  wrong: 0.93,
+  outdated: 0.95,
+  need_more_observation: 0.97,
+};
+
+/**
  * 화면의 분류(Agent) → 읽을 관찰 테이블. 서버(#266 `_DOMAINS_BY_AGENT`)와 같은 표다.
  *
  * 🚨 **`observation_${domain}` 으로 유추하지 않는다.** `growth` 는 education 과 routine 두 테이블이고,
@@ -84,13 +102,50 @@ function decodeCursor(cursor: string): number | null {
 export function resetMemoryState(): void {
   feedbackBySuggestion.clear();
   correctedObservations.clear();
+  wrongsByAffinity.clear();
+  strengthByAffinity.clear();
 }
 
 function scenarioAffinities(): Affinity[] {
   const scenario = currentScenario();
   if (scenario === "empty") return [];
-  if (scenario === "stale") return staleAffinities;
-  return affinities;
+  return (scenario === "stale" ? staleAffinities : affinities).map(currentAffinity);
+}
+
+/**
+ * 고치기를 반영한 기억. 서버(#277 `recompute_profile`)와 같은 규칙이다.
+ *
+ * - 묶인 기록은 `active` 만 센다 — 고친 기록(`stand_alone` · `inactive`)은 빠진다
+ * - 상태는 기록 수와 기억 `wrong` 수로만 정한다. `need_more_observation` · `outdated` 는
+ *   `strength` 만 낮추고 상태를 바꾸지 않는다. 🚨 **어느 판정도 기억을 `archived` 로 보내지 않는다**
+ *
+ * ⚠️ 서버는 최근 14일 기록 수와 강한 신호(G)도 보지만 목은 묶인 기록 수만 센다. 그래서 고치기가
+ *    닿지 않은 기억은 픽스처 그대로 둔다 — 다시 세면 픽스처의 상태가 목 규칙으로 바뀐다.
+ */
+function currentAffinity(affinity: Affinity): Affinity {
+  const activeRefs = affinity.source_refs.filter(
+    (ref) => !correctedObservations.has(`${ref.kind}:${ref.id}`),
+  );
+  const wrongs = wrongsByAffinity.get(affinity.id) ?? 0;
+  const strength = strengthByAffinity.get(affinity.id);
+  if (activeRefs.length === affinity.source_refs.length && wrongs === 0 && strength === undefined) {
+    return affinity;
+  }
+
+  const count = activeRefs.length;
+  const state =
+    affinity.state === "archived"
+      ? "archived"
+      : count >= PROMOTION_THRESHOLD + wrongs
+        ? "confirmed"
+        : "candidate";
+  return {
+    ...affinity,
+    state,
+    strength: strength ?? affinity.strength,
+    observation_count: count,
+    source_refs: activeRefs,
+  };
 }
 
 /**
@@ -177,9 +232,12 @@ export const memoryHandlers = [
     const domain = params.get("domain");
     const state = params.get("state");
 
-    let affinities = scenarioAffinities();
+    // 서버 기본값: `archived` 와 묶인 active 기록이 없는 기억은 빠진다 (#268).
+    let affinities = scenarioAffinities().filter((a) => a.observation_count > 0);
     if (domain) affinities = affinities.filter((a) => a.domain === domain);
-    if (state) affinities = affinities.filter((a) => a.state === state);
+    affinities = state
+      ? affinities.filter((a) => a.state === state)
+      : affinities.filter((a) => a.state !== "archived");
 
     const body: AffinitiesResponse = {
       affinities,
@@ -199,8 +257,20 @@ export const memoryHandlers = [
     }
 
     if (body.target_ref.kind === "profile_affinity") {
-      const target = scenarioAffinities().find((a) => a.id === body.target_ref.id);
-      if (!target) return apiError(404, "not_found", "그 프로필을 찾지 못했어요");
+      // 서버처럼 목록에 보이는 기억만 고친다 — 묶인 active 기록이 없으면 404.
+      const found = scenarioAffinities().find((a) => a.id === body.target_ref.id);
+      if (!found || found.observation_count === 0) {
+        return apiError(404, "not_found", "그 기억을 찾지 못했어요");
+      }
+      if (body.verdict === "once_only") {
+        return apiError(400, "validation_failed", "이 대상에는 쓸 수 없는 고치기예요");
+      }
+
+      strengthByAffinity.set(found.id, found.strength * VERDICT_DECAY[body.verdict]);
+      if (body.verdict === "wrong") {
+        wrongsByAffinity.set(found.id, (wrongsByAffinity.get(found.id) ?? 0) + 1);
+      }
+      const target = scenarioAffinities().find((a) => a.id === found.id) ?? found;
 
       const response: CorrectionResponse = {
         correction: {
@@ -208,7 +278,7 @@ export const memoryHandlers = [
           verdict: body.verdict,
           created_at: new Date().toISOString(),
         },
-        target: nextAffinity(target, body.verdict),
+        target,
         cascade: {
           affinities_recomputed: [{ kind: "profile_affinity", id: target.id }],
           suggestions_recalculated: ["s_1"],
@@ -281,16 +351,3 @@ export const memoryHandlers = [
     return HttpResponse.json(body);
   }),
 ];
-
-/**
- * 기억 교정의 효과 표 (계약서 §08). 프론트가 추측하지 않게 목도 그대로 따른다.
- *
- * `need_more_observation` 은 "아직 확정하지 말고 더 지켜보자" 라서 **한 단계만** 내린다 —
- * v1 에서 `once_only` 가 하던 자리와 같다.
- */
-function nextAffinity(target: Affinity, verdict: CorrectionRequest["verdict"]): Affinity {
-  if (verdict === "need_more_observation" || verdict === "once_only") {
-    return target.state === "confirmed" ? { ...target, state: "candidate" } : target;
-  }
-  return { ...target, state: "archived" };
-}

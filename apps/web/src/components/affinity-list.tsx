@@ -23,7 +23,8 @@ import { cn } from "@/lib/cn";
  * 🚨 **`is_stale` 인 프로필을 단독 근거처럼 보이게 두지 않는다** (NF-08). 6개월이 지났다는
  *    날짜 사실은 `state_reason` 이 말하고, 그래서 어떻게 되는지는 고정 문구가 말한다.
  */
-const STATE_LABEL: Record<AffinityState, string> = {
+/** 상세 시트의 고치기 결과 줄도 이 표를 쓴다 — 같은 상태가 화면마다 다른 이름으로 불리지 않게. */
+export const STATE_LABEL: Record<AffinityState, string> = {
   candidate: "후보",
   confirmed: "확인됨",
   archived: "보관됨",

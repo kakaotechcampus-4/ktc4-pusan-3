@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
 import { useState } from "react";
 
+import { STATE_LABEL } from "@/components/affinity-list";
 import { CorrectionButtons } from "@/components/correction-buttons";
 import { DomainMeta, observationAgent } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -13,6 +14,7 @@ import { api, qk } from "@/lib/api";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type {
   Affinity,
+  AffinityState,
   CorrectionRequest,
   CorrectionResponse,
   CorrectionVerdict,
@@ -59,6 +61,11 @@ export function MemoryDetailSheet({
 }) {
   const queryClient = useQueryClient();
   const [result, setResult] = useState<CorrectionResponse | null>(null);
+  /**
+   * 고치기 **직전**의 기억 상태. 결과 줄이 "무엇이 바뀌었나" 를 말하려면 비교할 값이 있어야 한다.
+   * 🚨 시트를 연 순간의 값이 아니다 — 한 시트에서 두 번 고치면 두 번째의 직전은 첫 번째 응답이다.
+   */
+  const [stateBefore, setStateBefore] = useState<AffinityState | null>(null);
 
   const ref: Ref | null =
     target === null
@@ -74,6 +81,13 @@ export function MemoryDetailSheet({
       return api.post<CorrectionResponse>("/corrections", body);
     },
     onSuccess: (response) => {
+      setStateBefore(
+        target?.type !== "affinity"
+          ? null
+          : result?.target.kind === "profile_affinity"
+            ? result.target.state
+            : target.affinity.state,
+      );
       setResult(response);
       // 교정 하나가 관찰·프로필·제안을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
@@ -82,6 +96,7 @@ export function MemoryDetailSheet({
 
   function close() {
     setResult(null);
+    setStateBefore(null);
     correct.reset();
     onClose();
   }
@@ -122,7 +137,9 @@ export function MemoryDetailSheet({
             </p>
           ) : null}
 
-          {result ? <CascadeResult result={result} targetKind={target.type} /> : null}
+          {result ? (
+            <CascadeResult result={result} targetKind={target.type} stateBefore={stateBefore} />
+          ) : null}
         </div>
       )}
     </BottomSheet>
@@ -132,16 +149,25 @@ export function MemoryDetailSheet({
 /**
  * 🚨 무엇이 다시 계산됐는지는 **서버가 준 숫자**로만 말한다. "추천이 바뀔 거예요" 같은
  *    예측을 프론트가 쓰지 않는다 — 재계산 범위를 아는 것은 Curator 뿐이다.
+ *
+ * 🚨 **기억을 고쳤으면 응답의 상태를 직전 상태와 비교해 말한다.** 기억 고치기는 의견이라
+ *    (`CorrectionButtons` 의 🚨) 상태가 그대로인 경우가 흔한데, "다시 계산했어요" 만 쓰면
+ *    무엇이 됐는지 알 수 없다. 그대로면 **그대로라고** 말하고, 이유는 서버의 `state_reason` 이 진다.
+ *    "기억 1건을 다시 계산했어요" 는 쓰지 않는다 — 고친 그 기억 자신이라 아무것도 알려 주지 않는다.
  */
 function CascadeResult({
   result,
   targetKind,
+  stateBefore,
 }: {
   result: CorrectionResponse;
   /** 🚨 관찰과 프로필을 "기억" 한 단어로 묶지 않는다 (`CorrectionButtons` 의 🚨). */
   targetKind: "observation" | "affinity";
+  /** 기억을 고쳤을 때만 있다. 고치기 직전의 상태. */
+  stateBefore: AffinityState | null;
 }) {
-  const profiles = result.cascade.affinities_recomputed.length;
+  const affinity = result.target.kind === "profile_affinity" ? result.target : null;
+  const profiles = affinity ? 0 : result.cascade.affinities_recomputed.length;
   const suggestions = result.cascade.suggestions_recalculated.length;
 
   return (
@@ -149,7 +175,17 @@ function CascadeResult({
       <p className="text-body-sm text-ink">
         {josa(VERDICT_LABEL[result.correction.verdict], "으로/로")} 반영했어요.
       </p>
-      {profiles === 0 && suggestions === 0 ? (
+      {affinity && stateBefore ? (
+        <div className="mt-1">
+          <p className="text-caption text-ink-muted">
+            {stateBefore === affinity.state
+              ? "기억의 상태는 바뀌지 않았어요."
+              : `기억이 ${STATE_LABEL[stateBefore]}에서 ${josa(STATE_LABEL[affinity.state], "으로/로")} 바뀌었어요.`}
+          </p>
+          <p className="text-caption text-ink-muted">{affinity.state_reason}</p>
+        </div>
+      ) : null}
+      {affinity && suggestions === 0 ? null : profiles === 0 && suggestions === 0 ? (
         <p className="text-caption text-ink-muted mt-1">다시 계산된 것은 없어요.</p>
       ) : (
         <ul className="text-caption text-ink-muted mt-1 flex flex-col gap-0.5">

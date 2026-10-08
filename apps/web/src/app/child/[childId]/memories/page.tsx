@@ -103,9 +103,9 @@ const USE_OPTIONS = [
 ] as const;
 
 /**
- * 🚨 **`archived` 를 고르게 두지 않는다.** 교정으로 내려간 기억을 다시 꺼내 보는 길인데,
- *    이 제품은 교정을 되돌리는 기능을 주지 않기로 했다. 목록에 없는 것을 필터로만 되살리면
- *    "되돌릴 수 있다" 는 기대를 만들면서 되돌릴 수단은 안 주는 셈이다.
+ * ⚠️ **`archived` 는 고르게 두지 않는다.** 처음 이유는 "고치기로 내려간 기억을 필터로만 되살리지
+ *    않는다" 였는데, 서버(#277)에서 `archived` 는 고치기가 아니라 기록이 오래 없을 때만 생긴다.
+ *    그 이유는 사라졌고, 다시 열지는 따로 정한다 (apps/web/CLAUDE.md §3).
  */
 const STATE_OPTIONS = [
   { value: "all", label: "전체" },
@@ -140,9 +140,7 @@ function MemoriesScreen() {
   const domain: ListDomain | null = isListDomain(domainParam) ? domainParam : null;
   const unusedOnly = searchParams.get("unused") === "1";
   /**
-   * 기억 탭의 승격 상태 필터. 🚨 **`archived` 는 고르게 두지 않는다** — 교정으로 내려간 기억을
-   * 다시 꺼내 보는 길이고, 이 제품은 교정을 되돌리는 기능을 주지 않기로 했다. 목록에 없는
-   * 것을 필터로만 되살리면 "되돌릴 수 있다" 는 기대를 만들면서 되돌릴 수단은 안 주는 셈이다.
+   * 기억 탭의 승격 상태 필터. `archived` 는 없다 (위 `STATE_OPTIONS` 의 ⚠️).
    */
   const stateParam = searchParams.get("state");
   const state: AffinityFilterState = isFilterState(stateParam) ? stateParam : "all";
