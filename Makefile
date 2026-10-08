@@ -33,7 +33,7 @@ help:
 	@echo "  make web-check      format + typecheck + lint + test — PR 올리기 전 (CI 와 같은 검사, build 만 빠짐)"
 	@echo ""
 	@echo "── 로컬 개발 DB (deploy/docker) ──"
-	@echo "  make db-up        로컬 Postgres+pgvector 기동 (최초 1회 deploy/docker/.env 필요)"
+	@echo "  make db-up        로컬 Postgres+pgvector+Redis 기동 (최초 1회 deploy/docker/.env 필요)"
 	@echo "  make db-down      로컬 DB 중지"
 	@echo "  make db-logs      로컬 DB 로그"
 	@echo ""
