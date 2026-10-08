@@ -16,7 +16,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents import entrypoint
+
+# AgentResult에 실을 readout을 만들 부품이라 진입점이 내보내지 않는다. 아래 초안 부품과 같은
+# 이유로 레이어 경계 밖이다. 번역은 readout 의 칸만 읽어 옮긴다.
+from app.agents.common.readout import Readout
+from app.agents.common.refs import Ref as EvidenceRef
 from app.agents.entrypoint import (
+    AgentResult,
     DomainRouted,
     Done,
     EventDraft,
@@ -44,7 +50,17 @@ from app.api.runs import registry, sse, translate
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
 
-SENT = {Step, Failed, Done, Guidance, EventDrafts, MemoryNote, Unavailable, Partial}
+SENT = {
+    Step,
+    Failed,
+    Done,
+    Guidance,
+    EventDrafts,
+    MemoryNote,
+    Unavailable,
+    Partial,
+    AgentResult,
+}
 """화면으로 보내는 것."""
 HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted}
 """보내지 않는 것. 이유는 translate.py 머리말."""
@@ -163,6 +179,85 @@ def test_event_drafts_use_the_agents_payload_shape():
     )
 
 
+def _growth_review() -> AgentResult:
+    """모델 0회로 readout만 내는 결과."""
+    return AgentResult(
+        agent="growth",
+        task_type="growth_review",
+        status="completed",
+        readouts=(
+            Readout(
+                kind="growth_delta",
+                body="3월 2일부터 6월 2일까지 3개월간 키 2.1cm 늘었어요.",
+                authored_by="code",
+                source_refs=(EvidenceRef(kind="child_growth_log", id=uuid.UUID(int=7)),),
+            ),
+        ),
+        question=None,
+    )
+
+
+def test_agent_result_copies_readouts_without_source_refs():
+    """readout은 칸을 하나씩 옮긴다. 근거 종류(`source_refs`)는 화면 `Ref` 에 아직 없어서 뺀다."""
+    assert translate.to_sse(_growth_review()) == (
+        "agent_result",
+        {
+            "agent": "growth",
+            "task_type": "growth_review",
+            "status": "completed",
+            "readouts": [
+                {
+                    "kind": "growth_delta",
+                    "title": "",
+                    "body": "3월 2일부터 6월 2일까지 3개월간 키 2.1cm 늘었어요.",
+                    "authored_by": "code",
+                    "code": None,
+                }
+            ],
+            "question": None,
+        },
+    )
+
+
+def test_agent_result_keeps_the_notice_code():
+    """개수 안내는 code 로 가른다. 같은 kind="notice" 인 날씨 안내는 code가 없다"""
+    result = AgentResult(
+        agent="activity",
+        task_type="activity_recommendation",
+        status="completed",
+        readouts=(
+            Readout(
+                kind="notice", body="날씨를 확인하지 못해 실내 놀이만 골랐어요.", authored_by="code"
+            ),
+            Readout(
+                kind="notice", body="조건에 맞는 추천이 없어요.", authored_by="code", code="empty"
+            ),
+        ),
+        question=None,
+    )
+
+    _, payload = translate.to_sse(result)
+
+    assert [readout["code"] for readout in payload["readouts"]] == [None, "empty"]
+
+
+def test_agent_result_carries_the_one_question():
+    """되묻기는 한 번에 하나다. 화면은 이 한 줄을 묻는다."""
+    result = AgentResult(
+        agent="growth",
+        task_type="routine_coaching",
+        status="completed",
+        readouts=(),
+        question="양치는 요즘 어느 정도까지 혼자 하나요?",
+    )
+
+    name, payload = translate.to_sse(result)
+
+    assert name == "agent_result"
+    assert payload["readouts"] == []
+    assert payload["question"] == "양치는 요즘 어느 정도까지 혼자 하나요?"
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -174,6 +269,7 @@ def test_event_drafts_use_the_agents_payload_shape():
         MemoryNote("언제부터였어요?", "question"),
         Unavailable(("activity", "growth")),
         Partial("timeout_20s", ("activity",), ("food",)),
+        _growth_review(),
     ],
     ids=lambda event: type(event).__name__,
 )
