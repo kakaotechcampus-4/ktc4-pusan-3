@@ -41,6 +41,39 @@ test.describe("교정 질문이 기록과 기억에서 다르다 (§5 Correction
 });
 
 /**
+ * 🚨 고친 기록도 목록에 남는다 (#266 — 서버는 deleted 만 뺀다). 고치기는 active 기록에서만
+ *    한다 (#277 — 아니면 409). 그래서 고친 줄은 칩으로 갈리고, 다시 열면 버튼 대신 안내가 선다.
+ */
+test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#266 · #277)", () => {
+  test("이번만 그랬어요로 고치면 줄에 고친 기록 칩이 서고, 다시 열면 버튼이 없다", async ({
+    page,
+  }) => {
+    await page.goto(MEMORIES);
+    const row = page.getByRole("button").filter({ hasText: "저녁에 계란말이를 또 찾았어요" });
+    await expect(row).toContainText("계란 반찬");
+    await row.click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
+    await sheet.getByRole("button", { name: "바꾸기" }).click();
+    await expect(sheet.getByText("이번만 그랬어요로 반영했어요.")).toBeVisible();
+    // 방금 고친 기록에 버튼이 다시 서면 누르는 순간 409 다.
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
+    await sheet.getByRole("button", { name: "닫기" }).last().click();
+
+    // 고친 표시가 서고, 기억으로 세지 않으니 묶인 기억 칩은 사라진다.
+    await expect(row).toContainText("이번만 그랬어요로 고친 기록");
+    await expect(row).not.toContainText("계란 반찬");
+
+    await row.click();
+    await expect(sheet.getByText("이번만 그랬어요로 고친 기록이에요.")).toBeVisible();
+    // 연결은 남지만 기억의 기록 수에는 들어가지 않는다 — "묶인 기억" 이라고 쓰지 않는다.
+    await expect(sheet.getByText("세지 않는 기억")).toBeVisible();
+    await expect(sheet.getByText("묶인 기억")).toHaveCount(0);
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
+  });
+});
+
+/**
  * 🚨 기억 고치기는 의견이다 (#277). 서버는 판정으로 상태를 바꾸지 않고 기록 수로만 다시 센다 —
  *    누르기 전에는 "목록에 그대로 있어요" 만 약속하고, 바뀐 것은 누른 뒤 응답으로 말한다.
  */

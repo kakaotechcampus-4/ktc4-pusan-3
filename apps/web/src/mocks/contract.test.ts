@@ -1136,9 +1136,56 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
 
     // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
     expect((result.target as Observation).status).toBe("inactive");
-    // 기본 조회는 active 만 본다 — 행은 남았지만 목록에서는 빠진다.
+    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.some((item) => item.id === target!.id)).toBe(false);
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.total).toBe(before.total);
+  });
+
+  it("이번만 그랬어요로 고친 기록도 목록에 stand_alone 으로 남고, 상세에 이력이 선다", async () => {
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const list = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(list.items.find((item) => item.id === "o_1")?.status).toBe("stand_alone");
+
+    const detail = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_food/o_1",
+    );
+    expect(detail.observation.status).toBe("stand_alone");
+    expect(detail.corrections.map((c) => c.id)).toEqual([result.correction.id]);
+  });
+
+  it("이미 고친 기록을 또 고치면 409 already_corrected 다 — 값이 틀린 400 과 다르다 (#277)", async () => {
+    const body = {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    } as const;
+    await api.post<CorrectionResponse>("/corrections", body);
+
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "already_corrected")).toBe(true);
+    expect((failure as ApiError).status).toBe(409);
+  });
+
+  it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: "observation_food", id: "o_1" },
+        verdict: "need_more_observation",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
   });
 
   // 🚨 기억 고치기는 의견이다 — 서버(#277)는 상태를 쌓인 기록 수와 기억 wrong 수로만 다시 센다.
