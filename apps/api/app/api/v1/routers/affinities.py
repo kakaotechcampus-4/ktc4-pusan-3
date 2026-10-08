@@ -9,6 +9,8 @@
 🚨 묶인 active 기록이 0개인 기억은 목록에서 뺀다 — 근거 없는 성향을 보여주지 않는다.
 """
 
+import uuid
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter
@@ -19,8 +21,11 @@ from app.api.errors import ErrorEnvelope
 from app.api.quota import today_kst
 from app.api.v1.schemas.affinities import AffinitiesResponse, AffinityOut
 from app.api.v1.schemas.common import Ref
-from app.domains.memory.observation.repository import list_active_refs_by_affinity
-from app.domains.memory.profile.models import MemoryDomain, ProfileState
+from app.domains.memory.observation.repository import (
+    ObservationDomain,
+    list_active_refs_by_affinity,
+)
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.domains.memory.profile.repository import list_affinities
 from app.rules.affinity_reason import is_stale, state_reason
 
@@ -65,30 +70,28 @@ async def get_affinities(
         session, child_id=child.child_id, affinity_ids=[row.id for row in rows]
     )
     today = today_kst()
-    affinities = []
-    for row in rows:
-        linked = refs.get(row.id, [])
-        if not linked:
-            # 묶인 기록이 모두 교정되면 기억은 후보로 남지만 근거가 없다. 근거 없는 것을 성향으로
-            # 보여주지 않는다 (루트 CLAUDE.md §2). 상태는 바꾸지 않고 목록에서만 뺀다.
-            continue
-        affinities.append(
-            AffinityOut(
-                id=str(row.id),
-                merge_key=row.merge_key,
-                domain=_AGENT_BY_MEMORY_DOMAIN[row.domain],
-                state=row.state.value,
-                polarity=row.polarity,
-                strength=row.strength,
-                last_observed_on=row.last_observed_on,
-                observation_count=len(linked),
-                state_reason=state_reason(
-                    observation_count=len(linked),
-                    last_observed_on=row.last_observed_on,
-                    today=today,
-                ),
-                is_stale=is_stale(row.last_observed_on, today=today),
-                source_refs=[Ref(kind=f"observation_{d.value}", id=str(oid)) for d, oid in linked],
-            )
-        )
+    # 묶인 기록이 모두 교정되면 기억은 후보로 남지만 근거가 없다. 근거 없는 것을 성향으로
+    # 보여주지 않는다 (루트 CLAUDE.md §2). 상태는 바꾸지 않고 목록에서만 뺀다.
+    affinities = [affinity_out(row, refs[row.id], today=today) for row in rows if refs.get(row.id)]
     return AffinitiesResponse(affinities=affinities)
+
+
+def affinity_out(
+    row: ProfileAffinity, linked: list[tuple[ObservationDomain, uuid.UUID]], *, today: date
+) -> AffinityOut:
+    """기억 1건의 응답. 고치기 응답(`POST /corrections`)도 같은 모양을 쓴다. linked 는 1건 이상."""
+    return AffinityOut(
+        id=str(row.id),
+        merge_key=row.merge_key,
+        domain=_AGENT_BY_MEMORY_DOMAIN[row.domain],
+        state=row.state.value,
+        polarity=row.polarity,
+        strength=row.strength,
+        last_observed_on=row.last_observed_on,
+        observation_count=len(linked),
+        state_reason=state_reason(
+            observation_count=len(linked), last_observed_on=row.last_observed_on, today=today
+        ),
+        is_stale=is_stale(row.last_observed_on, today=today),
+        source_refs=[Ref(kind=f"observation_{d.value}", id=str(oid)) for d, oid in linked],
+    )

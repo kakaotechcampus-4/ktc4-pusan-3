@@ -106,7 +106,7 @@ async def list_observations(
         cursor=_decode_cursor(cursor) if cursor else None,
         limit=limit,
     )
-    items = await _to_out(session, page.items, today=today_kst())
+    items = await to_observation_outs(session, page.items, today=today_kst())
     return ObservationsResponse(
         items=items,
         next_cursor=_encode_cursor(page.next_cursor) if page.next_cursor else None,
@@ -134,7 +134,7 @@ async def get_observation(
     if record is None:
         raise ApiError(404, "not_found", "그 기록을 찾지 못했어요")
 
-    [observation] = await _to_out(session, [record], today=today_kst())
+    [observation] = await to_observation_outs(session, [record], today=today_kst())
     suggestions = await list_suggestions_using_observation(
         session, child_id=child.child_id, kind=kind, observation_id=oid
     )
@@ -168,7 +168,7 @@ def _visible_domain(kind: str) -> ObservationDomain | None:
     return domain if domain in _VISIBLE_DOMAINS else None
 
 
-async def _to_out(
+async def to_observation_outs(
     session: SessionDep, records: list[ObservationRecord], *, today: date
 ) -> list[ObservationOut]:
     """묶인 기억과 적은 사람은 한 번씩 모아 읽는다 — 줄마다 조회하지 않는다."""
