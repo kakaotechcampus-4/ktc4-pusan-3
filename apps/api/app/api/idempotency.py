@@ -15,12 +15,9 @@ REDIS_URL 이 설정되면 Redis 를 쓰고, 없으면 프로세스 메모리 di
 """
 
 import json
-import logging
 from uuid import UUID
 
 from app.infra.redis import get_redis
-
-log = logging.getLogger(__name__)
 
 _TTL_SECONDS = 86400
 """24시간. 프로세스 메모리 시절에는 서버 재시작까지 무한이었으나
@@ -93,12 +90,4 @@ def clear() -> None:
         _seen.clear()
         return
 
-    # 테스트 전용 — idem:* 와 idem-run:* 를 지운다
-    for prefix in ("idem:", "idem-run:"):
-        cursor = 0
-        while True:
-            cursor, keys = r.scan(cursor, match=f"{prefix}*", count=100)
-            if keys:
-                r.delete(*keys)
-            if cursor == 0:
-                break
+    r.flushdb()
