@@ -1,0 +1,43 @@
+# growth_doc 시드 — 프롬프트 [예시] 에 들어가는 교육 활동 · 루틴 단계 행 (own_table §1 · RAG_plan Growth 절)
+#
+# 이 판은 로더를 먼저 들인 뼈대다. 행은 별도 PR 로 채운다 (docs/ai-288-growth-doc-rows-p0).
+# rows 가 비어 있어도 읽힌다 — InMemoryGrowthDocs.from_seed() 는 그동안 빈 문서를 낸다(doc.no_row).
+#
+# 🚨 사실만 읽고 문장은 새로 쓴다. 원문 문장을 옮기지 않는다 (RAG_plan §0, 8어절 이상 일치 금지).
+# 🚨 발달 이정표 · "이 나이면 ~할 수 있다" 문장 · 또래 비교를 쓰지 않는다 (own_table §1).
+# 🚨 materials · body 에 음식 재료를 쓰지 않는다 — 음식이 들어가는 놀이는 Activity 몫이다.
+#
+# 행 칸 — 공통 칸은 RAG_plan §1, Growth 칸은 own_table §1.
+#   row_type          learning_activity · routine_step · habit_strategy · manner_practice ·
+#                     rhythm_info · book_guide · measure_guide
+#   area              basic_life · physical_health · communication · social · art · nature
+#   routine_category  self_care · mealtime · household_task · social_manner · habit · transition
+#   trigger_tags      habit_strategy 가 읽는 상황 (bored · anxious · tired …). 영문 소문자
+#   setting           indoor · outdoor · either
+#   next_step_of      앞 단계 행의 doc_key. routine_step 끼리만 잇는다
+#
+# routine_step 규칙 (growth/tools/routine.py 의 pick_next_step 이 읽는다)
+# - tags 에 assistance:<independent|verbal_prompt|partial_assist|full_assist> 를 정확히 하나 적는다.
+#   그 행이 어느 도움 수준에 해당하는지다
+# - doc_key 는 growth.routine.<routine_category>.<사슬 이름>.step<N> 이다 (예: growth.routine.self_care.toothbrush.step2).
+#   같은 사슬 이름의 행이 한 사슬이고, run 은 이 이름으로 사슬을 통째로 읽는다. next_step_of 는 같은 사슬 안만 가리킨다
+# - 한 사슬은 처음이 하나, 갈라지거나 끊기거나 돌지 않는다. 도움이 많이 필요한 수준에서 혼자 하는
+#   수준 순서로 나아간다. 검수도 사슬 단위로 한다 — 가운데 행만 draft 면 run 이 읽는 사슬이 끊긴다
+#
+# 월령 — min_month 이상 max_month 미만. 12–35개월 학습 활동은 표준보육과정, 36개월 이상은 누리과정에서
+#   쓴 행이라 두 구간에 걸치지 않는다. habit_strategy 는 min_month 가 36 이상이다(DB CHECK).
+#
+# 검수 — 작성자와 다른 사람이 원문을 펴 놓고 사실 · 월령 · 출처 위치를 확인한 뒤
+# status: approved 와 reviewed_by · reviewed_at 을 채운다. 서비스는 approved 만 쓴다.
+# 작성자 · 검수자는 GitHub 아이디로 적는다.
+#
+# 행마다 테스트가 보는 것 (tests/unit/agents/growth/test_growth_doc_seed.py)
+# - 평가 표현 없음 · 위험 용어(행의 min_month 기준) 없음 · 음식 용어 없음 · 이정표 문장 없음
+# - row_type 별 칸 (학습 활동은 area, 예절은 social_manner 24개월+, 습관은 habit + trigger_tags …)
+# - routine_step 사슬이 pick_next_step 으로 읽힘
+
+source: 보건복지부 고시 제2020-75호 「제4차 어린이집 표준보육과정」 · 교육부·보건복지부 고시 「2019 개정 누리과정」 — 행마다 source_* 칸
+version: "2026.1-draft"
+fetched_at: 2026-10-09
+
+rows: []

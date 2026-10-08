@@ -16,7 +16,7 @@ import 만 바꾸면 되게 일부러 같게 두었다 — 그 전에 여기서 
 | GrowthLogReader | child_growth_log — 측정 전부 (Food 의 최근 1건과 다르다) |
 | GrowthMemoryReader | profile_affinity(education · activity) · 교육 · 루틴 · 놀이 관찰 |
 | NoticeReader | notice — 기관 공지가 있는가 (없어도 추천은 동작) |
-| GrowthDocReader | growth_doc — 월령 슬라이스 + 의미 검색 |
+| GrowthDocReader | growth_doc — 월령 슬라이스 + 의미 검색, 자립 단계 사슬 통째로 |
 | BookSource | 도서 검색 — book_catalog 캐시 + 도서관 정보나루 |
 | IssuedBookReader | 만료 전 suggestion 에 이미 낸 도서 ISBN |
 
@@ -251,6 +251,14 @@ class GrowthDocReader(Protocol):
 
         `status='approved'` 행만 돌려준다. `query` 는 코드가 조립한다 —
         보호자 발화가 들어가지 않는다.
+        """
+        ...
+
+    async def chain(self, *, chain_key: str) -> list[GrowthDocRow]:
+        """doc_key 가 `{chain_key}.step` 으로 시작하는 approved `routine_step` 행 전부.
+
+        월령으로 거르지 않는다 — 사슬 중간이 빠지면 `pick_next_step` 이 다음 칸을 못 고른다.
+        순서는 보장하지 않는다(`ordered_chain` 이 세운다). 사슬 이름은 `doc_seed.chain_key` 다.
         """
         ...
 

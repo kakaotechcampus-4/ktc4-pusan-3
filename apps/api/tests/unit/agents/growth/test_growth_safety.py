@@ -22,6 +22,7 @@ from app.agents.growth.tools.safety import (
     environmental_cautions,
     load_safety_rules,
 )
+from app.rules.term_match import Term
 
 
 def fake_rules(
@@ -263,6 +264,46 @@ class TestDefaultRules:
         entries = [SafetyEntry("allergy", "잣", "active")]
         assert rules.registered_names("잣 까기", entries) == ()
         assert rules.registered_names("잣가루 뿌리기", entries)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "포크로 찍어 먹기",
+            "에그 셰이커 흔들기",
+            "크랩 워크로 옆으로 걷기",
+            "피치 높낮이 따라 부르기",
+            "비프 소리 흉내 내기",
+        ],
+    )
+    def test_외래어_별칭은_문장에서_쓰지_않는다(self, rules, text):
+        """#264 가 공용 사전에 넣은 외래어 별칭이 Growth 문장에서 다른 뜻으로 걸리지 않게 한다."""
+        assert rules.food_terms(text) == ()
+
+
+# 공용 사전이 검사지 이름을 읽으려고 둔 외래어 별칭(#264)과 같은 모양의 가짜 항목
+PORK = Term(key="10", aliases=("돼지고기", "돈육", "포크", "pork"))
+
+
+class TestLoanwordAliases:
+    """외래어 별칭은 Growth 의 문장 스캔에서만 뺀다 — 공용 사전은 그대로다."""
+
+    @pytest.fixture
+    def rules(self, monkeypatch) -> SafetyRules:
+        monkeypatch.setattr("app.agents.growth.tools.safety.allergen_terms", lambda: (PORK,))
+        return load_safety_rules()
+
+    @pytest.mark.parametrize("text", ["포크로 찍어 먹기", "Pork 라고 적힌 카드 고르기"])
+    def test_음식_용어_스캔에서_뺀다(self, rules, text):
+        assert rules.food_terms(text) == ()
+
+    def test_한국어_이름은_그대로_찾는다(self, rules):
+        assert rules.food_terms("돈육 그림 카드") == ("10",)
+
+    def test_외래어로_등록한_이름도_한국어_별칭으로_찾는다(self, rules):
+        """보호자가 검사지 영어 이름(pork)으로 적었으면 그 항목의 한국어 별칭으로 본다."""
+        entries = [SafetyEntry("allergy", "pork", "active")]
+        assert [e.label for e in rules.registered_names("돼지고기 그림 카드", entries)] == ["pork"]
+        assert rules.registered_names("포크로 찍어 먹기", entries) == ()
 
 
 class TestRulesUnavailable:

@@ -13,6 +13,7 @@ from datetime import date, datetime
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.store.ports import (
     ActivityObservation,
     AffinityDomain,
@@ -132,6 +133,11 @@ class InMemoryGrowthDocs:
     def __init__(self, rows: Sequence[GrowthDocRow] = ()) -> None:
         self._rows = list(rows)
 
+    @classmethod
+    def from_seed(cls) -> "InMemoryGrowthDocs":
+        """`reference/growth_doc.yaml` 의 검수를 마친(`approved`) 행. DB 전 eval · 개발용."""
+        return cls(entry.to_row() for entry in growth_doc_seed() if entry.meta.status == "approved")
+
     async def search(
         self,
         *,
@@ -151,6 +157,12 @@ class InMemoryGrowthDocs:
             and (not trigger_tags or set(trigger_tags) & set(r.trigger_tags))
         ]
         return rows[:limit]
+
+    async def chain(self, *, chain_key: str) -> list[GrowthDocRow]:
+        prefix = f"{chain_key}.step"
+        return [
+            r for r in self._rows if r.row_type == "routine_step" and r.doc_key.startswith(prefix)
+        ]
 
 
 class InMemoryBooks:

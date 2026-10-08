@@ -4,7 +4,8 @@
 모델에게 묻지 않는다 (루트 CLAUDE.md §2).
 
     음식 용어 스캔   교육 · 루틴 후보. 알레르기 사전 용어나 질식 위험 음식 용어가 나오면 **아이 ·
-                    월령 · 동의와 무관하게** 뺀다. 음식 · 재료가 들어가는 놀이는 Activity 몫이다
+                    월령 · 동의와 무관하게** 뺀다. 음식 · 재료가 들어가는 놀이는 Activity 몫이다.
+                    한 글자 · 외래어 별칭(포크 · pork)은 문장에서 다른 뜻으로 걸려 쓰지 않는다
     등록한 이름 대조  **교육만**, 동의가 있을 때. 보호자가 `health_safety` 에 적은 이름이
                     후보 문장에 나오면 뺀다. 이름을 물건 · 장소로 넓히는 대응표는 만들지
                     않는다 (#261 리뷰 4번) —
@@ -36,6 +37,13 @@ RemovedBy = Literal["food_term", "allergy_name", "hazard_block"]
 
 # 질식 위험 음식 축. 교육 · 루틴 문장에 나오면 아이와 상관없이 뺀다
 FOOD_CHOKING_AXIS = "food_choking"
+# 영어 이름을 한글로 옮긴 별칭. 공용 사전에는 검사지 이름을 읽으려고 있지만(#264), Growth 문장에서는
+# 다른 뜻으로 더 자주 나와서 문장 스캔에서만 뺀다 — 포크(식사 도구) · 피치(음높이) · 에그 셰이커 ·
+# 크랩 워크 · 비프 소리. 라틴 문자 별칭(pork · egg)도 같다.
+# 보호자가 이 이름으로 등록한 걸 읽을 때는 쓴다
+_LOANWORD_ALIASES = frozenset(
+    {"에그", "밀크", "피넛", "크랩", "쉬림프", "포크", "피치", "월넛", "비프", "파인넛"}
+)
 # 보호자가 "라텍스 알레르기" 처럼 적는 꼬리말. 대조 전에 뗀다
 _LABEL_TAILS = ("알레르기", "알러지")
 
@@ -149,10 +157,10 @@ def load_safety_rules() -> SafetyRules:
     except Exception as exc:
         raise SafetyRulesUnavailable("안전 사전을 읽지 못했다") from exc
 
-    allergens = _without_single_char_aliases(raw_allergens)
+    allergens = _scan_aliases_only(raw_allergens)
     food_terms = (*allergens, *_food_choking_terms(hazards))
-    # 보호자가 "밀" 이라고만 적었을 때 어느 알레르기인지는 한 글자 별칭까지 포함해서 찾는다.
-    # 대조에 쓰는 별칭은 두 글자 이상만이다 — "밀" 등록 아이의 "공 밀기" 는 통과한다 (#261)
+    # 보호자가 "밀" · "pork" 라고만 적었을 때 어느 알레르기인지는 모든 별칭으로 찾는다.
+    # 대조에 쓰는 별칭은 두 글자 이상 한국어 이름만("밀" 등록 아이의 "공 밀기" 는 통과)
     kept = {term.key: term for term in allergens}
     by_alias = {
         normalize(alias): kept[term.key]
@@ -188,14 +196,27 @@ def load_safety_rules() -> SafetyRules:
     return SafetyRules(food_terms=scan_food, hazards=scan_hazard, registered_names=scan_registered)
 
 
-def _without_single_char_aliases(terms: Sequence[Term]) -> tuple[Term, ...]:
-    """한 글자 별칭(밀 · 게 · 닭 · 잣)을 뗀다. 놀이 문장의 "공 밀기" · "카드 게임" 이 걸린다."""
+def _scan_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
+    """문장 스캔에 쓰지 않는 별칭을 뗀다.
+
+    한 글자(밀 · 게 · 닭 · 잣)는 놀이 문장의 "공 밀기" · "카드 게임" 이 걸리고,
+    외래어(포크 · pork)는 식사 도구 · 노래 이름으로 걸린다.
+    """
     kept: list[Term] = []
     for term in terms:
-        aliases = tuple(alias for alias in term.aliases if len(normalize(alias)) >= 2)
+        aliases = tuple(alias for alias in term.aliases if _scans(alias))
         if aliases:
             kept.append(Term(key=term.key, aliases=aliases, guards=term.guards))
     return tuple(kept)
+
+
+def _scans(alias: str) -> bool:
+    name = normalize(alias)
+    return (
+        len(name) >= 2
+        and name not in _LOANWORD_ALIASES
+        and not any("a" <= ch <= "z" for ch in name)
+    )
 
 
 def _food_choking_terms(hazards: HazardTerms) -> tuple[Term, ...]:
