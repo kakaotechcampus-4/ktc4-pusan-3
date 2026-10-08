@@ -102,7 +102,8 @@ async def test_observation_correction_updates_state_history_and_affinity(
     assert [c["verdict"] for c in detail.json()["corrections"]] == ["once_only"]
     # 이미 고친 기록은 다시 고치지 않는다 — 같은 버튼을 두 번 눌러도 이력이 두 줄이 되지 않는다
     again = await db_client.post("/api/v1/corrections", json=body, headers=headers)
-    assert again.status_code == 400
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "already_corrected"
 
 
 async def test_profile_correction_returns_the_affinity(

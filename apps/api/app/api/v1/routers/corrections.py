@@ -50,7 +50,7 @@ router = APIRouter()
 
 @router.post(
     "/corrections",
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409)},
 )
 async def create_correction(
     body: CorrectionRequest, parent: CurrentParent, session: SessionDep
@@ -86,12 +86,12 @@ async def create_correction(
         record = await find_observation(
             session, domain=domain, child_id=child_id, observation_id=target_id, for_update=True
         )
-        # 잠근 채로 상태를 본다 — 같은 기록에 동시에 온 요청은 앞 요청이 끝난 뒤 400 을 받는다.
+        # 잠근 채로 상태를 본다 — 같은 기록에 동시에 온 요청은 앞 요청이 끝난 뒤 409 를 받는다.
         # 잠금 순서(기록 → 기억)는 Curator 와 같아서 서로 기다리다 멈추지 않는다.
         if record is None:
             raise ApiError(404, "not_found", "그 기록을 찾지 못했어요")
         if record.fields["status"] is not ObservationStatus.ACTIVE:
-            raise ApiError(400, "validation_failed", "이미 고친 기록이에요")
+            raise ApiError(409, "already_corrected", "이미 고친 기록이에요")
         await handle_observation_correction(
             session,
             domain=domain.value,
