@@ -175,6 +175,7 @@ export const memoryHandlers = [
     const params = new URL(request.url).searchParams;
     const domain = params.get("domain");
     const unusedOnly = params.get("unused_in_suggestions") === "true";
+    const status = params.get("status");
     const limit = Number(params.get("limit") ?? OBSERVATION_PAGE_SIZE);
     const cursor = params.get("cursor");
 
@@ -187,7 +188,13 @@ export const memoryHandlers = [
     const kinds = domain === null ? VISIBLE_KINDS : KINDS_BY_AGENT[domain as Agent];
     if (!kinds) return apiError(400, "validation_failed", "모르는 분류예요");
 
-    let items = scenarioObservations().filter((o) => kinds.includes(o.kind));
+    // 서버처럼 `status` 는 하나만 고른다 — 주지 않으면 세 상태 모두다 (#266).
+    if (status !== null && !["active", "stand_alone", "inactive"].includes(status)) {
+      return apiError(400, "validation_failed", "모르는 상태예요");
+    }
+    let items = scenarioObservations().filter(
+      (o) => kinds.includes(o.kind) && (status === null || o.status === status),
+    );
     // "제안에서 빠진 기억" — 목에서는 프로필에 묶이지 않은 것을 그 자리에 둔다.
     // 건강은 위에서 이미 빠졌다 — `affinity` 키가 없는 모양이라 여기 닿지 않는다.
     if (unusedOnly) items = items.filter((o) => !isHealthObservation(o) && o.affinity === null);

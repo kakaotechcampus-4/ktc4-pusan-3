@@ -719,7 +719,12 @@ export interface ObservationsResponse {
  */
 export interface ObservationFilters {
   domain?: Agent;
-  /** "제안에서 빠진 기억" — 근거로 쓰인 적 없는 것만. */
+  /** 고른 상태만 (#266). 주지 않으면 deleted 를 뺀 세 상태 모두다. `total` 도 이 기준으로 센다. */
+  status?: ObservationBase["status"];
+  /**
+   * "제안에서 빠진 기억" — 근거로 쓰인 적 없는 것만.
+   * ⚠️ 서버에는 남아 있지만 화면은 더 쓰지 않는다 — 그 자리가 `status` 필터로 바뀌었다 (#266).
+   */
   unused_in_suggestions?: boolean;
 }
 

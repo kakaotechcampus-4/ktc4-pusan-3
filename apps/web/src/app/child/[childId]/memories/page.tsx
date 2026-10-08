@@ -9,6 +9,7 @@ import { AffinityList } from "@/components/affinity-list";
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
 import { domainLabel } from "@/components/domain-chip";
 import { MemoryDetailSheet, type MemoryTarget } from "@/components/memory-detail-sheet";
 import { ObservationList } from "@/components/observation-list";
@@ -97,9 +98,25 @@ const DOMAIN_OPTIONS = [
   })),
 ] as const;
 
-const USE_OPTIONS = [
+/**
+ * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 세 상태 모두다.
+ *
+ * ⚠️ **"사용되지 않은 기록만"(`unused_in_suggestions`)을 내렸다.** 이 자리가 상태 필터로 바뀌었고
+ *    (#266 · 서버는 파라미터를 아직 남겨 뒀다), 두 필터를 같이 두면 상단에 고르기 상자가 셋이 된다.
+ * 🚨 이름은 고치기 버튼과 **같은 말**이다 (`CORRECTED_OBSERVATION`) — 누른 버튼 이름으로 찾게.
+ */
+const OBSERVATION_STATUS_FILTERS = ["all", "active", "stand_alone", "inactive"] as const;
+type ObservationStatusFilter = (typeof OBSERVATION_STATUS_FILTERS)[number];
+
+function isObservationStatusFilter(value: string | null): value is ObservationStatusFilter {
+  return value !== null && (OBSERVATION_STATUS_FILTERS as readonly string[]).includes(value);
+}
+
+const OBSERVATION_STATUS_OPTIONS = [
   { value: "all", label: "전체" },
-  { value: "unused", label: "사용되지 않은 기록만" },
+  { value: "active", label: "고치지 않은 기록" },
+  { value: "stand_alone", label: CORRECTED_OBSERVATION.stand_alone.label },
+  { value: "inactive", label: CORRECTED_OBSERVATION.inactive.label },
 ] as const;
 
 /**
@@ -138,7 +155,10 @@ function MemoriesScreen() {
   const tab: MemoryTab = isTab(tabParam) ? tabParam : "observations";
   const domainParam = searchParams.get("domain");
   const domain: ListDomain | null = isListDomain(domainParam) ? domainParam : null;
-  const unusedOnly = searchParams.get("unused") === "1";
+  const statusParam = searchParams.get("status");
+  const status: ObservationStatusFilter = isObservationStatusFilter(statusParam)
+    ? statusParam
+    : "all";
   /**
    * 기억 탭의 승격 상태 필터. `archived` 는 없다 (위 `STATE_OPTIONS` 의 ⚠️).
    */
@@ -161,18 +181,18 @@ function MemoriesScreen() {
    */
   function setFilter(next: {
     domain?: ListDomain | null;
-    unused?: boolean;
+    status?: ObservationStatusFilter;
     state?: AffinityFilterState;
   }) {
     const params = new URLSearchParams();
     if (tab !== "observations") params.set("tab", tab);
 
     const nextDomain = next.domain === undefined ? domain : next.domain;
-    const nextUnused = next.unused === undefined ? unusedOnly : next.unused;
+    const nextStatus = next.status === undefined ? status : next.status;
     const nextState = next.state === undefined ? state : next.state;
 
     if (nextDomain) params.set("domain", nextDomain);
-    if (tab === "observations" && nextUnused) params.set("unused", "1");
+    if (tab === "observations" && nextStatus !== "all") params.set("status", nextStatus);
     if (tab === "profile" && nextState !== "all") params.set("state", nextState);
 
     const query = params.toString();
@@ -194,7 +214,7 @@ function MemoriesScreen() {
         <ObservationsTab
           childId={childId}
           domain={domain}
-          unusedOnly={unusedOnly}
+          status={status}
           onFilter={setFilter}
           onOpen={(observation) => setTarget({ type: "observation", observation })}
         />
@@ -253,18 +273,18 @@ function MoreObservations({
 function ObservationsTab({
   childId,
   domain,
-  unusedOnly,
+  status,
   onFilter,
   onOpen,
 }: {
   childId: string;
   domain: ListDomain | null;
-  unusedOnly: boolean;
-  onFilter: (next: { domain?: ListDomain | null; unused?: boolean }) => void;
+  status: ObservationStatusFilter;
+  onFilter: (next: { domain?: ListDomain | null; status?: ObservationStatusFilter }) => void;
   onOpen: (observation: Observation) => void;
 }) {
   const router = useRouter();
-  const filters = { domain, unusedOnly };
+  const filters = { domain, status };
 
   /**
    * 🚨 **서버는 한 번에 20건만 준다.** 첫 장만 부르면 "기록 21건" 이라고 쓰고 20건만 그린다 (#269).
@@ -276,7 +296,7 @@ function ObservationsTab({
       api.get<ObservationsResponse>(`/children/${childId}/observations`, {
         query: {
           ...(domain ? { domain } : {}),
-          ...(unusedOnly ? { unused_in_suggestions: "true" } : {}),
+          ...(status !== "all" ? { status } : {}),
           cursor: pageParam,
         },
       }),
@@ -287,7 +307,7 @@ function ObservationsTab({
   /** 🚨 건수는 첫 장의 것이다 — 장마다 오지만 같은 필터의 같은 수다. 받아 온 줄 수가 아니다. */
   const total = observations.data?.pages[0]?.total ?? 0;
 
-  const filtered = domain !== null || unusedOnly;
+  const filtered = domain !== null || status !== "all";
 
   return (
     <section className="flex flex-col gap-3">
@@ -302,10 +322,10 @@ function ObservationsTab({
           onChange={(value) => onFilter({ domain: value === "all" ? null : value })}
         />
         <Select
-          label="보기"
-          value={unusedOnly ? "unused" : "all"}
-          options={USE_OPTIONS}
-          onChange={(value) => onFilter({ unused: value === "unused" })}
+          label="상태"
+          value={status}
+          options={OBSERVATION_STATUS_OPTIONS}
+          onChange={(value) => onFilter({ status: value })}
         />
       </FilterRow>
 
@@ -322,11 +342,7 @@ function ObservationsTab({
             <EmptyState
               icon={Notebook}
               title="이 조건에 맞는 기록이 없어요"
-              description={
-                unusedOnly
-                  ? "적어주신 기록이 전부 제안에 쓰이고 있어요. 다른 분류를 골라보세요."
-                  : "다른 분류를 골라보세요."
-              }
+              description="다른 분류나 상태를 골라보세요."
               count={0}
               countLabel="이 조건의 기록"
             />
