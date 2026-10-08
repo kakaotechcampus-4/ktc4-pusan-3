@@ -143,6 +143,76 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
   });
 });
 
+test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)", () => {
+  test.describe("agent_readout — 추천 없는 결과", () => {
+    test.use({ scenario: "agent_readout" });
+
+    test("성장 추이와 0개 안내가 도착 순서대로 서고, 기록을 못 찾았다고 말하지 않는다", async ({
+      page,
+    }) => {
+      await sendFromHome(page, "잘 크고 있어?");
+      const reply = turn(page, "잘 크고 있어?");
+
+      const delta = reply.getByText("6개월간 키 3.1cm · 몸무게 0.8kg 늘었어요.", { exact: false });
+      const empty = reply.getByText("조건에 맞는 추천이 없어요.");
+      await expect(empty).toBeVisible();
+      await expect(delta).toBeVisible();
+      // 🚨 잰 기록은 줄마다 선다 — 줄바꿈을 지우면 숫자가 한 덩어리로 붙는다.
+      await expect(delta).toHaveCSS("white-space", "pre-line");
+      // 🚨 도착한 순서 그대로다 (성장 → 식사). 재정렬하지 않는다 (#215).
+      const growthBox = await delta.boundingBox();
+      const foodBox = await empty.boundingBox();
+      expect(growthBox!.y).toBeLessThan(foodBox!.y);
+
+      // 🚨 식사 결과가 둘 왔지만(급식 갱신 + 추천) 보일 것이 있는 쪽만 블록이 된다.
+      await expect(reply.getByText("식사", { exact: true })).toHaveCount(1);
+      await expect(reply.getByText("성장", { exact: true })).toHaveCount(1);
+
+      // 🚨 요청형 한 줄은 저장할 관찰이 없는 것이 정상이다 — Agent 결과가 이미 답했다.
+      await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
+      await expect(
+        reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
+      ).toHaveCount(0);
+      // 🚨 성장 추이에 평가 표현을 붙이지 않는다 (최상위 §2 키 · 몸무게).
+      await expect(reply.getByText(/또래|빠르|느리|정상|백분위/)).toHaveCount(0);
+    });
+  });
+
+  test.describe("agent_question — Agent 가 되묻는 한 줄", () => {
+    test.use({ scenario: "agent_question" });
+
+    test("🚨 답할 자리를 열지 않는다 — reply_to 로 보내면 400 이다 (#246)", async ({ page }) => {
+      await sendFromHome(page, "놀이 추천해줘");
+      const reply = turn(page, "놀이 추천해줘");
+
+      await expect(
+        reply.getByText("요즘 주로 집 안에서 노는지 바깥에서 노는지 알려주시겠어요?"),
+      ).toBeVisible();
+      await expect(reply.getByText("놀이", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "이 질문에 답하기" })).toHaveCount(0);
+      await expect(page.getByText("위 질문에 답하는 중")).toHaveCount(0);
+    });
+  });
+
+  test.describe("agent_partial — 한 Agent 는 결과, 다른 Agent 는 실패", () => {
+    test.use({ scenario: "agent_partial" });
+
+    test("블록과 부분 결과가 한 묶음에 서고, 저장하지 않은 것을 저장했다고 하지 않는다", async ({
+      page,
+    }) => {
+      await sendFromHome(page, "저녁 추천해줘");
+      const reply = turn(page, "저녁 추천해줘");
+
+      await expect(reply.getByText("조건에 맞는 추천이 없어요.")).toBeVisible();
+      await expect(
+        reply.getByText("놀이 쪽은 이번에 처리하지 못했어요.", { exact: true }),
+      ).toBeVisible();
+      await expect(reply.getByText("저장한 기록은 그대로", { exact: false })).toHaveCount(0);
+      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+    });
+  });
+});
+
 test.describe("되묻기의 답은 원문을 다시 보내지 않는다 (#158)", () => {
   test.use({ scenario: "note_mixed" });
 
