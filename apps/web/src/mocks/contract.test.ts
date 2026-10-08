@@ -1175,6 +1175,36 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((failure as ApiError).status).toBe(409);
   });
 
+  it("status 를 고르면 그 상태만 오고 total 도 그 상태로 센다 (#266)", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const all = await api.get<ObservationsResponse>("/children/c1/observations");
+    const standAlone = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "stand_alone" },
+    });
+    const active = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "active" },
+    });
+
+    expect(standAlone.items.map((item) => item.id)).toEqual(["o_1"]);
+    expect(standAlone.total).toBe(1);
+    expect(active.items.some((item) => item.id === "o_1")).toBe(false);
+    expect(active.total).toBe(all.total - 1);
+  });
+
+  it("모르는 status 는 400 이다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
   it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
     const failure = await api
       .post<CorrectionResponse>("/corrections", {

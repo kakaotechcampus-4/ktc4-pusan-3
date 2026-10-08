@@ -71,6 +71,37 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
     await expect(sheet.getByText("묶인 기억")).toHaveCount(0);
     await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
   });
+
+  test("상태로 고르면 그 상태의 기록만 서고, 건수도 그 상태의 것이다", async ({ page }) => {
+    await page.goto(MEMORIES);
+    await expect(page.getByText("기록 6건")).toBeVisible();
+    await page.getByRole("button").filter({ hasText: "저녁에 계란말이를 또 찾았어요" }).click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
+    await sheet.getByRole("button", { name: "바꾸기" }).click();
+    await expect(sheet.getByText("이번만 그랬어요로 반영했어요.")).toBeVisible();
+    await sheet.getByRole("button", { name: "닫기" }).last().click();
+
+    const status = page.getByRole("combobox", { name: "상태" });
+    await status.click();
+    // 🚨 이름은 고치기 버튼과 같은 말이다 — 누른 버튼 이름으로 찾는다.
+    await expect(page.getByRole("option")).toHaveText([
+      "전체",
+      "고치지 않은 기록",
+      "이번만 그랬어요",
+      "잘못된 기록",
+    ]);
+    await page.getByRole("option", { name: "이번만 그랬어요" }).click();
+
+    await expect(page).toHaveURL(/status=stand_alone/);
+    await expect(page.getByText("기록 1건")).toBeVisible();
+    await expect(
+      page.getByRole("button").filter({ hasText: "저녁에 계란말이를 또 찾았어요" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button").filter({ hasText: "계란말이만 두 그릇 먹었어요" }),
+    ).toHaveCount(0);
+  });
 });
 
 /**
