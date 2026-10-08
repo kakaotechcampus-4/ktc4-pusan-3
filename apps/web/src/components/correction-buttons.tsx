@@ -34,11 +34,27 @@ interface VerdictSpec {
   label: string;
   /** 누르면 실제로 무엇이 바뀌는지. 🚨 확실한 것만 적는다. */
   effect: string;
+  /**
+   * 바꾼 뒤에 어떻게 되는지. 없으면 줄을 세우지 않는다.
+   *
+   * 🚨 **판정마다 둔다. 대상(기록/기억)마다 한 줄로 묶지 않는다.** 한동안 대상마다 한 줄이라
+   *    목록에 남는 판정에도 "목록에서 빠지고" 가 붙어, 바로 위 `effect` 와 반대말을 했다 (#270 리뷰).
+   * 🚨 **되돌릴 수 있다고 말하지 않는다.** 교정 자체는 append-only 라 데이터가 지워지지는 않지만,
+   *    화면에는 되돌리는 기능이 없다(제품 결정). "다시 고칠 수 있어요" 라고 쓰면 부모가 찾지 못할
+   *    길을 약속하는 것이다. 서버도 한 번 고친 기록은 다시 받지 않는다(400).
+   * 🚨 **Agent 마다 다른 것은 적지 않는다.** `stand_alone` 은 Food 는 검색하고 Activity 는 안 해서
+   *    "제안의 근거로 쓰이지 않아요" 가 반만 맞다 — 확실한 "기억으로 세지 않는다" 만 적는다.
+   */
+  after?: string;
 }
 
 /**
  * 🚨 **여기 없는 판정은 화면에 서지 않는다.** 서버도 대상마다 받는 값이 갈린다 — 기록에
  *    `need_more_observation` · `outdated` 를 보내면 400 이다 (#277).
+ *
+ * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` · `inactive`
+ * 둘 다 목록에 내린다). 기억은 `outdated` · `wrong` 이 `archived` 라 목록에서 빠지고,
+ * `need_more_observation` 은 `candidate` 로 내려갈 뿐이라 남는다.
  */
 const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
   observation: [
@@ -46,11 +62,13 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
       verdict: "once_only",
       label: "이번만 그랬어요",
       effect: "이번 한 번만 있던 일로 표시해요. 기록은 목록에 그대로 남아요.",
+      after: "아이의 기억으로는 세지 않아요. 한 번 바꾸면 되돌릴 수 없어요.",
     },
     {
       verdict: "wrong",
       label: "잘못된 기록",
-      effect: "이 기록을 목록에서 빼요.",
+      effect: "잘못 들어간 기록으로 표시해요. 기록은 목록에 남아요.",
+      after: "제안의 근거로도, 아이의 기억으로도 쓰이지 않아요. 한 번 바꾸면 되돌릴 수 없어요.",
     },
   ],
   affinity: [
@@ -63,23 +81,15 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
       verdict: "outdated",
       label: "지금은 달라요",
       effect: "지금은 다르다고 표시하고 이 기억을 목록에서 빼요.",
+      after: "빠진 기억은 되돌릴 수 없어요.",
     },
     {
       verdict: "wrong",
       label: "잘못된 기록",
       effect: "이 기억을 목록에서 빼요. 쌓인 기록은 그대로 남아요.",
+      after: "빠진 기억은 되돌릴 수 없어요.",
     },
   ],
-};
-
-/**
- * 🚨 **되돌릴 수 있다고 말하지 않는다.** 교정 자체는 append-only 라 데이터가 지워지지는 않지만,
- *    화면에는 되돌리는 기능이 없다(제품 결정). "다시 고칠 수 있어요" 라고 쓰면 부모가 찾지 못할
- *    길을 약속하는 것이다 — 목록에서 빠진다는 사실과, 앞으로 어떻게 되는지만 말한다.
- */
-const RECOVERY: Record<CorrectionTargetKind, string> = {
-  observation: "목록에서 빠지고 되돌릴 수 없어요. 제안의 근거로도 쓰이지 않아요.",
-  affinity: "목록에서 빠지고 되돌릴 수 없어요. 같은 것이 다시 쌓이면 새로 만들어져요.",
 };
 
 export function CorrectionButtons({
@@ -106,7 +116,9 @@ export function CorrectionButtons({
               문장에서 못 쓴다 — 받침으로 고르는 것은 `josa` 가 한다 (키가 `"으로/로"` 순서다). */}
           <p className="text-body text-ink">{josa(asking.label, "으로/로")} 바꿀까요?</p>
           <p className="text-body-sm text-ink-muted mt-1">{asking.effect}</p>
-          <p className="text-caption text-ink-subtle mt-2">{RECOVERY[targetKind]}</p>
+          {asking.after ? (
+            <p className="text-caption text-ink-subtle mt-2">{asking.after}</p>
+          ) : null}
         </div>
 
         {/* 🚨 `btn-approve` 도 `caution` 도 쓰지 않는다 — 그 둘은 승인 게이트 2곳 전용이다. */}

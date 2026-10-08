@@ -41,8 +41,8 @@ const feedbackBySuggestion = new Map<string, SuggestionFeedback>();
  * 교정으로 상태가 바뀐 관찰. 행을 지우지 않고 상태만 내린다 — 서버(#277)와 같은 표다.
  * `once_only` → `stand_alone` · `wrong` → `inactive`.
  *
- * ⚠️ `stand_alone` 은 목록에 남긴다 — "이번만 그랬어요" 의 안내 문구("기록은 목록에 그대로 남아요")를
- *    따랐다. 서버 목록은 `active` 만 내려서 빠진다. 어느 쪽이 맞는지 #277 에 물어 둔 상태다.
+ * ⚠️ 서버는 `stand_alone` · `inactive` 둘 다 목록에 내리기로 했다 (#270 리뷰 · 서버 반영 전).
+ *    목은 아직 `stand_alone` 만 남기고 `inactive` 는 뺀다.
  */
 const correctedObservations = new Map<string, "stand_alone" | "inactive">();
 
