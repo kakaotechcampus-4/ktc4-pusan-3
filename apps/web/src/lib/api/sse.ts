@@ -140,7 +140,8 @@ export interface UnavailableEvent {
  * 🚨 **`body` 는 여러 줄일 수 있다** — 성장 추이는 요약 한 줄 아래 잰 기록을 줄마다 적는다.
  * 🚨 **`kind` 는 열어 둔다.** 모르는 `kind` 가 와도 `body` 는 그린다 — 서버가 종류를 늘려도 화면을 먼저
  *    배포하지 않아도 된다 (`GuidanceEvent.code` 와 같은 이유).
- * ⚠️ 개수 안내와 Activity 날씨 안내가 둘 다 `kind: "notice"` 다. 둘을 가를 값은 #227 · #249 에서 정한다.
+ * 🚨 **개수 안내는 `kind` 가 아니라 `code` 로 찾는다.** Activity 날씨 안내도 `kind: "notice"` 라서, 한 블록에
+ *    둘이 같이 오면 `kind` 로는 못 가른다. 문구도 Agent 마다 달라서(Food 의 0개 문구) 문구로 가르면 안 된다.
  * ⚠️ 서버 readout 의 `source_refs` 는 오지 않는다 (#276). 근거 종류가 `Ref.kind` 에 아직 없다.
  */
 export interface AgentReadout {
@@ -149,6 +150,16 @@ export interface AgentReadout {
   title: string;
   body: string;
   authored_by: "code" | "model";
+  /**
+   * 개수 안내의 종류 (#276 · #249 의 `groups[].notice` 와 같은 값). 서버 `count_notice()` 만 붙인다.
+   * `fewer` 는 1~2개, `empty` 는 0개, 개수와 상관없는 readout(날씨 안내 · 성장 추이)은 `null` 이다. 키는 늘 있다.
+   *
+   * ⚠️ **3단계 전까지 04 에는 `empty` 만 온다.** `fewer` 는 늘 추천과 같이 나오는데, 추천이 든 결과는 서버가
+   *    `agent_result` 로 내지 않는다 (#276 `_shows`). 그래서 지금 04 블록은 이 값으로 그림을 가르지 않고,
+   *    3단계에서 "후보 N개" 자리에 개수 안내를 둘 때 쓴다.
+   * ⚠️ `cannot_resume`(이어서 할 수 없음)은 05 추천 엔드포인트만 붙인다 (#249). 04 에는 오지 않는다.
+   */
+  code: "fewer" | "empty" | null;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 
-import type { AgentResultEvent } from "@/lib/api/sse";
+import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
 import type { Agent, Observation } from "@/lib/api/types";
 
 import { healthObservation, observations, runEventDrafts } from "../fixtures";
@@ -138,8 +138,18 @@ const GROWTH_DELTA_BODY = [
   "  2026-09-01  키 99.5cm · 몸무게 15.0kg  (직전 대비 키 3.1cm · 몸무게 0.8kg)",
 ].join("\n");
 
-/** 0개 안내 — 서버 `suggestion.readout.yaml` 의 `suggestion.empty` 와 같은 글자. */
-const EMPTY_NOTICE = "조건에 맞는 추천이 없어요.";
+/**
+ * 0개 안내 — 서버 `suggestion.readout.yaml` 의 `suggestion.empty` 와 같은 글자.
+ * 🚨 `code` 는 `empty` 다 — 서버 `count_notice()` 가 붙인다 (#276). 3단계 전까지 04 로 오는 개수 안내는 이것뿐이다
+ *    (`fewer` 는 추천과 같이 나와서 서버가 `agent_result` 로 내지 않는다).
+ */
+const EMPTY_NOTICE_READOUT: AgentReadout = {
+  kind: "notice",
+  title: "",
+  body: "조건에 맞는 추천이 없어요.",
+  authored_by: "code",
+  code: "empty",
+};
 
 /** Agent 가 되묻는 한 줄 (`needs_observation`). Memory 의 `NOTE_QUESTION` 과 **다른 문장**이라 화면에서 갈린다. */
 const AGENT_QUESTION = "요즘 주로 집 안에서 노는지 바깥에서 노는지 알려주시겠어요?";
@@ -166,7 +176,13 @@ async function* agentResultScript(
             task_type: "growth_review",
             status: "completed",
             readouts: [
-              { kind: "growth_delta", title: "", body: GROWTH_DELTA_BODY, authored_by: "code" },
+              {
+                kind: "growth_delta",
+                title: "",
+                body: GROWTH_DELTA_BODY,
+                authored_by: "code",
+                code: null,
+              },
             ],
             question: null,
           },
@@ -181,7 +197,7 @@ async function* agentResultScript(
             agent: "food",
             task_type: "meal_recommendation",
             status: "completed",
-            readouts: [{ kind: "notice", title: "", body: EMPTY_NOTICE, authored_by: "code" }],
+            readouts: [EMPTY_NOTICE_READOUT],
             question: null,
           },
         ]
@@ -200,7 +216,7 @@ async function* agentResultScript(
               agent: "food",
               task_type: "meal_recommendation",
               status: "completed",
-              readouts: [{ kind: "notice", title: "", body: EMPTY_NOTICE, authored_by: "code" }],
+              readouts: [EMPTY_NOTICE_READOUT],
               question: null,
             },
           ];
