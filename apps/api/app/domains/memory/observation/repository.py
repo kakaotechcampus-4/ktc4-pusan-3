@@ -131,14 +131,29 @@ async def count_active_observations(
     child_id: uuid.UUID,
     period_start: date,
     period_end: date,
+    exclude_health: bool = False,
+    statuses: Collection[ObservationStatus] = (ObservationStatus.ACTIVE,),
 ) -> ActiveObservationCounts:
-    """홈의 전체 active 수와 지정 기간 겹침 수. 종료일은 열린 경계다."""
+    """홈의 전체 수와 지정 기간 겹침 수. 종료일은 열린 경계다.
+
+    exclude_health — 첫 배포 범위에서 건강 기록을 세지 않는다 (#259).
+    statuses — 셀 상태. 기본은 active 만이다. deleted 는 받지 않는다.
+    """
+    wanted = sorted({ObservationStatus(s).value for s in statuses})
+    if not wanted or ObservationStatus.DELETED.value in wanted:
+        raise ValueError("deleted 는 셀 수 없는 상태다")
     if period_start >= period_end:
         raise ValueError("집계 기간은 시작일보다 종료일이 늦어야 한다")
     row = (
         await session.execute(
             _COUNT_ACTIVE_SQL,
-            {"child_id": child_id, "period_start": period_start, "period_end": period_end},
+            {
+                "child_id": child_id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "exclude_health": exclude_health,
+                "statuses": wanted,
+            },
         )
     ).one()
     return ActiveObservationCounts(total_count=row.total_count, period_count=row.period_count)
