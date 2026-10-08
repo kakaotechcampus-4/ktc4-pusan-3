@@ -40,6 +40,38 @@ test.describe("교정 질문이 기록과 기억에서 다르다 (§5 Correction
   });
 });
 
+/**
+ * 🚨 기억 고치기는 의견이다 (#277). 서버는 판정으로 상태를 바꾸지 않고 기록 수로만 다시 센다 —
+ *    누르기 전에는 "목록에 그대로 있어요" 만 약속하고, 바뀐 것은 누른 뒤 응답으로 말한다.
+ */
+test.describe("기억 고치기는 기억을 목록에서 빼지 않는다 (#277)", () => {
+  async function correctAffinity(page: import("@playwright/test").Page, label: string) {
+    await page.goto(`${MEMORIES}?tab=profile`);
+    await page.getByText("계란 반찬").first().click();
+    const sheet = page.getByRole("dialog", { name: "기억 상세" });
+    await sheet.getByRole("button", { name: label, exact: true }).click();
+    await expect(sheet.getByText("기억은 목록에 그대로 있어요.", { exact: false })).toBeVisible();
+    await expect(sheet.getByText("목록에서 빼요", { exact: false })).toHaveCount(0);
+    await sheet.getByRole("button", { name: "바꾸기" }).click();
+    return sheet;
+  }
+
+  test("상태가 그대로면 그대로라고 말한다", async ({ page }) => {
+    const sheet = await correctAffinity(page, "지금은 달라요");
+
+    await expect(sheet.getByText("기억의 상태는 바뀌지 않았어요.")).toBeVisible();
+    await sheet.getByRole("button", { name: "닫기" }).last().click();
+    await expect(page.getByText("계란 반찬").first()).toBeVisible();
+  });
+
+  test("상태가 바뀌면 직전 상태와 함께 말한다", async ({ page }) => {
+    // 계란 반찬은 묶인 기록 3건으로 확인됨이다. wrong 이 기준을 올려 후보로 내려간다.
+    const sheet = await correctAffinity(page, "잘못된 기록");
+
+    await expect(sheet.getByText("기억이 확인됨에서 후보로 바뀌었어요.")).toBeVisible();
+  });
+});
+
 test.describe("한 번의 관찰을 성향으로 확정하지 않는다 (§2 기억)", () => {
   test("한 번 본 것은 후보로 남고, 반복된 것만 확인됨이다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=profile`);

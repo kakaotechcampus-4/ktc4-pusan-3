@@ -43,6 +43,7 @@ import type {
   CalendarDayResponse,
   CalendarMonthResponse,
   ChildProfile,
+  CorrectionRequest,
   CorrectionResponse,
   GrowthLog,
   GrowthLogsResponse,
@@ -1140,24 +1141,64 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect(after.items.some((item) => item.id === target!.id)).toBe(false);
   });
 
-  it("기억 need_more_observation 은 confirmed 를 candidate 로 한 단계만 내린다", async () => {
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_12" },
-      verdict: "need_more_observation",
+  // 🚨 기억 고치기는 의견이다 — 서버(#277)는 상태를 쌓인 기록 수와 기억 wrong 수로만 다시 센다.
+  //    어느 판정도 기억을 archived 로 보내지 않고, 기억은 목록에 남는다.
+  async function correctAffinity(id: string, verdict: CorrectionRequest["verdict"]) {
+    return api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id },
+      verdict,
       child_id: "c1",
     });
+  }
 
-    expect((result.target as Affinity).state).toBe("candidate");
+  async function listedAffinity(id: string): Promise<Affinity | undefined> {
+    const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    return body.affinities.find((a) => a.id === id);
+  }
+
+  it("기억 need_more_observation 은 strength 만 낮춘다 — 확인됨은 확인됨으로 남는다", async () => {
+    const before = await listedAffinity("a_12");
+    const result = await correctAffinity("a_12", "need_more_observation");
+
+    const target = result.target as Affinity;
+    expect(target.state).toBe("confirmed");
+    expect(target.strength).toBeLessThan(before!.strength);
+    expect((await listedAffinity("a_12"))?.state).toBe("confirmed");
   });
 
-  it("기억 outdated 는 archived 로 내린다 — 한 단계가 아니다", async () => {
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_20" },
-      verdict: "outdated",
+  it("기억 outdated 도 상태를 바꾸지 않고 목록에 남긴다", async () => {
+    const result = await correctAffinity("a_20", "outdated");
+
+    expect((result.target as Affinity).state).toBe("candidate");
+    expect(await listedAffinity("a_20")).toBeDefined();
+  });
+
+  it("기억 wrong 은 확인됨의 기준을 올린다 — 기록이 모자라면 후보로 내려가고 목록에 남는다", async () => {
+    // a_12 는 묶인 기록 3건으로 확인됨이다. wrong 1번이면 기준이 4건이 된다.
+    const result = await correctAffinity("a_12", "wrong");
+
+    expect((result.target as Affinity).state).toBe("candidate");
+    expect((await listedAffinity("a_12"))?.state).toBe("candidate");
+  });
+
+  it("묶인 기록을 고치면 기억도 다시 센다 — 고친 기록은 기억의 기록 수에서 빠진다", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
 
-    expect((result.target as Affinity).state).toBe("archived");
+    const affinity = await listedAffinity("a_12");
+    expect(affinity?.observation_count).toBe(2);
+    expect(affinity?.source_refs.some((ref) => ref.id === "o_1")).toBe(false);
+    expect(affinity?.state).toBe("candidate");
+  });
+
+  it("기억에 once_only 를 보내면 400 이다 — 기록에만 쓰는 값", async () => {
+    const failure = await correctAffinity("a_12", "once_only").catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
   });
 });
 
