@@ -158,6 +158,12 @@ class InMemoryGrowthDocs:
         ]
         return rows[:limit]
 
+    async def chain(self, *, chain_key: str) -> list[GrowthDocRow]:
+        prefix = f"{chain_key}.step"
+        return [
+            r for r in self._rows if r.row_type == "routine_step" and r.doc_key.startswith(prefix)
+        ]
+
 
 class InMemoryBooks:
     def __init__(self, rows: Sequence[BookRow] = (), *, fail: bool = False) -> None:

@@ -12,8 +12,13 @@ YAML 이 원본이다. DB 가 생기면 Alembic 이 이 파일을 `doc_key` 기�
 
 `next_step_of` 는 YAML 에서 **앞 단계 행의 doc_key** 로 적는다. 행의 id 는 doc_key 에서 늘 같게
 만들어지므로 (`doc_id`) 읽는 쪽이 같은 값으로 이어 붙인다 — DB 의 uuidv7 과는 다르다.
+
+자립 단계(`routine_step`)의 doc_key 는 `growth.routine.<routine_category>.<사슬 이름>.step<N>` 이다.
+`.step<N>` 앞까지가 사슬 이름(`chain_key`)이고, 같은 이름의 행이 한 사슬이다. run 은 이 이름으로
+사슬을 통째로 읽는다 — 의미 검색 top-3 으로는 `pick_next_step` 에 넘길 사슬이 다 오지 않는다.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
@@ -42,6 +47,16 @@ _DOMAIN_KEYS = frozenset(
     {"area", "routine_category", "trigger_tags", "materials", "setting", "next_step_of"}
 )
 _SEQUENCE_STEP = "routine_step"  # next_step_of 로 이어지는 것은 자립 단계뿐이다
+# growth.routine.<카테고리>.<사슬 이름>.step<N> — 1번 묶음이 사슬 이름, 2번이 카테고리
+_STEP_KEY = re.compile(r"(growth\.routine\.([a-z_]+)\.[a-z0-9_]+)\.step\d+")
+
+
+def chain_key(doc_key: str) -> str:
+    """자립 단계 doc_key 의 사슬 이름(`.step<N>` 앞까지). 모양이 다르면 `ValueError`."""
+    match = _STEP_KEY.fullmatch(doc_key)
+    if match is None:
+        raise ValueError(f"자립 단계 doc_key 가 아니다: {doc_key!r}")
+    return match.group(1)
 
 
 def doc_id(doc_key: str) -> UUID:
@@ -111,6 +126,13 @@ def _parse_entry(raw: Mapping[str, Any]) -> GrowthDocEntry:
     area = _optional_choice(raw, "area", AREAS, where)
     category = _optional_choice(raw, "routine_category", ROUTINE_CATEGORIES, where)
     setting = _optional_choice(raw, "setting", SETTINGS, where)
+    if meta.row_type == _SEQUENCE_STEP:
+        match = _STEP_KEY.fullmatch(meta.doc_key)
+        if match is None or match.group(2) != category:
+            raise ValueError(
+                f"{where} 의 doc_key 는 growth.routine.<routine_category>.<사슬 이름>.step<N> "
+                f"이어야 한다 (routine_category={category!r})"
+            )
     next_step_of = raw.get("next_step_of")
     if next_step_of is not None and not (isinstance(next_step_of, str) and next_step_of):
         raise ValueError(f"{where} 의 next_step_of 는 앞 단계 행의 doc_key 여야 한다")
@@ -153,3 +175,5 @@ def _check_next_steps(entries: Sequence[GrowthDocEntry]) -> None:
             raise ValueError(f"{where} 가 자기 자신이다")
         if _SEQUENCE_STEP != entry.meta.row_type or _SEQUENCE_STEP != previous.meta.row_type:
             raise ValueError(f"{where} 는 {_SEQUENCE_STEP} 끼리만 이을 수 있다")
+        if chain_key(entry.meta.doc_key) != chain_key(previous.meta.doc_key):
+            raise ValueError(f"{where} 는 같은 사슬 이름 안의 행이어야 한다")

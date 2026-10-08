@@ -19,9 +19,10 @@
 # routine_step 규칙 (growth/tools/routine.py 의 pick_next_step 이 읽는다)
 # - tags 에 assistance:<independent|verbal_prompt|partial_assist|full_assist> 를 정확히 하나 적는다.
 #   그 행이 어느 도움 수준에 해당하는지다
+# - doc_key 는 growth.routine.<routine_category>.<사슬 이름>.step<N> 이다 (예: growth.routine.self_care.toothbrush.step2).
+#   같은 사슬 이름의 행이 한 사슬이고, run 은 이 이름으로 사슬을 통째로 읽는다. next_step_of 는 같은 사슬 안만 가리킨다
 # - 한 사슬은 처음이 하나, 갈라지거나 끊기거나 돌지 않는다. 도움이 많이 필요한 수준에서 혼자 하는
-#   수준 순서로 나아간다. 한 사슬은 카테고리가 하나다
-# - doc_key 예: growth.routine.self_care.toothbrush.step2
+#   수준 순서로 나아간다. 검수도 사슬 단위로 한다 — 가운데 행만 draft 면 run 이 읽는 사슬이 끊긴다
 #
 # 월령 — min_month 이상 max_month 미만. 12–35개월 학습 활동은 표준보육과정, 36개월 이상은 누리과정에서
 #   쓴 행이라 두 구간에 걸치지 않는다. habit_strategy 는 min_month 가 36 이상이다(DB CHECK).

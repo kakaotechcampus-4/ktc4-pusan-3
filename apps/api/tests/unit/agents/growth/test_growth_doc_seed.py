@@ -24,6 +24,7 @@ from app.agents.growth.doc_seed import (
     ROUTINE_CATEGORIES,
     ROW_TYPES,
     GrowthDocEntry,
+    chain_key,
     doc_id,
     growth_doc_seed,
     parse_growth_doc,
@@ -178,34 +179,24 @@ def lint_entry(entry: GrowthDocEntry) -> list[str]:
 
 
 def chain_problems(entries: Sequence[GrowthDocEntry]) -> list[str]:
-    """`routine_step` 을 `next_step_of` 로 이어진 묶음마다 `pick_next_step` 이 읽을 수 있는지 본다.
+    """사슬 이름(`chain_key`)마다 `pick_next_step` 이 읽을 수 있는 한 줄인지 본다.
 
     같은 함수(`ordered_chain` · 도움 수준 태그 검사)를 그대로 쓴다 — run 과 다른 눈으로 보지 않게.
+    두 번 본다. 쓰고 있는 행 전부(retired 빼고)와, run 이 실제로 읽는 approved 행만.
+    중간 단계만 검수가 안 끝났으면 approved 쪽에서 사슬이 끊긴다.
     """
-    steps = [entry for entry in entries if entry.meta.row_type == "routine_step"]
-    parent = {entry.meta.doc_key: entry.meta.doc_key for entry in steps}
-
-    def root(key: str) -> str:
-        while parent[key] != key:
-            key = parent[key]
-        return key
-
-    for entry in steps:
-        if entry.next_step_of is not None:
-            parent[root(entry.meta.doc_key)] = root(entry.next_step_of)
-    groups: dict[str, list[GrowthDocEntry]] = defaultdict(list)
-    for entry in steps:
-        groups[root(entry.meta.doc_key)].append(entry)
-
+    live = [e for e in entries if e.meta.row_type == "routine_step" and e.meta.status != "retired"]
+    approved = [e for e in live if e.meta.status == "approved"]
     problems = []
-    for members in groups.values():
-        keys = sorted(m.meta.doc_key for m in members)
-        if len({m.routine_category for m in members}) > 1:
-            problems.append(f"{keys}: 한 사슬에 카테고리가 섞였다")
-        try:
-            pick_next_step([m.to_row() for m in members], assistance_level="full_assist")
-        except ChainError as exc:
-            problems.append(f"{keys}: {exc}")
+    for view, members in (("전체", live), ("approved", approved)):
+        groups: dict[str, list[GrowthDocEntry]] = defaultdict(list)
+        for entry in members:
+            groups[chain_key(entry.meta.doc_key)].append(entry)
+        for key, chain_rows in groups.items():
+            try:
+                pick_next_step([e.to_row() for e in chain_rows], assistance_level="full_assist")
+            except ChainError as exc:
+                problems.append(f"{key} ({view}): {exc}")
     return problems
 
 
@@ -271,8 +262,10 @@ def test_멀쩡한_행은_통과한다():
         ({"body": "이 나이에는 혼자 칫솔을 쥘 수 있다."}, "milestone"),
         ({"body": "18개월이면 스스로 문지르게 된다."}, "milestone"),
         ({"body": "대부분의 아이는 컵을 두 손으로 쥔다."}, "milestone"),
-        ({"routine_category": None}, "step_category_or_month"),
-        ({"routine_category": "habit"}, "step_category_or_month"),
+        (
+            {"doc_key": "growth.routine.habit.nail.step1", "routine_category": "habit"},
+            "step_category_or_month",
+        ),
     ],
 )
 def test_적재_검사가_틀린_행을_잡는다(overrides, expected):
@@ -337,8 +330,30 @@ class TestChain:
         assert chain_problems(entries_of(raw(tags=["self_care"]))) != []
 
     def test_갈라지면_잡는다(self):
-        rows = [*chain(), raw(doc_key="growth.routine.self_care.toothbrush.alt", next_step_of=K1)]
+        rows = [*chain(), raw(doc_key="growth.routine.self_care.toothbrush.step4", next_step_of=K1)]
         assert any("갈라" in p for p in chain_problems(entries_of(*rows)))
+
+    def test_앞_단계를_빠뜨려_끊기면_잡는다(self):
+        """같은 사슬 이름인데 처음이 둘이다 — 끊긴 칸이 한 칸짜리 사슬로 보이면 안 된다."""
+        rows = chain()
+        rows[2] = {k: v for k, v in rows[2].items() if k != "next_step_of"}
+        assert any("처음이 2개" in p for p in chain_problems(entries_of(*rows)))
+
+    def test_가운데만_검수가_안_끝나면_run_이_읽는_사슬이_끊긴다(self):
+        approved = {
+            "status": "approved",
+            "reviewed_by": "reviewer-b",
+            "reviewed_at": date(2026, 10, 9),
+        }
+        rows = chain()
+        rows[0] = {**rows[0], **approved}
+        rows[2] = {**rows[2], **approved}
+        problems = chain_problems(entries_of(*rows))
+        assert problems and all("(approved)" in p for p in problems)
+
+    def test_사슬_이름이_다르면_다른_사슬이다(self):
+        other = raw(doc_key="growth.routine.self_care.handwash.step1")
+        assert chain_problems(entries_of(*chain(), other)) == []
 
     def test_돌면_잡는다(self):
         rows = chain()
@@ -358,10 +373,17 @@ class TestChain:
             != []
         )
 
-    def test_카테고리가_섞이면_잡는다(self):
+    def test_사슬_안에서_카테고리가_다르면_읽을_때_실패한다(self):
+        """사슬 이름에 카테고리가 들어 있어서 한 사슬은 카테고리가 하나다."""
         rows = chain()
         rows[2] = {**rows[2], "routine_category": "mealtime"}
-        assert any("카테고리" in p for p in chain_problems(entries_of(*rows)))
+        with pytest.raises(ValueError, match="doc_key"):
+            entries_of(*rows)
+
+    def test_다른_사슬의_행을_앞_단계로_가리키면_실패한다(self):
+        other = raw(doc_key="growth.routine.self_care.handwash.step2", next_step_of=K1)
+        with pytest.raises(ValueError, match="next_step_of"):
+            entries_of(raw(), other)
 
     def test_루틴_단계가_아닌_행은_보지_않는다(self):
         assert chain_problems(entries_of(learning("growth.learn.art.1", 12, 36))) == []
@@ -454,6 +476,25 @@ class TestParse:
             )
         with pytest.raises(ValueError, match="next_step_of"):
             entries_of(raw(), learning("growth.learn.art.a", 12, 36, next_step_of=K1))
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"doc_key": "growth.routine.self_care.toothbrush"},  # .step<N> 이 없다
+            {"doc_key": "growth.routine.self_care.toothbrush.alt"},
+            {"doc_key": "growth.routine.toothbrush.step1"},  # 카테고리 칸이 없다
+            {"routine_category": None},
+            {"routine_category": "mealtime"},  # doc_key 의 카테고리와 다르다
+        ],
+    )
+    def test_자립_단계의_doc_key_는_카테고리와_사슬_이름을_담는다(self, overrides):
+        with pytest.raises(ValueError, match="doc_key"):
+            entries_of(raw(**overrides))
+
+    def test_사슬_이름은_step_앞까지다(self):
+        assert chain_key(K2) == "growth.routine.self_care.toothbrush"
+        with pytest.raises(ValueError):
+            chain_key("growth.learn.art.a")
 
     def test_doc_key_가_겹치면_실패한다(self):
         with pytest.raises(ValueError, match="겹친다"):

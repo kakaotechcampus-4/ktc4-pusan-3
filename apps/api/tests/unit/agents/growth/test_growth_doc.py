@@ -16,7 +16,13 @@ from app.agents.common.refs import count_child_records
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs
 from app.agents.growth.store.ports import GrowthDocRow, GrowthDocType
-from app.agents.growth.tools.docs import DOC_LIMIT, doc_row_type, search_growth_doc
+from app.agents.growth.tools.docs import (
+    DOC_LIMIT,
+    doc_row_type,
+    load_routine_chain,
+    search_growth_doc,
+)
+from app.agents.growth.tools.routine import pick_next_step
 from app.rules.age import stage_of
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
@@ -200,3 +206,50 @@ class TestRowType:
         assert spy.calls[0]["row_type"] == "manner_practice"
         assert spy.calls[0]["routine_category"] == "social_manner"
         assert spy.calls[0]["months"] == 30
+
+
+def step(name: str, n: int, level: str, *, lo: int = 12, hi: int = 48) -> GrowthDocRow:
+    """자립 단계 한 행. n > 1 이면 바로 앞 단계를 가리킨다."""
+    prefix = f"growth.routine.self_care.{name}"
+    return doc_row(
+        f"{prefix}.step{n}",
+        row_type="routine_step",
+        lo=lo,
+        hi=hi,
+        routine_category="self_care",
+        tags=(f"assistance:{level}",),
+        next_step_of=uuid5(NAMESPACE_URL, f"{prefix}.step{n - 1}") if n > 1 else None,
+    )
+
+
+TOOTHBRUSH = (
+    step("toothbrush", 1, "full_assist"),
+    step("toothbrush", 2, "partial_assist"),
+    step("toothbrush", 3, "independent", lo=36, hi=72),
+)
+
+
+class TestRoutineChain:
+    """`pick_next_step` 은 사슬 전체가 필요하다. top-3 이 아니라 사슬 이름으로 통째로 읽는다."""
+
+    async def test_검색에_걸린_행의_사슬을_처음부터_끝까지_가져온다(self):
+        docs = InMemoryGrowthDocs([TOOTHBRUSH[2], TOOTHBRUSH[0], TOOTHBRUSH[1]])
+        chain = await load_routine_chain(docs, TOOTHBRUSH[1])
+        assert [r.doc_key for r in chain] == [r.doc_key for r in TOOTHBRUSH]
+
+    async def test_월령으로_거르지_않는다(self):
+        """3단계는 36개월부터지만 사슬에서 빠지면 2단계의 다음 칸을 못 고른다."""
+        docs = InMemoryGrowthDocs(TOOTHBRUSH)
+        chain = await load_routine_chain(docs, TOOTHBRUSH[0])
+        assert pick_next_step(chain, assistance_level="partial_assist").row == TOOTHBRUSH[2]
+
+    async def test_이름_앞부분만_같은_사슬은_섞이지_않는다(self):
+        kit = step("toothbrush_kit", 1, "full_assist")
+        handwash = step("handwash", 1, "full_assist")
+        docs = InMemoryGrowthDocs([*TOOTHBRUSH, kit, handwash])
+        chain = await load_routine_chain(docs, TOOTHBRUSH[0])
+        assert [r.doc_key for r in chain] == [r.doc_key for r in TOOTHBRUSH]
+
+    async def test_자립_단계가_아닌_행은_사슬이_없다(self):
+        with pytest.raises(ValueError):
+            await load_routine_chain(InMemoryGrowthDocs(), doc_row("growth.learn.a"))

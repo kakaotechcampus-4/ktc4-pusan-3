@@ -10,6 +10,9 @@ run 시작에 코드가 한 번 부른다. 결과는 프롬프트 `[예시]` 구
               — 비면 호출부가 `doc.no_row` 로 일반 템플릿을 낸다
     근거      문서 행은 참고다. `Ref(kind='growth_doc')` 로만 싣고 개인화 근거로 세지 않는다
               (`count_child_records` 가 뺀다)
+
+자립 단계는 검색에 걸린 행 하나로 끝나지 않는다. `load_routine_chain` 이 그 행의 사슬을 통째로
+읽어 `pick_next_step` 에 넘긴다 — top-3 에는 사슬이 다 오지 않는다.
 """
 
 import re
@@ -17,10 +20,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.agents.common.refs import Ref
-from app.agents.growth.doc_seed import ROUTINE_CATEGORIES
+from app.agents.growth.doc_seed import ROUTINE_CATEGORIES, chain_key
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import GrowthDocReader, GrowthDocRow, GrowthDocType
+from app.agents.growth.tools.routine import ordered_chain
 from app.rules.age import stage_of
 
 # 프롬프트 [예시]에 싣는 행 수 (RAG_plan §7 — Growth 3)
@@ -103,3 +107,15 @@ async def search_growth_doc(
     )
     served = (r for r in rows if r.row_type == row_type and r.min_month <= months < r.max_month)
     return tuple(DocHit(row) for row in served)[:DOC_LIMIT]
+
+
+async def load_routine_chain(docs: GrowthDocReader, row: GrowthDocRow) -> tuple[GrowthDocRow, ...]:
+    """`row` 가 속한 자립 단계 사슬을 처음부터 끝까지 세운다. `pick_next_step` 에 그대로 넘긴다.
+
+    사슬은 doc_key 의 사슬 이름으로 읽는다(`doc_seed.chain_key`).
+    자립 단계 행이 아니면 `ValueError`,
+    사슬이 끊겼거나 갈라졌으면 `ChainError` — 적재 검사가 먼저 막는다.
+    """
+    if row.row_type != "routine_step":
+        raise ValueError(f"자립 단계 행이 아니다: {row.doc_key}")
+    return ordered_chain(await docs.chain(chain_key=chain_key(row.doc_key)))
