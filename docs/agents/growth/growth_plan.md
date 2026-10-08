@@ -93,7 +93,7 @@ DoD: upgrade/downgrade 왕복 · agent role로 `growth_doc` INSERT 시도 → �
 | --- | --- | --- |
 | 3-1 | 정보나루 인증키 + **서버 IP 등록** | 한도 500 → 30,000/일 |
 | 3-2 | 어댑터 + 계약 테스트 | 실제 응답 샘플 → dataclass |
-| 3-3 | 연령 산출식 (`age_min/max_month`) | API 연령 코드·청구기호·서명 키워드 조합 (GT-3) |
+| 3-3 | 연령 산출식 (`age_min/max_month`) | 아동 도서(부가기호 7)로 좁히고 `form` 의 월령 범위로 — 처음 값은 own_table §7 GT-3 |
 | 3-4 | `form` 분류 (보드북/그림책/지식책) | 불명이면 `unknown` → **영아기 제외** |
 | 3-5 | 사서추천도서 월 1회 배치 | `pick_weight` 반영 |
 | 3-6 | 주제어(`subjects`) 색인 | 관심사 매칭 |
@@ -108,7 +108,7 @@ app/agents/growth/
 ├── schemas/ · store/ports.py · tools/
 ```
 
-**포트**: `observation_education` · `observation_routine` · **`observation_activity`(주입, import 아님)** · `profile_affinity(domains: tuple[str,...])` · `child_growth_log` · `notice` · `growth_doc` · `book_catalog` · `hazard_term` · `SuggestionWriter`
+**포트**: `observation_education` · `observation_routine` · **`observation_activity`(주입, import 아님)** · `profile_affinity(domains: tuple[str,...])` · `child_growth_log`(전부, `Decimal`) · `notice` · `growth_doc` · `book_catalog` · `hazard_term` · `SuggestionWriter` · 생일 · `child_health` 동의 · `health_safety`(`allergy` · `environmental`, 교육 활동용). 생일 · 동의 · 알레르기 포트는 Food · Activity 와 같은 이름 · 시그니처로 `growth/store/ports.py` 에 둔다(공통화는 Food · Activity 포트를 `common/ports.py` 로 올릴 때 같이 한다). InMemory 동의는 기본값 없이 생성자 인자로 받는다
 
 **게이팅** ([`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §4)
 
@@ -117,9 +117,9 @@ app/agents/growth/
 | routine·activity·affinity 검색 · `propose_routine_plan` · `search_books` · `propose_books` · `compute_growth_delta` | 0 |
 | education 검색 · `lookup_notice` · `propose_learning_activity` | **12** |
 
-라벨 안에서 코드가 정하는 것: 루틴 모드(0–11 `rhythm_info` / 12+ `next_step` / 36+ `habit_fix`) · 허용 카테고리(24+ 예절, 36+ 습관) · KB 인덱스(12–35 / 36+) · 도서 연령 필터. **성장폭에는 연령 축이 없다** — `compute_growth_delta`는 측정 로그 전부를 읽는다.
+라벨 안에서 코드가 정하는 것: 루틴 모드(0–11 `rhythm_info` / 12+ `next_step` / 36+ `habit_fix`) · 허용 카테고리(24+ 예절, 36+ 습관) · `search_growth_doc` 월령 필터(12–35 / 36+) · 도서 연령 필터. **성장폭에는 연령 축이 없다** — `compute_growth_delta`는 측정 로그 전부를 읽는다.
 
-DoD: mock `run()` · Activity 패키지 import 0건(import-linter) · `test_growth_registry.py`.
+DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-linter 는 넣지 않는다, 2026-10-08) · `test_growth_registry.py`.
 
 ---
 
@@ -127,13 +127,16 @@ DoD: mock `run()` · Activity 패키지 import 0건(import-linter) · `test_grow
 
 | 순서 | tool | DoD |
 | --- | --- | --- |
-| 5-1 | `compute_growth_delta` | 측정일 **전부** 표기 · 측정 1건 이하 → readout · **모델 호출 0** · 판정어 0건 · 반올림 0건 |
+| 5-1 | `compute_growth_delta` | 측정일 **전부** 표기 · 측정 1건 이하 → readout · **모델 호출 0** · 판정어 0건 · 반올림 0건(`Decimal`) · **지표별** 판정 · 차분 · 한쪽만 잰 날은 그 값만 · 24개월을 걸친 키 측정이면 자세 단서 |
 | 5-2 | `check_routine_category` | 연령 허용표 대조 · 불허 → readout 교체(모델 1회는 유지) |
 | 5-3 | `rank_evidence` 연결 | domains 복수 · `profile_affinity`는 읽기만 (감쇠는 Curator) |
 | 5-4 | `search_growth_doc` | 월령·`row_type`·카테고리 필터 → 의미 검색 top-3 · 쿼리에 보호자 발화 없음 · **교육과정도 루틴 자료도 같은 테이블** |
-| 5-4a | `pick_next_step` | 관찰 `assistance_level` → 사슬의 바로 다음 행 · 건너뛰기 불가 · 사슬 끝이면 일반 템플릿 |
+| 5-4a | `pick_next_step` | 관찰 `assistance_level` → 사슬의 바로 다음 행 · 건너뛰기 불가 · 사슬 끝이면 일반 템플릿 · **최근 14일 안 관찰만** · 없거나 비면 `ask.routine_current` |
 | 5-5 | 평가 표현 필터 | 출력 사후 · 걸리면 후보 **삭제**(수정 아님) |
-| 5-6 | `hazard` 사후 스캔 | 활동 후보의 `materials`·문장 |
+| 5-6 | `hazard` 사후 스캔 | 활동 후보의 `materials`·문장 · 18개월 미만 승격 **없음** |
+| 5-7 | 음식 용어 스캔 | 교육 · 루틴 후보 · `allergen_terms.yaml` + `food_choking` · 아이 · 월령 무관 · 한 글자 별칭 안 씀 · Activity 제외 별칭 공유 (#264 · #261 전엔 포트 주입) |
+| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조(대응표 없음) · `environmental` 이 있으면 확인 문구(`caution.environmental`) · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
+| 5-9 | 루틴 닫힘 | 의료 처치 용어 → `closed.medical_routine` · 증상처럼 보이는 습관 → `closed.symptom_habit` · 요청 문장 · 관찰 `subject` 에 걸리면 모델 0 |
 
 ---
 
@@ -144,8 +147,8 @@ DoD: mock `run()` · Activity 패키지 import 0건(import-linter) · `test_grow
 **출력 검증**
 - 근거 id가 `rank_evidence` 상위 N 안
 - `propose_books`: **직전 `search_books` 결과의 ISBN만**
-- `propose_routine_plan`: `habit` + `trigger` NULL → 역질의 · **근거 0 → 역질의(카테고리 무관)**. `routine_coaching`은 일반 추천을 내지 않는다
-- 평가 표현 필터 · hazard 스캔
+- `propose_routine_plan`: `habit` + `trigger` NULL → 역질의 · **근거 0 → 역질의(카테고리 무관)** — 근거는 선언한 `category` 와 같은 `observation_routine` 이 최근 14일 안에 있는지로 센다(affinity 는 세지 않는다). `routine_coaching`은 일반 추천을 내지 않는다
+- 안전 필터(hazard 스캔 · 음식 용어 스캔 · 교육 알레르기 대조) → 평가 표현 필터 순([`Tool_공통.md`](../shared/Tool_공통.md) §5-1)
 - 근거가 `observation_activity`면 ref에 표시 → 화면 문구 분기
 
 `growth_review`는 이 경로를 **타지 않습니다.** AI 클라이언트를 아예 호출하지 않습니다.
@@ -156,7 +159,7 @@ DoD: mock `run()` · Activity 패키지 import 0건(import-linter) · `test_grow
 
 | 채널 | 내용 |
 | --- | --- |
-| `suggestions` | 교육 활동 · 루틴 · 도서 (draft +24h) · **최대 3개** · 필터 후 3개 미만이면 재호출 1회 · 다 못 채우면 개수 안내(`suggestion.partial` · 0개면 `suggestion.empty`) · 저장 즉시 추천 카드 화면 |
+| `suggestions` | 교육 활동 · 루틴 · 도서 (draft +24h) · **최대 3개** · 필터 후 3개 미만이면 재호출 1회 · 다 못 채우면 개수 안내(`suggestion.partial` · 0개면 `suggestion.empty`) · 저장이 끝나면 대화에 제안 화면 딥링크 안내(승인 · 피드백은 그 화면 카드에서만) |
 | `readouts` | `growth_delta`(code) · 닫힘 안내(code) |
 | `needs_observation` | `trigger` 질문 또는 습관 현재 여부 — 한 번에 하나 |
 | `event_requests` | 없음 |
@@ -168,10 +171,10 @@ DoD: 성장폭 readout에 **측정일 2개**가 항상 있음 · 닫힘 문구�
 ## 9. S8 — 파이프라인 통합
 
 - `IMPLEMENTED_AGENTS`에 `growth` · **라벨 4개** 라우팅
-- Supervisor 경계 예시 투입: activity↔growth 4줄 · 신체 성장 3줄("잘 크고 있어?"까지 전부 `growth_review`)
+- Supervisor 경계 예시 투입: activity↔growth 4줄 · 신체 성장 3줄("잘 크고 있어?"까지 전부 `growth_review`) · 의료 처치 · 증상 같은 습관("약 먹기 싫어해" · "눈을 자꾸 깜빡여")도 `routine_coaching` 으로 와서 코드가 닫는다
 - `growth_review`·닫힘 경로는 `model_calls=0`으로 집계
 
-DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) · "잘 크고 있어?" → Health.
+DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) · "잘 크고 있어?" → **Growth `growth_review`**(Health 아님).
 
 ---
 
@@ -181,8 +184,9 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 | --- | --- |
 | `test_growth_registry.py` | 게이팅 표 · 코드 tool 비노출 |
 | `test_growth_gating.py` | 11/12 · 23/24 · 35/36개월 양쪽 · 동의 철회 |
-| `test_growth_delta.py` | 측정 1건 → 안내 · **간격이 짧아도 수치가 그대로 나옴** · **AI 0회** · 측정일 전부 표기 · 반올림 0건 |
-| `test_growth_routine.py` | `trigger` NULL → 역질의 · 30개월 습관 → 닫힘 readout · **20개월 자립 + 근거 0 → 역질의**(일반 제안 아님) · **8개월 → `rhythm_info` readout 하나, `suggestion` 0건** |
+| `test_growth_delta.py` | 측정 1건 → 안내 · **간격이 짧아도 수치가 그대로 나옴** · **AI 0회** · 측정일 전부 표기 · 반올림 0건 · 지표별 판정(한쪽만 잰 날 · 한 지표만 2건) · 24개월 걸침 → 자세 단서 |
+| `test_growth_routine.py` | `trigger` NULL → 역질의 · 30개월 습관 → 닫힘 readout · **20개월 자립 + 근거 0 → 역질의**(일반 제안 아님) · **8개월 → `rhythm_info` readout 하나, `suggestion` 0건** · 같은 카테고리 관찰이 15일 전 → 역질의 · 다른 카테고리 관찰만 → 역질의 · `assistance_level` NULL → 역질의 · 의료 처치 / 증상 → 닫힘 readout · 모델 0회 |
+| `test_growth_safety.py` | **신규** — 음식 용어(알레르기 사전 · `food_choking`) 후보 삭제 · 동의 없음 → `health_safety` 미조회 + 교육 정상 · 등록한 이름(라텍스 · 꽃가루)이 든 후보 삭제 · 환경 알레르기 → 확인 문구 · 조회 실패 → 교육만 `blocked.safety` · 15개월 `water` 경고 후보가 **차단되지 않고** 경고와 함께 남음 |
 | `test_growth_output.py` | ISBN 검증(직전 검색 결과 + 만료 전 suggestion 제외) · 근거 id · hazard |
 | `test_growth_doc.py` | **신규** — `search_growth_doc` 쿼리에 보호자 발화 0건 · 월령 밖 행 미노출 · 결과가 `source_kind='growth_doc'`으로만 담김(품질 지표에서 제외) |
 | `test_growth_next_step.py` | **신규** — `pick_next_step`이 사슬의 바로 다음 칸 · 건너뛰기 0건 · 사슬 끝이면 일반 템플릿 |
@@ -242,4 +246,4 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 
 ## 13. 열린 항목
 
-G-3 · G-7 ([`Growth_Agent_명세.md`](Growth_Agent_명세.md) §10) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
+G-3 · G-7 · **G-9 증감 문구 협의** · 의료 처치 / 증상 목록 내용 ([`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`

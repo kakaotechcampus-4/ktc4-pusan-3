@@ -4,6 +4,7 @@
 > 관련: [`Growth_Agent_명세.md`](Growth_Agent_명세.md) · [`Growth_Tool_명세.md`](Growth_Tool_명세.md) · [`Agent_공통규약.md`](../shared/Agent_공통규약.md) §2
 >
 > **2026-09-22 갱신** — `growth_doc`이 핵심 기능(관찰 × 문서 연결 추천)의 재료 · `notice`는 보조 · 성장 판정은 시스템 전체에서 없음
+> **2026-10-08** — `profile_affinity` 는 education · activity 둘 · 교육 활동만 `health_safety`(allergy · environmental)를 읽는다 · 음식 용어 스캔에 `allergen_terms.yaml` · `food_choking` · 18개월 미만 승격 미적용 · 교육 알레르기는 이름 대조 + 환경 알레르기 확인 문구(#261) · 도서 연령 처음 값(GT-3)
 
 ---
 
@@ -16,13 +17,15 @@
 | `growth_doc` | 마이그레이션 시드 | Growth | 문서 행 (교육과정·루틴 자료를 **재작성한** 행) — **핵심 기능의 재료**. 별도 KB 인덱스는 없다 |
 | `book_catalog` · `book_query_cache` | 동기화 배치 (`integrations`) | Growth | 도서 API 캐시 |
 | `hazard_term` (상수 파일 `reference/hazard_terms.yaml`) | **Activity 소유** | Activity · **Growth** | 안전 사전 — 구현은 하나만 |
+| `reference/allergen_terms.yaml` (상수 파일) | 공용 (`common/reference.py`) | Food · Activity · **Growth** | 식품 알레르기 사전 — Growth 는 음식 용어 스캔에만 쓴다 |
 | `notice` | **OCR 파이프라인** (일반 기관 공지). 텍스트 일반 공지 경로 미정 | Growth | 읽기만 · **보조** |
 
 | 읽기만 하는 공유 테이블 | 소유 |
 | --- | --- |
 | `observation_education` · `observation_routine` · `observation_activity`(참고) | Memory |
-| `profile_affinity` (education · routine · activity) | Curator (배치) |
+| `profile_affinity` (education · activity) | Curator (배치) |
 | `child_growth_log` | Memory |
+| `health_safety` (`allergy` · `environmental`) — **교육 활동 필터만, 동의가 있을 때** | 보호자 입력 |
 | `child` (생년월일) | 앱 |
 | `suggestion` | 주입된 writer가 INSERT (`status='draft'`) |
 
@@ -80,7 +83,7 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 | `isbn` | text | **PK** (ISBN-13) |
 | `title` · `author` · `publisher` | text | `title` NOT NULL |
 | `pub_year` | smallint | nullable |
-| `age_min_month` · `age_max_month` | smallint | **코드가 정합니다.** API 연령 코드 · 청구기호 · 서명 키워드로 산출 |
+| `age_min_month` · `age_max_month` | smallint | **코드가 정합니다.** `form` 의 월령 범위로 산출 (§7 GT-3) |
 | `form` | varchar(16) | `board` / `picture` / `info` / `unknown` |
 | `subjects` | text[] | NOT NULL, default `'{}'`. 주제어 (관심사 매칭용) |
 | `cover_url` | text | nullable |
@@ -115,6 +118,13 @@ Growth의 활동 행과 출력 후보도 같은 사전으로 검사합니다. **
 | --- | --- |
 | `growth_doc` 적재 | 배치 (행 `min_month`와 충돌 검사) |
 | `propose_learning_activity` 출력 | 사후 필터 |
+| `food_choking` 축 용어 | 교육 · 루틴 출력의 **음식 용어 스캔** — 월령과 무관하게 뺀다 (2026-10-08) |
+
+- **0–17개월 경고 → 차단 승격은 Growth 에 적용하지 않는다** (2026-10-08). 승격은 Activity 판정의 규칙이다. Growth 는 경고가 붙은 후보를 경고 문구와 함께 낸다 — 음식 용어가 먼저 빠지므로 12–17개월에 실제로 걸리는 축은 `water` · `suffocation_film` 이다.
+
+### `health_safety` (보호자 입력)
+
+Growth 는 **`learning_suggestion` 에서만**, 동의가 있을 때 `allergy` · `environmental` 의 active 행을 읽는다(`build_gate` 에서 run 당 한 번). 보호자가 적은 이름이 교육 활동 후보의 문장 · `materials` 에 나오면 뺀다 — 19종은 사전 별칭으로 넓히고(한 글자 별칭 제외), 식품 사전에 없는 알레르기(라텍스)와 환경 알레르기(꽃가루 · 동물털)는 적은 이름 그대로 본다. 이름을 물건 · 장소로 넓히는 대응표는 만들지 않고, `environmental` active 행이 있으면 확인 문구(`caution.environmental`)를 붙인다(#261 리뷰 4번). 동의가 없으면 읽지 않는다. 조회에 실패하면 빈 목록으로 폴백하지 않고 교육 활동을 닫는다(`blocked.safety`). `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다(Activity D7 과 같은 이유). 루틴 · 도서 · `growth_review` 는 읽지 않는다.
 
 ### `notice` (Memory · OCR 파이프라인 소유)
 
@@ -132,7 +142,7 @@ Growth는 **차분만** 계산합니다. 백분위·저성장·정체기 판정�
 | --- | --- | --- |
 | `notice` | 테이블 신설 (**우선순위 낮음**) | 기관 맥락 연결만 빠짐. 핵심 기능과 무관 |
 | `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | 성장폭 계산 (G-5 닫힘) |
-| `profile_affinity` | `domain`에 `routine` 포함 확인 | Growth는 education·routine·activity 셋을 읽음 |
+| `profile_affinity` | ✅ 확정(09-23) — `domain` 에 `routine` 은 없다 | Growth 는 education · activity 둘을 읽고, 루틴 관찰은 티어 3 로만 인용한다 |
 | `suggestion` | **`kind`만** 추가 · `source_refs` jsonb 제거 → `suggestion_evidence` 테이블 | 개인화/일반 표시 · 근거를 행으로 세기 위해 |
 
 소유자는 Memory·Curator·앱입니다.
@@ -235,7 +245,7 @@ CREATE TABLE book_query_cache (
 | --- | --- | --- |
 | GT-1 | `growth_doc` 초기 행 수 | 루틴 40 · 교육 60 · 습관 20 · 예절/리듬 20 · 도서 8 |
 | GT-2 | 해설서·사례집의 라이선스 | 전부 `fact_rewrite`로 시작 |
-| GT-3 | 도서 API 연령 파라미터 코드 | 활용가이드 확인 전 `age_min/max_month` 산출식 확정 금지 |
+| GT-3 | 도서 API 연령 파라미터 코드 | 정보나루 `age` 는 대출자 연령대(0 = 영유아 0~5세)라 단계를 못 가른다. 처음 값 — 아동 도서(부가기호 첫 자리 7)로 좁히고, 서명 키워드(보드북 · 촉감책 · 헝겊책 · 사운드북 · 초점책)면 `board` 0–35, KDC 8(문학)이면 `picture` 12–71, 그 밖의 KDC 면 `info` 36–71, 부가기호가 없으면 `unknown`(0–11개월 제외). 청구기호는 쓰지 않는다. 어댑터 계약 테스트에서 실제 응답으로 확정한다 |
 | GT-4 | `next_step_of` 사슬을 어디까지 만들지 | 양치·배변·옷 입기 3종부터 |
 | GT-5 | `notice` 스키마 | OCR 팀 결정 대기. 우선순위 낮음 |
 | GT-6 | ~~`observation_education.source_suggestion_id`~~ | ✅ **폐기(09-22)** — 두지 않는다. 추천 → 관찰의 역방향 추적은 v1 범위 밖 |
