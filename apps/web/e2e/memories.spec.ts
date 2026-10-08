@@ -83,6 +83,9 @@ test.describe("한 번의 관찰을 성향으로 확정하지 않는다 (§2 기
     await expect(candidate).toContainText("후보");
     await expect(candidate).toContainText("아직 한 번 봤어요");
     await expect(candidate).not.toContainText("확인됨");
+    // 🚨 후보는 성향으로 말하지 않는다 — 목의 물놀이는 polarity 1 이지만 "좋아해요" 가 없어야 한다 (#259).
+    await expect(confirmed).toContainText("좋아해요");
+    await expect(candidate).not.toContainText("좋아해요");
   });
 
   test("기록 탭의 관찰 한 건에는 성향 표현이 붙지 않는다", async ({ page }) => {
