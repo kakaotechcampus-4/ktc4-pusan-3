@@ -211,11 +211,34 @@ def test_agent_result_copies_readouts_without_source_refs():
                     "title": "",
                     "body": "3월 2일부터 6월 2일까지 3개월간 키 2.1cm 늘었어요.",
                     "authored_by": "code",
+                    "code": None,
                 }
             ],
             "question": None,
         },
     )
+
+
+def test_agent_result_keeps_the_notice_code():
+    """개수 안내는 code 로 가른다. 같은 kind="notice" 인 날씨 안내는 code가 없다"""
+    result = AgentResult(
+        agent="activity",
+        task_type="activity_recommendation",
+        status="completed",
+        readouts=(
+            Readout(
+                kind="notice", body="날씨를 확인하지 못해 실내 놀이만 골랐어요.", authored_by="code"
+            ),
+            Readout(
+                kind="notice", body="조건에 맞는 추천이 없어요.", authored_by="code", code="empty"
+            ),
+        ),
+        question=None,
+    )
+
+    _, payload = translate.to_sse(result)
+
+    assert [readout["code"] for readout in payload["readouts"]] == [None, "empty"]
 
 
 def test_agent_result_carries_the_one_question():

@@ -67,7 +67,8 @@ def to_sse(event: Event) -> sse.SseEvent | None:
         # 도메인 Agent 결과 한 건 = 화면 블록 하나. 도착한 순서대로 그리고 재정렬하지 않는다 (#215)
         # readout의 source_refs는 싣지 않는다 — 근거 종류(child_growth_log · growth_doc …)가 화면
         # Ref에 아직 없어서, 보내면 타입이 안 맞는다 (apps/web/src/lib/api/types.ts 의 REF_KINDS)
-        # question은 없어도 키를 남긴다 (guidance의 deeplink와 같은 이유)
+        # question과 readout의 code는 없어도 키를 남긴다 (guidance의 deeplink와 같은 이유)
+        # code는 개수 안내(fewer · empty)를 같은 kind="notice"인 날씨 안내와 가르는 값이다 (#249)
         return "agent_result", {
             "agent": event.agent,
             "task_type": event.task_type,
@@ -78,6 +79,7 @@ def to_sse(event: Event) -> sse.SseEvent | None:
                     "title": readout.title,
                     "body": readout.body,
                     "authored_by": readout.authored_by,
+                    "code": readout.code,
                 }
                 for readout in event.readouts
             ],
