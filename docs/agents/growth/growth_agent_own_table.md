@@ -68,6 +68,7 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 - **행의 `min_month`·`max_month`가 tool 게이트 다음의 두 번째 관문**입니다. tool이 열려도 그 월령 행이 없으면 일반 템플릿으로 갑니다.
 - 적재 시 두 검사를 통과해야 합니다 — **평가 표현 lint**(또래·발달·늦·뛰어나 …)와 **`hazard_term` 스캔**(`materials`·`body`가 행의 `min_month`와 충돌하면 오류).
 - `next_step_of`로 자립 단계를 사슬로 묶습니다. **`pick_next_step`(코드)이 관찰의 `assistance_level`로 지금 칸을 찾고 사슬의 바로 다음 행을 고릅니다.** 모델은 그 행을 집 상황에 맞춰 문장으로 옮길 뿐이라 단계를 건너뛸 수 없습니다.
+- **`routine_step` 행 규칙** — `tags` 에 `assistance:<independent|verbal_prompt|partial_assist|full_assist>` 를 **정확히 하나** 적습니다(그 행이 어느 도움 수준에 해당하는지). `next_step_of` 는 앞 단계 행이고, 한 사슬은 처음이 하나이며 갈라짐·끊김·순환이 없고 도움이 많이 필요한 수준에서 혼자 하는 수준 순서로 나아갑니다. 적재 검사는 `pick_next_step` 이 쓰는 `ordered_chain` 을 그대로 씁니다(`tests/unit/agents/growth/test_growth_doc_seed.py`).
 - **교육과정 자료와 루틴 자료가 같은 테이블에 있습니다.** 별도 KB 인덱스를 만들지 않습니다 — 조회 경로는 `search_growth_doc` 하나뿐이고, 갈리는 것은 `row_type`과 월령입니다.
 
 **담지 않는 것** — 발달 이정표, "이 나이면 ~할 수 있다" 형태의 문장, 또래 비교. 이런 행은 평가 문장의 씨앗이 됩니다.
