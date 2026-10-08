@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid as _uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
@@ -21,7 +21,6 @@ from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
     AnswerRequest,
-    AnswerResponse,
     ApproveSuggestionsRequest,
     ApproveSuggestionsResponse,
     CalendarEventOut,
@@ -38,7 +37,6 @@ from app.api.v1.schemas.suggestions import (
     SuggestionListResponse,
     SuggestionOut,
     SuggestionsRequest,
-    SuggestionsResponse,
     UpdateEventRequest,
 )
 from app.domains.schedule import repository as schedule_repo
@@ -334,9 +332,12 @@ async def create_suggestions(
     child: AccessibleChild,
     body: SuggestionsRequest,
     session: SessionDep,
-) -> SuggestionsResponse:
+) -> JSONResponse:
     # TODO(#284): Agent 진입점 연결 — 이시하님 후속
-    raise HTTPException(status_code=501, detail="Agent 연결 전 — 이시하님 후속 (#284)")
+    return JSONResponse(
+        status_code=501,
+        content={"error": {"code": "not_implemented", "message": "Agent 연결 전 (#284)"}},
+    )
 
 
 @router.post(
@@ -347,9 +348,12 @@ async def answer_question(
     child: AccessibleChild,
     body: AnswerRequest,
     session: SessionDep,
-) -> AnswerResponse:
+) -> JSONResponse:
     # TODO(#284): Agent 진입점 연결 — 이시하님 후속
-    raise HTTPException(status_code=501, detail="Agent 연결 전 — 이시하님 후속 (#284)")
+    return JSONResponse(
+        status_code=501,
+        content={"error": {"code": "not_implemented", "message": "Agent 연결 전 (#284)"}},
+    )
 
 
 # ── 추천 목록 (I — #284) ─────────────────────────────────────────────────
