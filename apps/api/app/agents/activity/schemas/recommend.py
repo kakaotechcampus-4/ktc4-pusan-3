@@ -22,7 +22,7 @@ from app.agents.common.suggestion import MAX_SUGGESTIONS
 class ActivityCandidate(ToolArgs):
     content: Annotated[
         str,
-        Field(min_length=1, description="놀이·외출 후보. 예: 구슬 꿰기로 목걸이 만들기"),
+        Field(min_length=1, description="놀이·외출 후보. 예: 종이컵으로 탑 쌓기"),
     ]
     setting: Annotated[ActivitySetting, Field(description="indoor / outdoor / either")]
     materials: Annotated[
@@ -30,7 +30,7 @@ class ActivityCandidate(ToolArgs):
         Field(
             default_factory=list,
             description=(
-                "활동에 쓰는 물건을 빠짐없이. 예: 구슬, 실. "
+                "활동에 쓰는 물건을 빠짐없이. 예: 종이컵, 색종이. "
                 "안전 검사는 코드가 이 목록과 content 로 한다 — 알아서 빼거나 바꾸지 않는다"
             ),
         ),

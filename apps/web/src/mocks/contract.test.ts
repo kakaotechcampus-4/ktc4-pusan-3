@@ -66,7 +66,7 @@ import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { submittedInput } from "./handlers/runs";
 
-import { suggestions } from "./fixtures";
+import { suggestionAllergens, suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -330,10 +330,65 @@ describe("일정 초안", () => {
      * 🚨 `suggestion_id` 가 없으면 화면은 재료 하나로 **고른 것 전부**를 막는다
      *    (알레르기에서 덜 막는 쪽으로 기울 수 없다).
      */
-    const target = data.suggestions.find((s) => s.id === check?.suggestion_id);
-    expect(target).toBeDefined();
-    // 물놀이 제안에 "이 재료를 먹어본 적 있나요" 가 붙으면 안 된다.
-    expect(target?.agent).toBe("food");
+    for (const p of data.prechecks ?? []) {
+      expect(data.suggestions.some((s) => s.id === p.suggestion_id)).toBe(true);
+      // 🚨 묻는 항목은 그 제안의 `allergens` 에서만 나온다 — 물놀이 제안에 재료 질문이 붙으면 안 된다.
+      expect(suggestionAllergens[p.suggestion_id!]).toContain(p.item);
+    }
+  });
+
+  /**
+   * 🚨 **기준은 `agent` 가 아니라 제안의 `allergens` 다** (#233 · 문서 §3-8).
+   *    `health_safety` 에 행이 없는 항목만 묻고, `active` 는 제안째 빼고, `retracted` 는 묻지 않는다.
+   */
+  describe("사전검사는 allergens 와 health_safety 로 정해진다", () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const fetchSuggestions = () => api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+    const asked = (data: SuggestionsResponse) =>
+      (data.prechecks ?? []).map((p) => `${p.suggestion_id}:${p.item}`).sort();
+
+    it("놀이 제안이어도 allergens 가 있으면 묻고, 없으면 food 여도 묻지 않는다", async () => {
+      const data = await fetchSuggestions();
+      const expected = data.suggestions
+        .flatMap((s) => (suggestionAllergens[s.id] ?? []).map((a) => `${s.id}:${a}`))
+        .sort();
+      expect(asked(data)).toEqual(expected);
+
+      // 🚨 픽스처가 두 경우를 다 갖고 있어야 이 테스트가 `agent` 기준으로 돌아가는 것을 잡는다.
+      const withAllergens = (agent: Agent) =>
+        data.suggestions.filter((s) => s.agent === agent && suggestionAllergens[s.id]?.length);
+      expect(withAllergens("activity").length).toBeGreaterThan(0);
+      expect(
+        data.suggestions.some((s) => s.agent === "food" && !suggestionAllergens[s.id]?.length),
+      ).toBe(true);
+    });
+
+    it("🚨 active 로 등록된 항목이 든 제안은 목록에서 빠지고 묻지도 않는다", async () => {
+      const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
+      await addHealthSafety(
+        "c1",
+        { type: "allergy", label: allergen, category: "식품" },
+        newIdempotencyKey(),
+      );
+
+      const data = await fetchSuggestions();
+      expect(data.suggestions.map((s) => s.id)).not.toContain(id);
+      expect(asked(data).some((a) => a.endsWith(`:${allergen}`))).toBe(false);
+    });
+
+    it("retracted 로 내린 항목은 다시 묻지 않고, 그 제안은 목록에 남는다", async () => {
+      const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
+      const { safety } = await addHealthSafety(
+        "c1",
+        { type: "allergy", label: allergen, category: "식품" },
+        newIdempotencyKey(),
+      );
+      await api.delete(`/children/c1/health-safety/${safety.id}`);
+
+      const data = await fetchSuggestions();
+      expect(data.suggestions.map((s) => s.id)).toContain(id);
+      expect(asked(data)).not.toContain(`${id}:${allergen}`);
+    });
   });
 
   it("🚨 초안 응답은 사전검사를 지지 않는다 — 물어보는 자리가 아니다", async () => {

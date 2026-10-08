@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
+from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.store.ports import (
     ActivityDocRow,
@@ -100,12 +101,15 @@ class InMemoryActivityDocs:
     def __init__(self, rows: Sequence[ActivityDocRow] = ()) -> None:
         self._rows = list(rows)
 
+    @classmethod
+    def from_seed(cls) -> "InMemoryActivityDocs":
+        """`reference/activity_doc.yaml` 의 검수를 마친(`approved`) 행. DB 전 eval · 개발용."""
+        return cls(
+            entry.to_row() for entry in activity_doc_seed() if entry.meta.status == "approved"
+        )
+
     async def search(self, *, months: int, query: str, limit: int) -> list[ActivityDocRow]:
-        sliced = [
-            row
-            for row in self._rows
-            if row.min_month <= months and (row.max_month is None or months <= row.max_month)
-        ]
+        sliced = [row for row in self._rows if row.min_month <= months < row.max_month]
         return sliced[:limit]
 
 

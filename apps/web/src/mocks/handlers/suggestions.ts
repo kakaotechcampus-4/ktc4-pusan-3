@@ -7,11 +7,17 @@ import {
   mealDraft,
   staleSuggestion,
   suggestionDraft,
+  suggestionAllergens,
   suggestionGroups,
   suggestions,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
-import type { ApproveSuggestionsRequest, ApproveSuggestionsResponse } from "@/lib/api/types";
+import type {
+  ApproveSuggestionsRequest,
+  ApproveSuggestionsResponse,
+  Precheck,
+} from "@/lib/api/types";
+import { allergyStatus } from "./children";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 
@@ -102,19 +108,47 @@ export const suggestionHandlers = [
       });
     }
 
-    // partial 이면 실패한 Agent 의 제안은 빠진 채로 온다. 화면은 성공한 쪽을 그린다.
     // partial 이면 실패한 Agent 의 제안은 빠진 채로 온다 — 묶음 머리말도 같이 빠진다.
-    const alive =
-      scenario === "partial" ? suggestions.filter((s) => s.agent === "food") : suggestions;
+    // 🚨 **이미 알레르기가 등록된 항목이 든 제안은 목록에서 뺀다** (`active` · 문서 §3-8 ①).
+    //    추천이 나간 뒤 보호자가 확인 시트에서 "있어요" 를 저장한 경우가 여기 걸린다.
+    const alive = (
+      scenario === "partial" ? suggestions.filter((s) => s.agent === "food") : suggestions
+    ).filter((s) => !(suggestionAllergens[s.id] ?? []).some((a) => allergyStatus(a) === "active"));
     /**
      * 알레르기 사전검사. 🚨 **규칙이 만든다** — 모델은 관여하지 않는다 (최상위 §3).
      *
+     * 🚨 **기준은 제안의 `allergens` 다** (#233 · 문서 §3-8). `agent` 와 무관해서 놀이 제안의
+     *    간식도 걸린다. `health_safety` 에 행이 없는 항목만 묻는다 — `retracted` 는 묻지 않고,
+     *    `active` 는 위에서 제안째 빠졌다.
      * 🚨 **어느 제안 것인지 `suggestion_id` 로 말한다.** 안 실으면 화면은 재료 하나로 고른 것
      *    전부를 막는다 — 알레르기에서 덜 막는 쪽으로 기울 수 없기 때문이다 (`Precheck` 의 ⚠️).
      * 🚨 **채택할 때 묻는다.** 초안을 만든 뒤가 아니다 — 일정을 안 만들면 영영 안 묻게 된다.
-     * ⚠️ 기준이 `agent === "food"` 인지 "재료가 있을 때" 인지는 서버 쪽 결정이다 (#151).
      */
-    const firstFood = alive.find((s) => s.agent === "food");
+    const prechecks: Precheck[] = alive.flatMap((s) =>
+      (suggestionAllergens[s.id] ?? [])
+        .filter((a) => allergyStatus(a) === null)
+        .map((a) => ({
+          code: "unknown_ingredient",
+          item: a,
+          note: "알레르기 기록에 없음",
+          suggestion_id: s.id,
+        })),
+    );
+    if (scenario === "precheck_unknown_code") {
+      // 🚨 이름은 지어낸 것이다 — 화면이 **아는 code 가 아니라는 것**만 뜻이 있다.
+      //    재료가 없는 물놀이 제안에 붙여서, 알레르기 질문이 섞이지 않게 한다.
+      const water = alive.find(
+        (s) => (suggestionAllergens[s.id] ?? []).length === 0 && s.agent === "activity",
+      );
+      if (water) {
+        prechecks.push({
+          code: "not_yet_known_check",
+          item: "물놀이장 이용 조건",
+          note: "새 검사",
+          suggestion_id: water.id,
+        });
+      }
+    }
 
     return HttpResponse.json({
       suggestions: alive,
@@ -122,16 +156,7 @@ export const suggestionHandlers = [
       looked_at: "오늘 급식 · 최근 3일 식사 · 확정 관심 2건",
       guards: [],
       scarcity: null,
-      prechecks: firstFood
-        ? [
-            {
-              code: "unknown_ingredient",
-              item: "닭고기",
-              note: "첫 기록",
-              suggestion_id: firstFood.id,
-            },
-          ]
-        : [],
+      prechecks,
     });
   }),
 

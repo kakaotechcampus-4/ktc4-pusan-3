@@ -39,6 +39,19 @@ function activeSafety(): HealthSafety[] {
   return safetyState.filter((row) => !row.retracted).map((row) => row.safety);
 }
 
+/**
+ * 알레르기 항목 하나의 지금 상태 — 제안 목록의 사전검사(`handlers/suggestions.ts`)가 읽는다.
+ * `null` 은 행이 없다는 뜻이다 (서버의 `unknown` · 저장하지 않는 상태).
+ * ⚠️ 서버의 `none` 은 아직 목 모양(`HealthSafety`)에 없다 — 옛 모양이라 #87 때 같이 맞춘다.
+ */
+export function allergyStatus(label: string): "active" | "retracted" | null {
+  const rows = safetyState.filter(
+    (row) => row.safety.type === "allergy" && row.safety.label === label,
+  );
+  if (rows.some((row) => !row.retracted)) return "active";
+  return rows.length > 0 ? "retracted" : null;
+}
+
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
 export function resetSafetyState(): void {
   safetyState = healthSafety.map((safety) => ({ safety, retracted: false }));

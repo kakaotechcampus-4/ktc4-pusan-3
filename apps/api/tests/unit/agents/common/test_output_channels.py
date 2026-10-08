@@ -273,6 +273,7 @@ class TestCountNotice:
         assert notice.body == f"조건에 맞는 추천을 {count}개 준비했어요."
         assert notice.kind == "notice"
         assert notice.authored_by == "code"
+        assert notice.code == "fewer"
 
     def test_0개면_추천이_없다고_알린다(self):
         notice = count_notice(0)
@@ -280,16 +281,29 @@ class TestCountNotice:
         assert notice.body == "조건에 맞는 추천이 없어요."
         assert notice.kind == "notice"
         assert notice.authored_by == "code"
+        assert notice.code == "empty"
 
     def test_0개_문구가_따로_있는_Agent_는_그_문구를_쓴다(self):
         notice = count_notice(0, empty=self.POOL_EMPTY)
         assert notice is not None
         assert notice.body == "조건에 맞는 메뉴가 없어요."
+        assert notice.code == "empty"  # 문구가 달라도 화면은 code 로 가른다
 
     def test_0개_문구는_모자랄_때_쓰지_않는다(self):
         notice = count_notice(2, empty=self.POOL_EMPTY)
         assert notice is not None
         assert notice.body == "조건에 맞는 추천을 2개 준비했어요."
+        assert notice.code == "fewer"
+
+    def test_개수와_상관없는_안내는_code_가_없다(self):
+        """날씨 안내도 kind="notice" 다. 개수 안내와 섞여 와도 code 로 가른다."""
+        weather = ReadoutText(
+            key="weather.unchecked",
+            template="날씨를 확인하지 못해 실내 놀이만 골랐어요.",
+            kind="notice",
+        ).render()
+        assert weather.code is None
+        assert weather.to_payload()["code"] is None
 
     @pytest.mark.parametrize("count", [-1, MAX_SUGGESTIONS + 1])
     def test_개수_밖이면_ValueError(self, count):

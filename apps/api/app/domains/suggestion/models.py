@@ -86,6 +86,8 @@ class SuggestionEvent(Base):
     __tablename__ = "suggestion_event"
     __table_args__ = (
         sa.UniqueConstraint("suggestion_id", name="uq_suggestion_event_suggestion_id"),
+        # 일정 삭제(CASCADE) 때 event_id 로 찾는다 — 마이그레이션 f8a2b3c4d5e6 과 같은 이름
+        sa.Index("ix_suggestion_event_event_id", "event_id"),
     )
 
     suggestion_id: Mapped[uuid.UUID] = mapped_column(
