@@ -159,7 +159,7 @@ DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-
 
 | 채널 | 내용 |
 | --- | --- |
-| `suggestions` | 교육 활동 · 루틴 · 도서 (draft +24h) · **최대 3개** · 필터 후 3개 미만이면 재호출 1회 · 다 못 채우면 개수 안내(`suggestion.partial` · 0개면 `suggestion.empty`) · 저장이 끝나면 대화에 제안 화면 딥링크 안내(승인 · 피드백은 그 화면 카드에서만) |
+| `suggestions` | 교육 활동 · 루틴 · 도서 (draft +24h) · **최대 3개** · 필터 후 3개 미만이면 재호출 1회 · 다 못 채우면 개수 안내(`suggestion.partial` · 0개면 `suggestion.empty`) · 저장이 끝나면 대화에 결과 블록 "후보 보기 →"(#227 · `run_id`) — 05 는 그 run 의 draft 를 그대로 보여줌(#249) · 채택은 05, 피드백은 07 제안 탭 |
 | `readouts` | `growth_delta`(code) · 닫힘 안내(code) |
 | `needs_observation` | `trigger` 질문 또는 습관 현재 여부 — 한 번에 하나 |
 | `event_requests` | 없음 |
@@ -246,4 +246,4 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 
 ## 13. 열린 항목
 
-G-3 · G-7 · **G-9 증감 문구 협의** · 의료 처치 / 증상 목록 내용 ([`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
+G-3 · G-7 · **G-9 증감 문구 PM 확인**(FE 동의 10-08) · 의료 처치 / 증상 목록 내용 ([`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
