@@ -8,6 +8,8 @@
 - 막혀야 하는데 통과하면 사전에 이름을 더한다. 알레르기 자체의 이름은 공용 allergen_terms.yaml,
   그 성분이 든 음식은 Food 전용 food_safety_terms.yaml 이다.
 - 통과해야 하는데 막히면 guard 를 더하기 전에 그 성분이 정말 없는지부터 확인한다. 애매하면 막는다.
+- 제품마다 들어가기도 안 들어가기도 하는 성분(간장의 밀)은 varies_foods 에 넣고 MUST_CHECK 에 쓴다.
+  풀기 전에 제품 표시로 대조해서, 안 되는 항목은 code_foods · MUST_BLOCK 으로 되돌린다.
 """
 
 import unicodedata
@@ -16,7 +18,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import filter_food_safety, resolve_safety
+from app.agents.food.tools.safety import IngredientCheck, filter_food_safety, resolve_safety
 
 NOW = datetime(2026, 10, 7, tzinfo=timezone.utc)
 OLDER = 60  # 영아 규칙 · 질식 주의가 끼지 않는 월령
@@ -39,6 +41,8 @@ def _entries(*labels: str, kind: str = "allergy", status: str = "active") -> lis
 
 def _judge(entries: list[SafetyEntry], row: MenuCatalogRow, months: int = OLDER) -> str:
     result = filter_food_safety([row], entries, "preschool", months=months)
+    if result.needs_check:
+        return "needs_check"  # 막혔지만 제품 확인으로 풀 수 있다
     if result.blocked:
         return "blocked"
     return "unchecked" if result.unchecked else "passed"
@@ -207,9 +211,6 @@ MUST_BLOCK = [
     ("밀", "토스트", ("식빵", "버터")),
     ("밀", "우동", ("우동면",)),
     ("밀", "만두", ("만두피", "돼지고기")),
-    ("밀", "어묵볶음", ("어묵",)),
-    ("밀", "카레라이스", ("카레", "감자")),
-    ("밀", "불고기", ("소고기", "간장")),
     ("밀", "통밀 크래커", ("통밀", "크림치즈")),
     ("밀", "짜장면", ()),
     # "쿠키" 가 밀이다 — 글루텐 프리라고 적혀 있어도 막는다
@@ -219,7 +220,6 @@ MUST_BLOCK = [
     ("고등어", "고갈비", ()),
     # 게(8) · 새우(9) — #258 묶음 이름
     ("게", "꽃게탕", ("꽃게", "무")),
-    ("게", "크래미 샐러드", ("크래미", "오이")),
     ("게", "킹크랩찜", ()),
     ("갑각류", "꽃게탕", ("꽃게", "무")),
     ("갑각류", "새우볶음밥", ("새우", "밥")),
@@ -396,6 +396,20 @@ MUST_BLOCK = [
     ("우유", "까르보나라", ()),
     ("우유", "피자", ()),
     ("돼지고기", "대패삼겹 구이", ("대패삼겹",)),
+    # 확인 필요 음식을 그 이름으로 등록하면 그 음식은 확인으로 풀 수 없게 막는다
+    ("어묵", "어묵볶음", ("어묵",)),
+    ("맛살 알레르기", "맛살 볶음밥", ("밥", "맛살")),
+    ("간장", "불고기", ("소고기", "간장")),
+    # 같은 칸의 동의어도 그 이름으로 등록한 것과 같다 — 어묵 = 오뎅, 맛살 = 크래미
+    ("어묵", "오뎅탕", ("오뎅", "무")),
+    ("맛살", "크래미 샐러드", ("크래미", "오이")),
+    ("크래미", "맛살 볶음밥", ("밥", "맛살")),
+    # 이름에 성분 이름이 그대로 든 메뉴는 그 글자로 막는다. guard 는 성분이 확실히 없는 낱말에만
+    ("게", "게맛살 샐러드", ("게맛살", "오이")),
+    # 확실한 성분이 같이 있으면 확인으로 풀 수 없다
+    ("밀", "간장 국수", ("소면", "간장")),
+    ("밀", "짜장밥", ("춘장", "돼지고기")),
+    ("밀", "어묵우동", ("우동면", "어묵")),
 ]
 
 
@@ -406,6 +420,45 @@ MUST_BLOCK = [
 )
 def test_막혀야_하는_메뉴(label: str, name: str, ingredients: tuple[str, ...]) -> None:
     assert _judge(_entries(label), _menu(name, *ingredients)) == "blocked"
+
+
+# ── 2-1. 제품마다 다른 성분 — 막되 확인 필요로 표시 (#264 PM ⭐6 · #267 멘토) ──────
+# 지금은 막는다. 식단 추천을 구현할 때
+# "사용할 {재료}에 {성분} 성분이 들어 있는지" 를 묻고 내보낸다
+
+MUST_CHECK = [
+    ("밀", "어묵볶음", ("어묵",), (("어묵", "밀"),)),
+    ("밀", "오뎅탕", ("오뎅", "무"), (("오뎅", "밀"),)),
+    ("밀", "카레라이스", ("카레", "감자"), (("카레", "밀"),)),
+    ("밀", "불고기", ("소고기", "간장"), (("간장", "밀"),)),
+    ("밀", "된장찌개", ("된장", "두부", "애호박"), (("된장", "밀"),)),
+    ("밀", "제육볶음", ("돼지고기", "고추장", "간장"), (("간장", "밀"), ("고추장", "밀"))),
+    ("밀", "쌈밥", ("밥", "상추", "쌈장"), (("쌈장", "밀"),)),
+    ("밀 알레르기", "장조림", ("소고기", "간장", "메추리알"), (("간장", "밀"),)),
+    ("글루텐", "불고기", ("소고기", "간장"), (("간장", "밀"),)),
+    ("게", "크래미 샐러드", ("크래미", "오이"), (("크래미", "게"),)),
+    ("게", "맛살 볶음밥", ("밥", "맛살", "계란"), (("맛살", "게"),)),
+    ("갑각류", "크래미 샐러드", ("크래미", "오이"), (("크래미", "게"),)),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "ingredients", "checks"),
+    MUST_CHECK,
+    ids=[f"{label}-{name}" for label, name, _, _ in MUST_CHECK],
+)
+def test_제품마다_다른_성분만으로_막힌_메뉴는_확인_필요로_표시한다(
+    label: str, name: str, ingredients: tuple[str, ...], checks: tuple[tuple[str, str], ...]
+) -> None:
+    row = _menu(name, *ingredients)
+
+    result = filter_food_safety([row], _entries(label), "preschool", months=OLDER)
+
+    assert result.blocked == (row,)
+    assert result.needs_check == (row,)
+    assert result.checks[name] == tuple(
+        IngredientCheck(item, allergen) for item, allergen in checks
+    )
 
 
 # ── 3. 질환 — 알레르기 칸 · 질환 칸 어디에 적어도 ─────────────────────────────
@@ -556,10 +609,10 @@ def test_상태값(status: str, expected: str) -> None:
 
 AGE_CASES = [
     # (월령, 메뉴, 재료, 판정, 주의)
-    (6, "꿀떡", ("찹쌀", "꿀"), "blocked", ("질식 주의 식품",)),
+    (6, "꿀떡", ("찹쌀", "꿀"), "blocked", ()),
     (11, "허니버터 감자", ("감자", "허니버터"), "blocked", ()),
     (11, "꿀고구마", ("고구마",), "blocked", ()),
-    (12, "꿀떡", ("찹쌀", "꿀"), "passed", ("질식 주의 식품",)),
+    (12, "꿀떡", ("찹쌀", "꿀"), "blocked", ()),  # 꿀은 풀리지만 떡은 48개월 미만이면 막는다
     (6, "우유", (), "blocked", ()),
     (6, "우유(200ml)", (), "blocked", ()),
     (6, "우유 한 컵", (), "blocked", ()),
@@ -573,7 +626,9 @@ AGE_CASES = [
     (6, "딸기우유", ("우유", "딸기"), "blocked", ()),
     (6, "고구마우유죽", ("고구마", "우유"), "passed", ()),
     (12, "우유", ("우유",), "passed", ()),
-    (30, "떡국", ("떡", "소고기"), "passed", ("질식 주의 식품",)),
+    (30, "떡국", ("떡", "소고기"), "blocked", ()),
+    (47, "떡국", ("떡", "소고기"), "blocked", ()),
+    (48, "떡국", ("떡", "소고기"), "passed", ()),
     (30, "메추리알 장조림", ("메추리알", "간장"), "passed", ("질식 주의 식품",)),
     (30, "떡갈비", ("소고기", "돼지고기"), "passed", ()),
     (47, "포도", ("포도",), "passed", ("질식 주의 식품",)),

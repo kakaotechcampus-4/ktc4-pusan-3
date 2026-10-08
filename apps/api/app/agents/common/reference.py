@@ -185,13 +185,34 @@ AgeAction = Literal["block", "caution"]
 AgeScope = Literal["all", "name"]  # all — 메뉴명 · 재료 전부, name — 메뉴명만
 
 _FOOD_TOP_KEYS = frozenset(
-    {"source", "version", "fetched_at", "code_foods", "extra_allergens", "group_foods", "age_rules"}
+    {
+        "source",
+        "version",
+        "fetched_at",
+        "code_foods",
+        "varies_foods",
+        "extra_allergens",
+        "group_foods",
+        "age_rules",
+    }
 )
 _CODE_FOOD_KEYS = frozenset({"code", "foods", "guards"})
+_VARIES_FOOD_KEYS = frozenset({"code", "foods", "guards", "source"})
 _EXTRA_KEYS = frozenset({"label", "aliases", "guards"})
 _GROUP_FOOD_KEYS = frozenset({"group", "foods", "guards"})
 _AGE_RULE_KEYS = frozenset(
-    {"label", "below_month", "action", "scope", "aliases", "guards", "exact", "ends", "source"}
+    {
+        "label",
+        "below_month",
+        "action",
+        "daycare_action",
+        "scope",
+        "aliases",
+        "guards",
+        "exact",
+        "ends",
+        "source",
+    }
 )
 
 
@@ -208,6 +229,9 @@ class AgeRule:
     scope: AgeScope = "all"
     # 정규화한 메뉴명이 이 글자로 끝나면 건다 — "검은콩 우유" 는 마시는 우유, "우유푸딩" 은 아니다
     ends: frozenset[str] = frozenset()
+    # 급식 조회(purpose="daycare")에서 action 대신 쓴다. None 이면 action 그대로다.
+    # 떡은 추천에서는 막고 급식에서는 주의만 단다 — 기관이 이미 잘라서 준다(#264 PM 결정)
+    daycare_action: AgeAction | None = None
 
     def applies_at(self, months: int) -> bool:
         return self.below_month is None or months < self.below_month
@@ -221,6 +245,9 @@ class FoodSafetyTerms:
     extras: tuple[Term, ...]  # key 는 19종 밖 알레르기 label
     group_foods: Mapping[str, Term]  # 묶음 label → 그 묶음의 19종 밖 식품(key 는 묶음 label)
     age_rules: tuple[AgeRule, ...]
+    # key 는 19종 코드 문자열 — 제품마다 그 성분이 들어가기도 안 들어가기도 하는 음식.
+    # 메뉴 코드에 넣지 않고 따로 든다(확인 필요). 출처마다 한 행이라 코드가 겹친다
+    varies_terms: tuple[Term, ...] = ()
 
 
 @cache
@@ -253,6 +280,30 @@ def parse_food_safety_terms(
         guards = tuple(raw.get("guards") or ())
         _check_guards(where, foods, guards)
         code_terms.append(Term(key=str(next(iter(code))), aliases=foods, guards=guards))
+
+    # 같은 코드의 확실한 이름에도 있으면 확실한 쪽이 먼저 걸려서 확인 필요 칸이 조용히 죽는다
+    certain = {(t.key, normalize(alias)) for t in (*terms, *code_terms) for alias in t.aliases}
+    varies_terms: list[Term] = []
+    varies_seen: set[tuple[str, str]] = set()
+    for raw in data.get("varies_foods") or []:
+        where = f"food_safety_terms.yaml varies_foods {raw.get('code')!r}"
+        _check_keys(where, raw, _VARIES_FOOD_KEYS)
+        code = str(next(iter(_check_codes(where, [raw.get("code")]))))
+        foods = tuple(raw.get("foods") or ())
+        if not foods:
+            raise ValueError(f"{where} 의 foods 가 비어 있다")
+        if not str(raw.get("source") or "").strip():
+            raise ValueError(f"{where} 에 source 가 없다 — 성분이 든 제품과 없는 제품을 적는다")
+        for food in foods:
+            key = (code, normalize(food))
+            if key in certain:
+                raise ValueError(f"{where} 의 {food!r} 는 확실한 성분에도 있다")
+            if key in varies_seen:
+                raise ValueError(f"{where} 의 {food!r} 가 두 번 있다")
+            varies_seen.add(key)
+        guards = tuple(raw.get("guards") or ())
+        _check_guards(where, foods, guards)
+        varies_terms.append(Term(key=code, aliases=foods, guards=guards))
 
     extras: list[Term] = []
     owner: dict[str, str] = {}
@@ -306,6 +357,9 @@ def parse_food_safety_terms(
         action = raw.get("action")
         if action not in ("block", "caution"):
             raise ValueError(f"{where} 의 action 은 block · caution 중 하나다: {action!r}")
+        daycare = raw.get("daycare_action")
+        if daycare is not None and daycare not in ("block", "caution"):
+            raise ValueError(f"{where} 의 daycare_action 은 block · caution 중 하나다: {daycare!r}")
         scope = raw.get("scope", "all")
         if scope not in ("all", "name"):
             raise ValueError(f"{where} 의 scope 는 all · name 중 하나다: {scope!r}")
@@ -322,9 +376,11 @@ def parse_food_safety_terms(
         if label in {rule.term.key for rule in age_rules}:
             raise ValueError(f"{where} 가 두 번 있다")
         term = Term(key=label, aliases=aliases, guards=guards)
-        age_rules.append(AgeRule(term, below, action, exact, source, scope, ends))
+        age_rules.append(AgeRule(term, below, action, exact, source, scope, ends, daycare))
 
-    return FoodSafetyTerms(tuple(code_terms), tuple(extras), group_foods, tuple(age_rules))
+    return FoodSafetyTerms(
+        tuple(code_terms), tuple(extras), group_foods, tuple(age_rules), tuple(varies_terms)
+    )
 
 
 @cache

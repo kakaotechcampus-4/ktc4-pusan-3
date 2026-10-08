@@ -147,6 +147,7 @@ FOOD_VALID = {
     "version": "1",
     "fetched_at": "2026-10-07",
     "code_foods": [{"code": 18, "foods": ["굴", "소라"], "guards": ["소라빵"]}],
+    "varies_foods": [{"code": 8, "foods": ["맛살"], "guards": ["치맛살"], "source": "출처"}],
     "extra_allergens": [{"label": "참깨", "aliases": ["참깨", "참기름"], "guards": []}],
     "group_foods": [{"group": "갑각류", "foods": ["가재"], "guards": []}],
     "age_rules": [
@@ -170,6 +171,16 @@ FOOD_VALID = {
             "ends": ["커피"],
             "source": "출처",
         },
+        {
+            "label": "떡",
+            "below_month": 48,
+            "action": "block",
+            "daycare_action": "caution",
+            "aliases": ["떡"],
+            "guards": ["떡갈비"],
+            "exact": [],
+            "source": "출처",
+        },
     ],
 }
 
@@ -184,14 +195,16 @@ def test_parse_food_safety_terms_reads_every_section() -> None:
     food = parse_food_safety_terms(FOOD_VALID, _TERMS, _GROUPS)
 
     assert food.code_terms == (Term(key="18", aliases=("굴", "소라"), guards=("소라빵",)),)
+    assert food.varies_terms == (Term(key="8", aliases=("맛살",), guards=("치맛살",)),)
     assert food.extras == (Term(key="참깨", aliases=("참깨", "참기름")),)
     assert food.group_foods == {"갑각류": Term(key="갑각류", aliases=("가재",))}
-    honey, caffeine = food.age_rules
+    honey, caffeine, rice_cake = food.age_rules
     assert (honey.applies_at(11), honey.applies_at(12)) == (True, False)
     assert caffeine.applies_at(72)
     assert caffeine.exact == {"커피우유"}
     assert caffeine.ends == {"커피"}
     assert (honey.scope, caffeine.scope) == ("all", "name")
+    assert (honey.daycare_action, rice_cake.daycare_action) == (None, "caution")
 
 
 def test_real_food_safety_terms_loads_and_is_cached() -> None:
@@ -200,6 +213,29 @@ def test_real_food_safety_terms_loads_and_is_cached() -> None:
     assert food is food_safety_terms()
     assert {rule.term.key for rule in food.age_rules} >= {"꿀", "생우유", "질식 주의 식품"}
     assert set(food.group_foods) <= {group.label for group in allergen_groups()}
+
+
+def test_확인_필요로_옮긴_음식은_이것뿐이다() -> None:
+    """varies_foods 는 나중에 확인 질문으로 풀 범위를 정하는 칸이다.
+
+    목록이 바뀌면 이 테스트도 같이 고친다 — 풀릴 범위가 넓어지는 변경이 리뷰에서 보이게 한다.
+    """
+    food = food_safety_terms()
+    varies = {(term.key, name) for term in food.varies_terms for name in term.aliases}
+
+    assert varies == {
+        ("6", "간장"),
+        ("6", "된장"),
+        ("6", "고추장"),
+        ("6", "쌈장"),
+        ("6", "어묵"),
+        ("6", "오뎅"),
+        ("6", "카레"),
+        ("8", "크래미"),
+        ("8", "맛살"),
+    }
+    wheat = next(term for term in food.code_terms if term.key == "6")
+    assert {"짜장", "자장", "춘장"} <= set(wheat.aliases)
 
 
 def test_age_rule_months_match_their_single_source() -> None:
@@ -213,7 +249,12 @@ def test_age_rule_months_match_their_single_source() -> None:
     choking = hazard_terms().axes["food_choking"].warn_below_month
 
     assert rules["꿀"].below_month == rules["생우유"].below_month == toddler
-    assert rules["질식 위험 식품"].below_month == rules["질식 주의 식품"].below_month == choking
+    assert (
+        rules["질식 위험 식품"].below_month
+        == rules["질식 주의 식품"].below_month
+        == rules["떡"].below_month
+        == choking
+    )
 
 
 @pytest.mark.parametrize(
@@ -233,9 +274,20 @@ def test_age_rule_months_match_their_single_source() -> None:
         (lambda d: d["age_rules"][0].update(below_month=0), "below_month"),
         (lambda d: d["age_rules"][0].update(below_month=True), "below_month"),
         (lambda d: d["age_rules"][0].update(action="warn"), "action"),
+        (lambda d: d["age_rules"][0].update(daycare_action="warn"), "daycare_action"),
         (lambda d: d["age_rules"][0].update(scope="ingredients"), "scope"),
         (lambda d: d["age_rules"][0].update(source=" "), "source"),
         (lambda d: d["age_rules"].append(dict(d["age_rules"][0])), "두 번 있다"),
+        (lambda d: d["varies_foods"][0].update(code=20), "19종 밖"),
+        (lambda d: d["varies_foods"][0].update(foods=[]), "foods 가 비어"),
+        (lambda d: d["varies_foods"][0].update(source=" "), "source"),
+        (lambda d: d["varies_foods"][0].pop("source"), "source"),
+        (lambda d: d["varies_foods"][0].update(note="x"), "정해지지 않은 칸"),
+        (lambda d: d["varies_foods"][0].update(guards=["빵"]), "자기 별칭을 덮지 않는다"),
+        # 같은 코드의 확실한 이름(공용 사전 · code_foods)에 있으면 어느 쪽인지 모른다
+        (lambda d: d["varies_foods"][0].update(foods=["꽃게"]), "확실한 성분"),
+        (lambda d: d["varies_foods"][0].update(code=18, foods=["소라"], guards=[]), "확실한 성분"),
+        (lambda d: d["varies_foods"].append(dict(d["varies_foods"][0])), "두 번 있다"),
     ],
 )
 def test_parse_food_safety_terms_broken_data_raises(change, message: str) -> None:

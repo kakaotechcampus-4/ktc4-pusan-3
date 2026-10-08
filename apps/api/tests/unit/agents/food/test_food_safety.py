@@ -13,7 +13,13 @@ import pytest
 from app.agents.common import allergy, reference
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 from app.agents.food.tools import safety
-from app.agents.food.tools.safety import filter_food_safety, menu_codes, resolve_safety
+from app.agents.food.tools.safety import (
+    IngredientCheck,
+    Purpose,
+    filter_food_safety,
+    menu_codes,
+    resolve_safety,
+)
 
 NOW = datetime(2026, 9, 27, tzinfo=timezone.utc)
 
@@ -68,8 +74,8 @@ def test_키위_알레르기_코드없음_키위주스는_blocked() -> None:
     assert result.hits["키위주스"] == ("키위",)
 
 
-def test_꿀떡_이유기는_blocked_유아기는_passed() -> None:
-    row = _row("꿀떡", ingredients=("찹쌀", "꿀"))
+def test_꿀_이유기는_blocked_유아기는_passed() -> None:
+    row = _row("허니버터 감자", ingredients=("감자", "허니버터"))
 
     infant_result = filter_food_safety([row], [], "infant_weaning")
     toddler_result = filter_food_safety([row], [], "toddler")
@@ -206,7 +212,10 @@ def test_분류가_비어_있는_땅콩은_땅콩강정을_막는다() -> None:
 def test_환경으로만_분류된_쑥은_쑥떡을_막지_않는다() -> None:
     row = _row("쑥떡", ingredients=("쌀", "쑥"))
 
-    result = filter_food_safety([row], [_allergy("쑥", category=("environment",))], "toddler")
+    # 떡 규칙이 끼지 않는 월령 — 시험하는 것은 쑥 분류다
+    result = filter_food_safety(
+        [row], [_allergy("쑥", category=("environment",))], "preschool", months=60
+    )
 
     assert result.passed == (row,)
 
@@ -215,7 +224,7 @@ def test_식품과_환경이_같이_분류된_쑥은_쑥떡을_막는다() -> No
     row = _row("쑥떡", ingredients=("쌀", "쑥"))
 
     result = filter_food_safety(
-        [row], [_allergy("쑥", category=("food", "environment"))], "toddler"
+        [row], [_allergy("쑥", category=("food", "environment"))], "preschool", months=60
     )
 
     assert result.blocked == (row,)
@@ -308,12 +317,12 @@ def test_이름_표는_저장된_코드가_비어도_재료를_훑은_코드까�
 
 
 def test_이름_표에는_알레르기_성분이_없는_메뉴가_없다() -> None:
-    row = _row("현미밥", ingredients=("현미",))
+    row = _row("시금치무침", ingredients=("시금치", "소금"))
 
     result = filter_food_safety([row], [], "toddler")
 
     assert result.passed == (row,)
-    assert "현미밥" not in result.allergens
+    assert "시금치무침" not in result.allergens
 
 
 def test_이름_표는_막힌_메뉴와_확인_못_한_메뉴를_싣지_않는다() -> None:
@@ -323,6 +332,152 @@ def test_이름_표는_막힌_메뉴와_확인_못_한_메뉴를_싣지_않는�
     result = filter_food_safety([blocked, unchecked], [_allergy("우유")], "toddler")
 
     assert result.allergens == {}
+    assert result.checks == {}
+    assert result.needs_check == ()
+
+
+# ── 메뉴명에 인쇄된 알레르기 번호 — 급식표 ─────────────────────────────────
+def test_메뉴명에_인쇄된_알레르기_번호는_든_성분으로_본다() -> None:
+    # 급식표 번호는 기관이 실제로 쓴 제품을 보고 찍었다. 저장 코드가 비어도 메뉴명에서 읽는다
+    row = _row("두부조림(5.6)", ingredients=("두부", "설탕"))
+
+    result = filter_food_safety([row], [_allergy("밀")], "toddler")
+
+    assert result.blocked == (row,)
+    assert result.hits == {"두부조림(5.6)": ("6",)}
+
+
+def test_인쇄된_번호도_이름_표에_들어간다() -> None:
+    row = _row("두부조림(5.6)", ingredients=("두부", "설탕"))
+
+    result = filter_food_safety([row], [], "toddler")
+
+    assert result.allergens == {"두부조림(5.6)": ("대두", "밀")}
+
+
+def test_글자에_붙은_숫자는_번호가_아니다() -> None:
+    # 회귀 — "3색나물" 의 3 은 메밀(3)이 아니다
+    row = _row("3색나물", ingredients=("시금치", "고사리"))
+
+    result = filter_food_safety([row], [], "toddler")
+
+    assert result.passed == (row,)
+    assert "3색나물" not in result.allergens
+
+
+# ── 제품마다 다른 성분 — 막되 needs_check 로 표시 (#264 PM ⭐6 · #267 멘토) ─────
+def test_제품마다_다른_성분만으로_막힌_메뉴는_needs_check_로_표시한다() -> None:
+    # 간장의 밀은 제품마다 다르다. 지금은 막고, 식단 추천을 구현할 때 확인 필요로 내보낸다
+    row = _row("불고기", ingredients=("소고기", "간장"))
+
+    result = filter_food_safety([row], [_allergy("밀")], "toddler")
+
+    assert result.blocked == (row,)
+    assert result.needs_check == (row,)
+    assert result.hits == {"불고기": ("6",)}
+    assert result.checks == {"불고기": (IngredientCheck(item="간장", allergen="밀"),)}
+    assert result.allergens == {"불고기": ("대두", "밀", "쇠고기")}
+
+
+def test_등록하지_않은_알레르기도_이름_표에_실어_계속_묻는다() -> None:
+    # 결정 2 — 밀을 등록하지 않은 아이에게도 "밀 — 먹어본 적 있나요?" 가 나가야 한다
+    row = _row("불고기", ingredients=("소고기", "간장"))
+
+    result = filter_food_safety([row], [], "toddler")
+
+    assert result.passed == (row,)
+    assert result.allergens == {"불고기": ("대두", "밀", "쇠고기")}
+    assert result.checks == {"불고기": (IngredientCheck(item="간장", allergen="밀"),)}
+
+
+def test_확실한_성분이_같이_있으면_확인으로_풀_수_없다() -> None:
+    row = _row("간장 국수", ingredients=("소면", "간장"))
+
+    result = filter_food_safety([row], [_allergy("밀")], "toddler")
+
+    assert result.blocked == (row,)
+    assert result.needs_check == ()
+    assert result.checks == {}
+
+
+def test_재료를_모르면_확인으로_풀_수_없다() -> None:
+    # 다른 재료를 모르니 된장 하나만 확인받고 내보낼 수 없다. 막힌 채로 두고 표시하지 않는다
+    row = _row("된장국", ingredients=())
+
+    result = filter_food_safety([row], [_allergy("밀")], "toddler")
+
+    assert result.blocked == (row,)
+    assert result.needs_check == ()
+    assert result.checks == {}
+
+
+def test_확인_필요_음식을_그_이름으로_등록하면_확인으로_풀_수_없다() -> None:
+    # "어묵" 으로 등록한 보호자는 어묵 자체를 피하려는 것이다
+    row = _row("어묵볶음", ingredients=("어묵", "양파"))
+
+    result = filter_food_safety([row], [_allergy("어묵")], "toddler")
+
+    assert result.blocked == (row,)
+    assert result.needs_check == ()
+
+
+def test_확인_필요_음식_이름으로_등록하면_예전처럼_그_코드도_막는다() -> None:
+    # 이름 읽기는 확실 · 확인 필요를 가르지 않는다 — 어묵으로 등록한 보호자는 전에도 밀(6)을 막았다.
+    # 이 줄을 빼면 "어묵" 등록이 덜 막는 쪽으로 바뀐다
+    row = _row("식빵 토스트", ingredients=("식빵", "버터"))
+
+    result = filter_food_safety([row], [_allergy("어묵")], "toddler")
+
+    assert resolve_safety([_allergy("어묵")]).codes == {6}
+    assert result.blocked == (row,)
+
+
+@pytest.mark.parametrize("label", ["글루텐", "셀리악병"])
+def test_묶음_이름_질환으로_등록해도_needs_check_로_표시한다(label: str) -> None:
+    row = _row("불고기", ingredients=("소고기", "간장"))
+    entry = _condition(label) if label == "셀리악병" else _allergy(label)
+
+    result = filter_food_safety([row], [entry], "toddler")
+
+    assert result.needs_check == (row,)
+
+
+def test_확인할_재료가_여럿이면_코드_순_이름_순이다() -> None:
+    row = _row("제육볶음", ingredients=("돼지고기", "고추장", "간장"))
+
+    result = filter_food_safety([row], [_allergy("밀")], "toddler")
+
+    assert result.checks["제육볶음"] == (
+        IngredientCheck(item="간장", allergen="밀"),
+        IngredientCheck(item="고추장", allergen="밀"),
+    )
+
+
+def test_치맛살은_맛살이_아니다() -> None:
+    row = _row("소고기 볶음", ingredients=("소고기(치맛살)",))
+
+    result = filter_food_safety([row], [_allergy("게")], "toddler")
+
+    assert result.passed == (row,)
+    assert result.checks == {}
+
+
+# ── 이름 표의 19종 밖 이름 (#264 PM ⭐8) ──────────────────────────────────────
+def test_이름_표에_19종_밖_알레르기_이름도_담는다() -> None:
+    # 데이터 모델 — 19종 밖(아몬드 · 쑥)은 이름으로 담는다. 승인 때 active 행과 대조한다
+    row = _row("시금치나물", ingredients=("시금치", "참기름"))
+
+    result = filter_food_safety([row], [], "toddler")
+
+    assert result.allergens == {"시금치나물": ("참깨",)}
+
+
+def test_19종_이름_다음에_19종_밖_이름이_온다() -> None:
+    row = _row("키위 요거트", ingredients=("키위", "요거트"))
+
+    result = filter_food_safety([row], [], "toddler")
+
+    assert result.allergens == {"키위 요거트": ("우유", "키위")}
 
 
 def test_코드없는_계란_알레르기가_동의어표로_정규화돼_이름_없이도_걸린다() -> None:
@@ -398,7 +553,7 @@ def test_resolved_false_는_ingredients가_있어도_unchecked() -> None:
 
 @pytest.mark.parametrize("stage", ["toddler", "preschool"])
 def test_영유아_이후_단계는_꿀_금지가_적용되지_않는다(stage: str) -> None:
-    row = _row("꿀떡", ingredients=("꿀",))
+    row = _row("허니버터 감자", ingredients=("감자", "꿀"))
 
     result = filter_food_safety([row], [], stage)  # type: ignore[arg-type]
 
@@ -455,7 +610,7 @@ def test_질환_칸에_적은_알레르기도_같은_사전으로_읽는다() ->
 
 @pytest.mark.parametrize(("months", "blocked"), [(11, True), (12, False)])
 def test_꿀은_12개월_미만에만_막는다(months: int, blocked: bool) -> None:
-    row = _row("꿀떡", ingredients=("찹쌀", "꿀"))
+    row = _row("허니버터 감자", ingredients=("감자", "허니버터"))
 
     result = filter_food_safety([row], [], "toddler", months=months)
 
@@ -464,11 +619,11 @@ def test_꿀은_12개월_미만에만_막는다(months: int, blocked: bool) -> N
 
 def test_월령을_모르면_그_단계에서_가장_어린_월령으로_본다() -> None:
     # preschool 은 36개월부터다. 48개월 미만 질식 주의가 붙어야 한다
-    row = _row("떡국", ingredients=("떡", "소고기"))
+    row = _row("포도", ingredients=("포도",))
 
     result = filter_food_safety([row], [], "preschool")
 
-    assert result.cautions == {"떡국": ("질식 주의 식품",)}
+    assert result.cautions == {"포도": ("질식 주의 식품",)}
 
 
 @pytest.mark.parametrize(("months", "cautioned"), [(47, True), (48, False)])
@@ -479,6 +634,50 @@ def test_질식_주의는_막지_않고_안내만_단다(months: int, cautioned:
 
     assert result.passed == (row,)
     assert ("포도" in result.cautions) is cautioned
+
+
+# ── 떡 — 추천은 막고 급식은 주의만 (#264 PM ⭐2) ─────────────────────────────
+@pytest.mark.parametrize(
+    ("purpose", "blocked", "cautions"),
+    [("recommend", True, ()), ("daycare", False, ("떡",))],
+)
+def test_떡은_추천에서는_막고_급식에서는_주의만_단다(
+    purpose: Purpose, blocked: bool, cautions: tuple[str, ...]
+) -> None:
+    # 끈적해서 잘라도 위험이 남는다. 급식은 기관이 이미 잘라서 주니 주의만 단다
+    row = _row("떡국", ingredients=("떡", "소고기"))
+
+    result = filter_food_safety([row], [], "preschool", months=30, purpose=purpose)
+
+    assert (result.blocked == (row,)) is blocked
+    assert result.cautions.get("떡국", ()) == cautions
+
+
+def test_purpose_를_안_넘기면_추천으로_보고_막는다() -> None:
+    row = _row("떡국", ingredients=("떡", "소고기"))
+
+    result = filter_food_safety([row], [], "preschool", months=30)
+
+    assert result.blocked == (row,)
+
+
+def test_급식이어도_알레르기는_그대로_막는다() -> None:
+    row = _row("우유푸딩", ingredients=("우유",))
+
+    result = filter_food_safety(
+        [row], [_allergy("우유")], "preschool", months=30, purpose="daycare"
+    )
+
+    assert result.blocked == (row,)
+
+
+def test_떡갈비는_떡이_아니다() -> None:
+    row = _row("떡갈비", ingredients=("소고기", "돼지고기"))
+
+    result = filter_food_safety([row], [], "preschool", months=30)
+
+    assert result.passed == (row,)
+    assert "떡갈비" not in result.cautions
 
 
 @pytest.fixture
@@ -496,6 +695,8 @@ def broken_reference(tmp_path, monkeypatch):
         allergy.shared_book,
         safety.food_book,
         safety._code_matcher,
+        safety._varies_matcher,
+        safety._extra_matcher,
     )
     for name in ("allergen_terms.yaml", "chronic_restriction.yaml", "food_safety_terms.yaml"):
         shutil.copy(reference.REFERENCE_DIR / name, tmp_path / name)
