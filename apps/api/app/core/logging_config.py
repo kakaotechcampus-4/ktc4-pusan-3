@@ -4,7 +4,8 @@ uvicorn 은 자기 로거(uvicorn · uvicorn.error · uvicorn.access)만 설정�
 않으면 app.* 로그는 파이썬 기본 처리로 떨어져 WARNING 이상만, 시간도 이름도 없이 찍힌다.
 
 🚨 루트 로거는 건드리지 않는다 (WARNING 그대로). 루트를 INFO 로 열면 라이브러리 로그까지
-   열린다 — httpx 는 INFO 로 요청 주소를 찍는데, 주소에 키를 싣는 API 가 있다 (NEIS 의 KEY=).
+   열린다 — httpx 는 INFO 로 요청 주소를 찍는데, 주소에 키를 싣는 API 가 있다
+   (공공데이터포털의 serviceKey= · 식품안전나라는 경로에 키).
 🚨 무엇을 남기는지는 그대로다 — 원문 대신 id (루트 CLAUDE.md §2 개인정보).
 
 app 로그는 루트로도 올라간다(propagate). pytest 의 caplog 가 루트에서 받기 때문이다. 그래서

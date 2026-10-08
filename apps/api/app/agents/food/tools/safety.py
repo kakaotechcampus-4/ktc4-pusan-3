@@ -36,7 +36,7 @@ from app.agents.common.reference import (
 )
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 from app.rules.age import Stage, first_month_of
-from app.rules.allergen import ALLERGEN_NAMES, parse_allergens, strip_allergen_marks
+from app.rules.allergen import ALLERGEN_NAMES, strip_allergen_marks
 from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, prepare_fields
 
 # 거르지 않는 상태. 이 밖의 값은 모르는 값이라도 거른다 — 어댑터가 status 를 잘못 옮겨도
@@ -113,10 +113,12 @@ def filter_food_safety(
     """행마다 판정 순서대로 거른다.
 
     1. health_safety 행을 `resolve_safety` 로 읽어 막을 19종 코드와 글자 Term 을 만든다.
-    2. 메뉴 코드 = 저장된 `row.allergen_codes` ∪ 메뉴명에 인쇄된 알레르기 번호(급식표 "(2.5.6)") ∪
-       메뉴명 · 재료를 사전으로 훑은 코드. 저장된 코드만 믿으면 오래된 카탈로그 행 · 빠진 코드가
-       그대로 통과한다. 제품마다 다른 성분(varies_foods)은 메뉴 코드에 넣지 않고 (코드, 음식)으로
-       따로 든다. 메뉴 코드나 제품마다 다른 성분의 코드가 막을 코드와 겹치면 blocked.
+    2. 메뉴 코드 = 저장된 `row.allergen_codes` 와 메뉴명 · 재료를 사전으로 훑은 코드의 합집합.
+       저장된 코드만 믿으면 오래된 카탈로그 행 · 빠진 코드가 그대로 통과한다. 메뉴명에 인쇄된
+       알레르기 번호(급식표 "(2.5.6)")는 읽지 않는다 — 기관이 아이의 알레르기를 관리하고
+       보호자에게 미리 알린다. 제품마다 다른 성분(varies_foods)은 메뉴 코드에 넣지 않고
+       (코드, 음식)으로 따로 든다. 메뉴 코드나 제품마다 다른 성분의 코드가 막을 코드와 겹치면
+       blocked.
     3. 글자 Term 을 `match_fields((display_name, *재료), …)` 로 찾아 걸리면 blocked. 필드마다
        따로 보고, guard 는 띄어쓰기를 넘어 덮지 않는다.
     4. 연령 · 아이 금지 식품(`food_safety_terms.yaml` age_rules) 중 이 월령에 해당하는 것:
@@ -208,7 +210,7 @@ def filter_food_safety(
 
 
 def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
-    """health_safety 행들을 막을 것으로 바꾼다. 급식 조회는 `codes` 를 인쇄된 번호와도 대조한다.
+    """health_safety 행들을 막을 것으로 바꾼다.
 
     - `retracted` · `none` 이 아닌 행을 다 읽는다.
     - 알레르기 행은 `category` 에 `food` 가 있거나 비어 있어야 읽는다. `environment` · `drug`
@@ -319,7 +321,7 @@ def _row_hits(
     """(막는 key, 주의 key, 메뉴 코드, 확인할 (코드, 음식)). 막는 key 는 코드 → 글자 Term →
     연령 규칙 순서다. 제품마다 다른 성분으로 막는 것은 여기 넣지 않는다 — 호출부가 따로 본다.
 
-    메뉴 코드는 저장된 코드 · 메뉴명에 인쇄된 번호 · 메뉴명과 재료를 훑은 코드의 합집합이다.
+    메뉴 코드는 저장된 코드와 메뉴명 · 재료를 훑은 코드의 합집합이다.
     확인할 것은 제품마다 다른 성분 중 메뉴 코드에 없는 것이다 — 그 성분이 확실히 든 재료가
     같이 있으면(간장 국수의 소면) 메뉴 코드로 정해져서 확인할 필요가 없다.
     """
@@ -329,9 +331,7 @@ def _row_hits(
         if key not in found:
             found.append(key)
 
-    # 급식표처럼 메뉴명에 인쇄된 번호는 기관이 쓴 제품을 보고 찍었다 — 확실한 성분이다
-    printed = frozenset(parse_allergens(row.display_name).codes)
-    row_codes = row.allergen_codes | printed | _codes_in(prepared)
+    row_codes = row.allergen_codes | _codes_in(prepared)
     for code in sorted(row_codes & rules.codes):
         add(blocked, str(code))
     for key in matchers.rules.match(prepared):

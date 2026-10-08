@@ -62,7 +62,7 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
   FastAPI·Starlette 의존성을 추가하지 않는다.
 
 ### `app/integrations/`
-- 카카오 OAuth·NEIS·MFDS처럼 서비스 밖의 HTTP API 호출을 격리한다.
+- 카카오 OAuth·MFDS처럼 서비스 밖의 HTTP API 호출을 격리한다.
 - 카카오 요청 URL, 타임아웃, 응답 파싱, 외부 오류 변환은 `app/integrations/kakao/`가 맡는다.
 - **허용**: core, 사용하는 외부 SDK·HTTP 클라이언트
 - **금지**: api, domains, agents, infra import

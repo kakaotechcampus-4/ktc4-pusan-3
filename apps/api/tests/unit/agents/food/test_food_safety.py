@@ -337,32 +337,14 @@ def test_이름_표는_막힌_메뉴와_확인_못_한_메뉴를_싣지_않는�
 
 
 # ── 메뉴명에 인쇄된 알레르기 번호 — 급식표 ─────────────────────────────────
-def test_메뉴명에_인쇄된_알레르기_번호는_든_성분으로_본다() -> None:
-    # 급식표 번호는 기관이 실제로 쓴 제품을 보고 찍었다. 저장 코드가 비어도 메뉴명에서 읽는다
+def test_메뉴명에_인쇄된_알레르기_번호는_읽지_않는다() -> None:
+    # 기관이 아이의 알레르기를 관리하고 보호자에게 미리 알린다. 번호가 붙어 있어도 재료로만 본다
     row = _row("두부조림(5.6)", ingredients=("두부", "설탕"))
 
     result = filter_food_safety([row], [_allergy("밀")], "toddler")
 
-    assert result.blocked == (row,)
-    assert result.hits == {"두부조림(5.6)": ("6",)}
-
-
-def test_인쇄된_번호도_이름_표에_들어간다() -> None:
-    row = _row("두부조림(5.6)", ingredients=("두부", "설탕"))
-
-    result = filter_food_safety([row], [], "toddler")
-
-    assert result.allergens == {"두부조림(5.6)": ("대두", "밀")}
-
-
-def test_글자에_붙은_숫자는_번호가_아니다() -> None:
-    # 회귀 — "3색나물" 의 3 은 메밀(3)이 아니다
-    row = _row("3색나물", ingredients=("시금치", "고사리"))
-
-    result = filter_food_safety([row], [], "toddler")
-
     assert result.passed == (row,)
-    assert "3색나물" not in result.allergens
+    assert result.allergens == {"두부조림(5.6)": ("대두",)}
 
 
 # ── 제품마다 다른 성분 — 막되 needs_check 로 표시 (#264 PM ⭐6 · #267 멘토) ─────

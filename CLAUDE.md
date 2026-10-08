@@ -192,7 +192,7 @@
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
 │       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
 │       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
-│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · NEIS · MFDS)
+│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · MFDS)
 │       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
 │       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)

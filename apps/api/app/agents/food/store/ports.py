@@ -172,7 +172,11 @@ DaycareSlot = Literal["lunch", "snack_am", "snack_pm"]
 
 @dataclass(frozen=True)
 class DaycareMealRow:
-    """`daycare_meal` 한 행."""
+    """`daycare_meal` 한 행.
+
+    급식표에 인쇄된 알레르기 번호는 싣지 않는다 — 기관이 아이의 알레르기를 관리하고 보호자에게
+    미리 알린다. 위험 식품 표시는 메뉴 이름 · 재료로 `filter_food_safety` 가 한다.
+    """
 
     id: UUID
     child_id: UUID
@@ -181,10 +185,9 @@ class DaycareMealRow:
     menu_keys: tuple[str, ...]
     amount_factor: float = 1.0
     amount_known: bool = False
-    allergen_codes: frozenset[int] = frozenset()
-    allergen_mapped: bool = False
     caregiver_checked: bool = False
-    origin: Literal["ocr", "neis", "center_standard"] = "ocr"
+    # 급식표 읽기(사진 OCR · 센터 배포 엑셀) 또는 지역 센터 표준식단. NEIS 는 쓰지 않는다
+    origin: Literal["ocr", "center_standard"] = "ocr"
 
 
 @dataclass(frozen=True)
