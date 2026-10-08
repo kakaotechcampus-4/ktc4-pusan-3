@@ -36,8 +36,8 @@ class SuggestionStatus(enum.StrEnum):
 
 
 class SuggestionFeedback(enum.StrEnum):
-    LIKED = "liked"
-    DISLIKED = "disliked"
+    CHILD_LIKED = "child_liked"
+    CHILD_DISLIKED = "child_disliked"
     NOT_ACTED = "not_acted"
 
 
