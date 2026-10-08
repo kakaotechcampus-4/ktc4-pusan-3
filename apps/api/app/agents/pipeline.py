@@ -20,7 +20,9 @@ from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
 from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
+from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
 from app.agents.memory.agent import MemoryAgentResult
@@ -73,6 +75,12 @@ class DomainOutcome(Protocol):
     def status(self) -> str: ...
     @property
     def model_calls(self) -> int: ...
+    @property
+    def readouts(self) -> tuple[Readout, ...]: ...
+    @property
+    def needs_observation(self) -> tuple[str, ...]: ...
+    @property
+    def suggestions(self) -> tuple[SuggestionDraft, ...]: ...
 
 
 DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
@@ -170,6 +178,30 @@ class DomainRouted:
 
 
 @dataclass(frozen=True)
+class AgentResult:
+    """도메인 Agent 결과 중 화면에 보낼 것 (#227). SSE 이름은 agent_result.
+
+    Agent 결과 한 건에 하나씩, `DomainRouted` 바로 뒤에 나간다. 추천이 없는 결과(성장 추이 ·
+    닫힘 안내 · 개수 안내 · 되묻기)도 여기 실린다 — 저장할 것이 없어서 끝나는 대로 보낸다.
+    결과를 못 낸 Agent(예외 · 시간 초과 · `status="failed"`)는 이 이벤트가 없고 `Partial.failed`
+    로만 알린다.
+
+    추천(`suggestion_ids` · 근거 모드 · 이유 문장)은 아직 싣지 않는다. 저장이 끝난 id만
+    보내야해서(공통규약 §3) 저장 콜백이 생길 때 더한다. 그 전에 빈 목록을 보내면 화면이
+    "0개" 로 읽는다.
+    그래서 그때까지 추천이 들어 있는 결과는 이 이벤트를 내지 않는다(`_shows`). 내면 개수 안내
+    ("2개 준비했어요") · 날씨 안내가 후보 없이 대화에 먼저 선다. 추천을 실을 때는 추천 칸 키를
+    늘 싣는다 — 값이 없어도 `null` · `[]` 로.
+    """
+
+    agent: str
+    task_type: str | None
+    status: str
+    readouts: tuple[Readout, ...]
+    question: str | None  # needs_observation 하나. 되묻기는 한 번에 하나다 (DomainAgentResult)
+
+
+@dataclass(frozen=True)
 class Unavailable:
     agents: tuple[str, ...]  # 아직 지원하지 않는 도메인 Agent
 
@@ -242,6 +274,7 @@ Event = (
     | Saved
     | EventDrafts
     | DomainRouted
+    | AgentResult
     | Unavailable
     | Guidance
     | MemoryNote
@@ -294,6 +327,8 @@ class _DomainRun:
     partial: Partial | None
     writers_ms: int | None = None  # 그 묶음이 없었으면 None
     readers_ms: int | None = None
+    # status="failed" 로 돌아온 결과의 모델 호출 수. outcomes 에는 없지만 몇 번 불렀는지는 안다
+    failed_model_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -464,12 +499,15 @@ async def handle_input(
         send(Step(3, _TOTAL_STEPS, _LABELS[2]))
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
         budget_ms = int(remaining * 1000)
-        # 결과는 끝나는 대로 내보낸다 (K-11). Partial 은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+
+        # 결과는 끝나는 대로 내보낸다 (K-11). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+        def on_outcome(outcome: DomainOutcome) -> None:
+            send(_routed(outcome))  # 로그 · 지표용
+            if _shows(outcome):
+                send(_result(outcome))  # 화면용 — readout · 되묻기 (#227)
+
         ran = await _run_domain(
-            routing.domain_tasks,
-            contexts,
-            timeout=remaining,
-            on_outcome=lambda outcome: send(_routed(outcome)),
+            routing.domain_tasks, contexts, timeout=remaining, on_outcome=on_outcome
         )
         partial = ran.partial
         writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
@@ -478,6 +516,7 @@ async def handle_input(
         for outcome in ran.outcomes:
             domain.append(outcome)
             model_calls += outcome.model_calls
+        model_calls += ran.failed_model_calls
 
     if failed is None and not committed and not _did_anything(memory, domain, routing):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
@@ -681,6 +720,7 @@ async def _run_domain(
     outcomes: list[DomainOutcome] = []
     succeeded: list[str] = []
     failed: list[str] = []
+    failed_model_calls = 0
     timed_out = False
     for index, task in enumerate(tasks):
         item = settled[index]
@@ -701,6 +741,11 @@ async def _run_domain(
             )
         elif isinstance(item, BaseException):
             raise item  # KeyboardInterrupt·SystemExit 는 부분 실패가 아니다
+        elif _failed(item):
+            # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다(_shows)
+            failed.append(task.agent)
+            failed_model_calls += item.model_calls
+            result = "failed"
         else:
             outcomes.append(item)
             succeeded.append(task.agent)
@@ -721,7 +766,9 @@ async def _run_domain(
         succeeded=tuple(dict.fromkeys(succeeded)),
         failed=tuple(dict.fromkeys(failed)),
     )
-    return _DomainRun(tuple(outcomes), partial, writers_ms, readers_ms)
+    return _DomainRun(
+        tuple(outcomes), partial, writers_ms, readers_ms, failed_model_calls=failed_model_calls
+    )
 
 
 async def _settle(
@@ -830,6 +877,28 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
 def _routed(outcome: DomainOutcome) -> DomainRouted:
     task_type = None if outcome.task_type is None else str(outcome.task_type)
     return DomainRouted(outcome.agent, task_type, str(outcome.status), outcome.model_calls)
+
+
+def _failed(outcome: DomainOutcome) -> bool:
+    """결과를 못 낸 Agent 인가. `Partial.failed` 로 세고 다시 시도 대상이 된다."""
+    return str(outcome.status) == "failed"
+
+
+def _shows(outcome: DomainOutcome) -> bool:
+    """AgentResult 를 낼 결과인가.
+
+    실패는 `Partial.failed` 로만 알린다. 추천이 든 결과는 저장 콜백으로 id 를 실을 수 있을
+    때까지 내지 않는다 (AgentResult docstring).
+    """
+    return not _failed(outcome) and not outcome.suggestions
+
+
+def _result(outcome: DomainOutcome) -> AgentResult:
+    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    question = outcome.needs_observation[0] if outcome.needs_observation else None
+    return AgentResult(
+        outcome.agent, task_type, str(outcome.status), tuple(outcome.readouts), question
+    )
 
 
 def _label(agent: str, task_type: object) -> str:
