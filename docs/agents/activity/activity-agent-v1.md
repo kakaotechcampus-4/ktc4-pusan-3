@@ -36,7 +36,7 @@
 
 **Growth 도 `observation_activity` 를 읽는다** (`공통_구현_계획.md` §Growth). 놀이 기록이 Activity 밖에서도 근거가 되고, Growth 추천 화면에 *"놀이 기록을 참고했어요"* 가 나온다. `observation_activity` 스키마를 바꿀 때는 Growth 쪽도 본다.
 
-**승인된 추천은 다시 `observation_activity` 로 돌아온다.** 보호자가 승인하면 Memory Agent 가 suggestion 을 관찰로 재구조화하고, feedback(`liked`/`disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)가 된다 (`docs/agents/README.md` §2).
+**승인된 추천은 다시 `observation_activity` 로 돌아온다.** 보호자가 승인하면 Memory Agent 가 suggestion 을 관찰로 재구조화하고, feedback(`child_liked`/`child_disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)가 된다 (`docs/agents/README.md` §2).
 
 ---
 

@@ -369,7 +369,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | C-6 | ✅ 폐기 — 알레르기 후보 감지를 v1에서 뺐다. `safety_confirmations` 채널도 함께 사라졌다 |
 | C-7 | ✅ 닫힘 — **`confidence_source`로 갈음**한다. 별도 `type` 컬럼을 두지 않는다 |
 | C-8 | ✅ 닫힘(10-06) — **추천은 최대 3개.** 재호출 후에도 못 채우거나 후보 풀이 처음부터 3개 미만이면 남은 만큼(1~2개)을 개수 안내와 함께 낸다. 0개면 추천 없이 안내만 — 실패가 아니다. 3개를 채우려고 안전 조건을 늦추지 않는다 (멘토 [#196 답변](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/196#issuecomment-5933562473) · #216). `check_count(exhausted=True)` · `count_notice()` — [Tool_공통.md](Tool_공통.md) §5-2 |
-| C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`liked`/`disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
+| C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`child_liked`/`child_disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
 
 새로 열리는 것은 이 표에 다시 적는다.
 
