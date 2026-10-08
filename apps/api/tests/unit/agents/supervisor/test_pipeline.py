@@ -28,6 +28,7 @@ from app.agents import pipeline
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
+from app.agents.common.suggestion import SuggestionDraft, count_notice
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
@@ -923,6 +924,7 @@ class _Outcome:
     model_calls: int = 1
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
+    suggestions: tuple[SuggestionDraft, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -939,6 +941,8 @@ def _runner(
     name: str | None = None,
     readouts: tuple[Readout, ...] = (),
     needs_observation: tuple[str, ...] = (),
+    status: str = "completed",
+    suggestions: tuple[SuggestionDraft, ...] = (),
 ) -> Any:
     label = name or agent
 
@@ -949,7 +953,12 @@ def _runner(
         if log is not None:
             log.append(f"{label} 끝")
         return _Outcome(
-            agent, task.task_type, readouts=readouts, needs_observation=needs_observation
+            agent,
+            task.task_type,
+            status=status,
+            readouts=readouts,
+            needs_observation=needs_observation,
+            suggestions=suggestions,
         )
 
     return run
@@ -1063,6 +1072,75 @@ async def test_도메인_결과의_readout_과_되묻기가_AgentResult_로_나�
         AgentResult("food", "meal_recommendation", "completed", (notice,), question)
     ]
     assert _order(events)[-3:] == ["DomainRouted", "AgentResult", "Done"]
+
+
+async def test_추천이_든_결과는_저장_콜백_전까지_AgentResult_를_내지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 추천 id 를 실을 수 없는 동안 내면 개수 안내만 후보 없이 대화에 먼저 선다
+    draft = SuggestionDraft(
+        agent="food", kind="general", content="두부조림", reason="또래 기준 일반 추천이에요."
+    )
+    notice = count_notice(1)
+    assert notice is not None
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", readouts=(notice,), suggestions=(draft,)),
+    )
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert _of(events, AgentResult) == []
+    assert _order(events)[-2:] == ["DomainRouted", "Done"]  # 로그용 이벤트는 그대로 나간다
+    assert [item.agent for item in result.domain] == ["food"]  # 실패가 아니다
+    assert result.partial is None
+
+
+async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만_알린다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 결과를 못 낸 Agent 는 agent_result 없이 partial.failed 로만 온다 (#276 리뷰).
+    # #249 의 다시 시도도 Partial.failed 를 기준으로 실패 맥락을 남긴다
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", status="failed"))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert [item.agent for item in result.domain] == ["food"]
+    assert result.partial == Partial("agent_error", succeeded=("food",), failed=("activity",))
+    assert [item.agent for item in _of(events, AgentResult)] == ["food"]
+    # 로그용 DomainRouted 는 둘 다 나간다 — failed 상태도 지표에 남는다
+    assert [(item.agent, item.status) for item in _of(events, DomainRouted)] == [
+        ("food", "completed"),
+        ("activity", "failed"),
+    ]
+    assert _order(events)[-2:] == ["Partial", "Done"]
+    assert result.model_calls == 4  # 예외와 달리 몇 번 불렀는지 알아서 센다
 
 
 async def test_Agent_예외_메시지는_로그에_남기지_않는다(

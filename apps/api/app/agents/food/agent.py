@@ -12,6 +12,7 @@ from typing import Literal
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
+from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.context import FoodContext, build_gate
 from app.agents.food.registry import closed_readout_key, requires_safety_check, tools_for
 from app.agents.food.schemas.common import FoodTaskType
@@ -38,6 +39,7 @@ class FoodAgentResult:
     # 닫힘 문구(unsupported_stage)를 readout 으로 내는 것은 실구현에서 한다
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
+    suggestions: tuple[SuggestionDraft, ...] = ()  # mock 은 추천을 내지 않는다
 
 
 async def run(
