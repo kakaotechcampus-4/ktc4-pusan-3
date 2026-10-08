@@ -152,6 +152,7 @@ async def page_observations(
     date_from: date | None = None,
     date_to: date | None = None,
     status: ObservationStatus = ObservationStatus.ACTIVE,
+    statuses: Collection[ObservationStatus] | None = None,
     affinity_id: uuid.UUID | None = None,
     unused_in_suggestions: bool = False,
     cursor: ObservationCursor | None = None,
@@ -162,7 +163,8 @@ async def page_observations(
     domains 를 주면 그 표들만 합친다. growth Agent 처럼 한 분류가 두 표(education ·
     routine)를 읽는 경우가 있어 하나가 아니라 목록으로 받는다. 빈 목록은 받지 않는다 —
     "아무 표도 안 본다" 와 "전부 본다(None)" 가 섞이면 호출자 실수가 전체 조회로 새어 나간다.
-    deleted 는 목록 필터로 열지 않는다. 보호자에게 보이지 않는 상태다.
+    statuses 를 주면 status 대신 그 상태들을 합쳐서 본다. deleted 는 목록 필터로 열지 않는다.
+    보호자에게 보이지 않는 상태다.
     """
     if not 1 <= limit <= 100:
         raise ValueError("limit은 1~100이어야 한다")
@@ -175,8 +177,12 @@ async def page_observations(
         if domains is not None
         else None
     )
-    status = ObservationStatus(status)
-    if status is ObservationStatus.DELETED:
+    wanted = (
+        {ObservationStatus(s) for s in statuses}
+        if statuses is not None
+        else {ObservationStatus(status)}
+    )
+    if not wanted or ObservationStatus.DELETED in wanted:
         raise ValueError("deleted 는 목록으로 조회할 수 없는 상태다")
     result = (
         await session.execute(
@@ -186,7 +192,7 @@ async def page_observations(
                 "kinds": kinds,
                 "date_from": date_from,
                 "date_to_exclusive": date_to + timedelta(days=1) if date_to else None,
-                "status": status.value,
+                "statuses": sorted(s.value for s in wanted),
                 "affinity_id": affinity_id,
                 "unused_in_suggestions": unused_in_suggestions,
                 "cursor_upper": cursor.observed_to_exclusive if cursor else None,

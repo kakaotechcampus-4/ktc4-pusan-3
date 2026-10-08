@@ -35,6 +35,7 @@ from app.api.v1.schemas.observations import (
 from app.domains.correction.models import CorrectionTargetKind
 from app.domains.correction.repository import list_corrections
 from app.domains.identity.models import Parent
+from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import (
     ObservationCursor,
     ObservationDomain,
@@ -57,6 +58,12 @@ _DOMAINS_BY_AGENT: dict[str, tuple[ObservationDomain, ...]] = {
     "growth": (ObservationDomain.EDUCATION, ObservationDomain.ROUTINE),
     "health": (),
 }
+# 목록에 보이는 상태. 보호자가 고친 기록(이번만 · 잘못된 기록)도 남는다 — deleted 만 빠진다.
+_LISTED_STATUSES = (
+    ObservationStatus.ACTIVE,
+    ObservationStatus.STAND_ALONE,
+    ObservationStatus.INACTIVE,
+)
 _VISIBLE_DOMAINS = (
     ObservationDomain.FOOD,
     ObservationDomain.EDUCATION,
@@ -93,7 +100,7 @@ async def list_observations(
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ObservationsResponse:
-    """살아 있는(active) 관찰을 `observed_to` 최신순으로. 필터를 건 건수가 `total` 이다."""
+    """deleted 가 아닌 관찰을 `observed_to` 최신순으로. 필터를 건 건수가 `total` 이다."""
     domains = _DOMAINS_BY_AGENT[domain] if domain else _VISIBLE_DOMAINS
     if not domains:
         return ObservationsResponse(items=[], next_cursor=None, total=0)
@@ -102,6 +109,7 @@ async def list_observations(
         session,
         child_id=child.child_id,
         domains=domains,
+        statuses=_LISTED_STATUSES,
         unused_in_suggestions=unused_in_suggestions,
         cursor=_decode_cursor(cursor) if cursor else None,
         limit=limit,
