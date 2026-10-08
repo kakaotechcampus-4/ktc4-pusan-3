@@ -114,6 +114,15 @@ async def test_list_keeps_corrected_observations_but_not_deleted_ones(
         id_: status for id_, status in kept.items() if status != "deleted"
     }
     assert listed["total"] == 3
+    only = (
+        await db_client.get(
+            f"/api/v1/children/{cid}/observations",
+            params={"status": "stand_alone"},
+            headers=headers,
+        )
+    ).json()
+    assert [i["status"] for i in only["items"]] == ["stand_alone"]
+    assert only["total"] == 1
 
 
 async def test_cursor_pages_through_without_gaps(

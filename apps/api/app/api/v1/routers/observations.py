@@ -50,6 +50,7 @@ from app.rules.observed_label import observed_label
 router = APIRouter()
 
 AgentFilter = Literal["food", "activity", "growth", "health"]
+StatusFilter = Literal["active", "stand_alone", "inactive"]
 
 # 화면의 분류(Agent) → 읽을 관찰 표. health 는 범위 밖이라 빈 목록이다.
 _DOMAINS_BY_AGENT: dict[str, tuple[ObservationDomain, ...]] = {
@@ -96,11 +97,15 @@ async def list_observations(
     child: AccessibleChild,
     session: SessionDep,
     domain: AgentFilter | None = None,
+    status: StatusFilter | None = None,
     unused_in_suggestions: bool = False,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ObservationsResponse:
-    """deleted 가 아닌 관찰을 `observed_to` 최신순으로. 필터를 건 건수가 `total` 이다."""
+    """deleted 가 아닌 관찰을 `observed_to` 최신순으로. 필터를 건 건수가 `total` 이다.
+
+    status 를 주면 그 상태만, 주지 않으면 세 상태 모두다.
+    """
     domains = _DOMAINS_BY_AGENT[domain] if domain else _VISIBLE_DOMAINS
     if not domains:
         return ObservationsResponse(items=[], next_cursor=None, total=0)
@@ -109,7 +114,7 @@ async def list_observations(
         session,
         child_id=child.child_id,
         domains=domains,
-        statuses=_LISTED_STATUSES,
+        statuses=(ObservationStatus(status),) if status else _LISTED_STATUSES,
         unused_in_suggestions=unused_in_suggestions,
         cursor=_decode_cursor(cursor) if cursor else None,
         limit=limit,
