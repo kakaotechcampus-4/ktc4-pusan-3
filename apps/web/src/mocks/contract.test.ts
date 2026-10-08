@@ -1094,18 +1094,32 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
 });
 
 describe("⑨ 교정은 지우지 않고 내린다", () => {
-  it("target_ref 를 배열로 보내면 422 다", async () => {
+  it("target_ref 를 배열로 보내면 400 이다 — 서버는 본문 검증 실패를 400 으로 준다", async () => {
     const response = await fetch(`${API_BASE_URL}/corrections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target_ref: [{ kind: "profile_affinity", id: "a_12" }],
-        verdict: "confirm",
+        verdict: "wrong",
         child_id: "c1",
       }),
     });
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(400);
+  });
+
+  it("once_only 는 status 를 stand_alone 으로 바꾼다 — active 로 두지 않는다 (#277)", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    const target = before.items.find((item) => item.kind === "observation_food");
+    expect(target).toBeDefined();
+
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    expect((result.target as Observation).status).toBe("stand_alone");
   });
 
   it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {

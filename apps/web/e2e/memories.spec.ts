@@ -4,7 +4,7 @@ import { CHILD, expect, expectNoGate, test } from "./fixtures";
  * 07 기억 — 관찰 한 건과 승격된 기억을 섞지 않는다 (최상위 CLAUDE.md §2 기억 · §5 Correction).
  *
  * 🚨 Correction 은 **묻는 것이 대상마다 다르다.** 기록은 `once_only` · `wrong`, 기억은
- *    `need_more_observation` · `outdated` · `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다.
+ *    `need_more_observation` · `outdated` · `wrong`. `confirm`(맞아요)은 서버에도 없다 (#277).
  */
 
 const MEMORIES = `/child/${CHILD}/memories`;
@@ -79,7 +79,7 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
     ).toBeVisible();
   });
 
-  // `confirm` 은 화면에서 묻지 않는다(§5). 한동안 안내가 "맞아요를 눌러주세요" 였다 (#242).
+  // `confirm`(맞아요)은 없는 판정이다(§5). 한동안 안내가 "맞아요를 눌러주세요" 였다 (#242).
   test("상세 안내가 화면에 없는 버튼을 가리키지 않는다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
     await page.getByText("6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.").first().click();
