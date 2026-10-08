@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 
+import type { AgentResultEvent } from "@/lib/api/sse";
 import type { Agent, Observation } from "@/lib/api/types";
 
 import { healthObservation, observations, runEventDrafts } from "../fixtures";
@@ -126,6 +127,97 @@ const MAX_QUESTIONS = 4;
  *    "확인하지 못해" 가 그 바로 아래 서면 한 화면에서 말이 부딪힌다 (#251 리뷰).
  */
 const ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요.";
+
+/**
+ * 성장 추이 readout (#227). 서버 `compute_growth_delta` 템플릿 모양이다 (`docs/agents/growth/Growth_Tool_명세.md`
+ * — 요약 한 줄 + 잰 기록을 줄마다, 해석 문구 없음). 🚨 **숫자는 지어낸 것이다** (최상위 §9).
+ */
+const GROWTH_DELTA_BODY = [
+  "2026-03-02부터 2026-09-01까지 6개월간 키 3.1cm · 몸무게 0.8kg 늘었어요.",
+  "  2026-03-02  키 96.4cm · 몸무게 14.2kg",
+  "  2026-09-01  키 99.5cm · 몸무게 15.0kg  (직전 대비 키 3.1cm · 몸무게 0.8kg)",
+].join("\n");
+
+/** 0개 안내 — 서버 `suggestion.readout.yaml` 의 `suggestion.empty` 와 같은 글자. */
+const EMPTY_NOTICE = "조건에 맞는 추천이 없어요.";
+
+/** Agent 가 되묻는 한 줄 (`needs_observation`). Memory 의 `NOTE_QUESTION` 과 **다른 문장**이라 화면에서 갈린다. */
+const AGENT_QUESTION = "요즘 주로 집 안에서 노는지 바깥에서 노는지 알려주시겠어요?";
+
+/**
+ * 요청형 한 줄의 run (#227 · 서버 #276). 저장할 관찰이 없어서 Memory 단계가 없고, Agent 결과가 끝나는 대로
+ * 하나씩 온다. 순서는 서버와 같다 — `agent_result`(끝난 순서) → `partial`(있으면 한 번) → `done`.
+ *
+ * 🚨 **같은 Agent 가 두 번 온다** (`agent_readout` 의 Food). 하나는 화면에 보일 것이 없는 쓰는 task 라
+ *    블록이 하나만 서야 한다.
+ */
+async function* agentResultScript(
+  runId: string,
+  scenario: "agent_readout" | "agent_question" | "agent_partial",
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 3, total: 3, label: "다음 행동을 준비하고 있어요" });
+  await sleep(700);
+
+  const results: AgentResultEvent[] =
+    scenario === "agent_readout"
+      ? [
+          {
+            agent: "growth",
+            task_type: "growth_review",
+            status: "completed",
+            readouts: [
+              { kind: "growth_delta", title: "", body: GROWTH_DELTA_BODY, authored_by: "code" },
+            ],
+            question: null,
+          },
+          {
+            agent: "food",
+            task_type: "daycare_meal",
+            status: "completed",
+            readouts: [],
+            question: null,
+          },
+          {
+            agent: "food",
+            task_type: "meal_recommendation",
+            status: "completed",
+            readouts: [{ kind: "notice", title: "", body: EMPTY_NOTICE, authored_by: "code" }],
+            question: null,
+          },
+        ]
+      : scenario === "agent_question"
+        ? [
+            {
+              agent: "activity",
+              task_type: null,
+              status: "completed",
+              readouts: [],
+              question: AGENT_QUESTION,
+            },
+          ]
+        : [
+            {
+              agent: "food",
+              task_type: "meal_recommendation",
+              status: "completed",
+              readouts: [{ kind: "notice", title: "", body: EMPTY_NOTICE, authored_by: "code" }],
+              question: null,
+            },
+          ];
+
+  for (const result of results) {
+    yield frame("agent_result", result);
+    await sleep(400);
+  }
+
+  if (scenario === "agent_partial") {
+    // 🚨 결과를 못 낸 Agent 는 `agent_result` 없이 여기에만 이름이 온다.
+    yield frame("partial", { reason: "timeout_20s", succeeded: ["food"], failed: ["activity"] });
+    await sleep(200);
+  }
+
+  yield frame("done", { run_id: runId, model_calls: results.length });
+}
 
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
@@ -275,6 +367,15 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    */
   yield frame("ping", {});
   await sleep(200);
+
+  if (
+    scenario === "agent_readout" ||
+    scenario === "agent_question" ||
+    scenario === "agent_partial"
+  ) {
+    yield* agentResultScript(runId, scenario);
+    return;
+  }
 
   /**
    * 🚨 **안내만 나가고 끝나는 run 이다.** 원문이 전부 안내 조각이면 서버는 Memory 를 아예

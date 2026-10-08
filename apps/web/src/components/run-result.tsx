@@ -18,12 +18,12 @@ import { RewriteButton } from "@/components/rewrite-button";
 import { domainLabel, observationAgent } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
-import { DomainIcon } from "@/components/ui/icon";
+import { DOMAIN_ICON, DomainIcon } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
-import type { GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
+import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
 import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
 
@@ -34,8 +34,8 @@ import { isHealthObservation, type Agent, type Observation } from "@/lib/api/typ
  * 보낸 한 줄은 바로 위의 말풍선이 진다 — 그래서 여기에는 "적어주신 한 줄" 카드도 "홈으로" 버튼도
  * 없다 (돌아가기는 화면 머리의 화살표다).
  *
- * 🚨 **순서를 지킨다 — 안내 → 저장된 기록 → 기억이 자랐어요 → 일정 초안(분리).** 안내가 맨 위인
- *    이유는 `GuidanceCard` 자리의 주석에, 일정 초안을 가르는 이유는 `DraftsCard` 에 있다.
+ * 🚨 **순서를 지킨다 — 안내 → Agent 결과 → 저장된 기록 → 기억이 자랐어요 → 일정 초안(분리).** 안내가
+ *    맨 위인 이유는 `GuidanceCard` 자리의 주석에, 일정 초안을 가르는 이유는 `DraftsCard` 에 있다.
  * 🚨 **Agent 결과는 도착한 순서대로 붙이고 재정렬하지 않는다** (PR #215 리뷰). 서버가 늦게 끝난
  *    Agent 를 뒤에 보내는 것은 그게 실제로 일어난 순서라서다.
  * 🚨 **`partial` 은 실패 화면이 아니다** (NF-06). Agent 2개 중 1개만 성공해도 그 답을 보여주고,
@@ -150,7 +150,13 @@ export function RunReply({
    *    두 장을 나란히 두면 같은 자리에서 서로 다른 이유를 대고, 아래쪽이 위쪽을 부정한다.
    *    Memory 가 되물은 경우도 같다 — 아직 못 정한 것이지 못 읽은 것이 아니다.
    */
-  const noticedWhy = run.guidance.length > 0 || run.note !== null;
+  const agentResults = visibleAgentResults(run.agentResults);
+  /**
+   * 🚨 **Agent 결과도 이유를 말한 것이다** (#227). "잘 크고 있어?" 같은 요청형 한 줄은 저장할 관찰이 없고
+   *    답이 Agent 블록(성장 추이)뿐이다 — 그 아래에 "기록을 찾지 못했어요" 를 세우면 답을 받은 보호자가
+   *    실패한 줄 안다.
+   */
+  const noticedWhy = run.guidance.length > 0 || run.note !== null || agentResults.length > 0;
   /** Memory 가 답을 기다리는 중. 🚨 `kind` 를 모르면 질문으로 보지 않는다 (`NoteCard`). */
   const askingMore = run.note?.kind === "question";
 
@@ -193,6 +199,15 @@ export function RunReply({
           onAnswer={onAnswer}
         />
       ) : null}
+
+      {/* 🚨 **partial 바로 위에 둔다** — 한 Agent 가 해낸 것과 다른 Agent 가 못 한 것이 붙어 있어야
+          "성공과 실패를 한 화면에" 가 한눈에 읽힌다 (NF-06). 도착한 순서 그대로다 (#215). */}
+      {agentResults.map((result, index) => (
+        <AgentResultCard
+          key={`${result.agent}:${result.task_type ?? ""}:${index}`}
+          result={result}
+        />
+      ))}
 
       {/* 🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
           클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다. */}
@@ -325,6 +340,63 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
   );
   const failed = `${josa(parts.join(", "), "은/는")} 이번에 처리하지 못했어요.`;
   return savedSomething ? `${failed} 저장한 기록은 그대로 남아 있어요.` : failed;
+}
+
+/**
+ * 화면에 세울 Agent 결과만 고른다 (#227). 🚨 **순서는 건드리지 않는다** — 도착한 순서가 실제로 끝난 순서다.
+ *
+ * 쓰는 task(급식 갱신)처럼 보일 것이 없는 결과는 빈 블록이 되므로 뺀다. 빈 블록을 세우면 Agent 이름만 있는
+ * 카드가 "아무것도 못 했다" 로 읽힌다 — 실제로는 할 일을 끝낸 것이다.
+ */
+export function visibleAgentResults(results: AgentResultEvent[]): AgentResultEvent[] {
+  return results.filter(
+    (result) =>
+      result.readouts.some((readout) => readout.body.trim() !== "") ||
+      (result.question ?? "").trim() !== "",
+  );
+}
+
+/**
+ * 도메인 Agent 결과 한 블록 (#227 · 서버 #276). 지금은 readout 과 되묻기 한 줄만 싣는다 — 추천의 이유 문장과
+ * "후보 보기 →" 는 서버가 추천 칸을 실을 때(#227 3단계) 이 블록에 붙는다.
+ *
+ * 🚨 **도메인 색을 쓰지 않는다** (`ObservationRow` 와 같은 이유). 대화는 하루치 답이 위아래로 이어져서
+ *    Agent 블록마다 도메인 색 타일을 주면 한 화면에 도메인 색 2개 규칙(문서 §3)을 넘는다. 어느 Agent 인지는
+ *    아이콘 모양과 이름표 글자가 진다. 🚨 타일은 `neutral` 이다 — 브랜드 타일은 "보호자가 할 일이 있다" 는
+ *    자리라(`GuidanceCard`), 읽기만 하는 블록에 주면 눌러 볼 것이 있는 줄 안다.
+ * 🚨 **readout `body` 를 그대로 그린다.** 성장 추이는 코드가 만든 문장이고, 화면이 줄이거나 색을 입히면
+ *    평가로 읽힌다 (최상위 §2 키 · 몸무게). 여러 줄이라 줄바꿈을 살린다 (`whitespace-pre-line`).
+ * 🚨 **모델이 쓴 readout 도 HTML 로 그리지 않는다** (apps/web/CLAUDE.md §4). `{}` 로 넣는다.
+ * 🚨 **되묻기에 답하기 버튼을 세우지 않는다.** Memory 질문(`NoteCard`)과 달리 이어서 답할 길이 서버에 아직
+ *    없다 — `reply_to` 로 보내면 400 이다 (`AgentResultEvent.question` · #246).
+ */
+function AgentResultCard({ result }: { result: AgentResultEvent }) {
+  const readouts = result.readouts.filter((readout) => readout.body.trim() !== "");
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <IconTile icon={DOMAIN_ICON[result.agent]} tone="neutral" />
+        <div className="min-w-0 flex-1">
+          <p className="text-caption text-ink-subtle">{domainLabel(result.agent)}</p>
+          {readouts.map((readout, index) => (
+            <div key={index} className="mt-1">
+              {readout.title ? <p className="text-label text-ink-muted">{readout.title}</p> : null}
+              <p className="text-body text-ink whitespace-pre-line">{readout.body}</p>
+            </div>
+          ))}
+          {result.question ? (
+            <p
+              className={
+                readouts.length > 0 ? "text-body-sm text-ink-muted mt-2" : "text-body text-ink mt-1"
+              }
+            >
+              {result.question}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 /**

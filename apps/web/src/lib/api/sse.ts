@@ -130,6 +130,64 @@ export interface UnavailableEvent {
 }
 
 /**
+ * 04 한 줄 입력 — 도메인 Agent 가 낸 **읽기 전용 한 덩어리** (#227).
+ *
+ * 성장 추이 · 닫힘 안내 · 개수 안내("조건에 맞는 추천이 없어요") 같은 것이다. 저장하지 않고 그 run 에서만 산다.
+ *
+ * 🚨 **`body` 를 화면이 다시 쓰지 않는다.** `authored_by: "code"` 면 서버 코드가 만든 문자열이 그대로
+ *    온다 — 성장 추이가 그렇다. 화면이 줄이거나 꾸미다가 "또래보다" 같은 판정을 붙이면 발달 평가로
+ *    읽힌다 (최상위 §2 키 · 몸무게). 색으로 좋고 나쁨을 말하지도 않는다.
+ * 🚨 **`body` 는 여러 줄일 수 있다** — 성장 추이는 요약 한 줄 아래 잰 기록을 줄마다 적는다.
+ * 🚨 **`kind` 는 열어 둔다.** 모르는 `kind` 가 와도 `body` 는 그린다 — 서버가 종류를 늘려도 화면을 먼저
+ *    배포하지 않아도 된다 (`GuidanceEvent.code` 와 같은 이유).
+ * ⚠️ 개수 안내와 Activity 날씨 안내가 둘 다 `kind: "notice"` 다. 둘을 가를 값은 #227 · #249 에서 정한다.
+ * ⚠️ 서버 readout 의 `source_refs` 는 오지 않는다 (#276). 근거 종류가 `Ref.kind` 에 아직 없다.
+ */
+export interface AgentReadout {
+  kind: "growth_delta" | "notice" | "blocked" | "unsupported" | (string & {});
+  /** 비어 있을 수 있다 (`""`). 비었으면 그리지 않는다. */
+  title: string;
+  body: string;
+  authored_by: "code" | "model";
+}
+
+/**
+ * 04 한 줄 입력 — **도메인 Agent 결과 한 건** (#227 · 서버 #276). 한 건이 대화의 Agent 블록 하나다.
+ *
+ * 🚨 **도착한 순서대로 붙이고 재정렬하지 않는다** (#215). 먼저 끝난 Agent 가 먼저 온다.
+ * 🚨 **같은 Agent 가 두 번 올 수 있다** — task 가 둘이면(`daycare_meal` + `meal_recommendation`) 결과도 둘이다.
+ *    `agent` 하나로 묶지 않는다.
+ * 🚨 **결과를 못 낸 Agent 는 이 이벤트가 없다.** 예외 · 시간 초과는 지금처럼 `partial.failed` 로만 온다.
+ * 🚨 **비어 있는 결과도 온다** (`readouts: []` · `question: null`). 쓰는 task(급식 갱신)처럼 화면에 보일 것이
+ *    없는 결과다 — 화면은 블록을 세우지 않는다 (`components/run-result.tsx`).
+ *
+ * ⚠️ **추천 칸이 아직 없다** (`kind` · `reason` · `suggestion_ids`). 저장이 끝난 id 만 보내야 해서
+ *    (공통규약 §3) 서버의 저장 콜백이 생길 때 같이 붙는다 (#227 3단계). 화면은 지금 이 이벤트를
+ *    **추천이 없는 결과**로 읽는다 — 그래서 3단계 전에는 추천이 있는 결과를 보내지 말아 달라고
+ *    #276 리뷰에서 요청했다. 보내면 "조건에 맞는 추천을 2개 준비했어요" 가 후보 없이 선다.
+ */
+export interface AgentResultEvent {
+  agent: Agent;
+  /** Agent 안의 일 종류 (`meal_recommendation` · `growth_review` …). 라벨이 없는 Agent(Activity)는 `null`. */
+  task_type: string | null;
+  /**
+   * ⚠️ `string` 으로 받는다. 서버 실구현 전에는 Food mock 의 `mock` · `unsupported_stage` 가 그대로 오고,
+   *    실구현 뒤에 `completed` · `degraded` · `blocked` · `unsupported` 로 좁혀진다 (#276).
+   *    지금 화면은 이 값으로 그림을 가르지 않는다 — 가를 일("후보 보기" 를 세울지)은 추천 칸과 같이 온다.
+   */
+  status: string;
+  readouts: AgentReadout[];
+  /**
+   * Agent 가 되묻는 한 줄. 없으면 `null` 이다 (키는 늘 있다).
+   *
+   * 🚨 **답할 자리를 열지 않는다.** Memory 의 되묻기(`NoteEvent`)와 답의 쓰임이 달라서, "이 질문에 답하기" 로
+   *    `reply_to` 를 실어 보내면 서버가 400 `reply_context_unavailable` 로 막는다. 답을 받는 길은 #246 에서
+   *    정한다 — 그때까지는 안내 문장으로만 선다.
+   */
+  question: string | null;
+}
+
+/**
  * 08 사진 — 이 사진을 문서로 읽을지 활동 사진으로 읽을지. 🚨 **추측이다.**
  * 프론트가 이 값을 확정으로 쓰지 않는다 — 화면이 부모에게 한 번 되묻고, 부모가 바꾸면 그쪽이 정본이다.
  */
@@ -214,6 +272,7 @@ export type RunEvent =
   | { type: "guidance"; data: GuidanceEvent }
   | { type: "note"; data: NoteEvent }
   | { type: "unavailable"; data: UnavailableEvent }
+  | { type: "agent_result"; data: AgentResultEvent }
   | { type: "ping"; data: PingEvent }
   | { type: "partial"; data: PartialEvent }
   | { type: "failed"; data: FailedEvent }

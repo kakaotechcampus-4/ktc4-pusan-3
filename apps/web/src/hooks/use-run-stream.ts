@@ -7,6 +7,7 @@ import { qk } from "@/lib/api/queryKeys";
 import {
   isDraftEvent,
   streamRunEvents,
+  type AgentResultEvent,
   type EventDraftsEvent,
   type FailedEvent,
   type GuidanceEvent,
@@ -89,6 +90,13 @@ export interface RunState {
    */
   unavailable: Agent[];
   /**
+   * 도메인 Agent 결과 (#227). 🚨 **도착한 순서 그대로 쌓는다** — 재정렬하지도, 같은 Agent 끼리 합치지도
+   *    않는다. task 가 둘인 Agent 는 결과도 둘이고, 둘은 다른 블록이다.
+   * 🚨 비어 있는 결과(`readouts: []` · `question: null`)도 그대로 담는다. 그리지 않는 것은 화면이 정한다 —
+   *    리듀서가 버리면 "결과가 왔는가" 와 "보일 것이 있는가" 가 한 값이 된다.
+   */
+  agentResults: AgentResultEvent[];
+  /**
    * Agent 가 만든 일정 초안 묶음. 🚨 **아직 저장된 것이 아니다** — 보호자가 카드에서 제출해야
    *    캘린더에 들어간다 (승인 게이트 ㉠). 08 사진 run 에서는 늘 빈 배열이다.
    */
@@ -112,6 +120,7 @@ export const initialRunState: RunState = {
   guidance: [],
   note: null,
   unavailable: [],
+  agentResults: [],
   drafts: [],
   failure: null,
 };
@@ -195,6 +204,12 @@ export function runReducer(state: RunState, action: RunAction): RunState {
           if (added.length === 0) return state;
           return { ...state, unavailable: [...state.unavailable, ...added] };
         }
+
+        case "agent_result":
+          return {
+            ...state,
+            agentResults: [...state.agentResults, action.event.data as AgentResultEvent],
+          };
 
         // 🚨 **아무것도 하지 않는 것이 맞다** (#140). 조용한 채널의 하트비트라 담을 것이 없고,
         //    20초 타이머는 `pumpRunEvents` 의 `onEvent` 가 이미 되살렸다. 여기서 state 를 새로
