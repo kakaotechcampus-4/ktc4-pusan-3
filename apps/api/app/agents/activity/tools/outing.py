@@ -1,18 +1,33 @@
 """날씨 · 일정 · 장소 조회 (모델 tool 3개).
 
-날씨 · 일정은 아직 구현부가 주석이라 호출시 NotImplementedError. 장소 조회는 포트까지 연결돼 있다.
-실패는 기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니다 (D8).
+일정은 아직 구현부가 주석이라 호출시 NotImplementedError — 어린이집 휴원일을 알려면 공휴일 상수가
+먼저 필요하다. 실패는 기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니다 (D8).
 """
+
+import asyncio
+from collections.abc import Awaitable
+from datetime import date, timedelta
+from typing import TypeVar
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.schemas.common import DayLabel, PlaceCategory
 from app.agents.activity.schemas.outing import (
     LookupScheduleArgs,
     LookupWeatherArgs,
     SearchNearbyPlacesArgs,
 )
 from app.agents.activity.store.ports import UpstreamUnavailable
+from app.agents.activity.weather import (
+    WEATHER_UNCHECKED,
+    WeatherBrief,
+    judge_weather,
+    parse_uv,
+    read_advisories,
+    read_air,
+    read_forecast,
+)
+from app.rules.sun import sun_times
 
 # 장소 검색은 넓게 찾고 가까운 순으로 몇 곳만 준다. 둘 다 모델 인자가 아니라 코드 상수이고
 # 잠정값이다 — eval 로 조정한다. 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에
@@ -26,20 +41,80 @@ INDOOR_CATEGORIES = frozenset(
 )
 
 _PLACES = "search_nearby_places"
+_WEATHER = "lookup_weather"
+
+_T = TypeVar("_T")
+
+
+def day_of(label: DayLabel, today: date) -> date:
+    """모델이 고른 날 라벨을 날짜로. 모델은 날짜를 계산하지 않는다.
+
+    이번 주말은 토요일이다. 오늘이 토 · 일이면 오늘이다 — 주말 당일에 "이번 주말"은 오늘이다.
+    """
+    if label == DayLabel.TOMORROW:
+        return today + timedelta(days=1)
+    if label == DayLabel.THIS_WEEKEND:
+        days_to_saturday = 5 - today.weekday()
+        return today if days_to_saturday <= 0 else today + timedelta(days=days_to_saturday)
+    return today
+
+
+async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
+    """그날의 야외 판정. run() 의 사전 조회와 `lookup_weather` 가 같이 쓴다.
+
+    - 예보 · 대기질 · 자외선 · 특보를 병렬로 부른다. 하나가 실패해도 나머지는 쓴다 — 실패한
+      조회만 None 으로 `judge_weather` 에 넘기고, 판정 규칙이 실내만 · 고지를 정한다 (D8).
+    - 위치나 날씨 포트가 없으면 조회하지 않고 실패와 같게 본다 — 실내만.
+    - 🚨 대기질은 오늘만 본다. 에어코리아는 지금 측정값만 주고 예보가 아니다 — 내일 추천에 오늘
+      미세먼지를 쓰지 않고 "확인 못 함"으로 둔다. 특보는 지금 발효 중인 것을 그날에도 본다
+      (더 막는 쪽).
+    - 해가 졌는지는 오늘만 본다. 일몰은 위치와 날짜로 계산한다(`app/rules/sun.py`).
+    """
+    weather = context.ports.weather
+    grid = context.grid
+    location = context.location
+    if weather is None or grid is None or location is None:
+        return judge_weather(
+            forecast=None, air=None, uv_index=None, advisories=None, after_sunset=False
+        )
+
+    today = day == context.today
+    forecast, air, uv, advisories = await asyncio.gather(
+        _or_none(weather.forecast(grid=grid, day=day)),
+        _or_none(weather.air_quality(grid=grid)) if today else _none(),
+        _or_none(weather.uv(grid=grid, day=day)),
+        _or_none(weather.advisories(grid=grid)),
+    )
+    return judge_weather(
+        forecast=read_forecast(forecast) if forecast is not None else None,
+        air=read_air(air) if air is not None else None,
+        uv_index=parse_uv(uv),
+        advisories=read_advisories(advisories) if advisories is not None else None,
+        after_sunset=today and _after_sunset(context, day),
+    )
 
 
 async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> ToolResult:
     """오늘(또는 라벨의 날) 야외 판정과 등급 라벨을 돌려준다.
 
-    DB 연결 후:
-    - args.day 를 날짜로 바꾼다. 모델은 날짜를 계산하지 않는다.
-    - 예보 · 대기질 · 자외선 · 특보를 병렬로 부르고 4-2 표로 판정한다.
+    - args.day 를 날짜로 바꾼다(`day_of`). 모델은 날짜를 계산하지 않는다.
+    - 판정은 `check_weather` 가 4-2 표로 한다.
     - 모델에게는 판정(`outdoor_ok`)과 등급 라벨만 준다. raw 수치는 주지 않는다 —
       모델이 자기 기준으로 재해석해 "나쁨이지만 잠깐이면 괜찮아요"를 쓴다.
+    - 화면에 붙는 안내(문구 키)는 모델에게 주지 않고 `context.state.weather` 에 둔다.
     - 미세먼지만 실패하면 야외는 허용하되 "미세먼지는 확인하지 못했어요" 를 싣는다.
     - 날씨가 실패하면 UPSTREAM_ERROR. "맑음"으로 가정하지 않는다.
     """
-    raise NotImplementedError("외부 API 연결 후 구현")
+    brief = await check_weather(context, day_of(args.day, context.today))
+    context.state.weather = brief
+    if WEATHER_UNCHECKED in brief.notices:
+        return fail(
+            "query",
+            _WEATHER,
+            ErrorCode.UPSTREAM_ERROR,
+            "날씨를 확인하지 못했다. 맑다고 가정하지 않는다. 실내 활동만 낸다.",
+        )
+    return ok("query", _WEATHER, **brief.to_model_payload())
 
 
 async def lookup_schedule(context: ActivityContext, args: LookupScheduleArgs) -> ToolResult:
@@ -106,3 +181,30 @@ async def search_nearby_places(
         _PLACES,
         places=[{"name": row.name, "category": row.category.value} for row in nearest],
     )
+
+
+async def _or_none(call: Awaitable[_T]) -> _T | None:
+    """조회 하나의 실패를 None 으로. 다른 예외는 삼키지 않는다."""
+    try:
+        return await call
+    except UpstreamUnavailable:
+        return None
+
+
+async def _none() -> None:
+    return None
+
+
+def _after_sunset(context: ActivityContext, day: date) -> bool:
+    """지금이 그날 일몰 뒤인가. 위치 · 시각대는 context 에서 읽는다."""
+    location = context.location
+    local = context.now.astimezone(context.timezone)
+    offset = local.utcoffset()
+    if location is None or offset is None:
+        return False
+    hours = offset.total_seconds() / 3600
+    times = sun_times(day, location.lat, location.lon, tz_offset_hours=hours)
+    if times is None:
+        return False
+    _, sunset = times
+    return local.time() >= sunset
