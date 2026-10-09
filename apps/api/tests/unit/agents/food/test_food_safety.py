@@ -216,8 +216,7 @@ def test_쑥_알레르기는_쑥떡을_막는다() -> None:
     assert result.blocked == (row,)
 
 
-def test_우유_알레르기는_분류_없이_크림수프를_막는다() -> None:
-    # 보호자가 우유를 약물로 분류하면 식품 필터에서 빠지던 자리다 (#295)
+def test_우유_알레르기는_재료에_든_우유를_저장_코드_없이도_막는다() -> None:
     row = _row("크림수프", ingredients=("우유",))
 
     result = filter_food_safety([row], [_allergy("우유")], "toddler")
@@ -302,7 +301,7 @@ def test_active_우유_알레르기는_검사_등급과_상관없이_크림수�
     assert result.blocked == (row,)
 
 
-def test_SafetyEntry_는_필터가_안_쓰는_severity_management_category_를_싣지_않는다() -> None:
+def test_SafetyEntry_는_필터가_안_쓰는_severity_와_management_를_싣지_않는다() -> None:
     assert {field.name for field in fields(SafetyEntry)} == {"kind", "label", "status"}
 
 
