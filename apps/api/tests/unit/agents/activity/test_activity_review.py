@@ -285,7 +285,7 @@ class TestSafety:
         assert explain(result.rejections) == "2번 후보: " + GUIDANCE[RejectReason.EVALUATIVE]
 
     def test_active_알레르기에_걸린_후보도_제거된다(self):
-        entry = SafetyEntry(kind="allergy", label="밀", status="active", category=("food",))
+        entry = SafetyEntry(kind="allergy", label="밀", status="active")
         result = review(candidate(content="밀가루 점토 놀이", evidence=[]), safety=[entry])
         assert result.removed[0].hits == ("health_safety",)
 
@@ -452,7 +452,7 @@ class TestOutputTool:
 
     async def test_안전_필터로_빠지면_모델에게_돌려주지_않고_남은_것과_제외_목록을_담는다(self):
         """재호출 1회는 run() 이 제외 목록으로 한다. 사유는 넣지 않는다 (Tool_공통.md §5-2)."""
-        entry = SafetyEntry(kind="allergy", label="밀", status="active", category=("food",))
+        entry = SafetyEntry(kind="allergy", label="밀", status="active")
         ctx = await self.context(safety=InMemorySafety([entry]))
         result = await propose_activity_candidates(
             ctx,

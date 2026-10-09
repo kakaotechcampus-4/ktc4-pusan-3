@@ -66,7 +66,7 @@ class TestBuildGate:
             [
                 SafetyEntry(kind="allergy", label="밀", status="active"),
                 SafetyEntry(kind="allergy", label="땅콩", status="none"),
-                SafetyEntry(kind="environmental", label="꽃가루", status="active"),
+                SafetyEntry(kind="environmental", label="고소공포", status="active"),
             ]
         )
         gate = await build_gate(context(safety=safety), outdoor_ok=True)

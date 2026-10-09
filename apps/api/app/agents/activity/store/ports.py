@@ -54,26 +54,26 @@ class UpstreamUnavailable(Exception):
     """
 
 
-# 읽는 health_safety kind (D7 · 10/4 확정안). 나머지 셋(chronic_disease · behavioral ·
+# 읽는 health_safety kind (D7 · 10/4 확정안). 꽃가루 · 동물털 같은 환경 알레르기도 'allergy' 고,
+# 'environmental' 은 고소공포 같은 것이다(data_model.md). 나머지 셋(chronic_disease · behavioral ·
 # other_medical)은 읽지 않는다 — "천식이면 야외 금지" 같은 표가 곧 LLM 없는 자동 진단이다
 SafetyKind = Literal["allergy", "environmental"]
 # 10/4 확정안의 status. 행이 없는 항목이 unknown 이라 이 값으로는 오지 않는다
 SafetyStatus = Literal["active", "retracted", "none"]
-# kind='allergy' 행의 분류 목록. 쑥처럼 식품이면서 환경인 것은 둘 다 갖는다
-SafetyCategory = Literal["food", "drug", "environment"]
 
 
 @dataclass(frozen=True)
 class SafetyEntry:
     """`health_safety` 한 행 (10/4 확정안). 보호자 입력만 — AI 를 거치지 않는다.
 
-    별칭 칸은 DB 에서 빠졌다. 19종 알레르기는 `reference/allergen_terms.yaml` 로 넓혀 대조한다.
+    별칭 칸과 분류 칸(category, #295)은 DB 에서 빠졌다. label 은 자유 입력이라 Food 와 같은
+    규칙(`common/allergy.read_label`)으로 읽고, 19종은 `reference/allergen_terms.yaml` 로 넓혀
+    대조한다.
     """
 
     kind: SafetyKind
-    label: str  # 예: 밀 · 쑥
+    label: str  # 보호자가 적은 그대로. 예: 밀 · 우유 알레르기 · 쑥
     status: SafetyStatus  # 거르는 것은 active 뿐이다
-    category: tuple[SafetyCategory, ...] = ()  # kind='allergy' 만 갖는다
 
 
 @dataclass(frozen=True)

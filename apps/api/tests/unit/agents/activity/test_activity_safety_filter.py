@@ -38,8 +38,8 @@ def check(content, materials=(), *, months=40, entries=()):
     )
 
 
-def allergy(label, status="active", category=("food",)):
-    return SafetyEntry(kind="allergy", label=label, status=status, category=category)
+def allergy(label, status="active"):
+    return SafetyEntry(kind="allergy", label=label, status=status)
 
 
 class TestHazardTerms:
@@ -93,17 +93,67 @@ class TestHealthSafety:
     def test_19종_밖은_등록된_이름으로_대조한다(self):
         assert check("키위 껍질 만져 보기", entries=[allergy("키위")]).blocked is True
 
+    def test_사전에_없는_환경_알레르기도_이름으로_대조한다(self):
+        """꽃가루 · 동물털도 kind='allergy' 다. 'environmental' 은 고소공포 같은 것이다."""
+        assert check("꽃가루 관찰하기", entries=[allergy("꽃가루")]).blocked is True
+
     def test_environmental_도_이름으로_대조한다(self):
-        entry = SafetyEntry(kind="environmental", label="꽃가루", status="active")
-        assert check("꽃가루 관찰하기", entries=[entry]).blocked is True
+        entry = SafetyEntry(kind="environmental", label="고소공포", status="active")
+        assert check("고소공포 이겨 내기 놀이", entries=[entry]).blocked is True
 
     @pytest.mark.parametrize(
-        "content", ["공 밀기 놀이", "카드 게임", "비밀 상자 찾기", "닭 그림 그리기"]
+        ("label", "content", "blocked"),
+        [
+            ("갑각류", "꽃게 껍데기 관찰", True),
+            ("갑각류", "새우깡 탑 쌓기", True),
+            ("우유 알레르기", "생크림 케이크 꾸미기", True),
+            ("우유, 계란", "달걀 껍데기 모자이크", True),
+            ("Milk", "치즈 모양 맞추기", True),
+            ("견과류", "호두 굴리기", True),
+            ("쑥 알레르기", "쑥 캐기", True),
+            ("우유 알레르기", "큰 블록 쌓기", False),
+        ],
+    )
+    def test_보호자가_적은_이름을_읽어서_막는다(self, label, content, blocked):
+        """label 은 자유 입력이다. 별칭과 똑같을 때만 읽으면 나머지가 통과한다 (#264)."""
+        assert check(content, entries=[allergy(label)]).blocked is blocked
+
+    @pytest.mark.parametrize(
+        "content",
+        ["공 밀기 놀이", "카드 게임", "비밀 상자 찾기", "닭 그림 그리기", "굴렁쇠 굴리기"],
     )
     def test_사전의_한_글자_별칭은_놀이_문장에_쓰지_않는다(self, content):
-        """ "밀" · "게" · "닭" 을 그대로 대조하면 평범한 놀이 문장이 알레르기로 걸린다."""
-        entries = [allergy("밀"), allergy("게"), allergy("닭고기")]
+        """ "밀" · "게" · "닭" · "굴" 을 그대로 대조하면 평범한 놀이 문장이 알레르기로 걸린다."""
+        entries = [allergy("밀"), allergy("게"), allergy("닭고기"), allergy("조개류")]
         result = check(content, entries=entries)
+        assert (result.blocked, result.allergens) == (False, ())
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [("잣", "잣 까기"), ("대두", "콩주머니 던지기"), ("콩", "콩 고르기"), ("쑥", "쑥 캐기")],
+    )
+    def test_허용_목록의_한_글자는_막는다(self, label, content):
+        """잣 · 콩 · 깨 · 쑥은 놀이 문장에서도 거의 그 음식이다 (#261 리뷰)."""
+        assert check(content, entries=[allergy(label)]).blocked is True
+
+    def test_사전에_없는_한_글자는_글자_그대로_대조하지_않는다(self):
+        """강아지 알레르기를 "개" 로 적어도 "블록 3개" 를 막지 않는다 (#298 리뷰)."""
+        assert check("블록 3개 쌓기", entries=[allergy("개")]).blocked is False
+
+    @pytest.mark.parametrize(
+        ("content", "label"),
+        [
+            ("플라스틱 포크로 점토 찍기", "돼지고기"),
+            ("에그 쉐이커 흔들기", "난류"),
+            ("밀크 카톤으로 집 만들기", "우유"),
+            ("피치색 물감 칠하기", "복숭아"),
+            ("전복 모양 종이 접기", "조개류"),
+            ("돼지저금통 동전 넣기", "돼지고기"),
+        ],
+    )
+    def test_놀이_문장에서_다른_뜻인_별칭은_쓰지_않는다(self, content, label):
+        """공용 사전의 두 글자 별칭 중 놀이 문장에서 다른 뜻으로 읽히는 것 (#261 리뷰)."""
+        result = check(content, entries=[allergy(label)])
         assert (result.blocked, result.allergens) == (False, ())
 
 
@@ -117,8 +167,7 @@ class TestAllergens:
     def test_19종_밖은_등록된_항목만_잡힌다(self):
         """쑥처럼 사전에 없는 항목은 그 아이에게 등록돼 있어야 이름을 안다."""
         assert check("쑥 캐기").allergens == ()
-        entry = allergy("쑥", "none", ("food", "environment"))
-        assert check("쑥 캐기", entries=[entry]).allergens == ("쑥",)
+        assert check("쑥 캐기", entries=[allergy("쑥 알레르기", "none")]).allergens == ("쑥",)
 
     def test_재료에서도_찾는다(self):
         assert check("점토 놀이", ("밀가루", "물")).allergens == ("밀",)

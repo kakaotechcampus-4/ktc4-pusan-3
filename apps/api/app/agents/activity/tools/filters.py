@@ -9,20 +9,28 @@ from dataclasses import dataclass
 from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
+from app.agents.common.allergy import read_label, shared_book
 from app.agents.common.reference import allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
-from app.rules.term_match import Term, match_terms, normalize
+from app.rules.term_match import Term, match_fields, normalize
 
 # 이 월령 미만은 위험 용어의 경고도 차단으로 올린다 (D6 규칙 ②). 법령 · 학회 문장은 대부분
 # "N세 미만은 감독이 필요하다" 라 경고만 나오는데, 0–17개월은 감독만으로 위험이 안 없어진다.
 # 밴드 경계와 따로 둔다 — 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게.
 SAFETY_PROMOTE_BELOW_MONTH = 18
 
-# 알레르기 사전(allergen_terms.yaml)은 Food 의 메뉴 이름용이라 "밀" · "게" · "닭" · "잣" 같은
-# 한 글자 별칭이 있다. 놀이 문장에 그대로 대조하면 "공 밀기" · "카드 게임" · "비밀 상자" ·
-# "닭 그림" 이 걸린다. 위험 용어 사전이 한 글자 별칭을 금지한 것과 같은 이유로 Activity 는 쓰지
-# 않는다 — "밀가루" · "꽃게" · "닭고기" · "잣가루" 처럼 두 글자 이상 별칭이 실제 위험을 잡는다.
-MIN_ALLERGEN_ALIAS = 2
+# 알레르기 사전(allergen_terms.yaml)은 메뉴 이름용이라 놀이 문장에 그대로 대조하면 다른 뜻으로
+# 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
+# 사전을 그대로 쓴다("에그" 로 등록하면 난류다).
+#
+# 한 글자 이름은 허용 목록만 쓴다. "밀" · "게" · "굴" · "닭" 은 "공 밀기" · "카드 게임" ·
+# "굴리기" · "닭 그림" 이 걸린다. 잣 · 콩 · 깨 · 쑥은 놀이 문장에서도 거의 그 음식이다
+# ("콩주머니" 에는 실제 콩이 든다). 사전에 없는 한 글자(강아지 알레르기를 "개" 로 적은 것)도
+# 글자 그대로 대조하지 않는다 — "블록 3개" 가 걸린다 (#261 · #298 리뷰).
+SINGLE_CHAR_NAMES = frozenset({"잣", "콩", "깨", "쑥"})
+# 두 글자 이상이어도 놀이 문장에서 다른 뜻으로 읽히는 별칭 (#261 리뷰 — "플라스틱 포크" ·
+# "에그 쉐이커" · "밀크 카톤" · "피치색 물감" · "전복 모양" · "돼지저금통")
+EXCLUDED_ALIASES = frozenset({"포크", "에그", "밀크", "피치", "전복", "돼지"})
 
 # 로그와 사유에 남기는 이름. 알레르기 이름 · 활동명은 남기지 않는다
 HEALTH_SAFETY = "health_safety"
@@ -50,26 +58,34 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
     """health_safety 행을 대조표로 바꾼다.
 
     - 거르는 것은 `status='active'` 뿐이다. `none` · `retracted` · 행 없음(unknown)은 막지 않는다.
-    - 19종 알레르기는 label 로 사전을 찾아 별칭과 guard 를 쓴다 — DB 에 별칭 칸이 없다(10/4).
-      "밀" 로 등록돼 있으면 "밀가루 점토" 도 걸린다.
-    - 19종 밖(키위 · 쑥)과 `environmental` 은 보호자가 적은 label 그대로 대조한다. 보호자가 직접
-      적은 아이 고유의 값이라 한 글자여도 쓴다 — 놓치는 것보다 몇 개 더 막는 쪽이 안전하다.
+    - label 은 보호자의 자유 입력이라 Food 와 같은 규칙(`common/allergy.read_label`)으로 읽는다.
+      "우유 알레르기" · "우유, 계란" · "Milk" 도 19종 코드가 되고, 묶음 이름("갑각류")은 게 ·
+      새우로 펼친다. 19종은 사전의 별칭과 guard 로 넓혀 대조한다 — "밀" 로 등록하면 "밀가루 점토"
+      도 걸린다.
+    - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다.
+    - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다.
     """
     canonical = _canonical_allergens()
-    by_alias = {normalize(alias): term for term in allergen_terms() for alias in term.aliases}
+    book = shared_book()
 
     blocking: list[Term] = []
     registered: list[Term] = []
+
+    def add(found: list[Term], term: Term | None) -> None:
+        if term is not None and term not in found:
+            found.append(term)
+
     for entry in entries:
-        known = by_alias.get(normalize(entry.label)) if entry.kind == "allergy" else None
-        if known is not None:
-            term = canonical[known.key]
-        else:
-            term = Term(key=entry.label, aliases=(entry.label,))
-            if entry.kind == "allergy":
-                registered.append(term)
+        named, rest = read_label(entry.label, book)
+        terms = [canonical.get(str(code)) for code in sorted(named.codes)]
+        terms += [_for_activity(term) for term in named.terms]
+        literal = [_for_activity(Term(key=word, aliases=(word,))) for word in rest]
+        if entry.kind == "allergy":
+            for term in literal:
+                add(registered, term)
         if entry.status == "active":
-            blocking.append(term)
+            for term in (*terms, *literal):
+                add(blocking, term)
     return SafetyTerms(blocking=tuple(blocking), allergens=(*canonical.values(), *registered))
 
 
@@ -78,8 +94,9 @@ def check_candidate(
 ) -> SafetyCheck:
     """후보 하나를 위험 용어와 health_safety 로 판정한다.
 
-    - `content` 와 `materials` 의 각 항목을 **따로** 대조한다. 이어 붙이면
-      `["작은", "블록 담는 통"]` 이 "작은블록담는통" 이 되어 없는 위험을 만든다 (3-5).
+    - `content` 와 `materials` 의 각 항목을 **따로** 대조한다(`match_fields`). 이어 붙이면
+      `["작은", "블록 담는 통"]` 이 "작은블록담는통" 이 되어 없는 위험을 만든다 (3-5). 한 항목
+      안에서도 별칭은 문장부호를, guard 는 띄어쓰기를 넘지 않는다.
     - 위험 용어는 걸린 축의 월령으로 차단/경고를 정하고, 18개월 미만은 경고도 차단이다.
     - 걸린 후보는 고치지 않는다. 차단이면 통째로 뺀다 — "물놀이터" 를 "얕은 물놀이터" 로 고쳐
       통과시키지 않는다.
@@ -90,28 +107,24 @@ def check_candidate(
     hits: list[str] = []
     warnings: list[str] = []
     blocked = False
-    for text in texts:
-        for key in match_terms(text, dictionary.terms):
-            axis = dictionary.axis_of(key)
-            level = axis.level_at(months)
-            if level == "warn" and months < SAFETY_PROMOTE_BELOW_MONTH:
-                level = "block"
-            if level is None:
-                continue
-            if axis.name not in hits:
-                hits.append(axis.name)
-            if level == "block":
-                blocked = True
-            elif axis.warning_text and axis.warning_text not in warnings:
-                warnings.append(axis.warning_text)
-        if match_terms(text, terms.blocking):
+    for key in match_fields(texts, dictionary.terms):
+        axis = dictionary.axis_of(key)
+        level = axis.level_at(months)
+        if level == "warn" and months < SAFETY_PROMOTE_BELOW_MONTH:
+            level = "block"
+        if level is None:
+            continue
+        if axis.name not in hits:
+            hits.append(axis.name)
+        if level == "block":
             blocked = True
-            if HEALTH_SAFETY not in hits:
-                hits.append(HEALTH_SAFETY)
+        elif axis.warning_text and axis.warning_text not in warnings:
+            warnings.append(axis.warning_text)
+    if match_fields(texts, terms.blocking):
+        blocked = True
+        hits.append(HEALTH_SAFETY)
 
-    allergens = tuple(
-        dict.fromkeys(key for text in texts for key in match_terms(text, terms.allergens))
-    )
+    allergens = tuple(dict.fromkeys(match_fields(texts, terms.allergens)))
     return SafetyCheck(
         blocked=blocked,
         hits=tuple(hits),
@@ -148,10 +161,24 @@ def filter_recent_duplicates(
 
 
 def _canonical_allergens() -> dict[str, Term]:
-    """19종 사전을 코드 → 정식 명칭(`ALLERGEN_NAMES`)을 key 로 한 Term 으로. 한 글자 별칭은 뺀다."""
+    """19종 사전을 코드 → 정식 명칭(`ALLERGEN_NAMES`)을 key 로 한 Term 으로 (Activity 대조용)."""
     result: dict[str, Term] = {}
     for term in allergen_terms():
-        aliases = tuple(a for a in term.aliases if len(normalize(a)) >= MIN_ALLERGEN_ALIAS)
         name = ALLERGEN_NAMES[int(term.key)]
-        result[term.key] = Term(key=name, aliases=aliases, guards=term.guards)
+        usable = _for_activity(Term(key=name, aliases=term.aliases, guards=term.guards))
+        if usable is not None:
+            result[term.key] = usable
     return result
+
+
+def _for_activity(term: Term) -> Term | None:
+    """놀이 문장 대조에 쓸 별칭만 남긴다. 남는 게 없으면 None — 그 이름으로는 대조하지 않는다."""
+    excluded = {normalize(alias) for alias in EXCLUDED_ALIASES}
+    aliases = tuple(
+        alias
+        for alias in term.aliases
+        if (key := normalize(alias)) not in excluded and (len(key) >= 2 or key in SINGLE_CHAR_NAMES)
+    )
+    if not aliases:
+        return None
+    return Term(key=term.key, aliases=aliases, guards=term.guards)
