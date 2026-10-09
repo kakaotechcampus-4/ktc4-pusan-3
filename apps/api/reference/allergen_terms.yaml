@@ -98,50 +98,60 @@ terms:
 #   - 묶음 이름이 위 terms 의 별칭과 같으면(콩 · 글루텐) 그 별칭의 코드를 codes 에 꼭 넣는다 — 묶음이 더 넓어야 한다.
 #   - guards 는 이름 안에서 묶음 이름을 찾을 때 덮는 것이다("coconut" 은 견과류가 아니다).
 #   - 19종 밖 식품(가재 · 아몬드 · 연어 …)은 Food 전용 food_safety_terms.yaml 의 group_foods 에 둔다.
-#   - 새 묶음 · 묶음 구성은 의료 검수를 거친다. 넣을지 애매하면 넣는다.
+#   - 새 묶음 · 묶음 구성은 source 에 이렇게 묶은 근거를 적는다. 의료 검수를 직접 하기 어려워
+#     근거로 대신한다 (#264 PM 리뷰). 넣을지 애매하면 넣는다.
 groups:
   - label: 갑각류
     aliases: [갑각류, crustacean, crustaceans]
     codes: [8, 9]
     includes: []
     guards: []
+    source: 표시기준 19종 중 갑각류는 게 · 새우다. 19종 밖 갑각류(가재 · 랍스터 · 크릴)는 food_safety_terms.yaml group_foods 에 둔다 (#258)
   - label: 연체류
     aliases: [연체류, 두족류, mollusk, mollusc]
     codes: [17, 18]
     includes: []
     guards: []
+    source: 표시기준 19종 중 연체동물은 오징어 · 조개류다. "두족류" 로 등록해도 조개류까지 넓게 막는다 — 애매하면 막는다. 문어 · 낙지 · 주꾸미는 group_foods 에 둔다 (#258)
   - label: 생선
     aliases: [생선, 어류, 물고기, 생선류, fish]
     codes: [7]
     includes: []
     guards: []
+    source: 표시기준 19종 중 생선은 고등어뿐이다. 그 밖의 생선과 생선으로 만든 것(연어 · 멸치 · 어묵 · 액젓)은 group_foods 에 둔다 (#258)
   - label: 해산물
     aliases: [해산물, 해물, 어패류, 수산물, 씨푸드, 시푸드, seafood, shellfish]
     codes: []
     includes: [생선, 갑각류, 연체류]
     guards: []
+    source: 생선 · 갑각류 · 연체류를 다 포함한다. 그 밖의 해산물(해삼 · 멍게 · 성게)은 group_foods 에 둔다 (#258)
   - label: 견과류
     aliases: [견과류, 견과, 너트류, tree nut, nut, nuts]
     codes: [4, 14, 19]
     includes: []
     guards: [coconut, nutmeg, donut, doughnut, butternut]
+    source: "19종 중 호두 · 잣과 땅콩을 넣는다. 땅콩은 콩과 식물이지만 견과류로 부르는 일이 많아 넣는다 — 애매하면 막는다. 밤 · 은행 · 아몬드 등은 group_foods 에 두고, 코코넛은 넣지 않는다 (#258 이슈 합의, #264 PM 리뷰 10-09)"
   - label: 콩
     aliases: [콩]
     codes: [5]
     includes: []
     guards: []
+    source: '보호자가 적은 "콩" 은 대두로 읽고, 콩이 든 메뉴를 다 막는다. 대두만 막으려면 "대두" 로 등록한다 (#258, #264 PM 리뷰 10-09)'
   - label: 콩류
     aliases: [콩류, 두류, legume, legumes]
     codes: [4]
     includes: [콩]
     guards: []
+    source: 콩과 식물 전체 — 19종 중 대두 · 땅콩과, group_foods 의 녹두 · 팥 · 완두 · 렌틸 (#258)
   - label: 육류
     aliases: [육류, 고기, 고기류, 육고기, meat]
     codes: [10, 15, 16]
     includes: []
     guards: [물고기]
+    source: 19종 중 돼지고기 · 닭고기 · 쇠고기. 오리 · 양 · 염소 등은 group_foods 에 둔다 (#258)
   - label: 글루텐
     aliases: [글루텐]
     codes: [6]
     includes: []
     guards: [글루텐 프리, 무글루텐]
+    source: 글루텐이 든 곡류 — 19종 중 밀. 보리 · 호밀 · 귀리 · 엿기름은 group_foods 에 둔다 (#258)

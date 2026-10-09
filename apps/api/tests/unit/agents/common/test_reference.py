@@ -70,7 +70,15 @@ _TERMS = (
 
 
 def _group(label: str, **raw) -> dict:
-    return {"label": label, "aliases": [label], "codes": [], "includes": [], "guards": [], **raw}
+    return {
+        "label": label,
+        "aliases": [label],
+        "codes": [],
+        "includes": [],
+        "guards": [],
+        "source": "출처",
+        **raw,
+    }
 
 
 def test_real_groups_unfold_includes() -> None:
@@ -131,6 +139,9 @@ def test_parse_allergen_groups_name_that_is_also_an_alias_must_cover_its_code() 
             "묶음 이름이 겹친다",
         ),
         ([_group("갑각류", codes=[8], guards=["코코넛"])], "자기 별칭을 덮지 않는다"),
+        # 묶음 구성은 의료 검수 대신 근거를 적어 둔다
+        ([_group("갑각류", codes=[8], source=" ")], "source"),
+        ([{k: v for k, v in _group("갑각류", codes=[8]).items() if k != "source"}], "source"),
     ],
 )
 def test_parse_allergen_groups_broken_rows_raise(groups: list, message: str) -> None:

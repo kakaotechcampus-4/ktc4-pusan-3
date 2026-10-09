@@ -89,7 +89,7 @@ def _check_codes(where: str, codes: Any) -> frozenset[int]:
 
 
 # allergen_terms.yaml groups — 묶음 이름
-_GROUP_KEYS = frozenset({"label", "aliases", "codes", "includes", "guards"})
+_GROUP_KEYS = frozenset({"label", "aliases", "codes", "includes", "guards", "source"})
 
 
 @dataclass(frozen=True)
@@ -119,7 +119,7 @@ def parse_allergen_groups(
     """`groups` 를 검사해 펼친다. 틀린 곳이 있으면 `ValueError`.
 
     묶음 이름이 19종 별칭과 같으면(콩) 그 별칭의 코드를 다 포함해야 한다 — 묶음이 더 좁으면
-    같은 이름이 등록 방법에 따라 덜 막힌다.
+    같은 이름이 등록 방법에 따라 덜 막힌다. 묶음마다 `source`(이렇게 묶은 근거)가 있어야 한다.
     """
     alias_codes: dict[str, set[int]] = {}
     for term in terms:
@@ -156,6 +156,9 @@ def parse_allergen_groups(
     owner: dict[str, str] = {}
     for label, raw in by_label.items():
         where = f"allergen_terms.yaml 묶음 {label!r}"
+        # 묶음 구성은 의료 검수를 직접 하기 어려워 근거를 적어 둔다
+        if not str(raw.get("source") or "").strip():
+            raise ValueError(f"{where} 에 source 가 없다 — 이렇게 묶은 근거를 적는다")
         aliases = tuple(raw.get("aliases") or ())
         if label not in aliases:
             raise ValueError(f"{where} 의 aliases 에 label 자신이 없다")
