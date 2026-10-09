@@ -662,9 +662,11 @@ export const home: HomeResponse = {
     state_reason: "서로 다른 3일에 기록됐어요",
     ref: { kind: "profile_affinity", id: "a_12" },
   },
+  // 서버(#286 `rules/home_prompts.py`)의 저녁 시간대와 같은 모양이다. 문구는 서버가 별명으로 만든다.
+  // 🚨 `prompt_key` 는 누르면 05 의 추천 요청에 그대로 실린다 — 문장은 서버가 이 키로 정한다.
   agent_prompts: [
-    { agent: "food", text: "오늘 저녁 뭐 할지 같이 정하기" },
-    { agent: "activity", text: "주말에 뭐 하고 놀지 정하기" },
+    { agent: "food", text: "민준이가 먹을 저녁 추천해드릴까요?", prompt_key: "dinner" },
+    { agent: "activity", text: "민준이랑 할 놀이 추천해드릴까요?", prompt_key: "play" },
   ],
 };
 

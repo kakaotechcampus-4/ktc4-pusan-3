@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 
 import { DomainChip, domainPress } from "@/components/domain-chip";
-import type { Agent } from "@/lib/api/types";
+import type { Agent, PromptKey } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
 /**
@@ -34,17 +34,20 @@ export const PROMPT_PILL =
 export interface AgentPrompt {
   agent: Agent;
   text: string;
+  /** 03 홈의 버튼에만 있다 (#286). 04 의 제안은 `run_id` 로 이어져서 없다. */
+  prompt_key?: PromptKey;
 }
 
-export function AgentPrompts({
+/** 🚨 누르면 **고른 줄을 통째로** 돌려준다 — Agent 만 넘기면 그 줄의 `prompt_key` 가 사라진다. */
+export function AgentPrompts<T extends AgentPrompt>({
   items,
   onPick,
   disabled,
   layout,
   lead,
 }: {
-  items: AgentPrompt[];
-  onPick: (agent: Agent) => void;
+  items: T[];
+  onPick: (prompt: T) => void;
   disabled?: boolean;
   layout: "list" | "scroller";
   /**
@@ -86,21 +89,21 @@ export function AgentPrompts({
   );
 }
 
-function PromptButton({
+function PromptButton<T extends AgentPrompt>({
   prompt,
   onPick,
   disabled,
   block = false,
 }: {
-  prompt: AgentPrompt;
-  onPick: (agent: Agent) => void;
+  prompt: T;
+  onPick: (prompt: T) => void;
   disabled?: boolean;
   block?: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={() => onPick(prompt.agent)}
+      onClick={() => onPick(prompt)}
       disabled={disabled}
       className={cn(
         PROMPT_PILL,
