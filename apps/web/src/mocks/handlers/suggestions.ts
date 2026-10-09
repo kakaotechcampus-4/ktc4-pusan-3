@@ -267,7 +267,6 @@ export const suggestionHandlers = [
           id: `hs_${Date.now()}`,
           type: body.type,
           label: body.label,
-          aliases: [],
           severity: null,
           reactions: [],
           notes: null,

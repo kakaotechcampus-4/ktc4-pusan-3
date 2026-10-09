@@ -26,6 +26,7 @@ import {
   type UnavailableEvent,
 } from "@/lib/api/sse";
 import { toISODate } from "@/lib/format";
+import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import type {
   Affinity,
@@ -1915,10 +1916,10 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
 
     const { safety } = await api.patch<{ safety: HealthSafety }>(
       `/children/c1/health-safety/${before.id}`,
-      { severity: "severe", reactions: ["기침"], notes: "병원에서 다시 확인" },
+      { severity: "class_4", reactions: ["기침"], notes: "병원에서 다시 확인" },
     );
 
-    expect(safety.severity).toBe("severe");
+    expect(safety.severity).toBe("class_4");
     expect(safety.reactions).toEqual(["기침"]);
     // 🚨 정체는 그대로다.
     expect(safety.type).toBe(before.type);
@@ -1932,7 +1933,7 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
       api.patch(`/children/c1/health-safety/${target.id}`, { label: "땅콩" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { type: "condition" }),
+      api.patch(`/children/c1/health-safety/${target.id}`, { type: "chronic_disease" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
   });
 
@@ -1945,12 +1946,61 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
     expect(safety.severity).toBeNull();
   });
 
+  it("알레르기는 검사 Class 로 등록된다", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "복숭아", severity: "class_2" },
+      newIdempotencyKey(),
+    );
+    expect(safety.severity).toBe("class_2");
+  });
+
+  it("🚨 알레르기에 가볍게~심하게 를 보내면 400 이다 — DB CHECK 와 같다", async () => {
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: "allergy", label: "복숭아", severity: "mild" },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("지병은 가볍게~심하게 로 등록되고 Class 는 400 이다", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "chronic_disease", label: "천식", severity: "moderate" },
+      newIdempotencyKey(),
+    );
+    expect(safety.severity).toBe("moderate");
+
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: "chronic_disease", label: "소아 당뇨", severity: "class_3" },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("고칠 때도 같은 규칙이다", async () => {
+    const target = await first(); // 우유 — 알레르기
+    await expect(
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+
+    const { safety } = await api.patch<{ safety: HealthSafety }>(
+      `/children/c1/health-safety/${target.id}`,
+      { severity: "class_4" },
+    );
+    expect(safety.severity).toBe("class_4");
+  });
+
   it("내려간 기록은 고칠 수 없다", async () => {
     const target = await first();
     await api.delete(`/children/c1/health-safety/${target.id}`);
 
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found"));
   });
 
@@ -1958,7 +2008,7 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
     const target = await first();
     setScenario("consent");
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
     setScenario("default");
   });
@@ -2000,6 +2050,13 @@ describe("⑮ 검사지 읽기는 저장이 아니다", () => {
     expect(candidates.some((c) => c.severity === null)).toBe(true);
     // 🚨 원문 없이 옮겨 적은 줄이 있어야 화면이 그 줄을 미리 고르지 않는지 확인할 수 있다.
     expect(candidates.some((c) => c.source_text === null)).toBe(true);
+  });
+
+  it("🚨 읽은 심각도는 검사 결과의 Class 를 그대로 옮긴 값이다 — 알레르기에 쓸 수 없는 값이 없다", async () => {
+    const { candidates } = await scan();
+    for (const c of candidates) {
+      if (c.severity !== null) expect(isSeverityFor("allergy", c.severity)).toBe(true);
+    }
   });
 
   it("🚨 읽지 못한 줄 수를 그대로 내린다", async () => {

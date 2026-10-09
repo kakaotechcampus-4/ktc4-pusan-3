@@ -157,16 +157,24 @@ export interface Affinity {
 /**
  * 🚨 LLM 이 생성·추론·수정하지 않는다 (NF-03). 보호자 직접 입력 또는 의료 기록만.
  * DB 의 health_safety.kind 는 API 에서 type 으로 내려온다 (Ref 의 kind 와 이름 충돌 회피).
+ *
+ * 필드는 DB 모델(`apps/api/app/domains/safety/models.py`)에 맞춘다. 라우터가 아직 없어 Swagger 로
+ * 대조할 수 없다 — 생기면 한 번 대조한다 (`domains/safety/repository.py` 의 TODO).
  */
 export interface HealthSafety {
   kind: "health_safety";
   id: string;
+  /** DB 의 `health_safety.kind` — allergy / chronic_disease / behavioral / environmental / other_medical. */
   type: string;
   label: string;
-  aliases: string[];
+  /**
+   * 🚨 종류에 따라 값이 갈린다 (DB CHECK `health_safety_severity_by_kind`) — 알레르기는 검사 결과의
+   *    Class(`class_0` ~ `class_6`), 나머지는 `mild` ~ `anaphylaxis`. 규칙은 `lib/health-safety.ts`.
+   */
   severity: string | null;
   reactions: string[];
-  management: Record<string, unknown>;
+  /** DB 는 text 다 (jsonb 에서 바뀌었다). 화면은 쓰지 않는다. */
+  management: string | null;
   notes: string | null;
   created_by?: { parent_id: string; nickname: string };
   updated_at: string;

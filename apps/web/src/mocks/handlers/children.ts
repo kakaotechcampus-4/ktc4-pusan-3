@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type { HealthSafety, Relation } from "@/lib/api/types";
+import { isSeverityFor } from "@/lib/health-safety";
 
 import {
   CHILD_ID,
@@ -200,7 +201,16 @@ export const childrenHandlers = [
       await networkDelay();
       if (currentScenario() === "consent") return consentRequired("child_health");
 
-      const body = (await request.json()) as { type: string; label: string };
+      const body = (await request.json()) as {
+        type: string;
+        label: string;
+        severity?: string | null;
+      };
+      // 🚨 DB CHECK `health_safety_severity_by_kind` 를 목이 대신 막는다 — 알레르기에 가볍게~심하게
+      //    를 보내면 실서버에서는 등록이 통째로 실패한다. 목이 받아 주면 화면이 그걸 모르고 지나간다.
+      if (body.severity != null && !isSeverityFor(body.type, body.severity)) {
+        return apiError(400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요");
+      }
       const exists = safetyState.some(
         (row) => !row.retracted && row.safety.type === body.type && row.safety.label === body.label,
       );
@@ -283,6 +293,12 @@ export const childrenHandlers = [
 
     const row = safetyState.find((item) => item.safety.id === params.id);
     if (!row || row.retracted) return apiError(404, "not_found", "이미 내려간 기록이에요");
+
+    if ("severity" in body && body.severity !== null) {
+      if (!isSeverityFor(row.safety.type, String(body.severity))) {
+        return apiError(400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요");
+      }
+    }
 
     row.safety = {
       ...row.safety,

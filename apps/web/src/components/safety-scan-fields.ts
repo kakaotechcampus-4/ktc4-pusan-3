@@ -1,4 +1,5 @@
 import type { SafetyScanCandidate } from "@/lib/api";
+import { isSeverityFor } from "@/lib/health-safety";
 
 /**
  * 11-2 검사지 확인 화면이 쓰는 **한 줄의 모양과 분류**.
@@ -7,26 +8,9 @@ import type { SafetyScanCandidate } from "@/lib/api";
  *    본다.** 양쪽에 따로 두면 목록이 "고를 수 있다" 고 판단한 줄을 시트가 "아직 아니다" 라고
  *    보는 어긋남이 생긴다 — 승인 게이트에서 그 어긋남은 **확인 안 한 것이 등록되는** 경로다.
  *
- * 🚨 **직접 적기(`HealthSafetySheet`)와 선택지 문구를 맞춘다.** 같은 기록을 두 경로로 넣는데
- *    한쪽만 "보통", 다른 쪽만 "중간" 이면 목록에서 같은 것이 둘로 보인다.
+ * 🚨 **심각도 선택지는 직접 적기(`HealthSafetySheet`)와 같은 곳(`lib/health-safety.ts`)에서
+ *    온다.** 같은 기록을 두 경로로 넣는데 문구가 갈리면 목록에서 같은 것이 둘로 보인다.
  */
-
-/**
- * 🚨 **"모르겠어요" 가 기본값이다.** 보호자가 안 고르면 `severity` 를 보내지 않는다 —
- *    심각도는 추측하면 안 되는 값이다 (NF-03 · 직접 적기와 같은 규칙).
- */
-export const SEVERITY_OPTIONS = [
-  { value: "unknown", label: "모르겠어요" },
-  { value: "mild", label: "가볍게" },
-  { value: "moderate", label: "보통" },
-  { value: "severe", label: "심하게" },
-] as const;
-
-export const SEVERITY_LABEL: Record<string, string> = {
-  mild: "가볍게",
-  moderate: "보통",
-  severe: "심하게",
-};
 
 /** 등록할 때의 한 줄. 서버가 준 후보 + 보호자가 채운 것 + 등록 결과. */
 export interface ScanRow {
@@ -58,7 +42,13 @@ export function toRow(candidate: SafetyScanCandidate): ScanRow {
   return {
     id: candidate.id,
     label,
-    severity: candidate.severity,
+    // 🚨 검사지는 전부 알레르기라 심각도는 검사 Class 다. 쓸 수 없는 값이 오면 비운다 — DB 가
+    //    막는 조합을 보내서 알레르기 등록이 통째로 실패하는 것보다, 심각도가 빈 채 등록되는 편이
+    //    안전하다 (필터는 심각도를 쓰지 않는다).
+    severity:
+      candidate.severity !== null && isSeverityFor("allergy", candidate.severity)
+        ? candidate.severity
+        : null,
     reactions: candidate.reactions,
     sourceText: candidate.source_text,
     alreadyRegistered: false,

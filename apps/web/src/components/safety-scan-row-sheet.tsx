@@ -6,7 +6,8 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { TextInput } from "@/components/ui/text-input";
-import { SEVERITY_OPTIONS, type ScanRow } from "@/components/safety-scan-fields";
+import type { ScanRow } from "@/components/safety-scan-fields";
+import { severityFieldLabel, severityOptions } from "@/lib/health-safety";
 
 /**
  * 11-2 검사지 — 옮겨 적은 **한 줄**을 고치는 시트.
@@ -26,7 +27,7 @@ import { SEVERITY_OPTIONS, type ScanRow } from "@/components/safety-scan-fields"
  *    목록에서의 자리를 잃는다 — 시트는 덮고, 닫히면 있던 자리로 돌아온다.
  *
  * 🚨 **`type` 을 묻지 않는다.** 이 경로로 들어오는 것은 알레르기 검사지라 전부 `allergy` 고,
- *    지병(`condition`)은 직접 적기가 받는다. 여기서 종류를 고르게 하면 검사지에 없는 것을
+ *    지병(`chronic_disease`)은 직접 적기가 받는다. 여기서 종류를 고르게 하면 검사지에 없는 것을
  *    검사지에서 온 것처럼 등록하는 길이 생긴다.
  */
 export function SafetyScanRowSheet({
@@ -127,12 +128,12 @@ function RowForm({
         autoComplete="off"
       />
 
-      {/* 🚨 **"모르겠어요" 가 기본값이다** (직접 적기와 같은 규칙). 검사지의 등급을 심각도로
-          옮기는 것은 판단이라, 못 읽었으면 비워 두는 편이 지어내는 것보다 낫다. */}
+      {/* 🚨 **"모르겠어요" 가 기본값이다** (직접 적기와 같은 규칙). 검사지의 Class 를 그대로
+          옮기는 칸이라, 못 읽었으면 비워 두는 편이 지어내는 것보다 낫다. */}
       <Select
-        label="얼마나 심한가요"
+        label={severityFieldLabel("allergy")}
         value={severity}
-        options={SEVERITY_OPTIONS}
+        options={severityOptions("allergy")}
         onChange={setSeverity}
       />
 

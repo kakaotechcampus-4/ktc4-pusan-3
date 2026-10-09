@@ -6,7 +6,6 @@ import { useState, type ReactNode } from "react";
 
 import { SafetyScanRowSheet } from "@/components/safety-scan-row-sheet";
 import {
-  SEVERITY_LABEL,
   isSelectable,
   needsReview,
   reviewReason,
@@ -19,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
+import { SEVERITY_LABEL } from "@/lib/health-safety";
 
 /**
  * 11-2 알레르기 검사지 — 옮겨 적은 것을 보호자가 확인하는 칸. 🚨 **승인 게이트 ㉡** 이다.
