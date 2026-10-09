@@ -193,7 +193,9 @@ async def create_input(
             )
 
     # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
-    # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부르고, 되묻기가 이어지는 횟수에 상한이 없다.
+    # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
+    # 4회가 상한이지만(#251 · agents/memory/agent.py MAX_QUESTIONS), 조각마다 새로 열리니
+    # 답을 빼면 하루 한도를 비껴간다.
     if not quota.consume(
         parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
     ):
