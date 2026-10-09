@@ -1,6 +1,7 @@
 """실제 Jev 판정기로 연결 → 승격 → 감쇠 전체 흐름.
 
-실행: OPENROUTER_API_KEY=sk-or-... uv run pytest tests/integration/test_curator_live_scenario.py -v -m live
+실행: OPENROUTER_API_KEY=sk-or-... uv run pytest -v -m live
+      tests/integration/test_curator_live_scenario.py
 키 없으면 전부 skip.
 
 임베딩은 가짜 (벡터는 연결 판단에 안 쓰임). 판정만 실제 Jev.
