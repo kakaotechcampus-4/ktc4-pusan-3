@@ -29,9 +29,8 @@ class Settings(AgentLLMSettings):
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
 
-    # ERROR 이상 로그를 알릴 Discord 웹훅 주소 (app/core/alerts.py).
-    # 비어 있으면 알림만 꺼지고 서버는 뜬다. 🚨 비밀이다 — 아는 사람은 누구나 그 채널에 글을
-    #    올릴 수 있다. 응답 · 로그에 싣지 않는다 (CLAUDE.md §9).
+    # ERROR 이상 로그를 알릴 Discord 웹훅 주소 (app/core/alerts.py). 비어 있으면 알림만 꺼지고
+    # 서버는 뜬다. 🚨 비밀 — 응답 · 로그에 싣지 않는다. 켜는 법 · 본문은 README "로그와 알림".
     ALERT_WEBHOOK_URL: str = ""
 
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
@@ -130,6 +129,18 @@ class Settings(AgentLLMSettings):
         if "*" in raw:
             raise ValueError("CORS_ALLOW_ORIGINS 에 * 를 쓰지 않는다. 오리진을 명시할 것")
         return raw
+
+    @property
+    def alert_webhook_url(self) -> str | None:
+        """알림을 보낼 주소. 빈 칸은 없는 것으로 본다 (`ALERT_WEBHOOK_URL=` 처럼 키만 두는 실수).
+
+        🚨 local 에서는 주소가 있어도 없는 것으로 본다 — 노트북의 오류가 팀 채널로 가지 않게.
+           .env 에 주소를 넣어 둔 채 make dev 를 해도 조용하다. 로컬에서 한 번 확인할 때는
+           APP_ENV=dev 로 돌린다 (README "로그와 알림").
+        """
+        if self.APP_ENV == "local":
+            return None
+        return self.ALERT_WEBHOOK_URL.strip() or None
 
     @property
     def cors_allow_origins(self) -> list[str]:

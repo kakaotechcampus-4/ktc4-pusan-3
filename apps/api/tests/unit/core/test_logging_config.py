@@ -97,6 +97,9 @@ def test_library_info_log_stays_hidden(output):
     (공공데이터포털의 serviceKey= · 식품안전나라는 경로에 키).
     """
     assert "secret-key" not in output
+    # Discord 웹훅은 토큰이 주소에 있다 — 루트가 INFO 로 열려도 httpx 는 WARNING 에 못 박혀
+    # 있어야 한다
+    assert "SECRET-WEBHOOK-TOKEN" not in output
 
 
 def test_access_log_hides_query_strings_and_invite_codes(output):

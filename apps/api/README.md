@@ -81,8 +81,9 @@ curl http://localhost:8000/health
 
 ## 로그와 알림
 
-로그는 **stderr 로만** 찍는다 (`app/core/logging_config.py`). 어디에 모을지는 실행 환경이 정하고
-앱은 파일을 열지 않는다 (멘토 #267 2번 · 10-09 결정).
+로그는 **stderr 로만** 찍는다 (`app/core/logging_config.py`). 어디에 모을지는 실행 환경이 정하고 앱은
+파일을 열지 않는다. 결정과 근거는 [`docs/ops/logging-alerts-v1.md`](../../docs/ops/logging-alerts-v1.md)
+(멘토 #267 2번). 여기는 절차만 둔다.
 
 ### 로그는 어디서 보나
 
@@ -92,14 +93,9 @@ curl http://localhost:8000/health
 | 배포 서버 | `docker compose -f deploy/docker/docker-compose.deploy.yml logs -f api` |
 | 배포 서버, 컨테이너를 지운 뒤에도 | `journalctl CONTAINER_NAME=ktc4-api --since "1 hour ago"` |
 
-🚨 **docker 기본 로그(json-file)는 컨테이너와 수명이 같다.** 재시작은 남지만, 새 이미지로
-`compose up` 을 치면 컨테이너가 지워지고 새로 만들어지면서 **그 전까지의 로그가 함께 사라진다.**
-그래서 api 를 compose 에 올릴 때 드라이버를 `journald` 로 둔다 — 로그가 OS(systemd 저널)에 쌓여
-컨테이너를 지워도 남고, 용량은 OS 가 돌린다(기본값: 디스크의 10%, 최대 4GB). 서버는 카테캠이 준
-**Ubuntu 24.04 LTS** (EC2 t3.medium, 서울, 디스크 50GB 고정)이고, Ubuntu 는 저널을 기본으로
-디스크에 남긴다 (`ls /var/log/journal` 이 있으면 켜진 것).
-
-api 를 `deploy/docker/docker-compose.deploy.yml` 에 올릴 때 서비스 아래에 붙여 넣는다 (#166):
+🚨 docker 기본 로그(json-file)는 새 이미지로 `compose up` 할 때 컨테이너와 함께 지워진다. 그래서 api 를
+`deploy/docker/docker-compose.deploy.yml` 에 올릴 때 서비스 아래에 이것을 붙여 넣는다 (#166 · 서버는
+Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). web 도 지금 같은 문제라 같이 넣는 것이 좋다.
 
 ```yaml
     logging:
@@ -108,8 +104,8 @@ api 를 `deploy/docker/docker-compose.deploy.yml` 에 올릴 때 서비스 아�
         tag: ktc4-api
 ```
 
-journald 를 못 쓰는 호스트라면 대신 `json-file` 에 회전을 건다 — 회전이 없으면 디스크가 찰 때까지
-커진다.
+journald 를 못 쓰는 호스트라면 대신 `json-file` 에 회전을 건다 — 회전이 없으면 디스크(50GB 고정)가 찰
+때까지 커진다.
 
 ```yaml
     logging:
@@ -121,27 +117,38 @@ journald 를 못 쓰는 호스트라면 대신 `json-file` 에 회전을 건다 
 
 ### 에러 알림 (Discord)
 
-`app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹훅으로 한 건씩 간다 (`app/core/alerts.py`, 전송은
-`app/integrations/discord.py`). 본문은 `[환경] 레벨 모듈 — 메시지 첫 줄 (예외 종류)` 와 시간뿐이다 —
-원문 · 트레이스백 · 예외 메시지는 서버 로그에만 있다 (루트 CLAUDE.md §2). 같은 오류가 쏟아지면
-분당 10건까지만 보내고 넘친 건수는 다음 알림 머리에 적는다. 웹훅이 죽어도 요청 처리는 영향이 없다.
+api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹훅으로 한 건씩 간다 (`app/core/alerts.py`,
+전송은 `app/integrations/discord.py`). 본문은 이렇게 생겼고, 이것뿐이다.
+
+```
+[prod] ERROR app.api.runs.runner:_guarded:172 — run %s 의 job 이 %s 로 끝났다
+2026-10-09 23:01:02+0900
+```
+
+`%s` 를 채운 값 · 원문 · 트레이스백 · 예외 메시지는 **서버 로그에만** 있다 (루트 CLAUDE.md §2). 알림을
+보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 같은 오류가 쏟아지면 분당 10건까지만 보내고 넘친 건수는
+다음 알림 머리에 "(앞서 N건 생략)" 으로 적는다. 웹훅이 죽어도 요청 처리는 영향이 없다.
+
+**못 잡는 것** — 부팅 실패(설정 오류로 서버가 못 뜨면 핸들러도 없다), `uvicorn` · `sqlalchemy` 로거,
+`alembic` · `scripts/*` 같은 다른 프로세스. Discord 가 조용하다고 다 괜찮은 건 아니다 (문서 §5).
 
 켜는 법:
 
 1. Discord 채널 설정 › 연동 › 웹훅 › 새 웹훅 (이름 `api-alert`) → 웹훅 URL 복사
-2. 서버 `.env` 의 `ALERT_WEBHOOK_URL=` 에 붙여 넣고 api 를 재시작
+2. 서버 `.env` 의 `ALERT_WEBHOOK_URL=` 에 붙여 넣고 api 를 재시작. 웹훅 주소 모양
+   (`https://discord.com/api/webhooks/…`)이 아니면 서버가 뜨지 않는다 — 채널 링크를 넣은 것이다
 
-🚨 **웹훅 URL 은 비밀이다.** 아는 사람은 누구나 그 채널에 글을 올릴 수 있다. `.env` 에만 두고
-GitHub · Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). 평소 로컬 `.env` 는 비워 둔다 — 켜 두면
-노트북의 오류까지 팀 채널로 간다. `make test` 는 `.env` 에 무엇이 있든 알림을 보내지 않는다
+🚨 **웹훅 URL 은 비밀이다.** 아는 사람은 누구나 그 채널에 글을 올릴 수 있다. `.env` 에만 두고 GitHub ·
+Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). **`APP_ENV=local` 이면 주소가 있어도 알림이
+꺼진다** — 노트북의 오류가 팀 채널로 가지 않게. `make test` 도 `.env` 에 무엇이 있든 보내지 않는다
 (`tests/__init__.py`).
 
-로컬에서 한 번 확인하려면 `.env` 에 URL 을 넣고 아래를 돌린다. 서버가 뜰 때와 같은 순서로 설정을
-읽고 ERROR 하나를 찍는다 — Discord 에 `[local] ERROR app.probe — 알림 시험` 이 뜨면 된다.
-끝나면 URL 을 다시 비운다.
+로컬에서 한 번 확인하려면 `.env` 에 URL 을 넣고 아래를 돌린다 (`APP_ENV=dev` 로 local 규칙을 비켜
+간다). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에
+`[dev] ERROR app.probe:<module>:1 — 알림 시험` 이 뜨면 된다.
 
 ```bash
-cd apps/api && uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
+cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
 ```
 
 ---
