@@ -31,9 +31,8 @@ async def find_safety(
     )
 
 
-# TODO(#295): health-safety 라우터를 만들 때 request/response 스키마에 category 를 넣지 않는다.
-#   FE 타입은 이 모델에 맞춰 정렬했다 — type(=kind) · 종류별 severity · aliases 없음 ·
-#   management 는 text. 라우터의 Swagger 가 생기면 FE 타입과 한 번 대조한다.
+# TODO(#295): health-safety 라우터를 만들 때 Swagger 로 FE 타입(`HealthSafety`)과 필드를 대조한다.
+#   FE 타입은 이 모델에 맞춰 정렬했다 — type(=kind) · 종류별 severity · management 는 text.
 async def create_safety(
     session: AsyncSession,
     *,

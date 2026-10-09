@@ -348,7 +348,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
     )
 
 
-async def test_쑥_알레르기는_분류_없이_한_행으로_저장된다(session, family):
+async def test_쑥_알레르기는_한_행으로_저장된다(session, family):
     owner, _, child, _ = family
     mugwort = await create_safety(
         session, child_id=child.id, parent_id=owner.id, kind=SafetyKind.ALLERGY, label="쑥"
