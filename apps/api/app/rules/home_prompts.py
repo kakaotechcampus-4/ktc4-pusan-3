@@ -17,6 +17,8 @@ Agent = Literal["food", "activity"]
 
 _SHOWN = " 추천해드릴까요?"
 
+# 🚨 키를 늘리거나 바꾸면 웹의 `PROMPT_KEYS`(apps/web/src/lib/api/types.ts)도 같이 고친다.
+#    웹은 모르는 키를 버리고 키 없이 요청해서, 한쪽만 바뀌면 그 버튼의 맥락이 조용히 빠진다 (#296).
 PromptKey = Literal["breakfast", "lunch", "snack", "dinner", "next_breakfast", "play"]
 
 # (Agent, 키) → Agent 에 넘길 요청 문장. 별명은 넣지 않는다 — 화면 문구에만 쓴다.
