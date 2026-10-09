@@ -101,8 +101,8 @@ const DOMAIN_OPTIONS = [
 /**
  * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 세 상태 모두다.
  *
- * ⚠️ **"사용되지 않은 기록만"(`unused_in_suggestions`)을 내렸다.** 이 자리가 상태 필터로 바뀌었고
- *    (#266 · 서버는 파라미터를 아직 남겨 뒀다), 두 필터를 같이 두면 상단에 고르기 상자가 셋이 된다.
+ * ⚠️ **"사용되지 않은 기록만"(`unused_in_suggestions`)은 없다.** 이 자리가 상태 필터로 바뀌었고
+ *    (#266), 쓰는 곳이 없어 서버에서도 파라미터를 지웠다 (#286).
  * 🚨 이름은 고치기 버튼과 **같은 말**이다 (`CORRECTED_OBSERVATION`) — 누른 버튼 이름으로 찾게.
  */
 const OBSERVATION_STATUS_FILTERS = ["all", "active", "stand_alone", "inactive"] as const;
