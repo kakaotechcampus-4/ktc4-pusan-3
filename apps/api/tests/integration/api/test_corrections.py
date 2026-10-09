@@ -90,7 +90,7 @@ async def test_observation_correction_updates_state_history_and_affinity(
     resp = await db_client.post("/api/v1/corrections", json=body, headers=headers)
 
     data = resp.json()
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     assert data["target"]["status"] == "stand_alone"
     assert data["correction"]["verdict"] == "once_only"
     assert data["cascade"]["affinities_recomputed"] == [
@@ -119,7 +119,7 @@ async def test_profile_correction_returns_the_affinity(
     )
 
     data = resp.json()
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     assert data["target"]["id"] == str(affinity.id)
     assert data["target"]["observation_count"] == 1  # 기억 고치기는 기록을 바꾸지 않는다
     assert data["cascade"]["affinities_recomputed"] == [

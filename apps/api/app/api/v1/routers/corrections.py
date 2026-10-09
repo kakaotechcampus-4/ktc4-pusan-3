@@ -50,6 +50,7 @@ router = APIRouter()
 
 @router.post(
     "/corrections",
+    status_code=201,
     responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409)},
 )
 async def create_correction(
