@@ -22,11 +22,9 @@ from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
-    ObservationStatus,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.rules.profile import STRENGTH_DEFAULT
-
 
 # ---------------------------------------------------------------------------
 # 공통 픽스처 · 헬퍼
@@ -472,7 +470,6 @@ class TestE2EFullFlow:
 
         # ── Stage 3: 상태 재계산 ──
         from app.agents.curator.embedding.linker import LinkResult
-        from app.agents.curator.embedding.link_step import LinkOutcome
         from app.domains.memory.curator.recompute import recompute_after_linking
 
         # linker 가 만드는 LinkResult 를 수동 조립 (Stage 2 결과로)

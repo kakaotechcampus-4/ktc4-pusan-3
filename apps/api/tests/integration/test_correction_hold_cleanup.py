@@ -18,8 +18,6 @@ from app.domains.memory.observation.models import (
     ObservationLinkHold,
     ObservationStatus,
 )
-from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
-from app.rules.profile import STRENGTH_DEFAULT
 
 
 @pytest.fixture

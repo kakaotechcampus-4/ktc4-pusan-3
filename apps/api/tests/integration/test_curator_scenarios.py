@@ -17,8 +17,7 @@ from app.domains.memory.observation.models import (
     ObservationFood,
     ObservationStatus,
 )
-from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
-from app.rules.profile import STRENGTH_DEFAULT
+from app.domains.memory.profile.models import ProfileAffinity, ProfileState
 
 
 @pytest.fixture
@@ -233,8 +232,6 @@ class TestScenario3DeleteAndLastObserved:
         await session.flush()
 
         # recompute → last_observed_on 이 Day 3 으로 갱신
-        from app.domains.memory.curator.recompute import recompute_after_linking
-        from app.agents.curator.embedding.linker import LinkResult
 
         # 삭제 후 직접 recompute 를 부른다 (실제로는 delete_observation 경로에서 호출)
         from app.domains.memory.profile.repository import get_latest_active_observed_on
