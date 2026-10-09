@@ -70,7 +70,7 @@ class UsedInOut(BaseModel):
 
 class CorrectionOut(BaseModel):
     id: str
-    verdict: Literal["confirm", "once_only", "need_more_observation", "outdated", "wrong"]
+    verdict: Literal["once_only", "need_more_observation", "outdated", "wrong"]
     created_at: datetime
 
 
