@@ -22,7 +22,7 @@ import logging.config
 import re
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
-_DATEFMT = "%Y-%m-%d %H:%M:%S%z"
+DATEFMT = "%Y-%m-%d %H:%M:%S%z"
 """시간대(+0900 등)까지. 개발 맥은 한국 시간, 컨테이너는 보통 UTC 라 말없이 9시간 어긋난다."""
 
 _INVITE_CODE = re.compile(r"(/invites/+)[^/?]+", re.IGNORECASE)
@@ -74,7 +74,7 @@ def configure_logging() -> None:
         {
             "version": 1,
             "disable_existing_loggers": False,
-            "formatters": {"plain": {"format": _FORMAT, "datefmt": _DATEFMT}},
+            "formatters": {"plain": {"format": _FORMAT, "datefmt": DATEFMT}},
             "handlers": {
                 "stderr": {
                     "class": "logging.StreamHandler",

@@ -10,13 +10,22 @@ from app.api import health
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
 from app.api.v1.router import v1_router
+from app.core.alerts import configure_alerts
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
 from app.core.logging_config import configure_logging
+from app.integrations import discord
 
 # 앱 로그(app.*)를 시간 · 레벨 · 이름과 함께 찍는다. uvicorn 은 자기 로거만 설정해서, 이게
 # 없으면 info 는 버려지고 경고도 언제 난 건지 모르는 글자만 남는다 (#197 후속).
 configure_logging()
+
+# ERROR 이상은 Discord 로도 간다 — 서버 로그는 아무도 보고 있지 않다 (멘토 #267 2번). 주소가 비어
+# 있으면 알림만 꺼진다. 로그 설정 뒤에 둔다 — 전송 실패를 알리는 WARNING 이 stderr 로 찍히려면
+# app 로거의 처리기가 먼저 있어야 한다.
+configure_alerts(
+    settings.ALERT_WEBHOOK_URL, env=settings.APP_ENV, make_sender=discord.webhook_sender
+)
 
 app = FastAPI(title=settings.APP_NAME)
 

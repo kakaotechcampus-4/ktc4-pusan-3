@@ -29,6 +29,11 @@ class Settings(AgentLLMSettings):
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
 
+    # ERROR 이상 로그를 알릴 Discord 웹훅 주소 (app/core/alerts.py).
+    # 비어 있으면 알림만 꺼지고 서버는 뜬다. 🚨 비밀이다 — 아는 사람은 누구나 그 채널에 글을
+    #    올릴 수 있다. 응답 · 로그에 싣지 않는다 (CLAUDE.md §9).
+    ALERT_WEBHOOK_URL: str = ""
+
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
     #
     # 🚨 개발 환경에서만 Optional 이다. prod 는 없으면 서버가 뜨지 않는다 (#97).
