@@ -53,13 +53,17 @@ _MODEL_BY_DOMAIN: dict[str, type] = {
 
 # 관찰 모델에서 fields dict 를 만들 때 제외하는 키.
 # ObservationRow 의 최상위 속성 + Agent 에 넘길 필요 없는 내부 컬럼.
-_ROW_EXCLUDE_KEYS = frozenset({
-    "id", "raw_text", "created_at",
-    "updated_at",    # ORM 내부 타임스탬프
-    "embedding",     # 1536차원 벡터 — Curator 전용, Agent 에 불필요
-    "affinity_id",   # Curator 가 채우는 Profile 연결 — Agent 에 불필요
-    "strong_signals",  # Promotable 내부 — Agent 에 불필요
-})
+_ROW_EXCLUDE_KEYS = frozenset(
+    {
+        "id",
+        "raw_text",
+        "created_at",
+        "updated_at",  # ORM 내부 타임스탬프
+        "embedding",  # 1536차원 벡터 — Curator 전용, Agent 에 불필요
+        "affinity_id",  # Curator 가 채우는 Profile 연결 — Agent 에 불필요
+        "strong_signals",  # Promotable 내부 — Agent 에 불필요
+    }
+)
 
 
 def _daterange_to_psycopg(dr: DateRange) -> Range[date]:
@@ -192,9 +196,7 @@ class DbMemoryStore:
             model.status != ObservationStatus.DELETED,
         )
         if date_from is not None:
-            stmt = stmt.where(
-                model.observed_range.op("&&")(func.daterange(date_from, None, "[)"))
-            )
+            stmt = stmt.where(model.observed_range.op("&&")(func.daterange(date_from, None, "[)")))
         if date_to is not None:
             dto_exclusive = date_to + timedelta(days=1)
             stmt = stmt.where(
@@ -264,9 +266,7 @@ class DbMemoryStore:
             return _row_from_orm(domain, orm)
         return None
 
-    async def delete_observation(
-        self, *, domain: ObservationDomain, observation_id: str
-    ) -> bool:
+    async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
         uid = _parse_uuid(observation_id)
         if uid is None:
             return False

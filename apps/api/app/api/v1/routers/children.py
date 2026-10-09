@@ -161,7 +161,9 @@ async def create_input(
     맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 꺼내는 건 한도를 통과한 뒤다.
     """
     if not idempotency_key:
-        raise ApiError(400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요")
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
 
     scope = {
         "parent_id": parent.parent_id,

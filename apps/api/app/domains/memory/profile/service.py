@@ -62,17 +62,26 @@ async def recompute_profile(
         raise ValueError(f"프로필을 찾을 수 없다: {profile_id}")
 
     obs_count = await count_active_in_window(
-        session, affinity_id=profile.id, domain=profile.domain, today=today,
+        session,
+        affinity_id=profile.id,
+        domain=profile.domain,
+        today=today,
     )
     wrong_count = await count_wrong_in_window(session, profile_id=profile.id, today=today)
     signal = await has_strong_signals(
-        session, affinity_id=profile.id, domain=profile.domain, today=today,
+        session,
+        affinity_id=profile.id,
+        domain=profile.domain,
+        today=today,
     )
 
     prev_state = str(profile.state)
     next_state = compute_profile_status(
-        obs_count=obs_count, wrong_count=wrong_count, has_signal=signal,
-        last_observed_on=profile.last_observed_on, today=today,
+        obs_count=obs_count,
+        wrong_count=wrong_count,
+        has_signal=signal,
+        last_observed_on=profile.last_observed_on,
+        today=today,
     )
 
     if prev_state != next_state:
@@ -139,7 +148,9 @@ async def handle_observation_correction(
     affinity_id = record.fields.get("affinity_id")
     if affinity_id is not None:
         latest = await get_latest_active_observed_on(
-            session, affinity_id=affinity_id, domain=MemoryDomain(domain),
+            session,
+            affinity_id=affinity_id,
+            domain=MemoryDomain(domain),
         )
         if latest is not None:
             profile = await session.get(ProfileAffinity, affinity_id)
@@ -162,7 +173,10 @@ async def handle_profile_correction(
 ) -> None:
     """profile correction → strength 감소 → 이력 저장 → 재계산."""
     profile = await find_affinity(
-        session, child_id=child_id, affinity_id=profile_id, for_update=True,
+        session,
+        child_id=child_id,
+        affinity_id=profile_id,
+        for_update=True,
     )
     if profile is None:
         raise ValueError("프로필을 찾을 수 없다")
