@@ -56,7 +56,7 @@
 | `search_books` | `keywords[]`, `k≤10` | `{isbn, title, author, publisher, cover_url}` | 연령 필터 코드 주입 · 캐시 우선 |
 | `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence_ids[], curriculum_ref?, reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다 |
 | `propose_routine_plan` | `category`, `items[3]: {next_step, how, evidence_ids[], reason}` (`rhythm_info` 모드면 `items` 없음) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 음식 용어 → 금지 표현 필터 |
-| `propose_books` | `items[3]: {isbn, reason, evidence_ids[]}` | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 있는 ISBN도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게) |
+| `propose_books` | `items[3]: {isbn, reason, evidence_ids[]}` | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 있는 ISBN도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 중복 ISBN 과 4권째도 거절한다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` |
 
 ### 0–11개월은 추천을 내지 않는다
 
