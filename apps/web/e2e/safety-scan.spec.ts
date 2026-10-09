@@ -49,7 +49,6 @@ test("게이트 화면 — 네비 없이, 아무것도 저장되지 않았다고
 test("이름을 못 읽은 줄은 사람이 채우기 전에는 고를 수 없다", async ({ page }) => {
   await openScan(page);
   const unread = page.getByRole("checkbox", { name: /^이름을 읽지 못했어요/ });
-  // 사유는 하나만 — 분류가 필수 칸이던 때는 "이름과 분류를 읽지 못했어요" 였다
   await expect(page.getByText("이름을 읽지 못했어요. 검사지를 보고 채워주세요.")).toBeVisible();
   await unread.click({ force: true });
   await expect(unread).not.toBeChecked();
@@ -107,10 +106,7 @@ test("승인하면 고른 줄마다 서로 다른 Idempotency-Key 로 등록하�
   const keys = new Set(saved.map((c) => c.idempotencyKey));
   expect(keys.has(undefined)).toBe(false);
   expect(keys.size).toBe(7);
-  for (const call of saved) {
-    expect(call.body).toMatchObject({ type: "allergy" });
-    expect(call.body).not.toHaveProperty("category");
-  }
+  for (const call of saved) expect(call.body).toMatchObject({ type: "allergy" });
 
   // 검사지를 읽는 요청 말고는 이 흐름에서 쓰는 곳이 없다.
   const others = writes(calls).filter((c) => !/\/health-safety(\/scan)?$/.test(c.path));

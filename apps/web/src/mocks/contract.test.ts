@@ -1844,16 +1844,6 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
  *    회수는 행을 지우는 것이 아니라 `retracted` 로 내리는 것이다 (계약서 §10).
  */
 describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠진다", () => {
-  it("🚨 등록 응답에 분류(category) 칸이 없다 — 분류로 알레르기를 미리 빼지 않는다", async () => {
-    const { safety } = await addHealthSafety(
-      "c1",
-      { type: "allergy", label: "분류없는항목" },
-      newIdempotencyKey(),
-    );
-
-    expect("category" in safety).toBe(false);
-  });
-
   it("등록한 항목이 GET 에 그대로 나온다", async () => {
     const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
 

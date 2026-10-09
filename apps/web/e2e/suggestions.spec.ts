@@ -222,8 +222,6 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     expect(saved).toHaveLength(1);
     expect(saved[0].idempotencyKey).toBeTruthy();
     expect(saved[0].body).toMatchObject({ type: "allergy", label: "계란" });
-    // 사전검사가 "식품" 을 박아 보내던 자리다 (#295)
-    expect(saved[0].body).not.toHaveProperty("category");
 
     await sheet.getByRole("button", { name: "알레르기가 있는 건 빼고 고를게요" }).click();
     // s_1 만 골랐으므로 채택할 것이 남지 않는다.

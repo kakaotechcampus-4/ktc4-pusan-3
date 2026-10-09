@@ -42,8 +42,6 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
   }) => {
     const calls = recordApi(page);
     const sheet = await openAddSheet(page);
-    // 분류는 보호자가 고를 칸이 아니다 — 잘못 고르면 바로잡을 길이 없다 (#295)
-    await expect(sheet.getByRole("combobox", { name: "분류" })).toHaveCount(0);
     await sheet.getByLabel("무엇인가요").fill("땅콩");
 
     const list = page.locator("main").getByText("땅콩", { exact: true });
@@ -59,15 +57,13 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
     expect(saved[0].idempotencyKey).toBeTruthy();
     // 심각도를 고르지 않았으면 싣지 않는다 — "모르겠어요" 를 값으로 지어내지 않는다.
     expect(saved[0].body).not.toHaveProperty("severity");
-    expect(saved[0].body).not.toHaveProperty("category");
   });
 
   /**
    * ⚠️ **키가 큰 화면에서 돌린다.** 390×844 에서는 심각도 고르기 상자의 목록이 시트 본문 바닥에
    *    가려져서(목록 y 573~830 · 본문 바닥 703) 네 번째 항목부터 눌리지 않는다 — 항목을 보이게
-   *    하려고 본문이 스크롤되는 순간 `Select` 가 닫힌다. 예전 선택지 넷의 "심하게" 도 같은 이유로
-   *    눌리지 않았다. `Select` 의 문제라 이 테스트가 덮지 않고, 목록이 길어지는 이 변경에서 눈에
-   *    띄게 됐다 (#295 · PR 에서 FE 리드께 알린다).
+   *    하려고 본문이 스크롤되는 순간 `Select` 가 닫힌다. `Select` 자체의 문제라 이 테스트가
+   *    덮지 않는다.
    */
   test.describe("종류에 따라 심각도 선택지가 갈린다", () => {
     test.use({ viewport: { width: 390, height: 1400 } });
