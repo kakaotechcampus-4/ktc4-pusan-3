@@ -200,7 +200,7 @@ export const childrenHandlers = [
       await networkDelay();
       if (currentScenario() === "consent") return consentRequired("child_health");
 
-      const body = (await request.json()) as { type: string; label: string; category?: string };
+      const body = (await request.json()) as { type: string; label: string };
       const exists = safetyState.some(
         (row) => !row.retracted && row.safety.type === body.type && row.safety.label === body.label,
       );
@@ -286,7 +286,6 @@ export const childrenHandlers = [
 
     row.safety = {
       ...row.safety,
-      ...(body.category !== undefined ? { category: String(body.category) } : {}),
       ...("severity" in body
         ? { severity: body.severity === null ? null : String(body.severity) }
         : {}),

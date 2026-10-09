@@ -253,7 +253,7 @@ export const suggestionHandlers = [
 
   http.post(url("/children/:cid/health-safety"), async ({ request }) => {
     await networkDelay();
-    const body = (await request.json()) as { type: string; label: string; category: string };
+    const body = (await request.json()) as { type: string; label: string };
 
     // UNIQUE(child_id, type, label) — 같은 항목 재등록은 409 다. 지우고 다시 넣어야 한다.
     if (healthSafety.some((s) => s.type === body.type && s.label === body.label)) {
@@ -267,7 +267,6 @@ export const suggestionHandlers = [
           id: `hs_${Date.now()}`,
           type: body.type,
           label: body.label,
-          category: body.category,
           aliases: [],
           severity: null,
           reactions: [],

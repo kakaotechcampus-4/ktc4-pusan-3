@@ -53,13 +53,6 @@ const TYPE_OPTIONS = [
   { value: "condition", label: "지병 · 만성질환" },
 ] as const;
 
-const CATEGORY_OPTIONS = [
-  { value: "식품", label: "음식" },
-  { value: "약", label: "약" },
-  { value: "환경", label: "환경 · 계절" },
-  { value: "기타", label: "그 밖에" },
-] as const;
-
 /**
  * 🚨 **"모르겠어요" 가 기본값이다.** 보호자가 안 고르면 `severity` 를 보내지 않는다 —
  *    심각도는 추측하면 안 되는 값이고(NF-03), 비워 두는 것이 없는 값을 지어내는 것보다 낫다.
@@ -72,7 +65,6 @@ const SEVERITY_OPTIONS = [
 ] as const;
 
 type TypeValue = (typeof TYPE_OPTIONS)[number]["value"];
-type CategoryValue = (typeof CATEGORY_OPTIONS)[number]["value"];
 type SeverityValue = (typeof SEVERITY_OPTIONS)[number]["value"];
 
 const SEVERITY_LABEL: Record<string, string> = {
@@ -145,7 +137,7 @@ function HealthSafetyRow({
     },
   });
 
-  const meta = [TYPE_LABEL[item.type] ?? item.type, item.category].filter(Boolean).join(", ");
+  const meta = TYPE_LABEL[item.type] ?? item.type;
   const severity = item.severity ? SEVERITY_LABEL[item.severity] : null;
 
   return (
@@ -266,7 +258,6 @@ export function HealthSafetySheet({
 
   const [type, setType] = useState<TypeValue>("allergy");
   const [label, setLabel] = useState("");
-  const [category, setCategory] = useState<CategoryValue>("식품");
   const [severity, setSeverity] = useState<SeverityValue>("unknown");
   const [reactions, setReactions] = useState("");
   const [notes, setNotes] = useState("");
@@ -309,7 +300,6 @@ export function HealthSafetySheet({
   function reset() {
     setType("allergy");
     setLabel("");
-    setCategory("식품");
     setSeverity("unknown");
     setReactions("");
     setNotes("");
@@ -336,7 +326,6 @@ export function HealthSafetySheet({
     {
       setType((TYPE_LABEL[item.type] ? item.type : "allergy") as TypeValue);
       setLabel(item.label);
-      setCategory((item.category || "기타") as CategoryValue);
       setSeverity(
         (item.severity && SEVERITY_LABEL[item.severity]
           ? item.severity
@@ -358,7 +347,6 @@ export function HealthSafetySheet({
       // 🚨 종류·이름은 보내지 않는다 — 그 둘은 이 기록의 정체다 (`UpdateHealthSafetyRequest`).
       // 🚨 "모르겠어요" 로 되돌리는 것은 `null` 이다. 키를 빼면 "그대로 두기" 가 된다.
       update.mutate({
-        category,
         severity: severity === "unknown" ? null : severity,
         reactions: reactionList,
         notes: notes.trim() ? notes.trim() : null,
@@ -376,7 +364,6 @@ export function HealthSafetySheet({
     save.mutate({
       type,
       label: trimmed,
-      category,
       // 🚨 "모르겠어요" 는 값을 안 보내는 것이다. 빈 문자열이나 기본 심각도를 지어내지 않는다.
       ...(severity !== "unknown" ? { severity } : {}),
       ...(reactionList.length > 0 ? { reactions: reactionList } : {}),
@@ -483,8 +470,6 @@ export function HealthSafetySheet({
             />
           </>
         )}
-
-        <Select label="분류" value={category} options={CATEGORY_OPTIONS} onChange={setCategory} />
 
         <Select
           label="얼마나 심한가요"

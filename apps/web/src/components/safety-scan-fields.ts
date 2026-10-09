@@ -8,17 +8,8 @@ import type { SafetyScanCandidate } from "@/lib/api";
  *    보는 어긋남이 생긴다 — 승인 게이트에서 그 어긋남은 **확인 안 한 것이 등록되는** 경로다.
  *
  * 🚨 **직접 적기(`HealthSafetySheet`)와 선택지 문구를 맞춘다.** 같은 기록을 두 경로로 넣는데
- *    한쪽만 "음식", 다른 쪽만 "식품" 이면 목록에서 같은 것이 둘로 보인다.
+ *    한쪽만 "보통", 다른 쪽만 "중간" 이면 목록에서 같은 것이 둘로 보인다.
  */
-
-/** 🚨 `""`(못 읽음)이 첫 줄이다 — 못 읽은 칸을 기본값으로 메우지 않는다 (최상위 §2). */
-export const CATEGORY_OPTIONS = [
-  { value: "", label: "고르지 않음" },
-  { value: "식품", label: "음식" },
-  { value: "약", label: "약" },
-  { value: "환경", label: "환경 · 계절" },
-  { value: "기타", label: "그 밖에" },
-] as const;
 
 /**
  * 🚨 **"모르겠어요" 가 기본값이다.** 보호자가 안 고르면 `severity` 를 보내지 않는다 —
@@ -41,7 +32,6 @@ export const SEVERITY_LABEL: Record<string, string> = {
 export interface ScanRow {
   id: string;
   label: string;
-  category: string;
   severity: string | null;
   reactions: string[];
   sourceText: string | null;
@@ -64,12 +54,10 @@ export interface ScanRow {
  */
 export function toRow(candidate: SafetyScanCandidate): ScanRow {
   const label = candidate.label ?? "";
-  const category = candidate.category ?? "";
 
   return {
     id: candidate.id,
     label,
-    category,
     severity: candidate.severity,
     reactions: candidate.reactions,
     sourceText: candidate.source_text,
@@ -77,14 +65,14 @@ export function toRow(candidate: SafetyScanCandidate): ScanRow {
     confirmed: false,
     // 🚨 **미리 고르는 조건이 좁다.** 필수 칸이 다 있고 · 원문이 있는 줄만. 하나라도 어긋나면
     //    보호자가 직접 골라야 한다. (이미 등록된 줄은 화면이 따로 걸러 낸다 — 위 머리말.)
-    checked: label !== "" && category !== "" && candidate.source_text !== null,
+    checked: label !== "" && candidate.source_text !== null,
     status: "idle",
   };
 }
 
 /** 필수 칸이 다 찼는가. 심각도·증상은 없어도 등록된다 (추측해 채우지 않는다). */
 export function isComplete(row: ScanRow): boolean {
-  return row.label.trim() !== "" && row.category !== "";
+  return row.label.trim() !== "";
 }
 
 /**
@@ -117,10 +105,6 @@ export function isSelectable(row: ScanRow): boolean {
 
 /** 왜 확인이 필요한지. 🚨 두 사유가 섞이지 않게 **하나만** 고른다. */
 export function reviewReason(row: ScanRow): string {
-  if (row.label.trim() === "" && row.category === "") {
-    return "이름과 분류를 읽지 못했어요. 검사지를 보고 채워주세요.";
-  }
   if (row.label.trim() === "") return "이름을 읽지 못했어요. 검사지를 보고 채워주세요.";
-  if (row.category === "") return "분류를 읽지 못했어요. 무엇에 대한 것인지 골라주세요.";
   return "검사지 원문을 읽지 못했어요. 검사지를 보고 확인해주세요.";
 }

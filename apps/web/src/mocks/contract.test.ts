@@ -184,7 +184,7 @@ describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
     await submitEventDraft("c1", draftBody(), key);
 
     await expect(
-      addHealthSafety("c1", { type: "allergy", label: "지어낸항목", category: "식품" }, key),
+      addHealthSafety("c1", { type: "allergy", label: "지어낸항목" }, key),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "idempotency_key_reuse"));
   });
 });
@@ -365,11 +365,7 @@ describe("일정 초안", () => {
 
     it("🚨 active 로 등록된 항목이 든 제안은 목록에서 빠지고 묻지도 않는다", async () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
-      await addHealthSafety(
-        "c1",
-        { type: "allergy", label: allergen, category: "식품" },
-        newIdempotencyKey(),
-      );
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
 
       const data = await fetchSuggestions();
       expect(data.suggestions.map((s) => s.id)).not.toContain(id);
@@ -380,7 +376,7 @@ describe("일정 초안", () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
       const { safety } = await addHealthSafety(
         "c1",
-        { type: "allergy", label: allergen, category: "식품" },
+        { type: "allergy", label: allergen },
         newIdempotencyKey(),
       );
       await api.delete(`/children/c1/health-safety/${safety.id}`);
@@ -537,7 +533,7 @@ describe("일정 초안", () => {
 
 describe("승인 게이트 ㉡", () => {
   it("승인 게이트 ㉡ 도 같은 구조다", async () => {
-    const item = { type: "allergy", label: "지어낸알레르기", category: "식품" };
+    const item = { type: "allergy", label: "지어낸알레르기" };
 
     const created = await addHealthSafety("c1", item, newIdempotencyKey());
     expect(created.safety.kind).toBe("health_safety");
@@ -1847,14 +1843,20 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
  *    회수는 행을 지우는 것이 아니라 `retracted` 로 내리는 것이다 (계약서 §10).
  */
 describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠진다", () => {
+  it("🚨 등록 응답에 분류(category) 칸이 없다 — 분류로 알레르기를 미리 빼지 않는다", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "분류없는항목" },
+      newIdempotencyKey(),
+    );
+
+    expect("category" in safety).toBe(false);
+  });
+
   it("등록한 항목이 GET 에 그대로 나온다", async () => {
     const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
 
-    await addHealthSafety(
-      "c1",
-      { type: "allergy", label: "땅콩", category: "식품" },
-      newIdempotencyKey(),
-    );
+    await addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey());
 
     const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
     expect(after.items.length).toBe(before.items.length + 1);
@@ -1862,18 +1864,10 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
   });
 
   it("같은 항목을 새 키로 또 등록하면 409 다 (재시도와 다른 경로)", async () => {
-    await addHealthSafety(
-      "c1",
-      { type: "allergy", label: "땅콩", category: "식품" },
-      newIdempotencyKey(),
-    );
+    await addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey());
 
     await expect(
-      addHealthSafety(
-        "c1",
-        { type: "allergy", label: "땅콩", category: "식품" },
-        newIdempotencyKey(),
-      ),
+      addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey()),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_exists"));
   });
 
@@ -1888,11 +1882,7 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
 
     // 내려간 뒤에는 같은 라벨이 다시 등록돼야 한다 — 회수가 "영영 못 쓰는 이름" 을 만들면 안 된다.
     await expect(
-      addHealthSafety(
-        "c1",
-        { type: target.type, label: target.label, category: target.category },
-        newIdempotencyKey(),
-      ),
+      addHealthSafety("c1", { type: target.type, label: target.label }, newIdempotencyKey()),
     ).resolves.toBeDefined();
   });
 
@@ -2006,7 +1996,7 @@ describe("⑮ 검사지 읽기는 저장이 아니다", () => {
     const { candidates } = await scan();
 
     // 목이 일부러 덜 읽은 줄을 섞어 둔다 — 완벽하게 읽어 주면 화면의 빈 칸 처리를 확인할 수 없다.
-    expect(candidates.some((c) => c.category === null)).toBe(true);
+    expect(candidates.some((c) => c.label === null)).toBe(true);
     expect(candidates.some((c) => c.severity === null)).toBe(true);
     // 🚨 원문 없이 옮겨 적은 줄이 있어야 화면이 그 줄을 미리 고르지 않는지 확인할 수 있다.
     expect(candidates.some((c) => c.source_text === null)).toBe(true);
@@ -2022,12 +2012,12 @@ describe("⑮ 검사지 읽기는 저장이 아니다", () => {
     const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
 
     // 화면이 하는 것과 같다: 필수 칸이 다 찬 줄만, 줄마다 키 하나로.
-    const complete = candidates.filter((c) => c.label !== null && c.category !== null);
+    const complete = candidates.filter((c) => c.label !== null);
     for (const candidate of complete) {
       if (before.items.some((item) => item.label === candidate.label)) continue;
       await addHealthSafety(
         "c1",
-        { type: "allergy", label: candidate.label!, category: candidate.category! },
+        { type: "allergy", label: candidate.label! },
         newIdempotencyKey(),
       );
     }

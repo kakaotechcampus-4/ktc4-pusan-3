@@ -164,7 +164,6 @@ export interface HealthSafety {
   type: string;
   label: string;
   aliases: string[];
-  category: string;
   severity: string | null;
   reactions: string[];
   management: Record<string, unknown>;
@@ -657,7 +656,6 @@ export interface SubmitEventResponse {
 export interface CreateHealthSafetyRequest {
   type: string;
   label: string;
-  category: string;
   severity?: string;
   reactions?: string[];
   notes?: string;
@@ -678,7 +676,6 @@ export interface CreateHealthSafetyResponse {
  * 🚨 보호자 직접 입력만 들어온다. LLM 이 이 요청을 만들지 않는다 (NF-03 · 최상위 §2).
  */
 export interface UpdateHealthSafetyRequest {
-  category?: string;
   /** `null` 은 "모르겠어요" 로 되돌리는 것이다 — 값을 안 보내는 것(그대로 두기)과 다르다. */
   severity?: string | null;
   reactions?: string[];
@@ -1153,7 +1150,6 @@ export interface SafetyScanCandidate {
   /** 못 읽었으면 `null`. 🚨 추측해 채우지 않는다. */
   type: string | null;
   label: string | null;
-  category: string | null;
   severity: string | null;
   reactions: string[];
   /**
@@ -1323,7 +1319,6 @@ export type SafetyStatus = "none" | "has" | "unknown";
 export interface OnboardingSafetyInput {
   type: string;
   label: string;
-  category: string;
   severity?: string;
   reactions?: string[];
 }

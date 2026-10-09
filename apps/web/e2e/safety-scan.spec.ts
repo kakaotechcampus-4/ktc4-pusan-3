@@ -9,7 +9,7 @@ import { CHILD, expect, gateMarks, recordApi, test, writes } from "./fixtures";
  *    검사지에서 읽은 줄은 **보호자가 원문과 대조해 확인한 것만** 등록된다. 못 읽은 칸은 비어 있고
  *    사람이 채운다 — 화면이 기본값으로 채우지 않는다.
  *
- * 목 검사지(`mocks/fixtures.ts` 의 `safetyScan`): 확인이 필요해요 2건(땅콩 = 분류 못 읽음,
+ * 목 검사지(`mocks/fixtures.ts` 의 `safetyScan`): 확인이 필요해요 2건(이름 못 읽음,
  * 집먼지진드기 = 원문 못 읽음) · 잘 읽었어요 7건 · 이미 등록되어 있어요 1건(우유).
  */
 
@@ -46,11 +46,13 @@ test("게이트 화면 — 네비 없이, 아무것도 저장되지 않았다고
   expect(marks.some((m) => m.startsWith("caution 색:"))).toBe(true);
 });
 
-test("분류를 못 읽은 줄은 사람이 채우기 전에는 고를 수 없다", async ({ page }) => {
+test("이름을 못 읽은 줄은 사람이 채우기 전에는 고를 수 없다", async ({ page }) => {
   await openScan(page);
-  const peanut = page.getByRole("checkbox", { name: /^땅콩/ });
-  await peanut.click({ force: true });
-  await expect(peanut).not.toBeChecked();
+  const unread = page.getByRole("checkbox", { name: /^이름을 읽지 못했어요/ });
+  // 사유는 하나만 — 분류가 필수 칸이던 때는 "이름과 분류를 읽지 못했어요" 였다
+  await expect(page.getByText("이름을 읽지 못했어요. 검사지를 보고 채워주세요.")).toBeVisible();
+  await unread.click({ force: true });
+  await expect(unread).not.toBeChecked();
   await expect(page.getByRole("button", { name: "확인했어요, 7건 등록할게요" })).toBeVisible();
   await expect(page.getByText("확인하지 않은 2건은 등록하지 않아요.")).toBeVisible();
 
@@ -105,7 +107,10 @@ test("승인하면 고른 줄마다 서로 다른 Idempotency-Key 로 등록하�
   const keys = new Set(saved.map((c) => c.idempotencyKey));
   expect(keys.has(undefined)).toBe(false);
   expect(keys.size).toBe(7);
-  for (const call of saved) expect(call.body).toMatchObject({ type: "allergy" });
+  for (const call of saved) {
+    expect(call.body).toMatchObject({ type: "allergy" });
+    expect(call.body).not.toHaveProperty("category");
+  }
 
   // 검사지를 읽는 요청 말고는 이 흐름에서 쓰는 곳이 없다.
   const others = writes(calls).filter((c) => !/\/health-safety(\/scan)?$/.test(c.path));

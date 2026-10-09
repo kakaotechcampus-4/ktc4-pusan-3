@@ -6,7 +6,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { TextInput } from "@/components/ui/text-input";
-import { CATEGORY_OPTIONS, SEVERITY_OPTIONS, type ScanRow } from "@/components/safety-scan-fields";
+import { SEVERITY_OPTIONS, type ScanRow } from "@/components/safety-scan-fields";
 
 /**
  * 11-2 검사지 — 옮겨 적은 **한 줄**을 고치는 시트.
@@ -66,26 +66,21 @@ function RowForm({
   onDrop: (id: string) => void;
 }) {
   const [label, setLabel] = useState(row.label);
-  const [category, setCategory] = useState(row.category);
   /** 🚨 `""`(못 읽음)과 `"unknown"`(모르겠어요)을 같은 칸에서 다룬다 — 화면의 말은 하나다. */
   const [severity, setSeverity] = useState(row.severity ?? "unknown");
   const [reactions, setReactions] = useState(row.reactions.join(", "));
-  const [errors, setErrors] = useState<{ label?: string; category?: string }>({});
+  const [errors, setErrors] = useState<{ label?: string }>({});
 
   function submit() {
     const nextLabel = label.trim();
-    if (nextLabel === "" || category === "") {
-      setErrors({
-        ...(nextLabel === "" ? { label: "검사지를 보고 적어주세요" } : {}),
-        ...(category === "" ? { category: "무엇에 대한 것인지 골라주세요" } : {}),
-      });
+    if (nextLabel === "") {
+      setErrors({ label: "검사지를 보고 적어주세요" });
       return;
     }
 
     onSave({
       ...row,
       label: nextLabel,
-      category,
       // 🚨 "모르겠어요" 는 값을 **안 보내는** 것이다. 심각도를 추측해 채우지 않는다 (NF-03).
       severity: severity === "unknown" ? null : severity,
       reactions: reactions
@@ -130,17 +125,6 @@ function RowForm({
           if (errors.label) setErrors((prev) => ({ ...prev, label: undefined }));
         }}
         autoComplete="off"
-      />
-
-      <Select
-        label="분류"
-        value={category}
-        options={CATEGORY_OPTIONS}
-        error={errors.category}
-        onChange={(next) => {
-          setCategory(next);
-          if (errors.category) setErrors((prev) => ({ ...prev, category: undefined }));
-        }}
       />
 
       {/* 🚨 **"모르겠어요" 가 기본값이다** (직접 적기와 같은 규칙). 검사지의 등급을 심각도로
