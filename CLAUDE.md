@@ -198,8 +198,8 @@
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
-│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector),
-│   │                          docker-compose.deploy.yml 은 배포(지금은 web 하나). .env 는 한 곳을 같이 쓴다
+│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
+│   │                          docker-compose.deploy.yml 은 배포(web+Redis). .env 는 한 곳을 같이 쓴다
 │   └── nginx/, scripts/       (비어 있음) 배포용. web 을 nginx 뒤로 넣을 때 채운다
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
