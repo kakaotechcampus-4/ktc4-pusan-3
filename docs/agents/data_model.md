@@ -308,7 +308,6 @@
 | child_id | uuid | NOT NULL. FK → `child.id`, `ON DELETE CASCADE` |
 | kind | enum | `allergy` / `chronic_disease` / `behavioral` / `environmental`(고소공포 등) / `other_medical`, NOT NULL |
 | label | text | 아이가 앓고 있는 만성 질환 및 알레르기 종류 이름. "우유" / "소아 당뇨" / "천식" / "고소공포", NOT NULL |
-| category | enum[] | nullable, DEFAULT `'{}'`. **`kind='allergy'` 일 때만** `food`(식품) / `drug`(약물) / `environment`(환경) 중에서 고른다. 쑥처럼 식품이면서 환경인 것은 둘 다 넣는다. NULL 과 `'{}'` 는 같은 뜻(분류 없음) |
 | severity | enum | nullable. **`kind='allergy'` 는 검사 결과의 `class_0` ~ `class_6`**, 나머지 kind 는 `mild` / `moderate` / `severe` / `anaphylaxis`. 어긋나면 CHECK `health_safety_severity_by_kind` 가 막는다 |
 | reactions | text[] | 알레르기 반응 목록, 예: ["두드러기","호흡곤란"], default '{}' |
 | management | text | nullable. 알레르기·질환 등 관리 정보 |
@@ -331,8 +330,7 @@
   동의는 했지만 아직 아무것도 답하지 않은 아이도 0행이다 — 이때는 19종이 전부 `unknown` 이라 승인 때 확인 안내가 붙는다.
 - **막는 것은 조회 실패 하나다.** 실패를 빈 목록으로 숨기지 않는다 (루트 CLAUDE.md §2).
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
-- `category` 는 `kind='allergy'` 행만 갖는다 — CHECK `health_safety_category_allergy_only`. 값 집합은 CHECK `health_safety_category_values`.
-- 🚨 **Food 필터는 `food` 가 없고 `drug`·`environment` 만 있는 행만 뺀다.** `category` 가 NULL 이거나 `'{}'`(분류 없음)인 알레르기 행은 **거른다** (#156 Q1). "`food` 가 있는 행만 거른다" 로 구현하면 분류가 빠진 식품 알레르기가 아무 신호 없이 필터에서 빠진다 — 분류가 빠지거나 틀렸을 때는 과하게 막는 쪽이 안전하다. 마이그레이션도 세 값 밖의 옛 분류를 `'{}'` 로 옮긴다.
+- 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** 분류로 행을 미리 빼지 않고, Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다 (#295).
 - `UNIQUE(child_id, kind, label)`
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
@@ -341,7 +339,7 @@
 
 - `aliases` 제거 (10/4). 매칭 폭은 `allergen_terms.yaml` 동의어표가 맡는다.
 - `kind` 에서 `dietary_restriction` 제거 (10/4 투표 4:0). 종교·식습관으로 안 먹는 경우가 극소수이고, 결국 알레르기와 같은 필터로 들어간다.
-- `category` 는 enum list (10/4 투표 3:2). enum 하나면 쑥(식품+환경)을 행 두 개로 넣어야 한다. `varchar(32)[]` + CHECK 두 개로 구현.
+- `category` 는 10/4 투표(3:2)로 enum list 로 뒀다가 #295 에서 지웠다 (`d9e1f3a5b7c2`). Activity 도 식품 알레르기를 봐야 했고(밀 → 밀가루 점토), 보호자가 분류를 잘못 고르면(쑥을 환경으로만) Food 가 놓치는데 바로잡을 길이 없었다.
 - `state` → `status` 로 이름을 바꾸고 `unknown` 을 값에서 뺐다. DEFAULT 는 `active`.
 - `management` 는 jsonb → text.
 - `severity` 는 같은 칸에 `class_0`~`class_6` 을 더했다 (10/4). 알레르기는 Class 만, 나머지 kind 는 mild~anaphylaxis 만 쓴다. 마이그레이션은 알레르기 행에 옛 값이 있으면 멈춘다 — Class 로 옮길 근거가 없다.
