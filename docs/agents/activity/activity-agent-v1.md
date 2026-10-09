@@ -102,6 +102,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 - **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
 - 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
+- 모델에게는 줄 세운 순서대로 **상위 10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 관찰의 이름은 병합용 정규화 값(`subject`)이 아니라 사람이 읽는 활동명(`activity`)이다. `keywords` 는 줄 세운 뒤 이름으로 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
 
 **`profile_affinity` 에 routine 은 포함되지 않는다** (9/25 BE 합의). `MemoryDomain` 은 `food`/`activity`/`education` 세 값 그대로다. Activity 는 `domain=activity` 만 읽으므로 동작에 영향은 없다.
 
