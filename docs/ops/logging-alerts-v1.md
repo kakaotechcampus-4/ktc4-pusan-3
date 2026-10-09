@@ -15,6 +15,7 @@
 | **적재(모으기)** | 앱이 아니라 **docker 로그 드라이버 `journald`** — compose 의 `x-logging` 앵커로 전 서비스에 | 앱은 stderr 로만 찍고, 어디에 모을지는 실행 환경이 정한다 (§2) |
 | **알림** | `app.*` 로거의 **ERROR 이상 → Discord 웹훅**, 앱 코드 (`app/core/alerts.py` · `app/integrations/discord.py`) | docker 에는 "로그 줄을 골라 사람에게 보내는" 기능이 없다 |
 | **알림 본문** | 환경 · 레벨 · 로거:함수:줄 · **코드에 적힌 로그 글귀** · 예외 **종류 이름** · 시간 | 값(args) · 원문 · 트레이스백 · 예외 메시지는 밖으로 안 나간다 (§3) |
+| **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
 | **SaaS(Sentry 등)** | 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 §10 결정 전에는 못 쓴다 |
 
 ## 2. 왜 앱 파일 핸들러가 아닌가
@@ -46,9 +47,9 @@ docker 기본 로그 드라이버(json-file)는 컨테이너의 화면 출력을
 
 ## 5. 알림이 못 잡는 것
 
-알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다. Discord 가 조용하다고 다 괜찮은 건 아니다.
+api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다. Discord 가 조용하다고 다 괜찮은 건 아니다.
 
-- 부팅 실패 — `.env` 설정 오류로 서버가 뜨지 못하면 핸들러도 없다. compose 의 `restart` 가 되살리기를 반복할 뿐이다 → healthcheck 와 배포 스크립트에서 "api 가 뜨지 않았다"를 같은 웹훅으로 보내는 것으로 (#166, api 가 compose 에 합류할 때)
+- 부팅 실패 · 컨테이너 죽음 · 재시작 반복 — api 안의 알림은 api 가 살아 있을 때만 말할 수 있다. 그래서 밖에서 본다: 서버 cron 이 1분마다 `deploy/scripts/health-alert.sh` 로 compose 컨테이너 전부의 healthcheck 결과를 읽어 **달라진 것만** 같은 웹훅으로 보낸다 (복구도). 웹훅 전송이 실패하면 상태를 저장하지 않아 다음 분에 다시 보낸다. 죽어 있는 동안 매분 울리지 않는다. docker 의 healthcheck 는 판정만 하고 통보는 안 하기 때문에 이 한 겹이 필요하다. 서버에 cron 한 줄 등록은 Session Manager 로 (README)
 - `uvicorn` · `asyncio` · `sqlalchemy` 로거 — 대상이 아니다. `uvicorn.error` 의 "Exception in ASGI application" 은 `errors.py` 의 마지막 그물이 이미 ERROR 로 찍은 같은 예외라 일부러 뺐다
 - 다른 프로세스 — `alembic upgrade`, `scripts/*`, 앞으로의 `app/workers/*` 는 `app.main` 을 불러오지 않아 알림이 없다
 - 프로세스를 fork 하는 실행기(gunicorn `--preload` 등) — 알림 스레드가 자식으로 넘어가지 않는다. uvicorn 단일 프로세스 전제다
@@ -56,4 +57,4 @@ docker 기본 로그 드라이버(json-file)는 컨테이너의 화면 출력을
 ## 6. 열린 것
 
 - 알림 부착을 import 시점이 아니라 FastAPI lifespan 으로 옮길지 — 지금은 `configure_logging()` 을 다시 부르면 핸들러가 조용히 사라진다(문서로만 막음). lifespan 이면 순서가 보장되고 import 에 부작용이 없지만, README 의 한 줄 확인 명령이 복잡해진다
-- 부팅 실패 알림 (§5 첫 항목) — 배포 compose · 스크립트 쪽 (#166)
+- 배포 스크립트가 `compose up` 직후 healthcheck 를 기다렸다가 바로 알리는 것 — 지금은 cron 이 1분 안에 잡으므로 있으면 좋은 것 (#166)

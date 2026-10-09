@@ -119,8 +119,8 @@ api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹�
 보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 같은 오류가 쏟아지면 분당 10건까지만 보내고 넘친 건수는
 다음 알림 머리에 "(앞서 N건 생략)" 으로 적는다. 웹훅이 죽어도 요청 처리는 영향이 없다.
 
-**못 잡는 것** — 부팅 실패(설정 오류로 서버가 못 뜨면 핸들러도 없다), `uvicorn` · `sqlalchemy` 로거,
-`alembic` · `scripts/*` 같은 다른 프로세스. Discord 가 조용하다고 다 괜찮은 건 아니다 (문서 §5).
+**못 잡는 것** — `uvicorn` · `sqlalchemy` 로거, `alembic` · `scripts/*` 같은 다른 프로세스. 부팅 실패와
+컨테이너 죽음은 아래 "컨테이너 감시" 가 잡는다. Discord 가 조용하다고 다 괜찮은 건 아니다 (문서 §5).
 
 켜는 법:
 
@@ -139,6 +139,29 @@ Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). **`APP_ENV=loca
 
 ```bash
 cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
+```
+
+### 컨테이너 감시 (배포 실패 · redis 죽음 · 재시작 반복)
+
+위 알림은 api 가 살아 있을 때만 말할 수 있다. 컨테이너가 못 뜨거나 redis 가 죽은 건 밖에서 봐야 해서,
+서버의 cron(정해진 시각마다 명령을 돌리는 리눅스 장치)이 1분마다
+[`deploy/scripts/health-alert.sh`](../../deploy/scripts/health-alert.sh) 를 돌린다. 배포 compose 의
+컨테이너 전부의 상태(docker healthcheck 결과)를 읽어 **지난번과 달라진 것만** 같은 웹훅으로 한 줄
+보낸다 — `[prod] ktc4-web: running healthy → exited -`, 복구되면 `… → running healthy`. 웹훅 전송이
+실패하면 다음 분에 다시 보낸다. 1분마다 돌아도 `docker inspect` 몇 밀리초라 부담이 없다 (healthcheck
+자체가 이미 5~30초마다 돈다).
+
+서버 준비 — `deploy/docker/.env` 에 `ALERT_WEBHOOK_URL=` (api 의 `.env` 와 같은 값) 을 넣고 `crontab -e`:
+
+```
+* * * * * cd /home/ubuntu/ktc4-pusan-3 && deploy/scripts/health-alert.sh >> /var/tmp/ktc4-health-alert.log 2>&1
+```
+
+로컬에서 보려면 개발 DB compose 를 가리켜 `--dry-run` 으로 돌린다 (웹훅 대신 화면에 찍는다).
+`ktc4-postgres` 를 멈췄다 켜면서 다시 돌리면 달라진 줄만 찍힌다.
+
+```bash
+deploy/scripts/health-alert.sh --dry-run deploy/docker/docker-compose.yml
 ```
 
 ---
