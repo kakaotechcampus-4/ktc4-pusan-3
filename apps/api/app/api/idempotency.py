@@ -12,6 +12,8 @@ docs/api/idempotency-v1.md 가 그 위에 제안한 동작 중 **"같은 키 · 
 
 REDIS_URL 이 설정되면 Redis 를 쓰고, 없으면 프로세스 메모리 dict 로 폴백한다.
 폴백은 단일 워커 전제다 (#134).
+
+재시작 뒤 키는 Redis 에 남고 run 채널(registry)은 사라진다 — 새로고침하면 새 키.
 """
 
 import json
@@ -84,10 +86,17 @@ def forget_run(run_id: str) -> None:
 
 
 def clear() -> None:
-    """전부 비운다. 테스트용."""
+    """idem:* · idem-run:* 키만 비운다. 테스트용."""
     r = get_redis()
     if r is None:
         _seen.clear()
         return
 
-    r.flushdb()
+    for pattern in ("idem:*", "idem-run:*"):
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match=pattern, count=200)
+            if keys:
+                r.delete(*keys)
+            if cursor == 0:
+                break
