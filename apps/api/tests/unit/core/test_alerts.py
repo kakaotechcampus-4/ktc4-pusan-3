@@ -26,9 +26,16 @@ URL = "https://discord.com/api/webhooks/1/token"
 FIRST_LINE = re.compile(r"^\[prod\] ERROR app\.alerts_probe:\w+:\d+ — (?P<rest>.*)$")
 
 
+class _Sent(list[str]):
+    """보내기 함수 모양(글, 출처)을 그대로 받아 글만 모은다 — `attach(sent.append)` 로 쓴다."""
+
+    def append(self, text: str, source: str = "api") -> None:  # type: ignore[override]
+        super().append(text)
+
+
 @pytest.fixture
-def sent() -> list[str]:
-    return []
+def sent() -> _Sent:
+    return _Sent()
 
 
 @pytest.fixture
@@ -148,7 +155,7 @@ def test_sender_failure_stays_inside_the_handler(attach, caplog):
     URL(비밀)이 들어 있어서 메시지를 찍으면 서버 로그에 비밀이 남는다.
     """
 
-    def broken(_: str) -> None:
+    def broken(_text: str, _source: str) -> None:
         raise RuntimeError("POST https://discord.com/api/webhooks/1/SECRET-TOKEN failed")
 
     log, handler = attach(broken)
@@ -168,7 +175,7 @@ def test_send_error_message_is_logged_as_is(attach, caplog):
     있다.
     """
 
-    def refused(_: str) -> None:
+    def refused(_text: str, _source: str) -> None:
         raise alerts.SendError("webhook 429")
 
     log, handler = attach(refused)
@@ -185,7 +192,7 @@ def test_failed_sends_are_counted_in_the_next_alert(attach, sent):
     """보내다 실패한 것도 생략 건수에 들어간다 — 실패한 알림이 들고 가던 건수까지 되살린다."""
     calls: list[str] = []
 
-    def flaky(text: str) -> None:
+    def flaky(text: str, _source: str) -> None:
         calls.append(text)
         if len(calls) <= 2:
             raise alerts.SendError("webhook 500")
@@ -230,7 +237,7 @@ class _StuckSender:
         self.release = threading.Event()
         self.sent: list[str] = []
 
-    def __call__(self, text: str) -> None:
+    def __call__(self, text: str, _source: str) -> None:
         self.entered.set()
         self.release.wait(5)
         self.sent.append(text)
@@ -291,12 +298,52 @@ def test_sends_are_spaced_out(attach):
     건만 들어간다. 상한 10건/분이면 0.5초 간격으로도 5초 안에 다 나간다.
     """
     sleeps: list[float] = []
-    log, handler = attach(lambda _t: None, send_gap=0.5, sleep=sleeps.append)
+    log, handler = attach(lambda _t, _s: None, send_gap=0.5, sleep=sleeps.append)
     for i in range(3):
         log.error("오류 %d", i)
     handler.flush()
 
     assert sleeps == [0.5, 0.5, 0.5]
+
+
+def test_alert_detail_marked_safe_goes_out_after_the_template(attach, sent):
+    """값을 내보내는 유일한 길 — extra={"alert_detail": ...}. 서버가 모양을 검사한 값만 여기 넣는다.
+
+    화면 오류 보고(client_errors)가 쓴다. 일반 %s 값은 여전히 안 나간다 — 내보낼 값은 코드가
+    명시적으로 표시해야 하고, 어디서 내보내는지 grep 한 번으로 다 보인다.
+    """
+    log, handler = attach(sent.append)
+    detail = "TypeError /records android 14 app"
+    log.error("화면 오류 name=%s", "TypeError", extra={"alert_detail": detail})
+    handler.flush()
+
+    assert _template(sent[0]) == "화면 오류 name=%s · TypeError /records android 14 app"
+
+
+def test_alert_detail_is_one_short_line(attach, sent):
+    """detail 은 한 줄 · 200자까지 — 줄바꿈이나 긴 글이 들어와도 알림 모양이 깨지지 않는다."""
+    log, handler = attach(sent.append)
+    log.error("x", extra={"alert_detail": "첫 줄\n둘째 줄 " + "a" * 300})
+    handler.flush()
+
+    detail = _template(sent[0]).split(" · ", 1)[1]
+    assert "\n" not in detail
+    assert len(detail) <= 200
+    assert detail.startswith("첫 줄 둘째 줄")
+
+
+def test_alert_source_reaches_the_sender(attach):
+    """출처(api · web · infra)를 보내기 함수에 넘긴다 — Discord 에서 보내는 이름이 갈린다.
+
+    기본은 api 다. 화면 오류 보고는 extra={"alert_source": "web"} 으로 찍는다.
+    """
+    sources: list[str] = []
+    log, handler = attach(lambda _text, source: sources.append(source))
+    log.error("api 쪽")
+    log.error("화면 쪽", extra={"alert_source": "web"})
+    handler.flush()
+
+    assert sources == ["api", "web"]
 
 
 def test_configure_attaches_to_the_app_logger_only(request, sent):

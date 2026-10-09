@@ -93,7 +93,7 @@ else
   # JSON 글자 처리 — 백슬래시 · 따옴표 · 줄바꿈. 내용은 컨테이너 이름과 상태뿐이라 그 셋이면 된다.
   content="$(printf '%s' "$changes" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk 'BEGIN { ORS = "\\n" } { print }' | sed 's/\\n$//')"
   code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-    --data "{\"content\":\"$content\",\"allowed_mentions\":{\"parse\":[]}}" \
+    --data "{\"content\":\"$content\",\"username\":\"infra-alert\",\"allowed_mentions\":{\"parse\":[]}}" \
     "${ALERT_WEBHOOK_URL}?wait=true" || true)"
   case "$code" in
     2*) ;;

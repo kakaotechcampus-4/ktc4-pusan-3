@@ -111,12 +111,17 @@ api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹�
 전송은 `app/integrations/discord.py`). 본문은 이렇게 생겼고, 이것뿐이다.
 
 ```
-[prod] ERROR app.api.runs.runner:_guarded:172 — run %s 의 job 이 %s 로 끝났다
-2026-10-09 23:01:02+0900
+api-alert    [prod] ERROR app.api.runs.runner:_guarded:172 — run %s 의 job 이 %s 로 끝났다
+             2026-10-09 23:01:02+0900
+web-alert    [prod] ERROR app.api.v1.routers.client_errors:report_client_error:39 — 화면 오류 name=%s … · TypeError - /children/…/records android 14 app
+infra-alert  [prod] ktc4-web: running healthy → exited -
 ```
 
 `%s` 를 채운 값 · 원문 · 트레이스백 · 예외 메시지는 **서버 로그에만** 있다 (루트 CLAUDE.md §2). 알림을
-보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 같은 오류가 쏟아지면 분당 10건까지만 보내고 넘친 건수는
+보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 값을 내보내는 유일한 길은 로그를 찍을 때
+`extra={"alert_detail": "..."}` 로 표시하는 것이고, 서버가 모양을 검사한 값(화면 오류 보고)만 그렇게
+한다. 채널 하나에 **보내는 이름**이 출처별로 갈린다 — `api-alert`(서버) · `web-alert`(화면 오류) ·
+`infra-alert`(컨테이너 감시). 로그에 `extra={"alert_source": "web"}` 을 붙이면 그 이름으로 간다. 같은 오류가 쏟아지면 분당 10건까지만 보내고 넘친 건수는
 다음 알림 머리에 "(앞서 N건 생략)" 으로 적는다. 웹훅이 죽어도 요청 처리는 영향이 없다.
 
 **화면 오류도 온다 (로그인한 보호자만).** 보호자 폰 · 브라우저에서 화면이 깨지면 오류 바운더리가

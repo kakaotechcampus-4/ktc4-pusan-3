@@ -14,6 +14,10 @@
 
 🚨 본문에 무엇이 가는지는 format_alert 가 정한다 — 코드에 적힌 로그 글귀 · 위치 · 예외 종류 이름.
    로그에 넣은 값(args) · 트레이스백 · 예외 메시지는 밖으로 나가지 않는다 (루트 CLAUDE.md §2 · §10).
+   값을 내보내는 유일한 길은 `extra={"alert_detail": "..."}` — 서버가 모양을 검사한 값만 여기 넣는다
+   (화면 오류 보고). 어디서 내보내는지 `grep alert_detail` 한 번으로 다 보인다.
+   `extra={"alert_source": "web"}` 은 출처다 (기본 api · 감시 스크립트는 infra) — Discord 에서
+   보내는 이름(api-alert · web-alert · infra-alert)이 갈려 채널 하나에서도 구별된다.
 🚨 알림이 실패해도 요청 처리는 영향이 없다. 실패는 WARNING 한 줄 — SendError 면 그 메시지, 다른
    예외는 종류 이름만 (httpx 의 메시지에는 웹훅 URL(비밀)이 통째로 있다).
 🚨 Discord 가 막히거나 느려도 서버 종료를 붙들지 않는다 — flush 는 기한이 있고, 큐는 분당 상한만큼만
@@ -30,8 +34,12 @@ from app.core.logging_config import DATEFMT
 
 log = logging.getLogger(__name__)
 
-Sender = Callable[[str], None]
-"""알림 글 하나를 보내는 함수. 실패는 예외로 올린다 — 핸들러가 받아 WARNING 으로 남긴다."""
+Sender = Callable[[str, str], None]
+"""알림 글 하나를 보내는 함수 — (글, 출처). 실패는 예외로 올린다 — 핸들러가 받아 WARNING 으로
+남긴다."""
+
+DEFAULT_SOURCE = "api"
+_DETAIL_MAX = 200
 
 
 class SendError(Exception):
@@ -73,9 +81,19 @@ def format_alert(record: logging.LogRecord, *, env: str) -> str:
     exc_info = record.exc_info if isinstance(record.exc_info, tuple) else None
     exc_type = exc_info[0] if exc_info else None
     suffix = f" ({exc_type.__name__})" if exc_type is not None else ""
+    detail = getattr(record, "alert_detail", None)
+    if isinstance(detail, str) and detail:
+        # 내보내도 된다고 표시한 값 — 한 줄 · 짧게. 모양 검사는 넣는 쪽(라우터)의 책임이다.
+        suffix += " · " + " ".join(detail.split())[:_DETAIL_MAX]
     where = f"{record.name}:{record.funcName}:{record.lineno}"
     when = _TIME.formatTime(record, DATEFMT)  # datefmt 를 넘겨야 %z 가 붙는다
     return f"[{env}] {record.levelname} {where} — {first_line}{suffix}\n{when}"
+
+
+def alert_source(record: logging.LogRecord) -> str:
+    """출처 — extra={"alert_source": ...} 가 있으면 그것, 없으면 api."""
+    source = getattr(record, "alert_source", None)
+    return source if isinstance(source, str) and source else DEFAULT_SOURCE
 
 
 class WebhookHandler(logging.Handler):
@@ -113,8 +131,8 @@ class WebhookHandler(logging.Handler):
         self._dropped = 0  # 못 보낸 건수 — 다음 알림 머리에 적고 0 으로
         self._count_lock = threading.Lock()
         self._stopped = False  # logging.Handler 의 _closed 와 겹치지 않는 이름
-        # 항목은 (이 알림이 들고 가는 생략 건수, 글). 보내다 실패하면 건수를 되살린다.
-        self._queue: queue.Queue[tuple[int, str] | None] = queue.Queue(maxsize=per_minute)
+        # 항목은 (이 알림이 들고 가는 생략 건수, 글, 출처). 보내다 실패하면 건수를 되살린다.
+        self._queue: queue.Queue[tuple[int, str, str] | None] = queue.Queue(maxsize=per_minute)
         self._thread = threading.Thread(target=self._drain, name="alert-webhook", daemon=True)
         self._thread.start()
 
@@ -123,12 +141,13 @@ class WebhookHandler(logging.Handler):
             return  # 자기 WARNING(전송 실패)은 알리지 않는다 — 레벨을 낮춰도 되돌이가 없게
         try:
             text = format_alert(record, env=self._env)  # 글을 먼저 — 여기서 실패하면 자리를 안 쓴다
+            source = alert_source(record)
             with self._count_lock:
                 if not self._admit():
                     self._dropped += 1
                     return
                 try:
-                    self._queue.put_nowait((self._dropped, text))
+                    self._queue.put_nowait((self._dropped, text, source))
                 except queue.Full:
                     self._dropped += 1  # 보내는 쪽이 막혀 있다 — 쌓지 않고 건수로 센다
                     return
@@ -149,9 +168,9 @@ class WebhookHandler(logging.Handler):
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
-            note, text = item
+            note, text, source = item
             try:
-                self._send(f"(앞서 {note}건 생략)\n{text}" if note else text)
+                self._send(f"(앞서 {note}건 생략)\n{text}" if note else text, source)
             except Exception as exc:
                 with self._count_lock:
                     self._dropped += 1 + note  # 못 보냈다 — 들고 가던 건수까지 다음 알림으로

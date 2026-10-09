@@ -29,7 +29,7 @@ def test_posts_the_text_as_content_json_and_waits_for_delivery():
         return httpx.Response(200, json={"id": "1"})
 
     send = discord.webhook_sender(URL, client=_client(respond))
-    send("[prod] ERROR app.x — 무언가 @everyone")
+    send("[prod] ERROR app.x — 무언가 @everyone", "api")
 
     assert len(seen) == 1
     assert seen[0].method == "POST"
@@ -37,15 +37,32 @@ def test_posts_the_text_as_content_json_and_waits_for_delivery():
     assert seen[0].url.params["wait"] == "true"
     assert json.loads(seen[0].read()) == {
         "content": "[prod] ERROR app.x — 무언가 @everyone",
+        "username": "api-alert",
         "allowed_mentions": {"parse": []},
     }
+
+
+def test_sender_name_follows_the_source_so_one_channel_reads_sorted():
+    """채널 하나에 보내는 이름만 갈린다 — api-alert · web-alert · infra-alert. 웹훅 · 채널을 늘리지
+    않는다.
+    """
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"id": "1"})
+
+    send = discord.webhook_sender(URL, client=_client(respond))
+    send("화면 쪽", "web")
+
+    assert json.loads(seen[0].read())["username"] == "web-alert"
 
 
 def test_http_failure_becomes_a_webhook_error_without_the_url():
     """429 · 5xx 는 예외로 올린다 — 조용히 삼키면 "보냈다" 고 믿게 된다. 메시지엔 상태 코드만."""
     send = discord.webhook_sender(URL, client=_client(lambda _r: httpx.Response(429)))
     with pytest.raises(discord.WebhookError) as info:
-        send("x")
+        send("x", "api")
 
     assert isinstance(info.value, alerts.SendError)
     assert "429" in str(info.value)
@@ -62,7 +79,7 @@ def test_transport_failure_becomes_a_webhook_error_without_the_url():
 
     send = discord.webhook_sender(URL, client=_client(respond))
     with pytest.raises(discord.WebhookError) as info:
-        send("x")
+        send("x", "api")
 
     assert "ConnectError" in str(info.value)
     assert "SECRET-TOKEN" not in str(info.value)

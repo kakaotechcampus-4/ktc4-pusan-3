@@ -51,6 +51,11 @@ async def test_로그인한_보호자의_화면_오류는_ERROR_로그가_된다
     assert str(parent_id) in line
     for value in ("TypeError", CHILD, "android", str(parent_id)):
         assert value not in records[0].msg
+    # 서버가 모양을 검사한 네 칸은 Discord 에도 띄운다 — 보호자 id 는 아니다
+    detail = f"TypeError 1234567890 /children/{CHILD}/records android 14 app"
+    assert records[0].alert_detail == detail
+    assert str(parent_id) not in records[0].alert_detail
+    assert records[0].alert_source == "web"
 
 
 async def test_digest_는_없어도_된다(db_client, bearer):
@@ -100,8 +105,6 @@ async def test_빠진_칸은_거절한다(db_client, bearer):
 async def test_모르는_보호자_id_는_안_받는다(db_client, bearer):
     """보호자 id 는 토큰에서 온다 — 본문으로 다른 사람인 척 못 한다 (extra 금지)."""
     headers, _ = bearer
-    response = await db_client.post(
-        PATH, json=report(parent_id=str(uuid.uuid4())), headers=headers
-    )
+    response = await db_client.post(PATH, json=report(parent_id=str(uuid.uuid4())), headers=headers)
 
     assert response.status_code == 400
