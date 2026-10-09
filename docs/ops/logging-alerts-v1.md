@@ -34,7 +34,7 @@ docker 기본 로그 드라이버(json-file)는 컨테이너의 화면 출력을
 
 `journald` 드라이버면 로그가 docker 밖 OS(systemd 저널)에 쌓여 컨테이너를 지워도 남고, 보관 용량은 OS 가 돌리며(기본 디스크의 10%, 최대 4GB), `docker compose logs api` 도 그대로 된다. 조건은 서버가 systemd 리눅스라는 것인데, 서버는 카테캠이 준 **EC2 t3.medium · Ubuntu 24.04 LTS · 서울 · 디스크 50GB 고정** 이고 Ubuntu 는 저널을 기본으로 디스크에 남긴다.
 
-> 지금 `deploy/docker/docker-compose.deploy.yml` 의 web 도 json-file 이라 **배포할 때마다 web 로그가 지워지고 있다.** api 를 올릴 때 web 에도 같은 설정을 넣는 것이 좋다 (명성님).
+> 지금 `deploy/docker/docker-compose.deploy.yml` 의 web · redis 도 json-file 이라 **배포할 때마다 두 컨테이너의 로그가 지워지고 있다.** api 를 올릴 때 둘에도 같은 설정을 넣는 것이 좋다 (명성님).
 
 ## 4. 알림 설계와 안전
 

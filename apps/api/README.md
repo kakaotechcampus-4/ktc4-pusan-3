@@ -95,7 +95,7 @@ curl http://localhost:8000/health
 
 🚨 docker 기본 로그(json-file)는 새 이미지로 `compose up` 할 때 컨테이너와 함께 지워진다. 그래서 api 를
 `deploy/docker/docker-compose.deploy.yml` 에 올릴 때 서비스 아래에 이것을 붙여 넣는다 (#166 · 서버는
-Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). web 도 지금 같은 문제라 같이 넣는 것이 좋다.
+Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). web · redis 도 지금 같은 문제라 같이 넣는 것이 좋다.
 
 ```yaml
     logging:
