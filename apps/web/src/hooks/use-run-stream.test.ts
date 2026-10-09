@@ -244,3 +244,88 @@ describe("하트비트(ping)", () => {
     expect(after).toBe(before);
   });
 });
+
+describe("도메인 Agent 결과(agent_result) — #227", () => {
+  const growth: RunEvent = {
+    type: "agent_result",
+    data: {
+      agent: "growth",
+      task_type: "growth_review",
+      status: "completed",
+      readouts: [
+        { kind: "growth_delta", title: "", body: "지어낸 추이", authored_by: "code", code: null },
+      ],
+      question: null,
+    },
+  };
+  const foodWrite: RunEvent = {
+    type: "agent_result",
+    data: {
+      agent: "food",
+      task_type: "daycare_meal",
+      status: "completed",
+      readouts: [],
+      question: null,
+    },
+  };
+  const foodPick: RunEvent = {
+    type: "agent_result",
+    data: {
+      agent: "food",
+      task_type: "meal_recommendation",
+      status: "completed",
+      readouts: [
+        { kind: "notice", title: "", body: "지어낸 안내", authored_by: "code", code: "empty" },
+      ],
+      question: null,
+    },
+  };
+
+  it("🚨 도착한 순서 그대로 쌓고 재정렬하지 않는다 (#215)", () => {
+    const state = fold([growth, foodPick, DONE]);
+    expect(state.agentResults.map((r) => r.agent)).toEqual(["growth", "food"]);
+  });
+
+  it("🚨 같은 Agent 가 두 번 와도 합치지 않는다 — task 가 다르면 다른 결과다", () => {
+    const state = fold([foodWrite, foodPick, DONE]);
+    expect(state.agentResults.map((r) => r.task_type)).toEqual([
+      "daycare_meal",
+      "meal_recommendation",
+    ]);
+  });
+
+  it("빈 결과도 버리지 않는다 — 그리지 않는 것은 화면이 정한다", () => {
+    expect(fold([foodWrite, DONE]).agentResults).toHaveLength(1);
+  });
+
+  it("partial 이 뒤에 와도 결과를 지우지 않고 부분 결과로 끝난다 (NF-06)", () => {
+    const state = fold([
+      foodPick,
+      {
+        type: "partial",
+        data: { reason: "timeout_20s", succeeded: ["food"], failed: ["activity"] },
+      },
+      DONE,
+    ]);
+    expect(state.agentResults).toHaveLength(1);
+    expect(state.status).toBe("partial");
+  });
+
+  it("🚨 Agent 의 되묻기는 Memory 의 질문(note)이 되지 않는다 — 답할 자리가 열리면 400 이다 (#246)", () => {
+    const state = fold([
+      {
+        type: "agent_result",
+        data: {
+          agent: "activity",
+          task_type: null,
+          status: "completed",
+          readouts: [],
+          question: "지어낸 질문?",
+        },
+      },
+      DONE,
+    ]);
+    expect(state.note).toBeNull();
+    expect(state.agentResults[0].question).toBe("지어낸 질문?");
+  });
+});
