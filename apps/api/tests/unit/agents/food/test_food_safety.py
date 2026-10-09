@@ -43,8 +43,8 @@ def _row(
     )
 
 
-def _allergy(label: str, *, status: str = "active", category: tuple[str, ...] = ()) -> SafetyEntry:
-    return SafetyEntry(kind="allergy", label=label, status=status, category=category)  # type: ignore[arg-type]
+def _allergy(label: str, *, status: str = "active") -> SafetyEntry:
+    return SafetyEntry(kind="allergy", label=label, status=status)  # type: ignore[arg-type]
 
 
 def _condition(label: str, *, kind: str = "chronic_disease", status: str = "active") -> SafetyEntry:
@@ -199,57 +199,66 @@ def test_status_none은_거르지_않는다() -> None:
     assert result.passed == (row,)
 
 
-def test_분류가_비어_있는_땅콩은_땅콩강정을_막는다() -> None:
-    # 비어 있으면 거른다. "food 가 있는 행만 거른다" 로 만들면 분류가 빠진 식품 알레르기가
-    # 아무 신호 없이 필터에서 빠진다
+def test_땅콩_알레르기는_땅콩강정을_막는다() -> None:
     row = _row("땅콩강정", ingredients=("땅콩", "물엿"))
 
-    result = filter_food_safety([row], [_allergy("땅콩", category=())], "toddler")
+    result = filter_food_safety([row], [_allergy("땅콩")], "toddler")
 
     assert result.blocked == (row,)
 
 
-def test_환경으로만_분류된_쑥은_쑥떡을_막지_않는다() -> None:
+def test_쑥_알레르기는_쑥떡을_막는다() -> None:
     row = _row("쑥떡", ingredients=("쌀", "쑥"))
 
-    # 떡 규칙이 끼지 않는 월령 — 시험하는 것은 쑥 분류다
-    result = filter_food_safety(
-        [row], [_allergy("쑥", category=("environment",))], "preschool", months=60
-    )
-
-    assert result.passed == (row,)
-
-
-def test_식품과_환경이_같이_분류된_쑥은_쑥떡을_막는다() -> None:
-    row = _row("쑥떡", ingredients=("쌀", "쑥"))
-
-    result = filter_food_safety(
-        [row], [_allergy("쑥", category=("food", "environment"))], "preschool", months=60
-    )
+    # 떡 규칙이 끼지 않는 월령 — 시험하는 것은 쑥이다
+    result = filter_food_safety([row], [_allergy("쑥")], "preschool", months=60)
 
     assert result.blocked == (row,)
 
 
-def test_약물로만_분류된_페니실린은_어떤_메뉴도_막지_않는다() -> None:
+def test_우유_알레르기는_분류_없이_크림수프를_막는다() -> None:
+    # 보호자가 우유를 약물로 분류하면 식품 필터에서 빠지던 자리다 (#295)
+    row = _row("크림수프", ingredients=("우유",))
+
+    result = filter_food_safety([row], [_allergy("우유")], "toddler")
+
+    assert result.blocked == (row,)
+
+
+def test_페니실린은_어떤_메뉴도_막지_않는다() -> None:
+    # 약물 알레르기도 읽는다. 메뉴명 · 재료와 매칭되지 않으면 아무것도 막지 않는다
     rows = [_row("계란말이", ingredients=("계란",)), _row("우유푸딩", ingredients=("우유",))]
 
-    result = filter_food_safety(rows, [_allergy("페니실린", category=("drug",))], "toddler")
+    result = filter_food_safety(rows, [_allergy("페니실린")], "toddler")
 
     assert result.blocked == ()
     assert result.passed == tuple(rows)
 
 
-def test_약물로만_분류돼도_우유_같은_19종_이름이면_식품으로_보지_않고_뺀다() -> None:
-    # category 가 label 보다 먼저다. 보호자가 분류를 약물로 골랐으면 식품 필터의 대상이 아니다
-    row = _row("크림수프", ingredients=("우유",))
+def test_꽃가루는_꽃게탕을_막지_않는다() -> None:
+    # 환경 알레르기도 읽는다. "꽃가루" 가 "꽃게" 에 걸리지는 않는다
+    row = _row("꽃게탕", ingredients=("꽃게",))
 
-    result = filter_food_safety([row], [_allergy("우유", category=("drug",))], "toddler")
+    result = filter_food_safety([row], [_allergy("꽃가루")], "preschool", months=60)
 
     assert result.passed == (row,)
 
 
-def test_알레르기가_아닌_행은_category_가_아니라_label_매핑으로_읽는다() -> None:
-    # category 는 kind='allergy' 행만 갖는다. 질환 행의 판단은 category 가 아니라 label 이다
+def test_짧은_환경_알레르기_이름은_메뉴를_과하게_막는다() -> None:
+    # 알고 두는 과차단이다. 사전에 없는 이름은 글자 그대로 막아서 "개" 가 "찌개" 에 걸린다.
+    # 이슈 #295 잠정 결정 1 — v1 은 과하게 막는 쪽으로 둔다. 정책이 바뀌면 이 테스트를 같이 고친다
+    rows = [
+        _row("김치찌개", ingredients=("김치", "돼지고기")),
+        _row("된장찌개", ingredients=("된장", "두부")),
+    ]
+
+    result = filter_food_safety(rows, [_allergy("개")], "preschool", months=60)
+
+    assert result.blocked == tuple(rows)
+
+
+def test_질환_행은_label_매핑으로_읽는다() -> None:
+    # 질환 행은 label 이 chronic_restriction.yaml 매핑에 있을 때만 그 식품을 막는다
     row = _row("치즈토스트", ingredients=("식빵", "치즈"))
 
     result = filter_food_safety([row], [_condition("유당불내증")], "toddler")
@@ -293,8 +302,8 @@ def test_active_우유_알레르기는_검사_등급과_상관없이_크림수�
     assert result.blocked == (row,)
 
 
-def test_SafetyEntry_는_필터가_안_쓰는_severity_와_management_를_싣지_않는다() -> None:
-    assert {field.name for field in fields(SafetyEntry)} == {"kind", "label", "status", "category"}
+def test_SafetyEntry_는_필터가_안_쓰는_severity_management_category_를_싣지_않는다() -> None:
+    assert {field.name for field in fields(SafetyEntry)} == {"kind", "label", "status"}
 
 
 def test_통과한_메뉴에_든_19종_이름을_정식_명칭으로_돌려준다() -> None:
