@@ -17,6 +17,9 @@ class Settings(AgentLLMSettings):
     DB_PASSWORD: str
     DB_NAME: str
 
+    # Redis — 비워 두면 프로세스 메모리 폴백 (단일 워커 전제)
+    REDIS_URL: str | None = None
+
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
     MEAL_OCR_API_KEY: str | None = None
