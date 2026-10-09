@@ -185,6 +185,28 @@ cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.g
 deploy/scripts/health-alert.sh --dry-run deploy/docker/docker-compose.yml
 ```
 
+### 서버 밖 가동 감시 (UptimeRobot)
+
+위 cron 은 서버 **안**에 있어서 EC2 자체가 죽거나 네트워크가 끊기면 같이 말을 못 한다. 그래서 밖에서
+5분마다 주소를 찔러 보는 무료 서비스(UptimeRobot)를 둔다. 코드는 없다 — 가입과 등록뿐이다. 무료 플랜에
+Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를 찔러 응답 코드만 본다).
+
+지금 할 수 있는 것:
+
+1. Discord 에 **웹훅을 하나 따로** 만든다 (이름 `uptime-alert`). 외부 서비스가 들고 있는 주소라, 문제가
+   생기면 이것만 끊을 수 있게 api 의 웹훅과 나눈다
+2. uptimerobot.com 가입 → Integrations › Discord → 1번 주소 붙여 넣기
+
+첫 배포 뒤 (서버 주소가 생겨야 한다):
+
+3. New monitor › HTTP(s), 5분 간격, 2번 Discord 연결 선택. 두 개 —
+   api `http://<서버 공인 IP>:<api 포트>/health` (인증 없음, `/api/v1` 밖) ·
+   web `http://<서버 공인 IP>:<WEB_PORT>/`
+4. 보안그룹에서 그 포트가 밖으로 열려 있어야 한다
+
+🚨 **EC2 를 중지했다 시작하면 공인 IP 가 바뀐다** (카테캠 환경은 고정 IP 불가). 재부팅은 그대로다. 바뀌면
+모니터 주소도 고쳐야 한다 — 도메인을 붙이면 사라지는 문제다 (#166).
+
 ---
 
 ## 디렉토리 구조
