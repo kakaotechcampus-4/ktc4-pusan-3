@@ -47,6 +47,29 @@ test.describe("개인화 추천 (default)", () => {
   });
 });
 
+test.describe("홈 버튼에서 들어오면 (#286)", () => {
+  const suggestionsBody = (calls: ReturnType<typeof recordApi>) =>
+    writes(calls, "POST", new RegExp(`^/children/${CHILD}/suggestions$`)).map((c) => c.body);
+
+  test("누른 버튼의 키만 추천 요청에 싣고, 문장은 보내지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    await page.getByRole("button", { name: /저녁 추천해드릴까요/ }).click();
+
+    await expect(page).toHaveURL(/\/suggestions\?agents=food&prompt=dinner$/);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    // 🚨 문장이 실리면 Supervisor 사전검사를 안 거친 문장으로 Agent 가 돈다 (#249).
+    expect(suggestionsBody(calls)).toEqual([{ agents: ["food"], prompt_key: "dinner" }]);
+  });
+
+  test("주소의 모르는 키는 버리고 키 없이 요청한다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/suggestions?agents=food&prompt=midnight_snack`);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    expect(suggestionsBody(calls)).toEqual([{ agents: ["food"] }]);
+  });
+});
+
 test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
   test.describe("scarcity — 기록 1건", () => {
     test.use({ scenario: "scarcity" });
