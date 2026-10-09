@@ -172,6 +172,42 @@ test.describe("되묻기의 답은 원문을 다시 보내지 않는다 (#158)",
   });
 });
 
+test.describe("재질문 상한에 닿으면 질문 대신 안내로 끝난다 (#246)", () => {
+  test.use({ scenario: "reply_ask_limit" });
+
+  test("네 번째 질문의 답 뒤에는 답할 자리가 없고, 입력창은 새 이야기를 받는다", async ({
+    page,
+  }) => {
+    await sendFromHome(page, "어제부터 기침해");
+    const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
+
+    // 처음 질문까지 넷이다. 이어받은 run 이 셋을 더 묻는다.
+    for (const answer of ["사흘 전부터", "하루 세 번쯤", "밤에도"]) {
+      await expect(page.getByText("위 질문에 답하는 중")).toBeVisible();
+      await input.fill(answer);
+      await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+      await expect(
+        turn(page, answer).getByRole("button", { name: "이 질문에 답하기" }),
+      ).toHaveCount(0);
+      await expect(turn(page, answer).getByText("아래 입력창에서 답하는 중이에요.")).toBeVisible();
+    }
+
+    await input.fill("집에서");
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    const last = turn(page, "집에서");
+    await expect(last.getByText("이번 내용은 저장하지 않았어요")).toBeVisible();
+
+    // 🚨 안내 문장에 답할 자리를 열지 않는다 — 열면 상한이 의미가 없어진다.
+    await expect(last.getByRole("button", { name: "이 질문에 답하기" })).toHaveCount(0);
+    await expect(last.getByRole("heading", { name: "이렇게 저장했어요" })).toHaveCount(0);
+    // 🚨 제목과 안내가 서로 다른 말을 하지 않는다 (#251 리뷰 — 안내에 "확인" 을 쓰지 않는다).
+    await expect(last.getByText("확인하지 못해")).toHaveCount(0);
+    await expect(turn(page, "밤에도").getByText("아래에 답해 주셨어요.")).toBeVisible();
+    await expect(page.getByText("위 질문에 답하는 중")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "이 질문에 답하기" })).toHaveCount(0);
+  });
+});
+
 test.describe("보낸 원문은 디스크에 남지 않는다 (§2 개인정보)", () => {
   test("입력 중에도 보낸 뒤에도 localStorage · sessionStorage 에 원문이 없다", async ({ page }) => {
     const line = "지어낸 한 줄 Q7X";

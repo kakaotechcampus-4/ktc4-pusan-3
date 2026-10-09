@@ -16,7 +16,7 @@ help:
 	@echo "  make install      의존성 설치 (클론 직후)"
 	@echo "  make dev          개발 서버 실행  http://localhost:8000"
 	@echo "  make test         테스트 실행"
-	@echo "  make lint         코드 검사 (ruff)"
+	@echo "  make lint         코드 검사 (ruff check + format --check) — PR 올리기 전"
 	@echo "  make fmt          코드 포맷팅 (ruff)"
 	@echo ""
 	@echo "── 프론트 (apps/web) ──"
@@ -33,7 +33,7 @@ help:
 	@echo "  make web-check      format + typecheck + lint + test — PR 올리기 전 (CI 와 같은 검사, build 만 빠짐)"
 	@echo ""
 	@echo "── 로컬 개발 DB (deploy/docker) ──"
-	@echo "  make db-up        로컬 Postgres+pgvector 기동 (최초 1회 deploy/docker/.env 필요)"
+	@echo "  make db-up        로컬 Postgres+pgvector+Redis 기동 (최초 1회 deploy/docker/.env 필요)"
 	@echo "  make db-down      로컬 DB 중지"
 	@echo "  make db-logs      로컬 DB 로그"
 	@echo ""
@@ -68,7 +68,7 @@ test:
 	cd apps/api && uv run pytest
 
 lint:
-	cd apps/api && uv run ruff check .
+	cd apps/api && uv run ruff check . && uv run ruff format --check .
 
 fmt:
 	cd apps/api && uv run ruff format .

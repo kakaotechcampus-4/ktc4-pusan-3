@@ -62,7 +62,7 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - **해석 실패는 카탈로그에 남기지 않는다** — 정말 없음도, 외부 API 장애도(10-06). 남기면 보호자 말에서 나온 이름(예: "맛있는된장찌개")이 `child_id` 없이 전역 테이블에 남는다.
 - **이름이 정확히 같은 결과만 쌓는다.** 정규화한 이름과 외부 DB 의 이름이 같을 때만 받는다 — 비슷한 메뉴로 추정하지 않는다(된장찌개 → 부대된장찌개 금지). 그래서 쌓이는 행의 `menu_key` 는 공개 DB 에 실제로 있는 이름이고, 보호자 표현이 그대로 키가 되지 않는다. 밖으로 나가는 것도 정규화한 메뉴 이름뿐이다(아이 식별자 없음).
 - **판정의 외부 조회는 묶는다.** 영양 판정은 14일 치를 매번 다시 읽는다([`영양소_계산_설계.md`](영양소_계산_설계.md) §3). 찾은 메뉴는 카탈로그에 쌓여 다음부터 외부를 부르지 않는다. 못 찾은 이름은 판정 한 번 안에서 한 번만 묻고, 다음 판정에서 같은 이름을 다시 묻지 않게 프로세스 메모리에 짧게 기억한다(DB · 로그에는 남기지 않는다). 판정 한 번의 외부 조회 수에는 상한을 두고 동시에 부른다 — 상한 · 기억 기간은 구현 때 정한다(N-11). 장애(`MenuSourceError`)면 그 판정에서 unresolved 다.
-- **커버리지는 배치가 넓힌다.** [`외부연결_계획.md`](../shared/외부연결_계획.md) §2 의 소스(식약처 영양성분 · 레시피, 지역 센터 표준식단, NEIS 급식 메뉴명)를 소스마다 이용 조건을 확인한 뒤 배치가 싣는다. 지역 센터 표준식단은 센터별로 조건이 달라 확인 전에는 쓰지 않는다. 사람이 넣는 것(`menu_alias` 의 `seed`, `stage_min` 태깅, `manual` 행)은 검수할 수 있는 시드 파일로 두고 같이 싣는다. 배치는 미리 채워 두는 것이고, 요청 중 캐시 미스도 위 규칙대로 채운다. 그래도 못 찾은 메뉴는 그 판정에서 unresolved 이고, 해석률이 낮으면 결론을 막는다(§2-1).
+- **커버리지는 배치가 넓힌다.** [`외부연결_계획.md`](../shared/외부연결_계획.md) §2 의 소스(식약처 영양성분 · 레시피, 지역 센터 표준식단)를 소스마다 이용 조건을 확인한 뒤 배치가 싣는다. 지역 센터 표준식단은 센터별로 조건이 달라 확인 전에는 쓰지 않는다. 사람이 넣는 것(`menu_alias` 의 `seed`, `stage_min` 태깅, `manual` 행)은 검수할 수 있는 시드 파일로 두고 같이 싣는다. 배치는 미리 채워 두는 것이고, 요청 중 캐시 미스도 위 규칙대로 채운다. 그래도 못 찾은 메뉴는 그 판정에서 unresolved 이고, 해석률이 낮으면 결론을 막는다(§2-1).
 - 검토한 안 B(배치만 채움) · C(캐시 미스만 넘기고 백엔드가 채움)는 처음 보는 메뉴가 다음 배치 전까지 그날 "확인 못 함" 이 돼서 접었다.
 
 지금 코드는 `menu_source` 포트가 없으면(API 키 없음) 카탈로그만 쓰고 캐시 미스는 unresolved로 둔다. 찾아보지 않았으니 카탈로그에 남기지도 않는다.
@@ -165,7 +165,9 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 
 **Food가 보호자 말을 반영해 고치는 유일한 테이블이다**(메뉴 카탈로그는 계산 중에 생기는 내부 값이다 — §0). 단 **INSERT는 못 한다** — 행을 만드는 것은 OCR·급식 배치뿐이고, Food는 이미 있는 행을 고치거나 지울 뿐이다. 없는 급식을 지어내는 경로를 애초에 열지 않는다. 다른 Agent가 읽지 않는 도메인 전용 테이블이라 "공유 테이블의 단일 writer는 Memory" 원칙에 걸리지 않는다 — Health의 `medication_*`과 같은 자리다. 기준은 누가 쓰느냐가 아니라 **누가 읽느냐**다.
 
-어린이집 급식은 전국 단일 API가 없다. **기관 공지 OCR이 주 경로**이고, 학교·해당 유치원은 NEIS, 그 외에는 지역 센터 표준식단을 참고로 쓴다.
+어린이집 급식은 전국 단일 API가 없다. **급식표 읽기(사진 OCR · 센터 배포 엑셀)가 유일한 경로**이고, 그 외에는 지역 센터 표준식단을 참고로 쓴다. NEIS 는 쓰지 않는다(10-09).
+
+**급식표에 인쇄된 알레르기 번호는 저장하지 않는다**(10-09). 기관이 아이의 알레르기를 관리하고 보호자에게 미리 알린다. 위험 식품 표시는 메뉴 이름 · 재료로 `filter_food_safety` 가 한다. 영양 계산은 `menu_keys` 만 쓰므로 번호가 없어도 그대로 된다 — 메뉴 이름에서 번호를 떼는 것(`menu_key` 정규화)은 읽는 것이 아니라 지우는 것이다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
@@ -176,10 +178,8 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | `menu_keys` | text[] | NOT NULL. 정규화 메뉴. 대체식이면 **교체**한다 |
 | `amount_factor` | numeric(3,2) | NOT NULL, default 1.00. "계란말이를 엄청 많이 먹었대" → 큰 값 |
 | `amount_known` | boolean | NOT NULL, **default false**. 급식은 보통 얼마나 먹었는지 모른다. 보호자가 말하면 true |
-| `allergen_codes` | smallint[] | NOT NULL, default `'{}'`. 급식 표기에서 추출 |
-| `allergen_mapped` | boolean | NOT NULL, default false. **false면 "알레르기 확인 못 함"** |
 | `caregiver_checked` | boolean | NOT NULL, default false. 대체·제외를 확인했는가 ("없어요"도 true) |
-| `origin` | varchar(16) | `ocr` / `neis` / `center_standard` |
+| `origin` | varchar(16) | `ocr`(급식표 읽기 — 사진 · 엑셀) / `center_standard` |
 | `source_notice_id` | uuid | nullable |
 | `ocr_confidence` | numeric(3,2) | nullable |
 | `created_at` · `updated_at` | timestamptz | NOT NULL, default now() |
@@ -271,17 +271,14 @@ CREATE TABLE daycare_meal (
     amount_factor     numeric(3,2) NOT NULL DEFAULT 1.00
                       CHECK (amount_factor BETWEEN 0 AND 2),
     amount_known      boolean     NOT NULL DEFAULT false,
-    allergen_codes    smallint[]  NOT NULL DEFAULT '{}',
-    allergen_mapped   boolean     NOT NULL DEFAULT false,
     caregiver_checked boolean     NOT NULL DEFAULT false,
     origin            varchar(16) NOT NULL
-                      CHECK (origin IN ('ocr','neis','center_standard')),
+                      CHECK (origin IN ('ocr','center_standard')),
     source_notice_id  uuid,
     ocr_confidence    numeric(3,2),
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (child_id, serve_date, meal_slot),
-    CHECK (allergen_codes <@ ARRAY(SELECT generate_series(1,19))::smallint[])
+    UNIQUE (child_id, serve_date, meal_slot)
 );
 CREATE INDEX daycare_meal_window_idx ON daycare_meal (child_id, serve_date DESC);
 CREATE TABLE nutrient_reference (
@@ -337,7 +334,7 @@ CREATE TABLE nutrient_reference (
 | FT-2 | ✅ **닫힘(10-05)** — 섭취 파생 테이블의 30일 보관이 동의·보관 정책과 맞는지였다. 테이블을 없애 보관할 파생 값이 없다 (#205) |
 | FT-3 | 유아 1인분 보정 계수 (`portion_scale.yaml`) | 섭취기준 기준 체위·1회 섭취참고량으로 산출 |
 | FT-4 | 급식 `center_standard` 이용 조건 | 센터별로 다름 |
-| FT-5 | NEIS 알레르기 번호 ↔ `allergen_term.code` 순서 일치 | 실호출 확인 전 매핑 확정 금지 |
+| FT-5 | ✅ **닫힘(10-09)** — NEIS 알레르기 번호와 19종 코드의 순서가 같은지였다. NEIS 를 쓰지 않고, 급식표의 알레르기 번호도 읽지 않는다(§5) |
 | FT-6 | `menu_alias` 초기 사전 규모 | 급식 표기 흔들림이 가장 크다 |
 | FT-7 | 레시피 재료 텍스트 파서 정확도 기준 | 알레르기 판정 입력이라 임계가 높아야 함. 실제 형식(10-06 CSV): `[1인분]` 머리, `●양념장 :` · `고명` 같은 소제목 줄, `재료 무게g(분량)` 쉼표 나열, 줄바꿈이 섞인다 |
 | FT-8 | ✅ **닫힘(09-22)** — 급식은 `daycare_meal`로 분리하고 **Food 소유(CRUD)**로 뒀다. 대체·제외는 Food가 tool로 `menu_keys`를 교체한다 |
