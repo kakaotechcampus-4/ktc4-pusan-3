@@ -99,7 +99,7 @@ apps/api/
 │   ├── rules/               규칙 로직 (순수 Python — DB·LLM 접근 금지)
 │   ├── infra/db/            DB 세션 · 엔진 (다음 이슈에서 추가)
 │   ├── providers/           외부 LLM SDK 래퍼
-│   ├── integrations/        외부 API 연동 (NEIS, MFDS)
+│   ├── integrations/        외부 API 연동 (MFDS)
 │   └── workers/             백그라운드 작업 (승인 없는 실행 경로 차단)
 └── tests/
     ├── conftest.py           공통 픽스처 (ASGITransport AsyncClient)
