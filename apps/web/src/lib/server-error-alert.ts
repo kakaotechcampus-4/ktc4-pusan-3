@@ -67,11 +67,13 @@ export function buildWebAlert(
   const thrown = error as { name?: unknown; digest?: unknown } | null | undefined;
   const name = typeof thrown?.name === "string" ? thrown.name : typeof error;
   const digest = typeof thrown?.digest === "string" ? thrown.digest : "-";
+  // 🟡 — 내일 봐도 되는 세기. 서버가 죽은 건 infra-alert 가 🔴 로 따로 온다.
   const first =
-    `[${options.env}] ERROR web ${context.routeType} ${safePath(context.routePath)} — ` +
+    `🟡 [${options.env}] ERROR web ${context.routeType} ${safePath(context.routePath)} — ` +
     `${name} digest=${digest} path=${safePath(request.path)}`;
+  const nextStep = '→ journalctl CONTAINER_NAME=ktc4-web --since "10 min ago"';
   return {
-    content: `${first}\n${stamp(options.now ?? new Date())}`,
+    content: `${first}\n${stamp(options.now ?? new Date())}\n${nextStep}`,
     username: "web-alert",
     allowed_mentions: { parse: [] },
   };

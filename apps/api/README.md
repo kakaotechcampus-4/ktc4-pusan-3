@@ -111,12 +111,17 @@ api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹�
 전송은 `app/integrations/discord.py`). 본문은 이렇게 생겼고, 이것뿐이다.
 
 ```
-api-alert    [prod] ERROR app.api.runs.runner:_guarded:172 — run %s 의 job 이 %s 로 끝났다
-             2026-10-09 23:01:02+0900
-browser-alert    [prod] ERROR app.api.v1.routers.client_errors:report_client_error:39 — 화면 오류 name=%s … · TypeError - /children/…/records android 14 app
-infra-alert  [prod] ktc4-web: running healthy → exited -
-web-alert    [prod] ERROR web render /children/[cid]/records — TypeError digest=abc123 path=/children/…/records
+api-alert      🟠 [prod] ERROR app.api.runs.runner:_guarded:172 — run %s 의 job 이 %s 로 끝났다
+               2026-10-09 23:01:02+0900
+               → journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR
+browser-alert  🟡 [prod] ERROR app.api.v1.routers.client_errors:report_client_error:39 — 화면 오류 … · TypeError - /children/…/records android 14 app
+infra-alert    🔴 [prod] ktc4-web: running healthy → exited -
+               → docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>
+web-alert      🟡 [prod] ERROR web render /children/[cid]/records — TypeError digest=abc123 path=/children/…/records
 ```
+
+머리의 표시가 세기다 — 🔴 지금 봐야 함(서비스가 안 됨) · 🟠 오늘 안에 · 🟡 내일 봐도 됨 · 🟢 복구. 전부 같은
+세기로 오면 다 무시하게 된다. 셋째 줄은 "다음에 칠 명령" 이다 — 알림을 보고 뭘 할지 바로 알게.
 
 `%s` 를 채운 값 · 원문 · 트레이스백 · 예외 메시지는 **서버 로그에만** 있다 (루트 CLAUDE.md §2). 알림을
 보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 값을 내보내는 유일한 길은 로그를 찍을 때

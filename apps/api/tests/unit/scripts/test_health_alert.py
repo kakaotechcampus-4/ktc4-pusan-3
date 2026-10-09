@@ -81,8 +81,8 @@ def test_first_run_reports_every_container_as_new(box):
     lines = _lines(box(HEALTHY, "--dry-run"))
 
     assert lines == [
-        "[prod] ktc4-redis-deploy: 없음 → running healthy",
-        "[prod] ktc4-web: 없음 → running healthy",
+        "🟢 [prod] ktc4-redis-deploy: 없음 → running healthy",
+        "🟢 [prod] ktc4-web: 없음 → running healthy",
     ]
 
 
@@ -99,7 +99,7 @@ def test_only_the_changed_container_is_reported(box):
     box(HEALTHY, "--dry-run")
     lines = _lines(box(WEB_DOWN, "--dry-run"))
 
-    assert lines == ["[prod] ktc4-web: running healthy → exited -"]
+    assert lines == ["🔴 [prod] ktc4-web: running healthy → exited -"]
 
 
 def test_recovery_is_reported_too(box):
@@ -108,7 +108,7 @@ def test_recovery_is_reported_too(box):
     box(WEB_DOWN, "--dry-run")
     lines = _lines(box(HEALTHY, "--dry-run"))
 
-    assert lines == ["[prod] ktc4-web: exited - → running healthy"]
+    assert lines == ["🟢 [prod] ktc4-web: exited - → running healthy"]
 
 
 def test_vanished_container_is_reported(box):
@@ -116,7 +116,7 @@ def test_vanished_container_is_reported(box):
     box(HEALTHY, "--dry-run")
     lines = _lines(box("/ktc4-redis-deploy running healthy\\n", "--dry-run", ids="id1"))
 
-    assert lines == ["[prod] ktc4-web: running healthy → 사라짐"]
+    assert lines == ["🔴 [prod] ktc4-web: running healthy → 사라짐"]
 
 
 def test_posts_one_message_to_the_webhook_and_saves_state(box):
@@ -129,6 +129,7 @@ def test_posts_one_message_to_the_webhook_and_saves_state(box):
     assert '"allowed_mentions":{"parse":[]}' in args
     assert '"username":"infra-alert"' in args  # 채널 하나에서 api-alert · browser-alert 와 구별
     assert "ktc4-web: 없음 → running healthy" in args
+    assert "docker compose" in args and "logs --tail" in args  # 다음에 칠 명령 한 줄
     assert box.state.exists()
 
 

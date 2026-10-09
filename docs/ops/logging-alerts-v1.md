@@ -15,6 +15,7 @@
 | **적재(모으기)** | 앱이 아니라 **docker 로그 드라이버 `journald`** — compose 의 `x-logging` 앵커로 전 서비스에 | 앱은 stderr 로만 찍고, 어디에 모을지는 실행 환경이 정한다 (§2) |
 | **알림** | `app.*` 로거의 **ERROR 이상 → Discord 웹훅**, 앱 코드 (`app/core/alerts.py` · `app/integrations/discord.py`) | docker 에는 "로그 줄을 골라 사람에게 보내는" 기능이 없다 |
 | **알림 본문** | 환경 · 레벨 · 로거:함수:줄 · **코드에 적힌 로그 글귀** · 예외 **종류 이름** · 시간. 값을 내보내려면 `extra={"alert_detail"}` 로 표시 — 서버가 모양을 검사한 값만 | 값(args) · 원문 · 트레이스백 · 예외 메시지는 밖으로 안 나간다 (§3) |
+| **세기 · 다음 할 일** | 머리에 🔴(지금) · 🟠(오늘) · 🟡(내일) · 🟢(복구), 셋째 줄에 다음에 칠 명령 | 현업의 심각도 구분 · 런북을 가장 작게. 전부 같은 세기면 알림 피로로 다 무시한다. 🔴 만 `@here` 로 폰을 울릴지는 실사용자 뒤에 정한다 |
 | **구별** | 채널 하나, 보내는 이름이 출처별 — `api-alert` · `browser-alert` · `infra-alert` (`extra={"alert_source"}`) | 웹훅 · 채널을 늘리지 않는다. 쪼개고 싶으면 그때 URL 을 하나 더 |
 | **화면 오류** | 오류 바운더리 → `POST /client-errors`(로그인한 보호자만) → ERROR 로그 → 같은 알림 | 보호자 폰의 오류는 서버로 오지 않았다. 값은 종류 · digest · 경로 · 기기 요약뿐이고 모양을 서버가 검사한다. DB 에 넣지 않는다 (처리방침 ⑥) |
 | **web 서버 오류** | Next `src/instrumentation.ts` 의 `onRequestError` → 웹훅으로 직접 (`web-alert`). 종류 · digest · 경로 · 라우트만, 분당 상한, 개발 모드는 끔 | Next 서버엔 보호자 토큰이 없어 `/client-errors` 를 못 쓴다. 웹 컨테이너에 `ALERT_WEBHOOK_URL` 을 compose 가 넘긴다 |

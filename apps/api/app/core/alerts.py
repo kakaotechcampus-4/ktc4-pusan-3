@@ -41,6 +41,18 @@ Sender = Callable[[str, str], None]
 DEFAULT_SOURCE = "api"
 _DETAIL_MAX = 200
 
+SEVERITY_MARK = {"high": "🔴", "normal": "🟠", "low": "🟡"}
+"""알림 머리의 세기 표시 — 전부 같은 세기로 오면 다 무시하게 된다(현업의 심각도 구분을 가장 작게).
+🔴 지금 봐야 함 · 🟠 오늘 안에 · 🟡 내일 봐도 됨. `extra={"alert_severity": "high"}` 로 바꿀 수
+있다.
+감시 스크립트는 🔴(죽음) · 🟢(복구)를 자기가 붙인다."""
+DEFAULT_SEVERITY = {"api": "normal", "browser": "low"}
+NEXT_STEP = {
+    "api": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR',
+    "browser": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep "화면 오류"',
+}
+"""셋째 줄 "다음에 칠 명령" — 알림을 보고 뭘 할지 바로 알게 (런북의 가장 작은 모양)."""
+
 
 class SendError(Exception):
     """보내기 함수가 올리는 실패. 메시지에 비밀(URL)이 없어서 로그에 그대로 찍어도 된다.
@@ -66,9 +78,9 @@ _TIME = logging.Formatter(datefmt=DATEFMT)
 찾는다."""
 
 
-def format_alert(record: logging.LogRecord, *, env: str) -> str:
-    """알림 글. 첫 줄에 환경 · 레벨 · 어느 코드(로거:함수:줄) · 로그 글귀 · 예외 종류, 둘째 줄에
-    시간.
+def format_alert(record: logging.LogRecord, *, env: str, source: str = DEFAULT_SOURCE) -> str:
+    """알림 글. 첫 줄에 세기 표시 · 환경 · 레벨 · 어느 코드(로거:함수:줄) · 로그 글귀 · 예외 종류,
+    둘째 줄에 시간, 셋째 줄에 다음에 칠 명령.
 
     🚨 값은 나가지 않는다. 로그 글귀는 코드에 적힌 문장(record.msg, "run %s 의 job 이 %s 로 끝났다")
        그대로이고, %s 를 채운 값(args)은 서버 로그에만 있다 — 누가 `log.error("%s", 원문)` 을 써도
@@ -87,7 +99,16 @@ def format_alert(record: logging.LogRecord, *, env: str) -> str:
         suffix += " · " + " ".join(detail.split())[:_DETAIL_MAX]
     where = f"{record.name}:{record.funcName}:{record.lineno}"
     when = _TIME.formatTime(record, DATEFMT)  # datefmt 를 넘겨야 %z 가 붙는다
-    return f"[{env}] {record.levelname} {where} — {first_line}{suffix}\n{when}"
+    severity = getattr(record, "alert_severity", None)
+    if severity not in SEVERITY_MARK:
+        severity = DEFAULT_SEVERITY.get(source, "normal")
+    lines = [
+        f"{SEVERITY_MARK[severity]} [{env}] {record.levelname} {where} — {first_line}{suffix}",
+        when,
+    ]
+    if source in NEXT_STEP:
+        lines.append(f"→ {NEXT_STEP[source]}")
+    return "\n".join(lines)
 
 
 def alert_source(record: logging.LogRecord) -> str:
@@ -140,8 +161,10 @@ class WebhookHandler(logging.Handler):
         if self._stopped or record.name == __name__:
             return  # 자기 WARNING(전송 실패)은 알리지 않는다 — 레벨을 낮춰도 되돌이가 없게
         try:
-            text = format_alert(record, env=self._env)  # 글을 먼저 — 여기서 실패하면 자리를 안 쓴다
             source = alert_source(record)
+            text = format_alert(
+                record, env=self._env, source=source
+            )  # 글을 먼저 — 실패하면 자리를 안 쓴다
             with self._count_lock:
                 if not self._admit():
                     self._dropped += 1

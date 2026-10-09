@@ -72,14 +72,19 @@ while IFS= read -r line; do
   now="${line#* }"
   before="$(printf '%s\n' "$previous" | awk -v n="$name" '$1 == n { $1 = ""; sub(/^ /, ""); print; exit }')"
   [ "$before" = "$now" ] && continue
-  changes="${changes}[$ALERT_ENV] $name: ${before:-없음} → $now"$'\n'
+  # 세기 표시 — 🟢 살아 있음(healthy · 헬스체크 없이 running) · 🔴 그 밖(죽음 · unhealthy · 재시작 중)
+  case "$now" in
+    *healthy | "running -") mark="🟢" ;;
+    *) mark="🔴" ;;
+  esac
+  changes="${changes}${mark} [$ALERT_ENV] $name: ${before:-없음} → $now"$'\n'
 done <<< "$current"
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   name="${line%% *}"
   before="${line#* }"
   if ! printf '%s\n' "$current" | awk -v n="$name" '$1 == n { found = 1 } END { exit !found }'; then
-    changes="${changes}[$ALERT_ENV] $name: $before → 사라짐"$'\n'
+    changes="${changes}🔴 [$ALERT_ENV] $name: $before → 사라짐"$'\n'
   fi
 done <<< "$previous"
 
@@ -90,6 +95,8 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s' "$changes"
 else
+  # 다음에 칠 명령 한 줄 — 알림을 보고 뭘 할지 바로 알게.
+  changes="${changes}→ docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>"$'\n'
   # JSON 글자 처리 — 백슬래시 · 따옴표 · 줄바꿈. 내용은 컨테이너 이름과 상태뿐이라 그 셋이면 된다.
   content="$(printf '%s' "$changes" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk 'BEGIN { ORS = "\\n" } { print }' | sed 's/\\n$//')"
   code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \

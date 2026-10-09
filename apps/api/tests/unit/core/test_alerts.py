@@ -23,7 +23,7 @@ from app.core import alerts
 
 ENV = "prod"
 URL = "https://discord.com/api/webhooks/1/token"
-FIRST_LINE = re.compile(r"^\[prod\] ERROR app\.alerts_probe:\w+:\d+ — (?P<rest>.*)$")
+FIRST_LINE = re.compile(r"^\S+ \[prod\] ERROR app\.alerts_probe:\w+:\d+ — (?P<rest>.*)$")
 
 
 class _Sent(list[str]):
@@ -330,6 +330,25 @@ def test_alert_detail_is_one_short_line(attach, sent):
     assert "\n" not in detail
     assert len(detail) <= 200
     assert detail.startswith("첫 줄 둘째 줄")
+
+
+def test_severity_mark_and_next_step_follow_the_source(attach, sent):
+    """세기 표시(🟠 api · 🟡 browser · 🔴 급함)와 "다음에 칠 명령" 한 줄 — 알림을 보고 뭘 할지
+    바로 안다.
+
+    현업의 심각도 구분과 런북을 가장 작은 모양으로 흉내 낸 것이다. 전부 같은 세기로 오면 다
+    무시하게 된다.
+    """
+    log, handler = attach(sent.append)
+    log.error("api 쪽")
+    log.error("화면 쪽", extra={"alert_source": "browser"})
+    log.error("급한 쪽", extra={"alert_severity": "high"})
+    handler.flush()
+
+    assert [t.split(" ", 1)[0] for t in sent] == ["🟠", "🟡", "🔴"]
+    next_step = '→ journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR'
+    assert sent[0].splitlines()[2] == next_step
+    assert sent[1].splitlines()[2].endswith('| grep "화면 오류"')
 
 
 def test_alert_source_reaches_the_sender(attach):
