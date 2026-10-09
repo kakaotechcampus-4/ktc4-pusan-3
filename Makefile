@@ -16,7 +16,7 @@ help:
 	@echo "  make install      의존성 설치 (클론 직후)"
 	@echo "  make dev          개발 서버 실행  http://localhost:8000"
 	@echo "  make test         테스트 실행"
-	@echo "  make lint         코드 검사 (ruff)"
+	@echo "  make lint         코드 검사 (ruff check + format --check) — PR 올리기 전"
 	@echo "  make fmt          코드 포맷팅 (ruff)"
 	@echo ""
 	@echo "── 프론트 (apps/web) ──"
@@ -68,7 +68,7 @@ test:
 	cd apps/api && uv run pytest
 
 lint:
-	cd apps/api && uv run ruff check .
+	cd apps/api && uv run ruff check . && uv run ruff format --check .
 
 fmt:
 	cd apps/api && uv run ruff format .
