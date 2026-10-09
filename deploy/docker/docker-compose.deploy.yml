@@ -12,7 +12,7 @@
 # 🚨 로그는 전 서비스 journald 다 (아래 x-logging). docker 기본 json-file 은 새 이미지로 up 할 때 컨테이너와
 #    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다. api 가 합류하면
 #    `logging: *logging` 한 줄만 더한다. 이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
-#    바꾼 뒤에는 서버에서 `make web-up` 으로 컨테이너를 다시 올려야 적용된다.
+#    로그 설정은 컨테이너를 만들 때 정해진다 — 나중에 바꾸면 `make web-up` 으로 다시 올려야 적용된다.
 
 x-logging: &logging
   # 서버(Ubuntu 24.04)는 journald. 맥의 Docker Desktop 에는 journald 가 없어서 배포 compose 를 로컬에서
