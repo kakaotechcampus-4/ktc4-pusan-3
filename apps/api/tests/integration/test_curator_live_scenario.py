@@ -209,7 +209,9 @@ class TestLiveFullLifecycle:
         # ── Step 5: 새 관찰 3건 → confirmed 부활 ──
         day_revival = day_archived + timedelta(days=1)
         for i in range(3):
-            session.add(_food(child.id, subject="홍당무", observed_on=day_revival + timedelta(days=i)))
+            session.add(
+                _food(child.id, subject="홍당무", observed_on=day_revival + timedelta(days=i))
+            )
         await session.flush()
         day_last = day_revival + timedelta(days=2)
         r = await _curator_run(session, child.id, day_last, judge)
@@ -220,5 +222,7 @@ class TestLiveFullLifecycle:
         assert p.last_observed_on == day_last
         print(f"  Step 5: 부활 → confirmed, strength={p.strength:.3f}")
 
-        print(f"\n  최종: {p.merge_key} strength 변화: "
-              f"0.500 → 0.550(승격) → 0.495(archived) → 0.545(부활)")
+        print(
+            f"\n  최종: {p.merge_key} strength 변화: "
+            f"0.500 → 0.550(승격) → 0.495(archived) → 0.545(부활)"
+        )

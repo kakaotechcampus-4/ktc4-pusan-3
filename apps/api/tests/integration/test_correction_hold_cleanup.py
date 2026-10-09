@@ -56,10 +56,15 @@ class TestCorrectionClearsHold:
         await session.flush()
 
         # hold 생성
-        session.add(ObservationLinkHold(
-            child_id=child.id, domain="food", observation_id=obs.id,
-            uncertain_count=1, subject_hash="abc",
-        ))
+        session.add(
+            ObservationLinkHold(
+                child_id=child.id,
+                domain="food",
+                observation_id=obs.id,
+                uncertain_count=1,
+                subject_hash="abc",
+            )
+        )
         await session.flush()
 
         from app.domains.memory.profile.service import handle_observation_correction
@@ -75,8 +80,9 @@ class TestCorrectionClearsHold:
         )
 
         hold = await session.scalar(
-            select(ObservationLinkHold).where(ObservationLinkHold.domain == "food",
-            ObservationLinkHold.observation_id == obs.id)
+            select(ObservationLinkHold).where(
+                ObservationLinkHold.domain == "food", ObservationLinkHold.observation_id == obs.id
+            )
         )
         assert hold is None
 
@@ -87,10 +93,15 @@ class TestCorrectionClearsHold:
         session.add(obs)
         await session.flush()
 
-        session.add(ObservationLinkHold(
-            child_id=child.id, domain="food", observation_id=obs.id,
-            uncertain_count=2, subject_hash="abc",
-        ))
+        session.add(
+            ObservationLinkHold(
+                child_id=child.id,
+                domain="food",
+                observation_id=obs.id,
+                uncertain_count=2,
+                subject_hash="abc",
+            )
+        )
         await session.flush()
 
         from app.domains.memory.profile.service import handle_observation_correction
@@ -106,8 +117,9 @@ class TestCorrectionClearsHold:
         )
 
         hold = await session.scalar(
-            select(ObservationLinkHold).where(ObservationLinkHold.domain == "food",
-            ObservationLinkHold.observation_id == obs.id)
+            select(ObservationLinkHold).where(
+                ObservationLinkHold.domain == "food", ObservationLinkHold.observation_id == obs.id
+            )
         )
         assert hold is None
 
