@@ -30,6 +30,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.rules.book_form import BookForm
 
 
 class SafetyLookupError(Exception):
@@ -163,12 +164,13 @@ class GrowthDocRow:
     tags: tuple[str, ...] = ()
 
 
-BookForm = Literal["board", "picture", "info", "unknown"]
-
-
 @dataclass(frozen=True)
 class BookRow:
-    """`book_catalog` 한 행. 모델이 책 제목을 지어내지 못하게 이 행의 ISBN 만 통과시킨다."""
+    """`book_catalog` 한 행. 모델이 책 제목을 지어내지 못하게 이 행의 ISBN 만 통과시킨다.
+
+    `form` 은 `rules/book_form.py` 가 정한다. 월령 범위도 거기서 나오고, `search_books` 는 이 행의
+    `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 월령을 건다.
+    """
 
     isbn: str
     title: str
@@ -277,7 +279,11 @@ class IssuedBookReader(Protocol):
 
 @dataclass(frozen=True)
 class GrowthPorts:
-    """아이 하나 몫의 읽기 포트 묶음. `notice` · `books` · `issued_books` 는 없을 수 있다."""
+    """아이 하나 몫의 읽기 포트 묶음. `notice` · `books` · `issued_books` 는 없을 수 있다.
+
+    `books` 가 없으면 도서 라벨이 닫힌다. `issued_books` 가 없으면 `propose_books` 가 `RuntimeError`
+    를 올린다 — 낸 책을 모르는 채 통과시키면 "다른 책도" 에 같은 책이 다시 나온다.
+    """
 
     profile: ChildProfileReader
     consent: ConsentReader
