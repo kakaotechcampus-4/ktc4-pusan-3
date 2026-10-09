@@ -303,8 +303,26 @@ export interface HomeResponse {
   >;
   highlight: { text: string; state_reason: string; ref: Ref } | null;
   /** 시각대 규칙(F-15)으로 서버가 만든다 — 모델을 부르지 않는다. */
-  agent_prompts: Array<{ agent: Agent; text: string }>;
+  agent_prompts: Array<{ agent: Agent; text: string; prompt_key: PromptKey }>;
 }
+
+/**
+ * 홈 추천 버튼의 키 (#286). 누르면 05 가 이 키를 추천 요청에 그대로 싣는다.
+ *
+ * 🚨 **문장이 아니라 키다.** Agent 에 넘길 문장("저녁 추천해줘")은 서버가 이 키로 꺼낸다
+ *    (`apps/api/app/rules/home_prompts.py`). 클라이언트가 문장을 보내면 Supervisor 안전
+ *    사전검사를 거치지 않은 문장으로 Agent 가 돈다 (#249). 화면은 키를 만들지도 고치지도 않는다.
+ * 🚨 어느 Agent 와 짝인지는 서버가 검사한다 (표에 없는 조합은 400).
+ */
+export const PROMPT_KEYS = [
+  "breakfast",
+  "lunch",
+  "snack",
+  "dinner",
+  "next_breakfast",
+  "play",
+] as const;
+export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 /* ── 03 홈 · 한 줄 입력 ──────────────────────────────────────────────── */
 
@@ -335,6 +353,8 @@ export interface SuggestionsRequest {
   /** 04 의 offer 에서 넘어온 경우에만 있다. 홈의 agent_prompts 로 들어오면 run 이 없다. */
   run_id?: string;
   agents: Agent[];
+  /** 홈의 `agent_prompts` 로 들어온 경우에만 있다. 그 버튼의 `prompt_key` 그대로다 (#286). */
+  prompt_key?: PromptKey;
 }
 
 /**

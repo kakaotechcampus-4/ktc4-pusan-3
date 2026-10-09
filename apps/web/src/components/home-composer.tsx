@@ -7,7 +7,7 @@ import { AgentPrompts } from "@/components/agent-prompts";
 import { IconButton } from "@/components/ui/icon-button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
-import type { Agent, HomeResponse } from "@/lib/api/types";
+import type { HomeResponse } from "@/lib/api/types";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 
 /**
@@ -49,7 +49,8 @@ export function HomeComposer({
   onSubmit: () => void;
   /** 서버가 만든 "지금 도와드릴 수 있는 것". 없으면 줄 자체가 안 나온다. */
   prompts: HomeResponse["agent_prompts"];
-  onPickPrompt: (agent: Agent) => void;
+  /** 🚨 고른 줄을 통째로 받는다 — 05 가 그 줄의 `prompt_key` 를 추천 요청에 싣는다 (#286). */
+  onPickPrompt: (prompt: HomeResponse["agent_prompts"][number]) => void;
   /** 08 사진 화면으로. 🚨 여기서 파일을 고르지 않는다 — 고르는 자리와 확인하는 자리가 같아야 한다. */
   onPickPhoto: () => void;
   /**

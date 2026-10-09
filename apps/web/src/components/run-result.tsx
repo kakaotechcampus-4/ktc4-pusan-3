@@ -267,7 +267,7 @@ export function RunReply({
           <h3 className="text-label text-brand">이것도 도와드릴까요?</h3>
           <AgentPrompts
             items={run.offers.map((offer) => ({ agent: offer.agent, text: offer.label }))}
-            onPick={(agent) => onPickOffer([agent])}
+            onPick={(offer) => onPickOffer([offer.agent])}
             layout="list"
           />
           {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** */}

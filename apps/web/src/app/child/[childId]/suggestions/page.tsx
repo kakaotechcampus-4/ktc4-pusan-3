@@ -22,11 +22,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { useChildId } from "@/hooks/use-child-id";
 import {
   AGENTS,
+  PROMPT_KEYS,
   api,
   isApiError,
   qk,
   type Agent,
   type AnswerRequest,
+  type PromptKey,
   approveSuggestions,
   createEventDrafts,
   type CreateEventDraftsResponse,
@@ -70,6 +72,10 @@ function isAgent(value: string): value is Agent {
   return (AGENTS as readonly string[]).includes(value);
 }
 
+function isPromptKey(value: string | null): value is PromptKey {
+  return value !== null && (PROMPT_KEYS as readonly string[]).includes(value);
+}
+
 function SuggestionsScreen() {
   const childId = useChildId();
   const router = useRouter();
@@ -78,6 +84,13 @@ function SuggestionsScreen() {
   const runId = searchParams.get("run");
   /** 🚨 최대 2개다 (NF-01). URL 로 더 넘어와도 잘라서 보낸다. */
   const agents = (searchParams.get("agents") ?? "").split(",").filter(isAgent).slice(0, 2);
+  /**
+   * 03 홈 버튼의 키 (#286). 🚨 **아는 값만 싣는다** — 주소는 누구나 고칠 수 있어서, 모르는 값을
+   *    그대로 보내면 화면 전체가 400 이 된다. 버리면 키 없이 도는 홈 진입과 같다.
+   *    Agent 와 짝이 맞는지는 서버가 본다 (`PromptKey` 의 🚨).
+   */
+  const rawPromptKey = searchParams.get("prompt");
+  const promptKey = isPromptKey(rawPromptKey) ? rawPromptKey : null;
 
   /**
    * 🚨 **여러 개 고를 수 있다.** 고른 것을 한 번에 초안으로 바꾼다 —
@@ -101,12 +114,16 @@ function SuggestionsScreen() {
   const [approving, setApproving] = useState<CreateEventDraftsResponse | null>(null);
 
   const suggestions = useQuery({
-    queryKey: qk.suggestions(childId, runId, agents),
+    queryKey: qk.suggestions(childId, runId, agents, promptKey),
     enabled: agents.length > 0,
     // Agent 를 두 번 돌리지 않는다 — NF-01 이 model call 을 센다. 뒤로 갔다 와도 같은 화면이다.
     staleTime: Infinity,
     queryFn: () => {
-      const body: SuggestionsRequest = { agents, ...(runId ? { run_id: runId } : {}) };
+      const body: SuggestionsRequest = {
+        agents,
+        ...(runId ? { run_id: runId } : {}),
+        ...(promptKey ? { prompt_key: promptKey } : {}),
+      };
       return api.post<SuggestionsResponse>(`/children/${childId}/suggestions`, body);
     },
   });
