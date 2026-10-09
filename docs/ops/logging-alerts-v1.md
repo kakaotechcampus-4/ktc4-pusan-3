@@ -15,7 +15,7 @@
 | **적재(모으기)** | 앱이 아니라 **docker 로그 드라이버 `journald`** — compose 의 `x-logging` 앵커로 전 서비스에 | 앱은 stderr 로만 찍고, 어디에 모을지는 실행 환경이 정한다 (§2) |
 | **알림** | `app.*` 로거의 **ERROR 이상 → Discord 웹훅**, 앱 코드 (`app/core/alerts.py` · `app/integrations/discord.py`) | docker 에는 "로그 줄을 골라 사람에게 보내는" 기능이 없다 |
 | **알림 본문** | 환경 · 레벨 · 로거:함수:줄 · **코드에 적힌 로그 글귀** · 예외 **종류 이름** · 시간. 값을 내보내려면 `extra={"alert_detail"}` 로 표시 — 서버가 모양을 검사한 값만 | 값(args) · 원문 · 트레이스백 · 예외 메시지는 밖으로 안 나간다 (§3) |
-| **구별** | 채널 하나, 보내는 이름이 출처별 — `api-alert` · `web-alert` · `infra-alert` (`extra={"alert_source"}`) | 웹훅 · 채널을 늘리지 않는다. 쪼개고 싶으면 그때 URL 을 하나 더 |
+| **구별** | 채널 하나, 보내는 이름이 출처별 — `api-alert` · `browser-alert` · `infra-alert` (`extra={"alert_source"}`) | 웹훅 · 채널을 늘리지 않는다. 쪼개고 싶으면 그때 URL 을 하나 더 |
 | **화면 오류** | 오류 바운더리 → `POST /client-errors`(로그인한 보호자만) → ERROR 로그 → 같은 알림 | 보호자 폰의 오류는 서버로 오지 않았다. 값은 종류 · digest · 경로 · 기기 요약뿐이고 모양을 서버가 검사한다. DB 에 넣지 않는다 (처리방침 ⑥) |
 | **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
 | **SaaS(Sentry 등)** | 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 §10 결정 전에는 못 쓴다 |

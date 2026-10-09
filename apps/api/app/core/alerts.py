@@ -16,8 +16,8 @@
    로그에 넣은 값(args) · 트레이스백 · 예외 메시지는 밖으로 나가지 않는다 (루트 CLAUDE.md §2 · §10).
    값을 내보내는 유일한 길은 `extra={"alert_detail": "..."}` — 서버가 모양을 검사한 값만 여기 넣는다
    (화면 오류 보고). 어디서 내보내는지 `grep alert_detail` 한 번으로 다 보인다.
-   `extra={"alert_source": "web"}` 은 출처다 (기본 api · 감시 스크립트는 infra) — Discord 에서
-   보내는 이름(api-alert · web-alert · infra-alert)이 갈려 채널 하나에서도 구별된다.
+   `extra={"alert_source": "browser"}` 은 출처다 (기본 api · 감시 스크립트는 infra) — Discord 에서
+   보내는 이름(api-alert · browser-alert · infra-alert)이 갈려 채널 하나에서도 구별된다.
 🚨 알림이 실패해도 요청 처리는 영향이 없다. 실패는 WARNING 한 줄 — SendError 면 그 메시지, 다른
    예외는 종류 이름만 (httpx 의 메시지에는 웹훅 URL(비밀)이 통째로 있다).
 🚨 Discord 가 막히거나 느려도 서버 종료를 붙들지 않는다 — flush 는 기한이 있고, 큐는 분당 상한만큼만

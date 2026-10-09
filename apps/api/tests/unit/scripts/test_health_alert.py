@@ -127,7 +127,7 @@ def test_posts_one_message_to_the_webhook_and_saves_state(box):
     args = box.curl_log.read_text()
     assert "https://discord.com/api/webhooks/1/SECRET-TOKEN?wait=true" in args
     assert '"allowed_mentions":{"parse":[]}' in args
-    assert '"username":"infra-alert"' in args  # 채널 하나에서 api-alert · web-alert 와 구별
+    assert '"username":"infra-alert"' in args  # 채널 하나에서 api-alert · browser-alert 와 구별
     assert "ktc4-web: 없음 → running healthy" in args
     assert box.state.exists()
 

@@ -26,8 +26,8 @@ def webhook_sender(url: str, *, client: httpx.Client | None = None) -> Sender:
     (기본값 wait=false 는 저장에 실패해도 204 를 준다).
 
     allowed_mentions 를 비워 글에 @everyone 이 들어 있어도 아무도 호출하지 않는다.
-    username 은 출처별 — api-alert · web-alert · infra-alert. 채널 하나에서 보내는 이름으로 갈린다
-    (웹훅 · 채널을 늘리지 않는다. 쪼개고 싶으면 그때 URL 을 하나 더 두면 된다).
+    username 은 출처별 — api-alert · browser-alert · infra-alert. 채널 하나에서 보내는 이름으로
+    갈린다 (웹훅 · 채널을 늘리지 않는다. 쪼개고 싶으면 그때 URL 을 하나 더 두면 된다).
     2xx 가 아니면 WebhookError — 받는 쪽(알림 핸들러)이 세고 WARNING 으로 남긴다.
     동기 클라이언트다 — 알림 스레드에서 부른다. 이벤트 루프 위가 아니다.
     """

@@ -43,8 +43,8 @@ def test_posts_the_text_as_content_json_and_waits_for_delivery():
 
 
 def test_sender_name_follows_the_source_so_one_channel_reads_sorted():
-    """채널 하나에 보내는 이름만 갈린다 — api-alert · web-alert · infra-alert. 웹훅 · 채널을 늘리지
-    않는다.
+    """채널 하나에 보내는 이름만 갈린다 — api-alert · browser-alert · infra-alert. 웹훅 · 채널을
+    늘리지 않는다.
     """
     seen: list[httpx.Request] = []
 
@@ -53,9 +53,9 @@ def test_sender_name_follows_the_source_so_one_channel_reads_sorted():
         return httpx.Response(200, json={"id": "1"})
 
     send = discord.webhook_sender(URL, client=_client(respond))
-    send("화면 쪽", "web")
+    send("화면 쪽", "browser")
 
-    assert json.loads(seen[0].read())["username"] == "web-alert"
+    assert json.loads(seen[0].read())["username"] == "browser-alert"
 
 
 def test_http_failure_becomes_a_webhook_error_without_the_url():

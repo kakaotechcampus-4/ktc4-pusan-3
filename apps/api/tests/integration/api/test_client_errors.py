@@ -55,7 +55,7 @@ async def test_로그인한_보호자의_화면_오류는_ERROR_로그가_된다
     detail = f"TypeError 1234567890 /children/{CHILD}/records android 14 app"
     assert records[0].alert_detail == detail
     assert str(parent_id) not in records[0].alert_detail
-    assert records[0].alert_source == "web"
+    assert records[0].alert_source == "browser"
 
 
 async def test_digest_는_없어도_된다(db_client, bearer):

@@ -29,7 +29,7 @@ async def report_client_error(body: ClientErrorReport, parent: CurrentParent) ->
     """화면 오류 한 건을 서버 로그(ERROR)로 남긴다. 응답은 없다 — 화면은 결과를 기다리지 않는다.
 
     alert_detail — 네 칸은 서버가 모양을 검사했으니(스키마 패턴) Discord 에도 띄운다. 보호자 id 는
-    서버 로그에만. alert_source — Discord 에서 web-alert 로 뜬다.
+    서버 로그에만. alert_source — Discord 에서 browser-alert 로 뜬다.
     """
     log.error(
         "화면 오류 name=%s digest=%s path=%s platform=%s parent=%s",
@@ -40,6 +40,6 @@ async def report_client_error(body: ClientErrorReport, parent: CurrentParent) ->
         parent.parent_id,
         extra={
             "alert_detail": f"{body.name} {body.digest or '-'} {body.path} {body.platform}",
-            "alert_source": "web",
+            "alert_source": "browser",
         },
     )

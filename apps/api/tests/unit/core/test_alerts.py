@@ -335,15 +335,15 @@ def test_alert_detail_is_one_short_line(attach, sent):
 def test_alert_source_reaches_the_sender(attach):
     """출처(api · web · infra)를 보내기 함수에 넘긴다 — Discord 에서 보내는 이름이 갈린다.
 
-    기본은 api 다. 화면 오류 보고는 extra={"alert_source": "web"} 으로 찍는다.
+    기본은 api 다. 화면 오류 보고는 extra={"alert_source": "browser"} 으로 찍는다.
     """
     sources: list[str] = []
     log, handler = attach(lambda _text, source: sources.append(source))
     log.error("api 쪽")
-    log.error("화면 쪽", extra={"alert_source": "web"})
+    log.error("화면 쪽", extra={"alert_source": "browser"})
     handler.flush()
 
-    assert sources == ["api", "web"]
+    assert sources == ["api", "browser"]
 
 
 def test_configure_attaches_to_the_app_logger_only(request, sent):
