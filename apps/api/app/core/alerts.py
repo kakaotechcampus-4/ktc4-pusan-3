@@ -81,13 +81,13 @@ class WebhookHandler(logging.Handler):
         self._sent_in_window = 0
         self._dropped = 0  # 이번 분에 넘친 건수
         self._dropped_note = 0  # 지난 분에 넘친 건수 — 다음 알림 머리에 적는다
-        self._closed = False
+        self._stopped = False  # logging.Handler 의 _closed 와 겹치지 않는 이름
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._thread = threading.Thread(target=self._drain, name="alert-webhook", daemon=True)
         self._thread.start()
 
     def emit(self, record: logging.LogRecord) -> None:
-        if self._closed:
+        if self._stopped:
             return
         try:
             note = self._admit()
@@ -127,12 +127,12 @@ class WebhookHandler(logging.Handler):
                 self._queue.task_done()
 
     def flush(self) -> None:
-        if not self._closed:
+        if not self._stopped:
             self._queue.join()
 
     def close(self) -> None:
-        if not self._closed:
-            self._closed = True
+        if not self._stopped:
+            self._stopped = True
             self._queue.put(_STOP)
             self._thread.join(timeout=5.0)
         super().close()
