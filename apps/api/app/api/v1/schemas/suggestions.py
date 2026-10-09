@@ -61,6 +61,7 @@ class ApproveSuggestionsResponse(BaseModel):
 class SuggestionsRequest(BaseModel):
     agents: list[AgentValue]
     run_id: str | None = None
+    prompt_key: str | None = None
 
 
 class GeneralSuggestionOut(BaseModel):
