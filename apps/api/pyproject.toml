@@ -23,6 +23,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "fakeredis>=2.39.0",
     # 약관 원고(마크다운) → 정본 HTML. 새 약관 버전을 만들 때 scripts/render_policy_html.py 가
     # 한 번 쓰고, 결과 HTML 을 저장소에 커밋한다. 서버는 저장된 HTML 을 내줄 뿐이라 배포에 필요 없다.
     "markdown-it-py>=4.2.0",
