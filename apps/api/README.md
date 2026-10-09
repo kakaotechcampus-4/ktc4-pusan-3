@@ -93,27 +93,17 @@ curl http://localhost:8000/health
 | 배포 서버 | `docker compose -f deploy/docker/docker-compose.deploy.yml logs -f api` |
 | 배포 서버, 컨테이너를 지운 뒤에도 | `journalctl CONTAINER_NAME=ktc4-api --since "1 hour ago"` |
 
-🚨 docker 기본 로그(json-file)는 새 이미지로 `compose up` 할 때 컨테이너와 함께 지워진다. 그래서 api 를
-`deploy/docker/docker-compose.deploy.yml` 에 올릴 때 서비스 아래에 이것을 붙여 넣는다 (#166 · 서버는
-Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). web · redis 도 지금 같은 문제라 같이 넣는 것이 좋다.
+🚨 docker 기본 로그(json-file)는 새 이미지로 `compose up` 할 때 컨테이너와 함께 지워진다. 그래서
+`deploy/docker/docker-compose.deploy.yml` 은 전 서비스를 journald 로 둔다 (`x-logging` 앵커 · 서버는
+Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). api 를 올릴 때는 서비스 아래에 한 줄이다 (#166).
 
 ```yaml
-    logging:
-      driver: journald
-      options:
-        tag: ktc4-api
+    logging: *logging
 ```
 
-journald 를 못 쓰는 호스트라면 대신 `json-file` 에 회전을 건다 — 회전이 없으면 디스크(50GB 고정)가 찰
-때까지 커진다.
-
-```yaml
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
-```
+맥의 Docker Desktop 에는 journald 가 없다. 배포 compose 를 로컬에서 띄워 볼 때만 `deploy/docker/.env` 에
+`LOG_DRIVER=json-file` 을 둔다 (빌드 `make web-image` 는 상관없다). 그때는 회전이 없으니 오래 돌리지
+않는다 — journald 없는 호스트에서 오래 돌릴 일이 생기면 json-file 에 `max-size` · `max-file` 회전을 건다.
 
 ### 에러 알림 (Discord)
 

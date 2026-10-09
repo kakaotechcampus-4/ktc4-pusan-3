@@ -12,7 +12,7 @@
 
 | 무엇 | 어떻게 | 왜 |
 |---|---|---|
-| **적재(모으기)** | 앱이 아니라 **docker 로그 드라이버 `journald`** | 앱은 stderr 로만 찍고, 어디에 모을지는 실행 환경이 정한다 (§2) |
+| **적재(모으기)** | 앱이 아니라 **docker 로그 드라이버 `journald`** — compose 의 `x-logging` 앵커로 전 서비스에 | 앱은 stderr 로만 찍고, 어디에 모을지는 실행 환경이 정한다 (§2) |
 | **알림** | `app.*` 로거의 **ERROR 이상 → Discord 웹훅**, 앱 코드 (`app/core/alerts.py` · `app/integrations/discord.py`) | docker 에는 "로그 줄을 골라 사람에게 보내는" 기능이 없다 |
 | **알림 본문** | 환경 · 레벨 · 로거:함수:줄 · **코드에 적힌 로그 글귀** · 예외 **종류 이름** · 시간 | 값(args) · 원문 · 트레이스백 · 예외 메시지는 밖으로 안 나간다 (§3) |
 | **SaaS(Sentry 등)** | 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 §10 결정 전에는 못 쓴다 |
@@ -34,7 +34,7 @@ docker 기본 로그 드라이버(json-file)는 컨테이너의 화면 출력을
 
 `journald` 드라이버면 로그가 docker 밖 OS(systemd 저널)에 쌓여 컨테이너를 지워도 남고, 보관 용량은 OS 가 돌리며(기본 디스크의 10%, 최대 4GB), `docker compose logs api` 도 그대로 된다. 조건은 서버가 systemd 리눅스라는 것인데, 서버는 카테캠이 준 **EC2 t3.medium · Ubuntu 24.04 LTS · 서울 · 디스크 50GB 고정** 이고 Ubuntu 는 저널을 기본으로 디스크에 남긴다.
 
-> 지금 `deploy/docker/docker-compose.deploy.yml` 의 web · redis 도 json-file 이라 **배포할 때마다 두 컨테이너의 로그가 지워지고 있다.** api 를 올릴 때 둘에도 같은 설정을 넣는 것이 좋다 (명성님).
+> web · redis 도 json-file 이라 배포할 때마다 두 컨테이너의 로그가 지워지고 있었다 — PR #302 에서 compose 의 `x-logging` 앵커로 둘 다 journald 로 바꿨다. **적용되려면 서버에서 `make web-up` 으로 컨테이너를 한 번 다시 올려야 한다** (명성님). 맥의 Docker Desktop 에는 journald 가 없어서 로컬에서 띄워 볼 때만 `deploy/docker/.env` 에 `LOG_DRIVER=json-file` 을 둔다.
 
 ## 4. 알림 설계와 안전
 
@@ -57,4 +57,3 @@ docker 기본 로그 드라이버(json-file)는 컨테이너의 화면 출력을
 
 - 알림 부착을 import 시점이 아니라 FastAPI lifespan 으로 옮길지 — 지금은 `configure_logging()` 을 다시 부르면 핸들러가 조용히 사라진다(문서로만 막음). lifespan 이면 순서가 보장되고 import 에 부작용이 없지만, README 의 한 줄 확인 명령이 복잡해진다
 - 부팅 실패 알림 (§5 첫 항목) — 배포 compose · 스크립트 쪽 (#166)
-- web 서비스의 로그 드라이버 (§3 인용)
