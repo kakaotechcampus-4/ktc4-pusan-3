@@ -86,7 +86,8 @@ async def get_home(child: AccessibleChild, session: SessionDep) -> HomeResponse:
         today=[TodayEventOut(event_id=str(e.id), title=e.title) for e in todays],
         highlight=await _highlight(session, child_id=child.child_id, today=today),
         agent_prompts=[
-            AgentPromptOut(agent=p.agent, text=p.text) for p in agent_prompts(nickname, now)
+            AgentPromptOut(agent=p.agent, text=p.text, prompt_key=p.prompt_key)
+            for p in agent_prompts(nickname, now)
         ],
     )
 

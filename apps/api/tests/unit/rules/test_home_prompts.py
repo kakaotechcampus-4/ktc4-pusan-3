@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 
 from app.api.quota import KST
-from app.rules.home_prompts import agent_prompts
+from app.rules.home_prompts import agent_prompts, prompt_request
 
 WEEKDAY = datetime(2026, 10, 7, tzinfo=KST)  # 수
 SATURDAY = datetime(2026, 10, 10, tzinfo=KST)
@@ -54,3 +54,13 @@ def test_slot_boundaries_on_a_weekday(hour: int, meal: str, plays: bool) -> None
 
 def test_weekend_morning_also_asks_about_play() -> None:
     assert [p.agent for p in agent_prompts("하나", _at(SATURDAY, 8))] == ["food", "activity"]
+
+
+def test_every_button_key_maps_to_a_request() -> None:
+    """버튼이 내보내는 키는 모두 추천 API 가 문장으로 바꿀 수 있어야 한다. 엇갈린 조합은 막는다."""
+    for day in (WEEKDAY, SATURDAY):
+        for hour in range(24):
+            for prompt in agent_prompts("하나", _at(day, hour)):
+                assert prompt_request(prompt.agent, prompt.prompt_key)
+    assert prompt_request("food", "dinner") == "저녁 추천해줘"
+    assert prompt_request("activity", "dinner") is None

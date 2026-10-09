@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.api.v1.schemas.common import Ref
+from app.rules.home_prompts import PromptKey
 
 
 class TodayEventOut(BaseModel):
@@ -26,6 +27,12 @@ class HighlightOut(BaseModel):
 class AgentPromptOut(BaseModel):
     agent: Literal["food", "activity"]
     text: str = Field(description='버튼에 보이는 문구. 예) "민준이가 먹을 저녁 추천해드릴까요?"')
+    prompt_key: PromptKey = Field(
+        description=(
+            "버튼을 누르면 추천 요청에 agents 와 함께 그대로 보내는 키. "
+            "서버가 이 키로 Agent 에 넘길 요청 문장을 정한다 (rules/home_prompts.py)"
+        )
+    )
 
 
 class HomeResponse(BaseModel):
