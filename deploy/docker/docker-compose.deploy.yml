@@ -9,6 +9,8 @@
 # nginx 뒤로 넣는다 (지금은 앞에 아무것도 없어서 포트를 직접 낸다).
 # 🚨 api 는 --workers 1 이다. run 진행 상황이 프로그램 메모리에 있어서 (#134)
 #    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
+# 🚨 api 가 합류할 때 logging 은 journald 로 둔다 — 기본 json-file 은 새 이미지로 up 할 때 컨테이너와 함께
+#    로그가 지워진다. 붙여 넣을 설정과 이유는 apps/api/README.md "로그와 알림" (멘토 #267 2번).
 services:
   redis:
     image: redis:7-alpine
