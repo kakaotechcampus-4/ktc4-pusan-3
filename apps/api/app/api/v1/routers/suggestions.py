@@ -42,7 +42,7 @@ from app.api.v1.schemas.suggestions import (
 from app.domains.schedule import repository as schedule_repo
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.suggestion import repository as suggestion_repo
-from app.domains.suggestion.models import SuggestionFeedback, SuggestionStatus
+from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
 
 router = APIRouter()
 
@@ -375,6 +375,7 @@ async def list_suggestions(
         session,
         child_id=child.child_id,
         status=status_enum,
+        kind=SuggestionKind.PERSONALIZED,
         cursor=cursor,
         limit=limit,
     )

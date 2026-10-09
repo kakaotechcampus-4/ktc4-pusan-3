@@ -87,11 +87,14 @@ async def list_suggestions(
     *,
     child_id: uuid.UUID,
     status: SuggestionStatus | None = None,
+    kind: SuggestionKind | None = None,
     cursor: str | None = None,
     limit: int = 20,
 ) -> tuple[list[Suggestion], str | None]:
     """커서 페이징으로 추천 목록을 반환한다. (items, next_cursor)."""
     stmt = select(Suggestion).where(Suggestion.child_id == child_id)
+    if kind is not None:
+        stmt = stmt.where(Suggestion.kind == SuggestionKind(kind))
     if status is not None:
         stmt = stmt.where(Suggestion.status == SuggestionStatus(status))
     # draft 조회 시 만료된 것은 제외 (lazy expiration)
@@ -182,13 +185,31 @@ async def is_any_linked(
     return bool(await session.scalar(stmt))
 
 
+# 아이 기록 9종. 문서 행(food_doc 등)은 응답 evidence에서 제외한다.
+# agents/common/refs.py ChildRecordKind와 같은 목록.
+_CHILD_RECORD_KINDS = frozenset((
+    "observation_food",
+    "observation_health",
+    "observation_education",
+    "observation_activity",
+    "observation_routine",
+    "profile_affinity",
+    "child_growth_log",
+    "notice",
+    "daycare_meal",
+))
+
+
 async def list_evidence(
     session: AsyncSession, *, suggestion_id: uuid.UUID
 ) -> list[SuggestionEvidence]:
-    """추천 한 건의 근거 행."""
+    """추천 한 건의 근거 행 (아이 기록만, 문서 행 제외)."""
     stmt = (
         select(SuggestionEvidence)
-        .where(SuggestionEvidence.suggestion_id == suggestion_id)
+        .where(
+            SuggestionEvidence.suggestion_id == suggestion_id,
+            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+        )
         .order_by(SuggestionEvidence.created_at)
     )
     return list((await session.scalars(stmt)).all())
@@ -197,12 +218,15 @@ async def list_evidence(
 async def list_evidence_batch(
     session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SuggestionEvidence]]:
-    """여러 추천의 근거를 한 번에 조회한다. {suggestion_id: [evidence, ...]}."""
+    """여러 추천의 근거를 한 번에 조회한다 (아이 기록만, 문서 행 제외)."""
     if not suggestion_ids:
         return {}
     stmt = (
         select(SuggestionEvidence)
-        .where(SuggestionEvidence.suggestion_id.in_(suggestion_ids))
+        .where(
+            SuggestionEvidence.suggestion_id.in_(suggestion_ids),
+            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+        )
         .order_by(SuggestionEvidence.suggestion_id, SuggestionEvidence.created_at)
     )
     rows = list((await session.scalars(stmt)).all())

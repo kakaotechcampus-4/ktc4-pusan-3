@@ -94,7 +94,7 @@ class PrecheckOut(BaseModel):
     code: str
     item: str
     note: str
-    suggestion_id: str | None = None
+    suggestion_id: str
 
 
 class SuggestionsResponse(BaseModel):
