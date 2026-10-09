@@ -169,11 +169,10 @@ async def page_observations(
     status: ObservationStatus = ObservationStatus.ACTIVE,
     statuses: Collection[ObservationStatus] | None = None,
     affinity_id: uuid.UUID | None = None,
-    unused_in_suggestions: bool = False,
     cursor: ObservationCursor | None = None,
     limit: int = 20,
 ) -> ObservationPage:
-    """5종 병합 목록: 기간 overlap, 상태/성향/근거사용 필터, 역순 커서.
+    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 역순 커서.
 
     domains 를 주면 그 표들만 합친다. growth Agent 처럼 한 분류가 두 표(education ·
     routine)를 읽는 경우가 있어 하나가 아니라 목록으로 받는다. 빈 목록은 받지 않는다 —
@@ -209,7 +208,6 @@ async def page_observations(
                 "date_to_exclusive": date_to + timedelta(days=1) if date_to else None,
                 "statuses": sorted(s.value for s in wanted),
                 "affinity_id": affinity_id,
-                "unused_in_suggestions": unused_in_suggestions,
                 "cursor_upper": cursor.observed_to_exclusive if cursor else None,
                 "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
                 "cursor_id": cursor.id if cursor else None,

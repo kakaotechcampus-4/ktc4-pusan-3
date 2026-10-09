@@ -98,7 +98,6 @@ async def list_observations(
     session: SessionDep,
     domain: AgentFilter | None = None,
     status: StatusFilter | None = None,
-    unused_in_suggestions: bool = False,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ObservationsResponse:
@@ -115,7 +114,6 @@ async def list_observations(
         child_id=child.child_id,
         domains=domains,
         statuses=(ObservationStatus(status),) if status else _LISTED_STATUSES,
-        unused_in_suggestions=unused_in_suggestions,
         cursor=_decode_cursor(cursor) if cursor else None,
         limit=limit,
     )

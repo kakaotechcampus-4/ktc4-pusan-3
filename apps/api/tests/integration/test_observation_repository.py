@@ -9,7 +9,7 @@
 #   query date overlap: (child_id, status) 인덱스 후 observed_range post-filter
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -35,12 +35,6 @@ from app.domains.memory.observation.repository import (
     update_observation,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
-from app.domains.suggestion.models import (
-    Suggestion,
-    SuggestionAgent,
-    SuggestionEvidence,
-    SuggestionKind,
-)
 
 
 @pytest.fixture
@@ -509,8 +503,8 @@ async def test_page_merges_five_domains_with_cursor_and_status_filter(session, f
     assert [row.id for row in day.items] == [health.id]
 
 
-async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, family):
-    """affinity_id 필터 + unused_in_suggestions=True로 제안에 안 쓰인 관찰만 조회."""
+async def test_page_filters_by_affinity(session, family):
+    """affinity_id 를 주면 그 기억에 묶인 관찰만 조회한다."""
     writer, child, _ = family
     affinity = ProfileAffinity(
         child_id=child.id,
@@ -520,16 +514,16 @@ async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, fa
     )
     session.add(affinity)
     await session.flush()
-    used = await create_observation(
+    await create_observation(
         session,
         domain="food",
         child_id=child.id,
         source_writer=writer.id,
         raw_text="사과를 먹었다",
         observed_range=observed(date(2026, 9, 1)),
-        fields={**required_fields(ObservationDomain.FOOD, "사과"), "affinity_id": affinity.id},
+        fields=required_fields(ObservationDomain.FOOD, "사과"),
     )
-    unused = await create_observation(
+    linked = await create_observation(
         session,
         domain="food",
         child_id=child.id,
@@ -538,34 +532,12 @@ async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, fa
         observed_range=observed(date(2026, 9, 2)),
         fields={**required_fields(ObservationDomain.FOOD, "사과"), "affinity_id": affinity.id},
     )
-    suggestion = Suggestion(
-        child_id=child.id,
-        agent=SuggestionAgent.FOOD,
-        kind=SuggestionKind.PERSONALIZED,
-        content="사과 간식",
-        expires_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
-    )
-    session.add(suggestion)
-    await session.flush()
-    session.add(
-        SuggestionEvidence(
-            suggestion_id=suggestion.id,
-            source_kind="observation_food",
-            source_id=used.id,
-            note="사과를 먹었다",
-        )
-    )
-    await session.flush()
 
     page = await page_observations(
-        session,
-        child_id=child.id,
-        domains=["food"],
-        affinity_id=affinity.id,
-        unused_in_suggestions=True,
+        session, child_id=child.id, domains=["food"], affinity_id=affinity.id
     )
     assert page.total == 1
-    assert [row.id for row in page.items] == [unused.id]
+    assert [row.id for row in page.items] == [linked.id]
 
 
 async def test_page_cursor_does_not_skip_same_day_different_domain_records(session, family):
