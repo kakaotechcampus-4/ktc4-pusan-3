@@ -145,7 +145,61 @@ class GrowthLogOut(BaseModel):
     measured_on: date
     height_cm: float | None
     weight_kg: float | None
+    measured_label: str = Field(
+        description=(
+            "잰 날이 오늘로부터 얼마 전인지 (오늘 · 어제 · N일 전 · N주 전). 기록 탭과 같은 규칙"
+        )
+    )
     note: str | None
+
+
+class GrowthLogsResponse(BaseModel):
+    """GET /children/{cid}/growth — 잰 날 최신순. 한 화면에 다 들어오는 분량이라 커서는 늘 null."""
+
+    items: list[GrowthLogOut]
+    next_cursor: None = None
+
+
+class CreateGrowthLogRequest(BaseModel):
+    """POST /children/{cid}/growth — 잰 날 필수, 키 · 몸무게는 하나 이상.
+
+    잰 날은 아이 생일부터 오늘(한국 날짜)까지. 승인 게이트가 아니라 Idempotency-Key 를 받지 않는다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    measured_on: date = Field(description="잰 날 (YYYY-MM-DD). 생일보다 앞이거나 오늘보다 뒤면 400")
+    height_cm: Measurement | None = Field(default=None, description="키(cm). 0 보다 크고 300 이하")
+    weight_kg: Measurement | None = Field(
+        default=None, description="몸무게(kg). 0 보다 크고 300 이하"
+    )
+
+
+class UpdateGrowthLogRequest(BaseModel):
+    """PATCH /children/{cid}/growth/{id} — 보낸 칸만 바꾼다. 하나도 없으면 400.
+
+    키 · 몸무게의 null 은 "그날 그건 안 잰 것으로 되돌리기" 다(안 보내면 그대로). 다만 고친 결과가
+    둘 다 비면 400. 잰 날은 비울 수 없다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    measured_on: date | None = Field(default=None, description="잰 날. null 은 받지 않는다")
+    height_cm: Measurement | None = Field(default=None, description="키(cm). null 이면 비운다")
+    weight_kg: Measurement | None = Field(default=None, description="몸무게(kg). null 이면 비운다")
+
+    @field_validator("measured_on")
+    @classmethod
+    def _date_not_null(cls, value):
+        if value is None:
+            raise ValueError("잰 날은 비울 수 없다")
+        return value
+
+
+class GrowthLogResponse(BaseModel):
+    """201 · 200 — 더하거나 고친 기록 한 줄."""
+
+    log: GrowthLogOut
 
 
 class OnboardingResponse(BaseModel):

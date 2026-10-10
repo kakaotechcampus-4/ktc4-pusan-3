@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.child.models import (
@@ -178,6 +178,39 @@ async def create_growth_log(
     session.add(row)
     await session.flush()
     return row
+
+
+async def list_growth_logs(session: AsyncSession, *, child_id: uuid.UUID) -> list[ChildGrowthLog]:
+    """아이의 키 · 몸무게 기록 — 잰 날 최신순, 같은 날이면 나중에 적은 것 먼저."""
+    stmt = (
+        select(ChildGrowthLog)
+        .where(ChildGrowthLog.child_id == child_id)
+        .order_by(ChildGrowthLog.measured_on.desc(), ChildGrowthLog.id.desc())
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def find_growth_log(
+    session: AsyncSession, *, child_id: uuid.UUID, log_id: uuid.UUID
+) -> ChildGrowthLog | None:
+    """그 아이의 기록 하나. 다른 아이의 기록 id 면 None — 없는 것과 같게 본다."""
+    return await session.scalar(
+        select(ChildGrowthLog).where(
+            ChildGrowthLog.id == log_id, ChildGrowthLog.child_id == child_id
+        )
+    )
+
+
+async def delete_growth_log(
+    session: AsyncSession, *, child_id: uuid.UUID, log_id: uuid.UUID
+) -> bool:
+    """그 아이의 기록 하나를 지운다. 없거나 다른 아이의 기록이면 False."""
+    deleted = await session.scalar(
+        delete(ChildGrowthLog)
+        .where(ChildGrowthLog.id == log_id, ChildGrowthLog.child_id == child_id)
+        .returning(ChildGrowthLog.id)
+    )
+    return deleted is not None
 
 
 async def list_connected_parents(
