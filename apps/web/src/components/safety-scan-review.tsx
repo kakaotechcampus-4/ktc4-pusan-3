@@ -6,7 +6,6 @@ import { useState, type ReactNode } from "react";
 
 import { SafetyScanRowSheet } from "@/components/safety-scan-row-sheet";
 import {
-  SEVERITY_LABEL,
   isSelectable,
   needsReview,
   reviewReason,
@@ -19,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
+import { SEVERITY_LABEL } from "@/lib/health-safety";
 
 /**
  * 11-2 알레르기 검사지 — 옮겨 적은 것을 보호자가 확인하는 칸. 🚨 **승인 게이트 ㉡** 이다.
@@ -215,8 +215,8 @@ export function SafetyScanReview({
                 🚨 **색이 단독 신호가 아니다** — 무엇을 왜 다시 봐야 하는지를 글자가 말한다.
                 🚨 굵게 강조하지 않는다: 손글씨는 굵기 대비가 약해 이 크기에서 거의 안 보인다 (§4). */}
             <p className="text-body-sm text-caution mt-4">
-              등록하면 앞으로 식사 제안이 이 목록을 보고 걸러요. 사진에서 옮긴 값이라 이름이나
-              분류가 실제와 다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
+              등록하면 앞으로 식사 제안이 이 목록을 보고 걸러요. 사진에서 옮긴 값이라 이름이 실제와
+              다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
             </p>
 
             {/* 🚨 승인 게이트 ㉡ — 되돌릴 수 없는 확정이라 `btn-approve` 다. */}
@@ -488,9 +488,7 @@ function ScanRowCard({
   onEdit: (row: ScanRow) => void;
 }) {
   const selectable = isSelectable(row);
-  const meta = [row.category || null, row.severity ? SEVERITY_LABEL[row.severity] : null]
-    .filter(Boolean)
-    .join(" · ");
+  const meta = row.severity ? SEVERITY_LABEL[row.severity] : null;
   const review = needsReview(row);
 
   return (
