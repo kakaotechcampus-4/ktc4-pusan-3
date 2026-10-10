@@ -111,3 +111,8 @@ class TestReadKey:
     def test_둘_다_없으면_빈_값(self, tmp_path, monkeypatch):
         monkeypatch.delenv(KEY_NAME, raising=False)
         assert read_key(tmp_path / "없는파일") == ""
+
+    def test_Encoding_키는_한_번_풀어서_준다(self, tmp_path, monkeypatch):
+        """그대로 넘기면 이중 인코딩으로 "등록되지 않은 서비스키" 가 난다."""
+        monkeypatch.setenv(KEY_NAME, "abc%2Bdef%3D%3D")
+        assert read_key(tmp_path / "없는파일") == "abc+def=="

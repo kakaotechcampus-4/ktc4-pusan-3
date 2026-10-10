@@ -6,7 +6,8 @@
 구운 파일만 읽는다 — API 가 죽어도 날짜 계산이 죽지 않게 (설계 D8).
 
 - 인증키 `DATA_GO_KR_SERVICE_KEY` 는 환경변수나 `apps/api/.env` 에서 읽는다 — 날씨 조회와 같은
-  공공데이터포털 키다. "일반 인증키(Decoding)" 를 넣는다 — 이 스크립트가 주소에 넣을 때 인코딩한다.
+  공공데이터포털 키다. Encoding · Decoding 어느 쪽이든 받는다 — `%` 가 있으면(Encoding) 한 번 풀어
+  쓴다. 그대로 넘기면 주소에 넣을 때 한 번 더 인코딩돼 "등록되지 않은 서비스키"(30)가 난다.
   서버 설정 전체(`Settings`)를 읽지 않고 이 키 한 줄만 읽는다 — 굽는 데 다른 설정이 필요 없다.
 - 넘긴 해만 새로 받고, 이미 구워 둔 다른 해는 그대로 둔다.
 - 결과에서 `isHoliday=Y` 인 날만 남긴다. 기념일 · 24절기처럼 쉬지 않는 날은 다른 API 다.
@@ -21,6 +22,7 @@ import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -97,14 +99,19 @@ def changes(before: dict[date, str], after: dict[date, str]) -> list[str]:
 def read_key(env_file: Path = ENV_FILE) -> str:
     """환경변수가 먼저, 없으면 `.env` 의 `KEY=값` 줄. 값은 돌려주기만 하고 찍지 않는다."""
     if value := os.environ.get(KEY_NAME, "").strip():
-        return value
+        return _decoded(value)
     if not env_file.is_file():
         return ""
     for line in env_file.read_text(encoding="utf-8").splitlines():
         name, sep, value = line.partition("=")
         if sep and name.strip() == KEY_NAME:
-            return value.strip().strip("'\"")
+            return _decoded(value.strip().strip("'\""))
     return ""
+
+
+def _decoded(key: str) -> str:
+    """Encoding 키(`%2B` 등)면 한 번 푼다. httpx 가 주소에 넣을 때 다시 인코딩한다."""
+    return unquote(key) if "%" in key else key
 
 
 def fetch(year: int, key: str, client: httpx.Client) -> dict[date, str]:
