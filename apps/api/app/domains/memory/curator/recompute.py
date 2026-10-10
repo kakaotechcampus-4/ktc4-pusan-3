@@ -32,7 +32,9 @@ async def recompute_after_linking(
             continue
 
         latest = await get_latest_active_observed_on(
-            session, affinity_id=pid, domain=profile.domain,
+            session,
+            affinity_id=pid,
+            domain=profile.domain,
         )
         if latest is not None:
             if latest != profile.last_observed_on:

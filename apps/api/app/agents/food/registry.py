@@ -18,7 +18,7 @@
 - `meal_recommendation`은 `safety_ok=False`면 단계와 무관하게 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. `nutrient_analysis`·`daycare_meal`은 영향받지 않는다.
 - `consent_child_health`는 어느 라벨도 닫지 않는다. 동의가 없으면 `build_gate`가
-  `allergy_states`를 빈 튜플로 채울 뿐이다.
+  `health_safety`를 읽지 않고 `context.state.safety` 를 빈 튜플로 둘 뿐이다.
 - `(daycare)`는 `toddler`·`preschool` 에서만, 급식 행이 있을 때만 더해지는 tool이다.
   `infant_weaning`의 `meal_recommendation` 묶음은 급식 행과 무관하게 고정 3개다.
 - `filter_food_safety`는 `CODE_TOOLS`.

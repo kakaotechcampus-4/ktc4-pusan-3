@@ -185,8 +185,12 @@ class TestListUnlinked:
         obs1 = _food(child.id, subject="사과", embedding=vec)
         # 벡터 있고 affinity_id 있음 → 제외
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="배", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=0.5,
+            child_id=child.id,
+            merge_key="배",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=0.5,
             last_observed_on=date(2026, 9, 26),
         )
         session.add(profile)
@@ -211,19 +215,31 @@ class TestListProfiles:
     async def test_같은_도메인_polarity만_반환_archived_포함(self, session, family, store):
         _, child = family
         p1 = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CONFIRMED, polarity=1, strength=0.5,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CONFIRMED,
+            polarity=1,
+            strength=0.5,
             last_observed_on=date(2026, 9, 26),
         )
         p2 = ProfileAffinity(
-            child_id=child.id, merge_key="당근", domain=MemoryDomain.FOOD,
-            state=ProfileState.ARCHIVED, polarity=1, strength=0.3,
+            child_id=child.id,
+            merge_key="당근",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.ARCHIVED,
+            polarity=1,
+            strength=0.3,
             last_observed_on=date(2026, 9, 1),
         )
         # 다른 polarity → 제외
         p3 = ProfileAffinity(
-            child_id=child.id, merge_key="피망", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=-1, strength=0.5,
+            child_id=child.id,
+            merge_key="피망",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=-1,
+            strength=0.5,
             last_observed_on=date(2026, 9, 26),
         )
         session.add_all([p1, p2, p3])
@@ -246,8 +262,12 @@ class TestLink:
     async def test_관찰에_affinity_id_설정(self, session, family, store):
         _, child = family
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=0.5,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=0.5,
             last_observed_on=date(2026, 9, 26),
         )
         session.add(profile)
@@ -299,10 +319,14 @@ class TestHoldRecords:
         await session.flush()
 
         count1 = await store.record_uncertain(
-            domain="food", observation_id=str(obs.id), subject_hash="abc",
+            domain="food",
+            observation_id=str(obs.id),
+            subject_hash="abc",
         )
         count2 = await store.record_uncertain(
-            domain="food", observation_id=str(obs.id), subject_hash="abc",
+            domain="food",
+            observation_id=str(obs.id),
+            subject_hash="abc",
         )
 
         assert count1 == 1
@@ -317,7 +341,9 @@ class TestHoldRecords:
         await store.record_uncertain(domain="food", observation_id=str(obs.id), subject_hash="aaa")
         await store.record_uncertain(domain="food", observation_id=str(obs.id), subject_hash="aaa")
         count = await store.record_uncertain(
-            domain="food", observation_id=str(obs.id), subject_hash="bbb",
+            domain="food",
+            observation_id=str(obs.id),
+            subject_hash="bbb",
         )
 
         assert count == 1  # 리셋
@@ -333,7 +359,9 @@ class TestHoldRecords:
 
         # 다시 기록하면 1부터
         count = await store.record_uncertain(
-            domain="food", observation_id=str(obs.id), subject_hash="abc",
+            domain="food",
+            observation_id=str(obs.id),
+            subject_hash="abc",
         )
         assert count == 1
 
@@ -374,13 +402,15 @@ class TestSoftDeleteHoldCleanup:
         # soft delete
         from app.domains.memory.observation.repository import ObservationDomain, delete_observation
 
-        await delete_observation(session, domain=ObservationDomain.FOOD,
-                                 child_id=child.id, observation_id=obs.id)
+        await delete_observation(
+            session, domain=ObservationDomain.FOOD, child_id=child.id, observation_id=obs.id
+        )
 
         # hold 행이 사라져야 한다
         hold = await session.scalar(
-            select(ObservationLinkHold).where(ObservationLinkHold.domain == "food",
-                ObservationLinkHold.observation_id == obs.id)
+            select(ObservationLinkHold).where(
+                ObservationLinkHold.domain == "food", ObservationLinkHold.observation_id == obs.id
+            )
         )
         assert hold is None
 
@@ -438,13 +468,21 @@ class TestChildIsolation:
         await session.flush()
 
         pa = ProfileAffinity(
-            child_id=child_a.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=0.5,
+            child_id=child_a.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=0.5,
             last_observed_on=date(2026, 9, 26),
         )
         pb = ProfileAffinity(
-            child_id=child_b.id, merge_key="배", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=0.5,
+            child_id=child_b.id,
+            merge_key="배",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=0.5,
             last_observed_on=date(2026, 9, 26),
         )
         session.add_all([pa, pb])
@@ -465,34 +503,60 @@ async def test_hold_저장과_해제는_같은_UUID의_도메인을_구분한다
 
     _, child = family
     observation_id = uuid4()
-    session.add_all([
-        _food(child.id, id=observation_id),
-        _activity(child.id, id=observation_id),
-        ObservationEducation(
-            id=observation_id, child_id=child.id, raw_text="test", subject="수학",
-            topic="수학", confidence_source=ConfidenceSource.PARENT_DIRECT,
-            observed_range=Range(date(2026, 9, 26), date(2026, 9, 27)),
-        ),
-    ])
+    session.add_all(
+        [
+            _food(child.id, id=observation_id),
+            _activity(child.id, id=observation_id),
+            ObservationEducation(
+                id=observation_id,
+                child_id=child.id,
+                raw_text="test",
+                subject="수학",
+                topic="수학",
+                confidence_source=ConfidenceSource.PARENT_DIRECT,
+                observed_range=Range(date(2026, 9, 26), date(2026, 9, 27)),
+            ),
+        ]
+    )
     await session.flush()
 
     for domain in ("food", "activity", "education"):
-        assert await store.record_uncertain(
-            domain=domain, observation_id=str(observation_id), subject_hash="same",
-        ) == 1
-    assert await store.record_uncertain(
-        domain="food", observation_id=str(observation_id), subject_hash="same",
-    ) == 2
-    holds = (await session.scalars(select(ObservationLinkHold).where(
-        ObservationLinkHold.observation_id == observation_id,
-    ))).all()
+        assert (
+            await store.record_uncertain(
+                domain=domain,
+                observation_id=str(observation_id),
+                subject_hash="same",
+            )
+            == 1
+        )
+    assert (
+        await store.record_uncertain(
+            domain="food",
+            observation_id=str(observation_id),
+            subject_hash="same",
+        )
+        == 2
+    )
+    holds = (
+        await session.scalars(
+            select(ObservationLinkHold).where(
+                ObservationLinkHold.observation_id == observation_id,
+            )
+        )
+    ).all()
     assert {h.domain: h.uncertain_count for h in holds} == {
-        "food": 2, "activity": 1, "education": 1,
+        "food": 2,
+        "activity": 1,
+        "education": 1,
     }
     assert all(h.child_id == child.id for h in holds)
 
     await store.clear_hold(domain="food", observation_id=str(observation_id))
-    remaining = (await session.scalars(select(ObservationLinkHold.domain).where(
-        ObservationLinkHold.observation_id == observation_id,
-    ))).all()
+    remaining = (
+        await session.scalars(
+            select(ObservationLinkHold.domain).where(
+                ObservationLinkHold.observation_id == observation_id,
+            )
+        )
+    ).all()
     assert set(remaining) == {"activity", "education"}
