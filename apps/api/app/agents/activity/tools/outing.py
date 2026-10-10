@@ -42,6 +42,7 @@ INDOOR_CATEGORIES = frozenset(
 
 _PLACES = "search_nearby_places"
 _WEATHER = "lookup_weather"
+_WEEKDAYS = "월화수목금토일"
 
 _T = TypeVar("_T")
 
@@ -57,6 +58,16 @@ def day_of(label: DayLabel, today: date) -> date:
         days_to_saturday = 5 - today.weekday()
         return today if days_to_saturday <= 0 else today + timedelta(days=days_to_saturday)
     return today
+
+
+def days_of(label: DayLabel, today: date) -> tuple[date, ...]:
+    """라벨이 가리키는 날들. 이번 주말은 토 · 일 이틀이다 — 주말 나들이는 둘 중 하루를 고르는
+    일이라 날마다 따로 본다. 오늘이 일요일이면 오늘 하루다.
+    """
+    first = day_of(label, today)
+    if label == DayLabel.THIS_WEEKEND and first.weekday() == 5:
+        return (first, first + timedelta(days=1))
+    return (first,)
 
 
 async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
@@ -95,26 +106,43 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
 
 
 async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> ToolResult:
-    """오늘(또는 라벨의 날) 야외 판정과 등급 라벨을 돌려준다.
+    """라벨의 날마다 야외 판정과 등급 라벨을 돌려준다.
 
-    - args.day 를 날짜로 바꾼다(`day_of`). 모델은 날짜를 계산하지 않는다.
+    - args.day 를 날짜로 바꾼다(`days_of`). 모델은 날짜를 계산하지 않는다. 이번 주말은 토 · 일을
+      날마다 따로 판정한다 — 토요일 비가 일요일 야외를 막거나, 토요일 맑음이 일요일 비를 가리지
+      않게.
     - 판정은 `check_weather` 가 4-2 표로 한다.
     - 모델에게는 판정(`outdoor_ok`)과 등급 라벨만 준다. raw 수치는 주지 않는다 —
       모델이 자기 기준으로 재해석해 "나쁨이지만 잠깐이면 괜찮아요"를 쓴다.
-    - 화면에 붙는 안내(문구 키)는 모델에게 주지 않고 `context.state.weather` 에 둔다.
+    - 화면에 붙는 안내(문구 키)는 모델에게 주지 않고 `context.state.weather` 에 날짜별로 둔다.
     - 미세먼지만 실패하면 야외는 허용하되 "미세먼지는 확인하지 못했어요" 를 싣는다.
-    - 날씨가 실패하면 UPSTREAM_ERROR. "맑음"으로 가정하지 않는다.
+    - 날씨를 못 읽은 날은 `checked=False` · 실내만이다. 모든 날을 못 읽으면 UPSTREAM_ERROR.
+      "맑음"으로 가정하지 않는다.
     """
-    brief = await check_weather(context, day_of(args.day, context.today))
-    context.state.weather = brief
-    if WEATHER_UNCHECKED in brief.notices:
+    days = days_of(args.day, context.today)
+    briefs = await asyncio.gather(*(check_weather(context, day) for day in days))
+    context.state.weather.update(zip(days, briefs, strict=True))
+    checked = [WEATHER_UNCHECKED not in brief.notices for brief in briefs]
+    if not any(checked):
         return fail(
             "query",
             _WEATHER,
             ErrorCode.UPSTREAM_ERROR,
             "날씨를 확인하지 못했다. 맑다고 가정하지 않는다. 실내 활동만 낸다.",
         )
-    return ok("query", _WEATHER, **brief.to_model_payload())
+    return ok(
+        "query",
+        _WEATHER,
+        days=[
+            {
+                "date": day.isoformat(),
+                "weekday": _WEEKDAYS[day.weekday()],
+                "checked": ok_day,
+                **brief.to_model_payload(),
+            }
+            for day, brief, ok_day in zip(days, briefs, checked, strict=True)
+        ],
+    )
 
 
 async def lookup_schedule(context: ActivityContext, args: LookupScheduleArgs) -> ToolResult:
