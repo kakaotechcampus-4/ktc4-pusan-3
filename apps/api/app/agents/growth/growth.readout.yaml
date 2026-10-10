@@ -43,7 +43,7 @@ delta.checkup_hint:
   template: "성장 평가는 영유아 건강검진에서 확인해 보세요."
 
 # ── 안전 · 근거 안내 ──
-caution.environmental:
+caution.non_food_allergy:
   kind: notice
   template: "등록된 알레르기({label})가 있어요. 장소랑 재료를 한 번 확인해 주세요."
 doc.no_row:

@@ -133,9 +133,9 @@ DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-
 | 5-4 | `search_growth_doc` | 월령·`row_type`·카테고리 필터 → 의미 검색 top-3 · 쿼리에 보호자 발화 없음 · **교육과정도 루틴 자료도 같은 테이블** |
 | 5-4a | `pick_next_step` | 관찰 `assistance_level` → 사슬의 바로 다음 행 · 건너뛰기 불가 · 사슬 끝이면 일반 템플릿 · **최근 14일 안 관찰만** · 없거나 비면 `ask.routine_current` |
 | 5-5 | 평가 표현 필터 | 출력 사후 · 걸리면 후보 **삭제**(수정 아님) |
-| 5-6 | `hazard` 사후 스캔 | 활동 후보의 `materials`·문장 · 18개월 미만 승격 **없음** |
+| 5-6 | `hazard` 사후 스캔 | 활동 후보의 `materials`·문장 · 0–17개월은 경고도 **차단**(Activity 와 같다, #282 PM 리뷰) |
 | 5-7 | 음식 용어 스캔 | 교육 · 루틴 후보 · `allergen_terms.yaml` + `food_choking` · 아이 · 월령 무관 · 한 글자 별칭 안 씀 · Activity 제외 별칭 공유 (#264 · #261 전엔 포트 주입) |
-| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조(대응표 없음) · `environmental` 이 있으면 확인 문구(`caution.environmental`) · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
+| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조(대응표 없음) · `allergy` 중 식품 사전에 없는 이름이 있으면 확인 문구(`caution.non_food_allergy`, `environmental` 제외) · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
 | 5-9 | 루틴 닫힘 | 의료 처치 용어 → `closed.medical_routine` · 증상처럼 보이는 습관 → `closed.symptom_habit` · 요청 문장 · 관찰 `subject` 에 걸리면 모델 0 |
 
 ---
@@ -184,9 +184,9 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 | --- | --- |
 | `test_growth_registry.py` | 게이팅 표 · 코드 tool 비노출 |
 | `test_growth_gating.py` | 11/12 · 23/24 · 35/36개월 양쪽 · 동의 철회 |
-| `test_growth_delta.py` | 측정 1건 → 안내 · **간격이 짧아도 수치가 그대로 나옴** · **AI 0회** · 측정일 전부 표기 · 반올림 0건 · 지표별 판정(한쪽만 잰 날 · 한 지표만 2건) · 24개월 걸침 → 자세 단서 |
+| `test_growth_delta.py` | 측정 1건 → 안내 · **간격이 짧아도 수치가 그대로 나옴** · **AI 0회** · 측정일 전부 표기 · 반올림 0건 · 지표별 판정(한쪽만 잰 날 · 한 지표만 2건) · 24개월 걸침 → 자세 단서 · 요약은 방향을 동사로(늘었어요 · 줄었어요 · 그대로예요), 직전 대비는 부호 그대로 |
 | `test_growth_routine.py` | `trigger` NULL → 역질의 · 30개월 습관 → 닫힘 readout · **20개월 자립 + 근거 0 → 역질의**(일반 제안 아님) · **8개월 → `rhythm_info` readout 하나, `suggestion` 0건** · 같은 카테고리 관찰이 15일 전 → 역질의 · 다른 카테고리 관찰만 → 역질의 · `assistance_level` NULL → 역질의 · 의료 처치 / 증상 → 닫힘 readout · 모델 0회 |
-| `test_growth_safety.py` | **신규** — 음식 용어(알레르기 사전 · `food_choking`) 후보 삭제 · 동의 없음 → `health_safety` 미조회 + 교육 정상 · 등록한 이름(라텍스 · 꽃가루)이 든 후보 삭제 · 환경 알레르기 → 확인 문구 · 조회 실패 → 교육만 `blocked.safety` · 15개월 `water` 경고 후보가 **차단되지 않고** 경고와 함께 남음 |
+| `test_growth_safety.py` | **신규** — 음식 용어(알레르기 사전 · `food_choking`) 후보 삭제 · 동의 없음 → `health_safety` 미조회 + 교육 정상 · 등록한 이름(라텍스 · 꽃가루)이 든 후보 삭제 · 식품 사전에 없는 알레르기 이름 → 확인 문구(고소공포 `environmental` 은 없음) · 조회 실패 → 교육만 `blocked.safety` · 15개월 `water` 경고 후보는 **차단**, 18개월부터 경고와 함께 남음 |
 | `test_growth_output.py` | ISBN 검증(직전 검색 결과 + 만료 전 suggestion 제외) · 근거 id · hazard |
 | `test_growth_doc.py` | **신규** — `search_growth_doc` 쿼리에 보호자 발화 0건 · 월령 밖 행 미노출 · 결과가 `source_kind='growth_doc'`으로만 담김(품질 지표에서 제외) |
 | `test_growth_next_step.py` | **신규** — `pick_next_step`이 사슬의 바로 다음 칸 · 건너뛰기 0건 · 사슬 끝이면 일반 템플릿 |
@@ -246,4 +246,4 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 
 ## 13. 열린 항목
 
-G-3 · G-7 · **G-9 증감 문구 PM 확인**(FE 동의 10-08) · 의료 처치 / 증상 목록 내용 ([`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
+G-3 · G-7 · 루틴 닫힘 "약" 한 글자 별칭의 오탐 측정(목록 자체는 10-09 확정, [`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · 공용 `level_at` 으로 승격 옮기기(별도 이슈) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
