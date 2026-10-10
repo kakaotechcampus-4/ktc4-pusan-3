@@ -36,20 +36,22 @@ describe("buildWebAlert — 종류 · digest · 경로 · 라우트만, 메시�
 
     expect(alert.username).toBe("web-alert");
     expect(alert.allowed_mentions).toEqual({ parse: [] });
-    const [first, second, third] = alert.content.split("\n");
-    expect(first).toBe(
-      "🟡 [prod] ERROR web render /children/[cid]/records — TypeError digest=abc123 path=/children/abc/records",
-    );
-    expect(second).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{4}$/);
-    expect(third).toBe('→ journalctl CONTAINER_NAME=ktc4-web --since "10 min ago"');
-    expect(alert.content).not.toContain("SECRET");
-    expect(alert.content).not.toContain("tab=all");
+    const embed = alert.embeds[0];
+    expect(embed.description).toContain("## 🟡 TypeError");
+    expect(embed.description).toContain("/children/abc/records");
+    expect(embed.description).toContain("`abc123`");
+    expect(embed.description).toContain("**prod**");
+    expect(embed.footer?.text).toBe('journalctl CONTAINER_NAME=ktc4-web --since "10 min ago"');
+    expect(embed.timestamp).toBeDefined();
+    expect(embed.description).not.toContain("SECRET");
+    expect(embed.description).not.toContain("tab=all");
   });
 
   it("Error 가 아닌 것이 던져져도 터지지 않는다 — 종류는 typeof, digest 는 -", () => {
     const alert = buildWebAlert("boom", REQUEST, CONTEXT, { env: "prod", now: new Date(0) });
 
-    expect(alert.content).toContain("— string digest=- path=");
+    expect(alert.embeds[0].description).toContain("## 🟡 string");
+    expect(alert.embeds[0].description).toContain("`-`");
   });
 });
 
