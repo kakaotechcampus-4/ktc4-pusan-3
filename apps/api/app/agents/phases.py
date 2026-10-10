@@ -131,31 +131,39 @@ class PipelinePhase(Enum):
 TRANSITIONS: dict[PipelinePhase, tuple[PipelinePhase | None, ...]] = {
     # 일반 run
     PipelinePhase.SAFETY_PRECHECK: (
-        PipelinePhase.SUPERVISE, PipelinePhase.CONTINUATION_RECORD,
+        PipelinePhase.SUPERVISE,
+        PipelinePhase.CONTINUATION_RECORD,
     ),
     PipelinePhase.SUPERVISE: (PipelinePhase.ROUTE,),
     PipelinePhase.ROUTE: (
-        PipelinePhase.RECORD, PipelinePhase.DOMAIN, PipelinePhase.FINALIZE,
+        PipelinePhase.RECORD,
+        PipelinePhase.DOMAIN,
+        PipelinePhase.FINALIZE,
     ),
     PipelinePhase.RECORD: (PipelinePhase.RECORD_EMIT, PipelinePhase.FINALIZE),
     PipelinePhase.RECORD_EMIT: (
-        PipelinePhase.REROUTE, PipelinePhase.DOMAIN,
-        PipelinePhase.CURATOR_EMBED, PipelinePhase.FINALIZE,
+        PipelinePhase.REROUTE,
+        PipelinePhase.DOMAIN,
+        PipelinePhase.CURATOR_EMBED,
+        PipelinePhase.FINALIZE,
     ),
     PipelinePhase.REROUTE: (PipelinePhase.DOMAIN, PipelinePhase.FINALIZE),
     PipelinePhase.DOMAIN: (PipelinePhase.FINALIZE,),
     # Curator 체인
     PipelinePhase.CURATOR_EMBED: (
-        PipelinePhase.CURATOR_LINK, PipelinePhase.FINALIZE,
+        PipelinePhase.CURATOR_LINK,
+        PipelinePhase.FINALIZE,
     ),
     PipelinePhase.CURATOR_LINK: (
-        PipelinePhase.CURATOR_RECOMPUTE, PipelinePhase.FINALIZE,
+        PipelinePhase.CURATOR_RECOMPUTE,
+        PipelinePhase.FINALIZE,
     ),
     PipelinePhase.CURATOR_RECOMPUTE: (PipelinePhase.FINALIZE,),
     PipelinePhase.FINALIZE: (None,),
     # 이어받기 run
     PipelinePhase.CONTINUATION_RECORD: (
-        PipelinePhase.RECORD_EMIT, PipelinePhase.FINALIZE,
+        PipelinePhase.RECORD_EMIT,
+        PipelinePhase.FINALIZE,
     ),
 }
 

@@ -4,6 +4,9 @@
     client     — DB 를 쓰지 않는 테스트용. 서버도 DB 도 띄우지 않고 돈다
     session    — 트랜잭션 하나를 열고 테스트가 끝나면 롤백한다 (DB 필요)
     db_client  — client + session. A-01~A-20 처럼 DB 를 보는 테스트가 쓴다
+
+Discord 알림은 tests/__init__.py 가 끈다 — 이 파일이 app.main 을 불러오기 전에 돌아야 해서
+거기 있다.
 """
 
 import pytest
