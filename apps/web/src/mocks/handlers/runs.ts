@@ -354,6 +354,22 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   await sleep(700);
 
   /**
+   * 🚨 **저장한 뒤에 끊긴 run 이다** (#253 · #271). 서버는 Memory 가 쓴 것을 commit 한 뒤 예외나
+   *    60초 안전망에 걸리면 `failed` 가 아니라 `done` 에 `completed: false` 를 싣고 닫는다 —
+   *    `failed` 로 닫으면 키가 풀려 다시 보낸 한 줄이 **두 번 저장된다.** 그래서 여기서는
+   *    `forgetRun` 을 부르지 않는다. 같은 키로 다시 보내면 이 run 이 재생된다.
+   *    일정 낱말만 쓴 한 줄은 `saved` 를 보내기 전에 끊긴 run 으로 쓴다 — 화면이 받은 기록이 없는 갈래다.
+   */
+  if (scenario === "interrupted") {
+    if (intent !== "event") {
+      yield frame("saved", { observations: [observations[0]] });
+      await sleep(300);
+    }
+    yield frame("done", { run_id: runId, model_calls: 0, completed: false });
+    return;
+  }
+
+  /**
    * 🚨 **일정만 말한 한 줄에는 관찰이 없다.** "이번 주말에 공원 산책 가기" 는 아이가 무엇을
    *    했다는 말이 아니라 앞으로의 계획이라, 기록으로 쌓을 것이 없다 — 화면은 그때
    *    "아이에 관한 기록은 찾지 못했어요" 를 그리고 아래에 초안을 세운다.

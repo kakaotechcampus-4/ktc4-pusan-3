@@ -677,6 +677,42 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       setScenario("default");
     }
   });
+
+  /**
+   * 🚨 **저장한 뒤에 끊긴 run 은 failed 가 아니다** (#253 · #271). 서버는 done 에 `completed: false`
+   *    를 싣고 키를 놓지 않는다 — 놓으면 다시 보낸 한 줄이 두 번 저장된다.
+   */
+  it.each([
+    { label: "기록형 한 줄은 저장한 뒤 끊긴다", text: "그림 그렸어", saved: true },
+    { label: "일정형 한 줄은 saved 도 못 보내고 끊긴다", text: "주말에 소풍 가기", saved: false },
+  ])("interrupted — $label", async ({ text, saved }) => {
+    setScenario("interrupted");
+    try {
+      const key = newIdempotencyKey();
+      const body = { text, source: "home_input" };
+      const { run_id } = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+
+      const events = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      const types = events.map((e) => e.type);
+
+      expect(types).not.toContain("failed");
+      expect(types.includes("saved")).toBe(saved);
+      const last = events.at(-1);
+      expect(last?.type).toBe("done");
+      expect((last?.data as { completed?: boolean }).completed).toBe(false);
+
+      // 🚨 키를 놓지 않는다 — 같은 키로 다시 보내면 새 run 이 아니라 이 run 이 재생된다.
+      const again = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+      expect(again.run_id).toBe(run_id);
+    } finally {
+      setScenario("default");
+    }
+  });
 });
 
 /* ── 04 안내 · 되묻기 · 준비 중 (#141) ───────────────────────────────── */

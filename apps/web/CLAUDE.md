@@ -652,6 +652,14 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - `runReducer` 는 순수 함수다. 훅 없이 이벤트 배열만 흘려서 검증할 수 있다
 - 끝나면 **`qk.child(cid)` 를 통째로** 무효화한다 — run 하나가 홈·관찰·프로필을 동시에 바꾼다
 - 🚨 **`partial` 이 왔으면 `done` 이 와도 부분 결과다.** 성공 화면으로 덮지 않는다 (NF-06)
+- 🚨 **`done` 이 `completed: false` 로 오면 저장한 뒤에 끊긴 run 이다** (#253 · #271 · `RunState.interrupted`).
+  서버는 쓴 것을 commit 한 뒤 예외나 60초 안전망에 걸리면 `failed` 가 아니라 이 길로 닫고 Idempotency 키와
+  이어받기 맥락을 놓지 않는다 — `failed` 로 닫으면 다시 보낸 한 줄이 두 번 저장되기 때문이다. 키가 없으면 `true` 다.
+  - 🚨 **실패가 아니다.** `status` 는 `done`(또는 `partial`)이고 `isRunConfirmed` 도 참이라 질문도 닫힌다
+  - 🚨 **받은 기록이 없어도 "저장하지 않았어요" 를 세우지 않는다.** `saved` 를 보내기 전에 끊겼을 수 있고, 쓴 것이
+    일정 변경일 수도 있다 — 제목은 "적어주신 내용은 반영했어요" 다
+  - 🚨 **다시 시도 · 고쳐 쓰기를 세우지 않는다.** 대신 "같은 말을 다시 보내지 않아도 돼요" 를 글자로 말한다.
+    무엇이 빠졌는지("추천을 못 만들었어요")도 단정하지 않는다
 - 🚨 **`guidance` · `note` · `unavailable` 은 실패가 아니다** (#141). 셋 다 `done` 으로 끝나는
   run 에 실려 오고, 04 답 묶음 안의 카드로 선다 — 실패 화면으로 빼면 **같은 run 에서 저장된
   기록이 화면에서 사라진다.** 특히 `unavailable` 은 라우팅 직후 Memory 보다 **먼저** 나가서
@@ -735,7 +743,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   🚨 **그 스토어에 `persist` 를 붙이지 않는다** — 아이에 대한 발화 원문이라 디스크에 남기지 않는다
   (최상위 §2 개인정보). 로그아웃에서 `clearAll()` 로 지운다
 
-목의 `?scenario=partial` · `failed` · `disconnected` 로 세 경로를 바로 확인할 수 있다 (§7).
+목의 `?scenario=partial` · `failed` · `disconnected` · `interrupted` 로 네 경로를 바로 확인할 수 있다 (§7).
 대화 스토어의 규칙은 `stores/conversation.test.ts` 가 목 서버와 실제로 돌려서 건다 (§8).
 
 ---
@@ -897,6 +905,7 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `scarcity` | 근거 부족 — 개인화 대신 **일반 추천 1건**(점선 카드) + 되묻는 질문 **1개** |
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
+| `interrupted` | 04 저장한 뒤 끊김 — `done` + `completed: false`. **다시 시도가 없어야 한다** · 일정형 한 줄이면 받은 기록 없이 끊긴다 (#271) |
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
 | `policy_bumped` | 가입 동의 — **제출 직전에 약관이 새 판으로** (400 `policy_version_invalid`). 바뀐 항목만 체크가 풀리고 다시 확인받아야 한다 |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
