@@ -3,6 +3,8 @@
 - child.gender — male · female · undisclosed. 이미 있는 아이는 전부 undisclosed 가 된다.
   기본값이 "밝히지 않을래요" 인 것은 루트 CLAUDE.md §2 다.
 - child_growth_log — 키 · 몸무게를 잰 날 한 줄. 둘 다 빈 행과 0 이하 값은 DB 가 막는다.
+  칸 이름은 Agent 포트(agents/food/store/ports.py 의 Measurement)와 같고, 자릿수(numeric(4,1))는
+  docs/agents/data_model.md 의 09-22 확정값과 같다.
   아이가 지워지면 같이 지워지고, 적은 보호자가 탈퇴하면 적은 사람만 비운다 (공동 기록).
 
 Revision ID: 988fc4ef647d
@@ -40,7 +42,7 @@ def upgrade() -> None:
         sa.Column("child_id", sa.UUID(), nullable=False),
         sa.Column("measured_on", sa.Date(), nullable=False),
         sa.Column("height_cm", sa.Numeric(4, 1), nullable=True),
-        sa.Column("weight_kg", sa.Numeric(5, 2), nullable=True),
+        sa.Column("weight_kg", sa.Numeric(4, 1), nullable=True),
         sa.Column("note", sa.Text(), nullable=True),
         sa.Column("created_by", sa.UUID(), nullable=True),
         sa.Column(

@@ -109,9 +109,11 @@ class ChildGrowthLog(Base, UUIDPk, Timestamps):
         ForeignKey("child.id", ondelete="CASCADE"), nullable=False
     )
     measured_on: Mapped[date] = mapped_column(nullable=False)
-    # float 가 아니라 Numeric — 104.2 가 104.19999 로 바뀌지 않게
+    # float 가 아니라 Numeric — 104.2 가 104.19999 로 바뀌지 않게.
+    # 자릿수는 docs/agents/data_model.md 의 09-22 확정값(소수 한 자리)이다.
+    # 더 긴 값은 DB 가 반올림한다
     height_cm: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
-    weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("parent.id", ondelete="SET NULL")

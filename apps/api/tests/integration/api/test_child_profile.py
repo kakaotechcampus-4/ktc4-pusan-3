@@ -16,6 +16,7 @@
 from datetime import date
 
 import pytest
+from sqlalchemy import text
 
 from app.api.v1.routers import children as children_router
 from app.domains.child.models import ParentChildRelation
@@ -78,7 +79,7 @@ async def test_보호자3이_남의_아이를_보면_403(db_client, session, cid
 # ── PATCH /children/{cid} ──────────────────────────────────────────
 
 
-async def test_성별만_보내면_성별만_바뀐다(db_client, bearer, cid):
+async def test_성별만_보내면_성별만_바뀐다(db_client, session, bearer, cid):
     headers, _ = bearer
 
     response = await db_client.patch(profile_url(cid), json={"gender": "female"}, headers=headers)
@@ -88,8 +89,10 @@ async def test_성별만_보내면_성별만_바뀐다(db_client, bearer, cid):
     assert child["gender"] == "female"
     # 안 보낸 칸은 그대로다
     assert (child["nickname"], child["birth_date"]) == ("테스트아이", "2023-01-01")
-    again = await db_client.get(profile_url(cid), headers=headers)
-    assert again.json()["gender"] == "female"
+    # 요청과 테스트가 같은 세션이라 commit 안 된 값도 보인다 — 되감은 뒤 DB 에 남은 것만 본다
+    await session.rollback()
+    saved = await session.scalar(text("SELECT gender FROM child WHERE id = :id"), {"id": cid})
+    assert saved == "female"
 
 
 async def test_생일을_고치면_나이_문구도_다시_계산한다(db_client, bearer, cid):
@@ -117,7 +120,23 @@ async def test_보호자2도_고칠_수_있다(db_client, session, cid):
     response = await db_client.patch(profile_url(cid), json={"gender": "male"}, headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["child"]["role"] == "member"
+    assert (response.json()["child"]["role"], response.json()["child"]["gender"]) == (
+        "member",
+        "male",
+    )
+
+
+@pytest.mark.parametrize("birth_date", ["2026-10-05", "2006-01-01"])
+async def test_생일_범위의_양_끝은_받는다(db_client, bearer, cid, birth_date):
+    # 오늘(한국 날짜)과 올해 - 20년의 1월 1일 — 범위 안이다
+    headers, _ = bearer
+
+    response = await db_client.patch(
+        profile_url(cid), json={"birth_date": birth_date}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["child"]["birth_date"] == birth_date
 
 
 @pytest.mark.parametrize("birth_date", ["2026-10-06", "2005-12-31"])
@@ -140,6 +159,8 @@ async def test_생일이_화면_달력_범위_밖이면_400(db_client, bearer, c
         {},  # 고칠 것이 없다
         {"gender": "unknown"},  # 세 값 밖
         {"nickname": None},  # 비우기는 없다 — 별명 · 생일 · 성별은 늘 값이 있다
+        {"birth_date": None},
+        {"gender": None},
         {"nickname": "   "},  # 공백만
     ],
 )
