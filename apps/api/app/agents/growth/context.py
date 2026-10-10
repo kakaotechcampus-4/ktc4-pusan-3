@@ -17,6 +17,7 @@ from app.agents.common.gate import DataReady, Gate, SafetyState
 from app.agents.growth.gating import EDUCATION_MIN_MONTH
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import (
+    BookRow,
     GrowthMeasurement,
     GrowthPorts,
     SafetyEntry,
@@ -42,6 +43,9 @@ class GrowthRunState:
     safety_entries: tuple[SafetyEntry, ...] = ()
     # learning_suggestion · routine_coaching. 안전 사전과 매처
     rules: SafetyRules | None = None
+    # book_suggestion. 이번 run 에서 `search_books` 가 돌려준 책 (정규화한 ISBN → 행).
+    # `propose_books` 는 이 표에 있는 ISBN 만 통과시킨다 — 연령 필터에 걸러진 책은 들어오지 않는다
+    seen_books: dict[str, BookRow] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
