@@ -46,6 +46,8 @@ services:
       # Next 서버에서 난 오류를 Discord 로 (apps/web/src/instrumentation.ts). 빌드가 아니라 실행 때 읽는다.
       # 비어 있으면 안 보낸다. api · 감시 스크립트와 같은 값 — 브라우저 번들엔 안 들어간다.
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      # 알림 꼬리표 [prod] · [dev]. 감시 스크립트도 같은 줄을 읽는다 — 시험 서버는 .env 에 APP_ENV=dev.
+      APP_ENV: ${APP_ENV:-prod}
     ports:
       - "${WEB_PORT}:3000"
     healthcheck:

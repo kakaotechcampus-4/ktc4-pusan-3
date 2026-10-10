@@ -5,6 +5,7 @@ import {
   buildWebAlert,
   createWebAlerter,
   shouldSendWebAlert,
+  webAlertEnv,
   type RequestErrorContext,
 } from "@/lib/server-error-alert";
 import { server } from "@/mocks/server";
@@ -116,6 +117,17 @@ describe("createWebAlerter — 보내기와 분당 상한", () => {
     await expect(
       send(buildWebAlert(new Error("x"), REQUEST, CONTEXT, { env: "prod", now: new Date(0) })),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("webAlertEnv — 꼬리표는 compose 가 넘기는 APP_ENV", () => {
+  it.each([
+    ["dev", "dev"], // 시험 서버는 deploy/docker/.env 에 APP_ENV=dev 한 줄만 다르다
+    ["prod", "prod"],
+    [undefined, "prod"], // 넘기지 않으면 진짜 서버로 본다 — 알림은 production 빌드에서만 나간다
+    ["  ", "prod"],
+  ])("APP_ENV=%s → %s", (value, expected) => {
+    expect(webAlertEnv(value)).toBe(expected);
   });
 });
 

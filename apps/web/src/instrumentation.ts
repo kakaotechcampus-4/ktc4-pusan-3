@@ -2,6 +2,7 @@ import {
   buildWebAlert,
   createWebAlerter,
   shouldSendWebAlert,
+  webAlertEnv,
   type ErrorRequest,
   type RequestErrorContext,
   type WebAlert,
@@ -18,10 +19,8 @@ import {
  * 🚨 기다리지 않고 띄워 보낸다(`void`). Next 16 은 라우트 핸들러 예외에서 이 함수를 **기다린 뒤** 500 을
  *    낸다 — Discord 가 느리면 사용자 응답이 같이 늦어진다. 기다려서 얻는 것은 없다 (보내기 실패는 어차피
  *    조용하다). 서버는 계속 떠 있는 Node 프로세스라 띄워 보낸 요청도 끝까지 간다.
- * 환경 이름은 늘 prod 다 — 알림은 production 빌드(`next start`)에서만 나가고, 그건 배포 서버뿐이다.
- * ⏰ 시험 서버(dev · staging)를 띄우면 여기를 고친다 — 그 서버도 production 빌드라 오류가 `[prod]` 로
- *    찍힌다. compose 가 web 에 `APP_ENV` 를 넘기고(api 와 같은 이름) 여기서 그걸 읽는다
- *    (docs/ops/logging-alerts-v1.md §6 "시험 서버를 띄우면").
+ * 환경 이름(꼬리표)은 compose 가 넘기는 `APP_ENV` — api 와 같은 이름이고, 넘기지 않으면 prod 다.
+ *    시험 서버도 production 빌드라 박아 두면 `[prod]` 로 찍힌다 (`webAlertEnv`).
  */
 
 let send: ((alert: WebAlert) => Promise<void>) | null = null;
@@ -39,5 +38,5 @@ export function onRequestError(
   context: RequestErrorContext,
 ): void {
   if (!send) return;
-  void send(buildWebAlert(error, request, context, { env: "prod" }));
+  void send(buildWebAlert(error, request, context, { env: webAlertEnv(process.env.APP_ENV) }));
 }

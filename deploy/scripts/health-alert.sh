@@ -9,8 +9,8 @@
 #     compose 파일  기본값: 이 파일 옆의 ../docker/docker-compose.deploy.yml
 #     ENV_FILE      웹훅 주소(ALERT_WEBHOOK_URL)를 읽을 파일. 기본값: compose 파일 옆의 .env
 #     STATE_FILE    지난번 상태를 적어 두는 파일. 기본값: /tmp/ktc4-health-alert.state
-#     ALERT_ENV     메시지 머리의 환경 이름. 기본값: prod
-#                   ⏰ 시험 서버에 cron 을 걸 때는 줄 앞에 ALERT_ENV=dev 를 붙인다 — 안 붙이면 [prod] 로 찍힌다
+#     ALERT_ENV     메시지 머리의 환경 이름. 없으면 env 파일의 APP_ENV, 그것도 없으면 prod.
+#                   compose 가 web 에 넘기는 APP_ENV 와 같은 줄이라 시험 서버는 그 파일에 APP_ENV=dev 만 쓴다
 #     --dry-run     웹훅 대신 화면에 찍는다 (상태 파일은 그대로 갱신 — 다음 번엔 달라진 것만 보인다)
 #
 #   cron (서버, 1분마다 — crontab -e):
@@ -35,13 +35,19 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${1:-$HERE/../docker/docker-compose.deploy.yml}"
 ENV_FILE="${ENV_FILE:-$(dirname "$COMPOSE")/.env}"
 STATE_FILE="${STATE_FILE:-/tmp/ktc4-health-alert.state}"
-ALERT_ENV="${ALERT_ENV:-prod}"
+ALERT_ENV="${ALERT_ENV:-}"
 
 # 웹훅 주소 — 환경변수가 없으면 env 파일에서. 값은 변수에만 두고 절대 echo 하지 않는다.
 if [ -z "${ALERT_WEBHOOK_URL:-}" ] && [ -f "$ENV_FILE" ]; then
   # 줄이 없으면 grep 이 1 을 내는데, set -e 때문에 여기서 조용히 죽지 않게 || true
   ALERT_WEBHOOK_URL="$(grep -E '^ALERT_WEBHOOK_URL=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true)"
 fi
+# 환경 이름 — ALERT_ENV 가 없으면 env 파일의 APP_ENV (web 알림과 같은 값), 그것도 없으면 prod.
+if [ -z "$ALERT_ENV" ] && [ -f "$ENV_FILE" ]; then
+  ALERT_ENV="$(grep -E '^APP_ENV=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d "\"' " || true)"
+fi
+ALERT_ENV="${ALERT_ENV:-prod}"
+
 if [ "$DRY_RUN" -eq 0 ] && [ -z "${ALERT_WEBHOOK_URL:-}" ]; then
   echo "ALERT_WEBHOOK_URL 이 비어 있다 ($ENV_FILE). 보낼 곳이 없다" >&2
   exit 1

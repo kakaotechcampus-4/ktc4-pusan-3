@@ -43,7 +43,11 @@ def box(tmp_path: Path):
     )
 
     def run(
-        inspect: str, *args: str, ids: str = "id1 id2", curl_code: str = "200"
+        inspect: str,
+        *args: str,
+        ids: str = "id1 id2",
+        curl_code: str = "200",
+        alert_env: str | None = "prod",
     ) -> subprocess.CompletedProcess:
         env = {
             **os.environ,
@@ -54,8 +58,11 @@ def box(tmp_path: Path):
             "FAKE_CURL_CODE": curl_code,
             "STATE_FILE": str(tmp_path / "state"),
             "ENV_FILE": str(env_file),
-            "ALERT_ENV": "prod",
         }
+        env.pop("ALERT_ENV", None)
+        env.pop("APP_ENV", None)
+        if alert_env is not None:
+            env["ALERT_ENV"] = alert_env
         return subprocess.run(
             ["bash", str(SCRIPT), *args, str(tmp_path / "compose.yml")],
             capture_output=True,
@@ -65,6 +72,7 @@ def box(tmp_path: Path):
         )
 
     run.curl_log = tmp_path / "curl.log"  # type: ignore[attr-defined]
+    run.env_file = env_file  # type: ignore[attr-defined]
     run.state = tmp_path / "state"  # type: ignore[attr-defined]
     return run
 
@@ -141,6 +149,23 @@ def test_failed_post_keeps_the_old_state_so_it_retries_next_minute(box):
 
     assert result.returncode != 0
     assert not box.state.exists()
+
+
+def test_env_name_comes_from_app_env_in_the_env_file(box):
+    """꼬리표는 env 파일의 APP_ENV 에서 — 시험 서버는 그 파일에 APP_ENV=dev 한 줄만 다르게 쓴다.
+
+    compose 가 web 에 넘기는 값과 같은 줄이라 web 알림 · 감시 알림의 꼬리표가 같이 움직인다.
+    """
+    box.env_file.write_text(box.env_file.read_text() + "APP_ENV=dev\n")
+    lines = _lines(box(HEALTHY, "--dry-run", alert_env=None))
+
+    assert lines[0].startswith("🟢 [dev] ")
+
+
+def test_env_name_defaults_to_prod_without_app_env(box):
+    lines = _lines(box(HEALTHY, "--dry-run", alert_env=None))
+
+    assert lines[0].startswith("🟢 [prod] ")
 
 
 def test_dry_run_never_calls_curl(box):

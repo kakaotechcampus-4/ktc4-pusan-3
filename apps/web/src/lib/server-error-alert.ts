@@ -83,6 +83,15 @@ export function buildWebAlert(
   };
 }
 
+/**
+ * 알림 꼬리표 — compose 가 넘기는 `APP_ENV` (api 와 같은 이름). 넘기지 않으면 진짜 서버로 본다.
+ * 알림은 production 빌드에서만 나가는데 시험 서버도 production 빌드라, 꼬리표를 박아 두면 시험 서버
+ * 오류가 `[prod]` 로 찍힌다. 시험 서버는 deploy/docker/.env 에 `APP_ENV=dev` 한 줄만 다르게 쓴다.
+ */
+export function webAlertEnv(appEnv: string | undefined): string {
+  return appEnv?.trim() || "prod";
+}
+
 export function shouldSendWebAlert(options: {
   nodeEnv: string | undefined;
   url: string | undefined;
