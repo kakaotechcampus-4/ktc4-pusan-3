@@ -1,14 +1,13 @@
 """특일정보 API 로 관공서 공휴일을 받아 `app/rules/holidays_data.py` 로 굽는다.
 
-    cd apps/api && DATA_GO_KR_SERVICE_KEY=<인증키> uv run python -m scripts.bake_holidays 2026 2027
+    cd apps/api && uv run python -m scripts.bake_holidays 2026 2027
 
 1년에 한 번, 다음 해 월력요항이 나온 뒤(매년 6월쯤) 돌린다. 서비스는 런타임에 API 를 부르지 않고
 구운 파일만 읽는다 — API 가 죽어도 날짜 계산이 죽지 않게 (설계 D8).
 
-- 인증키는 실행할 때 환경변수 `DATA_GO_KR_SERVICE_KEY` 로만 넘긴다. 공공데이터포털의
-  "일반 인증키(Decoding)" 를 넣는다 — 이 스크립트가 주소에 넣을 때 인코딩한다.
-  🚨 `.env` 에 넣지 않는다 — 서버 설정(`Settings`)은 모르는 키가 있으면 부팅을 멈춘다. 서버가 쓰지
-  않는 키라 `.env.example` 에도 두지 않는다.
+- 인증키 `DATA_GO_KR_SERVICE_KEY` 는 환경변수나 `apps/api/.env` 에서 읽는다 — 날씨 조회와 같은
+  공공데이터포털 키다. "일반 인증키(Decoding)" 를 넣는다 — 이 스크립트가 주소에 넣을 때 인코딩한다.
+  서버 설정 전체(`Settings`)를 읽지 않고 이 키 한 줄만 읽는다 — 굽는 데 다른 설정이 필요 없다.
 - 넘긴 해만 새로 받고, 이미 구워 둔 다른 해는 그대로 둔다.
 - 결과에서 `isHoliday=Y` 인 날만 남긴다. 기념일 · 24절기처럼 쉬지 않는 날은 다른 API 다.
 - 바뀐 날(새로 생기거나 빠진 날)을 출력한다. 굽고 나면 `git diff` 로 확인하고 커밋한다.
@@ -29,6 +28,8 @@ from app.rules.holidays_data import HOLIDAYS
 
 ENDPOINT = "https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo"
 OUTPUT = Path(__file__).resolve().parents[1] / "app" / "rules" / "holidays_data.py"
+ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+KEY_NAME = "DATA_GO_KR_SERVICE_KEY"
 TIMEOUT_SECONDS = 10.0
 
 _HEADER = '''"""관공서 공휴일 날짜. `scripts/bake_holidays.py` 가 만든다 — 직접 고치지 않는다.
@@ -93,6 +94,19 @@ def changes(before: dict[date, str], after: dict[date, str]) -> list[str]:
     return added + removed
 
 
+def read_key(env_file: Path = ENV_FILE) -> str:
+    """환경변수가 먼저, 없으면 `.env` 의 `KEY=값` 줄. 값은 돌려주기만 하고 찍지 않는다."""
+    if value := os.environ.get(KEY_NAME, "").strip():
+        return value
+    if not env_file.is_file():
+        return ""
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        name, sep, value = line.partition("=")
+        if sep and name.strip() == KEY_NAME:
+            return value.strip().strip("'\"")
+    return ""
+
+
 def fetch(year: int, key: str, client: httpx.Client) -> dict[date, str]:
     params: dict[str, str | int] = {
         "serviceKey": key,
@@ -117,9 +131,9 @@ def main() -> int:
     parser.add_argument("years", nargs="+", type=int, help="받을 해. 예: 2026 2027")
     args = parser.parse_args()
 
-    key = os.environ.get("DATA_GO_KR_SERVICE_KEY", "")
+    key = read_key()
     if not key:
-        print("환경변수 DATA_GO_KR_SERVICE_KEY 가 없다.", file=sys.stderr)
+        print(f"{KEY_NAME} 가 없다 — apps/api/.env 에 넣는다.", file=sys.stderr)
         return 1
 
     baked = {year: dict(days) for year, days in HOLIDAYS.items()}

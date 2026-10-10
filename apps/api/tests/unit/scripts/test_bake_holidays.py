@@ -6,7 +6,15 @@ import httpx
 import pytest
 
 from app.rules.holidays_data import HOLIDAYS
-from scripts.bake_holidays import BakeError, changes, fetch, parse_rest_days, render
+from scripts.bake_holidays import (
+    KEY_NAME,
+    BakeError,
+    changes,
+    fetch,
+    parse_rest_days,
+    read_key,
+    render,
+)
 
 SECRET = "test-service-key-should-not-leak"
 
@@ -85,3 +93,21 @@ def test_호출_실패_메시지에_인증키를_넣지_않는다():
         with pytest.raises(BakeError) as error:
             fetch(2026, SECRET, client)
     assert SECRET not in str(error.value)
+
+
+class TestReadKey:
+    def test_환경변수가_먼저다(self, tmp_path, monkeypatch):
+        env = tmp_path / ".env"
+        env.write_text(f"{KEY_NAME}=from-file\n", encoding="utf-8")
+        monkeypatch.setenv(KEY_NAME, "from-env")
+        assert read_key(env) == "from-env"
+
+    def test_없으면_env_파일에서_읽는다(self, tmp_path, monkeypatch):
+        env = tmp_path / ".env"
+        env.write_text(f"# 메모\nOTHER=x\n{KEY_NAME}='from-file'\n", encoding="utf-8")
+        monkeypatch.delenv(KEY_NAME, raising=False)
+        assert read_key(env) == "from-file"
+
+    def test_둘_다_없으면_빈_값(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(KEY_NAME, raising=False)
+        assert read_key(tmp_path / "없는파일") == ""
