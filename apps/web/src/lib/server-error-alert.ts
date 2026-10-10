@@ -33,9 +33,9 @@ export interface ErrorRequest {
   headers: Record<string, string | string[] | undefined>;
 }
 
-/** Discord 웹훅 본문. 서버 쪽 Sender(app/integrations/discord.py)와 같은 모양이다. */
+/** Discord 웹훅 본문. 서버 쪽 Sender(app/integrations/discord.py)와 같은 embed 모양이다. */
 export interface WebAlert {
-  content: string;
+  embeds: [{ color: number; description: string; footer?: { text: string }; timestamp?: string }];
   username: "web-alert";
   allowed_mentions: { parse: [] };
 }
@@ -44,17 +44,6 @@ const PER_MINUTE = 10;
 const WINDOW_MS = 60_000;
 const TIMEOUT_MS = 3_000;
 const PATH_MAX = 200;
-
-function stamp(date: Date): string {
-  // 2026-10-10 03:12:45+0900 — api 로그 · 알림과 같은 모양. 어긋나면 알림을 보고 로그를 못 찾는다.
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const offset = -date.getTimezoneOffset();
-  const sign = offset >= 0 ? "+" : "-";
-  const abs = Math.abs(offset);
-  const ymd = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  const hms = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  return `${ymd} ${hms}${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
-}
 
 /** 쿼리 · 해시를 떼고, 이상한 글자는 _ 로. 인가 코드 · 검색어가 쿼리에 실린다. */
 function safePath(path: string): string {
@@ -71,13 +60,20 @@ export function buildWebAlert(
   const thrown = error as { name?: unknown; digest?: unknown } | null | undefined;
   const name = typeof thrown?.name === "string" ? thrown.name : typeof error;
   const digest = typeof thrown?.digest === "string" ? thrown.digest : "-";
-  // 🟡 — 내일 봐도 되는 세기. 서버가 죽은 건 infra-alert 가 🔴 로 따로 온다.
-  const first =
-    `🟡 [${options.env}] ERROR web ${context.routeType} ${safePath(context.routePath)} — ` +
-    `${name} digest=${digest} path=${safePath(request.path)}`;
-  const nextStep = '→ journalctl CONTAINER_NAME=ktc4-web --since "10 min ago"';
+  const YELLOW = 0xffd700;
+  const description =
+    `## 🟡 ${name}\n` +
+    `\`${safePath(request.path)}\` · ${context.routeType} · \`${digest}\`\n\n` +
+    `\`web:${safePath(context.routePath)}\` · **${options.env}**`;
   return {
-    content: `${first}\n${stamp(options.now ?? new Date())}\n${nextStep}`,
+    embeds: [
+      {
+        color: YELLOW,
+        description,
+        footer: { text: 'journalctl CONTAINER_NAME=ktc4-web --since "10 min ago"' },
+        timestamp: (options.now ?? new Date()).toISOString(),
+      },
+    ],
     username: "web-alert",
     allowed_mentions: { parse: [] },
   };

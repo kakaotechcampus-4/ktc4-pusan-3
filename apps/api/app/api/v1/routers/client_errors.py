@@ -39,7 +39,8 @@ async def report_client_error(body: ClientErrorReport, parent: CurrentParent) ->
         body.platform,
         parent.parent_id,
         extra={
-            "alert_detail": f"{body.name} {body.digest or '-'} {body.path} {body.platform}",
+            "alert_heading": body.name,
+            "alert_detail": f"`{body.path}` · {body.platform} · `{body.digest or '-'}`",
             "alert_source": "browser",
         },
     )

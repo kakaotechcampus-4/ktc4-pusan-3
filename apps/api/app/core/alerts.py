@@ -29,14 +29,13 @@ import queue
 import threading
 import time
 from collections.abc import Callable
-
-from app.core.logging_config import DATEFMT
+from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
-Sender = Callable[[str, str], None]
-"""알림 글 하나를 보내는 함수 — (글, 출처). 실패는 예외로 올린다 — 핸들러가 받아 WARNING 으로
-남긴다."""
+Sender = Callable[[dict, str], None]
+"""알림 embed 하나를 보내는 함수 — (embed dict, 출처). 실패는 예외로 올린다 — 핸들러가 받아
+WARNING 으로 남긴다."""
 
 DEFAULT_SOURCE = "api"
 _DETAIL_MAX = 200
@@ -47,6 +46,8 @@ SEVERITY_MARK = {"high": "🔴", "normal": "🟠", "low": "🟡"}
 있다.
 감시 스크립트는 🔴(죽음) · 🟢(복구)를 자기가 붙인다."""
 DEFAULT_SEVERITY = {"api": "normal", "browser": "low"}
+SEVERITY_COLOR = {"high": 0xFF0000, "normal": 0xFFA500, "low": 0xFFD700}
+"""embed 사이드바 색. SEVERITY_MARK 와 같은 키."""
 NEXT_STEP = {
     "api": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR',
     "browser": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep "화면 오류"',
@@ -73,42 +74,52 @@ FLUSH_TIMEOUT_SECONDS = 4.0
 _THREAD_JOIN_SECONDS = 1.0
 _WINDOW_SECONDS = 60.0
 
-_TIME = logging.Formatter(datefmt=DATEFMT)
-"""시간은 stderr 로그와 같은 방법(Formatter.formatTime)으로 — 어긋나면 알림을 보고 로그를 못
-찾는다."""
-
-
-def format_alert(record: logging.LogRecord, *, env: str, source: str = DEFAULT_SOURCE) -> str:
-    """알림 글. 첫 줄에 세기 표시 · 환경 · 레벨 · 어느 코드(로거:함수:줄) · 로그 글귀 · 예외 종류,
-    둘째 줄에 시간, 셋째 줄에 다음에 칠 명령.
+def format_alert(record: logging.LogRecord, *, env: str, source: str = DEFAULT_SOURCE) -> dict:
+    """Discord embed dict 를 만든다. `## 🟠 Heading` 마크다운 헤더로 눈에 띄게.
 
     🚨 값은 나가지 않는다. 로그 글귀는 코드에 적힌 문장(record.msg, "run %s 의 job 이 %s 로 끝났다")
-       그대로이고, %s 를 채운 값(args)은 서버 로그에만 있다 — 누가 `log.error("%s", 원문)` 을 써도
-       아이 이야기가 Discord 로 가는 일이 구조적으로 없다. 예외도 종류 이름만 — 메시지(str)에는
-       입력 원문이 섞일 수 있다. 어디서 났는지는 위치가 말해 준다 — 서버 로그에서 그 줄을 찾는다.
+       그대로이고, %s 를 채운 값(args)은 서버 로그에만 있다. 예외도 종류 이름만.
     글귀가 str 이 아니면(`log.error(exc)` 처럼 객체를 바로 찍은 경우) 그 종류 이름만 쓴다.
     """
     template = record.msg if isinstance(record.msg, str) else type(record.msg).__name__
     first_line = (template.splitlines() or [""])[0]
     exc_info = record.exc_info if isinstance(record.exc_info, tuple) else None
     exc_type = exc_info[0] if exc_info else None
-    suffix = f" ({exc_type.__name__})" if exc_type is not None else ""
+
     detail = getattr(record, "alert_detail", None)
-    if isinstance(detail, str) and detail:
-        # 내보내도 된다고 표시한 값 — 한 줄 · 짧게. 모양 검사는 넣는 쪽(라우터)의 책임이다.
-        suffix += " · " + " ".join(detail.split())[:_DETAIL_MAX]
-    where = f"{record.name}:{record.funcName}:{record.lineno}"
-    when = _TIME.formatTime(record, DATEFMT)  # datefmt 를 넘겨야 %z 가 붙는다
+    detail_str = " ".join(detail.split())[:_DETAIL_MAX] if isinstance(detail, str) and detail else None
+
+    heading_override = getattr(record, "alert_heading", None)
+    if isinstance(heading_override, str) and heading_override:
+        heading = heading_override
+    elif exc_type is not None:
+        heading = exc_type.__name__
+    else:
+        heading = first_line
+
     severity = getattr(record, "alert_severity", None)
     if severity not in SEVERITY_MARK:
         severity = DEFAULT_SEVERITY.get(source, "normal")
-    lines = [
-        f"{SEVERITY_MARK[severity]} [{env}] {record.levelname} {where} — {first_line}{suffix}",
-        when,
-    ]
-    if source in NEXT_STEP:
-        lines.append(f"→ {NEXT_STEP[source]}")
-    return "\n".join(lines)
+    mark = SEVERITY_MARK[severity]
+
+    parts = [f"## {mark} {heading}"]
+    if detail_str:
+        parts.append(detail_str)
+    elif heading != first_line:
+        parts.append(first_line)
+
+    where = f"{record.name}:{record.funcName}:{record.lineno}".removeprefix("app.")
+    parts.append(f"\n`{where}` · **{env}**")
+
+    embed: dict = {
+        "color": SEVERITY_COLOR[severity],
+        "description": "\n".join(parts),
+        "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+    }
+    footer_text = NEXT_STEP.get(source)
+    if footer_text:
+        embed["footer"] = {"text": footer_text}
+    return embed
 
 
 def alert_source(record: logging.LogRecord) -> str:
@@ -152,8 +163,8 @@ class WebhookHandler(logging.Handler):
         self._dropped = 0  # 못 보낸 건수 — 다음 알림 머리에 적고 0 으로
         self._count_lock = threading.Lock()
         self._stopped = False  # logging.Handler 의 _closed 와 겹치지 않는 이름
-        # 항목은 (이 알림이 들고 가는 생략 건수, 글, 출처). 보내다 실패하면 건수를 되살린다.
-        self._queue: queue.Queue[tuple[int, str, str] | None] = queue.Queue(maxsize=per_minute)
+        # 항목은 (이 알림이 들고 가는 생략 건수, embed, 출처). 보내다 실패하면 건수를 되살린다.
+        self._queue: queue.Queue[tuple[int, dict, str] | None] = queue.Queue(maxsize=per_minute)
         self._thread = threading.Thread(target=self._drain, name="alert-webhook", daemon=True)
         self._thread.start()
 
@@ -162,15 +173,15 @@ class WebhookHandler(logging.Handler):
             return  # 자기 WARNING(전송 실패)은 알리지 않는다 — 레벨을 낮춰도 되돌이가 없게
         try:
             source = alert_source(record)
-            text = format_alert(
+            embed = format_alert(
                 record, env=self._env, source=source
-            )  # 글을 먼저 — 실패하면 자리를 안 쓴다
+            )  # embed 를 먼저 — 실패하면 자리를 안 쓴다
             with self._count_lock:
                 if not self._admit():
                     self._dropped += 1
                     return
                 try:
-                    self._queue.put_nowait((self._dropped, text, source))
+                    self._queue.put_nowait((self._dropped, embed, source))
                 except queue.Full:
                     self._dropped += 1  # 보내는 쪽이 막혀 있다 — 쌓지 않고 건수로 센다
                     return
@@ -191,9 +202,11 @@ class WebhookHandler(logging.Handler):
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
-            note, text, source = item
+            note, embed, source = item
             try:
-                self._send(f"(앞서 {note}건 생략)\n{text}" if note else text, source)
+                if note:
+                    embed = {**embed, "description": f"(앞서 {note}건 생략)\n{embed['description']}"}
+                self._send(embed, source)
             except Exception as exc:
                 with self._count_lock:
                     self._dropped += 1 + note  # 못 보냈다 — 들고 가던 건수까지 다음 알림으로

@@ -45,13 +45,13 @@ def webhook_sender(url: str, *, client: httpx.Client | None = None) -> Sender:
         )
     http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
 
-    def send(text: str, source: str) -> None:
+    def send(embed: dict, source: str) -> None:
         try:
             response = http.post(
                 url,
                 params={"wait": "true"},
                 json={
-                    "content": text,
+                    "embeds": [embed],
                     "username": f"{source}-alert",
                     "allowed_mentions": {"parse": []},
                 },

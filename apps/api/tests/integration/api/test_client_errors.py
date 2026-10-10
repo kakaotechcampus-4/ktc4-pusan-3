@@ -52,8 +52,9 @@ async def test_로그인한_보호자의_화면_오류는_ERROR_로그가_된다
     for value in ("TypeError", CHILD, "android", str(parent_id)):
         assert value not in records[0].msg
     # 서버가 모양을 검사한 네 칸은 Discord 에도 띄운다 — 보호자 id 는 아니다
-    detail = f"TypeError 1234567890 /children/{CHILD}/records android 14 app"
+    detail = f"`/children/{CHILD}/records` · android 14 app · `1234567890`"
     assert records[0].alert_detail == detail
+    assert records[0].alert_heading == "TypeError"
     assert str(parent_id) not in records[0].alert_detail
     assert records[0].alert_source == "browser"
 

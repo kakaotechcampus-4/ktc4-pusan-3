@@ -23,14 +23,18 @@ from app.core import alerts
 
 ENV = "prod"
 URL = "https://discord.com/api/webhooks/1/token"
-FIRST_LINE = re.compile(r"^\S+ \[prod\] ERROR app\.alerts_probe:\w+:\d+ — (?P<rest>.*)$")
 
 
-class _Sent(list[str]):
-    """보내기 함수 모양(글, 출처)을 그대로 받아 글만 모은다 — `attach(sent.append)` 로 쓴다."""
+def _desc(embed: dict) -> str:
+    """embed 의 description 을 꺼낸다."""
+    return embed["description"]
 
-    def append(self, text: str, source: str = "api") -> None:  # type: ignore[override]
-        super().append(text)
+
+class _Sent(list[dict]):
+    """보내기 함수 모양(embed, 출처)을 그대로 받아 embed 만 모은다."""
+
+    def append(self, embed: dict, source: str = "api") -> None:  # type: ignore[override]
+        super().append(embed)
 
 
 @pytest.fixture
@@ -61,21 +65,10 @@ def attach(request):
     return _attach
 
 
-def _template(text: str) -> str:
-    """알림 글에서 로그 글귀 부분. 머리에 생략 건수가 붙어 있으면 건너뛴다."""
-    for line in text.splitlines():
-        found = FIRST_LINE.match(line)
-        if found:
-            return found["rest"]
-    raise AssertionError(f"알림 첫 줄 모양이 아니다: {text!r}")
-
-
 def test_error_log_goes_out_as_its_template_and_location_without_values(attach, sent):
     """ERROR 한 줄이 알림 하나가 된다 — 어느 환경 · 어느 코드 · 코드에 적힌 글귀 그대로.
 
-    🚨 %s 를 채운 값은 나가지 않는다. runner._guarded 가 찍는 모양 그대로 넣는다 — run id 도, 둘째
-       줄부터의 코드 위치(트레이스백)도 서버 로그에만 있다. 누가 `log.error("%s", 원문)` 을 써도
-       Discord 로 가는 건 "%s" 다.
+    🚨 %s 를 채운 값은 나가지 않는다. 누가 `log.error("%s", 원문)` 을 써도 Discord 로 가는 건 "%s" 다.
     """
     log, handler = attach(sent.append)
     log.error(
@@ -84,20 +77,21 @@ def test_error_log_goes_out_as_its_template_and_location_without_values(attach, 
     handler.flush()
 
     assert len(sent) == 1
-    assert _template(sent[0]) == "run %s 의 job 이 %s 로 끝났다"
-    assert "RUN-1" not in sent[0]
-    assert "File" not in sent[0]
+    desc = _desc(sent[0])
+    assert "run %s 의 job 이 %s 로 끝났다" in desc
+    assert "RUN-1" not in desc
+    assert "File" not in desc
 
 
-def test_alert_time_has_the_offset_like_the_server_log(attach, sent):
-    """둘째 줄의 시간에 시간대(+0900)가 붙는다 — stderr 로그와 같은 모양이라야 알림을 보고 로그를
-    찾는다.
-    """
+def test_alert_has_timestamp_and_color(attach, sent):
+    """embed 에 timestamp(ISO 8601)와 color 가 있다."""
     log, handler = attach(sent.append)
     log.error("x")
     handler.flush()
 
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{4}", sent[0].splitlines()[1])
+    assert "timestamp" in sent[0]
+    assert re.match(r"\d{4}-\d{2}-\d{2}T", sent[0]["timestamp"])
+    assert "color" in sent[0]
 
 
 def test_exception_type_goes_out_but_not_its_message(attach, sent):
@@ -112,9 +106,11 @@ def test_exception_type_goes_out_but_not_its_message(attach, sent):
         log.exception("처리되지 않은 예외")
     handler.flush()
 
-    assert _template(sent[0]) == "처리되지 않은 예외 (ValueError)"
-    assert "SECRET" not in sent[0]
-    assert "Traceback" not in sent[0]
+    desc = _desc(sent[0])
+    assert "## 🟠 ValueError" in desc
+    assert "처리되지 않은 예외" in desc
+    assert "SECRET" not in desc
+    assert "Traceback" not in desc
 
 
 def test_object_logged_as_the_message_sends_only_its_type(attach, sent):
@@ -123,8 +119,9 @@ def test_object_logged_as_the_message_sends_only_its_type(attach, sent):
     log.error(ValueError("SECRET-원문"))
     handler.flush()
 
-    assert _template(sent[0]) == "ValueError"
-    assert "SECRET" not in sent[0]
+    desc = _desc(sent[0])
+    assert "ValueError" in desc
+    assert "SECRET" not in desc
 
 
 def test_warning_is_not_sent(attach, sent):
@@ -151,16 +148,15 @@ def test_the_handlers_own_warnings_are_never_alerted(attach, sent):
 def test_sender_failure_stays_inside_the_handler(attach, caplog):
     """🚨 알림을 못 보내도 로그를 찍은 코드(요청 처리)는 아무 영향이 없다.
 
-    실패는 WARNING 한 줄로만 남긴다 — 모르는 예외는 종류 이름만. httpx 의 오류 메시지에는 웹훅
-    URL(비밀)이 들어 있어서 메시지를 찍으면 서버 로그에 비밀이 남는다.
+    실패는 WARNING 한 줄로만 남긴다 — 모르는 예외는 종류 이름만.
     """
 
-    def broken(_text: str, _source: str) -> None:
+    def broken(_embed: dict, _source: str) -> None:
         raise RuntimeError("POST https://discord.com/api/webhooks/1/SECRET-TOKEN failed")
 
     log, handler = attach(broken)
     with caplog.at_level(logging.WARNING, logger="app.core.alerts"):
-        log.error("무언가 실패")  # 여기서 예외가 올라오면 테스트가 바로 죽는다
+        log.error("무언가 실패")
         handler.flush()
 
     warnings = [r for r in caplog.records if r.name == "app.core.alerts"]
@@ -175,7 +171,7 @@ def test_send_error_message_is_logged_as_is(attach, caplog):
     있다.
     """
 
-    def refused(_text: str, _source: str) -> None:
+    def refused(_embed: dict, _source: str) -> None:
         raise alerts.SendError("webhook 429")
 
     log, handler = attach(refused)
@@ -190,13 +186,13 @@ def test_send_error_message_is_logged_as_is(attach, caplog):
 
 def test_failed_sends_are_counted_in_the_next_alert(attach, sent):
     """보내다 실패한 것도 생략 건수에 들어간다 — 실패한 알림이 들고 가던 건수까지 되살린다."""
-    calls: list[str] = []
+    calls: list[dict] = []
 
-    def flaky(text: str, _source: str) -> None:
-        calls.append(text)
+    def flaky(embed: dict, _source: str) -> None:
+        calls.append(embed)
         if len(calls) <= 2:
             raise alerts.SendError("webhook 500")
-        sent.append(text)
+        sent.append(embed)
 
     log, handler = attach(flaky)
     for template in ("첫 번째", "두 번째", "세 번째"):
@@ -204,8 +200,9 @@ def test_failed_sends_are_counted_in_the_next_alert(attach, sent):
         handler.flush()
 
     assert len(sent) == 1
-    assert sent[0].startswith("(앞서 2건 생략)\n")
-    assert _template(sent[0]) == "세 번째"
+    desc = _desc(sent[0])
+    assert desc.startswith("(앞서 2건 생략)\n")
+    assert "세 번째" in desc
 
 
 def test_at_most_n_per_minute_then_the_next_alert_counts_the_dropped(attach, sent):
@@ -226,7 +223,7 @@ def test_at_most_n_per_minute_then_the_next_alert_counts_the_dropped(attach, sen
     handler.flush()
 
     assert len(sent) == 4
-    assert sent[3].startswith("(앞서 2건 생략)\n")
+    assert _desc(sent[3]).startswith("(앞서 2건 생략)\n")
 
 
 class _StuckSender:
@@ -235,12 +232,12 @@ class _StuckSender:
     def __init__(self) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
-        self.sent: list[str] = []
+        self.sent: list[dict] = []
 
-    def __call__(self, text: str, _source: str) -> None:
+    def __call__(self, embed: dict, _source: str) -> None:
         self.entered.set()
         self.release.wait(5)
-        self.sent.append(text)
+        self.sent.append(embed)
 
 
 def test_flush_gives_up_after_its_deadline_when_the_sender_is_stuck(attach):
@@ -289,8 +286,10 @@ def test_overflow_while_the_sender_is_stuck_is_counted_not_queued(attach):
     log.error("5")  # 다음 알림 머리에 생략 건수
     handler.flush()
 
-    assert [_template(t) for t in stuck.sent] == ["1", "2", "3", "5"]
-    assert stuck.sent[3].startswith("(앞서 1건 생략)\n")
+    descs = [_desc(e) for e in stuck.sent]
+    assert len(descs) == 4
+    assert "1" in descs[0] and "2" in descs[1] and "3" in descs[2] and "5" in descs[3]
+    assert descs[3].startswith("(앞서 1건 생략)\n")
 
 
 def test_sends_are_spaced_out(attach):
@@ -298,7 +297,7 @@ def test_sends_are_spaced_out(attach):
     건만 들어간다. 상한 10건/분이면 0.5초 간격으로도 5초 안에 다 나간다.
     """
     sleeps: list[float] = []
-    log, handler = attach(lambda _t, _s: None, send_gap=0.5, sleep=sleeps.append)
+    log, handler = attach(lambda _e, _s: None, send_gap=0.5, sleep=sleeps.append)
     for i in range(3):
         log.error("오류 %d", i)
     handler.flush()
@@ -306,18 +305,18 @@ def test_sends_are_spaced_out(attach):
     assert sleeps == [0.5, 0.5, 0.5]
 
 
-def test_alert_detail_marked_safe_goes_out_after_the_template(attach, sent):
+def test_alert_detail_marked_safe_goes_out_in_description(attach, sent):
     """값을 내보내는 유일한 길 — extra={"alert_detail": ...}. 서버가 모양을 검사한 값만 여기 넣는다.
 
-    화면 오류 보고(client_errors)가 쓴다. 일반 %s 값은 여전히 안 나간다 — 내보낼 값은 코드가
-    명시적으로 표시해야 하고, 어디서 내보내는지 grep 한 번으로 다 보인다.
+    화면 오류 보고(client_errors)가 쓴다. 일반 %s 값은 여전히 안 나간다.
     """
     log, handler = attach(sent.append)
     detail = "TypeError /records android 14 app"
     log.error("화면 오류 name=%s", "TypeError", extra={"alert_detail": detail})
     handler.flush()
 
-    assert _template(sent[0]) == "화면 오류 name=%s · TypeError /records android 14 app"
+    desc = _desc(sent[0])
+    assert "TypeError /records android 14 app" in desc
 
 
 def test_alert_detail_is_one_short_line(attach, sent):
@@ -326,15 +325,15 @@ def test_alert_detail_is_one_short_line(attach, sent):
     log.error("x", extra={"alert_detail": "첫 줄\n둘째 줄 " + "a" * 300})
     handler.flush()
 
-    detail = _template(sent[0]).split(" · ", 1)[1]
-    assert "\n" not in detail
-    assert len(detail) <= 200
-    assert detail.startswith("첫 줄 둘째 줄")
+    desc = _desc(sent[0])
+    # detail 은 heading 아래 줄에 들어간다 — 한 줄이고 200자 이내
+    detail_line = desc.split("\n")[1]
+    assert "첫 줄 둘째 줄" in detail_line
+    assert len(detail_line) <= 200
 
 
 def test_severity_mark_and_next_step_follow_the_source(attach, sent):
-    """세기 표시(🟠 api · 🟡 browser · 🔴 급함)와 "다음에 칠 명령" 한 줄 — 알림을 보고 뭘 할지
-    바로 안다.
+    """세기 표시(🟠 api · 🟡 browser · 🔴 급함)와 "다음에 칠 명령" — 알림을 보고 뭘 할지 바로 안다.
 
     현업의 심각도 구분과 런북을 가장 작은 모양으로 흉내 낸 것이다. 전부 같은 세기로 오면 다
     무시하게 된다.
@@ -345,10 +344,14 @@ def test_severity_mark_and_next_step_follow_the_source(attach, sent):
     log.error("급한 쪽", extra={"alert_severity": "high"})
     handler.flush()
 
-    assert [t.split(" ", 1)[0] for t in sent] == ["🟠", "🟡", "🔴"]
-    next_step = '→ journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR'
-    assert sent[0].splitlines()[2] == next_step
-    assert sent[1].splitlines()[2].endswith('| grep "화면 오류"')
+    assert "🟠" in _desc(sent[0])
+    assert "🟡" in _desc(sent[1])
+    assert "🔴" in _desc(sent[2])
+    assert sent[0]["color"] == 0xFFA500
+    assert sent[1]["color"] == 0xFFD700
+    assert sent[2]["color"] == 0xFF0000
+    assert sent[0]["footer"]["text"].startswith("journalctl")
+    assert sent[1]["footer"]["text"].endswith('| grep "화면 오류"')
 
 
 def test_alert_source_reaches_the_sender(attach):
@@ -357,12 +360,22 @@ def test_alert_source_reaches_the_sender(attach):
     기본은 api 다. 화면 오류 보고는 extra={"alert_source": "browser"} 으로 찍는다.
     """
     sources: list[str] = []
-    log, handler = attach(lambda _text, source: sources.append(source))
+    log, handler = attach(lambda _embed, source: sources.append(source))
     log.error("api 쪽")
     log.error("화면 쪽", extra={"alert_source": "browser"})
     handler.flush()
 
     assert sources == ["api", "browser"]
+
+
+def test_alert_heading_overrides_default(attach, sent):
+    """extra={"alert_heading": ...} 으로 heading 을 지정할 수 있다 — 화면 오류 보고가 쓴다."""
+    log, handler = attach(sent.append)
+    log.error("화면 오류 name=%s", "TypeError", extra={"alert_heading": "TypeError"})
+    handler.flush()
+
+    desc = _desc(sent[0])
+    assert "## 🟠 TypeError" in desc
 
 
 def test_configure_attaches_to_the_app_logger_only(request, sent):
@@ -383,7 +396,7 @@ def test_configure_attaches_to_the_app_logger_only(request, sent):
     handler.flush()
 
     assert len(sent) == 1
-    assert "app 쪽 오류" in sent[0]
+    assert "app 쪽 오류" in _desc(sent[0])
 
 
 MAIN_PROBE = """

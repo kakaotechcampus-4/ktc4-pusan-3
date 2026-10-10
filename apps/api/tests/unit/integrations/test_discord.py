@@ -18,9 +18,9 @@ def _client(respond) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(respond))
 
 
-def test_posts_the_text_as_content_json_and_waits_for_delivery():
-    """Discord 웹훅 계약 — POST, JSON 의 content 한 칸, 저장까지 기다리고(wait=true), 아무도
-    호출하지 않게(allowed_mentions 비움). 보낸 글이 그대로 들어간다.
+def test_posts_embed_json_and_waits_for_delivery():
+    """Discord 웹훅 계약 — POST, JSON 의 embeds 한 칸, 저장까지 기다리고(wait=true), 아무도
+    호출하지 않게(allowed_mentions 비움). embed dict 가 그대로 들어간다.
     """
     seen: list[httpx.Request] = []
 
@@ -28,15 +28,16 @@ def test_posts_the_text_as_content_json_and_waits_for_delivery():
         seen.append(request)
         return httpx.Response(200, json={"id": "1"})
 
+    embed = {"color": 0xFFA500, "description": "## 🟠 test"}
     send = discord.webhook_sender(URL, client=_client(respond))
-    send("[prod] ERROR app.x — 무언가 @everyone", "api")
+    send(embed, "api")
 
     assert len(seen) == 1
     assert seen[0].method == "POST"
     assert str(seen[0].url).startswith(URL)
     assert seen[0].url.params["wait"] == "true"
     assert json.loads(seen[0].read()) == {
-        "content": "[prod] ERROR app.x — 무언가 @everyone",
+        "embeds": [embed],
         "username": "api-alert",
         "allowed_mentions": {"parse": []},
     }
@@ -53,7 +54,7 @@ def test_sender_name_follows_the_source_so_one_channel_reads_sorted():
         return httpx.Response(200, json={"id": "1"})
 
     send = discord.webhook_sender(URL, client=_client(respond))
-    send("화면 쪽", "browser")
+    send({"description": "화면 쪽"}, "browser")
 
     assert json.loads(seen[0].read())["username"] == "browser-alert"
 
@@ -62,7 +63,7 @@ def test_http_failure_becomes_a_webhook_error_without_the_url():
     """429 · 5xx 는 예외로 올린다 — 조용히 삼키면 "보냈다" 고 믿게 된다. 메시지엔 상태 코드만."""
     send = discord.webhook_sender(URL, client=_client(lambda _r: httpx.Response(429)))
     with pytest.raises(discord.WebhookError) as info:
-        send("x", "api")
+        send({"description": "x"}, "api")
 
     assert isinstance(info.value, alerts.SendError)
     assert "429" in str(info.value)
@@ -79,7 +80,7 @@ def test_transport_failure_becomes_a_webhook_error_without_the_url():
 
     send = discord.webhook_sender(URL, client=_client(respond))
     with pytest.raises(discord.WebhookError) as info:
-        send("x", "api")
+        send({"description": "x"}, "api")
 
     assert "ConnectError" in str(info.value)
     assert "SECRET-TOKEN" not in str(info.value)

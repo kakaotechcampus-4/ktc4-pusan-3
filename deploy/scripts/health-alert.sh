@@ -102,12 +102,17 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s' "$changes"
 else
-  # 다음에 칠 명령 한 줄 — 알림을 보고 뭘 할지 바로 알게.
-  changes="${changes}→ docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>"$'\n'
-  # JSON 글자 처리 — 백슬래시 · 따옴표 · 줄바꿈. 내용은 컨테이너 이름과 상태뿐이라 그 셋이면 된다.
-  content="$(printf '%s' "$changes" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk 'BEGIN { ORS = "\\n" } { print }' | sed 's/\\n$//')"
+  # embed 색 — 🔴(죽음)이 하나라도 있으면 빨강, 전부 🟢(복구)면 초록
+  if printf '%s' "$changes" | grep -q '🔴'; then
+    color=16711680  # 0xFF0000
+  else
+    color=52224     # 0x00CC00
+  fi
+  footer="docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>"
+  # embed description — 마크다운 헤더로 읽기 좋게. JSON 글자 처리는 이전과 같다.
+  description="$(printf '%s' "$changes" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk 'BEGIN { ORS = "\\n" } { print }' | sed 's/\\n$//')"
   code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-    --data "{\"content\":\"$content\",\"username\":\"infra-alert\",\"allowed_mentions\":{\"parse\":[]}}" \
+    --data "{\"embeds\":[{\"color\":$color,\"description\":\"$description\",\"footer\":{\"text\":\"$footer\"}}],\"username\":\"infra-alert\",\"allowed_mentions\":{\"parse\":[]}}" \
     "${ALERT_WEBHOOK_URL}?wait=true" || true)"
   case "$code" in
     2*) ;;
