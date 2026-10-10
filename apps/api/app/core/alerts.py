@@ -74,6 +74,7 @@ FLUSH_TIMEOUT_SECONDS = 4.0
 _THREAD_JOIN_SECONDS = 1.0
 _WINDOW_SECONDS = 60.0
 
+
 def format_alert(record: logging.LogRecord, *, env: str, source: str = DEFAULT_SOURCE) -> dict:
     """Discord embed dict 를 만든다. `## 🟠 Heading` 마크다운 헤더로 눈에 띄게.
 
@@ -87,10 +88,13 @@ def format_alert(record: logging.LogRecord, *, env: str, source: str = DEFAULT_S
     exc_type = exc_info[0] if exc_info else None
 
     detail = getattr(record, "alert_detail", None)
-    detail_str = " ".join(detail.split())[:_DETAIL_MAX] if isinstance(detail, str) and detail else None
+    detail_str = (
+        " ".join(detail.split())[:_DETAIL_MAX] if isinstance(detail, str) and detail else None
+    )
 
     heading_override = getattr(record, "alert_heading", None)
-    if isinstance(heading_override, str) and heading_override:
+    has_heading = isinstance(heading_override, str) and bool(heading_override)
+    if has_heading:
         heading = heading_override
     elif exc_type is not None:
         heading = exc_type.__name__
@@ -103,10 +107,12 @@ def format_alert(record: logging.LogRecord, *, env: str, source: str = DEFAULT_S
     mark = SEVERITY_MARK[severity]
 
     parts = [f"## {mark} {heading}"]
+    # 제목이 예외 종류면 무슨 일인지는 글귀가 말한다 — detail 이 있어도 지우지 않는다.
+    # alert_heading 을 준 쪽(화면 오류)은 제목 · detail 로 스스로 말하니 빈칸 글귀를 숨긴다.
+    if not has_heading and heading != first_line:
+        parts.append(first_line)
     if detail_str:
         parts.append(detail_str)
-    elif heading != first_line:
-        parts.append(first_line)
 
     where = f"{record.name}:{record.funcName}:{record.lineno}".removeprefix("app.")
     parts.append(f"\n`{where}` · **{env}**")
@@ -205,7 +211,10 @@ class WebhookHandler(logging.Handler):
             note, embed, source = item
             try:
                 if note:
-                    embed = {**embed, "description": f"(앞서 {note}건 생략)\n{embed['description']}"}
+                    embed = {
+                        **embed,
+                        "description": f"(앞서 {note}건 생략)\n{embed['description']}",
+                    }
                 self._send(embed, source)
             except Exception as exc:
                 with self._count_lock:

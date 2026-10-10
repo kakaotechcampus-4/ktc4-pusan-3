@@ -68,7 +68,8 @@ def attach(request):
 def test_error_log_goes_out_as_its_template_and_location_without_values(attach, sent):
     """ERROR 한 줄이 알림 하나가 된다 — 어느 환경 · 어느 코드 · 코드에 적힌 글귀 그대로.
 
-    🚨 %s 를 채운 값은 나가지 않는다. 누가 `log.error("%s", 원문)` 을 써도 Discord 로 가는 건 "%s" 다.
+    🚨 %s 를 채운 값은 나가지 않는다. 누가 `log.error("%s", 원문)` 을 써도 Discord 로 가는 건
+    "%s" 다.
     """
     log, handler = attach(sent.append)
     log.error(
@@ -376,6 +377,45 @@ def test_alert_heading_overrides_default(attach, sent):
 
     desc = _desc(sent[0])
     assert "## 🟠 TypeError" in desc
+
+
+def test_exception_with_detail_still_says_what_happened(attach, sent):
+    """예외 종류가 제목이 되면 무슨 일인지는 글귀가 말한다 — alert_detail 이 있어도 글귀를
+    지우지 않는다.
+
+    "기록 저장 실패" 가 빠지면 IntegrityError 와 값 하나만 남아 무슨 일인지 모른다.
+    """
+    log, handler = attach(sent.append)
+    try:
+        raise ValueError("SECRET-원문")
+    except ValueError:
+        log.exception("기록 저장 실패 run=%s", "RUN-1", extra={"alert_detail": "run-a1"})
+    handler.flush()
+
+    desc = _desc(sent[0])
+    assert "## 🟠 ValueError" in desc
+    assert "기록 저장 실패 run=%s" in desc
+    assert "run-a1" in desc
+    assert "RUN-1" not in desc
+    assert "SECRET" not in desc
+
+
+def test_heading_and_detail_given_together_replace_the_template(attach, sent):
+    """alert_heading 과 alert_detail 을 함께 준 쪽(화면 오류)은 그 둘로 말한다 — 빈칸 글귀는
+    숨긴다."""
+    log, handler = attach(sent.append)
+    log.error(
+        "화면 오류 name=%s path=%s",
+        "TypeError",
+        "/records",
+        extra={"alert_heading": "TypeError", "alert_detail": "`/records` · android 14 app"},
+    )
+    handler.flush()
+
+    desc = _desc(sent[0])
+    assert "## 🟠 TypeError" in desc
+    assert "`/records` · android 14 app" in desc
+    assert "name=%s" not in desc
 
 
 def test_configure_attaches_to_the_app_logger_only(request, sent):
