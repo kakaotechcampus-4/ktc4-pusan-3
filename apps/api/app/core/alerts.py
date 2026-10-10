@@ -7,15 +7,16 @@
 
 구조 — app 로거에 핸들러 하나.
 
-    log.error(...) ─ emit: 글 만들기 · 분당 상한 ─▶ 큐(상한만큼) ─▶ 스레드 하나 ─▶ send(글)
+    log.error(...) ─ emit: 카드 만들기 · 분당 상한 ─▶ 큐(상한만큼) ─▶ 스레드 하나 ─▶ send(카드)
 
     요청을 처리하는 이벤트 루프는 큐에 넣고 바로 돌아온다. HTTP 를 기다리는 건 스레드다.
     로그 핸들러 안에서 HTTP 를 직접 기다리면 그동안 서버의 모든 요청이 멈춘다.
 
-🚨 본문에 무엇이 가는지는 format_alert 가 정한다 — 코드에 적힌 로그 글귀 · 위치 · 예외 종류 이름.
-   로그에 넣은 값(args) · 트레이스백 · 예외 메시지는 밖으로 나가지 않는다 (루트 CLAUDE.md §2 · §10).
-   값을 내보내는 유일한 길은 `extra={"alert_detail": "..."}` — 서버가 모양을 검사한 값만 여기 넣는다
-   (화면 오류 보고). 어디서 내보내는지 `grep alert_detail` 한 번으로 다 보인다.
+🚨 카드(Discord embed)에 무엇이 가는지는 format_alert 가 정한다 — 코드에 적힌 로그 글귀 · 위치 ·
+   예외 종류 이름. 로그에 넣은 값(args) · 트레이스백 · 예외 메시지는 밖으로 나가지 않는다
+   (루트 CLAUDE.md §2 · §10). 값을 내보내는 길은 `extra={"alert_detail": ...}`(값 줄) 과
+   `extra={"alert_heading": ...}`(제목) 둘뿐 — 서버가 모양을 검사한 값만 여기 넣는다
+   (화면 오류 보고). 어디서 내보내는지 `grep -rn alert_ app` 한 번으로 다 보인다.
    `extra={"alert_source": "browser"}` 은 출처다 (기본 api · 감시 스크립트는 infra) — Discord 에서
    보내는 이름(api-alert · browser-alert · infra-alert)이 갈려 채널 하나에서도 구별된다.
 🚨 알림이 실패해도 요청 처리는 영향이 없다. 실패는 WARNING 한 줄 — SendError 면 그 메시지, 다른
@@ -52,7 +53,8 @@ NEXT_STEP = {
     "api": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR',
     "browser": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep "화면 오류"',
 }
-"""셋째 줄 "다음에 칠 명령" — 알림을 보고 뭘 할지 바로 알게 (런북의 가장 작은 모양)."""
+"""카드 바닥글의 "다음에 칠 명령" — 알림을 보고 뭘 할지 바로 알게 (런북의 가장 작은 모양).
+바닥글은 Discord 가 마크다운을 안 받아 코드 모양이 아니다."""
 
 
 class SendError(Exception):

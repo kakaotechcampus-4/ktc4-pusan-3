@@ -107,26 +107,35 @@ Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). api 를 올�
 
 ### 에러 알림 (Discord)
 
-api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹훅으로 한 건씩 간다 (`app/core/alerts.py`,
-전송은 `app/integrations/discord.py`). 본문은 이렇게 생겼고, 이것뿐이다.
+api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹훅으로 카드(embed) 한 장씩 간다
+(`app/core/alerts.py`, 전송은 `app/integrations/discord.py`). 카드는 이렇게 생겼고, 이것뿐이다.
 
 ```
-api-alert      🟠 [prod] ERROR app.api.runs.runner:_guarded:172 — run %s 의 job 이 %s 로 끝났다
-               2026-10-09 23:01:02+0900
-               → journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR
-browser-alert  🟡 [prod] ERROR app.api.v1.routers.client_errors:report_client_error:39 — 화면 오류 … · TypeError - /children/…/records android 14 app
-infra-alert    🔴 [prod] ktc4-web: running healthy → exited -
-               → docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>
-web-alert      🟡 [prod] ERROR web render /children/[cid]/records — TypeError digest=abc123 path=/children/…/records
+api-alert      ┃ 🟠 run %s 의 job 이 %s 로 끝났다                 ← 제목. 예외면 예외 종류, 글귀는 그 아래 줄
+               ┃ `api.runs.runner:_guarded:172` · prod            ← 코드 위치(앞의 app. 뗌) · 환경
+               ┃ journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR · 오늘 오후 11:01
+browser-alert  ┃ 🟡 TypeError
+               ┃ `/children/…/records` · android 14 app · `abc123`   ← 경로 · 기기 · digest
+               ┃ `v1.routers.client_errors:report_client_error:34` · prod
+infra-alert    ┃ 🔴 [prod] ktc4-web: running healthy → exited -
+               ┃ docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>
+web-alert      ┃ 🟡 TypeError
+               ┃ `/children/…/records` · render · `abc123`
+               ┃ `web:/children/[cid]/records` · prod
 ```
 
-머리의 표시가 세기다 — 🔴 지금 봐야 함(서비스가 안 됨) · 🟠 오늘 안에 · 🟡 내일 봐도 됨 · 🟢 복구. 전부 같은
-세기로 오면 다 무시하게 된다. 셋째 줄은 "다음에 칠 명령" 이다 — 알림을 보고 뭘 할지 바로 알게.
+왼쪽 색 막대와 제목 앞 표시가 세기다 — 🔴 지금 봐야 함(서비스가 안 됨) · 🟠 오늘 안에 · 🟡 내일 봐도 됨 ·
+🟢 복구. 전부 같은 세기로 오면 다 무시하게 된다. 바닥글은 "다음에 칠 명령" 이다 — 알림을 보고 뭘 할지
+바로 알게.
+
+**카드의 시각은 보는 사람의 시간대로 뜬다** (Discord 가 바꿔 보여 준다 — 한국에선 한국 시간). 서버 로그
+줄의 시각은 컨테이너 시간대다 — 줄 끝의 `+0000` · `+0900` 이 그것이다. 시간대가 다르면 두 시각이
+어긋나므로, 방금 온 알림은 바닥글 명령의 `--since "10 min ago"` 로 찾는다.
 
 `%s` 를 채운 값 · 원문 · 트레이스백 · 예외 메시지는 **서버 로그에만** 있다 (루트 CLAUDE.md §2). 알림을
-보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 값을 내보내는 유일한 길은 로그를 찍을 때
-`extra={"alert_detail": "..."}` 로 표시하는 것이고, 서버가 모양을 검사한 값(화면 오류 보고)만 그렇게
-한다. 채널 하나에 **보내는 이름**이 출처별로 갈린다 — `api-alert`(서버) · `browser-alert`(화면 오류) ·
+보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 값을 내보내는 길은 로그를 찍을 때
+`extra={"alert_detail": "..."}`(값 줄) · `extra={"alert_heading": "..."}`(제목) 로 표시하는 것뿐이고,
+서버가 모양을 검사한 값(화면 오류 보고)만 그렇게 한다. 채널 하나에 **보내는 이름**이 출처별로 갈린다 — `api-alert`(서버) · `browser-alert`(화면 오류) ·
 `infra-alert`(컨테이너 감시) · `web-alert`(Next 서버 오류 — `apps/web/src/instrumentation.ts` 가 웹훅으로
 직접 보낸다, 토큰이 없어 api 를 못 거치니까). 로그에 `extra={"alert_source": "browser"}` 을 붙이면 그
 이름으로 간다. 같은 오류가 쏟아지면 분당 10건까지만 보내고 넘친 건수는
@@ -155,8 +164,8 @@ Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). **`APP_ENV=loca
 (`tests/__init__.py`).
 
 로컬에서 한 번 확인하려면 `.env` 에 URL 을 넣고 아래를 돌린다 (`APP_ENV=dev` 로 local 규칙을 비켜
-간다). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에
-`[dev] ERROR app.probe:<module>:1 — 알림 시험` 이 뜨면 된다.
+간다). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에 주황 카드로
+`🟠 알림 시험` 과 `probe:<module>:1 · dev` 가 뜨면 된다.
 
 ```bash
 cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
@@ -167,8 +176,8 @@ cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.g
 위 알림은 api 가 살아 있을 때만 말할 수 있다. 컨테이너가 못 뜨거나 redis 가 죽은 건 밖에서 봐야 해서,
 서버의 cron(정해진 시각마다 명령을 돌리는 리눅스 장치)이 1분마다
 [`deploy/scripts/health-alert.sh`](../../deploy/scripts/health-alert.sh) 를 돌린다. 배포 compose 의
-컨테이너 전부의 상태(docker healthcheck 결과)를 읽어 **지난번과 달라진 것만** 같은 웹훅으로 한 줄
-보낸다 — `[prod] ktc4-web: running healthy → exited -`, 복구되면 `… → running healthy`. 웹훅 전송이
+컨테이너 전부의 상태(docker healthcheck 결과)를 읽어 **지난번과 달라진 것만** 같은 웹훅으로 카드
+한 장에 보낸다 (하나라도 🔴 면 빨강, 전부 복구면 초록) — `[prod] ktc4-web: running healthy → exited -`, 복구되면 `… → running healthy`. 웹훅 전송이
 실패하면 다음 분에 다시 보낸다. 1분마다 돌아도 `docker inspect` 몇 밀리초라 부담이 없다 (healthcheck
 자체가 이미 5~30초마다 돈다).
 
