@@ -18,6 +18,7 @@ from app.api.v1.routers import (
     auth,
     children,
     client_errors,
+    consents,
     corrections,
     home,
     invites,
@@ -42,6 +43,7 @@ protected_router = APIRouter(dependencies=[Depends(get_current_parent)])
 protected_router.include_router(auth.fixed_router)
 protected_router.include_router(children.router)
 protected_router.include_router(client_errors.router)
+protected_router.include_router(consents.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(observations.router)

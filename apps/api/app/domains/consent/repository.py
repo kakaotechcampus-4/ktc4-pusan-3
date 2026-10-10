@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
+from app.domains.policy.models import PolicyVersion
 
 ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
     ConsentScope.SERVICE_TERMS,
@@ -48,6 +49,18 @@ REQUIRED_CHILD_SCOPES: tuple[ConsentScope, ...] = (
 
 건강정보 동의도 필수다 — 자유 문장 입력에 건강 내용이 섞여 들어와, 선택으로 풀면 동의 없이
 민감정보를 저장 · 외부 전송하게 된다 (개인정보보호법 제23조, #92 결정).
+"""
+
+
+CHILD_SCOPES: tuple[ConsentScope, ...] = (
+    ConsentScope.CHILD_BASIC,
+    ConsentScope.CHILD_HEALTH,
+)
+"""아이 단위 동의 전부 — 동의 대상이 아이다. 지금은 REQUIRED_CHILD_SCOPES 와 같다.
+
+아이 쪽에 선택 동의가 생기면 여기에 더하고 REQUIRED_CHILD_SCOPES 에는 넣지 않는다 (계정 쪽의
+ACCOUNT_SCOPES / REQUIRED_ACCOUNT_SCOPES 와 같은 나눔). quality_improve 는 어디에도 없다 —
+쓰지 않는 값이다 (consent/models.py).
 """
 
 
@@ -144,6 +157,46 @@ async def record_consent(
     session.add(consent)
     await session.flush()
     return consent
+
+
+async def latest_consent(
+    session: AsyncSession,
+    *,
+    scope: ConsentScope,
+    subject_parent_id: uuid.UUID | None = None,
+    child_id: uuid.UUID | None = None,
+) -> tuple[Consent, str] | None:
+    """대상+scope 의 마지막 행과 그때의 약관 버전 이름. latest_action 과 같은 순서로 고른다."""
+    row = (
+        await session.execute(
+            select(Consent, PolicyVersion.version)
+            .join(PolicyVersion, PolicyVersion.id == Consent.policy_version_id)
+            .where(Consent.scope == scope, _target_filter(subject_parent_id, child_id))
+            .order_by(Consent.acted_at.desc(), Consent.id.desc())
+            .limit(1)
+        )
+    ).first()
+    return None if row is None else (row[0], row[1])
+
+
+async def list_consent_history(
+    session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID | None = None
+) -> list[tuple[Consent, str]]:
+    """이 보호자의 계정 동의 이력과, child_id 를 주면 그 아이의 동의 이력 — 최신순.
+
+    아이 동의는 누가 눌렀는지와 상관없이 그 아이의 기록이다 (missing_child_scopes 와 같은 기준).
+    다른 보호자의 계정 동의는 섞지 않는다. 증빙이라 지우는 길은 없다.
+    """
+    target = Consent.subject_parent_id == parent_id
+    if child_id is not None:
+        target = target | (Consent.child_id == child_id)
+    rows = await session.execute(
+        select(Consent, PolicyVersion.version)
+        .join(PolicyVersion, PolicyVersion.id == Consent.policy_version_id)
+        .where(target, Consent.scope != ConsentScope.QUALITY_IMPROVE)
+        .order_by(Consent.acted_at.desc(), Consent.id.desc())
+    )
+    return [(consent, version) for consent, version in rows.all()]
 
 
 async def grant_account_scope(
