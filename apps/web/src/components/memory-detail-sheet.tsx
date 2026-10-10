@@ -4,15 +4,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
 import { useState } from "react";
 
-import { CorrectionButtons } from "@/components/correction-buttons";
+import { STATE_LABEL } from "@/components/affinity-list";
+import { CORRECTED_OBSERVATION, CorrectionButtons } from "@/components/correction-buttons";
 import { DomainMeta, observationAgent } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, qk } from "@/lib/api";
+import { api, isApiError, qk } from "@/lib/api";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type {
   Affinity,
+  AffinityState,
   CorrectionRequest,
   CorrectionResponse,
   CorrectionVerdict,
@@ -39,9 +41,8 @@ import { formatDay } from "@/lib/format";
 export type MemoryTarget =
   { type: "observation"; observation: Observation } | { type: "affinity"; affinity: Affinity };
 
-/** 🚨 지난 교정 이력에도 쓰이므로 **화면 버튼에서 빠진 값(`confirm`)까지** 담는다. */
+/** 지난 교정 이력에 쓴다. 버튼 문구는 `CorrectionButtons` 의 표가 따로 든다. */
 const VERDICT_LABEL: Record<CorrectionVerdict, string> = {
-  confirm: "맞아요",
   once_only: "이번만 그랬어요",
   need_more_observation: "기록이 더 필요해요",
   outdated: "지금은 달라요",
@@ -60,6 +61,11 @@ export function MemoryDetailSheet({
 }) {
   const queryClient = useQueryClient();
   const [result, setResult] = useState<CorrectionResponse | null>(null);
+  /**
+   * 고치기 **직전**의 기억 상태. 결과 줄이 "무엇이 바뀌었나" 를 말하려면 비교할 값이 있어야 한다.
+   * 🚨 시트를 연 순간의 값이 아니다 — 한 시트에서 두 번 고치면 두 번째의 직전은 첫 번째 응답이다.
+   */
+  const [stateBefore, setStateBefore] = useState<AffinityState | null>(null);
 
   const ref: Ref | null =
     target === null
@@ -68,6 +74,20 @@ export function MemoryDetailSheet({
         ? { kind: target.observation.kind, id: target.observation.id }
         : { kind: "profile_affinity", id: target.affinity.id };
 
+  const observation = target?.type === "observation" ? target.observation : null;
+  const detail = useObservationDetail(childId, observation);
+  /**
+   * 기록의 **지금** 상태. 방금 고친 응답 → 다시 받은 상세 → 목록이 넘겨준 값 순으로 믿는다.
+   * 🚨 목록이 넘겨준 값만 보면 시트를 연 뒤에 고친 기록(이 시트든 다른 기기든)에 버튼이 또 서고,
+   *    누르면 서버가 409 `already_corrected` 를 준다 (#277). 고치기는 `active` 기록에서만 한다.
+   */
+  const observationStatus =
+    observation === null
+      ? null
+      : ((result && result.target.kind !== "profile_affinity" ? result.target.status : null) ??
+        detail.data?.observation.status ??
+        observation.status);
+
   const correct = useMutation({
     mutationFn: (verdict: CorrectionVerdict) => {
       if (!ref) throw new Error("교정 대상이 없다");
@@ -75,14 +95,29 @@ export function MemoryDetailSheet({
       return api.post<CorrectionResponse>("/corrections", body);
     },
     onSuccess: (response) => {
+      setStateBefore(
+        target?.type !== "affinity"
+          ? null
+          : result?.target.kind === "profile_affinity"
+            ? result.target.state
+            : target.affinity.state,
+      );
       setResult(response);
       // 교정 하나가 관찰·프로필·제안을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
+    onError: (error) => {
+      // 시트를 연 뒤에 이미 고쳐진 기록이다 — 다시 받아서 고친 내용을 그린다.
+      if (isApiError(error, "already_corrected")) {
+        void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+      }
+    },
   });
+  const alreadyCorrected = isApiError(correct.error, "already_corrected");
 
   function close() {
     setResult(null);
+    setStateBefore(null);
     correct.reset();
     onClose();
   }
@@ -106,24 +141,40 @@ export function MemoryDetailSheet({
             <AffinityDetail affinity={target.affinity} />
           )}
 
-          {/* 🚨 성공하면 **다시 세운다.** 확인 패널이 열린 채로 두면 방금 바꾼 것을 또 바꾸라고
-              묻는 화면이 된다 — 실패했을 때는 `correction.id` 가 그대로라 패널이 남고,
-              부모가 같은 자리에서 다시 누를 수 있다 (그게 재시도다). */}
-          <CorrectionButtons
-            key={result?.correction.id ?? "new"}
-            targetKind={target.type}
-            onSelect={(verdict) => correct.mutate(verdict)}
-            pending={correct.isPending ? (correct.variables ?? null) : null}
-          />
+          {/* 🚨 고친 기록에는 버튼을 세우지 않는다 — 서버가 `active` 기록만 받는다 (#277).
+              방금 이 시트에서 고쳤으면 아래 결과 줄이 같은 말을 하므로 안내도 겹쳐 세우지 않는다.
+              🚨 기억은 몇 번이든 다시 고칠 수 있다(서버가 막지 않는다) — 이 갈래는 기록에만 있다. */}
+          {observationStatus !== null && observationStatus !== "active" ? (
+            result ? null : (
+              <CorrectedNote status={observationStatus} />
+            )
+          ) : alreadyCorrected ? null : (
+            // 🚨 성공하면 **다시 세운다.** 확인 패널이 열린 채로 두면 방금 바꾼 것을 또 바꾸라고
+            //    묻는 화면이 된다 — 실패했을 때는 `correction.id` 가 그대로라 패널이 남고,
+            //    부모가 같은 자리에서 다시 누를 수 있다 (그게 재시도다).
+            <CorrectionButtons
+              key={result?.correction.id ?? "new"}
+              targetKind={target.type}
+              onSelect={(verdict) => correct.mutate(verdict)}
+              pending={correct.isPending ? (correct.variables ?? null) : null}
+            />
+          )}
 
-          {/* 🚨 실패를 빨강으로 칠하지 않는다 (문서 §3). */}
-          {correct.isError ? (
+          {/* 🚨 실패를 빨강으로 칠하지 않는다 (문서 §3). 409 는 실패가 아니라 이미 끝난 일이라
+              "다시 눌러주세요" 를 쓰지 않는다 — 다시 눌러도 같은 409 다. */}
+          {alreadyCorrected ? (
+            <p className="text-body-sm text-ink-muted" role="status">
+              이미 고친 기록이에요.
+            </p>
+          ) : correct.isError ? (
             <p className="text-body-sm text-ink-muted" role="status">
               지금은 고치지 못했어요. 잠시 뒤에 다시 눌러주세요.
             </p>
           ) : null}
 
-          {result ? <CascadeResult result={result} targetKind={target.type} /> : null}
+          {result ? (
+            <CascadeResult result={result} targetKind={target.type} stateBefore={stateBefore} />
+          ) : null}
         </div>
       )}
     </BottomSheet>
@@ -133,16 +184,25 @@ export function MemoryDetailSheet({
 /**
  * 🚨 무엇이 다시 계산됐는지는 **서버가 준 숫자**로만 말한다. "추천이 바뀔 거예요" 같은
  *    예측을 프론트가 쓰지 않는다 — 재계산 범위를 아는 것은 Curator 뿐이다.
+ *
+ * 🚨 **기억을 고쳤으면 응답의 상태를 직전 상태와 비교해 말한다.** 기억 고치기는 의견이라
+ *    (`CorrectionButtons` 의 🚨) 상태가 그대로인 경우가 흔한데, "다시 계산했어요" 만 쓰면
+ *    무엇이 됐는지 알 수 없다. 그대로면 **그대로라고** 말하고, 이유는 서버의 `state_reason` 이 진다.
+ *    "기억 1건을 다시 계산했어요" 는 쓰지 않는다 — 고친 그 기억 자신이라 아무것도 알려 주지 않는다.
  */
 function CascadeResult({
   result,
   targetKind,
+  stateBefore,
 }: {
   result: CorrectionResponse;
   /** 🚨 관찰과 프로필을 "기억" 한 단어로 묶지 않는다 (`CorrectionButtons` 의 🚨). */
   targetKind: "observation" | "affinity";
+  /** 기억을 고쳤을 때만 있다. 고치기 직전의 상태. */
+  stateBefore: AffinityState | null;
 }) {
-  const profiles = result.cascade.affinities_recomputed.length;
+  const affinity = result.target.kind === "profile_affinity" ? result.target : null;
+  const profiles = affinity ? 0 : result.cascade.affinities_recomputed.length;
   const suggestions = result.cascade.suggestions_recalculated.length;
 
   return (
@@ -150,7 +210,17 @@ function CascadeResult({
       <p className="text-body-sm text-ink">
         {josa(VERDICT_LABEL[result.correction.verdict], "으로/로")} 반영했어요.
       </p>
-      {profiles === 0 && suggestions === 0 ? (
+      {affinity && stateBefore ? (
+        <div className="mt-1">
+          <p className="text-caption text-ink-muted">
+            {stateBefore === affinity.state
+              ? "기억의 상태는 바뀌지 않았어요."
+              : `기억이 ${STATE_LABEL[stateBefore]}에서 ${josa(STATE_LABEL[affinity.state], "으로/로")} 바뀌었어요.`}
+          </p>
+          <p className="text-caption text-ink-muted">{affinity.state_reason}</p>
+        </div>
+      ) : null}
+      {affinity && suggestions === 0 ? null : profiles === 0 && suggestions === 0 ? (
         <p className="text-caption text-ink-muted mt-1">다시 계산된 것은 없어요.</p>
       ) : (
         <ul className="text-caption text-ink-muted mt-1 flex flex-col gap-0.5">
@@ -167,6 +237,34 @@ function CascadeResult({
   );
 }
 
+/**
+ * 기록 상세 조회. 시트 본체(지금 상태 — 고치기 버튼을 세울지)와 `ObservationDetail`(근거 · 이력)이
+ * **같은 키**로 같이 쓴다 — TanStack Query 가 한 번만 부른다.
+ */
+function useObservationDetail(childId: string, observation: Observation | null) {
+  return useQuery({
+    queryKey: observation
+      ? qk.observation(childId, observation.kind, observation.id)
+      : qk.observation(childId, "", ""),
+    queryFn: () =>
+      api.get<ObservationDetailResponse>(
+        `/children/${childId}/observations/${observation!.kind}/${observation!.id}`,
+      ),
+    enabled: observation !== null,
+  });
+}
+
+/** 이미 고친 기록을 열었을 때 버튼 자리에 서는 한 덩이. 무엇으로 고쳤고 그래서 어떻게 되는지. */
+function CorrectedNote({ status }: { status: "stand_alone" | "inactive" }) {
+  const { label, note } = CORRECTED_OBSERVATION[status];
+  return (
+    <div className="bg-surface-muted rounded-field p-3.5">
+      <p className="text-body-sm text-ink">{josa(label, "으로/로")} 고친 기록이에요.</p>
+      <p className="text-caption text-ink-muted mt-1">{note}</p>
+    </div>
+  );
+}
+
 function ObservationDetail({
   childId,
   observation,
@@ -178,13 +276,9 @@ function ObservationDetail({
    * 목록이 이미 관찰 본문을 들고 있는데도 상세를 부르는 이유는 **`used_in` 과 교정 이력** 때문이다.
    * 목록 응답에는 없고, "이 기억은 제안 근거에서 빠져 있어요" 를 그리려면 그 값이 있어야 한다.
    */
-  const detail = useQuery({
-    queryKey: qk.observation(childId, observation.kind, observation.id),
-    queryFn: () =>
-      api.get<ObservationDetailResponse>(
-        `/children/${childId}/observations/${observation.kind}/${observation.id}`,
-      ),
-  });
+  const detail = useObservationDetail(childId, observation);
+  // 목록이 넘겨준 값보다 다시 받은 상세가 새것이다 — 이 시트에서 방금 고친 기록도 여기서 갈린다.
+  const currentStatus = detail.data?.observation.status ?? observation.status;
 
   return (
     <div className="flex flex-col gap-4">
@@ -207,7 +301,12 @@ function ObservationDetail({
         {isHealthObservation(observation) ? (
           <HealthFields fields={observation.domain_fields} />
         ) : observation.affinity ? (
-          <MetaRow label="묶인 기억">{observation.affinity.merge_key}</MetaRow>
+          // 🚨 고친 기록도 서버가 `affinity` 를 그대로 싣는다 — 고치기는 `status` 만 바꾸고 연결은
+          //    남긴다. 다만 그 기억의 기록 수에는 `active` 만 들어가서, 고친 기록에 "묶인 기억" 이라고
+          //    쓰면 여전히 센다고 읽힌다. 사실은 버리지 않고 라벨로 말한다 (목록은 칩을 아예 뺀다).
+          <MetaRow label={currentStatus === "active" ? "묶인 기억" : "세지 않는 기억"}>
+            {observation.affinity.merge_key}
+          </MetaRow>
         ) : null}
       </dl>
 

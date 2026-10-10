@@ -820,12 +820,51 @@ export const educationObservation: ObservationPromotable = promotable(
   null,
 );
 
-/** 4개 테이블을 `observed_to DESC` 로 병합한 모양 — 서버가 하는 일을 목도 그대로 한다. */
+/**
+ * 생활습관 기록. 🚨 `growth` 분류에 education 과 **같이** 나와야 한다 (#266) — 목이 이걸 안 갖고
+ * 있어서, routine 이 한 건만 섞여도 07 화면이 멈추는 것을 목으로는 못 봤다 (#269).
+ * 승격 대상이 아니라 `affinity` 는 늘 `null`, `strong_signals` 는 늘 빈 배열이다.
+ */
+export const routineObservation: ObservationPromotable = {
+  ...promotable(
+    "o_6",
+    "observation_routine",
+    "양치",
+    "자기 전에 혼자 양치하겠다고 했어요",
+    4,
+    null,
+  ),
+  strong_signals: [],
+};
+
+/**
+ * 다섯 테이블 전부. 목록은 여기서 건강을 빼고 내려주지만(첫 배포 범위 밖 · #259), 캘린더와
+ * 상세는 아직 이 배열에서 찾는다.
+ */
 export const allObservations: Observation[] = [
   ...observations,
   educationObservation,
+  routineObservation,
   healthObservation,
 ].sort((a, b) => (a.observed_to < b.observed_to ? 1 : -1));
+
+/**
+ * `observations_many` 시나리오의 07 기록 — 한 장(20건)을 넘겨야 "더 보기" 가 선다.
+ * 기본 기록 뒤에 1주 전부터 하루씩 거슬러 간 놀이 기록을 붙인다.
+ */
+export const manyObservations: Observation[] = [
+  ...allObservations,
+  ...Array.from({ length: 19 }, (_, i) =>
+    promotable(
+      `o_m${i + 1}`,
+      "observation_activity",
+      "블록",
+      `블록으로 탑을 쌓았어요 (${i + 1})`,
+      7 + i,
+      null,
+    ),
+  ),
+];
 
 /**
  * 07 피드백 탭이 평가할 제안 목록.

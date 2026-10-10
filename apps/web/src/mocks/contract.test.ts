@@ -43,12 +43,14 @@ import type {
   CalendarDayResponse,
   CalendarMonthResponse,
   ChildProfile,
+  CorrectionRequest,
   CorrectionResponse,
   GrowthLog,
   GrowthLogsResponse,
   HealthSafety,
   HealthSafetyListResponse,
   Observation,
+  ObservationDetailResponse,
   ObservationsResponse,
   Policy,
   PhotoCommitResponse,
@@ -985,12 +987,13 @@ describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
-  it("도메인을 생략하면 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+  it("도메인을 생략하면 건강을 뺀 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const kinds = new Set(page.items.map((item) => item.kind));
     expect(kinds.size).toBeGreaterThan(1);
-    expect(kinds).toContain("observation_health");
+    // 🚨 건강 관찰은 첫 배포 범위 밖이다 — 서버(#266)가 목록에서 뺀다 (#259).
+    expect(kinds).not.toContain("observation_health");
     expect(page.total).toBe(page.items.length);
 
     const dates = page.items.map((item) => item.observed_to);
@@ -1006,6 +1009,70 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(page.items.every((item) => item.kind === "observation_food")).toBe(true);
   });
 
+  // 🚨 `observation_${domain}` 으로 찾으면 없는 테이블(`observation_growth`)을 찾아 늘 비었다 (#269).
+  it("growth 는 education 과 routine 두 테이블을 같이 내려준다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "growth" },
+    });
+
+    expect(new Set(page.items.map((item) => item.kind))).toEqual(
+      new Set(["observation_education", "observation_routine"]),
+    );
+  });
+
+  it("health 는 오류가 아니라 빈 목록이다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "health" },
+    });
+
+    expect(page).toEqual({ items: [], next_cursor: null, total: 0 });
+  });
+
+  it("next_cursor 를 그대로 돌려주면 빠지거나 겹치는 기록 없이 끝까지 넘어간다", async () => {
+    const whole = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ObservationsResponse = await api.get<ObservationsResponse>(
+        "/children/c1/observations",
+        { query: { limit: 2, cursor } },
+      );
+      expect(page.total).toBe(whole.total);
+      seen.push(...page.items.map((item) => `${item.kind}:${item.id}`));
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+
+    expect(seen).toEqual(whole.items.map((item) => `${item.kind}:${item.id}`));
+  });
+
+  it("기본 한 장은 20건이고, 넘치면 next_cursor 가 온다", async () => {
+    setScenario("observations_many");
+    try {
+      const first = await api.get<ObservationsResponse>("/children/c1/observations");
+      expect(first.items).toHaveLength(20);
+      expect(first.total).toBe(25);
+      expect(first.next_cursor).not.toBeNull();
+
+      const second = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { cursor: first.next_cursor },
+      });
+      expect(second.items).toHaveLength(5);
+      expect(second.next_cursor).toBeNull();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("깨진 커서는 400 validation_failed 다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { cursor: "깨진값" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
   it("프로필은 affinities 한 배열이고 safety 가 따로 온다", async () => {
     const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
 
@@ -1014,11 +1081,11 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(body.safety.length).toBeGreaterThan(0);
   });
 
+  // 목록에서는 빠졌지만 캘린더와 run 결과에는 아직 선다 — 그 화면들이 같은 시트를 연다.
   it("health 관찰에는 subject · polarity · affinity 키가 아예 없다", async () => {
-    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
-      query: { domain: "health" },
-    });
-    const health = page.items[0];
+    const { observation: health } = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_health/o_h1",
+    );
 
     expect(health.kind).toBe("observation_health");
     expect("subject" in health).toBe(false);
@@ -1028,18 +1095,32 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
 });
 
 describe("⑨ 교정은 지우지 않고 내린다", () => {
-  it("target_ref 를 배열로 보내면 422 다", async () => {
+  it("target_ref 를 배열로 보내면 400 이다 — 서버는 본문 검증 실패를 400 으로 준다", async () => {
     const response = await fetch(`${API_BASE_URL}/corrections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target_ref: [{ kind: "profile_affinity", id: "a_12" }],
-        verdict: "confirm",
+        verdict: "wrong",
         child_id: "c1",
       }),
     });
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(400);
+  });
+
+  it("once_only 는 status 를 stand_alone 으로 바꾼다 — active 로 두지 않는다 (#277)", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    const target = before.items.find((item) => item.kind === "observation_food");
+    expect(target).toBeDefined();
+
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    expect((result.target as Observation).status).toBe("stand_alone");
   });
 
   it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
@@ -1055,29 +1136,146 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
 
     // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
     expect((result.target as Observation).status).toBe("inactive");
-    // 기본 조회는 active 만 본다 — 행은 남았지만 목록에서는 빠진다.
+    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.some((item) => item.id === target!.id)).toBe(false);
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.total).toBe(before.total);
   });
 
-  it("기억 need_more_observation 은 confirmed 를 candidate 로 한 단계만 내린다", async () => {
+  it("이번만 그랬어요로 고친 기록도 목록에 stand_alone 으로 남고, 상세에 이력이 선다", async () => {
     const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_12" },
-      verdict: "need_more_observation",
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
+
+    const list = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(list.items.find((item) => item.id === "o_1")?.status).toBe("stand_alone");
+
+    const detail = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_food/o_1",
+    );
+    expect(detail.observation.status).toBe("stand_alone");
+    expect(detail.corrections.map((c) => c.id)).toEqual([result.correction.id]);
+  });
+
+  it("이미 고친 기록을 또 고치면 409 already_corrected 다 — 값이 틀린 400 과 다르다 (#277)", async () => {
+    const body = {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    } as const;
+    await api.post<CorrectionResponse>("/corrections", body);
+
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "already_corrected")).toBe(true);
+    expect((failure as ApiError).status).toBe(409);
+  });
+
+  it("status 를 고르면 그 상태만 오고 total 도 그 상태로 센다 (#266)", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const all = await api.get<ObservationsResponse>("/children/c1/observations");
+    const standAlone = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "stand_alone" },
+    });
+    const active = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "active" },
+    });
+
+    expect(standAlone.items.map((item) => item.id)).toEqual(["o_1"]);
+    expect(standAlone.total).toBe(1);
+    expect(active.items.some((item) => item.id === "o_1")).toBe(false);
+    expect(active.total).toBe(all.total - 1);
+  });
+
+  it("모르는 status 는 400 이다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: "observation_food", id: "o_1" },
+        verdict: "need_more_observation",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  // 🚨 기억 고치기는 의견이다 — 서버(#277)는 상태를 쌓인 기록 수와 기억 wrong 수로만 다시 센다.
+  //    어느 판정도 기억을 archived 로 보내지 않고, 기억은 목록에 남는다.
+  async function correctAffinity(id: string, verdict: CorrectionRequest["verdict"]) {
+    return api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id },
+      verdict,
+      child_id: "c1",
+    });
+  }
+
+  async function listedAffinity(id: string): Promise<Affinity | undefined> {
+    const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    return body.affinities.find((a) => a.id === id);
+  }
+
+  it("기억 need_more_observation 은 strength 만 낮춘다 — 확인됨은 확인됨으로 남는다", async () => {
+    const before = await listedAffinity("a_12");
+    const result = await correctAffinity("a_12", "need_more_observation");
+
+    const target = result.target as Affinity;
+    expect(target.state).toBe("confirmed");
+    expect(target.strength).toBeLessThan(before!.strength);
+    expect((await listedAffinity("a_12"))?.state).toBe("confirmed");
+  });
+
+  it("기억 outdated 도 상태를 바꾸지 않고 목록에 남긴다", async () => {
+    const result = await correctAffinity("a_20", "outdated");
 
     expect((result.target as Affinity).state).toBe("candidate");
+    expect(await listedAffinity("a_20")).toBeDefined();
   });
 
-  it("기억 outdated 는 archived 로 내린다 — 한 단계가 아니다", async () => {
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_20" },
-      verdict: "outdated",
+  it("기억 wrong 은 확인됨의 기준을 올린다 — 기록이 모자라면 후보로 내려가고 목록에 남는다", async () => {
+    // a_12 는 묶인 기록 3건으로 확인됨이다. wrong 1번이면 기준이 4건이 된다.
+    const result = await correctAffinity("a_12", "wrong");
+
+    expect((result.target as Affinity).state).toBe("candidate");
+    expect((await listedAffinity("a_12"))?.state).toBe("candidate");
+  });
+
+  it("묶인 기록을 고치면 기억도 다시 센다 — 고친 기록은 기억의 기록 수에서 빠진다", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
 
-    expect((result.target as Affinity).state).toBe("archived");
+    const affinity = await listedAffinity("a_12");
+    expect(affinity?.observation_count).toBe(2);
+    expect(affinity?.source_refs.some((ref) => ref.id === "o_1")).toBe(false);
+    expect(affinity?.state).toBe("candidate");
+  });
+
+  it("기억에 once_only 를 보내면 400 이다 — 기록에만 쓰는 값", async () => {
+    const failure = await correctAffinity("a_12", "once_only").catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
   });
 });
 

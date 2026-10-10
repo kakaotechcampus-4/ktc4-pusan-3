@@ -23,19 +23,28 @@ import { cn } from "@/lib/cn";
  * 🚨 **`is_stale` 인 프로필을 단독 근거처럼 보이게 두지 않는다** (NF-08). 6개월이 지났다는
  *    날짜 사실은 `state_reason` 이 말하고, 그래서 어떻게 되는지는 고정 문구가 말한다.
  */
-const STATE_LABEL: Record<AffinityState, string> = {
+/** 상세 시트의 고치기 결과 줄도 이 표를 쓴다 — 같은 상태가 화면마다 다른 이름으로 불리지 않게. */
+export const STATE_LABEL: Record<AffinityState, string> = {
   candidate: "후보",
   confirmed: "확인됨",
   archived: "보관됨",
 };
 
-/** 좋아함/싫어함은 별도 배열이 아니라 `polarity` 로 내려온다 (계약서 §08). */
-function polarityLabel(polarity: Affinity["polarity"]): string {
-  if (polarity === 1) return "좋아해요";
-  if (polarity === -1) return "안 좋아해요";
-  if (polarity === 0) return "반응이 갈려요";
-  // confirmed 면 NOT NULL 이다. candidate 에서만 비어 있을 수 있다.
-  return "아직 판단하지 않았어요";
+/**
+ * 좋아함/싫어함은 별도 배열이 아니라 `polarity` 로 내려온다 (계약서 §08).
+ *
+ * 🚨 **확인됨일 때만 말한다.** 후보는 "좋아해요" 처럼 성향으로 말하지 않는다 (최상위 §2
+ *    "한 번의 관찰을 성향으로 확정하지 않는다" · #259). 서버는 후보를 만들 때 첫 기록의
+ *    `polarity` 를 그대로 넣어서 기록 1건짜리 후보에도 값이 온다 — 값이 있다고 말하면
+ *    한 번 본 것을 성향으로 말하는 셈이다. 후보는 서버의 `state_reason` 이 사실만 말한다.
+ */
+function polarityLabel(affinity: Affinity): string | null {
+  if (affinity.state !== "confirmed") return null;
+  if (affinity.polarity === 1) return "좋아해요";
+  if (affinity.polarity === -1) return "안 좋아해요";
+  if (affinity.polarity === 0) return "반응이 갈려요";
+  // confirmed 면 NOT NULL 이다. 비어 오면 지어내지 않고 줄을 세우지 않는다.
+  return null;
 }
 
 export function AffinityList({
@@ -59,6 +68,7 @@ export function AffinityList({
 function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => void }) {
   const stale = affinity.is_stale;
   const candidate = affinity.state === "candidate";
+  const polarity = polarityLabel(affinity);
 
   return (
     <button
@@ -105,9 +115,11 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
           </span>
         </span>
 
-        <span className={cn("text-body-sm", stale ? "text-ink-muted" : "text-ink")}>
-          {polarityLabel(affinity.polarity)}
-        </span>
+        {polarity ? (
+          <span className={cn("text-body-sm", stale ? "text-ink-muted" : "text-ink")}>
+            {polarity}
+          </span>
+        ) : null}
 
         {/* 서버가 임계값을 알고 쓴 문장이다. 화면이 바꿔 쓰지 않는다. */}
         <span className="text-body-sm text-ink-muted">{affinity.state_reason}</span>

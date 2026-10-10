@@ -4,7 +4,7 @@
  */
 
 /* ── Ref — 도메인 간 참조 ────────────────────────────────────────────────
- * observation 테이블이 4개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
+ * observation 테이블이 5개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
  * 모든 참조는 { kind, id } 모양이다.
  */
 export const OBSERVATION_KINDS = [
@@ -12,6 +12,11 @@ export const OBSERVATION_KINDS = [
   "observation_health",
   "observation_education",
   "observation_activity",
+  /**
+   * 생활습관(양치 · 수면 등). 서버는 `growth` 분류로 education 과 같이 내려준다 (#266).
+   * 한동안 여기 없어서 routine 이 한 건만 섞여도 07 화면이 렌더링 오류로 멈췄다 (#269).
+   */
+  "observation_routine",
 ] as const;
 export type ObservationKind = (typeof OBSERVATION_KINDS)[number];
 
@@ -27,7 +32,7 @@ export const REF_KINDS = [
    *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
    *
    * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
-   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` ·
+   *    종류가 더 있다 — `child_growth_log` · `notice` ·
    *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
    *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
    *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.
@@ -55,23 +60,21 @@ export type Agent = (typeof AGENTS)[number];
 /** 승격 상태. LLM 이 직접 쓰지 않는다 — Curator 의 반복 집계로만 바뀐다 (CLAUDE.md §2). */
 export type AffinityState = "candidate" | "confirmed" | "archived";
 
-/** "맞아요" 교정으로 상향된다. */
+/** 고치기(`POST /corrections`)는 이 값을 바꾸지 않는다 — 기록의 `status` 만 내린다. */
 export type ConfidenceSource =
   "institution_notice" | "parent_direct" | "parent_hedged" | "parent_hearsay";
 
 /**
  * 교정 판정 (CLAUDE.md §5 Correction).
  *
- * 🚨 **화면이 쓰는 것과 타입에 있는 것이 다르다.** 여기는 계약서 enum 이라 지난 교정 이력
- *    (`ObservationDetailResponse.corrections`)에 실려 오는 값을 전부 담아야 한다. 어떤 버튼을
- *    보여줄지는 `CorrectionButtons` 의 표가 정한다 — 기록과 기억이 서로 다른 것을 묻는다.
+ * 서버 `correction_verdict` 와 같은 4개다. **대상마다 쓸 수 있는 값이 다르다** — 기록은
+ * `once_only` · `wrong`, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
+ * 어떤 버튼을 보여줄지는 `CorrectionButtons` 의 표가 정한다.
  *
- * ⚠️ `need_more_observation` 은 **계약서 v1 에 아직 없다.** "아직 확정하지 말고 더 지켜보자" 는
- *    기억에만 있는 판정인데 v1 에는 그 자리가 없어서(`once_only` 는 관찰 한 건에 대한 말이다)
- *    제안 형태로 두고 목에 먼저 세웠다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ * 🚨 **`confirm`(맞아요)은 없다.** 동의는 아무것도 바꾸지 않아서 서버가 이력으로도 남기지 않는다
+ *    (docs/agents/data_model.md). 보내면 400 이고, 지난 이력에도 실려 오지 않는다 (#277).
  */
-export type CorrectionVerdict =
-  "confirm" | "once_only" | "need_more_observation" | "outdated" | "wrong";
+export type CorrectionVerdict = "once_only" | "need_more_observation" | "outdated" | "wrong";
 
 export type SuggestionStatus = "draft" | "approved" | "rejected" | "expired";
 
@@ -82,19 +85,24 @@ interface ObservationBase {
   child_id: string;
   raw_text: string;
   confidence_source: ConfidenceSource;
-  status: "active" | "inactive";
+  /** `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다. 화면은 이 값으로 가르지 않는다. */
+  status: "active" | "inactive" | "stand_alone";
   /** observed_range 하한 (YYYY-MM-DD). */
   observed_from: string;
   /** 상한. 무한대 금지. */
   observed_to: string;
   /** "오늘" 같은 표시 문구. 서버가 만든다 — 프론트에서 날짜를 다시 계산하지 않는다. */
   observed_label?: string;
-  source_writer?: { parent_id: string; nickname: string };
+  /** 적은 보호자. 서버는 별명이 없거나 탈퇴해 행이 없으면 `null` 로 보낸다. */
+  source_writer?: { parent_id: string; nickname: string } | null;
   source_notice_id?: string | null;
   created_at?: string;
 }
 
-/** food · education · activity — 승격 파이프라인 안에 있는 3종. */
+/**
+ * food · education · activity — 승격 파이프라인 안에 있는 3종. routine 도 같은 모양으로 온다.
+ * 🚨 routine 은 승격 대상이 아니라 `affinity` 가 늘 `null`, `strong_signals` 가 늘 빈 배열이다.
+ */
 export interface ObservationPromotable extends ObservationBase {
   kind: Exclude<ObservationKind, "observation_health">;
   subject: string;
@@ -705,16 +713,19 @@ export interface ObservationsResponse {
   total: number;
 }
 
-/** 관찰 목록 필터. `?domain=` 생략 시 4개 테이블을 observed_to DESC 로 병합한다. */
+/**
+ * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
+ * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
+ */
 export interface ObservationFilters {
   domain?: Agent;
-  /** "제안에서 빠진 기억" — 근거로 쓰인 적 없는 것만. */
-  unused_in_suggestions?: boolean;
+  /** 고른 상태만 (#266). 주지 않으면 deleted 를 뺀 세 상태 모두다. `total` 도 이 기준으로 센다. */
+  status?: ObservationBase["status"];
 }
 
 /**
  * `GET /children/{cid}/observations/{kind}/{id}` — 관찰 상세.
- * 경로에 `kind` 가 들어가는 이유는 테이블이 4개이기 때문이다.
+ * 경로에 `kind` 가 들어가는 이유는 테이블이 5개이기 때문이다.
  */
 export interface ObservationDetailResponse {
   observation: Observation;
@@ -736,7 +747,7 @@ export interface AffinitiesResponse {
 
 /**
  * `POST /corrections` — 관찰이든 프로필이든 같은 엔드포인트.
- * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 422.
+ * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 400 (본문 검증 실패는 400 이다).
  */
 export interface CorrectionRequest {
   target_ref: Ref;
