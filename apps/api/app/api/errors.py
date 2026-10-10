@@ -148,8 +148,8 @@ def register_error_handlers(app: FastAPI) -> None:
             # 여기 오는 것은 버그다 — 우리 코드가 HTTPException 을 직접 던졌다는 뜻.
             # 원래 상태는 로그에만 남기고 밖으로는 500 으로 나간다. 매핑이 없다는 것은
             # 그 상태로 내보낼 코드를 정한 적이 없다는 뜻이라, 짝이 안 맞는 응답을
-            # 만들어 내보내지 않는다.
-            log.warning("매핑 없는 HTTPException status=%s", status)
+            # 만들어 내보내지 않는다. 사용자에게 500 이 나가는 버그라 ERROR 다 — 알림이 간다.
+            log.error("매핑 없는 HTTPException status=%s", status)
             return envelope(500, "internal_error", "요청을 처리할 수 없어요")
 
         return envelope(status, code, "요청을 처리할 수 없어요", headers=headers or None)

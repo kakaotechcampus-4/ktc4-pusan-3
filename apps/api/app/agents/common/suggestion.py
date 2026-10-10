@@ -4,7 +4,7 @@ Agent 는 값만 만들고 INSERT 는 주입된 writer 가 한다. `status` 와 
 tool 인자에 두지 않는다 — 모델이 만료나 승인 상태를 정할 수 없다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -39,7 +39,8 @@ class SuggestionDraft:
     content: str
     reason: str
     citations: tuple[EvidenceCitation, ...] = ()
-    # 그 추천에 들어 있는 알레르기 항목의 정식 명칭. 승인할 때 안내에 쓴다
+    # 그 추천에 들어 있거나 제품에 따라 들어 있을 수 있는 알레르기 항목의 정식 명칭.
+    # 19종 밖은 이름으로 담는다. 승인할 때 안내에 쓴다
     allergens: tuple[str, ...] = ()
     # 일정으로 만들 때 준비물 하나씩
     items: tuple[str, ...] = ()
@@ -136,14 +137,17 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
     `count` 는 `check_count` 를 거친 뒤 실제로 나가는 개수다. 0개는 실패가 아니라 안전 조건을
     통과한 후보가 없다는 뜻이라, 그 Agent 는 추천 없이 이 안내만 낸다. Food 처럼 0개 문구가
     따로 있는 Agent 는 `empty` 로 넘긴다.
+
+    `code` 는 여기서 붙인다. 문구가 Agent 마다 달라도 0개면 `empty` 라서 화면이 문구를 읽지
+    않고 가른다. 같은 `kind="notice"` 인 날씨 안내와 섞여 와도 개수 안내는 이 값으로 찾는다.
     """
     if not 0 <= count <= MAX_SUGGESTIONS:
         raise ValueError(f"추천 개수는 0~{MAX_SUGGESTIONS} 이다. 받은 것: {count}")
     if count == MAX_SUGGESTIONS:
         return None
     if count == 0:
-        return code_readout(empty)
-    return code_readout(PARTIAL_NOTICE, count=count)
+        return replace(code_readout(empty), code="empty")
+    return replace(code_readout(PARTIAL_NOTICE, count=count), code="fewer")
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:

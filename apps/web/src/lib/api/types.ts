@@ -157,17 +157,24 @@ export interface Affinity {
 /**
  * 🚨 LLM 이 생성·추론·수정하지 않는다 (NF-03). 보호자 직접 입력 또는 의료 기록만.
  * DB 의 health_safety.kind 는 API 에서 type 으로 내려온다 (Ref 의 kind 와 이름 충돌 회피).
+ *
+ * 필드는 DB 모델(`apps/api/app/domains/safety/models.py`)에 맞춘다. 라우터가 아직 없어 Swagger 로
+ * 대조할 수 없다 — 생기면 한 번 대조한다 (`domains/safety/repository.py` 의 TODO).
  */
 export interface HealthSafety {
   kind: "health_safety";
   id: string;
+  /** DB 의 `health_safety.kind` — allergy / chronic_disease / behavioral / environmental / other_medical. */
   type: string;
   label: string;
-  aliases: string[];
-  category: string;
+  /**
+   * 🚨 종류에 따라 값이 갈린다 (DB CHECK `health_safety_severity_by_kind`) — 알레르기는 검사 결과의
+   *    Class(`class_0` ~ `class_6`), 나머지는 `mild` ~ `anaphylaxis`. 규칙은 `lib/health-safety.ts`.
+   */
   severity: string | null;
   reactions: string[];
-  management: Record<string, unknown>;
+  /** DB 는 text 다 (jsonb 에서 바뀌었다). 화면은 쓰지 않는다. */
+  management: string | null;
   notes: string | null;
   created_by?: { parent_id: string; nickname: string };
   updated_at: string;
@@ -657,7 +664,6 @@ export interface SubmitEventResponse {
 export interface CreateHealthSafetyRequest {
   type: string;
   label: string;
-  category: string;
   severity?: string;
   reactions?: string[];
   notes?: string;
@@ -678,7 +684,6 @@ export interface CreateHealthSafetyResponse {
  * 🚨 보호자 직접 입력만 들어온다. LLM 이 이 요청을 만들지 않는다 (NF-03 · 최상위 §2).
  */
 export interface UpdateHealthSafetyRequest {
-  category?: string;
   /** `null` 은 "모르겠어요" 로 되돌리는 것이다 — 값을 안 보내는 것(그대로 두기)과 다르다. */
   severity?: string | null;
   reactions?: string[];
@@ -1153,7 +1158,6 @@ export interface SafetyScanCandidate {
   /** 못 읽었으면 `null`. 🚨 추측해 채우지 않는다. */
   type: string | null;
   label: string | null;
-  category: string | null;
   severity: string | null;
   reactions: string[];
   /**
@@ -1323,7 +1327,6 @@ export type SafetyStatus = "none" | "has" | "unknown";
 export interface OnboardingSafetyInput {
   type: string;
   label: string;
-  category: string;
   severity?: string;
   reactions?: string[];
 }
