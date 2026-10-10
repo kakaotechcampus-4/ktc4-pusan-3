@@ -163,7 +163,7 @@ class ActivityCandidate(ToolArgs):
 
 **스캔 대상은 `content` + `materials` 둘 다.** `materials` 만 보면 *"구슬 꿰기"* 처럼 재료가 문장 안에 있는 후보를 놓친다.
 
-**규칙 ② — 0–17개월에서는 경고를 차단으로 승격한다.** `SAFETY_PROMOTE_BELOW_MONTH = 18` 을 `ActivityBand` 와 **별도 상수로** 둔다.
+**규칙 ② — 0–17개월에서는 경고를 차단으로 승격한다.** `SAFETY_PROMOTE_BELOW_MONTH = 18` 을 `ActivityBand` 와 **별도 상수로** 둔다. 승격은 공용 판정 `HazardAxis.level_at`(`common/reference.py`) 한 곳에서 한다 — Growth 교육 활동도 같은 선을 쓰기로 해서(#282 리뷰) 두 Agent 가 같은 판정을 읽는다(#319).
 
 **`materials` 가 비어 있어도 후보를 떨어뜨리지 않는다.** 필수로 만들면 모델이 판정을 통과시키려고 재료를 지어내고, 그러면 판정 자체가 오염된다. 문장 스캔이 그 자리를 메운다.
 
@@ -193,6 +193,8 @@ class ActivityCandidate(ToolArgs):
 - **놀이 문장에서 다른 뜻으로 읽히는 별칭(포크 · 에그 · 밀크 · 피치 · 전복 · 돼지)은 쓰지 않는다** — "플라스틱 포크" · "에그 쉐이커" · "돼지저금통". `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
 
 **거르는 것은 `status = 'active'` 행뿐이다** (10/4 확정안 — `status` 3값, 행 없음이 `unknown`). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
+
+**식품 사전에 없는 알레르기 이름에는 확인 문구를 붙인다** (#298 · #261 리뷰). `allergy` active 행 중 이름에 식품 사전(공용 이름 사전)이 못 찾은 조각이 있으면 — 꽃가루 · 라텍스 · 동물털, 19종 밖 식품인 쑥 · 키위도 — 코드 문구 `caution.non_food_allergy` 를 이름마다 한 줄 낸다: *"등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."* 이름이 문장에 그대로 나오는 후보는 위 대조가 빼지만, 꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다. 이름을 장소 · 물건으로 넓히는 대응표(꽃가루 → 공원)는 "어디까지 위험한가" 를 우리가 정하는 일이라 만들지 않는다. 고르는 판정은 Growth 와 같은 공용 함수(`common/allergy.non_food_allergies`)다. `environmental`(고소공포)에는 붙이지 않는다. 문구는 추천마다가 아니라 run 에 한 벌로 run state(`cautions`)에 남기고, 화면 자리는 #249 를 따른다.
 
 **`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 정식 명칭이고, 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
 
@@ -473,7 +475,8 @@ async def run(task, context, *, client=None):
 ```
 1. 안전 필터            filter_activity_safety — hazard_term · health_safety(active)
                         → 후보를 풀에서 뺀다 (거절이 아니라 제거). 모델에게 돌려주지 않는다 —
-                          통과한 초안 · 빠진 후보(excluded) · 경고 문구(warnings)를 run state 에 담고,
+                          통과한 초안 · 빠진 후보(excluded) · 경고 문구(warnings) ·
+                          확인 문구(cautions, D7)를 run state 에 담고,
                           3개 미만이면 run() 이 제외 목록으로 재호출 1회
 2. 금지 표현 필터        content · why_this · why_now · note
 3. Activity 출력 검증    ─ 기피 근거의 라벨이 들어 있는 후보 → 거절          (D4)

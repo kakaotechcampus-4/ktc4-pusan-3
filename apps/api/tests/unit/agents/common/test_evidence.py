@@ -8,15 +8,21 @@ docs/agents/shared/Tool_공통.md §4 의 표를 그대로 옮긴다.
 """
 
 from datetime import date, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import pytest
 
 from app.agents.common.evidence import (
     OBSERVATION_WINDOW_DAYS,
     AffinityRow,
     ObservationRow,
+    RankedEvidence,
     pick_followup,
     rank_evidence,
+    top_refs,
+    unseen,
 )
+from app.agents.common.refs import Ref
 
 TODAY = date(2026, 9, 22)
 
@@ -135,3 +141,59 @@ class TestFollowup:
     def test_없으면_None(self):
         assert pick_followup((affinity(),)) is None
         assert pick_followup(()) is None
+
+
+def ranked(n: int) -> tuple[RankedEvidence, ...]:
+    """줄 세운 근거 n 개. id 는 1부터 순서대로다."""
+    return tuple(
+        RankedEvidence(
+            ref=Ref(kind="observation_food", id=UUID(int=i)),
+            tier=3,
+            label=f"관찰{i}",
+            polarity=1,
+            observed_on=TODAY,
+        )
+        for i in range(1, n + 1)
+    )
+
+
+class TestTopRefs:
+    """조회 tool 이 모델에게 돌려주는 상위 근거 = 이번 run 에 인용할 수 있는 표
+    (Tool_공통.md §5-3)."""
+
+    def test_상위_10개만_대조표에_든다(self):
+        table = top_refs(ranked(12))
+        assert list(table) == [UUID(int=i) for i in range(1, 11)]
+
+    def test_순서를_그대로_둔다(self):
+        """조회 tool 이 이 표로 모델에게 보낼 목록을 만든다. 티어 순서가 바뀌면 안 된다."""
+        rows = ranked(3)
+        assert list(top_refs(rows[::-1]).values()) == list(rows[::-1])
+
+    def test_근거가_없으면_빈_표다(self):
+        assert top_refs(()) == {}
+
+
+class TestUnseen:
+    """출력 tool 이 인용한 id 가 이번 run 조회 결과 안인가. 밖이면 후보를 거절한다 (#195)."""
+
+    SEEN = top_refs(ranked(10))
+
+    def test_조회한_id_만_인용하면_빈_튜플이다(self):
+        assert unseen([str(UUID(int=1)), str(UUID(int=10))], self.SEEN) == ()
+
+    def test_조회하지_않은_id_를_돌려준다(self):
+        """상위 10개 밖(11번째)도 모델이 못 본 것이라 지어낸 id 와 같다."""
+        outside = str(UUID(int=11))
+        assert unseen([str(UUID(int=1)), outside], self.SEEN) == (outside,)
+
+    @pytest.mark.parametrize("raw", ["", "abc", "1"])
+    def test_UUID_가_아니면_조회하지_않은_id_다(self, raw):
+        assert unseen([raw], self.SEEN) == (raw,)
+
+    def test_id_집합과도_대조한다(self):
+        """Food 처럼 표 대신 id 집합을 들고 있어도 쓸 수 있다."""
+        assert unseen([str(UUID(int=2))], {UUID(int=1)}) == (str(UUID(int=2)),)
+
+    def test_대문자로_적은_UUID_도_같은_id_다(self):
+        assert unseen([str(UUID(int=1)).upper()], self.SEEN) == ()

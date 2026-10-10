@@ -7,8 +7,8 @@
   (Activity 와 같다).
 - 사전을 못 읽으면 빈 사전으로 통과시키지 않는다.
 
-앞쪽은 가짜 매처로 판정 흐름만 본다(매처는 주입된다). 뒤쪽 `TestDefaultRules` 는 develop 의 실제
-사전으로 만든 임시 구현이고, #264 · #261 이 들어가 공통 함수로 바꾸면 그쪽 케이스를 더한다.
+앞쪽은 가짜 매처로 판정 흐름만 본다(매처는 주입된다). 뒤쪽 `TestDefaultRules` 는 실제 사전과
+공용 판정(`read_label` · `level_at`)으로 만든 `load_safety_rules()` 를 본다.
 """
 
 import pytest
@@ -31,13 +31,9 @@ def fake_rules(
     *,
     food: tuple[str, ...] = (),
     hazards: dict[str, HazardHit] | None = None,
-    non_food: tuple[str, ...] = (),
     log: list[str] | None = None,
 ) -> SafetyRules:
-    """`food` 에 든 낱말이 나오면 걸리고, `hazards` 의 키가 나오면 그 위험이 걸린다.
-
-    `non_food` 는 식품 사전에 없는 이름이다 — 띄어쓰기를 지운 이름에 들어 있으면 돌려준다.
-    """
+    """`food` 에 든 낱말이 나오면 걸리고, `hazards` 의 키가 나오면 그 위험이 걸린다."""
     hazards = hazards or {}
 
     def scan_food(text: str) -> tuple[str, ...]:
@@ -55,14 +51,10 @@ def fake_rules(
             log.append(f"names:{text}")
         return tuple(entry for entry in entries if entry.label in text)
 
-    def scan_non_food(label: str) -> tuple[str, ...]:
-        return tuple(word for word in non_food if word in label.replace(" ", ""))
-
     return SafetyRules(
         food_terms=scan_food,
         hazards=scan_hazard,
         registered_names=scan_names,
-        non_food_names=scan_non_food,
     )
 
 
@@ -148,7 +140,6 @@ class TestLearning:
             food_terms=lambda text: (),
             hazards=scan_hazard,
             registered_names=lambda text, entries: (),
-            non_food_names=lambda label: (),
         )
         learn(["블록 쌓기"], months=15, rules=rules)
         assert seen == [15]  # 승격은 주입된 위험 판정이 한다 — 이 함수는 월령을 그대로 넘긴다
@@ -181,45 +172,40 @@ class TestNonFoodAllergyCaution:
     """식품 사전에 없는 알레르기 이름에 확인 문구를 붙인다 (#282 리뷰).
 
     식품 알레르기는 이름 대조와 음식 용어 스캔이 뺀다. 식품이 아닌 것(꽃가루 · 라텍스)은 뺄 활동을
-    코드가 못 정해서, 보호자가 적은 이름을 보여 주고 확인하게 한다.
+    코드가 못 정해서, 보호자가 적은 이름을 보여 주고 확인하게 한다. 어느 행에 붙일지는 Activity 와
+    같은 공용 판정(`non_food_allergies`)이 고른다 — 판정 사례는
+    tests/unit/agents/common/test_allergy.py.
     """
 
-    RULES = fake_rules(non_food=("꽃가루", "라텍스", "동물털", "고소공포"))
     POLLEN = "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
 
-    def cautions(self, entries):
-        return allergy_cautions(entries, rules=self.RULES)
-
     def test_식품_사전에_없는_알레르기에_확인_문구를_낸다(self):
-        assert self.cautions([SafetyEntry("allergy", "꽃가루", "active")]) == (self.POLLEN,)
+        assert allergy_cautions([SafetyEntry("allergy", "꽃가루", "active")]) == (self.POLLEN,)
 
     def test_environmental_은_알레르기가_아니라_문구를_내지_않는다(self):
         # data_model.md — environmental 은 고소공포 같은 것이다.
         # "등록된 알레르기(고소공포)" 가 되면 안 된다
-        assert self.cautions([SafetyEntry("environmental", "고소공포", "active")]) == ()
+        assert allergy_cautions([SafetyEntry("environmental", "고소공포", "active")]) == ()
 
-    def test_식품_알레르기에는_문구를_내지_않는다(self):
-        assert self.cautions([SafetyEntry("allergy", "우유", "active")]) == ()
-
-    @pytest.mark.parametrize("status", ["retracted", "none"])
-    def test_active_가_아닌_행은_문구를_내지_않는다(self, status):
-        assert self.cautions([SafetyEntry("allergy", "라텍스", status)]) == ()
-
-    def test_같은_이름은_한_번만_낸다(self):
+    def test_식품이_아닌_알레르기에만_적은_이름_그대로_붙인다(self):
         entries = [
+            SafetyEntry("environmental", "고소공포", "active"),
             SafetyEntry("allergy", "꽃가루", "active"),
-            SafetyEntry("allergy", "꽃 가루", "active"),
-            SafetyEntry("allergy", "동물털", "active"),
+            SafetyEntry("allergy", "우유", "active"),
+            SafetyEntry("allergy", "라텍스 알레르기", "active"),
         ]
-        assert len(self.cautions(entries)) == 2
+        assert allergy_cautions(entries) == (
+            self.POLLEN,
+            "등록된 알레르기(라텍스 알레르기)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
+        )
 
     def test_어디가_위험한지는_말하지_않는다(self):
-        (text,) = self.cautions([SafetyEntry("allergy", "꽃가루", "active")])
+        (text,) = allergy_cautions([SafetyEntry("allergy", "꽃가루", "active")])
         assert "공원" not in text and "위험" not in text
 
 
 class TestDefaultRules:
-    """develop 의 사전(`allergen_terms.yaml` · `hazard_terms.yaml`)으로 만든 임시 구현."""
+    """실제 사전(`allergen_terms.yaml` · `hazard_terms.yaml`)과 공용 판정으로 만든 규칙."""
 
     @pytest.fixture
     def rules(self) -> SafetyRules:
@@ -291,6 +277,53 @@ class TestDefaultRules:
     def test_이름이_없으면_걸리지_않는다(self, rules, text):
         assert rules.registered_names(text, self.ENTRIES) == ()
 
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [
+            ("키위, 꽃가루", "꽃가루 관찰하기"),
+            ("라텍스/꽃가루", "라텍스 장갑 끼기"),
+            ("키위 알레르기, 꽃가루 알레르기", "꽃가루 관찰하기"),
+        ],
+    )
+    def test_한_칸에_적은_이름을_조각마다_대조한다(self, rules, label, text):
+        """칸 전체를 이름 하나로 보면 "키위꽃가루" 를 찾게 되어 꽃가루 놀이가 그대로 나간다
+        (#283 5번 · 공용 `read_label`)."""
+        verdict = check_learning_candidate(
+            [text], months=30, entries=[SafetyEntry("allergy", label, "active")], rules=rules
+        )
+        assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_name")
+
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [
+            ("갑각류", "대게 그림 맞추기"),  # 묶음 이름은 19종 여럿(게 · 새우)으로 펼친다
+            ("갑각류", "갑각류 그림 카드"),  # 묶음 이름 그 글자로도 본다
+            ("우유, 계란", "메추리알 그림 맞추기"),  # 19종 둘을 한 칸에
+        ],
+    )
+    def test_묶음_이름과_19종_여럿도_사전으로_읽는다(self, rules, label, text):
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert [e.label for e in rules.registered_names(text, entries)] == [label]
+
+    def test_띄어_쓴_이름은_낱말로도_대조한다(self, rules):
+        """ "고양이 털" 로 등록한 아이에게 고양이 쓰다듬기가 나가면 안 된다 — 칸 전체만 보면
+        놓친다."""
+        entries = [SafetyEntry("allergy", "고양이 털", "active")]
+        matched = rules.registered_names("고양이 쓰다듬기", entries)
+        assert [e.label for e in matched] == ["고양이 털"]
+
+    @pytest.mark.parametrize(
+        ("kind", "label", "text"),
+        [
+            ("allergy", "고양이 털", "털실 공 굴리기"),
+            ("environmental", "높은 곳", "곳곳에 숨긴 카드 찾기"),
+        ],
+    )
+    def test_띄어_쓴_이름에서_떨어진_한_글자로는_막지_않는다(self, rules, kind, label, text):
+        """한 글자는 보호자가 그 글자만 적었을 때(쑥)만 본다. 털 · 곳으로 막으면 과차단이다 —
+        한 글자 판정은 #305 에서 Food · Activity 와 맞춘다."""
+        assert rules.registered_names(text, [SafetyEntry(kind, label, "active")]) == ()
+
     def test_밀_등록_아이의_공_밀기는_통과한다(self, rules):
         """한 글자 별칭 정책 — #261. "밀" 은 사전의 두 글자 이상 별칭(밀가루 …)으로만 잡는다."""
         verdict = check_learning_candidate(
@@ -317,37 +350,6 @@ class TestDefaultRules:
     def test_외래어_별칭은_문장에서_쓰지_않는다(self, rules, text):
         """#264 가 공용 사전에 넣은 외래어 별칭이 Growth 문장에서 다른 뜻으로 걸리지 않게 한다."""
         assert rules.food_terms(text) == ()
-
-    @pytest.mark.parametrize(
-        ("label", "expected"),
-        [
-            ("꽃가루", ("꽃가루",)),
-            ("라텍스 알레르기", ("라텍스",)),  # 꼬리말을 뗀 이름
-            ("동물털", ("동물털",)),
-            ("쑥", ("쑥",)),  # 먹는 것이지만 사전(19종)에 없다 — 사전에 없는 이름 전부에 붙인다
-            ("땅콩, 꽃가루", ("꽃가루",)),  # 한 칸에 둘을 적어도 식품이 아닌 쪽만
-            ("우유", ()),
-            ("우유 알레르기", ()),
-            ("달걀흰자", ()),  # 사전 이름(달걀)이 안에 있다
-            ("Egg white", ()),
-            ("갑각류", ()),  # 묶음 이름도 식품이다
-            ("우유(2)", ()),  # 숫자는 이름이 아니다
-        ],
-    )
-    def test_식품_사전에서_아무것도_못_찾은_조각만_돌려준다(self, rules, label, expected):
-        assert rules.non_food_names(label) == expected
-
-    def test_실제_사전으로_고소공포는_빼고_식품이_아닌_알레르기에만_붙인다(self, rules):
-        entries = [
-            SafetyEntry("environmental", "고소공포", "active"),
-            SafetyEntry("allergy", "꽃가루", "active"),
-            SafetyEntry("allergy", "우유", "active"),
-            SafetyEntry("allergy", "라텍스 알레르기", "active"),
-        ]
-        assert allergy_cautions(entries, rules=rules) == (
-            "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
-            "등록된 알레르기(라텍스 알레르기)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
-        )
 
 
 # 공용 사전이 검사지 이름을 읽으려고 둔 외래어 별칭(#264)과 같은 모양의 가짜 항목
@@ -394,8 +396,8 @@ class TestRulesUnavailable:
             load_safety_rules()
 
     def test_이름_사전을_못_읽어도_같다(self, monkeypatch):
-        """식품 사전에 없는 이름을 가르는 사전(`shared_book`)도 못 읽으면 문구 없이 넘기지
-        않는다."""
+        """확인 문구를 고르는 이름 사전(`shared_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 문구
+        없이 넘기지 않는다."""
 
         def broken():
             raise ValueError("allergen_groups.yaml 깨짐")

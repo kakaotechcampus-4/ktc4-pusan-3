@@ -467,6 +467,24 @@ class TestOutputTool:
         assert len(ctx.state.suggestions) == 2
         assert ctx.state.excluded == ("밀가루 점토 놀이",)
 
+    async def test_식품_사전에_없는_알레르기는_확인_문구를_run_state_에_담는다(self):
+        """화면 자리(#249)가 생기기 전까지 run state 에 둔다. 이름이 문장에 없으면 후보는
+        그대로다."""
+        entry = SafetyEntry(kind="allergy", label="꽃가루", status="active")
+        ctx = await self.context(safety=InMemorySafety([entry]))
+        await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래성 쌓기", evidence=[]),
+                candidate(content="종이컵 탑 쌓기", evidence=[]),
+            ),
+        )
+        assert len(ctx.state.suggestions) == 3
+        assert ctx.state.cautions == (
+            "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
+        )
+
     async def test_출력_검증_동안_안전_정보를_다시_읽지_않는다(self):
         """build_gate 가 한 번 읽은 값을 쓴다. 다시 읽으면 게이트와 필터가 다른 행을 볼 수 있다."""
         safety = InMemorySafety([])
