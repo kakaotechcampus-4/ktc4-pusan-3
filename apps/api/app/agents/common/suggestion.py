@@ -131,6 +131,31 @@ def check_count(drafts: tuple[SuggestionDraft, ...], *, exhausted: bool = False)
         raise SuggestionRejected(f"추천을 {MAX_SUGGESTIONS}개 채울 수 있는데 {count}개만 받았다")
 
 
+def merge_drafts(
+    first: tuple[SuggestionDraft, ...], again: tuple[SuggestionDraft, ...]
+) -> tuple[SuggestionDraft, ...]:
+    """안전 필터 뒤 재호출 결과를 합친다 (#245 에서 정한 규칙).
+
+    처음에 통과한 것을 먼저 두고, 재호출 결과로 빈자리만 `MAX_SUGGESTIONS` 까지 채운다. 이미
+    있는 것과 같은 추천(띄어쓰기만 다른 것 포함)은 건너뛴다. 처음 것을 버리고 재호출 것으로
+    바꾸지 않는다 — 처음 것도 이미 출력 검증을 통과했다.
+    """
+    merged = list(first[:MAX_SUGGESTIONS])
+    seen = {_same_key(draft.content) for draft in merged}
+    for draft in again:
+        if len(merged) >= MAX_SUGGESTIONS:
+            break
+        key = _same_key(draft.content)
+        if key not in seen:
+            merged.append(draft)
+            seen.add(key)
+    return tuple(merged)
+
+
+def _same_key(content: str) -> str:
+    return "".join(content.split())
+
+
 def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | None:
     """다 채우지 못한 추천에 붙일 안내 한 줄. 다 채웠으면 없다 (Tool_공통.md §5-2).
 

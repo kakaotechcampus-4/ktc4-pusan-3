@@ -31,6 +31,7 @@ from app.agents.common.suggestion import (
     build,
     check_count,
     count_notice,
+    merge_drafts,
 )
 
 KST = timezone(timedelta(hours=9))
@@ -433,3 +434,29 @@ class TestEventRequest:
         )
         assert request.category == "health"
         assert request.ends_at is None
+
+
+class TestMergeDrafts:
+    """안전 필터 뒤 재호출 결과 합치기 (#245) — 처음 것 먼저, 빈자리만, 같은 것은 건너뛴다."""
+
+    @staticmethod
+    def drafts(*contents: str) -> tuple[SuggestionDraft, ...]:
+        return tuple(
+            SuggestionDraft(agent="activity", kind="general", content=c, reason="r")
+            for c in contents
+        )
+
+    def test_처음_것을_먼저_두고_빈자리만_채운다(self):
+        merged = merge_drafts(self.drafts("가", "나"), self.drafts("다", "라", "마"))
+        assert [d.content for d in merged] == ["가", "나", "다"]
+
+    def test_띄어쓰기만_다른_같은_추천은_건너뛴다(self):
+        merged = merge_drafts(self.drafts("종이컵 탑", "나"), self.drafts("종이컵탑", "다"))
+        assert [d.content for d in merged] == ["종이컵 탑", "나", "다"]
+
+    def test_재호출이_비면_처음_것만(self):
+        assert [d.content for d in merge_drafts(self.drafts("가"), ())] == ["가"]
+
+    def test_최대_개수를_넘기지_않는다(self):
+        merged = merge_drafts(self.drafts("가", "나", "다"), self.drafts("라"))
+        assert len(merged) == MAX_SUGGESTIONS
