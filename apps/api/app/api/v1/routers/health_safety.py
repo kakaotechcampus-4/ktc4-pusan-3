@@ -1,0 +1,158 @@
+"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `DELETE …/{id}` (E 묶음).
+
+🚨 LLM 이 만들거나 고치지 않는다 (루트 CLAUDE.md §2). 이 라우터가 health_safety 의 **유일한 쓰기
+   경로**이고 보호자 토큰으로만 열린다. 등록은 승인 게이트 ㉡ 이라 Idempotency-Key 가 필수다.
+🚨 내리기는 지우지 않는다 — status 를 retracted 로 바꾼다. 안전 필터는 active 만 읽는다.
+고치기(PATCH)는 #87 결정 뒤에 더한다.
+"""
+
+from datetime import UTC, datetime
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Header, Request, Response
+from fastapi.responses import JSONResponse
+
+from app.api import idempotency
+from app.api.deps.auth import CurrentParent
+from app.api.deps.child import AccessibleChild
+from app.api.deps.db import SessionDep
+from app.api.errors import ApiError, ErrorEnvelope
+from app.api.v1.schemas.health_safety import (
+    CreateHealthSafetyRequest,
+    CreateHealthSafetyResponse,
+    HealthSafetyListResponse,
+    HealthSafetyOut,
+    WrittenBy,
+)
+from app.domains.consent.models import ConsentAction, ConsentScope
+from app.domains.consent.repository import latest_action
+from app.domains.identity.repository import find_parent
+from app.domains.safety.models import HealthSafety
+from app.domains.safety.repository import (
+    create_safety,
+    has_active_safety,
+    list_active_safety_with_writer,
+    retract_safety,
+)
+
+router = APIRouter()
+
+
+def _out(row: HealthSafety, nickname: str | None) -> HealthSafetyOut:
+    return HealthSafetyOut(
+        id=row.id,
+        type=row.kind,
+        label=row.label,
+        severity=row.severity,
+        reactions=list(row.reactions),
+        management=row.management,
+        notes=row.notes,
+        created_by=None
+        if row.created_by is None
+        else WrittenBy(parent_id=row.created_by, nickname=nickname),
+        updated_at=row.updated_at,
+    )
+
+
+@router.get("/children/{cid}/health-safety", responses={403: {"model": ErrorEnvelope}})
+async def read_health_safety(
+    child: AccessibleChild, session: SessionDep
+) -> HealthSafetyListResponse:
+    """지금 고려 대상(active)인 알레르기 · 건강 기록. 내린 기록은 빠진다."""
+    rows = await list_active_safety_with_writer(session, child_id=child.child_id)
+    return HealthSafetyListResponse(
+        items=[_out(row, nickname) for row, nickname in rows],
+        updated_at=max((row.updated_at for row, _ in rows), default=datetime.now(UTC)),
+    )
+
+
+@router.post(
+    "/children/{cid}/health-safety",
+    status_code=201,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 409)},
+)
+async def register_health_safety(
+    child: AccessibleChild,
+    body: CreateHealthSafetyRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """승인 게이트 ㉡ — 보호자가 확인한 알레르기 · 건강 기록 1건을 등록한다.
+
+    순서: (본문 형식 · 아이 접근 — 의존성) → 키 확인 → 재생 → 건강정보 동의 → 같은 항목 409 →
+    종류별 심각도 400 → 저장 → commit → 응답 기억.
+    """
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = idempotency.recall(**scope)
+    if isinstance(replayed, dict):
+        return JSONResponse(status_code=201, content=replayed)
+
+    # 민감정보는 동의 없이 저장하지 않는다 (개인정보보호법 제23조). 아이 등록이 받는 필수 동의라
+    # 보통은 있다 — 동의를 받기 전 만들어진 아이 같은 경우를 막는다
+    granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
+    if granted is not ConsentAction.GRANTED:
+        raise ApiError(
+            403,
+            "consent_required",
+            "건강 정보 동의가 필요해요",
+            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
+        )
+
+    if await has_active_safety(session, child_id=child.child_id, kind=body.type, label=body.label):
+        raise ApiError(409, "already_exists", "이미 등록된 항목이에요")
+    try:
+        row = await create_safety(
+            session,
+            child_id=child.child_id,
+            parent_id=parent.parent_id,
+            kind=body.type,
+            label=body.label,
+            severity=body.severity,
+            reactions=body.reactions,
+            notes=body.notes,
+        )
+    except ValueError as exc:
+        # 종류와 맞지 않는 심각도 (create_safety 가 DB CHECK 보다 먼저 막는다)
+        raise ApiError(
+            400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {"fields": ["severity"]}
+        ) from exc
+    await session.refresh(row)
+    writer = await find_parent(session, parent.parent_id)
+    nickname = None if writer is None else writer.nickname
+    response = CreateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
+    await session.commit()
+    idempotency.remember(**scope, replay=response)
+    return JSONResponse(status_code=201, content=response)
+
+
+@router.delete(
+    "/children/{cid}/health-safety/{safety_id}",
+    status_code=204,
+    responses={status: {"model": ErrorEnvelope} for status in (403, 404)},
+)
+async def retract_health_safety(
+    child: AccessibleChild, safety_id: UUID, parent: CurrentParent, session: SessionDep
+) -> Response:
+    """기록을 내린다 — 지우지 않고 retracted 로. 이미 내렸거나 다른 아이의 기록이면 404.
+
+    되돌릴 수 있고 같은 요청을 두 번 보내도 결과가 같아서 Idempotency-Key 를 받지 않는다.
+    """
+    retracted = await retract_safety(
+        session, child_id=child.child_id, safety_id=safety_id, parent_id=parent.parent_id
+    )
+    if retracted is None:
+        raise ApiError(404, "not_found", "이미 내려간 기록이에요")
+    await session.commit()
+    return Response(status_code=204)
