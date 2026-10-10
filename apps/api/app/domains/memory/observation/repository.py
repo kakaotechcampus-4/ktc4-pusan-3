@@ -82,15 +82,20 @@ async def find_observation(
     domain: ObservationDomain | str,
     child_id: uuid.UUID,
     observation_id: uuid.UUID,
+    for_update: bool = False,
 ) -> ObservationRecord | None:
-    """상세 API의 기본 기록. 사용 제안과 교정 이력은 각 리포지터리에서 조회한다."""
+    """상세 API의 기본 기록. 사용 제안과 교정 이력은 각 리포지터리에서 조회한다.
+
+    for_update — 읽은 상태를 보고 바꿀 때 행을 잠가 같은 기록의 동시 요청을 순서대로 세운다.
+    """
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
-    row = await session.scalar(
-        select(model).where(
-            model.id == observation_id, model.child_id == child_id, _not_deleted(model)
-        )
+    stmt = select(model).where(
+        model.id == observation_id, model.child_id == child_id, _not_deleted(model)
     )
+    if for_update:
+        stmt = stmt.with_for_update()
+    row = await session.scalar(stmt)
     return _to_record(resolved, row) if row is not None else None
 
 
