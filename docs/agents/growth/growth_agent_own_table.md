@@ -126,11 +126,11 @@ Growth의 활동 행과 출력 후보도 같은 사전으로 검사합니다. **
 | `propose_learning_activity` 출력 | 사후 필터 |
 | `food_choking` 축 용어 | 교육 · 루틴 출력의 **음식 용어 스캔** — 월령과 무관하게 뺀다 (2026-10-08) |
 
-- **0–17개월 경고 → 차단 승격은 Growth 에 적용하지 않는다** (2026-10-08). 승격은 Activity 판정의 규칙이다. Growth 는 경고가 붙은 후보를 경고 문구와 함께 낸다 — 음식 용어가 먼저 빠지므로 12–17개월에 실제로 걸리는 축은 `water` · `suffocation_film` 이다.
+- **0–17개월 경고 → 차단 승격을 Growth 에도 적용한다** (2026-10-10, #282 PM 리뷰 — 10-08 의 "적용하지 않는다" 를 뒤집었다). 같은 아이에게 놀이는 막고 교육은 내보내면 설명이 안 돼서, 선이 없는 위험에 서비스가 긋는 선은 Activity 와 하나다. 음식 용어가 먼저 빠지므로 12–17개월에 이 승격으로 막히는 축은 `water` · `suffocation_film` 이다. 승격은 지금 Growth `safety.py` 와 Activity(#261) 코드에 따로 있고, 공용 판정(`level_at`)으로 옮기는 것은 별도 이슈다.
 
 ### `health_safety` (보호자 입력)
 
-Growth 는 **`learning_suggestion` 에서만**, 동의가 있을 때 `allergy` · `environmental` 의 active 행을 읽는다(`build_gate` 에서 run 당 한 번). 보호자가 적은 이름이 교육 활동 후보의 문장 · `materials` 에 나오면 뺀다 — 19종은 사전 별칭으로 넓히고(한 글자 별칭 제외), 식품 사전에 없는 알레르기(라텍스)와 환경 알레르기(꽃가루 · 동물털)는 적은 이름 그대로 본다. 이름을 물건 · 장소로 넓히는 대응표는 만들지 않고, `environmental` active 행이 있으면 확인 문구(`caution.environmental`)를 붙인다(#261 리뷰 4번). 동의가 없으면 읽지 않는다. 조회에 실패하면 빈 목록으로 폴백하지 않고 교육 활동을 닫는다(`blocked.safety`). `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다(Activity D7 과 같은 이유). 루틴 · 도서 · `growth_review` 는 읽지 않는다.
+Growth 는 **`learning_suggestion` 에서만**, 동의가 있을 때 `allergy` · `environmental` 의 active 행을 읽는다(`build_gate` 에서 run 당 한 번). 보호자가 적은 이름이 교육 활동 후보의 문장 · `materials` 에 나오면 뺀다 — 19종은 사전 별칭으로 넓히고(한 글자 별칭 제외), 식품 사전에 없는 알레르기(라텍스 · 꽃가루 · 동물털)는 적은 이름 그대로 본다. 꽃가루 · 동물털도 `allergy` 이고 `environmental` 은 고소공포 같은 것이다(`data_model.md`). 이름을 물건 · 장소로 넓히는 대응표는 만들지 않고, `allergy` active 행 중 이름이 식품 사전에 없는 것이 있으면 확인 문구(`caution.non_food_allergy`)를 붙인다(#261 리뷰 4번 · #282 리뷰). `environmental` 에는 붙이지 않는다. 동의가 없으면 읽지 않는다. 조회에 실패하면 빈 목록으로 폴백하지 않고 교육 활동을 닫는다(`blocked.safety`). `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다(Activity D7 과 같은 이유). 루틴 · 도서 · `growth_review` 는 읽지 않는다.
 
 ### `notice` (Memory · OCR 파이프라인 소유)
 

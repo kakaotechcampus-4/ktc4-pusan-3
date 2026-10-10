@@ -6,12 +6,12 @@
     음식 용어 스캔   교육 · 루틴 후보. 알레르기 사전 용어나 질식 위험 음식 용어가 나오면 **아이 ·
                     월령 · 동의와 무관하게** 뺀다. 음식 · 재료가 들어가는 놀이는 Activity 몫이다.
                     한 글자 · 외래어 별칭(포크 · pork)은 문장에서 다른 뜻으로 걸려 쓰지 않는다
-    등록한 이름 대조  **교육만**, 동의가 있을 때. 보호자가 `health_safety` 에 적은 이름이
+    등록한 이름 대조  교육만, 동의가 있을 때. 보호자가 `health_safety` 에 적은 이름이
                     후보 문장에 나오면 뺀다. 이름을 물건 · 장소로 넓히는 대응표는 만들지
-                    않는다 (#261 리뷰 4번) —
-                    대신 환경 알레르기가 있으면 확인 문구(`caution.environmental`)를 붙인다
-    위험 용어        교육. 차단이면 뺀다. 경고는 후보와 함께 나간다 — **18개월 미만 경고 → 차단
-                    승격을 적용하지 않는다** (Activity 와 다르다)
+                    않는 대신 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)이 있으면
+                    확인 문구(`caution.non_food_allergy`)를 붙인다
+    위험 용어        교육. 차단이면 뺀다. 경고는 후보와 함께 나간다.
+                    0–17개월은 경고도 차단으로 올린다 (Activity와 동일)
 
 후보는 필드마다 **따로** 대조한다 — 이어 붙이면 필드 경계를 넘어 오탐이 난다. 걸린 후보는 고치지
 않고 뺀다. 이 모듈은 어느 용어에 걸렸는지만 코드로 돌려주고 원문은 싣지 않는다(로그 · 모델 입력으로
@@ -27,14 +27,20 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from app.agents.common.allergy import read_label, shared_book, split_label
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
-from app.agents.growth.readouts import CAUTION_ENVIRONMENTAL, READOUTS
+from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.growth.store.ports import SafetyEntry
 from app.rules.term_match import Term, match_terms, normalize
 
 HazardLevel = Literal["block", "warn"]
 RemovedBy = Literal["food_term", "allergy_name", "hazard_block"]
 
+# 이 월령 미만은 위험 용어의 경고도 차단으로 올린다. Activity(#261 의
+# `SAFETY_PROMOTE_BELOW_MONTH`)와 같은 값이다 — 같은 아이에게 놀이는 막고 교육은 내보내면 설명이
+# 안 된다 (#282 리뷰). 두 Agent 가 한 규칙을 읽게 공용 판정(`HazardAxis.level_at`)으로 옮기면 이
+# 상수와 아래 승격 줄을 지운다
+SAFETY_PROMOTE_BELOW_MONTH = 18
 # 질식 위험 음식 축. 교육 · 루틴 문장에 나오면 아이와 상관없이 뺀다
 FOOD_CHOKING_AXIS = "food_choking"
 # 영어 이름을 한글로 옮긴 별칭. 공용 사전에는 검사지 이름을 읽으려고 있지만(#264), Growth 문장에서는
@@ -62,10 +68,12 @@ class HazardHit:
 
 # text -> 걸린 음식 용어 key(알레르기 코드 · food_choking label). 원문이 아니다
 FoodTermScan = Callable[[str], tuple[str, ...]]
-# (text, months) -> 걸린 위험 용어. 월령으로 block/warn 을 정한다. 승격은 하지 않는다
+# (text, months) -> 걸린 위험 용어. 월령으로 block/warn 을 정한다. 0–17개월은 경고도 차단이다
 HazardScan = Callable[[str, int], tuple[HazardHit, ...]]
 # (text, active 행) -> 문장에 이름이 나온 행
 RegisteredNameScan = Callable[[str, Sequence[SafetyEntry]], tuple[SafetyEntry, ...]]
+# 보호자가 적은 이름 하나 -> 식품 사전에서 아무것도 못 찾은 조각(정규화한 글자). 다 식품이면 빈 튜플
+NonFoodNames = Callable[[str], tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,7 @@ class SafetyRules:
     food_terms: FoodTermScan
     hazards: HazardScan
     registered_names: RegisteredNameScan
+    non_food_names: NonFoodNames
 
 
 @dataclass(frozen=True)
@@ -124,20 +133,27 @@ def check_routine_candidate(texts: Sequence[str], *, rules: SafetyRules) -> Safe
     return SafetyVerdict(allowed=True)
 
 
-def environmental_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
-    """환경 알레르기가 active 로 등록돼 있으면 확인 문구를 낸다. 교육 추천에 붙는다.
+def allergy_cautions(entries: Sequence[SafetyEntry], *, rules: SafetyRules) -> tuple[str, ...]:
+    """식품 사전에 없는 알레르기 이름이 active 로 있으면 확인 문구를 낸다. 교육 추천에 붙는다.
 
-    어디가 위험한지는 코드가 정하지 않는다 (꽃가루 → 공원 같은 표는 판단을 담게 된다). 보호자가
-    적은 이름을 되돌려 보여 주고 장소 · 재료를 확인하게 할 뿐이다.
+    꽃가루 · 라텍스 · 동물털처럼 식품이 아닌 알레르기는 뺄 활동을 코드가 못 정한다 (꽃가루 → 공원
+    같은 표는 판단을 담게 된다). 보호자가 적은 이름을 되돌려 보여 주고 장소 · 재료를 확인하게 할
+    뿐이다. 식품 알레르기는 이름 대조와 음식 용어 스캔이 뺀다.
+
+    `allergy` 행만 본다. `environmental` 은 고소공포 같은 것이라(data_model.md) 알레르기 문구가 맞지
+    않고, `health_safety.category` 가 빠진 뒤로는 환경 알레르기만 고를 칸도 없어서 이름이 식품
+    사전에 있는지로 가른다 (#282 리뷰).
     """
     cautions: list[str] = []
     seen: set[str] = set()
     for entry in entries:
         key = normalize(entry.label)
-        if entry.kind != "environmental" or entry.status != "active" or key in seen:
+        if entry.kind != "allergy" or entry.status != "active" or key in seen:
+            continue
+        if not rules.non_food_names(entry.label):
             continue
         seen.add(key)
-        cautions.append(READOUTS.render(CAUTION_ENVIRONMENTAL, label=entry.label).body)
+        cautions.append(READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=entry.label).body)
     return tuple(cautions)
 
 
@@ -154,6 +170,7 @@ def load_safety_rules() -> SafetyRules:
     try:  # 어떤 실패든 "사전을 못 읽음" 하나로 올린다
         hazards = hazard_terms()
         raw_allergens = allergen_terms()
+        book = shared_book()
     except Exception as exc:
         raise SafetyRulesUnavailable("안전 사전을 읽지 못했다") from exc
 
@@ -176,7 +193,9 @@ def load_safety_rules() -> SafetyRules:
         hits: list[HazardHit] = []
         for label in match_terms(text, hazards.terms):
             axis = hazards.axis_of(label)
-            level = axis.level_at(months)  # 18개월 미만 승격은 하지 않는다
+            level = axis.level_at(months)
+            if level == "warn" and months < SAFETY_PROMOTE_BELOW_MONTH:
+                level = "block"
             if level is not None:
                 hits.append(
                     HazardHit(
@@ -193,7 +212,23 @@ def load_safety_rules() -> SafetyRules:
             entry for entry in entries if match_terms(text, (_registered_term(entry, by_alias),))
         )
 
-    return SafetyRules(food_terms=scan_food, hazards=scan_hazard, registered_names=scan_registered)
+    def scan_non_food(label: str) -> tuple[str, ...]:
+        # 조각마다 읽는다 — "땅콩, 꽃가루" 의 꽃가루를 땅콩이 덮지 않게. 이름 안에서 사전 이름을
+        # 찾으면("달걀흰자" 의 달걀) 식품이다. 숫자처럼 이름이 아닌 조각("우유(2)" 의 2)은
+        # 세지 않는다
+        names: list[str] = []
+        for piece in split_label(label):
+            found, rest = read_label(piece, book)
+            if rest and not found.codes and not found.terms:
+                names.append(piece)
+        return tuple(names)
+
+    return SafetyRules(
+        food_terms=scan_food,
+        hazards=scan_hazard,
+        registered_names=scan_registered,
+        non_food_names=scan_non_food,
+    )
 
 
 def _scan_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
@@ -226,8 +261,8 @@ def _food_choking_terms(hazards: HazardTerms) -> tuple[Term, ...]:
 def _registered_term(entry: SafetyEntry, by_alias: dict[str, Term]) -> Term:
     """보호자가 적은 이름 하나를 대조 용어로. 19종이면 사전 별칭으로 넓히고, 아니면 적은 그대로.
 
-    19종 밖(쑥 · 라텍스)과 `environmental`(꽃가루)은 한 글자여도 그대로 쓴다 — 그 아이 하나의 값이라
-    몇 개 더 막는 쪽이 놓치는 것보다 낫다 (#261).
+    19종 밖(쑥 · 라텍스 · 꽃가루)과 `environmental`(고소공포 같은 것)은 한 글자여도 그대로 쓴다 —
+    그 아이 하나의 값이라 몇 개 더 막는 쪽이 놓치는 것보다 낫다 (#261).
     """
     label = entry.label
     for tail in _LABEL_TAILS:
