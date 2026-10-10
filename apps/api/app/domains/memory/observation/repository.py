@@ -131,14 +131,29 @@ async def count_active_observations(
     child_id: uuid.UUID,
     period_start: date,
     period_end: date,
+    exclude_health: bool = False,
+    statuses: Collection[ObservationStatus] = (ObservationStatus.ACTIVE,),
 ) -> ActiveObservationCounts:
-    """홈의 전체 active 수와 지정 기간 겹침 수. 종료일은 열린 경계다."""
+    """홈의 전체 수와 지정 기간 겹침 수. 종료일은 열린 경계다.
+
+    exclude_health — 첫 배포 범위에서 건강 기록을 세지 않는다 (#259).
+    statuses — 셀 상태. 기본은 active 만이다. deleted 는 받지 않는다.
+    """
+    wanted = sorted({ObservationStatus(s).value for s in statuses})
+    if not wanted or ObservationStatus.DELETED.value in wanted:
+        raise ValueError("deleted 는 셀 수 없는 상태다")
     if period_start >= period_end:
         raise ValueError("집계 기간은 시작일보다 종료일이 늦어야 한다")
     row = (
         await session.execute(
             _COUNT_ACTIVE_SQL,
-            {"child_id": child_id, "period_start": period_start, "period_end": period_end},
+            {
+                "child_id": child_id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "exclude_health": exclude_health,
+                "statuses": wanted,
+            },
         )
     ).one()
     return ActiveObservationCounts(total_count=row.total_count, period_count=row.period_count)
@@ -154,11 +169,10 @@ async def page_observations(
     status: ObservationStatus = ObservationStatus.ACTIVE,
     statuses: Collection[ObservationStatus] | None = None,
     affinity_id: uuid.UUID | None = None,
-    unused_in_suggestions: bool = False,
     cursor: ObservationCursor | None = None,
     limit: int = 20,
 ) -> ObservationPage:
-    """5종 병합 목록: 기간 overlap, 상태/성향/근거사용 필터, 역순 커서.
+    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 역순 커서.
 
     domains 를 주면 그 표들만 합친다. growth Agent 처럼 한 분류가 두 표(education ·
     routine)를 읽는 경우가 있어 하나가 아니라 목록으로 받는다. 빈 목록은 받지 않는다 —
@@ -194,7 +208,6 @@ async def page_observations(
                 "date_to_exclusive": date_to + timedelta(days=1) if date_to else None,
                 "statuses": sorted(s.value for s in wanted),
                 "affinity_id": affinity_id,
-                "unused_in_suggestions": unused_in_suggestions,
                 "cursor_upper": cursor.observed_to_exclusive if cursor else None,
                 "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
                 "cursor_id": cursor.id if cursor else None,

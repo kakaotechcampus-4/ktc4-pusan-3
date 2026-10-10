@@ -17,14 +17,6 @@ WITH observations AS (
       AND (CAST(:date_from AS date) IS NULL OR observed_range && daterange(CAST(:date_from AS date), NULL, '[)'))
       AND (CAST(:date_to_exclusive AS date) IS NULL OR observed_range && daterange(NULL, CAST(:date_to_exclusive AS date), '[)'))
       AND (CAST(:affinity_id AS uuid) IS NULL OR affinity_id = CAST(:affinity_id AS uuid))
-      AND (NOT :unused_in_suggestions OR NOT EXISTS (
-          SELECT 1
-          FROM suggestion_evidence AS se
-          JOIN suggestion AS s ON s.id = se.suggestion_id
-          WHERE s.child_id = :child_id
-            AND se.source_kind = o.kind
-            AND se.source_id = o.id
-      ))
 )
 SELECT totals.total, page.kind, page.id, page.observed_to_exclusive
 FROM (SELECT count(*) AS total FROM filtered) AS totals
