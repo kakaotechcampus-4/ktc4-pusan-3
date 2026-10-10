@@ -9,12 +9,12 @@ from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.activity.tools import filters
 from app.agents.activity.tools.filters import (
-    SAFETY_PROMOTE_BELOW_MONTH,
+    allergy_cautions,
     check_candidate,
     filter_activity_safety,
     safety_terms,
 )
-from app.agents.common.reference import hazard_terms
+from app.agents.common.reference import SAFETY_PROMOTE_BELOW_MONTH, hazard_terms
 
 
 def candidate(content: str, materials: tuple[str, ...] = ()) -> ActivityCandidate:
@@ -171,6 +171,31 @@ class TestAllergens:
 
     def test_재료에서도_찾는다(self):
         assert check("점토 놀이", ("밀가루", "물")).allergens == ("밀",)
+
+
+class TestNonFoodAllergyCaution:
+    """식품 사전에 없는 알레르기 이름이 active 면 확인 문구를 한 줄 낸다 (#298 · #261 리뷰).
+
+    꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다. 어느 행에
+    붙일지는 Growth 와 같은 공용 판정(`non_food_allergies`)이 고른다 — 판정 사례는
+    tests/unit/agents/common/test_allergy.py.
+    """
+
+    POLLEN = "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
+
+    def test_식품_사전에_없는_알레르기에_확인_문구를_낸다(self):
+        assert allergy_cautions([allergy("꽃가루")]) == (self.POLLEN,)
+
+    def test_environmental_은_알레르기가_아니라_문구를_내지_않는다(self):
+        entry = SafetyEntry(kind="environmental", label="고소공포", status="active")
+        assert allergy_cautions([entry]) == ()
+
+    def test_식품_알레르기에는_문구를_내지_않는다(self):
+        """식품은 이름 대조가 후보를 뺀다."""
+        assert allergy_cautions([allergy("우유 알레르기")]) == ()
+
+    def test_active_가_아니면_문구를_내지_않는다(self):
+        assert allergy_cautions([allergy("꽃가루", "retracted")]) == ()
 
 
 class TestFilter:

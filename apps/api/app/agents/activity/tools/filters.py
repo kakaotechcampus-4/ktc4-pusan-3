@@ -6,18 +6,14 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
-from app.agents.common.allergy import read_label, shared_book
+from app.agents.common.allergy import non_food_allergies, read_label, shared_book
 from app.agents.common.reference import allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import Term, match_fields, normalize
-
-# 이 월령 미만은 위험 용어의 경고도 차단으로 올린다 (D6 규칙 ②). 법령 · 학회 문장은 대부분
-# "N세 미만은 감독이 필요하다" 라 경고만 나오는데, 0–17개월은 감독만으로 위험이 안 없어진다.
-# 밴드 경계와 따로 둔다 — 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게.
-SAFETY_PROMOTE_BELOW_MONTH = 18
 
 # 알레르기 사전(allergen_terms.yaml)은 메뉴 이름용이라 놀이 문장에 그대로 대조하면 다른 뜻으로
 # 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
@@ -97,7 +93,8 @@ def check_candidate(
     - `content` 와 `materials` 의 각 항목을 **따로** 대조한다(`match_fields`). 이어 붙이면
       `["작은", "블록 담는 통"]` 이 "작은블록담는통" 이 되어 없는 위험을 만든다 (3-5). 한 항목
       안에서도 별칭은 문장부호를, guard 는 띄어쓰기를 넘지 않는다.
-    - 위험 용어는 걸린 축의 월령으로 차단/경고를 정하고, 18개월 미만은 경고도 차단이다.
+    - 위험 용어는 걸린 축의 월령으로 차단/경고를 정한다(`HazardAxis.level_at`). 18개월 미만은
+      경고도 차단이다 — 승격은 Growth 와 같이 쓰는 그 공용 판정이 한다 (D6 규칙 ②).
     - 걸린 후보는 고치지 않는다. 차단이면 통째로 뺀다 — "물놀이터" 를 "얕은 물놀이터" 로 고쳐
       통과시키지 않는다.
     """
@@ -110,8 +107,6 @@ def check_candidate(
     for key in match_fields(texts, dictionary.terms):
         axis = dictionary.axis_of(key)
         level = axis.level_at(months)
-        if level == "warn" and months < SAFETY_PROMOTE_BELOW_MONTH:
-            level = "block"
         if level is None:
             continue
         if axis.name not in hits:
@@ -147,6 +142,23 @@ def filter_activity_safety(
     """
     terms = safety_terms(safety)
     return tuple(check_candidate(c, months=months, terms=terms) for c in candidates)
+
+
+def allergy_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
+    """식품 사전에 없는 알레르기 이름이 active면 확인 문구를 한 줄씩 낸다(D7).
+
+    꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다.
+    이름이 문장에 그대로 나오는 후보만 `check_candidate` 가 뺀다. 그래서 보호자가 적은 이름을
+    보여 주고 장소 · 재료를 확인하게 한다. 어느 행에 붙일지는 Growth 와 같은 공용 판정
+    (`common/allergy.non_food_allergies`)이 고른다. `environmental`(고소공포 같은 것)에는
+    붙이지 않는다.
+
+    `entries` 는 build_gate가 run state에 담아 둔 행으로, 여기서 다시 읽지 않는다.
+    """
+    return tuple(
+        READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=label).body
+        for label in non_food_allergies(entries, shared_book())
+    )
 
 
 def filter_recent_duplicates(

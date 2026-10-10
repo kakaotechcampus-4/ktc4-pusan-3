@@ -46,6 +46,9 @@ class ActivityRunState:
     # suggestions 와 같은 순서로 짝지은 위험 용어 경고 문구(사전의 warning_text 상수).
     # 화면에 어떻게 실을지는 아직 정하지 않았다 — 공통 SuggestionDraft 에 칸이 없다
     warnings: tuple[tuple[str, ...], ...] = ()
+    # 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)의 확인 문구 (D7). 후보마다가 아니라 run 에
+    # 한 벌이다. 화면 자리는 #249 를 따르므로, 그 전까지 여기에 둔다
+    cautions: tuple[str, ...] = ()
     # 안전 필터로 빠진 후보의 content. run() 이 재호출할 때 제외 목록으로만 넣는다 —
     # 걸린 사유는 넣지 않는다 (Tool_공통.md §5-2)
     excluded: tuple[str, ...] = ()

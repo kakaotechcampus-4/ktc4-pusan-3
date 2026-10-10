@@ -7,7 +7,8 @@
 # 🚨 위험이 형용사에 실린 말은 수식어를 포함해서만 등록한다 (작은 블록 O · 블록 X).
 # 🚨 guard 에 "더 위험한 표현"을 넣지 않는다. guard 문구만 스캔하면 그 용어의 축에는 걸리지 않아야 한다.
 #    다른 축으로 넘기는 guard 는 된다 (풍선 → 풍선껌은 food_choking 이 잡는다). 그 축이 잡으니 숨지 않는다.
-# 0–17개월은 경고가 차단으로 올라간다 — 코드 상수 SAFETY_PROMOTE_BELOW_MONTH(18)이지 이 파일 값이 아니다.
+# 0–17개월은 경고가 차단으로 올라간다 — 이 파일 값이 아니라 공용 판정 HazardAxis.level_at
+#    (common/reference.py 의 SAFETY_PROMOTE_BELOW_MONTH = 18)이다. Activity · Growth 가 같이 읽는다.
 
 source: 어린이제품 공통안전기준 · 완구 안전기준 · 도로교통법 · AAP · 질병관리청 · 식약처 — 축별 출처는 axes.*.source
 version: "2026.1-p0"

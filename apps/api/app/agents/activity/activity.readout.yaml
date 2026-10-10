@@ -6,6 +6,12 @@ blocked.safety:
   kind: blocked
   template: 지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.
 
+# 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)이 active면 한 줄 (D7).
+# 뺄 놀이를 코드가 못 정해서 보호자가 적은 이름을 보여 준다. Growth 와 같은 문구 · 같은 판정이다
+caution.non_food_allergy:
+  kind: notice
+  template: 등록된 알레르기({label})가 있어요. 장소랑 재료를 한 번 확인해 주세요.
+
 # ── 날씨 안내 (weather.py 의 화면 문구 키). 날씨 판정이 붙이고 추천과 함께 화면에 나간다 ──
 # 무엇을 확인 못 했는지는 야외를 막아도 알린다 (D8)
 weather.unchecked:
