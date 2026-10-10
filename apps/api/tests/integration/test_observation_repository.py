@@ -560,7 +560,7 @@ async def test_page_filters_by_affinity_and_excludes_suggestion_used(session, fa
     page = await page_observations(
         session,
         child_id=child.id,
-        domain="food",
+        domains=["food"],
         affinity_id=affinity.id,
         unused_in_suggestions=True,
     )

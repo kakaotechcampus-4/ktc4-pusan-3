@@ -19,6 +19,7 @@ from app.api.v1.routers import (
     client_errors,
     invites,
     me,
+    observations,
     policies,
     runs,
     suggestions,
@@ -40,6 +41,7 @@ protected_router.include_router(children.router)
 protected_router.include_router(client_errors.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
+protected_router.include_router(observations.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)
