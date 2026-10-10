@@ -11,6 +11,9 @@
  *    보내지 않는다 — 서버 에러 봉투의 문구나 보호자의 입력이 섞일 수 있다 (루트 CLAUDE.md §2).
  * 🚨 분당 상한 — 한 페이지가 매 요청 터지면 Discord 를 도배하고 정작 봐야 할 알림이 묻힌다.
  * 🚨 보내기가 실패해도 조용하다 — 오류를 처리하는 자리에서 또 터지면 안 된다.
+ * 🚨 기한이 있다(3초). Next 16 은 라우트 핸들러 예외에서 `onRequestError` 를 **기다린 뒤** 500 을
+ *    낸다 (next/dist/build/templates/app-route.js 의 catch). Discord 가 멈추면 사용자 응답도 같이 멈추므로,
+ *    `instrumentation.ts` 는 기다리지 않고 띄워 보내고, 여기서도 기한을 건다 (api 쪽 flush 4초와 같은 생각).
  * 🚨 개발 모드(`next dev`)에서는 보내지 않는다 — 노트북의 오류가 팀 채널로 가지 않게. api 의
  *    "APP_ENV=local 이면 끔" 과 같은 규칙이다.
  */
@@ -39,6 +42,7 @@ export interface WebAlert {
 
 const PER_MINUTE = 10;
 const WINDOW_MS = 60_000;
+const TIMEOUT_MS = 3_000;
 const PATH_MAX = 200;
 
 function stamp(date: Date): string {
@@ -91,9 +95,11 @@ export function createWebAlerter(options: {
   url: string;
   perMinute?: number;
   now?: () => number;
+  timeoutMs?: number;
 }): (alert: WebAlert) => Promise<void> {
   const perMinute = options.perMinute ?? PER_MINUTE;
   const now = options.now ?? Date.now;
+  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   let windowStart = now();
   let sentInWindow = 0;
 
@@ -110,6 +116,7 @@ export function createWebAlerter(options: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(alert),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       // 알림을 못 보낸 걸 알릴 길은 없다. 요청 처리 쪽에 영향을 주지 않는 게 먼저다.

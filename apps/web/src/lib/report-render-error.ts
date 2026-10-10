@@ -89,7 +89,15 @@ function safePath(pathname: string): string {
   return cleaned.startsWith("/") ? cleaned : `/${cleaned}`;
 }
 
-/** 로그인했으면 서버로 한 건 보낸다. 실패는 조용히 — 호출한 쪽이 기다리거나 잡을 것이 없다. */
+/**
+ * 로그인했으면 서버로 한 건 보낸다. 실패는 조용히 — 호출한 쪽이 기다리거나 잡을 것이 없다.
+ *
+ * 🚨 `api.post` 가 아니라 `fetch` 를 직접 부른다 — CLAUDE.md "API 호출" 의 유일한 예외다.
+ *    ① 오류 화면에서 보내는 보고라 페이지를 떠나도 끝까지 가야 해서 `keepalive` 가 필요한데,
+ *    `api.post` 는 그 옵션을 넘길 자리가 없다. ② 토큰이 만료돼 401 이 오면 `api.post` 는 401 처리기를
+ *    타서 오류 화면을 로그인 화면으로 튕긴다 — 보고 하나 때문에 보호자가 보던 화면이 바뀌면 안 된다.
+ *    토큰 · 주소는 같은 클라이언트의 `authHeaders` · `buildUrl` 을 쓴다.
+ */
 export async function sendClientError(report: ClientErrorReport): Promise<void> {
   if (!("Authorization" in authHeaders())) return;
   try {

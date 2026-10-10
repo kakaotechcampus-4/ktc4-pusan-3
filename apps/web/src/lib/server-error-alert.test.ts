@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -92,6 +92,21 @@ describe("createWebAlerter — 보내기와 분당 상한", () => {
     clock = 61_000;
     await send(alert);
     expect(posts).toBe(4);
+  });
+
+  it("🚨 웹훅이 응답하지 않아도 기한 안에 돌아온다 — Next 는 onRequestError 를 기다린 뒤 500 을 낸다", async () => {
+    server.use(
+      http.post(WEBHOOK, async () => {
+        await delay("infinite");
+        return HttpResponse.json({ id: "1" });
+      }),
+    );
+    const send = createWebAlerter({ url: WEBHOOK, perMinute: 10, now: () => 0, timeoutMs: 50 });
+
+    const started = Date.now();
+    await send(buildWebAlert(new Error("x"), REQUEST, CONTEXT, { env: "prod", now: new Date(0) }));
+
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it("웹훅이 실패해도 예외가 올라오지 않는다 — 요청 처리 쪽에 영향이 없어야 한다", async () => {
