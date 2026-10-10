@@ -73,3 +73,91 @@ async def test_보호자3이_남의_아이를_보면_403(db_client, session, cid
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "child_access_denied"
+
+
+# ── PATCH /children/{cid} ──────────────────────────────────────────
+
+
+async def test_성별만_보내면_성별만_바뀐다(db_client, bearer, cid):
+    headers, _ = bearer
+
+    response = await db_client.patch(profile_url(cid), json={"gender": "female"}, headers=headers)
+
+    assert response.status_code == 200
+    child = response.json()["child"]
+    assert child["gender"] == "female"
+    # 안 보낸 칸은 그대로다
+    assert (child["nickname"], child["birth_date"]) == ("테스트아이", "2023-01-01")
+    again = await db_client.get(profile_url(cid), headers=headers)
+    assert again.json()["gender"] == "female"
+
+
+async def test_생일을_고치면_나이_문구도_다시_계산한다(db_client, bearer, cid):
+    headers, _ = bearer
+
+    response = await db_client.patch(
+        profile_url(cid), json={"nickname": "콩이", "birth_date": "2025-11-01"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    child = response.json()["child"]
+    assert (child["nickname"], child["birth_date"], child["age_display"]) == (
+        "콩이",
+        "2025-11-01",
+        "11개월",
+    )
+
+
+async def test_보호자2도_고칠_수_있다(db_client, session, cid):
+    # 지금은 연결된 보호자 누구나 고친다 (domains/child/repository.py update_child).
+    # 역할로 막기로 정하면 이 테스트를 바꾼다
+    headers, parent_2 = await issue_bearer(session, token="test-token-member")
+    await link_child(session, parent_id=parent_2, child_id=cid, relation=ParentChildRelation.FATHER)
+
+    response = await db_client.patch(profile_url(cid), json={"gender": "male"}, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["child"]["role"] == "member"
+
+
+@pytest.mark.parametrize("birth_date", ["2026-10-06", "2005-12-31"])
+async def test_생일이_화면_달력_범위_밖이면_400(db_client, bearer, cid, birth_date):
+    # 아이 등록과 같은 범위 — 올해 - 20년의 1월 1일 ~ 오늘 (한국 날짜)
+    headers, _ = bearer
+
+    response = await db_client.patch(
+        profile_url(cid), json={"birth_date": birth_date}, headers=headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert response.json()["error"]["detail"]["fields"] == ["birth_date"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},  # 고칠 것이 없다
+        {"gender": "unknown"},  # 세 값 밖
+        {"nickname": None},  # 비우기는 없다 — 별명 · 생일 · 성별은 늘 값이 있다
+        {"nickname": "   "},  # 공백만
+    ],
+)
+async def test_고칠_내용이_틀리면_400_이고_아무것도_안_바뀐다(db_client, bearer, cid, body):
+    headers, _ = bearer
+
+    response = await db_client.patch(profile_url(cid), json=body, headers=headers)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    again = (await db_client.get(profile_url(cid), headers=headers)).json()
+    assert (again["nickname"], again["gender"]) == ("테스트아이", "undisclosed")
+
+
+async def test_보호자3이_남의_아이를_고치면_403(db_client, session, cid):
+    headers, _ = await issue_bearer(session, token="test-token-stranger")
+
+    response = await db_client.patch(profile_url(cid), json={"gender": "male"}, headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "child_access_denied"

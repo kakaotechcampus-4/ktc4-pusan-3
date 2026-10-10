@@ -8,7 +8,7 @@ from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StrictBool, StringConstraints
+from pydantic import BaseModel, Field, StrictBool, StringConstraints, field_validator
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
 from app.domains.child.models import Gender, ParentChildRelation
@@ -64,6 +64,40 @@ class ChildProfile(BaseModel):
     )
     relation: ParentChildRelation = Field(description="보는 보호자와 아이의 관계")
     role: Role
+
+
+class UpdateChildRequest(BaseModel):
+    """PATCH /children/{cid} — 고친 칸만 보낸다. 안 보낸 칸은 그대로 둔다. 하나도 없으면 400.
+
+    null 은 받지 않는다(400). 별명 · 생일 · 성별은 늘 값이 있어서 "비우기" 가 없다.
+    """
+
+    nickname: Nickname | None = Field(
+        default=None, description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자"
+    )
+    birth_date: date | None = Field(
+        default=None,
+        description=(
+            "생일 (YYYY-MM-DD). 한국 날짜로 오늘보다 뒤거나 올해 - 20년의 1월 1일보다 앞이면 400"
+        ),
+    )
+    gender: Gender | None = Field(
+        default=None, description="male · female · undisclosed('밝히지 않을래요')"
+    )
+
+    @field_validator("nickname", "birth_date", "gender")
+    @classmethod
+    def _not_null(cls, value):
+        # 안 보낸 칸(기본값 None)에는 불리지 않는다 — null 을 직접 보낸 칸만 여기서 막힌다
+        if value is None:
+            raise ValueError("null 은 받지 않는다 — 고치지 않을 칸은 보내지 않는다")
+        return value
+
+
+class UpdateChildResponse(BaseModel):
+    """200 — 고친 뒤의 프로필."""
+
+    child: ChildProfile
 
 
 class CreateInputRequest(BaseModel):

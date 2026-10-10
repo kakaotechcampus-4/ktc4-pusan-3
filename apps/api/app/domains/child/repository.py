@@ -6,7 +6,7 @@ from datetime import date, datetime
 from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
+from app.domains.child.models import Child, Gender, Invite, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 
 
@@ -102,10 +102,22 @@ async def update_child(
     *,
     child_id: uuid.UUID,
     parent_id: uuid.UUID,
-    nickname: str,
-    birth_date: date,
+    nickname: str | None = None,
+    birth_date: date | None = None,
+    gender: Gender | None = None,
 ) -> Child | None:
-    """접근 가능한 보호자의 수정. 역할 제한이 추가되면 호출 계층에서 판단한다."""
+    """접근 가능한 보호자의 수정. 넘긴 칸만 바꾼다 — None 은 "그대로 둔다" 다.
+
+    별명 · 생일 · 성별은 늘 값이 있어서 비우는 길은 없다. 역할 제한이 추가되면 호출 계층에서
+    판단한다. 연결되지 않은 보호자 · 보관된 아이면 None.
+    """
+    values = {
+        name: value
+        for name, value in (("nickname", nickname), ("birth_date", birth_date), ("gender", gender))
+        if value is not None
+    }
+    if not values:
+        raise ValueError("바꿀 칸이 없다")
     return await session.scalar(
         update(Child)
         .where(
@@ -113,7 +125,7 @@ async def update_child(
             Child.deleted_at.is_(None),
             Child.id.in_(select(ParentChild.child_id).where(ParentChild.parent_id == parent_id)),
         )
-        .values(nickname=nickname, birth_date=birth_date)
+        .values(**values)
         .returning(Child)
     )
 

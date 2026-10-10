@@ -1,5 +1,5 @@
-"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `GET /children/{cid}`(프로필) ·
-`POST /children/{cid}/inputs`.
+"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `GET` · `PATCH /children/{cid}`
+(프로필) · `POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
@@ -28,16 +28,36 @@ from app.api.v1.schemas.children import (
     CreateChildResponse,
     CreateInputRequest,
     CreateInputResponse,
+    UpdateChildRequest,
+    UpdateChildResponse,
 )
 from app.core.config import settings
 from app.domains.child.models import Child, ParentChildRelation
-from app.domains.child.repository import create_child, find_child_link, has_child_link
+from app.domains.child.repository import (
+    create_child,
+    find_child_link,
+    has_child_link,
+    update_child,
+)
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import REQUIRED_CHILD_SCOPES, record_consent
 from app.domains.policy.repository import find_active_versions
 from app.rules.age import age_display
 
 router = APIRouter()
+
+
+def _check_birth_date(birth_date: date, today: date) -> None:
+    """화면 달력과 같은 범위 — 올해 - 20년의 1월 1일 ~ 오늘 (한국 날짜). 아니면 400.
+
+    나이 계산(age_display · life_stage)은 미래 생일에서 터지고, 너무 옛 생일은 "만 2025세" 로
+    저장돼 Agent 에도 넘어간다. 화면도 막지만 기기 날짜라 서버가 다시 본다
+    (onboarding EARLIEST_BIRTH_DATE). 등록과 고치기가 같은 범위를 쓴다.
+    """
+    if not date(today.year - 20, 1, 1) <= birth_date <= today:
+        raise ApiError(
+            400, "validation_failed", "생일을 다시 확인해 주세요", {"fields": ["birth_date"]}
+        )
 
 
 @router.post(
@@ -61,14 +81,7 @@ async def register_child(
     (apps/web/src/mocks/handlers/children.ts)과 같은 순서이고, 앞뒤 둘을 서버가 더했다.
     """
     today = today_kst()
-    # 나이 계산(age_display · life_stage)은 미래 생일에서 터지고, 너무 옛 생일은 "만 2025세" 로
-    # 저장돼 Agent 에도 넘어간다. 화면 달력과 같은 범위다 (onboarding EARLIEST_BIRTH_DATE) —
-    # 화면도 막지만 기기 날짜라 서버가 다시 본다.
-    earliest = date(today.year - 20, 1, 1)
-    if not earliest <= body.birth_date <= today:
-        raise ApiError(
-            400, "validation_failed", "생일을 다시 확인해 주세요", {"fields": ["birth_date"]}
-        )
+    _check_birth_date(body.birth_date, today)
 
     granted = {consent.scope for consent in body.consents}
     missing = [scope for scope in REQUIRED_CHILD_SCOPES if scope not in granted]
@@ -171,6 +184,39 @@ async def read_child(
         raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
     row, relation = link
     return _profile(row, relation, viewer_id=parent.parent_id, today=today_kst())
+
+
+@router.patch(
+    "/children/{cid}", responses={status: {"model": ErrorEnvelope} for status in (400, 403)}
+)
+async def update_child_profile(
+    child: AccessibleChild, body: UpdateChildRequest, parent: CurrentParent, session: SessionDep
+) -> UpdateChildResponse:
+    """아이 프로필 고치기 — 보낸 칸만 바꾼다. 연결된 보호자 누구나 고친다 (역할 제한 없음).
+
+    승인 게이트가 아니다(루트 §2 — 되돌릴 수 있는 수정). 그래서 Idempotency-Key 를 받지 않는다.
+    """
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise ApiError(400, "validation_failed", "고칠 내용이 없어요", {"fields": []})
+    today = today_kst()
+    if "birth_date" in changes:
+        _check_birth_date(changes["birth_date"], today)
+
+    updated = await update_child(
+        session, child_id=child.child_id, parent_id=parent.parent_id, **changes
+    )
+    link = await find_child_link(session, child_id=child.child_id, parent_id=parent.parent_id)
+    if updated is None or link is None:
+        # AccessibleChild 가 방금 확인했다. 그 사이에 연결이 끊긴 경우만 여기 온다
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    row, relation = link
+    # 응답은 commit 전에 만든다 — commit 뒤에 터지면 저장됐는데 실패로 보인다 (#214 리뷰 ⑤)
+    response = UpdateChildResponse(
+        child=_profile(row, relation, viewer_id=parent.parent_id, today=today)
+    )
+    await session.commit()
+    return response
 
 
 @router.post("/children/{cid}/inputs", status_code=202)
