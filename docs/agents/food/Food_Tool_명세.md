@@ -10,7 +10,7 @@
 >
 > **2026-10-06 갱신** — 추천은 최대 3개(C-8 닫힘) · 1~2개면 `suggestion.partial` 안내 · 0개면 추천 없이 `pool.empty` — 실패 아님 (§0-5) · 이미 추천한 메뉴가 다시 나오는 문제 TODO (§0-5)
 >
-> **2026-10-08 갱신** — 안전 필터를 health_safety 10/4 확정안에 맞춤: `SafetyEntry` 는 `kind` · `label` · `status` · `category` 만, 포트는 active 행만 · `category` 에 `food` 가 없는 알레르기 행은 뺌 · 통과한 메뉴에 든 19종 이름을 `SafetyVerdict.allergens` 로 돌려줌 · `notice.allergy_unconfirmed` 는 Food 가 내지 않음(승인 때 안내) (§3 · §4)
+> **2026-10-08 갱신** — 안전 필터를 health_safety 10/4 확정안에 맞춤: `SafetyEntry` 는 `kind` · `label` · `status` 만, 포트는 active 행만 · 통과한 메뉴에 든 19종 이름을 `SafetyVerdict.allergens` 로 돌려줌 · `notice.allergy_unconfirmed` 는 Food 가 내지 않음(승인 때 안내) (§3 · §4)
 
 ---
 
@@ -269,7 +269,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 
 막는 것은 코드가 한다. 모델에게 묻지 않는다(루트 §2 · §3). **애매하면 막는다** — 넣을지 망설여지는 이름은 사전에 넣고, guard(오탐 취소)에는 그 성분이 확실히 없는 것만 넣는다. 사례는 `apps/api/tests/unit/agents/food/test_food_safety_cases.py` 에 표로 있다.
 
-**입력** — 메뉴 행들, 이 task 시작에 읽은 `health_safety` 행들(`FoodRunState.safety`), 아이 단계와 월령, 추천인지 급식 조회인지(`purpose`, 기본은 추천). 안전 행은 `status='active'` 만 온다(`SafetyReader.food_safety` 계약, 백엔드는 `list_active_safety`). 행이 없는 것이 unknown 이라 빈 목록이 정상이고, 읽기에 실패하면 `SafetyLookupError` 다. `SafetyEntry` 는 `kind` · `label` · `status` · `category` 만 갖는다 — `severity` 는 싣지 않는다(보호자가 active 로 둔 알레르기를 검사 등급 class_0 이어도 거른다. 코드가 등급을 보고 낮추면 의료 판단이다). `management` 도 싣지 않는다(자유 텍스트라 제한 식품을 코드나 LLM 이 뽑으면 루트 §2 에 걸린다). 월령을 모르면 그 단계가 시작하는 월령으로 본다(가장 어린 쪽이라 규칙을 덜 풀지 않는다).
+**입력** — 메뉴 행들, 이 task 시작에 읽은 `health_safety` 행들(`FoodRunState.safety`), 아이 단계와 월령, 추천인지 급식 조회인지(`purpose`, 기본은 추천). 안전 행은 `status='active'` 만 온다(`SafetyReader.food_safety` 계약, 백엔드는 `list_active_safety`). 행이 없는 것이 unknown 이라 빈 목록이 정상이고, 읽기에 실패하면 `SafetyLookupError` 다. `SafetyEntry` 는 `kind` · `label` · `status` 만 갖는다 — `severity` 는 싣지 않는다(보호자가 active 로 둔 알레르기를 검사 등급 class_0 이어도 거른다. 코드가 등급을 보고 낮추면 의료 판단이다). `management` 도 싣지 않는다(자유 텍스트라 제한 식품을 코드나 LLM 이 뽑으면 루트 §2 에 걸린다). 월령을 모르면 그 단계가 시작하는 월령으로 본다(가장 어린 쪽이라 규칙을 덜 풀지 않는다).
 
 **1. 보호자가 적은 이름을 읽는다** — `resolve_safety`, 공통 규칙은 `app/agents/common/allergy.py`
 
@@ -283,7 +283,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 - **"콩"** 은 대두(5)로 읽고, 콩이 든 메뉴는 대두가 아니어도(강낭콩 · 완두콩 · 땅콩) 다 막는다 — 보호자가 콩류 전체를 뜻했을 수 있다. "대두" 로 등록하면 대두만 막는다.
 - kind 와 상관없이 같은 사전으로 읽는다 — 알레르기 칸에 적은 "유당불내증", 질환 칸에 적은 "우유 알레르기" 도 막는다. 질환은 정의상 빼는 19종 코드도 막는다(유당불내증 · 갈락토스혈증 → 우유, 셀리악병 → 밀). 질환의 줄임말 · 영어 이름(셀리악 · celiac · lactose intolerance)도 같은 질환으로 읽는다. `kind` 는 `allergy` · `chronic_disease` · `behavioral` · `environmental` · `other_medical` 다 — 사전에 없는 이름(당뇨 · 고소공포 · 편식)은 식품을 유도하지 않는다. `other_medical` 갈락토스혈증도 우유를 막는다.
 - 거르지 않는 상태는 `retracted` · `none` 둘뿐이다. 포트가 active 만 주지만 여기서 한 번 더 본다 — 어댑터가 `none` 행을 섞어 보내도 알레르기로 읽지 않는다. 모르는 상태값은 거른다 — 어댑터가 status 를 잘못 옮겨도("ACTIVE") 필터가 꺼지지 않는다. unknown 은 저장하지 않는 값이라 이 칸에 오면 어댑터 버그이고, 모르는 값으로 거른다.
-- **`category`** ([data_model.md](../data_model.md) health_safety 제약, #156 Q1) — `kind='allergy'` 행 중 `food` 가 없고 `drug` · `environment` 만 있는 행은 뺀다(페니실린 · 환경으로만 분류한 쑥). `food` 와 `environment` 가 같이 있으면(쑥) 식품이기도 해서 읽는다. **비어 있거나 NULL 이면 거른다** — "food 가 있는 행만 거른다" 로 만들면 분류가 빠진 식품 알레르기가 아무 신호 없이 필터에서 빠진다. 분류가 빠졌거나 틀렸을 때는 덜 막는 쪽보다 과하게 막는 쪽이 안전하다. `category` 는 알레르기 행만 갖는다 — 질환 행은 `category` 가 아니라 위의 `label` 읽기로 가른다.
+- **환경 · 약물 알레르기(꽃가루 · 페니실린)도 읽는다** — 메뉴명 · 재료와 매칭되지 않으면 아무것도 막지 않는다. 사전에 없는 짧은 이름은 글자 그대로 막아서 메뉴를 과하게 막을 수 있다(`개` → 김치찌개 · 된장찌개). 레시피 1,153개(60개월)로 재 보니 `개` 345개 · `꽃` 16개 · `나무` 2개 · `벌` 1개가 걸리고, 꽃가루 · 집먼지진드기 · 동물털 · 고양이 · 강아지 · 페니실린 · 아스피린 · 라텍스 같은 이름은 0개다 (2026-10-09). #298 리뷰에서 바꾸기로 했다 — 한 글자 이름은 사전에 있는 것(게 · 굴 · 잣 · 콩)만 막고, 사전에 없는 한 글자(개 · 꽃 · 벌)는 글자 그대로 막지 않는다 (Activity #261 과 같은 규칙). 다만 쑥 · 배 · 감 · 파 · 김 · 무 같은 한 글자 식품이 지금은 사전에 없고 글자 그대로 막는 것으로만 걸리기 때문에, 규칙을 먼저 바꾸면 이것들이 같이 풀린다(쑥떡 통과). 그래서 한 글자 식품을 guard 와 함께 사전에 넣은 뒤 규칙을 바꾼다 — "사전이 못 읽은 이름" 후속 이슈. 그 전까지의 동작(과차단)은 `test_food_safety.py` 의 `test_짧은_환경_알레르기_이름은_메뉴를_과하게_막는다` 가 고정한다.
 
 **2. 메뉴가 무엇을 담았는지 본다**
 

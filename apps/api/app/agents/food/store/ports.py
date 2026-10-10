@@ -85,7 +85,6 @@ class MenuSourceError(Exception):
 # 달라서 Food가 따로 둔다. unknown 은 없다 — 행이 없는 것이 unknown 이라 DB 에서 오지 않는다
 SafetyKind = Literal["allergy", "chronic_disease", "behavioral", "environmental", "other_medical"]
 SafetyStatus = Literal["active", "retracted", "none"]
-SafetyCategory = Literal["food", "drug", "environment"]
 
 
 @dataclass(frozen=True)
@@ -100,8 +99,6 @@ class SafetyEntry:
     kind: SafetyKind
     label: str  # 예: 보호자가 적은 자유 입력
     status: SafetyStatus
-    # kind='allergy' 만 갖는다. 빈 튜플은 분류 없음(NULL · '{}' 같은 뜻)이고 거른다
-    category: tuple[SafetyCategory, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -220,6 +217,7 @@ class SafetyReader(Protocol):
 
         데이터 모델의 "안전 조회는 항상 status='active'"와 같다. 백엔드 어댑터는 repository 의
         `list_active_safety`를 그대로 쓰면 된다. 행이 없는 것은 unknown 이라 빈 목록이 정상이다.
+        `HealthSafety` 에서는 kind · label · status 세 칸만 옮긴다.
         읽기에 실패하면 SafetyLookupError. 빈 목록을 대신 돌려주지 않는다.
         """
         ...
