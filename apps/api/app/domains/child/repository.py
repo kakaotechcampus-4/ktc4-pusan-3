@@ -33,6 +33,28 @@ async def list_child_links_for_parent(
     return [(child, relation) for child, relation in (await session.execute(stmt)).all()]
 
 
+async def find_child_link(
+    session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID
+) -> tuple[Child, ParentChildRelation] | None:
+    """보호자에게 연결된 아이 하나와 그 관계 — 프로필(GET /children/{cid})의 재료.
+
+    관계는 보는 보호자 기준이다. 같은 아이라도 엄마와 아빠가 다른 값을 받는다.
+    보관된 아이는 없는 것으로 본다 (find_accessible_child 와 같은 기준).
+    """
+    row = (
+        await session.execute(
+            select(Child, ParentChild.relation)
+            .join(ParentChild, ParentChild.child_id == Child.id)
+            .where(
+                Child.id == child_id,
+                ParentChild.parent_id == parent_id,
+                Child.deleted_at.is_(None),
+            )
+        )
+    ).first()
+    return None if row is None else (row[0], row[1])
+
+
 async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
     """이 보호자에게 parent_child 행이 있는가. 삭제(soft delete)된 아이와의 연결도 센다.
 

@@ -1,4 +1,5 @@
-"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `POST /children/{cid}/inputs`.
+"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `GET /children/{cid}`(프로필) ·
+`POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
@@ -22,14 +23,15 @@ from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
 from app.api.runs import pending_reply, registry, runner
 from app.api.v1.schemas.children import (
+    ChildProfile,
     CreateChildRequest,
     CreateChildResponse,
     CreateInputRequest,
     CreateInputResponse,
 )
 from app.core.config import settings
-from app.domains.child.models import ParentChildRelation
-from app.domains.child.repository import create_child, has_child_link
+from app.domains.child.models import Child, ParentChildRelation
+from app.domains.child.repository import create_child, find_child_link, has_child_link
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import REQUIRED_CHILD_SCOPES, record_consent
 from app.domains.policy.repository import find_active_versions
@@ -142,6 +144,33 @@ async def register_child(
     )
     await session.commit()
     return response
+
+
+def _profile(
+    child: Child, relation: ParentChildRelation, *, viewer_id: UUID, today: date
+) -> ChildProfile:
+    return ChildProfile(
+        id=child.id,
+        nickname=child.nickname,
+        birth_date=child.birth_date,
+        age_display=age_display(child.birth_date, today),
+        gender=child.gender,
+        relation=relation,
+        role="owner" if child.owner_parent_id == viewer_id else "member",
+    )
+
+
+@router.get("/children/{cid}", responses={403: {"model": ErrorEnvelope}})
+async def read_child(
+    child: AccessibleChild, parent: CurrentParent, session: SessionDep
+) -> ChildProfile:
+    """아이 프로필. 관계 · 역할은 보는 보호자 기준이다 — 같은 아이도 보호자마다 다르게 받는다."""
+    link = await find_child_link(session, child_id=child.child_id, parent_id=parent.parent_id)
+    if link is None:
+        # AccessibleChild 가 방금 확인했다. 그 사이에 연결이 끊긴 경우만 여기 온다
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    row, relation = link
+    return _profile(row, relation, viewer_id=parent.parent_id, today=today_kst())
 
 
 @router.post("/children/{cid}/inputs", status_code=202)

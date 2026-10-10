@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, StrictBool, StringConstraints
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
+from app.domains.child.models import Gender, ParentChildRelation
 
 Role = Literal["owner", "member"]
 """아이의 owner(등록한 보호자)인가, 초대로 연결된 member 인가 — child.owner_parent_id 와 비교."""
@@ -42,6 +43,26 @@ class CreateChildResponse(BaseModel):
     id: UUID
     nickname: str
     age_display: str = Field(description="화면에 그대로 쓰는 나이 문구 (생후 N일 · N개월 · 만 N세)")
+    role: Role
+
+
+class ChildProfile(BaseModel):
+    """아이 프로필 — GET /children/{cid} 의 응답이자 PATCH 의 응답 안 child.
+
+    관계(relation) · 역할(role)은 보는 보호자 기준이다. 같은 아이라도 보호자마다 다르게 받는다.
+    """
+
+    id: UUID
+    nickname: str
+    birth_date: date
+    age_display: str = Field(description="화면에 그대로 쓰는 나이 문구 (생후 N일 · N개월 · 만 N세)")
+    gender: Gender = Field(
+        description=(
+            "male · female · undisclosed. 기본값은 undisclosed('밝히지 않을래요'). "
+            "화면 표시 전용 — Agent 에 넘기지 않는다"
+        )
+    )
+    relation: ParentChildRelation = Field(description="보는 보호자와 아이의 관계")
     role: Role
 
 
