@@ -2,11 +2,19 @@
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import Child, Gender, Invite, ParentChild, ParentChildRelation
+from app.domains.child.models import (
+    Child,
+    ChildGrowthLog,
+    Gender,
+    Invite,
+    ParentChild,
+    ParentChildRelation,
+)
 from app.domains.identity.models import Parent
 
 
@@ -128,6 +136,48 @@ async def update_child(
         .values(**values)
         .returning(Child)
     )
+
+
+async def set_relation(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    relation: ParentChildRelation,
+) -> bool:
+    """이 보호자와 아이 사이의 관계를 바꾼다. 다른 보호자의 관계는 건드리지 않는다.
+
+    연결 행이 없으면 False.
+    """
+    changed = await session.scalar(
+        update(ParentChild)
+        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
+        .values(relation=relation)
+        .returning(ParentChild.id)
+    )
+    return changed is not None
+
+
+async def create_growth_log(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    created_by: uuid.UUID,
+    measured_on: date,
+    height_cm: Decimal | None,
+    weight_kg: Decimal | None,
+) -> ChildGrowthLog:
+    """키 · 몸무게를 잰 날 한 줄. 둘 다 None 이면 DB CHECK(child_growth_log_measured)가 막는다."""
+    row = ChildGrowthLog(
+        child_id=child_id,
+        created_by=created_by,
+        measured_on=measured_on,
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+    )
+    session.add(row)
+    await session.flush()
+    return row
 
 
 async def list_connected_parents(

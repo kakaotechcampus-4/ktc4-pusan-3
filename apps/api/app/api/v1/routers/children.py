@@ -1,5 +1,7 @@
-"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `GET` · `PATCH /children/{cid}`
-(프로필) · `POST /children/{cid}/inputs`.
+"""아이 엔드포인트 — 계약서 §04 · §05 · §06.
+
+`POST /children`(등록) · `GET` · `PATCH /children/{cid}`(프로필) ·
+`POST /children/{cid}/onboarding`(02 화면) · `POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
@@ -13,6 +15,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.api import idempotency, quota
@@ -28,6 +31,9 @@ from app.api.v1.schemas.children import (
     CreateChildResponse,
     CreateInputRequest,
     CreateInputResponse,
+    GrowthLogOut,
+    OnboardingRequest,
+    OnboardingResponse,
     UpdateChildRequest,
     UpdateChildResponse,
 )
@@ -35,8 +41,10 @@ from app.core.config import settings
 from app.domains.child.models import Child, ParentChildRelation
 from app.domains.child.repository import (
     create_child,
+    create_growth_log,
     find_child_link,
     has_child_link,
+    set_relation,
     update_child,
 )
 from app.domains.consent.models import ConsentAction, ConsentScope
@@ -216,6 +224,78 @@ async def update_child_profile(
         child=_profile(row, relation, viewer_id=parent.parent_id, today=today)
     )
     await session.commit()
+    return response
+
+
+@router.post(
+    "/children/{cid}/onboarding",
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
+)
+async def submit_onboarding(
+    child: AccessibleChild,
+    body: OnboardingRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> OnboardingResponse:
+    """아이 등록 뒤 02 화면 — 관계 · 성별 · 첫 키·몸무게를 한 트랜잭션에 저장한다.
+
+    관계는 보내는 보호자 자신의 것이다. 키 · 몸무게를 하나라도 적었으면 오늘(한국 날짜) 잰 기록
+    한 줄을 만든다. 같은 키로 다시 오면 처음 응답을 그대로 돌려준다 (일정 제출과 같은 방식).
+    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 빈 본문 → 저장 → commit → 응답 기억.
+    """
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = idempotency.recall(**scope)
+    if isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
+
+    if not body.model_fields_set:
+        raise ApiError(400, "validation_failed", "저장할 내용이 없어요", {"fields": []})
+
+    today = today_kst()
+    if body.relation is not None:
+        await set_relation(
+            session, child_id=child.child_id, parent_id=parent.parent_id, relation=body.relation
+        )
+    if body.gender is not None:
+        await update_child(
+            session, child_id=child.child_id, parent_id=parent.parent_id, gender=body.gender
+        )
+    growth = None
+    if body.height_cm is not None or body.weight_kg is not None:
+        growth = await create_growth_log(
+            session,
+            child_id=child.child_id,
+            created_by=parent.parent_id,
+            measured_on=today,
+            height_cm=body.height_cm,
+            weight_kg=body.weight_kg,
+        )
+
+    link = await find_child_link(session, child_id=child.child_id, parent_id=parent.parent_id)
+    if link is None:
+        # AccessibleChild 가 방금 확인했다. 그 사이에 연결이 끊긴 경우만 여기 온다
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    row, relation = link
+    # 응답은 commit 전에 만든다 — commit 뒤에 터지면 저장됐는데 실패로 보인다 (#214 리뷰 ⑤)
+    response = OnboardingResponse(
+        child=_profile(row, relation, viewer_id=parent.parent_id, today=today),
+        growth=None
+        if growth is None
+        else GrowthLogOut.model_validate(growth, from_attributes=True),
+    )
+    await session.commit()
+    idempotency.remember(**scope, replay=response.model_dump(mode="json"))
     return response
 
 

@@ -5,10 +5,11 @@
 """
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StrictBool, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, field_validator
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
 from app.domains.child.models import Gender, ParentChildRelation
@@ -93,6 +94,65 @@ class UpdateChildResponse(BaseModel):
     """200 — 고친 뒤의 프로필."""
 
     child: ChildProfile
+
+
+MEASUREMENT_MAX = 300
+"""키(cm) · 몸무게(kg)의 상한. 평가가 아니라 오타 막기다.
+
+DB 칸(999.9)에 닿기 전에 400 으로 돌려보낸다.
+
+화면은 0 보다 큰 숫자를 전부 보낸다 (apps/web/src/lib/measurement.ts).
+"""
+
+Measurement = Annotated[Decimal, Field(gt=0, le=MEASUREMENT_MAX)]
+
+
+class OnboardingRequest(BaseModel):
+    """POST /children/{cid}/onboarding — 아이 등록 뒤 02 화면. 적은 칸만 보낸다. 하나도 없으면 400.
+
+    🚨 알레르기(`safety` · `safety_status`)와 한 줄(`one_line`)은 받지 않는다(400). 알레르기의 쓰기
+       경로는 승인 게이트 ㉡(POST /children/{cid}/health-safety) 하나이고, 한 줄은 홈 입력이 받는다.
+       계약서 §05 의 `interests` · `dev_answers` 도 화면에서 빠졌다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    relation: ParentChildRelation | None = Field(
+        default=None, description="보내는 보호자와 아이의 관계. 다른 보호자의 관계는 바꾸지 않는다"
+    )
+    gender: Gender | None = Field(
+        default=None, description="male · female · undisclosed. 화면은 기본값이면 보내지 않는다"
+    )
+    height_cm: Measurement | None = Field(
+        default=None, description="키(cm). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
+    )
+    weight_kg: Measurement | None = Field(
+        default=None, description="몸무게(kg). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
+    )
+
+    @field_validator("relation", "gender", "height_cm", "weight_kg")
+    @classmethod
+    def _not_null(cls, value):
+        if value is None:
+            raise ValueError("null 은 받지 않는다 — 적지 않은 칸은 보내지 않는다")
+        return value
+
+
+class GrowthLogOut(BaseModel):
+    """키 · 몸무게를 잰 날 한 줄. 🚨 증감 · 백분위 · 또래 비교 칸은 만들지 않는다 (루트 §2)."""
+
+    id: UUID
+    measured_on: date
+    height_cm: float | None
+    weight_kg: float | None
+    note: str | None
+
+
+class OnboardingResponse(BaseModel):
+    """200 — 저장한 뒤의 프로필과, 키·몸무게를 적었으면 그 기록 한 줄."""
+
+    child: ChildProfile
+    growth: GrowthLogOut | None = Field(description="키 · 몸무게를 둘 다 안 적었으면 null")
 
 
 class CreateInputRequest(BaseModel):
