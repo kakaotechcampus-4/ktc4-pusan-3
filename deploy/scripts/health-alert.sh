@@ -10,6 +10,7 @@
 #     ENV_FILE      웹훅 주소(ALERT_WEBHOOK_URL)를 읽을 파일. 기본값: compose 파일 옆의 .env
 #     STATE_FILE    지난번 상태를 적어 두는 파일. 기본값: /tmp/ktc4-health-alert.state
 #     ALERT_ENV     메시지 머리의 환경 이름. 기본값: prod
+#                   ⏰ 시험 서버에 cron 을 걸 때는 줄 앞에 ALERT_ENV=dev 를 붙인다 — 안 붙이면 [prod] 로 찍힌다
 #     --dry-run     웹훅 대신 화면에 찍는다 (상태 파일은 그대로 갱신 — 다음 번엔 달라진 것만 보인다)
 #
 #   cron (서버, 1분마다 — crontab -e):
