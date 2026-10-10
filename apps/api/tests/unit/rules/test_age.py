@@ -11,6 +11,7 @@ import pytest
 from app.rules.age import (
     LifeStage,
     age_display,
+    first_month_of,
     life_stage,
     months_between,
     stage_of,
@@ -129,3 +130,19 @@ class TestLifeStageResult:
         assert result == LifeStage(months=12, stage="toddler", big="toddler")
         with pytest.raises(AttributeError):
             result.months = 13  # type: ignore[misc]
+
+
+class TestFirstMonthOf:
+    """월령을 모르고 단계만 알 때 쓰는 값 — 그 단계에서 가장 어린 월령."""
+
+    @pytest.mark.parametrize(
+        ("stage", "months"),
+        [("infant_milk", 0), ("infant_weaning", 4), ("toddler", 12), ("preschool", 36)],
+    )
+    def test_단계가_시작하는_월령(self, stage, months):
+        assert first_month_of(stage) == months
+        assert stage_of(first_month_of(stage)) == stage
+
+    def test_모르는_단계는_ValueError(self):
+        with pytest.raises(ValueError, match="모르는 단계"):
+            first_month_of("teen")  # type: ignore[arg-type]

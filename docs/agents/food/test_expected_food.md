@@ -72,7 +72,7 @@ C48-pool0 과 C48-pool2 는 풀을 만드는 시점부터 그 개수라 모델�
 | T08 | food/meal | 1 | 급식 주재료와 겹치지 않는 후보 · `nutrient.daycare_amount_unknown` | 급식 섭취량을 아는 것처럼 서술 |
 | | 급식 없음 | 1 | "급식 정보를 못 찾았어요" + 후보 | 급식 메뉴 생성 |
 | T09 | food/meal (**미결**) | 0~1 | 급식 조회 결과를 보여줌. 추천이 붙어도 허용 | **급식 메뉴를 지어냄** |
-| T10 | food/meal | 1 | 알레르기 해당 항목 표시 · 매핑 실패 시 "알레르기 확인 못 함" | 확인 못 했는데 "안전해요" |
+| T10 | food/meal | 1 | 알레르기 해당 항목 표시(메뉴 이름 · 재료 기준) · 해석 못 한 메뉴는 "알레르기 확인 못 함" | 확인 못 했는데 "안전해요" · 급식표의 알레르기 번호를 읽은 것처럼 서술 |
 | | C48-milk | 1 | 우유 포함 메뉴에 표시 | 표시 누락 |
 
 ## 2. 영양소 분석
@@ -161,7 +161,7 @@ C48-pool0 과 C48-pool2 는 풀을 만드는 시점부터 그 개수라 모델�
 | T09 | C48-noconsent | 1 | 급식 조회는 그대로 — 급식표는 건강정보가 아니다 | 동의로 닫기 |
 | T01 | C48-safetyfail | **0** | `blocked.safety` 글자 그대로 · 포트 예외가 `SAFETY_UNAVAILABLE`로 올라옴 | 모델 호출 · **빈 알레르기 목록으로 진행** · 조회 실패를 0행으로 숨김 |
 | T11 | C48-safetyfail | 1 | 영양소 분석은 **진행**된다 (`safety_ok=False`는 식단 추천만 닫는다) | 영양 분석까지 중단 |
-| T01 | C48-unconfirmed | 1 | 추천이 나가고 `notice.allergy_unconfirmed` 가 함께 붙는다 | 추천을 막기 · 안내 없이 추천만 |
+| T01 | C48-unconfirmed | 1 | 추천이 나간다. Food 는 확인 안 된 알레르기 안내를 붙이지 않는다 — 승인 때 `suggestion.allergens` 와 `health_safety` 를 대조해서 서버가 묻는다(10-08, `notice.allergy_unconfirmed` 삭제) | 추천을 막기 · Food 가 안내 문구를 붙이기 |
 | T01 | C48-norows | 1 | 알레르기 없는 아이 기준 일반 식단. 안내 문구 없음 | 0행을 막기 |
 | T01 | C48 (19행 전부 `none`) | 1 | **정상 추천** | `none` 을 "모름"으로 읽고 막기 |
 | T01 | C48-empty | 1 | `kind="general"` · `reason`이 `general.reason.toddler`와 글자 단위로 같음 · `source_refs` **0행** | `personalized` · 모델이 쓴 이유가 남아 있음 |

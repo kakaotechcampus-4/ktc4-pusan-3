@@ -228,7 +228,7 @@ async def test_build_gate_는_daycare_meal_행_유무를_그대로_옮긴다() -
 
 
 # build_gate: 읽은 안전 정보를 task state 에 남긴다
-_MILK = SafetyEntry(kind="allergy", label="우유", state="active", allergen_code=2)
+_MILK = SafetyEntry(kind="allergy", label="우유", status="active")
 
 
 async def test_build_gate_는_읽은_안전_정보를_state_에_담는다() -> None:
@@ -242,6 +242,21 @@ async def test_build_gate_는_읽은_안전_정보를_state_에_담는다() -> N
     await build_gate(context)
 
     assert context.state.safety == (_MILK,)
+
+
+async def test_build_gate_는_안전_정보를_읽어도_allergy_states_를_채우지_않는다() -> None:
+    # 확인 안 된 알레르기(unknown)는 Food 가 세지 않는다. 행이 없는 것이 unknown 이라 이 칸으로는
+    # 셀 수 없고, 안내는 추천을 승인할 때 suggestion.allergens 와 health_safety 를 대조해서 한다
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: date(2024, 9, 27)}),
+        consent=InMemoryConsent({CHILD: True}),
+        safety=InMemorySafety([_MILK]),
+    )
+
+    gate = await build_gate(_context(ports=ports))
+
+    assert gate.allergy_states == ()
+    assert gate.allergy_unconfirmed is False
 
 
 async def test_build_gate_는_동의가_없으면_state_에_빈_안전_정보를_담는다() -> None:

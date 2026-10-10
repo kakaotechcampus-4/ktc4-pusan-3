@@ -142,13 +142,9 @@ async def link_suggestions_to_event(
     await session.flush()
 
 
-async def is_any_linked(
-    session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
-) -> bool:
+async def is_any_linked(session: AsyncSession, *, suggestion_ids: list[uuid.UUID]) -> bool:
     """suggestion_ids 중 이미 일정에 연결된 것이 있는지."""
-    stmt = select(
-        exists().where(SuggestionEvent.suggestion_id.in_(suggestion_ids))
-    )
+    stmt = select(exists().where(SuggestionEvent.suggestion_id.in_(suggestion_ids)))
     return bool(await session.scalar(stmt))
 
 

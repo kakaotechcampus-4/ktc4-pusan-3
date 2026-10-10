@@ -10,7 +10,8 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
      🚨 보내기 시작할 때도 기록 단계 commit 뒤여야 한다. pipeline은 commit 이 끝난 뒤에
         `Saved` 를 낸다. 여기서는 받은 순서대로 보내기만 하고, 미리 만들어 앞당겨 보내지 않는다.
         화면이 "저장됐어요"로 본 기록은 DB에 있어야 한다.
-   - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다.
+   - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다. 도메인 Agent 결과 중
+     화면에 갈 것은 바로 뒤에 오는 `AgentResult`(agent_result, #227)가 싣는다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
    pipeline 에 이벤트가 새로 생기면 tests/unit/api/test_run_translate.py 가 실패해서 정하라고 한다.
 
@@ -21,6 +22,7 @@ agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAU
 """
 
 from app.agents.entrypoint import (
+    AgentResult,
     Done,
     Emit,
     Event,
@@ -61,6 +63,28 @@ def to_sse(event: Event) -> sse.SseEvent | None:
     if isinstance(event, Unavailable):
         # "준비 중" 카드. 문구는 화면이 Agent 이름으로 만들고, 서버는 이름만 넘긴다
         return "unavailable", {"agents": list(event.agents)}
+    if isinstance(event, AgentResult):
+        # 도메인 Agent 결과 한 건 = 화면 블록 하나. 도착한 순서대로 그리고 재정렬하지 않는다 (#215)
+        # readout의 source_refs는 싣지 않는다 — 근거 종류(child_growth_log · growth_doc …)가 화면
+        # Ref에 아직 없어서, 보내면 타입이 안 맞는다 (apps/web/src/lib/api/types.ts 의 REF_KINDS)
+        # question과 readout의 code는 없어도 키를 남긴다 (guidance의 deeplink와 같은 이유)
+        # code는 개수 안내(fewer · empty)를 같은 kind="notice"인 날씨 안내와 가르는 값이다 (#249)
+        return "agent_result", {
+            "agent": event.agent,
+            "task_type": event.task_type,
+            "status": event.status,
+            "readouts": [
+                {
+                    "kind": readout.kind,
+                    "title": readout.title,
+                    "body": readout.body,
+                    "authored_by": readout.authored_by,
+                    "code": readout.code,
+                }
+                for readout in event.readouts
+            ],
+            "question": event.question,
+        }
     if isinstance(event, Partial):
         # 끝 신호가 아니다. 뒤에 done 이 오고, 화면은 그때 "부분 결과" 로 닫는다.
         # 같은 Agent 가 succeeded · failed 양쪽에 있을 수 있다(task 둘 중 하나만 실패)
