@@ -19,7 +19,7 @@ Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 class CreateHealthSafetyRequest(BaseModel):
     """승인 게이트 ㉡ — 보호자가 확인한 값만 들어온다. LLM 이 이 요청을 만들지 않는다 (§2).
 
-    🚨 타입에 `| None` 을 붙이지 않는다. 기본값 None 은 "안 보냄" 표시이고, null 을 보내면 400 이다.
+    심각도 · 메모의 null 은 "안 보냄" 과 같다 (웹 HealthSafetyRequest 가 null 을 허용한다).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -28,24 +28,24 @@ class CreateHealthSafetyRequest(BaseModel):
         description="allergy · chronic_disease · behavioral · environmental · other_medical"
     )
     label: Label = Field(description="구체적 대상 — '우유' · '천식'. 앞뒤 공백을 떼고 1~100자")
-    severity: SafetySeverity = Field(
+    severity: SafetySeverity | None = Field(
         default=None,
         description=(
             "알레르기는 class_0~class_6, 나머지는 mild~anaphylaxis. 어긋나면 400. "
-            "모르면 보내지 않는다"
+            "모르면 보내지 않거나 null"
         ),
     )
-    reactions: list[Annotated[str, StringConstraints(min_length=1, max_length=100)]] = Field(
-        default_factory=list, max_length=20, description="반응 — '두드러기' 등"
-    )
-    notes: Annotated[str, StringConstraints(max_length=500)] = Field(
+    reactions: list[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    ] = Field(default_factory=list, max_length=20, description="반응 — '두드러기' 등")
+    notes: Annotated[str, StringConstraints(max_length=500)] | None = Field(
         default=None, description="보호자 메모"
     )
 
 
 class WrittenBy(BaseModel):
     parent_id: UUID
-    nickname: str | None = Field(description="적은 보호자의 부르는 이름. 이름이 없는 계정이면 null")
+    nickname: str = Field(description="적은 보호자의 부르는 이름")
 
 
 class HealthSafetyOut(BaseModel):
@@ -57,7 +57,9 @@ class HealthSafetyOut(BaseModel):
     reactions: list[str]
     management: str | None = Field(description="화면은 쓰지 않는다")
     notes: str | None
-    created_by: WrittenBy | None = Field(description="적은 보호자. 탈퇴했으면 null")
+    created_by: WrittenBy | None = Field(
+        description="적은 보호자. 탈퇴했거나 부르는 이름이 없는 계정이면 null"
+    )
     updated_at: datetime
 
 

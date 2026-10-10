@@ -18,14 +18,16 @@ HealthSafetyListResponse)과 목 서버(`apps/web/src/mocks/handlers/children.ts
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.api import idempotency
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
+from app.domains.identity.models import Parent
 from app.domains.policy.repository import find_active_versions
 from app.domains.safety.models import HealthSafety, SafetyKind, SafetyStatus
 from app.domains.safety.repository import create_safety
+from app.main import app
 
 from .conftest import issue_bearer, link_child
 
@@ -80,6 +82,7 @@ async def rows_of(session, child_id) -> list[HealthSafety]:
 
 async def test_목록은_내리지_않은_기록만_돌려준다(db_client, session, bearer, cid):
     headers, parent_1 = bearer
+    await session.execute(update(Parent).where(Parent.id == parent_1).values(nickname="지은"))
     milk = await create_safety(
         session,
         child_id=cid,
@@ -108,8 +111,20 @@ async def test_목록은_내리지_않은_기록만_돌려준다(db_client, sess
         "severity": "class_3",
         "reactions": ["두드러기"],
     }
-    assert item["created_by"]["parent_id"] == str(parent_1)
+    assert item["created_by"] == {"parent_id": str(parent_1), "nickname": "지은"}
     assert data["updated_at"]
+
+
+async def test_이름_없는_계정이_적었으면_created_by_는_null(db_client, session, bearer, cid):
+    # 화면이 "null님이 확인" 을 그리지 않게 — 이름은 #172 이후 가입에서만 필수라 옛 계정은 비어 있다
+    headers, parent_1 = bearer
+    await create_safety(
+        session, child_id=cid, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="우유"
+    )
+
+    response = await db_client.get(safety_url(cid), headers=headers)
+
+    assert response.json()["items"][0]["created_by"] is None
 
 
 async def test_보호자2가_남의_아이_기록을_보면_403(db_client, session, cid):
@@ -137,6 +152,33 @@ async def test_보호자1이_알레르기를_등록하면_201(db_client, session
     await session.rollback()
     (row,) = await rows_of(session, consented)
     assert (row.status, row.created_by) == (SafetyStatus.ACTIVE, parent_1)
+
+
+async def test_심각도_메모를_null_로_보내면_안_보낸_것으로_받는다(
+    db_client, session, bearer, consented
+):
+    headers, _ = bearer
+    body = {"type": "allergy", "label": "우유", "severity": None, "notes": None}
+
+    response = await db_client.post(safety_url(consented), json=body, headers=with_key(headers))
+
+    assert response.status_code == 201
+    assert (response.json()["safety"]["severity"], response.json()["safety"]["notes"]) == (
+        None,
+        None,
+    )
+
+
+async def test_실패한_요청은_키를_남기지_않는다(db_client, session, bearer, cid):
+    # 동의가 없어 403 → 동의한 뒤 같은 키로 다시 보내면 처음 403 을 재생하지 않고 등록된다
+    headers, parent_1 = bearer
+    body = {"type": "allergy", "label": "우유"}
+
+    refused = await db_client.post(safety_url(cid), json=body, headers=with_key(headers))
+    await grant_child_health(session, child_id=cid, parent_id=parent_1)
+    accepted = await db_client.post(safety_url(cid), json=body, headers=with_key(headers))
+
+    assert (refused.status_code, accepted.status_code) == (403, 201)
 
 
 async def test_같은_키로_두_번_보내면_처음_응답이고_기록은_한_번(
@@ -202,6 +244,7 @@ async def test_같은_항목이_있으면_409_내린_항목은_다시_등록할_
         {"type": "food", "label": "우유"},  # 모르는 종류
         {"type": "allergy", "label": "   "},  # 이름이 비었다
         {"type": "allergy", "label": "우유", "category": "식품"},  # #298 에서 지운 칸
+        {"type": "allergy", "label": "우유", "reactions": ["   "]},  # 공백뿐인 반응
     ],
 )
 async def test_받을_수_없는_본문은_400(db_client, session, bearer, consented, body):
@@ -212,6 +255,23 @@ async def test_받을_수_없는_본문은_400(db_client, session, bearer, conse
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation_failed"
     assert await rows_of(session, consented) == []
+
+
+async def test_같은_항목에_틀린_심각도면_409_가_아니라_400(db_client, session, bearer, consented):
+    # 목(children.ts)과 같은 순서 — 본문이 틀린 것을 먼저 알린다
+    headers, parent_1 = bearer
+    await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="우유"
+    )
+
+    response = await db_client.post(
+        safety_url(consented),
+        json={"type": "allergy", "label": "우유", "severity": "mild"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
 
 
 async def test_건강정보_동의가_없으면_403_이고_저장하지_않는다(db_client, session, bearer, cid):
@@ -277,3 +337,11 @@ async def test_내_아이_주소로_다른_아이의_기록을_내리면_404(db_
     assert response.json()["error"]["code"] == "not_found"
     await session.refresh(row_b)
     assert row_b.status is SafetyStatus.ACTIVE
+
+
+def test_Swagger_에_등록_응답_모양이_나온다():
+    # API 계약 정본은 Swagger 다 — JSONResponse 를 돌려줘도 201 의 모양이 문서에 있어야 한다
+    schema = app.openapi()
+    created = schema["paths"]["/api/v1/children/{cid}/health-safety"]["post"]["responses"]["201"]
+    ref = created["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith("/CreateHealthSafetyResponse")

@@ -28,7 +28,7 @@ from app.api.v1.schemas.health_safety import (
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import latest_action
 from app.domains.identity.repository import find_parent
-from app.domains.safety.models import HealthSafety
+from app.domains.safety.models import ALLERGY_SEVERITIES, HealthSafety, SafetyKind
 from app.domains.safety.repository import (
     create_safety,
     has_active_safety,
@@ -48,8 +48,9 @@ def _out(row: HealthSafety, nickname: str | None) -> HealthSafetyOut:
         reactions=list(row.reactions),
         management=row.management,
         notes=row.notes,
+        # 이름이 없으면 통째로 null — 화면이 "null님이 확인" 을 그리지 않게
         created_by=None
-        if row.created_by is None
+        if row.created_by is None or nickname is None
         else WrittenBy(parent_id=row.created_by, nickname=nickname),
         updated_at=row.updated_at,
     )
@@ -70,6 +71,8 @@ async def read_health_safety(
 @router.post(
     "/children/{cid}/health-safety",
     status_code=201,
+    # JSONResponse 를 돌려줘도 Swagger 에 201 의 모양이 나오게 (suggestions.py 의 일정 제출과 같다)
+    response_model=CreateHealthSafetyResponse,
     responses={status: {"model": ErrorEnvelope} for status in (400, 403, 409)},
 )
 async def register_health_safety(
@@ -82,8 +85,8 @@ async def register_health_safety(
 ) -> JSONResponse:
     """승인 게이트 ㉡ — 보호자가 확인한 알레르기 · 건강 기록 1건을 등록한다.
 
-    순서: (본문 형식 · 아이 접근 — 의존성) → 키 확인 → 재생 → 건강정보 동의 → 같은 항목 409 →
-    종류별 심각도 400 → 저장 → commit → 응답 기억.
+    순서: (본문 형식 · 아이 접근 — 의존성) → 키 확인 → 재생 → 건강정보 동의 → 종류별 심각도 400 →
+    같은 항목 409 → 저장 → commit → 응답 기억. 400 이 409 보다 먼저인 것은 목(children.ts)과 같다.
     """
     if not idempotency_key:
         raise ApiError(
@@ -110,6 +113,13 @@ async def register_health_safety(
             {"scopes": [ConsentScope.CHILD_HEALTH.value]},
         )
 
+    if body.severity is not None and (body.type is SafetyKind.ALLERGY) != (
+        body.severity in ALLERGY_SEVERITIES
+    ):
+        # 알레르기는 검사 등급(class_0~6), 나머지는 mild~anaphylaxis (DB CHECK 와 같은 규칙)
+        raise ApiError(
+            400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {"fields": ["severity"]}
+        )
     if await has_active_safety(session, child_id=child.child_id, kind=body.type, label=body.label):
         raise ApiError(409, "already_exists", "이미 등록된 항목이에요")
     try:
