@@ -4,11 +4,13 @@ import { api } from "./client";
 import {
   createIdempotencyKeyHolder,
   IdempotencyKeyRequiredError,
+  idempotentMethod,
   idempotentPath,
+  type IdempotentOperation,
   newIdempotencyKey,
   requiresIdempotencyKey,
 } from "./idempotency";
-import { submitEventDraft, submitInput } from "./operations";
+import { submitEventDraft, submitInput, updateEventDraft } from "./operations";
 import type { SubmitEventBody } from "./types";
 
 /** 제출 본문 한 벌. 🚨 일자가 있어야 목이 받는다 (화면이 막는 것과 같은 규칙). */
@@ -32,13 +34,30 @@ const DRAFT_BODY: SubmitEventBody = {
  */
 
 describe("되돌릴 수 없는 경로 판정", () => {
-  it("표의 5개 경로를 전부 요구한다", () => {
-    const paths = Object.values(idempotentPath).map((build) => build("x1"));
-    expect(paths).toHaveLength(5);
-    for (const path of paths) expect(requiresIdempotencyKey(path)).toBe(true);
+  const operations = Object.keys(idempotentPath) as IdempotentOperation[];
+
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출은 create 와 update 두 줄", () => {
+    expect(operations).toHaveLength(6);
+    for (const operation of operations) {
+      const path = idempotentPath[operation]("x1", "x2");
+      expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
+    }
   });
 
-  it("이웃한 읽기 경로를 잘못 걸지 않는다", () => {
+  it("🚨 수정 초안 반영(PATCH)도 키가 필요하다 (#316)", () => {
+    expect(requiresIdempotencyKey("PATCH", "/children/c1/events/e1")).toBe(true);
+    expect(requiresIdempotencyKey("patch", "/children/c1/events/e1")).toBe(true);
+  });
+
+  it("같은 경로라도 다른 메서드는 걸지 않는다", () => {
+    expect(requiresIdempotencyKey("GET", "/children/c1/events/e1")).toBe(false);
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/events/e1")).toBe(false);
+    expect(requiresIdempotencyKey("GET", "/children/c1/inputs")).toBe(false);
+    // 일정 목록 경로(create)를 PATCH 로 부르는 것은 표에 없다.
+    expect(requiresIdempotencyKey("PATCH", "/children/c1/events")).toBe(false);
+  });
+
+  it("이웃한 경로를 잘못 걸지 않는다", () => {
     // /children/{cid}/inputs 와 한 글자 차이인 경로들. [^/]+ 가 새는지 본다.
     for (const path of [
       "/children/c1/observations",
@@ -47,7 +66,10 @@ describe("되돌릴 수 없는 경로 판정", () => {
       "/children/c1/events/e1",
       "/children/c1/events/e1/items",
     ]) {
-      expect(requiresIdempotencyKey(path)).toBe(false);
+      expect(requiresIdempotencyKey("POST", path)).toBe(false);
+    }
+    for (const path of ["/children/c1/events/e1/items", "/children/c1/events/e1/extra"]) {
+      expect(requiresIdempotencyKey("PATCH", path)).toBe(false);
     }
   });
 });
@@ -60,6 +82,17 @@ describe("키 없는 호출", () => {
       IdempotencyKeyRequiredError,
     );
     // 🚨 서버의 400 에 기대지 않는다. fetch 자체가 호출되지 않아야 한다.
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("PATCH 도 막는다 — 수정 초안 반영 (#316)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      api.patch(idempotentPath.updateEvent("c1", "ev_1"), DRAFT_BODY),
+    ).rejects.toBeInstanceOf(IdempotencyKeyRequiredError);
     expect(fetchSpy).not.toHaveBeenCalled();
 
     fetchSpy.mockRestore();
@@ -88,6 +121,19 @@ describe("전용 함수", () => {
     const first = await submitEventDraft("c1", DRAFT_BODY, key);
     const second = await submitEventDraft("c1", DRAFT_BODY, key);
     expect(second).toEqual(first);
+  });
+
+  it("수정 초안 반영은 아이 스코프 경로로 PATCH 하고 키를 싣는다 (#284 · #316)", async () => {
+    const key = newIdempotencyKey();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await updateEventDraft("c1", "ev_1", DRAFT_BODY, key);
+
+    const [input, init] = fetchSpy.mock.calls[0];
+    expect(String(input)).toMatch(/\/children\/c1\/events\/ev_1$/);
+    expect(init?.method).toBe("PATCH");
+    expect(new Headers(init?.headers).get("Idempotency-Key")).toBe(key);
+    fetchSpy.mockRestore();
   });
 });
 
