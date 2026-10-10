@@ -227,6 +227,45 @@ async def page_observations(
     return ObservationPage(items=items, total=total, next_cursor=next_cursor)
 
 
+# 기억(profile_affinity)으로 묶이는 표. routine · health 는 affinity_id 가 없다.
+_PROMOTABLE_DOMAINS = (
+    ObservationDomain.FOOD,
+    ObservationDomain.EDUCATION,
+    ObservationDomain.ACTIVITY,
+)
+
+
+async def list_active_refs_by_affinity(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    affinity_ids: Collection[uuid.UUID],
+) -> dict[uuid.UUID, list[tuple[ObservationDomain, uuid.UUID]]]:
+    """기억마다 묶인 active 관찰의 (도메인, id). 최근 관찰이 앞이다.
+
+    기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · inactive 는
+    세지 않는다 — Curator 가 세는 것과 같은 기준이어야 카드 숫자가 상태와 어긋나지 않는다.
+    """
+    refs: dict[uuid.UUID, list[tuple[date, ObservationDomain, uuid.UUID]]] = {}
+    if not affinity_ids:
+        return {}
+    for domain in _PROMOTABLE_DOMAINS:
+        model = _MODEL_BY_DOMAIN[domain]
+        rows = await session.execute(
+            select(model.affinity_id, model.id, func.upper(model.observed_range)).where(
+                model.child_id == child_id,
+                model.affinity_id.in_(affinity_ids),
+                model.status == ObservationStatus.ACTIVE,
+            )
+        )
+        for affinity_id, observation_id, upper in rows:
+            refs.setdefault(affinity_id, []).append((upper, domain, observation_id))
+    return {
+        affinity_id: [(domain, oid) for _, domain, oid in sorted(found, reverse=True)]
+        for affinity_id, found in refs.items()
+    }
+
+
 def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
     fields = {
         column.key: getattr(row, column.key)
