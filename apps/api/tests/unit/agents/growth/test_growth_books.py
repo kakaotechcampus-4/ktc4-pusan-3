@@ -5,7 +5,8 @@
 - 월령 범위는 `form` 하나에서 나온다 — 캐시 행의 월령 칸이 틀려도 form 으로 다시 건다
 - 조회 실패는 빈 목록이 아니라 `UpstreamUnavailable` 이다. 캐시로 목록을 꾸미지 않는다
 - 이번 run 의 `search_books` 결과에 없는 ISBN 은 거절한다 — 지어낸 책 · 연령 필터에 걸러진 책
-- 만료 전 `suggestion` 에 이미 있는 ISBN(승인 · 거절한 책도) · 같은 호출 안의 중복 · 4권째는 거절
+- 만료 전 `suggestion` 에 이미 낸 책(승인 · 거절한 책도) · 같은 호출 안의 같은 책 · 4권째는 거절.
+  같은 책은 `items` 에 들어가는 "제목(저자)" 로 가른다 — ISBN 은 저장하지 않는다
 """
 
 from collections.abc import Sequence
@@ -22,6 +23,7 @@ from app.agents.growth.tools.books import (
     SEARCH_LIMIT,
     SEARCH_POOL,
     BookRejectReason,
+    book_label,
     explain,
     normalize_isbn,
     propose_books,
@@ -192,13 +194,13 @@ class TestSeenBooks:
 
 
 class IssuedBooks(InMemoryIssuedBooks):
-    def __init__(self, isbns: Sequence[str] = ()) -> None:
-        super().__init__(isbns)
+    def __init__(self, labels: Sequence[str] = ()) -> None:
+        super().__init__(labels)
         self.calls: list[tuple[UUID, object]] = []
 
-    async def isbns(self, *, child_id, now):
+    async def labels(self, *, child_id, now):
         self.calls.append((child_id, now))
-        return await super().isbns(child_id=child_id, now=now)
+        return await super().labels(child_id=child_id, now=now)
 
 
 async def searched(months: int, rows: Sequence[BookRow], *, issued: Sequence[str] = ()):
@@ -249,18 +251,33 @@ class TestProposeIsbn:
         assert isbns_of(review.accepted) == [isbn(1)]
 
     async def test_이미_낸_책은_거절한다(self):
-        ctx = await searched(30, [book(1, "picture"), book(2, "picture")], issued=[isbn(1)])
+        rows = [book(1, "picture", author="가"), book(2, "picture", author="가")]
+        ctx = await searched(30, rows, issued=["책1(가)"])
         review = await propose_books(ctx, [isbn(1), isbn(2)])
         assert isbns_of(review.accepted) == [isbn(2)]
         assert [(r.index, r.reason) for r in review.rejections] == [
             (0, BookRejectReason.ALREADY_ISSUED)
         ]
 
-    async def test_이미_낸_책은_하이픈을_달리_적어도_거절한다(self):
-        ctx = await searched(30, [book(1, "picture")], issued=["978-89-0000-0001"])
+    async def test_이미_낸_책은_띄어쓰기가_달라도_거절한다(self):
+        # 캐시가 갱신되며 서명 띄어쓰기가 바뀌어도 같은 책이다
+        ctx = await searched(30, [book(1, "picture", author="가")], issued=["책 1 (가)"])
         review = await propose_books(ctx, [isbn(1)])
         assert review.accepted == ()
         assert review.rejections[0].reason is BookRejectReason.ALREADY_ISSUED
+
+    async def test_제목과_저자가_같으면_다른_판도_이미_낸_책이다(self):
+        # 보드북판 · 양장판처럼 ISBN 만 다른 같은 책 — 부모에게는 "다른 책" 이 아니다
+        other_edition = BookRow(isbn=isbn(2), title="책1", form="picture", author="가")
+        ctx = await searched(30, [other_edition], issued=["책1(가)"])
+        review = await propose_books(ctx, [isbn(2)])
+        assert review.accepted == ()
+        assert review.rejections[0].reason is BookRejectReason.ALREADY_ISSUED
+
+    async def test_제목이_같아도_저자가_다르면_다른_책이다(self):
+        ctx = await searched(30, [book(1, "picture", author="나")], issued=["책1(가)"])
+        review = await propose_books(ctx, [isbn(1)])
+        assert isbns_of(review.accepted) == [isbn(1)]
 
     async def test_이미_낸_책은_아이_하나와_지금_시각으로_묻는다(self):
         issued = IssuedBooks()
@@ -276,6 +293,17 @@ class TestProposeIsbn:
         assert isbns_of(review.accepted) == [isbn(1), isbn(2)]
         assert [(r.index, r.reason) for r in review.rejections] == [(2, BookRejectReason.DUPLICATE)]
 
+    async def test_같은_호출_안에서_제목과_저자가_같은_다른_판은_뒤엣것을_거절한다(self):
+        # 둘 다 내면 카드 두 장에 같은 준비물 "책1(가)" 가 찍힌다
+        rows = [
+            book(1, "picture", author="가"),
+            BookRow(isbn=isbn(2), title="책1", form="picture", author="가"),
+        ]
+        ctx = await searched(30, rows)
+        review = await propose_books(ctx, [isbn(1), isbn(2)])
+        assert isbns_of(review.accepted) == [isbn(1)]
+        assert [(r.index, r.reason) for r in review.rejections] == [(1, BookRejectReason.DUPLICATE)]
+
     async def test_네_권째부터는_거절한다(self):
         rows = [book(n, "picture") for n in range(1, 6)]
         ctx = await searched(30, rows)
@@ -289,14 +317,14 @@ class TestProposeIsbn:
 
     async def test_거절된_책은_3권_한도를_쓰지_않는다(self):
         rows = [book(n, "picture") for n in range(1, 5)]
-        ctx = await searched(30, rows, issued=[isbn(1)])
+        ctx = await searched(30, rows, issued=["책1"])
         review = await propose_books(ctx, [isbn(1), isbn(2), isbn(3), isbn(4)])
         assert isbns_of(review.accepted) == [isbn(2), isbn(3), isbn(4)]
         assert [r.reason for r in review.rejections] == [BookRejectReason.ALREADY_ISSUED]
 
     async def test_검색_밖_ISBN_이_먼저_걸린다(self):
-        # 지어낸 ISBN 이 우연히 이미 낸 목록에 있어도 사유는 검색 밖이다
-        ctx = await searched(30, [book(1, "picture")], issued=[isbn(999)])
+        # 지어낸 책이 우연히 이미 낸 목록과 같은 이름이어도 사유는 검색 밖이다
+        ctx = await searched(30, [book(1, "picture")], issued=["책999"])
         review = await propose_books(ctx, [isbn(999)])
         assert review.rejections[0].reason is BookRejectReason.NOT_SEARCHED
 
@@ -308,11 +336,29 @@ class TestProposeIsbn:
             await propose_books(ctx, [isbn(1)])
 
     async def test_거절_설명은_후보_번호와_고칠_방향만_싣는다(self):
-        ctx = await searched(30, [book(1, "picture")], issued=[isbn(1)])
+        ctx = await searched(30, [book(1, "picture")], issued=["책1"])
         review = await propose_books(ctx, [isbn(1), isbn(999)])
         text = explain(review.rejections)
         assert "1번 후보" in text and "2번 후보" in text
         assert isbn(1) not in text and isbn(999) not in text  # 로그로 흘러가는 값은 싣지 않는다
+        assert "책1" not in text
+
+
+class TestBookLabel:
+    """`suggestion.items` 에 들어가 일정 준비물이 되는 글자. 이미 낸 책도 이 글자로 가른다."""
+
+    @pytest.mark.parametrize(
+        ("title", "author", "expected"),
+        [
+            ("공룡 대백과", "김철수", "공룡 대백과(김철수)"),
+            ("공룡 대백과", None, "공룡 대백과"),
+            ("공룡 대백과", "  ", "공룡 대백과"),
+            ("  공룡 대백과 ", " 김철수\n", "공룡 대백과(김철수)"),
+        ],
+    )
+    def test_제목_뒤에_저자를_괄호로_붙인다(self, title, author, expected):
+        row = BookRow(isbn=isbn(1), title=title, form="picture", author=author)
+        assert book_label(row) == expected
 
 
 class TestNormalizeIsbn:

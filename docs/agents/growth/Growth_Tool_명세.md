@@ -56,7 +56,7 @@
 | `search_books` | `keywords[]`, `k≤10` | `{isbn, title, author, publisher, cover_url}` | 연령 필터 코드 주입 · 캐시 우선 |
 | `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence_ids[], curriculum_ref?, reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다 |
 | `propose_routine_plan` | `category`, `items[3]: {next_step, how, evidence_ids[], reason}` (`rhythm_info` 모드면 `items` 없음) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 음식 용어 → 금지 표현 필터 |
-| `propose_books` | `items[3]: {isbn, reason, evidence_ids[]}` | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 있는 ISBN도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 중복 ISBN 과 4권째도 거절한다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` |
+| `propose_books` | `items[3]: {isbn, reason, evidence_ids[]}` | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 낸 책도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 같은 책과 4권째도 거절한다. 같은 책은 ISBN 이 아니라 `items` 에 들어가는 "제목(저자)"(`book_label`)로 가른다 — ISBN 은 저장하지 않아서 지난 추천과 맞춰 볼 값이 이것뿐이고, 보드북판 · 양장판처럼 ISBN 만 다른 같은 책도 함께 거른다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` |
 
 ### 0–11개월은 추천을 내지 않는다
 
@@ -77,7 +77,7 @@
 
 🚨 **`observation_activity`로는 가지 않는다.** Growth는 놀이 기록을 **읽어서** 학습·루틴으로 잇는 Agent이지 놀이를 추천하는 Agent가 아니다. 근거로 인용하는 것과 그 테이블에 쓰는 것은 다른 일이다.
 
-**개수·재호출** — 출력은 최대 3개. 사후 필터(`hazard_term` · 금지 표현 · 음식 용어 · 알레르기 · 의료 처치 — 아래 "안전 필터" · "루틴에서 닫는 것")로 3개 미만이 되면 걸러진 항목을 제외 목록으로 넣어 **모델을 1회 재호출**한다. 그래도 못 채우면 남은 만큼만 내고, 0개면 추천 없이 안내만 낸다([`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 재호출 결과는 첫 호출에서 통과한 것 뒤 빈자리만 채우고, 같은 후보는 교육 · 루틴은 `content`, 도서는 ISBN 으로 가른다. 금지 표현을 재호출 사유에 넣는 것은 Growth 의 확장이다 — Tool_공통 §5-2 는 안전 필터만 적고 늘릴지를 열어 두었는데, 금지 표현으로 지운 후보도 제외 목록에 넣어야 같은 후보가 다시 나오지 않는다. 그 외 이유로는 재호출하지 않는다. **기피(−1)는 필터가 아니라 근거라 여기 들어가지 않는다** — 걸러내지 않고 `reason`에 무엇을 피했는지 적는다.
+**개수·재호출** — 출력은 최대 3개. 사후 필터(`hazard_term` · 금지 표현 · 음식 용어 · 알레르기 · 의료 처치 — 아래 "안전 필터" · "루틴에서 닫는 것")로 3개 미만이 되면 걸러진 항목을 제외 목록으로 넣어 **모델을 1회 재호출**한다. 그래도 못 채우면 남은 만큼만 내고, 0개면 추천 없이 안내만 낸다([`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 재호출 결과는 첫 호출에서 통과한 것 뒤 빈자리만 채우고, 같은 후보는 교육 · 루틴은 `content`, 도서는 "제목(저자)"(`book_label`)로 가른다. 금지 표현을 재호출 사유에 넣는 것은 Growth 의 확장이다 — Tool_공통 §5-2 는 안전 필터만 적고 늘릴지를 열어 두었는데, 금지 표현으로 지운 후보도 제외 목록에 넣어야 같은 후보가 다시 나오지 않는다. 그 외 이유로는 재호출하지 않는다. **기피(−1)는 필터가 아니라 근거라 여기 들어가지 않는다** — 걸러내지 않고 `reason`에 무엇을 피했는지 적는다.
 
 **금지 표현 필터** (전 propose 공통, 코드): [`app/rules/evaluative.py`](../../../apps/api/app/rules/evaluative.py) 공통 목록 — 또래 비교 · 백분위 · 성장곡선 · 발달 속도 판정(늦 · 느리 · 발달이) · 능력 꼬리표(뛰어나 · 재능 · 소질) · 성장 정체 · 부족(정체 · 부족해) · 문제 행동. 한 글자 어간을 그대로 걸면 평범한 문장까지 걸려서 *"걸음마가 늦어요"* · *"체중이 부족해요"* 처럼 **성장 항목 뒤에 판정이 올 때**만 잡는다. `잘 크고` 는 넣지 않았다 — *"콩나물이 잘 크고 있어요"* 같은 기르기 놀이 문장이 걸린다.
 
@@ -96,7 +96,7 @@
 - `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다 — Activity D7 과 같은 이유다. *"변비가 있으니 배변 훈련은…"* 같은 분기가 곧 LLM 없는 자동 진단이 된다.
 - 루틴 · 도서는 `health_safety` 를 읽지 않는다. 루틴 문장에 나오는 음식은 음식 용어 스캔이 막는다.
 - **18개월 미만 승격을 적용하지 않는다.** Activity 는 0–17개월에 경고(warn)를 차단으로 올리지만 Growth 는 경고 문구와 함께 낸다. 음식 용어가 먼저 빠지므로 12–17개월 교육 활동에서 실제로 경고가 붙는 축은 `water` · `suffocation_film` 이다. 경고 · 확인 문구는 run state 에 남기고 화면 자리는 #249 를 따른다(`SuggestionDraft` 에 칸을 더하지 않는다).
-- `suggestion.allergens` 는 비운다 — 음식 용어나 등록한 이름이 든 후보는 빠지기 때문이다. `suggestion.items` 는 교육은 `materials` 로 채우고, 도서는 ISBN 을 둘 자리를 정할 때 같이 정한다.
+- `suggestion.allergens` 는 비운다 — 음식 용어나 등록한 이름이 든 후보는 빠지기 때문이다. `suggestion.items` 는 교육은 `materials` 로, 도서는 "제목(저자)"(`book_label`) 하나로 채운다 — 일정으로 만들면 준비물로 그대로 옮겨지기 때문이다. 도서의 ISBN 은 `suggestion` 에 저장하지 않는다(#292 리뷰). 저장한 뒤에 ISBN 을 읽는 곳이 없어서다 — 화면에 표지를 그리는 설계가 없고, `propose_books` 의 이미 낸 책 검사는 `items` 의 "제목(저자)" 로 한다. 그래서 `suggestion` 테이블에 칸을 더하지 않는다.
 
 ### 루틴 근거 — 무엇을 세나 (2026-10-08)
 

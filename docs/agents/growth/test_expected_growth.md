@@ -85,7 +85,7 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | | C8 | 1 | 보드북·촉감책만 | `form=unknown`·그림책 |
 | T08 | growth/book | 1 | 근거 없으면 `general` + "또래 기준" | – |
 | T09 | growth/book | 1 | 한글 입문 도서 | – |
-| T10 | growth/book | 1 | 3권 전부 만료 전 `suggestion`에 없는 ISBN · 주제는 affinity 에서 (이전 run 을 기억하지 않는다) | 직전에 낸 책이 다시 나옴 · 이전 run 대화를 참조함 |
+| T10 | growth/book | 1 | 3권 전부 만료 전 `suggestion`에 없는 책("제목(저자)") · 주제는 affinity 에서 (이전 run 을 기억하지 않는다) | 직전에 낸 책이 다시 나옴 · 이전 run 대화를 참조함 |
 | | 도서 API 장애 | **0** | `book_suggestion` 닫힘 readout | 책 생성 |
 
 ## 3. 생활 루틴

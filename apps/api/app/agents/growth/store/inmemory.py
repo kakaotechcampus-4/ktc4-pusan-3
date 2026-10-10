@@ -177,11 +177,11 @@ class InMemoryBooks:
 
 
 class InMemoryIssuedBooks:
-    def __init__(self, isbns: Sequence[str] = ()) -> None:
-        self._isbns = frozenset(isbns)
+    def __init__(self, labels: Sequence[str] = ()) -> None:
+        self._labels = frozenset(labels)
 
-    async def isbns(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
-        return self._isbns
+    async def labels(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
+        return self._labels
 
 
 def in_memory_ports(

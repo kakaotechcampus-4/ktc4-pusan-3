@@ -18,7 +18,7 @@ import 만 바꾸면 되게 일부러 같게 두었다 — 그 전에 여기서 
 | NoticeReader | notice — 기관 공지가 있는가 (없어도 추천은 동작) |
 | GrowthDocReader | growth_doc — 월령 슬라이스 + 의미 검색, 자립 단계 사슬 통째로 |
 | BookSource | 도서 검색 — book_catalog 캐시 + 도서관 정보나루 |
-| IssuedBookReader | 만료 전 suggestion 에 이미 낸 도서 ISBN |
+| IssuedBookReader | 만료 전 Growth suggestion 의 items — 도서는 "제목(저자)" |
 
 🚨 키 · 몸무게는 `Decimal` 이다.
 """
@@ -272,8 +272,13 @@ class BookSource(Protocol):
 
 
 class IssuedBookReader(Protocol):
-    async def isbns(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
-        """만료 전 `suggestion` 에 이미 있는 도서 ISBN. 승인 · 거절한 책도 포함한다."""
+    async def labels(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
+        """만료 전 Growth `suggestion` 의 `items` 값. 승인 · 거절한 추천도 포함한다.
+
+        도서 추천은 `book_label` 의 "제목(저자)" 하나가 들어 있다. ISBN 은 저장하지 않아서
+        이미 낸 책은 이 글자로 가른다. 교육 준비물(`materials`)도 같은 칸이라 섞여 와도 된다 —
+        "제목(저자)" 와 겹칠 일이 드물고, 겹치면 그 책을 이번에 한 번 덜 낼 뿐이다.
+        """
         ...
 
 
