@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, isApiError } from "@/lib/api/errors";
-import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
+import {
+  idempotentMethod,
+  idempotentPath,
+  type IdempotentOperation,
+  newIdempotencyKey,
+} from "@/lib/api/idempotency";
 import {
   addHealthSafety,
   approveSuggestions,
@@ -141,12 +146,16 @@ async function agreed(scopes: readonly string[]) {
   });
 }
 
-describe("① 키 누락 — 표에 있는 5개 전부", () => {
+describe("① 키 누락 — 표에 있는 줄 전부", () => {
   // 🚨 표(lib/api/idempotency.ts)에 줄을 더하고 목을 안 고치면 여기서 깨진다.
-  const cases = Object.entries(idempotentPath).map(([name, build]) => [name, build("c1")] as const);
+  //    메서드도 표가 정한다 — 수정 초안 반영은 PATCH 다 (#316).
+  const cases = (Object.keys(idempotentPath) as IdempotentOperation[]).map(
+    (name) => [name, idempotentMethod[name], idempotentPath[name]("c1", "ev_1")] as const,
+  );
 
-  it.each(cases)("%s 는 키가 없으면 400 이다", async (_name, path) => {
+  it.each(cases)("%s (%s) 는 키가 없으면 400 이다", async (_name, method, path) => {
     const response = await raw(path, {
+      method,
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
@@ -1080,9 +1089,12 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
 
 describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
   it("memory_changed 가 항상 false 다", async () => {
-    const body = await api.patch<SuggestionFeedbackResponse>("/suggestions/s_past_2/feedback", {
-      feedback: "child_disliked",
-    });
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/s_past_2/feedback",
+      {
+        feedback: "child_disliked",
+      },
+    );
 
     expect(body.suggestion.feedback).toBe("child_disliked");
     // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
@@ -1091,7 +1103,7 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 
   it("피드백을 보내도 관찰 건수가 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
-    await api.patch("/suggestions/s_past_1/feedback", { feedback: "not_acted" });
+    await api.patch("/children/c1/suggestions/s_past_1/feedback", { feedback: "not_acted" });
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
 
     expect(after.total).toBe(before.total);
