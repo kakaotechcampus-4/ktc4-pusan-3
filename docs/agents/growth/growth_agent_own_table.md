@@ -100,7 +100,7 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
-| `query_key` | text | PK. `키워드+연령대+form` 정규화 |
+| `query_key` | text | PK. 키워드 정규화. 월령 · `form` 은 넣지 않는다 — `search_books` 가 캐시 뒤에서 건다 |
 | `isbns` | text[] | NOT NULL. 결과 순서 보존 |
 | `fetched_at` | timestamptz | NOT NULL |
 | `ttl_days` | smallint | NOT NULL, default 30 |
