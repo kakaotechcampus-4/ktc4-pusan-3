@@ -535,6 +535,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 ### API 호출
 
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
+  - 예외는 `lib/report-render-error.ts` 의 `sendClientError` 하나다. 오류 화면에서 보내는 보고라 `keepalive` 가 필요하고, 401 처리기를 타면 안 된다 (오류 화면이 로그인 화면으로 튕긴다). 토큰 · 주소는 `authHeaders` · `buildUrl` 을 그대로 쓴다. (`lib/server-error-alert.ts` 의 `fetch` 는 우리 API 가 아니라 Next 서버가 Discord 웹훅을 부르는 것이라 이 규칙의 대상이 아니다.)
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
 
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다

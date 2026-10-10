@@ -22,7 +22,7 @@ import logging.config
 import re
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
-_DATEFMT = "%Y-%m-%d %H:%M:%S%z"
+DATEFMT = "%Y-%m-%d %H:%M:%S%z"
 """시간대(+0900 등)까지. 개발 맥은 한국 시간, 컨테이너는 보통 UTC 라 말없이 9시간 어긋난다."""
 
 _INVITE_CODE = re.compile(r"(/invites/+)[^/?]+", re.IGNORECASE)
@@ -64,6 +64,9 @@ class _RedactAccessLog(logging.Filter):
 def configure_logging() -> None:
     """app 로거에 처리기를 하나 단다. 여러 번 불러도 처리기는 하나다 (dictConfig 가 갈아 끼운다).
 
+    🚨 갈아 끼운다는 건 app 로거에 먼저 달린 다른 처리기도 닫고 뗀다는 뜻이다 — 알림 핸들러
+       (core/alerts.py)가 그렇다. 그래서 알림은 이 함수 뒤에 달고, 이 함수를 다시 부르지 않는다.
+
     🚨 disable_existing_loggers 를 끄는 이유 — 켜 두면(dictConfig 의 기본값) 이 함수보다 먼저
        만들어진 app 밖의 로거가 전부 꺼진다. 거기에 uvicorn 의 로거가 들어 있다 — uvicorn 은
        자기 로그를 먼저 설정하고 앱을 나중에 불러오므로, 꺼지면 시작 줄 · 요청 줄 ·
@@ -74,7 +77,7 @@ def configure_logging() -> None:
         {
             "version": 1,
             "disable_existing_loggers": False,
-            "formatters": {"plain": {"format": _FORMAT, "datefmt": _DATEFMT}},
+            "formatters": {"plain": {"format": _FORMAT, "datefmt": DATEFMT}},
             "handlers": {
                 "stderr": {
                     "class": "logging.StreamHandler",
@@ -90,3 +93,7 @@ def configure_logging() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _RedactAccessLog) for f in access.filters):
         access.addFilter(_RedactAccessLog())
+    # 🚨 httpx 는 INFO 로 요청 주소 전체를 찍는다 — NEIS 의 KEY=, Discord 웹훅의 토큰이 주소에 있다.
+    #    루트가 INFO 로 열리는 일(OPENAI_LOG · basicConfig)이 있어도 새지 않게 WARNING 으로 못
+    #    박는다.
+    logging.getLogger("httpx").setLevel(logging.WARNING)

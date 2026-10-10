@@ -9,11 +9,22 @@
 # nginx 뒤로 넣는다 (지금은 앞에 아무것도 없어서 포트를 직접 낸다).
 # 🚨 api 는 --workers 1 이다. run 진행 상황이 프로그램 메모리에 있어서 (#134)
 #    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
+# 🚨 로그는 전 서비스 journald 다 (아래 x-logging). docker 기본 json-file 은 새 이미지로 up 할 때 컨테이너와
+#    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다. api 가 합류하면
+#    `logging: *logging` 한 줄만 더한다. 이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
+#    로그 설정은 컨테이너를 만들 때 정해진다 — 나중에 바꾸면 `make web-up` 으로 다시 올려야 적용된다.
+
+x-logging: &logging
+  # 서버(Ubuntu 24.04)는 journald. 맥의 Docker Desktop 에는 journald 가 없어서 배포 compose 를 로컬에서
+  # 띄워 볼 때만 deploy/docker/.env 에 LOG_DRIVER=json-file 을 둔다 (빌드 `make web-image` 는 상관없다).
+  driver: ${LOG_DRIVER:-journald}
+
 services:
   redis:
     image: redis:7-alpine
     container_name: ktc4-redis-deploy
     restart: unless-stopped
+    logging: *logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -30,6 +41,13 @@ services:
     image: ktc4-web:${WEB_IMAGE_TAG:-local}
     container_name: ktc4-web
     restart: unless-stopped
+    logging: *logging
+    environment:
+      # Next 서버에서 난 오류를 Discord 로 (apps/web/src/instrumentation.ts). 빌드가 아니라 실행 때 읽는다.
+      # 비어 있으면 안 보낸다. api · 감시 스크립트와 같은 값 — 브라우저 번들엔 안 들어간다.
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      # 알림 꼬리표 [prod] · [dev]. 감시 스크립트도 같은 줄을 읽는다 — 시험 서버는 .env 에 APP_ENV=dev.
+      APP_ENV: ${APP_ENV:-prod}
     ports:
       - "${WEB_PORT}:3000"
     healthcheck:

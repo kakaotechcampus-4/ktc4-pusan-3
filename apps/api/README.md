@@ -79,6 +79,146 @@ curl http://localhost:8000/health
 
 ---
 
+## 로그와 알림
+
+로그는 **stderr 로만** 찍는다 (`app/core/logging_config.py`). 어디에 모을지는 실행 환경이 정하고 앱은
+파일을 열지 않는다. 결정과 근거는 [`docs/ops/logging-alerts-v1.md`](../../docs/ops/logging-alerts-v1.md)
+(멘토 #267 2번). 여기는 절차만 둔다.
+
+### 로그는 어디서 보나
+
+| 어디서 | 어떻게 |
+|------|------|
+| 로컬 `make dev` | 터미널에 그대로 |
+| 배포 서버 | `docker compose -f deploy/docker/docker-compose.deploy.yml logs -f api` |
+| 배포 서버, 컨테이너를 지운 뒤에도 | `journalctl CONTAINER_NAME=ktc4-api --since "1 hour ago"` |
+
+🚨 docker 기본 로그(json-file)는 새 이미지로 `compose up` 할 때 컨테이너와 함께 지워진다. 그래서
+`deploy/docker/docker-compose.deploy.yml` 은 전 서비스를 journald 로 둔다 (`x-logging` 앵커 · 서버는
+Ubuntu 24.04 라 journald 가 기본으로 디스크에 남는다). api 를 올릴 때는 서비스 아래에 한 줄이다 (#166).
+
+```yaml
+    logging: *logging
+```
+
+맥의 Docker Desktop 에는 journald 가 없다. 배포 compose 를 로컬에서 띄워 볼 때만 `deploy/docker/.env` 에
+`LOG_DRIVER=json-file` 을 둔다 (빌드 `make web-image` 는 상관없다). 그때는 회전이 없으니 오래 돌리지
+않는다 — journald 없는 호스트에서 오래 돌릴 일이 생기면 json-file 에 `max-size` · `max-file` 회전을 건다.
+
+### 에러 알림 (Discord)
+
+api 프로세스의 `app.*` 로거에서 **ERROR 이상**이 나면 Discord 웹훅으로 카드(embed) 한 장씩 간다
+(`app/core/alerts.py`, 전송은 `app/integrations/discord.py`). 카드는 이렇게 생겼고, 이것뿐이다.
+
+```
+api-alert      ┃ 🟠 run %s 의 job 이 %s 로 끝났다                 ← 제목. 예외면 예외 종류, 글귀는 그 아래 줄
+               ┃ `api.runs.runner:_guarded:172` · prod            ← 코드 위치(앞의 app. 뗌) · 환경
+               ┃ journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR · 오늘 오후 11:01
+browser-alert  ┃ 🟡 TypeError
+               ┃ `/children/…/records` · android 14 app · `abc123`   ← 경로 · 기기 · digest
+               ┃ `v1.routers.client_errors:report_client_error:34` · prod
+infra-alert    ┃ 🔴 [prod] ktc4-web: running healthy → exited -
+               ┃ docker compose -f deploy/docker/docker-compose.deploy.yml logs --tail 100 <이름>
+web-alert      ┃ 🟡 TypeError
+               ┃ `/children/…/records` · render · `abc123`
+               ┃ `web:/children/[cid]/records` · prod
+```
+
+왼쪽 색 막대와 제목 앞 표시가 세기다 — 🔴 지금 봐야 함(서비스가 안 됨) · 🟠 오늘 안에 · 🟡 내일 봐도 됨 ·
+🟢 복구. 전부 같은 세기로 오면 다 무시하게 된다. 바닥글은 "다음에 칠 명령" 이다 — 알림을 보고 뭘 할지
+바로 알게.
+
+**카드의 시각은 보는 사람의 시간대로 뜬다** (Discord 가 바꿔 보여 준다 — 한국에선 한국 시간). 서버 로그
+줄의 시각은 컨테이너 시간대다 — 줄 끝의 `+0000` · `+0900` 이 그것이다. 시간대가 다르면 두 시각이
+어긋나므로, 방금 온 알림은 바닥글 명령의 `--since "10 min ago"` 로 찾는다.
+
+`%s` 를 채운 값 · 원문 · 트레이스백 · 예외 메시지는 **서버 로그에만** 있다 (루트 CLAUDE.md §2). 알림을
+보면 그 시각의 서버 로그에서 같은 줄을 찾는다. 값을 내보내는 길은 로그를 찍을 때
+`extra={"alert_detail": "..."}`(값 줄) · `extra={"alert_heading": "..."}`(제목) 로 표시하는 것뿐이고,
+서버가 모양을 검사한 값(화면 오류 보고)만 그렇게 한다. 채널 하나에 **보내는 이름**이 출처별로 갈린다 — `api-alert`(서버) · `browser-alert`(화면 오류) ·
+`infra-alert`(컨테이너 감시) · `web-alert`(Next 서버 오류 — `apps/web/src/instrumentation.ts` 가 웹훅으로
+직접 보낸다, 토큰이 없어 api 를 못 거치니까). 로그에 `extra={"alert_source": "browser"}` 을 붙이면 그
+이름으로 간다. 같은 오류가 쏟아지면 분당 10건까지만 보내고 넘친 건수는
+다음 알림 머리에 "(앞서 N건 생략)" 으로 적는다. 웹훅이 죽어도 요청 처리는 영향이 없다.
+
+**화면 오류도 온다 (로그인한 보호자만).** 보호자 폰 · 브라우저에서 화면이 깨지면 오류 바운더리가
+`POST /client-errors` 로 예외 종류 · digest · 화면 경로 · 기기 요약(`android 14 app`)만 보내고, 서버가
+ERROR 로 찍어 같은 알림이 간다 (`apps/web/src/lib/report-render-error.ts` ·
+`app/api/v1/routers/client_errors.py`). 예외 메시지 · User-Agent 전체 · 쿼리 문자열은 못 들어오고
+(서버가 모양을 검사한다), DB 에 넣지 않는다. 로그인 전 화면(로그인 · 동의)의 오류는 그 기기의
+콘솔에만 남는다 — 인증 없는 창구는 아무나 팀 채널을 울릴 수 있어서다.
+
+**못 잡는 것** — `uvicorn` · `sqlalchemy` 로거, `alembic` · `scripts/*` 같은 다른 프로세스, 로그인 전
+화면의 브라우저 오류. 부팅 실패와 컨테이너 죽음은 아래 "컨테이너 감시" 가 잡는다. Discord 가 조용하다고
+다 괜찮은 건 아니다 (문서 §5).
+
+켜는 법:
+
+1. Discord 채널 설정 › 연동 › 웹훅 › 새 웹훅 (이름 `api-alert`) → 웹훅 URL 복사
+2. 서버 `.env` 의 `ALERT_WEBHOOK_URL=` 에 붙여 넣고 api 를 재시작. 웹훅 주소 모양
+   (`https://discord.com/api/webhooks/…`)이 아니면 서버가 뜨지 않는다 — 채널 링크를 넣은 것이다
+
+🚨 **웹훅 URL 은 비밀이다.** 아는 사람은 누구나 그 채널에 글을 올릴 수 있다. `.env` 에만 두고 GitHub ·
+Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). **`APP_ENV=local` 이면 주소가 있어도 알림이
+꺼진다** — 노트북의 오류가 팀 채널로 가지 않게. `make test` 도 `.env` 에 무엇이 있든 보내지 않는다
+(`tests/__init__.py`).
+
+로컬에서 한 번 확인하려면 `.env` 에 URL 을 넣고 아래를 돌린다 (`APP_ENV=dev` 로 local 규칙을 비켜
+간다). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에 주황 카드로
+`🟠 알림 시험` 과 `probe:<module>:1 · dev` 가 뜨면 된다.
+
+```bash
+cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
+```
+
+### 컨테이너 감시 (배포 실패 · redis 죽음 · 재시작 반복)
+
+위 알림은 api 가 살아 있을 때만 말할 수 있다. 컨테이너가 못 뜨거나 redis 가 죽은 건 밖에서 봐야 해서,
+서버의 cron(정해진 시각마다 명령을 돌리는 리눅스 장치)이 1분마다
+[`deploy/scripts/health-alert.sh`](../../deploy/scripts/health-alert.sh) 를 돌린다. 배포 compose 의
+컨테이너 전부의 상태(docker healthcheck 결과)를 읽어 **지난번과 달라진 것만** 같은 웹훅으로 카드
+한 장에 보낸다 (하나라도 🔴 면 빨강, 전부 복구면 초록) — `[prod] ktc4-web: running healthy → exited -`, 복구되면 `… → running healthy`. 웹훅 전송이
+실패하면 다음 분에 다시 보낸다. 1분마다 돌아도 `docker inspect` 몇 밀리초라 부담이 없다 (healthcheck
+자체가 이미 5~30초마다 돈다).
+
+서버 준비 — `deploy/docker/.env` 에 `ALERT_WEBHOOK_URL=` (api 의 `.env` 와 같은 값) 을 넣고 `crontab -e`:
+
+```
+* * * * * cd /home/ubuntu/ktc4-pusan-3 && deploy/scripts/health-alert.sh >> /var/tmp/ktc4-health-alert.log 2>&1
+```
+
+로컬에서 보려면 개발 DB compose 를 가리켜 `--dry-run` 으로 돌린다 (웹훅 대신 화면에 찍는다).
+`ktc4-postgres` 를 멈췄다 켜면서 다시 돌리면 달라진 줄만 찍힌다.
+
+```bash
+deploy/scripts/health-alert.sh --dry-run deploy/docker/docker-compose.yml
+```
+
+### 서버 밖 가동 감시 (UptimeRobot)
+
+위 cron 은 서버 **안**에 있어서 EC2 자체가 죽거나 네트워크가 끊기면 같이 말을 못 한다. 그래서 밖에서
+5분마다 주소를 찔러 보는 무료 서비스(UptimeRobot)를 둔다. 코드는 없다 — 가입과 등록뿐이다. 무료 플랜에
+Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를 찔러 응답 코드만 본다).
+
+지금 할 수 있는 것:
+
+1. Discord 에 **웹훅을 하나 따로** 만든다 (이름 `uptime-alert`). 외부 서비스가 들고 있는 주소라, 문제가
+   생기면 이것만 끊을 수 있게 api 의 웹훅과 나눈다
+2. uptimerobot.com 가입 → Integrations › Discord → 1번 주소 붙여 넣기
+
+첫 배포 뒤 (서버 주소가 생겨야 한다):
+
+3. New monitor › HTTP(s), 5분 간격, 2번 Discord 연결 선택. 두 개 —
+   api `https://<도메인>/…/health` (인증 없음, `/api/v1` 밖) · web `https://<도메인>/`. IP 가 아니라 **도메인**으로
+   등록한다 — 경로 · 포트는 nginx 를 앞에 둘 때 정해진다
+4. 보안그룹에서 그 포트가 밖으로 열려 있어야 한다
+
+🚨 **EC2 를 중지했다 시작하면 공인 IP 가 바뀐다** (카테캠 환경은 고정 IP 불가). 재부팅은 그대로다. 도메인을 사기로
+했으므로(10-10) 그때는 **도메인의 A 레코드만 새 IP 로 바꾼다** — 모니터 · 카카오 콜백 · 웹 빌드 · 앱은 도메인을
+가리키니 고칠 게 없다.
+
+---
+
 ## 디렉토리 구조
 
 ```
@@ -89,7 +229,9 @@ apps/api/
 ├── app/
 │   ├── main.py              FastAPI 앱 진입점, include_router 등록
 │   ├── core/
-│   │   └── config.py        pydantic-settings 로 .env 읽기
+│   │   ├── config.py        pydantic-settings 로 .env 읽기
+│   │   ├── logging_config.py  app.* 로그를 stderr 로 (시간 · 레벨 · 이름) · 접근 로그 가리기
+│   │   └── alerts.py        ERROR 이상 → Discord 웹훅 (전송은 integrations/discord.py)
 │   ├── api/
 │   │   ├── health.py        운영용 헬스체크 (/api/v1 밖)
 │   │   ├── deps/           인증 · 권한 · 동의 검사
@@ -99,7 +241,7 @@ apps/api/
 │   ├── rules/               규칙 로직 (순수 Python — DB·LLM 접근 금지)
 │   ├── infra/db/            DB 세션 · 엔진 (다음 이슈에서 추가)
 │   ├── providers/           외부 LLM SDK 래퍼
-│   ├── integrations/        외부 API 연동 (MFDS)
+│   ├── integrations/        외부 API 연동 (카카오 · Discord 웹훅)
 │   └── workers/             백그라운드 작업 (승인 없는 실행 경로 차단)
 └── tests/
     ├── conftest.py           공통 픽스처 (ASGITransport AsyncClient)
