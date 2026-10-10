@@ -222,7 +222,7 @@ class ActivityCandidate(ToolArgs):
 
 | | 어디에 | 왜 API 가 아닌가 |
 | --- | --- | --- |
-| 공휴일 | `app/rules/` 상수 (특일정보 `SpcdeInfoService/getRestDeInfo` 를 **연 1회 받아 굽는다**) | `lookup_schedule` 은 아이 일정만 읽어 **어린이집 휴원일을 모른다** — 개천절 오전 10시를 "어린이집 가 있는 시간"으로 착각한다. 그런데 공휴일은 전년도에 확정되는 정적 데이터다. 매 run 부르면 예산이 늘고 **API 가 죽으면 날짜 계산이 죽는다** |
+| 공휴일 | `app/rules/holidays.py` 상수 (특일정보 `SpcdeInfoService/getRestDeInfo` 를 **연 1회 받아 굽는다** — `scripts/bake_holidays.py` 가 `holidays_data.py` 를 만든다. 지금 2026 · 2027. 없는 해는 주말만 보고 로그에 남긴다) | `lookup_schedule` 은 아이 일정만 읽어 **어린이집 휴원일을 모른다** — 개천절 오전 10시를 "어린이집 가 있는 시간"으로 착각한다. 그런데 공휴일은 전년도에 확정되는 정적 데이터다. 매 run 부르면 예산이 늘고 **API 가 죽으면 날짜 계산이 죽는다** |
 | 일출·일몰 | `app/rules/sun.py` | 위도·경도·날짜만으로 결정되는 순수 함수다. 🚨 **API 로 붙이면 `outdoor_ok` 가 외부 장애에 물린다** — 날씨 실패는 "실내만"으로 안전하게 퇴화하지만, 해 진 시각을 모르면 퇴화할 방향이 없다 |
 
 🚨 **감기·천식·뇌졸중·피부질환 가능지수는 쓰지 않는다.** *"감기 가능성이 높으니 실내"* 는 건강 추론이고 D7 이 막는 것과 같다. 꽃가루 응답에 함께 오더라도 **파싱 단계에서 버린다.**
@@ -439,7 +439,7 @@ async def run(task, context, *, client=None):
 | --- | --- | --- |
 | `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. 18개월 미만은 affinity 조회를 건너뛴다 | 0 |
 | `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
-| `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용** | 0 |
+| `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용**. 날마다 평일 · 주말 · 공휴일과 바쁜 칸 · 비는 칸(08–20시, 오늘이면 지금부터)을 코드가 계산해 준다. 이번 주말은 토 · 일 이틀. 제목은 싣지 않는다 | 0 |
 | `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다.** 바깥 활동이 어려운 날은 실내 종류만 | 0 · 위치 있을 때 |
 | `propose_activity_candidates` | **마지막에 한 번.** `candidates[3]` 제출 (OUTPUT_TOOL) | 0 |
 

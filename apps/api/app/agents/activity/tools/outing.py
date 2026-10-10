@@ -1,13 +1,13 @@
 """날씨 · 일정 · 장소 조회 (모델 tool 3개).
 
-일정은 아직 구현부가 주석이라 호출시 NotImplementedError — 어린이집 휴원일을 알려면 공휴일 상수가
-먼저 필요하다. 실패는 기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니다 (D8).
+실패는 기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니다 (D8).
 """
 
 import asyncio
-from collections.abc import Awaitable
-from datetime import date, timedelta
-from typing import TypeVar
+import logging
+from collections.abc import Awaitable, Sequence
+from datetime import date, datetime, time, timedelta
+from typing import Any, TypeVar
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
@@ -17,7 +17,7 @@ from app.agents.activity.schemas.outing import (
     LookupWeatherArgs,
     SearchNearbyPlacesArgs,
 )
-from app.agents.activity.store.ports import UpstreamUnavailable
+from app.agents.activity.store.ports import ScheduleBlock, UpstreamUnavailable
 from app.agents.activity.weather import (
     WEATHER_UNCHECKED,
     WeatherBrief,
@@ -27,7 +27,10 @@ from app.agents.activity.weather import (
     read_air,
     read_forecast,
 )
+from app.rules.holidays import holidays_known, is_public_holiday
 from app.rules.sun import sun_times
+
+logger = logging.getLogger(__name__)
 
 # 장소 검색은 넓게 찾고 가까운 순으로 몇 곳만 준다. 둘 다 모델 인자가 아니라 코드 상수이고
 # 잠정값이다 — eval 로 조정한다. 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에
@@ -40,8 +43,16 @@ INDOOR_CATEGORIES = frozenset(
     {PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND, PlaceCategory.EXPERIENCE_CENTER}
 )
 
+# 비는 시간을 계산하는 하루의 범위. 아이가 밖에서 놀 수 있는 시간대로 둔 잠정값이다 — eval 로
+# 조정한다. 오늘이면 지금 시각부터 센다
+DAY_START = time(8)
+DAY_END = time(20)
+# 끝 시각이 없는 일정이 차지한다고 보는 길이. 비는 시간을 넉넉히 잡지 않는 쪽으로 둔다 (잠정)
+OPEN_ENDED_BLOCK = timedelta(hours=1)
+
 _PLACES = "search_nearby_places"
 _WEATHER = "lookup_weather"
+_SCHEDULE = "lookup_schedule"
 _WEEKDAYS = "월화수목금토일"
 
 _T = TypeVar("_T")
@@ -148,13 +159,25 @@ async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> T
 async def lookup_schedule(context: ActivityContext, args: LookupScheduleArgs) -> ToolResult:
     """아이 일정과 비는 시간을 돌려준다. 읽기 전용이다.
 
-    DB 연결 후:
-    - args.day 를 날짜 범위로 바꾼다.
-    - 일정 칸을 합쳐 비는 시간을 계산한다. 공휴일은 app/rules/ 상수로 본다 —
-      아이 일정에는 어린이집 휴원일이 없다.
-    - 일정 제목은 싣지 않는다. 비는 시간과 겹침만 준다.
+    - args.day 를 날짜로 바꾼다(`days_of`). 모델은 날짜를 계산하지 않는다.
+    - 날마다 평일 · 주말 · 공휴일을 가른다. 공휴일은 `app/rules/holidays.py` 상수로 본다 —
+      아이 일정에는 어린이집 휴원일이 없어서, 이걸 모르면 공휴일 오전을 "어린이집 가 있는 시간"으로
+      읽는다. 상수를 넣어 두지 않은 해는 주말만 보고 로그에 남긴다.
+    - 비는 시간은 코드가 계산한다(`DAY_START` ~ `DAY_END`, 오늘이면 지금부터). 일정 충돌은
+      모델에게 맡기지 않는다 (루트 CLAUDE.md §2).
+    - 일정 제목은 싣지 않는다. 시각만 준다 — 포트도 제목을 주지 않는다.
     """
-    raise NotImplementedError("DB 연결 후 구현")
+    today = context.today
+    days = days_of(args.day, today)
+    blocks = await context.ports.schedule.blocks(
+        child_id=context.child_id, date_from=days[0], date_to=days[-1]
+    )
+    local_now = context.now.astimezone(context.timezone)
+    return ok(
+        "query",
+        _SCHEDULE,
+        days=[_day_schedule(day, blocks, context, local_now) for day in days],
+    )
 
 
 async def search_nearby_places(
@@ -221,6 +244,76 @@ async def _or_none(call: Awaitable[_T]) -> _T | None:
 
 async def _none() -> None:
     return None
+
+
+def _day_schedule(
+    day: date, blocks: Sequence[ScheduleBlock], context: ActivityContext, now: datetime
+) -> dict[str, Any]:
+    """하루 몫. 바쁜 칸과 비는 칸은 `DAY_START` ~ `DAY_END` 안으로 자른다."""
+    tz = context.timezone
+    start = datetime.combine(day, DAY_START, tzinfo=tz)
+    end = datetime.combine(day, DAY_END, tzinfo=tz)
+    if day == now.date():
+        start = max(start, now)
+
+    busy: list[tuple[datetime, datetime]] = []
+    all_day = False
+    for block in blocks:
+        if block.all_day:
+            all_day = all_day or block.starts_at.astimezone(tz).date() == day
+            continue
+        begins = block.starts_at.astimezone(tz)
+        ends = block.ends_at.astimezone(tz) if block.ends_at else begins + OPEN_ENDED_BLOCK
+        clipped = (max(begins, datetime.combine(day, DAY_START, tzinfo=tz)), min(ends, end))
+        if clipped[0] < clipped[1]:
+            busy.append(clipped)
+
+    return {
+        "date": day.isoformat(),
+        "weekday": _WEEKDAYS[day.weekday()],
+        "day_type": _day_type(day),
+        "all_day_event": all_day,
+        "busy": [_span(a, b) for a, b in _merged(busy)],
+        "free": [] if all_day else [_span(a, b) for a, b in _gaps(_merged(busy), start, end)],
+    }
+
+
+def _day_type(day: date) -> str:
+    """평일 · 주말 · 공휴일. 공휴일을 넣어 두지 않은 해는 주말만 보고 로그에 남긴다."""
+    if not holidays_known(day.year):
+        logger.warning("공휴일 상수가 없는 해 — 주말만 본다", extra={"year": day.year})
+    elif is_public_holiday(day):
+        return "holiday"
+    return "weekend" if day.weekday() >= 5 else "weekday"
+
+
+def _merged(spans: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    merged: list[tuple[datetime, datetime]] = []
+    for begins, ends in sorted(spans):
+        if merged and begins <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], ends))
+        else:
+            merged.append((begins, ends))
+    return merged
+
+
+def _gaps(
+    busy: list[tuple[datetime, datetime]], start: datetime, end: datetime
+) -> list[tuple[datetime, datetime]]:
+    """start ~ end 에서 busy 를 뺀 구간. busy 는 합쳐 정렬된 상태로 받는다."""
+    gaps: list[tuple[datetime, datetime]] = []
+    cursor = start
+    for begins, ends in busy:
+        if begins > cursor:
+            gaps.append((cursor, min(begins, end)))
+        cursor = max(cursor, ends)
+    if cursor < end:
+        gaps.append((cursor, end))
+    return [(a, b) for a, b in gaps if a < b]
+
+
+def _span(begins: datetime, ends: datetime) -> dict[str, str]:
+    return {"start": begins.strftime("%H:%M"), "end": ends.strftime("%H:%M")}
 
 
 def _after_sunset(context: ActivityContext, day: date) -> bool:
