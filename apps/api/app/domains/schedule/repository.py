@@ -144,6 +144,7 @@ async def create_event_item(
 async def replace_event_items(
     session: AsyncSession,
     *,
+    child_id: uuid.UUID,
     event_id: uuid.UUID,
     items: list[dict],
 ) -> list[EventItem]:
@@ -153,19 +154,21 @@ async def replace_event_items(
     item_id가 None이면 새 항목, 있으면 기존 항목 유지.
     새 목록에 없는 기존 항목은 삭제한다.
     """
+    # child_id 스코핑 — 다른 아이의 일정 항목을 조작하지 않는다
+    owned = select(Event.id).where(Event.child_id == child_id, Event.id == event_id)
     keep_ids = [uuid.UUID(i["item_id"]) for i in items if i.get("item_id") is not None]
 
     # 새 목록에 없는 기존 item 삭제
     if keep_ids:
         await session.execute(
             delete(EventItem).where(
-                EventItem.event_id == event_id,
+                EventItem.event_id.in_(owned),
                 EventItem.item_id.notin_(keep_ids),
             )
         )
     else:
         await session.execute(
-            delete(EventItem).where(EventItem.event_id == event_id)
+            delete(EventItem).where(EventItem.event_id.in_(owned))
         )
 
     # item_id가 null인 것만 새로 INSERT

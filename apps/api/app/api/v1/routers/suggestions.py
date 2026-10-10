@@ -370,7 +370,10 @@ async def list_suggestions(
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> SuggestionListResponse:
-    status_enum = SuggestionStatus(status) if status else None
+    try:
+        status_enum = SuggestionStatus(status) if status else None
+    except ValueError:
+        raise ApiError(400, "validation_failed", "유효하지 않은 status 값이에요")
     rows, next_cursor = await suggestion_repo.list_suggestions(
         session,
         child_id=child.child_id,
@@ -467,6 +470,7 @@ async def update_event(
 
     items = await schedule_repo.replace_event_items(
         session,
+        child_id=child.child_id,
         event_id=eid,
         items=[i.model_dump() for i in body.items],
     )
