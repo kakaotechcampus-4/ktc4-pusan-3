@@ -18,6 +18,7 @@ from app.agents.activity.store.ports import (
     SafetyLookupError,
     WeatherGrid,
 )
+from app.agents.activity.weather import WeatherBrief
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import Gate, SafetyState
@@ -37,6 +38,8 @@ class ActivityRunState:
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
     gate: Gate | None = None
+    # 날짜별 날씨 판정. 화면에 붙는 안내 문구 키(notices)는 모델에게 주지 않고 여기 둔다
+    weather: dict[date, WeatherBrief] = field(default_factory=dict)
     # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
     suggestions: tuple[SuggestionDraft, ...] = ()
 
