@@ -79,8 +79,11 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5개. 승인 게이트 2곳(㉠ submitEvent · ㉡ healthSafety)이 여기 포함된다.
+ * 계약서 §01 의 5곳. 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety)이 여기 포함된다.
+ * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
+ *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  * 여기에 줄을 더하면 아래 정규식과 operations.ts 가 자동으로 따라온다.
+ * 🚨 줄을 더하면 `idempotentMethod` 에도 더한다 — 타입이 빠진 줄을 잡는다.
  */
 export const idempotentPath = {
   /** 한 줄 입력 — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는다. */
@@ -92,34 +95,62 @@ export const idempotentPath = {
   /**
    * 🚨 승인 게이트 ㉠ — 캘린더 쓰기. 초안 **제출**이 이 자리다 (#121).
    *
-   * ⚠️ **경로가 아직 미정이다** ([`docs/event/event-draft-flow-v1.md`] §6). #121 에서
-   *    `POST /children/{cid}/events` 로 합의했고 BE 가 동의했지만 계약서 갱신은 보류됐다 —
-   *    확정되면 **이 한 줄만** 고치면 차단·목·테스트가 따라온다.
-   *
-   * 🚨 **update 초안(`PATCH /events/{eid}`)은 여기 없다.** 9/21 에 op 별로 엔드포인트를 가르기로
-   *    했는데, PATCH 는 `items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같다(멱등) —
-   *    새 행을 만드는 POST 만 키가 필요하다. 이 판단이 틀리면 표에 줄을 하나 더한다.
+   * 9/21 에 op 별로 엔드포인트를 갈랐다 — create 는 여기(`POST`), update 는 아래 `updateEvent`(`PATCH`).
+   * 경로는 서버 구현(#236 · #284)이 정본이다 (Swagger).
    */
   submitEvent: (childId: string) => `/children/${childId}/events`,
-} as const satisfies Record<string, (id: string) => string>;
+  /**
+   * 🚨 승인 게이트 ㉠ — 수정 초안 반영. **이것도 캘린더 쓰기라 키가 필요하다** (#316).
+   *
+   * 🚨 한동안 "`items` 가 최종 목록이라 같은 본문을 두 번 보내도 결과가 같다(멱등)" 고 보고 표에서
+   *    뺐었다. **`item_id: null` 인 새 준비물에는 그 말이 성립하지 않는다** — 재시도가 같은 null 행을
+   *    다시 보내면 서버는 이미 들어간 것인지 알 수 없어서 준비물이 두 줄 들어간다.
+   */
+  updateEvent: (childId: string, eventId: string) => `/children/${childId}/events/${eventId}`,
+} as const satisfies Record<string, (...ids: string[]) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;
 
+/**
+ * 각 경로를 **어느 메서드로** 부를 때 키가 필요한가.
+ *
+ * 🚨 경로만으로 판정하지 않는다. `/children/{cid}/events/{eid}` 는 수정(`PATCH`)만 되돌릴 수
+ *    없고 같은 경로의 읽기는 아무것도 바꾸지 않는다 — 경로로만 걸면 읽기까지 막는다.
+ */
+export const idempotentMethod = {
+  input: "POST",
+  onboarding: "POST",
+  photo: "POST",
+  healthSafety: "POST",
+  submitEvent: "POST",
+  updateEvent: "PATCH",
+} as const satisfies Record<IdempotentOperation, "POST" | "PATCH">;
+
 const ID_SLOT = "__ID__";
 
-/** 경로 빌더에서 정규식을 만든다 — 목록을 손으로 두 번 쓰지 않기 위해서다. */
-function pathPattern(build: (id: string) => string): RegExp {
-  const segments = build(ID_SLOT)
+/**
+ * 경로 빌더에서 정규식을 만든다 — 목록을 손으로 두 번 쓰지 않기 위해서다.
+ * id 칸이 여럿인 빌더(`updateEvent`)는 칸마다 같은 자리표를 넣는다 (`build.length`).
+ */
+function pathPattern(build: (...ids: string[]) => string): RegExp {
+  const slots = Array.from({ length: build.length }, () => ID_SLOT);
+  const segments = build(...slots)
     .split(ID_SLOT)
     .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   return new RegExp(`^${segments.join("[^/]+")}$`);
 }
 
-const REQUIRED_PATTERNS: RegExp[] = Object.values(idempotentPath).map(pathPattern);
+const REQUIRED: Array<{ method: string; pattern: RegExp }> = (
+  Object.keys(idempotentPath) as IdempotentOperation[]
+).map((operation) => ({
+  method: idempotentMethod[operation],
+  pattern: pathPattern(idempotentPath[operation]),
+}));
 
-/** `/children/c1/inputs` 처럼 이미 만들어진 경로가 키를 요구하는지. */
-export function requiresIdempotencyKey(path: string): boolean {
-  return REQUIRED_PATTERNS.some((pattern) => pattern.test(path));
+/** `POST /children/c1/inputs` 처럼 이미 만들어진 요청이 키를 요구하는지. */
+export function requiresIdempotencyKey(method: string, path: string): boolean {
+  const upper = method.toUpperCase();
+  return REQUIRED.some((entry) => entry.method === upper && entry.pattern.test(path));
 }
 
 /**

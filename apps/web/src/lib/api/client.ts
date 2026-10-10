@@ -65,7 +65,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const { method = "GET", body, query, idempotencyKey, signal, headers } = options;
 
   // 🚨 경고가 아니라 차단이다. 환경을 가리지 않고, 요청은 나가지 않는다.
-  if (method === "POST" && !idempotencyKey && requiresIdempotencyKey(path)) {
+  //    메서드도 표가 정한다 — 수정 초안 반영(`PATCH`)도 되돌릴 수 없다 (#316).
+  if (!idempotencyKey && requiresIdempotencyKey(method, path)) {
     throw new IdempotencyKeyRequiredError(path);
   }
 

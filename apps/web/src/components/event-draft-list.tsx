@@ -245,7 +245,7 @@ function DraftRow({
        *    (`operations.ts` 의 주석).
        */
       if (draft.op === "update" && draft.event_id) {
-        return updateEventDraft(draft.event_id, body, submitKey.current());
+        return updateEventDraft(childId, draft.event_id, body, submitKey.current());
       }
       return submitEventDraft(
         childId,

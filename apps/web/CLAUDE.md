@@ -543,8 +543,11 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · **초안 제출**(게이트 ㉠).
 
 ⚠️ 게이트 ㉠ 이 `POST /events/{eid}/confirm` 에서 **초안 제출로 옮겨왔다** (#121 · #151). 초안을 만드는
-호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다. **경로는 확정 전이고**
-(`docs/event/event-draft-flow-v1.md` §6), `idempotentPath.submitEvent` 한 줄만 고치면 따라온다.
+호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다.
+🚨 **초안 제출은 메서드가 둘이다** — create 는 `POST /children/{cid}/events`, update 는
+`PATCH /children/{cid}/events/{eid}` (9/21 · 서버 #236 · #284). 한 곳의 두 갈래라 게이트를 늘린 것이 아니고,
+**둘 다 키가 필요하다** — update 도 `item_id: null` 인 새 준비물은 멱등이 아니다 (#316).
+그래서 표(`idempotentPath`)는 줄마다 메서드(`idempotentMethod`)를 같이 들고, 클라이언트 차단도 그 메서드로 건다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
 경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
