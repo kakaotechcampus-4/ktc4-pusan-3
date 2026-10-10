@@ -15,13 +15,13 @@
 보호자 2 = 아이 A 와 상관없는 다른 집 보호자(아이 B 의 보호자).
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
-from app.domains.policy.repository import find_active_versions
+from app.domains.policy.repository import find_active_versions, register_version
 
 from .conftest import issue_bearer, link_child
 
@@ -116,6 +116,71 @@ async def test_아이_필수_동의도_끌_수_없다(db_client, session, bearer
     assert rows.all() == []
 
 
+async def publish_next_location(session) -> str:
+    """위치 약관의 새 버전을 지금 보이는 버전으로 올린다 (테스트 트랜잭션 안에서만)."""
+    version = "test-next"
+    await register_version(
+        session,
+        scope=ConsentScope.LOCATION,
+        version=version,
+        label="위치정보 수집·이용 (테스트용 새 버전)",
+        content="테스트용 본문",
+        content_hash="test-hash",
+        # 지금 보이는 버전보다 늦게 시작해야 find_active_versions 가 이것을 고른다
+        effective_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    return version
+
+
+async def test_새_약관_버전에_다시_동의하면_새_행이_남는다(db_client, session, bearer, current):
+    headers, parent_1 = bearer
+    await db_client.post(
+        CONSENTS, json=body("location", "granted", current["location"]), headers=headers
+    )
+    next_version = await publish_next_location(session)
+
+    response = await db_client.post(
+        CONSENTS, json=body("location", "granted", next_version), headers=headers
+    )
+
+    assert response.status_code == 201
+    assert response.json()["consent"]["policy_version"] == next_version
+    rows = await account_rows(session, parent_1, ConsentScope.LOCATION)
+    assert [row.action for row in rows] == [ConsentAction.GRANTED, ConsentAction.GRANTED]
+
+
+async def test_지금_안_보이는_옛_버전으로도_철회는_된다(db_client, session, bearer, current):
+    # 위치 약관 제10조 "언제든 끌 수 있다" — 약관이 바뀌었다고 끄는 길이 막히면 안 된다
+    headers, parent_1 = bearer
+    old_version = current["location"]
+    await db_client.post(CONSENTS, json=body("location", "granted", old_version), headers=headers)
+    await publish_next_location(session)
+
+    response = await db_client.post(
+        CONSENTS, json=body("location", "withdrawn", old_version), headers=headers
+    )
+
+    assert response.status_code == 201
+    assert response.json()["effective"]["location"] is False
+    rows = await account_rows(session, parent_1, ConsentScope.LOCATION)
+    assert [row.action for row in rows] == [ConsentAction.GRANTED, ConsentAction.WITHDRAWN]
+
+
+@pytest.mark.parametrize("action", ["granted", "withdrawn"])
+async def test_등록된_적_없는_버전이면_400_policy_version_invalid(
+    db_client, session, bearer, action
+):
+    headers, parent_1 = bearer
+
+    response = await db_client.post(
+        CONSENTS, json=body("location", action, "2026-09-01"), headers=headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "policy_version_invalid"
+    assert await account_rows(session, parent_1, ConsentScope.LOCATION) == []
+
+
 async def test_지금_보여_주지_않는_버전이면_400_policy_version_invalid(db_client, session, bearer):
     headers, parent_1 = bearer
 
@@ -178,6 +243,8 @@ async def test_보호자1이_남의_아이_동의를_보내면_403(db_client, se
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "child_access_denied"
+    rows = await session.scalars(select(Consent).where(Consent.child_id == child_b))
+    assert rows.all() == []
 
 
 async def test_아이_동의를_받을_때는_법정대리인_확인이_필요하다(

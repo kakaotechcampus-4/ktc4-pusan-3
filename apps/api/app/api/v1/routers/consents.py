@@ -37,7 +37,7 @@ from app.domains.consent.repository import (
     list_consent_history,
     record_consent,
 )
-from app.domains.policy.repository import find_active_versions
+from app.domains.policy.repository import find_active_versions, find_version
 
 router = APIRouter()
 
@@ -102,6 +102,7 @@ async def change_consent(
 
     오류 (순서대로): 400 validation_failed(대상 · 필수 끄기) → 403 child_access_denied →
     403 consent_required(아이 동의의 법정대리인 확인) → 400 policy_version_invalid.
+    버전 — 켜기는 GET /policies 가 지금 보여 주는 것만, 끄기는 등록된 버전이면 받는다.
     """
     scope = ConsentScope(body.scope)
     is_account = scope in ACCOUNT_SCOPES
@@ -128,8 +129,16 @@ async def change_consent(
                 403, "consent_required", "법정대리인 확인이 필요해요", {"scopes": [scope.value]}
             )
 
-    current = {row.scope: row for row in await find_active_versions(session, now=datetime.now(UTC))}
-    registered = current.get(scope)
+    if body.action is ConsentAction.GRANTED:
+        # 동의는 지금 보여 주는 버전만 — 보여 주지 않은 글에 "동의했다" 를 남기지 않는다 (#91)
+        current = {
+            row.scope: row for row in await find_active_versions(session, now=datetime.now(UTC))
+        }
+        registered = current.get(scope)
+    else:
+        # 철회는 등록된 버전이면 받는다 — 약관이 바뀌거나 끝났다고 끄는 길이 막히면 안 된다
+        # (위치 약관 제10조 "언제든"). 철회 행은 화면이 보낸 그 버전을 가리킨다
+        registered = await find_version(session, scope=scope, version=body.policy_version)
     if registered is None or registered.version != body.policy_version:
         raise ApiError(
             400,

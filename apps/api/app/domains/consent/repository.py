@@ -129,18 +129,26 @@ async def record_consent(
 ) -> Consent | None:
     """동의·철회 1건을 남긴다. 저장과 철회가 같은 경로이고 action 만 다르다.
 
-    🚨 멱등 — 같은 대상+scope 의 마지막 action 이 이미 요청과 같으면 행을 넣지 않고
+    🚨 멱등 — 같은 대상+scope 의 마지막 행이 이미 요청과 같으면 행을 넣지 않고
        None 을 돌려준다. append-only 라 재시도가 그대로 중복 이력이 되는데, 그러면
        "몇 번 동의했는가" 가 네트워크 재시도 횟수를 세게 된다 (노션 Backend §7).
        상태가 실제로 바뀌는 요청만 이력에 남는다.
+    🚨 "같다" 의 기준 — 철회는 action 만 본다. 동의는 **약관 버전까지** 본다. 이미 동의한
+       보호자가 새 버전에 다시 동의한 것은 새 글에 대한 새 증빙이라 남겨야 한다 (#181 리뷰).
+       action 만 보면 새 버전 동의가 기록 없이 성공처럼 끝난다.
 
     actor_ref 는 actor_parent_id 로 여기서 채운다 — 호출자가 따로 넘기지 못한다.
     """
+    latest = await session.scalar(
+        select(Consent)
+        .where(Consent.scope == scope, _target_filter(subject_parent_id, child_id))
+        .order_by(Consent.acted_at.desc(), Consent.id.desc())
+        .limit(1)
+    )
     if (
-        await latest_action(
-            session, scope=scope, subject_parent_id=subject_parent_id, child_id=child_id
-        )
-        is action
+        latest is not None
+        and latest.action is action
+        and (action is ConsentAction.WITHDRAWN or latest.policy_version_id == policy_version_id)
     ):
         return None
 
