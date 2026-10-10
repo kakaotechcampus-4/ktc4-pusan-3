@@ -30,7 +30,8 @@ from app.rules.book_form import fits_age
 # 모델이 한 번에 받는 책 수의 상한 (Tool_명세 §2 — `k≤10`)
 SEARCH_LIMIT = 10
 # 포트에서 월령을 걸기 전에 가져오는 수. 연령 밖 책이 앞에 몰려도 맞는 책으로 `k` 권을 채우려고
-# 넉넉히 받는다
+# 넉넉히 받는다. 8개월처럼 `board` 만 통과하는 월령은 50권 안에 보드북이 적으면
+# `k` 권보다 적게 돌려준다. 정보나루 실제 응답에서 `board` 비율을 보고 조정한다
 SEARCH_POOL = 50
 # 한 번에 내는 책 수 (Tool_명세 §2 — `items[3]`)
 MAX_BOOKS = MAX_SUGGESTIONS
