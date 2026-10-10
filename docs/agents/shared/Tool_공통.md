@@ -138,7 +138,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - 0행이면 `kind="general"`. `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다. 문서 행(`*_doc`)은 세지 않는다 — 있든 없든 아이 기록이 0행이면 general 이다.
 - **general 은 거절 사유가 아니다.** 추천은 그대로 나가고 화면이 또래 기준임을 말한다 (루트 CLAUDE.md §2). `general` 인데 인용이 0행인 것은 문서에서도 근거를 못 찾았다는 뜻이라 품질 지표로 본다 (2026-09-25).
 - **인용마다 `note` 가 있어야 한다.** 그 행에서 무엇을 근거로 봤는지를 Agent 가 한 줄로 쓴다. 비면 그 후보를 거절한다. 거절은 후보 단위라 묶음은 그대로 간다.
-- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
+- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. 코드는 [`common/evidence.py`](../../../apps/api/app/agents/common/evidence.py) 다 — 조회 tool 이 `top_refs()` 로 상위 10개를 모델에게 돌려주며 run state 의 대조표(`seen_evidence`)에 적고, 출력 tool 이 `unseen()` 으로 인용한 id 를 그 표와 대조한다(#319). **조회하지 않은 id 가 하나라도 있으면 근거만 빼지 않고 그 후보를 거절한다** — 모델이 id 를 지어냈다는 뜻이고, 빼고 내보내면 남은 근거로 "우리 아이 맞춤" 인 척하게 된다(#195 리뷰). UUID 로 읽히지 않는 id 도 조회하지 않은 id 다. 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
 
 ### 5-4. 문구 — 기피를 인용했으면 말해야 한다
 

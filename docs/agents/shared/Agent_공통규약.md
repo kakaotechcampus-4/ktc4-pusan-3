@@ -256,6 +256,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
 | commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 `failed` 로 확정하지 않고 Idempotency 키도 풀지 않는 방향이다. — 러너 계약에서 확정한다 |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
+| 취소 | **도메인 Agent 는 `CancelledError` 를 삼키지 않는다.** pipeline 은 도메인 task 를 `asyncio.wait_for` 로 끊는데, Agent 가 취소를 잡고 값을 돌려주면 wait_for 가 시간 초과 대신 그 값을 돌려줘서 끊긴 Agent 의 늦은 결과가 성공으로 들어간다. `except BaseException` · 맨 `except:` 를 쓰지 않는다(`except Exception` 은 `CancelledError` 를 잡지 않는다). 정리할 것이 있으면 `finally` 에서 하고 다시 올린다. 공통 루프(`run_tool_loop`)가 이것을 테스트로 고정한다 (#319, #187 리뷰) |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
 
