@@ -25,6 +25,10 @@ class Settings(AgentLLMSettings):
     MEAL_OCR_API_KEY: str | None = None
     MEAL_OCR_MODEL: str = "gemini-3.1-pro-preview"
 
+    # 도서관 정보나루(data4library.kr) 인증키 — 도서 추천 (#290). 비어 있으면 도서 라벨만
+    # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
+    DATA4LIBRARY_AUTH_KEY: str = ""
+
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
