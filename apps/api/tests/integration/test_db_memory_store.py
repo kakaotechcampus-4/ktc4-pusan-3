@@ -133,17 +133,13 @@ class TestDeleteEmbeddingCleanup:
 
 
 class TestInvalidUuidDefence:
-    async def test_잘못된_id로_get하면_None(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_잘못된_id로_get하면_None(self, session: AsyncSession, family: tuple) -> None:
         _, child_a, _ = family
         store = DbMemoryStore(session, child_id=child_a.id)
         result = await store.get_observation(domain="food", observation_id="not-a-uuid")
         assert result is None
 
-    async def test_잘못된_id로_delete하면_False(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_잘못된_id로_delete하면_False(self, session: AsyncSession, family: tuple) -> None:
         _, child_a, _ = family
         store = DbMemoryStore(session, child_id=child_a.id)
         result = await store.delete_observation(domain="food", observation_id="xxx")
@@ -364,9 +360,7 @@ class TestEventItemChildIdIsolationUpdateDelete:
 class TestWroteFlag:
     """create / update / delete 후 wrote 플래그 검증."""
 
-    async def test_create_후_wrote가_True(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_create_후_wrote가_True(self, session: AsyncSession, family: tuple) -> None:
         owner, child_a, _ = family
         store = DbMemoryStore(session, child_id=child_a.id)
         assert store.wrote is False
@@ -381,9 +375,7 @@ class TestWroteFlag:
         )
         assert store.wrote is True
 
-    async def test_delete_event_후_wrote가_True(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_delete_event_후_wrote가_True(self, session: AsyncSession, family: tuple) -> None:
         _, child_a, _ = family
         event = Event(
             child_id=child_a.id,
@@ -423,9 +415,7 @@ class TestWroteFlag:
 
         store = DbMemoryStore(session, child_id=child_a.id)
         assert store.wrote is False
-        await store.update_event_item(
-            item_id=str(item.item_id), fields={"is_prepared": True}
-        )
+        await store.update_event_item(item_id=str(item.item_id), fields={"is_prepared": True})
         assert store.wrote is True
 
     async def test_delete_event_item_후_wrote가_True(
@@ -452,9 +442,7 @@ class TestWroteFlag:
         await store.delete_event_item(item_id=str(item.item_id))
         assert store.wrote is True
 
-    async def test_update_후_wrote가_True(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_update_후_wrote가_True(self, session: AsyncSession, family: tuple) -> None:
         owner, child_a, _ = family
         store = DbMemoryStore(session, child_id=child_a.id)
         row = await store.create_observation(
@@ -474,9 +462,7 @@ class TestWroteFlag:
         )
         assert store2.wrote is True
 
-    async def test_delete_후_wrote가_True(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_delete_후_wrote가_True(self, session: AsyncSession, family: tuple) -> None:
         owner, child_a, _ = family
         store = DbMemoryStore(session, child_id=child_a.id)
         row = await store.create_observation(
@@ -523,9 +509,7 @@ class TestWroteFlagStaysFalse:
 
 
 class TestInvalidUuidUpdateDefence:
-    async def test_잘못된_id로_update하면_None(
-        self, session: AsyncSession, family: tuple
-    ) -> None:
+    async def test_잘못된_id로_update하면_None(self, session: AsyncSession, family: tuple) -> None:
         _, child_a, _ = family
         store = DbMemoryStore(session, child_id=child_a.id)
         result = await store.update_observation(

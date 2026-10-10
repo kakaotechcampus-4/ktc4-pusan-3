@@ -1,6 +1,7 @@
 """실제 Jev 판정기로 연결 → 승격 → 감쇠 전체 흐름.
 
-실행: OPENROUTER_API_KEY=sk-or-... uv run pytest tests/integration/test_curator_live_scenario.py -v -m live
+실행: OPENROUTER_API_KEY=sk-or-... uv run pytest -v -m live
+      tests/integration/test_curator_live_scenario.py
 키 없으면 전부 skip.
 
 임베딩은 가짜 (벡터는 연결 판단에 안 쓰임). 판정만 실제 Jev.
@@ -209,7 +210,9 @@ class TestLiveFullLifecycle:
         # ── Step 5: 새 관찰 3건 → confirmed 부활 ──
         day_revival = day_archived + timedelta(days=1)
         for i in range(3):
-            session.add(_food(child.id, subject="홍당무", observed_on=day_revival + timedelta(days=i)))
+            session.add(
+                _food(child.id, subject="홍당무", observed_on=day_revival + timedelta(days=i))
+            )
         await session.flush()
         day_last = day_revival + timedelta(days=2)
         r = await _curator_run(session, child.id, day_last, judge)
@@ -220,5 +223,7 @@ class TestLiveFullLifecycle:
         assert p.last_observed_on == day_last
         print(f"  Step 5: 부활 → confirmed, strength={p.strength:.3f}")
 
-        print(f"\n  최종: {p.merge_key} strength 변화: "
-              f"0.500 → 0.550(승격) → 0.495(archived) → 0.545(부활)")
+        print(
+            f"\n  최종: {p.merge_key} strength 변화: "
+            f"0.500 → 0.550(승격) → 0.495(archived) → 0.545(부활)"
+        )

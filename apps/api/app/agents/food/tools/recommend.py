@@ -23,10 +23,15 @@ async def propose_meal_candidates(
     ingredients는 suggestion 결과에 포함하지 않는다.
     - 이 tool에서는 결과만 반환하며 저장, 발송, 예약은 처리하지 않는다.
 
-    TODO: suggestion.allergens · items 를 채운다 (10/4 스키마 이슈).
-    - allergens 는 모델이 쓴 ingredients 가 아니라 카탈로그 allergen_codes 를
-      allergen_terms.yaml 정식 명칭으로 바꿔 채운다
+    TODO: suggestion.allergens · items · ingredient_checks 를 채운다 (#264 · #267).
+    - allergens 는 filter_food_safety 의 `allergens[menu_key]` 를 그대로 쓴다(#264 PM 결정) —
+      들어 있거나 제품에 따라 들어 있을 수 있는 19종 이름과 19종 밖 이름이다. 카탈로그
+      allergen_codes 나 menu_codes 로 채우면 막는 판단과 묻는 목록이 어긋난다
+    - needs_check 행은 `checks[menu_key]` 를 ingredient_checks 로 실어 "확인 필요" 로 내보낸다.
+      실을 칸(후속 이슈)이 없으면 내보내지 않는다
     - items 는 일정 준비물로 쓸 재료 이름(된장 · 두부). 위의 "ingredients는 suggestion 결과에
-      포함하지 않는다" 와 어긋나니 구현할 때 같이 정리한다
+      포함하지 않는다" 와 어긋나니 구현할 때 같이 정리한다. 사전에 없는 성분은 필터도 채택
+      질문도 놓치므로, 마지막에 보호자가 재료를 보고 알아챌 수 있게 재료를 보여 주는 쪽으로
+      정리한다(출시 전 고려)
     """
     raise NotImplementedError("DB 연결 후 구현")

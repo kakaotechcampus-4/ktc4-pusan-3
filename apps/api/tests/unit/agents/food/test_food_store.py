@@ -226,12 +226,24 @@ async def test_safety_fail_이면_SafetyLookupError() -> None:
 
 
 async def test_safety_기본은_넣은_행을_그대로_돌려준다() -> None:
-    entry = SafetyEntry(kind="allergy", label="우유", state="active", allergen_code=2)
+    entry = SafetyEntry(kind="allergy", label="우유", status="active")
     store = InMemorySafety(entries=[entry])
 
     result = await store.food_safety(child_id=CHILD)
 
     assert result == [entry]
+
+
+async def test_safety_는_active_행만_돌려준다() -> None:
+    # 포트 계약: 어댑터(list_active_safety)와 같게. retracted · none 은 필터 앞에서 빠진다
+    active = SafetyEntry(kind="allergy", label="우유", status="active")
+    retracted = SafetyEntry(kind="allergy", label="땅콩", status="retracted")
+    none = SafetyEntry(kind="allergy", label="난류", status="none")
+    store = InMemorySafety(entries=[active, retracted, none])
+
+    result = await store.food_safety(child_id=CHILD)
+
+    assert result == [active]
 
 
 # ── menu catalog: 미해결 행은 all_resolved 에서 빠진다 ──────────────

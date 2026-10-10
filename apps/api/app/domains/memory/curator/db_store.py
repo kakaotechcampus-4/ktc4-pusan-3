@@ -37,6 +37,7 @@ _MODEL_BY_DOMAIN: dict[str, type] = {
     "education": ObservationEducation,
 }
 
+
 class DbCuratorStore:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -64,9 +65,13 @@ class DbCuratorStore:
             model = _MODEL_BY_DOMAIN[domain]
             stmt = (
                 select(
-                    model.id, model.subject, model.polarity,
+                    model.id,
+                    model.subject,
+                    model.polarity,
                     func.lower(model.observed_range).label("observed_on"),
-                    model.embedding, model.affinity_id, model.created_at,
+                    model.embedding,
+                    model.affinity_id,
+                    model.created_at,
                 )
                 .where(
                     model.child_id == child_id,
@@ -84,9 +89,12 @@ class DbCuratorStore:
             rows = (await self._session.execute(stmt)).all()
             per_domain.append([(domain, r) for r in rows])
 
-        merged = list(heapmerge(
-            *per_domain, key=lambda pair: (pair[1].created_at, str(pair[1].id)),
-        ))
+        merged = list(
+            heapmerge(
+                *per_domain,
+                key=lambda pair: (pair[1].created_at, str(pair[1].id)),
+            )
+        )
         return [
             ObservationItem(
                 id=str(row.id),
@@ -201,8 +209,10 @@ class DbCuratorStore:
                 index_elements=["domain", "observation_id"],
                 set_={
                     "uncertain_count": case(
-                        (ObservationLinkHold.subject_hash == subject_hash,
-                         ObservationLinkHold.uncertain_count + 1),
+                        (
+                            ObservationLinkHold.subject_hash == subject_hash,
+                            ObservationLinkHold.uncertain_count + 1,
+                        ),
                         else_=1,
                     ),
                     "subject_hash": subject_hash,
@@ -218,7 +228,7 @@ class DbCuratorStore:
         await self._session.execute(
             delete(ObservationLinkHold).where(
                 ObservationLinkHold.domain == domain,
-                ObservationLinkHold.observation_id == uuid.UUID(observation_id)
+                ObservationLinkHold.observation_id == uuid.UUID(observation_id),
             )
         )
         await self._session.flush()

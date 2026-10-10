@@ -123,7 +123,6 @@ export function SafetyCheckSheet({
       const body: CreateHealthSafetyRequest = {
         type: "allergy",
         label: item,
-        category: "식품",
         notes: "제안을 고를 때 보호자가 확인",
       };
       return addHealthSafety(childId, body, key);
