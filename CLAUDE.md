@@ -101,7 +101,7 @@
 
 **설계상 중요한 두 가지**
 
-- **저장이 검색보다 먼저다.** 방금 저장한 "5일째"가 같은 run 의 검색 결과에 잡혀야 혼합형이 성립한다. 그래서 쓰기 배치 캐싱을 하지 않는다.
+- **저장이 검색보다 먼저다.** 방금 저장한 "5일째"가 같은 run 의 검색 결과에 잡혀야 혼합형이 성립한다. 그래서 쓰기 배치 캐싱을 하지 않는다. 도메인 Agent 의 쓰기(급식 갱신 등)도 같은 run 의 읽기보다 먼저 끝난다.
 - **검색과 행동은 한 칸이다.** 각 Agent 가 직접 `memory.search` 를 부른다. 별도 검색 단계를 만들지 말 것.
 
 ---
@@ -154,6 +154,7 @@
 │   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
+│   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
@@ -191,14 +192,14 @@
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
 │       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
 │       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
-│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · NEIS · MFDS)
+│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · MFDS)
 │       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
 │       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
-│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector),
-│   │                          docker-compose.deploy.yml 은 배포(지금은 web 하나). .env 는 한 곳을 같이 쓴다
+│   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
+│   │                          docker-compose.deploy.yml 은 배포(web+Redis). .env 는 한 곳을 같이 쓴다
 │   └── nginx/, scripts/       (비어 있음) 배포용. web 을 nginx 뒤로 넣을 때 채운다
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```

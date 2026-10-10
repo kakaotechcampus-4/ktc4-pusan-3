@@ -226,12 +226,24 @@ async def test_safety_fail_이면_SafetyLookupError() -> None:
 
 
 async def test_safety_기본은_넣은_행을_그대로_돌려준다() -> None:
-    entry = SafetyEntry(kind="allergy", label="우유", state="active", allergen_code=2)
+    entry = SafetyEntry(kind="allergy", label="우유", status="active")
     store = InMemorySafety(entries=[entry])
 
     result = await store.food_safety(child_id=CHILD)
 
     assert result == [entry]
+
+
+async def test_safety_는_active_행만_돌려준다() -> None:
+    # 포트 계약: 어댑터(list_active_safety)와 같게. retracted · none 은 필터 앞에서 빠진다
+    active = SafetyEntry(kind="allergy", label="우유", status="active")
+    retracted = SafetyEntry(kind="allergy", label="땅콩", status="retracted")
+    none = SafetyEntry(kind="allergy", label="난류", status="none")
+    store = InMemorySafety(entries=[active, retracted, none])
+
+    result = await store.food_safety(child_id=CHILD)
+
+    assert result == [active]
 
 
 # ── menu catalog: 미해결 행은 all_resolved 에서 빠진다 ──────────────
@@ -273,7 +285,73 @@ async def test_menu_catalog_get_put_은_menu_key_로_찾는다() -> None:
     assert await store.get("된장국") == row
 
 
-# ── menu source: 외부 API 실패는 전용 예외 ─────────────────────────
+async def test_menu_catalog_put_은_이미_있는_행을_덮지_않는다() -> None:
+    # 캐시 미스 저장은 카탈로그에 없을 때만 넣는다(어댑터는 ON CONFLICT DO NOTHING).
+    # 같은 메뉴를 두 run 이 채우거나 사람이 넣은 행이 이미 있어도 한 행이 남고 덮이지 않는다
+    manual = MenuCatalogRow(
+        menu_key="된장국", display_name="된장국", source="manual", resolved=True, synced_at=NOW
+    )
+    fetched = MenuCatalogRow(
+        menu_key="된장국",
+        display_name="된장국(조회)",
+        source="mfds_nutri",
+        resolved=True,
+        synced_at=NOW,
+    )
+    store = InMemoryMenuCatalog([manual])
+
+    await store.put(fetched)
+    await store.put(fetched)
+
+    assert await store.get("된장국") == manual
+    assert await store.all_resolved() == [manual]
+
+
+# menu catalog: get_many 는 조회 한 번으로 여러 메뉴를 읽는다
+async def test_menu_catalog_get_many_는_있는_행만_menu_key_로_돌려준다() -> None:
+    kimchi = MenuCatalogRow(
+        menu_key="김치찌개",
+        display_name="김치찌개",
+        source="mfds_nutri",
+        resolved=True,
+        synced_at=NOW,
+    )
+    doenjang = MenuCatalogRow(
+        menu_key="된장국",
+        display_name="된장국",
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+    )
+    store = InMemoryMenuCatalog([kimchi, doenjang])
+
+    # 묻지 않은 행(된장국)과 없는 키(캐시 미스)는 빠지고,
+    # 같은 키를 두 번 넣어도 한 번만 나온다
+    result = await store.get_many(("김치찌개", "없는메뉴", "김치찌개"))
+
+    assert result == {"김치찌개": kimchi}
+
+
+async def test_menu_catalog_get_many_는_resolved_False_행도_돌려준다() -> None:
+    # get처럼 resolved와 무관하게 있는 행은 돌려준다. 해석 여부는 호출부가
+    # resolved로 가른다 — all_resolved와 다른 점.
+    unresolved = MenuCatalogRow(
+        menu_key="모름메뉴",
+        display_name="모름메뉴",
+        source="manual",
+        resolved=False,
+        synced_at=NOW,
+    )
+    store = InMemoryMenuCatalog([unresolved])
+
+    assert await store.get_many(("모름메뉴",)) == {"모름메뉴": unresolved}
+
+
+async def test_menu_catalog_get_many_는_빈_입력이면_빈_dict() -> None:
+    assert await InMemoryMenuCatalog().get_many(()) == {}
+
+
+# menu source: 외부 API 실패는 전용 예외
 async def test_menu_source_fail_이면_MenuSourceError() -> None:
     source = InMemoryMenuSource(fail=True)
 
@@ -289,7 +367,7 @@ async def test_menu_source_레시피_없음은_None() -> None:
     assert await source.ingredients(name="없는메뉴") is None
 
 
-# ── in_memory_ports: FoodPorts 와 필드가 같다 ──────────────────────
+# in_memory_ports: FoodPorts와 필드가 같다
 def test_in_memory_ports_의_필드가_FoodPorts_필드와_같다() -> None:
     ports = in_memory_ports()
 
@@ -305,3 +383,8 @@ def test_in_memory_ports_는_override_를_받는다() -> None:
 
     assert ports.safety is safety
     assert isinstance(ports.daycare, InMemoryDaycareMeals)
+
+
+def test_영양_구간을_저장하는_포트가_없다() -> None:
+    # 영양 합계·구간은 판정할 때마다 원본에서 계산하고 저장하지 않는다
+    assert "bands" not in {f.name for f in fields(FoodPorts)}

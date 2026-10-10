@@ -5,11 +5,22 @@
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
+
+import yaml
 
 from app.agents.common.refs import Ref
 
 AuthoredBy = Literal["code", "model"]
+
+# 화면이 문구 말고 모양으로 갈라야 하는 안내 (#249 의 groups[].notice 와 같은 값).
+# fewer(1~2개) · empty(0개)는 count_notice 만 붙인다. 날씨 안내처럼 같은 kind="notice" 라도
+# 개수와 상관없는 안내는 None 이다.
+# TODO(#249): cannot_resume(이어서 할 수 없음)은 05 추천 엔드포인트가 다시 시도를 가를 때 붙인다.
+#   그때 여기에 값을 더하고, 문구는 suggestion.readout.yaml 에 두어 entrypoint 로 내보낸다.
+#   agent_result(#227)는 이 값을 쓰지 않는다 — run 안에서는 이어서 할 일이 없다
+NoticeCode = Literal["fewer", "empty"]
 
 
 @dataclass(frozen=True)
@@ -25,6 +36,7 @@ class Readout:
     title: str = ""
     authored_by: AuthoredBy = "model"
     source_refs: tuple[Ref, ...] = ()
+    code: NoticeCode | None = None
 
     def __post_init__(self) -> None:
         if not self.body.strip():
@@ -37,6 +49,7 @@ class Readout:
             "body": self.body,
             "authored_by": self.authored_by,
             "source_refs": [ref.to_payload() for ref in self.source_refs],
+            "code": self.code,
         }
 
 
@@ -66,6 +79,26 @@ class ReadoutCatalog:
     """한 Agent 의 상수 문구 묶음. 키로 꺼내고 없으면 즉시 실패한다."""
 
     texts: dict[str, ReadoutText] = field(default_factory=dict)
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> "ReadoutCatalog":
+        """`*.readout.yaml` 을 읽는다. 최상위 키가 readout 키이고 값에 `template` · `kind` 가 있다.
+
+        파일이 없거나 모양이 틀리면 import 때 바로 실패한다 — 문구가 빈 채로 서버가 뜨지 않게.
+        """
+        with path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict) or not data:
+            raise ValueError(f"{path.name} 에 문구가 없다")
+        texts: dict[str, ReadoutText] = {}
+        for key, entry in data.items():
+            if not isinstance(entry, dict) or set(entry) != {"template", "kind"}:
+                raise ValueError(f"{path.name} 의 {key!r} 는 template · kind 두 칸이어야 한다")
+            template = entry["template"]
+            if not isinstance(template, str) or not template.strip():
+                raise ValueError(f"{path.name} 의 {key!r} 문구가 비었다")
+            texts[key] = ReadoutText(key=key, template=template, kind=entry["kind"])
+        return cls(texts=texts)
 
     def get(self, key: str) -> ReadoutText:
         text = self.texts.get(key)

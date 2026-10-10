@@ -4,14 +4,15 @@ pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 """
 
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, get_args
 from uuid import UUID
 
 import pytest
 
 from app.agents import entrypoint, pipeline
-from app.agents.food.store import FoodPorts
+from app.agents.common.datetime_rules import build_observed_range
+from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.supervisor import routing
@@ -172,3 +173,87 @@ async def test_이어받기가_없으면_none_을_넘긴다(monkeypatch: pytest.
     await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
 
     assert seen["continuation"] is None
+    assert seen["commit"] is None
+
+
+async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """방금 저장한 관찰이 같은 run 의 Food 근거로 잡혀야 한다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(memory=memory_context, food=contexts["food"])
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기 잘 먹었어", run_id="run-1"
+    )
+
+    memory, food = seen["memory"], seen["food"]
+    today = food.today
+    await memory.store.create_observation(
+        domain="food",
+        child_id=CHILD,
+        source_writer=PARENT,
+        raw_text="딸기 잘 먹었어",
+        observed_on=today,
+        observed_range=build_observed_range(today),
+        fields={"subject": "딸기"},
+    )
+    rows = await food.ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
+    assert [row.subject for row in rows] == ["딸기"]
+
+
+async def test_commit_을_pipeline_에_그대로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """기록 단계를 확정하는 함수는 러너가 만든다. agents 는 받아서 부르기만 한다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    async def commit() -> None:
+        return None
+
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=commit
+    )
+
+    assert seen["commit"] is commit
+
+
+async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """급식 갱신이 성공하면 같은 run의 표시가 남아야 pipeline이 failed로 끝내지 않는다."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(food=contexts["food"], **kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="두유", run_id="r")
+
+    writes = seen["writes"]
+    assert writes.wrote is False
+    # 메뉴 카탈로그 저장은 표시를 세우지 않지만 급식 삭제는 세운다
+    # (없는 id 는 조용히 넘어간다)
+    await seen["food"].ports.catalog.put(
+        MenuCatalogRow(
+            menu_key="두유",
+            display_name="두유",
+            source="manual",
+            resolved=True,
+            synced_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
+        )
+    )
+    assert writes.wrote is False
+    await seen["food"].ports.daycare.delete(child_id=CHILD, row_ids=(UUID(int=9),))
+    assert writes.wrote is True

@@ -214,11 +214,9 @@ export const healthSafety: HealthSafety[] = [
     id: "hs_1",
     type: "allergy",
     label: "우유",
-    aliases: ["유제품"],
-    category: "식품",
-    severity: "moderate",
+    severity: "class_3",
     reactions: ["두드러기"],
-    management: { avoid: true },
+    management: null,
     notes: null,
     created_by: { parent_id: PARENT_ID, nickname: "지은" },
     updated_at: hoursFromNow(-72),
@@ -232,7 +230,6 @@ export const healthSafety: HealthSafety[] = [
 export function newHealthSafety(input: {
   type: string;
   label: string;
-  category?: string;
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;
@@ -242,11 +239,9 @@ export function newHealthSafety(input: {
     id: `hs_${Date.now()}`,
     type: input.type,
     label: input.label,
-    aliases: [],
-    category: input.category ?? "기타",
     severity: input.severity ?? null,
     reactions: input.reactions ?? [],
-    management: { avoid: true },
+    management: null,
     notes: input.notes ?? null,
     created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
     updated_at: hoursFromNow(0),
@@ -264,7 +259,7 @@ export function newHealthSafety(input: {
  * 🚨 **일부러 덜 읽은 줄을 섞어 뒀다.** 화면이 못 읽은 칸을 **비워서** 보호자에게 넘기는지
  *    확인하려면 목이 완벽하게 읽어 주면 안 된다 — 목의 존재 이유가 그것이다 (§7 머리말).
  *      · `sc_1` 전부 읽음 → 미리 골라 둔다
- *      · `sc_2` 분류를 못 읽음 → 보호자가 채워야 고를 수 있다
+ *      · `sc_2` 이름을 못 읽음 → 보호자가 채워야 고를 수 있다
  *      · `sc_3` 원문이 없음 → 무엇을 보고 옮겼는지 못 대니 미리 고르지 않는다
  *      · `unreadable_count` 2 → 줄은 있는데 통째로 못 읽은 것이 둘
  */
@@ -275,17 +270,15 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_1",
       type: "allergy",
       label: "달걀흰자",
-      category: "식품",
-      severity: "moderate",
+      severity: "class_3",
       reactions: ["두드러기"],
       source_text: "Egg white  class 3  (3.9 kU/L)",
     },
     {
       id: "sc_2",
       type: "allergy",
-      label: "땅콩",
-      category: null,
-      severity: "severe",
+      label: null,
+      severity: "class_4",
       reactions: [],
       source_text: "Peanut  class 4",
     },
@@ -293,7 +286,6 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_3",
       type: "allergy",
       label: "집먼지진드기",
-      category: "환경",
       severity: null,
       reactions: [],
       source_text: null,
@@ -304,8 +296,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_4",
       type: "allergy",
       label: "우유",
-      category: "식품",
-      severity: "moderate",
+      severity: "class_3",
       reactions: ["두드러기"],
       source_text: "Milk  class 3",
     },
@@ -320,8 +311,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_5",
       type: "allergy",
       label: "새우",
-      category: "식품",
-      severity: "moderate",
+      severity: "class_3",
       reactions: ["두드러기"],
       source_text: "Shrimp  class 3",
     },
@@ -329,8 +319,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_6",
       type: "allergy",
       label: "고등어",
-      category: "식품",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Mackerel  class 2",
     },
@@ -338,8 +327,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_7",
       type: "allergy",
       label: "밀",
-      category: "식품",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Wheat  class 2",
     },
@@ -347,8 +335,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_8",
       type: "allergy",
       label: "대두",
-      category: "식품",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Soybean  class 2",
     },
@@ -356,8 +343,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_9",
       type: "allergy",
       label: "자작나무 꽃가루",
-      category: "환경",
-      severity: "mild",
+      severity: "class_2",
       reactions: ["재채기"],
       source_text: "Birch pollen  class 2",
     },
@@ -365,8 +351,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_10",
       type: "allergy",
       label: "고양이 비듬",
-      category: "환경",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Cat dander  class 2",
     },
@@ -565,7 +550,8 @@ export const suggestions: Suggestion[] = [
   personalized(
     "s_5",
     "activity",
-    "집 앞 놀이터에서 30분만 뛰어 보세요",
+    // 🚨 놀이 제안에도 먹을 것이 붙는다 — 사전검사가 `agent` 가 아니라 `allergens` 로 걸리는 경로.
+    "놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요",
     "바깥 놀이 뒤에 잘 잤어요",
     "이번 주말 일정이 비어 있어요",
     [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
@@ -579,6 +565,23 @@ export const suggestions: Suggestion[] = [
     [evidenceFrom(affinities[1])],
   ),
 ];
+
+/**
+ * 제안에 든 알레르기 항목 이름 — 서버의 `suggestion.allergens` 를 흉내 낸다 (#233).
+ *
+ * 🚨 **화면 타입(`Suggestion`)에 넣지 않는다.** 무엇을 물을지는 서버가 이 값과 `health_safety` 를
+ *    다시 읽어 정하고, 화면은 그 결과(`prechecks`)만 받는다 — 화면이 이 값으로 거르기 시작하면
+ *    알레르기 필터가 규칙이 아니라 화면 코드가 된다 (최상위 §3).
+ * 🚨 **`agent` 와 무관하다.** 놀이 제안의 간식(`s_5`)도 걸린다. 비어 있는 제안은 묻지 않는다.
+ */
+export const suggestionAllergens: Record<string, string[]> = {
+  s_1: ["계란"],
+  s_2: ["대두"],
+  s_3: [],
+  s_4: [],
+  s_5: ["땅콩"],
+  s_6: [],
+};
 
 /**
  * 묶음 머리말. 🚨 **문구는 서버가 만든다** — 무엇을 정하는 중인지는 후보를 만든 쪽만 안다.
@@ -622,7 +625,10 @@ export const generalSuggestions: GeneralSuggestion[] = [
  *    점선 근거 칩(NF-08)을 확인할 방법이 목뿐이다.
  */
 export const staleSuggestion: Suggestion = {
-  ...suggestions[1],
+  // 🚨 **번호로 고르지 않는다.** food 는 이 시나리오에서 guard 에 막혀 있다. 원래 `suggestions[1]`
+  //    이었는데 Agent 당 3가지로 바뀐 뒤(0194a79) 그 자리가 food 가 돼서, 막았다는 배너 아래
+  //    식사 제안이 그대로 섰다 (#242). 화면 테스트 `e2e/suggestions.spec.ts` 가 건다.
+  ...suggestions.find((s) => s.agent === "activity")!,
   evidence: [{ ...evidenceFrom(staleAffinities[1]), is_stale: true }],
 };
 
@@ -722,12 +728,14 @@ export const runEventDrafts: EventDraft[] = [
  * 식사 제안 여러 건을 **한 끼로 묶은** 초안. 🚨 고른 개수와 초안 개수가 1:1 이 아니라는 것을
  * 목이 실제로 보여주는 자리다 — 제안 둘을 고르면 "저녁 식사" 하나가 되고, 준비물로 각 제안이 붙는다.
  *
- * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 `approved` 로 바뀌어야 한다 —
- *    단수로 두면 묶인 나머지가 `draft` 인 채 24시간 뒤 만료된다 (보호자는 골랐는데).
+ * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 이 일정에 연결된다 (#206) —
+ *    단수로 두면 묶인 나머지는 일정이 됐다는 사실이 안 남는다.
  */
 export function mealDraft(items: Suggestion[]): EventDraft {
   return {
-    draft_id: `d_meal_${items.map((s) => s.id).join("_")}`,
+    // 🚨 **요청마다 새 id 다** (#241 · 서버는 `uuid4`). 제안에서 지어내면 같은 제안으로 다시 만든
+    //    초안이 우연히 같은 장으로 합쳐져서, 실서버에서만 두 장이 서는 것을 목이 가린다.
+    draft_id: crypto.randomUUID(),
     op: "create",
     event_id: null,
     event: {
@@ -747,7 +755,7 @@ export function mealDraft(items: Suggestion[]): EventDraft {
 
 export function suggestionDraft(suggestion: Suggestion): EventDraft {
   return {
-    draft_id: `d_${suggestion.id}`,
+    draft_id: crypto.randomUUID(), // 🚨 요청마다 새 id 다 (위 `mealDraft` 와 같은 이유)
     op: "create",
     event_id: null,
     event: {
@@ -773,7 +781,6 @@ export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEven
     ends_at: null,
     all_day: false,
     category: "activity",
-    status: "draft",
     created_by: "agent",
     source_notice_id: null,
     source_refs: [{ kind: "suggestion", id: "s_2" }],
@@ -816,7 +823,7 @@ export const receivedSuggestions: Suggestion[] = [
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
-/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다 (`confirmed`). draft 는 여기 오지 않는다. */
+/** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다. 초안은 `event` 행이 아니라 여기 오지 않는다 (#118). */
 export const confirmedEvent: CalendarEvent = {
   id: "e_3",
   title: "물놀이",
@@ -825,7 +832,6 @@ export const confirmedEvent: CalendarEvent = {
   ends_at: null,
   all_day: false,
   category: "institution",
-  status: "confirmed",
   created_by: "agent",
   source_notice_id: null,
   source_refs: [],

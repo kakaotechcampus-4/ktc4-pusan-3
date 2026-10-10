@@ -31,6 +31,10 @@ SSE 로 내보내는 데까지 하고, 저장은 제출 API 가 한다.
 | 추천 → 일정 (activity agent 의 "나들이") | suggestion 도메인 (서버) | Activity Agent 뒤 |
 | 기관 공지 OCR → 일정 | OCR 파이프라인 | 공지 구조화 확정 뒤 |
 
+**추천 → 일정의 준비물은 `suggestion.items` 에서 온다** (값 하나가 `item_name` 하나).
+🚨 food 제안 여러 건을 한 끼로 묶을 때 같은 재료(두부 등)가 겹치면 **서버가 한 번으로 합친다** —
+화면은 받은 `items` 를 거르지 않아서 그대로 두 줄이 뜬다. 묶는 쪽을 만들 때 같이 검사한다 (아직 구현 전).
+
 **세 경로가 같은 payload를 낸다.** 승인 시트를 한 벌로 유지하기 위해서다. 모양이 갈리면 화면이 여러 벌이 된다.
 
 Memory 의 `EventDraft` 클래스를 다른 경로가 가져다 쓰지는 않는다. `app/agents/memory/` 안이라
@@ -53,7 +57,7 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 
 ```json
 {
-  "draft_id": "d1",
+  "draft_id": "6f1c2a9e-3b7d-4c55-9a1e-2d8f0b4c7e31",
   "op": "create",
   "event": {
     "title": "물놀이",
@@ -74,7 +78,7 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 
 ```json
 {
-  "draft_id": "d2",
+  "draft_id": "b2e47d08-91c6-4f3a-8d25-7c0e5a6b1f94",
   "op": "update",
   "event_id": "ev_1",
   "event":  { "title": "운동회", "starts_at": "2026-09-18T17:00:00+09:00",
@@ -93,7 +97,7 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 
 | 필드 | 뜻 | 근거 |
 | --- | --- | --- |
-| `draft_id` | 화면이 카드를 가리키고 세션 스토리지 키로 쓴다. run 안에서만 유일 (제안·OCR 경로에는 run 이 없다 — 그때는 "한 응답 안에서만 유일" 로 읽는다) | 배열 인덱스로는 한 장 제출 뒤 나머지가 밀린다 |
+| `draft_id` | 화면이 카드를 가리키고 세션 스토리지 키로 쓴다. **전체에서 유일한 uuid** 다 — 화면은 아이의 모든 초안을 한 스토어에 두고 `draft_id` 가 같으면 같은 장으로 갈아 끼워서, run 안에서만 유일하면 앞 run 의 안 넣은 초안이 조용히 덮인다. Memory 초안(`DraftBook`)과 제안 초안(`_next_draft_id`)이 같은 규칙이다 (#250) | 배열 인덱스로는 한 장 제출 뒤 나머지가 밀린다 |
 | `op` | `create` / `update` 둘뿐. 화면이 부를 엔드포인트를 이 값으로 고른다 | 9/21 결정 |
 | `event_id` · `before` | update 에만 있다. create 는 언제나 null 이라 싣지 않는다 | payload 를 op 별로 나눈 결과 |
 | `before` | 수정 전 원본 **전체**(준비물 포함) | 화면이 "오후 3시 → 오후 5시" 를 그린다. 바뀐 필드 이름만으로는 보호자가 시트에서 값을 고치는 순간 못 쓰게 된다 |

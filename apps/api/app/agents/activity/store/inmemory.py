@@ -9,22 +9,24 @@ from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
+from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityObservation,
     ActivityPorts,
-    Advisories,
-    AffinityRecord,
-    AirQuality,
-    Forecast,
+    CoarseLocation,
     PlaceRow,
+    RawAdvisories,
+    RawAir,
+    RawForecast,
     SafetyEntry,
     SafetyLookupError,
     ScheduleBlock,
     UpstreamUnavailable,
     WeatherGrid,
 )
+from app.agents.common.evidence import AffinityRow
 
 
 class InMemoryProfile:
@@ -60,13 +62,13 @@ class InMemorySafety:
 class InMemoryActivityMemory:
     def __init__(
         self,
-        affinities: dict[UUID, Sequence[AffinityRecord]] | None = None,
+        affinities: dict[UUID, Sequence[AffinityRow]] | None = None,
         observations: dict[UUID, Sequence[ActivityObservation]] | None = None,
     ) -> None:
         self._affinities = {k: list(v) for k, v in (affinities or {}).items()}
         self._observations = {k: list(v) for k, v in (observations or {}).items()}
 
-    async def affinities(self, *, child_id: UUID) -> list[AffinityRecord]:
+    async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         return list(self._affinities.get(child_id, ()))
 
     async def observations(
@@ -99,12 +101,15 @@ class InMemoryActivityDocs:
     def __init__(self, rows: Sequence[ActivityDocRow] = ()) -> None:
         self._rows = list(rows)
 
+    @classmethod
+    def from_seed(cls) -> "InMemoryActivityDocs":
+        """`reference/activity_doc.yaml` 의 검수를 마친(`approved`) 행. DB 전 eval · 개발용."""
+        return cls(
+            entry.to_row() for entry in activity_doc_seed() if entry.meta.status == "approved"
+        )
+
     async def search(self, *, months: int, query: str, limit: int) -> list[ActivityDocRow]:
-        sliced = [
-            row
-            for row in self._rows
-            if row.min_month <= months and (row.max_month is None or months <= row.max_month)
-        ]
+        sliced = [row for row in self._rows if row.min_month <= months < row.max_month]
         return sliced[:limit]
 
 
@@ -114,35 +119,37 @@ class InMemoryWeather:
     def __init__(
         self,
         *,
-        forecast: Forecast | None = None,
-        air: AirQuality | None = None,
+        forecast: RawForecast | None = None,
+        air: RawAir | None = None,
         uv: str | None = None,
-        advisories: Advisories | None = None,
+        advisories: RawAdvisories | None = None,
         fail: frozenset[str] = frozenset(),
     ) -> None:
-        self._forecast = forecast or Forecast(sky="맑음", precip_mm_per_h=0.0, pop_percent=0)
-        self._air = air or AirQuality(pm10=30, pm25=15, ozone_ppm=0.03)
+        self._forecast = forecast or RawForecast(sky="1", pcp="강수없음", pop="0")
+        self._air = air or RawAir(
+            pm10="30", pm10_flag=None, pm25="15", pm25_flag=None, o3="0.03", o3_flag=None
+        )
         self._uv = uv
-        self._advisories = advisories or Advisories(heat="none", cold="none", severe=False)
+        self._advisories = advisories or RawAdvisories(result_code="03")  # 특보 없음
         self._fail = fail
 
     def _check(self, name: str) -> None:
         if name in self._fail:
             raise UpstreamUnavailable(f"{name} 조회 실패 (테스트 주입)")
 
-    async def forecast(self, *, grid: WeatherGrid, day: date) -> Forecast:
+    async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
         self._check("forecast")
         return self._forecast
 
-    async def air_quality(self, *, grid: WeatherGrid) -> AirQuality:
+    async def air_quality(self, *, grid: WeatherGrid) -> RawAir:
         self._check("air_quality")
         return self._air
 
-    async def uv_grade(self, *, grid: WeatherGrid, day: date) -> str | None:
-        self._check("uv_grade")
+    async def uv(self, *, grid: WeatherGrid, day: date) -> str | None:
+        self._check("uv")
         return self._uv
 
-    async def advisories(self, *, grid: WeatherGrid) -> Advisories:
+    async def advisories(self, *, grid: WeatherGrid) -> RawAdvisories:
         self._check("advisories")
         return self._advisories
 
@@ -153,7 +160,7 @@ class InMemoryPlaces:
         self._fail = fail
 
     async def nearby(
-        self, *, grid: WeatherGrid, category: PlaceCategory, radius_m: int
+        self, *, location: CoarseLocation, category: PlaceCategory, radius_m: int
     ) -> list[PlaceRow]:
         if self._fail:
             raise UpstreamUnavailable("장소 조회 실패 (테스트 주입)")

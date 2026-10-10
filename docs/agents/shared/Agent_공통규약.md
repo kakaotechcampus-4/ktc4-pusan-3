@@ -3,10 +3,11 @@
 > 모든 도메인 Agent(Food · Activity · Growth · Health)가 지키는 규칙. Agent별 문서가 이 규약을 어기면 **이 문서가 이긴다.**
 >
 > **2026-09-22 갱신** — 쓰기 주체(OCR · suggestion 이관) · suggestion 3개 · 필터 후 재호출 1회 · 복약 승인 게이트 · 성장 판정 제거 · 성별 미사용
-> **2026-09-22 (3차)** — **기피(−1)는 근거이지 제외 필터가 아니다**(§4) · Food는 영양이 선호보다 앞선다 · 복약 초안은 DB 저장 없이 payload(§2·§3) · **suggestion은 정확히 3개**(2~4 범위 폐지)
-> **2026-09-22 (4차)** — 알레르기 후보 감지 제거(`safety_confirmations` 폐기) · 근거는 `suggestion_evidence` 테이블 · `daycare_menu`를 `intake_daily`로 흡수 · 승인 시 Memory가 관찰 생성 · 복약 중단 soft delete · **API 계약서 v1은 레거시**(이 문서들이 정본)
-> **2026-09-22 (5차)** — 급식은 `daycare_meal`로 다시 분리하고 **Food 소유(UPDATE/DELETE)** · Food 라벨 3개(`daycare_meal` 신설) · `intake_daily`에서 끼니 슬롯 폐지 · 기록 충분 판정을 행 수로
+> **2026-09-22 (3차)** — **기피(−1)는 근거이지 제외 필터가 아니다**(§4) · Food는 영양이 선호보다 앞선다 · 복약 초안은 DB 저장 없이 payload(§2·§3) · **suggestion은 3개로 고정**(2~4 범위 폐지 · 10-06 에 최대 3개로 바뀜)
+> **2026-09-22 (4차)** — 알레르기 후보 감지 제거(`safety_confirmations` 폐기) · 근거는 `suggestion_evidence` 테이블 · `daycare_menu`를 섭취 파생 테이블로 흡수 · 승인 시 Memory가 관찰 생성 · 복약 중단 soft delete · **API 계약서 v1은 레거시**(이 문서들이 정본)
+> **2026-09-22 (5차)** — 급식은 `daycare_meal`로 다시 분리하고 **Food 소유(UPDATE/DELETE)** · Food 라벨 3개(`daycare_meal` 신설) · 섭취 파생 테이블에서 끼니 슬롯 폐지(테이블은 10-05 폐기) · 기록 충분 판정을 행 수로
 > **2026-09-22 (6차)** — Growth 문서 조회를 `search_growth_doc` 하나로(별도 KB 없음) · `rhythm_info`는 readout · 승인 이관은 라벨로 · **Health는 문서 테이블 대신 상수 파일** · `event_requests`도 초안 payload · Health 근거 규칙 명시
+> **2026-10-06** — 추천은 **최대 3개**(C-8 닫힘, #216) · 다 못 채우면 남은 만큼 + 개수 안내, 0개면 안내만 — 실패가 아니다 (§3 · §7)
 > 하위 문서: [`Tool_공통.md`](Tool_공통.md)(tool 실행 세부) · [`연령별_Tool_전략.md`](연령별_Tool_전략.md)(게이팅 정본) · [`RAG_plan.md`](RAG_plan.md)(문서 행) · [`외부연결_계획.md`](외부연결_계획.md)(API·출처)
 
 ---
@@ -26,7 +27,7 @@
   Food   Activity   Growth    Health │
   └─────────┼─────────┴─────────┘    │
         ↓                            │
-   suggestion (draft, 3개) ── 사용자 승인
+   suggestion (draft, 최대 3개) ── 사용자 승인
    readout / event 이관 / 역질의
         ↓
     Curator (Agent 아님, 배치)
@@ -63,6 +64,16 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 ```
 
 - Agent는 **DB를 모른다.** 읽기 포트(Protocol)와 writer를 주입받는다. 구현체는 `app/api`가 붙인다.
+- Agent가 받는 것은 DTO(frozen dataclass)뿐이다. 세션 · 트랜잭션 · ORM 객체는 백엔드에 남는다 — 포트도
+  `FoodObservation` · `EventRow` 같은 DTO 를 돌려준다. pipeline 이 기록 단계에서 부르는 `commit` 도 러너가 만든
+  함수이고, pipeline 은 부르는 시점만 정한다.
+- 데이터는 성격에 따라 두 길로 받는다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다. 발화에 따라
+  무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를 미리 넘기려면
+  범위를 넉넉히 잡아 읽어야 해서다. 어느 값을 값으로 옮길지는 생일 · 동의 포트를 `common/ports.py` 로 옮기는
+  작업에서 정한다.
+- Agent는 run 내내 DB 연결을 쥐지 않는다. 조회 포트는 호출마다 짧은 세션으로 읽고, 쓰기 포트는 호출 하나가
+  짧은 트랜잭션 하나로 바로 commit 된다. 그래서 한 task 안에서도 두 조회의 시점이 다를 수 있다 — 안전 정보는
+  task 시작(`build_gate`)에 한 번 읽고 게이트와 필터가 그 값을 같이 쓴다.
 - Agent는 다른 Agent 패키지를 **import하지 않는다.** 남의 테이블이 필요하면 포트 주입이다.
 - 의존 방향: `supervisor → 어휘만` · `<domain> → common만` · `pipeline → 전부`.
 - 밖으로 열린 함수는 `run` 하나.
@@ -76,6 +87,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `observation_*` · `profile_affinity` · `event` | **Memory** (공유 테이블 단일 writer). OCR이 일정성 공지로 분류한 것도 추출 원문을 Memory가 받아 초안 payload로 만든다 — `event` 행은 보호자가 제출할 때 생긴다 | 읽기만 |
 | `notice` (일반 기관 공지) | **OCR 파이프라인**. 텍스트로 붙여넣은 일반 공지의 저장 경로는 미정 | Growth만 읽음 (보조) |
 | `daycare_meal` | **OCR 파이프라인·급식 배치**가 INSERT · **Food**가 UPDATE/DELETE (도메인 전용 — 아무도 안 읽는다). Food에 INSERT를 주지 않아 없는 급식을 지어낼 수 없다. 승인 게이트 없음 | Memory·Activity·Growth·Health는 읽지 않는다 |
+| 메뉴 카탈로그 | **Food** (도메인 전용 — 포트 기준). 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 넣는다(10-04, [food_agent_own_table.md](../food/food_agent_own_table.md) §1). DB 권한 방식은 백엔드가 정한다. 영양 합계 · 구간은 저장하지 않는다 — 판정할 때마다 원본에서 계산한다(10-05, [영양소_계산_설계.md](../food/영양소_계산_설계.md) §3) | 읽지 않는다 |
 | `prescription_draft` | **OCR 파이프라인**(처방전·약봉투) | Health만 읽음 |
 | `medication_schedule` · `medication_dose` · `medication_dose_log` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 복용 기록과 중단(`status='stopped'`) | Food·Activity·Growth는 읽지 않는다 |
 | `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
@@ -83,6 +95,32 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | `*_doc` · 기준 상수(`reference/*.yaml` — `hazard_terms.yaml` 포함) | 배치·마이그레이션 · 상수 파일은 저장소 PR | 읽기만 |
 
 기준은 **누가 쓰느냐가 아니라 누가 읽느냐**다. 여러 Agent가 읽는 테이블은 통로가 하나여야 한다.
+
+**쓰는 시점** (#201)
+
+- 기록 단계 — Memory 의 쓰기를 트랜잭션 하나로 묶고, Memory 가 끝나면 pipeline 이 러너가 넘긴 `commit` 을
+  부른다. 저장 안내는 그 뒤에 나간다. 되묻기 맥락은 이 트랜잭션에 넣지 않는다 — commit 뒤 `PendingReply` 로
+  나가 러너가 프로세스 메모리에 둔다(15분, 팀 합의). Memory 가 반복 상한에 걸려 기록을 다 끝내지 못하면
+  commit 하지 않고 `failed` 로 끝낸다 — 일부만 남기지 않는다.
+- 도메인 쓰기 — 테이블 주인이 쓴다. 쓰기 포트 호출 하나가 짧은 트랜잭션 하나로 바로 commit 되고, 같은
+  갱신을 두 번 적용해도 결과가 같아야 한다. INSERT(예: Health 복약 기록)는 도메인 값으로 만든 중복 방지키로
+  보장한다 — 다시 보내면 run 이 새로 생기므로 run 단위 값은 키가 될 수 없다. 어떤 값이 같으면 같은 기록인지는
+  포트 계약(docstring)에 Agent 팀이 적고, unique 제약 · `ON CONFLICT` 같은 DB 구현은 백엔드가 한다.
+- 쓰기 포트를 더할 때 — commit 판정 표시(`run_writes`)로 감쌀지 아래 기준으로 고른다. 감싸는 건 entrypoint 가 한다.
+  - 감싼다: 보호자 말을 반영한 쓰기. 이 쓰기가 끝난 run 을 `failed`("저장 없음")로 끝내면 거짓 안내가 된다.
+    지금은 급식 수정 · 삭제, 나중엔 Health 복약 기록.
+  - 감싸지 않는다: 요청하지 않아도 계산 중에 생기는 내부 값. 지금은 메뉴 카탈로그(`MenuCatalogStore.put`) 하나다.
+    백엔드 어댑터가 없을 때만 넣는다(food_agent_own_table §1, 10-04). 영양 구간은 저장하지 않는다. 감싸면 질문만
+    한 run 이 모델 실패에도 `done` 이 되어 원문이 입력창에 돌아가지 않는다.
+  - 감싸지 않는 쓰기는 다시 보내도 안전해야 한다. 덮어쓰기면 그대로 두고, 쌓이는 쓰기(INSERT)면 **감싸지 않고
+    중복 방지키를 둔다.** 메뉴 카탈로그가 그 예다 — 없을 때만 넣고(`ON CONFLICT (menu_key) DO NOTHING`)
+    `menu_key` 가 PK 라 다시 보내도 한 행이다([food_agent_own_table.md](../food/food_agent_own_table.md) §1).
+    덮어쓰기인지는 감쌀지를 가르는 기준이 아니다 — 급식 수정도 덮어쓰기지만 보호자 말을 반영해서 감싼다.
+  - 추천(`suggestion`) 저장은 이 기준의 대상이 아니다. 도메인 쓰기 포트가 아니라 pipeline 이 결과를 저장하는
+    것이고, 저장됐으면 보여 줄 결과가 있다는 뜻이라 어차피 `done` 이다 (§3).
+- 추천(`suggestion`) — Agent 가 결과로 돌려주고 pipeline 이 저장한다. 되돌릴 수 없는 것은 승인 게이트
+  뒤에서만 쓴다.
+- 순서 — 기록 단계 → 쓰는 도메인 task → 읽는 도메인 task. 조회는 앞 단계가 commit 된 뒤라 그대로 보인다.
 
 ---
 
@@ -104,7 +142,7 @@ class DomainAgentResult:
 
 | 채널 | 저장 | 승인 | 쓰는 Agent |
 | --- | --- | --- | --- |
-| `suggestions` | `suggestion` draft +24h · **요청 1건당 정확히 3개** | 사용자 → 승인 시 Memory 이관 | Food · Activity · Growth |
+| `suggestions` | `suggestion` draft +24h · **요청 1건당 최대 3개** — 모자라면 개수 안내 ([Tool_공통.md](Tool_공통.md) §5-2) | 사용자 → 승인 시 Memory 이관 | Food · Activity · Growth |
 | `readouts` | **안 함** (세션 한정) | – | 전부 |
 | `event_requests` | **저장 안 함** — pipeline이 Memory의 일정 tool을 코드로 불러 초안 payload로 내보낸다 | 사용자 | Health |
 | `needs_observation` | 안 함 — 화면이 한 줄로 묻는다 | – | 전부 |
@@ -114,7 +152,8 @@ class DomainAgentResult:
 - `Readout.authored_by="code"`면 코드가 만든 문자열이 **그대로** 화면에 간다. 모델 입력에도 넣지 않는다.
 - **되묻기는 한 번에 하나.** 후보가 여럿이면 순위가 가장 높은 하나만 낸다.
 - **초안은 저장하지 않는다.** `medication_drafts`는 Memory의 `event` 초안과 같다 — run 단위 버퍼에 모였다가 JSON payload로 한 번에 나가고, run이 끝나면 사라진다. 비어 있는 NOT NULL 칸 목록(`missing`)을 함께 실어 화면이 제출을 막는다. **만들자마자 행을 쓰는 `suggestion`과 혼동하지 말 것** — 복약은 행이 있다는 것 자체가 승인의 증거다.
-- suggestion은 저장과 동시에 화면이 **추천 카드로 전환**된다. 카드 화면은 그 run의 응답을 그대로 쓴다(묶음 키 없음). 별도의 suggestion 목록 화면은 `expires_at > now()`인 suggestion 전부를 보여준다.
+- suggestion은 **저장(commit)이 끝난 뒤에** 화면이 추천 카드로 전환된다. 카드의 승인 · 거절 · 피드백이 저장된 행의 id로 동작하고, 개인화 추천은 `suggestion_evidence`가 함께 저장돼 있어야 해서다(루트 §2). 보여 주면서 동시에 저장을 요청하지 않는다. 저장에 실패하면 그 Agent 카드는 내보내지 않고 `partial`로 둔다. 카드 화면은 그 run의 응답을 그대로 쓴다(묶음 키 없음). 별도의 suggestion 목록 화면은 `expires_at > now()`인 suggestion 전부를 보여준다.
+- **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2).
 
 ---
 
@@ -209,11 +248,13 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 예산을 넘으면 | 실행을 끊지 않는다. `pipeline._log` 가 경고를 남길 뿐이다 — 재시도가 붙었다는 신호이지 잘못이 아니다 |
 | 도메인 Agent당 | **1회 이내** — 아래 재호출 예외만 2회 |
 | 0회 경로 | 게이트 닫힘 · Growth 성장 추이 · Health 검진/병원/전달 서류 · 안전 조회 실패 |
-| **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼만 낸다** — 개수 규칙의 유일한 예외다 (잠정 — C-8 미결) |
+| **재호출** | **안전 필터(사전·사후) 후 suggestion 후보가 3개 미만일 때만**, 그 Agent만 1회. 걸러진 항목을 제외 목록으로 넣는다. 기피는 필터가 아니라 근거라 재호출 사유가 되지 않는다. **재호출 후에도 3개를 못 채우면 남은 만큼(1~2개)만 내고, 0개면 추천 없이 안내만 낸다** — 추천은 최대 3개다 (C-8 닫힘, [Tool_공통.md](Tool_공통.md) §5-2) |
 | 그 외 출력 tool 거절 | 재호출하지 않는다 (2026-09-22 — 이전의 "거절 시 run당 1회 재시도"는 위 규칙으로 대체) |
-| 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
+| 동시 실행 | 도메인 Agent끼리 `asyncio.gather`, Memory 다음 · 쓰는 task 다음이라는 순서만 유지. 같은 Agent 의 task 둘도 동시에 돈다. run state 는 task 마다 새로 받는다 (`for_task()`) |
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
+| 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 `failed` 로 확정하지 않고 Idempotency 키도 풀지 않는 방향이다. — 러너 계약에서 확정한다 |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
@@ -327,9 +368,9 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | C-5 | ✅ 닫힘 — **그대로 둔다.** 24시간이면 만료되므로 무효화 배치를 두지 않는다 |
 | C-6 | ✅ 폐기 — 알레르기 후보 감지를 v1에서 뺐다. `safety_confirmations` 채널도 함께 사라졌다 |
 | C-7 | ✅ 닫힘 — **`confidence_source`로 갈음**한다. 별도 `type` 컬럼을 두지 않는다 |
-| C-8 | **미결** (2026-09-30 다시 엶) — 재호출 후에도 3개를 못 채우거나 후보 풀이 처음부터 3개 미만일 때 남은 만큼(1~2개)을 낼지 정하지 않았다. 지금 코드는 잠정으로 남은 만큼 내고 0개만 거절한다(`check_count(after_retry=True)`, §7) |
-| C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`liked`/`disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
+| C-8 | ✅ 닫힘(10-06) — **추천은 최대 3개.** 재호출 후에도 못 채우거나 후보 풀이 처음부터 3개 미만이면 남은 만큼(1~2개)을 개수 안내와 함께 낸다. 0개면 추천 없이 안내만 — 실패가 아니다. 3개를 채우려고 안전 조건을 늦추지 않는다 (멘토 [#196 답변](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/196#issuecomment-5933562473) · #216). `check_count(exhausted=True)` · `count_notice()` — [Tool_공통.md](Tool_공통.md) §5-2 |
+| C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`child_liked`/`child_disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
 
-C-8 을 다시 열었다. 새로 열리는 것은 이 표에 다시 적는다.
+새로 열리는 것은 이 표에 다시 적는다.
 
 > **API 계약서 v1(`docs/api/api-interface-v1.html`)은 레거시다.** 어긋나는 곳이 있어도 이 문서들이 정본이다.

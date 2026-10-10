@@ -1,11 +1,12 @@
 "use client";
 
+import { josa } from "es-hangul";
 import {
+  CalendarPlus,
   Hand,
   Hourglass,
   Info,
   MessageCircleQuestion,
-  PenLine,
   ShieldCheck,
   Sprout,
   Stethoscope,
@@ -13,8 +14,8 @@ import {
 } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
+import { RewriteButton } from "@/components/rewrite-button";
 import { domainLabel, observationAgent } from "@/components/domain-chip";
-import { EventDraftList } from "@/components/event-draft-list";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
@@ -22,138 +23,125 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
-import type { GuidanceEvent, NoteEvent } from "@/lib/api/sse";
+import type { GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
+import type { QuestionState } from "@/stores/conversation";
 import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
 
 /**
- * 04 저장 결과 — run 이벤트를 화면으로 옮긴다.
+ * 04 답 묶음 — run 하나의 이벤트를 **대화 안의 답 하나**로 옮긴다 (#226).
  *
- * 🚨 **별도 라우트가 아니다.** 03 홈과 같은 컴포넌트 트리 안의 레이어다 —
- *    화면을 벗어나면 `useRunStream` 이 스트림을 끊고, 실패 시 입력창에 되돌릴 **원문의 정본이
- *    입력 화면이 들고 있는 값**이기 때문이다 (apps/web/CLAUDE.md §3).
+ * 화면 하나를 통째로 덮던 04 결과가 대화 화면(`/child/{id}/chat`)의 말풍선 아래로 들어왔다.
+ * 보낸 한 줄은 바로 위의 말풍선이 진다 — 그래서 여기에는 "적어주신 한 줄" 카드도 "홈으로" 버튼도
+ * 없다 (돌아가기는 화면 머리의 화살표다).
  *
- * 🚨 **`partial` 은 실패 화면이 아니다** (NF-06). Agent 2개 중 1개만 성공해도 그 화면을 보여주고,
- *    성공과 실패를 **한 화면에** 섞는다. `done` 이 와도 `partial` 이 있었으면 부분 결과다.
+ * 🚨 **순서를 지킨다 — 안내 → 저장된 기록 → 기억이 자랐어요 → 일정 초안(분리).** 안내가 맨 위인
+ *    이유는 `GuidanceCard` 자리의 주석에, 일정 초안을 가르는 이유는 `DraftsCard` 에 있다.
+ * 🚨 **Agent 결과는 도착한 순서대로 붙이고 재정렬하지 않는다** (PR #215 리뷰). 서버가 늦게 끝난
+ *    Agent 를 뒤에 보내는 것은 그게 실제로 일어난 순서라서다.
+ * 🚨 **`partial` 은 실패 화면이 아니다** (NF-06). Agent 2개 중 1개만 성공해도 그 답을 보여주고,
+ *    성공과 실패를 **한 묶음에** 섞는다. `done` 이 와도 `partial` 이 있었으면 부분 결과다.
  * 🚨 **실패를 빨강으로 칠하지 않는다** (문서 §3). `CardFailed` 는 `surface-muted` 다.
  * 🚨 **health 관찰은 모양이 다르다.** `subject` · `polarity` · `affinity` 키 자체가 없다 —
  *    `null` 검사가 아니라 `isHealthObservation()` 으로 분기한다.
  */
 
-/** 진행 중. 단계 문구는 서버가 보낸 `step.label` 을 그대로 쓴다. */
-export function RunProgress({ state }: { state: RunState }) {
-  return (
-    <div className="flex flex-1 flex-col justify-center gap-6">
-      <div>
-        <IconTile icon={PenLine} className="mb-3" />
-        <h2 className="text-title text-ink">적어주신 말을 보고 있어요</h2>
-        <p className="text-body-sm text-ink-muted mt-2">
-          저장이 끝나야 다음으로 넘어가요. 잘못 저장하지 않으려고 한 칸씩 확인해요.
-        </p>
-      </div>
-
-      <Card>
-        <ProgressSteps
-          index={state.step?.index ?? 0}
-          total={state.step?.total ?? 3}
-          label={state.step?.label ?? "시작하고 있어요"}
-        />
-      </Card>
-    </div>
-  );
-}
-
-export function RunResult({
-  state,
+export function RunReply({
   childId,
-  inputText,
+  run,
+  question,
+  answeringNow,
+  remainingDrafts,
+  draftsReplaced,
+  followUp,
   onRetry,
-  onEdit,
-  onDone,
+  onRewrite,
+  rewriteBlocked,
+  onAnswer,
+  onOpenDrafts,
   onPickOffer,
-  onAnswerQuestion,
 }: {
-  state: RunState;
   /** 안내의 목적지를 아이 경로 아래에 붙이는 데 쓴다 (`GUIDANCE_DESTINATION`). */
   childId: string;
-  /** 부모가 적은 원문. 🚨 훅이 아니라 입력 화면이 들고 있는 값이다. */
-  inputText: string;
-  onRetry: () => void;
-  onEdit: () => void;
-  onDone: () => void;
+  run: RunState;
+  /** 이 run 이 낸 질문의 처지 (`stores/conversation.ts`). */
+  question: QuestionState | null;
+  /** 입력창이 지금 이 질문에 답하는 중인가. */
+  answeringNow: boolean;
+  /** 이 run 이 낸 일정 초안 중 아직 안 넣은 것. */
+  remainingDrafts: number;
+  /** 뒤 run 이 같은 초안을 다시 냈다 — 남은 것이 0 이어도 "넣었다" 가 아니다. */
+  draftsReplaced: boolean;
+  /** 이어받기 run 의 답이다 (질문에 대한 답을 보낸 줄). */
+  followUp: boolean;
+  /** 🚨 같은 자리에서 다시 보낼 수 없으면 `undefined` — 버튼을 세우지 않는다. */
+  onRetry?: () => void;
+  /** "고쳐 쓰기" 를 이미 했으면 `undefined`. */
+  onRewrite?: () => void;
+  /** 입력창에 쓰던 글이 있어서 지금은 고쳐 쓸 수 없다 (`RewriteButton`). */
+  rewriteBlocked: boolean;
+  onAnswer: () => void;
+  onOpenDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
-  /** 되묻는 질문에 답하러 03 홈으로. 질문은 홈까지 따라간다 (`stores/pending-question.ts`). */
-  onAnswerQuestion: (question: string) => void;
 }) {
+  if (run.status === "idle" || run.status === "streaming") {
+    // 단계 문구는 서버가 보낸 `step.label` 을 그대로 쓴다.
+    return (
+      <Card>
+        <ProgressSteps
+          index={run.step?.index ?? 0}
+          total={run.step?.total ?? 3}
+          label={run.step?.label ?? "시작하고 있어요"}
+        />
+      </Card>
+    );
+  }
+
   // 🚨 서버가 끝을 말하지 않고 끝난 run 이다 (20초 침묵 · 끊긴 스트림 · 연결 실패).
   //    **저장 여부를 모른다** — "저장했어요" 도 "저장하지 않았어요" 도 말하지 않는다
-  //    (CLAUDE.md §2 · PR #71 리뷰). 원문은 입력창에 그대로 남아 있다 (03 홈 `closeRun`).
-  if (state.status === "unconfirmed") {
+  //    (CLAUDE.md §2 · PR #71 리뷰). 보낸 말풍선도 그래서 지우지 않는다 (`rewriteTurn`).
+  if (run.status === "unconfirmed") {
     return (
-      <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-title text-ink">결과를 받지 못했어요</h2>
-          <p className="text-body-sm text-ink-muted mt-2">
-            연결이 끊겨서 저장됐는지 확인하지 못했어요. 적어주신 말은 입력창에 그대로 남겨뒀어요.
-          </p>
-        </div>
-
+      <div className="flex flex-col gap-3">
         <CardFailed>
-          {/* 같은 키로 나가는 재시도라 실제로 두 번 저장되지 않는다 (lib/api/idempotency.ts). */}
-          <p>다시 시도하면 같은 한 줄로 확인해요. 이미 저장됐다면 두 번 저장되지 않아요.</p>
+          <p className="text-body text-ink">저장됐는지 확인하지 못했어요</p>
+          <p className="mt-1">
+            연결이 끊겨서 결과를 받지 못했어요. 다시 시도하면 같은 한 줄로 확인해요. 이미 저장됐다면
+            두 번 저장되지 않아요.
+          </p>
+          <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
         </CardFailed>
 
-        {state.observations.length > 0 ? (
+        {run.observations.length > 0 ? (
           <section>
             <h3 className="text-label text-brand">
-              여기까지 받은 기록 {state.observations.length}건
+              여기까지 받은 기록 {run.observations.length}건
             </h3>
             <Card className="divide-line mt-2 flex flex-col divide-y">
-              {state.observations.map((observation) => (
+              {run.observations.map((observation) => (
                 <ObservationRow key={observation.id} observation={observation} />
               ))}
             </Card>
           </section>
         ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onRetry}>다시 시도</Button>
-          <Button variant="secondary" onClick={onEdit}>
-            직접 고쳐 쓰기
-          </Button>
-        </div>
       </div>
     );
   }
 
-  if (state.failure) {
+  if (run.failure) {
     return (
-      <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-title text-ink">읽지 못했어요</h2>
-          <p className="text-body-sm text-ink-muted mt-2">
-            한 줄을 구조화하는 데 실패했어요. 잘못 저장하지 않으려고 아무것도 저장하지 않았어요.
-          </p>
-        </div>
-
-        <CardFailed>
-          <p>적어주신 말은 입력창에 그대로 남겨뒀어요.</p>
-        </CardFailed>
-
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onRetry}>다시 시도</Button>
-          <Button variant="secondary" onClick={onEdit}>
-            직접 고쳐 쓰기
-          </Button>
-        </div>
-      </div>
+      <CardFailed>
+        <p className="text-body text-ink">읽지 못했어요</p>
+        <p className="mt-1">잘못 저장하지 않으려고 아무것도 저장하지 않았어요.</p>
+        <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
+      </CardFailed>
     );
   }
 
-  const noChildObservation = state.observations.length === 0;
+  const noChildObservation = run.observations.length === 0;
   /**
    * 🚨 **저장한 것이 없으면 "저장했어요" 라고 하지 않는다.** "이번 주말에 공원 산책 가기" 처럼
    *    앞으로의 계획만 말한 한 줄은 아이에 대한 관찰이 아니라서 쌓을 것이 없고, 일정도 아직
-   *    **초안**이라 캘린더에 없다 — 그 화면에서 제목이 "저장했어요" 면 화면이 거짓말을 한다.
+   *    **초안**이라 캘린더에 없다 — 그 답의 첫 줄이 "저장했어요" 면 화면이 거짓말을 한다.
    */
   const savedSomething = !noChildObservation;
   /**
@@ -162,42 +150,28 @@ export function RunResult({
    *    두 장을 나란히 두면 같은 자리에서 서로 다른 이유를 대고, 아래쪽이 위쪽을 부정한다.
    *    Memory 가 되물은 경우도 같다 — 아직 못 정한 것이지 못 읽은 것이 아니다.
    */
-  const noticedWhy = state.guidance.length > 0 || state.note !== null;
+  const noticedWhy = run.guidance.length > 0 || run.note !== null;
   /** Memory 가 답을 기다리는 중. 🚨 `kind` 를 모르면 질문으로 보지 않는다 (`NoteCard`). */
-  const askingMore = state.note?.kind === "question";
+  const askingMore = run.note?.kind === "question";
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div>
-        <h2 className="text-title text-ink">
-          {resultTitle({ savedSomething, askingMore, noticedWhy })}
-        </h2>
+        <h3 className="text-body text-ink">
+          {resultTitle({ savedSomething, askingMore, noticedWhy, followUp })}
+        </h3>
         {askingMore && !savedSomething ? (
           // 일어난 일만 적는다 — "답하면 저장돼요" 는 예측이라 쓰지 않는다 (§4).
-          <p className="text-body-sm text-ink-muted mt-2">
+          <p className="text-body-sm text-ink-muted mt-1">
             적어주신 말만으로는 아직 기록으로 남기지 않았어요.
           </p>
         ) : null}
       </div>
 
-      {/* 이 화면의 주인공은 결과 카드가 아니라 **부모가 적은 말**이다 (관찰 노트).
-          화면에서 한 장만 쓰는 `card-accent` 를 여기 쓴다 — 아래는 전부 거기서 나온 것이다. */}
-      {inputText ? (
-        <Card tone="accent">
-          <div className="flex items-start gap-3">
-            <IconTile icon={PenLine} />
-            <div className="min-w-0">
-              <p className="text-caption text-ink-subtle">적어주신 한 줄</p>
-              <p className="text-body text-ink mt-1">{inputText}</p>
-            </div>
-          </div>
-        </Card>
-      ) : null}
-
       {/* 🚨 **안내를 맨 위에 둔다.** "땅콩 알레르기 있어" 라고 적은 보호자가 제일 먼저 알아야
           하는 것은 **그 말이 저장되지 않았다**는 사실이다 (최상위 §2). 아래 기록 목록보다
           뒤에 두면 스크롤해야 보이고, 그 사이에 부모는 저장된 줄 안다. */}
-      {state.guidance.map((guidance) => (
+      {run.guidance.map((guidance) => (
         <GuidanceCard
           key={guidance.code}
           childId={childId}
@@ -206,20 +180,25 @@ export function RunResult({
         />
       ))}
 
-      {state.unavailable.length > 0 ? (
-        <UnavailableCard agents={state.unavailable} savedAlongside={savedSomething} />
+      {run.unavailable.length > 0 ? (
+        <UnavailableCard agents={run.unavailable} savedAlongside={savedSomething} />
       ) : null}
 
-      {state.note ? <NoteCard note={state.note} onAnswer={onAnswerQuestion} /> : null}
+      {run.note ? (
+        <NoteCard
+          note={run.note}
+          followUp={followUp}
+          question={question}
+          answeringNow={answeringNow}
+          onAnswer={onAnswer}
+        />
+      ) : null}
 
       {/* 🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
           클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다. */}
-      {state.partial ? (
+      {run.partial ? (
         <CardFailed>
-          <p>
-            {state.partial.failed.map(domainLabel).join(", ")} 쪽은 이번에 준비하지 못했어요. 아래
-            결과는 그대로 저장됐어요.
-          </p>
+          <p>{partialMessage(run.partial, savedSomething)}</p>
         </CardFailed>
       ) : null}
 
@@ -228,7 +207,7 @@ export function RunResult({
         noticedWhy ? null : (
           <CardFailed>
             <p>
-              {state.drafts.length > 0
+              {run.drafts.length > 0
                 ? "일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."
                 : "아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지 않았어요."}
             </p>
@@ -236,21 +215,21 @@ export function RunResult({
         )
       ) : (
         <section>
-          <h3 className="text-label text-brand">기록 {state.observations.length}건 저장됨</h3>
+          <h3 className="text-label text-brand">기록 {run.observations.length}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
           <Card className="divide-line mt-2 flex flex-col divide-y">
-            {state.observations.map((observation) => (
+            {run.observations.map((observation) => (
               <ObservationRow key={observation.id} observation={observation} />
             ))}
           </Card>
         </section>
       )}
 
-      {state.promoted.length > 0 ? (
+      {run.promoted.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
-          {state.promoted.map((change) => (
+          {run.promoted.map((change) => (
             <Card key={change.ref.id}>
               <div className="flex items-start gap-3">
                 <IconTile icon={Sprout} />
@@ -264,15 +243,14 @@ export function RunResult({
         </section>
       ) : null}
 
-      {/* 🚨 **일정 초안은 저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이 아래는
-          **보호자가 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게
-          저장했어요" 라는 제목이 아직 저장 안 된 것까지 덮는다 — 그래서 머리글로 가른다. */}
-      <EventDraftList
-        childId={childId}
-        incoming={state.drafts}
-        origin="input"
-        found="적어주신 말에서 일정을 찾았어요."
-      />
+      {run.drafts.length > 0 ? (
+        <DraftsCard
+          found={run.drafts.length}
+          remaining={remainingDrafts}
+          replaced={draftsReplaced}
+          onOpen={onOpenDrafts}
+        />
+      ) : null}
 
       {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
       {savedSomething ? (
@@ -281,21 +259,18 @@ export function RunResult({
         </p>
       ) : null}
 
-      {/* 🚨 제안을 버튼으로 쌓지 않는다. 예전에는 [제안][제안][아니요] 3개가 같은 무게로 서서
-          무엇이 다음 행동인지가 없었다 — 고르는 것은 줄(`AgentPromptRow`)이고, 화면을 떠나는
-          것만 버튼이다. "아니요" 버튼은 지웠다: 기본값이 기록만이라는 것은 아래 문구가 말하고,
-          아무것도 고르지 않아도 이미 저장은 끝나 있다. */}
-      {state.offers.length > 0 ? (
+      {/* 🚨 제안을 버튼으로 쌓지 않는다. 고르는 것은 줄(`AgentPromptRow`)이다. "아니요" 버튼은
+          두지 않는다: 기본값이 기록만이라는 것은 아래 문구가 말하고, 아무것도 고르지 않아도
+          이미 저장은 끝나 있다. */}
+      {run.offers.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-label text-brand">이것도 도와드릴까요?</h3>
-          {/* 여기는 화면에 자리가 있으므로 세로로 쌓는다 (03 채팅바 위와 달리 입력창을 안 민다). */}
           <AgentPrompts
-            items={state.offers.map((offer) => ({ agent: offer.agent, text: offer.label }))}
+            items={run.offers.map((offer) => ({ agent: offer.agent, text: offer.label }))}
             onPick={(agent) => onPickOffer([agent])}
             layout="list"
           />
-          {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** 일정만 말한 한 줄에는
-              쌓인 기록이 없다 — 남은 것을 안 세고 같은 문구를 쓰면 화면이 두 번 거짓말한다. */}
+          {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** */}
           <p className="text-caption text-ink-subtle mt-1">
             {savedSomething
               ? "고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요."
@@ -303,11 +278,107 @@ export function RunResult({
           </p>
         </section>
       ) : null}
-
-      <Button variant="secondary" block onClick={onDone}>
-        홈으로
-      </Button>
     </div>
+  );
+}
+
+/**
+ * 실패한 run 의 두 길. 🚨 **다시 시도는 같은 키다** — 같은 본문 · 같은 답하던 질문으로 같은 자리에서
+ * 다시 보낸다 (`retryTurn`). 고쳐 쓰기는 원문을 입력창에 되돌린다.
+ */
+function RetryActions({
+  onRetry,
+  onRewrite,
+  rewriteBlocked,
+}: {
+  onRetry?: () => void;
+  onRewrite?: () => void;
+  rewriteBlocked: boolean;
+}) {
+  if (!onRetry && !onRewrite) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-start gap-2">
+      {onRetry ? (
+        <Button variant="secondary" size="compact" onClick={onRetry}>
+          다시 시도
+        </Button>
+      ) : null}
+      {onRewrite ? <RewriteButton blocked={rewriteBlocked} onClick={onRewrite} /> : null}
+    </div>
+  );
+}
+
+/**
+ * 부분 결과 한 줄 (PR #215 리뷰). 🚨 **문구는 화면 상수다** — 서버 `partial.message` 를 읽지 않는다.
+ *
+ * - 🚨 **저장 여부로 나눈다.** 저장한 것이 없는데 "아래 결과는 그대로 저장됐어요" 를 붙이면 거짓이다.
+ * - 🚨 **같은 Agent 가 `succeeded` · `failed` 양쪽에 있으면 "일부" 다.** task 둘 중 하나만 실패한
+ *   경우라 결과가 화면에 서 있는데, "준비하지 못했어요" 라고 하면 바로 위의 답을 부정한다.
+ * - 🚨 **동사는 "처리하지 못했어요" 다.** 쓰는 task(급식 갱신)만 실패한 run 도 있어서, "준비" 라고
+ *   하면 추천을 못 받은 이야기로 읽힌다.
+ */
+export function partialMessage(partial: PartialEvent, savedSomething: boolean): string {
+  const parts = partial.failed.map((agent) =>
+    partial.succeeded.includes(agent)
+      ? `${domainLabel(agent)} 쪽 일부`
+      : `${domainLabel(agent)} 쪽`,
+  );
+  const failed = `${josa(parts.join(", "), "은/는")} 이번에 처리하지 못했어요.`;
+  return savedSomething ? `${failed} 저장한 기록은 그대로 남아 있어요.` : failed;
+}
+
+/**
+ * 일정 초안 — 🚨 **저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이건 **보호자가
+ * 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게 저장했어요" 라는 첫 줄이
+ * 아직 저장 안 된 것까지 덮는다 — 그래서 머리글로 가른다.
+ *
+ * 🚨 **대화에는 카드만 둔다. 넣는 것은 시트에서 확인한다** (#226). 초안 카드는 제목 · 일시 · 준비물 ·
+ *    제출까지 든 긴 폼이라, 대화 사이에 펼치면 위아래 말풍선이 화면 밖으로 밀린다. 시트에는
+ *    등장 애니메이션이 없다 (디자인 시스템 §8 — 승인 게이트).
+ */
+function DraftsCard({
+  found,
+  remaining,
+  replaced,
+  onOpen,
+}: {
+  found: number;
+  remaining: number;
+  replaced: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <section>
+      <h3 className="text-label text-brand">일정으로 만들까요?</h3>
+      <Card className="mt-2">
+        <div className="flex items-start gap-3">
+          <IconTile icon={CalendarPlus} />
+          <div className="min-w-0">
+            {remaining > 0 ? (
+              <>
+                <p className="text-body text-ink">
+                  적어주신 말에서 일정 {found}건을 찾았어요.
+                  {remaining < found ? ` 아직 넣지 않은 것은 ${remaining}건이에요.` : null}
+                </p>
+                <p className="text-body-sm text-ink-muted mt-1">
+                  넣기 전까지는 캘린더에 들어가지 않아요.
+                </p>
+                <Button variant="secondary" size="compact" className="mt-3" onClick={onOpen}>
+                  확인하고 넣기
+                </Button>
+              </>
+            ) : (
+              <p className="text-body text-ink">
+                {/* 🚨 뒤 답이 같은 초안을 다시 냈으면 "넣었다" 고 하지 않는다 — 넣은 적이 없다 (#231 리뷰). */}
+                {replaced
+                  ? "이 일정은 아래 답에서 다시 찾은 초안으로 바뀌었어요."
+                  : "남은 일정 초안이 없어요. 넣은 일정은 캘린더에서 볼 수 있어요."}
+              </p>
+            )}
+          </div>
+        </div>
+      </Card>
+    </section>
   );
 }
 
@@ -326,13 +397,16 @@ function resultTitle({
   savedSomething,
   askingMore,
   noticedWhy,
+  followUp,
 }: {
   savedSomething: boolean;
   askingMore: boolean;
   noticedWhy: boolean;
+  followUp: boolean;
 }): string {
   if (savedSomething) return "이렇게 저장했어요";
-  if (askingMore) return "한 가지만 더 알려주세요";
+  // 🚨 이어받기 run 이 또 물었으면 "한 가지만 더" 를 두 번 말하지 않는다 — 앞에서 한 말을 스스로 깬다.
+  if (askingMore) return followUp ? "이어서 조금만 더 알려주세요" : "한 가지만 더 알려주세요";
   if (noticedWhy) return "적어주신 말을 확인했어요";
   return "이렇게 이해했어요";
 }
@@ -467,16 +541,30 @@ function UnavailableCard({ agents, savedAlongside }: { agents: Agent[]; savedAlo
  * Memory 가 한 말 (#141).
  *
  * 🚨 **`kind` 를 모르면 질문으로 취급하지 않는다** (`sse.ts` 의 `NoteEvent`). 서버가 종류를
- *    실어 주기 전에는 요약 문장까지 "이어서 적기" 를 달게 되고, 화면이 답을 재촉하게 된다.
- * 🚨 **답하라고 떠미는 자리가 아니다.** 버튼은 `secondary` 하나고, 그냥 홈으로 가는 길도
- *    아래에 그대로 있다 — 답하려면 한 줄을 새로 보내야 해서 하루 입력 횟수를 한 번 더 쓴다 (#147).
+ *    실어 주기 전에는 요약 문장까지 답할 자리를 열게 되고, 화면이 답을 재촉하게 된다.
+ * 🚨 **답하라고 떠미는 자리가 아니다.** 질문이 오면 입력창이 그 질문을 기본 대상으로 잡을 뿐이고
+ *    (`stores/conversation.ts`), 내려놓아도 질문은 여기 **열린 채로** 남아 다시 고를 수 있다.
+ *    답하려면 한 줄을 새로 보내야 해서 하루 입력 횟수를 한 번 더 쓴다 (#147).
  * 🚨 **LLM 출력이라 HTML 로 그리지 않는다** (apps/web/CLAUDE.md §4). `{}` 로 넣어 React 가
  *    이스케이프하게 둔다 — `dangerouslySetInnerHTML` 을 쓰지 않는다.
  *
  * "한 가지만 더" 는 최소 질문 1개 규칙(최상위 §2)을 화면에서 말하는 자리이기도 하다 — 질문이
  * 하나뿐이라는 것을 부모가 먼저 알면, 답하는 것이 끝없는 문답처럼 보이지 않는다.
  */
-function NoteCard({ note, onAnswer }: { note: NoteEvent; onAnswer: (question: string) => void }) {
+function NoteCard({
+  note,
+  followUp,
+  question,
+  answeringNow,
+  onAnswer,
+}: {
+  note: NoteEvent;
+  /** 이어받기 run 이 또 물은 질문인가. 🚨 그때는 "한 가지만 더" 를 붙이지 않는다 (#231 리뷰). */
+  followUp: boolean;
+  question: QuestionState | null;
+  answeringNow: boolean;
+  onAnswer: () => void;
+}) {
   if (note.kind !== "question") {
     // 되묻기가 아닌 말은 안내 문장 한 줄이다 — 이름표도 버튼도 붙이지 않는다.
     return (
@@ -491,22 +579,31 @@ function NoteCard({ note, onAnswer }: { note: NoteEvent; onAnswer: (question: st
       <div className="flex items-start gap-3">
         <IconTile icon={MessageCircleQuestion} />
         <div className="min-w-0">
-          <p className="text-caption text-ink-subtle">한 가지만 더</p>
-          <p className="text-body text-ink mt-1">{note.text}</p>
-          {/* 🚨 **앞서 적은 말을 다시 쓰라고 하지 않는다** (#158 리뷰). 원문을 되돌려 이어 적게
-              했더니, 일부가 이미 저장된 run 에서는 그 조각이 **두 번 저장**됐다. 앞 이야기는
-              서버가 `reply_to` 로 찾으므로 화면은 답만 받는다 (03 홈 `answerQuestion`). */}
-          <p className="text-body-sm text-ink-muted mt-2">
-            이 질문에 대한 답만 적어주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
+          <p className="text-caption text-ink-subtle">
+            {followUp ? "이어서 여쭤봐요" : "한 가지만 더"}
           </p>
-          <Button
-            variant="secondary"
-            size="compact"
-            className="mt-3"
-            onClick={() => onAnswer(note.text)}
-          >
-            이어서 적기
-          </Button>
+          <p className="text-body text-ink mt-1">{note.text}</p>
+          {question === "open" ? (
+            <>
+              {/* 🚨 **앞서 적은 말을 다시 쓰라고 하지 않는다** (#158 리뷰). 원문을 되돌려 이어
+                  적게 했더니, 일부가 이미 저장된 run 에서는 그 조각이 **두 번 저장**됐다. 앞
+                  이야기는 서버가 `reply_to` 로 찾으므로 화면은 답만 받는다. */}
+              <p className="text-body-sm text-ink-muted mt-2">
+                이 질문에 대한 답만 적어주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
+              </p>
+              {answeringNow ? (
+                <p className="text-caption text-ink-muted mt-2">아래 입력창에서 답하는 중이에요.</p>
+              ) : (
+                <Button variant="secondary" size="compact" className="mt-3" onClick={onAnswer}>
+                  이 질문에 답하기
+                </Button>
+              )}
+            </>
+          ) : question === "answered" ? (
+            <p className="text-caption text-ink-subtle mt-2">아래에 답해 주셨어요.</p>
+          ) : question === "dropped" ? (
+            <p className="text-caption text-ink-subtle mt-2">이 질문은 더 이어서 답할 수 없어요.</p>
+          ) : null}
         </div>
       </div>
     </Card>

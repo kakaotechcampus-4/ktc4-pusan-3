@@ -10,6 +10,7 @@ import type {
 import { PARENT_ID } from "../fixtures";
 import { INVITE_CODE_LENGTH } from "@/lib/invite-code";
 import { apiError, networkDelay, url } from "./helpers";
+import { currentMe } from "./membership";
 
 /**
  * 10 설정 — 동의 현황 · 함께 보는 보호자 · 초대.
@@ -124,9 +125,17 @@ export const settingsHandlers = [
    * 🚨 **`relation` 없이도 발행된다.** 아이와 어떤 사이인지는 받는 쪽이 수락 화면에서 고르는
    *    값이라 화면이 안 보낸다 (#89). 계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서,
    *    보내오면 받아는 주되 없다고 막지 않는다 — 막으면 화면이 아예 초대를 못 한다.
+   * 🚨 **owner 만 발행한다** (#198). 연결 없음은 `403 child_access_denied`, 연결된 member 는
+   *    `403 owner_only` — 화면은 member 에게 버튼을 안 그리지만 서버가 다시 막는다.
+   *    member 계정은 `consent` 시나리오에서 초대를 수락하면 만들어진다.
    */
-  http.post(url("/children/:cid/invites"), async () => {
+  http.post(url("/children/:cid/invites"), async ({ params }) => {
     await networkDelay();
+    const link = currentMe().children.find((child) => child.child_id === String(params.cid));
+    if (!link) return apiError(403, "child_access_denied", "이 아이에 접근할 수 없어요");
+    if (link.role !== "owner") {
+      return apiError(403, "owner_only", "아이를 등록한 보호자만 초대할 수 있어요");
+    }
     // 코드는 서버가 만든다. 목이라 Crockford Base32 알파벳 안에서 8자만 맞춘다
     // (`docs/api/invite-v1.md` §4 — 서버는 정규화한 값을 해시로 저장한다).
     const code = randomInviteCode();

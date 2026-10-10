@@ -16,13 +16,13 @@ from app.agents.activity.schemas.common import (
     Intensity,
     ToolArgs,
 )
-from app.agents.common.suggestion import REQUIRED_COUNT
+from app.agents.common.suggestion import MAX_SUGGESTIONS
 
 
 class ActivityCandidate(ToolArgs):
     content: Annotated[
         str,
-        Field(min_length=1, description="놀이·외출 후보. 예: 구슬 꿰기로 목걸이 만들기"),
+        Field(min_length=1, description="놀이·외출 후보. 예: 종이컵으로 탑 쌓기"),
     ]
     setting: Annotated[ActivitySetting, Field(description="indoor / outdoor / either")]
     materials: Annotated[
@@ -30,7 +30,7 @@ class ActivityCandidate(ToolArgs):
         Field(
             default_factory=list,
             description=(
-                "활동에 쓰는 물건을 빠짐없이. 예: 구슬, 실. "
+                "활동에 쓰는 물건을 빠짐없이. 예: 종이컵, 색종이. "
                 "안전 검사는 코드가 이 목록과 content 로 한다 — 알아서 빼거나 바꾸지 않는다"
             ),
         ),
@@ -70,12 +70,13 @@ class ActivityCandidate(ToolArgs):
 
 
 class ProposeActivityCandidatesArgs(ToolArgs):
-    # 개수는 공통 상수 하나. 2개 이하나 4개 이상이면 인자 검증에서 거절된다
+    # 모델은 늘 최대 개수만큼 낸다. 2개 이하나 4개 이상이면 인자 검증에서 거절된다.
+    # 보호자에게 1~2개가 가는 것은 안전 필터로 빠진 뒤의 일이다 (Tool_공통.md §5-2)
     candidates: Annotated[
         list[ActivityCandidate],
         Field(
-            min_length=REQUIRED_COUNT,
-            max_length=REQUIRED_COUNT,
-            description=f"놀이 후보 정확히 {REQUIRED_COUNT}개",
+            min_length=MAX_SUGGESTIONS,
+            max_length=MAX_SUGGESTIONS,
+            description=f"놀이 후보 {MAX_SUGGESTIONS}개",
         ),
     ]

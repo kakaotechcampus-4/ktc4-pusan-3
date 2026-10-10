@@ -1,13 +1,136 @@
 """코드 tool — 모델에게 보이지 않고 코드가 정해진 지점에서 직접 부른다.
 
 모델 tool 로 만들면 모델이 스스로 통과시킬 수 있다 (3-2 "만들지 않는 것").
-지금은 구현부가 주석이라 호출시 NotImplementedError.
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
+from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
+from app.agents.common.allergy import read_label, shared_book
+from app.agents.common.reference import allergen_terms, hazard_terms
+from app.rules.allergen import ALLERGEN_NAMES
+from app.rules.term_match import Term, match_fields, normalize
+
+# 이 월령 미만은 위험 용어의 경고도 차단으로 올린다 (D6 규칙 ②). 법령 · 학회 문장은 대부분
+# "N세 미만은 감독이 필요하다" 라 경고만 나오는데, 0–17개월은 감독만으로 위험이 안 없어진다.
+# 밴드 경계와 따로 둔다 — 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게.
+SAFETY_PROMOTE_BELOW_MONTH = 18
+
+# 알레르기 사전(allergen_terms.yaml)은 메뉴 이름용이라 놀이 문장에 그대로 대조하면 다른 뜻으로
+# 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
+# 사전을 그대로 쓴다("에그" 로 등록하면 난류다).
+#
+# 한 글자 이름은 허용 목록만 쓴다. "밀" · "게" · "굴" · "닭" 은 "공 밀기" · "카드 게임" ·
+# "굴리기" · "닭 그림" 이 걸린다. 잣 · 콩 · 깨 · 쑥은 놀이 문장에서도 거의 그 음식이다
+# ("콩주머니" 에는 실제 콩이 든다). 사전에 없는 한 글자(강아지 알레르기를 "개" 로 적은 것)도
+# 글자 그대로 대조하지 않는다 — "블록 3개" 가 걸린다 (#261 · #298 리뷰).
+SINGLE_CHAR_NAMES = frozenset({"잣", "콩", "깨", "쑥"})
+# 두 글자 이상이어도 놀이 문장에서 다른 뜻으로 읽히는 별칭 (#261 리뷰 — "플라스틱 포크" ·
+# "에그 쉐이커" · "밀크 카톤" · "피치색 물감" · "전복 모양" · "돼지저금통")
+EXCLUDED_ALIASES = frozenset({"포크", "에그", "밀크", "피치", "전복", "돼지"})
+
+# 로그와 사유에 남기는 이름. 알레르기 이름 · 활동명은 남기지 않는다
+HEALTH_SAFETY = "health_safety"
+
+
+@dataclass(frozen=True)
+class SafetyTerms:
+    """이번 run 의 health_safety 행으로 만든 대조표. 후보마다 다시 만들지 않는다."""
+
+    blocking: tuple[Term, ...]  # status='active' 행 — 걸리면 차단
+    allergens: tuple[Term, ...]  # 놀이에 든 알레르기 항목 표시용 — 상태 무관, key 가 정식 명칭
+
+
+@dataclass(frozen=True)
+class SafetyCheck:
+    """후보 하나의 안전 판정."""
+
+    blocked: bool
+    hits: tuple[str, ...]  # 걸린 위험 축 이름 · "health_safety". 로그용 — 원문을 싣지 않는다
+    warnings: tuple[str, ...]  # 경고 축의 warning_text (상수). 차단이면 비어 있다
+    allergens: tuple[str, ...]  # 놀이에 든 알레르기 항목 정식 명칭 (suggestion.allergens)
+
+
+def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
+    """health_safety 행을 대조표로 바꾼다.
+
+    - 거르는 것은 `status='active'` 뿐이다. `none` · `retracted` · 행 없음(unknown)은 막지 않는다.
+    - label 은 보호자의 자유 입력이라 Food 와 같은 규칙(`common/allergy.read_label`)으로 읽는다.
+      "우유 알레르기" · "우유, 계란" · "Milk" 도 19종 코드가 되고, 묶음 이름("갑각류")은 게 ·
+      새우로 펼친다. 19종은 사전의 별칭과 guard 로 넓혀 대조한다 — "밀" 로 등록하면 "밀가루 점토"
+      도 걸린다.
+    - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다.
+    - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다.
+    """
+    canonical = _canonical_allergens()
+    book = shared_book()
+
+    blocking: list[Term] = []
+    registered: list[Term] = []
+
+    def add(found: list[Term], term: Term | None) -> None:
+        if term is not None and term not in found:
+            found.append(term)
+
+    for entry in entries:
+        named, rest = read_label(entry.label, book)
+        terms = [canonical.get(str(code)) for code in sorted(named.codes)]
+        terms += [_for_activity(term) for term in named.terms]
+        literal = [_for_activity(Term(key=word, aliases=(word,))) for word in rest]
+        if entry.kind == "allergy":
+            for term in literal:
+                add(registered, term)
+        if entry.status == "active":
+            for term in (*terms, *literal):
+                add(blocking, term)
+    return SafetyTerms(blocking=tuple(blocking), allergens=(*canonical.values(), *registered))
+
+
+def check_candidate(
+    candidate: ActivityCandidate, *, months: int, terms: SafetyTerms
+) -> SafetyCheck:
+    """후보 하나를 위험 용어와 health_safety 로 판정한다.
+
+    - `content` 와 `materials` 의 각 항목을 **따로** 대조한다(`match_fields`). 이어 붙이면
+      `["작은", "블록 담는 통"]` 이 "작은블록담는통" 이 되어 없는 위험을 만든다 (3-5). 한 항목
+      안에서도 별칭은 문장부호를, guard 는 띄어쓰기를 넘지 않는다.
+    - 위험 용어는 걸린 축의 월령으로 차단/경고를 정하고, 18개월 미만은 경고도 차단이다.
+    - 걸린 후보는 고치지 않는다. 차단이면 통째로 뺀다 — "물놀이터" 를 "얕은 물놀이터" 로 고쳐
+      통과시키지 않는다.
+    """
+    texts = (candidate.content, *candidate.materials)
+    dictionary = hazard_terms()
+
+    hits: list[str] = []
+    warnings: list[str] = []
+    blocked = False
+    for key in match_fields(texts, dictionary.terms):
+        axis = dictionary.axis_of(key)
+        level = axis.level_at(months)
+        if level == "warn" and months < SAFETY_PROMOTE_BELOW_MONTH:
+            level = "block"
+        if level is None:
+            continue
+        if axis.name not in hits:
+            hits.append(axis.name)
+        if level == "block":
+            blocked = True
+        elif axis.warning_text and axis.warning_text not in warnings:
+            warnings.append(axis.warning_text)
+    if match_fields(texts, terms.blocking):
+        blocked = True
+        hits.append(HEALTH_SAFETY)
+
+    allergens = tuple(dict.fromkeys(match_fields(texts, terms.allergens)))
+    return SafetyCheck(
+        blocked=blocked,
+        hits=tuple(hits),
+        warnings=() if blocked else tuple(warnings),
+        allergens=allergens,
+    )
 
 
 def filter_activity_safety(
@@ -15,30 +138,47 @@ def filter_activity_safety(
     *,
     months: int,
     safety: Sequence[SafetyEntry],
-) -> tuple[ActivityCandidate, ...]:
-    """안전 필터. 통과한 후보만 돌려준다. 걸린 후보는 수정하지 않고 뺀다.
+) -> tuple[SafetyCheck, ...]:
+    """안전 필터 (코드 tool). 후보마다 판정을 같은 순서로 돌려준다.
 
-    구현 (#156 의 app/rules/term_match.py 머지 후):
-    - `reference/hazard_terms.yaml` 을 로더로 읽는다. 읽지 못하면 예외를 그대로 올린다 —
-      빈 사전으로 통과시키면 전 후보가 조용히 나간다.
-    - content 와 materials 의 각 항목을 **따로** match_terms 에 넘긴다. 이어 붙이지 않는다.
-    - 걸린 축의 block/warn 월령과 대조한다. 0–17개월은 경고도 차단으로 올린다 (D6 규칙 ②).
-    - health_safety 는 state='active' 행만 같은 방식으로 대조한다 (D7). 알레르기 별칭은
-      Food 와 같은 `reference/allergen_terms.yaml` 을 공통 로더로 읽는다 — food 패키지를
-      import 하지 않는다 (docs/agents/README.md §6). 매처도 사전도 하나라 갈라지지 않는다.
-    - 로그에는 걸린 건수와 축만 남긴다. 활동명 · 재료 원문은 남기지 않는다.
+    `safety` 는 build_gate 가 run state 에 담아 둔 행이다 — 여기서 health_safety 를 다시 읽지
+    않는다. 위험 용어 사전을 읽지 못하면 예외를 그대로 올린다 — 빈 사전으로 통과시키면 전 후보가
+    조용히 나간다.
     """
-    raise NotImplementedError("term_match 머지 후 구현")
+    terms = safety_terms(safety)
+    return tuple(check_candidate(c, months=months, terms=terms) for c in candidates)
 
 
 def filter_recent_duplicates(
     candidates: Sequence[ActivityCandidate], *, recent: Sequence[str]
 ) -> tuple[ActivityCandidate, ...]:
-    """최근 창 안에 한 활동과 같은 후보를 뺀다.
+    """최근 창(`rules.DUPLICATE_WINDOW_DAYS`) 안에 한 활동과 같은 후보를 뺀다.
 
-    구현:
-    - 정규화 후 완전 일치다. 유사도 임계값은 쓰지 않는다 — `블록쌓기/블럭쌓기`(0.750)가
-      `물놀이/물감놀이`(0.857)보다 점수가 낮아 어떤 단일 임계값도 둘을 가르지 못한다.
-    - 정규화는 NFKC + casefold + 공백·문장부호 제거까지. 조사는 떼지 않는다.
+    판정은 `rules.is_recent_duplicate` — 정규화 후 완전 일치다. 출력 검증(`review.py`)은 같은
+    판정으로 후보를 거절하고, 이 함수는 사전 조회한 후보 풀에서 미리 뺄 때 쓴다.
     """
-    raise NotImplementedError("출력 검증 구현 후")
+    return tuple(c for c in candidates if not is_recent_duplicate(c.content, recent))
+
+
+def _canonical_allergens() -> dict[str, Term]:
+    """19종 사전을 코드 → 정식 명칭(`ALLERGEN_NAMES`)을 key 로 한 Term 으로 (Activity 대조용)."""
+    result: dict[str, Term] = {}
+    for term in allergen_terms():
+        name = ALLERGEN_NAMES[int(term.key)]
+        usable = _for_activity(Term(key=name, aliases=term.aliases, guards=term.guards))
+        if usable is not None:
+            result[term.key] = usable
+    return result
+
+
+def _for_activity(term: Term) -> Term | None:
+    """놀이 문장 대조에 쓸 별칭만 남긴다. 남는 게 없으면 None — 그 이름으로는 대조하지 않는다."""
+    excluded = {normalize(alias) for alias in EXCLUDED_ALIASES}
+    aliases = tuple(
+        alias
+        for alias in term.aliases
+        if (key := normalize(alias)) not in excluded and (len(key) >= 2 or key in SINGLE_CHAR_NAMES)
+    )
+    if not aliases:
+        return None
+    return Term(key=term.key, aliases=aliases, guards=term.guards)

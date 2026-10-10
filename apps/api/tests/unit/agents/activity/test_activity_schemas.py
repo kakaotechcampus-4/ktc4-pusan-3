@@ -1,6 +1,7 @@
 """모델 tool 인자 스키마 검증.
 
-- 후보는 정확히 3개 — 2개 이하나 4개 이상이면 인자 검증에서 거절된다.
+- 모델은 후보를 `MAX_SUGGESTIONS`(3)개 낸다 — 2개 이하나 4개 이상이면 인자 검증에서
+  거절된다. 보호자에게 1~2개가 가는 것은 안전 필터로 빠진 뒤의 일이다.
 - 근거는 `EvidencePick(id, note)`. note 가 비면 보호자 화면에 빈 근거가 나가므로 거절한다.
 - `materials` 는 비어도 받는다 — 필수로 만들면 모델이 재료를 지어낸다 (D6).
 """
@@ -16,8 +17,10 @@ from app.agents.activity.schemas.recommend import (
     ProposeActivityCandidatesArgs,
 )
 from app.agents.activity.schemas.task import ActivityTaskType, task_type_of
+from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.suggestion import REQUIRED_COUNT
+from app.agents.common.suggestion import MAX_SUGGESTIONS
+from app.rules.term_match import match_terms
 
 
 def candidate(**kwargs) -> dict:
@@ -40,7 +43,7 @@ def propose(count: int) -> dict:
 
 class TestCandidateCount:
     def test_개수는_공통_상수를_따른다(self):
-        assert REQUIRED_COUNT == 3
+        assert MAX_SUGGESTIONS == 3
 
     @pytest.mark.parametrize("count", [0, 1, 2, 4])
     def test_3개가_아니면_거절한다(self, count):
@@ -55,7 +58,7 @@ class TestCandidateCount:
         """검증 규칙과 모델 스펙이 같은 Pydantic 모델에서 나온다."""
         spec = next(s for s in TOOL_SPECS if s["function"]["name"] == "propose_activity_candidates")
         candidates = spec["function"]["parameters"]["properties"]["candidates"]
-        assert candidates["minItems"] == candidates["maxItems"] == REQUIRED_COUNT
+        assert candidates["minItems"] == candidates["maxItems"] == MAX_SUGGESTIONS
         assert candidates["items"]["additionalProperties"] is False
 
 
@@ -75,6 +78,14 @@ class TestCandidate:
         """아이 기록이 0행이면 코드가 일반 추천으로 분류한다. 모델이 막을 일이 아니다."""
         assert ActivityCandidate.model_validate(candidate()).evidence == []
 
+    @pytest.mark.parametrize("field", ["content", "materials"])
+    def test_설명의_예시는_위험_용어에_걸리지_않는다(self, field):
+        """이 스키마는 0개월부터 매 호출에 같이 나간다. 예시가 걸리는 문장이면 모델이 그 문장을
+        기준으로 삼는다 — activity_doc 예시에서 경고까지 뺀 것과 같은 이유다 (#256 리뷰).
+        """
+        description = ActivityCandidate.model_fields[field].description or ""
+        assert match_terms(description, hazard_terms().terms) == ()
+
 
 class TestEvidencePick:
     def test_note_가_비면_거절한다(self):
@@ -82,7 +93,7 @@ class TestEvidencePick:
             EvidencePick.model_validate({"id": "x", "note": ""})
 
     def test_출처_칸은_모델이_채우지_않는다(self):
-        """source_kind · source_updated_at 은 출력 tool 이 조회 결과에서 채운다 (D6)."""
+        """source_kind · polarity · label 은 출력 tool 이 조회 결과에서 채운다 (D6)."""
         with pytest.raises(ValidationError):
             EvidencePick.model_validate(
                 {"id": "x", "note": "모래놀이를 오래 했어요", "source_kind": "observation_activity"}

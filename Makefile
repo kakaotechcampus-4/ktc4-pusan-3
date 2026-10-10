@@ -2,7 +2,7 @@
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
-        web-install web-dev web-build web-start web-test web-lint web-fmt \
+        web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-image web-up web-down web-logs
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
@@ -16,7 +16,7 @@ help:
 	@echo "  make install      의존성 설치 (클론 직후)"
 	@echo "  make dev          개발 서버 실행  http://localhost:8000"
 	@echo "  make test         테스트 실행"
-	@echo "  make lint         코드 검사 (ruff)"
+	@echo "  make lint         코드 검사 (ruff check + format --check) — PR 올리기 전"
 	@echo "  make fmt          코드 포맷팅 (ruff)"
 	@echo ""
 	@echo "── 프론트 (apps/web) ──"
@@ -25,13 +25,15 @@ help:
 	@echo "  make web-build      프로덕션 빌드 (프리렌더까지 — dev 에서 안 보이는 에러가 여기서 난다)"
 	@echo "  make web-start      빌드 결과를 로컬에서 실행 (web-build 먼저)"
 	@echo "  make web-test       테스트 실행 (vitest)"
+	@echo "  make web-e2e        화면 규칙 테스트 (Playwright · 목 서버로 개발 서버를 띄운다)"
 	@echo "  make web-typecheck  타입 검사 (next typegen + tsc)"
 	@echo "  make web-lint       코드 검사 (eslint)"
 	@echo "  make web-fmt        코드 포맷팅 (prettier)"
-	@echo "  make web-check      typecheck + lint + test — PR 올리기 전"
+	@echo "  make web-fmt-check  포맷 검사만 (고치지 않는다 — CI 가 보는 것)"
+	@echo "  make web-check      format + typecheck + lint + test — PR 올리기 전 (CI 와 같은 검사, build 만 빠짐)"
 	@echo ""
 	@echo "── 로컬 개발 DB (deploy/docker) ──"
-	@echo "  make db-up        로컬 Postgres+pgvector 기동 (최초 1회 deploy/docker/.env 필요)"
+	@echo "  make db-up        로컬 Postgres+pgvector+Redis 기동 (최초 1회 deploy/docker/.env 필요)"
 	@echo "  make db-down      로컬 DB 중지"
 	@echo "  make db-logs      로컬 DB 로그"
 	@echo ""
@@ -66,7 +68,7 @@ test:
 	cd apps/api && uv run pytest
 
 lint:
-	cd apps/api && uv run ruff check .
+	cd apps/api && uv run ruff check . && uv run ruff format --check .
 
 fmt:
 	cd apps/api && uv run ruff format .
@@ -90,6 +92,10 @@ web-start:
 web-test:
 	cd apps/web && pnpm test
 
+# 개발 서버가 떠 있으면 그것을 쓰고, 없으면 목 모드로 띄웠다 내린다 (playwright.config.ts).
+web-e2e:
+	cd apps/web && pnpm test:e2e
+
 web-typecheck:
 	cd apps/web && pnpm typecheck
 
@@ -99,7 +105,11 @@ web-lint:
 web-fmt:
 	cd apps/web && pnpm format
 
-web-check: web-typecheck web-lint web-test
+web-fmt-check:
+	cd apps/web && pnpm format:check
+
+# CI(.github/workflows/ci-web.yml)와 같은 검사. 거기에 build 하나가 더 붙는다.
+web-check: web-fmt-check web-typecheck web-lint web-test
 
 db-up:
 	$(COMPOSE_DEV) up -d

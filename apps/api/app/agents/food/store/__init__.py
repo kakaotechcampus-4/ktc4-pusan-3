@@ -1,6 +1,7 @@
 """Food Agent와 DB·외부 데이터 사이 통로.
 구현체는 ORM·외부 API 가 연결된 뒤 같은 Protocol로 붙인다.
-Food 의 쓰기 포트는 `daycare_meal` 수정·삭제뿐이다. 기록은 Memory가, 추천 저장은 app/api가 한다.
+Food 의 쓰기 포트는 자기만 쓰고 읽는 둘(`daycare_meal` 수정·삭제 · 메뉴 카탈로그)이고,
+호출마다 바로 commit 된다. 영양 합계·구간은 저장하지 않는다.
 """
 
 from app.agents.food.store.inmemory import (
@@ -11,7 +12,6 @@ from app.agents.food.store.inmemory import (
     InMemoryGrowth,
     InMemoryMenuCatalog,
     InMemoryMenuSource,
-    InMemoryNutrientBands,
     InMemoryProfile,
     InMemorySafety,
     InMemorySuggestionHistory,
@@ -35,7 +35,6 @@ from app.agents.food.store.ports import (
     MenuSource,
     MenuSourceError,
     NutrientBand,
-    NutrientBandStore,
     NutritionFacts,
     SafetyEntry,
     SafetyLookupError,
@@ -62,7 +61,6 @@ __all__ = [
     "InMemoryGrowth",
     "InMemoryMenuCatalog",
     "InMemoryMenuSource",
-    "InMemoryNutrientBands",
     "InMemoryProfile",
     "InMemorySafety",
     "InMemorySuggestionHistory",
@@ -72,7 +70,6 @@ __all__ = [
     "MenuSource",
     "MenuSourceError",
     "NutrientBand",
-    "NutrientBandStore",
     "NutritionFacts",
     "SafetyEntry",
     "SafetyLookupError",

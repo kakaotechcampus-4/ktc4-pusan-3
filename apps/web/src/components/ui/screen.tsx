@@ -19,15 +19,25 @@ import { cn } from "@/lib/cn";
  *    화면이 직접 `sticky` 를 붙이면 아래 여백을 0 으로 되돌려야 하는데, 그게 바로 위에서
  *    두 번 사고 난 그 조작이다. 둘 다 넘기면 **채팅바가 위, 네비가 아래**로 한 덩어리가 되고
  *    safe area 는 제일 아래 것이 받는다 — 각자 받으면 그만큼 두 번 밀린다.
+ *
+ * 🚨 **위에 붙는 것도 같다** (`topBar` · 04 대화의 머리). 넘기면 위 여백(safe area + 여백)을
+ *    이 바가 대신 받는다 — 본문과 바가 각자 받으면 노치 아래에 빈 띠가 두 겹 생기고, 바 없이
+ *    화면이 직접 `sticky top-0` 을 붙이면 스크롤했을 때 바가 노치 · 상태바 밑으로 들어간다.
  */
 export function Screen({
   children,
   className,
+  topBar,
   bottomBar,
   nav,
 }: {
   children: ReactNode;
   className?: string;
+  /**
+   * 스크롤과 무관하게 화면 위에 붙는 머리 (04 대화). 🚨 **아래로 길게 자라는 흐름 화면에만 쓴다** —
+   * 돌아가는 길이 화면 밖으로 밀리는 곳이다. 짧은 화면에 붙이면 본문 자리만 줄어든다.
+   */
+  topBar?: ReactNode;
   /** 스크롤과 무관하게 화면 아래에 붙는 영역 (03 홈의 채팅바). */
   bottomBar?: ReactNode;
   /** 그보다 더 아래에 붙는 화면 이동 바 (`ChildNav`). */
@@ -36,11 +46,25 @@ export function Screen({
   const pinned = Boolean(bottomBar || nav);
 
   return (
-    <main className="max-w-content pt-safe-8 mx-auto flex min-h-dvh w-full flex-col">
+    <main
+      className={cn(
+        "max-w-content mx-auto flex min-h-dvh w-full flex-col",
+        topBar ? null : "pt-safe-8",
+      )}
+    >
+      {topBar ? (
+        // 🚨 위 여백(safe area + 여백)을 이 바가 진다. 아래 바와 짝이다 — `line` 1px 이
+        //    "여기부터 고정" 을 말하고, 좌우 여백은 본문과 같은 값이다.
+        <div className="bg-canvas border-line pt-safe-4 sticky top-0 z-10 border-b px-3 pb-2 min-[380px]:px-4">
+          {topBar}
+        </div>
+      ) : null}
       {/* 좌우 여백이 본문에만 걸린다 — 아래 바의 구분선은 화면 끝까지 가야 한다. */}
       <div
         className={cn(
           "flex flex-1 flex-col px-3 min-[380px]:px-4",
+          // 머리가 붙어 있으면 본문은 그 아래에서 한 칸(24px)만 띄우고 시작한다.
+          topBar ? "pt-6" : null,
           // 붙는 것이 없으면 이 컴포넌트가 아래 여백까지 소유한다 (기존 동작).
           pinned ? "pb-4" : "pb-safe-8",
           className,

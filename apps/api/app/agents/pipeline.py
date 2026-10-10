@@ -3,6 +3,10 @@
 Memory 저장이 끝난 뒤 도메인 Agent를 실행해 같은 요청에서 저장된 관찰도 바로 조회할 수 있게 한다.
 Supervisor 실패 시에는 Memory가 원문을 처리하고, Memory 실패 시 전체 요청을 실패로 처리한다.
 
+Memory 가 끝나면 러너가 넘긴 commit 으로 기록 단계를 확정하고, 저장 안내는 그 뒤에 낸다.
+도메인 단계는 쓰는 task 를 먼저 끝낸 뒤 읽는 task 를 돌린다.
+도메인 결과는 끝나는 대로 내보내고, Partial은 다 끝나거나 20초가 된 뒤 한 번 낸다.
+
 Supervisor가 요청을 기록으로 잘못 나누면 그 조각은 어디서도 처리되지 않는다.
 Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 돌려주고 한 번만 다시 나눈다.
 """
@@ -13,10 +17,14 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self
+from uuid import UUID
 
 from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
+from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.agent import run as run_food
+from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
@@ -24,6 +32,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
+from app.agents.run_writes import RunWrites
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.routing import Guidance, Routing, route
@@ -66,9 +75,28 @@ class DomainOutcome(Protocol):
     def status(self) -> str: ...
     @property
     def model_calls(self) -> int: ...
+    @property
+    def readouts(self) -> tuple[Readout, ...]: ...
+    @property
+    def needs_observation(self) -> tuple[str, ...]: ...
+    @property
+    def suggestions(self) -> tuple[SuggestionDraft, ...]: ...
 
 
 DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
+
+# 기록 단계를 확정하는 함수. 러너가 run마다 만들어 넘기고, pipeline은 Memory 다음에 한 번 부른다.
+# 세션과 commit 구현은 러너(백엔드). pipeline은 기록 단계가 끝난 시점만 알린다.
+# 러너 약속 — commit이 한 번이라도 끝난 run은 failed로 끝내지 않는다. 60초 안전망은
+#   pipeline 결과 없이 끝나므로, 러너는 이 함수 안에서 commit 여부를 직접 표시해 두고
+#   _guarded · 안전망 · forget_run 이 그 표시를 본다 (러너 구현은 백엔드 몫).
+# TODO(러너 계약): commit 도중 연결이 끊겨 결과를 모르면 failed 로 확정하지 않고
+#   Idempotency 키도 풀지 않는다. 요청 식별자와 처리 결과를 DB 에 남겨 같은 키로 다시
+#   보내면 기존 결과를 확인한다(멘토 #196 답변). 모양은 러너 DB 세션 작업 전에 정한다.
+Commit = Callable[[], Awaitable[None]]
+
+# child_id 를 받아 백그라운드로 Curator 를 띄우는 콜백. 구현은 entrypoint 가 결정한다.
+CuratorTrigger = Callable[[UUID], None]
 
 
 class DomainContext(Protocol):
@@ -82,6 +110,12 @@ PartialReason = Literal["timeout_20s", "agent_error"]
 # 구현된 도메인 Agent 의 실행 함수. routing.IMPLEMENTED_AGENTS 와 키가 같아야 한다
 _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
+}
+
+# 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.
+# 이 task를 먼저 끝낸 뒤 나머지를 동시에 돌린다(기록 단계 → 쓰는 task → 읽는 task)
+_WRITING_TASKS: dict[str, frozenset[str]] = {
+    DomainAgentName.FOOD.value: frozenset(task.value for task in FOOD_WRITING_TASKS),
 }
 
 
@@ -132,12 +166,39 @@ class EventDrafts:
 
 @dataclass(frozen=True)
 class DomainRouted:
-    """도메인 Agent 하나가 결과를 냈을 때 로그·지표용. 화면에 보내는 건 app/api가 정한다."""
+    """도메인 Agent 하나가 결과를 냈을 때 로그·지표용. 화면에 보내는 건 app/api가 정한다.
+
+    끝나는 대로 나간다. 쓰는 task의 것이 먼저고, 읽는 task 끼리는 끝난 순서다.
+    """
 
     agent: str
     task_type: str | None
     status: str
     model_calls: int
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    """도메인 Agent 결과 중 화면에 보낼 것 (#227). SSE 이름은 agent_result.
+
+    Agent 결과 한 건에 하나씩, `DomainRouted` 바로 뒤에 나간다. 추천이 없는 결과(성장 추이 ·
+    닫힘 안내 · 개수 안내 · 되묻기)도 여기 실린다 — 저장할 것이 없어서 끝나는 대로 보낸다.
+    결과를 못 낸 Agent(예외 · 시간 초과 · `status="failed"`)는 이 이벤트가 없고 `Partial.failed`
+    로만 알린다.
+
+    추천(`suggestion_ids` · 근거 모드 · 이유 문장)은 아직 싣지 않는다. 저장이 끝난 id만
+    보내야해서(공통규약 §3) 저장 콜백이 생길 때 더한다. 그 전에 빈 목록을 보내면 화면이
+    "0개" 로 읽는다.
+    그래서 그때까지 추천이 들어 있는 결과는 이 이벤트를 내지 않는다(`_shows`). 내면 개수 안내
+    ("2개 준비했어요") · 날씨 안내가 후보 없이 대화에 먼저 선다. 추천을 실을 때는 추천 칸 키를
+    늘 싣는다 — 값이 없어도 `null` · `[]` 로.
+    """
+
+    agent: str
+    task_type: str | None
+    status: str
+    readouts: tuple[Readout, ...]
+    question: str | None  # needs_observation 하나. 되묻기는 한 번에 하나다 (DomainAgentResult)
 
 
 @dataclass(frozen=True)
@@ -213,6 +274,7 @@ Event = (
     | Saved
     | EventDrafts
     | DomainRouted
+    | AgentResult
     | Unavailable
     | Guidance
     | MemoryNote
@@ -244,6 +306,32 @@ class Disagreement:
 
 
 @dataclass(frozen=True)
+class StageTimes:
+    """단계마다 걸린 시간(ms). 그 단계를 돌지 않았으면 None. 원문 없이 로그로만 남는다.
+
+    도메인 단계에 최소 예산을 따로 줄지 실측으로 정하기 위해 남긴다.
+    """
+
+    supervisor_ms: int | None = None  # 다시 나눈 run 은 두 번째 호출까지 더한다
+    memory_ms: int | None = None  # 기록 단계. Memory + commit
+    budget_ms: int | None = None  # 도메인 단계를 시작할 때 20초에서 남은 몫
+    writers_ms: int | None = None  # 쓰는 도메인 task 묶음
+    readers_ms: int | None = None  # 읽는 도메인 task 묶음
+
+
+@dataclass(frozen=True)
+class _DomainRun:
+    """_run_domain 결과."""
+
+    outcomes: tuple[DomainOutcome, ...]  # 결과를 낸 것만, task 순서
+    partial: Partial | None
+    writers_ms: int | None = None  # 그 묶음이 없었으면 None
+    readers_ms: int | None = None
+    # status="failed" 로 돌아온 결과의 모델 호출 수. outcomes 에는 없지만 몇 번 불렀는지는 안다
+    failed_model_calls: int = 0
+
+
+@dataclass(frozen=True)
 class PipelineResult:
     run_id: str
     supervisor: SupervisorResult  # 원문 조각은 로그나 저장소에 남기지 않는다
@@ -253,9 +341,12 @@ class PipelineResult:
     rerouted: Rerouted | None = None  # 다시 나눴으면 그 결과. routing 은 다시 나눈 쪽이다
     partial: Partial | None = None  # 도메인 Agent가 일부 빠진 경우
     failed: Failed | None = None
+    # 이 run 에서 확정된 쓰기가 있었는지. True면 failed가 아니다
+    committed: bool = False
     disagreement: Disagreement = Disagreement()
     model_calls: int = 0
     latency_ms: int = 0
+    times: StageTimes = StageTimes()
 
     @property
     def ok(self) -> bool:
@@ -272,12 +363,19 @@ async def handle_input(
     memory_client: LLMClient | None = None,
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
+    commit: Commit | None = None,
+    writes: RunWrites | None = None,
+    curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
     continuation 이 있으면 raw_text 는 이전 run 의 질문에 대한 답이다 (_handle_continuation).
     contexts는 도메인 Agent 이름 → 그 Agent 의 context.
     구현된 Agent 몫은 전부 있어야 하고, 포트는 호출 전에 만들어 넘긴다.
+    commit은 Memory가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
+    TODO: 러너가 DB 세션을 붙이면 기본값 None을 없앤다. 지금은 run 마다 InMemoryStore라
+      확정할 것이 없어 러너가 넘기지 않는다.
+    writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     """
     started = time.perf_counter()
     send = emit or _ignore
@@ -292,10 +390,14 @@ async def handle_input(
             memory_client=memory_client,
             send=send,
             started=started,
+            commit=commit,
+            curator_trigger=curator_trigger,
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
+    supervisor_started = time.perf_counter()
     supervisor = await run_supervisor(raw_text, client=supervisor_client)
+    supervisor_ms = _ms_since(supervisor_started)
     routing = route(raw_text, supervisor, run_id=run_id)
     model_calls = supervisor.model_calls
 
@@ -306,18 +408,36 @@ async def handle_input(
 
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
+    committed = False
+    memory_ms: int | None = None
     # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
     if routing.memory_task is not None:
         send(Step(2, _TOTAL_STEPS, _LABELS[1]))
+        record_started = time.perf_counter()
         try:
             memory = await run_memory(
                 raw_text, memory_context, client=memory_client, task=routing.memory_task
             )
         except LLMError:
-            # Memory 실패 시 기본값으로 대체하지 않는다
+            memory_ms = _ms_since(record_started)
+            # Memory 실패 시 기본값으로 대체하지 않는다. commit 전이라 러너가 되돌린다
             failed = Failed("llm_unavailable", raw_text)
         else:
             model_calls += 1  # Agent 하나가 1. 루프를 몇 바퀴 돌았는지는 memory.steps
+        if memory is not None and not memory.completed:
+            memory_ms = _ms_since(record_started)
+            # 반복 상한에 걸려 기록을 다 끝내지 못하면 일부만 남지 않게 commit 하지 않고
+            # (러너가 되돌린다) failed로 끝낸다. 저장 안내/되묻기 맥락도 내지 않는다
+            failed = Failed("unparsable", raw_text)
+        elif memory is not None:
+            # 기록 단계를 먼저 확정한다. 저장 안내 · 되묻기 맥락은 확정된 것만 나간다
+            committed = await _commit_record(memory, commit)
+            memory_ms = _ms_since(record_started)  # 기록 단계 = Memory + commit
+            if committed and curator_trigger is not None:
+                try:
+                    curator_trigger(memory_context.child_id)
+                except Exception as exc:
+                    logger.error("curator trigger 실패 error=%s", type(exc).__name__)
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
@@ -329,10 +449,6 @@ async def handle_input(
                 send(note)
             if memory.pending is not None:
                 send(PendingReply(run_id, memory.pending))
-            # TODO(#149-integration): DB 저장소가 붙으면 여기서 Curator 를 백그라운드로 띄운다.
-            #   관찰이 커밋된 뒤 호출해야 하므로 InMemoryStore 에서는 동작하지 않는다.
-            #   from app.domains.memory.curator.trigger import trigger_curator_background
-            #   trigger_curator_background(child_id, today, embedder, judge)
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
@@ -347,9 +463,11 @@ async def handle_input(
     # 호출을 한 번 더 쓰고, 그 조각이 도메인 Agent로 옮겨가 답이 와도 이어 붙일 자리가 없어진다
     waiting = memory is not None and memory.pending is not None
     if bounced and stranded and REROUTE_MISDELEGATED and not waiting:
+        reroute_started = time.perf_counter()
         retry = await run_supervisor(
             raw_text, client=supervisor_client, feedback=_reroute_feedback(bounced)
         )
+        supervisor_ms += _ms_since(reroute_started)
         model_calls += retry.model_calls
         if retry.output is not None:
             before, supervisor = routing, retry
@@ -373,17 +491,34 @@ async def handle_input(
 
     domain: list[DomainOutcome] = []
     partial: Partial | None = None
+    budget_ms: int | None = None
+    writers_ms: int | None = None
+    readers_ms: int | None = None
     if failed is None and routing.domain_tasks:
         # Memory 가 성공한 뒤에 돈다. 방금 저장한 관찰이 도메인 Agent 조회에 잡혀야 한다
         send(Step(3, _TOTAL_STEPS, _LABELS[2]))
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
-        outcomes, partial = await _run_domain(routing.domain_tasks, contexts, timeout=remaining)
-        for outcome in outcomes:
+        budget_ms = int(remaining * 1000)
+
+        # 결과는 끝나는 대로 내보낸다 (K-11). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+        def on_outcome(outcome: DomainOutcome) -> None:
+            send(_routed(outcome))  # 로그 · 지표용
+            if _shows(outcome):
+                send(_result(outcome))  # 화면용 — readout · 되묻기 (#227)
+
+        ran = await _run_domain(
+            routing.domain_tasks, contexts, timeout=remaining, on_outcome=on_outcome
+        )
+        partial = ran.partial
+        writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
+        # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다
+        committed = committed or (writes is not None and writes.wrote)
+        for outcome in ran.outcomes:
             domain.append(outcome)
             model_calls += outcome.model_calls
-            send(_routed(outcome))
+        model_calls += ran.failed_model_calls
 
-    if failed is None and not _did_anything(memory, domain, routing):
+    if failed is None and not committed and not _did_anything(memory, domain, routing):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
         failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
     if failed is not None:
@@ -401,9 +536,17 @@ async def handle_input(
         rerouted=rerouted,
         partial=partial,
         failed=failed,
+        committed=committed,
         disagreement=_disagreement(routing, memory),
         model_calls=model_calls,
-        latency_ms=int((time.perf_counter() - started) * 1000),
+        latency_ms=_ms_since(started),
+        times=StageTimes(
+            supervisor_ms=supervisor_ms,
+            memory_ms=memory_ms,
+            budget_ms=budget_ms,
+            writers_ms=writers_ms,
+            readers_ms=readers_ms,
+        ),
     )
     _log(result)
     return result
@@ -427,6 +570,12 @@ LEFTOVER_NOTE_NO_CONTEXT = (
     "적어 주신 다른 내용은 반영하지 않았어요. 그 내용과 이 질문의 답은 각각 따로 한 줄로 "
     "보내 주세요. 답에는 무엇에 대한 것인지 함께 적어 주세요."
 )
+# 재질문 상한에 닿은 이어받기 run. 모델이 또 물은 질문 대신 이 문구를 message 로 낸다.
+# NO_CONTEXT_NOTE 처럼 답을 따로 보내라고 하면 같은 답이 다시 와서 상한이 의미가 없어진다.
+# 상한은 그 run 에서 쓴 것이 없을 때만 걸려서, "저장하지 않았어요" 가 같은 run 의
+# 저장과 부딪히지 않는다. 화면은 저장 없이 message 만 온 run 에 "적어주신 말을 확인했어요"
+# 제목을 달고 이 문장이 상한 문구인지 가리지 못해서, 여기에 "확인" 을 쓰지 않는다(#246 프론트 리뷰)
+ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요."
 
 
 def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
@@ -437,6 +586,10 @@ def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
     reply = memory.reply
     if reply is None:
         return None
+    if memory.ask_limit_reached:
+        # 질문은 내보내지 않는다. 답에 섞인 말을 남겼으면 그것만 따로 보내라고 알린다
+        text = f"{ASK_LIMIT_NOTE} {LEFTOVER_NOTE}" if memory.leftover else ASK_LIMIT_NOTE
+        return MemoryNote(text=text, kind="message")
     if reply.kind == "question" and memory.pending is None:
         suffix = LEFTOVER_NOTE_NO_CONTEXT if memory.leftover else NO_CONTEXT_NOTE
         return MemoryNote(text=f"{reply.text} {suffix}", kind="message")
@@ -455,20 +608,38 @@ async def _handle_continuation(
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
+    commit: Commit | None,
+    curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
     send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
+    committed = False
     model_calls = 0
+    memory_ms: int | None = None
+    record_started = time.perf_counter()
     try:
         memory = await run_memory(
             answer, memory_context, client=memory_client, continuation=continuation
         )
     except LLMError:
+        memory_ms = _ms_since(record_started)
         failed = Failed("llm_unavailable", answer)
     else:
         model_calls = 1
+    if memory is not None and not memory.completed:
+        memory_ms = _ms_since(record_started)
+        # 반복 상한 — 일반 run과 같이 commit 하지 않고 failed로 끝냄
+        failed = Failed("unparsable", answer)
+    elif memory is not None:
+        committed = await _commit_record(memory, commit)
+        memory_ms = _ms_since(record_started)
+        if committed and curator_trigger is not None:
+            try:
+                curator_trigger(memory_context.child_id)
+            except Exception as exc:
+                logger.error("curator trigger 실패 error=%s", type(exc).__name__)
         refs = _saved_refs(memory)
         if refs:
             send(Saved(refs))
@@ -493,8 +664,10 @@ async def _handle_continuation(
         routing=_NO_ROUTING,
         memory=memory,
         failed=failed,
+        committed=committed,
         model_calls=model_calls,
-        latency_ms=int((time.perf_counter() - started) * 1000),
+        latency_ms=_ms_since(started),
+        times=StageTimes(memory_ms=memory_ms),
     )
     _log(result)
     return result
@@ -505,32 +678,60 @@ async def _run_domain(
     contexts: Mapping[str, DomainContext],
     *,
     timeout: float | None,
-) -> tuple[list[DomainOutcome], Partial | None]:
-    """도메인 task 를 전부 동시에 돌린다. 하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06).
+    on_outcome: Callable[[DomainOutcome], None] | None = None,
+) -> _DomainRun:
+    """쓰는 task 를 먼저 끝내고 읽는 task 를 동시에 돌린다.
 
-    결과는 끝난 순서가 아니라 task 순서로 돌려준다.
+    결과는 끝나는 대로 on_outcome 으로 넘긴다 (K-11). 쓰는 task 의 결과는 읽는 task 가 시작하기
+    전에 나가고, 읽는 task 끼리는 끝난 순서다. 돌려주는 outcomes 는 그대로 task 순서다.
+    하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06). 쓰는 task 도 같은 timeout 안에서 센다.
+    쓰는 쪽이 늦으면 읽는 쪽 몫이 준다.
     """
     # 표에 없는 agent·빠진 context 는 배선 버그다. 부분 실패로 숨기지 않고 시작 전에 올린다
     prepared = [(task, _RUNNERS[task.agent], contexts[task.agent]) for task in tasks]
-    settled = await asyncio.gather(
-        *(
-            asyncio.wait_for(runner(task, context.for_task()), timeout)
-            for task, runner, context in prepared
-        ),
-        return_exceptions=True,
-    )
+    deadline = None if timeout is None else time.perf_counter() + timeout
+    writers = [index for index, task in enumerate(tasks) if _writes(task)]
+    readers = [index for index, task in enumerate(tasks) if not _writes(task)]
+
+    elapsed_ms: dict[int, int] = {}  # 시작도 못 하고 끊긴 task 는 없다
+
+    async def run_one(index: int) -> DomainOutcome:
+        task, runner, context = prepared[index]
+        task_started = time.perf_counter()
+        try:
+            return await runner(task, context.for_task())
+        finally:
+            elapsed_ms[index] = _ms_since(task_started)
+
+    settled: dict[int, DomainOutcome | BaseException] = {}
+    group_ms: list[int | None] = []
+    # 읽는 task 가 갱신된 행을 보게 쓰는 task 를 먼저 끝낸다.
+    # 쓰는 task 가 실패하거나 끊겨도 읽는 task 는 돈다 (부분 결과 원칙 · 공통규약 §7)
+    for group in (writers, readers):
+        if not group:
+            group_ms.append(None)
+            continue
+        group_started = time.perf_counter()
+        remaining = None if deadline is None else max(0.0, deadline - time.perf_counter())
+        settled.update(await _settle(group, run_one, remaining, on_outcome))
+        group_ms.append(_ms_since(group_started))
+    writers_ms, readers_ms = group_ms
 
     outcomes: list[DomainOutcome] = []
     succeeded: list[str] = []
     failed: list[str] = []
+    failed_model_calls = 0
     timed_out = False
-    for task, item in zip(tasks, settled, strict=True):
+    for index, task in enumerate(tasks):
+        item = settled[index]
         if isinstance(item, TimeoutError):
             timed_out = True
             failed.append(task.agent)
+            result = "timeout"
             logger.warning("도메인 Agent 시간 초과 run_id=%s agent=%s", task.run_id, task.agent)
         elif isinstance(item, (Exception, asyncio.CancelledError)):
             failed.append(task.agent)
+            result = "error"
             # 예외 메시지에는 발화 조각이 섞일 수 있다. 종류만 남긴다
             logger.error(
                 "도메인 Agent 실패 run_id=%s agent=%s error=%s",
@@ -540,18 +741,90 @@ async def _run_domain(
             )
         elif isinstance(item, BaseException):
             raise item  # KeyboardInterrupt·SystemExit 는 부분 실패가 아니다
+        elif _failed(item):
+            # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다(_shows)
+            failed.append(task.agent)
+            failed_model_calls += item.model_calls
+            result = "failed"
         else:
             outcomes.append(item)
             succeeded.append(task.agent)
+            result = "ok"
+        # 최소 예산을 정할 실측. Agent/유형별로 모으려고 task 마다 한 줄 (라벨과 ms 만)
+        logger.info(
+            "도메인 task run_id=%s task=%s result=%s ms=%s",
+            task.run_id,
+            _label(task.agent, task.task_type),
+            result,
+            elapsed_ms.get(index),
+        )
 
     if not failed:
-        return outcomes, None
+        return _DomainRun(tuple(outcomes), None, writers_ms, readers_ms)
     partial = Partial(
         reason="timeout_20s" if timed_out else "agent_error",
         succeeded=tuple(dict.fromkeys(succeeded)),
         failed=tuple(dict.fromkeys(failed)),
     )
-    return outcomes, partial
+    return _DomainRun(
+        tuple(outcomes), partial, writers_ms, readers_ms, failed_model_calls=failed_model_calls
+    )
+
+
+async def _settle(
+    group: list[int],
+    run_one: Callable[[int], Awaitable[DomainOutcome]],
+    timeout: float | None,
+    on_outcome: Callable[[DomainOutcome], None] | None,
+) -> dict[int, DomainOutcome | BaseException]:
+    """묶음 하나를 동시에 돌리고, 끝나는 대로 on_outcome 으로 넘긴다. 실패는 예외 객체로 돌려준다.
+
+    같은 틱에 같이 끝난 것만 task 순서로 넘긴다. 그 밖에는 끝난 순서다.
+    on_outcome(화면 번역)이 터지면 부분 실패로 숨기지 않고 그대로 올린다.
+    빠져나갈 때(그 예외 · 바깥 취소) 남은 task 를 끊는다 — gather 와 달리 wait 는 자식을 안 끊는다.
+    """
+    running = {
+        asyncio.create_task(asyncio.wait_for(run_one(index), timeout)): index for index in group
+    }
+    settled: dict[int, DomainOutcome | BaseException] = {}
+    pending = set(running)
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for future in sorted(done, key=running.__getitem__):
+                item = _result_of(future)
+                settled[running[future]] = item
+                if on_outcome is not None and not isinstance(item, BaseException):
+                    on_outcome(item)
+    finally:
+        for future in pending:
+            future.cancel()
+        # 넘기지 못한 결과의 예외도 꺼내 둔다. 안 꺼내면 asyncio 가 GC 때 예외 메시지째 로그에
+        # 찍는다(발화 조각이 섞일 가능성 존재). 끝난 것은 지금, 끊는 중인 것은 끝날 때 꺼낸다
+        for future in running:
+            if future.done():
+                _retrieve(future)
+            else:
+                future.add_done_callback(_retrieve)
+    return settled
+
+
+def _retrieve(future: asyncio.Future[Any]) -> None:
+    """예외를 꺼냈다고 표시만 한다. 메시지는 어디에도 쓰지 않는다."""
+    if not future.cancelled():
+        future.exception()
+
+
+def _result_of(future: asyncio.Task[DomainOutcome]) -> DomainOutcome | BaseException:
+    """끝난 task 의 결과. 예외도 값으로 돌려준다 (gather 의 return_exceptions 와 같다)."""
+    if future.cancelled():
+        return asyncio.CancelledError()
+    return future.exception() or future.result()
+
+
+def _writes(task: DomainTask) -> bool:
+    """같은 run 의 다른 task 가 읽는 행을 쓰는 task 인가."""
+    return task.task_type in _WRITING_TASKS.get(task.agent, frozenset())
 
 
 def _ignore(event: Event) -> None:
@@ -563,6 +836,33 @@ def _safety_precheck(raw_text: str) -> None:
 
     실제 규칙은 app/rules/에 추가한다.
     """
+
+
+def _ms_since(started: float) -> int:
+    """perf_counter 로 잰 시작 시각부터 지금까지 ms."""
+    return int((time.perf_counter() - started) * 1000)
+
+
+async def _commit_record(memory: MemoryAgentResult, commit: Commit | None) -> bool:
+    """기록 단계를 확정한다. DB 에 실제로 쓴 것이 있으면 True.
+
+    일정 초안 · 바뀐 것 없는 성공은 세지 않는다(`MemoryAgentResult.persisted`) — 보호자가
+    다시 보내도 두 번 저장될 것이 없다. commit 이 예외를 내면 잡지 않고 러너에 올린다.
+    결과를 모르는 commit(연결이 끊긴 경우)을 어떻게 닫을지는 러너 계약에서 정한다.
+    """
+    if commit is not None:
+        await commit()
+    return memory.persisted
+
+
+def _memory_wrote(memory: MemoryAgentResult | None) -> bool:
+    """Memory 가 성공한 쓰기 tool 을 하나라도 불렀는가. 일정 초안도 센다.
+
+    처리한 일이 있었는지를 볼 때 쓴다. 저장됐는지는 `MemoryAgentResult.persisted` 로 본다.
+    """
+    return memory is not None and any(
+        call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
+    )
 
 
 def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
@@ -579,6 +879,28 @@ def _routed(outcome: DomainOutcome) -> DomainRouted:
     return DomainRouted(outcome.agent, task_type, str(outcome.status), outcome.model_calls)
 
 
+def _failed(outcome: DomainOutcome) -> bool:
+    """결과를 못 낸 Agent 인가. `Partial.failed` 로 세고 다시 시도 대상이 된다."""
+    return str(outcome.status) == "failed"
+
+
+def _shows(outcome: DomainOutcome) -> bool:
+    """AgentResult 를 낼 결과인가.
+
+    실패는 `Partial.failed` 로만 알린다. 추천이 든 결과는 저장 콜백으로 id 를 실을 수 있을
+    때까지 내지 않는다 (AgentResult docstring).
+    """
+    return not _failed(outcome) and not outcome.suggestions
+
+
+def _result(outcome: DomainOutcome) -> AgentResult:
+    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    question = outcome.needs_observation[0] if outcome.needs_observation else None
+    return AgentResult(
+        outcome.agent, task_type, str(outcome.status), tuple(outcome.readouts), question
+    )
+
+
 def _label(agent: str, task_type: object) -> str:
     """로그용 이름. 라벨이 없는 Agent 는 이름만."""
     return agent if task_type is None else f"{agent}:{task_type}"
@@ -588,7 +910,7 @@ def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten 
     """기록할 조각을 짚었는데 쓰기가 하나도 없으면 남긴다. 판정은 하지 않는다."""
     if task is None or not task.hints:
         return None
-    if any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls):
+    if _memory_wrote(memory):
         return None
 
     event = Unwritten(len(task.hints), len(memory.calls), bool(memory.final_message))
@@ -645,9 +967,7 @@ def _did_anything(
 
     순수 요청형+구현중인 에이전트로 분기했을 경우 화면에 "준비 중" 을 띄울 수 있다.
     """
-    wrote = memory is not None and any(
-        call.success and call.name.startswith(MUTATING_PREFIXES) for call in memory.calls
-    )
+    wrote = _memory_wrote(memory)
     note = memory is not None and bool(memory.final_message)
     return (
         wrote or note or bool(domain) or bool(routing.guidance) or bool(routing.unavailable_agents)
@@ -680,8 +1000,9 @@ def _log(result: PipelineResult) -> None:
     logger.info(
         "pipeline run_id=%s intent=%s degraded=%s supervisor_error=%s hints=%d steps=%s "
         "ended_by=%s saved=%d drafts=%d domain=%s guidance=%s unavailable=%s note=%s "
-        "rerouted=%s partial=%s failed=%s memory_only=%s supervisor_only=%s "
-        "model_calls=%d latency_ms=%d",
+        "rerouted=%s partial=%s failed=%s committed=%s memory_only=%s supervisor_only=%s "
+        "model_calls=%d latency_ms=%d supervisor_ms=%s memory_ms=%s budget_ms=%s "
+        "writers_ms=%s readers_ms=%s",
         result.run_id,
         result.routing.intent_type,
         result.routing.degraded,
@@ -698,10 +1019,16 @@ def _log(result: PipelineResult) -> None:
         result.rerouted.bounced if result.rerouted else 0,
         (result.partial.reason, list(result.partial.failed)) if result.partial else None,
         result.failed.reason if result.failed else None,
+        result.committed,
         list(result.disagreement.memory_only),
         list(result.disagreement.supervisor_only),
         result.model_calls,
         result.latency_ms,
+        result.times.supervisor_ms,
+        result.times.memory_ms,
+        result.times.budget_ms,
+        result.times.writers_ms,
+        result.times.readers_ms,
     )
     # 다시 나눈 run 은 Supervisor 호출이 하나 더 붙는다. 그만큼만 예산을 늘려 잡는다
     budget = MAX_MODEL_CALLS + (1 if result.rerouted else 0)

@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type { HealthSafety, Relation } from "@/lib/api/types";
+import { isSeverityFor } from "@/lib/health-safety";
 
 import {
   CHILD_ID,
@@ -37,6 +38,19 @@ let safetyState: SafetyRow[] = healthSafety.map((safety) => ({ safety, retracted
 
 function activeSafety(): HealthSafety[] {
   return safetyState.filter((row) => !row.retracted).map((row) => row.safety);
+}
+
+/**
+ * 알레르기 항목 하나의 지금 상태 — 제안 목록의 사전검사(`handlers/suggestions.ts`)가 읽는다.
+ * `null` 은 행이 없다는 뜻이다 (서버의 `unknown` · 저장하지 않는 상태).
+ * ⚠️ 서버의 `none` 은 아직 목 모양(`HealthSafety`)에 없다 — 옛 모양이라 #87 때 같이 맞춘다.
+ */
+export function allergyStatus(label: string): "active" | "retracted" | null {
+  const rows = safetyState.filter(
+    (row) => row.safety.type === "allergy" && row.safety.label === label,
+  );
+  if (rows.some((row) => !row.retracted)) return "active";
+  return rows.length > 0 ? "retracted" : null;
 }
 
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
@@ -187,7 +201,16 @@ export const childrenHandlers = [
       await networkDelay();
       if (currentScenario() === "consent") return consentRequired("child_health");
 
-      const body = (await request.json()) as { type: string; label: string; category?: string };
+      const body = (await request.json()) as {
+        type: string;
+        label: string;
+        severity?: string | null;
+      };
+      // 🚨 DB CHECK `health_safety_severity_by_kind` 를 목이 대신 막는다 — 알레르기에 가볍게~심하게
+      //    를 보내면 실서버에서는 등록이 통째로 실패한다. 목이 받아 주면 화면이 그걸 모르고 지나간다.
+      if (body.severity != null && !isSeverityFor(body.type, body.severity)) {
+        return apiError(400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요");
+      }
       const exists = safetyState.some(
         (row) => !row.retracted && row.safety.type === body.type && row.safety.label === body.label,
       );
@@ -271,9 +294,14 @@ export const childrenHandlers = [
     const row = safetyState.find((item) => item.safety.id === params.id);
     if (!row || row.retracted) return apiError(404, "not_found", "이미 내려간 기록이에요");
 
+    if ("severity" in body && body.severity !== null) {
+      if (!isSeverityFor(row.safety.type, String(body.severity))) {
+        return apiError(400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요");
+      }
+    }
+
     row.safety = {
       ...row.safety,
-      ...(body.category !== undefined ? { category: String(body.category) } : {}),
       ...("severity" in body
         ? { severity: body.severity === null ? null : String(body.severity) }
         : {}),

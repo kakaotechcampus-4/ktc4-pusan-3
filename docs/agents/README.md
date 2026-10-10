@@ -38,13 +38,13 @@ memory-agent-v1.md
 
 **라벨이 없다.** 놀이 추천 하나다. 실내/야외는 날씨·시간 조회 결과로 갈리므로 런타임 판단이지 라벨이 아니다.
 
-**추천은 정확히 3개다.** 2개 이하나 4개 이상이면 출력 tool이 거절한다. 안전 필터 뒤에 3개 미만이 되면 그 Agent만 모델을 한 번 더 부르고, 걸러진 항목을 제외 목록으로 넣는다. 재호출은 1회로 끝나고, 그래도 못 채우면 남은 만큼만 낸다 (잠정 — C-8 미결).
+**추천은 최대 3개다.** 4개 이상이면 출력 tool이 거절한다. 채울 수 있으면 3개를 다 채운다 — 안전 필터 뒤에 3개 미만이 되면 그 Agent만 모델을 한 번 더 부르고, 걸러진 항목을 제외 목록으로 넣는다. 재호출은 1회로 끝나고, 그래도 못 채우면 남은 만큼(1~2개)만 개수 안내와 함께 낸다. 하나도 남지 않으면 추천 없이 안내만 나간다 — 실패가 아니다 (C-8 닫힘, [shared/Tool_공통.md](shared/Tool_공통.md) §5-2).
 
 **기피(polarity −1)는 제외 필터가 아니라 근거다.** "미끄럼틀을 싫어해서 이걸 골랐어요"가 되어야 한다. 후보에서 지워버리면 무엇을 피해 골랐는지 화면에 말할 수 없다. 기피 근거를 인용했으면 `reason`에 무엇을 피했는지 쓴다. 후보 풀에서 지우는 것은 안전뿐이다 — `hazard_term`에 걸리는 것.
 
 **다만 기피 대상 자체가 후보로 나오면 출력에서 거절한다.** 근거로 쓰는 것과 그 활동을 다시 내지 않는 것은 별개다. Food 는 영양 때문에 기피 식품을 내야 할 때가 있지만 Activity 에는 그런 대항 요인이 없고, 모델에게 기피 근거를 주고 안 내기를 기대하는 것은 프롬프트에 맡기는 것이라 보장이 아니다. 기피 근거와 `merge_key` 가 같은 후보는 출력 tool 이 거절한다 — 풀에서 지우는 제거 필터가 아니라 출력 검증이라 위 문장과 부딪히지 않는다. 자리는 [activity/activity-agent-v1.md](activity/activity-agent-v1.md) §3-3 출력 검증이고, 공통 규약에는 [shared/Tool_공통.md](shared/Tool_공통.md) §5-5 가 원칙("후보를 지우는 공통 규칙은 안전뿐")과 Food·Activity 대비를 적어 두었다.
 
-**승인된 추천은 `observation_activity`로 간다.** 보호자가 승인하면 Memory Agent가 `suggestion`을 관찰로 재구조화해 저장하고, feedback(`liked`/`disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)를 갱신한다. `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음"이다.
+**승인된 추천은 `observation_activity`로 간다.** 보호자가 승인하면 Memory Agent가 `suggestion`을 관찰로 재구조화해 저장하고, feedback(`child_liked`/`child_disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)를 갱신한다. `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음"이다.
 
 **근거는 `suggestion_evidence` 테이블에 행으로 쌓는다.** `PK(suggestion_id, source_kind, source_id)`. `source_kind`가 아이 기록(`observation_*`·`profile_affinity` 등)이면 개인화 근거로 세고, 문서 행(`activity_doc`)이면 참고로만 센다. `kind='personalized'`인데 아이 기록 행이 0이면 버그다. `kind='general'`은 아이 기록 0행이 정상이고, 문서 행까지 0행인 것만 따로 센다.
 
@@ -116,7 +116,7 @@ def life_stage(birth_date: date, today: date) -> LifeStage
 | Food | `stage`를 배타적 범주로. 수유기와 유아식기는 먹을 수 있는 것이 질적으로 달라 tool이 겹치지 않는다 |
 | Growth | tool별 `min_month` 눈금. 열리는 시점만 다르고 배타적인 tool이 없다 |
 | Health | 가르지 않는다. 연령이 여는 tool이 없고 검진 차수·접종 시기라는 계산 방식만 바뀐다 |
-| Activity | tool별 `min_month` 눈금 (Growth와 같다). 날씨·위치는 `Gate.outdoor_ok` · `has_location` 으로 장소 조회 tool 하나만 여닫는다 |
+| Activity | tool별 `min_month` 눈금 (Growth와 같다). 위치(`has_location`)가 장소 조회 tool 하나만 여닫고, 날씨(`outdoor_ok`)는 그 tool 이 찾는 종류를 실내로 좁힌다 |
 
 아래는 방식과 무관하게 지켜야 한다. 안 지키면 게이트가 어긋난다.
 

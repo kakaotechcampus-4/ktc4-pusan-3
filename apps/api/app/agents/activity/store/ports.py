@@ -5,28 +5,38 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 만든다 (D11). 외부 API 어댑터는 `app/integrations/`에 두고 `app/api`가 주입한다
 (`app/agents/`는 `integrations`를 import할 수 없다 — D8).
 
-🚨 **원좌표는 여기까지 오지 않는다.** 좌표는 요청 바디로만 받아 받는 즉시 5km 격자로 뭉갠다.
-포트는 `WeatherGrid`만 받는다 — 원좌표가 DB·로그·모델 입력·예외 메시지 어디에도 없게 한다 (4-3).
+🚨 **좌표는 휴대폰이 약 1km 로 흐려서 보낸 값(`CoarseLocation`)만 받는다.** 서버는 그 요청 안에서
+격자 변환과 장소 거리 계산에만 쓰고, DB·로그·모델 입력·예외 메시지·외부 API 어디에도 남기거나
+보내지 않는다 (4-3). 거리 계산 결과도 모델에 주지 않는다 — 모델은 장소 이름 · 종류만 본다.
+날씨 포트는 `WeatherGrid` 만 받는다 — 좌표가 `app/integrations/` 에 아예
+들어가지 않는다.
 
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
 | ConsentReader | consent(scope=child_health) 최신 행 |
-| SafetyReader | health_safety — allergy · dietary_restriction · environmental (D7) |
+| SafetyReader | health_safety — allergy · environmental (D7). dietary_restriction 은 10/4 삭제 |
 | ActivityMemoryReader | profile_affinity(domain=activity) · observation_activity |
 | ScheduleReader | 아이 일정 — 읽기 전용 |
 | ActivityDocReader | activity_doc — 월령 슬라이스 + 의미 검색 |
 | WeatherSource | 기상청 단기예보 · 에어코리아 · 생활기상지수 · 기상특보 |
-| PlaceSource | Kakao Local · 도시공원 표준데이터 적재분 |
+| PlaceSource | 적재한 place 테이블 — 공원 · 어린이놀이시설 · 도서관. 외부 API 없음 (D9) |
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.schemas.common import (
+    ActivitySetting,
+    CaregiverRole,
+    Intensity,
+    PlaceCategory,
+)
 from app.agents.common.evidence import AffinityRow
-from app.agents.common.gate import SafetyState
+from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
+from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
+from app.rules.kma_grid import latlon_to_grid
 
 
 class SafetyLookupError(Exception):
@@ -44,17 +54,26 @@ class UpstreamUnavailable(Exception):
     """
 
 
-# 읽는 health_safety kind. 나머지 셋(chronic_disease · behavioral · other_medical)은 읽지 않는다 —
-# "천식이면 야외 금지" 같은 표가 곧 LLM 없는 자동 진단이다 (D7)
-SafetyKind = Literal["allergy", "dietary_restriction", "environmental"]
+# 읽는 health_safety kind (D7 · 10/4 확정안). 꽃가루 · 동물털 같은 환경 알레르기도 'allergy' 고,
+# 'environmental' 은 고소공포 같은 것이다(data_model.md). 나머지 셋(chronic_disease · behavioral ·
+# other_medical)은 읽지 않는다 — "천식이면 야외 금지" 같은 표가 곧 LLM 없는 자동 진단이다
+SafetyKind = Literal["allergy", "environmental"]
+# 10/4 확정안의 status. 행이 없는 항목이 unknown 이라 이 값으로는 오지 않는다
+SafetyStatus = Literal["active", "retracted", "none"]
 
 
 @dataclass(frozen=True)
 class SafetyEntry:
+    """`health_safety` 한 행 (10/4 확정안). 보호자 입력만 — AI 를 거치지 않는다.
+
+    별칭 칸과 분류 칸(category, #295)은 DB 에서 빠졌다. label 은 자유 입력이라 Food 와 같은
+    규칙(`common/allergy.read_label`)으로 읽고, 19종은 `reference/allergen_terms.yaml` 로 넓혀
+    대조한다.
+    """
+
     kind: SafetyKind
-    label: str  # 예: 밀
-    state: SafetyState  # 거르는 것은 active 뿐이다
-    aliases: tuple[str, ...] = ()
+    label: str  # 보호자가 적은 그대로. 예: 밀 · 우유 알레르기 · 쑥
+    status: SafetyStatus  # 거르는 것은 active 뿐이다
 
 
 @dataclass(frozen=True)
@@ -67,19 +86,6 @@ class ActivityObservation:
     subject: str  # 병합 판정 입력 (정규화된 값)
     activity: str  # 사람이 읽는 원문. 예: 레고 조립
     polarity: int  # -1 / 0 / +1
-    updated_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
-
-
-@dataclass(frozen=True)
-class AffinityRecord:
-    """`profile_affinity`(domain=activity) 한 행.
-
-    공통 `AffinityRow`에는 `updated_at`이 없다. 인용하려면 `source_updated_at`이 필요해서
-    여기서 같이 싣는다.
-    """
-
-    row: AffinityRow
-    updated_at: datetime
 
 
 @dataclass(frozen=True)
@@ -93,35 +99,70 @@ class ScheduleBlock:
 
 @dataclass(frozen=True)
 class ActivityDocRow:
-    """`activity_doc` 한 행. 사람이 읽고 재구성한 놀이 자료 (D9)."""
+    """`activity_doc` 한 행. 사람이 읽고 재구성한 놀이 자료 (D9 · RAG_plan Activity 절).
+
+    프롬프트 `[예시]` 에 들어가는 칸만 싣는다. 출력 후보(`ActivityCandidate`)와 같은 칸을 둬서
+    예시가 출력 모양을 그대로 보여 준다 — 재료를 빠뜨리지 않는 모양까지.
+    월령은 `min_month` 이상 `max_month` **미만**이다 (RAG_plan §1).
+    """
 
     id: UUID
     doc_key: str
+    title: str
     body: str
     min_month: int
-    max_month: int | None
-    written_at: datetime  # suggestion_evidence.source_updated_at 에 들어간다
+    max_month: int
+    setting: ActivitySetting
+    materials: tuple[str, ...]
+    caregiver_role: CaregiverRole
+    physical_intensity: Intensity
+    involves_food: bool
+
+
+# 좌표를 자르는 자리수. 소수점 둘째 자리는 위도 약 1.1km · 경도 약 0.9km (북위 36° 기준)
+COARSE_DECIMALS = 2
 
 
 @dataclass(frozen=True)
-class WeatherGrid:
-    """기상청 5km 격자. 원좌표는 이 값으로 뭉갠 뒤 버린다."""
+class CoarseLocation:
+    """휴대폰이 약 1km 로 흐려서 보낸 좌표. 요청 하나 동안만 산다.
 
-    nx: int
-    ny: int
+    `repr` 에 값을 싣지 않는다 — context 를 로그나 예외에 찍어도 좌표가 새지 않게.
+    만들 때 `COARSE_DECIMALS` 자리로 한 번 더 자른다. 클라이언트가 덜 흐려 보내도 서버에서
+    막힌다. 거절하지 않고 자른다 — 휴대폰이 흐린 위치도 소수점 아래가 길게 와서, 거절하면
+    정상 요청이 막힌다.
+    """
+
+    lat: float = field(repr=False)
+    lon: float = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not (-90.0 <= self.lat <= 90.0) or not (-180.0 <= self.lon <= 180.0):
+            raise ValueError("위경도가 범위를 벗어났다")  # 값은 싣지 않는다
+        # frozen 이라 직접 대입할 수 없다. 어떤 방식으로 만들어도 같은 정밀도만 남게 여기서 자른다
+        object.__setattr__(self, "lat", round(self.lat, COARSE_DECIMALS))
+        object.__setattr__(self, "lon", round(self.lon, COARSE_DECIMALS))
+
+    @property
+    def grid(self) -> WeatherGrid:
+        nx, ny = latlon_to_grid(self.lat, self.lon)
+        return WeatherGrid(nx=nx, ny=ny)
 
 
 @dataclass(frozen=True)
 class Forecast:
-    sky: str | None  # 기상청 하늘상태 라벨 그대로. None = 확인 못 함
+    """날씨 판정의 입력. `weather.read_forecast` 가 아래 `RawForecast` 를 읽어 만든다."""
+
+    sky: str | None  # 하늘상태 라벨("맑음" 등). None = 확인 못 함
     precip_mm_per_h: float | None  # 파싱 실패도 None 이다 — "강수없음"과 다르다
     pop_percent: int | None  # 강수확률
 
 
 @dataclass(frozen=True)
 class AirQuality:
-    pm10: int | None  # ㎍/㎥
-    pm25: int | None
+    # 측정기가 멈춘 값("-" · 사유 flag)은 None 이다. 0 으로 채우면 "좋음"이 된다
+    pm10: float | None  # ㎍/㎥
+    pm25: float | None
     ozone_ppm: float | None
 
 
@@ -134,17 +175,20 @@ class Advisories:
 
     heat: AdvisoryLevel
     cold: AdvisoryLevel
-    severe: bool  # 강풍 · 호우 · 대설 · 태풍 중 하나라도 발효 중
+    severe: bool  # 강풍 · 호우 · 대설 · 태풍 · 폭풍해일 중 하나라도 발효 중
 
 
 @dataclass(frozen=True)
 class PlaceRow:
-    """장소 한 곳. 화이트리스트 필드만 — 전화번호 · 관리기관 · 가격 · 평점은 싣지 않는다."""
+    """장소 한 곳. 화이트리스트 필드만 — 전화번호 · 관리기관 · 가격 · 평점은 싣지 않는다.
+
+    `distance_m` 은 적재한 행의 위경도와 `CoarseLocation` 사이를 서버가 계산한 값이다.
+    """
 
     name: str
     category: PlaceCategory
     distance_m: int
-    source: Literal["kakao_local", "city_park"]
+    source: Literal["city_park", "kids_play_facility", "library"]
 
 
 class ChildProfileReader(Protocol):
@@ -161,15 +205,20 @@ class ConsentReader(Protocol):
 
 class SafetyReader(Protocol):
     async def activity_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
-        """SafetyKind 세 가지를 state 무관하게 돌려준다. 거르는 것은 호출부다.
+        """`allergy` · `environmental` 행을 status 무관하게 돌려준다. 거르는 것은 호출부다.
 
+        행이 없는 항목은 unknown 이라 오지 않는다 (10/4 확정안 — unknown 은 저장하지 않는다).
         읽기에 실패하면 SafetyLookupError. 빈 목록을 대신 돌려주지 않는다.
+
+        🚨 run 당 한 번만 부른다 — `build_gate` 가 읽어 run state 에 담고, 출력 검증은 그 값을 쓴다.
+        출력 검증 때 다시 읽으면 같은 run 안에서 다른 답이 나올 수 있다 (게이트는 통과했는데
+        필터는 다른 행으로 거르는 경우).
         """
         ...
 
 
 class ActivityMemoryReader(Protocol):
-    async def affinities(self, *, child_id: UUID) -> list[AffinityRecord]:
+    async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         """`profile_affinity`(domain=activity). common/evidence.py 가 순위를 매긴다."""
         ...
 
@@ -188,31 +237,50 @@ class ScheduleReader(Protocol):
 
 class ActivityDocReader(Protocol):
     async def search(self, *, months: int, query: str, limit: int) -> list[ActivityDocRow]:
-        """`min_month <= months <= max_month` 로 거른 뒤 의미 검색 상위 `limit` 행."""
+        """`min_month <= months < max_month` 로 거른 뒤 의미 검색 상위 `limit` 행.
+
+        `status='approved'` 행만 돌려준다 — 검수 전 초안(`draft`)은 예시로 쓰지 않는다.
+        """
         ...
 
 
 class WeatherSource(Protocol):
-    """네 조회는 따로 실패한다. 하나가 죽어도 나머지는 온다 — 미세먼지만 실패하면 야외는 허용하되
-    고지한다 (D8). 실패는 각자 UpstreamUnavailable.
+    """어댑터는 호출 · 타임아웃 · 지금 시각 칸 고르기까지만 하고 값은 원문 그대로 넘긴다.
+
+    해석("-" · NO_DATA · 강수 문자열)은 `weather.py` 가 테스트와 함께 맡는다. 어댑터가 들어갈
+    `app/integrations/` 는 agents 를 import 할 수 없어서, 해석을 거기 두면 같은 규칙을 테스트
+    밖에서 한 번 더 짜게 된다. 같은 이유로 원문 모양(`Raw*` · `WeatherGrid`)은
+    `app/core/weather_raw.py` 에 있다 — 어댑터는 거기서 import 한다.
+
+    네 조회는 따로 실패한다. 하나가 죽어도 나머지는 온다 — 미세먼지만 실패하면 야외는 허용하되
+    고지한다 (D8). 호출 자체의 실패(타임아웃 · HTTP 오류)는 각자 UpstreamUnavailable.
     """
 
-    async def forecast(self, *, grid: WeatherGrid, day: date) -> Forecast: ...
+    async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast: ...
 
-    async def air_quality(self, *, grid: WeatherGrid) -> AirQuality: ...
+    async def air_quality(self, *, grid: WeatherGrid) -> RawAir: ...
 
-    async def uv_grade(self, *, grid: WeatherGrid, day: date) -> str | None:
-        """API 가 주는 자외선 등급 문자열 그대로. 우리가 다시 분류하지 않는다."""
+    async def uv(self, *, grid: WeatherGrid, day: date) -> str | None:
+        """생활기상지수 자외선(`getUVIdxV5`) 지금 시각 칸(`h0` · `h3` · …)의 지수 원문."""
         ...
 
-    async def advisories(self, *, grid: WeatherGrid) -> Advisories: ...
+    async def advisories(self, *, grid: WeatherGrid) -> RawAdvisories:
+        """특보코드조회(`getPwnCd`)를 이 위치의 특보구역으로. 결과 코드와 행을 그대로 넘긴다.
+
+        기간 없이 부르면 지난 발표분이 빠진다 — 며칠 전 발표돼 아직 발효 중인 특보를 놓치지 않게
+        기간을 넉넉히 준다. 발표 이력인 `getWthrWrnList` 는 쓰지 않는다 (해제된 특보도 남는다).
+        """
+        ...
 
 
 class PlaceSource(Protocol):
     async def nearby(
-        self, *, grid: WeatherGrid, category: PlaceCategory, radius_m: int
+        self, *, location: CoarseLocation, category: PlaceCategory, radius_m: int
     ) -> list[PlaceRow]:
-        """🚨 검색어는 category 하나다. 모델이 만든 문자열을 받지 않는다 (D8)."""
+        """적재한 place 테이블에서 찾는다. 외부 API 를 부르지 않는다 (D9).
+
+        🚨 검색 조건은 category 하나다. 모델이 만든 문자열을 받지 않는다 (D8).
+        """
         ...
 
 
