@@ -1,5 +1,7 @@
 """제안 표시·피드백과 관찰 상세의 근거 역조회."""
 
+import base64
+import json
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
@@ -70,20 +72,51 @@ async def find_suggestion(
     )
 
 
+def encode_cursor(created_at: datetime, suggestion_id: uuid.UUID) -> str:
+    payload = {"c": created_at.isoformat(), "id": str(suggestion_id)}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    payload = json.loads(base64.urlsafe_b64decode(cursor))
+    return datetime.fromisoformat(payload["c"]), uuid.UUID(payload["id"])
+
+
 async def list_suggestions(
-    session: AsyncSession, *, child_id: uuid.UUID, status: SuggestionStatus | None = None
-) -> list[Suggestion]:
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    status: SuggestionStatus | None = None,
+    kind: SuggestionKind | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> tuple[list[Suggestion], str | None]:
+    """커서 페이징으로 추천 목록을 반환한다. (items, next_cursor)."""
     stmt = select(Suggestion).where(Suggestion.child_id == child_id)
+    if kind is not None:
+        stmt = stmt.where(Suggestion.kind == SuggestionKind(kind))
     if status is not None:
         stmt = stmt.where(Suggestion.status == SuggestionStatus(status))
     # draft 조회 시 만료된 것은 제외 (lazy expiration)
     if status == SuggestionStatus.DRAFT:
         stmt = stmt.where(Suggestion.expires_at > func.now())
-    return list(
-        (
-            await session.scalars(stmt.order_by(Suggestion.created_at.desc(), Suggestion.id.desc()))
-        ).all()
-    )
+    if cursor is not None:
+        cur_created, cur_id = decode_cursor(cursor)
+        stmt = stmt.where(
+            (Suggestion.created_at < cur_created)
+            | ((Suggestion.created_at == cur_created) & (Suggestion.id < cur_id))
+        )
+    stmt = stmt.order_by(Suggestion.created_at.desc(), Suggestion.id.desc()).limit(limit + 1)
+    rows = list((await session.scalars(stmt)).all())
+
+    if len(rows) > limit:
+        rows = rows[:limit]
+        last = rows[-1]
+        next_cursor = encode_cursor(last.created_at, last.id)
+    else:
+        next_cursor = None
+
+    return rows, next_cursor
 
 
 async def set_feedback(
@@ -146,6 +179,57 @@ async def is_any_linked(session: AsyncSession, *, suggestion_ids: list[uuid.UUID
     """suggestion_ids 중 이미 일정에 연결된 것이 있는지."""
     stmt = select(exists().where(SuggestionEvent.suggestion_id.in_(suggestion_ids)))
     return bool(await session.scalar(stmt))
+
+
+# 아이 기록 9종. 문서 행(food_doc 등)은 응답 evidence에서 제외한다.
+# agents/common/refs.py ChildRecordKind와 같은 목록.
+_CHILD_RECORD_KINDS = frozenset((
+    "observation_food",
+    "observation_health",
+    "observation_education",
+    "observation_activity",
+    "observation_routine",
+    "profile_affinity",
+    "child_growth_log",
+    "notice",
+    "daycare_meal",
+))
+
+
+async def list_evidence(
+    session: AsyncSession, *, suggestion_id: uuid.UUID
+) -> list[SuggestionEvidence]:
+    """추천 한 건의 근거 행 (아이 기록만, 문서 행 제외)."""
+    stmt = (
+        select(SuggestionEvidence)
+        .where(
+            SuggestionEvidence.suggestion_id == suggestion_id,
+            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+        )
+        .order_by(SuggestionEvidence.created_at)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_evidence_batch(
+    session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """여러 추천의 근거를 한 번에 조회한다 (아이 기록만, 문서 행 제외)."""
+    if not suggestion_ids:
+        return {}
+    stmt = (
+        select(SuggestionEvidence)
+        .where(
+            SuggestionEvidence.suggestion_id.in_(suggestion_ids),
+            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+        )
+        .order_by(SuggestionEvidence.suggestion_id, SuggestionEvidence.created_at)
+    )
+    rows = list((await session.scalars(stmt)).all())
+    result: dict[uuid.UUID, list[SuggestionEvidence]] = {sid: [] for sid in suggestion_ids}
+    for row in rows:
+        result[row.suggestion_id].append(row)
+    return result
 
 
 async def list_suggestions_using_observation(

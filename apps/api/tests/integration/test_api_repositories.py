@@ -137,6 +137,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
             child_id=other.id,
             event_id=event.id,
             title="변경 시도",
+            event_type=EventType.EPISODIC,
             starts_at=start,
             ends_at=None,
             all_day=False,
@@ -149,6 +150,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
         child_id=child.id,
         event_id=event.id,
         title="물놀이 준비",
+        event_type=EventType.EPISODIC,
         starts_at=start,
         ends_at=None,
         all_day=False,
@@ -298,7 +300,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             session,
             child_id=other.id,
             suggestion_id=suggestion.id,
-            feedback=SuggestionFeedback.LIKED,
+            feedback=SuggestionFeedback.CHILD_LIKED,
         )
         is None
     )
@@ -307,9 +309,9 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             session,
             child_id=child.id,
             suggestion_id=suggestion.id,
-            feedback=SuggestionFeedback.LIKED,
+            feedback=SuggestionFeedback.CHILD_LIKED,
         )
-    ).feedback is SuggestionFeedback.LIKED
+    ).feedback is SuggestionFeedback.CHILD_LIKED
 
     correction = await append_correction(
         session,
