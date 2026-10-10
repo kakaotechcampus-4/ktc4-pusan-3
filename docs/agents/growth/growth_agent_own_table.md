@@ -5,6 +5,7 @@
 >
 > **2026-09-22 갱신** — `growth_doc`이 핵심 기능(관찰 × 문서 연결 추천)의 재료 · `notice`는 보조 · 성장 판정은 시스템 전체에서 없음
 > **2026-10-08** — `profile_affinity` 는 education · activity 둘 · 교육 활동만 `health_safety`(allergy · environmental)를 읽는다 · 음식 용어 스캔에 `allergen_terms.yaml` · `food_choking` · 18개월 미만 승격 미적용 · 교육 알레르기는 이름 대조 + 환경 알레르기 확인 문구(#261) · 도서 연령 처음 값(GT-3)
+> **2026-10-10** — `book_query_cache` 는 테이블이 아니라 Redis 키 · 키는 키워드만 · 키워드당 50권 · 메모리 폴백 없음 (#292 리뷰)
 
 ---
 
@@ -15,7 +16,8 @@
 | 테이블 | 쓰는 주체 | 읽는 주체 | 성격 |
 | --- | --- | --- | --- |
 | `growth_doc` | 마이그레이션 시드 | Growth | 문서 행 (교육과정·루틴 자료를 **재작성한** 행) — **핵심 기능의 재료**. 별도 KB 인덱스는 없다 |
-| `book_catalog` · `book_query_cache` | 동기화 배치 (`integrations`) | Growth | 도서 API 캐시 |
+| `book_catalog` | 동기화 배치 (`integrations`) | Growth | 도서 API 캐시 |
+| `book_query_cache` — **Redis 키**, 테이블 아님 (§2) | 동기화 배치 (`integrations`) | Growth | 검색어 → ISBN 목록 캐시, 30일 |
 | `hazard_term` (상수 파일 `reference/hazard_terms.yaml`) | **Activity 소유** | Activity · **Growth** | 안전 사전 — 구현은 하나만 |
 | `reference/allergen_terms.yaml` (상수 파일) | 공용 (`common/reference.py`) | Food · Activity · **Growth** | 식품 알레르기 사전 — Growth 는 음식 용어 스캔에만 쓴다 |
 | `notice` | **OCR 파이프라인** (일반 기관 공지). 텍스트 일반 공지 경로 미정 | Growth | 읽기만 · **보조** |
@@ -96,14 +98,17 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 - 도서 API 한도가 하루 500회(서버 IP 등록 시 30,000회)라 **캐시가 필수**입니다.
 - 절판·정보 부족 행은 지우지 않고 `synced_at`으로 노후를 판단합니다.
 
-### `book_query_cache` — 검색어 단위 캐시
+### `book_query_cache` — 검색어 단위 캐시 (Redis)
 
-| 필드 | 타입 | 비고 |
-| --- | --- | --- |
-| `query_key` | text | PK. 키워드 정규화. 월령 · `form` 은 넣지 않는다 — `search_books` 가 캐시 뒤에서 건다 |
-| `isbns` | text[] | NOT NULL. 결과 순서 보존 |
-| `fetched_at` | timestamptz | NOT NULL |
-| `ttl_days` | smallint | NOT NULL, default 30 |
+테이블이 아니라 Redis 키로, 30일 지나면 버려도 되는 매핑이라 `SETEX` 로 두고, 책 정보 자체(`book_catalog`)는 조인이 필요해서 DB에 둡니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 키 | 정규화한 키워드. 월령 · `form` 은 넣지 않는다 — `search_books` 가 캐시 뒤에서 건다 |
+| 값 | ISBN 목록, 정보나루 결과 순서 그대로. 키워드당 `SEARCH_POOL`(50)권까지 — 적게 담으면 영아에게 나갈 보드북이 모자란다 |
+| 만료 | `SETEX` 30일 |
+| `REDIS_URL` 이 없을 때 | 메모리 폴백 없이 정보나루를 바로 부른다. idempotency 와 달리 캐시가 없어도 깨지는 동작이 없다 |
+| 캐시가 빌 때 | 배포 compose 의 redis 는 볼륨 · AOF 가 없어 `docker compose down` 뒤 비지만 받아들인다 — 서버 IP 등록 뒤 하루 30,000회라 다시 불러도 감당된다 |
 
 같은 관심사("공룡")가 반복되므로 검색어 캐시가 호출을 가장 크게 줄입니다.
 
@@ -218,12 +223,7 @@ CREATE TABLE book_catalog (
 CREATE INDEX book_catalog_age_idx ON book_catalog (age_min_month, age_max_month);
 CREATE INDEX book_catalog_subject_idx ON book_catalog USING gin (subjects);
 
-CREATE TABLE book_query_cache (
-    query_key  text        PRIMARY KEY,
-    isbns      text[]      NOT NULL,
-    fetched_at timestamptz NOT NULL DEFAULT now(),
-    ttl_days   smallint    NOT NULL DEFAULT 30
-);
+-- book_query_cache 는 테이블이 아니라 Redis 키다 (§2)
 ```
 
 `CHECK (row_type <> 'habit_strategy' OR min_month >= 36)` — 36개월 미만 습관 교정 금지를 **DB에서** 막습니다. 게이팅이 뚫려도 행 자체가 없습니다.

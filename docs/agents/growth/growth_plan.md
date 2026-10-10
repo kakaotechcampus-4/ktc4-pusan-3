@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | S0 | 하드 선행 닫기 | – | 결정 5건 |
 | S1 | 공통 뼈대 | S0 | Food와 공유 (이미 있으면 건너뜀) |
-| S2 | 스키마 · 권한 | S0 | `growth_doc` · `book_catalog` · `book_query_cache` |
+| S2 | 스키마 · 권한 | S0 | `growth_doc` · `book_catalog` (`book_query_cache` 는 Redis 키, 테이블 없음) |
 | S3 | 콘텐츠 제작 **(임계 경로)** | S2 | 문서 행 148 + 도서 캐시 |
 | S4 | 포트 · 컨텍스트 · 게이팅 | S1 S2 | mock `run()` |
 | S5 | 코드 tool | S3 S4 | 차분 · 카테고리 · 안전 · 근거 |
@@ -51,7 +51,7 @@
 
 ```
 1) growth_doc            (self FK: next_step_of → 같은 테이블)
-2) book_catalog → book_query_cache
+2) book_catalog          (book_query_cache 는 Redis 키 — 테이블 없음)
 3) child_growth_log 단위·NOT NULL 변경       (S0-1)
 ```
 
