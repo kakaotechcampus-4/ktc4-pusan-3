@@ -72,14 +72,17 @@ async def test_보호자1이_관계_성별_키_몸무게를_한_번에_저장한
     assert data["growth"]["measured_on"] == "2026-10-05"
     assert (data["growth"]["height_cm"], data["growth"]["weight_kg"]) == (98.5, 15.2)
 
+    # 요청과 테스트가 같은 세션이라 commit 안 된 값도 보인다 — 되감은 뒤 DB 에 남은 것만 본다
+    await session.rollback()
     assert (
         await relation_of(session, child_id=cid, parent_id=parent_1) is ParentChildRelation.MOTHER
     )
     (row,) = await growth_rows(session, cid)
+    await session.refresh(row)
     assert (row.measured_on, row.height_cm, row.weight_kg) == (
         TODAY,
         Decimal("98.5"),
-        Decimal("15.20"),
+        Decimal("15.2"),
     )
     assert row.created_by == parent_1
 
@@ -104,8 +107,10 @@ async def test_몸무게만_적으면_몸무게만_있는_기록(db_client, sess
     )
 
     assert response.status_code == 200
+    await session.rollback()
     (row,) = await growth_rows(session, cid)
-    assert (row.height_cm, row.weight_kg) == (None, Decimal("15.40"))
+    await session.refresh(row)
+    assert (row.height_cm, row.weight_kg) == (None, Decimal("15.4"))
 
 
 async def test_같은_키로_두_번_보내면_처음_응답을_돌려주고_기록은_한_번(
@@ -142,17 +147,21 @@ async def test_Idempotency_Key_가_없으면_400_이고_아무것도_안_바뀐�
     [
         {},  # 화면은 아무것도 안 적으면 보내지 않는다 — 와도 저장할 것이 없다
         {"safety": [{"type": "allergy", "label": "땅콩"}]},  # 알레르기는 승인 게이트로만
+        # 정상 칸과 같이 와도 알레르기를 조용히 버리지 않고 통째로 거절한다
+        {"relation": "mother", "safety": [{"type": "allergy", "label": "땅콩"}]},
         {"safety_status": "none"},
         {"one_line": "요즘 블록 놀이를 좋아해요"},  # 한 줄은 홈 입력으로만
         {"height_cm": 0},
         {"weight_kg": -1},
-        {"height_cm": 301},  # 오타 막기 — DB 칸(999.9)에 닿기 전에
+        {"height_cm": 300.1},  # 오타 막기 — DB 칸(999.9)에 닿기 전에
+        {"weight_kg": 0.04},  # 소수 한 자리로 반올림하면 0
+        {"relation": "mother", "height_cm": None},  # null 은 받지 않는다 — 안 적은 칸은 안 보낸다
         {"gender": "unknown"},
         {"relation": "uncle"},
     ],
 )
 async def test_받지_않는_본문은_400_이고_아무것도_안_바뀐다(db_client, session, bearer, cid, body):
-    headers, _ = bearer
+    headers, parent_1 = bearer
 
     response = await db_client.post(onboarding_url(cid), json=body, headers=with_key(headers))
 
@@ -161,6 +170,40 @@ async def test_받지_않는_본문은_400_이고_아무것도_안_바뀐다(db_
     assert await growth_rows(session, cid) == []
     gender = await session.scalar(select(Child.gender).where(Child.id == cid))
     assert gender == "undisclosed"
+    assert await relation_of(session, child_id=cid, parent_id=parent_1) is ParentChildRelation.OTHER
+
+
+async def test_400_을_받은_키는_남지_않아_고친_본문으로_다시_보내면_저장된다(
+    db_client, session, bearer, cid
+):
+    headers, _ = bearer
+
+    refused = await db_client.post(
+        onboarding_url(cid), json={"height_cm": 0}, headers=with_key(headers)
+    )
+    accepted = await db_client.post(
+        onboarding_url(cid), json={"height_cm": 98.5}, headers=with_key(headers)
+    )
+
+    assert (refused.status_code, accepted.status_code) == (400, 200)
+    assert len(await growth_rows(session, cid)) == 1
+
+
+async def test_소수_둘째_자리는_반올림해_저장하고_저장된_값을_돌려준다(
+    db_client, session, bearer, cid
+):
+    headers, _ = bearer
+
+    response = await db_client.post(
+        onboarding_url(cid), json={"height_cm": 98.55}, headers=with_key(headers)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["growth"]["height_cm"] == 98.6
+    await session.rollback()
+    (row,) = await growth_rows(session, cid)
+    await session.refresh(row)
+    assert row.height_cm == Decimal("98.6")
 
 
 async def test_보호자2의_온보딩은_보호자2의_관계만_바꾼다(db_client, session, bearer, cid):

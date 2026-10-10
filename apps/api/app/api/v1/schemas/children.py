@@ -5,11 +5,11 @@
 """
 
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
 from app.domains.child.models import Gender, ParentChildRelation
@@ -99,16 +99,35 @@ class UpdateChildResponse(BaseModel):
 MEASUREMENT_MAX = 300
 """키(cm) · 몸무게(kg)의 상한. 평가가 아니라 오타 막기다.
 
-DB 칸(999.9)에 닿기 전에 400 으로 돌려보낸다.
-
-화면은 0 보다 큰 숫자를 전부 보낸다 (apps/web/src/lib/measurement.ts).
+DB 칸(999.9)에 닿기 전에 400 으로 돌려보낸다. 화면은 0 보다 큰 숫자를 전부 보낸다
+(apps/web/src/lib/measurement.ts).
 """
 
-Measurement = Annotated[Decimal, Field(gt=0, le=MEASUREMENT_MAX)]
+_ONE_PLACE = Decimal("0.1")
+
+
+def _round_one_place(value: Decimal) -> Decimal:
+    """소수 한 자리로 반올림한다 — DB 칸이 numeric(4,1) 이다 (docs/agents/data_model.md 09-22).
+
+    DB 가 말없이 반올림하게 두면 응답(보낸 값)과 저장된 값이 달라진다.
+    서버가 먼저 반올림하고 그 값을 저장 · 응답한다.
+    반올림해서 0 이 되는 값(0.04)은 잰 것이 아니라 400 이다 — 그대로 두면 DB 의 "0 보다 커야" 에
+    걸려 500 이 된다.
+    """
+    rounded = value.quantize(_ONE_PLACE, rounding=ROUND_HALF_UP)
+    if rounded < _ONE_PLACE:
+        raise ValueError("0.1 보다 작다")
+    return rounded
+
+
+Measurement = Annotated[Decimal, Field(gt=0, le=MEASUREMENT_MAX), AfterValidator(_round_one_place)]
 
 
 class OnboardingRequest(BaseModel):
     """POST /children/{cid}/onboarding — 아이 등록 뒤 02 화면. 적은 칸만 보낸다. 하나도 없으면 400.
+
+    null 은 받지 않는다(400) — 적지 않은 칸은 보내지 않는다.
+    키 · 몸무게는 소수 한 자리로 반올림한다.
 
     🚨 알레르기(`safety` · `safety_status`)와 한 줄(`one_line`)은 받지 않는다(400). 알레르기의 쓰기
        경로는 승인 게이트 ㉡(POST /children/{cid}/health-safety) 하나이고, 한 줄은 홈 입력이 받는다.
@@ -117,25 +136,18 @@ class OnboardingRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    relation: ParentChildRelation | None = Field(
+    relation: ParentChildRelation = Field(
         default=None, description="보내는 보호자와 아이의 관계. 다른 보호자의 관계는 바꾸지 않는다"
     )
-    gender: Gender | None = Field(
+    gender: Gender = Field(
         default=None, description="male · female · undisclosed. 화면은 기본값이면 보내지 않는다"
     )
-    height_cm: Measurement | None = Field(
+    height_cm: Measurement = Field(
         default=None, description="키(cm). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
     )
-    weight_kg: Measurement | None = Field(
+    weight_kg: Measurement = Field(
         default=None, description="몸무게(kg). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
     )
-
-    @field_validator("relation", "gender", "height_cm", "weight_kg")
-    @classmethod
-    def _not_null(cls, value):
-        if value is None:
-            raise ValueError("null 은 받지 않는다 — 적지 않은 칸은 보내지 않는다")
-        return value
 
 
 class GrowthLogOut(BaseModel):
@@ -184,16 +196,9 @@ class UpdateGrowthLogRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    measured_on: date | None = Field(default=None, description="잰 날. null 은 받지 않는다")
+    measured_on: date = Field(default=None, description="잰 날. null 은 받지 않는다")
     height_cm: Measurement | None = Field(default=None, description="키(cm). null 이면 비운다")
     weight_kg: Measurement | None = Field(default=None, description="몸무게(kg). null 이면 비운다")
-
-    @field_validator("measured_on")
-    @classmethod
-    def _date_not_null(cls, value):
-        if value is None:
-            raise ValueError("잰 날은 비울 수 없다")
-        return value
 
 
 class GrowthLogResponse(BaseModel):

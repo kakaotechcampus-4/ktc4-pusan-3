@@ -191,14 +191,19 @@ async def list_growth_logs(session: AsyncSession, *, child_id: uuid.UUID) -> lis
 
 
 async def find_growth_log(
-    session: AsyncSession, *, child_id: uuid.UUID, log_id: uuid.UUID
+    session: AsyncSession, *, child_id: uuid.UUID, log_id: uuid.UUID, for_update: bool = False
 ) -> ChildGrowthLog | None:
-    """그 아이의 기록 하나. 다른 아이의 기록 id 면 None — 없는 것과 같게 본다."""
-    return await session.scalar(
-        select(ChildGrowthLog).where(
-            ChildGrowthLog.id == log_id, ChildGrowthLog.child_id == child_id
-        )
+    """그 아이의 기록 하나. 다른 아이의 기록 id 면 None — 없는 것과 같게 본다.
+
+    for_update — 고치기 전에 행을 잠근다. 두 보호자가 키 · 몸무게를 각각 비우는 요청을 동시에 보내면
+    둘 다 "한쪽은 남는다" 검사를 통과하고 결과가 둘 다 비어 DB CHECK 가 500 을 낸다.
+    """
+    stmt = select(ChildGrowthLog).where(
+        ChildGrowthLog.id == log_id, ChildGrowthLog.child_id == child_id
     )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return await session.scalar(stmt)
 
 
 async def delete_growth_log(

@@ -133,7 +133,9 @@ async def test_기록을_더하면_201_과_서버_문구(db_client, session, bea
         {"measured_on": "2026-10-06", "height_cm": 99.1},  # 오늘(한국 날짜)보다 뒤
         {"measured_on": "2022-12-31", "height_cm": 99.1},  # 생일(2023-01-01)보다 앞
         {"measured_on": "2026-10-01", "height_cm": 0},
-        {"measured_on": "2026-10-01", "weight_kg": 301},
+        {"measured_on": "2026-10-01", "weight_kg": 300.1},
+        # 소수 한 자리로 반올림하면 0 이 된다 — DB 의 "0 보다 커야" 에 닿기 전에 400
+        {"measured_on": "2026-10-01", "height_cm": 0.04},
     ],
 )
 async def test_더할_수_없는_기록은_400(db_client, session, bearer, cid, body):
@@ -145,6 +147,27 @@ async def test_더할_수_없는_기록은_400(db_client, session, bearer, cid, 
     assert response.json()["error"]["code"] == "validation_failed"
     rows = await session.scalars(select(ChildGrowthLog).where(ChildGrowthLog.child_id == cid))
     assert rows.all() == []
+
+
+async def test_소수_둘째_자리는_반올림해_저장하고_저장된_값을_돌려준다(
+    db_client, session, bearer, cid
+):
+    # DB 칸이 소수 한 자리(docs/agents/data_model.md 09-22)라,
+    # 서버가 먼저 반올림하고 그 값을 돌려준다
+    headers, _ = bearer
+
+    response = await db_client.post(
+        growth_url(cid),
+        json={"measured_on": "2026-10-01", "height_cm": 98.55, "weight_kg": 300},
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    log = response.json()["log"]
+    assert (log["height_cm"], log["weight_kg"]) == (98.6, 300.0)
+    await session.rollback()
+    row = await session.scalar(select(ChildGrowthLog).where(ChildGrowthLog.id == log["id"]))
+    assert (row.height_cm, row.weight_kg) == (Decimal("98.6"), Decimal("300.0"))
 
 
 # ── PATCH ──────────────────────────────────────────────────────────
@@ -183,7 +206,6 @@ async def test_날짜를_고치면_문구도_다시_만든다(db_client, session
     "body",
     [
         {"weight_kg": None},  # 고친 결과가 둘 다 빈다
-        {},  # 고칠 것이 없다
         {"measured_on": None},  # 잰 날은 비울 수 없다
         {"measured_on": "2026-10-06"},  # 오늘보다 뒤
         {"height_cm": 0},
@@ -203,6 +225,17 @@ async def test_고칠_수_없는_내용은_400_이고_그대로다(db_client, se
         None,
         Decimal("15.40"),
     )
+
+
+async def test_바뀐_칸이_없으면_그대로_200(db_client, session, bearer, cid):
+    # 고치기 시트는 아무것도 안 바꾸고 저장하면 {} 를 보낸다 (growth-sheet.tsx) — 목과 같게 지금 줄
+    headers, parent_1 = bearer
+    log = await add_log(session, cid, parent_1, date(2026, 10, 1), weight=15.4)
+
+    response = await db_client.patch(growth_url(cid, log.id), json={}, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["log"]["weight_kg"] == 15.4
 
 
 async def test_다른_아이의_기록_id_로_고치면_404(db_client, session, bearer, cid):

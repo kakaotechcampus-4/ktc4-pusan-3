@@ -271,7 +271,8 @@ async def submit_onboarding(
 
     관계는 보내는 보호자 자신의 것이다. 키 · 몸무게를 하나라도 적었으면 오늘(한국 날짜) 잰 기록
     한 줄을 만든다. 같은 키로 다시 오면 처음 응답을 그대로 돌려준다 (일정 제출과 같은 방식).
-    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 빈 본문 → 저장 → commit → 응답 기억.
+    순서: (본문 형식 · 아이 접근 — 의존성) → 키 확인 → 재생 → 빈 본문 → 저장 → commit → 응답 기억.
+    본문 형식 검사가 키 확인보다 먼저라, 키 없이 틀린 본문이 오면 validation_failed 다.
     """
     if not idempotency_key:
         raise ApiError(
@@ -376,18 +377,23 @@ async def edit_growth_log(
 ) -> GrowthLogResponse:
     """보낸 칸만 바꾼다. 키 · 몸무게의 null 은 비우기. 고친 결과가 둘 다 비면 400.
 
+    아무 칸도 없으면 바꾸지 않고 지금 줄을 200 으로 돌려준다 (목과 같다).
     다른 아이의 기록 id 는 없는 것과 같다 (404).
     """
     changes = body.model_dump(exclude_unset=True)
-    if not changes:
-        raise ApiError(400, "validation_failed", "고칠 내용이 없어요", {"fields": []})
     today = today_kst()
     if "measured_on" in changes:
         _check_measured_on(changes["measured_on"], birth_date=child.birth_date, today=today)
 
-    row = await find_growth_log(session, child_id=child.child_id, log_id=log_id)
+    row = await find_growth_log(
+        session, child_id=child.child_id, log_id=log_id, for_update=bool(changes)
+    )
     if row is None:
         raise ApiError(404, "not_found", "이미 지워진 기록이에요")
+    if not changes:
+        # 고치기 시트는 아무것도 안 바꾸고 저장하면 {} 를 보낸다 (growth-sheet.tsx).
+        # 지금 줄을 그대로 돌려준다
+        return GrowthLogResponse(log=_growth_out(row, today))
     height = changes.get("height_cm", row.height_cm)
     weight = changes.get("weight_kg", row.weight_kg)
     if height is None and weight is None:
