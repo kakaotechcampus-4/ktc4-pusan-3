@@ -202,7 +202,7 @@ def _event_out(event: Event, items: list[EventItem]) -> CalendarEventOut:
                 item_id=str(i.item_id),
                 item_name=i.item_name,
                 is_prepared=i.is_prepared,
-                prepared_at=i.prepared_at,
+                prepared_at=i.prepared_at.isoformat() if i.prepared_at else None,
             )
             for i in items
         ],
