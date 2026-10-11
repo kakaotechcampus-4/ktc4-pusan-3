@@ -168,7 +168,8 @@ def load_safety_rules() -> SafetyRules:
         # 한 칸에 여러 이름("키위, 꽃가루")도 조각마다, 띄어 쓴 이름("고양이 털")은 낱말까지 읽는다.
         # 19종 · 묶음 이름(갑각류)은 사전 별칭으로 넓히고, 사전에 없는 이름은 적은 글자 그대로 본다.
         # 한 글자는 보호자가 그 글자만 적었을 때(쑥 · 개)만 쓴다 — 띄어 쓴 이름에서 떨어져 나온
-        # 한 글자(털 · 곳)로 막으면 과차단이다. TODO: 한 글자 판정은 #305 에서 Food · Activity 와 맞춘다
+        # 한 글자(털 · 곳)로 막으면 과차단이다.
+        # TODO: 한 글자 판정은 #305 에서 Food · Activity 와 맞춘다
         named, rest = read_label(entry.label, book)
         pieces = set(split_label(entry.label))
         coded = tuple(kept[key] for code in sorted(named.codes) if (key := str(code)) in kept)
