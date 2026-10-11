@@ -136,26 +136,29 @@ class KmaForecast:
             return self._cache[key]
         # 이번 주말(토 · 일)처럼 같은 발표분을 동시에 부르면 한 번만 받는다
         lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
-            if key in self._cache:
-                return self._cache[key]
-            payload = await get_json(
-                self._client,
-                URL,
-                {
-                    "pageNo": 1,
-                    "numOfRows": ROWS_PER_CALL,
-                    "dataType": "JSON",
-                    "base_date": base_date,
-                    "base_time": base_time,
-                    "nx": grid.nx,
-                    "ny": grid.ny,
-                },
-                what="단기예보",
-            )
-            slots = parse_slots(payload)
-            self._cache[key] = slots
-            if len(self._cache) > CACHE_SIZE:
-                self._cache.popitem(last=False)
-        self._locks.pop(key, None)
-        return slots
+        try:
+            async with lock:
+                if key in self._cache:
+                    return self._cache[key]
+                payload = await get_json(
+                    self._client,
+                    URL,
+                    {
+                        "pageNo": 1,
+                        "numOfRows": ROWS_PER_CALL,
+                        "dataType": "JSON",
+                        "base_date": base_date,
+                        "base_time": base_time,
+                        "nx": grid.nx,
+                        "ny": grid.ny,
+                    },
+                    what="단기예보",
+                )
+                slots = parse_slots(payload)
+                self._cache[key] = slots
+                if len(self._cache) > CACHE_SIZE:
+                    self._cache.popitem(last=False)
+                return slots
+        finally:
+            # 실패해도 Lock 을 남기지 않는다 (#328 리뷰). 기다리던 호출은 잡은 Lock 으로 이어 간다
+            self._locks.pop(key, None)

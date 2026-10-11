@@ -29,6 +29,22 @@ def service_key(monkeypatch):
     monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", KEY)
 
 
+# 테스트가 만든 어댑터. 끝나면 닫는다 — 안 닫으면 httpx 클라이언트가 남는다 (#328 리뷰)
+_OPENED: list[KmaForecast] = []
+
+
+@pytest.fixture(autouse=True)
+async def close_sources():
+    yield
+    while _OPENED:
+        await _OPENED.pop().aclose()
+
+
+def opened(src: KmaForecast) -> KmaForecast:
+    _OPENED.append(src)
+    return src
+
+
 def item(day: str, hour: str, category: str, value: str) -> dict:
     return {"fcstDate": day, "fcstTime": hour, "category": category, "fcstValue": value}
 
@@ -68,7 +84,7 @@ class Recorder:
 
 def source(response, now=NOW) -> tuple[KmaForecast, Recorder]:
     recorder = Recorder(response)
-    return KmaForecast(transport=httpx.MockTransport(recorder), now=lambda: now), recorder
+    return opened(KmaForecast(transport=httpx.MockTransport(recorder), now=lambda: now)), recorder
 
 
 def ok(items=ITEMS) -> httpx.Response:
@@ -152,7 +168,7 @@ class TestForecast:
     async def test_새_발표가_나오면_다시_부른다(self):
         clock = [NOW]
         recorder = Recorder(ok())
-        src = KmaForecast(transport=httpx.MockTransport(recorder), now=lambda: clock[0])
+        src = opened(KmaForecast(transport=httpx.MockTransport(recorder), now=lambda: clock[0]))
         await src.forecast(grid=GRID, day=date(2026, 10, 13))
         clock[0] = datetime(2026, 10, 11, 20, 15, tzinfo=KST)
         await src.forecast(grid=GRID, day=date(2026, 10, 13))
@@ -162,6 +178,19 @@ class TestForecast:
         src, _ = source(ok())
         with pytest.raises(UpstreamUnavailable):
             await src.forecast(grid=GRID, day=date(2026, 10, 12))
+
+
+class TestLocks:
+    async def test_실패해도_Lock_을_남기지_않는다(self):
+        src, _ = source(httpx.Response(500, text="error"))
+        with pytest.raises(UpstreamUnavailable):
+            await src.forecast(grid=GRID, day=date(2026, 10, 11))
+        assert src._locks == {}
+
+    async def test_성공하면_Lock_을_남기지_않는다(self):
+        src, _ = source(ok())
+        await src.forecast(grid=GRID, day=date(2026, 10, 11))
+        assert src._locks == {}
 
 
 class TestFailure:
