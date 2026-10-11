@@ -40,7 +40,12 @@ from app.domains.schedule.repository import (
     set_event_item_prepared,
     update_event,
 )
-from app.domains.suggestion.models import SuggestionAgent, SuggestionFeedback, SuggestionKind, SuggestionStatus
+from app.domains.suggestion.models import (
+    SuggestionAgent,
+    SuggestionFeedback,
+    SuggestionKind,
+    SuggestionStatus,
+)
 from app.domains.suggestion.repository import (
     create_suggestion,
     list_suggestions_using_observation,
