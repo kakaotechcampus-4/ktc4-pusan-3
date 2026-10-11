@@ -31,7 +31,7 @@ from app.rules.evaluative import find_evaluative
 # 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게.
 TOGETHER_ONLY_BELOW_MONTH = 18
 
-# 기피 라벨이 이 길이보다 짧으면 기피 대상 거절에 쓰지 않는다. "공" 을 싫어한다고
+# 기피 대상(`subject`)이 이 길이보다 짧으면 기피 대상 거절에 쓰지 않는다. "공" 을 싫어한다고
 # "공원" · "공룡" 이 들어간 후보까지 거절하면 과차단이다. 기피는 근거로는 계속 남는다.
 MIN_AVOIDED_LABEL = 2
 
@@ -96,11 +96,13 @@ def review_candidates(
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
     `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소 이름이다.
     """
+    # 대조는 subject 로 한다 — 관찰의 label 은 "물감 놀이" 같은 문장이라
+    # 후보에 그대로 나오는 일이 드물다
     avoided = tuple(
-        label
+        subject
         for ranked in seen.values()
         if ranked.is_avoidance
-        and len(label := normalize_activity(ranked.label)) >= MIN_AVOIDED_LABEL
+        and len(subject := normalize_activity(ranked.subject)) >= MIN_AVOIDED_LABEL
     )
     # 띄어쓰기만 다르게 써도 같은 곳으로 본다. 붙일 때는 조회 결과의 이름을 그대로 쓴다
     known_places = {key: name for name in places if (key := normalize_activity(name))}
@@ -175,7 +177,7 @@ def _check(
             return RejectReason.UNKNOWN_PLACE, (), None
 
     content_key = normalize_activity(candidate.content)
-    if any(label in content_key for label in avoided):
+    if any(subject in content_key for subject in avoided):
         return RejectReason.AVOIDED, (), None
     if any(overstates(pick.note) and ranked.tier != 1 for pick, ranked in resolved):
         return RejectReason.OVERSTATED_NOTE, (), None

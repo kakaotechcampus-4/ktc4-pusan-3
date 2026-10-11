@@ -102,7 +102,8 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 - **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
 - 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
-- 모델에게는 줄 세운 순서대로 **상위 10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 관찰의 이름은 병합용 정규화 값(`subject`)이 아니라 사람이 읽는 활동명(`activity`)이다. `keywords` 는 줄 세운 뒤 이름으로 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
+- 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
+- **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · why_this)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
 
 **`profile_affinity` 에 routine 은 포함되지 않는다** (9/25 BE 합의). `MemoryDomain` 은 `food`/`activity`/`education` 세 값 그대로다. Activity 는 `domain=activity` 만 읽으므로 동작에 영향은 없다.
 
@@ -124,7 +125,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 
 - Food 는 영양 분석이 부족을 가리키면 기피 식품군을 **일부러** 낸다. Activity 에는 그런 대항 요인이 없다 — 꼭 해야 하는 놀이가 없다
 - 모델에게 기피 근거를 주고 그 활동을 안 내기를 기대하는 것은 프롬프트에 맡기는 것이라 보장이 아니다 (D6)
-- 그래서 **기피 근거의 라벨이 후보 문장에 들어 있으면 출력 tool 이 거절**한다. 풀에서 지우는 제거 필터가 아니라 **출력 검증**이라 *"후보를 지우는 공통 규칙은 안전뿐"* 과 부딪히지 않는다
+- 그래서 **기피 근거의 `subject` 가 후보 문장에 들어 있으면 출력 tool 이 거절**한다(affinity 는 merge_key). 풀에서 지우는 제거 필터가 아니라 **출력 검증**이라 *"후보를 지우는 공통 규칙은 안전뿐"* 과 부딪히지 않는다
 - `merge_key` 로 비교하지 않는 이유 — 모델이 낸 후보는 문장이라 `merge_key` 가 없다. 라벨과 후보 문장을 둘 다 정규화(NFKC · casefold · 공백·문장부호 제거)한 뒤 **들어 있는지**를 본다. 라벨이 한 글자(`"공"`)면 쓰지 않는다 — `공원` · `공룡` 까지 막힌다
 
 🚨 **`state`·`polarity` 를 tool argument 로 받지 않는다.** 모델이 고를 수 있으면 이 표가 무의미해진다.
@@ -467,7 +468,7 @@ async def run(task, context, *, client=None):
 1. 안전 필터            filter_activity_safety — hazard_term · health_safety(active)
                         → 후보를 풀에서 뺀다 (거절이 아니라 제거)
 2. 금지 표현 필터        content · why_this · why_now · note
-3. Activity 출력 검증    ─ 기피 근거의 라벨이 들어 있는 후보 → 거절          (D4)
+3. Activity 출력 검증    ─ 기피 근거의 subject 가 들어 있는 후보 → 거절      (D4)
                         ─ note 의 반복·성향 표현은 Tier 1 근거일 때만           (D12)
                         ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
                         ─ 0–17개월은 caregiver_role = together 만

@@ -22,7 +22,11 @@ from app.agents.activity.store.inmemory import (
 )
 from app.agents.activity.store.ports import ActivityDocRow, ActivityObservation
 from app.agents.activity.tools.docs import DOC_LIMIT, search_activity_doc
-from app.agents.activity.tools.memory import MEMORY_LIMIT, search_activity_memory
+from app.agents.activity.tools.memory import (
+    MEMORY_LIMIT,
+    RECENT_RESERVED,
+    search_activity_memory,
+)
 from app.agents.common.evidence import OBSERVATION_WINDOW_DAYS, AffinityRow
 
 CHILD = UUID(int=1)
@@ -32,12 +36,14 @@ BORN_30_MONTHS = date(2024, 4, 1)
 BORN_12_MONTHS = date(2025, 10, 1)
 
 
-def observation(n: int, activity: str, *, days_ago: int = 1, polarity: int = 1):
+def observation(n: int, activity: str, *, subject=None, days_ago: int = 1, polarity: int = 1):
+    """subject 는 Curator 가 만드는 짧은 대조 키, activity 는 사람이 읽는 활동명이다.
+    따로 주지 않으면 활동명의 첫 낱말을 subject 로 쓴다 ("모래 놀이" → "모래")."""
     return ActivityObservation(
         id=UUID(int=100 + n),
         child_id=CHILD,
         observed_on=TODAY - timedelta(days=days_ago),
-        subject=activity.replace(" ", ""),
+        subject=subject or activity.split()[0],
         activity=activity,
         polarity=polarity,
     )
@@ -88,12 +94,13 @@ class TestMemory:
 
     async def test_id_와_필요한_칸만_싣는다(self):
         """raw_text 는 포트가 싣지 않고, 병합용 subject 대신 사람이 읽는 활동명을 준다."""
-        result = await search(await context([observation(1, "레고 조립", polarity=-1)]))
+        ctx = await context([observation(1, "레고로 성 만들기", subject="레고", polarity=-1)])
+        result = await search(ctx)
         assert result.data["records"] == [
             {
                 "id": str(UUID(int=101)),
                 "tier": 3,
-                "label": "레고 조립",
+                "label": "레고로 성 만들기",
                 "polarity": -1,
                 "observed_on": (TODAY - timedelta(days=1)).isoformat(),
             }
@@ -129,6 +136,39 @@ class TestMemory:
         ctx = await context([observation(1, "모래 놀이"), observation(2, "블록 쌓기")])
         assert labels(await search(ctx, ["모래"])) == ["모래 놀이"]
         assert labels(await search(ctx, ["블록 쌓기"])) == ["블록 쌓기"]
+
+    async def test_keywords_는_subject_와_양쪽으로_본다(self):
+        """모델은 "모래놀이" 처럼 길게, subject 는 "모래" 처럼 짧게 쓴다 (#304 리뷰)."""
+        ctx = await context(affinities=[affinity(1, "모래")])
+        assert labels(await search(ctx, ["모래놀이"])) == ["모래"]
+
+    async def test_한_글자는_포함으로_걸리지_않는다(self):
+        ctx = await context([observation(1, "공룡 놀이")], [affinity(1, "공")])
+        assert labels(await search(ctx, ["공룡"])) == ["공룡 놀이"]
+        assert labels(await search(ctx, ["공"])) == ["공"]
+
+    async def test_keywords_는_활동명에_든_말로도_찾는다(self):
+        ctx = await context([observation(1, "레고로 성 만들기", subject="레고")])
+        assert labels(await search(ctx, ["성 만들기"])) == ["레고로 성 만들기"]
+
+    async def test_같은_subject_관찰은_가장_최근_1건만(self):
+        ctx = await context(
+            [
+                observation(1, "레고로 성 만들기", subject="레고", days_ago=5),
+                observation(2, "레고로 기차 만들기", subject="레고", days_ago=2),
+                observation(3, "레고 정리하기 싫어함", subject="레고", days_ago=3, polarity=-1),
+            ]
+        )
+        assert labels(await search(ctx)) == ["레고로 기차 만들기", "레고 정리하기 싫어함"]
+
+    async def test_최근_관찰_자리를_먼저_보장한다(self):
+        """첫 관찰부터 티어 2 인 affinity 가 10개여도 최근 관찰이 남는다. 순서는 티어 순이다."""
+        ctx = await context(
+            [observation(n, f"놀이{n} 하기", days_ago=n) for n in range(1, 5)],
+            [affinity(n, f"관심{n}", state="candidate", strength=0.5) for n in range(MEMORY_LIMIT)],
+        )
+        tiers = [record["tier"] for record in (await search(ctx)).data["records"]]
+        assert tiers == [2] * (MEMORY_LIMIT - RECENT_RESERVED) + [3] * RECENT_RESERVED
 
     async def test_기록이_없으면_NO_RECORDS(self):
         result = await search(await context())
