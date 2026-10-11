@@ -397,7 +397,7 @@ CREATE TABLE prescription_draft (
 
 | 필드 | 비고 |
 | --- | --- |
-| id · child_id (CASCADE) · height · weight · check_date | 수정하지 않고 **append** |
+| id · child_id (CASCADE) · height_cm · weight_kg · measured_on (10-10, 정본 [`data_model.md`](../data_model.md)) | 수정하지 않고 **append** |
 
 | Agent | 읽는 목적 | 넘지 않는 선 |
 | --- | --- | --- |
