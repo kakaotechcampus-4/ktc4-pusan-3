@@ -68,9 +68,50 @@ async def test_create_suggestions_returns_501(
     assert resp.status_code == 501
 
 
-async def test_answer_question_returns_501(
+# 🚨 stub 해제 가드 — POST suggestions가 200을 반환하기 시작하면
+#    evidence.label이 사람이 읽을 수 있는 값이고, is_stale이 null이 아니어야 한다.
+#    stub인 동안은 skip되고, stub을 풀면 이 테스트가 활성화된다. (#323)
+_CHILD_RECORD_KINDS = frozenset((
+    "observation_food",
+    "observation_health",
+    "observation_education",
+    "observation_activity",
+    "observation_routine",
+    "profile_affinity",
+    "child_growth_log",
+    "notice",
+    "daycare_meal",
+))
+
+
+async def test_evidence_label_and_is_stale_are_filled_when_stub_is_lifted(
     db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
 ):
+    """stub이 풀리면 evidence.label은 source_kind가 아닌 사람이 읽을 수 있는 값,
+    is_stale은 bool이어야 한다. stub(501)인 동안은 건너뛴다."""
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions",
+        json={"agents": ["activity"]},
+        headers=headers,
+    )
+    if resp.status_code == 501:
+        pytest.skip("stub 미해제 — Agent 연결 후 활성화 (#323)")
+
+    data = resp.json()
+    for suggestion in data.get("suggestions", []):
+        for ev in suggestion.get("evidence", []):
+            assert ev["label"] not in _CHILD_RECORD_KINDS, (
+                f"evidence.label이 source_kind 식별자 그대로다: {ev['label']}. "
+                "사람이 읽을 수 있는 라벨을 채워야 한다 (#323)"
+            )
+            assert ev["is_stale"] is not None, (
+                "evidence.is_stale이 null이다. "
+                "6개월 규칙(§2)이 화면에서 빠진다 (#323)"
+            )
+
+
+async def test_answer_question_returns_501(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """POST /children/{cid}/answers는 agent 연결 전까지 501."""
     headers, _ = bearer
     resp = await db_client.post(
@@ -84,9 +125,7 @@ async def test_answer_question_returns_501(
 # ── 추천 목록 ────────────────────────────────────────────────────────────
 
 
-async def test_list_suggestions_empty(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_list_suggestions_empty(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """제안이 없으면 빈 목록."""
     headers, _ = bearer
     resp = await db_client.get(
@@ -116,7 +155,12 @@ async def test_list_suggestions_with_evidence(
     assert len(data["items"]) >= 1
     item = next(i for i in data["items"] if i["id"] == str(s.id))
     assert len(item["evidence"]) == 1
-    assert item["evidence"][0]["note"] == "반복 3회"
+    ev = item["evidence"][0]
+    assert ev["note"] == "반복 3회"
+    assert ev["ref"]["kind"] == "profile_affinity"
+    # label·is_stale 은 현재 placeholder — stub 해제 전에 채워야 한다 (#323)
+    assert "label" in ev
+    assert "is_stale" in ev
     assert len(item["source_refs"]) == 1
 
 
@@ -208,9 +252,7 @@ async def test_feedback_sets_value(
     assert data["suggestion"]["feedback"] == "child_liked"
 
 
-async def test_feedback_not_found(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_feedback_not_found(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """없는 suggestion → 404."""
     headers, _ = bearer
     resp = await db_client.patch(
@@ -307,9 +349,7 @@ async def test_update_event_preserves_is_prepared(
 
     event, items = await _make_event(session, child_id=cid)
     # 수건을 체크
-    await set_event_item_prepared(
-        session, child_id=cid, item_id=items[0].item_id, is_prepared=True
-    )
+    await set_event_item_prepared(session, child_id=cid, item_id=items[0].item_id, is_prepared=True)
     await session.flush()
 
     headers, _ = bearer
@@ -357,9 +397,7 @@ async def test_update_event_requires_idempotency_key(
     assert resp.json()["error"]["code"] == "idempotency_key_required"
 
 
-async def test_update_event_not_found(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_update_event_not_found(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """없는 일정 → 404."""
     headers, _ = bearer
     resp = await db_client.patch(
