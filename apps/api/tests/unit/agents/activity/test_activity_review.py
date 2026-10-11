@@ -22,14 +22,24 @@ from app.agents.activity.review import (
     review_candidates,
 )
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.schemas.common import (
+    ActivitySetting,
+    CaregiverRole,
+    Intensity,
+    PlaceCategory,
+)
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.store.inmemory import (
     InMemoryActivityMemory,
     InMemorySafety,
     in_memory_ports,
 )
-from app.agents.activity.store.ports import ActivityObservation, PlaceRow, SafetyEntry
+from app.agents.activity.store.ports import (
+    ActivityDocRow,
+    ActivityObservation,
+    PlaceRow,
+    SafetyEntry,
+)
 from app.agents.activity.tools.filters import safety_terms
 from app.agents.activity.tools.recommend import propose_activity_candidates
 from app.agents.common.evidence import RankedEvidence
@@ -79,8 +89,31 @@ def candidate(**kwargs) -> ActivityCandidate:
 PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
 
 
+TOWER_DOC = ActivityDocRow(
+    id=UUID(int=21),
+    doc_key="act-test-tower",
+    title="종이컵 탑 쌓기",
+    body="종이컵을 쌓고 무너뜨린다",
+    min_month=24,
+    max_month=48,
+    setting=ActivitySetting.INDOOR,
+    materials=("종이컵",),
+    caregiver_role=CaregiverRole.TOGETHER,
+    physical_intensity=Intensity.LOW,
+    involves_food=False,
+)
+DOCS = {TOWER_DOC.id: TOWER_DOC}  # 이번 run 의 프롬프트 [예시]에 실은 행
+
+
 def review(
-    *candidates, months=40, seen=SEEN, recent=(), places=(PARK,), safety=(), outdoor_ok=True
+    *candidates,
+    months=40,
+    seen=SEEN,
+    recent=(),
+    places=(PARK,),
+    safety=(),
+    outdoor_ok=True,
+    docs=DOCS,
 ):
     return review_candidates(
         candidates,
@@ -90,6 +123,7 @@ def review(
         places=places,
         safety=safety_terms(safety),
         outdoor_ok=outdoor_ok,
+        docs=docs,
     )
 
 
@@ -136,6 +170,38 @@ class TestEvidence:
         """지어낸 근거로 개인화인 척하지 못한다."""
         result = review(candidate(evidence=[{"id": raw, "note": "모래놀이를 했어요"}]))
         assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+
+class TestDocEvidence:
+    """일반 추천은 문서 행을 근거로 단다. 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)."""
+
+    def doc_pick(self, note="종이컵 탑 쌓기 예시를 참고했어요"):
+        return {"id": str(TOWER_DOC.id), "note": note}
+
+    def test_문서_행만_달면_일반_추천이고_근거로_남는다(self):
+        result = review(candidate(content="종이컵으로 높은 탑 쌓기", evidence=[self.doc_pick()]))
+        draft = result.drafts[0]
+        assert draft.kind == "general"
+        assert draft.reason == GENERAL_REASON
+        assert [(c.ref.kind, c.ref.id, c.label) for c in draft.citations] == [
+            ("activity_doc", TOWER_DOC.id, "종이컵 탑 쌓기")
+        ]
+
+    def test_기억과_같이_달면_개인화이고_둘_다_근거다(self):
+        memory = {"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}
+        result = review(candidate(evidence=[memory, self.doc_pick()]))
+        draft = result.drafts[0]
+        assert draft.kind == "personalized"
+        assert [c.ref.kind for c in draft.citations] == ["profile_affinity", "activity_doc"]
+
+    def test_예시에_싣지_않은_문서_id_는_거절(self):
+        result = review(candidate(evidence=[self.doc_pick()]), docs={})
+        assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+    def test_문서_근거_note_에_아이에_대한_반복_표현은_거절(self):
+        """ "늘 좋아하는" 은 문서가 아니라 아이에 대한 말이다. 기록 없이 성향을 말하지 않는다."""
+        result = review(candidate(evidence=[self.doc_pick("아이가 늘 좋아하는 놀이예요")]))
+        assert reason_of(result) is RejectReason.OVERSTATED_NOTE
 
 
 class TestAvoided:

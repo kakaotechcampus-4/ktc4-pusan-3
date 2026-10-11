@@ -14,8 +14,14 @@ from uuid import UUID
 
 from app.agents.activity.agent import MAX_STEPS, run
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.store.inmemory import InMemorySafety, InMemoryWeather, in_memory_ports
-from app.agents.activity.store.ports import CoarseLocation, SafetyEntry
+from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, Intensity
+from app.agents.activity.store.inmemory import (
+    InMemoryActivityDocs,
+    InMemorySafety,
+    InMemoryWeather,
+    in_memory_ports,
+)
+from app.agents.activity.store.ports import ActivityDocRow, CoarseLocation, SafetyEntry
 from app.agents.activity.weather import WEATHER_UNCHECKED
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
@@ -86,13 +92,13 @@ def memory() -> LLMResponse:
     return _tools(("search_activity_memory", {}))
 
 
-def context(born=BORN_40_MONTHS, *, location=None, weather=None) -> ActivityContext:
+def context(born=BORN_40_MONTHS, *, location=None, weather=None, docs=None) -> ActivityContext:
     return ActivityContext(
         child_id=CHILD,
         run_id="run-1",
         now=NOW,
         timezone=UTC,
-        ports=in_memory_ports(CHILD, born, weather=weather),
+        ports=in_memory_ports(CHILD, born, weather=weather, docs=docs),
         location=location,
     )
 
@@ -234,6 +240,40 @@ class TestWeather:
         )
         assert result.status == "completed"
         assert "바깥 활동을 할 수 있다" in llm.seen[0][0]["content"]
+
+
+class TestDocEvidence:
+    async def test_일반_추천은_예시_문서_행을_근거로_단다(self):
+        """기록이 없는 아이도 어느 문서 행을 보고 골랐는지 suggestion_evidence 에 남는다."""
+        row = ActivityDocRow(
+            id=UUID(int=21),
+            doc_key="act-test-tower",
+            title="종이컵 탑 쌓기",
+            body="종이컵을 쌓고 무너뜨린다",
+            min_month=36,
+            max_month=48,
+            setting=ActivitySetting.INDOOR,
+            materials=("종이컵",),
+            caregiver_role=CaregiverRole.TOGETHER,
+            physical_intensity=Intensity.LOW,
+            involves_food=False,
+        )
+        docs = InMemoryActivityDocs([row])
+        proposal = candidate(row.title)
+        proposal["evidence"] = [{"id": str(row.id), "note": "이 나이 예시를 참고했어요"}]
+        llm = FakeLLM(
+            _tools(
+                (
+                    "propose_activity_candidates",
+                    {"candidates": [proposal, candidate("그림자놀이"), candidate("색종이 접기")]},
+                )
+            )
+        )
+        result = await run(task(), context(docs=docs), client=llm)
+        first = result.suggestions[0]
+        assert first.kind == "general"
+        assert [(c.ref.kind, c.ref.id) for c in first.citations] == [("activity_doc", row.id)]
+        assert f"id {row.id}" in llm.seen[0][0]["content"]  # 프롬프트 [예시]에 id 가 실린다
 
 
 class TestPrompt:

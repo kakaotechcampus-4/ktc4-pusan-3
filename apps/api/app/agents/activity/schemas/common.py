@@ -59,18 +59,21 @@ class EvidencePick(ToolArgs):
     모델은 `id`를 고르고 `note`만 쓴다. `source_kind` · `polarity` · `label`은 출력 tool이
     그 id를 돌려준 조회 결과에서 채워 `EvidenceCitation`으로 바꾼다.
     모델에게 맡기면 틀린 값이 들어갈 수 있다 (D6).
+    프롬프트 [예시]의 문서 행 id 도 받는다 — `activity_doc` 근거가 되고 개인화로 세지 않는다.
     """
 
     id: Annotated[
         str,
-        Field(description="search_activity_memory 결과에 있던 id만. 지어내지 않는다"),
+        Field(
+            description="search_activity_memory 결과나 프롬프트 [예시]에 있던 id만. 지어내지 않는다"
+        ),
     ]
     note: Annotated[
         str,
         Field(
             min_length=1,
             description=(
-                "그 기록에서 무엇을 근거로 봤는지 한 줄. "
+                "그 기록이나 예시에서 무엇을 근거로 봤는지 한 줄. "
                 "예: 지난주 공원에서 모래놀이를 한 시간 넘게 했어요. "
                 "보호자 화면에 그대로 나간다"
             ),
