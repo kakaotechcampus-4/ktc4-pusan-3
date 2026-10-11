@@ -144,6 +144,25 @@ class TestAvoided:
         result = review(candidate(content="아파트 물놀이터 가기", evidence=[]))
         assert reason_of(result) is RejectReason.AVOIDED
 
+    def test_기피_대조는_활동명이_아니라_subject_로_한다(self):
+        """관찰의 활동명("물감 놀이")은 후보에 그대로 나오는 일이 드물다.
+        subject("물감")로 막는다 (#304 리뷰)."""
+        paint = UUID(int=15)
+        seen = {
+            **SEEN,
+            paint: RankedEvidence(
+                ref=Ref(kind="observation_activity", id=paint),
+                tier=3,
+                label="물감 놀이",
+                subject="물감",
+                polarity=-1,
+                observed_on=TODAY,
+            ),
+        }
+        for content in ("손가락 물감 찍기", "물감으로 그림 그리기"):
+            result = review(candidate(content=content, evidence=[]), seen=seen)
+            assert reason_of(result) is RejectReason.AVOIDED
+
     def test_기피는_근거로는_쓸_수_있다(self):
         """ "물놀이를 싫어해서 모래놀이를 골랐어요" 가 되어야 한다 (D4)."""
         pick = {"id": str(WATER), "note": "물놀이를 할 때 울었어요"}

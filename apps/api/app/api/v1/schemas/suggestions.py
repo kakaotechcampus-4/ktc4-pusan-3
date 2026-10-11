@@ -1,9 +1,8 @@
-"""제안 채택·일정 초안·일정 제출 요청·응답 — #236."""
+"""제안 채택·일정 초안·일정 제출·목록·평가·추천 생성 요청·응답 — #236 · #284."""
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -16,11 +15,19 @@ from app.core.event_draft import (
     Moment,
 )
 
-# ── 채택 ──────────────────────────────────────────────────────────────────
+# ── 공통 ──────────────────────────────────────────────────────────────────
+
+AgentValue = Literal["food", "activity", "growth", "health"]
+SuggestionFeedbackValue = Literal["child_liked", "child_disliked", "not_acted"]
 
 
-class ApproveSuggestionsRequest(BaseModel):
-    suggestion_ids: list[uuid.UUID]
+class EvidenceOut(BaseModel):
+    ref: Ref
+    label: str
+    observed_to: str
+    confidence_source: str
+    is_stale: bool | None = None
+    note: str
 
 
 class SuggestionOut(BaseModel):
@@ -29,21 +36,149 @@ class SuggestionOut(BaseModel):
     agent: str
     kind: str
     content: str
-    reason: str | None
+    reason: str | None = Field(
+        default=None,
+        description="현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정",
+    )
     status: str
     expires_at: str
     feedback: str | None
+    source_refs: list[Ref] = []
+    evidence: list[EvidenceOut] = []
+
+
+# ── 채택 ──────────────────────────────────────────────────────────────────
+
+
+class ApproveSuggestionsRequest(BaseModel):
+    suggestion_ids: list[uuid.UUID] = Field(max_length=20)
 
 
 class ApproveSuggestionsResponse(BaseModel):
     suggestions: list[SuggestionOut]
 
 
+# ── 추천 생성 (J — #284, agent 연결 전 stub) ─────────────────────────────
+
+
+class SuggestionsRequest(BaseModel):
+    agents: list[AgentValue] = Field(min_length=1, max_length=2)
+    run_id: str | None = Field(default=None, max_length=100)
+    prompt_key: str | None = Field(default=None, max_length=50)
+
+
+class GeneralSuggestionOut(BaseModel):
+    id: str
+    child_id: str
+    agent: str
+    kind: Literal["general"] = "general"
+    content: str
+    basis: str
+
+
+class SuggestionGroupOut(BaseModel):
+    agent: str
+    prompt: str | None = None
+    merges_into_one: bool | None = None
+
+
+class GuardOut(BaseModel):
+    code: str
+    blocked_agents: list[AgentValue]
+    message: str
+    deeplink: str | None = None
+
+
+class ScarcityOut(BaseModel):
+    count: int
+    question: dict
+
+
+class PrecheckOut(BaseModel):
+    code: str
+    item: str
+    note: str
+    suggestion_id: str
+
+
+class SuggestionsResponse(BaseModel):
+    suggestions: list[SuggestionOut]
+    groups: list[SuggestionGroupOut] | None = None
+    general: list[GeneralSuggestionOut] | None = None
+    looked_at: str
+    guards: list[GuardOut]
+    scarcity: ScarcityOut | None = None
+    prechecks: list[PrecheckOut] | None = None
+
+
+class AnswerRequest(BaseModel):
+    question_id: str = Field(max_length=100)
+    answer: str = Field(max_length=500)
+
+
+class AnswerResponse(BaseModel):
+    saved: bool
+
+
+# ── 추천 목록 (I — #284) ─────────────────────────────────────────────────
+
+
+class SuggestionListResponse(BaseModel):
+    items: list[SuggestionOut]
+    next_cursor: str | None = None
+
+
+# ── 추천 평가 (I — #284) ─────────────────────────────────────────────────
+
+
+class SuggestionFeedbackRequest(BaseModel):
+    feedback: SuggestionFeedbackValue
+
+
+class SuggestionFeedbackResponse(BaseModel):
+    suggestion: SuggestionOut
+    memory_changed: bool = False
+
+
+# ── 일정 수정 (I — #284) ─────────────────────────────────────────────────
+
+
+class UpdateEventBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(max_length=200)
+    starts_at: Moment = Field(description="ISO datetime with timezone")
+    ends_at: Moment | None = None
+    all_day: bool = False
+    event_type: EventTypeValue
+    category: EventCategoryValue
+
+    @model_validator(mode="after")
+    def _ends_after_starts(self) -> UpdateEventBody:
+        if self.ends_at is not None and self.ends_at <= self.starts_at:
+            msg = "끝나는 시각이 시작보다 늦어야 해요"
+            raise ValueError(msg)
+        return self
+
+
+class UpdateEventRequest(BaseModel):
+    event: UpdateEventBody
+    items: list[DraftItemPayload] = Field(default=[], max_length=100)
+
+    @model_validator(mode="after")
+    def _item_name_length(self) -> UpdateEventRequest:
+        for item in self.items:
+            if len(item.item_name) > 100:
+                msg = "준비물 이름은 100자까지예요"
+                raise ValueError(msg)
+        return self
+
+
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 
 class CreateEventDraftsRequest(BaseModel):
-    suggestion_ids: list[uuid.UUID]
+    suggestion_ids: list[uuid.UUID] = Field(max_length=20)
 
 
 class EventBodyOut(BaseModel):
@@ -78,7 +213,7 @@ class SubmitEventBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str
+    title: str = Field(max_length=200)
     starts_at: Moment = Field(description="ISO datetime with timezone — 보호자가 채운다")
     ends_at: Moment | None = None
     all_day: bool = False
@@ -95,15 +230,23 @@ class SubmitEventBody(BaseModel):
 
 class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
-    items: list[DraftItemPayload] = []
-    suggestion_ids: list[uuid.UUID] | None = None
+    items: list[DraftItemPayload] = Field(default=[], max_length=100)
+    suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def _item_name_length(self) -> SubmitEventRequest:
+        for item in self.items:
+            if len(item.item_name) > 100:
+                msg = "준비물 이름은 100자까지예요"
+                raise ValueError(msg)
+        return self
 
 
 class EventItemOut(BaseModel):
     item_id: str
     item_name: str
     is_prepared: bool
-    prepared_at: datetime | None = Field(default=None, description="체크한 시각. 서버가 채운다")
+    prepared_at: str | None = None
 
 
 class CalendarEventOut(BaseModel):
