@@ -14,7 +14,13 @@ import pytest
 import yaml
 
 from app.agents.food.recipe_catalog import parse_ingredient_table
-from scripts.draft_recipe_ingredients import build_draft, draft_entry, merge_entries, render_yaml
+from scripts.draft_recipe_ingredients import (
+    EXTRA_CODES,
+    build_draft,
+    draft_entry,
+    merge_entries,
+    render_yaml,
+)
 
 
 def sync(*recipes: list[str | None]) -> dict[str, Any]:
@@ -113,17 +119,28 @@ def test_괄호_속_고기는_코드_후보가_된다() -> None:
 @pytest.mark.parametrize(
     ("raw", "codes"),
     [
-        ("안심", {10, 16}),  # 소 · 돼지 둘 다 — 레시피를 보고 좁힌다
+        ("안심", {10, 16}),  # 소 · 돼지 둘 다
         ("감동젓", {9}),  # 작은 새우젓
         ("선지", {10, 16}),
         ("다짐육", {10, 16}),
+        ("장조림", {16}),
     ],
 )
-def test_사전이_모르는_이름은_넓은_코드_후보를_단다(raw: str, codes: set[int]) -> None:
-    entry = draft_entry(raw, rows=1)
+def test_부위_이름은_안전_사전이_넓은_코드를_단다(raw: str, codes: set[int]) -> None:
+    # 스크립트만 알던 이름을 안전 사전(food_safety_terms.yaml)으로 옮겼다 — 한 곳을 고치면
+    # 레시피 정리 표와 안전 필터가 같이 바뀐다(#326 리뷰)
+    assert codes <= set(draft_entry(raw, rows=1)["codes"])
 
-    assert codes <= set(entry["codes"])
+
+def test_스크립트에는_사전에_넣을_수_없는_한_글자_이름만_남는다() -> None:
+    # 사전은 글 속 부분 일치라 "양"(소의 위)이 양파 · 양념에 걸린다. 스크립트는 재료 이름 전체가
+    # 같을 때만 보므로 여기 남겨도 양파를 막지 않는다
+    assert set(EXTRA_CODES) == {"양"}
+    entry = draft_entry("양", rows=1)
+
+    assert 16 in entry["codes"]
     assert entry["note"]  # 왜 그 코드인지 검수자가 본다
+    assert 16 not in draft_entry("양파", rows=1)["codes"]
 
 
 def test_사전이_아는_이름은_사전_코드를_그대로_쓴다() -> None:
