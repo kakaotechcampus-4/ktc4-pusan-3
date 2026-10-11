@@ -166,6 +166,47 @@ def mentions_removed(text: str, removed: Iterable[str]) -> tuple[str, ...]:
     return tuple(found)
 
 
+@dataclass(frozen=True)
+class SummaryCheck:
+    """모델 요약 한 문장을 검사한 결과. 아이 정보(알레르기 이름)는 싣지 않지만
+    로그에는 남겨도 된다.
+    """
+
+    removed: tuple[str, ...]  # 표에서 빠진 식품 이름 · 별칭이 문장에 남은 것
+    blocked: bool  # 안전 필터 사전으로 이 아이에게 막히는 음식이 문장에 있다
+
+    @property
+    def ok(self) -> bool:
+        return not self.removed and not self.blocked
+
+
+def check_summary(
+    text: str,
+    removed: Iterable[str],
+    entries: Sequence[SafetyEntry],
+    *,
+    stage: Stage,
+    months: int,
+) -> SummaryCheck:
+    """요약 문장 검사 — 빠진 식품의 이름 · 별칭(`mentions_removed`)과 안전 필터 사전을 같이 건다.
+
+    별칭만 보면 부위(삼겹살) · 다른 이름(돈육) · 요리(삼계탕) · 묶음 알레르기(해산물의 새우)가
+    빠진다. 그래서 문장을 메뉴 행처럼 `filter_food_safety` 에 걸어
+    알레르기 · 질환 · 연령 규칙을 메뉴와 같은 사전으로 본다. 한 글자 별칭이 말끝에 걸려 잘못 막을
+    수 있지만, 잘못 막으면 요약 하나를 거절할 뿐이고 놓치면 알레르기 음식을 권하게 된다.
+    """
+    row = MenuCatalogRow(
+        menu_key="summary",
+        display_name=text,
+        source="manual",
+        resolved=True,
+        synced_at=_EPOCH,
+        ingredients=(text,),
+    )
+    verdict = filter_food_safety([row], entries, stage, months=months)
+    return SummaryCheck(removed=mentions_removed(text, removed), blocked=bool(verdict.blocked))
+
+
 def _aliases_of(name: str) -> tuple[str, ...]:
     return tuple(
         alias
