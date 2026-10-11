@@ -1,15 +1,17 @@
 """놀이 후보 출력 검증 — 설계 3-3 순서.
 
-  1. 안전 필터       위험 용어 사전 PR 에서 여기 붙는다. 걸린 후보는 거절이 아니라 풀에서 뺀다
+  1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
+                     아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   2. 평가 표현       content · why_this · why_now · note
-  3. Activity 검증   근거 id · 장소 이름 · 기피 대상 · note 반복 표현 · 최근 중복 ·
-                     0–17개월 보호자 동반
+  3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
+                     note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         아이 기록 근거 행 수로 kind 를 정한다. 모델이 고르지 않는다.
-                     장소 이름은 코드가 content 앞에 붙인다
+                     장소 이름은 코드가 content 앞에 붙인다. allergens · items 도 코드가 채운다
   5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
-걸린 후보는 고치지 않고 통째로 거절한다. "물놀이터" 를 "얕은 물놀이터" 로 고쳐 통과시키지 않는다.
+걸린 후보는 고치지 않고 통째로 빼거나 거절한다. "물놀이터" 를 "얕은 물놀이터" 로 고쳐 통과시키지
+않는다.
 사유는 코드로만 남긴다 — 활동명 · 근거 문장을 싣지 않는다 (로그로 흘러간다).
 """
 
@@ -20,8 +22,9 @@ from uuid import UUID
 
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
-from app.agents.activity.schemas.common import CaregiverRole, EvidencePick
+from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, EvidencePick
 from app.agents.activity.schemas.recommend import ActivityCandidate
+from app.agents.activity.tools.filters import SafetyTerms, check_candidate
 from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.refs import EvidenceCitation
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
@@ -50,6 +53,7 @@ class RejectReason(StrEnum):
     RECENT_DUPLICATE = "recent_duplicate"
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
+    OUTDOOR_CLOSED = "outdoor_closed"
     BUILD = "build_rejected"
 
 
@@ -66,6 +70,9 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.UNKNOWN_PLACE: (
         "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
     ),
+    RejectReason.OUTDOOR_CLOSED: (
+        "오늘은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾼다."
+    ),
     RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 why_this 에 쓴다.",
 }
 
@@ -77,9 +84,21 @@ class Rejection:
 
 
 @dataclass(frozen=True)
+class Removal:
+    """안전 필터로 빠진 후보. 거절과 달리 모델에게 돌려주지 않는다 — 걸린 사유를 알려 주면
+    어휘 회피를 가르치는 셈이다 (D6 · Tool_공통.md §5-2)."""
+
+    index: int  # 후보 순서 (0부터)
+    hits: tuple[str, ...]  # 걸린 위험 축 · "health_safety". 로그용 — 원문을 싣지 않는다
+
+
+@dataclass(frozen=True)
 class Review:
     drafts: tuple[SuggestionDraft, ...]
     rejections: tuple[Rejection, ...]
+    removed: tuple[Removal, ...] = ()
+    # drafts 와 같은 순서로 짝지은 위험 용어 경고 문구 (상수). 경고가 없으면 빈 튜플
+    warnings: tuple[tuple[str, ...], ...] = ()
 
 
 def review_candidates(
@@ -88,9 +107,14 @@ def review_candidates(
     months: int,
     seen: Seen,
     recent_activities: Collection[str],
+    safety: SafetyTerms,
     places: Collection[str] = (),
+    outdoor_ok: bool = True,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
+
+    `safety` 는 build_gate 가 run state 에 담은 health_safety 행으로 만든 대조표다 — 여기서
+    다시 읽지 않는다. 안전 필터에 걸린 후보는 `removed` 로 빠지고 뒤 검사를 타지 않는다.
 
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
@@ -105,8 +129,15 @@ def review_candidates(
     # 띄어쓰기만 다르게 써도 같은 곳으로 본다. 붙일 때는 조회 결과의 이름을 그대로 쓴다
     known_places = {key: name for name in places if (key := normalize_activity(name))}
     drafts: list[SuggestionDraft] = []
+    warnings: list[tuple[str, ...]] = []
     rejections: list[Rejection] = []
+    removed: list[Removal] = []
     for index, candidate in enumerate(candidates):
+        # 1. 안전 필터 — 맨 앞이다. 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다
+        check = check_candidate(candidate, months=months, terms=safety)
+        if check.blocked:
+            removed.append(Removal(index=index, hits=check.hits))
+            continue
         reason, citations, place = _check(
             candidate,
             months=months,
@@ -114,15 +145,23 @@ def review_candidates(
             places=known_places,
             avoided=avoided,
             recent=recent_activities,
+            outdoor_ok=outdoor_ok,
         )
         if reason is None:
             try:
-                drafts.append(_build(candidate, citations, place))
+                drafts.append(_build(candidate, citations, place, allergens=check.allergens))
             except SuggestionRejected:
                 reason = RejectReason.BUILD
+            else:
+                warnings.append(check.warnings)
         if reason is not None:
             rejections.append(Rejection(index=index, reason=reason))
-    return Review(drafts=tuple(drafts), rejections=tuple(rejections))
+    return Review(
+        drafts=tuple(drafts),
+        rejections=tuple(rejections),
+        removed=tuple(removed),
+        warnings=tuple(warnings),
+    )
 
 
 def error_code(rejections: Sequence[Rejection]) -> str:
@@ -151,8 +190,9 @@ def _check(
     places: Mapping[str, str],
     avoided: tuple[str, ...],
     recent: Collection[str],
+    outdoor_ok: bool,
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], str | None]:
-    # 1. 안전 필터 — 위험 용어 사전 PR 에서 여기에 붙는다
+    # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
     # 2. 평가 표현
     texts = (candidate.content, candidate.why_this, candidate.why_now)
@@ -174,6 +214,10 @@ def _check(
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
 
+    # 날씨 판정이 야외를 막은 날(D8). either 는 실내에서도 되니 통과한다
+    if not outdoor_ok and candidate.setting == ActivitySetting.OUTDOOR:
+        return RejectReason.OUTDOOR_CLOSED, (), None
+
     content_key = normalize_activity(candidate.content)
     if any(label in content_key for label in avoided):
         return RejectReason.AVOIDED, (), None
@@ -189,8 +233,16 @@ def _check(
 
 
 def _build(
-    candidate: ActivityCandidate, citations: tuple[EvidenceCitation, ...], place: str | None
+    candidate: ActivityCandidate,
+    citations: tuple[EvidenceCitation, ...],
+    place: str | None,
+    *,
+    allergens: tuple[str, ...],
 ) -> SuggestionDraft:
+    """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
+
+    allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
+    """
     reason = f"{candidate.why_this} {candidate.why_now}".strip()
     return build(
         agent="activity",
@@ -198,6 +250,8 @@ def _build(
         reason=reason,
         citations=citations,
         general_reason=GENERAL_REASON,
+        allergens=allergens,
+        items=tuple(candidate.materials),
     )
 
 

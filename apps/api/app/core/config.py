@@ -17,14 +17,25 @@ class Settings(AgentLLMSettings):
     DB_PASSWORD: str
     DB_NAME: str
 
+    # Redis — 비워 두면 프로세스 메모리 폴백 (단일 워커 전제)
+    REDIS_URL: str | None = None
+
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
     MEAL_OCR_API_KEY: str | None = None
     MEAL_OCR_MODEL: str = "gemini-3.1-pro-preview"
 
+    # 도서관 정보나루(data4library.kr) 인증키 — 도서 추천 (#290). 비어 있으면 도서 라벨만
+    # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
+    DATA4LIBRARY_AUTH_KEY: str = ""
+
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
+
+    # ERROR 이상 로그를 알릴 Discord 웹훅 주소 (app/core/alerts.py). 비어 있으면 알림만 꺼지고
+    # 서버는 뜬다. 🚨 비밀 — 응답 · 로그에 싣지 않는다. 켜는 법 · 본문은 README "로그와 알림".
+    ALERT_WEBHOOK_URL: str = ""
 
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
     #
@@ -122,6 +133,18 @@ class Settings(AgentLLMSettings):
         if "*" in raw:
             raise ValueError("CORS_ALLOW_ORIGINS 에 * 를 쓰지 않는다. 오리진을 명시할 것")
         return raw
+
+    @property
+    def alert_webhook_url(self) -> str | None:
+        """알림을 보낼 주소. 빈 칸은 없는 것으로 본다 (`ALERT_WEBHOOK_URL=` 처럼 키만 두는 실수).
+
+        🚨 local 에서는 주소가 있어도 없는 것으로 본다 — 노트북의 오류가 팀 채널로 가지 않게.
+           .env 에 주소를 넣어 둔 채 make dev 를 해도 조용하다. 로컬에서 한 번 확인할 때는
+           APP_ENV=dev 로 돌린다 (README "로그와 알림").
+        """
+        if self.APP_ENV == "local":
+            return None
+        return self.ALERT_WEBHOOK_URL.strip() or None
 
     @property
     def cors_allow_origins(self) -> list[str]:

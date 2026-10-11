@@ -70,15 +70,21 @@ class TestTriggerCuratorBackground:
     """trigger_curator_background → advisory lock → embed → link → recompute."""
 
     async def test_trigger가_관찰을_임베딩하고_프로필을_만든다(
-        self, session: AsyncSession, family, monkeypatch,
+        self,
+        session: AsyncSession,
+        family,
+        monkeypatch,
     ):
         owner, child = family
         today = date(2026, 9, 26)
 
         # 관찰 저장
         await _save(
-            session, child_id=child.id, parent_id=owner.id,
-            subject="딸기", observed_on=today,
+            session,
+            child_id=child.id,
+            parent_id=owner.id,
+            subject="딸기",
+            observed_on=today,
         )
         await session.flush()
 
@@ -103,9 +109,11 @@ class TestTriggerCuratorBackground:
         await asyncio.wait_for(task, timeout=5)
 
         # 관찰에 embedding + affinity_id 채워졌는지
-        obs_rows = (await session.scalars(
-            select(ObservationFood).where(ObservationFood.child_id == child.id)
-        )).all()
+        obs_rows = (
+            await session.scalars(
+                select(ObservationFood).where(ObservationFood.child_id == child.id)
+            )
+        ).all()
         assert len(obs_rows) == 1
         assert obs_rows[0].embedding is not None, "embedding이 채워져야 한다"
         assert obs_rows[0].affinity_id is not None, "profile에 연결되어야 한다"

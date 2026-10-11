@@ -14,6 +14,14 @@ from app.agents.common.refs import Ref
 
 AuthoredBy = Literal["code", "model"]
 
+# 화면이 문구 말고 모양으로 갈라야 하는 안내 (#249 의 groups[].notice 와 같은 값).
+# fewer(1~2개) · empty(0개)는 count_notice 만 붙인다. 날씨 안내처럼 같은 kind="notice" 라도
+# 개수와 상관없는 안내는 None 이다.
+# TODO(#249): cannot_resume(이어서 할 수 없음)은 05 추천 엔드포인트가 다시 시도를 가를 때 붙인다.
+#   그때 여기에 값을 더하고, 문구는 suggestion.readout.yaml 에 두어 entrypoint 로 내보낸다.
+#   agent_result(#227)는 이 값을 쓰지 않는다 — run 안에서는 이어서 할 일이 없다
+NoticeCode = Literal["fewer", "empty"]
+
 
 @dataclass(frozen=True)
 class Readout:
@@ -28,6 +36,7 @@ class Readout:
     title: str = ""
     authored_by: AuthoredBy = "model"
     source_refs: tuple[Ref, ...] = ()
+    code: NoticeCode | None = None
 
     def __post_init__(self) -> None:
         if not self.body.strip():
@@ -40,6 +49,7 @@ class Readout:
             "body": self.body,
             "authored_by": self.authored_by,
             "source_refs": [ref.to_payload() for ref in self.source_refs],
+            "code": self.code,
         }
 
 

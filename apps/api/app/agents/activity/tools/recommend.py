@@ -1,5 +1,6 @@
 """놀이 추천의 출력 (모델 tool)."""
 
+import logging
 from datetime import timedelta
 
 from app.agents.activity.context import ActivityContext
@@ -7,9 +8,12 @@ from app.agents.activity.result import ToolResult, fail, ok
 from app.agents.activity.review import error_code, explain, review_candidates
 from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS
 from app.agents.activity.schemas.recommend import ProposeActivityCandidatesArgs
+from app.agents.activity.tools.filters import safety_terms
 from app.agents.common.suggestion import check_count
 
 _NAME = "propose_activity_candidates"
+
+logger = logging.getLogger(__name__)
 
 
 async def propose_activity_candidates(
@@ -24,19 +28,21 @@ async def propose_activity_candidates(
     - 통과하면 `context.state.suggestions` 에 담는다. 저장 · 발송 · 예약은 하지 않는다.
       status 와 expires_at 은 인자에 없다.
 
-    안전 필터는 아직 없다 (위험 용어 사전 PR). 붙으면 걸린 후보는 거절이 아니라 풀에서 빠지고,
-    3개 미만이면 Agent 가 재호출 1회를 한다 — 그때는 걸린 사유를 모델에게 주지 않는다.
-    재호출 뒤에도 모자라면 `check_count(..., exhausted=True)` 로 남은 만큼 내고, 0개면 추천 없이
-    `count_notice(0)` 안내로 끝낸다 (Tool_공통.md §5-2).
-
-    TODO: suggestion.allergens · items 를 채운다 (10/4 스키마 이슈).
-    채워서 넘기는 곳은 `review._build` 의 `build()` 호출이다.
-    - allergens 는 19종 밖(쑥 등)도 이름으로 담는다
-    - items 는 준비물(수영복 등)
+    - 🚨 안전 필터는 build_gate 가 run state 에 담은 health_safety 행만 쓴다. 여기서 다시
+      읽지 않는다 — 읽으면 같은 run 안에서 게이트와 필터가 다른 행을 볼 수 있다.
+    - 안전 필터에 걸린 후보는 거절이 아니라 풀에서 빠진다. 모델에게 돌려주지 않고 사유도 알리지
+      않는다 — 어휘 회피를 가르치게 된다 (§5-2). 통과한 초안과 빠진 후보(`excluded`)를 run state
+      에 담고 끝낸다. 3개가 안 되면 재호출 1회는 run() 이 제외 목록과 함께 한다 —
+      재호출 결과를 합친 뒤 `check_count(..., exhausted=True)` → `count_notice(len)` 순서다.
+    - 경고 문구(위험 용어 사전 상수)는 추천과 같은 순서로 `state.warnings` 에 담는다.
+    - suggestion.allergens · items 는 `review._build` 가 코드로 채운다 (#232).
     """
     gate = context.state.gate
-    if gate is None:
-        raise RuntimeError("Gate 없이 출력 tool 이 불렸다 — run() 이 먼저 build_gate 를 부른다")
+    entries = context.state.safety_entries
+    if gate is None or entries is None:
+        raise RuntimeError(
+            "Gate · 안전 정보 없이 출력 tool 이 불렸다 — run() 이 먼저 build_gate 를 부른다"
+        )
 
     today = context.today
     observations = await context.ports.memory.observations(
@@ -51,11 +57,26 @@ async def propose_activity_candidates(
         seen=context.state.seen_evidence,
         places=context.state.seen_places,
         recent_activities=[row.activity for row in observations],
+        safety=safety_terms(entries),
+        outdoor_ok=gate.outdoor_ok,
     )
     if review.rejections:
+        # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다
         code = error_code(review.rejections)
         return fail("propose", _NAME, code, explain(review.rejections))
 
-    check_count(review.drafts)
+    if review.removed:
+        # 로그에는 건수와 축 이름만. 활동명 · 알레르기 이름은 남기지 않는다
+        logger.info(
+            "Activity 안전 필터 run_id=%s removed=%d axes=%s",
+            context.run_id,
+            len(review.removed),
+            sorted({hit for removal in review.removed for hit in removal.hits}),
+        )
+        context.state.excluded = tuple(args.candidates[r.index].content for r in review.removed)
+    else:
+        check_count(review.drafts)
+        context.state.excluded = ()
     context.state.suggestions = review.drafts
+    context.state.warnings = review.warnings
     return ok("propose", _NAME, count=len(review.drafts), kinds=[d.kind for d in review.drafts])

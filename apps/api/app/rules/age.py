@@ -119,6 +119,14 @@ def stage_of(months: int) -> Stage:
     raise AssertionError("_STAGE_BOUNDARIES 의 마지막 칸이 0 이 아니다")  # pragma: no cover
 
 
+def first_month_of(stage: Stage) -> int:
+    """그 단계가 시작하는 월령. 월령을 모르고 단계만 알 때 가장 어린 쪽으로 볼 때 쓴다."""
+    for boundary, candidate in _STAGE_BOUNDARIES:
+        if candidate == stage:
+            return boundary
+    raise ValueError(f"모르는 단계: {stage!r}")
+
+
 def _is_month_end_anniversary(birth_date: date, today: date) -> bool:
     """생일이 이 달에는 없어서 말일이 그날이 되는 경우.
 

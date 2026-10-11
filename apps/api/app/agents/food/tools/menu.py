@@ -11,8 +11,9 @@ async def lookup_daycare_menu(context: FoodContext, args: DaycareMenuArgs) -> To
 
     DB 연결 후:
     - args.day를 날짜로 변환한다.
-    - context.menu.menu(child_id, day)에서 메뉴, 알레르기 정보, 총 열량, 단백질을 가져온다.
-    해당 날짜의 데이터가 없으면 메뉴 없음으로 처리한다.
+    - context.menu.menu(child_id, day)에서 메뉴, 총 열량, 단백질을 가져온다.
+    해당 날짜의 데이터가 없으면 메뉴 없음으로 처리한다. 급식표에 인쇄된 알레르기 번호는
+    읽지 않는다 — 기관이 아이의 알레르기를 관리하고 보호자에게 미리 알린다.
     - build_gate가 읽어 둔 context.state.safety로 filter_food_safety를 불러 위험 식품을 표시한다.
     포트를 다시 읽지 않는다. None(조회 실패)이면 "알레르기 확인 못 함" 상태를 함께 반환한다.
     - 결과에는 메뉴, 위험 표시, 영양 합계만 포함한다.
