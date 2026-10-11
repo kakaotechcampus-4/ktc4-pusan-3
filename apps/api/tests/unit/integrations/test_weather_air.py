@@ -37,6 +37,22 @@ def service_key(monkeypatch):
     monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", KEY)
 
 
+# 테스트가 만든 어댑터. 끝나면 닫는다 — 안 닫으면 httpx 클라이언트가 남는다 (#328 리뷰)
+_OPENED: list = []
+
+
+@pytest.fixture(autouse=True)
+async def close_sources():
+    yield
+    while _OPENED:
+        await _OPENED.pop().aclose()
+
+
+def opened(src):
+    _OPENED.append(src)
+    return src
+
+
 def payload(rows: list[dict], code: str = "00") -> dict:
     return {
         "response": {
@@ -73,7 +89,7 @@ def source(response, clock=None) -> tuple[AirKorea, Recorder]:
     recorder = Recorder(response)
     now = clock or (lambda: NOW)
     return (
-        AirKorea(transport=httpx.MockTransport(recorder), now=now, stations=STATIONS),
+        opened(AirKorea(transport=httpx.MockTransport(recorder), now=now, stations=STATIONS)),
         recorder,
     )
 

@@ -110,25 +110,28 @@ class AirKorea:
             self._cache.move_to_end(key)
             return self._cache[key]
         lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
-            if key in self._cache:
-                return self._cache[key]
-            payload = await get_json(
-                self._client,
-                URL,
-                {
-                    "pageNo": 1,
-                    "numOfRows": 1,
-                    "returnType": "json",
-                    "stationName": station,
-                    "dataTerm": "DAILY",
-                    "ver": "1.0",
-                },
-                what="대기질",
-            )
-            air = parse_air(payload)
-            self._cache[key] = air
-            if len(self._cache) > CACHE_SIZE:
-                self._cache.popitem(last=False)
-        self._locks.pop(key, None)
-        return air
+        try:
+            async with lock:
+                if key in self._cache:
+                    return self._cache[key]
+                payload = await get_json(
+                    self._client,
+                    URL,
+                    {
+                        "pageNo": 1,
+                        "numOfRows": 1,
+                        "returnType": "json",
+                        "stationName": station,
+                        "dataTerm": "DAILY",
+                        "ver": "1.0",
+                    },
+                    what="대기질",
+                )
+                air = parse_air(payload)
+                self._cache[key] = air
+                if len(self._cache) > CACHE_SIZE:
+                    self._cache.popitem(last=False)
+                return air
+        finally:
+            # 실패해도 Lock 을 남기지 않는다 (#328 리뷰)
+            self._locks.pop(key, None)

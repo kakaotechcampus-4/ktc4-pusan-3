@@ -35,6 +35,22 @@ def service_key(monkeypatch):
     monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", KEY)
 
 
+# 테스트가 만든 어댑터. 끝나면 닫는다 — 안 닫으면 httpx 클라이언트가 남는다 (#328 리뷰)
+_OPENED: list = []
+
+
+@pytest.fixture(autouse=True)
+async def close_sources():
+    yield
+    while _OPENED:
+        await _OPENED.pop().aclose()
+
+
+def opened(src):
+    _OPENED.append(src)
+    return src
+
+
 class Recorder:
     def __init__(self, response) -> None:
         self.response = response
@@ -101,7 +117,7 @@ class TestUv:
 
     def source(self, response=None):
         recorder = Recorder(response or httpx.Response(200, json=kma([UV_ROW])))
-        return KmaUv(transport=httpx.MockTransport(recorder), now=lambda: NOW), recorder
+        return opened(KmaUv(transport=httpx.MockTransport(recorder), now=lambda: NOW)), recorder
 
     async def test_오늘은_지금_칸_다른_날은_12시_칸(self):
         src, recorder = self.source()
@@ -145,7 +161,7 @@ class TestAdvisories:
     def source(self, response, clock=None):
         recorder = Recorder(response)
         now = clock or (lambda: NOW)
-        return KmaAdvisories(transport=httpx.MockTransport(recorder), now=now), recorder
+        return opened(KmaAdvisories(transport=httpx.MockTransport(recorder), now=now)), recorder
 
     async def test_이_구역_행만_남기고_원문은_문자열로(self):
         body = kma([advisory("L1082500"), advisory("L1100100", var=12)])
@@ -207,18 +223,20 @@ class TestFailure:
         transport = httpx.MockTransport(Recorder(response))
         with pytest.raises(UpstreamUnavailable) as raised:
             if which == "uv":
-                await KmaUv(transport=transport, now=lambda: NOW).uv(
+                await opened(KmaUv(transport=transport, now=lambda: NOW)).uv(
                     grid=BUSAN, day=date(2026, 10, 11)
                 )
             else:
-                await KmaAdvisories(transport=transport, now=lambda: NOW).advisories(grid=BUSAN)
+                await opened(KmaAdvisories(transport=transport, now=lambda: NOW)).advisories(
+                    grid=BUSAN
+                )
         assert raised.value.__cause__ is None
         for text in (str(raised.value), caplog.text):
             assert KEY not in text and "serviceKey" not in text and "apis.data.go.kr" not in text
 
 
-def test_PublicWeather_는_Activity_날씨_포트다():
-    source: WeatherSource = PublicWeather(transport=httpx.MockTransport(Recorder(None)))
+async def test_PublicWeather_는_Activity_날씨_포트다():
+    source: WeatherSource = opened(PublicWeather(transport=httpx.MockTransport(Recorder(None))))
     assert all(
         callable(getattr(source, name)) for name in ("forecast", "air_quality", "uv", "advisories")
     )
