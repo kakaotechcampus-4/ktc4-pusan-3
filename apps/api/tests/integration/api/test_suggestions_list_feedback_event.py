@@ -373,6 +373,7 @@ async def test_update_event_preserves_is_prepared(
     towel = resp.json()["event"]["items"][0]
     assert towel["item_name"] == "수건"
     assert towel["is_prepared"] is True
+    assert towel["prepared_at"] is not None
 
 
 async def test_update_event_requires_idempotency_key(
