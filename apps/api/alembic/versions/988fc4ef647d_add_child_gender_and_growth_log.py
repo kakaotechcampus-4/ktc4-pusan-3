@@ -8,7 +8,7 @@
   아이가 지워지면 같이 지워지고, 적은 보호자가 탈퇴하면 적은 사람만 비운다 (공동 기록).
 
 Revision ID: 988fc4ef647d
-Revises: d9e1f3a5b7c2
+Revises: d8e9f0a1b2c3
 Create Date: 2026-10-10
 """
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "988fc4ef647d"
-down_revision: Union[str, Sequence[str], None] = "d9e1f3a5b7c2"
+down_revision: Union[str, Sequence[str], None] = "d8e9f0a1b2c3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
