@@ -52,6 +52,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.core.mfds_nutri_raw import RawNutriRow
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -151,7 +152,8 @@ class MenuCatalogRow:
 
     menu_key: str
     display_name: str
-    source: Literal["mfds_nutri", "mfds_recipe", "center_standard", "manual"]
+    # mafra_recipe — 농식품정보원 레시피 배치(#321). DB CHECK 에도 같은 값이 들어가야 한다(BE 협의)
+    source: Literal["mfds_nutri", "mfds_recipe", "mafra_recipe", "center_standard", "manual"]
     resolved: bool
     synced_at: datetime
     food_code: str | None = None
@@ -281,16 +283,20 @@ class MenuCatalogStore(Protocol):
 class MenuSource(Protocol):
     """외부 영양성분 · 레시피 조회. 실패하거나 정보가 부족하면 그 메뉴는 unresolved 로 둔다.
 
-    `name`(정규화한 메뉴 이름)과 이름이 정확히 같은 결과만 돌려준다 — 비슷한 이름만 있으면
-    None 이다(된장찌개를 물었는데 부대된장찌개를 주지 않는다). 받은 결과가 그대로 카탈로그에
-    쌓여서다(food_agent_own_table §1).
+    클라이언트는 원문 행을 그대로 주고, 어느 행을 쓸지는 Agent 가 정한다
+    (`nutrition_source.pick_nutrition` — 이름이 정확히 같은 행만, 품목대표만). 비슷한 이름으로
+    추정하지 않는다 — 받은 결과가 그대로 카탈로그에 쌓여서다(food_agent_own_table §1).
 
     unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
     (`tools/safety.py` 의 unchecked).
     """
 
-    async def nutrition(self, *, name: str) -> NutritionFacts | None:
-        """실패는 MenuSourceError. None 은 그 이름의 영양성분이 정말 없다는 뜻."""
+    async def nutrition_rows(self, *, name: str) -> tuple[RawNutriRow, ...]:
+        """`name`(정규화한 메뉴 이름)으로 검색한 영양DB 원문 행들. 실패는 MenuSourceError.
+
+        검색에 걸린 행을 다 준다 — 이름이 다른 행(된장찌개_두부)이 섞여 있어도 된다.
+        빈 튜플은 정말 없다는 뜻이고 장애가 아니다.
+        """
         ...
 
     async def ingredients(self, *, name: str) -> tuple[str, ...] | None:
