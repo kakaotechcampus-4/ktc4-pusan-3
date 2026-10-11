@@ -213,9 +213,8 @@ def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
     """health_safety 행들을 막을 것으로 바꾼다.
 
     - `retracted` · `none` 이 아닌 행을 다 읽는다.
-    - 알레르기 행은 `category` 에 `food` 가 있거나 비어 있어야 읽는다. `environment` · `drug`
-      만 있는 행(쑥 · 페니실린)은 뺀다. `food` 와 `environment` 가 같이 있으면(쑥) 식품이기도
-      해서 읽는다.
+    - 환경 · 약물 알레르기(꽃가루 · 페니실린)도 읽는다. 메뉴명 · 재료와 매칭되지 않으면
+      아무것도 막지 않는다.
     - kind 와 상관없이 label 을 같은 사전으로 읽는다 — 알레르기 칸에 적은 "유당불내증",
       질환 칸에 적은 "우유 알레르기" 도 그대로 막는다. 질환은 label 이
       `chronic_restriction.yaml` 매핑에 있을 때만 그 식품을 막고, 없는 label(당뇨 · 고소공포)은
@@ -232,10 +231,6 @@ def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
 
     for entry in entries:
         if entry.status in _INACTIVE_STATUSES:
-            continue
-        if entry.kind == "allergy" and entry.category and "food" not in entry.category:
-            # 환경 · 약물로만 분류된 알레르기는 식품 필터의 대상이 아니다. 분류가 비어 있으면
-            # 거른다 — 빠졌거나 틀렸을 때 덜 막는 쪽보다 과하게 막는 쪽이 안전하다
             continue
         found, rest = read_label(entry.label, book)
         codes |= found.codes

@@ -16,6 +16,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { formatDay } from "@/lib/format";
 import {
+  SEVERITY_LABEL,
+  isSeverityFor,
+  severityFieldLabel,
+  severityOptions,
+} from "@/lib/health-safety";
+import {
   addHealthSafety,
   api,
   isApiError,
@@ -47,43 +53,27 @@ import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
  *    화면 문구도 "지워요" 가 아니라 "빠져요" 다 — 없는 동작을 약속하지 않는다.
  */
 
-/** `type` 은 DB 의 `health_safety.kind` 다 (`Ref.kind` 와 이름이 겹쳐 API 에서만 `type`). */
+/**
+ * `type` 은 DB 의 `health_safety.kind` 다 (`Ref.kind` 와 이름이 겹쳐 API 에서만 `type`).
+ * 보호자가 직접 적는 것은 이 둘뿐이다 — 나머지 종류를 입력으로 늘리는 것은 제품 결정이다 (#295).
+ */
 const TYPE_OPTIONS = [
   { value: "allergy", label: "알레르기" },
-  { value: "condition", label: "지병 · 만성질환" },
-] as const;
-
-const CATEGORY_OPTIONS = [
-  { value: "식품", label: "음식" },
-  { value: "약", label: "약" },
-  { value: "환경", label: "환경 · 계절" },
-  { value: "기타", label: "그 밖에" },
-] as const;
-
-/**
- * 🚨 **"모르겠어요" 가 기본값이다.** 보호자가 안 고르면 `severity` 를 보내지 않는다 —
- *    심각도는 추측하면 안 되는 값이고(NF-03), 비워 두는 것이 없는 값을 지어내는 것보다 낫다.
- */
-const SEVERITY_OPTIONS = [
-  { value: "unknown", label: "모르겠어요" },
-  { value: "mild", label: "가볍게" },
-  { value: "moderate", label: "보통" },
-  { value: "severe", label: "심하게" },
+  { value: "chronic_disease", label: "지병 · 만성질환" },
 ] as const;
 
 type TypeValue = (typeof TYPE_OPTIONS)[number]["value"];
-type CategoryValue = (typeof CATEGORY_OPTIONS)[number]["value"];
-type SeverityValue = (typeof SEVERITY_OPTIONS)[number]["value"];
 
-const SEVERITY_LABEL: Record<string, string> = {
-  mild: "가볍게",
-  moderate: "보통",
-  severe: "심하게",
-};
-
+/**
+ * 🚨 DB 의 다섯 종류를 다 안다 — 입력으로 고르는 것은 위 둘뿐이어도, 목록에서 영문이 새지 않게.
+ *    뒤의 세 라벨은 잠정이다 (#295).
+ */
 const TYPE_LABEL: Record<string, string> = {
   allergy: "알레르기",
-  condition: "지병",
+  chronic_disease: "지병",
+  behavioral: "행동",
+  environmental: "환경",
+  other_medical: "그 밖의 건강 정보",
 };
 
 /* ── 목록 ─────────────────────────────────────────────────────────────── */
@@ -145,7 +135,7 @@ function HealthSafetyRow({
     },
   });
 
-  const meta = [TYPE_LABEL[item.type] ?? item.type, item.category].filter(Boolean).join(", ");
+  const meta = TYPE_LABEL[item.type] ?? item.type;
   const severity = item.severity ? SEVERITY_LABEL[item.severity] : null;
 
   return (
@@ -266,8 +256,7 @@ export function HealthSafetySheet({
 
   const [type, setType] = useState<TypeValue>("allergy");
   const [label, setLabel] = useState("");
-  const [category, setCategory] = useState<CategoryValue>("식품");
-  const [severity, setSeverity] = useState<SeverityValue>("unknown");
+  const [severity, setSeverity] = useState("unknown");
   const [reactions, setReactions] = useState("");
   const [notes, setNotes] = useState("");
   const [labelError, setLabelError] = useState<string | null>(null);
@@ -309,7 +298,6 @@ export function HealthSafetySheet({
   function reset() {
     setType("allergy");
     setLabel("");
-    setCategory("식품");
     setSeverity("unknown");
     setReactions("");
     setNotes("");
@@ -336,11 +324,8 @@ export function HealthSafetySheet({
     {
       setType((TYPE_LABEL[item.type] ? item.type : "allergy") as TypeValue);
       setLabel(item.label);
-      setCategory((item.category || "기타") as CategoryValue);
       setSeverity(
-        (item.severity && SEVERITY_LABEL[item.severity]
-          ? item.severity
-          : "unknown") as SeverityValue,
+        item.severity && isSeverityFor(item.type, item.severity) ? item.severity : "unknown",
       );
       setReactions(item.reactions.join(", "));
       setNotes(item.notes ?? "");
@@ -358,7 +343,6 @@ export function HealthSafetySheet({
       // 🚨 종류·이름은 보내지 않는다 — 그 둘은 이 기록의 정체다 (`UpdateHealthSafetyRequest`).
       // 🚨 "모르겠어요" 로 되돌리는 것은 `null` 이다. 키를 빼면 "그대로 두기" 가 된다.
       update.mutate({
-        category,
         severity: severity === "unknown" ? null : severity,
         reactions: reactionList,
         notes: notes.trim() ? notes.trim() : null,
@@ -376,7 +360,6 @@ export function HealthSafetySheet({
     save.mutate({
       type,
       label: trimmed,
-      category,
       // 🚨 "모르겠어요" 는 값을 안 보내는 것이다. 빈 문자열이나 기본 심각도를 지어내지 않는다.
       ...(severity !== "unknown" ? { severity } : {}),
       ...(reactionList.length > 0 ? { reactions: reactionList } : {}),
@@ -471,7 +454,17 @@ export function HealthSafetySheet({
           </div>
         ) : (
           <>
-            <Select label="종류" value={type} options={TYPE_OPTIONS} onChange={setType} />
+            <Select
+              label="종류"
+              value={type}
+              options={TYPE_OPTIONS}
+              onChange={(next) => {
+                setType(next);
+                // 🚨 심각도 선택지가 종류마다 달라서, 앞서 고른 값이 새 종류에 없으면 DB 가 막는
+                //    조합이 된다. 종류를 바꾸면 "모르겠어요" 로 돌린다.
+                setSeverity("unknown");
+              }}
+            />
 
             <TextInput
               label="무엇인가요"
@@ -484,12 +477,12 @@ export function HealthSafetySheet({
           </>
         )}
 
-        <Select label="분류" value={category} options={CATEGORY_OPTIONS} onChange={setCategory} />
-
+        {/* 🚨 **"모르겠어요" 가 기본값이다.** 보호자가 안 고르면 `severity` 를 보내지 않는다 —
+            심각도는 추측하면 안 되는 값이다 (NF-03). 선택지는 종류를 따라간다 (`lib/health-safety.ts`). */}
         <Select
-          label="얼마나 심한가요"
+          label={severityFieldLabel(type)}
           value={severity}
-          options={SEVERITY_OPTIONS}
+          options={severityOptions(type)}
           onChange={setSeverity}
         />
 

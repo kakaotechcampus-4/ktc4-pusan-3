@@ -140,6 +140,8 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - **인용마다 `note` 가 있어야 한다.** 그 행에서 무엇을 근거로 봤는지를 Agent 가 한 줄로 쓴다. 비면 그 후보를 거절한다. 거절은 후보 단위라 묶음은 그대로 간다.
 - 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
 
+- **대조는 `subject`, 설명은 사람이 읽는 칸.** `rank_evidence` 의 근거는 두 칸을 갖는다 (#304 리뷰). 기피 거절 · keywords 대조는 네 관찰 테이블 공통 칸인 `subject`(affinity 는 `merge_key`)로 하고, `cite()` · why_this · 화면의 "사용한 기록" 은 `label` 을 쓴다. `label` 은 사람이 읽는 칸이다 — Activity `activity`, Education `topic`. 그런 칸이 없는 Food · Routine 은 `ObservationRow.label` 을 비워 두면 `subject` 가 된다.
+
 ### 5-4. 문구 — 기피를 인용했으면 말해야 한다
 
 `polarity = −1` 근거를 인용한 후보는 `reason` 에 **무엇을 피했는지**가 있어야 한다. 없으면 거절한다.
