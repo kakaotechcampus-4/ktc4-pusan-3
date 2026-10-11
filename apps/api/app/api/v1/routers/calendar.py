@@ -15,10 +15,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
+from app.api.calendar_dates import FIRST_DAY, LAST_DAY, check_day, out_of_range
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
-from app.api.errors import ApiError, ErrorEnvelope
+from app.api.errors import ErrorEnvelope
 from app.api.quota import KST, today_kst
 from app.api.v1.routers.observations import (
     LISTED_STATUSES,
@@ -51,13 +52,6 @@ from app.domains.schedule.repository import (
 router = APIRouter()
 
 _PAGE_LIMIT = 100
-# 받는 날짜 범위 — 정책이 아니라 계산 한계다. 끝 연도(1 · 9999년)에서는 다음 날 · KST 자정
-# 계산이 넘쳐 500 이 되므로 DB 조회 전에 막는다 (#318 리뷰). Agent 날짜 규칙
-# (agents/common/datetime_rules.py 의 _MIN_YEAR · _MAX_YEAR)과 같은 범위라, Agent 가 저장할 수
-# 있는 일정은 모두 캘린더에서 열린다. agents 내부는 가져올 수 없어 값을 따로 둔다.
-# 상태 코드는 형식 오류와 같다 — 쿼리의 달은 400, 경로의 날짜는 422 (errors.py · 명세 §8-1).
-_FIRST_DAY = dt.date(dt.MINYEAR + 1, 1, 1)
-_LAST_DAY = dt.date(dt.MAXYEAR - 1, 12, 31)
 
 
 @router.get(
@@ -72,8 +66,8 @@ async def get_calendar_month(
 ) -> CalendarMonthResponse:
     """달 보기 — 날짜마다 일정 · 내 일기 · 공동 사진 · 기록 수."""
     year, mon = map(int, month.split("-"))
-    if not _FIRST_DAY.year <= year <= _LAST_DAY.year:
-        raise _out_of_range(400)
+    if not FIRST_DAY.year <= year <= LAST_DAY.year:  # 0년은 date 를 만들 수도 없어 연도로 본다
+        raise out_of_range(400)
     start = dt.date(year, mon, 1)
     end = dt.date(year + mon // 12, mon % 12 + 1, 1)
 
@@ -121,8 +115,7 @@ async def get_calendar_day(
     date: dt.date,
 ) -> CalendarDayResponse:
     """하루 보기 — 내 일기 · 공동 사진 · 일정(준비물 포함) · 기록."""
-    if not _FIRST_DAY <= date <= _LAST_DAY:
-        raise _out_of_range(422)
+    check_day(date, status=422)
     diary = await find_diary(session, child_id=child.child_id, parent_id=parent.parent_id, day=date)
     photos = await list_shared_photos(session, child_id=child.child_id, day=date)
     next_day = date + dt.timedelta(days=1)
@@ -144,10 +137,6 @@ async def get_calendar_day(
         events=[_event_out(e, items.get(e.id, [])) for e in events],
         observations=await to_observation_outs(session, records, today=today_kst()),
     )
-
-
-def _out_of_range(status: int) -> ApiError:
-    return ApiError(status, "validation_failed", "날짜가 올바르지 않아요")
 
 
 def _midnight(day: dt.date) -> dt.datetime:

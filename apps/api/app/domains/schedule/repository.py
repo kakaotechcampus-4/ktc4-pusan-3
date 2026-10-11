@@ -235,6 +235,19 @@ async def put_diary(
     return await session.scalar(stmt)
 
 
+async def delete_diary(
+    session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID, day: date
+) -> None:
+    """그 보호자 본인의 그날 일기만 지운다. 없으면 아무것도 하지 않는다."""
+    await session.execute(
+        delete(DiaryEntry).where(
+            DiaryEntry.child_id == child_id,
+            DiaryEntry.author_parent_id == parent_id,
+            DiaryEntry.date == day,
+        )
+    )
+
+
 async def list_shared_photos(
     session: AsyncSession, *, child_id: uuid.UUID, day: date
 ) -> list[SharedPhoto]:
