@@ -7,6 +7,7 @@
    들어오지 않아 밖으로 나갈 수 없다 (4-3).
 🚨 인증키는 요청 주소(`serviceKey=`)에 실린다. 오류 메시지 · 로그에 주소를 남기지 않는다.
 
-지금은 단기예보(`forecast.py`)와 대기질(`air.py`)이 있다. 자외선 · 특보는 격자를 지역 코드
-(행정구역 · 특보구역)로 바꾸는 표가 생기면 붙이고, 그때 넷을 묶어 Activity `WeatherSource` 로 만든다.
+단기예보(`forecast.py`) · 대기질(`air.py`) · 자외선(`uv.py`) · 특보(`advisories.py`)를
+`source.PublicWeather` 가 묶어 Activity `WeatherSource` 포트가 된다. 격자 → 시군구 · 특보구역은
+구운 표(`areas_data.py`), 격자 → 대기질 측정소도 구운 표(`stations_data.py`)다.
 """
