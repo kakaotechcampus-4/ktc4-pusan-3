@@ -289,7 +289,7 @@ DB 권한도 같이 간다 — Agent role 에 `health_safety` write 는 계속 �
 | weight_kg | 몸무게 |
 | measured_on | 측정일 |
 
-수정하지 않고 **로그처럼 계속 쌓는다** (append). 같은 날 재측정도 새 행.
+새로 잰 것은 **로그처럼 계속 쌓는다** (append). 같은 날 재측정도 새 행. 보호자는 화면(11-1)에서 잘못 적은 줄을 고치거나 지울 수 있다 (`PATCH` · `DELETE /children/{cid}/growth/{id}`, 10-10). Agent 는 읽기만 한다.
 
 이 테이블을 전제로 tool 을 구현한다.
 
