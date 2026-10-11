@@ -40,7 +40,7 @@ from app.domains.schedule.repository import (
     set_event_item_prepared,
     update_event,
 )
-from app.domains.suggestion.models import SuggestionAgent, SuggestionFeedback, SuggestionKind
+from app.domains.suggestion.models import SuggestionAgent, SuggestionFeedback, SuggestionKind, SuggestionStatus
 from app.domains.suggestion.repository import (
     create_suggestion,
     list_suggestions_using_observation,
@@ -287,6 +287,9 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
         ],
         expires_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
     )
+    # feedback은 approved/rejected 만 허용 — draft → approved 전환
+    suggestion.status = SuggestionStatus.APPROVED
+    await session.flush()
     assert [
         row.id
         for row in await list_suggestions_using_observation(
