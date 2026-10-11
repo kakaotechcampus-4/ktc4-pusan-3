@@ -414,12 +414,13 @@ def test_확인_필요_음식을_그_이름으로_등록하면_확인으로_풀_
 
 def test_확인_필요_음식_이름으로_등록하면_예전처럼_그_코드도_막는다() -> None:
     # 이름 읽기는 확실 · 확인 필요를 가르지 않는다 — 어묵으로 등록한 보호자는 전에도 밀(6)을 막았다.
-    # 이 줄을 빼면 "어묵" 등록이 덜 막는 쪽으로 바뀐다
+    # 이 줄을 빼면 "어묵" 등록이 덜 막는 쪽으로 바뀐다. 10-11 에 어묵의 달걀(난백)도 확인 필요로
+    # 넣어서, 어느 성분에 반응하는지 모르는 "어묵" 등록은 달걀(1)도 막는다(#326 리뷰)
     row = _row("식빵 토스트", ingredients=("식빵", "버터"))
 
     result = filter_food_safety([row], [_allergy("어묵")], "toddler")
 
-    assert resolve_safety([_allergy("어묵")]).codes == {6}
+    assert resolve_safety([_allergy("어묵")]).codes == {1, 6}
     assert result.blocked == (row,)
 
 
