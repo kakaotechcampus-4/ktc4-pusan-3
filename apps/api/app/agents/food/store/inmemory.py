@@ -13,6 +13,7 @@ from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
 from app.agents.food.store.ports import (
+    RECIPE_SOURCES,
     DaycareMealRow,
     FoodDocRow,
     FoodObservation,
@@ -91,6 +92,8 @@ class InMemoryMenuCatalog:
     """메뉴 카탈로그 — 메뉴명 → 영양성분. 아이 무관, 전역 하나다."""
 
     def __init__(self, rows: Sequence[MenuCatalogRow] = ()) -> None:
+        for row in rows:
+            _not_recipe(row)
         self._rows: dict[str, MenuCatalogRow] = {row.menu_key: row for row in rows}
 
     async def get(self, menu_key: str) -> MenuCatalogRow | None:
@@ -101,11 +104,18 @@ class InMemoryMenuCatalog:
         return {key: self._rows[key] for key in menu_keys if key in self._rows}
 
     async def put(self, row: MenuCatalogRow) -> None:
+        _not_recipe(row)
         self._rows.setdefault(row.menu_key, row)
 
     async def all_resolved(self) -> list[MenuCatalogRow]:
         """`resolved=True` 행만 돌려준다. 재료(ingredients) 유무는 여기서 거르지 않는다."""
         return [row for row in self._rows.values() if row.resolved]
+
+
+def _not_recipe(row: MenuCatalogRow) -> None:
+    """DB 의 source CHECK 와 같은 규칙 — 레시피 행은 recipe_catalog 몫이다(#326 리뷰)."""
+    if row.source in RECIPE_SOURCES:
+        raise ValueError(f"{row.source} 행은 recipe_catalog 에 넣는다 — menu_catalog 가 아니다")
 
 
 class InMemoryMenuSource:

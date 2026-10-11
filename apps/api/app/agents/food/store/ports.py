@@ -146,14 +146,24 @@ class NutritionFacts:
     source_version: str
 
 
+# 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다 —
+# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(#326 리뷰, own_table §1-1)
+RECIPE_SOURCES: frozenset[str] = frozenset({"mafra_recipe"})
+
+
 @dataclass(frozen=True)
 class MenuCatalogRow:
-    """메뉴 카탈로그(`menu_catalog`) 한 행 — 메뉴명(공개 DB · 급식표) → 식품코드·영양성분."""
+    """메뉴 카탈로그 한 행 — 메뉴명(공개 DB · 급식표) → 식품코드·영양성분.
+
+    `menu_catalog`(급식 · 기록 · 영양 판정)와 `recipe_catalog`(추천 후보)가 같은 모양을 쓴다.
+    어느 표의 행인지는 `source` 로 가른다(`RECIPE_SOURCES`).
+    """
 
     menu_key: str
     display_name: str
-    # mafra_recipe — 농식품정보원 레시피 배치(#321). DB CHECK 에도 같은 값이 들어가야 한다(BE 협의)
-    source: Literal["mfds_nutri", "mfds_recipe", "mafra_recipe", "center_standard", "manual"]
+    # menu_catalog: mfds_nutri · center_standard · manual / recipe_catalog: mafra_recipe.
+    # COOKRCP01(mfds_recipe)은 보류라 뺐다 — 들이면 레시피라 recipe_catalog 쪽이다
+    source: Literal["mfds_nutri", "mafra_recipe", "center_standard", "manual"]
     resolved: bool
     synced_at: datetime
     food_code: str | None = None
@@ -272,11 +282,17 @@ class MenuCatalogStore(Protocol):
         보호자 말에서 나온 이름이 `child_id` 없이 전역 테이블에 남는다. 넣는 행은 외부 DB 에
         이름이 정확히 같은 결과뿐이라 `menu_key` 가 공개 DB 에 있는 이름이다
         (food_agent_own_table §1).
+
+        레시피 행(`RECIPE_SOURCES`)은 받지 않는다 — `recipe_catalog` 몫이다(DB 는 CHECK).
         """
         ...
 
     async def all_resolved(self) -> list[MenuCatalogRow]:
-        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다."""
+        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다.
+
+        후보 풀은 `recipe_catalog` 에서 읽기로 했다(#326 리뷰). 레시피 표의 포트를 만들 때
+        (#321 파트 2 배치 · 식단 추천) 이 읽기를 그쪽으로 옮긴다.
+        """
         ...
 
 

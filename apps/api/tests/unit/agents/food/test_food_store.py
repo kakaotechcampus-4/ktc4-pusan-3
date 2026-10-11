@@ -310,6 +310,33 @@ async def test_menu_catalog_put_은_이미_있는_행을_덮지_않는다() -> N
     assert await store.all_resolved() == [manual]
 
 
+# ── menu catalog: 레시피 행은 받지 않는다 (#326 리뷰 — recipe_catalog 로 뗐다) ─────
+# 레시피 재료가 menu_catalog 에 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1).
+# DB 는 CHECK 로 막고, 가짜 저장소도 같은 규칙으로 막는다
+def _recipe_row() -> MenuCatalogRow:
+    return MenuCatalogRow(
+        menu_key="된장찌개",
+        display_name="된장찌개",
+        source="mafra_recipe",
+        resolved=True,
+        synced_at=NOW,
+        ingredients=("된장", "멸치"),
+    )
+
+
+async def test_menu_catalog_put_은_레시피_행을_받지_않는다() -> None:
+    store = InMemoryMenuCatalog()
+
+    with pytest.raises(ValueError, match="recipe_catalog"):
+        await store.put(_recipe_row())
+    assert await store.get("된장찌개") is None
+
+
+def test_menu_catalog_는_레시피_행으로_시작할_수_없다() -> None:
+    with pytest.raises(ValueError, match="recipe_catalog"):
+        InMemoryMenuCatalog([_recipe_row()])
+
+
 # menu catalog: get_many 는 조회 한 번으로 여러 메뉴를 읽는다
 async def test_menu_catalog_get_many_는_있는_행만_menu_key_로_돌려준다() -> None:
     kimchi = MenuCatalogRow(

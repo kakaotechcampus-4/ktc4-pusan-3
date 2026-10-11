@@ -16,7 +16,7 @@ from app.agents.food.recipe_catalog import (
     ingredient_key,
     parse_ingredient_table,
 )
-from app.agents.food.store import InMemoryMenuCatalog, NutritionFacts, SafetyEntry
+from app.agents.food.store import NutritionFacts, SafetyEntry
 from app.agents.food.tools.safety import filter_food_safety
 from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
 
@@ -168,12 +168,13 @@ def test_정리_못_한_재료가_있으면_해석하지_않는다(names: tuple[
     assert row.resolved is False, why
 
 
-async def test_해석_안_된_레시피는_후보_풀에_들어가지_않는다() -> None:
+def test_해석_안_된_레시피는_후보_풀에_들어가지_않는다() -> None:
+    # 후보 풀은 recipe_catalog 의 resolved 행만 쓴다(#326 리뷰). 레시피 표의 포트는 파트 2 에서
+    # 만들어서, 여기서는 행의 resolved 와 필터 판정을 본다
     done = build_recipe_row(recipe("두부", "양파", name="가짜조림"), TABLE, now=NOW)
     pending = build_recipe_row(recipe("두부", "대파", name="가짜국"), TABLE, now=NOW)
-    catalog = InMemoryMenuCatalog([done, pending])
 
-    pool = await catalog.all_resolved()
+    pool = [row for row in (done, pending) if row.resolved]
     verdict = filter_food_safety([done, pending], [], "toddler", months=24)
 
     assert pool == [done]
