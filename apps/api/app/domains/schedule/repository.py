@@ -30,14 +30,18 @@ async def list_events(
     starts_before: datetime,
     ends_after: datetime,
 ) -> list[Event]:
-    """캘린더 기간과 겹치는 확정 일정. 종료가 없으면 시작 시각을 사용한다."""
+    """캘린더 기간 [ends_after, starts_before) 와 겹치는 확정 일정.
+
+    일정도 [starts_at, ends_at) 이다 — 기간이 시작하는 순간에 끝난 일정은 겹치지 않는다.
+    🚨 `ends_at >= ends_after` 로 두면 어제 22:00~오늘 00:00 일정이 오늘에도 잡힌다 (#318).
+    종료가 없거나 시작과 같은 일정은 시작 시각 한 점이다 — 그 점이 기간 안이면 겹친다.
+    """
     stmt = (
         select(Event)
         .where(
             Event.child_id == child_id,
             Event.starts_at < starts_before,
-            (Event.ends_at >= ends_after)
-            | (Event.ends_at.is_(None) & (Event.starts_at >= ends_after)),
+            (Event.ends_at > ends_after) | (Event.starts_at >= ends_after),
         )
         .order_by(Event.starts_at, Event.id)
     )
@@ -126,6 +130,23 @@ async def list_event_items(
         .order_by(EventItem.created_at, EventItem.item_id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def list_items_by_event(
+    session: AsyncSession, *, event_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[EventItem]]:
+    """여러 일정의 준비물을 한 번에. 일정마다 조회하지 않는다. 준비물 없는 일정은 키가 없다."""
+    if not event_ids:
+        return {}
+    stmt = (
+        select(EventItem)
+        .where(EventItem.event_id.in_(event_ids))
+        .order_by(EventItem.created_at, EventItem.item_id)
+    )
+    items: dict[uuid.UUID, list[EventItem]] = {}
+    for row in await session.scalars(stmt):
+        items.setdefault(row.event_id, []).append(row)
+    return items
 
 
 async def create_event_item(
@@ -223,6 +244,31 @@ async def list_shared_photos(
         .order_by(SharedPhoto.created_at, SharedPhoto.id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def list_diary_dates(
+    session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID, start: date, end: date
+) -> set[date]:
+    """그 보호자가 일기를 쓴 날. 기간은 [start, end) 다. 남의 일기는 세지 않는다."""
+    stmt = select(DiaryEntry.date).where(
+        DiaryEntry.child_id == child_id,
+        DiaryEntry.author_parent_id == parent_id,
+        DiaryEntry.date >= start,
+        DiaryEntry.date < end,
+    )
+    return set((await session.scalars(stmt)).all())
+
+
+async def list_shared_photo_dates(
+    session: AsyncSession, *, child_id: uuid.UUID, start: date, end: date
+) -> set[date]:
+    """공동 사진이 있는 날. 기간은 [start, end) 다."""
+    stmt = select(SharedPhoto.date).where(
+        SharedPhoto.child_id == child_id,
+        SharedPhoto.date >= start,
+        SharedPhoto.date < end,
+    )
+    return set((await session.scalars(stmt)).all())
 
 
 async def add_shared_photo(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -102,6 +103,7 @@ class EventItemOut(BaseModel):
     item_id: str
     item_name: str
     is_prepared: bool
+    prepared_at: datetime | None = Field(default=None, description="체크한 시각. 서버가 채운다")
 
 
 class CalendarEventOut(BaseModel):

@@ -285,6 +285,7 @@ async def submit_event(
                     item_id=str(ei.item_id),
                     item_name=ei.item_name,
                     is_prepared=ei.is_prepared,
+                    prepared_at=ei.prepared_at,
                 )
                 for ei in items
             ],
