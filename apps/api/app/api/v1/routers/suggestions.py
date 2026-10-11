@@ -414,7 +414,7 @@ async def list_suggestions(
     if cursor is not None:
         try:
             suggestion_repo.decode_cursor(cursor)
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             raise ApiError(400, "validation_failed", "유효하지 않은 cursor 값이에요")
     rows, next_cursor = await suggestion_repo.list_suggestions(
         session,
@@ -527,7 +527,7 @@ async def update_event(
             event_id=eid,
             items=[i.model_dump() for i in body.items],
         )
-    except (ValueError, AttributeError):
+    except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 item_id예요")
 
     await session.commit()

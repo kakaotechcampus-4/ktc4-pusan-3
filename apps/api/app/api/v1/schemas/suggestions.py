@@ -51,7 +51,7 @@ class SuggestionOut(BaseModel):
 
 
 class ApproveSuggestionsRequest(BaseModel):
-    suggestion_ids: list[uuid.UUID]
+    suggestion_ids: list[uuid.UUID] = Field(max_length=20)
 
 
 class ApproveSuggestionsResponse(BaseModel):
@@ -62,9 +62,9 @@ class ApproveSuggestionsResponse(BaseModel):
 
 
 class SuggestionsRequest(BaseModel):
-    agents: list[AgentValue]
-    run_id: str | None = None
-    prompt_key: str | None = None
+    agents: list[AgentValue] = Field(max_length=2)
+    run_id: str | None = Field(default=None, max_length=100)
+    prompt_key: str | None = Field(default=None, max_length=50)
 
 
 class GeneralSuggestionOut(BaseModel):
@@ -112,8 +112,8 @@ class SuggestionsResponse(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    question_id: str
-    answer: str
+    question_id: str = Field(max_length=100)
+    answer: str = Field(max_length=500)
 
 
 class AnswerResponse(BaseModel):
@@ -146,7 +146,7 @@ class SuggestionFeedbackResponse(BaseModel):
 class UpdateEventBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str
+    title: str = Field(max_length=200)
     starts_at: Moment = Field(description="ISO datetime with timezone")
     ends_at: Moment | None = None
     all_day: bool = False
@@ -163,14 +163,14 @@ class UpdateEventBody(BaseModel):
 
 class UpdateEventRequest(BaseModel):
     event: UpdateEventBody
-    items: list[DraftItemPayload] = []
+    items: list[DraftItemPayload] = Field(default=[], max_length=100)
 
 
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 
 class CreateEventDraftsRequest(BaseModel):
-    suggestion_ids: list[uuid.UUID]
+    suggestion_ids: list[uuid.UUID] = Field(max_length=20)
 
 
 class EventBodyOut(BaseModel):
@@ -205,8 +205,10 @@ class SubmitEventBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str
-    starts_at: Moment = Field(description="ISO datetime with timezone — 보호자가 채운다")
+    title: str = Field(max_length=200)
+    starts_at: Moment = Field(
+        description="ISO datetime with timezone — 보호자가 채운다"
+    )
     ends_at: Moment | None = None
     all_day: bool = False
     event_type: EventTypeValue
@@ -222,8 +224,10 @@ class SubmitEventBody(BaseModel):
 
 class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
-    items: list[DraftItemPayload] = []
-    suggestion_ids: list[uuid.UUID] | None = None
+    items: list[DraftItemPayload] = Field(default=[], max_length=100)
+    suggestion_ids: list[uuid.UUID] | None = Field(
+        default=None, max_length=20
+    )
 
 
 class EventItemOut(BaseModel):
