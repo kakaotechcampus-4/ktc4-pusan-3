@@ -23,6 +23,9 @@ import type { EventDraft } from "@/lib/api/types";
  *    "금요일 물놀이 있어" 를 두 번 말하면 카드가 두 장 남고 둘 다 제출하면 일정이 두 건 생긴다.
  *    제목·시각이 같아도 다른 일정일 수 있어서 서버도 화면도 합칠 근거가 없다 (#122 재리뷰 (2)).
  *    **아는 채로 둔다** — 보호자가 카드를 보고 한 장만 내는 것에 기댄다.
+ *    🚨 **예외는 제안에서 온 초안이다.** 같은 제안이 걸린 초안은 같은 장이다 — 제안 하나는 일정
+ *    하나에만 연결되고(#206), 서버는 두 번째 제출을 `409 already_confirmed` 로 막는다. 초안 id 는
+ *    요청마다 새로 나오므로(#241) 이 규칙이 없으면 "일정으로 만들기" 를 다시 누를 때마다 한 장씩 는다.
  *
  * ## 🚨 왜 이 스토어만 `persist` 를 쓰나
  *
@@ -66,6 +69,9 @@ interface EventDraftState {
  *    고칠 수 있고, 낡은 쪽이 남아 있으면 그것이 뒤 결과를 지운다 — 갈라 두는 것은 **문구**이지
  *    덮어쓰기 판정이 아니다.
  *
+ * 🚨 **같은 제안이 하나라도 걸린 장도 새 것이 이긴다** (머리말의 예외). 묶인 식사 초안은 제안이
+ *    여럿이라 하나만 겹쳐도 같은 장으로 본다 — 둘 다 남기면 뒤에 낸 쪽이 409 로 막힌다.
+ *
  * 🚨 **그리는 목록도 이 함수를 쓴다.** `draft_id` 만으로 거르면 같은 `event_id` 의 낡은 장이
  *    화면에 남아 자기 제출 버튼을 갖고, 그걸 나중에 누르면 새 장의 준비물이 지워진다 —
  *    스토어가 막으려던 바로 그 사고를 화면이 되살린다.
@@ -75,11 +81,13 @@ export function mergeDrafts(current: StoredDraft[], incoming: StoredDraft[]): St
     incoming.map((d) => d.draft.event_id).filter((id): id is string => id !== null),
   );
   const replacedDraftIds = new Set(incoming.map((d) => d.draft.draft_id));
+  const replacedSuggestionIds = new Set(incoming.flatMap((d) => d.draft.suggestion_ids ?? []));
 
   const kept = current.filter(
     (d) =>
       !replacedDraftIds.has(d.draft.draft_id) &&
-      !(d.draft.event_id !== null && replacedEventIds.has(d.draft.event_id)),
+      !(d.draft.event_id !== null && replacedEventIds.has(d.draft.event_id)) &&
+      !(d.draft.suggestion_ids ?? []).some((id) => replacedSuggestionIds.has(id)),
   );
   return [...kept, ...incoming];
 }

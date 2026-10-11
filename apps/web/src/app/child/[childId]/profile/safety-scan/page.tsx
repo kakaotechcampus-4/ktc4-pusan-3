@@ -188,7 +188,6 @@ function SafetyScanScreen() {
           {
             type: "allergy",
             label: row.label.trim(),
-            category: row.category,
             ...(row.severity ? { severity: row.severity } : {}),
             ...(row.reactions.length > 0 ? { reactions: row.reactions } : {}),
             notes: "검사지 사진에서 옮겨 적고 보호자가 확인",

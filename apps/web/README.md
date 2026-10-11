@@ -18,7 +18,7 @@ make web-dev                 # http://localhost:3000
 | `make web-dev` | 개발 서버 |
 | `make web-build` | 프로덕션 빌드. **dev 에서 안 보이는 에러가 여기서 난다** (`useSearchParams` Suspense 누락 등 — CLAUDE.md §3) |
 | `make web-start` | 빌드 결과를 로컬에서 실행 |
-| `make web-check` | typecheck + lint + test. PR 올리기 전 |
+| `make web-check` | format(검사만) + typecheck + lint + test. PR 올리기 전 — CI(`ci-web.yml`)는 여기에 build 를 더 돈다 |
 
 백엔드 없이 화면을 볼 때는 `.env.local` 에서 `NEXT_PUBLIC_API_MOCKING=enabled` (CLAUDE.md §7).
 

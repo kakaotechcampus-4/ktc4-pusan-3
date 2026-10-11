@@ -282,10 +282,14 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
         <MetaRow label="마지막 기록">{formatDay(affinity.last_observed_on)}</MetaRow>
       </dl>
 
+      {/* 🚨 **없는 버튼을 가리키지 않는다.** 예전엔 "맞아요를 눌러주세요" 였는데 `confirm` 은 화면에서
+          묻지 않는다 (최상위 §5 Correction · `correction-buttons.tsx`). 오래된 기억을 되살리는 것은
+          새 기록이다 — 6개월 규칙이 보는 것이 마지막 기록이 언제인가라서 (#242).
+          "프로필" 이 아니라 "기억" 이다 — 탭 이름과 카드 문구가 그렇게 부른다. */}
       {affinity.is_stale ? (
         <p className="text-body-sm text-ink-muted">
-          6개월이 지나서 이 프로필만으로는 추천을 만들지 않아요. 요즘도 그렇다면 맞아요를
-          눌러주세요.
+          6개월이 지나서 이 기억만으로는 추천을 만들지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어
+          주세요. 새로 기록되면 다시 추천에 써요.
         </p>
       ) : null}
     </div>

@@ -19,7 +19,6 @@ ChildRecordKind = Literal[
     "profile_affinity",
     "child_growth_log",
     "notice",
-    "intake_daily",
     "daycare_meal",
 ]
 
@@ -38,7 +37,6 @@ _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
         "profile_affinity",
         "child_growth_log",
         "notice",
-        "intake_daily",
         "daycare_meal",
     )
 )

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, LargeBinary, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
@@ -19,7 +19,11 @@ class ParentChildRelation(enum.StrEnum):
 
 class ParentChild(Base, UUIDPk):
     __tablename__ = "parent_child"
-    __table_args__ = (UniqueConstraint("parent_id", "child_id"),)
+    # 보호자당 아이 1명. 아이 등록(#92)과 초대 수락(#198)이 이 위반을
+    # 409 child_already_exists 로 바꾼다.
+    # 아이 삭제는 hard delete(purge_child)라 이 행도 CASCADE 로 함께 지워진다 (invite-v1.md §7-05).
+    # child.deleted_at 만 채우면 이 행이 남아 그 보호자는 재등록·수락이 영영 막힌다.
+    __table_args__ = (UniqueConstraint("parent_id", name="uq_parent_child_parent_id"),)
 
     parent_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("parent.id", ondelete="CASCADE"), nullable=False
@@ -49,7 +53,6 @@ class Child(Base, UUIDPk, Timestamps):
 
 class Invite(Base, UUIDPk):
     __tablename__ = "invite"
-    __table_args__ = (UniqueConstraint("token"),)
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -57,7 +60,8 @@ class Invite(Base, UUIDPk):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("parent.id", ondelete="SET NULL")
     )
-    token: Mapped[str] = mapped_column(Text, nullable=False)
+    # 원문 코드는 저장하지 않는다 — 정규화한 값의 SHA-256 (session · auth_handoff 와 같은 원칙).
+    code_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     used_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("parent.id", ondelete="SET NULL"))

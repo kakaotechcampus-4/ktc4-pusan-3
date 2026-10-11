@@ -7,6 +7,7 @@ import { useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
@@ -44,6 +45,10 @@ import { MEMBER_RELATIONS, relationOptions } from "@/lib/relation";
  *
  * 🚨 **여기서 아이 동의를 받지 않는다** (#96). 그 아이에 대한 법정대리인 동의는 아이를
  *    등록한 보호자가 이미 했다 — 법정대리인이 아닌 사람에게 또 받으면 그 동의가 무효다.
+ *
+ * 🚨 **대신 만 19세 이상 표시를 받는다** (약관 제5조 ④ · 제7조 ② · #166). 나이를 묻는 이유가
+ *    아이 정보 보호라서 **아이 정보에 닿기 직전**인 이 화면이 묻는다 — 가입만 한 사람은
+ *    아이 정보가 없다. 아이를 등록하는 사람은 01 의 법정대리인 문항이 같은 표시를 겸한다.
  *
  * 🚨 **로그인 뒤에 입력한다.** 링크를 먼저 열고 로그인하는 흐름이 아니다 — 카카오 왕복을
  *    건너는 동안 `sessionStorage` 가 살아 있다는 보장이 없어서, 초대 토큰만이 아니라
@@ -88,19 +93,26 @@ function InviteScreen() {
    * 확인된 초대. 있으면 2단계다.
    * 🚨 `useQuery` 가 아니다 — 버튼을 눌러야 조회하는 것이고, 코드를 고칠 때마다 다시
    *    부르면 **틀린 코드로 시도 제한을 스스로 소모한다** (`429`).
+   * 🚨 **조회한 코드를 미리보기와 함께 들고 있고, 수락은 그 코드로 한다** (#150 멘토 리뷰).
+   *    입력창의 `code` 로 수락하면 A 로 확인하는 사이 B 로 고쳤을 때 **A 의 아이를 보고 B 의
+   *    아이에 연결된다.** 보여 준 것과 연결되는 것이 같다는 보장은 이 한 쌍이 진다.
    */
-  const [preview, setPreview] = useState<InvitePreviewResponse | null>(null);
+  const [preview, setPreview] = useState<{ code: string; invite: InvitePreviewResponse } | null>(
+    null,
+  );
   const [relation, setRelation] = useState<Relation | null>(null);
+  const [adultAttested, setAdultAttested] = useState(false);
 
   const check = useMutation({
     mutationFn: (value: string) =>
       api.get<InvitePreviewResponse>(`/invites/${encodeURIComponent(value)}`),
-    onSuccess: (data) => setPreview(data),
+    // 🚨 `variables` 가 조회에 쓴 코드다 — 응답이 온 시점의 입력창 값이 아니다.
+    onSuccess: (invite, value) => setPreview({ code: value, invite }),
   });
 
   const accept = useMutation({
-    mutationFn: (body: InviteAcceptRequest) =>
-      api.post<InviteAcceptResponse>(`/invites/${encodeURIComponent(code)}/accept`, body),
+    mutationFn: ({ code: confirmed, body }: { code: string; body: InviteAcceptRequest }) =>
+      api.post<InviteAcceptResponse>(`/invites/${encodeURIComponent(confirmed)}/accept`, body),
     onSuccess: async (child) => {
       await queryClient.invalidateQueries({ queryKey: qk.me() });
       router.replace(`/child/${child.child_id}/home`);
@@ -110,11 +122,14 @@ function InviteScreen() {
   function backToCode() {
     setPreview(null);
     setRelation(null);
+    // 🚨 다른 코드로 돌아가면 표시도 처음부터다 — 앞 아이에 대해 한 표시가 다음 아이로 넘어가지 않게.
+    setAdultAttested(false);
     accept.reset();
     check.reset();
   }
 
   if (preview) {
+    const { invite } = preview;
     return (
       <Screen className="gap-6">
         <div>
@@ -132,11 +147,11 @@ function InviteScreen() {
         {/* 🚨 **별명과 나이까지다.** 아직 연결되지 않은 사람이라 건강·알레르기를 여기
             보여주지 않는다 (`InvitePreviewResponse` 주석 · 최상위 §2 개인정보). */}
         <Card tone="accent">
-          <p className="text-title text-ink">{preview.child.nickname}</p>
-          <p className="text-body-sm text-ink-muted mt-1">{preview.child.age_display}</p>
-          {preview.invited_by.nickname ? (
+          <p className="text-title text-ink">{invite.child.nickname}</p>
+          <p className="text-body-sm text-ink-muted mt-1">{invite.child.age_display}</p>
+          {invite.invited_by.nickname ? (
             <p className="text-body-sm text-ink-muted border-line mt-3 border-t pt-3">
-              {preview.invited_by.nickname} 님이 초대했어요
+              {invite.invited_by.nickname} 님이 초대했어요
             </p>
           ) : null}
         </Card>
@@ -157,6 +172,12 @@ function InviteScreen() {
               </Chip>
             ))}
           </ChipRow>
+          {/* 🚨 **연결하기 전에 알린다** (약관 제7조 ④ · 동의문 1 v2). 같은 아이의 보호자끼리는
+              부르는 이름과 관계가 서로 보인다 — 고르는 자리 바로 아래에 둬야 "이 값이 남에게
+              보인다" 가 고르기 전에 읽힌다. 관계를 안 골라도 이름은 보이므로 늘 띄운다. */}
+          <p className="text-caption text-ink-subtle mt-1">
+            이 아이의 다른 보호자에게 내 부르는 이름과 아이와의 관계가 보여요.
+          </p>
         </div>
 
         <Card>
@@ -171,13 +192,36 @@ function InviteScreen() {
           </p>
         </Card>
 
+        {/* 🚨 **동의 항목이 아니라 본인이 누구인지 밝히는 표시다** — 01 의 법정대리인 문항과
+            같은 자리에 같은 모양으로 선다. 전문 시트가 없다.
+            🚨 `guardian_attested` 가 아니다. 이 사람은 법정대리인이 아닐 수 있어서 그 표시를 받지
+            않는다 (약관 제7조 ②). 문구에 "법정대리인" 을 넣지 않는다. */}
+        <Card>
+          <Checkbox
+            checked={adultAttested}
+            onChange={setAdultAttested}
+            label={
+              <>
+                <span className="text-ink-muted">[필수] </span>만 19세 이상이에요
+              </>
+            }
+            description="아이의 기록과 건강 정보를 함께 보게 돼서 성인만 연결할 수 있어요."
+          />
+        </Card>
+
         <div className="flex flex-col gap-3">
           {accept.isError ? <CardFailed>{message(accept.error)}</CardFailed> : null}
 
           <Button
             block
-            onClick={() => accept.mutate(relation ? { relation } : {})}
-            disabled={accept.isPending}
+            onClick={() =>
+              accept.mutate({
+                code: preview.code,
+                // 🚨 상수 true 가 아니다. 체크박스 값 그대로 싣는다 (`InviteAcceptRequest`).
+                body: { ...(relation ? { relation } : {}), adult_attested: adultAttested },
+              })
+            }
+            disabled={!adultAttested || accept.isPending}
           >
             {accept.isPending ? <Spinner /> : null}
             {accept.isPending ? "연결하는 중…" : "연결하기"}
@@ -213,6 +257,10 @@ function InviteScreen() {
         label="초대 코드"
         hint="대소문자와 하이픈은 신경 쓰지 않아도 돼요."
         value={formatInviteCode(code)}
+        // 🚨 확인하는 동안 코드를 못 바꾼다 (#150 멘토 리뷰). 수락은 이미 조회한 코드로 나가지만,
+        //    응답이 오면 입력창과 다른 코드의 아이가 뜨는 화면 자체를 만들지 않는다.
+        //    `disabled` 가 아니라 `readOnly` 다 — 모바일에서 포커스와 키보드가 날아가지 않는다.
+        readOnly={check.isPending}
         onChange={(e) => {
           setCode(normalizeInviteCode(e.target.value));
           if (check.isError) check.reset();

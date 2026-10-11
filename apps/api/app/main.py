@@ -10,8 +10,21 @@ from app.api import health
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
 from app.api.v1.router import v1_router
+from app.core.alerts import configure_alerts
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
+from app.core.logging_config import configure_logging
+from app.integrations import discord
+
+# 앱 로그(app.*)를 시간 · 레벨 · 이름과 함께 찍는다. uvicorn 은 자기 로거만 설정해서, 이게
+# 없으면 info 는 버려지고 경고도 언제 난 건지 모르는 글자만 남는다 (#197 후속).
+configure_logging()
+
+# ERROR 이상은 Discord 로도 간다 (멘토 #267 2번). 주소가 비어 있으면 알림만 꺼진다 — register_cors
+# 와 같은 모양. 🚨 configure_logging() 뒤에 — 그쪽 dictConfig 가 app 로거의 처리기를 갈아 끼워서,
+# 먼저 달면 사라진다.
+if settings.alert_webhook_url:
+    configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
 
 app = FastAPI(title=settings.APP_NAME)
 

@@ -1,23 +1,26 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   CalendarDays,
+  MessagesSquare,
   NotebookPen,
   Repeat,
   Settings,
   Utensils,
   type LucideIcon,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
-import { RunProgress, RunResult } from "@/components/run-result";
+import { PROMPT_PILL } from "@/components/agent-prompts";
+import { ChatRouteTransition } from "@/components/route-transition";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -28,32 +31,19 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
-import { isRunConfirmed, useRunStream } from "@/hooks/use-run-stream";
+import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
-import {
-  usePendingQuestion,
-  usePendingQuestionStore,
-  type PendingQuestion,
-} from "@/stores/pending-question";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
-import {
-  api,
-  isApiError,
-  qk,
-  submitInput,
-  type Agent,
-  type HomeResponse,
-  type InputRequest,
-  type Me,
-} from "@/lib/api";
-import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
+import { api, isApiError, qk, type Agent, type HomeResponse, type Me } from "@/lib/api";
+import { cn } from "@/lib/cn";
+import { TRANSITION_TYPE } from "@/lib/view-transition";
 
 /**
- * 03 홈 · 한 줄 입력 + 04 진행 · 저장 결과.
+ * 03 홈 · 한 줄 입력.
  *
- * 🚨 **04 를 별도 라우트로 두지 않는다.** 화면을 벗어나면 `useRunStream` 이 스트림을 끊는데,
- *    `failed` 일 때 입력창에 원문을 되돌려 놓아야 한다 (apps/web/CLAUDE.md §3).
- *    그래서 run 이 도는 동안 같은 컴포넌트 안에서 본문만 바꿔 그린다.
+ * 🚨 **보내는 순간 04 대화 화면으로 넘어간다** (#226). 202 를 기다리지 않는다 — 말풍선이 먼저 서고
+ *    요청은 뒤에서 나간다 (`stores/conversation.ts`). 그래서 **이 화면은 실패를 그리지 않는다.**
+ *    보내기 실패 · 429 · 400 은 대화 화면의 그 말풍선 아래 한 곳에 선다.
  *
  * 🚨 **아직 안 보낸 원문은 이 화면이 들고 있지 않다** (`stores/draft.ts`). 하단 네비가
  *    보내기 버튼 바로 아래에 다른 화면으로 가는 문을 세 개 열어서, 화면 로컬 상태로 두면
@@ -78,8 +68,6 @@ function HomeScreen() {
   // 🚨 `useState` 가 아니다 — 네비로 다녀와도 쓰던 글이 살아 있어야 한다 (위 주석 · stores/draft.ts).
   const [text, setText] = useDraftText(childId);
   const clearDraft = useDraftStore((s) => s.clearDraft);
-  /** 05 로 넘길 때 같이 보낸다 — 어느 입력에서 나온 제안인지 서버가 알아야 한다. */
-  const [runId, setRunId] = useState<string | null>(null);
   /**
    * 사진은 **여기서 고르고 08 에서 확인한다.** 고르는 것은 두 갈래 한 번이라 화면을 따로
    * 두지 않고(`PhotoSourceSheet`), 고른 파일은 라우트를 못 넘어가서 스토어로 넘긴다
@@ -87,15 +75,21 @@ function HomeScreen() {
    */
   const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
-  const run = useRunStream(childId);
 
+  const conversation = useConversation(childId);
+  const busy = isBusy(conversation);
   /**
-   * Memory 가 되물은 질문. 04 결과에서 "이어서 적기" 를 누르면 여기로 따라온다 —
-   * run 은 그 순간 리셋되므로 질문이 run 상태에 남아 있으면 같이 사라진다 (#141).
+   * 막 보낸 한 줄. 화면이 넘어가는 동안 입력창에 **그대로 둔다** — 이 글자가 대화 화면의 첫 말풍선
+   * 자리로 이어 붙는다 (`VIEW_TRANSITION.sentLine`). 🚨 draft 스토어는 이미 비웠다 — 이 값은
+   * 넘어가는 한 프레임의 그림일 뿐이고, 원문의 정본은 말풍선이다.
    */
-  const pendingQuestion = usePendingQuestion(childId);
-  const setQuestion = usePendingQuestionStore((s) => s.setQuestion);
-  const clearQuestion = usePendingQuestionStore((s) => s.clearQuestion);
+  const [leaving, setLeaving] = useState<string | null>(null);
+  const chatHref = `/child/${childId}/chat`;
+
+  // 보내는 순간 넘어가야 해서 미리 받아 둔다. 안 받아 두면 첫 이동이 그 주소를 받는 동안 멈춘다.
+  useEffect(() => {
+    router.prefetch(chatHref);
+  }, [router, chatHref]);
 
   const home = useQuery({
     queryKey: qk.home(childId),
@@ -107,302 +101,142 @@ function HomeScreen() {
   const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
 
   /**
-   * 🚨 **재시도할 때 키를 새로 만들지 않는다** — 같은 키를 다시 보내는 게 중복 저장을 막는다.
-   *    `mutationFn` 안에서 `newIdempotencyKey()` 를 부르면 재시도마다 새 키가 나가서
-   *    키를 붙인 의미가 통째로 사라진다 (`use-idempotency-key.ts`).
+   * 🚨 **03 에서 보낸 한 줄은 질문에 대한 답이 아니다** (`asReply: false`). 답을 기다리는 질문이
+   *    있어도 여기서는 그 질문이 화면에 없다 — 보이지 않는 질문의 답으로 묶지 않는다. 답하는 자리는
+   *    대화 화면이고, 입구가 "답을 기다리는 질문이 있어요" 로 그리로 부른다.
    */
-  const idempotencyKey = useIdempotencyKey();
-
-  /**
-   * 변수는 **이 한 줄이 답하는 질문**이다 (없으면 `null`).
-   *
-   * 🚨 **다시 시도는 `submit.variables` 를 그대로 넘긴다.** 그 순간의 스토어가 아니다 — 보낸 요청과
-   *    다시 보내는 요청이 같아야 같은 키가 나가고, 답이 어느 질문에 대한 것인지도 그대로 간다.
-   */
-  const submit = useMutation({
-    mutationFn: (answering: PendingQuestion | null) => {
-      const body: InputRequest = {
-        text: text.trim(),
-        source: "home_input",
-        // 🚨 되묻기에 답하는 중이면 **어느 run 에 대한 답인지**를 싣는다 (#158 리뷰).
-        //    원문을 다시 보내지 않는 이유는 `stores/pending-question.ts` 에 있다.
-        ...(answering ? { reply_to: answering.runId } : {}),
-      };
-      // 🚨 키를 **본문에 묶는다.** 같은 본문의 재시도는 같은 키(중복 저장 방지), 고쳐 쓴 본문은
-      //    새 키다. 서버가 처리했는데 응답만 유실되면 화면은 실패로 보이고 보호자는 한 줄을
-      //    고쳐서 다시 보내는데, 키가 그대로면 "같은 키 · 다른 본문" 이라 계속 422 다 (PR #71 리뷰).
-      // 🚨 **`text` 만 묶으면 안 된다.** 서버는 본문 **전체**로 같은 요청인지 보므로(idempotency-v1),
-      //    같은 답을 다른 질문에 보내면 "같은 키 · 다른 본문" 이라 422 다 — `reply_to` 도 함께 묶는다.
-      return submitInput(childId, body, idempotencyKey.current(keyPayload(body)));
-    },
-    // 🚨 **202 에서 질문을 지우지 않는다** (#175 리뷰). 이어받기 run 이 `failed` 로 끝나면 서버는
-    //    맥락을 원래 `reply_to` 자리에 되돌려 두는데, 여기서 지우면 "다시 시도" · "고쳐 쓰기" 뒤의
-    //    요청에 `reply_to` 가 빠져서 "3일 전부터" 만 맥락 없는 새 입력으로 나간다.
-    //    질문이 끝나는 때는 서버가 run 을 끝까지 처리했다고 말한 때다 (`closeRun`).
-    onSuccess: (res) => {
-      setRunId(res.run_id);
-      run.start(res.run_id);
-    },
-    // 🚨 **맥락을 못 찾았으면 질문을 놓는다** (#175). 들고 있으면 다음 한 줄에도 같은 `reply_to`
-    //    가 실려서 몇 번을 보내도 같은 400 이다. 놓으면 본문이 바뀌어 새 키가 저절로 나간다.
-    onError: (error) => {
-      if (isApiError(error, "reply_context_unavailable")) clearQuestion(childId);
-    },
-  });
-
-  // 🚨 실패해도 입력창에 원문이 남는 방법은 **지우지 않는 것**이다 (apps/web/CLAUDE.md §3).
-  //    `failed` 이벤트의 `raw_text` 로 되돌리는 방법도 있지만, 네트워크가 끊기면 그 값이 안 온다 —
-  //    원문의 정본은 draft 스토어고, 서버가 끝을 말했을 때만 비운다 (아래 closeRun).
-  /** 결과 화면을 닫고 홈으로. 🚨 서버가 끝을 말한 경우에만 원문과 키를 비운다. */
-  function closeRun() {
-    // 🚨 `failed` 만 보면 안 된다. 20초 침묵·끊긴 스트림(`unconfirmed`)도 **저장됐는지 모르는**
-    //    상태라, 여기서 비우면 확인되지 않은 채로 보호자가 적은 말이 사라진다 (PR #71 리뷰).
-    const confirmed = isRunConfirmed(run.state.status);
-    run.reset();
-    submit.reset();
-    setRunId(null);
-    if (!confirmed) return;
-
-    // 여기까지 왔으면 이 입력은 끝났다. 다음 한 줄은 새 동작이라 새 키를 쓴다.
-    // 🚨 반대로 실패·미확인 상태에서는 키를 갈지 않는다 — 서버가 이미 저장했을 수 있는 한 줄을
-    //    새 키로 다시 보내면 그때 두 번 저장된다. 본문을 고쳐 쓰는 경우는 키가 본문에 묶여 있어
-    //    (`current(body.text)`) 저절로 새 키가 나간다.
-    idempotencyKey.rotate();
+  function send() {
+    const line = text;
+    if (!sendLine(childId, line, { asReply: false, source: "home_input" })) return;
+    // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
+    setLeaving(line);
     clearDraft(childId);
-    // 되묻기에 답하러 왔든 다른 이야기를 적었든, 서버가 이 한 줄을 끝까지 처리했으니 그 질문은 끝났다.
-    // 🚨 이 run 이 또 되물었으면 `answerQuestion` 이 **이 뒤에** 새 질문을 넣는다.
-    clearQuestion(childId);
-  }
-
-  function retry() {
-    run.reset();
-    // 같은 입력의 재시도다. Idempotency-Key 를 유지한 채 다시 보낸다 — 답하던 질문도 같이.
-    submit.mutate(submit.variables ?? null);
-  }
-
-  /**
-   * 되묻는 질문에 답하러 03 홈으로 돌아간다 (#141 · #158 리뷰).
-   *
-   * 🚨 **원문을 입력창에 되돌리지 않는다.** 한동안 되돌려 놨었다 — 답은 새 한 줄이라 앞의 run 을
-   *    모르니 맥락을 화면이 만들어 주려던 것이었다. 그런데 **일부는 저장되고 질문이 같이 오는
-   *    run** 이 있어서("계란 잘 먹었어. 요즘 기침해" → 계란 저장 + 기침 되묻기 ·
-   *    `apps/api/app/agents/pipeline.py`), 원문을 다시 보내면 **계란이 두 번 저장된다.**
-   *    7일 승격 집계가 한 번의 관찰을 두 번으로 세게 되므로 최상위 §2 가 깨진다 (#154).
-   *    맥락은 서버가 `reply_to` 로 찾는다 (위 `submit`).
-   *
-   * 🚨 **`runId` 를 질문과 함께 넘긴다.** `closeRun()` 이 `setRunId(null)` 로 지우므로 그 전에
-   *    붙들어야 한다. 순서가 바뀌면 `reply_to` 가 비어서 답이 맥락 없는 새 입력이 된다.
-   */
-  function answerQuestion(question: string) {
-    // 🚨 `closeRun()` 이 지우기 전에 붙든다.
-    const answeringRunId = runId;
-    // 🚨 **`closeRun()` 다음에 넣는다.** closeRun 이 앞 질문을 지우므로, 먼저 넣으면 방금 받은
-    //    질문까지 지워진다 — 답을 이어받은 run 이 또 되묻는 경우다.
-    closeRun();
-    if (answeringRunId) setQuestion(childId, { text: question, runId: answeringRunId });
+    router.push(chatHref, { transitionTypes: [TRANSITION_TYPE.chatOpen] });
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
 
   function goToSuggestions(agents: Agent[]) {
-    // run 이 끝난 뒤에만 부른다 — 저장이 이미 끝나서 여기서 스트림이 끊겨도 잃을 것이 없다.
     const params = new URLSearchParams({ agents: agents.join(",") });
-    if (runId) params.set("run", runId);
     router.push(`/child/${childId}/suggestions?${params.toString()}`);
   }
 
-  if (run.state.status === "streaming") {
-    return (
-      <Screen className="gap-6">
-        <RunProgress state={run.state} />
-      </Screen>
-    );
-  }
-
-  if (run.state.status !== "idle") {
-    return (
-      <Screen className="gap-6">
-        <RunResult
-          state={run.state}
-          childId={childId}
-          inputText={text}
-          onRetry={retry}
-          onEdit={closeRun}
-          onDone={closeRun}
-          onPickOffer={goToSuggestions}
-          onAnswerQuestion={answerQuestion}
-        />
-      </Screen>
-    );
-  }
-
   return (
-    <Screen
-      className="gap-5"
-      nav={<ChildNav active="home" />}
-      bottomBar={
-        <div className="flex flex-col gap-2">
-          {/* 🚨 **`accent` 가 아니다.** 이 화면의 accent 한 장은 "눈여겨볼 것" 이 이미 쓰고 있다
-              (`HomeBody`) — 두 장이 되면 강조가 아니라 장식이 된다 (`components/ui/card.tsx`). */}
-          {pendingQuestion ? (
-            <Card>
-              <p className="text-caption text-ink-subtle">한 가지만 더</p>
-              {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
-              <p className="text-body-sm text-ink mt-1">{pendingQuestion.text}</p>
-              {/* 🚨 **답만 적으라고 말한다.** 앞서 적은 말을 다시 쓰게 하면 이미 저장된 조각이
-                  또 저장된다 (#158 리뷰) — 앞 이야기는 서버가 `reply_to` 로 찾는다. */}
-              <p className="text-caption text-ink-subtle mt-2">
-                이 질문에 대한 답만 적어주세요. 앞서 적어주신 말은 저장돼 있어요.
-              </p>
-              <Button
-                variant="tertiary"
-                size="compact"
-                className="mt-3"
-                onClick={() => clearQuestion(childId)}
-              >
-                나중에 할게요
-              </Button>
-            </Card>
-          ) : null}
-          {submit.isError ? (
-            <SubmitErrorCard
-              error={submit.error}
-              question={submit.variables?.text ?? null}
-              onRetry={() => submit.mutate(submit.variables ?? null)}
+    <ChatRouteTransition side="home">
+      <Screen
+        className="gap-5"
+        nav={<ChildNav active="home" />}
+        bottomBar={
+          <div className="flex flex-col gap-2">
+            <HomeComposer
+              value={leaving ?? text}
+              onChange={setText}
+              onSubmit={send}
+              prompts={home.data?.agent_prompts ?? []}
+              onPickPrompt={(agent) => goToSuggestions([agent])}
+              onPickPhoto={() => setPhotoSheetOpen(true)}
+              pending={busy || leaving !== null}
+              locked={leaving !== null}
+              busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
+              sentLine={leaving !== null}
+              lead={
+                // 🚨 **대화가 있을 때만 선다.** 앱을 끄면 그날 대화가 사라져서(#228 전까지) 빈 대화로
+                //    가는 문을 세우지 않는다.
+                conversation.turns.length > 0 ? (
+                  <ChatEntryLink href={chatHref} asking={hasOpenQuestion(conversation)} />
+                ) : undefined
+              }
             />
-          ) : null}
-          <HomeComposer
-            value={text}
-            onChange={setText}
-            onSubmit={() => submit.mutate(pendingQuestion)}
-            prompts={home.data?.agent_prompts ?? []}
-            onPickPrompt={(agent) => goToSuggestions([agent])}
-            onPickPhoto={() => setPhotoSheetOpen(true)}
-            pending={submit.isPending}
+          </div>
+        }
+      >
+        <header className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다.
+                🚨 이름 뒤에 "이" 를 붙이지 않는다 — 별명은 보호자가 정한 그대로 부르는 말이라
+                ("민준이" 처럼 이미 붙어 있거나 받침이 없으면) 붙인 글자가 이름을 바꾼다. */}
+            <PageTitle>{nickname ? `오늘 ${nickname}` : "오늘"}</PageTitle>
+            {home.data ? (
+              <p className="text-body-sm text-ink-subtle mt-2">
+                지금까지 함께 쌓은 기록 {home.data.observation_count}건
+              </p>
+            ) : null}
+          </div>
+          {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+          <IconButton label="설정" onClick={() => router.push(`/child/${childId}/settings`)}>
+            <Settings aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButton>
+        </header>
+
+        {home.isPending ? (
+          <Card>
+            <SkeletonBlock label="홈을 불러오는 중" />
+          </Card>
+        ) : consentBlocked ? (
+          // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
+          //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
+          <ConsentRequiredCard
+            childId={childId}
+            error={consentBlocked}
+            what="오늘 기록을 보여드릴 수 없어요."
           />
-        </div>
-      }
-    >
-      <header className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          {/* 섹션 라벨에 "오늘" 이 또 나온다. 제목과 겹치면 같은 말이 두 번이라 제목만 남긴다. */}
-          <PageTitle>{nickname ? `오늘 ${nickname}이` : "오늘"}</PageTitle>
-          {home.data ? (
-            <p className="text-body-sm text-ink-subtle mt-2">
-              지금까지 함께 쌓은 기록 {home.data.observation_count}건
-            </p>
-          ) : null}
-        </div>
-        {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
-        <IconButton label="설정" onClick={() => router.push(`/child/${childId}/settings`)}>
-          <Settings aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-        </IconButton>
-      </header>
+        ) : home.isError ? (
+          <CardFailed>
+            <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
+            <Button
+              variant="tertiary"
+              size="compact"
+              className="mt-3"
+              onClick={() => home.refetch()}
+            >
+              다시 시도
+            </Button>
+          </CardFailed>
+        ) : home.data ? (
+          <HomeBody data={home.data} />
+        ) : null}
 
-      {home.isPending ? (
-        <Card>
-          <SkeletonBlock label="홈을 불러오는 중" />
-        </Card>
-      ) : consentBlocked ? (
-        // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
-        //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
-        <ConsentRequiredCard
-          childId={childId}
-          error={consentBlocked}
-          what="오늘 기록을 보여드릴 수 없어요."
-        />
-      ) : home.isError ? (
-        <CardFailed>
-          <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
-          <Button variant="tertiary" size="compact" className="mt-3" onClick={() => home.refetch()}>
-            다시 시도
-          </Button>
-        </CardFailed>
-      ) : home.data ? (
-        <HomeBody data={home.data} />
-      ) : null}
-
-      {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
+        {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
-      <PhotoSourceSheet
-        open={photoSheetOpen}
-        onClose={() => setPhotoSheetOpen(false)}
-        onPick={({ file, lane }) => {
-          putPhoto(childId, file, lane);
-          setPhotoSheetOpen(false);
-          router.push(`/child/${childId}/photos`);
-        }}
-      />
-    </Screen>
+        <PhotoSourceSheet
+          open={photoSheetOpen}
+          onClose={() => setPhotoSheetOpen(false)}
+          onPick={({ file, lane }) => {
+            putPhoto(childId, file, lane);
+            setPhotoSheetOpen(false);
+            router.push(`/child/${childId}/photos`);
+          }}
+        />
+      </Screen>
+    </ChatRouteTransition>
   );
 }
 
 /**
- * Idempotency-Key 를 묶을 본문 지문.
- *
- * 🚨 **`text` 만으로는 부족하다.** 요청 지문은 `method + 경로 + 요청 본문` 이라
- *    (`docs/api/idempotency-v1.md` §3-2), "네" 라는 같은 답을 서로 다른 질문에 보내면
- *    같은 키에 다른 본문(`reply_to`)이 실려 `422 idempotency_key_reuse` 가 된다.
- * 🚨 필드를 더하면 **여기도 같이** 더한다 — 빠뜨리면 그 필드만 바뀐 요청이 조용히 같은 키로 나간다.
+ * 03 → 04 대화로 가는 문 (#226). 🚨 **제안 줄 맨 앞의 알약이다** — 따로 한 줄을 주면 각진 버튼 하나가
+ * 알약 줄 위에 혼자 떠 보였다. 같은 줄 · 같은 모양(`PROMPT_PILL`)이라 "들어가는 문들" 로 같이 읽힌다.
+ * 🚨 **누르는 색은 뉴트럴이다** — 제안은 누르면 그 도메인 색이 되는데(열릴 화면의 색), 대화는 도메인이 없다.
+ * 🚨 **질문은 여기서 보여주지 않는다.** 답하는 자리는 대화 화면이고, 문 이름만 바뀐다 — 그때 글자를
+ *    `ink` 로 올려 다른 문보다 먼저 읽히게 한다 (색만이 아니라 문구가 같이 바뀐다).
  */
-function keyPayload(body: InputRequest): string {
-  return `${body.reply_to ?? ""}|${body.source}|${body.text}`;
-}
-
-/**
- * 한 줄을 보내지 못했을 때 (#147).
- *
- * 🚨 **`daily_input_limit` 에는 "다시 시도" 를 두지 않는다.** 같은 본문은 같은 Idempotency-Key 로
- *    나가고(`use-idempotency-key.ts`), 한도는 한국 시간 자정에 풀린다 — 버튼을 세워 두면 부모가
- *    누를 때마다 같은 429 를 받는다. 누르면 같은 실패가 나오는 버튼을 만들지 않는다
- *    (apps/web/CLAUDE.md §3 에러 — `consent_required` 를 일반 실패로 그리지 않는 것과 같은 이유다).
- *
- * 🚨 **문구는 서버 것을 그대로 쓴다.** 하루 몇 번인지는 서버 설정값이라 바뀐다 (#147) — 화면이
- *    숫자를 따로 적으면 그날부터 둘이 어긋나고, 틀린 쪽은 언제나 화면이다.
- *
- * 🚨 **`reply_context_unavailable` 에도 "다시 시도" 를 두지 않는다** (#175). 서버가 앞 이야기를
- *    놓쳤으니 같은 답은 몇 번을 보내도 같은 400 이다. 대신 무엇을 물었는지 이 카드가 대신 들고
- *    있는다 — 질문 카드는 이미 놓았고(`onError`), 입력창의 "3일 전부터" 만으로는 보호자도
- *    무엇에 대한 답이었는지 다시 적을 수 없다.
- *    🚨 **"다 다시 적어 주세요" 라고 하지 않는다.** 앞서 저장된 이야기까지 다시 적으면 그 조각이
- *    두 번 저장된다 (`answerQuestion` 과 같은 이유 · #158).
- */
-function SubmitErrorCard({
-  error,
-  question,
-  onRetry,
-}: {
-  error: unknown;
-  /** 이 한 줄이 답하던 질문. 답이 아니었으면 `null`. */
-  question: string | null;
-  onRetry: () => void;
-}) {
-  const limited = isApiError(error, "daily_input_limit");
-  const lostContext = isApiError(error, "reply_context_unavailable");
-
+function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
-    <CardFailed>
-      <p>{error instanceof Error ? error.message : "보내지 못했어요."}</p>
-      {lostContext ? (
-        <>
-          {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
-          {question ? <p className="text-body-sm text-ink mt-2">{question}</p> : null}
-          <p className="text-caption text-ink-subtle mt-2">
-            적어주신 답은 입력창에 그대로 있어요. 무엇에 대한 답인지 함께 적어 보내 주세요. 앞서
-            저장된 이야기는 다시 적지 않아도 돼요.
-          </p>
-        </>
-      ) : limited ? (
-        // 🚨 원문은 지우지 않는다 — 내일 이어서 보낼 한 줄이다 (`closeRun` 과 같은 규칙).
-        <p className="text-caption text-ink-subtle mt-2">
-          적어주신 말은 입력창에 그대로 남겨뒀어요.
-        </p>
-      ) : (
-        <Button variant="tertiary" size="compact" className="mt-3" onClick={onRetry}>
-          다시 시도
-        </Button>
+    <Link
+      href={href}
+      transitionTypes={[TRANSITION_TYPE.chatOpen]}
+      className={cn(
+        PROMPT_PILL,
+        "hover:bg-surface-muted active:bg-surface-muted whitespace-nowrap",
       )}
-    </CardFailed>
+    >
+      {/* `chip` 높이(28)의 아이콘 원 — 옆 제안 알약의 도메인 칩과 같은 자리 · 같은 크기다. */}
+      <span className="bg-brand-soft text-brand-ink min-h-chip flex aspect-square items-center justify-center rounded-full">
+        <MessagesSquare aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
+      </span>
+      <span className={cn("text-body-sm pr-1", asking ? "text-ink" : "text-ink-muted")}>
+        {asking ? "답을 기다리는 질문이 있어요" : "오늘 대화 이어보기"}
+      </span>
+    </Link>
   );
 }
 

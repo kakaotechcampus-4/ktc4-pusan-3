@@ -40,6 +40,17 @@ REQUIRED_ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
 """
 
 
+REQUIRED_CHILD_SCOPES: tuple[ConsentScope, ...] = (
+    ConsentScope.CHILD_BASIC,
+    ConsentScope.CHILD_HEALTH,
+)
+"""아이 단위 **필수** 동의. 아이를 등록할 때 둘 다 받는다 (#92).
+
+건강정보 동의도 필수다 — 자유 문장 입력에 건강 내용이 섞여 들어와, 선택으로 풀면 동의 없이
+민감정보를 저장 · 외부 전송하게 된다 (개인정보보호법 제23조, #92 결정).
+"""
+
+
 async def latest_action(
     session: AsyncSession,
     *,
@@ -76,6 +87,19 @@ async def missing_account_scopes(
         for scope in REQUIRED_ACCOUNT_SCOPES
         if await latest_action(session, scope=scope, subject_parent_id=parent_id)
         is not ConsentAction.GRANTED
+    ]
+
+
+async def missing_child_scopes(session: AsyncSession, *, child_id: uuid.UUID) -> list[ConsentScope]:
+    """아직 granted 가 아닌 아이 필수 동의 스코프 — GET /me 의 consent_required (#92).
+
+    아이 동의의 대상은 아이다 — 누가 눌렀는지(actor)와 상관없이 그 아이의 마지막 행으로 본다.
+    그래서 함께 보는 보호자(member)에게도 같은 값이 보인다.
+    """
+    return [
+        scope
+        for scope in REQUIRED_CHILD_SCOPES
+        if await latest_action(session, scope=scope, child_id=child_id) is not ConsentAction.GRANTED
     ]
 
 

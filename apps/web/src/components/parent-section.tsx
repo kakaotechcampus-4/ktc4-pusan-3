@@ -37,6 +37,10 @@ import { formatDay } from "@/lib/format";
  *
  * 🚨 **한 코드는 한 번만 쓴다.** 발행할 때마다 새 코드다 — "초대 코드" 를 한 번 만들어 두고
  *    계속 쓰는 것처럼 보이게 하지 않는다. 만료 시각을 같이 적는다.
+ *
+ * 🚨 **초대 버튼은 owner 에게만 있다** (설정 화면이 그린다). 그래도 발행 실패는 시트 안에서
+ *    말한다 — 낡은 `/me` 캐시로 member 가 시트를 열었을 때(`403 owner_only`)나 네트워크 실패에
+ *    버튼만 다시 켜지고 아무 말이 없으면, 보호자는 눌린 줄도 모른다.
  */
 export function ParentSection({
   childId,
@@ -201,6 +205,15 @@ export function ParentSection({
             <li>한 번 쓰면 그 코드는 닫혀요. 여러 명을 초대하려면 그만큼 만들어 주세요.</li>
           </ul>
         )}
+        {invite.isError ? (
+          <CardFailed className="mt-4">
+            <p>
+              {isApiError(invite.error, "owner_only")
+                ? "아이를 등록한 보호자만 초대할 수 있어요."
+                : "초대 코드를 만들지 못했어요. 잠시 뒤에 다시 눌러 주세요."}
+            </p>
+          </CardFailed>
+        ) : null}
       </BottomSheet>
 
       {/* 연결 끊기 — 되돌리려면 다시 초대해야 한다. 그 사실까지 적는다. */}

@@ -149,7 +149,6 @@ export function commitPhotoRun(
 export interface HealthSafetyRequest {
   type: string;
   label: string;
-  category: string;
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;

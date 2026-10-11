@@ -27,7 +27,7 @@ export const REF_KINDS = [
    *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
    *
    * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
-   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` · `intake_daily` ·
+   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` ·
    *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
    *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
    *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.
@@ -74,7 +74,6 @@ export type CorrectionVerdict =
   "confirm" | "once_only" | "need_more_observation" | "outdated" | "wrong";
 
 export type SuggestionStatus = "draft" | "approved" | "rejected" | "expired";
-export type EventStatus = "draft" | "confirmed" | "cancelled";
 
 /* ── Observation ──────────────────────────────────────────────────────── */
 
@@ -158,17 +157,24 @@ export interface Affinity {
 /**
  * 🚨 LLM 이 생성·추론·수정하지 않는다 (NF-03). 보호자 직접 입력 또는 의료 기록만.
  * DB 의 health_safety.kind 는 API 에서 type 으로 내려온다 (Ref 의 kind 와 이름 충돌 회피).
+ *
+ * 필드는 DB 모델(`apps/api/app/domains/safety/models.py`)에 맞춘다. 라우터가 아직 없어 Swagger 로
+ * 대조할 수 없다 — 생기면 한 번 대조한다 (`domains/safety/repository.py` 의 TODO).
  */
 export interface HealthSafety {
   kind: "health_safety";
   id: string;
+  /** DB 의 `health_safety.kind` — allergy / chronic_disease / behavioral / environmental / other_medical. */
   type: string;
   label: string;
-  aliases: string[];
-  category: string;
+  /**
+   * 🚨 종류에 따라 값이 갈린다 (DB CHECK `health_safety_severity_by_kind`) — 알레르기는 검사 결과의
+   *    Class(`class_0` ~ `class_6`), 나머지는 `mild` ~ `anaphylaxis`. 규칙은 `lib/health-safety.ts`.
+   */
   severity: string | null;
   reactions: string[];
-  management: Record<string, unknown>;
+  /** DB 는 text 다 (jsonb 에서 바뀌었다). 화면은 쓰지 않는다. */
+  management: string | null;
   notes: string | null;
   created_by?: { parent_id: string; nickname: string };
   updated_at: string;
@@ -272,6 +278,10 @@ export interface Reminder {
   sent: boolean;
 }
 
+/**
+ * 🚨 **`status` 가 없다** (#118). `event` 테이블에는 보호자가 제출한 행만 들어가서
+ *    `draft` 와 `confirmed` 를 가를 일이 없다. 초안은 `EventDraft` 로 따로 오고 행이 아니다.
+ */
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -280,8 +290,6 @@ export interface CalendarEvent {
   ends_at: string | null;
   all_day: boolean;
   category: "institution" | "health" | "activity" | "etc";
-  /** draft 는 24h 만료. confirmed 로 가는 길목이 승인 게이트 ㉠ 이다. */
-  status: EventStatus;
   created_by: "agent" | "caregiver";
   source_notice_id: string | null;
   source_refs: Ref[];
@@ -456,7 +464,7 @@ export interface AnswerRequest {
  * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
  */
 
-/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `status` · `reminders` 가 없다 — 아직 행이 아니다. */
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminders` 가 없다 — 아직 행이 아니다. */
 export interface EventDraftFields {
   title: string;
   /**
@@ -518,10 +526,11 @@ export interface EventDraft {
   review_reason?: string;
   /**
    * ⚠️ 이 초안이 어느 제안(들)에서 왔는지. 제안 경로에만 있다 (#122 에서 모양이 미정으로 남은 자리).
-   *    제출받는 쪽이 그 `suggestion.status` 를 함께 `approved` 로 바꿔야 해서 필요하다.
+   *    제출받는 쪽이 **제안 ↔ 일정 연결**을 남기려고 필요하다 (#206). 🚨 상태를 바꾸려는 것이 아니다 —
+   *    초안이 되는 제안은 이미 채택(`approved`)된 것이다.
    *
-   * 🚨 **배열인 이유** — `food` 제안 여러 건이 한 끼로 묶여 초안 하나가 된다. 단수로 두면
-   *    묶인 나머지 제안이 `draft` 인 채로 남아 24시간 뒤 만료된다 (보호자는 골랐는데).
+   * 🚨 **배열인 이유** — `food` 제안 여러 건이 한 끼로 묶여 초안 하나가 된다. 연결이 N:1 이라
+   *    단수로 두면 묶인 나머지 제안은 일정이 됐다는 사실이 남지 않는다.
    */
   suggestion_ids?: string[];
 }
@@ -543,7 +552,7 @@ export interface SubmitEventBody {
   event: EventDraftFields;
   items: EventDraftItem[];
   /**
-   * 제출받는 쪽이 그 `suggestion.status` 를 `approved` 로 바꿔야 해서 필요하다.
+   * 제출받는 쪽이 제안 ↔ 일정 연결을 남기려고 필요하다 (#206). 🚨 제안의 `status` 는 바뀌지 않는다.
    * 제안 경로(create)에만 있다. 🚨 **배열이다** — `food` 제안 여러 건이 한 초안으로 묶인다.
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
@@ -558,11 +567,12 @@ export interface SubmitEventBody {
  * 🚨 **일정과 다른 축이다.** 이걸 부른다고 캘린더에 아무것도 안 들어간다. 부모가 "이걸로 할게요"
  *    라고 말한 것을 남기는 자리이고, 일정으로 만들지는 **그다음에** 따로 묻는다.
  *
- * ⚠️ **계약서에 없는 엔드포인트다.** 지금 계약에서 `approved` 가 되는 경로는 **초안 제출 하나**
- *    뿐이라(`SubmitEventBody.suggestion_ids`), 고르기만 하고 일정을 안 만들면 그 선택이
- *    **24시간 뒤 `expired`** 로 사라지고 §4 ⑤(선택·거절을 Memory 로 되돌려 기록)가 배우는 것이
- *    없다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
- *    ⚠️ 합의가 ㉯(새 상태 `chosen`)로 나면 이 응답의 `status` 값만 바뀐다.
+ * 🚨 **`approved` 의 뜻은 "보호자가 채택했다" 하나다** (#196 멘토 리뷰 · #206). 새 상태(`chosen`)를
+ *    두지 않는다. 일정이 됐는지는 상태가 아니라 **제안 ↔ 일정 연결**로 본다 — 그래서 일정을 제출해도
+ *    `status` 는 그대로고, 일정이 나중에 지워져도 채택은 남는다. 실제로 했는지는 `feedback` 이 따로 받는다.
+ *    24시간 만료는 **`draft` 에만** 걸린다 (고르지 않은 제안).
+ *
+ * ⚠️ **계약서에 없는 엔드포인트다.** 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
  *
  * 🚨 **승인 게이트가 아니다.** 되돌릴 수 없는 2곳은 캘린더 쓰기와 건강·알레르기 확정뿐이라
  *    (최상위 §2), 이 버튼에 `btn-approve` 도 `caution` 도 쓰지 않는다.
@@ -601,6 +611,8 @@ export interface CreateEventDraftsRequest {
 /**
  * 알레르기 사전검사. 🚨 규칙이 만들고 모델은 관여하지 않는다 (최상위 §3).
  * `unknown_ingredient` = 알레르기 기록에 없는 재료 — 보호자에게 물어야 한다.
+ * 🚨 **화면이 모르는 `code` 가 오면 그 제안을 막는다** (`safety-check-sheet.tsx`). 물을 수 없다고
+ *    통과시키면 서버가 새 검사를 붙인 날 화면이 덜 막는 쪽으로 기운다.
  *
  * 🚨 **묻는 자리는 제안을 채택할 때다** (#151). 한동안 초안을 만든 뒤(=일정을 만들기로 한 뒤)
  *    물었는데, 채택과 일정 만들기가 갈리면서 **일정을 안 만들면 영영 안 묻는** 구멍이 생겼다.
@@ -637,12 +649,12 @@ export interface CreateEventDraftsResponse {
 
 /**
  * 제출 응답. 🚨 **승인 게이트 ㉠ 을 지난 뒤**라 여기 오는 `event` 는 실제로 저장된 행이다.
- * 제안에서 온 초안이면 그 `suggestion.status` 도 함께 바뀐다.
+ *
+ * 🚨 **제안의 `status` 를 싣지 않는다** (#206). 제출은 제안 상태를 바꾸지 않는다 — 초안이 된
+ *    제안은 이미 `approved` 고, 제출이 남기는 것은 제안 ↔ 일정 연결이다.
  */
 export interface SubmitEventResponse {
   event: CalendarEvent;
-  /** 제안 경로에서만 의미가 있다. 다른 두 경로는 서버가 안 싣는다. */
-  suggestion_status?: SuggestionStatus;
 }
 
 /**
@@ -652,7 +664,6 @@ export interface SubmitEventResponse {
 export interface CreateHealthSafetyRequest {
   type: string;
   label: string;
-  category: string;
   severity?: string;
   reactions?: string[];
   notes?: string;
@@ -673,7 +684,6 @@ export interface CreateHealthSafetyResponse {
  * 🚨 보호자 직접 입력만 들어온다. LLM 이 이 요청을 만들지 않는다 (NF-03 · 최상위 §2).
  */
 export interface UpdateHealthSafetyRequest {
-  category?: string;
   /** `null` 은 "모르겠어요" 로 되돌리는 것이다 — 값을 안 보내는 것(그대로 두기)과 다르다. */
   severity?: string | null;
   reactions?: string[];
@@ -1111,6 +1121,7 @@ export interface CreateChildRequest {
   consents: Array<{ scope: string; policy_version: string }>;
   /**
    * 법정대리인임을 보호자가 확인한 표시 (개인정보보호법 제22조의2).
+   * **만 19세 이상 표시를 겸한다** — 화면 문항이 약관 제6조 ② 문장 그대로 둘을 함께 묻는다 (#166).
    *
    * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 — 그러면
    *    아무도 확인하지 않은 동의가 확인된 것으로 남는다.
@@ -1147,7 +1158,6 @@ export interface SafetyScanCandidate {
   /** 못 읽었으면 `null`. 🚨 추측해 채우지 않는다. */
   type: string | null;
   label: string | null;
-  category: string | null;
   severity: string | null;
   reactions: string[];
   /**
@@ -1317,7 +1327,6 @@ export type SafetyStatus = "none" | "has" | "unknown";
 export interface OnboardingSafetyInput {
   type: string;
   label: string;
-  category: string;
   severity?: string;
   reactions?: string[];
 }
@@ -1498,6 +1507,16 @@ export interface InvitePreviewResponse {
  */
 export interface InviteAcceptRequest {
   relation?: Relation;
+  /**
+   * 만 19세 이상임을 받는 쪽이 직접 표시한 것 (약관 제5조 ④ · 제7조 ② · #166).
+   *
+   * 🔶 **이름과 기록 방식은 프론트 제안이다** — 서버 `AcceptInviteRequest` 에 아직 없다.
+   *    지금 서버는 모르는 필드를 버리므로 먼저 실어 보내도 수락이 깨지지 않는다.
+   * 🚨 **화면의 체크박스 값을 그대로 싣는다.** 상수 `true` 를 보내지 않는다 (`guardian_attested` 와 같은 이유).
+   * 🚨 `guardian_attested` 가 아니다. 초대받은 사람은 법정대리인이 아닐 수 있어서 그 표시를
+   *    받지 않는다 (약관 제7조 ②) — 나이만 받는다.
+   */
+  adult_attested: boolean;
 }
 
 /**

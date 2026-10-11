@@ -10,6 +10,8 @@ import pytest
 
 from app.rules.age import (
     LifeStage,
+    age_display,
+    first_month_of,
     life_stage,
     months_between,
     stage_of,
@@ -84,6 +86,22 @@ class TestStageBoundaries:
         assert life_stage(birth, today).big == band
 
 
+class TestAgeDisplay:
+    @pytest.mark.parametrize(
+        ("today", "expected"),
+        [
+            (date(2026, 1, 15), "생후 1일"),  # 태어난 날 = 1일 (기념일식)
+            (date(2026, 4, 14), "생후 90일"),  # 3개월 전날
+            (date(2026, 4, 15), "3개월"),
+            (date(2028, 1, 14), "23개월"),  # 24개월 전날
+            (date(2028, 1, 15), "만 2세"),  # 24개월
+            (date(2030, 1, 14), "만 3세"),  # 만 4세 전날
+        ],
+    )
+    def test_경계_양쪽(self, today, expected):
+        assert age_display(date(2026, 1, 15), today) == expected
+
+
 class TestDateTypeGuard:
     def test_datetime_을_막는다(self):
         """datetime 은 date 의 하위 클래스라 isinstance 로 걸러지지 않는다.
@@ -112,3 +130,19 @@ class TestLifeStageResult:
         assert result == LifeStage(months=12, stage="toddler", big="toddler")
         with pytest.raises(AttributeError):
             result.months = 13  # type: ignore[misc]
+
+
+class TestFirstMonthOf:
+    """월령을 모르고 단계만 알 때 쓰는 값 — 그 단계에서 가장 어린 월령."""
+
+    @pytest.mark.parametrize(
+        ("stage", "months"),
+        [("infant_milk", 0), ("infant_weaning", 4), ("toddler", 12), ("preschool", 36)],
+    )
+    def test_단계가_시작하는_월령(self, stage, months):
+        assert first_month_of(stage) == months
+        assert stage_of(first_month_of(stage)) == stage
+
+    def test_모르는_단계는_ValueError(self):
+        with pytest.raises(ValueError, match="모르는 단계"):
+            first_month_of("teen")  # type: ignore[arg-type]

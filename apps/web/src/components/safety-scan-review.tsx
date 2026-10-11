@@ -6,8 +6,7 @@ import { useState, type ReactNode } from "react";
 
 import { SafetyScanRowSheet } from "@/components/safety-scan-row-sheet";
 import {
-  SEVERITY_LABEL,
-  isComplete,
+  isSelectable,
   needsReview,
   reviewReason,
   type ScanRow,
@@ -19,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
+import { SEVERITY_LABEL } from "@/lib/health-safety";
 
 /**
  * 11-2 알레르기 검사지 — 옮겨 적은 것을 보호자가 확인하는 칸. 🚨 **승인 게이트 ㉡** 이다.
@@ -32,8 +32,9 @@ import { cn } from "@/lib/cn";
  *
  *   ㉠ **못 읽은 칸은 비어서 온다.** 서버가 `null` 로 내리고 화면이 그 자리를 비운 채
  *      보호자에게 넘긴다 — 기본값으로 넘기지 않는다.
- *   ㉡ **필수 칸이 빈 줄은 고를 수 없다.** 채우기 전에는 체크박스가 잠겨서, 반쯤 읽은 것이
- *      승인 목록에 조용히 섞이지 않는다.
+ *   ㉡ **확인이 필요한 줄은 고를 수 없다.** 필수 칸이 비었거나 원문을 못 읽은 줄은 고치기에서
+ *      보기 전에는 체크박스가 잠겨서, 반쯤 읽은 것이 승인 목록에 조용히 섞이지 않는다
+ *      (`isSelectable`).
  *   ㉢ **줄마다 검사지 원문을 함께 보여준다.** 무엇을 보고 이렇게 옮겼는지 없이 승인하면
  *      그건 확인이 아니다. 원문을 못 읽은 줄은 **미리 고르지 않는다.**
  *   ㉣ **읽지 못한 줄 수를 그대로 말한다.** "다 읽었다" 고 넘기면 보호자가 빠진 항목을
@@ -102,7 +103,7 @@ export function SafetyScanReview({
   const ready = live.filter((row) => !needsReview(row) && !row.alreadyRegistered);
   const registered = live.filter((row) => row.alreadyRegistered);
 
-  const picked = live.filter((row) => row.checked && isComplete(row) && !row.alreadyRegistered);
+  const picked = live.filter((row) => row.checked && isSelectable(row) && !row.alreadyRegistered);
   const savedCount = rows.filter((row) => row.status === "done").length;
 
   /**
@@ -214,8 +215,8 @@ export function SafetyScanReview({
                 🚨 **색이 단독 신호가 아니다** — 무엇을 왜 다시 봐야 하는지를 글자가 말한다.
                 🚨 굵게 강조하지 않는다: 손글씨는 굵기 대비가 약해 이 크기에서 거의 안 보인다 (§4). */}
             <p className="text-body-sm text-caution mt-4">
-              등록하면 앞으로 식사 제안이 이 목록을 보고 걸러요. 사진에서 옮긴 값이라 이름이나
-              분류가 실제와 다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
+              등록하면 앞으로 식사 제안이 이 목록을 보고 걸러요. 사진에서 옮긴 값이라 이름이 실제와
+              다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
             </p>
 
             {/* 🚨 승인 게이트 ㉡ — 되돌릴 수 없는 확정이라 `btn-approve` 다. */}
@@ -486,10 +487,8 @@ function ScanRowCard({
   onPatch: (id: string, next: Partial<ScanRow>) => void;
   onEdit: (row: ScanRow) => void;
 }) {
-  const complete = isComplete(row);
-  const meta = [row.category || null, row.severity ? SEVERITY_LABEL[row.severity] : null]
-    .filter(Boolean)
-    .join(" · ");
+  const selectable = isSelectable(row);
+  const meta = row.severity ? SEVERITY_LABEL[row.severity] : null;
   const review = needsReview(row);
 
   return (
@@ -503,15 +502,15 @@ function ScanRowCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          {/* 🚨 **필수 칸이 비면 고를 수 없다.** 반쯤 읽은 줄이 승인 목록에 조용히 섞이지 않게
-              체크를 잠근다 — 채우면 열린다 (머리말 ㉡). */}
+          {/* 🚨 **확인이 필요한 줄은 고를 수 없다.** 필수 칸이 비었거나 원문을 못 읽은 줄이 승인
+              목록에 조용히 섞이지 않게 체크를 잠근다 — 고치기에서 확인하면 열린다 (머리말 ㉡). */}
           {/* 🚨 **비활성 체크박스를 두지 않는다** ("왜 안 눌리지" 를 만든다 · 디자인 시스템 §2-5).
               누를 수는 있되 **아무 일도 일어나지 않고**, 왜 그런지는 바로 아래 사유 줄이
               글자로 말한다 — 그 줄이 없으면 이 처리가 그냥 고장난 체크박스가 된다. */}
           <Checkbox
-            checked={row.checked && complete}
+            checked={row.checked && selectable}
             onChange={(checked) => {
-              if (!complete || row.status === "saving") return;
+              if (!selectable || row.status === "saving") return;
               onPatch(row.id, { checked });
             }}
             label={

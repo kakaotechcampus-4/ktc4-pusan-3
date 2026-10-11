@@ -3,7 +3,7 @@
 출력 채널 다섯. 채널마다 저장 여부와 승인 여부가 다르다
 (docs/agents/shared/Agent_공통규약.md §3).
 
-    suggestions        suggestion draft +24h · 요청 1건당 정확히 3개   Food · Activity · Growth
+    suggestions        suggestion draft +24h · 요청 1건당 최대 3개     Food · Activity · Growth
     readouts           저장 안 함 (세션 한정)                          전부
     event_requests     저장 안 함 — 초안 payload, 제출 시 저장         Health
     needs_observation  저장 안 함 — 화면이 한 줄로 묻는다              전부

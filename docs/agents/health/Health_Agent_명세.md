@@ -142,7 +142,7 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | --- | --- | --- |
 | `observation_health` | visit_summary · (hook) | 증상 경과 · 반복 감지 · 알레르기 후보 |
 | `observation_food` | visit_summary | 최근 3일 식사량 변화 |
-| `health_safety` (state=active) | visit_summary · (hook) | 기존 알레르기·만성질환 |
+| `health_safety` (status=active) | visit_summary · (hook) | 기존 알레르기·만성질환 |
 | `medication_schedule` · `medication_dose` | visit_summary · medication · care_handoff | 먹이고 있는 약 |
 | `medication_dose_log` | medication · visit_summary | 실제로 먹인 기록 |
 | `prescription_draft` | medication | **OCR 파이프라인 산출물. 읽기만** — 값은 보호자가 확인한 뒤에만 쓰임 |

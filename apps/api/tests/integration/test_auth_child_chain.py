@@ -6,7 +6,7 @@ API 라우터의 인증 흐름:
                                         find_accessible_child(child_id, parent_id)
 
 이 테스트는 체인의 각 단계가 올바르게 동작하고, 단계 간 연결이 끊기지 않는지 검증한다.
-인덱스 의존: ix_session_token_hash (unique), parent_child_parent_id_child_id_key (unique composite).
+인덱스 의존: ix_session_token_hash (unique), uq_parent_child_parent_id (unique).
 """
 
 import hashlib

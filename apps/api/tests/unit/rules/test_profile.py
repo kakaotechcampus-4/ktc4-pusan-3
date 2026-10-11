@@ -9,7 +9,6 @@ import pytest
 
 from app.rules.profile import (
     ARCHIVED_WINDOW_DAYS,
-    WRONG_COUNT_WINDOW_DAYS,
     PROMOTION_THRESHOLD,
     PROMOTION_THRESHOLD_WITH_G,
     PROMOTION_WINDOW_DAYS,
@@ -17,6 +16,7 @@ from app.rules.profile import (
     STRENGTH_MAX,
     STRENGTH_MIN,
     VERDICT_DECAY,
+    WRONG_COUNT_WINDOW_DAYS,
     apply_correction,
     apply_transition,
     compute_profile_status,

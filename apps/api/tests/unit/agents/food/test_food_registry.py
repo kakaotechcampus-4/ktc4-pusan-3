@@ -225,3 +225,64 @@ async def test_build_gate_는_daycare_meal_행_유무를_그대로_옮긴다() -
 
     assert gate.data.daycare_meal is False
     assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) == "closed.no_daycare"
+
+
+# build_gate: 읽은 안전 정보를 task state 에 남긴다
+_MILK = SafetyEntry(kind="allergy", label="우유", status="active")
+
+
+async def test_build_gate_는_읽은_안전_정보를_state_에_담는다() -> None:
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: date(2024, 9, 27)}),
+        consent=InMemoryConsent({CHILD: True}),
+        safety=InMemorySafety([_MILK]),
+    )
+    context = _context(ports=ports)
+
+    await build_gate(context)
+
+    assert context.state.safety == (_MILK,)
+
+
+async def test_build_gate_는_안전_정보를_읽어도_allergy_states_를_채우지_않는다() -> None:
+    # 확인 안 된 알레르기(unknown)는 Food 가 세지 않는다. 행이 없는 것이 unknown 이라 이 칸으로는
+    # 셀 수 없고, 안내는 추천을 승인할 때 suggestion.allergens 와 health_safety 를 대조해서 한다
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: date(2024, 9, 27)}),
+        consent=InMemoryConsent({CHILD: True}),
+        safety=InMemorySafety([_MILK]),
+    )
+
+    gate = await build_gate(_context(ports=ports))
+
+    assert gate.allergy_states == ()
+    assert gate.allergy_unconfirmed is False
+
+
+async def test_build_gate_는_동의가_없으면_state_에_빈_안전_정보를_담는다() -> None:
+    # 읽지 않았으니 게이트의 allergy_states가 빈 것과 같은 뜻
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: date(2024, 9, 27)}),
+        consent=InMemoryConsent({CHILD: False}),
+        safety=InMemorySafety([_MILK]),
+    )
+    context = _context(ports=ports)
+
+    await build_gate(context)
+
+    assert context.state.safety == ()
+
+
+async def test_build_gate_는_조회에_실패하면_state_안전_정보를_None_으로_둔다() -> None:
+    # None은 "확인 못 함"이다. 빈 튜플(제한 없음)로 대신하지 않는다
+    # (행의 상태 필드의 None 의미(보호자가 없다고 답함)와는 다름)
+    ports = in_memory_ports(
+        profile=InMemoryProfile({CHILD: date(2024, 9, 27)}),
+        consent=InMemoryConsent({CHILD: True}),
+        safety=InMemorySafety(fail=True),
+    )
+    context = _context(ports=ports)
+
+    await build_gate(context)
+
+    assert context.state.safety is None

@@ -229,7 +229,7 @@ describe("Memory 가 한 말(note)", () => {
   });
 
   it("⚠️ kind 가 없으면 없는 채로 둔다 — 질문으로 바꿔 넣지 않는다", () => {
-    // 🚨 기본값을 "question" 으로 채우면 요약 문장에도 "이어서 적기" 가 붙어 답을 재촉하게 된다.
+    // 🚨 기본값을 "question" 으로 채우면 요약 문장에도 답할 자리가 붙어 답을 재촉하게 된다.
     //    모르는 것을 아는 척하지 않는 자리다 (최상위 §2) — 판단은 화면이 한다 (`NoteCard`).
     expect(fold([{ type: "note", data: { text: "기록했어요" } }, DONE]).note?.kind).toBeUndefined();
   });

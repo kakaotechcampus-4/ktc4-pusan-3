@@ -100,9 +100,11 @@ class TestDbRepositoryToCurator:
         assert len(result.affected_profile_ids) == 1
 
         # ── 검증: observation 에 벡터 + affinity_id 채워짐 ──
-        obs_rows = (await session.scalars(
-            select(ObservationFood).where(ObservationFood.child_id == child.id)
-        )).all()
+        obs_rows = (
+            await session.scalars(
+                select(ObservationFood).where(ObservationFood.child_id == child.id)
+            )
+        ).all()
         for row in obs_rows:
             assert row.embedding is not None, "벡터가 저장됨"
             assert row.affinity_id is not None, "Profile 에 연결됨"
@@ -134,8 +136,10 @@ class TestDbRepositoryToCurator:
         from app.domains.memory.observation.repository import delete_observation
 
         await delete_observation(
-            session, domain=ObservationDomain.FOOD,
-            child_id=child.id, observation_id=record.id,
+            session,
+            domain=ObservationDomain.FOOD,
+            child_id=child.id,
+            observation_id=record.id,
         )
 
         # Curator 실행 — deleted 관찰은 대상이 아님
