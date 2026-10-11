@@ -62,7 +62,7 @@ class ApproveSuggestionsResponse(BaseModel):
 
 
 class SuggestionsRequest(BaseModel):
-    agents: list[AgentValue] = Field(max_length=2)
+    agents: list[AgentValue] = Field(min_length=1, max_length=2)
     run_id: str | None = Field(default=None, max_length=100)
     prompt_key: str | None = Field(default=None, max_length=50)
 
@@ -165,6 +165,14 @@ class UpdateEventRequest(BaseModel):
     event: UpdateEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=100)
 
+    @model_validator(mode="after")
+    def _item_name_length(self) -> UpdateEventRequest:
+        for item in self.items:
+            if len(item.item_name) > 100:
+                msg = "준비물 이름은 100자까지예요"
+                raise ValueError(msg)
+        return self
+
 
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
@@ -225,11 +233,20 @@ class SubmitEventRequest(BaseModel):
     items: list[DraftItemPayload] = Field(default=[], max_length=100)
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
 
+    @model_validator(mode="after")
+    def _item_name_length(self) -> SubmitEventRequest:
+        for item in self.items:
+            if len(item.item_name) > 100:
+                msg = "준비물 이름은 100자까지예요"
+                raise ValueError(msg)
+        return self
+
 
 class EventItemOut(BaseModel):
     item_id: str
     item_name: str
     is_prepared: bool
+    prepared_at: str | None = None
 
 
 class CalendarEventOut(BaseModel):
