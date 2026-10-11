@@ -267,7 +267,93 @@ async def test_invalid_status_returns_400(db_client: AsyncClient, bearer: Bearer
     assert resp.json()["error"]["code"] == "validation_failed"
 
 
-async def test_event_update_without_idempotency_key_returns_400(
+async def _make_event_with_items(session, *, child_id):
+    """테스트용 일정 + 준비물 2개."""
+    from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
+    from app.domains.schedule.repository import create_event, create_event_item
+
+    event = await create_event(
+        session,
+        child_id=child_id,
+        title="물놀이",
+        event_type=EventType.EPISODIC,
+        starts_at=datetime.now(UTC),
+        ends_at=None,
+        all_day=False,
+        category=EventCategory.ACTIVITY,
+        created_by=EventCreatedBy.CAREGIVER,
+    )
+    i1 = await create_event_item(
+        session, child_id=child_id, event_id=event.id, item_name="수건"
+    )
+    i2 = await create_event_item(
+        session, child_id=child_id, event_id=event.id, item_name="모자"
+    )
+    await session.flush()
+    return event, [i1, i2]
+
+
+async def test_update_event_other_events_item_id_returns_400(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """다른 일정의 item_id가 오면 400."""
+    headers, _ = bearer
+    event1, _ = await _make_event_with_items(session, child_id=cid)
+    event2, items2 = await _make_event_with_items(session, child_id=cid)
+
+    # event1을 수정하면서 event2의 item_id를 보냄
+    resp = await db_client.patch(
+        f"/api/v1/children/{cid}/events/{event1.id}",
+        json={
+            "event": {
+                "title": "물놀이",
+                "starts_at": "2026-10-15T10:00:00+09:00",
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "items": [
+                {"item_id": str(items2[0].item_id), "item_name": "남의 수건"},
+            ],
+        },
+        headers={**headers, "Idempotency-Key": "other-item-1"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "validation_failed"
+
+
+async def test_update_event_deleted_item_id_is_ignored(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """이미 삭제된 item_id는 무시하고 나머지를 정상 저장한다."""
+    headers, _ = bearer
+    event, items = await _make_event_with_items(session, child_id=cid)
+    deleted_id = str(uuid.uuid4())  # DB에 없는 item_id
+
+    resp = await db_client.patch(
+        f"/api/v1/children/{cid}/events/{event.id}",
+        json={
+            "event": {
+                "title": "물놀이",
+                "starts_at": "2026-10-15T10:00:00+09:00",
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "items": [
+                {"item_id": str(items[0].item_id), "item_name": "수건"},
+                {"item_id": deleted_id, "item_name": "없는 준비물"},
+                {"item_id": None, "item_name": "썬크림"},
+            ],
+        },
+        headers={**headers, "Idempotency-Key": "deleted-item-1"},
+    )
+    assert resp.status_code == 200
+    result_items = resp.json()["event"]["items"]
+    result_names = {i["item_name"] for i in result_items}
+    # 삭제된 id는 무시, 수건(유지) + 썬크림(신규)만 남아야 함
+    assert result_names == {"수건", "썬크림"}
+
+
+async def test_update_event_without_idempotency_key_returns_400(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     """일정 수정에 Idempotency-Key가 없으면 400."""
