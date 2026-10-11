@@ -10,6 +10,8 @@
 >
 > **2026-10-06 갱신** — 추천은 최대 3개(C-8 닫힘) · 1~2개면 `suggestion.partial` 안내 · 0개면 추천 없이 `pool.empty` — 실패 아님 (§0-5) · 이미 추천한 메뉴가 다시 나오는 문제 TODO (§0-5)
 >
+> **2026-10-11 갱신 (#321)** — 영양소 분석도 안전 조회 실패면 닫힘(`blocked.safety`, §1) · 요청 중 메뉴 해석은 식품영양성분DB 하나, 레시피 재료는 농식품정보원 배치(COOKRCP01 보류, §0-2 · §0-6) · 영양DB 행 고르는 규칙(§0-7) · 당류는 선택 칸 · 영양 안내에서 알레르기 식품 빼기(§2)
+>
 > **2026-10-08 갱신** — 안전 필터를 health_safety 10/4 확정안에 맞춤: `SafetyEntry` 는 `kind` · `label` · `status` 만, 포트는 active 행만 · 통과한 메뉴에 든 19종 이름을 `SafetyVerdict.allergens` 로 돌려줌 · `notice.allergy_unconfirmed` 는 Food 가 내지 않음(승인 때 안내) (§3 · §4)
 
 ---
@@ -32,17 +34,18 @@
 
 ```
 메뉴명 ──normalize──▶ menu_key ──▶ menu_catalog (메뉴 카탈로그)
-                                     │ 카탈로그에 없음(캐시 미스)
+                                     │ 카탈로그에 없음(캐시 미스) — 요청 중
                                      ▼
-          ① 식약처 식품영양성분DB정보 (음식 분류) ── 1인분 영양
-          ② 식약처 조리식품 레시피 DB (COOKRCP01) ── 재료 목록만 (영양 칸은 쓰지 않음)
-          ③ 둘 다 없음 · 외부 API 장애 → status="unresolved" (모델 추정 금지). 카탈로그에 남기지 않음
-             이름이 정확히 같은 결과만 받는다 — 비슷한 메뉴 추정 금지 (급식 · 판정 · 집 식사 모두)
-                                     │
-                                     ▼
-          재료 → 알레르기 19종 코드 매핑 (코드 사전)
-          식품분류 → 6개 식품군 매핑 (코드 사전)
+          ① 식약처 식품영양성분DB정보 ── 100g 기준 영양 · 1인분 중량 (재료는 찾지 않는다)
+             이름이 정확히 같은 품목대표 행만 받는다(§0-7) — 비슷한 메뉴 추정 금지 (급식 · 판정 · 집 식사 모두)
+          ② 없음 · 외부 API 장애 → status="unresolved" (모델 추정 금지). 카탈로그에 남기지 않음
+
+[배치] 농식품정보원 레시피 기본 · 재료정보 ──▶ 재료명 정리 표(사람 검수) ──▶ menu_catalog
+          재료 → 알레르기 19종 코드 (코드 사전 + 정리 표). 검수 전 재료가 있으면 resolved=false
+          식품분류 → 6개 식품군 (코드 사전 — 아직 없음)
 ```
+
+레시피 DB 는 요청 중에 부르지 않는다 — 호출 한도(농식품정보원 하루 1,000회)가 서비스 전체 상한이 된다. 식약처 COOKRCP01 은 재료가 자유 텍스트라 파싱 · 검수 비용이 커서 보류했다(10-11).
 
 ### 0-3. `menu_catalog` (메뉴 카탈로그)
 
@@ -50,10 +53,10 @@
 | --- | --- |
 | `menu_key` | 정규화 메뉴명 (공백·괄호·알레르기 번호 제거, 동의어 치환) · PK. 번호는 떼기만 하고 읽지 않는다 — 떼지 않으면 "카레라이스(2.5.6)" 가 카탈로그에서 안 찾아져 영양 계산에서 빠진다 |
 | `food_code` | 식약처 식품코드 (없으면 NULL) |
-| `source` | `mfds_nutri` · `mfds_recipe` · `manual` |
-| `serving_g` | 1인분 중량 — **성인 기준** |
-| `nutrients` | jsonb — 에너지·탄수화물·단백질·지방·당류·나트륨·칼슘·철 … (100g 기준 + 1인분). 식품영양성분DB 에서만 채운다 |
-| `ingredients` | text[] — 레시피 DB 재료 텍스트(`RCP_PARTS_DTLS`)를 파싱한 것 |
+| `source` | `mfds_nutri` · `mafra_recipe` · `center_standard` · `manual` (`mfds_recipe` 는 COOKRCP01 보류로 쓰지 않는다) |
+| `serving_g` | 1인분 중량 — **성인 기준**. 영양DB 원재료성 · 가공식품 품목대표는 대부분 비어 있다(우유 · 두유 · 백김치 — 10-11 측정). 비면 모르는 양이고 100g 으로 가정하지 않는다 |
+| `nutrients` | jsonb — 100g 기준. 에너지 · 단백질 · 지방 · 탄수화물 · 칼슘 · 철 · 나트륨은 다 차야 해석하고, 당류 · 포화지방은 있으면 싣는다(10-11). 식품영양성분DB 에서만 채운다 |
+| `ingredients` | text[] — 농식품정보원 레시피 재료를 재료명 정리 표(`reference/recipe_ingredients.yaml`, 사람 검수)로 정리한 이름 |
 | `allergen_codes` | smallint[] — 19종 코드 (재료 + 메뉴명 사전 **합집합**) |
 | `food_groups` | text[] — 곡류 · 고기생선달걀콩 · 채소 · 과일 · 우유유제품 · 유지당류 |
 | `stage_min` | 이 메뉴가 가능한 최소 단계 — `LifeStage.stage` 네 값 중 하나 (수동 태깅) |
@@ -114,13 +117,34 @@ menu_catalog
 
 | 소스 | 제공 | 용도 | 비고 |
 | --- | --- | --- | --- |
-| 식약처 **식품영양성분DB정보** — data.go.kr/data/15127578 | 식품코드·분류·영양성분·1회 섭취참고량 | `menu_catalog.nutrients` | REST, 무료. 구 API 폐기 후 통합본 |
+| 식약처 **식품영양성분DB정보** (`FoodNtrCpntDbInfo03`) — data.go.kr/data/15127578 | 음식 · 가공식품 · 원재료성 331,212행 — 식품코드 · 분류 · 100g 기준 영양 · 식품중량 | `menu_catalog.nutrients` · `serving_g` — 요청 중 캐시 미스 | 이용허락 제한 없음. 클라이언트 `app/integrations/mfds/` · 키 `DATA_GO_KR_SERVICE_KEY`. 이름은 **포함 검색**이라 `DB_CLASS_NM=품목대표` 필터를 걸고 정확히 같은 이름만 고른다(§0-7) |
 | 식약처 **K-FIND** 식품영양성분 DB | 동일 DB 검색 서비스 (130여 종 성분) | 수동 검수 | 2026-07 출범 |
-| 식약처 **조리식품 레시피 DB** (COOKRCP01) — foodsafetykorea.go.kr | 레시피 1,156건(10-06 받은 CSV 기준) — 메뉴명 · 요리 종류 · 조리법 · 재료 텍스트 · 1인분 영양 5항목(열량 · 탄수화물 · 단백질 · 지방 · 나트륨, 중량은 285건만) · 조리 순서 · 저감 조리 팁 | `ingredients` · 알레르기 — **재료 목록만 쓴다** | 영양 칸은 쓰지 않는다 — 칼슘 · 철 · 당류 · 포화지방이 없어 판정 항목을 다 채우지 못한다. 메뉴명이 일상 메뉴명이 아니라 변형 레시피 이름이다(FT-17). 재료가 텍스트라 파싱 필요(FT-7) |
+| **농식품정보원 레시피** 기본 · 재료정보 — data.mafra.go.kr | 레시피 537건 · 재료 6,104행(재료명 · 용량 · 주재료/부재료/양념, `RECIPE_ID` 로 이어짐) | `ingredients` · 알레르기 — **배치로만** | 클라이언트 `app/integrations/mafra/` · 키 `MAFRA_RECIPE_API_KEY`(호출 서버 IP 등록). 평문 HTTP · 키가 주소 경로에 들어가서 배치 한 곳에서만 부른다. 이용 조건 문의 중(10-11) — 운영 적재 · 원문 커밋은 답 뒤. 재료는 정리 표로 읽는다(own_table §1-1) |
+| 식약처 **조리식품 레시피 DB** (COOKRCP01) — foodsafetykorea.go.kr | 레시피 1,156건(10-06 받은 CSV 기준) — 재료가 자유 텍스트 | **보류(10-11)** | 재료 파싱(FT-7) · 검수 비용이 커서 쓰지 않는다. 메뉴명도 변형 레시피 이름이다(FT-17). 농식품정보원이 거절되거나 후보 풀이 모자라면 다시 본다 |
 | 식약처 알레르기 표시 대상 19종 | 알류·우유·메밀·땅콩·대두·밀·고등어·게·새우·돼지고기·복숭아·토마토·아황산류·호두·닭고기·쇠고기·오징어·조개류·잣 | `ALLERGEN_CODES` 상수 | 번호 = 이 순서 |
 | 급식표 읽기 (사진 OCR · 센터 배포 엑셀) | 끼니별 메뉴 이름 | `daycare_meal` (급식의 유일한 경로) | 파이프라인 산출물(`MealPlanJSON.name`) 읽기만. 메뉴명에 붙은 알레르기 번호는 읽지 않는다 — 기관이 아이의 알레르기를 관리하고 보호자에게 미리 알린다. 저장 직후 대체·제외 메뉴 확인 안내. NEIS 는 쓰지 않는다(10-09) |
 | 지역 어린이급식관리지원센터 표준식단 | 연령별 월간 식단·레시피 | 참고 식단 · 카탈로그 보강 | API 아님. 이용 조건 확인 |
 | 보건복지부 「2025 한국인 영양소 섭취기준」 | 연령군별 EAR·RNI·AI·UL·AMDR | `nutrient_reference` 시드 | 문서 → 상수 → 테이블 |
+
+### 0-7. 영양DB 행 고르는 규칙 — `nutrition_source.py`
+
+같은 이름이 여러 행이다(된장찌개 12 · 김치찌개 25). 클라이언트는 원문 행을 그대로 주고(`MenuSource.nutrition_rows`), 어느 행을 쓸지는 Agent 가 정한다. 알레르기와 영양을 붙이는 입력이라 **못 고르는 쪽으로 틀린다** — 못 고르면 unresolved 이고 알레르기는 "확인 못 함" 이다.
+
+1. 이름이 정확히 같은 행만(공백 · 문장부호만 무시). 영양DB 쪽 괄호는 지우지 않는다 — "김치찌개(참치)" 는 다른 변형이다.
+2. **품목대표만.** 상용제품(포장 제품) · 외식은 어느 그룹이든 메뉴명에 쓰지 않는다 — "백미밥" 은 즉석밥 제품 행에만 있고, 칼슘 · 철이 빈 행도 제품 행이었다.
+3. 음식 → 원재료성 → 가공식품 순서. 우유는 원재료성에만, 백김치 · 동그랑땡 · 김치볶음밥은 가공식품에만 있다. 그 밖의 그룹 이름은 받지 않는다.
+4. 에너지 · 단백질 · 지방 · 탄수화물 · 칼슘 · 철 · 나트륨이 다 찬 행만. 당류 · 포화지방은 있으면 싣고 비면 뺀다 — 0 으로 채우지 않는다. 당류가 빈 메뉴가 섞인 판정은 당류를 판단하지 않고 안내만 낸다(10-11 결정, 영양소_계산_설계 §3).
+5. 1인분 중량은 필수가 아니다. 원재료성 품목대표는 12행 모두, 가공식품 품목대표는 18행 중 17행이 비어 있다(10-11 표본) — 비면 `serving_g` 가 비고 100g 으로 가정하지 않는다.
+6. 같은 순위가 여럿이면 조사 일자가 최근인 행, 그다음 식품코드 순 — 입력 순서와 상관없이 매번 같은 행이다. 출처로 가르는 기준은 아직 없다.
+
+**실제 응답으로 확인한 것 (10-11)** — 영양값은 `AMT_NUM1` ~ `157` 번호뿐이다. 쓰는 칸은 에너지 1 · 단백질 3 · 지방 4 · 탄수화물 6 · 당류 7 · 칼슘 9 · 철 10 · 나트륨 13 · 포화지방 24 다(이웃한 23 은 콜레스테롤). 열량 = 단백질 · 탄수화물 4 + 지방 9 kcal/g 가 맞는지와 우유 · 버터 값으로 검증했고, 클라이언트 계약 테스트가 같은 식으로 칸 밀림을 잡는다. **이름 검색이 느리다** — 오후에 다시 재니 하나씩 4.5 ~ 7.8초, 5개 동시면 중간 6.9초 · 최대 15.5초였다(처음 쟀을 때는 100행 3 ~ 4초). 페이지를 10행으로 줄여도 고르게 빨라지지 않는다. 이름 없이 품목대표만 받으면 100행 1 ~ 4초 · 한 번에 최대 500행이고, 전체가 8,807행이다(own_table FT-19).
+
+**해석률 (10-11, 메뉴명 30개)** — 점검에 쓴 메뉴명 30개는 저장소 테스트 · 목(`apps/api/tests` · `apps/web/src/mocks`)에 나오는 메뉴 · 음식 이름 25개와, 소스를 비교할 때 더한 5개(김치볶음밥 · 단호박찜 · 비빔만두 · 고구마찜 · 두부구이)다. 골라 뽑은 목록이라 서비스 전체의 해석률이 아니라 "흔한 메뉴명이 정확한 이름으로 잡히는지" 를 보는 점검이다.
+
+- 찾은 21개 — 현미밥 · 미역국 · 김치찌개 · 된장찌개 · 잡채 · 떡국 · 감자조림 · 두부조림 · 멸치볶음 · 카레라이스 · 김치볶음밥 · 우유 · 두유 · 닭곰탕 · 호박죽 · 닭강정 · 돈가스 · 단호박찜 · 백김치 · 동그랑땡 · 시금치나물. 김치볶음밥은 당류를 선택 칸으로 바꾼 뒤 들어왔다.
+- 못 찾은 9개 — 상용제품 행만 있는 이름(백미밥 · 불고기 · 계란찜 · 두부구이)과 DB 에 없는 이름(누룽지죽 · 콩나물죽 · 백깍두기 · 비빔만두 · 고구마찜). 사람이 검수한 `menu_alias` 로만 잇는다(FT-6).
+- 지금 값(호출 8초 · 5개 동시)으로 `resolve_menu` 를 돌리면 15개다 — 찾을 수 있는 6개가 시간 초과로 빠진다(own_table FT-19). 시간 초과는 "없음" 으로 기억하지 않아 다음 판정에서 다시 부른다.
+- 다시 잴 때는 라이브 eval `tests/eval/agents/food/test_menu_resolution.py` 를 `-m live` 로 돌린다 — 같은 30개로 이름별 해석과 안전 필터("통과" 가 안 나오는지) · 실제 값으로 판정 거듭하기 · 모델이 쓴 급식표 표기를 본다. 10-11 17시에는 30개 모두 기대대로였고 급식표 표기 180개가 모두 같은 `menu_key` 로 모였다. 모델이 쓰지 않은 표기 중 "미역국 5/6/16" · "미역국-5.6" · "미역국 5번" 은 모이지 않는다 — 분수(1/2)를 지우지 않으려고 `/` · `-` 옆 숫자를 남기는 규칙이라 해석 실패("확인 못 함")로만 이어진다. 실제 급식표 OCR 결과로 다시 본다.
 
 ---
 
@@ -140,7 +164,9 @@ menu_catalog
 
 단계 안에서 코드가 주입하는 값: `texture`(4–5 `puree` / 6–8 `puree`·`mashed` / 9–11 `minced`·`soft_pieces`) · 섭취기준 연령군(12–35 `1-2y` / 36+ `3-5y`) · 연령 식품 규칙(12개월 미만 꿀·마시는 우유 금지, 48개월 미만 질식 위험 식품 금지 · 질식 주의, 모든 아이 날음식 · 카페인 · 술 금지 — §3) · 급식 조회는 `daycare_meal` 행이 있는 아이만.
 
-닫힘 조건 추가: `safety_ok=False` → `meal_recommendation`만 `()`.
+닫힘 조건 추가: `safety_ok=False` → `meal_recommendation` · `nutrient_analysis` 가 `()`(`blocked.safety`, 모델 0회). 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석도 식품군 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다(#321, 10-11 변경). `daycare_meal` 은 그대로 연다.
+
+포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 "동의 있음 + 안전 조회 실패" 조합이라 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 "없음" 으로 두지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다. 실제 포트는 issue4 에서 api 가 넘긴다.
 
 **`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — 읽은 안전 정보(`FoodRunState.safety`)가 빈 튜플이고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
 
@@ -178,7 +204,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `update_daycare_meal` | `date_span`, `slot?`, `removed_spans[]?`, `added_spans[]?`, `amount_span?` | 갱신된 `daycare_meal` 행 + `Readout(code, "daycare_updated")` | **span은 발화 원문의 부분 문자열**(코드 검증) · 날짜 해석은 코드 · 대상 행 없으면 `NOT_FOUND`, 여럿이면 `needs_observation` · 승인 게이트 없음 |
 | `delete_daycare_meal` | `date_span`, `slot?` | 행 삭제 + `Readout(code, "daycare_absent")` | 결석 처리. 대상 날짜가 모호하면 **반드시 되묻는다** · 되돌리려면 OCR 재적재가 필요하다 |
 | `propose_meal_candidates` | `candidates[1~3]: {menu_key, evidence_ids[], reason}`, `summary?` | `SuggestionDraft[]` + `summary`가 있으면 `Readout(model, kind="meal_note")` | **샘플링된 후보 목록 밖** `menu_key` 거절 · 사후 `filter_food_safety` · 안전 필터 후 3개 미만 → 재호출 1회 · 그래도 모자라면 남은 만큼(0개면 `pool.empty`) · 아이 기록 0 → general · 인용마다 `note` 필수 · **기피 근거(`polarity=-1`)를 인용했으면 `reason`에 무엇을 피했는지가 있어야 한다** (없으면 거절) |
-| `report_nutrient_analysis` | `findings[]: {band: "low"\|"ok"\|"high", target, food_group_action, basis_ref}`, `summary` | `Readout(model)` | `basis_ref`는 `compare_diet_balance` 결과 항목 필수 · **숫자 뒤에 `%`·`g`·`mg`·`kcal`이 붙은 표현과 "퍼센트"·"칼로리"를 쓰면 거절**(횟수 표현은 통과) · `insufficient=True`면 `findings` 비워야 함 |
+| `report_nutrient_analysis` | `findings[]: {band: "low"\|"ok"\|"high", target, food_group_action, basis_ref}`, `summary` | `Readout(model)` | `basis_ref`는 `compare_diet_balance` 결과 항목 필수 · **숫자 뒤에 `%`·`g`·`mg`·`kcal`이 붙은 표현과 "퍼센트"·"칼로리"를 쓰면 거절**(횟수 표현은 통과) · `insufficient=True`면 `findings` 비워야 함 · `food_group_action` 은 구간 → 식품군 표(`reference/nutrient_actions.yaml`)에서 **아이의 알레르기 · 질환 식품을 `filter_food_safety` 로 뺀 것만** — 다 빠지면 식품 안내 없이 구간만 · 빠진 식품의 이름(표에 적은 다른 이름 포함 — 달걀이면 계란 · 노른자)이 `summary` 에 있으면 거절(#321) |
 
 `WeaningTopic`: `texture` · `new_ingredient` · `portion_rhythm` · `refusal`
 
@@ -187,7 +213,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | Tool | 호출 시점 | 입력 → 출력 | 실패 |
 | --- | --- | --- | --- |
 | `resolve_meal_date` | `update`·`delete_daycare_meal` 인자 검증 | `date_span` + `today` → date | 사전에 없으면 `needs_observation` · 과거 30일 밖이면 거절 |
-| `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | 캐시 미스면 외부 조회(이름이 정확히 같은 결과만). 못 찾거나 API 실패 → `unresolved`, 카탈로그에 남기지 않는다. 판정에서는 한 번에 조회 수 상한 — [`food_agent_own_table.md`](food_agent_own_table.md) §1 |
+| `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | 캐시 미스면 영양DB 를 정확한 이름으로 조회(§0-7, 레시피는 찾지 않는다). 못 찾거나 API 실패 → `unresolved`, 카탈로그에 남기지 않는다. 판정 한 번의 외부 조회 상한 · 호출별 timeout · 못 찾은 이름 기억 — [`food_agent_own_table.md`](food_agent_own_table.md) §1. 구현 `menu_resolver.py` |
 | `filter_food_safety` | 모델 호출 전(풀) · 후(출력) · 급식 조회 | `menus`, `health_safety`, `stage`, `months`, `purpose`(recommend · daycare, 기본 recommend) → `(passed, blocked, unchecked)` + `needs_check`(blocked 의 일부) · `cautions` · `allergens` · `checks` — §3 음식 안전 수칙 | `health_safety` 조회 실패 → `SAFETY_UNAVAILABLE` (식단 추천 중단) · 사전(yaml)을 못 읽으면 예외 — 잡아서 통과시키지 않는다 |
 | `rank_evidence` | `search_food_memory` 내부 | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | – |
 | `build_candidate_pool` | 식단 추천 모델 호출 전 | §0-5 | 풀 0개 → 일반 추천 템플릿 없이 "조건에 맞는 메뉴가 없어요". **기피로는 아무것도 빼지 않는다** — 빠지는 것은 알레르기·연령 금지 재료뿐 |
@@ -323,7 +349,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 **5. 호출부가 지킬 것**
 
 - 사전(yaml)을 못 읽으면 예외가 난다. 잡아서 통과시키지 않는다 — 그 task 는 실패다.
-- `health_safety` 조회에 실패했으면(`FoodRunState.safety is None`) 필터를 부르지 않는다. 식단 추천은 닫히고(`blocked.safety`), 급식 조회는 "알레르기 확인 못 함" 을 낸다.
+- `health_safety` 조회에 실패했으면(`FoodRunState.safety is None`) 필터를 부르지 않는다. 식단 추천 · 영양소 분석은 닫히고(`blocked.safety`), 급식 조회는 "알레르기 확인 못 함" 을 낸다.
 - 후보 풀에는 `passed` 만 넣는다. `unchecked` 는 추천하지 않는다. `needs_check` 는 `blocked` 라서 지금은 넣지 않는다.
 - 식단 추천을 구현할 때 `needs_check` 행을 `checks` 와 함께 "확인 필요" 로 내보낸다(#264 PM 결정). `checks` 를 추천에 실을 칸(추천의 `ingredient_checks` · 서버의 사전검사 · 화면의 질문)이 없으면 내보내지 않는다.
 - `needs_check` 를 내보내기 전에 정할 것 — ① 묶음 · 질환으로 등록한 아이(글루텐 · 셀리악병 · 갑각류)의 `checks` 는 그 코드 하나(밀 · 게)만 묻는다. 보리 · 호밀 같은 나머지 구성은 못 보니, "제품에 밀이 없다" 는 답으로 풀어도 되는지 PM 과 정한다. ② 사전 빈칸 — `needs_check` 행의 나머지 재료(굴소스 · 데리야끼 · 우스터 소스의 밀, 떡볶이 밀떡 …)는 사전이 코드를 붙이지 않는다. 풀기 전에 점검한다. ③ 확인 필요 음식 이름으로 등록한 아이("어묵 알레르기")는 밀(6)도 막혀서 다른 장류 메뉴가 `needs_check` 로 표시된다 — 이 표시를 푸는 것이 맞는지 같이 정한다.
