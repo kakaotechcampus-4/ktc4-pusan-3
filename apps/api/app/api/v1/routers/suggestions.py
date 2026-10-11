@@ -86,8 +86,7 @@ def _suggestion_out(s, evidence_rows=None) -> SuggestionOut:
     "/children/{cid}/suggestions/approve",
     summary="추천 채택",
     description=(
-        "선택한 추천을 채택(draft → approved)한다. "
-        "이미 채택된 것은 멱등 처리. 만료된 추천은 409."
+        "선택한 추천을 채택(draft → approved)한다. 이미 채택된 것은 멱등 처리. 만료된 추천은 409."
     ),
     status_code=200,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409)},
@@ -395,8 +394,7 @@ async def answer_question(
     "/children/{cid}/suggestions",
     summary="지난 추천 목록",
     description=(
-        "개인화 추천만 커서 페이징으로 반환. "
-        "필터 없으면 draft 제외 (07 화면용). evidence 포함."
+        "개인화 추천만 커서 페이징으로 반환. 필터 없으면 draft 제외 (07 화면용). evidence 포함."
     ),
     status_code=200,
 )

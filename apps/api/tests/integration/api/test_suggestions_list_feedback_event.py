@@ -71,17 +71,19 @@ async def test_create_suggestions_returns_501(
 # 🚨 stub 해제 가드 — POST suggestions가 200을 반환하기 시작하면
 #    evidence.label이 사람이 읽을 수 있는 값이고, is_stale이 null이 아니어야 한다.
 #    stub인 동안은 skip되고, stub을 풀면 이 테스트가 활성화된다. (#323)
-_CHILD_RECORD_KINDS = frozenset((
-    "observation_food",
-    "observation_health",
-    "observation_education",
-    "observation_activity",
-    "observation_routine",
-    "profile_affinity",
-    "child_growth_log",
-    "notice",
-    "daycare_meal",
-))
+_CHILD_RECORD_KINDS = frozenset(
+    (
+        "observation_food",
+        "observation_health",
+        "observation_education",
+        "observation_activity",
+        "observation_routine",
+        "profile_affinity",
+        "child_growth_log",
+        "notice",
+        "daycare_meal",
+    )
+)
 
 
 async def test_evidence_label_and_is_stale_are_filled_when_stub_is_lifted(
@@ -106,8 +108,7 @@ async def test_evidence_label_and_is_stale_are_filled_when_stub_is_lifted(
                 "사람이 읽을 수 있는 라벨을 채워야 한다 (#323)"
             )
             assert ev["is_stale"] is not None, (
-                "evidence.is_stale이 null이다. "
-                "6개월 규칙(§2)이 화면에서 빠진다 (#323)"
+                "evidence.is_stale이 null이다. 6개월 규칙(§2)이 화면에서 빠진다 (#323)"
             )
 
 

@@ -245,9 +245,7 @@ async def test_feedback_rejected_on_draft(
     assert resp.status_code == 404
 
 
-async def test_invalid_cursor_returns_400(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_invalid_cursor_returns_400(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """잘못된 cursor → 500이 아니라 400."""
     headers, _ = bearer
     resp = await db_client.get(
@@ -258,9 +256,7 @@ async def test_invalid_cursor_returns_400(
     assert resp.json()["error"]["code"] == "validation_failed"
 
 
-async def test_invalid_status_returns_400(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
+async def test_invalid_status_returns_400(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
     """잘못된 status 값 → 500이 아니라 400."""
     headers, _ = bearer
     resp = await db_client.get(

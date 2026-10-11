@@ -206,9 +206,7 @@ class SubmitEventBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(max_length=200)
-    starts_at: Moment = Field(
-        description="ISO datetime with timezone — 보호자가 채운다"
-    )
+    starts_at: Moment = Field(description="ISO datetime with timezone — 보호자가 채운다")
     ends_at: Moment | None = None
     all_day: bool = False
     event_type: EventTypeValue
@@ -225,9 +223,7 @@ class SubmitEventBody(BaseModel):
 class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=100)
-    suggestion_ids: list[uuid.UUID] | None = Field(
-        default=None, max_length=20
-    )
+    suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
 
 
 class EventItemOut(BaseModel):
