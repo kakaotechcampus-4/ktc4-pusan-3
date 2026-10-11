@@ -479,7 +479,8 @@ terms:
     guards: []
 
   # ── height ──────────────────────────────────────────────────────────────
-  # 높이를 오르거나 매달리는 놀이. 미끄럼틀 · 그네 · 계단 · 경사로는 넣지 않는다 — 걸음마기에도 권하는
+  # 높이를 오르거나 매달리는 놀이. 별칭은 말끝을 빼고 앞부분만 둔다 — "나무에 올라가기" · "링에 매달려 보기" 도 걸리게.
+  # 미끄럼틀 · 그네 · 계단 · 경사로는 넣지 않는다 — 걸음마기에도 권하는
   # 기구라, 넣으면 0–17개월 경고→차단 승격이 아기 그네를 막는다 (CPSC Table 1).
   # "링" · "봉" 은 흔한 말이라 단독으로 넣지 않는다 — "링 던지기" · "막대 봉" 이 걸린다
   - axis: height
@@ -488,11 +489,11 @@ terms:
     guards: []
   - axis: height
     label: 인공 암벽
-    aliases: [인공 암벽, 암벽 등반, 암벽 타기, 클라이밍, 볼더링, 실내 클라이밍]
+    aliases: [인공 암벽, 암벽, 클라이밍, 볼더링]
     guards: []
   - axis: height
     label: 나무 타기
-    aliases: [나무 타기, 나무 오르기, 나무에 오르기]
+    aliases: [나무 타기, 나무 오르기, 나무에 오르기, 나무에 올라, 나무 위에 올라]
     guards: []
   - axis: height
     label: 구름사다리
@@ -500,7 +501,7 @@ terms:
     guards: []
   - axis: height
     label: 공중 링
-    aliases: [공중 링, 링 매달리기, 링 건너기, 링 사다리]
+    aliases: [공중 링, 링 매달리기, 링에 매달, 링 건너기, 링 사다리]
     guards: []
   - axis: height
     label: 봉 내려오기
@@ -512,7 +513,17 @@ terms:
     guards: []
   - axis: height
     label: 출렁다리
-    aliases: [출렁다리, 그물 다리, 체인 다리, 흔들 다리, 그물 오르기]
+    aliases: [출렁다리, 그물 다리, 체인 다리, 흔들 다리, 그물 오르기, 그물망 오르]
+    guards: []
+  # 철봉(horizontal bars)은 CPSC Table 1 어느 칸에도 없다. 밧줄 오르기는 학령기 칸
+  # ("free standing climbing events with flexible parts")에 있다. 사다리는 걸음마기 칸에 있어 넣지 않는다
+  - axis: height
+    label: 철봉
+    aliases: [철봉]
+    guards: []
+  - axis: height
+    label: 밧줄 오르기
+    aliases: [밧줄 오르기, 밧줄 오르, 밧줄 타고 오르, 로프 오르, 로프 타고 오르]
     guards: []
 
   # ── infant_walker ───────────────────────────────────────────────────────
