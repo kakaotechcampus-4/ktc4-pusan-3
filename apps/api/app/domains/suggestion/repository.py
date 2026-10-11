@@ -97,6 +97,9 @@ async def list_suggestions(
         stmt = stmt.where(Suggestion.kind == SuggestionKind(kind))
     if status is not None:
         stmt = stmt.where(Suggestion.status == SuggestionStatus(status))
+    else:
+        # 기본 목록에서 draft 제외 — 07 화면은 approved/rejected 만 쓴다
+        stmt = stmt.where(Suggestion.status != SuggestionStatus.DRAFT)
     # draft 조회 시 만료된 것은 제외 (lazy expiration)
     if status == SuggestionStatus.DRAFT:
         stmt = stmt.where(Suggestion.expires_at > func.now())
@@ -126,10 +129,14 @@ async def set_feedback(
     suggestion_id: uuid.UUID,
     feedback: SuggestionFeedback,
 ) -> Suggestion | None:
-    """피드백은 제안만 바꾼다. 관찰/성향 상태는 여기서 건드리지 않는다."""
+    """피드백은 채택/거절된 제안만 바꾼다. draft/expired 에는 적용하지 않는다."""
     return await session.scalar(
         update(Suggestion)
-        .where(Suggestion.child_id == child_id, Suggestion.id == suggestion_id)
+        .where(
+            Suggestion.child_id == child_id,
+            Suggestion.id == suggestion_id,
+            Suggestion.status.in_([SuggestionStatus.APPROVED, SuggestionStatus.REJECTED]),
+        )
         .values(feedback=SuggestionFeedback(feedback))
         .returning(Suggestion)
     )
@@ -175,29 +182,27 @@ async def link_suggestions_to_event(
     await session.flush()
 
 
-async def is_any_linked(
-    session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
-) -> bool:
+async def is_any_linked(session: AsyncSession, *, suggestion_ids: list[uuid.UUID]) -> bool:
     """suggestion_ids 중 이미 일정에 연결된 것이 있는지."""
-    stmt = select(
-        exists().where(SuggestionEvent.suggestion_id.in_(suggestion_ids))
-    )
+    stmt = select(exists().where(SuggestionEvent.suggestion_id.in_(suggestion_ids)))
     return bool(await session.scalar(stmt))
 
 
 # 아이 기록 9종. 문서 행(food_doc 등)은 응답 evidence에서 제외한다.
 # agents/common/refs.py ChildRecordKind와 같은 목록.
-_CHILD_RECORD_KINDS = frozenset((
-    "observation_food",
-    "observation_health",
-    "observation_education",
-    "observation_activity",
-    "observation_routine",
-    "profile_affinity",
-    "child_growth_log",
-    "notice",
-    "daycare_meal",
-))
+_CHILD_RECORD_KINDS = frozenset(
+    (
+        "observation_food",
+        "observation_health",
+        "observation_education",
+        "observation_activity",
+        "observation_routine",
+        "profile_affinity",
+        "child_growth_log",
+        "notice",
+        "daycare_meal",
+    )
+)
 
 
 async def list_evidence(

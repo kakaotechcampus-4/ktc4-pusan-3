@@ -21,6 +21,7 @@ from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
     AnswerRequest,
+    AnswerResponse,
     ApproveSuggestionsRequest,
     ApproveSuggestionsResponse,
     CalendarEventOut,
@@ -37,6 +38,7 @@ from app.api.v1.schemas.suggestions import (
     SuggestionListResponse,
     SuggestionOut,
     SuggestionsRequest,
+    SuggestionsResponse,
     UpdateEventRequest,
 )
 from app.domains.schedule import repository as schedule_repo
@@ -326,7 +328,8 @@ async def submit_event(
 @router.post(
     "/children/{cid}/suggestions",
     status_code=200,
-    responses={403: {"model": ErrorEnvelope}},
+    response_model=SuggestionsResponse,
+    responses={403: {"model": ErrorEnvelope}, 501: {"model": ErrorEnvelope}},
 )
 async def create_suggestions(
     child: AccessibleChild,
@@ -343,6 +346,8 @@ async def create_suggestions(
 @router.post(
     "/children/{cid}/answers",
     status_code=200,
+    response_model=AnswerResponse,
+    responses={501: {"model": ErrorEnvelope}},
 )
 async def answer_question(
     child: AccessibleChild,
@@ -374,6 +379,11 @@ async def list_suggestions(
         status_enum = SuggestionStatus(status) if status else None
     except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 status 값이에요")
+    if cursor is not None:
+        try:
+            suggestion_repo.decode_cursor(cursor)
+        except Exception:
+            raise ApiError(400, "validation_failed", "유효하지 않은 cursor 값이에요")
     rows, next_cursor = await suggestion_repo.list_suggestions(
         session,
         child_id=child.child_id,
@@ -468,12 +478,15 @@ async def update_event(
     if event is None:
         raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
 
-    items = await schedule_repo.replace_event_items(
-        session,
-        child_id=child.child_id,
-        event_id=eid,
-        items=[i.model_dump() for i in body.items],
-    )
+    try:
+        items = await schedule_repo.replace_event_items(
+            session,
+            child_id=child.child_id,
+            event_id=eid,
+            items=[i.model_dump() for i in body.items],
+        )
+    except (ValueError, AttributeError):
+        raise ApiError(400, "validation_failed", "유효하지 않은 item_id예요")
 
     await session.commit()
 

@@ -11,8 +11,10 @@ from datetime import date, timedelta
 STALE_DAYS = 180
 
 
-def is_stale(observed_date: date, today: date | None = None) -> bool:
-    """observed_date가 today 기준 6개월(180일) 이상 지났는지."""
-    if today is None:
-        today = date.today()
+def is_stale(observed_date: date, today: date) -> bool:
+    """observed_date가 today 기준 6개월(180일) 이상 지났는지.
+
+    today 는 호출하는 쪽이 넘긴다. 이 함수 안에서 date.today() 를 부르지 않는다 —
+    서버(UTC)에서 한국 시각 0~9시에 하루 어긋나기 때문이다. rules/age.py 와 같은 원칙.
+    """
     return (today - observed_date) >= timedelta(days=STALE_DAYS)

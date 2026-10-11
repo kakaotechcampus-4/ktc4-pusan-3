@@ -167,9 +167,7 @@ async def replace_event_items(
             )
         )
     else:
-        await session.execute(
-            delete(EventItem).where(EventItem.event_id.in_(owned))
-        )
+        await session.execute(delete(EventItem).where(EventItem.event_id.in_(owned)))
 
     # item_id가 null인 것만 새로 INSERT
     for i in items:

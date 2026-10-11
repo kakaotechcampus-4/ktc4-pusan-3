@@ -36,7 +36,10 @@ class SuggestionOut(BaseModel):
     agent: str
     kind: str
     content: str
-    reason: str | None
+    reason: str | None = Field(
+        default=None,
+        description="현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정",
+    )
     status: str
     expires_at: str
     feedback: str | None
