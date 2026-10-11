@@ -70,10 +70,11 @@ class UpdateChildRequest(BaseModel):
     """PATCH /children/{cid} — 고친 칸만 보낸다. 안 보낸 칸은 그대로 둔다. 하나도 없으면 400.
 
     null 은 받지 않는다(400). 별명 · 생일 · 성별은 늘 값이 있어서 "비우기" 가 없다.
-    🚨 타입에 `| None` 을 붙이지 않는다. 기본값 None 은 "안 보냄" 표시일 뿐이고(검사하지 않는다),
-       타입에 None 을 넣으면 Swagger 가 null 을 받는다고 안내한다.
     """
 
+    # 🚨 타입에 `| None` 을 붙이지 않는다. 기본값 None 은 "안 보냄" 표시일 뿐이고(검사하지 않는다),
+    #    타입에 None 을 넣으면 Swagger 가 null 을 받는다고 안내한다.
+    #    (docstring 이 아니라 주석인 이유 — docstring 은 Swagger 설명으로 그대로 나간다)
     nickname: Nickname = Field(
         default=None, description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자"
     )
