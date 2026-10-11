@@ -46,7 +46,7 @@ from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.suggestion import repository as suggestion_repo
 from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
 
-router = APIRouter()
+router = APIRouter(tags=["suggestions"])
 
 
 def _suggestion_out(s, evidence_rows=None) -> SuggestionOut:
@@ -84,6 +84,8 @@ def _suggestion_out(s, evidence_rows=None) -> SuggestionOut:
 
 @router.post(
     "/children/{cid}/suggestions/approve",
+    summary="추천 채택",
+    description="선택한 추천을 채택(draft → approved)한다. 이미 채택된 것은 멱등 처리. 만료된 추천은 409.",
     status_code=200,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409)},
 )
@@ -145,6 +147,8 @@ def _next_draft_id() -> str:
 
 @router.post(
     "/children/{cid}/suggestions/event-drafts",
+    summary="일정 초안 생성",
+    description="채택한 추천으로 일정 초안을 만든다. food는 하나로 묶이고, 나머지는 각각 별도 초안. DB에 저장하지 않는다 — 응답으로만 반환.",
     status_code=201,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 422)},
 )
@@ -214,6 +218,8 @@ async def create_event_drafts(
 
 @router.post(
     "/children/{cid}/events",
+    summary="일정 등록 (승인 게이트 ㉠)",
+    description="초안에 시간을 채워 캘린더에 확정한다. Idempotency-Key 필수. 추천에서 왔으면 suggestion ↔ event 연결.",
     status_code=201,
     response_model=SubmitEventResponse,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
@@ -327,6 +333,8 @@ async def submit_event(
 
 @router.post(
     "/children/{cid}/suggestions",
+    summary="추천 생성 (Agent 연결 전 stub)",
+    description="Agent를 실행해 추천 0~3개를 만든다. 현재 501 stub — #249에서 해제.",
     status_code=200,
     response_model=SuggestionsResponse,
     responses={403: {"model": ErrorEnvelope}, 501: {"model": ErrorEnvelope}},
@@ -345,6 +353,8 @@ async def create_suggestions(
 
 @router.post(
     "/children/{cid}/answers",
+    summary="되묻기 답변 (Agent 연결 전 stub)",
+    description="근거 부족 시 보호자 답변을 관찰로 저장한다. 현재 501 stub — #249에서 해제.",
     status_code=200,
     response_model=AnswerResponse,
     responses={501: {"model": ErrorEnvelope}},
@@ -366,6 +376,8 @@ async def answer_question(
 
 @router.get(
     "/children/{cid}/suggestions",
+    summary="지난 추천 목록",
+    description="개인화 추천만 커서 페이징으로 반환. 필터 없으면 draft 제외 (07 화면용). evidence 포함.",
     status_code=200,
 )
 async def list_suggestions(
@@ -406,6 +418,8 @@ async def list_suggestions(
 
 @router.patch(
     "/children/{cid}/suggestions/{sid}/feedback",
+    summary="추천 평가",
+    description="채택/거절된 추천에 피드백을 남긴다 (child_liked·child_disliked·not_acted). 기억은 바꾸지 않는다.",
     status_code=200,
     responses={404: {"model": ErrorEnvelope}},
 )
@@ -436,6 +450,8 @@ async def set_suggestion_feedback(
 
 @router.patch(
     "/children/{cid}/events/{eid}",
+    summary="일정 수정 (승인 게이트 ㉠)",
+    description="일정 본문과 준비물을 수정한다. items는 전체 교체 (기존 is_prepared 보존). Idempotency-Key 필수.",
     status_code=200,
     response_model=SubmitEventResponse,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
