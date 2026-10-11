@@ -129,11 +129,12 @@ class OnboardingRequest(BaseModel):
     null 은 받지 않는다(400) — 적지 않은 칸은 보내지 않는다.
     키 · 몸무게는 소수 한 자리로 반올림한다.
 
-    🚨 알레르기(`safety` · `safety_status`)와 한 줄(`one_line`)은 받지 않는다(400). 알레르기의 쓰기
-       경로는 승인 게이트 ㉡(POST /children/{cid}/health-safety) 하나이고, 한 줄은 홈 입력이 받는다.
-       계약서 §05 의 `interests` · `dev_answers` 도 화면에서 빠졌다.
+    알레르기(`safety` · `safety_status`)와 한 줄(`one_line`)은 받지 않는다(400). 알레르기는
+    POST /children/{cid}/health-safety 로, 한 줄은 홈 입력으로 보낸다.
     """
 
+    # 🚨 알레르기의 쓰기 경로는 승인 게이트 ㉡(health-safety) 하나다 (루트 §2) — 여기서 받지 않는다.
+    #    계약서 초안 §05 의 `interests` · `dev_answers` 도 화면에서 빠져서 받지 않는다.
     model_config = ConfigDict(extra="forbid")
 
     relation: ParentChildRelation = Field(
@@ -151,8 +152,9 @@ class OnboardingRequest(BaseModel):
 
 
 class GrowthLogOut(BaseModel):
-    """키 · 몸무게를 잰 날 한 줄. 🚨 증감 · 백분위 · 또래 비교 칸은 만들지 않는다 (루트 §2)."""
+    """키 · 몸무게를 잰 날 한 줄."""
 
+    # 🚨 증감 · 백분위 · 또래 비교 칸은 만들지 않는다 — 발달 평가로 읽힌다 (루트 §2)
     id: UUID
     measured_on: date
     height_cm: float | None
@@ -175,7 +177,8 @@ class GrowthLogsResponse(BaseModel):
 class CreateGrowthLogRequest(BaseModel):
     """POST /children/{cid}/growth — 잰 날 필수, 키 · 몸무게는 하나 이상.
 
-    잰 날은 아이 생일부터 오늘(한국 날짜)까지. 승인 게이트가 아니라 Idempotency-Key 를 받지 않는다.
+    잰 날은 아이 생일부터 오늘(한국 날짜)까지. 키 · 몸무게는 소수 한 자리로 반올림해 저장한다.
+    승인 게이트가 아니라 Idempotency-Key 를 받지 않는다.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -188,10 +191,11 @@ class CreateGrowthLogRequest(BaseModel):
 
 
 class UpdateGrowthLogRequest(BaseModel):
-    """PATCH /children/{cid}/growth/{id} — 보낸 칸만 바꾼다. 하나도 없으면 400.
+    """PATCH /children/{cid}/growth/{id} — 보낸 칸만 바꾼다.
 
+    하나도 없으면(`{}`) 바꾸지 않고 지금 줄을 200 으로 돌려준다.
     키 · 몸무게의 null 은 "그날 그건 안 잰 것으로 되돌리기" 다(안 보내면 그대로). 다만 고친 결과가
-    둘 다 비면 400. 잰 날은 비울 수 없다.
+    둘 다 비면 400. 잰 날은 비울 수 없다. 키 · 몸무게는 소수 한 자리로 반올림해 저장한다.
     """
 
     model_config = ConfigDict(extra="forbid")
