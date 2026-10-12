@@ -955,47 +955,71 @@ export interface PhotoCommitResponse {
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
-/** `GET /children/{cid}/calendar?month=YYYY-MM` 의 한 칸. */
+/**
+ * `GET /children/{cid}/calendar?month=YYYY-MM` 의 한 칸 (#318).
+ *
+ * 🚨 **표시할 것이 하나라도 있는 날만 온다.** 빈 날은 목록에 없다 — 화면은 없는 날을 표식 없이 그린다.
+ */
 export interface CalendarDay {
   /** YYYY-MM-DD. */
   date: string;
-  has_diary: boolean;
-  /** 🚨 `confirmed` 만 센다. draft 는 아직 캘린더에 쓴 것이 아니다 (승인 게이트 ㉠). */
+  /** 그날과 겹치는 일정이 있다. `event` 에는 보호자가 제출한 행만 있다 (#118 · 승인 게이트 ㉠). */
   has_event: boolean;
-  has_image: boolean;
+  /** 🚨 **로그인한 보호자 본인의 일기만** 센다. 다른 보호자의 일기는 여기에도 안 잡힌다 (#115). */
+  has_my_diary: boolean;
+  /** 연결된 보호자가 함께 보는 사진이 그날 있다. */
+  has_shared_photo: boolean;
+  /** 그날과 기간이 겹치는 기록 수. 하루 조회의 `observations` 와 같은 기준이다 (건강 · 지운 기록 제외). */
   observation_count: number;
-  /**
-   * ⚠️ **계약서 v1 에 아직 없다.** "이날 프로필이 달라졌다"(승격·강등)를 날짜 칸에 그리려면
-   *    이 값이 필요한데 월 조회 응답에는 없다. 프론트가 셀 수 없는 값이다 — 승격은 Curator 의
-   *    반복 집계 결과라 관찰 건수로 역산할 수 없다 (CLAUDE.md §2).
-   *    👉 `apps/api` Owner 협의 대상. 안 오면 고리 표식과 범례의 그 줄이 나오지 않는다.
-   */
-  profile_changed_count?: number;
 }
 
 export interface CalendarMonthResponse {
   days: CalendarDay[];
 }
 
+/** 로그인한 보호자의 그날 일기 (`diary_entry`). 쓴 사람 본인만 본다. */
+export interface MyDiary {
+  content: string;
+  updated_at: string;
+}
+
+/** 그날 사진 한 장 (`shared_photo`). 연결된 보호자가 함께 본다. */
+export interface SharedPhoto {
+  id: string;
+  image_url: string;
+  created_at: string;
+}
+
 /**
- * `GET /children/{cid}/calendar/{date}`.
+ * `GET /children/{cid}/calendar/{date}` (#318).
  *
  * `events` 는 그 날짜에 걸린 `episodic` 과 `core` 를 함께 담는다 — 화면은 둘을 구분하지 않는다.
+ * 🚨 그날 00:00 에 끝난 일정은 그날에 오지 않는다 (서버가 `[starts_at, ends_at)` 로 본다).
+ *
+ * 🚨 **일기와 사진은 다른 저장소다** (#115). 일기는 쓴 보호자 본인 것만 오고, 사진은 연결된
+ *    보호자가 함께 본다 — 한 칸에 섞으면 남의 일기가 보이거나 내 사진이 안 보인다.
  *
  * 🚨 **일기는 관찰로 자동 추출되지 않는다** (계약서 §09). 기억으로 남기려면 보호자가
  *    `POST /children/{cid}/inputs` 에 명시적으로 태워야 한다. 화면이 이 사실을 말한다 —
  *    사용자가 일기라고 쓴 것을 아이 성향으로 조용히 승격시키면 신뢰가 깨진다.
  */
 export interface CalendarDayResponse {
-  diary: { text: string; image_urls: string[] } | null;
+  my_diary: MyDiary | null;
+  shared_photos: SharedPhoto[];
   events: CalendarEvent[];
+  /** 기록 탭 목록과 같은 모양 · 같은 상태 기준이다. */
   observations: Observation[];
 }
 
-/** `PUT /children/{cid}/calendar/{date}`. 이미지 업로드는 08 사진 화면 것이다. */
+/**
+ * `PUT /children/{cid}/calendar/{date}` — 일기 쓰기.
+ *
+ * ⚠️ **옮겨 갈 경로다.** 서버는 `PUT /children/{cid}/diary/{date}` · `{ content }` 로 받는다
+ *    (#318 2/3). 응답 모양이 그 PR 에서 정해져서 그때 옮긴다. 사진은 일기 밖으로 나가서
+ *    여기 싣지 않는다 — 일기를 덮어도 사진은 그대로다.
+ */
 export interface CalendarDayUpdate {
   text: string;
-  image_urls: string[];
   event_ids: string[];
 }
 

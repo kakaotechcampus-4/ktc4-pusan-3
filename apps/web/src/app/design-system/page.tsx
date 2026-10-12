@@ -728,11 +728,11 @@ function ComponentSection() {
       </p>
 
       <SubTitle>캘린더 표식 (09)</SubTitle>
-      <DayMarkLegend hasProfileMarks />
+      <DayMarkLegend />
       <p className="text-caption text-ink-subtle">
-        🚨 색이 아니라 모양으로 가릅니다. 네 표식은 전부 currentColor 라 고른 날(brand 채움)
+        🚨 색이 아니라 모양으로 가릅니다. 세 표식은 전부 currentColor 라 고른 날(brand 채움)
         위에서도 같은 모양이 읽힙니다. 뜻을 잇는 것은 이 범례고, 날짜 칸의 aria-label 이 같은 말을
-        다시 합니다.
+        다시 합니다. 기억 변화(빈 고리)는 근거가 될 이력 표가 없어 보류했습니다 (#318).
       </p>
 
       <SubTitle>배너</SubTitle>
