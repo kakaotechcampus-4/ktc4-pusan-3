@@ -3,21 +3,25 @@
 # P0 행(learning_activity · routine_step)을 채우는 판이다 (#293). 전부 status: draft — 검수 전에는
 # 서비스가 읽지 않는다. rows 가 비어 있어도 읽힌다 (InMemoryGrowthDocs.from_seed() 는 빈 문서를 낸다, doc.no_row).
 #
-# 출처의 법적 근거는 고시 자체다 — 고시는 저작권법 제7조의 보호받지 못하는 저작물이라 public_law 로 적는다.
+# 출처의 법적 근거는 고시 자체다 — 고시는 저작권법 제7조 2호의 보호받지 못하는 저작물이라 public_law 로 적는다.
 # 아래 PDF 는 고시문을 읽은 사본이다. 교육부가 배포한 PDF 표지에 공공누리 제4유형 마크가 있어서, 행의
 # 출처는 PDF 가 아니라 고시 번호로 적었고 검수 때 대조할 정본은 국가법령정보센터 행정규칙 본문이다
 # (#337 과 같은 기준 — 상업적 이용과 변경이 둘 다 허락된 것만 행 출처로 쓴다).
 #
 # 원문 사본 — 저장소 밖(팀 드라이브)에 둔다. 파일이 같은지는 sha256 으로 본다.
-#   2024 개정 표준보육과정 (교육부 고시 제2024-23호, 2024-12-09 고시 · 2025-03-01 시행)
+#   표준보육과정 고시 (교육부고시 제2024-23호, 2024-12-09 고시 · 2025-03-01 시행) — 모든 행의 source_title
 #     표준보육과정(0~2세)_고시문_최종(웹용)_0416.pdf
 #     sha256 1be3352aae607d03d84d8ef652d74170d8f419ecb0d83f983c58ea84bb96364b
-#     0~1세 영역별 내용 인쇄 9–14쪽 · 2세 15–20쪽 (PDF 10–14쪽 · 16–20쪽). 총론 · 쪽 머리는 이미지라 텍스트가 안 나온다
+#     0~1세 영역별 내용 인쇄 9–14쪽 · 2세 15–20쪽 · 3~5세 21–26쪽 (PDF 10–14 · 16–20 · 22–26쪽).
+#     총론 · 쪽 머리는 이미지라 텍스트가 안 나온다
 #   2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호) — 해설서 부록 1 고시문만
 #     (2019_개정_누리과정)_해설서.pdf
 #     sha256 2e4e4f33f8a6486f9fc3878c735298c08da51bed5e07228f86cace6a18b1656a
-#     부록 1 고시문 PDF 113–124쪽(인쇄 116–127쪽). 해설서 본문 · 신구 대조표는 쓰지 않았다
-#   두 문서의 3~5세 영역별 내용은 같은 59개 내용이다. 누리과정 행은 누리과정 고시문으로 적는다.
+#     부록 1 고시문 PDF 113–124쪽(인쇄 116–127쪽). 36–71개월 행을 처음 쓸 때 읽은 사본이다.
+#     해설서 본문 · 신구 대조표는 쓰지 않았다
+#   두 고시의 3~5세 영역별 내용은 같은 59개 내용이라 36–71개월 행도 위 고시의 3~5세(누리과정) 부분으로 적는다.
+#   같은 고시는 같은 문자열이어야 D10(activity-agent-v1 §3)의 `DELETE WHERE source_title = ?` 한 줄로 뺄 수
+#   있어서, activity_doc 과 같은 국가법령정보센터 이름을 쓴다 (#339 리뷰).
 #
 # 쓰지 않은 자료 — 공공누리 제4유형(출처표시 · 상업적 이용금지 · 변경금지)이거나 무단 복제 금지인 자료는
 # 행의 근거로 쓰지 않는다 (상업 서비스 기준 #337, RAG_plan §4 · activity-agent-v1 §3).
@@ -37,7 +41,8 @@
 # 행 칸 — 공통 칸은 RAG_plan §1, Growth 칸은 own_table §1.
 #   row_type          learning_activity · routine_step · habit_strategy · manner_practice ·
 #                     rhythm_info · book_guide · measure_guide
-#   area              basic_life · physical_health · communication · social · art · nature
+#   area              physical_health · communication · social · art · nature (basic_life 는 제4차 표준보육과정
+#                     0~2세 영역이라 값으로만 남아 있다 — 2024 개정 고시는 0~5세 모두 5영역)
 #   routine_category  self_care · mealtime · household_task · social_manner · habit · transition
 #   trigger_tags      habit_strategy 가 읽는 상황 (bored · anxious · tired …). 영문 소문자
 #   setting           indoor · outdoor · either
@@ -51,8 +56,8 @@
 # - 한 사슬은 처음이 하나, 갈라지거나 끊기거나 돌지 않는다. 도움이 많이 필요한 수준에서 혼자 하는
 #   수준 순서로 나아간다. 검수도 사슬 단위로 한다 — 가운데 행만 draft 면 run 이 읽는 사슬이 끊긴다
 #
-# 월령 — min_month 이상 max_month 미만. 12–35개월 학습 활동은 표준보육과정, 36개월 이상은 누리과정에서
-#   쓴 행이라 두 구간에 걸치지 않는다. habit_strategy 는 min_month 가 36 이상이다(DB CHECK).
+# 월령 — min_month 이상 max_month 미만. 12–35개월 학습 활동은 고시의 0~1세 · 2세, 36개월 이상은
+#   3~5세(누리과정) 내용에서 쓴 행이라 두 구간에 걸치지 않는다. habit_strategy 는 min_month 가 36 이상이다(DB CHECK).
 #
 # 검수 — 작성자와 다른 사람이 원문을 펴 놓고 사실 · 월령 · 출처 위치를 확인한 뒤
 # status: approved 와 reviewed_by · reviewed_at 을 채운다. 서비스는 approved 만 쓴다.
@@ -63,7 +68,7 @@
 # - row_type 별 칸 (학습 활동은 area, 예절은 social_manner 24개월+, 습관은 habit + trigger_tags …)
 # - routine_step 사슬이 pick_next_step 으로 읽힘
 
-source: 교육부 고시 제2024-23호 「2024 개정 표준보육과정」 · 교육부·보건복지부 고시 「2019 개정 누리과정」 — 행마다 source_* 칸
+source: 교육부고시 제2024-23호 「표준보육과정 고시」 — 행마다 source_* 칸
 version: "2026.1-draft"
 fetched_at: 2026-10-09
 
@@ -81,7 +86,7 @@ rows:
     materials: ["손수건", "수건", "담요"]
     area: physical_health
     tags: [physical_health, sensory]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 다양한 감각을 경험한다"
@@ -102,7 +107,7 @@ rows:
     materials: ["종이컵"]
     area: physical_health
     tags: [physical_health, fine_motor]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 대소근육을 조절한다"
@@ -123,7 +128,7 @@ rows:
     materials: []
     area: physical_health
     tags: [physical_health, outdoor, gross_motor]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동을 즐긴다"
@@ -144,7 +149,7 @@ rows:
     materials: []
     area: communication
     tags: [communication, gesture, vocabulary]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 의사소통 · 듣기와 말하기 · 표정, 몸짓, 말소리로 의사를 표현한다"
@@ -165,7 +170,7 @@ rows:
     materials: ["보드북"]
     area: communication
     tags: [communication, book]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 의사소통 · 책과 이야기 즐기기 · 책에 관심을 가진다"
@@ -186,7 +191,7 @@ rows:
     materials: ["전지", "굵은 크레용"]
     area: communication
     tags: [communication, scribble]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 의사소통 · 읽기와 쓰기에 관심 가지기 · 끼적이기에 관심을 가진다"
@@ -206,7 +211,7 @@ rows:
     materials: []
     area: social
     tags: [social, attachment]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 사회관계 · 더불어 생활하기 · 안정적인 애착을 형성한다"
@@ -227,7 +232,7 @@ rows:
     materials: ["매트", "공"]
     area: social
     tags: [social, peer_interest]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 사회관계 · 더불어 생활하기 · 또래에게 관심을 가진다"
@@ -248,7 +253,7 @@ rows:
     materials: ["빈 플라스틱 통"]
     area: art
     tags: [art, rhythm, music]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 소리와 리듬, 노래로 표현한다"
@@ -269,7 +274,7 @@ rows:
     materials: ["신문지", "상자"]
     area: art
     tags: [art, art_material]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 다양한 미술 재료를 경험한다"
@@ -290,7 +295,7 @@ rows:
     materials: ["나뭇잎"]
     area: nature
     tags: [nature, nature, sensory]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 자연탐구 · 탐구과정 즐기기 · 사물과 자연 탐색하기를 즐긴다"
@@ -310,7 +315,7 @@ rows:
     materials: ["상자", "헝겊 공"]
     area: nature
     tags: [nature, space, shape]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 자연탐구 · 생활 속에서 탐구하기 · 공간과 모양을 탐색한다"
@@ -331,7 +336,7 @@ rows:
     materials: ["방석", "쿠션"]
     area: physical_health
     tags: [physical_health, gross_motor]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 시도한다"
@@ -352,7 +357,7 @@ rows:
     materials: []
     area: communication
     tags: [communication, listening, attachment]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 의사소통 · 듣기와 말하기 · 표정, 몸짓, 말과 주변의 소리에 주의를 기울인다"
@@ -373,7 +378,7 @@ rows:
     materials: []
     area: social
     tags: [social, emotion, expression]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 사회관계 · 나를 알고 존중하기 · 나의 욕구와 감정을 표현한다"
@@ -394,7 +399,7 @@ rows:
     materials: ["빗", "장난감 전화기"]
     area: art
     tags: [art, imitation, pretend_play]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 모방하기를 즐긴다"
@@ -415,7 +420,7 @@ rows:
     materials: []
     area: nature
     tags: [nature, plant, outdoor]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
@@ -436,7 +441,7 @@ rows:
     materials: ["큰 공"]
     area: physical_health
     tags: [physical_health, gross_motor, ball]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 즐긴다"
@@ -457,7 +462,7 @@ rows:
     materials: ["헝겊 공", "상자"]
     area: physical_health
     tags: [physical_health, throwing, coordination]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 대소근육을 조절한다"
@@ -478,7 +483,7 @@ rows:
     materials: []
     area: physical_health
     tags: [physical_health, body_awareness, music]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
@@ -499,7 +504,7 @@ rows:
     materials: ["모자"]
     area: communication
     tags: [communication, choice, expression]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 의사소통 · 듣기와 말하기 · 자신의 요구와 느낌을 말한다"
@@ -520,7 +525,7 @@ rows:
     materials: ["동물 인형"]
     area: communication
     tags: [communication, wordplay]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기에 재미를 느낀다"
@@ -541,7 +546,7 @@ rows:
     materials: ["그림책"]
     area: communication
     tags: [communication, book, imagination]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 의사소통 · 책과 이야기 즐기기 · 책에 관심을 가지고 상상한다"
@@ -562,7 +567,7 @@ rows:
     materials: ["큰 상자"]
     area: social
     tags: [social, peer_play, turn_taking]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 사회관계 · 더불어 생활하기 · 또래와 함께 놀이한다"
@@ -583,7 +588,7 @@ rows:
     materials: ["바구니"]
     area: social
     tags: [social, rule, routine]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
@@ -604,7 +609,7 @@ rows:
     materials: []
     area: nature
     tags: [nature, weather, outdoor]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 느낀다"
@@ -625,7 +630,7 @@ rows:
     materials: ["양말"]
     area: nature
     tags: [nature, sorting, same_different]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 사물을 같고 다름에 따라 구분한다"
@@ -646,7 +651,7 @@ rows:
     materials: ["짧은 스카프"]
     area: art
     tags: [art, dance, music]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 예술경험 · 창의적으로 표현하기 · 움직임과 춤으로 표현한다"
@@ -666,7 +671,7 @@ rows:
     materials: ["인형", "담요"]
     area: art
     tags: [art, pretend_play]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 예술경험 · 창의적으로 표현하기 · 상상놀이를 한다"
@@ -687,7 +692,7 @@ rows:
     materials: ["종이", "굵은 크레용"]
     area: communication
     tags: [communication, scribble, speaking]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 의사소통 · 읽기와 쓰기에 관심 가지기 · 끼적이며 표현하기를 즐긴다"
@@ -708,7 +713,7 @@ rows:
     materials: ["가족 사진"]
     area: social
     tags: [social, family]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 사회관계 · 더불어 생활하기 · 가족에게 관심을 가진다"
@@ -729,7 +734,7 @@ rows:
     materials: []
     area: art
     tags: [art, singing, music]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 예술경험 · 창의적으로 표현하기 · 익숙한 노래와 리듬을 표현한다"
@@ -750,7 +755,7 @@ rows:
     materials: ["종이컵", "상자"]
     area: nature
     tags: [nature, counting, math]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 수에 관심을 가진다"
@@ -771,7 +776,7 @@ rows:
     materials: ["빗", "수건", "칫솔"]
     area: nature
     tags: [nature, tools, everyday]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 생활 도구에 관심을 가진다"
@@ -780,7 +785,7 @@ rows:
     authored_by: nnhhlee
     version: 1
 
-  # ── learning_activity · 36–71개월 — 누리과정 (3~5세 공통) ───────────────────
+  # ── learning_activity · 36–71개월 — 표준보육과정 3~5세(누리과정) ─────────────
   - doc_key: growth.learn.m36_71.freeze_dance
     row_type: learning_activity
     title: "멈춰라 춤"
@@ -793,10 +798,10 @@ rows:
     materials: []
     area: physical_health
     tags: [physical_health, body_awareness, dance]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -813,10 +818,10 @@ rows:
     materials: ["마스킹 테이프"]
     area: physical_health
     tags: [physical_health, balance, gross_motor]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 신체활동 즐기기 · 신체 움직임을 조절한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 신체 움직임을 조절한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -834,10 +839,10 @@ rows:
     materials: ["신문지", "테이프", "상자"]
     area: physical_health
     tags: [physical_health, tool_use, gross_motor]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 신체활동 즐기기 · 기초적인 이동운동, 제자리 운동, 도구를 이용한 운동을 한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 기초적인 이동운동, 제자리 운동, 도구를 이용한 운동을 한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -854,10 +859,10 @@ rows:
     materials: []
     area: physical_health
     tags: [physical_health, outdoor, choice]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동에 자발적으로 참여한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동에 자발적으로 참여한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -875,10 +880,10 @@ rows:
     materials: ["바구니", "그림 이름표"]
     area: physical_health
     tags: [physical_health, tidy, self_care]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -896,10 +901,10 @@ rows:
     materials: ["인형"]
     area: physical_health
     tags: [physical_health, hygiene, prevention]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 건강하게 생활하기 · 질병을 예방하는 방법을 알고 실천한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 질병을 예방하는 방법을 알고 실천한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -917,10 +922,10 @@ rows:
     materials: ["색종이"]
     area: physical_health
     tags: [physical_health, safety, traffic]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 안전하게 생활하기 · 교통안전 규칙을 지킨다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 안전하게 생활하기 · 교통안전 규칙을 지킨다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -938,10 +943,10 @@ rows:
     materials: ["종이", "색연필"]
     area: physical_health
     tags: [physical_health, screen, rule]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 안전하게 생활하기 · TV, 컴퓨터, 스마트폰 등을 바르게 사용한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 안전하게 생활하기 · TV, 컴퓨터, 스마트폰 등을 바르게 사용한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -958,10 +963,10 @@ rows:
     materials: ["그림책"]
     area: communication
     tags: [communication, listening, book]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 듣기와 말하기 · 말이나 이야기를 관심 있게 듣는다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 듣기와 말하기 · 말이나 이야기를 관심 있게 듣는다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -979,10 +984,10 @@ rows:
     materials: []
     area: communication
     tags: [communication, speaking, feeling]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 듣기와 말하기 · 자신의 경험, 느낌, 생각을 말한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 듣기와 말하기 · 자신의 경험, 느낌, 생각을 말한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1000,10 +1005,10 @@ rows:
     materials: []
     area: communication
     tags: [communication, storytelling, turn_taking]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 듣기와 말하기 · 상대방이 하는 이야기를 듣고 관련해서 말한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 듣기와 말하기 · 상대방이 하는 이야기를 듣고 관련해서 말한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1021,10 +1026,10 @@ rows:
     materials: []
     area: communication
     tags: [communication, manners, language]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 듣기와 말하기 · 고운 말을 사용한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 듣기와 말하기 · 고운 말을 사용한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1042,10 +1047,10 @@ rows:
     materials: ["종이"]
     area: communication
     tags: [communication, literacy, outdoor]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 읽기와 쓰기에 관심 가지기 · 주변의 상징, 글자 등의 읽기에 관심을 가진다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 읽기와 쓰기에 관심 가지기 · 주변의 상징, 글자 등의 읽기에 관심을 가진다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1063,10 +1068,10 @@ rows:
     materials: ["카드", "굵은 사인펜"]
     area: communication
     tags: [communication, writing, literacy]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 읽기와 쓰기에 관심 가지기 · 자신의 생각을 글자와 비슷한 형태로 표현한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 읽기와 쓰기에 관심 가지기 · 자신의 생각을 글자와 비슷한 형태로 표현한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1083,10 +1088,10 @@ rows:
     materials: ["그림 카드"]
     area: communication
     tags: [communication, wordplay]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기 짓기를 즐긴다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기 짓기를 즐긴다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1104,10 +1109,10 @@ rows:
     materials: ["종이", "색연필"]
     area: social
     tags: [social, self, drawing]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 나를 알고 존중하기 · 나를 알고 소중히 여긴다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 나를 알고 소중히 여긴다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1125,10 +1130,10 @@ rows:
     materials: ["카드", "색연필"]
     area: social
     tags: [social, emotion, expression]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 나를 알고 존중하기 · 나의 감정을 알고 상황에 맞게 표현한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 나의 감정을 알고 상황에 맞게 표현한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1146,10 +1151,10 @@ rows:
     materials: ["종이", "스티커"]
     area: social
     tags: [social, independence, routine]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 나를 알고 존중하기 · 내가 할 수 있는 것을 스스로 한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 내가 할 수 있는 것을 스스로 한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1167,10 +1172,10 @@ rows:
     materials: ["종이", "색연필"]
     area: social
     tags: [social, family]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 더불어 생활하기 · 가족의 의미를 알고 화목하게 지낸다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 가족의 의미를 알고 화목하게 지낸다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1188,10 +1193,10 @@ rows:
     materials: ["담요", "인형"]
     area: social
     tags: [social, cooperation]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 더불어 생활하기 · 친구와 서로 도우며 사이좋게 지낸다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 친구와 서로 도우며 사이좋게 지낸다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1209,10 +1214,10 @@ rows:
     materials: ["인형 둘"]
     area: social
     tags: [social, conflict, roleplay]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 더불어 생활하기 · 친구와의 갈등을 긍정적인 방법으로 해결한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 친구와의 갈등을 긍정적인 방법으로 해결한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1230,10 +1235,10 @@ rows:
     materials: ["종이", "색연필"]
     area: social
     tags: [social, rule, negotiation]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 더불어 생활하기 · 약속과 규칙의 필요성을 알고 지킨다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 약속과 규칙의 필요성을 알고 지킨다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1250,10 +1255,10 @@ rows:
     materials: ["종이", "크레용"]
     area: art
     tags: [art, color, outdoor]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 아름다움 찾아보기 · 자연과 생활에서 아름다움을 느끼고 즐긴다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 아름다움 찾아보기 · 자연과 생활에서 아름다움을 느끼고 즐긴다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1270,10 +1275,10 @@ rows:
     materials: ["카드", "색연필"]
     area: art
     tags: [art, shape, observation]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 아름다움 찾아보기 · 예술적 요소에 관심을 갖고 찾아본다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 아름다움 찾아보기 · 예술적 요소에 관심을 갖고 찾아본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1290,10 +1295,10 @@ rows:
     materials: []
     area: art
     tags: [art, singing, wordplay]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 창의적으로 표현하기 · 노래를 즐겨 부른다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 노래를 즐겨 부른다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1310,10 +1315,10 @@ rows:
     materials: ["빈 통"]
     area: art
     tags: [art, rhythm, music]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 창의적으로 표현하기 · 신체, 사물, 악기로 간단한 소리와 리듬을 만들어 본다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 신체, 사물, 악기로 간단한 소리와 리듬을 만들어 본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1331,10 +1336,10 @@ rows:
     materials: ["스카프"]
     area: art
     tags: [art, dance, imagination]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 창의적으로 표현하기 · 신체나 도구를 활용하여 움직임과 춤으로 자유롭게 표현한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 신체나 도구를 활용하여 움직임과 춤으로 자유롭게 표현한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1351,10 +1356,10 @@ rows:
     materials: ["색종이", "풀", "도화지", "아동용 가위"]
     area: art
     tags: [art, collage, art_material]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 창의적으로 표현하기 · 다양한 미술 재료와 도구로 자신의 생각과 느낌을 표현한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 다양한 미술 재료와 도구로 자신의 생각과 느낌을 표현한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1372,10 +1377,10 @@ rows:
     materials: ["양말", "색종이", "풀"]
     area: art
     tags: [art, roleplay, storytelling]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 창의적으로 표현하기 · 극놀이로 경험이나 이야기를 표현한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 극놀이로 경험이나 이야기를 표현한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1393,10 +1398,10 @@ rows:
     materials: ["손전등", "인형"]
     area: nature
     tags: [nature, science, light]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 물체의 특성과 변화를 여러 가지 방법으로 탐색한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 물체의 특성과 변화를 여러 가지 방법으로 탐색한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1413,10 +1418,10 @@ rows:
     materials: ["신발"]
     area: nature
     tags: [nature, counting, math]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 물체를 세어 수량을 알아본다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 물체를 세어 수량을 알아본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1434,10 +1439,10 @@ rows:
     materials: ["인형", "의자"]
     area: nature
     tags: [nature, position, math]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 물체의 위치와 방향, 모양을 알고 구별한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 물체의 위치와 방향, 모양을 알고 구별한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1455,10 +1460,10 @@ rows:
     materials: ["막대", "책"]
     area: nature
     tags: [nature, measure, comparison]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 일상에서 길이, 무게 등의 속성을 비교한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 길이, 무게 등의 속성을 비교한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1476,10 +1481,10 @@ rows:
     materials: ["색종이"]
     area: nature
     tags: [nature, pattern, math]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 주변에서 반복되는 규칙을 찾는다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 주변에서 반복되는 규칙을 찾는다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1497,10 +1502,10 @@ rows:
     materials: ["양말", "컵", "상자"]
     area: nature
     tags: [nature, classification, math]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 일상에서 모은 자료를 기준에 따라 분류한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 모은 자료를 기준에 따라 분류한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1518,10 +1523,10 @@ rows:
     materials: ["화분", "종이", "색연필"]
     area: nature
     tags: [nature, plant, observation]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1539,10 +1544,10 @@ rows:
     materials: ["쿠션", "담요", "그림책"]
     area: physical_health
     tags: [physical_health, rest, routine]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 건강하게 생활하기 · 하루 일과에서 적당한 휴식을 취한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 하루 일과에서 적당한 휴식을 취한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1560,10 +1565,10 @@ rows:
     materials: []
     area: physical_health
     tags: [physical_health, safety, emergency]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "신체운동·건강 · 안전하게 생활하기 · 안전사고, 화재, 재난, 학대, 유괴 등에 대처하는 방법을 경험한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 안전하게 생활하기 · 안전사고, 화재, 재난, 학대, 유괴 등에 대처하는 방법을 경험한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1581,10 +1586,10 @@ rows:
     materials: ["그림 카드"]
     area: communication
     tags: [communication, manners, speaking]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 듣기와 말하기 · 상황에 적절한 단어를 사용하여 말한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 듣기와 말하기 · 상황에 적절한 단어를 사용하여 말한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1602,10 +1607,10 @@ rows:
     materials: ["동시집"]
     area: communication
     tags: [communication, poem, wordplay]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "의사소통 · 책과 이야기 즐기기 · 동화, 동시에서 말의 재미를 느낀다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 의사소통 · 책과 이야기 즐기기 · 동화, 동시에서 말의 재미를 느낀다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1623,10 +1628,10 @@ rows:
     materials: ["그림 한 장"]
     area: social
     tags: [social, respect, emotion]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 더불어 생활하기 · 서로 다른 감정, 생각, 행동을 존중한다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 서로 다른 감정, 생각, 행동을 존중한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1644,10 +1649,10 @@ rows:
     materials: ["큰 종이", "색연필"]
     area: social
     tags: [social, community, drawing]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 사회에 관심 가지기 · 내가 살고 있는 곳에 대해 궁금한 것을 알아본다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 사회에 관심 가지기 · 내가 살고 있는 곳에 대해 궁금한 것을 알아본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1665,10 +1670,10 @@ rows:
     materials: ["그림책"]
     area: social
     tags: [social, culture, greeting]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "사회관계 · 사회에 관심 가지기 · 다양한 문화에 관심을 가진다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 사회에 관심 가지기 · 다양한 문화에 관심을 가진다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1686,10 +1691,10 @@ rows:
     materials: ["빈 통"]
     area: art
     tags: [art, tradition, rhythm]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 예술 감상하기 · 우리나라 전통 예술에 관심을 갖고 친숙해진다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 예술 감상하기 · 우리나라 전통 예술에 관심을 갖고 친숙해진다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1707,10 +1712,10 @@ rows:
     materials: ["종이", "크레용"]
     area: art
     tags: [art, appreciation, imagination]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "예술경험 · 예술 감상하기 · 다양한 예술을 감상하며 상상하기를 즐긴다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 예술경험 · 예술 감상하기 · 다양한 예술을 감상하며 상상하기를 즐긴다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1728,10 +1733,10 @@ rows:
     materials: ["날씨 그림 카드"]
     area: nature
     tags: [nature, weather, everyday]
-    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
-    source_org: "교육부 · 보건복지부"
-    source_year: 2019
-    source_locator: "자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 생활과 관련짓는다"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 생활과 관련짓는다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -1740,6 +1745,7 @@ rows:
   # ── routine_step — 자립 단계 사슬 ────────────────────────────────────────
   # TODO(#293 routine_step 근거) — 다음 사슬은 고시에 대응하는 문구가 없어 이번 판에서 뺐다.
   #   growth.routine.self_care.shoes             (신발 신기)
+  #   growth.routine.self_care.dress_top         (상의 입기 — 근거가 약한 사슬로 남겼다가 #339 리뷰로 뺐다)
   #   growth.routine.household_task.laundry_basket (빨래 바구니에 넣기)
   #   growth.routine.transition.leave_home       (외출 준비)
   #   고시에는 "하루 일과를 즐겁게 경험한다"(2세) · "내가 할 수 있는 것을 스스로 한다"(3~5세) 처럼
@@ -1747,10 +1753,10 @@ rows:
   #   되돌리려면 근거를 먼저 정한다 — 상업 이용과 변경이 둘 다 허락된 자료(공공누리 제0 · 1유형 · 고시 ·
   #   CC BY, #337) 또는 허락받은 자료(`license_basis: permission`). 국가건강정보포털은 제4유형이라 안 된다. 같은 doc_key 규칙(growth.routine.<카테고리>.<사슬>.step<N>)으로 넣는다.
   # TODO(#293 routine_step 근거) — 다음 사슬은 남겼지만 근거가 약하다. 검수 때 남길지 정한다.
-  #   dress_top  (상의 입기) — 옷 입기를 가리키는 고시 문구가 없고, 일과 · 스스로 하기 주제를 빌렸다
   #   toilet     (화장실 가기) — 0~1세 · 2세 문구가 같아 도움 수준 순서를 받치지 못한다
   #   spoon      (숟가락 쓰기) — 음식 주제 문구이고 도구를 쥐는 단계는 고시에 없다
-  #   tidy_toys  (장난감 정리) — 2세 · 3~5세 문구 둘이라 단계 1~3 이 같은 문구를 쓴다
+  #   tidy_toys  (장난감 정리) — "자신의 몸과 주변을 깨끗이" 의 주변 정리로 주제는 맞지만, 24개월부터라
+  #              0~1세 "도움을 받아" 문구가 없어 단계 1~3 이 같은 2세 문구를 쓴다
   - doc_key: growth.routine.self_care.handwash.step1
     row_type: routine_step
     title: "손 씻기 — 어른이 아이 손을 잡고 씻겨 주는 단계"
@@ -1763,7 +1769,7 @@ rows:
     materials: ["비누", "수건"]
     routine_category: self_care
     tags: [self_care, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
@@ -1785,7 +1791,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.handwash.step1
     tags: [self_care, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
@@ -1807,7 +1813,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.handwash.step2
     tags: [self_care, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
@@ -1828,7 +1834,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.handwash.step3
     tags: [self_care, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
@@ -1848,7 +1854,7 @@ rows:
     materials: ["칫솔"]
     routine_category: self_care
     tags: [self_care, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
@@ -1870,7 +1876,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.toothbrush.step1
     tags: [self_care, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
@@ -1892,7 +1898,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.toothbrush.step2
     tags: [self_care, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
@@ -1913,7 +1919,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.toothbrush.step3
     tags: [self_care, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
@@ -1933,7 +1939,7 @@ rows:
     materials: ["손수건", "거울"]
     routine_category: self_care
     tags: [self_care, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
@@ -1954,7 +1960,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.face_wipe.step1
     tags: [self_care, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
@@ -1975,7 +1981,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.face_wipe.step2
     tags: [self_care, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
@@ -1996,7 +2002,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.face_wipe.step3
     tags: [self_care, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
@@ -2017,7 +2023,7 @@ rows:
     materials: ["아기 변기"]
     routine_category: self_care
     tags: [self_care, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
@@ -2038,7 +2044,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.toilet.step1
     tags: [self_care, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
@@ -2060,7 +2066,7 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.toilet.step2
     tags: [self_care, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
@@ -2081,93 +2087,10 @@ rows:
     routine_category: self_care
     next_step_of: growth.routine.self_care.toilet.step3
     tags: [self_care, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
-    license_basis: public_law
-    status: draft
-    authored_by: nnhhlee
-    version: 1
-
-  - doc_key: growth.routine.self_care.dress_top.step1
-    row_type: routine_step
-    title: "상의 입기 — 어른이 옷을 입혀 주는 단계"
-    body: >-
-      아이를 무릎에 앉히고 어른이 머리 구멍을 넓게 벌려 씌운 뒤 팔을 한쪽씩 소매에 넣어 준다. 하는 동안 "오른팔 쏙" 하고 말해 준다.
-    min_month: 12
-    max_month: 72
-    setting: indoor
-    materials: ["헐렁한 티셔츠"]
-    routine_category: self_care
-    tags: [self_care, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
-    source_org: "교육부"
-    source_year: 2024
-    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 하루 일과를 즐겁게 경험한다"
-    license_basis: public_law
-    status: draft
-    authored_by: nnhhlee
-    version: 1
-
-  - doc_key: growth.routine.self_care.dress_top.step2
-    row_type: routine_step
-    title: "상의 입기 — 어른이 머리 부분을 돕고 아이가 팔을 넣는 단계"
-    body: >-
-      어른이 머리 구멍을 벌려 씌워 주면 아이가 두 팔을 직접 소매에 넣고 옷을 아래로 내린다.
-    min_month: 12
-    max_month: 72
-    setting: indoor
-    materials: ["헐렁한 티셔츠"]
-    routine_category: self_care
-    next_step_of: growth.routine.self_care.dress_top.step1
-    tags: [self_care, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
-    source_org: "교육부"
-    source_year: 2024
-    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 하루 일과를 즐겁게 경험한다"
-    license_basis: public_law
-    status: draft
-    authored_by: nnhhlee
-    version: 1
-
-  - doc_key: growth.routine.self_care.dress_top.step3
-    row_type: routine_step
-    title: "상의 입기 — 어른이 순서를 말로 일러 주는 단계"
-    body: >-
-      그림이 있는 쪽이 앞이라는 것을 알려 주고, "머리, 오른팔, 왼팔, 내리기" 순서를 말로 짚어 준다. 손은 대지 않고 아이가 직접 입는다.
-    min_month: 12
-    max_month: 72
-    setting: indoor
-    materials: ["헐렁한 티셔츠"]
-    routine_category: self_care
-    next_step_of: growth.routine.self_care.dress_top.step2
-    tags: [self_care, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
-    source_org: "교육부"
-    source_year: 2024
-    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 하루 일과를 즐겁게 경험한다"
-    license_basis: public_law
-    status: draft
-    authored_by: nnhhlee
-    version: 1
-
-  - doc_key: growth.routine.self_care.dress_top.step4
-    row_type: routine_step
-    title: "상의 입기 — 아이가 혼자 입고 어른은 곁에서 보는 단계"
-    body: >-
-      아이가 앞뒤를 맞춰 혼자 옷을 입는다. 어른은 곁에서 지켜보다가 옷이 뒤집혔을 때 아이가 부탁하면 같이 고친다.
-    min_month: 12
-    max_month: 72
-    setting: indoor
-    materials: ["헐렁한 티셔츠"]
-    routine_category: self_care
-    next_step_of: growth.routine.self_care.dress_top.step3
-    tags: [self_care, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
-    source_org: "교육부"
-    source_year: 2024
-    source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 내가 할 수 있는 것을 스스로 한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -2184,10 +2107,10 @@ rows:
     materials: ["바구니"]
     routine_category: household_task
     tags: [household_task, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
-    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -2205,10 +2128,10 @@ rows:
     routine_category: household_task
     next_step_of: growth.routine.household_task.tidy_toys.step1
     tags: [household_task, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
-    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -2226,10 +2149,10 @@ rows:
     routine_category: household_task
     next_step_of: growth.routine.household_task.tidy_toys.step2
     tags: [household_task, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
-    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -2247,10 +2170,10 @@ rows:
     routine_category: household_task
     next_step_of: growth.routine.household_task.tidy_toys.step3
     tags: [household_task, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
-    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 약속과 규칙의 필요성을 알고 지킨다"
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
     status: draft
     authored_by: nnhhlee
@@ -2267,7 +2190,7 @@ rows:
     materials: ["숟가락", "그릇"]
     routine_category: mealtime
     tags: [mealtime, "assistance:full_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 음식에 관심을 가진다"
@@ -2288,7 +2211,7 @@ rows:
     routine_category: mealtime
     next_step_of: growth.routine.mealtime.spoon.step1
     tags: [mealtime, "assistance:partial_assist"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 음식에 관심을 가진다"
@@ -2309,7 +2232,7 @@ rows:
     routine_category: mealtime
     next_step_of: growth.routine.mealtime.spoon.step2
     tags: [mealtime, "assistance:verbal_prompt"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 음식을 즐겁게 먹는다"
@@ -2330,7 +2253,7 @@ rows:
     routine_category: mealtime
     next_step_of: growth.routine.mealtime.spoon.step3
     tags: [mealtime, "assistance:independent"]
-    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_title: "표준보육과정 고시 (교육부고시 제2024-23호)"
     source_org: "교육부"
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 몸에 좋은 음식에 관심을 가지고 바른 태도로 즐겁게 먹는다"
