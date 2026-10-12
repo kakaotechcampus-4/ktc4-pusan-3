@@ -19,6 +19,7 @@ from app.agents.activity.store.ports import (
     SafetyLookupError,
     WeatherGrid,
 )
+from app.agents.activity.weather import WeatherBrief
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import Gate, SafetyState
@@ -41,6 +42,8 @@ class ActivityRunState:
     # build_gate 가 읽은 health_safety 행. 출력 검증의 안전 필터는 이 값만 쓰고 다시 읽지 않는다.
     # None 은 아직 안 읽었다(build_gate 전)는 뜻이고, 동의가 없으면 빈 튜플이다
     safety_entries: tuple[SafetyEntry, ...] | None = None
+    # 날짜별 날씨 판정. 화면에 붙는 안내 문구 키(notices)는 모델에게 주지 않고 여기 둔다
+    weather: dict[date, WeatherBrief] = field(default_factory=dict)
     # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
     suggestions: tuple[SuggestionDraft, ...] = ()
     # suggestions 와 같은 순서로 짝지은 위험 용어 경고 문구(사전의 warning_text 상수).
