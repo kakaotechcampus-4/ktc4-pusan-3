@@ -79,6 +79,7 @@
 - 키 · 몸무게 둘 다 NULL 인 행과 0 이하 값은 DB 가 막는다 (CHECK `child_growth_log_measured` · `_height_positive` · `_weight_positive`)
 
 - 소유는 Memory. Growth가 성장폭 서술에, Food가 권장 열량 계산에 **읽기만** 한다
+- 보호자는 화면(11-1)에서 잘못 적은 줄을 고치거나 지울 수 있다 (`PATCH` · `DELETE /children/{cid}/growth/{id}`, 10-10). Agent 는 읽기만 한다
 - 측정 출처(보호자 측정 / 검진)는 저장하지 않는다. 그래서 화면에 **측정일을 반드시 함께** 보여준다
 - 백분위·BMI·또래 비교는 **어디서도 하지 않는다**. Growth가 로그 전부를 시간순으로 늘어놓을 뿐이다
 

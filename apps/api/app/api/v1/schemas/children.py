@@ -5,10 +5,11 @@
 """
 
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StrictBool, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
 from app.domains.child.models import Gender, ParentChildRelation
@@ -70,10 +71,11 @@ class UpdateChildRequest(BaseModel):
     """PATCH /children/{cid} — 고친 칸만 보낸다. 안 보낸 칸은 그대로 둔다. 하나도 없으면 400.
 
     null 은 받지 않는다(400). 별명 · 생일 · 성별은 늘 값이 있어서 "비우기" 가 없다.
-    🚨 타입에 `| None` 을 붙이지 않는다. 기본값 None 은 "안 보냄" 표시일 뿐이고(검사하지 않는다),
-       타입에 None 을 넣으면 Swagger 가 null 을 받는다고 안내한다.
     """
 
+    # 🚨 타입에 `| None` 을 붙이지 않는다. 기본값 None 은 "안 보냄" 표시일 뿐이고(검사하지 않는다),
+    #    타입에 None 을 넣으면 Swagger 가 null 을 받는다고 안내한다.
+    #    (docstring 이 아니라 주석인 이유 — docstring 은 Swagger 설명으로 그대로 나간다)
     nickname: Nickname = Field(
         default=None, description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자"
     )
@@ -92,6 +94,128 @@ class UpdateChildResponse(BaseModel):
     """200 — 고친 뒤의 프로필."""
 
     child: ChildProfile
+
+
+MEASUREMENT_MAX = 300
+"""키(cm) · 몸무게(kg)의 상한. 평가가 아니라 오타 막기다.
+
+DB 칸(999.9)에 닿기 전에 400 으로 돌려보낸다. 화면은 0 보다 큰 숫자를 전부 보낸다
+(apps/web/src/lib/measurement.ts).
+"""
+
+_ONE_PLACE = Decimal("0.1")
+
+
+def _round_one_place(value: Decimal) -> Decimal:
+    """소수 한 자리로 반올림한다 — DB 칸이 numeric(4,1) 이다 (docs/agents/data_model.md 09-22).
+
+    DB 가 말없이 반올림하게 두면 응답(보낸 값)과 저장된 값이 달라진다.
+    서버가 먼저 반올림하고 그 값을 저장 · 응답한다.
+    반올림해서 0 이 되는 값(0.04)은 잰 것이 아니라 400 이다 — 그대로 두면 DB 의 "0 보다 커야" 에
+    걸려 500 이 된다.
+    """
+    rounded = value.quantize(_ONE_PLACE, rounding=ROUND_HALF_UP)
+    if rounded < _ONE_PLACE:
+        raise ValueError("0.1 보다 작다")
+    return rounded
+
+
+Measurement = Annotated[Decimal, Field(gt=0, le=MEASUREMENT_MAX), AfterValidator(_round_one_place)]
+
+
+class OnboardingRequest(BaseModel):
+    """POST /children/{cid}/onboarding — 아이 등록 뒤 02 화면. 적은 칸만 보낸다. 하나도 없으면 400.
+
+    null 은 받지 않는다(400) — 적지 않은 칸은 보내지 않는다.
+    키 · 몸무게는 소수 한 자리로 반올림한다.
+
+    알레르기(`safety` · `safety_status`)와 한 줄(`one_line`)은 받지 않는다(400). 알레르기는
+    POST /children/{cid}/health-safety 로, 한 줄은 홈 입력으로 보낸다.
+    """
+
+    # 🚨 알레르기의 쓰기 경로는 승인 게이트 ㉡(health-safety) 하나다 (루트 §2) — 여기서 받지 않는다.
+    #    계약서 초안 §05 의 `interests` · `dev_answers` 도 화면에서 빠져서 받지 않는다.
+    model_config = ConfigDict(extra="forbid")
+
+    relation: ParentChildRelation = Field(
+        default=None, description="보내는 보호자와 아이의 관계. 다른 보호자의 관계는 바꾸지 않는다"
+    )
+    gender: Gender = Field(
+        default=None, description="male · female · undisclosed. 화면은 기본값이면 보내지 않는다"
+    )
+    height_cm: Measurement = Field(
+        default=None, description="키(cm). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
+    )
+    weight_kg: Measurement = Field(
+        default=None, description="몸무게(kg). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
+    )
+
+
+class GrowthLogOut(BaseModel):
+    """키 · 몸무게를 잰 날 한 줄."""
+
+    # 🚨 증감 · 백분위 · 또래 비교 칸은 만들지 않는다 — 발달 평가로 읽힌다 (루트 §2)
+    id: UUID
+    measured_on: date
+    height_cm: float | None
+    weight_kg: float | None
+    measured_label: str = Field(
+        description=(
+            "잰 날이 오늘로부터 얼마 전인지 (오늘 · 어제 · N일 전 · N주 전). 기록 탭과 같은 규칙"
+        )
+    )
+    note: str | None
+
+
+class GrowthLogsResponse(BaseModel):
+    """GET /children/{cid}/growth — 잰 날 최신순. 한 화면에 다 들어오는 분량이라 커서는 늘 null."""
+
+    items: list[GrowthLogOut]
+    next_cursor: None = None
+
+
+class CreateGrowthLogRequest(BaseModel):
+    """POST /children/{cid}/growth — 잰 날 필수, 키 · 몸무게는 하나 이상.
+
+    잰 날은 아이 생일부터 오늘(한국 날짜)까지. 키 · 몸무게는 소수 한 자리로 반올림해 저장한다.
+    승인 게이트가 아니라 Idempotency-Key 를 받지 않는다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    measured_on: date = Field(description="잰 날 (YYYY-MM-DD). 생일보다 앞이거나 오늘보다 뒤면 400")
+    height_cm: Measurement | None = Field(default=None, description="키(cm). 0 보다 크고 300 이하")
+    weight_kg: Measurement | None = Field(
+        default=None, description="몸무게(kg). 0 보다 크고 300 이하"
+    )
+
+
+class UpdateGrowthLogRequest(BaseModel):
+    """PATCH /children/{cid}/growth/{id} — 보낸 칸만 바꾼다.
+
+    하나도 없으면(`{}`) 바꾸지 않고 지금 줄을 200 으로 돌려준다.
+    키 · 몸무게의 null 은 "그날 그건 안 잰 것으로 되돌리기" 다(안 보내면 그대로). 다만 고친 결과가
+    둘 다 비면 400. 잰 날은 비울 수 없다. 키 · 몸무게는 소수 한 자리로 반올림해 저장한다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    measured_on: date = Field(default=None, description="잰 날. null 은 받지 않는다")
+    height_cm: Measurement | None = Field(default=None, description="키(cm). null 이면 비운다")
+    weight_kg: Measurement | None = Field(default=None, description="몸무게(kg). null 이면 비운다")
+
+
+class GrowthLogResponse(BaseModel):
+    """201 · 200 — 더하거나 고친 기록 한 줄."""
+
+    log: GrowthLogOut
+
+
+class OnboardingResponse(BaseModel):
+    """200 — 저장한 뒤의 프로필과, 키·몸무게를 적었으면 그 기록 한 줄."""
+
+    child: ChildProfile
+    growth: GrowthLogOut | None = Field(description="키 · 몸무게를 둘 다 안 적었으면 null")
 
 
 class CreateInputRequest(BaseModel):

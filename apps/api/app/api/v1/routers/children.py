@@ -1,5 +1,8 @@
-"""아이 엔드포인트 — 계약서 §04 · §06. `POST /children`(등록) · `GET` · `PATCH /children/{cid}`
-(프로필) · `POST /children/{cid}/inputs`.
+"""아이 엔드포인트 — 계약서 §04 · §05 · §06.
+
+`POST /children`(등록) · `GET` · `PATCH /children/{cid}`(프로필) ·
+`POST /children/{cid}/onboarding`(02 화면) · `/children/{cid}/growth`(키·몸무게 기록) ·
+`POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
@@ -12,7 +15,8 @@ from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.api import idempotency, quota
@@ -26,23 +30,36 @@ from app.api.v1.schemas.children import (
     ChildProfile,
     CreateChildRequest,
     CreateChildResponse,
+    CreateGrowthLogRequest,
     CreateInputRequest,
     CreateInputResponse,
+    GrowthLogOut,
+    GrowthLogResponse,
+    GrowthLogsResponse,
+    OnboardingRequest,
+    OnboardingResponse,
     UpdateChildRequest,
     UpdateChildResponse,
+    UpdateGrowthLogRequest,
 )
 from app.core.config import settings
-from app.domains.child.models import Child, ParentChildRelation
+from app.domains.child.models import Child, ChildGrowthLog, ParentChildRelation
 from app.domains.child.repository import (
     create_child,
+    create_growth_log,
+    delete_growth_log,
     find_child_link,
+    find_growth_log,
     has_child_link,
+    list_growth_logs,
+    set_relation,
     update_child,
 )
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import REQUIRED_CHILD_SCOPES, record_consent
 from app.domains.policy.repository import find_active_versions
 from app.rules.age import age_display
+from app.rules.observed_label import observed_label
 
 router = APIRouter()
 
@@ -173,6 +190,25 @@ def _profile(
     )
 
 
+def _growth_out(row: ChildGrowthLog, today: date) -> GrowthLogOut:
+    return GrowthLogOut(
+        id=row.id,
+        measured_on=row.measured_on,
+        height_cm=None if row.height_cm is None else float(row.height_cm),
+        weight_kg=None if row.weight_kg is None else float(row.weight_kg),
+        measured_label=observed_label(row.measured_on, today=today),
+        note=row.note,
+    )
+
+
+def _check_measured_on(measured_on: date, *, birth_date: date, today: date) -> None:
+    """잰 날은 아이 생일부터 오늘(한국 날짜)까지. 아니면 400."""
+    if not birth_date <= measured_on <= today:
+        raise ApiError(
+            400, "validation_failed", "잰 날을 다시 확인해 주세요", {"fields": ["measured_on"]}
+        )
+
+
 @router.get("/children/{cid}", responses={403: {"model": ErrorEnvelope}})
 async def read_child(
     child: AccessibleChild, parent: CurrentParent, session: SessionDep
@@ -217,6 +253,176 @@ async def update_child_profile(
     )
     await session.commit()
     return response
+
+
+@router.post(
+    "/children/{cid}/onboarding",
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
+)
+async def submit_onboarding(
+    child: AccessibleChild,
+    body: OnboardingRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> OnboardingResponse:
+    """아이 등록 뒤 02 화면 — 관계 · 성별 · 첫 키·몸무게를 한 트랜잭션에 저장한다.
+
+    관계는 보내는 보호자 자신의 것이다. 키 · 몸무게를 하나라도 적었으면 오늘(한국 날짜) 잰 기록
+    한 줄을 만든다. 같은 키로 다시 오면 처음 응답을 그대로 돌려준다 (일정 제출과 같은 방식).
+    순서: (본문 형식 · 아이 접근 — 의존성) → 키 확인 → 재생 → 빈 본문 → 저장 → commit → 응답 기억.
+    본문 형식 검사가 키 확인보다 먼저라, 키 없이 틀린 본문이 오면 validation_failed 다.
+    """
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = idempotency.recall(**scope)
+    if isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
+
+    if not body.model_fields_set:
+        raise ApiError(400, "validation_failed", "저장할 내용이 없어요", {"fields": []})
+
+    today = today_kst()
+    if body.relation is not None:
+        await set_relation(
+            session, child_id=child.child_id, parent_id=parent.parent_id, relation=body.relation
+        )
+    if body.gender is not None:
+        await update_child(
+            session, child_id=child.child_id, parent_id=parent.parent_id, gender=body.gender
+        )
+    growth = None
+    if body.height_cm is not None or body.weight_kg is not None:
+        growth = await create_growth_log(
+            session,
+            child_id=child.child_id,
+            created_by=parent.parent_id,
+            measured_on=today,
+            height_cm=body.height_cm,
+            weight_kg=body.weight_kg,
+        )
+
+    link = await find_child_link(session, child_id=child.child_id, parent_id=parent.parent_id)
+    if link is None:
+        # AccessibleChild 가 방금 확인했다. 그 사이에 연결이 끊긴 경우만 여기 온다
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    row, relation = link
+    # 응답은 commit 전에 만든다 — commit 뒤에 터지면 저장됐는데 실패로 보인다 (#214 리뷰 ⑤)
+    response = OnboardingResponse(
+        child=_profile(row, relation, viewer_id=parent.parent_id, today=today),
+        growth=None if growth is None else _growth_out(growth, today),
+    )
+    await session.commit()
+    idempotency.remember(**scope, replay=response.model_dump(mode="json"))
+    return response
+
+
+@router.get("/children/{cid}/growth", responses={403: {"model": ErrorEnvelope}})
+async def read_growth_logs(child: AccessibleChild, session: SessionDep) -> GrowthLogsResponse:
+    """키 · 몸무게 기록 — 잰 날 최신순.
+
+    보호자가 넣은 숫자를 그대로 돌려준다. 평가 표현은 만들지 않는다 (루트 §2).
+    """
+    today = today_kst()
+    rows = await list_growth_logs(session, child_id=child.child_id)
+    return GrowthLogsResponse(items=[_growth_out(row, today) for row in rows])
+
+
+@router.post(
+    "/children/{cid}/growth",
+    status_code=201,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
+)
+async def add_growth_log(
+    child: AccessibleChild, body: CreateGrowthLogRequest, parent: CurrentParent, session: SessionDep
+) -> GrowthLogResponse:
+    """키 · 몸무게 기록 한 줄을 더한다. 키 · 몸무게 둘 다 없으면 400."""
+    today = today_kst()
+    _check_measured_on(body.measured_on, birth_date=child.birth_date, today=today)
+    if body.height_cm is None and body.weight_kg is None:
+        raise ApiError(
+            400,
+            "validation_failed",
+            "키나 몸무게 중 하나는 적어주세요",
+            {"fields": ["height_cm", "weight_kg"]},
+        )
+    row = await create_growth_log(
+        session,
+        child_id=child.child_id,
+        created_by=parent.parent_id,
+        measured_on=body.measured_on,
+        height_cm=body.height_cm,
+        weight_kg=body.weight_kg,
+    )
+    response = GrowthLogResponse(log=_growth_out(row, today))
+    await session.commit()
+    return response
+
+
+@router.patch(
+    "/children/{cid}/growth/{log_id}",
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404)},
+)
+async def edit_growth_log(
+    child: AccessibleChild, log_id: UUID, body: UpdateGrowthLogRequest, session: SessionDep
+) -> GrowthLogResponse:
+    """보낸 칸만 바꾼다. 키 · 몸무게의 null 은 비우기. 고친 결과가 둘 다 비면 400.
+
+    아무 칸도 없으면 바꾸지 않고 지금 줄을 200 으로 돌려준다 (목과 같다).
+    다른 아이의 기록 id 는 없는 것과 같다 (404).
+    """
+    changes = body.model_dump(exclude_unset=True)
+    today = today_kst()
+    if "measured_on" in changes:
+        _check_measured_on(changes["measured_on"], birth_date=child.birth_date, today=today)
+
+    row = await find_growth_log(
+        session, child_id=child.child_id, log_id=log_id, for_update=bool(changes)
+    )
+    if row is None:
+        raise ApiError(404, "not_found", "이미 지워진 기록이에요")
+    if not changes:
+        # 고치기 시트는 아무것도 안 바꾸고 저장하면 {} 를 보낸다 (growth-sheet.tsx).
+        # 지금 줄을 그대로 돌려준다
+        return GrowthLogResponse(log=_growth_out(row, today))
+    height = changes.get("height_cm", row.height_cm)
+    weight = changes.get("weight_kg", row.weight_kg)
+    if height is None and weight is None:
+        raise ApiError(
+            400,
+            "validation_failed",
+            "키나 몸무게 중 하나는 적어주세요",
+            {"fields": ["height_cm", "weight_kg"]},
+        )
+    for name, value in changes.items():
+        setattr(row, name, value)
+    await session.flush()
+    await session.refresh(row)
+    response = GrowthLogResponse(log=_growth_out(row, today))
+    await session.commit()
+    return response
+
+
+@router.delete(
+    "/children/{cid}/growth/{log_id}",
+    status_code=204,
+    responses={status: {"model": ErrorEnvelope} for status in (403, 404)},
+)
+async def remove_growth_log(child: AccessibleChild, log_id: UUID, session: SessionDep) -> Response:
+    """기록 한 줄을 지운다. 되돌릴 수 있는 기록이라 승인 게이트가 아니다 (루트 §2)."""
+    if not await delete_growth_log(session, child_id=child.child_id, log_id=log_id):
+        raise ApiError(404, "not_found", "이미 지워진 기록이에요")
+    await session.commit()
+    return Response(status_code=204)
 
 
 @router.post("/children/{cid}/inputs", status_code=202)

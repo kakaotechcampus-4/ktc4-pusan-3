@@ -2,11 +2,19 @@
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import Child, Gender, Invite, ParentChild, ParentChildRelation
+from app.domains.child.models import (
+    Child,
+    ChildGrowthLog,
+    Gender,
+    Invite,
+    ParentChild,
+    ParentChildRelation,
+)
 from app.domains.identity.models import Parent
 
 
@@ -128,6 +136,86 @@ async def update_child(
         .values(**values)
         .returning(Child)
     )
+
+
+async def set_relation(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    relation: ParentChildRelation,
+) -> bool:
+    """이 보호자와 아이 사이의 관계를 바꾼다. 다른 보호자의 관계는 건드리지 않는다.
+
+    연결 행이 없으면 False.
+    """
+    changed = await session.scalar(
+        update(ParentChild)
+        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
+        .values(relation=relation)
+        .returning(ParentChild.id)
+    )
+    return changed is not None
+
+
+async def create_growth_log(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    created_by: uuid.UUID,
+    measured_on: date,
+    height_cm: Decimal | None,
+    weight_kg: Decimal | None,
+) -> ChildGrowthLog:
+    """키 · 몸무게를 잰 날 한 줄. 둘 다 None 이면 DB CHECK(child_growth_log_measured)가 막는다."""
+    row = ChildGrowthLog(
+        child_id=child_id,
+        created_by=created_by,
+        measured_on=measured_on,
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def list_growth_logs(session: AsyncSession, *, child_id: uuid.UUID) -> list[ChildGrowthLog]:
+    """아이의 키 · 몸무게 기록 — 잰 날 최신순, 같은 날이면 나중에 적은 것 먼저."""
+    stmt = (
+        select(ChildGrowthLog)
+        .where(ChildGrowthLog.child_id == child_id)
+        .order_by(ChildGrowthLog.measured_on.desc(), ChildGrowthLog.id.desc())
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def find_growth_log(
+    session: AsyncSession, *, child_id: uuid.UUID, log_id: uuid.UUID, for_update: bool = False
+) -> ChildGrowthLog | None:
+    """그 아이의 기록 하나. 다른 아이의 기록 id 면 None — 없는 것과 같게 본다.
+
+    for_update — 고치기 전에 행을 잠근다. 두 보호자가 키 · 몸무게를 각각 비우는 요청을 동시에 보내면
+    둘 다 "한쪽은 남는다" 검사를 통과하고 결과가 둘 다 비어 DB CHECK 가 500 을 낸다.
+    """
+    stmt = select(ChildGrowthLog).where(
+        ChildGrowthLog.id == log_id, ChildGrowthLog.child_id == child_id
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return await session.scalar(stmt)
+
+
+async def delete_growth_log(
+    session: AsyncSession, *, child_id: uuid.UUID, log_id: uuid.UUID
+) -> bool:
+    """그 아이의 기록 하나를 지운다. 없거나 다른 아이의 기록이면 False."""
+    deleted = await session.scalar(
+        delete(ChildGrowthLog)
+        .where(ChildGrowthLog.id == log_id, ChildGrowthLog.child_id == child_id)
+        .returning(ChildGrowthLog.id)
+    )
+    return deleted is not None
 
 
 async def list_connected_parents(
