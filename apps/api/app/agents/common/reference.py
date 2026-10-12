@@ -453,7 +453,11 @@ class HazardAxis:
     warning_text: str | None  # 화면 경고 문구. LLM 이 쓰지 않는다
 
     def level_at(self, months: int) -> HazardLevel | None:
-        """이 월령에서 차단인가 경고인가. 0–17개월 경고 → 차단 승격은 Activity 코드가 한다."""
+        """이 월령에서 차단인지 경고인지.
+
+        0–17개월 경고 → 차단 승격은 Agent 코드(Activity · Growth)가 따로 한다
+        TODO: 이 판정으로 옮겨 한 규칙으로 읽게 하는 것은 별도 이슈.
+        """
         if self.block_below_month is not None and months < self.block_below_month:
             return "block"
         if self.warn_below_month is not None and months < self.warn_below_month:

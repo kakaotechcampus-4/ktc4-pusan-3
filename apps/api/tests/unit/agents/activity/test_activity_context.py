@@ -61,16 +61,36 @@ class TestBuildGate:
         gate = await build_gate(context(safety=InMemorySafety(fail=True)), outdoor_ok=True)
         assert gate.safety_ok is False
 
-    async def test_알레르기_행의_state_만_모은다(self):
+    async def test_알레르기_행의_status_만_모은다(self):
         safety = InMemorySafety(
             [
-                SafetyEntry(kind="allergy", label="밀", state="active"),
-                SafetyEntry(kind="allergy", label="땅콩", state="unknown"),
-                SafetyEntry(kind="environmental", label="꽃가루", state="active"),
+                SafetyEntry(kind="allergy", label="밀", status="active"),
+                SafetyEntry(kind="allergy", label="땅콩", status="none"),
+                SafetyEntry(kind="environmental", label="고소공포", status="active"),
             ]
         )
         gate = await build_gate(context(safety=safety), outdoor_ok=True)
-        assert gate.allergy_states == ("active", "unknown")
+        assert gate.allergy_states == ("active", "none")
+
+    async def test_읽은_행을_run_state_에_담는다(self):
+        """출력 검증의 안전 필터는 이 값을 쓰고 health_safety 를 다시 읽지 않는다."""
+        entries = [SafetyEntry(kind="allergy", label="밀", status="active")]
+        ctx = context(safety=InMemorySafety(entries))
+        await build_gate(ctx, outdoor_ok=True)
+        assert ctx.state.safety_entries == tuple(entries)
+
+    async def test_동의가_없으면_빈_튜플이고_읽지_않는다(self):
+        safety = InMemorySafety([SafetyEntry(kind="allergy", label="밀", status="active")])
+        ctx = context(consent=False, safety=safety)
+        await build_gate(ctx, outdoor_ok=True)
+        assert ctx.state.safety_entries == ()
+        assert safety.calls == 0
+
+    async def test_조회에_실패하면_비워_두지_않고_None_이다(self):
+        """빈 튜플이면 안전 필터가 "거를 것 없음"으로 읽는다."""
+        ctx = context(safety=InMemorySafety(fail=True))
+        await build_gate(ctx, outdoor_ok=True)
+        assert ctx.state.safety_entries is None
 
     async def test_좌표가_없으면_위치가_없다(self):
         ctx = context(location=None)
