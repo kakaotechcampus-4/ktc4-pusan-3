@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from functools import cache
 
 from app.agents.common.reference import load_reference
+from app.rules.nutrition import KdriGroup
 from app.rules.term_match import normalize
 
 SEED_FILE = "amount_terms.yaml"
+PORTION_SCALE_FILE = "portion_scale.yaml"
 
 
 @dataclass(frozen=True)
@@ -41,3 +43,17 @@ def amount_of(text: str | None) -> AmountRule:
     if not text:
         return default
     return by_alias.get(normalize(text), default)
+
+
+@cache
+def _scales() -> dict[str, float]:
+    data = load_reference(PORTION_SCALE_FILE)
+    return {group: float(value) for group, value in data["scales"].items()}
+
+
+def portion_scale_for(group: KdriGroup) -> float:
+    """성인 1인분에 곱할 유아 보정 계수. 구간 판정에만 쓰고 절대량으로 내보내지 않는다 (설계 §4)."""
+    scales = _scales()
+    if group not in scales:
+        raise ValueError(f"{PORTION_SCALE_FILE} 에 {group!r} 계수가 없다")
+    return scales[group]
