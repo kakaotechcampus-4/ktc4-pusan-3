@@ -61,10 +61,12 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | `guide_weaning_stage.texture` | `puree` | `puree`·`mashed` | `minced`·`soft_pieces` | – | – | – |
 | 후보 풀 `stage_min` | 이유 초기 | 중기 | 후기 | 유아식 | 유아식 | 유아식 |
 | 섭취기준 연령군 | 영아 0–5 · 6–11 (분석 미지원) | | | **1–2세** | **1–2세** | **3–5세** |
-| `filter_food_safety` 연령 규칙 | 꿀 금지 · 생우유 금지 | | | 질식 주의 식품 | 질식 주의 식품 | 해제(48개월+) |
+| `filter_food_safety` 연령 규칙 | 꿀 · 마시는 우유 금지, 질식 위험 식품 금지 · 질식 주의 | | | 질식 위험 식품 금지 · 질식 주의 | 질식 위험 식품 금지 · 질식 주의 | 해제(48개월+) |
 | 급식 조회 | 대상 아님 | | | 어린이집 영아반 | 어린이집 | 어린이집·유치원 |
 
 - 이유기 시작(4개월)·질식 주의 해제(48개월)는 **설정값**이다. 소아청소년과학회 자료로 확정한다.
+- 날음식 · 카페인 · 술은 월령과 상관없이 모든 아이에게 막는다(카페인 · 술은 메뉴명만 본다). 규칙과 출처는 [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) §3 음식 안전 수칙 (#258).
+- `age_gates.yaml` 이 생기기 전까지 12 · 48 은 `reference/food_safety_terms.yaml` 에도 적혀 있다. 단계 경계 · Activity `food_choking` 축과 어긋나면 테스트가 깨진다.
 - 이유기는 affinity가 없으므로(§2) 후보 풀을 `food_doc`의 `weaning_*` 행에서 만든다. **이 구간에서 문서 행이 곧 추천 품질이다.**
 - 12개월에 한꺼번에 5개 tool이 열리는 게 아니라, **급식 데이터가 있는 아이만** `lookup_daycare_menu`가 열린다(`daycare_menu` 0행이면 제외).
 

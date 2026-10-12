@@ -25,7 +25,7 @@ DELTA_POSTURE_HINT = "delta.posture_hint"
 DELTA_CHECKUP_HINT = "delta.checkup_hint"
 
 # 안전 · 근거 안내
-CAUTION_ENVIRONMENTAL = "caution.environmental"
+CAUTION_NON_FOOD_ALLERGY = "caution.non_food_allergy"  # 식품 사전에 없는 알레르기 (꽃가루 · 라텍스)
 DOC_NO_ROW = "doc.no_row"
 RHYTHM_NO_ROW = "rhythm.no_row"
 NEXT_STEP_CHAIN_END = "next_step.chain_end"

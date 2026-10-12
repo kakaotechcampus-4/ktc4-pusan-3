@@ -18,7 +18,7 @@ import 만 바꾸면 되게 일부러 같게 두었다 — 그 전에 여기서 
 | NoticeReader | notice — 기관 공지가 있는가 (없어도 추천은 동작) |
 | GrowthDocReader | growth_doc — 월령 슬라이스 + 의미 검색, 자립 단계 사슬 통째로 |
 | BookSource | 도서 검색 — book_catalog 캐시 + 도서관 정보나루 |
-| IssuedBookReader | 만료 전 suggestion 에 이미 낸 도서 ISBN |
+| IssuedBookReader | 만료 전 Growth suggestion 의 items — 도서는 "제목(저자)" |
 
 🚨 키 · 몸무게는 `Decimal` 이다.
 """
@@ -30,6 +30,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.rules.book_form import BookForm
 
 
 class SafetyLookupError(Exception):
@@ -163,12 +164,13 @@ class GrowthDocRow:
     tags: tuple[str, ...] = ()
 
 
-BookForm = Literal["board", "picture", "info", "unknown"]
-
-
 @dataclass(frozen=True)
 class BookRow:
-    """`book_catalog` 한 행. 모델이 책 제목을 지어내지 못하게 이 행의 ISBN 만 통과시킨다."""
+    """`book_catalog` 한 행. 모델이 책 제목을 지어내지 못하게 이 행의 ISBN 만 통과시킨다.
+
+    `form` 은 `rules/book_form.py` 가 정한다. 월령 범위도 거기서 나오고, `search_books` 는 이 행의
+    `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 월령을 건다.
+    """
 
     isbn: str
     title: str
@@ -270,14 +272,23 @@ class BookSource(Protocol):
 
 
 class IssuedBookReader(Protocol):
-    async def isbns(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
-        """만료 전 `suggestion` 에 이미 있는 도서 ISBN. 승인 · 거절한 책도 포함한다."""
+    async def labels(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
+        """만료 전 Growth `suggestion` 의 `items` 값. 승인 · 거절한 추천도 포함한다.
+
+        도서 추천은 `book_label` 의 "제목(저자)" 하나가 들어 있다. ISBN 은 저장하지 않아서
+        이미 낸 책은 이 글자로 가른다. 교육 준비물(`materials`)도 같은 칸이라 섞여 와도 된다 —
+        "제목(저자)" 와 겹칠 일이 드물고, 겹치면 그 책을 이번에 한 번 덜 낼 뿐이다.
+        """
         ...
 
 
 @dataclass(frozen=True)
 class GrowthPorts:
-    """아이 하나 몫의 읽기 포트 묶음. `notice` · `books` · `issued_books` 는 없을 수 있다."""
+    """아이 하나 몫의 읽기 포트 묶음. `notice` · `books` · `issued_books` 는 없을 수 있다.
+
+    `books` 가 없으면 도서 라벨이 닫힌다. `issued_books` 가 없으면 `propose_books` 가 `RuntimeError`
+    를 올린다 — 낸 책을 모르는 채 통과시키면 "다른 책도" 에 같은 책이 다시 나온다.
+    """
 
     profile: ChildProfileReader
     consent: ConsentReader

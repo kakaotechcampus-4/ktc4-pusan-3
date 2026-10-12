@@ -39,7 +39,8 @@ class SuggestionDraft:
     content: str
     reason: str
     citations: tuple[EvidenceCitation, ...] = ()
-    # 그 추천에 들어 있는 알레르기 항목의 정식 명칭. 승인할 때 안내에 쓴다
+    # 그 추천에 들어 있거나 제품에 따라 들어 있을 수 있는 알레르기 항목의 정식 명칭.
+    # 19종 밖은 이름으로 담는다. 승인할 때 안내에 쓴다
     allergens: tuple[str, ...] = ()
     # 일정으로 만들 때 준비물 하나씩
     items: tuple[str, ...] = ()

@@ -166,8 +166,12 @@ class TestLinkToExistingProfile:
 
         # 기존 Profile + 관찰 1건 (이미 연결됨)
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=STRENGTH_DEFAULT,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=STRENGTH_DEFAULT,
             last_observed_on=today - timedelta(days=5),
             embedding=[0.1] * 1536,
         )

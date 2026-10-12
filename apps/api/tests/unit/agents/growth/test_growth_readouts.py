@@ -58,7 +58,7 @@ class TestCatalog:
         assert READOUTS.render("ask.routine_current", subject="양치하기").body == (
             "양치하기은(는) 요즘 어느 정도까지 혼자 하나요?"
         )
-        assert READOUTS.render("caution.environmental", label="꽃가루").body == (
+        assert READOUTS.render("caution.non_food_allergy", label="꽃가루").body == (
             "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
         )
 

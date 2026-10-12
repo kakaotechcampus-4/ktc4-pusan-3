@@ -21,7 +21,8 @@ _LLM_SUFFIXES = ("_API_KEY", "_BASE_URL", "_MODEL", "_REASONING_EFFORT")
 
 
 def _example_keys() -> set[str]:
-    return set(re.findall(r"^([A-Z_]+)=", _ENV_EXAMPLE.read_text(encoding="utf-8"), re.M))
+    # 숫자가 든 이름(DATA4LIBRARY_…)도 잡는다. [A-Z_]+ 였을 때는 그런 키가 검사 밖이었다
+    return set(re.findall(r"^([A-Z][A-Z0-9_]*)=", _ENV_EXAMPLE.read_text(encoding="utf-8"), re.M))
 
 
 def test_1() -> None:

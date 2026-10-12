@@ -3,7 +3,7 @@
 from datetime import date, datetime, timezone
 
 import pytest
-from sqlalchemy import null, select, text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 
@@ -21,7 +21,6 @@ from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, Pro
 from app.domains.memory.profile.repository import list_affinities, rename_affinity
 from app.domains.safety.models import (
     HealthSafety,
-    SafetyCategory,
     SafetyKind,
     SafetySeverity,
     SafetyStatus,
@@ -349,50 +348,18 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
     )
 
 
-async def test_safety_category_is_allergy_only(session, family):
+async def test_쑥_알레르기는_한_행으로_저장된다(session, family):
     owner, _, child, _ = family
     mugwort = await create_safety(
-        session,
-        child_id=child.id,
-        parent_id=owner.id,
-        kind=SafetyKind.ALLERGY,
-        label="쑥",
-        category=[SafetyCategory.FOOD, SafetyCategory.ENVIRONMENT],
+        session, child_id=child.id, parent_id=owner.id, kind=SafetyKind.ALLERGY, label="쑥"
     )
-    assert mugwort.category == ["food", "environment"]
     assert mugwort.status is SafetyStatus.ACTIVE
-
-    with pytest.raises(ValueError, match="allergy"):
-        await create_safety(
-            session,
-            child_id=child.id,
-            parent_id=owner.id,
-            kind=SafetyKind.CHRONIC_DISEASE,
-            label="소아 당뇨",
-            category=[SafetyCategory.FOOD],
-        )
+    assert [row.label for row in await list_active_safety(session, child_id=child.id)] == ["쑥"]
 
 
-async def test_db_checks_safety_category_and_kind(session, family):
+async def test_db_checks_safety_kind(session, family):
     """repository 를 거치지 않아도 DB CHECK 가 막는다."""
     _, _, child, _ = family
-    with pytest.raises(IntegrityError, match="health_safety_category_allergy_only"):
-        async with session.begin_nested():
-            session.add(
-                HealthSafety(
-                    child_id=child.id,
-                    kind=SafetyKind.CHRONIC_DISEASE,
-                    label="천식",
-                    category=["food"],
-                )
-            )
-    with pytest.raises(IntegrityError, match="health_safety_category_values"):
-        async with session.begin_nested():
-            session.add(
-                HealthSafety(
-                    child_id=child.id, kind=SafetyKind.ALLERGY, label="우유", category=["dairy"]
-                )
-            )
     with pytest.raises(IntegrityError, match='"safety_kind"'):
         async with session.begin_nested():
             await session.execute(
@@ -402,26 +369,6 @@ async def test_db_checks_safety_category_and_kind(session, family):
                 ),
                 {"child_id": child.id},
             )
-
-
-async def test_safety_category_null_passes_checks(session, family):
-    """CHECK 두 개가 NULL 을 통과시킨다.
-
-    category 는 server_default 가 있어 None 을 넘기면 '{}' 로 들어간다. NULL 은 null() 로 넣는다.
-    """
-    _, _, child, _ = family
-    rows = [
-        HealthSafety(child_id=child.id, kind=SafetyKind.ALLERGY, label="우유", category=null()),
-        HealthSafety(
-            child_id=child.id, kind=SafetyKind.BEHAVIORAL, label="분리불안", category=null()
-        ),
-    ]
-    async with session.begin_nested():
-        session.add_all(rows)
-    stored = await session.scalars(
-        select(HealthSafety.category.is_(None)).where(HealthSafety.id.in_([row.id for row in rows]))
-    )
-    assert list(stored) == [True, True]
 
 
 async def test_none_status_is_not_active(session, family):
@@ -450,7 +397,6 @@ async def test_safety_management_is_text(session, family):
         session, child_id=child.id, parent_id=owner.id, kind=SafetyKind.ALLERGY, label="우유"
     )
     assert milk.management is None
-    assert milk.category == []
 
 
 async def test_allergy_severity_is_class(session, family):

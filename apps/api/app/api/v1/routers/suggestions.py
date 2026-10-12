@@ -201,7 +201,9 @@ async def submit_event(
     idempotency_key: str | None = Header(alias="Idempotency-Key", default=None),
 ) -> JSONResponse:
     if idempotency_key is None:
-        raise ApiError(400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요")
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
 
     scope = {
         "parent_id": parent.parent_id,

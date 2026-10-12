@@ -22,11 +22,9 @@ from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
-    ObservationStatus,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.rules.profile import STRENGTH_DEFAULT
-
 
 # ---------------------------------------------------------------------------
 # 공통 픽스처 · 헬퍼
@@ -175,9 +173,14 @@ class TestStage2LinkExactName:
         vec = [0.1] * 1536
         # 기존 Profile
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=STRENGTH_DEFAULT,
-            last_observed_on=date(2026, 9, 20), embedding=vec,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=STRENGTH_DEFAULT,
+            last_observed_on=date(2026, 9, 20),
+            embedding=vec,
         )
         session.add(profile)
         await session.flush()
@@ -264,9 +267,14 @@ class TestStage2LinkHoldUncertain:
         vec = [0.1] * 1536
         # 기존 Profile (다른 이름)
         existing = ProfileAffinity(
-            child_id=child.id, merge_key="배", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=STRENGTH_DEFAULT,
-            last_observed_on=date(2026, 9, 20), embedding=vec,
+            child_id=child.id,
+            merge_key="배",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=STRENGTH_DEFAULT,
+            last_observed_on=date(2026, 9, 20),
+            embedding=vec,
         )
         session.add(existing)
         await session.flush()
@@ -310,8 +318,12 @@ class TestStage3Recompute:
         _, child = family
         today = date(2026, 9, 26)
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=STRENGTH_DEFAULT,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=STRENGTH_DEFAULT,
             last_observed_on=today,
         )
         session.add(profile)
@@ -333,8 +345,12 @@ class TestStage3Recompute:
         _, child = family
         today = date(2026, 9, 26)
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=STRENGTH_DEFAULT,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=STRENGTH_DEFAULT,
             last_observed_on=today,
         )
         session.add(profile)
@@ -357,8 +373,12 @@ class TestStage3Recompute:
         today = date(2026, 9, 26)
         old_date = today - timedelta(days=10)
         profile = ProfileAffinity(
-            child_id=child.id, merge_key="사과", domain=MemoryDomain.FOOD,
-            state=ProfileState.CANDIDATE, polarity=1, strength=STRENGTH_DEFAULT,
+            child_id=child.id,
+            merge_key="사과",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            strength=STRENGTH_DEFAULT,
             last_observed_on=old_date,
         )
         session.add(profile)
@@ -372,7 +392,9 @@ class TestStage3Recompute:
         from app.domains.memory.profile.repository import get_latest_active_observed_on
 
         latest = await get_latest_active_observed_on(
-            session, affinity_id=profile.id, domain=profile.domain,
+            session,
+            affinity_id=profile.id,
+            domain=profile.domain,
         )
 
         assert latest == today
@@ -408,9 +430,11 @@ class TestE2EFullFlow:
         for obs in observations:
             assert obs.embedding is None, "아직 벡터 없음"
             assert obs.affinity_id is None, "아직 미연결"
-        profiles_before = (await session.scalars(
-            select(ProfileAffinity).where(ProfileAffinity.child_id == child.id)
-        )).all()
+        profiles_before = (
+            await session.scalars(
+                select(ProfileAffinity).where(ProfileAffinity.child_id == child.id)
+            )
+        ).all()
         assert len(profiles_before) == 0, "Profile 아직 없음"
 
         # ── Stage 1: 임베딩 ──
@@ -446,7 +470,6 @@ class TestE2EFullFlow:
 
         # ── Stage 3: 상태 재계산 ──
         from app.agents.curator.embedding.linker import LinkResult
-        from app.agents.curator.embedding.link_step import LinkOutcome
         from app.domains.memory.curator.recompute import recompute_after_linking
 
         # linker 가 만드는 LinkResult 를 수동 조립 (Stage 2 결과로)

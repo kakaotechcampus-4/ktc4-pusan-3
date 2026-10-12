@@ -2,7 +2,9 @@
 
 - 측정일이 **전부** 나온다. 최소 간격도 연령 축도 없다.
 - 키 · 몸무게를 지표별로 센다. 한쪽만 잰 날은 그 값만 적고 빈 칸을 채우지 않는다.
-- 값은 `Decimal` 이고 반올림하지 않는다. 감소는 부호 그대로.
+- 값은 `Decimal` 이고 반올림하지 않는다.
+- 요약은 방향을 동사로 말하고(늘었어요 / 줄었어요 / 그대로예요) 숫자는 크기만 적는다 (G-9).
+  직전 대비 줄은 동사가 없어서 부호 그대로다.
 - 판정 요청에도 판정하지 않는다 — 같은 서술에 검진 안내만 붙는다.
 - 모델을 부르지 않는다(함수에 클라이언트 인자가 없다).
 """
@@ -118,21 +120,83 @@ class TestDecimal:
                 weight_kg=None,
             )
 
-    def test_감소는_부호_그대로_변화_없음은_0(self):
-        rows = [
-            measurement(1, date(2026, 3, 1), "95.5", "14.5"),
-            measurement(2, date(2026, 9, 1), "95.2", "14.5"),
-        ]
-        text = body(rows)
-        assert "키 -0.3cm" in text
-        assert "몸무게 0.0kg" in text
-
     def test_반올림하지_않는다(self):
         rows = [
             measurement(1, date(2026, 3, 1), "95.04", "14.0"),
             measurement(2, date(2026, 9, 1), "100.16", "15.0"),
         ]
         assert "키 5.12cm" in body(rows)
+
+
+class TestDirection:
+    """요약은 방향을 동사로 말한다 — 늘었어요 / 줄었어요 / 그대로예요 (G-9, #282 리뷰).
+
+    "키 -0.3cm 늘었어요" 가 되지 않게 숫자는 크기만 적는다. 두 지표가 같은 쪽이면 동사 하나로
+    묶는다.
+    """
+
+    PERIOD = "2026년 3월 1일부터 2026년 9월 1일까지 6개월간"
+
+    @pytest.mark.parametrize(
+        ("before", "after", "summary"),
+        [
+            (("95.0", "14.0"), ("97.1", "14.5"), "키 2.1cm · 몸무게 0.5kg 늘었어요."),
+            (("95.5", "14.5"), ("95.2", "14.2"), "키 0.3cm · 몸무게 0.3kg 줄었어요."),
+            (("95.0", "14.0"), ("97.1", "13.8"), "키 2.1cm 늘고 몸무게 0.2kg 줄었어요."),
+            (("95.5", "14.0"), ("95.2", "14.5"), "키 0.3cm 줄고 몸무게 0.5kg 늘었어요."),
+            (("95.0", "14.0"), ("97.0", "14.0"), "키 2.0cm 늘고 몸무게는 그대로예요."),
+            (("95.0", "14.0"), ("95.0", "14.6"), "키는 그대로이고 몸무게 0.6kg 늘었어요."),
+            (("95.0", "14.0"), ("95.0", "14.0"), "키와 몸무게 모두 그대로예요."),
+        ],
+    )
+    def test_두_지표의_방향을_동사로_말한다(self, before, after, summary):
+        rows = [
+            measurement(1, date(2026, 3, 1), *before),
+            measurement(2, date(2026, 9, 1), *after),
+        ]
+        assert body(rows).split("\n")[0] == f"{self.PERIOD} {summary}"
+
+    @pytest.mark.parametrize(
+        ("after", "summary"),
+        [
+            ("105.0", "키 10.0cm 늘었어요."),
+            ("94.7", "키 0.3cm 줄었어요."),
+            ("95.0", "키는 그대로예요."),
+        ],
+    )
+    def test_한_지표도_방향을_동사로_말한다(self, after, summary):
+        rows = [
+            measurement(1, date(2026, 3, 1), "95.0", None),
+            measurement(2, date(2026, 9, 1), after, None),
+        ]
+        assert body(rows).split("\n")[0] == f"{self.PERIOD} {summary}"
+
+    def test_측정일이_다르면_줄마다_방향을_말한다(self):
+        rows = [
+            measurement(1, date(2026, 3, 1), "100.0", "15.0"),
+            measurement(2, date(2026, 5, 1), None, "14.7"),
+            measurement(3, date(2026, 8, 1), "101.2", None),
+        ]
+        assert body(rows).split("\n")[:2] == [
+            "2026년 3월 1일부터 2026년 8월 1일까지 5개월간 키 1.2cm 늘고,",
+            "2026년 3월 1일부터 2026년 5월 1일까지 2개월간 몸무게 0.3kg 줄었어요.",
+        ]
+
+    def test_요약에는_빼기_부호가_없고_직전_대비는_부호_그대로다(self):
+        rows = [
+            measurement(1, date(2026, 3, 1), "95.5", "14.5"),
+            measurement(2, date(2026, 9, 1), "95.2", "14.5"),
+        ]
+        summary, _, latest = body(rows).split("\n")
+        assert "-" not in summary
+        assert latest.endswith("(직전 대비 키 -0.3cm · 몸무게 0.0kg)")
+
+    def test_줄었다는_말도_평가가_아니다(self):
+        rows = [
+            measurement(1, date(2026, 3, 1), "95.5", "14.5"),
+            measurement(2, date(2026, 9, 1), "95.2", "14.2"),
+        ]
+        assert find_evaluative(body(rows)) == ()
 
 
 class TestOneSide:
