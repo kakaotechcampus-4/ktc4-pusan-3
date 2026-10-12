@@ -283,12 +283,8 @@ async def _make_event_with_items(session, *, child_id):
         category=EventCategory.ACTIVITY,
         created_by=EventCreatedBy.CAREGIVER,
     )
-    i1 = await create_event_item(
-        session, child_id=child_id, event_id=event.id, item_name="수건"
-    )
-    i2 = await create_event_item(
-        session, child_id=child_id, event_id=event.id, item_name="모자"
-    )
+    i1 = await create_event_item(session, child_id=child_id, event_id=event.id, item_name="수건")
+    i2 = await create_event_item(session, child_id=child_id, event_id=event.id, item_name="모자")
     await session.flush()
     return event, [i1, i2]
 

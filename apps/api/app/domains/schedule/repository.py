@@ -162,33 +162,17 @@ async def replace_event_items(
     keep_ids = [uuid.UUID(i["item_id"]) for i in items if i.get("item_id") is not None]
 
     if keep_ids:
-        # 이 일정에 속하는 item_id만 조회
-        this_event_items = set(
-            (
-                await session.scalars(
-                    select(EventItem.item_id).where(
-                        EventItem.event_id == event_id,
-                        EventItem.item_id.in_(keep_ids),
-                    )
-                )
-            ).all()
-        )
-        # 다른 일정에 속하는 item_id가 있는지 확인
-        other_event_items = set(
-            (
-                await session.scalars(
-                    select(EventItem.item_id).where(
-                        EventItem.event_id != event_id,
-                        EventItem.item_id.in_(keep_ids),
-                    )
-                )
-            ).all()
-        )
-        if other_event_items:
+        # item_id와 event_id를 한 번에 가져와서 소속을 판별한다
+        rows = (
+            await session.execute(
+                select(EventItem.item_id, EventItem.event_id).where(EventItem.item_id.in_(keep_ids))
+            )
+        ).all()
+        if any(owner != event_id for _, owner in rows):
             msg = "다른 일정의 준비물 id가 포함돼 있어요"
             raise ValueError(msg)
         # DB에 없는 item_id는 무시 (동시 수정으로 삭제된 정상 경로)
-        keep_ids = list(this_event_items)
+        keep_ids = [item_id for item_id, _ in rows]
 
     # 새 목록에 없는 기존 item 삭제
     if keep_ids:
