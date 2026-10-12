@@ -10,12 +10,11 @@
 # 0–17개월은 경고가 차단으로 올라간다 — 코드 상수 SAFETY_PROMOTE_BELOW_MONTH(18)이지 이 파일 값이 아니다.
 
 source: 어린이제품 공통안전기준 · 완구 안전기준 · 도로교통법 · AAP · 질병관리청 · 식약처 — 축별 출처는 axes.*.source
-version: "2026.1-p0"
-fetched_at: 2026-10-02   # 축 출처 원문 확인일 — food_choking · suffocation_film 은 10-02, 나머지 축은 09-19 (round3 조사)
+version: "2026.2-p1"
+fetched_at: 2026-10-10   # 축 출처 원문 확인일 — height 는 09-19(고시) · 10-10(CPSC · 행안부 통계), food_choking · suffocation_film 은 10-02, 나머지 축은 09-19 (round3 조사)
 
 # 이 판에 없는 축. 있는 줄 알고 안 보는 일이 없게 이름을 남긴다.
 pending_axes:
-  height: P1 — 다음 판 (배포 전에 넣는다. 0–17개월 경고→차단 승격이 아기 그네를 막지 않게 따로 설계한다)
   wheeled_manual: P1 — 다음 판
   heat_burn: P2 — 다음 판
   strangulation: 보류 — 공통안전기준 본문에 끈 길이 조항이 없다 (임계값 출처 0)
@@ -53,6 +52,18 @@ axes:
       AAP — 6세 미만 트램펄린 사용 금지, 가정 설치 강력 비권장
       https://publications.aap.org/pediatrics/article/130/4/774/30158/Trampoline-Safety-in-Childhood-and-Adolescence
       (국내: 한국소비자원 가정 내 트램펄린 사고 220건 중 1–3세 56.4%)
+
+  height:
+    warn_below_month: 36
+    source: >-
+      어린이놀이시설의 시설기준 및 기술기준(행정안전부 고시 2020-10호) — "36개월 미만의 영유아는 …
+      성인이 동반하여 … 전제로 한다"
+      https://law.go.kr/행정규칙/어린이놀이시설의시설기준및기술기준 |
+      행정안전부 — 2022–24 어린이놀이시설 중대사고 601건 중 추락 69%
+      https://mobile.newsis.com/view/NISX20260504_0003616549 |
+      용어 고르기 참고: CPSC Public Playground Safety Handbook(Pub. 325) §2.2.7 Table 1 — 걸음마기(6–23개월)
+      에게도 권하는 기구(낮은 오르기 · 미끄럼틀 · 그네)는 넣지 않는다 https://www.cpsc.gov/s3fs-public/325.pdf
+    warning_text: 높은 곳에 오를 때는 바로 아래에서 지켜봐 주시고, 바닥에 매트나 모래처럼 충격을 받아 주는 것이 있는지 확인해 주세요.
 
   infant_walker:
     block_below_month: 72   # AAP 는 연령 무관 전면 금지 — 서비스 상한(72)으로 "전 구간 차단"을 옮긴 값
@@ -364,9 +375,10 @@ terms:
     guards: [강변공원, 강변 산책, 강변 산책로, 하천 산책로, 둔치 산책]
   - axis: water
     label: 연못
-    # 습지는 낱말로만 둔다 — 별칭은 띄어쓰기를 넘어 찾아서 "모습 지켜보기" 가 "습지" 로 걸린다
-    aliases: [연못, 저수지, 호수, 습지 탐방, 습지 체험, 습지 공원, 습지 생태]
-    guards: [호수공원, 호수 산책]   # 산책은 물놀이가 아니다. "호수공원에서 물놀이"는 물놀이로 걸린다
+    # 별칭은 띄어쓰기를 넘어 찾아서 "모습 지켜보기" 가 "습지" 로 걸린다. 별칭을 좁히면 진짜 습지를
+    # 놓치므로 오탐만 guard 로 막는다 (#332 리뷰). 목록이 닫혀 있지 않아 새 오탐은 과차단 쪽이다
+    aliases: [연못, 저수지, 호수, 습지]
+    guards: [호수공원, 호수 산책, 모습 지, 연습 지, 학습 지, 실습 지, 복습 지, 예습 지]   # 산책은 물놀이가 아니다. "호수공원에서 물놀이"는 물놀이로 걸린다
   - axis: water
     label: 분수
     aliases: [분수, 바닥분수, 음악분수, 분수대, 분수 물놀이]
@@ -397,9 +409,9 @@ terms:
     guards: []
   - axis: water
     label: 논두렁
-    # "수로" 만으로는 두지 않는다 — "박수로" · "필수로" · "횟수로" 처럼 흔한 말 안에 든다 (시드 80행 검사)
-    aliases: [논두렁, 농수로, 배수로, 용수로, 논 물놀이]
-    guards: []
+    # "수로" 는 "박수로" · "필수로" 같은 흔한 말 안에도 든다. 별칭은 두고 오탐만 guard 로 막는다 (#332 리뷰)
+    aliases: [논두렁, 수로, 농수로, 배수로, 용수로, 논 물놀이]
+    guards: [박수로, 필수로, 횟수로, 개수로, 점수로]
   - axis: water
     label: 얼음물
     aliases: [얼음물, 아이스박스 물, 얼음 대야]
@@ -467,6 +479,54 @@ terms:
   - axis: trampoline
     label: 번지 트램펄린
     aliases: [번지 트램펄린, 번지 점핑대, 스카이 점프]
+    guards: []
+
+  # ── height ──────────────────────────────────────────────────────────────
+  # 높이를 오르거나 매달리는 놀이. 별칭은 말끝을 빼고 앞부분만 둔다 — "나무에 올라가기" · "링에 매달려 보기" 도 걸리게.
+  # 미끄럼틀 · 그네 · 계단 · 경사로는 넣지 않는다 — 걸음마기에도 권하는
+  # 기구라, 넣으면 0–17개월 경고→차단 승격이 아기 그네를 막는다 (CPSC Table 1).
+  # "링" · "봉" 은 흔한 말이라 단독으로 넣지 않는다 — "링 던지기" · "막대 봉" 이 걸린다
+  - axis: height
+    label: 정글짐
+    aliases: [정글짐, 오르기 탑, 클라이밍 탑]
+    guards: []
+  - axis: height
+    label: 인공 암벽
+    aliases: [인공 암벽, 암벽, 클라이밍, 볼더링]
+    guards: []
+  - axis: height
+    label: 나무 타기
+    aliases: [나무 타기, 나무 오르기, 나무에 오르기, 나무에 올라, 나무 위에 올라]
+    guards: []
+  - axis: height
+    label: 구름사다리
+    aliases: [구름사다리, 몽키바, 매달리기 사다리]
+    guards: []
+  - axis: height
+    label: 공중 링
+    aliases: [공중 링, 링 매달리기, 링에 매달, 링 건너기, 링 사다리]
+    guards: []
+  - axis: height
+    label: 봉 내려오기
+    aliases: [봉 타고 내려오기, 봉 내려오기, 소방관 봉, 소방관 기둥]
+    guards: []
+  - axis: height
+    label: 짚라인
+    aliases: [짚라인, 집라인, 줄 타고 내려오기]
+    guards: []
+  - axis: height
+    label: 출렁다리
+    aliases: [출렁다리, 그물 다리, 체인 다리, 흔들 다리, 그물 오르기, 그물망 오르]
+    guards: []
+  # 철봉(horizontal bars)은 CPSC Table 1 어느 칸에도 없다. 밧줄 오르기는 학령기 칸
+  # ("free standing climbing events with flexible parts")에 있다. 사다리는 걸음마기 칸에 있어 넣지 않는다
+  - axis: height
+    label: 철봉
+    aliases: [철봉]
+    guards: []
+  - axis: height
+    label: 밧줄 오르기
+    aliases: [밧줄 오르기, 밧줄 오르, 밧줄 타고 오르, 로프 오르, 로프 타고 오르]
     guards: []
 
   # ── infant_walker ───────────────────────────────────────────────────────

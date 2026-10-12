@@ -90,6 +90,12 @@ class TestInMemoryDocs:
         served = {key for months in range(DOC_MONTH_LIMIT) for key in await self.keys(docs, months)}
         assert served == approved
 
+    async def test_include_draft_는_검수_전_행도_싣는다(self):
+        """검수 전에 [예시]가 어떻게 도는지 보는 임시 경로 (#332 리뷰)."""
+        drafts = await self.keys(InMemoryActivityDocs.from_seed(include_draft=True), 40)
+        approved = await self.keys(InMemoryActivityDocs.from_seed(), 40)
+        assert len(drafts) >= DOC_LIMIT and set(approved) <= set(drafts)
+
     def test_id_는_doc_key_로_늘_같다(self):
         (first, *_) = SEED
         assert first.to_row().id == first.to_row().id
