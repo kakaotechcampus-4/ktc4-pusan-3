@@ -222,15 +222,16 @@ export function submitEventDraft(
  *    보내는데 서버는 그게 이미 들어간 것인지 알 방법이 없다. 서버가 저장하고 응답만 유실되면
  *    카드가 실패로 보이고, 보호자가 한 번 더 누르면 **"모자" 가 두 줄** 들어간다.
  *
- * ⚠️ 경로가 미정이다 (`docs/event/event-draft-flow-v1.md` §6 — op 별로 가른다는 것까지만 정했다).
- *    🚨 그래서 `idempotentPath` 표에는 **아직 넣지 않았다** — 그 표는 POST 차단과 계약 테스트
- *    ①(키 없으면 400)을 함께 돌리는데, `POST /events/{eid}` 는 존재하지 않는 경로다.
- *    경로가 확정되면 표로 옮긴다.
+ * 🚨 **아이 스코프 아래 경로다** (#284 · #316). 서버가 `AccessibleChild` 로 권한을 본다 —
+ *    `event_id` 하나로는 남의 아이 일정인지 가릴 수 없다.
+ * 🚨 본문은 `submitEventDraft` 와 같은 **최종 목록**이다 (`items` 에서 빠진 `item_id` 는 삭제).
+ *    `suggestion_ids` 는 싣지 않는다 — 제안 ↔ 일정 연결은 create 에서만 생긴다.
  */
 export function updateEventDraft(
+  childId: string,
   eventId: string,
-  body: SubmitEventBody,
+  body: Omit<SubmitEventBody, "suggestion_ids">,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
-  return api.patch(`/events/${eventId}`, body, { idempotencyKey });
+  return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });
 }

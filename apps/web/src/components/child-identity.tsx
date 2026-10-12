@@ -171,6 +171,8 @@ export function ChildIdentitySheet({
           label="별명"
           value={nickname}
           onChange={(e) => setNickname(e.target.value)}
+          // 서버가 21자부터 400 이다 — 막지 않으면 저장이 계속 실패한다 (01 등록 화면과 같은 값)
+          maxLength={20}
           error={nicknameError}
           autoComplete="off"
         />
