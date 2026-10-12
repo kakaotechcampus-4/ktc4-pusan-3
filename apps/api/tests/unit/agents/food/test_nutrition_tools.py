@@ -3,6 +3,7 @@
 정본은 `docs/agents/food/Food_Tool_명세.md` §2 · `docs/agents/food/영양소_계산_설계.md`.
 """
 
+from dataclasses import fields
 from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -10,10 +11,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.food.context import FoodContext
-from app.agents.food.schemas.common import MealPeriod
-from app.agents.food.schemas.nutrition import CompareDietBalanceArgs, LookupNutritionArgs
+from app.agents.food.schemas.common import EvidenceRef, MealPeriod
+from app.agents.food.schemas.nutrition import (
+    CompareDietBalanceArgs,
+    LookupNutritionArgs,
+    NutrientReportArgs,
+)
 from app.agents.food.store import (
     DaycareMealRow,
+    FoodPorts,
     InMemoryDaycareMeals,
     InMemoryMenuCatalog,
     InMemoryProfile,
@@ -21,7 +27,13 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
-from app.agents.food.tools.nutrition import compare_diet_balance, lookup_nutrition
+from app.agents.food.tools.nutrition import (
+    compare_diet_balance,
+    lookup_nutrition,
+    report_nutrient_analysis,
+)
+
+UNSEEN_ID = str(uuid4())
 
 KST = ZoneInfo("Asia/Seoul")
 CHILD = UUID(int=1)
@@ -259,3 +271,99 @@ async def test_돌려준_항목만_basis_keys_에_남는다(context) -> None:
     )
 
     assert context.state.basis_keys == set(result.data["bands"])
+
+
+# ── report_nutrient_analysis (Task 9) ────────────────────────────────────
+@pytest.fixture
+def context_with_basis(context: FoodContext) -> FoodContext:
+    context.state.basis_keys = {"protein"}
+    return context
+
+
+@pytest.fixture
+def context_egg_allergy_basis(context: FoodContext) -> FoodContext:
+    context.state.basis_keys = {"iron"}
+    context.state.safety = (SafetyEntry(kind="allergy", label="달걀", status="active"),)
+    context.state.removed_foods = ("달걀노른자",)
+    return context
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        "단백질이 하루 20g 부족해요",  # 수치
+        "칼슘 섭취가 60% 수준이에요",  # %
+        "철 결핍이 의심돼요",  # 진단
+        "영양제를 챙겨 주세요",  # 처방
+        "달걀 반찬을 늘려 주세요",  # 식품 제안
+    ],
+)
+async def test_거절하는_문장(context, finding: str) -> None:
+    result = await report_nutrient_analysis(
+        context, NutrientReportArgs(period=MealPeriod.LAST_7_DAYS, findings=[finding])
+    )
+
+    assert not result.success
+    assert result.error["code"] == "INVALID_ARGS"
+
+
+async def test_구간_문장은_통과한다(context_with_basis) -> None:
+    result = await report_nutrient_analysis(
+        context_with_basis,
+        NutrientReportArgs(
+            period=MealPeriod.LAST_7_DAYS, findings=["단백질 비중이 기준보다 낮은 편이에요"]
+        ),
+    )
+
+    assert result.success
+
+
+async def test_basis_keys_밖_항목은_거절한다(context_with_basis) -> None:
+    # compare_diet_balance 가 돌려주지 않은 항목으로 말하면 지어낸 것이다
+    result = await report_nutrient_analysis(
+        context_with_basis,
+        NutrientReportArgs(period=MealPeriod.LAST_7_DAYS, findings=["아연 비중이 낮은 편이에요"]),
+    )
+
+    assert not result.success
+
+
+async def test_이번_run_에서_조회하지_않은_근거는_뺀다(context_with_basis) -> None:
+    result = await report_nutrient_analysis(
+        context_with_basis,
+        NutrientReportArgs(
+            period=MealPeriod.LAST_7_DAYS,
+            findings=["단백질 비중이 기준보다 낮은 편이에요"],
+            evidence=[EvidenceRef(kind="observation_food", id=UNSEEN_ID, note="테스트")],
+        ),
+    )
+
+    assert result.success
+    assert result.data["evidence"] == []
+
+
+async def test_뺀_알레르기_식품이_문장에_남으면_거절한다(context_egg_allergy_basis) -> None:
+    # N-14 — 별칭과 안전 사전을 둘 다 건다 (설계 §6 · #326 리뷰)
+    result = await report_nutrient_analysis(
+        context_egg_allergy_basis,
+        NutrientReportArgs(
+            period=MealPeriod.LAST_7_DAYS, findings=["노른자가 든 반찬이 도움이 돼요"]
+        ),
+    )
+
+    assert not result.success
+
+
+async def test_분석_결과를_저장하지_않는다(context_with_basis) -> None:
+    # 영양 분석 결과를 저장하는 포트 자체가 없다 — test_food_store.py 의
+    # test_영양_구간을_저장하는_포트가_없다 가 구조로 고정한다. 여기서는 호출이 그대로
+    # 성공하고 반환값 말고 다른 곳에 남기지 않는지만 본다
+    result = await report_nutrient_analysis(
+        context_with_basis,
+        NutrientReportArgs(
+            period=MealPeriod.LAST_7_DAYS, findings=["단백질 비중이 기준보다 낮은 편이에요"]
+        ),
+    )
+
+    assert result.success
+    assert "bands" not in {f.name for f in fields(FoodPorts)}

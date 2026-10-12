@@ -3,11 +3,14 @@
 정확한 섭취량을 계산하지 않고 식단에 담긴 영양소의 비중만 고려.
 """
 
+import re
+from uuid import UUID
+
 from app.agents.food.context import FoodContext
 from app.agents.food.menu_resolver import MenuResolver, Resolved
-from app.agents.food.nutrient_actions import advice_for
+from app.agents.food.nutrient_actions import advice_for, check_summary
 from app.agents.food.nutrition_eval import evaluate_nutrient_bands
-from app.agents.food.result import ToolResult, ok
+from app.agents.food.result import ErrorCode, ToolResult, fail, ok
 from app.agents.food.schemas.nutrition import (
     CompareDietBalanceArgs,
     LookupNutritionArgs,
@@ -15,6 +18,44 @@ from app.agents.food.schemas.nutrition import (
 )
 from app.rules.age import life_stage, months_between
 from app.rules.menu_key import normalize_menu_key
+
+# 숫자 + 단위(% · g · mg · kcal) 또는 그 한글 표현. report_nutrient_analysis 의 findings 는
+# 구간(낮은 편 · 적당 · 높은 편)으로만 말하고 수치를 쓰지 않는다 (Food_Tool_명세 §2).
+_NUMERIC_UNIT = re.compile(r"\d+(\.\d+)?\s*(%|g|mg|kcal)|퍼센트|칼로리")
+
+# 진단 · 처방 · 먹일 음식 제안 말. findings 는 식단 기반 비중·경향만 말한다
+_PROHIBITED_WORDS = (
+    "의심",
+    "결핍",
+    "영양제",
+    "보충제",
+    "처방",
+    "복용",
+    "늘려",
+    "드세요",
+    "먹이세요",
+    "챙겨",
+)
+
+# 자유 텍스트 finding 에서 영양소 이름을 찾는다. basis_keys(이번에 실제로 조회한 항목) 밖을
+# 말하면 모델이 항목을 지어낸 것이다 — "아연" 처럼 이 시스템이 다루지 않는 이름도 인식해야
+# basis_keys 밖으로 걸러낼 수 있다
+_NUTRIENT_NAMES: dict[str, str] = {
+    "단백질": "protein",
+    "칼슘": "calcium",
+    "철분": "iron",
+    "철": "iron",
+    "탄수화물": "carbohydrate",
+    "지방": "fat",
+    "나트륨": "sodium",
+    "당류": "sugars",
+    "당분": "sugars",
+    "포화지방": "saturated_fat",
+    "아연": "zinc",
+    "비타민": "vitamin",
+    "마그네슘": "magnesium",
+    "엽산": "folate",
+}
 
 
 async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> ToolResult:
@@ -81,12 +122,18 @@ async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArg
 
     entries = context.state.safety or ()
     food_group_actions: list[str] = []
+    removed_foods: list[str] = []
     for nutrient, band in verdict.bands.items():
         advice = advice_for(nutrient, band, entries, stage=stage, months=months)
-        if advice is not None and advice.text:
+        if advice is None:
+            continue
+        if advice.text:
             food_group_actions.append(advice.text)
+        removed_foods.extend(advice.removed)
 
     context.state.basis_keys = set(verdict.bands)
+    # report_nutrient_analysis 의 check_summary 가 요약 문장에 이 이름이 남았는지 본다(N-14)
+    context.state.removed_foods = tuple(removed_foods)
     return ok(
         "query",
         "diet_balance",
@@ -101,12 +148,61 @@ async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArg
 async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArgs) -> ToolResult:
     """영양소 분석 결과를 최종 검증하고 반환한다.
 
-    DB 연결 후:
-    - findings에 음식 추천, 근거 없는 정확한 수치, 진단 표현이 포함됐는지 확인한다.
-      허용하지 않는 내용이 있으면 INVALID_ARGS를 반환한다.
-    - evidence가 이번 실행에서 실제로 조회한 ref인지 확인하고,
-      확인되지 않은 ref는 결과에서 제외한다.
-    - 분석 결과는 저장하지 않고 반환만 한다. 영양 판정은 그 task의 run state에만 둔다.
-    - 결핍 진단, 치료식, 영양제 관련 요청은 이 단계에서 처리하지 않는다.
+    검사 순서 — ① 단위·수치 정규식 ② 진단·처방·먹일 음식 제안 말 ③ `check_summary`(별칭 +
+    안전 사전) ④ `basis_keys` 밖 항목 ⑤ `seen_refs` 밖 근거 제거(거절이 아니라 제외). ①~④ 중
+    하나라도 걸리면 findings 전체를 거절한다 — 분석 결과는 저장하지 않고 반환만 한다.
     """
-    raise NotImplementedError("DB 연결 후 구현")
+    ports = context.ports
+    birth_date = await ports.profile.birth_date(child_id=context.child_id)
+    months = months_between(birth_date, context.today)
+    stage = life_stage(birth_date, context.today).stage
+    entries = context.state.safety or ()
+
+    for finding in args.findings:
+        if _NUMERIC_UNIT.search(finding):
+            return fail(
+                "report",
+                "nutrient_analysis",
+                ErrorCode.INVALID_ARGS,
+                "findings 에 수치·단위 표현을 쓰지 않는다. 구간(낮은 편 · 적당 · 높은 편)으로만 "
+                "말한다.",
+            )
+        if any(word in finding for word in _PROHIBITED_WORDS):
+            return fail(
+                "report",
+                "nutrient_analysis",
+                ErrorCode.INVALID_ARGS,
+                "findings 에 진단 · 처방 · 먹일 음식 제안을 쓰지 않는다. 식단 기반 비중만 말한다.",
+            )
+        check = check_summary(
+            finding, context.state.removed_foods, entries, stage=stage, months=months
+        )
+        if not check.ok:
+            return fail(
+                "report",
+                "nutrient_analysis",
+                ErrorCode.INVALID_ARGS,
+                "findings 에 이 아이에게 안전하지 않거나 뺀 식품 이름이 남아 있다.",
+            )
+        mentioned = {key for word, key in _NUTRIENT_NAMES.items() if word in finding}
+        if mentioned - context.state.basis_keys:
+            return fail(
+                "report",
+                "nutrient_analysis",
+                ErrorCode.INVALID_ARGS,
+                "findings 에 이번에 조회하지 않은 영양 항목이 있다.",
+            )
+
+    evidence = [
+        ref.model_dump()
+        for ref in args.evidence
+        if (ref.kind, UUID(ref.id)) in context.state.seen_refs
+    ]
+
+    return ok(
+        "report",
+        "nutrient_analysis",
+        findings=list(args.findings),
+        data_gaps=list(args.data_gaps),
+        evidence=evidence,
+    )

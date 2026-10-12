@@ -38,6 +38,9 @@ class FoodRunState:
     sampled_keys: tuple[str, ...] = ()  # 모델에게 보여 준 후보
     blocked_keys: set[str] = field(default_factory=set)
     basis_keys: set[str] = field(default_factory=set)  # compare_diet_balance가 돌려준 항목
+    # compare_diet_balance 가 advice_for 로 뺀 식품 이름 전부(여러 항목분 합침). 알레르기 때문에
+    # 안내에서 뺀 식품이라 report_nutrient_analysis 의 check_summary 가 요약 문장에 남았는지 본다
+    removed_foods: tuple[str, ...] = ()
     # evaluate_nutrient_bands 가 담는 판정 결과. 저장 · 로그 없음 — run state 에만 (설계 §3 ⑤)
     nutrient_verdict: "NutrientVerdict | None" = None
     gate: Gate | None = None
