@@ -60,8 +60,8 @@ async def get_json(
     return payload
 
 
-def kma_result_code(payload: dict[str, Any]) -> str | None:
-    """기상청 응답의 `response.header.resultCode`. 모양이 다르면 None.
+def result_code(payload: dict[str, Any]) -> str | None:
+    """응답의 `response.header.resultCode`. 기상청 · 에어코리아가 같은 모양이다. 모양이 다르면 None.
 
     키 오류는 JSON 이 아니라 XML(`OpenAPI_ServiceResponse`)로 오기도 한다 — 그때는
     `get_json` 이 JSON 아님으로 이미 실패시켰다.

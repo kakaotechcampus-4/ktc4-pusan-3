@@ -4,7 +4,7 @@
  */
 
 /* ── Ref — 도메인 간 참조 ────────────────────────────────────────────────
- * observation 테이블이 4개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
+ * observation 테이블이 5개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
  * 모든 참조는 { kind, id } 모양이다.
  */
 export const OBSERVATION_KINDS = [
@@ -12,6 +12,11 @@ export const OBSERVATION_KINDS = [
   "observation_health",
   "observation_education",
   "observation_activity",
+  /**
+   * 생활습관(양치 · 수면 등). 서버는 `growth` 분류로 education 과 같이 내려준다 (#266).
+   * 한동안 여기 없어서 routine 이 한 건만 섞여도 07 화면이 렌더링 오류로 멈췄다 (#269).
+   */
+  "observation_routine",
 ] as const;
 export type ObservationKind = (typeof OBSERVATION_KINDS)[number];
 
@@ -21,19 +26,6 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
-  /**
-   * ⚠️ **계약서 v1 의 목록에 없다.** `docs/agents/data_model.md` 의 `suggestion_evidence`
-   *    (`source_kind`) 가 급식 행을 근거로 든다고 적어 뒀는데(2026-09-23 회의 확정) `Ref` 에
-   *    그 종류가 없어서, 그런 응답이 타입에 안 맞는다.
-   *
-   * ⚠️ **어긋나는 것이 이것만이 아니다.** 같은 문서의 `source_kind` 목록에는 `Ref` 에 없는
-   *    종류가 더 있다 — `observation_routine` · `child_growth_log` · `notice` ·
-   *    `food_doc` · `growth_doc` · `activity_doc`. 반대로 `Ref` 의 `health_safety` · `event` ·
-   *    `suggestion` 은 근거로 쓰이지 않는다(`Ref` 는 교정 대상 등 다른 자리에도 쓰인다).
-   *    **근거의 종류를 `Ref` 와 같은 enum 으로 둘 것인지부터** 정해야 한다.
-   *    👉 `apps/api` Owner 협의 대상 (#151).
-   */
-  "daycare_meal",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -55,23 +47,21 @@ export type Agent = (typeof AGENTS)[number];
 /** 승격 상태. LLM 이 직접 쓰지 않는다 — Curator 의 반복 집계로만 바뀐다 (CLAUDE.md §2). */
 export type AffinityState = "candidate" | "confirmed" | "archived";
 
-/** "맞아요" 교정으로 상향된다. */
+/** 고치기(`POST /corrections`)는 이 값을 바꾸지 않는다 — 기록의 `status` 만 내린다. */
 export type ConfidenceSource =
   "institution_notice" | "parent_direct" | "parent_hedged" | "parent_hearsay";
 
 /**
  * 교정 판정 (CLAUDE.md §5 Correction).
  *
- * 🚨 **화면이 쓰는 것과 타입에 있는 것이 다르다.** 여기는 계약서 enum 이라 지난 교정 이력
- *    (`ObservationDetailResponse.corrections`)에 실려 오는 값을 전부 담아야 한다. 어떤 버튼을
- *    보여줄지는 `CorrectionButtons` 의 표가 정한다 — 기록과 기억이 서로 다른 것을 묻는다.
+ * 서버 `correction_verdict` 와 같은 4개다. **대상마다 쓸 수 있는 값이 다르다** — 기록은
+ * `once_only` · `wrong`, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
+ * 어떤 버튼을 보여줄지는 `CorrectionButtons` 의 표가 정한다.
  *
- * ⚠️ `need_more_observation` 은 **계약서 v1 에 아직 없다.** "아직 확정하지 말고 더 지켜보자" 는
- *    기억에만 있는 판정인데 v1 에는 그 자리가 없어서(`once_only` 는 관찰 한 건에 대한 말이다)
- *    제안 형태로 두고 목에 먼저 세웠다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ * 🚨 **`confirm`(맞아요)은 없다.** 동의는 아무것도 바꾸지 않아서 서버가 이력으로도 남기지 않는다
+ *    (docs/agents/data_model.md). 보내면 400 이고, 지난 이력에도 실려 오지 않는다 (#277).
  */
-export type CorrectionVerdict =
-  "confirm" | "once_only" | "need_more_observation" | "outdated" | "wrong";
+export type CorrectionVerdict = "once_only" | "need_more_observation" | "outdated" | "wrong";
 
 export type SuggestionStatus = "draft" | "approved" | "rejected" | "expired";
 
@@ -82,19 +72,24 @@ interface ObservationBase {
   child_id: string;
   raw_text: string;
   confidence_source: ConfidenceSource;
-  status: "active" | "inactive";
+  /** `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다. 화면은 이 값으로 가르지 않는다. */
+  status: "active" | "inactive" | "stand_alone";
   /** observed_range 하한 (YYYY-MM-DD). */
   observed_from: string;
   /** 상한. 무한대 금지. */
   observed_to: string;
   /** "오늘" 같은 표시 문구. 서버가 만든다 — 프론트에서 날짜를 다시 계산하지 않는다. */
   observed_label?: string;
-  source_writer?: { parent_id: string; nickname: string };
+  /** 적은 보호자. 서버는 별명이 없거나 탈퇴해 행이 없으면 `null` 로 보낸다. */
+  source_writer?: { parent_id: string; nickname: string } | null;
   source_notice_id?: string | null;
   created_at?: string;
 }
 
-/** food · education · activity — 승격 파이프라인 안에 있는 3종. */
+/**
+ * food · education · activity — 승격 파이프라인 안에 있는 3종. routine 도 같은 모양으로 온다.
+ * 🚨 routine 은 승격 대상이 아니라 `affinity` 가 늘 `null`, `strong_signals` 가 늘 빈 배열이다.
+ */
 export interface ObservationPromotable extends ObservationBase {
   kind: Exclude<ObservationKind, "observation_health">;
   subject: string;
@@ -182,18 +177,50 @@ export interface HealthSafety {
 
 /* ── Suggestion ───────────────────────────────────────────────────────── */
 
+/**
+ * 근거로 실리는 종류 — **아이 기록 9종뿐이다** (#284 · 서버 `ChildRecordKind`).
+ *
+ * 🚨 **`Ref` 와 따로 둔다.** `Ref` 는 교정 대상 · 홈 하이라이트 · 일정 출처처럼 다른 자리에도 쓰여서
+ *    `health_safety` · `event` · `suggestion` 이 들어 있는데, 그것들은 근거가 아니다. 반대로 근거에만
+ *    있는 종류(`child_growth_log` · `notice` · `daycare_meal`)를 `Ref` 에 더하면 교정 대상으로도
+ *    열린다. 한 enum 이면 어느 쪽이든 틀린 값이 타입을 통과한다.
+ *
+ * 🚨 **문서 행(`food_doc` · `growth_doc` · `activity_doc`)은 없다.** 화면은 `evidence.length` 를
+ *    그대로 "사용한 기록 N건" 으로 보여 주는데, 문서 행이 섞이면 아이 기록이 아닌 것을 기록 건수로
+ *    센다 — "개인화 근거 0행이면 버그" 를 아이 기록으로만 세기로 한 규칙이 화면에서 무너진다
+ *    (최상위 §2). 서버가 응답에서 뺀다.
+ */
+export const EVIDENCE_KINDS = [
+  "observation_food",
+  "observation_health",
+  "observation_education",
+  "observation_activity",
+  "observation_routine",
+  "profile_affinity",
+  "child_growth_log",
+  "notice",
+  "daycare_meal",
+] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
+export interface EvidenceRef {
+  kind: EvidenceKind;
+  id: string;
+}
+
 export interface Evidence {
-  ref: Ref;
+  ref: EvidenceRef;
   label: string;
   observed_to: string;
   confidence_source: ConfidenceSource;
   /**
-   * ⚠️ **계약서 v1 에 아직 없는 필드다.** 6개월 지난 근거는 단독으로 쓰지 않는다는 규칙(NF-08)을
-   *    화면이 보여주려면 이 판정이 필요한데, 프론트는 날짜를 계산하지 않으므로(CLAUDE.md §3)
-   *    서버가 내려줘야 한다. `Affinity.is_stale` 은 있고 `Evidence` 에는 없다 — 계약서 수정 대상.
-   *    서버가 보내기 전까지는 항상 undefined 라서 점선 칩이 나오지 않는다.
+   * 6개월 지난 근거인가 (NF-08). 프론트는 날짜를 계산하지 않으므로(CLAUDE.md §3) 서버가 판정한다 —
+   * `Affinity.is_stale` 과 같은 기준이다 (서버 `app/rules/staleness.py` · #284).
+   *
+   * ⚠️ **`null` 이 올 수 있다.** 서버가 원본 테이블에서 관찰 날짜를 아직 못 읽어서(#301 후속) 판정 전이다.
+   *    화면은 참일 때만 글자를 붙인다 — `null` 을 "최근 기록" 으로 말하지 않는다.
    */
-  is_stale?: boolean;
+  is_stale?: boolean | null;
   /**
    * 그 근거 행에서 **추천 근거로 채택한 내용** ("계란말이 요청 · 지은 적음 · 반복 5회").
    * Agent 가 쓰고 **보호자 화면에 그대로 나간다** (`docs/agents/data_model.md` ·
@@ -204,14 +231,13 @@ export interface Evidence {
    *    할 후보를 UI 가 덮는다** (근거 0건을 그리지 않는 것과 같은 규칙 · CLAUDE.md §2).
    *
    * 🚨 **왜 조립하지 않고 문구로 받나** — 근거는 종류가 여럿이다. 성향(`profile_affinity`)이면
-   *    반복 횟수가 뜻이 있고, 급식 행(`daycare_meal`)이면 "어린이집에서 받음 · 기관 기록" 이고,
-   *    알레르기 규칙이면 "규칙 확인 · 보호자 입력값" 이다. 화면이 종류마다 다른 문장을 조립하려면
+   *    반복 횟수가 뜻이 있고, 급식 행(`daycare_meal`)이면 "어린이집에서 받음 · 기관 기록" 이다.
+   *    화면이 종류마다 다른 문장을 조립하려면
    *    **근거의 의미를 프론트가 알아야** 하고, 그러면 반복 횟수 같은 판단이 화면으로 샌다
    *    (CLAUDE.md §3 — 100% 맞아야 하는 것은 코드가, 그것도 서버가 한다).
    *    `Observation.observed_label` · `Affinity.state_reason` 과 같은 성격이다.
    *
-   * ⚠️ **계약서 v1(§02 `Evidence`)에는 아직 이 필드가 없다.** DB 문서에만 있다 —
-   *    응답에 실어 주는 것까지 확인이 필요하다. 👉 `apps/api` Owner 협의 대상 (#151).
+   * 서버 DTO 에서도 필수다 (#284).
    */
   note: string;
 }
@@ -237,7 +263,8 @@ export interface Suggestion {
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
   feedback: unknown | null;
-  source_refs: Ref[];
+  /** `evidence` 의 `ref` 만 모은 것. 같은 이유로 아이 기록 9종뿐이다 (`EVIDENCE_KINDS`). */
+  source_refs: EvidenceRef[];
   evidence: Evidence[];
 }
 
@@ -310,8 +337,26 @@ export interface HomeResponse {
   >;
   highlight: { text: string; state_reason: string; ref: Ref } | null;
   /** 시각대 규칙(F-15)으로 서버가 만든다 — 모델을 부르지 않는다. */
-  agent_prompts: Array<{ agent: Agent; text: string }>;
+  agent_prompts: Array<{ agent: Agent; text: string; prompt_key: PromptKey }>;
 }
+
+/**
+ * 홈 추천 버튼의 키 (#286). 누르면 05 가 이 키를 추천 요청에 그대로 싣는다.
+ *
+ * 🚨 **문장이 아니라 키다.** Agent 에 넘길 문장("저녁 추천해줘")은 서버가 이 키로 꺼낸다
+ *    (`apps/api/app/rules/home_prompts.py`). 클라이언트가 문장을 보내면 Supervisor 안전
+ *    사전검사를 거치지 않은 문장으로 Agent 가 돈다 (#249). 화면은 키를 만들지도 고치지도 않는다.
+ * 🚨 어느 Agent 와 짝인지는 서버가 검사한다 (표에 없는 조합은 400).
+ */
+export const PROMPT_KEYS = [
+  "breakfast",
+  "lunch",
+  "snack",
+  "dinner",
+  "next_breakfast",
+  "play",
+] as const;
+export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 /* ── 03 홈 · 한 줄 입력 ──────────────────────────────────────────────── */
 
@@ -342,6 +387,8 @@ export interface SuggestionsRequest {
   /** 04 의 offer 에서 넘어온 경우에만 있다. 홈의 agent_prompts 로 들어오면 run 이 없다. */
   run_id?: string;
   agents: Agent[];
+  /** 홈의 `agent_prompts` 로 들어온 경우에만 있다. 그 버튼의 `prompt_key` 그대로다 (#286). */
+  prompt_key?: PromptKey;
 }
 
 /**
@@ -367,12 +414,10 @@ export interface Scarcity {
 }
 
 /**
- * ⚠️ **계약서 v1 에 아직 없는 필드다** (`general`). "근거가 부족하면 개인화 대신 일반 추천을 낸다"
- *    (CLAUDE.md §2)를 화면이 지키려면 실을 데이터가 필요한데, v1 의 `scarcity` 응답은
- *    `suggestions: []` 로 끝난다. 필드 없이 프론트가 또래 기준 추천을 지어내면 규칙을 UI 로
- *    덮는 것이라, 서버가 내려주는 형태로 여기 제안해 두고 목으로 먼저 세웠다.
- *    👉 `apps/api` Owner 협의 대상이다 (최상위 CLAUDE.md §8 "영역 간 인터페이스").
- *    서버가 안 보내면 `general` 이 undefined 라 화면은 예전처럼 질문 1개만 그린다.
+ * `general` — 근거가 부족하면 개인화 대신 나가는 일반 추천 (CLAUDE.md §2 · #284 에서 모양 확정).
+ *    v1 의 `scarcity` 응답은 `suggestions: []` 로 끝나서, 필드 없이 프론트가 또래 기준 추천을
+ *    지어내면 규칙을 UI 로 덮게 된다 — 그래서 서버가 내려준다.
+ *    서버가 안 보내면(`null` · 없음) 화면은 질문 1개만 그린다.
  */
 
 /**
@@ -383,7 +428,7 @@ export interface Scarcity {
  *    계란말이 · 멸치볶음). 그 셋은 서로 다른 제안이 아니라 **한 결정에 대한 대안**이다.
  *    평평한 목록으로 그리면 보호자는 여섯 개의 독립 제안으로 읽고, "무엇을 정하는 중인가" 가 사라진다.
  *
- * ⚠️ **계약서 v1 에 아직 없다.** 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+ * 결과가 살아 있는 Agent 것만 온다 — guard 에 막혔거나 partial 로 실패한 Agent 는 빠진다 (#284).
  *    서버가 안 보내면 화면은 도메인 라벨로만 머리줄을 만들고, 묶임은 **말하지 않는다**.
  */
 export interface SuggestionGroup {
@@ -393,13 +438,15 @@ export interface SuggestionGroup {
    * 무엇을 묻는 중인지는 후보를 만든 쪽만 안다. 프론트가 지어내지 않는다.
    * (03 홈의 `agent_prompts` · 04 의 `offer.label` 과 같은 성격이다.)
    */
-  prompt?: string;
+  prompt?: string | null;
   /**
    * 🚨 **이 묶음에서 고른 것들이 일정 하나로 묶이는가.** `food` 가 그렇다 — 반찬 셋을 골라도
    *    "저녁 식사" 한 건이 된다. 묶는 판단은 도메인 지식이라 서버가 하고, 화면은 **미리 말하기만** 한다.
    *    말하지 않으면 보호자는 3건을 고르고 일정 3건을 기대하는데 1건이 나온다.
+   * 🚨 **서버 상수다** (#284). 초안을 만들 때 food 를 한 건으로 묶는 규칙과 같은 곳에서 꺼낸다 —
+   *    정하는 곳이 둘이면 화면은 "한 건으로 묶여요" 라고 말했는데 초안이 세 건 나올 수 있다.
    */
-  merges_into_one?: boolean;
+  merges_into_one?: boolean | null;
 }
 
 /**
@@ -413,15 +460,15 @@ export interface SuggestionsResponse {
    */
   suggestions: Suggestion[];
   /**
-   * 묶음 머리말. ⚠️ 계약서에 아직 없다 (`SuggestionGroup` 참고).
+   * 묶음 머리말 (`SuggestionGroup` 참고).
    * 🚨 후보를 담지 않는다 — 묶는 것은 화면이 `agent` 로 한다.
    */
-  groups?: SuggestionGroup[];
+  groups?: SuggestionGroup[] | null;
   /**
    * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
-   * 둘이 같이 나오지 않는다). 위 ⚠️ 참고 — 계약서에 아직 없어서 optional 이다.
+   * 둘이 같이 나오지 않는다). 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
-  general?: GeneralSuggestion[];
+  general?: GeneralSuggestion[] | null;
   /** "오늘 급식 · 최근 3일 식사 · 확정 관심 2건" — 무엇을 봤는지. 서버가 만든 문구다. */
   looked_at: string;
   guards: Guard[];
@@ -430,12 +477,15 @@ export interface SuggestionsResponse {
    * 알레르기 사전검사. 🚨 **고르는 화면이 미리 들고 있어야 한다** — 채택 버튼을 누른 그 자리에서
    *    물어야 하고, 그러려면 물어볼 것이 화면에 이미 있어야 한다 (`Precheck` 머리말 · #151).
    *
-   * ⚠️ **계약서에 아직 없다.** 계약서는 이 검사를 초안을 만드는 응답에 실어 뒀는데, 그 자리가
-   *    "일정을 만들기로 한 뒤" 라서 **일정을 안 만들면 영영 안 묻는다.**
-   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
-   *    서버가 안 보내면 빈 배열이고, 화면은 묻지 않는다 — 🚨 **그때는 "확인했다" 고 말하지도 않는다.**
+   * 계약서 초안은 이 검사를 초안을 만드는 응답에 실어 뒀는데, 그 자리가 "일정을 만들기로 한 뒤"
+   *    라서 **일정을 안 만들면 영영 안 묻는다** — 그래서 여기로 옮겼다 (#151 · #284 에서 확정).
+   *
+   * 서버가 따르는 규칙 (#284): `Suggestion.allergens` 중 `health_safety` 에 행이 **없는** 것만
+   *    `unknown_ingredient` 로 묻는다. `active` 인 항목이 든 제안은 묻지 않고 목록에서 아예 빼고,
+   *    `retracted` 인 항목은 묻지 않는다. 물을 것이 없으면 `[]` 다.
+   *    비어 있으면 화면은 묻지 않는다 — 🚨 **그때는 "확인했다" 고 말하지도 않는다.**
    */
-  prechecks?: Precheck[];
+  prechecks?: Precheck[] | null;
 }
 
 /** 되묻는 질문의 답. 관찰 1건으로 저장된다 (confidence_source: parent_direct). */
@@ -625,11 +675,12 @@ export interface Precheck {
   item: string;
   note: string;
   /**
-   * ⚠️ **계약서에 아직 없는 필드다.** 어느 제안 때문에 묻는 것인지 — 여러 개를 고를 수 있게
-   *    되면서 필요해졌다. 없으면 화면은 **재료 하나로 고른 것 전부를 막는다**:
-   *    식사 제안의 알레르기 때문에 놀이 제안까지 못 고르는 것은 규칙이 아니라 버그지만,
-   *    알레르기에서 **덜 막는 쪽으로 기울 수는 없어서** 모르면 전부 막는다.
-   *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
+   * 어느 제안 때문에 묻는 것인지 — 여러 개를 고를 수 있게 되면서 필요해졌다.
+   * 서버 DTO 에서 **필수**다 (#284).
+   *
+   * 🚨 **그래도 타입은 optional 로 둔다.** 없으면 화면은 **재료 하나로 고른 것 전부를 막는다** —
+   *    식사 제안의 알레르기 때문에 놀이 제안까지 못 고르는 것은 버그지만, 알레르기에서
+   *    **덜 막는 쪽으로 기울 수는 없어서** 모르면 전부 막는 경로를 지우지 않는다.
    */
   suggestion_id?: string;
 }
@@ -710,16 +761,19 @@ export interface ObservationsResponse {
   total: number;
 }
 
-/** 관찰 목록 필터. `?domain=` 생략 시 4개 테이블을 observed_to DESC 로 병합한다. */
+/**
+ * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
+ * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
+ */
 export interface ObservationFilters {
   domain?: Agent;
-  /** "제안에서 빠진 기억" — 근거로 쓰인 적 없는 것만. */
-  unused_in_suggestions?: boolean;
+  /** 고른 상태만 (#266). 주지 않으면 deleted 를 뺀 세 상태 모두다. `total` 도 이 기준으로 센다. */
+  status?: ObservationBase["status"];
 }
 
 /**
  * `GET /children/{cid}/observations/{kind}/{id}` — 관찰 상세.
- * 경로에 `kind` 가 들어가는 이유는 테이블이 4개이기 때문이다.
+ * 경로에 `kind` 가 들어가는 이유는 테이블이 5개이기 때문이다.
  */
 export interface ObservationDetailResponse {
   observation: Observation;
@@ -741,7 +795,7 @@ export interface AffinitiesResponse {
 
 /**
  * `POST /corrections` — 관찰이든 프로필이든 같은 엔드포인트.
- * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 422.
+ * 🚨 `target_ref` 는 **객체 1개**다. 배열로 보내면 400 (본문 검증 실패는 400 이다).
  */
 export interface CorrectionRequest {
   target_ref: Ref;
@@ -765,7 +819,7 @@ export interface CorrectionResponse {
 
 /* ── 07 제안 피드백 ──────────────────────────────────────────────────── */
 
-/** `PATCH /suggestions/{sid}/feedback`. 🚨 교정(`CorrectionVerdict`)과 다른 축이다. */
+/** `PATCH /children/{cid}/suggestions/{sid}/feedback`. 🚨 교정(`CorrectionVerdict`)과 다른 축이다. */
 export const SUGGESTION_FEEDBACKS = ["child_liked", "child_disliked", "not_acted"] as const;
 export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
 
@@ -780,11 +834,11 @@ export interface SuggestionFeedbackResponse {
 }
 
 /**
- * ⚠️ **계약서 v1 에 아직 없다.** 계약서 §03 은 07 화면에 `PATCH /feedback` 을 배정했는데
- *    **평가할 제안을 목록으로 얻을 길이 없다.** 프론트가 제안을 지어낼 수는 없으므로
- *    (근거를 달고 나가는 추천이 이 제품의 본체다) 서버가 내려주는 형태로 여기 제안해 두고
- *    목으로 먼저 세웠다. 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
- *    서버가 안 보내면 피드백 탭은 "아직 받은 제안이 없어요" 를 그린다.
+ * `GET /children/{cid}/suggestions` — 07 피드백 탭이 평가할 제안 목록 (#284).
+ *
+ * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다 — 일반 추천은 채택하는 흐름이
+ *    없어서 평가 대상이 아니다. 그래서 `items` 가 `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
+ * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
  */
 export interface SuggestionListResponse {
   items: Suggestion[];
@@ -1182,22 +1236,13 @@ export interface SafetyScanResponse {
 /* ── 11 아이 프로필 ──────────────────────────────────────────────────── */
 
 /**
- * ⚠️ **계약서 v1 에 없다** (이슈 #75 · `apps/api` Owner 협의 + PM 결정 대기).
- *    계약서가 주는 것은 `PATCH /children/{cid}` 의 `nickname` · `birth_date` 둘뿐이고,
- *    읽는 엔드포인트(`GET /children/{cid}`)도 성별도 측정 로그도 없다.
- *    최상위 `CLAUDE.md` §2 의 "수집은 이름(별명)·나이·알레르기 여부까지" 도 함께 걸린다.
- *    그래서 **이 구역의 타입은 전부 목에서만 사는 제안된 모양**이고(아이 프로필 · 측정 기록 ·
- *    측정 기록 고치기까지), 서버가 붙기 전에 이 주석이 지워지면 안 된다 — 지워지는 순간
- *    계약서에 있는 것처럼 보인다.
+ * `ChildProfile` · `UpdateChildRequest` · `UpdateChildResponse` 는 서버 구현이 정본이다
+ * (`GET` · `PATCH /children/{cid}` · PR #334 · Swagger). 🚨 `PATCH` 는 **보낸 필드만** 바꾸고
+ * `null` 은 400 이다 — 세 값 다 늘 값이 있어서 "비우기" 가 없다.
  *
- * 🚨 **성별은 화면 표시 전용으로 제안했다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
- *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다.
- *
- * ⚠️ **"밝히지 않음"(`unspecified`)을 뺐다 — 성별이 필수값이 됐다.** 최상위 CLAUDE.md §2 의
- *    "수집은 이름(별명)·나이·알레르기 여부까지" 를 넘는 쪽으로 한 걸음 더 간 것이라
- *    **#75 의 PM 결정 대상이 하나 늘었다**. 화면 표시 전용이라는 위 제약은 그대로다.
- *    ⚠️ 01 첫 진입은 아직 성별을 받지 않는다 — 새로 만든 아이의 성별을 무엇으로 둘지는
- *    서버 계약과 함께 정해야 한다 (지금은 목이 `male` 로 들고 있다).
+ * 🚨 **성별은 화면 표시 전용이다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
+ *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다
+ *    (서버 `Gender` 도 같은 결정 · 10-10).
  */
 /**
  * 🚨 **`undisclosed` 가 기본값이다** (최상위 `CLAUDE.md` §2 — "성별의 기본값은
@@ -1234,6 +1279,10 @@ export interface UpdateChildResponse {
 
 /**
  * 키 · 몸무게를 **잰 날 한 줄**. 🚨 지표가 아니라 기록이다.
+ *
+ * ⚠️ **여기부터 측정 기록 타입은 아직 목에서만 산다** (`/children/{cid}/growth` · #75).
+ *    서버에는 표(`child_growth_log`)만 먼저 들어갔고 API 는 다음 PR 이다 — 붙기 전에 이 주석을
+ *    지우지 않는다. 지워지는 순간 서버에 있는 것처럼 보인다.
  *
  * 🚨 **증감·백분위·또래 비교 필드를 여기에 만들지 않는다.** `DESIGN.md` 의
  *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, "지난번보다 +2cm" 는 이 제품이

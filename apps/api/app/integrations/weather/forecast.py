@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.core.weather_raw import RawForecast, UpstreamUnavailable, WeatherGrid
-from app.integrations.weather.public_data import get_json, kma_result_code
+from app.integrations.weather.public_data import get_json, result_code
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def slot_for(day: date, now: datetime, slots: Slots) -> Slot | None:
 
 def parse_slots(payload: dict[str, Any]) -> Slots:
     """응답 행을 (예보일, 예보시각) → {SKY · PCP · POP: 원문} 으로. 나머지 종류는 버린다."""
-    code = kma_result_code(payload)
+    code = result_code(payload)
     if code != _OK:
         # NO_DATA 도 여기서는 실패다 — 특보와 달리 예보가 비는 정상 상황이 없다
         raise UpstreamUnavailable(f"단기예보 결과 코드 {code}")

@@ -176,8 +176,15 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:
-    """기피한 대상의 라벨이 이유 문장에 들어 있는가.
+    """기피한 대상이 이유 문장에 들어 있는가 — 화면용 이름(`label`)이나 대조 키(`subject`) 둘 중 하나.
 
-    문장 품질까지는 못 본다. 라벨조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
+    관찰의 label 은 "물감 놀이 하다가 울었음" 같은 문장이라 이유에 그대로 나오지 않는다. 그래서
+    "물감은 피했어요" 처럼 대상(`subject`)만 말해도 밝힌 것으로 본다 (Activity 라이브 eval 에서 찾음 —
+    label 만 보면 맞게 쓴 후보가 계속 거절돼 왕복 상한까지 갔다).
+    문장 품질까지는 못 본다. 대상조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
     """
-    return any(item.label and item.label in reason for item in citations if item.is_avoidance)
+    return any(
+        any(name and name in reason for name in (item.label, item.subject))
+        for item in citations
+        if item.is_avoidance
+    )

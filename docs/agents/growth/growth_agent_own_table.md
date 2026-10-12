@@ -147,7 +147,7 @@ Growth는 **차분만** 계산합니다. 백분위·저성장·정체기 판정�
 | 테이블 | 요청 | 왜 |
 | --- | --- | --- |
 | `notice` | 테이블 신설 (**우선순위 낮음**) | 기관 맥락 연결만 빠짐. 핵심 기능과 무관 |
-| `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | 성장폭 계산 (G-5 닫힘) |
+| `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · 잰 날 `date NOT NULL`. 칸 이름은 10-10 에 `height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (Agent 포트 `Measurement` · 웹 타입과 같게, `data_model.md`) | 성장폭 계산 (G-5 닫힘) |
 | `profile_affinity` | ✅ 확정(09-23) — `domain` 에 `routine` 은 없다 | Growth 는 education · activity 둘을 읽고, 루틴 관찰은 티어 3 로만 인용한다 |
 | `suggestion` | **`kind`만** 추가 · `source_refs` jsonb 제거 → `suggestion_evidence` 테이블 | 개인화/일반 표시 · 근거를 행으로 세기 위해 |
 
