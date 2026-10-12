@@ -240,3 +240,26 @@ async def test_PublicWeather_는_Activity_날씨_포트다():
     assert all(
         callable(getattr(source, name)) for name in ("forecast", "air_quality", "uv", "advisories")
     )
+
+
+async def test_PublicWeather_는_하나가_못_닫혀도_나머지를_닫는다():
+    source = PublicWeather(transport=httpx.MockTransport(Recorder(None)))
+    forecast_client = source._forecast._client
+    closed: list[str] = []
+
+    async def broken() -> None:
+        raise RuntimeError("닫기 실패")
+
+    source._forecast.aclose = broken  # 첫 번째가 실패한다
+    for name in ("_air", "_uv", "_advisories"):
+        part = getattr(source, name)
+        original = part.aclose
+
+        async def close(original=original, name=name) -> None:
+            closed.append(name)
+            await original()
+
+        part.aclose = close
+    await source.aclose()
+    assert closed == ["_air", "_uv", "_advisories"]
+    await forecast_client.aclose()  # 실패로 바꿔 둔 첫 번째는 직접 닫는다

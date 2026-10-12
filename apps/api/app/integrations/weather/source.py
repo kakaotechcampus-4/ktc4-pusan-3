@@ -4,6 +4,7 @@
 따로 실패한다 — 하나가 죽어도 나머지는 온다 (D8). 묶기만 하고 아무것도 해석하지 않는다.
 """
 
+import logging
 from collections.abc import Callable
 from datetime import date, datetime
 
@@ -14,6 +15,8 @@ from app.integrations.weather.advisories import KmaAdvisories
 from app.integrations.weather.air import AirKorea
 from app.integrations.weather.forecast import KmaForecast
 from app.integrations.weather.uv import KmaUv
+
+log = logging.getLogger(__name__)
 
 
 class PublicWeather:
@@ -29,8 +32,16 @@ class PublicWeather:
         self._advisories = KmaAdvisories(transport=transport, now=now)
 
     async def aclose(self) -> None:
+        """넷을 다 닫는다. 하나가 실패해도 나머지는 닫는다 — 클라이언트가 남지 않게 (#346 리뷰)."""
         for part in (self._forecast, self._air, self._uv, self._advisories):
-            await part.aclose()
+            try:
+                await part.aclose()
+            except Exception as error:  # 닫기 실패는 종류만 남긴다 — 문구에 주소가 들 수 있다
+                log.warning(
+                    "날씨 어댑터 닫기 실패 part=%s error=%s",
+                    type(part).__name__,
+                    type(error).__name__,
+                )
 
     async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
         return await self._forecast.forecast(grid=grid, day=day)
