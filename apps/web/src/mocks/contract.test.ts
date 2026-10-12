@@ -2069,9 +2069,13 @@ describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
     expect(after.nickname).toBe("민서");
   });
 
-  it("빈 별명은 422 다 — 이름 없는 아이를 만들지 않는다", async () => {
-    await expect(api.patch("/children/c1", { nickname: "   " })).rejects.toSatisfy((e: unknown) =>
-      isApiError(e, "validation_failed"),
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it.each([
+    ["빈 별명", "   "],
+    ["21자 별명", "가".repeat(21)],
+  ])("%s 은 400 이다 — 서버 `Nickname` 과 같은 범위", async (_, nickname) => {
+    await expect(api.patch("/children/c1", { nickname })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
   });
 });

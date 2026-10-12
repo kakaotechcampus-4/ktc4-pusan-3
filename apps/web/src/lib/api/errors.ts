@@ -42,7 +42,7 @@ export const API_ERROR_CODES = [
   //    확인받는다. 대기표(`consent_code`)는 살아 있어서 로그인부터 다시 하지 않는다
   //    (`docs/api/auth-kakao-v1.md` §3-5).
   "policy_version_invalid",
-  "validation_failed", // 422
+  "validation_failed", // 400 바디 · 422 경로 값 (서버 `app/api/errors.py` · 명세 §8-1)
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
 ] as const;
 
