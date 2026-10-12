@@ -98,7 +98,9 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
       안전 필터는 이 값을 쓴다 — 다시 읽지 않는다 (SafetyReader 설명).
     - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다.
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
-    - `has_location` 은 좌표가 있는가. 없으면 장소 조회가 닫힌다.
+    - `has_location` 은 장소 조회를 열 수 있는가 — 좌표와 장소 포트가 둘 다 있어야 한다. 좌표만
+      있고 포트가 없으면(장소 어댑터를 아직 주입하지 않음) 열면 tool 이 죽는다. 없으면 장소 조회가
+      닫히고 프롬프트도 "위치를 모른다" 로 간다.
     - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
       좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
@@ -125,6 +127,6 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
         consent_child_health=consent,
         safety_ok=safety_ok,
         allergy_states=allergy_states,
-        has_location=context.location is not None,
+        has_location=context.location is not None and ports.places is not None,
         outdoor_ok=outdoor_ok,
     )

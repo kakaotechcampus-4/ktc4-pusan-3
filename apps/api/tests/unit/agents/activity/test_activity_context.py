@@ -15,7 +15,7 @@ import pytest
 from app.agents.activity.agent import run
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.readouts import READOUTS
-from app.agents.activity.store.inmemory import InMemorySafety, in_memory_ports
+from app.agents.activity.store.inmemory import InMemoryPlaces, InMemorySafety, in_memory_ports
 from app.agents.activity.store.ports import CoarseLocation, SafetyEntry, WeatherGrid
 from app.agents.common.schemas.task import DomainTask
 
@@ -102,9 +102,14 @@ class TestBuildGate:
         assert context().grid == WeatherGrid(nx=98, ny=76)
 
     async def test_야외_판정은_호출부가_넘긴_값이다(self):
-        gate = await build_gate(context(), outdoor_ok=False)
+        gate = await build_gate(context(places=InMemoryPlaces()), outdoor_ok=False)
         assert gate.outdoor_ok is False
         assert gate.has_location is True
+
+    async def test_좌표가_있어도_장소_포트가_없으면_장소_조회를_열지_않는다(self):
+        """장소 어댑터를 아직 주입하지 않은 서버에서 tool 이 죽지 않게 (라이브 eval 에서 찾음)."""
+        gate = await build_gate(context(), outdoor_ok=True)
+        assert gate.has_location is False
 
 
 class TestClosedRun:
