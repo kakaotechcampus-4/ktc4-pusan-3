@@ -20,6 +20,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
+from types import MappingProxyType
 from typing import Protocol
 
 from app.agents.common.reference import allergen_groups, allergen_terms
@@ -44,10 +45,26 @@ NameRule = tuple[str, Restriction, tuple[str, ...]]
 # 놀이 · 교육 문장(Activity · Growth)에서 대조하는 한 글자 이름 (#261 · #305). 그 밖의 한 글자는
 # 사전 별칭이든 보호자가 적은 이름이든 문장에 대조하지 않는다 — "밀" · "게" · "굴" · "닭" 은
 # "공 밀기" · "카드 게임" · "굴리기" · "닭 그림" 이, 강아지 알레르기를 적은 "개" 는 "블록 3개" 가
-# 걸린다. 이 네 글자는 놀이 문장에서도 거의 그 음식이다("콩주머니" 에는 실제 콩이 든다).
-# 메뉴를 보는 Food 는 자기 목록(`food/tools/safety.SINGLE_CHAR_FOODS`)을 쓰고, 이 네 글자도
-# 다 막는다(잣 · 콩 · 깨는 사전 이름, 쑥은 그 목록).
-SINGLE_CHAR_NAMES = frozenset({"잣", "콩", "깨", "쑥"})
+# 걸린다. 이 글자들은 놀이 문장에서도 거의 그것이다 — "콩주머니" 에는 실제 콩이 들고, 쌀 촉감놀이 ·
+# 팥 주머니(오자미)도 영아 놀이로 흔하다. 꽃은 보호자가 그 한 글자로 적었으면 꽃(꽃가루) 알레르기로
+# 보고 꽃 활동을 막는다(#341 리뷰 — #264 의 "애매하면 막는다").
+#
+# 값은 그 글자가 다른 뜻으로 나오는 자리(guard)다. 보호자가 적은 이름을 글자 그대로 대조할 때
+# 붙인다 — 사전 이름(잣 · 콩)은 사전의 guard 를 쓴다. 그 글자가 든 같은 것(찹쌀 · 꽃가루)은
+# guard 에 넣지 않는다(막는 쪽). 쌀의 좁쌀 · 보리쌀은 Food 사전(food_safety_terms.yaml)의 쌀과 같다.
+# 메뉴를 보는 Food 는 자기 목록(`food/tools/safety.SINGLE_CHAR_FOODS`)을 쓰고, 이 글자들도
+# 다 막는다(잣 · 콩 · 깨 · 쌀 · 팥은 Food 사전 이름, 쑥 · 꽃은 그 목록).
+SINGLE_CHAR_NAMES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "잣": (),
+        "콩": (),
+        "깨": ("깨끗", "깨우", "깨워", "깨면", "깨진", "깨지", "깨져", "으깨"),
+        "쑥": ("쑥쑥",),
+        "쌀": ("쌀쌀", "좁쌀", "보리쌀"),
+        "팥": (),
+        "꽃": ("꽃게", "불꽃", "눈꽃", "꽃샘"),
+    }
+)
 
 
 @dataclass(frozen=True)

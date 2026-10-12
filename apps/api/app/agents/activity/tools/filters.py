@@ -24,8 +24,8 @@ from app.rules.term_match import Term, match_fields, normalize
 # 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
 # 사전을 그대로 쓴다("에그" 로 등록하면 난류다).
 #
-# 한 글자 이름은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥)만 쓴다.
-# Growth 의 등록 이름 대조와 같은 목록이다 (#261 · #298 리뷰 · #305).
+# 한 글자 이름은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만
+# 그 guard 와 함께 쓴다. Growth 의 등록 이름 대조와 같은 목록이다.
 # 두 글자 이상이어도 놀이 문장에서 다른 뜻으로 읽히는 별칭 (#261 리뷰 — "플라스틱 포크" ·
 # "에그 쉐이커" · "밀크 카톤" · "피치색 물감" · "전복 모양" · "돼지저금통")
 EXCLUDED_ALIASES = frozenset({"포크", "에그", "밀크", "피치", "전복", "돼지"})
@@ -60,7 +60,8 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
       "우유 알레르기" · "우유, 계란" · "Milk" 도 19종 코드가 되고, 묶음 이름("갑각류")은 게 ·
       새우로 펼친다. 19종은 사전의 별칭과 guard 로 넓혀 대조한다 — "밀" 로 등록하면 "밀가루 점토"
       도 걸린다.
-    - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다.
+    - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다. 허용 목록의 한 글자(쌀)는 그
+      guard 와 함께 대조한다 — "쌀쌀한 날씨" 는 걸리지 않는다.
     - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다.
     """
     canonical = _canonical_allergens()
@@ -77,7 +78,10 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
         named, rest = read_label(entry.label, book)
         terms = [canonical.get(str(code)) for code in sorted(named.codes)]
         terms += [_for_activity(term) for term in named.terms]
-        literal = [_for_activity(Term(key=word, aliases=(word,))) for word in rest]
+        literal = [
+            _for_activity(Term(key=word, aliases=(word,), guards=SINGLE_CHAR_NAMES.get(word, ())))
+            for word in rest
+        ]
         if entry.kind == "allergy":
             for term in literal:
                 add(registered, term)
