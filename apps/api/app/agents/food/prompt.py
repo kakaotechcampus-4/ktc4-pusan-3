@@ -62,13 +62,20 @@ _OUTPUT_TOOL: dict[FoodTaskType, str] = {
 
 def _instructions(task_type: FoodTaskType) -> str:
     tool = _OUTPUT_TOOL[task_type]
-    return (
-        "[지시]\n"
+    lines = [
+        "[지시]",
         '- 숫자 뒤에 %·g·mg·kcal 이 붙은 표현과 "퍼센트"·"칼로리" 를 쓰지 않는다. '
-        "구간(낮은 편 · 적당 · 높은 편)으로만 말한다.\n"
-        "- 수치는 내부 계산에만 쓴다. 화면에는 구간과 식품군만 나간다.\n"
-        f"- 마지막에 tool 을 한 번 부른다. 이번 task 의 출력 tool 은 {tool} 다."
-    )
+        "구간(낮은 편 · 적당 · 높은 편)으로만 말한다.",
+        "- 수치는 내부 계산에만 쓴다. 화면에는 구간과 식품군만 나간다.",
+    ]
+    if task_type == FoodTaskType.NUTRIENT_ANALYSIS:
+        lines.append(
+            "- lookup_nutrition · compare_diet_balance 가 식사 기록을 직접 읽어 구간을 낸다. "
+            "search_food_memory · analyze_meal_records · check_repeated_menus 를 먼저 부르지 "
+            "않아도 된다."
+        )
+    lines.append(f"- 마지막에 tool 을 한 번 부른다. 이번 task 의 출력 tool 은 {tool} 다.")
+    return "\n".join(lines)
 
 
 def _examples(examples: tuple[FoodDocRow, ...]) -> str:
