@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import pytest
 
 from app.agents.common.allergy import (
+    SINGLE_CHAR_NAMES,
     Restriction,
     make_book,
     non_food_allergies,
@@ -232,6 +233,17 @@ def test_shared_name_rules_attach_group_foods_for_every_member() -> None:
 
     assert lobster in book.names["갑각류"].terms
     assert {sea, lobster} <= set(book.names["해산물"].terms)
+
+
+def test_single_char_names_guards_cover_the_name() -> None:
+    # guard 는 그 글자가 나온 자리를 덮어야 뜻이 있다. 글자가 없는 guard 는 아무것도 풀지 않는다
+    assert all(len(name) == 1 for name in SINGLE_CHAR_NAMES)
+    assert [
+        (name, guard)
+        for name, guards in SINGLE_CHAR_NAMES.items()
+        for guard in guards
+        if name not in guard
+    ] == []
 
 
 @dataclass(frozen=True)

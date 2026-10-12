@@ -966,7 +966,7 @@ def test_한_글자_식품은_메뉴의_알레르기_이름_표에_붙지_않는
 
 
 def test_놀이_교육_문장의_한_글자_허용_목록도_Food_가_다_막는다() -> None:
-    # Activity · Growth 가 문장에서 대조하는 한 글자(잣 · 콩 · 깨 · 쑥)는 Food 도 막는다 — 셋이 같은
+    # Activity · Growth 가 문장에서 대조하는 한 글자(SINGLE_CHAR_NAMES)는 Food 도 막는다 — 셋이 같은
     # 판정이다(#305 · #320 리뷰 4번). 사전 이름이거나 SINGLE_CHAR_FOODS 에 있다
     book = food_book()
     assert [

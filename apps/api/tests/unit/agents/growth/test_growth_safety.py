@@ -266,7 +266,7 @@ class TestDefaultRules:
         [
             ("밀가루 점토 만들기", "밀"),  # 19종은 사전 별칭으로 넓힌다
             ("라텍스 장갑 끼기", "라텍스 알레르기"),  # 꼬리말을 뗀 이름으로 찾고, 행은 적은 그대로
-            ("쑥 캐기", "쑥"),  # 한 글자는 허용 목록(잣 · 콩 · 깨 · 쑥)만 — Activity 와 같다
+            ("쑥 캐기", "쑥"),  # 한 글자는 허용 목록(`SINGLE_CHAR_NAMES`)만 — Activity 와 같다
             ("꽃가루 모으기", "꽃가루"),
         ],
     )
@@ -320,7 +320,7 @@ class TestDefaultRules:
         ],
     )
     def test_띄어_쓴_이름에서_떨어진_한_글자로는_막지_않는다(self, rules, kind, label, text):
-        """한 글자는 허용 목록(잣 · 콩 · 깨 · 쑥)만 본다 — Activity 와 같은 판정이다 (#305).
+        """한 글자는 허용 목록(`SINGLE_CHAR_NAMES`)만 본다 — Activity 와 같은 판정이다 (#305).
         털 · 곳으로 막으면 과차단이다."""
         assert rules.registered_names(text, [SafetyEntry(kind, label, "active")]) == ()
 
@@ -332,8 +332,8 @@ class TestDefaultRules:
         assert verdict.allowed
 
     def test_잣_등록_아이의_잣_까기는_막는다(self, rules):
-        """#261 에서 열어 둔 비대칭 — Activity 는 막고 Growth 는 놓쳤다. 허용 목록(잣 · 콩 · 깨 ·
-        쑥)의 한 글자는 사전 별칭이어도 대조한다 (#305)."""
+        """#261 에서 열어 둔 비대칭 — Activity 는 막고 Growth 는 놓쳤다. 허용 목록
+        (`SINGLE_CHAR_NAMES`)의 한 글자는 사전 별칭이어도 대조한다 (#305)."""
         entries = [SafetyEntry("allergy", "잣", "active")]
         assert rules.registered_names("잣 까기", entries)
         assert rules.registered_names("잣가루 뿌리기", entries)
@@ -342,6 +342,29 @@ class TestDefaultRules:
         """콩주머니에는 실제 콩이 든다 — Activity 와 같은 허용 목록이다 (#305)."""
         entries = [SafetyEntry("allergy", "콩", "active")]
         assert rules.registered_names("콩주머니 던지기", entries)
+
+    @pytest.mark.parametrize(
+        ("label", "text", "blocked"),
+        [
+            ("쌀", "쌀 촉감놀이", True),
+            ("팥", "팥 주머니 던지기", True),
+            ("꽃", "꽃과 풀 가까이서 보기", True),
+            ("쌀", "쌀쌀한 날씨에 산책", False),
+            ("꽃", "불꽃놀이 그림 그리기", False),
+            ("깨", "깨끗이 손 씻기", False),
+            ("깨", "잠이 깨면 기지개 켜기", False),
+            ("깨", "깨진 컵 치우기", False),
+            ("깨", "바나나 으깨기", False),
+            ("쑥", "키가 쑥쑥 자라는 스트레칭", False),
+            ("쌀", "쌀쌀한 날 쌀 촉감놀이", True),  # guard 는 그 자리만 덮는다
+            ("쑥", "쑥쑥 자라는 쑥 캐기", True),
+        ],
+    )
+    def test_쌀_팥_꽃도_Activity_와_같은_허용_목록이다(self, rules, label, text, blocked):
+        """#341 리뷰 — 사전에 없는 한 글자라 이 PR 에서 확인 문구만 붙고 통과하던 것을 막는다.
+        다른 뜻인 자리("쌀쌀한" · "깨끗이" · "쑥쑥")는 `SINGLE_CHAR_NAMES` 의 guard 가 덮는다."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert bool(rules.registered_names(text, entries)) is blocked
 
     def test_사전에_없는_한_글자는_글자_그대로_대조하지_않는다(self, rules):
         """강아지 알레르기를 "개" 로 적어도 "블록 3개" 를 막지 않는다 — Activity 와 같다 (#305 ·
