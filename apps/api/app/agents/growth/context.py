@@ -55,7 +55,7 @@ class GrowthContext:
     now: datetime  # timezone이 붙은 현재 시각
     timezone: tzinfo
     ports: GrowthPorts
-    # 안전 사전을 읽는 함수. 기본은 develop 의 사전으로 만든 임시 구현이다 (tools/safety.py)
+    # 안전 사전을 읽는 함수. 기본은 사전과 공용 판정으로 만든 load_safety_rules (tools/safety.py)
     safety_rules: Callable[[], SafetyRules] = load_safety_rules
     state: GrowthRunState = field(default_factory=GrowthRunState)
 

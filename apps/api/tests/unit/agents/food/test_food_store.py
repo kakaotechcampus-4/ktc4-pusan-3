@@ -21,6 +21,7 @@ from app.agents.food.store import (
     InMemoryDaycareMeals,
     InMemoryMenuCatalog,
     InMemoryMenuSource,
+    InMemoryProfile,
     InMemorySafety,
     Measurement,
     MenuCatalogRow,
@@ -29,7 +30,9 @@ from app.agents.food.store import (
     SafetyEntry,
     SafetyLookupError,
     in_memory_ports,
+    unwired_ports,
 )
+from app.core.mfds_nutri_raw import RawNutriRow
 
 CHILD = UUID(int=1)  # 아이 A
 OTHER_CHILD = UUID(int=2)  # 아이 B
@@ -307,6 +310,33 @@ async def test_menu_catalog_put_은_이미_있는_행을_덮지_않는다() -> N
     assert await store.all_resolved() == [manual]
 
 
+# ── menu catalog: 레시피 행은 받지 않는다 (#326 리뷰 — recipe_catalog 로 뗐다) ─────
+# 레시피 재료가 menu_catalog 에 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1).
+# DB 는 CHECK 로 막고, 가짜 저장소도 같은 규칙으로 막는다
+def _recipe_row() -> MenuCatalogRow:
+    return MenuCatalogRow(
+        menu_key="된장찌개",
+        display_name="된장찌개",
+        source="mafra_recipe",
+        resolved=True,
+        synced_at=NOW,
+        ingredients=("된장", "멸치"),
+    )
+
+
+async def test_menu_catalog_put_은_레시피_행을_받지_않는다() -> None:
+    store = InMemoryMenuCatalog()
+
+    with pytest.raises(ValueError, match="recipe_catalog"):
+        await store.put(_recipe_row())
+    assert await store.get("된장찌개") is None
+
+
+def test_menu_catalog_는_레시피_행으로_시작할_수_없다() -> None:
+    with pytest.raises(ValueError, match="recipe_catalog"):
+        InMemoryMenuCatalog([_recipe_row()])
+
+
 # menu catalog: get_many 는 조회 한 번으로 여러 메뉴를 읽는다
 async def test_menu_catalog_get_many_는_있는_행만_menu_key_로_돌려준다() -> None:
     kimchi = MenuCatalogRow(
@@ -356,9 +386,23 @@ async def test_menu_source_fail_이면_MenuSourceError() -> None:
     source = InMemoryMenuSource(fail=True)
 
     with pytest.raises(MenuSourceError):
-        await source.nutrition(name="김치찌개")
+        await source.nutrition_rows(name="김치찌개")
     with pytest.raises(MenuSourceError):
         await source.ingredients(name="김치찌개")
+
+
+async def test_menu_source_영양_행은_원문_그대로_돌려준다() -> None:
+    # 어느 행을 쓸지는 Agent(nutrition_source) 가 정한다 — 포트는 이름이 달라도 걸린 행을 다 준다
+    exact = RawNutriRow(food_code="A", name="된장찌개", db_group="음식", db_class="품목대표")
+    variant = RawNutriRow(food_code="B", name="된장찌개_두부", db_group="음식", db_class="품목대표")
+    source = InMemoryMenuSource(nutrition_rows_by_name={"된장찌개": [exact, variant]})
+
+    assert await source.nutrition_rows(name="된장찌개") == (exact, variant)
+
+
+async def test_menu_source_영양_행이_없으면_빈_튜플() -> None:
+    # 장애(MenuSourceError)와 다르다 — 정말 없음이다
+    assert await InMemoryMenuSource().nutrition_rows(name="없는메뉴") == ()
 
 
 async def test_menu_source_레시피_없음은_None() -> None:
@@ -383,6 +427,40 @@ def test_in_memory_ports_는_override_를_받는다() -> None:
 
     assert ports.safety is safety
     assert isinstance(ports.daycare, InMemoryDaycareMeals)
+
+
+# unwired_ports: 포트를 안 넘긴 run 의 기본값 — "동의 있음 + 알레르기 0행" 이 아니다
+def test_unwired_ports_의_필드가_FoodPorts_필드와_같다() -> None:
+    ports = unwired_ports()
+
+    assert isinstance(ports, FoodPorts)
+    assert {f.name for f in fields(ports)} == {f.name for f in fields(FoodPorts)}
+
+
+async def test_unwired_ports_는_안전_조회가_실패한다() -> None:
+    ports = unwired_ports()
+
+    # 빈 목록으로 읽히면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다
+    with pytest.raises(SafetyLookupError):
+        await ports.safety.food_safety(child_id=CHILD)
+
+
+async def test_unwired_ports_는_동의가_있어야_안전_조회가_실패한_것으로_닫힌다() -> None:
+    # 동의가 없으면 build_gate 가 health_safety 를 아예 읽지 않아 실패가 드러나지 않는다.
+    # 그래서 기본값은 "동의 있음" + "조회 실패" 짝이어야 한다
+    ports = unwired_ports()
+
+    assert await ports.consent.child_health_granted(child_id=CHILD) is True
+
+
+async def test_unwired_ports_는_다른_포트를_override_로_받는다() -> None:
+    profile = InMemoryProfile({CHILD: date(2024, 9, 27)})
+
+    ports = unwired_ports(profile=profile)
+
+    assert ports.profile is profile
+    with pytest.raises(SafetyLookupError):
+        await ports.safety.food_safety(child_id=CHILD)
 
 
 def test_영양_구간을_저장하는_포트가_없다() -> None:

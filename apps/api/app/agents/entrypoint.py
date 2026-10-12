@@ -9,7 +9,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.agents.food.context import FoodContext
-from app.agents.food.store import InMemoryProfile, in_memory_ports
+from app.agents.food.store import InMemoryProfile, unwired_ports
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
@@ -148,10 +148,11 @@ async def handle_input(
     # Food 포트는 아직 DB 에 연결되지 않았다. birth_date 를 InMemoryProfile 에 심어
     # build_gate 가 LifeStage 를 계산하게 하고, 기억 포트는 같은 run 의 store 를 읽게 한다.
     # 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
-    # 나머지 포트는 빈 기본값이다.
-    # TODO: 실제 DB 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다.
+    # 안전 조회는 실패하는 기본값이다 — 포트를 안 넘긴 run 이 "알레르기 0행" 으로 열리면
+    # 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다. Food 는 blocked.safety 로 닫힌다.
+    # TODO: 실제 DB 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다 (issue4).
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
-    food_ports = in_memory_ports(
+    food_ports = unwired_ports(
         profile=InMemoryProfile({child_id: resolved_birth_date}),
         memory=StoreFoodMemory(store),
     )

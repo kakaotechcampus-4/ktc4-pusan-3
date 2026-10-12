@@ -15,8 +15,9 @@
     급식 행 없음  닫힘
 
 
-- `meal_recommendation`은 `safety_ok=False`면 단계와 무관하게 닫힌다(`blocked.safety`) —
-  알레르기 필터를 걸 수 없어서다. `nutrient_analysis`·`daycare_meal`은 영향받지 않는다.
+- `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
+  알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
+  안내를 내서 식단 추천과 같이 닫고, `daycare_meal`은 영향받지 않는다.
 - `consent_child_health`는 어느 라벨도 닫지 않는다. 동의가 없으면 `build_gate`가
   `health_safety`를 읽지 않고 `context.state.safety` 를 빈 튜플로 둘 뿐이다.
 - `(daycare)`는 `toddler`·`preschool` 에서만, 급식 행이 있을 때만 더해지는 tool이다.
@@ -128,7 +129,10 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
             return "blocked.safety"
         return None
     if task == FoodTaskType.NUTRIENT_ANALYSIS:
-        return "unsupported.infant_nutrient" if stage in _INFANT_STAGES else None
+        if stage in _INFANT_STAGES:
+            return "unsupported.infant_nutrient"
+        # 영양 안내가 식품군("달걀 반찬 늘리기")을 말하므로, 걸러 낼 알레르기를 모르면 열지 않는다
+        return None if gate.safety_ok else "blocked.safety"
     if task == FoodTaskType.DAYCARE_MEAL:
         return None if gate.data.daycare_meal else "closed.no_daycare"
     raise AssertionError(f"모르는 FoodTaskType: {task}")  # pragma: no cover

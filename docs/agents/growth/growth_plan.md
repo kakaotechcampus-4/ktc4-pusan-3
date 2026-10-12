@@ -248,4 +248,4 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 
 ## 13. 열린 항목
 
-G-3 · G-7 · 루틴 닫힘 "약" 한 글자 별칭의 오탐 측정(목록 자체는 10-09 확정, [`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · 공용 `level_at` 으로 승격 옮기기(별도 이슈) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
+G-3 · G-7 · 루틴 닫힘 "약" 한 글자 별칭의 오탐 측정(목록 자체는 10-09 확정, [`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
