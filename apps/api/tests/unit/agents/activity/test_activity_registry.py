@@ -177,6 +177,5 @@ class TestExecuteTool:
         assert result.error["code"] == ErrorCode.INVALID_ARGS
 
     async def test_통과하면_핸들러까지_간다(self):
-        """지금 핸들러는 mock 이다. 예외를 삼키지 않고 그대로 올린다."""
-        with pytest.raises(NotImplementedError):
-            await execute_tool("lookup_schedule", {}, context(), allowed=BASE)
+        result = await execute_tool("lookup_schedule", {}, context(), allowed=BASE)
+        assert (result.success, result.resource) == (True, "lookup_schedule")

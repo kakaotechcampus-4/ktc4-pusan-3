@@ -29,6 +29,11 @@ class Settings(AgentLLMSettings):
     # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
     DATA4LIBRARY_AUTH_KEY: str = ""
 
+    # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회(어댑터는
+    # 아직 없음)와 공휴일 굽기(scripts/bake_holidays.py)가 같이 쓴다. 날씨 어댑터는 비어 있으면
+    # 조회 실패와 같게 본다 — "맑음"으로 채우지 않는다 (Activity D8)
+    DATA_GO_KR_SERVICE_KEY: str = ""
+
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
