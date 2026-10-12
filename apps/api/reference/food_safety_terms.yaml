@@ -1,0 +1,358 @@
+source: Food 안전 필터의 음식 어휘 — 표시기준 19종이 든 음식 · 19종 밖 알레르기 식품 · 묶음의 19종 밖 식품 · 연령 · 아이 금지 식품
+version: "1"
+fetched_at: 2026-10-07
+# Food 만 읽는다. 알레르기 자체의 이름은 공용 allergen_terms.yaml 에 있다.
+#
+# 원칙
+#   - 막는 쪽이 이긴다. 넣을지 애매하면 넣는다. guard 에는 그 성분이 확실히 없는 것만 넣는다.
+#   - 요리 이름은 그 요리의 주재료가 늘 그 성분일 때만 넣는다(소면 · 우동 → 밀). 재료가 그때그때
+#     다른 요리(떡볶이 · 김치 · 비빔밥)는 넣지 않는다 — 레시피 재료로 잡고, 재료를 모르면 unchecked 다.
+#   - 그 음식에 늘 들어가는 성분만 code_foods(확실)에 넣는다(소면 → 밀, 짜장 · 춘장 → 밀).
+#     제품마다 들어가기도 안 들어가기도 하는 성분은 varies_foods 에 넣는다(간장 → 밀).
+#     varies_foods 를 풀기 전에 제품 표시로 대조한다. 애매하면 code_foods 다.
+#   - 교차반응(오징어 ↔ 문어)은 코드로 넓히지 않는다. 코드는 표시기준의 그 항목만 뜻해야 추천의
+#     allergens 가 거짓이 되지 않는다. 넓게 막을 때는 보호자가 묶음 이름(연체류)으로 등록한다.
+
+# 19종 코드 → 그 성분이 든 음식. 메뉴명 · 재료를 훑어 코드를 붙인다. 보호자가 이 이름으로 등록해도 그 코드로 읽는다.
+code_foods:
+  - code: 1
+    foods: [마요, 지단, 오믈렛, 오므라이스, 스크램블, 머랭, 마카롱, 커스터드, 카스타드, 카스텔라, 카스테라, 타르타르, 동그랑땡, 프렌치토스트]
+    guards: []
+  - code: 2
+    foods: [크림, 라떼, 라테, 유당, 락토스, 요플레, 치즈케이크, 모짜렐라, 모차렐라, 파마산, 파르메산, 리코타, 마스카포네, 고르곤졸라, 까망베르, 카망베르, 체다, 야쿠르트, 요쿠르트, 그라탕, 그라탱, 까르보나라, 카르보나라, 피자, cream]
+    guards: [피자소스]
+  - code: 3
+    foods: [소바, 냉면, 막국수]
+    guards: []
+  - code: 5
+    foods: [청국장, 낫또, 나또, 유부, 비지, 메주, 춘장, 짜장, 쌈장, 고추장, 미소, 에다마메, 템페, 자장]
+    guards: []
+  # 장류 · 어묵 · 카레의 밀은 제품마다 달라 varies_foods 에 있다. 짜장 · 춘장은 여기(확실)다
+  - code: 6
+    foods: [빵, 빵가루, 강력분, 중력분, 박력분, 세몰리나, 듀럼, 쿠스쿠스, 소면, 중면, 국수, 칼국수, 우동, 라면, 라멘, 쫄면, 짬뽕, 냉면, 파스타, 스파게티, 마카로니, 펜네, 링귀니, 라자냐, 뇨끼, 수제비, 만두, 교자, 딤섬, 춘권, 케이크, 쿠키, 비스킷, 크래커, 과자, 도넛, 도너츠, 베이글, 머핀, 와플, 팬케이크, 핫케이크, 크레페, 또띠아, 토르티야, 피자, 호떡, 부침개, 튀김, 춘장, 짜장, 자장, 막국수, 바게트, 바게뜨, 크루아상, 크로와상, 크로아상, 카스텔라, 카스테라, 샌드위치, 토스트, 버거, 핫도그, 돈가스, 돈까스, 돈카츠, 카츠, 크로켓, 고로케, 동그랑땡, 스콘, 브라우니, 마들렌, 타르트, 파이, 츄러스, 추로스, 브리오슈, 치아바타, 포카치아, 크루통, 미트볼, 너겟, 너깃, 커틀릿]
+    guards: [피자치즈, 피자소스, 라이스버거, 밥버거, 스파이스, 스파이시]
+  - code: 7
+    foods: [고갈비]
+    guards: []
+  - code: 9
+    foods: [감바스]
+    guards: []
+  - code: 10
+    foods: [돈가스, 돈카츠, 제육, 베이컨, 햄, 소시지, 소세지, 비엔나, 족발, 보쌈, 수육, 순대, 항정살, 앞다리살, 뒷다리살, 갈매기살, 오겹살, 가브리살, 머릿고기, 차슈, 탕수육, 스팸, 라드, 갈비, 한돈, 돈등심, 돈안심, 삼겹]
+    guards: [닭갈비, 고갈비, 우삼겹]
+  - code: 12
+    foods: [케찹, 마리나라]
+    guards: []
+  - code: 15
+    foods: [삼계탕, 백숙, 너겟, 오골계, 영계]
+    guards: []
+  - code: 16
+    foods: [사골, 우둔, 양지, 사태, 차돌, 채끝, 부채살, 안창살, 업진살, 우삼겹, 육회, 육포, 불고기, 우족, 도가니, 곰탕, 설렁탕, 육개장, 스테이크, 수육, 갈비]
+    guards: [닭갈비, 고갈비]
+  - code: 17
+    foods: [진미채, 칼라마리, 깔라마리]
+    guards: []
+  - code: 18
+    foods: [바지락, 가리비, 재첩, 꼬막, 소라, 골뱅이, 다슬기, 우렁이, 백합, 대합, 동죽, 조갯살, 관자]
+    guards: [소라빵]
+
+# 19종 코드 → 제품마다 그 성분이 들어가기도 안 들어가기도 하는 음식.
+# 이 음식이 나온 메뉴는 그 코드를 메뉴 코드에 넣지 않고 따로 든다. 보호자가 그 알레르기를 등록했으면
+# 지금은 막고, 이것 때문에만 막힌 메뉴를 needs_check 로 표시한다(#264 PM 결정). 식단 추천을 구현할 때
+# "사용할 {음식}에 {성분} 성분이 들어 있는지 확인해 주세요" 를 묻고 내보낸다(문서 §3).
+# 보호자가 이 이름으로 등록하면("어묵 알레르기") 그 코드와 이 음식 글자를 함께 막는다.
+# 같은 행의 동의어(어묵 = 오뎅 · 맛살 = 크래미)도 같은 음식이라 함께 막는다.
+# 근거 — source 끝의 "(제품 표시 대조 전)" 은 후보 문장이라는 뜻이다. needs_check 를 내보내기 전에
+# 시판 제품의 원재료 · 알레르기 표시로 "든 제품과 없는 제품이 둘 다 있다" 를 확인하고 이 표시를 뗀다.
+# 확인되지 않은 항목은 code_foods 로 되돌린다. 애매하면 code_foods 다.
+varies_foods:
+  - code: 6
+    foods: [간장]
+    guards: []
+    source: 한식간장(국간장 · 조선간장)은 메주 · 소금 · 물로 담가 밀 없이 만든 제품이 있고, 양조간장 · 혼합간장은 원재료에 소맥(밀)을 표시한 제품이 많다(제품 표시 대조 전)
+  - code: 6
+    foods: [된장]
+    guards: []
+    source: 재래식 된장은 메주 · 소금으로 담가 밀이 없는 제품이 있고, 시판 된장에는 소맥분(밀)을 넣은 제품이 있다(제품 표시 대조 전)
+  - code: 6
+    foods: [고추장]
+    guards: []
+    source: 곡류를 쌀 · 찹쌀로 쓰는 제품과 밀(소맥분)로 쓰는 제품이 있다(제품 표시 대조 전)
+  - code: 6
+    foods: [쌈장]
+    guards: []
+    source: 된장 · 고추장을 섞어 만든다 — 두 장의 밀이 제품마다 다르다(제품 표시 대조 전)
+  - code: 6
+    foods: [어묵, 오뎅]
+    guards: []
+    source: 어육에 전분 · 밀가루를 섞는다 — 밀가루 없이 전분만 쓴 제품이 있다(제품 표시 대조 전)
+  - code: 6
+    foods: [카레]
+    guards: []
+    source: 고형 카레(루)는 밀가루로 걸쭉하게 만든 제품이 많고, 밀이 없는 카레가루 제품이 있다(제품 표시 대조 전)
+  - code: 8
+    foods: [크래미, 맛살]
+    guards: [치맛살]
+    source: 명태 등 연육으로 만들고, 게살 · 게 추출물을 넣은 제품과 안 넣은 제품이 있다(#267 멘토 리뷰)(제품 표시 대조 전)
+
+# 19종 밖 알레르기. 보호자가 aliases 중 하나로 등록하면 aliases 전부를 글자로 막는다.
+# 한국어 이름 하나뿐인 식품은 등록한 글자 그대로 막히지만, 검사지에서 옮긴 영어 이름(Almond · Codfish)은
+# 그 글자로는 한국어 메뉴에 안 걸린다. 다른 이름 · 영어 이름 · 그 식품이 든 음식이 있으면 둔다.
+# 사전에 없는 영어 이름은 글자 그대로만 막는다 — 한국어 메뉴에는 걸리지 않는다(문서 §3 의 한계).
+extra_allergens:
+  - label: 참깨
+    aliases: [참깨, 참께, 깨, 참깻가루, 깻가루, 참기름, 깨소금, 통깨, 흑임자, 검은깨, 타히니, 세서미, sesame, sesamum indicum]
+    guards: [깨끗, 홍두깨]
+  - label: 들깨
+    aliases: [들깨, 들기름, 들깻가루, 깻잎, perilla]
+    guards: []
+  - label: 키위
+    aliases: [키위, 참다래, kiwi]
+    guards: []
+  - label: 겨자
+    aliases: [겨자, 겨잣, 머스타드, 머스터드, 와사비, mustard]
+    guards: []
+  - label: 메론
+    aliases: [메론, 멜론, melon]
+    guards: [watermelon]
+  - label: 셀러리
+    aliases: [셀러리, 샐러리, celery]
+    guards: []
+  - label: 명태
+    aliases: [명태, 동태, 황태, 북어, 코다리, 노가리, 생태, 먹태, 명란, 창란, 창난, pollock]
+    guards: []
+  - label: 참치
+    aliases: [참치, 다랑어, 가다랑어, 튜나, 가쓰오부시, 가쓰오, tuna, bonito]
+    guards: []
+  - label: 멸치
+    aliases: [멸치, 지리멸, 앤초비, anchovy]
+    guards: []
+  - label: 주꾸미
+    aliases: [주꾸미, 쭈꾸미]
+    guards: []
+  - label: 오리
+    aliases: [오리, 오리고기, duck]
+    guards: [오리지널, 오리지날, 오리엔탈, 가오리]
+  - label: 양고기
+    aliases: [양고기, 램, 양갈비, 양꼬치, 머튼, lamb, mutton]
+    guards: [클램, 그램]
+  - label: 옥수수
+    aliases: [옥수수, 콘, 강냉이, corn, maize]
+    guards: [스콘, acorn, peppercorn]
+  - label: 사과
+    aliases: [사과, 애플, apple]
+    guards: [파인애플, pineapple, 애플민트, 애플망고]
+  - label: 딸기
+    aliases: [딸기, 스트로베리, strawberry]
+    guards: []
+  - label: 녹두
+    aliases: [녹두, 숙주, 청포묵, mung bean]
+    guards: []
+  - label: 팥
+    aliases: [팥, 단팥, 앙금, red bean, adzuki, azuki]
+    guards: []
+  # 검사지에 영어로 찍혀 오는 식품 (#258)
+  - label: 연어
+    aliases: [연어, salmon]
+    guards: []
+  - label: 대구
+    aliases: [대구, cod, codfish]
+    guards: []
+  - label: 바나나
+    aliases: [바나나, banana]
+    guards: []
+  - label: 아몬드
+    aliases: [아몬드, almond, prunus dulcis]
+    guards: []
+  - label: 캐슈넛
+    aliases: [캐슈넛, 캐슈너트, 캐슈, cashew]
+    guards: []
+  - label: 피스타치오
+    aliases: [피스타치오, pistachio]
+    guards: []
+  - label: 마카다미아
+    aliases: [마카다미아, macadamia]
+    guards: []
+  - label: 헤이즐넛
+    aliases: [헤이즐넛, 개암, hazelnut, filbert]
+    guards: []
+  - label: 피칸
+    aliases: [피칸, pecan]
+    guards: []
+  - label: 브라질너트
+    aliases: [브라질너트, brazil nut]
+    guards: []
+  - label: 랍스터
+    aliases: [랍스터, 로브스터, 바닷가재, lobster]
+    guards: []
+  - label: 가재
+    aliases: [가재, crayfish, crawfish]
+    guards: []
+  - label: 크릴
+    aliases: [크릴, krill]
+    guards: []
+  - label: 문어
+    aliases: [문어, octopus]
+    guards: []
+  - label: 칠면조
+    aliases: [칠면조, turkey]
+    guards: []
+  # 좁쌀(조) · 보리쌀은 쌀이 아니다. 떡갈비의 "떡" 은 모양이다
+  - label: 쌀
+    aliases: [쌀, 밥, 현미, 흑미, 백미, 누룽지, 미음, 식혜, 떡, rice]
+    guards: [좁쌀, 보리쌀, 떡갈비, licorice]
+  - label: 보리
+    aliases: [보리, 맥아, 엿기름, barley, malt]
+    guards: [보리새우]
+  - label: 호밀
+    aliases: [호밀, rye]
+    guards: []
+  - label: 귀리
+    aliases: [귀리, 오트밀, 오트, oat, oats, oatmeal]
+    guards: [goat]
+  - label: 효모
+    aliases: [효모, 이스트, yeast]
+    guards: [페이스트]
+  - label: 도토리
+    aliases: [도토리, acorn]
+    guards: []
+  - label: 감자
+    aliases: [감자, potato]
+    guards: [돼지감자, sweet potato]
+  - label: 고구마
+    aliases: [고구마, sweet potato]
+    guards: []
+  - label: 당근
+    aliases: [당근, carrot]
+    guards: []
+  - label: 마늘
+    aliases: [마늘, garlic]
+    guards: []
+  - label: 양파
+    aliases: [양파, onion]
+    guards: []
+  - label: 오렌지
+    aliases: [오렌지, orange]
+    guards: []
+  - label: 망고
+    aliases: [망고, mango]
+    guards: [망고스틴, mangosteen]
+  - label: 포도
+    aliases: [포도, 머스캣, 거봉, grape, raisin]
+    guards: [포도당, grapefruit]
+  - label: 수박
+    aliases: [수박, watermelon]
+    guards: []
+  - label: 초콜릿
+    aliases: [초콜릿, 초콜렛, 쵸콜릿, 초코, 쵸코, 코코아, 카카오, chocolate, cocoa, cacao]
+    guards: []
+
+# 묶음 이름(allergen_terms.yaml groups)의 19종 밖 식품. 그 묶음으로 등록한 아이에게 글자로 막는다.
+group_foods:
+  - group: 갑각류
+    foods: [가재, 랍스터, 로브스터, 바닷가재, 크릴, lobster, crayfish, krill]
+    guards: []
+  - group: 연체류
+    foods: [문어, 낙지, 주꾸미, 쭈꾸미, octopus]
+    guards: []
+  - group: 생선
+    foods: [생선, 연어, 참치, 다랑어, 튜나, 가쓰오부시, 가다랑어, 대구, 명태, 동태, 황태, 북어, 코다리, 노가리, 생태, 먹태, 명란, 창란, 창난, 멸치, 지리멸, 앤초비, 꽁치, 삼치, 갈치, 조기, 굴비, 가자미, 광어, 넙치, 우럭, 도미, 참돔, 농어, 방어, 전어, 숭어, 민어, 병어, 아귀, 장어, 메기, 미꾸라지, 추어, 송어, 빙어, 열빙어, 시샤모, 청어, 과메기, 정어리, 홍어, 가오리, 복어, 임연수, 이면수, 뱅어, 날치알, 어묵, 오뎅, 피쉬, 피시, 액젓, 까나리, fish, salmon, tuna, cod, anchovy]
+    guards: []
+  - group: 해산물
+    foods: [해삼, 멍게, 성게, 개불, 미더덕, 해파리]
+    guards: []
+  - group: 견과류
+    foods: [아몬드, 캐슈넛, 캐슈, 피스타치오, 마카다미아, 헤이즐넛, 개암, 피칸, 브라질너트, 밤, 은행, almond, cashew, pistachio, macadamia, hazelnut, pecan]
+    guards: [밤고구마, 밤호박]
+  - group: 콩
+    foods: [콩]
+    guards: []
+  - group: 콩류
+    foods: [녹두, 숙주, 청포묵, 팥, 렌틸, 완두, 동부, 작두, lentil, chickpea]
+    guards: []
+  - group: 육류
+    foods: [오리, 양고기, 램, 염소, 흑염소, 사슴, 말고기, 칠면조]
+    guards: [오리지널, 오리엔탈, 클램]
+  - group: 글루텐
+    foods: [보리, 호밀, 맥아, 엿기름, 귀리, 오트밀, 오트, 스펠트]
+    guards: [보리새우]
+
+# 연령 · 아이 금지 식품. below_month 보다 어린 아이에게 적용한다(null 이면 모든 아이).
+#   block   — 막는다. 추천에서 빠지고 급식 표시에는 경고가 붙는다.
+#   caution — 막지 않고 주의만 단다(guide.choking_caution 같은 안내를 붙이라는 뜻).
+#   daycare_action — 급식 조회(purpose=daycare)에서 action 대신 쓴다. 없으면 action 그대로다.
+#   scope   — all 이면 메뉴명 · 재료 전부, name 이면 메뉴명만 본다(마시는 것을 막는 규칙).
+#   exact   — 메뉴명이 이 글자 그대로일 때만 건다(부분 일치가 아니다).
+#   ends    — 메뉴명이 이 글자로 끝날 때 건다("검은콩 우유" 는 마시는 우유, "우유푸딩" 은 아니다).
+#   exact · ends 는 메뉴명에서 급식표 알레르기 번호 · 괄호 · 양을 뗀 뒤 견준다.
+age_rules:
+  - label: 꿀
+    below_month: 12
+    action: block
+    scope: all
+    aliases: [꿀, 벌꿀, 허니, honey]
+    guards: []
+    exact: []
+    source: 영아 보툴리누스증 — 1세 미만에게 꿀을 먹이지 않는다(질병관리청 · AAP)
+  - label: 생우유
+    below_month: 12
+    action: block
+    scope: all
+    aliases: [생우유, 흰우유, 멸균우유, 저지방우유, 무지방우유, 유기농우유, 가공유, 딸기우유, 바나나우유, 초코우유, 커피우유, 따뜻한 우유, 데운 우유]
+    guards: []
+    exact: [우유]
+    ends: [우유]
+    source: 마시는 우유는 돌 이후에 준다 — 요리에 든 우유는 이 규칙이 아니다(대한소아청소년과학회 · AAP)
+  - label: 질식 위험 식품
+    below_month: 48
+    action: block
+    scope: all
+    aliases: [팝콘, 사탕, 캔디, 껌, 젤리, 구미, gummy, 마시멜로, 마시멜로우, 머시멜로]
+    guards: [솜사탕, 사탕수수, 로열젤리]
+    exact: []
+    source: 자르거나 갈아서 안전하게 만들 수 없는 것 — AAP 2010 Prevention of Choking Among Children · 식약처 곤약젤리 수입 금지
+  - label: 떡
+    below_month: 48
+    action: block
+    # 급식은 기관이 이미 잘라서 주고, 어린이집 식사에는 우리가 관여하지 않는다 —
+    # 막지 않고 주의로만 둔다(#264 PM 결정)
+    daycare_action: caution
+    scope: all
+    aliases: [떡, 인절미, 송편, 경단, 증편, 백설기, 절편]
+    guards: [떡갈비, 떡뻥]
+    exact: []
+    source: 끈적해서 잘라도 목에 붙을 수 있다 — 한국소비자원 떡 질식 사고 주의 · AAP 2010 Prevention of Choking Among Children
+  - label: 질식 주의 식품
+    below_month: 48
+    action: caution
+    scope: all
+    aliases: [포도, 샤인머스캣, 거봉, 방울토마토, 체리, 소시지, 소세지, 비엔나, 핫도그, 메추리알, 땅콩, 아몬드, 호두, 잣, 견과, 캐슈넛, 피스타치오, 마카다미아, 헤이즐넛, 피칸, 밤]
+    # 갈거나 즙을 낸 것은 통째가 아니다(땅콩가루 · 포도잼). 땅콩버터 · 건포도는 주의 그대로다
+    guards: [포도당, 포도씨유, 포도잼, 포도주스, 포도즙, 밤고구마, 밤호박, 땅콩호박, 땅콩가루, 땅콩소스, 아몬드가루, 아몬드우유, 아몬드밀크, 호두가루, 잣가루, 잣죽, 잣소스]
+    exact: []
+    source: 통째로 먹으면 질식할 수 있고 잘게 잘라도 위험이 남아 먹는 동안 곁에서 지켜본다 — AAP 2010 Prevention of Choking Among Children
+  - label: 날음식
+    below_month: null
+    action: block
+    scope: all
+    # "생고기" 는 넣지 않는다 — 메뉴에서는 얼리지 않은 고기(익혀 먹는)를 뜻한다
+    aliases: [육회, 육사시미, 생간, 생선회, 모듬회, 모둠회, 광어회, 우럭회, 연어회, 참치회, 방어회, 도미회, 숭어회, 오징어회, 물회, 회덮밥, 회무침, 회냉면, 사시미, 초밥, 스시, 생굴, 굴회, 석화, 게장, 새우장, 간장새우, 생새우, 연어장, 산낙지, 포케, 세비체, 카르파치오, 연어 타르타르, 참치 타르타르, 비프 타르타르, 날달걀, 날계란, 생달걀, 생계란, 새싹]
+    guards: [유부초밥, 계란초밥, 해초밥, 닭게장, 육게장]
+    exact: []
+    source: 5세 미만은 식중독에 약해 날것 · 덜 익힌 고기 · 생선 · 달걀 · 새싹채소를 주지 않는다(CDC Food Safety for Children Younger Than 5). 5세 이상에게도 막는다 — 후보 풀이 어른 요리까지 든 공공 DB 라서(#264 PM 결정 10-08, 5세 이상 회 · 초밥은 피드백이 오면 다시 본다)
+  - label: 카페인
+    below_month: null
+    action: block
+    scope: name
+    aliases: [커피, 아메리카노, 에스프레소, 카페라떼, 카페라테, 카푸치노, 카페모카, 마키아토, 콜드브루, 카페인, 에너지드링크, 에너지음료, 콜라, 녹차, 말차, 홍차, 밀크티, 아이스티, 티라미수, coffee]
+    guards: [콜라겐, 콜라비, 디카페인]
+    exact: []
+    source: 어린이 카페인 최대 일일섭취권고량 2.5mg/kg(식약처) — 카페인 음료는 주지 않는다
+  - label: 술
+    below_month: null
+    action: block
+    scope: name
+    aliases: [소주, 맥주, 막걸리, 동동주, 와인, 포도주, 사케, 위스키, 보드카, 칵테일, 하이볼, 샴페인, 복분자주, 매실주, 과실주, 약주, 고량주, 브랜디, 알코올, 주류]
+    guards: [채소 주, 와인식초, 맥주효모, 포도주스, 매실주스, 과실주스, 복분자주스, 칵테일새우, 후르츠칵테일, 과일칵테일, 칵테일소스]
+    exact: []
+    source: 아이에게 술을 주지 않는다. 요리술(맛술 · 미림 · 청주)은 조리하면 대부분 날아가고 양념에 흔해 넣지 않는다

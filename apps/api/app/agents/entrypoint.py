@@ -17,6 +17,7 @@ from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
+    AgentResult,
     Commit,
     DomainRouted,
     Done,
@@ -42,6 +43,7 @@ from app.agents.supervisor.routing import Guidance
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "AgentResult",
     "Commit",
     "DomainRouted",
     "Done",

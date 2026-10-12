@@ -16,14 +16,14 @@ import {
 
 const PROFILE = `/child/${CHILD}/profile`;
 
-test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)", () => {
-  async function openAddSheet(page: import("@playwright/test").Page) {
-    await page.goto(PROFILE);
-    await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
-    await page.getByRole("button", { name: /^직접 적기/ }).click();
-    return page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
-  }
+async function openAddSheet(page: import("@playwright/test").Page) {
+  await page.goto(PROFILE);
+  await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
+  await page.getByRole("button", { name: /^직접 적기/ }).click();
+  return page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+}
 
+test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)", () => {
   test("게이트 표식(caution 배너 · approve 버튼)이 서고 실수로 닫히지 않는다", async ({ page }) => {
     const sheet = await openAddSheet(page);
     await expect(sheet.getByText("보호자가 확인한 것만 적어주세요")).toBeVisible();
@@ -57,6 +57,105 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
     expect(saved[0].idempotencyKey).toBeTruthy();
     // 심각도를 고르지 않았으면 싣지 않는다 — "모르겠어요" 를 값으로 지어내지 않는다.
     expect(saved[0].body).not.toHaveProperty("severity");
+  });
+
+  /**
+   * ⚠️ **키가 큰 화면에서 돌린다.** 390×844 에서는 심각도 고르기 상자의 목록이 시트 본문 바닥에
+   *    가려져서(목록 y 573~830 · 본문 바닥 703) 네 번째 항목부터 눌리지 않는다 — 항목을 보이게
+   *    하려고 본문이 스크롤되는 순간 `Select` 가 닫힌다. `Select` 자체의 문제라 이 테스트가
+   *    덮지 않는다.
+   */
+  test.describe("종류에 따라 심각도 선택지가 갈린다", () => {
+    test.use({ viewport: { width: 390, height: 1400 } });
+
+    test("알레르기는 검사 등급(Class)을 묻고, 보내는 값은 DB 가 받는 값이다", async ({ page }) => {
+      const calls = recordApi(page);
+      const sheet = await openAddSheet(page);
+
+      await sheet.getByRole("combobox", { name: "검사 등급" }).click();
+      await expect(page.getByRole("option")).toHaveText([
+        "모르겠어요",
+        "Class 0",
+        "Class 1",
+        "Class 2",
+        "Class 3",
+        "Class 4",
+        "Class 5",
+        "Class 6",
+      ]);
+      await page.getByRole("option", { name: "Class 3" }).click();
+      await sheet.getByLabel("무엇인가요").fill("복숭아");
+      await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
+      await expect(sheet).toBeHidden();
+
+      const saved = writes(calls, "POST", /\/health-safety$/);
+      expect(saved).toHaveLength(1);
+      expect(saved[0].body).toMatchObject({
+        type: "allergy",
+        label: "복숭아",
+        severity: "class_3",
+      });
+    });
+
+    test("지병으로 바꾸면 선택지가 바뀌고, 앞서 고른 Class 는 남지 않는다", async ({ page }) => {
+      const sheet = await openAddSheet(page);
+      await sheet.getByRole("combobox", { name: "검사 등급" }).click();
+      await page.getByRole("option", { name: "Class 3" }).click();
+
+      await sheet.getByRole("combobox", { name: "종류" }).click();
+      await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+
+      // Class 3 이 남아 있으면 DB 가 막는 조합이 된다
+      const severity = sheet.getByRole("combobox", { name: "얼마나 심한가요" });
+      await expect(severity).toContainText("모르겠어요");
+      await severity.click();
+      await expect(page.getByRole("option")).toHaveText(["모르겠어요", "가볍게", "보통", "심하게"]);
+    });
+  });
+});
+
+/**
+ * 시트 본문은 스크롤되는 면이라, 아래쪽 고르기 상자의 목록이 본문 바닥에 잘린다. 열 때 목록이
+ * 보이게 본문을 움직이고, 열린 뒤의 스크롤에는 닫지 않아야 잘린 항목까지 고를 수 있다 (#306).
+ */
+test.describe("시트 안 고르기 상자는 마지막 항목까지 고를 수 있다 (#306)", () => {
+  test("열면 목록이 끝까지 보이고, 마지막 항목이 등록 요청에 실린다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openAddSheet(page);
+    // 지병으로 고른다 — 심각도 상자의 이름과 마지막 값("심하게")이 알레르기와 달리 바뀌지 않는다 (#298).
+    await sheet.getByRole("combobox", { name: "종류" }).click();
+    await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+    await sheet.getByLabel("무엇인가요").fill("천식");
+
+    await sheet.getByRole("combobox", { name: "얼마나 심한가요" }).click();
+    const last = page.getByRole("option").last();
+    await expect(last).toHaveText("심하게");
+    await expect(last).toBeInViewport({ ratio: 1 });
+    await last.click();
+    await expect(page.getByRole("listbox")).toHaveCount(0);
+
+    await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
+    await expect(sheet).toBeHidden();
+    const saved = writes(calls, "POST", /\/health-safety$/);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].body).toMatchObject({ label: "천식", severity: "severe" });
+  });
+
+  test("열린 채로 시트 본문을 스크롤해도 닫히지 않는다", async ({ page }) => {
+    const sheet = await openAddSheet(page);
+    const trigger = sheet.getByRole("combobox", { name: "얼마나 심한가요" });
+    await trigger.click();
+    await expect(page.getByRole("listbox")).toBeVisible();
+
+    // 본문이 실제로 움직였는지부터 본다 — 안 움직였으면 이 테스트는 아무것도 확인하지 않는다.
+    const body = sheet.locator(".overflow-y-auto").first();
+    const before = await body.evaluate((el) => el.scrollTop);
+    await trigger.hover();
+    await page.mouse.wheel(0, 80);
+    await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBeGreaterThan(before);
+
+    await expect(page.getByRole("listbox")).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
   });
 });
 

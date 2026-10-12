@@ -407,9 +407,9 @@ function FeedbackTab({ childId }: { childId: string }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   /**
-   * ⚠️ `GET /children/{cid}/suggestions` 는 **계약서 v1 에 아직 없다** (types.ts 의 ⚠️).
-   *    계약서 §03 이 07 에 `PATCH /feedback` 을 배정했는데 평가할 대상을 목록으로 얻을 길이
-   *    없어서 제안해 두고 목으로 먼저 세웠다. 서버가 없으면 빈 상태가 그려진다.
+   * 받은 개인화 제안 목록 (#284). 일반 추천은 채택하는 흐름이 없어서 평가 대상이 아니고,
+   * 서버가 `kind = 'personalized'` 로 걸러 준다.
+   * ⚠️ 첫 장(20건)만 그린다 — `next_cursor` 로 더 보기는 아직 없다 (#316 하지 않는 것).
    */
   const received = useQuery({
     queryKey: qk.suggestionList(childId),
@@ -424,7 +424,10 @@ function FeedbackTab({ childId }: { childId: string }) {
       suggestion: Suggestion;
       feedback: SuggestionFeedback;
     }) =>
-      api.patch<SuggestionFeedbackResponse>(`/suggestions/${suggestion.id}/feedback`, { feedback }),
+      api.patch<SuggestionFeedbackResponse>(
+        `/children/${childId}/suggestions/${suggestion.id}/feedback`,
+        { feedback },
+      ),
     onMutate: ({ suggestion }) => setPendingId(suggestion.id),
     onSettled: () => setPendingId(null),
     onSuccess: () => {

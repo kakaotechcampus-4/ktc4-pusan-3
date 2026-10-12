@@ -530,8 +530,11 @@ async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥�
     channel = registry.open_run(parent_id=PARENT)
 
     job = runner.agent_job(
-        child_id=CHILD, parent_id=PARENT, raw_text="3일 전부터",
-        continuation=_PENDING, reply_to="r-prev",
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
 
@@ -552,8 +555,11 @@ async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_맥
     channel = registry.open_run(parent_id=PARENT)
 
     job = runner.agent_job(
-        child_id=CHILD, parent_id=PARENT, raw_text="3일 전부터",
-        continuation=_PENDING, reply_to="r-prev",
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
 

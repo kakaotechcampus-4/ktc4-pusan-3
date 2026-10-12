@@ -14,7 +14,7 @@ from datetime import date, datetime, tzinfo
 from uuid import UUID
 
 from app.agents.common.datetime_rules import today_of
-from app.agents.common.gate import DataReady, Gate, SafetyState
+from app.agents.common.gate import DataReady, Gate
 from app.agents.food.store.ports import FoodPorts, SafetyEntry, SafetyLookupError
 from app.rules.age import life_stage
 
@@ -64,11 +64,15 @@ async def build_gate(context: FoodContext) -> Gate:
 
     - birth_date → `life_stage()`로 `LifeStage`를 계산한다.
     - 동의(`consent_child_health`)가 없으면 `health_safety`를 아예 읽지 않는다.
-      읽을 것이 없는 상태라 allergy_states가 빈 튜플.
+      읽을 것이 없는 상태라 `context.state.safety` 가 빈 튜플이다.
     - 동의가 있는데 조회가 실패하면(`SafetyLookupError`) `safety_ok=False`가 되고 이 값만
       식단 추천을 닫는다. 실패를 빈 목록으로 숨기지 않는다.
     - `DataReady.daycare_meal`은 `has_rows()` 원본
     - 읽은 안전 정보는 `context.state.safety`에 남긴다. 이 task의 필터는 전부 이 값을 쓴다.
+    - `Gate.allergy_states`는 채우지 않는다. 포트가 active 행만 주고, 확인 안 된 알레르기
+      (unknown)는 행이 없는 것이라 이 칸으로 셀 수 없다. 그 안내는 추천을 승인할 때
+      `suggestion.allergens` 와 `health_safety`를 대조해서 한다.
+      이 칸은 Activity도 쓰는 공통 칸이라 지우지 않는다.
     """
     ports = context.ports
     birth_date = await ports.profile.birth_date(child_id=context.child_id)
@@ -76,7 +80,6 @@ async def build_gate(context: FoodContext) -> Gate:
     consent = await ports.consent.child_health_granted(child_id=context.child_id)
 
     safety_ok = True
-    allergy_states: tuple[SafetyState, ...] = ()
     safety: tuple[SafetyEntry, ...] | None = ()
     if consent:
         try:
@@ -84,8 +87,6 @@ async def build_gate(context: FoodContext) -> Gate:
         except SafetyLookupError:
             safety_ok = False
             safety = None
-        else:
-            allergy_states = tuple(entry.state for entry in safety if entry.kind == "allergy")
     context.state.safety = safety
 
     daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
@@ -94,6 +95,5 @@ async def build_gate(context: FoodContext) -> Gate:
         stage=stage,
         consent_child_health=consent,
         safety_ok=safety_ok,
-        allergy_states=allergy_states,
         data=DataReady(daycare_meal=daycare_meal),
     )

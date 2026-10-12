@@ -1,0 +1,66 @@
+# Growth 루틴 닫힘 목록 — reference/growth_closures.yaml
+# 설계: docs/agents/growth/Growth_Tool_명세.md §2 "루틴에서 닫는 것"
+#
+# 🚨 목록은 사람이 정한다 (hazard_terms.yaml 과 같은 원칙). 모델이 고르지 않는다.
+# 🚨 요청 문장이나 인용한 관찰의 subject 에 걸리면 모델을 부르지 않고 닫는다 (모델 0회).
+#    진단명은 말하지 않는다. Health 로 보내지 않는다 — Health 는 기록만 하고 조언하지 않는다.
+# 🚨 한 글자 별칭("약" · "관장")은 guards 가 있을 때만 쓴다. 로더가 guards 없는 한 글자 별칭을 거절한다.
+#    guard 는 그 자리를 덮어 취소한다 — "치약" 의 "약" 은 걸리지 않는다.
+# 🚨 손톱 물어뜯기 · 손가락 빨기 · 코 파기 같은 흔한 습관은 넣지 않는다. 습관 교정(T18 ~ T20)은 그대로 돈다.
+# ⚠️ "약" 은 "약국 갔다 와서 양치 습관…" 처럼 약과 상관없는 요청도 닫는다. guard 를 늘리기 전에 비공개
+#    테스트 실제 문장으로 오탐을 잰다(#264 방식). 재기 전에 guard 를 넣으면 닫히던 요청이 풀린다.
+
+source: Growth Owner 초안을 #282 PM 리뷰에서 확정(10-09) — 의료 처치는 처방한 병원 · 약국이 답할 일이고, 증상 같은 행동은 습관인지 증상인지 Agent 가 가를 수 없다
+version: "2026.1"
+fetched_at: 2026-10-08
+
+# 약 · 처치를 루틴으로 코칭하려는 요청 → closed.medical_routine
+medical_routine:
+  - label: 약
+    aliases: [약]
+    guards: [치약, 약속, 약간, 약한, 약하, 약해, 약올, 예약, 절약, 요약, 약점, 약수, 농약, 약과, 약식, 약지, 계약, 공약, 서약, 약혼, 규약, 협약, 조약]
+  - label: 안약
+    aliases: [안약, 귀약]
+    guards: []
+  - label: 연고
+    aliases: [연고]
+    guards: [연고지, 연고자]
+  - label: 해열제
+    aliases: [해열제, 항생제]
+    guards: []
+  - label: 흡입기
+    aliases: [흡입기, 네뷸라이저]
+    guards: []
+  - label: 혈당
+    aliases: [혈당, 인슐린]
+    guards: []
+  - label: 관장
+    aliases: [관장]
+    guards: [관장님]
+
+# 증상처럼 보이는 반복 행동을 습관으로 교정하려는 요청 → closed.symptom_habit
+symptom_habit:
+  - label: 눈 깜빡임
+    aliases: [깜빡임, 깜빡거, 깜빡여, 눈깜빡]
+    guards: []
+  - label: 킁킁거림
+    aliases: [킁킁]
+    guards: []
+  - label: 헛기침
+    aliases: [헛기침]
+    guards: []
+  - label: 고개 젖히기
+    aliases: [고개젖, 고개를젖]
+    guards: []
+  - label: 머리 박기
+    aliases: [머리박, 머리를박, 머리찧, 머리를찧]
+    guards: []
+  - label: 머리카락 뽑기
+    aliases: [머리카락뽑, 머리카락을뽑, 머리뽑, 머리를뽑]
+    guards: []
+  - label: 까치발 걷기
+    aliases: [까치발]
+    guards: []
+  - label: 말 더듬기
+    aliases: [말더듬, 말을더듬, 더듬거, 더듬더듬]
+    guards: []

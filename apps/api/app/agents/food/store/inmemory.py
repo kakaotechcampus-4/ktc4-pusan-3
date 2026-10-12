@@ -45,7 +45,10 @@ class InMemoryConsent:
 
 
 class InMemorySafety:
-    """`fail=True` 면 조회 자체가 실패한 것으로 본다 — 빈 목록과 구분해야 한다 (루트 §2)."""
+    """`fail=True` 면 조회 자체가 실패한 것으로 본다 — 빈 목록과 구분해야 한다 (루트 §2).
+
+    포트 계약대로 `status='active'` 행만 돌려준다 — 어댑터가 쓰는 `list_active_safety` 와 같다.
+    """
 
     def __init__(self, entries: Sequence[SafetyEntry] = (), *, fail: bool = False) -> None:
         self._entries = list(entries)
@@ -54,7 +57,7 @@ class InMemorySafety:
     async def food_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
         if self._fail:
             raise SafetyLookupError("health_safety 조회 실패 (테스트 주입)")
-        return list(self._entries)
+        return [entry for entry in self._entries if entry.status == "active"]
 
 
 class InMemoryGrowth:

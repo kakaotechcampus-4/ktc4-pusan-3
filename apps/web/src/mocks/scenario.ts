@@ -15,6 +15,10 @@ export const SCENARIOS = {
   scarcity: "근거 부족 — 개인화 대신 일반 추천 + 되묻는 질문 1개",
   partial: "Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06)",
   failed: "입력 처리 실패 — raw_text 를 입력창에 되돌림",
+  // 🚨 **failed 가 아니다** (#253 · #271). 서버는 저장한 뒤에 끊긴 run 을 done 으로 닫고 키를 놓지
+  //    않는다. 화면이 "저장하지 않았어요" 나 다시 시도를 세우면 같은 말이 두 번 저장된다.
+  //    일정 낱말만 쓰면 `saved` 도 못 보내고 끊긴 run 이 된다 (무엇이 저장됐는지 화면이 모르는 경우).
+  interrupted: "04 저장한 뒤 끊김 — done + completed: false (다시 시도 없이 '반영했어요')",
   disconnected: "종료 이벤트 없이 스트림이 끊김 — 저장 여부를 모르는 상태",
   consent: "필수 동의 미완료 — 신규 가입 대기 · 403 consent_required 로 저장 차단",
   auth_unready: "로그인 미연결 — GET /auth/kakao/status 가 ready: false",

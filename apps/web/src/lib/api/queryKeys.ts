@@ -40,9 +40,14 @@ export const qk = {
   /**
    * 05 제안 후보. 같은 run·같은 Agent 조합이면 같은 화면이라 키에 둘 다 담는다 —
    * 뒤로 갔다 오면 Agent 를 다시 돌리지 않는다 (NF-01 은 model call 을 센다).
+   * 🚨 홈 버튼의 `promptKey` 도 담는다 — 빼면 "저녁" 으로 받은 제안이 "내일 아침" 버튼에 그대로 뜬다.
    */
-  suggestions: (childId: string, runId: string | null, agents: readonly string[]) =>
-    [...qk.child(childId), "suggestions", runId, [...agents].join(",")] as const,
+  suggestions: (
+    childId: string,
+    runId: string | null,
+    agents: readonly string[],
+    promptKey: string | null = null,
+  ) => [...qk.child(childId), "suggestions", runId, [...agents].join(","), promptKey] as const,
   /** 07 피드백 탭이 평가할 제안 목록. ⚠️ 엔드포인트가 계약서 협의 대상이다 (types.ts). */
   suggestionList: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
   /** 09 월 조회. `month` 는 `YYYY-MM` — 달을 넘기면 다른 키라 이전 달이 캐시에 남는다. */

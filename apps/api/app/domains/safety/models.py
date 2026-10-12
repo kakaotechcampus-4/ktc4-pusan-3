@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,17 +15,6 @@ class SafetyKind(enum.StrEnum):
     BEHAVIORAL = "behavioral"
     ENVIRONMENTAL = "environmental"
     OTHER_MEDICAL = "other_medical"
-
-
-class SafetyCategory(enum.StrEnum):
-    """알레르기의 분류. kind='allergy' 행만 갖는다.
-
-    목록이라 쑥처럼 식품이면서 환경인 것을 한 행에 담는다.
-    """
-
-    FOOD = "food"
-    DRUG = "drug"
-    ENVIRONMENT = "environment"
 
 
 class SafetySeverity(enum.StrEnum):
@@ -57,7 +46,6 @@ class SafetyStatus(enum.StrEnum):
     NONE = "none"  # 확인 결과 없음
 
 
-_CATEGORY_VALUES = ", ".join(f"'{category.value}'" for category in SafetyCategory)
 _ALLERGY_SEVERITY_VALUES = ", ".join(
     f"'{severity.value}'" for severity in sorted(ALLERGY_SEVERITIES)
 )
@@ -68,8 +56,6 @@ class HealthSafety(Base, UUIDPk, Timestamps):
 
     kind      대분류 — allergy / chronic_disease / ...
     label     구체적 대상 — "우유" / "소아 당뇨" / "천식"
-    category  알레르기의 분류 목록. kind='allergy' 만 갖고 나머지는 비어 있다.
-              NULL 과 '{}' 는 같은 뜻(분류 없음)이다.
     severity  allergy 는 class_0~class_6, 나머지는 mild~anaphylaxis. 어긋나면 CHECK 가 막는다.
     status    active / retracted / none. 행이 없으면 unknown.
 
@@ -78,14 +64,6 @@ class HealthSafety(Base, UUIDPk, Timestamps):
 
     __tablename__ = "health_safety"
     __table_args__ = (
-        CheckConstraint(
-            f"category <@ ARRAY[{_CATEGORY_VALUES}]::varchar[]",
-            name="health_safety_category_values",
-        ),
-        CheckConstraint(
-            "kind = 'allergy' OR coalesce(cardinality(category), 0) = 0",
-            name="health_safety_category_allergy_only",
-        ),
         CheckConstraint(
             f"severity IS NULL OR (kind = 'allergy') = (severity IN ({_ALLERGY_SEVERITY_VALUES}))",
             name="health_safety_severity_by_kind",
@@ -100,9 +78,6 @@ class HealthSafety(Base, UUIDPk, Timestamps):
         nullable=False,
     )
     label: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String(32)), nullable=True, server_default="{}"
-    )
     severity: Mapped[SafetySeverity | None] = mapped_column(
         enum_col_py(SafetySeverity, name="safety_severity"),
         nullable=True,

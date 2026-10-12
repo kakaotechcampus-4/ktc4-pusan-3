@@ -214,11 +214,9 @@ export const healthSafety: HealthSafety[] = [
     id: "hs_1",
     type: "allergy",
     label: "우유",
-    aliases: ["유제품"],
-    category: "식품",
-    severity: "moderate",
+    severity: "class_3",
     reactions: ["두드러기"],
-    management: { avoid: true },
+    management: null,
     notes: null,
     created_by: { parent_id: PARENT_ID, nickname: "지은" },
     updated_at: hoursFromNow(-72),
@@ -232,7 +230,6 @@ export const healthSafety: HealthSafety[] = [
 export function newHealthSafety(input: {
   type: string;
   label: string;
-  category?: string;
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;
@@ -242,11 +239,9 @@ export function newHealthSafety(input: {
     id: `hs_${Date.now()}`,
     type: input.type,
     label: input.label,
-    aliases: [],
-    category: input.category ?? "기타",
     severity: input.severity ?? null,
     reactions: input.reactions ?? [],
-    management: { avoid: true },
+    management: null,
     notes: input.notes ?? null,
     created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
     updated_at: hoursFromNow(0),
@@ -264,7 +259,7 @@ export function newHealthSafety(input: {
  * 🚨 **일부러 덜 읽은 줄을 섞어 뒀다.** 화면이 못 읽은 칸을 **비워서** 보호자에게 넘기는지
  *    확인하려면 목이 완벽하게 읽어 주면 안 된다 — 목의 존재 이유가 그것이다 (§7 머리말).
  *      · `sc_1` 전부 읽음 → 미리 골라 둔다
- *      · `sc_2` 분류를 못 읽음 → 보호자가 채워야 고를 수 있다
+ *      · `sc_2` 이름을 못 읽음 → 보호자가 채워야 고를 수 있다
  *      · `sc_3` 원문이 없음 → 무엇을 보고 옮겼는지 못 대니 미리 고르지 않는다
  *      · `unreadable_count` 2 → 줄은 있는데 통째로 못 읽은 것이 둘
  */
@@ -275,17 +270,15 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_1",
       type: "allergy",
       label: "달걀흰자",
-      category: "식품",
-      severity: "moderate",
+      severity: "class_3",
       reactions: ["두드러기"],
       source_text: "Egg white  class 3  (3.9 kU/L)",
     },
     {
       id: "sc_2",
       type: "allergy",
-      label: "땅콩",
-      category: null,
-      severity: "severe",
+      label: null,
+      severity: "class_4",
       reactions: [],
       source_text: "Peanut  class 4",
     },
@@ -293,7 +286,6 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_3",
       type: "allergy",
       label: "집먼지진드기",
-      category: "환경",
       severity: null,
       reactions: [],
       source_text: null,
@@ -304,8 +296,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_4",
       type: "allergy",
       label: "우유",
-      category: "식품",
-      severity: "moderate",
+      severity: "class_3",
       reactions: ["두드러기"],
       source_text: "Milk  class 3",
     },
@@ -320,8 +311,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_5",
       type: "allergy",
       label: "새우",
-      category: "식품",
-      severity: "moderate",
+      severity: "class_3",
       reactions: ["두드러기"],
       source_text: "Shrimp  class 3",
     },
@@ -329,8 +319,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_6",
       type: "allergy",
       label: "고등어",
-      category: "식품",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Mackerel  class 2",
     },
@@ -338,8 +327,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_7",
       type: "allergy",
       label: "밀",
-      category: "식품",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Wheat  class 2",
     },
@@ -347,8 +335,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_8",
       type: "allergy",
       label: "대두",
-      category: "식품",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Soybean  class 2",
     },
@@ -356,8 +343,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_9",
       type: "allergy",
       label: "자작나무 꽃가루",
-      category: "환경",
-      severity: "mild",
+      severity: "class_2",
       reactions: ["재채기"],
       source_text: "Birch pollen  class 2",
     },
@@ -365,8 +351,7 @@ export const safetyScan: SafetyScanResponse = {
       id: "sc_10",
       type: "allergy",
       label: "고양이 비듬",
-      category: "환경",
-      severity: "mild",
+      severity: "class_2",
       reactions: [],
       source_text: "Cat dander  class 2",
     },
@@ -474,9 +459,14 @@ function evidenceFrom(a: Affinity): Evidence {
 }
 
 /**
- * 성향이 아닌 근거. 🚨 **근거는 `profile_affinity` 만이 아니다** — 급식 행과 규칙 확인도 근거로
+ * 성향이 아닌 근거. 🚨 **근거는 `profile_affinity` 만이 아니다** — 관찰 한 건과 급식 행도 근거로
  *    나간다 (CLAUDE.md §5 "컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문").
  *    픽스처에 성향만 있으면 화면이 그 한 종류만 그려 보고 통과한다.
+ *
+ * 🚨 **아이 기록 9종 밖의 것을 근거로 만들지 않는다** (`EVIDENCE_KINDS` · #284). 한동안 여기에
+ *    `health_safety` 근거("알레르기 제한 없음")가 있었는데, 서버는 9종 밖의 근거를 응답에서 뺀다
+ *    (`apps/api/app/domains/suggestion/repository.py` 의 `_CHILD_RECORD_KINDS`). 목이 실서버에
+ *    없는 모양을 그리면 화면이 그 모양에 맞춰진다.
  */
 const mealEvidence: Evidence = {
   ref: { kind: "daycare_meal", id: "dm_1" },
@@ -486,12 +476,12 @@ const mealEvidence: Evidence = {
   note: "어린이집에서 받음 · 기관 기록 · 오늘",
 };
 
-const safetyEvidence: Evidence = {
-  ref: { kind: "health_safety", id: "hs_none" },
-  label: "알레르기 제한 없음",
-  observed_to: daysAgo(0),
+const observationEvidence: Evidence = {
+  ref: { kind: "observation_food", id: observations[1].id },
+  label: observations[1].subject,
+  observed_to: observations[1].observed_to,
   confidence_source: "parent_direct",
-  note: "규칙 확인 · 보호자 입력값",
+  note: "두 그릇 먹음 · 출처 보호자",
 };
 
 /** 🚨 evidence 0건인 suggestion 은 만들지 않는다 — 그건 서버가 버리고 scarcity 로 내린다. */
@@ -535,7 +525,7 @@ export const suggestions: Suggestion[] = [
     "오늘 급식에 계란 반찬이 없어요",
     // 🚨 **근거는 제안마다 다르다.** 같은 배열을 셋에 복사하면 화면이 "근거가 제안마다 다르다" 를
     //    한 번도 그려 보지 않고 통과한다 — 건수도 종류도 갈라 둔다.
-    [evidenceFrom(affinities[0]), mealEvidence, safetyEvidence],
+    [evidenceFrom(affinities[0]), mealEvidence, observationEvidence],
   ),
   personalized(
     "s_2",
@@ -543,7 +533,7 @@ export const suggestions: Suggestion[] = [
     "두부를 부쳐서 한 조각 곁들여 보세요",
     "두부 반찬을 남기지 않았어요",
     "오늘 급식에 단백질 반찬이 적어요",
-    [evidenceFrom(affinities[0]), safetyEvidence],
+    [evidenceFrom(affinities[0]), observationEvidence],
   ),
   personalized(
     "s_3",
@@ -662,9 +652,11 @@ export const home: HomeResponse = {
     state_reason: "서로 다른 3일에 기록됐어요",
     ref: { kind: "profile_affinity", id: "a_12" },
   },
+  // 서버(#286 `rules/home_prompts.py`)의 저녁 시간대와 같은 모양이다. 문구는 서버가 별명으로 만든다.
+  // 🚨 `prompt_key` 는 누르면 05 의 추천 요청에 그대로 실린다 — 문장은 서버가 이 키로 정한다.
   agent_prompts: [
-    { agent: "food", text: "오늘 저녁 뭐 할지 같이 정하기" },
-    { agent: "activity", text: "주말에 뭐 하고 놀지 정하기" },
+    { agent: "food", text: "민준이가 먹을 저녁 추천해드릴까요?", prompt_key: "dinner" },
+    { agent: "activity", text: "민준이랑 할 놀이 추천해드릴까요?", prompt_key: "play" },
   ],
 };
 
@@ -827,10 +819,7 @@ export const allObservations: Observation[] = [
   healthObservation,
 ].sort((a, b) => (a.observed_to < b.observed_to ? 1 : -1));
 
-/**
- * 07 피드백 탭이 평가할 제안 목록.
- * ⚠️ `GET /children/{cid}/suggestions` 는 계약서 v1 에 아직 없다 (types.ts 의 ⚠️).
- */
+/** 07 피드백 탭이 평가할 제안 목록 (`GET /children/{cid}/suggestions` · #284). */
 export const receivedSuggestions: Suggestion[] = [
   { ...suggestions[0], id: "s_past_1", status: "approved", feedback: "child_liked" },
   { ...suggestions[1], id: "s_past_2", status: "rejected", feedback: null },

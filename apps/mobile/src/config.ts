@@ -3,6 +3,8 @@
  * 화면·상태·API 호출은 전부 web 에 있고, 여기는 네이티브만 할 수 있는 것을 맡는다.
  */
 
+import { isInternalUrlOf } from "./native/internal-url";
+
 const rawUrl = process.env.EXPO_PUBLIC_WEB_URL;
 
 if (!rawUrl) {
@@ -16,10 +18,7 @@ export const WEB_URL = rawUrl.replace(/\/$/, "");
 /** 웹뷰 안에 머물러도 되는 출처. 여기 밖은 앱 밖(in-app 브라우저 · 인증 세션 · OS)으로 넘긴다. */
 export const ALLOWED_ORIGIN = new URL(WEB_URL).origin;
 
+/** 출처가 같아도 API 경로(`/api/…`)는 웹뷰 밖이다 (`src/native/internal-url.ts`). */
 export function isInternalUrl(url: string): boolean {
-  try {
-    return new URL(url).origin === ALLOWED_ORIGIN;
-  } catch {
-    return false;
-  }
+  return isInternalUrlOf(url, ALLOWED_ORIGIN);
 }
