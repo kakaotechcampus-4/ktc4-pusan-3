@@ -74,7 +74,7 @@ export function submitInput(
  *    보호자가 적은 라벨만 올리고 심각도·반응·메모를 추측하지 않으므로(NF-03) 지금은 정본이 맞다.
  */
 
-/** 전부 선택이다 — 모두 건너뛰어도 200 이다. */
+/** 전부 선택이지만 빈 본문은 400 이다 — 아무것도 안 적었으면 부르지 않는다. */
 export function submitOnboarding(
   childId: string,
   body: OnboardingRequest,
