@@ -148,15 +148,32 @@ async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArg
 async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArgs) -> ToolResult:
     """영양소 분석 결과를 최종 검증하고 반환한다.
 
-    검사 순서 — ① 단위·수치 정규식 ② 진단·처방·먹일 음식 제안 말 ③ `check_summary`(별칭 +
-    안전 사전) ④ `basis_keys` 밖 항목 ⑤ `seen_refs` 밖 근거 제거(거절이 아니라 제외). ①~④ 중
-    하나라도 걸리면 findings 전체를 거절한다 — 분석 결과는 저장하지 않고 반환만 한다.
+    검사 순서 — ⓪ `insufficient` 와 findings 유무가 맞는지 ① 단위·수치 정규식 ② 진단·처방·먹일
+    음식 제안 말 ③ `check_summary`(별칭 + 안전 사전) ④ `basis_keys` 밖 항목 ⑤ `seen_refs` 밖
+    근거 제거(거절이 아니라 제외). ⓪~④ 중 하나라도 걸리면 findings 전체를 거절한다 — 분석
+    결과는 저장하지 않고 반환만 한다.
     """
     ports = context.ports
     birth_date = await ports.profile.birth_date(child_id=context.child_id)
     months = months_between(birth_date, context.today)
     stage = life_stage(birth_date, context.today).stage
     entries = context.state.safety or ()
+
+    verdict = context.state.nutrient_verdict
+    if verdict is not None and verdict.insufficient and args.findings:
+        return fail(
+            "report",
+            "nutrient_analysis",
+            ErrorCode.INVALID_ARGS,
+            "기록이 부족하면 findings 를 비운다. 구간을 말하지 않는다.",
+        )
+    if verdict is not None and not verdict.insufficient and not args.findings:
+        return fail(
+            "report",
+            "nutrient_analysis",
+            ErrorCode.INVALID_ARGS,
+            "findings 가 비어 있다. compare_diet_balance 가 낸 구간을 적어도 하나는 말한다.",
+        )
 
     for finding in args.findings:
         if _NUMERIC_UNIT.search(finding):

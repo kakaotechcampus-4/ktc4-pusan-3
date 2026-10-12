@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.food.context import FoodContext
+from app.agents.food.nutrition_eval import NutrientVerdict
 from app.agents.food.schemas.common import EvidenceRef, MealPeriod
 from app.agents.food.schemas.nutrition import (
     CompareDietBalanceArgs,
@@ -316,6 +317,55 @@ async def test_구간_문장은_통과한다(context_with_basis) -> None:
     )
 
     assert result.success
+
+
+@pytest.fixture
+def context_sufficient(context_with_basis: FoodContext) -> FoodContext:
+    # compare_diet_balance 가 구간을 낸 상태 — findings 가 비어 있으면 모델이 아무것도
+    # 말하지 않은 채 "ok" 로 끝난다(라이브 eval T14 에서 재현)
+    context_with_basis.state.nutrient_verdict = NutrientVerdict(
+        bands={"protein": "low"},
+        unscored=(),
+        records=14,
+        resolved_ratio=1.0,
+        insufficient=False,
+        food_groups=frozenset(),
+    )
+    return context_with_basis
+
+
+@pytest.fixture
+def context_insufficient(context: FoodContext) -> FoodContext:
+    context.state.basis_keys = set()
+    context.state.nutrient_verdict = NutrientVerdict(
+        bands={},
+        unscored=(),
+        records=2,
+        resolved_ratio=1.0,
+        insufficient=True,
+        food_groups=frozenset(),
+    )
+    return context
+
+
+async def test_기록이_충분한데_findings_가_비어있으면_거절한다(context_sufficient) -> None:
+    result = await report_nutrient_analysis(
+        context_sufficient, NutrientReportArgs(period=MealPeriod.LAST_7_DAYS, findings=[])
+    )
+
+    assert not result.success
+    assert result.error["code"] == "INVALID_ARGS"
+
+
+async def test_insufficient_인데_findings_가_있으면_거절한다(context_insufficient) -> None:
+    # basis_keys 가 비어 있어 영양 항목을 말하면 이미 거절되므로, 항목명 없이도 걸리는지 본다
+    result = await report_nutrient_analysis(
+        context_insufficient,
+        NutrientReportArgs(period=MealPeriod.LAST_7_DAYS, findings=["기록이 아직 많지 않아요"]),
+    )
+
+    assert not result.success
+    assert result.error["code"] == "INVALID_ARGS"
 
 
 async def test_basis_keys_밖_항목은_거절한다(context_with_basis) -> None:
