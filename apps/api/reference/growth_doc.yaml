@@ -1,7 +1,29 @@
 # growth_doc 시드 — 프롬프트 [예시] 에 들어가는 교육 활동 · 루틴 단계 행 (own_table §1 · RAG_plan Growth 절)
 #
-# 이 판은 로더를 먼저 들인 뼈대다. 행은 별도 PR 로 채운다 (docs/ai-288-growth-doc-rows-p0).
-# rows 가 비어 있어도 읽힌다 — InMemoryGrowthDocs.from_seed() 는 그동안 빈 문서를 낸다(doc.no_row).
+# P0 행(learning_activity · routine_step)을 채우는 판이다 (#293). 전부 status: draft — 검수 전에는
+# 서비스가 읽지 않는다. rows 가 비어 있어도 읽힌다 (InMemoryGrowthDocs.from_seed() 는 빈 문서를 낸다, doc.no_row).
+#
+# 원문 — 저장소 밖(팀 드라이브)에 둔다. 파일이 같은지는 sha256 으로 본다.
+#   2024 개정 표준보육과정 (교육부 고시 제2024-23호, 2024-12-09 고시 · 2025-03-01 시행)
+#     표준보육과정(0~2세)_고시문_최종(웹용)_0416.pdf
+#     sha256 1be3352aae607d03d84d8ef652d74170d8f419ecb0d83f983c58ea84bb96364b
+#     0~1세 영역별 내용 인쇄 9–14쪽 · 2세 15–20쪽 (PDF 10–14쪽 · 16–20쪽). 총론 · 쪽 머리는 이미지라 텍스트가 안 나온다
+#   2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호) — 해설서 부록 1 고시문만
+#     (2019_개정_누리과정)_해설서.pdf
+#     sha256 2e4e4f33f8a6486f9fc3878c735298c08da51bed5e07228f86cace6a18b1656a
+#     부록 1 고시문 PDF 113–124쪽(인쇄 116–127쪽). 해설서 본문 · 신구 대조표는 쓰지 않았다
+#   두 문서의 3~5세 영역별 내용은 같은 59개 내용이다. 누리과정 행은 누리과정 고시문으로 적는다.
+#
+# 쓰지 않은 자료 — 공공누리 제4유형(출처표시 · 상업적 이용금지 · 변경금지)이거나 무단 복제 금지인 자료는
+# 행의 근거로 쓰지 않는다 (#256 이 정해질 때까지 보류, RAG_plan §4 · activity-agent-v1 §3).
+#   2024 개정 표준보육과정(0~2세) 해설서 · 2019 개정 누리과정 해설서 본문 · 신구 대조표
+#   양육 첫걸음 · 디지털 생활 부모 지원 자료 · 따뜻한 말 한마디 교재 · 사례집 · 놀이자료
+#   위 PDF 들의 표지에 공공누리 마크가 있다. 이 시드가 읽은 것은 고시 본문(`public_law`)뿐이고,
+#   해설서의 풀이 · 사례 · 사진 · 구성은 보지 않았다.
+#
+# routine_step 의 근거 — 고시에는 도움 수준별 단계가 없다. 같은 주제의 문구가 연령마다 "도움을 받아 한다 →
+# 해 본다 → 한다" 로 바뀌는 곳은 단계마다 맞는 연령 문구를 source_locator 에 적었다. 연령 문구를 도움 수준에
+# 대응시킨 것은 이 시드의 해석이라 검수자가 확인한다. 근거가 없거나 약한 사슬은 routine_step 절의 TODO 에 있다.
 #
 # 🚨 사실만 읽고 문장은 새로 쓴다. 원문 문장을 옮기지 않는다 (RAG_plan §0, 8어절 이상 일치 금지).
 # 🚨 발달 이정표 · "이 나이면 ~할 수 있다" 문장 · 또래 비교를 쓰지 않는다 (own_table §1).
@@ -36,8 +58,2279 @@
 # - row_type 별 칸 (학습 활동은 area, 예절은 social_manner 24개월+, 습관은 habit + trigger_tags …)
 # - routine_step 사슬이 pick_next_step 으로 읽힘
 
-source: 보건복지부 고시 제2020-75호 「제4차 어린이집 표준보육과정」 · 교육부·보건복지부 고시 「2019 개정 누리과정」 — 행마다 source_* 칸
+source: 교육부 고시 제2024-23호 「2024 개정 표준보육과정」 · 교육부·보건복지부 고시 「2019 개정 누리과정」 — 행마다 source_* 칸
 version: "2026.1-draft"
 fetched_at: 2026-10-09
 
-rows: []
+rows:
+  # ── learning_activity · 12–23개월 — 표준보육과정 0~1세 ──────────────────────
+  - doc_key: growth.learn.m12_23.texture_cloths
+    row_type: learning_activity
+    title: "질감이 다른 천 만져 보기"
+    body: >-
+      손수건, 수건, 담요처럼 느낌이 다른 천을 바닥에 펼쳐 놓고 아이가 만지고 문질러 보게 한다. 어른은 천마다 "보들보들", "까칠까칠" 하고
+      느낌을 말로 붙여 준다. 천이 얼굴을 덮지 않게 곁에서 지켜본다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["손수건", "수건", "담요"]
+    area: physical_health
+    tags: [physical_health, sensory]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 다양한 감각을 경험한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.cup_stacking
+    row_type: learning_activity
+    title: "종이컵 쌓고 와르르 무너뜨리기"
+    body: >-
+      종이컵 몇 개를 아이 앞에 놓고 어른이 두세 개를 쌓아 보인다. 아이가 올려 보거나 손으로 쳐서 무너뜨리면 "와르르" 하고 말해 주고 같이
+      다시 쌓는다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["종이컵"]
+    area: physical_health
+    tags: [physical_health, fine_motor]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 대소근육을 조절한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.walk_and_stop
+    row_type: learning_activity
+    title: "걷다가 멈춰서 구경하기"
+    body: >-
+      집 근처 평평한 길을 아이 걸음에 맞춰 걷다가, 나뭇잎이나 지나가는 자전거처럼 눈길이 닿는 것 앞에서 멈춰 같이 본다. 아이가 가려는 쪽이
+      있으면 따라간다. 찻길 가까이에서는 아이 손을 잡는다.
+    min_month: 12
+    max_month: 24
+    setting: outdoor
+    materials: []
+    area: physical_health
+    tags: [physical_health, outdoor, gross_motor]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동을 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.point_and_name
+    row_type: learning_activity
+    title: "가리키면 이름 말해 주기"
+    body: >-
+      아이가 손가락으로 가리키거나 소리를 내면 어른이 그 물건의 이름을 한 번 말하고 "이거 줄까?" 하며 건넨다. 서두르지 않고 아이가 몸짓이나
+      소리로 다시 요청할 때까지 기다린다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: []
+    area: communication
+    tags: [communication, gesture, vocabulary]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 의사소통 · 듣기와 말하기 · 표정, 몸짓, 말소리로 의사를 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.board_book
+    row_type: learning_activity
+    title: "보드북 같이 넘겨 보기"
+    body: >-
+      두꺼운 종이로 된 그림책을 무릎에 앉힌 아이 앞에 펼치고 아이가 직접 쪽을 넘기게 한다. 그림 하나를 가리키며 이름을 말해 주고, 아이가 한
+      쪽에 오래 머물면 그 쪽을 더 본다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["보드북"]
+    area: communication
+    tags: [communication, book]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 의사소통 · 책과 이야기 즐기기 · 책에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.big_scribble
+    row_type: learning_activity
+    title: "큰 종이에 끼적이기"
+    body: >-
+      바닥에 넓은 종이를 붙이고 굵은 크레용을 쥐여 준다. 아이가 긋는 대로 두고 어른도 옆에서 선을 하나 그어 보인다. 크레용을 입에 가져가면
+      손에서 받아 내려놓는다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["전지", "굵은 크레용"]
+    area: communication
+    tags: [communication, scribble]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 의사소통 · 읽기와 쓰기에 관심 가지기 · 끼적이기에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.name_call
+    row_type: learning_activity
+    title: "눈 맞추고 이름 주고받기"
+    body: >-
+      아이와 얼굴을 마주 보고 이름을 부르고, 아이가 쳐다보거나 소리를 내면 어른도 같은 소리로 대답한다. 서너 번 주고받은 뒤 안아 준다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: []
+    area: social
+    tags: [social, attachment]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 사회관계 · 더불어 생활하기 · 안정적인 애착을 형성한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.side_by_side
+    row_type: learning_activity
+    title: "나란히 앉아 옆 아이 보기"
+    body: >-
+      다른 아이와 같은 매트에 앉아 각자 놀잇감을 갖고 놀게 한다. 어른은 "○○가 공을 굴리네" 하고 옆 아이가 하는 행동을 말해 준다. 아이가
+      옆 아이를 쳐다보면 같이 본다. 놀잇감은 같은 것으로 하나씩 준비한다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["매트", "공"]
+    area: social
+    tags: [social, peer_interest]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 사회관계 · 더불어 생활하기 · 또래에게 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.drum_pot
+    row_type: learning_activity
+    title: "빈 통 두드려 소리 내기"
+    body: >-
+      뚜껑 없는 빈 플라스틱 통을 엎어 놓고 손바닥으로 두드려 소리를 낸다. 아이가 두드리면 같은 박자로 따라 두드리고, 노래를 흥얼거리며 이어
+      간다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["빈 플라스틱 통"]
+    area: art
+    tags: [art, rhythm, music]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 소리와 리듬, 노래로 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.paper_crumple
+    row_type: learning_activity
+    title: "신문지 구기고 찢어 보기"
+    body: >-
+      신문지를 바닥에 펼쳐 주고 아이가 손으로 구기고 찢게 한다. 구긴 종이를 상자에 담는 것까지 같이 한다. 종이를 입에 넣으면 꺼내 주고 다른
+      재료로 바꾼다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["신문지", "상자"]
+    area: art
+    tags: [art, art_material]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 다양한 미술 재료를 경험한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.leaf_touch
+    row_type: learning_activity
+    title: "나뭇잎 만져 보기"
+    body: >-
+      바깥에서 떨어진 큰 나뭇잎 한두 장을 주워 아이 손에 쥐여 준다. 바스락 소리, 잎맥의 결, 색을 말로 곁들인다. 입에 넣으려 하면 다른
+      잎으로 바꿔 쥐여 준다.
+    min_month: 12
+    max_month: 24
+    setting: outdoor
+    materials: ["나뭇잎"]
+    area: nature
+    tags: [nature, nature, sensory]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 자연탐구 · 탐구과정 즐기기 · 사물과 자연 탐색하기를 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.box_in_out
+    row_type: learning_activity
+    title: "상자에 넣고 꺼내기"
+    body: >-
+      바닥에 열린 상자 두 개와 헝겊 공이나 인형을 놓고 아이가 물건을 넣고 꺼내게 한다. 넣을 때는 "쏙", 꺼낼 때는 "짠" 하고 말해 준다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["상자", "헝겊 공"]
+    area: nature
+    tags: [nature, space, shape]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 자연탐구 · 생활 속에서 탐구하기 · 공간과 모양을 탐색한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.cushion_climb
+    row_type: learning_activity
+    title: "방석 언덕 오르내리기"
+    body: >-
+      바닥에 방석이나 낮은 쿠션을 깔고 아이가 기어 올라가거나 걸어서 넘어가 보게 한다. 어른은 아이 바로 옆에서 손이 닿는 거리를 지키고,
+      "올라간다", "내려온다" 하고 움직임을 말해 준다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["방석", "쿠션"]
+    area: physical_health
+    tags: [physical_health, gross_motor]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 시도한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.name_hide_call
+    row_type: learning_activity
+    title: "숨어서 이름 부르기"
+    body: >-
+      아이가 보는 앞에서 어른이 문 뒤로 살짝 숨어 "○○야" 하고 이름을 부른다. 아이가 소리 나는 쪽을 보거나 다가오면 얼굴을 내밀고 웃어
+      준다. 아이가 불안해하는 기색이면 바로 얼굴을 보여 준다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: []
+    area: communication
+    tags: [communication, listening, attachment]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 의사소통 · 듣기와 말하기 · 표정, 몸짓, 말과 주변의 소리에 주의를 기울인다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.show_feeling
+    row_type: learning_activity
+    title: "좋아, 싫어 몸짓으로 말하기"
+    body: >-
+      아이가 고개를 젓거나 손을 밀어낼 때 어른이 "싫어?" 하고 몸짓을 말로 바꿔 준다. 반대로 아이가 웃으며 손을 뻗으면 "좋아!" 하고
+      말하며 건네 준다. 아이의 몸짓에 먼저 답하는 것을 이어 간다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: []
+    area: social
+    tags: [social, emotion, expression]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 사회관계 · 나를 알고 존중하기 · 나의 욕구와 감정을 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.copy_actions
+    row_type: learning_activity
+    title: "어른 따라 하는 흉내 놀이"
+    body: >-
+      어른이 빗으로 머리 빗는 시늉, 장난감 전화기로 "여보세요" 하는 시늉처럼 짧은 동작을 천천히 보여 주고 아이가 따라 하도록 기다린다.
+      아이가 새로 하는 동작은 어른이 다시 따라 한다.
+    min_month: 12
+    max_month: 24
+    setting: indoor
+    materials: ["빗", "장난감 전화기"]
+    area: art
+    tags: [art, imitation, pretend_play]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 모방하기를 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m12_23.flower_smell
+    row_type: learning_activity
+    title: "꽃과 풀 가까이서 보기"
+    body: >-
+      바깥에서 길가의 꽃이나 풀 앞에 아이와 같이 쪼그려 앉아 손가락으로 가리키며 "노란 꽃" 하고 말해 준다. 아이가 만져 보려 하면 한 번만
+      살살 닿게 하고, 입에 가져가지 않게 손을 잡아 준다.
+    min_month: 12
+    max_month: 24
+    setting: outdoor
+    materials: []
+    area: nature
+    tags: [nature, plant, outdoor]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  # ── learning_activity · 24–35개월 — 표준보육과정 2세 ────────────────────────
+  - doc_key: growth.learn.m24_35.ball_roll
+    row_type: learning_activity
+    title: "공 굴려 주고받기"
+    body: >-
+      마주 앉아 큰 공을 굴려 보낸다. 공이 아이 쪽으로 오면 두 손으로 막아 다시 굴리게 한다. 공이 멀리 가면 같이 쫓아가 가져온다.
+    min_month: 24
+    max_month: 36
+    setting: either
+    materials: ["큰 공"]
+    area: physical_health
+    tags: [physical_health, gross_motor, ball]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.ball_into_box
+    row_type: learning_activity
+    title: "헝겊 공 상자에 던져 넣기"
+    body: >-
+      바닥에 상자를 놓고 한두 걸음 떨어져 헝겊 공을 던져 넣는다. 넣을 때마다 어른이 "쏙!" 하고 같이 말한다. 거리는 아이 반응을 보며 한
+      걸음씩 늘리거나 줄인다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["헝겊 공", "상자"]
+    area: physical_health
+    tags: [physical_health, throwing, coordination]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 대소근육을 조절한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.body_song
+    row_type: learning_activity
+    title: "몸 이름 짚으며 노래하기"
+    body: >-
+      "머리 어깨 무릎 발" 노래에 맞춰 해당하는 곳을 손으로 짚는다. 아이가 짚는 곳을 어른이 말로 알려 주고 노래를 천천히 여러 번
+      되풀이한다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: []
+    area: physical_health
+    tags: [physical_health, body_awareness, music]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.choose_two
+    row_type: learning_activity
+    title: "두 가지 중 골라 말하기"
+    body: >-
+      모자 두 개처럼 아이가 좋아하는 물건 두 가지를 보여 주며 "어느 걸 쓸까?" 하고 묻는다. 아이가 가리키거나 말하면 그 말을 문장으로 한
+      번 더 말해 주고 건넨다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["모자"]
+    area: communication
+    tags: [communication, choice, expression]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 의사소통 · 듣기와 말하기 · 자신의 요구와 느낌을 말한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.sound_words
+    row_type: learning_activity
+    title: "소리 흉내와 몸짓 말놀이"
+    body: >-
+      동물 인형이나 그림책을 보며 "멍멍", "깡충깡충", "부릉부릉" 같은 흉내말을 몸짓과 함께 낸다. 아이가 새로운 소리를 만들면 어른이 따라
+      하고 그 소리가 나는 동작을 같이 한다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["동물 인형"]
+    area: communication
+    tags: [communication, wordplay]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기에 재미를 느낀다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.next_page_guess
+    row_type: learning_activity
+    title: "다음 장면 짐작하며 책 보기"
+    body: >-
+      아이가 익숙한 그림책을 펼쳐 쪽을 넘기기 전에 "다음에는 뭐가 나올까?" 하고 묻는다. 아이가 말하거나 가리키면 쪽을 넘겨 같이 확인한다.
+      짐작과 달라도 그대로 이야기를 이어 간다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["그림책"]
+    area: communication
+    tags: [communication, book, imagination]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 의사소통 · 책과 이야기 즐기기 · 책에 관심을 가지고 상상한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.tunnel_turns
+    row_type: learning_activity
+    title: "번갈아 상자 터널 지나기"
+    body: >-
+      큰 상자의 양 끝을 어른이 뚫어 터널을 만든다. 한 아이가 지나가면 다른 아이가 지나가도록 "먼저 ○○, 다음 △△" 하고 순서를 말해
+      준다. 기다리는 아이에게는 터널 입구를 같이 잡게 한다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["큰 상자"]
+    area: social
+    tags: [social, peer_play, turn_taking]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 사회관계 · 더불어 생활하기 · 또래와 함께 놀이한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.tidy_song
+    row_type: learning_activity
+    title: "정리 노래 부르며 제자리에 놓기"
+    body: >-
+      놀이를 끝낼 때마다 같은 정리 노래를 부르며 놀잇감을 바구니에 담는다. 노래가 끝나면 정리도 끝이라는 약속으로 삼고, 매번 같은 순서로
+      한다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["바구니"]
+    area: social
+    tags: [social, rule, routine]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.feel_the_wind
+    row_type: learning_activity
+    title: "바깥 날씨 느껴 보기"
+    body: >-
+      문밖에 나가 바람, 햇볕, 쌀쌀한 공기를 느끼고 "바람이 분다", "따뜻하다" 하고 말해 준다. 들어와서 오늘 입은 옷이 날씨에 맞았는지
+      같이 이야기한다.
+    min_month: 24
+    max_month: 36
+    setting: outdoor
+    materials: []
+    area: nature
+    tags: [nature, weather, outdoor]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 느낀다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.sock_pairs
+    row_type: learning_activity
+    title: "같은 색 양말 짝 찾기"
+    body: >-
+      색이 다른 양말 두세 켤레를 섞어 놓고 같은 색끼리 짝을 맞추게 한다. 어른이 먼저 한 켤레를 맞춰 보이고 "이거랑 똑같은 건 어디
+      있을까?" 하고 묻는다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["양말"]
+    area: nature
+    tags: [nature, sorting, same_different]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 사물을 같고 다름에 따라 구분한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.scarf_dance
+    row_type: learning_activity
+    title: "스카프 흔들며 춤추기"
+    body: >-
+      손에 쥘 만한 짧은 스카프를 양손에 하나씩 들고 음악에 맞춰 흔들며 돈다. 스카프가 얼굴이나 목에 감기지 않도록 짧은 천을 쓰고 어른이
+      곁에서 같이 춘다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["짧은 스카프"]
+    area: art
+    tags: [art, dance, music]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 예술경험 · 창의적으로 표현하기 · 움직임과 춤으로 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.doll_bedtime
+    row_type: learning_activity
+    title: "인형 재우기 흉내 내기"
+    body: >-
+      인형을 눕히고 담요를 덮어 준 뒤 토닥이며 자장가를 부른다. 아이가 하는 행동을 "토닥토닥 해 주는구나" 하고 말로 따라 말해 준다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["인형", "담요"]
+    area: art
+    tags: [art, pretend_play]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 예술경험 · 창의적으로 표현하기 · 상상놀이를 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.picture_drawing_talk
+    row_type: learning_activity
+    title: "그림 그리고 이야기 들려 주기"
+    body: >-
+      굵은 크레용으로 아이가 끼적인 그림을 보고 "이건 뭐야?" 하고 묻는다. 아이가 하는 말을 그림 귀퉁이에 짧게 적어 주고 다시 읽어 준다.
+      아이가 말하기 싫어하면 그림만 같이 본다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["종이", "굵은 크레용"]
+    area: communication
+    tags: [communication, scribble, speaking]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 의사소통 · 읽기와 쓰기에 관심 가지기 · 끼적이며 표현하기를 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.family_photo_names
+    row_type: learning_activity
+    title: "가족 사진 보며 이름 부르기"
+    body: >-
+      가족사진이나 사진첩을 같이 펼쳐 사람을 한 명씩 가리키며 "이 사람은 누구야?" 하고 묻는다. 아이가 대답하면 "맞아, 엄마야" 하고 되받아
+      말해 준다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["가족 사진"]
+    area: social
+    tags: [social, family]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 사회관계 · 더불어 생활하기 · 가족에게 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.song_pause
+    row_type: learning_activity
+    title: "노래 멈췄다 이어 부르기"
+    body: >-
+      아이가 아는 노래를 같이 부르다가 중간의 한 낱말에서 어른이 입을 다물고 기다린다. 아이가 그 낱말을 이어 부르면 다시 같이 부른다. 같은
+      노래를 여러 번 반복해도 좋다.
+    min_month: 24
+    max_month: 36
+    setting: either
+    materials: []
+    area: art
+    tags: [art, singing, music]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 예술경험 · 창의적으로 표현하기 · 익숙한 노래와 리듬을 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.count_steps_cups
+    row_type: learning_activity
+    title: "하나, 둘 종이컵 세어 보기"
+    body: >-
+      종이컵을 한 개씩 상자에 넣으며 "하나, 둘, 셋" 하고 같이 센다. 아이가 컵을 건네 줄 때마다 숫자를 말해 준다. 숫자를 틀리게 말해도
+      고쳐 주지 않고, 어른이 다음 번에 바르게 말해 보인다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["종이컵", "상자"]
+    area: nature
+    tags: [nature, counting, math]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 수에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m24_35.tool_use_guess
+    row_type: learning_activity
+    title: "집 안 도구 쓰임 맞히기"
+    body: >-
+      빗, 수건, 숟가락처럼 아이가 매일 보는 도구를 하나씩 들어 "이건 뭐 할 때 쓰지?" 하고 묻는다. 아이가 쓰는 시늉을 하면 어른이 같이
+      해 본다.
+    min_month: 24
+    max_month: 36
+    setting: indoor
+    materials: ["빗", "수건", "칫솔"]
+    area: nature
+    tags: [nature, tools, everyday]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 생활 도구에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  # ── learning_activity · 36–71개월 — 누리과정 (3~5세 공통) ───────────────────
+  - doc_key: growth.learn.m36_71.freeze_dance
+    row_type: learning_activity
+    title: "멈춰라 춤"
+    body: >-
+      음악에 맞춰 팔, 다리, 어깨를 움직이다가 음악이 멈추면 그 자세로 멈춘다. 어른이 "오른손 올려!" 처럼 몸의 부위를 말해 주고,
+      익숙해지면 아이가 어른에게 부위를 정해 준다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: []
+    area: physical_health
+    tags: [physical_health, body_awareness, dance]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.tape_line_walk
+    row_type: learning_activity
+    title: "테이프 선 위 걷기"
+    body: >-
+      바닥에 마스킹 테이프로 곧은 선을 붙이고 그 위를 한 발씩 걷는다. 익숙해지면 구불구불한 선이나 두 팔을 벌리고 걷기로 바꿔 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["마스킹 테이프"]
+    area: physical_health
+    tags: [physical_health, balance, gross_motor]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 신체활동 즐기기 · 신체 움직임을 조절한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.paper_stick_ball
+    row_type: learning_activity
+    title: "종이 막대로 공 굴리기"
+    body: >-
+      신문지를 길게 말아 테이프로 붙여 막대를 만들고, 구긴 신문지 공을 막대로 밀어 목표 지점까지 굴린다. 목표는 상자나 줄로 정하고, 거리는
+      아이와 의논해 바꾼다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["신문지", "테이프", "상자"]
+    area: physical_health
+    tags: [physical_health, tool_use, gross_motor]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 신체활동 즐기기 · 기초적인 이동운동, 제자리 운동, 도구를 이용한 운동을 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.outdoor_pick
+    row_type: learning_activity
+    title: "오늘 바깥놀이 직접 고르기"
+    body: >-
+      나가기 전에 "달리기, 공놀이, 술래잡기 중에 뭘 할까?" 하고 물어 아이가 고르게 한다. 어른은 한 번은 아이가 정한 방법대로 따라 한다.
+    min_month: 36
+    max_month: 72
+    setting: outdoor
+    materials: []
+    area: physical_health
+    tags: [physical_health, outdoor, choice]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동에 자발적으로 참여한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.toy_homes
+    row_type: learning_activity
+    title: "장난감 집 찾아 주기"
+    body: >-
+      바구니마다 "블록", "인형", "책" 처럼 그림 이름표를 붙이고, 놀이가 끝나면 각자 자기 집으로 돌려놓는다. 이름표는 아이와 같이 그려서
+      붙인다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["바구니", "그림 이름표"]
+    area: physical_health
+    tags: [physical_health, tidy, self_care]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.cough_elbow
+    row_type: learning_activity
+    title: "기침할 때 팔꿈치로 가리기"
+    body: >-
+      어른이 인형이 기침하는 장면을 연기하고 소매나 팔꿈치 안쪽으로 입을 가리는 모습을 보여 준다. 아이도 따라 해 보고, 기침한 뒤에는 손을
+      씻는 것까지 이어서 한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["인형"]
+    area: physical_health
+    tags: [physical_health, hygiene, prevention]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 건강하게 생활하기 · 질병을 예방하는 방법을 알고 실천한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.traffic_light
+    row_type: learning_activity
+    title: "신호등 놀이"
+    body: >-
+      빨간색과 초록색 종이 원을 하나씩 만들어 초록이 올라가면 걷고, 빨강이 올라가면 멈춘다. 실제 횡단보도 앞에서도 멈춰 서서 양쪽을 보고
+      건너자고 이야기한다.
+    min_month: 36
+    max_month: 72
+    setting: either
+    materials: ["색종이"]
+    area: physical_health
+    tags: [physical_health, safety, traffic]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 안전하게 생활하기 · 교통안전 규칙을 지킨다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.screen_promise
+    row_type: learning_activity
+    title: "화면 보는 약속 그림으로 정하기"
+    body: >-
+      가족이 함께 앉아 화면을 보는 시간과 장소, 끝났을 때 하는 일(끄고 책 보기 등)을 그림 카드로 정해 눈에 띄는 곳에 붙인다. 약속은 아이
+      의견을 하나 넣어 같이 만든다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["종이", "색연필"]
+    area: physical_health
+    tags: [physical_health, screen, rule]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 안전하게 생활하기 · TV, 컴퓨터, 스마트폰 등을 바르게 사용한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.listen_and_catch
+    row_type: learning_activity
+    title: "틀린 낱말 찾아내기"
+    body: >-
+      짧은 이야기를 읽어 주다가 중간에 낱말 하나를 일부러 엉뚱하게 말한다. 아이가 알아채고 고쳐 말하면 그 대목을 다시 읽어 준다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["그림책"]
+    area: communication
+    tags: [communication, listening, book]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 듣기와 말하기 · 말이나 이야기를 관심 있게 듣는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.one_scene_talk
+    row_type: learning_activity
+    title: "잠자리에서 오늘의 한 장면 말하기"
+    body: >-
+      자기 전에 오늘 있었던 장면 하나를 어른이 먼저 말하고, 이어서 아이가 자기 장면을 말한다. 아이 말을 고쳐 주지 않고, 한 번 되받아 말해
+      준 뒤 "그때 기분이 어땠어?" 하고 묻는다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: []
+    area: communication
+    tags: [communication, speaking, feeling]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 듣기와 말하기 · 자신의 경험, 느낌, 생각을 말한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.story_chain
+    row_type: learning_activity
+    title: "한 문장씩 이어 가는 이야기"
+    body: >-
+      어른이 "옛날에 곰 한 마리가 살았어" 하고 시작하면 아이가 바로 앞 말을 받아 한 문장을 잇는다. 번갈아 가며 이어 가다가 아이가 "끝"
+      이라고 하면 이야기를 마친다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: []
+    area: communication
+    tags: [communication, storytelling, turn_taking]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 듣기와 말하기 · 상대방이 하는 이야기를 듣고 관련해서 말한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.kind_words_swap
+    row_type: learning_activity
+    title: "고운 말로 바꿔 말하기 놀이"
+    body: >-
+      어른이 "줘!" 처럼 거친 말을 일부러 하고, 아이가 "주세요" 로 바꿔 주는 놀이다. 순서를 바꿔 아이가 거친 말을 하고 어른이 바꿔 말해
+      주기도 한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: []
+    area: communication
+    tags: [communication, manners, language]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 듣기와 말하기 · 고운 말을 사용한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.sign_hunt
+    row_type: learning_activity
+    title: "산책길 글자 찾기"
+    body: >-
+      산책하며 간판이나 표지판에서 아이 이름 글자나 낯익은 그림 표지를 찾는다. 찾으면 손가락으로 짚어 같이 읽어 보고, 집에 와서 찾은 것을
+      종이에 그려 본다.
+    min_month: 36
+    max_month: 72
+    setting: outdoor
+    materials: ["종이"]
+    area: communication
+    tags: [communication, literacy, outdoor]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 읽기와 쓰기에 관심 가지기 · 주변의 상징, 글자 등의 읽기에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.name_card_scribble
+    row_type: learning_activity
+    title: "이름 카드에 글자처럼 써 보기"
+    body: >-
+      이름 카드 한 장을 만들어 아이가 마음대로 선과 모양으로 "이름" 을 쓰게 한다. 아이가 쓴 것을 읽어 달라고 하면 아이가 한 말을 어른이
+      그 밑에 적어 준다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["카드", "굵은 사인펜"]
+    area: communication
+    tags: [communication, writing, literacy]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 읽기와 쓰기에 관심 가지기 · 자신의 생각을 글자와 비슷한 형태로 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.word_relay
+    row_type: learning_activity
+    title: "끝말 이어가기"
+    body: >-
+      "나비 → 비행기 → 기차" 처럼 앞 낱말의 끝소리로 시작하는 낱말을 번갈아 말한다. 막히면 그림 카드 한 장을 힌트로 보여 준다.
+    min_month: 36
+    max_month: 72
+    setting: either
+    materials: ["그림 카드"]
+    area: communication
+    tags: [communication, wordplay]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기 짓기를 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.about_me_page
+    row_type: learning_activity
+    title: "나에 대한 한 쪽 만들기"
+    body: >-
+      종이 한 장에 아이 손을 본뜨고, 그 안에 좋아하는 것과 해 보고 싶은 것을 그림으로 그리거나 어른이 받아 적는다. 완성한 쪽은 아이 방에
+      붙인다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["종이", "색연필"]
+    area: social
+    tags: [social, self, drawing]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 나를 알고 존중하기 · 나를 알고 소중히 여긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.feeling_faces
+    row_type: learning_activity
+    title: "감정 얼굴 카드 고르기"
+    body: >-
+      웃는 얼굴, 화난 얼굴, 슬픈 얼굴을 카드에 그리고, 오늘 있었던 일 하나를 떠올리며 어떤 얼굴인지 고르게 한다. 그런 기분일 때 어떻게
+      말하면 좋을지 같이 정해 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["카드", "색연필"]
+    area: social
+    tags: [social, emotion, expression]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 나를 알고 존중하기 · 나의 감정을 알고 상황에 맞게 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.my_job_board
+    row_type: learning_activity
+    title: "오늘 내가 할 일 판"
+    body: >-
+      신발 정리, 가방 걸기처럼 아이가 스스로 해 보고 싶은 일 두세 가지를 그림으로 그려 판에 붙인다. 하고 나면 아이가 직접 표시한다. 어른은
+      도와 달라고 할 때만 거든다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["종이", "스티커"]
+    area: social
+    tags: [social, independence, routine]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 나를 알고 존중하기 · 내가 할 수 있는 것을 스스로 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.family_drawing
+    row_type: learning_activity
+    title: "우리 가족 소개 그림"
+    body: >-
+      가족 한 사람씩 종이에 그려 넣고, "이 사람은 나한테 어떤 걸 해 줘?" 하고 물어 아이 이야기를 듣는다. 그림 옆에 아이가 한 말을 짧게
+      적어 둔다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["종이", "색연필"]
+    area: social
+    tags: [social, family]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 더불어 생활하기 · 가족의 의미를 알고 화목하게 지낸다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.blanket_carry
+    row_type: learning_activity
+    title: "담요에 인형 태워 둘이 옮기기"
+    body: >-
+      큰 담요의 양쪽을 두 아이(또는 아이와 어른)가 한 쪽씩 잡고 위에 인형을 태워 방 끝까지 옮긴다. 걸음이 맞지 않으면 인형이 떨어지는 것을
+      같이 겪고, "천천히" 하고 말로 맞춘다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["담요", "인형"]
+    area: social
+    tags: [social, cooperation]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 더불어 생활하기 · 친구와 서로 도우며 사이좋게 지낸다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.puppet_conflict
+    row_type: learning_activity
+    title: "인형으로 풀어 보는 다툼"
+    body: >-
+      인형 둘이 같은 장난감을 서로 갖겠다고 하는 장면을 어른이 연기하고, "어떻게 하면 둘 다 괜찮을까?" 하고 묻는다. 번갈아 쓰기나 같이
+      쓰기 중 아이가 고른 방법으로 이어서 연기한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["인형 둘"]
+    area: social
+    tags: [social, conflict, roleplay]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 더불어 생활하기 · 친구와의 갈등을 긍정적인 방법으로 해결한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.make_game_rules
+    row_type: learning_activity
+    title: "놀이 규칙 같이 정하기"
+    body: >-
+      새 놀이를 시작하기 전에 "순서는 어떻게 할까? 멈출 때 신호는 뭘로 할까?" 하고 두세 가지 규칙을 아이와 정해 그림으로 그려 붙인다.
+      놀이 중에 규칙이 맞지 않으면 멈추고 같이 고친다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["종이", "색연필"]
+    area: social
+    tags: [social, rule, negotiation]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 더불어 생활하기 · 약속과 규칙의 필요성을 알고 지킨다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.color_walk
+    row_type: learning_activity
+    title: "오늘의 색깔 찾기 산책"
+    body: >-
+      나가기 전에 오늘 찾을 색을 하나 정하고, 길에서 그 색을 가진 것을 찾아 짚어 본다. 돌아와서 가장 마음에 든 것을 그림으로 그린다.
+    min_month: 36
+    max_month: 72
+    setting: outdoor
+    materials: ["종이", "크레용"]
+    area: art
+    tags: [art, color, outdoor]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 아름다움 찾아보기 · 자연과 생활에서 아름다움을 느끼고 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.line_shape_hunt
+    row_type: learning_activity
+    title: "집 안에서 선과 모양 찾기"
+    body: >-
+      집 안을 둘러보며 동그라미, 네모, 줄무늬를 찾아 카드에 표시한다. 찾은 것과 같은 모양을 종이에 그려 보고 어떤 느낌인지 말해 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["카드", "색연필"]
+    area: art
+    tags: [art, shape, observation]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 아름다움 찾아보기 · 예술적 요소에 관심을 갖고 찾아본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.change_the_lyrics
+    row_type: learning_activity
+    title: "아는 노래 가사 바꿔 부르기"
+    body: >-
+      아이가 아는 노래의 한 구절을 아이가 정한 낱말로 바꿔 부른다. 어른도 하나 바꿔 보고 서로 바꾼 노래를 번갈아 부른다.
+    min_month: 36
+    max_month: 72
+    setting: either
+    materials: []
+    area: art
+    tags: [art, singing, wordplay]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 창의적으로 표현하기 · 노래를 즐겨 부른다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.body_band
+    row_type: learning_activity
+    title: "몸과 빈 통으로 소리 합주"
+    body: >-
+      손뼉, 발 구르기, 빈 통 두드리기로 소리를 내며 어른이 만든 박자를 따라 한다. 익숙해지면 아이가 박자를 정하고 어른이 따라 한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["빈 통"]
+    area: art
+    tags: [art, rhythm, music]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 창의적으로 표현하기 · 신체, 사물, 악기로 간단한 소리와 리듬을 만들어 본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.animal_music_move
+    row_type: learning_activity
+    title: "음악 따라 동물처럼 움직이기"
+    body: >-
+      음악을 바꿔 틀어 가며 부드러운 곡에서는 코끼리처럼 천천히, 빠른 곡에서는 토끼처럼 폴짝 움직인다. 스카프를 손에 들면 움직임이 더 커진다.
+      아이가 떠올린 동물로도 바꿔 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["스카프"]
+    area: art
+    tags: [art, dance, imagination]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 창의적으로 표현하기 · 신체나 도구를 활용하여 움직임과 춤으로 자유롭게 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.tear_and_paste
+    row_type: learning_activity
+    title: "찢고 붙여서 오늘 기분 그리기"
+    body: >-
+      색종이, 잡지 조각, 천을 손으로 찢거나 아동용 가위로 오려 풀로 붙여 "오늘 기분" 그림을 만든다. 가위를 쓸 때는 어른이 곁에서 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["색종이", "풀", "도화지", "아동용 가위"]
+    area: art
+    tags: [art, collage, art_material]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 창의적으로 표현하기 · 다양한 미술 재료와 도구로 자신의 생각과 느낌을 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.sock_puppet_show
+    row_type: learning_activity
+    title: "양말 인형극"
+    body: >-
+      양말에 색종이로 오린 눈과 입을 붙여 인형을 만들고, 있었던 일이나 좋아하는 이야기를 인형 목소리로 들려준다. 어른은 상대 인형을 맡아
+      대화를 이어 간다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["양말", "색종이", "풀"]
+    area: art
+    tags: [art, roleplay, storytelling]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 창의적으로 표현하기 · 극놀이로 경험이나 이야기를 표현한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.shadow_play
+    row_type: learning_activity
+    title: "손전등으로 그림자 만들기"
+    body: >-
+      어두운 방에서 손전등으로 인형이나 손을 비춰 벽에 그림자를 만든다. 손전등을 가까이, 멀리 움직이면 그림자 크기가 어떻게 달라지는지 같이
+      말해 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["손전등", "인형"]
+    area: nature
+    tags: [nature, science, light]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 물체의 특성과 변화를 여러 가지 방법으로 탐색한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.count_shoes
+    row_type: learning_activity
+    title: "우리 집 신발 세기"
+    body: >-
+      현관의 신발을 한 짝씩 짚으며 같이 센다. 가족별로 한 켤레씩 묶어 몇 켤레인지 다시 세어 보고, 어느 쪽이 더 많은지 말해 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["신발"]
+    area: nature
+    tags: [nature, counting, math]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 물체를 세어 수량을 알아본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.where_is_it
+    row_type: learning_activity
+    title: "위, 아래, 옆에 숨은 인형 찾기"
+    body: >-
+      인형을 의자 위, 아래, 옆에 숨기고 "의자 아래를 봐" 처럼 위치를 말로 알려 준다. 아이가 찾으면 역할을 바꿔 아이가 숨기고 위치 말로
+      어른이 찾는다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["인형", "의자"]
+    area: nature
+    tags: [nature, position, math]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 물체의 위치와 방향, 모양을 알고 구별한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.long_and_heavy
+    row_type: learning_activity
+    title: "길이와 무게 맞대어 비교하기"
+    body: >-
+      집 안의 막대나 끈 두 개를 나란히 대고 어느 쪽이 더 긴지 말한다. 책 두 권은 양손에 하나씩 들어 어느 쪽이 더 무거운지 말해 본다.
+      무거운 물건은 어른이 곁에서 같이 든다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["막대", "책"]
+    area: nature
+    tags: [nature, measure, comparison]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 일상에서 길이, 무게 등의 속성을 비교한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.color_pattern_line
+    row_type: learning_activity
+    title: "색종이로 규칙 만들기"
+    body: >-
+      빨강-파랑-빨강-파랑 순서로 색종이 조각을 놓고 다음에 올 색이 무엇일지 맞혀 보게 한다. 아이가 자기만의 규칙으로 줄을 만들면 어른이 다음
+      칸을 맞힌다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["색종이"]
+    area: nature
+    tags: [nature, pattern, math]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 주변에서 반복되는 규칙을 찾는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.sort_home_things
+    row_type: learning_activity
+    title: "집 안 물건 모아 나누기"
+    body: >-
+      양말, 컵, 장난감을 한 상자에 섞어 두고 "같은 것끼리" 나눠 담는다. 아이가 나눈 기준을 말로 설명하게 하고, 기준을 바꿔(색깔, 크기)
+      다시 나눠 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["양말", "컵", "상자"]
+    area: nature
+    tags: [nature, classification, math]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 생활 속에서 탐구하기 · 일상에서 모은 자료를 기준에 따라 분류한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.plant_watch
+    row_type: learning_activity
+    title: "화분 하루 한 장 관찰"
+    body: >-
+      화분 하나를 정해 며칠에 한 번 같은 자리에서 그림이나 사진으로 남기고, 달라진 점을 아이가 말해 본다. 그림을 차례로 붙여 두면 변한
+      모습이 한눈에 보인다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["화분", "종이", "색연필"]
+    area: nature
+    tags: [nature, plant, observation]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.quiet_corner
+    row_type: learning_activity
+    title: "조용히 쉬는 자리 만들기"
+    body: >-
+      집 한쪽에 쿠션과 담요로 쉬는 자리를 만들어 아이와 이름을 붙인다. 놀다가 지칠 때 "쉬는 자리에 갈까?" 하고 물어 아이가 가고 싶은지
+      고르게 한다. 어른도 같이 앉아 조용한 그림책을 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["쿠션", "담요", "그림책"]
+    area: physical_health
+    tags: [physical_health, rest, routine]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 건강하게 생활하기 · 하루 일과에서 적당한 휴식을 취한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.exit_route_walk
+    row_type: learning_activity
+    title: "집에서 나가는 길 걸어 보기"
+    body: >-
+      "불이 났다고 가정하고 밖으로 나가는 길" 을 아이와 천천히 걸어 본다. 방에서 현관까지 어느 길로 가는지, 문을 어떻게 여는지 말로 같이
+      짚는다. 놀이처럼 하되 실제 상황에서는 어른 손을 잡고 나간다고 알려 준다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: []
+    area: physical_health
+    tags: [physical_health, safety, emergency]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "신체운동·건강 · 안전하게 생활하기 · 안전사고, 화재, 재난, 학대, 유괴 등에 대처하는 방법을 경험한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.greeting_cards
+    row_type: learning_activity
+    title: "인사 장면 카드로 말해 보기"
+    body: >-
+      만났을 때, 헤어질 때, 고마울 때, 미안할 때를 그린 카드를 한 장씩 뽑아 그 장면에 맞는 말을 해 본다. 어른이 먼저 한 장면을 연기해
+      보이고 아이가 같은 말을 고르게 한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["그림 카드"]
+    area: communication
+    tags: [communication, manners, speaking]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 듣기와 말하기 · 상황에 적절한 단어를 사용하여 말한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.poem_repeat
+    row_type: learning_activity
+    title: "동시 따라 읽으며 반복되는 소리 찾기"
+    body: >-
+      짧은 동시를 어른이 읽어 주고 아이가 따라 읽는다. 두 번 이상 나오는 소리나 낱말이 있으면 그때마다 손뼉을 치게 한다. 다 읽으면 아이가
+      바꿔 읽어 보고 싶은 줄을 고른다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["동시집"]
+    area: communication
+    tags: [communication, poem, wordplay]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "의사소통 · 책과 이야기 즐기기 · 동화, 동시에서 말의 재미를 느낀다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.same_picture_different_feel
+    row_type: learning_activity
+    title: "같은 그림, 다른 느낌 말하기"
+    body: >-
+      그림 한 장을 보고 가족이 각자 어떤 느낌이 드는지 돌아가며 말한다. 서로 다르게 말해도 어른은 "그렇게도 보이는구나" 하고 받아 준다.
+      마지막에 느낌이 달랐던 점을 아이가 정리해 말하게 한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["그림 한 장"]
+    area: social
+    tags: [social, respect, emotion]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 더불어 생활하기 · 서로 다른 감정, 생각, 행동을 존중한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.neighborhood_map
+    row_type: learning_activity
+    title: "우리 동네 그림 지도 그리기"
+    body: >-
+      집 근처에서 자주 가는 곳(놀이터, 가게, 도서관)을 아이와 같이 떠올려 큰 종이에 그린다. 궁금한 곳이 있으면 표시해 두었다가 다음 산책에
+      같이 가서 확인한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["큰 종이", "색연필"]
+    area: social
+    tags: [social, community, drawing]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 사회에 관심 가지기 · 내가 살고 있는 곳에 대해 궁금한 것을 알아본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.hello_in_languages
+    row_type: learning_activity
+    title: "여러 나라 인사말 들어 보기"
+    body: >-
+      그림책이나 영상 속 다른 나라 사람들이 하는 인사말을 같이 듣고 따라 해 본다. 인사할 때 손을 모으거나 고개를 숙이는 것처럼 다른 몸짓도
+      같이 해 보고, 우리 인사와 어떻게 다른지 말해 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["그림책"]
+    area: social
+    tags: [social, culture, greeting]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "사회관계 · 사회에 관심 가지기 · 다양한 문화에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.janggu_beat
+    row_type: learning_activity
+    title: "빈 통으로 우리 장단 따라 치기"
+    body: >-
+      빈 통을 장구처럼 무릎에 놓고 "덩 덕쿵 덕" 장단을 어른이 먼저 치고 아이가 따라 친다. 전통 음악을 같이 듣고 그 박자에 맞춰 쳐 보기도
+      한다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["빈 통"]
+    area: art
+    tags: [art, tradition, rhythm]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 예술 감상하기 · 우리나라 전통 예술에 관심을 갖고 친숙해진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.listen_to_music_draw
+    row_type: learning_activity
+    title: "음악 들으며 떠오르는 모습 그리기"
+    body: >-
+      눈을 감고 짧은 음악을 들은 뒤 떠오른 모습을 종이에 그린다. 그림을 가족에게 보여 주며 어떤 부분에서 그런 모습이 떠올랐는지 말해 본다.
+      다른 가족이 그린 것도 같이 본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["종이", "크레용"]
+    area: art
+    tags: [art, appreciation, imagination]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "예술경험 · 예술 감상하기 · 다양한 예술을 감상하며 상상하기를 즐긴다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.learn.m36_71.weather_clothes
+    row_type: learning_activity
+    title: "날씨 보고 옷 고르기"
+    body: >-
+      아침에 창밖이나 날씨 그림 카드를 보고 오늘 날씨를 말한 뒤 입을 옷을 아이가 직접 고른다. 어른은 고른 옷이 오늘 날씨와 어떻게 이어지는지
+      한 번 물어본다.
+    min_month: 36
+    max_month: 72
+    setting: indoor
+    materials: ["날씨 그림 카드"]
+    area: nature
+    tags: [nature, weather, everyday]
+    source_title: "2019 개정 누리과정 (교육부 고시 제2019-189호 · 보건복지부 고시 제2019-152호)"
+    source_org: "교육부 · 보건복지부"
+    source_year: 2019
+    source_locator: "자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 생활과 관련짓는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  # ── routine_step — 자립 단계 사슬 ────────────────────────────────────────
+  # TODO(#293 routine_step 근거) — 다음 사슬은 고시에 대응하는 문구가 없어 이번 판에서 뺐다.
+  #   growth.routine.self_care.shoes             (신발 신기)
+  #   growth.routine.household_task.laundry_basket (빨래 바구니에 넣기)
+  #   growth.routine.transition.leave_home       (외출 준비)
+  #   고시에는 "하루 일과를 즐겁게 경험한다"(2세) · "내가 할 수 있는 것을 스스로 한다"(3~5세) 처럼
+  #   주제 수준의 문구뿐이다. 해설서는 상업 이용 금지라 근거로 쓰지 않는다 (#256).
+  #   되돌리려면 근거를 먼저 정한다 — 공공누리 유형이 확인된 자료(국가건강정보포털 등, RAG_plan §4) 또는
+  #   허락받은 자료(`license_basis: permission`). 같은 doc_key 규칙(growth.routine.<카테고리>.<사슬>.step<N>)으로 넣는다.
+  # TODO(#293 routine_step 근거) — 다음 사슬은 남겼지만 근거가 약하다. 검수 때 남길지 정한다.
+  #   dress_top  (상의 입기) — 옷 입기를 가리키는 고시 문구가 없고, 일과 · 스스로 하기 주제를 빌렸다
+  #   toilet     (화장실 가기) — 0~1세 · 2세 문구가 같아 도움 수준 순서를 받치지 못한다
+  #   spoon      (숟가락 쓰기) — 음식 주제 문구이고 도구를 쥐는 단계는 고시에 없다
+  #   tidy_toys  (장난감 정리) — 2세 · 3~5세 문구 둘이라 단계 1~3 이 같은 문구를 쓴다
+  - doc_key: growth.routine.self_care.handwash.step1
+    row_type: routine_step
+    title: "손 씻기 — 어른이 아이 손을 잡고 씻겨 주는 단계"
+    body: >-
+      세면대 앞에서 어른이 아이 손을 감싸 쥐고 비누 거품을 내어 손바닥, 손등, 손가락 사이를 문질러 준다. 헹구고 닦는 것도 어른이 하면서
+      "손바닥, 손등" 하고 부위를 말해 준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["비누", "수건"]
+    routine_category: self_care
+    tags: [self_care, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.handwash.step2
+    row_type: routine_step
+    title: "손 씻기 — 어른이 손을 받쳐 주고 아이가 비비는 단계"
+    body: >-
+      어른이 비누를 짜 주고 아이 손 아래를 받쳐 주면 아이가 두 손을 직접 비빈다. 손가락 사이와 손목처럼 빠지기 쉬운 곳만 어른이 같이 문질러
+      준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["비누", "수건"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.handwash.step1
+    tags: [self_care, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.handwash.step3
+    row_type: routine_step
+    title: "손 씻기 — 어른이 순서를 말로 일러 주는 단계"
+    body: >-
+      어른은 손을 대지 않고 "비누, 손바닥, 손등, 손가락 사이, 헹구기" 순서를 한 가지씩 말해 준다. 아이가 한 가지를 마치면 다음 순서를
+      말하고, 같은 순서를 그림 카드로 세면대 옆에 붙여 둔다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["비누", "수건"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.handwash.step2
+    tags: [self_care, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.handwash.step4
+    row_type: routine_step
+    title: "손 씻기 — 아이가 혼자 씻고 어른은 곁에서 보는 단계"
+    body: >-
+      아이가 처음부터 끝까지 혼자 씻고 수건으로 닦는다. 어른은 곁에서 지켜보다가 아이가 도와 달라고 할 때만 거든다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["비누", "수건"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.handwash.step3
+    tags: [self_care, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toothbrush.step1
+    row_type: routine_step
+    title: "양치 — 어른이 칫솔을 쥐고 닦아 주는 단계"
+    body: >-
+      아이가 입을 벌리면 어른이 칫솔을 쥐고 안쪽 이부터 앞니까지 차례로 닦아 준다. 노래 한 곡 길이로 마친다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["칫솔"]
+    routine_category: self_care
+    tags: [self_care, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toothbrush.step2
+    row_type: routine_step
+    title: "양치 — 아이가 칫솔을 쥐고 어른이 손을 포개는 단계"
+    body: >-
+      아이가 칫솔을 쥐고, 어른이 그 위에 손을 포개어 앞니, 어금니, 혀 쪽 순서로 같이 움직인다. 아이가 혼자 문지르는 시간을 조금씩 늘려
+      간다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["칫솔"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.toothbrush.step1
+    tags: [self_care, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toothbrush.step3
+    row_type: routine_step
+    title: "양치 — 어른이 순서를 말로 일러 주는 단계"
+    body: >-
+      아이가 칫솔을 쥐고 혼자 닦는 동안 어른이 "앞쪽, 위쪽, 아래쪽" 하고 순서를 말해 준다. 마지막에 어른이 입 안을 한 번 살펴 닦지 못한
+      곳이 있으면 그곳만 닦아 준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["칫솔"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.toothbrush.step2
+    tags: [self_care, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toothbrush.step4
+    row_type: routine_step
+    title: "양치 — 아이가 혼자 닦고 어른은 곁에서 보는 단계"
+    body: >-
+      아이가 거울을 보며 혼자 양치를 마친다. 어른은 곁에서 지켜보다가 아이가 부탁하거나 칫솔 쥐는 법이 흐트러질 때만 거든다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["칫솔"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.toothbrush.step3
+    tags: [self_care, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.face_wipe.step1
+    row_type: routine_step
+    title: "얼굴 닦기 — 어른이 손수건으로 닦아 주는 단계"
+    body: >-
+      "얼굴 닦자" 하고 말한 뒤 어른이 부드러운 손수건으로 이마, 볼, 입 주변을 차례로 닦아 준다. 닦는 곳을 한 군데씩 말해 준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["손수건", "거울"]
+    routine_category: self_care
+    tags: [self_care, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.face_wipe.step2
+    row_type: routine_step
+    title: "얼굴 닦기 — 아이가 손수건을 쥐고 어른이 손을 포개는 단계"
+    body: >-
+      아이가 손수건을 쥐고, 어른이 아이 손 위에 손을 포개어 볼과 입 주변을 같이 닦는다. 이마와 턱은 아이가 직접 해 본다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["손수건", "거울"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.face_wipe.step1
+    tags: [self_care, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.face_wipe.step3
+    row_type: routine_step
+    title: "얼굴 닦기 — 거울 앞에서 순서를 말로 일러 주는 단계"
+    body: >-
+      거울 앞에 서서 어른이 "이마, 볼, 입 주변" 하고 순서를 말해 주면 아이가 직접 닦는다. 닦인 곳을 거울로 같이 확인한다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["손수건", "거울"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.face_wipe.step2
+    tags: [self_care, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.face_wipe.step4
+    row_type: routine_step
+    title: "얼굴 닦기 — 아이가 혼자 닦고 어른은 곁에서 보는 단계"
+    body: >-
+      아이가 거울을 보고 혼자 얼굴을 닦는다. 어른은 곁에서 지켜보다가 아이가 부탁할 때만 도와준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["손수건", "거울"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.face_wipe.step3
+    tags: [self_care, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toilet.step1
+    row_type: routine_step
+    title: "화장실 가기 — 어른이 데려가 옷을 내려 주는 단계"
+    body: >-
+      아이를 변기까지 데려가 어른이 옷을 내리고 앉혀 준다. 마친 뒤 닦아 주고 옷을 올려 주는 것도 어른이 하며 "이제 내리자" 하고 하나씩
+      말한다.
+    min_month: 12
+    max_month: 36
+    setting: indoor
+    materials: ["아기 변기"]
+    routine_category: self_care
+    tags: [self_care, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toilet.step2
+    row_type: routine_step
+    title: "화장실 가기 — 아이가 앉고 어른이 옷과 뒤처리를 돕는 단계"
+    body: >-
+      아이가 변기에 직접 걸터앉고, 어른은 옷 내리기와 뒤처리만 돕는다. 앉아 있는 동안 곁에서 그림책을 같이 본다.
+    min_month: 12
+    max_month: 36
+    setting: indoor
+    materials: ["아기 변기"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.toilet.step1
+    tags: [self_care, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toilet.step3
+    row_type: routine_step
+    title: "화장실 가기 — 어른이 순서를 말로 일러 주는 단계"
+    body: >-
+      "옷 내리기, 앉기, 닦기, 내리기, 손 씻기" 순서를 아이가 직접 하도록 어른이 한 가지씩 말해 준다. 손으로 돕지 않고 문 앞에서
+      기다린다.
+    min_month: 12
+    max_month: 36
+    setting: indoor
+    materials: ["아기 변기"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.toilet.step2
+    tags: [self_care, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.toilet.step4
+    row_type: routine_step
+    title: "화장실 가기 — 아이가 혼자 가고 어른은 가까이에서 기다리는 단계"
+    body: >-
+      아이가 혼자 화장실을 다녀오고 어른은 문 밖 가까운 곳에서 기다린다. 아이가 부르면 들어가 도와준다.
+    min_month: 12
+    max_month: 36
+    setting: indoor
+    materials: ["아기 변기"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.toilet.step3
+    tags: [self_care, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.dress_top.step1
+    row_type: routine_step
+    title: "상의 입기 — 어른이 옷을 입혀 주는 단계"
+    body: >-
+      아이를 무릎에 앉히고 어른이 머리 구멍을 넓게 벌려 씌운 뒤 팔을 한쪽씩 소매에 넣어 준다. 하는 동안 "오른팔 쏙" 하고 말해 준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["헐렁한 티셔츠"]
+    routine_category: self_care
+    tags: [self_care, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 하루 일과를 즐겁게 경험한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.dress_top.step2
+    row_type: routine_step
+    title: "상의 입기 — 어른이 머리 부분을 돕고 아이가 팔을 넣는 단계"
+    body: >-
+      어른이 머리 구멍을 벌려 씌워 주면 아이가 두 팔을 직접 소매에 넣고 옷을 아래로 내린다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["헐렁한 티셔츠"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.dress_top.step1
+    tags: [self_care, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 하루 일과를 즐겁게 경험한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.dress_top.step3
+    row_type: routine_step
+    title: "상의 입기 — 어른이 순서를 말로 일러 주는 단계"
+    body: >-
+      그림이 있는 쪽이 앞이라는 것을 알려 주고, "머리, 오른팔, 왼팔, 내리기" 순서를 말로 짚어 준다. 손은 대지 않고 아이가 직접 입는다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["헐렁한 티셔츠"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.dress_top.step2
+    tags: [self_care, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 하루 일과를 즐겁게 경험한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.self_care.dress_top.step4
+    row_type: routine_step
+    title: "상의 입기 — 아이가 혼자 입고 어른은 곁에서 보는 단계"
+    body: >-
+      아이가 앞뒤를 맞춰 혼자 옷을 입는다. 어른은 곁에서 지켜보다가 옷이 뒤집혔을 때 아이가 부탁하면 같이 고친다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["헐렁한 티셔츠"]
+    routine_category: self_care
+    next_step_of: growth.routine.self_care.dress_top.step3
+    tags: [self_care, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 내가 할 수 있는 것을 스스로 한다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.household_task.tidy_toys.step1
+    row_type: routine_step
+    title: "장난감 정리 — 어른이 대부분 정리하고 아이는 하나만 넣는 단계"
+    body: >-
+      정리 노래를 틀고 어른이 장난감을 바구니에 담는다. 아이에게는 장난감 하나를 건네 "여기에 쏙" 하고 직접 넣게 한다.
+    min_month: 24
+    max_month: 72
+    setting: indoor
+    materials: ["바구니"]
+    routine_category: household_task
+    tags: [household_task, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.household_task.tidy_toys.step2
+    row_type: routine_step
+    title: "장난감 정리 — 어른과 아이가 종류를 나눠 담는 단계"
+    body: >-
+      블록은 아이가, 인형은 어른이 맡는 식으로 종류를 나눠 같이 담는다. 노래가 끝나기 전에 마치는 것을 약속으로 삼는다.
+    min_month: 24
+    max_month: 72
+    setting: indoor
+    materials: ["바구니"]
+    routine_category: household_task
+    next_step_of: growth.routine.household_task.tidy_toys.step1
+    tags: [household_task, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.household_task.tidy_toys.step3
+    row_type: routine_step
+    title: "장난감 정리 — 어른이 어디에 둘지 말로 일러 주는 단계"
+    body: >-
+      "블록은 파란 바구니, 인형은 의자 위" 하고 놓을 곳만 말해 준다. 어른은 손대지 않고 아이가 담는 것을 지켜본다.
+    min_month: 24
+    max_month: 72
+    setting: indoor
+    materials: ["바구니"]
+    routine_category: household_task
+    next_step_of: growth.routine.household_task.tidy_toys.step2
+    tags: [household_task, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.household_task.tidy_toys.step4
+    row_type: routine_step
+    title: "장난감 정리 — 아이가 혼자 정리하는 단계"
+    body: >-
+      정리 노래가 시작되면 아이가 혼자 장난감을 제자리에 담는다. 어른은 마지막에 같이 둘러보며 빠진 것이 없는지만 확인한다.
+    min_month: 24
+    max_month: 72
+    setting: indoor
+    materials: ["바구니"]
+    routine_category: household_task
+    next_step_of: growth.routine.household_task.tidy_toys.step3
+    tags: [household_task, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 사회관계 · 더불어 생활하기 · 약속과 규칙의 필요성을 알고 지킨다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.mealtime.spoon.step1
+    row_type: routine_step
+    title: "숟가락 쓰기 — 어른이 숟가락을 입 앞까지 가져가는 단계"
+    body: >-
+      숟가락에 담긴 것을 어른이 아이 입 앞까지 가져가 준다. 아이 눈높이에 맞춰 앉고 "아~" 하고 입을 같이 벌려 보인다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["숟가락", "그릇"]
+    routine_category: mealtime
+    tags: [mealtime, "assistance:full_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 음식에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.mealtime.spoon.step2
+    row_type: routine_step
+    title: "숟가락 쓰기 — 아이가 쥐고 어른이 손을 감싸는 단계"
+    body: >-
+      아이가 숟가락을 쥐고, 어른이 그 손을 감싸 그릇에서 입까지 같이 옮긴다. 입 앞에서는 아이 힘으로 옮기게 한다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["숟가락", "그릇"]
+    routine_category: mealtime
+    next_step_of: growth.routine.mealtime.spoon.step1
+    tags: [mealtime, "assistance:partial_assist"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 음식에 관심을 가진다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.mealtime.spoon.step3
+    row_type: routine_step
+    title: "숟가락 쓰기 — 어른이 순서를 말로 일러 주는 단계"
+    body: >-
+      아이가 혼자 숟가락을 쓰는 동안 어른이 "푸고, 입으로" 하고 순서만 말해 준다. 흘려도 어른은 손대지 않고 기다린다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["숟가락", "그릇"]
+    routine_category: mealtime
+    next_step_of: growth.routine.mealtime.spoon.step2
+    tags: [mealtime, "assistance:verbal_prompt"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 음식을 즐겁게 먹는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
+  - doc_key: growth.routine.mealtime.spoon.step4
+    row_type: routine_step
+    title: "숟가락 쓰기 — 아이가 혼자 쓰는 단계"
+    body: >-
+      아이가 숟가락으로 그릇에서 입까지 혼자 옮긴다. 어른은 같은 식탁에 앉아 같이 숟가락을 쓰는 모습을 보여 준다.
+    min_month: 12
+    max_month: 72
+    setting: indoor
+    materials: ["숟가락", "그릇"]
+    routine_category: mealtime
+    next_step_of: growth.routine.mealtime.spoon.step3
+    tags: [mealtime, "assistance:independent"]
+    source_title: "2024 개정 표준보육과정 (교육부 고시 제2024-23호)"
+    source_org: "교육부"
+    source_year: 2024
+    source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 몸에 좋은 음식에 관심을 가지고 바른 태도로 즐겁게 먹는다"
+    license_basis: public_law
+    status: draft
+    authored_by: nnhhlee
+    version: 1
+
