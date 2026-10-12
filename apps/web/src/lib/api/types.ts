@@ -986,6 +986,14 @@ export interface MyDiary {
 /** 그날 사진 한 장 (`shared_photo`). 연결된 보호자가 함께 본다. */
 export interface SharedPhoto {
   id: string;
+  /**
+   * 화면은 브라우저가 바로 여는 주소로 보고 `<img src>` 에 그대로 넣는다.
+   *
+   * ⚠️ **주소를 받는 방식이 바뀔 수 있다** (#350 리뷰). 지금 DB 에는 텍스트 칸 하나뿐이고,
+   *    서명 URL 처럼 따로 받아야 하는 주소가 될지는 사진 업로드를 다루는 K 묶음에서 정한다.
+   *    아이 사진이라 공개 주소로 두기 어려울 수 있다 — 바뀌면 이 칸과 `CalendarDayPanel` 의
+   *    `Photos` 를 같이 고친다.
+   */
   image_url: string;
   created_at: string;
 }
