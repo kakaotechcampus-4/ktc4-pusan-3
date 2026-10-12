@@ -466,12 +466,12 @@ async def test_expire_only_affects_draft(session: AsyncSession, cid: uuid.UUID):
     # 살아있는 draft
     s_alive = await _make_suggestion(session, child_id=cid)
 
-    drafts = await repo.list_suggestions(session, child_id=cid, status=SuggestionStatus.DRAFT)
+    drafts, _ = await repo.list_suggestions(session, child_id=cid, status=SuggestionStatus.DRAFT)
     draft_ids = {s.id for s in drafts}
     assert s_alive.id in draft_ids  # 살아있는 draft는 보인다
     assert s_expired.id not in draft_ids  # 만료된 draft는 안 보인다
 
-    all_approved = await repo.list_suggestions(
+    all_approved, _ = await repo.list_suggestions(
         session, child_id=cid, status=SuggestionStatus.APPROVED
     )
     assert s_approved.id in {s.id for s in all_approved}  # approved는 만료 무관
