@@ -143,6 +143,9 @@ test.describe("시트 안 고르기 상자는 마지막 항목까지 고를 수 
 
   test("열린 채로 시트 본문을 스크롤해도 닫히지 않는다", async ({ page }) => {
     const sheet = await openAddSheet(page);
+    // 알레르기(기본값)면 상자 이름이 "검사 등급" 이다 — 위 테스트처럼 지병으로 바꿔 이름을 고정한다 (#298).
+    await sheet.getByRole("combobox", { name: "종류" }).click();
+    await page.getByRole("option", { name: "지병 · 만성질환" }).click();
     const trigger = sheet.getByRole("combobox", { name: "얼마나 심한가요" });
     await trigger.click();
     await expect(page.getByRole("listbox")).toBeVisible();
