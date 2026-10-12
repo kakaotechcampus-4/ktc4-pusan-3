@@ -1557,6 +1557,113 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
   });
 
+  /** 🚨 서버는 `parent.nickname` 이 비어 있으면 `null` 을 내린다 (#336). 화면이 그 줄을 그리는지 목이 늘 보여 준다. */
+  it("이름이 빈 보호자는 nickname 이 null 로 온다", async () => {
+    const res = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(res.parents.some((p) => p.nickname === null)).toBe(true);
+  });
+
+  it("이미 끊긴 보호자를 다시 끊으면 404 not_found", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const member = before.parents.find((p) => p.role === "member")!;
+    await api.delete(`/children/c1/parents/${member.parent_id}`);
+
+    const caught = await api.delete(`/children/c1/parents/${member.parent_id}`).catch((e) => e);
+    expect(isApiError(caught, "not_found")).toBe(true);
+    expect((caught as ApiError).status).toBe(404);
+  });
+
+  it("연결되지 않은 아이의 보호자 목록은 403 child_access_denied", async () => {
+    const caught = await api.get("/children/c-unknown/parents").catch((e) => e);
+    expect(isApiError(caught, "child_access_denied")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+  });
+
+  /**
+   * 🚨 **member 는 자기 자신만 끊는다** (#336 · 재형님 결정 10-06). 화면은 남의 줄에 버튼을
+   *    안 그리지만 서버가 다시 막는다 — 초대 발행과 같은 403 `owner_only` 다.
+   */
+  describe("초대로 들어온 member", () => {
+    async function joinAsMember(): Promise<string> {
+      setScenario("consent");
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        adult_attested: true,
+      });
+      expect(joined.role).toBe("member");
+      return joined.child_id;
+    }
+
+    it("목록에서 자기는 member 이고 owner 는 다른 사람이다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+        const res = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+
+        expect(res.parents.find((p) => p.parent_id === me.id)?.role).toBe("member");
+        const owner = res.parents.find((p) => p.role === "owner");
+        expect(owner?.parent_id).not.toBe(me.id);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    it("다른 보호자를 끊으면 403 owner_only 이고 목록은 그대로다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+        const before = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        const other = before.parents.find((p) => p.role === "member" && p.parent_id !== me.id)!;
+
+        const caught = await api
+          .delete(`/children/${cid}/parents/${other.parent_id}`)
+          .catch((e) => e);
+        expect(isApiError(caught, "owner_only")).toBe(true);
+        expect((caught as ApiError).status).toBe(403);
+
+        const after = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        expect(after.parents).toHaveLength(before.parents.length);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    it("owner 를 끊으면 409 owner_required 다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const res = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        const owner = res.parents.find((p) => p.role === "owner")!;
+
+        const caught = await api
+          .delete(`/children/${cid}/parents/${owner.parent_id}`)
+          .catch((e) => e);
+        expect(isApiError(caught, "owner_required")).toBe(true);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    /**
+     * 🚨 **나가면 `/me` 에서도 빠진다.** 화면은 이걸 보고 `/start` 로 간다 — `/me` 가 나간
+     *    아이를 계속 주면 `/start` 가 홈으로 되돌린다. 다시 보내면 연결이 없어서 403 이다.
+     */
+    it("자기 자신을 끊으면 나가지고, 다시 보내면 403 child_access_denied", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+
+        await api.delete(`/children/${cid}/parents/${me.id}`);
+        const after = await api.get<Me>("/me");
+        expect(after.children.map((c) => c.child_id)).not.toContain(cid);
+
+        const caught = await api.delete(`/children/${cid}/parents/${me.id}`).catch((e) => e);
+        expect(isApiError(caught, "child_access_denied")).toBe(true);
+        expect((caught as ApiError).status).toBe(403);
+      } finally {
+        setScenario("default");
+      }
+    });
+  });
+
   it("초대 코드는 부를 때마다 새로 나온다 — 한 코드는 한 번만 쓴다", async () => {
     const first = await api.post<InviteResponse>("/children/c1/invites", {});
     const second = await api.post<InviteResponse>("/children/c1/invites", {});
