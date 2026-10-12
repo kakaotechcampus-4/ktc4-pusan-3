@@ -214,7 +214,7 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
         or resolved_ratio < MIN_RESOLUTION_RATIO
         or weighed_ratio < MIN_RESOLUTION_RATIO
     ):
-        return NutrientVerdict(
+        verdict = NutrientVerdict(
             bands={},
             unscored=(),
             records=records,
@@ -222,6 +222,8 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
             insufficient=True,
             food_groups=food_groups,
         )
+        context.state.nutrient_verdict = verdict
+        return verdict
 
     bands: dict[str, NutrientBand] = {}
     unscored: list[str] = []

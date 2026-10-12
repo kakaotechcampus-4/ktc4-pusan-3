@@ -421,6 +421,8 @@ async def test_7일_8행이면_수치_결론을_내지_않는다(context_8rows) 
 
     assert verdict.insufficient is True
     assert verdict.bands == {}
+    # insufficient 여도 run state 에는 담아 둔다 — 같은 run 의 다른 곳이 다시 읽을 수 있다
+    assert context_8rows.state.nutrient_verdict == verdict
 
 
 async def test_경계에서_구간이_매일_뒤집히지_않는다(context_boundary) -> None:
