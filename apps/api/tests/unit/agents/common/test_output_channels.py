@@ -169,6 +169,31 @@ class TestAvoidanceMustBeStated:
                 citations=(citation(polarity=-1, label="브로콜리"),),
             )
 
+    def test_관찰은_문장_label_대신_대상_subject_를_말해도_통과(self):
+        """관찰의 label 은 활동 문장이라 이유에 그대로 나오지 않는다 (Activity 라이브 eval)."""
+        ranked = RankedEvidence(
+            ref=Ref(kind="observation_activity", id=uuid4()),
+            tier=3,
+            label="물감 놀이 하다가 울었음",
+            subject="물감",
+            polarity=-1,
+            observed_on=date(2026, 10, 5),
+        )
+        draft = build(
+            agent="activity",
+            content="종이컵 탑 쌓기",
+            reason="물감은 피해서 종이컵으로 골랐어요",
+            citations=(cite(ranked, note="물감 놀이를 싫어했어요"),),
+        )
+        assert draft.kind == "personalized"
+        with pytest.raises(SuggestionRejected, match="무엇을 피했는지"):
+            build(
+                agent="activity",
+                content="종이컵 탑 쌓기",
+                reason="집에서 바로 할 수 있어요",
+                citations=(cite(ranked, note="물감 놀이를 싫어했어요"),),
+            )
+
     def test_밝히면_통과(self):
         draft = build(
             agent="food",

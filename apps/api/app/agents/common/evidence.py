@@ -142,13 +142,14 @@ def rank_evidence(
 def cite(ranked: RankedEvidence, *, note: str) -> EvidenceCitation:
     """줄 세운 근거 하나를 인용으로 옮긴다.
 
-    `polarity`와 `label`을 옮기는 자리는 여기 하나다.
+    `polarity` · `label` · `subject` 를 옮기는 자리는 여기 하나다.
     """
     return EvidenceCitation(
         ref=ranked.ref,
         note=note,
         polarity=ranked.polarity,
         label=ranked.label,
+        subject=ranked.subject,
     )
 
 
