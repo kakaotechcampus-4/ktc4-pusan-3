@@ -3,14 +3,14 @@
 판정 자체(구간·히스테리시스)는 `test_nutrition_eval.py` 의 Task 6 부분(§6)이 본다.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.agents.food.context import FoodContext
-from app.agents.food.nutrition_eval import daily_totals
+from app.agents.food.nutrition_eval import daily_totals, evaluate_nutrient_bands
 from app.agents.food.store import (
     DaycareMealRow,
     FoodObservation,
@@ -201,3 +201,273 @@ async def test_양을_모르는_기록은_절반_가중으로_들어간다(conte
     known = await daily_totals(context, date_from=date(2026, 10, 1), date_to=date(2026, 10, 1))
 
     assert totals[0].grams["protein"] == pytest.approx(known[0].grams["protein"] * 0.5)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Task 6 — 구간 판정 (evaluate_nutrient_bands)
+# ═══════════════════════════════════════════════════════════════════════
+# "오늘" = NOW(2026-10-02) → 판정 창(최근 7일) = 09-25 ~ 10-01, 다시 판정 창 = 09-18 ~ 09-24.
+# 유아 1인분 보정 계수(1-2y) = 0.1872 가 모든 섭취량 계산에 끼어든다.
+_WINDOW_END = date(2026, 10, 1)  # today - 1
+_CALCIUM_MENU = "칼슘식품"
+_FILLER_MENU = "밥"
+
+
+def _nutrient_row(menu_key: str, **nutrients: float) -> MenuCatalogRow:
+    return MenuCatalogRow(
+        menu_key=menu_key,
+        display_name=menu_key,
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        serving_g=1000.0,
+        nutrients=dict(nutrients),
+        food_groups=frozenset({"우유유제품"}),
+    )
+
+
+def _filler_row() -> MenuCatalogRow:
+    return MenuCatalogRow(
+        menu_key=_FILLER_MENU,
+        display_name=_FILLER_MENU,
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        serving_g=200.0,
+        nutrients={
+            "protein": 3.0,
+            "fat": 0.5,
+            "carbohydrate": 28.0,
+            "calcium": 3.0,
+            "iron": 0.2,
+            "sodium": 2.0,
+            "energy": 130.0,
+        },
+        food_groups=frozenset({"곡류"}),
+    )
+
+
+def _daily_rows(factor_for_offset) -> list[DaycareMealRow]:
+    """14일치(오늘 이전) 급식 행. 매일 `_CALCIUM_MENU`(변동 양) + `_FILLER_MENU`(고정 1.0)."""
+    rows: list[DaycareMealRow] = []
+    for offset in range(14):  # 0 = 오늘-1(최신) … 13 = 오늘-14(최고령)
+        day = _WINDOW_END - timedelta(days=offset)
+        rows.append(
+            DaycareMealRow(
+                id=uuid4(),
+                child_id=CHILD,
+                serve_date=day,
+                meal_slot="lunch",
+                menu_keys=(_CALCIUM_MENU,),
+                amount_factor=factor_for_offset(offset),
+                amount_known=True,
+            )
+        )
+        rows.append(
+            DaycareMealRow(
+                id=uuid4(),
+                child_id=CHILD,
+                serve_date=day,
+                meal_slot="snack_am",
+                menu_keys=(_FILLER_MENU,),
+                amount_factor=1.0,
+                amount_known=True,
+            )
+        )
+    return rows
+
+
+def _band_context(*, calcium_row: MenuCatalogRow, factor_for_offset) -> FoodContext:
+    rows = _daily_rows(factor_for_offset)
+    return _context(daycare_rows=rows, catalog_rows=[calcium_row, _filler_row()])
+
+
+@pytest.fixture
+def context_8rows() -> FoodContext:
+    # 최근 7일에 8행 — MIN_RECORDS(10) 미만
+    rows = [
+        DaycareMealRow(
+            id=uuid4(),
+            child_id=CHILD,
+            serve_date=_WINDOW_END - timedelta(days=offset),
+            meal_slot="lunch",
+            menu_keys=(_CALCIUM_MENU,),
+            amount_factor=1.0,
+            amount_known=True,
+        )
+        for offset in range(8)
+    ]
+    return _context(
+        daycare_rows=rows,
+        catalog_rows=[_nutrient_row(_CALCIUM_MENU, protein=10.0, calcium=200.0, energy=100.0)],
+    )
+
+
+@pytest.fixture
+def context_boundary() -> FoodContext:
+    # calcium EAR(1-2y)=400mg. per_100g=200·serving_g=1000·scale=0.1872 이므로
+    #   factor=0.5 → 187.2mg/일(뚜렷한 low) · factor=1.15 → 430.56mg/일(EAR~1.1*EAR 사이)
+    # 오래된 6일(187.2mg)로 low 를 먼저 세운 뒤, 최근 8일(430.56mg)이 raw EAR 은 넘지만
+    # 히스테리시스 복귀선(440mg)은 못 넘어 low 로 남는다
+    calcium_row = _nutrient_row(
+        _CALCIUM_MENU,
+        protein=5.0,
+        fat=2.0,
+        carbohydrate=20.0,
+        calcium=200.0,
+        iron=1.0,
+        sodium=50.0,
+        energy=150.0,
+    )
+
+    def factor_for_offset(offset: int) -> float:
+        return 1.15 if offset < 8 else 0.5  # offset 0~7 = 최근 8일, 8~13 = 오래된 6일
+
+    return _band_context(calcium_row=calcium_row, factor_for_offset=factor_for_offset)
+
+
+@pytest.fixture
+def context_between_ear_and_rni() -> FoodContext:
+    # 매일 430.56mg — EAR(400) 은 넘지만 RNI(450) 에는 못 미친다
+    calcium_row = _nutrient_row(
+        _CALCIUM_MENU,
+        protein=5.0,
+        fat=2.0,
+        carbohydrate=20.0,
+        calcium=200.0,
+        iron=1.0,
+        sodium=50.0,
+        energy=150.0,
+    )
+    return _band_context(calcium_row=calcium_row, factor_for_offset=lambda _offset: 1.15)
+
+
+@pytest.fixture
+def context_high_micro() -> FoodContext:
+    # 철 UL(1-2y)=40mg 을 훨씬 넘기는 양 — 그래도 high 로 보고하지 않는다(미량영양소는 상한 미보고)
+    calcium_row = _nutrient_row(
+        _CALCIUM_MENU,
+        protein=5.0,
+        fat=2.0,
+        carbohydrate=20.0,
+        calcium=200.0,
+        iron=500.0,
+        sodium=50.0,
+        energy=150.0,
+    )
+    return _band_context(calcium_row=calcium_row, factor_for_offset=lambda _offset: 1.0)
+
+
+@pytest.fixture
+def context_missing_sugars() -> FoodContext:
+    # 당류 칸 자체가 없다 — 모든 날에 걸쳐 빠져 있어 그 기간 전부가 unscored 다
+    calcium_row = _nutrient_row(
+        _CALCIUM_MENU,
+        protein=5.0,
+        fat=2.0,
+        carbohydrate=20.0,
+        calcium=200.0,
+        iron=1.0,
+        sodium=50.0,
+        energy=150.0,
+    )
+    return _band_context(calcium_row=calcium_row, factor_for_offset=lambda _offset: 1.15)
+
+
+@pytest.fixture
+def context_mostly_unweighed() -> FoodContext:
+    # 그날 메뉴 3개 중 1개만 1인분 중량이 있다 — 합계에 들어간 메뉴 비율이 50% 미만("정하는 것 ③")
+    weighed = _nutrient_row(_CALCIUM_MENU, protein=10.0, calcium=200.0, energy=100.0)
+    unweighed_a = MenuCatalogRow(
+        menu_key="무게모름A",
+        display_name="무게모름A",
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        serving_g=None,
+        nutrients={},
+        food_groups=frozenset({"채소"}),
+    )
+    unweighed_b = MenuCatalogRow(
+        menu_key="무게모름B",
+        display_name="무게모름B",
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        serving_g=None,
+        nutrients={},
+        food_groups=frozenset({"과일"}),
+    )
+    rows: list[DaycareMealRow] = []
+    for offset in range(7):  # 최근 7일(판정 창)만 있으면 충분하다
+        day = _WINDOW_END - timedelta(days=offset)
+        for menu_key in (_CALCIUM_MENU, "무게모름A", "무게모름B"):
+            rows.append(
+                DaycareMealRow(
+                    id=uuid4(),
+                    child_id=CHILD,
+                    serve_date=day,
+                    meal_slot="lunch" if menu_key == _CALCIUM_MENU else "snack_am",
+                    menu_keys=(menu_key,),
+                    amount_factor=1.0,
+                    amount_known=True,
+                )
+            )
+    return _context(daycare_rows=rows, catalog_rows=[weighed, unweighed_a, unweighed_b])
+
+
+async def test_7일_8행이면_수치_결론을_내지_않는다(context_8rows) -> None:
+    verdict = await evaluate_nutrient_bands(context_8rows, months=30)
+
+    assert verdict.insufficient is True
+    assert verdict.bands == {}
+
+
+async def test_경계에서_구간이_매일_뒤집히지_않는다(context_boundary) -> None:
+    # 히스테리시스 — 한 번 low 면 EAR 의 1.1 배를 넘어야 ok (설계 §6)
+    verdict = await evaluate_nutrient_bands(context_boundary, months=30)
+
+    assert verdict.bands["calcium"] == "low"
+
+
+async def test_EAR_을_쓴다_RNI_가_아니다(context_between_ear_and_rni) -> None:
+    # 같은 섭취량에서 RNI 기준이면 low, EAR 기준이면 ok
+    verdict = await evaluate_nutrient_bands(context_between_ear_and_rni, months=30)
+
+    assert verdict.bands["calcium"] == "ok"
+
+
+async def test_미량영양소_상한_초과를_high_로_보고하지_않는다(context_high_micro) -> None:
+    verdict = await evaluate_nutrient_bands(context_high_micro, months=30)
+
+    assert verdict.bands.get("iron") != "high"
+
+
+async def test_당류가_빈_메뉴가_섞이면_그_항목만_구간을_내지_않는다(context_missing_sugars) -> None:
+    # 리뷰 초점 2 — 0 으로 채우면 거짓 high 가 난다 (설계 §3)
+    verdict = await evaluate_nutrient_bands(context_missing_sugars, months=30)
+
+    assert "sugars" not in verdict.bands
+    assert "sugars" in verdict.unscored
+    assert "calcium" in verdict.bands  # 다른 항목은 그대로 판정한다
+
+
+async def test_합계에_들어간_메뉴가_모자라면_수치_결론을_막는다(context_mostly_unweighed) -> None:
+    # "정하는 것 ③" 의 임계
+    verdict = await evaluate_nutrient_bands(context_mostly_unweighed, months=30)
+
+    assert verdict.insufficient is True
+
+
+async def test_판정이_끝난_뒤_DB_와_로그에_합계가_남지_않는다(context, caplog) -> None:
+    # 리뷰 초점 4 (설계 §3 · 루트 CLAUDE.md §2 개인정보) — 영양 합계를 저장하는 포트 자체가 없다
+    # (test_food_store.py 의 test_영양_구간을_저장하는_포트가_없다 가 구조로 고정한다).
+    # 여기서는 로그에 수치가 남지 않는지만 본다
+    await evaluate_nutrient_bands(context, months=30)
+
+    assert not [r for r in caplog.records if "protein" in r.getMessage()]
+
+
+async def test_돌_전에는_판정하지_않는다(context) -> None:
+    with pytest.raises(ValueError, match="섭취기준 연령군"):
+        await evaluate_nutrient_bands(context, months=9)

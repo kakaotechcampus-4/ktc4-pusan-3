@@ -11,12 +11,18 @@ LLM이 만들면 안 되는 값(child_id, 식이 단계)과 날짜 계산의 기
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.food.store.ports import FoodPorts, SafetyEntry, SafetyLookupError
 from app.rules.age import life_stage
+
+if TYPE_CHECKING:
+    # nutrition_eval.py 가 FoodContext 를 쓰므로 런타임에 여기서 가져오면 순환 임포트다
+    # (설계 §3 ⑤ — 판정 결과는 run state 에만 둔다)
+    from app.agents.food.nutrition_eval import NutrientVerdict
 
 
 @dataclass
@@ -32,6 +38,8 @@ class FoodRunState:
     sampled_keys: tuple[str, ...] = ()  # 모델에게 보여 준 후보
     blocked_keys: set[str] = field(default_factory=set)
     basis_keys: set[str] = field(default_factory=set)  # compare_diet_balance가 돌려준 항목
+    # evaluate_nutrient_bands 가 담는 판정 결과. 저장 · 로그 없음 — run state 에만 (설계 §3 ⑤)
+    nutrient_verdict: "NutrientVerdict | None" = None
     gate: Gate | None = None
     # build_gate가 task 시작에 한 번 읽은 health_safety
     # () = 동의가 없어 읽지 않음(거를 것 없음), None = 조회 실패("알레르기 확인 못 함")
