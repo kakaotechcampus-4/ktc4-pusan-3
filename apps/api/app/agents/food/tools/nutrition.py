@@ -5,12 +5,15 @@
 
 from app.agents.food.context import FoodContext
 from app.agents.food.menu_resolver import MenuResolver, Resolved
+from app.agents.food.nutrient_actions import advice_for
+from app.agents.food.nutrition_eval import evaluate_nutrient_bands
 from app.agents.food.result import ToolResult, ok
 from app.agents.food.schemas.nutrition import (
     CompareDietBalanceArgs,
     LookupNutritionArgs,
     NutrientReportArgs,
 )
+from app.rules.age import life_stage, months_between
 from app.rules.menu_key import normalize_menu_key
 
 
@@ -49,19 +52,50 @@ async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> T
 
 
 async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArgs) -> ToolResult:
-    """기간 내 식단의 영양소 비중을 연령별 기준과 비교한다.
+    """기간 내 식단의 영양소 비중을 연령별 기준과 비교한다. 계산은 전부 코드가 한다.
 
-    DB와 외부 API 연결 후:
-    - 급식과 가정 식사 기록을 함께 조회한다.
-      식단 조회 방식은 analyze_meal_records와 동일하게 맞춘다.
-    - 메뉴별 영양성분을 기준으로 전체 영양소 비중을 계산한다.
-      먹은 양을 임의로 적용해 실제 섭취량으로 계산하지 않는다.
-    - birth_date로 개월 수를 계산하고 연령에 맞는 기준 비율을 가져온다.
-    - 기준과 비교해 각 영양소를 높음, 비슷, 낮음으로 구분한다.
-      판정 기준은 상수로 관리하고 키와 몸무게는 사용하지 않는다.
-    - 누락된 식사 기록이 많으면 비교 결과 대신 data_gaps를 반환한다.
+    `evaluate_nutrient_bands`(판정 창 고정 7일)에 그대로 맡긴다 — `args.period` 는 조회
+    tool(`analyze_meal_records` 등)의 기간 라벨과 달리 이 판정의 창 길이를 바꾸지 않는다.
+    기록·해석이 모자라면(`insufficient`) 구간 없이 건수만 돌려준다. 구간이 나온 항목만
+    `nutrient_actions.advice_for` 로 식품군 안내를 받고, 아이의 알레르기 때문에 안내 식품이
+    다 빠지면 구간만 말한다 — 다른 급원 식품을 지어내지 않는다(리뷰 초점 5).
     """
-    raise NotImplementedError("DB·외부 API 연결 후 구현")
+    ports = context.ports
+    birth_date = await ports.profile.birth_date(child_id=context.child_id)
+    months = months_between(birth_date, context.today)
+    stage = life_stage(birth_date, context.today).stage
+
+    verdict = await evaluate_nutrient_bands(context, months=months)
+
+    if verdict.insufficient:
+        context.state.basis_keys = set()
+        return ok(
+            "query",
+            "diet_balance",
+            bands={},
+            unscored=list(verdict.unscored),
+            food_group_actions=[],
+            records=verdict.records,
+            insufficient=True,
+        )
+
+    entries = context.state.safety or ()
+    food_group_actions: list[str] = []
+    for nutrient, band in verdict.bands.items():
+        advice = advice_for(nutrient, band, entries, stage=stage, months=months)
+        if advice is not None and advice.text:
+            food_group_actions.append(advice.text)
+
+    context.state.basis_keys = set(verdict.bands)
+    return ok(
+        "query",
+        "diet_balance",
+        bands=dict(verdict.bands),
+        unscored=list(verdict.unscored),
+        food_group_actions=food_group_actions,
+        records=verdict.records,
+        insufficient=False,
+    )
 
 
 async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArgs) -> ToolResult:
