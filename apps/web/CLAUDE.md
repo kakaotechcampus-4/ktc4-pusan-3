@@ -81,7 +81,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 | `/child/[childId]/home` |
 | 04 대화 (한 줄 입력의 결과 · 되묻기 답 · 하루 단위) | `/child/[childId]/chat` |
-| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
@@ -93,6 +93,12 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
+
+🚨 **03 홈 버튼은 05 에 문장이 아니라 키를 넘긴다** (`?prompt=dinner` · #286). 05 는 그 키를 추천 요청의
+`prompt_key` 에 그대로 싣고, Agent 에 넘길 문장("저녁 추천해줘")은 서버가 키로 꺼낸다. 문장을 화면이 보내면
+Supervisor 안전 사전검사를 거치지 않은 문장으로 Agent 가 돈다 (#249). 05 는 **아는 키만** 싣는다 — 주소는
+누구나 고칠 수 있다. 🚨 키는 05 쿼리 키에도 들어간다 — 빼면 다른 버튼을 눌러도 앞 버튼의 제안이 뜬다
+(`staleTime: Infinity`).
 
 `/onboarding` · `/start` · `/invite` 는 아이 스코프 **밖**이다 — `POST /children` 이나 초대 수락이
 성공해야 `childId` 가 생긴다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
