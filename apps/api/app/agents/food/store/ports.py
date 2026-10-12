@@ -53,6 +53,9 @@ from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
 from app.core.mfds_nutri_raw import RawNutriRow
+from app.core.nutrition_pick import (
+    NutritionFacts,  # noqa: F401 — store/__init__.py 가 여기서 가져간다
+)
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -133,21 +136,8 @@ class Measurement:
     measured_on: date
 
 
-@dataclass(frozen=True)
-class NutritionFacts:
-    """외부 영양성분 DB 조회 결과 한 건."""
-
-    food_code: str
-    name: str
-    category: str  # 식품 대분류. 식품군 매핑에 쓴다
-    serving_g: float | None  # 성인 1인분
-    # energy · protein · fat · carbohydrate · sugars · sodium · calcium · iron · saturated_fat
-    per_100g: dict[str, float]
-    source_version: str
-
-
-# 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다 —
-# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(#326 리뷰, own_table §1-1)
+# 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다.
+# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1)
 RECIPE_SOURCES: frozenset[str] = frozenset({"mafra_recipe"})
 
 
@@ -162,7 +152,7 @@ class MenuCatalogRow:
     menu_key: str
     display_name: str
     # menu_catalog: mfds_nutri · center_standard · manual / recipe_catalog: mafra_recipe.
-    # COOKRCP01(mfds_recipe)은 보류라 뺐다 — 들이면 레시피라 recipe_catalog 쪽이다
+    # COOKRCP01(mfds_recipe)은 보류라 뺀다. 들이면 레시피라 recipe_catalog 쪽에 들어간다
     source: Literal["mfds_nutri", "mafra_recipe", "center_standard", "manual"]
     resolved: bool
     synced_at: datetime
@@ -283,7 +273,7 @@ class MenuCatalogStore(Protocol):
         이름이 정확히 같은 결과뿐이라 `menu_key` 가 공개 DB 에 있는 이름이다
         (food_agent_own_table §1).
 
-        레시피 행(`RECIPE_SOURCES`)은 받지 않는다 — `recipe_catalog` 몫이다(DB 는 CHECK).
+        레시피 행(`RECIPE_SOURCES`)은 받지 않는다 — `recipe_catalog` 몫이다(DB는 CHECK).
         """
         ...
 
