@@ -19,6 +19,12 @@ report_nutrient_analysis 의 출력 검증(Task 9)은 수치 · 진단 · 처방
   다시 본다
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
+
+`test_기록_부족이면_insufficient_안내가_빈_화면_대신_뜬다` 는 final-review Critical #1 의 재발
+방지용이다 — `_readouts_from` 이 findings 가 비어도 `verdict.insufficient` 를 안 보고 그냥
+`readouts=()` 를 내던 버그가 있었다(agent.py). 코드 상수 문구라 단위 테스트
+(test_food_agent.py)로도 잡히지만, 모델이 실제로 그 경로(findings 비우기)까지 이어가는지는
+라이브로 다시 본다.
 """
 
 import re
@@ -31,6 +37,7 @@ import pytest
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
+from app.agents.food.readouts import READOUTS
 from app.agents.food.store import (
     DaycareMealRow,
     InMemoryDaycareMeals,
@@ -138,3 +145,33 @@ async def test_영양소_분석_어조(case: str, days: int, expect) -> None:
         assert not _NUMERIC_UNIT.search(bodies), (
             f"[{case} #{attempt}] 수치 표현이 남았다: {bodies!r}"
         )
+
+
+_INSUFFICIENT_DAYS = 2  # _daily_rows(2) = 3 메뉴 × 2일 = 6행 — MIN_RECORDS(10) 미만
+_INSUFFICIENT_RECORDS = 3 * _INSUFFICIENT_DAYS
+
+
+async def test_기록_부족이면_insufficient_안내가_빈_화면_대신_뜬다(expect) -> None:
+    expect(
+        "기록 부족(status=ok, findings=[])이면 readout 이 비지 않는다 — "
+        "nutrient.insufficient 코드 문구가 그대로 뜬다(final-review Critical #1 재발 방지)",
+        "그 문구는 코드 상수라 어조 검사 대상이 아니다 — "
+        "모델이 compare_diet_balance → report_nutrient_analysis(findings=[]) 로 "
+        "제대로 이어가는지만 end-to-end 로 본다",
+    )
+    require_food_model()
+
+    expected = READOUTS.get("nutrient.insufficient").template.format(recorded=_INSUFFICIENT_RECORDS)
+    seen_ok = False
+    for attempt in range(RUNS_PER_CASE):
+        result = await run(_task(), _context(_INSUFFICIENT_DAYS))
+        if result.status != "ok":
+            continue  # no_tool_call · max_steps 는 모델 변동성 — 이 테스트의 관심사가 아니다
+        seen_ok = True
+        assert result.readouts, (
+            f"[#{attempt}] status=ok 인데 readout 이 비었다 — 화면에 아무것도 안 뜬다"
+        )
+        assert result.readouts[0].body == expected, (
+            f"[#{attempt}] insufficient 문구가 기대와 다르다: {result.readouts[0].body!r}"
+        )
+    assert seen_ok, f"{RUNS_PER_CASE}번 다 status=ok 를 못 봤다 — 다시 돌려서 확인한다"
