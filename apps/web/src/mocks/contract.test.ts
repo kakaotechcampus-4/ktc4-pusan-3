@@ -1441,7 +1441,6 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 
     await api.put<CalendarDayResponse>(`/children/c1/calendar/${date}`, {
       text: "지어낸 일기 한 줄",
-      image_urls: [],
       event_ids: [],
     });
 
@@ -1450,7 +1449,7 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     expect(after.total).toBe(before.total);
 
     const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
-    expect(day.diary?.text).toBe("지어낸 일기 한 줄");
+    expect(day.my_diary?.content).toBe("지어낸 일기 한 줄");
   });
 
   it("월 조회의 has_event 는 그날 일정이 실제로 있는 날만 켠다", async () => {
@@ -1471,6 +1470,91 @@ describe("⑪ 일기는 관찰이 아니다", () => {
       const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
       expect(detail.events.length).toBeGreaterThan(0);
     }
+  });
+
+  it("달 보기는 표시할 것이 있는 날만 내리고, 표식은 하루 보기와 같은 사실을 말한다 (#318)", async () => {
+    const days = await recentCalendarDays();
+    expect(days.length).toBeGreaterThan(0);
+
+    for (const day of days) {
+      // 🚨 빈 날은 싣지 않는다 — 서버(#325)와 같다.
+      expect(
+        day.has_event || day.has_my_diary || day.has_shared_photo || day.observation_count > 0,
+      ).toBe(true);
+
+      const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
+      // 🚨 두 화면이 다른 기준을 쓰면 "기록 3건" 을 눌렀는데 2건이 나온다.
+      expect(detail.observations).toHaveLength(day.observation_count);
+      expect(detail.my_diary !== null).toBe(day.has_my_diary);
+      expect(detail.shared_photos.length > 0).toBe(day.has_shared_photo);
+    }
+  });
+
+  it("기록은 기록 탭 목록과 같은 기준이다 — 건강 기록은 빠지고, 고친 기록은 남는다 (#318)", async () => {
+    const list = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { limit: 100 },
+    });
+    const target = list.items.find((item) => item.kind === "observation_food");
+    expect(target).toBeDefined();
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const days = await recentCalendarDays();
+    const first = days[0]?.date ?? "";
+    const onCalendar: Observation[] = [];
+    for (const day of days) {
+      const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
+      onCalendar.push(...detail.observations);
+    }
+
+    // 🚨 건강 기록은 첫 배포 범위 밖이다 (#259 · #318). 기록 탭에서도 캘린더에서도 빠진다.
+    expect(onCalendar.some((o) => o.kind === "observation_health")).toBe(false);
+    // 고친 기록(`stand_alone`)도 캘린더에 남는다 — 기록 탭이 남기기 때문이다.
+    expect(onCalendar.find((o) => o.id === target!.id)?.status).toBe("stand_alone");
+
+    const key = (o: Observation) => `${o.kind}:${o.id}`;
+    const inRange = list.items.filter((o) => o.observed_to >= first);
+    expect(new Set(onCalendar.map(key))).toEqual(new Set(inRange.map(key)));
+  });
+
+  it("일기와 사진은 따로 온다 — 일기를 덮어도 공유 사진은 그대로다 (#115)", async () => {
+    const photoDay = (await recentCalendarDays()).find((day) => day.has_shared_photo);
+    expect(photoDay).toBeDefined();
+
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`);
+    await api.put<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`, {
+      text: "사진 옆에 적은 일기",
+      event_ids: [],
+    });
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`);
+
+    expect(after.my_diary?.content).toBe("사진 옆에 적은 일기");
+    expect(after.shared_photos).toEqual(before.shared_photos);
+  });
+
+  it("사진만 있는 날도 달 보기에 선다", async () => {
+    const days = await recentCalendarDays();
+    // 🚨 사진이 일기 안에 있던 때에는 이런 날이 있을 수 없었다. 하루 패널의 빈 상태가 여기서 갈린다.
+    expect(
+      days.some(
+        (day) =>
+          day.has_shared_photo &&
+          !day.has_my_diary &&
+          !day.has_event &&
+          day.observation_count === 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("월 쿼리의 형식이 틀리면 400 이다 (서버 #325)", async () => {
+    const failure = await api
+      .get("/children/c1/calendar", { query: { month: "2026-13" } })
+      .catch((error: unknown) => error);
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
   });
 
   it("준비물 체크는 다시 읽어도 남아 있다", async () => {
@@ -2662,6 +2746,27 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
 /** 목이 만든 달을 그대로 물어보기 위한 키. 표시가 아니라 쿼리 파라미터다. */
 function monthOf(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * 지난달 · 이번 달 · 다음 달의 달 보기를 이어 붙인 것. 목의 기록과 사진은 지난 며칠 안에,
+ * 일정은 모레에 있어서 월초 · 월말에는 이번 달 하나로 다 안 잡힌다 (아래 `findEventDay` 와 같은 이유).
+ * 🚨 픽스처를 import 하지 않는다 — 부르는 사람의 방법으로 찾는다.
+ */
+async function recentCalendarDays(): Promise<CalendarMonthResponse["days"]> {
+  const now = new Date();
+  const months = [-1, 0, 1].map((offset) =>
+    monthOf(new Date(now.getFullYear(), now.getMonth() + offset, 1)),
+  );
+
+  const days: CalendarMonthResponse["days"] = [];
+  for (const month of months) {
+    const res = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month },
+    });
+    days.push(...res.days);
+  }
+  return days;
 }
 
 /**
