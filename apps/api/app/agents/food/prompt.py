@@ -95,9 +95,12 @@ def build_system_prompt(
 ) -> str:
     """system 메시지 본문.
 
-    `examples` 는 `search_food_doc` 결과다(코드가 run 시작에 자동으로 채운다 — 모델에게
-    문서 검색 tool 은 없다). 현재 시각은 맨 뒤에 둔다 — now 는 run 마다 바뀌어서 앞에 두면
-    그 뒤가 전부 프롬프트 캐시에서 빠진다(memory/prompt.py 와 같은 이유).
+    `examples` 는 `search_food_doc` 결과가 들어갈 자리다 — 모델에게 문서 검색 tool 은 없고,
+    run 시작에 코드가 채워 넘기는 모양으로 설계했다(Food_Tool_명세 §3). 🚨 `agent.run()` 은
+    아직 이 인자를 채우지 않는다(#321 파트 2 범위 밖, final-review Important #4) — 지금은
+    항상 빈 튜플이 들어와 `[예시]` 구획이 "(참고할 문서 없음)" 으로만 나간다. 현재 시각은
+    맨 뒤에 둔다 — now 는 run 마다 바뀌어서 앞에 두면 그 뒤가 전부 프롬프트 캐시에서
+    빠진다(memory/prompt.py 와 같은 이유).
     """
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
     return "\n\n".join([*_SECTIONS, _instructions(task_type), _examples(examples), header])
