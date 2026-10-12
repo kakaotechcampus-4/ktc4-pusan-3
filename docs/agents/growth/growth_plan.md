@@ -37,7 +37,7 @@
 
 | # | 결정 | 없으면 | 담당 |
 | --- | --- | --- | --- |
-| 1 | ~~`child_growth_log` 단위·NOT NULL~~ | ✅ 닫힘(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | – |
+| 1 | ~~`child_growth_log` 단위·NOT NULL~~ | ✅ 닫힘(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL`. 칸 이름은 10-10 에 `height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (`data_model.md`) | – |
 | 2 | `child_health` 동의 게이팅 포트 | 키·몸무게 읽기가 법적으로 막힘 | BE |
 | 3 | `suggestion.kind` + `suggestion_evidence` 테이블 | 개인화/일반 표시 불가 · 근거를 셀 수 없음 | BE |
 | 4 | `reference/hazard_terms.yaml` (Activity 소유) | 활동 행 안전 검사 불가 | Activity |

@@ -16,14 +16,14 @@ import {
 
 const PROFILE = `/child/${CHILD}/profile`;
 
-test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)", () => {
-  async function openAddSheet(page: import("@playwright/test").Page) {
-    await page.goto(PROFILE);
-    await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
-    await page.getByRole("button", { name: /^직접 적기/ }).click();
-    return page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
-  }
+async function openAddSheet(page: import("@playwright/test").Page) {
+  await page.goto(PROFILE);
+  await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
+  await page.getByRole("button", { name: /^직접 적기/ }).click();
+  return page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+}
 
+test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)", () => {
   test("게이트 표식(caution 배너 · approve 버튼)이 서고 실수로 닫히지 않는다", async ({ page }) => {
     const sheet = await openAddSheet(page);
     await expect(sheet.getByText("보호자가 확인한 것만 적어주세요")).toBeVisible();
@@ -111,6 +111,67 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
       await severity.click();
       await expect(page.getByRole("option")).toHaveText(["모르겠어요", "가볍게", "보통", "심하게"]);
     });
+  });
+});
+
+/**
+ * 시트 본문은 스크롤되는 면이라, 아래쪽 고르기 상자의 목록이 본문 바닥에 잘린다. 열 때 목록이
+ * 보이게 본문을 움직이고, 열린 뒤의 스크롤에는 닫지 않아야 잘린 항목까지 고를 수 있다 (#306).
+ */
+test.describe("시트 안 고르기 상자는 마지막 항목까지 고를 수 있다 (#306)", () => {
+  test("열면 목록이 끝까지 보이고, 마지막 항목이 등록 요청에 실린다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openAddSheet(page);
+    // 지병으로 고른다 — 심각도 상자의 이름과 마지막 값("심하게")이 알레르기와 달리 바뀌지 않는다 (#298).
+    await sheet.getByRole("combobox", { name: "종류" }).click();
+    await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+    await sheet.getByLabel("무엇인가요").fill("천식");
+
+    await sheet.getByRole("combobox", { name: "얼마나 심한가요" }).click();
+    const last = page.getByRole("option").last();
+    await expect(last).toHaveText("심하게");
+    await expect(last).toBeInViewport({ ratio: 1 });
+    await last.click();
+    await expect(page.getByRole("listbox")).toHaveCount(0);
+
+    await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
+    await expect(sheet).toBeHidden();
+    const saved = writes(calls, "POST", /\/health-safety$/);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].body).toMatchObject({ label: "천식", severity: "severe" });
+  });
+
+  test("열린 채로 시트 본문을 스크롤해도 닫히지 않는다", async ({ page }) => {
+    const sheet = await openAddSheet(page);
+    // 알레르기(기본값)면 상자 이름이 "검사 등급" 이다 — 위 테스트처럼 지병으로 바꿔 이름을 고정한다 (#298).
+    await sheet.getByRole("combobox", { name: "종류" }).click();
+    await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+    const trigger = sheet.getByRole("combobox", { name: "얼마나 심한가요" });
+    await trigger.click();
+    await expect(page.getByRole("listbox")).toBeVisible();
+
+    // 본문이 실제로 움직였는지부터 본다 — 안 움직였으면 이 테스트는 아무것도 확인하지 않는다.
+    const body = sheet.locator(".overflow-y-auto").first();
+    const before = await body.evaluate((el) => el.scrollTop);
+    await trigger.hover();
+    await page.mouse.wheel(0, 80);
+    await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBeGreaterThan(before);
+
+    await expect(page.getByRole("listbox")).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+test.describe("기본 정보 고치기는 서버 범위 안에서만 받는다 (#347)", () => {
+  test("별명은 20자에서 더 들어가지 않는다", async ({ page }) => {
+    await page.goto(PROFILE);
+    await page.getByRole("button", { name: "기본 정보 고치기" }).click();
+    const sheet = page.getByRole("dialog", { name: "기본 정보 고치기" });
+    const nickname = sheet.getByLabel("별명");
+    await nickname.clear();
+    // 서버는 21자부터 400 이다. 막히지 않으면 저장 버튼이 계속 실패한다.
+    await nickname.pressSequentially("가".repeat(25));
+    await expect(nickname).toHaveValue("가".repeat(20));
   });
 });
 

@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, isApiError } from "@/lib/api/errors";
-import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
+import {
+  idempotentMethod,
+  idempotentPath,
+  type IdempotentOperation,
+  newIdempotencyKey,
+} from "@/lib/api/idempotency";
 import {
   addHealthSafety,
   approveSuggestions,
@@ -16,12 +21,14 @@ import {
 import {
   isDraftEvent,
   streamRunEvents,
+  type AgentResultEvent,
   type EventDraftsEvent,
   type GuidanceEvent,
   type LaneEvent,
   type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
+  type PartialEvent,
   type RunEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
@@ -44,12 +51,14 @@ import type {
   CalendarDayResponse,
   CalendarMonthResponse,
   ChildProfile,
+  CorrectionRequest,
   CorrectionResponse,
   GrowthLog,
   GrowthLogsResponse,
   HealthSafety,
   HealthSafetyListResponse,
   Observation,
+  ObservationDetailResponse,
   ObservationsResponse,
   Policy,
   PhotoCommitResponse,
@@ -141,12 +150,16 @@ async function agreed(scopes: readonly string[]) {
   });
 }
 
-describe("① 키 누락 — 표에 있는 5개 전부", () => {
+describe("① 키 누락 — 표에 있는 줄 전부", () => {
   // 🚨 표(lib/api/idempotency.ts)에 줄을 더하고 목을 안 고치면 여기서 깨진다.
-  const cases = Object.entries(idempotentPath).map(([name, build]) => [name, build("c1")] as const);
+  //    메서드도 표가 정한다 — 수정 초안 반영은 PATCH 다 (#316).
+  const cases = (Object.keys(idempotentPath) as IdempotentOperation[]).map(
+    (name) => [name, idempotentMethod[name], idempotentPath[name]("c1", "ev_1")] as const,
+  );
 
-  it.each(cases)("%s 는 키가 없으면 400 이다", async (_name, path) => {
+  it.each(cases)("%s (%s) 는 키가 없으면 400 이다", async (_name, method, path) => {
     const response = await raw(path, {
+      method,
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
@@ -674,6 +687,122 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       setScenario("default");
     }
   });
+
+  /**
+   * 🚨 **저장한 뒤에 끊긴 run 은 failed 가 아니다** (#253 · #271). 서버는 done 에 `completed: false`
+   *    를 싣고 키를 놓지 않는다 — 놓으면 다시 보낸 한 줄이 두 번 저장된다.
+   */
+  it.each([
+    { label: "기록형 한 줄은 저장한 뒤 끊긴다", text: "그림 그렸어", saved: true },
+    { label: "일정형 한 줄은 saved 도 못 보내고 끊긴다", text: "주말에 소풍 가기", saved: false },
+  ])("interrupted — $label", async ({ text, saved }) => {
+    setScenario("interrupted");
+    try {
+      const key = newIdempotencyKey();
+      const body = { text, source: "home_input" };
+      const { run_id } = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+
+      const events = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      const types = events.map((e) => e.type);
+
+      expect(types).not.toContain("failed");
+      expect(types.includes("saved")).toBe(saved);
+      const last = events.at(-1);
+      expect(last?.type).toBe("done");
+      expect((last?.data as { completed?: boolean }).completed).toBe(false);
+
+      // 🚨 키를 놓지 않는다 — 같은 키로 다시 보내면 새 run 이 아니라 이 run 이 재생된다.
+      const again = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+      expect(again.run_id).toBe(run_id);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+describe("⑦-2 도메인 Agent 결과 (#227)", () => {
+  async function eventsOf(scenario: "agent_readout" | "agent_question" | "agent_partial") {
+    setScenario(scenario);
+    try {
+      const { run_id } = await api.post<{ run_id: string }>(
+        idempotentPath.input("c1"),
+        { text: "지어낸 한 줄", source: "home_input" },
+        { idempotencyKey: newIdempotencyKey() },
+      );
+      const events: RunEvent[] = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      return events;
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it.each(["agent_readout", "agent_question", "agent_partial"] as const)(
+    "%s — 저장 없이 agent_result 가 오고 done 으로 끝난다",
+    async (scenario) => {
+      const types = (await eventsOf(scenario)).map((e) => e.type);
+      expect(types).toContain("agent_result");
+      // 요청형 한 줄이라 저장할 관찰이 없다. 실패로 끝나지도 않는다.
+      expect(types).not.toContain("saved");
+      expect(types).not.toContain("failed");
+      expect(types.at(-1)).toBe("done");
+    },
+  );
+
+  it("🚨 결과는 키를 늘 싣는다 — 값이 없으면 null · 빈 배열이다 (서버 translate.py 와 같은 규칙)", async () => {
+    for (const event of await eventsOf("agent_readout")) {
+      if (event.type !== "agent_result") continue;
+      const data = event.data as AgentResultEvent;
+      expect(Object.keys(data).sort()).toEqual([
+        "agent",
+        "question",
+        "readouts",
+        "status",
+        "task_type",
+      ]);
+      // ⚠️ 추천 칸은 3단계 전이라 없다. 있으면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
+      expect(data).not.toHaveProperty("suggestion_ids");
+      for (const readout of data.readouts) {
+        expect(Object.keys(readout).sort()).toEqual([
+          "authored_by",
+          "body",
+          "code",
+          "kind",
+          "title",
+        ]);
+      }
+    }
+  });
+
+  it("🚨 개수 안내는 code 로 찾는다 — 날씨 안내와 같은 kind 라서다 (#276)", async () => {
+    const readouts = (await eventsOf("agent_readout"))
+      .filter((e) => e.type === "agent_result")
+      .flatMap((e) => (e.data as AgentResultEvent).readouts);
+
+    // 3단계 전까지 04 로 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 나와서 서버가 걸러 낸다.
+    expect(readouts.filter((r) => r.code !== null).map((r) => r.code)).toEqual(["empty"]);
+    // 개수와 상관없는 readout(성장 추이)은 null 이다.
+    expect(readouts.find((r) => r.kind === "growth_delta")?.code).toBeNull();
+  });
+
+  it("🚨 결과를 못 낸 Agent 는 agent_result 없이 partial 에만 오고, partial 은 결과 뒤 · done 앞이다", async () => {
+    const events = await eventsOf("agent_partial");
+    const types = events.map((e) => e.type);
+    const agents = events
+      .filter((e) => e.type === "agent_result")
+      .map((e) => (e.data as AgentResultEvent).agent);
+    const partial = events.find((e) => e.type === "partial")?.data as PartialEvent;
+
+    expect(agents).not.toContain("activity");
+    expect(partial.failed).toEqual(["activity"]);
+    expect(types.lastIndexOf("agent_result")).toBeLessThan(types.indexOf("partial"));
+    expect(types.indexOf("partial")).toBeLessThan(types.indexOf("done"));
+  });
 });
 
 /* ── 04 안내 · 되묻기 · 준비 중 (#141) ───────────────────────────────── */
@@ -982,12 +1111,13 @@ describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
-  it("도메인을 생략하면 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+  it("도메인을 생략하면 건강을 뺀 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const kinds = new Set(page.items.map((item) => item.kind));
     expect(kinds.size).toBeGreaterThan(1);
-    expect(kinds).toContain("observation_health");
+    // 🚨 건강 관찰은 첫 배포 범위 밖이다 — 서버(#266)가 목록에서 뺀다 (#259).
+    expect(kinds).not.toContain("observation_health");
     expect(page.total).toBe(page.items.length);
 
     const dates = page.items.map((item) => item.observed_to);
@@ -1003,6 +1133,70 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(page.items.every((item) => item.kind === "observation_food")).toBe(true);
   });
 
+  // 🚨 `observation_${domain}` 으로 찾으면 없는 테이블(`observation_growth`)을 찾아 늘 비었다 (#269).
+  it("growth 는 education 과 routine 두 테이블을 같이 내려준다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "growth" },
+    });
+
+    expect(new Set(page.items.map((item) => item.kind))).toEqual(
+      new Set(["observation_education", "observation_routine"]),
+    );
+  });
+
+  it("health 는 오류가 아니라 빈 목록이다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "health" },
+    });
+
+    expect(page).toEqual({ items: [], next_cursor: null, total: 0 });
+  });
+
+  it("next_cursor 를 그대로 돌려주면 빠지거나 겹치는 기록 없이 끝까지 넘어간다", async () => {
+    const whole = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ObservationsResponse = await api.get<ObservationsResponse>(
+        "/children/c1/observations",
+        { query: { limit: 2, cursor } },
+      );
+      expect(page.total).toBe(whole.total);
+      seen.push(...page.items.map((item) => `${item.kind}:${item.id}`));
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+
+    expect(seen).toEqual(whole.items.map((item) => `${item.kind}:${item.id}`));
+  });
+
+  it("기본 한 장은 20건이고, 넘치면 next_cursor 가 온다", async () => {
+    setScenario("observations_many");
+    try {
+      const first = await api.get<ObservationsResponse>("/children/c1/observations");
+      expect(first.items).toHaveLength(20);
+      expect(first.total).toBe(25);
+      expect(first.next_cursor).not.toBeNull();
+
+      const second = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { cursor: first.next_cursor },
+      });
+      expect(second.items).toHaveLength(5);
+      expect(second.next_cursor).toBeNull();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("깨진 커서는 400 validation_failed 다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { cursor: "깨진값" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
   it("프로필은 affinities 한 배열이고 safety 가 따로 온다", async () => {
     const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
 
@@ -1011,11 +1205,11 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(body.safety.length).toBeGreaterThan(0);
   });
 
+  // 목록에서는 빠졌지만 캘린더와 run 결과에는 아직 선다 — 그 화면들이 같은 시트를 연다.
   it("health 관찰에는 subject · polarity · affinity 키가 아예 없다", async () => {
-    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
-      query: { domain: "health" },
-    });
-    const health = page.items[0];
+    const { observation: health } = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_health/o_h1",
+    );
 
     expect(health.kind).toBe("observation_health");
     expect("subject" in health).toBe(false);
@@ -1025,18 +1219,32 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
 });
 
 describe("⑨ 교정은 지우지 않고 내린다", () => {
-  it("target_ref 를 배열로 보내면 422 다", async () => {
+  it("target_ref 를 배열로 보내면 400 이다 — 서버는 본문 검증 실패를 400 으로 준다", async () => {
     const response = await fetch(`${API_BASE_URL}/corrections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target_ref: [{ kind: "profile_affinity", id: "a_12" }],
-        verdict: "confirm",
+        verdict: "wrong",
         child_id: "c1",
       }),
     });
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(400);
+  });
+
+  it("once_only 는 status 를 stand_alone 으로 바꾼다 — active 로 두지 않는다 (#277)", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    const target = before.items.find((item) => item.kind === "observation_food");
+    expect(target).toBeDefined();
+
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    expect((result.target as Observation).status).toBe("stand_alone");
   });
 
   it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
@@ -1052,37 +1260,157 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
 
     // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
     expect((result.target as Observation).status).toBe("inactive");
-    // 기본 조회는 active 만 본다 — 행은 남았지만 목록에서는 빠진다.
+    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.some((item) => item.id === target!.id)).toBe(false);
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.total).toBe(before.total);
   });
 
-  it("기억 need_more_observation 은 confirmed 를 candidate 로 한 단계만 내린다", async () => {
+  it("이번만 그랬어요로 고친 기록도 목록에 stand_alone 으로 남고, 상세에 이력이 선다", async () => {
     const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_12" },
-      verdict: "need_more_observation",
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
+
+    const list = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(list.items.find((item) => item.id === "o_1")?.status).toBe("stand_alone");
+
+    const detail = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_food/o_1",
+    );
+    expect(detail.observation.status).toBe("stand_alone");
+    expect(detail.corrections.map((c) => c.id)).toEqual([result.correction.id]);
+  });
+
+  it("이미 고친 기록을 또 고치면 409 already_corrected 다 — 값이 틀린 400 과 다르다 (#277)", async () => {
+    const body = {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    } as const;
+    await api.post<CorrectionResponse>("/corrections", body);
+
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "already_corrected")).toBe(true);
+    expect((failure as ApiError).status).toBe(409);
+  });
+
+  it("status 를 고르면 그 상태만 오고 total 도 그 상태로 센다 (#266)", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const all = await api.get<ObservationsResponse>("/children/c1/observations");
+    const standAlone = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "stand_alone" },
+    });
+    const active = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "active" },
+    });
+
+    expect(standAlone.items.map((item) => item.id)).toEqual(["o_1"]);
+    expect(standAlone.total).toBe(1);
+    expect(active.items.some((item) => item.id === "o_1")).toBe(false);
+    expect(active.total).toBe(all.total - 1);
+  });
+
+  it("모르는 status 는 400 이다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: "observation_food", id: "o_1" },
+        verdict: "need_more_observation",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  // 🚨 기억 고치기는 의견이다 — 서버(#277)는 상태를 쌓인 기록 수와 기억 wrong 수로만 다시 센다.
+  //    어느 판정도 기억을 archived 로 보내지 않고, 기억은 목록에 남는다.
+  async function correctAffinity(id: string, verdict: CorrectionRequest["verdict"]) {
+    return api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id },
+      verdict,
+      child_id: "c1",
+    });
+  }
+
+  async function listedAffinity(id: string): Promise<Affinity | undefined> {
+    const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    return body.affinities.find((a) => a.id === id);
+  }
+
+  it("기억 need_more_observation 은 strength 만 낮춘다 — 확인됨은 확인됨으로 남는다", async () => {
+    const before = await listedAffinity("a_12");
+    const result = await correctAffinity("a_12", "need_more_observation");
+
+    const target = result.target as Affinity;
+    expect(target.state).toBe("confirmed");
+    expect(target.strength).toBeLessThan(before!.strength);
+    expect((await listedAffinity("a_12"))?.state).toBe("confirmed");
+  });
+
+  it("기억 outdated 도 상태를 바꾸지 않고 목록에 남긴다", async () => {
+    const result = await correctAffinity("a_20", "outdated");
 
     expect((result.target as Affinity).state).toBe("candidate");
+    expect(await listedAffinity("a_20")).toBeDefined();
   });
 
-  it("기억 outdated 는 archived 로 내린다 — 한 단계가 아니다", async () => {
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_20" },
-      verdict: "outdated",
+  it("기억 wrong 은 확인됨의 기준을 올린다 — 기록이 모자라면 후보로 내려가고 목록에 남는다", async () => {
+    // a_12 는 묶인 기록 3건으로 확인됨이다. wrong 1번이면 기준이 4건이 된다.
+    const result = await correctAffinity("a_12", "wrong");
+
+    expect((result.target as Affinity).state).toBe("candidate");
+    expect((await listedAffinity("a_12"))?.state).toBe("candidate");
+  });
+
+  it("묶인 기록을 고치면 기억도 다시 센다 — 고친 기록은 기억의 기록 수에서 빠진다", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
 
-    expect((result.target as Affinity).state).toBe("archived");
+    const affinity = await listedAffinity("a_12");
+    expect(affinity?.observation_count).toBe(2);
+    expect(affinity?.source_refs.some((ref) => ref.id === "o_1")).toBe(false);
+    expect(affinity?.state).toBe("candidate");
+  });
+
+  it("기억에 once_only 를 보내면 400 이다 — 기록에만 쓰는 값", async () => {
+    const failure = await correctAffinity("a_12", "once_only").catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
   });
 });
 
 describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
   it("memory_changed 가 항상 false 다", async () => {
-    const body = await api.patch<SuggestionFeedbackResponse>("/suggestions/s_past_2/feedback", {
-      feedback: "child_disliked",
-    });
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/s_past_2/feedback",
+      {
+        feedback: "child_disliked",
+      },
+    );
 
     expect(body.suggestion.feedback).toBe("child_disliked");
     // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
@@ -1091,7 +1419,7 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 
   it("피드백을 보내도 관찰 건수가 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
-    await api.patch("/suggestions/s_past_1/feedback", { feedback: "not_acted" });
+    await api.patch("/children/c1/suggestions/s_past_1/feedback", { feedback: "not_acted" });
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
 
     expect(after.total).toBe(before.total);
@@ -1741,9 +2069,13 @@ describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
     expect(after.nickname).toBe("민서");
   });
 
-  it("빈 별명은 422 다 — 이름 없는 아이를 만들지 않는다", async () => {
-    await expect(api.patch("/children/c1", { nickname: "   " })).rejects.toSatisfy((e: unknown) =>
-      isApiError(e, "validation_failed"),
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it.each([
+    ["빈 별명", "   "],
+    ["21자 별명", "가".repeat(21)],
+  ])("%s 은 400 이다 — 서버 `Nickname` 과 같은 범위", async (_, nickname) => {
+    await expect(api.patch("/children/c1", { nickname })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
   });
 });

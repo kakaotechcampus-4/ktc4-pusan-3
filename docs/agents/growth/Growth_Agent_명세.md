@@ -278,7 +278,7 @@ Health의 성장 판정이 제거되어(2026-09-22) 경계가 없어졌습니다
 
 | # | 내용 | 없으면 |
 | --- | --- | --- |
-| G-5 | ✅ **닫힘(09-22)** — `child_growth_log` · `height` `numeric(4,1)` cm · `weight` `numeric(4,1)` kg · `check_date date NOT NULL` |
+| G-5 | ✅ **닫힘(09-22)** — `child_growth_log` · `height` `numeric(4,1)` cm · `weight` `numeric(4,1)` kg · `check_date date NOT NULL`. 칸 이름은 10-10 에 `height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (`data_model.md`) |
 | G-3 | 후보 관심의 **강도 임계값** | **설정값 0.5로 시작**(`strength` 기본값 0.3). Curator 곡선이 나오면 조정 |
 | G-8 | ✅ **닫힘(10-08)** — **누운키 / 선키**. 측정 자세는 수집하지 않고, 키 측정이 24개월 전과 후에 모두 있으면 서술에 단서 상수(`delta.posture_hint`)를 덧붙인다. 숫자는 고치지 않는다 | – |
 | G-9 | ✅ **닫힘(10-09, #282 PM 리뷰)** — 증감 숫자를 넣는다. 보호자가 적은 두 값의 차이라 최상위 CLAUDE.md §2 의 금지(백분위 · 또래 비교 · 표준 성장곡선 · 평가 표현)에 들지 않는다(FE 동의 10-08). 조건: ① 증감 옆에 평가로 읽히는 말을 붙이지 않는다 ② 색 · 강조로 늘고 줄음을 구분하지 않는다(§8 프론트). 요약은 부호에 맞춰 동사만 바꾼다 — 늘었어요 / 줄었어요 / 그대로예요, 방향이 다르면 "키 2.1cm 늘고 몸무게 0.2kg 줄었어요". 직전 대비 줄은 부호 그대로. `design-system-v1.md` 11-1 · `growth-chart.tsx` · `growth-log-list.tsx` 주석은 FE 가 따로 고친다 | – |

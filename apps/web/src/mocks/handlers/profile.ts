@@ -9,13 +9,11 @@ import { apiError, networkDelay, url } from "./helpers";
 /**
  * 11 아이 프로필 — 별명·생일·성별과 키·몸무게 측정 로그.
  *
- * ⚠️ **네 경로 전부 계약서 v1 에 없다** (이슈 #75). 계약서가 주는 것은
- *    `PATCH /children/{cid}` 의 `nickname` · `birth_date` 둘뿐이고, 읽는 엔드포인트도
- *    성별도 측정 로그도 없다. 키·몸무게·성별은 최상위 `CLAUDE.md` §2 의 수집 범위
- *    ("이름(별명)·나이·알레르기 여부까지")도 넘는다 — PM 결정과 계약 확정 전까지
- *    **이 파일이 그 세 엔드포인트의 유일한 구현**이다.
+ * `GET` · `PATCH /children/{cid}` 는 서버 구현(PR #334)을 따른다 — 서버가 정본이다.
  *
- * 🚨 이 주석을 지우고 실서버에 붙이지 않는다. 지워지면 계약서에 있는 것처럼 보인다.
+ * ⚠️ **측정 로그(`/children/{cid}/growth`)는 아직 서버에 없다** (#75 · 표만 먼저 들어갔다).
+ *    서버 PR 이 붙기 전까지 **이 파일이 그 경로들의 유일한 구현**이다.
+ *    🚨 이 줄을 지우고 실서버에 붙이지 않는다. 지워지면 서버에 있는 것처럼 보인다.
  *
  * 🚨 **측정 로그는 승인 게이트가 아니다.** 잘못 적으면 그 줄을 지우면 되니 되돌릴 수 있고,
  *    승인 게이트는 2곳에서 늘리지 않는다 (최상위 §2). 그래서 `withIdempotency` 로 감싸지
@@ -50,13 +48,18 @@ export const profileHandlers = [
     await networkDelay(320);
     const body = (await request.json()) as UpdateChildRequest;
 
-    if (body.nickname !== undefined && body.nickname.trim() === "") {
-      return apiError(422, "validation_failed", "별명을 적어주세요");
+    // 🚨 바디 검증 실패는 400 이다 (서버 `app/api/errors.py` · 명세 §8-1 — 422 는 경로 값).
+    //    실서버는 스키마(`Nickname` · 앞뒤 공백을 떼고 1~20자)가 공통 검증 오류로 낸다.
+    const nickname = body.nickname?.trim();
+    if (nickname !== undefined && (nickname === "" || nickname.length > 20)) {
+      return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+        fields: ["nickname"],
+      });
     }
 
     profile = {
       ...profile,
-      ...(body.nickname !== undefined ? { nickname: body.nickname.trim() } : {}),
+      ...(nickname !== undefined ? { nickname } : {}),
       ...(body.birth_date !== undefined ? { birth_date: body.birth_date } : {}),
       ...(body.gender !== undefined ? { gender: body.gender } : {}),
     };

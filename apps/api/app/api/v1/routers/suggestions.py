@@ -1,7 +1,7 @@
-"""제안 채택·일정 초안·일정 제출 — #236.
+"""제안 채택·일정 초안·일정 제출·추천 생성·목록·평가·일정 수정 — #236 · #284.
 
 채택은 되돌릴 수 있어 승인 게이트에 해당하지 않는다.
-일정 제출만 승인 게이트 ㉠ — Idempotency-Key 필수.
+일정 제출·수정만 승인 게이트 ㉠ — Idempotency-Key 필수.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid as _uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
@@ -18,7 +18,10 @@ from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
+from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
+    AnswerRequest,
+    AnswerResponse,
     ApproveSuggestionsRequest,
     ApproveSuggestionsResponse,
     CalendarEventOut,
@@ -27,19 +30,40 @@ from app.api.v1.schemas.suggestions import (
     EventBodyOut,
     EventDraftOut,
     EventItemOut,
+    EvidenceOut,
     SubmitEventRequest,
     SubmitEventResponse,
+    SuggestionFeedbackRequest,
+    SuggestionFeedbackResponse,
+    SuggestionListResponse,
     SuggestionOut,
+    SuggestionsRequest,
+    SuggestionsResponse,
+    UpdateEventRequest,
 )
 from app.domains.schedule import repository as schedule_repo
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.suggestion import repository as suggestion_repo
-from app.domains.suggestion.models import SuggestionStatus
+from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
 
-router = APIRouter()
+router = APIRouter(tags=["suggestions"])
 
 
-def _suggestion_out(s) -> SuggestionOut:
+def _suggestion_out(s, evidence_rows=None) -> SuggestionOut:
+    evidence = []
+    source_refs = []
+    if evidence_rows:
+        for e in evidence_rows:
+            source_refs.append(Ref(kind=e.source_kind, id=str(e.source_id)))
+            evidence.append(
+                EvidenceOut(
+                    ref=Ref(kind=e.source_kind, id=str(e.source_id)),
+                    label=e.source_kind,
+                    observed_to=e.created_at.isoformat(),
+                    confidence_source="",
+                    note=e.note,
+                )
+            )
     return SuggestionOut(
         id=str(s.id),
         child_id=str(s.child_id),
@@ -50,6 +74,8 @@ def _suggestion_out(s) -> SuggestionOut:
         status=str(s.status),
         expires_at=s.expires_at.isoformat(),
         feedback=str(s.feedback) if s.feedback else None,
+        source_refs=source_refs,
+        evidence=evidence,
     )
 
 
@@ -58,6 +84,10 @@ def _suggestion_out(s) -> SuggestionOut:
 
 @router.post(
     "/children/{cid}/suggestions/approve",
+    summary="추천 채택",
+    description=(
+        "선택한 추천을 채택(draft → approved)한다. 이미 채택된 것은 멱등 처리. 만료된 추천은 409."
+    ),
     status_code=200,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409)},
 )
@@ -119,6 +149,11 @@ def _next_draft_id() -> str:
 
 @router.post(
     "/children/{cid}/suggestions/event-drafts",
+    summary="일정 초안 생성",
+    description=(
+        "채택한 추천으로 일정 초안을 만든다. food는 하나로 묶이고 나머지는 별도 초안. "
+        "DB에 저장하지 않는다 — 응답으로만 반환."
+    ),
     status_code=201,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 422)},
 )
@@ -188,6 +223,11 @@ async def create_event_drafts(
 
 @router.post(
     "/children/{cid}/events",
+    summary="일정 등록 (승인 게이트 ㉠)",
+    description=(
+        "초안에 시간을 채워 캘린더에 확정한다. Idempotency-Key 필수. "
+        "추천에서 왔으면 suggestion ↔ event 연결."
+    ),
     status_code=201,
     response_model=SubmitEventResponse,
     responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
@@ -285,6 +325,7 @@ async def submit_event(
                     item_id=str(ei.item_id),
                     item_name=ei.item_name,
                     is_prepared=ei.is_prepared,
+                    prepared_at=ei.prepared_at.isoformat() if ei.prepared_at else None,
                 )
                 for ei in items
             ],
@@ -294,3 +335,226 @@ async def submit_event(
     response_dict = response_data.model_dump(mode="json")
     idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=201, content=response_dict)
+
+
+# ── 추천 생성 (J — #284, agent 연결 전 stub) ─────────────────────────────
+
+
+@router.post(
+    "/children/{cid}/suggestions",
+    summary="추천 생성 (Agent 연결 전 stub)",
+    description="Agent를 실행해 추천 0~3개를 만든다. 현재 501 stub — #249에서 해제.",
+    status_code=200,
+    response_model=SuggestionsResponse,
+    responses={403: {"model": ErrorEnvelope}, 501: {"model": ErrorEnvelope}},
+)
+async def create_suggestions(
+    child: AccessibleChild,
+    body: SuggestionsRequest,
+    session: SessionDep,
+) -> JSONResponse:
+    # prompt_key 검증 — 표에 없는 조합이면 400 (#286)
+    if body.prompt_key is not None:
+        from app.rules.home_prompts import prompt_request
+
+        for agent in body.agents:
+            if prompt_request(agent, body.prompt_key) is None:
+                raise ApiError(400, "validation_failed", "허용되지 않은 추천 요청이에요")
+
+    # TODO(#284): Agent 진입점 연결 — 이시하님 후속
+    return JSONResponse(
+        status_code=501,
+        content={"error": {"code": "not_implemented", "message": "Agent 연결 전 (#284)"}},
+    )
+
+
+@router.post(
+    "/children/{cid}/answers",
+    summary="되묻기 답변 (Agent 연결 전 stub)",
+    description="근거 부족 시 보호자 답변을 관찰로 저장한다. 현재 501 stub — #249에서 해제.",
+    status_code=200,
+    response_model=AnswerResponse,
+    responses={501: {"model": ErrorEnvelope}},
+)
+async def answer_question(
+    child: AccessibleChild,
+    body: AnswerRequest,
+    session: SessionDep,
+) -> JSONResponse:
+    # TODO(#284): Agent 진입점 연결 — 이시하님 후속
+    return JSONResponse(
+        status_code=501,
+        content={"error": {"code": "not_implemented", "message": "Agent 연결 전 (#284)"}},
+    )
+
+
+# ── 추천 목록 (I — #284) ─────────────────────────────────────────────────
+
+
+@router.get(
+    "/children/{cid}/suggestions",
+    summary="지난 추천 목록",
+    description=(
+        "개인화 추천만 커서 페이징으로 반환. 필터 없으면 draft 제외 (07 화면용). evidence 포함."
+    ),
+    status_code=200,
+)
+async def list_suggestions(
+    child: AccessibleChild,
+    session: SessionDep,
+    status: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> SuggestionListResponse:
+    try:
+        status_enum = SuggestionStatus(status) if status else None
+    except ValueError:
+        raise ApiError(400, "validation_failed", "유효하지 않은 status 값이에요")
+    if cursor is not None:
+        try:
+            suggestion_repo.decode_cursor(cursor)
+        except (ValueError, KeyError, TypeError):
+            raise ApiError(400, "validation_failed", "유효하지 않은 cursor 값이에요")
+    rows, next_cursor = await suggestion_repo.list_suggestions(
+        session,
+        child_id=child.child_id,
+        status=status_enum,
+        kind=SuggestionKind.PERSONALIZED,
+        cursor=cursor,
+        limit=limit,
+    )
+    evidence_map = await suggestion_repo.list_evidence_batch(
+        session, suggestion_ids=[s.id for s in rows]
+    )
+    return SuggestionListResponse(
+        items=[_suggestion_out(s, evidence_map.get(s.id)) for s in rows],
+        next_cursor=next_cursor,
+    )
+
+
+# ── 추천 평가 (I — #284) ─────────────────────────────────────────────────
+
+
+@router.patch(
+    "/children/{cid}/suggestions/{sid}/feedback",
+    summary="추천 평가",
+    description=(
+        "채택/거절된 추천에 피드백을 남긴다 "
+        "(child_liked·child_disliked·not_acted). 기억은 바꾸지 않는다."
+    ),
+    status_code=200,
+    responses={404: {"model": ErrorEnvelope}},
+)
+async def set_suggestion_feedback(
+    child: AccessibleChild,
+    sid: _uuid.UUID,
+    body: SuggestionFeedbackRequest,
+    session: SessionDep,
+) -> SuggestionFeedbackResponse:
+    updated = await suggestion_repo.set_feedback(
+        session,
+        child_id=child.child_id,
+        suggestion_id=sid,
+        feedback=SuggestionFeedback(body.feedback),
+    )
+    if updated is None:
+        raise ApiError(404, "not_found", "제안을 찾을 수 없어요")
+
+    await session.commit()
+    evidence_rows = await suggestion_repo.list_evidence(session, suggestion_id=sid)
+    return SuggestionFeedbackResponse(
+        suggestion=_suggestion_out(updated, evidence_rows),
+    )
+
+
+# ── 일정 수정 (I — #284, 승인 게이트 ㉠) ─────────────────────────────────
+
+
+@router.patch(
+    "/children/{cid}/events/{eid}",
+    summary="일정 수정 (승인 게이트 ㉠)",
+    description=(
+        "일정 본문과 준비물을 수정한다. items는 전체 교체 "
+        "(기존 is_prepared 보존). Idempotency-Key 필수."
+    ),
+    status_code=200,
+    response_model=SubmitEventResponse,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+)
+async def update_event(
+    child: AccessibleChild,
+    eid: _uuid.UUID,
+    body: UpdateEventRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: str | None = Header(alias="Idempotency-Key", default=None),
+) -> JSONResponse:
+    if idempotency_key is None:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = idempotency.recall(**scope)
+    if replayed is not None and isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
+
+    event = await schedule_repo.update_event(
+        session,
+        child_id=child.child_id,
+        event_id=eid,
+        title=body.event.title,
+        event_type=EventType(body.event.event_type),
+        starts_at=body.event.starts_at,
+        ends_at=body.event.ends_at,
+        all_day=body.event.all_day,
+        category=EventCategory(body.event.category),
+    )
+    if event is None:
+        raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
+
+    try:
+        items = await schedule_repo.replace_event_items(
+            session,
+            child_id=child.child_id,
+            event_id=eid,
+            items=[i.model_dump() for i in body.items],
+        )
+    except ValueError:
+        raise ApiError(400, "validation_failed", "유효하지 않은 item_id예요")
+
+    await session.commit()
+
+    response_data = SubmitEventResponse(
+        event=CalendarEventOut(
+            id=str(event.id),
+            title=event.title,
+            event_type=str(event.event_type),
+            starts_at=event.starts_at.isoformat(),
+            ends_at=event.ends_at.isoformat() if event.ends_at else None,
+            all_day=event.all_day,
+            category=str(event.category),
+            created_by=str(event.created_by),
+            source_notice_id=str(event.source_notice_id) if event.source_notice_id else None,
+            source_refs=event.source_refs or [],
+            items=[
+                EventItemOut(
+                    item_id=str(ei.item_id),
+                    item_name=ei.item_name,
+                    is_prepared=ei.is_prepared,
+                    prepared_at=ei.prepared_at.isoformat() if ei.prepared_at else None,
+                )
+                for ei in items
+            ],
+        )
+    )
+
+    response_dict = response_data.model_dump(mode="json")
+    idempotency.remember(**scope, replay=response_dict)
+    return JSONResponse(status_code=200, content=response_dict)

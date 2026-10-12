@@ -58,22 +58,34 @@ class AffinityRow:
 
 @dataclass(frozen=True)
 class ObservationRow:
-    """`observation_*` 한 줄."""
+    """`observation_*` 한 줄.
+
+    대조와 설명에 쓰는 칸을 나눈다. 대조(기피 거절 · keywords)는 네 테이블 공통 칸인 `subject`
+    로 한다 — affinity `merge_key` 와 같은 모양이라 같은 대상이 같은 말로 걸린다. 설명(why_this ·
+    화면의 "사용한 기록")은 사람이 읽는 칸(Activity `activity` · Education `topic`)을 `label` 로
+    넘긴다. 그런 칸이 없는 도메인(Food · Routine)은 비워 두면 `subject` 를 쓴다.
+    """
 
     id: UUID
     kind: ChildRecordKind  # observation_food · observation_activity …
-    subject: str
+    subject: str  # 대조 키. Curator 가 merge_key 를 만드는 값
     polarity: int  # -1 / 0 / +1. NOT NULL
     observed_on: date
+    label: str = ""  # 근거 설명 · 화면용. 비면 subject
 
 
 @dataclass(frozen=True)
 class RankedEvidence:
     ref: Ref
     tier: Literal[1, 2, 3]
-    label: str
+    label: str  # cite() · why_this · 화면. affinity 는 merge_key
     polarity: int
     observed_on: date
+    subject: str = ""  # 기피 거절 · keywords 대조. affinity 는 merge_key. 비면 label
+
+    def __post_init__(self) -> None:
+        if not self.subject:
+            object.__setattr__(self, "subject", self.label)
 
     @property
     def is_avoidance(self) -> bool:
@@ -111,6 +123,7 @@ def rank_evidence(
                 label=row.merge_key,
                 polarity=row.polarity,
                 observed_on=row.last_observed_on,
+                subject=row.merge_key,
             )
         )
 
@@ -122,9 +135,10 @@ def rank_evidence(
             RankedEvidence(
                 ref=Ref(kind=observation.kind, id=observation.id),
                 tier=3,
-                label=observation.subject,
+                label=observation.label or observation.subject,
                 polarity=observation.polarity,
                 observed_on=observation.observed_on,
+                subject=observation.subject,
             )
         )
 
