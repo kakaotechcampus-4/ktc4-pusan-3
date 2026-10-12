@@ -85,9 +85,13 @@ async def register_health_safety(
 ) -> JSONResponse:
     """승인 게이트 ㉡ — 보호자가 확인한 알레르기 · 건강 기록 1건을 등록한다.
 
-    순서: (본문 형식 · 아이 접근 — 의존성) → 키 확인 → 재생 → 건강정보 동의 → 종류별 심각도 400 →
-    같은 항목 409 → 저장 → commit → 응답 기억. 400 이 409 보다 먼저인 것은 목(children.ts)과 같다.
+    Idempotency-Key 가 필요하다. 같은 키로 다시 오면 처음 응답(201)을 그대로 돌려준다.
+    오류 (순서대로): 403 child_access_denied → 400 validation_failed(본문 형식) →
+    400 idempotency_key_required → 403 consent_required(건강정보 동의 없음) →
+    400 validation_failed(종류와 맞지 않는 심각도) → 409 already_exists(같은 종류 · 이름의 기록).
     """
+    # 검사 순서: 의존성(아이 접근 · 본문) → 키 → 재생 → 동의 → 심각도 → 중복 → 저장 → commit →
+    # 응답 기억. 심각도 400 이 중복 409 보다 먼저인 것은 목(children.ts)과 같게 맞춘 것이다.
     if not idempotency_key:
         raise ApiError(
             400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"

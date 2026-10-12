@@ -19,9 +19,10 @@ Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 class CreateHealthSafetyRequest(BaseModel):
     """승인 게이트 ㉡ — 보호자가 확인한 값만 들어온다. LLM 이 이 요청을 만들지 않는다 (§2).
 
-    심각도 · 메모의 null 은 "안 보냄" 과 같다 (웹 HealthSafetyRequest 가 null 을 허용한다).
+    심각도 · 메모의 null 은 "안 보냄" 과 같다.
     """
 
+    # null 을 400 으로 막지 않는 이유 — 웹 HealthSafetyRequest 타입이 null 을 허용한다
     model_config = ConfigDict(extra="forbid")
 
     type: SafetyKind = Field(
@@ -55,7 +56,10 @@ class HealthSafetyOut(BaseModel):
     label: str
     severity: SafetySeverity | None
     reactions: list[str]
-    management: str | None = Field(description="화면은 쓰지 않는다")
+    management: str | None = Field(
+        description="알레르기 · 질환 관리 정보."
+        " 등록 요청으로는 받지 않아 이 API 로 만든 기록은 null"
+    )
     notes: str | None
     created_by: WrittenBy | None = Field(
         description="적은 보호자. 탈퇴했거나 부르는 이름이 없는 계정이면 null"
