@@ -192,8 +192,8 @@ export const memoryHandlers = [
   }),
 
   /**
-   * ⚠️ **계약서 v1 에 없는 엔드포인트다** (types.ts 의 ⚠️). 07 피드백 탭이 평가할 제안을
-   *    목록으로 얻을 길이 없어서 제안해 두고 목으로 먼저 세웠다 — `apps/api` Owner 협의 대상.
+   * 07 피드백 탭이 평가할 제안 목록 (#284). 서버는 개인화(`kind = 'personalized'`)만 내린다.
+   * 목은 한 장으로 끝난다(`next_cursor: null`).
    */
   http.get(url("/children/:cid/suggestions"), async () => {
     await networkDelay();
@@ -208,7 +208,7 @@ export const memoryHandlers = [
     return HttpResponse.json(body);
   }),
 
-  http.patch(url("/suggestions/:sid/feedback"), async ({ params, request }) => {
+  http.patch(url("/children/:cid/suggestions/:sid/feedback"), async ({ params, request }) => {
     await networkDelay();
     const { feedback } = (await request.json()) as { feedback: SuggestionFeedback };
     const sid = String(params.sid);
