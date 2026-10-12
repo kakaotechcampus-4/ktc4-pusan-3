@@ -41,6 +41,14 @@ class Restriction:
 # (이름, 그 이름이 막는 것, 다른 이름 안에서 이 이름을 찾을 때 덮을 guard)
 NameRule = tuple[str, Restriction, tuple[str, ...]]
 
+# 놀이 · 교육 문장(Activity · Growth)에서 대조하는 한 글자 이름 (#261 · #305). 그 밖의 한 글자는
+# 사전 별칭이든 보호자가 적은 이름이든 문장에 대조하지 않는다 — "밀" · "게" · "굴" · "닭" 은
+# "공 밀기" · "카드 게임" · "굴리기" · "닭 그림" 이, 강아지 알레르기를 적은 "개" 는 "블록 3개" 가
+# 걸린다. 이 네 글자는 놀이 문장에서도 거의 그 음식이다("콩주머니" 에는 실제 콩이 든다).
+# 메뉴를 보는 Food 는 자기 목록(`food/tools/safety.SINGLE_CHAR_FOODS`)을 쓰고, 이 네 글자도
+# 다 막는다(잣 · 콩 · 깨는 사전 이름, 쑥은 그 목록).
+SINGLE_CHAR_NAMES = frozenset({"잣", "콩", "깨", "쑥"})
+
 
 @dataclass(frozen=True)
 class LabelBook:

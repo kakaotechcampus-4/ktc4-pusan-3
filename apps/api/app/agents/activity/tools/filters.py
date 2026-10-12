@@ -10,7 +10,12 @@ from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
-from app.agents.common.allergy import non_food_allergies, read_label, shared_book
+from app.agents.common.allergy import (
+    SINGLE_CHAR_NAMES,
+    non_food_allergies,
+    read_label,
+    shared_book,
+)
 from app.agents.common.reference import allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import Term, match_fields, normalize
@@ -19,11 +24,8 @@ from app.rules.term_match import Term, match_fields, normalize
 # 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
 # 사전을 그대로 쓴다("에그" 로 등록하면 난류다).
 #
-# 한 글자 이름은 허용 목록만 쓴다. "밀" · "게" · "굴" · "닭" 은 "공 밀기" · "카드 게임" ·
-# "굴리기" · "닭 그림" 이 걸린다. 잣 · 콩 · 깨 · 쑥은 놀이 문장에서도 거의 그 음식이다
-# ("콩주머니" 에는 실제 콩이 든다). 사전에 없는 한 글자(강아지 알레르기를 "개" 로 적은 것)도
-# 글자 그대로 대조하지 않는다 — "블록 3개" 가 걸린다 (#261 · #298 리뷰).
-SINGLE_CHAR_NAMES = frozenset({"잣", "콩", "깨", "쑥"})
+# 한 글자 이름은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥)만 쓴다.
+# Growth 의 등록 이름 대조와 같은 목록이다 (#261 · #298 리뷰 · #305).
 # 두 글자 이상이어도 놀이 문장에서 다른 뜻으로 읽히는 별칭 (#261 리뷰 — "플라스틱 포크" ·
 # "에그 쉐이커" · "밀크 카톤" · "피치색 물감" · "전복 모양" · "돼지저금통")
 EXCLUDED_ALIASES = frozenset({"포크", "에그", "밀크", "피치", "전복", "돼지"})
