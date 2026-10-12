@@ -32,8 +32,8 @@ class Settings(AgentLLMSettings):
     # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회, 공휴일 굽기
     # (scripts/bake_holidays.py), 식약처 식품영양성분DB(Food 메뉴 해석, #321)가 같이 쓴다. API 마다
     # 활용신청이 따로다 (docs/agents/shared/API발급.md). 비어 있으면 날씨는 조회 실패와 같게 보고
-    # ("맑음"으로 채우지 않는다, Activity D8) Food 는 메뉴 카탈로그만 쓴다. 🚨 비밀 — 키가 요청 주소에
-    # 들어가므로 응답 · 로그 · 예외 문구에 싣지 않는다
+    # ("맑음"으로 채우지 않는다, Activity D8) Food 는 메뉴 카탈로그만 쓴다.
+    # 🚨 비밀 — 키가 요청 주소에 들어가므로 응답 · 로그 · 예외 문구에 싣지 않는다
     DATA_GO_KR_SERVICE_KEY: str = ""
 
     # 농림축산식품 공공데이터포털(data.mafra.go.kr) 인증키 — 농식품정보원 레시피 기본 · 재료정보
