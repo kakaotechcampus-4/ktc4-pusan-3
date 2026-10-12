@@ -195,7 +195,8 @@ async def execute_tool(
     """tool 을 한 번 실행한다. 허용 목록 → 이름 조회 → 인자 검증 → 실행 순서.
 
     모델에게 안 보여준 tool 을 이름으로 불러도 실행하지 않는다. allowed 는 tools_for() 결과다.
-    지금 핸들러는 NotImplementedError 를 낸다 — 삼키지 않고 그대로 올린다.
+    DB 연결 전인 핸들러는 NotImplementedError 를 낸다(records.py) — 모델이 그 tool 을 고르면
+    run() 전체가 죽는 대신, 모델이 다른 tool 로 이어갈 수 있게 실패 결과로 돌려준다.
     """
     definition = _DEFINITIONS.get(name)
     handler = TOOL_HANDLERS.get(name)
@@ -217,7 +218,15 @@ async def execute_tool(
             f"인자가 스키마와 맞지 않는다: {_summarize(exc)}",
         )
 
-    return await handler(context, args)
+    try:
+        return await handler(context, args)
+    except NotImplementedError:
+        return fail(
+            None,
+            name,
+            ErrorCode.UPSTREAM_ERROR,
+            f"'{name}' 은 아직 쓸 수 없다. 이미 가진 결과로 계속하거나 다른 tool 로 이어간다.",
+        )
 
 
 def _summarize(exc: ValidationError, limit: int = 3) -> str:
