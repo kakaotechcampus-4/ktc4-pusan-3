@@ -12,6 +12,9 @@ import pytest
 
 from app.agents import entrypoint, pipeline
 from app.agents.common.datetime_rules import build_observed_range
+from app.agents.food.context import build_gate
+from app.agents.food.registry import closed_readout_key, tools_for
+from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
@@ -225,6 +228,31 @@ async def test_commit_을_pipeline_에_그대로_넘긴다(monkeypatch: pytest.M
     )
 
     assert seen["commit"] is commit
+
+
+async def test_포트를_안_넘긴_run_의_Food_는_안전_조회_실패로_닫힌다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다.
+
+    실제 DB 포트가 붙기 전까지 Food 는 서비스에서 모델 0회로 닫힌다.
+    (issue4 에서 api 가 포트를 넘긴다)
+    """
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen["food"] = contexts["food"]
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
+
+    gate = await build_gate(seen["food"])
+    assert gate.safety_ok is False
+    for task in (FoodTaskType.MEAL_RECOMMENDATION, FoodTaskType.NUTRIENT_ANALYSIS):
+        assert closed_readout_key(task, gate) == "blocked.safety"
+        assert tools_for(task, gate) == ()
 
 
 async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴다(

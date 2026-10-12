@@ -52,6 +52,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.core.mfds_nutri_raw import RawNutriRow
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -145,13 +146,24 @@ class NutritionFacts:
     source_version: str
 
 
+# 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다 —
+# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(#326 리뷰, own_table §1-1)
+RECIPE_SOURCES: frozenset[str] = frozenset({"mafra_recipe"})
+
+
 @dataclass(frozen=True)
 class MenuCatalogRow:
-    """메뉴 카탈로그(`menu_catalog`) 한 행 — 메뉴명(공개 DB · 급식표) → 식품코드·영양성분."""
+    """메뉴 카탈로그 한 행 — 메뉴명(공개 DB · 급식표) → 식품코드·영양성분.
+
+    `menu_catalog`(급식 · 기록 · 영양 판정)와 `recipe_catalog`(추천 후보)가 같은 모양을 쓴다.
+    어느 표의 행인지는 `source` 로 가른다(`RECIPE_SOURCES`).
+    """
 
     menu_key: str
     display_name: str
-    source: Literal["mfds_nutri", "mfds_recipe", "center_standard", "manual"]
+    # menu_catalog: mfds_nutri · center_standard · manual / recipe_catalog: mafra_recipe.
+    # COOKRCP01(mfds_recipe)은 보류라 뺐다 — 들이면 레시피라 recipe_catalog 쪽이다
+    source: Literal["mfds_nutri", "mafra_recipe", "center_standard", "manual"]
     resolved: bool
     synced_at: datetime
     food_code: str | None = None
@@ -270,27 +282,37 @@ class MenuCatalogStore(Protocol):
         보호자 말에서 나온 이름이 `child_id` 없이 전역 테이블에 남는다. 넣는 행은 외부 DB 에
         이름이 정확히 같은 결과뿐이라 `menu_key` 가 공개 DB 에 있는 이름이다
         (food_agent_own_table §1).
+
+        레시피 행(`RECIPE_SOURCES`)은 받지 않는다 — `recipe_catalog` 몫이다(DB 는 CHECK).
         """
         ...
 
     async def all_resolved(self) -> list[MenuCatalogRow]:
-        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다."""
+        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다.
+
+        후보 풀은 `recipe_catalog` 에서 읽기로 했다(#326 리뷰). 레시피 표의 포트를 만들 때
+        (#321 파트 2 배치 · 식단 추천) 이 읽기를 그쪽으로 옮긴다.
+        """
         ...
 
 
 class MenuSource(Protocol):
     """외부 영양성분 · 레시피 조회. 실패하거나 정보가 부족하면 그 메뉴는 unresolved 로 둔다.
 
-    `name`(정규화한 메뉴 이름)과 이름이 정확히 같은 결과만 돌려준다 — 비슷한 이름만 있으면
-    None 이다(된장찌개를 물었는데 부대된장찌개를 주지 않는다). 받은 결과가 그대로 카탈로그에
-    쌓여서다(food_agent_own_table §1).
+    클라이언트는 원문 행을 그대로 주고, 어느 행을 쓸지는 Agent 가 정한다
+    (`nutrition_source.pick_nutrition` — 이름이 정확히 같은 행만, 품목대표만). 비슷한 이름으로
+    추정하지 않는다 — 받은 결과가 그대로 카탈로그에 쌓여서다(food_agent_own_table §1).
 
     unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
     (`tools/safety.py` 의 unchecked).
     """
 
-    async def nutrition(self, *, name: str) -> NutritionFacts | None:
-        """실패는 MenuSourceError. None 은 그 이름의 영양성분이 정말 없다는 뜻."""
+    async def nutrition_rows(self, *, name: str) -> tuple[RawNutriRow, ...]:
+        """`name`(정규화한 메뉴 이름)으로 검색한 영양DB 원문 행들. 실패는 MenuSourceError.
+
+        검색에 걸린 행을 다 준다 — 이름이 다른 행(된장찌개_두부)이 섞여 있어도 된다.
+        빈 튜플은 정말 없다는 뜻이고 장애가 아니다.
+        """
         ...
 
     async def ingredients(self, *, name: str) -> tuple[str, ...] | None:

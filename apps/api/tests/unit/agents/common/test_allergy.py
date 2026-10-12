@@ -5,12 +5,15 @@ health_safety.label 은 자유 입력이라 한 칸에 여러 이름 · 뒤에 �
 """
 
 import unicodedata
+from dataclasses import dataclass
 
 import pytest
 
 from app.agents.common.allergy import (
     Restriction,
     make_book,
+    non_food_allergies,
+    non_food_names,
     read_label,
     shared_book,
     shared_name_rules,
@@ -229,3 +232,67 @@ def test_shared_name_rules_attach_group_foods_for_every_member() -> None:
 
     assert lobster in book.names["갑각류"].terms
     assert {sea, lobster} <= set(book.names["해산물"].terms)
+
+
+@dataclass(frozen=True)
+class Row:
+    """health_safety 한 행. Agent 마다 `SafetyEntry` 는 따로 두지만 이 세 칸은 같다."""
+
+    kind: str
+    label: str
+    status: str
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("꽃가루", ("꽃가루",)),
+        ("라텍스 알레르기", ("라텍스",)),  # 꼬리말을 뗀 이름
+        ("동물털", ("동물털",)),
+        ("쑥", ("쑥",)),  # 먹는 것이지만 사전(19종)에 없다 — 사전에 없는 이름 전부다
+        ("땅콩, 꽃가루", ("꽃가루",)),  # 한 칸에 둘을 적어도 식품이 아닌 쪽만
+        ("키위, 꽃가루", ("키위", "꽃가루")),
+        ("우유", ()),
+        ("우유 알레르기", ()),
+        ("달걀흰자", ()),  # 사전 이름(달걀)이 안에 있다
+        ("Egg white", ()),
+        ("갑각류", ()),  # 묶음 이름도 식품이다
+        ("우유(2)", ()),  # 숫자는 이름이 아니다
+    ],
+)
+def test_non_food_names_returns_pieces_the_food_book_finds_nothing_in(
+    label: str, expected: tuple[str, ...]
+) -> None:
+    assert non_food_names(label, shared_book()) == expected
+
+
+def test_non_food_allergies_keeps_active_allergy_rows_with_a_non_food_name() -> None:
+    """식품 알레르기는 이름 대조가 뺀다. `environmental` 은 고소공포 같은 것이라 알레르기가
+    아니다."""
+    rows = [
+        Row("environmental", "고소공포", "active"),
+        Row("allergy", "꽃가루", "active"),
+        Row("allergy", "우유", "active"),
+        Row("allergy", "라텍스 알레르기", "active"),
+    ]
+    assert non_food_allergies(rows, shared_book()) == ("꽃가루", "라텍스 알레르기")
+
+
+@pytest.mark.parametrize("status", ["retracted", "none"])
+def test_non_food_allergies_skips_rows_that_are_not_active(status: str) -> None:
+    assert non_food_allergies([Row("allergy", "라텍스", status)], shared_book()) == ()
+
+
+def test_non_food_allergies_names_the_same_label_once() -> None:
+    rows = [
+        Row("allergy", "꽃가루", "active"),
+        Row("allergy", "꽃 가루", "active"),
+        Row("allergy", "동물털", "active"),
+    ]
+    assert non_food_allergies(rows, shared_book()) == ("꽃가루", "동물털")
+
+
+def test_non_food_allergies_keeps_the_label_as_written() -> None:
+    """보호자가 적은 그대로 보여 준다 — 조각으로 쪼갠 이름을 내지 않는다."""
+    rows = [Row("allergy", "땅콩, 꽃가루", "active")]
+    assert non_food_allergies(rows, shared_book()) == ("땅콩, 꽃가루",)

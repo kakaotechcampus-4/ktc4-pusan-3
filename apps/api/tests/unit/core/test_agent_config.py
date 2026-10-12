@@ -44,6 +44,19 @@ def test_3() -> None:
     assert not undocumented, f".env.example 에 없는 선언: {undocumented}"
 
 
+def test_공공데이터포털_키는_비워도_서버가_뜬다() -> None:
+    """DATA_GO_KR_SERVICE_KEY(식품영양성분DB)가 없으면 Food 가 카탈로그만 쓰고 서버는 뜬다.
+
+    키가 없다고 빈 영양값으로 채우지 않는다 — 메뉴 해석이 unresolved 로 남을 뿐이다.
+    """
+    assert Settings.model_fields["DATA_GO_KR_SERVICE_KEY"].default == ""
+
+
+def test_농식품정보원_키는_비워도_서버가_뜬다() -> None:
+    """MAFRA_RECIPE_API_KEY(레시피 배치)가 없으면 배치만 못 돌고 서버는 뜬다."""
+    assert Settings.model_fields["MAFRA_RECIPE_API_KEY"].default == ""
+
+
 # --- _blank_is_default validator ---
 
 
