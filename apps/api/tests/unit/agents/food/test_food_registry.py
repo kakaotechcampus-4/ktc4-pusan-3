@@ -138,14 +138,16 @@ def test_열린_조합은_closed_readout_key_가_None() -> None:
     assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, _gate(24)) is None
 
 
-# ── safety_ok=False — 식단 추천만 닫힌다 ────────────────────────────
-def test_안전_조회_실패는_식단_추천만_닫는다() -> None:
+# ── safety_ok=False — 식단 추천 · 영양소 분석이 닫힌다 ───────────────
+def test_안전_조회_실패는_식단_추천과_영양소_분석을_닫는다() -> None:
     gate = _gate(24, safety_ok=False)
 
     assert tools_for(FoodTaskType.MEAL_RECOMMENDATION, gate) == ()
     assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, gate) == "blocked.safety"
-    # 영양소 분석·급식 갱신은 안전 조회와 무관하게 그대로 연다
-    assert tools_for(FoodTaskType.NUTRIENT_ANALYSIS, gate) == _TODDLER_NUTRIENT_WITH_DAYCARE
+    # 영양소 분석도 식품 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다
+    assert tools_for(FoodTaskType.NUTRIENT_ANALYSIS, gate) == ()
+    assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) == "blocked.safety"
+    # 급식 갱신은 식품 안내가 아니라서 안전 조회와 무관하게 그대로 연다
     assert tools_for(FoodTaskType.DAYCARE_MEAL, gate) == _DAYCARE_BUNDLE
 
 
@@ -153,6 +155,18 @@ def test_0에서_3개월은_안전_조회_실패여도_milk_meal이_우선한다
     # 단계로 닫힌 것과 안전 조회 실패가 같이 오면 단계 사유가 먼저다
     gate = _gate(1, safety_ok=False)
     assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, gate) == "unsupported.milk_meal"
+
+
+@pytest.mark.parametrize("months", [3, 6, 11])
+def test_영아기_영양소_분석은_안전_조회_실패여도_영아기_사유가_우선한다(months: int) -> None:
+    gate = _gate(months, safety_ok=False)
+    assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) == "unsupported.infant_nutrient"
+
+
+def test_동의가_없어_안전_정보를_읽지_않은_아이의_영양소_분석은_닫지_않는다() -> None:
+    # 동의 없음은 조회 실패가 아니다(safety_ok=True) — 세 라벨 모두 그대로 열린다
+    gate = _gate(24, consent=False)
+    assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) is None
 
 
 # ── build_gate — 동의 없어도 안 닫히고, health_safety 도 안 읽는다 ────
