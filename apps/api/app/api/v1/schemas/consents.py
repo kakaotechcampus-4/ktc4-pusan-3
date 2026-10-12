@@ -17,7 +17,10 @@ UsableScope = Literal["service_terms", "privacy_account", "location", "child_bas
 
 
 class ConsentRequest(BaseModel):
-    """동의 1건을 켜거나(granted) 끈다(withdrawn). 같은 상태로 다시 보내면 기록을 더하지 않는다."""
+    """동의 1건을 켜거나(granted) 끈다(withdrawn).
+
+    같은 상태로 다시 보내면 기록을 더하지 않는다. 다만 새 약관 버전에 다시 동의하면 새로 기록한다.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -27,7 +30,9 @@ class ConsentRequest(BaseModel):
     )
     action: ConsentAction
     policy_version: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        description="화면이 보여 준 약관 버전. GET /policies 가 지금 보여 주는 버전이 아니면 400"
+        description="화면이 보여 준 약관 버전."
+        " 켜기는 GET /policies 가 지금 보여 주는 버전이어야 하고,"
+        " 끄기는 등록된 버전이면 받는다. 아니면 400 policy_version_invalid"
     )
     child_id: UUID | None = Field(
         default=None,

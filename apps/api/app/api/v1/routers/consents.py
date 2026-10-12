@@ -100,6 +100,8 @@ async def change_consent(
 ) -> ConsentResponse:
     """동의 1건을 켜거나 끈다. 같은 상태로 다시 오면 기록을 더하지 않고 마지막 행을 돌려준다.
 
+    다만 새 약관 버전에 다시 동의하면 새 행을 남긴다 — 새 글에 동의한 것은 새 증빙이다.
+
     오류 (순서대로): 400 validation_failed(대상 · 필수 끄기) → 403 child_access_denied →
     403 consent_required(아이 동의의 법정대리인 확인) → 400 policy_version_invalid.
     버전 — 켜기는 GET /policies 가 지금 보여 주는 것만, 끄기는 등록된 버전이면 받는다.
