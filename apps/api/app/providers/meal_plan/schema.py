@@ -1,7 +1,8 @@
 """급식표 구조화 결과 — docs/meal-plan/meal-plan-pipeline-v1.md §3.
 
 입력이 사진(OCR) · 엑셀 · 한글 어느 쪽이든 읽기 코드는 이 모양까지만 낸다.
-`allergen_codes` 는 여기 **없다** — 번호는 규칙(app/rules/allergen.py)이 `raw` 에서 뽑는다.
+`allergen_codes` 는 여기 **없다** — 급식표의 알레르기 번호는 읽지 않는다. 기관이 아이의
+알레르기를 관리하고 보호자에게 미리 알린다. 번호는 `raw` 에 원문 그대로 남을 뿐이다.
 모르는 키가 섞여 오면 검증에서 거절된다 (`extra="forbid"`).
 """
 
@@ -39,8 +40,9 @@ class _Strict(BaseModel):
 
 class MenuItem(_Strict):
     name: str
+    """`raw` 에서 번호 · 기호를 뺀 메뉴 이름. 메뉴 카탈로그 조회와 영양 계산이 이 이름을 쓴다."""
     raw: str
-    """원문 그대로. 검수와 알레르기 번호 파싱의 유일한 근거 — 번호·기호를 지우지 않는다."""
+    """원문 그대로. 사람 검수의 근거 — 번호·기호를 지우지 않는다. 번호는 읽지 않는다."""
 
 
 class Meal(_Strict):

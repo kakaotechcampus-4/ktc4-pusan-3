@@ -122,8 +122,10 @@ def agent_job(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
                 if channel.memory_committed:
-                    done = ("done", {"run_id": channel.run_id,
-                                     "model_calls": 0, "completed": False})
+                    done = (
+                        "done",
+                        {"run_id": channel.run_id, "model_calls": 0, "completed": False},
+                    )
                     channel.publish(done)
                 else:
                     channel.publish(sse.failed_event("timeout", raw_text))
@@ -187,8 +189,7 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
             if channel.memory_committed:
                 # commit 이후에 터졌다. 관찰은 이미 DB 에 있으므로 done 으로 끝낸다.
                 # failed 로 끝내면 키가 풀려 재시도 시 두 번 저장된다.
-                done = ("done", {"run_id": channel.run_id,
-                                 "model_calls": 0, "completed": False})
+                done = ("done", {"run_id": channel.run_id, "model_calls": 0, "completed": False})
                 channel.publish(done)
             else:
                 channel.publish(sse.failed_event("internal_error", raw_text))

@@ -93,9 +93,13 @@ def test_uvicorn_logs_survive_app_logging_setup(output):
 def test_library_info_log_stays_hidden(output):
     """🚨 루트 로거는 WARNING 그대로다 — 라이브러리의 info 까지 열지 않는다.
 
-    httpx 는 INFO 로 요청 주소를 찍는데, 주소에 키를 싣는 API 가 있다 (NEIS 의 KEY=).
+    httpx 는 INFO 로 요청 주소를 찍는데, 주소에 키를 싣는 API 가 있다
+    (공공데이터포털의 serviceKey= · 식품안전나라는 경로에 키).
     """
     assert "secret-key" not in output
+    # Discord 웹훅은 토큰이 주소에 있다 — 루트가 INFO 로 열려도 httpx 는 WARNING 에 못 박혀
+    # 있어야 한다
+    assert "SECRET-WEBHOOK-TOKEN" not in output
 
 
 def test_access_log_hides_query_strings_and_invite_codes(output):

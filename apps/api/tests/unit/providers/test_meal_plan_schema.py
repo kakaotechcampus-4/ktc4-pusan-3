@@ -119,7 +119,7 @@ def test_unparsed_cell_requires_a_reason():
         MealPlanJSON.model_validate(_minimal(unparsed=[{"day": 4, "meal_type": "snack_pm"}]))
 
     plan = MealPlanJSON.model_validate(
-        _minimal(unparsed=[{"day": 4, "meal_type": "snack_pm", "why": "번호가 흐림"}])
+        _minimal(unparsed=[{"day": 4, "meal_type": "snack_pm", "why": "메뉴 이름이 흐림"}])
     )
     assert plan.unparsed[0].raw is None
 

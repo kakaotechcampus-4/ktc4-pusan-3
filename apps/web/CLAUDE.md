@@ -81,7 +81,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 | `/child/[childId]/home` |
 | 04 대화 (한 줄 입력의 결과 · 되묻기 답 · 하루 단위) | `/child/[childId]/chat` |
-| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` |
+| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
@@ -93,6 +93,12 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
+
+🚨 **03 홈 버튼은 05 에 문장이 아니라 키를 넘긴다** (`?prompt=dinner` · #286). 05 는 그 키를 추천 요청의
+`prompt_key` 에 그대로 싣고, Agent 에 넘길 문장("저녁 추천해줘")은 서버가 키로 꺼낸다. 문장을 화면이 보내면
+Supervisor 안전 사전검사를 거치지 않은 문장으로 Agent 가 돈다 (#249). 05 는 **아는 키만** 싣는다 — 주소는
+누구나 고칠 수 있다. 🚨 키는 05 쿼리 키에도 들어간다 — 빼면 다른 버튼을 눌러도 앞 버튼의 제안이 뜬다
+(`staleTime: Infinity`).
 
 `/onboarding` · `/start` · `/invite` 는 아이 스코프 **밖**이다 — `POST /children` 이나 초대 수락이
 성공해야 `childId` 가 생긴다. 이 경계를 흐리면 childId 가 없는 상태의 아이 스코프 라우트가 생긴다.
@@ -416,10 +422,11 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   돌아온다**(안 그러면 포커스가 `<body>` 로 떨어진다 · 09 달력에서 낸 사고와 같다) ·
   ESC · 바깥 클릭 · Tab 에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
   등장 애니메이션도 쉐브론 회전도 없다(방향은 아이콘을 갈아 끼워 말한다)
-  ⚠️ **스크롤에는 닫지 않는다.** 목록이 `relative` 루트 안의 `absolute` 라 트리거에 붙어 같이
-  움직이는데, 떨어질까 봐 넣었던 스크롤 가드가 **열릴 때 포커스가 일으킨 스크롤**을 잡아
-  자기를 닫고 있었다 — 바텀시트 안(본문이 `overflow-y-auto`)에서 상자가 **아예 안 열렸다.**
-  페이지가 긴 화면(07)에서는 스크롤이 안 나서 여태 안 보였다
+  🚨 **스크롤에는 닫지 않는다** (#306). 목록이 `relative` 루트 안의 `absolute` 라 트리거에 붙어 같이
+  움직이는데, 떨어질까 봐 넣었던 스크롤 가드가 두 번 사고를 냈다 — 처음엔 **열릴 때 포커스가 일으킨
+  스크롤**을 잡아 바텀시트 안에서 상자가 아예 안 열렸고, 그걸 한 프레임 미뤄 막은 뒤에는 **본문 바닥에
+  잘린 항목을 보려고 미는 스크롤**에 닫혀서 아래쪽 항목을 터치로 고를 수 없었다. 대신 **열 때 목록이
+  보이게** 가장 가까운 스크롤 면을 움직인다. ⚠️ 목록을 포털이나 `fixed` 로 옮기면 이 전제가 깨진다
 - 🚨 **접히는 질문(10 › 고객센터)은 네이티브 `<details>`/`<summary>` 다.** 펼침 상태·키보드·포커스를
   브라우저가 준다 — `aria-expanded` 를 손으로 달지 않는다. 🚨 기본 마커를 지우고(`list-none` +
   `::-webkit-details-marker`) 쉐브론은 **회전이 아니라 갈아 끼운다**. 🚨 `summary` 여백은 카드 밖으로
@@ -552,6 +559,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 ### API 호출
 
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
+  - 예외는 `lib/report-render-error.ts` 의 `sendClientError` 하나다. 오류 화면에서 보내는 보고라 `keepalive` 가 필요하고, 401 처리기를 타면 안 된다 (오류 화면이 로그인 화면으로 튕긴다). 토큰 · 주소는 `authHeaders` · `buildUrl` 을 그대로 쓴다. (`lib/server-error-alert.ts` 의 `fetch` 는 우리 API 가 아니라 Next 서버가 Discord 웹훅을 부르는 것이라 이 규칙의 대상이 아니다.)
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
 
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
@@ -559,8 +567,11 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡) · **초안 제출**(게이트 ㉠).
 
 ⚠️ 게이트 ㉠ 이 `POST /events/{eid}/confirm` 에서 **초안 제출로 옮겨왔다** (#121 · #151). 초안을 만드는
-호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다. **경로는 확정 전이고**
-(`docs/event/event-draft-flow-v1.md` §6), `idempotentPath.submitEvent` 한 줄만 고치면 따라온다.
+호출은 이제 아무것도 쓰지 않는다 — 쓰는 곳이 하나뿐이라 게이트도 하나다.
+🚨 **초안 제출은 메서드가 둘이다** — create 는 `POST /children/{cid}/events`, update 는
+`PATCH /children/{cid}/events/{eid}` (9/21 · 서버 #236 · #284). 한 곳의 두 갈래라 게이트를 늘린 것이 아니고,
+**둘 다 키가 필요하다** — update 도 `item_id: null` 인 새 준비물은 멱등이 아니다 (#316).
+그래서 표(`idempotentPath`)는 줄마다 메서드(`idempotentMethod`)를 같이 들고, 클라이언트 차단도 그 메서드로 건다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
 경로도 `lib/api/idempotency.ts` 의 `idempotentPath` 표에서만 만든다 — 새 엔드포인트를 여기 더하면 차단·목·테스트가 함께 따라온다. **표를 거치지 않고 이 5개를 부를 방법은 없어야 한다.**
@@ -669,6 +680,14 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
 - `runReducer` 는 순수 함수다. 훅 없이 이벤트 배열만 흘려서 검증할 수 있다
 - 끝나면 **`qk.child(cid)` 를 통째로** 무효화한다 — run 하나가 홈·관찰·프로필을 동시에 바꾼다
 - 🚨 **`partial` 이 왔으면 `done` 이 와도 부분 결과다.** 성공 화면으로 덮지 않는다 (NF-06)
+- 🚨 **`done` 이 `completed: false` 로 오면 저장한 뒤에 끊긴 run 이다** (#253 · #271 · `RunState.interrupted`).
+  서버는 쓴 것을 commit 한 뒤 예외나 60초 안전망에 걸리면 `failed` 가 아니라 이 길로 닫고 Idempotency 키와
+  이어받기 맥락을 놓지 않는다 — `failed` 로 닫으면 다시 보낸 한 줄이 두 번 저장되기 때문이다. 키가 없으면 `true` 다.
+  - 🚨 **실패가 아니다.** `status` 는 `done`(또는 `partial`)이고 `isRunConfirmed` 도 참이라 질문도 닫힌다
+  - 🚨 **받은 기록이 없어도 "저장하지 않았어요" 를 세우지 않는다.** `saved` 를 보내기 전에 끊겼을 수 있고, 쓴 것이
+    일정 변경일 수도 있다 — 제목은 "적어주신 내용은 반영했어요" 다
+  - 🚨 **다시 시도 · 고쳐 쓰기를 세우지 않는다.** 대신 "같은 말을 다시 보내지 않아도 돼요" 를 글자로 말한다.
+    무엇이 빠졌는지("추천을 못 만들었어요")도 단정하지 않는다
 - 🚨 **`guidance` · `note` · `unavailable` 은 실패가 아니다** (#141). 셋 다 `done` 으로 끝나는
   run 에 실려 오고, 04 답 묶음 안의 카드로 선다 — 실패 화면으로 빼면 **같은 run 에서 저장된
   기록이 화면에서 사라진다.** 특히 `unavailable` 은 라우팅 직후 Memory 보다 **먼저** 나가서
@@ -719,6 +738,16 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   - 🚨 **Idempotency-Key 를 `text` 에만 묶지 않는다** (`keyPayload`). 서버는 본문 **전체**로 같은
     요청인지 보므로, 같은 답("네")을 다른 질문에 보내면 "같은 키 · 다른 본문" 이라 422 다.
     본문에 필드를 더하면 `keyPayload` 에도 같이 더한다
+- 🚨 **`agent_result` 는 도메인 Agent 결과 한 건 = 답 묶음 안의 블록 하나다** (#227 · 서버 #276).
+  도착한 순서대로 붙이고 재정렬하지 않는다. 같은 Agent 가 두 번 올 수 있고(task 둘) 묶지 않는다.
+  보일 것이 없는 결과(쓰는 task)는 블록을 세우지 않는다 (`visibleAgentResults`).
+  - 🚨 **Agent 결과도 이유를 말한 것이다.** 블록이 서면 "아이에 관한 기록은 찾지 못했어요" 를 세우지 않는다 —
+    요청형 한 줄은 저장할 관찰이 없는 것이 정상이다 (`noticedWhy`)
+  - 🚨 **Agent 의 되묻기(`question`)에는 답할 자리를 열지 않는다.** Memory 의 되묻기(`note`)와 답의 쓰임이
+    달라서 `reply_to` 로 보내면 400 이다. 답을 받는 길은 #246 에서 정하고, 그때까지는 안내 문장이다
+  - ⚠️ **추천 칸(`kind` · `reason` · `suggestion_ids`)은 아직 없다.** 서버가 저장 콜백을 붙일 때 이유 문장 ·
+    "후보 보기 →" · 일반 추천 표시가 이 블록에 붙는다 (#227 3단계). 그 전에는 추천이 있는 결과가 오지
+    않는 것을 전제로 그린다
 - 🚨 **`ping` 은 아무것도 하지 않는다** (#140). 20초 타이머는 `pumpRunEvents` 의 `onEvent` 가
   되살리고, 리듀서에서 새 state 를 만들면 조용한 채널에서 10초마다 04 가 다시 그려진다
 - 🚨 **20초 안전망이 `subscribeRun` 안에 있다.** 전체 시간이 아니라 *조용한 시간*을 잰다 —
@@ -752,7 +781,7 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   🚨 **그 스토어에 `persist` 를 붙이지 않는다** — 아이에 대한 발화 원문이라 디스크에 남기지 않는다
   (최상위 §2 개인정보). 로그아웃에서 `clearAll()` 로 지운다
 
-목의 `?scenario=partial` · `failed` · `disconnected` 로 세 경로를 바로 확인할 수 있다 (§7).
+목의 `?scenario=partial` · `failed` · `disconnected` · `interrupted` 로 네 경로를 바로 확인할 수 있다 (§7).
 대화 스토어의 규칙은 `stores/conversation.test.ts` 가 목 서버와 실제로 돌려서 건다 (§8).
 
 ---
@@ -914,6 +943,7 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `scarcity` | 근거 부족 — 개인화 대신 **일반 추천 1건**(점선 카드) + 되묻는 질문 **1개** |
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
+| `interrupted` | 04 저장한 뒤 끊김 — `done` + `completed: false`. **다시 시도가 없어야 한다** · 일정형 한 줄이면 받은 기록 없이 끊긴다 (#271) |
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
 | `policy_bumped` | 가입 동의 — **제출 직전에 약관이 새 판으로** (400 `policy_version_invalid`). 바뀐 항목만 체크가 풀리고 다시 확인받아야 한다 |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
@@ -929,6 +959,9 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `reply_unavailable` | 04 되묻기 답이 400 `reply_context_unavailable` — **다시 시도 없이 질문을 놓고**, 물었던 질문은 말풍선 아래 오류에 |
 | `send_failed` | 04 보내기 실패(네트워크) — 키마다 처음 한 번은 서버에 닿지 않는다. 🚨 **다음 한 줄이 그 말풍선을 지우지 않아야 한다** (#231) |
 | `daily_limit` | 04 한 줄 보내기 하루 한도 429 — **다시 시도 버튼이 없어야 한다** · 원문은 입력창으로 |
+| `agent_readout` | 04 요청형 — Agent 결과만(성장 추이 · 0개 안내). 🚨 **같은 Agent 의 빈 결과는 블록이 안 선다** (#227) |
+| `agent_question` | 04 Agent 가 되묻는 한 줄 — 🚨 **답할 자리가 열리지 않아야 한다** (#246 전) |
+| `agent_partial` | 04 한 Agent 는 결과, 다른 Agent 는 실패 — 블록과 부분 결과가 한 묶음에 |
 | `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
 | `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
 

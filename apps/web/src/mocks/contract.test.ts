@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, isApiError } from "@/lib/api/errors";
-import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
+import {
+  idempotentMethod,
+  idempotentPath,
+  type IdempotentOperation,
+  newIdempotencyKey,
+} from "@/lib/api/idempotency";
 import {
   addHealthSafety,
   approveSuggestions,
@@ -16,16 +21,19 @@ import {
 import {
   isDraftEvent,
   streamRunEvents,
+  type AgentResultEvent,
   type EventDraftsEvent,
   type GuidanceEvent,
   type LaneEvent,
   type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
+  type PartialEvent,
   type RunEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
 import { toISODate } from "@/lib/format";
+import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import type {
   Affinity,
@@ -142,12 +150,16 @@ async function agreed(scopes: readonly string[]) {
   });
 }
 
-describe("① 키 누락 — 표에 있는 5개 전부", () => {
+describe("① 키 누락 — 표에 있는 줄 전부", () => {
   // 🚨 표(lib/api/idempotency.ts)에 줄을 더하고 목을 안 고치면 여기서 깨진다.
-  const cases = Object.entries(idempotentPath).map(([name, build]) => [name, build("c1")] as const);
+  //    메서드도 표가 정한다 — 수정 초안 반영은 PATCH 다 (#316).
+  const cases = (Object.keys(idempotentPath) as IdempotentOperation[]).map(
+    (name) => [name, idempotentMethod[name], idempotentPath[name]("c1", "ev_1")] as const,
+  );
 
-  it.each(cases)("%s 는 키가 없으면 400 이다", async (_name, path) => {
+  it.each(cases)("%s (%s) 는 키가 없으면 400 이다", async (_name, method, path) => {
     const response = await raw(path, {
+      method,
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
@@ -186,7 +198,7 @@ describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
     await submitEventDraft("c1", draftBody(), key);
 
     await expect(
-      addHealthSafety("c1", { type: "allergy", label: "지어낸항목", category: "식품" }, key),
+      addHealthSafety("c1", { type: "allergy", label: "지어낸항목" }, key),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "idempotency_key_reuse"));
   });
 });
@@ -367,11 +379,7 @@ describe("일정 초안", () => {
 
     it("🚨 active 로 등록된 항목이 든 제안은 목록에서 빠지고 묻지도 않는다", async () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
-      await addHealthSafety(
-        "c1",
-        { type: "allergy", label: allergen, category: "식품" },
-        newIdempotencyKey(),
-      );
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
 
       const data = await fetchSuggestions();
       expect(data.suggestions.map((s) => s.id)).not.toContain(id);
@@ -382,7 +390,7 @@ describe("일정 초안", () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
       const { safety } = await addHealthSafety(
         "c1",
-        { type: "allergy", label: allergen, category: "식품" },
+        { type: "allergy", label: allergen },
         newIdempotencyKey(),
       );
       await api.delete(`/children/c1/health-safety/${safety.id}`);
@@ -539,7 +547,7 @@ describe("일정 초안", () => {
 
 describe("승인 게이트 ㉡", () => {
   it("승인 게이트 ㉡ 도 같은 구조다", async () => {
-    const item = { type: "allergy", label: "지어낸알레르기", category: "식품" };
+    const item = { type: "allergy", label: "지어낸알레르기" };
 
     const created = await addHealthSafety("c1", item, newIdempotencyKey());
     expect(created.safety.kind).toBe("health_safety");
@@ -678,6 +686,122 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     } finally {
       setScenario("default");
     }
+  });
+
+  /**
+   * 🚨 **저장한 뒤에 끊긴 run 은 failed 가 아니다** (#253 · #271). 서버는 done 에 `completed: false`
+   *    를 싣고 키를 놓지 않는다 — 놓으면 다시 보낸 한 줄이 두 번 저장된다.
+   */
+  it.each([
+    { label: "기록형 한 줄은 저장한 뒤 끊긴다", text: "그림 그렸어", saved: true },
+    { label: "일정형 한 줄은 saved 도 못 보내고 끊긴다", text: "주말에 소풍 가기", saved: false },
+  ])("interrupted — $label", async ({ text, saved }) => {
+    setScenario("interrupted");
+    try {
+      const key = newIdempotencyKey();
+      const body = { text, source: "home_input" };
+      const { run_id } = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+
+      const events = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      const types = events.map((e) => e.type);
+
+      expect(types).not.toContain("failed");
+      expect(types.includes("saved")).toBe(saved);
+      const last = events.at(-1);
+      expect(last?.type).toBe("done");
+      expect((last?.data as { completed?: boolean }).completed).toBe(false);
+
+      // 🚨 키를 놓지 않는다 — 같은 키로 다시 보내면 새 run 이 아니라 이 run 이 재생된다.
+      const again = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+      expect(again.run_id).toBe(run_id);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+describe("⑦-2 도메인 Agent 결과 (#227)", () => {
+  async function eventsOf(scenario: "agent_readout" | "agent_question" | "agent_partial") {
+    setScenario(scenario);
+    try {
+      const { run_id } = await api.post<{ run_id: string }>(
+        idempotentPath.input("c1"),
+        { text: "지어낸 한 줄", source: "home_input" },
+        { idempotencyKey: newIdempotencyKey() },
+      );
+      const events: RunEvent[] = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      return events;
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it.each(["agent_readout", "agent_question", "agent_partial"] as const)(
+    "%s — 저장 없이 agent_result 가 오고 done 으로 끝난다",
+    async (scenario) => {
+      const types = (await eventsOf(scenario)).map((e) => e.type);
+      expect(types).toContain("agent_result");
+      // 요청형 한 줄이라 저장할 관찰이 없다. 실패로 끝나지도 않는다.
+      expect(types).not.toContain("saved");
+      expect(types).not.toContain("failed");
+      expect(types.at(-1)).toBe("done");
+    },
+  );
+
+  it("🚨 결과는 키를 늘 싣는다 — 값이 없으면 null · 빈 배열이다 (서버 translate.py 와 같은 규칙)", async () => {
+    for (const event of await eventsOf("agent_readout")) {
+      if (event.type !== "agent_result") continue;
+      const data = event.data as AgentResultEvent;
+      expect(Object.keys(data).sort()).toEqual([
+        "agent",
+        "question",
+        "readouts",
+        "status",
+        "task_type",
+      ]);
+      // ⚠️ 추천 칸은 3단계 전이라 없다. 있으면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
+      expect(data).not.toHaveProperty("suggestion_ids");
+      for (const readout of data.readouts) {
+        expect(Object.keys(readout).sort()).toEqual([
+          "authored_by",
+          "body",
+          "code",
+          "kind",
+          "title",
+        ]);
+      }
+    }
+  });
+
+  it("🚨 개수 안내는 code 로 찾는다 — 날씨 안내와 같은 kind 라서다 (#276)", async () => {
+    const readouts = (await eventsOf("agent_readout"))
+      .filter((e) => e.type === "agent_result")
+      .flatMap((e) => (e.data as AgentResultEvent).readouts);
+
+    // 3단계 전까지 04 로 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 나와서 서버가 걸러 낸다.
+    expect(readouts.filter((r) => r.code !== null).map((r) => r.code)).toEqual(["empty"]);
+    // 개수와 상관없는 readout(성장 추이)은 null 이다.
+    expect(readouts.find((r) => r.kind === "growth_delta")?.code).toBeNull();
+  });
+
+  it("🚨 결과를 못 낸 Agent 는 agent_result 없이 partial 에만 오고, partial 은 결과 뒤 · done 앞이다", async () => {
+    const events = await eventsOf("agent_partial");
+    const types = events.map((e) => e.type);
+    const agents = events
+      .filter((e) => e.type === "agent_result")
+      .map((e) => (e.data as AgentResultEvent).agent);
+    const partial = events.find((e) => e.type === "partial")?.data as PartialEvent;
+
+    expect(agents).not.toContain("activity");
+    expect(partial.failed).toEqual(["activity"]);
+    expect(types.lastIndexOf("agent_result")).toBeLessThan(types.indexOf("partial"));
+    expect(types.indexOf("partial")).toBeLessThan(types.indexOf("done"));
   });
 });
 
@@ -1281,9 +1405,12 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
 
 describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
   it("memory_changed 가 항상 false 다", async () => {
-    const body = await api.patch<SuggestionFeedbackResponse>("/suggestions/s_past_2/feedback", {
-      feedback: "child_disliked",
-    });
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/s_past_2/feedback",
+      {
+        feedback: "child_disliked",
+      },
+    );
 
     expect(body.suggestion.feedback).toBe("child_disliked");
     // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
@@ -1292,7 +1419,7 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 
   it("피드백을 보내도 관찰 건수가 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
-    await api.patch("/suggestions/s_past_1/feedback", { feedback: "not_acted" });
+    await api.patch("/children/c1/suggestions/s_past_1/feedback", { feedback: "not_acted" });
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
 
     expect(after.total).toBe(before.total);
@@ -2048,11 +2175,7 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
   it("등록한 항목이 GET 에 그대로 나온다", async () => {
     const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
 
-    await addHealthSafety(
-      "c1",
-      { type: "allergy", label: "땅콩", category: "식품" },
-      newIdempotencyKey(),
-    );
+    await addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey());
 
     const after = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
     expect(after.items.length).toBe(before.items.length + 1);
@@ -2060,18 +2183,10 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
   });
 
   it("같은 항목을 새 키로 또 등록하면 409 다 (재시도와 다른 경로)", async () => {
-    await addHealthSafety(
-      "c1",
-      { type: "allergy", label: "땅콩", category: "식품" },
-      newIdempotencyKey(),
-    );
+    await addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey());
 
     await expect(
-      addHealthSafety(
-        "c1",
-        { type: "allergy", label: "땅콩", category: "식품" },
-        newIdempotencyKey(),
-      ),
+      addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey()),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_exists"));
   });
 
@@ -2086,11 +2201,7 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
 
     // 내려간 뒤에는 같은 라벨이 다시 등록돼야 한다 — 회수가 "영영 못 쓰는 이름" 을 만들면 안 된다.
     await expect(
-      addHealthSafety(
-        "c1",
-        { type: target.type, label: target.label, category: target.category },
-        newIdempotencyKey(),
-      ),
+      addHealthSafety("c1", { type: target.type, label: target.label }, newIdempotencyKey()),
     ).resolves.toBeDefined();
   });
 
@@ -2123,10 +2234,10 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
 
     const { safety } = await api.patch<{ safety: HealthSafety }>(
       `/children/c1/health-safety/${before.id}`,
-      { severity: "severe", reactions: ["기침"], notes: "병원에서 다시 확인" },
+      { severity: "class_4", reactions: ["기침"], notes: "병원에서 다시 확인" },
     );
 
-    expect(safety.severity).toBe("severe");
+    expect(safety.severity).toBe("class_4");
     expect(safety.reactions).toEqual(["기침"]);
     // 🚨 정체는 그대로다.
     expect(safety.type).toBe(before.type);
@@ -2140,7 +2251,7 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
       api.patch(`/children/c1/health-safety/${target.id}`, { label: "땅콩" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { type: "condition" }),
+      api.patch(`/children/c1/health-safety/${target.id}`, { type: "chronic_disease" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
   });
 
@@ -2153,12 +2264,61 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
     expect(safety.severity).toBeNull();
   });
 
+  it("알레르기는 검사 Class 로 등록된다", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "복숭아", severity: "class_2" },
+      newIdempotencyKey(),
+    );
+    expect(safety.severity).toBe("class_2");
+  });
+
+  it("🚨 알레르기에 가볍게~심하게 를 보내면 400 이다 — DB CHECK 와 같다", async () => {
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: "allergy", label: "복숭아", severity: "mild" },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("지병은 가볍게~심하게 로 등록되고 Class 는 400 이다", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "chronic_disease", label: "천식", severity: "moderate" },
+      newIdempotencyKey(),
+    );
+    expect(safety.severity).toBe("moderate");
+
+    await expect(
+      addHealthSafety(
+        "c1",
+        { type: "chronic_disease", label: "소아 당뇨", severity: "class_3" },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("고칠 때도 같은 규칙이다", async () => {
+    const target = await first(); // 우유 — 알레르기
+    await expect(
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+
+    const { safety } = await api.patch<{ safety: HealthSafety }>(
+      `/children/c1/health-safety/${target.id}`,
+      { severity: "class_4" },
+    );
+    expect(safety.severity).toBe("class_4");
+  });
+
   it("내려간 기록은 고칠 수 없다", async () => {
     const target = await first();
     await api.delete(`/children/c1/health-safety/${target.id}`);
 
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found"));
   });
 
@@ -2166,7 +2326,7 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
     const target = await first();
     setScenario("consent");
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
+      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
     setScenario("default");
   });
@@ -2204,10 +2364,17 @@ describe("⑮ 검사지 읽기는 저장이 아니다", () => {
     const { candidates } = await scan();
 
     // 목이 일부러 덜 읽은 줄을 섞어 둔다 — 완벽하게 읽어 주면 화면의 빈 칸 처리를 확인할 수 없다.
-    expect(candidates.some((c) => c.category === null)).toBe(true);
+    expect(candidates.some((c) => c.label === null)).toBe(true);
     expect(candidates.some((c) => c.severity === null)).toBe(true);
     // 🚨 원문 없이 옮겨 적은 줄이 있어야 화면이 그 줄을 미리 고르지 않는지 확인할 수 있다.
     expect(candidates.some((c) => c.source_text === null)).toBe(true);
+  });
+
+  it("🚨 읽은 심각도는 검사 결과의 Class 를 그대로 옮긴 값이다 — 알레르기에 쓸 수 없는 값이 없다", async () => {
+    const { candidates } = await scan();
+    for (const c of candidates) {
+      if (c.severity !== null) expect(isSeverityFor("allergy", c.severity)).toBe(true);
+    }
   });
 
   it("🚨 읽지 못한 줄 수를 그대로 내린다", async () => {
@@ -2220,12 +2387,12 @@ describe("⑮ 검사지 읽기는 저장이 아니다", () => {
     const before = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
 
     // 화면이 하는 것과 같다: 필수 칸이 다 찬 줄만, 줄마다 키 하나로.
-    const complete = candidates.filter((c) => c.label !== null && c.category !== null);
+    const complete = candidates.filter((c) => c.label !== null);
     for (const candidate of complete) {
       if (before.items.some((item) => item.label === candidate.label)) continue;
       await addHealthSafety(
         "c1",
-        { type: "allergy", label: candidate.label!, category: candidate.category! },
+        { type: "allergy", label: candidate.label! },
         newIdempotencyKey(),
       );
     }

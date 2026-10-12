@@ -7,7 +7,7 @@ Supervisor 출력은 routing_cases 의 정답(RC01 등)을 그대로 쓴다 — 
   전달    Food 는 food 로 온 REQUEST 조각과 식이 단계만 받는다 (S10)
   실패    Supervisor 실패는 강등, Memory 실패는 failed(llm_unavailable)
   재분기  Memory 가 적지 않은 조각을 Supervisor 에게 돌려주고 한 번만 다시 나눈다
-  이벤트  step · saved · guidance · domain_routed · rerouted · failed · done
+  이벤트  step · saved · guidance · domain_routed · agent_result · rerouted · failed · done
 """
 
 import asyncio
@@ -26,7 +26,9 @@ import pytest
 
 from app.agents import pipeline
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
+from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
+from app.agents.common.suggestion import SuggestionDraft, count_notice
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
@@ -42,6 +44,7 @@ from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
+    AgentResult,
     DomainRouted,
     Done,
     Failed,
@@ -280,6 +283,7 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
+        "AgentResult",
         "Done",
     ]
     assert saved_when_food_ran == [1]  # Food 를 부를 때 이미 저장돼 있었다 (루트 §4)
@@ -308,6 +312,10 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
     task = result.routing.domain_tasks[0]
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
     assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "mock", 0)]
+    # mock 은 화면에 보낼 것이 없다 — 그래도 Agent 가 끝났다는 이벤트는 나간다 (#227)
+    assert _of(events, AgentResult) == [
+        AgentResult("food", "meal_recommendation", "mock", (), None)
+    ]
     food = result.domain[0]  # tool 묶음은 Food mock 결과가 들고 있다
     assert food.task_type == FoodTaskType.MEAL_RECOMMENDATION
     assert (food.stage, food.status) == ("toddler", "mock")
@@ -908,12 +916,15 @@ def test_구현된_agent_마다_실행_함수가_있다() -> None:
 # ── 도메인 Agent 실행 (공통_구현_계획 §5 · NF-06) ─────────────────
 @dataclass(frozen=True)
 class _Outcome:
-    """가짜 도메인 결과. pipeline 은 agent · task_type · status · model_calls 만 읽는다."""
+    """가짜 도메인 결과. pipeline 이 읽는 칸만 둔다 (`pipeline.DomainOutcome`)."""
 
     agent: str
     task_type: str | None = None
     status: str = "completed"
     model_calls: int = 1
+    readouts: tuple[Readout, ...] = ()
+    needs_observation: tuple[str, ...] = ()
+    suggestions: tuple[SuggestionDraft, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -923,7 +934,15 @@ class _FakeContext:
 
 
 def _runner(
-    agent: str, *, delay: float = 0.0, log: list[str] | None = None, name: str | None = None
+    agent: str,
+    *,
+    delay: float = 0.0,
+    log: list[str] | None = None,
+    name: str | None = None,
+    readouts: tuple[Readout, ...] = (),
+    needs_observation: tuple[str, ...] = (),
+    status: str = "completed",
+    suggestions: tuple[SuggestionDraft, ...] = (),
 ) -> Any:
     label = name or agent
 
@@ -933,7 +952,14 @@ def _runner(
         await asyncio.sleep(delay)
         if log is not None:
             log.append(f"{label} 끝")
-        return _Outcome(agent, task.task_type)
+        return _Outcome(
+            agent,
+            task.task_type,
+            status=status,
+            readouts=readouts,
+            needs_observation=needs_observation,
+            suggestions=suggestions,
+        )
 
     return run
 
@@ -1007,8 +1033,114 @@ async def test_RC16_한_Agent_가_죽어도_나머지_결과는_나간다(
     assert [item.agent for item in result.domain] == ["food"]
     assert result.partial == Partial("agent_error", succeeded=("food",), failed=("activity",))
     assert result.failed is None
-    assert _order(events)[-3:] == ["DomainRouted", "Partial", "Done"]
+    assert _order(events)[-4:] == ["DomainRouted", "AgentResult", "Partial", "Done"]
+    # 죽은 쪽은 화면 이벤트가 없다 — partial.failed 로만 알린다
+    assert [item.agent for item in _of(events, AgentResult)] == ["food"]
     assert result.model_calls == 3  # 죽은 쪽은 몇 번 불렀는지 몰라 세지 않는다
+
+
+async def test_도메인_결과의_readout_과_되묻기가_AgentResult_로_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # #227 — DomainRouted는 로그용이라 결과 본문이 없다.
+    # 화면에 갈 readout · 되묻기는 AgentResult가 싣는다
+    notice = Readout(kind="notice", body="조건에 맞는 추천을 2개 준비했어요.", authored_by="code")
+    question = "요즘 어느 정도까지 혼자 하나요?"
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", readouts=(notice,), needs_observation=(question,)),
+    )
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert _of(events, AgentResult) == [
+        AgentResult("food", "meal_recommendation", "completed", (notice,), question)
+    ]
+    assert _order(events)[-3:] == ["DomainRouted", "AgentResult", "Done"]
+
+
+async def test_추천이_든_결과는_저장_콜백_전까지_AgentResult_를_내지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 추천 id 를 실을 수 없는 동안 내면 개수 안내만 후보 없이 대화에 먼저 선다
+    draft = SuggestionDraft(
+        agent="food", kind="general", content="두부조림", reason="또래 기준 일반 추천이에요."
+    )
+    notice = count_notice(1)
+    assert notice is not None
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", readouts=(notice,), suggestions=(draft,)),
+    )
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
+        _reply("딸기 기록 남겼어요."),
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert _of(events, AgentResult) == []
+    assert _order(events)[-2:] == ["DomainRouted", "Done"]  # 로그용 이벤트는 그대로 나간다
+    assert [item.agent for item in result.domain] == ["food"]  # 실패가 아니다
+    assert result.partial is None
+
+
+async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만_알린다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 결과를 못 낸 Agent 는 agent_result 없이 partial.failed 로만 온다 (#276 리뷰).
+    # #249 의 다시 시도도 Partial.failed 를 기준으로 실패 맥락을 남긴다
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", status="failed"))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert [item.agent for item in result.domain] == ["food"]
+    assert result.partial == Partial("agent_error", succeeded=("food",), failed=("activity",))
+    assert [item.agent for item in _of(events, AgentResult)] == ["food"]
+    # 로그용 DomainRouted 는 둘 다 나간다 — failed 상태도 지표에 남는다
+    assert [(item.agent, item.status) for item in _of(events, DomainRouted)] == [
+        ("food", "completed"),
+        ("activity", "failed"),
+    ]
+    assert _order(events)[-2:] == ["Partial", "Done"]
+    assert result.model_calls == 4  # 예외와 달리 몇 번 불렀는지 알아서 센다
 
 
 async def test_Agent_예외_메시지는_로그에_남기지_않는다(
@@ -1544,7 +1676,7 @@ async def test_쓰는_task_가_죽어도_읽는_task_결과는_나가고_partial
     )
 
     assert [event.task_type for event in _of(events, DomainRouted)] == ["meal_recommendation"]
-    assert _order(events)[-3:] == ["DomainRouted", "Partial", "Done"]
+    assert _order(events)[-4:] == ["DomainRouted", "AgentResult", "Partial", "Done"]
     assert _order(events).count("Partial") == 1
 
 
