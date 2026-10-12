@@ -189,6 +189,20 @@ export function isDraftEvent(type: string): boolean {
 export interface DoneEvent {
   run_id: string;
   model_calls: number;
+  /**
+   * `false` — **저장한 뒤에 끊긴 run** (#253 · #271). 서버가 Memory 의 쓰기를 commit 한 뒤 예외나
+   * 60초 안전망에 걸리면 `failed` 대신 이 값을 싣고 닫는다. 키가 없으면 `true` 로 읽는다 —
+   * 정상 `done` 에는 이 키가 없다.
+   *
+   * 🚨 **무언가 실제로 들어갔다는 보장이다.** 서버는 store 가 쓴 것이 있을 때만 이 길로 보낸다
+   *    (`apps/api/app/api/runs/runner.py` 의 `store.wrote`). 아무것도 쓰지 않은 run 은 `failed` 다.
+   * 🚨 **무엇이 들어갔는지는 모른다.** `saved` 를 보내기 전에 끊겼을 수 있고, 쓴 것이 관찰이 아니라
+   *    일정 · 준비물 변경일 수도 있다. 그래서 화면은 "저장하지 않았어요" 도, 받지 못한 기록 목록도
+   *    말하지 않는다.
+   * 🚨 서버는 Idempotency 키를 놓지 않는다 — 같은 키로 다시 보내면 닫힌 run 이 재생될 뿐이고,
+   *    새 키로 같은 말을 보내면 **두 번 저장된다.** 다시 시도 버튼을 세우지 않는 이유다.
+   */
+  completed?: boolean;
 }
 
 /**

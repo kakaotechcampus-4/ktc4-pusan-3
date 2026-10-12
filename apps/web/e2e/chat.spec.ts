@@ -143,6 +143,40 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
   });
 });
 
+test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
+  test.use({ scenario: "interrupted" });
+
+  test("받은 기록은 그대로 서고, 다시 시도 없이 다시 보내지 않아도 된다고 말한다", async ({
+    page,
+  }) => {
+    await sendFromHome(page, "그림 그렸어");
+    const reply = turn(page, "그림 그렸어");
+    await expect(reply.getByRole("heading", { name: "이렇게 저장했어요" })).toBeVisible();
+    await expect(reply.getByText("기록 1건 저장됨")).toBeVisible();
+    await expect(reply.getByText("나머지는 마무리하지 못했어요")).toBeVisible();
+    await expect(
+      reply.getByText("위 기록은 그대로 저장됐어요. 같은 말을 다시 보내지 않아도 돼요."),
+    ).toBeVisible();
+    // 🚨 새 키로 다시 보내면 두 번 저장된다 — 실패 화면의 두 길을 세우지 않는다.
+    await expect(reply.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+    await expect(reply.getByRole("button", { name: "고쳐 쓰기" })).toHaveCount(0);
+    await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+  });
+
+  test('받은 기록이 없어도 "저장하지 않았어요" 라고 말하지 않는다', async ({ page }) => {
+    await sendFromHome(page, "주말에 소풍 가기");
+    const reply = turn(page, "주말에 소풍 가기");
+    await expect(reply.getByRole("heading", { name: "적어주신 내용은 반영했어요" })).toBeVisible();
+    await expect(reply.getByText("나머지는 마무리하지 못했어요")).toBeVisible();
+    await expect(
+      reply.getByText("반영된 내용은 기록 탭이나 달력에서 확인할 수 있어요."),
+    ).toBeVisible();
+    await expect(reply.getByText("저장하지 않았어요", { exact: false })).toHaveCount(0);
+    await expect(reply.getByText("이렇게 이해했어요")).toHaveCount(0);
+    await expect(reply.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+  });
+});
+
 test.describe("되묻기의 답은 원문을 다시 보내지 않는다 (#158)", () => {
   test.use({ scenario: "note_mixed" });
 
