@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
+from app.domains.policy.catalog import SCOPE_CATALOG
 from app.domains.policy.models import PolicyVersion
 
 ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
@@ -29,39 +30,32 @@ ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
 요구하고, 가입 시점에는 아이가 없다. 모델의 _ACCOUNT_SCOPE_SQL 과 같은 분류를 쓴다.
 """
 
-REQUIRED_ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
-    ConsentScope.SERVICE_TERMS,
-    ConsentScope.PRIVACY_ACCOUNT,
-)
-"""계정 단위 **필수** 동의 (§6-2 ② requireAccountConsent). 빠지면 가입을 막는다.
-
-🚨 ACCOUNT_SCOPES 와 같은 목록이 아니다. location 은 계정 동의지만 선택이다 — 필수로
-   받으면 선택이어야 할 동의를 강제하는 것이 된다 (#172). 두 목록을 하나로 합치면
-   위치에 동의하지 않은 보호자가 가입도, 로그인 뒤 사용도 막힌다.
-"""
-
-
-REQUIRED_CHILD_SCOPES: tuple[ConsentScope, ...] = (
-    ConsentScope.CHILD_BASIC,
-    ConsentScope.CHILD_HEALTH,
-)
-"""아이 단위 **필수** 동의. 아이를 등록할 때 둘 다 받는다 (#92).
-
-건강정보 동의도 필수다 — 자유 문장 입력에 건강 내용이 섞여 들어와, 선택으로 풀면 동의 없이
-민감정보를 저장 · 외부 전송하게 된다 (개인정보보호법 제23조, #92 결정).
-"""
-
-
 CHILD_SCOPES: tuple[ConsentScope, ...] = (
     ConsentScope.CHILD_BASIC,
     ConsentScope.CHILD_HEALTH,
 )
-"""아이 단위 동의 전부 — 동의 대상이 아이다. 지금은 REQUIRED_CHILD_SCOPES 와 같다.
+"""아이 단위 동의 전부 — 동의 대상이 아이다.
 
-아이 쪽에 선택 동의가 생기면 여기에 더하고 REQUIRED_CHILD_SCOPES 에는 넣지 않는다 (계정 쪽의
-ACCOUNT_SCOPES / REQUIRED_ACCOUNT_SCOPES 와 같은 나눔). quality_improve 는 어디에도 없다 —
-쓰지 않는 값이다 (consent/models.py).
+아이 쪽에 선택 동의가 생기면 여기에 더한다. 필수인지는 SCOPE_CATALOG 가 정한다.
+quality_improve 는 어디에도 없다 — 쓰지 않는 값이다 (consent/models.py).
 """
+
+# 🚨 "필수" 는 SCOPE_CATALOG(domains/policy/catalog.py) 한 곳에서만 정한다. 화면은
+#    GET /policies 로 그 값을 받아 "필수" 표시와 철회 버튼을 그리고, 서버는 아래 두 목록으로
+#    가입 · 아이 등록 · 철회를 막는다. 두 곳에 따로 적으면 화면은 철회 버튼을 그리는데 서버는
+#    400 을 주는 식으로 갈라진다 (test_consents.py "화면이 필수로 그리는 동의만").
+REQUIRED_ACCOUNT_SCOPES: tuple[ConsentScope, ...] = tuple(
+    scope for scope in ACCOUNT_SCOPES if SCOPE_CATALOG[scope].required
+)
+"""계정 단위 **필수** 동의 (§6-2 ② requireAccountConsent). 빠지면 가입을 막는다.
+
+ACCOUNT_SCOPES 와 같은 목록이 아니다 — location 은 계정 동의지만 선택이다 (#172).
+"""
+
+REQUIRED_CHILD_SCOPES: tuple[ConsentScope, ...] = tuple(
+    scope for scope in CHILD_SCOPES if SCOPE_CATALOG[scope].required
+)
+"""아이 단위 **필수** 동의. 아이를 등록할 때 받고, 설정에서 끌 수 없다 (#92)."""
 
 
 async def latest_action(

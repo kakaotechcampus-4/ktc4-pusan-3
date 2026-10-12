@@ -21,6 +21,8 @@ import pytest
 from sqlalchemy import select
 
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
+from app.domains.consent.repository import ACCOUNT_SCOPES
+from app.domains.policy.catalog import SCOPE_CATALOG
 from app.domains.policy.repository import find_active_versions, register_version
 
 from .conftest import issue_bearer, link_child
@@ -114,6 +116,27 @@ async def test_아이_필수_동의도_끌_수_없다(db_client, session, bearer
     assert response.json()["error"]["code"] == "validation_failed"
     rows = await session.scalars(select(Consent).where(Consent.child_id == cid))
     assert rows.all() == []
+
+
+@pytest.mark.parametrize("scope", list(SCOPE_CATALOG), ids=lambda scope: scope.value)
+async def test_화면이_필수로_그리는_동의만_서버가_철회를_막는다(
+    db_client, bearer, cid, current, scope
+):
+    """화면은 GET /policies 의 required(SCOPE_CATALOG)를 보고 철회 버튼을 그린다.
+
+    서버가 철회를 막는 기준이 그 값과 갈라지면, 버튼을 눌렀는데 400 이 나거나
+    화면이 필수라고 한 동의가 꺼진다. 다섯 종류 전부를 catalog 값과 맞대어 본다.
+    """
+    headers, _ = bearer
+    target = {} if scope in ACCOUNT_SCOPES else {"child_id": str(cid)}
+
+    response = await db_client.post(
+        CONSENTS,
+        json=body(scope.value, "withdrawn", current[scope.value], **target),
+        headers=headers,
+    )
+
+    assert (response.status_code == 400) is SCOPE_CATALOG[scope].required, response.json()
 
 
 async def publish_next_location(session) -> str:
