@@ -1,7 +1,7 @@
 """growth_doc 시드 — 틀린 모양은 읽을 때 막히고, 적재 검사는 틀린 행을 잡는다 (RAG_plan §6).
 
-`reference/growth_doc.yaml` 의 행은 별도 PR(docs/ai-288-growth-doc-rows-p0)에서 채워진다.
-그래서 시드가 비어 있어도 검사에 이가 있는지 보도록 두 곳에서 건다.
+`reference/growth_doc.yaml` 의 P0 행은 #293 에서 채웠고, 남은 row_type 은 뒤에 들어온다.
+그래서 행이 없는 row_type 도 검사에 이가 있는지 보도록 두 곳에서 건다.
 
 - 시드 전체에 거는 검사 — 행이 들어오는 순간부터 CI 가 막는다
 - 같은 검사를 일부러 틀린 행에 걸어 보는 검사 — 시드가 비어 있어도 검사가 살아 있다는 증거
@@ -428,7 +428,7 @@ class TestParse:
             parse_growth_doc({})
 
     def test_행이_아직_없는_시드는_읽힌다(self):
-        """행은 별도 PR 로 들어온다 (plan1013 4번)."""
+        """빈 시드도 읽힌다 — 행이 없는 판에서도 로더가 실패하지 않는다."""
         assert parse_growth_doc({"rows": []}) == ()
 
     @pytest.mark.parametrize(
