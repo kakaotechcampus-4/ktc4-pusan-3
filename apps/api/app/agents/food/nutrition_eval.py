@@ -14,6 +14,7 @@ from app.agents.food.context import FoodContext
 from app.agents.food.kdri import NutrientRef, refs_for
 from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.store.ports import DaycareMealRow, FoodObservation
+from app.core.mfds_nutri_raw import OPTIONAL_NUTRIENT_KEYS
 from app.rules.age import months_between
 from app.rules.menu_key import normalize_menu_key
 from app.rules.nutrition import (
@@ -46,6 +47,12 @@ _KCAL_PER_GRAM: dict[str, float] = {
 }
 
 
+# 핵심 영양소(CORE_NUTRIENT_KEYS)는 `core/nutrition_pick._usable()` 이 한 행에 다 있어야만
+# 카탈로그 행으로 올린다 — 실제 데이터에서 핵심 키만 빠지는 일은 없다. 당류 · 포화지방(선택
+# 칸)만 한 메뉴에서 빠질 수 있어 "섞인" 날을 추적할 대상도 이 둘뿐이다(review focus 2).
+_TRACKED_NUTRIENT_KEYS = OPTIONAL_NUTRIENT_KEYS
+
+
 @dataclass(frozen=True)
 class DayTotals:
     """하루치 합계. 저장하지 않고 판정할 때마다 다시 만든다 (설계 §3)."""
@@ -57,6 +64,7 @@ class DayTotals:
     menus: int  # 그날 언급된 메뉴 수 — 급식은 한 행에 메뉴가 여럿일 수 있다
     resolved_menus: int  # 메뉴 카탈로그에서 찾은 메뉴 수(영양값 유무와 무관)
     weighed_menus: int  # 1인분 중량 · 영양값이 다 있어 영양 합계에 실제로 들어간 메뉴 수
+    incomplete: frozenset[str] = frozenset()  # 그날 메뉴 중 하나라도 그 칸을 모르는 영양소 키
 
 
 def _is_institutional_duplicate(obs: FoodObservation, daycare_menu_keys: frozenset[str]) -> bool:
@@ -128,6 +136,7 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
     for day in days:
         grams: dict[str, float] = {}
         food_groups: set[str] = set()
+        incomplete: set[str] = set()
         menus = 0
         resolved_menus = 0
         weighed_menus = 0
@@ -144,6 +153,9 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
             if row.serving_g is None or not row.nutrients:
                 return
             weighed_menus += 1
+            # 이 메뉴가 모르는 칸은 그날 전체를 그 항목에서 빼야 한다 — 아는 메뉴만으로 합계를
+            # 내면 모르는 메뉴를 0 으로 채우는 것과 같아진다(리뷰 초점 2, 설계 §3)
+            incomplete.update(key for key in _TRACKED_NUTRIENT_KEYS if key not in row.nutrients)
             eaten_grams = row.serving_g * scale * amount_weight(factor, known=known)
             for nutrient, per_100g in row.nutrients.items():
                 grams[nutrient] = grams.get(nutrient, 0.0) + per_100g * eaten_grams / 100
@@ -165,6 +177,7 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
                 menus=menus,
                 resolved_menus=resolved_menus,
                 weighed_menus=weighed_menus,
+                incomplete=frozenset(incomplete),
             )
         )
     return totals
@@ -292,7 +305,11 @@ def _ear_band(
 
 
 def _window_mean(nutrient: str, by_day: dict[date, DayTotals], days: list[date]) -> float | None:
+    # 그날 메뉴 중 하나라도 이 영양소 칸을 몰랐으면(incomplete) 그 날은 뺀다 — 아는 메뉴만의
+    # 부분합을 "그날 전체"로 쓰면 모르는 메뉴를 0 으로 채우는 것과 같아진다(review focus 2)
     values = {
-        d: by_day[d].grams[nutrient] for d in days if d in by_day and nutrient in by_day[d].grams
+        d: by_day[d].grams[nutrient]
+        for d in days
+        if d in by_day and nutrient in by_day[d].grams and nutrient not in by_day[d].incomplete
     }
     return mean_over_recorded_days(values)

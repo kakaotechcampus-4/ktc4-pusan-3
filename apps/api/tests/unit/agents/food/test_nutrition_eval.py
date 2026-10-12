@@ -375,6 +375,25 @@ def context_missing_sugars() -> FoodContext:
 
 
 @pytest.fixture
+def context_sugars_partially_known() -> FoodContext:
+    # 당류 칸이 있는 메뉴(_CALCIUM_MENU)와 없는 메뉴(_filler_row, 당류 칸 자체가 없다)가 매일
+    # 섞인다 — "모든 날에 걸쳐 빠진" context_missing_sugars 와 다르다. 아는 메뉴만으로 합계를
+    # 내면 모르는 메뉴의 당류를 0 취급하는 것과 같은 효과라 거짓으로 낮은 평균이 나온다
+    calcium_row = _nutrient_row(
+        _CALCIUM_MENU,
+        protein=5.0,
+        fat=2.0,
+        carbohydrate=20.0,
+        calcium=200.0,
+        iron=1.0,
+        sodium=50.0,
+        energy=150.0,
+        sugars=80.0,
+    )
+    return _band_context(calcium_row=calcium_row, factor_for_offset=lambda _offset: 1.15)
+
+
+@pytest.fixture
 def context_mostly_unweighed() -> FoodContext:
     # 그날 메뉴 3개 중 1개만 1인분 중량이 있다 — 합계에 들어간 메뉴 비율이 50% 미만("정하는 것 ③")
     weighed = _nutrient_row(_CALCIUM_MENU, protein=10.0, calcium=200.0, energy=100.0)
@@ -448,6 +467,18 @@ async def test_미량영양소_상한_초과를_high_로_보고하지_않는다(
 async def test_당류가_빈_메뉴가_섞이면_그_항목만_구간을_내지_않는다(context_missing_sugars) -> None:
     # 리뷰 초점 2 — 0 으로 채우면 거짓 high 가 난다 (설계 §3)
     verdict = await evaluate_nutrient_bands(context_missing_sugars, months=30)
+
+    assert "sugars" not in verdict.bands
+    assert "sugars" in verdict.unscored
+    assert "calcium" in verdict.bands  # 다른 항목은 그대로 판정한다
+
+
+async def test_당류가_있는_메뉴와_없는_메뉴가_섞이면_그_항목만_구간을_내지_않는다(
+    context_sugars_partially_known,
+) -> None:
+    # 리뷰 초점 2 — "아예 빠짐"(위 테스트)과 다른 경우. 그날 두 메뉴 중 하나만 당류를 알면
+    # 아는 메뉴만으로 하루 합계를 내서는 안 된다 — 모르는 메뉴를 0 으로 채우는 것과 같아진다
+    verdict = await evaluate_nutrient_bands(context_sugars_partially_known, months=30)
 
     assert "sugars" not in verdict.bands
     assert "sugars" in verdict.unscored
