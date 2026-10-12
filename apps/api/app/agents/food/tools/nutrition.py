@@ -4,26 +4,48 @@
 """
 
 from app.agents.food.context import FoodContext
-from app.agents.food.result import ToolResult
+from app.agents.food.menu_resolver import MenuResolver, Resolved
+from app.agents.food.result import ToolResult, ok
 from app.agents.food.schemas.nutrition import (
     CompareDietBalanceArgs,
     LookupNutritionArgs,
     NutrientReportArgs,
 )
+from app.rules.menu_key import normalize_menu_key
 
 
 async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> ToolResult:
     """음식이나 식재료의 영양성분을 조회한다.
 
-    DB · 외부 API 연결 후:
-    - 메뉴 카탈로그(`MenuCatalogStore.get_many`)에서 먼저 찾고, 없는 이름만 `resolve_menu` 로
-      외부에서 찾는다. 이름이 정확히 같은 결과만 받고, 못 찾으면 남기지 않는다
-      (food_agent_own_table §1).
-    - 조회되지 않은 음식은 별도로 반환하고, 비슷한 음식의 값으로 대체하지 않는다.
-    - 영양성분 수치는 조회된 원본 값을 그대로 사용한다.
-      모델이 값을 추정하거나 보정하지 않는다.
+    메뉴 카탈로그(`MenuCatalogStore.get_many`)에서 먼저 찾고, 없는 이름만 `MenuResolver` 로
+    외부에서 찾는다. 이름이 정확히 같은 결과만 받고, 못 찾으면 남기지 않는다
+    (food_agent_own_table §1). 조회되지 않은 음식은 `unresolved` 로 따로 돌려주고, 비슷한
+    음식의 값으로 대체하지 않는다. 영양성분 수치는 조회된 원본 값을 그대로 낸다 — 모델이 값을
+    추정하거나 보정하지 않는다.
     """
-    raise NotImplementedError("DB·외부 API 연결 후 구현")
+    resolver = MenuResolver(
+        catalog=context.ports.catalog, source=context.ports.menu_source, now=context.now
+    )
+    resolutions = await resolver.resolve_many(args.foods)
+
+    found: list[dict[str, object]] = []
+    unresolved: list[str] = []
+    for name in args.foods:
+        resolution = resolutions.get(normalize_menu_key(name))
+        if isinstance(resolution, Resolved) and resolution.row.nutrients:
+            row = resolution.row
+            found.append(
+                {
+                    "menu_key": row.menu_key,
+                    "display_name": row.display_name,
+                    "per_100g": dict(row.nutrients),
+                    "food_groups": sorted(row.food_groups),
+                }
+            )
+        else:
+            unresolved.append(name)
+
+    return ok("query", "nutrition", found=found, unresolved=unresolved)
 
 
 async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArgs) -> ToolResult:
