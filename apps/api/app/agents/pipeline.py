@@ -83,7 +83,8 @@ class DomainOutcome(Protocol):
     def suggestions(self) -> tuple[SuggestionDraft, ...]: ...
 
 
-DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
+# client 키워드 인자는 domain_clients 에 그 agent 몫이 있을 때만 넘어간다(_run_domain.run_one)
+DomainRunner = Callable[..., Awaitable[DomainOutcome]]
 
 # 기록 단계를 확정하는 함수. 러너가 run마다 만들어 넘기고, pipeline은 Memory 다음에 한 번 부른다.
 # 세션과 commit 구현은 러너(백엔드). pipeline은 기록 단계가 끝난 시점만 알린다.
@@ -361,6 +362,7 @@ async def handle_input(
     run_id: str,
     supervisor_client: LLMClient | None = None,
     memory_client: LLMClient | None = None,
+    domain_clients: Mapping[str, LLMClient] | None = None,
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
     commit: Commit | None = None,
@@ -372,6 +374,8 @@ async def handle_input(
     continuation 이 있으면 raw_text 는 이전 run 의 질문에 대한 답이다 (_handle_continuation).
     contexts는 도메인 Agent 이름 → 그 Agent 의 context.
     구현된 Agent 몫은 전부 있어야 하고, 포트는 호출 전에 만들어 넘긴다.
+    domain_clients는 도메인 Agent 이름 → 그 Agent 가 쓸 LLMClient. 없는 Agent 는 각자의
+    기본값(role 별 설정)을 쓴다 — 실제 서비스에서는 러너가 role 당 하나씩 만들어 넘긴다.
     commit은 Memory가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
     TODO: 러너가 DB 세션을 붙이면 기본값 None을 없앤다. 지금은 run 마다 InMemoryStore라
       확정할 것이 없어 러너가 넘기지 않는다.
@@ -507,7 +511,11 @@ async def handle_input(
                 send(_result(outcome))  # 화면용 — readout · 되묻기 (#227)
 
         ran = await _run_domain(
-            routing.domain_tasks, contexts, timeout=remaining, on_outcome=on_outcome
+            routing.domain_tasks,
+            contexts,
+            timeout=remaining,
+            on_outcome=on_outcome,
+            domain_clients=domain_clients,
         )
         partial = ran.partial
         writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
@@ -679,6 +687,7 @@ async def _run_domain(
     *,
     timeout: float | None,
     on_outcome: Callable[[DomainOutcome], None] | None = None,
+    domain_clients: Mapping[str, LLMClient] | None = None,
 ) -> _DomainRun:
     """쓰는 task 를 먼저 끝내고 읽는 task 를 동시에 돌린다.
 
@@ -686,6 +695,9 @@ async def _run_domain(
     전에 나가고, 읽는 task 끼리는 끝난 순서다. 돌려주는 outcomes 는 그대로 task 순서다.
     하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06). 쓰는 task 도 같은 timeout 안에서 센다.
     쓰는 쪽이 늦으면 읽는 쪽 몫이 준다.
+
+    domain_clients 에 그 agent 몫이 없으면 client 인자를 아예 넘기지 않는다 — 각 runner 가
+    자기 기본값(role 별 설정)을 쓴다. 모든 runner 가 client 키워드 인자를 받는다고 가정한다.
     """
     # 표에 없는 agent·빠진 context 는 배선 버그다. 부분 실패로 숨기지 않고 시작 전에 올린다
     prepared = [(task, _RUNNERS[task.agent], contexts[task.agent]) for task in tasks]
@@ -697,9 +709,11 @@ async def _run_domain(
 
     async def run_one(index: int) -> DomainOutcome:
         task, runner, context = prepared[index]
+        client = (domain_clients or {}).get(task.agent)
+        kwargs = {} if client is None else {"client": client}
         task_started = time.perf_counter()
         try:
-            return await runner(task, context.for_task())
+            return await runner(task, context.for_task(), **kwargs)
         finally:
             elapsed_ms[index] = _ms_since(task_started)
 

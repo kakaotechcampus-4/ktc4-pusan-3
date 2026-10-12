@@ -168,6 +168,19 @@ def requires_safety_check(task: FoodTaskType) -> bool:
     return task == FoodTaskType.MEAL_RECOMMENDATION
 
 
+# task 마다 결과를 내는 tool. run_tool_loop 이 이 안에서 끝낸다(output_accepted).
+_OUTPUT_TOOLS: dict[FoodTaskType, frozenset[str]] = {
+    FoodTaskType.MEAL_RECOMMENDATION: frozenset({"propose_meal_candidates"}),
+    FoodTaskType.NUTRIENT_ANALYSIS: frozenset({"report_nutrient_analysis"}),
+    FoodTaskType.DAYCARE_MEAL: frozenset({"update_daycare_meal", "delete_daycare_meal"}),
+}
+
+
+def output_tools_for(task: FoodTaskType) -> frozenset[str]:
+    """이 task 의 출력 tool 이름. `run_tool_loop` 의 `output_tools` 로 그대로 넘긴다."""
+    return _OUTPUT_TOOLS[task]
+
+
 def specs_for(names: Collection[str]) -> list[dict[str, Any]]:
     return [_SPECS_BY_NAME[name] for name in _SPECS_BY_NAME if name in names]
 
