@@ -473,7 +473,7 @@ async def run(task, context, *, client=None):
 
 **재호출과 합치기** (`agent.py`) — 재호출은 같은 system 프롬프트에 *"아래 활동은 다시 내지 않는다"* 로 **이미 고른 것과 빠진 것**을 함께 준다. 빠진 이유는 말하지 않는다. 결과는 공통 `merge_drafts` 로 합친다 — 처음 통과한 것을 먼저 두고 빈자리만 채우며, 띄어쓰기만 다른 같은 추천은 건너뛴다. 그 뒤 `check_count(exhausted=True)` → `count_notice`. 다 빠져 0개여도 실패가 아니라 안내만 나간다.
 
-**끝나는 조건** — 출력 tool 이 통과하면 끝난다. 모델이 말로만 끝내면 한 번 다시 묻고, 그래도 안 내거나 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다.
+**끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 
 **status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다.
 

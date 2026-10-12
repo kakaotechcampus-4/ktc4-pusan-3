@@ -14,8 +14,8 @@ from uuid import UUID
 
 from app.agents.activity.agent import MAX_STEPS, run
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.store.inmemory import InMemoryWeather, in_memory_ports
-from app.agents.activity.store.ports import CoarseLocation
+from app.agents.activity.store.inmemory import InMemorySafety, InMemoryWeather, in_memory_ports
+from app.agents.activity.store.ports import CoarseLocation, SafetyEntry
 from app.agents.activity.weather import WEATHER_UNCHECKED
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
@@ -31,9 +31,11 @@ class FakeLLM:
     def __init__(self, *responses: LLMResponse) -> None:
         self._queue = list(responses)
         self.seen: list[list[dict[str, Any]]] = []
+        self.tool_choices: list[Any] = []
 
-    async def chat(self, messages: list[dict[str, Any]], **_: Any) -> LLMResponse:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         self.seen.append([dict(message) for message in messages])
+        self.tool_choices.append(kwargs.get("tool_choice"))
         if self._queue:
             return self._queue.pop(0)
         return _say("더 할 말이 없어요.")
@@ -125,18 +127,18 @@ class TestNormal:
         rejected = json.loads(llm.seen[1][-1]["content"])
         assert rejected["success"] is False
 
-    async def test_말로만_끝내면_한_번_다시_묻는다(self):
-        llm = FakeLLM(
-            _say("이런 놀이는 어때요?"), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기")
-        )
-        result = await run(task(), context(), client=llm)
-        assert result.status == "completed"
-        assert "propose_activity_candidates" in llm.seen[1][-1]["content"]
+    async def test_tool_을_반드시_부르게_한다(self):
+        """공통 루프에 required 를 넘긴다 — 라이브에서 auto 는 0/3, required 는 3/3 (#320 리뷰)."""
+        llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        await run(task(), context(), client=llm)
+        assert llm.tool_choices == ["required"]
 
-    async def test_끝내_내지_않으면_실패다(self):
-        llm = FakeLLM(_say("음..."), _say("글쎄요"))
+    async def test_그래도_말로_끝내면_실패다(self):
+        """모델이 쓴 말은 화면에 내지 않는다 — 출력 채널이 아니다."""
+        llm = FakeLLM(_say("이런 놀이는 어때요?"))
         result = await run(task(), context(), client=llm)
         assert (result.status, result.suggestions, result.model_calls) == ("failed", (), 1)
+        assert len(llm.seen) == 1
 
     async def test_왕복_상한을_넘기면_실패다(self):
         llm = FakeLLM(*[memory() for _ in range(MAX_STEPS)])
@@ -177,6 +179,25 @@ class TestRecall:
         result = await run(task(), context(BORN_20_MONTHS), client=llm)
         assert contents(result) == ["그림자놀이", "색종이 접기"]
         assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_재호출해도_알레르기_확인_문구는_남는다(self):
+        """식품 사전에 없는 알레르기(꽃가루)의 확인 문구는 run 에 한 벌이다 (#320). 재호출로 채운
+        추천에도 같이 붙어야 한다."""
+        safety = InMemorySafety([SafetyEntry(kind="allergy", label="꽃가루", status="active")])
+        ctx = ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=NOW,
+            timezone=UTC,
+            ports=in_memory_ports(CHILD, BORN_20_MONTHS, safety=safety),
+        )
+        llm = FakeLLM(
+            propose("구슬 꿰기", "그림자놀이", "색종이 접기"),
+            propose("까꿍 놀이", "공 굴리기", "컵 쌓기"),
+        )
+        result = await run(task(), ctx, client=llm)
+        assert result.model_calls == 2
+        assert len(ctx.state.cautions) == 1 and "꽃가루" in ctx.state.cautions[0]
 
     async def test_다_빠져도_실패가_아니라_안내만_낸다(self):
         llm = FakeLLM(
