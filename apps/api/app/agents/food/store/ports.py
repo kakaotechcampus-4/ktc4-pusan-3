@@ -40,6 +40,7 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
 | MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 메뉴명(공개 DB · 급식표) → 식품코드·영양성분 |
+| RecipeCatalogStore | recipe_catalog — 식단 추천 후보 풀. menu_catalog 와 뗐다(#326 리뷰) |
 | MenuSource | 식약처 등 외부 영양성분·레시피 조회 |
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
@@ -164,6 +165,9 @@ class MenuCatalogRow:
     food_groups: frozenset[str] = frozenset()
     stage_min: Stage | None = None  # None 은 toddler로 본다
     source_version: str | None = None
+    # recipe_catalog 의 PK 일부(source, source_id). menu_catalog 행은 쓰지 않는다 — menu_key 가
+    # 이미 PK 다(own_table §1-1)
+    source_id: str | None = None
 
 
 DaycareSlot = Literal["lunch", "snack_am", "snack_pm"]
@@ -277,11 +281,23 @@ class MenuCatalogStore(Protocol):
         """
         ...
 
-    async def all_resolved(self) -> list[MenuCatalogRow]:
-        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다.
 
-        후보 풀은 `recipe_catalog` 에서 읽기로 했다(#326 리뷰). 레시피 표의 포트를 만들 때
-        (#321 파트 2 배치 · 식단 추천) 이 읽기를 그쪽으로 옮긴다.
+class RecipeCatalogStore(Protocol):
+    """`recipe_catalog` — 식단 추천 후보 풀. `menu_catalog` 와 뗐다(#326 리뷰, own_table §1-1).
+
+    PK 는 (`source`, `source_id`) 다 — `menu_key` 는 PK 가 아니라서 이름이 같은 레시피도
+    따로 행을 갖는다. 레시피 배치만 쓴다.
+    """
+
+    async def all_resolved(self) -> list[MenuCatalogRow]:
+        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다."""
+        ...
+
+    async def put(self, row: MenuCatalogRow) -> None:
+        """(`source`, `source_id`) 로 갱신한다 — `menu_catalog.put` 과 달리 있는 행을 덮어쓴다.
+
+        레시피 배치가 다시 받으면 같은 레시피의 최신 값으로 바뀐다(own_table §1-1 "다시 받으면
+        같은 (source, source_id) 행을 새 값으로 바꾼다").
         """
         ...
 
@@ -360,6 +376,7 @@ class FoodPorts:
     growth: GrowthLogReader
     memory: FoodMemoryReader
     catalog: MenuCatalogStore
+    recipes: RecipeCatalogStore  # recipe_catalog — 식단 추천 후보 풀(#326 리뷰)
     daycare: DaycareMealStore
     docs: FoodDocReader
     suggestions: SuggestionHistoryReader

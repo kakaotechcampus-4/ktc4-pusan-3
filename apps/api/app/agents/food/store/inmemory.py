@@ -107,15 +107,30 @@ class InMemoryMenuCatalog:
         _not_recipe(row)
         self._rows.setdefault(row.menu_key, row)
 
-    async def all_resolved(self) -> list[MenuCatalogRow]:
-        """`resolved=True` 행만 돌려준다. 재료(ingredients) 유무는 여기서 거르지 않는다."""
-        return [row for row in self._rows.values() if row.resolved]
-
 
 def _not_recipe(row: MenuCatalogRow) -> None:
     """DB 의 source CHECK 와 같은 규칙 — 레시피 행은 recipe_catalog 몫이다(#326 리뷰)."""
     if row.source in RECIPE_SOURCES:
         raise ValueError(f"{row.source} 행은 recipe_catalog 에 넣는다 — menu_catalog 가 아니다")
+
+
+class InMemoryRecipeCatalog:
+    """레시피 카탈로그 — 식단 추천 후보 풀. `menu_catalog` 와 뗐다(#326 리뷰, own_table §1-1).
+
+    PK 는 (`source`, `source_id`) 다. `put` 은 `menu_catalog.put` 과 달리 **있는 행을 덮어쓴다**
+    — 레시피 배치가 다시 받으면 같은 레시피가 최신 값으로 바뀐다.
+    """
+
+    def __init__(self, rows: Sequence[MenuCatalogRow] = ()) -> None:
+        self._rows: dict[tuple[str, str | None], MenuCatalogRow] = {
+            (row.source, row.source_id): row for row in rows
+        }
+
+    async def all_resolved(self) -> list[MenuCatalogRow]:
+        return [row for row in self._rows.values() if row.resolved]
+
+    async def put(self, row: MenuCatalogRow) -> None:
+        self._rows[(row.source, row.source_id)] = row
 
 
 class InMemoryMenuSource:
@@ -232,6 +247,7 @@ def in_memory_ports(**overrides: object) -> FoodPorts:
         "growth": InMemoryGrowth(),
         "memory": InMemoryFoodMemory(),
         "catalog": InMemoryMenuCatalog(),
+        "recipes": InMemoryRecipeCatalog(),
         "daycare": InMemoryDaycareMeals(),
         "docs": InMemoryFoodDocs(),
         "suggestions": InMemorySuggestionHistory(),
