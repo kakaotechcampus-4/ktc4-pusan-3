@@ -19,6 +19,14 @@ export const RELATION_LABEL: Record<Relation, string> = {
 };
 
 /**
+ * 함께 보는 보호자를 부르는 이름. 🚨 **`nickname` 은 비어서 온다** (#336) — 그때는 관계 이름이다.
+ * 이름 뒤에 조사를 붙이는 자리(`josa`)가 있어서 빈 값을 그대로 두면 화면이 깨진다.
+ */
+export function parentDisplayName(parent: { nickname: string | null; relation: Relation }): string {
+  return parent.nickname?.trim() || RELATION_LABEL[parent.relation];
+}
+
+/**
  * 01 아이를 **등록하는** 보호자가 고를 수 있는 것.
  *
  * 🚨 **시터와 "그 밖에" 를 빼 둔다.** 이 화면에서 같이 받는 것이 아이 정보에 대한

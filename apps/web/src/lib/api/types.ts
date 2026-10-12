@@ -1489,10 +1489,18 @@ export interface ConsentsResponse {
  *
  * 🚨 **승인 대기 상태가 없다.** 초대 링크를 수락하면 `parent_child` 행이 바로 생긴다 —
  *    화면에 "대기 중" 칸을 만들지 않는다 (계약서 §02 `GET /me`).
+ *
+ * 🚨 **`nickname` 은 비어서 온다** (#336 · `parent.nickname` 이 nullable). 화면은 그때 관계
+ *    이름으로 부른다 (`parentDisplayName`) — 이름에 조사를 붙이는 자리가 있어서 그냥 두면 깨진다.
+ *
+ * `DELETE /children/{cid}/parents/{pid}` (#336) — 누가 누구를 끊나 (재형님 결정 10-06):
+ * owner 는 member 누구든, member 는 **자기 자신만**(스스로 나가기). owner 는 끊는 대상이 아니다.
+ * 409 `owner_required`(대상이 owner) · 403 `owner_only`(member 가 남을) · 404 `not_found`(연결 없음).
+ * `Idempotency-Key` 는 없다 — 다시 보내면 404, 스스로 나간 뒤에는 아이 접근 확인에서 403 이다.
  */
 export interface ChildParent {
   parent_id: string;
-  nickname: string;
+  nickname: string | null;
   relation: Relation;
   role: "owner" | "member";
   connected_at: string;
