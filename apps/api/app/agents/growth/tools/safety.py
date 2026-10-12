@@ -8,6 +8,7 @@
                     한 글자 · 외래어 별칭(포크 · pork)은 문장에서 다른 뜻으로 걸려 쓰지 않는다
     등록한 이름 대조  교육만, 동의가 있을 때. 보호자가 `health_safety` 에 적은 이름이
                     후보 문장에 나오면 뺀다. 이름은 공용 `read_label` 로 조각마다 읽는다.
+                    한 글자는 Activity 와 같은 허용 목록(잣 · 콩 · 깨 · 쑥)만 본다 (#305).
                     이름을 물건 · 장소로 넓히는 대응표는 만들지 않는 대신 식품 사전에 없는
                     알레르기 이름(꽃가루 · 라텍스)이 있으면 확인 문구
                     (`caution.non_food_allergy`)를 붙인다
@@ -29,7 +30,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from app.agents.common.allergy import non_food_allergies, read_label, shared_book, split_label
+from app.agents.common.allergy import (
+    SINGLE_CHAR_NAMES,
+    non_food_allergies,
+    read_label,
+    shared_book,
+)
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.growth.store.ports import SafetyEntry
@@ -160,23 +166,25 @@ def load_safety_rules() -> SafetyRules:
 
     allergens = _scan_aliases_only(raw_allergens)
     food_terms = (*allergens, *_food_choking_terms(hazards))
-    # 19종 코드 → 문장 대조에 쓰는 별칭. 두 글자 이상 한국어 이름만("밀" 등록 아이의 "공 밀기" 는
-    # 통과)이다. 보호자가 "밀" · "pork" 라고만 적었어도 `read_label` 이 코드로 읽는다
-    kept = {term.key: term for term in allergens}
+    # 19종 코드 → 등록 이름 대조에 쓰는 별칭. 두 글자 이상 한국어 이름과, 한 글자는 Activity 와
+    # 같은 허용 목록(잣 · 콩 · 깨 · 쑥)만이다 — "밀" 등록 아이의 "공 밀기" 는 통과하고 "잣 까기" 는
+    # 막는다.
+    # 보호자가 "밀" · "pork" 라고만 적었어도 `read_label` 이 코드로 읽는다
+    kept = {term.key: term for term in _registered_aliases_only(raw_allergens)}
 
     def registered_terms(entry: SafetyEntry) -> tuple[Term, ...]:
         # 한 칸에 여러 이름("키위, 꽃가루")도 조각마다, 띄어 쓴 이름("고양이 털")은 낱말까지 읽는다.
         # 19종 · 묶음 이름(갑각류)은 사전 별칭으로 넓히고, 사전에 없는 이름은 적은 글자 그대로 본다.
-        # 한 글자는 보호자가 그 글자만 적었을 때(쑥 · 개)만 쓴다 — 띄어 쓴 이름에서 떨어져 나온
-        # 한 글자(털 · 곳)로 막으면 과차단이다.
-        # TODO: 한 글자 판정은 #305 에서 Food · Activity 와 맞춘다
+        # 한 글자는 Activity 와 같은 허용 목록(`SINGLE_CHAR_NAMES`)만 쓴다 (#305) — 띄어 쓴 이름에서
+        # 떨어져 나온 한 글자(털 · 곳)도, 강아지 알레르기를 적은 "개" 도 "블록 3개" 를 막지 않는다.
         named, rest = read_label(entry.label, book)
-        pieces = set(split_label(entry.label))
         coded = tuple(kept[key] for code in sorted(named.codes) if (key := str(code)) in kept)
         literal = tuple(
-            Term(key=word, aliases=(word,)) for word in rest if len(word) >= 2 or word in pieces
+            Term(key=word, aliases=(word,))
+            for word in rest
+            if len(word) >= 2 or word in SINGLE_CHAR_NAMES
         )
-        return (*coded, *_scan_aliases_only(named.terms), *literal)
+        return (*coded, *_registered_aliases_only(named.terms), *literal)
 
     def scan_food(text: str) -> tuple[str, ...]:
         return match_terms(text, food_terms)
@@ -216,6 +224,21 @@ def _scan_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
     kept: list[Term] = []
     for term in terms:
         aliases = tuple(alias for alias in term.aliases if _scans(alias))
+        if aliases:
+            kept.append(Term(key=term.key, aliases=aliases, guards=term.guards))
+    return tuple(kept)
+
+
+def _registered_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
+    """등록 이름 대조에 쓰는 별칭만 남긴다. 음식 용어 스캔(`_scan_aliases_only`)과 같되, 한 글자는
+    허용 목록(잣 · 콩 · 깨 · 쑥)을 남긴다 — Activity 와 같은 판정이다 (#305)."""
+    kept: list[Term] = []
+    for term in terms:
+        aliases = tuple(
+            alias
+            for alias in term.aliases
+            if _scans(alias) or normalize(alias) in SINGLE_CHAR_NAMES
+        )
         if aliases:
             kept.append(Term(key=term.key, aliases=aliases, guards=term.guards))
     return tuple(kept)
