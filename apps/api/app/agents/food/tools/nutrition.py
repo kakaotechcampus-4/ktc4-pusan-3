@@ -11,6 +11,7 @@ from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.nutrient_actions import advice_for, check_summary
 from app.agents.food.nutrition_eval import evaluate_nutrient_bands
 from app.agents.food.result import ErrorCode, ToolResult, fail, ok
+from app.agents.food.schemas.common import EvidenceRef
 from app.agents.food.schemas.nutrition import (
     CompareDietBalanceArgs,
     LookupNutritionArgs,
@@ -145,6 +146,17 @@ async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArg
     )
 
 
+def _seen(ref: EvidenceRef, seen_refs: set[tuple[str, UUID]]) -> bool:
+    """ref.id 가 UUID 형식이 아니면 이번 run 에서 조회하지 않은 근거와 같이 뺀다 — 거절이 아니라
+    제외다(§4 ⑤). 모델이 지어낸 id 하나가 findings 전체를 죽이면 안 된다.
+    """
+    try:
+        ref_id = UUID(ref.id)
+    except ValueError:
+        return False
+    return (ref.kind, ref_id) in seen_refs
+
+
 async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArgs) -> ToolResult:
     """영양소 분석 결과를 최종 검증하고 반환한다.
 
@@ -210,11 +222,7 @@ async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArg
                 "findings 에 이번에 조회하지 않은 영양 항목이 있다.",
             )
 
-    evidence = [
-        ref.model_dump()
-        for ref in args.evidence
-        if (ref.kind, UUID(ref.id)) in context.state.seen_refs
-    ]
+    evidence = [ref.model_dump() for ref in args.evidence if _seen(ref, context.state.seen_refs)]
 
     return ok(
         "report",

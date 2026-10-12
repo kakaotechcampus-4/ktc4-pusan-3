@@ -392,6 +392,22 @@ async def test_이번_run_에서_조회하지_않은_근거는_뺀다(context_wi
     assert result.data["evidence"] == []
 
 
+async def test_형식이_깨진_근거_id_는_거절이_아니라_제외한다(context_with_basis) -> None:
+    # UUID 가 아닌 id 는 "이번 run 에서 조회하지 않은 근거"와 같은 취급이다 — 거절이 아니라 제외
+    # (§4 ⑤). 모델이 지어낸 id 하나가 findings 전체를 죽이면 안 된다
+    result = await report_nutrient_analysis(
+        context_with_basis,
+        NutrientReportArgs(
+            period=MealPeriod.LAST_7_DAYS,
+            findings=["단백질 비중이 기준보다 낮은 편이에요"],
+            evidence=[EvidenceRef(kind="observation_food", id="not-a-uuid", note="테스트")],
+        ),
+    )
+
+    assert result.success
+    assert result.data["evidence"] == []
+
+
 async def test_뺀_알레르기_식품이_문장에_남으면_거절한다(context_egg_allergy_basis) -> None:
     # N-14 — 별칭과 안전 사전을 둘 다 건다 (설계 §6 · #326 리뷰)
     result = await report_nutrient_analysis(
