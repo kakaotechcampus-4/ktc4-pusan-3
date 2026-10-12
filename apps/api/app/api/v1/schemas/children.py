@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, StrictBool, StringConstraints
 
 from app.api.v1.schemas.auth import ConsentInput, Nickname
+from app.domains.child.models import Gender, ParentChildRelation
 
 Role = Literal["owner", "member"]
 """아이의 owner(등록한 보호자)인가, 초대로 연결된 member 인가 — child.owner_parent_id 와 비교."""
@@ -43,6 +44,54 @@ class CreateChildResponse(BaseModel):
     nickname: str
     age_display: str = Field(description="화면에 그대로 쓰는 나이 문구 (생후 N일 · N개월 · 만 N세)")
     role: Role
+
+
+class ChildProfile(BaseModel):
+    """아이 프로필 — GET /children/{cid} 의 응답이자 PATCH 의 응답 안 child.
+
+    관계(relation) · 역할(role)은 보는 보호자 기준이다. 같은 아이라도 보호자마다 다르게 받는다.
+    """
+
+    id: UUID
+    nickname: str
+    birth_date: date
+    age_display: str = Field(description="화면에 그대로 쓰는 나이 문구 (생후 N일 · N개월 · 만 N세)")
+    gender: Gender = Field(
+        description=(
+            "male · female · undisclosed. 기본값은 undisclosed('밝히지 않을래요'). "
+            "화면 표시 전용 — Agent 에 넘기지 않는다"
+        )
+    )
+    relation: ParentChildRelation = Field(description="보는 보호자와 아이의 관계")
+    role: Role
+
+
+class UpdateChildRequest(BaseModel):
+    """PATCH /children/{cid} — 고친 칸만 보낸다. 안 보낸 칸은 그대로 둔다. 하나도 없으면 400.
+
+    null 은 받지 않는다(400). 별명 · 생일 · 성별은 늘 값이 있어서 "비우기" 가 없다.
+    🚨 타입에 `| None` 을 붙이지 않는다. 기본값 None 은 "안 보냄" 표시일 뿐이고(검사하지 않는다),
+       타입에 None 을 넣으면 Swagger 가 null 을 받는다고 안내한다.
+    """
+
+    nickname: Nickname = Field(
+        default=None, description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자"
+    )
+    birth_date: date = Field(
+        default=None,
+        description=(
+            "생일 (YYYY-MM-DD). 한국 날짜로 오늘보다 뒤거나 올해 - 20년의 1월 1일보다 앞이면 400"
+        ),
+    )
+    gender: Gender = Field(
+        default=None, description="male · female · undisclosed('밝히지 않을래요')"
+    )
+
+
+class UpdateChildResponse(BaseModel):
+    """200 — 고친 뒤의 프로필."""
+
+    child: ChildProfile
 
 
 class CreateInputRequest(BaseModel):

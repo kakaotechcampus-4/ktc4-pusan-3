@@ -6,7 +6,7 @@ from datetime import date, datetime
 from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
+from app.domains.child.models import Child, Gender, Invite, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 
 
@@ -31,6 +31,28 @@ async def list_child_links_for_parent(
         .order_by(Child.created_at, Child.id)
     )
     return [(child, relation) for child, relation in (await session.execute(stmt)).all()]
+
+
+async def find_child_link(
+    session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID
+) -> tuple[Child, ParentChildRelation] | None:
+    """보호자에게 연결된 아이 하나와 그 관계 — 프로필(GET /children/{cid})의 재료.
+
+    관계는 보는 보호자 기준이다. 같은 아이라도 엄마와 아빠가 다른 값을 받는다.
+    보관된 아이는 없는 것으로 본다 (find_accessible_child 와 같은 기준).
+    """
+    row = (
+        await session.execute(
+            select(Child, ParentChild.relation)
+            .join(ParentChild, ParentChild.child_id == Child.id)
+            .where(
+                Child.id == child_id,
+                ParentChild.parent_id == parent_id,
+                Child.deleted_at.is_(None),
+            )
+        )
+    ).first()
+    return None if row is None else (row[0], row[1])
 
 
 async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
@@ -80,10 +102,22 @@ async def update_child(
     *,
     child_id: uuid.UUID,
     parent_id: uuid.UUID,
-    nickname: str,
-    birth_date: date,
+    nickname: str | None = None,
+    birth_date: date | None = None,
+    gender: Gender | None = None,
 ) -> Child | None:
-    """접근 가능한 보호자의 수정. 역할 제한이 추가되면 호출 계층에서 판단한다."""
+    """접근 가능한 보호자의 수정. 넘긴 칸만 바꾼다 — None 은 "그대로 둔다" 다.
+
+    별명 · 생일 · 성별은 늘 값이 있어서 비우는 길은 없다. 역할 제한이 추가되면 호출 계층에서
+    판단한다. 연결되지 않은 보호자 · 보관된 아이면 None.
+    """
+    values = {
+        name: value
+        for name, value in (("nickname", nickname), ("birth_date", birth_date), ("gender", gender))
+        if value is not None
+    }
+    if not values:
+        raise ValueError("바꿀 칸이 없다")
     return await session.scalar(
         update(Child)
         .where(
@@ -91,7 +125,7 @@ async def update_child(
             Child.deleted_at.is_(None),
             Child.id.in_(select(ParentChild.child_id).where(ParentChild.parent_id == parent_id)),
         )
-        .values(nickname=nickname, birth_date=birth_date)
+        .values(**values)
         .returning(Child)
     )
 
