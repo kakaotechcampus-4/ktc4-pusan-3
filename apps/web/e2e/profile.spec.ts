@@ -162,6 +162,19 @@ test.describe("시트 안 고르기 상자는 마지막 항목까지 고를 수 
   });
 });
 
+test.describe("기본 정보 고치기는 서버 범위 안에서만 받는다 (#347)", () => {
+  test("별명은 20자에서 더 들어가지 않는다", async ({ page }) => {
+    await page.goto(PROFILE);
+    await page.getByRole("button", { name: "기본 정보 고치기" }).click();
+    const sheet = page.getByRole("dialog", { name: "기본 정보 고치기" });
+    const nickname = sheet.getByLabel("별명");
+    await nickname.clear();
+    // 서버는 21자부터 400 이다. 막히지 않으면 저장 버튼이 계속 실패한다.
+    await nickname.pressSequentially("가".repeat(25));
+    await expect(nickname).toHaveValue("가".repeat(20));
+  });
+});
+
 test.describe("키 · 몸무게는 최근 한 줄만, 평가 없이 (§2 개인정보)", () => {
   test("프로필에는 그래프도 평가 낱말도 없다", async ({ page }) => {
     await page.goto(PROFILE);
