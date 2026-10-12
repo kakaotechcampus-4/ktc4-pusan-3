@@ -1497,6 +1497,8 @@ export interface ConsentsResponse {
  * owner 는 member 누구든, member 는 **자기 자신만**(스스로 나가기). owner 는 끊는 대상이 아니다.
  * 409 `owner_required`(대상이 owner) · 403 `owner_only`(member 가 남을) · 404 `not_found`(연결 없음).
  * `Idempotency-Key` 는 없다 — 다시 보내면 404, 스스로 나간 뒤에는 아이 접근 확인에서 403 이다.
+ * 끊으면 그 보호자가 이 아이에 쓴 일기(`diary_entry`)와 일정에 걸어 둔 알림(`reminder`) **둘만** 지워진다.
+ * 관찰 · 건강 · 사진 · 고치기 이력과 그 "적은 사람" 은 남는다 (서버 확인 · #352).
  */
 export interface ChildParent {
   parent_id: string;
