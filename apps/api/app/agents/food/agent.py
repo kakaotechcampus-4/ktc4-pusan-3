@@ -15,7 +15,7 @@ from app.agents.common.suggestion import SuggestionDraft
 from app.agents.common.tool_loop import ToolCall, ToolLoopResult, run_tool_loop
 from app.agents.food.context import FoodContext, build_gate
 from app.agents.food.prompt import build_system_prompt
-from app.agents.food.readouts import READOUTS
+from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, READOUTS
 from app.agents.food.registry import (
     closed_readout_key,
     execute_tool,
@@ -93,7 +93,11 @@ async def run(
         output_tools=output_tools,
     )
 
-    readouts = _readouts_from(task_type, loop_result, output_tools) if loop_result.completed else ()
+    readouts = (
+        _readouts_from(task_type, loop_result, output_tools, context)
+        if loop_result.completed
+        else ()
+    )
     return FoodAgentResult(
         task_type=task_type,
         stage=stage,
@@ -107,7 +111,10 @@ async def run(
 
 
 def _readouts_from(
-    task_type: FoodTaskType, loop_result: ToolLoopResult, output_tools: Collection[str]
+    task_type: FoodTaskType,
+    loop_result: ToolLoopResult,
+    output_tools: Collection[str],
+    context: FoodContext,
 ) -> tuple[Readout, ...]:
     """통과한 출력 tool 의 결과를 화면에 낼 Readout 으로. 식단 추천 · 급식 갱신의 결과 변환은
     각자의 구현 이슈(issue3 등)에서 마저 다룬다 — 지금 실구현된 출력은 영양소 분석뿐이다.
@@ -117,6 +124,9 @@ def _readouts_from(
     accepted = _accepted_call(loop_result, output_tools)
     findings = accepted.result.data.get("findings") or []
     if not findings:
+        verdict = context.state.nutrient_verdict
+        if verdict is not None and verdict.insufficient:
+            return (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=verdict.records),)
         return ()
     return (Readout(kind="nutrient_analysis", body="\n".join(findings), authored_by="model"),)
 

@@ -110,6 +110,18 @@ def fake_client() -> FakeLLM:
 
 
 @pytest.fixture
+def insufficient_client() -> FakeLLM:
+    # 빈 포트라 기록이 0건 — compare_diet_balance 가 insufficient=True 를 내고,
+    # report_nutrient_analysis 의 ⓪ 검사가 요구하는 대로 findings 를 비워 낸다
+    return FakeLLM(
+        tool_response(call("c1", "compare_diet_balance", {"period": "last_7_days"})),
+        tool_response(
+            call("c2", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})
+        ),
+    )
+
+
+@pytest.fixture
 def talking_client() -> FakeLLM:
     return FakeLLM(reply("분석을 준비했어요."))
 
@@ -148,6 +160,20 @@ async def test_출력_tool_이_통과하면_ok_다(task, context, fake_client) -
 
     assert result.status == "ok"
     assert result.readouts
+
+
+async def test_기록이_부족하면_insufficient_readout_을_낸다(
+    task, context, insufficient_client
+) -> None:
+    # findings 가 비어도 ok 로 끝나는 것 자체는 맞다(⓪ 검사가 요구하는 모양) — 그런데 그 상태를
+    # 그대로 readouts=() 로 내면 부모 화면에 아무것도 안 뜬다. insufficient 전용 문구가 나가야 한다
+    result = await run(task, context, client=insufficient_client)
+
+    assert result.status == "ok"
+    assert result.readouts, "기록 부족 상태에서 readout 이 비었다 — 화면에 아무것도 안 뜬다"
+    assert result.readouts[0].body == READOUTS.get("nutrient.insufficient").template.format(
+        recorded=0
+    )
 
 
 async def test_모델이_말로_끝내면_실패다(task, context, talking_client) -> None:
