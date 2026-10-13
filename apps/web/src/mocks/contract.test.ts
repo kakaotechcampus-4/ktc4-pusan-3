@@ -16,6 +16,7 @@ import {
   submitEventDraft,
   photoFormData,
   submitOnboarding,
+  updateHealthSafety,
   uploadPhoto,
 } from "@/lib/api/operations";
 import {
@@ -66,6 +67,7 @@ import type {
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
+  UpdateHealthSafetyRequest,
   EventDraft,
   SubmitEventBody,
   SuggestionsRequest,
@@ -2483,49 +2485,110 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
 });
 
 /**
- * 🚨 승인 게이트 ㉡ — 고치기. ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ * 🚨 승인 게이트 ㉡ — 고치기. 서버 #370 (`PATCH /children/{cid}/health-safety/{id}` · #87 결정).
  *
- * 여기서 거는 것은 **정체를 못 바꾼다는 것**이다. `type`·`label` 이 바뀌면
- * `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이 같이 흔들린다.
+ * 여기서 거는 것은 두 가지다.
+ *   ① **정체를 못 바꾼다** — `type`·`label` 이 바뀌면 "이미 등록된 항목" 판정이 같이 흔들린다
+ *   ② **고치면 새 기록이다** — 지금 기록을 내리고 새 id 로 넣어 이력을 남긴다. 그래서 같은 고치기를
+ *      키 없이 다시 보내면 404 고, 키가 같으면 처음 응답이 재생된다
  */
-describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
-  async function first(): Promise<HealthSafety> {
-    const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
-    return items[0];
+describe("⑯ 안전 정보는 정체를 못 바꾸고, 고치면 새 기록이다", () => {
+  async function list(): Promise<HealthSafety[]> {
+    return (await api.get<HealthSafetyListResponse>("/children/c1/health-safety")).items;
   }
 
-  it("심각도·증상·메모는 고쳐진다", async () => {
+  async function first(): Promise<HealthSafety> {
+    return (await list())[0];
+  }
+
+  function edit(id: string, body: UpdateHealthSafetyRequest, key = newIdempotencyKey()) {
+    return updateHealthSafety("c1", id, body, key);
+  }
+
+  it("심각도·증상·메모가 고쳐지고, 새 id 로 온다 — 옛 id 는 목록에서 빠진다", async () => {
     const before = await first();
 
-    const { safety } = await api.patch<{ safety: HealthSafety }>(
-      `/children/c1/health-safety/${before.id}`,
-      { severity: "class_4", reactions: ["기침"], notes: "병원에서 다시 확인" },
-    );
+    const { safety } = await edit(before.id, {
+      severity: "class_4",
+      reactions: ["기침"],
+      notes: "병원에서 다시 확인",
+    });
 
     expect(safety.severity).toBe("class_4");
     expect(safety.reactions).toEqual(["기침"]);
+    expect(safety.notes).toBe("병원에서 다시 확인");
     // 🚨 정체는 그대로다.
     expect(safety.type).toBe(before.type);
     expect(safety.label).toBe(before.label);
+    // 🚨 이력이 남는다 — 같은 항목의 새 기록이다.
+    expect(safety.id).not.toBe(before.id);
+    const ids = (await list()).map((item) => item.id);
+    expect(ids).toContain(safety.id);
+    expect(ids).not.toContain(before.id);
+  });
+
+  it("바뀐 것이 없으면 새 기록을 만들지 않는다 — 같은 id 그대로다", async () => {
+    const before = await first();
+    const count = (await list()).length;
+
+    const { safety } = await edit(before.id, {
+      severity: before.severity,
+      reactions: before.reactions,
+      // 빈 메모는 null 과 같다 — 안 고친 칸을 실어 보내는 시트가 이력을 늘리지 않게
+      notes: "  ",
+    });
+
+    expect(safety.id).toBe(before.id);
+    expect((await list()).length).toBe(count);
+  });
+
+  it("🚨 같은 키로 다시 보내면 처음 응답이 온다 — 옛 id 는 이미 내려가 있어도 404 가 아니다", async () => {
+    const target = await first();
+    const key = newIdempotencyKey();
+
+    const once = await edit(target.id, { severity: "class_5" }, key);
+    const again = await edit(target.id, { severity: "class_5" }, key);
+
+    expect(again.safety.id).toBe(once.safety.id);
+    // 새 키로 같은 고치기를 보내는 것은 재시도가 아니다 — 옛 id 는 이미 내려가 있다.
+    await expect(edit(target.id, { severity: "class_5" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "not_found"),
+    );
+  });
+
+  it("다른 보호자가 먼저 고친 기록을 옛 id 로 고치면 404 다", async () => {
+    const target = await first();
+    await edit(target.id, { notes: "먼저 고친 보호자" });
+
+    await expect(edit(target.id, { severity: "class_2" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "not_found"),
+    );
   });
 
   it("🚨 종류·이름을 보내면 400 이다", async () => {
     const target = await first();
 
+    await expect(edit(target.id, { label: "땅콩" } as UpdateHealthSafetyRequest)).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed"),
+    );
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { label: "땅콩" }),
+      edit(target.id, { type: "chronic_disease" } as UpdateHealthSafetyRequest),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("증상을 null 로 보내면 400 이다 — 비우는 것은 빈 목록이다", async () => {
+    const target = await first();
+
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { type: "chronic_disease" }),
+      edit(target.id, { reactions: null } as unknown as UpdateHealthSafetyRequest),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    const { safety } = await edit(target.id, { reactions: [] });
+    expect(safety.reactions).toEqual([]);
   });
 
   it("`severity: null` 은 모르겠어요 로 되돌리는 것이다", async () => {
     const target = await first();
-    const { safety } = await api.patch<{ safety: HealthSafety }>(
-      `/children/c1/health-safety/${target.id}`,
-      { severity: null },
-    );
+    const { safety } = await edit(target.id, { severity: null });
     expect(safety.severity).toBeNull();
   });
 
@@ -2567,14 +2630,11 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
 
   it("고칠 때도 같은 규칙이다", async () => {
     const target = await first(); // 우유 — 알레르기
-    await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
-
-    const { safety } = await api.patch<{ safety: HealthSafety }>(
-      `/children/c1/health-safety/${target.id}`,
-      { severity: "class_4" },
+    await expect(edit(target.id, { severity: "mild" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "validation_failed"),
     );
+
+    const { safety } = await edit(target.id, { severity: "class_4" });
     expect(safety.severity).toBe("class_4");
   });
 
@@ -2582,18 +2642,22 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
     const target = await first();
     await api.delete(`/children/c1/health-safety/${target.id}`);
 
-    await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found"));
+    await expect(edit(target.id, { severity: "class_2" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "not_found"),
+    );
   });
 
   it("동의가 없으면 고치지도 못한다", async () => {
     const target = await first();
     setScenario("consent");
-    await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
-    setScenario("default");
+    try {
+      await expect(edit(target.id, { severity: "class_2" })).rejects.toSatisfy((e: unknown) =>
+        isApiError(e, "consent_required"),
+      );
+    } finally {
+      // 🚨 실패해도 되돌린다 — 남으면 뒤 describe 가 전부 동의 없음으로 돈다.
+      setScenario("default");
+    }
   });
 });
 
