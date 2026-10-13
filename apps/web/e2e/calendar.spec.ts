@@ -1,4 +1,6 @@
-import { CHILD, expect, test } from "./fixtures";
+import type { Page } from "@playwright/test";
+
+import { CHILD, expect, expectNoGate, recordApi, test, writes } from "./fixtures";
 import { browserDaysAgo } from "./time-zone";
 
 /**
@@ -45,4 +47,129 @@ test('범례에 "기억 변화" 가 없다 — 근거가 될 이력 표가 없�
   await expect(page.getByRole("listitem").filter({ hasText: /^일정$/ })).toBeVisible();
   await expect(page.getByText("기억 변화")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /기억 달라짐/ })).toHaveCount(0);
+});
+
+/* ── 일기 쓰기 · 고치기 · 지우기 (#364 · 서버 #333) ─────────────────────── */
+
+/**
+ * 고른 날의 달력 칸. 🚨 칸의 라벨이 달 보기의 `has_my_diary` 를 말로 낸다 ("일기 있음").
+ * 표식 모양은 `aria-hidden` 이라, 달 그리드의 일기 표식이 섰는지는 이 라벨로 잰다.
+ */
+function selectedDayButton(page: Page) {
+  return page.getByRole("gridcell", { selected: true }).getByRole("button");
+}
+
+test("일기를 쓰고 고치고 지운다 — 새 경로로 키 없이 보내고, 그만두기는 아무것도 지우지 않는다 (#364)", async ({
+  page,
+}) => {
+  // 7일 전은 사진만 있는 날이다 — 지운 뒤에도 사진이 남는지 같이 본다 (#115).
+  const date = browserDaysAgo(7);
+  const diaryPath = `/children/${CHILD}/diary/${date}`;
+  const calls = recordApi(page);
+  await page.goto(`${CALENDAR}?date=${date}`);
+
+  const write = page.getByRole("button", { name: "일기 쓰기" });
+  await expect(write).toBeVisible();
+  await expect(selectedDayButton(page)).not.toHaveAccessibleName(/일기 있음/);
+
+  // 쓰기
+  await write.click();
+  await page.getByRole("textbox", { name: "이날의 일기" }).fill("모래 놀이를 오래 했다.");
+  await page.getByRole("button", { name: "일기 저장" }).click();
+
+  await expect(page.getByText("모래 놀이를 오래 했다.")).toBeVisible();
+  // 🚨 옛 경로(`PUT /calendar/{date}` · `{ text, event_ids }`)가 아니라 서버 #333 의 경로와 본문이다.
+  //    Idempotency-Key 를 받지 않는 경로다 — 되돌릴 수 없는 5곳이 아니다.
+  expect(writes(calls, "PUT")).toEqual([
+    {
+      method: "PUT",
+      path: diaryPath,
+      body: { content: "모래 놀이를 오래 했다." },
+      idempotencyKey: undefined,
+    },
+  ]);
+  // 달 그리드의 일기 표식이 선다 — 달 보기를 다시 받았다.
+  await expect(selectedDayButton(page)).toHaveAccessibleName(/일기 있음/);
+
+  // 고치기 — 줄바꿈까지 그대로 보낸다
+  await page.getByRole("button", { name: "일기 고치기" }).click();
+  const editor = page.getByRole("textbox", { name: "이날의 일기" });
+  await expect(editor).toHaveValue("모래 놀이를 오래 했다.");
+  await editor.fill("모래 놀이를 오래 했다.\n손을 두 번 씻었다.");
+  await page.getByRole("button", { name: "일기 저장" }).click();
+
+  await expect(page.getByText("손을 두 번 씻었다.")).toBeVisible();
+  expect(writes(calls, "PUT").at(-1)?.body).toEqual({
+    content: "모래 놀이를 오래 했다.\n손을 두 번 씻었다.",
+  });
+
+  // 지우기 확인 패널 → 그만두기: 요청이 나가지 않고 일기가 그대로다
+  await page.getByRole("button", { name: "일기 지우기" }).click();
+  await expect(page.getByText("이 일기를 지울까요?")).toBeVisible();
+  await page.getByRole("button", { name: "그만두기" }).click();
+
+  await expect(page.getByText("이 일기를 지울까요?")).toHaveCount(0);
+  await expect(page.getByText("손을 두 번 씻었다.")).toBeVisible();
+  expect(writes(calls, "DELETE")).toEqual([]);
+  // 그만두기 버튼이 사라진 자리에서 포커스가 패널을 연 "일기 지우기" 로 돌아온다 (#364)
+  await expect(page.getByRole("button", { name: "일기 지우기" })).toBeFocused();
+
+  // 지우기 확정
+  await page.getByRole("button", { name: "일기 지우기" }).click();
+  await page.getByRole("button", { name: "지우기", exact: true }).click();
+
+  // 🚨 일기 구역이 "일기 쓰기" 로 돌아가고, 누른 버튼이 사라진 자리에서 포커스가 그 버튼으로 온다.
+  await expect(write).toBeVisible();
+  await expect(write).toBeFocused();
+  await expect(page.getByText("손을 두 번 씻었다.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "일기 고치기" })).toHaveCount(0);
+  expect(writes(calls, "DELETE")).toEqual([
+    { method: "DELETE", path: diaryPath, body: null, idempotencyKey: undefined },
+  ]);
+  // 달 그리드의 일기 표식이 사라지고, 사진은 그대로다 — 사진이 있으니 빈 날도 아니다.
+  await expect(selectedDayButton(page)).not.toHaveAccessibleName(/일기 있음/);
+  await expect(page.getByRole("img", { name: "이날 캘린더에 남은 사진" })).toHaveCount(1);
+  await expect(page.getByText("이날은 아무것도 없어요")).toHaveCount(0);
+});
+
+test("고치다가 내용을 다 비우면 저장이 꺼지고, 편집 중에는 지우기가 없다 — 빈 저장은 지우기가 아니다 (#364)", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(1)}`);
+
+  await page.getByRole("button", { name: "일기 고치기" }).click();
+  const editor = page.getByRole("textbox", { name: "이날의 일기" });
+  const save = page.getByRole("button", { name: "일기 저장" });
+
+  // 먼저 저장이 켜질 수 있는 상태에 닿는다 — 안 그러면 "꺼져 있다" 가 늘 참이다.
+  await editor.fill("바꿔 적은 일기");
+  await expect(save).toBeEnabled();
+
+  // 🚨 공백 · 줄바꿈뿐이면 서버가 422 로 거절한다 (#333). 버튼이 먼저 막는다.
+  await editor.fill("  \n ");
+  await expect(save).toBeDisabled();
+  // 꺼진 이유와 지우는 길을 글자로 말한다.
+  await expect(save).toHaveAccessibleDescription(/비운 채로는 저장되지 않아요/);
+  // 🚨 편집 중에는 지우기를 세우지 않는다 — 고치던 글을 버리는 것과 저장된 일기를 지우는 것이 섞인다.
+  await expect(page.getByRole("button", { name: "일기 지우기" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "취소" })).toBeVisible();
+
+  expect(writes(calls)).toEqual([]);
+});
+
+test("일기 지우기 확인 패널은 승인 게이트가 아니다 — 게이트 표식이 없다 (§2 실행 · #364)", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(1)}`);
+
+  await page.getByRole("button", { name: "일기 지우기" }).click();
+  // 🚨 패널이 열린 것을 먼저 확인한다 — 닫힌 채로 재면 늘 통과한다.
+  await expect(page.getByText("이 일기를 지울까요?")).toBeVisible();
+  await expect(page.getByRole("button", { name: "지우기", exact: true })).toBeVisible();
+
+  // 게이트는 캘린더 쓰기와 건강 기록 확정 딱 2곳이다. 자기 글을 지우는 확인은 그 칸이 아니다.
+  await expectNoGate(page);
+  expect(writes(calls)).toEqual([]);
 });

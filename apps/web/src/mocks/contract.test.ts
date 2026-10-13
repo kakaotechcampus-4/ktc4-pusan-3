@@ -57,6 +57,7 @@ import type {
   GrowthLogsResponse,
   HealthSafety,
   HealthSafetyListResponse,
+  MyDiary,
   Observation,
   ObservationDetailResponse,
   ObservationsResponse,
@@ -1440,10 +1441,7 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
 
-    await api.put<CalendarDayResponse>(`/children/c1/calendar/${date}`, {
-      text: "지어낸 일기 한 줄",
-      event_ids: [],
-    });
+    await api.put<MyDiary>(`/children/c1/diary/${date}`, { content: "지어낸 일기 한 줄" });
 
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
     // 🚨 계약서 §09 — 일기는 명시적으로 태우지 않는 한 관찰로 추출되지 않는다.
@@ -1526,9 +1524,8 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     expect(photoDay).toBeDefined();
 
     const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`);
-    await api.put<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`, {
-      text: "사진 옆에 적은 일기",
-      event_ids: [],
+    await api.put<MyDiary>(`/children/c1/diary/${photoDay!.date}`, {
+      content: "사진 옆에 적은 일기",
     });
     const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`);
 
@@ -1565,6 +1562,128 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
     const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
     expect(item?.is_prepared).toBe(true);
+  });
+});
+
+/**
+ * 09 캘린더 일기 쓰기 · 지우기 (#364). 서버 정본은 PR #333 (`routers/diary.py` · `test_diary.py`).
+ *
+ * 🚨 **빈 내용은 지우기가 아니다.** 목이 한동안 공백뿐인 PUT 을 지우기로 받아서, 화면이 비우고
+ *    저장하면 목에서는 지워지고 실서버에서는 422 가 났다. 지우는 길은 `DELETE` 하나다.
+ * 🚨 날짜는 픽스처를 import 하지 않고 달 보기로 찾는다 (`findEventDay` 주석과 같은 이유).
+ */
+describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364)", () => {
+  it("다시 쓰면 덮어쓰고, 앞뒤 공백 · 줄바꿈까지 원문 그대로 저장한다", async () => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+    const path = `/children/c1/diary/${date}`;
+
+    await api.put<MyDiary>(path, { content: "처음 적은 일기" });
+    const again = await api.put<MyDiary>(path, { content: "  고친 일기\n둘째 줄\n" });
+
+    // 🚨 화면이 다듬어 보내지 않는 것처럼 목도 다듬어 저장하지 않는다 — 공백 검사는 거절할 때만 쓴다.
+    expect(again.content).toBe("  고친 일기\n둘째 줄\n");
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary?.content).toBe("  고친 일기\n둘째 줄\n");
+  });
+
+  it("PUT 응답은 하루 보기 my_diary 와 같은 값이다 — 화면이 그대로 캐시에 얹는다", async () => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+
+    const saved = await api.put<MyDiary>(`/children/c1/diary/${date}`, {
+      content: "응답과 하루 보기를 맞춰 보는 일기",
+    });
+
+    // 🚨 옛 경로는 하루 보기 전체(`CalendarDayResponse`)를 돌려줬다. 그 모양이 돌아오면 화면이
+    //    `my_diary` 자리에 하루 보기를 통째로 얹는다.
+    expect(Object.keys(saved).sort()).toEqual(["content", "updated_at"]);
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary).toEqual(saved);
+  });
+
+  it.each([
+    ["빈 문자열", ""],
+    ["공백 · 줄바꿈 · 탭뿐", " \n\t"],
+  ])("내용이 %s 이면 422 validation_failed 이고 기존 일기가 남는다", async (_, content) => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+    expect(before.my_diary).not.toBeNull();
+
+    const failure = await api
+      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(422);
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+    expect(after.my_diary).toEqual(before.my_diary);
+  });
+
+  it.each([
+    ["content 가 없다", {}],
+    ["content 가 숫자다", { content: 123 }],
+    ["content 가 null 이다", { content: null }],
+  ])("%s 면 400 이다 — 본문 검증 실패는 400 (서버 errors.py)", async (_, body) => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+
+    const failure = await api
+      .put(`/children/c1/diary/${date}`, body)
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("두 번 지워도 둘 다 204 다 — 없는 일기를 지워도 204", async () => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const path = `/children/c1/diary/${diaryDay!.date}`;
+
+    const first = await raw(path, { method: "DELETE" });
+    const again = await raw(path, { method: "DELETE" });
+
+    expect([first.status, again.status]).toEqual([204, 204]);
+  });
+
+  it("지우면 하루 보기 my_diary 는 null, 달 보기 has_my_diary 는 false 다", async () => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const date = diaryDay!.date;
+
+    await api.delete(`/children/c1/diary/${date}`);
+
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary).toBeNull();
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: date.slice(0, 7) },
+    });
+    // 그날 다른 것이 없으면 달 보기에서 빠지는 것도 맞다 (빈 날은 싣지 않는다 · 서버 #325).
+    expect(month.days.find((d) => d.date === date)?.has_my_diary ?? false).toBe(false);
+  });
+
+  it("일기를 지워도 사진과 has_shared_photo 는 남는다 (#115)", async () => {
+    const photoDay = (await recentCalendarDays()).find((day) => day.has_shared_photo);
+    expect(photoDay).toBeDefined();
+    const date = photoDay!.date;
+    await api.put<MyDiary>(`/children/c1/diary/${date}`, { content: "사진 옆에 적었다 지울 일기" });
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(before.my_diary).not.toBeNull();
+    expect(before.shared_photos.length).toBeGreaterThan(0);
+
+    await api.delete(`/children/c1/diary/${date}`);
+
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(after.my_diary).toBeNull();
+    expect(after.shared_photos).toEqual(before.shared_photos);
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: date.slice(0, 7) },
+    });
+    const summary = month.days.find((d) => d.date === date);
+    expect(summary?.has_shared_photo).toBe(true);
+    expect(summary?.has_my_diary).toBe(false);
   });
 });
 
