@@ -85,7 +85,7 @@ def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
         (0, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
         (3, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
         (3, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
-        # 식단 추천은 tool 이 스텁이라 not_ready.meal 로 닫힌다 — 단계 · 급식 행과 무관
+        # 식단 추천은 run() 이 결과를 옮기기 전이라 not_ready.meal 로 닫힌다 — 단계 · 급식 행과 무관
         (4, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
         (4, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
         (11, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
@@ -95,7 +95,7 @@ def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
         (11, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
         (12, FoodTaskType.NUTRIENT_ANALYSIS, True, _TODDLER_NUTRIENT),
         (12, FoodTaskType.NUTRIENT_ANALYSIS, False, _TODDLER_NUTRIENT),
-        # 급식은 tool 이 스텁이라 행이 있어도 not_ready.daycare 로 닫힌다
+        # 급식은 run() 이 결과를 옮기기 전이라 행이 있어도 not_ready.daycare 로 닫힌다
         (3, FoodTaskType.DAYCARE_MEAL, True, ()),
         (4, FoodTaskType.DAYCARE_MEAL, True, ()),
         (11, FoodTaskType.DAYCARE_MEAL, False, ()),

@@ -16,6 +16,9 @@
 - 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. 식단 추천 · 급식 갱신은 tool 이
   구현될 때까지 `not_ready.*` 로 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
   구현되면 `NOT_READY` 에서 그 task 를 뺀다. `test_food_stub_gate.py` 가 막는다.
+- 지금은 tool 11개가 다 구현돼 있다. 식단 추천 · 급식 갱신을 `NOT_READY` 로 닫아 둔 것은 `run()` 이
+  그 결과(`state.picks` · `state.readouts`)를 아직 화면으로 옮기지 않기 때문이다 — 먼저 열면 모델은
+  돌고 화면에는 아무것도 안 나간다. `run()` 이 옮기면 여기서 뺀다.
 - `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
   안내를 내서 식단 추천과 같이 닫고, `daycare_meal`은 영향받지 않는다.
@@ -106,12 +109,13 @@ _TODDLER_NUTRIENT_BASE: frozenset[str] = frozenset(
     {"lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis"}
 )
 
-# tool 이 아직 스텁이라 모델에게 열지 않고 코드 문구로 닫는 task. tool 이 구현되면 여기서 뺀다 —
-# 열면 모델이 스텁을 부르고 NotImplementedError 가 pipeline 까지 올라가 agent_error 가 된다.
-# 열린 tool 에 스텁이 남아 있으면 test_food_stub_gate.py 가 막는다 (#357 리뷰 4-②)
+# 모델에게 열지 않고 코드 문구로 닫는 task. tool 은 다 구현됐지만(`test_food_stub_gate.py`)
+# `run()` 이 식단 추천 · 급식 갱신의 결과를 화면으로 옮기기 전이다 — 열면 모델은 돌고 화면에는
+# 아무것도 안 나간다. `run()` 이 옮기면 여기서 뺀다. 열린 tool 에 스텁이 남아 있으면 테스트가
+# 막는다 (#357 리뷰 4-②)
 NOT_READY: dict[FoodTaskType, str] = {
-    FoodTaskType.MEAL_RECOMMENDATION: NOT_READY_MEAL,  # 후보 풀 · 기록 조회
-    FoodTaskType.DAYCARE_MEAL: NOT_READY_DAYCARE,  # 급식 조회 · 갱신 · 삭제
+    FoodTaskType.MEAL_RECOMMENDATION: NOT_READY_MEAL,  # 결과(`state.picks`)를 옮기기 전
+    FoodTaskType.DAYCARE_MEAL: NOT_READY_DAYCARE,  # 급식 갱신 문구(`state.readouts`)를 옮기기 전
 }
 
 # life_stage() 의 네 값 중 영아기 둘. 영양소 분석은 이 두 단계 전부에서 닫힌다

@@ -109,7 +109,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="propose_meal_candidates",
         description=(
             "식사·간식 후보를 제출한다. 식단 추천의 마지막에 한 번 부른다. "
-            "재료는 빠짐없이 적는다 — 알레르기 필터는 코드가 이 재료 목록으로 한다."
+            "보여 준 후보 목록에서 menu_key 로 고른다 — 메뉴 이름과 재료는 코드가 채운다."
         ),
         args=ProposeMealCandidatesArgs,
     ),

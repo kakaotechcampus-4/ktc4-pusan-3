@@ -314,7 +314,7 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
-        "AgentResult",  # 식단 추천은 tool 이 붙기 전이라 not_ready.meal 로 닫혀 문구가 나간다
+        "AgentResult",  # 식단 추천은 결과 연결 전이라 not_ready.meal 로 닫혀 문구가 나간다
         "Done",
     ]
     assert saved_when_food_ran == [1]  # Food 를 부를 때 이미 저장돼 있었다 (루트 §4)
@@ -342,7 +342,7 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
 
     task = result.routing.domain_tasks[0]
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
-    # 식단 추천은 tool 이 붙기 전이라 not_ready 로 닫힌다(#357 리뷰) — 모델 0회, 코드 문구가 나간다
+    # 식단 추천은 결과 연결 전이라 not_ready 로 닫힌다(#357 리뷰) — 모델 0회, 코드 문구가 나간다
     assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "closed", 0)]
     assert _of(events, AgentResult) == [
         AgentResult(
@@ -673,7 +673,7 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     assert "딸기케이크" not in feedback  # 적힌 조각은 되돌리지 않는다
 
     assert _of(events, Rerouted) == [Rerouted(1, ("food:meal_recommendation",))]
-    # 식단 추천은 tool 이 붙기 전이라 not_ready 로 닫힌다(#357 리뷰) — routed 이벤트로 어느 task 가
+    # 식단 추천은 결과 연결 전이라 not_ready 로 닫힌다(#357 리뷰) — routed 이벤트로 어느 task 가
     # 돌았는지 본다
     assert [routed.task_type for routed in _of(events, DomainRouted)] == ["meal_recommendation"]
     assert result.routing.domain_tasks[0].request_texts == ("저녁에는 뭘 먹이면 좋을까?",)

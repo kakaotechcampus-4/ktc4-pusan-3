@@ -171,6 +171,8 @@ class MenuCatalogRow:
 
 
 DaycareSlot = Literal["lunch", "snack_am", "snack_pm"]
+# 하루 안의 순서. 간식 오전 → 점심 → 간식 오후
+DAYCARE_SLOT_ORDER: dict[DaycareSlot, int] = {"snack_am": 0, "lunch": 1, "snack_pm": 2}
 
 
 @dataclass(frozen=True)
