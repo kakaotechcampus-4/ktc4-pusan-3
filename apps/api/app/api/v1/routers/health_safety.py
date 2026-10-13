@@ -1,9 +1,9 @@
-"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `DELETE …/{id}` (E 묶음).
+"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `PATCH` · `DELETE …/{id}`.
 
 🚨 LLM 이 만들거나 고치지 않는다 (루트 CLAUDE.md §2). 이 라우터가 health_safety 의 **유일한 쓰기
    경로**이고 보호자 토큰으로만 열린다. 등록은 승인 게이트 ㉡ 이라 Idempotency-Key 가 필수다.
 🚨 내리기는 지우지 않는다 — status 를 retracted 로 바꾼다. 안전 필터는 active 만 읽는다.
-고치기(PATCH)는 #87 결정 뒤에 더한다.
+🚨 고치기도 지우지 않는다 — 지금 기록을 내리고 새 기록을 넣는다 (#87, 이력이 남는다).
 """
 
 from datetime import UTC, datetime
@@ -147,7 +147,7 @@ async def register_health_safety(
                 label=body.label,
                 severity=body.severity,
                 reactions=body.reactions,
-                notes=body.notes,
+                notes=body.notes or None,  # 빈 메모는 null 로
             )
     except ValueError as exc:
         # 종류와 맞지 않는 심각도 (create_safety 가 DB CHECK 보다 먼저 막는다)
@@ -225,7 +225,7 @@ async def revise_health_safety(
     changes = body.model_dump(exclude_unset=True)
     severity = changes.get("severity", current.severity)
     reactions = changes.get("reactions", list(current.reactions))
-    notes = changes.get("notes", current.notes)
+    notes = changes.get("notes", current.notes) or None  # 빈 메모는 null 로
     if severity is not None and (current.kind is SafetyKind.ALLERGY) != (
         severity in ALLERGY_SEVERITIES
     ):
@@ -233,7 +233,8 @@ async def revise_health_safety(
             400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {"fields": ["severity"]}
         )
 
-    if (severity, reactions, notes) == (current.severity, list(current.reactions), current.notes):
+    unchanged = (current.severity, list(current.reactions), current.notes or None)
+    if (severity, reactions, notes) == unchanged:
         # 바뀐 것이 없다 — 고치기 시트는 안 고친 칸도 지금 값으로 실어 보낸다. 이력을 늘리지 않는다
         row = current
     else:

@@ -16,7 +16,9 @@ from app.domains.safety.models import SafetyKind, SafetySeverity
 
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Reaction = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
-Notes = Annotated[str, StringConstraints(max_length=500)]
+# 앞뒤 공백을 뗀다. 빈 메모는 라우터가 null 로 맞춘다 — "" 와 null 이 다른 값이면 바뀐 것이 없는
+# 고치기가 이력 줄을 만든다
+Notes = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 
 
 class CreateHealthSafetyRequest(BaseModel):
@@ -93,7 +95,7 @@ class UpdateHealthSafetyRequest(BaseModel):
     )
     # 🚨 타입에 `| None` 을 붙이지 않는다 — 증상을 비우는 것은 [] 이고, null 은 400 이다.
     reactions: list[Reaction] = Field(
-        default=None, max_length=20, description="보내면 통째로 바꾼다. 비우려면 []"
+        default_factory=list, max_length=20, description="보내면 통째로 바꾼다. 비우려면 []"
     )
     notes: Notes | None = Field(default=None, description="null 이면 비운다. 보내지 않으면 그대로")
 

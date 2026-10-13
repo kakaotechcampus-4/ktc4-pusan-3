@@ -1,4 +1,4 @@
-"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `DELETE …/{id}` (E 묶음).
+"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `PATCH` · `DELETE …/{id}`.
 
 화면(`apps/web/src/lib/api/types.ts` 의 HealthSafety · CreateHealthSafetyRequest ·
 HealthSafetyListResponse)과 목 서버(`apps/web/src/mocks/handlers/children.ts`)가 기대하는
@@ -10,6 +10,7 @@ HealthSafetyListResponse)과 목 서버(`apps/web/src/mocks/handlers/children.ts
     ③ 종류와 맞지 않는 심각도는 400 (알레르기는 class_0~6, 나머지는 mild~anaphylaxis)
     ④ 건강정보 동의(child_health)가 없으면 저장하지 않는다 — 403 consent_required
     ⑤ 내리기는 행을 지우지 않고 retracted 로 — 목록에서 빠지고 Agent 필터도 안 읽는다
+    ⑥ 고치기는 제자리 수정이 아니다 — 지금 기록을 내리고 새 기록을 넣는다 (#87, 이력이 남는다)
 
 등장하는 사람은 전부 테스트용 가짜다. 보호자 1 = 아이 A 를 등록한 보호자,
 보호자 2 = 아이 A 와 상관없는 다른 집 보호자(아이 B 의 보호자). 알레르기 이름도 예시 값이다.
@@ -463,6 +464,84 @@ async def test_심각도를_null_로_보내면_모르겠어요로_되돌린다(d
 
     assert response.status_code == 200
     assert response.json()["safety"]["severity"] is None
+    await session.rollback()
+    rows = {row.id: row for row in await rows_of(session, consented)}
+    assert rows[old.id].status is SafetyStatus.RETRACTED
+    new = rows[uuid.UUID(response.json()["safety"]["id"])]
+    assert (new.status, new.severity) == (SafetyStatus.ACTIVE, None)
+
+
+async def test_다른_보호자가_고치면_고친_사람이_남는다(db_client, session, bearer, consented):
+    """함께 보는 보호자(보호자 3)가 고쳐도 된다. 옛 기록의 updated_by 와 새 기록의 created_by 가
+    고친 사람이다 — 처음 적은 사람(보호자 1)으로 남으면 이력이 거짓말을 한다."""
+    _, parent_1 = bearer
+    old = await milk(session, child_id=consented, parent_id=parent_1)
+    headers_3, parent_3 = await issue_bearer(session, token="test-token-co-parent")
+    await link_child(session, parent_id=parent_3, child_id=consented)
+    # 부르는 이름이 없으면 created_by 가 통째로 null 이다 — 고친 사람을 응답에서 보려고 붙인다
+    await session.execute(update(Parent).where(Parent.id == parent_3).values(nickname="보호자3"))
+
+    response = await db_client.patch(
+        safety_url(consented, old.id), json={"severity": "class_4"}, headers=headers_3
+    )
+
+    assert response.status_code == 200
+    assert response.json()["safety"]["created_by"]["parent_id"] == str(parent_3)
+    await session.rollback()
+    rows = {row.id: row for row in await rows_of(session, consented)}
+    assert rows[old.id].updated_by == parent_3
+    assert rows[uuid.UUID(response.json()["safety"]["id"])].created_by == parent_3
+
+
+async def test_고쳐도_관리_정보는_새_기록이_이어받는다(db_client, session, bearer, consented):
+    """management 는 이 API 로 받지 않지만, 다른 길로 들어온 값이 고치기에서 사라지면 안 된다."""
+    headers, parent_1 = bearer
+    old = await create_safety(
+        session,
+        child_id=consented,
+        parent_id=parent_1,
+        kind=SafetyKind.ALLERGY,
+        label="우유",
+        management="상비약 위치 메모",
+    )
+
+    response = await db_client.patch(
+        safety_url(consented, old.id), json={"severity": "class_4"}, headers=headers
+    )
+
+    assert response.json()["safety"]["management"] == "상비약 위치 메모"
+
+
+@pytest.mark.parametrize("notes", ["", "   "], ids=["빈 글자", "공백뿐"])
+async def test_빈_메모는_null_과_같아서_새_기록을_만들지_않는다(
+    db_client, session, bearer, consented, notes
+):
+    """메모가 없는 기록에 빈 메모를 보내도 바뀐 것이 아니다 — 이력 줄을 늘리지 않는다."""
+    headers, parent_1 = bearer
+    old = await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="우유"
+    )
+
+    response = await db_client.patch(
+        safety_url(consented, old.id), json={"notes": notes}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["safety"]["id"] == str(old.id)
+    assert response.json()["safety"]["notes"] is None
+
+
+async def test_등록할_때_공백뿐인_메모는_null_로_저장한다(db_client, session, bearer, consented):
+    headers, _ = bearer
+
+    response = await db_client.post(
+        safety_url(consented),
+        json={"type": "allergy", "label": "우유", "notes": "   "},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["safety"]["notes"] is None
 
 
 @pytest.mark.parametrize(
