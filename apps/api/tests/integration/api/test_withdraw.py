@@ -269,7 +269,6 @@ async def committed():
         await cleanup.execute(delete(Child).where(Child.id.in_(cids)))
         await cleanup.execute(delete(Parent).where(Parent.id.in_(pids)))
         await cleanup.commit()
-    await engine.dispose()
 
 
 async def _new_parent(factory, made) -> uuid.UUID:
