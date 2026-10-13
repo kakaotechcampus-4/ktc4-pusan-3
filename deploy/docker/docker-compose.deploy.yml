@@ -22,6 +22,8 @@ x-logging: &logging
   # 띄워 볼 때만 deploy/docker/.env 에 LOG_DRIVER=json-file 을 둔다 (빌드 `make web-image` 는 상관없다).
   driver: ${LOG_DRIVER:-journald}
 
+name: ktc4-deploy
+
 services:
   db:
     image: pgvector/pgvector:0.8.6-pg18
