@@ -69,9 +69,12 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
   함수이고, pipeline 은 부르는 시점만 정한다.
 - 데이터는 성격에 따라 두 길로 받는 것이 원칙이다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다.
   발화에 따라 무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를
-  미리 넘기려면 범위를 넉넉히 잡아 읽어야 해서다. 다만 생일 · 동의는 지금은 포트(`common/ports.py`)로
-  둔다(#319). 값으로 바꾸면 세 Agent 의 Context · pipeline · 백엔드 조회 함수(#201)의 인터페이스가 같이
-  바뀌어서, #201 연결을 붙일 때 백엔드와 정한다.
+  미리 넘기려면 범위를 넉넉히 잡아 읽어야 해서다. 생일 · 동의는 값으로 넘기는 쪽으로 정했다(#372).
+  입력 라우터가 run 마다 한 번 읽어(`child_health` 동의는 `consent.repository.child_health_granted`)
+  러너 → `entrypoint.handle_input` 으로 넘기고, 값을 감싼 포트(`common/child_values.py` 의 `ChildValues`)가
+  Agent 의 `ChildProfileReader` · `ConsentReader` 자리에 들어간다. Agent 는 #319 의 Protocol 을 그대로 받는다.
+  🚨 동의 조회에 실패하면 "동의 안 함" 으로 바꾸지 않고 run 을 시작하지 않는다 — False 로 넘기면 Agent 가
+  `health_safety` 를 읽지 않고 알레르기 필터 없이 추천을 연다.
 - Agent는 run 내내 DB 연결을 쥐지 않는다. 조회 포트는 호출마다 짧은 세션으로 읽고, 쓰기 포트는 호출 하나가
   짧은 트랜잭션 하나로 바로 commit 된다. 그래서 한 task 안에서도 두 조회의 시점이 다를 수 있다 — 안전 정보는
   task 시작(`build_gate`)에 한 번 읽고 게이트와 필터가 그 값을 같이 쓴다.

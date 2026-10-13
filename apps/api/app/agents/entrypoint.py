@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.agents.common.child_values import ChildValues
 from app.agents.food.context import FoodContext
 from app.agents.food.store import InMemoryProfile, unwired_ports
 from app.agents.memory.agent import MemoryReply
@@ -113,6 +114,7 @@ async def handle_input(
     raw_text: str,
     run_id: str,
     birth_date: date | None = None,
+    child_health_granted: bool | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
@@ -121,6 +123,10 @@ async def handle_input(
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
     - birth_date를 넘기면 Food Agent가 build_gate에서 그 값으로 식이 단계를 계산한다.
+    - child_health_granted 는 API 가 run 마다 한 번 읽은 `child_health` 동의의 현재 값이다.
+      생일과 같이 값을 감싼 포트(`ChildValues`)로 Food 의 `ConsentReader` 에 들어간다. 읽는 데
+      실패하면 API 가 run 을 시작하지 않으므로 여기에는 실패 값이 없다 — None 은 값을 안 넘긴
+      호출(테스트 · eval)이고 "동의 안 함" 으로 바뀌어 읽히지 않는다.
     - store를 넘기면 그것에 쓴다.
     - agents는 infra에 직접 닿지 않으므로 DB 어댑터는 api가 만들어 넘긴다.
     - continuation을 넘기면 raw_text는 이전 질문에 대한 보호자의 답이다. api는 reply_to를
@@ -145,17 +151,24 @@ async def handle_input(
         store=store,
     )
 
-    # Food 포트는 아직 DB 에 연결되지 않았다. birth_date 를 InMemoryProfile 에 심어
-    # build_gate 가 LifeStage 를 계산하게 하고, 기억 포트는 같은 run 의 store 를 읽게 한다.
-    # 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
-    # 안전 조회는 실패하는 기본값이다 — 포트를 안 넘긴 run 이 "알레르기 0행" 으로 열리면
-    # 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다. Food 는 blocked.safety 로 닫힌다.
-    # TODO: 실제 DB 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다 (issue4).
+    # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
+    # 포트가 build_gate 의 LifeStage 계산과 동의 확인 자리에 들어가고, 기억 포트는 같은 run 의
+    # store 를 읽게 한다. 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
+    # 안전 조회는 아직 연결되지 않았다(UnwiredSafety) — 포트를 안 넘긴 run 이 "알레르기 0행" 으로
+    # 열리면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다. 동의 값이 실제로 들어와도
+    # build_gate 는 동의와 상관없이 안전 조회 실패로 읽어서 Food 는 blocked.safety 로 닫힌다.
+    # TODO: health_safety 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다 (issue4).
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
-    food_ports = unwired_ports(
-        profile=InMemoryProfile({child_id: resolved_birth_date}),
-        memory=StoreFoodMemory(store),
-    )
+    memory_port = StoreFoodMemory(store)
+    if child_health_granted is None:
+        food_ports = unwired_ports(
+            profile=InMemoryProfile({child_id: resolved_birth_date}), memory=memory_port
+        )
+    else:
+        child_values = ChildValues(
+            child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
+        )
+        food_ports = unwired_ports(profile=child_values, consent=child_values, memory=memory_port)
     # 쓰기 포트는 호출마다 바로 commit
     writes = RunWrites()
     food_ports = record_food_writes(food_ports, writes)
