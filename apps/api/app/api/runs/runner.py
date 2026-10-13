@@ -57,6 +57,8 @@ def agent_job(
     raw_text: str,
     birth_date: date | None = None,
     child_health_granted: bool | None = None,
+    location: entrypoint.CoarseLocation | None = None,
+    activity_weather: entrypoint.WeatherSource | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
 ) -> Job:
@@ -70,6 +72,8 @@ def agent_job(
       그대로 진입점에 넘긴다 — 여기서 바꾸지 않는다. None 은 값이 없다는 뜻이고
       "동의 안 함"(False)이 아니다. 읽기에 실패하면 창구가 run 을 시작하지 않아서 이 job 이
       만들어지지 않는다.
+    - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
+      날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
@@ -117,6 +121,8 @@ def agent_job(
                         raw_text=raw_text,
                         birth_date=birth_date,
                         child_health_granted=child_health_granted,
+                        location=location,
+                        activity_weather=activity_weather,
                         run_id=channel.run_id,
                         emit=emit,
                         continuation=continuation,

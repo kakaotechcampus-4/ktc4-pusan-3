@@ -19,6 +19,7 @@ from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
+from app.agents import entrypoint
 from app.api import idempotency, quota
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
@@ -59,6 +60,7 @@ from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import (
     REQUIRED_CHILD_SCOPES,
     child_health_granted,
+    location_granted,
     record_consent,
 )
 from app.domains.policy.repository import find_active_versions
@@ -484,6 +486,13 @@ async def create_input(
     #    키 기억보다 앞이라 실패한 요청이 하루 한도와 한 번뿐인 맥락을 먹지 않는다.
     #    공통 의존성(AccessibleChild)에 넣지 않았다 — 아이 주소를 쓰는 모든 요청에 쿼리가 붙는다.
     health_consent = await child_health_granted(session, child_id=child.child_id)
+    # 좌표는 위치정보 동의가 있을 때만 Agent 로 넘긴다 (#380). 좌표가 안 왔으면 읽지도 않는다.
+    # 동의가 없으면 버리고 실내 전용으로 돈다 — 화면이 보냈어도 동의 없이 쓰지 않는다.
+    # 🚨 좌표는 저장 · 로그 · 예외 문구에 싣지 않는다. CoarseLocation 이 한 번 더 자르고
+    #    repr 을 막는다
+    location = None
+    if body.location is not None and await location_granted(session, parent_id=parent.parent_id):
+        location = entrypoint.CoarseLocation(lat=body.location.lat, lon=body.location.lon)
 
     # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
     # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
@@ -509,6 +518,8 @@ async def create_input(
         child_id=child.child_id,
         birth_date=child.birth_date,
         child_health_granted=health_consent,
+        location=location,
+        activity_weather=getattr(request.app.state, "activity_weather", None),
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,

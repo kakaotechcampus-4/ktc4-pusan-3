@@ -182,3 +182,78 @@ async def test_동의_조회가_실패해도_한도와_되묻기_맥락은_그�
     for _ in range(settings.INPUT_DAILY_LIMIT):
         response = await client.post(URL, json=BODY, headers=_key())
         assert response.status_code == 202
+
+
+# ── 좌표 (#380) ─────────────────────────────────────────────────
+LOCATION = {"lat": 35.177019, "lon": 129.076952}
+
+
+@pytest.fixture
+def location_reads(monkeypatch) -> _Reads:
+    """위치정보 동의 조회를 가짜로 바꿔 끼운다. 기본은 granted, 읽을 때마다 보호자 id 를 적는다."""
+    reads = _Reads()
+
+    async def fake_read(session, *, parent_id):
+        reads.append(parent_id)
+        return reads.value
+
+    monkeypatch.setattr(children, "location_granted", fake_read)
+    return reads
+
+
+async def test_위치_동의가_있으면_흐린_좌표를_러너에_넘긴다(
+    client, agent_calls, consent_reads, location_reads
+):
+    response = await client.post(URL, json={**BODY, "location": LOCATION}, headers=_key())
+
+    assert response.status_code == 202
+    location = agent_calls[0]["location"]
+    assert (location.lat, location.lon) == (35.18, 129.08)  # 서버가 한 번 더 자른다
+    assert "35" not in repr(location)  # 찍혀도 좌표가 새지 않는다
+    assert location_reads == [PARENT]
+
+
+async def test_위치_동의가_없으면_좌표를_버린다(client, agent_calls, consent_reads, location_reads):
+    """화면이 좌표를 보냈어도 동의 없이 쓰지 않는다. 실내 전용으로 돈다."""
+    location_reads.value = False
+
+    response = await client.post(URL, json={**BODY, "location": LOCATION}, headers=_key())
+
+    assert response.status_code == 202
+    assert agent_calls[0]["location"] is None
+
+
+async def test_좌표가_없으면_위치_동의를_읽지_않는다(
+    client, agent_calls, consent_reads, location_reads
+):
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["location"] is None
+    assert location_reads == []
+
+
+async def test_범위_밖_좌표는_400_이고_값을_돌려주지_않는다(
+    client, agent_calls, consent_reads, location_reads
+):
+    response = await client.post(
+        URL, json={**BODY, "location": {"lat": 135.5, "lon": 129.0}}, headers=_key()
+    )
+
+    assert response.status_code == 400
+    assert "135" not in response.text
+    assert agent_calls == []
+
+
+async def test_서버가_만든_날씨_어댑터를_러너에_넘긴다(client, agent_calls, consent_reads):
+    weather = object()
+    client._transport.app.state.activity_weather = weather
+
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["activity_weather"] is weather
+
+
+async def test_날씨_어댑터가_없으면_None_이다(client, agent_calls, consent_reads):
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["activity_weather"] is None
