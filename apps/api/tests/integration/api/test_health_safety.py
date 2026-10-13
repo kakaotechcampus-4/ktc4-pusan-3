@@ -19,8 +19,11 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.api import idempotency
+from app.api.errors import constraint_name
+from app.api.v1.routers import health_safety as health_safety_router
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
 from app.domains.identity.models import Parent
@@ -234,6 +237,62 @@ async def test_같은_항목이_있으면_409_내린_항목은_다시_등록할_
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "already_exists"
     assert again.status_code == 201
+
+
+async def test_DB_도_active_인_같은_항목을_두_줄_두지_않는다(session, bearer, consented):
+    """코드 확인(has_active_safety)을 거치지 않아도 부분 고유 인덱스가 두 번째 줄을 막는다.
+
+    내린(retracted) 줄은 인덱스 밖이라, 같은 이름을 내리고 다시 등록하는 것은 된다.
+    """
+    _, parent_1 = bearer
+    first = await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="땅콩"
+    )
+
+    with pytest.raises(IntegrityError) as caught:
+        async with session.begin_nested():
+            await create_safety(
+                session,
+                child_id=consented,
+                parent_id=parent_1,
+                kind=SafetyKind.ALLERGY,
+                label="땅콩",
+            )
+
+    assert constraint_name(caught.value) == "uq_health_safety_active_item"
+    first.status = SafetyStatus.RETRACTED
+    await session.flush()
+    await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="땅콩"
+    )
+
+
+async def test_동시에_온_같은_항목은_DB_가_막고_409(
+    db_client, session, bearer, consented, monkeypatch
+):
+    """두 보호자가 거의 동시에 누르면 둘 다 코드 확인에서 "아직 없다" 를 본다.
+
+    그 상황을 흉내 낸다 — 먼저 저장된 줄이 있는데 코드 확인은 "없다" 고 답하게 한다.
+    DB 가 두 번째를 거절하고, 서버는 그것을 500 이 아니라 409 로 돌려줘야 한다.
+    """
+    headers, parent_1 = bearer
+    await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="땅콩"
+    )
+
+    async def not_yet(*_args, **_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(health_safety_router, "has_active_safety", not_yet)
+
+    response = await db_client.post(
+        safety_url(consented), json={"type": "allergy", "label": "땅콩"}, headers=with_key(headers)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_exists"
+    rows = await rows_of(session, consented)
+    assert [row.status for row in rows] == [SafetyStatus.ACTIVE]
 
 
 @pytest.mark.parametrize(

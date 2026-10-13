@@ -12,12 +12,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.api import idempotency
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
-from app.api.errors import ApiError, ErrorEnvelope
+from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.v1.schemas.health_safety import (
     CreateHealthSafetyRequest,
     CreateHealthSafetyResponse,
@@ -124,24 +125,32 @@ async def register_health_safety(
         raise ApiError(
             400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {"fields": ["severity"]}
         )
+    # 같은 항목은 먼저 코드로 보고, 동시에 온 두 번째 요청은 DB 의 부분 고유 인덱스
+    # (uq_health_safety_active_item)가 막는다 — 아이 등록의 uq_parent_child_parent_id 와 같은 판정
     if await has_active_safety(session, child_id=child.child_id, kind=body.type, label=body.label):
         raise ApiError(409, "already_exists", "이미 등록된 항목이에요")
     try:
-        row = await create_safety(
-            session,
-            child_id=child.child_id,
-            parent_id=parent.parent_id,
-            kind=body.type,
-            label=body.label,
-            severity=body.severity,
-            reactions=body.reactions,
-            notes=body.notes,
-        )
+        # savepoint 로 감싼다 — DB 가 거절하면 이 한 줄만 되감고 세션은 그대로 쓸 수 있다
+        async with session.begin_nested():
+            row = await create_safety(
+                session,
+                child_id=child.child_id,
+                parent_id=parent.parent_id,
+                kind=body.type,
+                label=body.label,
+                severity=body.severity,
+                reactions=body.reactions,
+                notes=body.notes,
+            )
     except ValueError as exc:
         # 종류와 맞지 않는 심각도 (create_safety 가 DB CHECK 보다 먼저 막는다)
         raise ApiError(
             400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {"fields": ["severity"]}
         ) from exc
+    except IntegrityError as exc:
+        if constraint_name(exc) != "uq_health_safety_active_item":
+            raise
+        raise ApiError(409, "already_exists", "이미 등록된 항목이에요") from exc
     await session.refresh(row)
     writer = await find_parent(session, parent.parent_id)
     nickname = None if writer is None else writer.nickname
