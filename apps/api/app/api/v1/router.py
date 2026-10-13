@@ -22,6 +22,7 @@ from app.api.v1.routers import (
     consents,
     corrections,
     diary,
+    event_items,
     home,
     invites,
     me,
@@ -54,6 +55,7 @@ protected_router.include_router(corrections.router)
 protected_router.include_router(home.router)
 protected_router.include_router(calendar.router)
 protected_router.include_router(diary.router)
+protected_router.include_router(event_items.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)
