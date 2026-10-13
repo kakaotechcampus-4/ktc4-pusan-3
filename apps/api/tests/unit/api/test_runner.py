@@ -698,3 +698,36 @@ async def test_임베딩_키가_없으면_Curator_트리거를_넘기지_않는�
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["curator_trigger"] is None
+
+
+async def test_run_세션은_deps_의_백그라운드_세션으로_열고_commit_도_그_세션이다(monkeypatch):
+    """infra 세션을 import 하는 곳은 deps/db.py 하나다 (apps/api/CLAUDE.md). 러너도 그 문을 쓴다."""
+    opened: list = []
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        async def __aenter__(self) -> "FakeSession":
+            opened.append(self)
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    monkeypatch.setattr(runner, "background_session", FakeSession)
+
+    async def fake_handle_input(**kwargs):
+        await kwargs["commit"]()
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert [session.commits for session in opened] == [1]
