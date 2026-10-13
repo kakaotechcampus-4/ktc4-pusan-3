@@ -52,7 +52,7 @@
 | 동의 문구·개인정보 처리방침·이용약관 | `safety/` — NF-04 확정이 선행 조건 |
 | 아이 스코프 권한 (`requireConnected` · `requireOwner` · `requireWriter`) | 노션 「테크스팩 보완 제안 — 보호자 권한과 동의」 §2-1 |
 | 보호자 초대·연결 | 같은 문서 §2-3 |
-| 계정 탈퇴·파기 배치 | 같은 문서 §2-5. 파기 시 카카오 연결 끊기만 §7-4 에 남긴다 |
+| 계정 탈퇴·파기 배치 | 같은 문서 §2-5. 탈퇴할 때의 카카오 연결 끊기만 §7-4 에 남긴다 (#379) |
 | 앱 셸의 인앱 인증 세션 구현 | 프론트 이슈 ([#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 이관) |
 | 아이 스코프 권한에서 이번에 발견한 구멍 4건 | **부록 A** — 별도 이슈 대상 |
 
@@ -625,7 +625,7 @@ Cookie: oauth_state=<우리가 ③ 에서 심은 값>
 | **세션 토큰 · 1회용 코드 · `bind` 원문** | 전부 해시만 저장한다 |
 | 카카오 인가 코드 | 1회용이고 교환 즉시 무효다 |
 
-**예외 — 파기 배치.** 아이·계정 파기 시 카카오 연결을 끊어야 하는데 토큰이 없으므로 어드민 키로 대상을 지정한다.
+**예외 — 탈퇴.** 탈퇴하면 카카오 연결을 끊어야 하는데 토큰이 없으므로 어드민 키로 대상을 지정한다 (#379).
 
 ```
 POST https://kapi.kakao.com/v1/user/unlink
@@ -635,7 +635,12 @@ Content-Type: application/x-www-form-urlencoded;charset=utf-8
 target_id_type=user_id&target_id={provider_user_id}
 ```
 
-어드민 키는 앱 전체 권한이다. **서버 .env 에만 두고 파기 배치 외 어떤 경로에서도 부르지 않는다.**
+어드민 키는 앱 전체 권한이다. **서버 .env 에만 두고 탈퇴(`POST /auth/withdraw`) 외 어떤 경로에서도 부르지 않는다.**
+
+- 처음에는 "파기 배치에서만" 이었다. 탈퇴를 유예 없이 바로 지우기로 하면서(#167) 배치가 없어져 탈퇴 요청에서 부른다
+- 🚨 **DB 커밋 뒤에** 부르고, 실패해도 탈퇴는 성공(200)이다. 카카오가 먼저면 카카오 장애 때 탈퇴가 막힌다. 연결이 남아도 다시 로그인하면 신규 가입이라 지운 데이터는 돌아오지 않는다
+- 회원번호는 `auth_identity` 와 함께 지워지므로 커밋 전에 읽어 둔다. 그래서 자동 재시도는 없고, 실패하면 카카오의 "연결된 서비스" 에 이 서비스가 남는 것이 운영상 한계다
+- `APP_ENV=prod` 에서 키가 비어 있으면 서버가 뜨지 않는다. local · dev 에서 비어 있으면 연결 끊기만 건너뛴다
 
 ### 7-5. 로그
 
@@ -786,7 +791,7 @@ icatch://auth?error=oauth_denied
 KAKAO_REST_API_KEY=          # 콘솔 > 앱 키 > REST API 키
 KAKAO_CLIENT_SECRET=         # 콘솔 > 카카오 로그인 > 보안 에서 활성화 후 발급
 KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정확히 일치 (운영·로컬 각각)
-KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
+KAKAO_ADMIN_KEY=             # 어드민 키. 탈퇴의 카카오 연결 끊기에서만 사용 (§7-4)
 KAKAO_API_TIMEOUT=3          # 초
 AUTH_RETURN_URL_WEB=         # 🚨 필수. 예: https://<도메인>/auth/callback
 AUTH_RETURN_URL_APP=         # 🚨 필수. 예: icatch://auth

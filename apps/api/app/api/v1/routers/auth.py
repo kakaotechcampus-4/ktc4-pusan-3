@@ -32,6 +32,8 @@ from app.api.v1.schemas.auth import (
     ParentSummary,
     SessionResponse,
     SignupRequest,
+    WithdrawRequest,
+    WithdrawResponse,
 )
 from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
@@ -54,10 +56,12 @@ from app.domains.identity.repository import (
     find_parent,
     find_parent_id_by_identity,
 )
+from app.domains.identity.withdraw import withdraw_parent
 from app.domains.policy.repository import find_active_versions
 from app.integrations.kakao.client import (
     KakaoApiError,
     build_authorize_url,
+    kakao_admin,
     kakao_client,
     loggable_code,
 )
@@ -294,6 +298,61 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     await delete_session(session, session_id=auth.session_id)
     await session.commit()
     return Response(status_code=204)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 탈퇴 (#379) — 계약서 밖. 화면 목(apps/web/src/mocks/handlers/auth.ts)이 먼저 세운 모양이다
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@fixed_router.post(
+    "/withdraw",
+    responses={400: {"model": ErrorEnvelope}, 401: {"model": ErrorEnvelope}},
+)
+async def withdraw(
+    body: WithdrawRequest, auth: CurrentParent, session: SessionDep
+) -> WithdrawResponse:
+    """탈퇴 — 유예 없이 바로 지운다. 등록 보호자면 아이와 기록까지 지운다.
+
+    순서가 계약이다.
+    1. DB 삭제를 한 트랜잭션으로 커밋한다. 커밋 전 실패는 전부 되돌아간다 — 다시 누르면 된다
+    2. 커밋 뒤 카카오 연결을 끊는다. 실패해도 탈퇴는 200 이다 (_unlink_kakao)
+
+    🚨 커밋 뒤에는 되돌릴 수 없다. 응답이 사라져도 탈퇴는 끝났을 수 있고,
+       그 뒤 기존 세션은 401 이다.
+    `Idempotency-Key` 는 받지 않는다 — 끝난 뒤 다시 보내면 세션이 없어 401, 동시에 들어온
+    나중 요청은 withdraw_parent 의 잠금 뒤에서 이미 지워진 것을 보고 401 이다.
+    """
+    now = datetime.now(UTC)
+    withdrawn = await withdraw_parent(session, parent_id=auth.parent_id, now=now)
+    if withdrawn is None:
+        raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
+    await session.commit()
+
+    if withdrawn.kakao_user_id is not None:
+        await _unlink_kakao(withdrawn.kakao_user_id)
+    return WithdrawResponse(deleted_at=now)
+
+
+async def _unlink_kakao(user_id: str) -> None:
+    """카카오 연결 끊기 — 실패해도 예외를 올리지 않는다.
+
+    탈퇴는 이미 커밋됐다. 카카오가 먼저면 카카오 장애 때 탈퇴가 막힌다(약관 제9조 "탈퇴를 막지
+    않는다"). 연결이 남아도 다시 로그인하면 신규 가입이라 지운 데이터는 돌아오지 않는다.
+
+    🚨 재시도하지 않는다. 회원번호는 방금 함께 지워져 나중에 다시 부를 수도 없다 — 실패하면
+       카카오 앱의 "연결된 서비스" 에 이 서비스가 남는 것이 운영상 한계다 (#379).
+    🚨 로그에는 client 가 만든 문구(어느 호출 · 상태 코드 · 카카오 분류값)만 남는다.
+       회원번호 · 어드민 키 · 응답 본문은 싣지 않는다 (§7-5).
+    """
+    async with kakao_admin() as admin:
+        if admin is None:
+            log.info("KAKAO_ADMIN_KEY 가 비어 있어 카카오 연결 끊기를 건너뛴다")
+            return
+        try:
+            await admin.unlink(user_id)
+        except KakaoApiError as exc:
+            log.warning("카카오 연결 끊기 실패 — 탈퇴는 끝났다: %s", exc)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
