@@ -34,7 +34,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
-import { api, isApiError, qk, type Agent, type HomeResponse, type Me } from "@/lib/api";
+import { api, isApiError, qk, type HomeResponse, type Me } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { TRANSITION_TYPE } from "@/lib/view-transition";
 
@@ -116,8 +116,12 @@ function HomeScreen() {
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
 
-  function goToSuggestions(agents: Agent[]) {
-    const params = new URLSearchParams({ agents: agents.join(",") });
+  /**
+   * 🚨 **버튼의 `prompt_key` 를 그대로 넘긴다** (#286). 빼면 "저녁" 버튼을 눌러도 Agent 는
+   *    저녁인지 모른다. 문장은 넘기지 않는다 — 서버가 키로 정한다 (`PromptKey` 의 🚨).
+   */
+  function goToSuggestions(prompt: HomeResponse["agent_prompts"][number]) {
+    const params = new URLSearchParams({ agents: prompt.agent, prompt: prompt.prompt_key });
     router.push(`/child/${childId}/suggestions?${params.toString()}`);
   }
 
@@ -133,7 +137,7 @@ function HomeScreen() {
               onChange={setText}
               onSubmit={send}
               prompts={home.data?.agent_prompts ?? []}
-              onPickPrompt={(agent) => goToSuggestions([agent])}
+              onPickPrompt={goToSuggestions}
               onPickPhoto={() => setPhotoSheetOpen(true)}
               pending={busy || leaving !== null}
               locked={leaving !== null}

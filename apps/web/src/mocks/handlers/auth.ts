@@ -7,7 +7,7 @@ import { apiError, networkDelay, url } from "./helpers";
 import type { WithdrawResponse } from "@/lib/api/types";
 import { currentMe } from "./membership";
 import { invalidPolicyVersion } from "./policies";
-import { consentEffective, recordConsent } from "./settings";
+import { recordConsent } from "./settings";
 
 /**
  * 로그인 · 동의. 정본은 docs/api/auth-kakao-v1.md §3, 프론트 쪽은 docs/web/kakao-login-v1.md.
@@ -132,7 +132,7 @@ export const authHandlers = [
     //    선택 동의(`location`)를 가입 화면에서 켤 수 있게 되면서, 여기서 안 쌓으면
     //    10 설정이 "켰는데 꺼져 있다" 로 보인다 — 화면이 아니라 목이 거짓말하는 경우다.
     for (const consent of body.consents ?? []) {
-      recordConsent(consent.scope, "granted", consent.policy_version ?? "unknown");
+      recordConsent(null, consent.scope, "granted", consent.policy_version ?? "unknown");
     }
     return session(true, body.nickname);
   }),
@@ -143,47 +143,5 @@ export const authHandlers = [
   http.get(url("/me"), async () => {
     await networkDelay();
     return HttpResponse.json(currentMe());
-  }),
-
-  // append-only. 철회도 withdrawn 행을 추가하는 것이지 지우는 게 아니다.
-  //
-  // 🚨 **가입 흐름은 이 경로를 쓰지 않는다.** 계정 2건은 `/signup` 바디로, 아이 2건은
-  //    `POST /children` 바디로 간다 (#96) — 동의를 아이 단위로 기록하면 `child_id` 없이
-  //    저장할 수 없고, 그 id 는 아이를 만들어야 생기기 때문이다. 여기로 오는 것은
-  //    10 설정에서 켜고 끄는 경우뿐이고, 그때는 `child_id` 가 있다.
-  http.post(url("/consents"), async ({ request }) => {
-    await networkDelay();
-    const body = (await request.json()) as {
-      scope: string;
-      action: string;
-      policy_version?: string;
-    };
-    if (!body.policy_version) {
-      return apiError(400, "validation_failed", "policy_version 이 필요해요");
-    }
-    // 🚨 가입·아이 등록과 **같은 검사**다. 설정에서 켤 때만 낡은 버전을 받아 주면,
-    //    같은 동의가 어디서 켜졌는지에 따라 다른 글에 묶인다.
-    const staleVersion = invalidPolicyVersion([
-      { scope: body.scope, policy_version: body.policy_version },
-    ]);
-    if (staleVersion) {
-      return apiError(
-        400,
-        "policy_version_invalid",
-        "동의 화면을 다시 불러와 주세요",
-        staleVersion,
-      );
-    }
-    // 🚨 effective 를 여기서 손으로 만들지 않는다. 10 설정의 `GET /consents` 와 같은 표를
-    //    써야 "설정에서 껐는데 다시 켜져 있다" 가 안 생긴다 (handlers/settings.ts).
-    const action = body.action === "withdrawn" ? "withdrawn" : "granted";
-    const entry = recordConsent(body.scope, action, body.policy_version);
-    return HttpResponse.json(
-      {
-        consent: { id: `cs_${Date.now()}`, ...entry },
-        effective: consentEffective(),
-      },
-      { status: 201 },
-    );
   }),
 ];

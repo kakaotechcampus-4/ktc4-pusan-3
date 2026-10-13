@@ -438,6 +438,12 @@ def chronic_restriction_codes() -> dict[str, frozenset[int]]:
 
 HazardLevel = Literal["block", "warn"]
 
+# 이 월령 미만은 위험 용어의 경고도 차단으로 올린다 (Activity D6 규칙 ②). 법령 · 학회 문장은 대부분
+# "N세 미만은 감독이 필요하다" 라 경고만 나오는데, 0–17개월은 감독만으로 위험이 안 없어진다.
+# Activity 와 Growth 가 같은 선을 쓴다.
+# 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게 밴드 경계와 따로 둔다.
+SAFETY_PROMOTE_BELOW_MONTH = 18
+
 _AXIS_KEYS = frozenset({"block_below_month", "warn_below_month", "source", "warning_text"})
 _TERM_KEYS = frozenset({"axis", "label", "aliases", "guards"})
 
@@ -453,15 +459,14 @@ class HazardAxis:
     warning_text: str | None  # 화면 경고 문구. LLM 이 쓰지 않는다
 
     def level_at(self, months: int) -> HazardLevel | None:
-        """이 월령에서 차단인지 경고인지.
+        """이 월령에서 차단인지 경고인지. 0–17개월은 경고도 차단이다(`SAFETY_PROMOTE_BELOW_MONTH`).
 
-        0–17개월 경고 → 차단 승격은 Agent 코드(Activity · Growth)가 따로 한다
-        TODO: 이 판정으로 옮겨 한 규칙으로 읽게 하는 것은 별도 이슈.
+        승격은 여기 한 곳에서만 한다 — Activity · Growth 가 같은 판정을 읽어서 갈라지지 않는다.
         """
         if self.block_below_month is not None and months < self.block_below_month:
             return "block"
         if self.warn_below_month is not None and months < self.warn_below_month:
-            return "warn"
+            return "block" if months < SAFETY_PROMOTE_BELOW_MONTH else "warn"
         return None
 
 

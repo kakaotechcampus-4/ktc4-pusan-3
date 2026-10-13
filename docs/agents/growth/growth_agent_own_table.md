@@ -126,7 +126,7 @@ Growth의 활동 행과 출력 후보도 같은 사전으로 검사합니다. **
 | `propose_learning_activity` 출력 | 사후 필터 |
 | `food_choking` 축 용어 | 교육 · 루틴 출력의 **음식 용어 스캔** — 월령과 무관하게 뺀다 (2026-10-08) |
 
-- **0–17개월 경고 → 차단 승격을 Growth 에도 적용한다** (2026-10-10, #282 PM 리뷰 — 10-08 의 "적용하지 않는다" 를 뒤집었다). 같은 아이에게 놀이는 막고 교육은 내보내면 설명이 안 돼서, 선이 없는 위험에 서비스가 긋는 선은 Activity 와 하나다. 음식 용어가 먼저 빠지므로 12–17개월에 이 승격으로 막히는 축은 `water` · `suffocation_film` 이다. 승격은 지금 Growth `safety.py` 와 Activity(#261) 코드에 따로 있고, 공용 판정(`level_at`)으로 옮기는 것은 별도 이슈다.
+- **0–17개월 경고 → 차단 승격을 Growth 에도 적용한다** (2026-10-10, #282 PM 리뷰 — 10-08 의 "적용하지 않는다" 를 뒤집었다). 같은 아이에게 놀이는 막고 교육은 내보내면 설명이 안 돼서, 선이 없는 위험에 서비스가 긋는 선은 Activity 와 하나다. 음식 용어가 먼저 빠지므로 12–17개월에 이 승격으로 막히는 축은 `water` · `suffocation_film` 이다. 승격은 공용 판정 `HazardAxis.level_at`(`common/reference.py`) 한 곳에 있어 Activity 와 같은 규칙을 읽는다(#319).
 
 ### `health_safety` (보호자 입력)
 
@@ -147,7 +147,7 @@ Growth는 **차분만** 계산합니다. 백분위·저성장·정체기 판정�
 | 테이블 | 요청 | 왜 |
 | --- | --- | --- |
 | `notice` | 테이블 신설 (**우선순위 낮음**) | 기관 맥락 연결만 빠짐. 핵심 기능과 무관 |
-| `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | 성장폭 계산 (G-5 닫힘) |
+| `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · 잰 날 `date NOT NULL`. 칸 이름은 10-10 에 `height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (Agent 포트 `Measurement` · 웹 타입과 같게, `data_model.md`) | 성장폭 계산 (G-5 닫힘) |
 | `profile_affinity` | ✅ 확정(09-23) — `domain` 에 `routine` 은 없다 | Growth 는 education · activity 둘을 읽고, 루틴 관찰은 티어 3 로만 인용한다 |
 | `suggestion` | **`kind`만** 추가 · `source_refs` jsonb 제거 → `suggestion_evidence` 테이블 | 개인화/일반 표시 · 근거를 행으로 세기 위해 |
 

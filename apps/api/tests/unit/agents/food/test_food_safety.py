@@ -243,10 +243,9 @@ def test_꽃가루는_꽃게탕을_막지_않는다() -> None:
     assert result.passed == (row,)
 
 
-def test_짧은_환경_알레르기_이름은_메뉴를_과하게_막는다() -> None:
-    # 알고 두는 과차단이다. 사전에 없는 이름은 글자 그대로 막아서 "개" 가 "찌개" 에 걸린다.
-    # #한 글자는 사전에 있는 것만 막는다. 쑥 · 배 같은 한 글자 식품을 사전에
-    # 넣는 후속 이슈에서 이 테스트를 뒤집는다 — 사전보다 먼저 뒤집으면 쑥떡이 풀린다
+def test_짧은_환경_알레르기_이름은_메뉴를_막지_않는다() -> None:
+    # 사전에 없는 한 글자는 글자 그대로 막지 않는다 — "개" 가 "찌개" 에 걸리지 않는다 (#305).
+    # 쑥 · 배 같은 한 글자 식품은 SINGLE_CHAR_FOODS 로 그대로 막힌다(test_food_safety_cases.py)
     rows = [
         _row("김치찌개", ingredients=("김치", "돼지고기")),
         _row("된장찌개", ingredients=("된장", "두부")),
@@ -254,7 +253,7 @@ def test_짧은_환경_알레르기_이름은_메뉴를_과하게_막는다() ->
 
     result = filter_food_safety(rows, [_allergy("개")], "preschool", months=60)
 
-    assert result.blocked == tuple(rows)
+    assert result.passed == tuple(rows)
 
 
 def test_질환_행은_label_매핑으로_읽는다() -> None:
@@ -414,12 +413,13 @@ def test_확인_필요_음식을_그_이름으로_등록하면_확인으로_풀_
 
 def test_확인_필요_음식_이름으로_등록하면_예전처럼_그_코드도_막는다() -> None:
     # 이름 읽기는 확실 · 확인 필요를 가르지 않는다 — 어묵으로 등록한 보호자는 전에도 밀(6)을 막았다.
-    # 이 줄을 빼면 "어묵" 등록이 덜 막는 쪽으로 바뀐다
+    # 이 줄을 빼면 "어묵" 등록이 덜 막는 쪽으로 바뀐다. 10-11 에 어묵의 달걀(난백)도 확인 필요로
+    # 넣어서, 어느 성분에 반응하는지 모르는 "어묵" 등록은 달걀(1)도 막는다(#326 리뷰)
     row = _row("식빵 토스트", ingredients=("식빵", "버터"))
 
     result = filter_food_safety([row], [_allergy("어묵")], "toddler")
 
-    assert resolve_safety([_allergy("어묵")]).codes == {6}
+    assert resolve_safety([_allergy("어묵")]).codes == {1, 6}
     assert result.blocked == (row,)
 
 

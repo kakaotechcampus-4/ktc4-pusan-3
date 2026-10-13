@@ -103,7 +103,7 @@ def growth_doc_seed() -> tuple[GrowthDocEntry, ...]:
 
 
 def parse_growth_doc(data: Mapping[str, Any]) -> tuple[GrowthDocEntry, ...]:
-    """TODO: 행은 별도 PR 로 채우기"""
+    """시드 dict 를 행으로 읽는다. rows 가 비어 있어도 읽힌다 — 모양만 보고 내용은 테스트가 본다."""
     rows = data.get("rows")
     if not isinstance(rows, list):
         raise ValueError(f"{SEED_FILE} 에 rows 가 없다 (아직 행이 없으면 rows: [])")

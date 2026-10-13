@@ -9,7 +9,10 @@ health_safety.label 은 자유 입력이다. 고르는 목록이 없고, 검사�
 공용 이름 사전(allergen_terms.yaml)에 Food 는 자기 음식 어휘를 더하고, 더할 것이 없으면
 `shared_book()` 을 쓴다.
 
-Food · Activity 가 같이 쓴다. food 패키지를 import 하지 않는다 (docs/agents/README.md §6).
+식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)에 붙이는 확인 문구도 여기서 고른다
+(`non_food_allergies`). 문구 자체는 Agent 마다 자기 `*.readout.yaml` 에 둔다.
+
+Food · Activity · Growth 가 같이 쓴다. food 패키지를 import 하지 않는다 (docs/agents/README.md §6).
 """
 
 import re
@@ -17,6 +20,8 @@ import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
+from types import MappingProxyType
+from typing import Protocol
 
 from app.agents.common.reference import allergen_groups, allergen_terms
 from app.rules.term_match import Term, TermMatcher, normalize, prepare_fields, split_words
@@ -36,6 +41,30 @@ class Restriction:
 
 # (이름, 그 이름이 막는 것, 다른 이름 안에서 이 이름을 찾을 때 덮을 guard)
 NameRule = tuple[str, Restriction, tuple[str, ...]]
+
+# 놀이 · 교육 문장(Activity · Growth)에서 대조하는 한 글자 이름 (#261 · #305). 그 밖의 한 글자는
+# 사전 별칭이든 보호자가 적은 이름이든 문장에 대조하지 않는다 — "밀" · "게" · "굴" · "닭" 은
+# "공 밀기" · "카드 게임" · "굴리기" · "닭 그림" 이, 강아지 알레르기를 적은 "개" 는 "블록 3개" 가
+# 걸린다. 이 글자들은 놀이 문장에서도 거의 그것이다 — "콩주머니" 에는 실제 콩이 들고, 쌀 촉감놀이 ·
+# 팥 주머니(오자미)도 영아 놀이로 흔하다. 꽃은 보호자가 그 한 글자로 적었으면 꽃(꽃가루) 알레르기로
+# 보고 꽃 활동을 막는다(#341 리뷰 — #264 의 "애매하면 막는다").
+#
+# 값은 그 글자가 다른 뜻으로 나오는 자리(guard)다. 보호자가 적은 이름을 글자 그대로 대조할 때
+# 붙인다 — 사전 이름(잣 · 콩)은 사전의 guard 를 쓴다. 그 글자가 든 같은 것(찹쌀 · 꽃가루)은
+# guard 에 넣지 않는다(막는 쪽). 쌀의 좁쌀 · 보리쌀은 Food 사전(food_safety_terms.yaml)의 쌀과 같다.
+# 메뉴를 보는 Food 는 자기 목록(`food/tools/safety.SINGLE_CHAR_FOODS`)을 쓰고, 이 글자들도
+# 다 막는다(잣 · 콩 · 깨 · 쌀 · 팥은 Food 사전 이름, 쑥 · 꽃은 그 목록).
+SINGLE_CHAR_NAMES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "잣": (),
+        "콩": (),
+        "깨": ("깨끗", "깨우", "깨워", "깨면", "깨진", "깨지", "깨져", "으깨"),
+        "쑥": ("쑥쑥",),
+        "쌀": ("쌀쌀", "좁쌀", "보리쌀"),
+        "팥": (),
+        "꽃": ("꽃게", "불꽃", "눈꽃", "꽃샘"),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -304,6 +333,56 @@ def read_label(label: str, book: LabelBook) -> tuple[Restriction, tuple[str, ...
                 if len(stem) > 1 or (_final_consonant(stem) or 0) > 0:
                     keep(stem)
     return found, tuple(rest)
+
+
+class SafetyRow(Protocol):
+    """`health_safety` 한 행에서 이 모듈이 읽는 칸. `SafetyEntry` 는 Agent 마다 따로 둔다."""
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def status(self) -> str: ...
+
+
+def non_food_names(label: str, book: LabelBook) -> tuple[str, ...]:
+    """이름 하나에서 식품 사전이 아무것도 못 찾은 조각(정규화한 글자). 다 식품이면 빈 튜플.
+
+    조각마다 읽는다 — "땅콩, 꽃가루" 의 꽃가루를 땅콩이 덮지 않게. 조각 안에서 사전 이름을
+    찾으면("달걀흰자" 의 달걀) 식품이다. 숫자처럼 이름이 아닌 조각("우유(2)" 의 2)은 세지 않는다.
+    """
+    names: list[str] = []
+    for piece in split_label(label):
+        found, rest = read_label(piece, book)
+        if rest and not found.codes and not found.terms:
+            names.append(piece)
+    return tuple(names)
+
+
+def non_food_allergies(rows: Iterable[SafetyRow], book: LabelBook) -> tuple[str, ...]:
+    """확인 문구를 붙일 알레르기 이름 — 보호자가 적은 그대로, 같은 이름은 한 번.
+
+    `allergy` 이고 active인 행 중 이름에 식품 사전이 못 찾은 조각이 있는 것이다. 꽃가루 · 라텍스 ·
+    동물털처럼 식품이 아닌 알레르기는 뺄 활동을 코드가 못 정한다 — 이름을 물건 · 장소로 넓히는
+    대응표(꽃가루 → 공원)는 판단을 담게 된다. 그래서 적은 이름을 되돌려 보여 주고 확인하게 할
+    뿐이다. 19종 밖 식품(쑥 · 키위)도 사전에 없어서 들어간다. 식품 알레르기는 이름 대조가 뺀다.
+
+    `environmental`은 고소공포 같은 것이라(data_model.md) 알레르기 문구가 맞지 않아 넣지 않는다.
+    `health_safety.category`가 빠진 뒤로는 환경 알레르기만 고를 칸이 없어서 사전으로 가른다.
+    """
+    labels: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        key = normalize(row.label)
+        if row.kind != "allergy" or row.status != "active" or key in seen:
+            continue
+        if non_food_names(row.label, book):
+            seen.add(key)
+            labels.append(row.label)
+    return tuple(labels)
 
 
 def _stems(word: str) -> list[str]:
