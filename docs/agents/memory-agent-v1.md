@@ -497,11 +497,8 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 
 | | 이유 |
 | --- | --- |
-| 실제 DB 연결 | ORM 모델은 `app/domains/` 에 생겼지만 `store/` Protocol 을 구현하는 어댑터가 없다. tool 은 여전히 `InMemoryStore` 를 쓴다 |
 | 초안 제출 API | D9 의 초안을 받아 event·event_item 에 쓰는 엔드포인트. 백엔드 몫이고, 보호자가 고친 시각을 `check_when` 으로 다시 검증해야 한다 |
-| SSE 엔드포인트 | `GET /runs/{rid}/events` 가 아직 없다. pipeline 의 `EventDrafts` 를 `event_draft` 로 실어야 한다 |
-| `app/api` 연결 | `run()` 을 부르는 엔드포인트. `child_id`/`source_writer` 를 인증 context 에서 채워야 한다 |
-| embedding | `subject` 가 임베딩 입력인데 update 로 바뀔 수 있다. 재계산 시점을 Curator 앞으로 둘지 결정 필요 |
+| 수정 뒤 재집계 | `subject` 가 update 로 바뀌면 다시 임베딩 · 연결해야 한다. 결정: 수정은 `updated_at` 이 갱신되면서 Curator 집계에 다시 들어간다(삭제는 `embedding` 을 비운다 — data_model §observation). 아직 Curator 가 `updated_at` 을 읽지 않는다 — `DbCuratorStore` 가 대상을 고를 때 어디서 볼지는 #257 에서 명성님과 정한다 |
 | 날짜 규칙·프롬프트 단위 테스트 | 초판에 있던 `test_datetime_rules.py` · `test_prompt.py` 가 지금 없다. `datetime_rules.py` 는 `test_event_when.py` 가 간접적으로만 덮고, 프롬프트 구획을 겨누는 테스트는 아예 없다 |
 | 낡은 초안이 뒤 결과를 덮어쓰는 것 | 초안은 만들어진 시점의 DB 값을 들고 화면에 떠 있다. 두 장을 띄워두고 나중 것부터 제출하면 앞 초안이 뒤 결과를 지운다(`items` 가 최종 목록이라). 일단 현상유지로 두고 잠금은 나중에 보기로 했다 |
 | 승인 전 재발화 | 초안을 제출하기 전에 같은 일정을 다시 말하면 `query_event` 가 0건을 돌려주고 create 초안이 두 장 생긴다. `DraftBook` 이 run 단위라서다(D11). 보호자가 한 장만 승인하면 된다 |

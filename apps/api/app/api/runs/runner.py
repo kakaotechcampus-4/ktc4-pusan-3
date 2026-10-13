@@ -27,6 +27,7 @@ from uuid import UUID
 
 from app.agents import entrypoint
 from app.api import idempotency
+from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, translate
 from app.api.runs.registry import RunChannel
 
@@ -50,6 +51,24 @@ RUN_DEADLINE_SECONDS = 60.0
 """
 
 
+def _curator_trigger() -> entrypoint.CuratorTrigger | None:
+    """Memory commit 직후 Curator 를 띄우는 콜백. 임베딩 키가 없으면 None — pipeline 이 건너뛴다.
+
+    store · commit 과 같이 러너가 만든다. DB 세션을 여는 곳을 러너 한 곳에 모으려는 것이다 (#257).
+    콜백은 별도 세션에서 백그라운드 task 로 돈다 — run 은 Curator 를 기다리지 않는다.
+    """
+    from app.domains.memory.curator.trigger import trigger_curator_background
+
+    embedder, judge = entrypoint.curator_deps()
+    if embedder is None:
+        return None
+
+    def trigger(child_id: UUID, today: date) -> None:
+        trigger_curator_background(child_id, today, embedder, judge)
+
+    return trigger
+
+
 def agent_job(
     *,
     child_id: UUID,
@@ -64,6 +83,8 @@ def agent_job(
 
     - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
       async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
+    - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
+      넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
       None 이면 진입점의 기본값을 쓴다.
     - `child_health_granted` 는 창구가 입력 한 번에 읽은 `child_health` 동의의 현재 값이다 (#372).
@@ -97,11 +118,10 @@ def agent_job(
             relay(event)
 
         from app.domains.memory.store.db_store import DbMemoryStore
-        from app.infra.db.session import async_session_factory
 
         # TODO: 도메인 Agent 가 DB 포트를 쓰면 이 세션을 동시에 타서
         #   AsyncSession 에러가 난다. task 마다 별도 세션을 열어야 한다.
-        async with async_session_factory() as session:
+        async with background_session() as session:
             store = DbMemoryStore(session, child_id=child_id)
 
             async def commit() -> None:
@@ -122,6 +142,7 @@ def agent_job(
                         continuation=continuation,
                         store=store,
                         commit=commit,
+                        curator_trigger=_curator_trigger(),
                     )
             except TimeoutError:
                 log.warning(

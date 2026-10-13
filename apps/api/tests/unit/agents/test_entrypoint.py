@@ -4,6 +4,7 @@ pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 """
 
 import calendar
+import inspect
 from datetime import date, datetime, timezone
 from typing import Any, get_args
 from uuid import UUID
@@ -13,6 +14,9 @@ import pytest
 from app.agents import entrypoint, pipeline
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
+from app.agents.common.llm_client import LLMConfigError
+from app.agents.curator.embedding import embedder as embedder_module
+from app.agents.curator.embedding import jev as jev_module
 from app.agents.food.context import build_gate
 from app.agents.food.registry import closed_readout_key, tools_for
 from app.agents.food.schemas.common import FoodTaskType
@@ -23,6 +27,10 @@ from app.agents.supervisor import routing
 
 CHILD = UUID(int=1)
 PARENT = UUID(int=2)
+
+
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
 
 
 async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,6 +54,7 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
         raw_text="딸기 잘 먹었어",
         run_id="run-1",
         emit=emit,
+        commit=_no_commit,
     )
 
     assert result == "RESULT"
@@ -77,6 +86,13 @@ def test_이벤트_타입이_전부_밖으로_나간다() -> None:
     assert not missing
 
 
+def test_commit_은_기본값이_없다() -> None:
+    """기본값이 있으면 DB store 를 넘기고 commit 을 빼먹은 호출이 조용히 통과한다.
+    기록은 러너가 세션을 닫을 때 사라진다."""
+    for handle in (entrypoint.handle_input, pipeline.handle_input):
+        assert inspect.signature(handle).parameters["commit"].default is inspect.Parameter.empty
+
+
 async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch) -> None:
     """api 가 만든 store 에 써야 저장된 행을 api 가 다시 읽을 수 있다."""
     seen: dict[str, Any] = {}
@@ -94,6 +110,7 @@ async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch
         raw_text="딸기 잘 먹었어",
         run_id="run-1",
         store=store,
+        commit=_no_commit,
     )
 
     assert seen["memory"].store is store
@@ -134,6 +151,7 @@ async def test_생일을_주면_월령에서_단계를_고른다(
         raw_text="오늘 뭐 먹일까",
         run_id="run-1",
         birth_date=birth_date,
+        commit=_no_commit,
     )
 
     food = seen["food"]
@@ -158,6 +176,7 @@ async def test_이어받기_맥락을_pipeline_에_그대로_넘긴다(monkeypat
         raw_text="3일 전부터",
         run_id="run-2",
         continuation=pending,
+        commit=_no_commit,
     )
 
     assert seen["raw_text"] == "3일 전부터"
@@ -173,10 +192,11 @@ async def test_이어받기가_없으면_none_을_넘긴다(monkeypatch: pytest.
 
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
-    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=_no_commit
+    )
 
     assert seen["continuation"] is None
-    assert seen["commit"] is None
 
 
 async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
@@ -192,7 +212,11 @@ async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
     await entrypoint.handle_input(
-        child_id=CHILD, parent_id=PARENT, raw_text="딸기 잘 먹었어", run_id="run-1"
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기 잘 먹었어",
+        run_id="run-1",
+        commit=_no_commit,
     )
 
     memory, food = seen["memory"], seen["food"]
@@ -246,7 +270,9 @@ async def test_포트를_안_넘긴_run_의_Food_는_안전_조회_실패로_닫
 
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
-    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r")
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=_no_commit
+    )
 
     gate = await build_gate(seen["food"])
     assert gate.safety_ok is False
@@ -267,7 +293,9 @@ async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴
 
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
-    await entrypoint.handle_input(child_id=CHILD, parent_id=PARENT, raw_text="두유", run_id="r")
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="두유", run_id="r", commit=_no_commit
+    )
 
     writes = seen["writes"]
     assert writes.wrote is False
@@ -296,7 +324,12 @@ async def _food_of(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
 
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
     await entrypoint.handle_input(
-        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", **kwargs
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기",
+        run_id="r",
+        **kwargs,
+        commit=_no_commit,
     )
     return seen["food"]
 
@@ -352,3 +385,66 @@ async def test_다른_아이의_생일_동의는_받지_못한다(monkeypatch: p
         await food.ports.profile.birth_date(child_id=UUID(int=99))
     with pytest.raises(LookupError):
         await food.ports.consent.child_health_granted(child_id=UUID(int=99))
+
+
+async def test_받은_curator_trigger_를_그대로_pipeline_에_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    def trigger(child_id: UUID, today: date) -> None:
+        pass
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기 잘 먹었어",
+        run_id="run-1",
+        commit=_no_commit,
+        curator_trigger=trigger,
+    )
+
+    assert seen["curator_trigger"] is trigger
+
+
+async def test_트리거를_안_넘기면_Curator_를_띄우지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """agents 는 DB 를 열지 않는다.
+
+    테스트 · eval 이 임베딩 키를 가졌어도 실제 DB Curator 가 뜨면 안 된다.
+    """
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기 잘 먹었어",
+        run_id="run-1",
+        commit=_no_commit,
+    )
+
+    assert seen["curator_trigger"] is None
+
+
+def test_curator_deps_는_키가_없으면_None_이다(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_key(*args: Any, **kwargs: Any) -> Any:
+        raise LLMConfigError("키 없음")
+
+    monkeypatch.setattr(embedder_module, "Embedder", no_key)
+    monkeypatch.setattr(jev_module, "JevJudge", no_key)
+    entrypoint.curator_deps.cache_clear()
+    try:
+        assert entrypoint.curator_deps() == (None, None)
+    finally:
+        entrypoint.curator_deps.cache_clear()
