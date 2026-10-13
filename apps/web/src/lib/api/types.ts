@@ -532,7 +532,7 @@ export interface EventDraftFields {
 /**
  * 초안의 준비물 한 줄.
  *
- * 🚨 **`is_prepared` 가 없다** (#122 확정). 체크 상태는 `PATCH /event-items/{iid}` 만의 몫이고,
+ * 🚨 **`is_prepared` 가 없다** (#122 확정). 체크 상태는 `PATCH /children/{cid}/event-items/{iid}` 만의 몫이고,
  *    초안이 정하는 것은 새 준비물(`item_id: null`)의 초기값뿐이다. payload 에 실으면
  *    SSE 가 나간 뒤 보호자가 체크한 것이 제출하는 순간 풀린다.
  */
@@ -596,7 +596,7 @@ export interface EventDraft {
  * 🚨 **보호자가 확인한 최종 상태를 통째로 보낸다** (#122 확정). 부분 갱신이 아니라서
  *    `items` 배열에서 빠진 `item_id` 가 삭제로 처리된다.
  * 🚨 `draft_id` 를 싣지 않는다 (§4-4 — 화면 전용 키고 서버는 읽지 않는다).
- * 🚨 `items` 에 `is_prepared` 가 없다 (§4-3 — 체크는 `PATCH /event-items/{iid}` 만의 몫).
+ * 🚨 `items` 에 `is_prepared` 가 없다 (§4-3 — 체크는 `PATCH /children/{cid}/event-items/{iid}` 만의 몫).
  */
 export interface SubmitEventBody {
   event: EventDraftFields;
@@ -1035,7 +1035,7 @@ export interface DiaryRequest {
   content: string;
 }
 
-/** `PATCH /event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
+/** `PATCH /children/{cid}/event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
 export interface EventItemUpdateResponse {
   item: EventItem;
 }

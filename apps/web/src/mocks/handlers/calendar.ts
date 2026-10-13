@@ -4,6 +4,7 @@ import type {
   CalendarDay,
   CalendarDayResponse,
   CalendarMonthResponse,
+  EventItem,
   EventItemUpdateResponse,
   MyDiary,
   Observation,
@@ -26,8 +27,8 @@ import { withIdempotency } from "./idempotency";
 import { listedObservations } from "./memories";
 
 /**
- * 09 캘린더 핸들러. 서버(#318 1/3 · PR #325 달 보기 · 하루 보기, 2/3 · PR #333 일기 쓰기 · 지우기)와
- * 같은 모양을 내린다.
+ * 09 캘린더 핸들러. 서버(#318 1/3 · PR #325 달 보기 · 하루 보기, 2/3 · PR #333 일기 쓰기 · 지우기,
+ * 3/3 · PR #335 준비물 체크)와 같은 모양을 내린다.
  *
  * 🚨 **일기는 관찰과 별도 저장소다** (계약서 §09). 목에서도 일기를 쓴다고 관찰이 늘지 않는다 —
  *    "일기는 관찰로 자동 추출하지 않는다" 를 화면이 지키는지 확인하려면 목이 먼저 지켜야 한다.
@@ -39,23 +40,29 @@ import { listedObservations } from "./memories";
  *    같은 함수에서 나온다 — 어긋나면 "기록 3건" 을 눌렀는데 2건이 나온다.
  */
 
-/** 준비물 체크 상태. 🚨 프로세스 수명만큼 산다 — 테스트는 `resetCalendarState()` 로 되돌린다. */
-const preparedItems = new Map<string, boolean>(
-  confirmedEvent.items.map((item) => [item.item_id, item.is_prepared]),
-);
+/**
+ * 준비물 체크 상태. 🚨 프로세스 수명만큼 산다 — 테스트는 `resetCalendarState()` 로 되돌린다.
+ *
+ * 🚨 **체크 시각도 같이 든다.** 서버는 이미 체크된 것을 다시 체크하면 처음 시각을 그대로 둔다
+ *    (`set_event_item_prepared` · PR #335). 체크 여부만 들면 하루 보기가 픽스처 시각을 그대로 내려서
+ *    PATCH 응답과 다시 읽은 값이 어긋난다.
+ */
+type PreparedState = Pick<EventItem, "is_prepared" | "prepared_at">;
+
+const preparedItems = new Map<string, PreparedState>();
 
 export function resetCalendarState(): void {
   preparedItems.clear();
-  for (const item of confirmedEvent.items) preparedItems.set(item.item_id, item.is_prepared);
+  for (const { item_id, is_prepared, prepared_at } of confirmedEvent.items) {
+    preparedItems.set(item_id, { is_prepared, prepared_at });
+  }
 }
+resetCalendarState();
 
 function withPrepared(date: string) {
   return calendarEventsOn(date).map((event) => ({
     ...event,
-    items: event.items.map((item) => ({
-      ...item,
-      is_prepared: preparedItems.get(item.item_id) ?? item.is_prepared,
-    })),
+    items: event.items.map((item) => ({ ...item, ...preparedItems.get(item.item_id) })),
   }));
 }
 
@@ -235,31 +242,45 @@ export const calendarHandlers = [
             item_id: item.item_id ?? `i_new_${index}`,
             item_name: item.item_name,
             // 🚨 초안은 체크 상태를 정하지 않는다 — 기존 행은 서버가 들고 있던 값을 지킨다 (#122 §4-3).
-            is_prepared: item.item_id ? (preparedItems.get(item.item_id) ?? false) : false,
-            prepared_at: null,
+            ...((item.item_id && preparedItems.get(item.item_id)) || {
+              is_prepared: false,
+              prepared_at: null,
+            }),
           })),
         },
       });
     }),
   ),
 
-  http.patch(url("/event-items/:iid"), async ({ params, request }) => {
+  /**
+   * 준비물 체크 — 서버 `PATCH /children/{cid}/event-items/{iid}` (#318 3/3 · PR #335) 와 같다.
+   * 응답의 준비물은 일정 응답의 `items[]` 와 같은 모양이다.
+   *
+   * 🚨 **체크 시각은 상태가 바뀔 때만 새로 정한다.** 미체크 → 체크만 지금 시각, 체크 → 체크는
+   *    처음 시각 그대로, 해제는 `null`.
+   * 🚨 **`withIdempotency` 로 감싸지 않는다.** 최종 상태를 보내는 요청이라 몇 번 보내도 결과가 같다.
+   *    순서가 뒤바뀌는 것은 서버도 못 막아서 화면이 준비물마다 요청을 한 줄로 보낸다 (`PreparedCheckbox`).
+   */
+  http.patch(url("/children/:cid/event-items/:iid"), async ({ params, request }) => {
     await networkDelay();
     const iid = String(params.iid);
     const { is_prepared: isPrepared } = (await request.json()) as { is_prepared: boolean };
 
     const item = confirmedEvent.items.find((each) => each.item_id === iid);
-    if (!item) return apiError(404, "not_found", "그 준비물을 찾지 못했어요");
+    const before = preparedItems.get(iid);
+    if (!item || !before) return apiError(404, "not_found", "그 준비물을 찾지 못했어요");
 
-    preparedItems.set(iid, isPrepared);
-
-    const body: EventItemUpdateResponse = {
-      item: {
-        ...item,
-        is_prepared: isPrepared,
-        prepared_at: isPrepared ? new Date().toISOString() : null,
-      },
+    const after: PreparedState = {
+      is_prepared: isPrepared,
+      prepared_at: !isPrepared
+        ? null
+        : before.is_prepared
+          ? before.prepared_at
+          : new Date().toISOString(),
     };
+    preparedItems.set(iid, after);
+
+    const body: EventItemUpdateResponse = { item: { ...item, ...after } };
     return HttpResponse.json(body);
   }),
 ];
