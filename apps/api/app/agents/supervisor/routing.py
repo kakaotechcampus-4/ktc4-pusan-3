@@ -56,7 +56,9 @@ logger = logging.getLogger(__name__)
 
 IntentType = Literal["record", "request", "mixed"]
 
-IMPLEMENTED_AGENTS: frozenset[str] = frozenset({DomainAgentName.FOOD.value})
+IMPLEMENTED_AGENTS: frozenset[str] = frozenset(
+    {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value}
+)
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
 #       (Supervisor가 의도를 제대로 나눴다고 보는 정책으로, 잘못 나누면 입력 정보가 그대로 삭제)

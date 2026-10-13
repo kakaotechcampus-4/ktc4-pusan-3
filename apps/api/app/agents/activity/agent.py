@@ -11,7 +11,7 @@
      전부 빠졌는데 재호출도 후보를 못 내면 `failed` 다
 
 저장은 하지 않는다. 결과의 suggestions 를 pipeline 이 저장한다 (공통규약 §3).
-pipeline 에는 아직 연결하지 않았다 — Supervisor 라벨 · 추천 저장 콜백이 정해지면 붙인다.
+pipeline 에 등록돼 있다(#380). context 는 entrypoint 가 만든다 — 좌표 · 날씨 어댑터는 api 가 넘긴다.
 """
 
 import logging
@@ -21,7 +21,7 @@ from typing import Any
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.gating import checks_weather
 from app.agents.activity.prompt import build_system_prompt, recall_message, request_message
-from app.agents.activity.readouts import READOUTS
+from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
 from app.agents.activity.rules import normalize_activity
@@ -30,6 +30,7 @@ from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.outing import check_weather
 from app.agents.activity.weather import WEATHER_UNCHECKED
 from app.agents.common.llm_client import LLMClient
+from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
@@ -100,9 +101,10 @@ async def run(
         check_count(tuple(draft for draft, _ in picked), exhausted=True)
 
     drafts = tuple(draft for draft, _ in picked)
-    # 🚨 확인 문구(state.cautions)와 위험 경고(state.warnings)는 아직 결과에 싣지 않는다 — 화면
-    # 자리가 정해지지 않았다. pipeline 은 for_task() 사본으로 Agent 를 돌리고 결과만 받으므로,
-    # 연결할 때 결과로 옮기지 않으면 표시 없이 빠진다 (#359 리뷰)
+    # 확인 문구(state.cautions)는 결과의 readouts 로 싣는다 — pipeline 은 for_task() 사본으로
+    # Agent 를 돌리고 결과만 받아서, 여기 싣지 않으면 표시 없이 빠진다 (#380).
+    # 🚨 위험 경고(state.warnings)는 아직 결과에 없다. 추천 하나에 붙는 문구라 공통
+    # SuggestionDraft 에 칸이 생겨야 한다 — #380 합의 1
     context.state.suggestions = drafts
     context.state.warnings = tuple(warning for _, warning in picked)
     notice = count_notice(len(drafts))
@@ -113,6 +115,7 @@ async def run(
         status="degraded" if attempted and WEATHER_UNCHECKED in weather.notices else "completed",
         suggestions=drafts,
         readouts=(
+            *(_caution(text) for text in context.state.cautions),
             *(READOUTS.render(key) for key in weather.notices if attempted),
             *((notice,) if notice else ()),
         ),
@@ -121,6 +124,13 @@ async def run(
 
 
 Picked = tuple[tuple[SuggestionDraft, tuple[str, ...]], ...]
+
+
+def _caution(text: str) -> Readout:
+    """알레르기 확인 문구 한 줄. 문구는 출력 tool 이 상수 템플릿(`caution.non_food_allergy`)으로
+    이미 만들었다 — 모델을 거치지 않으므로 `authored_by="code"` 다.
+    """
+    return Readout(kind=READOUTS.get(CAUTION_NON_FOOD_ALLERGY).kind, body=text, authored_by="code")
 
 
 def _picked(context: ActivityContext) -> Picked:

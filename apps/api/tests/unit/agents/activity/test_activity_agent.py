@@ -238,6 +238,10 @@ class TestRecall:
         result = await run(task(), ctx, client=llm)
         assert result.model_calls == 2
         assert len(ctx.state.cautions) == 1 and "꽃가루" in ctx.state.cautions[0]
+        # pipeline 은 결과만 받으므로 확인 문구는 결과의 readouts 로도 나가야 한다 (#380)
+        (caution,) = [r for r in result.readouts if "꽃가루" in r.body]
+        assert (caution.kind, caution.authored_by) == ("notice", "code")
+        assert result.readouts[0] is caution  # 개수 안내보다 먼저 보인다
 
     async def test_다_빠져도_실패가_아니라_안내만_낸다(self):
         llm = FakeLLM(

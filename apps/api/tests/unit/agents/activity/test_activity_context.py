@@ -16,7 +16,12 @@ from app.agents.activity.agent import run
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.readouts import READOUTS
 from app.agents.activity.store.inmemory import InMemoryPlaces, InMemorySafety, in_memory_ports
-from app.agents.activity.store.ports import CoarseLocation, SafetyEntry, WeatherGrid
+from app.agents.activity.store.ports import (
+    CoarseLocation,
+    SafetyEntry,
+    UnwiredSafety,
+    WeatherGrid,
+)
 from app.agents.common.schemas.task import DomainTask
 
 CHILD = UUID(int=1)
@@ -171,3 +176,16 @@ class TestForTask:
         first, second = ctx.for_task(), ctx.for_task()
         first.state.seen_places["사직어린이공원"] = None  # type: ignore[assignment]
         assert second.state.seen_places == {}
+
+
+class TestUnwiredSafety:
+    """`health_safety` 어댑터 전의 자리 (#380). 동의와 상관없이 닫힌다 — Food 와 같다."""
+
+    @pytest.mark.parametrize("consent", [True, False])
+    async def test_동의와_상관없이_안전_조회_실패로_닫힌다(self, consent):
+        ctx = context(consent=consent, safety=UnwiredSafety())
+        gate = await build_gate(ctx, outdoor_ok=True)
+        assert gate.safety_ok is False
+        assert ctx.state.safety_entries is None
+        result = await run(task(), ctx, client=None)
+        assert (result.status, result.model_calls) == ("blocked", 0)

@@ -37,7 +37,7 @@ from app.agents.common.evidence import AffinityRow
 from app.agents.common.ports import (
     ChildProfileReader,
     ConsentReader,
-    SafetyLookupError,  # noqa: F401 — store/__init__.py · inmemory.py 가 여기서 가져간다
+    SafetyLookupError,
 )
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
@@ -195,6 +195,19 @@ class SafetyReader(Protocol):
         필터는 다른 행으로 거르는 경우).
         """
         ...
+
+
+class UnwiredSafety:
+    """`health_safety` 어댑터가 붙기 전의 자리. 읽으면 늘 `SafetyLookupError` 다 (Food 와 같다).
+
+    `build_gate` 는 이 포트가 들어 있으면 동의를 보지 않고 안전 조회 실패(`safety_ok=False`)로
+    읽는다. 동의가 없는 아이는 원래 `health_safety` 를 읽지 않아서 그대로 두면 실패가 드러나지
+    않고 Activity 가 환경 알레르기(꽃가루 · 동물털) 확인 없이 열린다 — 어댑터가 붙기 전에는 동의와
+    상관없이 닫혀 있어야 한다 (#372 · #380). 어댑터가 붙으면 이 클래스를 쓰는 자리가 없어진다.
+    """
+
+    async def activity_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
+        raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
 
 
 class ActivityMemoryReader(Protocol):

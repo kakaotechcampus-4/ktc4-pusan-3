@@ -8,6 +8,11 @@ from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.agents.activity.context import ActivityContext
+from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsent
+from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
+from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
+from app.agents.activity.store.ports import CoarseLocation, WeatherSource
 from app.agents.common.child_values import ChildValues
 from app.agents.food.context import FoodContext
 from app.agents.food.store import InMemoryProfile, unwired_ports
@@ -16,7 +21,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
-from app.agents.memory_bridge import StoreFoodMemory
+from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory
 from app.agents.pipeline import (
     AgentResult,
     Commit,
@@ -45,6 +50,7 @@ from app.agents.supervisor.routing import Guidance
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
     "AgentResult",
+    "CoarseLocation",
     "Commit",
     "DomainRouted",
     "Done",
@@ -68,6 +74,7 @@ __all__ = [
     "Step",
     "Unavailable",
     "Unwritten",
+    "WeatherSource",
     "handle_input",
 ]
 
@@ -115,6 +122,8 @@ async def handle_input(
     run_id: str,
     birth_date: date | None = None,
     child_health_granted: bool | None = None,
+    location: CoarseLocation | None = None,
+    activity_weather: WeatherSource | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
@@ -127,6 +136,12 @@ async def handle_input(
       생일과 같이 값을 감싼 포트(`ChildValues`)로 Food 의 `ConsentReader` 에 들어간다. 읽는 데
       실패하면 API 가 run 을 시작하지 않으므로 여기에는 실패 값이 없다 — None 은 값을 안 넘긴
       호출(테스트 · eval)이고 "동의 안 함" 으로 바뀌어 읽히지 않는다.
+    - location 은 휴대폰이 흐려 보낸 좌표다(#380). `CoarseLocation` 이 소수점 둘째 자리로 한 번 더
+      자르고, repr 에 값을 싣지 않는다. 이 run 안에서 격자 변환과 장소 거리 계산에만 쓰고 버린다 —
+      저장 · 로그 · 모델 입력에 넣지 않는다 (activity-agent-v1 4-3). None 이면 Activity 는
+      실내 전용이다.
+    - activity_weather 는 api 가 서버 시작 때 만든 날씨 어댑터다. agents 는 integrations 를
+      import 하지 않아서 api 가 넘긴다. None 이면 날씨를 묻지 않고 실내 전용이다.
     - store를 넘기면 그것에 쓴다.
     - agents는 infra에 직접 닿지 않으므로 DB 어댑터는 api가 만들어 넘긴다.
     - continuation을 넘기면 raw_text는 이전 질문에 대한 보호자의 답이다. api는 reply_to를
@@ -181,6 +196,30 @@ async def handle_input(
         ports=food_ports,
     )
 
+    # Activity 도 Food 와 같은 자리에서 같은 값을 받는다 (#380). 안전 조회는 아직 연결되지 않아
+    # (UnwiredSafety) 동의와 상관없이 blocked.safety 로 닫힌다 — 환경 알레르기를 확인하지 않고
+    # 열리지 않게. 기억은 같은 run 의 store 를 읽고, 문서 행은 yaml 의 approved 행이다.
+    activity_child = (
+        ChildValues(
+            child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
+        )
+        if child_health_granted is not None
+        else None
+    )
+    activity_context = ActivityContext(
+        child_id=child_id,
+        run_id=run_id,
+        now=now,
+        timezone=KST,
+        ports=activity_unwired_ports(
+            profile=activity_child or ActivityProfile({child_id: resolved_birth_date}),
+            consent=activity_child or ActivityConsent({child_id: True}),
+            memory=StoreActivityMemory(store),
+            weather=activity_weather,
+        ),
+        location=location,
+    )
+
     # Curator — DB 세션을 열어 백그라운드로 돌린다.
     # embedder 가 None 이면 trigger 를 안 만들어 pipeline 이 건너뛴다.
     embedder, judge = _build_curator_deps()
@@ -195,7 +234,7 @@ async def handle_input(
     return await _handle_input(
         raw_text,
         memory_context,
-        {"food": food_context},
+        {"food": food_context, "activity": activity_context},
         run_id=run_id,
         emit=emit,
         continuation=continuation,

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
+from app.agents.activity.agent import run as run_activity
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
@@ -111,6 +112,7 @@ PartialReason = Literal["timeout_20s", "agent_error"]
 # 구현된 도메인 Agent 의 실행 함수. routing.IMPLEMENTED_AGENTS 와 키가 같아야 한다
 _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
+    DomainAgentName.ACTIVITY.value: run_activity,
 }
 
 # 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.

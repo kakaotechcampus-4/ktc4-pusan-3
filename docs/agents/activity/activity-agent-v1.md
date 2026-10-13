@@ -242,7 +242,7 @@ class ActivityCandidate(ToolArgs):
 
 🚨 **응답의 해석도 Agent 쪽(`weather.py`)이 한다.** 반대 방향도 막혀 있어서 `integrations` 는 `agents` 를 import 할 수 없다. 해석을 어댑터에 두면 `"-"` · `NO_DATA` · 강수 문자열 같은 규칙(4-2)을 테스트 밖에서 한 번 더 짜게 된다. 어댑터는 호출 · 타임아웃 · 지금 시각 칸 고르기까지만 하고, 값은 **원문 문자열 그대로** 포트로 넘긴다.
 
-**어댑터 자리** — `app/integrations/weather/`. 단기예보(`forecast.py`) · 대기질(`air.py`) · 자외선(`uv.py`) · 특보(`advisories.py`)를 `source.PublicWeather` 가 묶어 `WeatherSource` 가 된다. `app/api` 가 프로세스에 하나를 만들어 주입한다(아직 안 함 — pipeline 연결 때).
+**어댑터 자리** — `app/integrations/weather/`. 단기예보(`forecast.py`) · 대기질(`air.py`) · 자외선(`uv.py`) · 특보(`advisories.py`)를 `source.PublicWeather` 가 묶어 `WeatherSource` 가 된다. `app/api` 가 프로세스에 하나를 만들어 `handle_input(activity_weather=...)` 로 넘긴다(#380 — agents 쪽 자리는 있고 api 쪽 주입은 PR 2).
 - **격자 → 시군구 · 특보구역** — 구운 표 `areas_data.py`(`scripts/bake_weather_areas.py`). 출처는 기상청 단기예보 활용가이드의 격자 · 위경도 표와 기상특보 활용가이드의 특보구역 코드 표다(엑셀은 저장소에 넣지 않는다). 격자에서 가장 가까운 읍면동 대표점(6칸 안)의 시군구를 쓴다.
 - **자외선** — 시군구 코드로 묻는다. API 는 읍면동 코드도 받지만 위치를 더 잘게 드러내서 쓰지 않는다. 발표 시각부터 3시간 칸(`h0` · `h3` …) 중 오늘은 지금 칸, 다른 날은 12시 칸.
 - **특보** — 위치 없이 전국 30일치를 한 번에 받아(전국 250행 남짓, 0.6초) 10분 동안 모든 사용자가 같이 쓰고, 그 시군구의 특보구역 행만 넘긴다. 특보구역은 시군 이름으로 찾고 하위 구역(파주시동북부 …)까지 넣는다. **구 단위 특보구역이 없는 광역시(서울 4권역 · 부산 3구역 · 인천 · 대구 · 대전 · 울산 · 옛 광주 구)는 그 시 전체 구역을 본다** — 어느 권역인지 표가 없어서, 시 어디든 발효면 실내만이다.
@@ -479,6 +479,8 @@ async def run(task, context, *, client=None):
 **재호출과 합치기** (`agent.py`) — 재호출은 **같은 대화에 이어** *"아래 활동은 다시 내지 않는다"* 한 줄을 더해 부르고, **이미 고른 것과 빠진 것**을 함께 준다. 빠진 이유는 말하지 않는다. 새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면 처음 통과한 것까지 잃는다 (`Tool_공통.md` §5-2 · #359 리뷰). 결과는 공통 `merge_drafts` 로 합친다 — 처음 통과한 것을 먼저 두고 빈자리만 채우며, 같은 후보 판정은 최근 중복 검사와 같은 `normalize_activity` 다. 경고 문구는 후보와 짝으로 넘겨 순서가 같이 간다. 그 뒤 `check_count(exhausted=True)` → `count_notice`. 1~2개가 남으면 개수 안내와 함께 낸다. **처음 것이 전부 빠졌는데 재호출도 후보를 못 내면 `failed`** 다 — "조건에 맞는 추천이 없어요" 는 모델이 냈는데 전부 안전 필터로 빠진 경우만이다.
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
+
+**pipeline 연결 (#380)** — `IMPLEMENTED_AGENTS` · `_RUNNERS` 에 등록돼 있고 context 는 entrypoint 가 Food 와 같은 생일 · 동의 · 기준일 · store 로 만든다. 안전 포트는 `UnwiredSafety` 라 `health_safety` 어댑터가 붙기 전에는 **동의와 상관없이** `blocked.safety` 다 — 동의하지 않은 아이가 환경 알레르기 확인 없이 열리지 않게(Food 와 같다, #372). pipeline 은 `for_task()` 사본으로 돌리고 결과만 받으므로, 화면에 가야 하는 것은 결과에 실어야 한다 — 알레르기 확인 문구(`state.cautions`)는 `readouts` 맨 앞에 코드 문구로 싣는다. 🚩 추천별 위험 경고(`state.warnings`)는 아직 결과에 없다 — 공통 `SuggestionDraft` 에 칸이 필요하다(#380 합의).
 
 **status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다. 좌표와 날씨 어댑터가 둘 다 없으면 `lookup_weather` 도 닫고(`Gate.data.weather`), 장소도 같다(`Gate.data.places`) — 열어 두면 부를 때마다 실패만 돌려준다. 프롬프트 `[오늘의 조건]` 은 *확인하지 못했다* 와 *바깥 활동이 어렵다* 를 나눠 쓴다 — 판정(실내만)은 같지만, 한 말로 쓰면 모델이 확인 안 한 날씨를 이유에 쓴다.
 

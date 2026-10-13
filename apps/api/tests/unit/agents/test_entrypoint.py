@@ -11,6 +11,10 @@ from uuid import UUID
 import pytest
 
 from app.agents import entrypoint, pipeline
+from app.agents.activity.context import build_gate as build_activity_gate
+from app.agents.activity.registry import closed_readout_key as activity_closed_key
+from app.agents.activity.schemas.task import ActivityTaskType
+from app.agents.activity.store.inmemory import InMemoryWeather
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.food.context import build_gate
@@ -19,6 +23,7 @@ from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
+from app.agents.memory_bridge import StoreActivityMemory
 from app.agents.supervisor import routing
 
 CHILD = UUID(int=1)
@@ -352,3 +357,67 @@ async def test_다른_아이의_생일_동의는_받지_못한다(monkeypatch: p
         await food.ports.profile.birth_date(child_id=UUID(int=99))
     with pytest.raises(LookupError):
         await food.ports.consent.child_health_granted(child_id=UUID(int=99))
+
+
+# ── Activity (#380) ─────────────────────────────────────────────
+async def _activity_of(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **_: Any) -> str:
+        seen.update(contexts=contexts, memory=memory_context)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="주말에 뭐 하지", run_id="r", **kwargs
+    )
+    return seen
+
+
+@pytest.mark.parametrize("granted", [True, False])
+async def test_Activity_도_동의와_상관없이_안전_조회_실패로_닫힌다(
+    monkeypatch: pytest.MonkeyPatch, granted: bool
+) -> None:
+    """🚨 어댑터가 붙기 전에 동의하지 않은 아이가 환경 알레르기 확인 없이 열리면 안 된다."""
+    seen = await _activity_of(monkeypatch, birth_date=_months_ago(30), child_health_granted=granted)
+    activity = seen["contexts"]["activity"]
+
+    gate = await build_activity_gate(activity, outdoor_ok=False)
+
+    assert gate.consent_child_health is granted
+    assert gate.safety_ok is False
+    assert activity_closed_key(ActivityTaskType.ACTIVITY_RECOMMENDATION, gate) == "blocked.safety"
+
+
+async def test_Activity_는_Food_와_같은_생일_기준일_store_를_쓴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    birth_date = _months_ago(30)
+    seen = await _activity_of(monkeypatch, birth_date=birth_date, child_health_granted=True)
+    activity, food = seen["contexts"]["activity"], seen["contexts"]["food"]
+
+    assert await activity.ports.profile.birth_date(child_id=CHILD) == birth_date
+    assert activity.now == food.now and activity.timezone is food.timezone
+    assert isinstance(activity.ports.memory, StoreActivityMemory)
+    assert activity.ports.places is None  # 장소 어댑터 전이라 장소 조회가 닫힌다
+
+
+async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weather = InMemoryWeather()
+    seen = await _activity_of(
+        monkeypatch,
+        location=entrypoint.CoarseLocation(lat=35.177019, lon=129.076952),
+        activity_weather=weather,
+    )
+    activity = seen["contexts"]["activity"]
+
+    assert activity.ports.weather is weather
+    assert (activity.location.lat, activity.location.lon) == (35.18, 129.08)  # 한 번 더 자른다
+
+
+async def test_좌표를_안_넘기면_Activity_는_실내_전용이다(monkeypatch: pytest.MonkeyPatch) -> None:
+    activity = (await _activity_of(monkeypatch))["contexts"]["activity"]
+    assert activity.location is None
+    assert activity.ports.weather is None
