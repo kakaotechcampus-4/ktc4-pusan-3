@@ -88,7 +88,7 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | `nutrients` | jsonb | NOT NULL, default `'{}'`. 100g 기준. **식품영양성분DB 에서만 채운다.** 에너지 · 단백질 · 지방 · 탄수화물 · 칼슘 · 철 · 나트륨은 다 차야 하고, 당류 · 포화지방은 있으면 싣는다(10-11). 사람이 넣은 행은 비어 있을 수 있고, 비면 영양 판정은 그 메뉴를 unresolved 로 센다 |
 | `ingredients` | text[] | NOT NULL, default `'{}'`. 사람이 확인한 재료(`manual`)만. 영양DB 행은 비어 있다 — 알레르기는 메뉴명 사전으로 보고 나머지는 "확인 못 함". 레시피 재료는 싣지 않는다(§1-1) |
 | `allergen_codes` | smallint[] | NOT NULL, default `'{}'`. 19종 — 재료 + 메뉴명 사전의 **합집합** |
-| `food_groups` | text[] | NOT NULL, default `'{}'`. 6개 식품군 |
+| `food_groups` | text[] | NOT NULL, default `'{}'`. 6개 식품군. 영양DB 행은 식품 대분류 이름을 `reference/food_groups.yaml` 대응표로 옮긴다 — 표에 없는 대분류는 비운다. 원재료성 행은 대분류 이름이 비어 오는 경우가 있어(우유: 이름은 비고 코드만 온다) 이 표로는 채워지지 않는다(#396) |
 | `resolved` | boolean | NOT NULL, default false |
 | `source_version` | varchar(32) | 데이터 기준 버전 |
 | `synced_at` | timestamptz | NOT NULL |
@@ -115,7 +115,8 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | `food_code` · `serving_g` · `nutrients` | | 레시피 이름이 영양DB 와 정확히 같을 때만 채운다(§1 규칙). 아니면 비우고, 영양 가중에 쓰지 않는다 |
 | `ingredients` | text[] | NOT NULL, default `'{}'`. 재료명 정리 표로 정리한 이름 (아래) |
 | `allergen_codes` | smallint[] | NOT NULL, default `'{}'`. 표의 코드 ∪ 메뉴명 · 정리한 재료명 사전의 **합집합** |
-| `food_groups` | text[] | NOT NULL, default `'{}'`. 6개 식품군 (아직 비운다) |
+| `food_groups` | text[] | NOT NULL, default `'{}'`. 6개 식품군. 재료 정리 표의 재료별 `food_group` 칸을 모은 합집합 — 칸이 빈 재료(검수 전)는 건너뛴다(#396) |
+| `main_ingredients` | text[] | NOT NULL, default `'{}'`. 원문 재료 역할(`IRDNT_TY_NM`)이 주재료인 재료의 정리한 이름. 비면 "같은 주재료 2개" 제약만 건너뛴다. 칸은 Agent 타입(`MenuCatalogRow.main_ingredients`)에 먼저 있고 DB 칸은 후속 어댑터 이슈(#396) |
 | `stage_min` | varchar(20) | 이 메뉴가 가능한 최소 단계. `LifeStage.stage` 네 값 — [`Tool_공통.md`](../shared/Tool_공통.md) §2 (수동 태깅, FT-1). 비면 `toddler` 로 본다 — **보수적인 쪽**(이유기 아이에게 나가지 않는다) |
 | `resolved` | boolean | NOT NULL, default false. 재료가 다 정리됐을 때만 true |
 | `source_version` · `synced_at` | | 데이터 기준 버전 · 적재 시각 |
@@ -126,12 +127,12 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - **버리는 행** — 기본정보가 없는 재료 행만 버린다(10-11: 171행, RECIPE_ID 501 ~ 540 의 38개). 재료 이름이 빈 행은 버리지 않고 "모르는 재료" 로 남긴다 — 버리면 그 레시피가 재료를 다 아는 것처럼 보인다(10-11 기준 0행).
 - **이름이 같은 레시피** — 4쌍이다(샤브샤브 · 깻잎장아찌 · 고추장아찌 · 보쌈김치, 쌍마다 재료 목록이 다르다. 10-11 라이브 eval `test_recipe_sync`). 이 표는 (`source`, `source_id`) 가 키라 두 레시피가 따로 행으로 남는다. 후보 풀에서 같은 `menu_key` 를 어떻게 보여 줄지는 식단 추천(issue3)에서 정한다 — 하나로 묶는다면 알레르기 코드는 합집합이 안전 쪽이다.
 - **재료는 정리 표로만 읽는다** (`reference/recipe_ingredients.yaml`, 사람 검수 · `app/agents/food/recipe_catalog.py`). 원문을 그대로 사전으로 훑으면 오타("돼기고기", 6행)가 돼지고기 알레르기에 안 걸리고, 묶음 표기("식용유/소금/참기름/잣가루")에 잣이 숨는다. 섹션 머리("[쇠고기양념] 간장")는 재료가 아니다. 부위명(안심 · 선지 · 곱창 · 장조림 …)은 10-11 에 안전 사전으로 옮겨 소 · 돼지 둘 다로 막는다(#326 리뷰, Food_Tool_명세 §3).
-  - 표 한 줄 = 원문 이름 → 정리한 이름 · 확실한 19종 코드 · `status`(`ok` 검수함 / `not_food` 음식 아님 / `unknown` 구성을 알 수 없음 / `draft` 검수 전).
+  - 표 한 줄 = 원문 이름 → 정리한 이름 · 확실한 19종 코드 · `status`(`ok` 검수함 / `not_food` 음식 아님 / `unknown` 구성을 알 수 없음 / `draft` 검수 전) · `food_group`(식품군 한 개, 선택 — 비면 그 재료는 식품군에 안 센다. 값은 FT-18 검수 때 채운다).
   - `ok` · `not_food` 만 정리된 것으로 센다. 재료가 하나라도 표에 없거나 `draft` · `unknown` 이면 그 레시피는 **`resolved=false`** — 후보 풀에 들어가지 않고 필터에서도 "확인 못 함" 이다.
   - `allergen_codes` = 표의 코드 ∪ 메뉴명 · 정리한 재료명을 사전으로 훑은 코드. 제품마다 다른 성분(간장의 밀)은 표 코드에 넣지 않는다 — 이름이 남아 있으면 필터가 따로 본다.
   - 합집합이라 **표에서 코드를 좁힐 수 없다.** 정리한 이름이 "안심" 이면 사전이 소 · 돼지를 둘 다 붙인다 — 쇠고기 안심이면 정리한 이름을 "쇠고기 안심" 처럼 고기를 밝혀 적는다(그래도 돼지 코드는 남는다, 막는 쪽). 정리 스크립트의 코드 후보 표(`EXTRA_CODES`)에는 사전에 넣을 수 없는 한 글자 이름("양" — 소의 위)만 남았다.
   - 초안은 `scripts/draft_recipe_ingredients.py` 가 만든다 — 원문 715개 표기가 696개 항목으로 모였고 전부 `draft` 다(10-11). 다시 돌려도 있는 항목은 덮지 않는다. 많이 나온 이름부터 검수하면 100개 → 레시피 64개, 200개 → 183개, 300개 → 278개가 풀린다.
-- `nutrients` 는 레시피 이름이 영양DB 와 정확히 같을 때만(§1 규칙) · `food_groups` 는 아직 비운다 · `stage_min` 은 사람이 태깅한 값만(FT-1), 비면 toddler.
+- `nutrients` 는 레시피 이름이 영양DB 와 정확히 같을 때만(§1 규칙) · `food_groups` 는 정리 표의 `food_group` 칸 합집합 · `stage_min` 은 사람이 태깅한 값만(FT-1), 비면 toddler.
 - ~~**이미 있는 행 채우기**(#321 합의 3)~~ — 표를 떼면서 필요 없어졌다(10-11, #326 리뷰). 레시피 배치는 `menu_catalog` 를 고치지 않는다.
 - ~~**급식 판정과 충돌**~~ — 표를 떼어 해결했다(10-11, #326 리뷰). 레시피 행이 `menu_catalog` 에 실려 "된장찌개" 급식이 레시피 재료로 판정되던 경로가 없어졌다. 운영 적재 전에 남은 조건은 이용 조건(아래)과 정리 표 검수(FT-18)다.
 - **이용 조건** — 10-11 문의, 답 대기. 운영 DB 적재와 원문 커밋은 답을 받은 뒤다. 정리 표(재료 이름 · 코드)를 저장소에 올릴지도 같이 정한다(FT-18).
