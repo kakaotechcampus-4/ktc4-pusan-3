@@ -14,6 +14,9 @@ import pytest
 from app.agents import entrypoint, pipeline
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
+from app.agents.common.llm_client import LLMConfigError
+from app.agents.curator.embedding import embedder as embedder_module
+from app.agents.curator.embedding import jev as jev_module
 from app.agents.food.context import build_gate
 from app.agents.food.registry import closed_readout_key, tools_for
 from app.agents.food.schemas.common import FoodTaskType
@@ -382,3 +385,66 @@ async def test_다른_아이의_생일_동의는_받지_못한다(monkeypatch: p
         await food.ports.profile.birth_date(child_id=UUID(int=99))
     with pytest.raises(LookupError):
         await food.ports.consent.child_health_granted(child_id=UUID(int=99))
+
+
+async def test_받은_curator_trigger_를_그대로_pipeline_에_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    def trigger(child_id: UUID, today: date) -> None:
+        pass
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기 잘 먹었어",
+        run_id="run-1",
+        commit=_no_commit,
+        curator_trigger=trigger,
+    )
+
+    assert seen["curator_trigger"] is trigger
+
+
+async def test_트리거를_안_넘기면_Curator_를_띄우지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """agents 는 DB 를 열지 않는다.
+
+    테스트 · eval 이 임베딩 키를 가졌어도 실제 DB Curator 가 뜨면 안 된다.
+    """
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기 잘 먹었어",
+        run_id="run-1",
+        commit=_no_commit,
+    )
+
+    assert seen["curator_trigger"] is None
+
+
+def test_curator_deps_는_키가_없으면_None_이다(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_key(*args: Any, **kwargs: Any) -> Any:
+        raise LLMConfigError("키 없음")
+
+    monkeypatch.setattr(embedder_module, "Embedder", no_key)
+    monkeypatch.setattr(jev_module, "JevJudge", no_key)
+    entrypoint.curator_deps.cache_clear()
+    try:
+        assert entrypoint.curator_deps() == (None, None)
+    finally:
+        entrypoint.curator_deps.cache_clear()
