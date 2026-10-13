@@ -49,6 +49,10 @@ class FakeLLM:
         return self._queue.pop(0) if self._queue else _reply("done")
 
 
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
+
+
 @pytest.fixture
 def memory_context() -> AgentContext:
     return AgentContext(
@@ -108,6 +112,7 @@ async def test_커밋_후_curator_trigger_가_불린다(memory_context: AgentCon
         supervisor_client=_supervisor_llm_record(),
         memory_client=_memory_llm_saves(),
         curator_trigger=trigger,
+        commit=_no_commit,
     )
 
     assert result.committed
@@ -124,6 +129,7 @@ async def test_curator_trigger_가_None_이면_스킵(memory_context: AgentConte
         supervisor_client=_supervisor_llm_record(),
         memory_client=_memory_llm_saves(),
         # curator_trigger 생략 — 기본값 None
+        commit=_no_commit,
     )
 
     assert result.committed  # 커밋은 됐지만 trigger 는 안 불림 (에러 없음)
@@ -146,6 +152,7 @@ async def test_이어받기에서도_curator_trigger_가_불린다(memory_contex
         memory_client=_memory_llm_saves(),
         continuation=pending,
         curator_trigger=trigger,
+        commit=_no_commit,
     )
 
     # Memory 가 저장에 성공하면 trigger 가 불려야 한다
@@ -176,6 +183,7 @@ async def test_저장하지_않으면_curator_trigger_안_불린다(memory_conte
         supervisor_client=_supervisor_llm_record(),
         memory_client=_memory_llm_no_save(),
         curator_trigger=trigger,
+        commit=_no_commit,
     )
 
     assert not result.committed
@@ -195,6 +203,7 @@ async def test_curator_trigger_예외가_run을_죽이지_않는다(memory_conte
         supervisor_client=_supervisor_llm_record(),
         memory_client=_memory_llm_saves(),
         curator_trigger=boom,
+        commit=_no_commit,
     )
 
     assert result.ok

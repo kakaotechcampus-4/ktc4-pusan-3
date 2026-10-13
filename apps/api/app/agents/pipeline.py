@@ -365,7 +365,7 @@ async def handle_input(
     domain_clients: Mapping[str, LLMClient] | None = None,
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
-    commit: Commit | None = None,
+    commit: Commit,
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
@@ -376,9 +376,9 @@ async def handle_input(
     구현된 Agent 몫은 전부 있어야 하고, 포트는 호출 전에 만들어 넘긴다.
     domain_clients는 도메인 Agent 이름 → 그 Agent 가 쓸 LLMClient. 없는 Agent 는 각자의
     기본값(role 별 설정)을 쓴다 — 실제 서비스에서는 러너가 role 당 하나씩 만들어 넘긴다.
-    commit은 Memory가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
-    TODO: 러너가 DB 세션을 붙이면 기본값 None을 없앤다. 지금은 run 마다 InMemoryStore라
-      확정할 것이 없어 러너가 넘기지 않는다.
+    commit 은 Memory 가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
+    필수다 — DbMemoryStore 를 넘기고 commit 을 빼먹으면 러너가 세션을 닫을 때 기록이 조용히
+    사라진다. InMemoryStore 로 도는 테스트 · eval 은 아무것도 하지 않는 commit 을 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     """
     started = time.perf_counter()
@@ -616,7 +616,7 @@ async def _handle_continuation(
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
-    commit: Commit | None,
+    commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
@@ -857,15 +857,14 @@ def _ms_since(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
-async def _commit_record(memory: MemoryAgentResult, commit: Commit | None) -> bool:
+async def _commit_record(memory: MemoryAgentResult, commit: Commit) -> bool:
     """기록 단계를 확정한다. DB 에 실제로 쓴 것이 있으면 True.
 
     일정 초안 · 바뀐 것 없는 성공은 세지 않는다(`MemoryAgentResult.persisted`) — 보호자가
     다시 보내도 두 번 저장될 것이 없다. commit 이 예외를 내면 잡지 않고 러너에 올린다.
     결과를 모르는 commit(연결이 끊긴 경우)을 어떻게 닫을지는 러너 계약에서 정한다.
     """
-    if commit is not None:
-        await commit()
+    await commit()
     return memory.persisted
 
 

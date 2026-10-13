@@ -249,6 +249,10 @@ def _default_food_llm() -> FakeLLM:
     )
 
 
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
+
+
 async def _handle(
     case_id: str,
     *,
@@ -259,7 +263,7 @@ async def _handle(
     supervisor_llm: FakeLLM | None = None,
     food_llm: FakeLLM | None = None,
     contexts: dict[str, Any] | None = None,
-    commit: Any = None,
+    commit: Any = _no_commit,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         CASES_BY_ID[case_id].text,
@@ -921,6 +925,7 @@ async def test_이어받기는_기록_단계_시간만_남긴다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert result.times.memory_ms is not None
@@ -1269,6 +1274,7 @@ async def test_같은_Agent_의_task_둘은_state_를_따로_받는다(
         supervisor_client=FakeLLM(_tools(_call("s1", "route", output))),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
     )
 
     assert [item.task_type for item in result.domain] == [
@@ -1292,6 +1298,7 @@ async def test_구현된_agent_의_context_가_빠지면_부분_실패로_숨기
             supervisor_client=_supervisor_llm("RC20"),
             memory_client=FakeLLM(),
             emit=events.append,
+            commit=_no_commit,
         )
 
 
@@ -1710,6 +1717,7 @@ async def test_쓰는_task_가_죽어도_읽는_task_결과는_나가고_partial
         ),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
     )
 
     assert [event.task_type for event in _of(events, DomainRouted)] == ["meal_recommendation"]
@@ -1753,6 +1761,7 @@ async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는�
         ),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
     )
 
     assert seen == [("두유",)]
@@ -1781,6 +1790,7 @@ async def _handle_meal_only(
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         writes=writes,
+        commit=_no_commit,
     )
 
 
@@ -1818,6 +1828,7 @@ async def test_메뉴_카탈로그만_저장했어도_모델이_실패하면_fai
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         writes=writes,
+        commit=_no_commit,
     )
 
     assert result.committed is False
@@ -1940,6 +1951,7 @@ async def test_되묻기_run_은_note_와_pending_을_같이_낸다(
         supervisor_client=supervisor,
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
     )
 
     note = next(event for event in events if isinstance(event, MemoryNote))
@@ -1974,6 +1986,7 @@ async def test_saved_가_note_보다_먼저_나간다(
         supervisor_client=_supervisor_llm("RC04"),
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
     )
 
     names = [type(event).__name__ for event in events]
@@ -2009,6 +2022,7 @@ async def test_이어받기는_supervisor_와_food_를_타지_않는다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert supervisor.calls == 0
@@ -2033,6 +2047,7 @@ async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
         memory_client=FakeLLM(LLMUnavailableError("down")),
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert result.failed is not None and result.failed.reason == "llm_unavailable"
@@ -2057,6 +2072,7 @@ async def test_이어받기에_다른_말이_섞이면_따로_보내라는_안�
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     notes = _of(events, MemoryNote)
@@ -2080,6 +2096,7 @@ async def test_다시_물을_때_붙인_안내는_다음_질문_맥락에_들어
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     # 다시 묻는 중이면 화면이 다음 한 줄을 이 질문의 답으로 보낸다. "따로 보내 주세요" 만 있으면
@@ -2108,6 +2125,7 @@ async def test_섞인_말이_없으면_안내를_붙이지_않는다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert [note.text for note in _of(events, MemoryNote)] == ["기록해 둘게요."]
@@ -2135,6 +2153,7 @@ async def test_이어받기가_저장한_뒤_물으면_message_로_내리고_따
         memory_client=memory,
         emit=events.append,
         continuation=_LUNCH_PENDING,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2166,6 +2185,7 @@ async def test_재질문_상한에_닿으면_질문_대신_상수_문구를_mess
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
+        commit=_no_commit,
     )
 
     # "따로 보내 주세요" 가 붙으면 보호자가 같은 답을 다시 보내 상한이 의미가 없어진다
@@ -2193,6 +2213,7 @@ async def test_재질문_상한에서_섞인_말이_있으면_따로_보내라�
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2220,6 +2241,7 @@ async def test_맥락_없이_물을_때_섞인_말이_있으면_안내를_한_�
         memory_client=memory,
         emit=events.append,
         continuation=_LUNCH_PENDING,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2247,6 +2269,7 @@ async def test_첫_run_에서도_맥락_없이_묻는_질문은_message_로_내�
         supervisor_client=_supervisor_llm("RC04"),
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2273,6 +2296,7 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
@@ -2300,6 +2324,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             ),
             _answer(_ask_second()),
         ),
+        commit=_no_commit,
     )
     assert before.memory is not None and before.memory.pending is not None
 
@@ -2316,6 +2341,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
         ),
         continuation=before.memory.pending,
+        commit=_no_commit,
     )
 
     activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
@@ -2338,6 +2364,7 @@ async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
         memory_client=FakeLLM(_reply(""), _reply("")),  # 빈 턴 두 번
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert result.failed is not None and result.failed.reason == "unparsable"
