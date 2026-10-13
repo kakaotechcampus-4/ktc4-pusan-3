@@ -183,7 +183,7 @@ C48-pool0 과 C48-pool2 는 풀을 만드는 시점부터 그 개수라 모델�
 | **11 / 12** | T01 | C11 | 1 | tool 3개 · `lookup_daycare_menu` **미노출** |
 | | | C12 | 1 | tool 5개 (급식 행이 있는 아이만) |
 | **11 / 12** | T11 | C11 | **0** | `unsupported.infant_nutrient` |
-| | | C12 | 1 | tool 7개 · `select_kdri_group` → `1-2y` |
+| | | C12 | 1 | tool 3개 · `select_kdri_group` → `1-2y` |
 | **17 / 18** | T01 | C17 | 1 | affinity 구조적 0행. 관찰도 0건이면 `general`, 관찰이 있으면 17개월도 `personalized` |
 | | | C18 | 1 | affinity 있으면 `personalized` · 없으면 `general` |
 | **35 / 36** | T11 | C35 | 1 | 섭취기준 `1-2y` |
