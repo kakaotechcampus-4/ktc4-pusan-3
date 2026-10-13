@@ -1268,22 +1268,13 @@ export interface SafetyScanResponse {
 /* ── 11 아이 프로필 ──────────────────────────────────────────────────── */
 
 /**
- * ⚠️ **계약서 v1 에 없다** (이슈 #75 · `apps/api` Owner 협의 + PM 결정 대기).
- *    계약서가 주는 것은 `PATCH /children/{cid}` 의 `nickname` · `birth_date` 둘뿐이고,
- *    읽는 엔드포인트(`GET /children/{cid}`)도 성별도 측정 로그도 없다.
- *    최상위 `CLAUDE.md` §2 의 "수집은 이름(별명)·나이·알레르기 여부까지" 도 함께 걸린다.
- *    그래서 **이 구역의 타입은 전부 목에서만 사는 제안된 모양**이고(아이 프로필 · 측정 기록 ·
- *    측정 기록 고치기까지), 서버가 붙기 전에 이 주석이 지워지면 안 된다 — 지워지는 순간
- *    계약서에 있는 것처럼 보인다.
+ * `ChildProfile` · `UpdateChildRequest` · `UpdateChildResponse` 는 서버 구현이 정본이다
+ * (`GET` · `PATCH /children/{cid}` · PR #334 · Swagger). 🚨 `PATCH` 는 **보낸 필드만** 바꾸고
+ * `null` 은 400 이다 — 세 값 다 늘 값이 있어서 "비우기" 가 없다.
  *
- * 🚨 **성별은 화면 표시 전용으로 제안했다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
- *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다.
- *
- * ⚠️ **"밝히지 않음"(`unspecified`)을 뺐다 — 성별이 필수값이 됐다.** 최상위 CLAUDE.md §2 의
- *    "수집은 이름(별명)·나이·알레르기 여부까지" 를 넘는 쪽으로 한 걸음 더 간 것이라
- *    **#75 의 PM 결정 대상이 하나 늘었다**. 화면 표시 전용이라는 위 제약은 그대로다.
- *    ⚠️ 01 첫 진입은 아직 성별을 받지 않는다 — 새로 만든 아이의 성별을 무엇으로 둘지는
- *    서버 계약과 함께 정해야 한다 (지금은 목이 `male` 로 들고 있다).
+ * 🚨 **성별은 화면 표시 전용이다.** 놀이·교육 추천이 성별로 갈리면 그건 이 제품이
+ *    하려던 개인화(아이를 오래 알아온 것)가 아니라 통계다. Agent 컨텍스트에 넣지 않는다
+ *    (서버 `Gender` 도 같은 결정 · 10-10).
  */
 /**
  * 🚨 **`undisclosed` 가 기본값이다** (최상위 `CLAUDE.md` §2 — "성별의 기본값은
@@ -1321,6 +1312,10 @@ export interface UpdateChildResponse {
 /**
  * 키 · 몸무게를 **잰 날 한 줄**. 🚨 지표가 아니라 기록이다.
  *
+ * 여기부터 측정 기록 타입은 서버 구현이 정본이다 (`/children/{cid}/growth` 4개 · PR #353 · Swagger).
+ * 🚨 바디 오류는 400 이다 — 키 · 몸무게가 둘 다 비었거나, 범위(`lib/measurement.ts`) 밖이거나,
+ *    잰 날이 아이 생일 이전 · 한국 날짜로 오늘 이후일 때.
+ *
  * 🚨 **증감·백분위·또래 비교 필드를 여기에 만들지 않는다.** `DESIGN.md` 의
  *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, "지난번보다 +2cm" 는 이 제품이
  *    하지 않기로 한 **발달 평가**다 (CLAUDE.md §2 · 스펙 아웃).
@@ -1332,8 +1327,8 @@ export interface GrowthLog {
   /** 🚨 한쪽만 재고 오는 날이 있다. 둘 다 null 인 행은 서버가 거부한다. */
   height_cm: number | null;
   weight_kg: number | null;
-  /** 🚨 서버 문구("2주 전"). 없으면 그 자리를 비운다 — 프론트가 계산해 채우지 않는다. */
-  measured_label?: string;
+  /** 🚨 서버 문구("2주 전"). 프론트가 계산해 채우지 않는다. */
+  measured_label: string;
   note: string | null;
 }
 
@@ -1418,7 +1413,10 @@ export interface OnboardingSafetyInput {
 }
 
 /**
- * 전부 선택이다. 모두 건너뛰어도 200 이다.
+ * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
+ * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
+ *
+ * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
@@ -1463,13 +1461,17 @@ export interface OnboardingRequest {
   one_line?: string;
 }
 
+/**
+ * 저장한 뒤의 프로필과, 키 · 몸무게를 적었으면 그 기록 한 줄 (서버 PR #353).
+ *
+ * ⚠️ 계약서 §05 초안의 `{observations, affinities, safety, skipped, run_id}` 가 아니다 —
+ *    02 가 한 줄 · 관심사 · 알레르기를 더는 보내지 않아서 그 필드들은 채워질 일이 없다.
+ *    🚨 run 을 만들지 않으므로 **`run_id` 가 없다.** 화면은 성공하면 응답을 읽지 않고 홈으로 간다.
+ */
 export interface OnboardingResponse {
-  observations: Observation[];
-  affinities: Affinity[];
-  safety: HealthSafety[];
-  /** 서버가 저장하지 않고 돌려보낸 항목. safety_status: "unknown" 이 여기 담긴다. */
-  skipped: string[];
-  run_id: string;
+  child: ChildProfile;
+  /** 키 · 몸무게를 둘 다 안 적었으면 `null`. */
+  growth: GrowthLog | null;
 }
 
 /* ── 동의 ─────────────────────────────────────────────────────────────── */
