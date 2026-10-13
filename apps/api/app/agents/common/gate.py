@@ -4,11 +4,15 @@
 게이팅은 `stage.months` 를 쓴다 (docs/agents/shared/Tool_공통.md §3).
 
 성별은 축이 아니다. 수집도 사용도 하지 않는다.
+
+안전 조회(`read_safety_basis`)도 여기 있다 — 그 결과가 `Gate.safety_ok` · `allergy_states` 가 된다.
 """
 
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Generic, Literal, Protocol, TypeVar
 
+from app.agents.common.ports import SafetyLookupError
 from app.rules.age import LifeStage
 
 # `health_safety.status`(active/retracted/none)에 "매칭되는 행 없음" 인 unknown 을 더한 값.
@@ -76,3 +80,57 @@ class Gate:
         항목 이름이 필요하면 tool 이 19종 중 행이 없는 것을 따로 본다 — Gate 는 상태만 든다.
         """
         return "unknown" in self.allergy_states
+
+
+# 안전 조회
+class SafetyRowLike(Protocol):
+    """`read_safety_basis` 가 보는 칸. `SafetyEntry` 는 Agent 마다 따로 둔다 (#319 리뷰)."""
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def status(self) -> Literal["active", "retracted", "none"]: ...
+
+
+E = TypeVar("E", bound=SafetyRowLike)
+
+
+@dataclass(frozen=True)
+class SafetyBasis(Generic[E]):
+    """`build_gate` 가 task 시작에 한 번 읽은 health_safety.
+
+    entries 가 None 이면 조회 실패다. () 는 동의가 없어 읽지 않았거나 등록한 것이 없는 것 —
+    거를 것이 없는 상태라 실패와 다르다. 둘을 섞으면 안전 필터가 실패를 "거를 것 없음" 으로 읽는다.
+    """
+
+    entries: tuple[E, ...] | None
+
+    @property
+    def ok(self) -> bool:
+        """조회에 성공했는가 — `Gate.safety_ok` 에 그대로 넣는다."""
+        return self.entries is not None
+
+    @property
+    def allergy_states(self) -> tuple[SafetyState, ...]:
+        """kind='allergy' 행들의 status, 읽은 순서대로. 실패면 빈 튜플이다."""
+        return tuple(entry.status for entry in self.entries or () if entry.kind == "allergy")
+
+
+async def read_safety_basis(
+    read: Callable[[], Awaitable[Sequence[E]]], *, consent: bool
+) -> SafetyBasis[E]:
+    """health_safety 를 run 당 한 번 읽는다. Food · Activity 의 `build_gate` 가 쓴다.
+
+    - 동의가 없으면 `read` 를 부르지 않는다 — 읽을 것이 없는 상태다.
+    - `SafetyLookupError` 만 실패(None)로 바꾼다. 그 밖의 예외는 그대로 올린다 — 버그를 조회
+      실패로 바꾸지 않고, 20초 제한의 `CancelledError` 를 삼키지 않는다 (Agent_공통규약 §7).
+    - 받은 행은 거르지 않는다. 어떤 kind · status 를 읽을지는 각 Agent 의 `SafetyReader` 가 정한다.
+    """
+    if not consent:
+        return SafetyBasis(entries=())
+    try:
+        rows = await read()
+    except SafetyLookupError:
+        return SafetyBasis(entries=None)
+    return SafetyBasis(entries=tuple(rows))

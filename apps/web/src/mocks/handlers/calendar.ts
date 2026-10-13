@@ -94,7 +94,7 @@ export const calendarHandlers = [
 
   /**
    * 🚨 **수정 초안의 제출. 승인 게이트 ㉠ 이다** — create 는 `POST`, update 는 `PATCH` 로
-   *    갈린다 (9/21 회의). ⚠️ 경로는 확정 전이다 (`docs/event/event-draft-flow-v1.md` §6).
+   *    갈린다 (9/21 회의). 경로는 서버 구현(#284)을 따른다 — 아이 스코프 아래다 (#316).
    *
    * 🚨 **키를 요구한다.** `item_id: null` 인 새 준비물은 멱등이 아니라서, 재시도가 같은 null 행을
    *    다시 보내면 준비물이 두 줄 들어간다 (`lib/api/operations.ts` 의 주석).
@@ -103,7 +103,7 @@ export const calendarHandlers = [
    *    보호자가 승인 화면에서 준비물을 지울 수 있는 유일한 표현 방법이다.
    */
   http.patch(
-    url("/events/:eid"),
+    url("/children/:cid/events/:eid"),
     withIdempotency(async ({ params, request }) => {
       await networkDelay();
       const eid = String(params.eid);

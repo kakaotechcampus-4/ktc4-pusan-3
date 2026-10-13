@@ -37,7 +37,7 @@
 
 | # | 결정 | 없으면 | 담당 |
 | --- | --- | --- | --- |
-| 1 | ~~`child_growth_log` 단위·NOT NULL~~ | ✅ 닫힘(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | – |
+| 1 | ~~`child_growth_log` 단위·NOT NULL~~ | ✅ 닫힘(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL`. 칸 이름은 10-10 에 `height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (`data_model.md`) | – |
 | 2 | `child_health` 동의 게이팅 포트 | 키·몸무게 읽기가 법적으로 막힘 | BE |
 | 3 | `suggestion.kind` + `suggestion_evidence` 테이블 | 개인화/일반 표시 불가 · 근거를 셀 수 없음 | BE |
 | 4 | `reference/hazard_terms.yaml` (Activity 소유) | 활동 행 안전 검사 불가 | Activity |
@@ -108,7 +108,7 @@ app/agents/growth/
 ├── schemas/ · store/ports.py · tools/
 ```
 
-**포트**: `observation_education` · `observation_routine` · **`observation_activity`(주입, import 아님)** · `profile_affinity(domains: tuple[str,...])` · `child_growth_log`(전부, `Decimal`) · `notice` · `growth_doc` · `book_catalog` · `hazard_term` · `SuggestionWriter` · 생일 · `child_health` 동의 · `health_safety`(`allergy` · `environmental`, 교육 활동용). 생일 · 동의 · 알레르기 포트는 Food · Activity 와 같은 이름 · 시그니처로 `growth/store/ports.py` 에 둔다(공통화는 Food · Activity 포트를 `common/ports.py` 로 올릴 때 같이 한다). InMemory 동의는 기본값 없이 생성자 인자로 받는다
+**포트**: `observation_education` · `observation_routine` · **`observation_activity`(주입, import 아님)** · `profile_affinity(domains: tuple[str,...])` · `child_growth_log`(전부, `Decimal`) · `notice` · `growth_doc` · `book_catalog` · `hazard_term` · `SuggestionWriter` · 생일 · `child_health` 동의 · `health_safety`(`allergy` · `environmental`, 교육 활동용). 알레르기 포트(`growth_safety`)는 `growth/store/ports.py` 에 둔다(생일 · 동의 포트와 `SafetyLookupError` 는 `common/ports.py` 에 있다, #319). InMemory 동의는 기본값 없이 생성자 인자로 받는다
 
 **게이팅** ([`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §4)
 
@@ -248,4 +248,4 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 
 ## 13. 열린 항목
 
-G-3 · G-7 · 루틴 닫힘 "약" 한 글자 별칭의 오탐 측정(목록 자체는 10-09 확정, [`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · 공용 `level_at` 으로 승격 옮기기(별도 이슈) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
+G-3 · G-7 · 루틴 닫힘 "약" 한 글자 별칭의 오탐 측정(목록 자체는 10-09 확정, [`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`

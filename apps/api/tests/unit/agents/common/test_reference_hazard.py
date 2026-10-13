@@ -8,7 +8,7 @@ import copy
 
 import pytest
 
-from app.agents.common.reference import hazard_terms, parse_hazard_terms
+from app.agents.common.reference import HazardAxis, hazard_terms, parse_hazard_terms
 
 VALID = {
     "source": "테스트",
@@ -55,7 +55,8 @@ class TestValid:
 
 
 class TestLevelAt:
-    """축의 월령 두 칸을 읽는 규칙. 0–17개월 경고 → 차단 승격은 Activity 코드가 한다."""
+    """축의 월령 두 칸을 읽는 규칙. 0–17개월은 경고도 차단이다 — Activity · Growth 가 이 판정
+    하나를 읽는다 (#282 리뷰)."""
 
     @pytest.mark.parametrize(
         ("months", "level"), [(0, "block"), (35, "block"), (36, "warn"), (71, "warn"), (72, None)]
@@ -66,6 +67,20 @@ class TestLevelAt:
     @pytest.mark.parametrize(("months", "level"), [(71, "block"), (72, None)])
     def test_차단만_있는_축(self, months, level):
         assert parse_hazard_terms(VALID).axes["trampoline"].level_at(months) == level
+
+    @pytest.mark.parametrize(
+        ("months", "level"), [(0, "block"), (17, "block"), (18, "warn"), (71, "warn"), (72, None)]
+    )
+    def test_경고만_있는_축도_17개월까지는_차단이다(self, months, level):
+        """물놀이처럼 출처에 임계 월령이 없어 경고만 있는 축 (D6 규칙 ②)."""
+        water = HazardAxis(
+            name="water",
+            block_below_month=None,
+            warn_below_month=72,
+            source="질병관리청 https://example.test",
+            warning_text="물가에서는 손이 닿는 거리에 있어 주세요.",
+        )
+        assert water.level_at(months) == level
 
 
 class TestBrokenAxes:

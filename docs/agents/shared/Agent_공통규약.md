@@ -67,10 +67,11 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 - Agent가 받는 것은 DTO(frozen dataclass)뿐이다. 세션 · 트랜잭션 · ORM 객체는 백엔드에 남는다 — 포트도
   `FoodObservation` · `EventRow` 같은 DTO 를 돌려준다. pipeline 이 기록 단계에서 부르는 `commit` 도 러너가 만든
   함수이고, pipeline 은 부르는 시점만 정한다.
-- 데이터는 성격에 따라 두 길로 받는다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다. 발화에 따라
-  무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를 미리 넘기려면
-  범위를 넉넉히 잡아 읽어야 해서다. 어느 값을 값으로 옮길지는 생일 · 동의 포트를 `common/ports.py` 로 옮기는
-  작업에서 정한다.
+- 데이터는 성격에 따라 두 길로 받는 것이 원칙이다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다.
+  발화에 따라 무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를
+  미리 넘기려면 범위를 넉넉히 잡아 읽어야 해서다. 다만 생일 · 동의는 지금은 포트(`common/ports.py`)로
+  둔다(#319). 값으로 바꾸면 세 Agent 의 Context · pipeline · 백엔드 조회 함수(#201)의 인터페이스가 같이
+  바뀌어서, #201 연결을 붙일 때 백엔드와 정한다.
 - Agent는 run 내내 DB 연결을 쥐지 않는다. 조회 포트는 호출마다 짧은 세션으로 읽고, 쓰기 포트는 호출 하나가
   짧은 트랜잭션 하나로 바로 commit 된다. 그래서 한 task 안에서도 두 조회의 시점이 다를 수 있다 — 안전 정보는
   task 시작(`build_gate`)에 한 번 읽고 게이트와 필터가 그 값을 같이 쓴다.
@@ -153,7 +154,7 @@ class DomainAgentResult:
 - **되묻기는 한 번에 하나.** 후보가 여럿이면 순위가 가장 높은 하나만 낸다.
 - **초안은 저장하지 않는다.** `medication_drafts`는 Memory의 `event` 초안과 같다 — run 단위 버퍼에 모였다가 JSON payload로 한 번에 나가고, run이 끝나면 사라진다. 비어 있는 NOT NULL 칸 목록(`missing`)을 함께 실어 화면이 제출을 막는다. **만들자마자 행을 쓰는 `suggestion`과 혼동하지 말 것** — 복약은 행이 있다는 것 자체가 승인의 증거다.
 - suggestion은 **저장(commit)이 끝난 뒤에** 화면이 추천 카드로 전환된다. 카드의 승인 · 거절 · 피드백이 저장된 행의 id로 동작하고, 개인화 추천은 `suggestion_evidence`가 함께 저장돼 있어야 해서다(루트 §2). 보여 주면서 동시에 저장을 요청하지 않는다. 저장에 실패하면 그 Agent 카드는 내보내지 않고 `partial`로 둔다. 카드 화면은 그 run의 응답을 그대로 쓴다(묶음 키 없음). 별도의 suggestion 목록 화면은 `expires_at > now()`인 suggestion 전부를 보여준다.
-- **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2).
+- **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2). 반대로 모델이 출력 tool 없이 끝났거나(`no_tool_call`) 왕복 상한(`max_steps`)에 걸린 것은 0개가 아니라 **실패**다 — `status="failed"` 로 내고 화면은 다시 시도를 띄운다 (#320 PM 리뷰). 다만 Food 영양소 분석은 예외다 — 판정 · 식품군 안내가 코드가 계산한 값이라 `failed` 대신 코드 문장 틀(`nutrient.band.*`)을 `status="ok"` 로 낸다(`authored_by="code"`, 경고 로그로 센다 — Food_Tool_명세 §2 · §4, #357 리뷰).
 
 ---
 
@@ -256,6 +257,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
 | commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 `failed` 로 확정하지 않고 Idempotency 키도 풀지 않는 방향이다. — 러너 계약에서 확정한다 |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
+| 취소 | **도메인 Agent 는 `CancelledError` 를 삼키지 않는다.** pipeline 은 도메인 task 를 `asyncio.wait_for` 로 끊는데, Agent 가 취소를 잡고 값을 돌려주면 wait_for 가 시간 초과 대신 그 값을 돌려줘서 끊긴 Agent 의 늦은 결과가 성공으로 들어간다. `except BaseException` · 맨 `except:` 를 쓰지 않는다(`except Exception` 은 `CancelledError` 를 잡지 않는다). 정리할 것이 있으면 `finally` 에서 하고 다시 올린다. 공통 루프(`run_tool_loop`)가 이것을 테스트로 고정한다 (#319, #187 리뷰) |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
 

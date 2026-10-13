@@ -1,0 +1,50 @@
+# 영양 구간 → 식품군 안내 — reference/nutrient_actions.yaml
+# 설계: docs/agents/food/영양소_계산_설계.md §6 "구간 → 화면 문구"
+#
+# 🚨 표는 사람이 정한다. 모델이 항목을 더하지 않는다 — 모델은 여기서 나온 문장을 다듬을 뿐이다.
+# 🚨 먹이는 안내(foods)는 식품마다 19종 코드를 단다. 코드는 filter_food_safety 가 아이의 알레르기 ·
+#    질환과 대조한다. 줄이는 안내(text)는 먹이라는 말이 아니라서 코드가 없다.
+# 🚨 코드는 넓게 단다 (고기 = 돼지 · 닭 · 쇠). 일부 고기만 알레르기여도 "고기" 를 통째로 뺀다 —
+#    덜 안내하는 쪽으로 틀린다. 다른 급원 식품을 더하려면 섭취기준 원문 근거가 있어야 한다.
+# aliases 는 요약 문장에서 이 식품을 가리키는 다른 말이다. 빠진 식품이 문장에 남았는지 볼 때만 쓴다.
+#    두 글자 이상만 쓴다 — 한 글자는 "적게" 의 "게" 처럼 다른 낱말에 걸린다.
+#
+
+source: 영양소_계산_설계.md §6 (구간 → 화면 문구). 식품별 알레르기 코드는 이 파일에서 달았다 (검수 대기)
+version: "2026.1"
+fetched_at: 2026-10-11
+
+actions:
+  - nutrient: protein
+    band: low
+    suffix: " 반찬 늘리기"
+    foods:
+      - {name: 고기, codes: [10, 15, 16], aliases: [쇠고기, 소고기, 돼지고기, 닭고기, 육류]}
+      - {name: 생선, codes: [7], aliases: [고등어, 연어, 어류, 생선살]}
+      - {name: 달걀, codes: [1], aliases: [계란, 난류, 노른자, 흰자]}
+      - {name: 콩, codes: [5], aliases: [대두, 두부, 두유]}
+
+  - nutrient: calcium
+    band: low
+    suffix: ""
+    foods:
+      - {name: 우유, codes: [2], aliases: [분유]}
+      - {name: 유제품, codes: [2], aliases: [치즈, 요거트, 요구르트, 분유]}
+
+  - nutrient: iron
+    band: low
+    suffix: ""
+    foods:
+      - {name: 붉은 고기, codes: [10, 16], aliases: [쇠고기, 소고기, 돼지고기]}
+      # 빠지는 이유가 달걀 알레르기라 달걀 전체를 가리키는 말도 본다 (10-11 라이브 eval)
+      - {name: 달걀노른자, codes: [1], aliases: [노른자, 달걀, 계란, 난류, 흰자]}
+      - {name: 콩, codes: [5], aliases: [대두, 두부, 두유]}
+
+  # 줄이는 안내 — 먹이라는 말이 아니라서 알레르기로 거르지 않는다
+  - nutrient: carbohydrate
+    band: high
+    text: 밥·빵·면 줄이고 반찬 한 가지
+
+  - nutrient: sodium
+    band: high
+    text: 국물·절임 줄이기

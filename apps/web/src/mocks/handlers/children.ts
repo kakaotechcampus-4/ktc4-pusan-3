@@ -1,7 +1,8 @@
 import { http, HttpResponse } from "msw";
 
-import type { HealthSafety, Relation } from "@/lib/api/types";
+import type { HealthSafety, OnboardingRequest } from "@/lib/api/types";
 import { isSeverityFor } from "@/lib/health-safety";
+import { isMeasurementInRange } from "@/lib/measurement";
 
 import {
   CHILD_ID,
@@ -20,6 +21,11 @@ import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 import { joinChild } from "./membership";
 import { invalidPolicyVersion } from "./policies";
+import { saveOnboarding } from "./profile";
+import { recordConsent } from "./settings";
+
+/** 02 온보딩 본문이 받는 필드 — 서버 `OnboardingRequest`(extra="forbid")와 같다. */
+const ONBOARDING_FIELDS = new Set(["relation", "gender", "height_cm", "weight_kg"]);
 
 /**
  * 등록된 안전 정보. 🚨 **예전에는 Set 하나였다** — 등록 여부만 알면 409 를 낼 수 있어서였다.
@@ -44,6 +50,9 @@ function activeSafety(): HealthSafety[] {
  * 알레르기 항목 하나의 지금 상태 — 제안 목록의 사전검사(`handlers/suggestions.ts`)가 읽는다.
  * `null` 은 행이 없다는 뜻이다 (서버의 `unknown` · 저장하지 않는 상태).
  * ⚠️ 서버의 `none` 은 아직 목 모양(`HealthSafety`)에 없다 — 옛 모양이라 #87 때 같이 맞춘다.
+ * ⚠️ **label 이 항목 이름과 글자로 같을 때만 짝짓는다** — 픽스처가 정식 이름만 쓰는 전제다.
+ *    실제 label 은 보호자의 자유 입력("우유 알레르기" · "Milk" · "우유, 땅콩")이라 서버는
+ *    문자열 비교가 아니라 알레르기 사전으로 짝짓는다 (#264). 이 함수를 서버 구현의 본으로 삼지 말 것.
  */
 export function allergyStatus(label: string): "active" | "retracted" | null {
   const rows = safetyState.filter(
@@ -109,6 +118,11 @@ export const childrenHandlers = [
       role: "owner",
       consent_required: [],
     });
+    // 🚨 **아이 동의도 같은 표에 쌓는다** (`handlers/settings.ts`). 실서버도 아이 등록에서
+    //    동의 행을 남기고, 10 설정의 `GET /consents?child_id=` 가 그 행을 돌려준다.
+    for (const consent of body.consents ?? []) {
+      recordConsent(CHILD_ID, consent.scope, "granted", consent.policy_version ?? "unknown");
+    }
     return HttpResponse.json(
       { id: CHILD_ID, nickname: body.nickname, age_display: "만 4세", role: "owner" },
       { status: 201 },
@@ -144,14 +158,15 @@ export const childrenHandlers = [
   }),
 
   /**
-   * 02 아이 정보. 전부 선택이라 모두 건너뛰어도 200 이다.
+   * 02 아이 정보. 서버 구현(PR #353)을 따른다 — 응답은 `{child, growth}` 고, 11 프로필과
+   * 같은 상태를 고친다 (`handlers/profile.ts` 의 `saveOnboarding`).
+   *
+   * 🚨 **바디 오류는 400 이다.** 전부 선택이지만 빈 본문 · `null` · 범위 밖 키와 몸무게 ·
+   *    모르는 필드(`safety` · `one_line` 등)는 받지 않는다. 화면은 아무것도 안 적으면 보내지 않는다.
    *
    * ⚠️ **본문이 계약서 §05 와 달라졌다** (확정 전) — `relation` · `gender` · `height_cm` ·
    *    `weight_kg` 가 들어오고 `interests` · `dev_answers` 가 빠졌다 (`OnboardingRequest`).
    *
-   * 🚨 **관심사가 없으므로 `affinities` 를 돌려주지 않는다.** 예전에는 시드를 그대로 실어
-   *    보냈는데, 이제 보낸 적 없는 관심이 저장된 것처럼 보인다 — 목이 화면에 거짓말하는
-   *    경우다. 보낸 값에서 나올 수 있는 것만 돌려준다.
    * ⚠️ **알레르기가 이 본문에서 빠졌다.** 02 가 11 과 같은 구역을 쓰면서 등록이 승인 게이트
    *    ㉡ 로만 간다 (`components/safety-section.tsx`). `safety_status`(없음/잘 모르겠어요)를
    *    물을 자리가 지금 없는 것은 **열린 결정**이다 (`OnboardingRequest` 주석).
@@ -162,29 +177,46 @@ export const childrenHandlers = [
       await networkDelay(400);
       if (currentScenario() === "consent") return consentRequired("child_health");
 
-      const body = (await request.json()) as { relation?: Relation };
+      const body = (await request.json()) as Record<string, unknown>;
+
+      // 🚨 알레르기는 이 경로로 오지 않는다 — 승인 게이트 ㉡ 가 유일한 쓰기 경로다 (서버 extra="forbid").
+      const unknown = Object.keys(body).filter((name) => !ONBOARDING_FIELDS.has(name));
+      const bad = Object.entries(body)
+        .filter(([name, value]) => {
+          if (!ONBOARDING_FIELDS.has(name)) return false;
+          if (value === null) return true;
+          return (
+            (name === "height_cm" || name === "weight_kg") &&
+            (typeof value !== "number" || !isMeasurementInRange(value))
+          );
+        })
+        .map(([name]) => name);
+      if (unknown.length > 0 || bad.length > 0) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: [...unknown, ...bad],
+        });
+      }
+      if (Object.keys(body).length === 0) {
+        return apiError(400, "validation_failed", "저장할 내용이 없어요", { fields: [] });
+      }
+      const input = body as Pick<
+        OnboardingRequest,
+        "relation" | "gender" | "height_cm" | "weight_kg"
+      >;
 
       // 관계는 `parent_child` 행의 값이다 — 보냈으면 `GET /me` 에도 그 값으로 서야 한다.
-      if (body.relation) {
+      if (input.relation) {
         joinChild({
           child_id: CHILD_ID,
           nickname: me.children[0]?.nickname ?? "민준",
           age_display: "만 4세",
-          relation: body.relation,
+          relation: input.relation,
           role: "owner",
           consent_required: [],
         });
       }
 
-      // 🚨 알레르기는 이 경로로 오지 않는다 — 승인 게이트 ㉡ 가 유일한 쓰기 경로다.
-      //    관심사도 없으니 돌려줄 관찰·프로필도 없다. 보낸 값에서 나올 수 있는 것만 답한다.
-      return HttpResponse.json({
-        observations: [],
-        affinities: [],
-        safety: [],
-        skipped: [],
-        run_id: "r01",
-      });
+      return HttpResponse.json(saveOnboarding(input));
     }),
   ),
 
