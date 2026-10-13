@@ -93,7 +93,10 @@ async def _retained(session: AsyncSession, **where) -> int:
 async def test_owner_withdraw_deletes_child_and_cuts_members(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, kakao
 ):
-    """등록 보호자: 아이 · 함께 보던 보호자의 연결까지 지우고, 다른 기기의 세션도 끊는다."""
+    """등록 보호자: 아이 · 함께 보던 보호자의 연결까지 지우고, 다른 기기의 세션도 끊는다.
+
+    다른 기기는 세션째 지워져 401 이다 — 로그인 문서 A-19.
+    """
     headers, owner = bearer
     member_headers, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
@@ -209,7 +212,8 @@ async def test_kakao_failure_after_commit_still_withdraws(
 
     assert resp.status_code == 200
     assert await session.get(Parent, pid) is None
-    assert "카카오 연결 끊기 실패" in caplog.text
+    [failed] = [r for r in caplog.records if "카카오 연결 끊기 실패" in r.getMessage()]
+    assert failed.levelno == logging.ERROR  # 알림이 가야 잘못 넣은 키를 안다
     assert KAKAO_ID not in caplog.text
 
 

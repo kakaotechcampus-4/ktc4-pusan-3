@@ -6,7 +6,6 @@
 | --- | --- | --- |
 | id | uuid | PK |
 | nickname | text | nullable. 표시 이름. 보호자 목록·이관 화면·기록 작성자 표시에 필요 |
-| deleted_at | timestamptz | nullable. 계정 탈퇴 요청 시각, N일 후 파기 |
 | created_at | timestamptz | NOT NULL, default now() |
 | updated_at | timestamptz | NOT NULL, default now(), on update now(). nickname 등 수정 시각 추적 |
 

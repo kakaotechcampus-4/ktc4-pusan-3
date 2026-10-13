@@ -352,7 +352,9 @@ async def _unlink_kakao(user_id: str) -> None:
         try:
             await admin.unlink(user_id)
         except KakaoApiError as exc:
-            log.warning("카카오 연결 끊기 실패 — 탈퇴는 끝났다: %s", exc)
+            # ERROR 라 알림이 간다. 부팅 검사는 키가 비었는지만 보므로, 잘못 넣은 키(오타 ·
+            # 재발급 전 키)는 여기서만 드러난다. 회원번호가 지워져 나중에 다시 끊을 수도 없다.
+            log.error("카카오 연결 끊기 실패 — 탈퇴는 끝났다: %s", exc)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -369,7 +371,7 @@ async def exchange(
 ) -> SessionResponse | ConsentRequiredResponse:
     """1회용 코드를 세션(기존 회원) 또는 가입 대기표(신규)로 바꾼다 — 명세 §3-4.
 
-    테스트 A-01 · A-03 · A-04 · A-05 · A-12 · A-19.
+    테스트 A-01 · A-03 · A-04 · A-05 · A-12.
 
     🚨 응답에 세션 토큰이나 가입 대기표가 실린다. 캐시에 남으면 뒤로 가기나 공용 PC 의
        브라우저 캐시에서 그대로 꺼낼 수 있다 (명세 §3-4 의 Cache-Control: no-store).
@@ -525,9 +527,9 @@ async def _issue_session(
        실려 나가면 끝이다 (§5 · A-18).
     """
     parent = await find_parent(session, parent_id)
-    if parent is None or parent.deleted_at is not None:
-        # A-19 · §10-1. 탈퇴는 유예 없이 즉시 삭제다 (삭제 정책 정본 §9 · #167) —
-        # 되살릴 계정이 아니므로 404 로 막고 세션을 내주지 않는다.
+    if parent is None:
+        # 방어용. 탈퇴하면 대기표도 보호자 행과 함께 지워져 교환은 그 전에 401 invalid_handoff
+        # 로 끝나므로 실제로는 오지 않는다 (#379).
         raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 
     token = secrets.token_urlsafe(32)
