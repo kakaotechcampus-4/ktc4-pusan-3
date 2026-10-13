@@ -9,8 +9,8 @@ from datetime import date
 
 import pytest
 
+from app.agents.common.reference import age_gates
 from app.agents.common.reference_docs import DOC_MONTH_LIMIT, check_unique_doc_keys, parse_doc_meta
-from app.rules.age import V1_MONTH_LIMIT
 
 ROW = {
     "doc_key": "activity.play.m18_23.cushion_crawl",
@@ -114,4 +114,4 @@ class TestBroken:
 
 def test_월령_끝은_v1_범위_상한이다():
     """72 를 여기서 따로 정하지 않는다 — 나이 경계는 app/rules/age.py 한 곳에 있다."""
-    assert DOC_MONTH_LIMIT == V1_MONTH_LIMIT
+    assert DOC_MONTH_LIMIT == age_gates().v1_month_limit

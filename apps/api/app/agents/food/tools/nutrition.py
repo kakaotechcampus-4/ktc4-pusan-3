@@ -6,6 +6,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.agents.common.age import life_stage
 from app.agents.food.context import FoodContext
 from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.nutrient_actions import advice_for, check_summary
@@ -19,7 +20,7 @@ from app.agents.food.schemas.nutrition import (
     NutrientReportArgs,
 )
 from app.agents.food.store.ports import SafetyEntry
-from app.rules.age import life_stage, months_between
+from app.rules.age import months_between
 from app.rules.menu_key import normalize_menu_key
 
 # 자유 텍스트 finding 에서 영양소 이름을 찾는다. basis_keys(이번에 실제로 조회한 항목) 밖을

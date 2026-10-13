@@ -348,6 +348,47 @@ async def test_아이_생일을_진입점에_넘긴다(monkeypatch):
     assert seen["birth_date"] == date(2025, 11, 1)
 
 
+@pytest.mark.parametrize("granted", [True, False])
+async def test_아이_건강정보_동의를_진입점에_값으로_넘긴다(monkeypatch, granted):
+    """#372 PR 2 — 창구가 입력 한 번에 읽은 `child_health` 동의가 생일과 같이 Agent 까지 간다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        birth_date=date(2025, 11, 1),
+        child_health_granted=granted,
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["child_health_granted"] is granted
+
+
+async def test_동의_값을_안_받은_job_은_동의_없음으로_바꿔_넘기지_않는다(monkeypatch):
+    """None 은 "값이 없다" 다. False 로 바뀌면 Agent 가 건강정보를 안 읽는 쪽으로 읽는다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["child_health_granted"] is None
+
+
 async def test_이어받기_run_이_실패하면_맥락을_되돌려_둔다(monkeypatch):
     # 창구가 맥락을 꺼낸 뒤 Agent 가 실패하면 "다시 시도" 가 400 을 받는다.
     # 되돌려 둬야 같은 답으로 재시도가 된다
