@@ -27,11 +27,12 @@ import {
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { DEFAULT_GENDER, GENDER_OPTIONS } from "@/lib/gender";
-import { parseMeasurement } from "@/lib/measurement";
+import { measurementError, parseMeasurement } from "@/lib/measurement";
 import { OWNER_RELATIONS, relationOptions } from "@/lib/relation";
 
 /**
- * 02 아이 정보 — **전부 선택이다.** 모두 건너뛰어도 200 이고 홈으로 간다.
+ * 02 아이 정보 — **전부 선택이다.** "건너뛰기" 는 아무것도 보내지 않고 홈으로 간다.
+ *    아무것도 안 적고 "다음" 을 누르면 안내만 선다 — 서버는 빈 본문을 400 으로 받는다.
  *
  * 🚨 **01 이 받지 않는 것을 전부 여기서 받는다.** 01 은 되돌리기 어려운 것(아이를 만드는 일 ·
  *    법정대리인 동의)만 받고, 고를 수 있는 것은 이 화면이 진다.
@@ -83,8 +84,14 @@ function ChildOnboardingScreen() {
   const idempotencyKey = useIdempotencyKey();
 
   const save = useMutation({
+    /**
+     * 🚨 **키를 본문에 묶는다** (`current(JSON.stringify(body))`). 서버가 저장했는데 응답만
+     *    끊기면 화면은 실패로 보이고, 보호자는 값을 고쳐 다시 누른다. 키가 그대로면 서버는
+     *    처음 응답을 재생해서 **고친 값이 버려진다** (서버 PR #353). 같은 본문을 다시 누르는
+     *    것은 재시도라 같은 키가 나간다.
+     */
     mutationFn: (body: OnboardingRequest) =>
-      submitOnboarding(childId, body, idempotencyKey.current()),
+      submitOnboarding(childId, body, idempotencyKey.current(JSON.stringify(body))),
     onSuccess: async () => {
       // 온보딩 한 번이 프로필·안전정보·홈을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
@@ -113,14 +120,15 @@ function ChildOnboardingScreen() {
 
   function submit() {
     /**
-     * 🚨 **잘못 적은 숫자를 조용히 버리지 않는다.** `buildBody()` 는 숫자가 아닌 값을 그냥
-     *    빼는데, 그대로 제출하면 **적은 사람만 적었다고 믿는다.** 여기서 먼저 막는다.
+     * 🚨 **잘못 적은 숫자를 조용히 버리지 않는다.** `buildBody()` 는 숫자가 아니거나 범위 밖인
+     *    값을 그냥 빼는데, 그대로 제출하면 **적은 사람만 적었다고 믿는다.** 여기서 먼저 막는다.
      */
-    const next: { height?: string; weight?: string } = {};
-    if (parseMeasurement(height) === "invalid") next.height = "숫자로 적어주세요.";
-    if (parseMeasurement(weight) === "invalid") next.weight = "숫자로 적어주세요.";
+    const next = {
+      height: measurementError(parseMeasurement(height)),
+      weight: measurementError(parseMeasurement(weight)),
+    };
     setMeasureErrors(next);
-    if (Object.keys(next).length > 0) return;
+    if (next.height || next.weight) return;
 
     if (!body) {
       setEmptyNotice(true);

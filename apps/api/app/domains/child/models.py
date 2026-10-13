@@ -1,8 +1,19 @@
 import enum
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, LargeBinary, Text, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
@@ -15,6 +26,18 @@ class ParentChildRelation(enum.StrEnum):
     GRANDPARENT = "grandparent"
     SITTER = "sitter"
     OTHER = "other"
+
+
+class Gender(enum.StrEnum):
+    """아이 성별. 기본값은 "밝히지 않을래요" 다 (루트 CLAUDE.md §2).
+
+    "모름" 이 아니라 "밝히지 않음" 이다 — 보호자는 알고 있고, 우리에게 알려 줄지를 고른다.
+    화면 표시 전용이다. Agent 컨텍스트에 넣지 않는다 (10-10 결정).
+    """
+
+    MALE = "male"
+    FEMALE = "female"
+    UNDISCLOSED = "undisclosed"
 
 
 class ParentChild(Base, UUIDPk):
@@ -45,8 +68,54 @@ class Child(Base, UUIDPk, Timestamps):
     nickname: Mapped[str] = mapped_column(Text, nullable=False)
     owner_parent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("parent.id"), nullable=False)
     birth_date: Mapped[date] = mapped_column(nullable=False)
+    # default 와 server_default 를 둘 다 둔다. server_default 만 있으면 ORM 이 flush 뒤 이 칸을
+    # 모르는 채로 남겨, 비동기 세션에서 읽는 순간 지연 로딩 오류가 난다
+    gender: Mapped[Gender] = mapped_column(
+        enum_col_py(Gender, name="child_gender"),
+        nullable=False,
+        default=Gender.UNDISCLOSED,
+        server_default=Gender.UNDISCLOSED.value,
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("parent.id", ondelete="SET NULL")
+    )
+
+
+class ChildGrowthLog(Base, UUIDPk, Timestamps):
+    """키 · 몸무게를 잰 날 한 줄. 지표가 아니라 기록이다 (루트 CLAUDE.md §2).
+
+    🚨 증감 · 백분위 · 또래 비교 칸을 만들지 않는다 — 발달 평가로 읽힌다.
+    표 이름은 Agent 포트(agents/food/store/ports.py 의 GrowthLogReader)가 이미 쓰는 이름이다.
+    공동 기록이라 적은 보호자가 탈퇴해도 남고(created_by SET NULL), 아이가 지워지면 같이 지워진다.
+    """
+
+    __tablename__ = "child_growth_log"
+    __table_args__ = (
+        # 한쪽만 재고 오는 날이 있다. 둘 다 비면 잰 것이 없는 기록이다
+        CheckConstraint(
+            "height_cm IS NOT NULL OR weight_kg IS NOT NULL", name="child_growth_log_measured"
+        ),
+        CheckConstraint(
+            "height_cm IS NULL OR height_cm > 0", name="child_growth_log_height_positive"
+        ),
+        CheckConstraint(
+            "weight_kg IS NULL OR weight_kg > 0", name="child_growth_log_weight_positive"
+        ),
+        Index("ix_child_growth_log_child_id_measured_on", "child_id", "measured_on"),
+    )
+
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
+    measured_on: Mapped[date] = mapped_column(nullable=False)
+    # float 가 아니라 Numeric — 104.2 가 104.19999 로 바뀌지 않게.
+    # 자릿수는 docs/agents/data_model.md 의 09-22 확정값(소수 한 자리)이다.
+    # 더 긴 값은 DB 가 반올림한다
+    height_cm: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
+    weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("parent.id", ondelete="SET NULL")
     )
 

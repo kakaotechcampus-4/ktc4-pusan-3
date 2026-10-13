@@ -16,6 +16,7 @@ from app.agents.food.store.inmemory import (
     InMemorySafety,
     InMemorySuggestionHistory,
     in_memory_ports,
+    unwired_ports,
 )
 from app.agents.food.store.ports import (
     ChildProfileReader,
@@ -76,4 +77,5 @@ __all__ = [
     "SafetyReader",
     "SuggestionHistoryReader",
     "in_memory_ports",
+    "unwired_ports",
 ]

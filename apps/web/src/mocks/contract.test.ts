@@ -60,6 +60,7 @@ import type {
   Observation,
   ObservationDetailResponse,
   ObservationsResponse,
+  OnboardingRequest,
   Policy,
   PhotoCommitResponse,
   PhotoEntry,
@@ -577,7 +578,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
       // 🚨 거부는 "처리 결과" 가 아니다. 동의를 받은 뒤 같은 키로 다시 보내면 통과해야 한다.
       setScenario("default");
       const retried = await submitOnboarding("c1", { gender: "female" }, key);
-      expect(retried.run_id).toBe("r01");
+      expect(retried.child.gender).toBe("female");
     } finally {
       setScenario("default");
     }
@@ -2155,9 +2156,9 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
 });
 
 /**
- * 11 아이 프로필. ⚠️ 여기서 거는 경로 셋(`GET`/`PATCH /children/{cid}` · `/growth`)은
- * **계약서 v1 에 없다** (이슈 #75). 목이 그 제안된 계약대로 행동하는지를 걸어 둬서,
- * 서버가 붙을 때 같은 표를 실서버에도 그대로 옮길 수 있게 한다.
+ * 11 아이 프로필. 여기서 거는 경로(`GET`/`PATCH /children/{cid}` · PR #334, `/growth` · PR #353)는
+ * 서버 구현이 정본이다. 목이 그 구현대로 행동하는지를 걸어 둬서, 같은 표를 실서버에도
+ * 그대로 옮길 수 있게 한다.
  */
 describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
   it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
@@ -2176,9 +2177,13 @@ describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
     expect(after.nickname).toBe("민서");
   });
 
-  it("빈 별명은 422 다 — 이름 없는 아이를 만들지 않는다", async () => {
-    await expect(api.patch("/children/c1", { nickname: "   " })).rejects.toSatisfy((e: unknown) =>
-      isApiError(e, "validation_failed"),
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it.each([
+    ["빈 별명", "   "],
+    ["21자 별명", "가".repeat(21)],
+  ])("%s 은 400 이다 — 서버 `Nickname` 과 같은 범위", async (_, nickname) => {
+    await expect(api.patch("/children/c1", { nickname })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
   });
 });
@@ -2204,10 +2209,41 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
     expect(log.weight_kg).toBe(17.4);
   });
 
-  it("둘 다 비어 있으면 422 다", async () => {
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it("둘 다 비어 있으면 400 이다", async () => {
     await expect(api.post("/children/c1/growth", { measured_on: "2026-09-12" })).rejects.toSatisfy(
-      (e: unknown) => isApiError(e, "validation_failed"),
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
+  });
+
+  it.each([
+    ["300 을 넘는 키", { height_cm: 300.1 }, "height_cm"],
+    ["반올림해 0 이 되는 몸무게", { weight_kg: 0.04 }, "weight_kg"],
+  ])("%s 는 400 이다 — 서버 `Measurement` 와 같은 범위", async (_, value, field) => {
+    const caught = await api
+      .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+    expect((caught as ApiError).detail).toEqual({ fields: [field] });
+  });
+
+  it.each([
+    ["아이 생일 이전", "2021-04-01"],
+    ["오늘 이후", toISODate(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000))],
+  ])("잰 날이 %s 면 400 이다", async (_, measured_on) => {
+    const caught = await api
+      .post("/children/c1/growth", { measured_on, height_cm: 100 })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+    expect((caught as ApiError).detail).toEqual({ fields: ["measured_on"] });
+  });
+
+  it("아이 생일에 잰 것은 받는다", async () => {
+    const { log } = await api.post<{ log: GrowthLog }>("/children/c1/growth", {
+      measured_on: "2021-04-02",
+      height_cm: 50.3,
+    });
+    expect(log.measured_on).toBe("2021-04-02");
   });
 
   it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
@@ -2236,13 +2272,25 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
     expect(log.weight_kg).toBe(target.weight_kg);
   });
 
-  it("고친 결과가 둘 다 비면 422 다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
+  it("고친 결과가 둘 다 비면 400 이다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
     const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
     const target = items.find((log) => log.height_cm !== null && log.weight_kg !== null)!;
 
     await expect(
       api.patch(`/children/c1/growth/${target.id}`, { height_cm: null, weight_kg: null }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+  });
+
+  it("고칠 때도 범위와 잰 날을 거른다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items[0];
+
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { height_cm: 1042 }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { measured_on: "2020-01-01" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
   });
 
   it("날짜를 고치면 서버가 날짜 문구도 다시 만든다", async () => {
@@ -2271,6 +2319,53 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
 
     const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
     expect(after.some((log) => log.id === target.id)).toBe(false);
+  });
+});
+
+/**
+ * 02 온보딩 — 서버 구현(PR #353)이 정본이다. 응답은 `{child, growth}` 이고 11 프로필과 같은 것을
+ * 고친다. 🚨 바디 오류는 400 이다.
+ */
+describe("㉔ 02 온보딩은 적은 것만 저장하고 11 프로필에 그대로 선다", () => {
+  it("성별과 키를 적으면 프로필과 오늘 잰 기록 한 줄이 돌아온다", async () => {
+    const res = await submitOnboarding(
+      "c1",
+      { gender: "female", height_cm: 104.2 },
+      newIdempotencyKey(),
+    );
+
+    expect(res.child.gender).toBe("female");
+    expect(res.growth).toMatchObject({ height_cm: 104.2, weight_kg: null, measured_label: "오늘" });
+    // 🚨 run 을 만들지 않는다 — 계약서 초안의 run_id 를 읽으면 undefined 다.
+    expect(res).not.toHaveProperty("run_id");
+
+    // 같은 상태다 — 02 에서 적은 것이 11 에 그대로 선다.
+    const profile = await api.get<ChildProfile>("/children/c1");
+    expect(profile.gender).toBe("female");
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(items[0].id).toBe(res.growth?.id);
+  });
+
+  it("키와 몸무게를 안 적었으면 growth 는 null 이다", async () => {
+    const res = await submitOnboarding("c1", { relation: "father" }, newIdempotencyKey());
+    expect(res.child.relation).toBe("father");
+    expect(res.growth).toBeNull();
+  });
+
+  it.each([
+    ["빈 본문", {}],
+    ["null", { gender: null }],
+    ["범위 밖 키", { height_cm: 350 }],
+    // 🚨 알레르기의 쓰기 경로는 승인 게이트 ㉡ 하나다 (최상위 §2) — 이 본문으로 받지 않는다.
+    ["알레르기", { safety: [{ type: "allergy", label: "땅콩" }] }],
+    ["한 줄", { one_line: "지어낸 한 줄" }],
+  ])("%s 은 400 이다", async (_, body) => {
+    const caught = await submitOnboarding(
+      "c1",
+      body as OnboardingRequest,
+      newIdempotencyKey(),
+    ).catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
   });
 });
 

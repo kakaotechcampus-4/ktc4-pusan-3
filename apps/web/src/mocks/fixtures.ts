@@ -362,7 +362,7 @@ export const safetyScan: SafetyScanResponse = {
 /* ── 11 아이 프로필 · 측정 로그 ───────────────────────────────────────── */
 
 /**
- * ⚠️ `GET /children/{cid}` 는 계약서 v1 에 없다 (이슈 #75). 여기가 그 제안의 유일한 구현이다.
+ * `GET /children/{cid}` 의 응답 모양은 서버 구현(PR #334)이 정본이다.
  * 🚨 `age_display` 는 **서버 문구**라 목이 만든다 — 화면은 생일에서 나이를 계산하지 않는다.
  */
 export const childProfile: ChildProfile = {

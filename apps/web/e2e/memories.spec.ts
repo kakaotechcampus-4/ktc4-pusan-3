@@ -1,4 +1,5 @@
 import { CHILD, expect, expectNoGate, test } from "./fixtures";
+import { browserDaysAgo } from "./time-zone";
 
 /**
  * 07 기억 — 관찰 한 건과 승격된 기억을 섞지 않는다 (최상위 CLAUDE.md §2 기억 · §5 Correction).
@@ -188,11 +189,12 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
   });
 });
 
-/** 목의 건강 관찰은 어제 날짜다 (`fixtures.ts` 의 `healthObservation`). 브라우저와 같은 지역 시간이다. */
+/**
+ * 목의 건강 관찰은 어제 날짜다 (`fixtures.ts` 의 `healthObservation`). 🚨 브라우저 시간대로 센다 —
+ * 러너 시간대로 세면 한국 시간 0시~9시에 하루 어긋난다 (`time-zone.ts`).
+ */
 function yesterday(): string {
-  const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return browserDaysAgo(1);
 }
 
 test.describe("health 관찰은 진단 · 평가를 하지 않는다 (§2 안전)", () => {
