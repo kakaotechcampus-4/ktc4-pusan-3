@@ -153,8 +153,7 @@ export interface Affinity {
  * 🚨 LLM 이 생성·추론·수정하지 않는다 (NF-03). 보호자 직접 입력 또는 의료 기록만.
  * DB 의 health_safety.kind 는 API 에서 type 으로 내려온다 (Ref 의 kind 와 이름 충돌 회피).
  *
- * 필드는 DB 모델(`apps/api/app/domains/safety/models.py`)에 맞춘다. 라우터가 아직 없어 Swagger 로
- * 대조할 수 없다 — 생기면 한 번 대조한다 (`domains/safety/repository.py` 의 TODO).
+ * 필드는 서버 응답(`apps/api/app/api/v1/schemas/health_safety.py` 의 `HealthSafetyOut` · #369)과 같다.
  */
 export interface HealthSafety {
   kind: "health_safety";
@@ -171,7 +170,11 @@ export interface HealthSafety {
   /** DB 는 text 다 (jsonb 에서 바뀌었다). 화면은 쓰지 않는다. */
   management: string | null;
   notes: string | null;
-  created_by?: { parent_id: string; nickname: string };
+  /**
+   * 적은 보호자. 🚨 **빠지지 않고 `null` 로 온다** — 탈퇴했거나 부르는 이름이 없는 계정이면
+   *    통째로 `null` 이다 (화면이 "null님이 확인" 을 그리지 않게 서버가 묶어 보낸다).
+   */
+  created_by: { parent_id: string; nickname: string } | null;
   updated_at: string;
 }
 
