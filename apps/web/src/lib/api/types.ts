@@ -1445,28 +1445,43 @@ export interface OnboardingResponse {
 /* ── 동의 ─────────────────────────────────────────────────────────────── */
 
 /**
- * POST /consents (계약서 §04). append-only — 철회도 `withdrawn` 행을 **추가**한다.
+ * POST /consents — 10 설정에서 동의 1건을 켜거나 끈다 (PR #355). append-only — 철회도
+ * `withdrawn` 행을 **추가**한다. 같은 상태로 다시 보내면 행을 더하지 않고 마지막 행을 돌려준다.
  *
- * 🚨 계정 스코프면 `child_id` 를 생략한다. 아이 스코프인데도 아이가 아직 없는 경우가
- *    가입 직후다 — `child_basic` 없이 `POST /children` 이 403 이라, 아이를 만들기 전에
- *    받아야 하기 때문이다 (#18 확인 대상).
+ * 🚨 `child_id` 는 **아이 동의에만** 싣는다. 계정 동의(`location` 포함)에 붙이거나 아이 동의에서
+ *    빼면 400 `validation_failed` 다. 어느 쪽인지는 `policy.target` 이 말한다 (#190).
+ * 🚨 필수 동의는 끌 수 없다 (400) — 끄는 것이 곧 탈퇴다. 화면은 선택 동의만 그린다.
+ * 🚨 `policy_version` — 켜기는 `GET /policies` 가 지금 주는 버전만, 끄기는 등록된 버전이면 받는다.
  */
 export interface ConsentRequest {
   scope: string;
   action: "granted" | "withdrawn";
   child_id?: string;
   policy_version: string;
-  /** 아이 스코프에서 보호자임을 확인한 표시. */
+  /** 아이 동의를 켤 때 법정대리인 확인. `true` 가 아니면 403 `consent_required`. */
   guardian_attested?: boolean;
 }
 
 export interface ConsentResponse {
-  consent: { id: string; scope: string; action: string; acted_at: string };
+  /** 기록한 행. 같은 상태였으면 마지막 행이다. */
+  consent: {
+    id: string;
+    scope: string;
+    action: "granted" | "withdrawn";
+    policy_version: string;
+    acted_at: string;
+  };
+  /**
+   * 🚨 계정 동의를 보냈으면 **계정 동의만** 온다 — `GET /consents?child_id=` 의 `effective` 와
+   *    키 수가 다르다. 화면은 이 값으로 그리지 않고 GET 을 다시 불러온다.
+   */
   effective: Record<string, boolean>;
 }
 
 /**
- * GET /consents?child_id= (계약서 §04). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ * GET /consents?child_id= (PR #355). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ * `child_id` 가 없으면 계정 동의만, 있으면 그 아이의 동의도 온다. 남의 아이면 403.
+ * 가입과 아이 등록 때 남은 행도 `history` 에 들어 있다.
  *
  * 🚨 `history` 는 증빙이라 삭제 엔드포인트가 없다 — 화면에도 "이력 지우기" 를 만들지 않는다.
  * 🚨 `effective` 는 **서버가 계산한 최신 상태**다. `history` 를 프론트에서 접어 현재 상태를
