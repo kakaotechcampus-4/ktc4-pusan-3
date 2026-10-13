@@ -172,6 +172,8 @@ async def test_기록이_없으면_일반_추천만_낸다(llm):
     assert out.result.status == "completed"
     assert out.result.suggestions
     assert all(d.kind == "general" and d.reason == GENERAL_REASON for d in out.result.suggestions)
+    # 일반 추천은 [예시] 문서 행을 근거로 단다 — 아이 기록 근거는 0행이다
+    assert any(c.ref.kind == "activity_doc" for d in out.result.suggestions for c in d.citations)
 
 
 async def test_관찰_한_번을_성향으로_말하지_않는다(llm):
@@ -185,6 +187,21 @@ async def test_관찰_한_번을_성향으로_말하지_않는다(llm):
     )
     notes = [c.note for d in out.result.suggestions for c in d.citations]
     assert not any(OVERCLAIM.search(note) for note in notes)
+
+
+async def test_상관없는_후보에는_그_기록을_달지_않는다(llm):
+    """블록 기록 1건으로 크레용 놀이까지 개인화로 내지 않는다 (예전 eval 에서 찾음)."""
+    out = await play(
+        llm,
+        "unrelated_citation",
+        "오늘 집에서 뭐 하고 놀까",
+        months=30,
+        observations=[observation(1, "블록으로 탑 쌓기", "블록")],
+    )
+    for draft in out.result.suggestions:
+        cited = [c for c in draft.citations if c.subject == "블록"]
+        text = " ".join((draft.content, *draft.items))
+        assert not cited or "블록" in text, draft.content
 
 
 async def test_부모_이야기를_아이_근거로_쓰지_않는다(llm):
