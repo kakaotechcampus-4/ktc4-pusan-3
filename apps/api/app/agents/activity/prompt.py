@@ -75,9 +75,15 @@ _CANDIDATES = """
 _EVIDENCE = """
 [근거]
 - 후보를 고르기 전에 search_activity_memory 를 부른다.
-- evidence 에는 그 결과에 있던 id 만 쓴다. 지어내지 않는다. 근거마다 note 에 어떤 기억을
-  근거로 했는지 짧게 쓴다 — 원문을 옮기지 않는다.
-- 기록이 없으면(NO_RECORDS) evidence 를 비우고 낸다. 보호자에게 되묻지 않는다.
+- evidence 에는 그 결과나 [예시]에 있던 id 만 쓴다. 지어내지 않는다. 근거마다 note 에 어떤
+  기억이나 예시를 근거로 했는지 짧게 쓴다 — 원문을 옮기지 않는다.
+- 기억은 그 후보를 고른 이유가 된 것만 단다. 후보와 상관없는 기록(블록 기록을 크레용 놀이에)을
+  달지 않는다 — 기록이 있다고 다 달면 근거가 약한데 이 아이 맞춤처럼 보인다.
+  싫어한 기록을 피해 골랐으면 그 기록은 이유가 되므로 단다.
+- 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를 evidence 에 단다. note 에는
+  그 예시에서 무엇을 참고했는지 쓴다. 가까운 예시가 없을 때만 evidence 를 비운다.
+- 기억 근거가 있는 후보도 [예시]를 바탕으로 했으면 그 id 를 같이 단다.
+- 기록이 없으면(NO_RECORDS) 기억 근거 없이 낸다. 보호자에게 되묻지 않는다.
 """.strip()
 
 _FAILURE = """
@@ -154,12 +160,12 @@ def _request(request_texts: Sequence[str]) -> str:
 def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
     if not examples:
         return "[예시]\n이 월령의 예시는 아직 없다."
-    lines = ["[예시] 결만 참고한다. 그대로 베끼지 않는다."]
+    lines = ["[예시] 결만 참고한다. 그대로 베끼지 않는다. 바탕으로 했으면 id 를 evidence 에 단다."]
     for row in examples:
         materials = ", ".join(row.materials) or "없음"
         lines.append(
-            f"- {row.title}: {row.body} (장소 {row.setting.value} · 준비물 {materials} · "
-            f"보호자 {row.caregiver_role.value})"
+            f"- id {row.id} · {row.title}: {row.body} (장소 {row.setting.value} · "
+            f"준비물 {materials} · 보호자 {row.caregiver_role.value})"
         )
     return "\n".join(lines)
 

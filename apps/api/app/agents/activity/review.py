@@ -24,10 +24,11 @@ from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, EvidencePick
 from app.agents.activity.schemas.recommend import ActivityCandidate
+from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
 from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.reference import age_gates
-from app.agents.common.refs import EvidenceCitation
+from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.rules.evaluative import find_evaluative
 
@@ -44,6 +45,8 @@ MIN_AVOIDED_LABEL = 2
 GENERAL_REASON = "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요."
 
 Seen = Mapping[UUID, RankedEvidence]
+# 이번 run 의 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
+Docs = Mapping[UUID, ActivityDocRow]
 
 
 class RejectReason(StrEnum):
@@ -61,7 +64,9 @@ class RejectReason(StrEnum):
 # 모델에게 돌려줄 설명 — 무엇을 고치면 되는지만. 걸린 낱말은 알려 주지 않는다
 GUIDANCE: dict[RejectReason, str] = {
     RejectReason.EVALUATIVE: "또래 비교나 발달 판정 표현을 쓰지 않는다.",
-    RejectReason.UNKNOWN_EVIDENCE: "evidence 에는 search_activity_memory 결과에 있던 id 만 쓴다.",
+    RejectReason.UNKNOWN_EVIDENCE: (
+        "evidence 에는 search_activity_memory 결과나 [예시]에 있던 id 만 쓴다."
+    ),
     RejectReason.AVOIDED: "싫어한다고 나온 활동은 다시 내지 않는다. 다른 활동으로 바꾼다.",
     RejectReason.OVERSTATED_NOTE: (
         "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
@@ -111,6 +116,7 @@ def review_candidates(
     safety: SafetyTerms,
     places: Collection[str] = (),
     outdoor_ok: bool = True,
+    docs: Docs | None = None,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -120,6 +126,8 @@ def review_candidates(
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
     `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소 이름이다.
+    `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
+    되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
     """
     # 대조는 subject 로 한다 — 관찰의 label 은 "물감 놀이" 같은 문장이라
     # 후보에 그대로 나오는 일이 드물다
@@ -145,6 +153,7 @@ def review_candidates(
             candidate,
             months=months,
             seen=seen,
+            docs=docs or {},
             places=known_places,
             avoided=avoided,
             recent=recent_activities,
@@ -190,6 +199,7 @@ def _check(
     *,
     months: int,
     seen: Seen,
+    docs: Docs,
     places: Mapping[str, str],
     avoided: tuple[str, ...],
     recent: Collection[str],
@@ -204,12 +214,12 @@ def _check(
         return RejectReason.EVALUATIVE, (), None
 
     # 3. Activity 검증
-    resolved: list[tuple[EvidencePick, RankedEvidence]] = []
+    resolved: list[tuple[EvidencePick, RankedEvidence | ActivityDocRow]] = []
     for pick in candidate.evidence:
-        ranked = _lookup(seen, pick.id)
-        if ranked is None:
+        found = _lookup(seen, docs, pick.id)
+        if found is None:
             return RejectReason.UNKNOWN_EVIDENCE, (), None
-        resolved.append((pick, ranked))
+        resolved.append((pick, found))
 
     place: str | None = None
     if candidate.place_name and candidate.place_name.strip():
@@ -224,14 +234,15 @@ def _check(
     content_key = normalize_activity(candidate.content)
     if any(subject in content_key for subject in avoided):
         return RejectReason.AVOIDED, (), None
-    if any(overstates(pick.note) and ranked.tier != 1 for pick, ranked in resolved):
+    # 문서 행 note 도 본다 — "늘 좋아하는" 은 문서가 아니라 아이에 대한 말이다
+    if any(overstates(pick.note) and not _confirmed(found) for pick, found in resolved):
         return RejectReason.OVERSTATED_NOTE, (), None
     if is_recent_duplicate(candidate.content, recent):
         return RejectReason.RECENT_DUPLICATE, (), None
     if months < TOGETHER_ONLY_BELOW_MONTH and candidate.caregiver_role != CaregiverRole.TOGETHER:
         return RejectReason.CAREGIVER_ROLE, (), None
 
-    citations = tuple(cite(ranked, note=pick.note) for pick, ranked in resolved)
+    citations = tuple(_cite(found, note=pick.note) for pick, found in resolved)
     return None, citations, place
 
 
@@ -264,9 +275,20 @@ def _with_place(content: str, place: str | None) -> str:
     return f"{place}에서 {content}"
 
 
-def _lookup(seen: Seen, raw_id: str) -> RankedEvidence | None:
+def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:
     try:
         key = UUID(raw_id)
     except ValueError:
         return None
-    return seen.get(key)
+    return seen.get(key) or docs.get(key)
+
+
+def _confirmed(found: RankedEvidence | ActivityDocRow) -> bool:
+    return isinstance(found, RankedEvidence) and found.tier == 1
+
+
+def _cite(found: RankedEvidence | ActivityDocRow, *, note: str) -> EvidenceCitation:
+    """기억은 `cite()` 로, 문서 행은 `activity_doc` 근거로. 문서 행은 기피가 없다(polarity 0)."""
+    if isinstance(found, RankedEvidence):
+        return cite(found, note=note)
+    return EvidenceCitation(ref=Ref(kind="activity_doc", id=found.id), note=note, label=found.title)

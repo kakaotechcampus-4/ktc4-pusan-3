@@ -3,7 +3,7 @@
 순서
   ① 오늘 날씨를 먼저 판정해 `outdoor_ok` 를 정한다 — 장소 조회를 실내 종류로 좁힐지가 걸려 있다
   ② build_gate 로 월령 · 동의 · 안전 조회 · 위치를 모은다. 안전 조회가 실패했으면 모델 0회로 닫는다
-  ③ 문서 행(예시)을 코드가 조회해 프롬프트에 넣는다
+  ③ 문서 행(예시)을 코드가 조회해 id 와 함께 프롬프트에 넣는다. 일반 추천은 이 id 를 근거로 단다
   ④ 모델이 조회 tool 을 부르고 마지막에 propose_activity_candidates 로 후보 3개를 낸다.
      거절되면 사유를 보고 고쳐 다시 낸다 — 같은 진입 안의 루프라 model_calls 가 늘지 않는다
   ⑤ 안전 필터로 빠져 3개가 안 되면 같은 대화에 이어 재호출 1회(model_calls=2). 처음 통과한 것을
@@ -74,6 +74,8 @@ async def run(
     examples = await search_activity_doc(
         context.ports.docs, months=gate.stage.months, query=" ".join(task.request_texts)
     )
+    # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
+    context.state.seen_docs = {row.id: row for row in examples}
     system = build_system_prompt(context, examples, weather=weather)
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [
