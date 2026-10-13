@@ -1280,9 +1280,9 @@ export interface UpdateChildResponse {
 /**
  * 키 · 몸무게를 **잰 날 한 줄**. 🚨 지표가 아니라 기록이다.
  *
- * ⚠️ **여기부터 측정 기록 타입은 아직 목에서만 산다** (`/children/{cid}/growth` · #75).
- *    서버에는 표(`child_growth_log`)만 먼저 들어갔고 API 는 다음 PR 이다 — 붙기 전에 이 주석을
- *    지우지 않는다. 지워지는 순간 서버에 있는 것처럼 보인다.
+ * 여기부터 측정 기록 타입은 서버 구현이 정본이다 (`/children/{cid}/growth` 4개 · PR #353 · Swagger).
+ * 🚨 바디 오류는 400 이다 — 키 · 몸무게가 둘 다 비었거나, 범위(`lib/measurement.ts`) 밖이거나,
+ *    잰 날이 아이 생일 이전 · 한국 날짜로 오늘 이후일 때.
  *
  * 🚨 **증감·백분위·또래 비교 필드를 여기에 만들지 않는다.** `DESIGN.md` 의
  *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, "지난번보다 +2cm" 는 이 제품이
@@ -1295,8 +1295,8 @@ export interface GrowthLog {
   /** 🚨 한쪽만 재고 오는 날이 있다. 둘 다 null 인 행은 서버가 거부한다. */
   height_cm: number | null;
   weight_kg: number | null;
-  /** 🚨 서버 문구("2주 전"). 없으면 그 자리를 비운다 — 프론트가 계산해 채우지 않는다. */
-  measured_label?: string;
+  /** 🚨 서버 문구("2주 전"). 프론트가 계산해 채우지 않는다. */
+  measured_label: string;
   note: string | null;
 }
 
@@ -1381,7 +1381,10 @@ export interface OnboardingSafetyInput {
 }
 
 /**
- * 전부 선택이다. 모두 건너뛰어도 200 이다.
+ * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
+ * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
+ *
+ * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
@@ -1426,40 +1429,59 @@ export interface OnboardingRequest {
   one_line?: string;
 }
 
+/**
+ * 저장한 뒤의 프로필과, 키 · 몸무게를 적었으면 그 기록 한 줄 (서버 PR #353).
+ *
+ * ⚠️ 계약서 §05 초안의 `{observations, affinities, safety, skipped, run_id}` 가 아니다 —
+ *    02 가 한 줄 · 관심사 · 알레르기를 더는 보내지 않아서 그 필드들은 채워질 일이 없다.
+ *    🚨 run 을 만들지 않으므로 **`run_id` 가 없다.** 화면은 성공하면 응답을 읽지 않고 홈으로 간다.
+ */
 export interface OnboardingResponse {
-  observations: Observation[];
-  affinities: Affinity[];
-  safety: HealthSafety[];
-  /** 서버가 저장하지 않고 돌려보낸 항목. safety_status: "unknown" 이 여기 담긴다. */
-  skipped: string[];
-  run_id: string;
+  child: ChildProfile;
+  /** 키 · 몸무게를 둘 다 안 적었으면 `null`. */
+  growth: GrowthLog | null;
 }
 
 /* ── 동의 ─────────────────────────────────────────────────────────────── */
 
 /**
- * POST /consents (계약서 §04). append-only — 철회도 `withdrawn` 행을 **추가**한다.
+ * POST /consents — 10 설정에서 동의 1건을 켜거나 끈다 (PR #355). append-only — 철회도
+ * `withdrawn` 행을 **추가**한다. 같은 상태로 다시 보내면 행을 더하지 않고 마지막 행을 돌려준다.
  *
- * 🚨 계정 스코프면 `child_id` 를 생략한다. 아이 스코프인데도 아이가 아직 없는 경우가
- *    가입 직후다 — `child_basic` 없이 `POST /children` 이 403 이라, 아이를 만들기 전에
- *    받아야 하기 때문이다 (#18 확인 대상).
+ * 🚨 `child_id` 는 **아이 동의에만** 싣는다. 계정 동의(`location` 포함)에 붙이거나 아이 동의에서
+ *    빼면 400 `validation_failed` 다. 어느 쪽인지는 `policy.target` 이 말한다 (#190).
+ * 🚨 필수 동의는 끌 수 없다 (400) — 끄는 것이 곧 탈퇴다. 화면은 선택 동의만 그린다.
+ * 🚨 `policy_version` — 켜기는 `GET /policies` 가 지금 주는 버전만, 끄기는 등록된 버전이면 받는다.
  */
 export interface ConsentRequest {
   scope: string;
   action: "granted" | "withdrawn";
   child_id?: string;
   policy_version: string;
-  /** 아이 스코프에서 보호자임을 확인한 표시. */
+  /** 아이 동의를 켤 때 법정대리인 확인. `true` 가 아니면 403 `consent_required`. */
   guardian_attested?: boolean;
 }
 
 export interface ConsentResponse {
-  consent: { id: string; scope: string; action: string; acted_at: string };
+  /** 기록한 행. 같은 상태였으면 마지막 행이다. */
+  consent: {
+    id: string;
+    scope: string;
+    action: "granted" | "withdrawn";
+    policy_version: string;
+    acted_at: string;
+  };
+  /**
+   * 🚨 계정 동의를 보냈으면 **계정 동의만** 온다 — `GET /consents?child_id=` 의 `effective` 와
+   *    키 수가 다르다. 화면은 이 값으로 그리지 않고 GET 을 다시 불러온다.
+   */
   effective: Record<string, boolean>;
 }
 
 /**
- * GET /consents?child_id= (계약서 §04). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ * GET /consents?child_id= (PR #355). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ * `child_id` 가 없으면 계정 동의만, 있으면 그 아이의 동의도 온다. 남의 아이면 403.
+ * 가입과 아이 등록 때 남은 행도 `history` 에 들어 있다.
  *
  * 🚨 `history` 는 증빙이라 삭제 엔드포인트가 없다 — 화면에도 "이력 지우기" 를 만들지 않는다.
  * 🚨 `effective` 는 **서버가 계산한 최신 상태**다. `history` 를 프론트에서 접어 현재 상태를

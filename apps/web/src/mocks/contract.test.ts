@@ -60,6 +60,7 @@ import type {
   Observation,
   ObservationDetailResponse,
   ObservationsResponse,
+  OnboardingRequest,
   Policy,
   PhotoCommitResponse,
   PhotoEntry,
@@ -577,7 +578,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
       // 🚨 거부는 "처리 결과" 가 아니다. 동의를 받은 뒤 같은 키로 다시 보내면 통과해야 한다.
       setScenario("default");
       const retried = await submitOnboarding("c1", { gender: "female" }, key);
-      expect(retried.run_id).toBe("r01");
+      expect(retried.child.gender).toBe("female");
     } finally {
       setScenario("default");
     }
@@ -1484,53 +1485,199 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 });
 
 describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
-  /**
-   * 🚨 `child_health` 는 **화면에 철회 버튼이 없는** 필수 동의다. 그래도 API 로는 철회가
-   *    가능하고(계약서 §04 는 스코프를 가리지 않는다), append-only 는 모든 스코프에서
-   *    지켜져야 한다 — 화면이 안 부른다고 목이 안 지켜도 되는 것이 아니다.
-   */
-  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
-    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(before.effective.child_health).toBe(true);
-
-    await api.post<ConsentResponse>("/consents", {
-      scope: "child_health",
-      action: "withdrawn",
-      child_id: "c1",
-      policy_version: await policyVersion("child_health"),
-    });
-
-    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(after.effective.child_health).toBe(false);
-    // 🚨 이력은 증빙이라 지워지지 않는다. 철회 한 줄이 **더해져** 있어야 한다.
-    expect(after.history).toHaveLength(1);
-    expect(after.history[0]).toMatchObject({ scope: "child_health", action: "withdrawn" });
-  });
-
-  it("껐다 켜면 이력 두 줄이 남고 현재 상태는 켜짐이다", async () => {
-    for (const action of ["withdrawn", "granted"] as const) {
-      await api.post<ConsentResponse>("/consents", {
-        scope: "location",
-        action,
-        child_id: "c1",
-        policy_version: await policyVersion("location"),
-      });
-    }
-
-    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(res.effective.location).toBe(true);
-    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(2);
-  });
-
-  it("POST /consents 의 effective 와 GET /consents 의 effective 가 같은 표를 본다", async () => {
-    const posted = await api.post<ConsentResponse>("/consents", {
+  /** 계정 동의(`location`)는 `child_id` 없이 보낸다 — 화면도 `policy.target` 으로 가른다. */
+  async function setLocation(action: "granted" | "withdrawn") {
+    return api.post<ConsentResponse>("/consents", {
       scope: "location",
-      action: "granted",
-      child_id: "c1",
+      action,
       policy_version: await policyVersion("location"),
     });
+  }
+
+  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(before.effective.location).toBe(false);
+
+    await setLocation("granted");
+    await setLocation("withdrawn");
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after.effective.location).toBe(false);
+    // 🚨 이력은 증빙이라 지워지지 않는다. 두 줄이 **더해져** 있고, 앞의 행은 그대로다.
+    expect(after.history).toHaveLength(before.history.length + 2);
+    expect(after.history.slice(0, 2)).toMatchObject([
+      { scope: "location", action: "withdrawn" },
+      { scope: "location", action: "granted" },
+    ]);
+    expect(after.history.slice(2)).toEqual(before.history);
+  });
+
+  /** 🚨 실서버도 가입과 아이 등록 때 남은 행을 이력에 넣어 준다 (PR #355). */
+  it("가입과 아이 등록 때 남은 동의도 이력에 있다", async () => {
+    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    const granted = res.history.filter((h) => h.action === "granted").map((h) => h.scope);
+    expect(granted).toEqual(
+      expect.arrayContaining(["service_terms", "privacy_account", "child_basic", "child_health"]),
+    );
+  });
+
+  /**
+   * 🚨 **같은 상태면 행을 더하지 않는다** (실서버 `record_consent`). 안 그러면 "몇 번 동의했는가"
+   *    가 네트워크 재시도 횟수를 센다.
+   */
+  it("같은 상태로 다시 보내면 이력이 늘지 않고 마지막 행을 돌려준다", async () => {
+    const first = await setLocation("granted");
+    const again = await setLocation("granted");
+    expect(again.consent.id).toBe(first.consent.id);
+
+    const res = await api.get<ConsentsResponse>("/consents");
+    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(1);
+  });
+
+  it("child_id 가 없으면 계정 동의만 온다", async () => {
+    const res = await api.get<ConsentsResponse>("/consents");
+    expect(Object.keys(res.effective).sort()).toEqual(
+      ["location", "privacy_account", "service_terms"].sort(),
+    );
+    expect(res.history.every((h) => !h.scope.startsWith("child_"))).toBe(true);
+  });
+
+  /**
+   * 🚨 POST 의 `effective` 는 **보낸 대상의 범위**다 — 계정 동의를 보내면 계정 동의만 온다.
+   *    그래서 `GET ?child_id=` 와 표가 통째로 같지는 않고, 겹치는 키의 값만 같다.
+   *    화면은 이 값으로 그리지 않고 GET 을 다시 불러온다 (`consent-section.tsx`).
+   */
+  it("POST 의 effective 는 보낸 대상의 범위이고, 겹치는 값은 GET 과 같다", async () => {
+    const posted = await setLocation("granted");
+    expect(Object.keys(posted.effective).sort()).toEqual(
+      ["location", "privacy_account", "service_terms"].sort(),
+    );
+
     const fetched = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(fetched.effective).toEqual(posted.effective);
+    for (const [scope, on] of Object.entries(posted.effective)) {
+      expect(fetched.effective[scope]).toBe(on);
+    }
+  });
+
+  /** 🚨 끄는 것이 곧 탈퇴라 막는다. 화면은 필수 동의에 철회 버튼을 그리지 않는다. */
+  it("필수 동의는 철회할 수 없다 — 400 validation_failed, 아무것도 쌓지 않는다", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+
+    const caught = await api
+      .post("/consents", {
+        scope: "child_health",
+        action: "withdrawn",
+        child_id: "c1",
+        policy_version: await policyVersion("child_health"),
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+    expect((caught as ApiError).detail).toMatchObject({ fields: ["scope"] });
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after).toEqual(before);
+  });
+
+  it("계정 동의에 child_id 를 붙이거나 아이 동의에서 빼면 400", async () => {
+    const withChild = await api
+      .post("/consents", {
+        scope: "location",
+        action: "granted",
+        child_id: "c1",
+        policy_version: await policyVersion("location"),
+      })
+      .catch((e) => e);
+    expect(isApiError(withChild, "validation_failed")).toBe(true);
+    expect((withChild as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+
+    const withoutChild = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        guardian_attested: true,
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(withoutChild, "validation_failed")).toBe(true);
+    expect((withoutChild as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+  });
+
+  /** 🚨 서버와 같은 순서로 막는다 — 대상 검사가 필수 끄기 검사보다 먼저다. */
+  it("대상과 필수 끄기가 둘 다 틀리면 대상 쪽으로 막힌다", async () => {
+    const caught = await api
+      .post("/consents", {
+        scope: "service_terms",
+        action: "withdrawn",
+        child_id: "c1",
+        policy_version: await policyVersion("service_terms"),
+      })
+      .catch((e) => e);
+    expect((caught as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+  });
+
+  it("남의 아이면 GET · POST 모두 403 child_access_denied", async () => {
+    const read = await api.get("/consents", { query: { child_id: "c-unknown" } }).catch((e) => e);
+    expect(isApiError(read, "child_access_denied")).toBe(true);
+    expect((read as ApiError).status).toBe(403);
+
+    const write = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        child_id: "c-unknown",
+        guardian_attested: true,
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(write, "child_access_denied")).toBe(true);
+  });
+
+  /** 🚨 아이 등록과 같은 규칙 — 동의와 법정대리인 확인은 별개 의무다. deeplink 는 없다. */
+  it("아이 동의를 켜는데 법정대리인 확인이 없으면 403 consent_required", async () => {
+    const caught = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        child_id: "c1",
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+    expect((caught as ApiError).detail).toMatchObject({ scopes: ["child_basic"] });
+    expect((caught as ApiError).consentDeeplink).toBeNull();
+  });
+
+  /**
+   * 🚨 **켜기와 끄기가 받는 버전이 다르다.** 끄기까지 지금 버전만 받으면 약관이 바뀐 순간 끄는
+   *    길이 막힌다 (위치 약관 제10조 "언제든"). `-b` 는 목에 등록된 다음 판이다
+   *    (`handlers/policies.ts` 의 `bumpedVersion`) — 등록은 됐지만 지금 보여 주는 판은 아니다.
+   */
+  it("켜기는 지금 버전만, 끄기는 등록된 버전이면 받는다", async () => {
+    const current = await policyVersion("location");
+    await setLocation("granted");
+
+    const grantOld = await api
+      .post("/consents", { scope: "location", action: "granted", policy_version: `${current}-b` })
+      .catch((e) => e);
+    expect(isApiError(grantOld, "policy_version_invalid")).toBe(true);
+
+    const withdrawUnknown = await api
+      .post("/consents", { scope: "location", action: "withdrawn", policy_version: "nope" })
+      .catch((e) => e);
+    expect(isApiError(withdrawUnknown, "policy_version_invalid")).toBe(true);
+
+    const withdrawn = await api.post<ConsentResponse>("/consents", {
+      scope: "location",
+      action: "withdrawn",
+      policy_version: `${current}-b`,
+    });
+    expect(withdrawn.consent).toMatchObject({
+      action: "withdrawn",
+      policy_version: `${current}-b`,
+    });
+    expect(withdrawn.effective.location).toBe(false);
   });
 
   it("owner 는 연결을 끊을 수 없다 — 409 owner_required", async () => {
@@ -2048,9 +2195,9 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
 });
 
 /**
- * 11 아이 프로필. ⚠️ 여기서 거는 경로 셋(`GET`/`PATCH /children/{cid}` · `/growth`)은
- * **계약서 v1 에 없다** (이슈 #75). 목이 그 제안된 계약대로 행동하는지를 걸어 둬서,
- * 서버가 붙을 때 같은 표를 실서버에도 그대로 옮길 수 있게 한다.
+ * 11 아이 프로필. 여기서 거는 경로(`GET`/`PATCH /children/{cid}` · PR #334, `/growth` · PR #353)는
+ * 서버 구현이 정본이다. 목이 그 구현대로 행동하는지를 걸어 둬서, 같은 표를 실서버에도
+ * 그대로 옮길 수 있게 한다.
  */
 describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
   it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
@@ -2101,10 +2248,41 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
     expect(log.weight_kg).toBe(17.4);
   });
 
-  it("둘 다 비어 있으면 422 다", async () => {
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it("둘 다 비어 있으면 400 이다", async () => {
     await expect(api.post("/children/c1/growth", { measured_on: "2026-09-12" })).rejects.toSatisfy(
-      (e: unknown) => isApiError(e, "validation_failed"),
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
+  });
+
+  it.each([
+    ["300 을 넘는 키", { height_cm: 300.1 }, "height_cm"],
+    ["반올림해 0 이 되는 몸무게", { weight_kg: 0.04 }, "weight_kg"],
+  ])("%s 는 400 이다 — 서버 `Measurement` 와 같은 범위", async (_, value, field) => {
+    const caught = await api
+      .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+    expect((caught as ApiError).detail).toEqual({ fields: [field] });
+  });
+
+  it.each([
+    ["아이 생일 이전", "2021-04-01"],
+    ["오늘 이후", toISODate(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000))],
+  ])("잰 날이 %s 면 400 이다", async (_, measured_on) => {
+    const caught = await api
+      .post("/children/c1/growth", { measured_on, height_cm: 100 })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+    expect((caught as ApiError).detail).toEqual({ fields: ["measured_on"] });
+  });
+
+  it("아이 생일에 잰 것은 받는다", async () => {
+    const { log } = await api.post<{ log: GrowthLog }>("/children/c1/growth", {
+      measured_on: "2021-04-02",
+      height_cm: 50.3,
+    });
+    expect(log.measured_on).toBe("2021-04-02");
   });
 
   it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
@@ -2133,13 +2311,25 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
     expect(log.weight_kg).toBe(target.weight_kg);
   });
 
-  it("고친 결과가 둘 다 비면 422 다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
+  it("고친 결과가 둘 다 비면 400 이다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
     const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
     const target = items.find((log) => log.height_cm !== null && log.weight_kg !== null)!;
 
     await expect(
       api.patch(`/children/c1/growth/${target.id}`, { height_cm: null, weight_kg: null }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+  });
+
+  it("고칠 때도 범위와 잰 날을 거른다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items[0];
+
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { height_cm: 1042 }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { measured_on: "2020-01-01" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
   });
 
   it("날짜를 고치면 서버가 날짜 문구도 다시 만든다", async () => {
@@ -2168,6 +2358,53 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
 
     const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
     expect(after.some((log) => log.id === target.id)).toBe(false);
+  });
+});
+
+/**
+ * 02 온보딩 — 서버 구현(PR #353)이 정본이다. 응답은 `{child, growth}` 이고 11 프로필과 같은 것을
+ * 고친다. 🚨 바디 오류는 400 이다.
+ */
+describe("㉔ 02 온보딩은 적은 것만 저장하고 11 프로필에 그대로 선다", () => {
+  it("성별과 키를 적으면 프로필과 오늘 잰 기록 한 줄이 돌아온다", async () => {
+    const res = await submitOnboarding(
+      "c1",
+      { gender: "female", height_cm: 104.2 },
+      newIdempotencyKey(),
+    );
+
+    expect(res.child.gender).toBe("female");
+    expect(res.growth).toMatchObject({ height_cm: 104.2, weight_kg: null, measured_label: "오늘" });
+    // 🚨 run 을 만들지 않는다 — 계약서 초안의 run_id 를 읽으면 undefined 다.
+    expect(res).not.toHaveProperty("run_id");
+
+    // 같은 상태다 — 02 에서 적은 것이 11 에 그대로 선다.
+    const profile = await api.get<ChildProfile>("/children/c1");
+    expect(profile.gender).toBe("female");
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(items[0].id).toBe(res.growth?.id);
+  });
+
+  it("키와 몸무게를 안 적었으면 growth 는 null 이다", async () => {
+    const res = await submitOnboarding("c1", { relation: "father" }, newIdempotencyKey());
+    expect(res.child.relation).toBe("father");
+    expect(res.growth).toBeNull();
+  });
+
+  it.each([
+    ["빈 본문", {}],
+    ["null", { gender: null }],
+    ["범위 밖 키", { height_cm: 350 }],
+    // 🚨 알레르기의 쓰기 경로는 승인 게이트 ㉡ 하나다 (최상위 §2) — 이 본문으로 받지 않는다.
+    ["알레르기", { safety: [{ type: "allergy", label: "땅콩" }] }],
+    ["한 줄", { one_line: "지어낸 한 줄" }],
+  ])("%s 은 400 이다", async (_, body) => {
+    const caught = await submitOnboarding(
+      "c1",
+      body as OnboardingRequest,
+      newIdempotencyKey(),
+    ).catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
   });
 });
 

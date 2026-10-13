@@ -1,6 +1,14 @@
 import { http, HttpResponse } from "msw";
 
-import type { ChildProfile, GrowthLog, UpdateChildRequest } from "@/lib/api/types";
+import type {
+  ChildProfile,
+  GrowthLog,
+  OnboardingRequest,
+  OnboardingResponse,
+  UpdateChildRequest,
+} from "@/lib/api/types";
+import { toISODate } from "@/lib/format";
+import { isMeasurementInRange } from "@/lib/measurement";
 
 import { childProfile, growthLogs, measuredLabel, newGrowthLog } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -11,9 +19,9 @@ import { apiError, networkDelay, url } from "./helpers";
  *
  * `GET` · `PATCH /children/{cid}` 는 서버 구현(PR #334)을 따른다 — 서버가 정본이다.
  *
- * ⚠️ **측정 로그(`/children/{cid}/growth`)는 아직 서버에 없다** (#75 · 표만 먼저 들어갔다).
- *    서버 PR 이 붙기 전까지 **이 파일이 그 경로들의 유일한 구현**이다.
- *    🚨 이 줄을 지우고 실서버에 붙이지 않는다. 지워지면 서버에 있는 것처럼 보인다.
+ * 측정 로그(`/children/{cid}/growth` 4개)도 서버 구현(PR #353)을 따른다. 🚨 바디 오류는 400 이다
+ * (서버 `app/api/errors.py` · 명세 §8-1 — 422 는 경로 값). 서버가 거르는 순서대로 거른다 —
+ * 키 · 몸무게 범위 → 잰 날 → 둘 다 빈 기록.
  *
  * 🚨 **측정 로그는 승인 게이트가 아니다.** 잘못 적으면 그 줄을 지우면 되니 되돌릴 수 있고,
  *    승인 게이트는 2곳에서 늘리지 않는다 (최상위 §2). 그래서 `withIdempotency` 로 감싸지
@@ -27,6 +35,60 @@ let logs: GrowthLog[] = [...growthLogs];
 export function resetProfileState(): void {
   profile = { ...childProfile };
   logs = [...growthLogs];
+}
+
+/**
+ * 서버 `Measurement`(0 보다 크고 300 이하, 반올림해 0.1 이상)와 `_check_measured_on`
+ * (아이 생일부터 오늘까지) 를 흉내 낸다. 걸리면 서버와 같은 400 응답, 없으면 `null`.
+ */
+function rejectGrowthBody(body: {
+  measured_on?: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+}) {
+  const outOfRange = (["height_cm", "weight_kg"] as const).filter((name) => {
+    const value = body[name];
+    return typeof value === "number" && !isMeasurementInRange(value);
+  });
+  if (outOfRange.length > 0) {
+    // 스키마 검증이라 서버 공통 문구다 (`app/api/errors.py`).
+    return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+      fields: outOfRange,
+    });
+  }
+  // YYYY-MM-DD 는 글자 순서가 날짜 순서다.
+  const day = body.measured_on;
+  if (day !== undefined && (day < profile.birth_date || day > toISODate(new Date()))) {
+    return apiError(400, "validation_failed", "잰 날을 다시 확인해 주세요", {
+      fields: ["measured_on"],
+    });
+  }
+  return null;
+}
+
+/**
+ * 02 온보딩이 저장하는 자리 — **11 프로필과 같은 상태**를 고친다. 02 에서 고른 성별과 적은 키가
+ * 11 에 그대로 서야 하고, 목이 두 벌을 들면 그게 어긋난다 (`handlers/children.ts`).
+ * 키 · 몸무게를 적었으면 잰 날을 오늘로 찍는다 — 서버가 찍는 값이라 요청에 없다.
+ */
+export function saveOnboarding(
+  body: Pick<OnboardingRequest, "relation" | "gender" | "height_cm" | "weight_kg">,
+): OnboardingResponse {
+  profile = {
+    ...profile,
+    ...(body.relation !== undefined ? { relation: body.relation } : {}),
+    ...(body.gender !== undefined ? { gender: body.gender } : {}),
+  };
+  let growth: GrowthLog | null = null;
+  if (body.height_cm !== undefined || body.weight_kg !== undefined) {
+    growth = newGrowthLog({
+      measured_on: toISODate(new Date()),
+      height_cm: body.height_cm,
+      weight_kg: body.weight_kg,
+    });
+    logs = [growth, ...logs];
+  }
+  return { child: profile, growth };
 }
 
 /** `empty` 시나리오는 "아직 아무것도 안 적은 계정" 이다 — 측정 기록이 0건이어야 한다. */
@@ -84,8 +146,12 @@ export const profileHandlers = [
       weight_kg?: number | null;
     };
 
+    const rejected = rejectGrowthBody(body);
+    if (rejected) return rejected;
     if (body.height_cm == null && body.weight_kg == null) {
-      return apiError(422, "validation_failed", "키나 몸무게 중 하나는 적어주세요");
+      return apiError(400, "validation_failed", "키나 몸무게 중 하나는 적어주세요", {
+        fields: ["height_cm", "weight_kg"],
+      });
     }
 
     const log = newGrowthLog(body);
@@ -113,6 +179,9 @@ export const profileHandlers = [
       weight_kg?: number | null;
     };
 
+    const rejected = rejectGrowthBody(body);
+    if (rejected) return rejected;
+
     const current = logs.find((log) => log.id === params.id);
     if (!current) return apiError(404, "not_found", "이미 지워진 기록이에요");
 
@@ -124,7 +193,9 @@ export const profileHandlers = [
     };
 
     if (next.height_cm == null && next.weight_kg == null) {
-      return apiError(422, "validation_failed", "키나 몸무게 중 하나는 적어주세요");
+      return apiError(400, "validation_failed", "키나 몸무게 중 하나는 적어주세요", {
+        fields: ["height_cm", "weight_kg"],
+      });
     }
 
     next.measured_label = measuredLabel(next.measured_on);

@@ -172,4 +172,5 @@ def build_recipe_row(
         allergen_codes=frozenset(codes),
         stage_min=stage_min,
         source_version=SOURCE_VERSION,
+        source_id=recipe.recipe_id,
     )

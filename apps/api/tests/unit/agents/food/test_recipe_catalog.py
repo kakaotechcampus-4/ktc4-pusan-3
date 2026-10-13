@@ -16,11 +16,31 @@ from app.agents.food.recipe_catalog import (
     ingredient_key,
     parse_ingredient_table,
 )
-from app.agents.food.store import NutritionFacts, SafetyEntry
+from app.agents.food.store import NutritionFacts, SafetyEntry, in_memory_ports
+from app.agents.food.store.ports import RECIPE_SOURCES, MenuCatalogRow
 from app.agents.food.tools.safety import filter_food_safety
 from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
+from app.rules.menu_key import normalize_menu_key
 
 NOW = datetime(2026, 10, 11, tzinfo=UTC)
+
+
+@pytest.fixture
+def ports():
+    return in_memory_ports()
+
+
+def recipe_row(*, source_id: str, name: str) -> MenuCatalogRow:
+    """레시피 카탈로그 행 하나 — 테스트용. 이름·source_id 는 전부 가짜다."""
+    return MenuCatalogRow(
+        menu_key=normalize_menu_key(name),
+        display_name=name,
+        source="mafra_recipe",
+        resolved=True,
+        synced_at=NOW,
+        ingredients=("가짜재료",),
+        source_id=source_id,
+    )
 
 
 def entry(
@@ -256,3 +276,27 @@ def test_같은_키가_두_번_나오면_읽지_않는다() -> None:
 def test_정리_표에는_출처가_있어야_한다() -> None:
     with pytest.raises(ValueError):
         parse_ingredient_table({"ingredients": [entry("두부")]})
+
+
+# ── recipe_catalog 포트 (Task 10, #326 리뷰에서 미룬 것) ─────────────────
+async def test_후보_풀은_레시피_표에서_읽는다(ports) -> None:
+    rows = await ports.recipes.all_resolved()
+
+    assert all(row.source in RECIPE_SOURCES for row in rows)
+
+
+async def test_메뉴_카탈로그에는_all_resolved_가_없다(ports) -> None:
+    assert not hasattr(ports.catalog, "all_resolved")
+
+
+async def test_레시피_표는_source_와_source_id_로_갱신한다(ports) -> None:
+    await ports.recipes.put(recipe_row(source_id="12", name="된장찌개"))
+    await ports.recipes.put(recipe_row(source_id="12", name="된장찌개(개정)"))
+
+    rows = await ports.recipes.all_resolved()
+    assert len(rows) == 1 and rows[0].display_name == "된장찌개(개정)"
+
+
+async def test_메뉴_카탈로그는_레시피_행을_받지_않는다(ports) -> None:
+    with pytest.raises(ValueError, match="recipe_catalog"):
+        await ports.catalog.put(recipe_row(source_id="12", name="된장찌개"))
