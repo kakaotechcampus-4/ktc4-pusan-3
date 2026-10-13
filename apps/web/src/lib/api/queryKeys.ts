@@ -35,7 +35,7 @@ export const qk = {
    * 한 번에 무효화된다.
    */
   childProfile: (childId: string) => [...qk.child(childId), "profile"] as const,
-  /** 11 키·몸무게 측정 로그. ⚠️ 계약서 v1 에 없다 (이슈 #75). */
+  /** 11 키·몸무게 측정 로그 (`GET /children/{cid}/growth` · PR #353). */
   growth: (childId: string) => [...qk.child(childId), "growth"] as const,
   /**
    * 05 제안 후보. 같은 run·같은 Agent 조합이면 같은 화면이라 키에 둘 다 담는다 —

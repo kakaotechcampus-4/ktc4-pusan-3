@@ -1280,9 +1280,9 @@ export interface UpdateChildResponse {
 /**
  * 키 · 몸무게를 **잰 날 한 줄**. 🚨 지표가 아니라 기록이다.
  *
- * ⚠️ **여기부터 측정 기록 타입은 아직 목에서만 산다** (`/children/{cid}/growth` · #75).
- *    서버에는 표(`child_growth_log`)만 먼저 들어갔고 API 는 다음 PR 이다 — 붙기 전에 이 주석을
- *    지우지 않는다. 지워지는 순간 서버에 있는 것처럼 보인다.
+ * 여기부터 측정 기록 타입은 서버 구현이 정본이다 (`/children/{cid}/growth` 4개 · PR #353 · Swagger).
+ * 🚨 바디 오류는 400 이다 — 키 · 몸무게가 둘 다 비었거나, 범위(`lib/measurement.ts`) 밖이거나,
+ *    잰 날이 아이 생일 이전 · 한국 날짜로 오늘 이후일 때.
  *
  * 🚨 **증감·백분위·또래 비교 필드를 여기에 만들지 않는다.** `DESIGN.md` 의
  *    "부모가 자기 아이를 지표로 보게 하지 않는다" 이고, "지난번보다 +2cm" 는 이 제품이
@@ -1295,8 +1295,8 @@ export interface GrowthLog {
   /** 🚨 한쪽만 재고 오는 날이 있다. 둘 다 null 인 행은 서버가 거부한다. */
   height_cm: number | null;
   weight_kg: number | null;
-  /** 🚨 서버 문구("2주 전"). 없으면 그 자리를 비운다 — 프론트가 계산해 채우지 않는다. */
-  measured_label?: string;
+  /** 🚨 서버 문구("2주 전"). 프론트가 계산해 채우지 않는다. */
+  measured_label: string;
   note: string | null;
 }
 
@@ -1381,7 +1381,10 @@ export interface OnboardingSafetyInput {
 }
 
 /**
- * 전부 선택이다. 모두 건너뛰어도 200 이다.
+ * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
+ * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
+ *
+ * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
@@ -1426,13 +1429,17 @@ export interface OnboardingRequest {
   one_line?: string;
 }
 
+/**
+ * 저장한 뒤의 프로필과, 키 · 몸무게를 적었으면 그 기록 한 줄 (서버 PR #353).
+ *
+ * ⚠️ 계약서 §05 초안의 `{observations, affinities, safety, skipped, run_id}` 가 아니다 —
+ *    02 가 한 줄 · 관심사 · 알레르기를 더는 보내지 않아서 그 필드들은 채워질 일이 없다.
+ *    🚨 run 을 만들지 않으므로 **`run_id` 가 없다.** 화면은 성공하면 응답을 읽지 않고 홈으로 간다.
+ */
 export interface OnboardingResponse {
-  observations: Observation[];
-  affinities: Affinity[];
-  safety: HealthSafety[];
-  /** 서버가 저장하지 않고 돌려보낸 항목. safety_status: "unknown" 이 여기 담긴다. */
-  skipped: string[];
-  run_id: string;
+  child: ChildProfile;
+  /** 키 · 몸무게를 둘 다 안 적었으면 `null`. */
+  growth: GrowthLog | null;
 }
 
 /* ── 동의 ─────────────────────────────────────────────────────────────── */
