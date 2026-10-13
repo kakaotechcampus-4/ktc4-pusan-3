@@ -83,7 +83,7 @@ def _instructions(task_type: FoodTaskType) -> str:
 def _examples(examples: tuple[FoodDocRow, ...]) -> str:
     if not examples:
         return "[예시]\n(참고할 문서 없음)"
-    body = "\n".join(f"- {doc.body}" for doc in examples)
+    body = "\n".join(f"- {doc.title}: {doc.body}" for doc in examples)
     return f"[예시]\n{body}"
 
 
