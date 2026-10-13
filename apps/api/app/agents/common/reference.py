@@ -8,10 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import yaml
 
+from app.rules.age import Stage, StageBoundaries
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import Term, normalize
 
@@ -562,3 +563,92 @@ def _parse_axis(name: str, raw: Mapping[str, Any]) -> HazardAxis:
         source=source,
         warning_text=warning_text,
     )
+
+
+# age_gates.yaml — 월령 경계값의 정본 (#372)
+_AGE_GATES_KEYS = frozenset(
+    {"source", "version", "fetched_at", "stage_boundaries", "v1_month_limit", "gates"}
+)
+_GATE_KEYS = (
+    "affinity_min_month",
+    "together_only_below_month",
+    "education_min_month",
+    "step_min_month",
+    "manner_min_month",
+    "habit_min_month",
+)
+
+
+@dataclass(frozen=True)
+class AgeGates:
+    """`age_gates.yaml` 을 읽은 결과. 월령 숫자는 코드에 두지 않고 여기서 읽는다.
+
+    `stage_boundaries` 는 월령 오름차순이다 — `rules/age.py` 의 `stage_of()` 가 받는 모양이다.
+    """
+
+    stage_boundaries: StageBoundaries
+    v1_month_limit: int
+    affinity_min_month: int  # Activity 가 profile_affinity 를 읽기 시작하는 월령. 0 = 월령 무관
+    together_only_below_month: int  # Activity — 이 월령 미만은 같이 하는 활동만
+    education_min_month: int  # Growth — 교육 tool 이 열린다
+    step_min_month: int  # Growth — 루틴이 다음 단계 제안으로 넘어간다
+    manner_min_month: int  # Growth — 예절 카테고리
+    habit_min_month: int  # Growth — 습관 교정 카테고리
+
+
+@cache
+def age_gates() -> AgeGates:
+    """`age_gates.yaml` 을 부팅 때 한 번 읽는다. 틀린 곳이 있으면 예외를 그대로 올린다.
+
+    월령을 기본값으로 대신 채우면 모든 게이트가 같이 어긋난다.
+    """
+    return parse_age_gates(load_reference("age_gates.yaml"))
+
+
+def parse_age_gates(data: Mapping[str, Any]) -> AgeGates:
+    """모양을 검사해 `AgeGates` 로 만든다. 틀린 곳이 있으면 `ValueError`."""
+    where = "age_gates.yaml"
+    _check_keys(where, data, _AGE_GATES_KEYS)
+    if missing := [k for k in ("stage_boundaries", "v1_month_limit", "gates") if k not in data]:
+        raise ValueError(f"{where} 에 빠진 칸이 있다: {missing}")
+
+    limit = _check_month(f"{where} v1_month_limit", data["v1_month_limit"], upper=None)
+    if limit <= 0:
+        raise ValueError(f"{where} 의 v1_month_limit 은 0 보다 커야 한다: {limit}")
+
+    raw_stages = data["stage_boundaries"]
+    expected = list(get_args(Stage))
+    if not isinstance(raw_stages, Mapping) or list(raw_stages) != expected:
+        raise ValueError(
+            f"{where} 의 단계는 월령 순서대로 {expected} 여야 한다: "
+            f"{list(raw_stages) if isinstance(raw_stages, Mapping) else raw_stages!r}"
+        )
+    boundaries = tuple(
+        (_check_month(f"{where} 단계 {name}", month, upper=limit), name)
+        for name, month in raw_stages.items()
+    )
+    if boundaries[0][0] != 0:
+        raise ValueError(f"{where} 의 단계 경계는 0 에서 시작해야 한다: {boundaries[0][0]}")
+    months = [month for month, _ in boundaries]
+    if any(later <= earlier for earlier, later in zip(months, months[1:], strict=False)):
+        raise ValueError(f"{where} 의 단계 경계는 오름차순이어야 한다: {months}")
+
+    raw_gates = data["gates"]
+    if not isinstance(raw_gates, Mapping):
+        raise ValueError(f"{where} 의 gates 는 칸 이름과 월령의 표여야 한다")
+    _check_keys(f"{where} gates", raw_gates, frozenset(_GATE_KEYS))
+    if missing := [k for k in _GATE_KEYS if k not in raw_gates]:
+        raise ValueError(f"{where} gates 에 빠진 칸이 있다: {missing}")
+    gates = {k: _check_month(f"{where} gates.{k}", raw_gates[k], upper=limit) for k in _GATE_KEYS}
+
+    return AgeGates(stage_boundaries=boundaries, v1_month_limit=limit, **gates)
+
+
+def _check_month(where: str, value: Any, *, upper: int | None) -> int:
+    """월령 하나. 정수가 아니면(문자열 · 소수 · bool) 거부하고, 0 ~ upper 밖이면 거부한다."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{where} 는 정수여야 한다: {value!r}")
+    if value < 0 or (upper is not None and value > upper):
+        bound = "0 이상" if upper is None else f"0 ~ {upper}"
+        raise ValueError(f"{where} 가 범위({bound}) 밖이다: {value}")
+    return value
