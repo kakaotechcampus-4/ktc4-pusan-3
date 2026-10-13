@@ -64,7 +64,7 @@ def _instructions(task_type: FoodTaskType) -> str:
     lines = [
         "[지시]",
         '- 숫자 뒤에 %·g·mg·kcal 이 붙은 표현과 "퍼센트"·"칼로리" 를 쓰지 않는다. '
-        "구간(낮은 편 · 적당 · 높은 편)으로만 말한다.",
+        "구간(적은 편 · 적당 · 많은 편)으로만 말한다.",
         "- 수치는 내부 계산에만 쓴다. 화면에는 구간과 식품군만 나간다.",
     ]
     if task_type == FoodTaskType.NUTRIENT_ANALYSIS:

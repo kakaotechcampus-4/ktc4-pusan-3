@@ -74,6 +74,14 @@ def test_수치를_만들지도_쓰지도_않는다고_말한다() -> None:
     assert "tool 결과에 있는 것만" not in text
 
 
+def test_구간_표현은_식품을_말하는_적은_편_많은_편이다() -> None:
+    # "칼슘이 낮은 편" 은 검사 수치처럼 읽힌다 — 코드 문장 틀 · 거절 메시지와 같은 표현을 쓴다
+    text = build_system_prompt(context(), FoodTaskType.NUTRIENT_ANALYSIS)
+
+    assert "구간(적은 편 · 적당 · 많은 편)" in text
+    assert "낮은 편" not in text
+
+
 def test_식단_추천에는_기록_조회_안내가_없다() -> None:
     text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
 

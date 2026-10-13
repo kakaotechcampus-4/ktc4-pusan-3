@@ -15,7 +15,7 @@
 
 - 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. 식단 추천 · 급식 갱신은 tool 이
   구현될 때까지 `not_ready.*` 로 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
-  구현되면 `closed_readout_key` 의 `not_ready` 줄만 지운다. `test_food_stub_gate.py` 가 막는다.
+  구현되면 `NOT_READY` 에서 그 task 를 뺀다. `test_food_stub_gate.py` 가 막는다.
 - `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
   안내를 내서 식단 추천과 같이 닫고, `daycare_meal`은 영향받지 않는다.
@@ -35,6 +35,7 @@ from pydantic import BaseModel, ValidationError
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
+from app.agents.food.readouts import NOT_READY_DAYCARE, NOT_READY_MEAL
 from app.agents.food.result import ErrorCode, ToolResult, fail
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
@@ -105,6 +106,14 @@ _TODDLER_NUTRIENT_BASE: frozenset[str] = frozenset(
     {"lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis"}
 )
 
+# tool 이 아직 스텁이라 모델에게 열지 않고 코드 문구로 닫는 task. tool 이 구현되면 여기서 뺀다 —
+# 열면 모델이 스텁을 부르고 NotImplementedError 가 pipeline 까지 올라가 agent_error 가 된다.
+# 열린 tool 에 스텁이 남아 있으면 test_food_stub_gate.py 가 막는다 (#357 리뷰 4-②)
+NOT_READY: dict[FoodTaskType, str] = {
+    FoodTaskType.MEAL_RECOMMENDATION: NOT_READY_MEAL,  # 후보 풀 · 기록 조회
+    FoodTaskType.DAYCARE_MEAL: NOT_READY_DAYCARE,  # 급식 조회 · 갱신 · 삭제
+}
+
 # life_stage() 의 네 값 중 영아기 둘. 영양소 분석은 이 두 단계 전부에서 닫힌다
 _INFANT_STAGES = ("infant_milk", "infant_weaning")
 
@@ -121,10 +130,7 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
             return "unsupported.milk_meal"
         if not gate.safety_ok:
             return "blocked.safety"
-        # 후보 풀 · 기록 조회 tool 이 아직 스텁이다. 열면 모델이 스텁을 부르고
-        # NotImplementedError 가 pipeline 까지 올라가 agent_error 가 된다 — 구현될 때까지 닫는다
-        # (#357 리뷰 4-②, test_food_stub_gate.py)
-        return "not_ready.meal"
+        return NOT_READY.get(task)
     if task == FoodTaskType.NUTRIENT_ANALYSIS:
         if stage in _INFANT_STAGES:
             return "unsupported.infant_nutrient"
@@ -133,7 +139,7 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
     if task == FoodTaskType.DAYCARE_MEAL:
         if not gate.data.daycare_meal:
             return "closed.no_daycare"
-        return "not_ready.daycare"  # 급식 조회 · 갱신 · 삭제 tool 이 아직 스텁이다
+        return NOT_READY.get(task)
     raise AssertionError(f"모르는 FoodTaskType: {task}")  # pragma: no cover
 
 

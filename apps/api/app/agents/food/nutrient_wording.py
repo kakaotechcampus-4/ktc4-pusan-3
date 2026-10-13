@@ -22,6 +22,7 @@ from app.agents.food.readouts import (
     NUTRIENT_BAND_LOW,
     NUTRIENT_BAND_LOW_ACTION,
     NUTRIENT_INSUFFICIENT,
+    NUTRIENT_UNSCORED,
     READOUTS,
 )
 
@@ -33,11 +34,26 @@ WordingProblem = Literal["number", "prescription", "body", "child_subject", "no_
 
 # 숫자 + 단위. "9건" 같은 기록 건수는 단위가 아니라 통과한다
 _NUMBER = re.compile(
-    r"\d+(?:[.,]\d+)?\s*(?:%|퍼센트|프로|mg|㎎|밀리그램|g|그램|kcal|㎉|킬로칼로리|칼로리|배)",
+    r"\d+(?:[.,]\d+)?\s*(?:%|퍼센트|프로|mg|㎎|밀리그램|ml|㎖|밀리리터|g|그램|kcal|㎉|킬로칼로리|칼로리|배)",
     re.IGNORECASE,
 )
-# 숫자를 한글로 써도("백이십 밀리그램") 단위어는 남는다
-_UNIT_WORDS = ("퍼센트", "밀리그램", "킬로칼로리", "칼로리", "그램")
+# 수를 한글로 쓴 배수 · 비율("두 배" · "이십 프로"). 수 앞이 한글이면 낱말의 일부라 보지 않고
+# ("식사 배달"), 과일 "배" · "배추" 는 수 다음에 오지 않아 걸리지 않는다
+_KOREAN_RATIO = re.compile(
+    r"(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|몇|여러|[일이삼사오육칠팔구십백]+)"
+    r"\s?(?:배(?![추달])|프로(?![그바틴필])|퍼센트)"
+)
+# 숫자를 한글로 써도("백이십 밀리그램") 단위어는 남는다. "절반" 도 양을 말하는 비율이다
+_UNIT_WORDS = (
+    "퍼센트",
+    "밀리그램",
+    "밀리그람",
+    "밀리리터",
+    "킬로칼로리",
+    "칼로리",
+    "그램",
+    "절반",
+)
 # 진단 · 처방 · 먹일 음식 제안
 _PRESCRIPTION = (
     "의심",
@@ -112,7 +128,11 @@ WORDING_MESSAGES: dict[WordingProblem, str] = {
 def wording_problem(finding: str) -> WordingProblem | None:
     """화면에 나가면 안 되는 이유. 없으면 None. 검사 순서는 위 상수 순서다."""
     text = unicodedata.normalize("NFKC", finding)
-    if _NUMBER.search(text) or any(word in text for word in _UNIT_WORDS):
+    if (
+        _NUMBER.search(text)
+        or _KOREAN_RATIO.search(text)
+        or any(word in text for word in _UNIT_WORDS)
+    ):
         return "number"
     if any(word in text for word in _PRESCRIPTION):
         return "prescription"
@@ -155,6 +175,9 @@ def fallback_readouts(
     """
     if verdict.insufficient:
         return (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=verdict.records),)
+    if not verdict.bands:
+        # 기록은 충분한데 모든 항목이 빈 칸이었다 — 아무것도 안 봤는데 "고르게" 라고 하지 않는다
+        return (READOUTS.render(NUTRIENT_UNSCORED, recorded=verdict.records),)
     lines = [
         READOUTS.render(
             _BAND_KEYS[(band, nutrient in actions)],

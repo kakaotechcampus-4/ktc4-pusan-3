@@ -271,6 +271,21 @@ async def test_이미_낸_판정이_있으면_그_판정으로_코드_문장을_
     assert len(lines) == 2  # ok 인 항목은 말하지 않는다
 
 
+async def test_판정한_항목이_없으면_빈_findings_뒤에_살펴보지_못했다고_낸다(task, context) -> None:
+    # 모델 경로 — 구간이 하나도 없으면 findings 를 비우고, 화면에는 코드 문구가 나간다
+    context.state.nutrient_verdict = _verdict({})
+    client = FakeLLM(
+        tool_response(
+            call("c1", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})
+        )
+    )
+
+    result = await run(task, context, client=client)
+
+    assert result.status == "ok"
+    assert result.readouts == (READOUTS.render("nutrient.unscored", recorded=9),)
+
+
 async def test_대체_문장의_안내에서도_알레르기_식품이_빠진다(task, talking_client) -> None:
     # 🚨 알레르기 식품 빼기는 코드가 한다 — 모델이 못 끝내서 코드 문장으로 가도 같다
     context = _context(

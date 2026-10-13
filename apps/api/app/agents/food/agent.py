@@ -17,7 +17,7 @@ from app.agents.common.tool_loop import ToolCall, ToolLoopResult, run_tool_loop
 from app.agents.food.context import FoodContext, build_gate
 from app.agents.food.nutrient_wording import fallback_readouts
 from app.agents.food.prompt import build_system_prompt
-from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, READOUTS
+from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, NUTRIENT_UNSCORED, READOUTS
 from app.agents.food.registry import (
     closed_readout_key,
     execute_tool,
@@ -152,6 +152,8 @@ def _readouts_from(
         verdict = context.state.nutrient_verdict
         if verdict is not None and verdict.insufficient:
             return (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=verdict.records),)
+        if verdict is not None and not verdict.bands:
+            return (READOUTS.render(NUTRIENT_UNSCORED, recorded=verdict.records),)
         return ()
     return (Readout(kind="nutrient_analysis", body="\n".join(findings), authored_by="model"),)
 

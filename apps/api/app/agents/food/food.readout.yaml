@@ -46,20 +46,23 @@ nutrient.daycare_amount_unknown:
   kind: nutrient
   template: "급식은 메뉴만 알고 얼마나 먹었는지는 몰라서 참고만 했어요."
 nutrient.band.low:
-  kind: nutrient
+  kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요."
 nutrient.band.low_action:
-  kind: nutrient
+  kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요 — {action}"
 nutrient.band.high:
-  kind: nutrient
+  kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 많은 음식이 자주 보여요."
 nutrient.band.high_action:
-  kind: nutrient
+  kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 많은 음식이 자주 보여요 — {action}"
 nutrient.band.all_ok:
-  kind: nutrient
+  kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 살펴본 영양소가 고르게 담겨 있어요."
+nutrient.unscored:
+  kind: nutrient
+  template: "기록된 식사 {recorded}건으로는 영양소 비중을 아직 살펴보지 못했어요."
 daycare.ask_substitute:
   kind: daycare
   template: "대체식이나 알레르기 때문에 빼놓은 메뉴가 있으면 알려주세요."

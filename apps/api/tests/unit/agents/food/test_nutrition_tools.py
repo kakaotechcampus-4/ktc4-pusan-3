@@ -464,6 +464,36 @@ def context_insufficient(context: FoodContext) -> FoodContext:
     return context
 
 
+@pytest.fixture
+def context_unscored(context: FoodContext) -> FoodContext:
+    # 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나온 상태
+    context.state.basis_keys = set()
+    context.state.nutrient_verdict = _verdict({})
+    return context
+
+
+async def test_판정한_항목이_없으면_findings_가_있어도_거절한다(context_unscored) -> None:
+    # 구간이 없는데 "균형 잡힌 식단" 같은 일반 문장이 나가면 근거 없는 안심이다
+    result = await report_nutrient_analysis(
+        context_unscored,
+        NutrientReportArgs(
+            period=MealPeriod.LAST_7_DAYS,
+            findings=["기록된 식사를 보면 전반적으로 균형 잡힌 식단이에요"],
+        ),
+    )
+
+    assert not result.success
+    assert result.error["code"] == "INVALID_ARGS"
+
+
+async def test_판정한_항목이_없으면_빈_findings_로_끝낸다(context_unscored) -> None:
+    result = await report_nutrient_analysis(
+        context_unscored, NutrientReportArgs(period=MealPeriod.LAST_7_DAYS, findings=[])
+    )
+
+    assert result.success
+
+
 async def test_기록이_충분한데_findings_가_비어있으면_거절한다(context_sufficient) -> None:
     result = await report_nutrient_analysis(
         context_sufficient, NutrientReportArgs(period=MealPeriod.LAST_7_DAYS, findings=[])

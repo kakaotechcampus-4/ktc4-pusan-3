@@ -206,14 +206,17 @@ async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArg
             ErrorCode.INVALID_ARGS,
             "compare_diet_balance 를 먼저 부른다. 구간 판정 없이는 findings 를 낼 수 없다.",
         )
-    if verdict.insufficient and args.findings:
+    # 기록이 부족하거나(insufficient) 모든 항목이 빈 칸이라 구간이 하나도 없으면 말할 구간이 없다 —
+    # 그때 "균형 잡힌 식단" 같은 일반 문장은 근거 없는 안심이라 findings 를 비우게 한다
+    has_bands = bool(verdict.bands) and not verdict.insufficient
+    if not has_bands and args.findings:
         return fail(
             "report",
             "nutrient_analysis",
             ErrorCode.INVALID_ARGS,
-            "기록이 부족하면 findings 를 비운다. 구간을 말하지 않는다.",
+            "기록이 부족하거나 판정한 항목이 없으면 findings 를 비운다. 구간을 말하지 않는다.",
         )
-    if not verdict.insufficient and not args.findings:
+    if has_bands and not args.findings:
         return fail(
             "report",
             "nutrient_analysis",

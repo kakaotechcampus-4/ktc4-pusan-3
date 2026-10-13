@@ -67,18 +67,13 @@ def _gate(
 
 @pytest.fixture
 def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """tool 이 구현돼 `not_ready.*` 줄을 지운 뒤의 게이팅. 게이팅 표의 묶음이 그대로 열리는지 본다.
+    """tool 이 구현돼 `registry.NOT_READY` 에서 뺀 뒤의 게이팅. 게이팅 표의 묶음이 그대로 열리는지
+    본다.
 
-    식단 추천 · 급식은 지금 스텁이라 닫혀 있지만, 그 묶음은 `tools_for` 에 남아 있다 — 구현 때 줄
-    하나만 지워서 열 수 있어야 하고, 그 사이에 표와 어긋나면 안 된다 (#357 리뷰 4-②).
+    식단 추천 · 급식은 지금 스텁이라 닫혀 있지만, 그 묶음은 `tools_for` 에 남아 있다 — 구현 때
+    `NOT_READY` 에서 빼기만 하면 열려야 하고, 그 사이에 표와 어긋나면 안 된다 (#357 리뷰 4-②).
     """
-    original = registry.closed_readout_key
-
-    def lifted(task: FoodTaskType, gate: Gate) -> str | None:
-        key = original(task, gate)
-        return None if key is not None and key.startswith("not_ready.") else key
-
-    monkeypatch.setattr(registry, "closed_readout_key", lifted)
+    monkeypatch.setattr(registry, "NOT_READY", {})
 
 
 # ── tools_for — 지금 모델에게 열리는 tool ───────────────────────────
@@ -260,10 +255,9 @@ async def test_build_gate_는_동의_없는_아이의_health_safety_를_읽지_�
     assert tools_for(FoodTaskType.MEAL_RECOMMENDATION, gate) != ()
     assert tools_for(FoodTaskType.NUTRIENT_ANALYSIS, gate) != ()
     assert tools_for(FoodTaskType.DAYCARE_MEAL, gate) != ()
-    # not_ready_lifted 가 바꾼 모듈 속 함수로 본다 — 위에서 import 한 이름은 원본이다
-    assert registry.closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, gate) is None
-    assert registry.closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) is None
-    assert registry.closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) is None
+    assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, gate) is None
+    assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) is None
+    assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) is None
 
 
 async def test_build_gate_는_안전_조회_실패를_safety_ok_False_로_옮긴다() -> None:

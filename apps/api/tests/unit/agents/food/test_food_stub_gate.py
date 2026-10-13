@@ -72,4 +72,5 @@ async def test_모델에게_열린_tool_에_스텁이_없다(task, stage, safety
         data=DataReady(daycare_meal=daycare),
     )
     opened = tools_for(task, gate)
-    assert [name for name in opened if await _is_stub(name)] == []
+    # 판별(_is_stub)만 믿지 않는다 — 스텁이 인자를 먼저 읽어 다른 예외를 내면 판별에서 빠진다
+    assert [name for name in opened if name in KNOWN_STUBS or await _is_stub(name)] == []

@@ -35,6 +35,8 @@ NUTRIENT_BAND_LOW_ACTION = "nutrient.band.low_action"
 NUTRIENT_BAND_HIGH = "nutrient.band.high"
 NUTRIENT_BAND_HIGH_ACTION = "nutrient.band.high_action"
 NUTRIENT_BAND_ALL_OK = "nutrient.band.all_ok"
+# 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나왔을 때 — "고르게" 라고 말하지 않는다
+NUTRIENT_UNSCORED = "nutrient.unscored"
 
 # 급식 조회 · 갱신 · 삭제
 DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"
