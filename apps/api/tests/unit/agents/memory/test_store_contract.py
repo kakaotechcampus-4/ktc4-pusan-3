@@ -4,6 +4,8 @@
 tests/integration/agents/memory/test_store_contract_db.py.
 """
 
+from dataclasses import replace
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -36,6 +38,12 @@ class InMemoryHarness:
     async def stored(self, domain: str, observation_id: str) -> tuple[str, str]:
         row = self.store._observations[observation_id]
         return row.fields["status"], row.raw_text
+
+    async def seed_item(self, event_id: str, item_name: str) -> str:
+        return (await self.store.create_event_item(event_id=event_id, item_name=item_name)).item_id
+
+    async def backdate_prepared(self, item_id: str, when: datetime) -> None:
+        self.store._items[item_id] = replace(self.store._items[item_id], prepared_at=when)
 
 
 @pytest.fixture

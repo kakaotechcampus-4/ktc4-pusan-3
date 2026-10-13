@@ -498,7 +498,6 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 | | 이유 |
 | --- | --- |
 | 초안 제출 API | D9 의 초안을 받아 event·event_item 에 쓰는 엔드포인트. 백엔드 몫이고, 보호자가 고친 시각을 `check_when` 으로 다시 검증해야 한다 |
-| 수정 뒤 재집계 | `subject` 가 update 로 바뀌면 다시 임베딩 · 연결해야 한다. 결정: 수정은 `updated_at` 이 갱신되면서 Curator 집계에 다시 들어간다(삭제는 `embedding` 을 비운다 — data_model §observation). 아직 Curator 가 `updated_at` 을 읽지 않는다 — `DbCuratorStore` 가 대상을 고를 때 어디서 볼지는 #257 에서 명성님과 정한다 |
 | 날짜 규칙·프롬프트 단위 테스트 | 초판에 있던 `test_datetime_rules.py` · `test_prompt.py` 가 지금 없다. `datetime_rules.py` 는 `test_event_when.py` 가 간접적으로만 덮고, 프롬프트 구획을 겨누는 테스트는 아예 없다 |
 | 낡은 초안이 뒤 결과를 덮어쓰는 것 | 초안은 만들어진 시점의 DB 값을 들고 화면에 떠 있다. 두 장을 띄워두고 나중 것부터 제출하면 앞 초안이 뒤 결과를 지운다(`items` 가 최종 목록이라). 일단 현상유지로 두고 잠금은 나중에 보기로 했다 |
 | 승인 전 재발화 | 초안을 제출하기 전에 같은 일정을 다시 말하면 `query_event` 가 0건을 돌려주고 create 초안이 두 장 생긴다. `DraftBook` 이 run 단위라서다(D11). 보호자가 한 장만 승인하면 된다 |
@@ -509,8 +508,6 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 
 ### 이관 검토
 
-- `memory/tools/schedule.py` 의 `prepared_at_for` → `app/rules/` — 웹의 준비물 체크(`PATCH /event-items/{iid}`)도
-  같은 규칙을 써야 한다. ai 브랜치에서 be 파트 폴더를 건드릴 수 없어 tool 에 둔 것이지 제자리가 아니다.
 - `common/datetime_rules.py` → `app/rules/` — 루트 §3 상 날짜 계산은 rules 소속이다. 표준 라이브러리만 쓰도록
   만들어 그대로 옮길 수 있다. 제출 API 가 `check_when` 을 다시 불러야 해서 이제는 필요가 더 분명해졌다.
   `app/rules/` 는 공동 소유지만 파트 리드는 리뷰 없이 고칠 수 있다 (2026-09-23 합의).
@@ -543,8 +540,26 @@ D9 가 요구한 ORM 변경이다. 이 브랜치가 아니라 백엔드 쪽에�
 적혔다. Agent 가 아직 이 ORM 을 쓰지 않아(자체 in-memory store) 그 불변식을 코드가 강제하지는 않는다.
 어댑터를 붙일 때 확인할 것.
 
-### `prepared_at` 판정이 tool 에 있다
+### 고친 관찰은 Curator 집계에 다시 들어간다
 
-`is_prepared` 가 바뀔 때 `prepared_at` 을 어떻게 둘지는 규칙이라 `app/rules/` 가 제자리인데,
-그 폴더가 be 파트라 ai 브랜치에 담을 수 없었다. `memory/tools/schedule.py` 의 `prepared_at_for` 에
-순수 함수로 두었다. 백엔드가 `PATCH /event-items/{iid}` 를 만들 때 같이 옮긴다.
+관찰을 고치면 `updated_at` 이 갱신되고, Curator 집계에 영향을 주는 칸이 실제로 바뀌었으면
+`DbMemoryStore` 가 같은 트랜잭션에서 정리한다(#257). Correction 이 관찰 상태를 바꾼 뒤 Profile 을
+바로 다시 계산하는 것과 같은 길이다.
+
+| 바뀐 칸 | 하는 일 |
+| --- | --- |
+| `subject` · `polarity` | 벡터 · Profile 연결 · 보류 기록을 비운다. 다음 Curator 가 다시 임베딩 · 연결한다 |
+| 위 둘 + `observed_range` · `strong_signals` | 원래 Profile 의 `last_observed_on` 과 상태를 다시 계산한다 |
+| 지움(`status = deleted`) | 벡터를 비우고, 원래 Profile 을 다시 계산한다 |
+
+다른 칸(양 · 반응 등)만 바뀌거나 같은 값으로 고치면 아무것도 하지 않는다. food · activity · education 만
+해당한다 — health · routine 은 승격 대상이 아니다.
+
+### `prepared_at` 은 store 가 정한다
+
+`is_prepared` 가 바뀔 때 `prepared_at` 을 어떻게 둘지는 `MemoryStore.set_event_item_prepared` 가 정한다.
+DB 구현은 백엔드의 `domains/schedule/repository.set_event_item_prepared`(`PATCH /children/{cid}/event-items/{iid}`
+와 같은 함수)를 그대로 부른다. 이전 값을 UPDATE 안의 `CASE` 로 보기 때문에, 읽은 뒤 쓰기 전에 보호자가
+화면에서 체크해도 처음 시각이 남는다(#335 · #257). 미체크 → 체크만 지금 시각, 체크 → 다시 체크는 처음 시각 유지,
+해제는 `None`. 규칙을 `app/rules/` 의 순수 함수로 빼지 않은 이유도 이것이다 — 백엔드는 그 함수를 못 쓰고 `rules/` 에
+Agent 만 쓰는 사본이 남는다.

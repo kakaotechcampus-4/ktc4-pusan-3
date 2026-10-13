@@ -731,3 +731,43 @@ async def test_run_세션은_deps_의_백그라운드_세션으로_열고_commit
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert [session.commits for session in opened] == [1]
+
+
+async def test_도메인_Agent_기억_포트는_열_때마다_run_세션과_다른_세션을_쓴다(monkeypatch):
+    """run 세션을 Memory 와 도메인 task 가 같이 타면 AsyncSession 동시 사용 에러가 난다 (#257).
+
+    도메인 단계는 Memory commit 뒤에 돌아서, 따로 연 세션에서도 방금 저장한 관찰이 보인다.
+    """
+    opened: list = []
+
+    class FakeSession:
+        async def __aenter__(self) -> "FakeSession":
+            opened.append(self)
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+    monkeypatch.setattr(runner, "background_session", FakeSession)
+    stores: list = []
+
+    async def fake_handle_input(**kwargs):
+        for _ in range(2):
+            async with kwargs["domain_store"]() as store:
+                stores.append(store)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    run_session, *domain_sessions = opened
+    assert len(domain_sessions) == 2
+    assert run_session not in domain_sessions
+    assert domain_sessions[0] is not domain_sessions[1]
+    assert [store._session for store in stores] == domain_sessions

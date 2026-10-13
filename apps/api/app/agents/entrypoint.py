@@ -19,7 +19,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
-from app.agents.memory_bridge import StoreFoodMemory
+from app.agents.memory_bridge import StoreFoodMemory, StoreOpener
 from app.agents.pipeline import (
     AgentResult,
     Commit,
@@ -71,6 +71,7 @@ __all__ = [
     "Rerouted",
     "Saved",
     "Step",
+    "StoreOpener",
     "Unavailable",
     "Unwritten",
     "curator_deps",
@@ -125,6 +126,7 @@ async def handle_input(
     continuation: PendingMemoryContext | None = None,
     commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
+    domain_store: StoreOpener | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -146,6 +148,9 @@ async def handle_input(
     - curator_trigger 를 넘기면 Memory 가 commit 된 직후 pipeline 이 (child_id, 기준일) 로 한 번
       부른다. 콜백이 별도 세션에서 Curator 를 백그라운드로 띄운다. 러너가 `curator_deps()` 로
       만든다. 안 넘기면(테스트 · eval) Curator 는 돌지 않는다.
+    - domain_store 를 넘기면 도메인 Agent 의 기억 포트가 호출마다 그것으로 store 를 새로 연다.
+      러너가 짧은 DB 세션으로 만든다 — run 세션을 도메인 task 들이 같이 타지 않게. 안 넘기면
+      run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -169,7 +174,9 @@ async def handle_input(
     # build_gate 는 동의와 상관없이 안전 조회 실패로 읽어서 Food 는 blocked.safety 로 닫힌다.
     # TODO: health_safety 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다 (issue4).
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
-    memory_port = StoreFoodMemory(store)
+    memory_port = (
+        StoreFoodMemory(store) if domain_store is None else StoreFoodMemory(opener=domain_store)
+    )
     if child_health_granted is None:
         food_ports = unwired_ports(
             profile=InMemoryProfile({child_id: resolved_birth_date}), memory=memory_port

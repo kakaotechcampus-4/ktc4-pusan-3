@@ -330,10 +330,9 @@ class TestEventItemChildIdIsolationUpdateDelete:
         await session.flush()
 
         store_b = DbMemoryStore(session, child_id=child_b.id)
-        result = await store_b.update_event_item(
-            item_id=str(item.item_id), fields={"is_prepared": True}
-        )
+        result = await store_b.set_event_item_prepared(item_id=str(item.item_id), is_prepared=True)
         assert result is None
+        assert store_b.wrote is False  # 남의 준비물은 안 바뀌고 쓴 표시도 안 선다
 
     async def test_다른_아이의_준비물을_delete하면_False(
         self, session: AsyncSession, family: tuple
@@ -417,7 +416,7 @@ class TestWroteFlag:
 
         store = DbMemoryStore(session, child_id=child_a.id)
         assert store.wrote is False
-        await store.update_event_item(item_id=str(item.item_id), fields={"is_prepared": True})
+        await store.set_event_item_prepared(item_id=str(item.item_id), is_prepared=True)
         assert store.wrote is True
 
     async def test_delete_event_item_후_wrote가_True(

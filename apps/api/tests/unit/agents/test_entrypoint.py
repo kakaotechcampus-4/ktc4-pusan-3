@@ -5,6 +5,8 @@ pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 
 import calendar
 import inspect
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Any, get_args
 from uuid import UUID
@@ -448,3 +450,36 @@ def test_curator_deps_는_키가_없으면_None_이다(monkeypatch: pytest.Monke
         assert entrypoint.curator_deps() == (None, None)
     finally:
         entrypoint.curator_deps.cache_clear()
+
+
+async def test_러너가_준_도메인_store_로_Food_기억_포트를_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """도메인 Agent 의 기억 포트는 run 의 store 가 아니라 러너가 준 opener 로 읽는다 (#257)."""
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen["food"] = contexts["food"]
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    domain_store = InMemoryStore()
+    opened: list[int] = []
+
+    @asynccontextmanager
+    async def opener() -> AsyncIterator[Any]:
+        opened.append(1)
+        yield domain_store
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기",
+        run_id="r",
+        commit=_no_commit,
+        domain_store=opener,
+    )
+    today = seen["food"].today
+    await seen["food"].ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
+
+    assert opened == [1]

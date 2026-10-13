@@ -14,7 +14,7 @@ test_observation_delete.py 에 남아 단위로만 돈다.
 """
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -44,6 +44,14 @@ class Harness(Protocol):
 
     async def stored(self, domain: str, observation_id: str) -> tuple[str, str]:
         """(status, raw_text). 지운 행도 읽는다 — store 의 조회는 deleted 를 거른다."""
+        ...
+
+    async def seed_item(self, event_id: str, item_name: str) -> str:
+        """확정 일정에 준비물을 넣고 id 를 돌려준다. tool 에는 준비물 저장이 없다(초안까지만)."""
+        ...
+
+    async def backdate_prepared(self, item_id: str, when: datetime) -> None:
+        """체크 시각을 과거로 민다. DB now() 는 테스트 트랜잭션 안에서 늘 같아서 이렇게 구분한다."""
         ...
 
 
@@ -441,6 +449,53 @@ async def update_로는_deleted_말고_다른_status_를_쓸_수_없다(h: Harne
     assert result.error["code"] == ErrorCode.INVALID_ARGS
 
 
+# ── 준비물 챙김 ─────────────────────────────────────────────────
+# 체크 시각 규칙은 백엔드 PATCH /children/{cid}/event-items/{iid} 와 같다 (#335).
+#   미체크 → 체크: 지금 시각 / 체크 → 다시 체크: 처음 시각 유지 / 해제: None / 해제 → 해제: None
+async def store_의_챙김_시각은_처음_체크한_때를_지킨다(h: Harness) -> None:
+    event_id = await _create_event(h, **_TIMED)
+    item_id = await h.seed_item(event_id, "체육복")
+    store = h.context.store
+
+    first = await store.set_event_item_prepared(item_id=item_id, is_prepared=True)
+    assert first is not None and first.is_prepared and first.prepared_at is not None
+
+    earlier = NOW - timedelta(days=1)
+    await h.backdate_prepared(item_id, earlier)
+    again = await store.set_event_item_prepared(item_id=item_id, is_prepared=True)
+    assert again is not None and again.prepared_at == earlier
+
+    off = await store.set_event_item_prepared(item_id=item_id, is_prepared=False)
+    assert off is not None and off.is_prepared is False and off.prepared_at is None
+    off_again = await store.set_event_item_prepared(item_id=item_id, is_prepared=False)
+    assert off_again is not None and off_again.prepared_at is None
+
+    back = await store.set_event_item_prepared(item_id=item_id, is_prepared=True)
+    assert back is not None and back.prepared_at is not None and back.prepared_at != earlier
+
+
+async def 없는_준비물을_챙기면_None_이다(h: Harness) -> None:
+    # 형식이 틀린 id 도 예외가 아니라 None
+    for item_id in ("없는-준비물", "00000000-0000-0000-0000-000000000000"):
+        row = await h.context.store.set_event_item_prepared(item_id=item_id, is_prepared=True)
+        assert row is None
+
+
+async def tool_로_다시_체크해도_처음_시각을_지킨다(h: Harness) -> None:
+    event_id = await _create_event(h, **_TIMED)
+    item_id = await h.seed_item(event_id, "체육복")
+    check = {"item_id": item_id, "is_prepared": True}
+
+    first = await execute_tool("update_event_item", check, h.context)
+    assert first.success is True, first.error
+
+    earlier = NOW - timedelta(days=1)
+    await h.backdate_prepared(item_id, earlier)
+    await execute_tool("update_event_item", check, h.context)
+    row = await h.context.store.get_event_item(item_id=item_id)
+    assert row is not None and row.is_prepared and row.prepared_at == earlier
+
+
 # ── 케이스 목록 ──────────────────────────────────────────────────
 def _case(scenario: Scenario, label: str = "", **params: Any) -> Any:
     case_id = f"{scenario.__name__}-{label}" if label else scenario.__name__
@@ -488,4 +543,7 @@ CASES = [
         _case(update_로는_deleted_말고_다른_status_를_쓸_수_없다, s, status=s)
         for s in ("active", "stand_alone", "inactive")
     ),
+    _case(store_의_챙김_시각은_처음_체크한_때를_지킨다),
+    _case(없는_준비물을_챙기면_None_이다),
+    _case(tool_로_다시_체크해도_처음_시각을_지킨다),
 ]

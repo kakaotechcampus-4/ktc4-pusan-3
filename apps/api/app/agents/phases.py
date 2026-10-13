@@ -67,10 +67,10 @@ class PipelinePhase(Enum):
 
     DOMAIN
         DB 성격: read + write
-        트랜잭션: 지금은 포트마다 다르다. 기억 포트(StoreFoodMemory)는 memory_bridge 를 거쳐
-                  러너 세션을 Memory 와 같이 읽고, 나머지 포트는 아직 DB 구현이 없다.
-                  목표(10-05)는 포트 호출마다 짧은 트랜잭션, 쓰기 포트는 호출 1회 = 즉시 commit
-                  — 러너 task 별 세션 작업에서 한다
+        트랜잭션: 포트 호출마다 짧은 세션. 기억 포트(StoreFoodMemory)는 러너가 준 opener 로
+                  호출마다 세션을 따로 연다 — run 세션을 같이 타지 않는다 (#257).
+                  나머지 포트는 아직 DB 구현이 없다. 붙일 때 같은 원칙(호출마다 짧은 세션,
+                  쓰기 포트는 호출 1회 = 즉시 commit)을 따른다
         실패 시: 그 Agent(task)만 빠진다 -> partial
         모델 호출: 포함 (도메인 Agent). 상태 전환 단위가 아님
         비고: 쓰는 task 를 먼저 끝낸 뒤 읽는 task 동시 실행. 20초 deadline 적용

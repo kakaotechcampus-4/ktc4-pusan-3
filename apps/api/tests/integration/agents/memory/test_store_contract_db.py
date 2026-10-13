@@ -4,12 +4,12 @@
 두 store 가 다르게 동작하는 것이다 — 그 모듈 머리말의 규칙대로 처리한다.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.memory.context import AgentContext
@@ -24,8 +24,8 @@ from app.domains.memory.observation.models import (
     ObservationRoutine,
 )
 from app.domains.memory.store.db_store import DbMemoryStore
-from app.domains.schedule.models import EventCreatedBy
-from app.domains.schedule.repository import create_event
+from app.domains.schedule.models import EventCreatedBy, EventItem
+from app.domains.schedule.repository import create_event, create_event_item
 from tests.unit.agents.memory.store_contract import CASES, KST, NOW, Scenario
 
 _MODELS = {
@@ -68,6 +68,21 @@ class DbHarness:
         )
         assert row is not None
         return str(row.status), row.raw_text
+
+    async def seed_item(self, event_id: str, item_name: str) -> str:
+        row = await create_event_item(
+            self._session,
+            child_id=self.context.child_id,
+            event_id=UUID(event_id),
+            item_name=item_name,
+        )
+        assert row is not None
+        return str(row.item_id)
+
+    async def backdate_prepared(self, item_id: str, when: datetime) -> None:
+        await self._session.execute(
+            update(EventItem).where(EventItem.item_id == UUID(item_id)).values(prepared_at=when)
+        )
 
 
 @pytest.fixture
