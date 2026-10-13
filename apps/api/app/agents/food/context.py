@@ -11,12 +11,13 @@ LLM이 만들면 안 되는 값(child_id, 식이 단계)과 날짜 계산의 기
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
+from functools import partial
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.agents.common.datetime_rules import today_of
-from app.agents.common.gate import DataReady, Gate
-from app.agents.food.store.ports import FoodPorts, SafetyEntry, SafetyLookupError
+from app.agents.common.gate import DataReady, Gate, read_safety_basis
+from app.agents.food.store.ports import FoodPorts, SafetyEntry
 from app.rules.age import life_stage
 
 if TYPE_CHECKING:
@@ -77,7 +78,8 @@ async def build_gate(context: FoodContext) -> Gate:
     - 동의(`consent_child_health`)가 없으면 `health_safety`를 아예 읽지 않는다.
       읽을 것이 없는 상태라 `context.state.safety` 가 빈 튜플이다.
     - 동의가 있는데 조회가 실패하면(`SafetyLookupError`) `safety_ok=False`가 되고 이 값만
-      식단 추천을 닫는다. 실패를 빈 목록으로 숨기지 않는다.
+      식단 추천을 닫는다. 실패를 빈 목록으로 숨기지 않는다 — 판정은 공용
+      `read_safety_basis()`
     - `DataReady.daycare_meal`은 `has_rows()` 원본
     - 읽은 안전 정보는 `context.state.safety`에 남긴다. 이 task의 필터는 전부 이 값을 쓴다.
     - `Gate.allergy_states`는 채우지 않는다. 포트가 active 행만 주고, 확인 안 된 알레르기
@@ -90,21 +92,16 @@ async def build_gate(context: FoodContext) -> Gate:
     stage = life_stage(birth_date, context.today)
     consent = await ports.consent.child_health_granted(child_id=context.child_id)
 
-    safety_ok = True
-    safety: tuple[SafetyEntry, ...] | None = ()
-    if consent:
-        try:
-            safety = tuple(await ports.safety.food_safety(child_id=context.child_id))
-        except SafetyLookupError:
-            safety_ok = False
-            safety = None
-    context.state.safety = safety
+    basis = await read_safety_basis(
+        partial(ports.safety.food_safety, child_id=context.child_id), consent=consent
+    )
+    context.state.safety = basis.entries
 
     daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
 
     return Gate(
         stage=stage,
         consent_child_health=consent,
-        safety_ok=safety_ok,
+        safety_ok=basis.ok,
         data=DataReady(daycare_meal=daycare_meal),
     )
