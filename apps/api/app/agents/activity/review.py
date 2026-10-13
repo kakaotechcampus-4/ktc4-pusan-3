@@ -22,7 +22,12 @@ from uuid import UUID
 
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
-from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, EvidencePick
+from app.agents.activity.schemas.common import (
+    ActivitySetting,
+    CaregiverRole,
+    DayLabel,
+    EvidencePick,
+)
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
@@ -76,7 +81,8 @@ GUIDANCE: dict[RejectReason, str] = {
         "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
     ),
     RejectReason.OUTDOOR_CLOSED: (
-        "오늘은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾼다."
+        "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
+        " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
     ),
     RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다.",
 }
@@ -114,7 +120,7 @@ def review_candidates(
     recent_activities: Collection[str],
     safety: SafetyTerms,
     places: Collection[str] = (),
-    outdoor_ok: bool = True,
+    outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
@@ -125,6 +131,8 @@ def review_candidates(
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
     `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소 이름이다.
+    `outdoor` 는 후보의 날(`day`)마다 바깥 활동을 할 수 있는지다 (`outing.outdoor_on`). 출력 tool 이
+    후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
     되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
     """
@@ -156,7 +164,7 @@ def review_candidates(
             places=known_places,
             avoided=avoided,
             recent=recent_activities,
-            outdoor_ok=outdoor_ok,
+            outdoor=outdoor,
         )
         if reason is None:
             try:
@@ -202,7 +210,7 @@ def _check(
     places: Mapping[str, str],
     avoided: tuple[str, ...],
     recent: Collection[str],
-    outdoor_ok: bool,
+    outdoor: Mapping[DayLabel, bool] | None,
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], str | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
@@ -226,8 +234,13 @@ def _check(
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
 
-    # 날씨 판정이 야외를 막은 날(D8). either 는 실내에서도 되니 통과한다
-    if not outdoor_ok and candidate.setting == ActivitySetting.OUTDOOR:
+    # 그날 날씨 판정이 야외를 막았다(D8 · #377). either 는 실내에서도 되니 통과한다.
+    # 표에 없는 날은 판정하지 않은 날이라 막는다 — 맑다고 가정하지 않는다
+    if (
+        outdoor is not None
+        and candidate.setting == ActivitySetting.OUTDOOR
+        and not outdoor.get(candidate.day, False)
+    ):
         return RejectReason.OUTDOOR_CLOSED, (), None
 
     content_key = normalize_activity(candidate.content)

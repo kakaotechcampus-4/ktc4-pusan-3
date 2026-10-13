@@ -7,7 +7,7 @@
 """
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -70,10 +70,13 @@ def _say(text: str) -> LLMResponse:
     )
 
 
-def candidate(content: str, *, setting: str = "indoor", materials=()) -> dict[str, Any]:
+def candidate(
+    content: str, *, setting: str = "indoor", materials=(), day: str = "today"
+) -> dict[str, Any]:
     return {
         "content": content,
         "setting": setting,
+        "day": day,
         "materials": list(materials),
         "physical_intensity": "low",
         "involves_food": False,
@@ -264,6 +267,35 @@ class TestWeather:
         llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
         await run(task(), context(location=BUSAN, weather=rain), client=llm)
         assert "바깥 활동이 어렵다" in llm.seen[0][0]["content"]
+
+    async def test_오늘_비가_와도_내일_야외_후보는_나간다(self):
+        """후보의 day 로 그날 판정을 본다. 모델이 lookup_weather 를 안 불러도 출력 tool 이
+        그날을 판정한다 (#377)."""
+        tomorrow = NOW.date() + timedelta(days=1)
+        weather = InMemoryWeather(
+            uv="1",
+            forecast=RawForecast(sky="4", pcp="20.0mm", pop="90"),
+            forecasts={tomorrow: RawForecast(sky="1", pcp="강수없음", pop="0")},
+        )
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor", day="tomorrow")
+        )
+        result = await run(
+            task("내일 밖에서 놀고 싶대"), context(location=BUSAN, weather=weather), client=llm
+        )
+        assert contents(result) == ["공원 산책", "그림자놀이", "색종이 접기"]
+        assert tomorrow in weather.forecast_days
+
+    async def test_오늘_비가_오면_오늘_야외_후보는_거절된다(self):
+        rain = InMemoryWeather(uv="1", forecast=RawForecast(sky="4", pcp="20.0mm", pop="90"))
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task(), context(location=BUSAN, weather=rain), client=llm)
+        assert contents(result) == ["종이컵 탑 쌓기", "그림자놀이", "색종이 접기"]
+        rejected = llm.seen[1][-1]["content"]  # 거절 사유가 tool 결과로 돌아간다
+        assert "그날(day)은 바깥 활동이 어려운 날" in rejected
 
     async def test_위치나_날씨_어댑터가_없으면_날씨_tool_을_열지_않는다(self):
         """부르면 늘 실패만 돌려준다. 프롬프트도 "확인하지 못했다" 로 간다."""

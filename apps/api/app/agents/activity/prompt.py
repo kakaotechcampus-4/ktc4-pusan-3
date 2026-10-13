@@ -33,7 +33,7 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 from collections.abc import Sequence
 
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.gating import finds_places, weather_checked
+from app.agents.activity.gating import checks_weather, finds_places, weather_checked
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.weather import WeatherBrief
 from app.agents.common.gate import Gate
@@ -68,7 +68,11 @@ _CANDIDATES = """
   알아서 빼거나 위험한 부분만 고쳐서 내지 않는다.
 - 싫어한다고 나온 활동(polarity -1)은 다시 내지 않는다. 싫어하는 것을 피해 골랐다면
   무엇을 피했는지 reason 에 쓴다.
+- 언제 하는 활동인지 day 에 적는다(today · tomorrow · this_weekend). 보호자가 날을 말하지
+  않았으면 today 다. 바깥 활동(outdoor)은 그날 날씨로 거른다 — 내일 · 주말 활동이면
+  lookup_weather 로 그날을 먼저 본다. 이번 주말은 토 · 일 중 되는 날을 reason 에 쓴다.
 - 장소는 search_nearby_places 결과에 있는 이름만 place_name 에 쓴다. 없으면 비운다.
+  장소를 찾을 때도 그 활동의 day 를 같이 넘긴다.
 - 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 """.strip()
 
@@ -175,16 +179,24 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
 
     확인하지 못한 날(위치 · 날씨 어댑터가 없거나 예보를 못 읽음)은 "어렵다" 와 나눠 쓴다 — 같은
     말이면 모델이 확인 안 한 날씨를 이유 문장에 쓴다. 판정은 같다(실내만, D8).
+    오늘 판정은 오늘 하는 활동에만 건다. 내일 · 주말은 그날 판정으로 거른다 (#377).
     """
-    if not checked:
+    if not checks_weather(gate):
+        outdoor = (
+            "날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않고, "
+            "setting 이 indoor 나 either 인 활동만 낸다."
+        )
+    elif not checked:
         outdoor = (
             "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
-            "setting 이 indoor 나 either 인 활동만 낸다."
+            "오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
     elif weather.outdoor_ok:
         outdoor = "오늘은 바깥 활동을 할 수 있다."
     else:
-        outdoor = "오늘은 바깥 활동이 어렵다. setting 이 indoor 나 either 인 활동만 낸다."
+        outdoor = (
+            "오늘은 바깥 활동이 어렵다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
+        )
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
     if finds_places(gate):
         place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
