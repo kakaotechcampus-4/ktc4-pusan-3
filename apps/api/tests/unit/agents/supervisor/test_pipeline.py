@@ -36,6 +36,7 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft, count_notice
 from app.agents.food.agent import run as run_food
 from app.agents.food.context import FoodContext
+from app.agents.food.readouts import READOUTS
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
     DaycareMealRow,
@@ -235,14 +236,15 @@ def _default_food_llm() -> FakeLLM:
     compare_diet_balance · lookup_nutrition 말고는 아직 구현되지 않아서(#321 파트 2),
     tool 을 부르게 두면 NotImplementedError 로 깨진다 — 실제 네트워크 호출도 0 이어야 한다.
 
-    영양소 분석이면 report_nutrient_analysis 를 바로 불러 성공으로 끝낸다(findings 빈 목록은
-    report_nutrient_analysis 의 검증을 그대로 통과한다 — Task 9). 다른 task(식단 추천 등)는 그
-    tool 이 허용 목록 밖이라 거절되고(TOOL_NOT_ALLOWED), 다음 턴에서 말로 끝난다
-    (ended_by="no_tool_call" → status="failed"). 특정 테스트가 Food 자체의 다른 경로를
-    보려면 `food_llm=` 으로 직접 넘긴다.
+    영양소 분석이면 compare_diet_balance 로 판정을 낸 뒤 report_nutrient_analysis 로 끝낸다 —
+    판정 없이 report 를 부르면 거절된다(#357 리뷰). 이 테스트들의 food_context 는 기록이 없어
+    `insufficient` 라 findings 빈 목록이 report 의 검증을 통과한다(Task 9). 식단 추천 · 급식은
+    not_ready 로 닫혀 모델을 부르지 않는다. 특정 테스트가 Food 자체의 다른 경로를 보려면
+    `food_llm=` 으로 직접 넘긴다.
     """
     return FakeLLM(
-        _tools(_call("a", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})),
+        _tools(_call("a", "compare_diet_balance", {"period": "last_7_days"})),
+        _tools(_call("b", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})),
         _reply("완료했어요."),
     )
 
@@ -308,15 +310,15 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
-        "Partial",  # 식단 추천은 아직 구현되지 않아서(#321 파트 2) Food 가 failed 로 끝난다
+        "AgentResult",  # 식단 추천은 tool 이 붙기 전이라 not_ready.meal 로 닫혀 문구가 나간다
         "Done",
     ]
     assert saved_when_food_ran == [1]  # Food 를 부를 때 이미 저장돼 있었다 (루트 §4)
     assert [(step.index, step.total) for step in _of(events, Step)] == [(1, 3), (2, 3), (3, 3)]
     assert [ref.kind for ref in _of(events, Saved)[0].refs] == ["observation_food"]
-    assert result.failed is None  # 저장은 됐으니 입력 전체가 실패는 아니다 — partial 이다
-    assert result.model_calls == 3  # Supervisor 1 + Memory 1 + Food 1 (아직 구현 전이라 실패)
-    assert _of(events, Done)[0] == Done(RUN_ID, 3)
+    assert result.failed is None  # 저장은 됐고 Food 는 not_ready 문구를 냈다 — 실패가 아니다
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (닫혀서 모델을 안 부른다)
+    assert _of(events, Done)[0] == Done(RUN_ID, 2)
 
 
 async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
@@ -336,16 +338,18 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
 
     task = result.routing.domain_tasks[0]
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
-    # 식단 추천은 아직 구현 전이라(#321 파트 2) failed 로 끝난다 — 실패한 Agent 는 세부 결과를
-    # 내보내지 않는다(AgentResult 없음, pipeline.py 의 _shows). task 가 받은 조각·단계는
-    # run_food 를 직접 불러 확인한다
-    assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "failed", 1)]
-    assert _of(events, AgentResult) == []
+    # 식단 추천은 tool 이 붙기 전이라 not_ready 로 닫힌다(#357 리뷰) — 모델 0회, 코드 문구가 나간다
+    assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "closed", 0)]
+    assert _of(events, AgentResult) == [
+        AgentResult(
+            "food", "meal_recommendation", "closed", (READOUTS.render("not_ready.meal"),), None
+        )
+    ]
 
     food = await run_food(task, food_context.for_task(), client=_default_food_llm())
     assert food.task_type == FoodTaskType.MEAL_RECOMMENDATION
     assert food.stage == "toddler"
-    assert len(food.tools) == 5  # 식단 추천 × 유아기
+    assert food.tools == ()  # 식단 추천 × 유아기 — not_ready.meal 로 닫혀 열리는 tool 이 없다
     assert food.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
 
 
@@ -402,7 +406,8 @@ async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르
     assert not _of(events, MemoryNote)  # 조기 종료면 메모가 없다 — 응답 문구는 화면이 만든다
     food = result.domain[0]
     assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
-    assert len(food.tools) == 7  # 영양소 분석 × 유아기
+    # 영양소 분석 × 유아기 — 스텁인 기록 조회 tool 은 열지 않는다 (#357 리뷰 4-①)
+    assert food.tools == ("lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis")
     assert food.requires_safety_check is False
     assert result.failed is None
 
@@ -664,8 +669,8 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     assert "딸기케이크" not in feedback  # 적힌 조각은 되돌리지 않는다
 
     assert _of(events, Rerouted) == [Rerouted(1, ("food:meal_recommendation",))]
-    # 식단 추천은 아직 구현 전이라(#321 파트 2) failed 로 끝나 .domain 에는 안 남는다 — routed
-    # 이벤트로 어느 task 가 돌았는지 본다
+    # 식단 추천은 tool 이 붙기 전이라 not_ready 로 닫힌다(#357 리뷰) — routed 이벤트로 어느 task 가
+    # 돌았는지 본다
     assert [routed.task_type for routed in _of(events, DomainRouted)] == ["meal_recommendation"]
     assert result.routing.domain_tasks[0].request_texts == ("저녁에는 뭘 먹이면 좋을까?",)
     assert result.rerouted is not None
@@ -674,7 +679,7 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
     assert [row.fields["subject"] for row in rows] == ["딸기케이크"]
     assert _order(events).index("Rerouted") < _order(events).index("DomainRouted")
-    assert result.model_calls == 4  # Supervisor 2 + Memory 1 + Food 1 — 다시 나눈 run 의 예산은 5
+    assert result.model_calls == 3  # Supervisor 2 + Memory 1 + Food 0 (닫힘) — 예산은 5
 
 
 async def test_Food_로_간_조각이_있으면_다시_나누지_않는다(
@@ -841,7 +846,7 @@ async def test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는�
     )
 
     assert memory_llm.calls == 4  # 실제 왕복은 네 번
-    assert result.model_calls == 3  # Supervisor 1 + Memory 1 + Food 1
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (식단 추천은 닫힘)
     assert "model_calls 예산 초과" not in caplog.text
 
 

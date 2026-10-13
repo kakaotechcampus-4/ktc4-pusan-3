@@ -28,9 +28,8 @@ _OUT_OF_SCOPE = """
 - 질병·영양 결핍을 진단하지 않는다.
 - 치료식을 처방하지 않는다. 약·영양제를 권하지 않는다.
 - 정확한 영양 수치를 만들지 않는다. 식단에 담긴 영양소의 비중만 말한다.
-  수치(%·g·mg·kcal)는 tool 결과에 있는 것만 내부적으로 쓰고 화면 문장에는 쓰지 않는다.
+  수치(%·g·mg·kcal)는 만들지도 쓰지도 않는다.
 - 알레르기를 추론하거나 확정하지 않는다. 주어진 알레르기·금지식품 목록 밖을 판단하지 않는다.
-- 영양소 분석에서는 먹일 음식을 제안하지 않는다.
 - 정확한 레시피를 쓰지 않는다.
 """.strip()
 
@@ -70,9 +69,12 @@ def _instructions(task_type: FoodTaskType) -> str:
     ]
     if task_type == FoodTaskType.NUTRIENT_ANALYSIS:
         lines.append(
-            "- lookup_nutrition · compare_diet_balance 가 식사 기록을 직접 읽어 구간을 낸다. "
-            "search_food_memory · analyze_meal_records · check_repeated_menus 를 먼저 부르지 "
-            "않아도 된다."
+            "- findings 의 주어는 아이가 아니라 먹은 식사다. '기록된 식사를 보면 …' · "
+            "'최근 식단에서 …' 처럼 쓴다. '아이 몸' · '부족' · '모자라' 같은 말은 쓰지 않는다."
+        )
+        lines.append(
+            "- compare_diet_balance 가 준 food_group_actions 에 없는 음식을 제안하지 않는다. "
+            "안내를 넣을 때는 그 문구를 그대로 쓴다(바꿔 쓰면 거절될 수 있다)."
         )
     lines.append(f"- 마지막에 tool 을 한 번 부른다. 이번 task 의 출력 tool 은 {tool} 다.")
     return "\n".join(lines)

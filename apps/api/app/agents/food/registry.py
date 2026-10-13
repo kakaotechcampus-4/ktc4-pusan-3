@@ -4,17 +4,18 @@
 
   라벨: meal_recommendation
     infant_milk(0–3)       닫힘
-    infant_weaning(4–11)   search·weaning·propose
-    toddler·preschool(12+) search·analyze·repeated·(daycare)·propose
+    infant_weaning(4–11)   search·weaning·propose        ← 지금은 not_ready.meal 로 닫힘
+    toddler·preschool(12+) search·analyze·repeated·(daycare)·propose  ← 같음
   라벨: nutrient_analysis
     infant_milk·infant_weaning(0–11)  닫힘
-    toddler·preschool(12+)            search·analyze·repeated·(daycare)·
-                                       nutrition·balance·report
+    toddler·preschool(12+)            nutrition·balance·report (급식 행 유무와 무관)
   라벨: daycare_meal — 단계로 닫지 않음
-    급식 행 있음  lookup·update·delete
+    급식 행 있음  lookup·update·delete                   ← 지금은 not_ready.daycare 로 닫힘
     급식 행 없음  닫힘
 
-
+- 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. 식단 추천 · 급식 갱신은 tool 이
+  구현될 때까지 `not_ready.*` 로 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
+  구현되면 `closed_readout_key` 의 `not_ready` 줄만 지운다. `test_food_stub_gate.py` 가 막는다.
 - `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
   안내를 내서 식단 추천과 같이 닫고, `daycare_meal`은 영향받지 않는다.
@@ -101,14 +102,7 @@ _TODDLER_MEAL_BASE: frozenset[str] = frozenset(
     }
 )
 _TODDLER_NUTRIENT_BASE: frozenset[str] = frozenset(
-    {
-        "search_food_memory",
-        "analyze_meal_records",
-        "check_repeated_menus",
-        "lookup_nutrition",
-        "compare_diet_balance",
-        "report_nutrient_analysis",
-    }
+    {"lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis"}
 )
 
 # life_stage() 의 네 값 중 영아기 둘. 영양소 분석은 이 두 단계 전부에서 닫힌다
@@ -127,14 +121,19 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
             return "unsupported.milk_meal"
         if not gate.safety_ok:
             return "blocked.safety"
-        return None
+        # 후보 풀 · 기록 조회 tool 이 아직 스텁이다. 열면 모델이 스텁을 부르고
+        # NotImplementedError 가 pipeline 까지 올라가 agent_error 가 된다 — 구현될 때까지 닫는다
+        # (#357 리뷰 4-②, test_food_stub_gate.py)
+        return "not_ready.meal"
     if task == FoodTaskType.NUTRIENT_ANALYSIS:
         if stage in _INFANT_STAGES:
             return "unsupported.infant_nutrient"
         # 영양 안내가 식품군("달걀 반찬 늘리기")을 말하므로, 걸러 낼 알레르기를 모르면 열지 않는다
         return None if gate.safety_ok else "blocked.safety"
     if task == FoodTaskType.DAYCARE_MEAL:
-        return None if gate.data.daycare_meal else "closed.no_daycare"
+        if not gate.data.daycare_meal:
+            return "closed.no_daycare"
+        return "not_ready.daycare"  # 급식 조회 · 갱신 · 삭제 tool 이 아직 스텁이다
     raise AssertionError(f"모르는 FoodTaskType: {task}")  # pragma: no cover
 
 
@@ -156,9 +155,9 @@ def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
             if gate.data.daycare_meal:
                 opened.add("lookup_daycare_menu")
     else:  # NUTRIENT_ANALYSIS — infant_* 는 위에서 이미 닫혔다
+        # compare_diet_balance 가 식사 기록 · 급식을 직접 읽어 판정한다. 기록 조회 tool 은 이 경로에
+        # 열지 않는다 (#321 합의 5번 · #357 리뷰)
         opened = set(_TODDLER_NUTRIENT_BASE)
-        if gate.data.daycare_meal:
-            opened.add("lookup_daycare_menu")
 
     return tuple(d.name for d in TOOL_DEFINITIONS if d.name in opened)
 
@@ -195,8 +194,8 @@ async def execute_tool(
     """tool 을 한 번 실행한다. 허용 목록 → 이름 조회 → 인자 검증 → 실행 순서.
 
     모델에게 안 보여준 tool 을 이름으로 불러도 실행하지 않는다. allowed 는 tools_for() 결과다.
-    DB 연결 전인 핸들러는 NotImplementedError 를 낸다(records.py) — 모델이 그 tool 을 고르면
-    run() 전체가 죽는 대신, 모델이 다른 tool 로 이어갈 수 있게 실패 결과로 돌려준다.
+    핸들러 예외는 삼키지 않고 그대로 올린다(Tool_공통). 스텁 tool 은 모델에게 열지 않는다 —
+    `tests/unit/agents/food/test_food_stub_gate.py` 가 막는다.
     """
     definition = _DEFINITIONS.get(name)
     handler = TOOL_HANDLERS.get(name)
@@ -218,15 +217,7 @@ async def execute_tool(
             f"인자가 스키마와 맞지 않는다: {_summarize(exc)}",
         )
 
-    try:
-        return await handler(context, args)
-    except NotImplementedError:
-        return fail(
-            None,
-            name,
-            ErrorCode.UPSTREAM_ERROR,
-            f"'{name}' 은 아직 쓸 수 없다. 이미 가진 결과로 계속하거나 다른 tool 로 이어간다.",
-        )
+    return await handler(context, args)
 
 
 def _summarize(exc: ValidationError, limit: int = 3) -> str:
