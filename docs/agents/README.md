@@ -169,6 +169,7 @@ app/agents/activity/
 | `app/rules/age.py` | `life_stage()` · 달력 계산 |
 | `app/rules/term_match.py` | 위험 용어·알레르기 매처 |
 | `common/tool_runtime.py` | `ToolResult` · `ErrorCode`. `execute_tool` 은 각 Agent 의 `registry.py` 가 갖는다 |
+| `common/ports.py` · `common/gate.py` | 생일 · 동의 포트 · `SafetyLookupError` · `Gate` · `read_safety_basis()` |
 | `common/evidence.py` | `rank_evidence()` |
 | `common/suggestion.py` · `common/readout.py` | `SuggestionDraft` · `Readout` |
 
