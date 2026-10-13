@@ -1485,53 +1485,199 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 });
 
 describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
-  /**
-   * 🚨 `child_health` 는 **화면에 철회 버튼이 없는** 필수 동의다. 그래도 API 로는 철회가
-   *    가능하고(계약서 §04 는 스코프를 가리지 않는다), append-only 는 모든 스코프에서
-   *    지켜져야 한다 — 화면이 안 부른다고 목이 안 지켜도 되는 것이 아니다.
-   */
-  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
-    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(before.effective.child_health).toBe(true);
-
-    await api.post<ConsentResponse>("/consents", {
-      scope: "child_health",
-      action: "withdrawn",
-      child_id: "c1",
-      policy_version: await policyVersion("child_health"),
-    });
-
-    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(after.effective.child_health).toBe(false);
-    // 🚨 이력은 증빙이라 지워지지 않는다. 철회 한 줄이 **더해져** 있어야 한다.
-    expect(after.history).toHaveLength(1);
-    expect(after.history[0]).toMatchObject({ scope: "child_health", action: "withdrawn" });
-  });
-
-  it("껐다 켜면 이력 두 줄이 남고 현재 상태는 켜짐이다", async () => {
-    for (const action of ["withdrawn", "granted"] as const) {
-      await api.post<ConsentResponse>("/consents", {
-        scope: "location",
-        action,
-        child_id: "c1",
-        policy_version: await policyVersion("location"),
-      });
-    }
-
-    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(res.effective.location).toBe(true);
-    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(2);
-  });
-
-  it("POST /consents 의 effective 와 GET /consents 의 effective 가 같은 표를 본다", async () => {
-    const posted = await api.post<ConsentResponse>("/consents", {
+  /** 계정 동의(`location`)는 `child_id` 없이 보낸다 — 화면도 `policy.target` 으로 가른다. */
+  async function setLocation(action: "granted" | "withdrawn") {
+    return api.post<ConsentResponse>("/consents", {
       scope: "location",
-      action: "granted",
-      child_id: "c1",
+      action,
       policy_version: await policyVersion("location"),
     });
+  }
+
+  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(before.effective.location).toBe(false);
+
+    await setLocation("granted");
+    await setLocation("withdrawn");
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after.effective.location).toBe(false);
+    // 🚨 이력은 증빙이라 지워지지 않는다. 두 줄이 **더해져** 있고, 앞의 행은 그대로다.
+    expect(after.history).toHaveLength(before.history.length + 2);
+    expect(after.history.slice(0, 2)).toMatchObject([
+      { scope: "location", action: "withdrawn" },
+      { scope: "location", action: "granted" },
+    ]);
+    expect(after.history.slice(2)).toEqual(before.history);
+  });
+
+  /** 🚨 실서버도 가입과 아이 등록 때 남은 행을 이력에 넣어 준다 (PR #355). */
+  it("가입과 아이 등록 때 남은 동의도 이력에 있다", async () => {
+    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    const granted = res.history.filter((h) => h.action === "granted").map((h) => h.scope);
+    expect(granted).toEqual(
+      expect.arrayContaining(["service_terms", "privacy_account", "child_basic", "child_health"]),
+    );
+  });
+
+  /**
+   * 🚨 **같은 상태면 행을 더하지 않는다** (실서버 `record_consent`). 안 그러면 "몇 번 동의했는가"
+   *    가 네트워크 재시도 횟수를 센다.
+   */
+  it("같은 상태로 다시 보내면 이력이 늘지 않고 마지막 행을 돌려준다", async () => {
+    const first = await setLocation("granted");
+    const again = await setLocation("granted");
+    expect(again.consent.id).toBe(first.consent.id);
+
+    const res = await api.get<ConsentsResponse>("/consents");
+    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(1);
+  });
+
+  it("child_id 가 없으면 계정 동의만 온다", async () => {
+    const res = await api.get<ConsentsResponse>("/consents");
+    expect(Object.keys(res.effective).sort()).toEqual(
+      ["location", "privacy_account", "service_terms"].sort(),
+    );
+    expect(res.history.every((h) => !h.scope.startsWith("child_"))).toBe(true);
+  });
+
+  /**
+   * 🚨 POST 의 `effective` 는 **보낸 대상의 범위**다 — 계정 동의를 보내면 계정 동의만 온다.
+   *    그래서 `GET ?child_id=` 와 표가 통째로 같지는 않고, 겹치는 키의 값만 같다.
+   *    화면은 이 값으로 그리지 않고 GET 을 다시 불러온다 (`consent-section.tsx`).
+   */
+  it("POST 의 effective 는 보낸 대상의 범위이고, 겹치는 값은 GET 과 같다", async () => {
+    const posted = await setLocation("granted");
+    expect(Object.keys(posted.effective).sort()).toEqual(
+      ["location", "privacy_account", "service_terms"].sort(),
+    );
+
     const fetched = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(fetched.effective).toEqual(posted.effective);
+    for (const [scope, on] of Object.entries(posted.effective)) {
+      expect(fetched.effective[scope]).toBe(on);
+    }
+  });
+
+  /** 🚨 끄는 것이 곧 탈퇴라 막는다. 화면은 필수 동의에 철회 버튼을 그리지 않는다. */
+  it("필수 동의는 철회할 수 없다 — 400 validation_failed, 아무것도 쌓지 않는다", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+
+    const caught = await api
+      .post("/consents", {
+        scope: "child_health",
+        action: "withdrawn",
+        child_id: "c1",
+        policy_version: await policyVersion("child_health"),
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+    expect((caught as ApiError).detail).toMatchObject({ fields: ["scope"] });
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after).toEqual(before);
+  });
+
+  it("계정 동의에 child_id 를 붙이거나 아이 동의에서 빼면 400", async () => {
+    const withChild = await api
+      .post("/consents", {
+        scope: "location",
+        action: "granted",
+        child_id: "c1",
+        policy_version: await policyVersion("location"),
+      })
+      .catch((e) => e);
+    expect(isApiError(withChild, "validation_failed")).toBe(true);
+    expect((withChild as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+
+    const withoutChild = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        guardian_attested: true,
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(withoutChild, "validation_failed")).toBe(true);
+    expect((withoutChild as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+  });
+
+  /** 🚨 서버와 같은 순서로 막는다 — 대상 검사가 필수 끄기 검사보다 먼저다. */
+  it("대상과 필수 끄기가 둘 다 틀리면 대상 쪽으로 막힌다", async () => {
+    const caught = await api
+      .post("/consents", {
+        scope: "service_terms",
+        action: "withdrawn",
+        child_id: "c1",
+        policy_version: await policyVersion("service_terms"),
+      })
+      .catch((e) => e);
+    expect((caught as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+  });
+
+  it("남의 아이면 GET · POST 모두 403 child_access_denied", async () => {
+    const read = await api.get("/consents", { query: { child_id: "c-unknown" } }).catch((e) => e);
+    expect(isApiError(read, "child_access_denied")).toBe(true);
+    expect((read as ApiError).status).toBe(403);
+
+    const write = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        child_id: "c-unknown",
+        guardian_attested: true,
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(write, "child_access_denied")).toBe(true);
+  });
+
+  /** 🚨 아이 등록과 같은 규칙 — 동의와 법정대리인 확인은 별개 의무다. deeplink 는 없다. */
+  it("아이 동의를 켜는데 법정대리인 확인이 없으면 403 consent_required", async () => {
+    const caught = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        child_id: "c1",
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+    expect((caught as ApiError).detail).toMatchObject({ scopes: ["child_basic"] });
+    expect((caught as ApiError).consentDeeplink).toBeNull();
+  });
+
+  /**
+   * 🚨 **켜기와 끄기가 받는 버전이 다르다.** 끄기까지 지금 버전만 받으면 약관이 바뀐 순간 끄는
+   *    길이 막힌다 (위치 약관 제10조 "언제든"). `-b` 는 목에 등록된 다음 판이다
+   *    (`handlers/policies.ts` 의 `bumpedVersion`) — 등록은 됐지만 지금 보여 주는 판은 아니다.
+   */
+  it("켜기는 지금 버전만, 끄기는 등록된 버전이면 받는다", async () => {
+    const current = await policyVersion("location");
+    await setLocation("granted");
+
+    const grantOld = await api
+      .post("/consents", { scope: "location", action: "granted", policy_version: `${current}-b` })
+      .catch((e) => e);
+    expect(isApiError(grantOld, "policy_version_invalid")).toBe(true);
+
+    const withdrawUnknown = await api
+      .post("/consents", { scope: "location", action: "withdrawn", policy_version: "nope" })
+      .catch((e) => e);
+    expect(isApiError(withdrawUnknown, "policy_version_invalid")).toBe(true);
+
+    const withdrawn = await api.post<ConsentResponse>("/consents", {
+      scope: "location",
+      action: "withdrawn",
+      policy_version: `${current}-b`,
+    });
+    expect(withdrawn.consent).toMatchObject({
+      action: "withdrawn",
+      policy_version: `${current}-b`,
+    });
+    expect(withdrawn.effective.location).toBe(false);
   });
 
   it("owner 는 연결을 끊을 수 없다 — 409 owner_required", async () => {
