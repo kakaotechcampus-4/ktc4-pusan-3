@@ -2446,6 +2446,30 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
     ).resolves.toBeDefined();
   });
 
+  it("🚨 같은 항목인지는 이름의 앞뒤 공백을 떼고 본다 — 서버와 같다 (#369)", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "  땅콩 " },
+      newIdempotencyKey(),
+    );
+    expect(safety.label).toBe("땅콩");
+
+    await expect(
+      addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_exists"));
+  });
+
+  it("종류와 맞지 않는 심각도는 400 이고, 어느 칸인지 싣는다 (#369)", async () => {
+    const caught = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "복숭아", severity: "mild" },
+      newIdempotencyKey(),
+    ).catch((e: unknown) => e);
+    expect(isApiError(caught, "validation_failed") && caught.detail).toEqual({
+      fields: ["severity"],
+    });
+  });
+
   it("이미 내려간 항목을 또 내리면 404 다", async () => {
     const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
     const target = items[0];
