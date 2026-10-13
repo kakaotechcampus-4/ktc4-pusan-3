@@ -3,11 +3,9 @@
 구현체는 DB·외부 API가 연결된 뒤에 붙인다.
 Growth는 쓰기 포트가 없다 — 관찰은 Memory가, 추천 저장은 주입된 writer가 쓴다.
 
-생일 · 동의 · 알레르기 포트(`ChildProfileReader` · `ConsentReader` · `SafetyLookupError`)는 Food ·
-Activity 와 같은 이름 · 시그니처의 사본이다. 도메인 Agent 공통 포트(`common/ports.py`)를 만들 때
-import 만 바꾸면 되게 일부러 같게 두었다 — 그 전에 여기서 `common/ports.py` 를 먼저 만들면 같은
-새 파일이 양쪽에 생겨 충돌한다. 알레르기를 읽는 메서드 이름만 Agent 마다 다르다
-(`food_safety` · `activity_safety` · `growth_safety`).
+생일 · 동의 포트와 `SafetyLookupError` 는 `common/ports.py` 에 있다 (#319). 알레르기를 읽는
+`SafetyReader` 와 `SafetyEntry` 는 Agent 마다 둔다 — 메서드 이름(`food_safety` · `activity_safety`
+· `growth_safety`)과 읽는 범위가 다르다.
 
 | 포트 | 연결 대상 |
 | ChildProfileReader | Child_Profile — birth_date 만 |
@@ -30,15 +28,12 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.agents.common.ports import (
+    ChildProfileReader,
+    ConsentReader,
+    SafetyLookupError,  # noqa: F401 — store/__init__.py · context.py 가 여기서 가져간다
+)
 from app.rules.book_form import BookForm
-
-
-class SafetyLookupError(Exception):
-    """health_safety를 읽지 못함. 0행(건강정보 동의 안 함)과 다르다.
-
-    빈 목록으로 대신 돌려주지 않는다. 교육 활동은 이때 모델을 부르지 않고 닫힌다
-    (`blocked.safety`) — 루틴 · 도서 · 성장 추이는 `health_safety` 를 읽지 않아 상관없다.
-    """
 
 
 class UpstreamUnavailable(Exception):
@@ -180,18 +175,6 @@ class BookRow:
     cover_url: str | None = None
     age_min_month: int | None = None
     age_max_month: int | None = None
-
-
-class ChildProfileReader(Protocol):
-    async def birth_date(self, *, child_id: UUID) -> date:
-        """월령은 이 값에서 코드가 계산한다 (app/rules/age.py)."""
-        ...
-
-
-class ConsentReader(Protocol):
-    async def child_health_granted(self, *, child_id: UUID) -> bool:
-        """consent(scope=child_health) 최신 행이 granted 인가."""
-        ...
 
 
 class SafetyReader(Protocol):

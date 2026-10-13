@@ -34,20 +34,17 @@ from app.agents.activity.schemas.common import (
     PlaceCategory,
 )
 from app.agents.common.evidence import AffinityRow
+from app.agents.common.ports import (
+    ChildProfileReader,
+    ConsentReader,
+    SafetyLookupError,  # noqa: F401 — store/__init__.py · context.py 가 여기서 가져간다
+)
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
 
 # 외부 조회 실패. 날씨 어댑터가 던져야 해서 core 에 있다 — 여기서 다시 내보낸다
 from app.core.weather_raw import UpstreamUnavailable as UpstreamUnavailable
 from app.rules.kma_grid import latlon_to_grid
-
-
-class SafetyLookupError(Exception):
-    """health_safety를 읽지 못함. 0행(건강정보 동의 안 함)과 다르다.
-
-    빈 목록으로 대신 돌려주지 않는다. Activity가 이때 어떻게 할지는 D7 을 따른다.
-    """
-
 
 # 읽는 health_safety kind (D7 · 10/4 확정안). 꽃가루 · 동물털 같은 환경 알레르기도 'allergy' 고,
 # 'environmental' 은 고소공포 같은 것이다(data_model.md). 나머지 셋(chronic_disease · behavioral ·
@@ -184,18 +181,6 @@ class PlaceRow:
     category: PlaceCategory
     distance_m: int
     source: Literal["city_park", "kids_play_facility", "library"]
-
-
-class ChildProfileReader(Protocol):
-    async def birth_date(self, *, child_id: UUID) -> date:
-        """월령은 이 값에서 코드가 계산한다 (app/rules/age.py)."""
-        ...
-
-
-class ConsentReader(Protocol):
-    async def child_health_granted(self, *, child_id: UUID) -> bool:
-        """consent(scope=child_health) 최신 행이 granted 인가."""
-        ...
 
 
 class SafetyReader(Protocol):
