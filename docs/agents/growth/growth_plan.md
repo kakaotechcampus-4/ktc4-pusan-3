@@ -108,7 +108,7 @@ app/agents/growth/
 ├── schemas/ · store/ports.py · tools/
 ```
 
-**포트**: `observation_education` · `observation_routine` · **`observation_activity`(주입, import 아님)** · `profile_affinity(domains: tuple[str,...])` · `child_growth_log`(전부, `Decimal`) · `notice` · `growth_doc` · `book_catalog` · `hazard_term` · `SuggestionWriter` · 생일 · `child_health` 동의 · `health_safety`(`allergy` · `environmental`, 교육 활동용). 생일 · 동의 · 알레르기 포트는 Food · Activity 와 같은 이름 · 시그니처로 `growth/store/ports.py` 에 둔다(공통화는 Food · Activity 포트를 `common/ports.py` 로 올릴 때 같이 한다). InMemory 동의는 기본값 없이 생성자 인자로 받는다
+**포트**: `observation_education` · `observation_routine` · **`observation_activity`(주입, import 아님)** · `profile_affinity(domains: tuple[str,...])` · `child_growth_log`(전부, `Decimal`) · `notice` · `growth_doc` · `book_catalog` · `hazard_term` · `SuggestionWriter` · 생일 · `child_health` 동의 · `health_safety`(`allergy` · `environmental`, 교육 활동용). 알레르기 포트(`growth_safety`)는 `growth/store/ports.py` 에 둔다(생일 · 동의 포트와 `SafetyLookupError` 는 `common/ports.py` 에 있다, #319). InMemory 동의는 기본값 없이 생성자 인자로 받는다
 
 **게이팅** ([`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §4)
 

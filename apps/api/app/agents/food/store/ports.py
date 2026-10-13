@@ -53,6 +53,11 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.agents.common.ports import (
+    ChildProfileReader,
+    ConsentReader,
+    SafetyLookupError,  # noqa: F401 — store/__init__.py · inmemory.py 가 여기서 가져간다
+)
 from app.core.mfds_nutri_raw import RawNutriRow
 from app.core.nutrition_pick import (
     NutritionFacts,  # noqa: F401 — store/__init__.py 가 여기서 가져간다
@@ -68,14 +73,6 @@ NutrientBand = Literal["low", "ok", "high"]
 # observation_food.confidence_source 값(memory/schemas/common.py 와 같은 값).
 # 보호자 말은 Memory Agent 가 저장할 때 고르고, OCR 분석이 쓰는 관찰은 그 경로가 따로 정한다.
 ConfidenceSource = Literal["institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"]
-
-
-class SafetyLookupError(Exception):
-    """health_safety를 읽지 못함.
-
-    기본값("제한 없음")으로 넘기지 않는다. 식단 추천은 모델을 부르지 않고 끝내고,
-    급식 조회는 "알레르기 확인을 못 했어요" 를 명시한다 (루트 §2 · S6).
-    """
 
 
 class MenuSourceError(Exception):
@@ -203,18 +200,6 @@ class FoodDocRow:
     texture: str | None
     allergen_codes: frozenset[int]
     written_at: datetime
-
-
-class ChildProfileReader(Protocol):
-    async def birth_date(self, *, child_id: UUID) -> date:
-        """식이 단계는 이 값에서 코드가 계산한다 (app/rules/age.py)."""
-        ...
-
-
-class ConsentReader(Protocol):
-    async def child_health_granted(self, *, child_id: UUID) -> bool:
-        """consent(scope=child_health) 최신 행이 granted 인가."""
-        ...
 
 
 class SafetyReader(Protocol):
