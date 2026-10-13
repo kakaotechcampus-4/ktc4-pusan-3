@@ -222,11 +222,16 @@ async def _food_wrapper(*args: Any, **kwargs: Any) -> Any:
         _add(AgentCall("food", question, answer=f"(예외 {type(exc).__name__})"))
         raise
     opened = " · ".join(result.tools) or "없음"
-    answer = (
+    summary = (
         f"{result.task_type}·{result.stage} → {result.status} "
         f"(열릴 tool {len(result.tools)}개: {opened})"
     )
-    # mock 은 tool 을 실행하지 않는다. 그래서 "사용한 tool" 이 아니라 답변에 열릴 tool 을 적는다
+    # readouts 가 있으면(#321 파트 2 — 실구현) 모델이 실제로 쓴 문장을 사람이 읽을 수 있게 앞에
+    # 둔다 — _clip 이 200자에서 자르므로, 뒤에 붙이면 tool 목록만으로도 다 차서 잘려 나간다.
+    # 없으면(아직 mock 인 task · 닫힌 경로) 예전처럼 열릴 tool 요약만 남긴다
+    said = " / ".join(readout.body for readout in result.readouts)
+    answer = f"{said} ({summary})" if said else summary
+    # "사용한 tool" 은 아직 이 묶음(result.calls)으로 들고 있지 않아 비워 둔다
     _add(AgentCall("food", question, result.model_calls, [], answer))
     return result
 

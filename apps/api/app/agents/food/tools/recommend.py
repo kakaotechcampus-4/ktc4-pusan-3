@@ -13,10 +13,10 @@ async def propose_meal_candidates(
     DB 연결 후:
     - 사전에 조회한 안전 정보를 기준으로 각 후보의 ingredients를 검사한다.
     주의 식품이 포함된 후보는 제외하고, 모든 후보가 제외되면 빈 결과를 반환한다.
-    - evidence가 이번 실행에서 실제로 조회한 (kind, id)인지 확인한다.
-    유효하지 않은 ref는 제거한다.
-    - 유효한 evidence가 없으면 일반 추천으로 처리하고, 또래 기준 추천임을 표시한다.
-    개인화 추천인데 evidence가 하나도 남지 않는 경우는 오류로 본다.
+    - evidence가 이번 실행에서 실제로 조회한 (kind, id)인지 확인한다(`common/evidence.unseen`).
+    조회하지 않은 ref를 하나라도 인용한 후보는 ref만 빼지 않고 거절한다 — EVIDENCE_REQUIRED.
+    빼고 내보내면 남은 근거로 개인화인 척하게 된다 (Tool_공통.md §5-3).
+    - 인용한 evidence가 없으면 일반 추천으로 처리하고, 또래 기준 추천임을 표시한다.
     - 오래된 선호 정보만 근거로 사용된 후보는 일반 추천으로 처리한다.
     - 최종 결과는 suggestion 형식으로 변환한다.
     agent, content, reason, source_refs, status를 채우고 expires_at은 백엔드에서 설정한다.

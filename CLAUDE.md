@@ -124,7 +124,7 @@
 | **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
 | **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
 | **근거 (evidence)**                | 그 추천이 쓴 `source_id` 목록. **0행이면 버그**. 컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문 | `suggestion_evidence`                                        |
-| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm` 은 이력에만 남고 화면에서 묻지 않는다. | `correction_verdict`                                         |
+| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm`(맞아요)은 없다 — 아무것도 바꾸지 않아 이력으로도 남기지 않는다. | `correction_verdict`                                         |
 | **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
 | **승인 게이트**                    | 되돌릴 수 없는 2곳                                                                                        | §2 · §3                                                      |
 

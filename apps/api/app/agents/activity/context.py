@@ -9,6 +9,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 위치 격자)과 날짜 계�
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
+from functools import partial
 from uuid import UUID
 
 from app.agents.activity.store.ports import (
@@ -16,12 +17,12 @@ from app.agents.activity.store.ports import (
     CoarseLocation,
     PlaceRow,
     SafetyEntry,
-    SafetyLookupError,
     WeatherGrid,
 )
+from app.agents.activity.weather import WeatherBrief
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
-from app.agents.common.gate import Gate, SafetyState
+from app.agents.common.gate import Gate, read_safety_basis
 from app.agents.common.suggestion import SuggestionDraft
 from app.rules.age import life_stage
 
@@ -41,11 +42,16 @@ class ActivityRunState:
     # build_gate 가 읽은 health_safety 행. 출력 검증의 안전 필터는 이 값만 쓰고 다시 읽지 않는다.
     # None 은 아직 안 읽었다(build_gate 전)는 뜻이고, 동의가 없으면 빈 튜플이다
     safety_entries: tuple[SafetyEntry, ...] | None = None
+    # 날짜별 날씨 판정. 화면에 붙는 안내 문구 키(notices)는 모델에게 주지 않고 여기 둔다
+    weather: dict[date, WeatherBrief] = field(default_factory=dict)
     # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
     suggestions: tuple[SuggestionDraft, ...] = ()
     # suggestions 와 같은 순서로 짝지은 위험 용어 경고 문구(사전의 warning_text 상수).
     # 화면에 어떻게 실을지는 아직 정하지 않았다 — 공통 SuggestionDraft 에 칸이 없다
     warnings: tuple[tuple[str, ...], ...] = ()
+    # 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)의 확인 문구 (D7). 후보마다가 아니라 run 에
+    # 한 벌이다. 화면 자리는 #249 를 따르므로, 그 전까지 여기에 둔다
+    cautions: tuple[str, ...] = ()
     # 안전 필터로 빠진 후보의 content. run() 이 재호출할 때 제외 목록으로만 넣는다 —
     # 걸린 사유는 넣지 않는다 (Tool_공통.md §5-2)
     excluded: tuple[str, ...] = ()
@@ -90,7 +96,8 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
       읽을 것이 없는 상태라 allergy_states 와 `state.safety_entries` 가 빈 튜플이다.
     - 🚨 읽은 행은 `context.state.safety_entries` 에 담는다. run 당 한 번만 읽고, 출력 검증의
       안전 필터는 이 값을 쓴다 — 다시 읽지 않는다 (SafetyReader 설명).
-    - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다.
+    - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다
+      (공용 `read_safety_basis()`).
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
     - `has_location` 은 좌표가 있는가. 없으면 장소 조회가 닫힌다.
     - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
@@ -101,24 +108,16 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     stage = life_stage(birth_date, context.today)
     consent = await ports.consent.child_health_granted(child_id=context.child_id)
 
-    safety_ok = True
-    allergy_states: tuple[SafetyState, ...] = ()
-    entries: tuple[SafetyEntry, ...] | None = ()
-    if consent:
-        try:
-            entries = tuple(await ports.safety.activity_safety(child_id=context.child_id))
-        except SafetyLookupError:
-            safety_ok = False
-            entries = None  # 읽지 못했다. 빈 튜플로 두면 안전 필터가 "거를 것 없음"으로 읽는다
-        else:
-            allergy_states = tuple(entry.status for entry in entries if entry.kind == "allergy")
-    context.state.safety_entries = entries
+    basis = await read_safety_basis(
+        partial(ports.safety.activity_safety, child_id=context.child_id), consent=consent
+    )
+    context.state.safety_entries = basis.entries
 
     return Gate(
         stage=stage,
         consent_child_health=consent,
-        safety_ok=safety_ok,
-        allergy_states=allergy_states,
+        safety_ok=basis.ok,
+        allergy_states=basis.allergy_states,
         has_location=context.location is not None,
         outdoor_ok=outdoor_ok,
     )

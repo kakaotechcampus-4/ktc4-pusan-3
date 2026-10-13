@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -9,10 +9,12 @@ import { DateField } from "@/components/ui/date-field";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { EARLIEST_BIRTH_DATE, toToday } from "@/lib/date-bounds";
-import { parseMeasurement } from "@/lib/measurement";
+import { parseISODate } from "@/lib/format";
+import { measurementError, parseMeasurement } from "@/lib/measurement";
 import {
   api,
   qk,
+  type ChildProfile,
   type GrowthLog,
   type UpdateGrowthLogRequest,
   type UpdateGrowthLogResponse,
@@ -53,6 +55,18 @@ export function GrowthSheet({
 }) {
   const queryClient = useQueryClient();
   const editing = log !== undefined;
+
+  /**
+   * 🚨 **잰 날은 아이 생일부터다** — 서버가 생일 이전을 400 으로 막는다 (서버 PR #353).
+   *    달력이 그 날을 고르게 두면 화면에는 "다시 눌러 주세요" 로만 보이고, 다시 눌러도 같다.
+   *    11 프로필과 같은 쿼리 키라 거기서 열면 이미 받아 둔 값이다. 받기 전이나 실패했을 때는
+   *    아이 서비스의 달력 하한으로 열고, 그 사이 고른 날은 서버가 막는다.
+   */
+  const profile = useQuery({
+    queryKey: qk.childProfile(childId),
+    queryFn: () => api.get<ChildProfile>(`/children/${childId}`),
+  });
+  const earliest = (profile.data && parseISODate(profile.data.birth_date)) ?? EARLIEST_BIRTH_DATE;
 
   const [measuredOn, setMeasuredOn] = useState(() => log?.measured_on ?? toToday());
   /** 🚨 `null`(안 잼)은 빈 칸이다 — `0` 으로 채우면 그날 0cm 였다는 말이 된다. */
@@ -96,11 +110,9 @@ export function GrowthSheet({
     const h = parseMeasurement(height);
     const w = parseMeasurement(weight);
 
-    if (h === "invalid" || w === "invalid") {
-      setErrors({
-        ...(h === "invalid" ? { height: "숫자로 적어주세요" } : {}),
-        ...(w === "invalid" ? { weight: "숫자로 적어주세요" } : {}),
-      });
+    // 숫자도 빈 칸도 아니면 읽지 못한 값이다 (`MeasurementRead`).
+    if (typeof h === "string" || typeof w === "string") {
+      setErrors({ height: measurementError(h), weight: measurementError(w) });
       return;
     }
     // 🚨 한쪽만 재고 오는 날이 있다. 둘 다 비어 있을 때만 막는다.
@@ -161,7 +173,7 @@ export function GrowthSheet({
           label="잰 날"
           value={measuredOn}
           onChange={setMeasuredOn}
-          fromDate={EARLIEST_BIRTH_DATE}
+          fromDate={earliest}
           toDate={new Date()}
         />
 

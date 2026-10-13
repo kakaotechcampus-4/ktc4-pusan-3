@@ -28,6 +28,11 @@ class CompareDietBalanceArgs(ToolArgs):
     period: Period
 
 
+# 모델에게 보이는 findings 예문. nutrient_wording 의 문장 규칙을 통과해야 한다 — 걸리는 예문을 주면
+# 모델이 그대로 따라 쓰고 거절당한다 (test_nutrient_wording.py 가 확인)
+FINDING_EXAMPLE = "기록된 식사를 보면 단백질 식품이 적은 편이에요"
+
+
 class NutrientReportArgs(ToolArgs):
     """영양소 분석의 출력.
     Supervisor가 식단 추천을 영양소 분석으로 잘못 보내도 식품 제안이 나갈 자리가 없다.
@@ -39,8 +44,8 @@ class NutrientReportArgs(ToolArgs):
         Field(
             max_length=5,
             description=(
-                "식단 기반 비중·경향만. 예: 단백질 비중이 기준보다 낮은 편. "
-                "결핍·과잉 진단, 정확한 수치, 먹일 음식 제안은 쓰지 않는다"
+                f"먹은 식사를 주어로 식단의 비중·경향만. 예: {FINDING_EXAMPLE}. "
+                "결핍·과잉 진단, 정확한 수치, 아이 몸 상태, 표 밖의 먹일 음식 제안은 쓰지 않는다"
             ),
         ),
     ]

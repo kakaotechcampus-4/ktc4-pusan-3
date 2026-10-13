@@ -24,7 +24,8 @@ SEED_FILE = "activity_doc.yaml"
 KEY_PREFIX = "activity."
 ROW_TYPES = frozenset({"play_idea"})
 
-# 고시 영역. 표준보육과정(0–2세)은 기본생활을 포함한 6개, 누리과정(3–5세)은 5개라
+# 고시 영역. 현행 표준보육과정(교육부고시 제2024-23호)은 0–5세 모두 5개다. basic_life 는 제4차(2020)
+# 0–2세의 기본생활 영역으로, Growth 시드와 같은 목록을 쓰려고 남겨 둔다.
 # 신체운동 · 신체운동·건강은 physical_health 하나로 묶는다
 AREAS = frozenset({"basic_life", "physical_health", "communication", "social", "art", "nature"})
 
