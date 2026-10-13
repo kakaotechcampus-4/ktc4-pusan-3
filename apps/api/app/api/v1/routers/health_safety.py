@@ -62,6 +62,9 @@ async def read_health_safety(
     child: AccessibleChild, session: SessionDep
 ) -> HealthSafetyListResponse:
     """지금 고려 대상(active)인 알레르기 · 건강 기록. 내린 기록은 빠진다."""
+    # 건강정보 동의(child_health)를 여기서는 보지 않는다. 필수 동의라 설정에서 끌 수 없어서
+    # (policy/catalog.py SCOPE_CATALOG), 동의 없는 아이에게 기록이 있을 수 없다.
+    # 🚨 끌 수 있게 바뀌면 등록(POST)처럼 여기서도 403 consent_required 를 확인할 것.
     rows = await list_active_safety_with_writer(session, child_id=child.child_id)
     return HealthSafetyListResponse(
         items=[_out(row, nickname) for row, nickname in rows],
