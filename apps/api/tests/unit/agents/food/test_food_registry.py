@@ -12,6 +12,7 @@ from uuid import UUID
 
 import pytest
 
+from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.food import registry
 from app.agents.food.context import FoodContext, build_gate
@@ -26,7 +27,7 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
-from app.rules.age import LifeStage, stage_of
+from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
 TODAY = date(2026, 9, 27)

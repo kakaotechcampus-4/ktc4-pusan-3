@@ -95,7 +95,7 @@ Activity 것이라 비워 뒀던 칸이다. 답은 전부 [activity/activity-age
 
 ## 4. 나이 계산 — 여기서 제일 많이 틀린다
 
-공통이 강제하는 것은 **월령 계산까지**다. 구현은 `app/rules/age.py` 하나이고 네 Agent가 같은 함수를 쓴다.
+공통이 강제하는 것은 **월령 계산까지**다. 달력 계산은 `app/rules/age.py` 하나이고, 단계 경계는 `reference/age_gates.yaml` 에서 읽어 `app/agents/common/age.py` 가 넘긴다 (#372). 네 Agent가 그 함수를 쓴다.
 
 ```python
 def life_stage(birth_date: date, today: date) -> LifeStage
@@ -166,7 +166,8 @@ app/agents/activity/
 
 | 경로 | 무엇 |
 | --- | --- |
-| `app/rules/age.py` | `life_stage()` · 달력 계산 |
+| `app/rules/age.py` | 달력 계산 · 단계 계산(경계는 인자) |
+| `common/age.py` | `life_stage()` · `stage_of()` · `first_month_of()` — `age_gates.yaml` 의 경계를 붙인 것 |
 | `app/rules/term_match.py` | 위험 용어·알레르기 매처 |
 | `common/tool_runtime.py` | `ToolResult` · `ErrorCode`. `execute_tool` 은 각 Agent 의 `registry.py` 가 갖는다 |
 | `common/ports.py` · `common/gate.py` | 생일 · 동의 포트 · `SafetyLookupError` · `Gate` · `read_safety_basis()` |

@@ -26,9 +26,10 @@ from app.agents.activity.registry import (
 from app.agents.activity.schemas.task import ActivityTaskType
 from app.agents.activity.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.activity.store.inmemory import in_memory_ports
+from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.common.tool_runtime import ErrorCode
-from app.rules.age import LifeStage, stage_of
+from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
 NOW = datetime(2026, 9, 28, tzinfo=UTC)

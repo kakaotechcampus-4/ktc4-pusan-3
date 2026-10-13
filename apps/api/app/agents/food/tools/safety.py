@@ -20,6 +20,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import Literal
 
+from app.agents.common.age import first_month_of
 from app.agents.common.allergy import (
     LabelBook,
     NameRule,
@@ -36,7 +37,7 @@ from app.agents.common.reference import (
     food_safety_terms,
 )
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.rules.age import Stage, first_month_of
+from app.rules.age import Stage
 from app.rules.allergen import ALLERGEN_NAMES, strip_allergen_marks
 from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, prepare_fields
 

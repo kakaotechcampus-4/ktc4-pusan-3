@@ -25,7 +25,7 @@
 ## 2. `life_stage` — 코드
 
 ```python
-def life_stage(birth_date: date, today: date) -> LifeStage
+def life_stage(birth_date: date, today: date) -> LifeStage  # app/agents/common/age.py — 경계는 age_gates.yaml
 # LifeStage(months: int, stage: Stage, big: Literal["infant","toddler"])
 ```
 

@@ -9,12 +9,12 @@ from uuid import UUID
 
 import pytest
 
+from app.agents.common.age import life_stage
 from app.agents.common.gate import DataReady, Gate
 from app.agents.food.context import FoodContext
 from app.agents.food.registry import TOOL_HANDLERS, tools_for
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import in_memory_ports
-from app.rules.age import life_stage
 
 CHILD = UUID(int=1)
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
