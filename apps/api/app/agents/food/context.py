@@ -15,10 +15,10 @@ from functools import partial
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import DataReady, Gate, read_safety_basis
 from app.agents.food.store.ports import FoodPorts, SafetyEntry
-from app.rules.age import life_stage
 
 if TYPE_CHECKING:
     # nutrition_eval.py 가 FoodContext 를 쓰므로 런타임에 여기서 가져오면 순환 임포트다

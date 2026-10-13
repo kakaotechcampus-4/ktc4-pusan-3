@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from app.agents import entrypoint, pipeline
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.food.context import build_gate
 from app.agents.food.registry import closed_readout_key, tools_for
@@ -19,7 +20,6 @@ from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.supervisor import routing
-from app.rules.age import life_stage
 
 CHILD = UUID(int=1)
 PARENT = UUID(int=2)
