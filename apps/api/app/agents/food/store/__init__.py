@@ -43,6 +43,7 @@ from app.agents.food.store.ports import (
     SafetyLookupError,
     SafetyReader,
     SuggestionHistoryReader,
+    UnwiredSafety,
 )
 
 __all__ = [
@@ -80,6 +81,7 @@ __all__ = [
     "SafetyLookupError",
     "SafetyReader",
     "SuggestionHistoryReader",
+    "UnwiredSafety",
     "in_memory_ports",
     "unwired_ports",
 ]

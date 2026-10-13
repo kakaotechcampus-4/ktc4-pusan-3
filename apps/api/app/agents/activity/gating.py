@@ -9,12 +9,13 @@ Growth 와 같은 눈금 방식이다 — tool 마다 열리는 월령이 다르
 registry 와 tool 이 같이 읽는 값이라 따로 둔다 — registry 는 tool 을 import 하므로
 여기 값을 registry 에 두면 tool 쪽에서 되돌아 import 할 수 없다.
 
-TODO: reference/age_gates.yaml 이 생기면 숫자를 거기서 읽는다 (공통_구현_계획 §4-2).
-      그 전까지는 여기가 Activity 의 유일한 자리다.
+월령 숫자는 `reference/age_gates.yaml` 이 정본이다 — 여기서는 읽기만 한다 (#372).
+tool 이 열리는 월령은 전부 0 이라(항상 열림) 표만 두고, 0 이 아닌 값만 파일에서 읽는다.
 """
 
 from app.agents.activity.weather import WEATHER_UNCHECKED, WeatherBrief
 from app.agents.common.gate import Gate
+from app.agents.common.reference import age_gates
 
 # tool 이름 → 열리는 월령. 표에 없는 tool 은 열지 않는다 (기본값으로 열지 않는다)
 MIN_MONTH: dict[str, int] = {
@@ -27,8 +28,9 @@ MIN_MONTH: dict[str, int] = {
 
 # search_activity_memory 안에서 profile_affinity 를 읽기 시작하는 월령.
 # 그 아래는 조회를 건너뛰고 관찰(티어 3)로만 근거를 만든다. tool 을 닫는 값이 아니다 —
-# 18개월은 근거 모드를 가르지 않는다. 관찰이 있으면 그 아래도 personalized 가 나간다.
-AFFINITY_MIN_MONTH = 18
+# 근거 모드를 가르지 않는다. 관찰이 있으면 그 아래도 personalized 가 나간다.
+# Curator 도 같은 값으로 그 아래 아이의 프로필을 만들지 않는다 — 여기는 방어선이다 (age_gates.yaml).
+AFFINITY_MIN_MONTH = age_gates().affinity_min_month
 
 # 위치가 여닫는 tool. 날씨가 나쁘면 닫지 않고 실내 종류로 좁힌다 — 좁히는 것은 tool 이 한다
 PLACES_TOOL = "search_nearby_places"

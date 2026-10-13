@@ -8,20 +8,25 @@ Growth 는 tool 별 `min_month` 눈금이다 — 열리는 시점만 다르고 �
 읽는 값이라 따로 둔다 — registry 는 tool 을 import 하므로 값을 registry 에 두면 tool 쪽에서 되돌아
 import 할 수 없다.
 
-TODO: reference/age_gates.yaml 이 생기면 숫자를 거기서 읽는다 (공통_구현_계획 §4-2).
-      그 전까지는 여기가 Growth 의 유일한 자리다.
+월령 숫자는 `reference/age_gates.yaml` 이 정본이다 — 여기서는 읽기만 한다 (#372).
+tool 표의 0 은 게이트가 아니라 "항상 열림" 이라 표에 그대로 두고, 0 이 아닌 값만 파일에서 읽는다.
 """
 
 from typing import Literal
 
 from app.agents.common.gate import Gate
+from app.agents.common.reference import age_gates
 
-EDUCATION_MIN_MONTH = 12  # 교육 tool 이 열린다. 그 아래는 놀이가 곧 배움이라 Activity 로 안내한다
-STEP_MIN_MONTH = 12  # 루틴이 안내 한 줄(rhythm_info)에서 다음 단계 제안(next_step)으로 넘어간다
-MANNER_MIN_MONTH = 24  # 예절 카테고리 (G-7, 설정값으로 시작)
-HABIT_MIN_MONTH = (
-    36  # 습관 교정 카테고리 (G-7, 설정값으로 시작). growth_doc 의 CHECK 와 같은 값이다
-)
+_GATES = age_gates()
+
+# 교육 tool 이 열린다. 그 아래는 놀이가 곧 배움이라 Activity 로 안내한다
+EDUCATION_MIN_MONTH = _GATES.education_min_month
+# 루틴이 안내 한 줄(rhythm_info)에서 다음 단계 제안(next_step)으로 넘어간다
+STEP_MIN_MONTH = _GATES.step_min_month
+# 예절 카테고리 (G-7, 설정값으로 시작)
+MANNER_MIN_MONTH = _GATES.manner_min_month
+# 습관 교정 카테고리 (G-7, 설정값으로 시작). growth_doc 의 CHECK 와 같은 값이다
+HABIT_MIN_MONTH = _GATES.habit_min_month
 
 # 모델에게 보이는 tool, 열리는 순서. tool → 열리는 월령. 표에 없는 tool 은 열지 않는다
 MIN_MONTH: dict[str, int] = {

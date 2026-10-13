@@ -68,7 +68,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 
 - 이유기 시작(4개월)·질식 주의 해제(48개월)는 **설정값**이다. 소아청소년과학회 자료로 확정한다.
 - 날음식 · 카페인 · 술은 월령과 상관없이 모든 아이에게 막는다(카페인 · 술은 메뉴명만 본다). 규칙과 출처는 [`Food_Tool_명세.md`](../food/Food_Tool_명세.md) §3 음식 안전 수칙 (#258).
-- `age_gates.yaml` 이 생기기 전까지 12 · 48 은 `reference/food_safety_terms.yaml` 에도 적혀 있다. 단계 경계 · Activity `food_choking` 축과 어긋나면 테스트가 깨진다.
+- 12 · 48 은 `reference/food_safety_terms.yaml` 에도 적혀 있다 — 규칙마다 출처가 붙은 안전 규칙이라 `age_gates.yaml` 로 옮기지 않았다. 단계 경계(12) · Activity `food_choking` 축과 어긋나면 테스트가 깨진다.
 - 이유기는 affinity가 없으므로(§2) 후보 풀을 `food_doc`의 `weaning_*` 행에서 만든다. **이 구간에서 문서 행이 곧 추천 품질이다.**
 - 12개월에 한꺼번에 5개 tool이 열리는 게 아니라, **급식 데이터가 있는 아이만** `lookup_daycare_menu`가 열린다(`daycare_menu` 0행이면 제외).
 
@@ -193,7 +193,7 @@ Growth와 같은 눈금 방식이다. 번호가 `5-1`인 이유는 §3·§4·§5
 | # | 내용 |
 | --- | --- |
 | A-1 | 이유기 시작 4개월 · 질식 주의 해제 48개월 — 소아청소년과학회 자료로 확정 |
-| A-3 | Curator의 affinity 생성 최소 월령이 정말 18개월인지 · 도메인별로 다른지. **열어 둔다** — Activity 문서의 18개월은 활동 도메인 게이트 근거(K-DST가 18개월부터 자조 영역을 추가)지 Curator 승격 기준이 아니고, 대조할 Curator 코드도 아직 없다. 어린 월령의 단순 반사 행동을 성향으로 굳히지 않는 문제도 여기서 본다 — 추천 근거 쪽은 월령으로 막지 않기로 했다(§4) |
+| A-3 | ✅ **정함 (#372 리뷰)** — Curator 는 18개월 미만 아이의 `profile_affinity` 를 만들지 않는다. 어린 월령의 단순 반사 행동을 성향으로 굳히지 않기 위해서다. 값은 `reference/age_gates.yaml` 의 `affinity_min_month` 하나이고 도메인마다 따로 두지 않는다 — Activity 의 읽는 쪽 게이트도 같은 값을 쓴다(만들어지기 전의 행 · 생일을 고친 아이의 옛 행을 막는 방어선). Curator 쪽 구현은 Curator 담당 PR 에서 한다. 추천 근거 모드는 지금처럼 월령으로 막지 않는다(§4) |
 | A-4 | 예절 24개월 · 습관 36개월 경계 근거 |
 | A-5 | ✅ 닫힘 — 영아는 `resolve_dose_timing`이 `bedtime` 대신 **`fixed` 19:30**을 돌려준다. 상수를 2벌로 두지 않으므로 `scheduled_time` 생성 컬럼을 유지한다 |
 | A-6 | ✅ 닫힘 — **아이 등록에 상한을 걸지 않는다.** 검진·접종만 "대상 종료"로 안내하고(`checkup.aged_out`) 식단·놀이·도서는 그대로 동작한다 |

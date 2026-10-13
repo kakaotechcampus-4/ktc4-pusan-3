@@ -214,6 +214,19 @@ class SafetyReader(Protocol):
         ...
 
 
+class UnwiredSafety:
+    """`health_safety` 어댑터가 붙기 전의 자리. 읽으면 늘 `SafetyLookupError` 다.
+
+    `build_gate` 는 이 포트가 들어 있으면 동의를 보지 않고 안전 조회 실패(`safety_ok=False`)로
+    읽는다. 동의가 없는 아이는 원래 `health_safety` 를 읽지 않아서 그대로 두면 실패가 드러나지
+    않고, Food 가 "알레르기 없는 아이 기준" 으로 열린다 — 어댑터가 붙기 전에는 동의와 상관없이
+    닫혀 있어야 한다 (#372). 어댑터가 붙으면 이 클래스를 쓰는 자리가 없어진다.
+    """
+
+    async def food_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
+        raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
+
+
 class GrowthLogReader(Protocol):
     async def latest(self, *, child_id: UUID) -> Measurement | None:
         """가장 최근 측정 한 건. 기록이 없으면 None."""

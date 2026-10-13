@@ -26,13 +26,14 @@ from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, E
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
 from app.agents.common.evidence import RankedEvidence, cite
+from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.rules.evaluative import find_evaluative
 
 # 이 월령 미만은 보호자가 같이 하는 활동만 낸다 (3-3). 밴드 경계와 따로 둔다 —
-# 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게.
-TOGETHER_ONLY_BELOW_MONTH = 18
+# 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게. 값은 `reference/age_gates.yaml` (#372).
+TOGETHER_ONLY_BELOW_MONTH = age_gates().together_only_below_month
 
 # 기피 대상(`subject`)이 이 길이보다 짧으면 기피 대상 거절에 쓰지 않는다. "공" 을 싫어한다고
 # "공원" · "공룡" 이 들어간 후보까지 거절하면 과차단이다. 기피는 근거로는 계속 남는다.

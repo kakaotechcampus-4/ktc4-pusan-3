@@ -19,13 +19,13 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from app.agents.common.age import stage_of
 from app.agents.common.refs import Ref
 from app.agents.growth.doc_seed import ROUTINE_CATEGORIES, chain_key
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import GrowthDocReader, GrowthDocRow, GrowthDocType
 from app.agents.growth.tools.routine import ordered_chain
-from app.rules.age import stage_of
 
 # 프롬프트 [예시]에 싣는 행 수 (RAG_plan §7 — Growth 3)
 DOC_LIMIT = 3
