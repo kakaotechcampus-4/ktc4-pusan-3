@@ -48,7 +48,9 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | --- | --- | --- | --- |
 | `infant_milk` | 0–3 | `()` → `unsupported.milk_meal` | `()` → `unsupported.infant_nutrient` |
 | `infant_weaning` | 4–11 | `search_food_memory` · `guide_weaning_stage` · `propose_meal_candidates` (3) | `()` → `unsupported.infant_nutrient` |
-| `toddler` · `preschool` | 12+ | + `analyze_meal_records` · `check_repeated_menus` · `lookup_daycare_menu` (5) | 7개 |
+| `toddler` · `preschool` | 12+ | + `analyze_meal_records` · `check_repeated_menus` · `lookup_daycare_menu` (5) | `lookup_nutrition` · `compare_diet_balance` · `report_nutrient_analysis` (3) |
+
+> **2026-10-13 (#357 리뷰)** — 위 `meal_recommendation` · `daycare_meal` 의 tool 은 아직 스텁이라 모델에게 열지 않고 Food 가 `not_ready.meal` · `not_ready.daycare` 로 닫는다(모델 0회). tool 이 구현되면 그 줄만 지운다. 영양소 분석은 기록 조회 tool 과 `lookup_daycare_menu` 를 열지 않는다 — `compare_diet_balance` 가 기록 · 급식을 직접 읽는다.
 
 세 번째 라벨 `daycare_meal`(급식 기록 갱신·삭제)은 **단계가 아니라 데이터로 열린다** — `daycare_meal` 행이 있는 아이만. 기관에 다니면 이유기라도 급식을 먹는다.
 
@@ -178,7 +180,7 @@ Growth와 같은 눈금 방식이다. 번호가 `5-1`인 이유는 §3·§4·§5
 | --- | --- |
 | 3개월 식단 추천 | tool `()`, 모델 0회, 수유기 문구 |
 | 4개월 식단 추천 | tool 3개, `texture=puree` |
-| 11개월 / 12개월 영양소 분석 | 각각 0회 안내 / tool 7개 + 섭취기준 1–2세 |
+| 11개월 / 12개월 영양소 분석 | 각각 0회 안내 / tool 3개 + 섭취기준 1–2세 |
 | 17개월 / 18개월 | 둘 다 추천이 나가고, 근거 모드는 월령이 아니라 **근거 유무**가 정한다 — 관찰 0건이면 양쪽 다 `general`, 관찰이 있으면 17개월도 `personalized`. 18개월부터 티어 1·2(affinity)가 근거에 얹힐 수 있을 뿐이다 |
 | 35개월 / 36개월 | 섭취기준 1–2 → 3–5, 표준보육과정 → 누리과정 |
 | 35개월 / 36개월 습관 교정 | 안내 readout / 교정안 (단, `trigger` 필요) |
