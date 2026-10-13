@@ -102,10 +102,17 @@ class InMemoryActivityDocs:
         self._rows = list(rows)
 
     @classmethod
-    def from_seed(cls) -> "InMemoryActivityDocs":
-        """`reference/activity_doc.yaml` 의 검수를 마친(`approved`) 행. DB 전 eval · 개발용."""
+    def from_seed(cls, *, include_draft: bool = False) -> "InMemoryActivityDocs":
+        """`reference/activity_doc.yaml` 의 검수를 마친(`approved`) 행. DB 전 eval · 개발용.
+
+        `include_draft` 는 임시다 — 검수 전에 [예시] · 문서 행 근거가 실제로 어떻게 도는지 eval 과
+        테스트에서 보려고 draft 행까지 싣는다 (#332 리뷰). 서비스 경로는 쓰지 않는다. 시드 검수가
+        끝나면 지운다.
+        """
         return cls(
-            entry.to_row() for entry in activity_doc_seed() if entry.meta.status == "approved"
+            entry.to_row()
+            for entry in activity_doc_seed()
+            if entry.meta.status == "approved" or include_draft
         )
 
     async def search(self, *, months: int, query: str, limit: int) -> list[ActivityDocRow]:

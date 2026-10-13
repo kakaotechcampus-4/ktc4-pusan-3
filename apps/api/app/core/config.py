@@ -29,10 +29,13 @@ class Settings(AgentLLMSettings):
     # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
     DATA4LIBRARY_AUTH_KEY: str = ""
 
-    # 공공데이터포털(data.go.kr) 서비스키 — 식약처 식품영양성분DB (Food 메뉴 해석, #321).
-    # 비어 있으면 Food 가 메뉴 카탈로그만 쓰고(조회 포트 없음) 서버는 뜬다. 키 없이 빈 영양값으로
-    # 채우지 않는다. 🚨 비밀 — 응답 · 로그 · 예외 문구에 싣지 않는다 (키가 요청 주소에 들어간다).
-    # 날씨 · 대기질도 같은 포털이지만 API 마다 활용신청이 따로다 (docs/agents/shared/API발급.md)
+    # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회(어댑터는
+    # 아직 없음)와 공휴일 굽기(scripts/bake_holidays.py)가 같이 쓴다. 날씨 어댑터는 비어 있으면
+    # 조회 실패와 같게 본다 — "맑음"으로 채우지 않는다 (Activity D8)
+    # 식약처 식품영양성분DB(Food 메뉴 해석, #321)도 이 키를 쓴다 — API 마다 활용신청이 따로다
+    # (docs/agents/shared/API발급.md). 비어 있으면 Food 가 메뉴 카탈로그만 쓰고(조회 포트 없음)
+    # 서버는 뜬다. 키 없이 빈 영양값으로 채우지 않는다. 🚨 비밀 — 키가 요청 주소에 들어가서
+    # 응답 · 로그 · 예외 문구에 싣지 않는다.
     DATA_GO_KR_SERVICE_KEY: str = ""
 
     # 농림축산식품 공공데이터포털(data.mafra.go.kr) 인증키 — 농식품정보원 레시피 기본 · 재료정보

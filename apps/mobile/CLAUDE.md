@@ -60,6 +60,7 @@ src/native/bridge.ts         웹뷰에 꽂는 창구 — 주입 스크립트 · 
 src/native/recent-photos.ts  최근 사진을 실제로 읽는 곳 (권한 · 썸네일 · 원본)
 src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth/callback 변환
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
+src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
 app.json                     Expo 설정 (name · scheme · bundle id · 권한 플러그인)
 ```
 
@@ -118,6 +119,7 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
 ## 4. 규칙
 
 - **허용 출처 밖은 웹뷰에 가두지 않는다.** `onShouldStartLoadWithRequest` 에서 `isInternalUrl()` 로 거르고, 아니면 앱 밖으로 넘긴다. 소셜 로그인·약관 페이지가 웹뷰 안에서 열리면 사용자가 주소창을 못 봐서 피싱과 구분할 수 없다.
+  🚨 **출처가 같아도 `/api/…` 는 밖이다** (#273). nginx 로 API 를 웹과 같은 주소 아래에 두면 약관 "전문 보기" 와 로그인 시작이 출처 검사를 통과해 버린다 — 약관은 가입 화면을 덮고(iOS 는 돌아올 길이 없다), 로그인은 아래 인증 세션 분기까지 오지 못한다. 셸은 API 주소를 모르므로 **경로만** 본다. nginx 경로가 `/api` 가 아니게 정해지면 `src/native/internal-url.ts` 를 같이 고친다.
 - **앱 밖 웹 주소는 in-app 브라우저로 앱 위에 얹는다** (`openBrowserAsync` · #212). 시스템 브라우저로 넘기면 앱을 떠나서, 약관을 다 읽은 사람이 동의 화면을 다시 찾아야 한다 — 필수 동의 직전의 링크라 그 수고가 곧 "안 읽고 체크" 다. in-app 브라우저는 진짜 브라우저라 도메인 · 자물쇠가 보이므로 위 규칙과 맞는다. `http(s)` 가 아닌 스킴(`tel:` · `mailto:` · `intent:`)과 in-app 브라우저를 못 여는 경우는 지금처럼 `Linking.openURL` 이다.
 - 🚨 **로그인 시작 URL 은 따로 연다** (`isAuthStartUrl()` · #210). 위의 in-app 브라우저(`openBrowserAsync`)나 시스템 브라우저로 열면 서버가 302 하는 `icatch://auth` 복귀를 받을 곳이 없다. `openAuthSessionAsync` 로 열고, `success` 일 때만 복귀 쿼리를 `/auth/callback` 에 붙여 **같은 웹뷰를 `location.replace` 로 옮긴다** — 웹뷰를 다시 만들면 `sessionStorage` 의 bind 가 사라진다. 셸은 URL 을 열고 돌려받을 뿐 코드 교환 · 토큰은 웹이 한다 (§1). 흐름 정본은 [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) §5.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
@@ -148,7 +150,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 브릿지 왕복 · 로그인 · 외부 링크 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 브릿지 왕복 · 로그인 · 외부 링크 · 웹뷰 안 주소 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```

@@ -198,11 +198,12 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | `row_type` | varchar(24) | `weaning_stage` / `weaning_ingredient` / `meal_pattern` / `nutrient_note` / `feeding_tip` |
-| `food_groups` | text[] | 6개 식품군 |
-| `nutrients` | text[] | `nutrient_note`용 |
-| `texture` | varchar(16) | `puree` / `mashed` / `minced` / `soft_pieces` / `regular` |
-| `allergen_codes` | smallint[] | 행이 특정 재료를 권하면 필수 — 조회 후 `filter_food_safety` 통과 |
+| `food_groups` | text[] | 6개 식품군 — `grains` / `meat_fish_egg_legumes` / `vegetables` / `fruits` / `dairy` / `fats_sugars` (#337 잠정) |
+| `nutrients` | text[] | `nutrient_note`만 |
+| `texture` | varchar(16) | 이유기 행만. `puree` / `mashed` / `minced` / `soft_pieces` / `regular` |
+| `allergen_codes` | smallint[] | 제목 · 본문에 나오는 19종 코드를 다 적는다 — 조회 후 `filter_food_safety` 통과 |
 
+- 시드는 `apps/api/reference/food_doc.yaml`, 로더는 `app/agents/food/doc_seed.py`, 내용 검사는 `tests/unit/agents/food/test_food_doc_seed.py` 다. 소스 기준은 RAG_plan §3 (#337).
 - 조회는 `status='approved'`만. 단계·`row_type` 필터 → 의미 검색 top-3.
 - 이유기(4–11개월)는 `profile_affinity`가 구조적으로 0행이라 **이 테이블이 곧 추천 품질**이다.
 

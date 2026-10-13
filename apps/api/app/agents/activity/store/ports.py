@@ -36,6 +36,9 @@ from app.agents.activity.schemas.common import (
 from app.agents.common.evidence import AffinityRow
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
+
+# 외부 조회 실패. 날씨 어댑터가 던져야 해서 core 에 있다 — 여기서 다시 내보낸다
+from app.core.weather_raw import UpstreamUnavailable as UpstreamUnavailable
 from app.rules.kma_grid import latlon_to_grid
 
 
@@ -43,14 +46,6 @@ class SafetyLookupError(Exception):
     """health_safety를 읽지 못함. 0행(건강정보 동의 안 함)과 다르다.
 
     빈 목록으로 대신 돌려주지 않는다. Activity가 이때 어떻게 할지는 D7 을 따른다.
-    """
-
-
-class UpstreamUnavailable(Exception):
-    """외부 조회 실패. 결과가 0건인 것과 다르다.
-
-    기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니고 미세먼지 실패는 "좋음"이 아니다 (D8).
-    메시지에 격자·장소명을 넣지 않는다.
     """
 
 

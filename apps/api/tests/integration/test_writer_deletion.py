@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 
-from app.domains.child.models import Child
+from app.domains.child.models import Child, ChildGrowthLog
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
@@ -48,6 +48,7 @@ RECORDS = [
     (ObservationHealth, "source_writer", {"symptom": ["synthetic symptom"]}),
     (ObservationRoutine, "source_writer", {"routine_category": RoutineCategory.HABIT}),
     (HealthSafety, "created_by", {"kind": SafetyKind.ALLERGY, "label": "synthetic label"}),
+    (ChildGrowthLog, "created_by", {"measured_on": date(2026, 9, 1), "height_cm": 99.1}),
     (
         SharedPhoto,
         "uploader_parent_id",

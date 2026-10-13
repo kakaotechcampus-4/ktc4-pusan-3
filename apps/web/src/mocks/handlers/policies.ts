@@ -121,6 +121,25 @@ export function invalidPolicyVersion(
   return null;
 }
 
+/**
+ * 등록된 적 있는 버전인가 — 철회가 받는 버전 (실서버 `POST /consents` · #181).
+ *
+ * 🚨 동의와 기준이 다르다. 철회까지 지금 버전만 받으면 약관이 바뀐 순간 끄는 길이 막힌다
+ *    (위치 약관 제10조 "언제든"). 목에 등록된 버전은 처음 판과 올라간 판 둘뿐이다.
+ */
+export function isRegisteredVersion(scope: string, version: string): boolean {
+  const policy = BASE.find((p) => p.scope === scope);
+  if (!policy) return false;
+  return version === policy.version || version === bumpedVersion(policy).version;
+}
+
+/** 목이 처음 내려주는 버전. 가입을 마친 계정의 출발 이력이 이 버전을 가리킨다. */
+export function initialPolicyVersion(scope: string): string {
+  const policy = BASE.find((p) => p.scope === scope);
+  if (!policy) throw new Error(`목 약관에 ${scope} 가 없다`);
+  return policy.version;
+}
+
 export function resetPolicyState(): void {
   bumped.clear();
 }
