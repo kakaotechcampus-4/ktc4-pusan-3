@@ -17,8 +17,15 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.agents.common.allergy import SINGLE_CHAR_NAMES
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import IngredientCheck, filter_food_safety, resolve_safety
+from app.agents.food.tools.safety import (
+    SINGLE_CHAR_FOODS,
+    IngredientCheck,
+    filter_food_safety,
+    food_book,
+    resolve_safety,
+)
 
 NOW = datetime(2026, 10, 7, tzinfo=timezone.utc)
 OLDER = 60  # 영아 규칙 · 질식 주의가 끼지 않는 월령
@@ -802,3 +809,173 @@ def test_전각_영문_재료도_막는다() -> None:
 
 def test_급식표의_줄바꿈_표시가_섞여도_막는다() -> None:
     assert _judge(_entries("우유"), _menu("우유<br/>바나나", "바나나")) == "blocked"
+
+
+# ── 한 글자 이름 (#305) ──────────────────────────────────────────────────────
+# 사전에 없는 한 글자 이름은 글자 그대로 막지 않는다 — 강아지 알레르기를 "개" 로 적으면 찌개 ·
+# 조개탕이 막혔다. 한 글자 식품(SINGLE_CHAR_FOODS)만 보호자가 그 한 글자로 적었을 때 guard 와 함께
+# 글자 그대로 막는다. 사전에는 넣지 않는다 — 다른 이름을 읽는 결과와 메뉴 이름 표가 바뀐다.
+# 풀리는 메뉴는 레시피 1,156개(식약처 COOKRCP01)로 뽑아 PR 에 붙였다.
+
+ONE_CHAR_MUST_BLOCK = [
+    ("쑥", "쑥떡", ("쑥", "찹쌀가루")),
+    ("쑥", "쑥갓나물", ("쑥갓", "참기름")),  # 이름이 겹치는 식물은 막는 쪽
+    ("배", "배숙", ("배", "생강")),
+    ("배", "배도라지차", ("배즙", "도라지")),
+    ("감", "곶감호두말이", ("곶감", "호두")),
+    ("감", "단감샐러드", ("단감", "요거트")),
+    ("파", "파전", ("쪽파", "부침가루")),
+    ("파", "양파볶음", ("양파", "식용유")),  # 양파도 파속이다 — 막는 쪽
+    ("김", "김밥", ("김", "밥", "단무지")),
+    ("김", "김치김밥", ("김치", "김", "밥")),  # 김치의 김은 guard 지만 김밥의 김은 막는다
+    ("무", "무생채", ("무", "고춧가루")),
+    ("무", "단무지무침", ("단무지", "참기름")),
+    ("밤", "밤밥", ("밤", "쌀")),
+    ("갓", "갓김치", ("갓", "고춧가루")),
+    ("마", "마죽", ("마", "쌀")),
+    ("마", "마감자전", ("마", "감자")),
+    ("톳", "톳밥", ("톳", "쌀")),
+    ("귤", "귤샐러드", ("귤", "양상추")),
+    ("조", "조밥", ("차조", "쌀")),
+    ("묵", "도토리묵무침", ("도토리묵", "상추")),
+    ("딜", "연어딜구이", ("연어", "딜")),
+    ("꿀", "꿀떡", ("찹쌀가루", "꿀")),
+    ("술", "술빵", ("막걸리", "밀가루")),
+    ("술", "조미술 생선조림", ("조미술", "고등어")),  # 미술 · 마술은 guard 가 아니다
+    ("소", "소고기무국", ("소고기", "무")),
+    ("소", "소곱창볶음", ("소곱창", "양파")),
+    ("양", "양꼬치", ("양고기", "소금")),
+    ("양", "양곱창구이", ("양곱창", "대파")),  # 양(소의 위)도 음식이라 막는 쪽
+    ("알", "알탕", ("명태알", "무")),
+    ("알", "메추리알조림", ("메추리알", "간장")),
+    ("꽃", "진달래화전", ("찹쌀가루", "식용꽃")),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "ingredients"),
+    ONE_CHAR_MUST_BLOCK,
+    ids=[f"{label}-{name}" for label, name, _ in ONE_CHAR_MUST_BLOCK],
+)
+def test_한_글자_식품은_그_한_글자로_적으면_막는다(
+    label: str, name: str, ingredients: tuple[str, ...]
+) -> None:
+    assert _judge(_entries(label), _menu(name, *ingredients)) == "blocked"
+
+
+ONE_CHAR_MUST_PASS = [
+    ("배", "배추김치", ("배추", "고춧가루")),
+    ("배", "양배추롤", ("양배추", "돼지고기")),
+    ("감", "감자전", ("감자", "부침가루")),
+    ("감", "감태주먹밥", ("감태", "밥")),
+    ("파", "파프리카볶음", ("파프리카", "식용유")),
+    ("파", "토마토파스타", ("스파게티면", "토마토")),
+    ("파", "알파벳 파스타", ("알파벳 파스타면", "토마토")),
+    ("김", "김치볶음밥", ("김치", "밥")),
+    ("김", "새우튀김", ("새우", "튀김가루")),
+    ("무", "오이무침", ("오이", "식초")),
+    ("무", "무화과샐러드", ("무화과", "양상추")),
+    ("마", "마늘빵", ("마늘", "버터")),
+    ("마", "토마토샐러드", ("토마토", "올리브유")),
+    ("마", "다시마육수", ("다시마", "멸치")),
+    ("조", "장조림", ("소고기", "간장")),
+    ("조", "모시조개국", ("모시조개", "대파")),
+    ("묵", "묵은지찜", ("묵은지", "돼지고기")),
+    ("갓", "쑥갓무침", ("쑥갓", "참기름")),
+    ("술", "된장국", ("된장", "두부", "된장 1큰술")),
+    ("소", "소금구이", ("고등어", "소금")),
+    ("소", "토마토소스파스타", ("토마토소스", "스파게티면")),
+    ("양", "양파볶음", ("양파", "식용유")),
+    ("양", "된장찌개", ("된장", "청양고추")),
+    ("양", "양송이수프", ("양송이", "우유")),
+    ("알", "알배추쌈", ("알배추", "쌈장")),
+    ("꽃", "꽃게탕", ("꽃게", "무")),
+    ("꽃", "꽃등심구이", ("꽃등심", "소금")),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "ingredients"),
+    ONE_CHAR_MUST_PASS,
+    ids=[f"{label}-{name}" for label, name, _ in ONE_CHAR_MUST_PASS],
+)
+def test_한_글자_식품도_다른_뜻의_낱말은_통과한다(
+    label: str, name: str, ingredients: tuple[str, ...]
+) -> None:
+    assert _judge(_entries(label), _menu(name, *ingredients)) == "passed"
+
+
+UNKNOWN_ONE_CHAR = [
+    ("개", "김치찌개", ("김치", "돼지고기")),  # 강아지 알레르기
+    ("개", "조개탕", ("모시조개", "무")),
+    ("개 털", "된장찌개", ("된장", "두부")),
+    ("물", "된장국", ("된장", "두부", "물")),
+    ("약", "곤약조림", ("곤약", "간장")),  # 약물 알레르기
+    ("해", "해물볶음밥", ("새우", "오징어", "밥")),  # 햇빛 알레르기
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "ingredients"),
+    UNKNOWN_ONE_CHAR,
+    ids=[f"{label}-{name}" for label, name, _ in UNKNOWN_ONE_CHAR],
+)
+def test_목록에_없는_한_글자_이름은_글자_그대로_막지_않는다(
+    label: str, name: str, ingredients: tuple[str, ...]
+) -> None:
+    assert _judge(_entries(label), _menu(name, *ingredients)) == "passed"
+
+
+def test_사전에_없는_두_글자_이상은_지금처럼_글자_그대로_막는다() -> None:
+    assert _judge(_entries("두리안"), _menu("두리안 스무디", "두리안", "우유")) == "blocked"
+
+
+# 한 글자 식품을 사전에 넣었을 때 생겼던 일 — 다른 이름 안의 글자가 그 식품으로 읽혔다.
+# 목록의 글자는 보호자가 그 한 글자로 적었을 때만 쓴다
+OTHER_NAMES_WITH_ONE_CHAR_FOODS = [
+    "알레르기 비염",  # 알
+    "우유단백알레르기",  # 알
+    "알파-락트알부민",  # 알 · 파
+    "설파제",  # 파
+    "파르브알부민",  # 파 · 알
+    "소아천식",  # 소
+    "식용색소",  # 소
+    "고양이",  # 양
+    "율무",  # 무
+    "꽃가루",  # 꽃
+    "쑥갓",  # 쑥
+    "메밀묵",  # 묵
+]
+
+
+@pytest.mark.parametrize("label", OTHER_NAMES_WITH_ONE_CHAR_FOODS)
+def test_한_글자_식품은_다른_이름_안에서는_읽지_않는다(label: str) -> None:
+    rules = resolve_safety(_entries(label))
+    assert not [term for term in rules.terms if set(term.aliases) & set(SINGLE_CHAR_FOODS)]
+
+
+def test_메밀묵은_메밀로_읽는다() -> None:
+    # 묵을 사전 이름으로 넣으면 정확히 같은 이름으로 읽혀서 메밀을 찾는 단계를 건너뛰었다
+    assert 3 in resolve_safety(_entries("메밀묵")).codes
+
+
+def test_한_글자_식품은_메뉴의_알레르기_이름_표에_붙지_않는다() -> None:
+    # 사전에 넣으면 대파가 든 메뉴마다 이름 표에 "파" 가 붙는다(레시피 1,156개 중 630개)
+    result = filter_food_safety([_menu("파전", "대파", "부침가루")], [], "preschool", months=OLDER)
+    assert "파" not in result.allergens.get("파전", ())
+
+
+def test_놀이_교육_문장의_한_글자_허용_목록도_Food_가_다_막는다() -> None:
+    # Activity · Growth 가 문장에서 대조하는 한 글자(SINGLE_CHAR_NAMES)는 Food 도 막는다 — 셋이 같은
+    # 판정이다(#305 · #320 리뷰 4번). 사전 이름이거나 SINGLE_CHAR_FOODS 에 있다
+    book = food_book()
+    assert [
+        c for c in SINGLE_CHAR_NAMES if c not in book.names and c not in SINGLE_CHAR_FOODS
+    ] == []
+
+
+def test_한_글자_식품은_사전에_없는_이름이다() -> None:
+    # 사전에 있으면 read_label 이 먼저 읽어서 이 목록은 쓰이지 않는다
+    book = food_book()
+    assert all(len(char) == 1 for char in SINGLE_CHAR_FOODS)
+    assert [char for char in SINGLE_CHAR_FOODS if char in book.names] == []

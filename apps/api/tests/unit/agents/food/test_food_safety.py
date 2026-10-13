@@ -243,10 +243,9 @@ def test_꽃가루는_꽃게탕을_막지_않는다() -> None:
     assert result.passed == (row,)
 
 
-def test_짧은_환경_알레르기_이름은_메뉴를_과하게_막는다() -> None:
-    # 알고 두는 과차단이다. 사전에 없는 이름은 글자 그대로 막아서 "개" 가 "찌개" 에 걸린다.
-    # #한 글자는 사전에 있는 것만 막는다. 쑥 · 배 같은 한 글자 식품을 사전에
-    # 넣는 후속 이슈에서 이 테스트를 뒤집는다 — 사전보다 먼저 뒤집으면 쑥떡이 풀린다
+def test_짧은_환경_알레르기_이름은_메뉴를_막지_않는다() -> None:
+    # 사전에 없는 한 글자는 글자 그대로 막지 않는다 — "개" 가 "찌개" 에 걸리지 않는다 (#305).
+    # 쑥 · 배 같은 한 글자 식품은 SINGLE_CHAR_FOODS 로 그대로 막힌다(test_food_safety_cases.py)
     rows = [
         _row("김치찌개", ingredients=("김치", "돼지고기")),
         _row("된장찌개", ingredients=("된장", "두부")),
@@ -254,7 +253,7 @@ def test_짧은_환경_알레르기_이름은_메뉴를_과하게_막는다() ->
 
     result = filter_food_safety(rows, [_allergy("개")], "preschool", months=60)
 
-    assert result.blocked == tuple(rows)
+    assert result.passed == tuple(rows)
 
 
 def test_질환_행은_label_매핑으로_읽는다() -> None:
