@@ -46,7 +46,7 @@
 
 [배치] 농식품정보원 레시피 기본 · 재료정보 ──▶ 재료명 정리 표(사람 검수) ──▶ recipe_catalog (추천 후보만)
           재료 → 알레르기 19종 코드 (코드 사전 + 정리 표). 검수 전 재료가 있으면 resolved=false
-          식품분류 → 6개 식품군 (코드 사전 — 아직 없음)
+          식품분류 → 6개 식품군 (영양DB 행: `reference/food_groups.yaml` 대응표, 레시피 행: 재료 정리 표의 재료별 칸 — #396)
 ```
 
 **두 표를 뗀다**(10-11, #326 리뷰). `menu_catalog` 는 급식 · 기록 · 영양 판정용이고 레시피 재료를 싣지 않는다. 레시피는 추천 후보용 `recipe_catalog` 에만 있다 — 레시피 재료로 급식 메뉴를 판정하면 어린이집이 실제로 넣은 재료를 표준 레시피가 "없음" 으로 덮는다([`food_agent_own_table.md`](food_agent_own_table.md) §1-1).
@@ -229,7 +229,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `select_kdri_group` | `compare_diet_balance` 내부 | `age_months` → `"1-2y"\|"3-5y"` (`nutrient_reference.age_group`과 같은 값) | – |
 | `compute_energy_target` | `compare_diet_balance` 내부 | `age_months` + 최근 `height`·`weight` → 권장 열량(내부 전용) | 측정 없음 → 연령군 일반값. 성별 입력 없음. 계산식 미정(성별 없는 식 선정 필요) |
 | `evaluate_nutrient_bands` | `compare_diet_balance` 내부 · **식단 추천에서도 `build_candidate_pool` 직전** | `observation_food` + `daycare_meal`(오늘 이전) 14일 치 + `menu_catalog` + `nutrient_reference` → 항목별 구간. 카탈로그에 없는 메뉴는 `resolve_menu` 로 찾고(상한 안), 그날 급식이 있으면 기관 출처 관찰은 뺀다(N-10). **저장하지 않는다** — 결과는 run state 에만([`영양소_계산_설계.md`](영양소_계산_설계.md) §3) | **7일에 10행 미만이면** 구간 없이 `insufficient`(설정값). 식단 추천에서는 가중치를 주지 않고 평소 순위로 간다 |
-| `search_food_doc` | run 시작 시 자동 | 단계·`row_type` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 키). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='food_doc'`으로 담는다 |
+| `search_food_doc` | run 시작 시 자동 | 월령·`row_type` 필터 → 아이 알레르기·연령 금지에 걸린 행 제외 → top-3(의미 검색은 행이 늘면, #396) → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 키). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='food_doc'`으로 담는다 |
 | `sample_candidates` | 후보 풀 직후 · 재호출 전 | 풀 → 10~15개 (가중 샘플링 + 식품군 다양성, `seed=run_id`). 가중치는 **부족 식품군 > 선호 > 기피** 순 — 기피는 가중치를 낮출 뿐 0으로 만들지 않는다 | 풀 < 3 → 재호출 없음 · 남은 만큼만 (§0-5) |
 
 ### 급식 갱신의 입력은 span이다

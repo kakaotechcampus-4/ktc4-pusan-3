@@ -158,6 +158,9 @@ class MenuCatalogRow:
     serving_g: float | None = None
     nutrients: dict[str, float] = field(default_factory=dict)  # 내부 전용
     ingredients: tuple[str, ...] = ()  # 비면 "재료 모름"
+    # 레시피 행만 채운다 — 원문 재료 역할이 주재료인 정리한 이름.
+    # 비면 "같은 주재료 2개" 제약을 건너뛴다
+    main_ingredients: tuple[str, ...] = ()
     allergen_codes: frozenset[int] = frozenset()
     food_groups: frozenset[str] = frozenset()
     stage_min: Stage | None = None  # None 은 toddler로 본다
@@ -192,13 +195,23 @@ class DaycareMealRow:
 
 @dataclass(frozen=True)
 class FoodDocRow:
-    """`food_doc` 한 행. 참고 문서라 개인화 근거로 세지 않는다."""
+    """`food_doc` 한 행. 참고 문서라 개인화 근거로 세지 않는다.
+
+    월령은 `min_month` 이상 `max_month` 미만(RAG_plan §1). `allergen_codes` 는 제목 · 본문에
+    나오는 19종 코드를 다 적은 값이다. `source_org` 는 출처 기관 — 뉴질랜드 보건부 행은 CC BY 4.0
+    이라 출처 표시가 조건이다.
+    """
 
     id: UUID
     row_type: str  # weaning_stage · weaning_ingredient · meal_pattern · nutrient_note · feeding_tip
+    title: str
     body: str
+    min_month: int
+    max_month: int
     texture: str | None
+    food_groups: frozenset[str]
     allergen_codes: frozenset[int]
+    source_org: str
     written_at: datetime
 
 
@@ -351,8 +364,15 @@ class DaycareMealStore(Protocol):
 
 class FoodDocReader(Protocol):
     async def search(
-        self, *, stage: Stage, row_types: tuple[str, ...], keys: tuple[str, ...]
-    ) -> list[FoodDocRow]: ...
+        self, *, months: int, row_types: tuple[str, ...], limit: int
+    ) -> list[FoodDocRow]:
+        """월령(`min_month` 이상 `max_month` 미만)과 `row_type` 으로 거른 검수 완료(`approved`) 행.
+
+        Activity 문서 조회(`ActivityDocReader.search`)와 같은 모양이다. 지금은 필터만 하고 의미
+        검색은 행이 늘면 붙인다. 알레르기로 거르는 것은 포트가 아니라 `search_food_doc` 의 몫이다 —
+        포트는 아이를 모른다. 그래서 호출부가 거른 뒤에 자를 수 있게 `limit` 은 넉넉히 받는다.
+        """
+        ...
 
 
 class SuggestionHistoryReader(Protocol):
