@@ -249,30 +249,6 @@ async def test_safety_는_active_행만_돌려준다() -> None:
     assert result == [active]
 
 
-# ── menu catalog: 미해결 행은 all_resolved 에서 빠진다 ──────────────
-async def test_menu_catalog_all_resolved_는_resolved_False_행을_뺀다() -> None:
-    resolved = MenuCatalogRow(
-        menu_key="김치찌개",
-        display_name="김치찌개",
-        source="mfds_nutri",
-        resolved=True,
-        synced_at=NOW,
-        food_code="D000001",
-    )
-    unresolved = MenuCatalogRow(
-        menu_key="모름메뉴",
-        display_name="모름메뉴",
-        source="manual",
-        resolved=False,
-        synced_at=NOW,
-    )
-    store = InMemoryMenuCatalog(rows=[resolved, unresolved])
-
-    result = await store.all_resolved()
-
-    assert result == [resolved]
-
-
 async def test_menu_catalog_get_put_은_menu_key_로_찾는다() -> None:
     store = InMemoryMenuCatalog()
     row = MenuCatalogRow(
@@ -307,7 +283,6 @@ async def test_menu_catalog_put_은_이미_있는_행을_덮지_않는다() -> N
     await store.put(fetched)
 
     assert await store.get("된장국") == manual
-    assert await store.all_resolved() == [manual]
 
 
 # ── menu catalog: 레시피 행은 받지 않는다 (#326 리뷰 — recipe_catalog 로 뗐다) ─────

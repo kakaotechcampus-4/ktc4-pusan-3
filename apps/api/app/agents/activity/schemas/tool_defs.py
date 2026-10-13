@@ -27,7 +27,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="lookup_weather",
         description=(
             "날씨 판정(야외 가능 여부)과 등급 라벨을 가져온다. "
-            "why_now 에 날씨를 쓸 때 부른다. 수치는 오지 않는다 — 라벨만 쓴다."
+            "reason 에 날씨를 쓸 때 부른다. 수치는 오지 않는다 — 라벨만 쓴다."
         ),
         args=LookupWeatherArgs,
     ),

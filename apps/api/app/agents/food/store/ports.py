@@ -40,6 +40,7 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 | GrowthLogReader | child_growth_log — 가장 최근 측정 |
 | FoodMemoryReader | profile_affinity(domain=food) · observation_food |
 | MenuCatalogStore | menu_catalog — 메뉴 카탈로그. 메뉴명(공개 DB · 급식표) → 식품코드·영양성분 |
+| RecipeCatalogStore | recipe_catalog — 식단 추천 후보 풀. menu_catalog 와 뗐다(#326 리뷰) |
 | MenuSource | 식약처 등 외부 영양성분·레시피 조회 |
 | DaycareMealStore | daycare_meal — 조회·수정·삭제 |
 | FoodDocReader | food_doc — 이유식 단계 등 참고 문서 |
@@ -52,7 +53,15 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
+from app.agents.common.ports import (
+    ChildProfileReader,
+    ConsentReader,
+    SafetyLookupError,  # noqa: F401 — store/__init__.py · inmemory.py 가 여기서 가져간다
+)
 from app.core.mfds_nutri_raw import RawNutriRow
+from app.core.nutrition_pick import (
+    NutritionFacts,  # noqa: F401 — store/__init__.py 가 여기서 가져간다
+)
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -64,14 +73,6 @@ NutrientBand = Literal["low", "ok", "high"]
 # observation_food.confidence_source 값(memory/schemas/common.py 와 같은 값).
 # 보호자 말은 Memory Agent 가 저장할 때 고르고, OCR 분석이 쓰는 관찰은 그 경로가 따로 정한다.
 ConfidenceSource = Literal["institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"]
-
-
-class SafetyLookupError(Exception):
-    """health_safety를 읽지 못함.
-
-    기본값("제한 없음")으로 넘기지 않는다. 식단 추천은 모델을 부르지 않고 끝내고,
-    급식 조회는 "알레르기 확인을 못 했어요" 를 명시한다 (루트 §2 · S6).
-    """
 
 
 class MenuSourceError(Exception):
@@ -133,21 +134,8 @@ class Measurement:
     measured_on: date
 
 
-@dataclass(frozen=True)
-class NutritionFacts:
-    """외부 영양성분 DB 조회 결과 한 건."""
-
-    food_code: str
-    name: str
-    category: str  # 식품 대분류. 식품군 매핑에 쓴다
-    serving_g: float | None  # 성인 1인분
-    # energy · protein · fat · carbohydrate · sugars · sodium · calcium · iron · saturated_fat
-    per_100g: dict[str, float]
-    source_version: str
-
-
-# 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다 —
-# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(#326 리뷰, own_table §1-1)
+# 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다.
+# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1)
 RECIPE_SOURCES: frozenset[str] = frozenset({"mafra_recipe"})
 
 
@@ -162,7 +150,7 @@ class MenuCatalogRow:
     menu_key: str
     display_name: str
     # menu_catalog: mfds_nutri · center_standard · manual / recipe_catalog: mafra_recipe.
-    # COOKRCP01(mfds_recipe)은 보류라 뺐다 — 들이면 레시피라 recipe_catalog 쪽이다
+    # COOKRCP01(mfds_recipe)은 보류라 뺀다. 들이면 레시피라 recipe_catalog 쪽에 들어간다
     source: Literal["mfds_nutri", "mafra_recipe", "center_standard", "manual"]
     resolved: bool
     synced_at: datetime
@@ -174,6 +162,9 @@ class MenuCatalogRow:
     food_groups: frozenset[str] = frozenset()
     stage_min: Stage | None = None  # None 은 toddler로 본다
     source_version: str | None = None
+    # recipe_catalog 의 PK 일부(source, source_id). menu_catalog 행은 쓰지 않는다 — menu_key 가
+    # 이미 PK 다(own_table §1-1)
+    source_id: str | None = None
 
 
 DaycareSlot = Literal["lunch", "snack_am", "snack_pm"]
@@ -209,18 +200,6 @@ class FoodDocRow:
     texture: str | None
     allergen_codes: frozenset[int]
     written_at: datetime
-
-
-class ChildProfileReader(Protocol):
-    async def birth_date(self, *, child_id: UUID) -> date:
-        """식이 단계는 이 값에서 코드가 계산한다 (app/rules/age.py)."""
-        ...
-
-
-class ConsentReader(Protocol):
-    async def child_health_granted(self, *, child_id: UUID) -> bool:
-        """consent(scope=child_health) 최신 행이 granted 인가."""
-        ...
 
 
 class SafetyReader(Protocol):
@@ -283,15 +262,27 @@ class MenuCatalogStore(Protocol):
         이름이 정확히 같은 결과뿐이라 `menu_key` 가 공개 DB 에 있는 이름이다
         (food_agent_own_table §1).
 
-        레시피 행(`RECIPE_SOURCES`)은 받지 않는다 — `recipe_catalog` 몫이다(DB 는 CHECK).
+        레시피 행(`RECIPE_SOURCES`)은 받지 않는다 — `recipe_catalog` 몫이다(DB는 CHECK).
         """
         ...
 
-    async def all_resolved(self) -> list[MenuCatalogRow]:
-        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다.
 
-        후보 풀은 `recipe_catalog` 에서 읽기로 했다(#326 리뷰). 레시피 표의 포트를 만들 때
-        (#321 파트 2 배치 · 식단 추천) 이 읽기를 그쪽으로 옮긴다.
+class RecipeCatalogStore(Protocol):
+    """`recipe_catalog` — 식단 추천 후보 풀. `menu_catalog` 와 뗐다(#326 리뷰, own_table §1-1).
+
+    PK 는 (`source`, `source_id`) 다 — `menu_key` 는 PK 가 아니라서 이름이 같은 레시피도
+    따로 행을 갖는다. 레시피 배치만 쓴다.
+    """
+
+    async def all_resolved(self) -> list[MenuCatalogRow]:
+        """`resolved=True` 행만 돌려준다. 재료가 빈 행을 거르는 것은 후보 풀 생성의 몫이다."""
+        ...
+
+    async def put(self, row: MenuCatalogRow) -> None:
+        """(`source`, `source_id`) 로 갱신한다 — `menu_catalog.put` 과 달리 있는 행을 덮어쓴다.
+
+        레시피 배치가 다시 받으면 같은 레시피의 최신 값으로 바뀐다(own_table §1-1 "다시 받으면
+        같은 (source, source_id) 행을 새 값으로 바꾼다").
         """
         ...
 
@@ -370,6 +361,7 @@ class FoodPorts:
     growth: GrowthLogReader
     memory: FoodMemoryReader
     catalog: MenuCatalogStore
+    recipes: RecipeCatalogStore  # recipe_catalog — 식단 추천 후보 풀(#326 리뷰)
     daycare: DaycareMealStore
     docs: FoodDocReader
     suggestions: SuggestionHistoryReader

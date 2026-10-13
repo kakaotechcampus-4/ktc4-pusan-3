@@ -33,8 +33,10 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 from collections.abc import Sequence
 
 from app.agents.activity.context import ActivityContext
+from app.agents.activity.gating import finds_places, weather_checked
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.weather import WeatherBrief
+from app.agents.common.gate import Gate
 
 _ROLE = """
 [역할]
@@ -65,7 +67,7 @@ _CANDIDATES = """
 - 활동에 쓰는 물건(materials)과 장소 성격(setting)을 빠짐없이 적는다. 거르는 건 코드가 한다 —
   알아서 빼거나 위험한 부분만 고쳐서 내지 않는다.
 - 싫어한다고 나온 활동(polarity -1)은 다시 내지 않는다. 싫어하는 것을 피해 골랐다면
-  무엇을 피했는지 why_this 에 쓴다.
+  무엇을 피했는지 reason 에 쓴다.
 - 장소는 search_nearby_places 결과에 있는 이름만 place_name 에 쓴다. 없으면 비운다.
 - 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 """.strip()
@@ -94,7 +96,7 @@ _FAILURE = """
 _OUTPUT = """
 [출력]
 - 마지막에 propose_activity_candidates 를 한 번 부른다. 말로 후보를 설명하지 않는다.
-- why_this 는 이 아이에게 맞는 이유, why_now 는 지금인 이유다. 조회한 사실로만 쓴다.
+- reason 에는 이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로 쓴다. 조회한 사실로만 쓴다.
 - 날짜와 시간을 계산하지 않는다. 날짜가 필요하면 tool 의 day 라벨(today · tomorrow ·
   this_weekend)을 고른다.
 """.strip()
@@ -120,7 +122,7 @@ def build_system_prompt(
         raise RuntimeError("Gate 없이 프롬프트를 만들었다 — run() 이 build_gate 를 먼저 부른다")
     dynamic = [
         _examples(examples),
-        _conditions(weather, has_location=gate.has_location),
+        _conditions(weather, checked=weather_checked(gate, weather), gate=gate),
         f"[월령]\n아이는 {gate.stage.months}개월이다.",
         _now(context),
     ]
@@ -168,18 +170,28 @@ def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
     return "\n".join(lines)
 
 
-def _conditions(weather: WeatherBrief, *, has_location: bool) -> str:
-    """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2)."""
-    if weather.outdoor_ok:
+def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
+    """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
+
+    확인하지 못한 날(위치 · 날씨 어댑터가 없거나 예보를 못 읽음)은 "어렵다" 와 나눠 쓴다 — 같은
+    말이면 모델이 확인 안 한 날씨를 이유 문장에 쓴다. 판정은 같다(실내만, D8).
+    """
+    if not checked:
+        outdoor = (
+            "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
+            "setting 이 indoor 나 either 인 활동만 낸다."
+        )
+    elif weather.outdoor_ok:
         outdoor = "오늘은 바깥 활동을 할 수 있다."
     else:
         outdoor = "오늘은 바깥 활동이 어렵다. setting 이 indoor 나 either 인 활동만 낸다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
-    place = (
-        "근처 장소는 search_nearby_places 로 찾을 수 있다."
-        if has_location
-        else "위치를 모른다. 특정 장소가 필요한 활동은 내지 않는다."
-    )
+    if finds_places(gate):
+        place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
+    elif gate.has_location:
+        place = "근처 장소는 찾을 수 없다. 특정 장소가 필요한 활동은 내지 않는다."
+    else:
+        place = "위치를 모른다. 특정 장소가 필요한 활동은 내지 않는다."
     lines = ["[오늘의 조건]", outdoor]
     if labels:
         lines.append(f"날씨: {labels}")
