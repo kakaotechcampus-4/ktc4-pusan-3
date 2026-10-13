@@ -33,9 +33,9 @@ def test_부팅_때_한_번만_읽는다():
 
 
 def test_게이트_값은_옮기기_전과_같다():
-    """#372 PR 1 은 동작이 그대로다 — 단, 관심 프로필(affinity)은 월령과 상관없이 읽는다(0)."""
+    """#372 PR 1 은 동작이 그대로다."""
     gates = age_gates()
-    assert gates.affinity_min_month == 0
+    assert gates.affinity_min_month == 18
     assert gates.together_only_below_month == 18
     assert gates.education_min_month == 12
     assert gates.step_min_month == 12

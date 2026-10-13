@@ -588,7 +588,7 @@ class AgeGates:
 
     stage_boundaries: StageBoundaries
     v1_month_limit: int
-    affinity_min_month: int  # Activity 가 profile_affinity 를 읽기 시작하는 월령. 0 = 월령 무관
+    affinity_min_month: int  # 관심 프로필을 만들고(Curator) 읽기(Activity) 시작하는 월령
     together_only_below_month: int  # Activity — 이 월령 미만은 같이 하는 활동만
     education_min_month: int  # Growth — 교육 tool 이 열린다
     step_min_month: int  # Growth — 루틴이 다음 단계 제안으로 넘어간다

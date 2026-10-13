@@ -457,7 +457,7 @@ async def run(task, context, *, client=None):
 
 | tool | 언제 부르는가 | `min_month` |
 | --- | --- | --- |
-| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. `age_gates.yaml` 의 `affinity_min_month` 미만은 affinity 조회를 건너뛴다(지금 값은 0 이라 월령과 상관없이 읽는다, #372) | 0 |
+| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. `age_gates.yaml` 의 `affinity_min_month`(18) 미만은 affinity 조회를 건너뛴다 | 0 |
 | `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
 | `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용**. 날마다 평일 · 주말 · 공휴일과 바쁜 칸 · 비는 칸(08–20시, 오늘이면 지금부터)을 코드가 계산해 준다. 이번 주말은 토 · 일 이틀. 제목은 싣지 않는다 | 0 |
 | `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다.** 바깥 활동이 어려운 날은 실내 종류만 | 0 · 위치 있을 때 |

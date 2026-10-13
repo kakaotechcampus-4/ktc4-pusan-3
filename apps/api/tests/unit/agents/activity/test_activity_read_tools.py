@@ -2,7 +2,7 @@
 
 - 기억은 rank_evidence 순서 그대로, 상위 몇 개만, id 와 함께 돌려준다. 돌려준 것만 run state 에
   남는다 — 출력 검증이 이 표에 없는 id 를 거절한다.
-- profile_affinity 는 월령과 상관없이 읽는다 (#372 — Curator 가 월령을 보는지 확인되기 전까지).
+- 18개월 미만은 profile_affinity 를 읽지 않는다. 관찰로만 근거를 만든다.
 - 0행은 NO_RECORDS 다. 일반 추천으로 가라는 신호이고 되묻기가 아니다.
 """
 
@@ -128,10 +128,9 @@ class TestMemory:
         result = await search(await context([observation(1, "물감 놀이", polarity=-1)]))
         assert result.data["records"][0]["polarity"] == -1
 
-    async def test_월령이_어려도_affinity_를_읽는다(self):
-        """affinity 가 있으면 어린 월령에서도 관찰 앞에 온다. 없는 월령은 0행이라 막을 것이 없다."""
+    async def test_18개월_미만은_affinity_를_읽지_않는다(self):
         ctx = await context([observation(1, "까꿍")], [affinity(1, "블록")], born=BORN_12_MONTHS)
-        assert labels(await search(ctx)) == ["블록", "까꿍"]
+        assert labels(await search(ctx)) == ["까꿍"]
 
     async def test_keywords_는_이름에_그_말이_든_근거만_남긴다(self):
         ctx = await context([observation(1, "모래 놀이"), observation(2, "블록 쌓기")])

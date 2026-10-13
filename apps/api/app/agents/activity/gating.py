@@ -28,8 +28,7 @@ MIN_MONTH: dict[str, int] = {
 # search_activity_memory 안에서 profile_affinity 를 읽기 시작하는 월령.
 # 그 아래는 조회를 건너뛰고 관찰(티어 3)로만 근거를 만든다. tool 을 닫는 값이 아니다 —
 # 근거 모드를 가르지 않는다. 관찰이 있으면 그 아래도 personalized 가 나간다.
-# 지금 파일의 값은 0 이라 월령과 상관없이 읽는다 — Curator 가 월령을 보는지 확인되기 전까지다
-# (age_gates.yaml 의 설명 · #372 합의 2).
+# Curator 도 같은 값으로 그 아래 아이의 프로필을 만들지 않는다 — 여기는 방어선이다 (age_gates.yaml).
 AFFINITY_MIN_MONTH = age_gates().affinity_min_month
 
 # 위치가 여닫는 tool. 날씨가 나쁘면 닫지 않고 실내 종류로 좁힌다 — 좁히는 것은 tool 이 한다

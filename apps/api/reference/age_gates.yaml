@@ -36,12 +36,13 @@ stage_boundaries:
 v1_month_limit: 72
 
 gates:
-  # Activity — search_activity_memory 가 profile_affinity 를 읽기 시작하는 월령.
-  # 🚨 0 은 월령과 상관없이 읽는다는 뜻이다. 연령별_Tool_전략 §2 는 Curator 가 profile_affinity 를
-  # 18개월부터 만든다고 적었는데(어린 월령의 단순 반사 행동을 성향으로 굳히지 않으려고), Curator 코드에서
-  # 그 숫자를 찾지 못했다. Curator 가 실제로 월령을 보는지 확인되기 전까지 읽는 쪽에서는 거르지 않는다 —
-  # 만들어지지 않은 월령의 조회는 0행이라 막을 것이 없다. 확인되면 이 값을 정한다 (#372 합의 2).
-  affinity_min_month: 0
+  # 관심 프로필(profile_affinity) 월령 — 이 월령 미만은 프로필을 만들지도 읽지도 않는다 (연령별_Tool_전략 §2).
+  # 어린 월령의 단순 반사 행동을 성향으로 굳히지 않으려는 값이다. 두 곳이 같은 값을 쓴다 (#372 합의 2).
+  #   Curator — 이 월령 미만 아이는 프로필을 만들지 않는다 (만들기)
+  #   Activity — search_activity_memory 가 이 월령 미만이면 profile_affinity 를 읽지 않는다 (읽기)
+  # 읽는 쪽 게이트는 방어선이다 — 게이트가 생기기 전에 만들어진 행, 생일을 고친 아이의 옛 행이 근거로
+  # 나가지 않게 한다. Curator 가 안 만든 월령은 어차피 0행이라 비용이 없다.
+  affinity_min_month: 18
 
   # Activity — 이 월령 미만은 보호자가 같이 하는 활동만 낸다 (3-3). 밴드 경계와 따로 둔다.
   # 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게.

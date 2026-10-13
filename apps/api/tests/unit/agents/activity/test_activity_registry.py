@@ -120,12 +120,14 @@ class TestGatingTable:
     def test_표에_없는_tool_은_열지_않는다(self):
         assert opens("filter_activity_safety", gate(71)) is False
 
-    @pytest.mark.parametrize("months", range(0, 72))
-    def test_관심_프로필은_월령과_상관없이_읽는다(self, months):
-        """#372 — Curator 가 월령을 보는지 확인되기 전까지 읽는 쪽에서는 거르지 않는다.
-        만들어지지 않은 월령의 조회는 0행이라 막을 것이 없다."""
-        assert AFFINITY_MIN_MONTH == 0
-        assert reads_affinity(gate(months)) is True
+    @pytest.mark.parametrize(
+        ("months", "expected"),
+        [(AFFINITY_MIN_MONTH - 1, False), (AFFINITY_MIN_MONTH, True)],
+    )
+    def test_관심_프로필은_18개월부터_읽는다(self, months, expected):
+        """tool 을 닫는 값이 아니다 — 그 아래도 관찰로 개인화가 된다."""
+        assert AFFINITY_MIN_MONTH == 18
+        assert reads_affinity(gate(months)) is expected
 
 
 class TestCodeTools:
