@@ -22,6 +22,7 @@ import { withIdempotency } from "./idempotency";
 import { joinChild } from "./membership";
 import { invalidPolicyVersion } from "./policies";
 import { saveOnboarding } from "./profile";
+import { recordConsent } from "./settings";
 
 /** 02 온보딩 본문이 받는 필드 — 서버 `OnboardingRequest`(extra="forbid")와 같다. */
 const ONBOARDING_FIELDS = new Set(["relation", "gender", "height_cm", "weight_kg"]);
@@ -117,6 +118,11 @@ export const childrenHandlers = [
       role: "owner",
       consent_required: [],
     });
+    // 🚨 **아이 동의도 같은 표에 쌓는다** (`handlers/settings.ts`). 실서버도 아이 등록에서
+    //    동의 행을 남기고, 10 설정의 `GET /consents?child_id=` 가 그 행을 돌려준다.
+    for (const consent of body.consents ?? []) {
+      recordConsent(CHILD_ID, consent.scope, "granted", consent.policy_version ?? "unknown");
+    }
     return HttpResponse.json(
       { id: CHILD_ID, nickname: body.nickname, age_display: "만 4세", role: "owner" },
       { status: 201 },
