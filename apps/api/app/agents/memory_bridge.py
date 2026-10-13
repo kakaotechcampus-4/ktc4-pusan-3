@@ -1,12 +1,17 @@
-"""InMemory 전용. 같은 run의 Memory store를 도메인 Agent의 기억 포트로 읽는다.
+"""같은 run 의 Memory store 를 도메인 Agent 의 기억 포트로 읽는다.
 
-방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 혼합형이 성립한다.
-DB 가 붙으면 도메인 Agent 는 백엔드 조회 함수로 읽는다. 이 파일은 그 전까지,
-그리고 테스트 · eval 이 DB 없이 이 흐름을 볼 때 쓴다.
+방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 혼합형이 성립한다 (루트 §4).
+store 종류는 모른다 — MemoryStore Protocol 로만 읽는다. 운영에서는 러너가 넘긴 DbMemoryStore,
+테스트 · eval 에서는 InMemoryStore 다.
+
+🚨 DbMemoryStore 를 읽으면 러너 세션 하나를 Memory 와 같이 쓴다. AsyncSession 은 쿼리 둘을 동시에
+   못 돌리므로, 이 포트를 읽는 task 둘이 동시에 돌면 깨진다. Food 포트를 DB 로 붙일 때는 이 다리를
+   쓰지 않고 포트 호출마다 짧은 트랜잭션으로 읽는다(10-05 목표, 러너 task 별 세션 작업). Memory 는
+   도메인 단계 전에 commit 되므로 따로 연 세션에서도 방금 저장한 관찰이 보인다.
 
 Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity
 포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
-Curator 는 DB 전환 완료로 DbCuratorStore 를 직접 쓴다 (trigger.py).
+Curator 는 이 다리를 쓰지 않고 DbCuratorStore 를 직접 쓴다 (domains/memory/curator/trigger.py).
 
 profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
 """
