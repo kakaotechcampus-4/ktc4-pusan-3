@@ -16,6 +16,10 @@ default:
   known: false
 
 rules:
+  # 급식 · 집 식사가 같이 쓴다. "많이" 쪽은 급식에서 나오는 말이다(Food_Tool_명세 급식 갱신)
+  - factor: 1.5
+    known: true
+    aliases: [엄청 많이, 많이, 더 달라고 했대]
   - factor: 1.0
     known: true
     aliases: [다 먹음, 완식, 한 그릇, 전부, 싹 비움]
@@ -27,7 +31,7 @@ rules:
     aliases: [조금, 몇 입, 한 입, 살짝]
   - factor: 0.5
     known: false
-    aliases: [남김, 남겼음, 조금 남김]
+    aliases: [남김, 남겼음, 조금 남김, 남겼대, 남겼어]
   - factor: 0.0
     known: true
     aliases: [뱉음, 안 먹음, 거부, 입에 안 댐]

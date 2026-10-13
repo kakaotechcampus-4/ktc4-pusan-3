@@ -37,6 +37,14 @@ def _table() -> tuple[AmountRule, dict[str, AmountRule]]:
     return default, by_alias
 
 
+def is_amount_text(text: str | None) -> bool:
+    """사전에 있는 양 표현인가. 없는 말은 `amount_of` 가 기본값을 주지만, 있던 양을 덮어쓰려는 쪽은
+    사전에 있는 말인지부터 본다 — 모르는 말로 알던 양을 "기록 없음" 으로 되돌리지 않게."""
+    if not text:
+        return False
+    return normalize(text) in _table()[1]
+
+
 def amount_of(text: str | None) -> AmountRule:
     """양 텍스트 하나를 계수로. 비었거나 사전에 없으면 기본값(양을 모르는 한 그릇)."""
     default, by_alias = _table()

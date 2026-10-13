@@ -33,9 +33,6 @@ unsupported.weaning_over12:
 unsupported.weight_diet:
   kind: unsupported
   template: "체중을 목표로 한 식단은 만들지 않아요. 몸무게 이야기는 영유아 건강검진에서 확인해 보세요."
-guide.choking_caution:
-  kind: guide
-  template: "통째로 먹으면 질식할 수 있어요. 잘게 잘라도 위험이 남으니, 먹는 동안 곁에서 지켜봐 주세요."
 nutrient.insufficient:
   kind: nutrient
   template: "최근 식사 기록이 적어서 영양 이야기는 정확하지 않아요. ({recorded}건 기록됨)"

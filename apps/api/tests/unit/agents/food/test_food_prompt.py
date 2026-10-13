@@ -108,3 +108,24 @@ def test_예시_구획은_문서_행의_제목과_본문을_그대로_싣고_출
     assert "질감 올리기" in text
     assert "걸쭉한 정도에서 시작한다." in text
     assert "가짜 기관" not in text
+
+
+def test_식단_추천_프롬프트는_재료를_모델에게_적게_하지_않는다() -> None:
+    # 메뉴 이름 · 재료는 코드가 카탈로그에서 채운다 — 모델이 재료를 빠뜨려도 필터가 새지 않는다
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    assert "[재료]" not in text
+    assert "재료를 빠짐없이" not in text
+
+
+def test_식단_추천_프롬프트는_보여_준_후보에서_menu_key_로만_고르게_한다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    assert "menu_key" in text
+    assert "보여 준 후보" in text
+
+
+def test_영양소_분석_프롬프트에는_후보_고르기_안내가_없다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.NUTRIENT_ANALYSIS)
+
+    assert "menu_key" not in text
