@@ -629,3 +629,72 @@ async def test_저장_안_한_run의_commit_후_예외는_failed로_끝난다(mo
     assert channel.ended_with == "failed"
     # 키가 풀려야 한다 — 저장한 게 없으니 재시도해도 안전하다
     assert idempotency.recall(**scope) is None
+
+
+async def test_임베딩_키가_있으면_Curator_트리거를_만들어_진입점에_넘긴다(monkeypatch):
+    """DB 세션을 여는 곳을 러너 한 곳에 모은다 (#257).
+
+    store · commit 과 같이 Curator 트리거도 러너가 만든다.
+    """
+    from app.domains.memory.curator import trigger as trigger_module
+
+    embedder, judge = object(), object()
+    started: list[tuple] = []
+    monkeypatch.setattr(entrypoint, "curator_deps", lambda: (embedder, judge))
+    monkeypatch.setattr(
+        trigger_module, "trigger_curator_background", lambda *args: started.append(args)
+    )
+
+    async def fake_handle_input(**kwargs):
+        kwargs["curator_trigger"](CHILD, date(2026, 10, 14))  # pipeline 이 commit 직후 부르는 자리
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert started == [(CHILD, date(2026, 10, 14), embedder, judge)]
+
+
+async def test_judge_키만_없어도_Curator_트리거는_넘긴다(monkeypatch):
+    """judge 가 없으면 Curator 는 임베딩 · 보류까지만 한다. 트리거를 빼면 임베딩도 안 쌓인다."""
+    from app.domains.memory.curator import trigger as trigger_module
+
+    embedder = object()
+    started: list[tuple] = []
+    monkeypatch.setattr(entrypoint, "curator_deps", lambda: (embedder, None))
+    monkeypatch.setattr(
+        trigger_module, "trigger_curator_background", lambda *args: started.append(args)
+    )
+
+    async def fake_handle_input(**kwargs):
+        kwargs["curator_trigger"](CHILD, date(2026, 10, 14))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert started == [(CHILD, date(2026, 10, 14), embedder, None)]
+    assert names(channel) == ["done"]
+
+
+async def test_임베딩_키가_없으면_Curator_트리거를_넘기지_않는다(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(entrypoint, "curator_deps", lambda: (None, None))
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["curator_trigger"] is None
