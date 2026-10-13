@@ -21,11 +21,11 @@ from app.agents.activity.store.ports import (
     WeatherGrid,
 )
 from app.agents.activity.weather import WeatherBrief
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import DataReady, Gate, read_safety_basis
 from app.agents.common.suggestion import SuggestionDraft
-from app.rules.age import life_stage
 
 
 @dataclass

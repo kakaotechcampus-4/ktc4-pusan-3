@@ -23,6 +23,7 @@ from app.agents.food.store.ports import (
     MenuSourceError,
     SafetyEntry,
     SafetyLookupError,
+    UnwiredSafety,
 )
 from app.core.mfds_nutri_raw import RawNutriRow
 from app.rules.age import Stage
@@ -261,14 +262,16 @@ def unwired_ports(**overrides: object) -> FoodPorts:
     """포트를 안 넘긴 run 의 기본값. 안전 조회가 실패한다.
 
     `in_memory_ports()` 기본값은 "동의 있음 + 알레르기 0행" 으로 읽혀서, 실제 포트가 안 붙은 run 이
-    알레르기가 등록된 아이에게도 거르지 않은 안내를 낸다. 여기서는 동의를 있음으로 두고
-    `food_safety` 를 실패시킨다 — 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아
-    실패가 드러나지 않는다. Food 는 `blocked.safety` 로 닫히고 모델을 부르지 않는다.
+    알레르기가 등록된 아이에게도 거르지 않은 안내를 낸다. 여기서는 `UnwiredSafety` 를 둬서
+    `build_gate` 가 동의와 상관없이 안전 조회 실패로 읽게 한다 — 동의가 없는 아이는 원래
+    `health_safety` 를 읽지 않아 실패가 드러나지 않기 때문이다. Food 는 `blocked.safety` 로 닫히고
+    모델을 부르지 않는다. `consent` 기본값은 값이 안 넘어온 run 을 위한 것이고, 실제 동의 값을
+    아는 쪽(entrypoint)은 override 로 넘긴다.
     테스트·eval 이 알레르기 시나리오를 쓰려면 `in_memory_ports(safety=...)` 로 명시한다.
     """
     defaults: dict[str, object] = {
         "consent": InMemoryConsent(default=True),
-        "safety": InMemorySafety(fail=True),
+        "safety": UnwiredSafety(),
     }
     defaults.update(overrides)
     return in_memory_ports(**defaults)

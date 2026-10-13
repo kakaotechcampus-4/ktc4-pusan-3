@@ -175,7 +175,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 닫힘 조건 추가: `safety_ok=False` → `meal_recommendation` · `nutrient_analysis` 가 `()`(`blocked.safety`, 모델 0회). 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석도 식품군 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다(#321, 10-11 변경). `daycare_meal` 은 식품 안내가 아니라서 안전 조회와 무관하다 — 다만 tool 이 스텁이라 지금은 `not_ready.daycare` 로 닫혀 있다.
 
-포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 "동의 있음 + 안전 조회 실패" 조합이라 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 "없음" 으로 두지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다. 실제 포트는 issue4 에서 api 가 넘긴다.
+안전 포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 안전 포트가 `UnwiredSafety` 라서, `build_gate` 가 **동의와 상관없이** 안전 조회 실패로 읽고 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 보지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다 — 생일 · 동의는 API 가 읽어 값으로 넘기므로(#372) 실제 동의 값이 들어와도 어댑터가 붙기 전에는 같다. 실제 안전 포트는 issue4 에서 api 가 넘긴다.
 
 **`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — 읽은 안전 정보(`FoodRunState.safety`)가 빈 튜플이고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
 
@@ -361,7 +361,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | 카페인(커피 · 녹차 · 홍차 · 밀크티 · 콜라 · 아이스티 · 티라미수 …) | 모든 아이 | 막는다. **메뉴명만 본다** — 재료의 "커피 1g" · 녹차가루는 양념이다 |
 | 술(소주 · 맥주 · 막걸리 · 와인 …) | 모든 아이 | 막는다. **메뉴명만 본다** — 재료의 와인 · 맥주는 조리하면 대부분 날아가는 양념이다(요리술 · 맛술 · 미림 · 청주를 넣지 않은 것과 같은 이유). 포도주스 · 칵테일새우는 술이 아니다 |
 
-12 · 48 은 설정값이다([연령별_Tool_전략.md](../shared/연령별_Tool_전략.md) A-1). `age_gates.yaml` 이 생기면 옮긴다. 메뉴명만 볼지 재료까지 볼지는 규칙의 `scope` 다(`name` · `all`).
+12 · 48 은 설정값이다([연령별_Tool_전략.md](../shared/연령별_Tool_전략.md) A-1). 단계 경계는 `age_gates.yaml` 이 정본이고, 이 규칙의 월령은 규칙마다 출처가 붙어 있어 `food_safety_terms.yaml` 에 두고 테스트가 단계 경계와 맞춘다(#372). 메뉴명만 볼지 재료까지 볼지는 규칙의 `scope` 다(`name` · `all`).
 
 **5. 호출부가 지킬 것**
 

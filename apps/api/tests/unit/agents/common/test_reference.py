@@ -14,6 +14,7 @@ import pytest
 from app.agents.common import reference
 from app.agents.common.reference import (
     AllergenGroup,
+    age_gates,
     allergen_groups,
     allergen_terms,
     chronic_restriction_codes,
@@ -24,7 +25,6 @@ from app.agents.common.reference import (
     parse_allergen_groups,
     parse_food_safety_terms,
 )
-from app.rules.age import first_month_of
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import Term, normalize
 
@@ -275,13 +275,13 @@ def test_확인_필요로_옮긴_음식은_이것뿐이다() -> None:
 
 
 def test_age_rule_months_match_their_single_source() -> None:
-    """age_gates.yaml 이 아직 없어 월령이 여기에도 적혀 있다. 원래 자리와 어긋나면 깨진다.
+    """안전 규칙 월령은 규칙마다 출처가 붙어 있어 age_gates.yaml 로 옮기지 않았다. 어긋나면 깨진다.
 
-    꿀 · 마시는 우유는 영아 단계(toddler 전)와 같은 경계, 질식은 Activity food_choking 축과
-    같은 값이다.
+    꿀 · 마시는 우유는 age_gates.yaml 의 영아 단계(toddler 전) 경계와 같은 값, 질식은 Activity
+    food_choking 축과 같은 값이다.
     """
     rules = {rule.term.key: rule for rule in food_safety_terms().age_rules}
-    toddler = first_month_of("toddler")
+    toddler = dict((stage, month) for month, stage in age_gates().stage_boundaries)["toddler"]
     choking = hazard_terms().axes["food_choking"].warn_below_month
 
     assert rules["꿀"].below_month == rules["생우유"].below_month == toddler

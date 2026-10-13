@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from app.agents import entrypoint, pipeline
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.food.context import build_gate
 from app.agents.food.registry import closed_readout_key, tools_for
@@ -19,7 +20,6 @@ from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.supervisor import routing
-from app.rules.age import life_stage
 
 CHILD = UUID(int=1)
 PARENT = UUID(int=2)
@@ -285,3 +285,70 @@ async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴
     assert writes.wrote is False
     await seen["food"].ports.daycare.delete(child_id=CHILD, row_ids=(UUID(int=9),))
     assert writes.wrote is True
+
+
+async def _food_of(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **_: Any) -> str:
+        seen["food"] = contexts["food"]
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    await entrypoint.handle_input(
+        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", **kwargs
+    )
+    return seen["food"]
+
+
+@pytest.mark.parametrize("granted", [True, False])
+async def test_API_가_읽어_넘긴_생일_동의가_Food_포트로_들어간다(
+    monkeypatch: pytest.MonkeyPatch, granted: bool
+) -> None:
+    """#372 PR 2 — 값 하나를 감싼 포트가 `ChildProfileReader` · `ConsentReader` 자리에 들어간다."""
+    birth_date = _months_ago(30)
+
+    food = await _food_of(monkeypatch, birth_date=birth_date, child_health_granted=granted)
+
+    assert await food.ports.profile.birth_date(child_id=CHILD) == birth_date
+    assert await food.ports.consent.child_health_granted(child_id=CHILD) is granted
+
+
+@pytest.mark.parametrize("granted", [True, False])
+async def test_동의와_상관없이_Food_는_안전_조회_실패로_닫힌다(
+    monkeypatch: pytest.MonkeyPatch, granted: bool
+) -> None:
+    """🚨 health_safety 어댑터가 붙기 전에는 동의하지 않은 아이도 Food 가 열리면 안 된다.
+
+    동의가 없으면 build_gate 가 health_safety 를 읽지 않아서, 포트를 그냥 실제 동의 값으로
+    바꾸면 동의하지 않은 아이에게는 "알레르기 없는 아이 기준" 으로 추천이 열린다.
+    """
+    food = await _food_of(monkeypatch, birth_date=_months_ago(30), child_health_granted=granted)
+
+    gate = await build_gate(food)
+
+    assert gate.consent_child_health is granted
+    assert gate.safety_ok is False
+    for task in (FoodTaskType.MEAL_RECOMMENDATION, FoodTaskType.NUTRIENT_ANALYSIS):
+        assert closed_readout_key(task, gate) == "blocked.safety"
+        assert tools_for(task, gate) == ()
+
+
+async def test_동의_값을_못_받았어도_동의_없음으로_바꾸지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """None 은 "값을 안 넘긴 호출" 이다 — False(동의 안 함)로 바뀌어 읽히지 않는다."""
+    food = await _food_of(monkeypatch)
+
+    assert await food.ports.consent.child_health_granted(child_id=CHILD) is True
+    gate = await build_gate(food)
+    assert gate.safety_ok is False
+
+
+async def test_다른_아이의_생일_동의는_받지_못한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    food = await _food_of(monkeypatch, birth_date=_months_ago(30), child_health_granted=True)
+
+    with pytest.raises(LookupError):
+        await food.ports.profile.birth_date(child_id=UUID(int=99))
+    with pytest.raises(LookupError):
+        await food.ports.consent.child_health_granted(child_id=UUID(int=99))
