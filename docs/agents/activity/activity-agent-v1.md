@@ -75,9 +75,9 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
     )
 ```
 
-- 경계값은 **`reference/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). 파일이 생기기 전까지 `MIN_MONTH` 는 `gating.py` 의 자기 표다 — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
-- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 18개월 값을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 개방 조건을 맡는다.
-- 월령은 **`app/rules/age.py` 의 `life_stage()`** 에서 온다. Activity 는 `stage.months` 만 쓴다.
+- 경계값은 **`reference/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). 숫자는 이 파일에서 읽고(`age_gates()`, #372), `MIN_MONTH` 의 tool 이름 표는 `gating.py` 에 둔다(값은 전부 0 이다) — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
+- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 관심 프로필 기준 월령을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 개방 조건을 맡는다.
+- 월령은 **`app/agents/common/age.py` 의 `life_stage()`**(계산은 `app/rules/age.py`, 경계는 `age_gates.yaml`)에서 온다. Activity 는 `stage.months` 만 쓴다.
 - **조산아는 따로 처리하지 않는다.** 교정연령을 쓰지 않는다 (9/25 결정).
 
 **범주에는 enum, 눈금에는 임계값.** Food 의 `LifeStage.stage` 는 진짜 범주형이다 — *"분유를 먹는가 / 일반식을 먹는가"* 는 질적 구분이고 `guide_weaning_stage` 와 `lookup_daycare_menu` 는 서로 배타적이다. Activity 의 18·36 은 **같은 축 위의 눈금**이고 배타적인 게 하나도 없다. 전부 *"이 월령부터 열린다"* 다.
@@ -457,7 +457,7 @@ async def run(task, context, *, client=None):
 
 | tool | 언제 부르는가 | `min_month` |
 | --- | --- | --- |
-| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. 18개월 미만은 affinity 조회를 건너뛴다 | 0 |
+| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. `age_gates.yaml` 의 `affinity_min_month` 미만은 affinity 조회를 건너뛴다(지금 값은 0 이라 월령과 상관없이 읽는다, #372) | 0 |
 | `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
 | `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용**. 날마다 평일 · 주말 · 공휴일과 바쁜 칸 · 비는 칸(08–20시, 오늘이면 지금부터)을 코드가 계산해 준다. 이번 주말은 토 · 일 이틀. 제목은 싣지 않는다 | 0 |
 | `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다.** 바깥 활동이 어려운 날은 실내 종류만 | 0 · 위치 있을 때 |
