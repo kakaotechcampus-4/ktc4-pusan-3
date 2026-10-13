@@ -73,7 +73,8 @@ services:
       DB_NAME: ${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
-      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      # CORS_ALLOW_ORIGINS 는 여기 두지 않는다 — environment 가 env_file 보다 우선해서
+      # 빈칸이 apps/api/.env 값을 덮는다. apps/api/.env 에서만 관리한다.
       # 나머지 키(LLM·OAuth·외부 API)는 apps/api/.env 에서 직접 주입한다.
       # 여기에 일일이 나열하면 키가 추가될 때마다 두 곳을 고쳐야 한다.
     env_file:

@@ -4,7 +4,7 @@
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-image web-up web-down web-logs \
-        api-image api-up api-down api-logs deploy-up deploy-down
+        api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
@@ -59,8 +59,9 @@ help:
 	@echo "  make web-up       프론트 컨테이너 기동"
 	@echo "  make web-down     프론트 컨테이너 중지"
 	@echo "  make web-logs     프론트 컨테이너 로그"
-	@echo "  make deploy-up    전체 기동 (db + redis + api + web)"
-	@echo "  make deploy-down  전체 중지"
+	@echo "  make deploy-up      전체 기동 (db + redis + api + web)"
+	@echo "  make deploy-down    전체 중지"
+	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
 	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다 (배포 4개는 docker)."
@@ -195,3 +196,6 @@ deploy-up:
 
 deploy-down:
 	$(COMPOSE_DEPLOY) down
+
+deploy-migrate:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync alembic upgrade heads
