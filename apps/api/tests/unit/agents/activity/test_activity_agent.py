@@ -19,6 +19,7 @@ from app.agents.activity.store.ports import CoarseLocation, SafetyEntry
 from app.agents.activity.weather import WEATHER_UNCHECKED
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
+from app.core.weather_raw import RawForecast
 
 CHILD = UUID(int=1)
 NOW = datetime(2026, 10, 7, 1, tzinfo=UTC)  # KST 10:00 수요일
@@ -71,8 +72,7 @@ def candidate(content: str, *, setting: str = "indoor", materials=()) -> dict[st
         "physical_intensity": "low",
         "involves_food": False,
         "caregiver_role": "together",
-        "why_this": "집에서 바로 할 수 있어요",
-        "why_now": "오늘 오전이 비어 있어요",
+        "reason": "집에서 바로 할 수 있어요 오늘 오전이 비어 있어요",
     }
 
 
@@ -166,10 +166,44 @@ class TestRecall:
             propose("까꿍 놀이", "공 굴리기", "컵 쌓기"),
         )
         await run(task(), context(BORN_20_MONTHS), client=llm)
-        recall = llm.seen[1][1]["content"]
-        assert "구슬 꿰기" in recall and "그림자놀이" in recall
-        assert "작은 부품" not in recall and "삼킬" not in recall
-        assert llm.seen[1][0] == llm.seen[0][0]  # 같은 system 프롬프트
+        recall = llm.seen[1][-1]
+        assert recall["role"] == "user"
+        assert "구슬 꿰기" in recall["content"] and "그림자놀이" in recall["content"]
+        assert "작은 부품" not in recall["content"] and "삼킬" not in recall["content"]
+
+    async def test_재호출은_같은_대화에_이어_쓴다(self):
+        """새 대화면 조회를 처음부터 다시 해 왕복이 늘고 20초에 걸리기 쉽다 (Tool_공통 §5-2)."""
+        llm = FakeLLM(
+            memory(),
+            propose("구슬 꿰기", "그림자놀이", "색종이 접기"),
+            propose("까꿍 놀이", "공 굴리기", "컵 쌓기"),
+        )
+        await run(task(), context(BORN_20_MONTHS), client=llm)
+        first, recall = llm.seen[1], llm.seen[2]
+        assert recall[: len(first)] == first  # 앞의 조회 결과를 그대로 본다
+        assert [m["role"] for m in recall[len(first) :]] == ["assistant", "tool", "user"]
+
+    async def test_전부_빠졌는데_재호출도_못_내면_실패다(self):
+        """ "조건에 맞는 추천이 없어요" 가 아니다 — 모델이 실패한 것이다 (#359 리뷰)."""
+        llm = FakeLLM(propose("구슬 꿰기", "단추 꿰기", "동전 쌓기"))  # 재호출은 말로 끝난다
+        result = await run(task(), context(BORN_20_MONTHS), client=llm)
+        assert (result.status, result.model_calls, result.suggestions) == ("failed", 2, ())
+
+    async def test_남은_게_있으면_재호출이_못_내도_있는_만큼_낸다(self):
+        llm = FakeLLM(propose("구슬 꿰기", "그림자놀이", "색종이 접기"))
+        result = await run(task(), context(BORN_20_MONTHS), client=llm)
+        assert result.status == "completed"
+        assert contents(result) == ["그림자놀이", "색종이 접기"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_문장부호만_다른_같은_후보는_건너뛴다(self):
+        """최근 중복 검사와 같은 정규화다 — 공백만 지우면 "그림자 놀이!" 가 따로 들어간다."""
+        llm = FakeLLM(
+            propose("구슬 꿰기", "그림자놀이", "색종이 접기"),
+            propose("그림자 놀이!", "까꿍 놀이", "컵 쌓기"),
+        )
+        result = await run(task(), context(BORN_20_MONTHS), client=llm)
+        assert contents(result) == ["그림자놀이", "색종이 접기", "까꿍 놀이"]
 
     async def test_재호출로도_못_채우면_있는_만큼_내고_안내한다(self):
         llm = FakeLLM(
@@ -216,7 +250,21 @@ class TestWeather:
         result = await run(task(), context(location=BUSAN, weather=weather), client=llm)
         assert result.status == "degraded"
         assert any(r.kind for r in result.readouts)
+        assert "날씨는 확인하지 못했다" in llm.seen[0][0]["content"]
+        assert "바깥 활동이 어렵다" not in llm.seen[0][0]["content"]
+
+    async def test_비가_많이_오면_바깥_활동이_어렵다고_알린다(self):
+        rain = InMemoryWeather(uv="1", forecast=RawForecast(sky="4", pcp="20.0mm", pop="90"))
+        llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        await run(task(), context(location=BUSAN, weather=rain), client=llm)
         assert "바깥 활동이 어렵다" in llm.seen[0][0]["content"]
+
+    async def test_위치나_날씨_어댑터가_없으면_날씨_tool_을_열지_않는다(self):
+        """부르면 늘 실패만 돌려준다. 프롬프트도 "확인하지 못했다" 로 간다."""
+        llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        await run(task(), context(), client=llm)
+        assert "날씨는 확인하지 못했다" in llm.seen[0][0]["content"]
+        assert "위치를 모른다" in llm.seen[0][0]["content"]
 
     async def test_위치가_없으면_날씨를_부르지_않고_정상이다(self):
         """위치가 없으면 실내 전용으로 정상 동작한다 (4-3). "날씨를 못 읽었어요" 를 안 붙인다."""

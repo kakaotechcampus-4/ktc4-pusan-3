@@ -6,8 +6,9 @@
   ③ 문서 행(예시)을 코드가 조회해 프롬프트에 넣는다
   ④ 모델이 조회 tool 을 부르고 마지막에 propose_activity_candidates 로 후보 3개를 낸다.
      거절되면 사유를 보고 고쳐 다시 낸다 — 같은 진입 안의 루프라 model_calls 가 늘지 않는다
-  ⑤ 안전 필터로 빠져 3개가 안 되면 재호출 1회(model_calls=2). 처음 통과한 것을 먼저 두고 빈자리만
-     채운다(`merge_drafts`). 그 뒤 check_count(exhausted=True) → count_notice
+  ⑤ 안전 필터로 빠져 3개가 안 되면 같은 대화에 이어 재호출 1회(model_calls=2). 처음 통과한 것을
+     먼저 두고 빈자리만 채운다(`merge_drafts`). 그 뒤 check_count(exhausted=True) → count_notice.
+     전부 빠졌는데 재호출도 후보를 못 내면 `failed` 다
 
 저장은 하지 않는다. 결과의 suggestions 를 pipeline 이 저장한다 (공통규약 §3).
 pipeline 에는 아직 연결하지 않았다 — Supervisor 라벨 · 추천 저장 콜백이 정해지면 붙인다.
@@ -18,16 +19,17 @@ from collections.abc import Collection
 from typing import Any
 
 from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.gating import checks_weather
 from app.agents.activity.prompt import build_system_prompt, recall_message, request_message
 from app.agents.activity.readouts import READOUTS
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
+from app.agents.activity.rules import normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.outing import check_weather
-from app.agents.activity.weather import WEATHER_UNCHECKED, WeatherBrief
+from app.agents.activity.weather import WEATHER_UNCHECKED
 from app.agents.common.llm_client import LLMClient
-from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
@@ -74,79 +76,111 @@ async def run(
     )
     system = build_system_prompt(context, examples, weather=weather)
     llm = client or LLMClient(role="activity")
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": request_message(task.request_texts)},
+    ]
 
-    if not await _converse(llm, system, request_message(task.request_texts), context, allowed):
-        return DomainAgentResult(
-            agent=AGENT, task_type=task_type.value, status="failed", model_calls=1
-        )
+    if not await _converse(llm, messages, context, allowed):
+        return _failed(task_type.value, model_calls=1)
 
-    drafts, warnings = context.state.suggestions, context.state.warnings
-    excluded = context.state.excluded
+    picked = _picked(context)
     model_calls = 1
-    if excluded and len(drafts) < MAX_SUGGESTIONS:
+    if context.state.excluded and len(picked) < MAX_SUGGESTIONS:
         # 안전 필터로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다 (Tool_공통.md §5-2)
         model_calls = 2
-        drafts, warnings = await _recall(llm, system, task, context, allowed, drafts, warnings)
-        check_count(drafts, exhausted=True)
+        again = await _recall(llm, messages, task, context, allowed, picked)
+        if again is None and not picked:
+            # 처음 것이 전부 빠졌고 재호출도 후보를 못 냈다. "조건에 맞는 추천이 없어요" 가 아니라
+            # 모델이 실패한 것이다 — 1~2개가 남았으면 그것을 낸다 (#359 리뷰)
+            return _failed(task_type.value, model_calls=model_calls)
+        picked = merge_drafts(picked, again or (), key=_same_activity)
+        check_count(tuple(draft for draft, _ in picked), exhausted=True)
 
-    context.state.suggestions, context.state.warnings = drafts, warnings
+    drafts = tuple(draft for draft, _ in picked)
+    # 🚨 확인 문구(state.cautions)와 위험 경고(state.warnings)는 아직 결과에 싣지 않는다 — 화면
+    # 자리가 정해지지 않았다. pipeline 은 for_task() 사본으로 Agent 를 돌리고 결과만 받으므로,
+    # 연결할 때 결과로 옮기지 않으면 표시 없이 빠진다 (#359 리뷰)
+    context.state.suggestions = drafts
+    context.state.warnings = tuple(warning for _, warning in picked)
     notice = count_notice(len(drafts))
+    attempted = checks_weather(gate)
     return DomainAgentResult(
         agent=AGENT,
         task_type=task_type.value,
-        status="degraded" if _weather_failed(context, weather) else "completed",
+        status="degraded" if attempted and WEATHER_UNCHECKED in weather.notices else "completed",
         suggestions=drafts,
-        readouts=(*_weather_readouts(context, weather), *((notice,) if notice else ())),
+        readouts=(
+            *(READOUTS.render(key) for key in weather.notices if attempted),
+            *((notice,) if notice else ()),
+        ),
         model_calls=model_calls,
+    )
+
+
+Picked = tuple[tuple[SuggestionDraft, tuple[str, ...]], ...]
+
+
+def _picked(context: ActivityContext) -> Picked:
+    """출력 tool 이 통과시킨 후보와 그 경고 문구를 짝으로. 합칠 때 순서가 같이 간다."""
+    return tuple(zip(context.state.suggestions, context.state.warnings, strict=True))
+
+
+def _same_activity(item: tuple[SuggestionDraft, tuple[str, ...]]) -> str:
+    """재호출 결과에서 "같은 후보" — 최근 중복 검사와 같은 정규화다 (Tool_공통.md §5-2)."""
+    return normalize_activity(item[0].content)
+
+
+def _failed(task_type: str, *, model_calls: int) -> DomainAgentResult:
+    return DomainAgentResult(
+        agent=AGENT, task_type=task_type, status="failed", model_calls=model_calls
     )
 
 
 async def _recall(
     llm: LLMClient,
-    system: str,
+    messages: list[dict[str, Any]],
     task: DomainTask,
     context: ActivityContext,
     allowed: Collection[str],
-    first: tuple[SuggestionDraft, ...],
-    first_warnings: tuple[tuple[str, ...], ...],
-) -> tuple[tuple[SuggestionDraft, ...], tuple[tuple[str, ...], ...]]:
-    """재호출 1회. 처음 통과한 것을 먼저 두고 빈자리만 채운다. 경고 문구도 같은 순서로 따라간다."""
-    message = recall_message(
-        task.request_texts,
-        chosen=[draft.content for draft in first],
-        excluded=context.state.excluded,
+    first: Picked,
+) -> Picked | None:
+    """재호출 1회. 같은 대화에 제외 목록 한 줄을 더해 이어 부른다 (Tool_공통.md §5-2).
+
+    새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에
+    걸리면 처음 통과한 것까지 잃는다. 이어 쓰면 앞의 조회 결과를 그대로 본다.
+    후보를 못 내면 None 이다 — 0개 통과(전부 안전 필터로 빠짐)와 구별한다.
+    """
+    messages.append(
+        {
+            "role": "user",
+            "content": recall_message(
+                task.request_texts,
+                chosen=[draft.content for draft, _ in first],
+                excluded=context.state.excluded,
+            ),
+        }
     )
     context.state.suggestions, context.state.warnings, context.state.excluded = (), (), ()
-    again: tuple[SuggestionDraft, ...] = ()
-    again_warnings: tuple[tuple[str, ...], ...] = ()
-    if await _converse(llm, system, message, context, allowed):
-        again, again_warnings = context.state.suggestions, context.state.warnings
-    else:
+    if not await _converse(llm, messages, context, allowed):
         logger.warning("Activity 재호출이 후보를 내지 못했다 run_id=%s", context.run_id)
-
-    merged = merge_drafts(first, again)
-    by_draft = dict(zip((*first, *again), (*first_warnings, *again_warnings), strict=True))
-    return merged, tuple(by_draft[draft] for draft in merged)
+        return None
+    return _picked(context)
 
 
 async def _converse(
     llm: LLMClient,
-    system: str,
-    user: str,
+    messages: list[dict[str, Any]],
     context: ActivityContext,
     allowed: Collection[str],
 ) -> bool:
     """대화 한 번. 출력 tool 이 통과하면 True — 결과는 run state 에 있다.
 
-    루프는 공통 `run_tool_loop` 다. 한 응답에 tool 이 여러 개 오면 온 순서대로 다 실행하고, 깨진
-    인자는 실행하지 않고 돌려준다. `tool_choice="required"` 라 말로 끝나지 않는다 — 라이브에서
-    auto 는 tool 을 0/3 부르고 required 는 3/3 불렀다 (#320 리뷰). 그래도 말로 끝나거나 왕복
-    상한을 넘기면 False 다.
+    루프는 공통 `run_tool_loop` 다. `messages` 에 응답과 tool 결과를 이어 붙인다 — 재호출이 같은
+    목록에 이어 쓴다. 한 응답에 tool 이 여러 개 오면 온 순서대로 다 실행하고, 깨진 인자는 실행하지
+    않고 돌려준다. `tool_choice="required"` 라 말로 끝나지 않는다 — 라이브에서 auto 는 tool 을
+    0/3 부르고 required 는 3/3 불렀다 (#320 리뷰). 그래도 말로 끝나거나 왕복 상한을 넘기면 False 다.
     """
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
 
     async def execute(name: str, arguments: dict[str, Any]) -> ToolResult:
         return await execute_tool(name, arguments, context, allowed=allowed)
@@ -166,19 +200,3 @@ async def _converse(
             "Activity 가 후보를 내지 못했다 run_id=%s ended_by=%s", context.run_id, loop.ended_by
         )
     return loop.completed
-
-
-def _weather_failed(context: ActivityContext, weather: WeatherBrief) -> bool:
-    """날씨를 불렀는데 못 읽었는가. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 —
-    위치가 없으면 실내 전용으로 정상 동작한다 (4-3).
-    """
-    attempted = context.ports.weather is not None and context.location is not None
-    return attempted and WEATHER_UNCHECKED in weather.notices
-
-
-def _weather_readouts(context: ActivityContext, weather: WeatherBrief) -> tuple[Readout, ...]:
-    """날씨 안내 문구. 부르지 않은 날(위치 없음)은 "날씨를 확인하지 못했어요" 를 붙이지 않는다."""
-    attempted = context.ports.weather is not None and context.location is not None
-    if not attempted:
-        return ()
-    return tuple(READOUTS.render(key) for key in weather.notices)

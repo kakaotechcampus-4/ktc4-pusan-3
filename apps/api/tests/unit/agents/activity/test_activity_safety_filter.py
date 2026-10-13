@@ -26,8 +26,7 @@ def candidate(content: str, materials: tuple[str, ...] = ()) -> ActivityCandidat
             physical_intensity="low",
             involves_food=False,
             caregiver_role="together",
-            why_this="이유",
-            why_now="지금",
+            reason="이유",
         )
     )
 

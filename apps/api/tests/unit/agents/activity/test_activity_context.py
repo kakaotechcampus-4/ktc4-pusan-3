@@ -106,10 +106,14 @@ class TestBuildGate:
         assert gate.outdoor_ok is False
         assert gate.has_location is True
 
-    async def test_좌표가_있어도_장소_포트가_없으면_장소_조회를_열지_않는다(self):
-        """장소 어댑터를 아직 주입하지 않은 서버에서 tool 이 죽지 않게 (라이브 eval 에서 찾음)."""
+    async def test_좌표와_어댑터를_따로_싣는다(self):
+        """장소 어댑터를 아직 주입하지 않은 서버에서 tool 이 죽지 않게 (라이브 eval 에서 찾음).
+        좌표는 있으니 프롬프트가 "위치를 모른다" 로 가지 않는다 (#359 리뷰)."""
         gate = await build_gate(context(), outdoor_ok=True)
-        assert gate.has_location is False
+        assert gate.has_location is True
+        assert (gate.data.places, gate.data.weather) == (False, False)
+        gate = await build_gate(context(places=InMemoryPlaces()), outdoor_ok=True)
+        assert gate.data.places is True
 
 
 class TestClosedRun:

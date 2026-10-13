@@ -103,7 +103,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 - 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 - 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
-- **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · why_this)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
+- **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · reason)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
 
 **`profile_affinity` 에 routine 은 포함되지 않는다** (9/25 BE 합의). `MemoryDomain` 은 `food`/`activity`/`education` 세 값 그대로다. Activity 는 `domain=activity` 만 읽으므로 동작에 영향은 없다.
 
@@ -156,8 +156,7 @@ class ActivityCandidate(ToolArgs):
     caregiver_role: CaregiverRole       # together / nearby / independent
     place_name: str | None = None       # 조회 결과에 있는 이름만
     duration_min: int | None = None
-    why_this: str
-    why_now: str
+    reason: str                         # 이 아이에게 맞는 이유 + 지금인 이유. 화면에 그대로
     evidence: list[EvidencePick] = []   # id ⊂ rank_evidence 상위 10
 ```
 
@@ -451,14 +450,14 @@ async def run(task, context, *, client=None):
     ...
 ```
 
-**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 장소 조회를 실내 종류로 좁힐지를 정한다. `lookup_weather` tool 은 그대로 두고 모델은 `why_now` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
+**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 장소 조회를 실내 종류로 좁힐지를 정한다. `lookup_weather` tool 은 그대로 두고 모델은 `reason` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
 
 **모델에게 보이는 tool** — 이름은 Food 관례(동사 + 목적어). `description` 에는 *무엇을 하는가*가 아니라 ***언제 부르는가***를 적는다.
 
 | tool | 언제 부르는가 | `min_month` |
 | --- | --- | --- |
 | `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. 18개월 미만은 affinity 조회를 건너뛴다 | 0 |
-| `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
+| `lookup_weather` | `reason` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
 | `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용**. 날마다 평일 · 주말 · 공휴일과 바쁜 칸 · 비는 칸(08–20시, 오늘이면 지금부터)을 코드가 계산해 준다. 이번 주말은 토 · 일 이틀. 제목은 싣지 않는다 | 0 |
 | `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다.** 바깥 활동이 어려운 날은 실내 종류만 | 0 · 위치 있을 때 |
 | `propose_activity_candidates` | **마지막에 한 번.** `candidates[3]` 제출 (OUTPUT_TOOL) | 0 |
@@ -474,11 +473,13 @@ async def run(task, context, *, client=None):
 
 **진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
 
-**재호출과 합치기** (`agent.py`) — 재호출은 같은 system 프롬프트에 *"아래 활동은 다시 내지 않는다"* 로 **이미 고른 것과 빠진 것**을 함께 준다. 빠진 이유는 말하지 않는다. 결과는 공통 `merge_drafts` 로 합친다 — 처음 통과한 것을 먼저 두고 빈자리만 채우며, 띄어쓰기만 다른 같은 추천은 건너뛴다. 그 뒤 `check_count(exhausted=True)` → `count_notice`. 다 빠져 0개여도 실패가 아니라 안내만 나간다.
+**재호출과 합치기** (`agent.py`) — 재호출은 **같은 대화에 이어** *"아래 활동은 다시 내지 않는다"* 한 줄을 더해 부르고, **이미 고른 것과 빠진 것**을 함께 준다. 빠진 이유는 말하지 않는다. 새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면 처음 통과한 것까지 잃는다 (`Tool_공통.md` §5-2 · #359 리뷰). 결과는 공통 `merge_drafts` 로 합친다 — 처음 통과한 것을 먼저 두고 빈자리만 채우며, 같은 후보 판정은 최근 중복 검사와 같은 `normalize_activity` 다. 경고 문구는 후보와 짝으로 넘겨 순서가 같이 간다. 그 뒤 `check_count(exhausted=True)` → `count_notice`. 1~2개가 남으면 개수 안내와 함께 낸다. **처음 것이 전부 빠졌는데 재호출도 후보를 못 내면 `failed`** 다 — "조건에 맞는 추천이 없어요" 는 모델이 냈는데 전부 안전 필터로 빠진 경우만이다.
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 
-**status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다.
+**status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다. 좌표와 날씨 어댑터가 둘 다 없으면 `lookup_weather` 도 닫고(`Gate.data.weather`), 장소도 같다(`Gate.data.places`) — 열어 두면 부를 때마다 실패만 돌려준다. 프롬프트 `[오늘의 조건]` 은 *확인하지 못했다* 와 *바깥 활동이 어렵다* 를 나눠 쓴다 — 판정(실내만)은 같지만, 한 말로 쓰면 모델이 확인 안 한 날씨를 이유에 쓴다.
+
+🚩 **날씨는 오늘 판정 하나로 본다.** 후보에 어느 날 하는 활동인지 칸이 없어서, 내일 · 주말 요청도 오늘 날씨로 야외 후보를 거른다. 후보가 날(`day`)을 갖고 그날 판정으로 보게 하는 것은 후속이다.
 
 **날씨가 나쁜 날은 장소 조회를 닫지 않고 실내 종류로 좁힌다.** 도서관 · 실내 놀이터를 적재하니 비 오는 날에 장소가 사라지는 게 손해다. `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁히고, 바깥 종류를 고르면 `INVALID_ARGS` 로 돌려 모델이 실내 종류로 고쳐 다시 부른다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
 
@@ -494,7 +495,7 @@ async def run(task, context, *, client=None):
                           통과한 초안 · 빠진 후보(excluded) · 경고 문구(warnings) ·
                           확인 문구(cautions, D7)를 run state 에 담고,
                           3개 미만이면 run() 이 제외 목록으로 재호출 1회
-2. 금지 표현 필터        content · why_this · why_now · note
+2. 금지 표현 필터        content · reason · note
 3. Activity 출력 검증    ─ 기피 근거의 subject 가 들어 있는 후보 → 거절      (D4)
                         ─ note 의 반복·성향 표현은 Tier 1 근거일 때만           (D12)
                         ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
@@ -524,9 +525,11 @@ async def run(task, context, *, client=None):
 ### 3-4. status 와 kind 는 **분리한다**
 
 ```python
-ActivityStatus = Literal["completed", "no_candidates", "degraded", "failed"]
+AgentStatus = Literal["completed", "blocked", "unsupported", "failed", "degraded"]  # common/result.py
 SuggestionKind = Literal["general", "personalized"]    # common/suggestion.py
 ```
+
+Activity 가 쓰는 값 — `blocked` 안전 조회 실패(모델 0회, D7) · `failed` 모델이 후보를 못 냈다(처음 호출, 또는 안전 필터로 0개가 된 뒤 재호출까지 못 냄) · `degraded` 날씨를 불렀는데 못 읽었다 · `completed` 그 밖. 안전 필터 뒤 1~2개만 남으면 `completed` + 개수 안내다. 예전 `no_candidates` 는 없다 — 0개는 `failed` 이거나(모델 실패) `completed` + 안내다(모델은 냈는데 전부 안전 필터로 빠지고 재호출도 그랬다).
 
 둘은 직교한다 — 날씨는 실패했지만 개인화 근거는 있는 run 이 `degraded` + `personalized` 다. 합치면 루트 §2 의 *"일반 추천과 개인화 추천은 타입으로 구분한다"* 가 성공/실패 축에 오염된다.
 
@@ -694,7 +697,7 @@ terms:
 | 모델에게 | 예 | 왜 |
 | --- | --- | --- |
 | **판정** ✅ | `outdoor_ok: false` · `heat: "advisory"` | 코드가 위 표로 내린 결론 |
-| **등급 라벨** ✅ | `pm10_grade: "나쁨"` · `sky: "흐림"` | `why_now` 문장에 쓸 사실. **이미 코드가 분류한 범주**이고, 야외가 차단이면 야외 후보 자체가 없어 오용될 자리가 없다 |
+| **등급 라벨** ✅ | `pm10_grade: "나쁨"` · `sky: "흐림"` | `reason` 문장에 쓸 사실. **이미 코드가 분류한 범주**이고, 야외가 차단이면 야외 후보 자체가 없어 오용될 자리가 없다 |
 | **raw 수치** ❌ | `PM2.5 = 87` · `강수확률 40%` | 모델이 자기 기준으로 재해석해 *"나쁨이지만 잠깐이면 괜찮아요"* 를 쓴다 |
 
 ### 4-3. 위치 — 저장하지 않고 요청 시점에 1회

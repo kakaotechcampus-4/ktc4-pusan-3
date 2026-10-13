@@ -52,13 +52,15 @@ class ActivityCandidate(ToolArgs):
         ),
     ]
     duration_min: Annotated[int | None, Field(default=None, ge=1, description="대략 몇 분")]
-    why_this: Annotated[
+    reason: Annotated[
         str,
-        Field(description="이 아이에게 맞는 이유. 조회한 기록에 있는 내용으로만 쓴다"),
-    ]
-    why_now: Annotated[
-        str,
-        Field(description="지금인 이유. 예: 오늘 오후가 비어 있음, 미세먼지 좋음"),
+        Field(
+            min_length=1,
+            description=(
+                "이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로. 조회한 사실로만 쓴다. "
+                "싫어한 것을 피해 골랐으면 무엇을 피했는지 쓴다. 보호자 화면에 그대로 나간다"
+            ),
+        ),
     ]
     evidence: Annotated[
         list[EvidencePick],

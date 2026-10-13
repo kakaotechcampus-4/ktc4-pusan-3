@@ -10,12 +10,12 @@ gitignore)을 사람이 읽는다. 프롬프트 · [예시]를 고칠 때마다 
 """
 
 import json
-import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -23,6 +23,7 @@ from app.agents.activity.agent import run
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.review import GENERAL_REASON
+from app.agents.activity.rules import overstates
 from app.agents.activity.store.inmemory import (
     InMemoryActivityDocs,
     InMemoryActivityMemory,
@@ -41,13 +42,11 @@ from app.rules.term_match import match_fields
 pytestmark = pytest.mark.live
 
 CHILD = UUID(int=7)
-NOW = datetime(2026, 10, 7, 1, tzinfo=UTC)  # KST 10:00 수요일
+KST = ZoneInfo("Asia/Seoul")
+NOW = datetime(2026, 10, 7, 10, tzinfo=KST)  # 수요일 오전 — 모델은 이 시각을 그대로 본다
 TODAY = date(2026, 10, 7)
 BUSAN = CoarseLocation(lat=35.18, lon=129.08)
 RESULTS = Path(__file__).with_name("test_activity_live_results.jsonl")
-
-# 관찰 1건 · 후보 affinity 를 성향으로 말하는 표현 (출력 검증 overstates 와 같은 결)
-OVERCLAIM = re.compile(r"늘|항상|어제도|매번|좋아하는")
 
 
 def born(months: int) -> date:
@@ -100,7 +99,7 @@ async def play(
         child_id=CHILD,
         run_id=f"eval-{case}",
         now=NOW,
-        timezone=UTC,
+        timezone=KST,
         ports=in_memory_ports(
             CHILD,
             born(months),
@@ -175,7 +174,10 @@ async def test_기록이_없으면_일반_추천만_낸다(llm):
 
 
 async def test_관찰_한_번을_성향으로_말하지_않는다(llm):
-    """과해석(S2) — 관찰 1건뿐인데 "늘 좋아하는" 으로 쓰면 출력 검증이 거절한다."""
+    """과해석(S2) — 관찰 1건뿐인데 "늘 좋아하는" 으로 쓰지 않는다.
+
+    note 는 코드가 거절해서 모델과 상관없이 통과한다. 코드가 보지 않는 reason 을 본다 (#359 리뷰).
+    """
     out = await play(
         llm,
         "single_observation",
@@ -183,8 +185,9 @@ async def test_관찰_한_번을_성향으로_말하지_않는다(llm):
         months=30,
         observations=[observation(1, "블록으로 탑 쌓기", "블록")],
     )
-    notes = [c.note for d in out.result.suggestions for c in d.citations]
-    assert not any(OVERCLAIM.search(note) for note in notes)
+    reasons = [d.reason for d in out.result.suggestions if d.kind == "personalized"]
+    # 판정은 출력 검증의 overstates 그대로다 — 낱말 단위라 "오늘" 의 "늘" 은 안 걸린다
+    assert not any(overstates(reason) for reason in reasons), reasons
 
 
 async def test_부모_이야기를_아이_근거로_쓰지_않는다(llm):
@@ -237,6 +240,7 @@ async def test_꽃가루_알레르기면_확인_문구가_붙는다(llm):
         safety=[SafetyEntry(kind="allergy", label="꽃가루", status="active")],
         weather=InMemoryWeather(uv="3"),
     )
+    # 아직 결과(DomainAgentResult)에 안 실려서 run state 를 본다 — pipeline 연결 때 결과로 옮긴다
     cautions = getattr(out.context.state, "cautions", ())
     assert len(cautions) == 1 and "꽃가루" in cautions[0]
 
