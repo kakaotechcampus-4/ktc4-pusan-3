@@ -906,9 +906,27 @@ export function readMyDiary(date: string): MyDiary | null {
   return diaries.get(date) ?? null;
 }
 
-export function writeMyDiary(date: string, content: string): void {
-  if (content.trim() === "") diaries.delete(date);
-  else diaries.set(date, { content, updated_at: new Date().toISOString() });
+/**
+ * 그날 내 일기를 쓴다. 이미 있으면 덮어쓴다 (서버 `put_diary` 와 같다 · #364).
+ *
+ * 🚨 **빈 내용을 지우기로 보지 않는다.** 한동안 공백뿐이면 지웠는데, 서버(PR #333)는 그 요청을
+ *    422 로 거절하고 기존 일기를 남긴다. 거절은 핸들러가 하고, 지우기는 `deleteMyDiary` 하나다.
+ *    저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다.
+ */
+export function writeMyDiary(date: string, content: string): MyDiary {
+  const diary: MyDiary = { content, updated_at: new Date().toISOString() };
+  diaries.set(date, diary);
+  return diary;
+}
+
+/**
+ * 그날 내 일기를 지운다. 없으면 아무것도 하지 않는다 (서버 `delete_diary` 와 같다 · #364).
+ *
+ * 🚨 **사진은 건드리지 않는다** (#115). 공유 사진은 일기 밖의 저장소(`sharedPhotos`)라, 일기를
+ *    지운 날에도 사진은 그대로 남고 달 보기의 `has_shared_photo` 도 그대로다.
+ */
+export function deleteMyDiary(date: string): void {
+  diaries.delete(date);
 }
 
 export function myDiaryDates(): string[] {

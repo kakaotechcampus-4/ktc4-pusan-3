@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarOff } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
@@ -18,10 +18,11 @@ import { api, qk } from "@/lib/api";
 import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
-  CalendarDayUpdate,
   CalendarEvent,
+  DiaryRequest,
   EventItem,
   EventItemUpdateResponse,
+  MyDiary,
   Observation,
   SharedPhoto,
 } from "@/lib/api/types";
@@ -65,6 +66,12 @@ export function CalendarDayPanel({
    * 세우는 쪽(09 화면)이 책임진다.
    */
   const [writing, setWriting] = useState(false);
+  /**
+   * 방금 일기를 지웠다. 🚨 지우면 누른 버튼이 구역째 사라져서 포커스가 `<body>` 로 떨어진다 —
+   * 키보드 · 스크린리더 사용자는 어디에 서 있는지 잃는다. 그 자리에 새로 서는 "일기 쓰기" 가
+   * 포커스를 받는다 (프로그램 포커스라 터치로 눌렀을 때는 테두리가 보이지 않는다).
+   */
+  const [diaryDeleted, setDiaryDeleted] = useState(false);
   const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
   const router = useRouter();
@@ -114,13 +121,29 @@ export function CalendarDayPanel({
 
       {hasDiary || writing ? (
         <Section title="이날의 일기">
-          <Diary childId={childId} date={date} data={data} onDone={() => setWriting(false)} />
+          <Diary
+            childId={childId}
+            date={date}
+            data={data}
+            onDone={() => setWriting(false)}
+            onDeleted={() => setDiaryDeleted(true)}
+          />
         </Section>
       ) : (
         // 일기만 없는 날. 구역 제목은 남기되 입력창은 접어 둔다 — 빈 날도 같은 모양이다.
+        // 일기를 지운 뒤에도 이 모양으로 돌아온다 — 그날 다른 것이 없으면 위의 빈 상태도 다시 선다.
         <Section title="이날의 일기">
           <div>
-            <Button variant="tertiary" size="compact" onClick={() => setWriting(true)}>
+            <Button
+              variant="tertiary"
+              size="compact"
+              // 지운 직후에만 건다 (위 `diaryDeleted`). 날을 처음 열 때 포커스를 뺏지 않는다.
+              autoFocus={diaryDeleted}
+              onClick={() => {
+                setDiaryDeleted(false);
+                setWriting(true);
+              }}
+            >
               일기 쓰기
             </Button>
           </div>
@@ -294,33 +317,90 @@ function Diary({
   date,
   data,
   onDone,
+  onDeleted,
 }: {
   childId: string;
   date: string;
   data: CalendarDayResponse;
   /** 편집이 끝났다(저장했거나 취소했다). 부모가 "일기 쓰기" 상태를 되돌린다. */
   onDone: () => void;
+  /** 서버가 지웠다(204). 부모가 그 자리에 서는 "일기 쓰기" 로 포커스를 옮긴다. */
+  onDeleted: () => void;
 }) {
   const queryClient = useQueryClient();
   const saved = data.my_diary?.content ?? "";
   const [draft, setDraft] = useState(saved);
   const [editing, setEditing] = useState(saved === "");
+  /** "일기 지우기" 를 눌러 확인 패널이 열려 있다 (아래 읽는 상태의 🚨). */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const emptiedHintId = useId();
 
+  /**
+   * 🚨 **확인 패널을 화면 안으로 끌어온다.** 09 는 하단 네비가 있는 화면이라 긴 일기 아래에서
+   *    패널이 네비 뒤에 열리면 부모 눈에는 아무 일도 안 일어난 것이 된다 (11-1 측정 기록과 같은 처리).
+   */
+  const confirmRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (confirmingDelete) confirmRef.current?.scrollIntoView({ block: "nearest" });
+  }, [confirmingDelete]);
+
+  /**
+   * 🚨 **"그만두기" 로 닫으면 포커스를 "일기 지우기" 로 돌려준다.** 누른 버튼이 패널째 사라져서
+   *    그대로 두면 포커스가 `<body>` 로 떨어지고, 키보드 · 스크린리더는 화면 맨 위에서 다시 찾아
+   *    내려와야 한다. 패널을 연 버튼이 돌아갈 자리다 (`Select` 가 닫힐 때와 같은 규칙).
+   */
+  const deleteToggleRef = useRef<HTMLButtonElement>(null);
+
+  const dayKey = qk.calendarDay(childId, date);
+  const diaryPath = `/children/${childId}/diary/${date}`;
+
+  /**
+   * 응답(또는 지운 사실)을 하루 보기 캐시에 바로 얹고, 달 그리드의 일기 표식(`has_my_diary`)만 다시 받는다.
+   * 무효화는 `qk.calendarMonths` 접두어 — 이 아이의 **달 보기 쿼리만** 걸린다 (하루 보기는 방금 얹었으니
+   * 다시 받지 않는다). 일기는 달 보기 말고 읽는 화면이 없다 (홈 응답에 일기가 없다).
+   */
+  const settleDiary = (myDiary: MyDiary | null) => {
+    queryClient.setQueryData<CalendarDayResponse>(dayKey, (current) =>
+      current ? { ...current, my_diary: myDiary } : current,
+    );
+    void queryClient.invalidateQueries({ queryKey: qk.calendarMonths(childId) });
+  };
+
+  /**
+   * 그날 내 일기 쓰기 (`PUT /children/{cid}/diary/{date}` · #364). 같은 날 다시 쓰면 덮어쓴다.
+   *
+   * 🚨 **본문은 고쳐 보내지 않는다** — 앞뒤 공백 · 줄바꿈까지 서버가 원문 그대로 저장한다.
+   *    공백뿐인 내용은 서버가 422 로 거절하므로 버튼이 먼저 막는다 (아래 `disabled`).
+   * 🚨 **"저장됐다" 는 응답으로만 만든다.** 응답이 하루 보기 `my_diary` 와 같은 모양이라 그대로 얹는다 —
+   *    `onMutate` 로 먼저 바꾸지 않는다. 사진은 일기 밖이라 싣지 않는다 (#115).
+   * Idempotency-Key 를 받지 않는 경로다 — 되돌릴 수 없는 5곳이 아니다.
+   */
   const save = useMutation({
-    mutationFn: (text: string) => {
-      // ⚠️ 옮겨 갈 경로다 (`CalendarDayUpdate` 주석 · #318 2/3). 사진은 일기 밖이라 싣지 않는다.
-      const body: CalendarDayUpdate = {
-        text,
-        event_ids: data.events.map((event) => event.id),
-      };
-      return api.put<CalendarDayResponse>(`/children/${childId}/calendar/${date}`, body);
+    mutationFn: (content: string) => {
+      const body: DiaryRequest = { content };
+      return api.put<MyDiary>(diaryPath, body);
     },
+    onSuccess: (myDiary) => {
+      setEditing(false);
+      onDone();
+      settleDiary(myDiary);
+    },
+  });
+
+  /**
+   * 그날 내 일기 지우기 (`DELETE /children/{cid}/diary/{date}` · #364). 없는 일기를 지워도 204 다.
+   *
+   * 🚨 **빈 내용 저장은 지우기가 아니다.** 지우는 길은 이것 하나다. 사진은 그대로 남는다 (#115).
+   * 🚨 **승인 게이트가 아니다** — 게이트는 캘린더 쓰기와 건강 기록 확정 두 곳뿐이다 (최상위 §2).
+   *    성공하면 `my_diary: null` 이 되어 부모가 이 구역을 "일기 쓰기" 상태로 되돌린다.
+   */
+  const remove = useMutation({
+    mutationFn: () => api.delete<void>(diaryPath),
     onSuccess: () => {
       setEditing(false);
       onDone();
-      void queryClient.invalidateQueries({ queryKey: qk.calendarDay(childId, date) });
-      // 달 그리드의 일기 표식이 바뀐다.
-      void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+      onDeleted();
+      settleDiary(null);
     },
   });
 
@@ -331,15 +411,111 @@ function Diary({
           {/* 🚨 `dangerouslySetInnerHTML` 을 쓰지 않는다. 줄바꿈은 CSS 로 살린다. */}
           <p className="text-body text-ink whitespace-pre-wrap">{saved}</p>
         </div>
-        <div>
-          <Button variant="tertiary" size="compact" onClick={() => setEditing(true)}>
+        {/* 🚨 **고치기가 왼쪽이다** (11-1 측정 기록 줄과 같은 순서). 일기에 더 자주 하는 일은
+            고치는 쪽이고, 지우기가 먼저 손에 닿으면 고치면 되는 것을 지우게 된다.
+            둘 다 `tertiary` · `compact` 다 — 카드 아래의 행동이고, 지우기를 고치기보다 무겁게
+            칠할 이유는 없다. 무게는 아래 확인 패널이 진다. */}
+        <div className="flex gap-2">
+          <Button
+            variant="tertiary"
+            size="compact"
+            onClick={() => {
+              setConfirmingDelete(false);
+              remove.reset();
+              setEditing(true);
+            }}
+            disabled={remove.isPending}
+          >
             일기 고치기
           </Button>
+          <Button
+            ref={deleteToggleRef}
+            variant="tertiary"
+            size="compact"
+            aria-expanded={confirmingDelete}
+            onClick={() => {
+              setConfirmingDelete((open) => !open);
+              remove.reset();
+            }}
+            disabled={remove.isPending}
+          >
+            일기 지우기
+          </Button>
         </div>
+
+        {/*
+          🚨 **지우기 전에 한 번 묻는다. 하지만 승인 게이트가 아니다.**
+             일기는 보호자가 손으로 쓴 글이고 화면에 지운 것을 되살리는 길이 없다 — 잘못 누른 한 번에
+             글이 통째로 사라지면 다시 쓸 수 없는 글이다. 그래서 묻는다. 게이트는 캘린더 쓰기와
+             건강 기록 확정 **딱 2곳**이고(최상위 §2), 그 둘은 AI 가 준비한 것을 사람이 확정하는
+             자리다. 여기는 보호자가 자기 글을 스스로 지우는 자리라 같은 종류가 아니다 — 그래서
+             `btn-approve` 도 `caution` 도 `Idempotency-Key` 도 없다 (11-1 측정 기록 지우기 ·
+             07 교정의 확인 단계와 같은 칸이다).
+          🚨 **확정은 `btn-secondary` 다 — `btn-danger` 도 `btn-primary` 도 아니다.** 결정과 이유는
+             디자인 시스템 §11 표 "09 캘린더 · 일기 지우기 확인" 과 §7 버튼에 있다. 짧게:
+             빨강은 지우면 그 한 건 밖의 것이 같이 바뀌는 확정(계정 · 보호자 연결 · 안전 정보)에
+             남긴다 — 일기 한 편은 거기서 끝나고 같은 날 다시 쓸 수 있다. 읽는 상태에 화면 primary
+             가 없어 초록을 쓸 수는 있지만, 채운 초록이 "없애는 행동" 을 가리키게 된다. 11-1 과 같다.
+          🚨 **버튼 줄은 접힌다** (`flex-wrap`). 글자를 키우거나 좁은 폭이면 "지우기" · "그만두기" 가
+             한 줄에 안 들어가고, `keep-all` 이라 단어를 쪼개지도 못해 패널 밖으로 넘친다. 접히면
+             각자 한 줄을 다 쓴다 (`flex-1`).
+          🚨 **확인 문구는 일어날 일만 말한다** (디자인 시스템 §7 "교정"). 되살릴 수 없다는 것과,
+             같은 날 보이는 사진은 일기 밖이라 그대로라는 것 (#115).
+          🚨 **실패하면 패널이 남는다.** 다시 누르는 것이 재시도다 — `DELETE` 는 몇 번 보내도 결과가
+             같아서 키가 없다. 실패를 빨강으로 칠하지 않는다 (문서 §3).
+        */}
+        {confirmingDelete ? (
+          <div
+            ref={confirmRef}
+            // 🚨 `scroll-mb-*` 가 없으면 `scrollIntoView` 가 하단 네비 **뒤**를 "보인다" 고
+            //    판단해서 버튼이 그대로 가려진다 (11-1 과 같은 값).
+            className="border-line rounded-card bg-surface-muted flex scroll-mb-28 flex-col gap-3 border p-4"
+          >
+            <div>
+              <p className="text-body text-ink">이 일기를 지울까요?</p>
+              <p className="text-body-sm text-ink-muted mt-1">
+                지운 일기는 되살릴 수 없어요. 이날의 사진은 그대로 남아요.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                size="compact"
+                className="flex-1"
+                onClick={() => remove.mutate()}
+                disabled={remove.isPending}
+              >
+                {remove.isPending ? <Spinner /> : null}
+                {remove.isPending ? "지우는 중이에요" : "지우기"}
+              </Button>
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="flex-1"
+                onClick={() => {
+                  setConfirmingDelete(false);
+                  remove.reset();
+                  deleteToggleRef.current?.focus();
+                }}
+                disabled={remove.isPending}
+              >
+                그만두기
+              </Button>
+            </div>
+            {remove.isError ? (
+              <p className="text-body-sm text-ink-muted" role="status">
+                지금은 지우지 못했어요. 일기는 그대로 있어요.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <DiaryNote />
       </div>
     );
   }
+
+  /** 이미 있는 일기를 다 비웠다. 저장이 막히는 이유와 지우는 길을 글자로 말한다. */
+  const emptied = saved !== "" && draft.trim() === "";
 
   return (
     <div className="flex flex-col gap-2">
@@ -353,7 +529,9 @@ function Diary({
       <div className="flex gap-2">
         <Button
           onClick={() => save.mutate(draft)}
-          disabled={save.isPending || draft.trim() === saved.trim()}
+          // 🚨 공백뿐이면 막는다 — 서버가 422 로 거절한다. 다 지우고 싶으면 "일기 지우기" 다 (#364).
+          disabled={save.isPending || draft.trim() === "" || draft.trim() === saved.trim()}
+          aria-describedby={emptied ? emptiedHintId : undefined}
         >
           {save.isPending ? <Spinner /> : null}
           일기 저장
@@ -370,6 +548,18 @@ function Diary({
           취소
         </Button>
       </div>
+
+      {/* 🚨 **이유 없이 꺼진 버튼을 두지 않는다** — "왜 안 눌리지" 를 먼저 묻게 만든다
+          (디자인 시스템 §7 바텀시트). 다 비우고 저장하려던 보호자는 지우고 싶은 것이다 — 빈
+          저장은 서버가 지우기로 보지 않으므로(422) 지우는 길을 알려준다.
+          🚨 **편집 중에는 지우기를 세우지 않는다.** 아직 저장 안 한 글이 열린 자리에
+          "지우기" 가 "취소" 옆에 서면, 고치던 글을 버리는 것인지 저장된 일기를 지우는 것인지
+          갈리지 않는다. 새로 쓰는 중이면 지울 것도 없다. 지우는 길은 읽는 상태의 하나뿐이다. */}
+      {emptied ? (
+        <p id={emptiedHintId} className="text-caption text-ink-subtle">
+          비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 일기 지우기를 눌러주세요.
+        </p>
+      ) : null}
 
       {/* 🚨 실패를 빨강으로 칠하지 않는다 (문서 §3). */}
       {save.isError ? (

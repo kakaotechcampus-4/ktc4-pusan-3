@@ -3,9 +3,9 @@ import { http, HttpResponse } from "msw";
 import type {
   CalendarDay,
   CalendarDayResponse,
-  CalendarDayUpdate,
   CalendarMonthResponse,
   EventItemUpdateResponse,
+  MyDiary,
   Observation,
 } from "@/lib/api/types";
 
@@ -13,6 +13,7 @@ import {
   calendarEventDates,
   calendarEventsOn,
   confirmedEvent,
+  deleteMyDiary,
   myDiaryDates,
   readMyDiary,
   sharedPhotoDates,
@@ -25,7 +26,8 @@ import { withIdempotency } from "./idempotency";
 import { listedObservations } from "./memories";
 
 /**
- * 09 캘린더 핸들러. 서버(#318 1/3 · PR #325)와 같은 모양을 내린다.
+ * 09 캘린더 핸들러. 서버(#318 1/3 · PR #325 달 보기 · 하루 보기, 2/3 · PR #333 일기 쓰기 · 지우기)와
+ * 같은 모양을 내린다.
  *
  * 🚨 **일기는 관찰과 별도 저장소다** (계약서 §09). 목에서도 일기를 쓴다고 관찰이 늘지 않는다 —
  *    "일기는 관찰로 자동 추출하지 않는다" 를 화면이 지키는지 확인하려면 목이 먼저 지켜야 한다.
@@ -60,6 +62,18 @@ function withPrepared(date: string) {
 /** 서버처럼 기간(`observed_from` ~ `observed_to`)이 그날과 겹치는 기록. 여러 날 기록은 걸친 날마다 나온다. */
 function observationsOn(date: string): Observation[] {
   return listedObservations().filter((o) => o.observed_from <= date && date <= o.observed_to);
+}
+
+/**
+ * 경로의 날짜가 실제 있는 날인지 (`YYYY-MM-DD`). 서버는 `dt.date` 로 받아서 형식 오류 · 없는 날
+ * (`2월 30일`) · 계산 한계 밖(1년 · 9999년 · `calendar_dates.py`)을 경로 오류 422 로 낸다.
+ */
+function isCalendarDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const year = Number(date.slice(0, 4));
+  if (year < 2 || year > 9998) return false;
+  const day = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === date;
 }
 
 /** `from` ~ `to` 의 날짜 전부 (YYYY-MM-DD). 서버 대신 날짜를 세는 자리다 — 화면 코드에는 두지 않는다. */
@@ -140,18 +154,49 @@ export const calendarHandlers = [
   }),
 
   /**
-   * ⚠️ **옮겨 갈 경로다** — 서버는 `PUT /children/{cid}/diary/{date}` · `{ content }` 로 받는다
-   *    (#318 2/3). 응답이 그 PR 에서 정해져서 그때 옮긴다.
+   * 그날 내 일기 쓰기 — 서버 `PUT /children/{cid}/diary/{date}` (#318 2/3 · PR #333) 와 같다.
+   * 같은 날 다시 쓰면 덮어쓰고, 응답은 하루 보기 `my_diary` 와 같은 `MyDiary` 다.
    *
-   * 🚨 사진은 일기 밖에 있어서 여기서 건드리지 않는다. 일기를 덮어도 사진은 그대로다.
+   * 🚨 **공백뿐이면 422 이고 기존 일기는 남는다.** 빈 내용은 지우기가 아니다 — 지우기는 아래
+   *    `DELETE` 하나다. 저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다.
+   * 🚨 **`content` 가 없거나 문자열이 아니면 400 이다** (서버 errors.py 의 바디 검증 — 경로는 422).
+   * 🚨 **`withIdempotency` 로 감싸지 않는다.** 서버가 키를 받지 않는다 — 몇 번 보내도 결과가 같다.
+   * 🚨 사진은 일기 밖에 있어서 여기서 건드리지 않는다. 일기를 덮어도 사진은 그대로다 (#115).
    */
-  http.put(url("/children/:cid/calendar/:date"), async ({ params, request }) => {
+  http.put(url("/children/:cid/diary/:date"), async ({ params, request }) => {
     await networkDelay();
     const date = String(params.date);
-    const update = (await request.json()) as CalendarDayUpdate;
+    if (!isCalendarDate(date)) return apiError(422, "validation_failed", "날짜가 올바르지 않아요");
 
-    writeMyDiary(date, update.text);
-    return HttpResponse.json(calendarDay(date));
+    const body: unknown = await request.json().catch(() => null);
+    const content =
+      typeof body === "object" && body !== null ? (body as Record<string, unknown>).content : null;
+    if (typeof content !== "string") {
+      return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+        fields: ["content"],
+      });
+    }
+    if (content.trim() === "") {
+      return apiError(422, "validation_failed", "일기 내용을 적어 주세요");
+    }
+
+    const saved: MyDiary = writeMyDiary(date, content);
+    return HttpResponse.json(saved);
+  }),
+
+  /**
+   * 그날 내 일기 지우기 — 서버 `DELETE /children/{cid}/diary/{date}` (PR #333) 와 같다.
+   *
+   * 🚨 **없는 일기를 지워도 204 다.** 두 번 눌러도 결과가 같은 요청이라 키도 받지 않는다.
+   * 🚨 사진은 그대로다 (`deleteMyDiary` 주석 · #115).
+   */
+  http.delete(url("/children/:cid/diary/:date"), async ({ params }) => {
+    await networkDelay();
+    const date = String(params.date);
+    if (!isCalendarDate(date)) return apiError(422, "validation_failed", "날짜가 올바르지 않아요");
+
+    deleteMyDiary(date);
+    return new HttpResponse(null, { status: 204 });
   }),
 
   /**
