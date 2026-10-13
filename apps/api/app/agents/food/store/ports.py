@@ -56,7 +56,7 @@ from app.agents.common.evidence import AffinityRow
 from app.agents.common.ports import (
     ChildProfileReader,
     ConsentReader,
-    SafetyLookupError,  # noqa: F401 — store/__init__.py · context.py 가 여기서 가져간다
+    SafetyLookupError,  # noqa: F401 — store/__init__.py · inmemory.py 가 여기서 가져간다
 )
 from app.core.mfds_nutri_raw import RawNutriRow
 from app.core.nutrition_pick import (
