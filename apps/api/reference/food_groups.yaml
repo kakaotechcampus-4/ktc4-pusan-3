@@ -1,0 +1,44 @@
+# 식품 대분류 → 식품군 대응표 — 식약처 영양DB `FOOD_CAT1_NM` 값으로 메뉴 카탈로그 행의 food_groups 를 채운다
+# 설계: app/agents/food/food_groups.py · docs/agents/food/Food_Tool_명세.md §0-2
+#
+# 🚨 식품군은 메뉴 카탈로그 행에서 "식품군 출현"과 부족 식품군 가중치를 세는 입력이다. 모델이 고르지 않는다.
+# 🚨 한 대분류가 한 식품군으로 갈리는 것만 적는다. 여러 식품군이 섞이는 대분류(찌개 및 전골류 · 국 및
+#    탕류 · 볶음류 · 면 및 만두류 …)와 쓰임이 갈리는 것(견과류 및 종실류 · 버섯류 · 해조류 · 조미료류)은
+#    줄을 두지 않는다 — 표에 없으면 빈 집합이고 추정하지 않는다.
+# 🚨 검수 전이다. 대분류 이름이 실제 영양DB 응답의 글자와 같은지 대조하지 않았다 — 글자가 다르면 그 줄은
+#    걸리지 않아 식품군이 빌 뿐이고 틀리게 채우지는 않는다. 응답에서 확인한 글자로 고치고 줄을 더한다.
+#    원재료성 행은 `FOOD_CAT1_NM` 이 비고 코드(`FOOD_CAT1_CD`)만 오는 경우가 있다(우유) — 그 행은 이 표로
+#    채워지지 않는다.
+#
+# 줄 하나 = 대분류 이름 하나. 띄어쓰기는 보지 않는다("곡류및그제품" 도 같다).
+#   category  대분류 이름
+#   groups    grains · meat_fish_egg_legumes · vegetables · fruits · dairy · fats_sugars 중에서.
+#             food_doc.yaml 이 쓰는 이름과 같아야 한다(어긋나면 읽을 때 실패)
+
+source: "식약처 식품영양성분 DB 식품 대분류 → 6개 식품군 (검수 전)"
+version: "2026.1-draft"
+fetched_at: 2026-10-14
+
+categories:
+  - category: "곡류 및 그 제품"
+    groups: [grains]
+  - category: "감자 및 전분류"
+    groups: [grains]
+  - category: "두류"
+    groups: [meat_fish_egg_legumes]
+  - category: "육류"
+    groups: [meat_fish_egg_legumes]
+  - category: "난류"
+    groups: [meat_fish_egg_legumes]
+  - category: "어패류"
+    groups: [meat_fish_egg_legumes]
+  - category: "채소류"
+    groups: [vegetables]
+  - category: "과일류"
+    groups: [fruits]
+  - category: "우유 및 유제품류"
+    groups: [dairy]
+  - category: "유지류"
+    groups: [fats_sugars]
+  - category: "당류"
+    groups: [fats_sugars]
