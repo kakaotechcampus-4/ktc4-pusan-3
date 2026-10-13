@@ -1,13 +1,16 @@
 """같은 run 의 Memory store 를 도메인 Agent 의 기억 포트로 읽는다.
 
 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 혼합형이 성립한다 (루트 §4).
-store 종류는 모른다 — MemoryStore Protocol 로만 읽는다. 운영에서는 러너가 넘긴 DbMemoryStore,
-테스트 · eval 에서는 InMemoryStore 다.
+store 종류는 모른다 — MemoryStore Protocol 로만 읽는다.
 
-🚨 DbMemoryStore 를 읽으면 러너 세션 하나를 Memory 와 같이 쓴다. AsyncSession 은 쿼리 둘을 동시에
-   못 돌리므로, 이 포트를 읽는 task 둘이 동시에 돌면 깨진다. Food 포트를 DB 로 붙일 때는 이 다리를
-   쓰지 않고 포트 호출마다 짧은 트랜잭션으로 읽는다(10-05 목표, 러너 task 별 세션 작업). Memory 는
-   도메인 단계 전에 commit 되므로 따로 연 세션에서도 방금 저장한 관찰이 보인다.
+읽을 store 를 받는 길이 둘이다.
+    StoreFoodMemory(store)          이미 열린 store 를 그대로 읽는다. 테스트 · eval 의 InMemoryStore
+    StoreFoodMemory(opener=opener)  호출마다 opener 로 store 를 새로 연다. 운영에서 러너가 준다
+
+🚨 운영에서는 opener 로 간다. 러너의 run 세션(Memory 가 쓰는 세션)을 도메인 task 둘이 같이
+   타면 AsyncSession 이 쿼리 둘을 동시에 못 돌려 깨진다. 러너는 호출마다 짧은 세션을 따로 열어
+   주고(#257), Memory 는 도메인 단계 전에 commit 되므로 따로 연 세션에서도 방금 저장한
+   관찰이 보인다.
 
 Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity
 포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
@@ -16,6 +19,8 @@ Curator 는 이 다리를 쓰지 않고 DbCuratorStore 를 직접 쓴다 (domain
 profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
 """
 
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import date
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -32,6 +37,27 @@ FOOD_STATUSES = frozenset({"active", "stand_alone"})
 ACTIVITY_STATUSES = frozenset({"active"})
 
 
+# 호출 한 번에 쓸 store 를 여는 함수. 러너가 짧은 DB 세션으로 만든다
+StoreOpener = Callable[[], AbstractAsyncContextManager[MemoryStore]]
+
+
+def same_store(store: MemoryStore) -> StoreOpener:
+    """이미 열린 store 를 그대로 돌려주는 opener. 세션이 없는 InMemoryStore 용."""
+
+    @asynccontextmanager
+    async def opener() -> AsyncIterator[MemoryStore]:
+        yield store
+
+    return opener
+
+
+class _StoreReader:
+    def __init__(self, store: MemoryStore | None = None, *, opener: StoreOpener | None = None):
+        if (store is None) == (opener is None):
+            raise TypeError("store 와 opener 중 하나만 넘긴다")
+        self._open: StoreOpener = opener or same_store(store)  # type: ignore[arg-type]
+
+
 def _uuid(row_id: str) -> UUID:
     """InMemory id(observation_food-1)는 UUID 가 아니다. 같은 id 는 늘 같은 UUID 로 바꾼다."""
     try:
@@ -41,7 +67,7 @@ def _uuid(row_id: str) -> UUID:
 
 
 async def _rows(
-    store: MemoryStore,
+    open_store: StoreOpener,
     domain: str,
     *,
     child_id: UUID,
@@ -49,18 +75,16 @@ async def _rows(
     date_to: date,
     statuses: frozenset[str],
 ) -> list[ObservationRow]:
-    rows = await store.query_observations(
-        domain=domain, child_id=child_id, date_from=date_from, date_to=date_to
-    )
+    async with open_store() as store:
+        rows = await store.query_observations(
+            domain=domain, child_id=child_id, date_from=date_from, date_to=date_to
+        )
     # status가 없으면 읽지 않는다
     return [row for row in rows if row.fields.get("status") in statuses]
 
 
-class StoreFoodMemory:
-    """`FoodMemoryReader` 구현. `observation_food`를 같은 run 의 store 에서 읽는다."""
-
-    def __init__(self, store: MemoryStore) -> None:
-        self._store = store
+class StoreFoodMemory(_StoreReader):
+    """`FoodMemoryReader` 구현. `observation_food`를 Memory store 에서 읽는다."""
 
     async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         return []
@@ -69,7 +93,7 @@ class StoreFoodMemory:
         self, *, child_id: UUID, date_from: date, date_to: date
     ) -> list[FoodObservation]:
         rows = await _rows(
-            self._store,
+            self._open,
             "food",
             child_id=child_id,
             date_from=date_from,
@@ -92,9 +116,8 @@ class StoreFoodMemory:
         ]
 
 
-class StoreActivityMemory:
-    def __init__(self, store: MemoryStore) -> None:
-        self._store = store
+class StoreActivityMemory(_StoreReader):
+    """`ActivityMemoryReader` 구현. `observation_activity`를 Memory store 에서 읽는다."""
 
     async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
         return []
@@ -103,7 +126,7 @@ class StoreActivityMemory:
         self, *, child_id: UUID, date_from: date, date_to: date
     ) -> list[ActivityObservation]:
         rows = await _rows(
-            self._store,
+            self._open,
             "activity",
             child_id=child_id,
             date_from=date_from,

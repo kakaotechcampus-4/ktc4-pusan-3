@@ -21,7 +21,8 @@
 import asyncio
 import logging
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import date
 from uuid import UUID
 
@@ -83,6 +84,7 @@ def agent_job(
 
     - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
       async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
+    - 도메인 Agent 의 기억 포트가 쓸 store 는 호출마다 짧은 세션으로 연다(`domain_store`).
     - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
@@ -119,8 +121,14 @@ def agent_job(
 
         from app.domains.memory.store.db_store import DbMemoryStore
 
-        # TODO: 도메인 Agent 가 DB 포트를 쓰면 이 세션을 동시에 타서
-        #   AsyncSession 에러가 난다. task 마다 별도 세션을 열어야 한다.
+        @asynccontextmanager
+        async def domain_store() -> AsyncIterator[DbMemoryStore]:
+            # 도메인 Agent 의 기억 포트는 호출마다 짧은 세션으로 읽는다. run 세션을 같이 타면
+            # 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다 (#257). Memory 는 도메인
+            # 단계 전에 commit 되므로 이 세션에서도 방금 저장한 관찰이 보인다. 읽기만 한다
+            async with background_session() as read_session:
+                yield DbMemoryStore(read_session, child_id=child_id)
+
         async with background_session() as session:
             store = DbMemoryStore(session, child_id=child_id)
 
@@ -143,6 +151,7 @@ def agent_job(
                         store=store,
                         commit=commit,
                         curator_trigger=_curator_trigger(),
+                        domain_store=domain_store,
                     )
             except TimeoutError:
                 log.warning(
