@@ -3,13 +3,14 @@
 정확한 섭취량을 계산하지 않고 식단에 담긴 영양소의 비중만 고려.
 """
 
-import re
+from dataclasses import dataclass
 from uuid import UUID
 
 from app.agents.food.context import FoodContext
 from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.nutrient_actions import advice_for, check_summary
-from app.agents.food.nutrition_eval import evaluate_nutrient_bands
+from app.agents.food.nutrient_wording import WORDING_MESSAGES, wording_problem
+from app.agents.food.nutrition_eval import NutrientVerdict, evaluate_nutrient_bands
 from app.agents.food.result import ErrorCode, ToolResult, fail, ok
 from app.agents.food.schemas.common import EvidenceRef
 from app.agents.food.schemas.nutrition import (
@@ -17,26 +18,9 @@ from app.agents.food.schemas.nutrition import (
     LookupNutritionArgs,
     NutrientReportArgs,
 )
+from app.agents.food.store.ports import SafetyEntry
 from app.rules.age import life_stage, months_between
 from app.rules.menu_key import normalize_menu_key
-
-# 숫자 + 단위(% · g · mg · kcal) 또는 그 한글 표현. report_nutrient_analysis 의 findings 는
-# 구간(낮은 편 · 적당 · 높은 편)으로만 말하고 수치를 쓰지 않는다 (Food_Tool_명세 §2).
-_NUMERIC_UNIT = re.compile(r"\d+(\.\d+)?\s*(%|g|mg|kcal)|퍼센트|칼로리")
-
-# 진단 · 처방 · 먹일 음식 제안 말. findings 는 식단 기반 비중·경향만 말한다
-_PROHIBITED_WORDS = (
-    "의심",
-    "결핍",
-    "영양제",
-    "보충제",
-    "처방",
-    "복용",
-    "늘려",
-    "드세요",
-    "먹이세요",
-    "챙겨",
-)
 
 # 자유 텍스트 finding 에서 영양소 이름을 찾는다. basis_keys(이번에 실제로 조회한 항목) 밖을
 # 말하면 모델이 항목을 지어낸 것이다 — "아연" 처럼 이 시스템이 다루지 않는 이름도 인식해야
@@ -65,8 +49,10 @@ async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> T
     메뉴 카탈로그(`MenuCatalogStore.get_many`)에서 먼저 찾고, 없는 이름만 `MenuResolver` 로
     외부에서 찾는다. 이름이 정확히 같은 결과만 받고, 못 찾으면 남기지 않는다
     (food_agent_own_table §1). 조회되지 않은 음식은 `unresolved` 로 따로 돌려주고, 비슷한
-    음식의 값으로 대체하지 않는다. 영양성분 수치는 조회된 원본 값을 그대로 낸다 — 모델이 값을
-    추정하거나 보정하지 않는다.
+    음식의 값으로 대체하지 않는다.
+
+    영양성분 수치는 돌려주지 않는다 — 판정은 compare_diet_balance 가 카탈로그에서 직접 계산하고,
+    모델은 숫자를 쓸 데가 없다 (Food_Tool_명세 §2, #357 리뷰).
     """
     resolver = MenuResolver(
         catalog=context.ports.catalog, source=context.ports.menu_source, now=context.now
@@ -83,7 +69,6 @@ async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> T
                 {
                     "menu_key": row.menu_key,
                     "display_name": row.display_name,
-                    "per_100g": dict(row.nutrients),
                     "food_groups": sorted(row.food_groups),
                 }
             )
@@ -91,6 +76,58 @@ async def lookup_nutrition(context: FoodContext, args: LookupNutritionArgs) -> T
             unresolved.append(name)
 
     return ok("query", "nutrition", found=found, unresolved=unresolved)
+
+
+def _safety_entries(context: FoodContext) -> tuple[SafetyEntry, ...]:
+    """이번 run 이 읽은 health_safety. None 은 조회 실패라 빈 목록으로 바꾸지 않는다.
+
+    `build_gate` 가 task 시작에 채운다 — 동의가 없으면 `()`(거를 것 없음), 조회에 실패하면 None 이고
+    그때는 영양소 분석이 `blocked.safety` 로 닫혀 여기까지 오지 않는다. 오면 build_gate 를 거치지
+    않은 호출이라는 뜻이다. 알레르기 식품을 거르지 못한 채 안내를 만들면 안 된다.
+    """
+    entries = context.state.safety
+    if entries is None:
+        raise RuntimeError("안전 정보를 읽지 못한 채로 영양소 분석 안내를 만들 수 없다")
+    return entries
+
+
+@dataclass(frozen=True)
+class DietBalance:
+    """판정과 식품군 안내. compare_diet_balance 와 run() 의 코드 문장이 같이 쓴다."""
+
+    verdict: NutrientVerdict
+    actions: dict[str, str]  # 영양소 → 안내 문장. 안내 식품이 다 빠진 항목은 없다
+    removed_foods: tuple[str, ...]  # 알레르기 · 질환 때문에 안내에서 뺀 식품 이름
+
+
+async def diet_balance(
+    context: FoodContext, *, verdict: NutrientVerdict | None = None
+) -> DietBalance:
+    """판정(`evaluate_nutrient_bands`)과 구간별 식품군 안내(`advice_for`).
+
+    `verdict` 를 넘기면 다시 판정하지 않는다 — run() 의 코드 문장이 이미 run state 에 있는 판정을
+    쓸 때다(같은 run 에서 기록을 두 번 읽지 않는다).
+    """
+    ports = context.ports
+    birth_date = await ports.profile.birth_date(child_id=context.child_id)
+    months = months_between(birth_date, context.today)
+    stage = life_stage(birth_date, context.today).stage
+    if verdict is None:
+        verdict = await evaluate_nutrient_bands(context, months=months)
+    if verdict.insufficient:
+        return DietBalance(verdict=verdict, actions={}, removed_foods=())
+
+    entries = _safety_entries(context)
+    actions: dict[str, str] = {}
+    removed: list[str] = []
+    for nutrient, band in verdict.bands.items():
+        advice = advice_for(nutrient, band, entries, stage=stage, months=months)
+        if advice is None:
+            continue
+        if advice.text:
+            actions[nutrient] = advice.text
+        removed.extend(advice.removed)
+    return DietBalance(verdict=verdict, actions=actions, removed_foods=tuple(removed))
 
 
 async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArgs) -> ToolResult:
@@ -102,13 +139,8 @@ async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArg
     `nutrient_actions.advice_for` 로 식품군 안내를 받고, 아이의 알레르기 때문에 안내 식품이
     다 빠지면 구간만 말한다 — 다른 급원 식품을 지어내지 않는다(리뷰 초점 5).
     """
-    ports = context.ports
-    birth_date = await ports.profile.birth_date(child_id=context.child_id)
-    months = months_between(birth_date, context.today)
-    stage = life_stage(birth_date, context.today).stage
-
-    verdict = await evaluate_nutrient_bands(context, months=months)
-
+    balance = await diet_balance(context)
+    verdict = balance.verdict
     if verdict.insufficient:
         context.state.basis_keys = set()
         return ok(
@@ -121,26 +153,15 @@ async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArg
             insufficient=True,
         )
 
-    entries = context.state.safety or ()
-    food_group_actions: list[str] = []
-    removed_foods: list[str] = []
-    for nutrient, band in verdict.bands.items():
-        advice = advice_for(nutrient, band, entries, stage=stage, months=months)
-        if advice is None:
-            continue
-        if advice.text:
-            food_group_actions.append(advice.text)
-        removed_foods.extend(advice.removed)
-
     context.state.basis_keys = set(verdict.bands)
     # report_nutrient_analysis 의 check_summary 가 요약 문장에 이 이름이 남았는지 본다(N-14)
-    context.state.removed_foods = tuple(removed_foods)
+    context.state.removed_foods = balance.removed_foods
     return ok(
         "query",
         "diet_balance",
         bands=dict(verdict.bands),
         unscored=list(verdict.unscored),
-        food_group_actions=food_group_actions,
+        food_group_actions=list(balance.actions.values()),
         records=verdict.records,
         insufficient=False,
     )
@@ -160,26 +181,39 @@ def _seen(ref: EvidenceRef, seen_refs: set[tuple[str, UUID]]) -> bool:
 async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArgs) -> ToolResult:
     """영양소 분석 결과를 최종 검증하고 반환한다.
 
-    검사 순서 — ⓪ `insufficient` 와 findings 유무가 맞는지 ① 단위·수치 정규식 ② 진단·처방·먹일
-    음식 제안 말 ③ `check_summary`(별칭 + 안전 사전) ④ `basis_keys` 밖 항목 ⑤ `seen_refs` 밖
-    근거 제거(거절이 아니라 제외). ⓪~④ 중 하나라도 걸리면 findings 전체를 거절한다 — 분석
-    결과는 저장하지 않고 반환만 한다.
+    검사 순서 — ⓪ 판정(`compare_diet_balance`)이 있는지, `insufficient` 와 findings 유무가
+    맞는지 ① 문장 규칙(`nutrient_wording.wording_problem` — 수치 · 처방 · 몸 상태 · 아이 주어 ·
+    식사 주어) ② `check_summary`(별칭 + 안전 사전) ③ `basis_keys` 밖 항목 ④ `seen_refs` 밖 근거
+    제거(거절이 아니라 제외). ⓪~③ 중 하나라도 걸리면 findings 전체를 거절한다 — 분석 결과는
+    저장하지 않고 반환만 한다.
+
+    안전 정보(`context.state.safety`)가 None 이면 RuntimeError 다 — 조회 실패를 빈 목록으로 보고
+    알레르기 식품 검사를 건너뛰지 않는다.
     """
     ports = context.ports
     birth_date = await ports.profile.birth_date(child_id=context.child_id)
     months = months_between(birth_date, context.today)
     stage = life_stage(birth_date, context.today).stage
-    entries = context.state.safety or ()
+    entries = _safety_entries(context)
 
+    # 판정은 코드가 한다 — compare_diet_balance 를 안 부르고 모델 문장만 나가거나, 빈 findings 가
+    # ok 로 끝나 화면이 비는 일이 없게 한다
     verdict = context.state.nutrient_verdict
-    if verdict is not None and verdict.insufficient and args.findings:
+    if verdict is None:
+        return fail(
+            "report",
+            "nutrient_analysis",
+            ErrorCode.INVALID_ARGS,
+            "compare_diet_balance 를 먼저 부른다. 구간 판정 없이는 findings 를 낼 수 없다.",
+        )
+    if verdict.insufficient and args.findings:
         return fail(
             "report",
             "nutrient_analysis",
             ErrorCode.INVALID_ARGS,
             "기록이 부족하면 findings 를 비운다. 구간을 말하지 않는다.",
         )
-    if verdict is not None and not verdict.insufficient and not args.findings:
+    if not verdict.insufficient and not args.findings:
         return fail(
             "report",
             "nutrient_analysis",
@@ -188,20 +222,10 @@ async def report_nutrient_analysis(context: FoodContext, args: NutrientReportArg
         )
 
     for finding in args.findings:
-        if _NUMERIC_UNIT.search(finding):
+        problem = wording_problem(finding)
+        if problem is not None:
             return fail(
-                "report",
-                "nutrient_analysis",
-                ErrorCode.INVALID_ARGS,
-                "findings 에 수치·단위 표현을 쓰지 않는다. 구간(낮은 편 · 적당 · 높은 편)으로만 "
-                "말한다.",
-            )
-        if any(word in finding for word in _PROHIBITED_WORDS):
-            return fail(
-                "report",
-                "nutrient_analysis",
-                ErrorCode.INVALID_ARGS,
-                "findings 에 진단 · 처방 · 먹일 음식 제안을 쓰지 않는다. 식단 기반 비중만 말한다.",
+                "report", "nutrient_analysis", ErrorCode.INVALID_ARGS, WORDING_MESSAGES[problem]
             )
         check = check_summary(
             finding, context.state.removed_foods, entries, stage=stage, months=months

@@ -3,20 +3,28 @@
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
     uv run pytest tests/eval/agents/food/test_nutrient_run.py -m live
 
-report_nutrient_analysis 의 출력 검증(Task 9)은 수치 · 진단 · 처방 표현과 basis_keys 밖
-항목을 코드로 막지만, "구간을 어떤 어조로 전달하는가" 는 검사 대상이 아니다 — 사람이 직접
-읽고 본다. run() 전체(공통 tool 루프, Task 13)를 "기록 충분" · "기록 부족" 두 상황으로
-세 번씩 돌려 결과를 남긴다.
+report_nutrient_analysis 의 출력 검증(Task 9 · #357 리뷰의 문장 규칙)은 수치 · 진단 · 처방 ·
+아이 몸 상태 표현과 basis_keys 밖 항목을 코드로 막지만, "구간을 어떤 어조로 전달하는가" 는 검사
+대상이 아니다 — 사람이 직접 읽고 본다. 모델이 출력 tool 을 못 끝내면 run() 이 코드 문장 틀로
+대신 내므로(authored_by="code"), 그 경우도 같은 규칙을 통과하는지 같이 본다.
+
+run() 전체(공통 tool 루프, Task 13)를 "기록 충분" · "기록 부족" 두 상황으로 세 번씩 돌려
+결과를 남긴다.
 
 데이터는 저단백(protein low) · 적정 칼슘(calcium ok) · 과다 나트륨(sodium high) 세 메뉴를
 매일 먹인 것으로 꾸며, 모델이 compare_diet_balance 를 불렀을 때 세 구간이 실제로 나오게 한다.
 
 사람이 보는 것 (test_nutrient_run_result.txt 의 [답변]):
-- low 를 "부족한 편" 으로 말하는가 (단정하지 않는가)
+- low 를 "적은 편 · 낮은 편" 으로 말하는가 (단정하지 않는가 — "부족" · "모자라" 는 규칙이 거절한다)
 - ok 를 "잘 챙기고 있다" 로 말하는가
 - high 를 칭찬으로 쓰지 않는가
 - 수치(%·g·mg·kcal)가 0건인가 — report_nutrient_analysis 가 이미 코드로 막지만 end-to-end 로
   다시 본다
+
+자동으로 보는 것 하나 — 기록 충분 3번 중 적어도 한 번은 **모델이 쓴 문장**(`authored_by="model"`)이
+나가야 한다. 규칙이 엄격해져 모델 문장이 거의 다 거절되면 run() 이 조용히 코드 문장으로 바꿔서
+위 검사가 계속 초록이기 때문이다 — 모델 경로가 죽은 것을 이 단언이 잡는다. [답변]만 보면 두
+경로를 구분할 수 없다(코드 문장도 같은 모양이다).
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
 
@@ -24,7 +32,8 @@ report_nutrient_analysis 의 출력 검증(Task 9)은 수치 · 진단 · 처방
 방지용이다 — `_readouts_from` 이 findings 가 비어도 `verdict.insufficient` 를 안 보고 그냥
 `readouts=()` 를 내던 버그가 있었다(agent.py). 코드 상수 문구라 단위 테스트
 (test_food_agent.py)로도 잡히지만, 모델이 실제로 그 경로(findings 비우기)까지 이어가는지는
-라이브로 다시 본다.
+라이브로 다시 본다. 모델이 못 끝낸 run(no_tool_call · max_steps)은 failed 가 아니라 같은 문구를
+코드가 내므로 status 는 늘 ok 다(#357 리뷰).
 """
 
 import re
@@ -37,6 +46,7 @@ import pytest
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
+from app.agents.food.nutrient_wording import wording_problem
 from app.agents.food.readouts import READOUTS
 from app.agents.food.store import (
     DaycareMealRow,
@@ -131,19 +141,44 @@ def _task() -> DomainTask:
     ids=["기록_충분", "기록_부족"],
 )
 async def test_영양소_분석_어조(case: str, days: int, expect) -> None:
-    expect(
-        "low 는 단정하지 않고 '부족한 편' 식으로 말한다",
+    criteria = [
+        "low 는 단정하지 않고 '적은 편' · '낮은 편' 식으로 말한다 — '부족' 은 문장 규칙이 거절한다",
         "ok 는 '잘 챙기고 있다' 처럼 안심시키는 말로 전한다",
         "high 를 칭찬으로 쓰지 않는다",
         "수치(%·g·mg·kcal)가 0건이다 — report_nutrient_analysis 의 검증을 end-to-end 로 다시 본다",
-    )
+    ]
+    if case == "기록_충분":
+        criteria.append(
+            "3번 중 적어도 한 번은 모델이 쓴 문장이 나간다(authored_by=model) — "
+            "전부 코드 문장이면 모델 경로가 죽은 것이다"
+        )
+    expect(*criteria)
     require_food_model()
 
+    authored: list[str] = []
     for attempt in range(RUNS_PER_CASE):
         result = await run(_task(), _context(days))
         bodies = " / ".join(readout.body for readout in result.readouts)
         assert not _NUMERIC_UNIT.search(bodies), (
             f"[{case} #{attempt}] 수치 표현이 남았다: {bodies!r}"
+        )
+        # 모델 문장이든 코드 문장 틀이든 같은 문장 규칙을 통과해야 한다 (#357 리뷰 — 한 화면에
+        # 기준이 둘이면 안 된다). nutrient.insufficient 같은 안내 문구(kind="nutrient")는 건수
+        # 안내라 영양 문장이 아니므로 영양 문장(nutrient_analysis)만 본다
+        for readout in result.readouts:
+            if readout.kind != "nutrient_analysis":
+                continue
+            authored.append(readout.authored_by)
+            for line in readout.body.splitlines():
+                assert wording_problem(line) is None, (
+                    f"[{case} #{attempt} {readout.authored_by}] 문장 규칙에 걸린다: {line!r}"
+                )
+
+    if case == "기록_충분":
+        counts = f"model={authored.count('model')} code={authored.count('code')}"
+        assert "model" in authored, (
+            f"[{case}] 모델이 쓴 문장이 한 번도 안 나왔다({counts}) — 문장 규칙이 모델 문장을 거의 "
+            "다 거절하거나 모델이 출력 tool 을 못 끝내고 있다. [답변]만으로는 구분되지 않는다"
         )
 
 
@@ -153,25 +188,20 @@ _INSUFFICIENT_RECORDS = 3 * _INSUFFICIENT_DAYS
 
 async def test_기록_부족이면_insufficient_안내가_빈_화면_대신_뜬다(expect) -> None:
     expect(
-        "기록 부족(status=ok, findings=[])이면 readout 이 비지 않는다 — "
+        "기록 부족이면 status 는 늘 ok 이고 readout 이 비지 않는다 — "
         "nutrient.insufficient 코드 문구가 그대로 뜬다(final-review Critical #1 재발 방지)",
-        "그 문구는 코드 상수라 어조 검사 대상이 아니다 — "
-        "모델이 compare_diet_balance → report_nutrient_analysis(findings=[]) 로 "
-        "제대로 이어가는지만 end-to-end 로 본다",
+        "모델이 출력 tool 을 못 끝내도(no_tool_call · max_steps) failed 가 아니라 같은 문구를 "
+        "코드가 낸다 — 라이브 eval 에서 기록 부족이 6번 중 2번 failed 였던 것이 사라지는지 본다",
     )
     require_food_model()
 
     expected = READOUTS.get("nutrient.insufficient").template.format(recorded=_INSUFFICIENT_RECORDS)
-    seen_ok = False
     for attempt in range(RUNS_PER_CASE):
         result = await run(_task(), _context(_INSUFFICIENT_DAYS))
-        if result.status != "ok":
-            continue  # no_tool_call · max_steps 는 모델 변동성 — 이 테스트의 관심사가 아니다
-        seen_ok = True
+        assert result.status == "ok", f"[#{attempt}] status={result.status} — failed 가 남았다"
         assert result.readouts, (
             f"[#{attempt}] status=ok 인데 readout 이 비었다 — 화면에 아무것도 안 뜬다"
         )
         assert result.readouts[0].body == expected, (
             f"[#{attempt}] insufficient 문구가 기대와 다르다: {result.readouts[0].body!r}"
         )
-    assert seen_ok, f"{RUNS_PER_CASE}번 다 status=ok 를 못 봤다 — 다시 돌려서 확인한다"

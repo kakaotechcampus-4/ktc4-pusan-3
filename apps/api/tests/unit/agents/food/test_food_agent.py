@@ -1,6 +1,7 @@
 """Food Agent 진입점 — run() 을 공통 tool 루프 위에서 끝까지 돈다."""
 
 import json
+import logging
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -14,8 +15,16 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.common.tool_loop import MAX_STEPS
 from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
-from app.agents.food.readouts import READOUTS
-from app.agents.food.store import InMemoryProfile, in_memory_ports, unwired_ports
+from app.agents.food.nutrition_eval import NutrientVerdict
+from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, READOUTS
+from app.agents.food.store import (
+    InMemoryConsent,
+    InMemoryProfile,
+    InMemorySafety,
+    SafetyEntry,
+    in_memory_ports,
+    unwired_ports,
+)
 
 KST = ZoneInfo("Asia/Seoul")
 CHILD = UUID(int=1)
@@ -95,6 +104,7 @@ def counting_client() -> FakeLLM:
 
 @pytest.fixture
 def fake_client() -> FakeLLM:
+    # compare_diet_balance 는 이미 불렀다고 보고(아래 테스트가 판정을 run state 에 둔다) 문장을 낸다
     return FakeLLM(
         tool_response(
             call(
@@ -102,7 +112,7 @@ def fake_client() -> FakeLLM:
                 "report_nutrient_analysis",
                 {
                     "period": "last_7_days",
-                    "findings": ["최근 식사 기록을 바탕으로 식단을 살펴봤어요"],
+                    "findings": ["기록된 식사를 보면 단백질 식품이 적은 편이에요"],
                 },
             )
         )
@@ -155,11 +165,39 @@ async def test_안전_조회_실패는_blocked_safety_로_닫는다(
     assert result.readouts[0].body == READOUTS.get("blocked.safety").template
 
 
-async def test_출력_tool_이_통과하면_ok_다(task, context, fake_client) -> None:
+async def test_출력_tool_이_통과하면_모델_문장이_그대로_ok_다(task, context, fake_client) -> None:
+    # 모델 경로 — 코드 문장으로 바뀌지 않고 모델이 쓴 문장이 나간다
+    context.state.nutrient_verdict = _verdict({"protein": "low"})
+    context.state.basis_keys = {"protein"}
+
     result = await run(task, context, client=fake_client)
 
     assert result.status == "ok"
-    assert result.readouts
+    (readout,) = result.readouts
+    assert readout.authored_by == "model"
+    assert readout.body == "기록된 식사를 보면 단백질 식품이 적은 편이에요"
+
+
+async def test_판정_없이_report_를_부르면_거절되고_코드_문장으로_간다(task, context) -> None:
+    # 판정은 코드가 한다 — compare_diet_balance 를 건너뛴 모델 문장은 나가지 않는다 (최종 리뷰)
+    client = FakeLLM(
+        tool_response(
+            call(
+                "c1",
+                "report_nutrient_analysis",
+                {
+                    "period": "last_7_days",
+                    "findings": ["기록된 식사를 보면 전반적으로 균형 잡힌 식단이에요"],
+                },
+            )
+        ),
+        reply("끝냈어요."),
+    )
+
+    result = await run(task, context, client=client)
+
+    assert result.status == "ok"
+    assert result.readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=0),)
 
 
 async def test_기록이_부족하면_insufficient_readout_을_낸다(
@@ -176,14 +214,74 @@ async def test_기록이_부족하면_insufficient_readout_을_낸다(
     )
 
 
-async def test_모델이_말로_끝내면_실패다(task, context, talking_client) -> None:
-    # no_tool_call 을 추천 0개로 받으면 모델 실패가 "말할 게 없다" 로 보인다 (#320 PM 리뷰)
+def _verdict(bands: dict[str, str], *, records: int = 9) -> NutrientVerdict:
+    return NutrientVerdict(
+        bands=bands,  # type: ignore[arg-type]
+        unscored=(),
+        records=records,
+        resolved_ratio=1.0,
+        insufficient=False,
+        food_groups=frozenset(),
+    )
+
+
+async def test_모델이_말로_끝내면_코드_문장으로_낸다(
+    task, context, talking_client, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 모델 실패를 "말할 게 없다" 로 보이게 두지 않는다(#320 PM 리뷰). 판정 · 안내는 코드 값이라
+    # 문장 틀로 낸다(#357 리뷰) — 대신 authored_by="code" 와 경고 로그로 모델 실패를 센다
+    caplog.set_level(logging.WARNING, logger="app.agents.food.agent")
+
     result = await run(task, context, client=talking_client)
 
-    assert result.status == "failed"
+    assert result.status == "ok"
+    assert result.model_calls == 1
+    assert result.readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=0),)  # 기록이 없다
+    assert "food.nutrient.fallback run_id=run-1 ended_by=no_tool_call" in caplog.text
+    assert "영양은 괜찮은지" not in caplog.text  # 원문은 남기지 않는다 — run_id 와 종료 사유만
 
 
-async def test_상한까지_출력_tool_이_통과하지_못하면_실패다(task, context, looping_client) -> None:
+async def test_상한까지_출력_tool_이_통과하지_못하면_코드_문장으로_낸다(
+    task, context, looping_client, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="app.agents.food.agent")
+
     result = await run(task, context, client=looping_client)
 
-    assert result.status == "failed"
+    assert result.status == "ok"
+    assert result.readouts
+    assert all(readout.authored_by == "code" for readout in result.readouts)
+    assert "ended_by=max_steps" in caplog.text
+
+
+async def test_이미_낸_판정이_있으면_그_판정으로_코드_문장을_낸다(
+    task, context, talking_client
+) -> None:
+    # compare_diet_balance 까지 부른 뒤 모델이 끝내지 못한 경우 — run state 의 판정을 그대로 쓴다.
+    # 다시 계산하면 이 context 는 기록이 없어 insufficient 가 나온다
+    context.state.nutrient_verdict = _verdict({"protein": "low", "sodium": "high", "iron": "ok"})
+
+    result = await run(task, context, client=talking_client)
+
+    (readout,) = result.readouts
+    assert readout.authored_by == "code"
+    lines = readout.body.splitlines()
+    assert lines[0].startswith("기록된 식사 9건을 보면 단백질 식품이 적은 편이에요 — ")
+    assert lines[1] == "기록된 식사 9건을 보면 나트륨 많은 음식이 자주 보여요 — 국물·절임 줄이기"
+    assert len(lines) == 2  # ok 인 항목은 말하지 않는다
+
+
+async def test_대체_문장의_안내에서도_알레르기_식품이_빠진다(task, talking_client) -> None:
+    # 🚨 알레르기 식품 빼기는 코드가 한다 — 모델이 못 끝내서 코드 문장으로 가도 같다
+    context = _context(
+        TODDLER_BIRTH,
+        consent=InMemoryConsent({CHILD: True}),
+        safety=InMemorySafety([SafetyEntry(kind="allergy", label="달걀", status="active")]),
+    )
+    context.state.nutrient_verdict = _verdict({"protein": "low"})
+
+    result = await run(task, context, client=talking_client)
+
+    body = result.readouts[0].body
+    assert "달걀" not in body and "계란" not in body
+    assert "고기" in body  # 달걀만 빠지고 다른 식품 안내는 남는다

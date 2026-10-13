@@ -4,6 +4,7 @@
 열려 있으면 `run_tool_loop`(공통 tool 루프) 위에서 출력 tool 이 통과할 때까지 돈다.
 """
 
+import logging
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -14,6 +15,7 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.common.tool_loop import ToolCall, ToolLoopResult, run_tool_loop
 from app.agents.food.context import FoodContext, build_gate
+from app.agents.food.nutrient_wording import fallback_readouts
 from app.agents.food.prompt import build_system_prompt
 from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, READOUTS
 from app.agents.food.registry import (
@@ -27,11 +29,16 @@ from app.agents.food.registry import (
 from app.agents.food.result import ToolResult
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.task import task_type_of
+from app.agents.food.tools.nutrition import diet_balance
 from app.rules.age import Stage
+
+logger = logging.getLogger(__name__)
 
 # ok      출력 tool 이 검증을 통과했다
 # failed  모델이 말로 끝냈거나(no_tool_call) 상한까지 출력 tool 이 통과하지 못했다(max_steps).
 #         추천 0개로 내면 모델 실패가 "말할 게 없다" 로 보인다(#320 PM 리뷰) — 그래서 failed 로 낸다
+#         (영양소 분석은 예외 — failed 대신 코드 문장으로 낸다. 판정 · 안내가 코드 값이라
+#         "말할 게 없다" 로 보이지 않는다, #357 리뷰)
 # closed  게이트 · 라벨 규칙이 닫았다. 코드 문구만 나간다(모델 0회)
 FoodStatus = Literal["ok", "failed", "closed"]
 
@@ -92,6 +99,24 @@ async def run(
         execute=execute,
         output_tools=output_tools,
     )
+
+    if task_type == FoodTaskType.NUTRIENT_ANALYSIS and not loop_result.completed:
+        # 모델이 출력 tool 을 못 끝냈다. 판정 · 안내는 코드 값이라 문장 틀로 낸다 (#357 리뷰).
+        # 원문은 남기지 않는다 — run_id 와 종료 사유만
+        logger.warning(
+            "food.nutrient.fallback run_id=%s ended_by=%s", context.run_id, loop_result.ended_by
+        )
+        balance = await diet_balance(context, verdict=context.state.nutrient_verdict)
+        return FoodAgentResult(
+            task_type=task_type,
+            stage=stage,
+            status="ok",
+            request_texts=task.request_texts,
+            tools=allowed,
+            requires_safety_check=requires_safety_check(task_type),
+            model_calls=1,
+            readouts=fallback_readouts(balance.verdict, balance.actions),
+        )
 
     readouts = (
         _readouts_from(task_type, loop_result, output_tools, context)

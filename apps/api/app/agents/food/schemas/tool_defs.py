@@ -81,8 +81,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="lookup_nutrition",
         description=(
-            "음식·재료의 영양성분을 식품영양성분 DB 에서 찾는다. 영양소 분석에서만 쓴다. "
-            "수치를 지어내지 않고 이 결과만 쓴다."
+            "음식·재료가 식품영양성분 DB 에 있는지와 식품군을 찾는다. 영양소 분석에서만 쓴다. "
+            "영양 수치는 돌려주지 않는다 — 구간 판정은 compare_diet_balance 가 한다."
         ),
         args=LookupNutritionArgs,
     ),
