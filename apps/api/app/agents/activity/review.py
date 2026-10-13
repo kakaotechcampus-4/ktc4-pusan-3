@@ -2,7 +2,7 @@
 
   1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
                      아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
-  2. 평가 표현       content · why_this · why_now · note
+  2. 평가 표현       content · reason · note
   3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
                      note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         아이 기록 근거 행 수로 kind 를 정한다. 모델이 고르지 않는다.
@@ -74,7 +74,7 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.OUTDOOR_CLOSED: (
         "오늘은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾼다."
     ),
-    RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 why_this 에 쓴다.",
+    RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다.",
 }
 
 
@@ -198,7 +198,7 @@ def _check(
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
     # 2. 평가 표현
-    texts = (candidate.content, candidate.why_this, candidate.why_now)
+    texts = (candidate.content, candidate.reason)
     notes = tuple(pick.note for pick in candidate.evidence)
     if any(find_evaluative(text) for text in (*texts, *notes)):
         return RejectReason.EVALUATIVE, (), None
@@ -246,11 +246,10 @@ def _build(
 
     allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
     """
-    reason = f"{candidate.why_this} {candidate.why_now}".strip()
     return build(
         agent="activity",
         content=_with_place(candidate.content, place),
-        reason=reason,
+        reason=candidate.reason.strip(),
         citations=citations,
         general_reason=GENERAL_REASON,
         allergens=allergens,

@@ -13,6 +13,7 @@ registry 와 tool 이 같이 읽는 값이라 따로 둔다 — registry 는 too
 tool 이 열리는 월령은 전부 0 이라(항상 열림) 표만 두고, 0 이 아닌 값만 파일에서 읽는다.
 """
 
+from app.agents.activity.weather import WEATHER_UNCHECKED, WeatherBrief
 from app.agents.common.gate import Gate
 from app.agents.common.reference import age_gates
 
@@ -33,6 +34,8 @@ AFFINITY_MIN_MONTH = age_gates().affinity_min_month
 
 # 위치가 여닫는 tool. 날씨가 나쁘면 닫지 않고 실내 종류로 좁힌다 — 좁히는 것은 tool 이 한다
 PLACES_TOOL = "search_nearby_places"
+# 위치와 날씨 어댑터가 둘 다 있어야 여는 tool. 없으면 부를 때마다 실패만 돌려준다
+WEATHER_TOOL = "lookup_weather"
 
 
 def opens(name: str, gate: Gate) -> bool:
@@ -41,8 +44,29 @@ def opens(name: str, gate: Gate) -> bool:
     if min_month is None or gate.stage.months < min_month:
         return False
     if name == PLACES_TOOL:
-        return gate.has_location
+        return finds_places(gate)
+    if name == WEATHER_TOOL:
+        return checks_weather(gate)
     return True
+
+
+def finds_places(gate: Gate) -> bool:
+    """근처 장소를 찾을 수 있는가 — 좌표와 장소 어댑터가 둘 다 있어야 한다."""
+    return gate.has_location and gate.data.places
+
+
+def checks_weather(gate: Gate) -> bool:
+    """날씨를 조회할 수 있는가 — 좌표와 날씨 어댑터가 둘 다 있어야 한다. 없으면 부르지 않은
+    것이라 실패(`degraded`)가 아니다 (4-3).
+    """
+    return gate.has_location and gate.data.weather
+
+
+def weather_checked(gate: Gate, weather: WeatherBrief) -> bool:
+    """오늘 날씨를 실제로 읽었는가. 부르지 않았거나(`checks_weather` 거짓) 예보를 못 읽은 날은
+    아니다 — 둘 다 판정은 실내만이지만, 모델에게 날씨를 말할 거리가 없다.
+    """
+    return checks_weather(gate) and WEATHER_UNCHECKED not in weather.notices
 
 
 def reads_affinity(gate: Gate) -> bool:

@@ -31,6 +31,7 @@ from app.agents.common.suggestion import (
     build,
     check_count,
     count_notice,
+    merge_drafts,
 )
 
 KST = timezone(timedelta(hours=9))
@@ -168,6 +169,58 @@ class TestAvoidanceMustBeStated:
                 reason="단백질이 들어 있어요",
                 citations=(citation(polarity=-1, label="브로콜리"),),
             )
+
+    def test_관찰은_문장_label_대신_대상_subject_를_말해도_통과(self):
+        """관찰의 label 은 활동 문장이라 이유에 그대로 나오지 않는다 (Activity 라이브 eval)."""
+        ranked = RankedEvidence(
+            ref=Ref(kind="observation_activity", id=uuid4()),
+            tier=3,
+            label="물감 놀이 하다가 울었음",
+            subject="물감",
+            polarity=-1,
+            observed_on=date(2026, 10, 5),
+        )
+        draft = build(
+            agent="activity",
+            content="종이컵 탑 쌓기",
+            reason="물감은 피해서 종이컵으로 골랐어요",
+            citations=(cite(ranked, note="물감 놀이를 싫어했어요"),),
+        )
+        assert draft.kind == "personalized"
+        with pytest.raises(SuggestionRejected, match="무엇을 피했는지"):
+            build(
+                agent="activity",
+                content="종이컵 탑 쌓기",
+                reason="집에서 바로 할 수 있어요",
+                citations=(cite(ranked, note="물감 놀이를 싫어했어요"),),
+            )
+
+    @pytest.mark.parametrize(
+        ("reason", "stated"),
+        [
+            ("물감으로 손도장을 찍어 봐요", False),  # "물" 이 들어 있을 뿐 다른 낱말이다
+            ("물가 대신 모래밭에서 놀아요", False),
+            ("물은 피해서 모래로 골랐어요", True),
+            ("물놀이를 싫어해서 모래로 골랐어요", True),
+            ("물 대신 모래로 골랐어요", True),
+        ],
+    )
+    def test_한_글자_대상은_낱말로만_센다(self, reason, stated):
+        """#305 · #341 의 한 글자 이름 문제와 같다 (#359 리뷰). 두 글자 이상은 그대로다."""
+        ranked = RankedEvidence(
+            ref=Ref(kind="profile_affinity", id=uuid4()),
+            tier=1,
+            label="물",
+            subject="물",
+            polarity=-1,
+            observed_on=date(2026, 10, 5),
+        )
+        citations = (cite(ranked, note="물을 싫어해요"),)
+        if stated:
+            assert build(agent="activity", content="모래 놀이", reason=reason, citations=citations)
+        else:
+            with pytest.raises(SuggestionRejected, match="무엇을 피했는지"):
+                build(agent="activity", content="모래 놀이", reason=reason, citations=citations)
 
     def test_밝히면_통과(self):
         draft = build(
@@ -433,3 +486,51 @@ class TestEventRequest:
         )
         assert request.category == "health"
         assert request.ends_at is None
+
+
+class TestMergeDrafts:
+    """안전 필터 뒤 재호출 결과 합치기 (#245) — 처음 것 먼저, 빈자리만, 같은 것은 건너뛴다."""
+
+    @staticmethod
+    def drafts(*contents: str) -> tuple[SuggestionDraft, ...]:
+        return tuple(
+            SuggestionDraft(agent="activity", kind="general", content=c, reason="r")
+            for c in contents
+        )
+
+    @staticmethod
+    def content(draft: SuggestionDraft) -> str:
+        return draft.content
+
+    def test_처음_것을_먼저_두고_빈자리만_채운다(self):
+        merged = merge_drafts(
+            self.drafts("가", "나"), self.drafts("다", "라", "마"), key=self.content
+        )
+        assert [d.content for d in merged] == ["가", "나", "다"]
+
+    def test_같은_추천은_Agent_가_넘긴_key_로_가린다(self):
+        """Tool_공통 §5-2 — 무엇이 같은 추천인지는 Agent 가 정한다 (Food 는 menu_key)."""
+
+        def no_spaces(draft: SuggestionDraft) -> str:
+            return "".join(draft.content.split())
+
+        first, again = self.drafts("종이컵 탑", "나"), self.drafts("종이컵탑", "다")
+        assert [d.content for d in merge_drafts(first, again, key=no_spaces)] == [
+            "종이컵 탑",
+            "나",
+            "다",
+        ]
+        assert len(merge_drafts(first, again, key=self.content)) == MAX_SUGGESTIONS
+
+    def test_딸린_값은_짝으로_넘기면_순서가_같이_간다(self):
+        first = tuple(zip(self.drafts("가"), [("경고",)], strict=True))
+        again = tuple(zip(self.drafts("가", "나"), [(), ("다른 경고",)], strict=True))
+        merged = merge_drafts(first, again, key=lambda pair: pair[0].content)
+        assert [(d.content, w) for d, w in merged] == [("가", ("경고",)), ("나", ("다른 경고",))]
+
+    def test_재호출이_비면_처음_것만(self):
+        assert [d.content for d in merge_drafts(self.drafts("가"), (), key=self.content)] == ["가"]
+
+    def test_최대_개수를_넘기지_않는다(self):
+        merged = merge_drafts(self.drafts("가", "나", "다"), self.drafts("라"), key=self.content)
+        assert len(merged) == MAX_SUGGESTIONS

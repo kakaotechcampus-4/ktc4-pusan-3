@@ -69,7 +69,7 @@ async def search_activity_memory(
         tuple(affinities),
         tuple(
             # 대조는 subject, 설명은 사람이 읽는 활동명(`activity`)이다. subject 는 모델이
-            # why_this 에 옮겨 쓰기 어렵다. 발화 원문(raw_text)은 포트가 싣지 않는다
+            # reason 에 옮겨 쓰기 어렵다. 발화 원문(raw_text)은 포트가 싣지 않는다
             ObservationRow(
                 id=row.id,
                 kind="observation_activity",

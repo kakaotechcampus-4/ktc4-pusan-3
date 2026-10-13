@@ -30,10 +30,170 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 - 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 """
 
+from collections.abc import Sequence
+
 from app.agents.activity.context import ActivityContext
+from app.agents.activity.gating import finds_places, weather_checked
 from app.agents.activity.store.ports import ActivityDocRow
+from app.agents.activity.weather import WeatherBrief
+from app.agents.common.gate import Gate
+
+_ROLE = """
+[역할]
+너는 아이의 기록과 오늘의 조건을 엮어, 지금 바로 해 볼 수 있는 놀이 · 외출 후보를 고르는 도우미다.
+보호자는 후보를 보고 고르기만 한다. 고르기 전에 조회 tool 로 사실을 모으고, 마지막에
+propose_activity_candidates 로 후보를 한 번 낸다.
+""".strip()
+
+_DONT = """
+[하지 않는 것]
+- 아이의 발달을 평가하지 않는다. 또래 · 평균 · 정상 · 수준 · 발달 단계와 비교하는 표현을
+  쓰지 않는다.
+- 진단하지 않는다. 행동 · 기질 · 집중력 · 사회성을 문제로 규정하지 않고, 그것을 고치는
+  활동을 권하지 않는다.
+- 한 번의 관찰을 성향으로 쓰지 않는다. "좋아하는" "늘" "항상" 은 확정된 관심(tier 1)에만
+  쓴다. note 도 같다.
+- 보호자의 인상 · 평가를 아이의 능력 · 특성으로 바꿔 쓰지 않는다.
+- 안전을 판단하지 않는다. 주어진 판정을 뒤집거나 예외를 제안하지 않는다.
+  "보호자가 지켜보면 괜찮아요" 를 붙이지 않는다.
+- 예약 · 결제 · 연락을 대신하지 않는다. 링크 · 가격 · 잔여좌석 · 전화번호를 쓰지 않는다.
+  리뷰나 평점으로 "최적"이라고 단정하지 않는다.
+- 일정을 직접 등록하지 않는다.
+""".strip()
+
+_CANDIDATES = """
+[후보]
+- 후보 3개를 낸다. 모자라게 내지 않는다.
+- 활동에 쓰는 물건(materials)과 장소 성격(setting)을 빠짐없이 적는다. 거르는 건 코드가 한다 —
+  알아서 빼거나 위험한 부분만 고쳐서 내지 않는다.
+- 싫어한다고 나온 활동(polarity -1)은 다시 내지 않는다. 싫어하는 것을 피해 골랐다면
+  무엇을 피했는지 reason 에 쓴다.
+- 장소는 search_nearby_places 결과에 있는 이름만 place_name 에 쓴다. 없으면 비운다.
+- 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
+""".strip()
+
+_EVIDENCE = """
+[근거]
+- 후보를 고르기 전에 search_activity_memory 를 부른다.
+- evidence 에는 그 결과에 있던 id 만 쓴다. 지어내지 않는다. 근거마다 note 에 어떤 기억을
+  근거로 했는지 짧게 쓴다 — 원문을 옮기지 않는다.
+- 기록이 없으면(NO_RECORDS) evidence 를 비우고 낸다. 보호자에게 되묻지 않는다.
+""".strip()
+
+_FAILURE = """
+[조회가 실패하면]
+- 날씨를 확인하지 못했으면 맑다고 가정하지 않는다. 실내 활동만 낸다.
+- 장소를 찾지 못했으면 장소가 필요 없는 활동만 낸다.
+- 후보가 거절되면 받은 사유대로 고쳐서 3개를 다시 낸다.
+""".strip()
+
+_OUTPUT = """
+[출력]
+- 마지막에 propose_activity_candidates 를 한 번 부른다. 말로 후보를 설명하지 않는다.
+- reason 에는 이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로 쓴다. 조회한 사실로만 쓴다.
+- 날짜와 시간을 계산하지 않는다. 날짜가 필요하면 tool 의 day 라벨(today · tomorrow ·
+  this_weekend)을 고른다.
+""".strip()
+
+_SECTIONS = (_ROLE, _DONT, _CANDIDATES, _EVIDENCE, _FAILURE, _OUTPUT)
 
 
-def build_system_prompt(context: ActivityContext, examples: tuple[ActivityDocRow, ...]) -> str:
-    """system 메시지 본문. examples 는 search_activity_doc 결과다."""
-    raise NotImplementedError("Activity Agent 실구현 때 작성")
+def build_system_prompt(
+    context: ActivityContext,
+    examples: tuple[ActivityDocRow, ...],
+    *,
+    weather: WeatherBrief,
+) -> str:
+    """system 메시지 본문. examples 는 search_activity_doc 결과, weather 는 run() 의 사전 조회다.
+
+    고정 구획 뒤에 동적 구획을 둔다. 동적 구획 안에서는 아이 사이에 공유되는 것(같은 월령의 예시)을
+    앞에, run 마다 바뀌는 현재 시각을 맨 뒤에 둔다 — 앞쪽이 프롬프트 캐시에 남게.
+    월령은 개월 수만 준다. 밴드 이름 · 일반/개인화 구분은 싣지 않는다 — 분류는 코드가
+    build() 에서 한다.
+    """
+    gate = context.state.gate
+    if gate is None:
+        raise RuntimeError("Gate 없이 프롬프트를 만들었다 — run() 이 build_gate 를 먼저 부른다")
+    dynamic = [
+        _examples(examples),
+        _conditions(weather, checked=weather_checked(gate, weather), gate=gate),
+        f"[월령]\n아이는 {gate.stage.months}개월이다.",
+        _now(context),
+    ]
+    return "\n\n".join([*_SECTIONS, *dynamic])
+
+
+def recall_message(
+    request_texts: Sequence[str], *, chosen: Sequence[str], excluded: Sequence[str]
+) -> str:
+    """안전 필터 뒤 재호출의 user 메시지. 빠진 이유는 말하지 않는다 (Tool_공통.md §5-2).
+
+    이미 고른 것과 빠진 것을 둘 다 "다시 내지 않는다" 로만 준다 — 이유를 알려 주면 단어만 바꿔
+    같은 활동을 다시 내는 법을 배운다.
+    """
+    avoid = "\n".join(f"- {item}" for item in (*chosen, *excluded))
+    return (
+        f"{_request(request_texts)}\n\n"
+        "아래 활동은 다시 내지 않는다. 다른 놀이로 후보 3개를 새로 낸다.\n"
+        f"{avoid}"
+    )
+
+
+def request_message(request_texts: Sequence[str]) -> str:
+    """처음 user 메시지 — 보호자의 요청 그대로."""
+    return _request(request_texts)
+
+
+def _request(request_texts: Sequence[str]) -> str:
+    texts = [text for text in request_texts if text.strip()]
+    if not texts:
+        return "오늘 아이와 해 볼 놀이를 추천해 줘."
+    return "\n".join(texts)
+
+
+def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
+    if not examples:
+        return "[예시]\n이 월령의 예시는 아직 없다."
+    lines = ["[예시] 결만 참고한다. 그대로 베끼지 않는다."]
+    for row in examples:
+        materials = ", ".join(row.materials) or "없음"
+        lines.append(
+            f"- {row.title}: {row.body} (장소 {row.setting.value} · 준비물 {materials} · "
+            f"보호자 {row.caregiver_role.value})"
+        )
+    return "\n".join(lines)
+
+
+def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
+    """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
+
+    확인하지 못한 날(위치 · 날씨 어댑터가 없거나 예보를 못 읽음)은 "어렵다" 와 나눠 쓴다 — 같은
+    말이면 모델이 확인 안 한 날씨를 이유 문장에 쓴다. 판정은 같다(실내만, D8).
+    """
+    if not checked:
+        outdoor = (
+            "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
+            "setting 이 indoor 나 either 인 활동만 낸다."
+        )
+    elif weather.outdoor_ok:
+        outdoor = "오늘은 바깥 활동을 할 수 있다."
+    else:
+        outdoor = "오늘은 바깥 활동이 어렵다. setting 이 indoor 나 either 인 활동만 낸다."
+    labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
+    if finds_places(gate):
+        place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
+    elif gate.has_location:
+        place = "근처 장소는 찾을 수 없다. 특정 장소가 필요한 활동은 내지 않는다."
+    else:
+        place = "위치를 모른다. 특정 장소가 필요한 활동은 내지 않는다."
+    lines = ["[오늘의 조건]", outdoor]
+    if labels:
+        lines.append(f"날씨: {labels}")
+    lines.append(place)
+    return "\n".join(lines)
+
+
+def _now(context: ActivityContext) -> str:
+    local = context.now.astimezone(context.timezone)
+    weekday = "월화수목금토일"[local.weekday()]
+    return f"현재 시각은 {local.isoformat()} ({weekday}요일) · timezone {context.timezone}."

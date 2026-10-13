@@ -23,7 +23,7 @@ from app.agents.activity.weather import WeatherBrief
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
-from app.agents.common.gate import Gate, read_safety_basis
+from app.agents.common.gate import DataReady, Gate, read_safety_basis
 from app.agents.common.suggestion import SuggestionDraft
 
 
@@ -99,7 +99,9 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다
       (공용 `read_safety_basis()`).
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
-    - `has_location` 은 좌표가 있는가. 없으면 장소 조회가 닫힌다.
+    - `has_location` 은 좌표가 있는가. 장소 · 날씨 어댑터가 주입됐는지는 `data.places` ·
+      `data.weather` 다 — 좌표만 있고 어댑터가 없을 때 tool 을 열면 늘 실패한다. 둘 다 있어야
+      그 tool 이 열린다 (`gating.opens`).
     - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
       좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
@@ -120,4 +122,5 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
         allergy_states=basis.allergy_states,
         has_location=context.location is not None,
         outdoor_ok=outdoor_ok,
+        data=DataReady(places=ports.places is not None, weather=ports.weather is not None),
     )

@@ -69,8 +69,7 @@ def candidate(**kwargs) -> ActivityCandidate:
         physical_intensity="low",
         involves_food=False,
         caregiver_role="together",
-        why_this="블록을 오래 가지고 놀았어요",
-        why_now="오늘 오후가 비어 있어요",
+        reason="블록을 오래 가지고 놀았어요 오늘 오후가 비어 있어요",
         evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
     )
     return ActivityCandidate.model_validate({**base, **kwargs})
@@ -115,7 +114,7 @@ class TestPass:
 
 
 class TestEvaluative:
-    @pytest.mark.parametrize("field", ["content", "why_this", "why_now"])
+    @pytest.mark.parametrize("field", ["content", "reason"])
     def test_평가_표현이_있으면_거절(self, field):
         result = review(candidate(**{field: "또래보다 잘하는 블록 쌓기"}))
         assert reason_of(result) is RejectReason.EVALUATIVE
@@ -126,7 +125,7 @@ class TestEvaluative:
 
     def test_평가_표현이_먼저다(self):
         """순서가 결과를 바꾼다 — 근거 id 도 틀렸지만 앞 검사 사유가 나간다."""
-        result = review(candidate(why_this="재능이 보여요", evidence=[{"id": "x", "note": "n"}]))
+        result = review(candidate(reason="재능이 보여요", evidence=[{"id": "x", "note": "n"}]))
         assert reason_of(result) is RejectReason.EVALUATIVE
 
 
@@ -169,7 +168,7 @@ class TestAvoided:
         result = review(
             candidate(
                 content="놀이터에서 모래성 쌓기",
-                why_this="물놀이를 싫어해서 모래로 노는 활동을 골랐어요",
+                reason="물놀이를 싫어해서 모래로 노는 활동을 골랐어요",
                 evidence=[pick],
             )
         )
