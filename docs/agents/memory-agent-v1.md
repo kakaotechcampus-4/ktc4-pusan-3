@@ -509,8 +509,6 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 
 ### 이관 검토
 
-- `memory/tools/schedule.py` 의 `prepared_at_for` → `app/rules/` — 웹의 준비물 체크(`PATCH /event-items/{iid}`)도
-  같은 규칙을 써야 한다. ai 브랜치에서 be 파트 폴더를 건드릴 수 없어 tool 에 둔 것이지 제자리가 아니다.
 - `common/datetime_rules.py` → `app/rules/` — 루트 §3 상 날짜 계산은 rules 소속이다. 표준 라이브러리만 쓰도록
   만들어 그대로 옮길 수 있다. 제출 API 가 `check_when` 을 다시 불러야 해서 이제는 필요가 더 분명해졌다.
   `app/rules/` 는 공동 소유지만 파트 리드는 리뷰 없이 고칠 수 있다 (2026-09-23 합의).
@@ -543,8 +541,11 @@ D9 가 요구한 ORM 변경이다. 이 브랜치가 아니라 백엔드 쪽에�
 적혔다. Agent 가 아직 이 ORM 을 쓰지 않아(자체 in-memory store) 그 불변식을 코드가 강제하지는 않는다.
 어댑터를 붙일 때 확인할 것.
 
-### `prepared_at` 판정이 tool 에 있다
+### `prepared_at` 은 store 가 정한다
 
-`is_prepared` 가 바뀔 때 `prepared_at` 을 어떻게 둘지는 규칙이라 `app/rules/` 가 제자리인데,
-그 폴더가 be 파트라 ai 브랜치에 담을 수 없었다. `memory/tools/schedule.py` 의 `prepared_at_for` 에
-순수 함수로 두었다. 백엔드가 `PATCH /event-items/{iid}` 를 만들 때 같이 옮긴다.
+`is_prepared` 가 바뀔 때 `prepared_at` 을 어떻게 둘지는 `MemoryStore.set_event_item_prepared` 가 정한다.
+DB 구현은 백엔드의 `domains/schedule/repository.set_event_item_prepared`(`PATCH /children/{cid}/event-items/{iid}`
+와 같은 함수)를 그대로 부른다. 이전 값을 UPDATE 안의 `CASE` 로 보기 때문에, 읽은 뒤 쓰기 전에 보호자가
+화면에서 체크해도 처음 시각이 남는다(#335 · #257). 미체크 → 체크만 지금 시각, 체크 → 다시 체크는 처음 시각 유지,
+해제는 `None`. 규칙을 `app/rules/` 의 순수 함수로 빼지 않은 이유도 이것이다 — 백엔드는 그 함수를 못 쓰고 `rules/` 에
+Agent 만 쓰는 사본이 남는다.

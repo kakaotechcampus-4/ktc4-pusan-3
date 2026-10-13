@@ -31,6 +31,7 @@ from app.domains.memory.observation.models import (
     ObservationStatus,
     Promotable,
 )
+from app.domains.schedule import repository as schedule_repository
 from app.domains.schedule.models import Event, EventItem
 
 _KST = timezone(timedelta(hours=9))
@@ -373,23 +374,18 @@ class DbMemoryStore:
         ).all()
         return [_event_item_row(r) for r in rows]
 
-    async def update_event_item(
-        self, *, item_id: str, fields: dict[str, Any]
+    async def set_event_item_prepared(
+        self, *, item_id: str, is_prepared: bool
     ) -> EventItemRow | None:
         uid = _parse_uuid(item_id)
         if uid is None:
             return None
-        # EventItem has no child_id; join through Event to enforce ownership.
-        orm = await self._session.scalar(
-            select(EventItem)
-            .join(Event, EventItem.event_id == Event.id)
-            .where(EventItem.item_id == uid, Event.child_id == self._child_id)
+        # 시각 규칙은 백엔드 PATCH 와 같은 함수 하나에 둔다 — 이전 값을 UPDATE 안에서 본다
+        orm = await schedule_repository.set_event_item_prepared(
+            self._session, child_id=self._child_id, item_id=uid, is_prepared=is_prepared
         )
         if orm is None:
             return None
-        for k, v in fields.items():
-            setattr(orm, k, v)
-        await self._session.flush()
         self.wrote = True
         return _event_item_row(orm)
 
