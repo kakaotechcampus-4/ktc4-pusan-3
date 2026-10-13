@@ -56,7 +56,11 @@ from app.domains.child.repository import (
     update_child,
 )
 from app.domains.consent.models import ConsentAction, ConsentScope
-from app.domains.consent.repository import REQUIRED_CHILD_SCOPES, record_consent
+from app.domains.consent.repository import (
+    REQUIRED_CHILD_SCOPES,
+    child_health_granted,
+    record_consent,
+)
 from app.domains.policy.repository import find_active_versions
 from app.rules.age import age_display
 from app.rules.observed_label import observed_label
@@ -430,13 +434,14 @@ async def create_input(
     child: AccessibleChild,
     body: CreateInputRequest,
     parent: CurrentParent,
+    session: SessionDep,
     request: Request,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> CreateInputResponse:
     """접수만 한다 — 채널을 열고 러너를 뒤에서 띄우고 바로 202. Agent 를 기다리지 않는다.
 
-    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 맥락 확인 → 한도 → 맥락 꺼내기 →
-    채널 열기 → 키 기억 → 러너 시작.
+    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 맥락 확인 → 동의 읽기 → 한도 →
+    맥락 꺼내기 → 채널 열기 → 키 기억 → 러너 시작.
     키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
     재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
     맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 꺼내는 건 한도를 통과한 뒤다.
@@ -473,6 +478,13 @@ async def create_input(
                 "이전 질문을 이어서 확인할 수 없어요.",
             )
 
+    # 아이 건강정보 동의의 현재 값을 입력 한 번에 한 번 읽어 Agent 까지 값으로 넘긴다 (#372).
+    # 🚨 읽기에 실패하면 False 로 바꾸지 않고 예외로 끝낸다 — "동의 안 함" 으로 넘기면 Agent 가
+    #    health_safety 를 읽지 않고 알레르기 필터 없이 추천을 연다. 한도 · 되묻기 맥락 · 채널 ·
+    #    키 기억보다 앞이라 실패한 요청이 하루 한도와 한 번뿐인 맥락을 먹지 않는다.
+    #    공통 의존성(AccessibleChild)에 넣지 않았다 — 아이 주소를 쓰는 모든 요청에 쿼리가 붙는다.
+    health_consent = await child_health_granted(session, child_id=child.child_id)
+
     # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
     # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
     # 4회가 상한이지만(#251 · agents/memory/agent.py MAX_QUESTIONS), 조각마다 새로 열리니
@@ -496,6 +508,7 @@ async def create_input(
     job = runner.agent_job(
         child_id=child.child_id,
         birth_date=child.birth_date,
+        child_health_granted=health_consent,
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,
