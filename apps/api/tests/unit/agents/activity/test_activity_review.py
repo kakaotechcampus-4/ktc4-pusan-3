@@ -6,6 +6,7 @@
 - 장소 이름은 이번 run 장소 조회 결과에 있어야 하고, 통과하면 코드가 문장 앞에 붙인다.
 """
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
@@ -123,6 +124,7 @@ def review(
         safety=safety_terms(safety),
         outdoor_ok=outdoor_ok,
         docs=docs,
+        today=TODAY,
     )
 
 
@@ -145,6 +147,25 @@ class TestPass:
         (draft,) = review(candidate(evidence=[])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
+
+    def test_6개월_지난_확정_관심_하나만_인용하면_일반_추천이고_그_인용은_빠진다(self):
+        """새로 생기는 동작이다. Curator 의 archived 는 새 관찰이 붙을 때만 갱신돼서, 몇 달
+        언급이 없던 관심이 confirmed 로 남아 단독 근거로 나갈 수 있었다 (#329)."""
+        old = {**SEEN, BLOCKS: replace(SEEN[BLOCKS], observed_on=date(2026, 3, 1))}
+
+        (draft,) = review(candidate(), seen=old).drafts
+
+        assert draft.kind == "general"
+        assert draft.reason == GENERAL_REASON
+        assert draft.citations == ()
+
+    def test_모델이_쓴_reason_이_그대로_추천의_reason_이다(self):
+        """#329 완료 기준. 두 칸(why_this · why_now)을 합치던 단계는 #359 에서 없어졌다 —
+        여기서는 고정만 한다. 앞뒤 공백만 뺀다."""
+        (draft,) = review(candidate(reason="  블록을 오래 가지고 놀았어요  ")).drafts
+
+        assert draft.kind == "personalized"
+        assert draft.reason == "블록을 오래 가지고 놀았어요"
 
 
 class TestEvaluative:

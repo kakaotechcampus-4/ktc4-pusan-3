@@ -5,7 +5,8 @@
                      풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   3. reason 문장     수치 · 진단 · 처방 · 몸 상태 · 또래 비교를 막는다(`nutrient_wording`)
   4. 근거 대조       이번 run 에서 조회하지 않은 근거 id 를 인용하면 후보를 거절한다
-  5. build()         아이 기록 근거 행 수로 `kind` 를 정한다. 이름 · 재료는 카탈로그 행에서 온다
+  5. build()         6개월이 안 지난 아이 기록 근거 수로 `kind` 를 정한다.
+                     이름 · 재료는 카탈로그 행에서 온다
 
 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다. 걸린 후보는 고치지 않고 통째로 뺀다.
 사유는 코드로만 남긴다 — 메뉴 이름 · 근거 문장을 싣지 않는다(로그로 흘러간다).
@@ -28,7 +29,6 @@ from app.agents.food.schemas.common import EvidenceRef, MealSlot
 from app.agents.food.schemas.recommend import MealCandidate
 from app.agents.food.store.ports import FoodDocRow, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.safety import filter_food_safety
-from app.rules.affinity_reason import is_stale
 from app.rules.age import Stage
 from app.rules.menu_key import normalize_menu_key
 
@@ -91,6 +91,7 @@ def review_candidates(
     """후보를 순서대로 검사해 통과한 것은 `MealPick` 으로, 걸린 것은 사유로 돌려준다.
 
     `entries` 는 `build_gate` 가 run state 에 담은 health_safety 행이다 — 여기서 다시 읽지 않는다.
+    `today` 는 `build()` 의 6개월 판정 기준일이다.
     """
     rejections: list[Rejection] = []
     chosen: list[tuple[int, MealCandidate, MenuCatalogRow]] = []
@@ -118,7 +119,7 @@ def review_candidates(
     for index, candidate, row in chosen:
         if row.menu_key not in passed:
             continue
-        reason = _check(candidate, seen=seen, docs=docs, today=today)
+        reason = _check(candidate, seen=seen, docs=docs)
         if isinstance(reason, RejectReason):
             rejections.append(Rejection(index, reason))
             continue
@@ -133,6 +134,7 @@ def review_candidates(
                 else GENERAL_REASON,
                 allergens=verdict.allergens.get(row.menu_key, ()),
                 items=row.ingredients,
+                today=today,
             )
         except SuggestionRejected:
             rejections.append(Rejection(index, RejectReason.BUILD))
@@ -160,7 +162,7 @@ def explain(rejections: Sequence[Rejection]) -> str:
 
 
 def _check(
-    candidate: MealCandidate, *, seen: Seen, docs: Docs, today: date
+    candidate: MealCandidate, *, seen: Seen, docs: Docs
 ) -> tuple[EvidenceCitation, ...] | RejectReason:
     """reason 문장 → 근거 대조 → 인용 만들기. 걸리면 사유를, 아니면 인용을 돌려준다."""
     # "먹은 식사가 주어" 요구는 영양소 분석 요약에만 맞는 규칙이다 — 추천 이유에는 걸지 않는다
@@ -172,19 +174,9 @@ def _check(
     if unseen((pick.id for pick in candidate.evidence), known):
         return RejectReason.UNKNOWN_EVIDENCE
 
-    # 인용의 종류는 모델이 쓴 값이 아니라 조회 결과에서 채운다
+    # 인용의 종류는 모델이 쓴 값이 아니라 조회 결과에서 채운다. 6개월 판정은 build() 가 한다
     found = [(pick, _lookup(seen, docs, pick)) for pick in candidate.evidence]
-    citations = [_cite(item, note=pick.note) for pick, item in found]
-    child = [
-        (citation, item)
-        for citation, (_, item) in zip(citations, found, strict=True)
-        if citation.ref.is_child_record
-    ]
-    if child and all(_is_stale(item, today) for _, item in child):
-        # 6개월 넘은 기록은 단독 근거로 쓰지 않는다 — 인용을 빼면 일반 추천이 된다(루트 §2).
-        # 선호(affinity)만이 아니다 — guide_weaning_stage 는 태어난 뒤 전체 관찰을 돌려준다
-        citations = [c for c in citations if not c.ref.is_child_record]
-    return tuple(citations)
+    return tuple(_cite(item, note=pick.note) for pick, item in found)
 
 
 def _lookup(seen: Seen, docs: Docs, pick: EvidenceRef) -> RankedEvidence | FoodDocRow:
@@ -192,11 +184,6 @@ def _lookup(seen: Seen, docs: Docs, pick: EvidenceRef) -> RankedEvidence | FoodD
     found = seen.get(key) or docs.get(key)
     assert found is not None
     return found
-
-
-def _is_stale(item: RankedEvidence | FoodDocRow, today: date) -> bool:
-    """아이 기록의 마지막 날짜가 6개월(달력 기준) 넘게 지났는가. 문서 행은 해당하지 않는다."""
-    return isinstance(item, RankedEvidence) and is_stale(item.observed_on, today=today)
 
 
 def _cite(item: RankedEvidence | FoodDocRow, *, note: str) -> EvidenceCitation:

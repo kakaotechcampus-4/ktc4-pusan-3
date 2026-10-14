@@ -62,6 +62,7 @@ async def propose_activity_candidates(
         recent_activities=[row.activity for row in observations],
         safety=safety_terms(entries),
         outdoor_ok=gate.outdoor_ok,
+        today=today,
     )
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다

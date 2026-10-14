@@ -7,11 +7,13 @@ tool 인자에 두지 않는다 — 모델이 만료나 승인 상태를 정할 
 import re
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
 from app.agents.common.readout import Readout, ReadoutCatalog, ReadoutText, code_readout
-from app.agents.common.refs import EvidenceCitation, count_child_records
+from app.agents.common.refs import EvidenceCitation
+from app.rules.staleness import is_stale
 
 SuggestionKind = Literal["general", "personalized"]
 
@@ -68,11 +70,17 @@ def build(
     general_reason: str | None = None,
     allergens: tuple[str, ...] = (),
     items: tuple[str, ...] = (),
+    today: date,
 ) -> SuggestionDraft:
-    """아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
+    """6개월이 안 지난 아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
     아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
     덮어쓴다. general 인데 인용이 0행인 것은 거절 사유가 아니라 품질 지표다.
+
+    6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
+    그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
+    인용했으면 개인화로 두고 둘 다 남긴다. 날짜를 모르는 아이 기록은 세지 않는다.
+    `today` 는 호출하는 쪽의 기준일이다.
 
     기피 근거를 인용했으면 `reason` 에 무엇을 피했는지가 있어야 한다. 인용만 하고 말하지
     않으면 보호자에게는 근거 없는 추천과 같다.
@@ -83,8 +91,7 @@ def build(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
             )
 
-    refs = tuple(item.ref for item in citations)
-    if count_child_records(refs) == 0:
+    if not any(_fresh(item, today) for item in citations):
         if general_reason is None:
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
@@ -94,7 +101,7 @@ def build(
             kind="general",
             content=content,
             reason=general_reason,
-            citations=citations,
+            citations=tuple(item for item in citations if not item.ref.is_child_record),
             allergens=allergens,
             items=items,
         )
@@ -111,6 +118,15 @@ def build(
         citations=citations,
         allergens=allergens,
         items=items,
+    )
+
+
+def _fresh(item: EvidenceCitation, today: date) -> bool:
+    """개인화 근거로 셀 수 있는 아이 기록인가. 날짜를 모르면 낡았는지 알 수 없어 세지 않는다."""
+    return (
+        item.ref.is_child_record
+        and item.observed_on is not None
+        and not is_stale(item.observed_on, today)
     )
 
 

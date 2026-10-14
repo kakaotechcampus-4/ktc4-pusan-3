@@ -25,8 +25,8 @@ from app.agents.food.schemas.records import (
     SearchFoodMemoryArgs,
 )
 from app.agents.food.store.ports import DAYCARE_SLOT_ORDER, DaycareSlot
-from app.rules.affinity_reason import is_stale
 from app.rules.menu_key import normalize_menu_key
+from app.rules.staleness import is_stale
 
 # 몇 날 나오면 반복인지. 판정 기준은 코드의 상수로 둔다 — 모델이 정하지 않는다
 REPEATED_MIN_DAYS = 3
@@ -58,7 +58,7 @@ async def search_food_memory(context: FoodContext, args: SearchFoodMemoryArgs) -
     - 상위 `TOP_N` 개만 돌려주고, 돌려준 것만 `context.state.seen_evidence` 에 적는다. 출력 tool 이
       이 표에 없는 id 를 인용하면 그 후보를 거절한다.
     - 마지막 관찰이 6개월 넘은 선호는 `is_stale=True` 다. 낡은 선호만으로 개인화 근거를 만들지
-      않는다(루트 §2) — 그 판정은 출력 tool 이 한다.
+      않는다(루트 §2) — 개인화 판정은 `build()` 가 같은 함수(`rules/staleness`)로 한다.
     - 결과에는 kind · id · tier · label · polarity · 날짜 · is_stale 만 싣는다.
       raw_text 는 싣지 않는다.
     - 0행이면 NO_RECORDS. 호출부는 일반 추천으로 간다 — 추천을 질문으로 대신하지 않는다.
@@ -107,7 +107,7 @@ async def search_food_memory(context: FoodContext, args: SearchFoodMemoryArgs) -
                 "polarity": item.polarity,
                 "observed_on": item.observed_on.isoformat(),
                 "is_stale": item.ref.kind == "profile_affinity"
-                and is_stale(item.observed_on, today=today),
+                and is_stale(item.observed_on, today),
             }
             for item in picked.values()
         ],
