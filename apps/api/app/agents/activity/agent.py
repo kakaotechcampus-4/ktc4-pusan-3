@@ -104,7 +104,7 @@ async def run(
     # 확인 문구(state.cautions)는 결과의 readouts 로 싣는다 — pipeline 은 for_task() 사본으로
     # Agent 를 돌리고 결과만 받아서, 여기 싣지 않으면 표시 없이 빠진다 (#380).
     # 🚨 위험 경고(state.warnings)는 아직 결과에 없다. 추천 하나에 붙는 문구라 공통
-    # SuggestionDraft 에 칸이 생겨야 한다 — #380 합의 1
+    # SuggestionDraft 에 칸이 생겨야 한다 — #402 (1차 배포 범위 밖)
     context.state.suggestions = drafts
     context.state.warnings = tuple(warning for _, warning in picked)
     notice = count_notice(len(drafts))
