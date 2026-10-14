@@ -84,6 +84,8 @@ def to_sse(event: Event) -> sse.SseEvent | None:
                 for readout in event.readouts
             ],
             "question": event.question,
+            # 저장(commit)이 끝난 추천의 id. 추천 순서 그대로다. 추천이 없으면 [] — 키는 늘 있다
+            "suggestion_ids": list(event.suggestion_ids),
         }
     if isinstance(event, Partial):
         # 끝 신호가 아니다. 뒤에 done 이 오고, 화면은 그때 "부분 결과" 로 닫는다.

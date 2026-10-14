@@ -237,7 +237,8 @@ export function newHealthSafety(input: {
 }): HealthSafety {
   return {
     kind: "health_safety",
-    id: `hs_${Date.now()}`,
+    // 🚨 시각만 쓰면 같은 밀리초에 등록과 고치기가 같은 id 를 받는다 — 고치면 새 id 라서 겹치면 안 된다.
+    id: `hs_${crypto.randomUUID()}`,
     type: input.type,
     label: input.label,
     severity: input.severity ?? null,

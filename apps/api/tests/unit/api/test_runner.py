@@ -16,6 +16,7 @@ from datetime import date
 import pytest
 
 from app.agents import entrypoint
+from app.agents.common.suggestion import SuggestionDraft
 from app.agents.entrypoint import (
     Done,
     EventDrafts,
@@ -771,3 +772,144 @@ async def test_도메인_Agent_기억_포트는_열_때마다_run_세션과_다�
     assert run_session not in domain_sessions
     assert domain_sessions[0] is not domain_sessions[1]
     assert [store._session for store in stores] == domain_sessions
+
+
+_DRAFT = SuggestionDraft(agent="food", kind="general", content="계란말이", reason="또래 기준")
+
+
+def _batch(run_id: str) -> entrypoint.SuggestionBatch:
+    return entrypoint.SuggestionBatch(
+        run_id=run_id, agent="food", task_type="meal_recommendation", drafts=(_DRAFT,)
+    )
+
+
+def _sessions(monkeypatch: pytest.MonkeyPatch) -> list:
+    """러너가 여는 세션을 가짜로 바꾸고, 열린 순서대로 남긴다."""
+    opened: list = []
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        async def __aenter__(self) -> "FakeSession":
+            opened.append(self)
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    monkeypatch.setattr(runner, "background_session", FakeSession)
+    return opened
+
+
+def _repository_save(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> list[dict]:
+    """BE 저장 함수를 가짜로. 러너는 job 안에서 이 이름을 읽는다.
+
+    DbMemoryStore 와 같은 늦은 import 라서 모듈 속성을 바꾸면 먹는다.
+    """
+    from app.domains.suggestion import repository
+
+    calls: list[dict] = []
+
+    async def save_agent_suggestions(session, **kwargs):
+        calls.append(kwargs)
+        if fail:
+            raise RuntimeError("저장 실패")
+        return [uuid.UUID(int=7 + index) for index in range(len(kwargs["payloads"]))]
+
+    monkeypatch.setattr(repository, "save_agent_suggestions", save_agent_suggestions)
+    return calls
+
+
+async def test_추천은_묶음마다_새_세션에서_저장하고_commit_한다(monkeypatch):
+    """트랜잭션 회의 표 — Agent 결과 하나마다 별도 트랜잭션. run 세션을 쓰지 않는다."""
+    opened = _sessions(monkeypatch)
+    calls = _repository_save(monkeypatch)
+    returned: list = []
+
+    async def fake_handle_input(**kwargs):
+        for _ in range(2):
+            returned.append(await kwargs["save_suggestions"](_batch(kwargs["run_id"])))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    run_session, *save_sessions = opened
+    assert [session.commits for session in save_sessions] == [1, 1]
+    assert run_session not in save_sessions and run_session.commits == 0
+    assert returned == [(str(uuid.UUID(int=7)),)] * 2  # 화면 · 05 가 쓰는 문자열 id
+    assert (calls[0]["child_id"], calls[0]["run_id"]) == (CHILD, channel.run_id)
+    assert calls[0]["payloads"] == [_DRAFT.to_payload()]
+    assert channel.suggestions_saved is True
+
+
+async def test_추천_저장_뒤_예외가_나도_done_이고_키를_풀지_않는다(monkeypatch):
+    """저장된 draft 가 있는 run 을 failed 로 닫으면 키가 풀려 다시 보낼 때 두 벌이 된다
+    (멘토 #196 ①)."""
+    _sessions(monkeypatch)
+    _repository_save(monkeypatch)
+
+    async def fake_handle_input(**kwargs):
+        await kwargs["save_suggestions"](_batch(kwargs["run_id"]))
+        raise RuntimeError("저장 뒤에 터졌다")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-saved"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert channel.ended_with == "done"
+    assert idempotency.recall(**scope) == channel.run_id
+
+
+async def test_추천_저장_뒤_시간_안전망에_걸려도_done_이다(monkeypatch):
+    _sessions(monkeypatch)
+    _repository_save(monkeypatch)
+
+    async def fake_handle_input(**kwargs):
+        await kwargs["save_suggestions"](_batch(kwargs["run_id"]))
+        await asyncio.sleep(999)  # 안전망 유발
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-saved-timeout"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=2)
+
+    assert channel.ended_with == "done"
+    assert idempotency.recall(**scope) == channel.run_id
+
+
+async def test_추천_저장이_실패하면_확정된_저장으로_세지_않는다(monkeypatch):
+    _sessions(monkeypatch)
+    _repository_save(monkeypatch, fail=True)
+
+    async def fake_handle_input(**kwargs):
+        with pytest.raises(RuntimeError):
+            await kwargs["save_suggestions"](_batch(kwargs["run_id"]))
+        raise RuntimeError("그 뒤에 터졌다")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-save-failed"}
+    idempotency.remember(**scope, replay=channel.run_id)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert channel.suggestions_saved is False
+    assert channel.ended_with == "failed"
+    assert idempotency.recall(**scope) is None

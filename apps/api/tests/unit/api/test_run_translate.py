@@ -215,8 +215,25 @@ def test_agent_result_copies_readouts_without_source_refs():
                 }
             ],
             "question": None,
+            "suggestion_ids": [],
         },
     )
+
+
+def test_agent_result_carries_saved_suggestion_ids_in_order():
+    """저장(commit)이 끝난 추천의 id 를 추천 순서대로 싣는다. 화면은 이 id 로 05 를 연다 (#227)."""
+    result = AgentResult(
+        agent="food",
+        task_type="meal_recommendation",
+        status="completed",
+        readouts=(),
+        question=None,
+        suggestion_ids=("s-1", "s-2"),
+    )
+
+    _, payload = translate.to_sse(result)
+
+    assert payload["suggestion_ids"] == ["s-1", "s-2"]
 
 
 def test_agent_result_keeps_the_notice_code():

@@ -19,6 +19,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.pipeline import handle_input
+from app.agents.suggestion_save import InMemorySuggestions
 
 KST = ZoneInfo("Asia/Seoul")
 CHILD = UUID(int=1)
@@ -114,6 +115,7 @@ async def test_커밋_후_curator_trigger_가_불린다(memory_context: AgentCon
         memory_client=_memory_llm_saves(),
         curator_trigger=trigger,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.committed
@@ -131,6 +133,7 @@ async def test_curator_trigger_가_None_이면_스킵(memory_context: AgentConte
         memory_client=_memory_llm_saves(),
         # curator_trigger 생략 — 기본값 None
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.committed  # 커밋은 됐지만 trigger 는 안 불림 (에러 없음)
@@ -154,6 +157,7 @@ async def test_이어받기에서도_curator_trigger_가_불린다(memory_contex
         continuation=pending,
         curator_trigger=trigger,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.committed
@@ -181,6 +185,7 @@ async def test_저장하지_않으면_curator_trigger_안_불린다(memory_conte
         memory_client=_memory_llm_no_save(),
         curator_trigger=trigger,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert not result.committed
@@ -201,6 +206,7 @@ async def test_curator_trigger_예외가_run을_죽이지_않는다(memory_conte
         memory_client=_memory_llm_saves(),
         curator_trigger=boom,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.ok
@@ -231,6 +237,7 @@ async def test_기준일은_서비스_시간대의_날짜다() -> None:
         memory_client=_memory_llm_saves(),
         commit=_no_commit,
         curator_trigger=trigger,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert triggered == [(CHILD, date(2026, 9, 10))]

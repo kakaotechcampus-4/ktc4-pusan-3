@@ -48,6 +48,7 @@ from app.agents.pipeline import (
 )
 from app.agents.pipeline import handle_input as _handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
 
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
@@ -66,6 +67,7 @@ __all__ = [
     "Failed",
     "Guidance",
     "InMemoryStore",
+    "InMemorySuggestions",
     "MemoryNote",
     "MemoryReply",
     "MemoryStore",
@@ -75,9 +77,11 @@ __all__ = [
     "PipelineResult",
     "Ref",
     "Rerouted",
+    "SaveSuggestions",
     "Saved",
     "Step",
     "StoreOpener",
+    "SuggestionBatch",
     "Unavailable",
     "Unwritten",
     "WeatherSource",
@@ -134,6 +138,7 @@ async def handle_input(
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
     commit: Commit,
+    save_suggestions: SaveSuggestions,
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
 ) -> PipelineResult:
@@ -160,6 +165,8 @@ async def handle_input(
       같은 트랜잭션에 넣지 않는다 — commit 뒤 PendingReply 로 나가 러너가 프로세스 메모리에
       둔다(팀 합의). Memory 가 반복 상한에 걸려 기록을 다 끝내지 못하면 commit 을 부르지
       않는다. 러너는 commit 되지 않은 세션을 되돌린다.
+    - save_suggestions 는 도메인 Agent 결과 하나의 추천을 저장 · commit 하는 함수다(필수). 러너가
+      결과마다 짧은 DB 세션으로 만든다. 테스트 · eval 은 `InMemorySuggestions()`.
     - curator_trigger 를 넘기면 Memory 가 commit 된 직후 pipeline 이 (child_id, 기준일) 로 한 번
       부른다. 콜백이 별도 세션에서 Curator 를 백그라운드로 띄운다. 러너가 `curator_deps()` 로
       만든다. 안 넘기면(테스트 · eval) Curator 는 돌지 않는다.
@@ -249,6 +256,7 @@ async def handle_input(
         emit=emit,
         continuation=continuation,
         commit=commit,
+        save_suggestions=save_suggestions,
         writes=writes,
         curator_trigger=curator_trigger,
     )
