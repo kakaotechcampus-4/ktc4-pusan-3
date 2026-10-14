@@ -61,6 +61,6 @@ export function startNativeBridgeStub(): void {
   window.icatch = { ...window.icatch, recentPhotos: devBridge };
   console.info(
     "[mocks] 최근 사진 브릿지를 흉내 낸다 — 08 사진 시트의 줄이 가짜 썸네일로 채워진다.\n" +
-      "        진짜 구현은 apps/mobile 의 Expo 셸이다 (lib/native/recent-photos.ts).",
+      "        실제 앱 셸은 이 창구를 꽂지 않는다 — 사진 권한과 함께 뺐다 (#408).",
   );
 }

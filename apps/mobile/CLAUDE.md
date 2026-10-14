@@ -27,10 +27,7 @@ Owner: 고태영 (프론트 리드)
 | React | 19.2.3 | |
 | react-native-webview | 13.16.1 | |
 | react-native-safe-area-context | 5.7.0 | |
-| expo-media-library | 57.0.5 | 최근 사진 목록 · 권한 (`/legacy` 진입점을 쓴다 — `src/native/recent-photos.ts` 머리말) |
-| expo-dev-client | 57.0.19 | 개발 빌드 런처 — Expo Go 로는 사진을 못 본다 (아래) |
-| expo-image-manipulator | 57.0.19 | 썸네일 축소 |
-| expo-file-system | 57.0.7 | 원본 base64 읽기 |
+| expo-dev-client | 57.0.19 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
 | TypeScript | 6.0.3 | |
 
@@ -56,55 +53,38 @@ App.tsx                      웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외
 index.ts                     registerRootComponent
 src/config.ts                WEB_URL · 허용 출처 판정
 src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다
-src/native/bridge.ts         웹뷰에 꽂는 창구 — 주입 스크립트 · 요청 파싱 · 조각 전송
-src/native/recent-photos.ts  최근 사진을 실제로 읽는 곳 (권한 · 썸네일 · 원본)
 src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth/callback 변환
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
 src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
-app.json                     Expo 설정 (name · scheme · bundle id · 권한 플러그인)
+app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
 ```
 
-### 최근 사진 브릿지 (`window.icatch.recentPhotos`)
+### 🚨 사진 권한을 받지 않는다 (#408)
 
-08 사진 시트의 "최근 사진" 줄은 **웹이 만들 수 없다.** 브라우저는 기기 갤러리 *목록*을 읽는 API 가 없고
-(`<input type="file">` 은 OS 피커를 열 뿐이다), 그래서 값은 셸이 꽂아 준다.
+Android 앱이 요청하는 권한은 `INTERNET` 하나다 (릴리스 매니페스트 기준). 사진을 고르는 길은 웹의
+`<input type="file">` 이 여는 시스템 선택기와 카메라 인텐트라 Android 에서는 권한이 필요 없다.
 
-**계약의 정본은 웹에 있다** — [`apps/web/src/lib/native/recent-photos.ts`](../web/src/lib/native/recent-photos.ts).
-여기는 그 계약을 만족시키는 쪽이고, 모양을 바꾸려면 **웹의 그 파일을 먼저 고친다.**
+⚠️ **iOS 는 확인 전이다.** WKWebView 의 촬영과 앨범은 Info.plist 의 `NSCameraUsageDescription` ·
+`NSPhotoLibraryUsageDescription` 이 있어야 하는데 지금 둘 다 없다 (앨범 키는 이번에 플러그인과 함께 빠졌다).
+iOS 첫 빌드 때 08 시트의 촬영과 앨범을 확인하고, 필요하면 `ios.infoPlist` 에 설명 문구를 넣는다.
 
-```
-웹  listRecentPhotos(12)  ──postMessage──▶  App.tsx onMessage
-                                                 └▶ src/native/recent-photos.ts (권한 · 쿼리 · 썸네일)
-웹  ◀──injectJavaScript──  조각 N 개 + 끝맺음  ◀──┘
-```
+예전에는 08 사진 시트의 "최근 사진" 줄을 채우려고 `expo-media-library` 로 갤러리 목록을 읽어
+`window.icatch.recentPhotos` 로 웹에 꽂았다. 첫 스토어 배포 전에 뺐다 — Google Play 는 사진 권한
+(`READ_MEDIA_IMAGES`)을 쓰는 앱에 별도 선언과 심사를 요구하고, 가끔 사진 한 장을 고르는 용도는 시스템
+사진 선택기를 쓰라고 한다. 이 줄은 그 기준을 넘기 어렵다.
 
-- **큰 값은 나눠 보낸다.** 네이티브 → 웹은 스크립트를 밀어 넣는 것뿐이라 값을 스크립트에 적어야 하는데,
-  사진 원본 base64 를 한 번에 넣으면 Android WebView 가 조용히 잘라 먹는다.
-- 🚨 **`injectedJavaScriptBeforeContentLoaded` 다.** 웹의 개발용 가짜 브릿지
-  (`apps/web/src/mocks/native-bridge.ts`)가 "이미 꽂혀 있으면 안 건드린다" 이므로, 진짜가 먼저 자리를 잡아야
-  셸 안에서 가짜 썸네일이 뜨지 않는다.
-- 🚨 **권한 거부를 셸이 설명하지 않는다.** 답은 빈 값(`kind: "empty"`)이고, 줄을 그릴지 말지는 웹이 정한다.
-  여기에 안내 화면을 만들면 화면이 두 벌이 된다 (§1).
-- 🚨 **원본을 줄이지 않는다.** 이 사진으로 알림장 글자를 읽는다. "앨범에서 고르기" 는 원본을 그대로 넘기므로,
-  여기만 줄이면 **같은 사진인데 경로에 따라 분석 결과가 달라진다.**
-  ⚠️ **예외는 HEIC 하나이고, 그 이유도 같은 규칙이다** (#144 리뷰). iOS 의 `<input type="file">` 은 HEIC 를
-  JPEG 로 바꿔서 주기 때문에, 여기만 원본을 고집하면 두 경로가 **서로 다른 형식**을 준다. 그래서 HEIC/HEIF
-  일 때만 JPEG 로 맞춘다 — 크기는 안 건드린다. Android 는 지금도 같아서 이 길을 안 지난다.
-- 🚨 **웹이 보낸 메시지는 보낸 쪽 주소부터 본다** (`App.tsx` 의 `handleMessage`). 여기가 사진 원본이 기기 밖으로
-  나가는 유일한 문이라, 탐색 제한(`onShouldStartLoadWithRequest`) 한 겹에만 기대지 않는다. 그 `url` 은 보낸
-  **프레임** 기준이라(iOS `frameInfo.request.URL` · Android `WebMessageListener` 의 `sourceOrigin`)
-  크로스 오리진 iframe 이 부르는 것까지 막힌다.
-- 🚨 **고른 사진의 주소를 `getAssetInfoAsync(id)` 로 다시 묻지 않는다.** 그 함수는 EXIF 를 열기 때문에
-  Android 에서 `ACCESS_MEDIA_LOCATION`(사진이 **찍힌 장소**)을 요구하고, 없으면 호출 자체가 거절된다.
-  이 앱은 그 권한을 받을 이유가 없으므로, 목록을 만들 때 쥐고 있던 주소를 셸이 기억해 뒀다가 쓴다.
+- 웹의 계약(`apps/web/src/lib/native/recent-photos.ts`)은 남아 있다. 셸이 창구를 꽂지 않으면 웹은 줄을
+  그리지 않으므로 화면 동작은 그대로다.
+- 🚨 **다시 넣으려면 권한 선언부터 정한다.** 구현과 그때 지킨 규칙(큰 값은 조각으로, 원본을 줄이지 않기,
+  보낸 쪽 주소 확인, `getAssetInfoAsync` 금지)은 #144 와 #408 이전 커밋에 있다.
+- `app.json` 의 `android.blockedPermissions` 는 Expo 템플릿이 기본으로 넣는 저장소 · 오버레이 · 진동
+  권한을 막는다. 셸이 쓰는 곳이 없다. 권한을 더하는 패키지를 넣으면 릴리스 매니페스트를 다시 확인한다
+  (`./gradlew :app:processReleaseMainManifest` 뒤 `app/build/intermediates/merged_manifest/release/`).
 
-### 🚨 Expo Go 로는 최근 사진을 볼 수 없다 — 개발 빌드가 필요하다
+### 🚨 Expo Go 로는 로그인을 끝낼 수 없다 — 개발 빌드가 필요하다
 
-Expo Go 는 Android 권한 정책이 바뀐 뒤로 미디어 라이브러리 접근을 **아예 막았다.**
-권한을 묻기도 전에 호출이 거절된다 (`Expo Go can no longer provide full access to the media library`).
-
-그래서 **이 줄을 눈으로 확인하려면 개발 빌드**를 써야 한다. 나머지 화면은 Expo Go 에서 그대로 보인다 —
-브릿지가 없는 것과 같은 상태가 되어 최근 사진 줄만 안 선다.
+카카오 로그인은 서버가 `icatch://auth` 로 돌려보내야 끝나는데(§4), Expo Go 는 이 앱의 스킴을 받지 않는다.
+그래서 **로그인 뒤 화면을 보려면 개발 빌드**를 쓴다.
 
 ```bash
 pnpm android          # = expo run:android — prebuild + gradle + 설치까지 한 번에
@@ -123,12 +103,11 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
 - **앱 밖 웹 주소는 in-app 브라우저로 앱 위에 얹는다** (`openBrowserAsync` · #212). 시스템 브라우저로 넘기면 앱을 떠나서, 약관을 다 읽은 사람이 동의 화면을 다시 찾아야 한다 — 필수 동의 직전의 링크라 그 수고가 곧 "안 읽고 체크" 다. in-app 브라우저는 진짜 브라우저라 도메인 · 자물쇠가 보이므로 위 규칙과 맞는다. `http(s)` 가 아닌 스킴(`tel:` · `mailto:` · `intent:`)과 in-app 브라우저를 못 여는 경우는 지금처럼 `Linking.openURL` 이다.
 - 🚨 **로그인 시작 URL 은 따로 연다** (`isAuthStartUrl()` · #210). 위의 in-app 브라우저(`openBrowserAsync`)나 시스템 브라우저로 열면 서버가 302 하는 `icatch://auth` 복귀를 받을 곳이 없다. `openAuthSessionAsync` 로 열고, `success` 일 때만 복귀 쿼리를 `/auth/callback` 에 붙여 **같은 웹뷰를 `location.replace` 로 옮긴다** — 웹뷰를 다시 만들면 `sessionStorage` 의 bind 가 사라진다. 셸은 URL 을 열고 돌려받을 뿐 코드 교환 · 토큰은 웹이 한다 (§1). 흐름 정본은 [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) §5.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
-- 🚨 **웹에서 온 메시지를 믿지 않는다.** `parseBridgeRequest()` 를 거치지 않은 값으로 네이티브를 부르지 않는다.
-  웹뷰는 우리 페이지만 띄우지만(`isInternalUrl`), 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
-- 🚨 **사진 경로 · 파일 이름 · 썸네일을 로그에 찍지 않는다** (최상위 CLAUDE.md §2 개인정보).
-  예외 메시지에도 경로가 섞여 들어오므로 `catch` 에서 그대로 찍지 않는다.
-- 🚨 **권한은 필요한 것만 묻는다.** `granularPermissions: ["photo"]` — 사진만이다. 기본값은 영상 · 오디오까지
-  묻고, 저장 권한(`savePhotosPermission`)과 사진 위치(`isAccessMediaLocationEnabled`)는 끈 채로 둔다.
+- 🚨 **웹에서 오는 메시지(`onMessage`)를 받지 않는다.** 지금 웹이 셸에 부탁할 것이 없다. 창구가 다시 생기면
+  보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만 네이티브를 부른다 —
+  모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
+- 🚨 **권한을 늘리지 않는다** (§3 "사진 권한을 받지 않는다"). 네이티브 기능이 필요해지면 그 권한이 스토어 심사에
+  무엇을 요구하는지부터 본다.
 - 🚨 **safe area 는 셸이 재고, 칠하는 것은 페이지다.** 웹뷰는 화면 끝까지 덮고(`edges={["left","right"]}`),
   상태바·제스처바 크기는 `--shell-inset-top` / `--shell-inset-bottom` 으로 넘긴다
   (`src/native/safe-area.ts` → 웹의 `pt-safe-*`/`pb-safe-*`).
@@ -150,7 +129,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 브릿지 왕복 · 로그인 · 외부 링크 · 웹뷰 안 주소 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
