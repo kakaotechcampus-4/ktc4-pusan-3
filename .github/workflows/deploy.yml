@@ -6,12 +6,17 @@ on:
       - develop
   workflow_dispatch:
 
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,6 +33,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --timeout-seconds 600 \
             --parameters commands='[
+              "set -e",
               "cd /home/ubuntu/ktc4-pusan-3",
               "git fetch origin ${{ github.ref_name }}",
               "git checkout ${{ github.ref_name }}",
@@ -35,7 +41,8 @@ jobs:
               "make api-image",
               "make web-image",
               "make deploy-migrate",
-              "make deploy-up"
+              "make deploy-up",
+              "docker image prune -f"
             ]' \
             --query "Command.CommandId" \
             --output text)

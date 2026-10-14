@@ -27,7 +27,7 @@ name: ktc4-deploy
 
 services:
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.10.0-alpine
     container_name: ktc4-caddy
     restart: unless-stopped
     logging: *logging
@@ -44,6 +44,9 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    networks:
+      default:
+        ipv4_address: 172.30.0.10
 
   db:
     image: pgvector/pgvector:0.8.6-pg18
@@ -96,6 +99,9 @@ services:
       DB_NAME: ${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      # Caddy 가 넘긴 X-Forwarded-For 만 믿는다. "*" 는 위조가 열려서 금지.
+      # invite-v1.md §IP 를 얻는 법 참조.
+      FORWARDED_ALLOW_IPS: 172.30.0.10
       # CORS_ALLOW_ORIGINS 는 여기 두지 않는다 — environment 가 env_file 보다 우선해서
       # 빈칸이 apps/api/.env 값을 덮는다. apps/api/.env 에서만 관리한다.
       # 나머지 키(LLM·OAuth·외부 API)는 apps/api/.env 에서 직접 주입한다.
@@ -141,6 +147,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   ktc4-postgres-deploy-data:

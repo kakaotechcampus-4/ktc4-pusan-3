@@ -161,8 +161,8 @@
 
 #### IP 를 얻는 법 — 배포에서 중요
 
-- 지금은 `request.client.host` 를 그대로 쓰고 `X-Forwarded-For` 는 믿지 않는다. 헤더를 믿으면 위조로 IP 제한이 풀린다.
-- 🚨 **api 를 nginx 뒤로 넣으면** uvicorn 을 `--proxy-headers --forwarded-allow-ips=<nginx 주소>` 로 띄워야 한다. 안 하면 모든 요청이 nginx IP 한 버킷에 몰려 **실패 30회면 전원이 429** 가 되고, 계정 6개로 일부러 그 상태를 만들 수도 있다. `--forwarded-allow-ips="*"` 는 금지 — 위조가 다시 열린다.
+- Caddy 가 앞에 서 있어서 `X-Forwarded-For` 로 사용자 IP 를 받는다. uvicorn 은 `FORWARDED_ALLOW_IPS=172.30.0.10` (Caddy 고정 IP) 으로 설정되어 있어 그 주소에서 온 헤더만 믿는다 (`docker-compose.deploy.yml`).
+- 🚨 **`FORWARDED_ALLOW_IPS="*"` 는 금지** — 위조가 열린다. Caddy 가 `X-Forwarded-For` 를 덮어쓰므로 외부에서 위조해도 무시된다.
 
 ---
 
