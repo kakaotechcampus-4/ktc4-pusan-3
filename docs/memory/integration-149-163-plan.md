@@ -186,5 +186,5 @@ Phase E  통합 테스트
 | 항목 | 상태 | 비고 |
 | --- | --- | --- |
 | `ports.py:100` docstring "strength 기본값 0.3" → 0.5 | 이시하님 코드 | #163 리뷰에서 언급 필요 |
-| CLAUDE.md §2 "6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다" | **미구현** | 절대 규칙. Agent 가 evidence 를 가져올 때 6개월 필터가 없으면 §2 위반. 현재 `ARCHIVED_WINDOW_DAYS=21` 만 있고 180일 감쇠 규칙은 코드에 없다. Agent evidence 조회 경로에서 후속 이슈로 처리해야 한다 |
+| CLAUDE.md §2 "6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다" | **#329 에서 막음** | 절대 규칙. Agent 가 evidence 를 가져올 때 6개월 필터가 없으면 §2 위반. 현재 `ARCHIVED_WINDOW_DAYS=21` 만 있고 180일 감쇠 규칙은 코드에 없다. Agent evidence 조회 경로에서 후속 이슈로 처리해야 한다. `build()` 가 6개월 넘은 아이 기록만 남은 후보를 일반 추천으로 돌린다. 감쇠 배치는 아직 없다 |
 | education 도메인 DB Store 테스트 | 미작성 | `ObservationEducation.topic` 필수 필드 때문에 별도 헬퍼 필요 |

@@ -12,11 +12,9 @@
 
 from datetime import date
 
+from app.rules import staleness
 from app.rules.age import months_between
 from app.rules.observed_label import observed_label
-
-# NF-08 "6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다".
-_STALE_MONTHS = 6
 
 
 def state_reason(*, observation_count: int, last_observed_on: date, today: date) -> str:
@@ -40,14 +38,11 @@ def state_reason(*, observation_count: int, last_observed_on: date, today: date)
 
 
 def is_stale(last_observed_on: date, *, today: date) -> bool:
-    """마지막 기록이 달력 기준 6개월 이상 전이면 True.
+    """마지막 기록이 달력 기준 6개월 이상 전이면 True — `rules/staleness.is_stale` 과 같은 판정.
 
-    개월 수는 `rules/age.py` 의 `months_between` 으로 센다 — 해당일이 없는 달은 말일이 그날이다
-    (8월 31일의 6개월 뒤는 2월 말일). 직접 빼면 월말 기록이 하루 늦게 낡음 처리된다.
+    기억 카드 · 추천 근거 · Agent 가 한 함수를 쓴다. 기억 카드는 키워드 인자로 부른다.
     """
-    if last_observed_on > today:
-        return False
-    return months_between(last_observed_on, today) >= _STALE_MONTHS
+    return staleness.is_stale(last_observed_on, today)
 
 
 def _copula(word: str) -> str:

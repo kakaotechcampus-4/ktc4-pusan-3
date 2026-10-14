@@ -367,7 +367,7 @@
 | --- | --- | --- |
 | id | uuid | PK |
 | child_id | uuid | NOT NULL. FK → `child.id`, `ON DELETE CASCADE` |
-| kind | enum | `general` / `personalized`, NOT NULL. 아이 기록 근거가 1행 이상이면 `personalized`, 0행이면 `general`. **근거 0행이면 `general`이 정상**이고, 그래서 개인화로 집계되면 안 된다 |
+| kind | enum | `general` / `personalized`, NOT NULL. 6개월이 안 지난 아이 기록 근거가 1행 이상이면 `personalized`, 0행이면 `general`. **근거 0행이면 `general`이 정상**이고, 그래서 개인화로 집계되면 안 된다. 6개월 넘은 기록만 있으면 `general` 이고 그 인용은 저장하지 않는다(#329) |
 | feedback | enum | `child_liked` / `child_disliked` / `not_acted` , nullable (10-08 웹 목 값에 맞춤 — 07 기억 화면 제안 탭에서 받는다). 승인 뒤 만들어진 관찰의 `polarity`(+1 / −1 / 0)로 이어진다 — `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음" |
 | ~~source_refs~~ | — | **제거.** 근거는 `suggestion_evidence` 테이블로 옮겼다 (2026-09-22) |
 | agent | enum | `food` / `activity` / `growth` / `health` |
