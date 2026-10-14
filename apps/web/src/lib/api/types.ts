@@ -1020,15 +1020,19 @@ export interface CalendarDayResponse {
 }
 
 /**
- * `PUT /children/{cid}/calendar/{date}` — 일기 쓰기.
+ * `PUT /children/{cid}/diary/{date}` — 그날 내 일기 쓰기 (#318 2/3 · PR #333 · #364).
+ * 응답은 하루 보기의 `my_diary` 와 같은 `MyDiary` 다. 같은 날 다시 쓰면 덮어쓴다.
  *
- * ⚠️ **옮겨 갈 경로다.** 서버는 `PUT /children/{cid}/diary/{date}` · `{ content }` 로 받는다
- *    (#318 2/3). 응답 모양이 그 PR 에서 정해져서 그때 옮긴다. 사진은 일기 밖으로 나가서
- *    여기 싣지 않는다 — 일기를 덮어도 사진은 그대로다.
+ * 🚨 **공백뿐인 `content` 는 422 `validation_failed` 다.** 서버는 빈 내용을 지우기로 보지 않는다 —
+ *    지우기는 `DELETE /children/{cid}/diary/{date}` 로만 한다 (204, 없는 일기를 지워도 204).
+ *    저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다. 화면이 다듬어 보내지 않는다.
+ *
+ * 작성자는 로그인한 보호자다 — 요청에 싣지 않는다. 사진은 일기 밖에 있어서(#115) 여기 싣지 않고,
+ * 일기를 덮거나 지워도 사진은 그대로다. `Idempotency-Key` 를 받지 않는다 — 몇 번 보내도 결과가
+ * 같은 요청이다 (`idempotency.ts` 의 5곳이 아니다).
  */
-export interface CalendarDayUpdate {
-  text: string;
-  event_ids: string[];
+export interface DiaryRequest {
+  content: string;
 }
 
 /** `PATCH /event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
