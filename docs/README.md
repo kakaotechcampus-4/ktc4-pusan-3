@@ -82,6 +82,7 @@
 - [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **서버 주도 인가 코드 흐름.** `redirect_uri` 를 API 오리진 하나로 고정(preview 도메인은 등록 불가) · 클라이언트는 1회용 코드를 받아 `{code, bind}` 로 교환하고 `bind` 가 그 홉을 지킨다 · **동의 전에는 `parent` 를 만들지 않는다**(`signup` 신설) · 계약서 §01 `Bearer` 유지, 무인증 5개와 302 엔드포인트 2개를 예외로 명시 · 불투명 세션 12시간, refresh 없음 · `session`·`auth_handoff` 테이블 신설안 · `parent.nickname` nullable
 - [api/invite-v1.md](api/invite-v1.md) — **초대를 링크가 아니라 코드로.** 카톡 링크는 인앱 브라우저에서 열려 `sessionStorage` 가 날아가면 `bind` 까지 잃고 **로그인 자체가 깨진다** · Crockford Base32 8자(`I`·`L`·`O`·`U` 제외) · 정규화한 값을 해시로 저장 · 24시간 · 1회용 · 🚨 **시도 제한이 이 선택의 전제**(40비트 · 확인과 수락이 같은 통) · 관계는 **받는 쪽이 수락할 때** 고른다 · 수락 전 확인 `GET /invites/{code}` · 시도 제한 계정 5회 · IP 30회 / 1시간 (#198 에서 확정) · ⚠️ 계약서 §05 를 **대체한다**
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
+- [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).
 
