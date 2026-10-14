@@ -10,6 +10,7 @@ import { DomainMeta, observationAgent } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { api, isApiError, qk } from "@/lib/api";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type {
@@ -312,19 +313,22 @@ function ObservationDetail({
 
       <section>
         <h3 className="text-section text-ink">이 기록을 쓴 추천</h3>
-        {detail.isPending ? (
-          <Skeleton className="mt-2 h-12 w-full" />
-        ) : detail.data && detail.data.used_in.length > 0 ? (
-          <ul className="mt-2 flex flex-col gap-2">
-            {detail.data.used_in.map((used) => (
-              <li key={used.suggestion_id} className="text-body-sm text-ink-muted">
-                {used.content}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-body-sm text-ink-muted mt-2">이 기록은 제안 근거에서 빠져 있어요.</p>
-        )}
+        {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
+        <Swap id={phaseOf(detail)}>
+          {detail.isPending ? (
+            <Skeleton className="mt-2 h-12 w-full" />
+          ) : detail.data && detail.data.used_in.length > 0 ? (
+            <ul className="mt-2 flex flex-col gap-2">
+              {detail.data.used_in.map((used) => (
+                <li key={used.suggestion_id} className="text-body-sm text-ink-muted">
+                  {used.content}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-body-sm text-ink-muted mt-2">이 기록은 제안 근거에서 빠져 있어요.</p>
+          )}
+        </Swap>
       </section>
 
       {detail.data && detail.data.corrections.length > 0 ? (

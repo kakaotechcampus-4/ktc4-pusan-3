@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ChatThread } from "@/components/chat-thread";
-import { ChatRouteTransition } from "@/components/route-transition";
+import { ScreenTransition } from "@/components/route-transition";
 import { EventDraftList } from "@/components/event-draft-list";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
@@ -23,7 +23,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Agent, type Me } from "@/lib/api";
 import { useSeoulToday } from "@/hooks/use-seoul-today";
 import { formatDay } from "@/lib/format";
-import { TRANSITION_TYPE } from "@/lib/view-transition";
+import { BACK, FORWARD } from "@/lib/view-transition";
 import {
   isBusy,
   sendLine,
@@ -108,11 +108,11 @@ function ChatScreen() {
    */
   function goToSuggestions(agents: Agent[]) {
     const params = new URLSearchParams({ agents: agents.join(",") });
-    router.push(`/child/${childId}/suggestions?${params.toString()}`);
+    router.push(`/child/${childId}/suggestions?${params.toString()}`, FORWARD);
   }
 
   return (
-    <ChatRouteTransition side="chat">
+    <ScreenTransition>
       <Screen
         className="gap-6"
         topBar={
@@ -120,11 +120,7 @@ function ChatScreen() {
           //    화면 밖으로 밀린다 — 흐름 화면이라 네비가 없어서 나가는 길이 그것 하나다.
           // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 10 › 고객센터와 같다).
           <header className="-ml-3 flex items-center gap-1">
-            <IconButtonLink
-              href={`/child/${childId}/home`}
-              label="홈으로 돌아가기"
-              transitionTypes={[TRANSITION_TYPE.chatClose]}
-            >
+            <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기" {...BACK}>
               <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
             </IconButtonLink>
             <div className="min-w-0">
@@ -185,6 +181,8 @@ function ChatScreen() {
         <BottomSheet
           open={draftsOf !== null}
           onClose={() => setDraftsOf(null)}
+          // 카드마다의 "넣기" 가 승인 게이트 ㉠ 이다 — 열고 닫는 움직임이 없다 (디자인 시스템 §8 "하지 않는 것").
+          gate
           // 🚨 설명을 달지 않는다 — 목록이 자기 머리글("일정으로 만들까요?" · 넣기 전에는 안 들어간다)을
           //    이미 세운다. 시트 머리에도 같은 말을 두면 한 화면에 같은 두 줄이 겹쳐 선다.
           title="찾은 일정"
@@ -215,11 +213,11 @@ function ChatScreen() {
           onPick={({ file, lane }) => {
             putPhoto(childId, file, lane);
             setPhotoSheetOpen(false);
-            router.push(`/child/${childId}/photos`);
+            router.push(`/child/${childId}/photos`, FORWARD);
           }}
         />
       </Screen>
-    </ChatRouteTransition>
+    </ScreenTransition>
   );
 }
 

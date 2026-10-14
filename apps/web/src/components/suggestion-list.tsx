@@ -9,6 +9,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { PanelTabs } from "@/components/ui/tabs";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
+import { useEnterMotion } from "@/lib/motion";
 
 /**
  * 05 제안 후보 목록 — **한 결정에 대한 대안 셋.**
@@ -99,8 +100,6 @@ export function SuggestionList({
     return false;
   });
 
-  if (drawable.length === 0) return null;
-
   /**
    * 🚨 **순서는 서버가 준 순서다.** 화면이 도메인으로 정렬하지 않는다 — Supervisor 가 고른
    *    Agent 순서에 "무엇을 먼저 묻는가" 가 들어 있다.
@@ -116,6 +115,14 @@ export function SuggestionList({
   const rows = drawable.filter((s) => s.agent === agent);
   const group = groups.find((g) => g.agent === agent);
   const chosen = rows.filter((s) => selectedIds.includes(s.id)).length;
+  // 다른 묶음 탭을 고르면 패널 내용이 갈아 끼워진다 (디자인 시스템 §8 "교체"). 탭 표식은 색으로만 바뀐다.
+  const panelRef = useEnterMotion<Agent | undefined, HTMLElement>(
+    agent,
+    "fade",
+    (root) => root.children,
+  );
+
+  if (drawable.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -141,6 +148,7 @@ export function SuggestionList({
       ) : null}
 
       <section
+        ref={panelRef}
         id={PANEL_ID}
         // 🚨 탭이 없으면 `tabpanel` 도 아니다 — 가리킬 탭이 없는 패널은 보조기술에 거짓말이다.
         role={order.length > 1 ? "tabpanel" : undefined}
@@ -194,7 +202,7 @@ export function SuggestionList({
                * 🚨 **색만으로 말하지 않는다** — 체크 아이콘이 함께 선다 (문서 §3).
                */
               className={cn(
-                "rounded-card bg-surface flex overflow-hidden border",
+                "rounded-card bg-surface ease-standard flex overflow-hidden border transition-colors duration-120",
                 selectedIds.includes(suggestion.id) ? "border-brand" : "border-line",
               )}
             >
@@ -207,7 +215,7 @@ export function SuggestionList({
               <span
                 aria-hidden
                 className={cn(
-                  "w-1.5 shrink-0",
+                  "ease-standard w-1.5 shrink-0 transition-colors duration-120",
                   selectedIds.includes(suggestion.id) ? "bg-brand" : domainBar(suggestion.agent),
                 )}
               />

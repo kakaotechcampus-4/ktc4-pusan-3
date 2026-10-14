@@ -14,6 +14,7 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 import { api, isApiError, qk, type HealthSafety, type HealthSafetyListResponse } from "@/lib/api";
 import { PENDING_SERVER_FEATURES } from "@/lib/features";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 알레르기 · 건강 구역. **11 아이 프로필과 02 아이 정보가 같은 것을 쓴다.**
@@ -82,6 +83,8 @@ export function SafetySection({ childId }: { childId: string }) {
         />
       }
     >
+      {/* 🚨 **교체 페이드를 걸지 않는다** (디자인 시스템 §8 "하지 않는 것"). 이 목록은 게이트 ㉡ 의 결과라
+          불러온 순간이라도 투명도로 흘려보내지 않는다. */}
       {query.isPending ? (
         <SkeletonBlock label="안전 정보를 불러오는 중" />
       ) : isApiError(query.error, "consent_required") ? (
@@ -122,7 +125,7 @@ export function SafetySection({ childId }: { childId: string }) {
               //    objectURL 을 만드는 것도 해제하는 것도 거기 한 곳이 맡는다.
               useSafetyScanDraftStore.getState().putPhoto(childId, file);
               setMode(null);
-              router.push(`/child/${childId}/profile/safety-scan`);
+              router.push(`/child/${childId}/profile/safety-scan`, FORWARD);
             }}
           />
 

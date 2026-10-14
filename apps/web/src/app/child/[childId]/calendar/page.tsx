@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { CalendarDayPanel } from "@/components/calendar-day";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -13,6 +14,7 @@ import { MonthGrid } from "@/components/month-grid";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import {
   api,
@@ -42,7 +44,9 @@ export default function CalendarPage() {
     // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (05·07 과 같은 이유).
     <Suspense fallback={null}>
       <AuthGate>
-        <CalendarScreen />
+        <ScreenTransition>
+          <CalendarScreen />
+        </ScreenTransition>
       </AuthGate>
     </Suspense>
   );
@@ -123,23 +127,27 @@ function CalendarScreen() {
           ) : null}
         </div>
 
-        {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
+        {/* 다른 날을 고르면 이 자리의 하루가 갈아 끼워진다 (디자인 시스템 §8 "교체"). 날짜가 같으면
+            다시 받아도 그대로다. */}
+        <Swap id={`${date}:${phaseOf(dayQuery)}`}>
+          {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
 
-        {dayQuery.isError ? (
-          <LoadFailed what="이날을" childId={childId} error={dayQuery.error} />
-        ) : null}
+          {dayQuery.isError ? (
+            <LoadFailed what="이날을" childId={childId} error={dayQuery.error} />
+          ) : null}
 
-        {dayQuery.data ? (
-          // 🚨 `key` 로 날짜마다 새로 세운다. 안 그러면 일기 초안과 "쓰는 중" 상태가 앞 날짜에서
-          //    넘어오고, 그 사이에 저장을 누르면 **다른 날의 일기가 이 날짜로 저장된다.**
-          <CalendarDayPanel
-            key={date}
-            childId={childId}
-            date={date}
-            data={dayQuery.data}
-            onOpenObservation={(observation) => setTarget({ type: "observation", observation })}
-          />
-        ) : null}
+          {dayQuery.data ? (
+            // 🚨 `key` 로 날짜마다 새로 세운다. 안 그러면 일기 초안과 "쓰는 중" 상태가 앞 날짜에서
+            //    넘어오고, 그 사이에 저장을 누르면 **다른 날의 일기가 이 날짜로 저장된다.**
+            <CalendarDayPanel
+              key={date}
+              childId={childId}
+              date={date}
+              data={dayQuery.data}
+              onOpenObservation={(observation) => setTarget({ type: "observation", observation })}
+            />
+          ) : null}
+        </Swap>
       </section>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />

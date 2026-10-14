@@ -20,7 +20,7 @@ import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { PROMPT_PILL } from "@/components/agent-prompts";
-import { ChatRouteTransition } from "@/components/route-transition";
+import { ScreenTransition } from "@/components/route-transition";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -29,6 +29,7 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChildId } from "@/hooks/use-child-id";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
@@ -36,7 +37,7 @@ import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, isApiError, qk, type HomeResponse, type Me } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { TRANSITION_TYPE } from "@/lib/view-transition";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 03 홈 · 한 줄 입력.
@@ -111,7 +112,7 @@ function HomeScreen() {
     // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
     setLeaving(line);
     clearDraft(childId);
-    router.push(chatHref, { transitionTypes: [TRANSITION_TYPE.chatOpen] });
+    router.push(chatHref, FORWARD);
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
@@ -122,11 +123,11 @@ function HomeScreen() {
    */
   function goToSuggestions(prompt: HomeResponse["agent_prompts"][number]) {
     const params = new URLSearchParams({ agents: prompt.agent, prompt: prompt.prompt_key });
-    router.push(`/child/${childId}/suggestions?${params.toString()}`);
+    router.push(`/child/${childId}/suggestions?${params.toString()}`, FORWARD);
   }
 
   return (
-    <ChatRouteTransition side="home">
+    <ScreenTransition>
       <Screen
         className="gap-5"
         nav={<ChildNav active="home" />}
@@ -167,38 +168,44 @@ function HomeScreen() {
             ) : null}
           </div>
           {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
-          <IconButton label="설정" onClick={() => router.push(`/child/${childId}/settings`)}>
+          <IconButton
+            label="설정"
+            onClick={() => router.push(`/child/${childId}/settings`, FORWARD)}
+          >
             <Settings aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButton>
         </header>
 
-        {home.isPending ? (
-          <Card>
-            <SkeletonBlock label="홈을 불러오는 중" />
-          </Card>
-        ) : consentBlocked ? (
-          // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
-          //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
-          <ConsentRequiredCard
-            childId={childId}
-            error={consentBlocked}
-            what="오늘 기록을 보여드릴 수 없어요."
-          />
-        ) : home.isError ? (
-          <CardFailed>
-            <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
-            <Button
-              variant="tertiary"
-              size="compact"
-              className="mt-3"
-              onClick={() => home.refetch()}
-            >
-              다시 시도
-            </Button>
-          </CardFailed>
-        ) : home.data ? (
-          <HomeBody data={home.data} />
-        ) : null}
+        {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
+        <Swap id={phaseOf(home)}>
+          {home.isPending ? (
+            <Card>
+              <SkeletonBlock label="홈을 불러오는 중" />
+            </Card>
+          ) : consentBlocked ? (
+            // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
+            //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
+            <ConsentRequiredCard
+              childId={childId}
+              error={consentBlocked}
+              what="오늘 기록을 보여드릴 수 없어요."
+            />
+          ) : home.isError ? (
+            <CardFailed>
+              <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="mt-3"
+                onClick={() => home.refetch()}
+              >
+                다시 시도
+              </Button>
+            </CardFailed>
+          ) : home.data ? (
+            <HomeBody data={home.data} />
+          ) : null}
+        </Swap>
 
         {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
@@ -208,11 +215,11 @@ function HomeScreen() {
           onPick={({ file, lane }) => {
             putPhoto(childId, file, lane);
             setPhotoSheetOpen(false);
-            router.push(`/child/${childId}/photos`);
+            router.push(`/child/${childId}/photos`, FORWARD);
           }}
         />
       </Screen>
-    </ChatRouteTransition>
+    </ScreenTransition>
   );
 }
 
@@ -227,7 +234,7 @@ function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
     <Link
       href={href}
-      transitionTypes={[TRANSITION_TYPE.chatOpen]}
+      {...FORWARD}
       className={cn(
         PROMPT_PILL,
         "hover:bg-surface-muted active:bg-surface-muted whitespace-nowrap",

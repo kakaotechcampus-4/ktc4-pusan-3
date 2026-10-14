@@ -83,17 +83,21 @@ export function SettingsLinkRow({
   title,
   status,
   note,
+  transitionTypes,
 }: {
   href: string;
   icon: LucideIcon;
   title: ReactNode;
   status?: ReactNode;
   note?: ReactNode;
+  /** 이 이동이 어떤 화면 전환인지 (`lib/view-transition.ts` 의 `FORWARD` · `BACK`). 없으면 움직임 없음. */
+  transitionTypes?: string[];
 }) {
   return (
     <li>
       <Link
         href={href}
+        transitionTypes={transitionTypes}
         className={cn(
           "min-h-touch ease-standard flex w-full items-center gap-3 p-4 text-left transition-colors duration-120",
           // 🚨 웹뷰에는 호버가 없다. 누른 느낌을 `active:` 로 반드시 준다 (문서 §8).

@@ -123,6 +123,7 @@ export function ButtonLink({
   size = "default",
   block = false,
   className,
+  transitionTypes,
   children,
 }: {
   href: string;
@@ -130,11 +131,14 @@ export function ButtonLink({
   size?: ButtonSize;
   block?: boolean;
   className?: string;
+  /** 이 이동이 어떤 화면 전환인지 (`lib/view-transition.ts` 의 `FORWARD` · `BACK`). 없으면 움직임 없음. */
+  transitionTypes?: string[];
   children: ReactNode;
 }) {
   return (
     <Link
       href={href}
+      transitionTypes={transitionTypes}
       className={cn(
         "text-button ease-standard inline-flex items-center justify-center gap-2 py-2 text-center transition-colors duration-120",
         variant === "approve" ? null : SIZE[size],
