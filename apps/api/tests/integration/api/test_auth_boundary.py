@@ -14,7 +14,7 @@ from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
-from app.api.cors import register_cors
+from app.api.cors import ALLOW_METHODS, register_cors
 from app.api.deps.auth import get_current_parent
 from app.core.config import Settings, settings
 from app.core.constants import API_V1_PREFIX
@@ -152,6 +152,19 @@ async def test_preflight_allows_idempotency_key(monkeypatch):
 
     assert response.status_code == 200
     assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_every_route_method_is_allowed_by_cors():
+    """라우트가 쓰는 메서드가 CORS 허용 목록에 없으면 브라우저에서만 preflight 가 막힌다.
+    서버 테스트는 preflight 를 거치지 않아서 이 검사가 없으면 아무도 모른다."""
+    used = {
+        method
+        for path, route, _ in all_routes(app.routes)
+        if path.startswith(API_V1_PREFIX)
+        for method in route.methods
+    }
+
+    assert used <= set(ALLOW_METHODS)
 
 
 async def test_unknown_origin_is_blocked(monkeypatch):
