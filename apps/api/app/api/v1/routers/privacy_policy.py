@@ -34,6 +34,12 @@ PAGES: dict[str, str] = {
 }
 """시행일 → 정본 HTML. 시행일 순서(= 이름 순서)로 담긴다."""
 
+# 파일이 없으면 아래 max() 가 "empty sequence" 로만 죽어 원인을 찾기 어렵다. 배포 이미지에서
+# 이 폴더가 빠졌을 때 바로 보이게 폴더 이름을 대고 멈춘다 (#448 리뷰).
+# assert 가 아닌 이유 — python -O 로 돌려도 남아야 한다.
+if not PAGES:
+    raise RuntimeError(f"개인정보 처리방침 정본(*.html)이 없다: {PAGES_DIR}")
+
 LATEST = max(PAGES)
 """고정 주소가 내주는 버전. 날짜 이름이라 글자 순서가 곧 시행일 순서다.
 
