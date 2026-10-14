@@ -8,7 +8,7 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
 자체를 알 필요가 없다 — 알레르기 판정이 코드 몫이라는 원칙과 같다(루트 CLAUDE.md §3).
 
 구획 순서 (고정 5 + 동적 2)
-  고정  [역할] → [하지 않는 것] → [근거] → [재료] → [지시]
+  고정  [역할] → [하지 않는 것] → [근거] → [날짜] → [지시]
   동적  [예시] → 현재 시각
 [예시]를 맨 뒤에 두는 이유는 memory/prompt.py 의 현재 시각과 같다 — run 마다 바뀌는 구간을
 뒤에 둬야 앞부분이 프롬프트 캐시에 남는다(RAG_plan §3).
@@ -41,11 +41,6 @@ _EVIDENCE = """
 - 근거가 없어 되물을 때는 질문을 하나만 한다.
 """.strip()
 
-_INGREDIENTS = """
-[재료]
-- 후보의 재료를 빠짐없이 적는다. 거르는 건 코드가 한다 — 알아서 빼거나 바꾸지 않는다.
-""".strip()
-
 _DATE = """
 [날짜]
 - 날짜를 계산하지 않는다.
@@ -67,6 +62,15 @@ def _instructions(task_type: FoodTaskType) -> str:
         "구간(적은 편 · 적당 · 많은 편)으로만 말한다.",
         "- 수치는 내부 계산에만 쓴다. 화면에는 구간과 식품군만 나간다.",
     ]
+    if task_type == FoodTaskType.MEAL_RECOMMENDATION:
+        lines.append(
+            "- 메뉴는 보여 준 후보 목록에서 menu_key 로만 고른다. 메뉴 이름과 재료를 직접 쓰지 "
+            "않는다 — 코드가 채운다. 목록에 없는 menu_key 는 거절된다."
+        )
+        lines.append(
+            "- reason 에는 이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로 쓴다. 싫어하는 것을 "
+            "피해 골랐으면 무엇을 피했는지 쓴다. 몸 상태나 수치는 쓰지 않는다."
+        )
     if task_type == FoodTaskType.NUTRIENT_ANALYSIS:
         lines.append(
             "- findings 의 주어는 아이가 아니라 먹은 식사다. '기록된 식사를 보면 …' · "
@@ -83,11 +87,11 @@ def _instructions(task_type: FoodTaskType) -> str:
 def _examples(examples: tuple[FoodDocRow, ...]) -> str:
     if not examples:
         return "[예시]\n(참고할 문서 없음)"
-    body = "\n".join(f"- {doc.body}" for doc in examples)
+    body = "\n".join(f"- {doc.title}: {doc.body}" for doc in examples)
     return f"[예시]\n{body}"
 
 
-_SECTIONS = (_ROLE, _OUT_OF_SCOPE, _EVIDENCE, _INGREDIENTS, _DATE)
+_SECTIONS = (_ROLE, _OUT_OF_SCOPE, _EVIDENCE, _DATE)
 
 
 def build_system_prompt(

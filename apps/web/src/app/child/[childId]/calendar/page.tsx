@@ -28,7 +28,7 @@ import { formatDay, parseISODate, toISODate, toMonthKey } from "@/lib/format";
  * 09 캘린더.
  *
  * 🚨 **여기에 승인 게이트가 없다.** 캘린더 쓰기(게이트 ㉠)는 05·06 이 지고, 이 화면에 서는
- *    일정은 전부 이미 확정된 것이다 (`has_event` 는 `confirmed` 만 센다). 그래서
+ *    일정은 전부 보호자가 이미 제출한 것이다 (`event` 에는 제출한 행만 있다 · #118). 그래서
  *    `btn-approve` 도 `caution` 도 쓰지 않는다 — 그 둘은 되돌릴 수 없는 2곳 전용이다.
  *
  * 🚨 **일기는 관찰이 아니다** (계약서 §09). 같은 날짜 아래 있어도 구역이 다르고, 화면이
@@ -160,8 +160,9 @@ function daySummary(summary: CalendarDay | undefined): string | null {
   const parts: string[] = [];
   if (summary.has_event) parts.push("일정 있음");
   if (summary.observation_count > 0) parts.push(`기록 ${summary.observation_count}건`);
-  if (summary.has_diary) parts.push("일기 있음");
-  if ((summary.profile_changed_count ?? 0) > 0) parts.push("기억 달라짐");
+  if (summary.has_my_diary) parts.push("일기 있음");
+  // 월 그리드에는 사진 표식이 없다 — 사진만 있는 날을 골랐을 때 이 줄이 그 사실을 먼저 말한다.
+  if (summary.has_shared_photo) parts.push("사진 있음");
 
   // 🚨 빈 날은 **여기서 말하지 않는다.** 아래 하루 패널의 빈 상태가 그 말을 맡는다 —
   //    같은 사실을 두 곳에서 하면 화면이 사과하는 것처럼 읽힌다 (문서 §7).

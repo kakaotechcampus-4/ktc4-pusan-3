@@ -1,13 +1,13 @@
 """Food Agent system prompt."""
 
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from app.agents.food.context import FoodContext
 from app.agents.food.prompt import build_system_prompt
 from app.agents.food.schemas.common import FoodTaskType
-from app.agents.food.store import in_memory_ports
+from app.agents.food.store import FoodDocRow, in_memory_ports
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -86,3 +86,46 @@ def test_식단_추천에는_기록_조회_안내가_없다() -> None:
     text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
 
     assert "compare_diet_balance" not in text
+
+
+def test_예시_구획은_문서_행의_제목과_본문을_그대로_싣고_출처를_싣지_않는다() -> None:
+    row = FoodDocRow(
+        id=uuid4(),
+        row_type="weaning_stage",
+        title="질감 올리기",
+        body="걸쭉한 정도에서 시작한다.",
+        min_month=6,
+        max_month=8,
+        texture=None,
+        food_groups=frozenset(),
+        allergen_codes=frozenset(),
+        source_org="가짜 기관",
+        written_at=datetime(2026, 10, 14, tzinfo=KST),
+    )
+
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION, (row,))
+
+    assert "질감 올리기" in text
+    assert "걸쭉한 정도에서 시작한다." in text
+    assert "가짜 기관" not in text
+
+
+def test_식단_추천_프롬프트는_재료를_모델에게_적게_하지_않는다() -> None:
+    # 메뉴 이름 · 재료는 코드가 카탈로그에서 채운다 — 모델이 재료를 빠뜨려도 필터가 새지 않는다
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    assert "[재료]" not in text
+    assert "재료를 빠짐없이" not in text
+
+
+def test_식단_추천_프롬프트는_보여_준_후보에서_menu_key_로만_고르게_한다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    assert "menu_key" in text
+    assert "보여 준 후보" in text
+
+
+def test_영양소_분석_프롬프트에는_후보_고르기_안내가_없다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.NUTRIENT_ANALYSIS)
+
+    assert "menu_key" not in text

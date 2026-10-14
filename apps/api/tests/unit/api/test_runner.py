@@ -629,3 +629,145 @@ async def test_저장_안_한_run의_commit_후_예외는_failed로_끝난다(mo
     assert channel.ended_with == "failed"
     # 키가 풀려야 한다 — 저장한 게 없으니 재시도해도 안전하다
     assert idempotency.recall(**scope) is None
+
+
+async def test_임베딩_키가_있으면_Curator_트리거를_만들어_진입점에_넘긴다(monkeypatch):
+    """DB 세션을 여는 곳을 러너 한 곳에 모은다 (#257).
+
+    store · commit 과 같이 Curator 트리거도 러너가 만든다.
+    """
+    from app.domains.memory.curator import trigger as trigger_module
+
+    embedder, judge = object(), object()
+    started: list[tuple] = []
+    monkeypatch.setattr(entrypoint, "curator_deps", lambda: (embedder, judge))
+    monkeypatch.setattr(
+        trigger_module, "trigger_curator_background", lambda *args: started.append(args)
+    )
+
+    async def fake_handle_input(**kwargs):
+        kwargs["curator_trigger"](CHILD, date(2026, 10, 14))  # pipeline 이 commit 직후 부르는 자리
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert started == [(CHILD, date(2026, 10, 14), embedder, judge)]
+
+
+async def test_judge_키만_없어도_Curator_트리거는_넘긴다(monkeypatch):
+    """judge 가 없으면 Curator 는 임베딩 · 보류까지만 한다. 트리거를 빼면 임베딩도 안 쌓인다."""
+    from app.domains.memory.curator import trigger as trigger_module
+
+    embedder = object()
+    started: list[tuple] = []
+    monkeypatch.setattr(entrypoint, "curator_deps", lambda: (embedder, None))
+    monkeypatch.setattr(
+        trigger_module, "trigger_curator_background", lambda *args: started.append(args)
+    )
+
+    async def fake_handle_input(**kwargs):
+        kwargs["curator_trigger"](CHILD, date(2026, 10, 14))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert started == [(CHILD, date(2026, 10, 14), embedder, None)]
+    assert names(channel) == ["done"]
+
+
+async def test_임베딩_키가_없으면_Curator_트리거를_넘기지_않는다(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(entrypoint, "curator_deps", lambda: (None, None))
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["curator_trigger"] is None
+
+
+async def test_run_세션은_deps_의_백그라운드_세션으로_열고_commit_도_그_세션이다(monkeypatch):
+    """infra 세션을 import 하는 곳은 deps/db.py 하나다 (apps/api/CLAUDE.md). 러너도 그 문을 쓴다."""
+    opened: list = []
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        async def __aenter__(self) -> "FakeSession":
+            opened.append(self)
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    monkeypatch.setattr(runner, "background_session", FakeSession)
+
+    async def fake_handle_input(**kwargs):
+        await kwargs["commit"]()
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert [session.commits for session in opened] == [1]
+
+
+async def test_도메인_Agent_기억_포트는_열_때마다_run_세션과_다른_세션을_쓴다(monkeypatch):
+    """run 세션을 Memory 와 도메인 task 가 같이 타면 AsyncSession 동시 사용 에러가 난다 (#257).
+
+    도메인 단계는 Memory commit 뒤에 돌아서, 따로 연 세션에서도 방금 저장한 관찰이 보인다.
+    """
+    opened: list = []
+
+    class FakeSession:
+        async def __aenter__(self) -> "FakeSession":
+            opened.append(self)
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+    monkeypatch.setattr(runner, "background_session", FakeSession)
+    stores: list = []
+
+    async def fake_handle_input(**kwargs):
+        for _ in range(2):
+            async with kwargs["domain_store"]() as store:
+                stores.append(store)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    run_session, *domain_sessions = opened
+    assert len(domain_sessions) == 2
+    assert run_session not in domain_sessions
+    assert domain_sessions[0] is not domain_sessions[1]
+    assert [store._session for store in stores] == domain_sessions

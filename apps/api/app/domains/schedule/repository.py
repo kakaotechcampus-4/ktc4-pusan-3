@@ -6,7 +6,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -207,15 +207,28 @@ async def replace_event_items(
 async def set_event_item_prepared(
     session: AsyncSession, *, child_id: uuid.UUID, item_id: uuid.UUID, is_prepared: bool
 ) -> EventItem | None:
-    """prepared_at은 DB 시각으로 기록한다. 다른 아이의 준비물은 바꾸지 않는다."""
+    """prepared_at은 DB 시각으로 기록한다. 다른 아이의 준비물은 바꾸지 않는다.
+
+    미체크 → 체크만 지금 시각, 이미 체크된 것을 다시 체크하면 처음 시각을 그대로 둔다.
+    해제하면 None. Memory Agent 도 이 함수로 체크한다(DbMemoryStore.set_event_item_prepared)
+    — 규칙을 한 곳에 둔다.
+    🚨 이전 값을 UPDATE 안에서 본다(CASE 의 is_prepared 는 바꾸기 전 값이다). 먼저 읽고 Python 에서
+       정하면, 그 사이에 들어온 해제 · 재체크 요청이 시각을 엉뚱하게 남긴다.
+    """
+    prepared_at = (
+        case((EventItem.is_prepared, EventItem.prepared_at), else_=func.now())
+        if is_prepared
+        else None
+    )
     stmt = (
         update(EventItem)
         .where(
             EventItem.item_id == item_id,
             EventItem.event_id.in_(select(Event.id).where(Event.child_id == child_id)),
         )
-        .values(is_prepared=is_prepared, prepared_at=func.now() if is_prepared else None)
+        .values(is_prepared=is_prepared, prepared_at=prepared_at)
         .returning(EventItem)
+        .execution_options(populate_existing=True)
     )
     return await session.scalar(stmt)
 

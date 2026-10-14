@@ -5,7 +5,7 @@
 데이터만 쥔다고 본다. 실패를 흉내 낼 때는 `fail=True` — 빈 결과와 구분해야 한다 (루트 §2).
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from uuid import UUID
 
@@ -126,18 +126,25 @@ class InMemoryActivityDocs:
 
 
 class InMemoryWeather:
-    """조회마다 따로 실패시킬 수 있다 — `fail={"air_quality"}` 면 미세먼지만 죽는다."""
+    """조회마다 따로 실패시킬 수 있다 — `fail={"air_quality"}` 면 미세먼지만 죽는다.
+
+    `forecasts` 에 날짜별 예보를 넣으면 그날만 다르게 준다. 없는 날은 `forecast` 다.
+    `forecast_days` 에 예보를 물은 날이 순서대로 쌓인다.
+    """
 
     def __init__(
         self,
         *,
         forecast: RawForecast | None = None,
+        forecasts: Mapping[date, RawForecast] | None = None,
         air: RawAir | None = None,
         uv: str | None = None,
         advisories: RawAdvisories | None = None,
         fail: frozenset[str] = frozenset(),
     ) -> None:
         self._forecast = forecast or RawForecast(sky="1", pcp="강수없음", pop="0")
+        self._forecasts = dict(forecasts or {})
+        self.forecast_days: list[date] = []
         self._air = air or RawAir(
             pm10="30", pm10_flag=None, pm25="15", pm25_flag=None, o3="0.03", o3_flag=None
         )
@@ -151,7 +158,8 @@ class InMemoryWeather:
 
     async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
         self._check("forecast")
-        return self._forecast
+        self.forecast_days.append(day)
+        return self._forecasts.get(day, self._forecast)
 
     async def air_quality(self, *, grid: WeatherGrid) -> RawAir:
         self._check("air_quality")

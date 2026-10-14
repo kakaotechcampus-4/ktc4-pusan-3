@@ -214,16 +214,30 @@ def test_missing_kakao_key_is_allowed_outside_prod(env, key):
     assert settings_without_key.kakao_ready is False
 
 
+PROD_KAKAO = {
+    "APP_ENV": "prod",
+    "KAKAO_REST_API_KEY": "rest-key",
+    "KAKAO_CLIENT_SECRET": "client-secret",
+    "KAKAO_CALLBACK_URL": "https://api.example.test/api/v1/auth/kakao/callback",
+    "KAKAO_ADMIN_KEY": "admin-key",
+}
+
+
 def test_prod_boots_when_kakao_keys_are_present():
     """운영이라도 키가 다 있으면 뜬다 — 막는 것은 누락뿐이다."""
-    configured = Settings(
-        APP_ENV="prod",
-        KAKAO_REST_API_KEY="rest-key",
-        KAKAO_CLIENT_SECRET="client-secret",
-        KAKAO_CALLBACK_URL="https://api.example.test/api/v1/auth/kakao/callback",
-    )
+    configured = Settings(**PROD_KAKAO)
 
     assert configured.kakao_ready is True
+
+
+def test_missing_admin_key_fails_at_boot_in_prod():
+    """🚨 #379. 어드민 키는 로그인 준비(kakao_ready) 밖이라 따로 막는다.
+
+    없으면 로그인은 되는데 탈퇴한 사람의 카카오 연결이 늘 남는다 — 탈퇴는 성공하니
+    아무도 모르는 채 쌓인다.
+    """
+    with pytest.raises(ValidationError, match="KAKAO_ADMIN_KEY"):
+        Settings(**{**PROD_KAKAO, "KAKAO_ADMIN_KEY": ""})
 
 
 def test_wildcard_origin_fails_at_boot():

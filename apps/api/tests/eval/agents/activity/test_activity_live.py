@@ -248,6 +248,21 @@ async def test_강한_비가_오면_바깥_활동을_내지_않는다(llm):
     assert out.result.suggestions  # 실내 추천은 나간다
 
 
+async def test_오늘_비가_와도_내일_요청은_내일_날씨로_본다(llm):
+    """후보의 day 로 그날 판정을 본다 (#377). 모델이 day 를 tomorrow 로 적었으면 출력 tool 이나
+    lookup_weather 가 내일 예보를 묻는다."""
+    tomorrow = TODAY + timedelta(days=1)
+    weather = InMemoryWeather(
+        uv="2",
+        forecast=RawForecast(sky="4", pcp="20.0mm", pop="90"),
+        forecasts={tomorrow: RawForecast(sky="1", pcp="강수없음", pop="0")},
+    )
+    out = await play(llm, "tomorrow_park", "내일 공원 가서 놀고 싶대", months=40, weather=weather)
+    assert out.result.status == "completed"
+    assert out.result.suggestions
+    assert tomorrow in weather.forecast_days
+
+
 async def test_꽃가루_알레르기면_확인_문구가_붙는다(llm):
     out = await play(
         llm,

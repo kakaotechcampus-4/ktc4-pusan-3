@@ -4,8 +4,8 @@
 실패해도 관찰은 이미 저장돼 있고, 벡터·연결이 안 된 관찰은
 다음 실행(list_unembedded / list_unlinked)이 자동으로 집는다.
 
-호출 시점: pipeline.handle_input 에서 Memory Agent 완료 후.
-현재는 InMemoryStore 라 아직 연결되지 않았다 — DB 저장소가 붙으면 활성화한다.
+호출 시점: Memory 가 commit 된 직후. 러너(api/runs/runner.py `_curator_trigger`)가 이 함수를 감싼
+콜백을 만들어 entrypoint 로 넘기고, pipeline 이 (child_id, 기준일) 로 부른다.
 """
 
 import asyncio

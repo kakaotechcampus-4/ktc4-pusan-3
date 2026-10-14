@@ -9,6 +9,7 @@ from app.agents.activity.review import error_code, explain, review_candidates
 from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS
 from app.agents.activity.schemas.recommend import ProposeActivityCandidatesArgs
 from app.agents.activity.tools.filters import allergy_cautions, safety_terms
+from app.agents.activity.tools.outing import outdoor_on
 from app.agents.common.suggestion import check_count
 
 _NAME = "propose_activity_candidates"
@@ -61,7 +62,11 @@ async def propose_activity_candidates(
         places=context.state.seen_places,
         recent_activities=[row.activity for row in observations],
         safety=safety_terms(entries),
-        outdoor_ok=gate.outdoor_ok,
+        # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
+        outdoor={
+            label: await outdoor_on(context, label)
+            for label in dict.fromkeys(candidate.day for candidate in args.candidates)
+        },
     )
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다

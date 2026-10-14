@@ -18,8 +18,12 @@ food_agent_own_table §1-1). 행 모양은 `MenuCatalogRow` 를 같이 쓰고 `s
 - `allergen_codes` 는 표의 코드와, 메뉴명 · 정리한 재료명을 사전으로 훑은 코드의 합집합이다
   (own_table §1). 제품마다 다른 성분(간장의 밀)은 표에 코드로 넣지 않는다 — 이름이 남아 있으면
   필터가 따로 본다.
-- 식품군(`food_groups`)은 아직 채우지 않는다. `stage_min` 은 사람이 태깅한 값만 쓰고 없으면 비운다
-  (비면 toddler 로 본다).
+- 식품군(`food_groups`)은 정리 표의 재료별 `food_group` 칸을 모은 합집합이다. 칸이 빈 재료(검수
+  전)는 건너뛰고, 재료가 다 비면 빈 집합이다 — 재료 이름으로 식품군을 추정하지 않는다.
+- 주재료(`main_ingredients`)는 레시피 원문의 재료 역할(`RawIngredient.role`)이 "주재료" 인 재료를
+  정리한 이름으로 모은다. 역할이 비면 비고, 그러면 "같은 주재료 2개" 제약만 건너뛴다(풀을 줄이지
+  않는다).
+- `stage_min` 은 사람이 태깅한 값만 쓰고 없으면 비운다(비면 toddler 로 본다).
 """
 
 import re
@@ -31,6 +35,7 @@ from functools import cache
 from typing import Any, Literal
 
 from app.agents.common.reference import load_reference
+from app.agents.food.food_groups import FOOD_GROUPS
 from app.agents.food.store.ports import MenuCatalogRow, NutritionFacts
 from app.agents.food.tools.safety import menu_codes
 from app.core.mafra_recipe_raw import RawRecipe
@@ -43,11 +48,12 @@ Status = Literal["draft", "ok", "unknown", "not_food"]
 _STATUSES: tuple[str, ...] = ("draft", "ok", "unknown", "not_food")
 _SETTLED: frozenset[str] = frozenset({"ok", "not_food"})  # 이 둘만 정리된 것으로 센다
 _TOP_KEYS = frozenset({"source", "version", "fetched_at", "ingredients"})
-_ENTRY_KEYS = frozenset({"raw", "names", "codes", "status", "note", "rows"})
+_ENTRY_KEYS = frozenset({"raw", "names", "codes", "status", "note", "rows", "food_group"})
 # 재료 앞의 섹션 머리 — "[쇠고기양념] 간장" 의 "[쇠고기양념]" 은 재료가 아니라 묶음 제목이다
 _SECTION = re.compile(r"^\s*\[[^\]]*\]\s*")
 
 SOURCE_VERSION = "mafra_recipe"
+MAIN_ROLE = "주재료"  # RawIngredient.role(IRDNT_TY_NM) 값. 부재료 · 양념과 가른다
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,7 @@ class IngredientEntry:
     codes: frozenset[int]  # 이 재료에 확실히 든 19종 코드
     status: Status
     note: str = ""
+    food_group: str | None = None  # 이 재료의 식품군 한 개. 검수 전에는 비어 있다
 
 
 def ingredient_key(raw: str) -> str:
@@ -93,6 +100,9 @@ def parse_ingredient_table(data: Mapping[str, Any]) -> dict[str, IngredientEntry
             raise ValueError(f"{where}: 빈 이름이 있다")
         if status == "ok" and not names:
             raise ValueError(f"{where}: ok 인데 정리한 이름이 없다")
+        food_group = raw_entry.get("food_group") or None
+        if food_group is not None and food_group not in FOOD_GROUPS:
+            raise ValueError(f"{where}: 정해지지 않은 식품군 {food_group!r}")
         codes = list(raw_entry.get("codes") or ())
         if outside := [c for c in codes if isinstance(c, bool) or c not in ALLERGEN_NAMES]:
             raise ValueError(f"{where}: 19종 밖 코드가 있다: {outside}")
@@ -104,6 +114,7 @@ def parse_ingredient_table(data: Mapping[str, Any]) -> dict[str, IngredientEntry
             codes=frozenset(codes),
             status=status,
             note=str(raw_entry.get("note") or ""),
+            food_group=food_group,
         )
     return table
 
@@ -132,31 +143,40 @@ def build_recipe_row(
         raise ValueError("레시피 이름이 정규화하면 비어 있다")
 
     ingredients: list[str] = []
+    main_ingredients: list[str] = []
     codes: set[int] = set()
+    food_groups: set[str] = set()
     settled = bool(recipe.ingredients)
 
-    def add(name: str) -> None:
-        if name and name not in ingredients:
+    def add(name: str, *, main: bool) -> None:
+        if not name:
+            return
+        if name not in ingredients:
             ingredients.append(name)
+        if main and name not in main_ingredients:
+            main_ingredients.append(name)
 
     for item in recipe.ingredients:
         if item.name is None:
             settled = False  # 이름 없는 재료 — 무엇이 들었는지 모른다
             continue
+        is_main = (item.role or "").strip() == MAIN_ROLE
         key = ingredient_key(item.name)
         found = table.get(key) if key else None
         if found is None:
             settled = False
             # 표에 없어도 원문은 남긴다 — 사전이 읽을 수 있는 글자면 필터가 막는다
-            add(_SECTION.sub("", unicodedata.normalize("NFKC", item.name)).strip())
+            add(_SECTION.sub("", unicodedata.normalize("NFKC", item.name)).strip(), main=is_main)
             continue
         if found.status not in _SETTLED:
             settled = False
         if found.status == "not_food":
             continue
         codes |= found.codes
+        if found.food_group:
+            food_groups.add(found.food_group)
         for name in found.names or (found.raw,):
-            add(name)
+            add(name, main=is_main)
 
     codes |= menu_codes((recipe.name, *ingredients))
     return MenuCatalogRow(
@@ -169,7 +189,9 @@ def build_recipe_row(
         serving_g=nutrition.serving_g if nutrition else None,
         nutrients=dict(nutrition.per_100g) if nutrition else {},
         ingredients=tuple(ingredients),
+        main_ingredients=tuple(main_ingredients),
         allergen_codes=frozenset(codes),
+        food_groups=frozenset(food_groups),
         stage_min=stage_min,
         source_version=SOURCE_VERSION,
         source_id=recipe.recipe_id,

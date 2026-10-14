@@ -32,6 +32,10 @@ AUTHORIZE_URL = "https://kauth.kakao.com/oauth/authorize"
 TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 TOKEN_INFO_URL = "https://kapi.kakao.com/v1/user/access_token_info"
 LOGOUT_URL = "https://kapi.kakao.com/v1/user/logout"
+UNLINK_URL = "https://kapi.kakao.com/v1/user/unlink"
+
+_Where = Literal["token", "token_info", "logout", "unlink"]
+"""어느 호출인지. 실패 문구 맨 앞에 붙는다."""
 
 _LOGGABLE_CODE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
 """카카오 분류값의 모양 — invalid_grant · KOE320 · -401. 공백 · 줄바꿈이 섞이면 분류값이 아니다."""
@@ -137,41 +141,67 @@ class KakaoClient:
             log.warning("카카오 토큰 폐기에 실패했다 — 로그인은 계속한다: %s", exc)
 
     async def _request(
-        self,
-        method: str,
-        url: str,
-        *,
-        where: Literal["token", "token_info", "logout"],
-        **kwargs: Any,
+        self, method: str, url: str, *, where: _Where, **kwargs: Any
     ) -> dict[str, Any]:
-        """호출 1건 + 실패를 전부 KakaoApiError 로 모은다.
+        return await _request(self.http, method, url, where=where, **kwargs)
 
-        where 는 "어느 호출인지" 만 담는다. 인가 코드도 토큰도 응답 본문도 넣지 않는다.
+
+@dataclass(frozen=True)
+class KakaoAdmin:
+    """어드민 키로 부르는 호출. 지금은 탈퇴의 연결 끊기 하나뿐이다 (§7-4 · #379).
+
+    🚨 어드민 키는 앱 전체 권한이다. 로그인 호출(KakaoClient)과 섞지 않으려고 따로 둔다.
+    """
+
+    admin_key: str
+    http: httpx.AsyncClient
+
+    async def unlink(self, user_id: str) -> None:
+        """이 회원과 우리 앱의 연결을 끊는다.
+
+        실패하면 KakaoApiError 다. 어떻게 다룰지는 부르는 쪽이 정한다.
         """
-        try:
-            response = await self.http.request(method, url, **kwargs)
-        except httpx.TimeoutException as exc:
-            raise KakaoApiError(f"{where}: 타임아웃") from exc
-        except httpx.HTTPError as exc:
-            raise KakaoApiError(f"{where}: 연결 실패") from exc
+        await _request(
+            self.http,
+            "POST",
+            UNLINK_URL,
+            where="unlink",
+            headers={"Authorization": f"KakaoAK {self.admin_key}"},
+            data={"target_id_type": "user_id", "target_id": user_id},
+        )
 
-        if response.status_code >= 400:
-            # 🚨 본문을 싣지 않는다 — 토큰 · 인가 코드 · 앱 키가 들어 있을 수 있다 (§7-5).
-            #    카카오의 분류값만 꺼내 싣는다. 이게 없으면 실패 원인을 볼 길이 없다 (#197).
-            #    4xx 도 여기서 끝낸다. 교환 실패는 사용자가 고칠 수 있는 것이 아니고,
-            #    카카오의 사유를 화면에 흘리면 정찰에 쓰인다 (§8-1) — 사유는 로그에만 남는다.
-            raise KakaoApiError(
-                f"{where}: 카카오가 {response.status_code} 로 답했다{_reason(response)}"
-            )
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise KakaoApiError(f"{where}: 응답이 JSON 이 아니다") from exc
+async def _request(
+    http: httpx.AsyncClient, method: str, url: str, *, where: _Where, **kwargs: Any
+) -> dict[str, Any]:
+    """호출 1건 + 실패를 전부 KakaoApiError 로 모은다.
 
-        if not isinstance(payload, dict):
-            raise KakaoApiError(f"{where}: 응답이 객체가 아니다")
-        return payload
+    where 는 "어느 호출인지" 만 담는다. 인가 코드도 토큰도 응답 본문도 넣지 않는다.
+    """
+    try:
+        response = await http.request(method, url, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise KakaoApiError(f"{where}: 타임아웃") from exc
+    except httpx.HTTPError as exc:
+        raise KakaoApiError(f"{where}: 연결 실패") from exc
+
+    if response.status_code >= 400:
+        # 🚨 본문을 싣지 않는다 — 토큰 · 인가 코드 · 앱 키가 들어 있을 수 있다 (§7-5).
+        #    카카오의 분류값만 꺼내 싣는다. 이게 없으면 실패 원인을 볼 길이 없다 (#197).
+        #    4xx 도 여기서 끝낸다. 교환 실패는 사용자가 고칠 수 있는 것이 아니고,
+        #    카카오의 사유를 화면에 흘리면 정찰에 쓰인다 (§8-1) — 사유는 로그에만 남는다.
+        raise KakaoApiError(
+            f"{where}: 카카오가 {response.status_code} 로 답했다{_reason(response)}"
+        )
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise KakaoApiError(f"{where}: 응답이 JSON 이 아니다") from exc
+
+    if not isinstance(payload, dict):
+        raise KakaoApiError(f"{where}: 응답이 객체가 아니다")
+    return payload
 
 
 def build_authorize_url(*, rest_api_key: str, callback_url: str, state: str) -> str:
@@ -239,3 +269,16 @@ async def kakao_client() -> AsyncIterator[KakaoClient]:
             callback_url=str(settings.KAKAO_CALLBACK_URL),
             http=http,
         )
+
+
+@asynccontextmanager
+async def kakao_admin() -> AsyncIterator[KakaoAdmin | None]:
+    """어드민 키 클라이언트. 키가 비어 있으면 None — 부르는 쪽이 연결 끊기를 건너뛴다.
+
+    local · dev 에서만 비어 있을 수 있다. prod 는 설정 검증이 부팅에서 막는다 (#379).
+    """
+    if not settings.KAKAO_ADMIN_KEY:
+        yield None
+        return
+    async with httpx.AsyncClient(timeout=settings.KAKAO_API_TIMEOUT) as http:
+        yield KakaoAdmin(admin_key=settings.KAKAO_ADMIN_KEY, http=http)
