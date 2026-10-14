@@ -87,7 +87,9 @@ async def test_영양DB_를_먼저_싣고_레시피에_영양값을_붙인다(se
         now=NOW,
     )
 
-    assert loaded == Loaded(nutrition_rows=2, recipe_rows=2, resolved_recipes=1)
+    assert loaded == Loaded(
+        nutrition_rows=2, recipe_rows=2, resolved_recipes=1, nutrition_received=2
+    )
     recipes = {r.source_id: r for r in (await session.scalars(select(RecipeCatalog))).all()}
     assert recipes["1"].food_code == "D1" and recipes["1"].resolved
     assert recipes["2"].resolved is False  # 정리 표에 없는 재료
@@ -243,3 +245,31 @@ async def test_레시피가_한_건도_안_오면_후보_풀을_비우지_않는
         await run(fetch_recipes=_syncing(), **kwargs)
 
     assert [r.source_id for r in await repository.list_resolved_recipes(session)] == ["1"]
+
+
+async def test_받은_영양DB_행과_적재한_메뉴_수를_따로_센다(session, opener):
+    async def fetch():
+        return [
+            raw("된장찌개"),
+            raw("된장찌개", "D9"),  # 같은 이름 — 한 메뉴로 모인다
+            RawNutriRow(  # 핵심 영양 칸이 비어 메뉴가 되지 못한다
+                food_code="D3",
+                name="빈영양국",
+                db_group="음식",
+                db_class="품목대표",
+                food_weight="300g",
+                nutrients={},
+            ),
+        ]
+
+    loaded = await run(
+        nutrition=True,
+        recipes=False,
+        fetch_nutrition=fetch,
+        fetch_recipes=_sync,
+        open_session=opener,
+        table=table,
+        now=NOW,
+    )
+
+    assert (loaded.nutrition_received, loaded.nutrition_rows) == (3, 1)

@@ -27,7 +27,7 @@ import argparse
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +51,9 @@ class Loaded:
     recipe_rows: int = 0  # recipe_catalog 에 넣거나 덮은 레시피
     resolved_recipes: int = 0  # 그중 재료가 다 정리돼 후보 풀에 들어가는 것
     retired_recipes: int = 0  # 소스에서 사라져 후보 풀에서 내린 레시피
+    # 영양DB 에서 받은 원문 행. 같은 이름은 한 메뉴로 모이고 핵심 영양 칸이 빈 이름은 메뉴가 못 돼서
+    # `nutrition_rows` 보다 많다(실제 8,807행 → 5,488메뉴). 숫자 하나만 보이면 오해한다
+    nutrition_received: int = 0
 
 
 async def run(
@@ -81,7 +84,7 @@ async def run(
                 await repository.refresh_nutrition_menus(
                     session, rows=[menu_values(row) for row in menus]
                 )
-                loaded = Loaded(nutrition_rows=len(menus))
+                loaded = Loaded(nutrition_rows=len(menus), nutrition_received=len(raw_rows))
             if sync is not None:
                 keys = sorted({key for r in sync.recipes if (key := normalize_menu_key(r.name))})
                 known = await repository.list_nutrition_menus(session, keys=keys)
@@ -97,8 +100,8 @@ async def run(
                     source="mafra_recipe",
                     keep_ids=[row.source_id for row in built if row.source_id],
                 )
-                loaded = Loaded(
-                    nutrition_rows=loaded.nutrition_rows,
+                loaded = replace(
+                    loaded,
                     recipe_rows=len(built),
                     resolved_recipes=sum(row.resolved for row in built),
                     retired_recipes=retired,
@@ -131,14 +134,38 @@ async def _fetch_recipes() -> RecipeSync:
         return await client.recipes_with_ingredients()
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    # 모듈 docstring 을 그대로 쓰지 않는다 — `—` · 이모지는 Windows 콘솔(cp949)에서 못 찍어
+    # `--help` 가 UnicodeEncodeError 로 죽는다
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+        description="Food 카탈로그 적재 (FT-19). 영양DB 품목대표는 menu_catalog 로, 레시피는 "
+        "recipe_catalog 로 싣는다. 받기를 다 끝낸 뒤 한 트랜잭션으로 쓴다.",
+        epilog=(
+            "예) uv run python -m scripts.load_food_catalog --all --dry-run\n"
+            "    (--nutrition 이나 --recipes 만 따로 돌릴 수도 있다)"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--nutrition", action="store_true", help="영양DB 품목대표 → menu_catalog")
     parser.add_argument("--recipes", action="store_true", help="레시피 → recipe_catalog")
     parser.add_argument("--all", action="store_true", help="둘 다(영양DB 먼저)")
     parser.add_argument("--dry-run", action="store_true", help="받고 세기만 하고 쓰지 않는다")
+    return parser
+
+
+def summary(loaded: Loaded, *, dry_run: bool) -> str:
+    # `—` 를 쓰지 않는다 — Windows 콘솔(cp949)에서 못 찍는다
+    suffix = " (dry-run, 쓰지 않음)" if dry_run else ""
+    # 영양DB 를 받았을 때만 받은 행 수를 같이 보여준다 — 받은 행과 메뉴 수가 다르다
+    received = f"(영양DB {loaded.nutrition_received}행 받음)" if loaded.nutrition_received else ""
+    return (
+        f"menu_catalog {loaded.nutrition_rows}행{received} · recipe_catalog {loaded.recipe_rows}행"
+        f"(후보 풀 {loaded.resolved_recipes}개 · 내린 것 {loaded.retired_recipes}개){suffix}"
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if not (args.nutrition or args.recipes or args.all):
         parser.error("--nutrition · --recipes · --all 중 하나를 고른다")
@@ -157,11 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
     )
-    suffix = " — dry-run, 쓰지 않음" if args.dry_run else ""
-    print(
-        f"menu_catalog {loaded.nutrition_rows}행 · recipe_catalog {loaded.recipe_rows}행"
-        f"(후보 풀 {loaded.resolved_recipes}개 · 내린 것 {loaded.retired_recipes}개){suffix}"
-    )
+    print(summary(loaded, dry_run=args.dry_run))
     return 0
 
 
