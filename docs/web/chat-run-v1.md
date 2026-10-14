@@ -30,9 +30,12 @@
   대화 화면에서만 나간다 — 홈은 "답을 기다리는 질문이 있어요" 입구로 그리로 부른다
 - ⚠️ **앱을 끄면 그날 대화가 사라진다** — 메모리 전용이다. 남기는 것은 #228 이다
 - 화면 전환은 디자인 시스템 §8 "허용하는 화면 전환" — 열 때 대화가 오른쪽에서 들어오고, 막 보낸
-  한 줄이 말풍선 자리로 날아간다. 🚨 **방향은 이동을 일으키는 쪽이 붙인다** (`TRANSITION_TYPE` ·
-  `router.push(href, { transitionTypes })` · `<Link transitionTypes>` · `IconButtonLink` 의 같은 prop).
-  안 붙이면 화면은 움직이지 않는다 — 두 화면을 감싸는 `ChatRouteTransition` 이 `default: "none"` 이다
+  한 줄이 말풍선 자리로 날아간다. 🚨 **방향은 이동을 일으키는 쪽이 붙인다** (`lib/view-transition.ts` 의
+  `FORWARD` · `BACK` 을 `router.push(href, FORWARD)` · `<Link {...BACK}>` · `IconButtonLink` 에 넘긴다).
+  안 붙이면 화면은 움직이지 않는다 — 두 화면을 감싸는 `ScreenTransition` 이 `default: "none"` 이다 (#426 에서
+  03 ↔ 04 전용이던 것을 다른 부모 ↔ 자식 쌍과 같은 것으로 바꿨다)
+- 🚨 **대화 안에서 말풍선이 붙는 것에는 움직임이 없다** (§8 "하지 않는 것"). 움직이는 것은 이미 서 있던 진행 카드가
+  결과로 바뀌는 순간(`ChatThread` 의 `Swap` · 교체)뿐이다
 - 🚨 **03 의 "오늘 대화 이어보기" 는 제안 줄 맨 앞의 알약이다** (`HomeComposer` 의 `lead` · `PROMPT_PILL`).
   따로 한 줄을 주면 각진 버튼 하나가 알약 줄 위에 혼자 떠 보인다
 
