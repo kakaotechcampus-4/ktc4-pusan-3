@@ -1,7 +1,8 @@
 """알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `PATCH` · `DELETE …/{id}`.
 
 🚨 LLM 이 만들거나 고치지 않는다 (루트 CLAUDE.md §2). 이 라우터가 health_safety 의 **유일한 쓰기
-   경로**이고 보호자 토큰으로만 열린다. 등록은 승인 게이트 ㉡ 이라 Idempotency-Key 가 필수다.
+   경로**이고 보호자 토큰으로만 열린다. 등록 · 고치기는 승인 게이트 ㉡ 이라 Idempotency-Key 가
+   필수다.
 🚨 내리기는 지우지 않는다 — status 를 retracted 로 바꾼다. 안전 필터는 active 만 읽는다.
 🚨 고치기도 지우지 않는다 — 지금 기록을 내리고 새 기록을 넣는다 (#87, 이력이 남는다).
 """
@@ -186,26 +187,27 @@ async def revise_health_safety(
 
     고치면 지금 기록은 내려가고 바뀐 값으로 새 기록이 생긴다 — 응답의 id 가 바뀐다. 바뀐 것이
     없으면 새 기록 없이 지금 기록을 200 으로 돌려준다.
-    Idempotency-Key 는 보내면 쓴다. 같은 키로 다시 오면 처음 응답을 그대로 돌려준다. 키 없이 같은
-    고치기를 다시 보내면 지금 기록이 이미 내려가 있어서 404 다.
+    Idempotency-Key 가 필요하다 (등록과 같다). 같은 키로 다시 오면 처음 응답을 그대로 돌려준다 —
+    고친 뒤에는 옛 기록이 내려가 있어서, 다른 키로 같은 고치기를 다시 보내면 404 다.
     오류 (순서대로): 403 child_access_denied → 400 validation_failed(본문 형식 · 종류와 이름) →
-    403 consent_required(건강정보 동의 없음) → 404 not_found(내렸거나 다른 아이의 기록) →
-    400 validation_failed(종류와 맞지 않는 심각도).
+    400 idempotency_key_required → 403 consent_required(건강정보 동의 없음) →
+    404 not_found(내렸거나 다른 아이의 기록) → 400 validation_failed(종류와 맞지 않는 심각도).
     """
-    # 키는 선택이다 — 등록(POST)과 달리 지금 화면이 키 없이 보내도 동작해야 한다. 내리고 새로
-    # 등록하는 방식이라 같은 고치기를 다시 보내면 404 가 되므로, 화면이 키를 붙이면 재시도가
-    # 안전해진다
-    scope = None
-    if idempotency_key:
-        scope = {
-            "parent_id": parent.parent_id,
-            "method": request.method,
-            "path": request.url.path,
-            "key": idempotency_key,
-        }
-        replayed = idempotency.recall(**scope)
-        if isinstance(replayed, dict):
-            return JSONResponse(status_code=200, content=replayed)
+    # 키는 필수다 (#370 리뷰). 내리고 새로 등록하는 방식이라 응답을 잃고 다시 보낸 고치기는
+    # 404 가 된다 — 같은 키면 처음 응답을 재생해서 그 길을 막는다. 화면은 #386 부터 늘 붙인다
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = idempotency.recall(**scope)
+    if isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
 
     granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
     if granted is not ConsentAction.GRANTED:
@@ -251,8 +253,7 @@ async def revise_health_safety(
     nickname = None if writer is None else writer.nickname
     response = UpdateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
     await session.commit()
-    if scope is not None:
-        idempotency.remember(**scope, replay=response)
+    idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=200, content=response)
 
 

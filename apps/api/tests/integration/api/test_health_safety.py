@@ -5,7 +5,8 @@ HealthSafetyListResponse)과 목 서버(`apps/web/src/mocks/handlers/children.ts
 모양을 지킨다.
 
 여기서 지키는 것 (루트 CLAUDE.md §2 · §3).
-    ① 등록은 승인 게이트 ㉡ — 보호자가 직접 보낸 것만, Idempotency-Key 필수, 같은 키는 처음 응답
+    ① 등록 · 고치기는 승인 게이트 ㉡ — 보호자가 직접 보낸 것만, Idempotency-Key 필수,
+       같은 키는 처음 응답
     ② 같은 항목(종류 + 이름)이 이미 있으면 409 — 내린 항목은 다시 등록할 수 있다
     ③ 종류와 맞지 않는 심각도는 400 (알레르기는 class_0~6, 나머지는 mild~anaphylaxis)
     ④ 건강정보 동의(child_health)가 없으면 저장하지 않는다 — 403 consent_required
@@ -434,7 +435,7 @@ async def test_고치면_옛_기록은_내려가고_바뀐_값으로_새_기록�
     old_id = old.id
 
     response = await db_client.patch(
-        safety_url(consented, old_id), json={"severity": "class_4"}, headers=headers
+        safety_url(consented, old_id), json={"severity": "class_4"}, headers=with_key(headers)
     )
 
     assert response.status_code == 200
@@ -459,7 +460,7 @@ async def test_심각도를_null_로_보내면_모르겠어요로_되돌린다(d
     old = await milk(session, child_id=consented, parent_id=parent_1)
 
     response = await db_client.patch(
-        safety_url(consented, old.id), json={"severity": None}, headers=headers
+        safety_url(consented, old.id), json={"severity": None}, headers=with_key(headers)
     )
 
     assert response.status_code == 200
@@ -482,7 +483,7 @@ async def test_다른_보호자가_고치면_고친_사람이_남는다(db_clien
     await session.execute(update(Parent).where(Parent.id == parent_3).values(nickname="보호자3"))
 
     response = await db_client.patch(
-        safety_url(consented, old.id), json={"severity": "class_4"}, headers=headers_3
+        safety_url(consented, old.id), json={"severity": "class_4"}, headers=with_key(headers_3)
     )
 
     assert response.status_code == 200
@@ -506,7 +507,7 @@ async def test_고쳐도_관리_정보는_새_기록이_이어받는다(db_clien
     )
 
     response = await db_client.patch(
-        safety_url(consented, old.id), json={"severity": "class_4"}, headers=headers
+        safety_url(consented, old.id), json={"severity": "class_4"}, headers=with_key(headers)
     )
 
     assert response.json()["safety"]["management"] == "상비약 위치 메모"
@@ -523,7 +524,7 @@ async def test_빈_메모는_null_과_같아서_새_기록을_만들지_않는�
     )
 
     response = await db_client.patch(
-        safety_url(consented, old.id), json={"notes": notes}, headers=headers
+        safety_url(consented, old.id), json={"notes": notes}, headers=with_key(headers)
     )
 
     assert response.status_code == 200
@@ -556,7 +557,9 @@ async def test_바뀐_것이_없으면_새_기록을_만들지_않는다(
     headers, parent_1 = bearer
     old = await milk(session, child_id=consented, parent_id=parent_1)
 
-    response = await db_client.patch(safety_url(consented, old.id), json=body, headers=headers)
+    response = await db_client.patch(
+        safety_url(consented, old.id), json=body, headers=with_key(headers)
+    )
 
     assert response.status_code == 200
     assert response.json()["safety"]["id"] == str(old.id)
@@ -579,7 +582,9 @@ async def test_고칠_수_없는_본문은_400_이고_아무것도_바뀌지_않
     headers, parent_1 = bearer
     old = await milk(session, child_id=consented, parent_id=parent_1)
 
-    response = await db_client.patch(safety_url(consented, old.id), json=body, headers=headers)
+    response = await db_client.patch(
+        safety_url(consented, old.id), json=body, headers=with_key(headers)
+    )
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation_failed"
@@ -597,11 +602,11 @@ async def test_내린_기록이나_다른_아이의_기록을_고치면_404(db_c
     await session.flush()
 
     gone = await db_client.patch(
-        safety_url(consented, retracted.id), json={"severity": "class_4"}, headers=headers
+        safety_url(consented, retracted.id), json={"severity": "class_4"}, headers=with_key(headers)
     )
     # 보호자 1 이 자기 아이 A 의 주소에 아이 B 의 기록 id 를 실어 보낸다
     other = await db_client.patch(
-        safety_url(consented, row_b.id), json={"severity": "class_4"}, headers=headers
+        safety_url(consented, row_b.id), json={"severity": "class_4"}, headers=with_key(headers)
     )
 
     assert (gone.status_code, other.status_code) == (404, 404)
@@ -612,7 +617,7 @@ async def test_내린_기록이나_다른_아이의_기록을_고치면_404(db_c
 async def test_같은_키로_다시_고치면_처음_응답이고_한_번만_바뀐다(
     db_client, session, bearer, consented
 ):
-    """응답이 끊겨 보호자가 다시 누르는 경우 — 옛 기록은 이미 내려가 있어서 키가 없으면 404 다."""
+    """응답이 끊겨 보호자가 다시 누르는 경우 — 옛 기록은 이미 내려가 있어서 키가 다르면 404 다."""
     headers, parent_1 = bearer
     old = await milk(session, child_id=consented, parent_id=parent_1)
     body = {"severity": "class_4"}
@@ -623,13 +628,34 @@ async def test_같은_키로_다시_고치면_처음_응답이고_한_번만_바
     again = await db_client.patch(
         safety_url(consented, old.id), json=body, headers=with_key(headers, "edit-1")
     )
-    without_key = await db_client.patch(safety_url(consented, old.id), json=body, headers=headers)
+    other_key = await db_client.patch(
+        safety_url(consented, old.id), json=body, headers=with_key(headers, "edit-2")
+    )
 
     assert (first.status_code, again.status_code) == (200, 200)
     assert again.json() == first.json()
-    assert without_key.status_code == 404
+    assert other_key.status_code == 404
     statuses = sorted(row.status for row in await rows_of(session, consented))
     assert statuses == sorted([SafetyStatus.ACTIVE, SafetyStatus.RETRACTED])
+
+
+@pytest.mark.parametrize("key", [None, ""], ids=["키 없음", "빈 키"])
+async def test_고치기도_Idempotency_Key_가_없으면_400_이고_아무것도_바뀌지_않는다(
+    db_client, session, bearer, consented, key
+):
+    """등록과 같은 게이트 ㉡ 이다 — 키 없이 다시 보낸 고치기가 404 로 끝나는 길을 남기지 않는다."""
+    headers, parent_1 = bearer
+    old = await milk(session, child_id=consented, parent_id=parent_1)
+    sent = headers if key is None else {**headers, "Idempotency-Key": key}
+
+    response = await db_client.patch(
+        safety_url(consented, old.id), json={"severity": "class_4"}, headers=sent
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "idempotency_key_required"
+    rows = await rows_of(session, consented)
+    assert [(row.id, row.status) for row in rows] == [(old.id, SafetyStatus.ACTIVE)]
 
 
 async def test_건강정보_동의가_없으면_고치기도_403(db_client, session, bearer, cid):
@@ -637,7 +663,7 @@ async def test_건강정보_동의가_없으면_고치기도_403(db_client, sess
     old = await milk(session, child_id=cid, parent_id=parent_1)
 
     response = await db_client.patch(
-        safety_url(cid, old.id), json={"severity": "class_4"}, headers=headers
+        safety_url(cid, old.id), json={"severity": "class_4"}, headers=with_key(headers)
     )
 
     assert response.status_code == 403
@@ -650,7 +676,7 @@ async def test_보호자2가_남의_아이_기록을_고치면_403(db_client, se
     headers_2, _ = await issue_bearer(session, token="test-token-other-home")
 
     response = await db_client.patch(
-        safety_url(consented, old.id), json={"severity": "class_4"}, headers=headers_2
+        safety_url(consented, old.id), json={"severity": "class_4"}, headers=with_key(headers_2)
     )
 
     assert response.status_code == 403
