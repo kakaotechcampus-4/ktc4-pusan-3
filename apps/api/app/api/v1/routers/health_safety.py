@@ -1,9 +1,9 @@
-"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `DELETE …/{id}` (E 묶음).
+"""알레르기 · 건강 기록 — `GET` · `POST /children/{cid}/health-safety` · `PATCH` · `DELETE …/{id}`.
 
 🚨 LLM 이 만들거나 고치지 않는다 (루트 CLAUDE.md §2). 이 라우터가 health_safety 의 **유일한 쓰기
    경로**이고 보호자 토큰으로만 열린다. 등록은 승인 게이트 ㉡ 이라 Idempotency-Key 가 필수다.
 🚨 내리기는 지우지 않는다 — status 를 retracted 로 바꾼다. 안전 필터는 active 만 읽는다.
-고치기(PATCH)는 #87 결정 뒤에 더한다.
+🚨 고치기도 지우지 않는다 — 지금 기록을 내리고 새 기록을 넣는다 (#87, 이력이 남는다).
 """
 
 from datetime import UTC, datetime
@@ -24,6 +24,8 @@ from app.api.v1.schemas.health_safety import (
     CreateHealthSafetyResponse,
     HealthSafetyListResponse,
     HealthSafetyOut,
+    UpdateHealthSafetyRequest,
+    UpdateHealthSafetyResponse,
     WrittenBy,
 )
 from app.domains.consent.models import ConsentAction, ConsentScope
@@ -32,9 +34,11 @@ from app.domains.identity.repository import find_parent
 from app.domains.safety.models import ALLERGY_SEVERITIES, HealthSafety, SafetyKind
 from app.domains.safety.repository import (
     create_safety,
+    find_active_safety_for_update,
     has_active_safety,
     list_active_safety_with_writer,
     retract_safety,
+    revise_safety,
 )
 
 router = APIRouter()
@@ -143,7 +147,7 @@ async def register_health_safety(
                 label=body.label,
                 severity=body.severity,
                 reactions=body.reactions,
-                notes=body.notes,
+                notes=body.notes or None,  # 빈 메모는 null 로
             )
     except ValueError as exc:
         # 종류와 맞지 않는 심각도 (create_safety 가 DB CHECK 보다 먼저 막는다)
@@ -161,6 +165,95 @@ async def register_health_safety(
     await session.commit()
     idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
+
+
+@router.patch(
+    "/children/{cid}/health-safety/{safety_id}",
+    # JSONResponse 를 돌려줘도 Swagger 에 200 의 모양이 나오게 (등록과 같다)
+    response_model=UpdateHealthSafetyResponse,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404)},
+)
+async def revise_health_safety(
+    child: AccessibleChild,
+    safety_id: UUID,
+    body: UpdateHealthSafetyRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """승인 게이트 ㉡ — 보호자가 확인한 알레르기 · 건강 기록을 고친다 (등록과 같은 게이트).
+
+    고치면 지금 기록은 내려가고 바뀐 값으로 새 기록이 생긴다 — 응답의 id 가 바뀐다. 바뀐 것이
+    없으면 새 기록 없이 지금 기록을 200 으로 돌려준다.
+    Idempotency-Key 는 보내면 쓴다. 같은 키로 다시 오면 처음 응답을 그대로 돌려준다. 키 없이 같은
+    고치기를 다시 보내면 지금 기록이 이미 내려가 있어서 404 다.
+    오류 (순서대로): 403 child_access_denied → 400 validation_failed(본문 형식 · 종류와 이름) →
+    403 consent_required(건강정보 동의 없음) → 404 not_found(내렸거나 다른 아이의 기록) →
+    400 validation_failed(종류와 맞지 않는 심각도).
+    """
+    # 키는 선택이다 — 등록(POST)과 달리 지금 화면이 키 없이 보내도 동작해야 한다. 내리고 새로
+    # 등록하는 방식이라 같은 고치기를 다시 보내면 404 가 되므로, 화면이 키를 붙이면 재시도가
+    # 안전해진다
+    scope = None
+    if idempotency_key:
+        scope = {
+            "parent_id": parent.parent_id,
+            "method": request.method,
+            "path": request.url.path,
+            "key": idempotency_key,
+        }
+        replayed = idempotency.recall(**scope)
+        if isinstance(replayed, dict):
+            return JSONResponse(status_code=200, content=replayed)
+
+    granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
+    if granted is not ConsentAction.GRANTED:
+        raise ApiError(
+            403,
+            "consent_required",
+            "건강 정보 동의가 필요해요",
+            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
+        )
+
+    current = await find_active_safety_for_update(
+        session, child_id=child.child_id, safety_id=safety_id
+    )
+    if current is None:
+        raise ApiError(404, "not_found", "이미 내려간 기록이에요")
+
+    changes = body.model_dump(exclude_unset=True)
+    severity = changes.get("severity", current.severity)
+    reactions = changes.get("reactions", list(current.reactions))
+    notes = changes.get("notes", current.notes) or None  # 빈 메모는 null 로
+    if severity is not None and (current.kind is SafetyKind.ALLERGY) != (
+        severity in ALLERGY_SEVERITIES
+    ):
+        raise ApiError(
+            400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {"fields": ["severity"]}
+        )
+
+    unchanged = (current.severity, list(current.reactions), current.notes or None)
+    if (severity, reactions, notes) == unchanged:
+        # 바뀐 것이 없다 — 고치기 시트는 안 고친 칸도 지금 값으로 실어 보낸다. 이력을 늘리지 않는다
+        row = current
+    else:
+        row = await revise_safety(
+            session,
+            current=current,
+            parent_id=parent.parent_id,
+            severity=severity,
+            reactions=reactions,
+            notes=notes,
+        )
+        await session.refresh(row)
+    writer = None if row.created_by is None else await find_parent(session, row.created_by)
+    nickname = None if writer is None else writer.nickname
+    response = UpdateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
+    await session.commit()
+    if scope is not None:
+        idempotency.remember(**scope, replay=response)
+    return JSONResponse(status_code=200, content=response)
 
 
 @router.delete(

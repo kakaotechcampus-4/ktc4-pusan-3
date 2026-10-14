@@ -63,6 +63,57 @@ async def find_safety(
     )
 
 
+async def find_active_safety_for_update(
+    session: AsyncSession, *, child_id: uuid.UUID, safety_id: uuid.UUID
+) -> HealthSafety | None:
+    """고치기 전에 그 아이의 active 기록을 잠근다. 내렸거나 다른 아이의 기록이면 None.
+
+    같은 기록을 두 사람이 동시에 고치면 두 번째는 첫 번째가 끝날 때까지 기다렸다가, 이미
+    내려간 기록을 보고 None 을 받는다 — 한 기록에서 새 기록이 둘 갈라져 나오지 않는다.
+    """
+    return await session.scalar(
+        select(HealthSafety)
+        .where(
+            HealthSafety.child_id == child_id,
+            HealthSafety.id == safety_id,
+            HealthSafety.status == SafetyStatus.ACTIVE,
+        )
+        .with_for_update()
+    )
+
+
+async def revise_safety(
+    session: AsyncSession,
+    *,
+    current: HealthSafety,
+    parent_id: uuid.UUID,
+    severity: SafetySeverity | None,
+    reactions: list[str],
+    notes: str | None,
+) -> HealthSafety:
+    """보호자의 고치기 — 제자리에서 바꾸지 않고, 지금 기록을 내린 뒤 새 기록을 넣는다.
+
+    이력이 남는다 (#87, 2026-10-13 PM 결정). 종류와 이름은 고칠 수 없어서 같은 아이 · 종류 ·
+    이름의 기록을 시간순으로 놓으면 그 항목이 바뀌어 온 길이다. 내린 기록의 updated_by 와 새
+    기록의 created_by 가 고친 보호자다. 지금 기록을 먼저 내리므로 active 가 둘이 되지 않는다
+    (uq_health_safety_active_item). 호출자가 find_active_safety_for_update 로 잠근 기록을 넘긴다.
+    """
+    current.status = SafetyStatus.RETRACTED
+    current.updated_by = parent_id
+    await session.flush()
+    return await create_safety(
+        session,
+        child_id=current.child_id,
+        parent_id=parent_id,
+        kind=current.kind,
+        label=current.label,
+        severity=severity,
+        reactions=reactions,
+        management=current.management,
+        notes=notes,
+    )
+
+
 async def create_safety(
     session: AsyncSession,
     *,

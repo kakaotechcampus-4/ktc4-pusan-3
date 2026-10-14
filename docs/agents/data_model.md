@@ -341,6 +341,7 @@
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
 - 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다.
 - **active 끼리만** `UNIQUE(child_id, kind, label)` — 부분 고유 인덱스 `uq_health_safety_active_item` (`WHERE status = 'active'`, 2026-10-13). 10/4 표의 전체 UNIQUE 와 다르다. 내린(`retracted`) 줄은 이력으로 남고, 같은 항목을 내린 뒤 다시 등록하면 같은 (child_id, kind, label) 로 새 줄이 생겨서, 전체에 걸면 다시 등록이 막힌다. 등록 API 는 코드로 먼저 보고(409), 동시에 온 두 번째 요청은 이 인덱스가 막는다
+- **보호자가 고치면(`PATCH`) 제자리에서 바꾸지 않는다** — 지금 줄을 `retracted`(`updated_by` = 고친 보호자)로 내리고, 바뀐 값으로 새 줄을 넣는다(`created_by` = 고친 보호자). #87 첫 질문의 답이다 (2026-10-13 PM 결정). 종류 · 이름은 고칠 수 없어서 같은 (child_id, kind, label) 의 줄을 시간순으로 놓으면 그 항목이 바뀌어 온 길이다. 바뀐 값이 없으면 새 줄을 만들지 않는다. 고치기는 한 트랜잭션이라 옛 줄의 `updated_at` 과 새 줄의 `created_at` 이 같다 — 보호자가 따로 "내리고 다시 등록" 한 것과 가르는 근거가 이것이다
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
 
