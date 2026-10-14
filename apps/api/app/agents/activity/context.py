@@ -18,13 +18,14 @@ from app.agents.activity.store.ports import (
     CoarseLocation,
     PlaceRow,
     SafetyEntry,
+    UnwiredSafety,
     WeatherGrid,
 )
 from app.agents.activity.weather import WeatherBrief
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
-from app.agents.common.gate import DataReady, Gate, read_safety_basis
+from app.agents.common.gate import DataReady, Gate, SafetyBasis, read_safety_basis
 from app.agents.common.suggestion import SuggestionDraft
 
 
@@ -114,9 +115,13 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     stage = life_stage(birth_date, context.today)
     consent = await ports.consent.child_health_granted(child_id=context.child_id)
 
-    basis = await read_safety_basis(
-        partial(ports.safety.activity_safety, child_id=context.child_id), consent=consent
-    )
+    if isinstance(ports.safety, UnwiredSafety):
+        # 어댑터가 붙기 전이다. 동의가 없어도 닫아야 해서 동의를 보지 않는다 — 읽지도 않는다 (#380)
+        basis: SafetyBasis[SafetyEntry] = SafetyBasis(entries=None)
+    else:
+        basis = await read_safety_basis(
+            partial(ports.safety.activity_safety, child_id=context.child_id), consent=consent
+        )
     context.state.safety_entries = basis.entries
 
     return Gate(

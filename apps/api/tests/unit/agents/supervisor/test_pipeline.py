@@ -77,6 +77,14 @@ NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
 CHILD = UUID(int=1)
 RUN_ID = "run-1"
 
+
+@pytest.fixture
+def food_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """미구현 agent 경로를 보는 테스트. activity 가 붙은 뒤에도(#380) 그 경로를 보도록 구현된
+    agent 를 food 하나로 고정한다 — 아직 없는 agent 예시로 activity 를 쓰고 있다."""
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food"}))
+
+
 # 관찰 저장 인자 — 도메인별 필수 필드만 채운다
 _STRAWBERRY = {
     "raw_text": "오늘 어린이집에서 딸기는 잘 먹었대",
@@ -464,6 +472,7 @@ async def test_RC20_기록할_조각이_없으면_Memory_를_부르지_않는다
     assert result.model_calls == 2  # Supervisor 1 + Food(기본 가짜 응답) 1
 
 
+@pytest.mark.usefixtures("food_only")
 async def test_RC07_미구현_agent_만_짚었어도_실패가_아니다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
@@ -483,6 +492,7 @@ async def test_RC07_미구현_agent_만_짚었어도_실패가_아니다(
     assert result.failed is None  # unparsable 이 아니다 — 못 읽은 게 아니라 아직 없는 agent 다
 
 
+@pytest.mark.usefixtures("food_only")
 async def test_RC16_미구현_agent_는_이름만_남기고_부르지_않는다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:

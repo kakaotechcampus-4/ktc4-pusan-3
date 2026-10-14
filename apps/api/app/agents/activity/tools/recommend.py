@@ -62,7 +62,6 @@ async def propose_activity_candidates(
         places=context.state.seen_places,
         recent_activities=[row.activity for row in observations],
         safety=safety_terms(entries),
-        outdoor_ok=gate.outdoor_ok,
         today=today,
         # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
         outdoor={
