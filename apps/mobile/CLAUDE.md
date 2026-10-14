@@ -22,12 +22,12 @@ Owner: 고태영 (프론트 리드)
 
 | | 버전 | 비고 |
 | --- | --- | --- |
-| Expo SDK | **57** (`expo@57.0.20`) | |
+| Expo SDK | **57** (`expo@57.0.28`) | |
 | React Native | 0.86.3 | |
 | React | 19.2.3 | |
 | react-native-webview | 13.16.1 | |
 | react-native-safe-area-context | 5.7.0 | |
-| expo-dev-client | 57.0.19 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
+| expo-dev-client | 57.0.20 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
 | TypeScript | 6.0.3 | |
 
@@ -57,6 +57,7 @@ src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
 src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
 app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
+eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
 ```
 
 ### 🚨 사진 권한을 받지 않는다 (#408)
@@ -170,3 +171,42 @@ adb.exe shell am start -a android.intent.action.VIEW \
 ```
 
 ⚠️ AVD 스냅샷이 깨져 있으면 에뮬레이터가 `offline` 에서 안 넘어온다. `-no-snapshot-load` 로 콜드 부팅한다.
+
+### 배포 빌드 (EAS · #410)
+
+스토어에 올리는 것은 `eas.json` 의 `production` 프로필이 만드는 `.aab` 다. 프로필은 셋이다.
+
+EAS 프로젝트는 **`truedoc` 조직의 `@truedoc/icatch`** 다 (`app.json` 의 `owner` · `extra.eas.projectId`).
+개인 계정이 아니라 조직에 둔 이유는 스토어 운영자(약관의 운영자)와 같은 곳에 빌드 기록과 키를 두기 위해서다.
+빌드하려면 그 조직의 멤버로 로그인한다.
+
+| 프로필 | 산출물 | 띄우는 웹 | 쓰는 곳 |
+| --- | --- | --- | --- |
+| `development` | 개발 빌드 apk | Metro 가 읽는 `.env.local` | 로컬 개발 (`pnpm android` 와 같은 앱) |
+| `preview` | apk | `https://icatch.ai.kr` | 팀원 실기기에 바로 설치해 보는 것 |
+| `production` | aab | `https://icatch.ai.kr` | Play 스토어 업로드 |
+
+```bash
+npx eas-cli@latest login                                    # 최초 1회 — 팀 Expo 계정
+npx eas-cli@latest build -p android --profile production    # aab (EAS 서버에서 빌드)
+npx eas-cli@latest build -p android --profile preview       # apk — 설치 링크가 나온다
+```
+
+- 🚨 **배포 빌드의 웹 주소는 `eas.json` 의 `env` 가 정한다.** `.env.local` 은 `.gitignore` 라 EAS 서버로
+  올라가지 않는다. 주소를 바꾸면 `eas.json` 을 고친다 — `EXPO_PUBLIC_*` 는 번들에 박히므로 다시 빌드해야 한다.
+- 🚨 **`versionCode` 는 EAS 가 올린다** (`appVersionSource: remote` + `autoIncrement`). `app.json` 에 손으로 적지 않는다.
+  사용자에게 보이는 `version`(지금 `0.1.0`)만 `app.json` 에서 올린다.
+- 🚨 **업로드 키는 EAS 가 만들어 `truedoc` 조직 자격 증명에 보관한다** (2026-10-14 결정). 키 파일을 팀원 PC 에
+  두지 않는다 — 누가 빌드하든 같은 키로 서명된다. 한 번 올린 업로드 키는 Play Console 에 재설정을 요청해야 바뀌므로,
+  `eas credentials` 에서 키를 지우거나 새로 만들지 않는다. 백업이 필요하면 조직 Owner 가 `eas credentials` 로 내려받는다.
+- EAS 없이 aab 가 만들어지는지만 볼 때는 로컬 gradle 로 굽는다. 서명은 디버그 키이고 `versionCode` 는 늘 1 이라
+  스토어에는 못 올린다. 🚨 **두 줄을 같이 돌린다.** 셸에서 준 주소가 `.env.local` 보다 앞서는데, `prebuild --clean`
+  없이 둘째 줄만 다른 주소로 다시 돌리면 gradle 이 번들 작업을 건너뛰어 옛 주소가 남을 수 있다.
+
+```bash
+CI=1 pnpm exec expo prebuild --clean --platform android --no-install
+cd android && EXPO_PUBLIC_WEB_URL=https://icatch.ai.kr ./gradlew bundleRelease
+# → android/app/build/outputs/bundle/release/app-release.aab
+# 박힌 주소 확인 (Hermes 문자열이라 앞 글자가 붙어 보일 수 있다)
+unzip -p app/build/outputs/bundle/release/app-release.aab base/assets/index.android.bundle | strings | grep -o 'icatch\.ai\.kr\|localhost:[0-9]*'
+```
