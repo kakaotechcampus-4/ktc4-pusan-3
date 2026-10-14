@@ -34,6 +34,7 @@ jobs:
             --timeout-seconds 600 \
             --parameters commands='[
               "set -e",
+              "export HOME=/root",
               "cd /home/ubuntu/ktc4-pusan-3",
               "git config --global --get safe.directory /home/ubuntu/ktc4-pusan-3 || git config --global --add safe.directory /home/ubuntu/ktc4-pusan-3",
               "git fetch origin ${{ github.ref_name }}",
