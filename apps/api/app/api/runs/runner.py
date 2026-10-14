@@ -31,6 +31,7 @@ from app.api import idempotency
 from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, translate
 from app.api.runs.registry import RunChannel
+from app.domains.safety.agent_reader import DbSafetyReader
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,9 @@ def agent_job(
                 channel.suggestions_saved = True
             return tuple(str(row_id) for row_id in ids)
 
+        # 호출마다 짧은 세션으로 health_safety 를 읽는다 — run 세션을 같이 타지 않게 (#257)
+        safety_reader = DbSafetyReader(background_session)
+
         async with background_session() as session:
             store = DbMemoryStore(session, child_id=child_id)
 
@@ -174,6 +178,9 @@ def agent_job(
                         save_suggestions=save_suggestions,
                         curator_trigger=_curator_trigger(),
                         domain_store=domain_store,
+                        # health_safety 를 읽는 어댑터는 Activity 에만 넘긴다(#405). Food 는 Food
+                        # 쪽 일정에 맞춰 food_safety=safety_reader 한 줄로 켠다
+                        activity_safety=safety_reader,
                     )
             except TimeoutError:
                 log.warning(

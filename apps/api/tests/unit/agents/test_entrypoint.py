@@ -18,15 +18,18 @@ from app.agents.activity.context import build_gate as build_activity_gate
 from app.agents.activity.registry import closed_readout_key as activity_closed_key
 from app.agents.activity.schemas.task import ActivityTaskType
 from app.agents.activity.store.inmemory import InMemoryWeather
+from app.agents.activity.store.ports import SafetyEntry as ActivitySafetyEntry
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.llm_client import LLMConfigError
+from app.agents.common.ports import SafetyLookupError
 from app.agents.curator.embedding import embedder as embedder_module
 from app.agents.curator.embedding import jev as jev_module
 from app.agents.food.context import build_gate
 from app.agents.food.registry import closed_readout_key, tools_for
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import FoodPorts, MenuCatalogRow
+from app.agents.food.store.ports import SafetyEntry as FoodSafetyEntry
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreActivityMemory
@@ -632,3 +635,95 @@ async def test_러너가_준_도메인_store_로_Activity_기억_포트를_읽�
     await activity.ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
 
     assert opened == [1]
+
+
+# ── health_safety 어댑터 (#405 PR B) ─────────────────────────────
+class FakeSafety:
+    """Food · Activity 의 SafetyReader 둘 다. `fail` 이면 읽기 실패다."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[str] = []
+
+    async def activity_safety(self, *, child_id: UUID) -> list[ActivitySafetyEntry]:
+        self.calls.append("activity")
+        if self.fail:
+            raise SafetyLookupError("down")
+        return [ActivitySafetyEntry(kind="environmental", label="꽃가루", status="active")]
+
+    async def food_safety(self, *, child_id: UUID) -> list[FoodSafetyEntry]:
+        self.calls.append("food")
+        return [FoodSafetyEntry(kind="allergy", label="우유", status="active")]
+
+
+async def test_넘긴_안전_어댑터로_Activity_가_열린다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """동의가 있으면 실제로 읽고 열린다. 확인 문구가 붙을 꽃가루 행도 그대로 온다."""
+    safety = FakeSafety()
+    seen = await _activity_of(
+        monkeypatch, birth_date=_months_ago(30), child_health_granted=True, activity_safety=safety
+    )
+    activity = seen["contexts"]["activity"]
+
+    gate = await build_activity_gate(activity, outdoor_ok=False)
+
+    assert gate.safety_ok is True
+    assert activity_closed_key(ActivityTaskType.ACTIVITY_RECOMMENDATION, gate) is None
+    assert [entry.label for entry in activity.state.safety_entries] == ["꽃가루"]
+    assert safety.calls == ["activity"]
+
+
+async def test_동의가_없으면_어댑터가_있어도_읽지_않고_열린다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safety = FakeSafety()
+    seen = await _activity_of(
+        monkeypatch, birth_date=_months_ago(30), child_health_granted=False, activity_safety=safety
+    )
+
+    gate = await build_activity_gate(seen["contexts"]["activity"], outdoor_ok=False)
+
+    assert gate.safety_ok is True
+    assert safety.calls == []
+
+
+async def test_어댑터가_못_읽으면_Activity_는_닫힌다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """빈 목록으로 열리지 않는다 (D7)."""
+    seen = await _activity_of(
+        monkeypatch,
+        birth_date=_months_ago(30),
+        child_health_granted=True,
+        activity_safety=FakeSafety(fail=True),
+    )
+
+    gate = await build_activity_gate(seen["contexts"]["activity"], outdoor_ok=False)
+
+    assert gate.safety_ok is False
+    assert activity_closed_key(ActivityTaskType.ACTIVITY_RECOMMENDATION, gate) == "blocked.safety"
+
+
+async def test_Activity_어댑터만_넘기면_Food_는_그대로_닫힌다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agent 마다 켜는 시점이 다르다 — 지금 러너는 Activity 만 넘긴다."""
+    seen = await _activity_of(
+        monkeypatch,
+        birth_date=_months_ago(30),
+        child_health_granted=True,
+        activity_safety=FakeSafety(),
+    )
+
+    gate = await build_gate(seen["contexts"]["food"])
+
+    assert gate.safety_ok is False
+
+
+async def test_Food_어댑터를_넘기면_Food_포트에_들어간다(monkeypatch: pytest.MonkeyPatch) -> None:
+    safety = FakeSafety()
+    seen = await _activity_of(
+        monkeypatch, birth_date=_months_ago(30), child_health_granted=True, food_safety=safety
+    )
+
+    gate = await build_gate(seen["contexts"]["food"])
+
+    assert gate.safety_ok is True
+    assert safety.calls == ["food"]
