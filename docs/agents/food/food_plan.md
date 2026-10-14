@@ -118,7 +118,7 @@ app/agents/food/
 └── tools/
 ```
 
-**포트**: `observation_food` · `profile_affinity(food)` · `health_safety` · `child` · `menu_catalog` · **`daycare_meal`(읽기+쓰기)** · `food_doc` · `SuggestionWriter`
+**포트**: `observation_food` · `profile_affinity(food)` · `health_safety` · `child` · `menu_catalog` · **`daycare_meal`(읽기+쓰기)** · `food_doc` (추천 저장은 포트가 아니다 — pipeline `save_suggestions`)
 
 **게이팅** ([`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §3)
 
