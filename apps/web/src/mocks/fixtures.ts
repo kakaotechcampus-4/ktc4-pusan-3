@@ -244,7 +244,8 @@ export function newHealthSafety(input: {
     reactions: input.reactions ?? [],
     management: null,
     notes: input.notes ?? null,
-    created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
+    // 서버처럼 부르는 이름이 없으면 통째로 null 이다 — 빈 이름을 지어 붙이지 않는다.
+    created_by: me.nickname ? { parent_id: PARENT_ID, nickname: me.nickname } : null,
     updated_at: hoursFromNow(0),
   };
 }

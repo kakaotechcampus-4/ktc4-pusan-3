@@ -241,16 +241,21 @@ export const childrenHandlers = [
       // 🚨 DB CHECK `health_safety_severity_by_kind` 를 목이 대신 막는다 — 알레르기에 가볍게~심하게
       //    를 보내면 실서버에서는 등록이 통째로 실패한다. 목이 받아 주면 화면이 그걸 모르고 지나간다.
       if (body.severity != null && !isSeverityFor(body.type, body.severity)) {
-        return apiError(400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요");
+        return apiError(400, "validation_failed", "이 종류에는 쓸 수 없는 심각도예요", {
+          fields: ["severity"],
+        });
       }
+      // 🚨 서버는 이름의 앞뒤 공백을 떼고 저장하고, 같은 항목인지도 뗀 이름으로 본다 (#369).
+      //    목이 원문으로 비교하면 " 땅콩" 이 목에서는 새 항목, 실서버에서는 409 가 된다.
+      const label = body.label.trim();
       const exists = safetyState.some(
-        (row) => !row.retracted && row.safety.type === body.type && row.safety.label === body.label,
+        (row) => !row.retracted && row.safety.type === body.type && row.safety.label === label,
       );
       if (exists) {
         return apiError(409, "already_exists", "이미 등록된 항목이에요");
       }
 
-      const safety = newHealthSafety(body);
+      const safety = newHealthSafety({ ...body, label });
       safetyState = [{ safety, retracted: false }, ...safetyState];
 
       return HttpResponse.json({ safety }, { status: 201 });

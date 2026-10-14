@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  HEALTH_SAFETY_LIMITS,
   SEVERITY_LABEL,
   isSeverityFor,
+  reactionsProblem,
   severityFieldLabel,
   severityOptions,
+  splitReactions,
 } from "@/lib/health-safety";
 
 /** DB `health_safety_severity_by_kind` 가 받는 값 (apps/api/app/domains/safety/models.py). */
@@ -42,5 +45,30 @@ describe("health_safety 심각도는 DB 규칙을 따른다", () => {
   it("알레르기 칸은 검사 등급이라고 말한다", () => {
     expect(severityFieldLabel("allergy")).toBe("검사 등급");
     expect(severityFieldLabel("chronic_disease")).toBe("얼마나 심한가요");
+  });
+});
+
+/** 서버 스키마(`apps/api/app/api/v1/schemas/health_safety.py`)가 받는 길이 (#369). */
+describe("health_safety 길이는 서버가 받는 만큼이다", () => {
+  // ⚠️ 서버와 맞는지를 잡는 테스트가 아니다 — 서버가 바뀌어도 깨지지 않는다. 상수를 바꾸는 순간
+  //    깨져서 "서버 스키마(`schemas/health_safety.py`)도 같이 봤는가" 를 묻는 알림이다.
+  it("길이 상수를 바꾸면 서버 스키마(#369)도 같이 확인한다", () => {
+    expect(HEALTH_SAFETY_LIMITS).toEqual({ label: 100, notes: 500, reactions: 20, reaction: 100 });
+  });
+
+  it("쉼표로 적은 증상은 앞뒤 공백을 떼고 빈 칸을 뺀다 — 서버는 빈 증상을 받지 않는다", () => {
+    expect(splitReactions(" 두드러기, ,기침 ,")).toEqual(["두드러기", "기침"]);
+    expect(splitReactions("")).toEqual([]);
+  });
+
+  it("증상 개수와 길이가 서버 제한 안이면 사유가 없다", () => {
+    expect(reactionsProblem(Array.from({ length: 20 }, () => "가".repeat(100)))).toBeNull();
+  });
+
+  it("🚨 증상이 21개거나 한 증상이 101자면 보내기 전에 막는다 — 서버는 400 이다", () => {
+    expect(reactionsProblem(Array.from({ length: 21 }, (_, n) => `증상${n}`))).toBe(
+      "증상은 20개까지 적을 수 있어요",
+    );
+    expect(reactionsProblem(["가".repeat(101)])).toBe("증상 하나는 100자까지 적을 수 있어요");
   });
 });

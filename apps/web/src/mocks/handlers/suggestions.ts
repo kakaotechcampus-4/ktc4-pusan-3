@@ -3,7 +3,6 @@ import { http, HttpResponse } from "msw";
 import {
   draftEvent,
   generalSuggestions,
-  healthSafety,
   mealDraft,
   staleSuggestion,
   suggestionDraft,
@@ -242,39 +241,9 @@ export const suggestionHandlers = [
     );
   }),
 
-  /* ── 승인 게이트 ㉡ — 알레르기·건강 기록의 유일한 쓰기 경로 ─────────────
-   * 🚨 보호자 토큰으로만 호출된다. Agent 실행 경로에는 이 함수를 부르는 코드가 없고,
-   *    DB 레벨에서도 Agent/Curator role 에 write 권한이 없다 (계약서 §07 "방어가 두 겹").
-   */
-  http.get(url("/children/:cid/health-safety"), async () => {
-    await networkDelay();
-    return HttpResponse.json({ items: healthSafety });
-  }),
-
-  http.post(url("/children/:cid/health-safety"), async ({ request }) => {
-    await networkDelay();
-    const body = (await request.json()) as { type: string; label: string };
-
-    // UNIQUE(child_id, type, label) — 같은 항목 재등록은 409 다. 지우고 다시 넣어야 한다.
-    if (healthSafety.some((s) => s.type === body.type && s.label === body.label)) {
-      return apiError(409, "conflict", "이미 등록된 항목이에요");
-    }
-
-    return HttpResponse.json(
-      {
-        safety: {
-          ...healthSafety[0],
-          id: `hs_${Date.now()}`,
-          type: body.type,
-          label: body.label,
-          severity: null,
-          reactions: [],
-          notes: null,
-        },
-      },
-      { status: 201 },
-    );
-  }),
+  // 🚨 알레르기 · 건강 기록(`/health-safety`, 게이트 ㉡)은 `handlers/children.ts` 하나가 갖는다 (#374).
+  //    여기 두 번째 벌이 있었는데, 먼저 등록된 children 쪽에 가려 닿지 않으면서 409 를 다른 코드
+  //    (`conflict`)로 내고 있었다 — 등록 순서가 바뀌는 순간 화면이 409 를 실패로 그린다.
 
   // 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점. 캘린더에 쓰는 것은 여기 하나다.
   http.post(
