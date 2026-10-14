@@ -4,9 +4,10 @@ import type { ApiErrorCode } from "@/lib/api/errors";
 import type { InviteAcceptResponse, InvitePreviewResponse, Relation } from "@/lib/api/types";
 
 import { isInviteCodeComplete, normalizeInviteCode } from "@/lib/invite-code";
-import { CHILD_ID, me } from "../fixtures";
+import { CHILD_ID } from "../fixtures";
 import { apiError, networkDelay, url } from "./helpers";
 import { currentMe, joinChild } from "./membership";
+import { INVITER_NICKNAME } from "./settings";
 
 /**
  * 초대 확인 · 수락.
@@ -101,7 +102,7 @@ export const inviteHandlers = [
 
     const res: InvitePreviewResponse = {
       child: { nickname: "민준", age_display: "만 4세" },
-      invited_by: { nickname: me.nickname },
+      invited_by: { nickname: INVITER_NICKNAME },
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
     return HttpResponse.json(res);

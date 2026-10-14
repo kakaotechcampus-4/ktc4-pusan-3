@@ -113,6 +113,7 @@ function SettingsScreen() {
       >
         <ParentSection
           childId={childId}
+          viewer={me.data && role ? { id: me.data.id, role } : undefined}
           inviteOpen={inviteOpen}
           onInviteOpenChange={setInviteOpen}
         />
