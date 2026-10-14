@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.identity.models import Parent
 from app.domains.safety.models import (
     ALLERGY_SEVERITIES,
     HealthSafety,
@@ -23,6 +24,37 @@ async def list_active_safety(session: AsyncSession, *, child_id: uuid.UUID) -> l
     return list((await session.scalars(stmt)).all())
 
 
+async def list_active_safety_with_writer(
+    session: AsyncSession, *, child_id: uuid.UUID
+) -> list[tuple[HealthSafety, str | None]]:
+    """list_active_safety 와 같은 행 · 순서에, 적은 보호자의 부르는 이름을 붙인다.
+
+    적은 보호자가 탈퇴했으면(created_by SET NULL) 이름은 None 이다.
+    """
+    stmt = (
+        select(HealthSafety, Parent.nickname)
+        .outerjoin(Parent, Parent.id == HealthSafety.created_by)
+        .where(HealthSafety.child_id == child_id, HealthSafety.status == SafetyStatus.ACTIVE)
+        .order_by(HealthSafety.created_at.desc(), HealthSafety.id.desc())
+    )
+    return [(row, nickname) for row, nickname in (await session.execute(stmt)).all()]
+
+
+async def has_active_safety(
+    session: AsyncSession, *, child_id: uuid.UUID, kind: SafetyKind, label: str
+) -> bool:
+    """같은 종류 · 같은 이름의 active 기록이 있는가. 내린(retracted) 기록은 세지 않는다."""
+    found = await session.scalar(
+        select(HealthSafety.id).where(
+            HealthSafety.child_id == child_id,
+            HealthSafety.kind == kind,
+            HealthSafety.label == label,
+            HealthSafety.status == SafetyStatus.ACTIVE,
+        )
+    )
+    return found is not None
+
+
 async def find_safety(
     session: AsyncSession, *, child_id: uuid.UUID, safety_id: uuid.UUID
 ) -> HealthSafety | None:
@@ -31,8 +63,6 @@ async def find_safety(
     )
 
 
-# TODO(#295): health-safety 라우터를 만들 때 Swagger 로 FE 타입(`HealthSafety`)과 필드를 대조한다.
-#   FE 타입은 이 모델에 맞춰 정렬했다 — type(=kind) · 종류별 severity · management 는 text.
 async def create_safety(
     session: AsyncSession,
     *,

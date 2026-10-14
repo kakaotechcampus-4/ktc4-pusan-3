@@ -340,7 +340,7 @@
 - **막는 것은 조회 실패 하나다.** 실패를 빈 목록으로 숨기지 않는다 (루트 CLAUDE.md §2).
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
 - 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다.
-- `UNIQUE(child_id, kind, label)`
+- **active 끼리만** `UNIQUE(child_id, kind, label)` — 부분 고유 인덱스 `uq_health_safety_active_item` (`WHERE status = 'active'`, 2026-10-13). 10/4 표의 전체 UNIQUE 와 다르다. 내린(`retracted`) 줄은 이력으로 남고, 같은 항목을 내린 뒤 다시 등록하면 같은 (child_id, kind, label) 로 새 줄이 생겨서, 전체에 걸면 다시 등록이 막힌다. 등록 API 는 코드로 먼저 보고(409), 동시에 온 두 번째 요청은 이 인덱스가 막는다
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
 
@@ -597,5 +597,5 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 
 - `observed_range` 의 빈 범위·무한 상한 금지 CHECK
 - `profile_affinity.polarity` 가 `confirmed` 일 때 NOT NULL 인 CHECK. ORM 레벨은 nullable 이다
-- `health_safety` 의 `UNIQUE(child_id, kind, label)` — `__table_args__` 에 미선언이라 autogenerate 가 못 잡는다. 수동 추가가 필요하다
+- ~~`health_safety` 의 `UNIQUE(child_id, kind, label)`~~ — 2026-10-13 active 끼리만 거는 부분 고유 인덱스로 `__table_args__` 에 선언했다 (마이그레이션 `d0be81909739`)
 - Agent/Curator role 의 write 권한 분리 (DB 계층 권한)

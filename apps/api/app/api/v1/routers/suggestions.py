@@ -240,7 +240,7 @@ async def submit_event(
     request: Request,
     idempotency_key: str | None = Header(alias="Idempotency-Key", default=None),
 ) -> JSONResponse:
-    if idempotency_key is None:
+    if not idempotency_key:
         raise ApiError(
             400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
         )
@@ -490,7 +490,7 @@ async def update_event(
     request: Request,
     idempotency_key: str | None = Header(alias="Idempotency-Key", default=None),
 ) -> JSONResponse:
-    if idempotency_key is None:
+    if not idempotency_key:
         raise ApiError(
             400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
         )
