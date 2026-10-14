@@ -229,7 +229,7 @@
 ### 3-5. 준비물
 
 - `items` 가 최종 목록이라 **빼기가 화면에 있어야 계약이 성립**한다
-- 🚨 **체크박스를 그리지 않는다.** `is_prepared` 는 payload 에 없고 체크는 `PATCH /event-items/{iid}` 만의 몫이다
+- 🚨 **체크박스를 그리지 않는다.** `is_prepared` 는 payload 에 없고 체크는 `PATCH /children/{cid}/event-items/{iid}` 만의 몫이다
 
 ### 3-6. 초안의 수명
 

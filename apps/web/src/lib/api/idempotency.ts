@@ -46,6 +46,9 @@ export interface IdempotencyKeyHolder {
    *   (idempotency-v1 §0 서버 보장 ③), 거기 걸리는 경로가 실제로 있다 — 서버는 처리했는데
    *   **응답만 유실되면** 화면은 실패로 보이고, 보호자가 한 줄을 고쳐서 다시 보낸다.
    *   그때 본문만 바뀌고 키는 그대로라 계속 422 다 (PR #71 리뷰).
+   *   ⚠️ 422 는 목과 idempotency-v1 의 목표 동작이고, **지금 서버는 본문을 비교하지 않고 처음 응답을
+   *   재생한다** (`apps/api/app/api/idempotency.py` · "422 는 다음 이슈"). 그쪽이 더 나쁘다 — 고친
+   *   본문이 저장되지 않는데 화면은 성공으로 그린다. 어느 쪽이든 본문을 넘기면 새 키가 나간다.
    *   본문이 하나뿐인 동작(확정 · 승인)은 넘기지 않는다.
    */
   current: (payload?: string) => IdempotencyKey;

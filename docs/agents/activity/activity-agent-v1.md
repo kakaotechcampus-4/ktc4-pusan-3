@@ -154,6 +154,7 @@ class ActivityCandidate(ToolArgs):
     physical_intensity: Intensity
     involves_food: bool
     caregiver_role: CaregiverRole       # together / nearby / independent
+    day: DayLabel = DayLabel.TODAY      # 언제 하는 활동인지. 바깥 활동은 그날 날씨로 거른다 (#377)
     place_name: str | None = None       # 조회 결과에 있는 이름만
     duration_min: int | None = None
     reason: str                         # 이 아이에게 맞는 이유 + 지금인 이유. 화면에 그대로
@@ -484,9 +485,9 @@ async def run(task, context, *, client=None):
 
 **status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다. 좌표와 날씨 어댑터가 둘 다 없으면 `lookup_weather` 도 닫고(`Gate.data.weather`), 장소도 같다(`Gate.data.places`) — 열어 두면 부를 때마다 실패만 돌려준다. 프롬프트 `[오늘의 조건]` 은 *확인하지 못했다* 와 *바깥 활동이 어렵다* 를 나눠 쓴다 — 판정(실내만)은 같지만, 한 말로 쓰면 모델이 확인 안 한 날씨를 이유에 쓴다.
 
-🚩 **날씨는 오늘 판정 하나로 본다.** 후보에 어느 날 하는 활동인지 칸이 없어서, 내일 · 주말 요청도 오늘 날씨로 야외 후보를 거른다. 후보가 날(`day`)을 갖고 그날 판정으로 보게 하는 것은 후속이다.
+**날씨는 후보의 날로 본다 (#377).** 후보가 `day`(today · tomorrow · this_weekend)를 갖고, 출력 검증은 야외 후보를 **그날 판정**으로 거른다 — 오늘 비가 와도 내일 공원 나들이는 나간다. 판정이 없는 날(모델이 `lookup_weather` 를 안 불렀다)은 출력 tool 이 그 자리에서 판정해 `state.weather` 에 넣는다(`outing.outdoor_on`). 사전 조회는 지금처럼 오늘만 한다 — 다른 날은 필요할 때만 부른다. **이번 주말은 토 · 일 중 하루라도 되면 연다.** 보호자가 둘 중 하루를 고르는 일이라, 둘 다 맑아야 열면 주말 나들이가 너무 자주 막힌다. 되는 날은 모델이 `reason` 에 쓴다 — 코드로 강제하지는 못한다. 대기질은 오늘만 있어서 다른 날은 *"확인 못 함"* 이고 야외는 열린다(미세먼지만 실패한 날과 같다).
 
-**날씨가 나쁜 날은 장소 조회를 닫지 않고 실내 종류로 좁힌다.** 도서관 · 실내 놀이터를 적재하니 비 오는 날에 장소가 사라지는 게 손해다. `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁히고, 바깥 종류를 고르면 `INVALID_ARGS` 로 돌려 모델이 실내 종류로 고쳐 다시 부른다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
+**날씨가 나쁜 날은 장소 조회를 닫지 않고 실내 종류로 좁힌다.** 그날은 `search_nearby_places` 의 `day` 다 — 오늘 비가 와도 주말 공원은 찾는다(#377). 도서관 · 실내 놀이터를 적재하니 비 오는 날에 장소가 사라지는 게 손해다. `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁히고, 바깥 종류를 고르면 `INVALID_ARGS` 로 돌려 모델이 실내 종류로 고쳐 다시 부른다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
 
 **만들지 않는 것** — Age/Safety Filter 를 모델 tool 로(모델이 스스로 통과시킬 수 있다 — 대신 코드 tool 로) · 놀이 후기 기록(쓰기는 Memory 가 한다).
 
@@ -506,7 +507,7 @@ async def run(task, context, *, client=None):
                         ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
                         ─ 0–17개월은 caregiver_role = together 만
                         ─ evidence id ⊂ rank_evidence 상위 10
-                        ─ 바깥 활동이 어려운 날(outdoor_ok=False)의 setting=outdoor → 거절 (either 는 통과)
+                        ─ 후보의 날(day)이 바깥 활동이 어려운 날이면 setting=outdoor → 거절 (either 는 통과)
                         ─ place_name ⊂ 이번 run 의 search_nearby_places 결과 → 아니면 거절
                           통과하면 코드가 content 앞에 붙인다 ("○○어린이공원에서 …")
 4. build()              근거 행 수로 kind · general 이면 reason 을 템플릿으로 덮어씀

@@ -82,11 +82,35 @@ def _is_institutional_duplicate(obs: FoodObservation, daycare_menu_keys: frozens
     return False
 
 
-async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) -> list[DayTotals]:
-    """원본에서 날짜별 영양 합계를 만든다. 기록이 있는 날만 돌려준다 (설계 §1-3).
+@dataclass(frozen=True)
+class MealRecords:
+    """날짜별로 묶은 식사 원본. 기관에서 온 중복 관찰은 이미 뺐다.
 
-    흐름 (설계 §3 ①~③): 원본 두 번 읽기 → 기관 중복 관찰 빼기 → 메뉴를 한 번에 조회·해석 →
-    날짜별로 양 가중 · 유아 보정 계수를 적용해 더한다.
+    키는 기록이 있는 날이다. 관찰이 전부 중복이라 빈 목록이 된 날도 키로 남는다.
+    """
+
+    observations: dict[date, list[FoodObservation]]
+    daycare: dict[date, list[DaycareMealRow]]
+
+    @property
+    def days(self) -> list[date]:
+        return sorted({*self.daycare, *self.observations})
+
+
+async def read_meal_records(
+    context: FoodContext,
+    *,
+    date_from: date,
+    date_to: date,
+    daycare_before: date | None = None,
+) -> MealRecords:
+    """`observation_food` 와 `daycare_meal` 을 읽어 날짜별로 묶고 기관 중복(N-10)을 뺀다.
+
+    영양 판정(`daily_totals`)과 기록 tool(`analyze_meal_records` · `check_repeated_menus`)이 같은
+    코드를 쓴다 — 기관 중복을 두 곳에서 따로 세지 않는다.
+
+    `daycare_before` 를 주면 그날 이전 급식만 읽는다. 오늘 급식은 앞으로 나올 식단이라 먹은 기록이
+    아니다. 급식을 자른 뒤에 중복을 보므로, 오늘 알림장이 전한 식사는 급식과 겹치지 않고 남는다.
     """
     ports = context.ports
     observations = await ports.memory.observations(
@@ -98,7 +122,8 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
 
     daycare_by_day: dict[date, list[DaycareMealRow]] = defaultdict(list)
     for row in daycare_rows:
-        daycare_by_day[row.serve_date].append(row)
+        if daycare_before is None or row.serve_date < daycare_before:
+            daycare_by_day[row.serve_date].append(row)
 
     observations_by_day: dict[date, list[FoodObservation]] = defaultdict(list)
     for obs in observations:
@@ -114,8 +139,21 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
         kept_observations_by_day[day] = [
             obs for obs in day_obs if not _is_institutional_duplicate(obs, daycare_menu_keys)
         ]
+    return MealRecords(observations=kept_observations_by_day, daycare=dict(daycare_by_day))
 
-    days = sorted({*daycare_by_day, *kept_observations_by_day})
+
+async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) -> list[DayTotals]:
+    """원본에서 날짜별 영양 합계를 만든다. 기록이 있는 날만 돌려준다 (설계 §1-3).
+
+    흐름 (설계 §3 ①~③): 원본 두 번 읽기 → 기관 중복 관찰 빼기(`read_meal_records`) → 메뉴를 한
+    번에 조회·해석 → 날짜별로 양 가중 · 유아 보정 계수를 적용해 더한다.
+    """
+    ports = context.ports
+    records = await read_meal_records(context, date_from=date_from, date_to=date_to)
+    daycare_by_day = records.daycare
+    kept_observations_by_day = records.observations
+
+    days = records.days
     if not days:
         return []
 

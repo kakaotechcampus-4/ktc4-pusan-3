@@ -12,20 +12,21 @@
 import type {
   Affinity,
   Agent,
-  CalendarDay,
   CalendarEvent,
-  Evidence,
-  EventDraft,
   ChildProfile,
+  EventDraft,
+  Evidence,
   GeneralSuggestion,
   GrowthLog,
   HealthSafety,
-  SafetyScanResponse,
   HomeResponse,
   Me,
+  MyDiary,
   Observation,
   ObservationHealth,
   ObservationPromotable,
+  SafetyScanResponse,
+  SharedPhoto,
   Suggestion,
   SuggestionGroup,
 } from "@/lib/api/types";
@@ -243,7 +244,8 @@ export function newHealthSafety(input: {
     reactions: input.reactions ?? [],
     management: null,
     notes: input.notes ?? null,
-    created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
+    // 서버처럼 부르는 이름이 없으면 통째로 null 이다 — 빈 이름을 지어 붙이지 않는다.
+    created_by: me.nickname ? { parent_id: PARENT_ID, nickname: me.nickname } : null,
     updated_at: hoursFromNow(0),
   };
 }
@@ -830,7 +832,7 @@ export const routineObservation: ObservationPromotable = {
 };
 
 /**
- * 다섯 테이블 전부. 목록은 여기서 건강을 빼고 내려주지만(첫 배포 범위 밖 · #259), 캘린더와
+ * 다섯 테이블 전부. 목록과 캘린더는 여기서 건강을 빼고 내려주지만(첫 배포 범위 밖 · #259 · #318),
  * 상세는 아직 이 배열에서 찾는다.
  */
 export const allObservations: Observation[] = [
@@ -885,36 +887,97 @@ export const confirmedEvent: CalendarEvent = {
   reminders: [],
 };
 
-/** 일기는 관찰이 아니다 — 별도 저장소에 둔다 (계약서 §09). 날짜 → 본문·사진. */
-const diaries = new Map<string, { text: string; image_urls: string[] }>([
-  [
-    daysAgo(1),
-    {
-      text: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
-      image_urls: [],
-    },
-  ],
-]);
+/**
+ * 내 일기 (`diary_entry`). 일기는 관찰이 아니다 — 별도 저장소에 둔다 (계약서 §09).
+ *
+ * 🚨 **로그인한 보호자 본인 것만 들고 있다** (#115). 목에는 보호자가 한 명뿐이라 날짜 → 일기 한 벌이면
+ *    서버와 같은 결과다. 다른 보호자의 일기는 서버도 내려 주지 않는다.
+ */
+const diaries = new Map<string, MyDiary>();
 
-/** 🚨 프로필 승격이 일어난 날. 프론트가 관찰 건수로 역산할 수 없는 값이라 목이 들고 있다. */
-const profileChanged = new Map<string, number>([[daysAgo(0), 1]]);
+function seedDiaries(): void {
+  diaries.set(daysAgo(1), {
+    content: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
+    updated_at: `${daysAgo(1)}T21:30:00+09:00`,
+  });
+}
+seedDiaries();
 
-export function readDiary(date: string): { text: string; image_urls: string[] } | null {
+export function readMyDiary(date: string): MyDiary | null {
   return diaries.get(date) ?? null;
 }
 
-export function writeDiary(date: string, value: { text: string; image_urls: string[] }): void {
-  if (value.text.trim() === "") diaries.delete(date);
-  else diaries.set(date, value);
+/**
+ * 그날 내 일기를 쓴다. 이미 있으면 덮어쓴다 (서버 `put_diary` 와 같다 · #364).
+ *
+ * 🚨 **빈 내용을 지우기로 보지 않는다.** 한동안 공백뿐이면 지웠는데, 서버(PR #333)는 그 요청을
+ *    422 로 거절하고 기존 일기를 남긴다. 거절은 핸들러가 하고, 지우기는 `deleteMyDiary` 하나다.
+ *    저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다.
+ */
+export function writeMyDiary(date: string, content: string): MyDiary {
+  const diary: MyDiary = { content, updated_at: new Date().toISOString() };
+  diaries.set(date, diary);
+  return diary;
+}
+
+/**
+ * 그날 내 일기를 지운다. 없으면 아무것도 하지 않는다 (서버 `delete_diary` 와 같다 · #364).
+ *
+ * 🚨 **사진은 건드리지 않는다** (#115). 공유 사진은 일기 밖의 저장소(`sharedPhotos`)라, 일기를
+ *    지운 날에도 사진은 그대로 남고 달 보기의 `has_shared_photo` 도 그대로다.
+ */
+export function deleteMyDiary(date: string): void {
+  diaries.delete(date);
+}
+
+export function myDiaryDates(): string[] {
+  return [...diaries.keys()];
 }
 
 /** 테스트용 — 목은 프로세스 수명만큼 살아 있다 (apps/web/CLAUDE.md §8). */
 export function resetDiaries(): void {
   diaries.clear();
-  diaries.set(daysAgo(1), {
-    text: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
-    image_urls: [],
-  });
+  seedDiaries();
+}
+
+/** 실제 사진이 아니라는 것이 한눈에 보여야 한다 (`native-bridge.ts` 와 같은 규칙 · 커밋되는 이미지가 없다). */
+function placeholderPhoto(label: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">
+    <rect width="320" height="240" fill="rgb(214,208,200)"/>
+    <text x="160" y="132" font-family="sans-serif" font-size="32" fill="rgb(110,105,97)"
+          text-anchor="middle">${label}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/**
+ * 공유 사진 (`shared_photo`). 🚨 **일기 밖에 있다** (#115) — 연결된 보호자가 함께 보고, 일기를
+ *    덮거나 지워도 그대로다. 오늘은 기록과 같이 있는 날, 7일 전은 **사진만 있는 날**이다.
+ *    업로드는 K 묶음이라 목도 조회만 한다.
+ */
+const sharedPhotos: Array<SharedPhoto & { date: string }> = [
+  {
+    id: "sp_1",
+    date: daysAgo(0),
+    image_url: placeholderPhoto("사진 1"),
+    created_at: hoursFromNow(-3),
+  },
+  {
+    id: "sp_2",
+    date: daysAgo(7),
+    image_url: placeholderPhoto("사진 2"),
+    created_at: `${daysAgo(7)}T16:00:00+09:00`,
+  },
+];
+
+export function sharedPhotosOn(date: string): SharedPhoto[] {
+  return sharedPhotos
+    .filter((photo) => photo.date === date)
+    .map(({ id, image_url, created_at }) => ({ id, image_url, created_at }));
+}
+
+export function sharedPhotoDates(): string[] {
+  return sharedPhotos.map((photo) => photo.date);
 }
 
 /** 일정이 걸린 날. 서버가 `starts_at` 을 날짜로 접어 내리는 자리다. */
@@ -926,30 +989,6 @@ export function calendarEventsOn(date: string): CalendarEvent[] {
   return [confirmedEvent].filter((event) => eventDate(event) === date);
 }
 
-export function calendarObservationsOn(date: string): Observation[] {
-  return allObservations.filter((observation) => observation.observed_to === date);
-}
-
-/**
- * 월 조회. 🚨 `has_event` 는 `confirmed` 만 센다 — draft 는 아직 캘린더에 쓴 것이 아니다.
- */
-export function calendarMonth(month: string): CalendarDay[] {
-  const dates = new Set<string>();
-  for (const observation of allObservations) {
-    if (observation.observed_to.startsWith(month)) dates.add(observation.observed_to);
-  }
-  for (const event of [confirmedEvent]) {
-    if (eventDate(event).startsWith(month)) dates.add(eventDate(event));
-  }
-  for (const date of diaries.keys()) if (date.startsWith(month)) dates.add(date);
-  for (const date of profileChanged.keys()) if (date.startsWith(month)) dates.add(date);
-
-  return [...dates].sort().map((date) => ({
-    date,
-    has_diary: diaries.has(date),
-    has_event: calendarEventsOn(date).length > 0,
-    has_image: (diaries.get(date)?.image_urls.length ?? 0) > 0,
-    observation_count: calendarObservationsOn(date).length,
-    profile_changed_count: profileChanged.get(date) ?? 0,
-  }));
+export function calendarEventDates(): string[] {
+  return [confirmedEvent].map(eventDate);
 }

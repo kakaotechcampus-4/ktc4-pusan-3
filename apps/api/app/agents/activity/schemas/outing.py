@@ -30,6 +30,7 @@ class LookupScheduleArgs(ToolArgs):
 
 
 class SearchNearbyPlacesArgs(ToolArgs):
+    day: Day  # 바깥 종류를 찾을 수 있는지가 그날 날씨에 걸려 있다 (#377)
     category: Annotated[
         PlaceCategory,
         Field(

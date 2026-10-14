@@ -67,4 +67,3 @@ async def test_동시에_두_번_소비하면_한쪽만_행을_받는다():
                 delete(Parent).where(Parent.id.in_([owner.id, first.id, second.id]))
             )
             await cleanup.commit()
-        await engine.dispose()

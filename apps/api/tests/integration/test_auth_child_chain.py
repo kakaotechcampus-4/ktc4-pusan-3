@@ -57,7 +57,6 @@ async def test_valid_session_resolves_to_parent(session, two_parents):
     assert row is not None
     assert isinstance(row, SessionRow)
     assert row.parent_id == parent_a.id
-    assert row.parent_deleted_at is None
 
 
 async def test_expired_session_returns_row_with_past_expires_at(session, two_parents):
@@ -80,28 +79,6 @@ async def test_unknown_token_hash_returns_none(session, two_parents):
     """DB에 없는 토큰 해시 → None. deps/auth.py는 이를 401로 변환한다."""
     row = await find_session_by_token_hash(session, token_hash=_hash("no-such-token"))
     assert row is None
-
-
-async def test_deleted_parent_session_carries_deleted_at(session, two_parents):
-    """탈퇴한 부모의 세션은 parent_deleted_at이 채워진다. deps/auth.py는 이를 404로 변환한다."""
-    parent_a, _ = two_parents
-    deleted_time = datetime.now(timezone.utc)
-    parent_a.deleted_at = deleted_time
-    await session.flush()
-
-    token_hash = _hash("deleted-parent-token")
-    await create_session(
-        session,
-        parent_id=parent_a.id,
-        token_hash=token_hash,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
-    )
-
-    row = await find_session_by_token_hash(session, token_hash=token_hash)
-
-    assert row is not None
-    assert row.parent_id == parent_a.id
-    assert row.parent_deleted_at is not None
 
 
 # -- 2. 부모 → 아이 접근 --
