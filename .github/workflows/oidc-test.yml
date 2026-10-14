@@ -2,11 +2,6 @@ name: OIDC 연결 확인
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - ci/be-449-oidc-auth
-    paths:
-      - .github/workflows/oidc-test.yml
 
 permissions:
   id-token: write
