@@ -11,6 +11,7 @@ from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.child.models import ChildGrowthLog
+from app.domains.food.repository import resolved_recipe_names
 from app.domains.memory.observation.models import (
     ObservationActivity,
     ObservationEducation,
@@ -29,6 +30,7 @@ from app.domains.suggestion.models import (
     SuggestionKind,
     SuggestionStatus,
 )
+from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
 
 async def create_suggestion(
@@ -222,6 +224,11 @@ _CHILD_RECORD_KINDS = frozenset(
 # 아직 없어서(YAML 시드 · uuid5 id) 종류만 본다
 _DOC_KINDS = frozenset(("food_doc", "growth_doc", "activity_doc"))
 
+# agents/common/refs.py MenuKind 와 같은 목록(#442). Food 일반 추천만 고른 메뉴(레시피 카탈로그
+# 행)를 근거로 단다 — 문서 행이 없는 월령에도 일반 추천에 근거가 붙게. 실제 후보 풀의 레시피인지는
+# 저장할 때 본다
+_MENU_KINDS = frozenset((MENU_EVIDENCE_KIND,))
+
 # 근거의 아이 기록 중 대상 테이블이 있는 것 — 같은 아이의 행이 있는지 본다(correction 과 같은
 # 방식). 여기 없는 아이 기록(notice · daycare_meal)은 테이블이 생길 때까지 거절한다
 _EVIDENCE_TARGETS = {
@@ -255,7 +262,8 @@ async def save_agent_suggestions(
     - `payloads` 의 한 항목은 `SuggestionDraft.to_payload()` 모양이다. 돌려주는 id 는 그 순서다.
     - 근거를 먼저 다 본 뒤에 쓴다. 하나라도 어긋나면 `SuggestionEvidenceError` 이고 한 행도
       쓰지 않는다 — 개인화인데 아이 기록 근거 0행 · 일반인데 아이 기록 근거 · 일반인데 문서 행
-      근거 0행 · 정해지지 않은 근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직
+      (Food 는 메뉴 행도) 근거 0행 · Food 일반 추천이 아닌데 메뉴 근거 · 후보 풀에 없는 메뉴 ·
+      정해지지 않은 근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직
       없는 아이 기록.
     - 한 추천이 같은 (source_kind, source_id) 를 두 번 인용하면 첫 인용만 남긴다(PK).
     - `status=draft` · `expires_at=now+SUGGESTION_TTL` 은 여기서 정한다.
@@ -295,17 +303,27 @@ async def _checked_citations(
         if key not in seen:
             seen.add(key)
             citations.append(dict(item))
-    if any(item["source_kind"] not in _CHILD_RECORD_KINDS | _DOC_KINDS for item in citations):
+    known = _CHILD_RECORD_KINDS | _DOC_KINDS | _MENU_KINDS
+    if any(item["source_kind"] not in known for item in citations):
         raise SuggestionEvidenceError("정해지지 않은 근거 종류다")
     child = [item for item in citations if item["source_kind"] in _CHILD_RECORD_KINDS]
+    menus = [item for item in citations if item["source_kind"] in _MENU_KINDS]
     if kind is SuggestionKind.PERSONALIZED and not child:
         raise SuggestionEvidenceError("개인화 추천인데 아이 기록 근거가 없다")
     if kind is SuggestionKind.GENERAL and child:
         raise SuggestionEvidenceError("일반 추천에 아이 기록 근거가 있다")
+    if menus and (payload["agent"] != "food" or kind is not SuggestionKind.GENERAL):
+        # 메뉴 근거는 Food 일반 추천만 단다(#442). 개인화는 아이 기록이 근거다
+        raise SuggestionEvidenceError("메뉴 근거는 Food 일반 추천에만 단다")
     if kind is SuggestionKind.GENERAL and not any(
-        item["source_kind"] in _DOC_KINDS for item in citations
+        item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations
     ):
         raise SuggestionEvidenceError("일반 추천인데 문서 행 근거가 없다")
+    if menus:
+        # 실제 후보 풀(검수된 레시피)의 메뉴여야 근거다 — 아니면 근거 0행과 같다
+        names = await resolved_recipe_names(session)
+        if any(uuid.UUID(str(item["source_id"])) not in names for item in menus):
+            raise SuggestionEvidenceError("메뉴 근거가 레시피 카탈로그에 없다")
     for item in child:
         model = _EVIDENCE_TARGETS.get(item["source_kind"])
         if model is None:
@@ -396,11 +414,12 @@ async def count_child_records(
     return total
 
 
-async def list_doc_evidence_batch(
+async def list_general_evidence_batch(
     session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SuggestionEvidence]]:
-    """일반 추천의 문서 행 근거. 아이 기록 근거와 섞지 않는다 — 화면 타입이 다르다."""
-    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS)
+    """일반 추천의 근거 — 문서 행과 메뉴 행(Food, #442). 아이 기록 근거와 섞지 않는다 — 화면
+    타입이 다르다."""
+    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS | _MENU_KINDS)
 
 
 async def list_evidence_batch(

@@ -32,7 +32,12 @@ from app.agents.common.suggestion import (
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
-from app.agents.food.store import InMemoryProfile, unwired_ports
+from app.agents.food.store import InMemoryFoodDocs, InMemoryProfile, unwired_ports
+from app.agents.food.store.ports import (
+    MenuCatalogStore,
+    RecipeCatalogStore,
+    SuggestionHistoryReader,
+)
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
@@ -183,6 +188,9 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
     count_records: CountRecords | None = None,
+    food_catalog: MenuCatalogStore | None = None,
+    food_recipes: RecipeCatalogStore | None = None,
+    food_suggestions: SuggestionHistoryReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -217,6 +225,9 @@ async def handle_input(
       run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
     - count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다. 러너가
       `agent_ports.record_counter` 로 만든다. 안 넘기면(테스트 · eval) 그 칸이 빈다.
+    - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
+      어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
+      빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -242,6 +253,9 @@ async def handle_input(
         location=location,
         activity_weather=activity_weather,
         domain_store=domain_store,
+        food_catalog=food_catalog,
+        food_recipes=food_recipes,
+        food_suggestions=food_suggestions,
     )
 
     return await _handle_input(
@@ -290,6 +304,9 @@ async def suggest(
     child_health_granted: bool | None = None,
     domain_store: StoreOpener | None = None,
     store: MemoryStore | None = None,
+    food_catalog: MenuCatalogStore | None = None,
+    food_recipes: RecipeCatalogStore | None = None,
+    food_suggestions: SuggestionHistoryReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
 
@@ -315,6 +332,9 @@ async def suggest(
         location=None,
         activity_weather=None,
         domain_store=domain_store,
+        food_catalog=food_catalog,
+        food_recipes=food_recipes,
+        food_suggestions=food_suggestions,
     )
     domain_tasks = tuple(
         DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
@@ -415,6 +435,9 @@ def _domain_contexts(
     location: CoarseLocation | None,
     activity_weather: WeatherSource | None,
     domain_store: StoreOpener | None,
+    food_catalog: MenuCatalogStore | None = None,
+    food_recipes: RecipeCatalogStore | None = None,
+    food_suggestions: SuggestionHistoryReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
     """Food · Activity 컨텍스트. 입력 run 과 05 가 같은 값으로 연다 — 포트가 두 벌이 되지 않게."""
     # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
@@ -428,15 +451,29 @@ def _domain_contexts(
     memory_port = (
         StoreFoodMemory(store) if domain_store is None else StoreFoodMemory(opener=domain_store)
     )
+    # Food 가 읽는 공용 데이터 · 추천 이력은 api 가 넘긴 어댑터만 바꿔 끼운다(#383 방식). 문서 행은
+    # Activity 처럼 yaml 의 검수된 행이다 — 일반 추천의 근거라 비면 일반 추천을 못 낸다
+    food_stores: dict[str, object] = {"docs": InMemoryFoodDocs.from_seed()}
+    for name, port in (
+        ("catalog", food_catalog),
+        ("recipes", food_recipes),
+        ("suggestions", food_suggestions),
+    ):
+        if port is not None:
+            food_stores[name] = port
     if child_health_granted is None:
         food_ports = unwired_ports(
-            profile=InMemoryProfile({child_id: resolved_birth_date}), memory=memory_port
+            profile=InMemoryProfile({child_id: resolved_birth_date}),
+            memory=memory_port,
+            **food_stores,
         )
     else:
         child_values = ChildValues(
             child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
         )
-        food_ports = unwired_ports(profile=child_values, consent=child_values, memory=memory_port)
+        food_ports = unwired_ports(
+            profile=child_values, consent=child_values, memory=memory_port, **food_stores
+        )
     # 쓰기 포트는 호출마다 바로 commit
     writes = RunWrites()
     food_ports = record_food_writes(food_ports, writes)

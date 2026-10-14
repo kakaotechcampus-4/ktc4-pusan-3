@@ -79,9 +79,18 @@ class SuggestionsRequest(BaseModel):
 
 
 class DocEvidenceOut(BaseModel):
-    """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다."""
+    """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다.
 
-    ref: Ref = Field(description="kind 는 food_doc · activity_doc · growth_doc")
+    Food 일반 추천은 고른 메뉴(레시피 카탈로그 행)도 이 모양으로 싣는다(#442) — `title` 은 메뉴
+    이름, 출처는 그 레시피를 받아 온 공개 데이터다.
+    """
+
+    ref: Ref = Field(
+        description=(
+            "kind 는 food_doc · activity_doc · growth_doc, "
+            "또는 recipe_catalog(Food 일반 추천의 메뉴 근거)"
+        )
+    )
     title: str
     source_org: str
     source_title: str
@@ -90,7 +99,10 @@ class DocEvidenceOut(BaseModel):
 
 
 class GeneralSuggestionOut(BaseModel):
-    """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2)."""
+    """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
+
+    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442).
+    """
 
     id: str
     child_id: str

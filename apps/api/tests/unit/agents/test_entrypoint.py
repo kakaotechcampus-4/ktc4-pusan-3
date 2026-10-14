@@ -669,3 +669,108 @@ async def test_러너가_준_도메인_store_로_Activity_기억_포트를_읽�
     await activity.ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
 
     assert opened == [1]
+
+
+# ── Food 카탈로그 · 추천 이력 어댑터와 문서 시드 (#442) ──────────────────────
+def _food_ports(**kwargs: Any) -> Any:
+    now = datetime.now(timezone.utc)
+    contexts, _ = entrypoint._domain_contexts(
+        child_id=CHILD,
+        run_id="r",
+        now=now,
+        store=InMemoryStore(now=now),
+        birth_date=None,
+        child_health_granted=None,
+        location=None,
+        activity_weather=None,
+        domain_store=None,
+        **kwargs,
+    )
+    return contexts["food"].ports
+
+
+def test_넘긴_Food_카탈로그_어댑터를_그대로_쓴다() -> None:
+    catalog, recipes, suggestions = object(), object(), object()
+
+    ports = _food_ports(food_catalog=catalog, food_recipes=recipes, food_suggestions=suggestions)
+
+    assert (ports.catalog, ports.recipes, ports.suggestions) == (catalog, recipes, suggestions)
+
+
+def test_안_넘기면_빈_InMemory_다() -> None:
+    ports = _food_ports()
+
+    assert type(ports.catalog).__name__ == "InMemoryMenuCatalog"
+    assert type(ports.recipes).__name__ == "InMemoryRecipeCatalog"
+    assert type(ports.suggestions).__name__ == "InMemorySuggestionHistory"
+
+
+def test_하나만_넘겨도_나머지는_건드리지_않는다() -> None:
+    recipes = object()
+
+    ports = _food_ports(food_recipes=recipes)
+
+    assert ports.recipes is recipes
+    assert type(ports.catalog).__name__ == "InMemoryMenuCatalog"
+
+
+async def test_Food_문서는_검수된_시드_행을_읽는다() -> None:
+    # 일반 추천은 문서 행이 근거다 — 비어 있으면 Food 는 일반 추천을 못 낸다. 이유기 월령으로 본다:
+    # 30개월은 시드가 1행뿐이라(meal_pattern · nutrient_note 행이 아직 없다) 조금만 바뀌어도 깨진다
+    rows = await _food_ports().docs.search(
+        months=6,
+        row_types=(
+            "weaning_stage",
+            "weaning_ingredient",
+            "meal_pattern",
+            "nutrient_note",
+            "feeding_tip",
+        ),
+        limit=200,
+    )
+
+    assert rows
+
+
+async def test_넘긴_Food_어댑터를_handle_input_과_suggest_가_둘_다_받는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+    original = entrypoint._domain_contexts
+
+    def spy(**kwargs: Any) -> Any:
+        seen.append((kwargs["food_catalog"], kwargs["food_recipes"], kwargs["food_suggestions"]))
+        return original(**kwargs)
+
+    async def fake_run(*args: Any, **kwargs: Any) -> Any:
+        return pipeline.SuggestRun(outcomes=(), failed=())
+
+    async def fake_handle(*args: Any, **kwargs: Any) -> str:
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_domain_contexts", spy)
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+    monkeypatch.setattr(entrypoint, "_handle_input", fake_handle)
+    catalog, recipes, suggestions = object(), object(), object()
+    stores = {"food_catalog": catalog, "food_recipes": recipes, "food_suggestions": suggestions}
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="저녁 추천해줘",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+        **stores,
+    )
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+        **stores,
+    )
+
+    assert seen == [(catalog, recipes, suggestions)] * 2

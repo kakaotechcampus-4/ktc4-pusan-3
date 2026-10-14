@@ -19,6 +19,7 @@ from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidat
 from app.agents.food.store import SafetyEntry
 from app.agents.food.tools.recommend import propose_meal_candidates
 from app.agents.food.tools.safety import filter_food_safety
+from app.rules.menu_evidence import menu_evidence_id
 from tests.unit.agents.food.support import MEAL_DOC, context, day, doc_row, menu_row
 
 MILK = [SafetyEntry(kind="allergy", label="우유", status="active")]
@@ -305,12 +306,44 @@ async def test_아이_기록_근거가_없으면_일반_추천이고_이유는_�
     [only] = ctx.state.picks
     assert only.draft.kind == "general"
     assert only.draft.reason == GENERAL_REASON
-    assert [c.ref.kind for c in only.draft.citations] == ["food_doc"]  # 아이 기록은 0행이다
+    # 아이 기록은 0행이다. 인용한 문서 행에 고른 메뉴 자체가 근거로 붙는다(#442)
+    assert [c.ref.kind for c in only.draft.citations] == ["food_doc", "recipe_catalog"]
 
 
-async def test_인용이_하나도_없으면_거절한다() -> None:
-    """일반 추천은 문서 행이 근거다 (루트 §2). 아이 기록도 문서도 없는 후보는 나가지 않는다."""
+async def test_인용이_하나도_없어도_고른_메뉴를_근거로_단_일반_추천이다() -> None:
+    """#442 — Food 일반 추천은 문서 행이 없어도 고른 메뉴(레시피 카탈로그 행)가 근거다.
+
+    36개월부터는 [예시] 문서 행이 0개라, 문서 행만 근거로 받으면 Food 일반 추천이 나갈 수 없다.
+    """
     ctx = shown(*FULL, exhausted=True)
+
+    result = await propose_meal_candidates(ctx, args(pick("두부조림", evidence=[])))
+
+    assert result.success
+    [only] = ctx.state.picks
+    assert only.draft.kind == "general"
+    [menu] = only.draft.citations
+    assert menu.ref == Ref(kind="recipe_catalog", id=menu_evidence_id("mafra_recipe", "두부조림"))
+    assert menu.label == "두부조림" and menu.note.strip()
+    assert not menu.ref.is_child_record  # 개인화 근거로 세지 않는다
+
+
+async def test_개인화_추천에는_메뉴_근거를_달지_않는다() -> None:
+    ctx = shown(*FULL, exhausted=True)
+    key = seen_affinity(ctx, "두부")
+
+    await propose_meal_candidates(ctx, args(pick("두부조림", evidence=[cite(key)])))
+
+    [only] = ctx.state.picks
+    assert only.draft.kind == "personalized"
+    assert [c.ref.kind for c in only.draft.citations] == ["profile_affinity"]
+
+
+async def test_레시피_번호가_없는_메뉴는_인용이_없으면_거절한다() -> None:
+    """메뉴 근거는 레시피 카탈로그 행을 가리킨다. 레시피 번호가 없는 행(운영 후보 풀에는 없다)은
+    가리킬 행이 없어서, 지금처럼 문서 행이 있어야 일반 추천이다."""
+    rows = (menu_row("두부조림"), menu_row("시금치나물"), menu_row("미역국"))
+    ctx = shown(*rows, exhausted=True)
 
     result = await propose_meal_candidates(ctx, args(pick("두부조림", evidence=[])))
 
@@ -332,9 +365,9 @@ async def test_문서_행만_인용하면_일반_추천이고_근거는_food_doc
 
     [only] = ctx.state.picks
     assert only.draft.kind == "general"
-    [citation] = only.draft.citations
-    assert citation.ref.kind == "food_doc"
-    assert not citation.ref.is_child_record  # 개인화 근거로 세지 않는다
+    doc, menu = only.draft.citations  # 인용한 문서 행 + 고른 메뉴(#442)
+    assert (doc.ref.kind, menu.ref.kind) == ("food_doc", "recipe_catalog")
+    assert not doc.ref.is_child_record and not menu.ref.is_child_record  # 개인화 근거가 아니다
 
 
 async def test_오래된_선호만_근거면_일반_추천으로_처리한다() -> None:

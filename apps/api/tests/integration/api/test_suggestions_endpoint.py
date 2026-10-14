@@ -721,3 +721,72 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
     )
     assert kept == task  # 내일 다시 시도할 수 있게 맥락은 남는다(15분 안이면)
+
+
+async def test_05_도_Food_카탈로그_어댑터를_넘긴다(db_client, bearer, cid, agents):
+    """#442 — 입력 run(러너)과 05 가 같은 어댑터를 넘긴다.
+
+    한쪽만 넘기면 두 경로의 후보 풀이 갈라진다.
+    """
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "조건에 맞는 추천이 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert type(calls[0]["food_catalog"]).__name__ == "DbMenuCatalog"
+    assert type(calls[0]["food_recipes"]).__name__ == "DbRecipeCatalog"
+    assert type(calls[0]["food_suggestions"]).__name__ == "DbSuggestionHistory"
+
+
+# ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
+async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """문서 행이 없는 월령에도 Food 일반 추천이 나간다 — 근거는 고른 메뉴(레시피 카탈로그 행)다."""
+    from app.domains.food import repository as food_repository
+    from app.rules.menu_evidence import menu_evidence_id
+
+    plan, _ = agents
+    headers, _ = bearer
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": "mafra_recipe",
+                "source_id": "7",
+                "menu_key": "두부조림",
+                "display_name": "두부조림",
+                "ingredients": ["두부"],
+                "resolved": True,
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+    )
+    menu = menu_evidence_id("mafra_recipe", "7")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 아이들이 많이 먹는 메뉴예요.",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+                    ),
+                ),
+            )
+        ],
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
+    assert evidence["title"] == "두부조림"
+    assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."

@@ -29,6 +29,7 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
+from app.rules.menu_evidence import menu_evidence_id
 from tests.unit.agents.food.support import (
     BIRTH_DATE,
     CHILD,
@@ -128,14 +129,36 @@ async def test_식단_추천은_tool_을_강제한다() -> None:
     assert llm.tool_choices == ["required"]
 
 
-async def test_문서_행만_인용한_추천은_일반_추천이고_근거는_문서_행뿐이다() -> None:
+async def test_문서_행만_인용한_추천은_일반_추천이고_근거는_문서_행과_메뉴다() -> None:
     llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
 
     result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP), client=llm)
 
     assert {draft.kind for draft in result.suggestions} == {"general"}
-    assert all(  # 아이 기록 근거가 0행이고 문서 행이 근거다
-        [(item.ref.kind, item.ref.id) for item in draft.citations] == [("food_doc", MEAL_DOC.id)]
+    assert all(  # 아이 기록 근거가 0행이고 문서 행과 고른 메뉴(#442)가 근거다
+        [(item.ref.kind, item.ref.id) for item in draft.citations]
+        == [
+            ("food_doc", MEAL_DOC.id),
+            ("recipe_catalog", menu_evidence_id("mafra_recipe", draft.content)),
+        ]
+        for draft in result.suggestions
+    )
+
+
+async def test_문서_행이_없는_월령에도_고른_메뉴를_근거로_일반_추천이_나온다() -> None:
+    """#442 — 36개월부터는 [예시] 문서 행이 0개다. 모델이 근거를 비워도 추천은 나가고, 근거는
+    고른 메뉴다. 근거 0행인 추천은 하나도 없다."""
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", evidence=[]))
+
+    result = await run(
+        meal_task(), meal_context(TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs()), client=llm
+    )
+
+    assert result.status == "completed"
+    assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
+    assert all(
+        draft.kind == "general"
+        and [item.ref.kind for item in draft.citations] == ["recipe_catalog"]
         for draft in result.suggestions
     )
 
@@ -428,8 +451,12 @@ async def test_예시_문서를_인용한_추천은_문서_근거가_달리고_�
     assert {draft.kind for draft in result.suggestions} == {
         "general"
     }  # 문서는 개인화 근거가 아니다
-    assert all(
-        [(item.ref.kind, item.ref.id) for item in draft.citations] == [("food_doc", doc.id)]
+    assert all(  # 인용한 문서 행 + 고른 메뉴(#442)
+        [(item.ref.kind, item.ref.id) for item in draft.citations]
+        == [
+            ("food_doc", doc.id),
+            ("recipe_catalog", menu_evidence_id("mafra_recipe", draft.content)),
+        ]
         for draft in result.suggestions
     )
 

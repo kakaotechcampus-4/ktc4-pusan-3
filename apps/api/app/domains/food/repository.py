@@ -10,6 +10,7 @@ agents 의 행 모양은 `agent_reader.py` 가 옮긴다.
   `retire_missing_recipes` 가 후보 풀에서 내린다.
 """
 
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -18,6 +19,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.food.models import MenuCatalog, RecipeCatalog
+from app.rules.menu_evidence import menu_evidence_id
 
 # 한 문장에 싣는 행 수. 칸이 14개라 PostgreSQL 인자 상한(32,767)에 걸리지 않는 크기다
 CHUNK = 1000
@@ -110,6 +112,20 @@ async def retire_missing_recipes(
         .values(resolved=False)
     )
     return (await session.execute(stmt)).rowcount
+
+
+async def resolved_recipe_names(session: AsyncSession) -> dict[uuid.UUID, str]:
+    """후보 풀(resolved)의 레시피를 메뉴 근거 id → 메뉴 이름으로 (#442).
+
+    Food 일반 추천의 메뉴 근거가 실제 후보 풀의 레시피인지 저장 때 확인하고, 05 가 근거 카드의
+    이름을 찾는다. 근거 id 는 (source, source_id) 로 만드는 uuid5 라 표에 칸이 없어서, 해석된
+    행을 읽어 같은 함수(`rules/menu_evidence`)로 다시 만든다 — 지금은 537행이라 한 번에 읽는다.
+    """
+    stmt = select(RecipeCatalog.source, RecipeCatalog.source_id, RecipeCatalog.display_name).where(
+        RecipeCatalog.resolved.is_(True)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {menu_evidence_id(source, source_id): name for source, source_id, name in rows}
 
 
 async def list_resolved_recipes(session: AsyncSession) -> list[RecipeCatalog]:
