@@ -60,28 +60,66 @@ class ApproveSuggestionsResponse(BaseModel):
     suggestions: list[SuggestionOut]
 
 
-# ── 추천 생성 (J — #284, agent 연결 전 stub) ─────────────────────────────
+# ── 추천 받기 (J — #284 · #249) ──────────────────────────────────────────
 
 
 class SuggestionsRequest(BaseModel):
-    agents: list[AgentValue] = Field(min_length=1, max_length=2)
-    run_id: str | None = Field(default=None, max_length=100)
-    prompt_key: str | None = Field(default=None, max_length=50)
+    agents: list[AgentValue] = Field(min_length=1, max_length=2, description="최대 2개 (NF-01)")
+    run_id: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "04 '후보 보기' 로 들어온 입력 run. 있으면 그 run 의 추천을 돌려주고, 결과를 못 낸 "
+            "Agent 만 15분 안에 처음 맥락으로 다시 만든다. 홈 · 04 제안은 없다"
+        ),
+    )
+    prompt_key: str | None = Field(
+        default=None, max_length=50, description="홈 추천 버튼의 키. 문장은 서버가 꺼낸다 (#286)"
+    )
+
+
+class DocEvidenceOut(BaseModel):
+    """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다."""
+
+    ref: Ref = Field(description="kind 는 food_doc · activity_doc · growth_doc")
+    title: str
+    source_org: str
+    source_title: str
+    source_url: str | None = None
+    note: str = Field(description="이 문서를 어떻게 참고했는지 한 줄")
 
 
 class GeneralSuggestionOut(BaseModel):
+    """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2)."""
+
     id: str
     child_id: str
     agent: str
     kind: Literal["general"] = "general"
     content: str
-    basis: str
+    basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
+    status: str
+    expires_at: str
+    evidence: list[DocEvidenceOut]
+
+
+class GroupNoticeOut(BaseModel):
+    code: Literal["fewer", "empty", "cannot_resume"] = Field(
+        description=(
+            "fewer 1~2개 · empty 0개 · cannot_resume 이어서 할 수 없음. "
+            "화면은 notice 가 있는 묶음에 다시 시도를 띄우지 않는다"
+        )
+    )
+    message: str
 
 
 class SuggestionGroupOut(BaseModel):
     agent: str
-    prompt: str | None = None
-    merges_into_one: bool | None = None
+    prompt: str | None = Field(default=None, description="무엇을 봤는지. 아직 비어 있다 (후속)")
+    merges_into_one: bool | None = Field(
+        default=None, description="채택하면 일정 초안이 한 건으로 묶이는 Agent"
+    )
+    notice: GroupNoticeOut | None = None
 
 
 class GuardOut(BaseModel):
@@ -91,9 +129,17 @@ class GuardOut(BaseModel):
     deeplink: str | None = None
 
 
+class ScarcityQuestionOut(BaseModel):
+    id: str
+    text: str
+    options: list[str] = []
+
+
 class ScarcityOut(BaseModel):
-    count: int
-    question: dict
+    count: int = Field(description="그 Agent 도메인에 쌓인 기록 건수 (남아 있는 관찰만)")
+    question: ScarcityQuestionOut | None = Field(
+        default=None, description="Agent 가 되물은 한 줄. 없으면 null — 최대 1개"
+    )
 
 
 class PrecheckOut(BaseModel):
@@ -104,13 +150,23 @@ class PrecheckOut(BaseModel):
 
 
 class SuggestionsResponse(BaseModel):
-    suggestions: list[SuggestionOut]
-    groups: list[SuggestionGroupOut] | None = None
-    general: list[GeneralSuggestionOut] | None = None
+    suggestions: list[SuggestionOut] = Field(
+        description="개인화 추천. Agent 마다 0~3개 — 묶음은 groups 의 agent 로 가른다"
+    )
+    groups: list[SuggestionGroupOut] = Field(
+        description="결과를 낸 Agent 마다 하나. 실패한 Agent 는 없다 — 화면이 실패 카드를 그린다"
+    )
+    general: list[GeneralSuggestionOut] = Field(
+        description="또래 기준 일반 추천. 근거는 문서 행이다. Agent 마다 0~3개"
+    )
     looked_at: str
     guards: list[GuardOut]
-    scarcity: ScarcityOut | None = None
-    prechecks: list[PrecheckOut] | None = None
+    scarcity: ScarcityOut | None = Field(
+        default=None, description="일반 추천이 있을 때만. 쌓인 기록 건수 · 질문은 최대 1개"
+    )
+    prechecks: list[PrecheckOut] = Field(
+        description="채택 전에 물을 알레르기 항목. active 에 걸린 추천은 응답에서 빠진다"
+    )
 
 
 class AnswerRequest(BaseModel):
