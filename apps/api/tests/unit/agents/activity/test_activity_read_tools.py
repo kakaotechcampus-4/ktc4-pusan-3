@@ -191,16 +191,16 @@ class TestMemory:
             await search(ctx)
 
 
-def doc(n: int, *, min_month: int, max_month: int) -> ActivityDocRow:
+def doc(n: int, *, min_month: int, max_month: int, title=None, materials=()) -> ActivityDocRow:
     return ActivityDocRow(
         id=UUID(int=300 + n),
         doc_key=f"doc_{n}",
-        title=f"놀이 {n}",
+        title=title or f"놀이 {n}",
         body="본문",
         min_month=min_month,
         max_month=max_month,
         setting=ActivitySetting.INDOOR,
-        materials=(),
+        materials=tuple(materials),
         caregiver_role=CaregiverRole.TOGETHER,
         physical_intensity=Intensity.LOW,
         involves_food=False,
@@ -222,3 +222,45 @@ class TestDocs:
 
     async def test_0행은_실패가_아니라_빈_튜플(self):
         assert await search_activity_doc(InMemoryActivityDocs(), months=30, query="") == ()
+
+
+class TestDocVariety:
+    """같은 월령이 매번 같은 [예시]를 받지 않게 고른다 (#332 라이브 확인)."""
+
+    docs = InMemoryActivityDocs([doc(n, min_month=24, max_month=36) for n in range(14)])
+
+    async def keys(self, query="", rotation=""):
+        rows = await search_activity_doc(self.docs, months=30, query=query, rotation=rotation)
+        return [row.doc_key for row in rows]
+
+    async def test_같은_아이_같은_날은_같은_예시(self):
+        assert await self.keys(rotation="아이1|2026-10-11") == await self.keys(
+            rotation="아이1|2026-10-11"
+        )
+
+    async def test_날이_바뀌면_예시가_바뀐다(self):
+        days = [await self.keys(rotation=f"아이1|2026-10-{d}") for d in range(11, 15)]
+        assert len({tuple(day) for day in days}) > 1
+        assert all(len(day) == DOC_LIMIT for day in days)
+
+    async def test_파일_앞쪽만_주지_않는다(self):
+        """2주 동안 고른 예시가 한 구간 14행 중 앞 5행에 갇히지 않는다."""
+        seen = set()
+        for d in range(1, 15):
+            seen |= set(await self.keys(rotation=f"아이1|2026-10-{d:02d}"))
+        assert len(seen) > DOC_LIMIT
+
+    async def test_요청_낱말이_든_행을_먼저_준다(self):
+        docs = InMemoryActivityDocs(
+            [doc(n, min_month=24, max_month=36) for n in range(10)]
+            + [doc(90, min_month=24, max_month=36, title="큰 공 굴리기", materials=["공"])]
+        )
+        for day in range(11, 15):
+            rows = await search_activity_doc(
+                docs, months=30, query="공놀이 하고 싶어", rotation=f"아이1|2026-10-{day}"
+            )
+            assert rows[0].doc_key == "doc_90"
+
+    async def test_흔한_낱말로는_고르지_않는다(self):
+        """ "놀이" 는 모든 제목에 들어 있어 고르는 데 쓰지 않는다 — 돌림 순서 그대로다."""
+        assert await self.keys(query="놀이 하자", rotation="r") == await self.keys(rotation="r")

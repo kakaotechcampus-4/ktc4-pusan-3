@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+from app.agents.activity import agent as agent_module
 from app.agents.activity.agent import MAX_STEPS, run
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, Intensity
@@ -364,6 +365,22 @@ class TestPrompt:
         assert "40개월" in system
         assert "general" not in system and "personalized" not in system
         assert "preschool" not in system
+
+    async def test_예시는_아이와_날짜로_돌린다(self, monkeypatch):
+        """같은 날 같은 아이는 같은 [예시], 날이나 아이가 바뀌면 바뀐다 (#343)."""
+        seen: list[str] = []
+        original = agent_module.search_activity_doc
+
+        async def spy(docs, **kwargs):
+            seen.append(kwargs["rotation"])
+            return await original(docs, **kwargs)
+
+        monkeypatch.setattr(agent_module, "search_activity_doc", spy)
+        ctx = context()
+        await run(
+            task(), ctx, client=FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        )
+        assert seen == [f"{CHILD}|{ctx.today.isoformat()}"]
 
     async def test_보호자_요청을_그대로_user_로_준다(self):
         llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))

@@ -72,7 +72,11 @@ async def run(
 
     allowed = tools_for(task_type, gate)
     examples = await search_activity_doc(
-        context.ports.docs, months=gate.stage.months, query=" ".join(task.request_texts)
+        context.ports.docs,
+        months=gate.stage.months,
+        query=" ".join(task.request_texts),
+        # 같은 날 같은 아이는 같은 [예시] — 재호출도 같은 프롬프트다. 날이 바뀌면 바뀐다 (#343)
+        rotation=f"{context.child_id}|{context.today.isoformat()}",
     )
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
