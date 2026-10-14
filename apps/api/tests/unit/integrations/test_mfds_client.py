@@ -24,6 +24,7 @@ import pytest
 
 from app.agents.food.menu_resolver import MenuResolver, NotFoundMemory, Resolved, Unresolved
 from app.agents.food.store import InMemoryMenuCatalog
+from app.integrations.mfds import client as client_module
 from app.integrations.mfds.client import (
     BASE_URL,
     HTTP_TIMEOUT_S,
@@ -414,3 +415,76 @@ async def test_HTTP_클라이언트는_느린_응답을_기다릴_만큼_길게_
     async with mfds_nutri_http() as http:
         assert http.timeout.read == HTTP_TIMEOUT_S
         assert 5.0 <= HTTP_TIMEOUT_S <= 30.0
+
+
+# ── 품목대표 전체 받기 (배치, FT-19) ──────────────────────────────────
+def _bulk_body(total: int, names: list[str]) -> dict:
+    return {
+        "header": {"resultCode": "00"},
+        "body": {
+            "totalCount": total,
+            "items": [
+                {
+                    "FOOD_CD": f"D{index}",
+                    "FOOD_NM_KR": name,
+                    "DB_GRP_NM": "음식",
+                    "DB_CLASS_NM": "품목대표",
+                }
+                for index, name in enumerate(names)
+            ],
+        },
+    }
+
+
+async def test_품목대표_전체를_쪽마다_차례로_받는다(monkeypatch) -> None:
+    monkeypatch.setattr(client_module, "BULK_ROWS", 2)
+    pages = {"1": ["가", "나"], "2": ["다"]}
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = {key: values[0] for key, values in parse_qs(request.url.query.decode()).items()}
+        seen.append(query)
+        return httpx.Response(200, json=_bulk_body(3, pages[query["pageNo"]]))
+
+    rows = await build_client(handler).representative_rows()
+
+    assert [row.name for row in rows] == ["가", "나", "다"]
+    assert [q["pageNo"] for q in seen] == ["1", "2"]
+    assert all(q["DB_CLASS_NM"] == "품목대표" and "FOOD_NM_KR" not in q for q in seen)
+    assert all(q["numOfRows"] == "2" for q in seen)
+
+
+async def test_한_쪽이라도_실패하면_전체가_실패다(monkeypatch) -> None:
+    monkeypatch.setattr(client_module, "BULK_ROWS", 2)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "pageNo=2" in request.url.query.decode():
+            return httpx.Response(500)
+        return httpx.Response(200, json=_bulk_body(3, ["가", "나"]))
+
+    with pytest.raises(MfdsApiError):
+        await build_client(handler).representative_rows()
+
+
+async def test_받은_행_수가_다르면_실패다(monkeypatch) -> None:
+    monkeypatch.setattr(client_module, "BULK_ROWS", 2)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_bulk_body(3, ["가"]))  # 쪽마다 1행만 온다
+
+    with pytest.raises(MfdsApiError):
+        await build_client(handler).representative_rows()
+
+
+async def test_쪽수가_상한을_넘으면_받지_않는다(monkeypatch) -> None:
+    monkeypatch.setattr(client_module, "BULK_ROWS", 1)
+    monkeypatch.setattr(client_module, "BULK_MAX_PAGES", 2)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.query.decode())
+        return httpx.Response(200, json=_bulk_body(3, ["가"]))
+
+    with pytest.raises(MfdsApiError):
+        await build_client(handler).representative_rows()
+    assert len(calls) == 1  # 첫 쪽에서 전체 수를 보고 멈춘다
