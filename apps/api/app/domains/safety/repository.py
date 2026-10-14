@@ -24,6 +24,22 @@ async def list_active_safety(session: AsyncSession, *, child_id: uuid.UUID) -> l
     return list((await session.scalars(stmt)).all())
 
 
+async def list_safety_of_kinds(
+    session: AsyncSession, *, child_id: uuid.UUID, kinds: tuple[SafetyKind, ...]
+) -> list[HealthSafety]:
+    """그 아이의 `kinds` 행을 status 와 상관없이 (#405 — Activity 의 안전 포트 계약).
+
+    Activity 는 `allergy` · `environmental` 만 읽고 거르는 것은 호출부가 한다. 순서는
+    `list_active_safety` 와 같다.
+    """
+    stmt = (
+        select(HealthSafety)
+        .where(HealthSafety.child_id == child_id, HealthSafety.kind.in_(kinds))
+        .order_by(HealthSafety.created_at.desc(), HealthSafety.id.desc())
+    )
+    return list((await session.scalars(stmt)).all())
+
+
 async def list_active_safety_with_writer(
     session: AsyncSession, *, child_id: uuid.UUID
 ) -> list[tuple[HealthSafety, str | None]]:
