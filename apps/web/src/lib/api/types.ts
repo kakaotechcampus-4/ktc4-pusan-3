@@ -728,7 +728,11 @@ export interface CreateHealthSafetyResponse {
 }
 
 /**
- * 🚨 **승인 게이트 ㉡ — 고치기.** ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ * 🚨 **승인 게이트 ㉡ — 고치기.** `PATCH /children/{cid}/health-safety/{id}` (서버 #370 · #87 결정).
+ *
+ * 🚨 **고치면 id 가 바뀐다.** 서버가 지금 기록을 내리고(`retracted`) 바뀐 값으로 새 기록을 넣는다 —
+ *    이력이 남는다. 바뀐 것이 없으면 같은 기록이 그대로 온다. 증상(`reactions`)은 보내면 통째로
+ *    바뀌고 `null` 은 400 이다(비우려면 `[]`).
  *
  * 🚨 **`type` 과 `label` 이 없다.** 그 둘은 이 기록의 **정체**다 — 우유를 땅콩으로 고치는 것은
  *    고치기가 아니라 다른 기록이고, `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이

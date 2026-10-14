@@ -241,6 +241,66 @@ test.describe("알레르기 등록과 내리기는 서버 응답대로 그린다
   });
 });
 
+test.describe("알레르기 고치기는 게이트 ㉡ 이고, 고치면 새 기록이다 (#375)", () => {
+  async function openEditSheet(page: import("@playwright/test").Page) {
+    await page.goto(PROFILE);
+    await page
+      .locator("main li")
+      .filter({ hasText: "우유" })
+      .getByRole("button", { name: "이 기록 고치기" })
+      .click();
+    return page.getByRole("dialog", { name: "알레르기 · 건강 기록 고치기" });
+  }
+
+  test("그 기록의 값으로 열리고, Idempotency-Key 를 달고 고친다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openEditSheet(page);
+    // 목 픽스처의 우유: Class 3, 두드러기
+    await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toContainText("Class 3");
+    await expect(sheet.getByLabel("증상 · 선택")).toHaveValue("두드러기");
+
+    await sheet.getByLabel("메모 · 선택").fill("병원에서 다시 확인");
+    await sheet.getByRole("button", { name: "확인했어요, 고칠게요" }).click();
+    await expect(sheet).toBeHidden();
+    await expect(page.locator("main").getByText("병원에서 다시 확인")).toBeVisible();
+
+    const edits = writes(calls, "PATCH", /\/health-safety\/hs_1$/);
+    expect(edits).toHaveLength(1);
+    expect(edits[0].idempotencyKey).toBeTruthy();
+    // 🚨 종류와 이름은 싣지 않는다 — 그 둘은 이 기록의 정체다.
+    expect(edits[0].body).not.toHaveProperty("type");
+    expect(edits[0].body).not.toHaveProperty("label");
+  });
+
+  test("다른 보호자가 먼저 고친 기록이면 다시 누르라고 하지 않고, 닫으면 지금 기록이 보인다", async ({
+    page,
+  }) => {
+    const sheet = await openEditSheet(page);
+    expect(
+      await asOtherCaregiver(page, {
+        method: "PATCH",
+        path: `/children/${CHILD}/health-safety/hs_1`,
+        body: { notes: "다른 보호자가 먼저 적음" },
+        idempotent: true,
+      }),
+    ).toBe(200);
+
+    await sheet.getByLabel("메모 · 선택").fill("내가 적으려던 것");
+    await sheet.getByRole("button", { name: "확인했어요, 고칠게요" }).click();
+    await expect(
+      sheet.getByText("이미 먼저 고쳐졌거나 내려간 기록이에요", { exact: false }),
+    ).toBeVisible();
+    // 🚨 다시 눌러도 같은 404 다 — 누를 길을 남기지 않는다.
+    await expect(sheet.getByRole("button", { name: "확인했어요, 고칠게요" })).toBeDisabled();
+    await expect(sheet.getByText("다시 눌러 주세요", { exact: false })).toHaveCount(0);
+
+    await sheet.getByRole("button", { name: "그만두기" }).click();
+    await expect(sheet).toBeHidden();
+    await expect(page.locator("main").getByText("다른 보호자가 먼저 적음")).toBeVisible();
+    await expect(page.locator("main").getByText("내가 적으려던 것")).toHaveCount(0);
+  });
+});
+
 test.describe("키 · 몸무게는 최근 한 줄만, 평가 없이 (§2 개인정보)", () => {
   test("프로필에는 그래프도 평가 낱말도 없다", async ({ page }) => {
     await page.goto(PROFILE);
