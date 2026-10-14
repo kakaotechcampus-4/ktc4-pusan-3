@@ -7,7 +7,7 @@
 active 줄에만 건다 — 내린(retracted) 줄은 몇 개든 남을 수 있고, 같은 이름을 다시 등록할 수 있다.
 
 Revision ID: d0be81909739
-Revises: 988fc4ef647d
+Revises: 226ce4be8ebe
 Create Date: 2026-10-13
 """
 
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d0be81909739"
-down_revision: Union[str, Sequence[str], None] = "988fc4ef647d"
+down_revision: Union[str, Sequence[str], None] = "226ce4be8ebe"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
