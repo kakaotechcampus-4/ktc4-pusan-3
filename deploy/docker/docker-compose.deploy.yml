@@ -67,6 +67,7 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-prod}
+      TZ: Asia/Seoul
       APP_NAME: ktc4-pusan-3-api
       DB_HOST: db
       DB_PORT: 5432
