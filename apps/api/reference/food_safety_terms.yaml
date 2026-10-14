@@ -314,7 +314,7 @@ group_foods:
 
 # 연령 · 아이 금지 식품. below_month 보다 어린 아이에게 적용한다(null 이면 모든 아이).
 #   block   — 막는다. 추천에서 빠지고 급식 표시에는 경고가 붙는다.
-#   caution — 막지 않고 주의만 단다(guide.choking_caution 같은 안내를 붙이라는 뜻).
+#   caution — 막지 않는다. 판정(cautions)만 남기고 화면에는 문구를 내지 않는다(10-13 결정).
 #   daycare_action — 급식 조회(purpose=daycare)에서 action 대신 쓴다. 없으면 action 그대로다.
 #   scope   — all 이면 메뉴명 · 재료 전부, name 이면 메뉴명만 본다(마시는 것을 막는 규칙).
 #   exact   — 메뉴명이 이 글자 그대로일 때만 건다(부분 일치가 아니다).

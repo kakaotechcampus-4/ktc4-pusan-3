@@ -50,16 +50,10 @@ async def session():
             yield s
         await tx.rollback()
 
-    # 🚨 커넥션 풀을 비운다. pytest-asyncio 는 테스트마다 새 이벤트 루프를 열고, asyncpg
-    #    커넥션은 자기를 만든 루프에 묶여 있다. 풀에 남겨 두면 다음 테스트가 다른 루프에서
-    #    같은 커넥션을 꺼내 "another operation is in progress" 로 죽는다.
-    #    단독 실행은 통과하고 모아서 돌리면 두 번째부터 깨지는 증상이 이것이다.
-    #
-    # TODO: DB 테스트가 50개쯤으로 늘면 asyncio_default_fixture_loop_scope=session 으로
-    #   옮기고 이 줄을 뺀다. dispose 는 매번 커넥션 풀을 버리는 비용이 있다. 지금은 18개라
-    #   그 비용보다, pytest-asyncio 설정을 바꿔 저장소의 모든 비동기 테스트 실행 방식을
-    #   건드리는 쪽이 크다.
-    await engine.dispose()
+    # 커넥션 풀은 비우지 않는다. asyncpg 커넥션은 자기를 만든 이벤트 루프에 묶여 있는데,
+    # 테스트 전체가 루프 하나를 같이 쓰므로(pyproject asyncio_default_*_loop_scope = session)
+    # 다음 테스트가 같은 커넥션을 꺼내도 된다. 예전에는 테스트마다 루프가 새로 열려서
+    # 매번 engine.dispose() 로 풀을 버렸다 (#257).
 
 
 @pytest.fixture

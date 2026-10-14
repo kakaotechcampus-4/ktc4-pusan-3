@@ -6,12 +6,13 @@ from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.store.inmemory import in_memory_ports
 from app.agents.growth.store.ports import GrowthMeasurement
-from app.rules.age import LifeStage, stage_of
+from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
 KST = ZoneInfo("Asia/Seoul")

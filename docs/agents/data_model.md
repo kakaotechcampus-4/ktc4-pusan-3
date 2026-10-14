@@ -6,7 +6,6 @@
 | --- | --- | --- |
 | id | uuid | PK |
 | nickname | text | nullable. 표시 이름. 보호자 목록·이관 화면·기록 작성자 표시에 필요 |
-| deleted_at | timestamptz | nullable. 계정 탈퇴 요청 시각, N일 후 파기 |
 | created_at | timestamptz | NOT NULL, default now() |
 | updated_at | timestamptz | NOT NULL, default now(), on update now(). nickname 등 수정 시각 추적 |
 
@@ -202,7 +201,8 @@
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
 - `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
-- 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` · `embedding` 도 그대로 남는다. 되살리는 경로는 없다.
+- 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` 는 남고 `embedding` 은 비운다(`health` 에는 `embedding` 칸이 없다). 그 관찰의 연결 보류(`observation_link_hold`) 행도 지우고, 연결돼 있던 Profile 의 `last_observed_on` · 상태를 다시 계산한다. 되살리는 경로는 없다.
+- 관찰을 고쳐 `subject` · `polarity` 가 바뀌면 `embedding` · `affinity_id` 를 비워 Curator 가 다시 연결하게 하고, 그 칸들이나 `observed_range` · `strong_signals` 가 바뀌면 원래 Profile 을 다시 계산한다(#257, `memory-agent-v1.md` "고친 관찰은 Curator 집계에 다시 들어간다").
 
 ### 1. observation_food (섭취·영양)
 
@@ -367,7 +367,7 @@
 | --- | --- | --- |
 | id | uuid | PK |
 | child_id | uuid | NOT NULL. FK → `child.id`, `ON DELETE CASCADE` |
-| kind | enum | `general` / `personalized`, NOT NULL. 아이 기록 근거가 1행 이상이면 `personalized`, 0행이면 `general`. **근거 0행이면 `general`이 정상**이고, 그래서 개인화로 집계되면 안 된다 |
+| kind | enum | `general` / `personalized`, NOT NULL. 6개월이 안 지난 아이 기록 근거가 1행 이상이면 `personalized`, 0행이면 `general`. **근거 0행이면 `general`이 정상**이고, 그래서 개인화로 집계되면 안 된다. 6개월 넘은 기록만 있으면 `general` 이고 그 인용은 저장하지 않는다(#329) |
 | feedback | enum | `child_liked` / `child_disliked` / `not_acted` , nullable (10-08 웹 목 값에 맞춤 — 07 기억 화면 제안 탭에서 받는다). 승인 뒤 만들어진 관찰의 `polarity`(+1 / −1 / 0)로 이어진다 — `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음" |
 | ~~source_refs~~ | — | **제거.** 근거는 `suggestion_evidence` 테이블로 옮겼다 (2026-09-22) |
 | agent | enum | `food` / `activity` / `growth` / `health` |
@@ -377,6 +377,7 @@
 | items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
 | status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
+| run_id | text | nullable. 추천을 만든 입력 run(`RunChannel.run_id`). 05 가 그 run 의 추천을 찾는다. 인덱스 `(child_id, run_id)` |
 | created_at | timestamptz | NOT NULL, default now() |
 | updated_at | timestamptz | NOT NULL, default now(), on update now() |
 

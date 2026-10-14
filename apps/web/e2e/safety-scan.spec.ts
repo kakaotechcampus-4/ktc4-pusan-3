@@ -1,6 +1,15 @@
 import type { Page } from "@playwright/test";
 
-import { CHILD, expect, gateMarks, recordApi, test, writes } from "./fixtures";
+import {
+  CHILD,
+  asOtherCaregiver,
+  expect,
+  gateMarks,
+  recordApi,
+  switchScenario,
+  test,
+  writes,
+} from "./fixtures";
 
 /**
  * 11-2 검사지에서 가져오기 — 승인 게이트 ㉡ 가 시트에서 화면으로 옮겨 온 자리 (apps/web/CLAUDE.md §3).
@@ -111,6 +120,73 @@ test("승인하면 고른 줄마다 서로 다른 Idempotency-Key 로 등록하�
   // 검사지를 읽는 요청 말고는 이 흐름에서 쓰는 곳이 없다.
   const others = writes(calls).filter((c) => !/\/health-safety(\/scan)?$/.test(c.path));
   expect(others).toEqual([]);
+});
+
+// 목록을 받은 뒤 다른 보호자가 같은 항목을 등록하면 그 줄은 409 다. 이미 기록에 있으니 실패로 남기지
+// 않는다 — 남기면 다시 눌러도 같은 409 라 이 화면을 떠날 수 없다 (#374).
+test("고른 줄이 그사이 등록돼 있으면 등록된 것으로 보고 프로필로 돌아간다", async ({ page }) => {
+  const calls = recordApi(page);
+  await openScan(page);
+  expect(
+    await asOtherCaregiver(page, {
+      method: "POST",
+      path: `/children/${CHILD}/health-safety`,
+      body: { type: "allergy", label: "달걀흰자" },
+      idempotent: true,
+    }),
+  ).toBe(201);
+
+  await page.getByRole("button", { name: "확인했어요, 7건 등록할게요" }).click();
+  await page.waitForURL(`**/child/${CHILD}/profile`);
+  // 두 건은 다른 보호자 1건 + 화면 1건이다 — 페이지 안의 `fetch` 라 `recordApi` 가 같이 센다.
+  expect(
+    writes(calls, "POST", /\/health-safety$/).filter(
+      (c) => (c.body as { label: string }).label === "달걀흰자",
+    ),
+  ).toHaveLength(2);
+});
+
+// 서버는 같은 키면 본문을 비교하지 않고 처음 응답을 재생한다 (#369). 실패한 줄을 고쳐 다시 등록할 때
+// 키가 그대로면, 처음 요청이 서버에 닿아 있었을 경우 고친 값은 저장되지 않고 "등록됨" 이 된다 (#374).
+test("실패한 줄을 고쳐 다시 등록하면 그 줄만 새 키다 — 안 고친 줄은 같은 키로 재시도한다", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await openScan(page);
+
+  // 동의가 없어 고른 줄이 전부 실패한다 (403 · 저장된 것 없음).
+  await switchScenario(page, "consent");
+  await page.getByRole("button", { name: "확인했어요, 7건 등록할게요" }).click();
+  await expect(page.getByRole("button", { name: /^확인했어요, 7건/ })).toBeEnabled();
+  expect(writes(calls, "POST", /\/health-safety$/)).toHaveLength(7);
+  await switchScenario(page, "default");
+
+  // 달걀흰자 한 줄만 증상을 고친다 (목 검사지는 두드러기 하나).
+  await page
+    .getByRole("checkbox", { name: /^달걀흰자/ })
+    .locator("xpath=ancestor::div[contains(@class,'rounded-card')][1]")
+    .getByRole("button", { name: "고치기" })
+    .click();
+  const sheet = page.getByRole("dialog", { name: "옮겨 적은 것 고치기" });
+  await sheet.getByLabel("어떤 증상이 있었나요").fill("두드러기, 구토");
+  await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
+  await expect(sheet).toBeHidden();
+
+  await page.getByRole("button", { name: /^확인했어요, 7건/ }).click();
+  await page.waitForURL(`**/child/${CHILD}/profile`);
+
+  const saved = writes(calls, "POST", /\/health-safety$/);
+  const keysOf = (label: string) =>
+    saved.filter((c) => (c.body as { label: string }).label === label).map((c) => c.idempotencyKey);
+  const [eggBefore, eggAfter] = keysOf("달걀흰자");
+  expect(eggAfter).toBeTruthy();
+  expect(eggAfter).not.toBe(eggBefore);
+
+  const untouched = saved
+    .map((c) => (c.body as { label: string }).label)
+    .find((label) => label !== "달걀흰자");
+  const [before, after] = keysOf(untouched!);
+  expect(after).toBe(before);
 });
 
 test("새로고침하면 검사지 사진은 사라지고 다시 올라가지 않는다 (의료 기록 · persist 금지)", async ({

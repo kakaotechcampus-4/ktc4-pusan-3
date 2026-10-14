@@ -27,6 +27,8 @@ import type {
   PhotoLane,
   SubmitEventBody,
   SubmitEventResponse,
+  UpdateHealthSafetyRequest,
+  UpdateHealthSafetyResponse,
 } from "./types";
 
 /* ── 04 한 줄 입력 ────────────────────────────────────────────────────── */
@@ -164,6 +166,23 @@ export function addHealthSafety(
   idempotencyKey: IdempotencyKey,
 ): Promise<{ safety: HealthSafety }> {
   return api.post(idempotentPath.healthSafety(childId), body, { idempotencyKey });
+}
+
+/**
+ * 🚨 승인 게이트 ㉡ — **고치기.** 등록과 같은 게이트의 다른 메서드다 (일정 제출의 POST · PATCH 와 같다).
+ *
+ * 🚨 **응답의 id 가 바뀔 수 있다** (서버 #370) — 고치면 지금 기록을 내리고 새 기록을 넣는다. 바뀐 것이
+ *    없으면 같은 id 그대로다. 화면은 응답 뒤 목록을 다시 받아 그리고, 들고 있던 id 를 다시 쓰지 않는다.
+ * 🚨 `404 not_found` 는 먼저 고쳐졌거나 내려간 기록이다(다른 보호자, 또는 응답을 잃은 뒤 값을 바꿔
+ *    다시 보낸 본인) — 같은 요청을 다시 보내도 같다.
+ */
+export function updateHealthSafety(
+  childId: string,
+  safetyId: string,
+  body: UpdateHealthSafetyRequest,
+  idempotencyKey: IdempotencyKey,
+): Promise<UpdateHealthSafetyResponse> {
+  return api.patch(idempotentPath.updateHealthSafety(childId, safetyId), body, { idempotencyKey });
 }
 
 /* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */

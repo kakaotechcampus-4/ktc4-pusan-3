@@ -20,6 +20,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import Literal
 
+from app.agents.common.age import first_month_of
 from app.agents.common.allergy import (
     LabelBook,
     NameRule,
@@ -36,7 +37,7 @@ from app.agents.common.reference import (
     food_safety_terms,
 )
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.rules.age import Stage, first_month_of
+from app.rules.age import Stage
 from app.rules.allergen import ALLERGEN_NAMES, strip_allergen_marks
 from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, prepare_fields
 
@@ -44,7 +45,7 @@ from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, p
 # 필터가 조용히 꺼지지 않게(fail closed).
 _INACTIVE_STATUSES = frozenset({"retracted", "none"})
 
-# 추천인지 급식 조회인지. 급식은 기관이 이미 잘라서 주는 떡을 막지 않고 주의만 단다
+# 추천인지 급식 조회인지. 급식은 기관이 이미 잘라서 주는 떡을 막지 않고 문구 없이 표시한다
 Purpose = Literal["recommend", "daycare"]
 
 # 연령 규칙의 exact 는 메뉴명에서 급식표의 알레르기 번호 · 괄호 · 양을 뗀 뒤 비교한다
@@ -283,8 +284,8 @@ class SafetyVerdict:
     blocked: tuple[MenuCatalogRow, ...]
     unchecked: tuple[MenuCatalogRow, ...]  # 해석 실패거나 재료 모름 — 추천하지 않는다
     hits: dict[str, tuple[str, ...]]  # menu_key → 걸린 key. 로그에 싣지 않음
-    # menu_key → 주의 규칙 label. 막지 않고 안내만 붙인다(질식 주의 → guide.choking_caution).
-    # 나뉜 묶음과 따로 본다 — passed 행에도 붙는다
+    # menu_key → 주의 규칙 label. 막지 않는다. 화면에 문구를 내지 않는다(어른이 곁에서 지켜본다는
+    # 전제) — 판정만 계속 계산해 둔다. 나뉜 묶음과 따로 본다 — passed 행에도 붙는다
     cautions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # menu_key → 그 메뉴에 들어 있거나 제품에 따라 들어 있을 수 있는 19종 정식 명칭(코드 순).
     # passed · needs_check 행만 싣고, 없으면 키가 없다.

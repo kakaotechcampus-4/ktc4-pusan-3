@@ -79,6 +79,19 @@ async def latest_action(
     return await session.scalar(stmt)
 
 
+async def child_health_granted(session: AsyncSession, *, child_id: uuid.UUID) -> bool:
+    """이 아이의 `child_health` 동의가 지금 granted 인가.
+
+    입력 한 번에 한 번 읽어 Agent 에 값으로 넘긴다.
+
+    마지막 action 이 granted 이면 True 이고, withdrawn 이거나 한 번도 동의한 적이 없으면 False 다.
+    🚨 조회에 실패하면 False 로 바꾸지 않고 예외를 그대로 올린다. 실패를 "동의 안 함" 으로 읽으면
+       Agent 가 `health_safety` 를 읽지 않고 알레르기 필터 없이 추천을 연다 (#372).
+    """
+    action = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child_id)
+    return action is ConsentAction.GRANTED
+
+
 async def missing_account_scopes(
     session: AsyncSession,
     *,

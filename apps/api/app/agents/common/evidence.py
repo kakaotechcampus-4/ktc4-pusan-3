@@ -61,7 +61,7 @@ class ObservationRow:
     """`observation_*` 한 줄.
 
     대조와 설명에 쓰는 칸을 나눈다. 대조(기피 거절 · keywords)는 네 테이블 공통 칸인 `subject`
-    로 한다 — affinity `merge_key` 와 같은 모양이라 같은 대상이 같은 말로 걸린다. 설명(why_this ·
+    로 한다 — affinity `merge_key` 와 같은 모양이라 같은 대상이 같은 말로 걸린다. 설명(reason ·
     화면의 "사용한 기록")은 사람이 읽는 칸(Activity `activity` · Education `topic`)을 `label` 로
     넘긴다. 그런 칸이 없는 도메인(Food · Routine)은 비워 두면 `subject` 를 쓴다.
     """
@@ -78,7 +78,7 @@ class ObservationRow:
 class RankedEvidence:
     ref: Ref
     tier: Literal[1, 2, 3]
-    label: str  # cite() · why_this · 화면. affinity 는 merge_key
+    label: str  # cite() · reason · 화면. affinity 는 merge_key
     polarity: int
     observed_on: date
     subject: str = ""  # 기피 거절 · keywords 대조. affinity 는 merge_key. 비면 label
@@ -179,13 +179,15 @@ def unseen(ids: Iterable[str], seen: Container[UUID]) -> tuple[str, ...]:
 def cite(ranked: RankedEvidence, *, note: str) -> EvidenceCitation:
     """줄 세운 근거 하나를 인용으로 옮긴다.
 
-    `polarity`와 `label`을 옮기는 자리는 여기 하나다.
+    `polarity` · `label` · `subject` · `observed_on` 을 옮기는 자리는 여기 하나다.
     """
     return EvidenceCitation(
         ref=ranked.ref,
         note=note,
         polarity=ranked.polarity,
         label=ranked.label,
+        subject=ranked.subject,
+        observed_on=ranked.observed_on,
     )
 
 
