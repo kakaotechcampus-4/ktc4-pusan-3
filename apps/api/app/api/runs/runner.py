@@ -177,6 +177,7 @@ def agent_job(
                         count_records=agent_ports.record_counter(child_id),
                         curator_trigger=_curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
+                        **agent_ports.food_stores(),
                     )
             except TimeoutError:
                 log.warning(

@@ -721,3 +721,20 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
     )
     assert kept == task  # 내일 다시 시도할 수 있게 맥락은 남는다(15분 안이면)
+
+
+async def test_05_도_Food_카탈로그_어댑터를_넘긴다(db_client, bearer, cid, agents):
+    """#442 — 입력 run(러너)과 05 가 같은 어댑터를 넘긴다.
+
+    한쪽만 넘기면 두 경로의 후보 풀이 갈라진다.
+    """
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "조건에 맞는 추천이 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert type(calls[0]["food_catalog"]).__name__ == "DbMenuCatalog"
+    assert type(calls[0]["food_recipes"]).__name__ == "DbRecipeCatalog"
+    assert type(calls[0]["food_suggestions"]).__name__ == "DbSuggestionHistory"

@@ -915,6 +915,30 @@ async def test_기록_건수_함수를_진입점에_넘기고_짧은_세션에�
     assert len(opened) == 2  # run 세션 + 건수 세션 — run 세션을 같이 타지 않는다
 
 
+async def test_Food_카탈로그_어댑터를_진입점에_넘긴다(monkeypatch):
+    """#442 — Food 가 DB 의 레시피 · 메뉴 카탈로그 · 추천 이력을 읽는다.
+
+    어댑터는 만들 때 세션을 열지 않는다.
+    """
+    opened = _sessions(monkeypatch)
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert type(seen["food_recipes"]).__name__ == "DbRecipeCatalog"
+    assert type(seen["food_catalog"]).__name__ == "DbMenuCatalog"
+    assert type(seen["food_suggestions"]).__name__ == "DbSuggestionHistory"
+    assert len(opened) == 1  # run 세션 하나뿐 — 어댑터는 호출할 때마다 짧은 세션을 연다
+
+
 async def test_추천_저장_뒤_예외가_나도_done_이고_키를_풀지_않는다(monkeypatch):
     """저장된 draft 가 있는 run 을 failed 로 닫으면 키가 풀려 다시 보낼 때 두 벌이 된다
     (멘토 #196 ①)."""

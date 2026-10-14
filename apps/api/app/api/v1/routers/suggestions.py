@@ -487,6 +487,7 @@ async def create_suggestions(
                 birth_date=child.birth_date,
                 child_health_granted=health_consent,
                 domain_store=agent_ports.domain_store_opener(child.child_id),
+                **agent_ports.food_stores(),
             )
             settled = {o.agent for o in run.outcomes}
     finally:
