@@ -33,7 +33,10 @@
   `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
   `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
-  `PhotoCard`/`PhotoSlotButton`
+  `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
+- 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
+  `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
+  `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
@@ -92,7 +95,7 @@
   ARIA 는 `combobox` + `listbox` 한 쌍 · 열 때 고른 항목으로 포커스가 들어가고 **닫을 때 버튼으로
   돌아온다**(안 그러면 포커스가 `<body>` 로 떨어진다 · 09 달력에서 낸 사고와 같다) ·
   ESC · 바깥 클릭 · Tab 에 닫힌다 · 그림자 없이 `line-strong` 1px 로 뜬 면을 만든다 ·
-  등장 애니메이션도 쉐브론 회전도 없다(방향은 아이콘을 갈아 끼워 말한다)
+  열린 목록은 투명도로만 서고 쉐브론은 회전하지 않는다(방향은 아이콘을 갈아 끼워 말한다)
   🚨 **스크롤에는 닫지 않는다** (#306). 목록이 `relative` 루트 안의 `absolute` 라 트리거에 붙어 같이
   움직이는데, 떨어질까 봐 넣었던 스크롤 가드가 두 번 사고를 냈다 — 처음엔 **열릴 때 포커스가 일으킨
   스크롤**을 잡아 바텀시트 안에서 상자가 아예 안 열렸고, 그걸 한 프레임 미뤄 막은 뒤에는 **본문 바닥에
@@ -181,7 +184,10 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
   🚨 `hover:` 는 `globals.css` 의 `@custom-variant` 로 **`@media (hover: hover)` 안에서만** 걸리게 덮어 뒀다.
   Tailwind 기본값은 그냥 `:hover` 라 터치 기기에서 탭한 뒤 **눌러붙는다** — 이 화면은 대부분 웹뷰라 그게 기본 경험이 된다.
 - **기다리는 버튼에는 `Spinner` 를 붙인다.** 🚨 `prefers-reduced-motion` 에서는 스피너가 숨고 문구만 남는다 — 멈춘 스피너는 고장난 화면으로 읽힌다.
-- **등장·스크롤 애니메이션을 만들지 않는다** (디자인 시스템 §8). 하루에 여러 번 지친 상태로 여는 화면이라, 처음엔 살아 있어 보여도 100번째엔 매번 기다려야 하는 것이 된다.
+- **움직임은 바뀐 순간에만 쓴다** (디자인 시스템 §8 — 시트 · 펼침 · 교체 · 단계 넘김 · 자리 옮김 · 화면 전환).
+  🚨 **화면이 처음 뜰 때 · 스크롤할 때는 움직이지 않는다.** 하루에 여러 번 지친 상태로 여는 화면이라, 처음엔 살아 있어
+  보여도 100번째엔 매번 기다려야 하는 것이 된다. `lib/motion.ts` 의 훅과 `Swap` 은 전부 첫 렌더를 건너뛴다 — 직접
+  `animate()` 를 부르지 말고 그것을 쓴다. 🚨 승인 게이트 안에는 색 변화 말고 넣지 않는다 (`BottomSheet` 의 `gate`).
 - 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 추천이 없어서 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../../apps/mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
 - 노치·상태바·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 값의 출처는 둘이다 — 웹뷰 안에서는 네이티브 셸이 꽂아 주는 `--shell-inset-*`, 모바일 브라우저 직접 접속에서는 `env(safe-area-inset-*)`. 🚨 **셸이 그 자리를 대신 칠하게 두지 않는다** — 화면마다 아래 색이 달라서(네비 · 시트 · 그냥 화면) 셸이 한 색으로 칠하면 흰 띠가 남는다 (#133).

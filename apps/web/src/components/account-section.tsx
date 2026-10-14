@@ -12,6 +12,7 @@ import { CardFailed } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
 import { useSessionStore } from "@/stores/session";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 10 설정 — 계정.
@@ -69,6 +70,7 @@ export function AccountSection({ childId }: { childId: string }) {
           title="탈퇴하기"
           status="쌓인 기억이 사라져요"
           note="무엇이 어떻게 되는지 다음 화면에서 알려드려요"
+          {...FORWARD}
         />
       </SettingsGroup>
 

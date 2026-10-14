@@ -3,6 +3,7 @@
 import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { Card } from "@/components/ui/card";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -11,6 +12,8 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
 import { CONTACT_NOT_READY, FAQ_GROUPS, SERVICE_INFO } from "@/lib/help";
+import { playEnter } from "@/lib/motion";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 10 설정 › 고객센터 — **읽는 화면이다.**
@@ -30,8 +33,8 @@ import { CONTACT_NOT_READY, FAQ_GROUPS, SERVICE_INFO } from "@/lib/help";
  * 🚨 **한 번에 하나만 열리게 하지 않는다** (`name` 속성을 주지 않는다). 두 답을 나란히 놓고
  *    비교하는 것을 막을 이유가 없고, 방금 연 것이 다른 것을 닫으면 화면이 제멋대로 움직인다.
  *
- * 🚨 **여는 애니메이션이 없고 쉐브론도 회전하지 않는다** (디자인 시스템 §8). 방향은 아이콘을
- *    갈아 끼워 말한다 — 고르기 상자가 쓰는 것과 같은 처리다.
+ * 🚨 **펼친 답은 투명도로만 선다** (디자인 시스템 §8 "펼침"). 높이를 움직이지 않고, 접을 때는 즉시다.
+ *    쉐브론은 회전하지 않는다 — 방향은 아이콘을 갈아 끼워 말한다 (고르기 상자와 같은 처리).
  *
  * 🚨 **문의 버튼을 만들지 않는다.** 이메일도 카카오 채널도 아직 없다. 없는 주소를 버튼으로
  *    세우면 부모가 보낸 문의가 아무 데도 도착하지 않는다 — 아무 데도 안 가는 링크를 만들지
@@ -50,7 +53,9 @@ import { CONTACT_NOT_READY, FAQ_GROUPS, SERVICE_INFO } from "@/lib/help";
 export default function HelpPage() {
   return (
     <AuthGate>
-      <HelpScreen />
+      <ScreenTransition>
+        <HelpScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -68,7 +73,7 @@ function HelpScreen() {
             ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
             유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
         <div className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기">
+          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <PageTitle>고객센터</PageTitle>
@@ -84,7 +89,18 @@ function HelpScreen() {
           <div className="flex flex-col gap-3">
             {group.items.map((item) => (
               <Card key={item.question}>
-                <details className="group">
+                <details
+                  className="group"
+                  // 🚨 `toggle` 이벤트는 열린 뒤 따로 늦게 와서 한 프레임 다 보였다가 깜빡일 수 있다 —
+                  //    누른 순간 다음 프레임(칠하기 전)에 건다 (08 원문 펼치기와 같다).
+                  onClick={(event) => {
+                    const details = event.currentTarget;
+                    if (details.open) return;
+                    requestAnimationFrame(() => {
+                      if (details.open) playEnter(details.querySelector(":scope > div"));
+                    });
+                  }}
+                >
                   {/* 🚨 **기본 삼각형 마커를 지운다** (`list-none` + `::-webkit-details-marker`).
                       뜻을 나르는 그림은 lucide 한 곳에 모으기로 했고(문서 §4), 브라우저마다
                       다르게 생긴 마커가 그 규칙 밖에서 하나 더 서면 안 된다.

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { PhotoReview } from "@/components/photo-review";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
@@ -17,6 +18,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { PhotoCard, PhotoSlotButton } from "@/components/ui/photo-card";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { Screen } from "@/components/ui/screen";
+import { Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
 import { usePhotoDraftStore, type PendingPhoto } from "@/stores/photo-draft";
@@ -68,7 +70,9 @@ export default function PhotosPage() {
     // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (05·07·09 와 같은 이유).
     <Suspense fallback={null}>
       <AuthGate>
-        <PhotosScreen />
+        <ScreenTransition>
+          <PhotosScreen />
+        </ScreenTransition>
       </AuthGate>
     </Suspense>
   );
@@ -201,6 +205,18 @@ function PhotosScreen() {
   }
 
   const consentBlocked = isApiError(upload.error, "consent_required") ? upload.error : null;
+  /** 지금 본문에 무엇이 서 있는가 — 바뀔 때 새 단계가 투명도로 선다 (디자인 시스템 §8 "교체"). */
+  const stage = consentBlocked
+    ? "consent"
+    : !photo
+      ? "pick"
+      : upload.isError
+        ? "upload-failed"
+        : upload.isPending || run.state.status === "streaming" || run.state.status === "idle"
+          ? "reading"
+          : run.state.parsed
+            ? `review:${runId}`
+            : "read-failed";
 
   return (
     <Screen className="gap-6">
@@ -213,65 +229,67 @@ function PhotosScreen() {
         </div>
       </header>
 
-      {consentBlocked ? (
-        <ConsentRequiredCard
-          childId={childId}
-          error={consentBlocked}
-          what="사진을 읽어 드릴 수 없어요."
-        />
-      ) : !photo ? (
-        <Picker date={date} onPick={() => setSheetOpen(true)} />
-      ) : /* 🚨 **보내기 실패를 먼저 본다.** 요청이 실패하면 run 은 `idle` 그대로라, 아래
+      <Swap id={stage}>
+        {consentBlocked ? (
+          <ConsentRequiredCard
+            childId={childId}
+            error={consentBlocked}
+            what="사진을 읽어 드릴 수 없어요."
+          />
+        ) : !photo ? (
+          <Picker date={date} onPick={() => setSheetOpen(true)} />
+        ) : /* 🚨 **보내기 실패를 먼저 본다.** 요청이 실패하면 run 은 `idle` 그대로라, 아래
              "아직 시작 전" 과 구분되지 않으면 실패한 화면이 영원히 읽는 중으로 남는다. */
-      upload.isError ? (
-        <Failed
-          title="사진을 보내지 못했어요"
-          note="저장된 것은 없어요. 같은 사진을 그대로 다시 보낼 수 있어요."
-          // 🚨 같은 사진의 재시도라 Idempotency-Key 를 그대로 쓴다 (키를 돌리지 않는다).
-          onRetry={() => startUpload(photo)}
-          onGoHome={goHome}
-        />
-      ) : /* 🚨 `idle` 을 실패로 떨어뜨리지 않는다. 사진을 고른 직후의 한 틱과 요청이 나가기 전이
+        upload.isError ? (
+          <Failed
+            title="사진을 보내지 못했어요"
+            note="저장된 것은 없어요. 같은 사진을 그대로 다시 보낼 수 있어요."
+            // 🚨 같은 사진의 재시도라 Idempotency-Key 를 그대로 쓴다 (키를 돌리지 않는다).
+            onRetry={() => startUpload(photo)}
+            onGoHome={goHome}
+          />
+        ) : /* 🚨 `idle` 을 실패로 떨어뜨리지 않는다. 사진을 고른 직후의 한 틱과 요청이 나가기 전이
              여기 걸리는데, 그 상태를 "읽어낼 게 없었어요" 로 그리면 **보내 보지도 않고 실패라고
              말하는 화면**이 된다 (실제로 그렇게 났다). 실패는 스트림이 그렇게 말할 때만이다. */
-      upload.isPending || run.state.status === "streaming" || run.state.status === "idle" ? (
-        <Reading
-          previewUrl={photo.url}
-          index={run.state.step?.index ?? 0}
-          total={run.state.step?.total ?? 2}
-          label={run.state.step?.label ?? "사진을 열고 있어요"}
-        />
-      ) : run.state.parsed ? (
-        // 🚨 run 마다 새로 세운다. 사진을 바꾸면 앞 사진에서 고치던 항목이 넘어오면 안 된다 —
-        //    **부모가 확인한 적 없는 것**이 저장 대상으로 남는다.
-        <PhotoReview
-          key={runId}
-          // 🚨 시트에서 고른 값이 그대로 정본이다. 서버의 `lane` 추측은 이 화면이 쓰지 않는다.
-          lane={photo.lane}
-          parsed={run.state.parsed}
-          date={date}
-          previewUrl={photo.url}
-          childId={childId}
-          onCommit={(body) => commit.mutate(body)}
-          committing={commit.isPending}
-          commitError={
-            commit.isError
-              ? commit.error instanceof Error
-                ? commit.error.message
-                : "저장하지 못했어요. 아직 아무것도 저장되지 않았어요."
-              : null
-          }
-          onGoHome={goHome}
-        />
-      ) : (
-        // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
-        <Failed
-          title="이 사진에서는 읽어낼 게 없었어요"
-          note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
-          onRetry={() => startUpload(photo)}
-          onGoHome={goHome}
-        />
-      )}
+        upload.isPending || run.state.status === "streaming" || run.state.status === "idle" ? (
+          <Reading
+            previewUrl={photo.url}
+            index={run.state.step?.index ?? 0}
+            total={run.state.step?.total ?? 2}
+            label={run.state.step?.label ?? "사진을 열고 있어요"}
+          />
+        ) : run.state.parsed ? (
+          // 🚨 run 마다 새로 세운다. 사진을 바꾸면 앞 사진에서 고치던 항목이 넘어오면 안 된다 —
+          //    **부모가 확인한 적 없는 것**이 저장 대상으로 남는다.
+          <PhotoReview
+            key={runId}
+            // 🚨 시트에서 고른 값이 그대로 정본이다. 서버의 `lane` 추측은 이 화면이 쓰지 않는다.
+            lane={photo.lane}
+            parsed={run.state.parsed}
+            date={date}
+            previewUrl={photo.url}
+            childId={childId}
+            onCommit={(body) => commit.mutate(body)}
+            committing={commit.isPending}
+            commitError={
+              commit.isError
+                ? commit.error instanceof Error
+                  ? commit.error.message
+                  : "저장하지 못했어요. 아직 아무것도 저장되지 않았어요."
+                : null
+            }
+            onGoHome={goHome}
+          />
+        ) : (
+          // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
+          <Failed
+            title="이 사진에서는 읽어낼 게 없었어요"
+            note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
+            onRetry={() => startUpload(photo)}
+            onGoHome={goHome}
+          />
+        )}
+      </Swap>
 
       {/* 🚨 홈·캘린더와 **같은 시트**다. 고르는 방법이 화면마다 다르면 부모가 매번 다시 찾는다. */}
       <PhotoSourceSheet

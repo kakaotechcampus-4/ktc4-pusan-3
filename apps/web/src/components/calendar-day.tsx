@@ -28,6 +28,8 @@ import type {
   SharedPhoto,
 } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
+import { useReveal } from "@/lib/motion";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 09 하루 패널 — 고른 날의 일정 · 관찰 · 내 일기 · 함께 보는 사진.
@@ -176,7 +178,7 @@ export function CalendarDayPanel({
               putPhoto(childId, file, lane);
               setPhotoSheetOpen(false);
               // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
-              router.push(`/child/${childId}/photos?date=${date}`);
+              router.push(`/child/${childId}/photos?date=${date}`, FORWARD);
             }}
           />
         </Section>
@@ -349,6 +351,7 @@ function Diary({
    *    패널이 네비 뒤에 열리면 부모 눈에는 아무 일도 안 일어난 것이 된다 (11-1 측정 기록과 같은 처리).
    */
   const confirmRef = useRef<HTMLDivElement>(null);
+  const revealRef = useReveal(confirmingDelete);
   useEffect(() => {
     if (confirmingDelete) confirmRef.current?.scrollIntoView({ block: "nearest" });
   }, [confirmingDelete]);
@@ -475,7 +478,10 @@ function Diary({
         */}
         {confirmingDelete ? (
           <div
-            ref={confirmRef}
+            ref={(node) => {
+              confirmRef.current = node;
+              revealRef.current = node;
+            }}
             // 🚨 `scroll-mb-*` 가 없으면 `scrollIntoView` 가 하단 네비 **뒤**를 "보인다" 고
             //    판단해서 버튼이 그대로 가려진다 (11-1 과 같은 값).
             className="border-line rounded-card bg-surface-muted flex scroll-mb-28 flex-col gap-3 border p-4"

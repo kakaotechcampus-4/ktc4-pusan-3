@@ -1,10 +1,11 @@
 "use client";
 
 import { ArrowUp, Camera, Mic } from "lucide-react";
-import { ViewTransition, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { IconButton } from "@/components/ui/icon-button";
+import { Named } from "@/components/ui/named";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
 import type { HomeResponse } from "@/lib/api/types";
@@ -152,18 +153,5 @@ export function HomeComposer({
         </div>
       </Named>
     </div>
-  );
-}
-
-/**
- * 이름 붙인 전환 한 쌍의 한쪽. 🚨 `default="none"` 과 `share` 를 **같이** 준다 — 이름 붙인 것이
- * 관계없는 전환(다른 화면으로 가는 이동)마다 제 혼자 페이드하지 않게 막고, 쌍이 만나면 이어 붙인다.
- * `share` 가 빠지면 쌍이 조용히 안 이어진다 (`lib/view-transition.ts`).
- */
-export function Named({ name, children }: { name: string; children: ReactNode }) {
-  return (
-    <ViewTransition name={name} share="auto" default="none">
-      {children}
-    </ViewTransition>
   );
 }

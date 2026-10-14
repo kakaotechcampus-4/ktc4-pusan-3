@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { cn } from "@/lib/cn";
 import { formatDateWithYear, toISODate } from "@/lib/format";
+import { useEnterMotion } from "@/lib/motion";
 
 /**
  * 날짜 입력. 값은 `YYYY-MM-DD` 문자열이고, 달력은 바텀시트로 연다.
@@ -210,6 +211,22 @@ function Calendar({
     setMonth(clampMonth(next, fromDate, toDate));
   }
 
+  /**
+   * 아래 면이 바뀌는 움직임 (디자인 시스템 §8). 날짜 · 연도 · 달 면끼리는 같은 자리의 **교체**라 페이드,
+   * 날짜 면에서 달을 넘기면 **단계 넘김**이라 다음 달은 오른쪽에서 · 지난 달은 왼쪽에서 들어온다.
+   * 🚨 머리줄은 움직이지 않는다 — 화살표를 연달아 누르는 손가락 밑에서 버튼이 미끄러지면 안 된다.
+   * 키의 `YYYY-MM` 은 사전 순서가 곧 달 순서라 비교만 한다 (날짜를 더하고 빼지 않는다).
+   */
+  const panelRef = useEnterMotion(
+    view === "days" ? `days:${toISODate(month).slice(0, 7)}` : view,
+    (from, to) =>
+      from.startsWith("days:") && to.startsWith("days:")
+        ? to > from
+          ? "forward"
+          : "back"
+        : "fade",
+  );
+
   return (
     <div className="flex flex-col gap-3">
       {/* ── 머리줄 ──────────────────────────────────────────────────────
@@ -263,7 +280,7 @@ function Calendar({
           날짜 그리드(제일 자주 보는 면)에 바닥을 맞춰 두면 달 그리드가 쪼그라들지 않는다.
           🚨 `px` 가 아니라 `rem` 이다 — 글자를 키우면 그리드가 같이 커지는데 바닥만
           제자리에 남으면 소용이 없다 (09 표식 크기와 같은 이유 · 디자인 시스템 §7). */}
-      <div className="flex min-h-[19rem] flex-col">
+      <div ref={panelRef} className="flex min-h-[19rem] flex-col">
         {view === "years" ? (
           <YearGrid
             year={year}

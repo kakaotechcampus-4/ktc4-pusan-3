@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -24,6 +25,7 @@ import {
   type WithdrawResponse,
 } from "@/lib/api";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 10 설정 › 탈퇴 — **흐름 중인 화면이다.**
@@ -65,7 +67,9 @@ export default function WithdrawPage() {
 
   return (
     <AuthGate>
-      <WithdrawScreen onDone={() => setDone(true)} />
+      <ScreenTransition>
+        <WithdrawScreen onDone={() => setDone(true)} />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -108,7 +112,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
             ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
             유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
         <div className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기">
+          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <PageTitle>탈퇴하기</PageTitle>
@@ -127,7 +131,12 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
             <li>함께 보는 사람만 줄이고 싶다면 그 보호자의 연결만 끊을 수 있어요.</li>
           </ul>
           <div className="mt-3">
-            <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" size="compact">
+            <ButtonLink
+              href={`/child/${childId}/settings`}
+              variant="tertiary"
+              size="compact"
+              {...BACK}
+            >
               설정에서 골라 볼게요
             </ButtonLink>
           </div>
@@ -206,7 +215,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
         <Button variant="danger" block disabled={!acknowledged} onClick={() => setConfirming(true)}>
           탈퇴하기
         </Button>
-        <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" block>
+        <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" block {...BACK}>
           그만두고 돌아가기
         </ButtonLink>
       </section>

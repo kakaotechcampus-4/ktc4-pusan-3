@@ -12,6 +12,7 @@ import { PhotoCard } from "@/components/ui/photo-card";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
 import { formatDay, formatEventTime, formatTimeOfDay } from "@/lib/format";
+import { playEnter, useFlip } from "@/lib/motion";
 import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/lib/api";
 
 /**
@@ -139,6 +140,11 @@ export function PhotoReview({
   const [eventAdded, setEventAdded] = useState<Record<string, AddedEventInput>>({});
   const addedCount = Object.keys(eventAdded).length;
   const [showChecked, setShowChecked] = useState(false);
+  /**
+   * 자리 옮김 (디자인 시스템 §8). 확인한 줄이 "확인이 필요해요" 에서 "잘 읽었어요" 로 옮겨 가고, 빼거나
+   * 펼친 줄의 자리를 나머지가 메운다. 두 묶음을 함께 감싸야 묶음을 건너가는 줄이 같은 id 로 이어진다.
+   */
+  const flipRef = useFlip<HTMLDivElement>();
 
   const copy = LANE[lane];
 
@@ -220,7 +226,7 @@ export function PhotoReview({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={flipRef} className="flex flex-col gap-6">
       {/* 사진과 거기서 읽어낸 글자가 한 덩어리다 — 이 화면에서 `accent` 는 여기 한 장뿐이다. */}
       <PhotoCard
         tone="accent"
@@ -231,7 +237,19 @@ export function PhotoReview({
             <p className="text-body-sm text-ink-muted">{copy.note}</p>
 
             {lane === "document" && parsed.raw_text ? (
-              <details className="group border-line border-t pt-3">
+              <details
+                className="group border-line border-t pt-3"
+                // 펼친 원문은 투명도로 선다 (디자인 시스템 §8 "펼침"). 접을 때는 즉시다.
+                // 🚨 `toggle` 이벤트는 열린 뒤 따로 늦게 와서, 그 사이 한 번 칠해지면 다 보였다가 투명으로
+                //    돌아가 깜빡인다. 누른 순간 다음 프레임(칠하기 전)에 건다 — 그때는 이미 열려 있다.
+                onClick={(event) => {
+                  const details = event.currentTarget;
+                  if (details.open) return;
+                  requestAnimationFrame(() => {
+                    if (details.open) playEnter(details.querySelector(":scope > p"));
+                  });
+                }}
+              >
                 {/* 🚨 원문은 **접어 둔다.** 한 달치 식단표의 원문이 펼쳐져 있으면 정작 확인할
                     항목이 화면 아래로 밀린다 — 대조가 필요할 때 여는 자리다. */}
                 {/* 🚨 기본 마커를 지우고 쉐브론을 단다 — 브라우저마다 삼각형 모양이 다르고,
@@ -406,7 +424,7 @@ function NeedsReviewGroup({
       </div>
       <ul className="flex flex-col gap-2">
         {entries.map((entry) => (
-          <li key={entry.id}>
+          <li key={entry.id} data-flip={entry.id}>
             <EntryRow entry={entry} added={added[entry.id]} onEdit={onEdit} />
           </li>
         ))}
@@ -420,7 +438,8 @@ function NeedsReviewGroup({
 /**
  * 🚨 **기본이 접힘이다.** 식단표는 거의 한 달치라 스무 개가 넘는데, 잘 읽은 것을 전부 펼쳐 두면
  *    위의 "확인이 필요해요" 가 화면 밖으로 밀린다. 건수는 접힌 채로도 보인다.
- * 🚨 **등장 애니메이션을 만들지 않는다** (디자인 시스템 §8). 펼침은 즉시다.
+ * 🚨 **펼친 줄은 투명도로만 선다** (디자인 시스템 §8 "펼침"). 높이를 움직이지 않는다 — 목록이 자라는
+ *    동안 아래 저장 버튼이 같이 끌려 내려가며 흔들린다. 줄마다의 페이드는 위 `useFlip` 이 건다.
  */
 function CheckedGroup({
   entries,
@@ -494,7 +513,7 @@ function CheckedGroup({
           )}
         >
           {entries.map((entry) => (
-            <li key={entry.id}>
+            <li key={entry.id} data-flip={entry.id}>
               <EntryRow entry={entry} added={added[entry.id]} onEdit={onEdit} />
             </li>
           ))}
@@ -519,7 +538,7 @@ function EntryRow({
   return (
     <div
       className={cn(
-        "rounded-card bg-surface border p-4",
+        "rounded-card bg-surface ease-standard border p-4 transition-colors duration-120",
         // 🚨 확인이 필요한 것을 빨강으로 칠하지 않는다. 사고가 아니라 **아직 안 한 일**이다 —
         //    테두리만 진하게 해서 눈에 먼저 들어오게 한다.
         entry.needs_review ? "border-line-strong" : "border-line",
