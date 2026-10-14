@@ -33,7 +33,7 @@ from app.agents import pipeline
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.suggestion import SuggestionDraft, count_notice
+from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.agent import run as run_food
 from app.agents.food.context import FoodContext
 from app.agents.food.readouts import READOUTS
@@ -66,6 +66,7 @@ from app.agents.pipeline import (
     handle_input,
 )
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
@@ -264,6 +265,7 @@ async def _handle(
     food_llm: FakeLLM | None = None,
     contexts: dict[str, Any] | None = None,
     commit: Any = _no_commit,
+    save_suggestions: Any = None,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         CASES_BY_ID[case_id].text,
@@ -275,6 +277,7 @@ async def _handle(
         domain_clients={"food": food_llm or _default_food_llm()},
         emit=events.append,
         commit=commit,
+        save_suggestions=InMemorySuggestions() if save_suggestions is None else save_suggestions,
     )
 
 
@@ -926,6 +929,7 @@ async def test_이어받기는_기록_단계_시간만_남긴다(
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.times.memory_ms is not None
@@ -1114,41 +1118,222 @@ async def test_도메인_결과의_readout_과_되묻기가_AgentResult_로_나�
     assert _order(events)[-3:] == ["DomainRouted", "AgentResult", "Done"]
 
 
-async def test_추천이_든_결과는_저장_콜백_전까지_AgentResult_를_내지_않는다(
+class _Saver:
+    """저장 함수 대역. 받은 묶음과, 받은 때까지 나간 이벤트 수를 남긴다."""
+
+    def __init__(
+        self,
+        events: list[Any],
+        *,
+        fail: BaseException | None = None,
+        ids: tuple[str, ...] | None = None,
+        delay: float = 0.0,
+    ) -> None:
+        self.events, self.fail, self.ids, self.delay = events, fail, ids, delay
+        self.calls: list[tuple[SuggestionBatch, int]] = []
+
+    async def __call__(self, batch: SuggestionBatch) -> tuple[str, ...]:
+        self.calls.append((batch, len(self.events)))
+        await asyncio.sleep(self.delay)
+        if self.fail is not None:
+            raise self.fail
+        if self.ids is not None:
+            return self.ids
+        return tuple(f"s{index}" for index in range(len(batch.drafts)))
+
+
+def _draft(content: str) -> SuggestionDraft:
+    return SuggestionDraft(agent="food", kind="general", content=content, reason="또래 기준")
+
+
+_NO_MEMORY = "불리면 안 된다"  # RC20 은 순수 요청형이라 Memory 가 돌지 않는다
+
+
+async def test_추천은_저장이_끝난_뒤에_id_를_싣고_나간다(
     monkeypatch: pytest.MonkeyPatch,
     memory_context: AgentContext,
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # 추천 id 를 실을 수 없는 동안 내면 개수 안내만 후보 없이 대화에 먼저 선다
-    draft = SuggestionDraft(
-        agent="food", kind="general", content="두부조림", reason="또래 기준 일반 추천이에요."
-    )
-    notice = count_notice(1)
-    assert notice is not None
-    monkeypatch.setitem(
-        pipeline._RUNNERS,
-        "food",
-        _runner("food", readouts=(notice,), suggestions=(draft,)),
-    )
-    memory_llm = FakeLLM(
-        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
-        _reply("딸기 기록 남겼어요."),
-    )
+    drafts = (_draft("계란말이"), _draft("두부조림"))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", suggestions=drafts))
+    saver = _Saver(events)
 
     result = await _handle(
-        "RC01",
-        memory_llm=memory_llm,
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
         memory_context=memory_context,
         food_context=food_context,
         events=events,
         contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
     )
 
-    assert _of(events, AgentResult) == []
-    assert _order(events)[-2:] == ["DomainRouted", "Done"]  # 로그용 이벤트는 그대로 나간다
-    assert [item.agent for item in result.domain] == ["food"]  # 실패가 아니다
+    [(batch, sent_before)] = saver.calls
+    assert (batch.run_id, batch.agent, batch.drafts) == (RUN_ID, "food", drafts)
+    assert not _of(events[:sent_before], AgentResult)  # 저장이 끝나기 전에는 카드가 없다
+    [card] = _of(events, AgentResult)
+    assert card.suggestion_ids == ("s0", "s1")  # 추천 순서 그대로
+    assert card.task_type == batch.task_type
     assert result.partial is None
+
+
+async def test_추천이_없는_결과는_저장하지_않고_빈_id_로_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food"))
+    saver = _Saver(events)
+
+    await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    assert saver.calls == []
+    [card] = _of(events, AgentResult)
+    assert card.suggestion_ids == ()
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [{"fail": RuntimeError("계란말이 저장 실패")}, {"ids": ("s0",)}],
+    ids=["예외", "결과_수가_다름"],
+)
+async def test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    caplog: pytest.LogCaptureFixture,
+    broken: dict[str, Any],
+) -> None:
+    drafts = (_draft("계란말이"), _draft("두부조림"))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", suggestions=drafts))
+
+    with caplog.at_level(logging.INFO):
+        result = await _handle(
+            "RC16",
+            memory_llm=_pool_memory(),
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+            contexts=_FAKE_CONTEXTS,
+            save_suggestions=_Saver(events, **broken),
+        )
+
+    assert result.partial == Partial("agent_error", succeeded=("activity",), failed=("food",))
+    assert [item.agent for item in _of(events, AgentResult)] == ["activity"]
+    assert [item.agent for item in result.domain] == ["activity"]
+    assert result.model_calls == 4  # 저장에 실패해도 모델은 불렀다
+    text = "\n".join(r.getMessage() for r in caplog.records if r.name == pipeline.__name__)
+    assert "계란말이" not in text  # 예외 메시지에는 추천 문장이 섞일 수 있다 — 종류만 남긴다
+
+
+async def test_실패한_결과는_저장하지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    failed = _runner("food", status="failed", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", failed)
+    saver = _Saver(events)
+
+    await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    assert saver.calls == []
+
+
+async def test_추천을_저장한_run_은_확정된_저장이_있다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 순수 요청형이라 Memory 가 쓰지 않는다. 추천 저장이 이 run 의 확정된 저장이다
+    runner = _runner("food", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", runner)
+
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events),
+    )
+
+    assert result.committed is True
+
+
+async def test_저장이_느려도_이미_끝난_Agent_는_끊기지_않는다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 저장은 Agent 의 시간 제한 밖이다 — commit 을 중간에 끊으면 들어갔는지 모르는 저장이 남는다.
+    # 저장이 제한을 넘겨도 그동안 끝난 activity 는 시간 초과가 아니고, 저장 뒤에 나간다
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.3)  # 앞 단계는 FakeLLM 이라 수 ms
+    food = _runner("food", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", delay=0.05))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events, delay=0.5),
+    )
+
+    assert result.partial is None
+    assert [item.agent for item in _of(events, AgentResult)] == ["food", "activity"]
+
+
+async def test_저장_중_취소는_부분_실패로_숨기지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 러너의 60초 안전망이 저장 중에 run 을 끊는 경우다
+    runner = _runner("food", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", runner)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _handle(
+            "RC20",
+            memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+            contexts=_FAKE_CONTEXTS,
+            save_suggestions=_Saver(events, fail=asyncio.CancelledError()),
+        )
+
+    assert not _of(events, AgentResult)
 
 
 async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만_알린다(
@@ -1275,6 +1460,7 @@ async def test_같은_Agent_의_task_둘은_state_를_따로_받는다(
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert [item.task_type for item in result.domain] == [
@@ -1299,6 +1485,7 @@ async def test_구현된_agent_의_context_가_빠지면_부분_실패로_숨기
             memory_client=FakeLLM(),
             emit=events.append,
             commit=_no_commit,
+            save_suggestions=InMemorySuggestions(),
         )
 
 
@@ -1485,10 +1672,11 @@ async def test_읽는_task_결과는_끝나는_대로_넘긴다(monkeypatch: pyt
         await activity_passed.wait()
         return _Outcome("food", task.task_type)
 
-    def record(outcome: Any) -> None:
+    async def record(outcome: Any) -> bool:
         passed.append(outcome.agent)
         if outcome.agent == "activity":
             activity_passed.set()
+        return True
 
     monkeypatch.setitem(pipeline._RUNNERS, "food", food_after_activity)
     monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
@@ -1515,11 +1703,12 @@ async def test_쓰는_task_결과는_읽는_task_가_시작하기_전에_넘긴�
         ),
     )
 
+    async def record(outcome: Any) -> bool:
+        log.append(f"넘김 {outcome.task_type}")
+        return True
+
     await pipeline._run_domain(
-        (_DINNER, _MEAL),
-        {"food": _FakeContext()},
-        timeout=1.0,
-        on_outcome=lambda outcome: log.append(f"넘김 {outcome.task_type}"),
+        (_DINNER, _MEAL), {"food": _FakeContext()}, timeout=1.0, on_outcome=record
     )
 
     assert log == [
@@ -1538,11 +1727,12 @@ async def test_같이_끝난_결과는_task_순서로_넘긴다(monkeypatch: pyt
     monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
     passed: list[str] = []
 
+    async def record(outcome: Any) -> bool:
+        passed.append(outcome.agent)
+        return True
+
     await pipeline._run_domain(
-        (_FOOD_TASK, _ACTIVITY_TASK),
-        _FAKE_CONTEXTS,
-        timeout=1.0,
-        on_outcome=lambda outcome: passed.append(outcome.agent),
+        (_FOOD_TASK, _ACTIVITY_TASK), _FAKE_CONTEXTS, timeout=1.0, on_outcome=record
     )
 
     assert passed == ["food", "activity"]
@@ -1556,7 +1746,7 @@ async def test_결과를_넘기다_터지면_숨기지_않고_남은_Agent_를_�
     monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=0.2, log=log))
     monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", log=log))
 
-    def broken(outcome: Any) -> None:
+    async def broken(outcome: Any) -> bool:
         raise ValueError("번역 실패")
 
     with pytest.raises(ValueError):
@@ -1578,7 +1768,7 @@ async def test_넘기다_터져도_같이_끝난_Agent_의_예외_메시지는_�
         await asyncio.sleep(0)  # activity 와 같은 틱에 끝나게
         raise RuntimeError("민준이 수영장")
 
-    def broken(outcome: Any) -> None:
+    async def broken(outcome: Any) -> bool:
         raise ValueError("번역 실패")
 
     caplog.set_level(logging.ERROR)
@@ -1718,6 +1908,7 @@ async def test_쓰는_task_가_죽어도_읽는_task_결과는_나가고_partial
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert [event.task_type for event in _of(events, DomainRouted)] == ["meal_recommendation"]
@@ -1762,6 +1953,7 @@ async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는�
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen == [("두유",)]
@@ -1791,6 +1983,7 @@ async def _handle_meal_only(
         emit=events.append,
         writes=writes,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
 
@@ -1829,6 +2022,7 @@ async def test_메뉴_카탈로그만_저장했어도_모델이_실패하면_fai
         emit=events.append,
         writes=writes,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.committed is False
@@ -1952,6 +2146,7 @@ async def test_되묻기_run_은_note_와_pending_을_같이_낸다(
         memory_client=memory,
         emit=events.append,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = next(event for event in events if isinstance(event, MemoryNote))
@@ -1987,6 +2182,7 @@ async def test_saved_가_note_보다_먼저_나간다(
         memory_client=memory,
         emit=events.append,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     names = [type(event).__name__ for event in events]
@@ -2023,6 +2219,7 @@ async def test_이어받기는_supervisor_와_food_를_타지_않는다(
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert supervisor.calls == 0
@@ -2048,6 +2245,7 @@ async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.failed is not None and result.failed.reason == "llm_unavailable"
@@ -2073,6 +2271,7 @@ async def test_이어받기에_다른_말이_섞이면_따로_보내라는_안�
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     notes = _of(events, MemoryNote)
@@ -2097,6 +2296,7 @@ async def test_다시_물을_때_붙인_안내는_다음_질문_맥락에_들어
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     # 다시 묻는 중이면 화면이 다음 한 줄을 이 질문의 답으로 보낸다. "따로 보내 주세요" 만 있으면
@@ -2126,6 +2326,7 @@ async def test_섞인_말이_없으면_안내를_붙이지_않는다(
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert [note.text for note in _of(events, MemoryNote)] == ["기록해 둘게요."]
@@ -2154,6 +2355,7 @@ async def test_이어받기가_저장한_뒤_물으면_message_로_내리고_따
         emit=events.append,
         continuation=_LUNCH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2186,6 +2388,7 @@ async def test_재질문_상한에_닿으면_질문_대신_상수_문구를_mess
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     # "따로 보내 주세요" 가 붙으면 보호자가 같은 답을 다시 보내 상한이 의미가 없어진다
@@ -2214,6 +2417,7 @@ async def test_재질문_상한에서_섞인_말이_있으면_따로_보내라�
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2242,6 +2446,7 @@ async def test_맥락_없이_물을_때_섞인_말이_있으면_안내를_한_�
         emit=events.append,
         continuation=_LUNCH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2270,6 +2475,7 @@ async def test_첫_run_에서도_맥락_없이_묻는_질문은_message_로_내�
         memory_client=memory,
         emit=events.append,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2297,6 +2503,7 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
@@ -2325,6 +2532,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             _answer(_ask_second()),
         ),
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
     assert before.memory is not None and before.memory.pending is not None
 
@@ -2342,6 +2550,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
         ),
         continuation=before.memory.pending,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
@@ -2365,6 +2574,7 @@ async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.failed is not None and result.failed.reason == "unparsable"
@@ -2488,6 +2698,7 @@ async def test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나�
             memory_client=memory,
             emit=events.append,
             commit=broken,
+            save_suggestions=InMemorySuggestions(),
         )
 
     # 확정된 게 없다. 끝 신호는 러너가 failed 로 붙인다
@@ -2545,6 +2756,7 @@ async def test_이어받기도_반복_상한에_걸리면_commit_하지_않고_f
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_commit_into(events),
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.memory is not None and result.memory.completed is False
@@ -2588,6 +2800,7 @@ async def test_이어받기도_Memory_다음에_commit_하고_Saved_는_그_뒤�
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_commit_into(events),
+        save_suggestions=InMemorySuggestions(),
     )
 
     names = _order(events)

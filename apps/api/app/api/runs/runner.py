@@ -23,7 +23,7 @@ import logging
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from app.agents import entrypoint
@@ -85,6 +85,9 @@ def agent_job(
     - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
       async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
     - 도메인 Agent 의 기억 포트가 쓸 store 는 호출마다 짧은 세션으로 연다(`domain_store`).
+    - 추천 저장 함수도 여기서 만든다(`save_suggestions`). Agent 결과 하나마다 짧은 세션으로
+      저장 · commit 하고, commit 이 돌아오면 `channel.suggestions_saved` 를 세운다 — Memory
+      commit 과 같이 확정된 저장이다.
     - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
@@ -129,6 +132,24 @@ def agent_job(
             async with background_session() as read_session:
                 yield DbMemoryStore(read_session, child_id=child_id)
 
+        from app.domains.suggestion.repository import save_agent_suggestions
+
+        async def save_suggestions(batch: entrypoint.SuggestionBatch) -> tuple[str, ...]:
+            # Agent 결과 하나마다 짧은 세션 · 트랜잭션 하나다(트랜잭션 회의 표). run 세션을 쓰지
+            # 않는다 — 실패한 저장이 rollback 이 필요한 상태를 run 세션에 남기지 않게
+            async with background_session() as save_session:
+                ids = await save_agent_suggestions(
+                    save_session,
+                    child_id=child_id,
+                    run_id=batch.run_id,
+                    payloads=[draft.to_payload() for draft in batch.drafts],
+                    now=datetime.now(UTC),
+                )
+                await save_session.commit()
+                # commit 이 돌아온 뒤에만 표시한다. 결과를 모르면 표시가 없어 failed 다(결정 4)
+                channel.suggestions_saved = True
+            return tuple(str(row_id) for row_id in ids)
+
         async with background_session() as session:
             store = DbMemoryStore(session, child_id=child_id)
 
@@ -150,6 +171,7 @@ def agent_job(
                         continuation=continuation,
                         store=store,
                         commit=commit,
+                        save_suggestions=save_suggestions,
                         curator_trigger=_curator_trigger(),
                         domain_store=domain_store,
                     )
@@ -157,7 +179,7 @@ def agent_job(
                 log.warning(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
-                if channel.memory_committed:
+                if channel.committed:
                     done = (
                         "done",
                         {"run_id": channel.run_id, "model_calls": 0, "completed": False},
@@ -172,7 +194,7 @@ def agent_job(
                     continuation is not None
                     and reply_to is not None
                     and not_done
-                    and not channel.memory_committed
+                    and not channel.committed
                 )
                 if should_restore:
                     pending_reply.put(
@@ -219,11 +241,12 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         #    "확인하지 못했어요" 로 떨어지고 키도 안 풀려 다시 눌러도 닫힌 run 만 재생된다.
         #    이미 나갔으면(done 뒤 결과 기록에서 터진 경우) 붙이지 않는다 — 화면은 이미 결과를
         #    받았다.
-        # 🚨 Memory 단계가 끝나면 commit 한다. commit 이후에 터져도 저장된 관찰은
-        #    되돌리지 않는다 — commit 된 run 은 done 으로 끝내고 키를 놓지 않는다.
+        # 🚨 Memory 단계가 끝나면 commit 하고, 추천은 Agent 결과마다 저장 · commit 한다. commit
+        #    이후에 터져도 저장된 관찰 · 추천은 되돌리지 않는다 — commit 된 run 은 done 으로
+        #    끝내고 키를 놓지 않는다.
         if channel.ended_with is None:
-            if channel.memory_committed:
-                # commit 이후에 터졌다. 관찰은 이미 DB 에 있으므로 done 으로 끝낸다.
+            if channel.committed:
+                # commit 이후에 터졌다. 관찰 · 추천이 이미 DB 에 있으므로 done 으로 끝낸다.
                 # failed 로 끝내면 키가 풀려 재시도 시 두 번 저장된다.
                 done = ("done", {"run_id": channel.run_id, "model_calls": 0, "completed": False})
                 channel.publish(done)

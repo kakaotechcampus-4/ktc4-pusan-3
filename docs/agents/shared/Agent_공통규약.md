@@ -258,7 +258,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
-| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 `failed` 로 확정하지 않고 Idempotency 키도 풀지 않는 방향이다. — 러너 계약에서 확정한다 |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. 추천 저장도 commit 이 돌아온 뒤에는 확정된 저장으로 센다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 표시가 남지 않아 `failed` 다 — 다시 보내도 안전하게 하는 건 쓰기 쪽 멱등성 몫이다(트랜잭션 회의 결정 4) |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
 | 취소 | **도메인 Agent 는 `CancelledError` 를 삼키지 않는다.** pipeline 은 도메인 task 를 `asyncio.wait_for` 로 끊는데, Agent 가 취소를 잡고 값을 돌려주면 wait_for 가 시간 초과 대신 그 값을 돌려줘서 끊긴 Agent 의 늦은 결과가 성공으로 들어간다. `except BaseException` · 맨 `except:` 를 쓰지 않는다(`except Exception` 은 `CancelledError` 를 잡지 않는다). 정리할 것이 있으면 `finally` 에서 하고 다시 올린다. 공통 루프(`run_tool_loop`)가 이것을 테스트로 고정한다 (#319, #187 리뷰) |
 

@@ -43,6 +43,7 @@ from app.agents.pipeline import (
     PipelineResult,
     handle_input,
 )
+from app.agents.suggestion_save import InMemorySuggestions
 from tests.eval.agents.routing_cases import SCHEDULE, R, RoutingCase, answer_output
 
 pytestmark = pytest.mark.live
@@ -137,6 +138,7 @@ async def _chain(memory_client: LLMClient) -> list[Turn]:
             emit=events.append,
             continuation=continuation,
             commit=_no_commit,
+            save_suggestions=InMemorySuggestions(),
         )
         return Turn(run_id, said, events, result)
 
