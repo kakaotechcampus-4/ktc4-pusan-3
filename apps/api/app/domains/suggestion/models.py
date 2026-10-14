@@ -43,6 +43,8 @@ class SuggestionFeedback(enum.StrEnum):
 
 class Suggestion(Base, UUIDPk, Timestamps):
     __tablename__ = "suggestion"
+    # 05(#249)가 run 의 추천을 찾는다 — 마이그레이션과 같은 이름
+    __table_args__ = (Index("ix_suggestion_child_id_run_id", "child_id", "run_id"),)
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -73,6 +75,9 @@ class Suggestion(Base, UUIDPk, Timestamps):
         nullable=True,
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # 추천을 만든 입력 run. 05 가 "후보 보기 →" 로 연 run 의 추천을 찾는다.
+    # run 밖에서 만든 행은 비어 있다
+    run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class SuggestionEvent(Base):

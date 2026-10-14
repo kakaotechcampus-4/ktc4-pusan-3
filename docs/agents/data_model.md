@@ -377,6 +377,7 @@
 | items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
 | status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
+| run_id | text | nullable. 추천을 만든 입력 run(`RunChannel.run_id`). 05 가 그 run 의 추천을 찾는다. 인덱스 `(child_id, run_id)` |
 | created_at | timestamptz | NOT NULL, default now() |
 | updated_at | timestamptz | NOT NULL, default now(), on update now() |
 
