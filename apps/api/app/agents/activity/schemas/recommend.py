@@ -12,6 +12,7 @@ from pydantic import Field
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
+    DayLabel,
     EvidencePick,
     Intensity,
     ToolArgs,
@@ -25,6 +26,16 @@ class ActivityCandidate(ToolArgs):
         Field(min_length=1, description="놀이·외출 후보. 예: 종이컵으로 탑 쌓기"),
     ]
     setting: Annotated[ActivitySetting, Field(description="indoor / outdoor / either")]
+    day: Annotated[
+        DayLabel,
+        Field(
+            default=DayLabel.TODAY,
+            description=(
+                "언제 하는 활동인지. today / tomorrow / this_weekend. "
+                "바깥 활동은 그날 날씨로 거른다"
+            ),
+        ),
+    ]
     materials: Annotated[
         list[str],
         Field(
