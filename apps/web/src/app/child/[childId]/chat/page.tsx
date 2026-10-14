@@ -101,8 +101,13 @@ function ChatScreen() {
     if (sent) clearDraft(childId);
   }
 
-  function goToSuggestions(agents: Agent[], runId: string) {
-    const params = new URLSearchParams({ agents: agents.join(","), run: runId });
+  /**
+   * 04 "이것도 도와드릴까요?" → 05. 🚨 **run_id 를 싣지 않는다** (#249) — 제안은 이어서 하는 것이 아니라
+   * 새로 고른 것이라 홈처럼 처음 요청으로 돈다. 실으면 서버는 그 run 에 이 Agent 기록이 없어
+   * "이어서 할 수 없어요" 를 낸다. run_id 는 #227 "후보 보기" 에만 붙인다.
+   */
+  function goToSuggestions(agents: Agent[]) {
+    const params = new URLSearchParams({ agents: agents.join(",") });
     router.push(`/child/${childId}/suggestions?${params.toString()}`);
   }
 

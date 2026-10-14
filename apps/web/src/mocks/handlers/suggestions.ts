@@ -12,6 +12,7 @@ import {
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import type {
+  Agent,
   ApproveSuggestionsRequest,
   ApproveSuggestionsResponse,
   Precheck,
@@ -59,31 +60,104 @@ function refuseUnapproved(ids: string[]) {
 
 /** 05 제안 · 06 승인. */
 export const suggestionHandlers = [
-  http.post(url("/children/:cid/suggestions"), async () => {
+  http.post(url("/children/:cid/suggestions"), async ({ request }) => {
     // Agent 호출이라 홈보다 느리다. 진행 오버레이가 실제로 보이는 시간.
     await networkDelay(900);
     const scenario = currentScenario();
+    const asked = (await request.json().catch(() => ({}))) as {
+      agents?: Agent[];
+      run_id?: string;
+    };
+    /**
+     * 🚨 **run_id 로 들어오면 그 run 의 채택한 추천도 돌아온다** (#249). 새로고침해도 채택이 남는다 —
+     *    화면은 `status` 로 되살리고, 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
+     *    run_id 가 없으면(홈 · 04 제안) 새로 만든 추천이라 늘 `draft` 다.
+     */
+    const withStatus = <T extends { id: string; status: string }>(items: T[]): T[] =>
+      asked.run_id
+        ? items.map((s) =>
+            approvedSuggestions.has(s.id) ? { ...s, status: "approved" as const } : s,
+          )
+        : items;
 
     if (scenario === "consent") return consentRequired("child_health");
 
     // 🚨 근거가 없으면 개인화 대신 **일반 추천**이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
     //    개인화(`suggestions`)와 일반(`general`)은 **다른 필드**다. 한 배열에 섞으면 언젠가
-    //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2).
-    //    ⚠️ `general` 은 계약서 v1 에 아직 없다 — types.ts 의 ⚠️ 참고 (서버 Owner 협의 대상).
+    //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2). 일반 추천의 근거는 **문서 행**이다 (#249).
+    //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
+    //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     if (scenario === "scarcity" || scenario === "empty") {
+      const general = scenario === "empty" ? generalSuggestions : [generalSuggestions[0]];
+      const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
-        general: scenario === "empty" ? generalSuggestions : [generalSuggestions[0]],
-        looked_at: "오늘 급식",
+        // 요청한 Agent 마다 묶음이 온다 — 일반 추천을 낸 쪽은 안내 없이, 못 낸 쪽은 0개 안내와 함께
+        groups: (asked.agents ?? [...generalAgents]).map((agent) => ({
+          agent,
+          merges_into_one: agent === "food",
+          notice: generalAgents.has(agent)
+            ? null
+            : { code: "empty", message: "조건에 맞는 추천이 없어요." },
+        })),
+        general,
+        looked_at: "",
         guards: [],
         scarcity: {
           count: scenario === "empty" ? 0 : 1,
           question: {
             id: "q1",
             text: "요즘 실내와 야외 중 어디를 더 찾나요?",
-            options: ["실내", "야외", "모르겠어요"],
+            options: [],
           },
         },
+        prechecks: [],
+      });
+    }
+
+    // 🚨 아래 둘은 **실패가 아니다** (#249). 결과를 낸 Agent 는 0개여도 안내와 함께 묶음이 오고,
+    //    이어서 할 수 없는 Agent 도 안내만 온다. 묶음이 없는 Agent 만 실패다.
+    if (scenario === "suggest_counts") {
+      return HttpResponse.json({
+        suggestions: suggestions.filter((s) => s.agent === "food").slice(0, 2),
+        groups: [
+          {
+            agent: "food",
+            merges_into_one: true,
+            notice: { code: "fewer", message: "조건에 맞는 추천을 2개 준비했어요." },
+          },
+          {
+            agent: "activity",
+            merges_into_one: false,
+            notice: { code: "empty", message: "조건에 맞는 추천이 없어요." },
+          },
+        ],
+        general: [],
+        looked_at: "",
+        guards: [],
+        scarcity: null,
+        prechecks: [],
+      });
+    }
+    if (scenario === "cannot_resume") {
+      return HttpResponse.json({
+        suggestions: withStatus(suggestions.filter((s) => s.agent === "food")),
+        groups: [
+          { agent: "food", merges_into_one: true, notice: null },
+          {
+            agent: "activity",
+            merges_into_one: false,
+            notice: {
+              code: "cannot_resume",
+              message: "이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요.",
+            },
+          },
+        ],
+        general: [],
+        looked_at: "",
+        guards: [],
+        scarcity: null,
+        prechecks: [],
       });
     }
 
@@ -150,7 +224,7 @@ export const suggestionHandlers = [
     }
 
     return HttpResponse.json({
-      suggestions: alive,
+      suggestions: withStatus(alive),
       groups: suggestionGroups.filter((g) => alive.some((s) => s.agent === g.agent)),
       looked_at: "오늘 급식 · 최근 3일 식사 · 확정 관심 2건",
       guards: [],
