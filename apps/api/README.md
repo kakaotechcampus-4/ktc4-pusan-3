@@ -217,6 +217,23 @@ Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를
 했으므로(10-10) 그때는 **도메인의 A 레코드만 새 IP 로 바꾼다** — 모니터 · 카카오 콜백 · 웹 빌드 · 앱은 도메인을
 가리키니 고칠 게 없다.
 
+### 만료된 값 정리 (하루 한 번)
+
+처리방침이 "로그인 유지 값은 하루 한 번 서버에서 지운다" 고 알린다. 서버의 cron 이 하루 한 번
+[`app/workers/cleanup.py`](app/workers/cleanup.py) 를 api 컨테이너 안에서 돌린다 — 만료된 로그인 세션 ·
+1회용 코드 · 가입 대기표와, 보관 기간(1년)이 끝난 동의 증빙을 지운다. 로그에는 지운 건수만 남고,
+실패하면 위의 Discord 알림으로 온다.
+
+서버 준비 — cron 은 서버 시계를 따른다. `timedatectl` 이 UTC 면 아래처럼 19시(= 한국 04시),
+Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:
+
+```
+0 19 * * * docker exec ktc4-api uv run --no-sync python -m app.workers.cleanup >> /var/tmp/ktc4-cleanup.log 2>&1
+```
+
+넣은 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
+로컬에서는 개발 DB 를 상대로 `uv run python -m app.workers.cleanup`.
+
 ---
 
 ## 디렉토리 구조
