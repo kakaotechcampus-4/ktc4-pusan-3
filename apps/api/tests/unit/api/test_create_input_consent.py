@@ -5,6 +5,7 @@
 DB 없이 도는 테스트다 — 의존성(인증 · 아이 접근 · 세션)과 동의 조회 · 러너를 바꿔 끼운다.
 """
 
+import asyncio
 import uuid
 from datetime import date
 
@@ -182,3 +183,42 @@ async def test_동의_조회가_실패해도_한도와_되묻기_맥락은_그�
     for _ in range(settings.INPUT_DAILY_LIMIT):
         response = await client.post(URL, json=BODY, headers=_key())
         assert response.status_code == 202
+
+
+async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_받는다(
+    client, agent_calls, monkeypatch
+):
+    """맥락 확인(get)과 지우기(consume) 사이에 await 가 있으면 두 답이 다 확인을 통과한다.
+
+    동의 읽기가 두 요청이 모두 들어올 때까지 기다리게 해서 끼어들기를 재현한다. 동의 읽기가
+    get 과 consume 사이에 있으면 둘 다 202 가 되고, 같은 답으로 run 이 두 개 떠 관찰이 두 행이 된다.
+    """
+    pending_reply.put(
+        run_id="prev-run",
+        parent_id=PARENT,
+        child_id=CHILD,
+        context=PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE),
+    )
+    entered = 0
+    both_in = asyncio.Event()
+
+    async def read_after_both_arrive(session, *, child_id):
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            both_in.set()
+        await asyncio.wait_for(both_in.wait(), timeout=2)
+        return True
+
+    monkeypatch.setattr(children, "child_health_granted", read_after_both_arrive)
+
+    reply = {**BODY, "reply_to": "prev-run"}
+    first, second = await asyncio.gather(
+        client.post(URL, json=reply, headers=_key()),
+        client.post(URL, json=reply, headers=_key()),
+    )
+
+    assert sorted([first.status_code, second.status_code]) == [202, 400]
+    rejected = first if first.status_code == 400 else second
+    assert rejected.json()["error"]["code"] == "reply_context_unavailable"
+    assert len(agent_calls) == 1
