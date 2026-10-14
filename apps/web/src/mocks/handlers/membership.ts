@@ -24,6 +24,11 @@ export function joinChild(child: Me["children"][number]): void {
   joined = [...joined.filter((c) => c.child_id !== child.child_id), child];
 }
 
+/** 스스로 나가기 (#336). 들어오는 길과 같은 곳에서 뺀다 — 안 빼면 `/me` 가 나간 아이를 계속 준다. */
+export function leaveChild(childId: string): void {
+  joined = joined.filter((c) => c.child_id !== childId);
+}
+
 /** `GET /me` 가 돌려줄 것. 🚨 손으로 만들지 말고 이걸 부른다 — 두 곳이 어긋나면 화면이 튕긴다. */
 export function currentMe(): Me {
   if (currentScenario() !== "consent") return me;

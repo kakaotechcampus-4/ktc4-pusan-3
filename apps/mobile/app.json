@@ -19,20 +19,15 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE"
+      ]
     },
     "plugins": [
-      [
-        "expo-media-library",
-        {
-          "photosPermission": "받아 둔 알림장이나 아이 사진을 시트에서 바로 고를 수 있게 사진 접근을 허용해 주세요.",
-          "savePhotosPermission": false,
-          "isAccessMediaLocationEnabled": false,
-          "granularPermissions": [
-            "photo"
-          ]
-        }
-      ],
       "expo-web-browser"
     ],
     "web": {

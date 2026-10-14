@@ -12,8 +12,8 @@ UNSUPPORTED_MILK_MEAL = "unsupported.milk_meal"  # 식단 추천 + 수유기(0�
 UNSUPPORTED_INFANT_NUTRIENT = "unsupported.infant_nutrient"  # 영양소 분석 + 0–11개월
 BLOCKED_SAFETY = "blocked.safety"  # 안전 조회 실패 — 식단 추천 · 영양소 분석
 CLOSED_NO_DAYCARE = "closed.no_daycare"  # daycare_meal 라벨인데 급식 행이 없음
-NOT_READY_MEAL = "not_ready.meal"  # 식단 추천 — 후보 풀 · 기록 조회가 붙기 전 (#357 리뷰 4-②)
-NOT_READY_DAYCARE = "not_ready.daycare"  # 급식 조회 · 갱신 · 삭제 — tool 이 붙기 전
+NOT_READY_MEAL = "not_ready.meal"  # 식단 추천 — run() 이 결과를 옮기기 전 (#357 리뷰 4-②)
+NOT_READY_DAYCARE = "not_ready.daycare"  # 급식 조회 · 갱신 · 삭제 — run() 이 결과를 옮기기 전
 
 # 식단 추천 후보 풀
 POOL_EMPTY = "pool.empty"
@@ -23,13 +23,15 @@ FOLLOWUP_PREFERENCE = "followup.preference"
 UNSUPPORTED_MILK_AMOUNT = "unsupported.milk_amount"
 UNSUPPORTED_WEANING_OVER12 = "unsupported.weaning_over12"
 UNSUPPORTED_WEIGHT_DIET = "unsupported.weight_diet"
-GUIDE_CHOKING_CAUTION = "guide.choking_caution"
 
 # 영양소 분석
 NUTRIENT_INSUFFICIENT = "nutrient.insufficient"
 NUTRIENT_TODAY_EMPTY = "nutrient.today_empty"
 NUTRIENT_DAYCARE_AMOUNT_UNKNOWN = "nutrient.daycare_amount_unknown"
-# 모델이 출력 tool 을 못 끝냈을 때 run() 이 대신 내는 문장 틀 (#357 리뷰). 주어는 늘 기록된 식사다
+# 1차 출력 — 기록된 날 중 식품군이 나온 날 수. 영양소 분석 문장은 이것뿐이다(N-17 · N-18)
+NUTRIENT_APPEARANCE = "nutrient.appearance"
+# 구간 문장 틀 (#357 리뷰). 1차 출력에서는 화면에 내지 않는다 — 구간을 다시 낼 때 쓴다. 주어는 늘
+# 기록된 식사다
 NUTRIENT_BAND_LOW = "nutrient.band.low"
 NUTRIENT_BAND_LOW_ACTION = "nutrient.band.low_action"
 NUTRIENT_BAND_HIGH = "nutrient.band.high"

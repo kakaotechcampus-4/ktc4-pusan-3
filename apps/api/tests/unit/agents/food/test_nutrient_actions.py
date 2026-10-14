@@ -12,6 +12,7 @@ import pytest
 from app.agents.food.nutrient_actions import (
     ACTIONS,
     advice_for,
+    blocked_groups,
     check_summary,
     mentions_removed,
 )
@@ -340,3 +341,72 @@ def test_요약_검사는_연령_금지_식품도_막는다() -> None:
 
 def test_알레르기가_없고_흔한_음식이면_통과한다() -> None:
     assert check_summary("시금치나물과 현미밥을 곁들여 보세요.", (), [], **OLDER).ok
+
+
+# ── 식품군 출현 문장에서 뺄 식품군 (#411 T5) ──────────────────────────────
+# 출현 문장은 "우유·유제품이 나온 날은 0일" 처럼 식품군을 말한다. 아이가 먹지 않는 식품군은 말하지
+# 않는다 — 안내(위)와 같은 쪽으로, 대표 식품이 한 가지라도 막히면 그 식품군을 통째로 뺀다.
+def test_알레르기가_없으면_뺄_식품군이_없다() -> None:
+    assert blocked_groups((), **TODDLER) == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("label", "group"),
+    [
+        ("우유", "dairy"),
+        ("달걀", "meat_fish_egg_legumes"),
+        ("대두", "meat_fish_egg_legumes"),
+        ("고등어", "meat_fish_egg_legumes"),
+        ("돼지고기", "meat_fish_egg_legumes"),
+        ("밀", "grains"),
+    ],
+)
+def test_알레르기_식품이_든_식품군은_뺀다(label: str, group: str) -> None:
+    assert group in blocked_groups((allergy(label),), **TODDLER)
+
+
+def test_알레르기가_없는_식품군은_남는다() -> None:
+    assert blocked_groups((allergy("우유"),), **TODDLER) == frozenset({"dairy"})
+
+
+def test_채소와_과일은_한_가지_알레르기로_통째로_빼지_않는다() -> None:
+    entries = (allergy("복숭아"), allergy("토마토"))
+
+    assert blocked_groups(entries, **TODDLER) == frozenset()
+
+
+def test_질환으로_막히는_식품이_든_식품군도_뺀다() -> None:
+    entries = (allergy("유당불내증", kind="chronic_disease"),)
+
+    assert "dairy" in blocked_groups(entries, **TODDLER)
+
+
+def test_보호자가_철회한_알레르기는_식품군을_빼지_않는다() -> None:
+    assert blocked_groups((allergy("우유", status="retracted"),), **TODDLER) == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("label", "group"),
+    [
+        ("연어", "meat_fish_egg_legumes"),  # 19종 밖 생선 — 이름으로 거른다
+        ("갈치", "meat_fish_egg_legumes"),
+        ("새우", "meat_fish_egg_legumes"),
+        ("게", "meat_fish_egg_legumes"),
+        ("오징어", "meat_fish_egg_legumes"),
+        ("조개류", "meat_fish_egg_legumes"),
+        ("갑각류", "meat_fish_egg_legumes"),
+        ("메밀", "grains"),
+    ],
+)
+def test_어패류_메밀_알레르기도_그_식품군을_뺀다(label: str, group: str) -> None:
+    # 어패류는 식품군 대응표에서 고기 · 생선 · 달걀 · 콩 쪽이다 (#411 최종 리뷰)
+    assert group in blocked_groups((allergy(label),), **TODDLER)
+
+
+@pytest.mark.parametrize(
+    ("stage", "months"), [("toddler", 12), ("toddler", 24), ("preschool", 47), ("preschool", 60)]
+)
+def test_알레르기가_없으면_연령_규칙으로_식품군을_빼지_않는다(stage: str, months: int) -> None:
+    # 대표 식품에 붙인 19종 밖 식품(group_foods)이 질식 · 날음식 규칙에 걸려 식품군이 통째로 빠지면
+    # 알레르기 없는 아이도 그 식품군 문장을 못 받는다
+    assert blocked_groups((), stage=stage, months=months) == frozenset()  # type: ignore[arg-type]

@@ -4,12 +4,16 @@ Agent 는 값만 만들고 INSERT 는 주입된 writer 가 한다. `status` 와 
 tool 인자에 두지 않는다 — 모델이 만료나 승인 상태를 정할 수 없다.
 """
 
+import re
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
 from app.agents.common.readout import Readout, ReadoutCatalog, ReadoutText, code_readout
-from app.agents.common.refs import EvidenceCitation, count_child_records
+from app.agents.common.refs import EvidenceCitation
+from app.rules.staleness import is_stale
 
 SuggestionKind = Literal["general", "personalized"]
 
@@ -66,11 +70,17 @@ def build(
     general_reason: str | None = None,
     allergens: tuple[str, ...] = (),
     items: tuple[str, ...] = (),
+    today: date,
 ) -> SuggestionDraft:
-    """아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
+    """6개월이 안 지난 아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
     아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
     덮어쓴다. general 인데 인용이 0행인 것은 거절 사유가 아니라 품질 지표다.
+
+    6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
+    그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
+    인용했으면 개인화로 두고 둘 다 남긴다. 날짜를 모르는 아이 기록은 세지 않는다.
+    `today` 는 호출하는 쪽의 기준일이다.
 
     기피 근거를 인용했으면 `reason` 에 무엇을 피했는지가 있어야 한다. 인용만 하고 말하지
     않으면 보호자에게는 근거 없는 추천과 같다.
@@ -81,8 +91,7 @@ def build(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
             )
 
-    refs = tuple(item.ref for item in citations)
-    if count_child_records(refs) == 0:
+    if not any(_fresh(item, today) for item in citations):
         if general_reason is None:
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
@@ -92,7 +101,7 @@ def build(
             kind="general",
             content=content,
             reason=general_reason,
-            citations=citations,
+            citations=tuple(item for item in citations if not item.ref.is_child_record),
             allergens=allergens,
             items=items,
         )
@@ -109,6 +118,15 @@ def build(
         citations=citations,
         allergens=allergens,
         items=items,
+    )
+
+
+def _fresh(item: EvidenceCitation, today: date) -> bool:
+    """개인화 근거로 셀 수 있는 아이 기록인가. 날짜를 모르면 낡았는지 알 수 없어 세지 않는다."""
+    return (
+        item.ref.is_child_record
+        and item.observed_on is not None
+        and not is_stale(item.observed_on, today)
     )
 
 
@@ -131,6 +149,32 @@ def check_count(drafts: tuple[SuggestionDraft, ...], *, exhausted: bool = False)
         raise SuggestionRejected(f"추천을 {MAX_SUGGESTIONS}개 채울 수 있는데 {count}개만 받았다")
 
 
+def merge_drafts[T](
+    first: Sequence[T], again: Sequence[T], *, key: Callable[[T], Hashable]
+) -> tuple[T, ...]:
+    """안전 필터 뒤 재호출 결과를 합친다 (#245 에서 정한 규칙).
+
+    처음에 통과한 것을 먼저 두고, 재호출 결과로 빈자리만 `MAX_SUGGESTIONS` 까지 채운다. `key` 가
+    같은 추천은 건너뛴다. 처음 것을 버리고 재호출 것으로 바꾸지 않는다 — 처음 것도 이미 출력
+    검증을 통과했다.
+
+    - `key` 는 "같은 추천" 판정이다. Agent 가 정한다 (Tool_공통.md §5-2) — Activity 는 정규화한
+      `content`, Food 는 `menu_key`.
+    - 추천에 딸린 값(경고 문구 등)도 같이 옮겨야 하면 `(draft, 딸린 값)` 짝을 넘기고 `key` 에서
+      draft 를 꺼낸다. 따로 합치면 순서가 어긋난다.
+    """
+    merged = list(first[:MAX_SUGGESTIONS])
+    seen = {key(item) for item in merged}
+    for item in again:
+        if len(merged) >= MAX_SUGGESTIONS:
+            break
+        same = key(item)
+        if same not in seen:
+            merged.append(item)
+            seen.add(same)
+    return tuple(merged)
+
+
 def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | None:
     """다 채우지 못한 추천에 붙일 안내 한 줄. 다 채웠으면 없다 (Tool_공통.md §5-2).
 
@@ -151,8 +195,48 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:
-    """기피한 대상의 라벨이 이유 문장에 들어 있는가.
+    """기피한 대상이 이유 문장에 들어 있는가 — 화면용 이름(`label`)이나 대조 키(`subject`).
 
-    문장 품질까지는 못 본다. 라벨조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
+    관찰의 label 은 "물감 놀이 하다가 울었음" 같은 문장이라 이유에 그대로 나오지 않는다. 그래서
+    "물감은 피했어요" 처럼 대상(`subject`)만 말해도 밝힌 것으로 본다 (Activity 라이브 eval 에서
+    찾음 — label 만 보면 맞게 쓴 후보가 계속 거절돼 왕복 상한까지 갔다).
+    문장 품질까지는 못 본다. 대상조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
+
+    한 글자 대상은 낱말로만 센다 — "물" 이 "물감으로 손도장" 에 들어 있다고 물놀이를 피했다고
+    밝힌 것이 아니다 (#359 리뷰). 두 글자 이상은 지금처럼 들어 있기만 하면 된다.
     """
-    return any(item.label and item.label in reason for item in citations if item.is_avoidance)
+    return any(
+        _mentions(name, reason)
+        for item in citations
+        if item.is_avoidance
+        for name in (item.label, item.subject)
+        if name
+    )
+
+
+# 한 글자 대상 뒤에 붙어도 같은 낱말로 보는 것 — 조사, 그리고 "물놀이" 처럼 대상에 붙는 "놀이".
+# 받침에 맞는 조사만 센다 — "물가" 의 "가" 는 받침 뒤에 오지 않으니 조사가 아니다
+_ANY_TAIL = ("하고", "에서", "에는", "에도", "까지", "보다", "처럼", "도", "만", "에", "의")
+_AFTER_FINAL = ("이랑", "으로", "과", "이", "은", "을")
+_AFTER_OPEN = ("랑", "와", "가", "는", "를", "로")
+_RIEUL = 8  # 종성 번호 — ㄹ. "로" 는 받침 없는 글자와 ㄹ 받침 뒤에 온다
+
+
+def _particles(last: str) -> str:
+    code = ord(last) - 0xAC00
+    final = code % 28 if 0 <= code < 11172 else None
+    if final is None:
+        tails = (*_ANY_TAIL, *_AFTER_FINAL, *_AFTER_OPEN)
+    elif final == 0:
+        tails = (*_ANY_TAIL, *_AFTER_OPEN)
+    else:
+        tails = (*_ANY_TAIL, *_AFTER_FINAL, *(("로",) if final == _RIEUL else ()))
+    return "|".join(sorted(tails, key=len, reverse=True))
+
+
+def _mentions(name: str, reason: str) -> bool:
+    if len(name) > 1:
+        return name in reason
+    tail = rf"(?:놀이(?:{_particles('이')})?|{_particles(name)})?"
+    word = rf"(?<![가-힣]){re.escape(name)}{tail}(?![가-힣])"
+    return re.search(word, reason) is not None

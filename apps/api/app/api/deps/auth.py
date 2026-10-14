@@ -9,9 +9,9 @@ GET /me와 /consents는 계정 동의 검사를 건너뛴다 (§6-2).
    조회하는 경로가 열린다. 권한 판정은 deps 한 곳에서만
    한다 (명세 §6-2 "핸들러가 직접 권한 쿼리를 쓰지 않는다").
 
-🚨 실패를 두 갈래로 나눈다 — 세션이 없음·만료·삭제됨은 전부 401 unauthenticated,
-   계정 자체가 탈퇴 처리된 경우만 404 not_found (명세 §8-1 · A-19).
-   앞의 셋을 구분해 알려주면 공격자에게 정보를 주고, 뒤는 만료를 기다리지 않는다.
+🚨 실패는 한 갈래다 — 세션이 없음·만료·삭제됨은 전부 401 unauthenticated (명세 §8-1).
+   셋을 구분해 알려주면 공격자에게 정보를 준다. 탈퇴한 계정도 여기에 든다 — 탈퇴는 보호자
+   행을 지우고 세션도 함께 지워지므로 만료를 기다리지 않고 바로 401 이다 (A-19 · #379).
 """
 
 import hashlib
@@ -68,12 +68,6 @@ async def get_current_parent(
     #    관련 테스트: A-14(만료 토큰) · A-15(로그아웃 직후)
     if row is None or row.expires_at <= datetime.now(UTC):
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
-
-    # A-19 만 다른 곳으로 간다. 탈퇴한 계정은 세션 만료를 기다리지 않고 즉시 끊는다.
-    # 탈퇴는 유예 없이 즉시 삭제로 정했다 (삭제 정책 정본 §9 · #167) — 되살릴 계정이
-    # 아니므로 404 로 막는다 (§8-1 · §10-1).
-    if row.parent_deleted_at is not None:
-        raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 
     return AuthContext(parent_id=row.parent_id, session_id=row.session_id)
 

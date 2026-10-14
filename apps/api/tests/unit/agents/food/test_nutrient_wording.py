@@ -8,7 +8,12 @@ import pytest
 
 from app.agents.food.kdri import refs_for
 from app.agents.food.nutrient_actions import ACTIONS, advice_for
-from app.agents.food.nutrient_wording import NUTRIENT_LABELS, fallback_readouts, wording_problem
+from app.agents.food.nutrient_wording import (
+    NUTRIENT_LABELS,
+    appearance_readouts,
+    fallback_readouts,
+    wording_problem,
+)
 from app.agents.food.nutrition_eval import NutrientVerdict
 from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, READOUTS
 from app.agents.food.schemas.nutrition import FINDING_EXAMPLE, NutrientReportArgs
@@ -160,3 +165,97 @@ def test_구간을_말하는_코드_문장은_모델_문장과_같은_kind_다(b
     """화면 · eval 이 kind 로 영양 문장을 고른다. all_ok 만 다른 kind 면 문장 검사에서 빠진다."""
     (readout,) = fallback_readouts(_verdict(bands), {})
     assert readout.kind == "nutrient_analysis"
+
+
+# ── 1차 출력 — 식품군 출현 문장 (#411 T5) ────────────────────────────────
+def _appearance_verdict(
+    days: dict[str, int], *, recorded_days: int = 7, records: int = 14, ready: bool = True
+) -> NutrientVerdict:
+    return NutrientVerdict(
+        bands={"calcium": "low"},  # 구간은 만들어도 화면에 나가지 않는다
+        unscored=(),
+        records=records,
+        resolved_ratio=1.0,
+        insufficient=not ready,
+        food_groups=frozenset(days),
+        food_group_days=days,
+        recorded_days=recorded_days,
+        appearance_ready=ready,
+    )
+
+
+def test_출현_문장은_기록된_날_중_식품군이_나온_날을_말한다():
+    (readout,) = appearance_readouts(
+        _appearance_verdict({"vegetables": 3, "grains": 7, "fruits": 1}), frozenset()
+    )
+
+    assert readout.authored_by == "code"
+    assert readout.kind == "nutrient_analysis"
+    assert "기록된 7일 중 채소가 나온 날은 3일이에요." in readout.body.splitlines()
+    assert "기록된 7일 중 곡류가 나온 날은 7일이에요." in readout.body.splitlines()
+
+
+def test_기록된_날이_이레보다_적으면_그_날_수를_분모로_말한다():
+    (readout,) = appearance_readouts(
+        _appearance_verdict({"vegetables": 2}, recorded_days=5), frozenset()
+    )
+
+    assert "기록된 5일 중 채소가 나온 날은 2일이에요." in readout.body.splitlines()
+
+
+def test_한_번도_안_나온_식품군은_0일이라고_말한다():
+    (readout,) = appearance_readouts(_appearance_verdict({"grains": 7}), frozenset())
+
+    assert "기록된 7일 중 과일이 나온 날은 0일이에요." in readout.body.splitlines()
+
+
+def test_식품군_순서는_고정이고_유지_당류는_말하지_않는다():
+    (readout,) = appearance_readouts(
+        _appearance_verdict({"fats_sugars": 7, "dairy": 7}), frozenset()
+    )
+
+    assert [line.split(" ")[3] for line in readout.body.splitlines()] == [
+        "곡류가",
+        "고기·생선·달걀·콩이",
+        "채소가",
+        "과일이",
+        "우유·유제품이",
+    ]
+    assert "유지" not in readout.body and "당류" not in readout.body
+
+
+def test_뺀_식품군은_문장에서_빠진다():
+    (readout,) = appearance_readouts(
+        _appearance_verdict({"dairy": 0, "vegetables": 3}), frozenset({"dairy"})
+    )
+
+    assert "우유" not in readout.body
+    assert "채소가" in readout.body
+
+
+def test_출현_문장에는_구간_표현이_없다():
+    # 칼슘이 low 인 판정이어도 구간 문장은 화면에 나가지 않는다 (N-17)
+    (readout,) = appearance_readouts(_appearance_verdict({"vegetables": 3}), frozenset())
+
+    assert "칼슘" not in readout.body
+    assert "적은 편" not in readout.body and "많은 음식" not in readout.body
+
+
+def test_출현_문장은_자기_검사를_통과한다():
+    (readout,) = appearance_readouts(_appearance_verdict({"vegetables": 3}), frozenset())
+
+    for line in readout.body.splitlines():
+        assert wording_problem(line) is None
+
+
+def test_출현을_말할_수_없으면_기록_부족_문구다():
+    readouts = appearance_readouts(_appearance_verdict({}, records=4, ready=False), frozenset())
+
+    assert readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=4),)
+
+
+def test_기록은_충분한데_메뉴를_못_읽어_출현을_못_말하면_살펴보지_못했다고_한다():
+    # "기록이 적어서" 는 20건 기록된 아이에게 맞지 않는다 (#411 최종 리뷰)
+    readouts = appearance_readouts(_appearance_verdict({}, records=20, ready=False), frozenset())
+
+    assert readouts == (READOUTS.render("nutrient.unscored", recorded=20),)

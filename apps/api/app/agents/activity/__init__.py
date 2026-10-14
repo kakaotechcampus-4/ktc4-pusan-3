@@ -4,7 +4,8 @@
 하는 일은 놀이 추천 하나(라벨 없음). 실내/야외는 날씨·시간 조회 결과로 갈리는 런타임 판단이다.
 아이의 월령과 위치·날씨에 따라 쓸 수 있는 tool이 달라지고, 그 조합은 코드(registry)가 정한다.
 
-run()은 LLM·DB를 부르지 않는 mock. 날씨 · 일정 tool 은 아직 구현부가 주석이다
+run()은 사전 조회 + tool calling 루프다. pipeline 에 등록돼 있고(#380), health_safety 어댑터가
+붙기 전에는 동의와 상관없이 blocked.safety 로 닫힌다 (UnwiredSafety).
 하지 않는 일 : 한 번 즐긴 놀이를 장기 취향으로 확정, 외부 리뷰만 보고 장소 단정,
              예약·결제(경로 자체가 없다), observation_education · observation_routine 읽기
 

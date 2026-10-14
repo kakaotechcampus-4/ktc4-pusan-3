@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { TextInput } from "@/components/ui/text-input";
 import type { ScanRow } from "@/components/safety-scan-fields";
-import { severityFieldLabel, severityOptions } from "@/lib/health-safety";
+import {
+  HEALTH_SAFETY_LIMITS,
+  reactionsProblem,
+  severityFieldLabel,
+  severityOptions,
+  splitReactions,
+} from "@/lib/health-safety";
 
 /**
  * 11-2 검사지 — 옮겨 적은 **한 줄**을 고치는 시트.
@@ -70,12 +76,24 @@ function RowForm({
   /** 🚨 `""`(못 읽음)과 `"unknown"`(모르겠어요)을 같은 칸에서 다룬다 — 화면의 말은 하나다. */
   const [severity, setSeverity] = useState(row.severity ?? "unknown");
   const [reactions, setReactions] = useState(row.reactions.join(", "));
-  const [errors, setErrors] = useState<{ label?: string }>({});
+  const [errors, setErrors] = useState<{ label?: string; reactions?: string }>({});
 
   function submit() {
     const nextLabel = label.trim();
-    if (nextLabel === "") {
-      setErrors({ label: "검사지를 보고 적어주세요" });
+    const nextReactions = splitReactions(reactions);
+    // 🚨 길이는 서버가 받는 만큼이다 (`HEALTH_SAFETY_LIMITS`). 검사지에서 옮긴 이름은 입력의
+    //    `maxLength` 를 거치지 않고 들어와서 여기서 한 번 더 본다.
+    const next = {
+      label:
+        nextLabel === ""
+          ? "검사지를 보고 적어주세요"
+          : nextLabel.length > HEALTH_SAFETY_LIMITS.label
+            ? `이름은 ${HEALTH_SAFETY_LIMITS.label}자까지 적을 수 있어요`
+            : undefined,
+      reactions: reactionsProblem(nextReactions) ?? undefined,
+    };
+    if (next.label || next.reactions) {
+      setErrors(next);
       return;
     }
 
@@ -84,10 +102,7 @@ function RowForm({
       label: nextLabel,
       // 🚨 "모르겠어요" 는 값을 **안 보내는** 것이다. 심각도를 추측해 채우지 않는다 (NF-03).
       severity: severity === "unknown" ? null : severity,
-      reactions: reactions
-        .split(",")
-        .map((v) => v.trim())
-        .filter((v) => v !== ""),
+      reactions: nextReactions,
       /** 🚨 보호자가 직접 봤으므로 원문이 없어도 대조가 끝났다 — 이 전환이 "잘 읽은 것" 으로 내린다. */
       confirmed: true,
       /**
@@ -120,6 +135,7 @@ function RowForm({
         label="무엇인가요"
         hint="검사지에 적힌 이름 그대로가 좋아요."
         value={label}
+        maxLength={HEALTH_SAFETY_LIMITS.label}
         error={errors.label}
         onChange={(e) => {
           setLabel(e.target.value);
@@ -141,7 +157,11 @@ function RowForm({
         label="어떤 증상이 있었나요"
         hint="쉼표로 나눠 적어요. 없으면 비워 둬도 돼요."
         value={reactions}
-        onChange={(e) => setReactions(e.target.value)}
+        error={errors.reactions}
+        onChange={(e) => {
+          setReactions(e.target.value);
+          if (errors.reactions) setErrors((prev) => ({ ...prev, reactions: undefined }));
+        }}
         autoComplete="off"
       />
 

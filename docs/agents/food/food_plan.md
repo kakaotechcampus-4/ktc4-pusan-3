@@ -49,7 +49,7 @@ DoD: 1~4가 이슈로 닫히고 스키마 PR이 머지됨.
 | `common/suggestion.py` | `SuggestionDraft.build()` — personalized인데 ref 0행이면 거절 |
 | `common/readout.py` | `Readout(authored_by)` |
 | `common/evidence.py` | `rank_evidence()` — **티어 1·2는 polarity ∈ {+1, −1}**. 기피도 근거다 |
-| `app/rules/age.py` | `life_stage()` · 민법 달력 계산 · `date` 타입 강제 |
+| `app/rules/age.py` | 민법 달력 계산 · `date` 타입 강제 · 단계 계산(경계는 인자 — `common/age.py` 의 `life_stage()` 가 `age_gates.yaml` 의 경계를 넘긴다) |
 | `app/rules/term_match.py` | 공백 제거 부분 일치 + guards + 최엄격 우선 (Activity와 공유) |
 
 DoD: `test_evidence_ranking.py` 통과 · `//30` 나눗셈 0건 · import-linter로 `<domain> → common` 방향 고정.
@@ -118,14 +118,14 @@ app/agents/food/
 └── tools/
 ```
 
-**포트**: `observation_food` · `profile_affinity(food)` · `health_safety` · `child` · `menu_catalog` · **`daycare_meal`(읽기+쓰기)** · `food_doc` · `SuggestionWriter`
+**포트**: `observation_food` · `profile_affinity(food)` · `health_safety` · `child` · `menu_catalog` · **`daycare_meal`(읽기+쓰기)** · `food_doc` (추천 저장은 포트가 아니다 — pipeline `save_suggestions`)
 
 **게이팅** ([`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §3)
 
 | 라벨 \ 단계 | infant_milk 0–3 | infant_weaning 4–11 | toddler · preschool 12+ |
 | --- | --- | --- | --- |
 | `meal_recommendation` | `()` | 3 | 5 |
-| `nutrient_analysis` | `()` | `()` | 7 |
+| `nutrient_analysis` | `()` | `()` | `()` — 열린 tool 없이 코드가 출현 문장을 낸다(#411) |
 
 추가 닫힘: `safety_ok=False` → 식단 추천 · 영양소 분석(`blocked.safety`, #321 — 영양 안내도 식품군을 말해서 걸러 낼 알레르기를 모르면 열지 않는다). 동의 없음은 닫지 않는다 — `health_safety`·`child_growth_log` 를 못 읽을 뿐이라 알레르기 필터 없는 일반 식단에 연령군 일반값 열량으로 간다. `kind='allergy'` 가 0행이거나 `unknown` 이 섞인 것도 닫지 않는다.
 

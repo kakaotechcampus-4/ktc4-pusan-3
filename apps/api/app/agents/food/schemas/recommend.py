@@ -1,5 +1,8 @@
 """식단 후보 제출 인자. suggestion form에 맞춰야 화면에서 보여줄 수 있음
-MealCandidate는 suggestion의 content · reason · source_refs로 옮겨진다.
+
+모델은 코드가 보여 준 후보 목록에서 `menu_key` 만 고른다. 메뉴 이름과 재료는 모델이 쓰지 않는다 —
+코드가 카탈로그 행에서 채운다. 모델이 "바나나 셰이크" 를 내면서 재료에 우유를 빠뜨려도 사후 필터가
+그대로 통과시키는 일이 없게 하려는 것이다. MealCandidate는 suggestion의 reason · 근거로 옮겨진다.
 evidence가 비면 일반 추천(또래 기준)으로 분류된다.
 """
 
@@ -12,25 +15,25 @@ from app.agents.food.schemas.common import EvidenceRef, MealSlot, ToolArgs
 
 
 class MealCandidate(ToolArgs):
-    content: Annotated[
+    menu_key: Annotated[
         str,
-        Field(description="식사·간식 후보. 예: 계란말이와 미역국. 정확한 레시피는 쓰지 않는다"),
-    ]
-    ingredients: Annotated[
-        list[str],
         Field(
             min_length=1,
-            description="들어가는 재료를 빠짐없이 포함. 알레르기 필터가 이 목록으로 거른다",
+            description="보여 준 후보 목록에 있는 menu_key 만. 지어내거나 고쳐 쓰지 않는다",
         ),
     ]
     meal_slot: Annotated[MealSlot, Field(description="breakfast / lunch / dinner / snack")]
-    why_this: Annotated[
+    reason: Annotated[
         str,
-        Field(description="이 아이에게 맞는 이유. 조회한 기록에 있는 내용으로만 쓴다"),
-    ]
-    why_now: Annotated[
-        str,
-        Field(description="지금인 이유. 예: 오늘 급식과 겹치지 않음, 최근 채소가 적었음"),
+        Field(
+            min_length=1,
+            description=(
+                "이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로. "
+                "조회한 기록에 있는 내용으로만 쓴다. "
+                "싫어하는 것을 피해 골랐으면 무엇을 피했는지 쓴다. "
+                "수치와 몸 상태는 쓰지 않는다. 보호자 화면에 그대로 나간다"
+            ),
+        ),
     ]
     evidence: Annotated[
         list[EvidenceRef],

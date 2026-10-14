@@ -162,6 +162,16 @@ function scenarioObservations(): Observation[] {
   );
 }
 
+/**
+ * 기록 탭 목록과 같은 기준의 기록 전부 — 같은 표 · 같은 상태. 09 캘린더가 이것을 센다 (#318).
+ *
+ * 🚨 서버도 캘린더가 기록 탭의 상수(`LISTED_STATUSES` · `VISIBLE_DOMAINS`)를 그대로 가져다 쓴다.
+ *    목이 두 곳에서 따로 거르면 달 숫자를 눌렀을 때 기록 탭과 다른 목록이 나온다.
+ */
+export function listedObservations(): Observation[] {
+  return scenarioObservations().filter((o) => VISIBLE_KINDS.includes(o.kind));
+}
+
 function withCorrectedStatus<T extends Observation>(observation: T): T {
   const status = correctedObservations.get(`${observation.kind}:${observation.id}`);
   return status ? { ...observation, status } : observation;

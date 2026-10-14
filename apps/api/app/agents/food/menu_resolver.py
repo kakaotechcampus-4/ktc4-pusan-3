@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from app.agents.food.food_groups import food_groups_of_category
 from app.agents.food.nutrition_source import pick_nutrition
 from app.agents.food.store.ports import MenuCatalogRow, MenuCatalogStore, MenuSource
 from app.agents.food.tools.safety import menu_codes
@@ -207,6 +208,8 @@ class MenuResolver:
             # "확인 못 함" 이다. 코드는 메뉴명에서 뽑은 것뿐이다
             ingredients=(),
             allergen_codes=menu_codes((facts.name,)),
+            # 영양DB 의 식품 대분류를 대응표로 옮긴다. 표에 없으면 비어 있다 — 추정하지 않는다
+            food_groups=food_groups_of_category(facts.category),
             source_version=facts.source_version,
         )
         try:

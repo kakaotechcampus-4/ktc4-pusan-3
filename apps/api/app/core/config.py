@@ -68,6 +68,12 @@ class Settings(AgentLLMSettings):
     # 초. NF-06 의 20초는 Agent 파이프라인 예산이고 로그인은 그 예산 밖이다 (§8-1).
     KAKAO_API_TIMEOUT: float = 3.0
 
+    # 어드민 키 — 탈퇴할 때 카카오 연결 끊기(§7-4)에만 쓴다. 앱 전체 권한이라
+    # 다른 곳에서 읽지 않는다.
+    # 로그인 준비(kakao_missing_keys)와 무관하다 — 없어도 로그인은 된다. local · dev 에서 비면
+    # 탈퇴는 하되 카카오 연결 끊기만 건너뛴다. prod 는 아래 검증이 부팅에서 막는다 (#379).
+    KAKAO_ADMIN_KEY: str | None = None
+
     # 로그인을 마친 뒤 302 로 돌려보낼 곳. client 열거값이 web / app 을 고른다 (§2-3).
     #
     # 🚨 둘 다 필수다. 하나라도 비면 서버가 뜨지 않는다 (아래 검증, #45).
@@ -133,6 +139,13 @@ class Settings(AgentLLMSettings):
             raise ValueError(
                 f"운영 환경인데 카카오 설정이 비어 있다: {', '.join(self.kakao_missing_keys)}. "
                 "이대로 뜨면 로그인 버튼만 꺼진 채 배포된다"
+            )
+        # 어드민 키는 로그인 준비 목록 밖이라 따로 본다. 없으면 탈퇴한 사람의 카카오 연결이
+        # 늘 남는다 — 탈퇴 실패가 아니라서 아무도 모르는 채 쌓인다 (#379).
+        if self.APP_ENV == "prod" and not self.KAKAO_ADMIN_KEY:
+            raise ValueError(
+                "운영 환경인데 카카오 설정이 비어 있다: KAKAO_ADMIN_KEY. "
+                "이대로 뜨면 탈퇴해도 카카오 연결이 끊기지 않는다"
             )
         return self
 

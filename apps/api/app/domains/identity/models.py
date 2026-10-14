@@ -28,7 +28,6 @@ class Parent(Base, UUIDPk, Timestamps):
     __tablename__ = "parent"
 
     nickname: Mapped[str | None] = mapped_column(Text, nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuthIdentity(Base, UUIDPk):

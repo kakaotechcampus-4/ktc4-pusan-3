@@ -10,9 +10,9 @@ from datetime import date
 
 import pytest
 
+from app.agents.common.age import life_stage
 from app.agents.common.gate import DataReady, Gate, SafetyBasis, read_safety_basis
 from app.agents.common.ports import SafetyLookupError
-from app.rules.age import life_stage
 
 STAGE = life_stage(date(2022, 9, 22), date(2026, 9, 22))  # 48개월
 

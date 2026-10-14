@@ -167,8 +167,8 @@
 │   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면 · 주입 배선
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 최근 사진(`window.icatch.recentPhotos`).
-│   │                         🚨 최근 사진 계약 정본은 웹(`apps/web/src/lib/native/`)이고 여기는 구현이다
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크.
+│   │                         🚨 Android 권한은 INTERNET 하나다. 사진 권한은 스토어 심사 때문에 뺐다 (#408)
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
