@@ -42,6 +42,8 @@ async def put_my_diary(
     row = await put_diary(
         session, child_id=child.child_id, parent_id=parent.parent_id, day=date, content=body.content
     )
+    if row is None:  # 확인한 뒤 연결이 끊겼다 (#427)
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
     out = MyDiaryOut(content=row.content, updated_at=row.updated_at)
     await session.commit()
     return out

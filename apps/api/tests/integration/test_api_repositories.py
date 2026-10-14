@@ -220,6 +220,7 @@ async def test_diary_put_updates_only_authors_own_day(session, family):
         day=date(2026, 9, 23),
         content="고친 기록",
     )
+    # 연결되지 않은 보호자는 쓰지 못한다 (#427)
     other = await put_diary(
         session,
         child_id=child.id,
@@ -229,7 +230,7 @@ async def test_diary_put_updates_only_authors_own_day(session, family):
     )
     assert revised.id == first.id
     assert revised.content == "고친 기록"
-    assert other.id != first.id
+    assert other is None
 
 
 async def test_affinity_list_defaults_to_non_archived_and_rename_is_scoped(session, family):

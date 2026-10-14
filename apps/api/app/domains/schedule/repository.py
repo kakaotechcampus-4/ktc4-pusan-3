@@ -10,7 +10,8 @@ from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import ParentChild
+from app.domains.child.models import Child, ParentChild
+from app.domains.identity.models import Parent
 from app.domains.schedule.models import (
     DiaryEntry,
     Event,
@@ -298,8 +299,31 @@ async def put_diary(
     parent_id: uuid.UUID,
     day: date,
     content: str,
-) -> DiaryEntry:
-    """작성자·아이·날짜별 한 행. 동시 재요청도 중복 행/unique 오류 없이 갱신한다."""
+) -> DiaryEntry | None:
+    """작성자·아이·날짜별 한 행. 동시 재요청도 중복 행/unique 오류 없이 갱신한다.
+
+    작성자가 이 아이와 연결돼 있지 않으면 쓰지 않고 None.
+    🚨 보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡은 뒤 연결을 확인한다 (#427).
+       - 라우터의 접근 확인(`AccessibleChild`)은 잠그지 않는다. 그 뒤에 연결 끊기(`unlink_parent`)가
+         연결과 일기를 지우고 커밋하면 여기서 쓴 일기가 끊긴 보호자에게 남는다. 잡아 두면 끊기가
+         먼저면 행이 없어 None, 여기가 먼저면 끊기가 커밋을 기다렸다가 이 일기까지 지운다.
+       - 순서는 탈퇴(`withdraw_parent`)와 같다. 연결 행만 잡으면 그것을 쥔 채 탈퇴가 잠근 보호자 ·
+         아이를 기다리고, 탈퇴는 CASCADE 로 그 연결 행을 기다려 교착이 된다.
+       - 세 행 모두 고치지 않고 지워지지만 않으면 되니 가장 약한 KEY SHARE 다. DELETE 만 막고
+         관계 바꾸기(`set_relation`) 같은 일반 수정과 같은 보호자의 다른 일기 저장은 막지 않는다.
+    """
+    key_share = {"read": True, "key_share": True}
+    await session.execute(
+        select(Parent.id).where(Parent.id == parent_id).with_for_update(**key_share)
+    )
+    await session.execute(select(Child.id).where(Child.id == child_id).with_for_update(**key_share))
+    linked = await session.scalar(
+        select(ParentChild.id)
+        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
+        .with_for_update(**key_share)
+    )
+    if linked is None:
+        return None
     stmt = (
         pg_insert(DiaryEntry)
         .values(child_id=child_id, author_parent_id=parent_id, date=day, content=content)
