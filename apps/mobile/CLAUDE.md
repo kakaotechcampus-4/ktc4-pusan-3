@@ -176,6 +176,10 @@ adb.exe shell am start -a android.intent.action.VIEW \
 
 스토어에 올리는 것은 `eas.json` 의 `production` 프로필이 만드는 `.aab` 다. 프로필은 셋이다.
 
+EAS 프로젝트는 **`truedoc` 조직의 `@truedoc/icatch`** 다 (`app.json` 의 `owner` · `extra.eas.projectId`).
+개인 계정이 아니라 조직에 둔 이유는 스토어 운영자(약관의 운영자)와 같은 곳에 빌드 기록과 키를 두기 위해서다.
+빌드하려면 그 조직의 멤버로 로그인한다.
+
 | 프로필 | 산출물 | 띄우는 웹 | 쓰는 곳 |
 | --- | --- | --- | --- |
 | `development` | 개발 빌드 apk | Metro 가 읽는 `.env.local` | 로컬 개발 (`pnpm android` 와 같은 앱) |

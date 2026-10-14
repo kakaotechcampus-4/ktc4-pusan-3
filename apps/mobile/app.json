@@ -2,6 +2,7 @@
   "expo": {
     "name": "아이캐치",
     "slug": "icatch",
+    "owner": "truedoc",
     "scheme": "icatch",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -32,6 +33,11 @@
     ],
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "67403aa7-3f76-4e90-917e-47c6104323a4"
+      }
     }
   }
 }
