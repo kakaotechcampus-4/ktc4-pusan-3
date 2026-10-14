@@ -322,15 +322,15 @@ export const childrenHandlers = [
    * 🚨 `type` · `label` 은 받지 않는다(400). 그 둘은 이 기록의 정체다.
    * 🚨 `severity: null` 은 "모르겠어요 로 되돌리기", `notes: null` 은 비우기, 안 보낸 칸은 그대로다.
    *    증상은 보내면 통째로 바뀌고 `null` 은 400 이다.
-   * 🚨 서버는 키를 선택으로 받지만 화면은 늘 붙이고(`idempotentPath`), 목은 키 없는 요청을 막는다 —
-   *    화면이 키를 빼먹으면 여기서 드러나게.
+   * 🚨 키는 서버도 필수다(없으면 400 `idempotency_key_required`). 화면은 늘 붙이고(`idempotentPath`),
+   *    목도 키 없는 요청을 막는다 — 화면이 키를 빼먹으면 여기서 드러나게.
    */
   http.patch(
     url("/children/:cid/health-safety/:id"),
     withIdempotency(async ({ request, params }) => {
       await networkDelay(320);
 
-      // 서버 순서: 본문 형식(400) → 동의(403) → 없는 기록(404) → 심각도(400).
+      // 서버 순서: 본문 형식(400) → 키(400) → 동의(403) → 없는 기록(404) → 심각도(400).
       const body = (await request.json()) as Record<string, unknown>;
       if ("type" in body || "label" in body) {
         return apiError(400, "validation_failed", "종류와 이름은 고칠 수 없어요");

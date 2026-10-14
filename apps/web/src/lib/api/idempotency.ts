@@ -100,7 +100,8 @@ export const idempotentPath = {
    * 🚨 승인 게이트 ㉡ — 고치기 (`PATCH`, 서버 #370). **같은 본문을 두 번 보내도 결과가 같지 않다** —
    *    서버는 고치면 지금 기록을 내리고 새 id 로 다시 넣어서(이력이 남는다), 응답만 잃고 다시 보내면
    *    옛 id 가 이미 내려가 있어 404 다. 키가 있으면 처음 응답이 재생된다.
-   *    서버는 키를 선택으로 받지만 화면은 늘 붙인다 — 표에 넣어 키 없이는 나가지 않게 한다.
+   *    서버도 키를 필수로 받는다(없으면 400 `idempotency_key_required`) — 표에 넣어 키 없이는
+   *    나가지 않게 한다.
    */
   updateHealthSafety: (childId: string, safetyId: string) =>
     `/children/${childId}/health-safety/${safetyId}`,
