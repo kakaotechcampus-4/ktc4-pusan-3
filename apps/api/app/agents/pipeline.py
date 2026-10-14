@@ -34,6 +34,7 @@ from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
 from app.agents.run_writes import RunWrites
+from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.routing import Guidance, Routing, route
@@ -89,12 +90,12 @@ DomainRunner = Callable[..., Awaitable[DomainOutcome]]
 
 # 기록 단계를 확정하는 함수. 러너가 run마다 만들어 넘기고, pipeline은 Memory 다음에 한 번 부른다.
 # 세션과 commit 구현은 러너(백엔드). pipeline은 기록 단계가 끝난 시점만 알린다.
-# 러너 약속 — commit이 한 번이라도 끝난 run은 failed로 끝내지 않는다. 60초 안전망은
-#   pipeline 결과 없이 끝나므로, 러너는 이 함수 안에서 commit 여부를 직접 표시해 두고
-#   _guarded · 안전망 · forget_run 이 그 표시를 본다 (러너 구현은 백엔드 몫).
-# TODO(러너 계약): commit 도중 연결이 끊겨 결과를 모르면 failed 로 확정하지 않고
-#   Idempotency 키도 풀지 않는다. 요청 식별자와 처리 결과를 DB 에 남겨 같은 키로 다시
-#   보내면 기존 결과를 확인한다(멘토 #196 답변). 모양은 러너 DB 세션 작업 전에 정한다.
+# 러너 약속 — commit이 한 번이라도 끝난 run은 failed로 끝내지 않는다. 추천 저장의 commit 도
+#   같다. 60초 안전망은 pipeline 결과 없이 끝나므로, 러너는 이 함수와 추천 저장 함수 안에서
+#   commit 여부를 직접 표시해 두고 _guarded · 안전망 · forget_run 이 그 표시를 본다
+#   (러너 구현은 백엔드 몫).
+# commit 도중 연결이 끊겨 결과를 모르면 표시가 남지 않아 failed 로 끝난다(트랜잭션 회의
+#   결정 4). 다시 보내도 안전하게 하는 건 쓰기 쪽 멱등성 몫이다.
 Commit = Callable[[], Awaitable[None]]
 
 # child_id 와 기준일을 받아 백그라운드로 Curator 를 띄우는 콜백. 러너가 만들어 넘긴다.
@@ -184,17 +185,12 @@ class DomainRouted:
 class AgentResult:
     """도메인 Agent 결과 중 화면에 보낼 것 (#227). SSE 이름은 agent_result.
 
-    Agent 결과 한 건에 하나씩, `DomainRouted` 바로 뒤에 나간다. 추천이 없는 결과(성장 추이 ·
-    닫힘 안내 · 개수 안내 · 되묻기)도 여기 실린다 — 저장할 것이 없어서 끝나는 대로 보낸다.
-    결과를 못 낸 Agent(예외 · 시간 초과 · `status="failed"`)는 이 이벤트가 없고 `Partial.failed`
-    로만 알린다.
-
-    추천(`suggestion_ids` · 근거 모드 · 이유 문장)은 아직 싣지 않는다. 저장이 끝난 id만
-    보내야해서(공통규약 §3) 저장 콜백이 생길 때 더한다. 그 전에 빈 목록을 보내면 화면이
-    "0개" 로 읽는다.
-    그래서 그때까지 추천이 들어 있는 결과는 이 이벤트를 내지 않는다(`_shows`). 내면 개수 안내
-    ("2개 준비했어요") · 날씨 안내가 후보 없이 대화에 먼저 선다. 추천을 실을 때는 추천 칸 키를
-    늘 싣는다 — 값이 없어도 `null` · `[]` 로.
+    Agent 결과 한 건에 하나씩, `DomainRouted` 바로 뒤에 나간다. 추천이 있으면 저장(commit)이
+    끝난 뒤에 나가고, 저장된 id 를 추천 순서대로 `suggestion_ids` 에 싣는다 — 카드의 승인 ·
+    거절 · 피드백은 저장된 행의 id 로 동작한다(공통규약 §3). 추천이 없는 결과(성장 추이 ·
+    닫힘 안내 · 개수 안내 · 되묻기)는 `()` 로 바로 나간다. 결과를 못 낸 Agent(예외 · 시간
+    초과 · `status="failed"` · 추천 저장 실패)는 이 이벤트가 없고 `Partial.failed` 로만 알린다.
+    후보 내용 · 근거 모드는 싣지 않는다 — 화면이 05 에서 id 로 읽는다.
     """
 
     agent: str
@@ -202,6 +198,7 @@ class AgentResult:
     status: str
     readouts: tuple[Readout, ...]
     question: str | None  # needs_observation 하나. 되묻기는 한 번에 하나다 (DomainAgentResult)
+    suggestion_ids: tuple[str, ...] = ()  # 저장이 끝난 추천 id. 추천 순서 그대로
 
 
 @dataclass(frozen=True)
@@ -368,6 +365,7 @@ async def handle_input(
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
     commit: Commit,
+    save_suggestions: SaveSuggestions,
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
@@ -381,6 +379,9 @@ async def handle_input(
     commit 은 Memory 가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
     필수다 — DbMemoryStore 를 넘기고 commit 을 빼먹으면 러너가 세션을 닫을 때 기록이 조용히
     사라진다. InMemoryStore 로 도는 테스트 · eval 은 아무것도 하지 않는 commit 을 넘긴다.
+    save_suggestions 는 도메인 Agent 결과 하나의 추천을 저장 · commit 하고 id 를 돌려주는 러너의
+    함수다. 필수다 — 기본값이 있으면 러너가 빠뜨린 호출에서 추천이 조용히 사라진다. 테스트 ·
+    eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     """
     started = time.perf_counter()
@@ -503,11 +504,23 @@ async def handle_input(
         remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
         budget_ms = int(remaining * 1000)
 
-        # 결과는 끝나는 대로 내보낸다 (K-11). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
-        def on_outcome(outcome: DomainOutcome) -> None:
+        # 결과는 끝나는 대로 내보낸다 (K-11). 추천이 있으면 저장(commit)이 끝난 뒤에 카드가
+        # 나간다(공통규약 §3). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+        saved: list[str] = []  # 이 run 에서 저장한 추천 id — 확정된 저장이다
+
+        async def on_outcome(outcome: DomainOutcome) -> bool:
             send(_routed(outcome))  # 로그 · 지표용
-            if _shows(outcome):
-                send(_result(outcome))  # 화면용 — readout · 되묻기 (#227)
+            if _failed(outcome):
+                return True  # 실패는 Partial.failed 로만 알린다 — _run_domain 이 센다
+            ids: tuple[str, ...] = ()
+            if outcome.suggestions:
+                stored = await _save(outcome, save_suggestions, run_id=run_id)
+                if stored is None:
+                    return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
+                ids = stored
+                saved.extend(ids)
+            send(_result(outcome, ids))  # 화면용 — readout · 되묻기 · 추천 id (#227)
+            return True
 
         ran = await _run_domain(
             routing.domain_tasks,
@@ -518,8 +531,9 @@ async def handle_input(
         )
         partial = ran.partial
         writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
-        # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다
-        committed = committed or (writes is not None and writes.wrote)
+        # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다.
+        # 추천 저장도 commit 이 끝난 뒤에만 saved 에 들어간다
+        committed = committed or (writes is not None and writes.wrote) or bool(saved)
         for outcome in ran.outcomes:
             domain.append(outcome)
             model_calls += outcome.model_calls
@@ -682,7 +696,7 @@ async def _run_domain(
     contexts: Mapping[str, DomainContext],
     *,
     timeout: float | None,
-    on_outcome: Callable[[DomainOutcome], None] | None = None,
+    on_outcome: Callable[[DomainOutcome], Awaitable[bool]] | None = None,
     domain_clients: Mapping[str, LLMClient] | None = None,
 ) -> _DomainRun:
     """쓰는 task 를 먼저 끝내고 읽는 task 를 동시에 돌린다.
@@ -691,6 +705,7 @@ async def _run_domain(
     전에 나가고, 읽는 task 끼리는 끝난 순서다. 돌려주는 outcomes 는 그대로 task 순서다.
     하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06). 쓰는 task 도 같은 timeout 안에서 센다.
     쓰는 쪽이 늦으면 읽는 쪽 몫이 준다.
+    on_outcome 이 False 를 돌려주면(추천 저장 실패) 그 결과는 실패로 센다 — 모델 호출 수는 센다.
 
     domain_clients 에 그 agent 몫이 없으면 client 인자를 아예 넘기지 않는다 — 각 runner 가
     자기 기본값(role 별 설정)을 쓴다. 모든 runner 가 client 키워드 인자를 받는다고 가정한다.
@@ -739,6 +754,11 @@ async def _run_domain(
             failed.append(task.agent)
             result = "timeout"
             logger.warning("도메인 Agent 시간 초과 run_id=%s agent=%s", task.run_id, task.agent)
+        elif isinstance(item, _NotDelivered):
+            # 결과는 나왔는데 추천을 저장하지 못했다. 카드가 없으니 실패로 센다 — 모델은 불렀다
+            failed.append(task.agent)
+            failed_model_calls += item.outcome.model_calls
+            result = "save_error"
         elif isinstance(item, (Exception, asyncio.CancelledError)):
             failed.append(task.agent)
             result = "error"
@@ -752,7 +772,7 @@ async def _run_domain(
         elif isinstance(item, BaseException):
             raise item  # KeyboardInterrupt·SystemExit 는 부분 실패가 아니다
         elif _failed(item):
-            # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다(_shows)
+            # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다
             failed.append(task.agent)
             failed_model_calls += item.model_calls
             result = "failed"
@@ -785,12 +805,15 @@ async def _settle(
     group: list[int],
     run_one: Callable[[int], Awaitable[DomainOutcome]],
     timeout: float | None,
-    on_outcome: Callable[[DomainOutcome], None] | None,
+    on_outcome: Callable[[DomainOutcome], Awaitable[bool]] | None,
 ) -> dict[int, DomainOutcome | BaseException]:
     """묶음 하나를 동시에 돌리고, 끝나는 대로 on_outcome 으로 넘긴다. 실패는 예외 객체로 돌려준다.
 
     같은 틱에 같이 끝난 것만 task 순서로 넘긴다. 그 밖에는 끝난 순서다.
-    on_outcome(화면 번역)이 터지면 부분 실패로 숨기지 않고 그대로 올린다.
+    on_outcome(추천 저장 · 화면 번역)은 task 의 시간 제한 밖에서 기다린다 — 저장 commit 을
+    중간에 끊으면 들어갔는지 모르는 저장이 남는다. 그동안 다른 task 는 계속 돈다.
+    on_outcome 이 False 를 돌려주면 그 결과를 `_NotDelivered` 로 바꿔 둔다(부분 실패).
+    on_outcome 이 터지면 부분 실패로 숨기지 않고 그대로 올린다.
     빠져나갈 때(그 예외 · 바깥 취소) 남은 task 를 끊는다 — gather 와 달리 wait 는 자식을 안 끊는다.
     """
     running = {
@@ -803,9 +826,10 @@ async def _settle(
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for future in sorted(done, key=running.__getitem__):
                 item = _result_of(future)
-                settled[running[future]] = item
                 if on_outcome is not None and not isinstance(item, BaseException):
-                    on_outcome(item)
+                    if not await on_outcome(item):
+                        item = _NotDelivered(item)
+                settled[running[future]] = item
     finally:
         for future in pending:
             future.cancel()
@@ -903,21 +927,52 @@ def _failed(outcome: DomainOutcome) -> bool:
     return str(outcome.status) == "failed"
 
 
-def _shows(outcome: DomainOutcome) -> bool:
-    """AgentResult 를 낼 결과인가.
-
-    실패는 `Partial.failed` 로만 알린다. 추천이 든 결과는 저장 콜백으로 id 를 실을 수 있을
-    때까지 내지 않는다 (AgentResult docstring).
-    """
-    return not _failed(outcome) and not outcome.suggestions
-
-
-def _result(outcome: DomainOutcome) -> AgentResult:
+def _result(outcome: DomainOutcome, suggestion_ids: tuple[str, ...]) -> AgentResult:
     task_type = None if outcome.task_type is None else str(outcome.task_type)
     question = outcome.needs_observation[0] if outcome.needs_observation else None
     return AgentResult(
-        outcome.agent, task_type, str(outcome.status), tuple(outcome.readouts), question
+        outcome.agent,
+        task_type,
+        str(outcome.status),
+        tuple(outcome.readouts),
+        question,
+        suggestion_ids,
     )
+
+
+class _NotDelivered(Exception):
+    """결과는 나왔는데 내보내지 못했다(추천 저장 실패). 그 Agent 는 실패로 센다."""
+
+    def __init__(self, outcome: DomainOutcome) -> None:
+        super().__init__()
+        self.outcome = outcome
+
+
+async def _save(
+    outcome: DomainOutcome, save: SaveSuggestions, *, run_id: str
+) -> tuple[str, ...] | None:
+    """추천을 저장하고 id 를 추천 순서대로 돌려준다. 실패하면 None — 그 Agent 는 실패로 센다.
+
+    예외 메시지에는 추천 문장이 섞일 수 있어 종류만 남긴다. `CancelledError` 는 잡지 않는다 —
+    run 이 끊긴 것이지 부분 실패가 아니다(`except Exception` 은 그것을 잡지 않는다).
+    """
+    drafts = tuple(outcome.suggestions)
+    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    batch = SuggestionBatch(run_id=run_id, agent=outcome.agent, task_type=task_type, drafts=drafts)
+    try:
+        ids = tuple(await save(batch))
+    except Exception as exc:
+        logger.error(
+            "추천 저장 실패 run_id=%s agent=%s error=%s",
+            run_id,
+            outcome.agent,
+            type(exc).__name__,
+        )
+        return None
+    if len(ids) != len(drafts):
+        logger.error("추천 저장 결과 수가 다르다 run_id=%s agent=%s", run_id, outcome.agent)
+        return None
+    return ids
 
 
 def _label(agent: str, task_type: object) -> str:

@@ -24,6 +24,7 @@ from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import Saved, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ObservationFood
@@ -208,6 +209,7 @@ class TestMemoryToCurator:
             emit=events.append,
             commit=commit,
             writes=writes,
+            save_suggestions=InMemorySuggestions(),
         )
 
         # ── pipeline 성공 ──
@@ -286,6 +288,7 @@ class TestCommitPoint:
             supervisor_client=_supervisor_llm("RC01"),
             memory_client=_saves_strawberry(_answer({"reply": "기록했어요.", "kind": "message"})),
             commit=commit,
+            save_suggestions=InMemorySuggestions(),
         )
 
         assert result.committed and result.failed is None
@@ -314,6 +317,7 @@ class TestCommitPoint:
             # 관찰 하나를 flush 한 뒤 다음 모델 호출에서 죽는다
             memory_client=_saves_strawberry(LLMUnavailableError("망")),
             commit=commit,
+            save_suggestions=InMemorySuggestions(),
         )
 
         assert result.failed is not None and result.failed.reason == "llm_unavailable"
@@ -343,6 +347,7 @@ class TestCommitPoint:
                 "요즘 딸기 먹어?", "얼마나 먹었어요?", WorkType.OBSERVE
             ),
             commit=commit,
+            save_suggestions=InMemorySuggestions(),
         )
 
         assert result.committed

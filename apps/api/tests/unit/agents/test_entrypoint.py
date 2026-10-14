@@ -25,6 +25,7 @@ from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
+from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import routing
 
 CHILD = UUID(int=1)
@@ -57,6 +58,7 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
         run_id="run-1",
         emit=emit,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result == "RESULT"
@@ -88,11 +90,37 @@ def test_이벤트_타입이_전부_밖으로_나간다() -> None:
     assert not missing
 
 
-def test_commit_은_기본값이_없다() -> None:
-    """기본값이 있으면 DB store 를 넘기고 commit 을 빼먹은 호출이 조용히 통과한다.
-    기록은 러너가 세션을 닫을 때 사라진다."""
+def test_commit_과_save_suggestions_는_기본값이_없다() -> None:
+    """기본값이 있으면 러너가 빠뜨린 호출이 조용히 통과한다 — commit 은 기록이, save_suggestions 는
+    추천이 사라진다."""
     for handle in (entrypoint.handle_input, pipeline.handle_input):
-        assert inspect.signature(handle).parameters["commit"].default is inspect.Parameter.empty
+        params = inspect.signature(handle).parameters
+        for name in ("commit", "save_suggestions"):
+            assert params[name].default is inspect.Parameter.empty, name
+
+
+async def test_넘긴_save_suggestions_를_pipeline_에_그대로_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    saver = InMemorySuggestions()
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=saver,
+    )
+
+    assert seen["save_suggestions"] is saver
 
 
 async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,6 +141,7 @@ async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch
         run_id="run-1",
         store=store,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen["memory"].store is store
@@ -154,6 +183,7 @@ async def test_생일을_주면_월령에서_단계를_고른다(
         run_id="run-1",
         birth_date=birth_date,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     food = seen["food"]
@@ -179,6 +209,7 @@ async def test_이어받기_맥락을_pipeline_에_그대로_넘긴다(monkeypat
         run_id="run-2",
         continuation=pending,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen["raw_text"] == "3일 전부터"
@@ -195,7 +226,12 @@ async def test_이어받기가_없으면_none_을_넘긴다(monkeypatch: pytest.
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
     await entrypoint.handle_input(
-        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=_no_commit
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen["continuation"] is None
@@ -219,6 +255,7 @@ async def test_Food_기억_포트는_같은_run_의_Memory_store_를_읽는다(
         raw_text="딸기 잘 먹었어",
         run_id="run-1",
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     memory, food = seen["memory"], seen["food"]
@@ -250,7 +287,12 @@ async def test_commit_을_pipeline_에_그대로_넘긴다(monkeypatch: pytest.M
         return None
 
     await entrypoint.handle_input(
-        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=commit
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기",
+        run_id="r",
+        commit=commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen["commit"] is commit
@@ -273,7 +315,12 @@ async def test_포트를_안_넘긴_run_의_Food_는_안전_조회_실패로_닫
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
     await entrypoint.handle_input(
-        child_id=CHILD, parent_id=PARENT, raw_text="딸기", run_id="r", commit=_no_commit
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="딸기",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     gate = await build_gate(seen["food"])
@@ -296,7 +343,12 @@ async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴
     monkeypatch.setattr(entrypoint, "_handle_input", fake)
 
     await entrypoint.handle_input(
-        child_id=CHILD, parent_id=PARENT, raw_text="두유", run_id="r", commit=_no_commit
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="두유",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     writes = seen["writes"]
@@ -332,6 +384,7 @@ async def _food_of(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
         run_id="r",
         **kwargs,
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
     return seen["food"]
 
@@ -410,6 +463,7 @@ async def test_받은_curator_trigger_를_그대로_pipeline_에_넘긴다(
         run_id="run-1",
         commit=_no_commit,
         curator_trigger=trigger,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen["curator_trigger"] is trigger
@@ -434,6 +488,7 @@ async def test_트리거를_안_넘기면_Curator_를_띄우지_않는다(monkey
         raw_text="딸기 잘 먹었어",
         run_id="run-1",
         commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen["curator_trigger"] is None
@@ -478,6 +533,7 @@ async def test_러너가_준_도메인_store_로_Food_기억_포트를_읽는다
         run_id="r",
         commit=_no_commit,
         domain_store=opener,
+        save_suggestions=InMemorySuggestions(),
     )
     today = seen["food"].today
     await seen["food"].ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
