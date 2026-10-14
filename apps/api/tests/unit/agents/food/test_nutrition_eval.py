@@ -3,6 +3,7 @@
 판정 자체(구간·히스테리시스)는 `test_nutrition_eval.py` 의 Task 6 부분(§6)이 본다.
 """
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -52,11 +53,12 @@ def _observation(
     amount_text: str | None = "다 먹음",
     confidence_source: str | None = "parent_direct",
     source_notice_id: UUID | None = None,
+    day: date = DAY,
 ) -> FoodObservation:
     return FoodObservation(
         id=uuid4(),
         child_id=CHILD,
-        observed_on=DAY,
+        observed_on=day,
         subject=subject,
         amount_text=amount_text,
         polarity=1,
@@ -82,9 +84,10 @@ def _context(
     daycare_rows: list[DaycareMealRow] = (),
     catalog_rows: list[MenuCatalogRow] = (),
     menu_source: InMemoryMenuSource | None = None,
+    birth_date: date = BIRTH_DATE,
 ) -> FoodContext:
     ports_kwargs: dict[str, object] = {
-        "profile": InMemoryProfile({CHILD: BIRTH_DATE}),
+        "profile": InMemoryProfile({CHILD: birth_date}),
         "memory": InMemoryFoodMemory(observations={CHILD: list(observations)}),
         "catalog": InMemoryMenuCatalog(list(catalog_rows)),
         "daycare": InMemoryDaycareMeals(list(daycare_rows)),
@@ -201,6 +204,64 @@ async def test_양을_모르는_기록은_절반_가중으로_들어간다(conte
     known = await daily_totals(context, date_from=date(2026, 10, 1), date_to=date(2026, 10, 1))
 
     assert totals[0].grams["protein"] == pytest.approx(known[0].grams["protein"] * 0.5)
+
+
+# ── 음식 종류별 1인분 계수 (#411 T1) ─────────────────────────────────────
+BIRTH_DATE_3Y = date(2023, 6, 2)  # NOW 기준 40개월 — 섭취기준 3-5y 구간
+
+
+def _milk_row() -> MenuCatalogRow:
+    return _menu_row(
+        menu_key="우유",
+        display_name="우유",
+        serving_g=200.0,  # 우유 한 팩(200ml = 200g 로 읽는다)
+        nutrients={"calcium": 118.0, "energy": 67.0},
+        food_groups=frozenset({"dairy"}),
+    )
+
+
+async def test_우유_한_팩은_3세에게도_200g_그대로_합계에_들어간다() -> None:
+    context = _context(
+        observations=[_observation(subject="우유", amount_text="한 그릇")],
+        catalog_rows=[_milk_row()],
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    totals = await daily_totals(context, date_from=DAY, date_to=DAY)
+
+    assert totals[0].grams["calcium"] == pytest.approx(118.0 * 200 / 100)  # 236mg
+
+
+async def test_밥은_3세에게_유아_계수가_곱해진다() -> None:
+    rice = _menu_row(
+        menu_key="쌀밥",
+        display_name="쌀밥",
+        serving_g=210.0,
+        nutrients={"calcium": 3.0, "energy": 130.0},
+        food_groups=frozenset({"grains"}),
+    )
+    context = _context(
+        observations=[_observation(subject="쌀밥", amount_text="한 그릇")],
+        catalog_rows=[rice],
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    totals = await daily_totals(context, date_from=DAY, date_to=DAY)
+
+    assert totals[0].grams["calcium"] == pytest.approx(3.0 * 210 * 0.2816 / 100)
+
+
+async def test_식품군이_빈_메뉴는_지금_계수_그대로다() -> None:
+    # 원재료성 행은 대분류 이름이 비어 식품군이 안 채워진다 — 개 단위라고 추정해 계수를 빼지 않는다
+    context = _context(
+        observations=[_observation(subject="우유", amount_text="한 그릇")],
+        catalog_rows=[replace(_milk_row(), food_groups=frozenset())],
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    totals = await daily_totals(context, date_from=DAY, date_to=DAY)
+
+    assert totals[0].grams["calcium"] == pytest.approx(118.0 * 200 * 0.2816 / 100)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -504,3 +565,379 @@ async def test_판정이_끝난_뒤_DB_와_로그에_합계가_남지_않는다(
 async def test_돌_전에는_판정하지_않는다(context) -> None:
     with pytest.raises(ValueError, match="섭취기준 연령군"):
         await evaluate_nutrient_bands(context, months=9)
+
+
+# ── 빈 메뉴 임계를 영양 기여로 (#411 T2) ─────────────────────────────────
+# 3세 아이의 14일치 — 매일 쌀밥 · 된장찌개 · 우유. 100g 당 값은 mfds_nutri_sample.json 픽스처의
+# 우유 · 된장찌개 행이고 쌀밥만 근사값이다. 우유 serving_g 가 비면 합계에서 빠지는데, 빠진 양이
+# 큰 영양소(칼슘 · 열량)는 나머지 메뉴만으로 구간을 내면 거짓이 된다
+_MILK = {
+    "energy": 67.0,
+    "protein": 3.09,
+    "fat": 3.85,
+    "carbohydrate": 4.86,
+    "sugars": 4.81,
+    "calcium": 118.0,
+    "iron": 0.03,
+    "sodium": 40.0,
+    "saturated_fat": 2.17,
+}
+_DOENJANG_JJIGAE = {
+    "energy": 46.0,
+    "protein": 3.38,
+    "fat": 1.63,
+    "carbohydrate": 4.44,
+    "sugars": 0.0,
+    "calcium": 21.0,
+    "iron": 0.70,
+    "sodium": 318.0,
+    "saturated_fat": 0.27,
+}
+_RICE = {  # 근사값
+    "energy": 150.0,
+    "protein": 2.7,
+    "fat": 0.3,
+    "carbohydrate": 33.0,
+    "sugars": 0.0,
+    "calcium": 3.0,
+    "iron": 0.1,
+    "sodium": 2.0,
+    "saturated_fat": 0.1,
+}
+
+
+def _pm_catalog(*, milk_serving_g: float | None) -> list[MenuCatalogRow]:
+    return [
+        _menu_row(
+            menu_key="우유",
+            display_name="우유",
+            serving_g=milk_serving_g,
+            nutrients=_MILK,
+            food_groups=frozenset({"dairy"}),
+        ),
+        _menu_row(
+            menu_key="된장찌개",
+            display_name="된장찌개",
+            serving_g=300.0,
+            nutrients=_DOENJANG_JJIGAE,
+            food_groups=frozenset(),
+        ),
+        _menu_row(
+            menu_key="쌀밥",
+            display_name="쌀밥",
+            serving_g=210.0,
+            nutrients=_RICE,
+            food_groups=frozenset({"grains"}),
+        ),
+    ]
+
+
+def _pm_context(
+    *,
+    milk_per_day: int,
+    milk_serving_g: float | None,
+    others_per_day: int = 2,
+    extra_rows: list[MenuCatalogRow] = (),
+    extra_observations: list[FoodObservation] = (),
+) -> FoodContext:
+    """3세 · 14일 · 매일 쌀밥 · 된장찌개 `others_per_day` 번씩 + 우유 `milk_per_day` 컵."""
+    observations = [
+        _observation(
+            subject=subject, amount_text="한 그릇", day=_WINDOW_END - timedelta(days=offset)
+        )
+        for offset in range(14)
+        for subject, times in (
+            ("쌀밥", others_per_day),
+            ("된장찌개", others_per_day),
+            ("우유", milk_per_day),
+        )
+        for _ in range(times)
+    ]
+    return _context(
+        observations=[*observations, *extra_observations],
+        catalog_rows=[*_pm_catalog(milk_serving_g=milk_serving_g), *extra_rows],
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+
+async def test_우유_하루_2컵_14일_기록은_3세_칼슘이_low_가_아니다() -> None:
+    # 우유 한 팩을 유아 계수로 줄이면 하루 8컵을 마셔야 EAR(450mg)을 넘는다
+    context = _pm_context(milk_per_day=2, milk_serving_g=200.0)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.insufficient is False
+    assert verdict.bands["calcium"] == "ok"
+
+
+async def test_우유_1인분_중량이_비면_칼슘은_구간을_내지_않는다() -> None:
+    # 합계에서 빠진 우유가 칼슘의 대부분이다 — 나머지 메뉴만으로 low 를 내면 거짓이다
+    context = _pm_context(milk_per_day=2, milk_serving_g=None)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert "calcium" not in verdict.bands
+    assert "calcium" in verdict.unscored or verdict.insufficient
+
+
+async def test_우유_중량이_비면_열량이_모자란_채_탄수화물_지방_비율을_내지_않는다() -> None:
+    # 우유가 빠지면 지방은 낮게 · 탄수화물은 높게 나와 비율이 뒤집힌다. 쌀밥 · 찌개 한 번씩이라
+    # 우유(하루 2컵)의 열량이 알려진 열량보다 크다
+    context = _pm_context(milk_per_day=2, milk_serving_g=None, others_per_day=1)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.insufficient is True
+    assert "carbohydrate" not in verdict.bands
+    assert "fat" not in verdict.bands
+
+
+async def test_우유_중량이_빈_기록이_작게_섞이면_구간을_낸다() -> None:
+    # 열량 · 칼슘이 거의 안 빠지는 메뉴는 중량이 비어도 판정을 막지 않는다
+    snack = _menu_row(
+        menu_key="물",
+        display_name="물",
+        serving_g=None,
+        nutrients={"energy": 0.0, "calcium": 1.0, "protein": 0.0, "fat": 0.0, "carbohydrate": 0.0},
+        food_groups=frozenset(),
+    )
+    context = _pm_context(
+        milk_per_day=2,
+        milk_serving_g=200.0,
+        extra_rows=[snack],
+        extra_observations=[_observation(subject="물", amount_text="한 그릇", day=_WINDOW_END)],
+    )
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.insufficient is False
+    assert verdict.bands["calcium"] == "ok"
+
+
+# ── 식품군 출현 (#411 T3) ────────────────────────────────────────────────
+# 최근 7일(판정 창) 중 식품군이 나온 날 수. 무게를 몰라도 센다 — "나왔는가" 는 양과 무관하다.
+def _appearance_catalog(*, veg_serving_g: float | None = 80.0) -> list[MenuCatalogRow]:
+    return [
+        _menu_row(
+            menu_key="쌀밥",
+            display_name="쌀밥",
+            serving_g=210.0,
+            nutrients=_RICE,
+            food_groups=frozenset({"grains"}),
+        ),
+        _menu_row(
+            menu_key="시금치나물",
+            display_name="시금치나물",
+            serving_g=veg_serving_g,
+            nutrients={"energy": 30.0, "calcium": 60.0, "protein": 3.0, "fat": 0.5},
+            food_groups=frozenset({"vegetables"}),
+        ),
+    ]
+
+
+def _appearance_context(
+    *,
+    veg_offsets: tuple[int, ...],
+    veg_serving_g: float | None = 80.0,
+    days: int = 7,
+    rice: int = 2,
+) -> FoodContext:
+    """최근 `days`일 매일 쌀밥 `rice` 번 + `veg_offsets` 번째 날(0 = 어제)에만 시금치나물."""
+    observations = [
+        _observation(
+            subject="쌀밥", amount_text="한 그릇", day=_WINDOW_END - timedelta(days=offset)
+        )
+        for offset in range(days)
+        for _ in range(rice)
+    ] + [
+        _observation(
+            subject="시금치나물", amount_text="한 그릇", day=_WINDOW_END - timedelta(days=offset)
+        )
+        for offset in veg_offsets
+    ]
+    return _context(
+        observations=observations,
+        catalog_rows=_appearance_catalog(veg_serving_g=veg_serving_g),
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+
+async def test_7일_중_채소가_3일_나오면_채소_출현은_3일이다() -> None:
+    context = _appearance_context(veg_offsets=(0, 2, 4))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.food_group_days["vegetables"] == 3
+    assert verdict.food_group_days["grains"] == 7
+    assert verdict.recorded_days == 7
+    assert verdict.appearance_ready is True
+
+
+async def test_같은_날_여러_번_나와도_하루로_센다() -> None:
+    context = _appearance_context(veg_offsets=(0, 0, 0, 1))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.food_group_days["vegetables"] == 2
+
+
+async def test_나오지_않은_식품군은_출현에_없다() -> None:
+    context = _appearance_context(veg_offsets=(0,))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert "fruits" not in verdict.food_group_days
+
+
+async def test_1인분_중량이_빈_메뉴도_식품군_출현으로_센다() -> None:
+    context = _appearance_context(veg_offsets=(0, 1, 2, 3, 4), veg_serving_g=None)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.food_group_days["vegetables"] == 5
+    assert verdict.appearance_ready is True
+
+
+async def test_우유_중량이_비어_구간을_막아도_식품군_출현은_센다() -> None:
+    # 구간(insufficient)은 중량이 빈 우유가 열량의 큰 몫이라 막힌다 — 출현은 그것과 무관하다
+    context = _pm_context(milk_per_day=2, milk_serving_g=None, others_per_day=1)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.insufficient is True
+    assert verdict.appearance_ready is True
+    assert verdict.food_group_days["dairy"] == 7
+
+
+async def test_기록_행_수가_모자라면_출현을_말할_수_없다() -> None:
+    # 7일 중 5행 — N-1(10행) 미만이다. "7일 중 1일" 같은 말을 하지 않는다
+    context = _appearance_context(veg_offsets=(0,), days=4, rice=1)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.records == 5
+    assert verdict.appearance_ready is False
+    assert verdict.insufficient is True
+
+
+async def test_메뉴를_못_읽은_기록이_절반_넘으면_출현을_말할_수_없다() -> None:
+    # 카탈로그에 없는 메뉴만 있으면 식품군이 비어 채소 0일이 되는데, 안 나온 게 아니라 못 읽은 것
+    context = _context(
+        observations=[
+            _observation(subject="처음보는음식", day=_WINDOW_END - timedelta(days=offset))
+            for offset in range(7)
+            for _ in range(2)
+        ],
+        catalog_rows=_appearance_catalog(),
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.appearance_ready is False
+
+
+# ── 최종 리뷰 반영 (#411) ───────────────────────────────────────────────
+async def test_식품군을_모르는_메뉴가_절반_넘으면_출현을_말할_수_없다() -> None:
+    # 찌개 · 국 같은 음식 행은 해석돼도 식품군이 빈다. 채소 0일은 안 나온 게 아니라 모르는 것이다
+    rows = [replace(row, food_groups=frozenset()) for row in _appearance_catalog()]
+    context = _context(
+        observations=[
+            _observation(subject=name, amount_text="한 그릇", day=_WINDOW_END - timedelta(days=d))
+            for d in range(7)
+            for name in ("쌀밥", "쌀밥", "시금치나물")
+        ],
+        catalog_rows=rows,
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.resolved_ratio == 1.0
+    assert verdict.appearance_ready is False
+
+
+async def test_안_먹은_기록은_식품군_출현으로_세지_않는다() -> None:
+    # 시금치나물을 3일 거부(안 먹음)하고 하루만 먹었다 — 나온 날은 먹은 하루다
+    refused = [
+        _observation(
+            subject="시금치나물", amount_text="안 먹음", day=_WINDOW_END - timedelta(days=d)
+        )
+        for d in (1, 2, 3)
+    ]
+    eaten = [_observation(subject="시금치나물", amount_text="다 먹음", day=_WINDOW_END)]
+    context = _context(
+        observations=[
+            *(
+                _observation(
+                    subject="쌀밥", amount_text="한 그릇", day=_WINDOW_END - timedelta(days=d)
+                )
+                for d in range(7)
+                for _ in range(2)
+            ),
+            *refused,
+            *eaten,
+        ],
+        catalog_rows=_appearance_catalog(),
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.food_group_days["vegetables"] == 1
+
+
+async def test_싫어한다는_관찰은_식품군_출현으로_세지_않는다() -> None:
+    disliked = replace(
+        _observation(subject="시금치나물", amount_text=None, day=_WINDOW_END), polarity=-1
+    )
+    context = _context(
+        observations=[
+            *(
+                _observation(
+                    subject="쌀밥", amount_text="한 그릇", day=_WINDOW_END - timedelta(days=d)
+                )
+                for d in range(7)
+                for _ in range(2)
+            ),
+            disliked,
+        ],
+        catalog_rows=_appearance_catalog(),
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert "vegetables" not in verdict.food_group_days
+
+
+async def test_다시_판정하는_앞_7일에_중량이_빈_몫이_크면_EAR_항목은_구간을_내지_않는다() -> None:
+    # 8~14일 전에는 중량이 빈 우유, 최근 7일은 중량이 있는 우유. 앞쪽 창이 거짓 low 를 세우면
+    # 최근 7일 평균(EAR 450 ~ 1.1배 사이)이 히스테리시스로 low 에 붙잡힌다
+    unweighed_milk = _menu_row(
+        menu_key="멸균우유",
+        display_name="멸균우유",
+        serving_g=None,
+        nutrients=_MILK,
+        food_groups=frozenset({"dairy"}),
+    )
+    observations = [
+        _observation(subject=name, amount_text="한 그릇", day=_WINDOW_END - timedelta(days=d))
+        for d in range(14)
+        for name in (
+            "쌀밥",
+            "쌀밥",
+            "우유" if d < 7 else "멸균우유",
+            "우유" if d < 7 else "멸균우유",
+        )
+    ]
+    context = _context(
+        observations=observations,
+        catalog_rows=[*_pm_catalog(milk_serving_g=200.0), unweighed_milk],
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.bands.get("calcium") != "low"
+    assert "calcium" in verdict.unscored
