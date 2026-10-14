@@ -48,7 +48,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | --- | --- | --- | --- |
 | `infant_milk` | 0–3 | `()` → `unsupported.milk_meal` | `()` → `unsupported.infant_nutrient` |
 | `infant_weaning` | 4–11 | `search_food_memory` · `guide_weaning_stage` · `propose_meal_candidates` (3) | `()` → `unsupported.infant_nutrient` |
-| `toddler` · `preschool` | 12+ | + `analyze_meal_records` · `check_repeated_menus` · `lookup_daycare_menu` (5) | `lookup_nutrition` · `compare_diet_balance` · `report_nutrient_analysis` (3) |
+| `toddler` · `preschool` | 12+ | + `analyze_meal_records` · `check_repeated_menus` · `lookup_daycare_menu` (5) | 열린 tool 없음 — 코드가 식품군 출현 문장을 낸다(모델 0회, #411) |
 
 > **2026-10-13 (#357 리뷰)** — 위 `meal_recommendation` · `daycare_meal` 의 tool 은 아직 스텁이라 모델에게 열지 않고 Food 가 `not_ready.meal` · `not_ready.daycare` 로 닫는다(모델 0회). tool 이 구현되면 `registry.NOT_READY` 에서 그 task 를 뺀다. 영양소 분석은 기록 조회 tool 과 `lookup_daycare_menu` 를 열지 않는다 — `compare_diet_balance` 가 기록 · 급식을 직접 읽는다.
 

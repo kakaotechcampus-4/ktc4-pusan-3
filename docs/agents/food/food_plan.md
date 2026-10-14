@@ -125,7 +125,7 @@ app/agents/food/
 | 라벨 \ 단계 | infant_milk 0–3 | infant_weaning 4–11 | toddler · preschool 12+ |
 | --- | --- | --- | --- |
 | `meal_recommendation` | `()` | 3 | 5 |
-| `nutrient_analysis` | `()` | `()` | 7 |
+| `nutrient_analysis` | `()` | `()` | `()` — 열린 tool 없이 코드가 출현 문장을 낸다(#411) |
 
 추가 닫힘: `safety_ok=False` → 식단 추천 · 영양소 분석(`blocked.safety`, #321 — 영양 안내도 식품군을 말해서 걸러 낼 알레르기를 모르면 열지 않는다). 동의 없음은 닫지 않는다 — `health_safety`·`child_growth_log` 를 못 읽을 뿐이라 알레르기 필터 없는 일반 식단에 연령군 일반값 열량으로 간다. `kind='allergy'` 가 0행이거나 `unknown` 이 섞인 것도 닫지 않는다.
 
