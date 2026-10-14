@@ -14,14 +14,22 @@ import pytest
 from app.agents.food.meal_dates import resolve_meal_date
 from app.agents.food.readouts import READOUTS
 from app.agents.food.result import ErrorCode
-from app.agents.food.schemas.daycare import DeleteDaycareMealArgs, UpdateDaycareMealArgs
+from app.agents.food.schemas.daycare import (
+    DeleteDaycareMealArgs,
+    KeepDaycareMealArgs,
+    UpdateDaycareMealArgs,
+)
 from app.agents.food.store import (
     DaycareMealRow,
     InMemoryDaycareMeals,
     InMemoryMenuCatalog,
     SafetyEntry,
 )
-from app.agents.food.tools.menu import delete_daycare_meal, update_daycare_meal
+from app.agents.food.tools.menu import (
+    delete_daycare_meal,
+    keep_daycare_meal,
+    update_daycare_meal,
+)
 from tests.unit.agents.food.support import CHILD, TODAY, context, day, daycare, menu_row
 
 SHRIMP = [SafetyEntry(kind="allergy", label="새우", status="active")]
@@ -475,3 +483,166 @@ async def test_삭제_쓰기가_실패하면_빠졌다는_문구가_나가지_�
         await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="오늘"))
 
     assert ctx.state.readouts == ()
+
+
+# ── 급식이 실제로 바뀌었다는 말인가 (코드 가드) ──────────────────────────
+# 급식 갱신은 tool 을 꼭 부르게 해서(required) 묻는 말 · 가정도 갱신 · 삭제로 올 수 있다.
+# 되돌릴 수 없는 삭제를 모델 판단에 맡기지 않는다 — 원문을 코드가 본다
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "모레 어린이집 쉬는 날이야?",
+        "모레 어린이집 빠지니",
+        "모레 어린이집 쉬나요",
+        "모레 어린이집 쉴까",
+    ],
+)
+async def test_묻는_말이면_지우지_않고_그대로_뒀다고_한다(utterance: str) -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", days_ago=-2)])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    result = await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="모레"))
+
+    assert result.success
+    assert len(await rows_on(meals, -2)) == 1
+    assert texts(ctx) == [code("daycare.unchanged")]
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "내일 어린이집 빠지면",
+        "내일 비 오면 어린이집 안 보낼래",
+        "내일 어린이집 빠질 수도 있어",
+        "내일 어린이집 쉴 것 같아",
+    ],
+)
+async def test_가정이나_짐작이면_지우지_않는다(utterance: str) -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", days_ago=-1)])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    result = await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="내일"))
+
+    assert result.success
+    assert len(await rows_on(meals, -1)) == 1
+    assert texts(ctx) == [code("daycare.unchanged")]
+
+
+@pytest.mark.parametrize("utterance", ["내일 급식은 카레래", "내일 급식 뭐 나와"])
+async def test_빠지거나_끼니가_없었다는_말이_없으면_삭제를_거절한다(utterance: str) -> None:
+    # 모델에게 돌려줘서 갱신 · 그대로 두기 중 맞는 tool 을 다시 고르게 한다
+    meals = InMemoryDaycareMeals([lunch("밥", days_ago=-1)])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    result = await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="내일"))
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
+    assert len(await rows_on(meals, -1)) == 1
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "내일 어린이집 빠져",
+        "내일 어린이집 안 가",
+        "내일 결석해요",
+        "내일은 가정보육해요",
+        "내일 어린이집 쉬어",
+        "내일 점심은 없대",
+    ],
+)
+async def test_빠지거나_끼니가_없다는_말이면_지운다(utterance: str) -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", days_ago=-1)])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    result = await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="내일"))
+
+    assert result.success
+    assert await rows_on(meals, -1) == []
+
+
+@pytest.mark.parametrize(
+    ("utterance", "args"),
+    [
+        ("어제 급식 남겼어?", UpdateDaycareMealArgs(date_span="어제", amount_span="남겼어")),
+        (
+            "오늘 우유 대신 두유 받았니",
+            UpdateDaycareMealArgs(date_span="오늘", removed_spans=["우유"], added_spans=["두유"]),
+        ),
+    ],
+)
+async def test_묻는_말이면_양도_메뉴도_바꾸지_않는다(
+    utterance: str, args: UpdateDaycareMealArgs
+) -> None:
+    yesterday = lunch("밥", "우유", days_ago=1)
+    today = lunch("밥", "우유", days_ago=0)
+    meals = InMemoryDaycareMeals([yesterday, today])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    result = await update_daycare_meal(ctx, args)
+
+    assert result.success
+    assert await rows_on(meals, 1) == [yesterday]
+    assert await rows_on(meals, 0) == [today]
+    assert texts(ctx) == [code("daycare.unchanged")]
+
+
+async def test_가정이어도_메뉴를_바꿔_달라는_말은_고친다() -> None:
+    # 갱신은 되돌릴 수 있다(다시 말하면 고친다) — 가정을 막는 것은 삭제뿐이다
+    meals = InMemoryDaycareMeals([lunch("밥", "우유", days_ago=-1)])
+    ctx = context(daycare=meals, utterance="내일 우유 나오면 두유로 바꿔줘")
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span="내일", removed_spans=["우유"], added_spans=["두유"])
+    )
+
+    [row] = await rows_on(meals, -1)
+    assert row.menu_keys == ("밥", "두유")
+
+
+async def test_더_긴_날짜_낱말의_일부를_날짜로_쓰면_거절한다() -> None:
+    # "내일모레" 의 "내일" 은 원문의 부분 문자열이지만 다른 날이다 — 그대로 풀면 내일 급식을 지운다
+    tomorrow = lunch("밥", days_ago=-1)
+    meals = InMemoryDaycareMeals([tomorrow, lunch("밥", days_ago=-2)])
+    ctx = context(daycare=meals, utterance="내일모레는 어린이집 빠져")
+
+    result = await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="내일"))
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
+    assert await rows_on(meals, -1) == [tomorrow]
+
+    ctx = context(daycare=meals, utterance="내일모레 점심은 많이 먹는대")
+    result = await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span="내일", amount_span="많이")
+    )
+    assert not result.success
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
+    assert await rows_on(meals, -1) == [tomorrow]
+
+
+async def test_같은_날을_가리키는_더_짧은_낱말은_받는다() -> None:
+    # "내일모레" 의 "모레" 는 같은 날(오늘 + 2)이라 거절할 이유가 없다
+    meals = InMemoryDaycareMeals([lunch("밥", days_ago=-2)])
+    ctx = context(daycare=meals, utterance="내일모레는 어린이집 빠져")
+
+    result = await delete_daycare_meal(ctx, DeleteDaycareMealArgs(date_span="모레"))
+
+    assert result.success
+    assert await rows_on(meals, -2) == []
+
+
+async def test_그대로_두는_tool_은_아무것도_쓰지_않고_그대로_뒀다고_한다() -> None:
+    row = lunch("밥", "우유")
+    meals = InMemoryDaycareMeals([row])
+    ctx = context(daycare=meals, utterance="오늘 어린이집 급식 뭐 나왔어?")
+
+    result = await keep_daycare_meal(ctx, KeepDaycareMealArgs())
+
+    assert result.success
+    assert await rows_on(meals) == [row]
+    assert texts(ctx) == [code("daycare.unchanged")]

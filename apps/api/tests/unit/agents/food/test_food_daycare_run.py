@@ -79,14 +79,14 @@ async def test_급식_갱신은_모델이_갱신_tool_을_부르면_끝나고_�
     assert set(row.menu_keys) == {"미역국", "잡곡밥"}  # 된장국만 바뀌고 밥은 남는다
 
 
-async def test_급식_갱신은_tool_을_강제하지_않는다() -> None:
-    # 출력 tool 이 쓰기(갱신 · 삭제)뿐이라 required 면 조회만 하려던 발화도 쓰기로 몰린다.
-    # 삭제는 되돌릴 수 없다(OCR 재적재) — 모델이 말로 끝내면 failed 로 끝나는 쪽이 낫다
+async def test_급식_갱신도_tool_을_강제한다() -> None:
+    # auto 에서는 분명한 지시에도 모델이 말로 답해 failed 가 났다(라이브 12건 중 4건).
+    # 날짜를 못 정하면 tool 이 되묻는다. 조회 발화가 삭제로 몰리는지는 라이브 R1 · R2 가 본다
     llm = ScriptedLLM(update_call())
 
     await run(daycare_task(), daycare_context(), client=llm)
 
-    assert llm.tool_choices == ["auto"]
+    assert llm.tool_choices == ["required"]
 
 
 async def test_조회한_뒤_갱신해도_왕복은_한_진입이다() -> None:
@@ -199,3 +199,30 @@ async def test_알레르기와_겹치는_메뉴도_저장하고_경고_문구를
     assert any("알레르기와 겹쳐요" in readout.body for readout in result.readouts)  # 화면 문구
     (row,) = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
     assert "계란국" in row.menu_keys  # 있었던 일이라 기록은 막지 않는다
+
+
+async def test_바뀐_게_없는_말은_그대로_두는_tool_로_끝나고_아무것도_쓰지_않는다() -> None:
+    context = daycare_context()
+    before = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    llm = ScriptedLLM(tool_response(tool_call("k", "keep_daycare_meal", {})))
+
+    result = await run(daycare_task("오늘 어린이집 급식 뭐 나왔어?"), context, client=llm)
+
+    assert result.status == "completed" and result.model_calls == 1
+    assert [r.body for r in result.readouts] == [READOUTS.render("daycare.unchanged").body]
+    after = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    assert after == before
+
+
+async def test_묻는_말에_모델이_삭제를_불러도_지우지_않는다() -> None:
+    # 모델 판단이 아니라 코드가 막는다 — 삭제는 OCR 재적재 없이는 되돌릴 수 없다
+    context = daycare_context()
+    before = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    llm = ScriptedLLM(tool_response(tool_call("d", "delete_daycare_meal", {"date_span": "오늘"})))
+
+    result = await run(daycare_task("오늘 어린이집 쉬는 날이야?"), context, client=llm)
+
+    assert result.status == "completed"
+    assert [r.body for r in result.readouts] == [READOUTS.render("daycare.unchanged").body]
+    after = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    assert after == before

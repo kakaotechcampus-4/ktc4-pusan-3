@@ -16,7 +16,12 @@ from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.food import registry
 from app.agents.food.context import FoodContext, build_gate
-from app.agents.food.registry import answers_by_code, closed_readout_key, tools_for
+from app.agents.food.registry import (
+    answers_by_code,
+    closed_readout_key,
+    output_tools_for,
+    tools_for,
+)
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
     DaycareMealRow,
@@ -33,7 +38,12 @@ CHILD = UUID(int=1)
 TODAY = date(2026, 9, 27)
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
 
-_DAYCARE_BUNDLE = ("lookup_daycare_menu", "update_daycare_meal", "delete_daycare_meal")
+_DAYCARE_BUNDLE = (
+    "lookup_daycare_menu",
+    "update_daycare_meal",
+    "delete_daycare_meal",
+    "keep_daycare_meal",
+)
 _WEANING_MEAL_BUNDLE = ("search_food_memory", "guide_weaning_stage", "propose_meal_candidates")
 _TODDLER_MEAL_WITH_DAYCARE = (
     "search_food_memory",
@@ -118,7 +128,7 @@ def test_급식_행_없으면_closed_no_daycare() -> None:
 
 
 def test_NOT_READY_는_비어_있다() -> None:
-    # tool 11개가 다 구현되고 run() 이 결과를 옮긴다. 스텁 tool 이 생기면 그 task 를 다시 적는다
+    # tool 12개가 다 구현되고 run() 이 결과를 옮긴다. 스텁 tool 이 생기면 그 task 를 다시 적는다
     assert registry.NOT_READY == {}
 
 
@@ -308,3 +318,10 @@ def test_영양소_분석만_모델_없이_코드가_답한다() -> None:
     assert answers_by_code(FoodTaskType.NUTRIENT_ANALYSIS) is True
     assert answers_by_code(FoodTaskType.MEAL_RECOMMENDATION) is False
     assert answers_by_code(FoodTaskType.DAYCARE_MEAL) is False
+
+
+def test_급식_갱신은_쓰지_않고_끝내는_출력_tool_도_있다() -> None:
+    # tool 을 꼭 불러야 끝나서(required) 출력 tool 이 쓰기뿐이면 바뀐 게 없는 말도 쓰기로 몰린다
+    assert output_tools_for(FoodTaskType.DAYCARE_MEAL) == frozenset(
+        {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
+    )
