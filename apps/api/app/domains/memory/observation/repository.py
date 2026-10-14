@@ -159,6 +159,40 @@ async def count_active_observations(
     return ActiveObservationCounts(total_count=row.total_count, period_count=row.period_count)
 
 
+async def count_observations_by_day(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    start: date,
+    end: date,
+    domains: Collection[ObservationDomain],
+    statuses: Collection[ObservationStatus],
+) -> dict[date, int]:
+    """[start, end) 의 날짜마다 그날과 `observed_range` 가 겹치는 관찰 수. 0인 날은 키가 없다.
+
+    여러 날에 걸친 관찰은 걸친 날마다 한 번씩 센다 — 하루 목록(page_observations 의 기간
+    overlap)에 그 관찰이 나오는 날과 같다.
+    """
+    wanted = sorted({ObservationStatus(s).value for s in statuses})
+    if not wanted or ObservationStatus.DELETED.value in wanted:
+        raise ValueError("deleted 는 셀 수 없는 상태다")
+    if not domains:
+        raise ValueError("domains 는 비어 있을 수 없다")
+    if start >= end:
+        raise ValueError("집계 기간은 시작일보다 종료일이 늦어야 한다")
+    rows = await session.execute(
+        _COUNT_BY_DAY_SQL,
+        {
+            "child_id": child_id,
+            "start": start,
+            "end_exclusive": end,
+            "kinds": sorted({f"observation_{ObservationDomain(d).value}" for d in domains}),
+            "statuses": wanted,
+        },
+    )
+    return {row.day: row.observation_count for row in rows}
+
+
 async def page_observations(
     session: AsyncSession,
     *,
@@ -459,5 +493,8 @@ async def delete_observation(
 
 _COUNT_ACTIVE_SQL = text(
     Path(__file__).with_name("count_active_observations.sql").read_text(encoding="utf-8")
+)
+_COUNT_BY_DAY_SQL = text(
+    Path(__file__).with_name("count_observations_by_day.sql").read_text(encoding="utf-8")
 )
 _PAGE_SQL = text(Path(__file__).with_name("page_observations.sql").read_text(encoding="utf-8"))

@@ -16,6 +16,7 @@ from app.api.deps.auth import get_current_parent
 from app.api.v1.routers import (
     affinities,
     auth,
+    calendar,
     child_parents,
     children,
     client_errors,
@@ -54,6 +55,7 @@ protected_router.include_router(observations.router)
 protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
 protected_router.include_router(home.router)
+protected_router.include_router(calendar.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)

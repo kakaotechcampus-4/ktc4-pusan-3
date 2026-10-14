@@ -114,6 +114,8 @@ async def test_events_today_and_within_seven_days(
     await event("6일 뒤", noon + timedelta(days=6))
     await event("8일 뒤", noon + timedelta(days=8))
     await event("어제", noon - timedelta(days=1))
+    # 오늘 00:00 에 끝났다 — 오늘 일정이 아니다 (#318)
+    await event("어제 밤", noon - timedelta(hours=14), ends_at=noon - timedelta(hours=12))
 
     data = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
 
