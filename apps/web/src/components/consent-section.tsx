@@ -23,7 +23,6 @@ import {
   consentChoices,
   LEGAL_DOCUMENTS,
   policyHref,
-  TERMS_NOT_FINAL,
   type ConsentChoice,
   type LegalDocument,
 } from "@/lib/consent";
@@ -284,32 +283,6 @@ function consentName(choice: ConsentChoice): string {
 }
 
 /**
- * 🚨 약관 전문이 아니다. 보관 기간·삭제 범위가 미정이라(최상위 CLAUDE.md §10) 정식 문구를
- *    쓸 수 없고, 없는 조항을 지어 넣으면 그대로 배포된다. 확정된 사실만 보여주고 아직
- *    최종본이 아니라는 것을 화면에 밝힌다.
- *
- * 🚨 **동의 스코프는 이 시트를 쓰지 않는다** (#90). 그쪽 전문은 서버 정본 HTML 이고, 여기 남은
- *    것은 서버에 아직 없는 개인정보 처리방침 하나뿐이다 — 올라오면 이 함수도 같이 지운다.
- */
-function ConsentDetail({ details }: { details: NonNullable<LegalDocument["details"]> }) {
-  return (
-    <div className="flex flex-col gap-5">
-      {details.map((section) => (
-        <section key={section.heading}>
-          <h3 className="text-section text-ink">{section.heading}</h3>
-          <ul className="text-body-sm text-ink-muted marker:text-ink-subtle mt-2 flex list-disc flex-col gap-1.5 pl-5">
-            {section.lines.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        </section>
-      ))}
-      <p className="text-caption text-ink-subtle border-line border-t pt-4">{TERMS_NOT_FINAL}</p>
-    </div>
-  );
-}
-
-/**
  * **약관과 방침** — 보호자가 언제든 다시 읽는 **법적 문서 둘**이다 (`LEGAL_DOCUMENTS`).
  *
  * 🚨 **동의 스코프를 늘어놓지 않는다.** 필수 동의 네 건은 *가입할 때 받는 것*이고, 그걸 설정에
@@ -326,12 +299,11 @@ function ConsentDetail({ details }: { details: NonNullable<LegalDocument["detail
  * 🚨 **컴팩트한 줄이다** — 아이콘 타일이 없다. 여기 줄들은 "무엇을 하는 곳" 이 아니라
  *    **문서 목록**이라 훑는 속도가 먼저고, 타일을 세우면 손대는 구역들과 같은 무게로 읽힌다.
  *
- * 🚨 **이용약관은 사본이 아니라 서버 정본을 연다** (#90). 가입 화면이 여는 것과 같은 페이지라,
- *    부모가 동의한 글과 나중에 다시 읽는 글이 같다는 것이 구조로 보장된다. 개인정보 처리방침만
- *    아직 서버에 없어서 화면 안 시트로 남아 있다 — 올라오면 이 갈래가 없어진다.
+ * 🚨 **둘 다 사본이 아니라 서버 정본을 연다** (#90 · #221). 이용약관은 가입 화면이 여는 것과 같은
+ *    페이지라, 부모가 동의한 글과 나중에 다시 읽는 글이 같다는 것이 구조로 보장된다. 처리방침은
+ *    동의 목록 밖의 고정 주소라 늘 지금 적용 중인 판이 열린다.
  */
 export function LegalDocumentSection() {
-  const [detail, setDetail] = useState<LegalDocument | null>(null);
   const policies = usePolicies();
 
   /** 문서에 붙는 서버 정본. 없으면(아직 못 받았거나 정본이 없으면) 링크를 걸지 않는다. */
@@ -341,64 +313,44 @@ export function LegalDocumentSection() {
       : policies.data?.find((policy) => policy.scope === doc.scope);
 
   return (
-    <>
-      <SettingsGroup>
-        {LEGAL_DOCUMENTS.map((doc) => {
-          const policy = documentPolicy(doc);
-          const href = policy ? policyHref(policy) : null;
+    <SettingsGroup>
+      {LEGAL_DOCUMENTS.map((doc) => {
+        const policy = documentPolicy(doc);
+        const href = doc.href ?? (policy ? policyHref(policy) : null);
 
-          return (
-            <li key={doc.id} className="px-4 py-1">
-              {/* 🚨 이름이 유일한 조작이다. 줄 전체를 버튼으로 만들지 않는 것은 다른 설정 줄과
-                  같지만, 여기서는 **누를 것이 이것뿐**이라 밑줄이 더 중요하다. */}
-              {href ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={LEGAL_LINK}
-                  aria-describedby={`${doc.id}-version`}
-                >
-                  {doc.label}
-                </a>
-              ) : doc.details ? (
-                <button type="button" onClick={() => setDetail(doc)} className={LEGAL_LINK}>
-                  {doc.label}
-                </button>
-              ) : (
-                /* 🚨 **못 여는 링크를 그리지 않는다.** 정본을 못 받았을 때 누르면 아무 일도
-                   안 일어나는 밑줄이 서는 대신, 왜 못 여는지를 아래 줄이 말한다. */
-                <span className="text-body text-ink-subtle block py-2">{doc.label}</span>
-              )}
+        return (
+          <li key={doc.id} className="px-4 py-1">
+            {/* 🚨 이름이 유일한 조작이다. 줄 전체를 버튼으로 만들지 않는 것은 다른 설정 줄과
+                같지만, 여기서는 **누를 것이 이것뿐**이라 밑줄이 더 중요하다. */}
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={LEGAL_LINK}
+                aria-describedby={`${doc.id}-version`}
+              >
+                {doc.label}
+              </a>
+            ) : (
+              /* 🚨 **못 여는 링크를 그리지 않는다.** 정본을 못 받았을 때 누르면 아무 일도
+                 안 일어나는 밑줄이 서는 대신, 왜 못 여는지를 아래 줄이 말한다. */
+              <span className="text-body text-ink-subtle block py-2">{doc.label}</span>
+            )}
 
-              {/* 어느 판인지. 🚨 문서마다 다르다 — 약관은 저마다 버전을 갖는다 (#168). */}
-              <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
-                {policy
+            {/* 어느 판인지. 🚨 문서마다 다르다 — 약관은 저마다 버전을 갖는다 (#168).
+                처리방침은 고정 주소라 판을 화면이 모른다 — 서버가 지금 판을 연다. */}
+            <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
+              {doc.href
+                ? "지금 적용 중인 판이 열려요."
+                : policy
                   ? `${policy.version} 판이에요.`
-                  : doc.scope !== undefined
-                    ? "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."
-                    : "아직 정식 문서가 아니에요."}
-              </p>
-            </li>
-          );
-        })}
-      </SettingsGroup>
-
-      <BottomSheet
-        open={detail !== null}
-        onClose={() => setDetail(null)}
-        variant="document"
-        title={detail?.label ?? ""}
-        description={detail?.legalBasis}
-        footer={
-          <Button block variant="secondary" onClick={() => setDetail(null)}>
-            닫기
-          </Button>
-        }
-      >
-        {detail?.details ? <ConsentDetail details={detail.details} /> : null}
-      </BottomSheet>
-    </>
+                  : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}
+            </p>
+          </li>
+        );
+      })}
+    </SettingsGroup>
   );
 }
 
