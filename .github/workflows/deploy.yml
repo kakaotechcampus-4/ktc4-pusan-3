@@ -27,7 +27,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --timeout-seconds 300 \
+            --timeout-seconds 600 \
             --parameters commands='[
               "cd /home/ubuntu/ktc4-pusan-3",
               "git fetch origin ${{ github.ref_name }}",
@@ -44,12 +44,29 @@ jobs:
 
       - name: 배포 결과 확인
         run: |
-          aws ssm wait command-executed \
-            --command-id "${{ steps.ssm.outputs.command_id }}" \
-            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
-            || true
+          # wait 기본 5초 간격 × 20회 = 100초. 이미지 빌드는 더 걸리므로 폴링으로 최대 10분 대기.
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${{ steps.ssm.outputs.command_id }}" \
+              --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
 
-          aws ssm get-command-invocation \
-            --command-id "${{ steps.ssm.outputs.command_id }}" \
-            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
-            --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}'
+            echo "[$i/60] Status: $STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              echo "배포 성공"
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "TimedOut" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "배포 실패: $STATUS"
+              aws ssm get-command-invocation \
+                --command-id "${{ steps.ssm.outputs.command_id }}" \
+                --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+                --query '{Output:StandardOutputContent,Error:StandardErrorContent}'
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "배포 시간 초과 (10분)"
+          exit 1
