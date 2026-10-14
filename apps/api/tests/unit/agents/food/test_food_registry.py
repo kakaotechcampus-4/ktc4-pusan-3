@@ -64,18 +64,7 @@ def _gate(
     )
 
 
-@pytest.fixture
-def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """tool 이 구현돼 `registry.NOT_READY` 에서 뺀 뒤의 게이팅. 게이팅 표의 묶음이 그대로 열리는지
-    본다.
-
-    식단 추천 · 급식은 지금 스텁이라 닫혀 있지만, 그 묶음은 `tools_for` 에 남아 있다 — 구현 때
-    `NOT_READY` 에서 빼기만 하면 열려야 하고, 그 사이에 표와 어긋나면 안 된다 (#357 리뷰 4-②).
-    """
-    monkeypatch.setattr(registry, "NOT_READY", {})
-
-
-# ── tools_for — 지금 모델에게 열리는 tool ───────────────────────────
+# ── tools_for — 모델에게 열리는 tool (게이팅 표 칸마다 한 케이스) ───────
 @pytest.mark.parametrize(
     ("months", "task", "daycare", "expected"),
     [
@@ -83,35 +72,6 @@ def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
         (0, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
         (3, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
         (3, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
-        # 식단 추천은 run() 이 결과를 옮기기 전이라 not_ready.meal 로 닫힌다 — 단계 · 급식 행과 무관
-        (4, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
-        (4, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
-        (11, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
-        (12, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
-        (12, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
-        # 영양소 분석 — 0–11개월은 닫히고, 12개월+ 는 급식 행 유무와 무관하게 같은 묶음
-        (11, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
-        (12, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),  # 열린 tool 이 없다 — 코드가 낸다
-        (12, FoodTaskType.NUTRIENT_ANALYSIS, False, ()),
-        # 급식은 run() 이 결과를 옮기기 전이라 행이 있어도 not_ready.daycare 로 닫힌다
-        (3, FoodTaskType.DAYCARE_MEAL, True, ()),
-        (4, FoodTaskType.DAYCARE_MEAL, True, ()),
-        (11, FoodTaskType.DAYCARE_MEAL, False, ()),
-        (12, FoodTaskType.DAYCARE_MEAL, True, ()),
-        (48, FoodTaskType.DAYCARE_MEAL, False, ()),
-    ],
-)
-def test_tools_for(
-    months: int, task: FoodTaskType, daycare: bool, expected: tuple[str, ...]
-) -> None:
-    assert tools_for(task, _gate(months, daycare=daycare)) == expected
-
-
-# ── tools_for — not_ready 를 풀었을 때 — 게이팅 표 칸마다 한 케이스 ───
-@pytest.mark.usefixtures("not_ready_lifted")
-@pytest.mark.parametrize(
-    ("months", "task", "daycare", "expected"),
-    [
         # 4–11개월(infant_weaning) — meal_recommendation 은 고정 3개, daycare 유무와 무관
         (4, FoodTaskType.MEAL_RECOMMENDATION, False, _WEANING_MEAL_BUNDLE),
         (4, FoodTaskType.MEAL_RECOMMENDATION, True, _WEANING_MEAL_BUNDLE),
@@ -119,6 +79,10 @@ def test_tools_for(
         # 12개월+ — 급식 행 있음 · 없음(daycare 빠진 묶음)
         (12, FoodTaskType.MEAL_RECOMMENDATION, True, _TODDLER_MEAL_WITH_DAYCARE),
         (12, FoodTaskType.MEAL_RECOMMENDATION, False, _TODDLER_MEAL_NO_DAYCARE),
+        # 영양소 분석 — 0–11개월은 닫히고, 12개월+ 는 급식 행 유무와 무관하게 같은 묶음
+        (11, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
+        (12, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),  # 열린 tool 이 없다 — 코드가 낸다
+        (12, FoodTaskType.NUTRIENT_ANALYSIS, False, ()),
         # daycare_meal — 단계로 닫지 않는다. 급식 행 유무로만 갈린다
         (3, FoodTaskType.DAYCARE_MEAL, True, _DAYCARE_BUNDLE),
         (4, FoodTaskType.DAYCARE_MEAL, True, _DAYCARE_BUNDLE),
@@ -127,7 +91,7 @@ def test_tools_for(
         (48, FoodTaskType.DAYCARE_MEAL, False, ()),
     ],
 )
-def test_tools_for_not_ready_를_풀면(
+def test_tools_for(
     months: int, task: FoodTaskType, daycare: bool, expected: tuple[str, ...]
 ) -> None:
     assert tools_for(task, _gate(months, daycare=daycare)) == expected
@@ -153,20 +117,27 @@ def test_급식_행_없으면_closed_no_daycare() -> None:
     )
 
 
+def test_NOT_READY_는_비어_있다() -> None:
+    # tool 11개가 다 구현되고 run() 이 결과를 옮긴다. 스텁 tool 이 생기면 그 task 를 다시 적는다
+    assert registry.NOT_READY == {}
+
+
 @pytest.mark.parametrize("months", [4, 11, 12, 48])
-def test_식단_추천은_tool_이_붙기_전까지_not_ready_meal(months: int) -> None:
-    assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, _gate(months)) == "not_ready.meal"
+def test_식단_추천은_열려_있다(months: int) -> None:
+    assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, _gate(months)) is None
 
 
 @pytest.mark.parametrize("months", [3, 12, 48])
-def test_급식_행이_있어도_tool_이_붙기_전까지_not_ready_daycare(months: int) -> None:
+def test_급식_행이_있으면_급식_갱신이_열려_있다(months: int) -> None:
     gate = _gate(months, daycare=True)
-    assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) == "not_ready.daycare"
+    assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) is None
 
 
-def test_열린_조합은_closed_readout_key_가_None() -> None:
-    # 지금 모델에게 열리는 건 영양소 분석(12개월+)뿐이다 — 나머지는 not_ready.* 로 닫혀 있다
-    assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, _gate(24)) is None
+@pytest.mark.parametrize("task", list(FoodTaskType))
+@pytest.mark.parametrize("months", [4, 12, 48])
+def test_열린_조합의_문구_키는_not_ready_가_아니다(task: FoodTaskType, months: int) -> None:
+    key = closed_readout_key(task, _gate(months, daycare=True))
+    assert key is None or not key.startswith("not_ready")
 
 
 # ── safety_ok=False — 식단 추천 · 영양소 분석이 닫힌다 ───────────────
@@ -178,16 +149,9 @@ def test_안전_조회_실패는_식단_추천과_영양소_분석을_닫는다(
     # 영양소 분석도 식품 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다
     assert tools_for(FoodTaskType.NUTRIENT_ANALYSIS, gate) == ()
     assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) == "blocked.safety"
-    # 급식 갱신은 식품 안내가 아니라서 안전 조회와 무관하다 — blocked.safety 가 아니라 tool 이 붙기
-    # 전이라 not_ready.daycare 로 닫힌다
-    assert tools_for(FoodTaskType.DAYCARE_MEAL, gate) == ()
-    assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) == "not_ready.daycare"
-
-
-@pytest.mark.usefixtures("not_ready_lifted")
-def test_not_ready_를_풀어도_급식_갱신은_안전_조회와_무관하다() -> None:
-    gate = _gate(24, safety_ok=False)
+    # 급식 갱신은 식품 안내가 아니라서 안전 조회와 무관하다 — 닫히지 않는다
     assert tools_for(FoodTaskType.DAYCARE_MEAL, gate) == _DAYCARE_BUNDLE
+    assert closed_readout_key(FoodTaskType.DAYCARE_MEAL, gate) is None
 
 
 def test_0에서_3개월은_안전_조회_실패여도_milk_meal이_우선한다() -> None:
@@ -225,7 +189,6 @@ class _CountingSafety:
         return await self._inner.food_safety(child_id=child_id)
 
 
-@pytest.mark.usefixtures("not_ready_lifted")
 async def test_build_gate_는_동의_없는_아이의_health_safety_를_읽지_않는다() -> None:
     spy = _CountingSafety(InMemorySafety())
     ports = in_memory_ports(

@@ -23,7 +23,7 @@ general.reason.weaning:
   template: "이 시기 아기들이 많이 먹는 재료예요."
 followup.preference:
   kind: followup
-  template: "{menu}는 좋아하는 편인가요?"
+  template: "{menu}은(는) 좋아하는 편인가요?"
 unsupported.milk_amount:
   kind: unsupported
   template: "먹이는 양은 아이마다 달라서 알려드리기 어려워요. 소아과에서 확인해 보세요."
@@ -75,6 +75,9 @@ daycare.reference_menu:
 daycare.updated:
   kind: daycare
   template: "{date} {slot} 급식을 {menu}(으)로 바꿔 뒀어요."
+daycare.amount_updated:
+  kind: daycare
+  template: "{date} {slot} 급식은 먹은 양을 반영해 뒀어요."
 daycare.absent:
   kind: daycare
   template: "{date}은(는) 기관 식사 없는 걸로 해 뒀어요."
@@ -93,12 +96,6 @@ daycare.out_of_range:
 closed.no_daycare:
   kind: closed
   template: "등록된 기관 급식 정보가 없어요."
-not_ready.meal:
-  kind: closed
-  template: "식단 추천은 아직 준비 중이에요."
-not_ready.daycare:
-  kind: closed
-  template: "급식 정보 확인·수정은 아직 준비 중이에요."
 daycare.not_found:
   kind: daycare
   template: "급식 정보를 못 찾았어요."

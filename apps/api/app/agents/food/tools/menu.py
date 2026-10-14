@@ -13,6 +13,7 @@ from app.agents.food.readouts import (
     DAYCARE_ABSENT,
     DAYCARE_ALLERGY_CONFLICT,
     DAYCARE_AMBIGUOUS,
+    DAYCARE_AMOUNT_UPDATED,
     DAYCARE_ASK_SUBSTITUTE,
     DAYCARE_NOT_FOUND,
     DAYCARE_OUT_OF_RANGE,
@@ -205,6 +206,13 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
                 date=_date_label(day),
                 slot=_SLOT_LABEL[row.meal_slot],
                 menu=" · ".join(added_names),
+            ),
+        )
+    elif amount_given:
+        # 메뉴는 그대로고 양만 바꿨다 — 아무 문구도 없으면 보호자는 반영됐는지 알 수 없다
+        readouts = (
+            READOUTS.render(
+                DAYCARE_AMOUNT_UPDATED, date=_date_label(day), slot=_SLOT_LABEL[row.meal_slot]
             ),
         )
     entries = state.safety

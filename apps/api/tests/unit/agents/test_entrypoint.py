@@ -23,7 +23,9 @@ from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.llm_client import LLMConfigError
 from app.agents.curator.embedding import embedder as embedder_module
 from app.agents.curator.embedding import jev as jev_module
+from app.agents.food.agent import run as food_run
 from app.agents.food.context import build_gate
+from app.agents.food.readouts import READOUTS
 from app.agents.food.registry import closed_readout_key, tools_for
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import FoodPorts, MenuCatalogRow
@@ -32,6 +34,7 @@ from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreActivityMemory
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import routing
+from tests.unit.agents.food.support import ScriptedLLM, food_task
 
 CHILD = UUID(int=1)
 PARENT = UUID(int=2)
@@ -308,8 +311,8 @@ async def test_포트를_안_넘긴_run_의_Food_는_안전_조회_실패로_닫
 ) -> None:
     """ "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다.
 
-    실제 DB 포트가 붙기 전까지 Food 는 서비스에서 모델 0회로 닫힌다.
-    (issue4 에서 api 가 포트를 넘긴다)
+    안전 어댑터를 러너가 Food 에 넘기기 전까지 Food 는 서비스에서 모델 0회로 닫힌다. 식단 추천 ·
+    급식 갱신의 `NOT_READY` 가 비어 있어도 그렇다 — 닫는 것은 안전 조회 실패다.
     """
     seen: dict[str, Any] = {}
 
@@ -333,6 +336,14 @@ async def test_포트를_안_넘긴_run_의_Food_는_안전_조회_실패로_닫
     for task in (FoodTaskType.MEAL_RECOMMENDATION, FoodTaskType.NUTRIENT_ANALYSIS):
         assert closed_readout_key(task, gate) == "blocked.safety"
         assert tools_for(task, gate) == ()
+        # run() 끝까지 — 모델은 한 번도 불리지 않고 추천 · 문장 없이 blocked.safety 문구만 나간다
+        llm = ScriptedLLM()
+        result = await food_run(food_task(task.value), seen["food"].for_task(), client=llm)
+        assert (result.status, result.model_calls, llm.calls) == ("blocked", 0, 0)
+        assert result.suggestions == ()
+        assert [readout.body for readout in result.readouts] == [
+            READOUTS.get("blocked.safety").template
+        ]
 
 
 async def test_Food_쓰기_포트를_감싸_쓰기_표시를_pipeline_에_넘긴다(

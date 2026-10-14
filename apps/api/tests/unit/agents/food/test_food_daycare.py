@@ -256,6 +256,16 @@ async def test_양만_말하면_메뉴는_그대로_두고_양_계수만_바꾼�
     assert row.caregiver_checked is False  # 양만 말했다 — 대체식을 확인한 것이 아니다
 
 
+async def test_양만_말해도_반영했다는_문구를_낸다() -> None:
+    # 메뉴가 안 바뀌어도 화면에 아무것도 안 나가면 보호자는 반영됐는지 알 수 없다
+    meals = InMemoryDaycareMeals([lunch("밥", "국")])
+    ctx = context(daycare=meals, utterance="오늘 급식 엄청 많이 먹었대")
+
+    await update_daycare_meal(ctx, UpdateDaycareMealArgs(date_span="오늘", amount_span="엄청 많이"))
+
+    assert texts(ctx) == [code("daycare.amount_updated", date=label_of(0), slot="점심")]
+
+
 async def test_남겼다는_말은_양을_모르는_절반이다() -> None:
     meals = InMemoryDaycareMeals([lunch("밥", "국", days_ago=1)])
     ctx = context(daycare=meals, utterance="어제 급식 남겼대")

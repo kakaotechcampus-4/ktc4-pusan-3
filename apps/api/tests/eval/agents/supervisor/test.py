@@ -641,7 +641,7 @@ def _report(observed: Observed) -> None:
 
 
 def _food(result: PipelineResult) -> list[Any]:
-    """도메인 결과 중 Food 몫. mock 결과라 tools · stage 를 그대로 읽는다."""
+    """도메인 결과 중 Food 몫."""
     return [item for item in result.domain if item.agent == "food"]
 
 
@@ -689,10 +689,9 @@ def _print_case(observed: Observed, attempt: int) -> None:
         )
         print(f"      저장 {_saved_summary(observed)}")
     for food in _food(result):
-        safety = "health_safety 사전 확인 대상" if food.requires_safety_check else "사전 확인 없음"
         print(
-            f"    F {food.task_type}·{food.stage} ← {list(food.request_texts)} · "
-            f"tools {len(food.tools)} · {safety} · {food.status}"
+            f"    F {food.task_type} · {food.status} · 추천 {len(food.suggestions)}개 · "
+            f"모델 {food.model_calls}회"
         )
     if result.routing.unavailable_agents:
         print(f"      미구현 agent: {list(result.routing.unavailable_agents)}")
@@ -772,10 +771,9 @@ def _record(observed: Observed) -> dict[str, Any]:
         "food": [
             {
                 "task_type": str(food.task_type),
-                "stage": str(food.stage),
                 "status": food.status,
-                "tools": len(food.tools),
-                "requires_safety_check": food.requires_safety_check,
+                "suggestions": len(food.suggestions),
+                "model_calls": food.model_calls,
             }
             for food in _food(result)
         ],

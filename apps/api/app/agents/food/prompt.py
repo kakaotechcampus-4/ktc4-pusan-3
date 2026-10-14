@@ -12,15 +12,20 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
   동적  [예시] → 현재 시각
 [예시]를 맨 뒤에 두는 이유는 memory/prompt.py 의 현재 시각과 같다 — run 마다 바뀌는 구간을
 뒤에 둬야 앞부분이 프롬프트 캐시에 남는다(RAG_plan §3).
+
+식단 추천의 후보 목록은 system 이 아니라 user 메시지에 싣는다 — 샘플이 run 마다 바뀌어서 system 에
+두면 [예시] 앞이 캐시에서 빠진다. 재호출은 같은 대화에 user 메시지를 더해 새 목록을 준다.
 """
+
+from collections.abc import Sequence
 
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
-from app.agents.food.store.ports import FoodDocRow
+from app.agents.food.store.ports import FoodDocRow, MenuCatalogRow
 
 _ROLE = """
 [역할]
-너는 Child Memory 의 Food Agent 다. 주어진 task(식단 추천 또는 영양소 분석) 하나만 한다.
+너는 Child Memory 의 Food Agent 다. 주어진 task(식단 추천 또는 급식 갱신) 하나만 한다.
 """.strip()
 
 _OUT_OF_SCOPE = """
@@ -36,6 +41,8 @@ _OUT_OF_SCOPE = """
 _EVIDENCE = """
 [근거]
 - evidence 에는 이번 대화의 조회 결과에 있던 kind·id 만 쓴다. 지어내지 않는다.
+- [예시] 문서 행을 바탕으로 했으면 그 행의 id 를 kind=food_doc 으로 단다. 문서 행만 근거면 코드가
+  일반 추천으로 분류한다.
 - 근거가 없으면 evidence 를 비운다 — 코드가 일반 추천으로 분류한다. 개인화인 척하지 않는다.
 - 6개월 지난 선호(is_stale)는 단독 근거로 쓰지 않는다.
 - 근거가 없어 되물을 때는 질문을 하나만 한다.
@@ -87,8 +94,52 @@ def _instructions(task_type: FoodTaskType) -> str:
 def _examples(examples: tuple[FoodDocRow, ...]) -> str:
     if not examples:
         return "[예시]\n(참고할 문서 없음)"
-    body = "\n".join(f"- {doc.title}: {doc.body}" for doc in examples)
-    return f"[예시]\n{body}"
+    lines = ["[예시] 결만 참고한다. 그대로 베끼지 않는다. 바탕으로 했으면 id 를 evidence 에 단다."]
+    # 출처 기관을 같이 보여 준다 — 일부 행은 출처 표시가 이용 조건이다. 화면의 출처는 id 로 붙는다
+    lines.extend(f"- id {doc.id} · {doc.title} ({doc.source_org}): {doc.body}" for doc in examples)
+    return "\n".join(lines)
+
+
+# 후보 한 줄에 싣는 재료 수. 이름만으로 고르기 어려운 메뉴를 가르는 데는 이 정도면 된다
+_INGREDIENT_LIMIT = 8
+
+
+def candidate_list(sample: Sequence[MenuCatalogRow]) -> str:
+    """모델에게 보여 줄 후보 목록. menu_key · 이름 · 재료만 싣는다 — 영양 수치 · 알레르기는 없다."""
+    lines = ["[후보 목록] 이 중에서만 menu_key 로 고른다."]
+    for row in sample:
+        ingredients = ", ".join(row.ingredients[:_INGREDIENT_LIMIT]) or "재료 모름"
+        lines.append(f"- {row.menu_key} · {row.display_name} · 재료 {ingredients}")
+    return "\n".join(lines)
+
+
+def _request(request_texts: Sequence[str]) -> str:
+    texts = [text for text in request_texts if text.strip()]
+    return "\n".join(texts) if texts else "오늘 아이에게 먹일 식단을 추천해 줘."
+
+
+def request_message(request_texts: Sequence[str], sample: Sequence[MenuCatalogRow]) -> str:
+    """식단 추천의 처음 user 메시지 — 보호자의 요청 그대로와 코드가 뽑은 후보 목록."""
+    return f"{_request(request_texts)}\n\n{candidate_list(sample)}"
+
+
+def recall_message(
+    request_texts: Sequence[str], *, avoid: Sequence[str], sample: Sequence[MenuCatalogRow]
+) -> str:
+    """안전 필터 뒤 재호출의 user 메시지. 빠진 이유는 말하지 않는다 (Tool_공통.md §5-2).
+
+    `avoid` 는 이미 고른 것과 빠진 것의 `menu_key` 다 — 둘을 같은 말("다시 내지 않는다")로만 준다.
+    이유를 알려 주면 단어만 바꿔 같은 메뉴를 다시 내는 법을 배운다. 앞의 후보 목록은 더 쓰지
+    않는다 — 새 목록 밖 `menu_key` 는 출력 tool 이 거절한다.
+    """
+    exclusion = "\n".join(f"- {key}" for key in avoid)
+    return (
+        f"{_request(request_texts)}\n\n"
+        "아래 메뉴는 다시 내지 않는다. 앞의 후보 목록은 더 쓰지 않고, 아래 새 목록에서 "
+        "다른 메뉴로 3개를 새로 낸다.\n"
+        f"{exclusion}\n\n"
+        f"{candidate_list(sample)}"
+    )
 
 
 _SECTIONS = (_ROLE, _OUT_OF_SCOPE, _EVIDENCE, _DATE)
@@ -102,11 +153,9 @@ def build_system_prompt(
     """system 메시지 본문.
 
     `examples` 는 `search_food_doc` 결과가 들어갈 자리다 — 모델에게 문서 검색 tool 은 없고,
-    run 시작에 코드가 채워 넘기는 모양으로 설계했다(Food_Tool_명세 §3). 🚨 `agent.run()` 은
-    아직 이 인자를 채우지 않는다(#321 파트 2 범위 밖, final-review Important #4) — 지금은
-    항상 빈 튜플이 들어와 `[예시]` 구획이 "(참고할 문서 없음)" 으로만 나간다. 현재 시각은
-    맨 뒤에 둔다 — now 는 run 마다 바뀌어서 앞에 두면 그 뒤가 전부 프롬프트 캐시에서
-    빠진다(memory/prompt.py 와 같은 이유).
+    run 시작에 코드가 채워 넘긴다(Food_Tool_명세 §3). 식단 추천이 채우고, 문서가 없으면 `[예시]`
+    구획이 "(참고할 문서 없음)" 으로 나간다. 현재 시각은 맨 뒤에 둔다 — now 는 run 마다 바뀌어서
+    앞에 두면 그 뒤가 전부 프롬프트 캐시에서 빠진다(memory/prompt.py 와 같은 이유).
     """
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
     return "\n\n".join([*_SECTIONS, _instructions(task_type), _examples(examples), header])
