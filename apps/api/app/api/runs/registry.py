@@ -34,11 +34,22 @@ class RunChannel:
         self.memory_committed = False
         """Memory 단계의 commit 이 끝났으면 True. commit 이후에 터져도 저장된 관찰은
         되돌리지 않는다 — _guarded 가 이 값을 보고 done/failed 를 정한다."""
+        self.suggestions_saved = False
+        """추천 저장이 한 번이라도 commit 됐으면 True. Memory commit 과 같이 확정된 저장이다
+        (공통규약 §7) — 저장된 draft 가 있는 run 을 failed 로 닫으면 다시 보낼 때 두 벌이 된다."""
         self.closed = False
         self.closed_at = None
         self._changed = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         """이 run 을 돌리는 백그라운드 태스크. 참조를 여기 매달아야 GC 가 도중에 거두지 않는다."""
+
+    @property
+    def committed(self) -> bool:
+        """확정된 저장이 있는 run 인가. 있으면 failed 로 끝내지 않고 Idempotency 키도 놓지 않는다.
+
+        Memory commit 과 추천 저장 commit 을 한 값으로 본다.
+        """
+        return self.memory_committed or self.suggestions_saved
 
     def publish(self, event) -> None:
         """이벤트 하나를 붙이고 자는 구독자를 깨운다. sync 다 — pipeline 의 emit 콜백이 그렇다.

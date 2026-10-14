@@ -5,7 +5,7 @@
   2. 평가 표현       content · reason · note
   3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
                      note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
-  4. build()         아이 기록 근거 행 수로 kind 를 정한다. 모델이 고르지 않는다.
+  4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙인다. allergens · items 도 코드가 채운다
   5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
@@ -17,6 +17,7 @@
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
@@ -123,6 +124,7 @@ def review_candidates(
     places: Collection[str] = (),
     outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
+    today: date,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -136,6 +138,7 @@ def review_candidates(
     후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
     되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
+    `today` 는 `build()` 의 6개월 판정 기준일이다.
     """
     # 대조는 subject 로 한다 — 관찰의 label 은 "물감 놀이" 같은 문장이라
     # 후보에 그대로 나오는 일이 드물다
@@ -169,7 +172,9 @@ def review_candidates(
         )
         if reason is None:
             try:
-                drafts.append(_build(candidate, citations, place, allergens=check.allergens))
+                drafts.append(
+                    _build(candidate, citations, place, allergens=check.allergens, today=today)
+                )
             except SuggestionRejected:
                 reason = RejectReason.BUILD
             else:
@@ -265,6 +270,7 @@ def _build(
     place: str | None,
     *,
     allergens: tuple[str, ...],
+    today: date,
 ) -> SuggestionDraft:
     """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
 
@@ -278,6 +284,7 @@ def _build(
         general_reason=GENERAL_REASON,
         allergens=allergens,
         items=tuple(candidate.materials),
+        today=today,
     )
 
 

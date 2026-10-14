@@ -6,6 +6,7 @@
 """
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal
 from uuid import UUID
 
@@ -74,6 +75,9 @@ class EvidenceCitation:
     `label` 은 화면용 이름이라 관찰이면 "물감 놀이 하다가 울었음" 같은 문장일 수 있고,
     `subject` 는 대조 키("물감")다 (Tool_공통 §5-3). 이유 문장에 둘 중 하나가 나오면
     밝힌 것으로 본다.
+
+    `observed_on` 은 아이 기록의 날짜다(affinity 는 마지막 관찰일, 문서 행은 None). `build()` 가
+    6개월 판정에 쓰고 `suggestion_evidence` 로는 나가지 않는다.
     """
 
     ref: Ref
@@ -81,6 +85,7 @@ class EvidenceCitation:
     polarity: int = 0
     label: str = ""
     subject: str = ""
+    observed_on: date | None = None
 
     @property
     def is_avoidance(self) -> bool:
