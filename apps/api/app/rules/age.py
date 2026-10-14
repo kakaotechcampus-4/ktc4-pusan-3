@@ -86,6 +86,16 @@ def months_between(birth_date: date, today: date) -> int:
     return months
 
 
+def date_at_month(birth_date: date, months: int) -> date:
+    """기준 월령이 되는 날. 해당 일이 없는 달은 말일로 맞춘다."""
+    _require_plain_date(birth_date, "birth_date")
+    if months < 0:
+        raise ValueError(f"월령은 음수일 수 없다: {months}")
+    year, month_index = divmod(birth_date.year * 12 + birth_date.month - 1 + months, 12)
+    month = month_index + 1
+    return date(year, month, min(birth_date.day, _last_day_of_month(year, month)))
+
+
 def age_display(birth_date: date, today: date) -> str:
     """화면에 그대로 보여 줄 나이 문구. 프론트는 나이를 계산하지 않고 이 값을 쓴다.
 

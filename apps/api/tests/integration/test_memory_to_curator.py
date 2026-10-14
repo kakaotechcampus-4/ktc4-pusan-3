@@ -239,7 +239,11 @@ class TestMemoryToCurator:
 
         curator_store = DbCuratorStore(session)
         link_result = await link_observations(
-            curator_store, _FakeEmbedder(), _FakeJudge(), child_id=child.id
+            curator_store,
+            _FakeEmbedder(),
+            _FakeJudge(),
+            child_id=child.id,
+            birth_date=date(2023, 1, 1),
         )
         if link_result.affected_profile_ids:
             await recompute_after_linking(session, result=link_result, today=TODAY)
