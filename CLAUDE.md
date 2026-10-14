@@ -296,7 +296,8 @@
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
-  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` · `GET /policies/{scope}/{version}` 만 인증 없이 호출한다.
+  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` · `GET /policies/{scope}/{version}`,
+  개인정보 처리방침 정본 `GET /privacy-policy` · `GET /privacy-policy/{version}` 만 인증 없이 호출한다.
   새 예외가 필요하면 구현 전에 이 목록과 API 계약을 함께 변경한다.
   - `GET /auth/{provider}/status`
   - `GET /auth/{provider}`
@@ -305,6 +306,7 @@
   - `POST /auth/{provider}/signup`
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
   - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
+  - `GET /privacy-policy` · `GET /privacy-policy/{version}` — 개인정보 처리방침 정본 HTML (#221). 누구나 언제든 볼 수 있게 게시해야 하고, 동의 대상이 아니라 동의 목록 밖에 둔다. 스토어에 거는 고정 주소가 앞의 것이다
 - 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**
@@ -320,8 +322,7 @@
 
 그중 코드에 직접 걸리는 것:
 
-- **개인정보 보관 범위·기간**, **삭제 범위** (Memory·원문·Inference·Embedding·로그까지)
 - **외부 LLM 전달 범위** — 공통 컨텍스트 강제 주입 구조상 무관한 Agent 에도 건강정보가 갈 수 있다
 - **키·몸무게를 어느 Agent 가 어떤 추천에 쓰는지** (#75) — 외부 LLM 으로 보낼 수 있다는 것까지는 정했다 (개인정보 처리방침에 전달 항목으로 적는다). 필요한 Agent 에만 넘길 수 있는지는 바로 위 항목(공통 컨텍스트 구조)과 같은 숙제다
 
-새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다.
+새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다. — 보관 · 삭제 범위는 10-14 확정 → [`docs/safety/retention-v1.md`](docs/safety/retention-v1.md)

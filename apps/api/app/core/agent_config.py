@@ -6,6 +6,12 @@
 이 목록을 core Settings와 AgentSettings가 함께 상속한다.
 값을 읽어 쓰는 곳과 역할별 폴백 규칙(빈 값이면 MEMORY_* 사용 등)은
 app/agents/common/config.py의 AgentSettings.
+
+🚨 보호자가 쓴 글이 이 주소들로 나간다. 처리방침은 받는 곳을 회사 단위로 적었다 —
+   대화 · 임베딩은 OpenAI · Google · Anthropic (엘리스를 거치거나 직접),
+   같은 대상 판정은 OpenRouter.
+   BASE_URL · MODEL 을 이 밖의 회사로 바꾸면 처리방침과 동의부터 고친다
+   (docs/safety/consent-texts-v1.md). .env 만 바뀌어서 리뷰 · CI 가 잡지 못한다.
 """
 
 from typing import Literal, get_args
