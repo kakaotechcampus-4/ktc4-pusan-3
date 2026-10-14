@@ -1,0 +1,79 @@
+name: 배포
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
+          aws-region: ap-northeast-2
+
+      - name: EC2에 배포 명령 전송
+        id: ssm
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --timeout-seconds 600 \
+            --parameters commands='[
+              "set -e",
+              "cd /home/ubuntu/ktc4-pusan-3",
+              "git config --global --get safe.directory /home/ubuntu/ktc4-pusan-3 || git config --global --add safe.directory /home/ubuntu/ktc4-pusan-3",
+              "git fetch origin ${{ github.ref_name }}",
+              "git checkout ${{ github.ref_name }}",
+              "git reset --hard origin/${{ github.ref_name }}",
+              "make api-image",
+              "make web-image",
+              "make deploy-migrate",
+              "make deploy-up",
+              "docker image prune -f"
+            ]' \
+            --query "Command.CommandId" \
+            --output text)
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+      - name: 배포 결과 확인
+        run: |
+          # wait 기본 5초 간격 × 20회 = 100초. 이미지 빌드는 더 걸리므로 폴링으로 최대 10분 대기.
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${{ steps.ssm.outputs.command_id }}" \
+              --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+
+            echo "[$i/60] Status: $STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              echo "배포 성공"
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "TimedOut" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "배포 실패: $STATUS"
+              aws ssm get-command-invocation \
+                --command-id "${{ steps.ssm.outputs.command_id }}" \
+                --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+                --query '{Output:StandardOutputContent,Error:StandardErrorContent}'
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "배포 시간 초과 (10분)"
+          exit 1

@@ -1,0 +1,7 @@
+icatch.ai.kr {
+	reverse_proxy web:3000
+}
+
+api.icatch.ai.kr {
+	reverse_proxy api:8000
+}
