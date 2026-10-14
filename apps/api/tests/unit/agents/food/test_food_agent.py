@@ -148,7 +148,7 @@ def counting_client() -> FakeLLM:
 async def test_닫힌_경로는_모델을_0회_부른다(task, context_infant, counting_client) -> None:
     result = await run(task, context_infant, client=counting_client)
 
-    assert result.status == "closed"
+    assert result.status == "unsupported"  # 단계가 지원하지 않는다
     assert result.model_calls == 0
     assert result.readouts[0].body == READOUTS.get("unsupported.infant_nutrient").template
 
@@ -159,6 +159,7 @@ async def test_안전_조회_실패는_blocked_safety_로_닫는다(
     # 안전 구멍 ②③ — unwired_ports() 는 조회를 실패시킨다
     result = await run(task, context_unwired, client=counting_client)
 
+    assert result.status == "blocked"  # 게이트가 닫았다
     assert result.model_calls == 0
     assert result.readouts[0].body == READOUTS.get("blocked.safety").template
 
@@ -169,9 +170,8 @@ async def test_영양소_분석은_모델을_부르지_않고_식품군_출현�
 ) -> None:
     result = await run(task, _records_context(), client=counting_client)
 
-    assert result.status == "ok"
+    assert result.status == "completed"
     assert result.model_calls == 0
-    assert result.tools == ()
     (readout,) = result.readouts
     assert readout.authored_by == "code"
     assert "기록된 7일 중 채소가 나온 날은 3일이에요." in readout.body.splitlines()
@@ -204,7 +204,7 @@ async def test_1인분_중량이_빈_메뉴가_많아도_출현은_말한다(tas
 async def test_기록이_부족하면_식품군_출현을_말하지_않는다(task, context, counting_client) -> None:
     result = await run(task, context, client=counting_client)  # 기록 0건
 
-    assert result.status == "ok"
+    assert result.status == "completed"
     assert result.model_calls == 0
     assert result.readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=0),)
 

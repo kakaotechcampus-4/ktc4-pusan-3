@@ -12,8 +12,6 @@ UNSUPPORTED_MILK_MEAL = "unsupported.milk_meal"  # 식단 추천 + 수유기(0�
 UNSUPPORTED_INFANT_NUTRIENT = "unsupported.infant_nutrient"  # 영양소 분석 + 0–11개월
 BLOCKED_SAFETY = "blocked.safety"  # 안전 조회 실패 — 식단 추천 · 영양소 분석
 CLOSED_NO_DAYCARE = "closed.no_daycare"  # daycare_meal 라벨인데 급식 행이 없음
-NOT_READY_MEAL = "not_ready.meal"  # 식단 추천 — run() 이 결과를 옮기기 전 (#357 리뷰 4-②)
-NOT_READY_DAYCARE = "not_ready.daycare"  # 급식 조회 · 갱신 · 삭제 — run() 이 결과를 옮기기 전
 
 # 식단 추천 후보 풀
 POOL_EMPTY = "pool.empty"
@@ -45,6 +43,7 @@ DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"
 DAYCARE_UNCHECKED = "daycare.unchecked"
 DAYCARE_REFERENCE_MENU = "daycare.reference_menu"
 DAYCARE_UPDATED = "daycare.updated"
+DAYCARE_AMOUNT_UPDATED = "daycare.amount_updated"  # 메뉴는 그대로 두고 양만 반영했을 때
 DAYCARE_ABSENT = "daycare.absent"
 DAYCARE_AMBIGUOUS = "daycare.ambiguous"
 DAYCARE_SLOT_AMBIGUOUS = "daycare.slot_ambiguous"

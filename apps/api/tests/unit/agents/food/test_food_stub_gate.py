@@ -1,8 +1,7 @@
 """모델에게 열린 tool 중 스텁(NotImplementedError)이 있으면 실패한다 (#357 리뷰 4-②).
 
 포트를 붙이는 쪽이 구현 순서를 몰라도, 스텁을 모델에게 여는 순간 이 테스트가 막는다.
-tool 11개는 다 구현됐다. 식단 추천 · 급식 갱신이 `not_ready.*` 로 닫혀 있는 것은 `run()` 이 결과를
-옮기기 전이라서다(`registry.NOT_READY`).
+tool 11개는 다 구현됐다. 스텁 tool 이 다시 생기면 `registry.NOT_READY` 에 그 task 를 적어 닫는다.
 """
 
 from datetime import UTC, date, datetime

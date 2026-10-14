@@ -88,7 +88,7 @@ def test_식단_추천에는_기록_조회_안내가_없다() -> None:
     assert "compare_diet_balance" not in text
 
 
-def test_예시_구획은_문서_행의_제목과_본문을_그대로_싣고_출처를_싣지_않는다() -> None:
+def test_예시_구획은_문서_행의_id_제목_본문과_출처_기관을_싣는다() -> None:
     row = FoodDocRow(
         id=uuid4(),
         row_type="weaning_stage",
@@ -107,7 +107,8 @@ def test_예시_구획은_문서_행의_제목과_본문을_그대로_싣고_출
 
     assert "질감 올리기" in text
     assert "걸쭉한 정도에서 시작한다." in text
-    assert "가짜 기관" not in text
+    assert "가짜 기관" in text  # 출처 표시가 이용 조건인 행이 있다 — 모델이 인용할 때 같이 본다
+    assert str(row.id) in text  # 인용하려면 id 가 보여야 한다
 
 
 def test_식단_추천_프롬프트는_재료를_모델에게_적게_하지_않는다() -> None:

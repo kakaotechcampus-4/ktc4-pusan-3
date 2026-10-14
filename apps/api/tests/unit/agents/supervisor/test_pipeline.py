@@ -1,9 +1,9 @@
 """handle_input() 검증. 가짜 LLM 들로 돈다 (API 호출 0).
 
-Food 는 #321 파트 2 부터 공통 tool 루프 위에서 실제로 돈다(더 이상 mock 이 아니다) — 그래서
-`_default_food_llm()` 으로 가짜 LLM 을 주입한다(domain_clients). 기본값은 영양소 분석이면
-report_nutrient_analysis 로 성공하고, 다른 task(식단 추천 등 — 아직 구현 전)는 말로 끝나
-failed 가 된다. 특정 테스트가 Food 자체의 다른 경로를 보려면 `food_llm=` 을 직접 넘긴다.
+Food 는 공통 tool 루프 위에서 실제로 돈다(더 이상 mock 이 아니다) — 그래서
+`_default_food_llm()` 으로 가짜 LLM 을 주입한다(domain_clients). 영양소 분석은 모델을 부르지 않고,
+식단 추천은 레시피가 없으면 후보 풀이 비어 모델을 부르지 않는다(`pool.empty`). 특정 테스트가 Food
+자체의 다른 경로를 보려면 `food_llm=` 을 직접 넘긴다.
 
 Supervisor 출력은 routing_cases 의 정답(RC01 등)을 그대로 쓴다 — 조각을 손으로 적지 않는다.
 일부러 틀리게 나눈 출력은 재분기 테스트에서만 손으로 적는다.
@@ -42,6 +42,7 @@ from app.agents.food.store import (
     DaycareMealRow,
     InMemoryDaycareMeals,
     InMemoryProfile,
+    InMemoryRecipeCatalog,
     MenuCatalogRow,
     in_memory_ports,
 )
@@ -245,11 +246,10 @@ def _default_food_llm() -> FakeLLM:
     compare_diet_balance · lookup_nutrition 말고는 아직 구현되지 않아서(#321 파트 2),
     tool 을 부르게 두면 NotImplementedError 로 깨진다 — 실제 네트워크 호출도 0 이어야 한다.
 
-    영양소 분석이면 compare_diet_balance 로 판정을 낸 뒤 report_nutrient_analysis 로 끝낸다 —
-    판정 없이 report 를 부르면 거절된다(#357 리뷰). 이 테스트들의 food_context 는 기록이 없어
-    `insufficient` 라 findings 빈 목록이 report 의 검증을 통과한다(Task 9). 식단 추천 · 급식은
-    not_ready 로 닫혀 모델을 부르지 않는다. 특정 테스트가 Food 자체의 다른 경로를 보려면
-    `food_llm=` 으로 직접 넘긴다.
+    영양소 분석은 모델을 부르지 않고 코드가 출현 문장을 낸다. 이 테스트들의 food_context 는 레시피가
+    없어 식단 추천도 후보 풀이 비고, 그러면 모델을 부르지 않는다(`pool.empty`). 그래서 이 가짜
+    응답은 쓰이지 않는 것이 기본이다 — 특정 테스트가 Food 자체의 다른 경로를 보려면 `food_llm=` 으로
+    직접 넘긴다.
     """
     return FakeLLM(
         _tools(_call("a", "compare_diet_balance", {"period": "last_7_days"})),
@@ -325,14 +325,14 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
-        "AgentResult",  # 식단 추천은 결과 연결 전이라 not_ready.meal 로 닫혀 문구가 나간다
+        "AgentResult",  # 식단 추천은 레시피가 없어 후보 풀이 비고, 추천 없이 안내만 나간다
         "Done",
     ]
     assert saved_when_food_ran == [1]  # Food 를 부를 때 이미 저장돼 있었다 (루트 §4)
     assert [(step.index, step.total) for step in _of(events, Step)] == [(1, 3), (2, 3), (3, 3)]
     assert [ref.kind for ref in _of(events, Saved)[0].refs] == ["observation_food"]
-    assert result.failed is None  # 저장은 됐고 Food 는 not_ready 문구를 냈다 — 실패가 아니다
-    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (닫혀서 모델을 안 부른다)
+    assert result.failed is None  # 저장은 됐고 Food 는 추천 없는 안내를 냈다 — 실패가 아니다
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (풀이 비어 모델을 안 부른다)
     assert _of(events, Done)[0] == Done(RUN_ID, 2)
 
 
@@ -353,19 +353,23 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
 
     task = result.routing.domain_tasks[0]
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
-    # 식단 추천은 결과 연결 전이라 not_ready 로 닫힌다(#357 리뷰) — 모델 0회, 코드 문구가 나간다
-    assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "closed", 0)]
-    assert _of(events, AgentResult) == [
-        AgentResult(
-            "food", "meal_recommendation", "closed", (READOUTS.render("not_ready.meal"),), None
-        )
+    # 레시피가 없어 후보 풀이 비면 모델 0회로 추천 없는 안내(`pool.empty`)가 나간다 — 실패가 아니다
+    assert _of(events, DomainRouted) == [
+        DomainRouted("food", "meal_recommendation", "completed", 0)
+    ]
+    (agent_result,) = _of(events, AgentResult)
+    assert agent_result.status == "completed" and agent_result.suggestion_ids == ()
+    assert [readout.body for readout in agent_result.readouts] == [
+        READOUTS.get("pool.empty").template
     ]
 
     food = await run_food(task, food_context.for_task(), client=_default_food_llm())
-    assert food.task_type == FoodTaskType.MEAL_RECOMMENDATION
-    assert food.stage == "toddler"
-    assert food.tools == ()  # 식단 추천 × 유아기 — not_ready.meal 로 닫혀 열리는 tool 이 없다
-    assert food.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
+    assert (food.agent, food.task_type, food.status) == (
+        "food",
+        FoodTaskType.MEAL_RECOMMENDATION.value,
+        "completed",
+    )
+    assert food.suggestions == () and food.model_calls == 0
 
 
 async def test_T07_Memory_가_저장한_관찰을_같은_run_의_Food_가_기억_포트로_읽는다(
@@ -420,12 +424,10 @@ async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르
     assert result.memory.ended_by == "coverage"  # 힌트를 다 채워 요약 호출 없이 끝났다
     assert not _of(events, MemoryNote)  # 조기 종료면 메모가 없다 — 응답 문구는 화면이 만든다
     food = result.domain[0]
-    assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
-    # 영양소 분석 × 유아기 — 열린 tool 이 없다. 모델을 부르지 않고 코드가 식품군 출현 문장을 낸다
-    assert food.tools == ()
-    assert food.status == "ok"
+    assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS.value
+    # 영양소 분석 × 유아기 — 모델을 부르지 않고 코드가 식품군 출현 문장을 낸다
+    assert food.status == "completed"
     assert food.model_calls == 0
-    assert food.requires_safety_check is False
     assert result.failed is None
 
 
@@ -445,8 +447,7 @@ async def test_RC21_영아기에는_영양소_분석을_하지_않는다(
     )
 
     food = result.domain[0]
-    assert food.status == "closed"
-    assert food.tools == ()
+    assert food.status == "unsupported"
     assert food.model_calls == 0
 
 
@@ -2819,3 +2820,50 @@ async def test_이어받기도_Memory_다음에_commit_하고_Saved_는_그_뒤�
     assert names.count("_Committed") == 1
     assert names.index("_Committed") < names.index("Saved")
     assert result.committed is True
+
+
+async def test_식단_추천_결과는_저장_함수에_한_묶음으로_가고_카드가_그_id_를_받는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 실제 Food run() 이 낸 추천이 pipeline 의 저장 단계를 거친다 — Agent 는 저장 없이 결과만 낸다
+    names = ("두부조림", "시금치나물", "미역국")
+    recipes = [
+        MenuCatalogRow(
+            menu_key=name,
+            display_name=name,
+            source="mafra_recipe",
+            resolved=True,
+            synced_at=NOW,
+            ingredients=("가짜재료",),
+            source_id=name,
+        )
+        for name in names
+    ]
+    context = replace(
+        food_context, ports=replace(food_context.ports, recipes=InMemoryRecipeCatalog(recipes))
+    )
+    candidates = [
+        {"menu_key": name, "meal_slot": "dinner", "reason": "어제와 겹치지 않아요", "evidence": []}
+        for name in names
+    ]
+    saver = InMemorySuggestions()
+
+    result = await _handle(
+        "RC01",
+        memory_llm=FakeLLM(
+            _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+        ),
+        memory_context=memory_context,
+        food_context=context,
+        events=events,
+        food_llm=FakeLLM(_tools(_call("p", "propose_meal_candidates", {"candidates": candidates}))),
+        save_suggestions=saver,
+    )
+
+    [batch] = saver.batches
+    assert (batch.run_id, batch.agent, batch.task_type) == (RUN_ID, "food", "meal_recommendation")
+    assert [draft.content for draft in batch.drafts] == list(names)
+    [card] = _of(events, AgentResult)
+    assert card.status == "completed"
+    assert len(card.suggestion_ids) == len(batch.drafts) == 3  # 카드 id 는 저장된 추천 수와 같다
+    assert result.failed is None and result.partial is None

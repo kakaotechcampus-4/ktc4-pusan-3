@@ -4,22 +4,21 @@
 
   라벨: meal_recommendation
     infant_milk(0–3)       닫힘
-    infant_weaning(4–11)   search·weaning·propose        ← 지금은 not_ready.meal 로 닫힘
-    toddler·preschool(12+) search·analyze·repeated·(daycare)·propose  ← 같음
+    infant_weaning(4–11)   search·weaning·propose
+    toddler·preschool(12+) search·analyze·repeated·(daycare)·propose
   라벨: nutrient_analysis
     infant_milk·infant_weaning(0–11)  닫힘
     toddler·preschool(12+)            열린 tool 없음 — 모델을 부르지 않고 코드가 출현 문장을 낸다
                                       (닫힘이 아니다. `closed_readout_key` 는 None 이다)
   라벨: daycare_meal — 단계로 닫지 않음
-    급식 행 있음  lookup·update·delete                   ← 지금은 not_ready.daycare 로 닫힘
+    급식 행 있음  lookup·update·delete
     급식 행 없음  닫힘
 
-- 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. 식단 추천 · 급식 갱신은 tool 이
-  구현될 때까지 `not_ready.*` 로 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
+- 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. tool 이 아직 스텁인 task 는
+  `NOT_READY` 에 문구 키를 적어 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
   구현되면 `NOT_READY` 에서 그 task 를 뺀다. `test_food_stub_gate.py` 가 막는다.
-- 지금은 tool 11개가 다 구현돼 있다. 식단 추천 · 급식 갱신을 `NOT_READY` 로 닫아 둔 것은 `run()` 이
-  그 결과(`state.picks` · `state.readouts`)를 아직 화면으로 옮기지 않기 때문이다 — 먼저 열면 모델은
-  돌고 화면에는 아무것도 안 나간다. `run()` 이 옮기면 여기서 뺀다.
+- 지금은 tool 11개가 다 구현돼 있고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서
+  `NOT_READY` 는 비어 있다.
 - `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
   안내를 내서 식단 추천과 같이 닫고, `daycare_meal`은 영향받지 않는다.
@@ -39,7 +38,6 @@ from pydantic import BaseModel, ValidationError
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
-from app.agents.food.readouts import NOT_READY_DAYCARE, NOT_READY_MEAL
 from app.agents.food.result import ErrorCode, ToolResult, fail
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
@@ -112,14 +110,10 @@ _NUTRIENT_MODEL_TOOLS: frozenset[str] = frozenset(
     {"lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis"}
 )
 
-# 모델에게 열지 않고 코드 문구로 닫는 task. tool 은 다 구현됐지만(`test_food_stub_gate.py`)
-# `run()` 이 식단 추천 · 급식 갱신의 결과를 화면으로 옮기기 전이다 — 열면 모델은 돌고 화면에는
-# 아무것도 안 나간다. `run()` 이 옮기면 여기서 뺀다. 열린 tool 에 스텁이 남아 있으면 테스트가
-# 막는다 (#357 리뷰 4-②)
-NOT_READY: dict[FoodTaskType, str] = {
-    FoodTaskType.MEAL_RECOMMENDATION: NOT_READY_MEAL,  # 결과(`state.picks`)를 옮기기 전
-    FoodTaskType.DAYCARE_MEAL: NOT_READY_DAYCARE,  # 급식 갱신 문구(`state.readouts`)를 옮기기 전
-}
+# 모델에게 열지 않고 코드 문구로 닫는 task → 문구 키. tool 이 아직 스텁인 task 를 여기에 적는다.
+# 지금은 tool 11개가 다 구현되고 `run()` 이 결과를 옮겨서 비어 있다. 열린 tool 에 스텁이 남아 있으면
+# `test_food_stub_gate.py` 가 막는다 (#357 리뷰 4-②)
+NOT_READY: dict[FoodTaskType, str] = {}
 
 # life_stage() 의 네 값 중 영아기 둘. 영양소 분석은 이 두 단계 전부에서 닫힌다
 _INFANT_STAGES = ("infant_milk", "infant_weaning")
@@ -178,11 +172,6 @@ def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
 def answers_by_code(task: FoodTaskType) -> bool:
     """모델을 부르지 않고 코드가 결과를 내는 task. 영양소 분석 1차 출력이다(N-17)."""
     return task == FoodTaskType.NUTRIENT_ANALYSIS
-
-
-def requires_safety_check(task: FoodTaskType) -> bool:
-    """모델 호출 전에 health_safety 를 읽어야 하는가. 식단 추천만 (S6 ①)."""
-    return task == FoodTaskType.MEAL_RECOMMENDATION
 
 
 # task 마다 결과를 내는 tool. run_tool_loop 이 이 안에서 끝낸다(output_accepted).

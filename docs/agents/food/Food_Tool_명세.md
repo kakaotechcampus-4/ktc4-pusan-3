@@ -12,7 +12,7 @@
 >
 > **#411 갱신** — 영양소 분석 1차 출력: 열린 tool 없이 `run()` 이 모델 0회로 식품군 출현 문장 `nutrient.appearance` 만 낸다(§1 · §4). 구간은 판정해 두되 화면에 내지 않는다 — `nutrient.band.*` 는 키만 남기고, `report_nutrient_analysis` · 문장 규칙은 구간을 다시 낼 때 쓴다([`영양소_계산_설계.md`](영양소_계산_설계.md) §9 N-17 · N-18)
 >
-> **2026-10-13 갱신 (#357 리뷰)** — 영양소 분석은 스텁 tool 을 열지 않고 3개만(§1) · 식단 추천 · 급식 갱신은 tool 이 붙기 전까지 `not_ready.*` 로 닫음(§1 · §4) · `lookup_nutrition` 은 수치를 돌려주지 않음 · `report_nutrient_analysis` 의 문장 규칙 다섯 가지와 판정 없이 부르면 거절 · 판정한 항목이 없으면 findings 를 비우고 `nutrient.unscored` · 모델이 못 끝내면 코드 문장 틀 `nutrient.band.*` (§2 · §4)
+> **2026-10-13 갱신 (#357 리뷰)** — 영양소 분석은 스텁 tool 을 열지 않고 3개만(§1) · 식단 추천 · 급식 갱신은 tool 이 붙기 전까지 `not_ready.*` 로 닫았다가 #411 에서 열었다(§1 · §4) · `lookup_nutrition` 은 수치를 돌려주지 않음 · `report_nutrient_analysis` 의 문장 규칙 다섯 가지와 판정 없이 부르면 거절 · 판정한 항목이 없으면 findings 를 비우고 `nutrient.unscored` · 모델이 못 끝내면 코드 문장 틀 `nutrient.band.*` (§2 · §4)
 >
 > **2026-10-11 갱신 (#321)** — 영양소 분석도 안전 조회 실패면 닫힘(`blocked.safety`, §1) · 요청 중 메뉴 해석은 식품영양성분DB 하나, 레시피 재료는 농식품정보원 배치(COOKRCP01 보류, §0-2 · §0-6) · 영양DB 행 고르는 규칙(§0-7) · 당류는 선택 칸 · 영양 안내에서 알레르기 식품 빼기(§2)
 >
@@ -118,7 +118,11 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 - **기피는 풀에서 빼지 않는다.** 기피는 가중치를 낮추고 `reason`을 쓰는 값이지 후보를 지우는 값이 아니다. 풀에서 빼는 것은 §3 음식 안전 수칙이 막거나(`blocked`) 확인하지 못한(`unchecked`) 메뉴뿐이다. 막힌 메뉴 중 제품마다 다른 성분 때문에만 막힌 것(`needs_check`)은 식단 추천을 구현할 때 확인 필요로 내보낸다(§3 의 5). 질식 주의 식품은 빼지 않고 문구도 달지 않는다(10-13 결정 — 어른이 곁에서 지켜본다는 전제).
 - **부족 식품군은 기피보다 세다.** `evaluate_nutrient_bands`가 `low`로 판정한 식품군은 기피 가중치를 상쇄하고 풀 상단에 남는다. 채소 기피 아이에게 채소가 부족하면 채소가 든 메뉴가 후보에 올라와야 하고, 모델은 그중 선호(계란 등)와 겹치는 형태를 고른다 — [`Food_Agent_명세.md`](Food_Agent_명세.md) §6.
 - 모델은 **풀 밖 메뉴를 낼 수 없다** (`menu_key` 검증). F-1 해소: 재료는 모델이 아니라 카탈로그에서 온다.
-- 풀 자체가 3개 미만이면 재호출해도 채울 수 없으므로 **재호출하지 않고 남은 만큼만 낸다** — 추천은 최대 3개다(C-8 닫힘, [`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 3개를 채우려고 풀 밖 메뉴를 만들지 않는다. 1~2개면 `suggestion.partial` 안내를 붙인다. 풀이 0개면 모델을 부르지 않고 추천 없이 `pool.empty` 만 낸다 — 재호출 뒤 0개도 같다. 실패가 아니다.
+- **`run()` 이 이어 주는 것** (#411) — 코드가 풀(`build_pool`)을 만들고 샘플(`sample_pool`, seed=`{run_id}:sample`)을 뽑아 `state.sampled` 에 적은 뒤, 후보 목록(menu_key · 이름 · 재료만 — 영양 수치 · 알레르기 코드는 없다)을 **user 메시지**에 싣는다. 샘플이 run 마다 달라서 system 에 두면 `[예시]` 앞 프롬프트 캐시가 깨진다. system 프롬프트의 `[예시]` 는 `search_food_doc` 결과(id · 제목 · 출처 기관 · 본문)이고 현재 시각 바로 앞이다. 모델이 문서 행을 인용하면 `food_doc` 근거가 되어 일반 추천으로 분류된다 — 개인화로 세지 않는다. 화면의 출처 기관은 `suggestion_evidence` 에 남지 않아서(`food_doc` · id · note 만 남는다) 05 엔드포인트(#249)가 id 로 문서 행을 찾아 붙인다.
+- **`tool_choice`** — 식단 추천은 `required`, 급식 갱신은 `auto` 다. 급식 갱신의 출력 tool 이 쓰기(갱신 · 삭제)뿐이라 `required` 면 조회만 하려던 발화도 쓰기로 몰리고, 삭제는 되돌릴 수 없다(OCR 재적재).
+- **재호출** — 사후 안전 필터로 빠져 3개 미만이고(`state.blocked_keys` 가 비지 않음) 더 채울 길이가 있으면(`state.exhausted` 가 아님) 같은 대화에 user 메시지를 더해 한 번 더 부른다. 풀에서 빠진 것과 이미 고른 것을 뺀 새 샘플을 다시 뽑고(`remember_sample(recalled=True)`), 제외 목록에는 `menu_key` 만 싣는다 — 사유는 싣지 않는다. 처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts(key=menu_key)`). 남은 후보가 없으면 모델을 부르지 않고 처음 것을 낸다. 재호출이 출력 tool 을 못 끝냈으면 처음 것이 남았을 때 그것을 내고, 0개면 `failed` 다(모델이 못 한 것이지 "추천할 게 없다" 가 아니다). 재호출 뒤에도 모자라면 있는 만큼 내고 개수 안내를 붙인다.
+- **결과** — 공통 `DomainAgentResult`(agent=`food`). 풀이 0개면 모델 0회로 추천 없이 `pool.empty`(`completed`). 모델이 출력 tool 없이 끝나면 `failed`. 닫힌 문구는 `unsupported.*` → `unsupported`, 그 밖 → `blocked`. 개수 안내(`suggestion.partial` · `pool.empty`)는 합친 결과로 센다. 질식 주의 문구는 싣지 않는다. 되묻기는 추천을 냈을 때 선호인지 기피인지 모르는 후보(`pick_followup`) **하나**만 `followup.preference` 로 낸다 — 아이가 먹지 못하는 식품(알레르기 · 질환 · 연령 규칙, `filter_food_safety`)은 되묻지 않는다.
+- 샘플이 3개 미만이면(풀 자체가 3개 미만이거나 같은 주재료 제한으로 샘플이 줄었을 때) 재호출해도 채울 수 없는 것으로 보고 **재호출하지 않고 남은 만큼만 낸다**(`remember_sample` 이 `exhausted` 를 세운다) — 추천은 최대 3개다(C-8 닫힘, [`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 3개를 채우려고 풀 밖 메뉴를 만들지 않는다. 1~2개면 `suggestion.partial` 안내를 붙인다. 풀이 0개면 모델을 부르지 않고 추천 없이 `pool.empty` 만 낸다 — 재호출 뒤 0개도 같다. 실패가 아니다.
 - ⚠️ TODO (추천 엔드포인트 이슈 #249 에서 정함): 이미 추천한 메뉴(만료 전 `draft`)는 풀에서 빼지 않는다. `sample_candidates` 의 seed 가 `run_id` 라 같은 `run_id` 로 다시 요청하면 같은 후보가 모델에게 가서, 다시 시도나 화면 재진입에서 같은 메뉴가 다시 나오기 쉽다. 풀에서 draft 메뉴를 뺄지, 모자랄 때 제외를 풀지, seed 를 무엇으로 할지는 [공통_구현_계획.md](../shared/공통_구현_계획.md) §6 TODO 에 모아 뒀다.
 - 이유기는 카탈로그 대신 **이유식 재료 KB**(단계별 질감 · 도입 재료)에서 풀을 만든다. 공식 API가 없어 코드 상수. ⚠️ 아직 없다(#399) — 지금은 `recipe_catalog` 를 `stage_min` 으로 거르는데 태깅(FT-1) 전이라 이유기 아이의 풀은 늘 비어 `pool.empty` 다.
 
@@ -163,9 +167,9 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 | 라벨 \ 단계 | `infant_milk` 0–3 | `infant_weaning` 4–11 | `toddler` · `preschool` 12+ |
 | --- | --- | --- | --- |
-| `meal_recommendation` | `()` → readout | search · weaning · propose — **지금은 `not_ready.meal` 로 닫힘** | search · analyze · repeated · daycare · propose — **지금은 `not_ready.meal` 로 닫힘** |
+| `meal_recommendation` | `()` → readout | search · weaning · propose | search · analyze · repeated · daycare · propose |
 | `nutrient_analysis` | `()` → readout | `()` → readout | 열린 tool 없음 — 코드가 출현 문장(`nutrient.appearance`)을 낸다(모델 0회) |
-| **`daycare_meal`** | `()` | `daycare` · update · delete — **지금은 `not_ready.daycare` 로 닫힘** | `daycare` · update · delete — **지금은 `not_ready.daycare` 로 닫힘** |
+| **`daycare_meal`** | `()` | `daycare` · update · delete | `daycare` · update · delete |
 
 `nutrient_analysis` 는 열린 tool 이 없다 — 닫힘(`closed_readout_key`)이 아니라 `run()` 이 `evaluate_nutrient_bands` 를 직접 불러 식품군 출현 문장을 코드로 낸다(`registry.answers_by_code`). `lookup_nutrition` · `compare_diet_balance` · `report_nutrient_analysis` 는 남겨 둔다 — 구간 문장을 다시 모델이 다듬을 때 `registry._NUTRIENT_MODEL_TOOLS` 를 연다. 기록 조회 tool(search · analyze · repeated)과 `daycare` 는 그때도 열지 않는다 — `compare_diet_balance` 가 식사 기록 · 급식을 직접 읽어 판정한다. `execute_tool` 은 핸들러 예외를 삼키지 않고(Tool_공통), 스텁이 열려 있는지는 `test_food_stub_gate.py` 가 막는다(#357 리뷰).
 
@@ -175,7 +179,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 단계 안에서 코드가 주입하는 값: `texture`(4–5 `puree` / 6–8 `puree`·`mashed` / 9–11 `minced`·`soft_pieces`) · 섭취기준 연령군(12–35 `1-2y` / 36+ `3-5y`) · 연령 식품 규칙(12개월 미만 꿀·마시는 우유 금지, 48개월 미만 질식 위험 식품 금지 · 질식 주의, 모든 아이 날음식 · 카페인 · 술 금지 — §3) · 급식 조회는 `daycare_meal` 행이 있는 아이만.
 
-닫힘 조건 추가: `safety_ok=False` → `meal_recommendation` · `nutrient_analysis` 가 `()`(`blocked.safety`, 모델 0회). 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석도 식품군 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다(#321, 10-11 변경). `daycare_meal` 은 식품 안내가 아니라서 안전 조회와 무관하다 — 다만 tool 이 스텁이라 지금은 `not_ready.daycare` 로 닫혀 있다.
+닫힘 조건 추가: `safety_ok=False` → `meal_recommendation` · `nutrient_analysis` 가 `()`(`blocked.safety`, 모델 0회). 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석도 식품군 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다(#321, 10-11 변경). `daycare_meal` 은 식품 안내가 아니라서 안전 조회와 무관하다.
 
 안전 포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 안전 포트가 `UnwiredSafety` 라서, `build_gate` 가 **동의와 상관없이** 안전 조회 실패로 읽고 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 보지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다 — 생일 · 동의는 API 가 읽어 값으로 넘기므로(#372) 실제 동의 값이 들어와도 어댑터가 붙기 전에는 같다. 실제 안전 포트는 #405 의 `DbSafetyReader.food_safety`(active · kind 전부)이고, entrypoint 의 `food_safety` 자리로 들어간다(#416). 러너가 Food 에 넘기는 시점은 Food 쪽이 정한다 — #249 · 화면 3단계 · #411 PR 4-1 · 원재료성 행 · 음식 행 식품군이 끝난 뒤다(#411 "순서").
 
@@ -232,7 +236,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `compute_energy_target` | `compare_diet_balance` 내부 | `age_months` + 최근 `height`·`weight` → 권장 열량(내부 전용) | 측정 없음 → 연령군 일반값. 성별 입력 없음. 계산식 미정(성별 없는 식 선정 필요) |
 | `evaluate_nutrient_bands` | `compare_diet_balance` 내부 · **식단 추천에서도 `build_candidate_pool` 직전** | `observation_food` + `daycare_meal`(오늘 이전) 14일 치 + `menu_catalog` + `nutrient_reference` → 항목별 구간. 카탈로그에 없는 메뉴는 `resolve_menu` 로 찾고(상한 안), 그날 급식이 있으면 기관 출처 관찰은 뺀다(N-10). **저장하지 않는다** — 결과는 run state 에만([`영양소_계산_설계.md`](영양소_계산_설계.md) §3) | **7일에 10행 미만이면** 구간 없이 `insufficient`(설정값). 식단 추천에서는 가중치를 주지 않고 평소 순위로 간다 |
 | `search_food_doc` | run 시작 시 자동 | 월령·`row_type` 필터 → 아이 알레르기·연령 금지에 걸린 행 제외 → top-3(의미 검색은 행이 늘면, #396) → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 키). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='food_doc'`으로 담는다 |
-| `sample_candidates` | 후보 풀 직후 · 재호출 전 | 풀 → 10~15개 (가중 샘플링 + 같은 주재료 2개 이하, `seed=run_id`) — 구현 `meal_pool.sample_pool`, 보여 준 후보는 `remember_sample` 이 run state 에 적는다. 가중치는 **부족 식품군 > 선호 > 기피** 순 — 기피는 가중치를 낮출 뿐 0으로 만들지 않는다. 오늘 먹은 식품군과 겹치면 낮추고, 최근 3일(오늘 포함) 먹은 메뉴와 이름이 같으면 낮춘다 — 빼지는 않는다(집 식사 · 급식, 기관 중복은 한 번만) | 풀 < 3 → 재호출 없음 · 남은 만큼만 (§0-5) |
+| `sample_candidates` | 후보 풀 직후 · 재호출 전 | 풀 → 10~15개 (가중 샘플링 + 같은 주재료 2개 이하, `seed=run_id`) — 구현 `meal_pool.sample_pool`, 보여 준 후보는 `remember_sample` 이 run state 에 적는다. 가중치는 **부족 식품군 > 선호 > 기피** 순 — 기피는 가중치를 낮출 뿐 0으로 만들지 않는다. 오늘 먹은 식품군과 겹치면 낮추고, 최근 3일(오늘 포함) 먹은 메뉴와 이름이 같으면 낮춘다 — 빼지는 않는다(집 식사 · 급식, 기관 중복은 한 번만) | 샘플 < 3 → 재호출 없음 · 남은 만큼만 (§0-5) |
 
 ### 급식 갱신의 입력은 span이다
 
@@ -406,7 +410,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `pool.empty` | 조건에 맞는 메뉴가 없어요. |
 | `general.reason.toddler` | 또래 아이들이 많이 먹는 메뉴예요. |
 | `general.reason.weaning` | 이 시기 아기들이 많이 먹는 재료예요. |
-| `followup.preference` | {menu}는 좋아하는 편인가요? |
+| `followup.preference` | {menu}은(는) 좋아하는 편인가요? |
 | `unsupported.milk_amount` | 먹이는 양은 아이마다 달라서 알려드리기 어려워요. 소아과에서 확인해 보세요. |
 | `unsupported.weaning_over12` | 지금은 이유식 시기가 지나서 일반식으로 알려드릴게요. |
 | `unsupported.weight_diet` | 체중을 목표로 한 식단은 만들지 않아요. 몸무게 이야기는 영유아 건강검진에서 확인해 보세요. |
@@ -424,14 +428,13 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `daycare.unchecked` | 대체식 확인 전 |
 | `daycare.reference_menu` | 지역 표준식단이라 우리 아이가 실제로 먹은 것과 다를 수 있어요. |
 | `daycare.updated` | {date} {slot} 급식을 {menu}(으)로 바꿔 뒀어요. |
+| `daycare.amount_updated` | {date} {slot} 급식은 먹은 양을 반영해 뒀어요. |
 | `daycare.absent` | {date}은(는) 기관 식사 없는 걸로 해 뒀어요. |
 | `daycare.ambiguous` | 어느 날 급식을 말씀하시는 걸까요? |
 | `daycare.slot_ambiguous` | 그날은 점심과 간식이 다 있어요. 어느 쪽일까요? |
 | `daycare.allergy_conflict` | 기록해 뒀어요. 그런데 등록된 {label} 알레르기와 겹쳐요. |
 | `daycare.out_of_range` | 너무 지난 날이라 급식 기록이 남아 있지 않아요. |
 | `closed.no_daycare` | 등록된 기관 급식 정보가 없어요. |
-| `not_ready.meal` | 식단 추천은 아직 준비 중이에요. |
-| `not_ready.daycare` | 급식 정보 확인·수정은 아직 준비 중이에요. |
 | `daycare.not_found` | 급식 정보를 못 찾았어요. |
 | `daycare.replaced_unknown` | 어떤 메뉴 대신 받았나요? |
 
@@ -439,4 +442,4 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 
 `nutrient.appearance` 는 영양소 분석 1차 출력의 유일한 문장이다. `{group}` 은 코드가 만든 이름(곡류가 · 고기·생선·달걀·콩이 · 채소가 · 과일이 · 우유·유제품이 — 조사까지 붙여 둔다)이고, 이 순서로 한 줄씩 낸다. 유지 · 당류는 말하지 않는다. 아이의 알레르기 · 질환으로 막히는 식품군은 뺀다(`nutrient_actions.blocked_groups`). `{days}` 는 최근 7일 중 기록이 있는 날 수, `{count}` 는 그중 그 식품군을 먹은 날 수다(안 먹음 · 싫어한다는 관찰은 세지 않는다). 기록 행이 모자라면 이 문장 대신 `nutrient.insufficient`, 기록은 충분한데 메뉴나 식품군을 절반 넘게 못 읽었으면 `nutrient.unscored` 다. `nutrient.band.*` 는 1차 출력에서 화면에 나가지 않는다.
 
-`not_ready.meal` · `not_ready.daycare` 는 tool 이 구현되기 전에 그 라벨을 닫는 문구다(#357 리뷰) — 열린 tool 중에 스텁이 있으면 모델이 부르고 `failed` 로 끝나서, 구현될 때까지 `closed_readout_key` 가 `registry.NOT_READY` 를 보고 닫는다(`test_food_stub_gate.py` 가 막는다). tool 11개는 #396 에서 다 구현됐다. 그래도 식단 추천 · 급식 갱신을 아직 닫아 두는 것은 `run()` 이 그 결과(`state.picks` · `state.readouts`)를 화면으로 옮기지 않아서다 — 먼저 열면 모델은 돌고 화면에는 아무것도 안 나간다. `run()` 이 옮기면 `NOT_READY` 에서 그 task 를 뺀다. #321 합의 4번은 "status `not_ready` + pipeline 이 `Unavailable` 로" 였는데, 라우팅의 준비 중 카드(`IMPLEMENTED_AGENTS`)가 Agent 단위라 Food 안에서 task 하나만 닫을 수 없어, Food 가 코드 문구(status `closed`, 모델 0회)로 닫는다. `nutrient.band.*` 는 구간 문장 틀이다 — 1차 출력에서는 화면에 내지 않고(#411), 구간을 다시 낼 때 모델이 출력 tool 을 못 끝낸 영양소 분석을 대신 내는 데 쓴다(§2 `report_nutrient_analysis`). 주어는 늘 기록된 식사이고 `{nutrient}` · `{action}` 은 코드가 만든 값(`NUTRIENT_LABELS` · 식품군 안내)으로만 채운다. 구간 문장(`nutrient.band.*`)은 모델이 쓴 영양 문장과 같은 `kind="nutrient_analysis"` 이고, 건수 안내(`nutrient.insufficient` · `nutrient.unscored`)는 `kind="nutrient"` 다. `nutrient.unscored` 는 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나왔을 때 쓴다 — 아무것도 안 봤는데 "고르게 담겨 있어요" 라고 하지 않는다.
+`registry.NOT_READY` 는 tool 이 아직 스텁인 task 를 코드 문구로 닫는 표다(#357 리뷰). 열린 tool 중에 스텁이 있으면 모델이 부르고 `failed` 로 끝나서, 스텁이 생기면 그 task 를 적어 `closed_readout_key` 가 닫는다(`test_food_stub_gate.py` 가 막는다). tool 11개는 #396 에서 다 구현됐고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서(#411) 지금은 비어 있다 — `not_ready.*` 문구는 없앴다. 닫힌 문구의 결과 상태는 `unsupported.*` → `unsupported`, 그 밖(`blocked.safety` · `closed.no_daycare`)은 `blocked` 다. `nutrient.band.*` 는 구간 문장 틀이다 — 1차 출력에서는 화면에 내지 않고(#411), 구간을 다시 낼 때 모델이 출력 tool 을 못 끝낸 영양소 분석을 대신 내는 데 쓴다(§2 `report_nutrient_analysis`). 주어는 늘 기록된 식사이고 `{nutrient}` · `{action}` 은 코드가 만든 값(`NUTRIENT_LABELS` · 식품군 안내)으로만 채운다. 구간 문장(`nutrient.band.*`)은 모델이 쓴 영양 문장과 같은 `kind="nutrient_analysis"` 이고, 건수 안내(`nutrient.insufficient` · `nutrient.unscored`)는 `kind="nutrient"` 다. `nutrient.unscored` 는 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나왔을 때 쓴다 — 아무것도 안 봤는데 "고르게 담겨 있어요" 라고 하지 않는다.
