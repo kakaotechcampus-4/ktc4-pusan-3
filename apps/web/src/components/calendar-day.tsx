@@ -23,11 +23,12 @@ import type {
   EventItem,
   EventItemUpdateResponse,
   Observation,
+  SharedPhoto,
 } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 
 /**
- * 09 하루 패널 — 고른 날의 일정 · 관찰 · 일기 · 사진.
+ * 09 하루 패널 — 고른 날의 일정 · 관찰 · 내 일기 · 함께 보는 사진.
  *
  * 🚨 **없는 구역은 그리지 않는다.** 빈 상자를 늘어놓아 하루를 채우지 않는다 — 프로토타입의
  *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다.
@@ -39,6 +40,9 @@ import { formatEventTime } from "@/lib/format";
  * 🚨 **사진을 여기서 올리지 않는다.** 넣는 것은 08 사진 화면(`/child/{cid}/photos?date=`)이고,
  *    이 패널은 그 화면으로 가는 문 하나와 이미 남은 사진의 조회만 맡는다 — 사진은 읽어낸 것을
  *    보호자가 확인해야 저장되는데(승인 전 저장 금지) 그 확인이 하루 패널에 들어갈 크기가 아니다.
+ *
+ * 🚨 **일기와 사진은 다른 저장소다** (#115). 일기(`my_diary`)는 쓴 보호자 본인 것만 오고, 사진
+ *    (`shared_photos`)은 연결된 보호자가 함께 본다. 그래서 두 구역이 따로 서고, 사진만 있는 날도 있다.
  */
 export function CalendarDayPanel({
   childId,
@@ -65,8 +69,14 @@ export function CalendarDayPanel({
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
   const router = useRouter();
 
-  const hasDiary = data.diary !== null && data.diary.text.trim() !== "";
-  const nothing = data.events.length === 0 && data.observations.length === 0 && !hasDiary;
+  const hasDiary = data.my_diary !== null;
+  // 🚨 사진도 센다. 사진은 일기 밖에 있어서, 빼면 사진만 있는 날에 "아무것도 없어요" 가
+  //    그 사진 바로 위에 선다.
+  const nothing =
+    data.events.length === 0 &&
+    data.observations.length === 0 &&
+    !hasDiary &&
+    data.shared_photos.length === 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -122,9 +132,7 @@ export function CalendarDayPanel({
           이 구역이 생기면 "그날 사진을 넣는 법" 이 날마다 달라져서, 빈 날에는 부모가 홈까지
           올라가 카메라 버튼을 찾아야 한다. */}
       <Section title="이날의 사진">
-        {data.diary && data.diary.image_urls.length > 0 ? (
-          <Photos urls={data.diary.image_urls} />
-        ) : null}
+        {data.shared_photos.length > 0 ? <Photos photos={data.shared_photos} /> : null}
         <div>
           <Button variant="tertiary" size="compact" onClick={() => setPhotoSheetOpen(true)}>
             사진으로 적기
@@ -161,8 +169,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 /* ── 일정 ─────────────────────────────────────────────────────────────── */
 
 /**
- * 🚨 여기 서 있는 일정은 전부 **이미 승인된 것**이다 (`confirmed`). draft 는 캘린더에 쓰이지
- *    않았으므로 이 화면에 나오지 않는다 — 승인 게이트 ㉠ 은 05·06 이 진다. 이 화면에
+ * 🚨 여기 서 있는 일정은 전부 **보호자가 이미 제출한 것**이다. `event` 에는 제출한 행만 들어가고
+ *    초안은 행이 아니라 이 화면에 나오지 않는다 (#118) — 승인 게이트 ㉠ 은 05·06 이 진다. 이 화면에
  *    `btn-approve` 나 `caution` 이 없는 이유가 그것이다.
  */
 function EventCard({
@@ -294,16 +302,15 @@ function Diary({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
-  const saved = data.diary?.text ?? "";
+  const saved = data.my_diary?.content ?? "";
   const [draft, setDraft] = useState(saved);
   const [editing, setEditing] = useState(saved === "");
 
   const save = useMutation({
     mutationFn: (text: string) => {
-      // 🚨 PUT 이라 통째로 덮는다. 사진과 이어 둔 일정을 함께 실어 보내지 않으면 지워진다.
+      // ⚠️ 옮겨 갈 경로다 (`CalendarDayUpdate` 주석 · #318 2/3). 사진은 일기 밖이라 싣지 않는다.
       const body: CalendarDayUpdate = {
         text,
-        image_urls: data.diary?.image_urls ?? [],
         event_ids: data.events.map((event) => event.id),
       };
       return api.put<CalendarDayResponse>(`/children/${childId}/calendar/${date}`, body);
@@ -390,11 +397,11 @@ function DiaryNote() {
 
 /* ── 사진 ─────────────────────────────────────────────────────────────── */
 
-function Photos({ urls }: { urls: string[] }) {
+function Photos({ photos }: { photos: SharedPhoto[] }) {
   return (
     <ul className="grid grid-cols-2 gap-2">
-      {urls.map((url) => (
-        <li key={url} className="rounded-card bg-surface-muted overflow-hidden">
+      {photos.map((photo) => (
+        <li key={photo.id} className="rounded-card bg-surface-muted overflow-hidden">
           {/*
             next/image 를 쓰지 않는다 — 사진 주소는 서버가 주는 임의 호스트라 `remotePatterns` 에
             미리 적을 수 없고, 배포마다 달라지면 이미지가 조용히 404 가 된다.
@@ -404,7 +411,7 @@ function Photos({ urls }: { urls: string[] }) {
           */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={url}
+            src={photo.image_url}
             alt="이날 캘린더에 남은 사진"
             className="aspect-[4/3] w-full object-cover"
             loading="lazy"

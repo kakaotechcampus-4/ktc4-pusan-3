@@ -1,29 +1,40 @@
 import { http, HttpResponse } from "msw";
 
 import type {
+  CalendarDay,
   CalendarDayResponse,
   CalendarDayUpdate,
   CalendarMonthResponse,
   EventItemUpdateResponse,
+  Observation,
 } from "@/lib/api/types";
 
 import {
+  calendarEventDates,
   calendarEventsOn,
-  calendarMonth,
-  calendarObservationsOn,
   confirmedEvent,
-  readDiary,
-  writeDiary,
+  myDiaryDates,
+  readMyDiary,
+  sharedPhotoDates,
+  sharedPhotosOn,
+  writeMyDiary,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
+import { listedObservations } from "./memories";
 
 /**
- * 09 캘린더 핸들러.
+ * 09 캘린더 핸들러. 서버(#318 1/3 · PR #325)와 같은 모양을 내린다.
  *
  * 🚨 **일기는 관찰과 별도 저장소다** (계약서 §09). 목에서도 일기를 쓴다고 관찰이 늘지 않는다 —
  *    "일기는 관찰로 자동 추출하지 않는다" 를 화면이 지키는지 확인하려면 목이 먼저 지켜야 한다.
+ *
+ * 🚨 **일기와 사진도 서로 다른 저장소다** (#115). 일기는 쓴 보호자 본인 것만, 사진은 연결된 보호자가
+ *    함께 본다.
+ *
+ * 🚨 **기록은 기록 탭과 같은 기준이다** (`listedObservations`). 달 보기의 숫자와 하루 보기의 목록도
+ *    같은 함수에서 나온다 — 어긋나면 "기록 3건" 을 눌렀는데 2건이 나온다.
  */
 
 /** 준비물 체크 상태. 🚨 프로세스 수명만큼 산다 — 테스트는 `resetCalendarState()` 로 되돌린다. */
@@ -46,11 +57,64 @@ function withPrepared(date: string) {
   }));
 }
 
+/** 서버처럼 기간(`observed_from` ~ `observed_to`)이 그날과 겹치는 기록. 여러 날 기록은 걸친 날마다 나온다. */
+function observationsOn(date: string): Observation[] {
+  return listedObservations().filter((o) => o.observed_from <= date && date <= o.observed_to);
+}
+
+/** `from` ~ `to` 의 날짜 전부 (YYYY-MM-DD). 서버 대신 날짜를 세는 자리다 — 화면 코드에는 두지 않는다. */
+function datesBetween(from: string, to: string): string[] {
+  const dates: string[] = [];
+  for (let day = new Date(`${from}T00:00:00Z`); ; day.setUTCDate(day.getUTCDate() + 1)) {
+    const date = day.toISOString().slice(0, 10);
+    if (date > to) return dates;
+    dates.push(date);
+  }
+}
+
+/** 🚨 표시할 것이 하나라도 있는 날만, 날짜순. 빈 날은 싣지 않는다 (서버와 같다). */
+function calendarMonth(month: string): CalendarDay[] {
+  const dates = new Set<string>();
+  for (const o of listedObservations()) {
+    for (const date of datesBetween(o.observed_from, o.observed_to)) dates.add(date);
+  }
+  for (const date of calendarEventDates()) dates.add(date);
+  for (const date of myDiaryDates()) dates.add(date);
+  for (const date of sharedPhotoDates()) dates.add(date);
+
+  return [...dates]
+    .filter((date) => date.startsWith(month))
+    .sort()
+    .map((date) => ({
+      date,
+      has_event: calendarEventsOn(date).length > 0,
+      has_my_diary: readMyDiary(date) !== null,
+      has_shared_photo: sharedPhotosOn(date).length > 0,
+      observation_count: observationsOn(date).length,
+    }))
+    .filter(
+      (day) => day.has_event || day.has_my_diary || day.has_shared_photo || day.observation_count,
+    );
+}
+
+function calendarDay(date: string): CalendarDayResponse {
+  return {
+    my_diary: readMyDiary(date),
+    shared_photos: sharedPhotosOn(date),
+    events: withPrepared(date),
+    observations: observationsOn(date),
+  };
+}
+
 export const calendarHandlers = [
   http.get(url("/children/:cid/calendar"), async ({ request }) => {
     await networkDelay();
     const month = new URL(request.url).searchParams.get("month");
     if (!month) return apiError(422, "validation_failed", "month 가 필요해요");
+    // 서버처럼 쿼리의 형식 오류는 400 이다 (#325 · errors.py).
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      return apiError(400, "validation_failed", "날짜가 올바르지 않아요");
+    }
 
     const body: CalendarMonthResponse = {
       days: currentScenario() === "empty" ? [] : calendarMonth(month),
@@ -63,33 +127,31 @@ export const calendarHandlers = [
     const date = String(params.date);
 
     if (currentScenario() === "empty") {
-      const empty: CalendarDayResponse = { diary: null, events: [], observations: [] };
+      const empty: CalendarDayResponse = {
+        my_diary: null,
+        shared_photos: [],
+        events: [],
+        observations: [],
+      };
       return HttpResponse.json(empty);
     }
 
-    const body: CalendarDayResponse = {
-      diary: readDiary(date),
-      events: withPrepared(date),
-      observations: calendarObservationsOn(date),
-    };
-    return HttpResponse.json(body);
+    return HttpResponse.json(calendarDay(date));
   }),
 
+  /**
+   * ⚠️ **옮겨 갈 경로다** — 서버는 `PUT /children/{cid}/diary/{date}` · `{ content }` 로 받는다
+   *    (#318 2/3). 응답이 그 PR 에서 정해져서 그때 옮긴다.
+   *
+   * 🚨 사진은 일기 밖에 있어서 여기서 건드리지 않는다. 일기를 덮어도 사진은 그대로다.
+   */
   http.put(url("/children/:cid/calendar/:date"), async ({ params, request }) => {
     await networkDelay();
     const date = String(params.date);
     const update = (await request.json()) as CalendarDayUpdate;
 
-    // 🚨 PUT 이라 통째로 덮는다. 화면이 사진과 일정을 함께 실어 보내지 않으면 여기서 지워진다 —
-    //    목이 그걸 봐주면 실서버에서만 사진이 사라진다.
-    writeDiary(date, { text: update.text, image_urls: update.image_urls ?? [] });
-
-    const body: CalendarDayResponse = {
-      diary: readDiary(date),
-      events: withPrepared(date),
-      observations: calendarObservationsOn(date),
-    };
-    return HttpResponse.json(body);
+    writeMyDiary(date, update.text);
+    return HttpResponse.json(calendarDay(date));
   }),
 
   /**
