@@ -31,7 +31,7 @@ from app.agents.common.evidence import AffinityRow
 from app.agents.common.ports import (
     ChildProfileReader,
     ConsentReader,
-    SafetyLookupError,  # noqa: F401 — context.py · inmemory.py 가 여기서 가져간다
+    SafetyLookupError,
 )
 from app.rules.book_form import BookForm
 
@@ -184,6 +184,19 @@ class SafetyReader(Protocol):
         읽기에 실패하면 SafetyLookupError. 빈 목록을 대신 돌려주지 않는다.
         """
         ...
+
+
+class UnwiredSafety:
+    """`health_safety` 어댑터가 붙기 전의 자리. 읽으면 늘 `SafetyLookupError` 다.
+
+    Food · Activity 의 `UnwiredSafety` 와 같다.
+
+    `build_gate` 는 이 포트가 들어 있으면 동의를 보지 않고 교육을 닫는다 — 동의하지 않은 아이가
+    알레르기 확인 없이 열리지 않게. 루틴 · 도서 · 성장 추이는 건강정보를 읽지 않아 상관없다.
+    """
+
+    async def growth_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
+        raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
 
 
 class GrowthLogReader(Protocol):

@@ -27,6 +27,7 @@ from app.agents.growth.store.ports import (
     RoutineObservation,
     SafetyEntry,
     SafetyLookupError,
+    UnwiredSafety,
 )
 from app.agents.growth.tools.routine import PickedStep
 from app.agents.growth.tools.safety import SafetyRules, SafetyRulesUnavailable, load_safety_rules
@@ -112,6 +113,7 @@ async def build_gate(
         그 밖                읽지 않는다 — 루틴 · 도서는 건강정보를 쓰지 않는다
     - 읽다가 실패하면 빈 목록이 아니라 닫는다. 안전 조회 실패는 `safety_ok=False` 다
       (교육만 닫힌다).
+      안전 포트가 `UnwiredSafety` 면 동의와 상관없이 교육을 닫는다.
       안전 사전을 못 읽은 것도 같다 — 빈 사전으로 통과시키지 않는다. 측정 읽기 실패는 예외를 그대로
       올린다 ("측정 0건" 으로 읽히면 안 된다).
     - 교육이 0–11개월이면 어차피 `closed.infant_learning` 으로 닫혀서 안전 정보도 읽지 않는다.
@@ -130,15 +132,21 @@ async def build_gate(
     notice = False
 
     if task_type is GrowthTaskType.LEARNING_SUGGESTION and stage.months >= EDUCATION_MIN_MONTH:
-        try:
-            state.rules = context.safety_rules()
-            entries = await ports.safety.growth_safety(child_id=context.child_id) if consent else []
-        except (SafetyRulesUnavailable, SafetyLookupError):
+        if isinstance(ports.safety, UnwiredSafety):
+            # 어댑터가 붙기 전이다. 동의가 없어도 닫는다 — 읽지도 않는다 (Activity #380 과 같다)
             safety_ok = False
-            state.rules = None
         else:
-            state.safety_entries = tuple(entries)
-            allergy_states = tuple(entry.status for entry in entries if entry.kind == "allergy")
+            try:
+                state.rules = context.safety_rules()
+                entries = (
+                    await ports.safety.growth_safety(child_id=context.child_id) if consent else []
+                )
+            except (SafetyRulesUnavailable, SafetyLookupError):
+                safety_ok = False
+                state.rules = None
+            else:
+                state.safety_entries = tuple(entries)
+                allergy_states = tuple(entry.status for entry in entries if entry.kind == "allergy")
         if ports.notice is not None:
             notice = await ports.notice.has_notice(child_id=context.child_id)
     elif task_type is GrowthTaskType.ROUTINE_COACHING:

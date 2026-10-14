@@ -59,7 +59,15 @@ def test_모든_필드에_description_이_있다() -> None:
 def test_정해진_필드만_노출한다() -> None:
     # 아이 이름·날짜 같은 걸 모델이 채우게 두지 않는다
     segment = ROUTE_TOOL_SPEC["function"]["parameters"]["properties"]["segments"]["items"]
-    assert set(segment["properties"]) == {"text", "kind", "work", "agent", "food_task", "guard"}
+    assert set(segment["properties"]) == {
+        "text",
+        "kind",
+        "work",
+        "agent",
+        "food_task",
+        "growth_task",
+        "guard",
+    }
 
 
 # ── enum 일치 ───────────────────────────────────────────────────
@@ -365,3 +373,48 @@ def test_segment_는_enum_이_아니라_값을_담는다() -> None:
     # use_enum_values — routing 과 JSONL 이 문자열로 다룬다
     segment = Segment.model_validate({"text": "x", "kind": "record", "work": "observe"})
     assert segment.kind == "record" and segment.work == "observe"
+
+
+def test_growth_에_유형이_없으면_교육_추천으로_채운다() -> None:
+    parsed = _output({"text": "한글 공부 추천해줘", "kind": "request", "agent": "growth"}).segments[
+        0
+    ]
+    assert parsed.growth_task == "learning_suggestion"
+
+
+def test_growth_유형은_네_가지를_그대로_받는다() -> None:
+    for label in ("learning_suggestion", "routine_coaching", "book_suggestion", "growth_review"):
+        parsed = _output(
+            {"text": "잘 크고 있어?", "kind": "request", "agent": "growth", "growth_task": label}
+        ).segments[0]
+        assert parsed.growth_task == label
+
+
+def test_growth_가_아닌_조각의_growth_task_는_지운다() -> None:
+    parsed = _output(
+        {
+            "text": "놀이 추천해줘",
+            "kind": "request",
+            "agent": "activity",
+            "growth_task": "learning_suggestion",
+        }
+    ).segments[0]
+    assert parsed.growth_task is None
+
+
+def test_모르는_growth_유형은_지우고_기본값으로_채운다() -> None:
+    parsed = _output(
+        {"text": "책 추천해줘", "kind": "request", "agent": "growth", "growth_task": "reading"}
+    ).segments[0]
+    assert parsed.growth_task == "learning_suggestion"
+
+
+def test_프롬프트가_growth_네_라벨과_경계_예시를_싣는다() -> None:
+    from app.agents.supervisor.prompt import build_system_prompt
+
+    prompt = build_system_prompt()
+    for label in ("learning_suggestion", "routine_coaching", "book_suggestion", "growth_review"):
+        assert label in prompt
+    # 의료 처치 · 증상 습관도 routine_coaching 으로 보낸다 — Growth 가 코드로 닫는다
+    assert "약 먹는 걸 너무 싫어해" in prompt
+    assert "눈을 자꾸 깜빡여" in prompt

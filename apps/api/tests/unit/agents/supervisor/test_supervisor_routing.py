@@ -17,6 +17,7 @@ from app.agents.supervisor.routing import (
     AGENT_LIMIT,
     MAX_DOMAIN_AGENTS,
     SKIP_MEMORY_FOR_PURE_REQUEST,
+    TASK_LIMIT,
     covers_only_requests,
     route,
 )
@@ -336,3 +337,54 @@ def test_생략을_끄면_순수_요청형도_Memory_를_부른다(monkeypatch: 
     # 되돌리는 경로. Supervisor 가 기록을 요청으로 잘못 잘라도 Memory 가 원문을 한 번 더 본다
     monkeypatch.setattr(routing_module, "SKIP_MEMORY_FOR_PURE_REQUEST", False)
     assert _route_case("RC07").memory_task is not None
+
+
+def test_growth_조각은_라벨을_task_type_으로_넘긴다() -> None:
+    raw = "잘 크고 있어?"
+    output = _output(
+        {"text": raw, "kind": "request", "agent": "growth", "growth_task": "growth_review"}
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    (task,) = routing.domain_tasks
+    assert (task.agent, task.task_type) == ("growth", "growth_review")
+
+
+def _growth(text: str, label: str) -> dict[str, Any]:
+    return {"text": text, "kind": "request", "agent": "growth", "growth_task": label}
+
+
+def test_한_run_에_Growth_추천은_처음_것_하나만_돈다() -> None:
+    raw = "공룡 책이랑 숫자 놀이 추천해줘"
+    output = _output(
+        _growth("공룡 책 추천해줘", "book_suggestion"),
+        _growth("숫자 놀이 추천해줘", "learning_suggestion"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("growth", "book_suggestion")]
+    assert TASK_LIMIT in [guidance.code for guidance in routing.guidance]
+
+
+def test_성장_추이는_추천과_같이_돈다() -> None:
+    raw = "잘 크고 있어? 숫자 놀이도 추천해줘"
+    output = _output(
+        _growth("잘 크고 있어?", "growth_review"),
+        _growth("숫자 놀이도 추천해줘", "learning_suggestion"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [t.task_type for t in routing.domain_tasks] == ["growth_review", "learning_suggestion"]
+    assert TASK_LIMIT not in [guidance.code for guidance in routing.guidance]
+
+
+def test_같은_Growth_라벨_조각_둘은_한_task_로_묶인다() -> None:
+    raw = "한글 공부랑 숫자 공부 추천해줘"
+    output = _output(
+        _growth("한글 공부 추천해줘", "learning_suggestion"),
+        _growth("숫자 공부 추천해줘", "learning_suggestion"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    (task,) = routing.domain_tasks
+    assert task.request_texts == ("한글 공부 추천해줘", "숫자 공부 추천해줘")
+    assert TASK_LIMIT not in [guidance.code for guidance in routing.guidance]

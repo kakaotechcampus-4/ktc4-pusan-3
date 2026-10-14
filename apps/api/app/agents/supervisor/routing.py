@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
+from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
 from app.agents.memory.schemas.task import MemoryHint, MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.schemas import (
@@ -57,8 +58,14 @@ logger = logging.getLogger(__name__)
 IntentType = Literal["record", "request", "mixed"]
 
 IMPLEMENTED_AGENTS: frozenset[str] = frozenset(
-    {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value}
+    {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value, DomainAgentName.GROWTH.value}
 )
+
+# 한 run 에 추천 라벨을 하나만 돌리는 Agent. 05 의 다시 시도 맥락 · 0개 기록이 (run, agent) 로
+# 묶여서, 같은 Agent 의 추천 task 가 둘이면 서로 덮는다. Food 는 추천 라벨이 하나라 해당이 없다
+_ONE_RECOMMENDATION: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: GROWTH_RECOMMENDING,
+}
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
 #       (Supervisor가 의도를 제대로 나눴다고 보는 정책으로, 잘못 나누면 입력 정보가 그대로 삭제)
@@ -107,6 +114,14 @@ _AGENT_LIMIT = Guidance(
 )
 
 
+# 한 Agent 의 추천을 여러 가지 물어 뒤의 것을 뺐을 때 알리는 용도
+TASK_LIMIT = "task_limit"
+_TASK_LIMIT = Guidance(
+    code=TASK_LIMIT,
+    message="한 번에 한 가지씩 추천할 수 있어요. 나머지는 다시 말씀해 주세요.",
+)
+
+
 @dataclass(frozen=True)
 class Routing:
     intent_type: IntentType
@@ -140,7 +155,7 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     wanted = list(dict.fromkeys(str(s.agent) for s in requests))
     selected, dropped = wanted[:MAX_DOMAIN_AGENTS], wanted[MAX_DOMAIN_AGENTS:]
 
-    domain_tasks = _domain_tasks(
+    domain_tasks, trimmed = _domain_tasks(
         [s for s in requests if str(s.agent) in selected and str(s.agent) in IMPLEMENTED_AGENTS],
         run_id=run_id,
     )
@@ -151,7 +166,7 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         domain_tasks=domain_tasks,
         unavailable_agents=tuple(a for a in selected if a not in IMPLEMENTED_AGENTS),
         dropped_agents=tuple(dropped),
-        guidance=_guidance(result.output, dropped=bool(dropped)),
+        guidance=_guidance(result.output, dropped=bool(dropped), trimmed=trimmed),
     )
     _log(routing, None)
     return routing
@@ -164,28 +179,46 @@ def _intent(*, has_record: bool, has_request: bool) -> IntentType:
     return "record"
 
 
-def _domain_tasks(segments: list, *, run_id: str) -> tuple[DomainTask, ...]:
-    """agent × task_type 당 하나. 처음 나온 순서를 따른다."""
+def _domain_tasks(segments: list, *, run_id: str) -> tuple[tuple[DomainTask, ...], bool]:
+    """agent × task_type 당 하나. 처음 나온 순서를 따른다.
+
+    `_ONE_RECOMMENDATION` 의 Agent 는 추천 라벨을 처음 것 하나만 남긴다. 뺀 조각이 있으면 True —
+    호출부가 안내 한 줄을 붙인다(조용히 빠지면 사용자는 답이 없는 이유를 모른다).
+    """
     texts: dict[tuple[str, str | None], list[str]] = {}
+    trimmed = False
     for segment in segments:
-        texts.setdefault((str(segment.agent), _task_label(segment)), []).append(segment.text)
-    return tuple(
+        agent, label = str(segment.agent), _task_label(segment)
+        limited = _ONE_RECOMMENDATION.get(agent, frozenset())
+        if label in limited and any(
+            other_agent == agent and other in limited and other != label
+            for other_agent, other in texts
+        ):
+            trimmed = True
+            continue
+        texts.setdefault((agent, label), []).append(segment.text)
+    tasks = tuple(
         DomainTask(run_id=run_id, agent=agent, task_type=task_type, request_texts=tuple(items))
         for (agent, task_type), items in texts.items()
     )
+    return tasks, trimmed
 
 
 def _task_label(segment) -> str | None:
-    """Supervisor 가 agent 별로 붙이는 라벨. 지금은 food_task 하나뿐이다.
+    """Supervisor 가 agent 별로 붙이는 라벨. food 와 growth 만 있다 — activity 는 라벨이 없다.
 
-    TODO: Activity·Growth·Health 라벨이 Supervisor 스키마에 생기면 여기만 늘린다.
+    TODO: Health 라벨이 Supervisor 스키마에 생기면 여기만 늘린다.
     """
     if segment.agent == DomainAgentName.FOOD:
         return str(segment.food_task)
+    if segment.agent == DomainAgentName.GROWTH:
+        return str(segment.growth_task)
     return None
 
 
-def _guidance(output: SupervisorOutput, *, dropped: bool = False) -> tuple[Guidance, ...]:
+def _guidance(
+    output: SupervisorOutput, *, dropped: bool = False, trimmed: bool = False
+) -> tuple[Guidance, ...]:
     """guard · out_of_scope 별 안내. 같은 코드는 한 번만.
 
     상한을 넘겨 버린 요청이 있으면 그것도 알린다 — 조용히 빠지면 사용자는 답이 없는 이유를 모른다.
@@ -199,6 +232,8 @@ def _guidance(output: SupervisorOutput, *, dropped: bool = False) -> tuple[Guida
     guidance = [_GUIDANCE[code] for code in dict.fromkeys(codes)]
     if dropped:
         guidance.append(_AGENT_LIMIT)
+    if trimmed:
+        guidance.append(_TASK_LIMIT)
     return tuple(guidance)
 
 

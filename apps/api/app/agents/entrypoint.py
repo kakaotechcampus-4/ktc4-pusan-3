@@ -33,12 +33,23 @@ from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
 from app.agents.food.store import InMemoryProfile, unwired_ports
+from app.agents.growth.context import GrowthContext
+from app.agents.growth.store.inmemory import InMemoryConsent as GrowthConsent
+from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthLog
+from app.agents.growth.store.inmemory import InMemoryProfile as GrowthProfile
+from app.agents.growth.store.ports import GrowthLogReader, GrowthPorts
+from app.agents.growth.store.ports import UnwiredSafety as GrowthUnwiredSafety
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
-from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, StoreOpener
+from app.agents.memory_bridge import (
+    StoreActivityMemory,
+    StoreFoodMemory,
+    StoreGrowthMemory,
+    StoreOpener,
+)
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentResult,
@@ -76,6 +87,7 @@ from app.agents.supervisor.routing import Guidance
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
     "MAX_SUGGESTIONS",
+    "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",
     "AgentResult",
     "AllergenCheck",
@@ -93,6 +105,7 @@ __all__ = [
     "EventDrafts",
     "Failed",
     "Guidance",
+    "GrowthLogReader",
     "InMemoryStore",
     "InMemorySuggestions",
     "MemoryNote",
@@ -183,6 +196,7 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
     count_records: CountRecords | None = None,
+    growth_log: GrowthLogReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -212,6 +226,8 @@ async def handle_input(
     - curator_trigger 를 넘기면 Memory 가 commit 된 직후 pipeline 이 (child_id, 기준일) 로 한 번
       부른다. 콜백이 별도 세션에서 Curator 를 백그라운드로 띄운다. 러너가 `curator_deps()` 로
       만든다. 안 넘기면(테스트 · eval) Curator 는 돌지 않는다.
+    - growth_log 는 러너가 짧은 DB 세션으로 만든 성장 기록 어댑터다. 안 넘기면(테스트 · eval)
+      측정이 없는 것으로 읽힌다.
     - domain_store 를 넘기면 도메인 Agent 의 기억 포트가 호출마다 그것으로 store 를 새로 연다.
       러너가 짧은 DB 세션으로 만든다 — run 세션을 도메인 task 들이 같이 타지 않게. 안 넘기면
       run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
@@ -242,6 +258,7 @@ async def handle_input(
         location=location,
         activity_weather=activity_weather,
         domain_store=domain_store,
+        growth_log=growth_log,
     )
 
     return await _handle_input(
@@ -270,10 +287,15 @@ class SuggestTask:
 
 
 SUGGESTION_AGENTS: frozenset[str] = frozenset(RECOMMENDING_TASKS)
+# 05 처음 요청(run_id 없음)으로 돌 수 있는 Agent — 추천 라벨이 하나라 무엇을 돌릴지 정해진다.
+# Growth 는 라벨이 셋이라 처음 요청은 not_ready 다. 홈 버튼을 붙일 때 그 표가 라벨까지 정한다
+FIRST_REQUEST_AGENTS: frozenset[str] = frozenset(
+    agent for agent, labels in RECOMMENDING_TASKS.items() if len(labels) == 1
+)
 
 
 def recommendation_task_type(agent: str) -> str | None:
-    """05 가 처음 요청으로 돌릴 때의 라벨. Agent 마다 추천 task 가 하나다."""
+    """05 가 처음 요청으로 돌릴 때의 라벨. `FIRST_REQUEST_AGENTS` 만 부른다."""
     [label] = RECOMMENDING_TASKS[agent]
     return label
 
@@ -290,6 +312,7 @@ async def suggest(
     child_health_granted: bool | None = None,
     domain_store: StoreOpener | None = None,
     store: MemoryStore | None = None,
+    growth_log: GrowthLogReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
 
@@ -315,6 +338,7 @@ async def suggest(
         location=None,
         activity_weather=None,
         domain_store=domain_store,
+        growth_log=growth_log,
     )
     domain_tasks = tuple(
         DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
@@ -415,8 +439,12 @@ def _domain_contexts(
     location: CoarseLocation | None,
     activity_weather: WeatherSource | None,
     domain_store: StoreOpener | None,
+    growth_log: GrowthLogReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
-    """Food · Activity 컨텍스트. 입력 run 과 05 가 같은 값으로 연다 — 포트가 두 벌이 되지 않게."""
+    """Food · Activity · Growth 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
+
+    포트가 두 벌이 되지 않게 한 곳에서 만든다.
+    """
     # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
     # 포트가 build_gate 의 LifeStage 계산과 동의 확인 자리에 들어가고, 기억 포트는 같은 run 의
     # store 를 읽게 한다. 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
@@ -476,4 +504,30 @@ def _domain_contexts(
         ),
         location=location,
     )
-    return {"food": food_context, "activity": activity_context}, writes
+    # Growth 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 안전 조회는 아직 연결하지 않아
+    # (UnwiredSafety) 교육은 동의와 상관없이 blocked.safety 로 닫히고 루틴 · 성장 추이만 열린다.
+    # 도서 · 공지 포트는 없다 — 도서는 closed.book_api, lookup_notice 는 빠진다.
+    # 동의 값을 못 받은 호출(테스트 · eval)은 동의 없음으로 읽는다 — 키 · 몸무게를 읽지 않게
+    growth_context = GrowthContext(
+        child_id=child_id,
+        run_id=run_id,
+        now=now,
+        timezone=KST,
+        ports=GrowthPorts(
+            profile=activity_child or GrowthProfile({child_id: resolved_birth_date}),
+            consent=activity_child or GrowthConsent({child_id: False}),
+            safety=GrowthUnwiredSafety(),
+            growth_log=growth_log or InMemoryGrowthLog(),
+            memory=(
+                StoreGrowthMemory(store)
+                if domain_store is None
+                else StoreGrowthMemory(opener=domain_store)
+            ),
+            docs=InMemoryGrowthDocs.from_seed(),
+        ),
+    )
+    return {
+        "food": food_context,
+        "activity": activity_context,
+        "growth": growth_context,
+    }, writes
