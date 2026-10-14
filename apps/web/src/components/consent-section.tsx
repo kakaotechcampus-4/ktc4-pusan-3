@@ -304,7 +304,7 @@ function consentName(choice: ConsentChoice): string {
  *
  * 🚨 **둘 다 사본이 아니라 서버 정본을 연다** (#90 · #221). 이용약관은 가입 화면이 여는 것과 같은
  *    페이지라, 부모가 동의한 글과 나중에 다시 읽는 글이 같다는 것이 구조로 보장된다. 처리방침은
- *    동의 목록 밖의 고정 주소라 늘 지금 적용 중인 판이 열린다.
+ *    동의 목록 밖의 고정 주소라 늘 가장 최신 판이 열린다.
  */
 export function LegalDocumentSection() {
   const policies = usePolicies();
@@ -342,10 +342,10 @@ export function LegalDocumentSection() {
             )}
 
             {/* 어느 판인지. 🚨 문서마다 다르다 — 약관은 저마다 버전을 갖는다 (#168).
-                처리방침은 고정 주소라 판을 화면이 모른다 — 서버가 지금 판을 연다. */}
+                처리방침은 고정 주소라 판을 화면이 모른다 — 서버가 가장 최신 판을 연다. */}
             <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
               {doc.href
-                ? "지금 적용 중인 판이 열려요."
+                ? "가장 최신의 처리방침이 열려요."
                 : policy
                   ? `${policy.version} 판이에요.`
                   : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}
