@@ -41,7 +41,9 @@ test("08 사진 확인 화면 — 저장은 게이트가 아니다 (일정 넣�
 test("10 설정", async ({ page }) => {
   await page.goto(`/child/${CHILD}/settings`);
   await expect(page.getByRole("heading", { name: "함께 보는 보호자" })).toBeVisible();
-  await expect(page.getByText("위치정보").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "개인정보 처리방침" })).toBeVisible();
+  // 위치 동의는 지금 묻지 않는다 (`askedChoices` · #221) — 켜고 끌 선택 동의가 없어 "동의" 구역도 없다
+  await expect(page.getByText("위치정보")).toHaveCount(0);
   await expectNoGate(page);
 });
 
@@ -54,6 +56,7 @@ test.describe("가입 · 첫 진입", () => {
     });
     await page.goto("/auth/consent");
     await expect(page.getByRole("checkbox", { name: "[필수] 서비스 이용약관" })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: /위치정보/ })).toHaveCount(0);
     await expectNoGate(page);
   });
 

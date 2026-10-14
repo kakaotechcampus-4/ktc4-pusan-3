@@ -158,6 +158,22 @@ export function consentChoices(
 }
 
 /**
+ * 서버가 내주지만 **지금은 묻지 않는** 동의 (#221).
+ *
+ * 위치 기능이 첫 빌드에 없다. 개인정보 처리방침(2026-10-15 판)이 "기기의 위치 정보를 읽는 기능은
+ * 두지 않는다" 고 알리는데, 가입 화면에 위치 동의가 서 있으면 두 글이 서로 다른 말을 한다.
+ *
+ * 🚨 **임시 예외다.** 무엇을 물을지는 원래 서버(`GET /policies`)가 정한다 (이 파일 머리말).
+ *    위치 기능을 켤 때 이 목록을 비우고, 그때 서버 쪽도 위치 약관 새 판 · 신고를 마친다.
+ */
+const NOT_ASKED_YET: ReadonlySet<string> = new Set(["location"]);
+
+/** 화면에 세울 동의만 — `NOT_ASKED_YET` 을 뺀다. 가입 화면과 10 설정이 같은 기준을 쓴다. */
+export function askedChoices(choices: readonly ConsentChoice[]): ConsentChoice[] {
+  return choices.filter(({ policy }) => !NOT_ASKED_YET.has(policy.scope));
+}
+
+/**
  * 전문 보기가 여는 주소. `html_path` 는 `/api/v1` 아래 경로라 기준 주소 뒤에 그대로 붙인다.
  *
  * 🚨 **`null` 이면 열 곳이 없다** — 화면은 버튼을 **숨긴다**. 다른 글로 대신하지 않는다.

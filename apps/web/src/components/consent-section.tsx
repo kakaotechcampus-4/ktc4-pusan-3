@@ -20,6 +20,7 @@ import {
   type ConsentsResponse,
 } from "@/lib/api";
 import {
+  askedChoices,
   consentChoices,
   LEGAL_DOCUMENTS,
   policyHref,
@@ -139,7 +140,9 @@ export function ConsentSection({ childId }: { childId: string }) {
     consents.data?.history.find((h) => h.scope === scope && h.action === "withdrawn")?.acted_at;
 
   /** 🚨 선택 동의만 이 구역이 든다. 그 판단도 서버 값(`required`)이다. */
-  const optional = consentChoices(policies.data).filter(({ policy }) => !policy.required);
+  const optional = askedChoices(consentChoices(policies.data)).filter(
+    ({ policy }) => !policy.required,
+  );
 
   if (consents.isPending || policies.isPending) {
     return <SkeletonBlock label="동의 현황을 불러오는 중" />;

@@ -21,6 +21,7 @@ import {
   readProvider,
 } from "@/lib/auth";
 import {
+  askedChoices,
   consentChoices,
   consentPayload,
   POLICY_CHANGED_MESSAGE,
@@ -80,7 +81,7 @@ export default function AuthConsentPage() {
     if (!consentCode.current) router.replace("/");
   }, [hydrated, router]);
 
-  const choices = consentChoices(policies.data, "account");
+  const choices = askedChoices(consentChoices(policies.data, "account"));
   const required = choices.filter(({ policy }) => policy.required);
   const optional = choices.filter(({ policy }) => !policy.required);
 

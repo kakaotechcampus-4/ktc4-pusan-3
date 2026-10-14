@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  askedChoices,
   consentChoices,
   consentPayload,
   isConsentChecked,
@@ -158,6 +159,30 @@ describe("어느 화면이 묻는가 — 서버가 말한다", () => {
       "child",
     ).map((c) => c.policy.scope);
     expect(scopes).toEqual(["child_health", "child_basic"]);
+  });
+});
+
+describe("지금은 묻지 않는 동의 (#221)", () => {
+  it("위치 동의는 빼고 나머지는 응답 순서대로 남긴다", () => {
+    const choices = consentChoices([
+      policy("service_terms"),
+      policy("privacy_account"),
+      policy("location", { required: false }),
+    ]);
+    expect(askedChoices(choices).map((c) => c.policy.scope)).toEqual([
+      "service_terms",
+      "privacy_account",
+    ]);
+  });
+
+  it("🚨 필수 동의는 하나도 빼지 않는다 — 빠지면 가입이 필수 동의 없이 통과한다", () => {
+    const choices = consentChoices([
+      policy("service_terms"),
+      policy("privacy_account"),
+      policy("child_basic", { target: "child" }),
+      policy("child_health", { target: "child" }),
+    ]);
+    expect(askedChoices(choices)).toHaveLength(4);
   });
 });
 

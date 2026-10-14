@@ -16,7 +16,9 @@ import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
+import { usePolicies } from "@/hooks/use-policies";
 import { api, qk, type Me } from "@/lib/api";
+import { askedChoices, consentChoices } from "@/lib/consent";
 import { BACK, FORWARD } from "@/lib/view-transition";
 
 /**
@@ -74,6 +76,15 @@ function SettingsScreen() {
    *    버튼 없이 초대하라고 말하는 화면이 된다 — 그때는 초대 얘기를 꺼내지 않는다.
    */
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
+  /**
+   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 지금은 유일한 선택 동의(위치)를
+   *    묻지 않는다 (`askedChoices` · #221). 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
+   *    아무것도 없는 목록을 설명하는 화면이 된다. 위치를 다시 물으면 저절로 돌아온다.
+   */
+  const policies = usePolicies();
+  const hasOptionalConsent = askedChoices(consentChoices(policies.data)).some(
+    ({ policy }) => !policy.required,
+  );
   const role = me.data?.children.find((child) => child.child_id === childId)?.role;
   const inviteNote =
     role === "owner"
@@ -123,12 +134,14 @@ function SettingsScreen() {
         />
       </Section>
 
-      <Section
-        title="동의"
-        description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
-      >
-        <ConsentSection childId={childId} />
-      </Section>
+      {hasOptionalConsent ? (
+        <Section
+          title="동의"
+          description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
+        >
+          <ConsentSection childId={childId} />
+        </Section>
+      ) : null}
 
       <Section title="고객센터" description="자주 묻는 것과 이 서비스의 기본 정보예요.">
         <SettingsGroup>
