@@ -10,6 +10,7 @@ import pytest
 
 from app.agents.food import meal_pool
 from app.agents.food.meal_pool import (
+    DEFICIT_BOOST,
     POOL_MAX,
     RECENT_EATEN_DAYS,
     SAMPLE_MAX,
@@ -225,14 +226,24 @@ async def test_선호는_가중치가_높다() -> None:
     assert weight_of(pool, "딸기푸딩") > weight_of(pool, "두부조림")
 
 
-def verdict(*, low: tuple[str, ...] = (), insufficient: bool = False) -> NutrientVerdict:
+def verdict(
+    *,
+    low: tuple[str, ...] = (),
+    insufficient: bool = False,
+    group_days: dict[str, int] | None = None,
+    recorded_days: int = 7,
+    appearance_ready: bool = False,
+) -> NutrientVerdict:
     return NutrientVerdict(
         bands={nutrient: "low" for nutrient in low},
         unscored=(),
         records=12,
         resolved_ratio=1.0,
         insufficient=insufficient,
-        food_groups=frozenset(),
+        food_groups=frozenset(group_days or ()),
+        food_group_days=dict(group_days or {}),
+        recorded_days=recorded_days,
+        appearance_ready=appearance_ready,
     )
 
 
@@ -291,6 +302,136 @@ async def test_기록이_모자라면_영양_가중치를_주지_않는다(fake_
     pool = await build_pool(ctx)
 
     assert weight_of(pool, "우유찜") == weight_of(pool, "두부조림")
+
+
+# ── 채소 · 과일 부족 가중 (#411 T4) ──────────────────────────────────────
+# 영양 구간에는 채소 · 과일에 대응하는 항목이 없다. 최근 7일 중 나온 날 수가 기록된 날의 절반보다
+# 적으면 그 식품군을 부족 식품군에 더한다(N-19).
+VEGETABLES = frozenset({"vegetables"})
+FRUITS = frozenset({"fruits"})
+
+
+def veg_and_plain_recipes() -> InMemoryRecipeCatalog:
+    return recipes(
+        recipe("시금치나물", "시금치", food_groups=VEGETABLES),
+        recipe("사과조림", "사과", food_groups=FRUITS),
+        recipe("두부조림", "두부"),
+    )
+
+
+async def test_7일_중_채소가_1일이면_채소_메뉴에_부족_가중치가_붙는다(fake_verdict) -> None:
+    fake_verdict(verdict(group_days={"vegetables": 1, "fruits": 7}, appearance_ready=True))
+
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+
+    assert weight_of(pool, "시금치나물") == pytest.approx(
+        DEFICIT_BOOST * weight_of(pool, "두부조림")
+    )
+    assert weight_of(pool, "사과조림") == weight_of(pool, "두부조림")  # 과일은 충분히 나왔다
+
+
+async def test_기준_일수_이상_나왔으면_가중치가_없다(fake_verdict) -> None:
+    # 기록된 7일의 절반(3.5일)을 넘는 4일부터 충분하다
+    fake_verdict(verdict(group_days={"vegetables": 4, "fruits": 7}, appearance_ready=True))
+
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+
+    assert weight_of(pool, "시금치나물") == weight_of(pool, "두부조림")
+
+
+async def test_기준_일수는_기록된_날_수로_본다(fake_verdict) -> None:
+    # 4일만 기록했으면 절반은 2일 — 채소가 2일 나왔으면 충분하고 1일이면 부족하다
+    fake_verdict(
+        verdict(group_days={"vegetables": 2, "fruits": 4}, recorded_days=4, appearance_ready=True)
+    )
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+    assert weight_of(pool, "시금치나물") == weight_of(pool, "두부조림")
+
+    fake_verdict(
+        verdict(group_days={"vegetables": 1, "fruits": 4}, recorded_days=4, appearance_ready=True)
+    )
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+    assert weight_of(pool, "시금치나물") == pytest.approx(
+        DEFICIT_BOOST * weight_of(pool, "두부조림")
+    )
+
+
+async def test_한_번도_안_나온_과일은_부족_식품군이다(fake_verdict) -> None:
+    fake_verdict(
+        verdict(group_days={"vegetables": 7}, appearance_ready=True)
+    )  # fruits 키 없음 = 0일
+
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+
+    assert weight_of(pool, "사과조림") == pytest.approx(DEFICIT_BOOST * weight_of(pool, "두부조림"))
+    assert weight_of(pool, "시금치나물") == weight_of(pool, "두부조림")
+
+
+async def test_기록이_모자라면_채소_과일_가중치를_주지_않는다(fake_verdict) -> None:
+    fake_verdict(verdict(group_days={}, insufficient=True, appearance_ready=False))
+
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+
+    assert weight_of(pool, "시금치나물") == weight_of(pool, "두부조림")
+    assert weight_of(pool, "사과조림") == weight_of(pool, "두부조림")
+
+
+async def test_구간은_막혀도_기록이_충분하면_채소_과일_가중치는_준다(fake_verdict) -> None:
+    # 1인분 중량이 빈 메뉴 때문에 구간(insufficient)은 못 냈어도 출현은 센다
+    fake_verdict(
+        verdict(group_days={"vegetables": 1, "fruits": 7}, insufficient=True, appearance_ready=True)
+    )
+
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+
+    assert weight_of(pool, "시금치나물") == pytest.approx(
+        DEFICIT_BOOST * weight_of(pool, "두부조림")
+    )
+
+
+async def test_이유기_단계는_채소_과일_가중치를_주지_않는다(fake_verdict) -> None:
+    fake_verdict(verdict(group_days={"vegetables": 0}, appearance_ready=True))
+    rows = recipes(
+        recipe("시금치죽", "시금치", food_groups=VEGETABLES, stage_min="infant_weaning"),
+        recipe("두부죽", "두부", stage_min="infant_weaning"),
+    )
+
+    pool = await build_pool(context(recipes=rows, birth=date(2026, 3, 10)))
+
+    assert weight_of(pool, "시금치죽") == weight_of(pool, "두부죽")
+
+
+async def test_칼슘이_low_이고_채소도_부족하면_둘_다_가중한다(fake_verdict) -> None:
+    fake_verdict(
+        verdict(low=("calcium",), group_days={"vegetables": 1, "fruits": 7}, appearance_ready=True)
+    )
+    rows = recipes(
+        recipe("우유찜", "우유", food_groups=frozenset({"dairy"})),
+        recipe("시금치나물", "시금치", food_groups=VEGETABLES),
+        recipe("두부조림", "두부"),
+    )
+
+    pool = await build_pool(context(recipes=rows))
+
+    assert weight_of(pool, "우유찜") == pytest.approx(DEFICIT_BOOST * weight_of(pool, "두부조림"))
+    assert weight_of(pool, "시금치나물") == pytest.approx(
+        DEFICIT_BOOST * weight_of(pool, "두부조림")
+    )
+
+
+async def test_채소와_유제품이_함께_든_메뉴는_부족_가중치를_한_번만_받는다(fake_verdict) -> None:
+    # 칼슘 low(dairy) 와 채소 부족(vegetables) 이 한 메뉴에 겹쳐도 DEFICIT_BOOST 는 한 번만 곱한다
+    fake_verdict(verdict(low=("calcium",), group_days={"vegetables": 1}, appearance_ready=True))
+    rows = recipes(
+        recipe("시금치치즈전", "시금치", food_groups=frozenset({"dairy", "vegetables"})),
+        recipe("두부조림", "두부"),
+    )
+
+    pool = await build_pool(context(recipes=rows))
+
+    assert weight_of(pool, "시금치치즈전") == pytest.approx(
+        DEFICIT_BOOST * weight_of(pool, "두부조림")
+    )
 
 
 async def test_영양_판정은_12개월_이상일_때만_부른다(fake_verdict) -> None:

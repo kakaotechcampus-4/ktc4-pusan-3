@@ -1,26 +1,29 @@
-"""Food Agent 진입점 — run() 을 공통 tool 루프 위에서 끝까지 돈다."""
+"""Food Agent 진입점 — 닫힌 경로와 영양소 분석(1차 출력)을 run() 끝에서 끝까지 돈다.
 
-import json
-import logging
-from datetime import date, datetime
-from types import SimpleNamespace
+영양소 분석은 모델을 부르지 않는다 — 판정 결과의 식품군 출현을 코드 문장 틀로 낸다
+(`영양소_계산_설계.md` §9 N-17 · N-18).
+"""
+
+from datetime import date, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.tool_loop import MAX_STEPS
 from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
-from app.agents.food.nutrition_eval import NutrientVerdict
 from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, READOUTS
 from app.agents.food.store import (
+    FoodObservation,
     InMemoryConsent,
+    InMemoryFoodMemory,
+    InMemoryMenuCatalog,
     InMemoryProfile,
     InMemorySafety,
+    MenuCatalogRow,
     SafetyEntry,
     in_memory_ports,
     unwired_ports,
@@ -31,7 +34,7 @@ CHILD = UUID(int=1)
 NOW = datetime(2026, 10, 2, 9, 0, tzinfo=KST)
 TODDLER_BIRTH = date(2024, 6, 2)  # NOW 기준 28개월
 INFANT_BIRTH = date(2026, 2, 2)  # NOW 기준 8개월 — infant_weaning
-USAGE = {"prompt_tokens": 10, "completion_tokens": 5}
+WINDOW_END = date(2026, 10, 1)  # 오늘(10-02) 이전 하루
 
 
 class FakeLLM:
@@ -42,25 +45,8 @@ class FakeLLM:
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         if not self._queue:
-            raise AssertionError("응답을 다 썼는데 모델을 또 불렀다 — 닫힌 경로는 모델 0회가 맞다")
+            raise AssertionError("응답을 다 썼는데 모델을 또 불렀다 — 모델 0회가 맞다")
         return self._queue.pop(0)
-
-
-def call(call_id: str, name: str, arguments: dict[str, Any]) -> SimpleNamespace:
-    raw = json.dumps(arguments, ensure_ascii=False)
-    return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=raw))
-
-
-def tool_response(*calls: SimpleNamespace) -> LLMResponse:
-    return LLMResponse(
-        message=SimpleNamespace(content=None, tool_calls=list(calls)), usage=USAGE, latency_ms=1
-    )
-
-
-def reply(content: str) -> LLMResponse:
-    return LLMResponse(
-        message=SimpleNamespace(content=content, tool_calls=None), usage=USAGE, latency_ms=1
-    )
 
 
 def _context(birth_date: date, **port_overrides: object) -> FoodContext:
@@ -68,6 +54,63 @@ def _context(birth_date: date, **port_overrides: object) -> FoodContext:
     defaults.update(port_overrides)
     return FoodContext(
         child_id=CHILD, run_id="run-1", now=NOW, timezone=KST, ports=in_memory_ports(**defaults)
+    )
+
+
+def _menu(name: str, groups: set[str], *, serving_g: float | None = 100.0) -> MenuCatalogRow:
+    return MenuCatalogRow(
+        menu_key=name,
+        display_name=name,
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        serving_g=serving_g,
+        nutrients={
+            "energy": 100.0,
+            "protein": 3.0,
+            "fat": 1.0,
+            "carbohydrate": 15.0,
+            "calcium": 20.0,
+        },
+        food_groups=frozenset(groups),
+    )
+
+
+def _meals(*pairs: tuple[str, int]) -> list[FoodObservation]:
+    """(메뉴, 어제부터 며칠 전) 마다 기록 한 건."""
+    return [
+        FoodObservation(
+            id=uuid4(),
+            child_id=CHILD,
+            observed_on=WINDOW_END - timedelta(days=offset),
+            subject=name,
+            amount_text="한 그릇",
+            polarity=1,
+            updated_at=NOW,
+            confidence_source="parent_direct",
+        )
+        for name, offset in pairs
+    ]
+
+
+def _records_context(
+    *, extra: tuple[tuple[str, int], ...] = (), serving_g: float | None = 100.0, **ports: object
+) -> FoodContext:
+    """7일 · 매일 쌀밥 두 번 + 채소가 나온 날(어제 · 2일 전 · 4일 전) — 기록 21행."""
+    meals = [("쌀밥", day) for day in range(7) for _ in range(2)]
+    meals += [("시금치나물", day) for day in (0, 2, 4)]
+    meals += list(extra)
+    return _context(
+        TODDLER_BIRTH,
+        memory=InMemoryFoodMemory(observations={CHILD: _meals(*meals)}),
+        catalog=InMemoryMenuCatalog(
+            [
+                _menu("쌀밥", {"grains"}, serving_g=serving_g),
+                _menu("시금치나물", {"vegetables"}, serving_g=serving_g),
+                _menu("우유", {"dairy"}, serving_g=serving_g),
+            ]
+        ),
+        **ports,
     )
 
 
@@ -102,51 +145,6 @@ def counting_client() -> FakeLLM:
     return FakeLLM()  # 큐가 비어 있다 — 한 번이라도 부르면 AssertionError
 
 
-@pytest.fixture
-def fake_client() -> FakeLLM:
-    # compare_diet_balance 는 이미 불렀다고 보고(아래 테스트가 판정을 run state 에 둔다) 문장을 낸다
-    return FakeLLM(
-        tool_response(
-            call(
-                "c1",
-                "report_nutrient_analysis",
-                {
-                    "period": "last_7_days",
-                    "findings": ["기록된 식사를 보면 단백질 식품이 적은 편이에요"],
-                },
-            )
-        )
-    )
-
-
-@pytest.fixture
-def insufficient_client() -> FakeLLM:
-    # 빈 포트라 기록이 0건 — compare_diet_balance 가 insufficient=True 를 내고,
-    # report_nutrient_analysis 의 ⓪ 검사가 요구하는 대로 findings 를 비워 낸다
-    return FakeLLM(
-        tool_response(call("c1", "compare_diet_balance", {"period": "last_7_days"})),
-        tool_response(
-            call("c2", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})
-        ),
-    )
-
-
-@pytest.fixture
-def talking_client() -> FakeLLM:
-    return FakeLLM(reply("분석을 준비했어요."))
-
-
-@pytest.fixture
-def looping_client() -> FakeLLM:
-    # 출력 tool 을 한 번도 안 부르고 조회만 반복해 MAX_STEPS 에서 끊긴다
-    return FakeLLM(
-        *(
-            tool_response(call(f"c{i}", "lookup_nutrition", {"foods": ["밥"]}))
-            for i in range(MAX_STEPS)
-        )
-    )
-
-
 async def test_닫힌_경로는_모델을_0회_부른다(task, context_infant, counting_client) -> None:
     result = await run(task, context_infant, client=counting_client)
 
@@ -165,138 +163,77 @@ async def test_안전_조회_실패는_blocked_safety_로_닫는다(
     assert result.readouts[0].body == READOUTS.get("blocked.safety").template
 
 
-async def test_출력_tool_이_통과하면_모델_문장이_그대로_ok_다(task, context, fake_client) -> None:
-    # 모델 경로 — 코드 문장으로 바뀌지 않고 모델이 쓴 문장이 나간다
-    context.state.nutrient_verdict = _verdict({"protein": "low"})
-    context.state.basis_keys = {"protein"}
-
-    result = await run(task, context, client=fake_client)
+# ── 영양소 분석 1차 출력 — 모델 0회 · 식품군 출현 문장 (N-17 · N-18) ────────
+async def test_영양소_분석은_모델을_부르지_않고_식품군_출현을_코드_문장으로_낸다(
+    task, counting_client
+) -> None:
+    result = await run(task, _records_context(), client=counting_client)
 
     assert result.status == "ok"
+    assert result.model_calls == 0
+    assert result.tools == ()
     (readout,) = result.readouts
-    assert readout.authored_by == "model"
-    assert readout.body == "기록된 식사를 보면 단백질 식품이 적은 편이에요"
+    assert readout.authored_by == "code"
+    assert "기록된 7일 중 채소가 나온 날은 3일이에요." in readout.body.splitlines()
+    assert "기록된 7일 중 곡류가 나온 날은 7일이에요." in readout.body.splitlines()
 
 
-async def test_판정_없이_report_를_부르면_거절되고_코드_문장으로_간다(task, context) -> None:
-    # 판정은 코드가 한다 — compare_diet_balance 를 건너뛴 모델 문장은 나가지 않는다 (최종 리뷰)
-    client = FakeLLM(
-        tool_response(
-            call(
-                "c1",
-                "report_nutrient_analysis",
-                {
-                    "period": "last_7_days",
-                    "findings": ["기록된 식사를 보면 전반적으로 균형 잡힌 식단이에요"],
-                },
-            )
-        ),
-        reply("끝냈어요."),
-    )
+async def test_구간은_판정해_두지만_구간_문장은_화면에_안_나간다(task, counting_client) -> None:
+    context = _records_context()
 
-    result = await run(task, context, client=client)
+    result = await run(task, context, client=counting_client)
+
+    verdict = context.state.nutrient_verdict
+    assert verdict is not None and verdict.bands  # 구간은 만든다
+    body = result.readouts[0].body
+    assert "적은 편" not in body and "많은 음식" not in body
+    assert "칼슘" not in body and "나트륨" not in body
+
+
+async def test_1인분_중량이_빈_메뉴가_많아도_출현은_말한다(task, counting_client) -> None:
+    # 구간은 중량이 없어 못 내도(insufficient) 출현은 "나왔는가" 라서 센다
+    context = _records_context(serving_g=None)
+
+    result = await run(task, context, client=counting_client)
+
+    verdict = context.state.nutrient_verdict
+    assert verdict is not None and verdict.insufficient is True
+    assert "기록된 7일 중 채소가 나온 날은 3일이에요." in result.readouts[0].body.splitlines()
+
+
+async def test_기록이_부족하면_식품군_출현을_말하지_않는다(task, context, counting_client) -> None:
+    result = await run(task, context, client=counting_client)  # 기록 0건
 
     assert result.status == "ok"
+    assert result.model_calls == 0
     assert result.readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=0),)
 
 
-async def test_기록이_부족하면_insufficient_readout_을_낸다(
-    task, context, insufficient_client
-) -> None:
-    # findings 가 비어도 ok 로 끝나는 것 자체는 맞다(⓪ 검사가 요구하는 모양) — 그런데 그 상태를
-    # 그대로 readouts=() 로 내면 부모 화면에 아무것도 안 뜬다. insufficient 전용 문구가 나가야 한다
-    result = await run(task, context, client=insufficient_client)
-
-    assert result.status == "ok"
-    assert result.readouts, "기록 부족 상태에서 readout 이 비었다 — 화면에 아무것도 안 뜬다"
-    assert result.readouts[0].body == READOUTS.get("nutrient.insufficient").template.format(
-        recorded=0
-    )
-
-
-def _verdict(bands: dict[str, str], *, records: int = 9) -> NutrientVerdict:
-    return NutrientVerdict(
-        bands=bands,  # type: ignore[arg-type]
-        unscored=(),
-        records=records,
-        resolved_ratio=1.0,
-        insufficient=False,
-        food_groups=frozenset(),
-    )
-
-
-async def test_모델이_말로_끝내면_코드_문장으로_낸다(
-    task, context, talking_client, caplog: pytest.LogCaptureFixture
-) -> None:
-    # 모델 실패를 "말할 게 없다" 로 보이게 두지 않는다(#320 PM 리뷰). 판정 · 안내는 코드 값이라
-    # 문장 틀로 낸다(#357 리뷰) — 대신 authored_by="code" 와 경고 로그로 모델 실패를 센다
-    caplog.set_level(logging.WARNING, logger="app.agents.food.agent")
-
-    result = await run(task, context, client=talking_client)
-
-    assert result.status == "ok"
-    assert result.model_calls == 1
-    assert result.readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=0),)  # 기록이 없다
-    assert "food.nutrient.fallback run_id=run-1 ended_by=no_tool_call" in caplog.text
-    assert "영양은 괜찮은지" not in caplog.text  # 원문은 남기지 않는다 — run_id 와 종료 사유만
-
-
-async def test_상한까지_출력_tool_이_통과하지_못하면_코드_문장으로_낸다(
-    task, context, looping_client, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.WARNING, logger="app.agents.food.agent")
-
-    result = await run(task, context, client=looping_client)
-
-    assert result.status == "ok"
-    assert result.readouts
-    assert all(readout.authored_by == "code" for readout in result.readouts)
-    assert "ended_by=max_steps" in caplog.text
-
-
-async def test_이미_낸_판정이_있으면_그_판정으로_코드_문장을_낸다(
-    task, context, talking_client
-) -> None:
-    # compare_diet_balance 까지 부른 뒤 모델이 끝내지 못한 경우 — run state 의 판정을 그대로 쓴다.
-    # 다시 계산하면 이 context 는 기록이 없어 insufficient 가 나온다
-    context.state.nutrient_verdict = _verdict({"protein": "low", "sodium": "high", "iron": "ok"})
-
-    result = await run(task, context, client=talking_client)
-
-    (readout,) = result.readouts
-    assert readout.authored_by == "code"
-    lines = readout.body.splitlines()
-    assert lines[0].startswith("기록된 식사 9건을 보면 단백질 식품이 적은 편이에요 — ")
-    assert lines[1] == "기록된 식사 9건을 보면 나트륨 많은 음식이 자주 보여요 — 국물·절임 줄이기"
-    assert len(lines) == 2  # ok 인 항목은 말하지 않는다
-
-
-async def test_판정한_항목이_없으면_빈_findings_뒤에_살펴보지_못했다고_낸다(task, context) -> None:
-    # 모델 경로 — 구간이 하나도 없으면 findings 를 비우고, 화면에는 코드 문구가 나간다
-    context.state.nutrient_verdict = _verdict({})
-    client = FakeLLM(
-        tool_response(
-            call("c1", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})
-        )
-    )
-
-    result = await run(task, context, client=client)
-
-    assert result.status == "ok"
-    assert result.readouts == (READOUTS.render("nutrient.unscored", recorded=9),)
-
-
-async def test_대체_문장의_안내에서도_알레르기_식품이_빠진다(task, talking_client) -> None:
-    # 🚨 알레르기 식품 빼기는 코드가 한다 — 모델이 못 끝내서 코드 문장으로 가도 같다
-    context = _context(
-        TODDLER_BIRTH,
+async def test_알레르기_식품군은_출현_문장에서_빠진다(task, counting_client) -> None:
+    # 🚨 우유 알레르기 아이에게 "우유·유제품이 나온 날은 0일" 을 말하지 않는다 — 판정은 코드가 한다
+    context = _records_context(
         consent=InMemoryConsent({CHILD: True}),
-        safety=InMemorySafety([SafetyEntry(kind="allergy", label="달걀", status="active")]),
+        safety=InMemorySafety([SafetyEntry(kind="allergy", label="우유", status="active")]),
     )
-    context.state.nutrient_verdict = _verdict({"protein": "low"})
 
-    result = await run(task, context, client=talking_client)
+    result = await run(task, context, client=counting_client)
 
     body = result.readouts[0].body
-    assert "달걀" not in body and "계란" not in body
-    assert "고기" in body  # 달걀만 빠지고 다른 식품 안내는 남는다
+    assert "우유" not in body and "유제품" not in body
+    assert "채소가" in body  # 다른 식품군은 그대로 말한다
+
+
+async def test_식품군을_모르는_메뉴뿐이면_0일이라고_말하지_않는다(task, counting_client) -> None:
+    # 실제 카탈로그의 음식 행(찌개 · 나물)은 식품군이 빈다 — 안 나온 게 아니라 모르는 것이다
+    context = _context(
+        TODDLER_BIRTH,
+        memory=InMemoryFoodMemory(
+            observations={CHILD: _meals(*[("된장찌개", day) for day in range(7) for _ in range(2)])}
+        ),
+        catalog=InMemoryMenuCatalog([_menu("된장찌개", set())]),
+    )
+
+    result = await run(task, context, client=counting_client)
+
+    assert "0일" not in result.readouts[0].body
+    assert result.readouts == (READOUTS.render("nutrient.unscored", recorded=14),)

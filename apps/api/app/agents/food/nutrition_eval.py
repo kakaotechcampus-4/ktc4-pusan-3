@@ -5,8 +5,8 @@
 다음 Task). 결과는 그 task 의 run state 에만 두고 DB · 로그에 남기지 않는다.
 """
 
-from collections import defaultdict
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from app.agents.food.amount_rules import amount_of, portion_scale_for
@@ -34,8 +34,15 @@ from app.rules.nutrition import (
 _WINDOW_DAYS = 7
 _LOOKBACK_DAYS = 14
 
-# "정하는 것 ③" — 합계에 들어간 메뉴(또는 해석된 메뉴)가 전체 메뉴의 이 비율 미만이면 insufficient
+# "정하는 것 ③" — 해석된 메뉴(영양값이 있는 메뉴)가 전체 메뉴의 이 비율 미만이면 insufficient
 MIN_RESOLUTION_RATIO = 0.5
+
+# 1인분 중량이 빈 메뉴(우유 · 원재료성 행)는 합계에 넣지 않는다 — 양을 가정한 숫자를 만들지 않는다.
+# 대신 그 메뉴가 표준 1인분(성인 200g)이었다면 더했을 양을 따로 세서, 합계에서 빠진 몫이 큰
+# 영양소의 구간을 막는 데만 쓴다(N-16). 알려진 합계가 (알려진 합계 + 빠진 몫)의 이 비율 미만이면
+# 구간을 내지 않는다
+NOMINAL_SERVING_G = 200.0
+MIN_KNOWN_SHARE = 0.5
 
 # AMDR · 상한(%kcal) 항목을 에너지 비율로 바꿀 때 쓰는 열량 환산계수(g → kcal)
 _KCAL_PER_GRAM: dict[str, float] = {
@@ -65,6 +72,11 @@ class DayTotals:
     resolved_menus: int  # 메뉴 카탈로그에서 찾은 메뉴 수(영양값 유무와 무관)
     weighed_menus: int  # 1인분 중량 · 영양값이 다 있어 영양 합계에 실제로 들어간 메뉴 수
     incomplete: frozenset[str] = frozenset()  # 그날 메뉴 중 하나라도 그 칸을 모르는 영양소 키
+    # 영양값은 있는데 1인분 중량이 빈 메뉴가 표준 1인분이었다면 더했을 양. 합계(`grams`)에는 넣지
+    # 않고 구간을 낼 수 있는지만 가른다
+    unweighed: dict[str, float] = field(default_factory=dict)
+    blank_menus: int = 0  # 해석됐지만 영양값이 하나도 없는 메뉴 수 — 얼마나 빠졌는지 알 수 없다
+    grouped_menus: int = 0  # 식품군을 아는 메뉴 수 — 찌개 · 국 같은 음식 행은 식품군이 빈다
 
 
 def _is_institutional_duplicate(obs: FoodObservation, daycare_menu_keys: frozenset[str]) -> bool:
@@ -165,7 +177,6 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
 
     birth_date = await ports.profile.birth_date(child_id=context.child_id)
     group = select_kdri_group(months_between(birth_date, context.today))
-    scale = portion_scale_for(group)
 
     resolver = MenuResolver(catalog=ports.catalog, source=ports.menu_source, now=context.now)
     resolutions = await resolver.resolve_many(names)
@@ -173,22 +184,36 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
     totals: list[DayTotals] = []
     for day in days:
         grams: dict[str, float] = {}
+        unweighed: dict[str, float] = {}
         food_groups: set[str] = set()
         incomplete: set[str] = set()
         menus = 0
         resolved_menus = 0
         weighed_menus = 0
+        blank_menus = 0
+        grouped_menus = 0
 
-        def _apply(menu_name: str, factor: float, known: bool) -> None:
-            nonlocal menus, resolved_menus, weighed_menus
+        def _apply(menu_name: str, factor: float, known: bool, *, disliked: bool = False) -> None:
+            nonlocal menus, resolved_menus, weighed_menus, blank_menus, grouped_menus
             menus += 1
             resolution = resolutions.get(normalize_menu_key(menu_name))
             if not isinstance(resolution, Resolved):
                 return
             resolved_menus += 1
             row = resolution.row
-            food_groups.update(row.food_groups)
-            if row.serving_g is None or not row.nutrients:
+            if row.food_groups:
+                grouped_menus += 1
+            # 출현은 먹은 것만 센다 — 안 먹음 · 뱉음(양 0)이나 싫어한다는 관찰은 "나온 날" 이 아니다
+            if not disliked and amount_weight(factor, known=known) > 0:
+                food_groups.update(row.food_groups)
+            if not row.nutrients:
+                blank_menus += 1
+                return
+            scale = portion_scale_for(group, row.food_groups)
+            if row.serving_g is None:
+                standard = NOMINAL_SERVING_G * scale * amount_weight(factor, known=known)
+                for nutrient, per_100g in row.nutrients.items():
+                    unweighed[nutrient] = unweighed.get(nutrient, 0.0) + per_100g * standard / 100
                 return
             weighed_menus += 1
             # 이 메뉴가 모르는 칸은 그날 전체를 그 항목에서 빼야 한다 — 아는 메뉴만으로 합계를
@@ -200,7 +225,7 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
 
         for obs in kept_observations_by_day.get(day, ()):
             rule = amount_of(obs.amount_text)
-            _apply(obs.subject, rule.factor, rule.known)
+            _apply(obs.subject, rule.factor, rule.known, disliked=obs.polarity < 0)
         for row in daycare_by_day.get(day, ()):
             for menu_key in row.menu_keys:
                 _apply(menu_key, row.amount_factor, row.amount_known)
@@ -216,6 +241,9 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
                 resolved_menus=resolved_menus,
                 weighed_menus=weighed_menus,
                 incomplete=frozenset(incomplete),
+                unweighed=unweighed,
+                blank_menus=blank_menus,
+                grouped_menus=grouped_menus,
             )
         )
     return totals
@@ -231,6 +259,12 @@ class NutrientVerdict:
     resolved_ratio: float  # 최근 7일 메뉴 해석률
     insufficient: bool
     food_groups: frozenset[str]  # 최근 7일에 나온 식품군
+    # 식품군 → 최근 7일 중 나온 날 수(나온 식품군만). 1인분 중량과 무관하게 센다
+    food_group_days: dict[str, int] = field(default_factory=dict)
+    recorded_days: int = 0  # 최근 7일 중 기록이 있는 날 수 — 출현 문장의 분모
+    # 출현을 말해도 되는가. 구간(`insufficient`)과 따로 본다 — 구간은 1인분 중량이 빈 메뉴에도
+    # 막히지만 출현은 "나왔는가" 라서 기록 행 수(N-1) · 메뉴 해석률만 본다(N-17)
+    appearance_ready: bool = False
 
 
 async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> NutrientVerdict:
@@ -255,15 +289,28 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
     records = sum(dt.records for dt in current_totals)
     total_menus = sum(dt.menus for dt in current_totals)
     total_resolved = sum(dt.resolved_menus for dt in current_totals)
-    total_weighed = sum(dt.weighed_menus for dt in current_totals)
+    total_blank = sum(dt.blank_menus for dt in current_totals)
     resolved_ratio = total_resolved / total_menus if total_menus else 0.0
-    weighed_ratio = total_weighed / total_menus if total_menus else 0.0
+    # 해석은 됐어도 영양값이 하나도 없는 메뉴는 얼마나 빠졌는지 알 수 없어 해석 안 된 것과 같게 센다
+    quantified_ratio = (total_resolved - total_blank) / total_menus if total_menus else 0.0
     food_groups: frozenset[str] = frozenset().union(*(dt.food_groups for dt in current_totals))
+    food_group_days = dict(Counter(group for dt in current_totals for group in dt.food_groups))
+    recorded_days = sum(1 for dt in current_totals if dt.records > 0)
+    # 식품군을 모르는 메뉴가 많으면 "0일" 은 안 나온 게 아니라 모르는 것이다 — 해석률과 같게 본다
+    grouped_ratio = (
+        sum(dt.grouped_menus for dt in current_totals) / total_menus if total_menus else 0.0
+    )
+    appearance_ready = (
+        not is_insufficient(records)
+        and resolved_ratio >= MIN_RESOLUTION_RATIO
+        and grouped_ratio >= MIN_RESOLUTION_RATIO
+    )
 
     if (
         is_insufficient(records)
         or resolved_ratio < MIN_RESOLUTION_RATIO
-        or weighed_ratio < MIN_RESOLUTION_RATIO
+        or quantified_ratio < MIN_RESOLUTION_RATIO
+        or _known_share("energy", current_totals) < MIN_KNOWN_SHARE
     ):
         verdict = NutrientVerdict(
             bands={},
@@ -272,6 +319,9 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
             resolved_ratio=resolved_ratio,
             insufficient=True,
             food_groups=food_groups,
+            food_group_days=food_group_days,
+            recorded_days=recorded_days,
+            appearance_ready=appearance_ready,
         )
         context.state.nutrient_verdict = verdict
         return verdict
@@ -281,6 +331,9 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
     for nutrient, ref in refs_for(group).items():
         if nutrient == "energy":
             continue  # 이번 범위 밖 — 권장 열량 계산이 붙을 때 쓴다(설계 §2)
+        if _known_share(nutrient, current_totals) < MIN_KNOWN_SHARE:
+            unscored.append(nutrient)  # 중량이 빈 메뉴가 이 영양소의 큰 몫이라 합계가 실제보다 작다
+            continue
         band = _band_for(nutrient, ref, by_day, current_days)
         if band is None:
             unscored.append(nutrient)
@@ -294,9 +347,20 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
         resolved_ratio=resolved_ratio,
         insufficient=False,
         food_groups=food_groups,
+        food_group_days=food_group_days,
+        recorded_days=recorded_days,
+        appearance_ready=appearance_ready,
     )
     context.state.nutrient_verdict = verdict
     return verdict
+
+
+def _known_share(nutrient: str, totals: list[DayTotals]) -> float:
+    """합계에 들어간 양이 (들어간 양 + 중량이 비어 못 넣은 몫)에서 차지하는 비율. 못 넣은 몫이
+    없으면 1. 구간을 내도 되는가를 가르는 데만 쓰고, 못 넣은 몫은 어디에도 내보내지 않는다."""
+    known = sum(dt.grams.get(nutrient, 0.0) for dt in totals)
+    missing = sum(dt.unweighed.get(nutrient, 0.0) for dt in totals)
+    return known / (known + missing) if known + missing > 0 else 1.0
 
 
 def _band_for(
@@ -335,6 +399,9 @@ def _ear_band(
     daily_means: list[float] = []
     for end_day in current_days:
         window = [end_day - timedelta(days=i) for i in range(_WINDOW_DAYS)]
+        # 다시 판정하는 앞 창에서 중량이 빈 몫이 크면 그 창의 거짓 low 가 히스테리시스로 남는다
+        if _known_share(nutrient, [by_day[d] for d in window if d in by_day]) < MIN_KNOWN_SHARE:
+            return None
         mean = _window_mean(nutrient, by_day, window)
         if mean is None:
             return None
