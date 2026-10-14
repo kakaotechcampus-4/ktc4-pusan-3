@@ -91,7 +91,9 @@ class TestLinkThenRecompute:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         # Curator 결과: 1개 생성 + 2개 연결
         assert len(result.created_profile_ids) == 1
@@ -118,7 +120,9 @@ class TestLinkThenRecompute:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 
@@ -141,7 +145,9 @@ class TestLinkThenRecompute:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 
@@ -192,7 +198,9 @@ class TestLinkToExistingProfile:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         # 새 Profile 은 안 만들어야 한다 — 이름이 같으므로 기존에 연결
         assert len(result.created_profile_ids) == 0
@@ -223,7 +231,9 @@ class TestRecomputeIdempotency:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 
@@ -264,7 +274,9 @@ class TestDeleteLinkedObservation:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 
@@ -302,7 +314,9 @@ class TestDeleteLinkedObservation:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 
@@ -347,7 +361,9 @@ class TestCorrectionAfterLinking:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 
@@ -389,7 +405,9 @@ class TestCorrectionAfterLinking:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         from app.domains.memory.curator.recompute import recompute_after_linking
 

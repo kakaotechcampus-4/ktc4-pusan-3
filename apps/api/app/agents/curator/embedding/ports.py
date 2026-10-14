@@ -5,7 +5,7 @@ Profile 의 state · strength 는 쓰지 않는다 — 승격·감쇠 파트의 
 
 조회 조건을 둘로 나눈다.
     임베딩 대상  active · embedding 없음
-    연결 대상    active · embedding 있음 · affinity_id 없음
+    연결 대상    active · embedding 있음 · affinity_id 없음 · 관찰 시작일 >= 기준 날짜
 임베딩은 됐는데 연결 전에 멈춘 관찰은 다음 실행에서 연결만 다시 한다.
 """
 
@@ -63,9 +63,12 @@ class CuratorStore(Protocol):
         """관찰마다 벡터를 저장한다."""
         ...
 
-    async def list_unlinked(self, *, child_id: UUID) -> list[ObservationItem]:
+    async def list_unlinked(
+        self, *, child_id: UUID, min_observed_on: date
+    ) -> list[ObservationItem]:
         """연결 대상. 저장된 순서(created_at 오름차순)로 돌려준다.
 
+        관찰 시작일이 min_observed_on 이상인 기록만 반환한다. 임베딩 조회에는 적용하지 않는다.
         먼저 저장된 관찰의 subject 가 새 Profile 의 merge_key 가 된다.
         observed_on 순이 아니다 — "지난주에 ~했어" 처럼 나중에 적힌 과거 관찰이 있다.
         """

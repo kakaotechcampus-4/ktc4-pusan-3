@@ -23,7 +23,12 @@ from app.agents.common.child_values import ChildValues
 from app.agents.common.readout import Readout
 from app.agents.common.reference_docs import doc_row_id
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.suggestion import cannot_resume_notice, count_notice
+from app.agents.common.suggestion import (
+    MAX_SUGGESTIONS,
+    cannot_resume_notice,
+    count_notice,
+    empty_notice,
+)
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
@@ -38,6 +43,7 @@ from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentResult,
     Commit,
+    CountRecords,
     CuratorTrigger,
     DomainContext,
     DomainRouted,
@@ -69,11 +75,13 @@ from app.agents.supervisor.routing import Guidance
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "MAX_SUGGESTIONS",
     "SUGGESTION_AGENTS",
     "AgentResult",
     "AllergenCheck",
     "CoarseLocation",
     "Commit",
+    "CountRecords",
     "CuratorTrigger",
     "DocCard",
     "DomainRouted",
@@ -110,11 +118,13 @@ __all__ = [
     "Unavailable",
     "Unwritten",
     "WeatherSource",
-    "cannot_resume_text",
+    "allergy_cautions",
+    "cannot_resume_notice",
     "check_allergens",
-    "count_notice_text",
+    "count_notice",
     "curator_deps",
     "describe_docs",
+    "empty_notice",
     "handle_input",
     "recommendation_task_type",
     "suggest",
@@ -172,6 +182,7 @@ async def handle_input(
     save_suggestions: SaveSuggestions,
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
+    count_records: CountRecords | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -204,6 +215,8 @@ async def handle_input(
     - domain_store 를 넘기면 도메인 Agent 의 기억 포트가 호출마다 그것으로 store 를 새로 연다.
       러너가 짧은 DB 세션으로 만든다 — run 세션을 도메인 task 들이 같이 타지 않게. 안 넘기면
       run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
+    - count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다. 러너가
+      `agent_ports.record_counter` 로 만든다. 안 넘기면(테스트 · eval) 그 칸이 빈다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -242,6 +255,7 @@ async def handle_input(
         save_suggestions=save_suggestions,
         writes=writes,
         curator_trigger=curator_trigger,
+        count_records=count_records,
     )
 
 
@@ -267,7 +281,6 @@ def recommendation_task_type(agent: str) -> str | None:
 async def suggest(
     *,
     child_id: UUID,
-    parent_id: UUID,
     tasks: Sequence[SuggestTask],
     request_id: str,
     save_run_id: str | None,
@@ -288,8 +301,6 @@ async def suggest(
       Agent context 의 now 로만 쓴다. 새 추천의 `expires_at` 은 저장할 때 실제 시각으로 잡힌다.
       None 이면 지금이다.
     - 생일 · 동의 · 포트는 `handle_input` 과 같은 자리에서 같은 값으로 연다.
-    - `parent_id` 는 지금 쓰는 곳이 없지만 `handle_input` 과 같은 자리에 둔다 — 05 가 Memory 를
-      부르게 되면 작성자로 쓴다.
     """
     now = sent_at.astimezone(KST) if sent_at is not None else datetime.now(KST)
     if store is None:
@@ -337,6 +348,23 @@ def check_allergens(allergens: Sequence[str], rows: Sequence[SafetyLabel]) -> Al
     )
 
 
+def allergy_cautions(agent: str, rows: Sequence[SafetyLabel]) -> tuple[str, ...]:
+    """그 Agent 가 run 에서 붙이는 알레르기 확인 문구 — 05 가 재생할 때도 같은 말을 한다.
+
+    Activity 만 있다. 꽃가루처럼 식품 사전에 없는 알레르기는 뺄 활동을 코드가 못 정해서 보호자에게
+    확인을 맡긴다(`activity/tools/filters.allergy_cautions`). 04 는 Agent 결과의 readout 으로,
+    05 는 이 함수로 같은 문구를 낸다 — 05 는 결과 readout 을 저장하지 않아 재생 때 다시 만든다.
+    """
+    if agent != "activity":
+        return ()
+    from app.agents.activity.store.ports import SafetyEntry
+    from app.agents.activity.tools.filters import allergy_cautions as activity_cautions
+
+    return activity_cautions(
+        [SafetyEntry(kind=row.kind, label=row.label, status=row.status) for row in rows]
+    )
+
+
 @dataclass(frozen=True)
 class DocCard:
     """일반 추천 근거로 화면에 나가는 문서 행. CC BY 행은 출처 표시가 조건이다."""
@@ -352,9 +380,15 @@ def _doc_index() -> dict[tuple[str, UUID], DocCard]:
     """검수를 마친(approved) 시드 행. Agent 가 [예시] 로 받은 것과 같은 행이라 같은 id 다."""
     from app.agents.activity.doc_seed import activity_doc_seed
     from app.agents.food.doc_seed import food_doc_seed
+    from app.agents.growth.doc_seed import growth_doc_seed
 
     index: dict[tuple[str, UUID], DocCard] = {}
-    for kind, entries in (("activity_doc", activity_doc_seed()), ("food_doc", food_doc_seed())):
+    seeds = (
+        ("activity_doc", activity_doc_seed()),
+        ("food_doc", food_doc_seed()),
+        ("growth_doc", growth_doc_seed()),
+    )
+    for kind, entries in seeds:
         for entry in entries:
             meta = entry.meta
             if meta.status != "approved":
@@ -368,15 +402,6 @@ def describe_docs(refs: Iterable[tuple[str, UUID]]) -> dict[tuple[str, UUID], Do
     """근거로 저장된 문서 행 id → 화면에 실을 내용. 시드에 없는(검수가 풀린) 행은 빠진다."""
     index = _doc_index()
     return {ref: index[ref] for ref in refs if ref in index}
-
-
-def count_notice_text(count: int) -> Readout | None:
-    """공통 개수 안내. 05 가 응답에 실린 개수로 다시 만든다 (fewer · empty)."""
-    return count_notice(count)
-
-
-def cannot_resume_text() -> Readout:
-    return cannot_resume_notice()
 
 
 def _domain_contexts(

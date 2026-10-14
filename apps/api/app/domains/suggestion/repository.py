@@ -400,39 +400,32 @@ async def list_doc_evidence_batch(
     session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SuggestionEvidence]]:
     """일반 추천의 문서 행 근거. 아이 기록 근거와 섞지 않는다 — 화면 타입이 다르다."""
-    if not suggestion_ids:
-        return {}
-    stmt = (
-        select(SuggestionEvidence)
-        .where(
-            SuggestionEvidence.suggestion_id.in_(suggestion_ids),
-            SuggestionEvidence.source_kind.in_(_DOC_KINDS),
-        )
-        .order_by(SuggestionEvidence.suggestion_id, SuggestionEvidence.created_at)
-    )
-    result: dict[uuid.UUID, list[SuggestionEvidence]] = {sid: [] for sid in suggestion_ids}
-    for row in (await session.scalars(stmt)).all():
-        result[row.suggestion_id].append(row)
-    return result
+    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS)
 
 
 async def list_evidence_batch(
     session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SuggestionEvidence]]:
     """여러 추천의 근거를 한 번에 조회한다 (아이 기록만, 문서 행 제외)."""
+    return await _evidence_batch(session, suggestion_ids, _CHILD_RECORD_KINDS)
+
+
+async def _evidence_batch(
+    session: AsyncSession, suggestion_ids: list[uuid.UUID], kinds: frozenset[str]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """추천마다 그 종류의 근거 행을 만든 순서대로. 근거가 없는 추천도 빈 목록으로 둔다."""
     if not suggestion_ids:
         return {}
     stmt = (
         select(SuggestionEvidence)
         .where(
             SuggestionEvidence.suggestion_id.in_(suggestion_ids),
-            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+            SuggestionEvidence.source_kind.in_(kinds),
         )
         .order_by(SuggestionEvidence.suggestion_id, SuggestionEvidence.created_at)
     )
-    rows = list((await session.scalars(stmt)).all())
     result: dict[uuid.UUID, list[SuggestionEvidence]] = {sid: [] for sid in suggestion_ids}
-    for row in rows:
+    for row in (await session.scalars(stmt)).all():
         result[row.suggestion_id].append(row)
     return result
 

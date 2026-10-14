@@ -886,6 +886,35 @@ async def test_추천은_묶음마다_새_세션에서_저장하고_commit_한�
     assert channel.suggestions_saved is True
 
 
+async def test_기록_건수_함수를_진입점에_넘기고_짧은_세션에서_센다(monkeypatch):
+    """일반 추천 블록의 "쌓인 기록 N건" (#227). 05 와 같은 표로 센다(`agent_ports.RECORD_KINDS`)."""
+    opened = _sessions(monkeypatch)
+    from app.domains.suggestion import repository
+
+    asked: list = []
+
+    async def count_child_records(session, *, child_id, kinds):
+        asked.append((child_id, tuple(kinds)))
+        return 4
+
+    monkeypatch.setattr(repository, "count_child_records", count_child_records)
+    counted: list = []
+
+    async def fake_handle_input(**kwargs):
+        counted.append(await kwargs["count_records"]("activity"))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert counted == [4]
+    assert asked == [(CHILD, ("observation_activity",))]
+    assert len(opened) == 2  # run 세션 + 건수 세션 — run 세션을 같이 타지 않는다
+
+
 async def test_추천_저장_뒤_예외가_나도_done_이고_키를_풀지_않는다(monkeypatch):
     """저장된 draft 가 있는 run 을 failed 로 닫으면 키가 풀려 다시 보낼 때 두 벌이 된다
     (멘토 #196 ①)."""

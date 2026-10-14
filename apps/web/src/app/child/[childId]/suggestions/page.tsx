@@ -125,6 +125,9 @@ function SuggestionsScreen() {
   const suggestions = useQuery({
     queryKey: qk.suggestions(childId, runId, agents, promptKey),
     enabled: agents.length > 0,
+    // 🚨 자동 재시도를 끈다 — 이 요청은 Agent 를 돌리고 하루 한도를 쓴다. 5xx 를 두 번 더 보내면 한도와
+    //    모델 호출을 같이 쓴다 (#433 리뷰 ④). 다시 시도는 화면 버튼으로만.
+    retry: false,
     // Agent 를 두 번 돌리지 않는다 — NF-01 이 model call 을 센다. 뒤로 갔다 와도 같은 화면이다.
     staleTime: Infinity,
     queryFn: () => {
@@ -318,16 +321,34 @@ function SuggestionsScreen() {
                 ? suggestions.error.message
                 : "제안을 준비하지 못했어요."}
             </p>
-            <Button
-              variant="tertiary"
-              size="compact"
-              className="mt-3"
-              onClick={() => suggestions.refetch()}
-            >
-              다시 시도
-            </Button>
+            {/* 🚨 하루 한도는 다시 눌러도 같은 답이다 — 다시 시도를 세우지 않는다 (apps/web CLAUDE §3 에러) */}
+            {isApiError(suggestions.error, "daily_input_limit") ? null : (
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="mt-3"
+                onClick={() => suggestions.refetch()}
+              >
+                다시 시도
+              </Button>
+            )}
           </CardFailed>
         ) : null}
+
+        {/* #433 리뷰 ③ — 식품 아닌 알레르기 확인 문구. 서버 코드 문구를 그대로 그린다. 고르기 전에 읽게
+            목록보다 위에 둔다. 🚨 caution 색을 쓰지 않는다 — 승인 게이트 2곳 전용이다. */}
+        {(data?.groups ?? [])
+          .filter((group) => group.cautions.length > 0)
+          .map((group) => (
+            <Card key={`caution:${group.agent}`}>
+              <p className="text-label text-ink-subtle">{domainLabel(group.agent)}</p>
+              {group.cautions.map((text) => (
+                <p key={text} className="text-body-sm text-ink mt-1">
+                  {text}
+                </p>
+              ))}
+            </Card>
+          ))}
 
         {/* 🚨 후보를 카드 더미로 펼쳐 놓지 않는다. 한 덩어리 목록에서 한 줄씩 훑고, 고른 하나만
           그 자리에서 연다 — 밤에 한 손으로 여는 화면에서 "둘 다 읽고 고르기" 는 인지 노동이다. */}
@@ -478,7 +499,12 @@ function SuggestionsScreen() {
         {scarcity && general.length > 0 ? (
           <ul className="flex flex-col gap-3">
             {general.map((item) => (
-              <GeneralSuggestionCard key={item.id} suggestion={item} recordCount={scarcity.count} />
+              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              <GeneralSuggestionCard
+                key={item.id}
+                suggestion={item}
+                recordCount={item.record_count}
+              />
             ))}
           </ul>
         ) : null}

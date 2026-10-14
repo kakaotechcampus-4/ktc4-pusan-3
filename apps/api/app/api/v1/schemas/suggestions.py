@@ -100,13 +100,19 @@ class GeneralSuggestionOut(BaseModel):
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str
     expires_at: str
+    record_count: int = Field(
+        description=(
+            "그 Agent 도메인에 쌓인 기록 수 (남아 있는 관찰만). 04 블록의 record_count 와 같은 표"
+        )
+    )
     evidence: list[DocEvidenceOut]
 
 
 class GroupNoticeOut(BaseModel):
-    code: Literal["fewer", "empty", "cannot_resume"] = Field(
+    code: Literal["fewer", "empty", "cannot_resume", "daily_limit"] = Field(
         description=(
-            "fewer 1~2개 · empty 0개 · cannot_resume 이어서 할 수 없음. "
+            "fewer 1~2개 · empty 0개 · cannot_resume 이어서 할 수 없음 · "
+            "daily_limit 오늘 한도라 이 Agent 는 돌리지 않음. "
             "화면은 notice 가 있는 묶음에 다시 시도를 띄우지 않는다"
         )
     )
@@ -120,6 +126,13 @@ class SuggestionGroupOut(BaseModel):
         default=None, description="채택하면 일정 초안이 한 건으로 묶이는 Agent"
     )
     notice: GroupNoticeOut | None = None
+    cautions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "식품 사전에 없는 알레르기(꽃가루 등)의 확인 문구. 코드 문구다 — 화면이 그대로 그린다. "
+            "동의가 없으면 늘 빈 목록"
+        ),
+    )
 
 
 class GuardOut(BaseModel):

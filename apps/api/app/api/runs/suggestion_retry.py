@@ -1,7 +1,9 @@
-"""05 다시 시도 보관함 — (run_id, agent) → 실패 맥락 15분 · 0개 기록 24시간 (#249).
+"""05 다시 시도 보관함 — (run_id, agent) → 실패 맥락 15분 · 0개 기록 · 닫힘 기록 24시간 (#249).
 
 입력 run 의 pipeline 이 화면에 안 나가는 이벤트(RetryContext · EmptyResult)로 내면 러너가 넣고,
 05 추천 엔드포인트가 판단 순서 ② · ③ 에서 꺼낸다. "추천 있음" 은 DB(`suggestion.run_id`)로 본다.
+05 가 다시 만든 결과가 0개면 0개 기록, 닫힘(blocked · unsupported)이면 guard 기록을 남긴다 —
+다음 요청이 같은 모양을 재생한다.
 
 - 프로세스 메모리다. 재시작하면 사라지고 05 는 "이어서 할 수 없다" 로 간다 — 맥락 없이 다시
   만들지 않는다. 워커가 둘이면 나뉜다 (`--workers 1` 전제 · #134).
@@ -36,6 +38,7 @@ class _Entry:
     stored_at: float
     task: RetryTask | None = None  # 실패 맥락
     message: str | None = None  # 0개 기록의 안내 본문
+    guard: tuple[str, str] | None = None  # 닫힘 기록 — (guard code, 문구)
     in_use: bool = False
 
     def ttl(self) -> float:
@@ -90,6 +93,28 @@ def put_empty(
     moment = _now(now)
     sweep(now=moment)
     _entries[(run_id, agent)] = _Entry(parent_id, child_id, moment, message=message)
+
+
+def put_guard(
+    *,
+    run_id: str,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    agent: str,
+    code: str,
+    message: str,
+    now: float | None = None,
+) -> None:
+    moment = _now(now)
+    sweep(now=moment)
+    _entries[(run_id, agent)] = _Entry(parent_id, child_id, moment, guard=(code, message))
+
+
+def guard_of(
+    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, agent: str, now: float | None = None
+) -> tuple[str, str] | None:
+    entry = _owned((run_id, agent), parent_id, child_id, _now(now))
+    return None if entry is None else entry.guard
 
 
 def empty_message(

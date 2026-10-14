@@ -180,7 +180,9 @@ async def _one(
         embedding=vectors[subject.strip()],
         observed_on=date(2026, 9, 27),
     )
-    [outcome] = (await link_pending(store, judge, child_id=CHILD)).outcomes
+    [outcome] = (
+        await link_pending(store, judge, child_id=CHILD, min_observed_on=date(2024, 7, 1))
+    ).outcomes
     shown = _shown(profiles, vectors, subject)
     return {
         "subject": subject,
@@ -260,7 +262,9 @@ async def run_orders(judge: IdentityJudge, vectors, path) -> list[dict[str, Any]
                     polarity=step.polarity,
                     embedding=vectors[step.subject.strip()],
                 )
-            outcomes = (await link_pending(store, judge, child_id=CHILD)).outcomes
+            outcomes = (
+                await link_pending(store, judge, child_id=CHILD, min_observed_on=date(2024, 7, 1))
+            ).outcomes
             held = [o for o in outcomes if o.status == "held"]
             groups: dict[str, set[int]] = {}
             for o in outcomes:

@@ -18,6 +18,7 @@ from app.api.runs import suggestion_retry
 from app.core.config import settings
 from app.domains.memory.observation.models import (
     ConfidenceSource,
+    ObservationActivity,
     ObservationFood,
     ObservationStatus,
 )
@@ -59,7 +60,7 @@ def _same_session(monkeypatch, session):
 
 @pytest.fixture
 def agents(monkeypatch):
-    """Agent 마다 낼 결과를 정한다. 값: ("drafts", [SuggestionDraft]) · ("empty", 문구) ·
+    """Agent 마다 낼 결과를 정한다. 값: ("drafts", [SuggestionDraft], 되묻기?) · ("empty", 문구) ·
     ("blocked", 문구) · ("fail",)."""
     plan: dict[str, tuple] = {}
     calls: list[dict] = []
@@ -85,8 +86,11 @@ def agents(monkeypatch):
             elif what[0] == "blocked":
                 status = "blocked"
                 readouts = (Readout(kind="blocked", body=what[1], authored_by="code"),)
+            question = what[2] if len(what) > 2 else None
             outcomes.append(
-                entrypoint.SuggestOutcome(task.agent, task.task_type, status, ids, readouts, None)
+                entrypoint.SuggestOutcome(
+                    task.agent, task.task_type, status, ids, readouts, question
+                )
             )
         return entrypoint.SuggestRun(tuple(outcomes), tuple(failed))
 
@@ -486,3 +490,234 @@ async def test_표에_없는_prompt_key_는_400(db_client, bearer, cid, agents):
 
     assert resp.status_code == 400
     assert agents[1] == []
+
+
+# ── #433 리뷰 정비 (#227 3단계) ──────────────────────────────────────────
+async def test_맥락을_꺼낸_뒤_터져도_사용_중이_아니다(db_client, bearer, cid, agents, monkeypatch):
+    """claim 뒤 예외로 끝나도 맥락을 푼다 — 안 풀면 15분 동안 다시 시도가 BUSY 다 (#433 리뷰 ②)."""
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
+    suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
+    )
+
+    async def broken(session, *, child_id):
+        raise RuntimeError("db")
+
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", broken)
+    try:
+        await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    except RuntimeError:
+        pass  # 테스트 클라이언트가 앱 예외를 그대로 올리는 경우
+
+    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    assert kept == task
+
+
+async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard(db_client, bearer, cid, agents):
+    """닫힘을 기록해 두지 않으면 다음 요청이 "이어서 할 수 없어요" 가 된다 (#433 리뷰 ⑧)."""
+    plan, calls = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
+    suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("blocked", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
+
+    first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+    second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+
+    assert [g["code"] for g in first["guards"]] == ["safety_unknown"]
+    assert second["guards"] == first["guards"]
+    assert second["groups"] == []
+    assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다
+
+
+async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """Agent 가 도는 동안(최대 20초) 요청 커넥션을 쥐지 않는다 (#433 리뷰 ⑨)."""
+    headers, _ = bearer
+    seen: list[bool] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append(session.in_transaction())
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"])
+
+    assert seen == [False]
+
+
+async def test_질문_id_는_질문을_낸_Agent_다(db_client, bearer, cid, agents, monkeypatch):
+    """첫 Agent 로 적으면 답(#246)이 다른 Agent 로 간다 (#433 리뷰 ⑤)."""
+    plan, _ = agents
+    headers, _ = bearer
+    monkeypatch.setattr(
+        entrypoint,
+        "_doc_index",
+        lambda: {("activity_doc", DOC_ID): DOC_CARD, ("food_doc", DOC_ID): DOC_CARD},
+    )
+    plan["food"] = ("empty", "조건에 맞는 추천이 없어요.")
+    plan["activity"] = ("drafts", [_general()], "요즘 실내와 야외 중 어디를 더 찾나요?")
+
+    data = (await _post(db_client, cid, headers, agents=["food", "activity"])).json()
+
+    assert data["scarcity"]["question"]["id"] == "activity:q"
+
+
+async def test_한_run_에_행이_셋을_넘어도_500_이_아니다(db_client, session, bearer, cid, agents):
+    """다시 만들기가 겹쳐 한 Agent 행이 3개를 넘어도 개수 안내가 터지지 않는다 (#433 리뷰 ⑦)."""
+    headers, parent_id = bearer
+    for _ in range(4):
+        await _saved_in_run(session, cid, parent_id, "run-1")
+
+    resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert resp.status_code == 200
+    assert resp.json()["groups"][0]["notice"] is None
+
+
+async def test_allergens_가_없으면_사전검사_행을_읽지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """사전검사 행은 처음 필요할 때 한 번 읽는다 (#433 리뷰 ⑬)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    reads: list[int] = []
+
+    async def labels(session, *, child_id):
+        reads.append(1)
+        return []
+
+    monkeypatch.setattr("app.api.v1.routers.suggestions.list_safety_labels", labels)
+    plan["food"] = ("drafts", [await _personal(session, cid, parent_id)])
+
+    await _post(db_client, cid, headers, agents=["food"])
+
+    assert reads == []
+
+
+# ── 05 응답 칸 (#227 3단계) ──────────────────────────────────────────────
+CAUTION = "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
+
+
+async def test_식품_아닌_알레르기_확인_문구가_놀이_묶음에_선다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """04 에서 보인 확인 문구가 05 에서 사라지지 않는다 — 재생 때도 코드로 다시 만든다 (#433 ③)."""
+    plan, _ = agents
+    headers, _ = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    session.add(
+        HealthSafety(
+            child_id=cid, kind=SafetyKind.ALLERGY, label="꽃가루", status=SafetyStatus.ACTIVE
+        )
+    )
+    plan["activity"] = ("drafts", [_general()])
+    plan["food"] = ("empty", "조건에 맞는 추천이 없어요.")
+
+    data = (await _post(db_client, cid, headers, agents=["food", "activity"])).json()
+
+    groups = {g["agent"]: g for g in data["groups"]}
+    assert groups["activity"]["cautions"] == [CAUTION]
+    assert groups["food"]["cautions"] == []
+
+
+async def test_동의가_없으면_확인_문구도_읽지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    plan, _ = agents
+    headers, _ = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
+    session.add(
+        HealthSafety(
+            child_id=cid, kind=SafetyKind.ALLERGY, label="꽃가루", status=SafetyStatus.ACTIVE
+        )
+    )
+    plan["activity"] = ("drafts", [_general()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    assert data["groups"][0]["cautions"] == []
+
+
+async def _activity_record(session, cid, parent_id):
+    today = datetime.now(UTC).date()
+    session.add(
+        ObservationActivity(
+            child_id=cid,
+            source_writer=parent_id,
+            raw_text="블록을 쌓았다",
+            subject="블록",
+            activity="블록 쌓기",
+            confidence_source=ConfidenceSource.PARENT_DIRECT,
+            observed_range=Range(today, today + timedelta(days=1)),
+        )
+    )
+    await session.flush()
+
+
+async def test_일반_추천은_그_도메인의_기록_수를_싣는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """카드의 "기록 N건" 은 그 Agent 도메인 수다 — 합을 쓰면 다른 주제까지 센다 (#433 ⑥)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr(
+        entrypoint,
+        "_doc_index",
+        lambda: {("activity_doc", DOC_ID): DOC_CARD, ("food_doc", DOC_ID): DOC_CARD},
+    )
+    await _personal(session, cid, parent_id)  # 식사 관찰 1건
+    await _personal(session, cid, parent_id)  # 식사 관찰 2건
+    await _activity_record(session, cid, parent_id)  # 놀이 관찰 1건
+    food_doc = EvidenceCitation(ref=Ref(kind="food_doc", id=DOC_ID), note="또래 식사 자료")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 기준",
+                citations=(food_doc,),
+            )
+        ],
+    )
+    plan["activity"] = ("drafts", [_general()])
+
+    data = (await _post(db_client, cid, headers, agents=["food", "activity"])).json()
+
+    counts = {g["agent"]: g["record_count"] for g in data["general"]}
+    assert counts == {"food": 2, "activity": 1}
+    assert data["scarcity"]["count"] == 3  # 질문 카드의 "이 주제" 는 합 그대로
+
+
+async def test_한도에_걸려도_다른_Agent_재생은_보인다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """요청 전체를 429 로 막지 않고 돌릴 Agent 묶음에만 안내를 단다 (#433 리뷰 ④)."""
+    headers, parent_id = bearer
+    monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 0)
+    row = await _saved_in_run(session, cid, parent_id, "run-1")
+    task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
+    suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["food", "activity"], run_id="run-1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [s["id"] for s in data["suggestions"]] == [str(row.id)]
+    groups = {g["agent"]: g for g in data["groups"]}
+    assert groups["activity"]["notice"]["code"] == "daily_limit"
+    assert agents[1] == []  # 돌리지 않았다
+    kept = suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
+    )
+    assert kept == task  # 내일 다시 시도할 수 있게 맥락은 남는다(15분 안이면)

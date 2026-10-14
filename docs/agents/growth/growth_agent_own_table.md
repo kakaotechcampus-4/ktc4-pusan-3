@@ -58,7 +58,7 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | `row_type` | varchar(24) | `learning_activity` / `routine_step` / `habit_strategy` / `manner_practice` / `rhythm_info` / `book_guide` / `measure_guide` |
-| `area` | varchar(24) | nullable. 누리과정 5영역(`physical_health`·`communication`·`social`·`art`·`nature`) / 표준보육과정은 기본생활 포함 6영역 |
+| `area` | varchar(24) | nullable. 고시 5영역(`physical_health`·`communication`·`social`·`art`·`nature`) — 2024 개정 표준보육과정(교육부고시 제2024-23호)은 0~5세 모두 5영역이다. `basic_life`(기본생활)는 제4차(2020) 표준보육과정 0~2세의 영역이라 값 집합에만 남아 있고 시드는 쓰지 않는다 |
 | `routine_category` | varchar(24) | nullable. `observation_routine.routine_category`와 **같은 값 집합** |
 | `trigger_tags` | text[] | NOT NULL, default `'{}'`. `habit_strategy`용 (`bored` · `anxious` · `tired` …) |
 | `materials` | text[] | NOT NULL, default `'{}'`. **`hazard_term` 스캔 대상** |
@@ -245,9 +245,9 @@ CREATE INDEX book_catalog_subject_idx ON book_catalog USING gin (subjects);
 | # | 쟁점 | 메모 |
 | --- | --- | --- |
 | GT-1 | `growth_doc` 초기 행 수 | 루틴 40 · 교육 60 · 습관 20 · 예절/리듬 20 · 도서 8 |
-| GT-2 | 해설서·사례집의 라이선스 | 전부 `fact_rewrite`로 시작 |
+| GT-2 | 해설서·사례집의 라이선스 | #337 기준으로 정함 — 상업적 이용 · 변경이 허락된 것만 행 출처로 쓴다. 해설서 · 사례집은 공공누리 제4유형이라 쓰지 않고, 고시 본문(`public_law`)만 쓴다(#293) |
 | GT-3 | 도서 API 연령 파라미터 코드 | 정보나루 `age` 는 대출자 연령대(0 = 영유아 0~5세)라 단계를 못 가른다. 처음 값 — 아동 도서(부가기호 첫 자리 7)로 좁히고, 서명 키워드(보드북 · 촉감책 · 헝겊책 · 사운드북 · 초점책)면 `board` 0–35, KDC 8(문학)이면 `picture` 12–71, 그 밖의 KDC 면 `info` 36–71, 부가기호가 없으면 `unknown`(0–11개월 제외). 청구기호는 쓰지 않는다. 어댑터 계약 테스트에서 실제 응답으로 확정한다. 코드는 `app/rules/book_form.py` 다 (#290). 구현에서 정한 것 — ① 부가기호 첫 자리가 7 이 아니면 서명에 보드북이 있어도 후보에서 뺀다 ② 부가기호가 없으면 서명 키워드 · KDC 가 그럴듯해도 `unknown` ③ 분류번호를 못 읽어도 `unknown` ④ 월령 범위는 양 끝을 포함한다(`board` 0–35 = 35개월까지, 36개월부터는 빠진다) ⑤ `search_books` 는 행의 `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 건다 |
-| GT-4 | `next_step_of` 사슬을 어디까지 만들지 | 양치·배변·옷 입기 3종부터 |
+| GT-4 | `next_step_of` 사슬을 어디까지 만들지 | #293 에서 6사슬(손 씻기 · 양치 · 얼굴 닦기 · 화장실 · 숟가락 · 장난감 정리). 옷 입기 · 신발 · 빨래 바구니 · 외출 준비는 고시 문구가 없어 `growth_doc.yaml` TODO |
 | GT-5 | `notice` 스키마 | OCR 팀 결정 대기. 우선순위 낮음 |
 | GT-6 | ~~`observation_education.source_suggestion_id`~~ | ✅ **폐기(09-22)** — 두지 않는다. 추천 → 관찰의 역방향 추적은 v1 범위 밖 |
 | GT-7 | 루틴 행의 원문 출처 | 배변·수면 자료의 공신력 있는 원문 확보. 별도 KB가 아니라 `growth_doc` 행으로 들어간다 |

@@ -292,6 +292,8 @@ export interface GeneralSuggestion {
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
   expires_at: string;
+  /** 그 Agent 도메인에 쌓인 기록 수 (04 `record_count` 와 같은 표). 🚨 카드의 "기록 N건" 은 이 값이다 — 0 도 그린다. */
+  record_count: number;
   /**
    * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다"). 비어 오지 않는다 —
    *    문서 근거가 없는 일반 추천은 서버가 만들지도 내보내지도 않는다.
@@ -456,7 +458,7 @@ export interface Scarcity {
  */
 
 export interface GroupNotice {
-  code: "fewer" | "empty" | "cannot_resume" | (string & {});
+  code: "fewer" | "empty" | "cannot_resume" | "daily_limit" | (string & {});
   message: string;
 }
 
@@ -477,9 +479,15 @@ export interface SuggestionGroup {
   /**
    * 묶음 안내 (#249). 🚨 **notice 가 있는 묶음은 실패가 아니다** — 다시 시도를 띄우지 않는다.
    *    `fewer` 1~2개 · `empty` 0개 · `cannot_resume` 이어서 할 수 없음(04 "후보 보기" 로 들어왔는데
-   *    맥락이 없다). 🚨 `message` 는 서버 문구다 — 그대로 그린다. `code` 는 모양을 가를 때만 쓴다.
+   *    맥락이 없다) · `daily_limit` 오늘 한도라 이 Agent 는 돌리지 않음(다른 Agent 결과는 같은 응답에 선다).
+   *    🚨 `message` 는 서버 문구다 — 그대로 그린다. `code` 는 모양을 가를 때만 쓴다.
    */
   notice?: GroupNotice | null;
+  /**
+   * 식품 사전에 없는 알레르기(꽃가루 등)의 확인 문구 (#433 리뷰 ③). 🚨 **서버 코드 문구다** — 그대로 그린다.
+   * 놀이 묶음에만 오고, 동의가 없으면 늘 빈 목록이다. 05 에 다시 들어와도(재생) 같은 문구가 온다.
+   */
+  cautions: string[];
   /**
    * 이 묶음이 무엇을 정하는 중인가 ("오늘 저녁 뭐 먹을까요"). 🚨 **서버 문구다** —
    * 무엇을 묻는 중인지는 후보를 만든 쪽만 안다. 프론트가 지어내지 않는다.

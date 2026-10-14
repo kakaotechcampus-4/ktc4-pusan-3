@@ -238,7 +238,11 @@ async def test_고친_관찰은_다음_Curator_실행에서_새_Profile_로_연�
         domain="food", observation_id=edited, fields={"subject": "바나나"}
     )
     result = await link_observations(
-        DbCuratorStore(session), _FakeEmbedder(), _NoMatchJudge(), child_id=child.id
+        DbCuratorStore(session),
+        _FakeEmbedder(),
+        _NoMatchJudge(),
+        child_id=child.id,
+        birth_date=date(2023, 1, 1),
     )
 
     row = await _food(session, edited)

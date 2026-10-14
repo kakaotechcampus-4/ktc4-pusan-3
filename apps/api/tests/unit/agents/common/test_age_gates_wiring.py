@@ -14,6 +14,7 @@ from app.agents.common.reference import age_gates
 
 # (모듈, 상수 이름, 파일의 값을 꺼내는 함수)
 WIRED = [
+    ("app.agents.curator.embedding.linker", "AFFINITY_MIN_MONTH", lambda g: g.affinity_min_month),
     ("app.agents.activity.gating", "AFFINITY_MIN_MONTH", lambda g: g.affinity_min_month),
     (
         "app.agents.activity.review",
