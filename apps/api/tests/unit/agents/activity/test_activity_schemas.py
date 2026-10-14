@@ -31,8 +31,7 @@ def candidate(**kwargs) -> dict:
         physical_intensity="low",
         involves_food=False,
         caregiver_role="together",
-        why_this="블록을 오래 가지고 놀았어요",
-        why_now="오늘 오후가 비어 있어요",
+        reason="블록을 오래 가지고 놀았어요 오늘 오후가 비어 있어요",
     )
     return {**base, **kwargs}
 

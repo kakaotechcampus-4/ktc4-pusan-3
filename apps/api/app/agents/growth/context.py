@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import DataReady, Gate, SafetyState
 from app.agents.growth.gating import EDUCATION_MIN_MONTH
@@ -24,7 +25,6 @@ from app.agents.growth.store.ports import (
     SafetyLookupError,
 )
 from app.agents.growth.tools.safety import SafetyRules, SafetyRulesUnavailable, load_safety_rules
-from app.rules.age import life_stage
 
 
 @dataclass

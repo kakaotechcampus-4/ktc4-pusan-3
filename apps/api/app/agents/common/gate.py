@@ -36,6 +36,8 @@ class DataReady:
     daycare_meal: bool = False  # 급식 행 — Food 의 급식 조회·갱신
     notice: bool = False  # 기관 공지 — Growth 의 lookup_notice
     book_api: bool = True  # 도서 API 가용 — Growth 의 도서 라벨
+    places: bool = False  # 장소 어댑터가 주입됐나 — Activity 의 search_nearby_places
+    weather: bool = False  # 날씨 어댑터가 주입됐나 — Activity 의 lookup_weather
 
 
 @dataclass(frozen=True)

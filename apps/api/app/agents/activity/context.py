@@ -13,18 +13,20 @@ from functools import partial
 from uuid import UUID
 
 from app.agents.activity.store.ports import (
+    ActivityDocRow,
     ActivityPorts,
     CoarseLocation,
     PlaceRow,
     SafetyEntry,
+    UnwiredSafety,
     WeatherGrid,
 )
 from app.agents.activity.weather import WeatherBrief
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.evidence import RankedEvidence
-from app.agents.common.gate import Gate, read_safety_basis
+from app.agents.common.gate import DataReady, Gate, SafetyBasis, read_safety_basis
 from app.agents.common.suggestion import SuggestionDraft
-from app.rules.age import life_stage
 
 
 @dataclass
@@ -38,6 +40,9 @@ class ActivityRunState:
 
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
+    # 프롬프트 [예시]에 실은 문서 행. run() 이 모델을 부르기 전에 채운다. 일반 추천은 이 행을
+    # 근거로 단다 — 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)
+    seen_docs: dict[UUID, ActivityDocRow] = field(default_factory=dict)
     gate: Gate | None = None
     # build_gate 가 읽은 health_safety 행. 출력 검증의 안전 필터는 이 값만 쓰고 다시 읽지 않는다.
     # None 은 아직 안 읽었다(build_gate 전)는 뜻이고, 동의가 없으면 빈 튜플이다
@@ -99,7 +104,9 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다
       (공용 `read_safety_basis()`).
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
-    - `has_location` 은 좌표가 있는가. 없으면 장소 조회가 닫힌다.
+    - `has_location` 은 좌표가 있는가. 장소 · 날씨 어댑터가 주입됐는지는 `data.places` ·
+      `data.weather` 다 — 좌표만 있고 어댑터가 없을 때 tool 을 열면 늘 실패한다. 둘 다 있어야
+      그 tool 이 열린다 (`gating.opens`).
     - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
       좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
@@ -108,9 +115,13 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     stage = life_stage(birth_date, context.today)
     consent = await ports.consent.child_health_granted(child_id=context.child_id)
 
-    basis = await read_safety_basis(
-        partial(ports.safety.activity_safety, child_id=context.child_id), consent=consent
-    )
+    if isinstance(ports.safety, UnwiredSafety):
+        # 어댑터가 붙기 전이다. 동의가 없어도 닫아야 해서 동의를 보지 않는다 — 읽지도 않는다 (#380)
+        basis: SafetyBasis[SafetyEntry] = SafetyBasis(entries=None)
+    else:
+        basis = await read_safety_basis(
+            partial(ports.safety.activity_safety, child_id=context.child_id), consent=consent
+        )
     context.state.safety_entries = basis.entries
 
     return Gate(
@@ -120,4 +131,5 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
         allergy_states=basis.allergy_states,
         has_location=context.location is not None,
         outdoor_ok=outdoor_ok,
+        data=DataReady(places=ports.places is not None, weather=ports.weather is not None),
     )

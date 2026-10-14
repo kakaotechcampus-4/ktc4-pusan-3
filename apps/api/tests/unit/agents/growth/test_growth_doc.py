@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
+from app.agents.common.age import stage_of
 from app.agents.common.refs import count_child_records
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs
@@ -23,7 +24,6 @@ from app.agents.growth.tools.docs import (
     search_growth_doc,
 )
 from app.agents.growth.tools.routine import pick_next_step
-from app.rules.age import stage_of
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING

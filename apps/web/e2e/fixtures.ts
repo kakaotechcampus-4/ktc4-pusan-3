@@ -203,3 +203,45 @@ export const EVALUATIVE = /백분위|또래|평균|정상|빠르|느리|표준|�
 export async function visibleText(page: Page): Promise<string> {
   return page.evaluate(() => document.body.innerText);
 }
+
+/* ── 다른 보호자 ───────────────────────────────────────────────────────── */
+
+/**
+ * **다른 보호자가 먼저 한 일**을 목에 만든다 — 화면이 들고 있는 값이 서버에서 이미 바뀐 경우다
+ * (먼저 내린 기록 · 먼저 등록한 알레르기).
+ *
+ * 🚨 `page.route` 로는 응답을 못 바꿔서(위 머리말) 페이지 안에서 직접 `fetch` 한다. 서비스
+ *    워커가 받으니 화면과 **같은 목 상태**가 바뀐다. 시나리오를 더하지 않는 이유는, 이것이
+ *    "서버가 이상하게 군다" 가 아니라 정상 응답의 다른 순서이기 때문이다.
+ * 🚨 API 주소는 화면이 이미 보낸 요청에서 읽는다 — 개발 서버가 어떤 주소로 떴든 같다. 그래서
+ *    화면이 API 를 한 번은 부른 뒤에 쓴다.
+ */
+export async function asOtherCaregiver(
+  page: Page,
+  request: { method: string; path: string; body?: unknown; idempotent?: boolean },
+): Promise<number> {
+  return page.evaluate(async ({ method, path, body, idempotent }) => {
+    const seen = performance
+      .getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .find((name) => new URL(name).pathname.startsWith("/api/v1/"));
+    if (!seen) throw new Error("화면이 아직 API 를 부르지 않았다");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (idempotent) headers["Idempotency-Key"] = crypto.randomUUID();
+    const response = await fetch(`${new URL(seen).origin}/api/v1${path}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return response.status;
+  }, request);
+}
+
+/**
+ * 테스트 중간에 목 시나리오를 바꾼다. 목은 요청마다 시나리오를 다시 읽어서(`currentScenario()`)
+ * **그다음 요청부터** 바뀐 응답이 온다 — 한 번 실패한 뒤 고쳐서 다시 누르는 흐름에 쓴다.
+ * 🚨 `page.goto` 로 다시 들어가면 안 된다 — 목 상태와 화면 상태가 같이 날아간다 (위 머리말).
+ */
+export async function switchScenario(page: Page, scenario: Scenario): Promise<void> {
+  await page.evaluate((s) => localStorage.setItem("icatch.mock.scenario", s), scenario);
+}

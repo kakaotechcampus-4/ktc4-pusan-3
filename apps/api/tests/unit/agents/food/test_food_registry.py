@@ -12,10 +12,11 @@ from uuid import UUID
 
 import pytest
 
+from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.food import registry
 from app.agents.food.context import FoodContext, build_gate
-from app.agents.food.registry import closed_readout_key, tools_for
+from app.agents.food.registry import answers_by_code, closed_readout_key, tools_for
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
     DaycareMealRow,
@@ -26,7 +27,7 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
-from app.rules.age import LifeStage, stage_of
+from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
 TODAY = date(2026, 9, 27)
@@ -47,8 +48,6 @@ _TODDLER_MEAL_NO_DAYCARE = (
     "check_repeated_menus",
     "propose_meal_candidates",
 )
-# 급식 행 유무와 무관하다 — 기록 조회 tool 은 스텁이라 열지 않는다
-_TODDLER_NUTRIENT = ("lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis")
 
 
 def _gate(
@@ -84,7 +83,7 @@ def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
         (0, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
         (3, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
         (3, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
-        # 식단 추천은 tool 이 스텁이라 not_ready.meal 로 닫힌다 — 단계 · 급식 행과 무관
+        # 식단 추천은 run() 이 결과를 옮기기 전이라 not_ready.meal 로 닫힌다 — 단계 · 급식 행과 무관
         (4, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
         (4, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
         (11, FoodTaskType.MEAL_RECOMMENDATION, True, ()),
@@ -92,9 +91,9 @@ def not_ready_lifted(monkeypatch: pytest.MonkeyPatch) -> None:
         (12, FoodTaskType.MEAL_RECOMMENDATION, False, ()),
         # 영양소 분석 — 0–11개월은 닫히고, 12개월+ 는 급식 행 유무와 무관하게 같은 묶음
         (11, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),
-        (12, FoodTaskType.NUTRIENT_ANALYSIS, True, _TODDLER_NUTRIENT),
-        (12, FoodTaskType.NUTRIENT_ANALYSIS, False, _TODDLER_NUTRIENT),
-        # 급식은 tool 이 스텁이라 행이 있어도 not_ready.daycare 로 닫힌다
+        (12, FoodTaskType.NUTRIENT_ANALYSIS, True, ()),  # 열린 tool 이 없다 — 코드가 낸다
+        (12, FoodTaskType.NUTRIENT_ANALYSIS, False, ()),
+        # 급식은 run() 이 결과를 옮기기 전이라 행이 있어도 not_ready.daycare 로 닫힌다
         (3, FoodTaskType.DAYCARE_MEAL, True, ()),
         (4, FoodTaskType.DAYCARE_MEAL, True, ()),
         (11, FoodTaskType.DAYCARE_MEAL, False, ()),
@@ -251,9 +250,8 @@ async def test_build_gate_는_동의_없는_아이의_health_safety_를_읽지_�
     assert spy.calls == 0
     assert gate.allergy_states == ()
     assert gate.safety_ok is True  # 동의가 없는 건 조회 실패가 아니다
-    # 동의가 없어도 세 라벨 모두 열린다
+    # 동의가 없어도 세 라벨 모두 열린다 — 영양소 분석은 열린 tool 이 없이 코드가 낸다
     assert tools_for(FoodTaskType.MEAL_RECOMMENDATION, gate) != ()
-    assert tools_for(FoodTaskType.NUTRIENT_ANALYSIS, gate) != ()
     assert tools_for(FoodTaskType.DAYCARE_MEAL, gate) != ()
     assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, gate) is None
     assert closed_readout_key(FoodTaskType.NUTRIENT_ANALYSIS, gate) is None
@@ -341,3 +339,9 @@ async def test_build_gate_는_조회에_실패하면_state_안전_정보를_None
     await build_gate(context)
 
     assert context.state.safety is None
+
+
+def test_영양소_분석만_모델_없이_코드가_답한다() -> None:
+    assert answers_by_code(FoodTaskType.NUTRIENT_ANALYSIS) is True
+    assert answers_by_code(FoodTaskType.MEAL_RECOMMENDATION) is False
+    assert answers_by_code(FoodTaskType.DAYCARE_MEAL) is False

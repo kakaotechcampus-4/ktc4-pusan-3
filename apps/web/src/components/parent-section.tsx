@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
 import { UserRound } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
@@ -22,7 +23,7 @@ import {
   type InviteResponse,
 } from "@/lib/api";
 import { formatInviteCode } from "@/lib/invite-code";
-import { RELATION_LABEL } from "@/lib/relation";
+import { parentDisplayName, RELATION_LABEL } from "@/lib/relation";
 import { formatDay } from "@/lib/format";
 
 /**
@@ -35,6 +36,19 @@ import { formatDay } from "@/lib/format";
  *    화면이 버튼을 그렸다가 눌러야 실패를 알려주는 경로를 만들지 않는다. 이관은
  *    `child.owner_parent_id` 변경이라 이 화면의 일이 아니다 (계약서 §07).
  *
+ * 🚨 **버튼은 보는 사람 기준이다** (#336 · 재형님 결정 10-06). owner 는 member 줄마다
+ *    "연결 끊기", member 는 **자기 줄에만** "나가기" 다 — 남을 끊으면 서버가 403 `owner_only` 로
+ *    막는다. role 을 모르는 동안(`viewer` 없음)에는 어느 줄에도 그리지 않는다 (초대 버튼과 같다).
+ *
+ * 🚨 **나가면 이 아이가 계정에서 사라진다.** 보호자당 아이가 하나라 0명이 되고, 0명이면
+ *    `/start` 다 (apps/web CLAUDE.md §3 라우팅). `/me` 캐시를 지우고 가야 한다 — 낡은 캐시를
+ *    들고 가면 `/start` 가 그 아이를 보고 홈으로 되돌려서 403 화면에 떨어진다.
+ *
+ * 🚨 **확인 창은 남는 것과 지워지는 것을 둘 다 말한다** (#336). 공동 기록과 "적은 사람" 은
+ *    남고 그 보호자의 일기 · 개인 알림은 지워진다 — 남는 것만 적으면 지워지는 것을 모르고 누른다.
+ *    지워지는 것은 **그 둘뿐**이다 (서버 확인 · #352). 알림을 "일정에 걸어 둔 알림" 으로 부르는 것은
+ *    `reminder` 가 `event_id` 를 필수로 갖는 행이라서다. 대화 기록(#228) 지우기가 붙으면 문구를 더한다.
+ *
  * 🚨 **한 코드는 한 번만 쓴다.** 발행할 때마다 새 코드다 — "초대 코드" 를 한 번 만들어 두고
  *    계속 쓰는 것처럼 보이게 하지 않는다. 만료 시각을 같이 적는다.
  *
@@ -44,13 +58,17 @@ import { formatDay } from "@/lib/format";
  */
 export function ParentSection({
   childId,
+  viewer,
   inviteOpen,
   onInviteOpenChange,
 }: {
   childId: string;
+  /** 보는 사람. `/me` 를 받기 전에는 `undefined` — 그동안은 끊기 버튼을 그리지 않는다. */
+  viewer: { id: string; role: "owner" | "member" } | undefined;
   inviteOpen: boolean;
   onInviteOpenChange: (open: boolean) => void;
 }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const toast = useToast();
   const [issued, setIssued] = useState<InviteResponse | null>(null);
@@ -76,11 +94,38 @@ export function ParentSection({
     onSuccess: (data) => setIssued(data),
   });
 
+  const isSelf = (parent: ChildParent) => viewer !== undefined && parent.parent_id === viewer.id;
+  const canDisconnect = (parent: ChildParent) =>
+    viewer !== undefined &&
+    parent.role !== "owner" &&
+    (viewer.role === "owner" || parent.parent_id === viewer.id);
+
   const disconnect = useMutation({
-    mutationFn: (parent: ChildParent) =>
-      api.delete<null>(`/children/${childId}/parents/${parent.parent_id}`),
-    onSuccess: () => {
+    /**
+     * 🚨 **이미 끊긴 것은 실패가 아니다.** `Idempotency-Key` 가 없어서(#336) 응답만 놓치고 다시
+     *    누르면 404 `not_found` 가, 스스로 나간 뒤라면 아이 접근 확인에서 403
+     *    `child_access_denied` 가 온다. 둘 다 원하던 상태라 실패 카드 대신 끝난 것으로 넘긴다.
+     *    ⚠️ 403 을 "나갔다" 로 읽는 근거 — 연결이 남아 있는데 이 코드가 오는 길은 지금 없다
+     *    (서버 확인 · #352). 아이 삭제 표시(`child.deleted_at`)가 생겨도 그 아이는 더 못 쓰니 `/start` 가 맞다.
+     */
+    mutationFn: async (parent: ChildParent) => {
+      const leaving = isSelf(parent);
+      try {
+        await api.delete<null>(`/children/${childId}/parents/${parent.parent_id}`);
+      } catch (error) {
+        const done =
+          isApiError(error, "not_found") || (leaving && isApiError(error, "child_access_denied"));
+        if (!done) throw error;
+      }
+      return { leaving };
+    },
+    onSuccess: ({ leaving }) => {
       setDisconnecting(null);
+      if (leaving) {
+        queryClient.removeQueries({ queryKey: qk.me(), exact: true });
+        router.replace("/start");
+        return;
+      }
       void queryClient.invalidateQueries({ queryKey: qk.parents(childId) });
     },
   });
@@ -97,6 +142,8 @@ export function ParentSection({
   }
 
   const rows = parents.data.parents;
+  const leaving = disconnecting !== null && isSelf(disconnecting);
+  const disconnectingName = disconnecting ? parentDisplayName(disconnecting) : "";
 
   return (
     <div className="flex flex-col gap-2">
@@ -105,24 +152,23 @@ export function ParentSection({
           <SettingsInfoRow
             key={parent.parent_id}
             icon={UserRound}
-            title={parent.nickname}
-            status={
-              parent.role === "owner"
-                ? `${RELATION_LABEL[parent.relation]} · 아이를 만든 보호자`
-                : RELATION_LABEL[parent.relation]
-            }
+            title={parentDisplayName(parent)}
+            status={parentStatus(parent)}
             note={`${formatDay(parent.connected_at)}부터 함께 보고 있어요`}
             action={
-              parent.role === "owner" ? null : (
+              canDisconnect(parent) ? (
                 <Button
                   variant="tertiary"
                   size="compact"
-                  onClick={() => setDisconnecting(parent)}
+                  onClick={() => {
+                    disconnect.reset();
+                    setDisconnecting(parent);
+                  }}
                   disabled={disconnect.isPending}
                 >
-                  연결 끊기
+                  {isSelf(parent) ? "나가기" : "연결 끊기"}
                 </Button>
-              )
+              ) : null
             }
           />
         ))}
@@ -216,13 +262,19 @@ export function ParentSection({
         ) : null}
       </BottomSheet>
 
-      {/* 연결 끊기 — 되돌리려면 다시 초대해야 한다. 그 사실까지 적는다. */}
+      {/* 연결 끊기 · 나가기 — 되돌리려면 다시 초대해야 한다. 그 사실까지 적는다. */}
       <BottomSheet
         open={disconnecting !== null}
         onClose={() => {
           if (!disconnect.isPending) setDisconnecting(null);
         }}
-        title={disconnecting ? `${josa(disconnecting.nickname, "이/가")} 더는 못 보게 할까요?` : ""}
+        title={
+          disconnecting === null
+            ? ""
+            : leaving
+              ? "함께 보기에서 나갈까요?"
+              : `${josa(disconnectingName, "이/가")} 더는 못 보게 할까요?`
+        }
         footer={
           disconnecting ? (
             <div className="flex gap-2">
@@ -241,7 +293,7 @@ export function ParentSection({
                 onClick={() => disconnect.mutate(disconnecting)}
               >
                 {disconnect.isPending ? <Spinner /> : null}
-                연결 끊기
+                {leaving ? "나가기" : "연결 끊기"}
               </Button>
             </div>
           ) : null
@@ -249,17 +301,33 @@ export function ParentSection({
       >
         {disconnecting ? (
           <div className="flex flex-col gap-4">
-            <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
-              <li>이 아이의 기록과 제안을 더는 볼 수 없어요.</li>
-              <li>그동안 적어 준 기록은 남아요. 누가 적었는지도 그대로예요.</li>
-              <li>다시 함께 보려면 초대 코드를 새로 만들어야 해요.</li>
-            </ul>
+            {leaving ? (
+              <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
+                <li>이 아이의 기록과 제안을 더는 볼 수 없어요.</li>
+                <li>내가 적은 기록은 아이에게 남고, 적은 사람으로 내 이름이 보여요.</li>
+                <li>내가 쓴 일기와 일정에 걸어 둔 알림은 지워져요.</li>
+                <li>다시 함께 보려면 아이를 등록한 보호자에게 초대 코드를 새로 받아야 해요.</li>
+              </ul>
+            ) : (
+              <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
+                <li>이 아이의 기록과 제안을 더는 볼 수 없어요.</li>
+                <li>그동안 적어 준 기록은 남아요. 누가 적었는지도 그대로예요.</li>
+                <li>
+                  {josa(disconnectingName, "이/가")} 쓴 일기와 일정에 걸어 둔 알림은 지워져요.
+                </li>
+                <li>다시 함께 보려면 초대 코드를 새로 만들어야 해요.</li>
+              </ul>
+            )}
             {disconnect.isError ? (
               <CardFailed>
                 <p>
-                  {isApiError(disconnect.error) && disconnect.error.code === "owner_required"
+                  {isApiError(disconnect.error, "owner_required")
                     ? "아이를 만든 보호자는 연결을 끊을 수 없어요."
-                    : "연결을 끊지 못했어요. 목록은 그대로예요."}
+                    : isApiError(disconnect.error, "owner_only")
+                      ? "다른 보호자의 연결은 아이를 등록한 보호자만 끊을 수 있어요."
+                      : leaving
+                        ? "나가지 못했어요. 지금은 그대로 함께 보고 있어요."
+                        : "연결을 끊지 못했어요. 목록은 그대로예요."}
                 </p>
               </CardFailed>
             ) : null}
@@ -268,4 +336,15 @@ export function ParentSection({
       </BottomSheet>
     </div>
   );
+}
+
+/**
+ * 줄의 두 번째 줄. 이름이 비어 관계 이름이 제목으로 섰으면 관계를 또 적지 않는다 (같은 말이 두 번 선다).
+ */
+function parentStatus(parent: ChildParent): string | undefined {
+  const relation = parent.nickname?.trim() ? RELATION_LABEL[parent.relation] : null;
+  if (parent.role === "owner") {
+    return relation ? `${relation} · 아이를 만든 보호자` : "아이를 만든 보호자";
+  }
+  return relation ?? undefined;
 }

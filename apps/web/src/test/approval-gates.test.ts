@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
  * 승인 게이트가 **딱 2곳**인 것을 코드로 건다 (최상위 CLAUDE.md §2 실행 · #242).
  *
  *   ㉠ 캘린더 쓰기 — 초안 제출 (`submitEventDraft` · `updateEventDraft`)
- *   ㉡ 건강·알레르기 기록 확정 — `addHealthSafety`
+ *   ㉡ 건강·알레르기 기록 확정 — 등록 `addHealthSafety` · 고치기 `updateHealthSafety`
  *
  * 브라우저 테스트(`e2e/`)는 "이 화면에서 뜬다" 는 보여도 "다른 곳에서는 안 뜬다" 는 모든 경로를
  * 돌아야 증명된다. 그래서 **어디서 부를 수 있는가**를 파일 목록으로 고정한다.
@@ -65,6 +65,10 @@ describe("승인 게이트 ㉡ 건강·알레르기 확정", () => {
       "components/health-safety-list.tsx",
       "components/safety-check-sheet.tsx",
     ]);
+  });
+
+  it("고치기는 02/11 의 고치기 시트에서만 부른다 (#375 · 등록과 같은 게이트의 다른 메서드)", () => {
+    expect(callers("updateHealthSafety")).toEqual(["components/health-safety-list.tsx"]);
   });
 });
 

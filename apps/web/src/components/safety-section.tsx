@@ -13,6 +13,7 @@ import { Section, SectionAction, SectionError } from "@/components/ui/section";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 import { api, isApiError, qk, type HealthSafety, type HealthSafetyListResponse } from "@/lib/api";
+import { PENDING_SERVER_FEATURES } from "@/lib/features";
 
 /**
  * 알레르기 · 건강 구역. **11 아이 프로필과 02 아이 정보가 같은 것을 쓴다.**
@@ -50,6 +51,9 @@ export function SafetySection({ childId }: { childId: string }) {
    * 🚨 **검사지는 시트가 아니라 화면(11-2)으로 나간다.** 한 장에서 열 줄 넘게 나오는데 시트
    *    높이 안에서는 배너·사진·목록·승인 버튼이 서로 자리를 뺏는다 (사진을 96px 까지 줄여야
    *    목록이 보였다). 그래서 여기 남는 `mode` 는 둘뿐이다.
+   *
+   * ⚠️ 실서버에 검사지 읽기가 생기기 전에는(`lib/features.ts` · #409) 길이 직접 적기 하나라
+   *    `"choose"` 를 쓰지 않는다 — 추가 버튼이 바로 `"manual"` 로 간다.
    */
   const [mode, setMode] = useState<null | "choose" | "manual">(null);
   /** 고치는 중인 기록. 있으면 같은 승인 게이트 시트가 고치기로 열린다. */
@@ -69,7 +73,14 @@ export function SafetySection({ childId }: { childId: string }) {
       title="알레르기 · 건강"
       description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
       count={items.length > 0 ? items.length : undefined}
-      action={<SectionAction label="알레르기·건강 기록 추가" onClick={() => setMode("choose")} />}
+      action={
+        <SectionAction
+          label="알레르기·건강 기록 추가"
+          // 🚨 검사지 길이 닫혀 있으면(`lib/features.ts` · #409) 고를 것이 직접 적기 하나뿐이라,
+          //    고르는 시트를 건너뛰고 바로 연다 — 한 줄짜리 선택지를 한 번 더 누르게 하지 않는다.
+          onClick={() => setMode(PENDING_SERVER_FEATURES.safetyScan ? "choose" : "manual")}
+        />
+      }
     >
       {query.isPending ? (
         <SkeletonBlock label="안전 정보를 불러오는 중" />
@@ -94,31 +105,35 @@ export function SafetySection({ childId }: { childId: string }) {
         <HealthSafetyList childId={childId} items={items} onEdit={setEditing} />
       )}
 
-      {/* 🚨 화면에 보이지 않지만 자리는 여기다 — 고르는 시트가 닫힌 뒤에도 같은 입력을 쓴다. */}
-      <input
-        ref={photoInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0] ?? null;
-          // 같은 파일을 다시 고를 수 있게 값을 비운다 (안 비우면 onChange 가 안 온다).
-          e.target.value = "";
-          if (!file) return;
-          // 🚨 **파일은 URL 로 못 넘긴다.** 화면 밖 스토어에 한 칸 두고 넘긴다 —
-          //    objectURL 을 만드는 것도 해제하는 것도 거기 한 곳이 맡는다.
-          useSafetyScanDraftStore.getState().putPhoto(childId, file);
-          setMode(null);
-          router.push(`/child/${childId}/profile/safety-scan`);
-        }}
-      />
+      {PENDING_SERVER_FEATURES.safetyScan ? (
+        <>
+          {/* 🚨 화면에 보이지 않지만 자리는 여기다 — 고르는 시트가 닫힌 뒤에도 같은 입력을 쓴다. */}
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              // 같은 파일을 다시 고를 수 있게 값을 비운다 (안 비우면 onChange 가 안 온다).
+              e.target.value = "";
+              if (!file) return;
+              // 🚨 **파일은 URL 로 못 넘긴다.** 화면 밖 스토어에 한 칸 두고 넘긴다 —
+              //    objectURL 을 만드는 것도 해제하는 것도 거기 한 곳이 맡는다.
+              useSafetyScanDraftStore.getState().putPhoto(childId, file);
+              setMode(null);
+              router.push(`/child/${childId}/profile/safety-scan`);
+            }}
+          />
 
-      <AddSafetySheet
-        open={mode === "choose"}
-        onClose={() => setMode(null)}
-        onManual={() => setMode("manual")}
-        onPhoto={() => photoInputRef.current?.click()}
-      />
+          <AddSafetySheet
+            open={mode === "choose"}
+            onClose={() => setMode(null)}
+            onManual={() => setMode("manual")}
+            onPhoto={() => photoInputRef.current?.click()}
+          />
+        </>
+      ) : null}
 
       <HealthSafetySheet open={mode === "manual"} onClose={() => setMode(null)} childId={childId} />
 

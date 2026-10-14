@@ -1,7 +1,7 @@
 # Food 의 코드 상수 문구 (Food_Tool_명세.md §4). 모델을 거치지 않고 화면에 그대로 나간다.
 # 테스트(test_food_readouts.py)가 명세 §4 표와 글자 단위로 비교한다. 문구를 바꾸면 명세도 같이 고친다.
-# `{menu}` · `{recorded}` · `{date}` · `{slot}` · `{label}` · `{nutrient}` · `{action}` 자리는 코드가 만든
-# 값으로만 채운다.
+# `{menu}` · `{recorded}` · `{date}` · `{slot}` · `{label}` · `{nutrient}` · `{action}` · `{days}` ·
+# `{group}` · `{count}` 자리는 코드가 만든 값으로만 채운다.
 
 unsupported.milk_meal:
   kind: unsupported
@@ -33,9 +33,6 @@ unsupported.weaning_over12:
 unsupported.weight_diet:
   kind: unsupported
   template: "체중을 목표로 한 식단은 만들지 않아요. 몸무게 이야기는 영유아 건강검진에서 확인해 보세요."
-guide.choking_caution:
-  kind: guide
-  template: "통째로 먹으면 질식할 수 있어요. 잘게 잘라도 위험이 남으니, 먹는 동안 곁에서 지켜봐 주세요."
 nutrient.insufficient:
   kind: nutrient
   template: "최근 식사 기록이 적어서 영양 이야기는 정확하지 않아요. ({recorded}건 기록됨)"
@@ -45,6 +42,9 @@ nutrient.today_empty:
 nutrient.daycare_amount_unknown:
   kind: nutrient
   template: "급식은 메뉴만 알고 얼마나 먹었는지는 몰라서 참고만 했어요."
+nutrient.appearance:
+  kind: nutrient_analysis
+  template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."
 nutrient.band.low:
   kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요."

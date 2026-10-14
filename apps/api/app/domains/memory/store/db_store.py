@@ -27,13 +27,22 @@ from app.domains.memory.observation.models import (
     ObservationEducation,
     ObservationFood,
     ObservationHealth,
+    ObservationLinkHold,
     ObservationRoutine,
     ObservationStatus,
     Promotable,
 )
+from app.domains.memory.profile.service import refresh_profile
+from app.domains.schedule import repository as schedule_repository
 from app.domains.schedule.models import Event, EventItem
 
 _KST = timezone(timedelta(hours=9))
+
+# 관찰을 고칠 때 Curator 집계에 영향을 주는 칸 (#257)
+# 바뀌면 벡터 · Profile 연결을 비운다 — 다음 Curator 가 다시 임베딩 · 연결한다
+_RELINK_KEYS = frozenset({"subject", "polarity"})
+# 바뀌면 원래 Profile 의 last_observed_on 과 상태를 다시 계산한다
+_RECOMPUTE_KEYS = _RELINK_KEYS | {"observed_range", "strong_signals"}
 
 
 def _parse_uuid(value: str) -> UUID | None:
@@ -140,12 +149,29 @@ def _event_item_row(orm: EventItem) -> EventItemRow:
 class DbMemoryStore:
     """MemoryStore Protocol 구현. 세션 하나가 run 하나를 의미한다."""
 
-    def __init__(self, session: AsyncSession, *, child_id: UUID) -> None:
+    def __init__(self, session: AsyncSession, *, child_id: UUID, today: date | None = None) -> None:
         self._session = session
         self._child_id = child_id
+        self._fixed_today = today
         self.wrote = False
         """create / update / delete 가 DB 에 실제로 쓴 적이 있으면 True.
         runner 가 commit 표시를 세울지 판단하는 데 쓴다."""
+
+    def _today(self) -> date:
+        """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
+        return self._fixed_today or datetime.now(_KST).date()
+
+    async def _refresh_profile(self, affinity_id: UUID | None) -> None:
+        if affinity_id is not None:
+            await refresh_profile(self._session, profile_id=affinity_id, today=self._today())
+
+    async def _clear_link_hold(self, domain: ObservationDomain, observation_id: UUID) -> None:
+        await self._session.execute(
+            delete(ObservationLinkHold).where(
+                ObservationLinkHold.domain == domain,
+                ObservationLinkHold.observation_id == observation_id,
+            )
+        )
 
     # ── observation ─────────────────────────────────────────────
 
@@ -251,6 +277,26 @@ class DbMemoryStore:
             values["observed_range"] = Range(observed_on, observed_on + timedelta(days=1))
         if not values:
             return await self.get_observation(domain=domain, observation_id=observation_id)
+        # Curator 집계에 영향을 주는 칸이 실제로 바뀌는지 고치기 전 값과 비교한다
+        affinity_id: UUID | None = None
+        changed: set[str] = set()
+        if issubclass(model, Promotable):
+            watched = sorted(_RECOMPUTE_KEYS & values.keys())
+            before = (
+                await self._session.execute(
+                    select(model.affinity_id, *(getattr(model, k) for k in watched)).where(
+                        model.id == uid,
+                        model.child_id == self._child_id,
+                        model.status != ObservationStatus.DELETED,
+                    )
+                )
+            ).first()
+            if before is not None:
+                affinity_id = before[0]
+                changed = {k for k, old in zip(watched, before[1:]) if values[k] != old}
+            if changed & _RELINK_KEYS:
+                values["embedding"] = None
+                values["affinity_id"] = None
         orm = await self._session.scalar(
             update(model)
             .where(
@@ -261,10 +307,15 @@ class DbMemoryStore:
             .values(**values)
             .returning(model)
         )
-        if orm is not None:
-            self.wrote = True
-            return _row_from_orm(domain, orm)
-        return None
+        if orm is None:
+            return None
+        self.wrote = True
+        if changed & _RELINK_KEYS:
+            # 옛 subject · polarity 로 쌓인 보류 기록은 다시 연결할 때 쓸모가 없다
+            await self._clear_link_hold(domain, uid)
+        if changed:
+            await self._refresh_profile(affinity_id)
+        return _row_from_orm(domain, orm)
 
     async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
         uid = _parse_uuid(observation_id)
@@ -284,19 +335,17 @@ class DbMemoryStore:
             .values(**values)
             .returning(model.id)
         )
-        if result is not None:
-            from app.domains.memory.observation.models import ObservationLinkHold
-
-            await self._session.execute(
-                delete(ObservationLinkHold).where(
-                    ObservationLinkHold.domain == domain,
-                    ObservationLinkHold.observation_id == uid,
-                )
+        if result is None:
+            return False
+        self.wrote = True
+        await self._clear_link_hold(domain, uid)
+        if issubclass(model, Promotable):
+            # 지운 관찰 몫을 원래 Profile 에서 다시 계산한다 (#257)
+            affinity_id = await self._session.scalar(
+                select(model.affinity_id).where(model.id == uid)
             )
-        deleted = result is not None
-        if deleted:
-            self.wrote = True
-        return deleted
+            await self._refresh_profile(affinity_id)
+        return True
 
     # ── event ───────────────────────────────────────────────────
 
@@ -373,23 +422,18 @@ class DbMemoryStore:
         ).all()
         return [_event_item_row(r) for r in rows]
 
-    async def update_event_item(
-        self, *, item_id: str, fields: dict[str, Any]
+    async def set_event_item_prepared(
+        self, *, item_id: str, is_prepared: bool
     ) -> EventItemRow | None:
         uid = _parse_uuid(item_id)
         if uid is None:
             return None
-        # EventItem has no child_id; join through Event to enforce ownership.
-        orm = await self._session.scalar(
-            select(EventItem)
-            .join(Event, EventItem.event_id == Event.id)
-            .where(EventItem.item_id == uid, Event.child_id == self._child_id)
+        # 시각 규칙은 백엔드 PATCH 와 같은 함수 하나에 둔다 — 이전 값을 UPDATE 안에서 본다
+        orm = await schedule_repository.set_event_item_prepared(
+            self._session, child_id=self._child_id, item_id=uid, is_prepared=is_prepared
         )
         if orm is None:
             return None
-        for k, v in fields.items():
-            setattr(orm, k, v)
-        await self._session.flush()
         self.wrote = True
         return _event_item_row(orm)
 

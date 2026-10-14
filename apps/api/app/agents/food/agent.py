@@ -1,7 +1,8 @@
 """Food Agent 진입점.
 
 `build_gate` 로 이번 run 의 Gate 를 계산하고, 닫힌 조합이면 코드 문구로 모델 0회로 끝낸다.
-열려 있으면 `run_tool_loop`(공통 tool 루프) 위에서 출력 tool 이 통과할 때까지 돈다.
+영양소 분석은 열려 있어도 모델을 부르지 않는다 — 판정의 식품군 출현을 코드 문장 틀로 낸다
+(1차 출력, N-17). 나머지는 `run_tool_loop`(공통 tool 루프) 위에서 출력 tool 이 통과할 때까지 돈다.
 """
 
 import logging
@@ -13,12 +14,12 @@ from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft
-from app.agents.common.tool_loop import ToolCall, ToolLoopResult, run_tool_loop
+from app.agents.common.tool_loop import ToolLoopResult, run_tool_loop
 from app.agents.food.context import FoodContext, build_gate
-from app.agents.food.nutrient_wording import fallback_readouts
 from app.agents.food.prompt import build_system_prompt
-from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, NUTRIENT_UNSCORED, READOUTS
+from app.agents.food.readouts import READOUTS
 from app.agents.food.registry import (
+    answers_by_code,
     closed_readout_key,
     execute_tool,
     output_tools_for,
@@ -29,7 +30,7 @@ from app.agents.food.registry import (
 from app.agents.food.result import ToolResult
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.task import task_type_of
-from app.agents.food.tools.nutrition import diet_balance
+from app.agents.food.tools.nutrition import appearance_report
 from app.rules.age import Stage
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,6 @@ logger = logging.getLogger(__name__)
 # ok      출력 tool 이 검증을 통과했다
 # failed  모델이 말로 끝냈거나(no_tool_call) 상한까지 출력 tool 이 통과하지 못했다(max_steps).
 #         추천 0개로 내면 모델 실패가 "말할 게 없다" 로 보인다(#320 PM 리뷰) — 그래서 failed 로 낸다
-#         (영양소 분석은 예외 — failed 대신 코드 문장으로 낸다. 판정 · 안내가 코드 값이라
-#         "말할 게 없다" 로 보이지 않는다, #357 리뷰)
 # closed  게이트 · 라벨 규칙이 닫았다. 코드 문구만 나간다(모델 0회)
 FoodStatus = Literal["ok", "failed", "closed"]
 
@@ -81,6 +80,19 @@ async def run(
             readouts=(READOUTS.render(key),),
         )
 
+    if answers_by_code(task_type):
+        # 영양소 분석 1차 출력 — 모델을 부르지 않는다. 구간은 판정해 두되 문장은 식품군 출현만 쓴다
+        return FoodAgentResult(
+            task_type=task_type,
+            stage=stage,
+            status="ok",
+            request_texts=task.request_texts,
+            tools=(),
+            requires_safety_check=requires_safety_check(task_type),
+            model_calls=0,
+            readouts=await appearance_report(context),
+        )
+
     allowed = tools_for(task_type, gate)
     output_tools = output_tools_for(task_type)
     llm = client or LLMClient(role="food")
@@ -99,24 +111,6 @@ async def run(
         execute=execute,
         output_tools=output_tools,
     )
-
-    if task_type == FoodTaskType.NUTRIENT_ANALYSIS and not loop_result.completed:
-        # 모델이 출력 tool 을 못 끝냈다. 판정 · 안내는 코드 값이라 문장 틀로 낸다 (#357 리뷰).
-        # 원문은 남기지 않는다 — run_id 와 종료 사유만
-        logger.warning(
-            "food.nutrient.fallback run_id=%s ended_by=%s", context.run_id, loop_result.ended_by
-        )
-        balance = await diet_balance(context, verdict=context.state.nutrient_verdict)
-        return FoodAgentResult(
-            task_type=task_type,
-            stage=stage,
-            status="ok",
-            request_texts=task.request_texts,
-            tools=allowed,
-            requires_safety_check=requires_safety_check(task_type),
-            model_calls=1,
-            readouts=fallback_readouts(balance.verdict, balance.actions),
-        )
 
     readouts = (
         _readouts_from(task_type, loop_result, output_tools, context)
@@ -142,24 +136,6 @@ def _readouts_from(
     context: FoodContext,
 ) -> tuple[Readout, ...]:
     """통과한 출력 tool 의 결과를 화면에 낼 Readout 으로. 식단 추천 · 급식 갱신의 결과 변환은
-    각자의 구현 이슈(issue3 등)에서 마저 다룬다 — 지금 실구현된 출력은 영양소 분석뿐이다.
+    각자의 구현 이슈에서 마저 다룬다 — 영양소 분석은 모델을 거치지 않아 여기 오지 않는다.
     """
-    if task_type != FoodTaskType.NUTRIENT_ANALYSIS:
-        return ()
-    accepted = _accepted_call(loop_result, output_tools)
-    findings = accepted.result.data.get("findings") or []
-    if not findings:
-        verdict = context.state.nutrient_verdict
-        if verdict is not None and verdict.insufficient:
-            return (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=verdict.records),)
-        if verdict is not None and not verdict.bands:
-            return (READOUTS.render(NUTRIENT_UNSCORED, recorded=verdict.records),)
-        return ()
-    return (Readout(kind="nutrient_analysis", body="\n".join(findings), authored_by="model"),)
-
-
-def _accepted_call(loop_result: ToolLoopResult, output_tools: Collection[str]) -> ToolCall:
-    for call in reversed(loop_result.calls):
-        if call.result.success and call.name in output_tools:
-            return call
-    raise AssertionError("output_accepted 인데 성공한 출력 tool 호출이 없다")  # pragma: no cover
+    return ()

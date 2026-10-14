@@ -3,12 +3,22 @@
 import base64
 import json
 import uuid
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.child.models import ChildGrowthLog
+from app.domains.memory.observation.models import (
+    ObservationActivity,
+    ObservationEducation,
+    ObservationFood,
+    ObservationHealth,
+    ObservationRoutine,
+)
+from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
@@ -32,11 +42,13 @@ async def create_suggestion(
     expires_at: datetime,
     allergens: Sequence[str] = (),
     items: Sequence[str] = (),
+    run_id: str | None = None,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
     `citations` · `allergens` · `items` 는 `SuggestionDraft.to_payload()` 의 같은 이름 칸을
     그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
+    `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
     """
     row = Suggestion(
         child_id=child_id,
@@ -48,6 +60,7 @@ async def create_suggestion(
         items=list(items),
         expires_at=expires_at,
         status=SuggestionStatus.DRAFT,
+        run_id=run_id,
     )
     session.add(row)
     await session.flush()
@@ -203,6 +216,101 @@ _CHILD_RECORD_KINDS = frozenset(
         "daycare_meal",
     )
 )
+
+# agents/common/refs.py DocKind 와 같은 목록. 문서 행은 아이 데이터가 아니고 DB 테이블도
+# 아직 없어서(YAML 시드 · uuid5 id) 종류만 본다
+_DOC_KINDS = frozenset(("food_doc", "growth_doc", "activity_doc"))
+
+# 근거의 아이 기록 중 대상 테이블이 있는 것 — 같은 아이의 행이 있는지 본다(correction 과 같은
+# 방식). 여기 없는 아이 기록(notice · daycare_meal)은 테이블이 생길 때까지 거절한다
+_EVIDENCE_TARGETS = {
+    "observation_food": ObservationFood,
+    "observation_health": ObservationHealth,
+    "observation_education": ObservationEducation,
+    "observation_activity": ObservationActivity,
+    "observation_routine": ObservationRoutine,
+    "profile_affinity": ProfileAffinity,
+    "child_growth_log": ChildGrowthLog,
+}
+
+SUGGESTION_TTL = timedelta(hours=24)
+"""추천 draft 가 사는 시간. 승인 없는 추천은 이 시간 뒤 만료된다 (루트 §2)."""
+
+
+class SuggestionEvidenceError(ValueError):
+    """추천 묶음의 근거가 규칙에 어긋난다. 메시지에 추천 문장 · 근거 문장 · id 를 싣지 않는다."""
+
+
+async def save_agent_suggestions(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    run_id: str,
+    payloads: Sequence[Mapping[str, Any]],
+    now: datetime,
+) -> list[uuid.UUID]:
+    """도메인 Agent 결과 하나의 추천을 저장한다(flush 까지). commit 은 호출자(러너)가 한다.
+
+    - `payloads` 의 한 항목은 `SuggestionDraft.to_payload()` 모양이다. 돌려주는 id 는 그 순서다.
+    - 근거를 먼저 다 본 뒤에 쓴다. 하나라도 어긋나면 `SuggestionEvidenceError` 이고 한 행도
+      쓰지 않는다 — 개인화인데 아이 기록 근거 0행 · 일반인데 아이 기록 근거 · 정해지지 않은
+      근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직 없는 아이 기록.
+    - 한 추천이 같은 (source_kind, source_id) 를 두 번 인용하면 첫 인용만 남긴다(PK).
+    - `status=draft` · `expires_at=now+SUGGESTION_TTL` 은 여기서 정한다.
+    """
+    checked = [
+        await _checked_citations(session, child_id=child_id, payload=item) for item in payloads
+    ]
+    ids: list[uuid.UUID] = []
+    for item, citations in zip(payloads, checked, strict=True):
+        row = await create_suggestion(
+            session,
+            child_id=child_id,
+            agent=SuggestionAgent(item["agent"]),
+            kind=SuggestionKind(item["kind"]),
+            content=item["content"],
+            reason=item["reason"],
+            citations=citations,
+            expires_at=now + SUGGESTION_TTL,
+            allergens=item["allergens"],
+            items=item["items"],
+            run_id=run_id,
+        )
+        ids.append(row.id)
+    return ids
+
+
+async def _checked_citations(
+    session: AsyncSession, *, child_id: uuid.UUID, payload: Mapping[str, Any]
+) -> list[dict]:
+    """추천 한 건의 인용을 검사해 돌려준다. 같은 근거를 두 번 인용했으면 첫 인용만 남긴다."""
+    SuggestionAgent(payload["agent"])  # 정해지지 않은 Agent 면 쓰기 전에 ValueError
+    kind = SuggestionKind(payload["kind"])
+    citations: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for item in payload["citations"]:
+        key = (item["source_kind"], str(uuid.UUID(str(item["source_id"]))))
+        if key not in seen:
+            seen.add(key)
+            citations.append(dict(item))
+    if any(item["source_kind"] not in _CHILD_RECORD_KINDS | _DOC_KINDS for item in citations):
+        raise SuggestionEvidenceError("정해지지 않은 근거 종류다")
+    child = [item for item in citations if item["source_kind"] in _CHILD_RECORD_KINDS]
+    if kind is SuggestionKind.PERSONALIZED and not child:
+        raise SuggestionEvidenceError("개인화 추천인데 아이 기록 근거가 없다")
+    if kind is SuggestionKind.GENERAL and child:
+        raise SuggestionEvidenceError("일반 추천에 아이 기록 근거가 있다")
+    for item in child:
+        model = _EVIDENCE_TARGETS.get(item["source_kind"])
+        if model is None:
+            raise SuggestionEvidenceError("아직 확인할 수 없는 아이 기록 종류다")
+        source_id = uuid.UUID(str(item["source_id"]))
+        found = await session.scalar(
+            select(model.id).where(model.id == source_id, model.child_id == child_id)
+        )
+        if found is None:
+            raise SuggestionEvidenceError("근거 기록이 없거나 다른 아이의 기록이다")
+    return citations
 
 
 async def list_evidence(

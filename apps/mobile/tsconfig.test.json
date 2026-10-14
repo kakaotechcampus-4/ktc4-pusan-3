@@ -8,7 +8,7 @@
     "types": ["node"],
     "moduleResolution": "bundler",
     "customConditions": [],
-    // Node 러너가 `./bridge.ts` 를 그대로 읽는다 (타입 스트리핑).
+    // Node 러너가 `./auth-session.ts` 를 그대로 읽는다 (타입 스트리핑).
     "allowImportingTsExtensions": true,
     "noEmit": true
   },

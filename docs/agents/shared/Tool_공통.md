@@ -25,7 +25,7 @@
 ## 2. `life_stage` — 코드
 
 ```python
-def life_stage(birth_date: date, today: date) -> LifeStage
+def life_stage(birth_date: date, today: date) -> LifeStage  # app/agents/common/age.py — 경계는 age_gates.yaml
 # LifeStage(months: int, stage: Stage, big: Literal["infant","toddler"])
 ```
 
@@ -82,9 +82,9 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 | 2 | `candidate` · polarity ∈ {+1, −1} · strength ≥ 임계 |
 | 3 | 최근 14일 관찰 (polarity 무관) |
 | 역질의 | `candidate` + polarity NULL → `needs_observation` 후보로 반환 (1개만 사용) |
-| 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다 |
+| 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다. 6개월 넘은 아이 기록만 남은 후보는 `build()` 가 일반 추천으로 돌린다(§5-3) |
 
-> 🟡 **`profile_affinity` 는 Agent 가 만들지 않는다.** 관찰을 승격해 이 행을 만드는 것도, 오래된 관심을 내리는 것도 Curator(백엔드 배치)의 일이다. Agent 는 이미 만들어진 행을 **읽기만** 한다 — 유예일을 Agent 가 다시 세면 값이 두 벌이 되고 한쪽만 갱신된다. NF-08(6개월)도 Curator 가 `archived` 로 바꾸는 것으로 지켜진다.
+> 🟡 **`profile_affinity` 는 Agent 가 만들지 않는다.** 관찰을 승격해 이 행을 만드는 것도, 오래된 관심을 내리는 것도 Curator(백엔드 배치)의 일이다. Agent 는 이미 만들어진 행을 **읽기만** 한다 — 유예일을 Agent 가 다시 세면 값이 두 벌이 되고 한쪽만 갱신된다. NF-08(6개월)은 감쇠와 별개로 `build()` 가 한 번 더 막는다 — `archived` 는 새 관찰이 연결될 때만 갱신된다(§5-3 · #329).
 >
 > 🔴 **기피(−1)는 제외 필터가 아니라 근거다.** "브로콜리를 싫어해서"도 추천을 고르는 이유다. `rank_evidence`는 제거 목록을 반환하지 않는다.
 > 후보에서 지우는 것은 **안전뿐** — 알레르기(`health_safety`) · 연령 금지식품 · `hazard_term`. 이건 `rank_evidence`가 아니라 Agent별 안전 필터의 일이다.
@@ -133,15 +133,16 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 
 ### 5-3. 근거 — `kind` 는 코드가 정한다
 
-모델이 `kind` 를 고르지 않는다. `build()` 가 **아이 기록 근거의 행 수**로 정한다.
+모델이 `kind` 를 고르지 않는다. `build()` 가 **6개월이 안 지난 아이 기록 근거의 행 수**로 정한다.
 
-- 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal`)이 1행 이상이면 `kind="personalized"`. `reason` 이 비어 있으면 거절한다.
+- 6개월이 안 지난 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal`)이 1행 이상이면 `kind="personalized"`. `reason` 이 비어 있으면 거절한다. 오래된 기록과 같이 인용했으면 둘 다 근거로 남는다.
 - 0행이면 `kind="general"`. `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다. 문서 행(`*_doc`)은 세지 않는다 — 있든 없든 아이 기록이 0행이면 general 이다.
+- **6개월 넘은 아이 기록만 인용했으면 일반 추천이다.** 그 인용은 빼고 문서 행 인용만 남긴다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 날짜를 모르는 아이 기록도 세지 않는다. 판정은 `rules/staleness.is_stale`(달력 6개월)이고, 날짜는 `cite()` 가 `RankedEvidence.observed_on` 에서 옮긴다 (#329).
 - **general 은 거절 사유가 아니다.** 추천은 그대로 나가고 화면이 또래 기준임을 말한다 (루트 CLAUDE.md §2). `general` 인데 인용이 0행인 것은 문서에서도 근거를 못 찾았다는 뜻이라 품질 지표로 본다 (2026-09-25).
 - **인용마다 `note` 가 있어야 한다.** 그 행에서 무엇을 근거로 봤는지를 Agent 가 한 줄로 쓴다. 비면 그 후보를 거절한다. 거절은 후보 단위라 묶음은 그대로 간다.
 - 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. 코드는 [`common/evidence.py`](../../../apps/api/app/agents/common/evidence.py) 다 — 조회 tool 이 `top_refs()` 로 상위 10개를 모델에게 돌려주며 run state 의 대조표(`seen_evidence`)에 적고, 출력 tool 이 `unseen()` 으로 인용한 id 를 그 표와 대조한다(#319). **조회하지 않은 id 가 하나라도 있으면 근거만 빼지 않고 그 후보를 거절한다** — 모델이 id 를 지어냈다는 뜻이고, 빼고 내보내면 남은 근거로 "우리 아이 맞춤" 인 척하게 된다(#195 리뷰). UUID 로 읽히지 않는 id 도 조회하지 않은 id 다. 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
 
-- **대조는 `subject`, 설명은 사람이 읽는 칸.** `rank_evidence` 의 근거는 두 칸을 갖는다 (#304 리뷰). 기피 거절 · keywords 대조는 네 관찰 테이블 공통 칸인 `subject`(affinity 는 `merge_key`)로 하고, `cite()` · why_this · 화면의 "사용한 기록" 은 `label` 을 쓴다. `label` 은 사람이 읽는 칸이다 — Activity `activity`, Education `topic`. 그런 칸이 없는 Food · Routine 은 `ObservationRow.label` 을 비워 두면 `subject` 가 된다.
+- **대조는 `subject`, 설명은 사람이 읽는 칸.** `rank_evidence` 의 근거는 두 칸을 갖는다 (#304 리뷰). 기피 거절 · keywords 대조는 네 관찰 테이블 공통 칸인 `subject`(affinity 는 `merge_key`)로 하고, `cite()` · `reason` · 화면의 "사용한 기록" 은 `label` 을 쓴다. `label` 은 사람이 읽는 칸이다 — Activity `activity`, Education `topic`. 그런 칸이 없는 Food · Routine 은 `ObservationRow.label` 을 비워 두면 `subject` 가 된다.
 
 ### 5-4. 문구 — 기피를 인용했으면 말해야 한다
 

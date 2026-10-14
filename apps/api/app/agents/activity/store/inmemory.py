@@ -5,7 +5,7 @@
 데이터만 쥔다고 본다. 실패를 흉내 낼 때는 `fail=True` — 빈 결과와 구분해야 한다 (루트 §2).
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from uuid import UUID
 
@@ -13,9 +13,12 @@ from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.store.ports import (
     ActivityDocRow,
+    ActivityMemoryReader,
     ActivityObservation,
     ActivityPorts,
+    ChildProfileReader,
     CoarseLocation,
+    ConsentReader,
     PlaceRow,
     RawAdvisories,
     RawAir,
@@ -23,8 +26,10 @@ from app.agents.activity.store.ports import (
     SafetyEntry,
     SafetyLookupError,
     ScheduleBlock,
+    UnwiredSafety,
     UpstreamUnavailable,
     WeatherGrid,
+    WeatherSource,
 )
 from app.agents.common.evidence import AffinityRow
 
@@ -121,18 +126,25 @@ class InMemoryActivityDocs:
 
 
 class InMemoryWeather:
-    """조회마다 따로 실패시킬 수 있다 — `fail={"air_quality"}` 면 미세먼지만 죽는다."""
+    """조회마다 따로 실패시킬 수 있다 — `fail={"air_quality"}` 면 미세먼지만 죽는다.
+
+    `forecasts` 에 날짜별 예보를 넣으면 그날만 다르게 준다. 없는 날은 `forecast` 다.
+    `forecast_days` 에 예보를 물은 날이 순서대로 쌓인다.
+    """
 
     def __init__(
         self,
         *,
         forecast: RawForecast | None = None,
+        forecasts: Mapping[date, RawForecast] | None = None,
         air: RawAir | None = None,
         uv: str | None = None,
         advisories: RawAdvisories | None = None,
         fail: frozenset[str] = frozenset(),
     ) -> None:
         self._forecast = forecast or RawForecast(sky="1", pcp="강수없음", pop="0")
+        self._forecasts = dict(forecasts or {})
+        self.forecast_days: list[date] = []
         self._air = air or RawAir(
             pm10="30", pm10_flag=None, pm25="15", pm25_flag=None, o3="0.03", o3_flag=None
         )
@@ -146,7 +158,8 @@ class InMemoryWeather:
 
     async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
         self._check("forecast")
-        return self._forecast
+        self.forecast_days.append(day)
+        return self._forecasts.get(day, self._forecast)
 
     async def air_quality(self, *, grid: WeatherGrid) -> RawAir:
         self._check("air_quality")
@@ -198,4 +211,30 @@ def in_memory_ports(
         docs=docs or InMemoryActivityDocs(),
         weather=weather,
         places=places,
+    )
+
+
+def unwired_ports(
+    *,
+    profile: ChildProfileReader,
+    consent: ConsentReader,
+    memory: ActivityMemoryReader,
+    weather: WeatherSource | None = None,
+) -> ActivityPorts:
+    """실제 포트가 아직 안 붙은 run 의 기본값 (entrypoint 가 쓴다). 안전 조회가 실패한다.
+
+    - 안전은 `UnwiredSafety` 다 — `build_gate` 가 동의와 상관없이 닫는다. 테스트 · eval 이 알레르기
+      시나리오를 쓰려면 `in_memory_ports(safety=...)` 로 명시한다.
+    - 일정은 빈 표다(일정 포트 연결 전). 비는 시간을 묻는 tool 은 "일정 없음" 으로 읽는다.
+    - 문서 행은 `reference/activity_doc.yaml` 의 `approved` 행이다. 테이블은 아직 없다.
+    - 장소는 None 이다 — 장소 어댑터 전이라 장소 조회가 닫힌다.
+    """
+    return ActivityPorts(
+        profile=profile,
+        consent=consent,
+        safety=UnwiredSafety(),
+        memory=memory,
+        schedule=InMemorySchedule(),
+        docs=InMemoryActivityDocs.from_seed(),
+        weather=weather,
     )

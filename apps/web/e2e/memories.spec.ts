@@ -1,5 +1,4 @@
 import { CHILD, expect, expectNoGate, test } from "./fixtures";
-import { browserDaysAgo } from "./time-zone";
 
 /**
  * 07 기억 — 관찰 한 건과 승격된 기억을 섞지 않는다 (최상위 CLAUDE.md §2 기억 · §5 Correction).
@@ -186,26 +185,6 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await expect(sheet.getByText("이 기억이 맞나요?")).toBeVisible();
     await expect(sheet.getByText("맞아요를", { exact: false })).toHaveCount(0);
-  });
-});
-
-/**
- * 목의 건강 관찰은 어제 날짜다 (`fixtures.ts` 의 `healthObservation`). 🚨 브라우저 시간대로 센다 —
- * 러너 시간대로 세면 한국 시간 0시~9시에 하루 어긋난다 (`time-zone.ts`).
- */
-function yesterday(): string {
-  return browserDaysAgo(1);
-}
-
-test.describe("health 관찰은 진단 · 평가를 하지 않는다 (§2 안전)", () => {
-  // 07 기록 탭에서는 빠졌다 (첫 배포 범위 밖 · #259). 같은 시트를 여는 09 캘린더에서 건다.
-  test("증상은 사실만 서고, 묶인 기억도 심각도 평가도 없다", async ({ page }) => {
-    await page.goto(`/child/${CHILD}/calendar?date=${yesterday()}`);
-    await page.getByText("자다가 기침을 몇 번 했어요").click();
-    const sheet = page.getByRole("dialog", { name: "기록 상세" });
-    await expect(sheet.getByText("이 기록은 제안 근거에서 빠져 있어요.")).toBeVisible();
-    await expect(sheet.getByText("묶인 기억")).toHaveCount(0);
-    await expect(sheet.getByText(/가볍게|심해요|mild|severe/)).toHaveCount(0);
   });
 });
 

@@ -47,7 +47,7 @@ class EventItemRow:
     event_id: str
     item_name: str
     is_prepared: bool
-    prepared_at: datetime | None = None  # 체크한 시각. 언제 정하는지는 tool 이 안다
+    prepared_at: datetime | None = None  # 체크한 시각. store 가 정한다 (set_event_item_prepared)
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -162,12 +162,14 @@ class MemoryStore(Protocol):
 
     async def list_event_items(self, *, event_id: str) -> list[EventItemRow]: ...
 
-    async def update_event_item(
-        self, *, item_id: str, fields: dict[str, Any]
+    async def set_event_item_prepared(
+        self, *, item_id: str, is_prepared: bool
     ) -> EventItemRow | None:
-        """없으면 None. fields에는 바꿀 것만 담긴다.
+        """챙김 표시를 바꾼다. 없으면(형식이 틀린 id 포함) None.
 
-        prepared_at 은 tool 이 정해서 넘긴다. store 는 받은 값을 그대로 저장한다.
+        체크 시각(prepared_at)은 store 가 정한다 — 미체크 → 체크만 지금 시각, 이미 체크된 것을
+        다시 체크하면 처음 시각을 그대로 둔다. 해제하면 None. 백엔드 PATCH 와 같은 규칙이다
+        (`domains/schedule/repository.set_event_item_prepared`, #335).
         """
         ...
 

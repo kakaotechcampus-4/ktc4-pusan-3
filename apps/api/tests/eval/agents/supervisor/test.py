@@ -47,6 +47,7 @@ from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 t
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
 from app.rules.age import Stage
@@ -103,6 +104,10 @@ INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
 _CASES = (*RC_CASES, *T_CASES)
+
+
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
 
 
 def _client() -> LLMClient:
@@ -397,6 +402,8 @@ async def _run_once(
         memory_client=memory_client,
         emit=emitted.append,
         writes=writes,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 

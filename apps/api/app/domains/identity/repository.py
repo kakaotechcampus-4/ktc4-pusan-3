@@ -34,9 +34,8 @@ async def find_parent_id_by_identity(
     None 이 "신규" 를 뜻하므로 parent 를 만들지 않는다 — 신규 생성은 필수 동의를 검증한
     signup 트랜잭션에서만 일어난다 (§6-1).
 
-    🚨 deleted_at 이 찍힌 계정도 그대로 찾아 돌려준다. 탈퇴 계정 차단은 세션을 내주는
-       교환 시점의 판정이고(§10-1 · A-19), 여기서 None 으로 만들면 탈퇴한 사람이
-       신규 가입으로 흘러가 같은 회원번호로 parent 가 하나 더 생긴다.
+    탈퇴하면 auth_identity 가 보호자 행과 함께 지워진다(#379). 그래서 탈퇴한 사람이 다시
+    로그인하면 여기서 None — 신규 가입이다 (§10 1번).
     """
     stmt = select(AuthIdentity.parent_id).where(
         AuthIdentity.provider == provider,
@@ -84,7 +83,6 @@ class SessionRow:
     session_id: uuid.UUID
     parent_id: uuid.UUID
     expires_at: datetime
-    parent_deleted_at: datetime | None
 
 
 async def find_session_by_token_hash(
@@ -94,19 +92,14 @@ async def find_session_by_token_hash(
 ) -> SessionRow | None:
     """세션 토큰 해시로 한 건 찾는다 (§6-2 ①).
 
-    parent 를 조인해 탈퇴 여부까지 한 번에 가져온다. 나눠 부르면 "세션은 살아 있는데
-    계정은 지워진" 사이를 두 쿼리 사이에서 보게 된다.
+    탈퇴는 보호자 행을 지우고 세션도 CASCADE 로 함께 지워진다(#379). 그래서 탈퇴 여부를
+    따로 보지 않는다 — 세션이 없으면 그것으로 끝이다.
     """
-    stmt = (
-        select(
-            AuthSession.id,
-            AuthSession.parent_id,
-            AuthSession.expires_at,
-            Parent.deleted_at,
-        )
-        .join(Parent, Parent.id == AuthSession.parent_id)
-        .where(AuthSession.token_hash == token_hash)
-    )
+    stmt = select(
+        AuthSession.id,
+        AuthSession.parent_id,
+        AuthSession.expires_at,
+    ).where(AuthSession.token_hash == token_hash)
     row = (await session.execute(stmt)).first()
     return SessionRow(*row) if row is not None else None
 
@@ -202,5 +195,5 @@ async def create_session(
 
 
 async def find_parent(session: AsyncSession, parent_id: uuid.UUID) -> Parent | None:
-    """세션 응답에 실을 보호자. deleted_at 판정도 이 행으로 한다 (§10-1)."""
+    """세션 응답에 실을 보호자."""
     return await session.get(Parent, parent_id)
