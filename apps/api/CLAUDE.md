@@ -73,6 +73,7 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 - **DB 예외**: `app/api/deps/db.py` 한 곳만 `app/infra/db/session.py` 를 import 한다.
   라우터는 엔진이나 `get_session` 을 직접 가져오지 않고 `SessionDep` 를 받는다.
   요청 밖에서 도는 백그라운드 러너(`app/api/runs/`)는 같은 파일의 `background_session()` 을 쓴다.
+  러너와 05 가 같이 쓰는 Agent 포트(`app/api/agent_ports.py`)도 같다.
 - FastAPI 전용 오류 모델·예외 핸들러는 `app/api/errors.py` 에 둔다. `app/core/` 에
   FastAPI·Starlette 의존성을 추가하지 않는다.
 
