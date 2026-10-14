@@ -223,22 +223,21 @@ class InMemoryStore:
         rows = [item for item in self._items.values() if item.event_id == event_id]
         return sorted(rows, key=lambda item: item.item_id)
 
-    async def update_event_item(
-        self, *, item_id: str, fields: dict[str, Any]
+    async def set_event_item_prepared(
+        self, *, item_id: str, is_prepared: bool
     ) -> EventItemRow | None:
         row = self._items.get(item_id)
         if row is None:
             return None
-
-        updated = EventItemRow(
-            item_id=row.item_id,
-            event_id=row.event_id,
-            item_name=fields.get("item_name", row.item_name),
-            is_prepared=fields.get("is_prepared", row.is_prepared),
-            # 언제로 둘지는 tool 이 정해서 넘긴다. 여기서는 받은 값을 그대로 쓴다
-            prepared_at=fields.get("prepared_at", row.prepared_at),
-        )
-        self._items[row.item_id] = updated
+        # DB 와 같은 규칙(set_event_item_prepared 의 CASE). 시각은 이 store 의 now
+        if not is_prepared:
+            prepared_at = None
+        elif row.is_prepared:
+            prepared_at = row.prepared_at
+        else:
+            prepared_at = self._now
+        updated = replace(row, is_prepared=is_prepared, prepared_at=prepared_at)
+        self._items[item_id] = updated
         return updated
 
     async def delete_event_item(self, *, item_id: str) -> bool:

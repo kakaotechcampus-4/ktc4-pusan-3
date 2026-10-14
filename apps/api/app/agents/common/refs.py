@@ -70,13 +70,17 @@ class EvidenceCitation:
     `note`는 Agent가 쓰므로, 문서 행이든 아이 기록이든 비워 둘 수 없다.
     "보호자 화면에 그대로 나가는 값"이다.
 
-    `polarity` 와 `label` 은 기피 검사에만 쓴다. 문서 행은 기본값 그대로다.
+    `polarity` · `label` · `subject` 는 기피 검사에만 쓴다. 문서 행은 기본값 그대로다.
+    `label` 은 화면용 이름이라 관찰이면 "물감 놀이 하다가 울었음" 같은 문장일 수 있고,
+    `subject` 는 대조 키("물감")다 (Tool_공통 §5-3). 이유 문장에 둘 중 하나가 나오면
+    밝힌 것으로 본다.
     """
 
     ref: Ref
     note: str
     polarity: int = 0
     label: str = ""
+    subject: str = ""
 
     @property
     def is_avoidance(self) -> bool:

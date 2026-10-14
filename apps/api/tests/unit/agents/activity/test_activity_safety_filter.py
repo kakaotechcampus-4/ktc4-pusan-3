@@ -9,12 +9,12 @@ from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.activity.tools import filters
 from app.agents.activity.tools.filters import (
-    SAFETY_PROMOTE_BELOW_MONTH,
+    allergy_cautions,
     check_candidate,
     filter_activity_safety,
     safety_terms,
 )
-from app.agents.common.reference import hazard_terms
+from app.agents.common.reference import SAFETY_PROMOTE_BELOW_MONTH, hazard_terms
 
 
 def candidate(content: str, materials: tuple[str, ...] = ()) -> ActivityCandidate:
@@ -26,8 +26,7 @@ def candidate(content: str, materials: tuple[str, ...] = ()) -> ActivityCandidat
             physical_intensity="low",
             involves_food=False,
             caregiver_role="together",
-            why_this="이유",
-            why_now="지금",
+            reason="이유",
         )
     )
 
@@ -130,11 +129,51 @@ class TestHealthSafety:
 
     @pytest.mark.parametrize(
         ("label", "content"),
-        [("잣", "잣 까기"), ("대두", "콩주머니 던지기"), ("콩", "콩 고르기"), ("쑥", "쑥 캐기")],
+        [
+            ("잣", "잣 까기"),
+            ("대두", "콩주머니 던지기"),
+            ("콩", "콩 고르기"),
+            ("쑥", "쑥 캐기"),
+            ("쌀", "쌀 촉감놀이"),
+            ("쌀", "찹쌀 반죽 놀이"),
+            ("팥", "팥 주머니 던지기"),
+            ("꽃", "꽃잎 붙이기"),
+            ("꽃", "꽃가루 관찰하기"),
+        ],
     )
     def test_허용_목록의_한_글자는_막는다(self, label, content):
-        """잣 · 콩 · 깨 · 쑥은 놀이 문장에서도 거의 그 음식이다 (#261 리뷰)."""
+        """허용 목록의 글자는 놀이 문장에서도 거의 그것이다 — 쌀 촉감놀이 · 팥 주머니는 영아 놀이로
+        흔하고, "꽃" 한 글자로 적었으면 꽃 활동을 막는다 (#261 · #341 리뷰)."""
         assert check(content, entries=[allergy(label)]).blocked is True
+
+    @pytest.mark.parametrize(
+        ("label", "content", "blocked"),
+        [
+            ("쌀", "쌀쌀한 날씨에 산책", False),
+            ("쌀", "좁쌀 촉감놀이", False),
+            ("꽃", "꽃게 껍데기 관찰", False),
+            ("꽃", "불꽃놀이 그림 그리기", False),
+            ("꽃", "눈꽃 모양 종이 접기", False),
+            ("꽃", "꽃샘추위에 겉옷 입기", False),
+            ("깨", "깨끗이 손 씻기", False),
+            ("깨", "잠 깨우기 노래", False),
+            ("깨", "인형 깨워요 놀이", False),
+            ("깨", "잠이 깨면 기지개 켜기", False),
+            ("깨", "깨진 컵 치우기", False),
+            ("깨", "깨지기 쉬운 물건 고르기", False),
+            ("깨", "풍선이 깨져요", False),
+            ("깨", "감자 으깨기", False),
+            ("쑥", "키가 쑥쑥 자라는 스트레칭", False),
+            ("쌀", "쌀쌀한 날 쌀 촉감놀이", True),  # guard 는 그 자리만 덮는다
+            ("꽃", "불꽃놀이 뒤 꽃잎 줍기", True),
+            ("깨", "깨끗한 접시에 깨 뿌리기", True),
+            ("쑥", "쑥쑥 자라는 쑥 캐기", True),
+        ],
+    )
+    def test_허용_목록의_한_글자는_다른_뜻인_자리를_막지_않는다(self, label, content, blocked):
+        """`SINGLE_CHAR_NAMES` 의 guard — "쌀쌀한 날씨" · "깨끗이" · "쑥쑥" 은 그 음식이 아니다
+        (#341 리뷰)."""
+        assert check(content, entries=[allergy(label)]).blocked is blocked
 
     def test_사전에_없는_한_글자는_글자_그대로_대조하지_않는다(self):
         """강아지 알레르기를 "개" 로 적어도 "블록 3개" 를 막지 않는다 (#298 리뷰)."""
@@ -171,6 +210,31 @@ class TestAllergens:
 
     def test_재료에서도_찾는다(self):
         assert check("점토 놀이", ("밀가루", "물")).allergens == ("밀",)
+
+
+class TestNonFoodAllergyCaution:
+    """식품 사전에 없는 알레르기 이름이 active 면 확인 문구를 한 줄 낸다 (#298 · #261 리뷰).
+
+    꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다. 어느 행에
+    붙일지는 Growth 와 같은 공용 판정(`non_food_allergies`)이 고른다 — 판정 사례는
+    tests/unit/agents/common/test_allergy.py.
+    """
+
+    POLLEN = "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
+
+    def test_식품_사전에_없는_알레르기에_확인_문구를_낸다(self):
+        assert allergy_cautions([allergy("꽃가루")]) == (self.POLLEN,)
+
+    def test_environmental_은_알레르기가_아니라_문구를_내지_않는다(self):
+        entry = SafetyEntry(kind="environmental", label="고소공포", status="active")
+        assert allergy_cautions([entry]) == ()
+
+    def test_식품_알레르기에는_문구를_내지_않는다(self):
+        """식품은 이름 대조가 후보를 뺀다."""
+        assert allergy_cautions([allergy("우유 알레르기")]) == ()
+
+    def test_active_가_아니면_문구를_내지_않는다(self):
+        assert allergy_cautions([allergy("꽃가루", "retracted")]) == ()
 
 
 class TestFilter:

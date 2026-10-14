@@ -6,7 +6,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -153,10 +153,26 @@ async def replace_event_items(
     items: [{"item_id": str | None, "item_name": str}, ...]
     item_id가 None이면 새 항목, 있으면 기존 항목 유지.
     새 목록에 없는 기존 항목은 삭제한다.
+
+    다른 일정의 item_id가 오면 ValueError를 던진다.
+    이미 삭제된(DB에 없는) item_id는 무시한다 (동시 수정 정상 경로).
     """
     # child_id 스코핑 — 다른 아이의 일정 항목을 조작하지 않는다
     owned = select(Event.id).where(Event.child_id == child_id, Event.id == event_id)
     keep_ids = [uuid.UUID(i["item_id"]) for i in items if i.get("item_id") is not None]
+
+    if keep_ids:
+        # item_id와 event_id를 한 번에 가져와서 소속을 판별한다
+        rows = (
+            await session.execute(
+                select(EventItem.item_id, EventItem.event_id).where(EventItem.item_id.in_(keep_ids))
+            )
+        ).all()
+        if any(owner != event_id for _, owner in rows):
+            msg = "다른 일정의 준비물 id가 포함돼 있어요"
+            raise ValueError(msg)
+        # DB에 없는 item_id는 무시 (동시 수정으로 삭제된 정상 경로)
+        keep_ids = [item_id for item_id, _ in rows]
 
     # 새 목록에 없는 기존 item 삭제
     if keep_ids:
@@ -191,15 +207,28 @@ async def replace_event_items(
 async def set_event_item_prepared(
     session: AsyncSession, *, child_id: uuid.UUID, item_id: uuid.UUID, is_prepared: bool
 ) -> EventItem | None:
-    """prepared_at은 DB 시각으로 기록한다. 다른 아이의 준비물은 바꾸지 않는다."""
+    """prepared_at은 DB 시각으로 기록한다. 다른 아이의 준비물은 바꾸지 않는다.
+
+    미체크 → 체크만 지금 시각, 이미 체크된 것을 다시 체크하면 처음 시각을 그대로 둔다.
+    해제하면 None. Memory Agent 도 이 함수로 체크한다(DbMemoryStore.set_event_item_prepared)
+    — 규칙을 한 곳에 둔다.
+    🚨 이전 값을 UPDATE 안에서 본다(CASE 의 is_prepared 는 바꾸기 전 값이다). 먼저 읽고 Python 에서
+       정하면, 그 사이에 들어온 해제 · 재체크 요청이 시각을 엉뚱하게 남긴다.
+    """
+    prepared_at = (
+        case((EventItem.is_prepared, EventItem.prepared_at), else_=func.now())
+        if is_prepared
+        else None
+    )
     stmt = (
         update(EventItem)
         .where(
             EventItem.item_id == item_id,
             EventItem.event_id.in_(select(Event.id).where(Event.child_id == child_id)),
         )
-        .values(is_prepared=is_prepared, prepared_at=func.now() if is_prepared else None)
+        .values(is_prepared=is_prepared, prepared_at=prepared_at)
         .returning(EventItem)
+        .execution_options(populate_existing=True)
     )
     return await session.scalar(stmt)
 

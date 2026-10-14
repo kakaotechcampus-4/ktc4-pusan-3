@@ -5,10 +5,11 @@
    부른다. 설정이 비어도 문자열을 내리는 이유가 이것이다 (아래 참조).
 """
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import AfterValidator, BaseModel, StrictBool, StringConstraints
 
 from app.domains.consent.models import ConsentScope
 
@@ -143,3 +144,29 @@ class ConsentRequiredResponse(BaseModel):
 
     status: Literal["consent_required"] = "consent_required"
     consent_code: str
+
+
+def _must_be_true(value: bool) -> bool:
+    if value is not True:
+        raise ValueError("true 여야 한다")
+    return value
+
+
+class WithdrawRequest(BaseModel):
+    """POST /auth/withdraw (#379).
+
+    프론트 apps/web/src/lib/api/types.ts 의 WithdrawRequest 와 같다.
+    """
+
+    acknowledged_immediate_deletion: Annotated[StrictBool, AfterValidator(_must_be_true)]
+    """화면이 "지금 지워지고 되돌릴 수 없다" 를 보여줬다는 표시. 저장하지 않고 확인용으로만 쓴다.
+
+    🚨 JSON 불리언 true 만 받는다. Literal[True] 는 1 도 통과시키고(1 == True), 기본 bool 은
+       "true" 문자열까지 바꿔 받는다 — 화면 버그로 잘못 나간 탈퇴를 한 번 더 막는 자리라
+       엄격하게 본다.
+    """
+
+
+class WithdrawResponse(BaseModel):
+    deleted_at: datetime
+    """서버가 지운 시각. 화면이 계산하지 않는다."""

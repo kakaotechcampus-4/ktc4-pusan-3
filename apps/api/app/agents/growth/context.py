@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import DataReady, Gate, SafetyState
 from app.agents.growth.gating import EDUCATION_MIN_MONTH
@@ -24,7 +25,6 @@ from app.agents.growth.store.ports import (
     SafetyLookupError,
 )
 from app.agents.growth.tools.safety import SafetyRules, SafetyRulesUnavailable, load_safety_rules
-from app.rules.age import life_stage
 
 
 @dataclass
@@ -55,7 +55,7 @@ class GrowthContext:
     now: datetime  # timezone이 붙은 현재 시각
     timezone: tzinfo
     ports: GrowthPorts
-    # 안전 사전을 읽는 함수. 기본은 develop 의 사전으로 만든 임시 구현이다 (tools/safety.py)
+    # 안전 사전을 읽는 함수. 기본은 사전과 공용 판정으로 만든 load_safety_rules (tools/safety.py)
     safety_rules: Callable[[], SafetyRules] = load_safety_rules
     state: GrowthRunState = field(default_factory=GrowthRunState)
 

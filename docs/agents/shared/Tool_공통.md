@@ -25,7 +25,7 @@
 ## 2. `life_stage` — 코드
 
 ```python
-def life_stage(birth_date: date, today: date) -> LifeStage
+def life_stage(birth_date: date, today: date) -> LifeStage  # app/agents/common/age.py — 경계는 age_gates.yaml
 # LifeStage(months: int, stage: Stage, big: Literal["infant","toddler"])
 ```
 
@@ -116,6 +116,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - 재호출은 1회로 끝난다. 그래도 못 채우거나 후보 풀이 처음부터 3개보다 적으면 **남은 만큼(1~2개)만** 낸다. 3개를 채우려고 안전 조건을 늦추거나 풀 밖 후보를 만들지 않는다. `check_count(exhausted=True)` 가 이 경우를 통과시킨다.
 - **재호출 결과는 빈자리만 채운다.** 첫 호출에서 통과한 것을 먼저 두고, 재호출에서 통과한 것으로 3개가 될 때까지만 채운다. 첫 호출 것과 같은 후보는 건너뛰고 남는 것은 버린다 — 둘을 그대로 합치면 4개가 넘을 수 있고, 그러면 `check_count` 가 넘친다고 거절한다. 무엇을 같은 후보로 볼지는 Agent 가 정한다 — Food 는 `menu_key`, Activity 는 `content`(최근 중복 검사 `is_recent_duplicate` 가 보는 칸)로 본다 (#245 리뷰).
 - **0개는 실패가 아니다.** 더 채울 길이 없는데 0개면 `check_count(exhausted=True)` 가 예외 없이 통과시키고, Agent 는 추천 없이 안내만 내고 끝낸다. 호출부는 0개를 따로 거르지 않고 `check_count` → `count_notice(len(drafts))` 순서로 부르면 0~3개가 다 처리된다 — 0개에 예외를 던지면 호출부가 놓쳤을 때 pipeline 이 그 Agent 를 실패로 세고 화면에 다시 시도가 뜬다 (#245 리뷰). 채울 수 있는데 0개(`exhausted=False`)는 1~2개처럼 거절한다. `status` 는 `completed` 다 — 실패가 아니라 안전 조건을 통과한 후보가 없다는 결과라, 화면은 다시 시도를 띄우지 않는다. 근거가 없어 일반 추천으로 가는 경우(5-3)와 다르다 — 그쪽은 추천이 나간다.
+- **모델이 결과를 못 낸 것은 0개가 아니라 실패다.** tool 루프가 `no_tool_call`(출력 tool 없이 말로 끝남)이나 `max_steps`(상한까지 출력 tool 이 통과하지 못함)로 끝나면 Agent 는 `status="failed"` 로 낸다 — 화면은 다시 시도를 띄운다. 이걸 0개(`completed` + 0개 안내)로 받으면 모델이 실패한 게 "추천할 게 없다" 로 보인다. 0개 `completed` 는 출력 tool 이 통과했는데 안전 조건을 지난 후보가 없을 때(풀 0개 · 사후 필터 뒤 0개)뿐이다 (#320 PM 리뷰 — 각 Agent 의 `run()` 연결에서 지킨다). 다만 Food 영양소 분석은 예외다 — 판정 · 식품군 안내가 코드가 계산한 값이라 `failed` 대신 코드 문장 틀(`nutrient.band.*`)을 `status="ok"` 로 낸다(`authored_by="code"`, 경고 로그로 센다 — Food_Tool_명세 §2 · §4, #357 리뷰). `tool_choice` 는 `"auto"` 로 시작한다(같은 리뷰).
 - 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다.
 - 이때만 그 Agent 의 진입 수가 2가 된다 ([Agent_공통규약.md](Agent_공통규약.md) §7).
 - `note` 가 비어 후보가 빠지면 개수가 3개 아래로 내려간다. 재호출 사유는 안전 필터뿐이라 지금은 묶음이 거절된다. 금지 표현 필터(5-1 의 2번)도 같은 자리에 있어 새로 생긴 문제는 아니다. 재호출 사유를 늘릴지는 아직 안 정했다 (2026-09-25).
@@ -138,7 +139,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - 0행이면 `kind="general"`. `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다. 문서 행(`*_doc`)은 세지 않는다 — 있든 없든 아이 기록이 0행이면 general 이다.
 - **general 은 거절 사유가 아니다.** 추천은 그대로 나가고 화면이 또래 기준임을 말한다 (루트 CLAUDE.md §2). `general` 인데 인용이 0행인 것은 문서에서도 근거를 못 찾았다는 뜻이라 품질 지표로 본다 (2026-09-25).
 - **인용마다 `note` 가 있어야 한다.** 그 행에서 무엇을 근거로 봤는지를 Agent 가 한 줄로 쓴다. 비면 그 후보를 거절한다. 거절은 후보 단위라 묶음은 그대로 간다.
-- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
+- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. 코드는 [`common/evidence.py`](../../../apps/api/app/agents/common/evidence.py) 다 — 조회 tool 이 `top_refs()` 로 상위 10개를 모델에게 돌려주며 run state 의 대조표(`seen_evidence`)에 적고, 출력 tool 이 `unseen()` 으로 인용한 id 를 그 표와 대조한다(#319). **조회하지 않은 id 가 하나라도 있으면 근거만 빼지 않고 그 후보를 거절한다** — 모델이 id 를 지어냈다는 뜻이고, 빼고 내보내면 남은 근거로 "우리 아이 맞춤" 인 척하게 된다(#195 리뷰). UUID 로 읽히지 않는 id 도 조회하지 않은 id 다. 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
 
 - **대조는 `subject`, 설명은 사람이 읽는 칸.** `rank_evidence` 의 근거는 두 칸을 갖는다 (#304 리뷰). 기피 거절 · keywords 대조는 네 관찰 테이블 공통 칸인 `subject`(affinity 는 `merge_key`)로 하고, `cite()` · why_this · 화면의 "사용한 기록" 은 `label` 을 쓴다. `label` 은 사람이 읽는 칸이다 — Activity `activity`, Education `topic`. 그런 칸이 없는 Food · Routine 은 `ObservationRow.label` 을 비워 두면 `subject` 가 된다.
 

@@ -1,4 +1,9 @@
-"""handle_input() 검증. 가짜 LLM 2개 + 실제 Food mock 으로 돈다 (API 호출 0).
+"""handle_input() 검증. 가짜 LLM 들로 돈다 (API 호출 0).
+
+Food 는 #321 파트 2 부터 공통 tool 루프 위에서 실제로 돈다(더 이상 mock 이 아니다) — 그래서
+`_default_food_llm()` 으로 가짜 LLM 을 주입한다(domain_clients). 기본값은 영양소 분석이면
+report_nutrient_analysis 로 성공하고, 다른 task(식단 추천 등 — 아직 구현 전)는 말로 끝나
+failed 가 된다. 특정 테스트가 Food 자체의 다른 경로를 보려면 `food_llm=` 을 직접 넘긴다.
 
 Supervisor 출력은 routing_cases 의 정답(RC01 등)을 그대로 쓴다 — 조각을 손으로 적지 않는다.
 일부러 틀리게 나눈 출력은 재분기 테스트에서만 손으로 적는다.
@@ -29,7 +34,9 @@ from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft, count_notice
+from app.agents.food.agent import run as run_food
 from app.agents.food.context import FoodContext
+from app.agents.food.readouts import READOUTS
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
     DaycareMealRow,
@@ -224,6 +231,28 @@ def _supervisor_llm(case_id: str) -> FakeLLM:
     return FakeLLM(_tools(_call("s1", "route", output.model_dump(mode="json", exclude_none=True))))
 
 
+def _default_food_llm() -> FakeLLM:
+    """라우팅만 보려는 테스트의 기본값. Food 의 모델 tool 은 report_nutrient_analysis ·
+    compare_diet_balance · lookup_nutrition 말고는 아직 구현되지 않아서(#321 파트 2),
+    tool 을 부르게 두면 NotImplementedError 로 깨진다 — 실제 네트워크 호출도 0 이어야 한다.
+
+    영양소 분석이면 compare_diet_balance 로 판정을 낸 뒤 report_nutrient_analysis 로 끝낸다 —
+    판정 없이 report 를 부르면 거절된다(#357 리뷰). 이 테스트들의 food_context 는 기록이 없어
+    `insufficient` 라 findings 빈 목록이 report 의 검증을 통과한다(Task 9). 식단 추천 · 급식은
+    not_ready 로 닫혀 모델을 부르지 않는다. 특정 테스트가 Food 자체의 다른 경로를 보려면
+    `food_llm=` 으로 직접 넘긴다.
+    """
+    return FakeLLM(
+        _tools(_call("a", "compare_diet_balance", {"period": "last_7_days"})),
+        _tools(_call("b", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})),
+        _reply("완료했어요."),
+    )
+
+
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
+
+
 async def _handle(
     case_id: str,
     *,
@@ -232,8 +261,9 @@ async def _handle(
     food_context: FoodContext,
     events: list[Any],
     supervisor_llm: FakeLLM | None = None,
+    food_llm: FakeLLM | None = None,
     contexts: dict[str, Any] | None = None,
-    commit: Any = None,
+    commit: Any = _no_commit,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         CASES_BY_ID[case_id].text,
@@ -242,6 +272,7 @@ async def _handle(
         run_id=RUN_ID,
         supervisor_client=supervisor_llm or _supervisor_llm(case_id),
         memory_client=memory_llm,
+        domain_clients={"food": food_llm or _default_food_llm()},
         emit=events.append,
         commit=commit,
     )
@@ -283,14 +314,14 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
-        "AgentResult",
+        "AgentResult",  # 식단 추천은 결과 연결 전이라 not_ready.meal 로 닫혀 문구가 나간다
         "Done",
     ]
     assert saved_when_food_ran == [1]  # Food 를 부를 때 이미 저장돼 있었다 (루트 §4)
     assert [(step.index, step.total) for step in _of(events, Step)] == [(1, 3), (2, 3), (3, 3)]
     assert [ref.kind for ref in _of(events, Saved)[0].refs] == ["observation_food"]
-    assert result.failed is None
-    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food mock 0 (S8)
+    assert result.failed is None  # 저장은 됐고 Food 는 not_ready 문구를 냈다 — 실패가 아니다
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (닫혀서 모델을 안 부른다)
     assert _of(events, Done)[0] == Done(RUN_ID, 2)
 
 
@@ -311,15 +342,18 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
 
     task = result.routing.domain_tasks[0]
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
-    assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "mock", 0)]
-    # mock 은 화면에 보낼 것이 없다 — 그래도 Agent 가 끝났다는 이벤트는 나간다 (#227)
+    # 식단 추천은 결과 연결 전이라 not_ready 로 닫힌다(#357 리뷰) — 모델 0회, 코드 문구가 나간다
+    assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "closed", 0)]
     assert _of(events, AgentResult) == [
-        AgentResult("food", "meal_recommendation", "mock", (), None)
+        AgentResult(
+            "food", "meal_recommendation", "closed", (READOUTS.render("not_ready.meal"),), None
+        )
     ]
-    food = result.domain[0]  # tool 묶음은 Food mock 결과가 들고 있다
+
+    food = await run_food(task, food_context.for_task(), client=_default_food_llm())
     assert food.task_type == FoodTaskType.MEAL_RECOMMENDATION
-    assert (food.stage, food.status) == ("toddler", "mock")
-    assert len(food.tools) == 5  # 식단 추천 × 유아기
+    assert food.stage == "toddler"
+    assert food.tools == ()  # 식단 추천 × 유아기 — not_ready.meal 로 닫혀 열리는 tool 이 없다
     assert food.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
 
 
@@ -376,7 +410,8 @@ async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르
     assert not _of(events, MemoryNote)  # 조기 종료면 메모가 없다 — 응답 문구는 화면이 만든다
     food = result.domain[0]
     assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
-    assert len(food.tools) == 7  # 영양소 분석 × 유아기
+    # 영양소 분석 × 유아기 — 스텁인 기록 조회 tool 은 열지 않는다 (#357 리뷰 4-①)
+    assert food.tools == ("lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis")
     assert food.requires_safety_check is False
     assert result.failed is None
 
@@ -397,7 +432,7 @@ async def test_RC21_영아기에는_영양소_분석을_하지_않는다(
     )
 
     food = result.domain[0]
-    assert food.status == "unsupported_stage"
+    assert food.status == "closed"
     assert food.tools == ()
     assert food.model_calls == 0
 
@@ -420,9 +455,10 @@ async def test_RC20_기록할_조각이_없으면_Memory_를_부르지_않는다
     assert result.memory is None
     assert result.routing.memory_task is None
     assert [step.index for step in _of(events, Step)] == [1, 3]  # 저장 단계가 없다
-    assert len(result.domain) == 1  # Food 는 그대로 돈다
+    # Food 는 그대로 돈다 — .domain 은 성공한 것만 담아서 routed 이벤트로 본다
+    assert [routed.agent for routed in _of(events, DomainRouted)] == ["food"]
     assert result.failed is None
-    assert result.model_calls == 1  # Supervisor 한 번뿐
+    assert result.model_calls == 2  # Supervisor 1 + Food(기본 가짜 응답) 1
 
 
 async def test_RC07_미구현_agent_만_짚었어도_실패가_아니다(
@@ -457,7 +493,8 @@ async def test_RC16_미구현_agent_는_이름만_남기고_부르지_않는다(
     )
 
     assert _of(events, Unavailable)[0].agents == ("activity",)
-    assert len(result.domain) == 1  # food 만 실제로 돌았다
+    # food 만 실제로 돌았다 — 성패와 무관하게 routed 이벤트로 본다(.domain 은 성공한 것만 담는다)
+    assert [routed.agent for routed in _of(events, DomainRouted)] == ["food"]
     assert result.routing.dropped_agents == ()
 
 
@@ -636,7 +673,9 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     assert "딸기케이크" not in feedback  # 적힌 조각은 되돌리지 않는다
 
     assert _of(events, Rerouted) == [Rerouted(1, ("food:meal_recommendation",))]
-    assert [food.task_type for food in result.domain] == [FoodTaskType.MEAL_RECOMMENDATION]
+    # 식단 추천은 결과 연결 전이라 not_ready 로 닫힌다(#357 리뷰) — routed 이벤트로 어느 task 가
+    # 돌았는지 본다
+    assert [routed.task_type for routed in _of(events, DomainRouted)] == ["meal_recommendation"]
     assert result.routing.domain_tasks[0].request_texts == ("저녁에는 뭘 먹이면 좋을까?",)
     assert result.rerouted is not None
     # Memory 는 다시 돌리지 않았다 — 간식은 한 번만 저장됐다
@@ -644,7 +683,7 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
     assert [row.fields["subject"] for row in rows] == ["딸기케이크"]
     assert _order(events).index("Rerouted") < _order(events).index("DomainRouted")
-    assert result.model_calls == 3  # Supervisor 2 + Memory 1 — 다시 나눈 run 의 예산은 5
+    assert result.model_calls == 3  # Supervisor 2 + Memory 1 + Food 0 (닫힘) — 예산은 5
 
 
 async def test_Food_로_간_조각이_있으면_다시_나누지_않는다(
@@ -811,7 +850,7 @@ async def test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는�
     )
 
     assert memory_llm.calls == 4  # 실제 왕복은 네 번
-    assert result.model_calls == 2  # Supervisor 1 + Memory 1
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (식단 추천은 닫힘)
     assert "model_calls 예산 초과" not in caplog.text
 
 
@@ -886,6 +925,7 @@ async def test_이어받기는_기록_단계_시간만_남긴다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert result.times.memory_ms is not None
@@ -1197,13 +1237,15 @@ async def test_같은_Agent_의_task_둘은_state_를_따로_받는다(
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # 식단 추천과 영양소 분석이 동시에 돈다. state 를 같이 쓰면 한쪽 근거가 다른 쪽 검증에 섞인다
+    # 식단 추천과 영양소 분석이 동시에 돈다. state 를 같이 쓰면 한쪽 근거가 다른 쪽 검증에 섞인다.
+    # 여기서 보는 건 pipeline 이 task 마다 context.for_task() 로 state 를 따로 주는지다 —
+    # 그래서 식단 추천(아직 propose_meal_candidates 가 없다, #321 파트 2) 까지 실제로 완주할
+    # 필요는 없다. 상태만 기록하고 바로 끝내는 가짜로 충분하다
     states: list[Any] = []
-    real = pipeline._RUNNERS["food"]
 
     async def recording(task: Any, context: Any, **kwargs: Any) -> Any:
         states.append(context.state)
-        return await real(task, context, **kwargs)
+        return _Outcome(task.agent, task.task_type)
 
     monkeypatch.setitem(pipeline._RUNNERS, "food", recording)
     raw = "영양 골고루 먹었는지 봐줘. 내일 간식은 뭐가 좋을까?"
@@ -1232,6 +1274,7 @@ async def test_같은_Agent_의_task_둘은_state_를_따로_받는다(
         supervisor_client=FakeLLM(_tools(_call("s1", "route", output))),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
     )
 
     assert [item.task_type for item in result.domain] == [
@@ -1255,6 +1298,7 @@ async def test_구현된_agent_의_context_가_빠지면_부분_실패로_숨기
             supervisor_client=_supervisor_llm("RC20"),
             memory_client=FakeLLM(),
             emit=events.append,
+            commit=_no_commit,
         )
 
 
@@ -1673,6 +1717,7 @@ async def test_쓰는_task_가_죽어도_읽는_task_결과는_나가고_partial
         ),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
     )
 
     assert [event.task_type for event in _of(events, DomainRouted)] == ["meal_recommendation"]
@@ -1716,6 +1761,7 @@ async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는�
         ),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
     )
 
     assert seen == [("두유",)]
@@ -1744,6 +1790,7 @@ async def _handle_meal_only(
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         writes=writes,
+        commit=_no_commit,
     )
 
 
@@ -1781,6 +1828,7 @@ async def test_메뉴_카탈로그만_저장했어도_모델이_실패하면_fai
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         writes=writes,
+        commit=_no_commit,
     )
 
     assert result.committed is False
@@ -1903,6 +1951,7 @@ async def test_되묻기_run_은_note_와_pending_을_같이_낸다(
         supervisor_client=supervisor,
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
     )
 
     note = next(event for event in events if isinstance(event, MemoryNote))
@@ -1937,6 +1986,7 @@ async def test_saved_가_note_보다_먼저_나간다(
         supervisor_client=_supervisor_llm("RC04"),
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
     )
 
     names = [type(event).__name__ for event in events]
@@ -1972,6 +2022,7 @@ async def test_이어받기는_supervisor_와_food_를_타지_않는다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert supervisor.calls == 0
@@ -1996,6 +2047,7 @@ async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
         memory_client=FakeLLM(LLMUnavailableError("down")),
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert result.failed is not None and result.failed.reason == "llm_unavailable"
@@ -2020,6 +2072,7 @@ async def test_이어받기에_다른_말이_섞이면_따로_보내라는_안�
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     notes = _of(events, MemoryNote)
@@ -2043,6 +2096,7 @@ async def test_다시_물을_때_붙인_안내는_다음_질문_맥락에_들어
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     # 다시 묻는 중이면 화면이 다음 한 줄을 이 질문의 답으로 보낸다. "따로 보내 주세요" 만 있으면
@@ -2071,6 +2125,7 @@ async def test_섞인_말이_없으면_안내를_붙이지_않는다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert [note.text for note in _of(events, MemoryNote)] == ["기록해 둘게요."]
@@ -2098,6 +2153,7 @@ async def test_이어받기가_저장한_뒤_물으면_message_로_내리고_따
         memory_client=memory,
         emit=events.append,
         continuation=_LUNCH_PENDING,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2129,6 +2185,7 @@ async def test_재질문_상한에_닿으면_질문_대신_상수_문구를_mess
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
+        commit=_no_commit,
     )
 
     # "따로 보내 주세요" 가 붙으면 보호자가 같은 답을 다시 보내 상한이 의미가 없어진다
@@ -2156,6 +2213,7 @@ async def test_재질문_상한에서_섞인_말이_있으면_따로_보내라�
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2183,6 +2241,7 @@ async def test_맥락_없이_물을_때_섞인_말이_있으면_안내를_한_�
         memory_client=memory,
         emit=events.append,
         continuation=_LUNCH_PENDING,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2210,6 +2269,7 @@ async def test_첫_run_에서도_맥락_없이_묻는_질문은_message_로_내�
         supervisor_client=_supervisor_llm("RC04"),
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2236,6 +2296,7 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
@@ -2263,6 +2324,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             ),
             _answer(_ask_second()),
         ),
+        commit=_no_commit,
     )
     assert before.memory is not None and before.memory.pending is not None
 
@@ -2279,6 +2341,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
         ),
         continuation=before.memory.pending,
+        commit=_no_commit,
     )
 
     activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
@@ -2301,6 +2364,7 @@ async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
         memory_client=FakeLLM(_reply(""), _reply("")),  # 빈 턴 두 번
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
     )
 
     assert result.failed is not None and result.failed.reason == "unparsable"

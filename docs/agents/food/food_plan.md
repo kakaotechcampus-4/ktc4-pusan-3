@@ -49,7 +49,7 @@ DoD: 1~4가 이슈로 닫히고 스키마 PR이 머지됨.
 | `common/suggestion.py` | `SuggestionDraft.build()` — personalized인데 ref 0행이면 거절 |
 | `common/readout.py` | `Readout(authored_by)` |
 | `common/evidence.py` | `rank_evidence()` — **티어 1·2는 polarity ∈ {+1, −1}**. 기피도 근거다 |
-| `app/rules/age.py` | `life_stage()` · 민법 달력 계산 · `date` 타입 강제 |
+| `app/rules/age.py` | 민법 달력 계산 · `date` 타입 강제 · 단계 계산(경계는 인자 — `common/age.py` 의 `life_stage()` 가 `age_gates.yaml` 의 경계를 넘긴다) |
 | `app/rules/term_match.py` | 공백 제거 부분 일치 + guards + 최엄격 우선 (Activity와 공유) |
 
 DoD: `test_evidence_ranking.py` 통과 · `//30` 나눗셈 0건 · import-linter로 `<domain> → common` 방향 고정.
@@ -93,7 +93,7 @@ DoD: `alembic upgrade head` → `downgrade -1` 왕복 성공 · 권한 테스트
 | 3-1 | `allergen_term` 시드 (19종 + aliases + guards) | 19행 | "계란/달걀/난류" → 코드 1 · "밀크티"가 밀로 안 걸림 |
 | 3-2 | `nutrient_reference` 시드 | 4개 연령군 × 항목 × ref_type | **2인 대조 완료** · AMDR 단위 `%kcal` |
 | 3-3 | 식약처 영양성분 API 어댑터 + 계약 테스트 | – | 실제 응답 샘플 → 내부 dataclass 변환 |
-| 3-4 | 레시피 DB 어댑터 + 재료 파서 | – | 파서 정확도 기준 합의(FT-7) |
+| 3-4 | 농식품정보원 레시피 클라이언트 + 재료명 정리 표 (#321) | 레시피 537 · 재료 6,104행 · 재료 이름 696개 | `RECIPE_ID` 로 잇기 · 기본정보 없는 재료 행 버림 · 정리 표 검수(`status: ok`) 전에는 `resolved=false` (COOKRCP01 재료 파서(FT-7)는 보류) |
 | 3-5 | `menu_catalog` 초기 동기화 배치 | 수천 행 | `resolved=true` 비율 리포트 |
 | 3-6 | `stage_min` 수동 태깅 | 상위 300행 | `LifeStage.stage` 네 값 · 나머지는 `toddler` 기본 |
 | 3-7 | `menu_alias` 초기 사전 | 급식 표기 위주 | 급식 30개 샘플 해석률 측정 |
@@ -127,7 +127,7 @@ app/agents/food/
 | `meal_recommendation` | `()` | 3 | 5 |
 | `nutrient_analysis` | `()` | `()` | 7 |
 
-추가 닫힘: `safety_ok=False` → 식단 추천. 동의 없음은 닫지 않는다 — `health_safety`·`child_growth_log` 를 못 읽을 뿐이라 알레르기 필터 없는 일반 식단에 연령군 일반값 열량으로 간다. `kind='allergy'` 가 0행이거나 `unknown` 이 섞인 것도 닫지 않는다.
+추가 닫힘: `safety_ok=False` → 식단 추천 · 영양소 분석(`blocked.safety`, #321 — 영양 안내도 식품군을 말해서 걸러 낼 알레르기를 모르면 열지 않는다). 동의 없음은 닫지 않는다 — `health_safety`·`child_growth_log` 를 못 읽을 뿐이라 알레르기 필터 없는 일반 식단에 연령군 일반값 열량으로 간다. `kind='allergy'` 가 0행이거나 `unknown` 이 섞인 것도 닫지 않는다.
 
 DoD: mock `run()`이 포트·클라이언트를 **건드리지 않고** `DomainAgentResult` 반환 · `test_food_registry.py` 통과.
 

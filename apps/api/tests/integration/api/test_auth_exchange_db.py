@@ -65,9 +65,9 @@ async def seed_handoff(
     await session.flush()
 
 
-async def seed_member(session, *, deleted: bool = False) -> Parent:
+async def seed_member(session) -> Parent:
     """이미 가입한 보호자 + 카카오 연결."""
-    parent = Parent(deleted_at=datetime.now(UTC) if deleted else None)
+    parent = Parent()
     session.add(parent)
     await session.flush()
     session.add(
@@ -840,45 +840,6 @@ async def test_expired_session_token_is_401(db_client, session):
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthenticated"
-
-
-async def test_withdrawn_account_is_404_not_401(db_client, session):
-    """🚨 A-19. 탈퇴한 계정의 세션은 404 not_found — 만료를 기다리지 않는다.
-
-    401 과 구분하는 유일한 경우다. 나머지(없음·만료·삭제됨)는 전부 401 이다 (§8-1).
-    """
-    parent = await seed_member(session, deleted=True)
-    session.add(
-        AuthSession(
-            parent_id=parent.id,
-            token_hash=hash_token("withdrawn-token"),
-            expires_at=datetime.now(UTC) + timedelta(hours=12),
-        )
-    )
-    await session.flush()
-
-    response = await db_client.post(
-        "/api/v1/auth/logout", headers={"Authorization": "Bearer withdrawn-token"}
-    )
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "not_found"
-
-
-async def test_withdrawn_member_cannot_exchange(db_client, session):
-    """A-19. 탈퇴 계정은 교환에서도 세션을 받지 못한다 (§10-1)."""
-    parent = await seed_member(session, deleted=True)
-    await seed_handoff(session, code="handoff-code", parent_id=parent.id)
-    base = await snapshot(session)
-
-    response = await db_client.post(
-        "/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND}
-    )
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "not_found"
-    # 세션은 나가지 않는다. 코드는 이미 소비된 뒤라 -1 이다.
-    assert await changed(session, base) == {"AuthHandoff": -1}
 
 
 # ── A-18 저장 확인 ────────────────────────────────────────────────────────────

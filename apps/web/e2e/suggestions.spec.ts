@@ -1,4 +1,13 @@
-import { CHILD, expect, expectNoGate, gateMarks, recordApi, test, writes } from "./fixtures";
+import {
+  CHILD,
+  asOtherCaregiver,
+  expect,
+  expectNoGate,
+  gateMarks,
+  recordApi,
+  test,
+  writes,
+} from "./fixtures";
 
 /**
  * 05 제안 후보 · 06 승인 시트 — 최상위 CLAUDE.md §2 기억 · 안전 · 실행.
@@ -44,6 +53,29 @@ test.describe("개인화 추천 (default)", () => {
     // 일반 추천의 표시가 개인화 화면에 섞이지 않는다 — 둘은 한 화면에 같이 서지 않는다.
     await expect(page.getByText("또래 기준 일반 추천")).toHaveCount(0);
     await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(0);
+  });
+});
+
+test.describe("홈 버튼에서 들어오면 (#286)", () => {
+  const suggestionsBody = (calls: ReturnType<typeof recordApi>) =>
+    writes(calls, "POST", new RegExp(`^/children/${CHILD}/suggestions$`)).map((c) => c.body);
+
+  test("누른 버튼의 키만 추천 요청에 싣고, 문장은 보내지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    await page.getByRole("button", { name: /저녁 추천해드릴까요/ }).click();
+
+    await expect(page).toHaveURL(/\/suggestions\?agents=food&prompt=dinner$/);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    // 🚨 문장이 실리면 Supervisor 사전검사를 안 거친 문장으로 Agent 가 돈다 (#249).
+    expect(suggestionsBody(calls)).toEqual([{ agents: ["food"], prompt_key: "dinner" }]);
+  });
+
+  test("주소의 모르는 키는 버리고 키 없이 요청한다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/suggestions?agents=food&prompt=midnight_snack`);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    expect(suggestionsBody(calls)).toEqual([{ agents: ["food"] }]);
   });
 });
 
@@ -226,6 +258,28 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await sheet.getByRole("button", { name: "알레르기가 있는 건 빼고 고를게요" }).click();
     // s_1 만 골랐으므로 채택할 것이 남지 않는다.
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+  });
+
+  test("다른 보호자가 먼저 등록한 재료면 기록된 것으로 서고, 다시 시도가 없다 (#374)", async ({
+    page,
+  }) => {
+    const sheet = await pickEggAndAdopt(page);
+    expect(
+      await asOtherCaregiver(page, {
+        method: "POST",
+        path: `/children/${CHILD}/health-safety`,
+        body: { type: "allergy", label: "계란" },
+        idempotent: true,
+      }),
+    ).toBe(201);
+
+    // 🚨 409 already_exists 는 "이미 기록에 있다" 다 — 다음 제안에서도 걸러진다.
+    await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
+    await expect(sheet.getByText("알레르기 기록에 추가했어요")).toBeVisible();
+    await expect(
+      sheet.getByText("알레르기 기록에 저장하지 못했어요", { exact: false }),
+    ).toHaveCount(0);
+    await expect(sheet.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
   });
 
   test('"괜찮았어요" 는 알레르기 기록을 만들지 않는다', async ({ page }) => {

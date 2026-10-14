@@ -29,6 +29,21 @@ class Settings(AgentLLMSettings):
     # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
     DATA4LIBRARY_AUTH_KEY: str = ""
 
+    # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회(어댑터는
+    # 아직 없음)와 공휴일 굽기(scripts/bake_holidays.py)가 같이 쓴다. 날씨 어댑터는 비어 있으면
+    # 조회 실패와 같게 본다 — "맑음"으로 채우지 않는다 (Activity D8)
+    # 식약처 식품영양성분DB(Food 메뉴 해석, #321)도 이 키를 쓴다 — API 마다 활용신청이 따로다
+    # (docs/agents/shared/API발급.md). 비어 있으면 Food 가 메뉴 카탈로그만 쓰고(조회 포트 없음)
+    # 서버는 뜬다. 키 없이 빈 영양값으로 채우지 않는다. 🚨 비밀 — 키가 요청 주소에 들어가서
+    # 응답 · 로그 · 예외 문구에 싣지 않는다.
+    DATA_GO_KR_SERVICE_KEY: str = ""
+
+    # 농림축산식품 공공데이터포털(data.mafra.go.kr) 인증키 — 농식품정보원 레시피 기본 · 재료정보
+    # (Food 추천 후보 재료, #321). 배치에서만 부른다 — 요청 중에는 쓰지 않는다. 비어 있으면 배치만
+    # 못 돌고 서버는 뜬다. 🚨 비밀 — 키가 요청 주소 **경로**에 들어가고 주소가 평문 HTTP 다.
+    # 응답 · 로그 · 예외 문구에 싣지 않는다 (integrations/mafra/client.py)
+    MAFRA_RECIPE_API_KEY: str = ""
+
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
@@ -52,6 +67,12 @@ class Settings(AgentLLMSettings):
 
     # 초. NF-06 의 20초는 Agent 파이프라인 예산이고 로그인은 그 예산 밖이다 (§8-1).
     KAKAO_API_TIMEOUT: float = 3.0
+
+    # 어드민 키 — 탈퇴할 때 카카오 연결 끊기(§7-4)에만 쓴다. 앱 전체 권한이라
+    # 다른 곳에서 읽지 않는다.
+    # 로그인 준비(kakao_missing_keys)와 무관하다 — 없어도 로그인은 된다. local · dev 에서 비면
+    # 탈퇴는 하되 카카오 연결 끊기만 건너뛴다. prod 는 아래 검증이 부팅에서 막는다 (#379).
+    KAKAO_ADMIN_KEY: str | None = None
 
     # 로그인을 마친 뒤 302 로 돌려보낼 곳. client 열거값이 web / app 을 고른다 (§2-3).
     #
@@ -118,6 +139,13 @@ class Settings(AgentLLMSettings):
             raise ValueError(
                 f"운영 환경인데 카카오 설정이 비어 있다: {', '.join(self.kakao_missing_keys)}. "
                 "이대로 뜨면 로그인 버튼만 꺼진 채 배포된다"
+            )
+        # 어드민 키는 로그인 준비 목록 밖이라 따로 본다. 없으면 탈퇴한 사람의 카카오 연결이
+        # 늘 남는다 — 탈퇴 실패가 아니라서 아무도 모르는 채 쌓인다 (#379).
+        if self.APP_ENV == "prod" and not self.KAKAO_ADMIN_KEY:
+            raise ValueError(
+                "운영 환경인데 카카오 설정이 비어 있다: KAKAO_ADMIN_KEY. "
+                "이대로 뜨면 탈퇴해도 카카오 연결이 끊기지 않는다"
             )
         return self
 

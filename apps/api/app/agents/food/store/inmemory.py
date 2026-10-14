@@ -8,11 +8,14 @@
 """
 
 from collections.abc import Sequence
-from datetime import date
-from uuid import UUID
+from datetime import UTC, date, datetime, time
+from typing import TYPE_CHECKING
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.agents.common.evidence import AffinityRow
+from app.agents.common.reference import load_reference
 from app.agents.food.store.ports import (
+    RECIPE_SOURCES,
     DaycareMealRow,
     FoodDocRow,
     FoodObservation,
@@ -20,11 +23,14 @@ from app.agents.food.store.ports import (
     Measurement,
     MenuCatalogRow,
     MenuSourceError,
-    NutritionFacts,
     SafetyEntry,
     SafetyLookupError,
+    UnwiredSafety,
 )
-from app.rules.age import Stage
+from app.core.mfds_nutri_raw import RawNutriRow
+
+if TYPE_CHECKING:
+    from app.agents.food.doc_seed import FoodDocEntry
 
 
 class InMemoryProfile:
@@ -91,6 +97,8 @@ class InMemoryMenuCatalog:
     """메뉴 카탈로그 — 메뉴명 → 영양성분. 아이 무관, 전역 하나다."""
 
     def __init__(self, rows: Sequence[MenuCatalogRow] = ()) -> None:
+        for row in rows:
+            _not_recipe(row)
         self._rows: dict[str, MenuCatalogRow] = {row.menu_key: row for row in rows}
 
     async def get(self, menu_key: str) -> MenuCatalogRow | None:
@@ -101,29 +109,57 @@ class InMemoryMenuCatalog:
         return {key: self._rows[key] for key in menu_keys if key in self._rows}
 
     async def put(self, row: MenuCatalogRow) -> None:
+        _not_recipe(row)
         self._rows.setdefault(row.menu_key, row)
 
+
+def _not_recipe(row: MenuCatalogRow) -> None:
+    """DB 의 source CHECK 와 같은 규칙 — 레시피 행은 recipe_catalog 몫이다(#326 리뷰)."""
+    if row.source in RECIPE_SOURCES:
+        raise ValueError(f"{row.source} 행은 recipe_catalog 에 넣는다 — menu_catalog 가 아니다")
+
+
+class InMemoryRecipeCatalog:
+    """레시피 카탈로그 — 식단 추천 후보 풀. `menu_catalog` 와 뗐다(#326 리뷰, own_table §1-1).
+
+    PK 는 (`source`, `source_id`) 다. `put` 은 `menu_catalog.put` 과 달리 **있는 행을 덮어쓴다**
+    — 레시피 배치가 다시 받으면 같은 레시피가 최신 값으로 바뀐다.
+    """
+
+    def __init__(self, rows: Sequence[MenuCatalogRow] = ()) -> None:
+        self._rows: dict[tuple[str, str | None], MenuCatalogRow] = {
+            (row.source, row.source_id): row for row in rows
+        }
+
     async def all_resolved(self) -> list[MenuCatalogRow]:
-        """`resolved=True` 행만 돌려준다. 재료(ingredients) 유무는 여기서 거르지 않는다."""
         return [row for row in self._rows.values() if row.resolved]
+
+    async def put(self, row: MenuCatalogRow) -> None:
+        self._rows[(row.source, row.source_id)] = row
 
 
 class InMemoryMenuSource:
+    """`calls` 는 외부를 몇 번 불렀는지 센다 — 상한 · 못 찾은 이름 기억 테스트가 쓴다."""
+
     def __init__(
         self,
-        nutrition_by_name: dict[str, NutritionFacts] | None = None,
+        nutrition_rows_by_name: dict[str, Sequence[RawNutriRow]] | None = None,
         ingredients_by_name: dict[str, tuple[str, ...]] | None = None,
         *,
         fail: bool = False,
     ) -> None:
-        self._nutrition = dict(nutrition_by_name or {})
+        self._nutrition_rows = {
+            key: tuple(rows) for key, rows in (nutrition_rows_by_name or {}).items()
+        }
         self._ingredients = dict(ingredients_by_name or {})
         self._fail = fail
+        self.calls: list[str] = []
 
-    async def nutrition(self, *, name: str) -> NutritionFacts | None:
+    async def nutrition_rows(self, *, name: str) -> tuple[RawNutriRow, ...]:
+        self.calls.append(name)
         if self._fail:
             raise MenuSourceError(f"영양성분 조회 실패 (테스트 주입): {name}")
-        return self._nutrition.get(name)
+        return self._nutrition_rows.get(name, ())
 
     async def ingredients(self, *, name: str) -> tuple[str, ...] | None:
         if self._fail:
@@ -186,17 +222,62 @@ class InMemoryDaycareMeals:
 
 
 class InMemoryFoodDocs:
+    """의미 검색은 흉내 내지 않는다. 월령 · row_type 만 거르고 넣은 순서대로 돌려준다."""
+
     def __init__(self, rows: Sequence[FoodDocRow] = ()) -> None:
         self._rows = list(rows)
 
+    @classmethod
+    def from_seed(cls, *, include_draft: bool = False) -> "InMemoryFoodDocs":
+        """`reference/food_doc.yaml` 의 검수를 마친(`approved`) 행. DB 전 eval · 개발용.
+
+        `include_draft` 는 검수 전에 [예시] 와 문서 조회가 실제로 어떻게 도는지 테스트에서 보려는
+        임시 스위치다(`InMemoryActivityDocs.from_seed` 와 같다). 시드 행은 아직 전부 draft 라서 이
+        스위치 없이는 비어 있다. 서비스 경로는 쓰지 않는다. TODO: 시드 검수가 끝나면 지운다.
+        """
+        # 위쪽에서 import 하면 순환한다 — doc_seed → tools.safety → store → inmemory → doc_seed
+        from app.agents.food.doc_seed import SEED_FILE, food_doc_seed
+
+        fetched = load_reference(SEED_FILE)["fetched_at"]
+        if not isinstance(fetched, date):
+            raise ValueError(f"{SEED_FILE} 의 fetched_at 이 날짜가 아니다")
+        written_at = datetime.combine(fetched, time.min, tzinfo=UTC)
+        return cls(
+            _seed_row(entry, written_at=written_at)
+            for entry in food_doc_seed()
+            if include_draft or entry.meta.status == "approved"
+        )
+
     async def search(
-        self, *, stage: Stage, row_types: tuple[str, ...], keys: tuple[str, ...]
+        self, *, months: int, row_types: tuple[str, ...], limit: int
     ) -> list[FoodDocRow]:
-        # stage·keys 로 좁히는 것은 실제 검색(임베딩·인덱스)의 몫이다.
-        # InMemory 는 테스트가 필요한 행만 미리 넣어 두므로 row_type 만 거른다.
-        if not row_types:
-            return list(self._rows)
-        return [row for row in self._rows if row.row_type in row_types]
+        sliced = [
+            row
+            for row in self._rows
+            if row.row_type in row_types and row.min_month <= months < row.max_month
+        ]
+        return sliced[:limit]
+
+
+def _seed_row(entry: "FoodDocEntry", *, written_at: datetime) -> FoodDocRow:
+    """시드 한 행을 포트가 돌려주는 모양으로. `id` 는 doc_key 로 늘 같게 만든다 — DB 의 uuidv7 과는
+    다르다. `allergen_codes` 는 YAML 에 적힌 코드와 제목 · 본문을 사전으로 훑은 코드의 합집합이다 —
+    적힌 코드만 믿지 않는다(`doc_seed` 머리말)."""
+    from app.agents.food.doc_seed import allergen_codes_in
+
+    return FoodDocRow(
+        id=uuid5(NAMESPACE_URL, f"food_doc:{entry.meta.doc_key}"),
+        row_type=entry.meta.row_type,
+        title=entry.meta.title,
+        body=entry.meta.body,
+        min_month=entry.meta.min_month,
+        max_month=entry.meta.max_month,
+        texture=entry.texture,
+        food_groups=frozenset(entry.food_groups),
+        allergen_codes=entry.allergen_codes | allergen_codes_in(entry),
+        source_org=entry.meta.source_org,
+        written_at=written_at,
+    )
 
 
 class InMemorySuggestionHistory:
@@ -216,6 +297,7 @@ def in_memory_ports(**overrides: object) -> FoodPorts:
         "growth": InMemoryGrowth(),
         "memory": InMemoryFoodMemory(),
         "catalog": InMemoryMenuCatalog(),
+        "recipes": InMemoryRecipeCatalog(),
         "daycare": InMemoryDaycareMeals(),
         "docs": InMemoryFoodDocs(),
         "suggestions": InMemorySuggestionHistory(),
@@ -223,3 +305,22 @@ def in_memory_ports(**overrides: object) -> FoodPorts:
     }
     defaults.update(overrides)
     return FoodPorts(**defaults)
+
+
+def unwired_ports(**overrides: object) -> FoodPorts:
+    """포트를 안 넘긴 run 의 기본값. 안전 조회가 실패한다.
+
+    `in_memory_ports()` 기본값은 "동의 있음 + 알레르기 0행" 으로 읽혀서, 실제 포트가 안 붙은 run 이
+    알레르기가 등록된 아이에게도 거르지 않은 안내를 낸다. 여기서는 `UnwiredSafety` 를 둬서
+    `build_gate` 가 동의와 상관없이 안전 조회 실패로 읽게 한다 — 동의가 없는 아이는 원래
+    `health_safety` 를 읽지 않아 실패가 드러나지 않기 때문이다. Food 는 `blocked.safety` 로 닫히고
+    모델을 부르지 않는다. `consent` 기본값은 값이 안 넘어온 run 을 위한 것이고, 실제 동의 값을
+    아는 쪽(entrypoint)은 override 로 넘긴다.
+    테스트·eval 이 알레르기 시나리오를 쓰려면 `in_memory_ports(safety=...)` 로 명시한다.
+    """
+    defaults: dict[str, object] = {
+        "consent": InMemoryConsent(default=True),
+        "safety": UnwiredSafety(),
+    }
+    defaults.update(overrides)
+    return in_memory_ports(**defaults)

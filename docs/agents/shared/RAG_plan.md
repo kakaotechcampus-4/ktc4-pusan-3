@@ -94,47 +94,50 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | 컬럼 | 비고 |
 | --- | --- |
-| `food_groups` | text[] — 6개 식품군 |
-| `nutrients` | text[] — `nutrient_note`용 (`protein`, `iron`, `calcium` …) |
-| `texture` | varchar nullable — `puree` · `mashed` · `minced` · `soft_pieces` · `regular` |
-| `allergen_codes` | smallint[] — 행이 특정 재료를 권하면 필수. 조회 후 `filter_food_safety`에 통과시킴 |
+| `food_groups` | text[] — 6개 식품군. 값은 `grains` · `meat_fish_egg_legumes` · `vegetables` · `fruits` · `dairy` · `fats_sugars` (#337 잠정 — `menu_catalog.food_groups` 와 같은 값이어야 해서 둘 곳은 리뷰에서 정한다) |
+| `nutrients` | text[] — `nutrient_note`만 (`protein`, `iron`, `calcium` …) |
+| `texture` | varchar nullable — 이유기 행(`weaning_stage` · `weaning_ingredient`)만. `puree` · `mashed` · `minced` · `soft_pieces` · `regular` |
+| `allergen_codes` | smallint[] — 제목 · 본문에 나오는 19종 코드를 다 적는다. 시드 테스트가 Food 사전으로 문장을 훑어 빠진 코드를 잡는다(`doc_seed.allergen_codes_in`). 조회 후 `filter_food_safety`에 통과시킴 |
 
-### 소스 후보
+### 소스 (#337)
 
-| 소스 | 쓸 곳 | 라이선스 확인 |
+**상업 서비스 기준으로 좁혔다** — 상업적 이용과 변경(다시 쓰기)이 둘 다 허락된 것만 행 출처로 쓴다. 공공누리 제0 · 1유형, 법령 · 고시, CC BY 처럼 둘을 명시한 라이선스다. 공공누리 제2 · 3 · 4유형, 표시가 없는 공공기관 자료, "All rights reserved", 비상업 라이선스는 사실만 다시 쓰는 방식(`fact_rewrite`)으로도 넣지 않는다. 미국 연방기관 자료는 외국 저작권법 예외가 있어서 검수 대조용으로만 쓴다.
+
+| 소스 | 쓸 곳 | 라이선스 |
 | --- | --- | --- |
-| 보건복지부 「2025 한국인 영양소 섭취기준」 | `nutrient_note` (급원 식품군 서술) | 정부 발간물 — 공공누리 유형 확인 |
-| 식약처 어린이 식생활 안전·영양 자료 | `meal_pattern` · `feeding_tip` | 공공누리 확인 |
-| 지역 어린이급식관리지원센터 연령별 식단·레시피 | `meal_pattern` 예시 | **센터별로 다름** — 불명이면 `fact_rewrite` |
-| 대한소아청소년과학회 이유식 자료 | `weaning_stage` · `weaning_ingredient` | 학회 저작물 → `fact_rewrite` 또는 허락 |
-| 질병관리청 국가건강정보포털 | `weaning_stage` · `feeding_tip` | 공공누리 확인 |
+| 뉴질랜드 보건부 「Healthy Eating Guidelines for New Zealand Babies and Toddlers (0–2 years old)」 2021 | `weaning_stage` · `weaning_ingredient` · `feeding_tip` | CC BY 4.0 — 값 집합에 CC BY 가 없어 `fact_rewrite` 로 적고 시드 머리말에 라이선스를 적는다 |
+| 한국소비자원 「영유아 이유식 안전실태조사」 2023 붙임4 | 시작 시기(4~6개월) · 한 가지씩 · 먹이는 태도 | 공공누리 제1유형 (`kogl_1`) |
+| 표준보육과정 · 누리과정 고시 | `feeding_tip` (연령별 식사 태도) | 고시 (`public_law`) — 국가법령정보센터 본문 |
+| CDC · USDA WIC · 미국 식생활지침 | 대조용 (행 출처 아님) | 미국 연방 저작물 |
+
+뺀 소스와 이유(식생활 영양정보 · 2025 한국인 영양소 섭취기준 · 국가건강정보포털 · 학회 자료 · 급식관리지원센터 · WHO 등)는 #337 에 있다. 이 기준을 만족하는 한국 식단 구성 자료를 아직 못 찾아서 `meal_pattern` · `nutrient_note` 는 비어 있다.
 
 ### 행 예시
 
 ```yaml
-- doc_key: food.weaning.texture.m6_7
+- doc_key: food.weaning.stage.m6_7.texture
   row_type: weaning_stage
   title: 6~7개월 이유식 질감
-  body: 곱게 간 미음에서 시작해 조금씩 되직하게 만든다. 하루 1~2회, 새 재료는 한 번에 하나씩 며칠 간격으로 더한다.
+  body: >-
+    6개월 무렵부터는 곱게 간 음식을 점점 되직하게 만들고, 으깬 음식과 부드러운 음식도 준다. …
   min_month: 6
   max_month: 8
-  texture: puree
-  tags: [weaning, texture]
-  source_title: (문서명)
-  source_org: (발행처)
-  source_year: 2025
-  source_locator: p.00
-  license_basis: fact_rewrite
+  tags: [weaning, texture, mashed]
+  texture: mashed
+  <<: [*nz, *draft]  # 출처 칸 묶음 — reference/food_doc.yaml 의 origins
+  source_locator: Eating Statement 2 — Increasing food texture, Starting out (p.28)
 ```
 
 ### 분량 · 우선순위
 
 | 순위 | 유형 | 목표 행 |
 | --- | --- | --- |
-| P0 | `weaning_stage` · `weaning_ingredient` | 45 (공식 API가 없는 유일한 영역) |
-| P1 | `meal_pattern` | 30 (12–35 · 36+ 각 15) |
-| P1 | `nutrient_note` | 20 |
-| P2 | `feeding_tip` | 15 |
+| P0 | `weaning_stage` · `weaning_ingredient` | 30 (공식 API가 없는 유일한 영역. 재료별이 아니라 식품군 단위로 써서 45 → 30, #337) |
+| P1 | `meal_pattern` | 30 (12–35 · 36+ 각 15) — 소스를 찾은 뒤 |
+| P1 | `nutrient_note` | 20 — 필요한지부터 따로 정한다 (#337) |
+| P2 | `feeding_tip` | 10 (#337) |
+
+이유식 단계(`weaning_stage`)는 4–5 / 6–7 / 8–11 개월로 나눈다. 시작 시기는 한국소비자원(4~6개월), 질감 진행은 뉴질랜드 지침을 따랐다. 한국 관행의 초기 · 중기 · 후기(4–5 / 6–8 / 9–11)는 기준을 만족하는 소스에 없다 (#337).
 
 ### 조회 연결
 - 단계 필터 → `row_type` 필터 → `search_text` 의미 검색 top-3
@@ -247,8 +250,8 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | 소스 | 쓸 곳 | 라이선스 |
 | --- | --- | --- |
-| 「제4차 어린이집 표준보육과정」 고시 (보건복지부 고시 제2020-75호, 0~1세 · 2세 · 3~5세) | 행마다 영역 · 내용범주 · 내용 | 고시 본문 = `public_law`. 해설서 부록에 실린 본문으로 대조했다 |
-| 표준보육과정 · 누리과정 **해설서 · 사례집** 본문 | – | **보류.** 해설서 판권면에 "사전승인 없이 무단 복제를 금합니다"(0~2세 해설서)가 있어 아래 놀이자료와 같은 줄로 본다. 이번 판은 해설서 **부록에 실린 고시 본문**만 썼다 — 고시는 법령이라 영향 없음 |
+| 「표준보육과정 고시」 (교육부고시 제2024-23호, 2025-03-01 시행, 0~1세 · 2세 · 3~5세) | 행마다 영역 · 내용범주 · 내용 | 고시 본문 = `public_law`. 국가법령정보센터 행정규칙 첨부 본문으로 대조했다. `source_title` 은 Growth · Food 와 같은 문자열이다(D10 — 한 줄로 뺄 수 있게) |
+| 표준보육과정 · 누리과정 **해설서 · 사례집** 본문 | – | **보류.** 해설서 판권면에 "사전승인 없이 무단 복제를 금합니다"(0~2세 해설서)가 있어 아래 놀이자료와 같은 줄로 본다. 이번 판은 **고시 본문**만 썼다 — 고시는 법령이라 영향 없음 |
 | i-누리 · 육아종합지원센터 놀이자료 · 누리과정 놀이자료(공공누리 제4유형) | – | **보류.** Activity D10 은 `fact_rewrite` 로 읽을 수 있다고 봤고 Growth(§4)는 사용 안 함으로 정해서 규칙이 둘이다. 하나로 맞춘 뒤 정한다 |
 
 ### 행 예시
@@ -267,10 +270,10 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
   involves_food: false
   area: physical_health
   tags: [gross_motor]
-  source_title: 제4차 어린이집 표준보육과정 (보건복지부 고시 제2020-75호)
-  source_org: 보건복지부
-  source_year: 2020
-  source_locator: 0~1세 신체운동 · 신체활동 즐기기 · 기본 운동을 시도한다
+  source_title: 표준보육과정 고시 (교육부고시 제2024-23호)
+  source_org: 교육부
+  source_year: 2024
+  source_locator: 0~1세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 시도한다
   license_basis: public_law
   status: draft
   authored_by: 03leedo       # 검수는 다른 사람이 원문을 펴 놓고 확인한 뒤 approved

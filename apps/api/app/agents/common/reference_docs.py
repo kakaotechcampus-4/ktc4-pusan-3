@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
-from app.rules.age import V1_MONTH_LIMIT
+from app.agents.common.reference import age_gates
 
 LicenseBasis = Literal[
     "public_law", "kogl_1", "kogl_2", "kogl_3", "kogl_4", "fact_rewrite", "permission"
@@ -24,8 +24,9 @@ _LICENSE_BASES: frozenset[str] = frozenset(
     {"public_law", "kogl_1", "kogl_2", "kogl_3", "kogl_4", "fact_rewrite", "permission"}
 )
 _DOC_STATUSES: frozenset[str] = frozenset({"draft", "approved", "retired"})
-# 문서 행 월령의 끝. max_month 는 "미만" 이라 이 값까지 쓸 수 있다 — v1 범위 상한 (app/rules/age.py)
-DOC_MONTH_LIMIT = V1_MONTH_LIMIT
+# 문서 행 월령의 끝. max_month 는 "미만" 이라 이 값까지 쓸 수 있다 — v1 범위 상한
+# (reference/age_gates.yaml)
+DOC_MONTH_LIMIT = age_gates().v1_month_limit
 
 DOC_COMMON_KEYS: frozenset[str] = frozenset(
     {

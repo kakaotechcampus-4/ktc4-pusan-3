@@ -75,9 +75,9 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
     )
 ```
 
-- 경계값은 **`reference/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). 파일이 생기기 전까지 `MIN_MONTH` 는 `gating.py` 의 자기 표다 — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
-- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 18개월 값을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 개방 조건을 맡는다.
-- 월령은 **`app/rules/age.py` 의 `life_stage()`** 에서 온다. Activity 는 `stage.months` 만 쓴다.
+- 경계값은 **`reference/age_gates.yaml` 한 곳**에 둔다. 코드·프롬프트·문서에 숫자를 복제하지 않는다 (`연령별_Tool_전략.md` §1 원칙 5). 숫자는 이 파일에서 읽고(`age_gates()`, #372), `MIN_MONTH` 의 tool 이름 표는 `gating.py` 에 둔다(값은 전부 0 이다) — `agents/common/tool_schema.py` 의 `ToolDefinition` 은 건드리지 않는다.
+- **`gating.py` 를 registry 와 따로 둔다.** registry 가 tool 을 import 하는데 `search_activity_memory` 도 관심 프로필 기준 월령을 읽어야 해서, registry 에 두면 순환 import 가 된다. registry 는 tool 등록 · 실행과 `tools_for()` 구성, `gating.py` 는 월령 · 위치 개방 조건을 맡는다.
+- 월령은 **`app/agents/common/age.py` 의 `life_stage()`**(계산은 `app/rules/age.py`, 경계는 `age_gates.yaml`)에서 온다. Activity 는 `stage.months` 만 쓴다.
 - **조산아는 따로 처리하지 않는다.** 교정연령을 쓰지 않는다 (9/25 결정).
 
 **범주에는 enum, 눈금에는 임계값.** Food 의 `LifeStage.stage` 는 진짜 범주형이다 — *"분유를 먹는가 / 일반식을 먹는가"* 는 질적 구분이고 `guide_weaning_stage` 와 `lookup_daycare_menu` 는 서로 배타적이다. Activity 의 18·36 은 **같은 축 위의 눈금**이고 배타적인 게 하나도 없다. 전부 *"이 월령부터 열린다"* 다.
@@ -103,7 +103,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 - 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 - 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
-- **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · why_this)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
+- **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · reason)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
 
 **`profile_affinity` 에 routine 은 포함되지 않는다** (9/25 BE 합의). `MemoryDomain` 은 `food`/`activity`/`education` 세 값 그대로다. Activity 는 `domain=activity` 만 읽으므로 동작에 영향은 없다.
 
@@ -154,10 +154,10 @@ class ActivityCandidate(ToolArgs):
     physical_intensity: Intensity
     involves_food: bool
     caregiver_role: CaregiverRole       # together / nearby / independent
+    day: DayLabel = DayLabel.TODAY      # 언제 하는 활동인지. 바깥 활동은 그날 날씨로 거른다 (#377)
     place_name: str | None = None       # 조회 결과에 있는 이름만
     duration_min: int | None = None
-    why_this: str
-    why_now: str
+    reason: str                         # 이 아이에게 맞는 이유 + 지금인 이유. 화면에 그대로
     evidence: list[EvidencePick] = []   # id ⊂ rank_evidence 상위 10
 ```
 
@@ -165,7 +165,7 @@ class ActivityCandidate(ToolArgs):
 
 **스캔 대상은 `content` + `materials` 둘 다.** `materials` 만 보면 *"구슬 꿰기"* 처럼 재료가 문장 안에 있는 후보를 놓친다.
 
-**규칙 ② — 0–17개월에서는 경고를 차단으로 승격한다.** `SAFETY_PROMOTE_BELOW_MONTH = 18` 을 `ActivityBand` 와 **별도 상수로** 둔다.
+**규칙 ② — 0–17개월에서는 경고를 차단으로 승격한다.** `SAFETY_PROMOTE_BELOW_MONTH = 18` 을 `ActivityBand` 와 **별도 상수로** 둔다. 승격은 공용 판정 `HazardAxis.level_at`(`common/reference.py`) 한 곳에서 한다 — Growth 교육 활동도 같은 선을 쓰기로 해서(#282 리뷰) 두 Agent 가 같은 판정을 읽는다(#319).
 
 **`materials` 가 비어 있어도 후보를 떨어뜨리지 않는다.** 필수로 만들면 모델이 판정을 통과시키려고 재료를 지어내고, 그러면 판정 자체가 오염된다. 문장 스캔이 그 자리를 메운다.
 
@@ -191,10 +191,12 @@ class ActivityCandidate(ToolArgs):
 대조는 `hazard_term` 과 **같은 자리에서 같은 방식으로** 한다 — `content` 와 `materials` 각 항목에 부분 일치(`tools/filters.py`). `label` 은 보호자의 자유 입력이라 **Food 와 같은 규칙(`common/allergy.read_label`)으로 읽는다** — "우유 알레르기" · "우유, 계란" · "Milk" 도 19종 코드가 되고, 묶음 이름("갑각류" · "견과류")은 코드 여럿으로 펼친다. **19종은 사전의 별칭으로 넓혀 대조**한다 — "밀" 로 등록돼 있으면 "밀가루 점토" 도 걸린다. 사전에서 못 찾은 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다.
 
 사전이 메뉴 이름용이라 놀이 문장에 대조할 때만 두 가지를 거른다(`tools/filters.py`, #261 · #298 리뷰).
-- **한 글자 이름은 허용 목록(잣 · 콩 · 깨 · 쑥)만 쓴다.** 밀 · 게 · 굴 · 닭은 "공 밀기" · "카드 게임" · "굴리기" · "닭 그림" 이 걸린다. 허용 목록은 놀이 문장에서도 거의 그 음식인 글자다 — "콩주머니" 에는 실제 콩이 든다. 사전에 없는 한 글자(강아지 알레르기를 "개" 로 적은 것)도 글자 그대로 대조하지 않는다 — "블록 3개" 가 걸린다.
+- **한 글자 이름은 허용 목록(잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만 쓴다.** 목록은 `common/allergy.SINGLE_CHAR_NAMES` 이고 Growth 의 등록 이름 대조도 같은 목록을 쓴다(#305). 밀 · 게 · 굴 · 닭은 "공 밀기" · "카드 게임" · "굴리기" · "닭 그림" 이 걸린다. 허용 목록은 놀이 문장에서도 거의 그것인 글자다 — "콩주머니" 에는 실제 콩이 들고, 쌀 촉감놀이 · 팥 주머니(오자미)도 영아 놀이로 흔하다. 꽃은 보호자가 그 한 글자로 적었으면 꽃(꽃가루) 알레르기로 보고 꽃 활동을 막는다(#341 리뷰). 그 글자가 다른 뜻으로 나오는 자리는 목록의 guard 가 덮는다 — "쌀쌀한 날씨" · "좁쌀" · "불꽃놀이" · "눈꽃" · "꽃샘추위" · "꽃게" · "깨끗이" · "잠 깨우기" · "잠이 깨면" · "깨진 컵" · "감자 으깨기" · "쑥쑥". 그 글자가 든 같은 것(찹쌀 · 꽃가루 · 종이꽃)은 막는다. 사전에 없는 한 글자(강아지 알레르기를 "개" 로 적은 것)도 글자 그대로 대조하지 않는다 — "블록 3개" 가 걸린다.
 - **놀이 문장에서 다른 뜻으로 읽히는 별칭(포크 · 에그 · 밀크 · 피치 · 전복 · 돼지)은 쓰지 않는다** — "플라스틱 포크" · "에그 쉐이커" · "돼지저금통". `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
 
 **거르는 것은 `status = 'active'` 행뿐이다** (10/4 확정안 — `status` 3값, 행 없음이 `unknown`). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
+
+**식품 사전에 없는 알레르기 이름에는 확인 문구를 붙인다** (#298 · #261 리뷰). `allergy` active 행 중 이름에 식품 사전(공용 이름 사전)이 못 찾은 조각이 있으면 — 꽃가루 · 라텍스 · 동물털, 19종 밖 식품인 쑥 · 키위도 — 코드 문구 `caution.non_food_allergy` 를 이름마다 한 줄 낸다: *"등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."* 이름이 문장에 그대로 나오는 후보는 위 대조가 빼지만, 꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다. 이름을 장소 · 물건으로 넓히는 대응표(꽃가루 → 공원)는 "어디까지 위험한가" 를 우리가 정하는 일이라 만들지 않는다. 고르는 판정은 Growth 와 같은 공용 함수(`common/allergy.non_food_allergies`)다. `environmental`(고소공포)에는 붙이지 않는다. 문구는 추천마다가 아니라 run 에 한 벌로 run state(`cautions`)에 남기고, 화면 자리는 #249 를 따른다.
 
 **`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 정식 명칭이고, 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
 
@@ -215,7 +217,7 @@ class ActivityCandidate(ToolArgs):
 | 생활기상 | 기상청 **생활기상지수 4.0** `LivingWthrIdxServiceV5/getUVIdxV5` (`data.go.kr/15085288`) | 자외선. 단기예보·에어코리아 어느 쪽도 주지 않는다. 등급이 아니라 **지수 숫자**가 온다 (4-2). 신청 페이지 이름은 4.0 이고 주소는 V5 다 — V4 주소는 "폐기됨" 오류를 준다 |
 | 특보 | 기상청 **기상특보** `WthrWrnInfoService/getPwnCd` (특보코드조회) | 폭염·한파·호우·강풍을 **발효 여부(boolean)로** 받는다. 12종 특보 · **특보구역** 단위(시군구보다 잘다 — 예: 경주시동부). 발표 이력인 `getWthrWrnList` 는 쓰지 않는다 — **해제된 특보도 목록에 남아** 발효 여부를 알 수 없다 |
 
-🚨 **보호자 좌표를 외부 API 로 보내지 않는다.** 밖으로 나가는 위치 파생값은 기상청 5km 격자 번호(`nx`,`ny`) · 생활기상지수와 특보의 지역 코드 · 에어코리아 측정소 이름뿐이다. 장소는 외부에 반경 질의를 맡기지 않고 전부 적재해 서버 안에서 거리를 계산한다 (D9).
+🚨 **보호자 좌표를 외부 API 로 보내지 않는다.** 밖으로 나가는 위치 파생값은 기상청 5km 격자 번호(`nx`,`ny`) · 생활기상지수의 시군구 코드 · 에어코리아 측정소 이름뿐이다. 특보는 전국 목록을 받아 서버에서 거르므로 위치가 나가지 않는다. 장소는 외부에 반경 질의를 맡기지 않고 전부 적재해 서버 안에서 거리를 계산한다 (D9).
 
 **적재하는 것** (런타임 호출 아님)
 
@@ -232,7 +234,7 @@ class ActivityCandidate(ToolArgs):
 
 | | 어디에 | 왜 API 가 아닌가 |
 | --- | --- | --- |
-| 공휴일 | `app/rules/` 상수 (특일정보 `SpcdeInfoService/getRestDeInfo` 를 **연 1회 받아 굽는다**) | `lookup_schedule` 은 아이 일정만 읽어 **어린이집 휴원일을 모른다** — 개천절 오전 10시를 "어린이집 가 있는 시간"으로 착각한다. 그런데 공휴일은 전년도에 확정되는 정적 데이터다. 매 run 부르면 예산이 늘고 **API 가 죽으면 날짜 계산이 죽는다** |
+| 공휴일 | `app/rules/holidays.py` 상수 (특일정보 `SpcdeInfoService/getRestDeInfo` 를 **연 1회 받아 굽는다** — `scripts/bake_holidays.py` 가 `holidays_data.py` 를 만든다. 지금 2026 · 2027. 없는 해는 주말만 보고 로그에 남긴다) | `lookup_schedule` 은 아이 일정만 읽어 **어린이집 휴원일을 모른다** — 개천절 오전 10시를 "어린이집 가 있는 시간"으로 착각한다. 그런데 공휴일은 전년도에 확정되는 정적 데이터다. 매 run 부르면 예산이 늘고 **API 가 죽으면 날짜 계산이 죽는다** |
 | 일출·일몰 | `app/rules/sun.py` | 위도·경도·날짜만으로 결정되는 순수 함수다. 🚨 **API 로 붙이면 `outdoor_ok` 가 외부 장애에 물린다** — 날씨 실패는 "실내만"으로 안전하게 퇴화하지만, 해 진 시각을 모르면 퇴화할 방향이 없다 |
 
 🚨 **감기·천식·뇌졸중·피부질환 가능지수는 쓰지 않는다.** *"감기 가능성이 높으니 실내"* 는 건강 추론이고 D7 이 막는 것과 같다. 꽃가루 응답에 함께 오더라도 **파싱 단계에서 버린다.**
@@ -240,6 +242,14 @@ class ActivityCandidate(ToolArgs):
 **연결 방식** — `app/agents/` 는 `app/integrations/` 를 import 할 수 없다 (`apps/api/CLAUDE.md` 레이어 경계). Activity 는 **포트(Protocol)만 알고**, 어댑터는 `app/integrations/` 에 두고 **`app/api` 가 주입**한다. 격자 변환은 Agent 쪽에서 하고 `integrations` 에는 `(nx, ny)` 만 넘긴다 — 좌표가 `integrations` 에 아예 들어가지 않는다 (4-3).
 
 🚨 **응답의 해석도 Agent 쪽(`weather.py`)이 한다.** 반대 방향도 막혀 있어서 `integrations` 는 `agents` 를 import 할 수 없다. 해석을 어댑터에 두면 `"-"` · `NO_DATA` · 강수 문자열 같은 규칙(4-2)을 테스트 밖에서 한 번 더 짜게 된다. 어댑터는 호출 · 타임아웃 · 지금 시각 칸 고르기까지만 하고, 값은 **원문 문자열 그대로** 포트로 넘긴다.
+
+**어댑터 자리** — `app/integrations/weather/`. 단기예보(`forecast.py`) · 대기질(`air.py`) · 자외선(`uv.py`) · 특보(`advisories.py`)를 `source.PublicWeather` 가 묶어 `WeatherSource` 가 된다. `app/api` 가 프로세스에 하나를 만들어 주입한다(아직 안 함 — pipeline 연결 때).
+- **격자 → 시군구 · 특보구역** — 구운 표 `areas_data.py`(`scripts/bake_weather_areas.py`). 출처는 기상청 단기예보 활용가이드의 격자 · 위경도 표와 기상특보 활용가이드의 특보구역 코드 표다(엑셀은 저장소에 넣지 않는다). 격자에서 가장 가까운 읍면동 대표점(6칸 안)의 시군구를 쓴다.
+- **자외선** — 시군구 코드로 묻는다. API 는 읍면동 코드도 받지만 위치를 더 잘게 드러내서 쓰지 않는다. 발표 시각부터 3시간 칸(`h0` · `h3` …) 중 오늘은 지금 칸, 다른 날은 12시 칸.
+- **특보** — 위치 없이 전국 30일치를 한 번에 받아(전국 250행 남짓, 0.6초) 10분 동안 모든 사용자가 같이 쓰고, 그 시군구의 특보구역 행만 넘긴다. 특보구역은 시군 이름으로 찾고 하위 구역(파주시동북부 …)까지 넣는다. **구 단위 특보구역이 없는 광역시(서울 4권역 · 부산 3구역 · 인천 · 대구 · 대전 · 울산 · 옛 광주 구)는 그 시 전체 구역을 본다** — 어느 권역인지 표가 없어서, 시 어디든 발효면 실내만이다.
+- **볼 칸** — 오늘은 지금 시각 이후 첫 칸, 다른 날은 12시 칸(`DAYTIME_HOUR`, 잠정) 하나다. 발표분에 그 칸이 없으면(예보 범위 밖) 조회 실패와 같다.
+- **발표 시각** — 02 · 05 · … · 23시 발표가 10분 뒤 올라온다. 지금 받을 수 있는 가장 최근 발표를 쓰고, 캐시 키는 (nx, ny, 발표일, 발표시각)이다. 동시에 같은 발표분을 물으면(이번 주말 토 · 일) 한 번만 부른다.
+- **실패 예외** — `UpstreamUnavailable` 은 `app/core/weather_raw.py` 에 있다. 어댑터가 agents 를 import 할 수 없어서다. Activity 포트는 그대로 다시 내보낸다. 메시지 · 로그에 요청 주소(인증키 포함)를 남기지 않는다.
 
 **키와 쿼터**
 
@@ -268,7 +278,7 @@ class ActivityCandidate(ToolArgs):
 | --- | --- | --- | --- |
 | 날씨·미세먼지·자외선·특보 | (격자·지역 질의) | **저장하지 않는다** — 패스스루 + 프로세스 내 캐시 | 틀린 값이 남으면 근거처럼 보인다. **근거가 아니라 필터 조건**이다 |
 | 🚩 장소 3종 (공원 · 어린이놀이시설 · 도서관) | ❌ 전국 덤프 페이징 | 🚩 **테이블 적재** (`place`) | 좌표가 밖으로 나가지 않는다. 그리고 패스스루가 **물리적으로 불가능**하다 — 공원만 19,199행이고 1,000행씩 20회 왕복하면 타임아웃 2.5s × 20 으로 예산을 통째로 먹는다 |
-| 대기질 측정소 목록 | ❌ | **테이블 적재** | 가장 가까운 측정소를 서버에서 고른다 |
+| 대기질 측정소 목록 | ❌ | **구운 파일** (`integrations/weather/stations_data.py`, `scripts/bake_air_stations.py`) | 가장 가까운 측정소를 서버에서 고른다. 좌표가 아니라 격자로 굽는다 — 어댑터는 격자만 받는다. 560곳 남짓이고 거의 안 바뀌어서 테이블 · 마이그레이션 대신 공휴일처럼 굽는다 |
 | 위험 용어 사전 | — | 🚩 **상수 파일** (`reference/hazard_terms.yaml`) | 정적 사전이라 바뀔 때 사람이 PR 로 검수한다. 코드 곳곳에 문자열 목록으로 흩으면 **반드시 새는 게 나온다** — 파일 하나 · 로더 하나로만 읽는다 (3-5) |
 | 근거 문서 행 | — | 🚩 **테이블** (`activity_doc`) | 아래 |
 | 공휴일 | — | `app/rules/` 상수 | 정적 데이터 |
@@ -295,6 +305,9 @@ class ActivityCandidate(ToolArgs):
 - 행마다 원문 출처(`source_title`, `source_locator`)를 열로 남긴다 (`RAG_plan.md` §1). 라이선스가 문제되면 `DELETE WHERE source_title = ?` 한 줄로 뺀다 (D10).
 - 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 의미 검색 상위 5행을 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
 - **근거(`suggestion_evidence`)에는 넣되 개인화 근거로 세지 않는다.** `refs.py` 가 `activity_doc` 을 `DocKind` 로 따로 두고 `count_child_records()` 가 아이 기록만 센다. 넣어두면 어느 문서 행을 봤는지 추적되고, 문서 행만 달고 나간 추천은 자동으로 `general` 이 된다.
+- **다는 방법.** run() 이 조회한 행을 `state.seen_docs` 에 담고 `[예시]` 에 행 `id` 와 함께 싣는다. 모델은 예시를 바탕으로 고른 후보의 `evidence` 에 그 id 와 note 를 단다 — 기억 근거와 같은 칸이다. 출력 검증은 이번 run 에 실은 행만 받고(없는 id 는 `UNKNOWN_EVIDENCE`), note 의 반복 표현 검사도 똑같이 건다 — *"늘 좋아하는"* 은 문서가 아니라 아이에 대한 말이고 문서 행은 확정 관심이 아니다. 기억 근거와 같이 달면 개인화이고 둘 다 근거로 남는다.
+- **기억은 그 후보를 고른 이유가 된 것만 단다.** 라이브 eval 에서 관찰이 "블록 쌓기" 1건뿐인데 크레용 놀이 · 색깔 찾기에도 그 기록을 달았다. 이러면 근거가 약한데 개인화로 집계된다(루트 §2 *"맞춤인 척하지 않는다"*). 상관없는 후보는 가장 가까운 예시 행을 달아 일반 추천으로 나가게 한다. 기피 기록은 예외다 — 피해 고른 이유라 근거로 단다(D4). 관련성을 코드로 대조하지 않는 이유: `subject`("블록")가 후보 문장("레고로 탑 쌓기")에 안 나오는 정상 인용까지 막힌다. 프롬프트로 두고 eval 로 본다.
+- 🚩 **시드 80행이 아직 전부 `draft` 다.** 서비스는 `approved` 만 읽으므로 검수 전까지는 `[예시]` 가 비고 일반 추천의 근거도 0행이다 — 품질 지표로 잡힌다 (H-10).
 - **커버리지는 행 수가 아니라 월령 구간을 빠짐없이 덮는 것이 기준이다.** 행마다 `min_month`·`max_month` 가 있으므로, 행이 적어도 0–71개월을 빈틈없이 덮으면 문서 행이 0개인 경우가 거의 생기지 않는다.
 - 🚩 **프롬프트 캐시** — 근거 문서 행은 동적 구간의 맨 앞에 붙인다 (4-5). 같은 월령 아이들끼리는 거기까지 캐시가 산다.
 
@@ -441,15 +454,15 @@ async def run(task, context, *, client=None):
     ...
 ```
 
-**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 장소 조회를 실내 종류로 좁힐지를 정한다. `lookup_weather` tool 은 그대로 두고 모델은 `why_now` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
+**날씨를 먼저 조회하는 이유** — `outdoor_ok` 가 장소 조회를 실내 종류로 좁힐지를 정한다. `lookup_weather` tool 은 그대로 두고 모델은 `reason` 에 쓸 라벨만 가져간다. 발표 시각 기준 캐시(D9)가 있어 외부 왕복은 늘지 않는다.
 
 **모델에게 보이는 tool** — 이름은 Food 관례(동사 + 목적어). `description` 에는 *무엇을 하는가*가 아니라 ***언제 부르는가***를 적는다.
 
 | tool | 언제 부르는가 | `min_month` |
 | --- | --- | --- |
-| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. 18개월 미만은 affinity 조회를 건너뛴다 | 0 |
-| `lookup_weather` | `why_now` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
-| `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용** | 0 |
+| `search_activity_memory` | 활동을 고르기 전에. 최근 관찰 + activity affinity 를 **`rank_evidence` 로 정렬**해 `id` 와 함께 돌려준다. `age_gates.yaml` 의 `affinity_min_month`(18) 미만은 affinity 조회를 건너뛴다 | 0 |
+| `lookup_weather` | `reason` 에 오늘 날씨를 쓸 때. **판정과 등급 라벨만** (4-2) | 0 |
+| `lookup_schedule` | 아이 일정과 겹치는지, 비는 시간이 언제인지. **읽기 전용**. 날마다 평일 · 주말 · 공휴일과 바쁜 칸 · 비는 칸(08–20시, 오늘이면 지금부터)을 코드가 계산해 준다. 이번 주말은 토 · 일 이틀. 제목은 싣지 않는다 | 0 |
 | `search_nearby_places` | 나들이 후보를 낼 때. **결과에 있는 이름만 쓴다.** 바깥 활동이 어려운 날은 실내 종류만 | 0 · 위치 있을 때 |
 | `propose_activity_candidates` | **마지막에 한 번.** `candidates[3]` 제출 (OUTPUT_TOOL) | 0 |
 
@@ -464,7 +477,15 @@ async def run(task, context, *, client=None):
 
 **진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
 
-**날씨가 나쁜 날은 장소 조회를 닫지 않고 실내 종류로 좁힌다.** 도서관 · 실내 놀이터를 적재하니 비 오는 날에 장소가 사라지는 게 손해다. `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁히고, 바깥 종류를 고르면 `INVALID_ARGS` 로 돌려 모델이 실내 종류로 고쳐 다시 부른다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
+**재호출과 합치기** (`agent.py`) — 재호출은 **같은 대화에 이어** *"아래 활동은 다시 내지 않는다"* 한 줄을 더해 부르고, **이미 고른 것과 빠진 것**을 함께 준다. 빠진 이유는 말하지 않는다. 새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면 처음 통과한 것까지 잃는다 (`Tool_공통.md` §5-2 · #359 리뷰). 결과는 공통 `merge_drafts` 로 합친다 — 처음 통과한 것을 먼저 두고 빈자리만 채우며, 같은 후보 판정은 최근 중복 검사와 같은 `normalize_activity` 다. 경고 문구는 후보와 짝으로 넘겨 순서가 같이 간다. 그 뒤 `check_count(exhausted=True)` → `count_notice`. 1~2개가 남으면 개수 안내와 함께 낸다. **처음 것이 전부 빠졌는데 재호출도 후보를 못 내면 `failed`** 다 — "조건에 맞는 추천이 없어요" 는 모델이 냈는데 전부 안전 필터로 빠진 경우만이다.
+
+**끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
+
+**status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다. 좌표와 날씨 어댑터가 둘 다 없으면 `lookup_weather` 도 닫고(`Gate.data.weather`), 장소도 같다(`Gate.data.places`) — 열어 두면 부를 때마다 실패만 돌려준다. 프롬프트 `[오늘의 조건]` 은 *확인하지 못했다* 와 *바깥 활동이 어렵다* 를 나눠 쓴다 — 판정(실내만)은 같지만, 한 말로 쓰면 모델이 확인 안 한 날씨를 이유에 쓴다.
+
+**날씨는 후보의 날로 본다 (#377).** 후보가 `day`(today · tomorrow · this_weekend)를 갖고, 출력 검증은 야외 후보를 **그날 판정**으로 거른다 — 오늘 비가 와도 내일 공원 나들이는 나간다. 판정이 없는 날(모델이 `lookup_weather` 를 안 불렀다)은 출력 tool 이 그 자리에서 판정해 `state.weather` 에 넣는다(`outing.outdoor_on`). 사전 조회는 지금처럼 오늘만 한다 — 다른 날은 필요할 때만 부른다. **이번 주말은 토 · 일 중 하루라도 되면 연다.** 보호자가 둘 중 하루를 고르는 일이라, 둘 다 맑아야 열면 주말 나들이가 너무 자주 막힌다. 되는 날은 모델이 `reason` 에 쓴다 — 코드로 강제하지는 못한다. 대기질은 오늘만 있어서 다른 날은 *"확인 못 함"* 이고 야외는 열린다(미세먼지만 실패한 날과 같다).
+
+**날씨가 나쁜 날은 장소 조회를 닫지 않고 실내 종류로 좁힌다.** 그날은 `search_nearby_places` 의 `day` 다 — 오늘 비가 와도 주말 공원은 찾는다(#377). 도서관 · 실내 놀이터를 적재하니 비 오는 날에 장소가 사라지는 게 손해다. `PlaceCategory` 를 실내 3값(`library`·`indoor_playground`·`experience_center`)으로 좁히고, 바깥 종류를 고르면 `INVALID_ARGS` 로 돌려 모델이 실내 종류로 고쳐 다시 부른다. 닫힌 enum 이라 *"모델이 만든 문자열로 장소를 찾지 않는다"* 는 그대로 유지된다.
 
 **만들지 않는 것** — Age/Safety Filter 를 모델 tool 로(모델이 스스로 통과시킬 수 있다 — 대신 코드 tool 로) · 놀이 후기 기록(쓰기는 Memory 가 한다).
 
@@ -475,15 +496,16 @@ async def run(task, context, *, client=None):
 ```
 1. 안전 필터            filter_activity_safety — hazard_term · health_safety(active)
                         → 후보를 풀에서 뺀다 (거절이 아니라 제거). 모델에게 돌려주지 않는다 —
-                          통과한 초안 · 빠진 후보(excluded) · 경고 문구(warnings)를 run state 에 담고,
+                          통과한 초안 · 빠진 후보(excluded) · 경고 문구(warnings) ·
+                          확인 문구(cautions, D7)를 run state 에 담고,
                           3개 미만이면 run() 이 제외 목록으로 재호출 1회
-2. 금지 표현 필터        content · why_this · why_now · note
+2. 금지 표현 필터        content · reason · note
 3. Activity 출력 검증    ─ 기피 근거의 subject 가 들어 있는 후보 → 거절      (D4)
                         ─ note 의 반복·성향 표현은 Tier 1 근거일 때만           (D12)
                         ─ 최근 창 안에 한 활동 → 거절 (filter_recent_duplicates)
                         ─ 0–17개월은 caregiver_role = together 만
                         ─ evidence id ⊂ rank_evidence 상위 10
-                        ─ 바깥 활동이 어려운 날(outdoor_ok=False)의 setting=outdoor → 거절 (either 는 통과)
+                        ─ 후보의 날(day)이 바깥 활동이 어려운 날이면 setting=outdoor → 거절 (either 는 통과)
                         ─ place_name ⊂ 이번 run 의 search_nearby_places 결과 → 아니면 거절
                           통과하면 코드가 content 앞에 붙인다 ("○○어린이공원에서 …")
 4. build()              근거 행 수로 kind · general 이면 reason 을 템플릿으로 덮어씀
@@ -507,9 +529,11 @@ async def run(task, context, *, client=None):
 ### 3-4. status 와 kind 는 **분리한다**
 
 ```python
-ActivityStatus = Literal["completed", "no_candidates", "degraded", "failed"]
+AgentStatus = Literal["completed", "blocked", "unsupported", "failed", "degraded"]  # common/result.py
 SuggestionKind = Literal["general", "personalized"]    # common/suggestion.py
 ```
+
+Activity 가 쓰는 값 — `blocked` 안전 조회 실패(모델 0회, D7) · `failed` 모델이 후보를 못 냈다(처음 호출, 또는 안전 필터로 0개가 된 뒤 재호출까지 못 냄) · `degraded` 날씨를 불렀는데 못 읽었다 · `completed` 그 밖. 안전 필터 뒤 1~2개만 남으면 `completed` + 개수 안내다. 예전 `no_candidates` 는 없다 — 0개는 `failed` 이거나(모델 실패) `completed` + 안내다(모델은 냈는데 전부 안전 필터로 빠지고 재호출도 그랬다).
 
 둘은 직교한다 — 날씨는 실패했지만 개인화 근거는 있는 run 이 `degraded` + `personalized` 다. 합치면 루트 §2 의 *"일반 추천과 개인화 추천은 타입으로 구분한다"* 가 성공/실패 축에 오염된다.
 
@@ -668,6 +692,8 @@ terms:
 
 🚨 **강수량 파서는 세 형식을 모두 받는다** — 구간 문자열(`"30.0~50.0mm"`) · `"강수없음"` · 순수 숫자. 실응답으로는 `"강수없음"` 과 순수 숫자 `"0"`(발표 3일 뒤 시각부터)을 확인했고, 비 오는 날의 구간 문자열은 아직 못 봤다. `float()` 파싱이 터지거나, 더 나쁘게 `"1.0mm 미만"` 이 `1.0` 으로 읽혀 **경고가 통째로 안 뜬다.** **파싱 실패는 '맑음'이 아니라 '확인 못 함'** 으로 흘린다.
 
+**대기질은 오늘만 본다.** 에어코리아는 지금 측정값만 주고 예보가 아니다. 내일 · 이번 주말 추천에 오늘 미세먼지를 쓰면 오늘 나쁜 공기가 내일 야외를 막거나, 오늘 맑은 공기가 내일을 통과시킨다. 그래서 오늘이 아닌 날은 대기질을 부르지 않고 "확인 못 함"으로 고지한다. 특보는 지금 발효 중인 것을 그날에도 본다(더 막는 쪽). 해가 졌는지도 오늘만 본다. 날 라벨은 코드가 날짜로 바꾼다 — "이번 주말"은 토 · 일 이틀을 **날마다 따로** 판정한다(오늘이 일요일이면 오늘 하루). 하나로 합치면 토요일 비가 일요일 야외를 막거나, 토요일 맑음이 일요일 비를 가린다 (`tools/outing.py` `days_of`).
+
 **대기질은 `health_safety` 를 읽을 필요가 없다.** 환경부·에어코리아가 민감군을 "어린이·노인·천식 등 폐질환자"로 이미 정의했고 우리 타겟은 전원 어린이다. **모든 아이에게 민감군 기준을 적용**하면 질환에서 추론하지 않고도 안전한 쪽에 선다.
 
 🚨 **모델에게 raw 수치를 주지 않는다.**
@@ -675,7 +701,7 @@ terms:
 | 모델에게 | 예 | 왜 |
 | --- | --- | --- |
 | **판정** ✅ | `outdoor_ok: false` · `heat: "advisory"` | 코드가 위 표로 내린 결론 |
-| **등급 라벨** ✅ | `pm10_grade: "나쁨"` · `sky: "흐림"` | `why_now` 문장에 쓸 사실. **이미 코드가 분류한 범주**이고, 야외가 차단이면 야외 후보 자체가 없어 오용될 자리가 없다 |
+| **등급 라벨** ✅ | `pm10_grade: "나쁨"` · `sky: "흐림"` | `reason` 문장에 쓸 사실. **이미 코드가 분류한 범주**이고, 야외가 차단이면 야외 후보 자체가 없어 오용될 자리가 없다 |
 | **raw 수치** ❌ | `PM2.5 = 87` · `강수확률 40%` | 모델이 자기 기준으로 재해석해 *"나쁨이지만 잠깐이면 괜찮아요"* 를 쓴다 |
 
 ### 4-3. 위치 — 저장하지 않고 요청 시점에 1회

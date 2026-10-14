@@ -7,7 +7,7 @@ import { apiError, networkDelay, url } from "./helpers";
 import type { WithdrawResponse } from "@/lib/api/types";
 import { currentMe } from "./membership";
 import { invalidPolicyVersion } from "./policies";
-import { consentEffective, recordConsent } from "./settings";
+import { recordConsent } from "./settings";
 
 /**
  * 로그인 · 동의. 정본은 docs/api/auth-kakao-v1.md §3, 프론트 쪽은 docs/web/kakao-login-v1.md.
@@ -19,12 +19,36 @@ import { consentEffective, recordConsent } from "./settings";
 
 const EXPIRES_IN = 43_200; // 12시간
 
+/**
+ * 탈퇴가 끝났는가. 🚨 끝나면 `/me` 와 다시 보낸 탈퇴가 `401 unauthenticated` 다 — 서버는 커밋하면서
+ * 그 보호자의 세션을 전부 지운다 (PR #384). 목이 계속 200 을 주면 "응답만 잃은 탈퇴" 를 화면이
+ * 어떻게 끝내는지 볼 수 없다 (#389). 다음 로그인(교환 · 가입)에서 풀린다 — 새 계정이다.
+ */
+let withdrawn = false;
+/** `withdraw_unreached` 에서 이미 한 번 끊어 봤는가. 🚨 한 번만 끊는다 — 다시 누르면 닿아야 한다. */
+let unreachedOnce = false;
+/** `withdraw_unconfirmed` 에서 탈퇴 뒤의 첫 `/me` 를 끊어 봤는가. 🚨 한 번만 끊는다. */
+let probeCutOnce = false;
+
+export function resetWithdrawState(): void {
+  withdrawn = false;
+  unreachedOnce = false;
+  probeCutOnce = false;
+}
+
+/** 탈퇴한 뒤에 들고 있던 토큰으로 온 요청. 서버에는 그 세션이 없다. */
+function sessionGone() {
+  return apiError(401, "unauthenticated", "다시 로그인해 주세요");
+}
+
 /** 세션 응답. `/auth/{provider}` 와 `/signup` 이 같은 모양을 돌려준다. */
 function session(
   isNew: boolean,
   nickname: string = me.nickname ?? "",
   consentRequired: string[] = [],
 ) {
+  // 탈퇴한 뒤 다시 로그인하면 새 계정이다 — 서버도 새로 가입시킨다 (PR #384).
+  withdrawn = false;
   return HttpResponse.json({
     token: MOCK_TOKEN,
     expires_in: EXPIRES_IN,
@@ -58,8 +82,7 @@ export const authHandlers = [
   }),
 
   /**
-   * ⚠️ **계약서에도 `docs/api/auth-kakao-v1.md` 에도 없다** (`lib/api/types.ts` 의
-   *    `WithdrawRequest` 주석). 화면을 끝까지 돌려 보려고 목에만 세운 제안이다.
+   * 서버 PR #384 와 같은 모양이다 (`lib/api/types.ts` 의 `WithdrawRequest` 주석).
    *
    * 🚨 목이라고 **아무거나 200 으로 돌려주지 않는다.** 화면의 읽음 표시를 같이 받고 없거나
    *    `false` 면 `400` 이다. 서버도 이 값을 **저장하지 않고 확인용으로만** 쓰고 같은 코드로
@@ -68,10 +91,25 @@ export const authHandlers = [
    */
   http.post(url("/auth/withdraw"), async ({ request }) => {
     await networkDelay();
-    const body = (await request.json()) as { acknowledged_immediate_deletion?: boolean };
+    // 서버 순서와 같다 — 인증이 먼저다. 이미 끝난 탈퇴를 다시 보내면 본문을 보기 전에 401 이다.
+    if (withdrawn) return sessionGone();
+    const body = (await request.json()) as { acknowledged_immediate_deletion?: unknown };
     if (body.acknowledged_immediate_deletion !== true) {
       return apiError(400, "validation_failed", "acknowledged_immediate_deletion 이 필요해요");
     }
+
+    const scenario = currentScenario();
+    // 🚨 서버에 닿기 전에 끊긴다 — 아무것도 안 지웠다. 확인(`/me`)하면 200 이어야 한다.
+    if (scenario === "withdraw_unreached" && !unreachedOnce) {
+      unreachedOnce = true;
+      return HttpResponse.error();
+    }
+    withdrawn = true;
+    // 🚨 커밋한 **뒤에** 응답이 사라진다 (PR #384 "응답을 못 받았을 때"). 다시 누르면 401 이다.
+    if (scenario === "withdraw_lost" || scenario === "withdraw_unconfirmed") {
+      return HttpResponse.error();
+    }
+
     const res: WithdrawResponse = { deleted_at: new Date().toISOString() };
     return HttpResponse.json(res);
   }),
@@ -132,7 +170,7 @@ export const authHandlers = [
     //    선택 동의(`location`)를 가입 화면에서 켤 수 있게 되면서, 여기서 안 쌓으면
     //    10 설정이 "켰는데 꺼져 있다" 로 보인다 — 화면이 아니라 목이 거짓말하는 경우다.
     for (const consent of body.consents ?? []) {
-      recordConsent(consent.scope, "granted", consent.policy_version ?? "unknown");
+      recordConsent(null, consent.scope, "granted", consent.policy_version ?? "unknown");
     }
     return session(true, body.nickname);
   }),
@@ -142,48 +180,14 @@ export const authHandlers = [
   //    (`handlers/membership.ts` — 그러지 않으면 00-1·초대 화면을 열어 볼 수 없다).
   http.get(url("/me"), async () => {
     await networkDelay();
+    if (withdrawn) {
+      // 🚨 확인까지 끊긴다 — 화면은 모르는 채로 "다시 눌러 주세요" 를 세우고, 다시 누른 탈퇴가 401 이다.
+      if (currentScenario() === "withdraw_unconfirmed" && !probeCutOnce) {
+        probeCutOnce = true;
+        return HttpResponse.error();
+      }
+      return sessionGone();
+    }
     return HttpResponse.json(currentMe());
-  }),
-
-  // append-only. 철회도 withdrawn 행을 추가하는 것이지 지우는 게 아니다.
-  //
-  // 🚨 **가입 흐름은 이 경로를 쓰지 않는다.** 계정 2건은 `/signup` 바디로, 아이 2건은
-  //    `POST /children` 바디로 간다 (#96) — 동의를 아이 단위로 기록하면 `child_id` 없이
-  //    저장할 수 없고, 그 id 는 아이를 만들어야 생기기 때문이다. 여기로 오는 것은
-  //    10 설정에서 켜고 끄는 경우뿐이고, 그때는 `child_id` 가 있다.
-  http.post(url("/consents"), async ({ request }) => {
-    await networkDelay();
-    const body = (await request.json()) as {
-      scope: string;
-      action: string;
-      policy_version?: string;
-    };
-    if (!body.policy_version) {
-      return apiError(400, "validation_failed", "policy_version 이 필요해요");
-    }
-    // 🚨 가입·아이 등록과 **같은 검사**다. 설정에서 켤 때만 낡은 버전을 받아 주면,
-    //    같은 동의가 어디서 켜졌는지에 따라 다른 글에 묶인다.
-    const staleVersion = invalidPolicyVersion([
-      { scope: body.scope, policy_version: body.policy_version },
-    ]);
-    if (staleVersion) {
-      return apiError(
-        400,
-        "policy_version_invalid",
-        "동의 화면을 다시 불러와 주세요",
-        staleVersion,
-      );
-    }
-    // 🚨 effective 를 여기서 손으로 만들지 않는다. 10 설정의 `GET /consents` 와 같은 표를
-    //    써야 "설정에서 껐는데 다시 켜져 있다" 가 안 생긴다 (handlers/settings.ts).
-    const action = body.action === "withdrawn" ? "withdrawn" : "granted";
-    const entry = recordConsent(body.scope, action, body.policy_version);
-    return HttpResponse.json(
-      {
-        consent: { id: `cs_${Date.now()}`, ...entry },
-        effective: consentEffective(),
-      },
-      { status: 201 },
-    );
   }),
 ];

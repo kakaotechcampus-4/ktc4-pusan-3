@@ -16,6 +16,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
@@ -83,7 +84,8 @@ class DomainOutcome(Protocol):
     def suggestions(self) -> tuple[SuggestionDraft, ...]: ...
 
 
-DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
+# client 키워드 인자는 domain_clients 에 그 agent 몫이 있을 때만 넘어간다(_run_domain.run_one)
+DomainRunner = Callable[..., Awaitable[DomainOutcome]]
 
 # 기록 단계를 확정하는 함수. 러너가 run마다 만들어 넘기고, pipeline은 Memory 다음에 한 번 부른다.
 # 세션과 commit 구현은 러너(백엔드). pipeline은 기록 단계가 끝난 시점만 알린다.
@@ -95,8 +97,9 @@ DomainRunner = Callable[[DomainTask, Any], Awaitable[DomainOutcome]]
 #   보내면 기존 결과를 확인한다(멘토 #196 답변). 모양은 러너 DB 세션 작업 전에 정한다.
 Commit = Callable[[], Awaitable[None]]
 
-# child_id 를 받아 백그라운드로 Curator 를 띄우는 콜백. 구현은 entrypoint 가 결정한다.
-CuratorTrigger = Callable[[UUID], None]
+# child_id 와 기준일을 받아 백그라운드로 Curator 를 띄우는 콜백. 러너가 만들어 넘긴다.
+# 기준일은 memory_context.today 다 — 러너가 서비스 시간대를 따로 알지 않아도 된다
+CuratorTrigger = Callable[[UUID, date], None]
 
 
 class DomainContext(Protocol):
@@ -361,9 +364,10 @@ async def handle_input(
     run_id: str,
     supervisor_client: LLMClient | None = None,
     memory_client: LLMClient | None = None,
+    domain_clients: Mapping[str, LLMClient] | None = None,
     emit: Emit | None = None,
     continuation: PendingMemoryContext | None = None,
-    commit: Commit | None = None,
+    commit: Commit,
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
@@ -372,9 +376,11 @@ async def handle_input(
     continuation 이 있으면 raw_text 는 이전 run 의 질문에 대한 답이다 (_handle_continuation).
     contexts는 도메인 Agent 이름 → 그 Agent 의 context.
     구현된 Agent 몫은 전부 있어야 하고, 포트는 호출 전에 만들어 넘긴다.
-    commit은 Memory가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
-    TODO: 러너가 DB 세션을 붙이면 기본값 None을 없앤다. 지금은 run 마다 InMemoryStore라
-      확정할 것이 없어 러너가 넘기지 않는다.
+    domain_clients는 도메인 Agent 이름 → 그 Agent 가 쓸 LLMClient. 없는 Agent 는 각자의
+    기본값(role 별 설정)을 쓴다 — 실제 서비스에서는 러너가 role 당 하나씩 만들어 넘긴다.
+    commit 은 Memory 가 끝난 직후 한 번 부른다. 기록 단계 세션을 확정하는 러너의 함수다.
+    필수다 — DbMemoryStore 를 넘기고 commit 을 빼먹으면 러너가 세션을 닫을 때 기록이 조용히
+    사라진다. InMemoryStore 로 도는 테스트 · eval 은 아무것도 하지 않는 commit 을 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     """
     started = time.perf_counter()
@@ -433,11 +439,8 @@ async def handle_input(
             # 기록 단계를 먼저 확정한다. 저장 안내 · 되묻기 맥락은 확정된 것만 나간다
             committed = await _commit_record(memory, commit)
             memory_ms = _ms_since(record_started)  # 기록 단계 = Memory + commit
-            if committed and curator_trigger is not None:
-                try:
-                    curator_trigger(memory_context.child_id)
-                except Exception as exc:
-                    logger.error("curator trigger 실패 error=%s", type(exc).__name__)
+            if committed:
+                _trigger_curator(curator_trigger, memory_context)
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
@@ -507,7 +510,11 @@ async def handle_input(
                 send(_result(outcome))  # 화면용 — readout · 되묻기 (#227)
 
         ran = await _run_domain(
-            routing.domain_tasks, contexts, timeout=remaining, on_outcome=on_outcome
+            routing.domain_tasks,
+            contexts,
+            timeout=remaining,
+            on_outcome=on_outcome,
+            domain_clients=domain_clients,
         )
         partial = ran.partial
         writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
@@ -608,7 +615,7 @@ async def _handle_continuation(
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
-    commit: Commit | None,
+    commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
@@ -635,11 +642,8 @@ async def _handle_continuation(
     elif memory is not None:
         committed = await _commit_record(memory, commit)
         memory_ms = _ms_since(record_started)
-        if committed and curator_trigger is not None:
-            try:
-                curator_trigger(memory_context.child_id)
-            except Exception as exc:
-                logger.error("curator trigger 실패 error=%s", type(exc).__name__)
+        if committed:
+            _trigger_curator(curator_trigger, memory_context)
         refs = _saved_refs(memory)
         if refs:
             send(Saved(refs))
@@ -679,6 +683,7 @@ async def _run_domain(
     *,
     timeout: float | None,
     on_outcome: Callable[[DomainOutcome], None] | None = None,
+    domain_clients: Mapping[str, LLMClient] | None = None,
 ) -> _DomainRun:
     """쓰는 task 를 먼저 끝내고 읽는 task 를 동시에 돌린다.
 
@@ -686,6 +691,9 @@ async def _run_domain(
     전에 나가고, 읽는 task 끼리는 끝난 순서다. 돌려주는 outcomes 는 그대로 task 순서다.
     하나가 죽거나 늦어도 나머지 결과는 낸다 (NF-06). 쓰는 task 도 같은 timeout 안에서 센다.
     쓰는 쪽이 늦으면 읽는 쪽 몫이 준다.
+
+    domain_clients 에 그 agent 몫이 없으면 client 인자를 아예 넘기지 않는다 — 각 runner 가
+    자기 기본값(role 별 설정)을 쓴다. 모든 runner 가 client 키워드 인자를 받는다고 가정한다.
     """
     # 표에 없는 agent·빠진 context 는 배선 버그다. 부분 실패로 숨기지 않고 시작 전에 올린다
     prepared = [(task, _RUNNERS[task.agent], contexts[task.agent]) for task in tasks]
@@ -697,9 +705,11 @@ async def _run_domain(
 
     async def run_one(index: int) -> DomainOutcome:
         task, runner, context = prepared[index]
+        client = (domain_clients or {}).get(task.agent)
+        kwargs = {} if client is None else {"client": client}
         task_started = time.perf_counter()
         try:
-            return await runner(task, context.for_task())
+            return await runner(task, context.for_task(), **kwargs)
         finally:
             elapsed_ms[index] = _ms_since(task_started)
 
@@ -843,16 +853,25 @@ def _ms_since(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
-async def _commit_record(memory: MemoryAgentResult, commit: Commit | None) -> bool:
+async def _commit_record(memory: MemoryAgentResult, commit: Commit) -> bool:
     """기록 단계를 확정한다. DB 에 실제로 쓴 것이 있으면 True.
 
     일정 초안 · 바뀐 것 없는 성공은 세지 않는다(`MemoryAgentResult.persisted`) — 보호자가
     다시 보내도 두 번 저장될 것이 없다. commit 이 예외를 내면 잡지 않고 러너에 올린다.
     결과를 모르는 commit(연결이 끊긴 경우)을 어떻게 닫을지는 러너 계약에서 정한다.
     """
-    if commit is not None:
-        await commit()
+    await commit()
     return memory.persisted
+
+
+def _trigger_curator(curator_trigger: CuratorTrigger | None, memory_context: AgentContext) -> None:
+    """기록이 commit 된 뒤에만 부른다. 트리거가 터져도 run 은 계속된다 — 관찰은 이미 저장됐다."""
+    if curator_trigger is None:
+        return
+    try:
+        curator_trigger(memory_context.child_id, memory_context.today)
+    except Exception as exc:
+        logger.error("curator trigger 실패 error=%s", type(exc).__name__)
 
 
 def _memory_wrote(memory: MemoryAgentResult | None) -> bool:

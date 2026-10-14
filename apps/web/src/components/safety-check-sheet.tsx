@@ -10,6 +10,7 @@ import { CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import {
   addHealthSafety,
+  isApiError,
   newIdempotencyKey,
   qk,
   type CreateHealthSafetyRequest,
@@ -132,7 +133,14 @@ export function SafetyCheckSheet({
       setSaveState((prev) => ({ ...prev, [item]: "saved" }));
       return queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) });
     },
-    onError: (_error, item) => setSaveState((prev) => ({ ...prev, [item]: "failed" })),
+    onError: (error, item) => {
+      // 🚨 **409 `already_exists` 는 실패가 아니다** (#369). 그 재료가 이미 알레르기 기록에 있다는
+      //    뜻이라(다른 보호자가 먼저 등록했거나, 앞서 등록한 응답만 못 받았다) 다음 제안에서도
+      //    걸러진다. 실패로 두면 "다시 시도" 가 서는데, 다시 눌러도 같은 409 다.
+      const saved = isApiError(error, "already_exists");
+      setSaveState((prev) => ({ ...prev, [item]: saved ? "saved" : "failed" }));
+      if (saved) void queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) });
+    },
   });
 
   function answer(item: string, value: SafetyAnswer) {

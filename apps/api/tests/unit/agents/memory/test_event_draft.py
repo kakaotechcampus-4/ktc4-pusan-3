@@ -723,6 +723,19 @@ async def test_수정_뒤_체크해도_준비물이_바뀐_것으로_잡히지_�
     assert draft.changed == ("starts_at",)  # items 는 붙지 않는다
 
 
+async def test_이름도_챙김도_없으면_아무것도_쓰지_않는다(context: AgentContext) -> None:
+    event_id = await _seed_event(context, "체육복")
+
+    result = await execute_tool("update_event_item", {"item_id": "event_item-1"}, context)
+
+    assert result.success is True, result.error
+    assert result.data["is_prepared"] is False
+    stored = await context.store.get_event_item(item_id="event_item-1")
+    assert stored is not None and stored.is_prepared is False and stored.prepared_at is None
+    # _seed_event 는 store 에만 넣고 초안을 만들지 않는다
+    assert context.drafts.get(event_id) is None
+
+
 async def test_이름과_챙김을_같이_주면_둘_다_반영된다(context: AgentContext) -> None:
     # "체육복 이름 고치고 챙겼어": 한 호출에 둘이 같이 온다. 이름은 초안, 챙김은 바로 쓰기
     event_id = await _seed_event(context, "체육복")

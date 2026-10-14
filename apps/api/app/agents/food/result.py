@@ -10,8 +10,9 @@ from app.agents.common.tool_runtime import ErrorCode, ToolResult
 from app.agents.common.tool_runtime import fail as _fail
 from app.agents.common.tool_runtime import ok as _ok
 
-# query = 조회, propose = 식단 후보 제출, report = 영양소 분석 보고
-Operation = Literal["query", "propose", "report"]
+# query = 조회, propose = 식단 후보 제출, report = 영양소 분석 보고,
+# update · delete = 급식 행 갱신 · 삭제(Food 가 보호자 말을 반영해 쓰는 유일한 자리)
+Operation = Literal["query", "propose", "report", "update", "delete"]
 
 __all__ = ["ErrorCode", "Operation", "ToolResult", "fail", "ok"]
 

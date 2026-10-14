@@ -16,6 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
+from app.domains.policy.catalog import SCOPE_CATALOG
+from app.domains.policy.models import PolicyVersion
 
 ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
     ConsentScope.SERVICE_TERMS,
@@ -28,27 +30,32 @@ ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
 요구하고, 가입 시점에는 아이가 없다. 모델의 _ACCOUNT_SCOPE_SQL 과 같은 분류를 쓴다.
 """
 
-REQUIRED_ACCOUNT_SCOPES: tuple[ConsentScope, ...] = (
-    ConsentScope.SERVICE_TERMS,
-    ConsentScope.PRIVACY_ACCOUNT,
-)
-"""계정 단위 **필수** 동의 (§6-2 ② requireAccountConsent). 빠지면 가입을 막는다.
-
-🚨 ACCOUNT_SCOPES 와 같은 목록이 아니다. location 은 계정 동의지만 선택이다 — 필수로
-   받으면 선택이어야 할 동의를 강제하는 것이 된다 (#172). 두 목록을 하나로 합치면
-   위치에 동의하지 않은 보호자가 가입도, 로그인 뒤 사용도 막힌다.
-"""
-
-
-REQUIRED_CHILD_SCOPES: tuple[ConsentScope, ...] = (
+CHILD_SCOPES: tuple[ConsentScope, ...] = (
     ConsentScope.CHILD_BASIC,
     ConsentScope.CHILD_HEALTH,
 )
-"""아이 단위 **필수** 동의. 아이를 등록할 때 둘 다 받는다 (#92).
+"""아이 단위 동의 전부 — 동의 대상이 아이다.
 
-건강정보 동의도 필수다 — 자유 문장 입력에 건강 내용이 섞여 들어와, 선택으로 풀면 동의 없이
-민감정보를 저장 · 외부 전송하게 된다 (개인정보보호법 제23조, #92 결정).
+아이 쪽에 선택 동의가 생기면 여기에 더한다. 필수인지는 SCOPE_CATALOG 가 정한다.
+quality_improve 는 어디에도 없다 — 쓰지 않는 값이다 (consent/models.py).
 """
+
+# 🚨 "필수" 는 SCOPE_CATALOG(domains/policy/catalog.py) 한 곳에서만 정한다. 화면은
+#    GET /policies 로 그 값을 받아 "필수" 표시와 철회 버튼을 그리고, 서버는 아래 두 목록으로
+#    가입 · 아이 등록 · 철회를 막는다. 두 곳에 따로 적으면 화면은 철회 버튼을 그리는데 서버는
+#    400 을 주는 식으로 갈라진다 (test_consents.py "화면이 필수로 그리는 동의만").
+REQUIRED_ACCOUNT_SCOPES: tuple[ConsentScope, ...] = tuple(
+    scope for scope in ACCOUNT_SCOPES if SCOPE_CATALOG[scope].required
+)
+"""계정 단위 **필수** 동의 (§6-2 ② requireAccountConsent). 빠지면 가입을 막는다.
+
+ACCOUNT_SCOPES 와 같은 목록이 아니다 — location 은 계정 동의지만 선택이다 (#172).
+"""
+
+REQUIRED_CHILD_SCOPES: tuple[ConsentScope, ...] = tuple(
+    scope for scope in CHILD_SCOPES if SCOPE_CATALOG[scope].required
+)
+"""아이 단위 **필수** 동의. 아이를 등록할 때 받고, 설정에서 끌 수 없다 (#92)."""
 
 
 async def latest_action(
@@ -70,6 +77,19 @@ async def latest_action(
         .limit(1)
     )
     return await session.scalar(stmt)
+
+
+async def child_health_granted(session: AsyncSession, *, child_id: uuid.UUID) -> bool:
+    """이 아이의 `child_health` 동의가 지금 granted 인가.
+
+    입력 한 번에 한 번 읽어 Agent 에 값으로 넘긴다.
+
+    마지막 action 이 granted 이면 True 이고, withdrawn 이거나 한 번도 동의한 적이 없으면 False 다.
+    🚨 조회에 실패하면 False 로 바꾸지 않고 예외를 그대로 올린다. 실패를 "동의 안 함" 으로 읽으면
+       Agent 가 `health_safety` 를 읽지 않고 알레르기 필터 없이 추천을 연다 (#372).
+    """
+    action = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child_id)
+    return action is ConsentAction.GRANTED
 
 
 async def missing_account_scopes(
@@ -116,18 +136,26 @@ async def record_consent(
 ) -> Consent | None:
     """동의·철회 1건을 남긴다. 저장과 철회가 같은 경로이고 action 만 다르다.
 
-    🚨 멱등 — 같은 대상+scope 의 마지막 action 이 이미 요청과 같으면 행을 넣지 않고
+    🚨 멱등 — 같은 대상+scope 의 마지막 행이 이미 요청과 같으면 행을 넣지 않고
        None 을 돌려준다. append-only 라 재시도가 그대로 중복 이력이 되는데, 그러면
        "몇 번 동의했는가" 가 네트워크 재시도 횟수를 세게 된다 (노션 Backend §7).
        상태가 실제로 바뀌는 요청만 이력에 남는다.
+    🚨 "같다" 의 기준 — 철회는 action 만 본다. 동의는 **약관 버전까지** 본다. 이미 동의한
+       보호자가 새 버전에 다시 동의한 것은 새 글에 대한 새 증빙이라 남겨야 한다 (#181 리뷰).
+       action 만 보면 새 버전 동의가 기록 없이 성공처럼 끝난다.
 
     actor_ref 는 actor_parent_id 로 여기서 채운다 — 호출자가 따로 넘기지 못한다.
     """
+    latest = await session.scalar(
+        select(Consent)
+        .where(Consent.scope == scope, _target_filter(subject_parent_id, child_id))
+        .order_by(Consent.acted_at.desc(), Consent.id.desc())
+        .limit(1)
+    )
     if (
-        await latest_action(
-            session, scope=scope, subject_parent_id=subject_parent_id, child_id=child_id
-        )
-        is action
+        latest is not None
+        and latest.action is action
+        and (action is ConsentAction.WITHDRAWN or latest.policy_version_id == policy_version_id)
     ):
         return None
 
@@ -144,6 +172,46 @@ async def record_consent(
     session.add(consent)
     await session.flush()
     return consent
+
+
+async def latest_consent(
+    session: AsyncSession,
+    *,
+    scope: ConsentScope,
+    subject_parent_id: uuid.UUID | None = None,
+    child_id: uuid.UUID | None = None,
+) -> tuple[Consent, str] | None:
+    """대상+scope 의 마지막 행과 그때의 약관 버전 이름. latest_action 과 같은 순서로 고른다."""
+    row = (
+        await session.execute(
+            select(Consent, PolicyVersion.version)
+            .join(PolicyVersion, PolicyVersion.id == Consent.policy_version_id)
+            .where(Consent.scope == scope, _target_filter(subject_parent_id, child_id))
+            .order_by(Consent.acted_at.desc(), Consent.id.desc())
+            .limit(1)
+        )
+    ).first()
+    return None if row is None else (row[0], row[1])
+
+
+async def list_consent_history(
+    session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID | None = None
+) -> list[tuple[Consent, str]]:
+    """이 보호자의 계정 동의 이력과, child_id 를 주면 그 아이의 동의 이력 — 최신순.
+
+    아이 동의는 누가 눌렀는지와 상관없이 그 아이의 기록이다 (missing_child_scopes 와 같은 기준).
+    다른 보호자의 계정 동의는 섞지 않는다. 증빙이라 지우는 길은 없다.
+    """
+    target = Consent.subject_parent_id == parent_id
+    if child_id is not None:
+        target = target | (Consent.child_id == child_id)
+    rows = await session.execute(
+        select(Consent, PolicyVersion.version)
+        .join(PolicyVersion, PolicyVersion.id == Consent.policy_version_id)
+        .where(target, Consent.scope != ConsentScope.QUALITY_IMPROVE)
+        .order_by(Consent.acted_at.desc(), Consent.id.desc())
+    )
+    return [(consent, version) for consent, version in rows.all()]
 
 
 async def grant_account_scope(

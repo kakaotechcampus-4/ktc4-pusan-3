@@ -44,6 +44,16 @@ export interface RequestOptions {
   idempotencyKey?: IdempotencyKey;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  /**
+   * `false` 면 `401 unauthenticated` 를 위의 전역 처리에 넘기지 않고 호출자에게 던지기만 한다.
+   *
+   * 🚨 **탈퇴 화면 말고는 쓰지 않는다** (#389). 탈퇴는 커밋하면서 그 보호자의 세션을 전부
+   *    지운다 — 응답만 잃은 뒤의 401 은 만료가 아니라 **탈퇴가 끝났다**는 뜻이다. 전역 처리에
+   *    넘기면 돌아올 주소로 탈퇴 화면을 기억한 채 `/` 로 튕겨서 "탈퇴했어요" 를 아무도 못 본다.
+   *    다른 화면이 이걸 끄면 만료된 세션이 그 화면에 남는다.
+   *    ⚠️ 살아 있는 세션의 401 이 늘 탈퇴는 아니다 (다른 탭의 로그아웃) — 한계는 그 화면 주석에 있다.
+   */
+  handleUnauthenticated?: boolean;
 }
 
 export function buildUrl(path: string, query?: RequestOptions["query"]): string {
@@ -62,10 +72,19 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, query, idempotencyKey, signal, headers } = options;
+  const {
+    method = "GET",
+    body,
+    query,
+    idempotencyKey,
+    signal,
+    headers,
+    handleUnauthenticated = true,
+  } = options;
 
   // 🚨 경고가 아니라 차단이다. 환경을 가리지 않고, 요청은 나가지 않는다.
-  if (method === "POST" && !idempotencyKey && requiresIdempotencyKey(path)) {
+  //    메서드도 표가 정한다 — 수정 초안 반영(`PATCH`)도 되돌릴 수 없다 (#316).
+  if (!idempotencyKey && requiresIdempotencyKey(method, path)) {
     throw new IdempotencyKeyRequiredError(path);
   }
 
@@ -98,7 +117,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!response.ok) {
     const envelope = payload as Partial<ApiErrorBody> | null;
     const error = envelope?.error;
-    if (response.status === 401 && error?.code === "unauthenticated") onUnauthenticated?.();
+    if (response.status === 401 && error?.code === "unauthenticated" && handleUnauthenticated) {
+      onUnauthenticated?.();
+    }
     throw new ApiError(
       response.status,
       error?.code ?? "unknown",

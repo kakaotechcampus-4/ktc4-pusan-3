@@ -18,7 +18,8 @@ export const API_ERROR_CODES = [
   "owner_required", // 409
   "already_sent", // 409 reminder 발송 완료
   "already_confirmed", // 409 승인 게이트 중복
-  "already_exists", // 409 health_safety UNIQUE(child_id, type, label) 재등록 — 계약서에 코드가 없어 제안
+  "already_exists", // 409 health_safety 등록 — active 끼리 (아이, 종류, 앞뒤 공백 뗀 이름)이 겹침 (#369). 🚨 실패가 아니라 "이미 기록에 있다" 다
+  "already_corrected", // 409 `POST /corrections` 가 active 가 아닌 기록을 받음 (#277) — 값이 틀린 400 과 다르다
   "invite_used", // 409
   // ── 초대. 이름은 프론트 제안 그대로 확정됐다 (#198 서버 구현 · PR #214 · `docs/api/invite-v1.md` §5).
   "owner_only", // 403 연결됐지만 owner 가 아닌 보호자가 코드 발행 — `child_access_denied`(연결 없음)와 다르다
@@ -41,7 +42,7 @@ export const API_ERROR_CODES = [
   //    확인받는다. 대기표(`consent_code`)는 살아 있어서 로그인부터 다시 하지 않는다
   //    (`docs/api/auth-kakao-v1.md` §3-5).
   "policy_version_invalid",
-  "validation_failed", // 422
+  "validation_failed", // 400 바디 · 422 경로 값 (서버 `app/api/errors.py` · 명세 §8-1)
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
 ] as const;
 

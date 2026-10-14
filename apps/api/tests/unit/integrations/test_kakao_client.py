@@ -20,6 +20,8 @@ from app.integrations.kakao.client import (
     LOGOUT_URL,
     TOKEN_INFO_URL,
     TOKEN_URL,
+    UNLINK_URL,
+    KakaoAdmin,
     KakaoApiError,
     KakaoClient,
     build_authorize_url,
@@ -253,3 +255,26 @@ async def test_revoke_failure_log_says_which_call_and_why(caplog):
     assert "logout" in caplog.text
     assert "-401" in caplog.text
     assert "kakao-access-token" not in caplog.text
+
+
+async def test_unlink_sends_admin_key_and_target_user():
+    """탈퇴의 연결 끊기 (#379) — 토큰이 없으니 어드민 키로 대상 회원을 지정한다 (§7-4)."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"id": 1234567890})
+
+    admin = KakaoAdmin(
+        admin_key="test-admin-key",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    await admin.unlink("1234567890")
+
+    [request] = seen
+    assert (request.method, str(request.url)) == ("POST", UNLINK_URL)
+    assert request.headers["Authorization"] == "KakaoAK test-admin-key"
+    assert parse_qs(request.content.decode()) == {
+        "target_id_type": ["user_id"],
+        "target_id": ["1234567890"],
+    }

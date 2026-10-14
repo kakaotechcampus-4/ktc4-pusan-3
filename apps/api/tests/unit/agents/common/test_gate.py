@@ -4,12 +4,15 @@ F-4 — 거르는 것은 `state='active'` 뿐이다. 막는 것은 조회 실패
 `unknown` 은 확인 안내만 붙이고, 0행(건강정보 동의 안 함)은 일반 식단으로 간다.
 """
 
+import asyncio
+from dataclasses import dataclass
 from datetime import date
 
 import pytest
 
-from app.agents.common.gate import DataReady, Gate
-from app.rules.age import life_stage
+from app.agents.common.age import life_stage
+from app.agents.common.gate import DataReady, Gate, SafetyBasis, read_safety_basis
+from app.agents.common.ports import SafetyLookupError
 
 STAGE = life_stage(date(2022, 9, 22), date(2026, 9, 22))  # 48개월
 
@@ -89,3 +92,80 @@ class TestGateCarriesAge:
         """age_months 를 따로 넘기지 않는다."""
         assert gate().stage.months == 48
         assert gate().stage.stage == "preschool"
+
+
+# ── read_safety_basis (#319 2부) ─────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _Row:
+    kind: str
+    label: str
+    status: str
+
+
+class _Reader:
+    def __init__(self, rows=(), *, error: BaseException | None = None):
+        self.rows = list(rows)
+        self.error = error
+        self.calls = 0
+
+    async def __call__(self):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.rows
+
+
+async def test_동의가_없으면_읽지_않고_빈_튜플이다():
+    reader = _Reader([_Row("allergy", "밀", "active")])
+    basis = await read_safety_basis(reader, consent=False)
+    assert reader.calls == 0
+    assert basis == SafetyBasis(entries=())
+    assert basis.ok is True  # 실패가 아니라 읽을 것이 없는 상태다
+
+
+async def test_읽은_행은_거르지_않고_그대로_담는다():
+    """kind · status 를 고르는 것은 각 Agent 의 SafetyReader 다 — 여기서 거르면 Activity 가
+    쓰는 none · retracted 행이 사라진다."""
+    rows = [
+        _Row("allergy", "밀", "active"),
+        _Row("allergy", "땅콩", "none"),
+        _Row("environmental", "고소공포", "retracted"),
+    ]
+    reader = _Reader(rows)
+    basis = await read_safety_basis(reader, consent=True)
+    assert reader.calls == 1
+    assert basis.entries == tuple(rows)
+    assert basis.ok is True
+
+
+async def test_0행은_실패가_아니다():
+    basis = await read_safety_basis(_Reader([]), consent=True)
+    assert basis.entries == ()
+    assert basis.ok is True
+
+
+async def test_조회_실패는_None_이고_ok_가_아니다():
+    """빈 튜플이면 안전 필터가 "거를 것 없음" 으로 읽는다."""
+    basis = await read_safety_basis(_Reader(error=SafetyLookupError("x")), consent=True)
+    assert basis.entries is None
+    assert basis.ok is False
+    assert basis.allergy_states == ()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("버그"), asyncio.CancelledError()])
+async def test_조회_실패가_아닌_예외는_그대로_올린다(error):
+    """버그를 조회 실패로 바꾸지 않고, 20초 제한의 취소를 삼키지 않는다 (Agent_공통규약 §7)."""
+    with pytest.raises(type(error)):
+        await read_safety_basis(_Reader(error=error), consent=True)
+
+
+async def test_allergy_states_는_allergy_행의_status_만_순서대로():
+    rows = [
+        _Row("allergy", "밀", "active"),
+        _Row("environmental", "고소공포", "active"),
+        _Row("allergy", "땅콩", "none"),
+    ]
+    basis = await read_safety_basis(_Reader(rows), consent=True)
+    assert basis.allergy_states == ("active", "none")

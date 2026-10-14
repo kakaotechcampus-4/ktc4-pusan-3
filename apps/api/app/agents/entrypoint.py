@@ -5,20 +5,25 @@ api 레이어는 이 모듈만 import한다. 밖으로는 handle_input 과 그 �
 
 import logging
 from datetime import date, datetime, timedelta
+from functools import cache
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.agents.common.child_values import ChildValues
+from app.agents.curator.embedding.embed_step import TextEmbedder
+from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
-from app.agents.food.store import InMemoryProfile, in_memory_ports
+from app.agents.food.store import InMemoryProfile, unwired_ports
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
-from app.agents.memory_bridge import StoreFoodMemory
+from app.agents.memory_bridge import StoreFoodMemory, StoreOpener
 from app.agents.pipeline import (
     AgentResult,
     Commit,
+    CuratorTrigger,
     DomainRouted,
     Done,
     Emit,
@@ -45,6 +50,7 @@ from app.agents.supervisor.routing import Guidance
 __all__ = [
     "AgentResult",
     "Commit",
+    "CuratorTrigger",
     "DomainRouted",
     "Done",
     "Emit",
@@ -65,8 +71,10 @@ __all__ = [
     "Rerouted",
     "Saved",
     "Step",
+    "StoreOpener",
     "Unavailable",
     "Unwritten",
+    "curator_deps",
     "handle_input",
 ]
 
@@ -79,21 +87,21 @@ KST = ZoneInfo("Asia/Seoul")
 _FALLBACK_BIRTH_OFFSET = timedelta(days=365 * 2)
 
 
-def _build_curator_deps() -> tuple:
-    """Embedder · JevJudge 를 만든다. 키가 없으면 (None, None).
+@cache
+def curator_deps() -> tuple[TextEmbedder | None, IdentityJudge | None]:
+    """러너가 Curator 트리거를 만들 때 쓰는 embedder · judge. 키가 없으면 그 자리가 None.
 
-    한 번 만들면 프로세스가 살아 있는 동안 재사용한다 — HTTP 클라이언트를
-    매 요청마다 만들면 연결 풀이 낭비되고 누수 가능성이 있다.
+    embedder 가 None 이면 러너는 트리거를 넘기지 않는다(Curator 를 띄우지 않는다).
+    judge 만 None 이면 Curator 는 임베딩 · 보류까지만 한다.
+    한 번 만들면 프로세스가 살아 있는 동안 재사용한다 — HTTP 클라이언트를 매 run 만들면
+    연결 풀이 낭비되고 누수 가능성이 있다.
     """
-    if hasattr(_build_curator_deps, "_cached"):
-        return _build_curator_deps._cached  # type: ignore[attr-defined]
-
     from app.agents.common.llm_client import LLMConfigError
     from app.agents.curator.embedding.embedder import Embedder
     from app.agents.curator.embedding.jev import JevJudge
 
-    embedder = None
-    judge = None
+    embedder: TextEmbedder | None = None
+    judge: IdentityJudge | None = None
     try:
         embedder = Embedder()
     except LLMConfigError:
@@ -102,7 +110,6 @@ def _build_curator_deps() -> tuple:
         judge = JevJudge()
     except LLMConfigError:
         logger.debug("CURATOR_JUDGE_* 미설정 — curator judge 비활성")
-    _build_curator_deps._cached = (embedder, judge)  # type: ignore[attr-defined]
     return embedder, judge
 
 
@@ -113,23 +120,37 @@ async def handle_input(
     raw_text: str,
     run_id: str,
     birth_date: date | None = None,
+    child_health_granted: bool | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
-    commit: Commit | None = None,
+    commit: Commit,
+    curator_trigger: CuratorTrigger | None = None,
+    domain_store: StoreOpener | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
     - birth_date를 넘기면 Food Agent가 build_gate에서 그 값으로 식이 단계를 계산한다.
+    - child_health_granted 는 API 가 run 마다 한 번 읽은 `child_health` 동의의 현재 값이다.
+      생일과 같이 값을 감싼 포트(`ChildValues`)로 Food 의 `ConsentReader` 에 들어간다. 읽는 데
+      실패하면 API 가 run 을 시작하지 않으므로 여기에는 실패 값이 없다 — None 은 값을 안 넘긴
+      호출(테스트 · eval)이고 "동의 안 함" 으로 바뀌어 읽히지 않는다.
     - store를 넘기면 그것에 쓴다.
-    - agents는 infra에 직접 닿지 않으므로 DB 어댑터는 api가 만들어 넘긴다.
+    - agents 는 infra 에 직접 닿지 않는다. store · commit · curator_trigger 처럼 DB 에 닿는 것은
+      전부 api(러너)가 만들어 넘긴다.
     - continuation을 넘기면 raw_text는 이전 질문에 대한 보호자의 답이다. api는 reply_to를
       검증·복원한 뒤 이 값만 넘긴다.
-    - commit을 넘기면 Memory가 끝난 직후 한 번 부른다. 기록 단계(Memory 의 쓰기)를
+    - commit 은 Memory 가 끝난 직후 한 번 부른다(필수). 기록 단계(Memory 의 쓰기)를
       확정하는 함수이고, 러너가 run 마다 만든다. 저장 안내는 그 뒤에 나간다. 되묻기 맥락은
       같은 트랜잭션에 넣지 않는다 — commit 뒤 PendingReply 로 나가 러너가 프로세스 메모리에
       둔다(팀 합의). Memory 가 반복 상한에 걸려 기록을 다 끝내지 못하면 commit 을 부르지
       않는다. 러너는 commit 되지 않은 세션을 되돌린다.
+    - curator_trigger 를 넘기면 Memory 가 commit 된 직후 pipeline 이 (child_id, 기준일) 로 한 번
+      부른다. 콜백이 별도 세션에서 Curator 를 백그라운드로 띄운다. 러너가 `curator_deps()` 로
+      만든다. 안 넘기면(테스트 · eval) Curator 는 돌지 않는다.
+    - domain_store 를 넘기면 도메인 Agent 의 기억 포트가 호출마다 그것으로 store 를 새로 연다.
+      러너가 짧은 DB 세션으로 만든다 — run 세션을 도메인 task 들이 같이 타지 않게. 안 넘기면
+      run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -145,16 +166,26 @@ async def handle_input(
         store=store,
     )
 
-    # Food 포트는 아직 DB 에 연결되지 않았다. birth_date 를 InMemoryProfile 에 심어
-    # build_gate 가 LifeStage 를 계산하게 하고, 기억 포트는 같은 run 의 store 를 읽게 한다.
-    # 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
-    # 나머지 포트는 빈 기본값이다.
-    # TODO: 실제 DB 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다.
+    # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
+    # 포트가 build_gate 의 LifeStage 계산과 동의 확인 자리에 들어가고, 기억 포트는 같은 run 의
+    # store 를 읽게 한다. 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
+    # 안전 조회는 아직 연결되지 않았다(UnwiredSafety) — 포트를 안 넘긴 run 이 "알레르기 0행" 으로
+    # 열리면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다. 동의 값이 실제로 들어와도
+    # build_gate 는 동의와 상관없이 안전 조회 실패로 읽어서 Food 는 blocked.safety 로 닫힌다.
+    # TODO: health_safety 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다 (issue4).
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
-    food_ports = in_memory_ports(
-        profile=InMemoryProfile({child_id: resolved_birth_date}),
-        memory=StoreFoodMemory(store),
+    memory_port = (
+        StoreFoodMemory(store) if domain_store is None else StoreFoodMemory(opener=domain_store)
     )
+    if child_health_granted is None:
+        food_ports = unwired_ports(
+            profile=InMemoryProfile({child_id: resolved_birth_date}), memory=memory_port
+        )
+    else:
+        child_values = ChildValues(
+            child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
+        )
+        food_ports = unwired_ports(profile=child_values, consent=child_values, memory=memory_port)
     # 쓰기 포트는 호출마다 바로 commit
     writes = RunWrites()
     food_ports = record_food_writes(food_ports, writes)
@@ -166,17 +197,6 @@ async def handle_input(
         timezone=KST,
         ports=food_ports,
     )
-
-    # Curator — DB 세션을 열어 백그라운드로 돌린다.
-    # embedder 가 None 이면 trigger 를 안 만들어 pipeline 이 건너뛴다.
-    embedder, judge = _build_curator_deps()
-
-    def curator_trigger(cid: UUID) -> None:
-        if embedder is None:
-            return
-        from app.domains.memory.curator.trigger import trigger_curator_background
-
-        trigger_curator_background(cid, now.date(), embedder, judge)
 
     return await _handle_input(
         raw_text,

@@ -21,7 +21,6 @@ created_by / child_id 는 규칙이 채운다.
 
 import logging
 from dataclasses import replace
-from datetime import datetime
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -375,13 +374,22 @@ def _gone_after_check(item_id: str) -> ToolResult:
 async def _check_event_item(
     context: AgentContext, current: EventItemRow, is_prepared: bool | None
 ) -> ToolResult:
-    """챙김 표시는 바로 쓴다. 되돌릴 수 있는 값이라 승인 게이트에 넣지 않는다."""
-    fields: dict[str, Any] = {} if is_prepared is None else {"is_prepared": is_prepared}
-    prepared_at = prepared_at_for(current, is_prepared, context.now)
-    if prepared_at != current.prepared_at:
-        fields["prepared_at"] = prepared_at
+    """챙김 표시는 바로 쓴다. 되돌릴 수 있는 값이라 승인 게이트에 넣지 않는다.
 
-    row = await context.store.update_event_item(item_id=current.item_id, fields=fields)
+    체크 시각은 store 가 정한다 — 백엔드 PATCH 와 같은 규칙 (`MemoryStore.set_event_item_prepared`).
+    """
+    if is_prepared is None:
+        # 이름도 챙김도 없는 호출. 쓸 것이 없어 지금 값을 그대로 돌려준다
+        return ok(
+            "update",
+            EVENT_ITEM,
+            draft=False,
+            item_id=current.item_id,
+            is_prepared=current.is_prepared,
+        )
+    row = await context.store.set_event_item_prepared(
+        item_id=current.item_id, is_prepared=is_prepared
+    )
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
     _sync_checked(context, row)
@@ -465,19 +473,6 @@ def _with_items(parent: EventDraft, event_id: str, items: tuple[DraftItem, ...])
         items=items,
         changed=_merge_changed(parent.changed, ("items",) if items != parent.items else ()),
     )
-
-
-def prepared_at_for(
-    current: EventItemRow, is_prepared: bool | None, now: datetime
-) -> datetime | None:
-    """준비물을 챙긴 시각. 체크하면 now, 해제하면 제거.
-
-    TODO: 백엔드의 PATCH /event-items/{iid}도 같은 규칙을 쓰게 하기
-    app/rules/는 be 파트라 지금은 임시로 여기 두고, API를 만들 때 옮기기
-    """
-    if is_prepared is None or is_prepared == current.is_prepared:
-        return current.prepared_at
-    return now if is_prepared else None
 
 
 async def delete_event_item(context: AgentContext, args: EventItemRef) -> ToolResult:

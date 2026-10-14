@@ -6,7 +6,6 @@
 | --- | --- | --- |
 | id | uuid | PK |
 | nickname | text | nullable. 표시 이름. 보호자 목록·이관 화면·기록 작성자 표시에 필요 |
-| deleted_at | timestamptz | nullable. 계정 탈퇴 요청 시각, N일 후 파기 |
 | created_at | timestamptz | NOT NULL, default now() |
 | updated_at | timestamptz | NOT NULL, default now(), on update now(). nickname 등 수정 시각 추적 |
 
@@ -57,20 +56,29 @@
 | updated_at | timestamptz | NOT NULL, default now(), on update now(). 최근 수정 시각 추적 |
 | deleted_at | timestamptz | nullable. 값이 있으면 전원 접근 차단 |
 | deleted_by | uuid | FK → parent.id, nullable, ON DELETE SET NULL |
-| gender | — | **수집하지 않는다.** 성장 판정 제거(2026-09-22)로 소비처가 사라졌다 |
+| gender | varchar(32) | NOT NULL, default `'undisclosed'`. `male` · `female` · `undisclosed` 셋만(CHECK `child_gender`). **선택 수집**이고 기본값이 "밝히지 않을래요" 다 (루트 CLAUDE.md §2 · 09-23 결정). 화면 표시 전용 — Agent 컨텍스트에 넣지 않는다 (2026-10-10, C 묶음) |
 
-#### child_growth_log (키·몸무게 로그) — 이름·타입 확정 2026-09-22
+#### child_growth_log (키·몸무게 로그) — 타입 확정 2026-09-22 · 칸 이름 2026-10-10
+
+칸 이름은 Agent 포트(`agents/food/store/ports.py` 의 `Measurement`)와 웹 타입(`GrowthLog`)이 이미 쓰는
+`height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (09-22 문서의 `height` · `weight` · `check_date` 에서 바뀜).
+자릿수 · NOT NULL 규칙은 09-22 결정 그대로다.
 
 | 필드 | 타입 | 비고  |
 | --- | --- | --- |
 | id | uuid | PK, `uuidv7()` |
 | child_id | uuid | FK → `child.id`, NOT NULL, ON DELETE CASCADE |
-| height | numeric(4,1) | **cm.** 95.5 같은 값이 들어간다 — int면 성장폭이 계단처럼 나온다 |
-| weight | numeric(4,1) | **kg.** 14.2 |
-| check_date | date | **NOT NULL.** `timestamptz`가 아니다 — 잰 날짜만 의미가 있다 |
+| height_cm | numeric(4,1) | **cm.** 95.5 같은 값이 들어간다 — int면 성장폭이 계단처럼 나온다. NULL 이면 그날 안 잼 |
+| weight_kg | numeric(4,1) | **kg.** 14.2. NULL 이면 그날 안 잼 |
+| measured_on | date | **NOT NULL.** `timestamptz`가 아니다 — 잰 날짜만 의미가 있다 |
+| note | text | nullable |
+| created_by | uuid | FK → `parent.id`, nullable, ON DELETE SET NULL (공동 기록 — 적은 보호자가 탈퇴해도 남는다) |
 | created_at / updated_at | timestamptz | NOT NULL, default now() |
 
+- 키 · 몸무게 둘 다 NULL 인 행과 0 이하 값은 DB 가 막는다 (CHECK `child_growth_log_measured` · `_height_positive` · `_weight_positive`)
+
 - 소유는 Memory. Growth가 성장폭 서술에, Food가 권장 열량 계산에 **읽기만** 한다
+- 보호자는 화면(11-1)에서 잘못 적은 줄을 고치거나 지울 수 있다 (`PATCH` · `DELETE /children/{cid}/growth/{id}`, 10-10). Agent 는 읽기만 한다
 - 측정 출처(보호자 측정 / 검진)는 저장하지 않는다. 그래서 화면에 **측정일을 반드시 함께** 보여준다
 - 백분위·BMI·또래 비교는 **어디서도 하지 않는다**. Growth가 로그 전부를 시간순으로 늘어놓을 뿐이다
 
@@ -193,7 +201,8 @@
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
 - `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
-- 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` · `embedding` 도 그대로 남는다. 되살리는 경로는 없다.
+- 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` 는 남고 `embedding` 은 비운다(`health` 에는 `embedding` 칸이 없다). 그 관찰의 연결 보류(`observation_link_hold`) 행도 지우고, 연결돼 있던 Profile 의 `last_observed_on` · 상태를 다시 계산한다. 되살리는 경로는 없다.
+- 관찰을 고쳐 `subject` · `polarity` 가 바뀌면 `embedding` · `affinity_id` 를 비워 Curator 가 다시 연결하게 하고, 그 칸들이나 `observed_range` · `strong_signals` 가 바뀌면 원래 Profile 을 다시 계산한다(#257, `memory-agent-v1.md` "고친 관찰은 Curator 집계에 다시 들어간다").
 
 ### 1. observation_food (섭취·영양)
 
@@ -538,7 +547,7 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 | 요청 | 어디에 | 올린 Agent |
 | --- | --- | --- |
 | `child.gender` 수집하지 않음 | Child §child | Health (성장 판정 제거로 철회) |
-| `child_growth_log` — `numeric(4,1)` · `check_date date NOT NULL` | Child §child_growth_log | Growth (G-5) |
+| `child_growth_log` — `numeric(4,1)` · `measured_on date NOT NULL` (09-22 의 `check_date`) | Child §child_growth_log | Growth (G-5) |
 | `suggestion.kind` (`general`/`personalized`) | Suggestion §suggestion | Food · Growth |
 | `source_refs` 제거 → `suggestion_evidence` | Suggestion §suggestion_evidence | Food · Growth |
 
