@@ -29,9 +29,9 @@ jobs:
             --timeout-seconds 600 \
             --parameters commands='[
               "cd /home/ubuntu/ktc4-pusan-3",
-              "git fetch origin develop",
-              "git checkout develop",
-              "git reset --hard origin/develop",
+              "git fetch origin ${{ github.ref_name }}",
+              "git checkout ${{ github.ref_name }}",
+              "git reset --hard origin/${{ github.ref_name }}",
               "make api-image",
               "make web-image",
               "make deploy-migrate",
