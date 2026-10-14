@@ -189,7 +189,7 @@ class DomainAgentResult:
 - **코드가 후보에서 지우는 것은 안전뿐이다** — 알레르기(`health_safety`) · 연령 금지식품 · `hazard_term`. 기피는 여기 들어가지 않는다. 안전 필터는 여전히 가중치가 아니라 제거다.
 - **기피를 근거로 썼으면 문장에도 남긴다.** 기피 근거를 인용한 추천은 무엇을 피했는지, 또는 왜 그럼에도 골랐는지를 `reason`에 밝힌다. 인용만 하고 말하지 않으면 보호자에게는 근거 없는 추천과 같다.
 - **Food는 영양이 선호보다 앞선다.** 기피 근거가 있어도 영양 분석이 부족을 가리키면 그 식품군을 뺀 추천을 내지 않는다 — [`Food_Agent_명세.md`](../food/Food_Agent_명세.md) §6.
-- **신선도는 Curator가 맡는다.** 오래된 관심은 Curator가 `strength`를 내리거나 `archived`로 바꾼다. Agent는 그 결과(`state`·`strength`)만 보고 티어를 매기고, 유예일을 다시 세지 않는다 — 값이 두 벌이 되면 한쪽만 갱신된다. NF-08(180일)도 Curator 쪽 규칙이다.
+- **감쇠는 Curator가 맡는다.** 오래된 관심은 Curator가 `strength`를 내리거나 `archived`로 바꾼다. Agent는 그 결과(`state`·`strength`)만 보고 티어를 매기고, 유예일을 다시 세지 않는다 — 값이 두 벌이 되면 한쪽만 갱신된다. 다만 **6개월 넘은 아이 기록만 남은 후보는 `build()`가 일반 추천으로 돌린다**(루트 §2 · NF-08). `archived`는 새 관찰이 그 기억에 연결될 때만 갱신돼서, 몇 달 언급이 없던 관심이 `confirmed`로 남아 단독 근거로 나갈 수 있다. 기준은 `rules/staleness.is_stale`(달력 6개월) 하나이고 기억 카드와 추천 근거의 `is_stale`도 같은 함수다 (#329).
 - 아이 기록이 0행이면 **일반 추천을 낸다**(`kind="general"`). `reason`을 코드 템플릿으로 덮어쓰고, 화면이 "또래 기준"과 함께 `scarcity`(쌓인 기록 건수 + 되물을 질문 1개)를 표시한다. 추천을 빼고 `scarcity`만 내리지 않는다 — 루트 CLAUDE.md §2가 "일반 추천을 낸다"이기 때문이다.
 - **문서 행(`*_doc`)은 개인화 근거가 아니다.** `suggestion_evidence` 에 `source_kind='*_doc'` 으로 같이 쌓되 품질 지표에서는 빼고 센다. 일반 추천을 떠받치는 것이 이 행이다.
 - **Growth 의 `routine_coaching` 은 이 규칙의 예외다.** 근거 0행이면 일반 추천 대신 역질의를 낸다 — 아이와 무관한 생활 조언이 되기 때문이다 ([Growth_Tool_명세.md](../growth/Growth_Tool_명세.md) §propose_routine_plan).
@@ -367,7 +367,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | # | 내용 |
 | --- | --- |
 | C-1 | ✅ 닫힘 — `suggestion`에 **`kind`만** 추가. `task_type`·`content` jsonb는 안 한다. `reference_refs`는 `suggestion_evidence`로 흡수 |
-| C-2 | ✅ 닫힘 — `reason`은 **text 한 칸**. `{why_this, why_now}`는 쓰지 않는다 |
+| C-2 | ✅ 닫힘 — `reason`은 **text 한 칸**. `{why_this, why_now}`는 쓰지 않는다. 한쪽 칸만 채워진 추천은 보호자에게 근거가 부족해 보이고, "최근 7일간 단백질 섭취가 부족해요" 같은 근거는 어느 칸에 넣어도 자연스러워 나누는 기준이 애매하다. 모델 출력도 `reason` 한 칸이다 (#359 · #400 · #329) |
 | C-3 | ✅ 닫힘 — **일반 추천 + `scarcity` 동봉**(§4). 루트 문서가 이긴다 |
 | C-4 | ✅ 닫힘 — data_model.md가 이미 정했다. `confirm`은 **저장하지 않는다**(상태를 바꾸지 않으므로 이력 값에서 제외) |
 | C-5 | ✅ 닫힘 — **그대로 둔다.** 24시간이면 만료되므로 무효화 배치를 두지 않는다 |
