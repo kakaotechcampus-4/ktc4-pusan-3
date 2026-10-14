@@ -100,8 +100,15 @@
 - [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 `sessionStorage` 12시간
 - [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫
 - [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 **제출만 게이트 ㉠**(`/events/{eid}/confirm` 에서 옮겨옴) · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만 · 🔶 `photo-runs/{rid}/commit` 이 게이트인지는 미결
+- [web/screen-rules-v1.md](web/screen-rules-v1.md) — 04 · 11-1 · 11-2 가 시트가 아니라 라우트인 이유(웹뷰 뒤로가기) · `childId` 정본은 URL · 05 채택과 일정 만들기 분리 · 알레르기 확인이 채택보다 먼저 · 07 기록/기억 이름 · 교정 · 필터 · 08 은 게이트가 아님 · 사진 시트 두 단계 · 09 표식은 모양
+- [web/chat-run-v1.md](web/chat-run-v1.md) — 04 는 라우트 · 보내는 순간 넘어감 · 대화는 하루 하나 · `EventSource` 금지 · `partial` · `interrupted` · `guidance` 는 실패 아님 · `unconfirmed` 분리 · 되묻기는 `reply_to` · 키는 말풍선에
+- [web/components-v1.md](web/components-v1.md) — 컴포넌트 목록 · `Screen` 고정 바 · 네비는 가는 곳에만 · `IconButtonLink` · `ButtonLink` · 직접 만든 `Select` · 외부 UI 라이브러리 예외 셋 · 토큰 · 높이 · 서체 두 벌 · 호버 변형
+- [web/auth-consent-v1.md](web/auth-consent-v1.md) — 로그인 시작 지점 하나 · `bind` · 복귀 경로 검증 · 가입 동의와 아이 동의를 나눈 이유 · 관계는 02 · "전체 동의" 금지 · 동의 정본은 `GET /policies` · 토큰은 `sessionStorage`
+- [web/api-client-v1.md](web/api-client-v1.md) — `fetch` 직접 호출 금지와 예외 · 되돌릴 수 없는 5곳은 `operations.ts` 로만 · 키 수명(`rotate` 는 성공 뒤) · 에러 코드별 "다시 시도" 금지 · 게이트에 낙관적 업데이트 금지 · 에러 바운더리 표
+- [web/mock-and-tests-v1.md](web/mock-and-tests-v1.md) — 목 시나리오 표 · 목 규칙(타입 강제 · `withIdempotency` · 핸들러 순서) · Vitest 와 Playwright 가 거는 것 · 테스트 전용 핸들러 금지 · 목 상태 리셋
+- [web/toolchain-deploy-v1.md](web/toolchain-deploy-v1.md) — 스택 버전과 TS 7 을 안 쓰는 이유 · `make web-build` 를 PR 전에 · CI 단계 · API 주소는 빌드 인자 · `.dockerignore` 의 `.env*` · standalone 복사
 
-*아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기.
+*아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기의 **설계 문서**. 이미 만든 화면의 구현 규칙은 위 `screen-rules` · `chat-run` · `auth-consent` 에 있다.
 
 ## 안전 · 개인정보
 
