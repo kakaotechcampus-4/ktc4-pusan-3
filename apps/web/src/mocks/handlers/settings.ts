@@ -194,6 +194,14 @@ function initialParents(): ChildParent[] {
 }
 
 /**
+ * 초대한 사람(= member 시점 목록의 owner). 초대 미리보기(`GET /invites/{code}`)도 이 이름을 쓴다.
+ *
+ * 🚨 **`me.nickname` 을 쓰지 않는다.** `consent` 시나리오에서 초대를 받는 사람도 `me`(지은)라서,
+ *    미리보기가 `me` 를 쓰면 "지은이 지은을 초대했다" 가 되고 설정의 owner 와도 어긋난다.
+ */
+export const INVITER_NICKNAME = "현우";
+
+/**
  * 초대로 들어온 member 가 보는 목록. `consent` 시나리오에서 초대를 수락하면 이쪽이다.
  *
  * 🚨 **보는 사람(`PARENT_ID`)이 member 로 서고 owner 는 다른 사람이다.** owner 시점 목록을
@@ -203,7 +211,7 @@ function initialMemberView(relation: ChildParent["relation"]): ChildParent[] {
   return [
     {
       parent_id: "p2",
-      nickname: "현우",
+      nickname: INVITER_NICKNAME,
       relation: "father",
       role: "owner",
       connected_at: "2026-08-30T11:00:00+09:00",
