@@ -21,11 +21,12 @@ SuggestionKind = Literal["general", "personalized"]
 # 더 채울 길이 없을 때뿐이다 — 안전 필터 뒤 재호출 1회를 했거나, 후보 풀이 처음부터 모자라다.
 MAX_SUGGESTIONS = 3
 
-# 개수 안내. 다 채우지 못했을 때만 추천과 함께 나간다 — 문구는 yaml 에, 고르는 것은 count_notice
+# 개수 안내 · 04 묶음 이유. 문구는 yaml 에, 고르는 것은 각 함수
 _NOTICES = ReadoutCatalog.from_yaml(Path(__file__).with_name("suggestion.readout.yaml"))
 PARTIAL_NOTICE: ReadoutText = _NOTICES.get("suggestion.partial")
 EMPTY_NOTICE: ReadoutText = _NOTICES.get("suggestion.empty")
 CANNOT_RESUME_NOTICE: ReadoutText = _NOTICES.get("suggestion.cannot_resume")
+BUNDLE_PERSONALIZED: ReadoutText = _NOTICES.get("suggestion.bundle.personalized")
 
 
 class SuggestionRejected(ValueError):
@@ -203,6 +204,46 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
 def cannot_resume_notice() -> Readout:
     """05 가 그 Agent 를 이어서 만들 수 없을 때의 안내. 다시 만들지 않는다 (#249 판단 순서 4)."""
     return replace(code_readout(CANNOT_RESUME_NOTICE), code="cannot_resume")
+
+
+def empty_notice(readouts: Sequence[Readout]) -> Readout | None:
+    """결과 readout 중 0개 안내. 문구가 아니라 `code` 로 찾는다 — Agent 마다 0개 문구가 다르다.
+
+    pipeline 의 0개 기록 · 05 의 0개 재생 · 05 의 묶음 안내가 같이 쓴다 (#433 리뷰 ⑩).
+    """
+    return next((readout for readout in readouts if readout.code == "empty"), None)
+
+
+@dataclass(frozen=True)
+class BundleSummary:
+    """04 Agent 블록 머리의 묶음 칸 (#227). 추천이 없으면 둘 다 None."""
+
+    kind: Literal["personalized", "general"] | None
+    reason: str | None
+
+
+def bundle_summary(drafts: Sequence[SuggestionDraft]) -> BundleSummary:
+    """Agent 결과 하나의 추천 묶음을 화면 한 줄로. 모델을 부르지 않는다 (#227).
+
+    - 개인화가 하나라도 있으면 개인화다 — 섞인 묶음의 일반 추천은 05 가 따로 보여 준다. 이유는
+      개인화 추천이 근거로 쓴 아이 기록 수(같은 기록은 한 번)로 말한다. 모델이 쓴 note 를 이어
+      붙이지 않는다 — 그러면 표현 검사를 화면 문장에 한 번 더 해야 한다.
+    - 전부 일반이면 그 Agent 의 일반 추천 문구(`build()` 가 덮어쓴 코드 템플릿)를 쓴다.
+    """
+    if not drafts:
+        return BundleSummary(kind=None, reason=None)
+    personal = [draft for draft in drafts if draft.kind == "personalized"]
+    if not personal:
+        return BundleSummary(kind="general", reason=drafts[0].reason)
+    records = {
+        (item.ref.kind, item.ref.id)
+        for draft in personal
+        for item in draft.citations
+        if item.ref.is_child_record
+    }
+    return BundleSummary(
+        kind="personalized", reason=BUNDLE_PERSONALIZED.template.format(count=len(records))
+    )
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:

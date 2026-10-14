@@ -17,3 +17,9 @@ suggestion.empty:
 suggestion.cannot_resume:
   kind: notice
   template: 이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요.
+
+# 04 Agent 블록의 이유 한 문장 (#227). 개인화 추천 묶음에만 쓴다 — 모델을 거치지 않는다.
+# {count} 는 그 묶음의 개인화 추천이 근거로 쓴 아이 기록 수다(같은 기록은 한 번)
+suggestion.bundle.personalized:
+  kind: reason
+  template: 아이 기록 {count}건을 보고 골랐어요.
