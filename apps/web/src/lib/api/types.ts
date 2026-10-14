@@ -1606,8 +1606,7 @@ export interface InviteAcceptResponse {
 }
 
 /**
- * POST /auth/withdraw — ⚠️ **계약서 v1 에도 `docs/api/auth-kakao-v1.md` 에도 없다.**
- * 그 문서 §1 이 "계정 탈퇴·파기 배치" 를 다루지 않는 것으로 미뤄 뒀다(노션). MSW 목 위에서만 돈다.
+ * POST /auth/withdraw — 서버 PR #384. 정본은 서버 Swagger 다 (계약서 v1 에는 없다).
  *
  * 🚨 **유예가 없다. 누르면 그 자리에서 지워지고 되돌릴 수 없다** (PM 09-29 · #167).
  *    삭제 정책 정본 §9 가 MVP 를 복구(soft delete · restore UI) 없는 hard delete 로 정해 뒀다 —
@@ -1615,18 +1614,19 @@ export interface InviteAcceptResponse {
  *    설계가 크게 늘어난다. 🚨 **화면에 "며칠 안에 돌아올 수 있다" 를 다시 만들지 말 것**:
  *    그 문구를 세우는 순간 서버가 지운 뒤에 부모가 돌아올 길을 찾는다.
  *
- * 서버가 이미 정해 둔 것(같은 문서 §4-2 · §5-3)은 **탈퇴 시 그 보호자의 세션을 전부
- * 무효화한다**는 것이다. ⚠️ 같은 문서의 `parent.deleted_at`(soft delete)은 **유예를 전제한
- * 서술**이라 지금 정책과 다르다 — 정본 §9 는 복구 없는 hard delete 다. 서버 문서 정리는
- * 백엔드 쪽에서 한다 (#182 리뷰).
+ * 🚨 **탈퇴하면 그 보호자의 세션이 전부 지워진다** (`docs/api/auth-kakao-v1.md` §5-3).
+ *    그래서 응답만 잃은 뒤의 요청은 `401 unauthenticated` 다 — 동시에 들어온 나중 요청도 같다.
+ *    화면은 이 401 을 만료가 아니라 **탈퇴가 끝난 것**으로 받는다 (탈퇴 화면의 `requestWithdraw`).
+ * 🚨 `Idempotency-Key` 를 받지 않는다. 되돌릴 수 없는 5곳 표(`idempotentPath`)에 더하지 않는다 —
+ *    다시 보낸 요청은 세션이 없어서 위의 401 로 결말이 난다.
  */
 export interface WithdrawRequest {
   /**
    * 화면이 "지금 지워지고 되돌릴 수 없다" 를 보여줬다는 표시.
    *
-   * 🚨 **서버는 이 값을 저장하지 않고 확인용으로만 쓴다** (#182 리뷰). 없거나 `false` 면
-   *    `400 validation_failed` — 화면 버그로 잘못 나간 탈퇴 요청을 서버가 한 번 더 막는
-   *    장치다. 값이 `true` 하나뿐인 것은 그래서다.
+   * 🚨 **서버는 이 값을 저장하지 않고 확인용으로만 쓴다** (#182 리뷰). JSON `true` 가 아니면
+   *    (`false` · `"true"` · `1` 포함) `400 validation_failed` — 화면 버그로 잘못 나간 탈퇴
+   *    요청을 서버가 한 번 더 막는 장치다. 값이 `true` 하나뿐인 것은 그래서다.
    * 🚨 **확정 버튼을 막는 것은 이 타입이 아니다** — 그건 읽음 표시(`disabled={!acknowledged}`)
    *    가 한다. 타입이 막는 것은 요청에 **다른 값을 싣는 코드**다.
    */

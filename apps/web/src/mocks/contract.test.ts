@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { API_BASE_URL } from "@/lib/env";
-import { ApiError, isApiError } from "@/lib/api/errors";
+import { ApiError, isApiError, NetworkError } from "@/lib/api/errors";
 import {
   idempotentMethod,
   idempotentPath,
@@ -1717,10 +1717,6 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
    *    계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서, 없다고 막히면 화면이
    *    초대를 아예 못 한다 — 이 테스트가 그 회귀를 잡는다.
    */
-  /**
-   * ⚠️ `POST /auth/withdraw` 는 **계약서에 없다** (`lib/api/types.ts`). 화면을 끝까지 돌려
-   *    보려고 목에만 세운 제안이고, 서버가 붙으면 이 표를 실서버에도 건다.
-   */
   it("POST /auth/logout 이 교환 핸들러에 안 먹힌다 — 204 다", async () => {
     // 🚨 `:provider` 가 `logout` 까지 삼켜서 실제로 500 이 나고 있었다. 화면이 로컬 세션을
     //    비우고 나가 버려서 아무도 눈치채지 못한 종류의 회귀라, 여기서 못을 박는다.
@@ -1728,6 +1724,10 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(res.status).toBe(204);
   });
 
+  /**
+   * `POST /auth/withdraw` 는 서버 PR #384 와 같은 모양이다 (`lib/api/types.ts`). 서버가 붙으면
+   * 아래 탈퇴 표를 실서버에도 건다 (apps/web/CLAUDE.md §8).
+   */
   it("탈퇴는 화면의 읽음 표시를 같이 받는다 — 없으면 막힌다", async () => {
     const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
     expect(isApiError(caught, "validation_failed")).toBe(true);
@@ -1738,6 +1738,85 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
       acknowledged_immediate_deletion: true,
     });
     expect(new Date(res.deleted_at).getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("탈퇴 확인 값은 JSON true 만 받는다 — 문자열과 숫자도 막힌다", async () => {
+    // 🚨 서버는 `StrictBool` 이다 (PR #384). 목이 느슨하면 화면이 엉뚱한 값을 실어도 개발 중에 통과한다.
+    for (const value of [false, "true", 1]) {
+      const caught = await api
+        .post("/auth/withdraw", { acknowledged_immediate_deletion: value })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed")).toBe(true);
+    }
+    // 막힌 요청은 아무것도 지우지 않는다 — 그 뒤에도 세션이 살아 있다.
+    await expect(api.get<Me>("/me")).resolves.toBeDefined();
+  });
+
+  /**
+   * 🚨 **탈퇴하면 세션이 전부 지워진다** (PR #384). 화면은 응답을 잃었을 때 `/me` 로 확인하고,
+   *    다시 누른 탈퇴의 401 을 "끝났다" 로 받는다 (#389) — 목이 계속 200 을 주면 그 길을 못 본다.
+   */
+  it("탈퇴한 뒤에는 /me 와 다시 보낸 탈퇴가 401 이고, 다시 로그인하면 풀린다", async () => {
+    await api.post<WithdrawResponse>("/auth/withdraw", { acknowledged_immediate_deletion: true });
+
+    const me = await api.get("/me").catch((e) => e);
+    expect(isApiError(me, "unauthenticated")).toBe(true);
+    const again = await api
+      .post("/auth/withdraw", { acknowledged_immediate_deletion: true })
+      .catch((e) => e);
+    expect(isApiError(again, "unauthenticated")).toBe(true);
+
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await expect(api.get<Me>("/me")).resolves.toBeDefined();
+  });
+
+  it("withdraw_lost — 지운 뒤에 응답이 사라진다 (/me 는 401)", async () => {
+    setScenario("withdraw_lost");
+    try {
+      const caught = await api
+        .post("/auth/withdraw", { acknowledged_immediate_deletion: true })
+        .catch((e) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+
+      const me = await api.get("/me").catch((e) => e);
+      expect(isApiError(me, "unauthenticated")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("withdraw_unconfirmed — 지운 뒤 응답도 첫 확인도 끊기고, 다시 보낸 탈퇴는 401 이다", async () => {
+    setScenario("withdraw_unconfirmed");
+    try {
+      const withdrawBody = { acknowledged_immediate_deletion: true };
+      expect(await api.post("/auth/withdraw", withdrawBody).catch((e) => e)).toBeInstanceOf(
+        NetworkError,
+      );
+      expect(await api.get("/me").catch((e) => e)).toBeInstanceOf(NetworkError);
+
+      const again = await api.post("/auth/withdraw", withdrawBody).catch((e) => e);
+      expect(isApiError(again, "unauthenticated")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("withdraw_unreached — 한 번만 서버에 닿기 전에 끊긴다 (/me 는 200, 다시 보내면 닿는다)", async () => {
+    setScenario("withdraw_unreached");
+    try {
+      const caught = await api
+        .post("/auth/withdraw", { acknowledged_immediate_deletion: true })
+        .catch((e) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+      await expect(api.get<Me>("/me")).resolves.toBeDefined();
+
+      const res = await api.post<WithdrawResponse>("/auth/withdraw", {
+        acknowledged_immediate_deletion: true,
+      });
+      expect(res.deleted_at).toBeTruthy();
+    } finally {
+      setScenario("default");
+    }
   });
 
   it("relation 없이 초대해도 코드가 나온다", async () => {
