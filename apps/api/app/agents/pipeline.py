@@ -24,7 +24,12 @@ from app.agents.activity.agent import run as run_activity
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.suggestion import SuggestionDraft
+from app.agents.common.suggestion import (
+    BundleSummary,
+    SuggestionDraft,
+    bundle_summary,
+    empty_notice,
+)
 from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
 from app.agents.memory.agent import MemoryAgentResult
@@ -102,6 +107,10 @@ Commit = Callable[[], Awaitable[None]]
 # child_id 와 기준일을 받아 백그라운드로 Curator 를 띄우는 콜백. 러너가 만들어 넘긴다.
 # 기준일은 memory_context.today 다 — 러너가 서비스 시간대를 따로 알지 않아도 된다
 CuratorTrigger = Callable[[UUID, date], None]
+
+# 일반 추천 블록의 "쌓인 기록 N건" 을 세는 함수 (#227). 러너가 짧은 DB 세션으로 만든다
+# (`api/agent_ports.record_counter`). 없으면(테스트 · eval) 건수 칸이 비고 결과는 그대로 나간다
+CountRecords = Callable[[str], Awaitable[int]]
 
 
 class DomainContext(Protocol):
@@ -200,6 +209,9 @@ class AgentResult:
     닫힘 안내 · 개수 안내 · 되묻기)는 `()` 로 바로 나간다. 결과를 못 낸 Agent(예외 · 시간
     초과 · `status="failed"` · 추천 저장 실패)는 이 이벤트가 없고 `Partial.failed` 로만 알린다.
     후보 내용 · 근거 모드는 싣지 않는다 — 화면이 05 에서 id 로 읽는다.
+
+    추천이 있으면 `kind` · `reason` 이 묶음을 한 줄로 말한다(`bundle_summary`). 일반 묶음이면
+    `record_count` 가 그 Agent 도메인에 쌓인 기록 수다 — 05 와 같은 표로 센다.
     """
 
     agent: str
@@ -208,6 +220,9 @@ class AgentResult:
     readouts: tuple[Readout, ...]
     question: str | None  # needs_observation 하나. 되묻기는 한 번에 하나다 (DomainAgentResult)
     suggestion_ids: tuple[str, ...] = ()  # 저장이 끝난 추천 id. 추천 순서 그대로
+    kind: str | None = None  # "personalized" · "general" · 추천이 없으면 None
+    reason: str | None = None  # 묶음의 이유 한 문장(코드 문구)
+    record_count: int | None = None  # kind == "general" 일 때만. 세지 못했으면 None
 
 
 @dataclass(frozen=True)
@@ -289,11 +304,14 @@ class Partial:
 
     화면 계약(apps/web/src/lib/api/sse.ts 의 PartialEvent)과 같은 모양으로,
     한 Agent의 task 둘 중 하나만 실패하면 그 Agent는 succeeded와 failed 양쪽에 들어간다.
+    `retryable` 은 실패한 task 중 추천을 내는 task 의 Agent 다. 화면이 이 Agent 들로 05 를 열어
+    다시 준비한다(#249 판단 순서 ③). 급식 갱신만 실패한 Agent 는 없다 — 05 화면이 없다.
     """
 
     reason: PartialReason
     succeeded: tuple[str, ...]
     failed: tuple[str, ...]
+    retryable: tuple[str, ...] = ()  # 실패한 추천 task 의 Agent — 05 가 다시 만들 수 있다
 
 
 @dataclass(frozen=True)
@@ -410,6 +428,7 @@ async def handle_input(
     save_suggestions: SaveSuggestions,
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
+    count_records: CountRecords | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
@@ -425,6 +444,7 @@ async def handle_input(
     함수다. 필수다 — 기본값이 있으면 러너가 빠뜨린 호출에서 추천이 조용히 사라진다. 테스트 ·
     eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
+    count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다(없으면 그 칸이 빈다).
     """
     started = time.perf_counter()
     send = emit or _ignore
@@ -568,7 +588,12 @@ async def handle_input(
                 # 05 가 24시간 안에 같은 0개 안내를 낸다. 화면 결과보다 먼저 보관함에 들어가야
                 # 결과를 받자마자 "후보 보기" 로 들어와도 기록이 있다
                 send(EmptyResult(run_id, outcome.agent, _task_label(outcome.task_type), message))
-            send(_result(outcome, ids))  # 화면용 — readout · 되묻기 · 추천 id (#227)
+            summary = bundle_summary(outcome.suggestions)
+            count = (
+                await _count(outcome.agent, count_records) if summary.kind == "general" else None
+            )
+            # 화면용 — readout · 되묻기 · 추천 칸 (#227)
+            send(_result(outcome, ids, summary, count))
             return True
 
         ran = await _run_domain(
@@ -927,6 +952,10 @@ async def _run_domain(
         reason="timeout_20s" if timed_out else "agent_error",
         succeeded=tuple(dict.fromkeys(succeeded)),
         failed=tuple(dict.fromkeys(failed)),
+        # RetryContext 를 남긴 것과 같은 Agent — 05 가 그 맥락으로 다시 만든다 (D9)
+        retryable=tuple(
+            dict.fromkeys(t.agent for t in failed_tasks if _recommends(t.agent, t.task_type))
+        ),
     )
     return _DomainRun(
         tuple(outcomes),
@@ -1012,7 +1041,8 @@ def _empty_notice(outcome: DomainOutcome) -> str | None:
     """0개로 끝난 추천의 안내 본문. 실패 · 닫힘 · 추천 있음이면 None."""
     if str(outcome.status) not in ("completed", "degraded") or outcome.suggestions:
         return None
-    return next((r.body for r in outcome.readouts if r.code == "empty"), None)
+    notice = empty_notice(outcome.readouts)
+    return None if notice is None else notice.body
 
 
 def _ignore(event: Event) -> None:
@@ -1081,7 +1111,12 @@ def _failed(outcome: DomainOutcome) -> bool:
     return str(outcome.status) == "failed"
 
 
-def _result(outcome: DomainOutcome, suggestion_ids: tuple[str, ...]) -> AgentResult:
+def _result(
+    outcome: DomainOutcome,
+    suggestion_ids: tuple[str, ...],
+    summary: BundleSummary = BundleSummary(kind=None, reason=None),
+    record_count: int | None = None,
+) -> AgentResult:
     task_type = _task_label(outcome.task_type)
     question = outcome.needs_observation[0] if outcome.needs_observation else None
     return AgentResult(
@@ -1091,7 +1126,24 @@ def _result(outcome: DomainOutcome, suggestion_ids: tuple[str, ...]) -> AgentRes
         tuple(outcome.readouts),
         question,
         suggestion_ids,
+        kind=summary.kind,
+        reason=summary.reason,
+        record_count=record_count,
     )
+
+
+async def _count(agent: str, count_records: CountRecords | None) -> int | None:
+    """일반 추천 블록의 쌓인 기록 수. 세지 못하면 None — 결과는 그대로 낸다(건수 칸만 빈다).
+
+    `CancelledError` 는 잡지 않는다 — run 이 끊긴 것이지 건수가 없는 것이 아니다.
+    """
+    if count_records is None:
+        return None
+    try:
+        return await count_records(agent)
+    except Exception as exc:
+        logger.error("기록 건수 실패 agent=%s error=%s", agent, type(exc).__name__)
+        return None
 
 
 class _NotDelivered(Exception):

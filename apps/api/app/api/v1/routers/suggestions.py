@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid as _uuid
 from collections.abc import Sequence
-from dataclasses import replace
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -74,12 +73,15 @@ KST = ZoneInfo("Asia/Seoul")
 # 정하는 곳이 둘이면 화면은 "한 건으로 묶여요" 라고 말했는데 초안이 세 건 나올 수 있다
 _MERGED_AGENTS = frozenset({"food"})
 
-# 그 Agent 의 "쌓인 기록 건수" 를 셀 관찰 종류 (루트 §2 · D7)
-_RECORD_KINDS = {"food": ("observation_food",), "activity": ("observation_activity",)}
+# 확인 문구를 내는 Agent — entrypoint.allergy_cautions 와 같은 목록
+_CAUTION_AGENTS = frozenset({"activity"})
 
 _GUARD_CODES = {"blocked": "safety_unknown", "unsupported": "unsupported"}
 _NOT_READY = "아직 준비 중인 주제예요."
 _UNKNOWN_NOTE = "알레르기 기록에 없음"
+
+# 하루 한도 문구. 05 는 "적기" 가 아니라 "준비하기" 라 /inputs 와 문구를 따로 둔다 (코드는 같다)
+_DAILY_LIMIT = "오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요."
 
 
 def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
@@ -408,58 +410,75 @@ async def create_suggestions(
     # 판단 순서 (#249) — run_id 가 없으면 전부 처음 요청이다
     run_id = body.run_id
     replay: dict[str, list] = {}  # ① 그 run 의 추천
-    notices: dict[str, Readout] = {}  # ② 0개 기록 · ④ 이어서 할 수 없음
+    notices: dict[str, GroupNoticeOut] = {}  # ② 0개 기록 · ④ 이어서 할 수 없음
     claimed: dict[str, suggestion_retry.RetryTask] = {}  # ③ 다시 만들 맥락
-    fresh: list[entrypoint.SuggestTask] = []
-    if run_id is None:
-        fresh = [
-            entrypoint.SuggestTask(
-                a,
-                entrypoint.recommendation_task_type(a),
-                (prompt_request(a, body.prompt_key),) if body.prompt_key else (),
-            )
-            for a in ready
-        ]
-    else:
-        for a in ready:
-            rows = await suggestion_repo.list_run_suggestions(
-                session, child_id=child.child_id, run_id=run_id, agent=a, now=now
-            )
-            if rows:
-                replay[a] = rows
-                continue
-            message = suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
-            if message is not None:
-                notices[a] = replace(entrypoint.count_notice_text(0), body=message)
-                continue
-            task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
-            if task == suggestion_retry.BUSY:
-                continue  # 다른 요청이 다시 만드는 중 — 둘을 만들지 않는다. 실패와 같다
-            if task is None:
-                notices[a] = entrypoint.cannot_resume_text()
-            else:
-                claimed[a] = task
-
-    to_run = fresh + [
-        entrypoint.SuggestTask(a, t.task_type, t.request_texts) for a, t in claimed.items()
-    ]
-    health_consent = await child_health_granted(session, child_id=child.child_id)
+    settled: set[str] = set()  # 다시 만들어 결과를 낸 Agent — 그 맥락은 지운다
     run = entrypoint.SuggestRun(outcomes=(), failed=())
-    if to_run:
-        # Agent 를 실제로 새로 돌릴 때만 하루 한도를 쓴다 — 재생은 모델을 부르지 않는다 (D8)
-        if not quota.consume(
-            parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
-        ):
-            for a in claimed:
-                suggestion_retry.release(run_id=run_id, agent=a)
-            raise ApiError(
-                429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요."
-            )
-        sent_at = next(iter(claimed.values())).sent_at if claimed else None
-        try:
+    # 🚨 맥락을 꺼낸(claim) 뒤 무엇이 터져도 "사용 중" 을 푼다. 안 풀면 15분 동안 다시 시도가
+    #    BUSY 로 떨어져 실패 카드만 뜬다 (#433 리뷰 ②)
+    try:
+        if run_id is None:
+            fresh = [
+                entrypoint.SuggestTask(
+                    a,
+                    entrypoint.recommendation_task_type(a),
+                    (prompt_request(a, body.prompt_key),) if body.prompt_key else (),
+                )
+                for a in ready
+            ]
+        else:
+            fresh = []
+            for a in ready:
+                rows = await suggestion_repo.list_run_suggestions(
+                    session, child_id=child.child_id, run_id=run_id, agent=a, now=now
+                )
+                if rows:
+                    replay[a] = rows
+                    continue
+                message = suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
+                if message is not None:
+                    notices[a] = GroupNoticeOut(code="empty", message=message)
+                    continue
+                recorded = suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
+                if recorded is not None:
+                    # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
+                    code, message = recorded
+                    guards.append(GuardOut(code=code, blocked_agents=[a], message=message))
+                    continue
+                task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
+                if task == suggestion_retry.BUSY:
+                    continue  # 다른 요청이 다시 만드는 중 — 둘을 만들지 않는다. 실패와 같다
+                if task is None:
+                    notices[a] = _notice_out(entrypoint.cannot_resume_notice())
+                else:
+                    claimed[a] = task
+
+        to_run = fresh + [
+            entrypoint.SuggestTask(a, t.task_type, t.request_texts) for a, t in claimed.items()
+        ]
+        health_consent = await child_health_granted(session, child_id=child.child_id)
+        if to_run:
+            # Agent 를 실제로 새로 돌릴 때만 하루 한도를 쓴다 — 재생은 모델을 부르지 않는다 (D8)
+            if not quota.consume(
+                parent_id=parent.parent_id,
+                today=quota.today_kst(),
+                limit=settings.INPUT_DAILY_LIMIT,
+            ):
+                if not (replay or notices or guards):
+                    raise ApiError(429, "daily_input_limit", _DAILY_LIMIT)
+                # 같은 응답에 보여 줄 다른 결과가 있으면 막지 않는다 — 돌릴 Agent 묶음에 안내만
+                # 단다. 꺼낸 맥락은 finally 가 푼다 (#433 리뷰 ④)
+                for task in to_run:
+                    notices[task.agent] = GroupNoticeOut(code="daily_limit", message=_DAILY_LIMIT)
+                to_run = []
+        if to_run:
+            # 요청 세션의 트랜잭션을 닫아 커넥션을 풀에 돌려준다. Agent 가 도는 동안(최대 20초)
+            # 쥐고 있으면 포트가 여는 짧은 세션과 겹쳐 동시 요청에서 풀이 마른다 (#433 리뷰 ⑨).
+            # 여기까지 읽기만 했고, expire_on_commit=False 라 읽은 행도 그대로 쓸 수 있다
+            await session.commit()
+            sent_at = next(iter(claimed.values())).sent_at if claimed else None
             run = await entrypoint.suggest(
                 child_id=child.child_id,
-                parent_id=parent.parent_id,
                 tasks=to_run,
                 request_id=str(_uuid.uuid4()),
                 save_run_id=run_id if claimed else None,
@@ -469,20 +488,27 @@ async def create_suggestions(
                 child_health_granted=health_consent,
                 domain_store=agent_ports.domain_store_opener(child.child_id),
             )
-        finally:
-            ran = {o.agent for o in run.outcomes}
-            for a in claimed:
-                if a in ran:
-                    suggestion_retry.drop(run_id=run_id, agent=a)
-                else:
-                    suggestion_retry.release(run_id=run_id, agent=a)
-        for o in run.outcomes:
-            empty = next((r for r in o.readouts if r.code == "empty"), None)
-            if o.agent in claimed and empty is not None:
-                # 다시 만들었더니 0개 — 24시간 동안 같은 안내 (② 로 간다)
-                suggestion_retry.put_empty(
-                    run_id=run_id, agent=o.agent, message=empty.body, **owner
-                )
+            settled = {o.agent for o in run.outcomes}
+    finally:
+        for a in claimed:
+            if a in settled:
+                suggestion_retry.drop(run_id=run_id, agent=a)
+            else:
+                suggestion_retry.release(run_id=run_id, agent=a)
+
+    # 다시 만든 결과를 지운 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
+    # 지운 뒤에 넣어야 한다 — 같은 (run_id, agent) 칸이라 순서를 바꾸면 기록이 지워진다
+    for o in run.outcomes:
+        if o.agent not in claimed:
+            continue
+        empty = entrypoint.empty_notice(o.readouts)
+        code = _GUARD_CODES.get(o.status)
+        if empty is not None:
+            suggestion_retry.put_empty(run_id=run_id, agent=o.agent, message=empty.body, **owner)
+        elif code is not None:
+            suggestion_retry.put_guard(
+                run_id=run_id, agent=o.agent, code=code, message=_guard_message(o), **owner
+            )
 
     return await _suggestions_response(
         session,
@@ -503,7 +529,7 @@ async def _suggestions_response(
     child_id,
     agents: list[str],
     replay: dict[str, list],
-    notices: dict[str, Readout],
+    notices: dict[str, GroupNoticeOut],
     run: entrypoint.SuggestRun,
     guards: list[GuardOut],
     health_consent: bool,
@@ -514,8 +540,7 @@ async def _suggestions_response(
     for agent, o in outcomes.items():
         code = _GUARD_CODES.get(o.status)
         if code is not None:
-            message = next((r.body for r in o.readouts), "추천을 만들지 않았어요.")
-            guards.append(GuardOut(code=code, blocked_agents=[agent], message=message))
+            guards.append(GuardOut(code=code, blocked_agents=[agent], message=_guard_message(o)))
 
     # 이번에 보일 추천 행 — 재생 행 + 방금 저장한 행. 묶음 순서는 요청한 Agent 순서다
     fresh_ids = [_uuid.UUID(i) for o in run.outcomes for i in o.suggestion_ids]
@@ -532,11 +557,25 @@ async def _suggestions_response(
     cards = entrypoint.describe_docs(
         (e.source_kind, e.source_id) for es in doc_ev.values() for e in es
     )
-    safety = (
-        [entrypoint.SafetyLabel(*r) for r in await list_safety_labels(session, child_id=child_id)]
-        if health_consent
-        else None
-    )
+    safety_rows: list[entrypoint.SafetyLabel] | None = None
+
+    async def safety() -> list[entrypoint.SafetyLabel]:
+        # 처음 필요할 때 한 번 읽는다 — allergens 가 든 추천이 없으면 읽지 않는다 (#433 리뷰 ⑬)
+        nonlocal safety_rows
+        if safety_rows is None:
+            labels = await list_safety_labels(session, child_id=child_id)
+            safety_rows = [entrypoint.SafetyLabel(*r) for r in labels]
+        return safety_rows
+
+    record_counts: dict[str, int] = {}
+
+    async def records(agent: str) -> int:
+        # Agent 마다 한 번 센다 — 일반 카드의 "기록 N건" 은 그 도메인 수다 (#433 리뷰 ⑥)
+        if agent not in record_counts:
+            record_counts[agent] = await suggestion_repo.count_child_records(
+                session, child_id=child_id, kinds=agent_ports.RECORD_KINDS.get(agent, ())
+            )
+        return record_counts[agent]
 
     personal: list[SuggestionOut] = []
     general: list[GeneralSuggestionOut] = []
@@ -544,9 +583,9 @@ async def _suggestions_response(
     shown: dict[str, int] = dict.fromkeys(agents, 0)
     for row in rows:
         if row.allergens:
-            if safety is None:
+            if not health_consent:
                 continue  # 동의 없이 묻지 않는다 — 묻는 순간 건강정보 수집이다 (D10)
-            check = entrypoint.check_allergens(row.allergens, safety)
+            check = entrypoint.check_allergens(row.allergens, await safety())
             if check.blocked:
                 continue
         else:
@@ -571,7 +610,7 @@ async def _suggestions_response(
             ]
             if not docs:
                 continue  # 일반 추천의 근거는 문서 행이다 — 검수가 풀린 행만 남았으면 내지 않는다
-            general.append(_general_out(row, docs))
+            general.append(_general_out(row, docs, await records(str(row.agent))))
         prechecks.extend(
             PrecheckOut(
                 code="unknown_ingredient",
@@ -589,28 +628,30 @@ async def _suggestions_response(
         o = outcomes.get(agent)
         if agent in blocked or (o is None and agent not in replay and agent not in notices):
             continue  # 닫힘은 guard 로, 실패는 묶음 없음으로
-        notice = notices.get(agent) or _count_notice(shown[agent], o)
+        # 식품 아닌 알레르기 확인 문구 — 04 와 같은 말을 코드로 다시 만든다.
+        # 동의가 없으면 읽지 않는다 (#433 리뷰 ③)
+        cautions = (
+            list(entrypoint.allergy_cautions(agent, await safety()))
+            if health_consent and shown[agent] > 0 and agent in _CAUTION_AGENTS
+            else []
+        )
         groups.append(
             SuggestionGroupOut(
                 agent=agent,
                 merges_into_one=agent in _MERGED_AGENTS,
-                notice=None
-                if notice is None
-                else GroupNoticeOut(code=notice.code, message=notice.body),
+                notice=notices.get(agent) or _count_notice(shown[agent], o),
+                cautions=cautions,
             )
         )
 
     scarcity = None
     general_agents = {str(item.agent) for item in general}
     if general_agents:
-        count = await suggestion_repo.count_child_records(
-            session,
-            child_id=child_id,
-            kinds=[k for a in general_agents for k in _RECORD_KINDS.get(a, ())],
-        )
-        question = next(
+        count = sum([await records(a) for a in sorted(general_agents)])
+        # 질문을 낸 Agent 로 id 를 단다 — 답(#246)이 그 Agent 로 간다 (#433 리뷰 ⑤)
+        asked = next(
             (
-                o.question
+                (a, o.question)
                 for a in agents
                 if a in general_agents and (o := outcomes.get(a)) and o.question
             ),
@@ -619,8 +660,8 @@ async def _suggestions_response(
         scarcity = ScarcityOut(
             count=count,
             question=None
-            if question is None
-            else ScarcityQuestionOut(id=f"{agents[0]}:q", text=question),
+            if asked is None
+            else ScarcityQuestionOut(id=f"{asked[0]}:q", text=asked[1]),
         )
 
     return SuggestionsResponse(
@@ -634,18 +675,31 @@ async def _suggestions_response(
     )
 
 
-def _count_notice(shown: int, outcome: entrypoint.SuggestOutcome | None) -> Readout | None:
+def _count_notice(shown: int, outcome: entrypoint.SuggestOutcome | None) -> GroupNoticeOut | None:
     """보이는 개수로 다시 만든다 — 알레르기 · 근거로 빠진 것이 있으면 Agent 의 안내와 다르다.
-    0개면 그 Agent 의 0개 문구(Food 의 pool.empty)를 쓴다."""
-    notice = entrypoint.count_notice_text(shown)
+
+    0개면 그 Agent 의 0개 문구(Food 의 pool.empty)를 쓴다. 한 run 에 행이 상한을 넘게
+    쌓였어도(다시 만들기가 겹친 경우) 다 채운 것으로 본다 — 500 으로 다른 Agent 까지 가리지 않는다
+    (#433 리뷰 ⑦).
+    """
     if shown == 0 and outcome is not None:
-        own = next((r for r in outcome.readouts if r.code == "empty"), None)
+        own = entrypoint.empty_notice(outcome.readouts)
         if own is not None:
-            return own
-    return notice
+            return _notice_out(own)
+    notice = entrypoint.count_notice(min(shown, entrypoint.MAX_SUGGESTIONS))
+    return None if notice is None else _notice_out(notice)
 
 
-def _general_out(row, docs: list[DocEvidenceOut]) -> GeneralSuggestionOut:
+def _notice_out(readout: Readout) -> GroupNoticeOut:
+    return GroupNoticeOut(code=readout.code, message=readout.body)
+
+
+def _guard_message(outcome: entrypoint.SuggestOutcome) -> str:
+    """닫힌 Agent 의 코드 문구 — readout 본문이다. 없으면 기본 문구."""
+    return next((r.body for r in outcome.readouts), "추천을 만들지 않았어요.")
+
+
+def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralSuggestionOut:
     return GeneralSuggestionOut(
         id=str(row.id),
         child_id=str(row.child_id),
@@ -654,6 +708,7 @@ def _general_out(row, docs: list[DocEvidenceOut]) -> GeneralSuggestionOut:
         basis=row.reason or "",
         status=str(row.status),
         expires_at=row.expires_at.isoformat(),
+        record_count=record_count,
         evidence=docs,
     )
 

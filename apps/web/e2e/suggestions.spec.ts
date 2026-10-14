@@ -429,4 +429,27 @@ test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", 
       await expect(page.getByRole("button", { name: "실내" })).toHaveCount(0);
     });
   });
+
+  test.describe("식품 아닌 알레르기 확인 문구", () => {
+    test.use({ scenario: "suggest_cautions" });
+
+    test("놀이 묶음에 확인 문구가 선다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      await expect(
+        page.getByText("등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."),
+      ).toBeVisible();
+    });
+  });
+
+  test.describe("하루 한도", () => {
+    test.use({ scenario: "daily_limit" });
+
+    test("🚨 다시 시도를 세우지 않는다 — 눌러도 같은 답이다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      await expect(
+        page.getByText("오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+    });
+  });
 });

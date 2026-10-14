@@ -27,12 +27,15 @@ from app.agents.common.result import (
 )
 from app.agents.common.suggestion import (
     MAX_SUGGESTIONS,
+    BundleSummary,
     SuggestionDraft,
     SuggestionRejected,
     build,
+    bundle_summary,
     cannot_resume_notice,
     check_count,
     count_notice,
+    empty_notice,
     merge_drafts,
 )
 
@@ -652,3 +655,55 @@ class TestMergeDrafts:
     def test_최대_개수를_넘기지_않는다(self):
         merged = merge_drafts(self.drafts("가", "나", "다"), self.drafts("라"), key=self.content)
         assert len(merged) == MAX_SUGGESTIONS
+
+
+class TestBundleSummary:
+    """04 Agent 블록 머리의 묶음 칸 (#227). 모델을 부르지 않고 코드로 만든다."""
+
+    def test_추천이_없으면_칸이_비어_있다(self):
+        assert bundle_summary(()) == BundleSummary(kind=None, reason=None)
+
+    def test_개인화는_근거로_쓴_아이_기록_수로_말한다(self):
+        shared = citation()
+        first = build(
+            agent="food",
+            content="계란말이",
+            reason="r1",
+            citations=(shared, citation(label="두부")),
+            today=TODAY,
+        )
+        second = build(
+            agent="food", content="두부조림", reason="r2", citations=(shared,), today=TODAY
+        )
+
+        # 같은 기록(shared)은 한 번만 센다 — 2건
+        assert bundle_summary((first, second)) == BundleSummary(
+            kind="personalized", reason="아이 기록 2건을 보고 골랐어요."
+        )
+
+    def test_일반은_Agent_의_코드_문구를_쓴다(self):
+        assert bundle_summary(general_drafts(2)) == BundleSummary(
+            kind="general", reason="또래 기준"
+        )
+
+    def test_개인화와_일반이_섞이면_개인화로_보고_개인화_근거만_센다(self):
+        personal = build(
+            agent="food", content="계란말이", reason="r", citations=(citation(),), today=TODAY
+        )
+
+        # 일반 추천의 문서 행 근거는 아이 기록이 아니라 세지 않는다
+        assert bundle_summary((personal, *general_drafts(2))) == BundleSummary(
+            kind="personalized", reason="아이 기록 1건을 보고 골랐어요."
+        )
+
+
+class TestEmptyNotice:
+    """0개 안내는 `code` 로 찾는다 — Food 의 pool.empty 처럼 Agent 마다 문구가 다르다."""
+
+    def test_0개_안내를_찾는다(self):
+        weather = Readout(kind="notice", body="오늘은 맑아요.", authored_by="code")
+        assert empty_notice((weather, count_notice(0))) == count_notice(0)
+
+    def test_없으면_None(self):
+        assert empty_notice((count_notice(2),)) is None
+        assert empty_notice(()) is None

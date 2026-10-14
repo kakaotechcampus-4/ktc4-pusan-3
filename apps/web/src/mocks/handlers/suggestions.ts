@@ -81,6 +81,14 @@ export const suggestionHandlers = [
         : items;
 
     if (scenario === "consent") return consentRequired("child_health");
+    // 🚨 05 도 하루 한도에 걸린다 — 요청마다 Agent 를 돌려서다. 다시 눌러도 같은 답이라 화면이 다시 시도를 세우지 않는다
+    if (scenario === "daily_limit") {
+      return apiError(
+        429,
+        "daily_input_limit",
+        "오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요.",
+      );
+    }
 
     // 🚨 근거가 없으면 개인화 대신 **일반 추천**이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
     //    개인화(`suggestions`)와 일반(`general`)은 **다른 필드**다. 한 배열에 섞으면 언젠가
@@ -99,8 +107,10 @@ export const suggestionHandlers = [
           notice: generalAgents.has(agent)
             ? null
             : { code: "empty", message: "조건에 맞는 추천이 없어요." },
+          cautions: [],
         })),
-        general,
+        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
+        general: general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
         looked_at: "",
         guards: [],
         scarcity: {
@@ -125,11 +135,13 @@ export const suggestionHandlers = [
             agent: "food",
             merges_into_one: true,
             notice: { code: "fewer", message: "조건에 맞는 추천을 2개 준비했어요." },
+            cautions: [],
           },
           {
             agent: "activity",
             merges_into_one: false,
             notice: { code: "empty", message: "조건에 맞는 추천이 없어요." },
+            cautions: [],
           },
         ],
         general: [],
@@ -143,7 +155,7 @@ export const suggestionHandlers = [
       return HttpResponse.json({
         suggestions: withStatus(suggestions.filter((s) => s.agent === "food")),
         groups: [
-          { agent: "food", merges_into_one: true, notice: null },
+          { agent: "food", merges_into_one: true, notice: null, cautions: [] },
           {
             agent: "activity",
             merges_into_one: false,
@@ -151,6 +163,7 @@ export const suggestionHandlers = [
               code: "cannot_resume",
               message: "이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요.",
             },
+            cautions: [],
           },
         ],
         general: [],
@@ -221,6 +234,30 @@ export const suggestionHandlers = [
           suggestion_id: water.id,
         });
       }
+    }
+
+    // 식품 사전에 없는 알레르기(꽃가루)는 뺄 놀이를 코드가 못 정해서 확인 문구만 낸다 (#433 리뷰 ③).
+    // 글자는 서버 activity/tools/filters.allergy_cautions 와 같다
+    if (scenario === "suggest_cautions") {
+      return HttpResponse.json({
+        suggestions: withStatus(alive),
+        groups: suggestionGroups
+          .filter((g) => alive.some((s) => s.agent === g.agent))
+          .map((g) =>
+            g.agent === "activity"
+              ? {
+                  ...g,
+                  cautions: [
+                    "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
+                  ],
+                }
+              : g,
+          ),
+        looked_at: "",
+        guards: [],
+        scarcity: null,
+        prechecks,
+      });
     }
 
     return HttpResponse.json({

@@ -596,8 +596,8 @@ export const suggestionAllergens: Record<string, string[]> = {
  * 🚨 `food` 만 `merges_into_one` 이다. 반찬 셋을 골라도 "저녁 식사" 한 건이 된다.
  */
 export const suggestionGroups: SuggestionGroup[] = [
-  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true },
-  { agent: "activity", prompt: "주말에 뭐 하고 놀까요" },
+  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true, cautions: [] },
+  { agent: "activity", prompt: "주말에 뭐 하고 놀까요", cautions: [] },
 ];
 
 /**
@@ -617,6 +617,7 @@ export const generalSuggestions: GeneralSuggestion[] = [
     basis: "36개월 또래가 자주 찾는 놀이예요",
     status: "draft",
     expires_at: hoursFromNow(24),
+    record_count: 1,
     evidence: [
       {
         ref: { kind: "activity_doc", id: "doc_1" },
@@ -637,6 +638,7 @@ export const generalSuggestions: GeneralSuggestion[] = [
     basis: "36개월 또래의 식사에서 흔한 형태예요",
     status: "draft",
     expires_at: hoursFromNow(24),
+    record_count: 1,
     evidence: [
       {
         ref: { kind: "food_doc", id: "doc_2" },
