@@ -16,10 +16,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { formatDay } from "@/lib/format";
 import {
+  HEALTH_SAFETY_LIMITS,
   SEVERITY_LABEL,
   isSeverityFor,
+  reactionsProblem,
   severityFieldLabel,
   severityOptions,
+  splitReactions,
 } from "@/lib/health-safety";
 import {
   addHealthSafety,
@@ -126,7 +129,18 @@ function HealthSafetyRow({
    *    두 번 보내도 결과가 같다.
    */
   const retract = useMutation({
-    mutationFn: () => api.delete<void>(`/children/${childId}/health-safety/${item.id}`),
+    mutationFn: async () => {
+      try {
+        await api.delete<void>(`/children/${childId}/health-safety/${item.id}`);
+      } catch (error) {
+        // 🚨 **404 는 실패가 아니다** — 다른 보호자가 먼저 내렸거나 고친 기록이다 (#369 ·
+        //    고치면 옛 줄을 내리고 새 id 로 다시 넣는다). 이 id 는 이미 안전 정보에 없고, 다시
+        //    눌러도 같은 404 라서 "다시 눌러 주세요" 를 세우면 사실과 반대말이 된다. 목록을 다시
+        //    받으면 내린 기록은 빠지고, 고친 기록은 **새 값으로 다시 선다** — 내리려면 그 줄에서
+        //    다시 누른다 (더 막는 쪽이라 안전 정보가 사라지는 일은 없다).
+        if (!isApiError(error, "not_found")) throw error;
+      }
+    },
     onSuccess: async () => {
       // 🚨 성공한 뒤에만 닫는다. 실패하면 남는다 — 다시 누르는 것이 재시도다.
       setConfirming(false);
@@ -260,13 +274,19 @@ export function HealthSafetySheet({
   const [reactions, setReactions] = useState("");
   const [notes, setNotes] = useState("");
   const [labelError, setLabelError] = useState<string | null>(null);
+  const [reactionsError, setReactionsError] = useState<string | null>(null);
 
   /** 🚨 사용자 동작 하나에 키 하나. `mutationFn` 안에서 새로 만들지 않는다. */
   const idempotencyKey = useIdempotencyKey();
 
   const save = useMutation({
+    /**
+     * 🚨 **키를 본문에 묶는다** (`current(본문)`). 서버는 같은 키면 본문을 비교하지 않고 처음
+     *    응답을 재생한다 (#369). 응답이 끊긴 뒤 이름을 고쳐 다시 누르는데 키가 그대로면, 고친
+     *    항목은 저장되지 않고 화면은 성공으로 닫힌다. 같은 본문을 다시 누르는 것만 재시도다.
+     */
     mutationFn: (body: CreateHealthSafetyRequest) =>
-      addHealthSafety(childId, body, idempotencyKey.current()),
+      addHealthSafety(childId, body, idempotencyKey.current(JSON.stringify(body))),
     onSuccess: async () => {
       // 🚨 다음 동작으로 넘어가는 것은 성공 응답을 받은 뒤다 (실패 뒤 재시도는 같은 키).
       idempotencyKey.rotate();
@@ -302,6 +322,7 @@ export function HealthSafetySheet({
     setReactions("");
     setNotes("");
     setLabelError(null);
+    setReactionsError(null);
     save.reset();
     update.reset();
   }
@@ -330,16 +351,17 @@ export function HealthSafetySheet({
       setReactions(item.reactions.join(", "));
       setNotes(item.notes ?? "");
       setLabelError(null);
+      setReactionsError(null);
     }
   }
 
   function submit() {
-    const reactionList = reactions
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const reactionList = splitReactions(reactions);
+    const reactionsTooLong = reactionsProblem(reactionList);
+    setReactionsError(reactionsTooLong);
 
     if (editing) {
+      if (reactionsTooLong) return;
       // 🚨 종류·이름은 보내지 않는다 — 그 둘은 이 기록의 정체다 (`UpdateHealthSafetyRequest`).
       // 🚨 "모르겠어요" 로 되돌리는 것은 `null` 이다. 키를 빼면 "그대로 두기" 가 된다.
       update.mutate({
@@ -351,11 +373,8 @@ export function HealthSafetySheet({
     }
 
     const trimmed = label.trim();
-    if (!trimmed) {
-      setLabelError("무엇인지 적어주세요");
-      return;
-    }
-    setLabelError(null);
+    setLabelError(trimmed ? null : "무엇인지 적어주세요");
+    if (!trimmed || reactionsTooLong) return;
 
     save.mutate({
       type,
@@ -472,6 +491,8 @@ export function HealthSafetySheet({
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               error={labelError}
+              // 🚨 서버가 받는 길이에서 막는다 — 넘기면 400 이 일반 실패로 그려진다 (`HEALTH_SAFETY_LIMITS`).
+              maxLength={HEALTH_SAFETY_LIMITS.label}
               autoComplete="off"
             />
           </>
@@ -490,7 +511,11 @@ export function HealthSafetySheet({
           label="증상 · 선택"
           hint="쉼표로 나눠 적어요. 두드러기, 기침"
           value={reactions}
-          onChange={(e) => setReactions(e.target.value)}
+          onChange={(e) => {
+            setReactions(e.target.value);
+            if (reactionsError) setReactionsError(null);
+          }}
+          error={reactionsError}
           autoComplete="off"
         />
 
@@ -499,6 +524,7 @@ export function HealthSafetySheet({
           hint="언제 어디서 확인했는지 적어 두면 나중에 도움이 돼요."
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
+          maxLength={HEALTH_SAFETY_LIMITS.notes}
           autoComplete="off"
         />
       </div>

@@ -26,6 +26,7 @@ from app.agents.activity.rules import is_recent_duplicate, normalize_activity, o
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
+    DayLabel,
     Intensity,
     PlaceCategory,
 )
@@ -112,7 +113,7 @@ def review(
     recent=(),
     places=(PARK,),
     safety=(),
-    outdoor_ok=True,
+    outdoor=None,
     docs=DOCS,
 ):
     return review_candidates(
@@ -122,7 +123,7 @@ def review(
         recent_activities=recent,
         places=places,
         safety=safety_terms(safety),
-        outdoor_ok=outdoor_ok,
+        outdoor=outdoor,
         docs=docs,
         today=TODAY,
     )
@@ -410,18 +411,27 @@ class TestSafety:
 
 
 class TestOutdoor:
-    """날씨 판정이 야외를 막은 날(D8)에는 야외 후보를 거절한다. 모델이 실내로 고친다."""
+    """그날 날씨 판정이 야외를 막았으면(D8) 야외 후보를 거절한다. 모델이 실내로 고친다 (#377)."""
+
+    RAIN_TODAY = {DayLabel.TODAY: False, DayLabel.TOMORROW: True}
 
     def test_바깥_활동이_어려운_날_야외_후보는_거절(self):
-        result = review(candidate(setting="outdoor"), outdoor_ok=False)
+        result = review(candidate(setting="outdoor"), outdoor=self.RAIN_TODAY)
         assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
 
     @pytest.mark.parametrize("setting", ["indoor", "either"])
     def test_실내나_어디서든은_통과(self, setting):
-        assert review(candidate(setting=setting), outdoor_ok=False).rejections == ()
+        assert review(candidate(setting=setting), outdoor=self.RAIN_TODAY).rejections == ()
 
-    def test_바깥이_괜찮은_날은_야외도_통과(self):
-        assert review(candidate(setting="outdoor"), outdoor_ok=True).rejections == ()
+    def test_오늘_비가_와도_내일_야외는_통과(self):
+        """요청이 내일이면 오늘 날씨로 막지 않는다 (#359 리뷰)."""
+        tomorrow = candidate(setting="outdoor", day="tomorrow")
+        assert review(tomorrow, outdoor=self.RAIN_TODAY).rejections == ()
+
+    def test_판정하지_않은_날은_맑다고_가정하지_않는다(self):
+        weekend = candidate(setting="outdoor", day="this_weekend")
+        result = review(weekend, outdoor=self.RAIN_TODAY)
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
 
 
 class TestOutputTool:
