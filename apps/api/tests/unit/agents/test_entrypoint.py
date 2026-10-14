@@ -131,6 +131,32 @@ async def test_넘긴_save_suggestions_를_pipeline_에_그대로_넘긴다(
     assert seen["save_suggestions"] is saver
 
 
+async def test_넘긴_count_records_를_pipeline_에_그대로_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake(raw_text: str, memory_context: Any, contexts: Any, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "RESULT"
+
+    async def count(agent: str) -> int:
+        return 1
+
+    monkeypatch.setattr(entrypoint, "_handle_input", fake)
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="놀이 추천해줘",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+        count_records=count,
+    )
+
+    assert seen["count_records"] is count
+
+
 async def test_넘긴_store_를_그대로_쓴다(monkeypatch: pytest.MonkeyPatch) -> None:
     """api 가 만든 store 에 써야 저장된 행을 api 가 다시 읽을 수 있다."""
     seen: dict[str, Any] = {}
