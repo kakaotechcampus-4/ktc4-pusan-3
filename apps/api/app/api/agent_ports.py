@@ -2,6 +2,7 @@
 
 도메인 Agent 의 기억 포트는 호출마다, 추천 저장은 Agent 결과 하나마다 세션 하나다. 요청 세션이나
 run 세션을 같이 타면 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다.
+기록 건수도 호출마다 세션 하나다.
 """
 
 from collections.abc import AsyncIterator, Callable
@@ -11,6 +12,13 @@ from uuid import UUID
 
 from app.agents import entrypoint
 from app.api.deps.db import background_session
+
+# 그 Agent 의 "쌓인 기록 N건" 을 셀 관찰 종류 (루트 §2). 04 블록(#227)과 05(#249)가 같은 수를
+# 말하게 한 곳에 둔다. 표에 없는 Agent 는 0건이다
+RECORD_KINDS: dict[str, tuple[str, ...]] = {
+    "food": ("observation_food",),
+    "activity": ("observation_activity",),
+}
 
 
 def domain_store_opener(child_id: UUID) -> entrypoint.StoreOpener:
@@ -47,3 +55,16 @@ def suggestion_saver(
         return tuple(str(row_id) for row_id in ids)
 
     return save_suggestions
+
+
+def record_counter(child_id: UUID) -> entrypoint.CountRecords:
+    from app.domains.suggestion.repository import count_child_records
+
+    async def count_records(agent: str) -> int:
+        # 읽기만 한다. 결과 하나마다 짧은 세션 — run 세션을 도메인 task 들과 같이 타지 않는다
+        async with background_session() as session:
+            return await count_child_records(
+                session, child_id=child_id, kinds=RECORD_KINDS.get(agent, ())
+            )
+
+    return count_records

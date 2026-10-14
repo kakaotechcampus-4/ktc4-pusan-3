@@ -218,6 +218,9 @@ def test_agent_result_copies_readouts_without_source_refs():
             ],
             "question": None,
             "suggestion_ids": [],
+            "kind": None,
+            "reason": None,
+            "record_count": None,
         },
     )
 
@@ -409,6 +412,7 @@ def test_partial_carries_agent_names_only():
             "reason": "timeout_20s",
             "succeeded": ["activity"],
             "failed": ["food"],
+            "retryable": [],
         },
     )
 
@@ -431,3 +435,35 @@ def test_partial_is_not_an_end_signal():
 
     assert [name for name, _ in channel.events] == ["partial", "done"]
     assert channel.ended_with == "done"
+
+
+def test_agent_result_carries_bundle_kind_reason_and_record_count():
+    """04 블록 머리의 묶음 칸 (#227). 화면이 "후보 N개 · 이유 · 쌓인 기록 N건" 을 그린다."""
+    result = AgentResult(
+        agent="activity",
+        task_type=None,
+        status="completed",
+        readouts=(),
+        question=None,
+        suggestion_ids=("s-1",),
+        kind="general",
+        reason="또래 기준",
+        record_count=0,
+    )
+
+    _, payload = translate.to_sse(result)
+
+    assert (payload["kind"], payload["reason"], payload["record_count"]) == (
+        "general",
+        "또래 기준",
+        0,
+    )
+
+
+def test_partial_carries_retryable_agents():
+    """04 부분 실패 카드의 "다시 준비하기" 가 이 Agent 들로 05 를 연다 (D9)."""
+    event = Partial(
+        "agent_error", succeeded=("food",), failed=("activity",), retryable=("activity",)
+    )
+
+    assert translate.to_sse(event)[1]["retryable"] == ["activity"]
