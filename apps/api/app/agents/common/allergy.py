@@ -21,7 +21,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
-from typing import Protocol
+from typing import Literal, Protocol
 
 from app.agents.common.reference import allergen_groups, allergen_terms
 from app.rules.term_match import Term, TermMatcher, normalize, prepare_fields, split_words
@@ -383,6 +383,36 @@ def non_food_allergies(rows: Iterable[SafetyRow], book: LabelBook) -> tuple[str,
             seen.add(key)
             labels.append(row.label)
     return tuple(labels)
+
+
+AllergenState = Literal["active", "known"] | None
+
+
+def allergen_states(
+    allergens: Iterable[str], rows: Iterable[tuple[str, str, str]], book: LabelBook
+) -> dict[str, AllergenState]:
+    """추천에 든 항목마다 그 아이의 health_safety 상태. 05 의 사전검사가 쓴다 (#249).
+
+    `rows` 는 (kind, label, status) — 모든 kind 다. Activity 는 19종 밖 이름(꽃가루)을 등록된
+    이름 그대로 싣고, 그 행은 environmental 일 수 있다. 같은 이름 사전(`read_label`)으로 양쪽을
+    읽어 코드 · Term 이 겹치거나 사전에 없는 조각이 같으면 같은 항목이다.
+    - active 행에 걸리면 "active" — 그 추천은 내보내지 않는다.
+    - none · retracted 행에만 걸리면 "known" — 묻지 않는다.
+    - 걸리는 행이 없으면 None — 채택 전에 묻는다.
+    """
+    read = [(status, *read_label(label, book)) for _, label, status in rows]
+    states: dict[str, AllergenState] = {}
+    for name in allergens:
+        wanted, rest = read_label(name, book)
+        hits = [
+            status
+            for status, found, found_rest in read
+            if wanted.codes & found.codes
+            or set(wanted.terms) & set(found.terms)
+            or set(rest) & set(found_rest)
+        ]
+        states[name] = "active" if "active" in hits else ("known" if hits else None)
+    return states
 
 
 def _stems(word: str) -> list[str]:

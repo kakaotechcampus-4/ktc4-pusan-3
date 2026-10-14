@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.agents.common.reference import age_gates
 
@@ -175,6 +176,16 @@ def parse_doc_meta(
         reviewed_at=reviewed_at,
         version=version,
     )
+
+
+def doc_row_id(kind: str, doc_key: str) -> UUID:
+    """`doc_key` 에서 늘 같게 만드는 문서 행 id (DB 의 uuidv7 과는 다르다).
+
+    포트가 돌려주는 행(`to_row` · `_seed_row`)과 05 의 문서 조회(`entrypoint.describe_docs`)가 같은
+    식을 불러 쓴다 — 한쪽만 바뀌면 근거가 조용히 사라진다. `kind` 는 근거 종류(`activity_doc` ·
+    `food_doc`)다.
+    """
+    return uuid5(NAMESPACE_URL, f"{kind}:{doc_key}")
 
 
 def check_unique_doc_keys(rows: Sequence[DocMeta], *, file: str) -> None:
