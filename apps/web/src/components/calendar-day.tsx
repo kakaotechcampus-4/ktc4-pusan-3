@@ -15,6 +15,7 @@ import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, qk } from "@/lib/api";
+import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
@@ -153,29 +154,37 @@ export function CalendarDayPanel({
 
       {/* 🚨 일기 구역과 같은 규칙이다 — **빈 날에도 같은 모양으로** 선다. 사진이 있는 날에만
           이 구역이 생기면 "그날 사진을 넣는 법" 이 날마다 달라져서, 빈 날에는 부모가 홈까지
-          올라가 카메라 버튼을 찾아야 한다. */}
-      <Section title="이날의 사진">
-        {data.shared_photos.length > 0 ? <Photos photos={data.shared_photos} /> : null}
-        <div>
-          <Button variant="tertiary" size="compact" onClick={() => setPhotoSheetOpen(true)}>
-            사진으로 적기
-          </Button>
-        </div>
-        <p className="text-caption text-ink-subtle">
-          사진에서 읽어낸 것을 보여드리고, 승인해야 저장돼요.
-        </p>
-        {/* 🚨 홈과 **같은 시트**다. 사진을 고르는 방법이 화면마다 다르면 부모가 매번 다시 찾는다. */}
-        <PhotoSourceSheet
-          open={photoSheetOpen}
-          onClose={() => setPhotoSheetOpen(false)}
-          onPick={({ file, lane }) => {
-            putPhoto(childId, file, lane);
-            setPhotoSheetOpen(false);
-            // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
-            router.push(`/child/${childId}/photos?date=${date}`);
-          }}
-        />
-      </Section>
+          올라가 카메라 버튼을 찾아야 한다.
+          ⚠️ 넣는 길이 닫혀 있는 동안(`lib/features.ts` · #409)은 이미 남은 사진이 있는 날에만 선다 —
+          넣을 수 없는 날에 빈 구역만 세우면 아무 데도 안 가는 자리가 된다. */}
+      {PENDING_SERVER_FEATURES.photoEntry ? (
+        <Section title="이날의 사진">
+          {data.shared_photos.length > 0 ? <Photos photos={data.shared_photos} /> : null}
+          <div>
+            <Button variant="tertiary" size="compact" onClick={() => setPhotoSheetOpen(true)}>
+              사진으로 적기
+            </Button>
+          </div>
+          <p className="text-caption text-ink-subtle">
+            사진에서 읽어낸 것을 보여드리고, 승인해야 저장돼요.
+          </p>
+          {/* 🚨 홈과 **같은 시트**다. 사진을 고르는 방법이 화면마다 다르면 부모가 매번 다시 찾는다. */}
+          <PhotoSourceSheet
+            open={photoSheetOpen}
+            onClose={() => setPhotoSheetOpen(false)}
+            onPick={({ file, lane }) => {
+              putPhoto(childId, file, lane);
+              setPhotoSheetOpen(false);
+              // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
+              router.push(`/child/${childId}/photos?date=${date}`);
+            }}
+          />
+        </Section>
+      ) : data.shared_photos.length > 0 ? (
+        <Section title="이날의 사진">
+          <Photos photos={data.shared_photos} />
+        </Section>
+      ) : null}
     </div>
   );
 }
