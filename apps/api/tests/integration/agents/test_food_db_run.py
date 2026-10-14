@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from app.agents import entrypoint
 from app.agents.common.schemas.task import DomainTask
@@ -28,9 +29,11 @@ from app.domains.suggestion.agent_reader import DbSuggestionHistory
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
+    SuggestionEvidence,
     SuggestionKind,
     SuggestionStatus,
 )
+from app.domains.suggestion.repository import save_agent_suggestions
 from tests.unit.agents.food.support import MEAL_DOC, ScriptedLLM, propose
 
 KST = ZoneInfo("Asia/Seoul")
@@ -158,3 +161,47 @@ async def test_어댑터를_붙여도_안전_포트가_없으면_Food_는_닫힌
     )
     result = await run(task, context.for_task(), client=llm)
     assert (result.status, result.model_calls, llm.calls) == ("blocked", 0, 0)
+
+
+async def test_문서_행이_없어도_DB_레시피로_추천하고_저장된_추천마다_근거가_있다(
+    session, opener, child
+):
+    """#442 — 36개월부터는 Food 문서 시드가 0행이다. 모델이 근거를 비워도 Food 는 추천을 내고,
+    근거는 고른 메뉴(레시피 카탈로그 행)다. Agent 가 만든 메뉴 근거 id 를 저장층이 같은 식으로
+    확인하므로, 실제로 저장해 추천마다 근거 행이 있는지까지 본다(근거 0행이면 버그 — 루트 §2)."""
+    recipes = DbRecipeCatalog(opener)
+    for row in (
+        recipe("1", "두부조림", "두부", "간장", codes={5, 6}),
+        recipe("2", "시금치나물", "시금치", "참기름"),
+        recipe("3", "미역국", "미역", "소고기", codes={16}),
+    ):
+        await recipes.put(row)
+    wired = wired_contexts(child, opener, recipes)["food"].ports
+    ports = replace(wired, safety=InMemorySafety([]), docs=InMemoryFoodDocs())  # 문서 행 0
+    context = FoodContext(child_id=child.id, run_id="run-1", now=NOW, timezone=KST, ports=ports)
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", evidence=[]))
+    task = DomainTask(
+        run_id="run-1",
+        agent="food",
+        task_type="meal_recommendation",
+        request_texts=("저녁 뭐 먹일까",),
+    )
+
+    result = await run(task, context, client=llm)
+    assert result.status == "completed"
+    assert len(result.suggestions) == 3
+
+    ids = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id="run-1",
+        payloads=[draft.to_payload() for draft in result.suggestions],
+        now=NOW,
+    )
+    evidence = (
+        await session.scalars(
+            select(SuggestionEvidence).where(SuggestionEvidence.suggestion_id.in_(ids))
+        )
+    ).all()
+    assert {row.suggestion_id for row in evidence} == set(ids)  # 근거 0행인 추천이 없다
+    assert {row.source_kind for row in evidence} == {"recipe_catalog"}

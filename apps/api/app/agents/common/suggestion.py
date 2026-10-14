@@ -70,6 +70,7 @@ def build(
     reason: str,
     citations: tuple[EvidenceCitation, ...] = (),
     general_reason: str | None = None,
+    general_basis: tuple[EvidenceCitation, ...] = (),
     allergens: tuple[str, ...] = (),
     items: tuple[str, ...] = (),
     today: date,
@@ -79,6 +80,10 @@ def build(
     아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
     덮어쓴다. 이때 문서 행을 하나 이상 인용해야 한다 — 일반 추천의 근거는 문서 행이다(루트 §2).
 
+    `general_basis` 는 일반 추천일 때만 붙는 근거다(개인화면 버린다). 모델이 아니라 코드가 만든다.
+    Food 는 고른 메뉴(레시피 카탈로그 행)를 넘겨서, 문서 행이 없어도 메뉴를 근거로 일반 추천을
+    낸다(#442). 넘기지 않는 Agent(Activity · Growth)는 지금처럼 문서 행이 있어야 한다.
+
     6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
     그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
     인용했으면 개인화로 두고 둘 다 남긴다. 날짜를 모르는 아이 기록은 세지 않는다.
@@ -87,7 +92,7 @@ def build(
     기피 근거를 인용했으면 `reason` 에 무엇을 피했는지가 있어야 한다. 인용만 하고 말하지
     않으면 보호자에게는 근거 없는 추천과 같다.
     """
-    for item in citations:
+    for item in (*citations, *general_basis):
         if not item.note.strip():
             raise SuggestionRejected(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
@@ -98,17 +103,17 @@ def build(
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
-        docs = tuple(item for item in citations if not item.ref.is_child_record)
-        if not docs:
-            # 일반 추천은 문서 행이 근거다 (루트 §2). 아이 기록도 문서도 없으면 무엇을 기준으로
-            # 골랐는지 보호자에게 보여 줄 것이 없다
+        basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
+        if not basis:
+            # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도
+            # 없으면 무엇을 기준으로 골랐는지 보호자에게 보여 줄 것이 없다
             raise SuggestionRejected(f"{agent}: 일반 추천인데 문서 행 근거가 없다")
         return SuggestionDraft(
             agent=agent,
             kind="general",
             content=content,
             reason=general_reason,
-            citations=docs,
+            citations=basis,
             allergens=allergens,
             items=items,
         )

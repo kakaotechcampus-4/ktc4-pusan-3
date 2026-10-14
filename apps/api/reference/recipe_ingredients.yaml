@@ -2,7 +2,7 @@
 # 설계: app/agents/food/recipe_catalog.py · docs/agents/food/food_agent_own_table.md §1
 #
 # 🚨 알레르기 판정 입력이다. 사람이 검수한다. 모델이 고르지 않는다.
-# 🚨 status 가 ok · not_food 인 재료만 정리된 것으로 센다. ok(검수 전) · unknown(구성 모름) ·
+# 🚨 status 가 ok · not_food 인 재료만 정리된 것으로 센다. draft(검수 전) · unknown(구성 모름) ·
 #    표에 없는 재료가 하나라도 있는 레시피는 resolved=false — 후보 풀에 들어가지 않는다.
 #
 # 검수하는 법 (한 줄씩)
@@ -17,9 +17,14 @@
 #   rows    이 이름이 나온 재료 행 수 — 많이 나온 것부터 보면 레시피가 빨리 풀린다
 #
 # 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch  (있는 항목은 덮지 않는다)
+#
+# 🚨 TEMP(#442) — 지금 이 표는 사람이 검수한 것이 아니다. e2e 를 끝까지 돌려 보려고 전부를 임시로
+#    정리된 것(ok)으로 일괄 처리했다(이름이 빈 5개는 초안 후보대로 not_food). names · codes ·
+#    food_group 은 초안 그대로다. 실제로 검수한 항목은 note 에 검수한 사람 · 날짜를 적는다.
+#    Food 를 켜기 전(remain_task 순서 6)에 실제 검수를 마치고 이 단락을 지운다.
 
 source: "농식품정보원 레시피 재료정보 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
-version: "2026.1-draft"
+version: "2026.1-temp"
 fetched_at: 2026-10-11
 
 ingredients:
@@ -724,7 +729,7 @@ ingredients:
   - raw: "꼬치"
     names: []
     codes: []
-    status: ok
+    status: not_food
     note: "음식이 아닌 것으로 보임 → not_food 후보"
     rows: 6
   - raw: "월계수잎"
@@ -1354,7 +1359,7 @@ ingredients:
   - raw: "무명실"
     names: []
     codes: []
-    status: ok
+    status: not_food
     note: "음식이 아닌 것으로 보임 → not_food 후보"
     rows: 2
   - raw: "대구살"
@@ -2034,7 +2039,7 @@ ingredients:
   - raw: "은박컵"
     names: []
     codes: []
-    status: ok
+    status: not_food
     note: "음식이 아닌 것으로 보임 → not_food 후보"
     rows: 1
   - raw: "피클"
@@ -2383,7 +2388,7 @@ ingredients:
   - raw: "랩"
     names: []
     codes: []
-    status: ok
+    status: not_food
     note: "음식이 아닌 것으로 보임 → not_food 후보"
     rows: 1
   - raw: "시금치즙"
@@ -2887,7 +2892,7 @@ ingredients:
   - raw: "숯"
     names: []
     codes: []
-    status: ok
+    status: not_food
     note: "음식이 아닌 것으로 보임 → not_food 후보"
     rows: 1
   - raw: "메주"

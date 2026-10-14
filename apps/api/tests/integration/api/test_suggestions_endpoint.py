@@ -738,3 +738,55 @@ async def test_05_도_Food_카탈로그_어댑터를_넘긴다(db_client, bearer
     assert type(calls[0]["food_catalog"]).__name__ == "DbMenuCatalog"
     assert type(calls[0]["food_recipes"]).__name__ == "DbRecipeCatalog"
     assert type(calls[0]["food_suggestions"]).__name__ == "DbSuggestionHistory"
+
+
+# ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
+async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """문서 행이 없는 월령에도 Food 일반 추천이 나간다 — 근거는 고른 메뉴(레시피 카탈로그 행)다."""
+    from app.domains.food import repository as food_repository
+    from app.rules.menu_evidence import menu_evidence_id
+
+    plan, _ = agents
+    headers, _ = bearer
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": "mafra_recipe",
+                "source_id": "7",
+                "menu_key": "두부조림",
+                "display_name": "두부조림",
+                "ingredients": ["두부"],
+                "resolved": True,
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+    )
+    menu = menu_evidence_id("mafra_recipe", "7")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 아이들이 많이 먹는 메뉴예요.",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+                    ),
+                ),
+            )
+        ],
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
+    assert evidence["title"] == "두부조림"
+    assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."

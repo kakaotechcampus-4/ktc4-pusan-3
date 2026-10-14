@@ -56,6 +56,7 @@ from app.api.v1.schemas.suggestions import (
 )
 from app.core.config import settings
 from app.domains.consent.repository import child_health_granted
+from app.domains.food import repository as food_repo
 from app.domains.safety.labels import list_safety_labels
 from app.domains.schedule import repository as schedule_repo
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
@@ -64,6 +65,7 @@ from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.evidence_view import EvidenceView, describe_evidence
 from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
 from app.rules.home_prompts import prompt_request
+from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
 router = APIRouter(tags=["suggestions"])
 
@@ -554,10 +556,13 @@ async def _suggestions_response(
     views = await describe_evidence(
         session, child_id=child_id, rows=[e for es in child_ev.values() for e in es], today=today
     )
-    doc_ev = await suggestion_repo.list_doc_evidence_batch(session, suggestion_ids=ids)
+    general_ev = await suggestion_repo.list_general_evidence_batch(session, suggestion_ids=ids)
     cards = entrypoint.describe_docs(
-        (e.source_kind, e.source_id) for es in doc_ev.values() for e in es
+        (e.source_kind, e.source_id) for es in general_ev.values() for e in es
     )
+    # Food 일반 추천의 메뉴 근거 이름(#442). 메뉴 근거가 있을 때만 한 번 읽는다
+    has_menu = any(e.source_kind == MENU_EVIDENCE_KIND for es in general_ev.values() for e in es)
+    menus = await food_repo.resolved_recipe_names(session) if has_menu else {}
     safety_rows: list[entrypoint.SafetyLabel] | None = None
 
     async def safety() -> list[entrypoint.SafetyLabel]:
@@ -597,21 +602,16 @@ async def _suggestions_response(
                 continue  # 보이는 근거가 없는 개인화는 내보내지 않는다 (루트 §2)
             personal.append(_suggestion_out(row, seen))
         else:
-            docs = [
-                DocEvidenceOut(
-                    ref=Ref(kind=e.source_kind, id=str(e.source_id)),
-                    title=card.title,
-                    source_org=card.source_org,
-                    source_title=card.source_title,
-                    source_url=card.source_url,
-                    note=e.note,
-                )
-                for e in doc_ev.get(row.id, [])
-                if (card := cards.get((e.source_kind, e.source_id))) is not None
+            basis = [
+                out
+                for e in general_ev.get(row.id, [])
+                if (out := _general_evidence_out(e, cards, menus)) is not None
             ]
-            if not docs:
-                continue  # 일반 추천의 근거는 문서 행이다 — 검수가 풀린 행만 남았으면 내지 않는다
-            general.append(_general_out(row, docs, await records(str(row.agent))))
+            if not basis:
+                # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
+                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다
+                continue
+            general.append(_general_out(row, basis, await records(str(row.agent))))
         prechecks.extend(
             PrecheckOut(
                 code="unknown_ingredient",
@@ -698,6 +698,42 @@ def _notice_out(readout: Readout) -> GroupNoticeOut:
 def _guard_message(outcome: entrypoint.SuggestOutcome) -> str:
     """닫힌 Agent 의 코드 문구 — readout 본문이다. 없으면 기본 문구."""
     return next((r.body for r in outcome.readouts), "추천을 만들지 않았어요.")
+
+
+# Food 일반 추천의 메뉴 근거 카드 — 고른 메뉴가 온 공개 레시피의 출처다(#442). 화면은 문서 카드와
+# 같이 "참고 · 메뉴 이름 (기관, 출처)" 로 그린다
+MENU_SOURCE_ORG = "농식품정보원"
+MENU_SOURCE_TITLE = "농림축산식품 공공데이터포털 레시피 기본 · 재료정보"
+MENU_SOURCE_URL = "https://data.mafra.go.kr"
+
+
+def _general_evidence_out(e, cards: dict, menus: dict[_uuid.UUID, str]) -> DocEvidenceOut | None:
+    """일반 추천 근거 한 행 → 화면 카드. 문서 행은 검수된 시드에서, 메뉴 행은 후보 풀(검수된
+    레시피)에서 찾는다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
+    ref = Ref(kind=e.source_kind, id=str(e.source_id))
+    if e.source_kind == MENU_EVIDENCE_KIND:
+        name = menus.get(e.source_id)
+        if name is None:
+            return None
+        return DocEvidenceOut(
+            ref=ref,
+            title=name,
+            source_org=MENU_SOURCE_ORG,
+            source_title=MENU_SOURCE_TITLE,
+            source_url=MENU_SOURCE_URL,
+            note=e.note,
+        )
+    card = cards.get((e.source_kind, e.source_id))
+    if card is None:
+        return None
+    return DocEvidenceOut(
+        ref=ref,
+        title=card.title,
+        source_org=card.source_org,
+        source_title=card.source_title,
+        source_url=card.source_url,
+        note=e.note,
+    )
 
 
 def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralSuggestionOut:
