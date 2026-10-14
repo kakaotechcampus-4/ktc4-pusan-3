@@ -4,6 +4,7 @@ import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
+import { useReveal } from "@/lib/motion";
 
 import { ICON_SIZE, ICON_STROKE } from "./icon";
 
@@ -34,8 +35,8 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  *
  * 🚨 **그림자가 없다** (문서 §6 — 그림자는 바텀시트 하나뿐). 떠 있는 면의 경계는 `line-strong`
  *    1px 이 만든다 (토스트와 같은 처리다).
- * 🚨 **등장 애니메이션이 없다** (문서 §8). 쉐브론도 회전시키지 않는다 — 상호작용 전환은
- *    "색만 바꾸고 크기·위치는 건드리지 않는다" 라서, 방향은 아이콘을 갈아 끼워 말한다.
+ * 🚨 **열린 목록은 투명도로만 선다** (문서 §8 "떠 있는 것"). 위치 · 크기는 움직이지 않고, 닫힐 때는 즉시다.
+ *    쉐브론도 회전시키지 않는다 — 방향은 아이콘을 갈아 끼워 말한다.
  * 🚨 **라벨을 지우지 않는다.** 좁은 화면에서 상자만 남기면 무엇을 고르는 상자인지 사라진다.
  *    ⚠️ `labelHidden` 은 그 예외가 아니라 **자리를 옮기는 것**이다 — 라벨은 DOM 에 그대로 남아
  *    (`sr-only`) 보조기술이 읽고, 눈에 보이는 이름은 **바깥 묶음**이 진다. 시각 칸(`TimeField`)
@@ -90,6 +91,7 @@ export function Select<T extends string>({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const revealRef = useReveal<HTMLUListElement>(open);
 
   const index = options.findIndex((option) => option.value === value);
   const current = index < 0 ? undefined : options[index];
@@ -209,7 +211,10 @@ export function Select<T extends string>({
 
       {open ? (
         <ul
-          ref={listRef}
+          ref={(node) => {
+            listRef.current = node;
+            revealRef.current = node;
+          }}
           id={listId}
           role="listbox"
           aria-labelledby={labelId}

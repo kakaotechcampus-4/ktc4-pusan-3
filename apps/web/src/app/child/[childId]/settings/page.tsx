@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
 import { ParentSection } from "@/components/parent-section";
@@ -16,6 +17,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Me } from "@/lib/api";
+import { BACK, FORWARD } from "@/lib/view-transition";
 
 /**
  * 10 설정 — **지금 이렇게 되어 있어요.**
@@ -54,7 +56,9 @@ import { api, qk, type Me } from "@/lib/api";
 export default function SettingsPage() {
   return (
     <AuthGate>
-      <SettingsScreen />
+      <ScreenTransition>
+        <SettingsScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -88,7 +92,7 @@ function SettingsScreen() {
             ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
             유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
         <div className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기">
+          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <PageTitle>설정</PageTitle>
@@ -133,6 +137,7 @@ function SettingsScreen() {
             icon={LifeBuoy}
             title="자주 묻는 질문"
             status="기록 · 제안 · 안전 · 함께 보기"
+            {...FORWARD}
           />
         </SettingsGroup>
       </Section>

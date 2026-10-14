@@ -99,12 +99,22 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
       />
 
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span className={cn("text-body", wrong ? "text-ink-muted" : "text-ink")}>
+        <span
+          className={cn(
+            "text-body ease-standard transition-colors duration-120",
+            wrong ? "text-ink-muted" : "text-ink",
+          )}
+        >
           {observation.raw_text}
         </span>
 
         {/* 🚨 띄운 가운뎃점은 **줄당 하나**다 (문서 §4). 도메인과 날짜가 한 줄, 칩은 아래 줄. */}
-        <span className={cn("text-caption", wrong ? "text-ink-muted" : "text-ink-subtle")}>
+        <span
+          className={cn(
+            "text-caption ease-standard transition-colors duration-120",
+            wrong ? "text-ink-muted" : "text-ink-subtle",
+          )}
+        >
           {domainLabel(agent)}
           {observation.observed_label ? ` · ${observation.observed_label}` : ""}
         </span>
@@ -116,7 +126,10 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
         aria-hidden
         size={ICON_SIZE.md}
         strokeWidth={ICON_STROKE}
-        className={cn("mt-2 shrink-0", wrong ? "text-ink-muted" : "text-ink-subtle")}
+        className={cn(
+          "ease-standard mt-2 shrink-0 transition-colors duration-120",
+          wrong ? "text-ink-muted" : "text-ink-subtle",
+        )}
       />
     </button>
   );

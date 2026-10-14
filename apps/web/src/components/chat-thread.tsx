@@ -1,6 +1,7 @@
 "use client";
 
-import { Named } from "@/components/home-composer";
+import { Named } from "@/components/ui/named";
+import { Swap } from "@/components/ui/swap";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { RewriteButton } from "@/components/rewrite-button";
 import { RunReply } from "@/components/run-result";
@@ -146,28 +147,34 @@ function TurnReply({
     (d) => d.origin === "input" && turn.run.drafts.some((r) => r.draft_id === d.draft.draft_id),
   ).length;
   const draftsReplaced = replacedByLater(turn, later);
+  // 🚨 다시 보내는 동안에는 진행 표시다. 앞 run 은 지우지 않고 들고 있다가 202 를 받으면 갈아 끼운다
+  //    — 다시 시도가 실패해도 "여기까지 받은 기록" 이 남는다 (`stores/conversation.ts` 의 `submit`).
+  const run = turn.send.status === "sending" ? SENDING : turn.run;
+  const running = run.status === "idle" || run.status === "streaming";
 
   return (
-    <RunReply
-      childId={childId}
-      // 🚨 다시 보내는 동안에는 진행 표시다. 앞 run 은 지우지 않고 들고 있다가 202 를 받으면 갈아 끼운다
-      //    — 다시 시도가 실패해도 "여기까지 받은 기록" 이 남는다 (`stores/conversation.ts` 의 `submit`).
-      run={turn.send.status === "sending" ? SENDING : turn.run}
-      question={turn.question}
-      answeringNow={runId !== null && answering?.runId === runId}
-      remainingDrafts={remainingDrafts}
-      draftsReplaced={draftsReplaced}
-      // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
-      followUp={turn.answering !== null}
-      onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
-      onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
-      rewriteBlocked={rewriteBlocked}
-      onAnswer={() => {
-        if (runId) answerQuestion(childId, runId);
-      }}
-      onOpenDrafts={onOpenDrafts}
-      onPickOffer={onPickOffer}
-    />
+    // 진행 표시 → 결과는 같은 자리의 교체다 (디자인 시스템 §8). 🚨 **말풍선이 붙는 것에는 움직임이 없다** —
+    //    이건 이미 서 있던 진행 카드가 결과로 바뀌는 순간뿐이다 (§8 "하지 않는 것").
+    <Swap id={running ? "progress" : "result"}>
+      <RunReply
+        childId={childId}
+        run={run}
+        question={turn.question}
+        answeringNow={runId !== null && answering?.runId === runId}
+        remainingDrafts={remainingDrafts}
+        draftsReplaced={draftsReplaced}
+        // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
+        followUp={turn.answering !== null}
+        onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
+        onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
+        rewriteBlocked={rewriteBlocked}
+        onAnswer={() => {
+          if (runId) answerQuestion(childId, runId);
+        }}
+        onOpenDrafts={onOpenDrafts}
+        onPickOffer={onPickOffer}
+      />
+    </Swap>
   );
 }
 
