@@ -23,6 +23,9 @@ PREVIEW = "/api/v1/invites/{code}"
 ACCEPT = "/api/v1/invites/{code}/accept"
 CODE = "ABCD1234"
 ALPHABET = set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+# 수락은 만 19세 이상 표시가 있어야 한다 (약관 제7조 ② · #166).
+# 이 표시를 보려는 테스트가 아니면 이걸 싣는다.
+ATTESTED = {"adult_attested": True}
 
 
 @pytest.fixture(autouse=True)
@@ -160,7 +163,9 @@ async def test_확인_뒤_수락하면_member_로_바로_연결된다(db_client,
         await db_client.get(PREVIEW.format(code=CODE), headers=stranger_headers)
     ).status_code == 200
     res = await db_client.post(
-        ACCEPT.format(code=CODE), json={"relation": "sitter"}, headers=stranger_headers
+        ACCEPT.format(code=CODE),
+        json={"relation": "sitter", **ATTESTED},
+        headers=stranger_headers,
     )
 
     assert res.status_code == 200
@@ -181,12 +186,70 @@ async def test_relation_없이_수락하면_other(db_client, session, family):
     child, _, owner_id, _, stranger_headers = family
     invite = await _seed_invite(session, child, owner_id)
 
-    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+    res = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=stranger_headers)
 
     assert res.status_code == 200
     await session.refresh(invite)
     link = await session.scalar(select(ParentChild).where(ParentChild.parent_id == invite.used_by))
     assert link.relation == ParentChildRelation.OTHER
+
+
+@pytest.mark.parametrize(
+    "attested",
+    [{}, {"adult_attested": False}, {"adult_attested": "true"}, {"adult_attested": 1}],
+    ids=["없음", "false", "문자열", "숫자"],
+)
+async def test_만_19세_표시가_true_가_아니면_400_이고_코드를_쓰지_않는다(
+    db_client, session, family, attested
+):
+    """약관 제7조 ② — 초대를 수락할 때 만 19세 이상임을 표시한다 (#166).
+
+    화면은 체크 전에 연결하기를 막지만, 화면을 거치지 않은 요청도 서버가 막는다.
+    표시는 따로 저장하지 않는다 — true 를 강제하므로 "연결됨 = 표시함" 이다
+    (10-14 PM 결정).
+    """
+    child, _, owner_id, _, stranger_headers = family
+    invite = await _seed_invite(session, child, owner_id)
+
+    res = await db_client.post(
+        ACCEPT.format(code=CODE),
+        json={"relation": "sitter", **attested},
+        headers=stranger_headers,
+    )
+
+    assert res.status_code == 400
+    error = res.json()["error"]
+    assert error["code"] == "validation_failed"
+    assert "adult_attested" in error["detail"]["fields"]
+    await session.refresh(invite)
+    assert invite.used_at is None
+    links = (
+        await session.scalars(select(ParentChild).where(ParentChild.child_id == child.id))
+    ).all()
+    assert len(links) == 2  # owner · member 그대로 — 새 연결이 생기지 않았다
+
+
+async def test_만_19세_표시가_없는_요청은_시도_제한의_실패로_세지_않는다(
+    db_client, session, family
+):
+    """표시가 빠진 요청은 코드를 보기 전에 막는다 — 5회 한도를 쓰지 않는다."""
+    child, _, owner_id, _, stranger_headers = family
+    await _seed_invite(session, child, owner_id)
+
+    statuses = [
+        (
+            await db_client.post(
+                ACCEPT.format(code=CODE),
+                json={"adult_attested": False},
+                headers=stranger_headers,
+            )
+        ).status_code
+        for _ in range(6)
+    ]
+    ok = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=stranger_headers)
+
+    assert statuses == [400] * 6
+    assert ok.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -209,7 +272,7 @@ async def test_수락은_만료_삭제를_다시_보고_코드를_쓰지_않는�
         (await session.get(Child, child.id)).deleted_at = now
         await session.flush()
 
-    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+    res = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=stranger_headers)
 
     assert res.status_code == status
     assert res.json()["error"]["code"] == code
@@ -222,8 +285,8 @@ async def test_한_번_쓴_코드는_다른_보호자가_못_쓴다(db_client, s
     await _seed_invite(session, child, owner_id)
     other_headers, _ = await issue_bearer(session, token="other-token")
 
-    first = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
-    second = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=other_headers)
+    first = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=stranger_headers)
+    second = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=other_headers)
 
     assert first.status_code == 200
     assert second.status_code == 409
@@ -252,14 +315,14 @@ async def test_유니크_위반이면_연결도_소비도_남지_않는다(db_cl
         return None
 
     monkeypatch.setattr(invites_router, "_reject_if_has_child", skip_check)
-    res = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=racer_headers)
+    res = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=racer_headers)
 
     assert res.status_code == 409
     assert res.json()["error"]["code"] == "child_already_exists"
     await session.refresh(invite)
     assert invite.used_at is None
     # 코드가 남아 있어 다른 보호자는 쓸 수 있다
-    ok = await db_client.post(ACCEPT.format(code=CODE), json={}, headers=stranger_headers)
+    ok = await db_client.post(ACCEPT.format(code=CODE), json=ATTESTED, headers=stranger_headers)
     assert ok.status_code == 200
 
 
@@ -292,7 +355,7 @@ async def _fail(client, how: str, headers) -> int:
     if how == "preview":
         res = await client.get(PREVIEW.format(code="ZZZZ9999"), headers=headers)
     else:
-        res = await client.post(ACCEPT.format(code="ZZZZ9999"), json={}, headers=headers)
+        res = await client.post(ACCEPT.format(code="ZZZZ9999"), json=ATTESTED, headers=headers)
     return res.status_code
 
 

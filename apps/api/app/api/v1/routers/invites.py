@@ -191,7 +191,7 @@ async def preview_invite(
 
 @router.post(
     "/invites/{code}/accept",
-    responses=_CODE_ERRORS,
+    responses={**_CODE_ERRORS, 400: {"model": ErrorEnvelope}},
 )
 async def accept_invite(
     code: str,
@@ -200,7 +200,19 @@ async def accept_invite(
     session: SessionDep,
     request: Request,
 ) -> AcceptInviteResponse:
-    """수락 — 코드 소비와 parent_child 생성을 한 트랜잭션으로. 수락하면 바로 member 다."""
+    """수락 — 코드 소비와 parent_child 생성을 한 트랜잭션으로. 수락하면 바로 member 다.
+
+    만 19세 이상 표시(`adult_attested: true`)가 있어야 한다. 없으면 코드를 보기 전에 400 이다.
+    """
+    # 🚨 시도 제한보다 먼저 막는다 — 표시가 빠진 요청은 코드를 쓰지 않고 5회 한도에도 세지 않는다.
+    #    값이 없거나 true · false 가 아니면 스키마가 이미 400 을 냈다. 여기 남는 것은 false 뿐이다.
+    if not body.adult_attested:
+        raise ApiError(
+            400,
+            "validation_failed",
+            "만 19세 이상인지 표시해 주세요",
+            {"fields": ["adult_attested"]},
+        )
     async with _limited_attempt(parent.parent_id, request):
         return await _accept(code, body, parent.parent_id, session)
 
