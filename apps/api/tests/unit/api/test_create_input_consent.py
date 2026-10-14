@@ -185,13 +185,10 @@ async def test_동의_조회가_실패해도_한도와_되묻기_맥락은_그�
         assert response.status_code == 202
 
 
-async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_받는다(
-    client, agent_calls, monkeypatch
-):
-    """맥락 확인(get)과 지우기(consume) 사이에 await 가 있으면 두 답이 다 확인을 통과한다.
+async def _answer_same_question_twice_at_once(client, monkeypatch):
+    """같은 되묻기에 두 답을 거의 동시에 보낸다.
 
-    동의 읽기가 두 요청이 모두 들어올 때까지 기다리게 해서 끼어들기를 재현한다. 동의 읽기가
-    get 과 consume 사이에 있으면 둘 다 202 가 되고, 같은 답으로 run 이 두 개 떠 관찰이 두 행이 된다.
+    동의 읽기가 두 요청이 모두 들어올 때까지 기다리게 해서 끼어들기를 재현한다.
     """
     pending_reply.put(
         run_id="prev-run",
@@ -213,12 +210,43 @@ async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_
     monkeypatch.setattr(children, "child_health_granted", read_after_both_arrive)
 
     reply = {**BODY, "reply_to": "prev-run"}
-    first, second = await asyncio.gather(
+    return await asyncio.gather(
         client.post(URL, json=reply, headers=_key()),
         client.post(URL, json=reply, headers=_key()),
     )
+
+
+async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_받는다(
+    client, agent_calls, monkeypatch
+):
+    """맥락 확인(get)과 지우기(consume) 사이에 await 가 있으면 두 답이 다 확인을 통과한다.
+
+    동의 읽기가 get 과 consume 사이에 있으면 둘 다 202 가 되고, 같은 답으로 run 이 두 개 떠
+    관찰이 두 행이 된다.
+    """
+    first, second = await _answer_same_question_twice_at_once(client, monkeypatch)
 
     assert sorted([first.status_code, second.status_code]) == [202, 400]
     rejected = first if first.status_code == 400 else second
     assert rejected.json()["error"]["code"] == "reply_context_unavailable"
     assert len(agent_calls) == 1
+
+
+async def test_같은_되묻기에_늦게_온_답은_하루_한도를_쓰지_않는다(client, agent_calls, monkeypatch):
+    """늦게 온 답은 한도를 세기 전에 400 으로 끝난다 (#439 리뷰).
+
+    순서는 두고 consume() 이 "이미 없음" 을 돌려줄 때 400 을 내는 방법도 위 테스트는 통과한다.
+    하지만 그때는 한도를 이미 센 뒤라, 늦게 온 답이 400 을 받으면서도 하루 한도 1회를 잃는다.
+    동의 읽기를 get 앞으로 옮긴 이유가 이것이라, 남은 횟수로 직접 건다.
+    """
+    from app.core.config import settings
+
+    first, second = await _answer_same_question_twice_at_once(client, monkeypatch)
+    assert sorted([first.status_code, second.status_code]) == [202, 400]
+
+    # 받아들인 답 하나만 셌다 — 일반 입력이 한도 - 1 번 더 들어가고, 그다음이 429 다
+    for _ in range(settings.INPUT_DAILY_LIMIT - 1):
+        response = await client.post(URL, json=BODY, headers=_key())
+        assert response.status_code == 202
+    over = await client.post(URL, json=BODY, headers=_key())
+    assert over.status_code == 429
