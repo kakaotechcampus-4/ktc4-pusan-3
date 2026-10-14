@@ -110,8 +110,6 @@ export const inviteHandlers = [
 
   http.post(url("/invites/:code/accept"), async ({ params, request }) => {
     await networkDelay();
-    const rejected = rejectCode(normalizeInviteCode(String(params.code)));
-    if (rejected) return rejected;
 
     // 🚨 **관계는 받는 쪽이 보낸다.** 안 보내면 비워 둔다 — 목이 기본값을 채우면
     //    "안 골라도 뭔가 들어간다" 가 되어 화면이 그 필드를 안 보내도 모른다.
@@ -122,10 +120,15 @@ export const inviteHandlers = [
 
     // 🚨 **만 19세 표시가 없으면 연결하지 않는다** (약관 제7조 ② · #166). 화면이 체크값을 실제로
     //    싣는지 여기서 건다 — 목이 통과시키면 표시 없이 아이 정보에 닿는 길이 생겨도 모른다.
-    //    ⚠️ 서버에는 아직 없는 검사라 코드 · 상태와 다른 검사와의 순서는 계약이 아니다.
+    //    서버와 같이 **코드를 보기 전에** 400 으로 막는다 — 코드를 쓰지 않고 시도 제한에도 세지 않는다.
     if (body.adult_attested !== true) {
-      return apiError(422, "validation_failed", "만 19세 이상인지 표시해 주세요");
+      return apiError(400, "validation_failed", "만 19세 이상인지 표시해 주세요", {
+        fields: ["adult_attested"],
+      });
     }
+
+    const rejected = rejectCode(normalizeInviteCode(String(params.code)));
+    if (rejected) return rejected;
 
     // 초대받은 보호자는 owner 가 아니다. 나머지 화면이 그대로 돌게 같은 아이에 붙인다.
     joinChild({

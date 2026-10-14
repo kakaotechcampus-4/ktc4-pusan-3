@@ -2260,7 +2260,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       for (let i = 0; i < 5; i += 1) {
         await api.get("/invites/MKWASTED").catch(() => null);
       }
-      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
       expect(isApiError(caught, "too_many_attempts")).toBe(true);
     } finally {
       setScenario("default");
@@ -2302,7 +2302,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     setScenario("consent");
     try {
       for (let i = 0; i < 6; i += 1) {
-        await api.post("/invites/MKTAKEN2/accept", {}).catch(() => null);
+        await api.post("/invites/MKTAKEN2/accept", ADULT).catch(() => null);
       }
       const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
       expect(res.child_id).toBe("c1");
@@ -2352,6 +2352,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       try {
         const caught = await api.post("/invites/MKGRAND1/accept", body).catch((e) => e);
         expect(isApiError(caught, "validation_failed")).toBe(true);
+        expect((caught as ApiError).status).toBe(400);
 
         const me = await api.get<Me>("/me");
         expect(me.children).toHaveLength(0);
@@ -2367,7 +2368,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
 
   it("이미 아이가 있으면 수락이 막힌다", async () => {
     // default 시나리오는 아이가 하나 있는 계정이다.
-    const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+    const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
     expect(isApiError(caught, "child_already_exists")).toBe(true);
   });
 
@@ -2378,7 +2379,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   ])("%s 는 %s 로 막힌다", async (code, expected) => {
     setScenario("consent");
     try {
-      const caught = await api.post(`/invites/${code}/accept`, {}).catch((e) => e);
+      const caught = await api.post(`/invites/${code}/accept`, ADULT).catch((e) => e);
       expect(isApiError(caught, expected)).toBe(true);
     } finally {
       setScenario("default");
@@ -2393,9 +2394,9 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     setScenario("consent");
     try {
       for (let i = 0; i < 5; i += 1) {
-        await api.post("/invites/MKWASTED/accept", {}).catch(() => null);
+        await api.post("/invites/MKWASTED/accept", ADULT).catch(() => null);
       }
-      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
       expect(isApiError(caught, "too_many_attempts")).toBe(true);
     } finally {
       setScenario("default");
