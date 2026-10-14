@@ -1,0 +1,108 @@
+"""Growth Agent 의 system prompt.
+
+Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 막는 자리다 — 안전 · 단계 고르기 ·
+근거 대조 · 일반/개인화 분류는 코드가 한다. 프롬프트에 중복해 적지 않는다.
+
+구획 (고정 → 동적)
+  고정  [역할] → [하지 않는 것] → 라벨 구획([교육 활동] | [생활 루틴]) → [근거] → [출력]
+  동적  [예시] → [월령] → 현재 시각
+- 아이 이름 · 건강정보 · 코드 문구(`authored_by="code"`)를 싣지 않는다.
+"""
+
+from collections.abc import Sequence
+
+from app.agents.growth.context import GrowthContext
+from app.agents.growth.schemas.task import GrowthTaskType
+from app.agents.growth.tools.docs import DocHit
+
+_ROLE = """
+[역할]
+너는 아이의 기록을 바탕으로 집에서 해 볼 배움 활동이나 생활 루틴의 다음 한 걸음을 고르는 도우미다.
+보호자는 후보를 보고 고르기만 한다. 조회 tool 로 사실을 모으고, 마지막에 출력 tool 을 한 번 부른다.
+""".strip()
+
+_DONT = """
+[하지 않는 것]
+- 아이의 발달을 평가하지 않는다. 또래 · 평균 · 정상 · 수준 · 발달 단계와 비교하지 않는다.
+  늦다 · 빠르다 · 뛰어나다 · 재능 · 소질 같은 말을 쓰지 않는다.
+- 진단하지 않는다. 행동을 문제로 규정하지 않는다.
+- 한 번의 관찰을 성향으로 쓰지 않는다. "늘" "항상" "좋아하는" 은 확정된 관심(tier 1)에만 쓴다.
+- 음식 · 식재료를 쓰는 활동을 내지 않는다. 그건 놀이 추천의 몫이다.
+- 약 · 처치 방법을 말하지 않는다.
+- 일정을 직접 등록하지 않는다.
+""".strip()
+
+_LEARNING = """
+[교육 활동]
+- 후보 3개를 낸다. 모자라게 내지 않는다.
+- 단계(steps)는 1~4줄. 쓰는 물건(materials)을 빠짐없이 적는다 — 거르는 건 코드가 한다.
+- 관심사가 있으면 활동에 잇는다. 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
+""".strip()
+
+_ROUTINE = """
+[생활 루틴]
+- 먼저 search_routine_memory 를 부른다. 다음 단계(next_steps)는 코드가 골랐다 — 단계를 건너뛰거나
+  새로 만들지 않는다. next_steps 의 단계마다 하나씩, 그 단계를 이 집 상황에 맞춘 문장으로 옮긴다.
+- next_steps 가 없거나 기록이 없으면 items 를 비우고 category · subject 만 낸다.
+  코드가 알맞은 안내나 질문을 낸다.
+""".strip()
+
+_EVIDENCE = """
+[근거]
+- evidence 에는 조회 결과나 [예시]에 있던 id 만 쓴다. 지어내지 않는다. 근거마다 note 를 짧게 쓴다 —
+  원문을 옮기지 않는다.
+- 기억 근거가 없는 교육 활동은 가장 가까운 [예시] id 를 단다.
+- 생활 루틴은 그 루틴 기록을 근거로 단다.
+- 싫어한 기록을 피해 골랐으면 무엇을 피했는지 reason 에 쓴다.
+""".strip()
+
+_OUTPUT = """
+[출력]
+- 마지막에 출력 tool 을 한 번 부른다. 말로 후보를 설명하지 않는다.
+- 후보가 거절되면 받은 사유대로 고쳐서 다시 낸다.
+""".strip()
+
+
+def build_system_prompt(
+    context: GrowthContext, task_type: GrowthTaskType, examples: Sequence[DocHit]
+) -> str:
+    """system 메시지 본문. examples 는 `search_growth_doc` 결과(교육만, 루틴은 비어 있다)다."""
+    gate = context.state.gate
+    if gate is None:
+        raise RuntimeError("Gate 없이 프롬프트를 만들었다 — run() 이 build_gate 를 먼저 부른다")
+    label = _LEARNING if task_type is GrowthTaskType.LEARNING_SUGGESTION else _ROUTINE
+    dynamic = [_examples(examples), f"[월령]\n아이는 {gate.stage.months}개월이다.", _now(context)]
+    return "\n\n".join([_ROLE, _DONT, label, _EVIDENCE, _OUTPUT, *dynamic])
+
+
+def request_message(request_texts: Sequence[str]) -> str:
+    texts = [text for text in request_texts if text.strip()]
+    return "\n".join(texts) if texts else "아이와 해 볼 것을 추천해 줘."
+
+
+def recall_message(
+    request_texts: Sequence[str], *, chosen: Sequence[str], excluded: Sequence[str]
+) -> str:
+    """안전 필터 · 금지 표현 뒤 재호출. 빠진 이유는 말하지 않는다 (Tool_공통 §5-2)."""
+    avoid = "\n".join(f"- {item}" for item in (*chosen, *excluded))
+    return (
+        f"{request_message(request_texts)}\n\n"
+        "아래 후보는 다시 내지 않는다. 다른 후보로 다시 낸다.\n"
+        f"{avoid}"
+    )
+
+
+def _examples(examples: Sequence[DocHit]) -> str:
+    if not examples:
+        return "[예시]\n이 월령의 예시는 아직 없다."
+    lines = ["[예시] 결만 참고한다. 바탕으로 했으면 id 를 evidence 에 단다."]
+    for hit in examples:
+        row = hit.row
+        materials = ", ".join(row.materials) or "없음"
+        lines.append(f"- id {row.id} · {row.title}: {row.body} (준비물 {materials})")
+    return "\n".join(lines)
+
+
+def _now(context: GrowthContext) -> str:
+    local = context.now.astimezone(context.timezone)
+    return f"현재 시각은 {local.isoformat()} · timezone {context.timezone}."

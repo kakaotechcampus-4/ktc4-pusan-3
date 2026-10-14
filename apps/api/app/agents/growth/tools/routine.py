@@ -141,6 +141,20 @@ class NextStep:
             raise ValueError("다음 칸이 있거나 readout 이 있거나 둘 중 하나다")
 
 
+@dataclass(frozen=True)
+class PickedStep:
+    """`search_routine_memory` 가 관찰 하나(subject)마다 고른 결과.
+
+    `step.row` 가 있으면 그 행이 다음 단계, 없으면 `step.readout_key` 가 왜 없는지다 —
+    `ask.routine_current`(도움 수준 모름) · `next_step.chain_end`(사슬 끝) ·
+    `doc.no_row`(맞는 사슬 없음).
+    """
+
+    subject: str  # 관찰의 행동 이름 그대로. 되묻기 문장에 들어간다
+    category: str
+    step: NextStep
+
+
 def ordered_chain(rows: Sequence[GrowthDocRow]) -> tuple[GrowthDocRow, ...]:
     """`next_step_of`(앞 단계)로 사슬을 처음부터 끝까지 세운다. 이상하면 `ChainError`.
 
