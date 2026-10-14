@@ -68,6 +68,8 @@ import type {
   PhotoLane,
   SafetyScanResponse,
   EventDraft,
+  EventItem,
+  EventItemUpdateResponse,
   SubmitEventBody,
   SuggestionsRequest,
   SuggestionsResponse,
@@ -632,7 +634,7 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     for (const d of drafts) {
       expect(d).not.toHaveProperty("id");
       expect(d).not.toHaveProperty("status");
-      // 🚨 `is_prepared` 는 payload 에 없다 — 체크는 PATCH /event-items/{iid} 만의 몫이다 (#122).
+      // 🚨 `is_prepared` 는 payload 에 없다 — 체크는 PATCH /children/{cid}/event-items/{iid} 만의 몫이다 (#122).
       for (const item of d.items) expect(item).not.toHaveProperty("is_prepared");
     }
   });
@@ -1554,15 +1556,6 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     expect(isApiError(failure, "validation_failed")).toBe(true);
     expect((failure as ApiError).status).toBe(400);
   });
-
-  it("준비물 체크는 다시 읽어도 남아 있다", async () => {
-    await api.patch("/event-items/i_1", { is_prepared: true });
-
-    const eventDay = await findEventDay();
-    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
-    const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
-    expect(item?.is_prepared).toBe(true);
-  });
 });
 
 /**
@@ -1684,6 +1677,65 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
     const summary = month.days.find((d) => d.date === date);
     expect(summary?.has_shared_photo).toBe(true);
     expect(summary?.has_my_diary).toBe(false);
+  });
+});
+
+/**
+ * 09 캘린더 준비물 체크 (#367). 서버 정본은 PR #335 (`routers/event_items.py` · `test_event_items.py`).
+ *
+ * 🚨 **체크 시각은 상태가 바뀔 때만 새로 정한다.** 이미 체크된 것을 다시 체크하면 처음 시각을 그대로
+ *    둔다 — 목이 한동안 체크할 때마다 지금 시각을 넣고, 하루 보기에는 픽스처 시각을 내렸다.
+ * 🚨 날짜는 픽스처를 import 하지 않고 달 보기로 찾는다 (`findEventDay` 주석과 같은 이유).
+ */
+describe("㉕ 준비물 체크 — 서버 #335 와 같은 계약 (#367)", () => {
+  async function dayItem(itemId: string): Promise<EventItem | undefined> {
+    const eventDay = await findEventDay();
+    const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
+    return detail.events.flatMap((event) => event.items).find((i) => i.item_id === itemId);
+  }
+
+  function patchItem(itemId: string, isPrepared: boolean): Promise<EventItem> {
+    return api
+      .patch<EventItemUpdateResponse>(`/children/c1/event-items/${itemId}`, {
+        is_prepared: isPrepared,
+      })
+      .then((res) => res.item);
+  }
+
+  it("아이 경로로 체크한 값이 하루 보기에 그대로 남는다", async () => {
+    expect((await dayItem("i_1"))?.is_prepared).toBe(false);
+
+    const checked = await patchItem("i_1", true);
+
+    expect(checked.is_prepared).toBe(true);
+    expect(checked.prepared_at).not.toBeNull();
+    expect(await dayItem("i_1")).toEqual(checked);
+  });
+
+  it("다시 체크하면 처음 시각을 지키고, 해제하면 null, 해제 뒤 체크는 새 시각이다", async () => {
+    // 목의 i_2 는 이미 체크된 준비물이다 — 처음 시각은 하루 보기에서 읽는다.
+    const first = await dayItem("i_2");
+    expect(first?.is_prepared).toBe(true);
+    expect(first?.prepared_at).not.toBeNull();
+
+    const again = await patchItem("i_2", true); // 체크 → 체크
+    const cleared = await patchItem("i_2", false); // 체크 → 미체크
+    const stillClear = await patchItem("i_2", false); // 미체크 → 미체크
+    const rechecked = await patchItem("i_2", true); // 미체크 → 체크
+
+    expect(again.prepared_at).toBe(first?.prepared_at);
+    expect([cleared.is_prepared, cleared.prepared_at]).toEqual([false, null]);
+    expect([stillClear.is_prepared, stillClear.prepared_at]).toEqual([false, null]);
+    expect(rechecked.is_prepared).toBe(true);
+    expect(rechecked.prepared_at).not.toBeNull();
+    expect(rechecked.prepared_at).not.toBe(first?.prepared_at);
+    expect(await dayItem("i_2")).toEqual(rechecked);
+  });
+
+  it("그 아이의 일정에 없는 준비물은 404 다", async () => {
+    const failure = await patchItem("i_missing", true).catch((error: unknown) => error);
+    expect(isApiError(failure, "not_found")).toBe(true);
+    expect((failure as ApiError).status).toBe(404);
   });
 });
 

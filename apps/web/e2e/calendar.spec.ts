@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
 
+import type { CalendarDayResponse } from "@/lib/api/types";
+
 import { CHILD, expect, expectNoGate, recordApi, test, writes } from "./fixtures";
 import { browserDaysAgo } from "./time-zone";
 
@@ -172,4 +174,55 @@ test("일기 지우기 확인 패널은 승인 게이트가 아니다 — 게이
   // 게이트는 캘린더 쓰기와 건강 기록 확정 딱 2곳이다. 자기 글을 지우는 확인은 그 칸이 아니다.
   await expectNoGate(page);
   expect(writes(calls)).toEqual([]);
+});
+
+/* ── 준비물 체크 (#367 · 서버 #335) ─────────────────────────────────────── */
+
+test("준비물 체크는 아이 경로로 키 없이 나가고, 다시 받은 하루 보기에도 남는다 (#367)", async ({
+  page,
+}) => {
+  // 목의 일정은 이틀 뒤다. 준비물 "수건" 은 아직 안 챙긴 상태로 시작한다.
+  const date = browserDaysAgo(-2);
+  const dayPath = `/children/${CHILD}/calendar/${date}`;
+  const calls = recordApi(page);
+  await page.goto(`${CALENDAR}?date=${date}`);
+
+  const towel = page.getByRole("checkbox", { name: "수건" });
+  await expect(towel).not.toBeChecked();
+  // 체크가 끝나면 하루 보기를 다시 받는다 (`PreparedCheckbox` 의 onSettled).
+  const reread = page.waitForResponse(
+    (res) =>
+      res.request().method() === "GET" && new URL(res.url()).pathname === `/api/v1${dayPath}`,
+  );
+
+  await towel.click({ force: true });
+
+  // 🚨 옛 경로(`PATCH /event-items/{iid}`)가 아니라 서버 #335 의 아이 경로다.
+  //    Idempotency-Key 를 받지 않는 경로다 — 되돌릴 수 있는 체크라 되돌릴 수 없는 5곳이 아니다.
+  await expect
+    .poll(() => writes(calls, "PATCH"))
+    .toEqual([
+      {
+        method: "PATCH",
+        path: `/children/${CHILD}/event-items/i_1`,
+        body: { is_prepared: true },
+        idempotencyKey: undefined,
+      },
+    ]);
+  // 🚨 다시 받은 값에도 체크가 남아 있다 — 화면의 체크가 낙관적 표시만이 아니다.
+  const day = (await (await reread).json()) as CalendarDayResponse;
+  expect(day.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1")).toMatchObject(
+    { is_prepared: true },
+  );
+  await expect(towel).toBeChecked();
+
+  // 해제도 같은 경로로 최종 상태를 보낸다.
+  await towel.click({ force: true });
+  await expect
+    .poll(() => writes(calls, "PATCH").map((c) => c.body))
+    .toEqual([{ is_prepared: true }, { is_prepared: false }]);
+  await expect(towel).not.toBeChecked();
+
+  // 되돌릴 수 있는 체크라 게이트 표식이 없다 (§2 실행).
+  await expectNoGate(page);
 });

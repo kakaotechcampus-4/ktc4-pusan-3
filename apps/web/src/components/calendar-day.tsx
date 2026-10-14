@@ -262,7 +262,7 @@ function PreparedCheckbox({
   const toggle = useMutation({
     mutationFn: (isPrepared: boolean) =>
       queue.run(() =>
-        api.patch<EventItemUpdateResponse>(`/event-items/${item.item_id}`, {
+        api.patch<EventItemUpdateResponse>(`/children/${childId}/event-items/${item.item_id}`, {
           is_prepared: isPrepared,
         }),
       ),
