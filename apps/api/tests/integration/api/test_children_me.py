@@ -28,10 +28,10 @@ ME = "/api/v1/me"
 TODAY = date(2026, 10, 5)
 """나이 문구가 날짜에 따라 바뀌어서 "오늘" 을 고정한다."""
 
-CHILD_POLICY = "draft-0"
-"""아이 동의 둘(child_basic · child_health)의 지금 버전.
+CHILD_POLICY = "draft-2"
+"""아이 동의 둘(child_basic · child_health)의 지금 버전 — 약관 draft-2 (#221).
 
-동의문 2 · 3 을 새로 등록하면 같이 바꾼다."""
+아이 동의를 새로 등록하면 같이 바꾼다."""
 
 CHILD_CONSENTS = [
     {"scope": "child_basic", "policy_version": CHILD_POLICY},
@@ -298,7 +298,7 @@ async def test_법정대리인_403_은_child_basic_을_가리킨다(db_client, b
 async def test_아이_동의가_아닌_scope_는_기록하지_않는다(db_client, session, bearer):
     """계정 동의는 가입에서만 받는다. 아이 등록 요청에 실려 와도 이 아이의 동의로 남기지 않는다."""
     headers, _ = bearer
-    consents = [*CHILD_CONSENTS, {"scope": "service_terms", "policy_version": "draft-1"}]
+    consents = [*CHILD_CONSENTS, {"scope": "service_terms", "policy_version": "draft-2"}]
 
     response = await db_client.post(
         CHILDREN, json=register_body(consents=consents), headers=headers
