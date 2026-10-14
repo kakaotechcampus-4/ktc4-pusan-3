@@ -3,8 +3,11 @@
 원고는 `alembic/policy_texts/draft-1/<scope>.md` 이고 마이그레이션이 그 글을 그대로 넣는다.
 여기서 지키는 것 셋.
     ① DB 본문은 저장소 원고와 한 글자도 다르지 않다 — 원문·해시가 같은 글 한 벌에서 나온다
-    ② 새 버전을 등록한 scope 의 draft-0 은 끝난 것으로 기록된다. 개정 중인 아이 동의 둘은 그대로다
+    ② 새 버전을 등록한 scope 의 draft-0 은 끝난 것으로 기록된다
     ③ 🚨 운영자 주소·전화는 빈칸 그대로다 — 저장소가 public 이라 실제 값은 배포 때만 채운다 (#166)
+
+draft-2(b5be2945826e)가 위치를 뺀 셋을 이어받았다 — 지금 판인지는 위치만 여기서 보고, 나머지는
+tests/integration/test_policy_draft_2.py 가 본다. draft-1 행의 본문 · 해시 · 정본은 그대로 남는다.
 """
 
 import hashlib
@@ -21,7 +24,8 @@ from app.domains.policy.repository import find_active_versions
 
 TEXTS = Path(__file__).resolve().parents[2] / "alembic" / "policy_texts" / "draft-1"
 REGISTERED = (ConsentScope.SERVICE_TERMS, ConsentScope.PRIVACY_ACCOUNT, ConsentScope.LOCATION)
-STILL_DRAFT_0 = (ConsentScope.CHILD_BASIC, ConsentScope.CHILD_HEALTH)
+STILL_CURRENT = (ConsentScope.LOCATION,)
+"""draft-2 가 이어받지 않은 scope — 위치는 첫 빌드에서 묻지 않아 draft-1 이 그대로 지금 판이다."""
 
 
 async def version_row(session, scope: ConsentScope, version: str) -> PolicyVersion | None:
@@ -30,9 +34,9 @@ async def version_row(session, scope: ConsentScope, version: str) -> PolicyVersi
     )
 
 
-@pytest.mark.parametrize("scope", REGISTERED, ids=lambda s: s.value)
+@pytest.mark.parametrize("scope", STILL_CURRENT, ids=lambda s: s.value)
 async def test_draft_1_is_the_current_version(session, scope):
-    """동의 화면(GET /policies)이 지금 보여 주는 버전이 draft-1 이다."""
+    """GET /policies 가 지금 보여 주는 버전이 draft-1 이다 — draft-2 가 이어받지 않은 위치."""
     current = {row.scope: row for row in await find_active_versions(session, now=datetime.now(UTC))}
 
     assert current[scope].version == "draft-1"
@@ -89,15 +93,6 @@ async def test_superseded_draft_0_is_marked_ended(session, scope):
 
     if draft_0 is not None:  # location 은 draft-0 이 없던 scope 다
         assert draft_0.ended_at == draft_1.effective_at
-
-
-@pytest.mark.parametrize("scope", STILL_DRAFT_0, ids=lambda s: s.value)
-async def test_child_consents_stay_on_draft_0(session, scope):
-    """② 동의문 2·3 은 개정 중이라 이번에 올리지 않는다. draft-0 이 그대로 유효하다."""
-    draft_0 = await version_row(session, scope, "draft-0")
-
-    assert draft_0.ended_at is None
-    assert await version_row(session, scope, "draft-1") is None
 
 
 @pytest.mark.parametrize(
