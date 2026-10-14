@@ -42,7 +42,7 @@
 | 읽기만 하는 공유 테이블 | 소유 |
 | --- | --- |
 | `observation_food` · `profile_affinity(domain=food)` | Memory |
-| `health_safety` | 앱 API (보호자 권한) |
+| `health_safety` | 앱 API (보호자 권한). Agent 는 `domains/safety/agent_reader.py` 의 `DbSafetyReader.food_safety`(active · kind 전부)로 읽는다 — entrypoint 연결은 #405 PR B |
 | `child` (생년월일) | 앱 |
 | `child_growth_log` (키·몸무게·측정일) | Memory |
 | `suggestion` | 주입된 writer가 INSERT (`status='draft'`) |
