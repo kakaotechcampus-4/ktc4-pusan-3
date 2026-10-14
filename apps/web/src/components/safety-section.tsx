@@ -51,6 +51,9 @@ export function SafetySection({ childId }: { childId: string }) {
    * 🚨 **검사지는 시트가 아니라 화면(11-2)으로 나간다.** 한 장에서 열 줄 넘게 나오는데 시트
    *    높이 안에서는 배너·사진·목록·승인 버튼이 서로 자리를 뺏는다 (사진을 96px 까지 줄여야
    *    목록이 보였다). 그래서 여기 남는 `mode` 는 둘뿐이다.
+   *
+   * ⚠️ 실서버에 검사지 읽기가 생기기 전에는(`lib/features.ts` · #409) 길이 직접 적기 하나라
+   *    `"choose"` 를 쓰지 않는다 — 추가 버튼이 바로 `"manual"` 로 간다.
    */
   const [mode, setMode] = useState<null | "choose" | "manual">(null);
   /** 고치는 중인 기록. 있으면 같은 승인 게이트 시트가 고치기로 열린다. */
