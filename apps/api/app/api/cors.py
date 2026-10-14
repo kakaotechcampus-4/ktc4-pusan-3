@@ -17,8 +17,13 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-ALLOW_METHODS = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
-"""계약서가 쓰는 메서드만 적는다. `*` 로 열면 나중에 추가되는 메서드가 조용히 통과한다."""
+ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+"""계약서가 쓰는 메서드만 적는다. `*` 로 열면 나중에 추가되는 메서드가 조용히 통과한다.
+
+🚨 새 메서드를 쓰는 라우트를 만들면 여기에도 더한다. 빠지면 서버 테스트는 통과하고 브라우저에서만
+   preflight 가 400 으로 막힌다 (`PUT /diary` 가 그랬다).
+   test_auth_boundary.py 가 라우트와 이 목록을 맞춰 본다.
+"""
 
 ALLOW_HEADERS = ["Authorization", "Content-Type", "Idempotency-Key"]
 """프론트 apps/web/src/lib/api/client.ts 가 실제로 싣는 세 개.

@@ -123,14 +123,16 @@ def cors_app(monkeypatch, origins: str) -> FastAPI:
     return fresh
 
 
-async def preflight(target: FastAPI, origin: str, header: str = "authorization"):
+async def preflight(
+    target: FastAPI, origin: str, header: str = "authorization", method: str = "GET"
+):
     transport = ASGITransport(app=target)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         return await c.options(
             "/ping",
             headers={
                 "Origin": origin,
-                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Method": method,
                 "Access-Control-Request-Headers": header,
             },
         )
@@ -152,6 +154,22 @@ async def test_preflight_allows_idempotency_key(monkeypatch):
 
     assert response.status_code == 200
     assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()
+
+
+async def test_every_route_method_passes_preflight(monkeypatch):
+    """라우트가 쓰는 메서드가 CORS 에서 빠지면 브라우저에서만 preflight 가 막힌다.
+    서버 테스트는 preflight 를 거치지 않아서 이 검사가 없으면 아무도 모른다 (`PUT /diary`)."""
+    used = {
+        method
+        for path, route, _ in all_routes(app.routes)
+        if path.startswith(API_V1_PREFIX)
+        for method in route.methods
+    }
+    target = cors_app(monkeypatch, ALLOWED_ORIGIN)
+
+    for method in sorted(used):
+        response = await preflight(target, ALLOWED_ORIGIN, method=method)
+        assert response.status_code == 200, method
 
 
 async def test_unknown_origin_is_blocked(monkeypatch):
