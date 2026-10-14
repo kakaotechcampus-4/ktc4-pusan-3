@@ -46,6 +46,9 @@ export interface IdempotencyKeyHolder {
    *   (idempotency-v1 §0 서버 보장 ③), 거기 걸리는 경로가 실제로 있다 — 서버는 처리했는데
    *   **응답만 유실되면** 화면은 실패로 보이고, 보호자가 한 줄을 고쳐서 다시 보낸다.
    *   그때 본문만 바뀌고 키는 그대로라 계속 422 다 (PR #71 리뷰).
+   *   ⚠️ 422 는 목과 idempotency-v1 의 목표 동작이고, **지금 서버는 본문을 비교하지 않고 처음 응답을
+   *   재생한다** (`apps/api/app/api/idempotency.py` · "422 는 다음 이슈"). 그쪽이 더 나쁘다 — 고친
+   *   본문이 저장되지 않는데 화면은 성공으로 그린다. 어느 쪽이든 본문을 넘기면 새 키가 나간다.
    *   본문이 하나뿐인 동작(확정 · 승인)은 넘기지 않는다.
    */
   current: (payload?: string) => IdempotencyKey;
@@ -82,6 +85,7 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
  * 계약서 §01 의 5곳. 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety)이 여기 포함된다.
  * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
  *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
+ *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
  * 여기에 줄을 더하면 아래 정규식과 operations.ts 가 자동으로 따라온다.
  * 🚨 줄을 더하면 `idempotentMethod` 에도 더한다 — 타입이 빠진 줄을 잡는다.
  */
@@ -92,6 +96,14 @@ export const idempotentPath = {
   photo: (childId: string) => `/children/${childId}/photos`,
   /** 🚨 승인 게이트 ㉡ — 알레르기·건강 기록 확정. */
   healthSafety: (childId: string) => `/children/${childId}/health-safety`,
+  /**
+   * 🚨 승인 게이트 ㉡ — 고치기 (`PATCH`, 서버 #370). **같은 본문을 두 번 보내도 결과가 같지 않다** —
+   *    서버는 고치면 지금 기록을 내리고 새 id 로 다시 넣어서(이력이 남는다), 응답만 잃고 다시 보내면
+   *    옛 id 가 이미 내려가 있어 404 다. 키가 있으면 처음 응답이 재생된다.
+   *    서버는 키를 선택으로 받지만 화면은 늘 붙인다 — 표에 넣어 키 없이는 나가지 않게 한다.
+   */
+  updateHealthSafety: (childId: string, safetyId: string) =>
+    `/children/${childId}/health-safety/${safetyId}`,
   /**
    * 🚨 승인 게이트 ㉠ — 캘린더 쓰기. 초안 **제출**이 이 자리다 (#121).
    *
@@ -122,6 +134,7 @@ export const idempotentMethod = {
   onboarding: "POST",
   photo: "POST",
   healthSafety: "POST",
+  updateHealthSafety: "PATCH",
   submitEvent: "POST",
   updateEvent: "PATCH",
 } as const satisfies Record<IdempotentOperation, "POST" | "PATCH">;

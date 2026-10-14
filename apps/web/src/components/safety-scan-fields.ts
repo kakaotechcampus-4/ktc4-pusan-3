@@ -1,5 +1,5 @@
 import type { SafetyScanCandidate } from "@/lib/api";
-import { isSeverityFor } from "@/lib/health-safety";
+import { HEALTH_SAFETY_LIMITS, isSeverityFor, reactionsProblem } from "@/lib/health-safety";
 
 /**
  * 11-2 검사지 확인 화면이 쓰는 **한 줄의 모양과 분류**.
@@ -39,7 +39,7 @@ export interface ScanRow {
 export function toRow(candidate: SafetyScanCandidate): ScanRow {
   const label = candidate.label ?? "";
 
-  return {
+  const row: ScanRow = {
     id: candidate.id,
     label,
     // 🚨 검사지는 전부 알레르기라 심각도는 검사 Class 다. 쓸 수 없는 값이 오면 비운다 — DB 가
@@ -58,6 +58,18 @@ export function toRow(candidate: SafetyScanCandidate): ScanRow {
     checked: label !== "" && candidate.source_text !== null,
     status: "idle",
   };
+  // 🚨 서버가 받지 않는 길이면 미리 고르지 않는다 — 고른 채로 승인하면 그 줄만 400 으로 실패한다.
+  return tooLong(row) ? { ...row, checked: false } : row;
+}
+
+/**
+ * 서버가 받는 길이를 넘었는가 (`HEALTH_SAFETY_LIMITS`). 검사지에서 옮긴 글은 보호자가 친 것이
+ * 아니라서 입력의 `maxLength` 를 거치지 않고 들어온다.
+ */
+function tooLong(row: ScanRow): boolean {
+  return (
+    row.label.trim().length > HEALTH_SAFETY_LIMITS.label || reactionsProblem(row.reactions) !== null
+  );
 }
 
 /** 필수 칸이 다 찼는가. 심각도·증상은 없어도 등록된다 (추측해 채우지 않는다). */
@@ -72,13 +84,14 @@ export function isComplete(row: ScanRow): boolean {
  *   ㉡ **검사지 원문을 못 읽었다.** 칸은 다 찼지만 **무엇을 보고 옮겼는지가 없다.** 대조할
  *      것이 없는 승인은 확인이 아니라서, 보호자가 고치기 시트에서 한 번 보고 확인해야
  *      비로소 "잘 읽은 것" 으로 내려간다 (`confirmed`).
+ *   ㉢ **서버가 받지 않는 길이다.** 고르면 그 줄만 400 이라, 고치기 시트에서 줄여야 한다.
  *
  * 🚨 **이미 등록된 줄은 여기 오지 않는다.** 할 일이 없는 줄이라 확인 목록에 섞으면 정작
  *    손봐야 할 줄이 그만큼 묻힌다.
  */
 export function needsReview(row: ScanRow): boolean {
   if (row.alreadyRegistered) return false;
-  if (!isComplete(row)) return true;
+  if (!isComplete(row) || tooLong(row)) return true;
   return row.sourceText === null && !row.confirmed;
 }
 
@@ -93,8 +106,9 @@ export function isSelectable(row: ScanRow): boolean {
   return isComplete(row) && !needsReview(row);
 }
 
-/** 왜 확인이 필요한지. 🚨 두 사유가 섞이지 않게 **하나만** 고른다. */
+/** 왜 확인이 필요한지. 🚨 사유가 섞이지 않게 **하나만** 고른다. */
 export function reviewReason(row: ScanRow): string {
   if (row.label.trim() === "") return "이름을 읽지 못했어요. 검사지를 보고 채워주세요.";
+  if (tooLong(row)) return "옮겨 온 글이 너무 길어요. 검사지를 보고 줄여주세요.";
   return "검사지 원문을 읽지 못했어요. 검사지를 보고 확인해주세요.";
 }

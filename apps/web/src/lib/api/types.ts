@@ -153,8 +153,7 @@ export interface Affinity {
  * 🚨 LLM 이 생성·추론·수정하지 않는다 (NF-03). 보호자 직접 입력 또는 의료 기록만.
  * DB 의 health_safety.kind 는 API 에서 type 으로 내려온다 (Ref 의 kind 와 이름 충돌 회피).
  *
- * 필드는 DB 모델(`apps/api/app/domains/safety/models.py`)에 맞춘다. 라우터가 아직 없어 Swagger 로
- * 대조할 수 없다 — 생기면 한 번 대조한다 (`domains/safety/repository.py` 의 TODO).
+ * 필드는 서버 응답(`apps/api/app/api/v1/schemas/health_safety.py` 의 `HealthSafetyOut` · #369)과 같다.
  */
 export interface HealthSafety {
   kind: "health_safety";
@@ -171,7 +170,11 @@ export interface HealthSafety {
   /** DB 는 text 다 (jsonb 에서 바뀌었다). 화면은 쓰지 않는다. */
   management: string | null;
   notes: string | null;
-  created_by?: { parent_id: string; nickname: string };
+  /**
+   * 적은 보호자. 🚨 **빠지지 않고 `null` 로 온다** — 탈퇴했거나 부르는 이름이 없는 계정이면
+   *    통째로 `null` 이다 (화면이 "null님이 확인" 을 그리지 않게 서버가 묶어 보낸다).
+   */
+  created_by: { parent_id: string; nickname: string } | null;
   updated_at: string;
 }
 
@@ -532,7 +535,7 @@ export interface EventDraftFields {
 /**
  * 초안의 준비물 한 줄.
  *
- * 🚨 **`is_prepared` 가 없다** (#122 확정). 체크 상태는 `PATCH /event-items/{iid}` 만의 몫이고,
+ * 🚨 **`is_prepared` 가 없다** (#122 확정). 체크 상태는 `PATCH /children/{cid}/event-items/{iid}` 만의 몫이고,
  *    초안이 정하는 것은 새 준비물(`item_id: null`)의 초기값뿐이다. payload 에 실으면
  *    SSE 가 나간 뒤 보호자가 체크한 것이 제출하는 순간 풀린다.
  */
@@ -596,7 +599,7 @@ export interface EventDraft {
  * 🚨 **보호자가 확인한 최종 상태를 통째로 보낸다** (#122 확정). 부분 갱신이 아니라서
  *    `items` 배열에서 빠진 `item_id` 가 삭제로 처리된다.
  * 🚨 `draft_id` 를 싣지 않는다 (§4-4 — 화면 전용 키고 서버는 읽지 않는다).
- * 🚨 `items` 에 `is_prepared` 가 없다 (§4-3 — 체크는 `PATCH /event-items/{iid}` 만의 몫).
+ * 🚨 `items` 에 `is_prepared` 가 없다 (§4-3 — 체크는 `PATCH /children/{cid}/event-items/{iid}` 만의 몫).
  */
 export interface SubmitEventBody {
   event: EventDraftFields;
@@ -725,7 +728,11 @@ export interface CreateHealthSafetyResponse {
 }
 
 /**
- * 🚨 **승인 게이트 ㉡ — 고치기.** ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ * 🚨 **승인 게이트 ㉡ — 고치기.** `PATCH /children/{cid}/health-safety/{id}` (서버 #370 · #87 결정).
+ *
+ * 🚨 **고치면 id 가 바뀐다.** 서버가 지금 기록을 내리고(`retracted`) 바뀐 값으로 새 기록을 넣는다 —
+ *    이력이 남는다. 바뀐 것이 없으면 같은 기록이 그대로 온다. 증상(`reactions`)은 보내면 통째로
+ *    바뀌고 `null` 은 400 이다(비우려면 `[]`).
  *
  * 🚨 **`type` 과 `label` 이 없다.** 그 둘은 이 기록의 **정체**다 — 우유를 땅콩으로 고치는 것은
  *    고치기가 아니라 다른 기록이고, `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이
@@ -955,51 +962,87 @@ export interface PhotoCommitResponse {
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
-/** `GET /children/{cid}/calendar?month=YYYY-MM` 의 한 칸. */
+/**
+ * `GET /children/{cid}/calendar?month=YYYY-MM` 의 한 칸 (#318).
+ *
+ * 🚨 **표시할 것이 하나라도 있는 날만 온다.** 빈 날은 목록에 없다 — 화면은 없는 날을 표식 없이 그린다.
+ */
 export interface CalendarDay {
   /** YYYY-MM-DD. */
   date: string;
-  has_diary: boolean;
-  /** 🚨 `confirmed` 만 센다. draft 는 아직 캘린더에 쓴 것이 아니다 (승인 게이트 ㉠). */
+  /** 그날과 겹치는 일정이 있다. `event` 에는 보호자가 제출한 행만 있다 (#118 · 승인 게이트 ㉠). */
   has_event: boolean;
-  has_image: boolean;
+  /** 🚨 **로그인한 보호자 본인의 일기만** 센다. 다른 보호자의 일기는 여기에도 안 잡힌다 (#115). */
+  has_my_diary: boolean;
+  /** 연결된 보호자가 함께 보는 사진이 그날 있다. */
+  has_shared_photo: boolean;
+  /** 그날과 기간이 겹치는 기록 수. 하루 조회의 `observations` 와 같은 기준이다 (건강 · 지운 기록 제외). */
   observation_count: number;
-  /**
-   * ⚠️ **계약서 v1 에 아직 없다.** "이날 프로필이 달라졌다"(승격·강등)를 날짜 칸에 그리려면
-   *    이 값이 필요한데 월 조회 응답에는 없다. 프론트가 셀 수 없는 값이다 — 승격은 Curator 의
-   *    반복 집계 결과라 관찰 건수로 역산할 수 없다 (CLAUDE.md §2).
-   *    👉 `apps/api` Owner 협의 대상. 안 오면 고리 표식과 범례의 그 줄이 나오지 않는다.
-   */
-  profile_changed_count?: number;
 }
 
 export interface CalendarMonthResponse {
   days: CalendarDay[];
 }
 
+/** 로그인한 보호자의 그날 일기 (`diary_entry`). 쓴 사람 본인만 본다. */
+export interface MyDiary {
+  content: string;
+  updated_at: string;
+}
+
+/** 그날 사진 한 장 (`shared_photo`). 연결된 보호자가 함께 본다. */
+export interface SharedPhoto {
+  id: string;
+  /**
+   * 화면은 브라우저가 바로 여는 주소로 보고 `<img src>` 에 그대로 넣는다.
+   *
+   * ⚠️ **주소를 받는 방식이 바뀔 수 있다** (#350 리뷰). 지금 DB 에는 텍스트 칸 하나뿐이고,
+   *    서명 URL 처럼 따로 받아야 하는 주소가 될지는 사진 업로드를 다루는 K 묶음에서 정한다.
+   *    아이 사진이라 공개 주소로 두기 어려울 수 있다 — 바뀌면 이 칸과 `CalendarDayPanel` 의
+   *    `Photos` 를 같이 고친다.
+   */
+  image_url: string;
+  created_at: string;
+}
+
 /**
- * `GET /children/{cid}/calendar/{date}`.
+ * `GET /children/{cid}/calendar/{date}` (#318).
  *
  * `events` 는 그 날짜에 걸린 `episodic` 과 `core` 를 함께 담는다 — 화면은 둘을 구분하지 않는다.
+ * 🚨 그날 00:00 에 끝난 일정은 그날에 오지 않는다 (서버가 `[starts_at, ends_at)` 로 본다).
+ *
+ * 🚨 **일기와 사진은 다른 저장소다** (#115). 일기는 쓴 보호자 본인 것만 오고, 사진은 연결된
+ *    보호자가 함께 본다 — 한 칸에 섞으면 남의 일기가 보이거나 내 사진이 안 보인다.
  *
  * 🚨 **일기는 관찰로 자동 추출되지 않는다** (계약서 §09). 기억으로 남기려면 보호자가
  *    `POST /children/{cid}/inputs` 에 명시적으로 태워야 한다. 화면이 이 사실을 말한다 —
  *    사용자가 일기라고 쓴 것을 아이 성향으로 조용히 승격시키면 신뢰가 깨진다.
  */
 export interface CalendarDayResponse {
-  diary: { text: string; image_urls: string[] } | null;
+  my_diary: MyDiary | null;
+  shared_photos: SharedPhoto[];
   events: CalendarEvent[];
+  /** 기록 탭 목록과 같은 모양 · 같은 상태 기준이다. */
   observations: Observation[];
 }
 
-/** `PUT /children/{cid}/calendar/{date}`. 이미지 업로드는 08 사진 화면 것이다. */
-export interface CalendarDayUpdate {
-  text: string;
-  image_urls: string[];
-  event_ids: string[];
+/**
+ * `PUT /children/{cid}/diary/{date}` — 그날 내 일기 쓰기 (#318 2/3 · PR #333 · #364).
+ * 응답은 하루 보기의 `my_diary` 와 같은 `MyDiary` 다. 같은 날 다시 쓰면 덮어쓴다.
+ *
+ * 🚨 **공백뿐인 `content` 는 422 `validation_failed` 다.** 서버는 빈 내용을 지우기로 보지 않는다 —
+ *    지우기는 `DELETE /children/{cid}/diary/{date}` 로만 한다 (204, 없는 일기를 지워도 204).
+ *    저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다. 화면이 다듬어 보내지 않는다.
+ *
+ * 작성자는 로그인한 보호자다 — 요청에 싣지 않는다. 사진은 일기 밖에 있어서(#115) 여기 싣지 않고,
+ * 일기를 덮거나 지워도 사진은 그대로다. `Idempotency-Key` 를 받지 않는다 — 몇 번 보내도 결과가
+ * 같은 요청이다 (`idempotency.ts` 의 5곳이 아니다).
+ */
+export interface DiaryRequest {
+  content: string;
 }
 
-/** `PATCH /event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
+/** `PATCH /children/{cid}/event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
 export interface EventItemUpdateResponse {
   item: EventItem;
 }
@@ -1445,28 +1488,43 @@ export interface OnboardingResponse {
 /* ── 동의 ─────────────────────────────────────────────────────────────── */
 
 /**
- * POST /consents (계약서 §04). append-only — 철회도 `withdrawn` 행을 **추가**한다.
+ * POST /consents — 10 설정에서 동의 1건을 켜거나 끈다 (PR #355). append-only — 철회도
+ * `withdrawn` 행을 **추가**한다. 같은 상태로 다시 보내면 행을 더하지 않고 마지막 행을 돌려준다.
  *
- * 🚨 계정 스코프면 `child_id` 를 생략한다. 아이 스코프인데도 아이가 아직 없는 경우가
- *    가입 직후다 — `child_basic` 없이 `POST /children` 이 403 이라, 아이를 만들기 전에
- *    받아야 하기 때문이다 (#18 확인 대상).
+ * 🚨 `child_id` 는 **아이 동의에만** 싣는다. 계정 동의(`location` 포함)에 붙이거나 아이 동의에서
+ *    빼면 400 `validation_failed` 다. 어느 쪽인지는 `policy.target` 이 말한다 (#190).
+ * 🚨 필수 동의는 끌 수 없다 (400) — 끄는 것이 곧 탈퇴다. 화면은 선택 동의만 그린다.
+ * 🚨 `policy_version` — 켜기는 `GET /policies` 가 지금 주는 버전만, 끄기는 등록된 버전이면 받는다.
  */
 export interface ConsentRequest {
   scope: string;
   action: "granted" | "withdrawn";
   child_id?: string;
   policy_version: string;
-  /** 아이 스코프에서 보호자임을 확인한 표시. */
+  /** 아이 동의를 켤 때 법정대리인 확인. `true` 가 아니면 403 `consent_required`. */
   guardian_attested?: boolean;
 }
 
 export interface ConsentResponse {
-  consent: { id: string; scope: string; action: string; acted_at: string };
+  /** 기록한 행. 같은 상태였으면 마지막 행이다. */
+  consent: {
+    id: string;
+    scope: string;
+    action: "granted" | "withdrawn";
+    policy_version: string;
+    acted_at: string;
+  };
+  /**
+   * 🚨 계정 동의를 보냈으면 **계정 동의만** 온다 — `GET /consents?child_id=` 의 `effective` 와
+   *    키 수가 다르다. 화면은 이 값으로 그리지 않고 GET 을 다시 불러온다.
+   */
   effective: Record<string, boolean>;
 }
 
 /**
- * GET /consents?child_id= (계약서 §04). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ * GET /consents?child_id= (PR #355). 10 설정의 동의 현황 + 철회 버튼이 쓴다.
+ * `child_id` 가 없으면 계정 동의만, 있으면 그 아이의 동의도 온다. 남의 아이면 403.
+ * 가입과 아이 등록 때 남은 행도 `history` 에 들어 있다.
  *
  * 🚨 `history` 는 증빙이라 삭제 엔드포인트가 없다 — 화면에도 "이력 지우기" 를 만들지 않는다.
  * 🚨 `effective` 는 **서버가 계산한 최신 상태**다. `history` 를 프론트에서 접어 현재 상태를
@@ -1601,8 +1659,7 @@ export interface InviteAcceptResponse {
 }
 
 /**
- * POST /auth/withdraw — ⚠️ **계약서 v1 에도 `docs/api/auth-kakao-v1.md` 에도 없다.**
- * 그 문서 §1 이 "계정 탈퇴·파기 배치" 를 다루지 않는 것으로 미뤄 뒀다(노션). MSW 목 위에서만 돈다.
+ * POST /auth/withdraw — 서버 PR #384. 정본은 서버 Swagger 다 (계약서 v1 에는 없다).
  *
  * 🚨 **유예가 없다. 누르면 그 자리에서 지워지고 되돌릴 수 없다** (PM 09-29 · #167).
  *    삭제 정책 정본 §9 가 MVP 를 복구(soft delete · restore UI) 없는 hard delete 로 정해 뒀다 —
@@ -1610,18 +1667,19 @@ export interface InviteAcceptResponse {
  *    설계가 크게 늘어난다. 🚨 **화면에 "며칠 안에 돌아올 수 있다" 를 다시 만들지 말 것**:
  *    그 문구를 세우는 순간 서버가 지운 뒤에 부모가 돌아올 길을 찾는다.
  *
- * 서버가 이미 정해 둔 것(같은 문서 §4-2 · §5-3)은 **탈퇴 시 그 보호자의 세션을 전부
- * 무효화한다**는 것이다. ⚠️ 같은 문서의 `parent.deleted_at`(soft delete)은 **유예를 전제한
- * 서술**이라 지금 정책과 다르다 — 정본 §9 는 복구 없는 hard delete 다. 서버 문서 정리는
- * 백엔드 쪽에서 한다 (#182 리뷰).
+ * 🚨 **탈퇴하면 그 보호자의 세션이 전부 지워진다** (`docs/api/auth-kakao-v1.md` §5-3).
+ *    그래서 응답만 잃은 뒤의 요청은 `401 unauthenticated` 다 — 동시에 들어온 나중 요청도 같다.
+ *    화면은 이 401 을 만료가 아니라 **탈퇴가 끝난 것**으로 받는다 (탈퇴 화면의 `requestWithdraw`).
+ * 🚨 `Idempotency-Key` 를 받지 않는다. 되돌릴 수 없는 5곳 표(`idempotentPath`)에 더하지 않는다 —
+ *    다시 보낸 요청은 세션이 없어서 위의 401 로 결말이 난다.
  */
 export interface WithdrawRequest {
   /**
    * 화면이 "지금 지워지고 되돌릴 수 없다" 를 보여줬다는 표시.
    *
-   * 🚨 **서버는 이 값을 저장하지 않고 확인용으로만 쓴다** (#182 리뷰). 없거나 `false` 면
-   *    `400 validation_failed` — 화면 버그로 잘못 나간 탈퇴 요청을 서버가 한 번 더 막는
-   *    장치다. 값이 `true` 하나뿐인 것은 그래서다.
+   * 🚨 **서버는 이 값을 저장하지 않고 확인용으로만 쓴다** (#182 리뷰). JSON `true` 가 아니면
+   *    (`false` · `"true"` · `1` 포함) `400 validation_failed` — 화면 버그로 잘못 나간 탈퇴
+   *    요청을 서버가 한 번 더 막는 장치다. 값이 `true` 하나뿐인 것은 그래서다.
    * 🚨 **확정 버튼을 막는 것은 이 타입이 아니다** — 그건 읽음 표시(`disabled={!acknowledged}`)
    *    가 한다. 타입이 막는 것은 요청에 **다른 값을 싣는 코드**다.
    */

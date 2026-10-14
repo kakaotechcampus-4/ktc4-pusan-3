@@ -16,22 +16,50 @@ from app.agents.food.recipe_catalog import (
     ingredient_key,
     parse_ingredient_table,
 )
-from app.agents.food.store import NutritionFacts, SafetyEntry
+from app.agents.food.store import NutritionFacts, SafetyEntry, in_memory_ports
+from app.agents.food.store.ports import RECIPE_SOURCES, MenuCatalogRow
 from app.agents.food.tools.safety import filter_food_safety
 from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
+from app.rules.menu_key import normalize_menu_key
 
 NOW = datetime(2026, 10, 11, tzinfo=UTC)
 
 
+@pytest.fixture
+def ports():
+    return in_memory_ports()
+
+
+def recipe_row(*, source_id: str, name: str) -> MenuCatalogRow:
+    """레시피 카탈로그 행 하나 — 테스트용. 이름·source_id 는 전부 가짜다."""
+    return MenuCatalogRow(
+        menu_key=normalize_menu_key(name),
+        display_name=name,
+        source="mafra_recipe",
+        resolved=True,
+        synced_at=NOW,
+        ingredients=("가짜재료",),
+        source_id=source_id,
+    )
+
+
 def entry(
-    raw: str, names: list[str] | None = None, codes: list[int] | None = None, *, status: str = "ok"
+    raw: str,
+    names: list[str] | None = None,
+    codes: list[int] | None = None,
+    *,
+    status: str = "ok",
+    food_group: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    made: dict[str, Any] = {
         "raw": raw,
         "names": [raw] if names is None else names,
         "codes": codes or [],
         "status": status,
     }
+    if food_group is not None:
+        made["food_group"] = food_group
+    return made
 
 
 def table(*entries: dict[str, Any]) -> dict[str, IngredientEntry]:
@@ -46,12 +74,12 @@ def table(*entries: dict[str, Any]) -> dict[str, IngredientEntry]:
 
 
 TABLE = table(
-    entry("돼기고기", ["돼지고기"], [10]),  # 오타
-    entry("안심", ["쇠고기"], [16]),  # 부위명
+    entry("돼기고기", ["돼지고기"], [10], food_group="meat_fish_egg_legumes"),  # 오타
+    entry("안심", ["쇠고기"], [16], food_group="meat_fish_egg_legumes"),  # 부위명
     entry("감동젓", codes=[9]),  # 이름은 그대로 두고 코드만 — 사전은 감동젓(작은 새우젓)을 모른다
-    entry("두부", codes=[5]),
+    entry("두부", codes=[5], food_group="meat_fish_egg_legumes"),
     entry("간장"),  # 밀 · 대두는 제품마다 — 이름이 남아 있으면 필터가 따로 본다
-    entry("양파"),
+    entry("양파", food_group="vegetables"),
     entry("소금, 후추", ["소금", "후추"]),  # 묶음 표기
     entry("은박컵", [], status="not_food"),
     entry("육수", status="unknown"),
@@ -64,6 +92,15 @@ def recipe(*names: str | None, name: str = "가짜찌개") -> RawRecipe:
         recipe_id="1",
         name=name,
         ingredients=tuple(RawIngredient(name=n) for n in names),
+    )
+
+
+def recipe_with_roles(*lines: tuple[str, str | None], name: str = "가짜찌개") -> RawRecipe:
+    """재료 행마다 역할(주재료 · 부재료 · 양념)을 단다."""
+    return RawRecipe(
+        recipe_id="1",
+        name=name,
+        ingredients=tuple(RawIngredient(name=n, role=role) for n, role in lines),
     )
 
 
@@ -148,6 +185,65 @@ def test_음식이_아닌_재료는_빼고_해석을_막지_않는다() -> None:
 
     assert row.resolved is True
     assert row.ingredients == ("두부",)
+
+
+# ── 식품군 · 주재료 ───────────────────────────────────────────────────
+def test_재료_식품군의_합집합이_행의_식품군이_된다() -> None:
+    row = build_recipe_row(recipe("돼기고기", "두부", "양파", "간장"), TABLE, now=NOW)
+
+    # 간장은 식품군 칸이 비어 있다 — 건너뛴다
+    assert row.food_groups == frozenset({"meat_fish_egg_legumes", "vegetables"})
+
+
+def test_식품군_칸이_빈_재료만_있으면_식품군은_비고_예외도_없다() -> None:
+    # 검수 전 표는 칸이 비어 있다 — 풀이 비는 것과 별개로 행을 만드는 데는 지장이 없다
+    row = build_recipe_row(recipe("간장", "감동젓"), TABLE, now=NOW)
+
+    assert row.food_groups == frozenset()
+
+
+def test_해석_못_한_레시피도_아는_재료의_식품군은_남긴다() -> None:
+    row = build_recipe_row(recipe("양파", "처음보는재료"), TABLE, now=NOW)
+
+    assert row.resolved is False
+    assert row.food_groups == frozenset({"vegetables"})
+
+
+def test_음식이_아닌_재료는_식품군에_들어가지_않는다() -> None:
+    parsed = table(entry("은박컵", [], status="not_food", food_group="grains"))
+
+    row = build_recipe_row(recipe("은박컵"), parsed, now=NOW)
+
+    assert row.food_groups == frozenset()
+
+
+def test_주재료_역할의_재료만_주재료로_간다() -> None:
+    row = build_recipe_row(
+        recipe_with_roles(
+            ("돼기고기", "주재료"), ("두부", "주재료"), ("양파", "부재료"), ("간장", "양념")
+        ),
+        TABLE,
+        now=NOW,
+    )
+
+    # 정리한 이름으로 간다(오타가 아니라 돼지고기)
+    assert row.main_ingredients == ("돼지고기", "두부")
+    assert row.ingredients == ("돼지고기", "두부", "양파", "간장")
+
+
+def test_역할이_없으면_주재료는_비어_있다() -> None:
+    # 칸이 비면 풀을 줄이지 않고 "같은 주재료 2개" 제약만 건너뛴다(후보 풀 쪽)
+    row = build_recipe_row(recipe("돼기고기", "두부"), TABLE, now=NOW)
+
+    assert row.main_ingredients == ()
+
+
+def test_묶음_표기_주재료는_나눈_이름으로_싣고_중복은_한_번이다() -> None:
+    row = build_recipe_row(
+        recipe_with_roles(("소금, 후추", "주재료"), ("소금, 후추", "주재료")), TABLE, now=NOW
+    )
+
+    assert row.main_ingredients == ("소금", "후추")
 
 
 # ── 정리 못 한 재료가 있으면 후보 풀에 들어가지 않는다 ─────────────────
@@ -238,6 +334,7 @@ def test_정리_표는_정리한_키로_찾는다() -> None:
         (entry("두부", status="maybe"), "모르는 status"),
         (entry("두부", []), "ok 인데 이름이 없음"),
         ({**entry("두부"), "extra": 1}, "정해지지 않은 칸"),
+        (entry("두부", food_group="vegetable"), "여섯 이름 밖 식품군"),
         ({k: v for k, v in entry("두부").items() if k != "status"}, "status 없음"),
         (entry("   "), "빈 원문"),
     ],
@@ -256,3 +353,27 @@ def test_같은_키가_두_번_나오면_읽지_않는다() -> None:
 def test_정리_표에는_출처가_있어야_한다() -> None:
     with pytest.raises(ValueError):
         parse_ingredient_table({"ingredients": [entry("두부")]})
+
+
+# ── recipe_catalog 포트 (Task 10, #326 리뷰에서 미룬 것) ─────────────────
+async def test_후보_풀은_레시피_표에서_읽는다(ports) -> None:
+    rows = await ports.recipes.all_resolved()
+
+    assert all(row.source in RECIPE_SOURCES for row in rows)
+
+
+async def test_메뉴_카탈로그에는_all_resolved_가_없다(ports) -> None:
+    assert not hasattr(ports.catalog, "all_resolved")
+
+
+async def test_레시피_표는_source_와_source_id_로_갱신한다(ports) -> None:
+    await ports.recipes.put(recipe_row(source_id="12", name="된장찌개"))
+    await ports.recipes.put(recipe_row(source_id="12", name="된장찌개(개정)"))
+
+    rows = await ports.recipes.all_resolved()
+    assert len(rows) == 1 and rows[0].display_name == "된장찌개(개정)"
+
+
+async def test_메뉴_카탈로그는_레시피_행을_받지_않는다(ports) -> None:
+    with pytest.raises(ValueError, match="recipe_catalog"):
+        await ports.catalog.put(recipe_row(source_id="12", name="된장찌개"))

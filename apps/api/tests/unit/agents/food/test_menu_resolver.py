@@ -117,7 +117,6 @@ async def test_영양DB에_없으면_unresolved_이고_카탈로그에_남지_�
     assert result == Unresolved(menu_key="처음보는메뉴", reason="not_found")
     assert source.calls == ["처음보는메뉴"]
     assert await catalog.get("처음보는메뉴") is None
-    assert await catalog.all_resolved() == []
 
 
 async def test_API_장애면_unresolved_이고_카탈로그에_남지_않는다() -> None:

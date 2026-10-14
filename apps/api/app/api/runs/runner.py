@@ -21,12 +21,14 @@
 import asyncio
 import logging
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import date
 from uuid import UUID
 
 from app.agents import entrypoint
 from app.api import idempotency
+from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, translate
 from app.api.runs.registry import RunChannel
 
@@ -50,12 +52,31 @@ RUN_DEADLINE_SECONDS = 60.0
 """
 
 
+def _curator_trigger() -> entrypoint.CuratorTrigger | None:
+    """Memory commit 직후 Curator 를 띄우는 콜백. 임베딩 키가 없으면 None — pipeline 이 건너뛴다.
+
+    store · commit 과 같이 러너가 만든다. DB 세션을 여는 곳을 러너 한 곳에 모으려는 것이다 (#257).
+    콜백은 별도 세션에서 백그라운드 task 로 돈다 — run 은 Curator 를 기다리지 않는다.
+    """
+    from app.domains.memory.curator.trigger import trigger_curator_background
+
+    embedder, judge = entrypoint.curator_deps()
+    if embedder is None:
+        return None
+
+    def trigger(child_id: UUID, today: date) -> None:
+        trigger_curator_background(child_id, today, embedder, judge)
+
+    return trigger
+
+
 def agent_job(
     *,
     child_id: UUID,
     parent_id: UUID,
     raw_text: str,
     birth_date: date | None = None,
+    child_health_granted: bool | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
 ) -> Job:
@@ -63,8 +84,15 @@ def agent_job(
 
     - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
       async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
+    - 도메인 Agent 의 기억 포트가 쓸 store 는 호출마다 짧은 세션으로 연다(`domain_store`).
+    - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
+      넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
       None 이면 진입점의 기본값을 쓴다.
+    - `child_health_granted` 는 창구가 입력 한 번에 읽은 `child_health` 동의의 현재 값이다 (#372).
+      그대로 진입점에 넘긴다 — 여기서 바꾸지 않는다. None 은 값이 없다는 뜻이고
+      "동의 안 함"(False)이 아니다. 읽기에 실패하면 창구가 run 을 시작하지 않아서 이 job 이
+      만들어지지 않는다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
@@ -92,11 +120,16 @@ def agent_job(
             relay(event)
 
         from app.domains.memory.store.db_store import DbMemoryStore
-        from app.infra.db.session import async_session_factory
 
-        # TODO: 도메인 Agent 가 DB 포트를 쓰면 이 세션을 동시에 타서
-        #   AsyncSession 에러가 난다. task 마다 별도 세션을 열어야 한다.
-        async with async_session_factory() as session:
+        @asynccontextmanager
+        async def domain_store() -> AsyncIterator[DbMemoryStore]:
+            # 도메인 Agent 의 기억 포트는 호출마다 짧은 세션으로 읽는다. run 세션을 같이 타면
+            # 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다 (#257). Memory 는 도메인
+            # 단계 전에 commit 되므로 이 세션에서도 방금 저장한 관찰이 보인다. 읽기만 한다
+            async with background_session() as read_session:
+                yield DbMemoryStore(read_session, child_id=child_id)
+
+        async with background_session() as session:
             store = DbMemoryStore(session, child_id=child_id)
 
             async def commit() -> None:
@@ -111,11 +144,14 @@ def agent_job(
                         parent_id=parent_id,
                         raw_text=raw_text,
                         birth_date=birth_date,
+                        child_health_granted=child_health_granted,
                         run_id=channel.run_id,
                         emit=emit,
                         continuation=continuation,
                         store=store,
                         commit=commit,
+                        curator_trigger=_curator_trigger(),
+                        domain_store=domain_store,
                     )
             except TimeoutError:
                 log.warning(

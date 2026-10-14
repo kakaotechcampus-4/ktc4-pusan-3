@@ -99,6 +99,10 @@ class Turn:
         return next((event for event in self.events if isinstance(event, PendingReply)), None)
 
 
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
+
+
 def _client() -> LLMClient:
     settings = AgentSettings()
     if not settings.MEMORY_API_KEY or not settings.MEMORY_BASE_URL:
@@ -132,6 +136,7 @@ async def _chain(memory_client: LLMClient) -> list[Turn]:
             memory_client=memory_client,
             emit=events.append,
             continuation=continuation,
+            commit=_no_commit,
         )
         return Turn(run_id, said, events, result)
 

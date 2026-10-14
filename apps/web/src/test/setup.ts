@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
 
+import { resetWithdrawState } from "@/mocks/handlers/auth";
 import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetInviteState } from "@/mocks/handlers/invites";
 import { resetMembership } from "@/mocks/handlers/membership";
@@ -40,6 +41,7 @@ afterEach(() => {
   resetParentState();
   resetInviteState();
   resetMembership();
+  resetWithdrawState();
 });
 
 afterAll(() => {

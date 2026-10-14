@@ -19,8 +19,9 @@ async def search_activity_doc(
     - 0행이면 빈 튜플이다. 실패가 아니다 — 예시 없이 모델을 부른다. 예시는 결을 보여 주는
       것이라 없어도 후보를 낼 수 있다.
     - 포트가 행을 더 주더라도 DOC_LIMIT 에서 자른다. 프롬프트 길이가 여기 걸려 있다.
-    - 문서 행은 근거(suggestion_evidence)에 넣되 개인화 근거로 세지 않는다 (DocKind) —
-      근거로 다는 것은 run() 이 build() 에 넘길 때 한다.
+    - 문서 행은 근거(suggestion_evidence)에 넣되 개인화 근거로 세지 않는다 (DocKind).
+      run() 이 결과를 `state.seen_docs` 에 담고 [예시]에 id 와 함께 싣는다. 모델이 그 id 를
+      evidence 에 달면 출력 tool 이 `activity_doc` 근거로 바꾼다.
     """
     rows = await docs.search(months=months, query=query, limit=DOC_LIMIT)
     return tuple(rows[:DOC_LIMIT])

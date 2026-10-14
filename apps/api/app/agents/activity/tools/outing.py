@@ -71,6 +71,23 @@ def day_of(label: DayLabel, today: date) -> date:
     return today
 
 
+async def outdoor_on(context: ActivityContext, label: DayLabel) -> bool:
+    """그 라벨의 날에 바깥 활동을 할 수 있는가. 출력 검증과 장소 조회가 같이 쓴다 (#377).
+
+    - 이미 판정한 날(사전 조회 · `lookup_weather`)은 `state.weather` 를 다시 쓰고, 없으면 여기서
+      판정해 넣는다 — 모델이 `lookup_weather` 를 안 불렀어도 그날 판정으로 거른다.
+    - 이번 주말은 토 · 일 중 **하루라도** 되면 연다. 보호자가 둘 중 하루를 고르는 일이라, 둘 다
+      맑아야 열면 주말 나들이가 너무 자주 막힌다. 되는 날은 모델이 reason 에 쓴다.
+    - 못 읽은 날은 실내만이다 (`check_weather` 가 outdoor_ok=False 를 준다).
+    """
+    days = days_of(label, context.today)
+    missing = [day for day in days if day not in context.state.weather]
+    if missing:
+        briefs = await asyncio.gather(*(check_weather(context, day) for day in missing))
+        context.state.weather.update(zip(missing, briefs, strict=True))
+    return any(context.state.weather[day].outdoor_ok for day in days)
+
+
 def days_of(label: DayLabel, today: date) -> tuple[date, ...]:
     """라벨이 가리키는 날들. 이번 주말은 토 · 일 이틀이다 — 주말 나들이는 둘 중 하루를 고르는
     일이라 날마다 따로 본다. 오늘이 일요일이면 오늘 하루다.
@@ -189,7 +206,8 @@ async def search_nearby_places(
       테이블에서 거리를 계산한다 — 외부 API 를 부르지 않는다 (D9).
       🚨 검색 조건은 닫힌 enum 하나다. 모델이 만든 문자열로 찾지 않는다.
     - 바깥 활동이 어려운 날은 실내 종류만 찾는다. 바깥 종류를 고르면 INVALID_ARGS 이고
-      모델이 실내 종류로 고쳐 다시 부른다.
+      모델이 실내 종류로 고쳐 다시 부른다. 그날은 args.day 다 — 오늘 비가 와도 주말 공원은
+      찾을 수 있다 (#377).
     - 가까운 순 `PLACE_TOP_K` 곳의 이름 · 종류만 싣는다. 🚨 거리는 모델에 주지 않는다 —
       이름 여러 곳과 거리를 같이 주면 위치를 거꾸로 짐작할 수 있고, 약관(draft-1 제8조 ③)이
       인공지능에 전달된다고 적은 것은 장소 이름뿐이다. 정렬은 여기서 끝낸다.
@@ -203,13 +221,13 @@ async def search_nearby_places(
     if gate is None or location is None:
         raise RuntimeError("Gate · 위치 없이 장소 조회가 불렸다 — registry 가 열지 않았어야 한다")
 
-    if not gate.outdoor_ok and args.category not in INDOOR_CATEGORIES:
+    if args.category not in INDOOR_CATEGORIES and not await outdoor_on(context, args.day):
         indoor = " · ".join(sorted(INDOOR_CATEGORIES))
         return fail(
             "query",
             _PLACES,
             ErrorCode.INVALID_ARGS,
-            f"오늘은 바깥 활동이 어려운 날이라 실내 장소만 찾을 수 있다. {indoor} 중에서 고른다.",
+            f"그날은 바깥 활동이 어려운 날이라 실내 장소만 찾을 수 있다. {indoor} 중에서 고른다.",
         )
 
     try:

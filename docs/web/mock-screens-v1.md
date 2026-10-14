@@ -105,6 +105,10 @@ location.replace("/");
 | **08 · 저장하면 홈이다** | 저장이 끝나면 **03 홈으로 바로 간다** — 결과 화면을 한 칸 두지 않는다. 🚨 뒤로가기로 이 화면에 못 돌아온다(`replace`) — 저장을 끝낸 확인 화면으로 돌아가면 같은 것을 또 누를 수 있다 |
 | 08 · 캘린더의 하루에서 들어온 경우 | `/child/c1/photos?date=2026-09-12` 또는 09 하루 패널의 "사진으로 적기" |
 | 09 캘린더 | `/child/c1/calendar` (`?date=YYYY-MM-DD`) |
+| 10 탈퇴 | `/child/c1/settings/withdraw` — 읽음 표시 → 탈퇴하기 → 확인 시트의 "탈퇴할게요" → "탈퇴했어요". 🚨 끝 화면 다음은 다시 로그인해야 한다(목도 탈퇴한 뒤의 `/me` 가 401 이다) |
+| 10 탈퇴 · 지운 뒤 응답 유실 | `/child/c1/settings/withdraw?scenario=withdraw_lost` — 응답을 못 받아도 **"탈퇴했어요" 로 끝나야 한다.** 🚨 첫 화면으로 튕기면 401 이 전역 처리로 샌 것이다 (#389) |
+| 10 탈퇴 · 응답도 확인도 끊김 | `/child/c1/settings/withdraw?scenario=withdraw_unconfirmed` — 시트에 "처리됐는지 확인하지 못했어요". 🚨 **다시 누르면 첫 화면이 아니라 "탈퇴했어요" 로 가야 한다** (다시 누른 탈퇴가 401 이다 · #389) |
+| 10 탈퇴 · 서버에 닿기 전 끊김 | `/child/c1/settings/withdraw?scenario=withdraw_unreached` — 시트에 **"아직 지워지지 않았어요"** 가 서야 한다(`/me` 가 200). 다시 누르면 닿는다 |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 

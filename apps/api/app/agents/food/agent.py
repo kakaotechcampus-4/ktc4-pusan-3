@@ -1,28 +1,46 @@
 """Food Agent 진입점.
 
-지금은 라우팅 확인용 mock으로 LLM을 부르지 않고,
-build_gate로 이번 run의 Gate(단계·안전 조회·급식 행 유무)를 계산해
-받은 task 와 열릴 tool을 돌려주기만 하며,
-결과는 Suggestion을 거치지 않는다.
+`build_gate` 로 이번 run 의 Gate 를 계산하고, 닫힌 조합이면 코드 문구로 모델 0회로 끝낸다.
+열려 있으면 `run_tool_loop`(공통 tool 루프) 위에서 출력 tool 이 통과할 때까지 돈다.
 """
 
+import logging
+from collections.abc import Collection
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.common.tool_loop import ToolCall, ToolLoopResult, run_tool_loop
 from app.agents.food.context import FoodContext, build_gate
-from app.agents.food.registry import closed_readout_key, requires_safety_check, tools_for
+from app.agents.food.nutrient_wording import fallback_readouts
+from app.agents.food.prompt import build_system_prompt
+from app.agents.food.readouts import NUTRIENT_INSUFFICIENT, NUTRIENT_UNSCORED, READOUTS
+from app.agents.food.registry import (
+    closed_readout_key,
+    execute_tool,
+    output_tools_for,
+    requires_safety_check,
+    specs_for,
+    tools_for,
+)
+from app.agents.food.result import ToolResult
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.task import task_type_of
+from app.agents.food.tools.nutrition import diet_balance
 from app.rules.age import Stage
 
-# mock: 라우팅 확인용.
-# unsupported_stage: closed_readout_key 가 있는 조합 — 연령 미지원(unsupported.*) ·
-#   안전 조회 실패(blocked.safety) · 급식 행 없음(closed.no_daycare) 을 아직 한 값으로 처리.
-FoodStatus = Literal["mock", "unsupported_stage"]
+logger = logging.getLogger(__name__)
+
+# ok      출력 tool 이 검증을 통과했다
+# failed  모델이 말로 끝냈거나(no_tool_call) 상한까지 출력 tool 이 통과하지 못했다(max_steps).
+#         추천 0개로 내면 모델 실패가 "말할 게 없다" 로 보인다(#320 PM 리뷰) — 그래서 failed 로 낸다
+#         (영양소 분석은 예외 — failed 대신 코드 문장으로 낸다. 판정 · 안내가 코드 값이라
+#         "말할 게 없다" 로 보이지 않는다, #357 리뷰)
+# closed  게이트 · 라벨 규칙이 닫았다. 코드 문구만 나간다(모델 0회)
+FoodStatus = Literal["ok", "failed", "closed"]
 
 
 @dataclass(frozen=True)
@@ -35,36 +53,113 @@ class FoodAgentResult:
     requires_safety_check: bool
     model_calls: int = 0  # Agent 진입 수 — 0(게이트 닫힘) · 1 · 2(안전 필터 후 재호출)
     agent: Literal["food"] = "food"  # pipeline 이 DomainOutcome 으로 읽는다
-    # 화면에 보낼 것 (pipeline 의 AgentResult). mock 은 아직 아무것도 싣지 않는다 —
-    # 닫힘 문구(unsupported_stage)를 readout 으로 내는 것은 실구현에서 한다
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
-    suggestions: tuple[SuggestionDraft, ...] = ()  # mock 은 추천을 내지 않는다
+    suggestions: tuple[SuggestionDraft, ...] = ()
 
 
 async def run(
     task: DomainTask, context: FoodContext, *, client: LLMClient | None = None
 ) -> FoodAgentResult:
     """Food Agent 진입점."""
-    # DB 연결 후 처리 순서
-    # 1. build_gate(context) 로 birth_date → LifeStage, 동의·안전 조회, 급식 행 유무를 계산.
-    # 2. closed_readout_key 가 있으면 모델 호출 없이 그 코드 문구로 끝낸다.
-    # 3. 식단 추천인 경우 후보 풀·영양 구간은 코드가 미리 준비한다.
-    # 4. 모델에는 오늘 급식, 식이 단계, 필요한 안전 정보만 전달.
-    #    food로 분류된 입력 외에 아이 이름이나 다른 도메인의 기록은 넘기지 않는다.
-    # 5. task와 Gate에 맞는 tool 목록만 열어두고 tool calling을 수행.
-    #    (실행 구조는 memory/agent.py와 동일)
-    # 6. 규칙 기반 검사를 거쳐 응답.
-    #    - 식단 추천: 금지 음식 필터링, 근거 확인, suggestion 형식 변환
-    #    - 영양소 분석: 제안성 문장이나 불필요하게 정확한 수치가 포함됐는지 확인
     task_type = task_type_of(task)
     gate = await build_gate(context)
+    context.state.gate = gate
+    context.state.utterance = "\n".join(task.request_texts)
+    stage = gate.stage.stage
+
     key = closed_readout_key(task_type, gate)
+    if key is not None:
+        return FoodAgentResult(
+            task_type=task_type,
+            stage=stage,
+            status="closed",
+            request_texts=task.request_texts,
+            tools=(),
+            requires_safety_check=requires_safety_check(task_type),
+            model_calls=0,
+            readouts=(READOUTS.render(key),),
+        )
+
+    allowed = tools_for(task_type, gate)
+    output_tools = output_tools_for(task_type)
+    llm = client or LLMClient(role="food")
+    messages = [
+        {"role": "system", "content": build_system_prompt(context, task_type)},
+        {"role": "user", "content": context.state.utterance},
+    ]
+
+    async def execute(name: str, arguments: dict[str, Any]) -> ToolResult:
+        return await execute_tool(name, arguments, context, allowed=allowed)
+
+    loop_result = await run_tool_loop(
+        llm,
+        messages,
+        tools=specs_for(allowed),
+        execute=execute,
+        output_tools=output_tools,
+    )
+
+    if task_type == FoodTaskType.NUTRIENT_ANALYSIS and not loop_result.completed:
+        # 모델이 출력 tool 을 못 끝냈다. 판정 · 안내는 코드 값이라 문장 틀로 낸다 (#357 리뷰).
+        # 원문은 남기지 않는다 — run_id 와 종료 사유만
+        logger.warning(
+            "food.nutrient.fallback run_id=%s ended_by=%s", context.run_id, loop_result.ended_by
+        )
+        balance = await diet_balance(context, verdict=context.state.nutrient_verdict)
+        return FoodAgentResult(
+            task_type=task_type,
+            stage=stage,
+            status="ok",
+            request_texts=task.request_texts,
+            tools=allowed,
+            requires_safety_check=requires_safety_check(task_type),
+            model_calls=1,
+            readouts=fallback_readouts(balance.verdict, balance.actions),
+        )
+
+    readouts = (
+        _readouts_from(task_type, loop_result, output_tools, context)
+        if loop_result.completed
+        else ()
+    )
     return FoodAgentResult(
         task_type=task_type,
-        stage=gate.stage.stage,
-        status="mock" if key is None else "unsupported_stage",
+        stage=stage,
+        status="ok" if loop_result.completed else "failed",
         request_texts=task.request_texts,
-        tools=tools_for(task_type, gate),
+        tools=allowed,
         requires_safety_check=requires_safety_check(task_type),
+        model_calls=1,
+        readouts=readouts,
     )
+
+
+def _readouts_from(
+    task_type: FoodTaskType,
+    loop_result: ToolLoopResult,
+    output_tools: Collection[str],
+    context: FoodContext,
+) -> tuple[Readout, ...]:
+    """통과한 출력 tool 의 결과를 화면에 낼 Readout 으로. 식단 추천 · 급식 갱신의 결과 변환은
+    각자의 구현 이슈(issue3 등)에서 마저 다룬다 — 지금 실구현된 출력은 영양소 분석뿐이다.
+    """
+    if task_type != FoodTaskType.NUTRIENT_ANALYSIS:
+        return ()
+    accepted = _accepted_call(loop_result, output_tools)
+    findings = accepted.result.data.get("findings") or []
+    if not findings:
+        verdict = context.state.nutrient_verdict
+        if verdict is not None and verdict.insufficient:
+            return (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=verdict.records),)
+        if verdict is not None and not verdict.bands:
+            return (READOUTS.render(NUTRIENT_UNSCORED, recorded=verdict.records),)
+        return ()
+    return (Readout(kind="nutrient_analysis", body="\n".join(findings), authored_by="model"),)
+
+
+def _accepted_call(loop_result: ToolLoopResult, output_tools: Collection[str]) -> ToolCall:
+    for call in reversed(loop_result.calls):
+        if call.result.success and call.name in output_tools:
+            return call
+    raise AssertionError("output_accepted 인데 성공한 출력 tool 호출이 없다")  # pragma: no cover

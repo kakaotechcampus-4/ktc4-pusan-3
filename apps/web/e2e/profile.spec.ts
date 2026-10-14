@@ -1,6 +1,7 @@
 import {
   CHILD,
   EVALUATIVE,
+  asOtherCaregiver,
   expect,
   expectNoGate,
   gateMarks,
@@ -172,6 +173,131 @@ test.describe("기본 정보 고치기는 서버 범위 안에서만 받는다 (
     // 서버는 21자부터 400 이다. 막히지 않으면 저장 버튼이 계속 실패한다.
     await nickname.pressSequentially("가".repeat(25));
     await expect(nickname).toHaveValue("가".repeat(20));
+  });
+});
+
+test.describe("알레르기 등록과 내리기는 서버 응답대로 그린다 (#374)", () => {
+  test("같은 본문을 다시 누르면 같은 키, 이름을 고쳐 다시 누르면 새 키다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openAddSheet(page);
+    const name = sheet.getByLabel("무엇인가요");
+    const submit = sheet.getByRole("button", { name: "확인했어요, 등록할게요" });
+
+    // 우유는 이미 등록돼 있다 (목 픽스처) — 409 로 시트가 남는다.
+    await name.fill("우유");
+    await submit.click();
+    await expect(sheet.getByText("이미 등록된 항목이에요", { exact: false })).toBeVisible();
+    await submit.click();
+    await expect(sheet.getByText("이미 등록된 항목이에요", { exact: false })).toBeVisible();
+
+    // 🚨 서버는 같은 키면 본문을 비교하지 않고 처음 응답을 재생한다 — 고친 이름은 새 키여야 저장된다.
+    await name.fill("땅콩");
+    await submit.click();
+    await expect(sheet).toBeHidden();
+    await expect(page.locator("main").getByText("땅콩", { exact: true })).toBeVisible();
+
+    const saved = writes(calls, "POST", /\/health-safety$/);
+    expect(saved.map((c) => (c.body as { label: string }).label)).toEqual(["우유", "우유", "땅콩"]);
+    expect(saved[1].idempotencyKey).toBe(saved[0].idempotencyKey);
+    expect(saved[2].idempotencyKey).not.toBe(saved[0].idempotencyKey);
+  });
+
+  test("이름과 메모는 서버가 받는 길이에서 더 들어가지 않고, 증상은 개수를 넘기면 막는다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    const sheet = await openAddSheet(page);
+    const name = sheet.getByLabel("무엇인가요");
+    await name.pressSequentially("가".repeat(105));
+    await expect(name).toHaveValue("가".repeat(100));
+    const notes = sheet.getByLabel("메모 · 선택");
+    await notes.fill("나".repeat(505));
+    await expect(notes).toHaveValue("나".repeat(500));
+
+    await sheet
+      .getByLabel("증상 · 선택")
+      .fill(Array.from({ length: 21 }, (_, n) => `증상${n}`).join(", "));
+    await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
+    await expect(sheet.getByText("증상은 20개까지 적을 수 있어요")).toBeVisible();
+    expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
+  });
+
+  test("다른 보호자가 먼저 내린 기록을 내리면 실패가 아니라 목록에서 빠진다", async ({ page }) => {
+    await page.goto(PROFILE);
+    const milk = page.locator("main li").filter({ hasText: "우유" });
+    await milk.getByRole("button", { name: "이 기록 내리기" }).click();
+
+    expect(
+      await asOtherCaregiver(page, {
+        method: "DELETE",
+        path: `/children/${CHILD}/health-safety/hs_1`,
+      }),
+    ).toBe(204);
+
+    await milk.getByRole("button", { name: "내릴게요" }).click();
+    await expect(milk).toHaveCount(0);
+    // 🚨 "아직 안전 정보에 그대로 있으니 다시 눌러 주세요" 는 사실과 반대말이다 — 이미 빠졌다.
+    await expect(page.getByText("내리지 못했어요", { exact: false })).toHaveCount(0);
+  });
+});
+
+test.describe("알레르기 고치기는 게이트 ㉡ 이고, 고치면 새 기록이다 (#375)", () => {
+  async function openEditSheet(page: import("@playwright/test").Page) {
+    await page.goto(PROFILE);
+    await page
+      .locator("main li")
+      .filter({ hasText: "우유" })
+      .getByRole("button", { name: "이 기록 고치기" })
+      .click();
+    return page.getByRole("dialog", { name: "알레르기 · 건강 기록 고치기" });
+  }
+
+  test("그 기록의 값으로 열리고, Idempotency-Key 를 달고 고친다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openEditSheet(page);
+    // 목 픽스처의 우유: Class 3, 두드러기
+    await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toContainText("Class 3");
+    await expect(sheet.getByLabel("증상 · 선택")).toHaveValue("두드러기");
+
+    await sheet.getByLabel("메모 · 선택").fill("병원에서 다시 확인");
+    await sheet.getByRole("button", { name: "확인했어요, 고칠게요" }).click();
+    await expect(sheet).toBeHidden();
+    await expect(page.locator("main").getByText("병원에서 다시 확인")).toBeVisible();
+
+    const edits = writes(calls, "PATCH", /\/health-safety\/hs_1$/);
+    expect(edits).toHaveLength(1);
+    expect(edits[0].idempotencyKey).toBeTruthy();
+    // 🚨 종류와 이름은 싣지 않는다 — 그 둘은 이 기록의 정체다.
+    expect(edits[0].body).not.toHaveProperty("type");
+    expect(edits[0].body).not.toHaveProperty("label");
+  });
+
+  test("다른 보호자가 먼저 고친 기록이면 다시 누르라고 하지 않고, 닫으면 지금 기록이 보인다", async ({
+    page,
+  }) => {
+    const sheet = await openEditSheet(page);
+    expect(
+      await asOtherCaregiver(page, {
+        method: "PATCH",
+        path: `/children/${CHILD}/health-safety/hs_1`,
+        body: { notes: "다른 보호자가 먼저 적음" },
+        idempotent: true,
+      }),
+    ).toBe(200);
+
+    await sheet.getByLabel("메모 · 선택").fill("내가 적으려던 것");
+    await sheet.getByRole("button", { name: "확인했어요, 고칠게요" }).click();
+    await expect(
+      sheet.getByText("이미 먼저 고쳐졌거나 내려간 기록이에요", { exact: false }),
+    ).toBeVisible();
+    // 🚨 다시 눌러도 같은 404 다 — 누를 길을 남기지 않는다.
+    await expect(sheet.getByRole("button", { name: "확인했어요, 고칠게요" })).toBeDisabled();
+    await expect(sheet.getByText("다시 눌러 주세요", { exact: false })).toHaveCount(0);
+
+    await sheet.getByRole("button", { name: "그만두기" }).click();
+    await expect(sheet).toBeHidden();
+    await expect(page.locator("main").getByText("다른 보호자가 먼저 적음")).toBeVisible();
+    await expect(page.locator("main").getByText("내가 적으려던 것")).toHaveCount(0);
   });
 });
 

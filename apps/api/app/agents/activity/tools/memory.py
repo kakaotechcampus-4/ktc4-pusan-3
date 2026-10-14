@@ -38,7 +38,8 @@ async def search_activity_memory(
     - 관찰은 최근 14일(`OBSERVATION_WINDOW_DAYS`)을 읽는다. 포트가 `status='active'` 만 주고,
       `affinity_id=NULL` 인 관찰도 온다 (D3 · K-7).
     - `gating.reads_affinity(gate)` 가 참일 때만 profile_affinity(domain=activity)를 읽는다.
-      18개월 미만은 affinity 가 구조적으로 0행이라 조회를 건너뛴다.
+      기준 월령은 `age_gates.yaml` 의 `affinity_min_month` 다. 그 아래는 Curator 가 프로필을 만들지
+      않아 티어 1·2 가 0행이고, 조회를 건너뛰고 관찰로만 근거를 만든다.
     - `common/evidence.rank_evidence()` 로 줄 세운다. 순서를 모델에게 맡기지 않는다.
       기피(−1)도 근거로 남는다 — 후보에서 지우는 것은 안전 필터뿐이다 (D4).
     - 관찰은 `subject`(대조 키)와 `activity`(설명 · 화면)를 나눠 넘긴다. 같은 subject · polarity
@@ -68,7 +69,7 @@ async def search_activity_memory(
         tuple(affinities),
         tuple(
             # 대조는 subject, 설명은 사람이 읽는 활동명(`activity`)이다. subject 는 모델이
-            # why_this 에 옮겨 쓰기 어렵다. 발화 원문(raw_text)은 포트가 싣지 않는다
+            # reason 에 옮겨 쓰기 어렵다. 발화 원문(raw_text)은 포트가 싣지 않는다
             ObservationRow(
                 id=row.id,
                 kind="observation_activity",

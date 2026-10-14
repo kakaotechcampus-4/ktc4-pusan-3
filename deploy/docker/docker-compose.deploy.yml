@@ -2,24 +2,46 @@
 # 개발 DB 는 "내 노트북에서 apps/api 를 돌리기 위한 것" 이고, 여기 있는 것은 "서버에서 서비스되는 것" 이다.
 #
 #   cp .env.example .env    (최초 1회, 값 채우기)
-#   make web-image          이미지 굽기
-#   make web-up             띄우기
+#   make api-image          API 이미지 굽기
+#   make web-image          프론트 이미지 굽기
+#   make deploy-up          전체 기동 (db + redis + api + web)
+#   make deploy-down        전체 중지
 #
-# 지금은 web 하나다. api 와 nginx 가 여기 합류한다 — 그때 web 의 ports 를 지우고
-# nginx 뒤로 넣는다 (지금은 앞에 아무것도 없어서 포트를 직접 낸다).
+# nginx 가 합류하면 web · api 의 ports 를 지우고 nginx 뒤로 넣는다.
+# nginx 는 서브도메인(api.<도메인> → api, <도메인> → web)으로 라우팅할 예정이다.
+# 지금은 앞에 아무것도 없어서 포트를 직접 낸다.
 # 🚨 api 는 --workers 1 이다. run 진행 상황이 프로그램 메모리에 있어서 (#134)
 #    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
 # 🚨 로그는 전 서비스 journald 다 (아래 x-logging). docker 기본 json-file 은 새 이미지로 up 할 때 컨테이너와
-#    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다. api 가 합류하면
-#    `logging: *logging` 한 줄만 더한다. 이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
-#    로그 설정은 컨테이너를 만들 때 정해진다 — 나중에 바꾸면 `make web-up` 으로 다시 올려야 적용된다.
+#    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다.
+#    이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
+#    로그 설정은 컨테이너를 만들 때 정해진다 — 나중에 바꾸면 다시 올려야 적용된다.
 
 x-logging: &logging
   # 서버(Ubuntu 24.04)는 journald. 맥의 Docker Desktop 에는 journald 가 없어서 배포 compose 를 로컬에서
   # 띄워 볼 때만 deploy/docker/.env 에 LOG_DRIVER=json-file 을 둔다 (빌드 `make web-image` 는 상관없다).
   driver: ${LOG_DRIVER:-journald}
 
+name: ktc4-deploy
+
 services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg18
+    container_name: ktc4-postgres-deploy
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ktc4-postgres-deploy-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     container_name: ktc4-redis-deploy
@@ -30,6 +52,44 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  api:
+    build:
+      context: ../../apps/api
+    image: ktc4-api:${API_IMAGE_TAG:-local}
+    container_name: ktc4-api
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      APP_NAME: ktc4-pusan-3-api
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      # CORS_ALLOW_ORIGINS 는 여기 두지 않는다 — environment 가 env_file 보다 우선해서
+      # 빈칸이 apps/api/.env 값을 덮는다. apps/api/.env 에서만 관리한다.
+      # 나머지 키(LLM·OAuth·외부 API)는 apps/api/.env 에서 직접 주입한다.
+      # 여기에 일일이 나열하면 키가 추가될 때마다 두 곳을 고쳐야 한다.
+    env_file:
+      - path: ../../apps/api/.env
+        required: false
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   web:
     build:
@@ -58,3 +118,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+volumes:
+  ktc4-postgres-deploy-data:

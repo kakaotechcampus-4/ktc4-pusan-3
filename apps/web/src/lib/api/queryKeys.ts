@@ -51,7 +51,12 @@ export const qk = {
   /** 07 피드백 탭이 평가할 제안 목록. ⚠️ 엔드포인트가 계약서 협의 대상이다 (types.ts). */
   suggestionList: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
   /** 09 월 조회. `month` 는 `YYYY-MM` — 달을 넘기면 다른 키라 이전 달이 캐시에 남는다. */
-  calendar: (childId: string, month: string) => [...qk.child(childId), "calendar", month] as const,
+  calendar: (childId: string, month: string) => [...qk.calendarMonths(childId), month] as const,
+  /**
+   * 09 월 조회 **전부** (달마다 키가 따로라 무효화는 이 접두어로 한다). 요소 단위로 비교하므로
+   * `"calendar"` 는 `"calendar-day"` 와 겹치지 않는다 — 하루 보기는 이 접두어에 걸리지 않는다.
+   */
+  calendarMonths: (childId: string) => [...qk.child(childId), "calendar"] as const,
   /**
    * 09 일 조회. 🚨 월 키 **아래에 두지 않는다** — 일기를 쓰면 그날만 무효화하고 싶은데,
    * 월 키 아래면 `calendar` 를 통째로 지우게 되고 달 전체가 다시 뜬다.
