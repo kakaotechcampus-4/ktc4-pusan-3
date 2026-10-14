@@ -35,6 +35,7 @@ jobs:
             --parameters commands='[
               "set -e",
               "cd /home/ubuntu/ktc4-pusan-3",
+              "git config --global --get safe.directory /home/ubuntu/ktc4-pusan-3 || git config --global --add safe.directory /home/ubuntu/ktc4-pusan-3",
               "git fetch origin ${{ github.ref_name }}",
               "git checkout ${{ github.ref_name }}",
               "git reset --hard origin/${{ github.ref_name }}",
