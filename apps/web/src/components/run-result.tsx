@@ -21,11 +21,19 @@ import { Card, CardFailed } from "@/components/ui/card";
 import { DOMAIN_ICON, DomainIcon } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
+import {
+  blockCandidates,
+  blockReadouts,
+  partialRetryHref,
+  visibleAgentResults,
+  type BlockCandidates,
+} from "@/lib/agent-result";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
 import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 04 답 묶음 — run 하나의 이벤트를 **대화 안의 답 하나**로 옮긴다 (#226).
@@ -47,6 +55,7 @@ import { isHealthObservation, type Agent, type Observation } from "@/lib/api/typ
 
 export function RunReply({
   childId,
+  runId,
   run,
   question,
   answeringNow,
@@ -62,6 +71,8 @@ export function RunReply({
 }: {
   /** 안내의 목적지를 아이 경로 아래에 붙이는 데 쓴다 (`GUIDANCE_DESTINATION`). */
   childId: string;
+  /** 이 run 의 id. "후보 보기" · "다시 준비하기" 가 그 run 의 05 를 연다. 모르면 `null` — 링크를 그리지 않는다. */
+  runId: string | null;
   run: RunState;
   /** 이 run 이 낸 질문의 처지 (`stores/conversation.ts`). */
   question: QuestionState | null;
@@ -164,6 +175,7 @@ export function RunReply({
    *    때만 이 길로 닫는다. 그래서 아래의 "저장하지 않았어요" 류 문장을 전부 세우지 않는다.
    */
   const interrupted = run.interrupted;
+  const retryHref = run.partial ? partialRetryHref(run.partial, { childId, runId }) : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -211,6 +223,7 @@ export function RunReply({
         <AgentResultCard
           key={`${result.agent}:${result.task_type ?? ""}:${index}`}
           result={result}
+          candidates={blockCandidates(result, { childId, runId })}
         />
       ))}
 
@@ -222,6 +235,19 @@ export function RunReply({
       {run.partial && !interrupted ? (
         <CardFailed>
           <p>{partialMessage(run.partial, savedSomething)}</p>
+          {/* 실패한 추천 Agent 를 그 run 의 처음 맥락으로 다시 준비한다 (#249). 15분이 지나면 05 가
+              "이어서 할 수 없어요" 안내를 낸다 — 그래도 실패가 아니라 안내다. */}
+          {retryHref ? (
+            <ButtonLink
+              href={retryHref}
+              variant="secondary"
+              size="compact"
+              className="mt-3"
+              transitionTypes={FORWARD.transitionTypes}
+            >
+              다시 준비하기
+            </ButtonLink>
+          ) : null}
         </CardFailed>
       ) : null}
 
@@ -381,22 +407,8 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
 }
 
 /**
- * 화면에 세울 Agent 결과만 고른다 (#227). 🚨 **순서는 건드리지 않는다** — 도착한 순서가 실제로 끝난 순서다.
- *
- * 쓰는 task(급식 갱신)처럼 보일 것이 없는 결과는 빈 블록이 되므로 뺀다. 빈 블록을 세우면 Agent 이름만 있는
- * 카드가 "아무것도 못 했다" 로 읽힌다 — 실제로는 할 일을 끝낸 것이다.
- */
-export function visibleAgentResults(results: AgentResultEvent[]): AgentResultEvent[] {
-  return results.filter(
-    (result) =>
-      result.readouts.some((readout) => readout.body.trim() !== "") ||
-      (result.question ?? "").trim() !== "",
-  );
-}
-
-/**
- * 도메인 Agent 결과 한 블록 (#227 · 서버 #276). 지금은 readout 과 되묻기 한 줄만 싣는다 — 추천의 이유 문장과
- * "후보 보기 →" 는 서버가 추천 칸을 실을 때(#227 3단계) 이 블록에 붙는다.
+ * 도메인 Agent 결과 한 블록 (#227 · 서버 #276). readout · 되묻기 · 추천 묶음(후보 N개 · 이유 · 일반이면
+ * 또래 기준과 쌓인 기록 수 · 후보 보기)을 싣는다 (#227).
  *
  * 🚨 **도메인 색을 쓰지 않는다** (`ObservationRow` 와 같은 이유). 대화는 하루치 답이 위아래로 이어져서
  *    Agent 블록마다 도메인 색 타일을 주면 한 화면에 도메인 색 2개 규칙(문서 §3)을 넘는다. 어느 Agent 인지는
@@ -408,14 +420,38 @@ export function visibleAgentResults(results: AgentResultEvent[]): AgentResultEve
  * 🚨 **되묻기에 답하기 버튼을 세우지 않는다.** Memory 질문(`NoteCard`)과 달리 이어서 답할 길이 서버에 아직
  *    없다 — `reply_to` 로 보내면 400 이다 (`AgentResultEvent.question` · #246).
  */
-function AgentResultCard({ result }: { result: AgentResultEvent }) {
-  const readouts = result.readouts.filter((readout) => readout.body.trim() !== "");
+function AgentResultCard({
+  result,
+  candidates,
+}: {
+  result: AgentResultEvent;
+  candidates: BlockCandidates | null;
+}) {
+  const readouts = blockReadouts(result);
   return (
     <Card>
       <div className="flex items-start gap-3">
         <IconTile icon={DOMAIN_ICON[result.agent]} tone="neutral" />
         <div className="min-w-0 flex-1">
           <p className="text-caption text-ink-subtle">{domainLabel(result.agent)}</p>
+          {candidates ? (
+            <div className="mt-1">
+              <p className="text-body text-ink">후보 {candidates.count}개</p>
+              {/* 🚨 일반 묶음은 "또래 기준" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
+                  색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5). */}
+              {candidates.general ? (
+                <p className="text-caption text-ink-muted mt-1">
+                  {candidates.recordCount === null
+                    ? "또래 기준 일반 추천"
+                    : `또래 기준 일반 추천 · 쌓인 기록 ${candidates.recordCount}건`}
+                </p>
+              ) : null}
+              {/* 🚨 서버 코드 문구다 — 줄이거나 다시 쓰지 않는다. */}
+              {candidates.reason ? (
+                <p className="text-body-sm text-ink-muted mt-1">{candidates.reason}</p>
+              ) : null}
+            </div>
+          ) : null}
           {readouts.map((readout, index) => (
             <div key={index} className="mt-1">
               {readout.title ? <p className="text-label text-ink-muted">{readout.title}</p> : null}
@@ -425,11 +461,25 @@ function AgentResultCard({ result }: { result: AgentResultEvent }) {
           {result.question ? (
             <p
               className={
-                readouts.length > 0 ? "text-body-sm text-ink-muted mt-2" : "text-body text-ink mt-1"
+                readouts.length > 0 || candidates
+                  ? "text-body-sm text-ink-muted mt-2"
+                  : "text-body text-ink mt-1"
               }
             >
               {result.question}
             </p>
+          ) : null}
+          {/* 그 블록의 Agent · 그 run 의 05 (#249 가 그 run 의 추천을 되살린다). 링크 글자에 기호를 붙이지 않는다. */}
+          {candidates?.href ? (
+            <ButtonLink
+              href={candidates.href}
+              variant="secondary"
+              size="compact"
+              className="mt-3"
+              transitionTypes={FORWARD.transitionTypes}
+            >
+              후보 보기
+            </ButtonLink>
           ) : null}
         </div>
       </div>

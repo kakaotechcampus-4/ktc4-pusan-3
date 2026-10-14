@@ -159,6 +159,7 @@ function TurnReply({
     <Swap id={running ? "progress" : "result"}>
       <RunReply
         childId={childId}
+        runId={runId}
         run={run}
         question={turn.question}
         answeringNow={runId !== null && answering?.runId === runId}

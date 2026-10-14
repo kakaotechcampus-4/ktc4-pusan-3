@@ -471,14 +471,17 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
 
 describe("부분 결과 문구 (PR #215 리뷰)", () => {
   it("저장한 것이 없으면 '저장' 을 말하지 않는다", () => {
-    const text = partialMessage({ reason: "timeout_20s", succeeded: [], failed: ["food"] }, false);
+    const text = partialMessage(
+      { reason: "timeout_20s", succeeded: [], failed: ["food"], retryable: [] },
+      false,
+    );
     expect(text).not.toContain("저장");
     expect(text).toContain("처리하지 못했어요");
   });
 
   it("같은 Agent 가 양쪽에 있으면 '일부' 다", () => {
     const text = partialMessage(
-      { reason: "timeout_20s", succeeded: ["food"], failed: ["food", "activity"] },
+      { reason: "timeout_20s", succeeded: ["food"], failed: ["food", "activity"], retryable: [] },
       true,
     );
     expect(text).toMatch(/쪽 일부, .+ 쪽은 이번에 처리하지 못했어요\./);

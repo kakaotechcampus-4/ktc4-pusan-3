@@ -611,6 +611,26 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     }
   });
 
+  it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
+    const plain = await fetchWith("default", { agents: ["food", "activity"] });
+    for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
+
+    const data = await fetchWith("suggest_cautions", { agents: ["food", "activity"] });
+    const activity = data.groups?.find((g) => g.agent === "activity");
+    expect(activity?.cautions.length).toBeGreaterThan(0);
+  });
+
+  it("🚨 일반 추천은 카드마다 그 도메인의 기록 수를 싣는다", async () => {
+    const data = await fetchWith("empty", { agents: ["food", "activity"] });
+    for (const item of data.general ?? []) expect(typeof item.record_count).toBe("number");
+  });
+
+  it("🚨 05 의 하루 한도는 429 daily_input_limit 이다", async () => {
+    await expect(fetchWith("daily_limit", { agents: ["food"] })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "daily_input_limit") && (e as ApiError).status === 429,
+    );
+  });
+
   it("🚨 run_id 로 오면 채택한 추천도 돌아와 status 로 되살린다 — 홈은 늘 draft 다", async () => {
     const fresh = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
       agents: ["food"],
@@ -812,7 +832,9 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
 });
 
 describe("⑦-2 도메인 Agent 결과 (#227)", () => {
-  async function eventsOf(scenario: "agent_readout" | "agent_question" | "agent_partial") {
+  async function eventsOf(
+    scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+  ) {
     setScenario(scenario);
     try {
       const { run_id } = await api.post<{ run_id: string }>(
@@ -846,13 +868,17 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
       const data = event.data as AgentResultEvent;
       expect(Object.keys(data).sort()).toEqual([
         "agent",
+        "kind",
         "question",
         "readouts",
+        "reason",
+        "record_count",
         "status",
+        "suggestion_ids",
         "task_type",
       ]);
-      // ⚠️ 추천 칸은 3단계 전이라 없다. 있으면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
-      expect(data).not.toHaveProperty("suggestion_ids");
+      // 🚨 추천 칸도 키는 늘 있다 — 추천이 없으면 `[]` · `null` 이다 (#227 3단계).
+      //    키가 빠지면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
       for (const readout of data.readouts) {
         expect(Object.keys(readout).sort()).toEqual([
           "authored_by",
@@ -865,12 +891,39 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
     }
   });
 
+  it("🚨 agent_result 는 추천 칸을 늘 키로 싣는다 — 개인화는 이유, 일반은 쌓인 기록 수", async () => {
+    const results = (await eventsOf("agent_suggestions"))
+      .filter((e) => e.type === "agent_result")
+      .map((e) => e.data as AgentResultEvent);
+
+    for (const result of results) {
+      expect(result).toHaveProperty("suggestion_ids");
+      expect(result).toHaveProperty("kind");
+      expect(result).toHaveProperty("reason");
+      expect(result).toHaveProperty("record_count");
+    }
+    const personal = results.find((r) => r.kind === "personalized");
+    const general = results.find((r) => r.kind === "general");
+    expect(personal?.suggestion_ids.length).toBeGreaterThan(0);
+    expect(personal?.reason).toBeTruthy();
+    expect(personal?.record_count).toBeNull();
+    expect(typeof general?.record_count).toBe("number");
+  });
+
+  it("🚨 partial 의 retryable 은 failed 안에 있다 — 화면이 고르지 않는다", async () => {
+    const partial = (await eventsOf("agent_partial")).find((e) => e.type === "partial")
+      ?.data as PartialEvent;
+
+    expect(partial.retryable.length).toBeGreaterThan(0);
+    for (const agent of partial.retryable) expect(partial.failed).toContain(agent);
+  });
+
   it("🚨 개수 안내는 code 로 찾는다 — 날씨 안내와 같은 kind 라서다 (#276)", async () => {
     const readouts = (await eventsOf("agent_readout"))
       .filter((e) => e.type === "agent_result")
       .flatMap((e) => (e.data as AgentResultEvent).readouts);
 
-    // 3단계 전까지 04 로 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 나와서 서버가 걸러 낸다.
+    // 추천이 없는 결과에 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 오는 것이라 `agent_suggestions` 에 있다.
     expect(readouts.filter((r) => r.code !== null).map((r) => r.code)).toEqual(["empty"]);
     // 개수와 상관없는 readout(성장 추이)은 null 이다.
     expect(readouts.find((r) => r.kind === "growth_delta")?.code).toBeNull();
