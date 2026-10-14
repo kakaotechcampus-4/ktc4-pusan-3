@@ -2225,8 +2225,8 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
 });
 
 /**
- * 초대 수락. 코드 방식은 `docs/api/invite-v1.md` 로 확정됐고, **확인 조회(`GET /invites/{code}`)와
- * 응답 모양은 아직 제안이다** (같은 문서 §7 열린 결정). 서버가 붙으면 이 표를 실서버에도 건다.
+ * 초대 수락. 코드 방식 · 확인 조회(`GET /invites/{code}`) · 만 19세 표시는 `docs/api/invite-v1.md`
+ * 로 확정됐다 (§7 결정 01 · 06). 서버가 붙으면 이 표를 실서버에도 건다.
  */
 describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   /** 🚨 연결이 성공해야 하는 호출은 전부 만 19세 표시를 싣는다 — 화면이 그렇게 보낸다. */
@@ -2365,6 +2365,35 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       }
     },
   );
+
+  /**
+   * 🚨 **만 19세 표시가 아이 보유 · 시도 제한보다 먼저다** — 서버와 같은 순서 (invite-v1.md §3-3).
+   *    순서가 바뀌면 아래 두 경우가 409 · 429 로 바뀐다.
+   */
+  it("이미 아이가 있어도 만 19세 표시가 없으면 409 가 아니라 400 이다", async () => {
+    // default 시나리오는 아이가 하나 있는 계정이다.
+    const caught = await api
+      .post("/invites/MKGRAND1/accept", { adult_attested: false })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+  });
+
+  it("시도 한도를 다 써도 만 19세 표시가 없으면 429 가 아니라 400 이다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.post("/invites/MKWASTED/accept", ADULT).catch(() => null);
+      }
+      const caught = await api
+        .post("/invites/MKGRAND1/accept", { adult_attested: false })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed")).toBe(true);
+      expect((caught as ApiError).status).toBe(400);
+    } finally {
+      setScenario("default");
+    }
+  });
 
   it("이미 아이가 있으면 수락이 막힌다", async () => {
     // default 시나리오는 아이가 하나 있는 계정이다.

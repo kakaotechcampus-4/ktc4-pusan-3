@@ -220,7 +220,7 @@ async def test_만_19세_표시가_true_가_아니면_400_이고_코드를_쓰�
     assert res.status_code == 400
     error = res.json()["error"]
     assert error["code"] == "validation_failed"
-    assert "adult_attested" in error["detail"]["fields"]
+    assert error["detail"]["fields"] == ["adult_attested"]
     await session.refresh(invite)
     assert invite.used_at is None
     links = (
@@ -250,6 +250,34 @@ async def test_만_19세_표시가_없는_요청은_시도_제한의_실패로_�
 
     assert statuses == [400] * 6
     assert ok.status_code == 200
+
+
+async def test_시도_한도를_다_써도_만_19세_표시가_없으면_429_가_아니라_400(db_client, family):
+    """표시 검사가 시도 제한보다 먼저다 — 검사를 제한 안으로 옮기면 여기서 429 가 난다."""
+    _, _, _, _, stranger_headers = family
+    assert [await _fail(db_client, "accept", stranger_headers) for _ in range(5)] == [404] * 5
+
+    res = await db_client.post(
+        ACCEPT.format(code=CODE), json={"adult_attested": False}, headers=stranger_headers
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "validation_failed"
+
+
+async def test_아이가_있는_보호자도_만_19세_표시가_없으면_409_가_아니라_400(
+    db_client, session, family
+):
+    """표시 검사가 아이 보유 검사보다 먼저다 — 순서가 바뀌면 여기서 409 가 난다."""
+    child, owner_headers, owner_id, _, _ = family
+    await _seed_invite(session, child, owner_id)
+
+    res = await db_client.post(
+        ACCEPT.format(code=CODE), json={"adult_attested": False}, headers=owner_headers
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "validation_failed"
 
 
 @pytest.mark.parametrize(
