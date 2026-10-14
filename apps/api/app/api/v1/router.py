@@ -22,6 +22,8 @@ from app.api.v1.routers import (
     client_errors,
     consents,
     corrections,
+    diary,
+    event_items,
     health_safety,
     home,
     invites,
@@ -56,6 +58,8 @@ protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
 protected_router.include_router(home.router)
 protected_router.include_router(calendar.router)
+protected_router.include_router(diary.router)
+protected_router.include_router(event_items.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
 public_router.include_router(auth.provider_router)
