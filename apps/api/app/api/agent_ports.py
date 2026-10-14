@@ -18,6 +18,8 @@ from app.api.deps.db import background_session
 RECORD_KINDS: dict[str, tuple[str, ...]] = {
     "food": ("observation_food",),
     "activity": ("observation_activity",),
+    # 놀이 기록은 Growth 가 근거로 읽기만 해서 세지 않는다 — Activity 의 기록이다
+    "growth": ("observation_education", "observation_routine"),
 }
 
 
@@ -31,6 +33,13 @@ def domain_store_opener(child_id: UUID) -> entrypoint.StoreOpener:
             yield DbMemoryStore(read_session, child_id=child_id)
 
     return domain_store
+
+
+def growth_log_reader() -> entrypoint.GrowthLogReader:
+    from app.domains.child.agent_reader import DbGrowthLogReader
+
+    # 호출마다 짧은 세션으로 child_growth_log 를 읽는다 — run 세션을 같이 타지 않게 (#257)
+    return DbGrowthLogReader(background_session)
 
 
 def suggestion_saver(

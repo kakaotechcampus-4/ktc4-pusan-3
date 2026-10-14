@@ -86,7 +86,8 @@ def agent_job(
     - 도메인 Agent 의 기억 포트가 쓸 store 와 추천 저장 함수는 `agent_ports` 로 연다. 호출마다
       · Agent 결과 하나마다 짧은 세션이고, 저장 commit 이 돌아오면 `channel.suggestions_saved`
       를 세운다 — Memory commit 과 같이 확정된 저장이다. 일반 추천 블록의 기록 건수도 같은 곳에서
-      연다(#227).
+      연다(#227). Growth 의 성장 기록 어댑터도 같은 곳에서 연다 — 안 넘기면 성장 추이가 "측정
+      0건" 으로 읽힌다.
     - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
@@ -177,6 +178,7 @@ def agent_job(
                         count_records=agent_ports.record_counter(child_id),
                         curator_trigger=_curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
+                        growth_log=agent_ports.growth_log_reader(),
                     )
             except TimeoutError:
                 log.warning(

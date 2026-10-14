@@ -77,6 +77,10 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert seen["parent_id"] == PARENT  # 보호자 발화가 아이 것으로 저장되지 않게 (§2)
     assert seen["raw_text"] == RAW_TEXT
     assert seen["run_id"] == channel.run_id  # 202 로 준 run_id 가 done 까지 같은 값
+    # 안 넘기면 성장 추이가 "측정 0건" 으로 읽힌다
+    from app.domains.child.agent_reader import DbGrowthLogReader
+
+    assert isinstance(seen["growth_log"], DbGrowthLogReader)
     assert names(channel) == ["step", "done"]
     assert channel.closed
 
