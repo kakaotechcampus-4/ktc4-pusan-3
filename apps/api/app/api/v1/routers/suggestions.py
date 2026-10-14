@@ -44,6 +44,7 @@ from app.api.v1.schemas.suggestions import (
 from app.domains.schedule import repository as schedule_repo
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.suggestion import repository as suggestion_repo
+from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
 
 router = APIRouter(tags=["suggestions"])
@@ -152,6 +153,7 @@ def _next_draft_id() -> str:
     summary="일정 초안 생성",
     description=(
         "채택한 추천으로 일정 초안을 만든다. food는 하나로 묶이고 나머지는 별도 초안. "
+        "준비물은 그 추천의 items — food 묶음에서 같은 재료는 한 번. "
         "DB에 저장하지 않는다 — 응답으로만 반환."
     ),
     status_code=201,
@@ -193,7 +195,8 @@ async def create_event_drafts(
                     event_type="episodic",
                     category="etc",
                 ),
-                items=[],
+                # 묶은 food 추천의 재료를 한 번씩 (#315). 화면은 받은 items 를 거르지 않는다
+                items=draft_items(s.items for s in food),
                 suggestion_ids=[str(s.id) for s in food],
             )
         )
@@ -210,7 +213,7 @@ async def create_event_drafts(
                     event_type="episodic",
                     category=category,
                 ),
-                items=[],
+                items=draft_items([s.items]),
                 suggestion_ids=[str(s.id)],
             )
         )

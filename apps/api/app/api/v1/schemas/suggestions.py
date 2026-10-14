@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.v1.schemas.common import Ref
 from app.core.event_draft import (
+    MAX_DRAFT_ITEMS,
+    MAX_ITEM_NAME,
     DraftItemPayload,
     EventCategoryValue,
     EventTypeValue,
@@ -163,13 +165,13 @@ class UpdateEventBody(BaseModel):
 
 class UpdateEventRequest(BaseModel):
     event: UpdateEventBody
-    items: list[DraftItemPayload] = Field(default=[], max_length=100)
+    items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
 
     @model_validator(mode="after")
     def _item_name_length(self) -> UpdateEventRequest:
         for item in self.items:
-            if len(item.item_name) > 100:
-                msg = "준비물 이름은 100자까지예요"
+            if len(item.item_name) > MAX_ITEM_NAME:
+                msg = f"준비물 이름은 {MAX_ITEM_NAME}자까지예요"
                 raise ValueError(msg)
         return self
 
@@ -230,14 +232,14 @@ class SubmitEventBody(BaseModel):
 
 class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
-    items: list[DraftItemPayload] = Field(default=[], max_length=100)
+    items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def _item_name_length(self) -> SubmitEventRequest:
         for item in self.items:
-            if len(item.item_name) > 100:
-                msg = "준비물 이름은 100자까지예요"
+            if len(item.item_name) > MAX_ITEM_NAME:
+                msg = f"준비물 이름은 {MAX_ITEM_NAME}자까지예요"
                 raise ValueError(msg)
         return self
 
