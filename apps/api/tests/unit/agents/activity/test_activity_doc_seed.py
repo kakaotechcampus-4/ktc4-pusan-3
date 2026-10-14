@@ -138,6 +138,9 @@ def _raw_row() -> dict:
         "license_basis": meta.license_basis,
         "status": meta.status,
         "authored_by": meta.authored_by,
+        # approved 행은 검수 칸이 있어야 읽힌다 — 시드 상태(draft · approved)와 무관하게 복원한다
+        "reviewed_by": meta.reviewed_by,
+        "reviewed_at": meta.reviewed_at,
         "version": meta.version,
         "setting": "indoor",
         "materials": [],
