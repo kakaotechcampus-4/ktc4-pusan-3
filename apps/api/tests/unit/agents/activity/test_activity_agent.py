@@ -34,6 +34,21 @@ BORN_40_MONTHS = date(2023, 6, 1)
 BORN_20_MONTHS = date(2025, 2, 1)
 BUSAN = CoarseLocation(lat=35.18, lon=129.08)
 
+# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없는 아이의 후보가 이 행을 인용하게 둔다
+DEFAULT_DOC = ActivityDocRow(
+    id=UUID(int=20),
+    doc_key="act-test-default",
+    title="블록 쌓기",
+    body="블록을 쌓고 무너뜨린다",
+    min_month=0,
+    max_month=72,
+    setting=ActivitySetting.INDOOR,
+    materials=("블록",),
+    caregiver_role=CaregiverRole.TOGETHER,
+    physical_intensity=Intensity.LOW,
+    involves_food=False,
+)
+
 
 class FakeLLM:
     def __init__(self, *responses: LLMResponse) -> None:
@@ -83,6 +98,7 @@ def candidate(
         "involves_food": False,
         "caregiver_role": "together",
         "reason": "집에서 바로 할 수 있어요 오늘 오전이 비어 있어요",
+        "evidence": [{"id": str(DEFAULT_DOC.id), "note": "이 나이 예시를 참고했어요"}],
     }
 
 
@@ -97,6 +113,7 @@ def memory() -> LLMResponse:
 
 
 def context(born=BORN_40_MONTHS, *, location=None, weather=None, docs=None) -> ActivityContext:
+    docs = docs if docs is not None else InMemoryActivityDocs([DEFAULT_DOC])
     return ActivityContext(
         child_id=CHILD,
         run_id="run-1",
@@ -233,7 +250,9 @@ class TestRecall:
             run_id="run-1",
             now=NOW,
             timezone=UTC,
-            ports=in_memory_ports(CHILD, BORN_20_MONTHS, safety=safety),
+            ports=in_memory_ports(
+                CHILD, BORN_20_MONTHS, safety=safety, docs=InMemoryActivityDocs([DEFAULT_DOC])
+            ),
         )
         llm = FakeLLM(
             propose("구슬 꿰기", "그림자놀이", "색종이 접기"),
@@ -343,7 +362,7 @@ class TestDocEvidence:
             physical_intensity=Intensity.LOW,
             involves_food=False,
         )
-        docs = InMemoryActivityDocs([row])
+        docs = InMemoryActivityDocs([row, DEFAULT_DOC])
         proposal = candidate(row.title)
         proposal["evidence"] = [{"id": str(row.id), "note": "이 나이 예시를 참고했어요"}]
         llm = FakeLLM(

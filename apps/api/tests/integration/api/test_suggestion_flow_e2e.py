@@ -9,9 +9,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
+from app.domains.memory.observation.models import ConfidenceSource, ObservationActivity
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
@@ -57,12 +59,23 @@ async def test_full_suggestion_to_event_flow(
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     )
     session.add_all([s1, s2])
+    # 근거는 원본 행이 있어야 목록에 나간다 (#323)
+    today = datetime.now(UTC).date()
+    observation = ObservationActivity(
+        child_id=cid,
+        raw_text="공원에서 뛰어놀았다",
+        subject="공원 놀이",
+        activity="공원에서 뛰어놀기",
+        confidence_source=ConfidenceSource.PARENT_DIRECT,
+        observed_range=Range(today, today + timedelta(days=1)),
+    )
+    session.add(observation)
     await session.flush()
     session.add(
         SuggestionEvidence(
             suggestion_id=s1.id,
             source_kind="observation_activity",
-            source_id=uuid.uuid4(),
+            source_id=observation.id,
             note="공원에서 뛰어놀았다",
         )
     )
@@ -151,6 +164,7 @@ async def test_full_suggestion_to_event_flow(
     s1_item = next(i for i in items if i["id"] == str(s1.id))
     assert len(s1_item["evidence"]) == 1
     assert s1_item["evidence"][0]["note"] == "공원에서 뛰어놀았다"
+    assert s1_item["evidence"][0]["label"] == "공원 놀이"
     assert len(s1_item["source_refs"]) == 1
 
     # ── 6. 평가 ─────────────────────────────────────────────────────────

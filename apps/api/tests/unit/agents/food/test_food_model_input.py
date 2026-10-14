@@ -21,6 +21,7 @@ from app.agents.food.agent import run
 from app.agents.food.store import InMemoryFoodDocs, InMemoryFoodMemory, SafetyEntry
 from tests.unit.agents.food.support import (
     CHILD,
+    MEAL_DOC,
     ScriptedLLM,
     affinity,
     doc_row,
@@ -90,7 +91,7 @@ async def test_식단_추천의_모델_입력에는_알레르기_이름_아이_�
         EGGROLL,
         safety=EGG,
         memory=memory,
-        docs=InMemoryFoodDocs([egg_doc, tip]),
+        docs=InMemoryFoodDocs([egg_doc, tip, MEAL_DOC]),
     )
     llm = ScriptedLLM(
         tool_response(

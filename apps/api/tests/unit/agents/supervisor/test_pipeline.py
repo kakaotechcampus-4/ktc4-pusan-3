@@ -33,7 +33,7 @@ from app.agents import pipeline
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
 from app.agents.common.schemas.task import DomainTask
-from app.agents.common.suggestion import SuggestionDraft
+from app.agents.common.suggestion import SuggestionDraft, count_notice
 from app.agents.food.agent import run as run_food
 from app.agents.food.context import FoodContext
 from app.agents.food.readouts import READOUTS
@@ -41,6 +41,7 @@ from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
     DaycareMealRow,
     InMemoryDaycareMeals,
+    InMemoryFoodDocs,
     InMemoryProfile,
     InMemoryRecipeCatalog,
     MenuCatalogRow,
@@ -55,11 +56,13 @@ from app.agents.pipeline import (
     AgentResult,
     DomainRouted,
     Done,
+    EmptyResult,
     Failed,
     MemoryNote,
     Partial,
     PendingReply,
     Rerouted,
+    RetryContext,
     Saved,
     Step,
     Unavailable,
@@ -72,6 +75,7 @@ from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
+from tests.unit.agents.food.support import MEAL_DOC
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
@@ -325,6 +329,7 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
+        "EmptyResult",  # 0개 안내는 화면 결과보다 먼저 05 보관함 기록으로 나간다 (#249)
         "AgentResult",  # 식단 추천은 레시피가 없어 후보 풀이 비고, 추천 없이 안내만 나간다
         "Done",
     ]
@@ -970,6 +975,12 @@ def test_구현된_agent_마다_실행_함수가_있다() -> None:
     assert set(pipeline._RUNNERS) == routing_module.IMPLEMENTED_AGENTS
 
 
+def test_추천을_내는_task_표도_구현된_agent_와_키가_같다() -> None:
+    # 05 의 다시 시도 · 0개 기록은 이 표로 남긴다 (#249). 한쪽만 늘리면 새 Agent 의 실패가 맥락 없이
+    # "이어서 할 수 없음" 으로 떨어진다
+    assert set(pipeline.RECOMMENDING_TASKS) == routing_module.IMPLEMENTED_AGENTS
+
+
 # ── 도메인 Agent 실행 (공통_구현_계획 §5 · NF-06) ─────────────────
 @dataclass(frozen=True)
 class _Outcome:
@@ -1090,7 +1101,8 @@ async def test_RC16_한_Agent_가_죽어도_나머지_결과는_나간다(
     assert [item.agent for item in result.domain] == ["food"]
     assert result.partial == Partial("agent_error", succeeded=("food",), failed=("activity",))
     assert result.failed is None
-    assert _order(events)[-4:] == ["DomainRouted", "AgentResult", "Partial", "Done"]
+    # 죽은 쪽의 다시 시도 맥락은 partial 보다 먼저 나간다 (#249). 화면에는 안 간다
+    assert _order(events)[-5:] == ["DomainRouted", "AgentResult", "RetryContext", "Partial", "Done"]
     # 죽은 쪽은 화면 이벤트가 없다 — partial.failed 로만 알린다
     assert [item.agent for item in _of(events, AgentResult)] == ["food"]
     assert result.model_calls == 3  # 죽은 쪽은 몇 번 불렀는지 몰라 세지 않는다
@@ -1379,6 +1391,135 @@ async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만
     ]
     assert _order(events)[-2:] == ["Partial", "Done"]
     assert result.model_calls == 4  # 예외와 달리 몇 번 불렀는지 알아서 센다
+
+
+# ── 05 의 다시 시도 · 0개 기록 (#249) ───────────────────────────────────
+@pytest.mark.parametrize("how", ["failed_status", "exception", "save_error"])
+async def test_실패한_추천_task_는_partial_앞에_맥락을_낸다(
+    how: str,
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    """05 의 다시 시도가 쓸 맥락. 화면 이벤트(partial)보다 먼저 나가야 보관함에 먼저 들어간다."""
+    saver = None
+    if how == "failed_status":
+        monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", status="failed"))
+    elif how == "exception":
+        monkeypatch.setitem(pipeline._RUNNERS, "activity", _failing(RuntimeError("부서졌다")))
+    else:
+        runner = _runner("activity", suggestions=(_draft("블록 쌓기"),))
+        monkeypatch.setitem(pipeline._RUNNERS, "activity", runner)
+        saver = _Saver(events, fail=RuntimeError("db"))
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    [retry] = _of(events, RetryContext)
+    assert (retry.run_id, retry.agent, retry.task_type) == (RUN_ID, "activity", None)
+    assert retry.request_texts  # Supervisor 가 나눈 요청 문장
+    assert retry.sent_at == memory_context.now
+    names = _order(events)
+    assert names.index("RetryContext") < names.index("Partial")
+
+
+async def test_시간_초과한_추천_task_도_맥락을_낸다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.05)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", delay=5))
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert [retry.agent for retry in _of(events, RetryContext)] == ["activity"]
+
+
+async def test_0개로_끝난_추천은_결과_이벤트_앞에_기록을_낸다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    empty = _runner("activity", readouts=(count_notice(0),))
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", empty)
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    [recorded] = _of(events, EmptyResult)
+    assert (recorded.run_id, recorded.agent, recorded.task_type) == (RUN_ID, "activity", None)
+    assert recorded.message == "조건에 맞는 추천이 없어요."
+    card = next(e for e in events if isinstance(e, AgentResult) and e.agent == "activity")
+    assert events.index(recorded) < events.index(card)
+
+
+async def test_추천이_있는_결과는_0개_기록이_아니다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 0개 안내가 붙어 있어도 추천이 있으면 기록하지 않는다 — 05 가 DB 행으로 돌려준다
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "activity",
+        _runner("activity", readouts=(count_notice(0),), suggestions=(_draft("블록 쌓기"),)),
+    )
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert not _of(events, EmptyResult)
+
+
+async def test_추천을_내지_않는_task_는_맥락을_남기지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 급식 갱신은 05 화면이 없다 — 다시 시도할 곳이 없으니 원문 조각을 남기지 않는다
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _failing(RuntimeError("부서졌다")))
+    context, writes = _recorded(food_context)
+
+    await _handle_meal_only(memory_context, context, events, writes)
+
+    assert _of(events, Failed) or _of(events, Partial)
+    assert not any(isinstance(event, RetryContext | EmptyResult) for event in events)
 
 
 async def test_Agent_예외_메시지는_로그에_남기지_않는다(
@@ -2840,10 +2981,21 @@ async def test_식단_추천_결과는_저장_함수에_한_묶음으로_가고_
         for name in names
     ]
     context = replace(
-        food_context, ports=replace(food_context.ports, recipes=InMemoryRecipeCatalog(recipes))
+        food_context,
+        ports=replace(
+            food_context.ports,
+            recipes=InMemoryRecipeCatalog(recipes),
+            docs=InMemoryFoodDocs([MEAL_DOC]),  # 일반 추천의 근거는 문서 행이다
+        ),
     )
+    doc = {"kind": "food_doc", "id": str(MEAL_DOC.id), "note": "식단 자료를 참고함"}
     candidates = [
-        {"menu_key": name, "meal_slot": "dinner", "reason": "어제와 겹치지 않아요", "evidence": []}
+        {
+            "menu_key": name,
+            "meal_slot": "dinner",
+            "reason": "어제와 겹치지 않아요",
+            "evidence": [doc],
+        }
         for name in names
     ]
     saver = InMemorySuggestions()

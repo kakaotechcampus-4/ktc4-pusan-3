@@ -1,4 +1,4 @@
-"""추천 목록 · 평가 · 추천 생성 stub · 일정 수정 통합 테스트 — #284."""
+"""추천 목록 · 평가 · 추천 받기 가드 · 일정 수정 통합 테스트 — #284."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.schedule.repository import create_event, create_event_item
 from app.domains.suggestion.models import (
@@ -40,11 +41,20 @@ async def _make_suggestion(
     session.add(row)
     await session.flush()
     if with_evidence:
+        # 근거는 원본 행이 있어야 화면에 나간다 (#323) — 지운 · 없는 원본은 빠진다
+        affinity = ProfileAffinity(
+            child_id=child_id,
+            merge_key="공원 산책",
+            domain=MemoryDomain.ACTIVITY,
+            last_observed_on=datetime.now(UTC).date(),
+        )
+        session.add(affinity)
+        await session.flush()
         session.add(
             SuggestionEvidence(
                 suggestion_id=row.id,
                 source_kind="profile_affinity",
-                source_id=uuid.uuid4(),
+                source_id=affinity.id,
                 note="반복 3회",
             )
         )
@@ -52,25 +62,12 @@ async def _make_suggestion(
     return row
 
 
-# ── 추천 생성 stub ───────────────────────────────────────────────────────
+# ── 추천 받기 가드 ───────────────────────────────────────────────────────
 
 
-async def test_create_suggestions_returns_501(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
-    """POST /children/{cid}/suggestions는 agent 연결 전까지 501."""
-    headers, _ = bearer
-    resp = await db_client.post(
-        f"/api/v1/children/{cid}/suggestions",
-        json={"agents": ["food"]},
-        headers=headers,
-    )
-    assert resp.status_code == 501
-
-
-# 🚨 stub 해제 가드 — POST suggestions가 200을 반환하기 시작하면
-#    evidence.label이 사람이 읽을 수 있는 값이고, is_stale이 null이 아니어야 한다.
-#    stub인 동안은 skip되고, stub을 풀면 이 테스트가 활성화된다. (#323)
+# 🚨 05 가 돌려주는 근거는 label 이 사람이 읽을 수 있는 값이고 is_stale 이 null 이 아니어야 한다.
+#    진짜 entrypoint 가 돈다 — 운영 포트의 안전 조회가 아직 연결되지 않아(UnwiredSafety) Activity
+#    는 모델 호출 없이 닫히므로 추천 행이 없어도 통과한다. 연결되면 근거가 실제로 검사된다. (#323)
 _CHILD_RECORD_KINDS = frozenset(
     (
         "observation_food",
@@ -86,19 +83,17 @@ _CHILD_RECORD_KINDS = frozenset(
 )
 
 
-async def test_evidence_label_and_is_stale_are_filled_when_stub_is_lifted(
+async def test_evidence_label_and_is_stale_are_filled(
     db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
 ):
-    """stub이 풀리면 evidence.label은 source_kind가 아닌 사람이 읽을 수 있는 값,
-    is_stale은 bool이어야 한다. stub(501)인 동안은 건너뛴다."""
+    """evidence.label은 source_kind가 아닌 사람이 읽을 수 있는 값, is_stale은 bool이어야 한다."""
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/suggestions",
         json={"agents": ["activity"]},
         headers=headers,
     )
-    if resp.status_code == 501:
-        pytest.skip("stub 미해제 — Agent 연결 후 활성화 (#323)")
+    assert resp.status_code == 200
 
     data = resp.json()
     for suggestion in data.get("suggestions", []):
@@ -159,9 +154,9 @@ async def test_list_suggestions_with_evidence(
     ev = item["evidence"][0]
     assert ev["note"] == "반복 3회"
     assert ev["ref"]["kind"] == "profile_affinity"
-    # label·is_stale 은 현재 placeholder — stub 해제 전에 채워야 한다 (#323)
-    assert "label" in ev
-    assert "is_stale" in ev
+    # 이름 · 낡음은 원본(관심 행)에서 온다 (#323)
+    assert ev["label"] == "공원 산책"
+    assert ev["is_stale"] is False
     assert len(item["source_refs"]) == 1
 
 

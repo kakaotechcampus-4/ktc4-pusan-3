@@ -86,7 +86,10 @@ GUIDANCE: dict[RejectReason, str] = {
         "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
         " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
     ),
-    RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다.",
+    RejectReason.BUILD: (
+        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
+        "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
+    ),
 }
 
 
