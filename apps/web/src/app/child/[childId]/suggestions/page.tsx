@@ -55,8 +55,11 @@ import { useEnterMotion } from "@/lib/motion";
  *    일반 카드는 **다른 컴포넌트 · 다른 타입 · 응답의 다른 필드**다 — 한 곳에 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다. 둘이 한 화면에 같이 나오는 경우는 없다.
  *
- * ⚠️ `general` 필드는 **계약서 v1 에 아직 없다** (types.ts 의 ⚠️). 서버가 안 보내면
- *    일반 카드 없이 예전처럼 질문 1개만 그린다 — 프론트가 또래 기준 추천을 지어내지 않는다.
+ * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내(`notice`)와 함께 묶음이 오고,
+ *    이어서 할 수 없는 Agent(`cannot_resume`)도 안내만 온다 — 둘 다 다시 시도를 두지 않는다.
+ *    눌러도 같은 응답이 온다.
+ * ⚠️ 서버가 `groups` 를 안 보내던 응답(예전 서버)은 예전 규칙으로 본다. 프론트가 또래 기준 추천을
+ *    지어내지 않는다.
  */
 export default function SuggestionsPage() {
   return (
@@ -192,6 +195,14 @@ function SuggestionsScreen() {
   }
   const visible = data?.suggestions ?? [];
   /**
+   * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
+   *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
+   */
+  const restored = visible.filter((s) => s.status === "approved").map((s) => s.id);
+  const chosenIds = approvedIds ?? (restored.length > 0 ? restored : null);
+  /** 화면에 "고른 것" 으로 서는 id. 채택이 끝났으면 서버가 아는 채택, 아니면 지금 고르는 중인 것. */
+  const pickedIds = chosenIds ?? selectedIds;
+  /**
    * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
    * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
    * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
@@ -200,22 +211,30 @@ function SuggestionsScreen() {
   const general = scarcity ? (data?.general ?? []) : [];
   const blockedByGuard = new Set(data?.guards.flatMap((g) => g.blocked_agents) ?? []);
   /**
-   * 요청했는데 결과도 없고 규칙에 막힌 것도 아닌 Agent = 이번에 실패한 쪽이다 (NF-06).
-   * 응답이 오기 전과 `scarcity` 는 제외한다 — 기다리는 중인 것과 근거가 부족한 것은 실패가 아니다.
+   * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내와 함께 묶음이 온다 —
+   *    추천이 없다고 실패 카드를 그리면 눌러도 같은 0개만 다시 온다.
+   *    서버가 `groups` 를 안 보내던 응답(예전 서버)은 예전 규칙으로 본다. 규칙에 막힌 Agent 는
+   *    실패가 아니다. 응답이 오기 전에는 비어 있다 — 기다리는 중인 것은 실패가 아니다 (NF-06).
    */
-  const failedAgents =
-    data && !data.scarcity
-      ? agents.filter(
-          (agent) => !blockedByGuard.has(agent) && !data.suggestions.some((s) => s.agent === agent),
-        )
-      : [];
+  const groupAgents = data?.groups ? new Set(data.groups.map((g) => g.agent)) : null;
+  const failedAgents = data
+    ? agents.filter(
+        (agent) =>
+          !blockedByGuard.has(agent) &&
+          (groupAgents
+            ? !groupAgents.has(agent)
+            : !data.scarcity && !data.suggestions.some((s) => s.agent === agent)),
+      )
+    : [];
+  /** 안내가 있는 묶음. 🚨 실패 카드가 아니다 — 다시 시도를 두지 않고 문구는 서버 것을 그대로 그린다. */
+  const notices = (data?.groups ?? []).filter((g) => g.notice);
 
   /**
    * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
    *    보호자가 둘을 맞춰 읽어야 한다.
    */
   const pickedByAgent = visible.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
-    if (!selectedIds.includes(s.id)) return acc;
+    if (!pickedIds.includes(s.id)) return acc;
     const found = acc.find((g) => g.agent === s.agent);
     if (found) found.count += 1;
     else acc.push({ agent: s.agent, count: 1 });
@@ -232,7 +251,10 @@ function SuggestionsScreen() {
         <PageTitle>제안 후보</PageTitle>
         {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
             스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
-        {data ? <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p> : null}
+        {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
+        {data?.looked_at ? (
+          <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p>
+        ) : null}
       </header>
 
       {/* 🚨 배너는 화면 최상단 **한 곳**에만 둔다 (문서 §7). guard 가 여럿이어도 배너는 하나고,
@@ -249,17 +271,25 @@ function SuggestionsScreen() {
             title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
           >
             {data.guards.map((guard) => (
-              <p key={guard.code}>{guard.message}</p>
+              <p key={`${guard.code}:${guard.blocked_agents.join(",")}`}>{guard.message}</p>
             ))}
-            <p className="text-caption mt-1">알레르기를 알려주시면 식사 제안도 함께 준비해요.</p>
-            <ButtonLink
-              href={`/child/${childId}/profile`}
-              variant="secondary"
-              size="compact"
-              className="mt-3"
-            >
-              알레르기 적으러 가기
-            </ButtonLink>
+            {/* 🚨 알레르기를 적으러 가는 길은 **알레르기를 몰라서 막힌 경우에만** 둔다 (#249). 준비 중이거나
+                지원하지 않는 주제는 알레르기를 적어도 풀리지 않는다. */}
+            {data.guards.some((guard) => guard.code === "safety_unknown") ? (
+              <>
+                <p className="text-caption mt-1">
+                  알레르기를 알려주시면 식사 제안도 함께 준비해요.
+                </p>
+                <ButtonLink
+                  href={`/child/${childId}/profile`}
+                  variant="secondary"
+                  size="compact"
+                  className="mt-3"
+                >
+                  알레르기 적으러 가기
+                </ButtonLink>
+              </>
+            ) : null}
           </Banner>
         ) : null}
 
@@ -304,9 +334,9 @@ function SuggestionsScreen() {
         <SuggestionList
           suggestions={visible}
           groups={data?.groups ?? []}
-          selectedIds={selectedIds}
+          selectedIds={pickedIds}
           // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
-          busy={approve.isPending || approvedIds !== null}
+          busy={approve.isPending || chosenIds !== null}
           onToggleSelect={(suggestion) =>
             setSelectedIds((prev) =>
               prev.includes(suggestion.id)
@@ -321,7 +351,7 @@ function SuggestionsScreen() {
         {visible.some((s) => s.agent !== "health") ? (
           <Card>
             <p className="text-section text-ink">
-              {approvedIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
+              {chosenIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
             </p>
             {/* 🚨 **묶음별로 센다.** "3건" 만 말하면 보호자는 무엇을 셋 골랐는지 되짚어야 한다 —
               대안이 Agent 당 셋이라 "식사 2가지 · 놀이 1가지" 가 실제로 고른 모양이다. */}
@@ -329,7 +359,7 @@ function SuggestionsScreen() {
               <div className="flex gap-2">
                 <dt className="text-label text-ink-subtle w-14 shrink-0">고른 것</dt>
                 <dd className="text-body-sm text-ink">
-                  {selectedIds.length === 0
+                  {pickedIds.length === 0
                     ? "아직 없음"
                     : pickedByAgent
                         .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
@@ -340,7 +370,7 @@ function SuggestionsScreen() {
 
             {/* ① → ② 는 같은 카드 안에서 한 칸 앞으로 넘어가는 것이다 (디자인 시스템 §8 "단계 넘김"). */}
             <div ref={stepRef}>
-              {approvedIds === null ? (
+              {chosenIds === null ? (
                 /* ── ① 고르는 중 — 채택부터 한다 ─────────────────────────────── */
                 <>
                   {/* 🚨 **여기서 캘린더 얘기를 하지 않는다.** 이 버튼이 하는 일은 "이걸로 할게요"
@@ -408,7 +438,7 @@ function SuggestionsScreen() {
                     className="mt-4"
                     disabled={createDrafts.isPending}
                     aria-busy={createDrafts.isPending}
-                    onClick={() => createDrafts.mutate(approvedIds)}
+                    onClick={() => createDrafts.mutate(chosenIds)}
                   >
                     {createDrafts.isPending ? <Spinner /> : null}
                     {createDrafts.isPending ? "준비하는 중이에요" : "일정으로 만들기"}
@@ -418,6 +448,14 @@ function SuggestionsScreen() {
             </div>
           </Card>
         ) : null}
+
+        {/* #249 — 묶음 안내. 🚨 실패 카드가 아니다: 다시 시도를 두지 않는다. 문구는 서버 그대로다. */}
+        {notices.map((group) => (
+          <Card key={group.agent}>
+            <p className="text-label text-ink-subtle">{domainLabel(group.agent)}</p>
+            <p className="text-body-sm text-ink mt-1">{group.notice?.message}</p>
+          </Card>
+        ))}
 
         {/* NF-06 — 실패한 쪽도 같은 화면에 남긴다. 빨강이 아니다. */}
         {failedAgents.map((agent) => (
@@ -502,10 +540,14 @@ function ScarcityCard({
   hasGeneral: boolean;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
+  /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
+  const question = scarcity.question;
 
   const answer = useMutation({
     mutationFn: (value: string) => {
-      const body: AnswerRequest = { question_id: scarcity.question.id, answer: value };
+      // 답하는 칩은 질문이 있을 때만 서므로 여기서 null 은 오지 않는다
+      if (question === null) throw new Error("question_missing");
+      const body: AnswerRequest = { question_id: question.id, answer: value };
       return api.post(`/children/${childId}/answers`, body);
     },
     onSuccess: (_data, value) => setAnswered(value),
@@ -521,23 +563,28 @@ function ScarcityCard({
           ? "이 주제로 쌓인 기록이 아직 없어요."
           : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
         {hasGeneral
-          ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+          ? question
+            ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+            : "그래서 위 추천은 또래 기준이에요."
           : "근거 없이 추천을 만들지는 않을게요."}
       </p>
 
-      <p className="text-body text-ink mt-4">{scarcity.question.text}</p>
-      <ChipRow>
-        {scarcity.question.options.map((option) => (
-          <Chip
-            key={option}
-            selected={answered === option}
-            disabled={answer.isPending || answered !== null}
-            onClick={() => answer.mutate(option)}
-          >
-            {option}
-          </Chip>
-        ))}
-      </ChipRow>
+      {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}
+      {/* 🚨 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 세운다 (04 의 되묻기와 같다). */}
+      {question && question.options.length > 0 ? (
+        <ChipRow>
+          {question.options.map((option) => (
+            <Chip
+              key={option}
+              selected={answered === option}
+              disabled={answer.isPending || answered !== null}
+              onClick={() => answer.mutate(option)}
+            >
+              {option}
+            </Chip>
+          ))}
+        </ChipRow>
+      ) : null}
 
       {answer.isError ? (
         <p className="text-body-sm text-ink-muted mt-2">답을 저장하지 못했어요.</p>
@@ -547,7 +594,9 @@ function ScarcityCard({
         </p>
       ) : null}
 
-      <p className="text-caption text-ink-subtle mt-2">질문은 한 개까지만 드려요.</p>
+      {question ? (
+        <p className="text-caption text-ink-subtle mt-2">질문은 한 개까지만 드려요.</p>
+      ) : null}
     </Card>
   );
 }

@@ -182,6 +182,13 @@ def doc_row(
     )
 
 
+# 일반 추천은 문서 행이 근거다 (루트 §2). 식단 추천 테스트의 기본 후보는 이 행을 인용한다.
+# 월령 범위를 넓게 잡아 어느 월령의 아이에게도 [예시]로 보인다
+MEAL_DOC = doc_row(
+    "기본 식단 자료", row_type="meal_pattern", months=(0, 120), body="밥 국 반찬을 고루 둔다."
+)
+
+
 # ── 가짜 LLM — run() 을 끝까지 돌리는 테스트가 같이 쓴다 ─────────────────────
 USAGE = {"prompt_tokens": 10, "completion_tokens": 5}
 
@@ -237,7 +244,9 @@ def propose(
     reason: str = "어제 급식과 겹치지 않아서 골랐어요",
     evidence: list[dict[str, str]] | None = None,
 ) -> LLMResponse:
-    """`propose_meal_candidates` 를 부르는 응답 하나."""
+    """`propose_meal_candidates` 를 부르는 응답 하나. `evidence` 를 안 주면 MEAL_DOC 을 인용한다."""
+    if evidence is None:
+        evidence = [{"kind": "food_doc", "id": str(MEAL_DOC.id), "note": "식단 자료를 참고함"}]
     return tool_response(
         tool_call(
             f"propose-{'-'.join(menu_keys)}",
@@ -248,7 +257,7 @@ def propose(
                         "menu_key": key,
                         "meal_slot": "dinner",
                         "reason": reason,
-                        "evidence": evidence or [],
+                        "evidence": evidence,
                     }
                     for key in menu_keys
                 ]

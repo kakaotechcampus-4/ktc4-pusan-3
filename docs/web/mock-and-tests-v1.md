@@ -33,7 +33,7 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | --- | --- |
 | `default` | 기억이 쌓인 상태 · 개인화 추천 2건 |
 | `empty` | 기록 0건 — `highlight: null` 빈 상태 · 05 는 일반 추천 **2건**(도메인 2색) |
-| `scarcity` | 근거 부족 — 개인화 대신 **일반 추천 1건**(점선 카드) + 되묻는 질문 **1개** |
+| `scarcity` | 근거 부족 — 개인화 대신 **일반 추천 1건**(점선 카드 · 문서 출처 줄) + 되묻는 질문 **1개**(선택지는 비어 온다 · #246 전) |
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
 | `interrupted` | 04 저장한 뒤 끊김 — `done` + `completed: false`. **다시 시도가 없어야 한다** · 일정형 한 줄이면 받은 기록 없이 끊긴다 (#271) |
@@ -55,6 +55,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `agent_readout` | 04 요청형 — Agent 결과만(성장 추이 · 0개 안내). 🚨 **같은 Agent 의 빈 결과는 블록이 안 선다** (#227) |
 | `agent_question` | 04 Agent 가 되묻는 한 줄 — 🚨 **답할 자리가 열리지 않아야 한다** (#246 전) |
 | `agent_partial` | 04 한 Agent 는 결과, 다른 Agent 는 실패 — 블록과 부분 결과가 한 묶음에 |
+| `suggest_counts` | 05 개수 안내 — 식사 2개(`fewer`) · 놀이 0개(`empty`). 🚨 **0개는 실패 카드가 아니다** · 다시 시도가 없어야 한다 (#249) |
+| `cannot_resume` | 05 `run=` 으로 들어왔는데 놀이는 이어서 할 수 없음 — 안내만 서고 **다시 시도가 없어야 한다**, 식사 후보는 그대로 (#249) |
 | `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
 | `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
 | `withdraw_lost` | 10 탈퇴 — 지운 **뒤에** 응답이 사라짐. 🚨 **첫 화면이 아니라 "탈퇴했어요" 로 끝나야 한다** (#389) |

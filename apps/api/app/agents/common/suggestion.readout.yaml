@@ -11,3 +11,9 @@ suggestion.partial:
 suggestion.empty:
   kind: notice
   template: 조건에 맞는 추천이 없어요.
+
+# 05 가 run_id 로 들어왔는데 그 Agent 를 이어서 만들 맥락이 없다 (맥락 15분 지남 · 서버 재시작 ·
+# 24시간 지남 · 그 run 에서 돌지 않은 Agent). 실패가 아니라서 화면은 다시 시도를 띄우지 않는다
+suggestion.cannot_resume:
+  kind: notice
+  template: 이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요.

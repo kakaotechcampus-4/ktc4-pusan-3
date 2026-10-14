@@ -25,6 +25,7 @@ from app.agents.entrypoint import (
     AgentResult,
     DomainRouted,
     Done,
+    EmptyResult,
     EventDraft,
     EventDrafts,
     Failed,
@@ -35,6 +36,7 @@ from app.agents.entrypoint import (
     PendingReply,
     Ref,
     Rerouted,
+    RetryContext,
     Saved,
     Step,
     Unavailable,
@@ -62,7 +64,7 @@ SENT = {
     AgentResult,
 }
 """화면으로 보내는 것."""
-HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted}
+HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 

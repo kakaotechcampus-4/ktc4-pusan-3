@@ -44,7 +44,7 @@ export function ChatThread({
   /** 입력창이 지금 답하는 질문 — 그 질문의 카드가 "답하는 중" 으로 바뀐다. */
   answering: ChatQuestion | null;
   onOpenDrafts: (turn: ChatTurn) => void;
-  onPickOffer: (agents: Agent[], runId: string) => void;
+  onPickOffer: (agents: Agent[]) => void;
 }) {
   const last = turns.at(-1);
   const days = groupByDay(turns);
@@ -72,7 +72,8 @@ export function ChatThread({
                     answering={answering}
                     onOpenDrafts={() => onOpenDrafts(turn)}
                     onPickOffer={(agents) => {
-                      if (turn.send.status === "sent") onPickOffer(agents, turn.send.runId);
+                      // 🚨 run 을 싣지 않는다 — 04 제안은 처음 요청이다 (`chat/page.tsx` 의 goToSuggestions).
+                      if (turn.send.status === "sent") onPickOffer(agents);
                     }}
                   />
                 )}

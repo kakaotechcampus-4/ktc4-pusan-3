@@ -289,6 +289,30 @@ export interface GeneralSuggestion {
   content: string;
   /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
+  status: SuggestionStatus;
+  /** 생성 +24h. 개인화 추천과 같다. */
+  expires_at: string;
+  /**
+   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다"). 비어 오지 않는다 —
+   *    문서 근거가 없는 일반 추천은 서버가 만들지도 내보내지도 않는다.
+   *    아이 기록 근거(`Suggestion.evidence`)와 필드 이름까지 같지만 **다른 타입**이다.
+   */
+  evidence: DocEvidence[];
+}
+
+/**
+ * 일반 추천의 근거 — **문서 행**이다. 🚨 `Evidence` 와 따로 둔다. 아이 기록이 아니라서
+ * "사용한 기록 N건" 으로 세면 안 된다.
+ * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
+ */
+export interface DocEvidence {
+  ref: { kind: "food_doc" | "activity_doc" | "growth_doc"; id: string };
+  title: string;
+  source_org: string;
+  source_title: string;
+  source_url: string | null;
+  /** 이 문서를 어떻게 참고했는지 한 줄. */
+  note: string;
 }
 
 /* ── Event · EventItem · Reminder ─────────────────────────────────────── */
@@ -387,7 +411,11 @@ export interface CreateInputResponse {
 
 /** 🚨 agents 는 최대 2개다 (NF-01). Supervisor 가 고른 것을 그대로 싣는다. */
 export interface SuggestionsRequest {
-  /** 04 의 offer 에서 넘어온 경우에만 있다. 홈의 agent_prompts 로 들어오면 run 이 없다. */
+  /**
+   * #227 04 "후보 보기" 로 들어온 경우에만 있다. 04 제안(offer) · 홈은 없다 — 서버는 run_id 가
+   * 없으면 처음 요청으로 돌린다 (#249). 있으면 그 run 의 추천을 돌려주고, 결과를 못 낸 Agent 만
+   * 15분 안에 처음 맥락으로 다시 만든다.
+   */
   run_id?: string;
   agents: Agent[];
   /** 홈의 `agent_prompts` 로 들어온 경우에만 있다. 그 버튼의 `prompt_key` 그대로다 (#286). */
@@ -413,7 +441,11 @@ export interface Guard {
 export interface Scarcity {
   /** 쌓인 기록 건수. 화면에 그대로 보여준다 — 숨기지 않는다. */
   count: number;
-  question: { id: string; text: string; options: string[] };
+  /**
+   * Agent 가 되물었을 때만 있다. 🚨 **답하는 길(#246) 전에는 `options` 가 비어 온다** — 화면은
+   * 질문을 문장으로만 세우고 답하는 칩을 그리지 않는다 (04 의 되묻기와 같다).
+   */
+  question: { id: string; text: string; options: string[] } | null;
 }
 
 /**
@@ -423,6 +455,11 @@ export interface Scarcity {
  *    서버가 안 보내면(`null` · 없음) 화면은 질문 1개만 그린다.
  */
 
+export interface GroupNotice {
+  code: "fewer" | "empty" | "cannot_resume" | (string & {});
+  message: string;
+}
+
 /**
  * 한 Agent 가 낸 후보 묶음의 **머리말**. 🚨 후보 자체는 `suggestions` 에 평평하게 담기고,
  * 화면이 `agent` 로 묶는다 — 여기 담기는 것은 그 묶음에 대해 **서버만 아는 것**뿐이다.
@@ -431,11 +468,18 @@ export interface Scarcity {
  *    계란말이 · 멸치볶음). 그 셋은 서로 다른 제안이 아니라 **한 결정에 대한 대안**이다.
  *    평평한 목록으로 그리면 보호자는 여섯 개의 독립 제안으로 읽고, "무엇을 정하는 중인가" 가 사라진다.
  *
- * 결과가 살아 있는 Agent 것만 온다 — guard 에 막혔거나 partial 로 실패한 Agent 는 빠진다 (#284).
+ * 🚨 **결과를 낸 Agent 는 0개여도 묶음이 온다** (#249) — 안내(`notice`)와 함께. guard 에 막혔거나
+ *    결과를 못 낸(실패) Agent 는 빠진다 — **묶음이 없는 Agent 가 실패**다.
  *    서버가 안 보내면 화면은 도메인 라벨로만 머리줄을 만들고, 묶임은 **말하지 않는다**.
  */
 export interface SuggestionGroup {
   agent: Agent;
+  /**
+   * 묶음 안내 (#249). 🚨 **notice 가 있는 묶음은 실패가 아니다** — 다시 시도를 띄우지 않는다.
+   *    `fewer` 1~2개 · `empty` 0개 · `cannot_resume` 이어서 할 수 없음(04 "후보 보기" 로 들어왔는데
+   *    맥락이 없다). 🚨 `message` 는 서버 문구다 — 그대로 그린다. `code` 는 모양을 가를 때만 쓴다.
+   */
+  notice?: GroupNotice | null;
   /**
    * 이 묶음이 무엇을 정하는 중인가 ("오늘 저녁 뭐 먹을까요"). 🚨 **서버 문구다** —
    * 무엇을 묻는 중인지는 후보를 만든 쪽만 안다. 프론트가 지어내지 않는다.
@@ -453,8 +497,8 @@ export interface SuggestionGroup {
 }
 
 /**
- * 🚨 `suggestions` 가 비어 있는데 `scarcity` 도 null 인 응답은 없다.
- *    둘 다 비면 화면에 그릴 것이 없다는 뜻이고, 그건 서버 버그다.
+ * 결과를 낸 Agent 는 0개여도 `groups` 에 안내와 함께 온다. 화면은 **묶음이 없는 Agent 만** 실패로
+ * 그린다 (#249). 🚨 `suggestions` · `general` 이 다 비어도 `groups` 의 안내가 그릴 것이다.
  */
 export interface SuggestionsResponse {
   /**

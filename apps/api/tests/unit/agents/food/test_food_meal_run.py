@@ -33,6 +33,7 @@ from tests.unit.agents.food.support import (
     BIRTH_DATE,
     CHILD,
     KST,
+    MEAL_DOC,
     NOW,
     ScriptedLLM,
     affinity,
@@ -76,8 +77,8 @@ def meal_context(
     }
     if memory is not None:
         overrides["memory"] = memory
-    if docs is not None:
-        overrides["docs"] = docs
+    # 기본은 MEAL_DOC 하나 — 기본 후보가 인용하는 문서 행이다(support.propose)
+    overrides["docs"] = docs if docs is not None else InMemoryFoodDocs([MEAL_DOC])
     return FoodContext(
         child_id=CHILD, run_id="run-1", now=NOW, timezone=KST, ports=in_memory_ports(**overrides)
     )
@@ -127,13 +128,16 @@ async def test_식단_추천은_tool_을_강제한다() -> None:
     assert llm.tool_choices == ["required"]
 
 
-async def test_근거가_없는_추천은_일반_추천이고_이유가_코드_문구다() -> None:
+async def test_문서_행만_인용한_추천은_일반_추천이고_근거는_문서_행뿐이다() -> None:
     llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
 
     result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP), client=llm)
 
     assert {draft.kind for draft in result.suggestions} == {"general"}
-    assert all(draft.citations == () for draft in result.suggestions)  # 아이 기록 근거가 0행이다
+    assert all(  # 아이 기록 근거가 0행이고 문서 행이 근거다
+        [(item.ref.kind, item.ref.id) for item in draft.citations] == [("food_doc", MEAL_DOC.id)]
+        for draft in result.suggestions
+    )
 
 
 async def test_기억을_조회해_근거를_달면_개인화_추천이고_근거가_따라간다() -> None:
@@ -362,7 +366,9 @@ async def test_예시는_프롬프트의_마지막_내용_구획이고_출처_�
     llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
 
     await run(
-        meal_task(), meal_context(TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs([doc])), client=llm
+        meal_task(),
+        meal_context(TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs([doc, MEAL_DOC])),
+        client=llm,
     )
 
     system = str(llm.seen[0][0]["content"])
@@ -388,7 +394,9 @@ async def test_예시에는_알레르기_행이_들어가지_않는다() -> None
 
     await run(
         meal_task(),
-        meal_context(TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs([egg_doc, ok_doc]), safety=EGG),
+        meal_context(
+            TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs([egg_doc, ok_doc, MEAL_DOC]), safety=EGG
+        ),
         client=llm,
     )
 
@@ -411,7 +419,9 @@ async def test_예시_문서를_인용한_추천은_문서_근거가_달리고_�
     )
 
     result = await run(
-        meal_task(), meal_context(TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs([doc])), client=llm
+        meal_task(),
+        meal_context(TOFU, SPINACH, SOUP, docs=InMemoryFoodDocs([doc, MEAL_DOC])),
+        client=llm,
     )
 
     assert result.status == "completed"

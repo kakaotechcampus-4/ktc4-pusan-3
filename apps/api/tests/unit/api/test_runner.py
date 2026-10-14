@@ -11,7 +11,7 @@ HTTP 없이 채널과 태스크만 본다.
 
 import asyncio
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -19,18 +19,20 @@ from app.agents import entrypoint
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.entrypoint import (
     Done,
+    EmptyResult,
     EventDrafts,
     Failed,
     MemoryNote,
     Partial,
     PendingMemoryContext,
     PendingReply,
+    RetryContext,
     Step,
     Unwritten,
 )
 from app.agents.memory.schemas.task import WorkType
-from app.api import idempotency
-from app.api.runs import pending_reply, registry, runner
+from app.api import agent_ports, idempotency
+from app.api.runs import pending_reply, registry, runner, suggestion_retry
 
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
@@ -307,6 +309,38 @@ async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_�
     stored = pending_reply.consume(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
     assert stored == _PENDING
     pending_reply.clear()
+
+
+async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeypatch):
+    """실패 맥락에는 요청 원문 조각이 있다. 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)."""
+    suggestion_retry.clear()
+    sent_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        run_id = kwargs["run_id"]
+        emit(RetryContext(run_id, "food", "meal_recommendation", ("저녁 추천해줘",), sent_at))
+        emit(EmptyResult(run_id, "activity", None, "조건에 맞는 추천이 없어요."))
+        emit(Done(run_id, 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["done"]  # 화면에는 아무것도 가지 않는다
+    claimed = suggestion_retry.claim(
+        run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="food"
+    )
+    assert claimed == suggestion_retry.RetryTask("meal_recommendation", ("저녁 추천해줘",), sent_at)
+    assert (
+        suggestion_retry.empty_message(
+            run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
+        )
+        == "조건에 맞는 추천이 없어요."
+    )
+    suggestion_retry.clear()
 
 
 async def test_이어받기_맥락을_진입점에_넘긴다(monkeypatch):
@@ -753,6 +787,7 @@ async def test_도메인_Agent_기억_포트는_열_때마다_run_세션과_다�
             return None
 
     monkeypatch.setattr(runner, "background_session", FakeSession)
+    monkeypatch.setattr(agent_ports, "background_session", FakeSession)
     stores: list = []
 
     async def fake_handle_input(**kwargs):
@@ -802,6 +837,7 @@ def _sessions(monkeypatch: pytest.MonkeyPatch) -> list:
             self.commits += 1
 
     monkeypatch.setattr(runner, "background_session", FakeSession)
+    monkeypatch.setattr(agent_ports, "background_session", FakeSession)
     return opened
 
 

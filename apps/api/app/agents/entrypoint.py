@@ -1,20 +1,29 @@
 """API가 부르는 agents 진입점.
 
-api 레이어는 이 모듈만 import한다. 밖으로는 handle_input 과 그 입출력·이벤트 타입만 내보낸다.
+api 레이어는 이 모듈만 import한다. 밖으로는 handle_input · suggest 와 그 입출력·이벤트 타입, api 가
+응답을 만들 때 쓰는 판정(사전검사 · 문서 행 · 안내 문구)만 내보낸다.
 """
 
 import logging
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import cache
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.agents import pipeline
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsent
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
 from app.agents.activity.store.ports import CoarseLocation, WeatherSource
+from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
+from app.agents.common.readout import Readout
+from app.agents.common.reference_docs import doc_row_id
+from app.agents.common.schemas.task import DomainTask
+from app.agents.common.suggestion import cannot_resume_notice, count_notice
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
@@ -26,12 +35,15 @@ from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, StoreOpener
 from app.agents.pipeline import (
+    RECOMMENDING_TASKS,
     AgentResult,
     Commit,
     CuratorTrigger,
+    DomainContext,
     DomainRouted,
     Done,
     Emit,
+    EmptyResult,
     Event,
     EventDrafts,
     Failed,
@@ -41,8 +53,11 @@ from app.agents.pipeline import (
     PipelineResult,
     Ref,
     Rerouted,
+    RetryContext,
     Saved,
     Step,
+    SuggestOutcome,
+    SuggestRun,
     Unavailable,
     Unwritten,
 )
@@ -54,13 +69,17 @@ from app.agents.supervisor.routing import Guidance
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "SUGGESTION_AGENTS",
     "AgentResult",
+    "AllergenCheck",
     "CoarseLocation",
     "Commit",
     "CuratorTrigger",
+    "DocCard",
     "DomainRouted",
     "Done",
     "Emit",
+    "EmptyResult",
     "Event",
     "EventDraft",
     "EventDrafts",
@@ -75,18 +94,30 @@ __all__ = [
     "PendingMemoryContext",
     "PendingReply",
     "PipelineResult",
+    "Readout",
     "Ref",
     "Rerouted",
+    "RetryContext",
+    "SafetyLabel",
     "SaveSuggestions",
     "Saved",
     "Step",
     "StoreOpener",
+    "SuggestOutcome",
+    "SuggestRun",
+    "SuggestTask",
     "SuggestionBatch",
     "Unavailable",
     "Unwritten",
     "WeatherSource",
+    "cannot_resume_text",
+    "check_allergens",
+    "count_notice_text",
     "curator_deps",
+    "describe_docs",
     "handle_input",
+    "recommendation_task_type",
+    "suggest",
 ]
 
 logger = logging.getLogger(__name__)
@@ -188,6 +219,179 @@ async def handle_input(
         store=store,
     )
 
+    contexts, writes = _domain_contexts(
+        child_id=child_id,
+        run_id=run_id,
+        now=now,
+        store=store,
+        birth_date=birth_date,
+        child_health_granted=child_health_granted,
+        location=location,
+        activity_weather=activity_weather,
+        domain_store=domain_store,
+    )
+
+    return await _handle_input(
+        raw_text,
+        memory_context,
+        contexts,
+        run_id=run_id,
+        emit=emit,
+        continuation=continuation,
+        commit=commit,
+        save_suggestions=save_suggestions,
+        writes=writes,
+        curator_trigger=curator_trigger,
+    )
+
+
+@dataclass(frozen=True)
+class SuggestTask:
+    """05 가 돌릴 추천 task 하나. 요청 문장은 서버가 정한 것만 — 홈 버튼 키의 표 문장이거나
+    입력 run 이 남긴 맥락이다. 화면이 보낸 문장은 들어오지 않는다 (#249 · #286)."""
+
+    agent: str
+    task_type: str | None
+    request_texts: tuple[str, ...]
+
+
+SUGGESTION_AGENTS: frozenset[str] = frozenset(RECOMMENDING_TASKS)
+
+
+def recommendation_task_type(agent: str) -> str | None:
+    """05 가 처음 요청으로 돌릴 때의 라벨. Agent 마다 추천 task 가 하나다."""
+    [label] = RECOMMENDING_TASKS[agent]
+    return label
+
+
+async def suggest(
+    *,
+    child_id: UUID,
+    parent_id: UUID,
+    tasks: Sequence[SuggestTask],
+    request_id: str,
+    save_run_id: str | None,
+    sent_at: datetime | None,
+    save_suggestions: SaveSuggestions,
+    birth_date: date | None = None,
+    child_health_granted: bool | None = None,
+    domain_store: StoreOpener | None = None,
+    store: MemoryStore | None = None,
+) -> SuggestRun:
+    """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
+
+    - `request_id` 는 05 요청 하나의 id 다. Agent 의 run_id(Food 샘플 seed)로 쓴다 — 다시 만들 때
+      입력 run 과 같은 후보가 다시 뽑히지 않게.
+    - `save_run_id` 는 저장할 추천의 run 칸이다. 입력 run 을 다시 만들면 그 run, 홈 · 04 제안이면
+      None.
+    - `sent_at` 은 입력 run 의 기준 시각이다. 다시 만들 때 "내일 아침" 이 그때 기준으로 읽혀야 해서
+      Agent context 의 now 로만 쓴다. 새 추천의 `expires_at` 은 저장할 때 실제 시각으로 잡힌다.
+      None 이면 지금이다.
+    - 생일 · 동의 · 포트는 `handle_input` 과 같은 자리에서 같은 값으로 연다.
+    - `parent_id` 는 지금 쓰는 곳이 없지만 `handle_input` 과 같은 자리에 둔다 — 05 가 Memory 를
+      부르게 되면 작성자로 쓴다.
+    """
+    now = sent_at.astimezone(KST) if sent_at is not None else datetime.now(KST)
+    if store is None:
+        store = InMemoryStore(now=now)
+    contexts, _ = _domain_contexts(
+        child_id=child_id,
+        run_id=request_id,
+        now=now,
+        store=store,
+        birth_date=birth_date,
+        child_health_granted=child_health_granted,
+        location=None,
+        activity_weather=None,
+        domain_store=domain_store,
+    )
+    domain_tasks = tuple(
+        DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
+    )
+    return await pipeline.run_suggestions(
+        domain_tasks, contexts, save_run_id=save_run_id, save_suggestions=save_suggestions
+    )
+
+
+@dataclass(frozen=True)
+class SafetyLabel:
+    """api 가 health_safety 행에서 옮겨 담는 칸. agents 는 domains 모델을 받지 않는다."""
+
+    kind: str
+    label: str
+    status: str
+
+
+@dataclass(frozen=True)
+class AllergenCheck:
+    blocked: tuple[str, ...]  # active 에 걸린 항목 — 그 추천은 내보내지 않는다
+    unknown: tuple[str, ...]  # 행이 없는 항목 — 채택 전에 묻는다 (unknown_ingredient)
+
+
+def check_allergens(allergens: Sequence[str], rows: Sequence[SafetyLabel]) -> AllergenCheck:
+    """05 의 알레르기 사전검사 (types.ts `Precheck` · #284 규칙). 모델을 부르지 않는다."""
+    states = allergen_states(allergens, [(r.kind, r.label, r.status) for r in rows], shared_book())
+    return AllergenCheck(
+        blocked=tuple(name for name, state in states.items() if state == "active"),
+        unknown=tuple(name for name, state in states.items() if state is None),
+    )
+
+
+@dataclass(frozen=True)
+class DocCard:
+    """일반 추천 근거로 화면에 나가는 문서 행. CC BY 행은 출처 표시가 조건이다."""
+
+    title: str
+    source_org: str
+    source_title: str
+    source_url: str | None
+
+
+@cache
+def _doc_index() -> dict[tuple[str, UUID], DocCard]:
+    """검수를 마친(approved) 시드 행. Agent 가 [예시] 로 받은 것과 같은 행이라 같은 id 다."""
+    from app.agents.activity.doc_seed import activity_doc_seed
+    from app.agents.food.doc_seed import food_doc_seed
+
+    index: dict[tuple[str, UUID], DocCard] = {}
+    for kind, entries in (("activity_doc", activity_doc_seed()), ("food_doc", food_doc_seed())):
+        for entry in entries:
+            meta = entry.meta
+            if meta.status != "approved":
+                continue
+            key = (kind, doc_row_id(kind, meta.doc_key))
+            index[key] = DocCard(meta.title, meta.source_org, meta.source_title, meta.source_url)
+    return index
+
+
+def describe_docs(refs: Iterable[tuple[str, UUID]]) -> dict[tuple[str, UUID], DocCard]:
+    """근거로 저장된 문서 행 id → 화면에 실을 내용. 시드에 없는(검수가 풀린) 행은 빠진다."""
+    index = _doc_index()
+    return {ref: index[ref] for ref in refs if ref in index}
+
+
+def count_notice_text(count: int) -> Readout | None:
+    """공통 개수 안내. 05 가 응답에 실린 개수로 다시 만든다 (fewer · empty)."""
+    return count_notice(count)
+
+
+def cannot_resume_text() -> Readout:
+    return cannot_resume_notice()
+
+
+def _domain_contexts(
+    *,
+    child_id: UUID,
+    run_id: str,
+    now: datetime,
+    store: MemoryStore,
+    birth_date: date | None,
+    child_health_granted: bool | None,
+    location: CoarseLocation | None,
+    activity_weather: WeatherSource | None,
+    domain_store: StoreOpener | None,
+) -> tuple[dict[str, DomainContext], RunWrites]:
+    """Food · Activity 컨텍스트. 입력 run 과 05 가 같은 값으로 연다 — 포트가 두 벌이 되지 않게."""
     # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
     # 포트가 build_gate 의 LifeStage 계산과 동의 확인 자리에 들어가고, 기억 포트는 같은 run 의
     # store 를 읽게 한다. 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
@@ -247,16 +451,4 @@ async def handle_input(
         ),
         location=location,
     )
-
-    return await _handle_input(
-        raw_text,
-        memory_context,
-        {"food": food_context, "activity": activity_context},
-        run_id=run_id,
-        emit=emit,
-        continuation=continuation,
-        commit=commit,
-        save_suggestions=save_suggestions,
-        writes=writes,
-        curator_trigger=curator_trigger,
-    )
+    return {"food": food_context, "activity": activity_context}, writes

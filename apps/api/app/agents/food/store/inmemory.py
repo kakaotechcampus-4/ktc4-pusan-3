@@ -10,10 +10,11 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.reference import load_reference
+from app.agents.common.reference_docs import doc_row_id
 from app.agents.food.store.ports import (
     RECIPE_SOURCES,
     DaycareMealRow,
@@ -266,7 +267,7 @@ def _seed_row(entry: "FoodDocEntry", *, written_at: datetime) -> FoodDocRow:
     from app.agents.food.doc_seed import allergen_codes_in
 
     return FoodDocRow(
-        id=uuid5(NAMESPACE_URL, f"food_doc:{entry.meta.doc_key}"),
+        id=doc_row_id("food_doc", entry.meta.doc_key),
         row_type=entry.meta.row_type,
         title=entry.meta.title,
         body=entry.meta.body,

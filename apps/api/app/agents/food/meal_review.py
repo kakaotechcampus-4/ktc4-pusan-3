@@ -60,7 +60,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.UNKNOWN_EVIDENCE: (
         "evidence 에는 search_food_memory · guide_weaning_stage 결과나 [예시] 에 있던 id 만 쓴다."
     ),
-    RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다.",
+    RejectReason.BUILD: (
+        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
+        "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
+    ),
 }
 
 

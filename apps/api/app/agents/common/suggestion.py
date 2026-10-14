@@ -25,6 +25,7 @@ MAX_SUGGESTIONS = 3
 _NOTICES = ReadoutCatalog.from_yaml(Path(__file__).with_name("suggestion.readout.yaml"))
 PARTIAL_NOTICE: ReadoutText = _NOTICES.get("suggestion.partial")
 EMPTY_NOTICE: ReadoutText = _NOTICES.get("suggestion.empty")
+CANNOT_RESUME_NOTICE: ReadoutText = _NOTICES.get("suggestion.cannot_resume")
 
 
 class SuggestionRejected(ValueError):
@@ -75,7 +76,7 @@ def build(
     """6개월이 안 지난 아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
     아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
-    덮어쓴다. general 인데 인용이 0행인 것은 거절 사유가 아니라 품질 지표다.
+    덮어쓴다. 이때 문서 행을 하나 이상 인용해야 한다 — 일반 추천의 근거는 문서 행이다(루트 §2).
 
     6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
     그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
@@ -96,12 +97,17 @@ def build(
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
+        docs = tuple(item for item in citations if not item.ref.is_child_record)
+        if not docs:
+            # 일반 추천은 문서 행이 근거다 (루트 §2). 아이 기록도 문서도 없으면 무엇을 기준으로
+            # 골랐는지 보호자에게 보여 줄 것이 없다
+            raise SuggestionRejected(f"{agent}: 일반 추천인데 문서 행 근거가 없다")
         return SuggestionDraft(
             agent=agent,
             kind="general",
             content=content,
             reason=general_reason,
-            citations=tuple(item for item in citations if not item.ref.is_child_record),
+            citations=docs,
             allergens=allergens,
             items=items,
         )
@@ -192,6 +198,11 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
     if count == 0:
         return replace(code_readout(empty), code="empty")
     return replace(code_readout(PARTIAL_NOTICE, count=count), code="fewer")
+
+
+def cannot_resume_notice() -> Readout:
+    """05 가 그 Agent 를 이어서 만들 수 없을 때의 안내. 다시 만들지 않는다 (#249 판단 순서 4)."""
+    return replace(code_readout(CANNOT_RESUME_NOTICE), code="cannot_resume")
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:

@@ -9,8 +9,8 @@ import type { GeneralSuggestion } from "@/lib/api/types";
  * (`SuggestionList`)이 서는 자리에 이 카드가 선다 — 둘이 같이 나오는 경우는 없다.
  *
  * 🚨 **개인화 줄과 같은 컴포넌트로 만들지 않는다.** 한 컴포넌트에 플래그를 넣으면 언젠가
- *    근거 0건인데 개인화로 그려진다 (문서 §7). 타입도 따로라(`GeneralSuggestion` 에는
- *    `evidence` 필드가 아예 없다) 이 카드에 개인화 제안을 넘기면 컴파일이 막는다.
+ *    근거 0건인데 개인화로 그려진다 (문서 §7). 타입도 따로라(`GeneralSuggestion.evidence` 는
+ *    아이 기록이 아니라 문서 행 `DocEvidence[]` 다) 이 카드에 개인화 제안을 넘기면 컴파일이 막는다.
  *
  * 🚨 **"또래 기준" 이라는 사실을 카드가 직접 말한다.** 라벨과 기록 건수는 장식이 아니라
  *    이 카드의 본체다 — 근거가 없는데 "우리 아이 맞춤" 인 척하지 않는 것이 이 화면의 전부다.
@@ -45,6 +45,19 @@ export function GeneralSuggestionCard({
 
       <p className="text-body text-ink mt-3">{suggestion.content}</p>
       <p className="text-body-sm text-ink-muted mt-1">{suggestion.basis}</p>
+
+      {/* 🚨 일반 추천의 근거는 **문서 행**이다 (최상위 §2). 출처를 같이 적는다 — CC BY 문서는 출처
+          표시가 이용 조건이고, 무엇을 보고 골랐는지가 "또래 기준" 의 근거다. "사용한 기록 N건" 으로
+          세지 않는다 (아이 기록이 아니다). */}
+      {suggestion.evidence.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-1">
+          {suggestion.evidence.map((doc) => (
+            <li key={doc.ref.id} className="text-caption text-ink-subtle">
+              참고 · {doc.title} ({doc.source_org}, {doc.source_title})
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </li>
   );
 }

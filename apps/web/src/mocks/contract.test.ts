@@ -564,6 +564,86 @@ describe("승인 게이트 ㉡", () => {
   });
 });
 
+/**
+ * 05 묶음 안내 · 일반 추천 근거 (#249). 서버 `POST /children/{cid}/suggestions` 와 같은 계약이다.
+ * 🚨 실패는 "묶음이 없는 Agent" 다 — 0개로 끝난 Agent 도 안내와 함께 묶음이 온다.
+ */
+describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
+  async function fetchWith(scenario: Parameters<typeof setScenario>[0], body: SuggestionsRequest) {
+    setScenario(scenario);
+    try {
+      return await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
+    const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
+
+    const byAgent = Object.fromEntries((data.groups ?? []).map((g) => [g.agent, g]));
+    expect(byAgent.activity?.notice?.code).toBe("empty");
+    expect(data.suggestions.some((s) => s.agent === "activity")).toBe(false);
+    expect(byAgent.food?.notice?.code).toBe("fewer");
+    // 서버 문구는 비어 있지 않다 — 화면이 그대로 그린다
+    for (const group of data.groups ?? []) expect(group.notice?.message.trim()).not.toBe("");
+  });
+
+  it("🚨 이어서 할 수 없으면 그 묶음에 안내가 오고 오류가 아니다", async () => {
+    const data = await fetchWith("cannot_resume", { agents: ["food", "activity"], run_id: "r1" });
+
+    expect(data.groups?.find((g) => g.agent === "activity")?.notice?.code).toBe("cannot_resume");
+    // 같은 응답에 이어서 할 수 있는 Agent 의 추천이 섞여 온다
+    expect(data.suggestions.some((s) => s.agent === "food")).toBe(true);
+    expect(data.groups?.find((g) => g.agent === "food")?.notice).toBeNull();
+  });
+
+  it("🚨 일반 추천은 문서 행 근거와 출처를 달고 온다", async () => {
+    const data = await fetchWith("scarcity", { agents: ["activity"] });
+
+    expect((data.general ?? []).length).toBeGreaterThan(0);
+    for (const item of data.general ?? []) {
+      expect(item.evidence.length).toBeGreaterThan(0);
+      for (const e of item.evidence) {
+        expect(e.source_org).not.toBe("");
+        expect(["food_doc", "activity_doc", "growth_doc"]).toContain(e.ref.kind);
+      }
+    }
+  });
+
+  it("🚨 run_id 로 오면 채택한 추천도 돌아와 status 로 되살린다 — 홈은 늘 draft 다", async () => {
+    const fresh = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+    });
+    const [first] = fresh.suggestions;
+    expect(fresh.suggestions.every((s) => s.status === "draft")).toBe(true);
+    await approveSuggestions("c1", { suggestion_ids: [first.id] });
+
+    const replayed = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+      run_id: "r1",
+    });
+    expect(replayed.suggestions.find((s) => s.id === first.id)?.status).toBe("approved");
+    // 채택 안 한 것은 그대로 draft 다
+    expect(
+      replayed.suggestions.filter((s) => s.id !== first.id).every((s) => s.status === "draft"),
+    ).toBe(true);
+    // run 없이 다시 받으면 새로 만든 추천이라 draft 다
+    const home = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+    });
+    expect(home.suggestions.every((s) => s.status === "draft")).toBe(true);
+  });
+
+  it("🚨 일반 추천은 개인화 목록에 섞이지 않고, 질문은 하나뿐이다", async () => {
+    const data = await fetchWith("scarcity", { agents: ["activity"] });
+
+    expect(data.suggestions).toEqual([]);
+    // 답하는 길(#246) 전에는 선택지가 비어 온다 — 서버와 같은 모양
+    expect(data.scarcity?.question?.options).toEqual([]);
+  });
+});
+
 describe("⑥ 권한 부족 — 동의 거부", () => {
   it("403 consent_required 에 deeplink 가 붙고, 저장은 일어나지 않는다", async () => {
     setScenario("consent");

@@ -19,7 +19,7 @@ from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidat
 from app.agents.food.store import SafetyEntry
 from app.agents.food.tools.recommend import propose_meal_candidates
 from app.agents.food.tools.safety import filter_food_safety
-from tests.unit.agents.food.support import context, day, doc_row, menu_row
+from tests.unit.agents.food.support import MEAL_DOC, context, day, doc_row, menu_row
 
 MILK = [SafetyEntry(kind="allergy", label="우유", status="active")]
 GENERAL_REASON = READOUTS.get(GENERAL_REASON_TODDLER).template
@@ -37,9 +37,14 @@ MILKBREAD = menu_row(
 SPINACH = menu_row("시금치나물", source="mafra_recipe", ingredients=("시금치", "참기름"))
 
 
+# 일반 추천은 문서 행이 근거다 (루트 §2). 기본 후보는 이 행을 인용하고, shown() 이 보여 준다
+DOC_CITE = EvidenceRef(kind="food_doc", id=str(MEAL_DOC.id), note="식단 자료를 참고함")
+
+
 def pick(
     menu_key: str, *, reason: str = "어제 급식과 겹치지 않아서 골랐어요", **kwargs
 ) -> MealCandidate:
+    kwargs.setdefault("evidence", [DOC_CITE])
     return MealCandidate(
         menu_key=menu_key, meal_slot=kwargs.pop("meal_slot", "dinner"), reason=reason, **kwargs
     )
@@ -54,6 +59,7 @@ def shown(*rows, safety=(), exhausted: bool = False, birth: date | None = None) 
     ctx = context(safety=safety) if birth is None else context(safety=safety, birth=birth)
     ctx.state.sampled = {row.menu_key: row for row in rows}
     ctx.state.exhausted = exhausted
+    ctx.state.seen_docs[MEAL_DOC.id] = MEAL_DOC
     return ctx
 
 
@@ -291,7 +297,7 @@ async def test_근거를_조회했으면_개인화_추천이고_인용_종류는
     assert citation.note == "두부를 좋아함"
 
 
-async def test_근거가_없으면_일반_추천이고_이유는_코드_문구로_덮는다() -> None:
+async def test_아이_기록_근거가_없으면_일반_추천이고_이유는_코드_문구로_덮는다() -> None:
     ctx = shown(*FULL, exhausted=True)
 
     await propose_meal_candidates(ctx, args(pick("두부조림", reason="모델이 쓴 이유예요")))
@@ -299,7 +305,20 @@ async def test_근거가_없으면_일반_추천이고_이유는_코드_문구�
     [only] = ctx.state.picks
     assert only.draft.kind == "general"
     assert only.draft.reason == GENERAL_REASON
-    assert only.draft.citations == ()
+    assert [c.ref.kind for c in only.draft.citations] == ["food_doc"]  # 아이 기록은 0행이다
+
+
+async def test_인용이_하나도_없으면_거절한다() -> None:
+    """일반 추천은 문서 행이 근거다 (루트 §2). 아이 기록도 문서도 없는 후보는 나가지 않는다."""
+    ctx = shown(*FULL, exhausted=True)
+
+    result = await propose_meal_candidates(ctx, args(pick("두부조림", evidence=[])))
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
+    assert "문서 행" in result.error["message"]
+    assert ctx.state.picks == ()
 
 
 async def test_문서_행만_인용하면_일반_추천이고_근거는_food_doc_이다() -> None:
@@ -322,7 +341,7 @@ async def test_오래된_선호만_근거면_일반_추천으로_처리한다() 
     ctx = shown(*FULL, exhausted=True)
     old = seen_affinity(ctx, "두부", days_ago=200)
 
-    await propose_meal_candidates(ctx, args(pick("두부조림", evidence=[cite(old)])))
+    await propose_meal_candidates(ctx, args(pick("두부조림", evidence=[cite(old), DOC_CITE])))
 
     [only] = ctx.state.picks
     assert only.draft.kind == "general"
@@ -449,7 +468,10 @@ async def test_6개월_넘은_관찰만_근거면_일반_추천이다() -> None:
     await propose_meal_candidates(
         ctx,
         args(
-            pick("두부조림", evidence=[cite(key, kind="observation_food", note="두부를 먹어 봄")])
+            pick(
+                "두부조림",
+                evidence=[cite(key, kind="observation_food", note="두부를 먹어 봄"), DOC_CITE],
+            )
         ),
     )
 

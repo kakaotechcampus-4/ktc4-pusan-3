@@ -83,6 +83,14 @@ def cited(kind: str, source_id: uuid.UUID, note: str = "다 먹었다") -> dict:
     return {"source_kind": kind, "source_id": str(source_id), "note": note}
 
 
+DOC_ID = uuid.UUID("00000000-0000-5000-8000-000000000001")
+
+
+def doc_citation(kind: str = "activity_doc") -> dict:
+    """일반 추천의 근거는 문서 행이다 (루트 §2)."""
+    return cited(kind, DOC_ID, "또래 놀이 자료")
+
+
 async def counts(session, child_id) -> tuple[int, int]:
     """그 아이의 추천 행 수 · 근거 행 수. 개발 DB 의 다른 행을 세지 않게 아이로 거른다."""
     suggestions = await session.scalar(
@@ -115,7 +123,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
         now=NOW,
         payloads=[
             payload(kind="personalized", citations=[cited("observation_food", obs)]),
-            payload(content="두부조림"),
+            payload(content="두부조림", citations=[doc_citation()]),
         ],
     )
 
@@ -126,7 +134,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.run_id for row in rows} == {RUN}
     assert {row.expires_at for row in rows} == {NOW + SUGGESTION_TTL}
     assert (rows[0].allergens, rows[0].items) == (["난류"], ["계란"])
-    assert await counts(session, child.id) == (2, 1)
+    assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
 async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, kids):
@@ -247,7 +255,18 @@ async def test_근거가_어긋난_묶음은_한_행도_쓰지_않는다(session
             child_id=child.id,
             run_id=RUN,
             now=NOW,
-            payloads=[payload(), make(obs, others)],  # 앞 항목은 맞아도 묶음째 거절된다
+            # 앞 항목은 맞아도 묶음째 거절된다
+            payloads=[payload(citations=[doc_citation()]), make(obs, others)],
         )
 
     assert await counts(session, child.id) == (0, 0), why
+
+
+async def test_일반_추천인데_문서_근거가_없으면_한_행도_쓰지_않는다(session, kids):
+    """일반 추천의 근거는 문서 행이다 (루트 §2). 개인화 0행과 같은 자리에서 막는다."""
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거"):
+        await save_agent_suggestions(
+            session, child_id=child.id, run_id=RUN, payloads=[payload(kind="general")], now=NOW
+        )
+    assert await counts(session, child.id) == (0, 0)
