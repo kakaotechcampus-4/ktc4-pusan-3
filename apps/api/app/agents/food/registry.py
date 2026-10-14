@@ -11,13 +11,13 @@
     toddler·preschool(12+)            열린 tool 없음 — 모델을 부르지 않고 코드가 출현 문장을 낸다
                                       (닫힘이 아니다. `closed_readout_key` 는 None 이다)
   라벨: daycare_meal — 단계로 닫지 않음
-    급식 행 있음  lookup·update·delete
+    급식 행 있음  lookup·update·delete·keep
     급식 행 없음  닫힘
 
 - 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. tool 이 아직 스텁인 task 는
   `NOT_READY` 에 문구 키를 적어 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
   구현되면 `NOT_READY` 에서 그 task 를 뺀다. `test_food_stub_gate.py` 가 막는다.
-- 지금은 tool 11개가 다 구현돼 있고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서
+- 지금은 tool 12개가 다 구현돼 있고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서
   `NOT_READY` 는 비어 있다.
 - `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
@@ -44,6 +44,7 @@ from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.food.tools.infant import guide_weaning_stage
 from app.agents.food.tools.menu import (
     delete_daycare_meal,
+    keep_daycare_meal,
     lookup_daycare_menu,
     update_daycare_meal,
 )
@@ -69,6 +70,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "lookup_daycare_menu": lookup_daycare_menu,
     "update_daycare_meal": update_daycare_meal,
     "delete_daycare_meal": delete_daycare_meal,
+    "keep_daycare_meal": keep_daycare_meal,
     "lookup_nutrition": lookup_nutrition,
     "compare_diet_balance": compare_diet_balance,
     "guide_weaning_stage": guide_weaning_stage,
@@ -91,7 +93,7 @@ _SPECS_BY_NAME: dict[str, dict[str, Any]] = {spec["function"]["name"]: spec for 
 
 # 라벨별로 열리는 tool 이름
 _DAYCARE_TOOLS: frozenset[str] = frozenset(
-    {"lookup_daycare_menu", "update_daycare_meal", "delete_daycare_meal"}
+    {"lookup_daycare_menu", "update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
 )
 _WEANING_MEAL: frozenset[str] = frozenset(
     {"search_food_memory", "guide_weaning_stage", "propose_meal_candidates"}
@@ -111,7 +113,7 @@ _NUTRIENT_MODEL_TOOLS: frozenset[str] = frozenset(
 )
 
 # 모델에게 열지 않고 코드 문구로 닫는 task → 문구 키. tool 이 아직 스텁인 task 를 여기에 적는다.
-# 지금은 tool 11개가 다 구현되고 `run()` 이 결과를 옮겨서 비어 있다. 열린 tool 에 스텁이 남아 있으면
+# 지금은 tool 12개가 다 구현되고 `run()` 이 결과를 옮겨서 비어 있다. 열린 tool 에 스텁이 남아 있으면
 # `test_food_stub_gate.py` 가 막는다 (#357 리뷰 4-②)
 NOT_READY: dict[FoodTaskType, str] = {}
 
@@ -178,7 +180,10 @@ def answers_by_code(task: FoodTaskType) -> bool:
 _OUTPUT_TOOLS: dict[FoodTaskType, frozenset[str]] = {
     FoodTaskType.MEAL_RECOMMENDATION: frozenset({"propose_meal_candidates"}),
     FoodTaskType.NUTRIENT_ANALYSIS: frozenset({"report_nutrient_analysis"}),
-    FoodTaskType.DAYCARE_MEAL: frozenset({"update_daycare_meal", "delete_daycare_meal"}),
+    # 급식 갱신은 tool 을 꼭 부른다(required). 쓰지 않고 끝내는 keep 이 없으면 묻는 말도 쓰기로 간다
+    FoodTaskType.DAYCARE_MEAL: frozenset(
+        {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
+    ),
 }
 
 

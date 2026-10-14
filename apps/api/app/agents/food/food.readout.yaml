@@ -102,3 +102,6 @@ daycare.not_found:
 daycare.replaced_unknown:
   kind: daycare
   template: "어떤 메뉴 대신 받았나요?"
+daycare.unchanged:
+  kind: daycare
+  template: "급식 기록은 그대로 두었어요."

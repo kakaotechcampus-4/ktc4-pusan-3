@@ -57,7 +57,9 @@ _DATE = """
 _OUTPUT_TOOL: dict[FoodTaskType, str] = {
     FoodTaskType.MEAL_RECOMMENDATION: "propose_meal_candidates",
     FoodTaskType.NUTRIENT_ANALYSIS: "report_nutrient_analysis",
-    FoodTaskType.DAYCARE_MEAL: "update_daycare_meal 또는 delete_daycare_meal",
+    FoodTaskType.DAYCARE_MEAL: (
+        "update_daycare_meal · delete_daycare_meal · keep_daycare_meal 중 하나"
+    ),
 }
 
 
@@ -86,6 +88,17 @@ def _instructions(task_type: FoodTaskType) -> str:
         lines.append(
             "- compare_diet_balance 가 준 food_group_actions 에 없는 음식을 제안하지 않는다. "
             "안내를 넣을 때는 그 문구를 그대로 쓴다(바꿔 쓰면 거절될 수 있다)."
+        )
+    if task_type == FoodTaskType.DAYCARE_MEAL:
+        lines.append(
+            "- 급식이 실제로 바뀌었다는 말이 아니면(묻는 말 · 가정이나 짐작 · 급식이 뭐였는지 "
+            "알고 싶은 말) keep_daycare_meal 을 부른다. delete_daycare_meal 은 어린이집 · 유치원을 "
+            "빠지거나 그 끼니가 없었다는 말일 때만 부른다."
+        )
+        lines.append(
+            "- 바꿔 달라는 말이나 바뀌었다는 말이면 날짜 · 끼니 · 메뉴가 빠져 있어도 "
+            "update_daycare_meal 을 부른다. 모르는 것은 코드가 되묻는다 — keep_daycare_meal 로 "
+            "끝내지 않는다."
         )
     lines.append(f"- 마지막에 tool 을 한 번 부른다. 이번 task 의 출력 tool 은 {tool} 다.")
     return "\n".join(lines)

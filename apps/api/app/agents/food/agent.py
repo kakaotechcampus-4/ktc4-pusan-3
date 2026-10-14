@@ -54,10 +54,10 @@ logger = logging.getLogger(__name__)
 
 AGENT = "food"
 
-# 모델이 tool 을 꼭 불러야 하는가. 급식 갱신은 쓰기 tool 뿐이라 강제하지 않는다(`_converse`)
+# 모델이 tool 을 꼭 불러야 하는가. 둘 다 required 다(`_converse`)
 _TOOL_CHOICE: dict[FoodTaskType, str] = {
     FoodTaskType.MEAL_RECOMMENDATION: "required",
-    FoodTaskType.DAYCARE_MEAL: "auto",
+    FoodTaskType.DAYCARE_MEAL: "required",
 }
 
 # 식단 추천 [예시] 로 보여 주는 문서 행 종류 (RAG_plan Food 절). 이유기는 이유식 단계 · 재료 행이다.
@@ -301,10 +301,12 @@ async def _converse(
     """대화 한 번. 출력 tool 이 통과하면 True — 결과는 run state 에 있다.
 
     루프는 공통 `run_tool_loop` 다. `messages` 에 응답과 tool 결과를 이어 붙인다 — 재호출이 같은
-    목록에 이어 쓴다. 식단 추천은 `tool_choice="required"` 라 말로 끝나지 않는다 — Activity 라이브
-    에서
-    auto 는 tool 을 0/3 부르고 required 는 3/3 불렀다(#320 리뷰). 급식 갱신은 auto 다 — 출력 tool 이
-    쓰기(갱신 · 삭제)뿐이라 required 면 조회만 하려던 발화도 쓰기로 몰리고, 삭제는 되돌릴 수 없다.
+    목록에 이어 쓴다. `tool_choice="required"` 라 말로 끝나지 않는다 — Activity 라이브에서 auto 는
+    tool 을 0/3 부르고 required 는 3/3 불렀다(#320 리뷰). Food 급식 갱신도 같았다 — auto 에서는
+    "다음 주 화요일 급식에 우유 빼고 두유로 해줘" 같은 분명한 지시에도 말로 답해 12건 중 4건이
+    failed 였다(`tests/eval/agents/food/test_food_run.py`). 대신 묻는 말 · 가정도 쓰기로 올 수
+    있어서 쓰지 않고 끝내는 `keep_daycare_meal` 을 열어 두고, 갱신 · 삭제 tool 이 원문을 코드로
+    다시 본다(`daycare_intent`). 날짜를 못 정하면 tool 이 코드 문구로 되묻는다.
     말로 끝나거나 왕복 상한을 넘기면 False 다.
     """
 

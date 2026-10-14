@@ -51,5 +51,6 @@ DAYCARE_ALLERGY_CONFLICT = "daycare.allergy_conflict"
 DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
 DAYCARE_REPLACED_UNKNOWN = "daycare.replaced_unknown"
+DAYCARE_UNCHANGED = "daycare.unchanged"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("food.readout.yaml"))
