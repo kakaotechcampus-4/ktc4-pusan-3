@@ -96,3 +96,36 @@ def test_0개_기록은_맥락_꺼내기에_걸리지_않는다():
 def test_실패_맥락은_0개_기록으로_읽히지_않는다():
     _put()
     assert store.empty_message(run_id="r", parent_id=P, child_id=C, agent="food", now=1.0) is None
+
+
+def test_닫힌_결과는_24시간_같은_guard_로_남는다():
+    """다시 만들었더니 닫혔다 — 다음 요청도 "이어서 할 수 없어요" 대신 같은 guard (#433 ⑧)."""
+    kwargs = {"run_id": "r", "parent_id": P, "child_id": C, "agent": "activity"}
+    store.put_guard(
+        **kwargs, code="safety_unknown", message="알레르기를 확인할 수 없어요.", now=0.0
+    )
+
+    assert store.guard_of(**kwargs, now=store.EMPTY_TTL_SECONDS - 1) == (
+        "safety_unknown",
+        "알레르기를 확인할 수 없어요.",
+    )
+    assert store.guard_of(**kwargs, now=store.EMPTY_TTL_SECONDS + 1) is None
+
+
+def test_guard_기록은_0개_기록도_맥락도_아니다():
+    kwargs = {"run_id": "r", "parent_id": P, "child_id": C, "agent": "food"}
+    store.put_guard(**kwargs, code="unsupported", message="m", now=0.0)
+
+    assert store.empty_message(**kwargs, now=1.0) is None
+    assert store.claim(**kwargs, now=1.0) is None
+
+
+def test_guard_기록도_주인을_본다():
+    store.put_guard(
+        run_id="r", parent_id=P, child_id=C, agent="food", code="unsupported", message="m", now=0.0
+    )
+
+    assert (
+        store.guard_of(run_id="r", parent_id=uuid.uuid4(), child_id=C, agent="food", now=1.0)
+        is None
+    )
