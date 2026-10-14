@@ -16,7 +16,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
@@ -122,6 +122,13 @@ _RUNNERS: dict[str, DomainRunner] = {
 # 이 task를 먼저 끝낸 뒤 나머지를 동시에 돌린다(기록 단계 → 쓰는 task → 읽는 task)
 _WRITING_TASKS: dict[str, frozenset[str]] = {
     DomainAgentName.FOOD.value: frozenset(task.value for task in FOOD_WRITING_TASKS),
+}
+
+# 추천을 내는 task. 05 의 다시 시도 · 0개 기록은 이것만 남긴다 — 급식 갱신 · 영양소 분석은
+# 05 화면이 없다. routing.IMPLEMENTED_AGENTS 와 키가 같아야 한다
+RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
+    DomainAgentName.FOOD.value: frozenset({"meal_recommendation"}),
+    DomainAgentName.ACTIVITY.value: frozenset({None}),
 }
 
 
@@ -247,6 +254,36 @@ class Rerouted:
 
 
 @dataclass(frozen=True)
+class RetryContext:
+    """결과를 못 낸 추천 task 의 다시 시도 맥락. 화면에 보내지 않는다.
+
+    러너가 05 보관함에 넣는다(api/runs/suggestion_retry.py). `request_texts` 는 원문 조각이라
+    로그 · 화면에 싣지 않는다. `Partial` 보다 먼저 나간다 — 화면이 실패 카드를 그리자마자 다시
+    시도해도 맥락이 있다.
+    """
+
+    run_id: str
+    agent: str
+    task_type: str | None
+    request_texts: tuple[str, ...]
+    sent_at: datetime  # 입력 run 의 기준 시각(memory_context.now)
+
+
+@dataclass(frozen=True)
+class EmptyResult:
+    """0개로 끝난 추천 결과의 기록. 화면에 보내지 않는다.
+
+    러너가 05 보관함에 넣어 두면 05 가 24시간 안에 같은 0개 안내를 다시 낸다. 추천이 있는 결과는
+    기록하지 않는다 — 05 는 그 run 의 추천을 DB(`suggestion.run_id`)에서 읽는다.
+    """
+
+    run_id: str
+    agent: str
+    task_type: str | None
+    message: str  # 0개 안내 본문(코드 문구)
+
+
+@dataclass(frozen=True)
 class Partial:
     """도메인 Agent 일부가 결과를 못 낸 run. SSE 이름은 partial.
 
@@ -283,6 +320,8 @@ Event = (
     | PendingReply
     | Unwritten
     | Rerouted
+    | RetryContext
+    | EmptyResult
     | Partial
     | Failed
     | Done
@@ -331,6 +370,7 @@ class _DomainRun:
     readers_ms: int | None = None
     # status="failed" 로 돌아온 결과의 모델 호출 수. outcomes 에는 없지만 몇 번 불렀는지는 안다
     failed_model_calls: int = 0
+    failed_tasks: tuple[DomainTask, ...] = ()  # 결과를 못 낸 task. 다시 시도 맥락이 여기서 나온다
 
 
 @dataclass(frozen=True)
@@ -521,6 +561,13 @@ async def handle_input(
                     return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
                 ids = stored
                 saved.extend(ids)
+            message = (
+                _empty_notice(outcome) if _recommends(outcome.agent, outcome.task_type) else None
+            )
+            if message is not None:
+                # 05 가 24시간 안에 같은 0개 안내를 낸다. 화면 결과보다 먼저 보관함에 들어가야
+                # 결과를 받자마자 "후보 보기" 로 들어와도 기록이 있다
+                send(EmptyResult(run_id, outcome.agent, _task_label(outcome.task_type), message))
             send(_result(outcome, ids))  # 화면용 — readout · 되묻기 · 추천 id (#227)
             return True
 
@@ -533,6 +580,18 @@ async def handle_input(
         )
         partial = ran.partial
         writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
+        for task in ran.failed_tasks:
+            if _recommends(task.agent, task.task_type):
+                # partial 보다 먼저 — 화면이 실패 카드를 그리자마자 다시 시도해도 맥락이 있다
+                send(
+                    RetryContext(
+                        run_id,
+                        task.agent,
+                        _task_label(task.task_type),
+                        task.request_texts,
+                        memory_context.now,
+                    )
+                )
         # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다.
         # 추천 저장도 commit 이 끝난 뒤에만 saved 에 들어간다
         committed = committed or (writes is not None and writes.wrote) or bool(saved)
@@ -573,6 +632,72 @@ async def handle_input(
     )
     _log(result)
     return result
+
+
+@dataclass(frozen=True)
+class SuggestOutcome:
+    """05 가 받는 도메인 결과 한 건. 화면 이벤트(AgentResult)와 같은 칸이다."""
+
+    agent: str
+    task_type: str | None
+    status: str
+    suggestion_ids: tuple[str, ...]
+    readouts: tuple[Readout, ...]
+    question: str | None
+
+
+@dataclass(frozen=True)
+class SuggestRun:
+    outcomes: tuple[SuggestOutcome, ...]  # 결과를 낸 것만, task 순서
+    failed: tuple[str, ...]  # 결과를 못 낸 Agent(예외 · 시간 초과 · failed · 저장 실패)
+
+
+async def run_suggestions(
+    tasks: tuple[DomainTask, ...],
+    contexts: Mapping[str, DomainContext],
+    *,
+    save_run_id: str | None,
+    save_suggestions: SaveSuggestions,
+    domain_clients: Mapping[str, LLMClient] | None = None,
+    timeout: float = RUN_DEADLINE_S,
+) -> SuggestRun:
+    """05 추천 요청 하나. Supervisor · Memory 없이 도메인 task 만 돌린다 (#249).
+
+    요청 문장은 Supervisor 사전검사를 거친 것만 들어온다 — 홈 버튼 키의 표 문장이거나 입력 run 이
+    남긴 맥락이다. 추천은 `save_run_id` 로 저장한다(다시 만들면 입력 run, 홈이면 None).
+    seed 는 `DomainTask.run_id`(05 요청 id)라 입력 run 과 다르다. 20초 안에 못 끝낸 Agent 는
+    실패로 센다 (NF-06).
+    """
+    stored_ids: dict[int, tuple[str, ...]] = {}
+
+    async def on_outcome(outcome: DomainOutcome) -> bool:
+        if _failed(outcome):
+            return True
+        ids: tuple[str, ...] = ()
+        if outcome.suggestions:
+            stored = await _save(outcome, save_suggestions, run_id=save_run_id)
+            if stored is None:
+                return False
+            ids = stored
+        stored_ids[id(outcome)] = ids
+        return True
+
+    ran = await _run_domain(
+        tasks, contexts, timeout=timeout, on_outcome=on_outcome, domain_clients=domain_clients
+    )
+    outcomes = tuple(
+        SuggestOutcome(
+            agent=o.agent,
+            task_type=_task_label(o.task_type),
+            status=str(o.status),
+            suggestion_ids=stored_ids.get(id(o), ()),
+            readouts=tuple(o.readouts),
+            question=o.needs_observation[0] if o.needs_observation else None,
+        )
+        for o in ran.outcomes
+    )
+    failed = () if ran.partial is None else ran.partial.failed
+    return SuggestRun(outcomes=outcomes, failed=failed)
 
 
 # 이어받기 run의 routing 자리. 안내·준비 중 agent가 없어 _did_anything에는 쓴 것과 말만 남는다
@@ -747,6 +872,7 @@ async def _run_domain(
     outcomes: list[DomainOutcome] = []
     succeeded: list[str] = []
     failed: list[str] = []
+    failed_tasks: list[DomainTask] = []
     failed_model_calls = 0
     timed_out = False
     for index, task in enumerate(tasks):
@@ -754,15 +880,18 @@ async def _run_domain(
         if isinstance(item, TimeoutError):
             timed_out = True
             failed.append(task.agent)
+            failed_tasks.append(task)
             result = "timeout"
             logger.warning("도메인 Agent 시간 초과 run_id=%s agent=%s", task.run_id, task.agent)
         elif isinstance(item, _NotDelivered):
             # 결과는 나왔는데 추천을 저장하지 못했다. 카드가 없으니 실패로 센다 — 모델은 불렀다
             failed.append(task.agent)
+            failed_tasks.append(task)
             failed_model_calls += item.outcome.model_calls
             result = "save_error"
         elif isinstance(item, (Exception, asyncio.CancelledError)):
             failed.append(task.agent)
+            failed_tasks.append(task)
             result = "error"
             # 예외 메시지에는 발화 조각이 섞일 수 있다. 종류만 남긴다
             logger.error(
@@ -776,6 +905,7 @@ async def _run_domain(
         elif _failed(item):
             # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다
             failed.append(task.agent)
+            failed_tasks.append(task)
             failed_model_calls += item.model_calls
             result = "failed"
         else:
@@ -799,7 +929,12 @@ async def _run_domain(
         failed=tuple(dict.fromkeys(failed)),
     )
     return _DomainRun(
-        tuple(outcomes), partial, writers_ms, readers_ms, failed_model_calls=failed_model_calls
+        tuple(outcomes),
+        partial,
+        writers_ms,
+        readers_ms,
+        failed_model_calls=failed_model_calls,
+        failed_tasks=tuple(failed_tasks),
     )
 
 
@@ -863,6 +998,23 @@ def _writes(task: DomainTask) -> bool:
     return task.task_type in _WRITING_TASKS.get(task.agent, frozenset())
 
 
+def _task_label(task_type: object) -> str | None:
+    """이벤트에 싣는 task 라벨. 라벨이 없는 Agent(Activity)는 None."""
+    return None if task_type is None else str(task_type)
+
+
+def _recommends(agent: str, task_type: object) -> bool:
+    """추천을 내는 task 인가. 05 의 다시 시도 · 0개 기록은 이것만 남긴다."""
+    return _task_label(task_type) in RECOMMENDING_TASKS.get(agent, frozenset())
+
+
+def _empty_notice(outcome: DomainOutcome) -> str | None:
+    """0개로 끝난 추천의 안내 본문. 실패 · 닫힘 · 추천 있음이면 None."""
+    if str(outcome.status) not in ("completed", "degraded") or outcome.suggestions:
+        return None
+    return next((r.body for r in outcome.readouts if r.code == "empty"), None)
+
+
 def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
@@ -920,7 +1072,7 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
 
 
 def _routed(outcome: DomainOutcome) -> DomainRouted:
-    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    task_type = _task_label(outcome.task_type)
     return DomainRouted(outcome.agent, task_type, str(outcome.status), outcome.model_calls)
 
 
@@ -930,7 +1082,7 @@ def _failed(outcome: DomainOutcome) -> bool:
 
 
 def _result(outcome: DomainOutcome, suggestion_ids: tuple[str, ...]) -> AgentResult:
-    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    task_type = _task_label(outcome.task_type)
     question = outcome.needs_observation[0] if outcome.needs_observation else None
     return AgentResult(
         outcome.agent,
@@ -951,7 +1103,7 @@ class _NotDelivered(Exception):
 
 
 async def _save(
-    outcome: DomainOutcome, save: SaveSuggestions, *, run_id: str
+    outcome: DomainOutcome, save: SaveSuggestions, *, run_id: str | None
 ) -> tuple[str, ...] | None:
     """추천을 저장하고 id 를 추천 순서대로 돌려준다. 실패하면 None — 그 Agent 는 실패로 센다.
 
@@ -959,7 +1111,7 @@ async def _save(
     run 이 끊긴 것이지 부분 실패가 아니다(`except Exception` 은 그것을 잡지 않는다).
     """
     drafts = tuple(outcome.suggestions)
-    task_type = None if outcome.task_type is None else str(outcome.task_type)
+    task_type = _task_label(outcome.task_type)
     batch = SuggestionBatch(run_id=run_id, agent=outcome.agent, task_type=task_type, drafts=drafts)
     try:
         ids = tuple(await save(batch))
