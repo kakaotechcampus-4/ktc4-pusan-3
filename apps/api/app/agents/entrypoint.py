@@ -4,6 +4,7 @@ api 레이어는 이 모듈만 import한다. 밖으로는 handle_input 과 그 �
 """
 
 import logging
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from functools import cache
 from uuid import UUID
@@ -14,11 +15,13 @@ from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsen
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
 from app.agents.activity.store.ports import CoarseLocation, WeatherSource
+from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.child_values import ChildValues
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
 from app.agents.food.store import InMemoryProfile, unwired_ports
+from app.agents.food.store.ports import SafetyReader as FoodSafetyReader
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
@@ -134,6 +137,8 @@ async def handle_input(
     child_health_granted: bool | None = None,
     location: CoarseLocation | None = None,
     activity_weather: WeatherSource | None = None,
+    food_safety: FoodSafetyReader | None = None,
+    activity_safety: ActivitySafetyReader | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
@@ -155,6 +160,9 @@ async def handle_input(
       실내 전용이다.
     - activity_weather 는 api 가 서버 시작 때 만든 날씨 어댑터다. agents 는 integrations 를
       import 하지 않아서 api 가 넘긴다. None 이면 날씨를 묻지 않고 실내 전용이다.
+    - food_safety · activity_safety 는 api 가 넘긴 `health_safety` 어댑터다(#405). 넘어온 Agent 만
+      안전 정보를 실제로 읽고, 안 넘어온 Agent 는 `UnwiredSafety` 라 동의와 상관없이 닫힌다.
+      둘을 나눈 것은 Agent 마다 켜는 시점이 달라서다 — 지금 러너는 Activity 만 넘긴다.
     - store를 넘기면 그것에 쓴다.
     - agents 는 infra 에 직접 닿지 않는다. store · commit · curator_trigger 처럼 DB 에 닿는 것은
       전부 api(러너)가 만들어 넘긴다.
@@ -208,6 +216,9 @@ async def handle_input(
             child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
         )
         food_ports = unwired_ports(profile=child_values, consent=child_values, memory=memory_port)
+    if food_safety is not None:
+        # api 가 health_safety 어댑터를 넘겼다(#405). Food 를 켜는 시점은 Food 쪽이 정한다
+        food_ports = replace(food_ports, safety=food_safety)
     # 쓰기 포트는 호출마다 바로 commit
     writes = RunWrites()
     food_ports = record_food_writes(food_ports, writes)
@@ -244,6 +255,7 @@ async def handle_input(
                 else StoreActivityMemory(opener=domain_store)
             ),
             weather=activity_weather,
+            safety=activity_safety,
         ),
         location=location,
     )
