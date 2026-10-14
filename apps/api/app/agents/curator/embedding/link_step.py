@@ -39,6 +39,7 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Literal, TypeGuard
 from uuid import UUID
 
@@ -123,12 +124,12 @@ class _Judging:
 
 
 async def link_pending(
-    store: CuratorStore, judge: IdentityJudge | None, *, child_id: UUID
+    store: CuratorStore, judge: IdentityJudge | None, *, child_id: UUID, min_observed_on: date
 ) -> LinkStepResult:
     """judge 가 None 이면 이름 비교 · 후보 없음만 처리한다. 나머지는 judge_unavailable 로 보류."""
     judging = _Judging(judge)
     outcomes: list[LinkOutcome] = []
-    for item in await store.list_unlinked(child_id=child_id):
+    for item in await store.list_unlinked(child_id=child_id, min_observed_on=min_observed_on):
         outcome = await _link_one(store, judging, item, child_id=child_id)
         if outcome.status == "held":
             # 원문(subject)은 남기지 않는다

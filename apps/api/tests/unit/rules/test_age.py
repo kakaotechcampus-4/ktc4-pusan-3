@@ -181,3 +181,22 @@ class TestBoundariesAreArguments:
 
     def test_first_month_of_는_받은_경계를_쓴다(self):
         assert first_month_of("toddler", self.OTHER) == 18
+
+
+@pytest.mark.parametrize(
+    ("birth", "months", "expected"),
+    [
+        (date(2024, 1, 1), 18, date(2025, 7, 1)),
+        (date(2024, 8, 31), 18, date(2026, 2, 28)),
+        (date(2022, 8, 31), 18, date(2024, 2, 29)),
+        (date(2024, 2, 29), 12, date(2025, 2, 28)),
+        (date(2024, 1, 31), 0, date(2024, 1, 31)),
+    ],
+)
+def test_기준_월령_도달일은_달력과_말일을_따른다(birth, months, expected):
+    from app.rules.age import date_at_month
+
+    assert date_at_month(birth, months) == expected
+    assert months_between(birth, expected) == months
+    if months:
+        assert months_between(birth, expected - timedelta(days=1)) == months - 1

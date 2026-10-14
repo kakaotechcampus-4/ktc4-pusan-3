@@ -112,7 +112,9 @@ def _profile(
 
 
 async def _link(store: InMemoryCuratorStore, judge: FakeJudge | None) -> tuple[LinkOutcome, ...]:
-    return (await link_pending(store, judge, child_id=CHILD)).outcomes
+    return (
+        await link_pending(store, judge, child_id=CHILD, min_observed_on=date(2024, 7, 1))
+    ).outcomes
 
 
 # 판정기를 부르지 않는 경우
