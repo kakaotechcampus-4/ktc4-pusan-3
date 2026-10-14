@@ -8,7 +8,8 @@
     toddler·preschool(12+) search·analyze·repeated·(daycare)·propose  ← 같음
   라벨: nutrient_analysis
     infant_milk·infant_weaning(0–11)  닫힘
-    toddler·preschool(12+)            nutrition·balance·report (급식 행 유무와 무관)
+    toddler·preschool(12+)            열린 tool 없음 — 모델을 부르지 않고 코드가 출현 문장을 낸다
+                                      (닫힘이 아니다. `closed_readout_key` 는 None 이다)
   라벨: daycare_meal — 단계로 닫지 않음
     급식 행 있음  lookup·update·delete                   ← 지금은 not_ready.daycare 로 닫힘
     급식 행 없음  닫힘
@@ -105,7 +106,9 @@ _TODDLER_MEAL_BASE: frozenset[str] = frozenset(
         "propose_meal_candidates",
     }
 )
-_TODDLER_NUTRIENT_BASE: frozenset[str] = frozenset(
+# 영양소 분석을 모델이 문장으로 다듬던 tool. 1차 출력은 모델을 부르지 않아 열지 않는다 —
+# 구간을 다시 화면에 낼 때 `tools_for` 에서 이 집합을 연다
+_NUTRIENT_MODEL_TOOLS: frozenset[str] = frozenset(
     {"lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis"}
 )
 
@@ -165,11 +168,16 @@ def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
             if gate.data.daycare_meal:
                 opened.add("lookup_daycare_menu")
     else:  # NUTRIENT_ANALYSIS — infant_* 는 위에서 이미 닫혔다
-        # compare_diet_balance 가 식사 기록 · 급식을 직접 읽어 판정한다. 기록 조회 tool 은 이 경로에
-        # 열지 않는다 (#321 합의 5번 · #357 리뷰)
-        opened = set(_TODDLER_NUTRIENT_BASE)
+        # 1차 출력은 모델을 부르지 않는다 — 코드가 식품군 출현 문장을 낸다(N-17). 열린 tool 이 없을
+        # 뿐 닫힘(`closed_readout_key`)과 다르다 — 이 task 는 `run()` 이 코드로 끝까지 간다
+        opened: set[str] = set()
 
     return tuple(d.name for d in TOOL_DEFINITIONS if d.name in opened)
+
+
+def answers_by_code(task: FoodTaskType) -> bool:
+    """모델을 부르지 않고 코드가 결과를 내는 task. 영양소 분석 1차 출력이다(N-17)."""
+    return task == FoodTaskType.NUTRIENT_ANALYSIS
 
 
 def requires_safety_check(task: FoodTaskType) -> bool:

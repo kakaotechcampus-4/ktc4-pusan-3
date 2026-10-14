@@ -1,7 +1,8 @@
-"""영양소 분석 문장의 규칙 — 모델이 쓴 문장 검사 · 코드 문장 틀 (#357 리뷰).
+"""영양소 분석 문장의 규칙 — 코드 문장 틀 · 모델이 쓴 문장 검사 (#357 리뷰).
 
+1차 출력은 코드 문장 틀만 나간다(`appearance_readouts`, N-17 · N-18). 구간을 다시 화면에 내면
 문장은 모델이 쓴다. 판정 · 식품군 안내 · 알레르기 식품 빼기는 코드가 이미 했고, 모델은 그 결과를
-보호자에게 읽히게 옮긴다. 여기서는 그 문장이 화면에 나가도 되는지만 본다 —
+보호자에게 읽히게 옮긴다. 아래 검사는 그 문장이 화면에 나가도 되는지만 본다 —
 주어가 **먹은 식사 · 기록**인가, 수치 · 진단 · 처방 · 아이 몸 상태로 읽히는 말이 없는가.
 
 목록으로 보는 검사라 다 막지 못한다. 그래서 주어(식사 · 기록)를 **요구**하는 쪽으로 좁히고,
@@ -11,11 +12,12 @@
 
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Literal
 
 from app.agents.common.readout import Readout
 from app.agents.food.readouts import (
+    NUTRIENT_APPEARANCE,
     NUTRIENT_BAND_ALL_OK,
     NUTRIENT_BAND_HIGH,
     NUTRIENT_BAND_HIGH_ACTION,
@@ -25,6 +27,7 @@ from app.agents.food.readouts import (
     NUTRIENT_UNSCORED,
     READOUTS,
 )
+from app.rules.nutrition import is_insufficient
 
 if TYPE_CHECKING:
     # nutrition_eval 이 FoodContext 를 거쳐 무겁게 import 된다 — 타입에만 쓴다
@@ -165,10 +168,47 @@ _BAND_KEYS: dict[tuple[str, bool], str] = {
 }
 
 
+# 1차 출력이 말하는 식품군과 순서. 조사가 식품군 이름마다 달라 이름에 붙여 둔다.
+# 유지 · 당류는 늘리라는 말로 읽혀서 말하지 않는다
+APPEARANCE_GROUPS: tuple[tuple[str, str], ...] = (
+    ("grains", "곡류가"),
+    ("meat_fish_egg_legumes", "고기·생선·달걀·콩이"),
+    ("vegetables", "채소가"),
+    ("fruits", "과일이"),
+    ("dairy", "우유·유제품이"),
+)
+
+
+def appearance_readouts(
+    verdict: "NutrientVerdict", blocked_groups: Collection[str]
+) -> tuple[Readout, ...]:
+    """영양소 분석 1차 출력 — 기록된 날 중 식품군이 나온 날 수. 모델을 거치지 않는다.
+
+    구간은 문장에 쓰지 않는다. 출현을 말할 수 없으면 기록 부족 · 살펴보지 못함 문구다. 아이가
+    먹지 않는 식품군(`blocked_groups`)은 말하지 않는다.
+    """
+    if not verdict.appearance_ready:
+        # 기록 행이 모자라면 기록 부족, 기록은 충분한데 메뉴 · 식품군을 못 읽었으면 살펴보지 못했다
+        key = NUTRIENT_INSUFFICIENT if is_insufficient(verdict.records) else NUTRIENT_UNSCORED
+        return (READOUTS.render(key, recorded=verdict.records),)
+    lines = [
+        READOUTS.render(
+            NUTRIENT_APPEARANCE,
+            days=verdict.recorded_days,
+            group=label,
+            count=verdict.food_group_days.get(group, 0),
+        ).body
+        for group, label in APPEARANCE_GROUPS
+        if group not in blocked_groups
+    ]
+    return (Readout(kind="nutrient_analysis", body="\n".join(lines), authored_by="code"),)
+
+
 def fallback_readouts(
     verdict: "NutrientVerdict", actions: Mapping[str, str]
 ) -> tuple[Readout, ...]:
-    """모델이 출력 tool 을 못 끝냈을 때 낼 문장. 판정 · 안내는 코드가 이미 계산한 값이다.
+    """구간 문장 틀. 1차 출력에서는 화면에 내지 않는다(N-17) — 구간을 다시 낼 때 쓴다.
+    판정 · 안내는 코드가 이미 계산한 값이다.
 
     구간이 low · high 인 항목만 한 줄씩, 판정 순서대로 말한다. 안내 식품이 알레르기로 다 빠진
     항목(actions 에 없음)은 구간만 말한다 — 다른 급원 식품을 지어내지 않는다(#321 합의 6번).

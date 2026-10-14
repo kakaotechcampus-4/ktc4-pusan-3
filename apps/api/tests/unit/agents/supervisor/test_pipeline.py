@@ -421,8 +421,10 @@ async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르
     assert not _of(events, MemoryNote)  # 조기 종료면 메모가 없다 — 응답 문구는 화면이 만든다
     food = result.domain[0]
     assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
-    # 영양소 분석 × 유아기 — 스텁인 기록 조회 tool 은 열지 않는다 (#357 리뷰 4-①)
-    assert food.tools == ("lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis")
+    # 영양소 분석 × 유아기 — 열린 tool 이 없다. 모델을 부르지 않고 코드가 식품군 출현 문장을 낸다
+    assert food.tools == ()
+    assert food.status == "ok"
+    assert food.model_calls == 0
     assert food.requires_safety_check is False
     assert result.failed is None
 
@@ -469,7 +471,7 @@ async def test_RC20_기록할_조각이_없으면_Memory_를_부르지_않는다
     # Food 는 그대로 돈다 — .domain 은 성공한 것만 담아서 routed 이벤트로 본다
     assert [routed.agent for routed in _of(events, DomainRouted)] == ["food"]
     assert result.failed is None
-    assert result.model_calls == 2  # Supervisor 1 + Food(기본 가짜 응답) 1
+    assert result.model_calls == 1  # Supervisor 1 + Food 0 (영양소 분석은 코드가 낸다)
 
 
 @pytest.mark.usefixtures("food_only")
