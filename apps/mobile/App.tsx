@@ -4,6 +4,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   BackHandler,
   Keyboard,
   Linking,
@@ -17,6 +18,7 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 
+import { CookieFlush } from "./modules/cookie-flush";
 import { WEB_URL, isInternalUrl, isRootUrl } from "./src/config";
 import {
   AUTH_RETURN_URL,
@@ -25,6 +27,7 @@ import {
   navigateScript,
 } from "./src/native/auth-session";
 import { EXIT_HINT, decideBack } from "./src/native/back-press";
+import { flushOnBackground } from "./src/native/cookie-flush";
 import { isWebUrl } from "./src/native/in-app-browser";
 import { SAFE_AREA_SCRIPT, safeAreaScript, shellInsets } from "./src/native/safe-area";
 
@@ -166,6 +169,20 @@ function Shell() {
       shown.remove();
       hidden.remove();
     };
+  }, []);
+
+  /**
+   * 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다 (`src/native/cookie-flush.ts` · #469). 안 그러면 앱을
+   * 켜고 바로 끌 때 회전된 refresh 쿠키가 사라져 다음 실행에서 서버가 세션을 지운다.
+   * 모듈이 없는 iOS · Expo Go 에서는 아무것도 하지 않는다.
+   */
+  useEffect(() => {
+    const native = CookieFlush;
+    const flush = native ? () => native.flush() : undefined;
+    const subscription = AppState.addEventListener("change", (state) =>
+      flushOnBackground(state, flush),
+    );
+    return () => subscription.remove();
   }, []);
 
   // 회전·시스템 바·키보드 변화로 값이 바뀌면 다시 넘긴다. 첫 값은 주입 스크립트가 이미 들고 간다.

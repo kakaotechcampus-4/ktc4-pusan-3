@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다** · 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다(값은 모른다).
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 토큰을 들고 있지 않다. 상태를 관리하지 않는다.
 
@@ -57,6 +57,8 @@ src/native/back-press.ts     물리 뒤로가기 판정 — 히스토리 / 종�
 src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth/callback 변환
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
 src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
+src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#469)
+modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
 app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
 eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
 ```
@@ -104,6 +106,10 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   🚨 **출처가 같아도 `/api/…` 는 밖이다** (#273). nginx 로 API 를 웹과 같은 주소 아래에 두면 약관 "전문 보기" 와 로그인 시작이 출처 검사를 통과해 버린다 — 약관은 가입 화면을 덮고(iOS 는 돌아올 길이 없다), 로그인은 아래 인증 세션 분기까지 오지 못한다. 셸은 API 주소를 모르므로 **경로만** 본다. nginx 경로가 `/api` 가 아니게 정해지면 `src/native/internal-url.ts` 를 같이 고친다.
 - **앱 밖 웹 주소는 in-app 브라우저로 앱 위에 얹는다** (`openBrowserAsync` · #212). 시스템 브라우저로 넘기면 앱을 떠나서, 약관을 다 읽은 사람이 동의 화면을 다시 찾아야 한다 — 필수 동의 직전의 링크라 그 수고가 곧 "안 읽고 체크" 다. in-app 브라우저는 진짜 브라우저라 도메인 · 자물쇠가 보이므로 위 규칙과 맞는다. `http(s)` 가 아닌 스킴(`tel:` · `mailto:` · `intent:`)과 in-app 브라우저를 못 여는 경우는 지금처럼 `Linking.openURL` 이다.
 - 🚨 **로그인 시작 URL 은 따로 연다** (`isAuthStartUrl()` · #210). 위의 in-app 브라우저(`openBrowserAsync`)나 시스템 브라우저로 열면 서버가 302 하는 `icatch://auth` 복귀를 받을 곳이 없다. `openAuthSessionAsync` 로 열고, `success` 일 때만 복귀 쿼리를 `/auth/callback` 에 붙여 **같은 웹뷰를 `location.replace` 로 옮긴다** — 웹뷰를 다시 만들면 `sessionStorage` 의 bind 가 사라진다. 셸은 URL 을 열고 돌려받을 뿐 코드 교환 · 토큰은 웹이 한다 (§1). 흐름 정본은 [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) §5.
+- 🚨 **백그라운드로 갈 때 웹뷰 쿠키를 flush 한다** (#469 · `src/native/cookie-flush.ts`). 웹은 앱을 켤 때 refresh 쿠키로 로그인을 되살리고(#465) 서버는 그때마다 쿠키를 회전시킨다(#468). 웹뷰는 쿠키를 주기적으로만 디스크에 쓰고(Chromium 기준 약 30초) react-native-webview 는 페이지 로드가 끝날 때만 flush 하는데, 회전은 그 뒤다. flush 없이 바로 앱을 끄면 디스크에 직전 refresh 가 남고, 다음 실행에서 서버가 유예 30초 밖 재사용으로 보고 **세션을 지운다.** Android 는 최근 앱 화면으로 갈 때도 `background` 라 스와이프 종료 전에 지나간다.
+  셸은 쿠키 값을 읽거나 쓰지 않는다 — 기록 시점만 앞당긴다 (§1). 네이티브 쪽은 로컬 모듈 `modules/cookie-flush` 이고 패키지를 늘리지 않았다. iOS 는 WKWebView 가 스스로 저장해 모듈이 없다 (기기 확인 전).
+  ⚠️ **좁은 틈이 하나 남는다.** refresh 응답이 백그라운드 전환보다 늦게 오면(켜자마자 최근 앱 화면으로 간 경우, 왕복 수백 ms) flush 는 옛 쿠키를 쓰고 새 쿠키는 메모리에만 남는다. 그 상태로 스와이프 종료하고 30초 뒤 다시 켜면 서버가 세션을 지운다. 같은 증상을 보면 여기부터 의심한다.
+  ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않는다. `modules/` 를 고치면 `./gradlew assembleDebug` 로 직접 빌드해 본다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
 - 🚨 **웹에서 오는 메시지(`onMessage`)를 받지 않는다.** 지금 웹이 셸에 부탁할 것이 없다. 창구가 다시 생기면
   보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만 네이티브를 부른다 —
@@ -142,7 +148,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```

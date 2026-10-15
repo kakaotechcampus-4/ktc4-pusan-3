@@ -324,7 +324,7 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 | access | 불투명 난수 · **15분** (`expires_in: 900`) · `Authorization: Bearer` · JS 메모리에만 |
 | refresh | 쿠키 `icatch_rt` · `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` · 유휴 30일(쓸 때마다 연장) · 절대 90일 · 쓸 때마다 회전 |
 | 갱신 | `POST /auth/refresh` — 쿠키로만 인증 · 200 `{ token, expires_in }` · 실패는 전부 `401 unauthenticated` |
-| 앱을 켤 때 | 웹이 refresh 를 부른다. **셸은 바뀌지 않는다** — 교환을 웹뷰 안의 웹이 하므로 쿠키가 웹뷰 쿠키 저장소에 남는다 |
+| 앱을 켤 때 | 웹이 refresh 를 부른다. **셸은 토큰을 다루지 않는다** — 교환을 웹뷰 안의 웹이 하므로 쿠키가 웹뷰 쿠키 저장소에 남는다. 셸이 하는 일은 백그라운드로 갈 때 그 저장소를 디스크에 쓰는 것뿐이다 (아래 ⚠️) |
 
 - **왜 `localStorage` 가 아닌가** — 아래 XSS 전제가 그대로다. 저장소에 둔 토큰은 XSS 한 건에 꺼내지고, 수명을 늘리면 그만큼 오래 쓰인다. 지금 JS 가 읽을 수 있는 것은 15분짜리 access 하나다
 - **왜 세션 전체를 쿠키로 옮기지 않았나** — 모든 API 에 CSRF 방어가 필요해지고 `client.ts` · `sse.ts` · 계약서 §01(Bearer)이 다 바뀐다. refresh 만 쿠키로 두면 일반 API 의 계약은 그대로다
@@ -340,7 +340,7 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 
 [명세 §7-7](../api/auth-kakao-v1.md) 이 이 규칙을 최상위 CLAUDE.md §2 절대 규칙으로 올릴 것을 제안한다 — 프론트가 지키지만 어겼을 때 깨지는 것은 인증이라 파트 경계를 넘는다. 동의한다.
 
-⚠️ **실기기에서 확인할 것이 남았다** — Android 웹뷰는 쿠키를 디스크에 주기적으로 기록해서, 로그인 직후 몇 초 안에 앱을 강제 종료하면 쿠키가 남지 않을 수 있다. 확인되면 셸이 백그라운드로 갈 때 쿠키를 flush 하는 것만 더한다 (토큰을 다루지 않는다).
+⚠️ **Android 웹뷰는 쿠키를 디스크에 주기적으로만 기록한다.** 앱을 켤 때의 refresh 가 회전시킨 쿠키가 기록되기 전에 앱을 끄면 다음 실행에서 직전 refresh 가 나가고, 서버(#468)는 유예 밖 재사용으로 보고 세션을 지운다. 그래서 셸이 백그라운드로 갈 때 쿠키를 flush 한다 (#469 · [`apps/mobile/CLAUDE.md`](../../apps/mobile/CLAUDE.md) §4). 토큰은 다루지 않는다.
 
 ---
 
@@ -476,6 +476,7 @@ webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location
 - [x] 로그인 시작이 아닌 외부 링크("전문 보기")는 인증 세션으로 열리지 않음 (Android) — #212 부터 in-app 브라우저
 - [ ] bind 를 지우고 교환 → `401 invalid_handoff`
 - [ ] 로그인 → 앱 완전 종료 → 다시 실행하면 로그인 화면 없이 홈 (#465 · 서버 refresh 가 붙은 뒤 · Android · iOS)
+- [ ] 앱을 켜고 30초 안에 최근 앱 화면에서 스와이프로 종료 → 30초 넘게 기다렸다 다시 실행하면 로그인 화면 없이 홈 (#469 · 백그라운드 flush · Android)
 
 ---
 
