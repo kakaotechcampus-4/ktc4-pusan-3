@@ -104,6 +104,9 @@ export const SCENARIOS = {
     "10 로그아웃 — 서버에 닿기 전에 한 번 끊김 (나간 척하지 않고 실패를 남긴다 · 다시 누르면 나간다)",
   withdraw_unreached:
     "10 탈퇴 — 서버에 닿기 전에 한 번 끊김 (/me 가 200 · '아직 지워지지 않았어요', 다시 누르면 닿는다)",
+  // 🚨 보호자당 24시간 10건을 채워야 나오는 상태다 (#487 · 서버 PR #488). 목은 건수를 세지 않는다.
+  report_limit:
+    "10 문제 알리기 — 오늘 보낼 수 있는 만큼 보냄 429 too_many_reports (서버 문구 그대로 · 다시 시도가 없어야 한다)",
 } as const;
 
 export type Scenario = keyof typeof SCENARIOS;

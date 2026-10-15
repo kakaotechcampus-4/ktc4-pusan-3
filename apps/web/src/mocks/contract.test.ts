@@ -7,6 +7,7 @@ import {
   idempotentPath,
   type IdempotentOperation,
   newIdempotencyKey,
+  requiresIdempotencyKey,
 } from "@/lib/api/idempotency";
 import {
   addHealthSafety,
@@ -36,6 +37,7 @@ import {
 import { toISODate } from "@/lib/format";
 import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
+import { REPORT_CATEGORIES, REPORT_MESSAGE_MAX_LENGTH } from "@/lib/api/types";
 import type {
   Affinity,
   AffinitiesResponse,
@@ -65,6 +67,8 @@ import type {
   OnboardingRequest,
   Policy,
   PhotoCommitResponse,
+  ReportRequest,
+  ReportResponse,
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
@@ -3703,6 +3707,87 @@ describe("㉖ refresh 로 세션을 잇는다 (#465)", () => {
     setScenario("session_unreachable");
     try {
       await expect(refresh()).rejects.toThrow();
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/**
+ * `POST /reports` — 10 설정 › 문제 알리기 (#487 · 서버 PR #488). 목이 서버와 같은 검사를 거는지 본다.
+ * 🚨 본문은 지어낸 문장이다 — 실제 보호자의 말을 넣지 않는다 (최상위 §9).
+ */
+describe("㉗ 문제 알리기 — 서버 #488 과 같은 계약 (#487)", () => {
+  function send(body: unknown): Promise<Response> {
+    return raw("/reports", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function codeOf(response: Response): Promise<string> {
+    return ((await response.json()) as { error: { code: string } }).error.code;
+  }
+
+  it("201 과 함께 id · created_at 을 준다", async () => {
+    const created = await api.post<ReportResponse>("/reports", {
+      category: "ai_content",
+      message: "지어낸 신고 문장",
+    } satisfies ReportRequest);
+    expect(created).toEqual({ id: expect.any(String), created_at: expect.any(String) });
+  });
+
+  it("🚨 되돌릴 수 없는 5곳이 아니다 — Idempotency-Key 없이 나간다", async () => {
+    expect(requiresIdempotencyKey("POST", "/reports")).toBe(false);
+    const res = await send({ category: "bug", message: "지어낸 문장" });
+    expect(res.status).toBe(201);
+  });
+
+  it.each(REPORT_CATEGORIES)("분류 %s 를 받는다", async (category) => {
+    expect((await send({ category, message: "지어낸 문장" })).status).toBe(201);
+  });
+
+  it("앞뒤 공백을 떼고 센다 — 공백만이면 400, 떼고 1000자면 201", async () => {
+    const blank = await send({ category: "other", message: " \n\t " });
+    expect(blank.status).toBe(400);
+    expect(await codeOf(blank)).toBe("validation_failed");
+
+    const full = "가".repeat(REPORT_MESSAGE_MAX_LENGTH);
+    expect((await send({ category: "other", message: `  ${full}  ` })).status).toBe(201);
+    expect((await send({ category: "other", message: `${full}가` })).status).toBe(400);
+  });
+
+  it("모르는 분류 · NUL 문자 · 문자열이 아닌 본문은 400 이다", async () => {
+    for (const body of [
+      { category: "spam", message: "지어낸 문장" },
+      { category: "bug", message: "지어낸\u0000문장" },
+      { category: "bug", message: 42 },
+      { category: "bug" },
+    ]) {
+      const res = await send(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(await codeOf(res)).toBe("validation_failed");
+    }
+  });
+
+  it("🚨 모르는 필드가 섞이면 400 이다 — 화면 상태를 통째로 보내지 않는다", async () => {
+    const res = await send({ category: "bug", message: "지어낸 문장", child_id: "c1" });
+    expect(res.status).toBe(400);
+    expect(await codeOf(res)).toBe("validation_failed");
+  });
+
+  it("report_limit — 429 too_many_reports 에 서버 문구가 실려 온다", async () => {
+    setScenario("report_limit");
+    try {
+      const failure = await api
+        .post("/reports", { category: "bug", message: "지어낸 문장" })
+        .then(() => null)
+        .catch((e: unknown) => e);
+      expect(isApiError(failure, "too_many_reports")).toBe(true);
+      expect((failure as ApiError).status).toBe(429);
+      expect((failure as ApiError).message).toBe(
+        "오늘은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
+      );
     } finally {
       setScenario("default");
     }
