@@ -27,7 +27,11 @@ import { FORWARD } from "@/lib/view-transition";
  * 🚨 **로그아웃은 파괴가 아니다.** `danger` 를 쓰지 않는다 — 다시 로그인하면 그대로다.
  *    다만 아직 안 보낸 한 줄은 같이 지워지므로(세션 스토어), 그 사실을 확인 시트에 적는다.
  *
- * 🚨 **서버 호출이 실패해도 이 기기에서는 나간다.** 토큰을 들고 남는 것이 더 나쁘다.
+ * 🚨 **서버에 닿지 못하면 나간 척하지 않는다.** 로그인을 이어 주는 refresh 쿠키는 HttpOnly 라
+ *    화면이 지울 수 없고, 지우는 것은 로그아웃 응답뿐이다. 이 기기의 토큰만 버리고 "나갔어요"
+ *    하면 앱을 다시 켤 때 그 쿠키로 다시 로그인된다 — 함께 쓰는 기기라면 다음 사람이 그대로
+ *    들어온다. 그래서 실패는 시트에 남겨 다시 누르게 한다 (docs/web/auth-consent-v1.md §2).
+ *    세션이 이미 끝난 401 은 전역 처리가 이 기기에서 내보낸다 (`lib/api/client.ts`).
  */
 export function AccountSection({ childId }: { childId: string }) {
   const router = useRouter();
@@ -37,8 +41,7 @@ export function AccountSection({ childId }: { childId: string }) {
 
   const logout = useMutation({
     mutationFn: () => api.post<null>("/auth/logout"),
-    // 🚨 서버가 세션을 못 지워도 이 기기의 토큰은 버린다. 그래서 성공·실패가 같은 경로다.
-    onSettled: () => {
+    onSuccess: () => {
       signOut();
       queryClient.clear();
       router.replace("/");
@@ -104,7 +107,7 @@ export function AccountSection({ childId }: { childId: string }) {
         </ul>
         {logout.isError ? (
           <CardFailed className="mt-4">
-            <p>서버에 알리지 못했지만 이 기기에서는 나갔어요.</p>
+            <p>로그아웃하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.</p>
           </CardFailed>
         ) : null}
       </BottomSheet>

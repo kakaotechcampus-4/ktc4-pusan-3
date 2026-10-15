@@ -27,10 +27,18 @@ export function Providers({ children }: { children: ReactNode }) {
     void startMocks().finally(() => setMocksReady(true));
   }, []);
 
-  // sessionStorage 는 서버에 없다. 마운트 후에 복구해야 하이드레이션 불일치가 안 난다.
+  /**
+   * 앱을 켤 때 세션을 되살린다 — 토큰은 메모리에만 있어서 늘 비어 있고, refresh 쿠키로 다시 받는다
+   * (`stores/session.ts`). 저장소와 쿠키는 서버 렌더에 없으니 마운트 후에 해야 하이드레이션이
+   * 어긋나지 않는다.
+   *
+   * 🚨 **목이 뜬 뒤에 한다.** 워커보다 먼저 나간 갱신은 목을 통과해 실서버로 간다.
+   */
   useEffect(() => {
+    if (!mocksReady) return;
     void useSessionStore.persist.rehydrate();
-  }, []);
+    void useSessionStore.getState().restore();
+  }, [mocksReady]);
 
   /**
    * 세션 만료(401 unauthenticated)를 한 곳에서 처리한다 — 화면마다 다루면 어딘가는 빠뜨린다.

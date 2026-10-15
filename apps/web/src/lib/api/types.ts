@@ -1197,11 +1197,23 @@ export type AuthClient = "web" | "app";
 export interface AuthSession {
   /** 불투명 난수 43자. JWT 가 아니다 — 디코딩해서 정보를 꺼내려 하지 않는다. */
   token: string;
-  /** 초 (12시간 = 43200). 없으면 401 을 맞고 나서야 만료를 안다. */
+  /** access 토큰 수명, 초 (15분 = 900). 없으면 401 을 맞고 나서야 만료를 안다. */
   expires_in: number;
   is_new: boolean;
   parent: { id: string; nickname: string | null };
   consent_required: string[];
+}
+
+/**
+ * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`icatch_rt`, HttpOnly)로 인증한다.
+ * 성공하면 새 access 토큰을 주고 쿠키를 회전시킨다. 실패는 전부 `401 unauthenticated` 다.
+ * 정본은 서버 Swagger 다 (docs/web/auth-consent-v1.md §2).
+ */
+export interface AuthRefreshResponse {
+  /** 새 access 토큰. 메모리에만 둔다. */
+  token: string;
+  /** 초 (15분 = 900). */
+  expires_in: number;
 }
 
 /** 신규 회원 — 동의 전에는 parent 가 없어서 토큰이 없다. `consent_code` TTL 10분. */
