@@ -3,7 +3,8 @@
 모양은 화면 타입(apps/web `lib/api/types.ts` 의 `ObservationsResponse` ·
 `ObservationDetailResponse` · `ObservationPromotable`)을 따른다.
 
-🚨 건강 관찰(`observation_health`)은 이 응답에 실리지 않는다 — 첫 배포 범위 밖이다 (#259).
+🚨 건강 관찰(`observation_health`)은 목록 · 상세 응답에 실리지 않는다 — 첫 배포 범위 밖이다 (#259).
+   `ObservationHealthOut` 은 04 run 의 `saved` 이벤트에만 실린다 (#471).
 """
 
 from datetime import date, datetime
@@ -29,14 +30,12 @@ class SourceWriterOut(BaseModel):
     nickname: str
 
 
-class ObservationOut(BaseModel):
+class _ObservationBaseOut(BaseModel):
+    """food · education · activity · routine · health 가 같이 가진 칸."""
+
     id: str
     child_id: str
-    kind: ObservationKindOut
     raw_text: str
-    subject: str
-    polarity: int = Field(description="-1 싫어함 · 0 갈림 · 1 좋아함")
-    strong_signals: list[str] = Field(description="routine 은 승격 대상이 아니라 늘 빈 배열이다")
     confidence_source: Literal[
         "institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"
     ]
@@ -46,7 +45,6 @@ class ObservationOut(BaseModel):
     observed_from: date
     observed_to: date = Field(description="포함 날짜. DB 의 열린 상한에서 하루 뺀 값")
     observed_label: str = Field(description='observed_to 기준 "오늘" · "3일 전". 서버 문구다')
-    affinity: LinkedAffinityOut | None = Field(description="routine 은 늘 null")
     domain_fields: dict[str, Any] = Field(
         description="표마다 다른 칸 (food: action · amount · reaction 등)"
     )
@@ -54,6 +52,23 @@ class ObservationOut(BaseModel):
         default=None, description="적은 보호자. 별명이 없거나 탈퇴해 행이 없으면 null"
     )
     created_at: datetime
+
+
+class ObservationOut(_ObservationBaseOut):
+    kind: ObservationKindOut
+    subject: str
+    polarity: int = Field(description="-1 싫어함 · 0 갈림 · 1 좋아함")
+    strong_signals: list[str] = Field(description="routine 은 승격 대상이 아니라 늘 빈 배열이다")
+    affinity: LinkedAffinityOut | None = Field(description="routine 은 늘 null")
+
+
+class ObservationHealthOut(_ObservationBaseOut):
+    """건강 관찰. 승격 파이프라인 밖이라 subject · polarity · strong_signals · affinity 키가 없다.
+
+    화면은 null 검사가 아니라 `kind === "observation_health"` 로 가른다 (apps/web types.ts).
+    """
+
+    kind: Literal["observation_health"]
 
 
 class ObservationsResponse(BaseModel):
