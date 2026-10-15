@@ -23,13 +23,14 @@ from fastapi.responses import RedirectResponse
 
 from app.api.deps.auth import CurrentParent, hash_token
 from app.api.deps.db import SessionDep
-from app.api.errors import ApiError
+from app.api.errors import ApiError, envelope
 from app.api.v1.schemas.auth import (
     BIND_PATTERN,
     AuthStatusResponse,
     ConsentRequiredResponse,
     ExchangeRequest,
     ParentSummary,
+    RefreshResponse,
     SessionResponse,
     SignupRequest,
     WithdrawRequest,
@@ -37,7 +38,7 @@ from app.api.v1.schemas.auth import (
 )
 from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
-from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
+from app.core.constants import API_V1_PREFIX, AUTH_COOKIE_PATH, AUTH_PREFIX
 from app.domains.consent.models import ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
@@ -48,6 +49,7 @@ from app.domains.consent.repository import (
 from app.domains.identity.models import AuthProvider
 from app.domains.identity.repository import (
     consume_handoff,
+    create_access,
     create_handoff,
     create_identity,
     create_parent,
@@ -55,6 +57,8 @@ from app.domains.identity.repository import (
     delete_session,
     find_parent,
     find_parent_id_by_identity,
+    lock_session_by_refresh,
+    rotate_refresh,
 )
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.policy.repository import find_active_versions
@@ -69,7 +73,15 @@ from app.integrations.kakao.client import (
 log = logging.getLogger(__name__)
 
 fixed_router = APIRouter(prefix=AUTH_PREFIX, tags=["auth"])
-"""경로가 고정된 엔드포인트. provider 값을 받지 않는다."""
+"""경로가 고정된 엔드포인트. provider 값을 받지 않는다. 인증 라우터에 붙는다."""
+
+refresh_router = APIRouter(prefix=AUTH_PREFIX, tags=["auth"])
+"""POST /auth/refresh 하나 (#466). 경로는 고정이지만 Bearer 없이 쿠키로 인증해서 fixed_router 와
+나눴다 — fixed_router 는 인증 라우터에 붙어 access 가 만료된 요청을 401 로 먼저 막는다.
+
+🚨 공개 라우터에서 provider_router 보다 먼저 붙인다. 늦으면 /auth/refresh 가
+   provider="refresh" 로 잡혀 422 가 된다 (app/api/v1/router.py).
+"""
 
 provider_router = APIRouter(prefix=f"{AUTH_PREFIX}/{{provider}}", tags=["auth"])
 """경로에 provider 가 들어가는 엔드포인트.
@@ -80,6 +92,9 @@ provider_router = APIRouter(prefix=f"{AUTH_PREFIX}/{{provider}}", tags=["auth"])
 """
 
 STATE_COOKIE = "oauth_state"
+
+REFRESH_COOKIE = "icatch_rt"
+"""refresh 토큰을 싣는 쿠키 (#466). 웹 JS 가 읽지 못하는 HttpOnly 라 앱을 꺼도 남는다."""
 
 _CLIENTS = frozenset({"web", "app"})
 """복귀 대상은 URL 이 아니라 열거값이다. URL 을 받으면 그 순간 오픈 리다이렉트다 (§2-3)."""
@@ -168,7 +183,7 @@ async def start(
         max_age=settings.OAUTH_STATE_TTL,
         # Path 를 좁혀 인증 외 요청에 실리지 않게 한다. 값은 상수 한 곳에서 온다 —
         # 마운트 지점이 바뀌면 쿠키 Path 도 함께 따라와야 한다 (§5-5).
-        path=OAUTH_COOKIE_PATH,
+        path=AUTH_COOKIE_PATH,
         httponly=True,
         secure=True,
         # Lax 는 크로스 사이트 최상위 GET 이동에 실린다. 카카오 → 콜백이 그 경우다.
@@ -297,7 +312,101 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     """
     await delete_session(session, session_id=auth.session_id)
     await session.commit()
-    return Response(status_code=204)
+    response = Response(status_code=204)
+    _expire_refresh(response)
+    return response
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# refresh (#466) — Bearer 가 아니라 쿠키로 인증한다. 루트 CLAUDE.md §9 의 무인증 목록에 있다
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@refresh_router.post("/refresh", responses={401: {"model": ErrorEnvelope}})
+async def refresh(
+    session: SessionDep,
+    response: Response,
+    icatch_rt: Annotated[str | None, Cookie()] = None,
+) -> RefreshResponse:
+    """refresh 쿠키로 새 access 를 받는다. 현재 refresh 면 회전한다 — #466.
+
+    | 들어온 쿠키 | 결과 |
+    | --- | --- |
+    | 현재 refresh, 만료 전 | 새 access + 회전된 쿠키 |
+    | 직전 refresh, 회전 후 유예(30초) 안 | 새 access 만. 쿠키는 이긴 요청이 이미 바꿨다 |
+    | 직전 refresh, 유예 밖 | 재사용으로 보고 세션 삭제 → 401 |
+    | 없음 · 모르는 값 · 유휴 또는 절대 만료 | 401 (만료면 세션도 삭제) |
+
+    🚨 실패 사유를 구분하지 않는다 — 전부 401 unauthenticated 다 (명세 §8-1).
+       실패하면 쿠키도 지운다. 남겨 두면 다음 실행마다 같은 401 을 다시 맞는다.
+    🚨 로그에는 토큰도 해시도 남기지 않는다 (§7-5). 재사용 삭제만 세션 id 로 남긴다.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    if not icatch_rt:
+        return _refresh_failed()
+
+    presented = hash_token(icatch_rt)
+    row = await lock_session_by_refresh(session, refresh_hash=presented)
+    if row is None:
+        return _refresh_failed()
+
+    # 🚨 시각은 잠금을 얻은 뒤에 잡는다. 앞에서 잡으면 기다리는 사이 만료가 지나도 만료 전
+    #    시각으로 판정해 이미 만료된 세션을 연장할 수 있다.
+    now = datetime.now(UTC)
+    if row.refresh_expires_at <= now or row.absolute_expires_at <= now:
+        await delete_session(session, session_id=row.session_id)
+        await session.commit()
+        return _refresh_failed()
+
+    if row.refresh_hash != presented:
+        # 직전 refresh 로 걸렸다. 회전 직후면 동시 요청에서 진 쪽이고, 아니면 재사용이다.
+        in_grace = row.rotated_at is not None and now - row.rotated_at <= timedelta(
+            seconds=settings.REFRESH_REUSE_GRACE
+        )
+        if not in_grace:
+            # 탈취와 정상 기기의 쿠키 유실(응답 직전 앱 종료 · Android 쿠키 기록 지연)이 여기서
+            # 똑같이 보인다. 한 건으로는 못 가르지만 건수가 많으면 정상 사용자가 쫓겨나는 중이다.
+            log.warning(
+                "직전 refresh 가 유예 밖에서 와서 세션을 지운다: session=%s", row.session_id
+            )
+            await delete_session(session, session_id=row.session_id)
+            await session.commit()
+            return _refresh_failed()
+        token, expires_in = await _issue_access(
+            session, session_id=row.session_id, now=now, absolute_expires_at=row.absolute_expires_at
+        )
+        await session.commit()
+        return RefreshResponse(token=token, expires_in=expires_in)
+
+    rotated = secrets.token_urlsafe(32)
+    refresh_expires_at = min(
+        now + timedelta(seconds=settings.REFRESH_IDLE_TTL), row.absolute_expires_at
+    )
+    await rotate_refresh(
+        session,
+        session_id=row.session_id,
+        old_hash=presented,
+        new_hash=hash_token(rotated),
+        rotated_at=now,
+        refresh_expires_at=refresh_expires_at,
+    )
+    token, expires_in = await _issue_access(
+        session, session_id=row.session_id, now=now, absolute_expires_at=row.absolute_expires_at
+    )
+    await session.commit()
+    _set_refresh(response, rotated, max_age=int((refresh_expires_at - now).total_seconds()))
+    return RefreshResponse(token=token, expires_in=expires_in)
+
+
+def _refresh_failed() -> Response:
+    """refresh 실패 응답 — 401 봉투 + 쿠키 삭제.
+
+    ApiError 로 던지지 않는다. 예외 처리기가 새 응답을 만들어 쿠키 삭제가 실리지 않는다.
+    """
+    failed = envelope(401, "unauthenticated", "다시 로그인해 주세요")
+    failed.headers["Cache-Control"] = "no-store"
+    _expire_refresh(failed)
+    return failed
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -310,7 +419,7 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     responses={400: {"model": ErrorEnvelope}, 401: {"model": ErrorEnvelope}},
 )
 async def withdraw(
-    body: WithdrawRequest, auth: CurrentParent, session: SessionDep
+    body: WithdrawRequest, auth: CurrentParent, session: SessionDep, response: Response
 ) -> WithdrawResponse:
     """탈퇴 — 유예 없이 바로 지운다. 등록 보호자면 아이와 기록까지 지운다.
 
@@ -328,6 +437,7 @@ async def withdraw(
     if withdrawn is None:
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
     await session.commit()
+    _expire_refresh(response)
 
     if withdrawn.kakao_user_id is not None:
         await _unlink_kakao(withdrawn.kakao_user_id)
@@ -411,9 +521,9 @@ async def exchange(
         await session.commit()
         return ConsentRequiredResponse(consent_code=consent_code)
 
-    response = await _issue_session(session, parent_id=consumed.parent_id, is_new=False)
+    issued = await _issue_session(session, response, parent_id=consumed.parent_id, is_new=False)
     await session.commit()
-    return response
+    return issued
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -505,9 +615,9 @@ async def signup(
             policy_version_id=policy_version_id,
         )
 
-    response = await _issue_session(session, parent_id=parent.id, is_new=True)
+    issued = await _issue_session(session, response, parent_id=parent.id, is_new=True)
     await session.commit()
-    return response
+    return issued
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -517,11 +627,14 @@ async def signup(
 
 async def _issue_session(
     session: SessionDep,
+    response: Response,
     *,
     parent_id: UUID,
     is_new: bool,
 ) -> SessionResponse:
-    """세션 행 1건을 만들고 응답을 짠다 — 교환과 가입이 같은 모양을 쓴다 (§3-4).
+    """로그인 1건(refresh)과 access 1건을 만들고 응답을 짠다 — 교환과 가입이 같이 쓴다 (§3-4).
+
+    access 는 본문으로, refresh 는 쿠키로 나간다 (#466).
 
     🚨 토큰 원문은 저장되지 않는다. 남기는 것은 해시뿐이고, 원문은 이 응답에 한 번
        실려 나가면 끝이다 (§5 · A-18).
@@ -532,21 +645,51 @@ async def _issue_session(
         # 로 끝나므로 실제로는 오지 않는다 (#379).
         raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 
-    token = secrets.token_urlsafe(32)
-    await create_session(
+    now = datetime.now(UTC)
+    absolute_expires_at = now + timedelta(seconds=settings.REFRESH_ABSOLUTE_TTL)
+    refresh = secrets.token_urlsafe(32)
+    refresh_expires_at = min(
+        now + timedelta(seconds=settings.REFRESH_IDLE_TTL), absolute_expires_at
+    )
+    session_id = await create_session(
         session,
         parent_id=parent_id,
-        token_hash=hash_token(token),
-        expires_at=datetime.now(UTC) + timedelta(seconds=settings.SESSION_TTL),
+        refresh_hash=hash_token(refresh),
+        refresh_expires_at=refresh_expires_at,
+        absolute_expires_at=absolute_expires_at,
+    )
+    _set_refresh(response, refresh, max_age=int((refresh_expires_at - now).total_seconds()))
+    token, expires_in = await _issue_access(
+        session, session_id=session_id, now=now, absolute_expires_at=absolute_expires_at
     )
 
     return SessionResponse(
         token=token,
-        expires_in=settings.SESSION_TTL,
+        expires_in=expires_in,
         is_new=is_new,
         parent=ParentSummary(id=parent.id, nickname=parent.nickname),
         consent_required=await missing_account_scopes(session, parent_id=parent_id),
     )
+
+
+async def _issue_access(
+    session: SessionDep,
+    *,
+    session_id: UUID,
+    now: datetime,
+    absolute_expires_at: datetime,
+) -> tuple[str, int]:
+    """그 로그인에 access 1건을 달고 (원문, 수명 초) 를 돌려준다 — 로그인과 refresh 가 같이 쓴다.
+
+    수명은 ACCESS_TTL 이되 로그인의 절대 만료를 넘지 않는다. 넘기면 상한 뒤에도 access 로
+    잠깐 더 쓸 수 있다.
+    """
+    token = secrets.token_urlsafe(32)
+    expires_at = min(now + timedelta(seconds=settings.ACCESS_TTL), absolute_expires_at)
+    await create_access(
+        session, session_id=session_id, token_hash=hash_token(token), expires_at=expires_at
+    )
+    return token, int((expires_at - now).total_seconds())
 
 
 def _warn_if_unimplemented(provider: AuthProvider) -> None:
@@ -644,9 +787,36 @@ def _decode_state(raw: str | None) -> tuple[str, str, bytes] | None:
     return state, target, bind_hash
 
 
+def _set_refresh(response: Response, refresh: str, *, max_age: int) -> None:
+    """refresh 를 쿠키로 심는다 (#466).
+
+    🚨 max_age 를 빼지 않는다. 빠지면 세션 쿠키가 되어 앱을 끌 때 같이 사라진다 —
+       sessionStorage 때문에 매번 다시 로그인하던 지금 증상이 그대로 돌아온다.
+    🚨 Domain 을 주지 않는다. host-only 로 API 호스트에만 저장된다.
+    SameSite=Strict 여도 웹(icatch.ai.kr)이 API(api.icatch.ai.kr)를 부를 때는 실린다 — ai.kr 이
+    Public Suffix List 에 있어 둘이 같은 사이트다. 다른 사이트에서 오는 요청에는 실리지 않는다.
+    """
+    response.set_cookie(
+        REFRESH_COOKIE,
+        refresh,
+        max_age=max_age,
+        path=AUTH_COOKIE_PATH,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+    )
+
+
+def _expire_refresh(response: Response) -> None:
+    """refresh 쿠키를 지운다 — 로그아웃 · 탈퇴. 속성이 심을 때와 같아야 지워진다."""
+    response.delete_cookie(
+        REFRESH_COOKIE, path=AUTH_COOKIE_PATH, httponly=True, secure=True, samesite="strict"
+    )
+
+
 def _expire_state(response: RedirectResponse) -> RedirectResponse:
     """쓴 쿠키는 콜백에서 만료시킨다 (§3-3 5번). Path 가 심을 때와 같아야 지워진다."""
-    response.delete_cookie(STATE_COOKIE, path=OAUTH_COOKIE_PATH)
+    response.delete_cookie(STATE_COOKIE, path=AUTH_COOKIE_PATH)
     return response
 
 
