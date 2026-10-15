@@ -129,7 +129,7 @@ _ROUTINE_SUBJECT = (
 )
 _ROUTINE_CATEGORY = (
     "self_care(양치/옷 입기/손 씻기) / mealtime(식사 도구 및 태도) / "
-    "household_task(정리/심부름) / social_manner(인사/차례 지키기) / "
+    "household_task(정리/심부름) / social_manner(인사/차례 지키기/친구 도와주기·달래기) / "
     "habit(손톱 물어뜯기/손가락 빨기) / transition(등원 준비/잠자리 들기/놀이 끝내기)"
 )
 _ASSISTANCE = _optional(

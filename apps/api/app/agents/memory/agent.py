@@ -8,10 +8,12 @@ app/api와 이후의 Supervisor는 내부(registry·prompt·client)를 모른 �
   - 같은 인자로 성공한 쓰기 작업을 두 번 실행하지 않는다
   - 끝나지 않는 대화를 끊고, 끝났는지 여부를 호출자에게 알린다
 
-task 를 넘기면(Supervisor 경로) 세 가지가 더 붙는다.
-  - [tool 묶음] 기록 기본 묶음은 항상, 수정·삭제는 lookup_edit 조각이 있을 때만
+task 를 넘기면(Supervisor 경로) 다섯 가지가 더 붙는다.
+  - [tool 묶음] 기록 기본 묶음은 항상, 수정·삭제는 MemoryTask.open_lookup_edit 일 때만
   - [허용 목록] 모델에게 안 보여준 tool은 이름으로 불러도 실행하지 않는다
   - [조기 종료] 할 일을 다 한 게 코드로 확인되면 요약 호출 없이 끝낸다 (_covered)
+  - [unclear] Supervisor 가 unclear 로 본 조각은 관찰로 저장하지 않는다 (_in_unclear)
+  - [고쳐 말하기] lookup_edit 조각은 조회 결과를 본 뒤에만 새로 저장한다 (_skipped_lookup)
 task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없이 Memory 만 재는 경로다.
 """
 
@@ -84,6 +86,49 @@ _WHOLE_FRAGMENT = (
     "(나누지 못한 원문 전체다. 이 글에 적힌 기록은 아직 하나도 저장하지 않았다. "
     "물은 것과 상관없는 것도 이 글에 적힌 기록이면 하나씩 모두 저장한다. "
     "보호자의 답에만 있고 이 글에 없는 기록은 섞인 말이다)"
+)
+
+# unclear 조각만 있던 입력에서 물은 뒤의 이어받기. 원문을 못 나눈 강등 경로(_WHOLE_FRAGMENT)와
+# 달리 "아니" 가 답일 수 있는 질문이다. _WHOLE_FRAGMENT 를 붙이면 아니라고 해도 같은 걸 다시 물었다
+_UNCLEAR_FRAGMENT = (
+    "(아이가 한 일인지 알 수 없어 물었던 문장이다. 보호자가 아이 얘기라고 답했을 때만 이 글에 적힌 "
+    "기록을 저장한다. 보호자 자신의 얘기라거나 아니라고 답하면 저장하지 않고, 아이 기록이 아니라서 "
+    "남기지 않았다고 한 줄로 알리고 끝낸다. 이때는 다시 묻지 않는다)"
+)
+
+# Supervisor 가 unclear 로 본 조각의 관찰 저장. tool 을 빼면 모델이 이유를 몰라 저장 없이
+# "기록했어요" 라고 답했다. 그래서 열어 둔 채 거절하고 다음 행동을 적는다.
+# 묻지 않는다. "아이가 그랬나요?" 로 물으면 물을지가 반반으로 갈렸고, "아니 내가 먹은 거야" 라는
+# 답에도 저장한 적이 있다(6번 중 1번). 아이 얘기면 아이를 주어로 다시 말하면 record 로 간다
+_NOT_CHILD_RECORD_ALONE = (
+    "이 발화는 아이가 한 일이나 보인 반응인지 원문에서 드러나지 않아 관찰로 저장하지도 고치지도 "
+    "않는다. 다시 부르지 않는다. 묻지 않고, 아이 기록인지 알 수 없어 저장하지 않았다고 한 줄로 "
+    "알린다. 아이 얘기였다면 아이를 주어로 다시 말해 달라고 짧게 덧붙인다. 보호자 얘기를 "
+    "'아이도 ~?' 처럼 아이에게 옮겨 묻지 않는다."
+)
+_NOT_CHILD_RECORD_MIXED = (
+    "이 문장은 아이가 한 일이나 보인 반응인지 원문에서 드러나지 않아 관찰로 저장하지 않는다. "
+    "다시 부르지 않는다. 발화의 다른 기록은 그대로 저장한다. 이 문장은 묻지 않고, "
+    "아이 기록인지 알 수 없어 남기지 않았다고 한 줄로만 알린다."
+)
+
+# 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
+# 바뀌는 값이 사람·장소면 프롬프트 규칙이 있어도 3번 다 새 행을 만들었다
+_LOOKUP_FIRST = (
+    "이 문장은 저장된 기록을 고치는 말이다. 새로 저장하기 전에 query_observation_* 로 "
+    "바뀌기 전 값이 든 기록을 먼저 찾고, 그 결과를 본 뒤에 [고쳐 말할 때] 규칙대로 고치거나 "
+    "저장한다. 찾기와 저장을 한 응답에 같이 부르지 않는다."
+)
+
+# unclear 조각만 있던 입력을 되묻기로 끝낸 턴. "나 딸기 좋아해" 에 tool 없이 바로
+# "아이의 음식 취향으로 기록할까요?" 라고 물어 거절 메시지의 안내가 닿지 않았다(3번 중 2번).
+# 프롬프트에 더해도 그대로라 이 턴만 코드가 집어 run 당 한 번 다시 확인한다.
+# 그래도 물으면 되묻기 맥락(unclear=True)이 남고, 이어받기는 _UNCLEAR_FRAGMENT 를 받는다
+_UNCLEAR_QUESTION = (
+    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
+    "이 발화는 아이 기록인지 알 수 없다고 판정됐다. 묻지 않고, 아이 기록인지 알 수 없어 "
+    "저장하지 않았다고 한 줄로 알린다(kind=message). 아이 얘기였다면 아이를 주어로 다시 말해 "
+    "달라고 짧게 덧붙인다."
 )
 
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
@@ -211,6 +256,7 @@ async def run(
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
     rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
+    asked_unclear = False  # unclear 만 있는 입력의 되묻기를 다시 확인하게 한 적이 있는지
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
     reply_model: type[ReplyOutput] = (
@@ -262,8 +308,23 @@ async def run(
                     messages.append({"role": "user", "content": _PENDING_RETRY})
                     continue
                 # 조회 · 수정은 "지우지 않을게요" 처럼 저장 없이 끝나는 말이 정상이라 보지 않는다
+                unclear_question = (
+                    continuation is None
+                    and task is not None
+                    and task.unclear_only
+                    and replied.kind == "question"
+                )
+                if unclear_question and not asked_unclear:
+                    asked_unclear = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _UNCLEAR_QUESTION})
+                    continue
+                # unclear 맥락은 "아이 얘기가 아니에요" 면 저장 없이 끝나는 게 맞다. 재확인 문구의
+                # "필요한 값을 묻는다" 가 같은 질문을 다시 부를 수 있다
                 recording = (
-                    continuation is not None and continuation.work is not WorkType.LOOKUP_EDIT
+                    continuation is not None
+                    and continuation.work is not WorkType.LOOKUP_EDIT
+                    and not continuation.unclear
                 )
                 if recording and replied.kind == "message" and not _wrote(calls):
                     if not rechecked:
@@ -299,8 +360,10 @@ async def run(
 
         messages.append(_assistant_message(response.message))
         step_records: list[ToolCallRecord] = []
+        # 조회를 했는지는 이전 응답까지만 본다. 같은 응답의 조회는 모델이 결과를 못 본 것이다
+        prior = list(calls)
         for call in tool_calls:  # 한 응답에 여러 개가 와도 전부, 온 순서대로 실행한다
-            record = await _execute(call, context, succeeded, allowed)
+            record = await _execute(call, context, succeeded, allowed, task=task, prior=prior)
             calls.append(record)
             step_records.append(record)
             messages.append(
@@ -318,6 +381,8 @@ async def run(
             and continuation is None
             and EARLY_STOP
             and _covered(task, step_records, calls)
+            # unclear 조각을 거절했으면 남기지 않았다고 알릴 턴을 준다
+            and not _refused(calls, ErrorCode.NOT_CHILD_RECORD)
         ):
             # 모델에게 "무엇을 했는지" 요약을 받으려고 한 번 더 부르지 않는다
             return MemoryAgentResult(
@@ -439,10 +504,15 @@ def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
         lines = "\n".join(pending.transcript)
         rounds = f"\n\n[앞서 주고받은 것]\n{lines}"
     # 헤더가 아니라 원문 전체 조각에만 붙인다. 헤더에 두면 답에 섞인 말까지 저장했다
-    whole = f"\n{_WHOLE_FRAGMENT}" if pending.whole else ""
+    if pending.unclear:
+        note = f"\n{_UNCLEAR_FRAGMENT}"
+    elif pending.whole:
+        note = f"\n{_WHOLE_FRAGMENT}"
+    else:
+        note = ""
     return (
         f"{_CONTINUATION_HEADER}{rounds}\n\n"
-        f"[아직 저장하지 못한 조각]\n{pending.hint_text}{whole}\n\n"
+        f"[아직 저장하지 못한 조각]\n{pending.hint_text}{note}\n\n"
         f"[직전에 물은 것]\n{pending.question}\n\n"
         f"[보호자의 답]\n{answer}"
     )
@@ -525,6 +595,7 @@ def _pending(
             work=continuation.work,
             transcript=(*continuation.transcript, continuation.question, answer),
             whole=continuation.whole,
+            unclear=continuation.unclear,
         )
     if task is None:
         return None
@@ -535,7 +606,12 @@ def _pending(
             return None
         # 작업 종류를 모른다. observe로 두면 이어받기가 수정·삭제 tool을 열지 않는다
         return PendingMemoryContext(
-            hint_text=task.raw_text, question=reply.text, work=WorkType.OBSERVE, whole=True
+            # unclear 만 있었으면 그 조각만 잇는다. 원문에 섞인 요청은 이어받기 대상이 아니다
+            hint_text=" ".join(task.unclear) if task.unclear_only else task.raw_text,
+            question=reply.text,
+            work=WorkType.OBSERVE,
+            whole=True,
+            unclear=task.unclear_only,
         )
     open_hints = _open_hints(task, calls)
     if len(task.hints) == 1:
@@ -560,12 +636,24 @@ async def _execute(
     context: AgentContext,
     succeeded: set[tuple[str, str]],
     allowed: Collection[str] | None = None,
+    *,
+    task: MemoryTask | None = None,
+    prior: list[ToolCallRecord] | None = None,
 ) -> ToolCallRecord:
     name = call.function.name
     arguments = _parse_arguments(call.function.arguments)
     if arguments is None:
         # registry는 dict를 전제
         return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
+    if task is not None and task.unclear_only and name.startswith("update_observation_"):
+        # 아이 기록이 아닌 말로 이미 저장된 아이 기록을 고치지 않는다
+        return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, _NOT_CHILD_RECORD_ALONE)
+    if task is not None and name.startswith(WRITES_FOR[WorkType.OBSERVE]):
+        if _in_unclear(arguments, task):
+            message = _NOT_CHILD_RECORD_ALONE if task.unclear_only else _NOT_CHILD_RECORD_MIXED
+            return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, message)
+        if _skipped_lookup(str(arguments.get("raw_text", "")), task, prior or []):
+            return _failed(name, arguments, ErrorCode.TARGET_REQUIRED, _LOOKUP_FIRST)
 
     key = _dedup_key(name, arguments)
     if key is not None and key in succeeded:
@@ -575,6 +663,76 @@ async def _execute(
     if key is not None and result.success:
         succeeded.add(key)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())
+
+
+def _letters(text: str) -> str:
+    """글자·숫자만. 띄어쓰기·문장부호가 달라도 같은 조각으로 본다."""
+    return "".join(char for char in text if char.isalnum())
+
+
+# 관찰 create 인자 중 "무엇에 대한 기록인가" 를 담는 칸. 도메인마다 이름이 다르다
+_TARGET_FIELDS = ("subject", "symptom", "activity", "topic")
+
+
+def _targets(arguments: dict[str, Any]) -> list[str]:
+    """관찰 대상 이름(글자만). symptom 은 목록이다."""
+    names: list[str] = []
+    for field_name in _TARGET_FIELDS:
+        value = arguments.get(field_name)
+        values = value if isinstance(value, list) else [value]
+        names.extend(_letters(str(item)) for item in values if item)
+    return [name for name in names if name]
+
+
+def _in_unclear(arguments: dict[str, Any], task: MemoryTask) -> bool:
+    """이 관찰이 Supervisor 가 unclear 로 본 조각의 기록인가.
+
+    기록 조각 없이 unclear 만 있으면 무엇을 적든 막는다. 섞여 있으면 둘 중 하나로 본다.
+      - 대상 이름이 unclear 조각에만 나오고 기록 조각에는 없다 — 원문을 길게·바꿔 적어도 막힌다
+      - 원문이 unclear 조각 안에 들어간다
+    기록 조각과 겹치는 원문은 기록으로 본다 — 모델이 원문을 길게 적어도 기록이 막히지 않게.
+    """
+    if not task.unclear:
+        return False
+    if task.unclear_only:
+        return True
+    unclear = [_letters(segment) for segment in task.unclear]
+    hints = [_letters(hint.text) for hint in task.hints]
+    names = _targets(arguments)
+    in_unclear = any(name in segment for name in names for segment in unclear)
+    in_hint = any(name in hint for name in names for hint in hints)
+    if in_unclear and not in_hint:
+        return True
+    text = _letters(str(arguments.get("raw_text", "")))
+    if not text or any(text in hint or hint in text for hint in hints):
+        return False
+    return any(text in segment for segment in unclear)
+
+
+def _refused(calls: list[ToolCallRecord], code: str) -> bool:
+    """이번 run 에 이 코드로 거절된 호출이 있는가."""
+    return any(call.result.get("error", {}).get("code") == code for call in calls)
+
+
+def _skipped_lookup(raw_text: str, task: MemoryTask, prior: list[ToolCallRecord]) -> bool:
+    """고쳐 말하는 조각(lookup_edit)으로 관찰을 새로 만들면서 저장된 기록을 찾아본 적이 없는가.
+
+    수정인지는 Supervisor 라벨을 따른다. 찾아본 뒤에 만드는 것은 막지 않는다 — 바뀌기 전 기록이
+    없으면 바뀐 값만 새로 저장하는 게 맞다. prior 는 이전 응답까지의 호출이다.
+    원문이 관찰(observe) 조각에도 들어가면 그 조각의 기록으로 보고 막지 않는다.
+    """
+    edits = [_letters(hint.text) for hint in task.hints if hint.work == WorkType.LOOKUP_EDIT]
+    if not edits:
+        return False
+    if any(call.success and call.name.startswith("query_observation_") for call in prior):
+        return False
+    text = _letters(raw_text)
+    if not text:
+        return False
+    observes = [_letters(hint.text) for hint in task.hints if hint.work == WorkType.OBSERVE]
+    if any(text in hint or hint in text for hint in observes if hint):
+        return False
+    return any(edit and (text in edit or edit in text) for edit in edits)
 
 
 def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
