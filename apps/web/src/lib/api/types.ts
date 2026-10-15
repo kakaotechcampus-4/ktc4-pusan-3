@@ -308,7 +308,8 @@ export interface GeneralSuggestion {
  * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
  */
 export interface DocEvidence {
-  ref: { kind: "food_doc" | "activity_doc" | "growth_doc"; id: string };
+  /** 문서 행 · 또는 Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442). 화면은 `id` 만 키로 쓴다. */
+  ref: { kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog"; id: string };
   title: string;
   source_org: string;
   source_title: string;

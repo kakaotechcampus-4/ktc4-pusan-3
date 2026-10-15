@@ -21,6 +21,7 @@ from app.agents.activity.store.inmemory import InMemoryWeather
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.llm_client import LLMConfigError
+from app.agents.common.ports import SafetyLookupError
 from app.agents.curator.embedding import embedder as embedder_module
 from app.agents.curator.embedding import jev as jev_module
 from app.agents.food.agent import run as food_run
@@ -337,7 +338,7 @@ async def test_포트를_안_넘긴_run_의_Food_는_안전_조회_실패로_닫
 ) -> None:
     """ "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다.
 
-    안전 어댑터를 러너가 Food 에 넘기기 전까지 Food 는 서비스에서 모델 0회로 닫힌다. 식단 추천 ·
+    안전 어댑터를 안 넘긴 호출(테스트 · eval)에서 Food 는 모델 0회로 닫힌다. 식단 추천 ·
     급식 갱신의 `NOT_READY` 가 비어 있어도 그렇다 — 닫는 것은 안전 조회 실패다.
     """
     seen: dict[str, Any] = {}
@@ -448,7 +449,8 @@ async def test_API_가_읽어_넘긴_생일_동의가_Food_포트로_들어간�
 async def test_동의와_상관없이_Food_는_안전_조회_실패로_닫힌다(
     monkeypatch: pytest.MonkeyPatch, granted: bool
 ) -> None:
-    """🚨 health_safety 어댑터가 붙기 전에는 동의하지 않은 아이도 Food 가 열리면 안 된다.
+    """🚨 health_safety 어댑터를 안 넘긴 호출(테스트 · eval)은 동의하지 않은 아이도 Food 가
+    열리면 안 된다.
 
     동의가 없으면 build_gate 가 health_safety 를 읽지 않아서, 포트를 그냥 실제 동의 값으로
     바꾸면 동의하지 않은 아이에게는 "알레르기 없는 아이 기준" 으로 추천이 열린다.
@@ -608,7 +610,8 @@ async def _activity_of(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
 async def test_Activity_도_동의와_상관없이_안전_조회_실패로_닫힌다(
     monkeypatch: pytest.MonkeyPatch, granted: bool
 ) -> None:
-    """🚨 어댑터가 붙기 전에 동의하지 않은 아이가 환경 알레르기 확인 없이 열리면 안 된다."""
+    """🚨 어댑터를 안 넘긴 호출(테스트 · eval)은 동의하지 않은 아이도 환경 알레르기 확인 없이
+    열리면 안 된다."""
     seen = await _activity_of(monkeypatch, birth_date=_months_ago(30), child_health_granted=granted)
     activity = seen["contexts"]["activity"]
 
@@ -669,6 +672,131 @@ async def test_러너가_준_도메인_store_로_Activity_기억_포트를_읽�
     await activity.ports.memory.observations(child_id=CHILD, date_from=today, date_to=today)
 
     assert opened == [1]
+
+
+# ── 안전 어댑터 (#460) ─────────────────────────────────────────────
+class _Reader:
+    """`DbSafetyReader` 자리. 어느 메서드를 불렀는지 남긴다."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[str] = []
+        self.fail = fail
+
+    async def food_safety(self, *, child_id: UUID) -> list:
+        self.calls.append("food")
+        if self.fail:
+            raise SafetyLookupError("못 읽음")
+        return []
+
+    async def activity_safety(self, *, child_id: UUID) -> list:
+        self.calls.append("activity")
+        if self.fail:
+            raise SafetyLookupError("못 읽음")
+        return []
+
+
+async def test_안전_어댑터를_넘기면_Food_와_Activity_가_열린다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Reader()
+    seen = await _activity_of(
+        monkeypatch,
+        birth_date=_months_ago(30),
+        child_health_granted=True,
+        food_safety=reader,
+        activity_safety=reader,
+    )
+
+    food_gate = await build_gate(seen["contexts"]["food"])
+    activity_gate = await build_activity_gate(seen["contexts"]["activity"], outdoor_ok=False)
+
+    assert food_gate.safety_ok is True
+    assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, food_gate) is None
+    assert activity_gate.safety_ok is True
+    assert activity_closed_key(ActivityTaskType.ACTIVITY_RECOMMENDATION, activity_gate) is None
+
+
+async def test_Activity_는_activity_safety_로_Food_는_food_safety_로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 읽는 행이 다르다(Food: active · kind 전부, Activity: allergy · environmental · status 전부)
+    reader = _Reader()
+    seen = await _activity_of(
+        monkeypatch,
+        birth_date=_months_ago(30),
+        child_health_granted=True,
+        food_safety=reader,
+        activity_safety=reader,
+    )
+
+    await build_gate(seen["contexts"]["food"])
+    await build_activity_gate(seen["contexts"]["activity"], outdoor_ok=False)
+
+    assert reader.calls == ["food", "activity"]
+
+
+async def test_안전_어댑터가_못_읽으면_둘_다_닫힌다(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _Reader(fail=True)
+    seen = await _activity_of(
+        monkeypatch,
+        birth_date=_months_ago(30),
+        child_health_granted=True,
+        food_safety=reader,
+        activity_safety=reader,
+    )
+
+    food_gate = await build_gate(seen["contexts"]["food"])
+    activity_gate = await build_activity_gate(seen["contexts"]["activity"], outdoor_ok=False)
+
+    assert closed_readout_key(FoodTaskType.MEAL_RECOMMENDATION, food_gate) == "blocked.safety"
+    assert (
+        activity_closed_key(ActivityTaskType.ACTIVITY_RECOMMENDATION, activity_gate)
+        == "blocked.safety"
+    )
+
+
+async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+    original = entrypoint._domain_contexts
+
+    def spy(**kwargs: Any) -> Any:
+        seen.append((kwargs["food_safety"], kwargs["activity_safety"]))
+        return original(**kwargs)
+
+    async def fake_run(*args: Any, **kwargs: Any) -> Any:
+        return pipeline.SuggestRun(outcomes=(), failed=())
+
+    async def fake_handle(*args: Any, **kwargs: Any) -> str:
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_domain_contexts", spy)
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+    monkeypatch.setattr(entrypoint, "_handle_input", fake_handle)
+    reader = _Reader()
+    readers = {"food_safety": reader, "activity_safety": reader}
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="저녁 추천해줘",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+        **readers,
+    )
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+        **readers,
+    )
+
+    assert seen == [(reader, reader)] * 2
 
 
 # ── Food 카탈로그 · 추천 이력 어댑터와 문서 시드 (#442) ──────────────────────

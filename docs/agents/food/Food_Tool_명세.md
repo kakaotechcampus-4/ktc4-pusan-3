@@ -181,7 +181,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 닫힘 조건 추가: `safety_ok=False` → `meal_recommendation` · `nutrient_analysis` 가 `()`(`blocked.safety`, 모델 0회). 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석도 식품군 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다(#321, 10-11 변경). `daycare_meal` 은 식품 안내가 아니라서 안전 조회와 무관하다.
 
-안전 포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 안전 포트가 `UnwiredSafety` 라서, `build_gate` 가 **동의와 상관없이** 안전 조회 실패로 읽고 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 보지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다 — 생일 · 동의는 API 가 읽어 값으로 넘기므로(#372) 실제 동의 값이 들어와도 어댑터가 붙기 전에는 같다. 실제 안전 포트는 #405 의 `DbSafetyReader.food_safety`(active · kind 전부)이고, entrypoint 의 `food_safety` 자리로 들어간다(#416). 러너가 Food 에 넘기는 시점은 Food 쪽이 정한다 — #249 · 화면 3단계 · #411 PR 4-1 · 원재료성 행 · 음식 행 식품군이 끝난 뒤다(#411 "순서").
+안전 포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 안전 포트가 `UnwiredSafety` 라서, `build_gate` 가 **동의와 상관없이** 안전 조회 실패로 읽고 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 보지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다 — 생일 · 동의는 API 가 읽어 값으로 넘기므로(#372) 실제 동의 값이 들어와도 어댑터가 붙기 전에는 같다. 실제 안전 포트는 #405 의 `DbSafetyReader.food_safety`(active · kind 전부)이고, 러너와 05 가 `agent_ports.safety_readers()` 로 entrypoint 의 `food_safety` 자리에 넘긴다(#460).
 
 **`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — 읽은 안전 정보(`FoodRunState.safety`)가 빈 튜플이고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
 
