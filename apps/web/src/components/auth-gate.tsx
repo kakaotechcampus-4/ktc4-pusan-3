@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
+import { SessionChecking } from "@/components/session-checking";
 import { SessionUnreachable } from "@/components/session-unreachable";
 import { currentPath, rememberReturnPath } from "@/lib/auth";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
@@ -10,9 +11,9 @@ import { hasLiveSession, useSessionStore } from "@/stores/session";
 /**
  * 세션이 없으면 로그인 화면으로 되돌린다.
  *
- * 🚨 `hydrated` 전에는 아무것도 그리지 않는다. 앱을 켜면 토큰은 비어 있고 refresh 쿠키로
- *    되살리는 중이다 (`stores/session.ts`) — 그때 그리면 로그인한 사용자에게도 화면이 한 번
- *    깜빡이고 튕긴다.
+ * 🚨 `hydrated` 전에는 화면 대신 확인 중 표시(`SessionChecking`)만 그린다. 앱을 켜면 토큰은 비어
+ *    있고 refresh 쿠키로 되살리는 중이다 (`stores/session.ts`) — 그때 화면을 그리면 로그인한
+ *    사용자에게도 한 번 깜빡이고 튕긴다.
  * 🚨 세션을 **확인하지 못한 것**(서버에 닿지 못함)은 로그아웃이 아니다. 튕기지 않고 연결
  *    확인 화면을 세운다 (`SessionUnreachable`).
  *
@@ -33,7 +34,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     router.replace("/");
   }, [hydrated, live, restoreFailed, router]);
 
-  if (!hydrated) return null;
+  if (!hydrated) return <SessionChecking />;
   if (!live) return restoreFailed ? <SessionUnreachable /> : null;
   return <>{children}</>;
 }

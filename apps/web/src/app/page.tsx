@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { SessionChecking } from "@/components/session-checking";
 import { SessionUnreachable } from "@/components/session-unreachable";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -54,14 +55,14 @@ export default function LandingPage() {
   const live = useSessionStore(hasLiveSession);
   const restoreFailed = useSessionStore((s) => s.restoreFailed);
 
-  // 확인하는 동안은 아무것도 그리지 않는다 — 로그인 화면이 깜빡였다가 홈으로 넘어간다.
-  if (!hydrated) return null;
+  // 확인하는 동안 로그인 화면을 그리지 않는다 — 깜빡였다가 홈으로 넘어간다.
+  if (!hydrated) return <SessionChecking />;
   if (live) return <ResumeSession />;
   if (restoreFailed) return <SessionUnreachable />;
   return <LoginScreen />;
 }
 
-/** 세션이 살아 있다. 마지막에 본 아이의 홈으로 보낸다. 그리는 것은 없다. */
+/** 세션이 살아 있다. 마지막에 본 아이의 홈으로 보낸다. `/me` 를 받는 동안도 같은 확인 중 표시다. */
 function ResumeSession() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -83,7 +84,7 @@ function ResumeSession() {
     };
   }, [queryClient, router]);
 
-  return null;
+  return <SessionChecking />;
 }
 
 function LoginScreen() {
