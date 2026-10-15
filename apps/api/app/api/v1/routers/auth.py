@@ -37,7 +37,7 @@ from app.api.v1.schemas.auth import (
 )
 from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
-from app.core.constants import API_V1_PREFIX, AUTH_PREFIX, OAUTH_COOKIE_PATH
+from app.core.constants import API_V1_PREFIX, AUTH_COOKIE_PATH, AUTH_PREFIX
 from app.domains.consent.models import ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
@@ -81,6 +81,9 @@ provider_router = APIRouter(prefix=f"{AUTH_PREFIX}/{{provider}}", tags=["auth"])
 """
 
 STATE_COOKIE = "oauth_state"
+
+REFRESH_COOKIE = "icatch_rt"
+"""refresh 토큰을 싣는 쿠키 (#466). 웹 JS 가 읽지 못하는 HttpOnly 라 앱을 꺼도 남는다."""
 
 _CLIENTS = frozenset({"web", "app"})
 """복귀 대상은 URL 이 아니라 열거값이다. URL 을 받으면 그 순간 오픈 리다이렉트다 (§2-3)."""
@@ -169,7 +172,7 @@ async def start(
         max_age=settings.OAUTH_STATE_TTL,
         # Path 를 좁혀 인증 외 요청에 실리지 않게 한다. 값은 상수 한 곳에서 온다 —
         # 마운트 지점이 바뀌면 쿠키 Path 도 함께 따라와야 한다 (§5-5).
-        path=OAUTH_COOKIE_PATH,
+        path=AUTH_COOKIE_PATH,
         httponly=True,
         secure=True,
         # Lax 는 크로스 사이트 최상위 GET 이동에 실린다. 카카오 → 콜백이 그 경우다.
@@ -298,7 +301,9 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     """
     await delete_session(session, session_id=auth.session_id)
     await session.commit()
-    return Response(status_code=204)
+    response = Response(status_code=204)
+    _expire_refresh(response)
+    return response
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -311,7 +316,7 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
     responses={400: {"model": ErrorEnvelope}, 401: {"model": ErrorEnvelope}},
 )
 async def withdraw(
-    body: WithdrawRequest, auth: CurrentParent, session: SessionDep
+    body: WithdrawRequest, auth: CurrentParent, session: SessionDep, response: Response
 ) -> WithdrawResponse:
     """탈퇴 — 유예 없이 바로 지운다. 등록 보호자면 아이와 기록까지 지운다.
 
@@ -329,6 +334,7 @@ async def withdraw(
     if withdrawn is None:
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
     await session.commit()
+    _expire_refresh(response)
 
     if withdrawn.kakao_user_id is not None:
         await _unlink_kakao(withdrawn.kakao_user_id)
@@ -412,9 +418,9 @@ async def exchange(
         await session.commit()
         return ConsentRequiredResponse(consent_code=consent_code)
 
-    response = await _issue_session(session, parent_id=consumed.parent_id, is_new=False)
+    issued = await _issue_session(session, response, parent_id=consumed.parent_id, is_new=False)
     await session.commit()
-    return response
+    return issued
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -506,9 +512,9 @@ async def signup(
             policy_version_id=policy_version_id,
         )
 
-    response = await _issue_session(session, parent_id=parent.id, is_new=True)
+    issued = await _issue_session(session, response, parent_id=parent.id, is_new=True)
     await session.commit()
-    return response
+    return issued
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -518,11 +524,14 @@ async def signup(
 
 async def _issue_session(
     session: SessionDep,
+    response: Response,
     *,
     parent_id: UUID,
     is_new: bool,
 ) -> SessionResponse:
     """로그인 1건(refresh)과 access 1건을 만들고 응답을 짠다 — 교환과 가입이 같이 쓴다 (§3-4).
+
+    access 는 본문으로, refresh 는 쿠키로 나간다 (#466).
 
     🚨 토큰 원문은 저장되지 않는다. 남기는 것은 해시뿐이고, 원문은 이 응답에 한 번
        실려 나가면 끝이다 (§5 · A-18).
@@ -535,15 +544,18 @@ async def _issue_session(
 
     now = datetime.now(UTC)
     absolute_expires_at = now + timedelta(seconds=settings.REFRESH_ABSOLUTE_TTL)
+    refresh = secrets.token_urlsafe(32)
+    refresh_expires_at = min(
+        now + timedelta(seconds=settings.REFRESH_IDLE_TTL), absolute_expires_at
+    )
     session_id = await create_session(
         session,
         parent_id=parent_id,
-        refresh_hash=hash_token(secrets.token_urlsafe(32)),
-        refresh_expires_at=min(
-            now + timedelta(seconds=settings.REFRESH_IDLE_TTL), absolute_expires_at
-        ),
+        refresh_hash=hash_token(refresh),
+        refresh_expires_at=refresh_expires_at,
         absolute_expires_at=absolute_expires_at,
     )
+    _set_refresh(response, refresh, max_age=int((refresh_expires_at - now).total_seconds()))
     token = secrets.token_urlsafe(32)
     await create_access(
         session,
@@ -656,9 +668,36 @@ def _decode_state(raw: str | None) -> tuple[str, str, bytes] | None:
     return state, target, bind_hash
 
 
+def _set_refresh(response: Response, refresh: str, *, max_age: int) -> None:
+    """refresh 를 쿠키로 심는다 (#466).
+
+    🚨 max_age 를 빼지 않는다. 빠지면 세션 쿠키가 되어 앱을 끌 때 같이 사라진다 —
+       sessionStorage 때문에 매번 다시 로그인하던 지금 증상이 그대로 돌아온다.
+    🚨 Domain 을 주지 않는다. host-only 로 API 호스트에만 저장된다.
+    SameSite=Strict 여도 웹(icatch.ai.kr)이 API(api.icatch.ai.kr)를 부를 때는 실린다 — ai.kr 이
+    Public Suffix List 에 있어 둘이 같은 사이트다. 다른 사이트에서 오는 요청에는 실리지 않는다.
+    """
+    response.set_cookie(
+        REFRESH_COOKIE,
+        refresh,
+        max_age=max_age,
+        path=AUTH_COOKIE_PATH,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+    )
+
+
+def _expire_refresh(response: Response) -> None:
+    """refresh 쿠키를 지운다 — 로그아웃 · 탈퇴. 속성이 심을 때와 같아야 지워진다."""
+    response.delete_cookie(
+        REFRESH_COOKIE, path=AUTH_COOKIE_PATH, httponly=True, secure=True, samesite="strict"
+    )
+
+
 def _expire_state(response: RedirectResponse) -> RedirectResponse:
     """쓴 쿠키는 콜백에서 만료시킨다 (§3-3 5번). Path 가 심을 때와 같아야 지워진다."""
-    response.delete_cookie(STATE_COOKIE, path=OAUTH_COOKIE_PATH)
+    response.delete_cookie(STATE_COOKIE, path=AUTH_COOKIE_PATH)
     return response
 
 

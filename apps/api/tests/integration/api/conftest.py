@@ -15,6 +15,18 @@ Bearer = tuple[dict[str, str], uuid.UUID]
 """(Authorization 헤더, parent_id)."""
 
 
+def cookie_header(response, name: str) -> str | None:
+    """응답의 Set-Cookie 중 그 이름의 줄 하나. 없으면 None.
+
+    httpx 쿠키 저장소를 거치지 않고 헤더를 그대로 본다 — Secure 쿠키는 http 테스트 주소로
+    다시 실리지 않아, 저장소로는 속성이 맞는지 볼 수 없다.
+    """
+    for header in response.headers.get_list("set-cookie"):
+        if header.startswith(f"{name}="):
+            return header
+    return None
+
+
 async def seed_login(
     session: AsyncSession,
     *,

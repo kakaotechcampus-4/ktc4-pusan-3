@@ -27,7 +27,7 @@ from app.domains.identity.models import (
     SessionAccess,
 )
 from app.domains.policy.models import PolicyVersion
-from tests.integration.api.conftest import seed_login
+from tests.integration.api.conftest import cookie_header, seed_login
 
 BIND = "A" * 43
 OTHER_BIND = "B" * 43
@@ -802,6 +802,43 @@ async def issue_session(db_client, session) -> str:
     ).json()["token"]
 
 
+async def test_session_sets_a_refresh_cookie_that_outlives_the_app(db_client, session):
+    """🚨 로그인 응답이 refresh 를 쿠키로 심는다 (#466).
+
+    Max-Age 가 빠지면 세션 쿠키가 되어 앱을 끌 때 같이 사라진다 — sessionStorage 때문에
+    매번 다시 로그인하던 증상이 그대로 돌아온다. 원문은 쿠키에만 있고 DB 에는 해시만 있다 (A-18).
+    """
+    await seed_handoff(session, code="handoff-code")
+    consent_code = (
+        await db_client.post("/api/v1/auth/kakao", json={"code": "handoff-code", "bind": BIND})
+    ).json()["consent_code"]
+    response = await db_client.post(
+        "/api/v1/auth/kakao/signup",
+        json={
+            "consent_code": consent_code,
+            "bind": BIND,
+            "nickname": NICKNAME,
+            "consents": REQUIRED_CONSENTS,
+        },
+    )
+
+    header = cookie_header(response, "icatch_rt")
+    assert header is not None
+    attrs = {part.strip().split("=", 1)[0].lower() for part in header.split(";")[1:]}
+    assert {"httponly", "secure", "path", "max-age", "samesite"} <= attrs
+    assert "domain" not in attrs
+    assert "Path=/api/v1/auth" in header
+    assert "Max-Age=2592000" in header
+    assert "SameSite=strict" in header
+
+    refresh = header.split(";")[0].split("=", 1)[1]
+    stored = await session.scalar(
+        select(AuthSession.refresh_hash).where(AuthSession.refresh_hash == hash_token(refresh))
+    )
+    assert stored == hash_token(refresh)
+    assert stored != refresh.encode()
+
+
 async def test_logout_invalidates_the_token_immediately(db_client, session):
     """🚨 A-15. 로그아웃 직후 같은 토큰은 401. 지연이 있으면 불투명 토큰을 고른 이유가 사라진다."""
     token = await issue_session(db_client, session)
@@ -812,6 +849,7 @@ async def test_logout_invalidates_the_token_immediately(db_client, session):
     after = await db_client.post("/api/v1/auth/logout", headers=headers)
 
     assert logout.status_code == 204
+    assert "Max-Age=0" in cookie_header(logout, "icatch_rt")
     assert after.status_code == 401
     assert after.json()["error"]["code"] == "unauthenticated"
     # 세션 행을 지우면 딸린 access 도 CASCADE 로 같이 사라진다.

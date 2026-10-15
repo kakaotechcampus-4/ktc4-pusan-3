@@ -35,7 +35,13 @@ from app.domains.policy.models import PolicyVersion
 from app.domains.schedule.models import SharedPhoto
 from app.infra.db.session import engine
 from app.integrations.kakao.client import KakaoApiError
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child, seed_login
+from tests.integration.api.conftest import (
+    Bearer,
+    cookie_header,
+    issue_bearer,
+    link_child,
+    seed_login,
+)
 
 URL = "/api/v1/auth/withdraw"
 ACK = {"acknowledged_immediate_deletion": True}
@@ -155,6 +161,8 @@ async def test_member_withdraw_keeps_child_and_shared_records(
     await session.rollback()
 
     assert resp.status_code == 200
+    # 이 기기의 refresh 쿠키도 지운다 — 세션 행은 이미 없어 남겨도 401 이지만, 남길 이유가 없다
+    assert "Max-Age=0" in cookie_header(resp, "icatch_rt")
     assert await session.get(Parent, member) is None
     assert await session.get(Child, cid) is not None
     await session.refresh(photo)
