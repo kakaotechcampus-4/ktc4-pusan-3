@@ -2,7 +2,9 @@
 `app/core/nutrition_pick.py`, 호출 규칙은 `docs/agents/shared/외부연결_계획.md` §2.
 """
 
-from app.core.nutrition_pick import nutrition_facts_by_key
+from dataclasses import replace
+
+from app.core.nutrition_pick import nutrition_facts_by_key, pick_nutrition
 from tests.unit.agents.food.test_nutrition_source import row  # 기존 픽스처 재사용
 
 
@@ -26,3 +28,13 @@ def test_괄호가_붙은_이름은_따로_묶인다() -> None:
 def test_쓸_수_없는_행만_있는_이름은_키가_없다() -> None:
     # 상용제품 · 핵심 영양 칸이 빈 행은 pick_nutrition 이 고르지 않는다
     assert nutrition_facts_by_key([row("백미밥", cls="대표")]) == {}
+
+
+def test_고른_행의_DB_그룹과_대분류_코드를_싣는다() -> None:
+    # 원재료성 행은 대분류 이름이 비고 코드만 오기도 한다 — 식품군 대응표가 코드로 한 번 더 찾는다
+    milk = replace(row("우유", group="원재료성"), category=None, category_code="13")
+
+    picked = pick_nutrition([milk], "우유")
+
+    assert picked is not None
+    assert (picked.db_group, picked.category, picked.category_code) == ("원재료성", "", "13")

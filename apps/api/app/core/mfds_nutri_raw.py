@@ -39,6 +39,9 @@ class RawNutriRow:
     db_group: str  # 음식 · 가공식품 · 원재료성 …
     db_class: str  # 품목대표 · 상용제품
     category: str | None = None  # 식품 대분류
+    # 식품 대분류 코드(FOOD_CAT1_CD). 원재료성은 이름이 비고 코드만 오는 행이 있다(우유 · 달걀 ·
+    # 닭고기). 코드 뜻은 DB 그룹마다 다르다 — 원재료성 09 는 육류, 음식 09 는 전·적 및 부침류다
+    category_code: str | None = None
     ref_name: str | None = None  # 대표식품명
     source: str | None = None  # 출처
     researched_on: str | None = None  # 조사 일자 원문

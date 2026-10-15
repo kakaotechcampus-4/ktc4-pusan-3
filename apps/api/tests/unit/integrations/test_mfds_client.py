@@ -133,6 +133,15 @@ async def test_실제_응답을_원문_행으로_옮긴다() -> None:
     }
 
 
+async def test_대분류_코드를_원문_그대로_싣는다() -> None:
+    rows = await build_client(lambda request: ok(SAMPLE)).nutrition_rows(name="된장찌개")
+
+    dish, _, milk = rows
+    assert dish.category_code == "06"
+    # 우유는 대분류 이름이 비고 코드만 온다(실제 응답) — 코드가 없으면 식품군을 못 찾는다
+    assert (milk.db_group, milk.category, milk.category_code) == ("원재료성", None, "13")
+
+
 async def test_원재료성_행은_1인분_중량이_없다() -> None:
     rows = await build_client(lambda request: ok(SAMPLE)).nutrition_rows(name="우유")
 

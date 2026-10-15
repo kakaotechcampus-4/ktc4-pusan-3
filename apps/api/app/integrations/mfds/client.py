@@ -17,6 +17,8 @@
   - 응답 시간은 페이지 크기에 따라 다르다. 1 ~ 5행은 약 1초, 100행은 3 ~ 4초이고, 느린 때는 10초를
     넘기도 한다(17초 관측). 호출하는 쪽이 timeout 을 건다.
   - 이름 없이 품목대표만 받으면 100행 1 ~ 4초 · 한 번에 최대 500행 · 전체 8,807행(own_table FT-19).
+  - 품목대표 전체에서 원재료성 3,605행 중 514행은 `FOOD_CAT1_NM` 이 비고 `FOOD_CAT1_CD` 만 온다
+    (`09` 육류 · `10` 난류 · `13` 우유 및 유제품류 · `12` 해조류). 코드 뜻은 DB 그룹마다 다르다.
 
 🚨 서비스키는 요청 **주소**에 들어간다. httpx 예외 문구(연결 실패 · 시간 초과)에도 그 주소가
    있다. 그래서 밖으로는 `MfdsApiError` 만 나가고, 문구에는 어느 단계에서 실패했는지(예외 종류 ·
@@ -222,6 +224,7 @@ def _row(raw: dict[str, Any]) -> RawNutriRow:
         db_group=_text(raw.get("DB_GRP_NM")) or "",
         db_class=_text(raw.get("DB_CLASS_NM")) or "",
         category=_text(raw.get("FOOD_CAT1_NM")),
+        category_code=_text(raw.get("FOOD_CAT1_CD")),
         ref_name=_text(raw.get("FOOD_REF_NM")),
         source=_text(raw.get("SUB_REF_NAME")),
         researched_on=_text(raw.get("RESEARCH_YMD")),
