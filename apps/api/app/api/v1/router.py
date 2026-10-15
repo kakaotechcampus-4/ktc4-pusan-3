@@ -36,8 +36,9 @@ from app.api.v1.routers import (
 )
 
 public_router = APIRouter()
-"""무인증. 로그인 자체를 시작·완료하는 5개와, 가입 전 동의 화면이 약관을 읽는
-GET /policies · 정본 HTML, 그리고 개인정보 처리방침 정본 둘 (루트 CLAUDE.md §9 · #91 · #172 · #221).
+"""무인증. 로그인 자체를 시작·완료하는 5개, 쿠키로 access 를 다시 받는 refresh(#466),
+가입 전 동의 화면이 약관을 읽는 GET /policies · 정본 HTML, 그리고 개인정보 처리방침 정본 둘
+(루트 CLAUDE.md §9 · #91 · #172 · #221 · #466).
 
 여기에 라우터를 붙이는 것은 보안 예외 목록을 늘리는 일이다. 늘려야 한다면 구현 전에
 그 목록과 API 계약을 먼저 고친다.
@@ -63,6 +64,8 @@ protected_router.include_router(diary.router)
 protected_router.include_router(event_items.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
+# refresh 가 provider_router 보다 먼저다 — 늦으면 /auth/refresh 가 provider="refresh" 로 잡힌다.
+public_router.include_router(auth.refresh_router)
 public_router.include_router(auth.provider_router)
 public_router.include_router(policies.router)
 public_router.include_router(privacy_policy.router)

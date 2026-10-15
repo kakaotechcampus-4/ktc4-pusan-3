@@ -92,9 +92,11 @@ class Settings(AgentLLMSettings):
     #   ACCESS_TTL           — Bearer 로 싣는 access. 웹은 메모리에만 둔다
     #   REFRESH_IDLE_TTL     — refresh 를 안 쓰고 이만큼 지나면 만료. 회전마다 연장
     #   REFRESH_ABSOLUTE_TTL — 로그인 시각부터 이만큼이 상한. 연장하지 않는다
+    #   REFRESH_REUSE_GRACE  — 회전 직후 직전 refresh 를 동시 요청으로 보아주는 시간
     ACCESS_TTL: int = 900
     REFRESH_IDLE_TTL: int = 2592000
     REFRESH_ABSOLUTE_TTL: int = 7776000
+    REFRESH_REUSE_GRACE: int = 30
     HANDOFF_TTL: int = 120
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600

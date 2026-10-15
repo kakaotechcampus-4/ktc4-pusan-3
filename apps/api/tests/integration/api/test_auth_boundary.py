@@ -1,7 +1,7 @@
 """인증 경계와 CORS — 루트 CLAUDE.md §9 · 이슈 #34
 
 여기서 지키는 것 둘.
-    ① 무인증으로 열린 경로가 보안 목록 9개를 넘지 않는다
+    ① 무인증으로 열린 경로가 보안 목록 10개를 넘지 않는다
     ② 브라우저가 부를 수 있는 오리진이 환경변수로 정한 목록뿐이다
 
 ①이 중요한 이유 — 인증을 라우터마다 손으로 다는 구조에서는 한 번 깜빡한 엔드포인트가
@@ -26,12 +26,13 @@ PUBLIC_ALLOWLIST = {
     ("GET", "/api/v1/auth/{provider}/callback"),
     ("POST", "/api/v1/auth/{provider}"),
     ("POST", "/api/v1/auth/{provider}/signup"),
+    ("POST", "/api/v1/auth/refresh"),
     ("GET", "/api/v1/policies"),
     ("GET", "/api/v1/policies/{scope}/{version}"),
     ("GET", "/api/v1/privacy-policy"),
     ("GET", "/api/v1/privacy-policy/{version}"),
 }
-"""루트 CLAUDE.md §9 의 무인증 9개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
+"""루트 CLAUDE.md §9 의 무인증 10개. 이 집합을 늘리려면 그 목록과 API 계약을 먼저 고친다.
 
 `GET /policies` 는 로그인용은 아니지만 가입 전 동의 화면이 약관을 그리려고 부른다 (#91).
 `GET /policies/{scope}/{version}` 은 그 화면의 "전문 보기" 가 여는 정본 HTML 이다 (#172).
@@ -92,7 +93,7 @@ def test_route_walk_actually_sees_the_routes():
 
 
 def test_public_routes_never_exceed_the_security_allowlist():
-    """🚨 무인증으로 열린 경로는 §9 의 9개를 넘지 않는다 (루트 CLAUDE.md §9)."""
+    """🚨 무인증으로 열린 경로는 §9 의 10개를 넘지 않는다 (루트 CLAUDE.md §9)."""
     assert public_routes() <= PUBLIC_ALLOWLIST
 
 

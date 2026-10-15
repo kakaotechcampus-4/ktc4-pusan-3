@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.identity.models import (
@@ -108,8 +108,74 @@ async def find_session_by_access_hash(
     return SessionRow(*row) if row is not None else None
 
 
+@dataclass(frozen=True)
+class RefreshRow:
+    """refresh 판정에 필요한 세션 칸. 회전 · 유예 · 만료를 라우터가 판정한다."""
+
+    session_id: uuid.UUID
+    refresh_hash: bytes
+    rotated_at: datetime | None
+    refresh_expires_at: datetime
+    absolute_expires_at: datetime
+
+
+async def lock_session_by_refresh(
+    session: AsyncSession,
+    *,
+    refresh_hash: bytes,
+) -> RefreshRow | None:
+    """현재 refresh 또는 직전 refresh 가 이 해시인 세션을 잠그고 찾는다 (#466).
+
+    둘 중 무엇에 걸렸는지는 부르는 쪽이 `row.refresh_hash == refresh_hash` 로 가른다.
+
+    🚨 FOR UPDATE 다. 같은 refresh 로 두 요청이 동시에 오면 한쪽이 회전을 끝낼 때까지
+       다른 쪽이 기다린다. 기다린 쪽은 바뀐 행으로 조건을 다시 보고(READ COMMITTED) 직전
+       refresh 로 걸린다 — 두 요청이 같은 refresh 로 둘 다 회전하는 일이 없다.
+    """
+    stmt = (
+        select(
+            AuthSession.id,
+            AuthSession.refresh_hash,
+            AuthSession.rotated_at,
+            AuthSession.refresh_expires_at,
+            AuthSession.absolute_expires_at,
+        )
+        .where(
+            or_(
+                AuthSession.refresh_hash == refresh_hash,
+                AuthSession.prev_refresh_hash == refresh_hash,
+            )
+        )
+        .with_for_update()
+    )
+    row = (await session.execute(stmt)).first()
+    return RefreshRow(*row) if row is not None else None
+
+
+async def rotate_refresh(
+    session: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    old_hash: bytes,
+    new_hash: bytes,
+    rotated_at: datetime,
+    refresh_expires_at: datetime,
+) -> None:
+    """refresh 를 새 값으로 바꾸고 방금 쓴 값을 직전 refresh 로 남긴다 (#466)."""
+    await session.execute(
+        update(AuthSession)
+        .where(AuthSession.id == session_id)
+        .values(
+            refresh_hash=new_hash,
+            prev_refresh_hash=old_hash,
+            rotated_at=rotated_at,
+            refresh_expires_at=refresh_expires_at,
+        )
+    )
+
+
 async def delete_session(session: AsyncSession, *, session_id: uuid.UUID) -> None:
-    """세션 행 1건 삭제 — 로그아웃 (§5-3 · A-15).
+    """세션 행 1건 삭제 — 로그아웃 · refresh 만료 · 재사용 탐지 (§5-3 · A-15 · #466).
 
     🚨 id 로만 지운다. parent_id 로 지우면 같은 계정의 다른 기기 세션까지 끊긴다.
        폐기를 행 삭제로 하는 이유는 §5-3 — 세션은 증빙이 아니라 유출 표면이다.
