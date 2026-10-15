@@ -16,8 +16,8 @@ from app.api.deps.auth import CurrentParent
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
+from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.routers.affinities import affinity_out
-from app.api.v1.routers.observations import to_observation_outs
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.corrections import (
     Cascade,

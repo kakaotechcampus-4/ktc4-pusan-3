@@ -23,6 +23,7 @@ import logging
 import traceback
 from collections.abc import Awaitable, Callable
 from datetime import date
+from typing import Any
 from uuid import UUID
 
 from app.agents import entrypoint
@@ -114,7 +115,9 @@ def agent_job(
     """
 
     async def job(channel: RunChannel) -> None:
-        relay = translate.relay(channel)
+        # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
+        saved_rows: dict[tuple[str, str], Any] = {}
+        relay = translate.relay(channel, saved_rows=saved_rows)
 
         def emit(event: entrypoint.Event) -> None:
             if isinstance(event, entrypoint.PendingReply):
@@ -161,6 +164,8 @@ def agent_job(
                 await session.commit()
                 if store.wrote:
                     channel.memory_committed = True
+                # pipeline 은 이 commit 뒤에 Saved 를 낸다 — 그때 화면에 실을 행을 읽어 둔다
+                saved_rows.update(await _read_saved(session, child_id, store.created, channel))
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
@@ -216,6 +221,56 @@ def agent_job(
                     )
 
     return job
+
+
+async def _read_saved(
+    session: Any, child_id: UUID, created: list[tuple[str, UUID]], channel: RunChannel
+) -> dict[tuple[str, str], Any]:
+    """commit 된 관찰을 다시 읽어 07 기록 탭과 같은 모양으로 (#471).
+
+    키는 `Saved.refs` 의 (kind, id)다. 같은 run 에서 지운 관찰은 읽히지 않아 값이 None 이다 —
+    번역기가 "지워서 없음" 과 "키가 어긋나 없음" 을 가른다.
+    🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 저장은 이미 확정됐다. failed 로 끝내면 오히려
+       "저장 안 됐다" 로 보인다. `saved` 만 빠지고 ERROR 로그를 남긴다(원문 없이, 루트 §2).
+    🚨 `affinity` 는 Curator 가 묶기 전(commit 직후)이라 보통 null 이다 — 04 화면은 그리지 않는다.
+    """
+    from app.api.quota import today_kst
+    from app.api.v1.observation_outs import to_observation_outs
+    from app.domains.memory.observation.repository import find_observation
+
+    if not created:
+        return {}
+    try:
+        records = [
+            record
+            for domain, oid in created
+            if (
+                record := await find_observation(
+                    session, domain=domain, child_id=child_id, observation_id=oid
+                )
+            )
+        ]
+        outs = await to_observation_outs(session, records, today=today_kst())
+    except Exception as exc:
+        # ERROR 다 — 스키마가 바뀐 코드 버그도 여기로 와서, 경고면 "saved 빠짐" 으로만 묻힌다.
+        # 원문 대신 예외 종류와 코드 위치만 남긴다 (_guarded 와 같은 방식)
+        log.error(
+            "run %s 의 저장한 관찰을 다시 읽지 못했다 (%s) — saved 를 건너뛴다\n%s",
+            channel.run_id,
+            type(exc).__name__,
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
+        # rollback 까지 실패해도 commit() 밖으로 내보내지 않는다 — 내보내면 추천 단계가 빠진다.
+        # 같은 세션을 받는 도메인 Agent 가 뒤이어 실패할 수 있어서 원인은 남긴다(종류만)
+        try:
+            await session.rollback()
+        except Exception as rollback_exc:
+            log.warning(
+                "run %s 의 rollback 도 실패했다 (%s)", channel.run_id, type(rollback_exc).__name__
+            )
+        return {}
+    deleted = {(f"observation_{domain}", str(oid)): None for domain, oid in created}
+    return deleted | {(out.kind, out.id): out for out in outs}
 
 
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:

@@ -509,6 +509,55 @@ class TestWroteFlagStaysFalse:
         assert store.wrote is False
 
 
+class TestCreatedObservations:
+    """run 이 만든 관찰 목록 (#471) — 러너가 commit 뒤에 이 행들을 읽어 화면 `saved` 로 보낸다."""
+
+    async def test_create_한_관찰만_만든_순서대로_남는다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        assert store.created == []
+        food = await store.create_observation(
+            domain="food",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="사과 잘 먹었어",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"subject": "사과", "polarity": 1, "confidence_source": "parent_direct"},
+        )
+        health = await store.create_observation(
+            domain="health",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="기침해",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"symptom": ["기침"], "confidence_source": "parent_direct"},
+        )
+
+        # 고치기 · 지우기는 새로 만든 기록이 아니다 — "저장됨" 목록에 넣지 않는다
+        await store.update_observation(
+            domain="food", observation_id=food.id, fields={"subject": "배"}
+        )
+        assert store.created == [("food", UUID(food.id)), ("health", UUID(health.id))]
+
+    async def test_고치기_지우기만_한_store_는_비어_있다(
+        self, session: AsyncSession, family: tuple, obs_of_a: str
+    ) -> None:
+        _, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+
+        await store.update_observation(
+            domain="food", observation_id=obs_of_a, fields={"subject": "배"}
+        )
+        await store.delete_observation(domain="food", observation_id=obs_of_a)
+
+        assert store.wrote is True
+        assert store.created == []
+
+
 class TestInvalidUuidUpdateDefence:
     async def test_잘못된_id로_update하면_None(self, session: AsyncSession, family: tuple) -> None:
         _, child_a, _ = family

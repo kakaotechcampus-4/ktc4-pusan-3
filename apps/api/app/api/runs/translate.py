@@ -4,12 +4,15 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 글자만 알아듣는다. 화면이 아는 이름은 프론트 `apps/web/src/lib/api/sse.ts` 의 `RunEvent` 를 기준으로
 본다 — HTML 계약서는 9/21 부터 갱신을 보류했고, SSE 는 스웨거로 그리기 어렵다.
 
+🚨 `Saved` 는 id 만 싣고 오는데 화면은 관찰 내용 전체(`observations`)를 원한다 (#471).
+   러너가 commit 직후 그 run 이 만든 행을 읽어 `saved_rows` 에 넣어 두고, 여기서는 refs 순서대로
+   꺼내 싣기만 한다 — emit 은 sync 라 여기서 DB 를 읽을 수 없다. 읽어 둔 행이 없는 ref(같은 run 에서
+   지웠거나 읽기에 실패한 것)는 건너뛰고, 하나도 없으면 보내지 않는다(빈 "기록 0건 저장됨" 금지).
+   같은 run 에서 지운 것은 러너가 None 으로 표시해 조용히 빼고, 키가 아예 없으면 경고를 남긴다.
+   🚨 pipeline 은 commit 이 끝난 뒤에 `Saved` 를 낸다. 받은 순서대로 보내기만 하고 앞당기지 않는다 —
+      화면이 "저장됐어요"로 본 기록은 DB에 있어야 한다.
+
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
-   - `Saved` — 화면은 관찰 내용 전체(`observations`)를 원하는데 id 만 실려 온다. 8단계에서 행을
-     읽어 채울 때까지 보내지 않는다.
-     🚨 보내기 시작할 때도 기록 단계 commit 뒤여야 한다. pipeline은 commit 이 끝난 뒤에
-        `Saved` 를 낸다. 여기서는 받은 순서대로 보내기만 하고, 미리 만들어 앞당겨 보내지 않는다.
-        화면이 "저장됐어요"로 본 기록은 DB에 있어야 한다.
    - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다. 도메인 Agent 결과 중
      화면에 갈 것은 바로 뒤에 오는 `AgentResult`(agent_result, #227)가 싣는다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
@@ -23,6 +26,10 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
+import logging
+from collections.abc import Mapping
+from typing import Any
+
 from app.agents.entrypoint import (
     AgentResult,
     Done,
@@ -33,15 +40,38 @@ from app.agents.entrypoint import (
     Guidance,
     MemoryNote,
     Partial,
+    Saved,
     Step,
     Unavailable,
 )
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 
+log = logging.getLogger(__name__)
 
-def to_sse(event: Event) -> sse.SseEvent | None:
+SavedRows = Mapping[tuple[str, str], Any]
+"""(kind, id) → 러너가 commit 뒤에 읽어 둔 화면 모양 행(`observation_outs`). model_dump 만 쓴다."""
+
+
+def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent | None:
     """이벤트 하나를 화면용 (이름, 내용) 으로. 화면에 보낼 게 아니면 None."""
+    if isinstance(event, Saved):
+        rows = saved_rows or {}
+        keys = [(ref.kind, ref.id) for ref in event.refs]
+        # None 은 러너가 "같은 run 에서 지워져 읽히지 않음" 으로 표시한 것 — 정상이라 조용히 뺀다.
+        # 키 자체가 없으면 refs 와 러너의 키 형식이 어긋난 것이다 — 조용히 거르면 #471 이 흔적 없이
+        # 돌아온다(화면이 다시 "저장하지 않았어요")
+        missing = [kind for kind, oid in keys if (kind, oid) not in rows]
+        if missing:
+            log.warning(
+                "Saved refs %d건을 읽어 둔 행에서 찾지 못했다 (kind=%s)",
+                len(missing),
+                ",".join(sorted(set(missing))),
+            )
+        observations = [
+            rows[key].model_dump(mode="json") for key in keys if rows.get(key) is not None
+        ]
+        return ("saved", {"observations": observations}) if observations else None
     if isinstance(event, Step):
         return "step", {"index": event.index, "total": event.total, "label": event.label}
     if isinstance(event, Failed):
@@ -109,8 +139,10 @@ def to_sse(event: Event) -> sse.SseEvent | None:
     return None
 
 
-def relay(channel: RunChannel) -> Emit:
+def relay(channel: RunChannel, *, saved_rows: SavedRows | None = None) -> Emit:
     """pipeline 에 넘길 emit 을 만든다. 번역해서 채널에 넣는다.
+
+    saved_rows — 러너의 commit 이 채우는 dict. `Saved` 가 올 때 읽는다 (#471).
 
     sync 다 — pipeline 은 emit 을 기다리지(await) 않고, 채널의 publish 도 sync 라 그대로 이어진다.
     끝 신호 뒤에 오는 것(pipeline 이 Failed 뒤에 보내는 Done 등)은 채널이 버린다.
@@ -126,7 +158,7 @@ def relay(channel: RunChannel) -> Emit:
     """
 
     def emit(event: Event) -> None:
-        translated = to_sse(event)
+        translated = to_sse(event, saved_rows=saved_rows)
         if translated is None:
             return
         sse.frame(*translated)  # JSON 으로 못 바뀌면 여기서 터진다 — 채널에 넣기 전에
