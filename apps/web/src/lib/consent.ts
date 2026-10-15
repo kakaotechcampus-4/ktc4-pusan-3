@@ -168,9 +168,14 @@ export function consentChoices(
  */
 const NOT_ASKED_YET: ReadonlySet<string> = new Set(["location"]);
 
-/** 화면에 세울 동의만 — `NOT_ASKED_YET` 을 뺀다. 가입 화면과 10 설정이 같은 기준을 쓴다. */
+/**
+ * 화면에 세울 동의만 — `NOT_ASKED_YET` 을 뺀다. 가입 화면과 10 설정이 같은 기준을 쓴다.
+ *
+ * 🚨 **선택 동의만 뺀다.** 서버가 그 scope 를 필수로 바꾸면 이름이 목록에 있어도 세운다 —
+ *    숨기면 서버는 필수 동의가 빠졌다고 `consent_required` 로 막는데, 보호자는 체크할 칸이 없다.
+ */
 export function askedChoices(choices: readonly ConsentChoice[]): ConsentChoice[] {
-  return choices.filter(({ policy }) => !NOT_ASKED_YET.has(policy.scope));
+  return choices.filter(({ policy }) => policy.required || !NOT_ASKED_YET.has(policy.scope));
 }
 
 /**
@@ -211,7 +216,7 @@ export function toggleConsent(
  * 필수 항목이 전부 체크됐는가.
  *
  * 🚨 **막는 것은 `required` 뿐이다.** 목록 길이로 세지 않는다 — 선택 동의(`location`)가
- *    가입 화면에 서 있어서, 길이로 세면 그것까지 필수가 된다.
+ *    가입 화면에 서 있을 수 있어서, 길이로 세면 그것까지 필수가 된다.
  */
 export function requiredConsentsChecked(
   choices: readonly ConsentChoice[],

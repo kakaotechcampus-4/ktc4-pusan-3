@@ -184,6 +184,14 @@ describe("지금은 묻지 않는 동의 (#221)", () => {
     ]);
     expect(askedChoices(choices)).toHaveLength(4);
   });
+
+  it("🚨 숨기는 이름이어도 필수로 오면 남긴다 — 숨기면 가입이 consent_required 에 막혀 고칠 길이 없다", () => {
+    const choices = consentChoices([policy("service_terms"), policy("location")]);
+    expect(askedChoices(choices).map((c) => c.policy.scope)).toEqual([
+      "service_terms",
+      "location",
+    ]);
+  });
 });
 
 describe("전문 주소", () => {
