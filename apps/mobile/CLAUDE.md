@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 토큰을 들고 있지 않다. 상태를 관리하지 않는다.
 
@@ -52,7 +52,8 @@ Expo autolinking 이 pnpm 의 격리된 심볼릭 링크 구조에서 네이티�
 App.tsx                      웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
 index.ts                     registerRootComponent
 src/config.ts                WEB_URL · 허용 출처 판정
-src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다
+src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다 (키보드가 열리면 아래는 0)
+src/native/back-press.ts     물리 뒤로가기 판정 — 히스토리 / 종료 안내 / 종료. 셸이 아는 웹 경로(하단 네비 네 칸)
 src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth/callback 변환
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
 src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
@@ -116,6 +117,17 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   (그냥 화면 `canvas` · 하단 네비 `surface-muted` · 시트가 열리면 딤). 셸은 그중 하나밖에 모르니
   위아래에 흰 띠가 남았다 (#133). 화면별로 색을 바꿔 칠하는 것은 §1 을 깨는 길이다 — 자리만 비워 준다.
   ⚠️ 셸이 그리는 **연결 실패 화면**은 예외다. 그건 셸의 화면이라 거기서는 `SafeAreaView` 가 직접 먹는다.
+- 🚨 **키보드가 열려 있으면 아래 여백을 0 으로 넘긴다** (#462). 웹뷰 바닥이 키보드 윗변으로 올라오고 시스템 바는
+  키보드 아래에 가려지는데, `useSafeAreaInsets()` 의 아래 값은 키보드와 무관하게 그대로라 하단 네비가 키보드 위에
+  빈 띠를 남겼다. `Keyboard` 이벤트로 `shellInsets()` 를 바꾼다. ⚠️ Android 에서만 켠다 — iOS 는 기기 확인 전이다.
+- 🚨 **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)에서 뒤로가기는 히스토리로 가지 않는다** (#462). 탭 이동이
+  push 로 쌓이고 로그인 화면도 히스토리에 남아 있어서 앱이 닫힐 차례가 오지 않았다. 닫힐 차례의 첫 누름은
+  `ToastAndroid` 로 "한 번 더 누르면 종료" 를 띄우고, 2초 안에 또 누르면 `false` 를 돌려 OS 기본 동작에 넘긴다.
+  ⚠️ 기본 동작은 액티비티를 **끝낸다** (Android 17 실기기 확인) — 웹뷰가 새로 만들어져 `sessionStorage` 로그인이 풀린다.
+  뒤로 보내기만 하려면 `moveTaskToBack` 을 부르는 네이티브 코드가 필요하다.
+  셸이 웹의 **화면** 경로를 아는 곳이다 (`/auth/callback` · `/api` 는 흐름의 입구라 성격이 다르다). 웹이 알려 주려면
+  `onMessage` 를 열어야 해서 경로를 본다. `apps/web/src/components/child-nav.tsx` 의 `TABS` 가 바뀌면 `back-press.ts` 를 같이 고친다.
+  토스트는 OS 가 그리는 것이라 "셸은 화면을 그리지 않는다"(§1)에 걸리지 않는다.
 - ⚠️ **Android 웹뷰의 `env(safe-area-inset-*)` 는 상태바·제스처바를 세지 않는다** (디스플레이 컷아웃만 본다).
   그래서 웹이 스스로 알 수 없고, 셸이 넘겨야 한다. 예전에 셸 패딩과 `env()` 가 **둘 다 걸려 위쪽이 두 번 밀린**
   적이 있는데(#133), 지금은 웹이 셸 값을 먼저 보므로 한 번만 센다.
@@ -130,7 +142,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
