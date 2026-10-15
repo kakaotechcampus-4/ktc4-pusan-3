@@ -36,10 +36,11 @@ stage_boundaries:
 v1_month_limit: 72
 
 gates:
-  # 관심 프로필(profile_affinity) 월령 — 이 월령 미만은 프로필을 만들지도 읽지도 않는다 (연령별_Tool_전략 §2).
+  # 관심 프로필(profile_affinity) 기준 월령 (연령별_Tool_전략 §2 · A-3).
   # 어린 월령의 단순 반사 행동을 성향으로 굳히지 않으려는 값이다. 두 곳이 같은 값을 쓴다 (#372 합의 2).
-  #   Curator — 이 월령 미만 아이는 프로필을 만들지 않는다 (만들기)
-  #   Activity — search_activity_memory 가 이 월령 미만이면 profile_affinity 를 읽지 않는다 (읽기)
+  #   Curator — 관찰한 날(기간 시작일)의 월령이 이 값 미만이면 새 연결·프로필 생성에서 제외한다.
+  #             아이가 자라도 그 관찰은 제외된다. 기존 연결·생일 수정 후 정리는 별도 작업 (#391).
+  #   Activity — 아이의 현재 월령이 이 값 미만이면 search_activity_memory 가 profile_affinity 를 읽지 않는다.
   # 읽는 쪽 게이트는 방어선이다 — 게이트가 생기기 전에 만들어진 행, 생일을 고친 아이의 옛 행이 근거로
   # 나가지 않게 한다. Curator 가 안 만든 월령은 어차피 0행이라 비용이 없다.
   affinity_min_month: 18

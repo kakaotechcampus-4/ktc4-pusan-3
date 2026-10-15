@@ -7,22 +7,29 @@ from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import DateParseError
 from app.agents.food.amount_rules import amount_of, is_amount_text
 from app.agents.food.context import FoodContext
-from app.agents.food.meal_dates import in_edit_range, resolve_meal_date
+from app.agents.food.daycare_intent import is_question, is_uncertain, says_absence
+from app.agents.food.meal_dates import cut_from_longer_date_word, in_edit_range, resolve_meal_date
 from app.agents.food.menu_resolver import MenuResolver
 from app.agents.food.readouts import (
     DAYCARE_ABSENT,
     DAYCARE_ALLERGY_CONFLICT,
     DAYCARE_AMBIGUOUS,
+    DAYCARE_AMOUNT_UPDATED,
     DAYCARE_ASK_SUBSTITUTE,
     DAYCARE_NOT_FOUND,
     DAYCARE_OUT_OF_RANGE,
     DAYCARE_REPLACED_UNKNOWN,
     DAYCARE_SLOT_AMBIGUOUS,
+    DAYCARE_UNCHANGED,
     DAYCARE_UPDATED,
     READOUTS,
 )
 from app.agents.food.result import ErrorCode, Operation, ToolResult, fail, ok
-from app.agents.food.schemas.daycare import DeleteDaycareMealArgs, UpdateDaycareMealArgs
+from app.agents.food.schemas.daycare import (
+    DeleteDaycareMealArgs,
+    KeepDaycareMealArgs,
+    UpdateDaycareMealArgs,
+)
 from app.agents.food.schemas.menu import DaycareMenuArgs, MenuDay
 from app.agents.food.store.ports import (
     DAYCARE_SLOT_ORDER,
@@ -118,15 +125,25 @@ _SPAN_MESSAGE = (
     "date_span · removed_spans · added_spans · amount_span 은 발화 원문에 있는 구간만 쓴다. "
     "원문에 없는 말을 지어내거나 바꿔 쓰지 않는다."
 )
+_DATE_WORD_MESSAGE = (
+    "date_span 은 날짜 낱말을 자르지 않고 원문 그대로 쓴다. 예: 내일모레 를 내일 로 자르지 않는다."
+)
+_ABSENCE_MESSAGE = (
+    "delete_daycare_meal 은 어린이집 · 유치원을 빠지거나 그 끼니가 없었다는 말일 때만 부른다. "
+    "급식이 바뀐 말이면 update_daycare_meal, 바뀐 게 없으면 keep_daycare_meal 을 부른다."
+)
 
 
 async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs) -> ToolResult:
     """이미 있는 급식 행을 고친다. 없는 급식을 새로 만들지 않는다 (INSERT 는 Food 의 권한 밖이다).
 
     - 날짜 · 메뉴 · 양은 발화 원문(`state.utterance`)의 부분 문자열이어야 한다. 아니면 모델에게
-      `INVALID_ARGS` 로 돌려준다. 날짜는 코드가 푼다(`resolve_meal_date`) — 풀 수 없거나 말하지
-      않았으면 오늘로 추정하지 않고 되묻는다(`daycare.ambiguous`). 과거 30일 밖이면 고치지 않는다
+      `INVALID_ARGS` 로 돌려준다. 날짜 구간이 더 긴 날짜 낱말의 일부("내일모레" 의 "내일")여도
+      돌려준다. 날짜는 코드가 푼다(`resolve_meal_date`) — 풀 수 없거나 말하지 않았으면 오늘로
+      추정하지 않고 되묻는다(`daycare.ambiguous`). 과거 30일 밖이면 고치지 않는다
       (`daycare.out_of_range`). 그날 행이 없으면 새로 만들지 않는다(`daycare.not_found`).
+    - 묻는 말("어제 급식 남겼어?")이면 아무것도 쓰지 않고 그대로 뒀다고 한다(`daycare.unchanged`).
+      tool 을 꼭 불러야 끝나서(`tool_choice="required"`) 묻는 말도 갱신으로 올 수 있다.
     - 끼니(`slot`)를 말하지 않았을 때 그날 행이 하나면 그 행을, 여럿이면 되묻는다
       (`daycare.slot_ambiguous`) — 엉뚱한 끼니를 고치면 영양 계산이 틀어진다.
     - 메뉴는 **집합 연산**이다: `menu_keys - removed + added`. 같은 갱신을 두 번 해도 결과가 같다.
@@ -150,6 +167,10 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     spans = (args.date_span, *args.removed_spans, *args.added_spans, args.amount_span or "")
     if _outside_utterance(state.utterance, spans):
         return fail("update", _RESOURCE, ErrorCode.INVALID_ARGS, _SPAN_MESSAGE)
+    if cut_from_longer_date_word(state.utterance, args.date_span, today=context.today):
+        return fail("update", _RESOURCE, ErrorCode.INVALID_ARGS, _DATE_WORD_MESSAGE)
+    if is_question(state.utterance):
+        return _stop(context, "update", DAYCARE_UNCHANGED)
 
     day, stop = _target_day(context, args.date_span)
     if day is None:
@@ -207,6 +228,13 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
                 menu=" · ".join(added_names),
             ),
         )
+    elif amount_given:
+        # 메뉴는 그대로고 양만 바꿨다 — 아무 문구도 없으면 보호자는 반영됐는지 알 수 없다
+        readouts = (
+            READOUTS.render(
+                DAYCARE_AMOUNT_UPDATED, date=_date_label(day), slot=_SLOT_LABEL[row.meal_slot]
+            ),
+        )
     entries = state.safety
     if entries is not None and added:
         labels = await _allergy_conflicts(context, added, entries)
@@ -229,7 +257,12 @@ async def delete_daycare_meal(context: FoodContext, args: DeleteDaycareMealArgs)
 
     - `slot` 이 없으면 그날 행 전부를, 있으면 그 끼니만 지운다. "어린이집 빠져" 는 하루를 통째로
       안 가는 것이라 끼니를 물을 이유가 없다.
-    - 날짜는 발화 원문에 있는 구간을 코드가 푼다(`resolve_meal_date`). 말하지 않았거나 풀 수 없으면
+    - 원문을 코드가 먼저 본다(`daycare_intent`). 묻는 말 · 가정 · 짐작("모레 어린이집 쉬는 날이야?",
+      "내일 어린이집 빠지면")이면 지우지 않고 그대로 뒀다고 한다(`daycare.unchanged`). 빠지거나 그
+      끼니가 없었다는 말이 없으면 모델에게 `INVALID_ARGS` 로 돌려줘 다른 tool 을 고르게 한다 —
+      tool 을 꼭 불러야 끝나서(`tool_choice="required"`) 바뀐 게 없는 말도 삭제로 올 수 있다.
+    - 날짜는 발화 원문에 있는 구간을 코드가 푼다(`resolve_meal_date`). 더 긴 날짜 낱말의 일부
+      ("내일모레" 의 "내일")면 돌려준다. 말하지 않았거나 풀 수 없으면
       **반드시 되묻고** 지우지 않는다(`daycare.ambiguous`). 과거 30일 밖이면 지우지 않는다
       (`daycare.out_of_range`). 그날 행이 없으면 `daycare.not_found` 다. 미래 날짜도 지운다.
     - 쓰기가 끝난 뒤에만 "기관 식사 없는 걸로 해 뒀어요"(`daycare.absent`)를 `state.readouts` 에
@@ -239,6 +272,12 @@ async def delete_daycare_meal(context: FoodContext, args: DeleteDaycareMealArgs)
     state = context.state
     if _outside_utterance(state.utterance, (args.date_span,)):
         return fail("delete", _RESOURCE, ErrorCode.INVALID_ARGS, _SPAN_MESSAGE)
+    if cut_from_longer_date_word(state.utterance, args.date_span, today=context.today):
+        return fail("delete", _RESOURCE, ErrorCode.INVALID_ARGS, _DATE_WORD_MESSAGE)
+    if is_question(state.utterance) or is_uncertain(state.utterance):
+        return _stop(context, "delete", DAYCARE_UNCHANGED)
+    if not says_absence(state.utterance):
+        return fail("delete", _RESOURCE, ErrorCode.INVALID_ARGS, _ABSENCE_MESSAGE)
 
     day, stop = _target_day(context, args.date_span)
     if day is None:
@@ -340,3 +379,12 @@ def _allergy_labels(verdict: SafetyVerdict, entries: tuple[SafetyEntry, ...]) ->
             if name:
                 labels.setdefault(name, None)
     return tuple(labels)
+
+
+async def keep_daycare_meal(context: FoodContext, args: KeepDaycareMealArgs) -> ToolResult:
+    """급식 기록을 바꾸지 않고 끝낸다. 급식이 실제로 바뀌었다는 말이 아닐 때 부른다(묻는 말 · 가정).
+
+    급식 갱신은 tool 을 꼭 불러야 끝나는데(`tool_choice="required"`) 출력 tool 이 쓰기뿐이면 바뀐 게
+    없는 말도 갱신 · 삭제로 몰린다. 아무것도 쓰지 않고 그대로 뒀다고 한다(`daycare.unchanged`).
+    """
+    return _stop(context, "update", DAYCARE_UNCHANGED)

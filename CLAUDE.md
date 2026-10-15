@@ -46,7 +46,7 @@
 
 - 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 또래 기준 일반 추천임을 **화면에 명시**하고, 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
 - 🚨 **개인화 추천에는 사용한 `source_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
-- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다. 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
+- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다(Food 일반 추천은 고른 메뉴 — 레시피 카탈로그 행 — 만으로도 된다, #442). 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
 - 🚨 **한 번의 관찰을 성향으로 확정하지 않는다.** 승격은 오직 Curator 의 반복 집계로만. LLM 이 `state` 를 직접 쓰지 않는다.
 - 🚨 **부모의 말은 아이의 Fact 가 아니다.** "요즘 산만하다"는 보호자 Observation(`caregiver_observation`). 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
 - 🚨 **6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다.**
@@ -165,10 +165,11 @@
 │   ├── mobile/               모바일 웹뷰 셸 (Expo · React Native) — 고태영
 │   │   ├── CLAUDE.md         셸 경계 · SDK 버전을 npm 최신으로 올리면 안 되는 이유
 │   │   ├── App.tsx           WebView 하나 + 뒤로가기 · 외부 링크 · 실패 화면 · 주입 배선
+│   │   ├── modules/          로컬 Expo 모듈 — `cookie-flush`(Android 웹뷰 쿠키를 디스크에 쓴다 · #469). 그 안의 `android/` 는 생성물이 아니라 소스다
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 최근 사진(`window.icatch.recentPhotos`).
-│   │                         🚨 최근 사진 계약 정본은 웹(`apps/web/src/lib/native/`)이고 여기는 구현이다
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점.
+│   │                         🚨 Android 권한은 INTERNET 하나다. 사진 권한은 스토어 심사 때문에 뺐다 (#408)
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
@@ -199,8 +200,9 @@
 ├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
 ├── deploy/
 │   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
-│   │                          docker-compose.deploy.yml 은 배포(web+Redis). .env 는 한 곳을 같이 쓴다
-│   └── nginx/, scripts/       (비어 있음) 배포용. web 을 nginx 뒤로 넣을 때 채운다
+│   │                          docker-compose.deploy.yml 은 배포(db+redis+api+web+caddy). .env 는 한 곳을 같이 쓴다
+│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api)
+│   └── nginx/, scripts/       (비어 있음) 배포용
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
@@ -296,15 +298,19 @@
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
-  위한 아래 5개와, 가입 전 동의 화면이 약관을 읽는 `GET /policies` · `GET /policies/{scope}/{version}` 만 인증 없이 호출한다.
+  위한 아래 5개, 쿠키로 access 를 다시 받는 `POST /auth/refresh`, 가입 전 동의 화면이 약관을 읽는
+  `GET /policies` · `GET /policies/{scope}/{version}`, 개인정보 처리방침 정본 `GET /privacy-policy` ·
+  `GET /privacy-policy/{version}` 만 Bearer 없이 호출한다.
   새 예외가 필요하면 구현 전에 이 목록과 API 계약을 함께 변경한다.
   - `GET /auth/{provider}/status`
   - `GET /auth/{provider}`
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
+  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`icatch_rt`)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
   - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
+  - `GET /privacy-policy` · `GET /privacy-policy/{version}` — 개인정보 처리방침 정본 HTML (#221). 누구나 언제든 볼 수 있게 게시해야 하고, 동의 대상이 아니라 동의 목록 밖에 둔다. 스토어에 거는 고정 주소가 앞의 것이다
 - 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**
@@ -320,8 +326,7 @@
 
 그중 코드에 직접 걸리는 것:
 
-- **개인정보 보관 범위·기간**, **삭제 범위** (Memory·원문·Inference·Embedding·로그까지)
 - **외부 LLM 전달 범위** — 공통 컨텍스트 강제 주입 구조상 무관한 Agent 에도 건강정보가 갈 수 있다
 - **키·몸무게를 어느 Agent 가 어떤 추천에 쓰는지** (#75) — 외부 LLM 으로 보낼 수 있다는 것까지는 정했다 (개인정보 처리방침에 전달 항목으로 적는다). 필요한 Agent 에만 넘길 수 있는지는 바로 위 항목(공통 컨텍스트 구조)과 같은 숙제다
 
-새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다.
+새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다. — 보관 · 삭제 범위는 10-14 확정 → [`docs/safety/retention-v1.md`](docs/safety/retention-v1.md)

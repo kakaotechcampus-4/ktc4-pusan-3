@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -24,6 +25,7 @@ import {
   type WithdrawResponse,
 } from "@/lib/api";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 10 설정 › 탈퇴 — **흐름 중인 화면이다.**
@@ -65,7 +67,9 @@ export default function WithdrawPage() {
 
   return (
     <AuthGate>
-      <WithdrawScreen onDone={() => setDone(true)} />
+      <ScreenTransition>
+        <WithdrawScreen onDone={() => setDone(true)} />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -108,7 +112,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
             ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
             유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
         <div className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기">
+          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <PageTitle>탈퇴하기</PageTitle>
@@ -127,7 +131,12 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
             <li>함께 보는 사람만 줄이고 싶다면 그 보호자의 연결만 끊을 수 있어요.</li>
           </ul>
           <div className="mt-3">
-            <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" size="compact">
+            <ButtonLink
+              href={`/child/${childId}/settings`}
+              variant="tertiary"
+              size="compact"
+              {...BACK}
+            >
               설정에서 골라 볼게요
             </ButtonLink>
           </div>
@@ -206,7 +215,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
         <Button variant="danger" block disabled={!acknowledged} onClick={() => setConfirming(true)}>
           탈퇴하기
         </Button>
-        <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" block>
+        <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" block {...BACK}>
           그만두고 돌아가기
         </ButtonLink>
       </section>
@@ -276,11 +285,13 @@ class WithdrawNotApplied extends Error {
  *    보호자의 세션을 전부 지운다(PR #384) — 응답만 잃은 뒤 다시 누른 요청, 다른 기기에서 먼저
  *    끝난 탈퇴가 여기로 온다. 이 401 을 전역 처리(`lib/api/client.ts`)에 넘기면 돌아올 주소로
  *    이 화면을 기억한 채 `/` 로 튕겨서 "탈퇴했어요" 를 아무도 못 본다.
- * 🚨 **세션 만료와는 화면이 든 만료 시각으로 가른다.** 서버의 401 은 둘 다 같은 코드라, 이미
- *    만료된 세션으로 보낸 요청은 평소대로 전역 처리에 맡긴다 (그때는 계정이 그대로다).
+ * 🚨 **access 만료는 여기 오지 않는다.** `lib/api/client.ts` 가 refresh 쿠키로 갱신해 한 번 다시
+ *    보내고, 갱신까지 실패해야 401 이 돌아온다 — 서버에 이 로그인의 세션 행이 없다는 뜻이다.
+ *    로그인돼 있지 않은 채로 보낸 요청(`live` 가 아님)만 평소대로 전역 처리에 맡긴다.
  *    ⚠️ **가르지 못하는 경우가 남는다.** 서버는 로그아웃(그 세션 하나)에서도 세션을 지운다 —
- *    탭을 복제해 세션을 나눠 가진 탭에서 로그아웃한 뒤 이 탭에서 누르면, 계정이 그대로인데
- *    "탈퇴했어요" 가 선다. 서버가 "이미 탈퇴됨" 을 따로 주지 않는 한 화면은 이 경우를 모른다.
+ *    다른 탭에서 로그아웃한 뒤 이 탭에서 누르면, 계정이 그대로인데 "탈퇴했어요" 가 선다.
+ *    refresh 의 절대 상한(90일)에 마침 닿은 경우도 같다. 서버가 "이미 탈퇴됨" 을 따로 주지 않는
+ *    한 화면은 이 경우를 모른다.
  * 🚨 **응답을 못 받았으면 `/me` 로 한 번 확인한다** (PR #384). 커밋 뒤에 응답이 사라졌을 수
  *    있어서 "계정은 그대로예요" 로 단정하지 않는다. 401 이면 끝났고, 200 이면 아직 안 지워졌고,
  *    그것도 못 받으면 모르는 채로 둔다 — 그때 다시 누르는 요청이 위의 401 길로 결말을 낸다.

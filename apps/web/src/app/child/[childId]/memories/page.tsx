@@ -20,6 +20,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { useChildId } from "@/hooks/use-child-id";
 import {
@@ -210,27 +211,30 @@ function MemoriesScreen() {
 
       <Tabs items={tabs} active={tab} label="기억 보기" />
 
-      {tab === "observations" ? (
-        <ObservationsTab
-          childId={childId}
-          domain={domain}
-          status={status}
-          onFilter={setFilter}
-          onOpen={(observation) => setTarget({ type: "observation", observation })}
-        />
-      ) : null}
+      {/* 탭을 바꾸면 그 자리의 내용이 갈아 끼워진다 (디자인 시스템 §8 "교체"). 탭 표식은 색으로만 바뀐다. */}
+      <Swap id={tab}>
+        {tab === "observations" ? (
+          <ObservationsTab
+            childId={childId}
+            domain={domain}
+            status={status}
+            onFilter={setFilter}
+            onOpen={(observation) => setTarget({ type: "observation", observation })}
+          />
+        ) : null}
 
-      {tab === "profile" ? (
-        <ProfileTab
-          domain={domain}
-          state={state}
-          onFilter={setFilter}
-          childId={childId}
-          onOpen={(affinity) => setTarget({ type: "affinity", affinity })}
-        />
-      ) : null}
+        {tab === "profile" ? (
+          <ProfileTab
+            domain={domain}
+            state={state}
+            onFilter={setFilter}
+            childId={childId}
+            onOpen={(affinity) => setTarget({ type: "affinity", affinity })}
+          />
+        ) : null}
 
-      {tab === "feedback" ? <FeedbackTab childId={childId} /> : null}
+        {tab === "feedback" ? <FeedbackTab childId={childId} /> : null}
+      </Swap>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />
     </Screen>
@@ -329,55 +333,57 @@ function ObservationsTab({
         />
       </FilterRow>
 
-      {observations.isPending ? <SkeletonBlock label="기록을 불러오는 중" /> : null}
+      <Swap id={phaseOf(observations)}>
+        {observations.isPending ? <SkeletonBlock label="기록을 불러오는 중" /> : null}
 
-      {/* 다음 장만 실패한 것은 여기가 아니다 — 받아 둔 목록을 지우지 않고 버튼 옆에서 말한다. */}
-      {observations.isError && !observations.isFetchNextPageError ? (
-        <LoadFailed what="기록을" childId={childId} error={observations.error} />
-      ) : null}
+        {/* 다음 장만 실패한 것은 여기가 아니다 — 받아 둔 목록을 지우지 않고 버튼 옆에서 말한다. */}
+        {observations.isError && !observations.isFetchNextPageError ? (
+          <LoadFailed what="기록을" childId={childId} error={observations.error} />
+        ) : null}
 
-      {observations.data ? (
-        items.length === 0 ? (
-          filtered ? (
-            <EmptyState
-              icon={Notebook}
-              title="이 조건에 맞는 기록이 없어요"
-              description="다른 분류나 상태를 골라보세요."
-              count={0}
-              countLabel="이 조건의 기록"
-            />
-          ) : (
-            <EmptyState
-              icon={Notebook}
-              title="아직 적은 말이 없어요"
-              description="홈에서 오늘 있었던 일을 한 줄 남기면 여기에 쌓여요."
-              count={0}
-              action={
-                <Button
-                  variant="secondary"
-                  block
-                  onClick={() => router.push(`/child/${childId}/home`)}
-                >
-                  홈에서 한 줄 적기
-                </Button>
-              }
-            />
-          )
-        ) : (
-          <>
-            {/* 🚨 건수를 숨기지 않는다 (문서 §7). 필터를 걸면 그 필터의 건수다. */}
-            <p className="text-caption text-ink-subtle">기록 {total}건</p>
-            <ObservationList observations={items} onOpen={onOpen} />
-            {observations.hasNextPage ? (
-              <MoreObservations
-                loading={observations.isFetchingNextPage}
-                failed={observations.isFetchNextPageError}
-                onMore={() => void observations.fetchNextPage()}
+        {observations.data ? (
+          items.length === 0 ? (
+            filtered ? (
+              <EmptyState
+                icon={Notebook}
+                title="이 조건에 맞는 기록이 없어요"
+                description="다른 분류나 상태를 골라보세요."
+                count={0}
+                countLabel="이 조건의 기록"
               />
-            ) : null}
-          </>
-        )
-      ) : null}
+            ) : (
+              <EmptyState
+                icon={Notebook}
+                title="아직 적은 말이 없어요"
+                description="홈에서 오늘 있었던 일을 한 줄 남기면 여기에 쌓여요."
+                count={0}
+                action={
+                  <Button
+                    variant="secondary"
+                    block
+                    onClick={() => router.push(`/child/${childId}/home`)}
+                  >
+                    홈에서 한 줄 적기
+                  </Button>
+                }
+              />
+            )
+          ) : (
+            <>
+              {/* 🚨 건수를 숨기지 않는다 (문서 §7). 필터를 걸면 그 필터의 건수다. */}
+              <p className="text-caption text-ink-subtle">기록 {total}건</p>
+              <ObservationList observations={items} onOpen={onOpen} />
+              {observations.hasNextPage ? (
+                <MoreObservations
+                  loading={observations.isFetchingNextPage}
+                  failed={observations.isFetchNextPageError}
+                  onMore={() => void observations.fetchNextPage()}
+                />
+              ) : null}
+            </>
+          )
+        ) : null}
+      </Swap>
     </section>
   );
 }
@@ -430,40 +436,42 @@ function ProfileTab({
         />
       </FilterRow>
 
-      {affinities.isPending ? <SkeletonBlock label="기억을 불러오는 중" /> : null}
+      <Swap id={phaseOf(affinities)}>
+        {affinities.isPending ? <SkeletonBlock label="기억을 불러오는 중" /> : null}
 
-      {affinities.isError ? (
-        <LoadFailed what="기억을" childId={childId} error={affinities.error} />
-      ) : null}
+        {affinities.isError ? (
+          <LoadFailed what="기억을" childId={childId} error={affinities.error} />
+        ) : null}
 
-      {affinities.data ? (
-        affinities.data.affinities.length === 0 ? (
-          filtered ? (
-            <EmptyState
-              icon={Sprout}
-              title="이 조건에 맞는 기억이 없어요"
-              description="다른 분류나 상태를 골라보세요."
-              count={0}
-              countLabel="이 조건의 기억"
-            />
+        {affinities.data ? (
+          affinities.data.affinities.length === 0 ? (
+            filtered ? (
+              <EmptyState
+                icon={Sprout}
+                title="이 조건에 맞는 기억이 없어요"
+                description="다른 분류나 상태를 골라보세요."
+                count={0}
+                countLabel="이 조건의 기억"
+              />
+            ) : (
+              <EmptyState
+                icon={Sprout}
+                title="아직 확정된 기억이 없어요"
+                description="같은 것이 서로 다른 날에 반복되면 기억이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
+                count={0}
+                countLabel="쌓인 기억"
+              />
+            )
           ) : (
-            <EmptyState
-              icon={Sprout}
-              title="아직 확정된 기억이 없어요"
-              description="같은 것이 서로 다른 날에 반복되면 기억이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
-              count={0}
-              countLabel="쌓인 기억"
-            />
+            <>
+              <p className="text-caption text-ink-subtle">
+                기억 {affinities.data.affinities.length}건
+              </p>
+              <AffinityList affinities={affinities.data.affinities} onOpen={onOpen} />
+            </>
           )
-        ) : (
-          <>
-            <p className="text-caption text-ink-subtle">
-              기억 {affinities.data.affinities.length}건
-            </p>
-            <AffinityList affinities={affinities.data.affinities} onOpen={onOpen} />
-          </>
-        )
-      ) : null}
+        ) : null}
+      </Swap>
     </section>
   );
 }
@@ -515,29 +523,31 @@ function FeedbackTab({ childId }: { childId: string }) {
         탭에서 고쳐주세요.
       </p>
 
-      {received.isPending ? <SkeletonBlock label="받은 제안을 불러오는 중" /> : null}
+      <Swap id={phaseOf(received)}>
+        {received.isPending ? <SkeletonBlock label="받은 제안을 불러오는 중" /> : null}
 
-      {received.isError ? (
-        <LoadFailed what="받은 제안을" childId={childId} error={received.error} />
-      ) : null}
+        {received.isError ? (
+          <LoadFailed what="받은 제안을" childId={childId} error={received.error} />
+        ) : null}
 
-      {received.data ? (
-        received.data.items.length === 0 ? (
-          <EmptyState
-            icon={ThumbsUp}
-            title="아직 받은 제안이 없어요"
-            description="제안을 한 번 받으면 여기서 어땠는지 알려줄 수 있어요."
-            count={0}
-            countLabel="받은 제안"
-          />
-        ) : (
-          <SuggestionFeedbackList
-            suggestions={received.data.items}
-            pendingId={pendingId}
-            onSelect={(suggestion, feedback) => sendFeedback.mutate({ suggestion, feedback })}
-          />
-        )
-      ) : null}
+        {received.data ? (
+          received.data.items.length === 0 ? (
+            <EmptyState
+              icon={ThumbsUp}
+              title="아직 받은 제안이 없어요"
+              description="제안을 한 번 받으면 여기서 어땠는지 알려줄 수 있어요."
+              count={0}
+              countLabel="받은 제안"
+            />
+          ) : (
+            <SuggestionFeedbackList
+              suggestions={received.data.items}
+              pendingId={pendingId}
+              onSelect={(suggestion, feedback) => sendFeedback.mutate({ suggestion, feedback })}
+            />
+          )
+        ) : null}
+      </Swap>
 
       {sendFeedback.isError ? (
         <p className="text-body-sm text-ink-muted" role="status">

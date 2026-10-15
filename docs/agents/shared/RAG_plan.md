@@ -166,7 +166,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | 컬럼 | 비고 |
 | --- | --- |
-| `area` | varchar — 누리과정 5개 영역(`physical_health` · `communication` · `social` · `art` · `nature`) / 표준보육과정은 6개 영역(기본생활 포함) |
+| `area` | varchar — 고시 5개 영역(`physical_health` · `communication` · `social` · `art` · `nature`). 2024 개정 표준보육과정은 0~5세 모두 5영역이고, `basic_life`(기본생활)는 제4차(2020) 0~2세 영역이라 쓰지 않는다 |
 | `routine_category` | `observation_routine.routine_category` enum과 같은 값 |
 | `trigger_tags` | text[] — `habit_strategy`용 (`bored`, `anxious`, `tired` …) |
 | `materials` | text[] — **`hazard_term` 스캔 대상** (Activity 필터 재사용) |
@@ -176,10 +176,10 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | 소스 | 쓸 곳 | 라이선스 |
 | --- | --- | --- |
-| 보건복지부 「제4차 어린이집 표준보육과정」 고시 (0–2세) | `learning_activity` 영역 틀 · `routine_step` | 고시 본문 = `public_law` |
-| 교육부·보건복지부 「2019 개정 누리과정」 고시 (3–5세) | `learning_activity` 영역 틀 | `public_law` |
-| 위 두 과정의 **해설서·놀이 사례집** | 구체 활동 아이디어 | 저작물 → **`fact_rewrite`만** |
-| 국가건강정보포털 배변·수면·양치 자료 | `routine_step` · `rhythm_info` | 공공누리 확인 |
+| 「표준보육과정 고시」(교육부고시 제2024-23호 — 0~1세 · 2세 · 3~5세(누리과정)) | `learning_activity` 영역 틀 · `routine_step` | 고시 본문 = `public_law`(저작권법 제7조 2호). 출처 문자열은 `표준보육과정 고시 (교육부고시 제2024-23호)` 하나 — activity_doc 과 같다(D10) |
+| 「2019 개정 누리과정」 고시 (3–5세) | 대조용 — 3~5세 내용이 위 고시와 같아서 행 출처로는 위 고시를 적는다 | `public_law` |
+| 위 과정의 **해설서·놀이 사례집** | – | **쓰지 않음** — 공공누리 제4유형(상업 이용 금지 · 변경 금지), #337 기준 |
+| 국가건강정보포털 배변·수면·양치 자료 | – | **쓰지 않음** — 공공누리 제4유형, #337 기준 |
 | i-누리 · 중앙육아종합지원센터 놀이자료 | – | **사용 안 함** — 사이트 표기가 `ALL RIGHTS RESERVED` 이고, 누리과정 놀이자료는 공공누리 제4유형(출처표시 + 상업금지 + 변경금지)이라 상업 금지에 걸린다 (2026-09-23 확인) |
 
 ### 행 예시

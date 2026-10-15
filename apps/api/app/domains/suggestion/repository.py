@@ -11,12 +11,14 @@ from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.child.models import ChildGrowthLog
+from app.domains.food.repository import resolved_recipe_names
 from app.domains.memory.observation.models import (
     ObservationActivity,
     ObservationEducation,
     ObservationFood,
     ObservationHealth,
     ObservationRoutine,
+    ObservationStatus,
 )
 from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.suggestion.models import (
@@ -28,6 +30,7 @@ from app.domains.suggestion.models import (
     SuggestionKind,
     SuggestionStatus,
 )
+from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
 
 async def create_suggestion(
@@ -221,6 +224,11 @@ _CHILD_RECORD_KINDS = frozenset(
 # 아직 없어서(YAML 시드 · uuid5 id) 종류만 본다
 _DOC_KINDS = frozenset(("food_doc", "growth_doc", "activity_doc"))
 
+# agents/common/refs.py MenuKind 와 같은 목록(#442). Food 일반 추천만 고른 메뉴(레시피 카탈로그
+# 행)를 근거로 단다 — 문서 행이 없는 월령에도 일반 추천에 근거가 붙게. 실제 후보 풀의 레시피인지는
+# 저장할 때 본다
+_MENU_KINDS = frozenset((MENU_EVIDENCE_KIND,))
+
 # 근거의 아이 기록 중 대상 테이블이 있는 것 — 같은 아이의 행이 있는지 본다(correction 과 같은
 # 방식). 여기 없는 아이 기록(notice · daycare_meal)은 테이블이 생길 때까지 거절한다
 _EVIDENCE_TARGETS = {
@@ -245,7 +253,7 @@ async def save_agent_suggestions(
     session: AsyncSession,
     *,
     child_id: uuid.UUID,
-    run_id: str,
+    run_id: str | None,
     payloads: Sequence[Mapping[str, Any]],
     now: datetime,
 ) -> list[uuid.UUID]:
@@ -253,8 +261,10 @@ async def save_agent_suggestions(
 
     - `payloads` 의 한 항목은 `SuggestionDraft.to_payload()` 모양이다. 돌려주는 id 는 그 순서다.
     - 근거를 먼저 다 본 뒤에 쓴다. 하나라도 어긋나면 `SuggestionEvidenceError` 이고 한 행도
-      쓰지 않는다 — 개인화인데 아이 기록 근거 0행 · 일반인데 아이 기록 근거 · 정해지지 않은
-      근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직 없는 아이 기록.
+      쓰지 않는다 — 개인화인데 아이 기록 근거 0행 · 일반인데 아이 기록 근거 · 일반인데 문서 행
+      (Food 는 메뉴 행도) 근거 0행 · Food 일반 추천이 아닌데 메뉴 근거 · 후보 풀에 없는 메뉴 ·
+      정해지지 않은 근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직
+      없는 아이 기록.
     - 한 추천이 같은 (source_kind, source_id) 를 두 번 인용하면 첫 인용만 남긴다(PK).
     - `status=draft` · `expires_at=now+SUGGESTION_TTL` 은 여기서 정한다.
     """
@@ -293,13 +303,27 @@ async def _checked_citations(
         if key not in seen:
             seen.add(key)
             citations.append(dict(item))
-    if any(item["source_kind"] not in _CHILD_RECORD_KINDS | _DOC_KINDS for item in citations):
+    known = _CHILD_RECORD_KINDS | _DOC_KINDS | _MENU_KINDS
+    if any(item["source_kind"] not in known for item in citations):
         raise SuggestionEvidenceError("정해지지 않은 근거 종류다")
     child = [item for item in citations if item["source_kind"] in _CHILD_RECORD_KINDS]
+    menus = [item for item in citations if item["source_kind"] in _MENU_KINDS]
     if kind is SuggestionKind.PERSONALIZED and not child:
         raise SuggestionEvidenceError("개인화 추천인데 아이 기록 근거가 없다")
     if kind is SuggestionKind.GENERAL and child:
         raise SuggestionEvidenceError("일반 추천에 아이 기록 근거가 있다")
+    if menus and (payload["agent"] != "food" or kind is not SuggestionKind.GENERAL):
+        # 메뉴 근거는 Food 일반 추천만 단다(#442). 개인화는 아이 기록이 근거다
+        raise SuggestionEvidenceError("메뉴 근거는 Food 일반 추천에만 단다")
+    if kind is SuggestionKind.GENERAL and not any(
+        item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations
+    ):
+        raise SuggestionEvidenceError("일반 추천인데 문서 행 근거가 없다")
+    if menus:
+        # 실제 후보 풀(검수된 레시피)의 메뉴여야 근거다 — 아니면 근거 0행과 같다
+        names = await resolved_recipe_names(session)
+        if any(uuid.UUID(str(item["source_id"])) not in names for item in menus):
+            raise SuggestionEvidenceError("메뉴 근거가 레시피 카탈로그에 없다")
     for item in child:
         model = _EVIDENCE_TARGETS.get(item["source_kind"])
         if model is None:
@@ -328,23 +352,99 @@ async def list_evidence(
     return list((await session.scalars(stmt)).all())
 
 
+async def list_run_suggestions(
+    session: AsyncSession, *, child_id: uuid.UUID, run_id: str, agent: str, now: datetime
+) -> list[Suggestion]:
+    """그 run 에서 그 Agent 가 낸 추천 — 채택한 것 전부와 만료 전 draft (#249 판단 순서 1).
+
+    채택한 것도 돌려준다. 일부만 채택하고 새로고침했을 때 남은 draft 만 오면 화면이 "1가지 중에서"
+    를 그린다. 만료된 draft · 거절 · 만료 상태는 뺀다.
+    """
+    stmt = (
+        select(Suggestion)
+        .where(
+            Suggestion.child_id == child_id,
+            Suggestion.run_id == run_id,
+            Suggestion.agent == SuggestionAgent(agent),
+            (Suggestion.status == SuggestionStatus.APPROVED)
+            | ((Suggestion.status == SuggestionStatus.DRAFT) & (Suggestion.expires_at > now)),
+        )
+        .order_by(Suggestion.created_at, Suggestion.id)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_suggestions_by_ids(
+    session: AsyncSession, *, child_id: uuid.UUID, ids: Sequence[uuid.UUID]
+) -> list[Suggestion]:
+    """방금 저장한 추천을 저장 순서대로. 다른 아이의 id 는 섞이지 않는다."""
+    if not ids:
+        return []
+    rows = (
+        await session.scalars(
+            select(Suggestion).where(Suggestion.child_id == child_id, Suggestion.id.in_(ids))
+        )
+    ).all()
+    by_id = {row.id: row for row in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+async def count_child_records(
+    session: AsyncSession, *, child_id: uuid.UUID, kinds: Sequence[str]
+) -> int:
+    """그 주제로 쌓인 관찰 건수 — 화면이 "기록 N건" 으로 그대로 보여 준다 (루트 §2).
+
+    남아 있는 관찰(active · stand_alone)만 센다. 잘못된 기록(inactive) · 지운 기록은 빼고,
+    관찰이 아닌 종류는 세지 않는다.
+    """
+    kept = (ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE)
+    total = 0
+    for kind in kinds:
+        model = _EVIDENCE_TARGETS.get(kind)
+        if model is None or not kind.startswith("observation_"):
+            continue
+        total += (
+            await session.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.child_id == child_id, model.status.in_(kept))
+            )
+            or 0
+        )
+    return total
+
+
+async def list_general_evidence_batch(
+    session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """일반 추천의 근거 — 문서 행과 메뉴 행(Food, #442). 아이 기록 근거와 섞지 않는다 — 화면
+    타입이 다르다."""
+    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS | _MENU_KINDS)
+
+
 async def list_evidence_batch(
     session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SuggestionEvidence]]:
     """여러 추천의 근거를 한 번에 조회한다 (아이 기록만, 문서 행 제외)."""
+    return await _evidence_batch(session, suggestion_ids, _CHILD_RECORD_KINDS)
+
+
+async def _evidence_batch(
+    session: AsyncSession, suggestion_ids: list[uuid.UUID], kinds: frozenset[str]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """추천마다 그 종류의 근거 행을 만든 순서대로. 근거가 없는 추천도 빈 목록으로 둔다."""
     if not suggestion_ids:
         return {}
     stmt = (
         select(SuggestionEvidence)
         .where(
             SuggestionEvidence.suggestion_id.in_(suggestion_ids),
-            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+            SuggestionEvidence.source_kind.in_(kinds),
         )
         .order_by(SuggestionEvidence.suggestion_id, SuggestionEvidence.created_at)
     )
-    rows = list((await session.scalars(stmt)).all())
     result: dict[uuid.UUID, list[SuggestionEvidence]] = {sid: [] for sid in suggestion_ids}
-    for row in rows:
+    for row in (await session.scalars(stmt)).all():
         result[row.suggestion_id].append(row)
     return result
 

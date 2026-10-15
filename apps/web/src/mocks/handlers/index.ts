@@ -1,4 +1,4 @@
-import { authHandlers } from "./auth";
+import { authHandlers, sessionGuardHandlers } from "./auth";
 import { calendarHandlers } from "./calendar";
 import { childrenHandlers } from "./children";
 import { clientErrorHandlers } from "./client-errors";
@@ -22,6 +22,8 @@ import { suggestionHandlers } from "./suggestions";
  *    사라지지 않게 파일을 나눠 뒀다.
  */
 export const handlers = [
+  // 🚨 맨 앞이다 — 만료된 access 를 어느 경로에서든 먼저 막는다 (`session_expired`).
+  ...sessionGuardHandlers,
   // 🚨 무인증 엔드포인트다 — 가입 동의 화면이 로그인 전에 부른다 (#91).
   ...policyHandlers,
   ...authHandlers,

@@ -8,10 +8,11 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import Range
 
-from app.agents.common.refs import ChildRecordKind, DocKind, EvidenceCitation, Ref
+from app.agents.common.refs import ChildRecordKind, DocKind, EvidenceCitation, MenuKind, Ref
 from app.agents.common.suggestion import SuggestionDraft
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import create_child
+from app.domains.food import repository as food_repository
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ConfidenceSource, ObservationFood
 from app.domains.suggestion import repository
@@ -26,6 +27,7 @@ from app.domains.suggestion.repository import (
     SuggestionEvidenceError,
     save_agent_suggestions,
 )
+from app.rules.menu_evidence import menu_evidence_id
 
 NOW = datetime(2026, 10, 14, 0, 0, tzinfo=UTC)
 RUN = "run-1"
@@ -83,6 +85,14 @@ def cited(kind: str, source_id: uuid.UUID, note: str = "다 먹었다") -> dict:
     return {"source_kind": kind, "source_id": str(source_id), "note": note}
 
 
+DOC_ID = uuid.UUID("00000000-0000-5000-8000-000000000001")
+
+
+def doc_citation(kind: str = "activity_doc") -> dict:
+    """일반 추천의 근거는 문서 행이다 (루트 §2)."""
+    return cited(kind, DOC_ID, "또래 놀이 자료")
+
+
 async def counts(session, child_id) -> tuple[int, int]:
     """그 아이의 추천 행 수 · 근거 행 수. 개발 DB 의 다른 행을 세지 않게 아이로 거른다."""
     suggestions = await session.scalar(
@@ -115,7 +125,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
         now=NOW,
         payloads=[
             payload(kind="personalized", citations=[cited("observation_food", obs)]),
-            payload(content="두부조림"),
+            payload(content="두부조림", citations=[doc_citation()]),
         ],
     )
 
@@ -126,7 +136,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.run_id for row in rows} == {RUN}
     assert {row.expires_at for row in rows} == {NOW + SUGGESTION_TTL}
     assert (rows[0].allergens, rows[0].items) == (["난류"], ["계란"])
-    assert await counts(session, child.id) == (2, 1)
+    assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
 async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, kids):
@@ -247,7 +257,117 @@ async def test_근거가_어긋난_묶음은_한_행도_쓰지_않는다(session
             child_id=child.id,
             run_id=RUN,
             now=NOW,
-            payloads=[payload(), make(obs, others)],  # 앞 항목은 맞아도 묶음째 거절된다
+            # 앞 항목은 맞아도 묶음째 거절된다
+            payloads=[payload(citations=[doc_citation()]), make(obs, others)],
         )
 
     assert await counts(session, child.id) == (0, 0), why
+
+
+async def test_일반_추천인데_문서_근거가_없으면_한_행도_쓰지_않는다(session, kids):
+    """일반 추천의 근거는 문서 행이다 (루트 §2). 개인화 0행과 같은 자리에서 막는다."""
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거"):
+        await save_agent_suggestions(
+            session, child_id=child.id, run_id=RUN, payloads=[payload(kind="general")], now=NOW
+        )
+    assert await counts(session, child.id) == (0, 0)
+
+
+# ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
+async def recipe_in_catalog(session, source_id="7", *, resolved=True) -> uuid.UUID:
+    """레시피 카탈로그에 한 행을 넣고 그 행을 가리키는 메뉴 근거 id 를 돌려준다."""
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": "mafra_recipe",
+                "source_id": source_id,
+                "menu_key": f"레시피{source_id}",
+                "display_name": f"레시피{source_id}",
+                "ingredients": ["두부"],
+                "resolved": resolved,
+                "synced_at": NOW,
+            }
+        ],
+    )
+    return menu_evidence_id("mafra_recipe", source_id)
+
+
+def menu_citation(menu: uuid.UUID) -> dict:
+    return cited("recipe_catalog", menu, "재료가 검수된 메뉴예요.")
+
+
+def test_메뉴_근거_종류_목록이_Agent_쪽과_같다():
+    assert repository._MENU_KINDS == frozenset(get_args(MenuKind))
+
+
+async def test_Food_일반_추천은_메뉴_근거만으로_저장한다(session, kids):
+    """문서 행이 없어도 고른 메뉴(레시피 카탈로그 행)가 근거다 — 근거 0행이 아니다."""
+    _, child, _ = kids
+    menu = await recipe_in_catalog(session)
+
+    [row_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        now=NOW,
+        payloads=[payload(citations=[menu_citation(menu)])],
+    )
+
+    row = await session.scalar(
+        select(SuggestionEvidence).where(SuggestionEvidence.suggestion_id == row_id)
+    )
+    assert (row.source_kind, row.source_id) == ("recipe_catalog", menu)
+
+
+async def test_메뉴_근거는_Food_가_아니면_거절한다(session, kids):
+    _, child, _ = kids
+    menu = await recipe_in_catalog(session)
+
+    with pytest.raises(SuggestionEvidenceError):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            now=NOW,
+            payloads=[payload(citations=[menu_citation(menu)]) | {"agent": "activity"}],
+        )
+    assert await counts(session, child.id) == (0, 0)
+
+
+async def test_메뉴_근거는_개인화_추천에_달지_않는다(session, kids):
+    owner, child, _ = kids
+    obs = await observation(session, child, owner)
+    menu = await recipe_in_catalog(session)
+    citations = [cited("observation_food", obs), menu_citation(menu)]
+
+    with pytest.raises(SuggestionEvidenceError):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            now=NOW,
+            payloads=[payload(kind="personalized", citations=citations)],
+        )
+
+
+@pytest.mark.parametrize("which", ["unknown", "unresolved"])
+async def test_카탈로그에_없거나_풀리지_않은_메뉴는_근거로_받지_않는다(session, kids, which):
+    """근거가 실제 후보 풀의 레시피여야 한다 — 아니면 근거 0행과 같다."""
+    _, child, _ = kids
+    menu = (
+        uuid.uuid4()
+        if which == "unknown"
+        else await recipe_in_catalog(session, "8", resolved=False)
+    )
+
+    with pytest.raises(SuggestionEvidenceError):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            now=NOW,
+            payloads=[payload(citations=[menu_citation(menu)])],
+        )
+    assert await counts(session, child.id) == (0, 0)

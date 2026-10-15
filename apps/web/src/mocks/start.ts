@@ -24,6 +24,8 @@ export function startMocks(): Promise<void> {
 }
 
 async function run(): Promise<void> {
+  // 🚨 이 두 줄을 바꾸면 `lib/features.ts` 의 조건도 같이 바꾼다 — 목에만 있는 기능의 버튼을
+  //    "목이 뜰 때만" 세우는데, 두 조건이 갈리면 404 로 끝나는 버튼이 실서버 빌드에 선다 (#409).
   if (process.env.NODE_ENV !== "development") return;
   if (process.env.NEXT_PUBLIC_API_MOCKING !== "enabled") return;
 

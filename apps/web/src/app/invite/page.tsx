@@ -28,6 +28,7 @@ import {
   isInviteCodeComplete,
   normalizeInviteCode,
 } from "@/lib/invite-code";
+import { useMotionCue } from "@/lib/motion";
 import { MEMBER_RELATIONS, relationOptions } from "@/lib/relation";
 
 /**
@@ -102,12 +103,17 @@ function InviteScreen() {
   );
   const [relation, setRelation] = useState<Relation | null>(null);
   const [adultAttested, setAdultAttested] = useState(false);
+  /** 코드 입력 → 아이 확인은 한 칸 앞, "코드를 다시 입력할게요" 는 한 칸 뒤다 (디자인 시스템 §8 "단계 넘김"). */
+  const { ref: stepRef, cue: cueStep } = useMotionCue<HTMLDivElement>();
 
   const check = useMutation({
     mutationFn: (value: string) =>
       api.get<InvitePreviewResponse>(`/invites/${encodeURIComponent(value)}`),
     // 🚨 `variables` 가 조회에 쓴 코드다 — 응답이 온 시점의 입력창 값이 아니다.
-    onSuccess: (invite, value) => setPreview({ code: value, invite }),
+    onSuccess: (invite, value) => {
+      cueStep("forward");
+      setPreview({ code: value, invite });
+    },
   });
 
   const accept = useMutation({
@@ -120,6 +126,7 @@ function InviteScreen() {
   });
 
   function backToCode() {
+    cueStep("back");
     setPreview(null);
     setRelation(null);
     // 🚨 다른 코드로 돌아가면 표시도 처음부터다 — 앞 아이에 대해 한 표시가 다음 아이로 넘어가지 않게.
@@ -131,7 +138,7 @@ function InviteScreen() {
   if (preview) {
     const { invite } = preview;
     return (
-      <Screen className="gap-6">
+      <Screen className="gap-6" bodyRef={stepRef}>
         <div>
           <p className="text-label text-ink-subtle">초대 확인</p>
           <PageTitle className="mt-2">
@@ -241,7 +248,7 @@ function InviteScreen() {
   const ready = isInviteCodeComplete(code);
 
   return (
-    <Screen className="gap-6">
+    <Screen className="gap-6" bodyRef={stepRef}>
       <div>
         <PageTitle>
           받은 코드를

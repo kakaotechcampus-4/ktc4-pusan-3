@@ -564,6 +564,106 @@ describe("승인 게이트 ㉡", () => {
   });
 });
 
+/**
+ * 05 묶음 안내 · 일반 추천 근거 (#249). 서버 `POST /children/{cid}/suggestions` 와 같은 계약이다.
+ * 🚨 실패는 "묶음이 없는 Agent" 다 — 0개로 끝난 Agent 도 안내와 함께 묶음이 온다.
+ */
+describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
+  async function fetchWith(scenario: Parameters<typeof setScenario>[0], body: SuggestionsRequest) {
+    setScenario(scenario);
+    try {
+      return await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
+    const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
+
+    const byAgent = Object.fromEntries((data.groups ?? []).map((g) => [g.agent, g]));
+    expect(byAgent.activity?.notice?.code).toBe("empty");
+    expect(data.suggestions.some((s) => s.agent === "activity")).toBe(false);
+    expect(byAgent.food?.notice?.code).toBe("fewer");
+    // 서버 문구는 비어 있지 않다 — 화면이 그대로 그린다
+    for (const group of data.groups ?? []) expect(group.notice?.message.trim()).not.toBe("");
+  });
+
+  it("🚨 이어서 할 수 없으면 그 묶음에 안내가 오고 오류가 아니다", async () => {
+    const data = await fetchWith("cannot_resume", { agents: ["food", "activity"], run_id: "r1" });
+
+    expect(data.groups?.find((g) => g.agent === "activity")?.notice?.code).toBe("cannot_resume");
+    // 같은 응답에 이어서 할 수 있는 Agent 의 추천이 섞여 온다
+    expect(data.suggestions.some((s) => s.agent === "food")).toBe(true);
+    expect(data.groups?.find((g) => g.agent === "food")?.notice).toBeNull();
+  });
+
+  it("🚨 일반 추천은 문서 행 근거와 출처를 달고 온다", async () => {
+    const data = await fetchWith("scarcity", { agents: ["activity"] });
+
+    expect((data.general ?? []).length).toBeGreaterThan(0);
+    for (const item of data.general ?? []) {
+      expect(item.evidence.length).toBeGreaterThan(0);
+      for (const e of item.evidence) {
+        expect(e.source_org).not.toBe("");
+        expect(["food_doc", "activity_doc", "growth_doc"]).toContain(e.ref.kind);
+      }
+    }
+  });
+
+  it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
+    const plain = await fetchWith("default", { agents: ["food", "activity"] });
+    for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
+
+    const data = await fetchWith("suggest_cautions", { agents: ["food", "activity"] });
+    const activity = data.groups?.find((g) => g.agent === "activity");
+    expect(activity?.cautions.length).toBeGreaterThan(0);
+  });
+
+  it("🚨 일반 추천은 카드마다 그 도메인의 기록 수를 싣는다", async () => {
+    const data = await fetchWith("empty", { agents: ["food", "activity"] });
+    for (const item of data.general ?? []) expect(typeof item.record_count).toBe("number");
+  });
+
+  it("🚨 05 의 하루 한도는 429 daily_input_limit 이다", async () => {
+    await expect(fetchWith("daily_limit", { agents: ["food"] })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "daily_input_limit") && (e as ApiError).status === 429,
+    );
+  });
+
+  it("🚨 run_id 로 오면 채택한 추천도 돌아와 status 로 되살린다 — 홈은 늘 draft 다", async () => {
+    const fresh = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+    });
+    const [first] = fresh.suggestions;
+    expect(fresh.suggestions.every((s) => s.status === "draft")).toBe(true);
+    await approveSuggestions("c1", { suggestion_ids: [first.id] });
+
+    const replayed = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+      run_id: "r1",
+    });
+    expect(replayed.suggestions.find((s) => s.id === first.id)?.status).toBe("approved");
+    // 채택 안 한 것은 그대로 draft 다
+    expect(
+      replayed.suggestions.filter((s) => s.id !== first.id).every((s) => s.status === "draft"),
+    ).toBe(true);
+    // run 없이 다시 받으면 새로 만든 추천이라 draft 다
+    const home = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+    });
+    expect(home.suggestions.every((s) => s.status === "draft")).toBe(true);
+  });
+
+  it("🚨 일반 추천은 개인화 목록에 섞이지 않고, 질문은 하나뿐이다", async () => {
+    const data = await fetchWith("scarcity", { agents: ["activity"] });
+
+    expect(data.suggestions).toEqual([]);
+    // 답하는 길(#246) 전에는 선택지가 비어 온다 — 서버와 같은 모양
+    expect(data.scarcity?.question?.options).toEqual([]);
+  });
+});
+
 describe("⑥ 권한 부족 — 동의 거부", () => {
   it("403 consent_required 에 deeplink 가 붙고, 저장은 일어나지 않는다", async () => {
     setScenario("consent");
@@ -732,7 +832,9 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
 });
 
 describe("⑦-2 도메인 Agent 결과 (#227)", () => {
-  async function eventsOf(scenario: "agent_readout" | "agent_question" | "agent_partial") {
+  async function eventsOf(
+    scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+  ) {
     setScenario(scenario);
     try {
       const { run_id } = await api.post<{ run_id: string }>(
@@ -766,13 +868,17 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
       const data = event.data as AgentResultEvent;
       expect(Object.keys(data).sort()).toEqual([
         "agent",
+        "kind",
         "question",
         "readouts",
+        "reason",
+        "record_count",
         "status",
+        "suggestion_ids",
         "task_type",
       ]);
-      // ⚠️ 추천 칸은 3단계 전이라 없다. 있으면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
-      expect(data).not.toHaveProperty("suggestion_ids");
+      // 🚨 추천 칸도 키는 늘 있다 — 추천이 없으면 `[]` · `null` 이다 (#227 3단계).
+      //    키가 빠지면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
       for (const readout of data.readouts) {
         expect(Object.keys(readout).sort()).toEqual([
           "authored_by",
@@ -785,12 +891,39 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
     }
   });
 
+  it("🚨 agent_result 는 추천 칸을 늘 키로 싣는다 — 개인화는 이유, 일반은 쌓인 기록 수", async () => {
+    const results = (await eventsOf("agent_suggestions"))
+      .filter((e) => e.type === "agent_result")
+      .map((e) => e.data as AgentResultEvent);
+
+    for (const result of results) {
+      expect(result).toHaveProperty("suggestion_ids");
+      expect(result).toHaveProperty("kind");
+      expect(result).toHaveProperty("reason");
+      expect(result).toHaveProperty("record_count");
+    }
+    const personal = results.find((r) => r.kind === "personalized");
+    const general = results.find((r) => r.kind === "general");
+    expect(personal?.suggestion_ids.length).toBeGreaterThan(0);
+    expect(personal?.reason).toBeTruthy();
+    expect(personal?.record_count).toBeNull();
+    expect(typeof general?.record_count).toBe("number");
+  });
+
+  it("🚨 partial 의 retryable 은 failed 안에 있다 — 화면이 고르지 않는다", async () => {
+    const partial = (await eventsOf("agent_partial")).find((e) => e.type === "partial")
+      ?.data as PartialEvent;
+
+    expect(partial.retryable.length).toBeGreaterThan(0);
+    for (const agent of partial.retryable) expect(partial.failed).toContain(agent);
+  });
+
   it("🚨 개수 안내는 code 로 찾는다 — 날씨 안내와 같은 kind 라서다 (#276)", async () => {
     const readouts = (await eventsOf("agent_readout"))
       .filter((e) => e.type === "agent_result")
       .flatMap((e) => (e.data as AgentResultEvent).readouts);
 
-    // 3단계 전까지 04 로 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 나와서 서버가 걸러 낸다.
+    // 추천이 없는 결과에 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 오는 것이라 `agent_suggestions` 에 있다.
     expect(readouts.filter((r) => r.code !== null).map((r) => r.code)).toEqual(["empty"]);
     // 개수와 상관없는 readout(성장 추이)은 null 이다.
     expect(readouts.find((r) => r.kind === "growth_delta")?.code).toBeNull();
@@ -1961,6 +2094,113 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
   });
 
+  /** 🚨 서버는 `parent.nickname` 이 비어 있으면 `null` 을 내린다 (#336). 화면이 그 줄을 그리는지 목이 늘 보여 준다. */
+  it("이름이 빈 보호자는 nickname 이 null 로 온다", async () => {
+    const res = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(res.parents.some((p) => p.nickname === null)).toBe(true);
+  });
+
+  it("이미 끊긴 보호자를 다시 끊으면 404 not_found", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const member = before.parents.find((p) => p.role === "member")!;
+    await api.delete(`/children/c1/parents/${member.parent_id}`);
+
+    const caught = await api.delete(`/children/c1/parents/${member.parent_id}`).catch((e) => e);
+    expect(isApiError(caught, "not_found")).toBe(true);
+    expect((caught as ApiError).status).toBe(404);
+  });
+
+  it("연결되지 않은 아이의 보호자 목록은 403 child_access_denied", async () => {
+    const caught = await api.get("/children/c-unknown/parents").catch((e) => e);
+    expect(isApiError(caught, "child_access_denied")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+  });
+
+  /**
+   * 🚨 **member 는 자기 자신만 끊는다** (#336 · 재형님 결정 10-06). 화면은 남의 줄에 버튼을
+   *    안 그리지만 서버가 다시 막는다 — 초대 발행과 같은 403 `owner_only` 다.
+   */
+  describe("초대로 들어온 member", () => {
+    async function joinAsMember(): Promise<string> {
+      setScenario("consent");
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        adult_attested: true,
+      });
+      expect(joined.role).toBe("member");
+      return joined.child_id;
+    }
+
+    it("목록에서 자기는 member 이고 owner 는 다른 사람이다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+        const res = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+
+        expect(res.parents.find((p) => p.parent_id === me.id)?.role).toBe("member");
+        const owner = res.parents.find((p) => p.role === "owner");
+        expect(owner?.parent_id).not.toBe(me.id);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    it("다른 보호자를 끊으면 403 owner_only 이고 목록은 그대로다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+        const before = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        const other = before.parents.find((p) => p.role === "member" && p.parent_id !== me.id)!;
+
+        const caught = await api
+          .delete(`/children/${cid}/parents/${other.parent_id}`)
+          .catch((e) => e);
+        expect(isApiError(caught, "owner_only")).toBe(true);
+        expect((caught as ApiError).status).toBe(403);
+
+        const after = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        expect(after.parents).toHaveLength(before.parents.length);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    it("owner 를 끊으면 409 owner_required 다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const res = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        const owner = res.parents.find((p) => p.role === "owner")!;
+
+        const caught = await api
+          .delete(`/children/${cid}/parents/${owner.parent_id}`)
+          .catch((e) => e);
+        expect(isApiError(caught, "owner_required")).toBe(true);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    /**
+     * 🚨 **나가면 `/me` 에서도 빠진다.** 화면은 이걸 보고 `/start` 로 간다 — `/me` 가 나간
+     *    아이를 계속 주면 `/start` 가 홈으로 되돌린다. 다시 보내면 연결이 없어서 403 이다.
+     */
+    it("자기 자신을 끊으면 나가지고, 다시 보내면 403 child_access_denied", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+
+        await api.delete(`/children/${cid}/parents/${me.id}`);
+        const after = await api.get<Me>("/me");
+        expect(after.children.map((c) => c.child_id)).not.toContain(cid);
+
+        const caught = await api.delete(`/children/${cid}/parents/${me.id}`).catch((e) => e);
+        expect(isApiError(caught, "child_access_denied")).toBe(true);
+        expect((caught as ApiError).status).toBe(403);
+      } finally {
+        setScenario("default");
+      }
+    });
+  });
+
   it("초대 코드는 부를 때마다 새로 나온다 — 한 코드는 한 번만 쓴다", async () => {
     const first = await api.post<InviteResponse>("/children/c1/invites", {});
     const second = await api.post<InviteResponse>("/children/c1/invites", {});
@@ -2118,8 +2358,8 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
 });
 
 /**
- * 초대 수락. 코드 방식은 `docs/api/invite-v1.md` 로 확정됐고, **확인 조회(`GET /invites/{code}`)와
- * 응답 모양은 아직 제안이다** (같은 문서 §7 열린 결정). 서버가 붙으면 이 표를 실서버에도 건다.
+ * 초대 수락. 코드 방식 · 확인 조회(`GET /invites/{code}`) · 만 19세 표시는 `docs/api/invite-v1.md`
+ * 로 확정됐다 (§7 결정 01 · 06). 서버가 붙으면 이 표를 실서버에도 건다.
  */
 describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   /** 🚨 연결이 성공해야 하는 호출은 전부 만 19세 표시를 싣는다 — 화면이 그렇게 보낸다. */
@@ -2153,7 +2393,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       for (let i = 0; i < 5; i += 1) {
         await api.get("/invites/MKWASTED").catch(() => null);
       }
-      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
       expect(isApiError(caught, "too_many_attempts")).toBe(true);
     } finally {
       setScenario("default");
@@ -2195,7 +2435,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     setScenario("consent");
     try {
       for (let i = 0; i < 6; i += 1) {
-        await api.post("/invites/MKTAKEN2/accept", {}).catch(() => null);
+        await api.post("/invites/MKTAKEN2/accept", ADULT).catch(() => null);
       }
       const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
       expect(res.child_id).toBe("c1");
@@ -2245,6 +2485,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       try {
         const caught = await api.post("/invites/MKGRAND1/accept", body).catch((e) => e);
         expect(isApiError(caught, "validation_failed")).toBe(true);
+        expect((caught as ApiError).status).toBe(400);
 
         const me = await api.get<Me>("/me");
         expect(me.children).toHaveLength(0);
@@ -2258,9 +2499,38 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     },
   );
 
+  /**
+   * 🚨 **만 19세 표시가 아이 보유 · 시도 제한보다 먼저다** — 서버와 같은 순서 (invite-v1.md §3-3).
+   *    순서가 바뀌면 아래 두 경우가 409 · 429 로 바뀐다.
+   */
+  it("이미 아이가 있어도 만 19세 표시가 없으면 409 가 아니라 400 이다", async () => {
+    // default 시나리오는 아이가 하나 있는 계정이다.
+    const caught = await api
+      .post("/invites/MKGRAND1/accept", { adult_attested: false })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+  });
+
+  it("시도 한도를 다 써도 만 19세 표시가 없으면 429 가 아니라 400 이다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.post("/invites/MKWASTED/accept", ADULT).catch(() => null);
+      }
+      const caught = await api
+        .post("/invites/MKGRAND1/accept", { adult_attested: false })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed")).toBe(true);
+      expect((caught as ApiError).status).toBe(400);
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("이미 아이가 있으면 수락이 막힌다", async () => {
     // default 시나리오는 아이가 하나 있는 계정이다.
-    const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+    const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
     expect(isApiError(caught, "child_already_exists")).toBe(true);
   });
 
@@ -2271,7 +2541,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   ])("%s 는 %s 로 막힌다", async (code, expected) => {
     setScenario("consent");
     try {
-      const caught = await api.post(`/invites/${code}/accept`, {}).catch((e) => e);
+      const caught = await api.post(`/invites/${code}/accept`, ADULT).catch((e) => e);
       expect(isApiError(caught, expected)).toBe(true);
     } finally {
       setScenario("default");
@@ -2286,9 +2556,9 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     setScenario("consent");
     try {
       for (let i = 0; i < 5; i += 1) {
-        await api.post("/invites/MKWASTED/accept", {}).catch(() => null);
+        await api.post("/invites/MKWASTED/accept", ADULT).catch(() => null);
       }
-      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
       expect(isApiError(caught, "too_many_attempts")).toBe(true);
     } finally {
       setScenario("default");
@@ -3370,3 +3640,60 @@ async function findEventDay(): Promise<CalendarMonthResponse["days"][number]> {
   }
   throw new Error(`일정이 걸린 날이 ${months.join(" · ")} 어디에도 없다`);
 }
+
+/**
+ * `POST /auth/refresh` — 앱을 다시 켜도 로그인이 이어지는 길 (#465). 서버와 맞춘 계약은
+ * `lib/api/types.ts` 의 `AuthRefreshResponse` 다. 쿠키 대신 목은 표식을 쓰지만, **언제 생기고
+ * 언제 사라지는지**는 서버 쿠키와 같아야 화면 흐름을 목으로 볼 수 있다.
+ */
+describe("㉖ refresh 로 세션을 잇는다 (#465)", () => {
+  function refresh(): Promise<Response> {
+    return raw("/auth/refresh", { credentials: "include" });
+  }
+
+  it("로그인 전에는 401 unauthenticated 다", async () => {
+    const res = await refresh();
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.code).toBe("unauthenticated");
+  });
+
+  it("로그인(교환)하면 새 access 와 15분을 준다 — 로그인 응답과 같은 수명이다", async () => {
+    const login = await api.post<AuthSession>("/auth/kakao", { code: "c", bind: "b" });
+
+    const res = await refresh();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ token: expect.any(String), expires_in: 900 });
+    expect(login.expires_in).toBe(body.expires_in);
+  });
+
+  it("🚨 /auth/refresh 가 교환 핸들러(:provider)에 먹히지 않는다", async () => {
+    // 먹히면 본문이 없어 400 validation_failed 가 나고, 화면은 그걸 "서버에 닿지 못함" 으로 읽는다.
+    const res = await refresh();
+    expect(res.status).not.toBe(400);
+  });
+
+  it("로그아웃하면 더는 이어지지 않는다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post("/auth/logout");
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("탈퇴하면 더는 이어지지 않는다 — 다른 기기의 앱도 다시 켜면 로그인 화면이다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post<WithdrawResponse>("/auth/withdraw", { acknowledged_immediate_deletion: true });
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("session_unreachable — 서버에 닿지 않는다 (401 이 아니다)", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    setScenario("session_unreachable");
+    try {
+      await expect(refresh()).rejects.toThrow();
+    } finally {
+      setScenario("default");
+    }
+  });
+});

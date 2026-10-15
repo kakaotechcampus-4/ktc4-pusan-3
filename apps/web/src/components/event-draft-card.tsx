@@ -309,7 +309,7 @@ export function EventDraftCard({
                 두 번째 관문을 알게 된다 — 제안 경로는 일자가 늘 비어 있어서 늘 그랬다. */}
             <div
               className={cn(
-                "mb-3 flex flex-col gap-1",
+                "ease-standard mb-3 flex flex-col gap-1 transition-colors duration-120",
                 canSubmit ? "text-caution" : "text-ink-subtle",
               )}
             >

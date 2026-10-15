@@ -105,7 +105,8 @@ def test_swagger_tells_the_screen_how_to_use_the_page():
 
 
 async def test_list_points_to_each_page(db_client):
-    """GET /policies 가 버전마다 정본 주소를 준다. 정본이 없는 버전(draft-0)은 null 이다.
+    """GET /policies 가 버전마다 정본 주소를 준다. 정본이 없는 버전(draft-0)이면 null 이다 —
+    draft-2 부터는 지금 판에 정본이 없는 scope 가 없다 (draft-0 주소의 404 는 위 테스트가 본다).
 
     경로는 프론트 API 클라이언트의 다른 경로와 같은 기준(`/api/v1` 아래)이다.
     """
@@ -113,5 +114,5 @@ async def test_list_points_to_each_page(db_client):
     paths = {item["scope"]: item["html_path"] for item in body}
 
     assert paths["location"] == "/policies/location/draft-1"
-    assert paths["service_terms"] == "/policies/service_terms/draft-1"
-    assert paths["child_basic"] is None
+    assert paths["service_terms"] == "/policies/service_terms/draft-2"
+    assert paths["child_basic"] == "/policies/child_basic/draft-2"

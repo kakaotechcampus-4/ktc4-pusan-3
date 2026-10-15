@@ -113,11 +113,15 @@ class InMemoryCuratorStore:
                 stored, item=replace(stored.item, embedding=list(vector))
             )
 
-    async def list_unlinked(self, *, child_id: UUID) -> list[ObservationItem]:
+    async def list_unlinked(
+        self, *, child_id: UUID, min_observed_on: date
+    ) -> list[ObservationItem]:
         return [
             item
             for item in self._active(child_id)
-            if item.embedding is not None and item.affinity_id is None
+            if item.embedding is not None
+            and item.affinity_id is None
+            and item.observed_on >= min_observed_on
         ]
 
     async def list_profiles(

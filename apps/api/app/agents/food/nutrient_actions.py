@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from functools import cache
 from typing import Any
 
-from app.agents.common.reference import load_reference
+from app.agents.common.reference import food_safety_terms, load_reference
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
@@ -149,6 +149,52 @@ def advice_for(
     removed = tuple(food.name for food in action.foods if _key(food) not in passed)
     text = "·".join(kept) + action.suffix if kept else None
     return ActionAdvice(nutrient=nutrient, band=band, text=text, removed=removed)
+
+
+# 식품군 출현 문장에서 이 식품군을 말해도 되는지 가르는 대표 식품. 한 가지라도 막히면 그 식품군은
+# 말하지 않는다(위 안내와 같이 넓게 단다). 줄마다 (식품군, 이름, 19종 코드, 19종 밖 식품을 재료로
+# 붙일 묶음). 19종 밖 식품(연어 · 가재 · 보리 …)은 food_safety_terms.yaml group_foods 를 그대로 쓴다
+# — 사전을 여기서 따로 짜지 않는다. 채소 · 과일은 한 가지 알레르기로 식품군 전체가 막히지 않아 두지
+# 않는다 — 늘 말한다
+_APPEARANCE_FOODS: tuple[tuple[str, str, frozenset[int], tuple[str, ...]], ...] = (
+    ("grains", "밥", frozenset(), ()),
+    ("grains", "빵·면", frozenset({6}), ("글루텐",)),
+    ("grains", "메밀", frozenset({3}), ()),
+    ("meat_fish_egg_legumes", "고기", frozenset({10, 15, 16}), ("육류",)),
+    ("meat_fish_egg_legumes", "생선", frozenset({7}), ("생선",)),
+    (
+        "meat_fish_egg_legumes",
+        "갑각류·조개",
+        frozenset({8, 9, 17, 18}),
+        ("갑각류", "연체류", "해산물"),
+    ),
+    ("meat_fish_egg_legumes", "달걀", frozenset({1}), ()),
+    ("meat_fish_egg_legumes", "콩", frozenset({5}), ("콩",)),
+    ("dairy", "우유", frozenset({2}), ()),
+)
+
+
+def blocked_groups(entries: Sequence[SafetyEntry], *, stage: Stage, months: int) -> frozenset[str]:
+    """이 아이에게 말하지 않을 식품군. 대표 식품 중 하나라도 `filter_food_safety` 에 막히거나 확인
+    못 하면 그 식품군을 뺀다 — 알레르기 · 질환 판정을 여기서 새로 짜지 않는다."""
+    group_foods = food_safety_terms().group_foods
+    rows = [
+        MenuCatalogRow(
+            menu_key=f"appearance:{name}",
+            display_name=name,
+            source="manual",
+            resolved=True,
+            synced_at=_EPOCH,
+            ingredients=(name, *(f for label in labels for f in group_foods[label].aliases)),
+            allergen_codes=codes,
+        )
+        for _, name, codes, labels in _APPEARANCE_FOODS
+    ]
+    verdict = filter_food_safety(rows, entries, stage, months=months)
+    passed = {row.menu_key for row in verdict.passed}
+    return frozenset(
+        group for group, name, _, _ in _APPEARANCE_FOODS if f"appearance:{name}" not in passed
+    )
 
 
 def mentions_removed(text: str, removed: Iterable[str]) -> tuple[str, ...]:

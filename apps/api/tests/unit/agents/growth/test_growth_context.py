@@ -227,7 +227,6 @@ class TestRun:
         )
         assert result.status == "completed"
         assert result.model_calls == 0
-        assert result.tools == ()
         assert result.agent == "growth"
         (readout,) = result.readouts
         assert readout.kind == "growth_delta" and readout.authored_by == "code"
@@ -244,14 +243,12 @@ class TestRun:
         result = await run(task("learning_suggestion"), context(birth_for(8)))
         assert result.status == "blocked" and result.model_calls == 0
         assert result.readouts == (READOUTS.render("closed.infant_learning"),)
-        assert result.tools == ()
 
     async def test_알레르기_조회가_실패하면_교육만_닫힌다(self):
         safety = InMemorySafety(fail=True)
         learning = await run(task("learning_suggestion"), context(birth_for(30), safety=safety))
-        routine = await run(task("routine_coaching", "양치 혼자 하게"), context(birth_for(30)))
         assert learning.readouts == (READOUTS.render("blocked.safety"),)
-        assert routine.status == "mock"
+        assert learning.model_calls == 0
 
     async def test_도서_API_가_없으면_도서만_닫힌다(self):
         result = await run(task("book_suggestion", "공룡 책"), context(birth_for(30)))
@@ -268,21 +265,9 @@ class TestRun:
         result = await run(task("routine_coaching", "눈을 자꾸 깜빡여. 어떻게 고쳐?"), context())
         assert result.readouts == (READOUTS.render("closed.symptom_habit"),)
 
-    async def test_일반_루틴_요청은_닫히지_않고_열릴_tool_을_돌려준다(self):
-        result = await run(
-            task("routine_coaching", "양치를 혼자 하게 하려면 어떻게 해?"), context()
-        )
-        assert result.status == "mock"
-        assert result.tools == (
-            "search_routine_memory",
-            "search_activity_memory",
-            "search_affinity",
-            "propose_routine_plan",
-        )
-
     async def test_run_state_에_gate_를_남긴다(self):
         ctx = context(birth_for(30))
-        await run(task("routine_coaching", "양치 혼자 하게"), ctx)
+        await run(task("growth_review"), ctx)
         assert ctx.state.gate is not None and ctx.state.gate.stage.months == 30
 
     async def test_Growth_task_가_아니면_거부한다(self):

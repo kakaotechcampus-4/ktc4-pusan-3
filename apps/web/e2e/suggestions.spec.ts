@@ -381,3 +381,75 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     expect(submitted[0].body).toMatchObject({ suggestion_ids: ["s_4"] });
   });
 });
+
+test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", () => {
+  test.describe("개수 안내", () => {
+    test.use({ scenario: "suggest_counts" });
+
+    test("0개로 끝난 Agent 는 안내만 서고 다시 시도가 없다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+
+      // 서버 문구를 그대로 그린다 — 놀이는 0개, 식사는 2개
+      await expect(page.getByText("조건에 맞는 추천이 없어요.")).toBeVisible();
+      await expect(page.getByText("조건에 맞는 추천을 2개 준비했어요.")).toBeVisible();
+      // 🚨 실패는 "묶음이 없는 Agent" 다 — 0개를 실패 카드로 그리면 눌러도 같은 0개만 다시 온다.
+      await expect(page.getByText(/쪽은 이번에 준비하지 못했어요/)).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("이어서 할 수 없음", () => {
+    test.use({ scenario: "cannot_resume" });
+
+    test("안내만 서고 다시 시도가 없고, 이어서 할 수 있는 쪽은 그대로 보인다", async ({ page }) => {
+      await page.goto(`${SUGGESTIONS}&run=r1`);
+
+      await expect(
+        page.getByText("이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+      // 성공과 안내를 한 화면에 섞는다 (NF-06) — 식사 후보는 그대로 선다.
+      // 서버가 `prompt` 를 아직 안 주므로(null) 머리줄은 도메인 라벨이다
+      await expect(page.getByText("식사 · 3가지 중에서")).toBeVisible();
+    });
+  });
+
+  test.describe("일반 추천의 근거", () => {
+    test.use({ scenario: "scarcity" });
+
+    test("문서 출처를 적고, 아이 기록처럼 세지 않는다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+
+      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      await expect(card).toContainText("참고 · 블록 쌓기 (교육부, 표준보육과정)");
+      // 🚨 문서는 아이 기록이 아니다 — "사용한 기록 N건" 으로 세지 않는다
+      await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
+      // 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 서고 칩이 없다
+      await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toBeVisible();
+      await expect(page.getByRole("button", { name: "실내" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("식품 아닌 알레르기 확인 문구", () => {
+    test.use({ scenario: "suggest_cautions" });
+
+    test("놀이 묶음에 확인 문구가 선다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      await expect(
+        page.getByText("등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."),
+      ).toBeVisible();
+    });
+  });
+
+  test.describe("하루 한도", () => {
+    test.use({ scenario: "daily_limit" });
+
+    test("🚨 다시 시도를 세우지 않는다 — 눌러도 같은 답이다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      await expect(
+        page.getByText("오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+    });
+  });
+});

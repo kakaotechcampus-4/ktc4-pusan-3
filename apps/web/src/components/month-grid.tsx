@@ -9,6 +9,7 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import type { CalendarDay } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { toISODate } from "@/lib/format";
+import { useEnterMotion } from "@/lib/motion";
 
 /**
  * 09 월 그리드 — 날짜 칸이 **무엇이 있었는지까지** 말한다.
@@ -50,9 +51,20 @@ export function MonthGrid({
 }) {
   /** 🚨 렌더마다 새 Map 을 만들면 아래 Provider 값이 매번 바뀐다. 날짜 칸이 통째로 다시 그려진다. */
   const byDate = useMemo(() => new Map(days.map((day) => [day.date, day])), [days]);
+  /**
+   * 달을 넘기면 날짜 칸이 한 칸 옆으로 넘어간다 — 다음 달은 오른쪽에서, 지난 달은 왼쪽에서
+   * (디자인 시스템 §8 "단계 넘김"). 🚨 **머리줄(연월 · 화살표)은 두고 날짜 칸만 움직인다** — 화살표를
+   * 연달아 누르는 손가락 밑에서 버튼이 미끄러지면 두 번째 누르기가 빗나간다.
+   * 키는 `YYYY-MM` 문자열이라 사전 순서가 곧 달 순서다 — 날짜를 더하거나 빼지 않는다.
+   */
+  const gridRef = useEnterMotion(
+    toISODate(month).slice(0, 7),
+    (from, to) => (to > from ? "forward" : "back"),
+    (root) => root.querySelector("table"),
+  );
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={gridRef} className="flex flex-col gap-3">
       {/* 날짜 칸이 그날 무엇이 있었는지 알아야 하는데, 라이브러리는 `DayButton` 에 day 와
           modifiers 만 준다. 컴포넌트를 렌더 안에서 만들면 안 되므로(아래 🚨) context 로 넘긴다. */}
       <DayMarksContext.Provider value={byDate}>
@@ -235,9 +247,9 @@ const CALENDAR_CLASSES = {
   month_caption: "flex min-h-touch items-center justify-center",
   caption_label: "text-section text-ink",
   button_previous:
-    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
+    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted ease-standard transition-colors duration-120 flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   button_next:
-    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
+    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted ease-standard transition-colors duration-120 flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   month_grid: "w-full border-collapse",
   weekdays: "flex",
   // 🚨 글자가 들어가는 요소에 고정 높이를 주지 않는다 (apps/web/CLAUDE.md §5). `h-8` 이었는데

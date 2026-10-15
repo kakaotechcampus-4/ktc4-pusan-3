@@ -31,6 +31,11 @@
 # status: approved 와 reviewed_by · reviewed_at 을 채운다. 서비스는 approved 만 쓴다.
 # 작성자 · 검수자는 GitHub 아이디로 적는다.
 #
+# TEMP(#434): 배포 테스트에서 일반 추천을 열려고 모든 행을 status: approved · reviewed_by: admin 으로
+# 임시로 올렸다. 실제 검수가 아니다. 🚨 10/20 전에 작성자가 아닌 사람이 원문을 펴 놓고 사실 · 월령 · 출처
+# 위치를 확인한 뒤 reviewed_by · reviewed_at 을 그 사람의 GitHub 아이디 · 검수일로 바꾼다.
+# 통과하지 못한 행은 status: draft 로 되돌리고 reviewed_by · reviewed_at 을 지운다.
+#
 # 원문은 저장소 밖(팀 드라이브)에 두고, 받은 날의 라이선스 표시(판권면 · 공공누리 표시 캡처)도 같이 둔다.
 #   뉴질랜드 지침 PDF (위 source_url, 2026-10-12 받음)
 #     sha256 7f890b302dc5c0133765dcf67e7d2a658808aea02d32a4a40e2ee9b9b2f6b237 — 판권면 2쪽
@@ -64,9 +69,12 @@ origins:
     source_year: 2023
     source_url: https://www.kca.go.kr/smartconsumer/sub.do?cate=00000056&menukey=7301&mode=view&no=1003447270
     license_basis: kogl_1
-  draft: &draft
-    status: draft
+  # TEMP(#434): 임시 검수자. 이 앵커를 쓰는 행이 전부 approved 다 — 실제 검수가 끝나면 행마다 고친다
+  temp_admin: &temp_admin
+    status: approved
     authored_by: nnhhlee
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     version: 1
 
 rows:
@@ -79,7 +87,7 @@ rows:
     max_month: 7
     tags: [weaning, start, timing]
     texture: puree
-    <<: [*kca, *draft]
+    <<: [*kca, *temp_admin]
     source_locator: 붙임 4 이유식 구매·섭취 가이드 — 섭취할 때 (22쪽)
 
   - doc_key: food.weaning.stage.m4_5.texture
@@ -92,7 +100,7 @@ rows:
     max_month: 6
     tags: [weaning, texture, puree, early_start]
     texture: puree
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, Starting out (p.28)
 
   - doc_key: food.weaning.stage.not_before_4
@@ -104,7 +112,7 @@ rows:
     min_month: 4
     max_month: 6
     tags: [weaning, start, timing, early_start]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Reasons for the recommendations (p.23)
 
   - doc_key: food.weaning.stage.first_spoon
@@ -117,7 +125,7 @@ rows:
     max_month: 8
     tags: [weaning, spoon, how_to_feed]
     texture: puree
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Practical advice, How to start complementary feeding (p.33)
 
   - doc_key: food.weaning.stage.flavours
@@ -130,7 +138,7 @@ rows:
     max_month: 8
     tags: [weaning, taste, variety]
     texture: puree
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, Starting out (p.28)
 
   - doc_key: food.weaning.stage.milk_order
@@ -143,7 +151,7 @@ rows:
     max_month: 12
     tags: [weaning, milk_feed, order]
     allergen_codes: [2]  # 분유 → 우유
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Practical advice, How to start complementary feeding (p.33)
 
   - doc_key: food.weaning.stage.no_salt
@@ -155,7 +163,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [weaning, seasoning, salt, store_bought]
-    <<: [*kca, *draft]
+    <<: [*kca, *temp_admin]
     source_locator: 붙임 4 이유식 구매·섭취 가이드 — 구입·주문할 때 (22쪽)
 
   - doc_key: food.weaning.stage.m6_7.texture
@@ -168,7 +176,7 @@ rows:
     max_month: 8
     tags: [weaning, texture, mashed]
     texture: mashed
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, Starting out (p.28)
 
   - doc_key: food.weaning.stage.m6_7.move_on
@@ -181,7 +189,7 @@ rows:
     max_month: 8
     tags: [weaning, texture, lumpy, chewing]
     texture: mashed
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Key points (p.22) · Reasons for the recommendations (p.23)
 
   - doc_key: food.weaning.stage.grasp
@@ -194,7 +202,7 @@ rows:
     max_month: 12
     tags: [weaning, finger_food, self_feeding]
     texture: soft_pieces
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, Seven to nine months (p.28)
 
   - doc_key: food.weaning.stage.m8_11.texture
@@ -207,7 +215,7 @@ rows:
     max_month: 12
     tags: [weaning, texture, minced, finger_food]
     texture: minced
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, Seven to nine months (p.28)
 
   - doc_key: food.weaning.stage.m8_11.no_long_puree
@@ -220,7 +228,7 @@ rows:
     max_month: 12
     tags: [weaning, texture, lumpy]
     texture: minced
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, Note (p.28)
 
   - doc_key: food.weaning.stage.meals
@@ -232,7 +240,7 @@ rows:
     min_month: 8
     max_month: 12
     tags: [weaning, meals, snack, schedule]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Practical advice, How to start complementary feeding (p.33)
 
   - doc_key: food.weaning.stage.m10_11.family_food
@@ -245,7 +253,7 @@ rows:
     max_month: 12
     tags: [weaning, family_food, texture]
     texture: soft_pieces
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Increasing food texture, 10–12 months (p.29)
 
   # ── weaning_ingredient — 식품군 단위 ──────────────────────────────────────
@@ -256,7 +264,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [weaning, new_food, one_at_a_time]
-    <<: [*kca, *draft]
+    <<: [*kca, *temp_admin]
     source_locator: 붙임 4 이유식 구매·섭취 가이드 — 섭취할 때 (22쪽)
 
   - doc_key: food.weaning.ingredient.grains.start
@@ -270,7 +278,7 @@ rows:
     texture: puree
     food_groups: [grains]
     allergen_codes: [2]  # 분유 → 우유
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Iron-rich foods (p.24) · Table 2 Puréed food (p.26)
 
   - doc_key: food.weaning.ingredient.grains.porridge
@@ -282,7 +290,7 @@ rows:
     tags: [weaning, grains, porridge]
     texture: mashed
     food_groups: [grains]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Soft foods (p.26) · Eating Statement 3 grain foods (p.37)
 
   - doc_key: food.weaning.ingredient.grains.finger
@@ -297,7 +305,7 @@ rows:
     texture: soft_pieces
     food_groups: [grains]
     allergen_codes: [6]  # 국수 · 빵 → 밀
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Finger foods (p.27)
 
   - doc_key: food.weaning.ingredient.vegetables.start
@@ -311,7 +319,7 @@ rows:
     tags: [weaning, vegetables, puree]
     texture: puree
     food_groups: [vegetables]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Puréed food (p.26)
 
   - doc_key: food.weaning.ingredient.vegetables.bitter
@@ -324,7 +332,7 @@ rows:
     max_month: 12
     tags: [weaning, vegetables, bitter, repeated_exposure]
     food_groups: [vegetables]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Vegetables and fruits (p.25)
 
   - doc_key: food.weaning.ingredient.vegetables.soft
@@ -337,7 +345,7 @@ rows:
     tags: [weaning, vegetables, soft_food, finger_food]
     texture: soft_pieces
     food_groups: [vegetables]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Soft foods (p.26)
 
   - doc_key: food.weaning.ingredient.vegetables.chopped
@@ -351,7 +359,7 @@ rows:
     texture: minced
     food_groups: [vegetables]
     allergen_codes: [12]  # 토마토
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Chopped · Finger foods (p.27)
 
   - doc_key: food.weaning.ingredient.vegetables.canned_frozen
@@ -364,7 +372,7 @@ rows:
     max_month: 12
     tags: [weaning, vegetables, fruits, canned, frozen]
     food_groups: [vegetables, fruits]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Vegetables and fruits (p.25)
 
   - doc_key: food.weaning.ingredient.fruits.start
@@ -376,7 +384,7 @@ rows:
     tags: [weaning, fruits, puree]
     texture: puree
     food_groups: [fruits]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Puréed food (p.26)
 
   - doc_key: food.weaning.ingredient.fruits.soft
@@ -389,7 +397,7 @@ rows:
     tags: [weaning, fruits, soft_food, mashed]
     texture: mashed
     food_groups: [fruits]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Soft foods · Mashed/lumpy food (p.26)
 
   - doc_key: food.weaning.ingredient.fruits.grated
@@ -401,7 +409,7 @@ rows:
     tags: [weaning, fruits, grated, finger_food]
     texture: minced
     food_groups: [fruits]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Finger foods · Chopped (p.27)
 
   - doc_key: food.weaning.ingredient.protein.iron_first
@@ -416,7 +424,7 @@ rows:
     texture: puree
     food_groups: [meat_fish_egg_legumes]
     allergen_codes: [10, 15, 16]  # 고기(돼지 · 닭 · 쇠고기) · 닭고기
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Iron-rich foods (p.24)
 
   - doc_key: food.weaning.ingredient.protein.legumes
@@ -431,7 +439,7 @@ rows:
     texture: mashed
     food_groups: [meat_fish_egg_legumes]
     allergen_codes: [5]  # 두부 · 콩 → 대두
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Iron-rich foods (p.24) · Table 2 Mashed/lumpy food (p.26)
 
   - doc_key: food.weaning.ingredient.protein.egg_cooked
@@ -444,7 +452,7 @@ rows:
     texture: mashed
     food_groups: [meat_fish_egg_legumes]
     allergen_codes: [1]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Mashed/lumpy food (p.26)
 
   - doc_key: food.weaning.ingredient.protein.fish
@@ -457,7 +465,7 @@ rows:
     tags: [weaning, fish, bones, finger_food]
     texture: mashed
     food_groups: [meat_fish_egg_legumes]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Mashed/lumpy food (p.26) · Finger foods (p.27)
 
   - doc_key: food.weaning.ingredient.protein.minced
@@ -472,7 +480,7 @@ rows:
     texture: minced
     food_groups: [meat_fish_egg_legumes]
     allergen_codes: [10, 15, 16]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Chopped (p.27)
 
   - doc_key: food.weaning.ingredient.protein.egg_finger
@@ -487,7 +495,7 @@ rows:
     texture: soft_pieces
     food_groups: [meat_fish_egg_legumes]
     allergen_codes: [1, 5]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Finger foods (p.27)
 
   - doc_key: food.weaning.ingredient.dairy.yoghurt
@@ -500,7 +508,7 @@ rows:
     texture: mashed
     food_groups: [dairy]
     allergen_codes: [2]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Soft foods (p.26) · Eating Statement 4 Food ideas (p.52)
 
   - doc_key: food.weaning.ingredient.dairy.cheese
@@ -514,7 +522,7 @@ rows:
     texture: mashed
     food_groups: [dairy]
     allergen_codes: [2]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Mashed/lumpy food (p.26) · Finger foods (p.27) · Eating Statement 4 Food ideas (p.52)
 
   # ── feeding_tip — 먹이는 태도 · 질식 예방 · 마실 것 ────────────────────────
@@ -527,7 +535,7 @@ rows:
     min_month: 4
     max_month: 24
     tags: [responsive_feeding, hunger_cues]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 6 — How to recognise when a baby or toddler is hungry or full (p.66)
 
   - doc_key: food.tip.fullness_cues
@@ -539,7 +547,7 @@ rows:
     min_month: 4
     max_month: 24
     tags: [responsive_feeding, fullness_cues]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 6 — Signs of fullness (p.67) · Eating Statement 2 Practical advice (p.33)
 
   - doc_key: food.tip.no_forcing
@@ -549,7 +557,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [responsive_feeding, appetite]
-    <<: [*kca, *draft]
+    <<: [*kca, *temp_admin]
     source_locator: 붙임 4 이유식 구매·섭취 가이드 — 섭취할 때 (22쪽)
 
   - doc_key: food.tip.same_place
@@ -559,7 +567,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [routine, mealtime, spoon]
-    <<: [*kca, *draft]
+    <<: [*kca, *temp_admin]
     source_locator: 붙임 4 이유식 구매·섭취 가이드 — 섭취할 때 (22쪽)
 
   - doc_key: food.tip.leftovers
@@ -571,7 +579,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [food_safety, leftovers, storage, store_bought]
-    <<: [*kca, *draft]
+    <<: [*kca, *temp_admin]
     source_locator: 붙임 4 이유식 구매·섭취 가이드 — 보관할 때 (22쪽)
 
   - doc_key: food.tip.pouch
@@ -583,7 +591,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [store_bought, pouch, spoon]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 4 — Commercial baby food (p.50)
 
   - doc_key: food.tip.new_food_faces
@@ -595,7 +603,7 @@ rows:
     min_month: 4
     max_month: 12
     tags: [new_food, encouragement]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Practical advice (p.34)
 
   - doc_key: food.tip.repeated_exposure
@@ -607,7 +615,7 @@ rows:
     min_month: 6
     max_month: 24
     tags: [refusal, repeated_exposure, picky_eating]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 3 — The importance of repeated exposure to different foods (p.41)
 
   - doc_key: food.tip.family_meals
@@ -619,7 +627,7 @@ rows:
     min_month: 6
     max_month: 24
     tags: [family_meal, role_modeling, mealtime]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 2 — Practical advice (p.34) · Eating Statement 6 Enthusiastic role modelling (p.65)
 
   - doc_key: food.tip.no_screens
@@ -631,7 +639,7 @@ rows:
     min_month: 6
     max_month: 24
     tags: [screens, mealtime, fullness_cues]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 6 — The pitfalls of eating in front of screens (p.68)
 
   - doc_key: food.tip.picky.offer_again
@@ -643,7 +651,7 @@ rows:
     min_month: 12
     max_month: 24
     tags: [picky_eating, refusal, praise]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 6 — How to respond to a fussy eater (p.68)
 
   - doc_key: food.tip.picky.hungry_at_table
@@ -655,7 +663,7 @@ rows:
     min_month: 12
     max_month: 24
     tags: [picky_eating, refusal, snack, mealtime]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 6 — How to respond to a fussy eater (p.68)
 
   - doc_key: food.tip.choking.sit_and_watch
@@ -667,7 +675,7 @@ rows:
     min_month: 6
     max_month: 24
     tags: [choking, safety, supervision]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 3 — How to reduce the risk of choking (p.43)
 
   - doc_key: food.tip.choking.round_foods
@@ -678,7 +686,7 @@ rows:
     max_month: 24
     tags: [choking, safety, round_food, grapes]
     food_groups: [fruits]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Table 2 Finger foods (p.27) · Eating Statement 3 How to reduce the risk of choking (p.43)
 
   - doc_key: food.tip.choking.gagging
@@ -690,7 +698,7 @@ rows:
     min_month: 6
     max_month: 24
     tags: [choking, gagging, safety]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 3 — The difference between gagging and choking (p.42)
 
   - doc_key: food.tip.choking.stuffing
@@ -702,7 +710,7 @@ rows:
     min_month: 24
     max_month: 36
     tags: [choking, safety, portion]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 3 — How to reduce the risk of choking (p.43)
 
   - doc_key: food.tip.water_cup
@@ -714,7 +722,7 @@ rows:
     min_month: 6
     max_month: 12
     tags: [drinks, water, cup]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 5 — Key points (p.55) · When to offer water (p.57)
 
   - doc_key: food.tip.drinks_after_one
@@ -728,7 +736,7 @@ rows:
     tags: [drinks, milk, water, cup]
     food_groups: [dairy]
     allergen_codes: [2]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 5 — Key points (p.55) · Cow's milk as a drink (p.58)
 
   - doc_key: food.tip.no_salt_sugar
@@ -740,5 +748,5 @@ rows:
     min_month: 12
     max_month: 24
     tags: [seasoning, salt, sugar]
-    <<: [*nz, *draft]
+    <<: [*nz, *temp_admin]
     source_locator: Eating Statement 4 — Key points (p.48) · Reasons for the recommendations (p.49)

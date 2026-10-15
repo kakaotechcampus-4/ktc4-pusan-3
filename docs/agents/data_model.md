@@ -340,7 +340,8 @@
 - **막는 것은 조회 실패 하나다.** 실패를 빈 목록으로 숨기지 않는다 (루트 CLAUDE.md §2).
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
 - 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다.
-- `UNIQUE(child_id, kind, label)`
+- **active 끼리만** `UNIQUE(child_id, kind, label)` — 부분 고유 인덱스 `uq_health_safety_active_item` (`WHERE status = 'active'`, 2026-10-13). 10/4 표의 전체 UNIQUE 와 다르다. 내린(`retracted`) 줄은 이력으로 남고, 같은 항목을 내린 뒤 다시 등록하면 같은 (child_id, kind, label) 로 새 줄이 생겨서, 전체에 걸면 다시 등록이 막힌다. 등록 API 는 코드로 먼저 보고(409), 동시에 온 두 번째 요청은 이 인덱스가 막는다
+- **보호자가 고치면(`PATCH`) 제자리에서 바꾸지 않는다** — 지금 줄을 `retracted`(`updated_by` = 고친 보호자)로 내리고, 바뀐 값으로 새 줄을 넣는다(`created_by` = 고친 보호자). #87 첫 질문의 답이다 (2026-10-13 PM 결정). 종류 · 이름은 고칠 수 없어서 같은 (child_id, kind, label) 의 줄을 시간순으로 놓으면 그 항목이 바뀌어 온 길이다. 바뀐 값이 없으면 새 줄을 만들지 않는다. 고치기는 한 트랜잭션이라 옛 줄의 `updated_at` 과 새 줄의 `created_at` 이 같다 — 보호자가 따로 "내리고 다시 등록" 한 것과 가르는 근거가 이것이다
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
 
@@ -386,7 +387,7 @@
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
 | suggestion_id | uuid | FK → `suggestion.id`, NOT NULL, `ON DELETE CASCADE` |
-| source_kind | text | NOT NULL. 아래 두 무리 중 하나 |
+| source_kind | text | NOT NULL. 아래 세 무리 중 하나 |
 | source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
 | note | text | NOT NULL. 그 행에서 추천 근거로 채택한 내용. Agent 가 쓰고 **보호자 화면에 그대로 나간다**. 비면 그 후보를 거절한다 |
 | created_at | timestamptz | NOT NULL, default `now()` |
@@ -395,12 +396,13 @@
 - `source_kind` 인덱스를 따로 둔다 — 품질 지표가 kind로 거르기 때문
 - **이름이 `memory_*`가 아니라 `source_*`인 이유** — 가리키는 대상이 Memory 소유 테이블만이 아니다. 문서 행(`*_doc`)과 Food 소유인 `daycare_meal`도 들어온다 (2026-09-23 회의 확정).
 
-**`source_kind`는 두 무리다.**
+**`source_kind`는 세 무리다.**
 
 | 무리 | 값 | 개인화 근거로 셈 |
 | --- | --- | --- |
 | 아이 기록 | `observation_food` · `observation_health` · `observation_education` · `observation_activity` · `observation_routine` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal` | ✅ |
 | 문서 행 | `food_doc` · `growth_doc` · `activity_doc` | ❌ 참고만 (Health는 문서 행을 쓰지 않는다 — 상수 파일이다) |
+| 메뉴 행 | `recipe_catalog` | ❌ **Food 일반 추천만** — 고른 메뉴(레시피 카탈로그 행) 자체다(#442). 문서 행이 없는 월령(36개월부터 Food 문서 시드 0행)에도 일반 추천에 근거가 붙게. `source_id` 는 (source, source_id) 로 만드는 uuid5(`rules/menu_evidence.py`)이고, 저장할 때 후보 풀(resolved)의 레시피인지 본다 |
 
 🚨 **품질 지표는 아이 기록만 센다.** `kind='personalized'`인데 아이 기록 행이 0이면 버그다 — 문서 행만 달고 나가면 COUNT는 통과하지만 근거 없는 추천이다.
 
@@ -597,5 +599,5 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 
 - `observed_range` 의 빈 범위·무한 상한 금지 CHECK
 - `profile_affinity.polarity` 가 `confirmed` 일 때 NOT NULL 인 CHECK. ORM 레벨은 nullable 이다
-- `health_safety` 의 `UNIQUE(child_id, kind, label)` — `__table_args__` 에 미선언이라 autogenerate 가 못 잡는다. 수동 추가가 필요하다
+- ~~`health_safety` 의 `UNIQUE(child_id, kind, label)`~~ — 2026-10-13 active 끼리만 거는 부분 고유 인덱스로 `__table_args__` 에 선언했다 (마이그레이션 `d0be81909739`)
 - Agent/Curator role 의 write 권한 분리 (DB 계층 권한)

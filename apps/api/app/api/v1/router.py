@@ -16,22 +16,29 @@ from app.api.deps.auth import get_current_parent
 from app.api.v1.routers import (
     affinities,
     auth,
+    calendar,
+    child_parents,
     children,
     client_errors,
     consents,
     corrections,
+    diary,
+    event_items,
+    health_safety,
     home,
     invites,
     me,
     observations,
     policies,
+    privacy_policy,
     runs,
     suggestions,
 )
 
 public_router = APIRouter()
-"""무인증. 로그인 자체를 시작·완료하는 5개와, 가입 전 동의 화면이 약관을 읽는
-GET /policies 하나 (루트 CLAUDE.md §9 · #91).
+"""무인증. 로그인 자체를 시작·완료하는 5개, 쿠키로 access 를 다시 받는 refresh(#466),
+가입 전 동의 화면이 약관을 읽는 GET /policies · 정본 HTML, 그리고 개인정보 처리방침 정본 둘
+(루트 CLAUDE.md §9 · #91 · #172 · #221 · #466).
 
 여기에 라우터를 붙이는 것은 보안 예외 목록을 늘리는 일이다. 늘려야 한다면 구현 전에
 그 목록과 API 계약을 먼저 고친다.
@@ -42,18 +49,26 @@ protected_router = APIRouter(dependencies=[Depends(get_current_parent)])
 
 protected_router.include_router(auth.fixed_router)
 protected_router.include_router(children.router)
+protected_router.include_router(child_parents.router)
 protected_router.include_router(client_errors.router)
 protected_router.include_router(consents.router)
+protected_router.include_router(health_safety.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(observations.router)
 protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
 protected_router.include_router(home.router)
+protected_router.include_router(calendar.router)
+protected_router.include_router(diary.router)
+protected_router.include_router(event_items.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
+# refresh 가 provider_router 보다 먼저다 — 늦으면 /auth/refresh 가 provider="refresh" 로 잡힌다.
+public_router.include_router(auth.refresh_router)
 public_router.include_router(auth.provider_router)
 public_router.include_router(policies.router)
+public_router.include_router(privacy_policy.router)
 
 v1_router = APIRouter()
 

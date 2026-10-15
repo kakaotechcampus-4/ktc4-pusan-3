@@ -1,0 +1,294 @@
+"""Growth 기억 조회 (모델 tool 4개).
+
+    search_education_memory   observation_education 14일 + profile_affinity(education)
+    search_activity_memory    observation_activity 14일 + profile_affinity(activity) — 참고용
+    search_affinity           profile_affinity(education · activity) 만
+    search_routine_memory     observation_routine 14일 + 코드가 고른 다음 단계(next_steps)
+
+- 순서는 `common/evidence.rank_evidence` 가 정한다. 모델에게 맡기지 않는다.
+- 돌려준 것만 `state.seen_evidence` 에 적는다 — 출력 tool 은 이 표 밖 id 를 거절한다.
+- 결과에는 id · 종류 · 티어 · 이름 · polarity · 날짜만 싣는다. 발화 원문은 포트가 싣지 않는다.
+- 다음 단계는 모델이 고르지 않는다. 관찰 subject 를 사슬 이름(`docs.match_chain`)에 맞추고,
+  14일 안 도움 수준으로 `pick_next_step` 이 바로 다음 칸을 고른다. 맞는 사슬이 없으면 `doc.no_row`
+  — 단계를 지어내지 않는다.
+"""
+
+from collections.abc import Sequence
+from datetime import date, timedelta
+
+from app.agents.common.evidence import (
+    OBSERVATION_WINDOW_DAYS,
+    TOP_N,
+    ObservationRow,
+    RankedEvidence,
+    rank_evidence,
+    top_refs,
+)
+from app.agents.growth.context import GrowthContext
+from app.agents.growth.doc_seed import chain_key
+from app.agents.growth.readouts import DOC_NO_ROW
+from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
+from app.agents.growth.schemas.memory import (
+    SearchActivityMemoryArgs,
+    SearchAffinityArgs,
+    SearchEducationMemoryArgs,
+    SearchRoutineMemoryArgs,
+)
+from app.agents.growth.store.ports import GrowthDocRow, RoutineObservation
+from app.agents.growth.tools.docs import match_chain, routine_chains
+from app.agents.growth.tools.routine import (
+    NextStep,
+    PickedStep,
+    current_assistance_level,
+    pick_next_step,
+)
+from app.rules.term_match import normalize
+
+# 모델에게 돌려주는 근거 수 (공통 TOP_N 과 같다)
+MEMORY_LIMIT = TOP_N
+# keywords 와 subject 를 서로 포함 관계로 볼 때 짧은 쪽의 최소 길이
+MIN_KEYWORD_MATCH = 2
+# 자립 단계 사슬이 있는 카테고리. 예절 · 습관은 단계가 아니라 전략 행이다
+SELF_RELIANCE = frozenset({"self_care", "mealtime", "household_task", "transition"})
+
+_NO_RECORDS = "기록이 없다. 기억 근거 없이 [예시]를 바탕으로 낸다. 보호자에게 되묻지 않는다."
+_NO_ROUTINE = (
+    "생활 루틴 기록이 없다. propose_routine_plan 을 items 를 비우고 category · subject 만 넣어 "
+    "부른다 — 코드가 보호자에게 되묻는다."
+)
+
+
+def _require_gate(context: GrowthContext) -> None:
+    if context.state.gate is None:
+        raise RuntimeError("Gate 없이 기억 조회가 불렸다 — run() 이 build_gate 를 먼저 부른다")
+
+
+def _window(context: GrowthContext) -> tuple[date, date]:
+    today = context.today
+    return today - timedelta(days=OBSERVATION_WINDOW_DAYS), today
+
+
+def _related(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long = sorted((a, b), key=len)
+    return len(short) >= MIN_KEYWORD_MATCH and short in long
+
+
+def _matching(
+    ranked: Sequence[RankedEvidence], keywords: Sequence[str]
+) -> tuple[RankedEvidence, ...]:
+    """keywords 중 하나라도 맞는 근거. 비면 전부다. 줄 세운 뒤에 거르므로 순서는 같다."""
+    wanted = [key for key in map(normalize, keywords) if key]
+    if not wanted:
+        return tuple(ranked)
+    return tuple(
+        item
+        for item in ranked
+        if any(
+            _related(key, normalize(item.subject)) or _related(key, normalize(item.label))
+            for key in wanted
+        )
+    )
+
+
+def _remember(context: GrowthContext, ranked: Sequence[RankedEvidence]) -> list[dict]:
+    picked = top_refs(ranked, limit=MEMORY_LIMIT)
+    context.state.seen_evidence.update(picked)
+    return [
+        {
+            "id": str(item.ref.id),
+            "kind": item.ref.kind,
+            "tier": item.tier,
+            "label": item.label,
+            "polarity": item.polarity,
+            "observed_on": item.observed_on.isoformat(),
+        }
+        for item in picked.values()
+    ]
+
+
+async def search_education_memory(
+    context: GrowthContext, args: SearchEducationMemoryArgs
+) -> ToolResult:
+    _require_gate(context)
+    start, today = _window(context)
+    memory = context.ports.memory
+    rows = await memory.education(child_id=context.child_id, date_from=start, date_to=today)
+    affinities = await memory.affinities(child_id=context.child_id, domains=("education",))
+    ranked = rank_evidence(
+        tuple(affinities),
+        tuple(
+            ObservationRow(
+                id=row.id,
+                kind="observation_education",
+                subject=row.subject,
+                label=row.topic,
+                polarity=row.polarity,
+                observed_on=row.observed_on,
+            )
+            for row in rows
+        ),
+        today=today,
+    )
+    found = _matching(ranked, args.keywords)
+    if not found:
+        return fail("query", "search_education_memory", ErrorCode.NO_RECORDS, _NO_RECORDS)
+    return ok("query", "search_education_memory", records=_remember(context, found))
+
+
+async def search_activity_memory(
+    context: GrowthContext, args: SearchActivityMemoryArgs
+) -> ToolResult:
+    """놀이 기록은 **참고**다. Growth 는 읽기만 하고 observation_activity 에 쓰지 않는다."""
+    _require_gate(context)
+    start, today = _window(context)
+    memory = context.ports.memory
+    rows = await memory.activities(child_id=context.child_id, date_from=start, date_to=today)
+    affinities = await memory.affinities(child_id=context.child_id, domains=("activity",))
+    ranked = rank_evidence(
+        tuple(affinities),
+        tuple(
+            ObservationRow(
+                id=row.id,
+                kind="observation_activity",
+                subject=row.subject,
+                label=row.activity,
+                polarity=row.polarity,
+                observed_on=row.observed_on,
+            )
+            for row in rows
+        ),
+        today=today,
+    )
+    found = _matching(ranked, args.keywords)
+    if not found:
+        return fail("query", "search_activity_memory", ErrorCode.NO_RECORDS, _NO_RECORDS)
+    return ok("query", "search_activity_memory", records=_remember(context, found))
+
+
+async def search_affinity(context: GrowthContext, args: SearchAffinityArgs) -> ToolResult:
+    _require_gate(context)
+    rows = await context.ports.memory.affinities(
+        child_id=context.child_id, domains=tuple(dict.fromkeys(args.domains))
+    )
+    ranked = rank_evidence(tuple(rows), (), today=context.today)
+    if not ranked:
+        return fail("query", "search_affinity", ErrorCode.NO_RECORDS, _NO_RECORDS)
+    return ok("query", "search_affinity", records=_remember(context, ranked))
+
+
+async def search_routine_memory(
+    context: GrowthContext, args: SearchRoutineMemoryArgs
+) -> ToolResult:
+    """루틴 관찰 14일과, 자립 카테고리면 관찰 subject 마다 코드가 고른 다음 단계.
+
+    `next_steps` 에는 단계 행이 있는 것만 싣는다. 단계가 없는 이유(되묻기 · 사슬 끝 · 사슬 없음)는
+    `state.steps` 에 남겨 출력 tool 이 코드 문구로 닫는다 — 모델에게 고르게 하지 않는다.
+    """
+    _require_gate(context)
+    start, today = _window(context)
+    rows = await context.ports.memory.routine(
+        child_id=context.child_id, date_from=start, date_to=today
+    )
+    if args.category is not None:
+        rows = [row for row in rows if row.routine_category == args.category]
+    if not rows:
+        return fail("query", "search_routine_memory", ErrorCode.NO_RECORDS, _NO_ROUTINE)
+
+    ranked = rank_evidence(
+        (),
+        tuple(
+            ObservationRow(
+                id=row.id,
+                kind="observation_routine",
+                subject=row.subject,
+                polarity=row.polarity,
+                observed_on=row.observed_on,
+            )
+            for row in rows
+        ),
+        today=today,
+    )
+    picked = top_refs(ranked, limit=MEMORY_LIMIT)
+    context.state.seen_evidence.update(picked)
+    by_id = {row.id: row for row in rows}
+    shown = [by_id[key] for key in picked]
+    for row in shown:
+        context.state.seen_routine[row.id] = row
+
+    await _pick_steps(context, shown)
+    return ok(
+        "query",
+        "search_routine_memory",
+        records=[
+            {
+                "id": str(row.id),
+                "subject": row.subject,
+                "category": row.routine_category,
+                "assistance_level": row.assistance_level,
+                "completion_status": row.completion_status,
+                "trigger": row.trigger,
+                "observed_on": row.observed_on.isoformat(),
+            }
+            for row in shown
+        ],
+        next_steps=[
+            {
+                "step_id": str(picked_step.step.row.id),
+                "subject": picked_step.subject,
+                "category": picked_step.category,
+                "title": picked_step.step.row.title,
+                "body": picked_step.step.row.body,
+            }
+            for picked_step in context.state.steps.values()
+            if picked_step.step.row is not None
+        ],
+    )
+
+
+async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]) -> None:
+    """관찰마다가 아니라 **사슬마다** 한 번 고른다.
+
+    같은 행동을 "양치" · "양치하기" 로 달리 적어도 한 사슬이다 — 그 사슬에 맞는 관찰을 다 모아 가장
+    최근 도움 수준으로 단계를 고른다. 한 철자의 오래된 기록으로 이미 넘어선 단계를 시키지 않게 한다.
+    맞는 사슬이 없는 subject 는 카테고리와 이름으로 따로 남긴다 (`doc.no_row`).
+    """
+    gate = context.state.gate
+    assert gate is not None
+    months, today = gate.stage.months, context.today
+    steps = context.state.steps
+    chains_by_category: dict[str, dict[str, tuple[GrowthDocRow, ...]]] = {}
+    for row in rows:
+        category = row.routine_category
+        if category not in SELF_RELIANCE:
+            continue
+        if category not in chains_by_category:
+            chains_by_category[category] = await routine_chains(
+                context.ports.docs, months=months, category=category
+            )
+        chain = match_chain(chains_by_category[category], row.subject)
+        if chain is None:
+            unmatched = f"{category}|{normalize(row.subject)}"
+            if unmatched not in steps:
+                steps[unmatched] = PickedStep(
+                    subject=row.subject, category=category, step=NextStep(readout_key=DOC_NO_ROW)
+                )
+            continue
+        key = chain_key(chain[0].doc_key)
+        if key in steps:
+            continue
+        same = [
+            obs
+            for obs in rows
+            if obs.routine_category == category and match_chain({key: chain}, obs.subject)
+        ]
+        level = current_assistance_level(same, category=category, subject=None, today=today)
+        latest = max(same, key=lambda obs: obs.observed_on)
+        steps[key] = PickedStep(
+            subject=latest.subject,
+            category=category,
+            step=pick_next_step(chain, assistance_level=level),
+        )

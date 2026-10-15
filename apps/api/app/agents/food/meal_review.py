@@ -6,7 +6,8 @@
   3. reason 문장     수치 · 진단 · 처방 · 몸 상태 · 또래 비교를 막는다(`nutrient_wording`)
   4. 근거 대조       이번 run 에서 조회하지 않은 근거 id 를 인용하면 후보를 거절한다
   5. build()         6개월이 안 지난 아이 기록 근거 수로 `kind` 를 정한다.
-                     이름 · 재료는 카탈로그 행에서 온다
+                     이름 · 재료는 카탈로그 행에서 온다. 일반 추천이면 고른 메뉴(레시피 카탈로그
+                     행) 자체가 근거로 붙는다 — 문서 행이 없는 월령에도 근거 0행이 되지 않게(#442)
 
 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다. 걸린 후보는 고치지 않고 통째로 뺀다.
 사유는 코드로만 남긴다 — 메뉴 이름 · 근거 문장을 싣지 않는다(로그로 흘러간다).
@@ -27,9 +28,10 @@ from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEAN
 from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef, MealSlot
 from app.agents.food.schemas.recommend import MealCandidate
-from app.agents.food.store.ports import FoodDocRow, MenuCatalogRow, SafetyEntry
+from app.agents.food.store.ports import RECIPE_SOURCES, FoodDocRow, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
+from app.rules.menu_evidence import menu_evidence_id
 from app.rules.menu_key import normalize_menu_key
 
 Seen = Mapping[UUID, RankedEvidence]
@@ -39,6 +41,10 @@ Docs = Mapping[UUID, FoodDocRow]
 # 추천임을 표시하고 쌓인 기록 건수를 함께 보여 준다(루트 §2). 이유기 아이는 "이 시기 아기들" 문구다
 GENERAL_REASON = READOUTS.get(GENERAL_REASON_TODDLER).template
 GENERAL_REASON_INFANT = READOUTS.get(GENERAL_REASON_WEANING).template
+
+# 일반 추천에 붙는 메뉴 근거의 한 줄. 코드 문구다(모델이 쓰지 않는다). 05 화면에 그대로 나가서
+# 사실만 쓴다 — 후보 풀의 레시피는 재료 정리 표를 사람이 검수한 것만 들어온다(resolved)
+MENU_EVIDENCE_NOTE = "농식품정보원 공개 레시피 중 재료가 검수된 메뉴예요."
 
 
 class RejectReason(StrEnum):
@@ -58,9 +64,12 @@ GUIDANCE: dict[RejectReason, str] = {
         "이 아이의 기록에서 고른 이유와 지금인 이유만 쓴다."
     ),
     RejectReason.UNKNOWN_EVIDENCE: (
-        "evidence 에는 search_food_memory 나 guide_weaning_stage 결과에 있던 id 만 쓴다."
+        "evidence 에는 search_food_memory · guide_weaning_stage 결과나 [예시] 에 있던 id 만 쓴다."
     ),
-    RejectReason.BUILD: "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다.",
+    RejectReason.BUILD: (
+        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
+        "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
+    ),
 }
 
 
@@ -132,6 +141,7 @@ def review_candidates(
                 general_reason=GENERAL_REASON_INFANT
                 if stage == "infant_weaning"
                 else GENERAL_REASON,
+                general_basis=_menu_basis(row),
                 allergens=verdict.allergens.get(row.menu_key, ()),
                 items=row.ingredients,
                 today=today,
@@ -184,6 +194,18 @@ def _lookup(seen: Seen, docs: Docs, pick: EvidenceRef) -> RankedEvidence | FoodD
     found = seen.get(key) or docs.get(key)
     assert found is not None
     return found
+
+
+def _menu_basis(row: MenuCatalogRow) -> tuple[EvidenceCitation, ...]:
+    """고른 메뉴 자체를 일반 추천의 근거로 (#442). 개인화 추천이면 `build()` 가 버린다.
+
+    레시피 카탈로그 행만 가리킬 수 있다(id 는 `rules/menu_evidence`). 레시피 번호가 없는 행은
+    비운다 — 그때는 지금처럼 문서 행을 인용해야 일반 추천이다. 운영 후보 풀은 늘 레시피 행이다.
+    """
+    if row.source not in RECIPE_SOURCES or not row.source_id:
+        return ()
+    ref = Ref(kind="recipe_catalog", id=menu_evidence_id(row.source, row.source_id))
+    return (EvidenceCitation(ref=ref, note=MENU_EVIDENCE_NOTE, label=row.display_name),)
 
 
 def _cite(item: RankedEvidence | FoodDocRow, *, note: str) -> EvidenceCitation:

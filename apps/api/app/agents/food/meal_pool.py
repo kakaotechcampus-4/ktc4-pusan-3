@@ -34,7 +34,12 @@ from app.agents.common.evidence import OBSERVATION_WINDOW_DAYS, ObservationRow, 
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.matching import related
-from app.agents.food.nutrition_eval import MealRecords, evaluate_nutrient_bands, read_meal_records
+from app.agents.food.nutrition_eval import (
+    MealRecords,
+    NutrientVerdict,
+    evaluate_nutrient_bands,
+    read_meal_records,
+)
 from app.agents.food.store.ports import MenuCatalogRow
 from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
@@ -54,7 +59,7 @@ RECENT_EATEN_DAYS = 3
 BASE_WEIGHT = 1.0
 AVOID_FACTOR = 0.3  # 기피 — 0 이 되지는 않는다
 PREFER_FACTOR = 1.5  # 선호
-DEFICIT_BOOST = 4.0  # 영양 판정이 low 인 항목의 식품군
+DEFICIT_BOOST = 4.0  # 영양 판정이 low 인 항목의 식품군 · 적게 나온 채소 · 과일
 TODAY_OVERLAP_FACTOR = 0.7  # 오늘 이미 먹은 식품군과 겹침 — 점심에 고기면 저녁은 채소 위주
 RECENT_REPEAT_FACTOR = 0.4  # 최근 3일 안에 먹은 메뉴와 같은 이름 — 0 이 되지는 않는다
 
@@ -65,6 +70,11 @@ LOW_NUTRIENT_GROUPS: dict[str, frozenset[str]] = {
     "calcium": frozenset({"dairy"}),
     "iron": frozenset({"meat_fish_egg_legumes"}),
 }
+
+# 영양 구간에 대응하는 항목이 없는 식품군 — 최근 7일 중 나온 날 수로 부족을 본다(N-19). 기록된 날의
+# 이 비율보다 적게 나오면 부족 식품군에 더한다. 영양 구간으로 오는 부족 식품군과 합집합이다
+APPEARANCE_DEFICIT_GROUPS: tuple[str, ...] = ("vegetables", "fruits")
+MIN_APPEARANCE_SHARE = 0.5
 
 # 영양 판정(KDRI)이 있는 단계. 12개월 미만은 판정하지 않는다
 _NUTRIENT_STAGES: frozenset[Stage] = frozenset({"toddler", "preschool"})
@@ -243,18 +253,33 @@ async def _signals(context: FoodContext) -> tuple[tuple[str, ...], tuple[str, ..
 
 
 async def _deficit_groups(context: FoodContext, *, stage: Stage, months: int) -> frozenset[str]:
-    """영양 판정이 `low` 인 항목의 식품군. 판정이 없거나 기록이 모자라면 비어 있다."""
+    """부족 식품군 — 영양 판정이 `low` 인 항목의 식품군 + 적게 나온 채소 · 과일. 판정이 없거나
+    기록이 모자라면 해당 쪽은 비어 있다."""
     if stage not in _NUTRIENT_STAGES:
         return frozenset()
     verdict = await evaluate_nutrient_bands(context, months=months)
-    if verdict.insufficient:
-        return frozenset()
-    return frozenset().union(
-        *(
-            LOW_NUTRIENT_GROUPS.get(nutrient, frozenset())
-            for nutrient, band in verdict.bands.items()
-            if band == "low"
+    low: frozenset[str] = frozenset()
+    if not verdict.insufficient:
+        low = frozenset().union(
+            *(
+                LOW_NUTRIENT_GROUPS.get(nutrient, frozenset())
+                for nutrient, band in verdict.bands.items()
+                if band == "low"
+            )
         )
+    return low | _sparse_groups(verdict)
+
+
+def _sparse_groups(verdict: NutrientVerdict) -> frozenset[str]:
+    """최근 7일에 기록된 날의 `MIN_APPEARANCE_SHARE` 보다 적게 나온 채소 · 과일.
+
+    구간(`insufficient`)과 따로 본다 — 1인분 중량이 빈 메뉴로 구간이 막혀도 "나왔는가" 는 센다."""
+    if not verdict.appearance_ready:
+        return frozenset()
+    return frozenset(
+        group
+        for group in APPEARANCE_DEFICIT_GROUPS
+        if verdict.food_group_days.get(group, 0) < verdict.recorded_days * MIN_APPEARANCE_SHARE
     )
 
 

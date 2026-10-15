@@ -7,10 +7,15 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.agents.common.age import life_stage
+from app.agents.common.readout import Readout
 from app.agents.food.context import FoodContext
 from app.agents.food.menu_resolver import MenuResolver, Resolved
-from app.agents.food.nutrient_actions import advice_for, check_summary
-from app.agents.food.nutrient_wording import WORDING_MESSAGES, wording_problem
+from app.agents.food.nutrient_actions import advice_for, blocked_groups, check_summary
+from app.agents.food.nutrient_wording import (
+    WORDING_MESSAGES,
+    appearance_readouts,
+    wording_problem,
+)
 from app.agents.food.nutrition_eval import NutrientVerdict, evaluate_nutrient_bands
 from app.agents.food.result import ErrorCode, ToolResult, fail, ok
 from app.agents.food.schemas.common import EvidenceRef
@@ -129,6 +134,21 @@ async def diet_balance(
             actions[nutrient] = advice.text
         removed.extend(advice.removed)
     return DietBalance(verdict=verdict, actions=actions, removed_foods=tuple(removed))
+
+
+async def appearance_report(context: FoodContext) -> tuple[Readout, ...]:
+    """영양소 분석 1차 출력 — 판정(`evaluate_nutrient_bands`)의 식품군 출현을 코드 문장으로 낸다.
+
+    모델을 거치지 않는다. 구간은 판정해서 run state 에 두지만 문장에는 쓰지 않는다. 안전 정보를
+    읽지 못했으면 RuntimeError 다 — 식품군을 걸러 낼 알레르기를 모르는 채로 말하지 않는다.
+    """
+    ports = context.ports
+    birth_date = await ports.profile.birth_date(child_id=context.child_id)
+    months = months_between(birth_date, context.today)
+    stage = life_stage(birth_date, context.today).stage
+    entries = _safety_entries(context)
+    verdict = await evaluate_nutrient_bands(context, months=months)
+    return appearance_readouts(verdict, blocked_groups(entries, stage=stage, months=months))
 
 
 async def compare_diet_balance(context: FoodContext, args: CompareDietBalanceArgs) -> ToolResult:

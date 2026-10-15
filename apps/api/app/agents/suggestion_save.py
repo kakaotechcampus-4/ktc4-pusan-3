@@ -20,7 +20,7 @@ from app.agents.common.suggestion import SuggestionDraft
 class SuggestionBatch:
     """Agent 결과 하나의 추천. 이 단위로 트랜잭션 하나다."""
 
-    run_id: str
+    run_id: str | None  # 05 의 홈 · 04 제안 요청은 run 이 없다
     agent: str
     task_type: str | None
     drafts: tuple[SuggestionDraft, ...]

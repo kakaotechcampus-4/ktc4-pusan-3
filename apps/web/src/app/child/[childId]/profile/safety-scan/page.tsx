@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { SafetyScanReview } from "@/components/safety-scan-review";
 import { isSelectable, toRow, type ScanRow } from "@/components/safety-scan-fields";
@@ -29,6 +30,7 @@ import {
   type IdempotencyKeyHolder,
   type SafetyScanResponse,
 } from "@/lib/api";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 11-2 알레르기 검사지에서 가져오기 (`/child/[childId]/profile/safety-scan`).
@@ -55,7 +57,9 @@ import {
 export default function SafetyScanPage() {
   return (
     <AuthGate>
-      <SafetyScanScreen />
+      <ScreenTransition>
+        <SafetyScanScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -161,7 +165,7 @@ function SafetyScanScreen() {
   }
 
   function leave() {
-    router.push(`/child/${childId}/profile`);
+    router.push(`/child/${childId}/profile`, BACK);
   }
 
   /**
@@ -232,7 +236,7 @@ function SafetyScanScreen() {
      *    "확인하지 않은 N건은 등록하지 않아요" 라고 이미 말했다 — 그래서 떠나는 것을 막지 않는다.
      */
     if (failed === 0 && saved > 0) {
-      router.push(`/child/${childId}/profile`);
+      router.push(`/child/${childId}/profile`, BACK);
     }
   }
 
@@ -245,6 +249,7 @@ function SafetyScanScreen() {
             아니라 `Link` 다 — 주소로 바로 들어오면 히스토리에 프로필이 없어 앱 밖으로 나간다. */}
         <Link
           href={`/child/${childId}/profile`}
+          {...BACK}
           className="text-body-sm text-ink-muted ease-standard active:text-ink hover:text-ink min-h-touch -my-2 -ml-1 flex w-fit items-center gap-1 py-2 pr-2 pl-1 transition-colors duration-120"
         >
           <ChevronLeft aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
@@ -311,7 +316,7 @@ function NoPhoto({ childId }: { childId: string }) {
         </p>
       </div>
       <div>
-        <Button onClick={() => router.push(`/child/${childId}/profile`)}>
+        <Button onClick={() => router.push(`/child/${childId}/profile`, BACK)}>
           <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           프로필에서 다시 고르기
         </Button>
@@ -359,7 +364,9 @@ function ReadFailed({ childId }: { childId: string }) {
         </p>
       </div>
       <div>
-        <Button onClick={() => router.push(`/child/${childId}/profile`)}>프로필로 돌아가기</Button>
+        <Button onClick={() => router.push(`/child/${childId}/profile`, BACK)}>
+          프로필로 돌아가기
+        </Button>
       </div>
     </div>
   );

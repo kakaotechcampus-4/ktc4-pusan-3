@@ -8,7 +8,7 @@ PR #178 (observation soft delete) 반영:
   관찰이 soft delete 되면 보류 기록(hold)도 정리돼야 한다.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy.dialects.postgresql import Range
@@ -43,7 +43,7 @@ def _food(child_id, *, subject="사과", polarity=1, observed_on=date(2026, 9, 2
         subject=subject,
         polarity=polarity,
         confidence_source=ConfidenceSource.PARENT_DIRECT,
-        observed_range=Range(observed_on, observed_on),
+        observed_range=Range(observed_on, observed_on + timedelta(days=1)),
         **overrides,
     )
 
@@ -56,7 +56,7 @@ def _activity(child_id, *, subject="축구", polarity=1, observed_on=date(2026, 
         polarity=polarity,
         activity="축구",
         confidence_source=ConfidenceSource.PARENT_DIRECT,
-        observed_range=Range(observed_on, observed_on),
+        observed_range=Range(observed_on, observed_on + timedelta(days=1)),
         **overrides,
     )
 
@@ -172,7 +172,7 @@ class TestListUnlinked:
         session.add_all([active, deleted])
         await session.flush()
 
-        result = await store.list_unlinked(child_id=child.id)
+        result = await store.list_unlinked(child_id=child.id, min_observed_on=date(2024, 7, 1))
 
         ids = [item.id for item in result]
         assert str(active.id) in ids
@@ -199,7 +199,7 @@ class TestListUnlinked:
         session.add_all([obs1, obs2])
         await session.flush()
 
-        result = await store.list_unlinked(child_id=child.id)
+        result = await store.list_unlinked(child_id=child.id, min_observed_on=date(2024, 7, 1))
 
         ids = [item.id for item in result]
         assert str(obs1.id) in ids
@@ -430,7 +430,7 @@ class TestSoftDeleteHoldCleanup:
         await session.flush()
 
         assert await store.list_unembedded(child_id=child.id) == []
-        assert await store.list_unlinked(child_id=child.id) == []
+        assert await store.list_unlinked(child_id=child.id, min_observed_on=date(2024, 7, 1)) == []
 
 
 # ---------------------------------------------------------------------------

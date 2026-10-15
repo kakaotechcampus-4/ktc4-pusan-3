@@ -194,6 +194,38 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
     });
   });
 
+  test.describe("agent_suggestions — 추천이 든 결과", () => {
+    test.use({ scenario: "agent_suggestions" });
+
+    test("후보 수 · 이유 · 또래 기준 표시가 서고, 후보 보기는 그 run 의 05 로 간다", async ({
+      page,
+    }) => {
+      await sendFromHome(page, "저녁이랑 놀이 추천해줘");
+      const reply = turn(page, "저녁이랑 놀이 추천해줘");
+
+      await expect(reply.getByText("후보 3개")).toBeVisible();
+      await expect(reply.getByText("아이 기록 4건을 보고 골랐어요.")).toBeVisible();
+      // 🚨 일반 묶음은 또래 기준임과 쌓인 기록 수를 그대로 적는다 (최상위 §2)
+      await expect(reply.getByText("또래 기준 일반 추천 · 쌓인 기록 1건")).toBeVisible();
+      // 🚨 개수 안내는 "후보 N개" 가 대신하고, 날씨 안내는 그대로 선다
+      await expect(reply.getByText("조건에 맞는 추천을 1개 준비했어요.")).toHaveCount(0);
+      await expect(
+        reply.getByText("오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요."),
+      ).toBeVisible();
+      await expect(
+        reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
+      ).toHaveCount(0);
+
+      const links = reply.getByRole("link", { name: "후보 보기" });
+      await expect(links).toHaveCount(2);
+      expect(await links.first().getAttribute("href")).toMatch(
+        /^\/child\/c1\/suggestions\?agents=food&run=.+/,
+      );
+      await links.first().click();
+      await expect(page).toHaveURL(/\/child\/c1\/suggestions\?agents=food&run=/);
+    });
+  });
+
   test.describe("agent_partial — 한 Agent 는 결과, 다른 Agent 는 실패", () => {
     test.use({ scenario: "agent_partial" });
 
@@ -209,6 +241,12 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
       ).toBeVisible();
       await expect(reply.getByText("저장한 기록은 그대로", { exact: false })).toHaveCount(0);
       await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      // 실패한 추천 Agent 를 그 run 의 처음 맥락으로 다시 준비한다 (#249)
+      const retry = reply.getByRole("link", { name: "다시 준비하기" });
+      await expect(retry).toHaveAttribute(
+        "href",
+        /^\/child\/c1\/suggestions\?agents=activity&run=.+/,
+      );
     });
   });
 });

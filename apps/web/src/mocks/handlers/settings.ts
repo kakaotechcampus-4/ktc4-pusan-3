@@ -13,7 +13,7 @@ import { CHILD_ID, PARENT_ID } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { INVITE_CODE_LENGTH } from "@/lib/invite-code";
 import { apiError, networkDelay, url } from "./helpers";
-import { currentMe } from "./membership";
+import { currentMe, leaveChild } from "./membership";
 import {
   currentPolicies,
   initialPolicyVersion,
@@ -164,6 +164,8 @@ function isLinkedChild(childId: string): boolean {
 /**
  * 🚨 **owner 는 목록에서 뺄 수 없다** (계약서 §07 · 409 `owner_required`).
  *    이관은 `child.owner_parent_id` 변경으로 처리하는 것이라 이 화면의 일이 아니다.
+ *
+ * 🚨 **이름이 빈 보호자가 한 줄 있다** (#336 · `nickname: null`). 화면이 관계 이름으로 부르는지 여기서 본다.
  */
 function initialParents(): ChildParent[] {
   return [
@@ -181,13 +183,76 @@ function initialParents(): ChildParent[] {
       role: "member",
       connected_at: "2026-09-02T20:10:00+09:00",
     },
+    {
+      parent_id: "p3",
+      nickname: null,
+      relation: "sitter",
+      role: "member",
+      connected_at: "2026-09-10T09:30:00+09:00",
+    },
+  ];
+}
+
+/**
+ * 초대한 사람(= member 시점 목록의 owner). 초대 미리보기(`GET /invites/{code}`)도 이 이름을 쓴다.
+ *
+ * 🚨 **`me.nickname` 을 쓰지 않는다.** `consent` 시나리오에서 초대를 받는 사람도 `me`(지은)라서,
+ *    미리보기가 `me` 를 쓰면 "지은이 지은을 초대했다" 가 되고 설정의 owner 와도 어긋난다.
+ */
+export const INVITER_NICKNAME = "현우";
+
+/**
+ * 초대로 들어온 member 가 보는 목록. `consent` 시나리오에서 초대를 수락하면 이쪽이다.
+ *
+ * 🚨 **보는 사람(`PARENT_ID`)이 member 로 서고 owner 는 다른 사람이다.** owner 시점 목록을
+ *    그대로 주면 보는 사람이 owner 줄에 있어서 member 화면(나가기 버튼)을 열어 볼 수 없다.
+ */
+function initialMemberView(relation: ChildParent["relation"]): ChildParent[] {
+  return [
+    {
+      parent_id: "p2",
+      nickname: INVITER_NICKNAME,
+      relation: "father",
+      role: "owner",
+      connected_at: "2026-08-30T11:00:00+09:00",
+    },
+    {
+      parent_id: PARENT_ID,
+      nickname: currentMe().nickname,
+      relation,
+      role: "member",
+      connected_at: new Date().toISOString(),
+    },
+    {
+      parent_id: "p3",
+      nickname: null,
+      relation: "sitter",
+      role: "member",
+      connected_at: "2026-09-10T09:30:00+09:00",
+    },
   ];
 }
 
 let parents = initialParents();
+let memberView: ChildParent[] | null = null;
 
 export function resetParentState(): void {
   parents = initialParents();
+  memberView = null;
+}
+
+/** 보는 사람의 role 에 맞는 목록. 연결이 없으면 `null` — 서버의 `AccessibleChild` 403 이다. */
+function parentsFor(cid: string): { role: "owner" | "member"; rows: ChildParent[] } | null {
+  const link = currentMe().children.find((child) => child.child_id === cid);
+  if (!link) return null;
+  if (link.role === "owner") return { role: "owner", rows: parents };
+  memberView ??= initialMemberView(link.relation as ChildParent["relation"]);
+  return { role: "member", rows: memberView };
+}
+
+function setParentsFor(role: "owner" | "member", rows: ChildParent[]): void {
+  if (role === "owner") parents = rows;
+  else memberView = rows;
 }
 
 export const settingsHandlers = [
@@ -289,22 +354,52 @@ export const settingsHandlers = [
     return HttpResponse.json(res, { status: 201 });
   }),
 
-  http.get(url("/children/:cid/parents"), async () => {
+  http.get(url("/children/:cid/parents"), async ({ params }) => {
     await networkDelay();
-    const body: ChildParentsResponse = { parents };
+    const view = parentsFor(String(params.cid));
+    if (!view) return apiError(403, "child_access_denied", "이 아이에 접근할 수 없어요");
+    const body: ChildParentsResponse = { parents: view.rows };
     return HttpResponse.json(body);
   }),
 
+  /**
+   * 누가 누구를 끊나 (#336 · 재형님 결정 10-06). owner 는 member 누구든, member 는 자기 자신만.
+   *
+   * 🚨 **스스로 나가면 `/me` 에서도 빠진다** (`leaveChild`). 다시 보내면 연결이 없어서
+   *    아이 접근 확인에서 403 `child_access_denied` 다 — 서버와 같다.
+   */
   http.delete(url("/children/:cid/parents/:pid"), async ({ params }) => {
     await networkDelay();
+    const cid = String(params.cid);
     const pid = String(params.pid);
-    const target = parents.find((p) => p.parent_id === pid);
+    const view = parentsFor(cid);
+    if (!view) return apiError(403, "child_access_denied", "이 아이에 접근할 수 없어요");
+
+    const target = view.rows.find((p) => p.parent_id === pid);
     if (!target) return apiError(404, "not_found", "그 보호자를 찾지 못했어요");
     // 🚨 owner 는 연결을 끊는 대상이 아니다. 화면이 버튼을 안 그려도 서버가 다시 막는다.
     if (target.role === "owner") {
       return apiError(409, "owner_required", "아이를 만든 보호자는 연결을 끊을 수 없어요");
     }
-    parents = parents.filter((p) => p.parent_id !== pid);
+    // 🚨 member 는 자기 자신만 끊는다. 화면은 남의 줄에 버튼을 안 그리지만 서버가 다시 막는다.
+    if (view.role === "member" && pid !== currentMe().id) {
+      return apiError(
+        403,
+        "owner_only",
+        "아이를 등록한 보호자만 다른 보호자의 연결을 끊을 수 있어요",
+      );
+    }
+
+    if (pid === currentMe().id) {
+      // 다시 초대받아 들어오면 처음 목록부터 본다.
+      leaveChild(cid);
+      memberView = null;
+    } else {
+      setParentsFor(
+        view.role,
+        view.rows.filter((p) => p.parent_id !== pid),
+      );
+    }
     return new HttpResponse(null, { status: 204 });
   }),
 

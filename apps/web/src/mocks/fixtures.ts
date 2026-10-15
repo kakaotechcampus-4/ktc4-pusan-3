@@ -596,14 +596,15 @@ export const suggestionAllergens: Record<string, string[]> = {
  * 🚨 `food` 만 `merges_into_one` 이다. 반찬 셋을 골라도 "저녁 식사" 한 건이 된다.
  */
 export const suggestionGroups: SuggestionGroup[] = [
-  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true },
-  { agent: "activity", prompt: "주말에 뭐 하고 놀까요" },
+  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true, cautions: [] },
+  { agent: "activity", prompt: "주말에 뭐 하고 놀까요", cautions: [] },
 ];
 
 /**
  * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 추천 (CLAUDE.md §2).
  *
- * 🚨 `evidence` 필드가 없다 — 일반 추천은 근거 0행이 정상이고, 그래서 개인화와 **타입이 다르다.**
+ * 🚨 `evidence` 는 **아이 기록이 아니라 문서 행**이다 (`DocEvidence`) — 일반 추천은 아이 기록 근거 0행이
+ *    정상이고, 그래서 개인화와 **타입이 다르다.** 문서 근거가 없는 일반 추천은 서버가 내지 않는다.
  * 🚨 `basis` 는 서버가 만든 문구다. 목에서도 프론트가 "또래 기준" 을 지어내지 않게 여기 둔다.
  */
 export const generalSuggestions: GeneralSuggestion[] = [
@@ -614,6 +615,19 @@ export const generalSuggestions: GeneralSuggestion[] = [
     kind: "general",
     content: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요",
     basis: "36개월 또래가 자주 찾는 놀이예요",
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    record_count: 1,
+    evidence: [
+      {
+        ref: { kind: "activity_doc", id: "doc_1" },
+        title: "블록 쌓기",
+        source_org: "교육부",
+        source_title: "표준보육과정",
+        source_url: null,
+        note: "또래 놀이 자료",
+      },
+    ],
   },
   {
     id: "g_2",
@@ -622,6 +636,19 @@ export const generalSuggestions: GeneralSuggestion[] = [
     kind: "general",
     content: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요",
     basis: "36개월 또래의 식사에서 흔한 형태예요",
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    record_count: 1,
+    evidence: [
+      {
+        ref: { kind: "food_doc", id: "doc_2" },
+        title: "한 끼 구성",
+        source_org: "보건복지부",
+        source_title: "영유아 식생활 지침",
+        source_url: null,
+        note: "또래 식사 자료",
+      },
+    ],
   },
 ];
 

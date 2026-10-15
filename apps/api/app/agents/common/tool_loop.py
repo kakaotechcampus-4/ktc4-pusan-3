@@ -50,7 +50,7 @@ ExecuteTool = Callable[[str, dict[str, Any]], Awaitable[ToolResult]]
 # no_tool_call · max_steps 는 Agent 가 실패(status="failed", 화면은 다시 시도)로 낸다. 추천 0개
 # (completed + empty 안내)로 내면 모델이 실패한 것이 "추천할 게 없다" 로 보인다 — 0개는 출력 tool 이
 # 통과했는데 안전 조건을 지난 후보가 없을 때뿐이다 (Tool_공통.md §5-2, #320 PM 리뷰)
-# 예외 — Food 영양소 분석은 판정 · 안내가 코드 값이라 코드 문장 틀을 ok 로 낸다 (#357 리뷰)
+# Food 영양소 분석은 모델을 부르지 않아 이 루프를 타지 않는다 — 코드가 출현 문장을 낸다 (#411)
 EndedBy = Literal["output_accepted", "no_tool_call", "max_steps"]
 
 _BAD_JSON = "arguments가 올바른 JSON 객체가 아니다. 스키마에 맞는 JSON으로 다시 만든다."

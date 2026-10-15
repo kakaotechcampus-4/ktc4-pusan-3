@@ -11,7 +11,7 @@ HTTP 없이 채널과 태스크만 본다.
 
 import asyncio
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -19,18 +19,21 @@ from app.agents import entrypoint
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.entrypoint import (
     Done,
+    EmptyResult,
     EventDrafts,
     Failed,
     MemoryNote,
     Partial,
     PendingMemoryContext,
     PendingReply,
+    RetryContext,
     Step,
     Unwritten,
 )
 from app.agents.memory.schemas.task import WorkType
-from app.api import idempotency
-from app.api.runs import pending_reply, registry, runner
+from app.api import agent_ports, idempotency
+from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
@@ -102,6 +105,25 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
 
     assert seen["location"] is location
     assert seen["activity_weather"] is weather
+
+
+async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):
+    """#460 — 넘기지 않으면 둘 다 blocked.safety 로 닫힌다. 같은 어댑터 하나를 둘이 다른
+    메서드로 읽는다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["food_safety"], DbSafetyReader)
+    assert seen["activity_safety"] is seen["food_safety"]
 
 
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
@@ -332,6 +354,38 @@ async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_�
     stored = pending_reply.consume(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
     assert stored == _PENDING
     pending_reply.clear()
+
+
+async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeypatch):
+    """실패 맥락에는 요청 원문 조각이 있다. 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)."""
+    suggestion_retry.clear()
+    sent_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        run_id = kwargs["run_id"]
+        emit(RetryContext(run_id, "food", "meal_recommendation", ("저녁 추천해줘",), sent_at))
+        emit(EmptyResult(run_id, "activity", None, "조건에 맞는 추천이 없어요."))
+        emit(Done(run_id, 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["done"]  # 화면에는 아무것도 가지 않는다
+    claimed = suggestion_retry.claim(
+        run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="food"
+    )
+    assert claimed == suggestion_retry.RetryTask("meal_recommendation", ("저녁 추천해줘",), sent_at)
+    assert (
+        suggestion_retry.empty_message(
+            run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
+        )
+        == "조건에 맞는 추천이 없어요."
+    )
+    suggestion_retry.clear()
 
 
 async def test_이어받기_맥락을_진입점에_넘긴다(monkeypatch):
@@ -778,6 +832,7 @@ async def test_도메인_Agent_기억_포트는_열_때마다_run_세션과_다�
             return None
 
     monkeypatch.setattr(runner, "background_session", FakeSession)
+    monkeypatch.setattr(agent_ports, "background_session", FakeSession)
     stores: list = []
 
     async def fake_handle_input(**kwargs):
@@ -827,6 +882,7 @@ def _sessions(monkeypatch: pytest.MonkeyPatch) -> list:
             self.commits += 1
 
     monkeypatch.setattr(runner, "background_session", FakeSession)
+    monkeypatch.setattr(agent_ports, "background_session", FakeSession)
     return opened
 
 
@@ -873,6 +929,59 @@ async def test_추천은_묶음마다_새_세션에서_저장하고_commit_한�
     assert (calls[0]["child_id"], calls[0]["run_id"]) == (CHILD, channel.run_id)
     assert calls[0]["payloads"] == [_DRAFT.to_payload()]
     assert channel.suggestions_saved is True
+
+
+async def test_기록_건수_함수를_진입점에_넘기고_짧은_세션에서_센다(monkeypatch):
+    """일반 추천 블록의 "쌓인 기록 N건" (#227). 05 와 같은 표로 센다(`agent_ports.RECORD_KINDS`)."""
+    opened = _sessions(monkeypatch)
+    from app.domains.suggestion import repository
+
+    asked: list = []
+
+    async def count_child_records(session, *, child_id, kinds):
+        asked.append((child_id, tuple(kinds)))
+        return 4
+
+    monkeypatch.setattr(repository, "count_child_records", count_child_records)
+    counted: list = []
+
+    async def fake_handle_input(**kwargs):
+        counted.append(await kwargs["count_records"]("activity"))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert counted == [4]
+    assert asked == [(CHILD, ("observation_activity",))]
+    assert len(opened) == 2  # run 세션 + 건수 세션 — run 세션을 같이 타지 않는다
+
+
+async def test_Food_카탈로그_어댑터를_진입점에_넘긴다(monkeypatch):
+    """#442 — Food 가 DB 의 레시피 · 메뉴 카탈로그 · 추천 이력을 읽는다.
+
+    어댑터는 만들 때 세션을 열지 않는다.
+    """
+    opened = _sessions(monkeypatch)
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert type(seen["food_recipes"]).__name__ == "DbRecipeCatalog"
+    assert type(seen["food_catalog"]).__name__ == "DbMenuCatalog"
+    assert type(seen["food_suggestions"]).__name__ == "DbSuggestionHistory"
+    assert len(opened) == 1  # run 세션 하나뿐 — 어댑터는 호출할 때마다 짧은 세션을 연다
 
 
 async def test_추천_저장_뒤_예외가_나도_done_이고_키를_풀지_않는다(monkeypatch):

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { CorrectionVerdict } from "@/lib/api/types";
+import { useMotionCue } from "@/lib/motion";
 
 /**
  * 교정 (CLAUDE.md §5 Correction · 디자인 시스템 §11).
@@ -135,10 +136,17 @@ export function CorrectionButtons({
 }) {
   const [asking, setAsking] = useState<VerdictSpec | null>(null);
   const busy = pending !== null;
+  /** 판정 버튼 묶음 ↔ 확인 패널은 같은 자리의 **교체**다 (디자인 시스템 §8). 누른 것만 움직인다. */
+  const { ref: swapRef, cue: cueSwap } = useMotionCue<HTMLDivElement>();
+
+  function ask(next: VerdictSpec | null) {
+    cueSwap("fade");
+    setAsking(next);
+  }
 
   if (asking) {
     return (
-      <div className="border-line rounded-card bg-surface-muted border p-4">
+      <div ref={swapRef} className="border-line rounded-card bg-surface-muted border p-4">
         {/* 🚨 `role="status"` 로 알린다 — 버튼 묶음이 통째로 바뀌는데 눈으로만 알 수 있으면
             스크린리더 사용자는 자기가 무엇을 확인하는 중인지 모른다. */}
         <div role="status">
@@ -163,7 +171,7 @@ export function CorrectionButtons({
             {busy ? <Spinner /> : null}
             바꾸기
           </Button>
-          <Button variant="tertiary" size="compact" disabled={busy} onClick={() => setAsking(null)}>
+          <Button variant="tertiary" size="compact" disabled={busy} onClick={() => ask(null)}>
             그만두기
           </Button>
         </div>
@@ -172,19 +180,14 @@ export function CorrectionButtons({
   }
 
   return (
-    <div>
+    <div ref={swapRef}>
       <p className="text-label text-ink-muted">
         {targetKind === "observation" ? "이 기록이 어떤가요?" : "이 기억이 맞나요?"}
       </p>
       {/* 순서는 교정의 세기 순이고, 한 줄에 둘씩 둬서 좁은 폰에서도 문구가 잘리지 않는다. */}
       <div className="mt-2 grid grid-cols-2 gap-2">
         {VERDICTS[targetKind].map((spec) => (
-          <Button
-            key={spec.verdict}
-            variant="secondary"
-            size="compact"
-            onClick={() => setAsking(spec)}
-          >
+          <Button key={spec.verdict} variant="secondary" size="compact" onClick={() => ask(spec)}>
             {spec.label}
           </Button>
         ))}

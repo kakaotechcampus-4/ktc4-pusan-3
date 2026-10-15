@@ -73,8 +73,8 @@ DoD: upgrade/downgrade 왕복 · agent role로 `growth_doc` INSERT 시도 → �
 
 | 순위 | `row_type` | 행 수 | 출처 |
 | --- | --- | --- | --- |
-| P0 | `routine_step` | 40 | 표준보육과정·누리과정 고시(`public_law`) + 국가건강정보포털 |
-| P0 | `learning_activity` | 60 (12–35 · 36+) | 고시 + 해설서(`fact_rewrite`) |
+| P0 | `routine_step` | 40 (#293 에서 6사슬 24행) | 표준보육과정 고시(교육부고시 제2024-23호, `public_law`) — 국가건강정보포털은 공공누리 제4유형이라 쓰지 않는다(#337) |
+| P0 | `learning_activity` | 60 (12–35 · 36+, #293 에서 80행) | 표준보육과정 고시 — 해설서는 공공누리 제4유형이라 쓰지 않는다(#337) |
 | P1 | `habit_strategy` | 20 (`trigger_tags`별) | 루틴 원문 (GT-7) |
 | P1 | `manner_practice` · `rhythm_info` | 20 | 동일 |
 | P2 | `book_guide` · `measure_guide` | 8 + 4 | `measure_guide`는 Health에서 넘어온 행(성장 판정 제거로 소비처가 Growth로) |
@@ -85,7 +85,7 @@ DoD: upgrade/downgrade 왕복 · agent role로 `growth_doc` INSERT 시도 → �
 1. **평가 표현** — 또래 · 평균 · 정상 · 발달이 · 늦 · 느리 · 뛰어나 · 재능 · 소질 · 문제 행동
 2. **`hazard_term` 스캔** — `materials`·`body`가 행의 `min_month`와 충돌하면 적재 거부
 
-`next_step_of` 사슬은 양치·배변·옷 입기 3종부터(GT-4).
+`next_step_of` 사슬은 양치·배변 등 고시 문구로 받칠 수 있는 6종부터(GT-4). 옷 입기는 고시에 문구가 없어 뺐다.
 
 ### 4-2. 도서
 

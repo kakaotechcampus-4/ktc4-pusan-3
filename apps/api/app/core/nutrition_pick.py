@@ -58,6 +58,10 @@ class NutritionFacts:
     # energy · protein · fat · carbohydrate · sugars · sodium · calcium · iron · saturated_fat
     per_100g: dict[str, float]
     source_version: str
+    # 원재료성 행은 대분류 이름이 비고 코드만 오기도 한다 — 식품군 대응표가 코드로 한 번 더 찾는다.
+    # 코드 뜻이 DB 그룹마다 달라서 그룹을 같이 싣는다
+    db_group: str = ""
+    category_code: str | None = None
 
 
 def parse_nutrient(raw: str | None) -> float | None:
@@ -111,6 +115,8 @@ def pick_nutrition(rows: Iterable[RawNutriRow], menu_key: str) -> NutritionFacts
         serving_g=serving_g,
         per_100g=per_100g,
         source_version=SOURCE_VERSION,
+        db_group=row.db_group.strip(),
+        category_code=row.category_code,
     )
 
 

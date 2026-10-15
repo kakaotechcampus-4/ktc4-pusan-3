@@ -17,7 +17,37 @@ import { recordConsent } from "./settings";
  *    중간(카카오 왕복)은 `lib/auth/oauth.ts` 의 MOCK_ONLY 분기가 건너뛴다.
  */
 
-const EXPIRES_IN = 43_200; // 12시간
+/** access 토큰 수명. 서버와 같은 15분이다. */
+const EXPIRES_IN = 900;
+
+/**
+ * refresh 쿠키 대신 두는 표식. 교환 · 가입이 심고, 로그아웃 · 탈퇴가 지운다.
+ *
+ * 🚨 **화면 코드는 이 값을 읽지 않는다.** 실서버의 쿠키는 HttpOnly 라 화면이 못 읽는다. 목은
+ *    서비스 워커라 쿠키를 다룰 수 없어서 표식을 저장소에 둘 뿐이고, 읽는 것은 아래 핸들러뿐이다.
+ * `localStorage` 인 이유 — 새로고침하고 탭을 다시 열어도 남아야 "앱을 다시 켜도 로그인 유지" 를
+ * 목에서 볼 수 있다. e2e 는 로그인한 채로 시작할 때 이 값을 심는다 (`e2e/fixtures.ts`).
+ */
+export const MOCK_REFRESH_KEY = "icatch.mock.refresh";
+
+function hasRefreshCookie(): boolean {
+  return typeof localStorage !== "undefined" && localStorage.getItem(MOCK_REFRESH_KEY) !== null;
+}
+
+function setRefreshCookie(present: boolean): void {
+  if (typeof localStorage === "undefined") return;
+  if (present) localStorage.setItem(MOCK_REFRESH_KEY, "1");
+  else localStorage.removeItem(MOCK_REFRESH_KEY);
+}
+
+/**
+ * `session_expired` 에서 처음 발급하는 access 토큰. 🚨 이 토큰으로 온 요청은 401 이다 —
+ * 화면이 갱신한 뒤 다시 보내는지 본다 (`sessionGuardHandlers`).
+ */
+const EXPIRED_TOKEN = "mock-token-expired";
+let issuedExpired = false;
+/** `logout_unreached` 에서 로그아웃을 한 번 끊어 봤는가. 🚨 한 번만 끊는다 — 다시 누르면 닿아야 한다. */
+let logoutCutOnce = false;
 
 /**
  * 탈퇴가 끝났는가. 🚨 끝나면 `/me` 와 다시 보낸 탈퇴가 `401 unauthenticated` 다 — 서버는 커밋하면서
@@ -30,10 +60,14 @@ let unreachedOnce = false;
 /** `withdraw_unconfirmed` 에서 탈퇴 뒤의 첫 `/me` 를 끊어 봤는가. 🚨 한 번만 끊는다. */
 let probeCutOnce = false;
 
-export function resetWithdrawState(): void {
+/** 목의 로그인 상태를 처음으로 되돌린다. 🚨 refresh 표식은 저장소에 있어서 테스트끼리 샌다. */
+export function resetAuthState(): void {
   withdrawn = false;
   unreachedOnce = false;
   probeCutOnce = false;
+  issuedExpired = false;
+  logoutCutOnce = false;
+  setRefreshCookie(false);
 }
 
 /** 탈퇴한 뒤에 들고 있던 토큰으로 온 요청. 서버에는 그 세션이 없다. */
@@ -49,6 +83,8 @@ function session(
 ) {
   // 탈퇴한 뒤 다시 로그인하면 새 계정이다 — 서버도 새로 가입시킨다 (PR #384).
   withdrawn = false;
+  // 서버는 이 응답에 refresh 쿠키를 심는다.
+  setRefreshCookie(true);
   return HttpResponse.json({
     token: MOCK_TOKEN,
     expires_in: EXPIRES_IN,
@@ -58,7 +94,43 @@ function session(
   });
 }
 
+/**
+ * 만료된 access 로 온 요청을 막는다 (`session_expired`). 🚨 **모든 핸들러보다 앞에 선다**
+ * (`handlers/index.ts`). `/auth/*` 는 건드리지 않는다 — 갱신 자체가 그 아래다.
+ *
+ * 🚨 **경로 패턴(`/*`)이 아니라 조건으로 맞춘다.** 모든 경로에 맞는 핸들러가 응답 없이 넘기면
+ *    msw 는 그 요청을 "처리됨" 으로 보고 실서버로 흘려보낸다 — 계약에 없는 경로를 잡는
+ *    `onUnhandledRequest: "error"` 가 꺼진다. 조건에 안 맞는 요청은 이 핸들러에 아예 안 맞는다.
+ */
+export const sessionGuardHandlers = [
+  http.all(
+    ({ request }) =>
+      currentScenario() === "session_expired" &&
+      request.url.startsWith(API_BASE_URL) &&
+      !new URL(request.url).pathname.includes("/auth/") &&
+      request.headers.get("Authorization") === `Bearer ${EXPIRED_TOKEN}`,
+    () => sessionGone(),
+  ),
+];
+
 export const authHandlers = [
+  /**
+   * 갱신 — Bearer 가 아니라 refresh 쿠키로 인증한다 (`lib/api/types.ts` 의 `AuthRefreshResponse`).
+   * 🚨 `:provider` 보다 먼저 선다 (아래 주석). 안 그러면 교환 핸들러가 `refresh` 를 provider 로 삼킨다.
+   */
+  http.post(url("/auth/refresh"), async () => {
+    await networkDelay();
+    // 🚨 서버에 닿지 못한 것이다 — 로그아웃이 아니다. 화면은 연결 확인을 세우고 로그인 화면으로 안 간다.
+    if (currentScenario() === "session_unreachable") return HttpResponse.error();
+    if (withdrawn || !hasRefreshCookie()) return sessionGone();
+    const expired = currentScenario() === "session_expired" && !issuedExpired;
+    if (expired) issuedExpired = true;
+    return HttpResponse.json({
+      token: expired ? EXPIRED_TOKEN : MOCK_TOKEN,
+      expires_in: EXPIRES_IN,
+    });
+  }),
+
   // 🚨 ready: false 면 프론트가 버튼을 비활성화한다 — 죽은 버튼을 만들지 않는다.
   http.get(url("/auth/:provider/status"), async ({ params }) => {
     await networkDelay();
@@ -78,6 +150,13 @@ export const authHandlers = [
    */
   http.post(url("/auth/logout"), async () => {
     await networkDelay();
+    // 🚨 서버에 닿지 못했다 — 세션도 쿠키도 그대로다. 화면이 나간 척하면 다시 켤 때 로그인돼 있다.
+    if (currentScenario() === "logout_unreached" && !logoutCutOnce) {
+      logoutCutOnce = true;
+      return HttpResponse.error();
+    }
+    // 서버는 세션 행을 지우고 refresh 쿠키도 지운다.
+    setRefreshCookie(false);
     return new HttpResponse(null, { status: 204 });
   }),
 
@@ -105,6 +184,7 @@ export const authHandlers = [
       return HttpResponse.error();
     }
     withdrawn = true;
+    setRefreshCookie(false);
     // 🚨 커밋한 **뒤에** 응답이 사라진다 (PR #384 "응답을 못 받았을 때"). 다시 누르면 401 이다.
     if (scenario === "withdraw_lost" || scenario === "withdraw_unconfirmed") {
       return HttpResponse.error();

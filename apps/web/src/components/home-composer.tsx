@@ -1,13 +1,15 @@
 "use client";
 
 import { ArrowUp, Camera, Mic } from "lucide-react";
-import { ViewTransition, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { IconButton } from "@/components/ui/icon-button";
+import { Named } from "@/components/ui/named";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
 import type { HomeResponse } from "@/lib/api/types";
+import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 
 /**
@@ -122,9 +124,13 @@ export function HomeComposer({
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
       <Named name={VIEW_TRANSITION.chatBar}>
         <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
-          <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
-            <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-          </IconButton>
+          {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
+              서버에 아직 없는 기능이라, 보호자에게 남길 설명이 없다 (`lib/features.ts` · #409). */}
+          {PENDING_SERVER_FEATURES.photoEntry ? (
+            <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
+              <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+            </IconButton>
+          ) : null}
           <IconButton label="말로 적기 (음성 처리 방침을 정하는 중이에요)" disabled>
             <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButton>
@@ -147,18 +153,5 @@ export function HomeComposer({
         </div>
       </Named>
     </div>
-  );
-}
-
-/**
- * 이름 붙인 전환 한 쌍의 한쪽. 🚨 `default="none"` 과 `share` 를 **같이** 준다 — 이름 붙인 것이
- * 관계없는 전환(다른 화면으로 가는 이동)마다 제 혼자 페이드하지 않게 막고, 쌍이 만나면 이어 붙인다.
- * `share` 가 빠지면 쌍이 조용히 안 이어진다 (`lib/view-transition.ts`).
- */
-export function Named({ name, children }: { name: string; children: ReactNode }) {
-  return (
-    <ViewTransition name={name} share="auto" default="none">
-      {children}
-    </ViewTransition>
   );
 }

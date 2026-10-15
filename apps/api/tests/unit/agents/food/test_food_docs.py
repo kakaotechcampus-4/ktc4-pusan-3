@@ -1,14 +1,17 @@
 """`search_food_doc` — 월령 · row_type · 알레르기로 거른 문서 행 (#396 T3).
 
 시드(`food_doc.yaml`)를 그대로 읽는 검사와, 일부러 만든 가짜 행으로 거르기를 보는 검사를 같이 둔다.
-시드 행은 아직 전부 draft 라서 `include_draft=True` 로만 읽는다.
+시드 상태(draft · approved)와 무관하게 보려고 `include_draft=True` 로 읽는다. 거르기 자체는
+한 행만 draft 로 돌려 놓고 본다.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
+from app.agents.common.reference_docs import doc_row_id
 from app.agents.food.doc_seed import ROW_TYPES, WEANING_TYPES, food_doc_seed
 from app.agents.food.store import FoodDocRow, InMemoryFoodDocs, SafetyEntry
 from app.agents.food.tools.docs import DOC_LIMIT, search_food_doc
@@ -48,15 +51,22 @@ def seed_docs() -> InMemoryFoodDocs:
 
 
 # ── 시드 ──────────────────────────────────────────────────────────────
-async def test_기본_시드는_검수를_마친_행만_읽는다() -> None:
-    # 시드 행은 아직 전부 draft 다 — 서비스는 approved 만 쓴다
-    assert {e.meta.status for e in food_doc_seed()} == {"draft"}
+async def test_기본_시드는_검수를_마친_행만_읽는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 서비스는 approved 만 쓴다. 시드가 전부 approved 여도(#434 의 임시 검수) 거르기는 보여야 해서
+    # 첫 행만 draft 로 돌려 놓는다
+    entries = food_doc_seed()
+    drafted = replace(
+        entries[0],
+        meta=replace(entries[0].meta, status="draft", reviewed_by=None, reviewed_at=None),
+    )
+    monkeypatch.setattr("app.agents.food.doc_seed.food_doc_seed", lambda: (drafted, *entries[1:]))
 
     approved_only = await InMemoryFoodDocs.from_seed().search(months=6, row_types=WEANING, limit=99)
     with_draft = await seed_docs().search(months=6, row_types=WEANING, limit=99)
 
-    assert approved_only == []
-    assert with_draft
+    assert approved_only
+    hidden = {r.id for r in with_draft} - {r.id for r in approved_only}
+    assert hidden == {doc_row_id("food_doc", drafted.meta.doc_key)}
 
 
 async def test_시드_행에_제목_월령_출처_기관_식품군이_실린다() -> None:

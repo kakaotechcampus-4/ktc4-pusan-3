@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
 import { ParentSection } from "@/components/parent-section";
@@ -15,7 +16,10 @@ import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
+import { usePolicies } from "@/hooks/use-policies";
 import { api, qk, type Me } from "@/lib/api";
+import { askedChoices, consentChoices } from "@/lib/consent";
+import { BACK, FORWARD } from "@/lib/view-transition";
 
 /**
  * 10 설정 — **지금 이렇게 되어 있어요.**
@@ -54,7 +58,9 @@ import { api, qk, type Me } from "@/lib/api";
 export default function SettingsPage() {
   return (
     <AuthGate>
-      <SettingsScreen />
+      <ScreenTransition>
+        <SettingsScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -70,6 +76,15 @@ function SettingsScreen() {
    *    버튼 없이 초대하라고 말하는 화면이 된다 — 그때는 초대 얘기를 꺼내지 않는다.
    */
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
+  /**
+   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 지금은 유일한 선택 동의(위치)를
+   *    묻지 않는다 (`askedChoices` · #221). 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
+   *    아무것도 없는 목록을 설명하는 화면이 된다. 위치를 다시 물으면 저절로 돌아온다.
+   */
+  const policies = usePolicies();
+  const hasOptionalConsent = askedChoices(consentChoices(policies.data)).some(
+    ({ policy }) => !policy.required,
+  );
   const role = me.data?.children.find((child) => child.child_id === childId)?.role;
   const inviteNote =
     role === "owner"
@@ -88,12 +103,17 @@ function SettingsScreen() {
             ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
             유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
         <div className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기">
+          <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <PageTitle>설정</PageTitle>
         </div>
-        <p className="text-body-sm text-ink-muted mt-2">함께 보는 사람과 동의를 여기서 관리해요.</p>
+        {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
+        <p className="text-body-sm text-ink-muted mt-2">
+          {hasOptionalConsent
+            ? "함께 보는 사람과 동의를 여기서 관리해요."
+            : "함께 보는 사람과 계정을 여기서 관리해요."}
+        </p>
       </header>
 
       <Section
@@ -113,17 +133,20 @@ function SettingsScreen() {
       >
         <ParentSection
           childId={childId}
+          viewer={me.data && role ? { id: me.data.id, role } : undefined}
           inviteOpen={inviteOpen}
           onInviteOpenChange={setInviteOpen}
         />
       </Section>
 
-      <Section
-        title="동의"
-        description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
-      >
-        <ConsentSection childId={childId} />
-      </Section>
+      {hasOptionalConsent ? (
+        <Section
+          title="동의"
+          description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
+        >
+          <ConsentSection childId={childId} />
+        </Section>
+      ) : null}
 
       <Section title="고객센터" description="자주 묻는 것과 이 서비스의 기본 정보예요.">
         <SettingsGroup>
@@ -132,6 +155,7 @@ function SettingsScreen() {
             icon={LifeBuoy}
             title="자주 묻는 질문"
             status="기록 · 제안 · 안전 · 함께 보기"
+            {...FORWARD}
           />
         </SettingsGroup>
       </Section>

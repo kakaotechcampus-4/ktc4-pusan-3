@@ -25,7 +25,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError
-from app.domains.identity.repository import find_session_by_token_hash
+from app.domains.identity.repository import find_session_by_access_hash
 
 # auto_error=False — 헤더가 없을 때 FastAPI 기본 403 이 나가지 않게 하고,
 # 우리가 401 unauthenticated 봉투로 답한다 (계약서 §01).
@@ -45,7 +45,7 @@ class AuthContext:
 
 
 def hash_token(token: str) -> bytes:
-    """session.token_hash 대조용 해시.
+    """토큰 대조용 해시 — access(session_access.token_hash) · refresh(session.refresh_hash) 공통.
 
     🚨 hexdigest 가 아니라 digest 다 — 컬럼이 bytea 다 (명세 §5-3).
        서버는 토큰 원문을 저장하지 않고, 받은 값을 그때그때 해시해 비교한다 (§5).
@@ -57,11 +57,11 @@ async def get_current_parent(
     session: SessionDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> AuthContext:
-    """Bearer 토큰 → SHA-256 → session 조회 → parent_id (명세 §6-2 ①)."""
+    """Bearer(access) → SHA-256 → session_access 조회 → 그 세션의 parent_id (명세 §6-2 ①)."""
     if credentials is None:
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
 
-    row = await find_session_by_token_hash(session, token_hash=hash_token(credentials.credentials))
+    row = await find_session_by_access_hash(session, token_hash=hash_token(credentials.credentials))
 
     # 🚨 "없음 · 만료 · 이미 삭제됨" 을 구분해 알려주지 않는다 — 전부 401 이다.
     #    사유를 알려주면 공격자에게 정보를 준다 (명세 §8-1).

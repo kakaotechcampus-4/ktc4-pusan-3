@@ -351,7 +351,7 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 - `draft_id` 는 전체에서 유일한 uuid 다(`_next_draft_id`, #241). Memory 초안과 같은 규칙이다 — 화면은 `draft_id` 가 같으면 같은 장으로 갈아 끼운다 (#250).
 - `op` 는 `create` 하나다. 추천에서 생기는 일정은 언제나 새 일정이라 `event_id`·`before` 가 없다.
 
-**준비물(`items`)** — 지금은 **필드만 넘긴다** (`items: []`). 초안을 만드는 시점에 Agent 가 돌지 않으므로 Agent 가 채우려면 suggestion 에 준비물 필드가 새로 필요해서다. 나중에 채울 때는 **`ActivityCandidate.materials` 를 옮기고** 도시락·여벌옷 같은 외출용품만 코드 상수로 붙인다. `materials` 는 모델이 이미 후보마다 쓰는 필드라 새로 만들 것이 없다.
+**준비물(`items`)** — 초안의 `items` 는 **`suggestion.items` 를 그대로 싣는다** (`item_id: null`, #315). 초안을 만드는 시점에 Agent 가 돌지 않으므로 Agent 는 추천을 저장할 때 **`ActivityCandidate.materials` 를 `suggestion.items` 에 담아 두고**, 서버가 초안을 만들 때 옮기기만 한다. 도시락·여벌옷 같은 외출용품을 코드 상수로 붙이는 것은 아직 하지 않았다.
 
 🚩 **`source`(출처) 필드는 아직 payload 에 없다.** Memory 는 채울 값이 영원히 `null` 이라 넣지 않았고, **키 이름과 모양은 이 경로를 만드는 PR 에서 정한다.**
 
@@ -481,7 +481,7 @@ async def run(task, context, *, client=None):
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 
-**pipeline 연결 (#380)** — `IMPLEMENTED_AGENTS` · `_RUNNERS` 에 등록돼 있고 context 는 entrypoint 가 Food 와 같은 생일 · 동의 · 기준일 · store 로 만든다. 안전 포트는 `UnwiredSafety` 라 `health_safety` 어댑터가 붙기 전에는 **동의와 상관없이** `blocked.safety` 다 — 동의하지 않은 아이가 환경 알레르기 확인 없이 열리지 않게(Food 와 같다, #372). pipeline 은 `for_task()` 사본으로 돌리고 결과만 받으므로, 화면에 가야 하는 것은 결과에 실어야 한다 — 알레르기 확인 문구(`state.cautions`)는 `readouts` 맨 앞에 코드 문구로 싣는다. 🚩 추천별 위험 경고(`state.warnings`)는 아직 결과에 없다 — 공통 `SuggestionDraft.warnings` 칸으로 Activity · Growth 가 같이 싣는다(#402). 1차 배포 화면은 추천 승인 때 알레르기 확인 모달만 띄우고 경고 표시는 그 이슈에서 한다(10-13 회의).
+**pipeline 연결 (#380)** — `IMPLEMENTED_AGENTS` · `_RUNNERS` 에 등록돼 있고 context 는 entrypoint 가 Food 와 같은 생일 · 동의 · 기준일 · store 로 만든다. 안전 포트는 러너와 05 가 `agent_ports.safety_readers()` 로 넘기는 `DbSafetyReader.activity_safety`(allergy · environmental, status 무관)다(#405 · #460). 안 넘긴 호출(테스트 · eval)은 `UnwiredSafety` 라 **동의와 상관없이** `blocked.safety` 다. 넘어오면 동의가 있는 아이만 `health_safety` 를 읽고, 동의가 없는 아이는 읽지 않고 거를 것 없이 연다(#372, Food 와 같다) — 꽃가루 · 동물털 같은 환경 알레르기를 확인하지 않은 추천이다. 05 는 동의 없는 아이에게 `allergens` 가 있는 추천을 내지 않는다(`v1/routers/suggestions.py`). #416 은 develop 이 아니라 #412 브랜치로 머지돼 develop 에 없었고, #460 이 같은 배선을 지금 구조로 다시 넣었다. pipeline 은 `for_task()` 사본으로 돌리고 결과만 받으므로, 화면에 가야 하는 것은 결과에 실어야 한다 — 알레르기 확인 문구(`state.cautions`)는 `readouts` 맨 앞에 코드 문구로 싣는다. 🚩 추천별 위험 경고(`state.warnings`)는 아직 결과에 없다 — 공통 `SuggestionDraft.warnings` 칸으로 Activity · Growth 가 같이 싣는다(#402). 1차 배포 화면은 추천 승인 때 알레르기 확인 모달만 띄우고 경고 표시는 그 이슈에서 한다(10-13 회의).
 
 **status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다. 좌표와 날씨 어댑터가 둘 다 없으면 `lookup_weather` 도 닫고(`Gate.data.weather`), 장소도 같다(`Gate.data.places`) — 열어 두면 부를 때마다 실패만 돌려준다. 프롬프트 `[오늘의 조건]` 은 *확인하지 못했다* 와 *바깥 활동이 어렵다* 를 나눠 쓴다 — 판정(실내만)은 같지만, 한 말로 쓰면 모델이 확인 안 한 날씨를 이유에 쓴다.
 

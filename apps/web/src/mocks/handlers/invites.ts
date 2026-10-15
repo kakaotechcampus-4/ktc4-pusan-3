@@ -4,16 +4,17 @@ import type { ApiErrorCode } from "@/lib/api/errors";
 import type { InviteAcceptResponse, InvitePreviewResponse, Relation } from "@/lib/api/types";
 
 import { isInviteCodeComplete, normalizeInviteCode } from "@/lib/invite-code";
-import { CHILD_ID, me } from "../fixtures";
+import { CHILD_ID } from "../fixtures";
 import { apiError, networkDelay, url } from "./helpers";
 import { currentMe, joinChild } from "./membership";
+import { INVITER_NICKNAME } from "./settings";
 
 /**
  * 초대 확인 · 수락.
  *
  * **코드 방식과 `{ relation }` 은 `docs/api/invite-v1.md` 로 확정됐다** (#96).
- * ⚠️ **`GET /invites/{code}`(수락 전 확인)와 그 응답 모양은 아직 제안이다** — 계약서에 없다
- *    (`InvitePreviewResponse`). 수락 전에 어느 아이인지 보여줄 길이 그것뿐이라 먼저 만들어 뒀다.
+ * **`GET /invites/{code}`(수락 전 확인)와 그 응답 모양도 같은 문서에서 확정됐다** (§7 결정 01 ·
+ *    `InvitePreviewResponse`). 수락 전에 어느 아이인지 보여줄 길이 그것뿐이다.
  *
  * 🚨 **실패를 시나리오로 만들지 않았다.** 목 시나리오는 *실서버로 만들기 어려운 상태* 를 위한
  *    것인데(apps/web/CLAUDE.md §7), 만료·재사용·중복 등록은 **입력값으로 갈리는 것**이라
@@ -101,7 +102,7 @@ export const inviteHandlers = [
 
     const res: InvitePreviewResponse = {
       child: { nickname: "민준", age_display: "만 4세" },
-      invited_by: { nickname: me.nickname },
+      invited_by: { nickname: INVITER_NICKNAME },
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
     return HttpResponse.json(res);
@@ -109,8 +110,6 @@ export const inviteHandlers = [
 
   http.post(url("/invites/:code/accept"), async ({ params, request }) => {
     await networkDelay();
-    const rejected = rejectCode(normalizeInviteCode(String(params.code)));
-    if (rejected) return rejected;
 
     // 🚨 **관계는 받는 쪽이 보낸다.** 안 보내면 비워 둔다 — 목이 기본값을 채우면
     //    "안 골라도 뭔가 들어간다" 가 되어 화면이 그 필드를 안 보내도 모른다.
@@ -121,10 +120,15 @@ export const inviteHandlers = [
 
     // 🚨 **만 19세 표시가 없으면 연결하지 않는다** (약관 제7조 ② · #166). 화면이 체크값을 실제로
     //    싣는지 여기서 건다 — 목이 통과시키면 표시 없이 아이 정보에 닿는 길이 생겨도 모른다.
-    //    ⚠️ 서버에는 아직 없는 검사라 코드 · 상태와 다른 검사와의 순서는 계약이 아니다.
+    //    서버와 같이 **코드를 보기 전에** 400 으로 막는다 — 코드를 쓰지 않고 시도 제한에도 세지 않는다.
     if (body.adult_attested !== true) {
-      return apiError(422, "validation_failed", "만 19세 이상인지 표시해 주세요");
+      return apiError(400, "validation_failed", "만 19세 이상인지 표시해 주세요", {
+        fields: ["adult_attested"],
+      });
     }
+
+    const rejected = rejectCode(normalizeInviteCode(String(params.code)));
+    if (rejected) return rejected;
 
     // 초대받은 보호자는 owner 가 아니다. 나머지 화면이 그대로 돌게 같은 아이에 붙인다.
     joinChild({

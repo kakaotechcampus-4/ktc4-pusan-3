@@ -188,33 +188,80 @@ def test_음식이_아닌_재료는_빼고_해석을_막지_않는다() -> None:
 
 
 # ── 식품군 · 주재료 ───────────────────────────────────────────────────
-def test_재료_식품군의_합집합이_행의_식품군이_된다() -> None:
-    row = build_recipe_row(recipe("돼기고기", "두부", "양파", "간장"), TABLE, now=NOW)
+def test_주재료_식품군의_합집합이_행의_식품군이_된다() -> None:
+    row = build_recipe_row(
+        recipe_with_roles(
+            ("돼기고기", "주재료"), ("두부", "주재료"), ("양파", "부재료"), ("간장", "양념")
+        ),
+        TABLE,
+        now=NOW,
+    )
 
-    # 간장은 식품군 칸이 비어 있다 — 건너뛴다
-    assert row.food_groups == frozenset({"meat_fish_egg_legumes", "vegetables"})
+    # 부재료 · 양념은 세지 않는다 — 양파(채소)가 빠진다(#420: 주재료만)
+    assert row.food_groups == frozenset({"meat_fish_egg_legumes"})
 
 
-def test_식품군_칸이_빈_재료만_있으면_식품군은_비고_예외도_없다() -> None:
-    # 검수 전 표는 칸이 비어 있다 — 풀이 비는 것과 별개로 행을 만드는 데는 지장이 없다
-    row = build_recipe_row(recipe("간장", "감동젓"), TABLE, now=NOW)
+def test_주재료_하나라도_식품군을_안_정했으면_비어_있다() -> None:
+    # 간장은 식품군 칸이 비어 있다(아직 안 정함). 일부만 적으면 빠진 식품군이 "0일" 이 된다
+    row = build_recipe_row(
+        recipe_with_roles(("두부", "주재료"), ("간장", "주재료")), TABLE, now=NOW
+    )
+
+    assert row.resolved is True
+    assert row.food_groups == frozenset()
+
+
+def test_식품군이_없는_재료는_none_으로_정하고_식품군에는_넣지_않는다() -> None:
+    parsed = table(
+        entry("두부", codes=[5], food_group="meat_fish_egg_legumes"),
+        entry("소금", food_group="none"),
+    )
+
+    row = build_recipe_row(
+        recipe_with_roles(("두부", "주재료"), ("소금", "주재료")), parsed, now=NOW
+    )
+
+    assert row.food_groups == frozenset({"meat_fish_egg_legumes"})
+
+
+def test_표에_없는_주재료가_있으면_식품군은_비어_있다() -> None:
+    row = build_recipe_row(
+        recipe_with_roles(("양파", "주재료"), ("처음보는재료", "주재료")), TABLE, now=NOW
+    )
+
+    assert row.resolved is False
+    assert row.food_groups == frozenset()
+
+
+def test_이름_없는_주재료가_있으면_식품군은_비어_있다() -> None:
+    row = build_recipe_row(recipe_with_roles(("양파", "주재료"), (None, "주재료")), TABLE, now=NOW)
 
     assert row.food_groups == frozenset()
 
 
-def test_해석_못_한_레시피도_아는_재료의_식품군은_남긴다() -> None:
-    row = build_recipe_row(recipe("양파", "처음보는재료"), TABLE, now=NOW)
+def test_음식이_아닌_주재료는_건너뛰고_식품군을_막지_않는다() -> None:
+    parsed = table(
+        entry("은박컵", [], status="not_food", food_group="grains"),
+        entry("양파", food_group="vegetables"),
+    )
 
-    assert row.resolved is False
+    row = build_recipe_row(
+        recipe_with_roles(("은박컵", "주재료"), ("양파", "주재료")), parsed, now=NOW
+    )
+
     assert row.food_groups == frozenset({"vegetables"})
 
 
-def test_음식이_아닌_재료는_식품군에_들어가지_않는다() -> None:
-    parsed = table(entry("은박컵", [], status="not_food", food_group="grains"))
-
-    row = build_recipe_row(recipe("은박컵"), parsed, now=NOW)
+def test_역할이_없으면_식품군도_비어_있다() -> None:
+    # 주재료를 모르면 무엇이 주인지 모른다 — 풀은 줄이지 않고 식품군만 빈다
+    row = build_recipe_row(recipe("돼기고기", "양파"), TABLE, now=NOW)
 
     assert row.food_groups == frozenset()
+
+
+def test_정해지지_않은_식품군_값은_읽지_않는다() -> None:
+    with pytest.raises(ValueError, match="nothing"):
+        table(entry("소금", food_group="nothing"))
 
 
 def test_주재료_역할의_재료만_주재료로_간다() -> None:

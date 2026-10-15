@@ -14,9 +14,9 @@
 | --- | --- | --- | --- |
 | **도서관 정보나루** (국립중앙도서관) — data4library.kr | 도서 검색 · 연령대별 인기대출 · 도서 상세(ISBN·표지) | `search_books` | REST. 하루 500회, 서버 IP 등록 시 30,000회 → **`book_catalog` 캐시** |
 | **국립중앙도서관 사서추천도서 API** — nl.go.kr | 사서 추천 목록(분류별) | 추천 가중치 (+) | 월 1회 배치 |
-| 보건복지부 **제4차 어린이집 표준보육과정** (0–2세) | 영역별 놀이·경험 내용 | `search_growth_doc` (`learning_activity`, 12–35) | 사람이 읽고 **행으로 재작성** |
-| 교육부·보건복지부 **2019 개정 누리과정** (3–5세) | 5개 영역 · 놀이 사례 | `search_growth_doc` (`learning_activity`, 36+) | 동일 |
-| 루틴 자료 (배변·수면·식사 자립) | 소아청소년과학회·국가건강정보포털 | `search_growth_doc` (`routine_step`·`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 확보 전에는 연령별 코드 템플릿만 |
+| 교육부 **표준보육과정 고시** (교육부고시 제2024-23호) — 0~1세 · 2세 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 12–35 · `routine_step`) | 사람이 읽고 **행으로 재작성**. 고시는 `public_law`(저작권법 제7조 2호) |
+| 같은 고시의 **3~5세(누리과정)** — 「2019 개정 누리과정」 고시와 내용이 같다 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 36+ · `routine_step`) | 동일. 출처 문자열은 0~5세 모두 `표준보육과정 고시 (교육부고시 제2024-23호)` 하나(activity_doc 과 같다) |
+| 루틴 자료 (배변·수면·습관·예절) | 미확보 — 상업적 이용 · 변경이 허락된 자료만 쓴다(#337). 국가건강정보포털 · 해설서는 공공누리 제4유형이라 쓰지 않는다 | `search_growth_doc` (`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 확보 전에는 연령별 코드 템플릿만 |
 | `child_growth_log` | 키·몸무게·측정일 | `compute_growth_delta` | 포트 |
 
 - 도서는 **API 응답만 추천 가능** — 모델이 책 제목을 생성하면 `propose_books`가 ISBN 검증에서 거절.

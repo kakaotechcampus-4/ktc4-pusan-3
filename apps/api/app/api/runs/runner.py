@@ -21,15 +21,14 @@
 import asyncio
 import logging
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from collections.abc import Awaitable, Callable
+from datetime import date
 from uuid import UUID
 
 from app.agents import entrypoint
-from app.api import idempotency
+from app.api import agent_ports, idempotency
 from app.api.deps.db import background_session
-from app.api.runs import pending_reply, sse, translate
+from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
@@ -86,10 +85,10 @@ def agent_job(
 
     - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
       async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
-    - 도메인 Agent 의 기억 포트가 쓸 store 는 호출마다 짧은 세션으로 연다(`domain_store`).
-    - 추천 저장 함수도 여기서 만든다(`save_suggestions`). Agent 결과 하나마다 짧은 세션으로
-      저장 · commit 하고, commit 이 돌아오면 `channel.suggestions_saved` 를 세운다 — Memory
-      commit 과 같이 확정된 저장이다.
+    - 도메인 Agent 의 기억 포트가 쓸 store 와 추천 저장 함수는 `agent_ports` 로 연다. 호출마다
+      · Agent 결과 하나마다 짧은 세션이고, 저장 commit 이 돌아오면 `channel.suggestions_saved`
+      를 세운다 — Memory commit 과 같이 확정된 저장이다. 일반 추천 블록의 기록 건수도 같은 곳에서
+      연다(#227).
     - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
@@ -104,6 +103,8 @@ def agent_job(
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
       done 앞에 들어가야 화면이 note 를 받은 직후 보낸 답도 맥락을 찾는다.
+    - 실패한 추천 맥락(RetryContext) · 0개 기록(EmptyResult)은 05 보관함(`suggestion_retry`)에
+      넣는다 — PendingReply 처럼 화면 결과보다 먼저 온다.
     - 이어받기 run 이 done 없이 끝나면(실패 · 시간 초과 · 예외) 창구가 꺼낸 맥락을 reply_to 로
       되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
@@ -124,37 +125,36 @@ def agent_job(
                     context=event.context,
                 )
                 return
+            if isinstance(event, entrypoint.RetryContext):
+                # 원문 조각이 있다 — 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)
+                suggestion_retry.put_failed(
+                    run_id=event.run_id,
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    agent=event.agent,
+                    task=suggestion_retry.RetryTask(
+                        event.task_type, event.request_texts, event.sent_at
+                    ),
+                )
+                return
+            if isinstance(event, entrypoint.EmptyResult):
+                suggestion_retry.put_empty(
+                    run_id=event.run_id,
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    agent=event.agent,
+                    message=event.message,
+                )
+                return
             relay(event)
 
-        from app.domains.memory.store.db_store import DbMemoryStore
-
-        @asynccontextmanager
-        async def domain_store() -> AsyncIterator[DbMemoryStore]:
-            # 도메인 Agent 의 기억 포트는 호출마다 짧은 세션으로 읽는다. run 세션을 같이 타면
-            # 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다 (#257). Memory 는 도메인
-            # 단계 전에 commit 되므로 이 세션에서도 방금 저장한 관찰이 보인다. 읽기만 한다
-            async with background_session() as read_session:
-                yield DbMemoryStore(read_session, child_id=child_id)
-
-        from app.domains.suggestion.repository import save_agent_suggestions
-
-        async def save_suggestions(batch: entrypoint.SuggestionBatch) -> tuple[str, ...]:
-            # Agent 결과 하나마다 짧은 세션 · 트랜잭션 하나다(트랜잭션 회의 표). run 세션을 쓰지
-            # 않는다 — 실패한 저장이 rollback 이 필요한 상태를 run 세션에 남기지 않게
-            async with background_session() as save_session:
-                ids = await save_agent_suggestions(
-                    save_session,
-                    child_id=child_id,
-                    run_id=batch.run_id,
-                    payloads=[draft.to_payload() for draft in batch.drafts],
-                    now=datetime.now(UTC),
-                )
-                await save_session.commit()
-                # commit 이 돌아온 뒤에만 표시한다. 결과를 모르면 표시가 없어 failed 다(결정 4)
-                channel.suggestions_saved = True
-            return tuple(str(row_id) for row_id in ids)
+        def mark_saved() -> None:
+            # commit 이 돌아온 뒤에만 표시한다. 결과를 모르면 표시가 없어 failed 다(결정 4)
+            channel.suggestions_saved = True
 
         async with background_session() as session:
+            from app.domains.memory.store.db_store import DbMemoryStore
+
             store = DbMemoryStore(session, child_id=child_id)
 
             async def commit() -> None:
@@ -177,9 +177,14 @@ def agent_job(
                         continuation=continuation,
                         store=store,
                         commit=commit,
-                        save_suggestions=save_suggestions,
+                        save_suggestions=agent_ports.suggestion_saver(
+                            child_id, on_commit=mark_saved
+                        ),
+                        count_records=agent_ports.record_counter(child_id),
                         curator_trigger=_curator_trigger(),
-                        domain_store=domain_store,
+                        domain_store=agent_ports.domain_store_opener(child_id),
+                        **agent_ports.food_stores(),
+                        **agent_ports.safety_readers(),
                     )
             except TimeoutError:
                 log.warning(

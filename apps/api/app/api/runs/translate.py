@@ -13,6 +13,8 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
    - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다. 도메인 Agent 결과 중
      화면에 갈 것은 바로 뒤에 오는 `AgentResult`(agent_result, #227)가 싣는다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
+   - `RetryContext` · `EmptyResult` — 05 추천 엔드포인트의 보관함(suggestion_retry.py)으로만 간다.
+     `RetryContext` 에는 요청 원문 조각이 들어 있다.
    pipeline 에 이벤트가 새로 생기면 tests/unit/api/test_run_translate.py 가 실패해서 정하라고 한다.
 
 🚨 필드를 하나씩 옮겨 적는다 (`dataclasses.asdict` 로 통째로 넘기지 않는다). agents 가 이벤트에
@@ -86,6 +88,11 @@ def to_sse(event: Event) -> sse.SseEvent | None:
             "question": event.question,
             # 저장(commit)이 끝난 추천의 id. 추천 순서 그대로다. 추천이 없으면 [] — 키는 늘 있다
             "suggestion_ids": list(event.suggestion_ids),
+            # 추천 묶음 한 줄 (#227). 개인화 · 일반 · 없음(null). 이유는 코드 문구다(모델 아님).
+            # 기록 건수는 일반 묶음에만 있고, 세지 못했으면 null 이다 — 키는 늘 있다
+            "kind": event.kind,
+            "reason": event.reason,
+            "record_count": event.record_count,
         }
     if isinstance(event, Partial):
         # 끝 신호가 아니다. 뒤에 done 이 오고, 화면은 그때 "부분 결과" 로 닫는다.
@@ -95,6 +102,9 @@ def to_sse(event: Event) -> sse.SseEvent | None:
             "reason": event.reason,
             "succeeded": list(event.succeeded),
             "failed": list(event.failed),
+            # 실패한 추천 task 의 Agent (D9). 화면이 "다시 준비하기" 로 이 Agent 들의 05 를 연다.
+            # 급식 갱신만 실패한 Agent 는 없다 — 05 화면이 없다
+            "retryable": list(event.retryable),
         }
     return None
 

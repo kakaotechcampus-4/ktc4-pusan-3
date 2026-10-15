@@ -38,7 +38,8 @@ export function IconTile({
   return (
     <span
       className={cn(
-        "rounded-field flex size-9 shrink-0 items-center justify-center",
+        // 타일 색은 상태를 따라 바뀐다 (교정된 기록 → 뉴트럴 · 비활성). 줄이 색을 바꾸는 박자와 맞춘다 (§8 `fast`).
+        "rounded-field ease-standard flex size-9 shrink-0 items-center justify-center transition-colors duration-120",
         tone === "plain"
           ? null
           : tone === "neutral"

@@ -10,7 +10,8 @@ from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import ParentChild
+from app.domains.child.models import Child, ParentChild
+from app.domains.identity.models import Parent
 from app.domains.schedule.models import (
     DiaryEntry,
     Event,
@@ -30,14 +31,18 @@ async def list_events(
     starts_before: datetime,
     ends_after: datetime,
 ) -> list[Event]:
-    """캘린더 기간과 겹치는 확정 일정. 종료가 없으면 시작 시각을 사용한다."""
+    """캘린더 기간 [ends_after, starts_before) 와 겹치는 확정 일정.
+
+    일정도 [starts_at, ends_at) 이다 — 기간이 시작하는 순간에 끝난 일정은 겹치지 않는다.
+    🚨 `ends_at >= ends_after` 로 두면 어제 22:00~오늘 00:00 일정이 오늘에도 잡힌다 (#318).
+    종료가 없거나 시작과 같은 일정은 시작 시각 한 점이다 — 그 점이 기간 안이면 겹친다.
+    """
     stmt = (
         select(Event)
         .where(
             Event.child_id == child_id,
             Event.starts_at < starts_before,
-            (Event.ends_at >= ends_after)
-            | (Event.ends_at.is_(None) & (Event.starts_at >= ends_after)),
+            (Event.ends_at > ends_after) | (Event.starts_at >= ends_after),
         )
         .order_by(Event.starts_at, Event.id)
     )
@@ -128,6 +133,23 @@ async def list_event_items(
         .order_by(EventItem.created_at, EventItem.item_id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def list_items_by_event(
+    session: AsyncSession, *, event_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[EventItem]]:
+    """여러 일정의 준비물을 한 번에. 일정마다 조회하지 않는다. 준비물 없는 일정은 키가 없다."""
+    if not event_ids:
+        return {}
+    stmt = (
+        select(EventItem)
+        .where(EventItem.event_id.in_(event_ids))
+        .order_by(EventItem.created_at, EventItem.item_id)
+    )
+    items: dict[uuid.UUID, list[EventItem]] = {}
+    for row in await session.scalars(stmt):
+        items.setdefault(row.event_id, []).append(row)
+    return items
 
 
 async def create_event_item(
@@ -277,8 +299,31 @@ async def put_diary(
     parent_id: uuid.UUID,
     day: date,
     content: str,
-) -> DiaryEntry:
-    """작성자·아이·날짜별 한 행. 동시 재요청도 중복 행/unique 오류 없이 갱신한다."""
+) -> DiaryEntry | None:
+    """작성자·아이·날짜별 한 행. 동시 재요청도 중복 행/unique 오류 없이 갱신한다.
+
+    작성자가 이 아이와 연결돼 있지 않으면 쓰지 않고 None.
+    🚨 보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡은 뒤 연결을 확인한다 (#427).
+       - 라우터의 접근 확인(`AccessibleChild`)은 잠그지 않는다. 그 뒤에 연결 끊기(`unlink_parent`)가
+         연결과 일기를 지우고 커밋하면 여기서 쓴 일기가 끊긴 보호자에게 남는다. 잡아 두면 끊기가
+         먼저면 행이 없어 None, 여기가 먼저면 끊기가 커밋을 기다렸다가 이 일기까지 지운다.
+       - 순서는 탈퇴(`withdraw_parent`)와 같다. 연결 행만 잡으면 그것을 쥔 채 탈퇴가 잠근 보호자 ·
+         아이를 기다리고, 탈퇴는 CASCADE 로 그 연결 행을 기다려 교착이 된다.
+       - 세 행 모두 고치지 않고 지워지지만 않으면 되니 가장 약한 KEY SHARE 다. DELETE 만 막고
+         관계 바꾸기(`set_relation`) 같은 일반 수정과 같은 보호자의 다른 일기 저장은 막지 않는다.
+    """
+    key_share = {"read": True, "key_share": True}
+    await session.execute(
+        select(Parent.id).where(Parent.id == parent_id).with_for_update(**key_share)
+    )
+    await session.execute(select(Child.id).where(Child.id == child_id).with_for_update(**key_share))
+    linked = await session.scalar(
+        select(ParentChild.id)
+        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
+        .with_for_update(**key_share)
+    )
+    if linked is None:
+        return None
     stmt = (
         pg_insert(DiaryEntry)
         .values(child_id=child_id, author_parent_id=parent_id, date=day, content=content)
@@ -292,6 +337,19 @@ async def put_diary(
     return await session.scalar(stmt)
 
 
+async def delete_diary(
+    session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID, day: date
+) -> None:
+    """그 보호자 본인의 그날 일기만 지운다. 없으면 아무것도 하지 않는다."""
+    await session.execute(
+        delete(DiaryEntry).where(
+            DiaryEntry.child_id == child_id,
+            DiaryEntry.author_parent_id == parent_id,
+            DiaryEntry.date == day,
+        )
+    )
+
+
 async def list_shared_photos(
     session: AsyncSession, *, child_id: uuid.UUID, day: date
 ) -> list[SharedPhoto]:
@@ -301,6 +359,31 @@ async def list_shared_photos(
         .order_by(SharedPhoto.created_at, SharedPhoto.id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def list_diary_dates(
+    session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID, start: date, end: date
+) -> set[date]:
+    """그 보호자가 일기를 쓴 날. 기간은 [start, end) 다. 남의 일기는 세지 않는다."""
+    stmt = select(DiaryEntry.date).where(
+        DiaryEntry.child_id == child_id,
+        DiaryEntry.author_parent_id == parent_id,
+        DiaryEntry.date >= start,
+        DiaryEntry.date < end,
+    )
+    return set((await session.scalars(stmt)).all())
+
+
+async def list_shared_photo_dates(
+    session: AsyncSession, *, child_id: uuid.UUID, start: date, end: date
+) -> set[date]:
+    """공동 사진이 있는 날. 기간은 [start, end) 다."""
+    stmt = select(SharedPhoto.date).where(
+        SharedPhoto.child_id == child_id,
+        SharedPhoto.date >= start,
+        SharedPhoto.date < end,
+    )
+    return set((await session.scalars(stmt)).all())
 
 
 async def add_shared_photo(

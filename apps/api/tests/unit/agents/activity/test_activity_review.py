@@ -104,6 +104,8 @@ TOWER_DOC = ActivityDocRow(
     involves_food=False,
 )
 DOCS = {TOWER_DOC.id: TOWER_DOC}  # 이번 run 의 프롬프트 [예시]에 실은 행
+# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없이 내는 후보는 이 인용을 단다
+DOC_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
 
 
 def review(
@@ -144,21 +146,26 @@ class TestPass:
         assert citation.label == "블록"  # 모델이 아니라 조회 결과에서 채운다
         assert citation.note == "블록 쌓기를 즐겨 했어요"
 
-    def test_근거가_없으면_일반_추천이고_이유를_코드_문구로_덮는다(self):
-        (draft,) = review(candidate(evidence=[])).drafts
+    def test_문서_행만_인용하면_일반_추천이고_이유를_코드_문구로_덮는다(self):
+        (draft,) = review(candidate(evidence=[DOC_PICK])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
+
+    def test_인용이_하나도_없으면_거절한다(self):
+        """일반 추천의 근거는 문서 행이다. 아이 기록도 문서도 없는 후보는 나가지 않는다."""
+        assert reason_of(review(candidate(evidence=[]))) is RejectReason.BUILD
 
     def test_6개월_지난_확정_관심_하나만_인용하면_일반_추천이고_그_인용은_빠진다(self):
         """새로 생기는 동작이다. Curator 의 archived 는 새 관찰이 붙을 때만 갱신돼서, 몇 달
         언급이 없던 관심이 confirmed 로 남아 단독 근거로 나갈 수 있었다 (#329)."""
         old = {**SEEN, BLOCKS: replace(SEEN[BLOCKS], observed_on=date(2026, 3, 1))}
 
-        (draft,) = review(candidate(), seen=old).drafts
+        blocks = {"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}
+        (draft,) = review(candidate(evidence=[blocks, DOC_PICK]), seen=old).drafts
 
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
-        assert draft.citations == ()
+        assert [c.ref.kind for c in draft.citations] == ["activity_doc"]  # 아이 기록 인용은 빠진다
 
     def test_모델이_쓴_reason_이_그대로_추천의_reason_이다(self):
         """#329 완료 기준. 두 칸(why_this · why_now)을 합치던 단계는 #359 에서 없어졌다 —
@@ -271,7 +278,7 @@ class TestAvoided:
     def test_한_글자_기피_라벨로는_거절하지_않는다(self):
         """ "공" 을 싫어한다고 "공원" · "공룡" 까지 막으면 과차단이다."""
         assert MIN_AVOIDED_LABEL == 2
-        result = review(candidate(content="공원에서 공룡 그림 그리기", evidence=[]))
+        result = review(candidate(content="공원에서 공룡 그림 그리기", evidence=[DOC_PICK]))
         assert result.rejections == ()
 
 
@@ -396,14 +403,14 @@ class TestSafety:
         assert result.removed[0].hits == ("health_safety",)
 
     def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
-        result = review(candidate(), candidate(content="구슬 꿰기", evidence=[]), months=40)
+        result = review(candidate(), candidate(content="구슬 꿰기", evidence=[DOC_PICK]), months=40)
         small_parts = hazard_terms().axes["small_parts"].warning_text
         assert result.warnings == ((), (small_parts,))
 
     def test_allergens_와_items_를_코드가_채운다(self):
         """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
         result = review(
-            candidate(content="밀가루 반죽 놀이", materials=["밀가루", "밀대"], evidence=[])
+            candidate(content="밀가루 반죽 놀이", materials=["밀가루", "밀대"], evidence=[DOC_PICK])
         )
         (draft,) = result.drafts
         assert draft.allergens == ("밀",)
@@ -460,6 +467,7 @@ class TestOutputTool:
         )
         ctx.state.gate = await build_gate(ctx, outdoor_ok=outdoor_ok)
         ctx.state.seen_evidence.update(SEEN)
+        ctx.state.seen_docs = dict(DOCS)
         return ctx
 
     def args(self, *candidates):
@@ -471,8 +479,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is True
@@ -488,8 +496,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[], place_name=PARK),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK], place_name=PARK),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
@@ -500,8 +508,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="아파트 물놀이터 가기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="아파트 물놀이터 가기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is False
@@ -514,8 +522,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(evidence=[{"id": str(UUID(int=999)), "note": "블록을 즐겨 했어요"}]),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
@@ -527,9 +535,9 @@ class TestOutputTool:
         result = await propose_activity_candidates(
             ctx,
             self.args(
-                candidate(content="아파트 물놀이터 가기", evidence=[]),
+                candidate(content="아파트 물놀이터 가기", evidence=[DOC_PICK]),
                 candidate(evidence=[{"id": str(UUID(int=999)), "note": "블록을 즐겨 했어요"}]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
@@ -544,8 +552,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is False
@@ -559,8 +567,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is True
@@ -573,8 +581,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="밀가루 점토 놀이", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="밀가루 점토 놀이", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is True
@@ -591,8 +599,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert len(ctx.state.suggestions) == 3
@@ -609,8 +617,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert safety.calls == 1

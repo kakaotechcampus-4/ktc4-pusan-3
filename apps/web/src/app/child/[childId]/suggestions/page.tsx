@@ -7,6 +7,7 @@ import { Suspense, useState } from "react";
 import { ApprovalSheet } from "@/components/approval-sheet";
 import { SafetyCheckSheet } from "@/components/safety-check-sheet";
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
 import { GeneralSuggestionCard } from "@/components/general-suggestion-card";
@@ -19,6 +20,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import {
   AGENTS,
@@ -36,6 +38,7 @@ import {
   type SuggestionsRequest,
   type SuggestionsResponse,
 } from "@/lib/api";
+import { useEnterMotion } from "@/lib/motion";
 
 /**
  * 05 제안 후보.
@@ -52,8 +55,11 @@ import {
  *    일반 카드는 **다른 컴포넌트 · 다른 타입 · 응답의 다른 필드**다 — 한 곳에 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다. 둘이 한 화면에 같이 나오는 경우는 없다.
  *
- * ⚠️ `general` 필드는 **계약서 v1 에 아직 없다** (types.ts 의 ⚠️). 서버가 안 보내면
- *    일반 카드 없이 예전처럼 질문 1개만 그린다 — 프론트가 또래 기준 추천을 지어내지 않는다.
+ * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내(`notice`)와 함께 묶음이 오고,
+ *    이어서 할 수 없는 Agent(`cannot_resume`)도 안내만 온다 — 둘 다 다시 시도를 두지 않는다.
+ *    눌러도 같은 응답이 온다.
+ * ⚠️ 서버가 `groups` 를 안 보내던 응답(예전 서버)은 예전 규칙으로 본다. 프론트가 또래 기준 추천을
+ *    지어내지 않는다.
  */
 export default function SuggestionsPage() {
   return (
@@ -62,7 +68,9 @@ export default function SuggestionsPage() {
     //    스켈레톤을 띄우면 로그인 확인 전에 화면이 한 번 깜빡인다.
     <Suspense fallback={null}>
       <AuthGate>
-        <SuggestionsScreen />
+        <ScreenTransition>
+          <SuggestionsScreen />
+        </ScreenTransition>
       </AuthGate>
     </Suspense>
   );
@@ -106,6 +114,7 @@ function SuggestionsScreen() {
    *    되돌려 기록)가 배우는 것이 없다. 채택을 먼저 남기고, 일정은 **그다음에 따로 묻는다.**
    */
   const [approvedIds, setApprovedIds] = useState<string[] | null>(null);
+  const stepRef = useEnterMotion(approvedIds === null ? "pick" : "plan", "forward");
   /**
    * 알레르기 확인 시트가 열려 있다. 🚨 **채택보다 먼저다** — 채택을 되돌리는 길이 없어서,
    *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
@@ -116,6 +125,9 @@ function SuggestionsScreen() {
   const suggestions = useQuery({
     queryKey: qk.suggestions(childId, runId, agents, promptKey),
     enabled: agents.length > 0,
+    // 🚨 자동 재시도를 끈다 — 이 요청은 Agent 를 돌리고 하루 한도를 쓴다. 5xx 를 두 번 더 보내면 한도와
+    //    모델 호출을 같이 쓴다 (#433 리뷰 ④). 다시 시도는 화면 버튼으로만.
+    retry: false,
     // Agent 를 두 번 돌리지 않는다 — NF-01 이 model call 을 센다. 뒤로 갔다 와도 같은 화면이다.
     staleTime: Infinity,
     queryFn: () => {
@@ -186,6 +198,14 @@ function SuggestionsScreen() {
   }
   const visible = data?.suggestions ?? [];
   /**
+   * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
+   *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
+   */
+  const restored = visible.filter((s) => s.status === "approved").map((s) => s.id);
+  const chosenIds = approvedIds ?? (restored.length > 0 ? restored : null);
+  /** 화면에 "고른 것" 으로 서는 id. 채택이 끝났으면 서버가 아는 채택, 아니면 지금 고르는 중인 것. */
+  const pickedIds = chosenIds ?? selectedIds;
+  /**
    * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
    * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
    * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
@@ -194,22 +214,30 @@ function SuggestionsScreen() {
   const general = scarcity ? (data?.general ?? []) : [];
   const blockedByGuard = new Set(data?.guards.flatMap((g) => g.blocked_agents) ?? []);
   /**
-   * 요청했는데 결과도 없고 규칙에 막힌 것도 아닌 Agent = 이번에 실패한 쪽이다 (NF-06).
-   * 응답이 오기 전과 `scarcity` 는 제외한다 — 기다리는 중인 것과 근거가 부족한 것은 실패가 아니다.
+   * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내와 함께 묶음이 온다 —
+   *    추천이 없다고 실패 카드를 그리면 눌러도 같은 0개만 다시 온다.
+   *    서버가 `groups` 를 안 보내던 응답(예전 서버)은 예전 규칙으로 본다. 규칙에 막힌 Agent 는
+   *    실패가 아니다. 응답이 오기 전에는 비어 있다 — 기다리는 중인 것은 실패가 아니다 (NF-06).
    */
-  const failedAgents =
-    data && !data.scarcity
-      ? agents.filter(
-          (agent) => !blockedByGuard.has(agent) && !data.suggestions.some((s) => s.agent === agent),
-        )
-      : [];
+  const groupAgents = data?.groups ? new Set(data.groups.map((g) => g.agent)) : null;
+  const failedAgents = data
+    ? agents.filter(
+        (agent) =>
+          !blockedByGuard.has(agent) &&
+          (groupAgents
+            ? !groupAgents.has(agent)
+            : !data.scarcity && !data.suggestions.some((s) => s.agent === agent)),
+      )
+    : [];
+  /** 안내가 있는 묶음. 🚨 실패 카드가 아니다 — 다시 시도를 두지 않고 문구는 서버 것을 그대로 그린다. */
+  const notices = (data?.groups ?? []).filter((g) => g.notice);
 
   /**
    * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
    *    보호자가 둘을 맞춰 읽어야 한다.
    */
   const pickedByAgent = visible.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
-    if (!selectedIds.includes(s.id)) return acc;
+    if (!pickedIds.includes(s.id)) return acc;
     const found = acc.find((g) => g.agent === s.agent);
     if (found) found.count += 1;
     else acc.push({ agent: s.agent, count: 1 });
@@ -226,7 +254,10 @@ function SuggestionsScreen() {
         <PageTitle>제안 후보</PageTitle>
         {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
             스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
-        {data ? <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p> : null}
+        {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
+        {data?.looked_at ? (
+          <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p>
+        ) : null}
       </header>
 
       {/* 🚨 배너는 화면 최상단 **한 곳**에만 둔다 (문서 §7). guard 가 여럿이어도 배너는 하나고,
@@ -235,208 +266,253 @@ function SuggestionsScreen() {
           한다" 라서 승인 게이트 2곳 전용이고, 여기서 쓰면 보호자가 무언가를 승인해야 하는 줄 안다 (#242).
           🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다** (apps/web/CLAUDE.md §3). 알레르기를 적는 곳은
           11 프로필 한 곳이다 — 04 의 안전 정보 안내와 같은 곳으로 보낸다. */}
-      {data && data.guards.length > 0 ? (
-        <Banner
-          tone="danger"
-          title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
-        >
-          {data.guards.map((guard) => (
-            <p key={guard.code}>{guard.message}</p>
+      {/* 스켈레톤 → 제안은 같은 자리의 교체다 (디자인 시스템 §8). 처음부터 받아 둔 것이 있으면 그대로 선다. */}
+      <Swap id={agents.length === 0 ? "none" : phaseOf(suggestions)}>
+        {data && data.guards.length > 0 ? (
+          <Banner
+            tone="danger"
+            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
+          >
+            {data.guards.map((guard) => (
+              <p key={`${guard.code}:${guard.blocked_agents.join(",")}`}>{guard.message}</p>
+            ))}
+            {/* 🚨 알레르기를 적으러 가는 길은 **알레르기를 몰라서 막힌 경우에만** 둔다 (#249). 준비 중이거나
+                지원하지 않는 주제는 알레르기를 적어도 풀리지 않는다. */}
+            {data.guards.some((guard) => guard.code === "safety_unknown") ? (
+              <>
+                <p className="text-caption mt-1">
+                  알레르기를 알려주시면 식사 제안도 함께 준비해요.
+                </p>
+                <ButtonLink
+                  href={`/child/${childId}/profile`}
+                  variant="secondary"
+                  size="compact"
+                  className="mt-3"
+                >
+                  알레르기 적으러 가기
+                </ButtonLink>
+              </>
+            ) : null}
+          </Banner>
+        ) : null}
+
+        {agents.length === 0 ? (
+          <Card>
+            <p className="text-body text-ink">어떤 도움이 필요한지 고르지 않으셨어요</p>
+            <p className="text-body-sm text-ink-muted mt-2">
+              홈에서 도와드릴 것을 고르면 그 주제로 준비해요.
+            </p>
+          </Card>
+        ) : suggestions.isPending ? (
+          <Card>
+            <SkeletonBlock label="제안을 준비하는 중" />
+          </Card>
+        ) : consentBlocked ? (
+          <ConsentRequiredCard
+            childId={childId}
+            error={consentBlocked}
+            what="제안을 준비할 수 없어요."
+          />
+        ) : suggestions.isError ? (
+          // 🚨 llm_unavailable 을 기본값으로 대체하지 않는다. 실패했다고 화면에 말한다.
+          <CardFailed>
+            <p>
+              {suggestions.error instanceof Error
+                ? suggestions.error.message
+                : "제안을 준비하지 못했어요."}
+            </p>
+            {/* 🚨 하루 한도는 다시 눌러도 같은 답이다 — 다시 시도를 세우지 않는다 (apps/web CLAUDE §3 에러) */}
+            {isApiError(suggestions.error, "daily_input_limit") ? null : (
+              <Button
+                variant="tertiary"
+                size="compact"
+                className="mt-3"
+                onClick={() => suggestions.refetch()}
+              >
+                다시 시도
+              </Button>
+            )}
+          </CardFailed>
+        ) : null}
+
+        {/* #433 리뷰 ③ — 식품 아닌 알레르기 확인 문구. 서버 코드 문구를 그대로 그린다. 고르기 전에 읽게
+            목록보다 위에 둔다. 🚨 caution 색을 쓰지 않는다 — 승인 게이트 2곳 전용이다. */}
+        {(data?.groups ?? [])
+          .filter((group) => group.cautions.length > 0)
+          .map((group) => (
+            <Card key={`caution:${group.agent}`}>
+              <p className="text-label text-ink-subtle">{domainLabel(group.agent)}</p>
+              {group.cautions.map((text) => (
+                <p key={text} className="text-body-sm text-ink mt-1">
+                  {text}
+                </p>
+              ))}
+            </Card>
           ))}
-          <p className="text-caption mt-1">알레르기를 알려주시면 식사 제안도 함께 준비해요.</p>
-          <ButtonLink
-            href={`/child/${childId}/profile`}
-            variant="secondary"
-            size="compact"
-            className="mt-3"
-          >
-            알레르기 적으러 가기
-          </ButtonLink>
-        </Banner>
-      ) : null}
 
-      {agents.length === 0 ? (
-        <Card>
-          <p className="text-body text-ink">어떤 도움이 필요한지 고르지 않으셨어요</p>
-          <p className="text-body-sm text-ink-muted mt-2">
-            홈에서 도와드릴 것을 고르면 그 주제로 준비해요.
-          </p>
-        </Card>
-      ) : suggestions.isPending ? (
-        <Card>
-          <SkeletonBlock label="제안을 준비하는 중" />
-        </Card>
-      ) : consentBlocked ? (
-        <ConsentRequiredCard
-          childId={childId}
-          error={consentBlocked}
-          what="제안을 준비할 수 없어요."
-        />
-      ) : suggestions.isError ? (
-        // 🚨 llm_unavailable 을 기본값으로 대체하지 않는다. 실패했다고 화면에 말한다.
-        <CardFailed>
-          <p>
-            {suggestions.error instanceof Error
-              ? suggestions.error.message
-              : "제안을 준비하지 못했어요."}
-          </p>
-          <Button
-            variant="tertiary"
-            size="compact"
-            className="mt-3"
-            onClick={() => suggestions.refetch()}
-          >
-            다시 시도
-          </Button>
-        </CardFailed>
-      ) : null}
-
-      {/* 🚨 후보를 카드 더미로 펼쳐 놓지 않는다. 한 덩어리 목록에서 한 줄씩 훑고, 고른 하나만
+        {/* 🚨 후보를 카드 더미로 펼쳐 놓지 않는다. 한 덩어리 목록에서 한 줄씩 훑고, 고른 하나만
           그 자리에서 연다 — 밤에 한 손으로 여는 화면에서 "둘 다 읽고 고르기" 는 인지 노동이다. */}
-      <SuggestionList
-        suggestions={visible}
-        groups={data?.groups ?? []}
-        selectedIds={selectedIds}
-        // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
-        busy={approve.isPending || approvedIds !== null}
-        onToggleSelect={(suggestion) =>
-          setSelectedIds((prev) =>
-            prev.includes(suggestion.id)
-              ? prev.filter((id) => id !== suggestion.id)
-              : [...prev, suggestion.id],
-          )
-        }
-      />
+        <SuggestionList
+          suggestions={visible}
+          groups={data?.groups ?? []}
+          selectedIds={pickedIds}
+          // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
+          busy={approve.isPending || chosenIds !== null}
+          onToggleSelect={(suggestion) =>
+            setSelectedIds((prev) =>
+              prev.includes(suggestion.id)
+                ? prev.filter((id) => id !== suggestion.id)
+                : [...prev, suggestion.id],
+            )
+          }
+        />
 
-      {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
+        {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
-      {visible.some((s) => s.agent !== "health") ? (
-        <Card>
-          <p className="text-section text-ink">
-            {approvedIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
-          </p>
-          {/* 🚨 **묶음별로 센다.** "3건" 만 말하면 보호자는 무엇을 셋 골랐는지 되짚어야 한다 —
+        {visible.some((s) => s.agent !== "health") ? (
+          <Card>
+            <p className="text-section text-ink">
+              {chosenIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
+            </p>
+            {/* 🚨 **묶음별로 센다.** "3건" 만 말하면 보호자는 무엇을 셋 골랐는지 되짚어야 한다 —
               대안이 Agent 당 셋이라 "식사 2가지 · 놀이 1가지" 가 실제로 고른 모양이다. */}
-          <dl className="mt-3 flex flex-col gap-2">
-            <div className="flex gap-2">
-              <dt className="text-label text-ink-subtle w-14 shrink-0">고른 것</dt>
-              <dd className="text-body-sm text-ink">
-                {selectedIds.length === 0
-                  ? "아직 없음"
-                  : pickedByAgent
-                      .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
-                      .join(" · ")}
-              </dd>
-            </div>
-          </dl>
+            <dl className="mt-3 flex flex-col gap-2">
+              <div className="flex gap-2">
+                <dt className="text-label text-ink-subtle w-14 shrink-0">고른 것</dt>
+                <dd className="text-body-sm text-ink">
+                  {pickedIds.length === 0
+                    ? "아직 없음"
+                    : pickedByAgent
+                        .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
+                        .join(" · ")}
+                </dd>
+              </div>
+            </dl>
 
-          {approvedIds === null ? (
-            /* ── ① 고르는 중 — 채택부터 한다 ─────────────────────────────── */
-            <>
-              {/* 🚨 **여기서 캘린더 얘기를 하지 않는다.** 이 버튼이 하는 일은 "이걸로 할게요"
+            {/* ① → ② 는 같은 카드 안에서 한 칸 앞으로 넘어가는 것이다 (디자인 시스템 §8 "단계 넘김"). */}
+            <div ref={stepRef}>
+              {chosenIds === null ? (
+                /* ── ① 고르는 중 — 채택부터 한다 ─────────────────────────────── */
+                <>
+                  {/* 🚨 **여기서 캘린더 얘기를 하지 않는다.** 이 버튼이 하는 일은 "이걸로 할게요"
                   하나고, 일정은 다음 단계가 따로 묻는다. 한 버튼이 둘을 하면 부모는
                   **일정을 안 만들려면 고르지도 말아야** 한다고 읽는다. */}
-              <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
-                고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
-              </p>
-
-              {approve.isError ? (
-                <CardFailed className="mt-3">
-                  <p>
-                    {approve.error instanceof Error
-                      ? approve.error.message
-                      : "고른 것을 남기지 못했어요."}
+                  <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
+                    고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
                   </p>
-                  <p className="mt-1">아직 아무것도 저장되지 않았어요.</p>
-                </CardFailed>
-              ) : null}
 
-              <Button
-                block
-                className="mt-4"
-                disabled={selectedIds.length === 0 || approve.isPending}
-                aria-busy={approve.isPending}
-                onClick={startApprove}
-              >
-                {approve.isPending ? <Spinner /> : null}
-                {approve.isPending
-                  ? "남기는 중이에요"
-                  : selectedIds.length === 0
-                    ? "고른 것이 없어요"
-                    : // 🚨 단위는 "가지" 다 — 제안은 한 결정의 대안이고, 일정이 "건" 이다.
-                      `이 ${selectedIds.length}가지로 할게요`}
-              </Button>
-            </>
-          ) : (
-            /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
-            <>
-              <p className="text-body-sm text-ink mt-3">일정으로도 만들까요?</p>
-              {/* 🚨 **안 만드는 버튼을 두지 않는다.** 안 만들 사람은 그냥 나간다(아래 "홈으로") —
+                  {approve.isError ? (
+                    <CardFailed className="mt-3">
+                      <p>
+                        {approve.error instanceof Error
+                          ? approve.error.message
+                          : "고른 것을 남기지 못했어요."}
+                      </p>
+                      <p className="mt-1">아직 아무것도 저장되지 않았어요.</p>
+                    </CardFailed>
+                  ) : null}
+
+                  <Button
+                    block
+                    className="mt-4"
+                    disabled={selectedIds.length === 0 || approve.isPending}
+                    aria-busy={approve.isPending}
+                    onClick={startApprove}
+                  >
+                    {approve.isPending ? <Spinner /> : null}
+                    {approve.isPending
+                      ? "남기는 중이에요"
+                      : selectedIds.length === 0
+                        ? "고른 것이 없어요"
+                        : // 🚨 단위는 "가지" 다 — 제안은 한 결정의 대안이고, 일정이 "건" 이다.
+                          `이 ${selectedIds.length}가지로 할게요`}
+                  </Button>
+                </>
+              ) : (
+                /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
+                <>
+                  <p className="text-body-sm text-ink mt-3">일정으로도 만들까요?</p>
+                  {/* 🚨 **안 만드는 버튼을 두지 않는다.** 안 만들 사람은 그냥 나간다(아래 "홈으로") —
                   "아니요" 버튼은 **아무 일도 안 하는 것을 한 번 더 확인시키는** 칸이고,
                   고른 것은 이미 남아 있다. 대신 나가도 된다는 사실을 글자로 말한다.
                   🚨 **몇 장이 될지 화면이 말하지 않는다.** food 제안들이 한 끼로 묶이는지는
                   서버가 정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때
                   거짓말이 된다. */}
-              <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
-                저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도 고른
-                것은 그대로 남아요.
-              </p>
-
-              {createDrafts.isError ? (
-                <CardFailed className="mt-3">
-                  <p>
-                    {createDrafts.error instanceof Error
-                      ? createDrafts.error.message
-                      : "저장될 내용을 만들지 못했어요."}
+                  <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
+                    저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도
+                    고른 것은 그대로 남아요.
                   </p>
-                  <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
-                </CardFailed>
-              ) : null}
 
-              <Button
-                block
-                className="mt-4"
-                disabled={createDrafts.isPending}
-                aria-busy={createDrafts.isPending}
-                onClick={() => createDrafts.mutate(approvedIds)}
-              >
-                {createDrafts.isPending ? <Spinner /> : null}
-                {createDrafts.isPending ? "준비하는 중이에요" : "일정으로 만들기"}
-              </Button>
-            </>
-          )}
-        </Card>
-      ) : null}
+                  {createDrafts.isError ? (
+                    <CardFailed className="mt-3">
+                      <p>
+                        {createDrafts.error instanceof Error
+                          ? createDrafts.error.message
+                          : "저장될 내용을 만들지 못했어요."}
+                      </p>
+                      <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+                    </CardFailed>
+                  ) : null}
 
-      {/* NF-06 — 실패한 쪽도 같은 화면에 남긴다. 빨강이 아니다. */}
-      {failedAgents.map((agent) => (
-        <CardFailed key={agent}>
-          <p>{domainLabel(agent)} 쪽은 이번에 준비하지 못했어요.</p>
-          <Button
-            variant="tertiary"
-            size="compact"
-            className="mt-3"
-            onClick={() => suggestions.refetch()}
-          >
-            다시 시도
-          </Button>
-        </CardFailed>
-      ))}
+                  <Button
+                    block
+                    className="mt-4"
+                    disabled={createDrafts.isPending}
+                    aria-busy={createDrafts.isPending}
+                    onClick={() => createDrafts.mutate(chosenIds)}
+                  >
+                    {createDrafts.isPending ? <Spinner /> : null}
+                    {createDrafts.isPending ? "준비하는 중이에요" : "일정으로 만들기"}
+                  </Button>
+                </>
+              )}
+            </div>
+          </Card>
+        ) : null}
 
-      {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
+        {/* #249 — 묶음 안내. 🚨 실패 카드가 아니다: 다시 시도를 두지 않는다. 문구는 서버 그대로다. */}
+        {notices.map((group) => (
+          <Card key={group.agent}>
+            <p className="text-label text-ink-subtle">{domainLabel(group.agent)}</p>
+            <p className="text-body-sm text-ink mt-1">{group.notice?.message}</p>
+          </Card>
+        ))}
+
+        {/* NF-06 — 실패한 쪽도 같은 화면에 남긴다. 빨강이 아니다. */}
+        {failedAgents.map((agent) => (
+          <CardFailed key={agent}>
+            <p>{domainLabel(agent)} 쪽은 이번에 준비하지 못했어요.</p>
+            <Button
+              variant="tertiary"
+              size="compact"
+              className="mt-3"
+              onClick={() => suggestions.refetch()}
+            >
+              다시 시도
+            </Button>
+          </CardFailed>
+        ))}
+
+        {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
           질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
           카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다. */}
-      {scarcity && general.length > 0 ? (
-        <ul className="flex flex-col gap-3">
-          {general.map((item) => (
-            <GeneralSuggestionCard key={item.id} suggestion={item} recordCount={scarcity.count} />
-          ))}
-        </ul>
-      ) : null}
+        {scarcity && general.length > 0 ? (
+          <ul className="flex flex-col gap-3">
+            {general.map((item) => (
+              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              <GeneralSuggestionCard
+                key={item.id}
+                suggestion={item}
+                recordCount={item.record_count}
+              />
+            ))}
+          </ul>
+        ) : null}
 
-      {scarcity ? (
-        <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
-      ) : null}
+        {scarcity ? (
+          <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
+        ) : null}
+      </Swap>
 
       {/* 🚨 "고르면 저장될 내용을 먼저 보여드려요" 를 여기 두지 않는다 — 바로 위 요약 카드가
           이미 같은 말을 한다. 한 화면에서 두 번 하면 둘 다 흘려 읽게 된다. */}
@@ -490,10 +566,14 @@ function ScarcityCard({
   hasGeneral: boolean;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
+  /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
+  const question = scarcity.question;
 
   const answer = useMutation({
     mutationFn: (value: string) => {
-      const body: AnswerRequest = { question_id: scarcity.question.id, answer: value };
+      // 답하는 칩은 질문이 있을 때만 서므로 여기서 null 은 오지 않는다
+      if (question === null) throw new Error("question_missing");
+      const body: AnswerRequest = { question_id: question.id, answer: value };
       return api.post(`/children/${childId}/answers`, body);
     },
     onSuccess: (_data, value) => setAnswered(value),
@@ -509,23 +589,28 @@ function ScarcityCard({
           ? "이 주제로 쌓인 기록이 아직 없어요."
           : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
         {hasGeneral
-          ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+          ? question
+            ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+            : "그래서 위 추천은 또래 기준이에요."
           : "근거 없이 추천을 만들지는 않을게요."}
       </p>
 
-      <p className="text-body text-ink mt-4">{scarcity.question.text}</p>
-      <ChipRow>
-        {scarcity.question.options.map((option) => (
-          <Chip
-            key={option}
-            selected={answered === option}
-            disabled={answer.isPending || answered !== null}
-            onClick={() => answer.mutate(option)}
-          >
-            {option}
-          </Chip>
-        ))}
-      </ChipRow>
+      {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}
+      {/* 🚨 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 세운다 (04 의 되묻기와 같다). */}
+      {question && question.options.length > 0 ? (
+        <ChipRow>
+          {question.options.map((option) => (
+            <Chip
+              key={option}
+              selected={answered === option}
+              disabled={answer.isPending || answered !== null}
+              onClick={() => answer.mutate(option)}
+            >
+              {option}
+            </Chip>
+          ))}
+        </ChipRow>
+      ) : null}
 
       {answer.isError ? (
         <p className="text-body-sm text-ink-muted mt-2">답을 저장하지 못했어요.</p>
@@ -535,7 +620,9 @@ function ScarcityCard({
         </p>
       ) : null}
 
-      <p className="text-caption text-ink-subtle mt-2">질문은 한 개까지만 드려요.</p>
+      {question ? (
+        <p className="text-caption text-ink-subtle mt-2">질문은 한 개까지만 드려요.</p>
+      ) : null}
     </Card>
   );
 }

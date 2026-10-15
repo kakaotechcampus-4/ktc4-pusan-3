@@ -2,12 +2,15 @@
 
     from app.agents.curator.embedding import Embedder, JevJudge, link_observations
 
-    result = await link_observations(store, Embedder(), JevJudge(), child_id=child_id)
+    result = await link_observations(
+        store, Embedder(), JevJudge(), child_id=child_id, birth_date=birth_date
+    )
     result.affected_profile_ids  # 이번에 근거가 늘어난 Profile — 승격·감쇠가 다시 볼 대상
 
 부르는 쪽이 정할 것
     - 언제 부르는가: 관찰이 commit 된 뒤. 같은 트랜잭션에서 부르면 실패가 관찰 저장까지 되돌린다
     - 동시 실행: 같은 아이에 대해 두 번 동시에 돌지 않게 막는다 (DB 구현의 몫)
+    - birth_date: 잠금을 잡은 뒤 DB 에서 읽은 생일. 현재 월령이 아닌 관찰 시작일로 연결을 제한한다
     - Embedder(): EMBEDDING_* 가 비면 LLMConfigError 를 낸다. 잡아서 건너뛸지는 부르는 쪽이 정한다
     - JevJudge(): CURATOR_JUDGE_* 가 비면 LLMConfigError. 잡고 judge=None 으로 넘기면
       이름이 같거나 후보가 없는 관찰만 처리하고, 나머지는 judge_unavailable 로 다음 실행에 미룬다
@@ -24,20 +27,26 @@
 import logging
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from uuid import UUID
 
+from app.agents.common.reference import age_gates
 from app.agents.curator.embedding.embed_step import TextEmbedder, embed_pending
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.curator.embedding.link_step import LinkOutcome, link_pending
 from app.agents.curator.embedding.ports import CuratorStore
+from app.rules.age import date_at_month
 
 logger = logging.getLogger(__name__)
+
+AFFINITY_MIN_MONTH = age_gates().affinity_min_month
 
 
 @dataclass(frozen=True)
 class LinkResult:
-    """관찰마다 결과가 하나씩 있다.
+    """처리한 관찰마다 결과가 하나씩 있다. 월령으로 제외된 관찰의 연결 결과는 없다.
 
+    월령으로 연결에서 제외돼도 임베딩은 유지하므로, 임베딩 실패·빈 subject 결과는 포함된다.
     순서는 연결 단계 결과(저장된 순서) → 임베딩 실패 → 빈 subject.
     두 단계의 대상은 겹치지 않는다 — 벡터가 없는 관찰은 연결 대상이 아니다.
     """
@@ -68,10 +77,12 @@ async def link_observations(
     judge: IdentityJudge | None,
     *,
     child_id: UUID,
+    birth_date: date,
 ) -> LinkResult:
+    min_observed_on = date_at_month(birth_date, AFFINITY_MIN_MONTH)
     embedded = await embed_pending(store, embedder, child_id=child_id)
     # 임베딩이 실패해도 돌린다 — 지난 실행에서 벡터만 저장되고 연결 전에 멈춘 관찰이 있다
-    linked = await link_pending(store, judge, child_id=child_id)
+    linked = await link_pending(store, judge, child_id=child_id, min_observed_on=min_observed_on)
 
     outcomes = (
         *linked.outcomes,

@@ -1,5 +1,10 @@
 # growth_doc 시드 — 프롬프트 [예시] 에 들어가는 교육 활동 · 루틴 단계 행 (own_table §1 · RAG_plan Growth 절)
 #
+# TEMP(#434): 배포 테스트에서 일반 추천을 열려고 모든 행을 status: approved · reviewed_by: admin 으로
+# 임시로 올렸다. 실제 검수가 아니다. 🚨 10/20 전에 작성자가 아닌 사람이 원문을 펴 놓고 사실 · 월령 · 출처
+# 위치를 확인한 뒤 reviewed_by · reviewed_at 을 그 사람의 GitHub 아이디 · 검수일로 바꾼다.
+# 통과하지 못한 행은 status: draft 로 되돌리고 reviewed_by · reviewed_at 을 지운다.
+#
 # P0 행(learning_activity · routine_step)을 채우는 판이다 (#293). 전부 status: draft — 검수 전에는
 # 서비스가 읽지 않는다. rows 가 비어 있어도 읽힌다 (InMemoryGrowthDocs.from_seed() 는 빈 문서를 낸다, doc.no_row).
 #
@@ -91,7 +96,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 다양한 감각을 경험한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -112,7 +119,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 대소근육을 조절한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -133,7 +142,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동을 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -154,7 +165,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 의사소통 · 듣기와 말하기 · 표정, 몸짓, 말소리로 의사를 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -175,7 +188,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 의사소통 · 책과 이야기 즐기기 · 책에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -196,7 +211,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 의사소통 · 읽기와 쓰기에 관심 가지기 · 끼적이기에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -216,7 +233,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 사회관계 · 더불어 생활하기 · 안정적인 애착을 형성한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -237,7 +256,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 사회관계 · 더불어 생활하기 · 또래에게 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -258,7 +279,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 소리와 리듬, 노래로 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -279,7 +302,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 다양한 미술 재료를 경험한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -300,7 +325,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 자연탐구 · 탐구과정 즐기기 · 사물과 자연 탐색하기를 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -320,7 +347,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 자연탐구 · 생활 속에서 탐구하기 · 공간과 모양을 탐색한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -341,7 +370,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 시도한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -362,7 +393,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 의사소통 · 듣기와 말하기 · 표정, 몸짓, 말과 주변의 소리에 주의를 기울인다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -383,7 +416,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 사회관계 · 나를 알고 존중하기 · 나의 욕구와 감정을 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -404,7 +439,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 예술경험 · 창의적으로 표현하기 · 모방하기를 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -425,7 +462,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -446,7 +485,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 기본 운동을 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -467,7 +508,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 대소근육을 조절한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -488,7 +531,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -509,7 +554,9 @@ rows:
     source_year: 2024
     source_locator: "2세 의사소통 · 듣기와 말하기 · 자신의 요구와 느낌을 말한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -530,7 +577,9 @@ rows:
     source_year: 2024
     source_locator: "2세 의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기에 재미를 느낀다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -551,7 +600,9 @@ rows:
     source_year: 2024
     source_locator: "2세 의사소통 · 책과 이야기 즐기기 · 책에 관심을 가지고 상상한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -572,7 +623,9 @@ rows:
     source_year: 2024
     source_locator: "2세 사회관계 · 더불어 생활하기 · 또래와 함께 놀이한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -593,7 +646,9 @@ rows:
     source_year: 2024
     source_locator: "2세 사회관계 · 더불어 생활하기 · 지켜야 할 약속이 있음을 안다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -614,7 +669,9 @@ rows:
     source_year: 2024
     source_locator: "2세 자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 느낀다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -635,7 +692,9 @@ rows:
     source_year: 2024
     source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 사물을 같고 다름에 따라 구분한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -656,7 +715,9 @@ rows:
     source_year: 2024
     source_locator: "2세 예술경험 · 창의적으로 표현하기 · 움직임과 춤으로 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -676,7 +737,9 @@ rows:
     source_year: 2024
     source_locator: "2세 예술경험 · 창의적으로 표현하기 · 상상놀이를 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -697,7 +760,9 @@ rows:
     source_year: 2024
     source_locator: "2세 의사소통 · 읽기와 쓰기에 관심 가지기 · 끼적이며 표현하기를 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -718,7 +783,9 @@ rows:
     source_year: 2024
     source_locator: "2세 사회관계 · 더불어 생활하기 · 가족에게 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -739,7 +806,9 @@ rows:
     source_year: 2024
     source_locator: "2세 예술경험 · 창의적으로 표현하기 · 익숙한 노래와 리듬을 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -760,7 +829,9 @@ rows:
     source_year: 2024
     source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 수에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -781,7 +852,9 @@ rows:
     source_year: 2024
     source_locator: "2세 자연탐구 · 생활 속에서 탐구하기 · 생활 도구에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -803,7 +876,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 신체를 인식하고 움직인다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -823,7 +898,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 신체 움직임을 조절한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -844,7 +921,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 기초적인 이동운동, 제자리 운동, 도구를 이용한 운동을 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -864,7 +943,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 신체활동 즐기기 · 실내외 신체활동에 자발적으로 참여한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -885,7 +966,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -906,7 +989,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 질병을 예방하는 방법을 알고 실천한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -927,7 +1012,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 안전하게 생활하기 · 교통안전 규칙을 지킨다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -948,7 +1035,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 안전하게 생활하기 · TV, 컴퓨터, 스마트폰 등을 바르게 사용한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -968,7 +1057,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 듣기와 말하기 · 말이나 이야기를 관심 있게 듣는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -989,7 +1080,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 듣기와 말하기 · 자신의 경험, 느낌, 생각을 말한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1010,7 +1103,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 듣기와 말하기 · 상대방이 하는 이야기를 듣고 관련해서 말한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1031,7 +1126,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 듣기와 말하기 · 고운 말을 사용한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1052,7 +1149,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 읽기와 쓰기에 관심 가지기 · 주변의 상징, 글자 등의 읽기에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1073,7 +1172,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 읽기와 쓰기에 관심 가지기 · 자신의 생각을 글자와 비슷한 형태로 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1093,7 +1194,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 책과 이야기 즐기기 · 말놀이와 이야기 짓기를 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1114,7 +1217,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 나를 알고 소중히 여긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1135,7 +1240,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 나의 감정을 알고 상황에 맞게 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1156,7 +1263,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 나를 알고 존중하기 · 내가 할 수 있는 것을 스스로 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1177,7 +1286,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 더불어 생활하기 · 가족의 의미를 알고 화목하게 지낸다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1198,7 +1309,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 더불어 생활하기 · 친구와 서로 도우며 사이좋게 지낸다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1219,7 +1332,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 더불어 생활하기 · 친구와의 갈등을 긍정적인 방법으로 해결한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1240,7 +1355,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 더불어 생활하기 · 약속과 규칙의 필요성을 알고 지킨다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1260,7 +1377,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 아름다움 찾아보기 · 자연과 생활에서 아름다움을 느끼고 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1280,7 +1399,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 아름다움 찾아보기 · 예술적 요소에 관심을 갖고 찾아본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1300,7 +1421,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 노래를 즐겨 부른다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1320,7 +1443,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 신체, 사물, 악기로 간단한 소리와 리듬을 만들어 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1341,7 +1466,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 신체나 도구를 활용하여 움직임과 춤으로 자유롭게 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1361,7 +1488,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 다양한 미술 재료와 도구로 자신의 생각과 느낌을 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1382,7 +1511,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 창의적으로 표현하기 · 극놀이로 경험이나 이야기를 표현한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1403,7 +1534,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 물체의 특성과 변화를 여러 가지 방법으로 탐색한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1423,7 +1556,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 물체를 세어 수량을 알아본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1444,7 +1579,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 물체의 위치와 방향, 모양을 알고 구별한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1465,7 +1602,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 길이, 무게 등의 속성을 비교한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1486,7 +1625,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 주변에서 반복되는 규칙을 찾는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1507,7 +1648,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 생활 속에서 탐구하기 · 일상에서 모은 자료를 기준에 따라 분류한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1528,7 +1671,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 자연과 더불어 살기 · 주변의 동식물에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1549,7 +1694,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 하루 일과에서 적당한 휴식을 취한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1570,7 +1717,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 안전하게 생활하기 · 안전사고, 화재, 재난, 학대, 유괴 등에 대처하는 방법을 경험한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1591,7 +1740,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 듣기와 말하기 · 상황에 적절한 단어를 사용하여 말한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1612,7 +1763,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 의사소통 · 책과 이야기 즐기기 · 동화, 동시에서 말의 재미를 느낀다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1633,7 +1786,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 더불어 생활하기 · 서로 다른 감정, 생각, 행동을 존중한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1654,7 +1809,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 사회에 관심 가지기 · 내가 살고 있는 곳에 대해 궁금한 것을 알아본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1675,7 +1832,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 사회관계 · 사회에 관심 가지기 · 다양한 문화에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1696,7 +1855,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 예술 감상하기 · 우리나라 전통 예술에 관심을 갖고 친숙해진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1717,7 +1878,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 예술경험 · 예술 감상하기 · 다양한 예술을 감상하며 상상하기를 즐긴다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1738,7 +1901,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 자연탐구 · 자연과 더불어 살기 · 날씨와 계절의 변화를 생활과 관련짓는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1774,7 +1939,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1796,7 +1963,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1818,7 +1987,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1839,7 +2010,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1859,7 +2032,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1881,7 +2056,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1903,7 +2080,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1924,7 +2103,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1944,7 +2125,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1965,7 +2148,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 도움을 받아 몸을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -1986,7 +2171,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2007,7 +2194,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2028,7 +2217,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2049,7 +2240,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2071,7 +2264,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2092,7 +2287,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 건강한 배변 습관을 갖는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2112,7 +2309,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2133,7 +2332,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2154,7 +2355,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 해 본다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2175,7 +2378,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 자신의 몸과 주변을 깨끗이 한다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2195,7 +2400,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 음식에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2216,7 +2423,9 @@ rows:
     source_year: 2024
     source_locator: "0~1세 신체운동·건강 · 건강하게 생활하기 · 음식에 관심을 가진다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2237,7 +2446,9 @@ rows:
     source_year: 2024
     source_locator: "2세 신체운동·건강 · 건강하게 생활하기 · 음식을 즐겁게 먹는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 
@@ -2258,7 +2469,9 @@ rows:
     source_year: 2024
     source_locator: "3~5세 신체운동·건강 · 건강하게 생활하기 · 몸에 좋은 음식에 관심을 가지고 바른 태도로 즐겁게 먹는다"
     license_basis: public_law
-    status: draft
+    status: approved
+    reviewed_by: admin
+    reviewed_at: 2026-10-14
     authored_by: nnhhlee
     version: 1
 

@@ -13,6 +13,7 @@ from app.agents.common.reference import food_safety_terms
 from app.agents.food import readouts
 from app.agents.food.meal_pool import build_pool
 from app.agents.food.readouts import READOUTS
+from app.agents.food.schemas.common import EvidenceRef
 from app.agents.food.schemas.menu import DaycareMenuArgs
 from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidatesArgs
 from app.agents.food.store import (
@@ -24,7 +25,7 @@ from app.agents.food.store import (
 from app.agents.food.tools.menu import lookup_daycare_menu
 from app.agents.food.tools.recommend import propose_meal_candidates
 from app.agents.food.tools.safety import filter_food_safety
-from tests.unit.agents.food.support import context, daycare, menu_row
+from tests.unit.agents.food.support import MEAL_DOC, context, daycare, menu_row
 
 _RULES = food_safety_terms().age_rules
 CAUTION = [rule for rule in _RULES if rule.action == "caution"]
@@ -81,10 +82,14 @@ async def test_질식_주의_식품을_추천해도_결과_어디에도_질식_�
     ctx = context()
     ctx.state.sampled = {row.menu_key: row}
     ctx.state.exhausted = True
+    ctx.state.seen_docs[MEAL_DOC.id] = MEAL_DOC  # 일반 추천의 근거는 문서 행이다
     args = ProposeMealCandidatesArgs(
         candidates=[
             MealCandidate(
-                menu_key="포도", meal_slot="snack", reason="오늘 급식과 겹치지 않아서 골랐어요"
+                menu_key="포도",
+                meal_slot="snack",
+                reason="오늘 급식과 겹치지 않아서 골랐어요",
+                evidence=[EvidenceRef(kind="food_doc", id=str(MEAL_DOC.id), note="식단 자료")],
             )
         ]
     )

@@ -1,4 +1,4 @@
-import { authHeaders, buildUrl } from "./client";
+import { authHeaders, authorizedFetch, buildUrl, notifyUnauthenticated } from "./client";
 import { NetworkError } from "./errors";
 import type { Affinity, Agent, EventDraft, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
 
@@ -45,6 +45,12 @@ export interface PartialEvent {
   reason: string;
   succeeded: Agent[];
   failed: Agent[];
+  /**
+   * 실패한 task 중 **추천을 내는 task** 의 Agent (#227 3단계). 화면이 "다시 준비하기" 로 이 Agent 들의 05 를
+   * `run=` 과 함께 연다 — 05 가 그 run 의 처음 시각 · 문장으로 다시 만든다 (#249).
+   * 🚨 **화면이 `failed` 로 고르지 않는다.** 급식 갱신만 실패한 식사도 `failed` 에 있지만 05 화면이 없다.
+   */
+  retryable: Agent[];
 }
 
 /**
@@ -154,9 +160,8 @@ export interface AgentReadout {
    * 개수 안내의 종류 (#276 · #249 의 `groups[].notice` 와 같은 값). 서버 `count_notice()` 만 붙인다.
    * `fewer` 는 1~2개, `empty` 는 0개, 개수와 상관없는 readout(날씨 안내 · 성장 추이)은 `null` 이다. 키는 늘 있다.
    *
-   * ⚠️ **3단계 전까지 04 에는 `empty` 만 온다.** `fewer` 는 늘 추천과 같이 나오는데, 추천이 든 결과는 서버가
-   *    `agent_result` 로 내지 않는다 (#276 `_shows`). 그래서 지금 04 블록은 이 값으로 그림을 가르지 않고,
-   *    3단계에서 "후보 N개" 자리에 개수 안내를 둘 때 쓴다.
+   * 후보가 있는 블록에서는 개수 안내(`fewer`)를 그리지 않는다 — '후보 N개' 가 대신한다
+   *    (`lib/agent-result.ts` 의 `blockReadouts`).
    * ⚠️ `cannot_resume`(이어서 할 수 없음)은 05 추천 엔드포인트만 붙인다 (#249). 04 에는 오지 않는다.
    */
   code: "fewer" | "empty" | null;
@@ -172,10 +177,8 @@ export interface AgentReadout {
  * 🚨 **비어 있는 결과도 온다** (`readouts: []` · `question: null`). 쓰는 task(급식 갱신)처럼 화면에 보일 것이
  *    없는 결과다 — 화면은 블록을 세우지 않는다 (`components/run-result.tsx`).
  *
- * ⚠️ **추천 칸이 아직 없다** (`kind` · `reason` · `suggestion_ids`). 저장이 끝난 id 만 보내야 해서
- *    (공통규약 §3) 서버의 저장 콜백이 생길 때 같이 붙는다 (#227 3단계). 화면은 지금 이 이벤트를
- *    **추천이 없는 결과**로 읽는다 — 그래서 3단계 전에는 추천이 있는 결과를 보내지 말아 달라고
- *    #276 리뷰에서 요청했다. 보내면 "조건에 맞는 추천을 2개 준비했어요" 가 후보 없이 선다.
+ * 🚨 **추천이 든 결과는 블록에 '후보 N개' · 이유 · '후보 보기' 가 선다** (#227 3단계). 링크는 그 블록의
+ *    Agent 와 그 run 을 싣고 05 가 그 run 의 추천을 되살린다 (#249).
  */
 export interface AgentResultEvent {
   agent: Agent;
@@ -196,6 +199,20 @@ export interface AgentResultEvent {
    *    정한다 — 그때까지는 안내 문장으로만 선다.
    */
   question: string | null;
+  /** 저장(commit)이 끝난 추천 id. 추천 순서 그대로다. 없으면 `[]` (키는 늘 있다). */
+  suggestion_ids: string[];
+  /**
+   * 추천 묶음의 종류 (#227 3단계). 추천이 없으면 `null`.
+   * 🚨 **개인화 · 일반이 섞인 묶음은 `"personalized"` 로 온다** — 섞인 일반 추천은 05 가 따로 보여 준다.
+   */
+  kind: "personalized" | "general" | null;
+  /** 묶음 이유 한 문장. 🚨 **서버 코드 문구다** — 화면이 줄이거나 다시 쓰지 않는다. 추천이 없으면 `null`. */
+  reason: string | null;
+  /**
+   * 일반 묶음일 때 그 주제로 쌓인 기록 수 (05 `general[].record_count` 와 같은 표). 🚨 **0 도 그린다** (최상위 §2).
+   * 서버가 세지 못했거나 일반 묶음이 아니면 `null`.
+   */
+  record_count: number | null;
 }
 
 /**
@@ -336,17 +353,15 @@ export async function* streamRunEvents(
   runId: string,
   signal?: AbortSignal,
 ): AsyncGenerator<RunEvent> {
-  let response: Response;
-  try {
-    response = await fetch(buildUrl(`/runs/${runId}/events`), {
-      headers: authHeaders({ Accept: "text/event-stream" }),
-      signal,
-      cache: "no-store",
-    });
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
-    throw new NetworkError(cause);
-  }
+  // access 가 만료됐으면 한 번 갱신해 다시 연결한다 (`authorizedFetch`).
+  const response = await authorizedFetch(buildUrl(`/runs/${runId}/events`), () => ({
+    headers: authHeaders({ Accept: "text/event-stream" }),
+    signal,
+    cache: "no-store",
+  }));
+
+  // 갱신까지 실패했다 — 세션이 끝났다. 화면은 아래 연결 실패로 끝내고, 로그인 화면으로는 전역 처리가 보낸다.
+  if (response.status === 401) notifyUnauthenticated();
 
   if (!response.ok || !response.body) {
     throw new NetworkError(new Error(`SSE 연결 실패 (${response.status})`));

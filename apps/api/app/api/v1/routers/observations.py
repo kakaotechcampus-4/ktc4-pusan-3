@@ -60,12 +60,12 @@ _DOMAINS_BY_AGENT: dict[str, tuple[ObservationDomain, ...]] = {
     "health": (),
 }
 # 목록에 보이는 상태. 보호자가 고친 기록(이번만 · 잘못된 기록)도 남는다 — deleted 만 빠진다.
-_LISTED_STATUSES = (
+LISTED_STATUSES = (
     ObservationStatus.ACTIVE,
     ObservationStatus.STAND_ALONE,
     ObservationStatus.INACTIVE,
 )
-_VISIBLE_DOMAINS = (
+VISIBLE_DOMAINS = (
     ObservationDomain.FOOD,
     ObservationDomain.EDUCATION,
     ObservationDomain.ACTIVITY,
@@ -105,7 +105,7 @@ async def list_observations(
 
     status 를 주면 그 상태만, 주지 않으면 세 상태 모두다.
     """
-    domains = _DOMAINS_BY_AGENT[domain] if domain else _VISIBLE_DOMAINS
+    domains = _DOMAINS_BY_AGENT[domain] if domain else VISIBLE_DOMAINS
     if not domains:
         return ObservationsResponse(items=[], next_cursor=None, total=0)
 
@@ -113,7 +113,7 @@ async def list_observations(
         session,
         child_id=child.child_id,
         domains=domains,
-        statuses=(ObservationStatus(status),) if status else _LISTED_STATUSES,
+        statuses=(ObservationStatus(status),) if status else LISTED_STATUSES,
         cursor=_decode_cursor(cursor) if cursor else None,
         limit=limit,
     )
@@ -176,7 +176,7 @@ def _visible_domain(kind: str) -> ObservationDomain | None:
         domain = ObservationDomain(kind.removeprefix("observation_"))
     except ValueError:
         return None
-    return domain if domain in _VISIBLE_DOMAINS else None
+    return domain if domain in VISIBLE_DOMAINS else None
 
 
 async def to_observation_outs(

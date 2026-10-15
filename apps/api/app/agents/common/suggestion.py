@@ -21,10 +21,12 @@ SuggestionKind = Literal["general", "personalized"]
 # 더 채울 길이 없을 때뿐이다 — 안전 필터 뒤 재호출 1회를 했거나, 후보 풀이 처음부터 모자라다.
 MAX_SUGGESTIONS = 3
 
-# 개수 안내. 다 채우지 못했을 때만 추천과 함께 나간다 — 문구는 yaml 에, 고르는 것은 count_notice
+# 개수 안내 · 04 묶음 이유. 문구는 yaml 에, 고르는 것은 각 함수
 _NOTICES = ReadoutCatalog.from_yaml(Path(__file__).with_name("suggestion.readout.yaml"))
 PARTIAL_NOTICE: ReadoutText = _NOTICES.get("suggestion.partial")
 EMPTY_NOTICE: ReadoutText = _NOTICES.get("suggestion.empty")
+CANNOT_RESUME_NOTICE: ReadoutText = _NOTICES.get("suggestion.cannot_resume")
+BUNDLE_PERSONALIZED: ReadoutText = _NOTICES.get("suggestion.bundle.personalized")
 
 
 class SuggestionRejected(ValueError):
@@ -68,6 +70,7 @@ def build(
     reason: str,
     citations: tuple[EvidenceCitation, ...] = (),
     general_reason: str | None = None,
+    general_basis: tuple[EvidenceCitation, ...] = (),
     allergens: tuple[str, ...] = (),
     items: tuple[str, ...] = (),
     today: date,
@@ -75,7 +78,11 @@ def build(
     """6개월이 안 지난 아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
     아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
-    덮어쓴다. general 인데 인용이 0행인 것은 거절 사유가 아니라 품질 지표다.
+    덮어쓴다. 이때 문서 행을 하나 이상 인용해야 한다 — 일반 추천의 근거는 문서 행이다(루트 §2).
+
+    `general_basis` 는 일반 추천일 때만 붙는 근거다(개인화면 버린다). 모델이 아니라 코드가 만든다.
+    Food 는 고른 메뉴(레시피 카탈로그 행)를 넘겨서, 문서 행이 없어도 메뉴를 근거로 일반 추천을
+    낸다(#442). 넘기지 않는 Agent(Activity · Growth)는 지금처럼 문서 행이 있어야 한다.
 
     6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
     그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
@@ -85,7 +92,7 @@ def build(
     기피 근거를 인용했으면 `reason` 에 무엇을 피했는지가 있어야 한다. 인용만 하고 말하지
     않으면 보호자에게는 근거 없는 추천과 같다.
     """
-    for item in citations:
+    for item in (*citations, *general_basis):
         if not item.note.strip():
             raise SuggestionRejected(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
@@ -96,12 +103,17 @@ def build(
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
+        basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
+        if not basis:
+            # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도
+            # 없으면 무엇을 기준으로 골랐는지 보호자에게 보여 줄 것이 없다
+            raise SuggestionRejected(f"{agent}: 일반 추천인데 문서 행 근거가 없다")
         return SuggestionDraft(
             agent=agent,
             kind="general",
             content=content,
             reason=general_reason,
-            citations=tuple(item for item in citations if not item.ref.is_child_record),
+            citations=basis,
             allergens=allergens,
             items=items,
         )
@@ -192,6 +204,51 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
     if count == 0:
         return replace(code_readout(empty), code="empty")
     return replace(code_readout(PARTIAL_NOTICE, count=count), code="fewer")
+
+
+def cannot_resume_notice() -> Readout:
+    """05 가 그 Agent 를 이어서 만들 수 없을 때의 안내. 다시 만들지 않는다 (#249 판단 순서 4)."""
+    return replace(code_readout(CANNOT_RESUME_NOTICE), code="cannot_resume")
+
+
+def empty_notice(readouts: Sequence[Readout]) -> Readout | None:
+    """결과 readout 중 0개 안내. 문구가 아니라 `code` 로 찾는다 — Agent 마다 0개 문구가 다르다.
+
+    pipeline 의 0개 기록 · 05 의 0개 재생 · 05 의 묶음 안내가 같이 쓴다 (#433 리뷰 ⑩).
+    """
+    return next((readout for readout in readouts if readout.code == "empty"), None)
+
+
+@dataclass(frozen=True)
+class BundleSummary:
+    """04 Agent 블록 머리의 묶음 칸 (#227). 추천이 없으면 둘 다 None."""
+
+    kind: Literal["personalized", "general"] | None
+    reason: str | None
+
+
+def bundle_summary(drafts: Sequence[SuggestionDraft]) -> BundleSummary:
+    """Agent 결과 하나의 추천 묶음을 화면 한 줄로. 모델을 부르지 않는다 (#227).
+
+    - 개인화가 하나라도 있으면 개인화다 — 섞인 묶음의 일반 추천은 05 가 따로 보여 준다. 이유는
+      개인화 추천이 근거로 쓴 아이 기록 수(같은 기록은 한 번)로 말한다. 모델이 쓴 note 를 이어
+      붙이지 않는다 — 그러면 표현 검사를 화면 문장에 한 번 더 해야 한다.
+    - 전부 일반이면 그 Agent 의 일반 추천 문구(`build()` 가 덮어쓴 코드 템플릿)를 쓴다.
+    """
+    if not drafts:
+        return BundleSummary(kind=None, reason=None)
+    personal = [draft for draft in drafts if draft.kind == "personalized"]
+    if not personal:
+        return BundleSummary(kind="general", reason=drafts[0].reason)
+    records = {
+        (item.ref.kind, item.ref.id)
+        for draft in personal
+        for item in draft.citations
+        if item.ref.is_child_record
+    }
+    return BundleSummary(
+        kind="personalized", reason=BUNDLE_PERSONALIZED.template.format(count=len(records))
+    )
 
 
 def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:

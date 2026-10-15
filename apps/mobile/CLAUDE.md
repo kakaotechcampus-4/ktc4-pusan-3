@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다**.
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다** · 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다(값은 모른다).
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 토큰을 들고 있지 않다. 상태를 관리하지 않는다.
 
@@ -22,15 +22,12 @@ Owner: 고태영 (프론트 리드)
 
 | | 버전 | 비고 |
 | --- | --- | --- |
-| Expo SDK | **57** (`expo@57.0.20`) | |
+| Expo SDK | **57** (`expo@57.0.28`) | |
 | React Native | 0.86.3 | |
 | React | 19.2.3 | |
 | react-native-webview | 13.16.1 | |
 | react-native-safe-area-context | 5.7.0 | |
-| expo-media-library | 57.0.5 | 최근 사진 목록 · 권한 (`/legacy` 진입점을 쓴다 — `src/native/recent-photos.ts` 머리말) |
-| expo-dev-client | 57.0.19 | 개발 빌드 런처 — Expo Go 로는 사진을 못 본다 (아래) |
-| expo-image-manipulator | 57.0.19 | 썸네일 축소 |
-| expo-file-system | 57.0.7 | 원본 base64 읽기 |
+| expo-dev-client | 57.0.20 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
 | TypeScript | 6.0.3 | |
 
@@ -55,56 +52,43 @@ Expo autolinking 이 pnpm 의 격리된 심볼릭 링크 구조에서 네이티�
 App.tsx                      웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
 index.ts                     registerRootComponent
 src/config.ts                WEB_URL · 허용 출처 판정
-src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다
-src/native/bridge.ts         웹뷰에 꽂는 창구 — 주입 스크립트 · 요청 파싱 · 조각 전송
-src/native/recent-photos.ts  최근 사진을 실제로 읽는 곳 (권한 · 썸네일 · 원본)
+src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다 (키보드가 열리면 아래는 0)
+src/native/back-press.ts     물리 뒤로가기 판정 — 히스토리 / 종료 안내 / 종료. 셸이 아는 웹 경로(하단 네비 네 칸)
 src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth/callback 변환
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
 src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
-app.json                     Expo 설정 (name · scheme · bundle id · 권한 플러그인)
+src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#469)
+modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
+app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
+eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
 ```
 
-### 최근 사진 브릿지 (`window.icatch.recentPhotos`)
+### 🚨 사진 권한을 받지 않는다 (#408)
 
-08 사진 시트의 "최근 사진" 줄은 **웹이 만들 수 없다.** 브라우저는 기기 갤러리 *목록*을 읽는 API 가 없고
-(`<input type="file">` 은 OS 피커를 열 뿐이다), 그래서 값은 셸이 꽂아 준다.
+Android 앱이 요청하는 권한은 `INTERNET` 하나다 (릴리스 매니페스트 기준). 사진을 고르는 길은 웹의
+`<input type="file">` 이 여는 시스템 선택기와 카메라 인텐트라 Android 에서는 권한이 필요 없다.
 
-**계약의 정본은 웹에 있다** — [`apps/web/src/lib/native/recent-photos.ts`](../web/src/lib/native/recent-photos.ts).
-여기는 그 계약을 만족시키는 쪽이고, 모양을 바꾸려면 **웹의 그 파일을 먼저 고친다.**
+⚠️ **iOS 는 확인 전이다.** WKWebView 의 촬영과 앨범은 Info.plist 의 `NSCameraUsageDescription` ·
+`NSPhotoLibraryUsageDescription` 이 있어야 하는데 지금 둘 다 없다 (앨범 키는 이번에 플러그인과 함께 빠졌다).
+iOS 첫 빌드 때 08 시트의 촬영과 앨범을 확인하고, 필요하면 `ios.infoPlist` 에 설명 문구를 넣는다.
 
-```
-웹  listRecentPhotos(12)  ──postMessage──▶  App.tsx onMessage
-                                                 └▶ src/native/recent-photos.ts (권한 · 쿼리 · 썸네일)
-웹  ◀──injectJavaScript──  조각 N 개 + 끝맺음  ◀──┘
-```
+예전에는 08 사진 시트의 "최근 사진" 줄을 채우려고 `expo-media-library` 로 갤러리 목록을 읽어
+`window.icatch.recentPhotos` 로 웹에 꽂았다. 첫 스토어 배포 전에 뺐다 — Google Play 는 사진 권한
+(`READ_MEDIA_IMAGES`)을 쓰는 앱에 별도 선언과 심사를 요구하고, 가끔 사진 한 장을 고르는 용도는 시스템
+사진 선택기를 쓰라고 한다. 이 줄은 그 기준을 넘기 어렵다.
 
-- **큰 값은 나눠 보낸다.** 네이티브 → 웹은 스크립트를 밀어 넣는 것뿐이라 값을 스크립트에 적어야 하는데,
-  사진 원본 base64 를 한 번에 넣으면 Android WebView 가 조용히 잘라 먹는다.
-- 🚨 **`injectedJavaScriptBeforeContentLoaded` 다.** 웹의 개발용 가짜 브릿지
-  (`apps/web/src/mocks/native-bridge.ts`)가 "이미 꽂혀 있으면 안 건드린다" 이므로, 진짜가 먼저 자리를 잡아야
-  셸 안에서 가짜 썸네일이 뜨지 않는다.
-- 🚨 **권한 거부를 셸이 설명하지 않는다.** 답은 빈 값(`kind: "empty"`)이고, 줄을 그릴지 말지는 웹이 정한다.
-  여기에 안내 화면을 만들면 화면이 두 벌이 된다 (§1).
-- 🚨 **원본을 줄이지 않는다.** 이 사진으로 알림장 글자를 읽는다. "앨범에서 고르기" 는 원본을 그대로 넘기므로,
-  여기만 줄이면 **같은 사진인데 경로에 따라 분석 결과가 달라진다.**
-  ⚠️ **예외는 HEIC 하나이고, 그 이유도 같은 규칙이다** (#144 리뷰). iOS 의 `<input type="file">` 은 HEIC 를
-  JPEG 로 바꿔서 주기 때문에, 여기만 원본을 고집하면 두 경로가 **서로 다른 형식**을 준다. 그래서 HEIC/HEIF
-  일 때만 JPEG 로 맞춘다 — 크기는 안 건드린다. Android 는 지금도 같아서 이 길을 안 지난다.
-- 🚨 **웹이 보낸 메시지는 보낸 쪽 주소부터 본다** (`App.tsx` 의 `handleMessage`). 여기가 사진 원본이 기기 밖으로
-  나가는 유일한 문이라, 탐색 제한(`onShouldStartLoadWithRequest`) 한 겹에만 기대지 않는다. 그 `url` 은 보낸
-  **프레임** 기준이라(iOS `frameInfo.request.URL` · Android `WebMessageListener` 의 `sourceOrigin`)
-  크로스 오리진 iframe 이 부르는 것까지 막힌다.
-- 🚨 **고른 사진의 주소를 `getAssetInfoAsync(id)` 로 다시 묻지 않는다.** 그 함수는 EXIF 를 열기 때문에
-  Android 에서 `ACCESS_MEDIA_LOCATION`(사진이 **찍힌 장소**)을 요구하고, 없으면 호출 자체가 거절된다.
-  이 앱은 그 권한을 받을 이유가 없으므로, 목록을 만들 때 쥐고 있던 주소를 셸이 기억해 뒀다가 쓴다.
+- 웹의 계약(`apps/web/src/lib/native/recent-photos.ts`)은 남아 있다. 셸이 창구를 꽂지 않으면 웹은 줄을
+  그리지 않으므로 화면 동작은 그대로다.
+- 🚨 **다시 넣으려면 권한 선언부터 정한다.** 구현과 그때 지킨 규칙(큰 값은 조각으로, 원본을 줄이지 않기,
+  보낸 쪽 주소 확인, `getAssetInfoAsync` 금지)은 #144 와 #408 이전 커밋에 있다.
+- `app.json` 의 `android.blockedPermissions` 는 Expo 템플릿이 기본으로 넣는 저장소 · 오버레이 · 진동
+  권한을 막는다. 셸이 쓰는 곳이 없다. 권한을 더하는 패키지를 넣으면 릴리스 매니페스트를 다시 확인한다
+  (`./gradlew :app:processReleaseMainManifest` 뒤 `app/build/intermediates/merged_manifest/release/`).
 
-### 🚨 Expo Go 로는 최근 사진을 볼 수 없다 — 개발 빌드가 필요하다
+### 🚨 Expo Go 로는 로그인을 끝낼 수 없다 — 개발 빌드가 필요하다
 
-Expo Go 는 Android 권한 정책이 바뀐 뒤로 미디어 라이브러리 접근을 **아예 막았다.**
-권한을 묻기도 전에 호출이 거절된다 (`Expo Go can no longer provide full access to the media library`).
-
-그래서 **이 줄을 눈으로 확인하려면 개발 빌드**를 써야 한다. 나머지 화면은 Expo Go 에서 그대로 보인다 —
-브릿지가 없는 것과 같은 상태가 되어 최근 사진 줄만 안 선다.
+카카오 로그인은 서버가 `icatch://auth` 로 돌려보내야 끝나는데(§4), Expo Go 는 이 앱의 스킴을 받지 않는다.
+그래서 **로그인 뒤 화면을 보려면 개발 빌드**를 쓴다.
 
 ```bash
 pnpm android          # = expo run:android — prebuild + gradle + 설치까지 한 번에
@@ -122,13 +106,16 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   🚨 **출처가 같아도 `/api/…` 는 밖이다** (#273). nginx 로 API 를 웹과 같은 주소 아래에 두면 약관 "전문 보기" 와 로그인 시작이 출처 검사를 통과해 버린다 — 약관은 가입 화면을 덮고(iOS 는 돌아올 길이 없다), 로그인은 아래 인증 세션 분기까지 오지 못한다. 셸은 API 주소를 모르므로 **경로만** 본다. nginx 경로가 `/api` 가 아니게 정해지면 `src/native/internal-url.ts` 를 같이 고친다.
 - **앱 밖 웹 주소는 in-app 브라우저로 앱 위에 얹는다** (`openBrowserAsync` · #212). 시스템 브라우저로 넘기면 앱을 떠나서, 약관을 다 읽은 사람이 동의 화면을 다시 찾아야 한다 — 필수 동의 직전의 링크라 그 수고가 곧 "안 읽고 체크" 다. in-app 브라우저는 진짜 브라우저라 도메인 · 자물쇠가 보이므로 위 규칙과 맞는다. `http(s)` 가 아닌 스킴(`tel:` · `mailto:` · `intent:`)과 in-app 브라우저를 못 여는 경우는 지금처럼 `Linking.openURL` 이다.
 - 🚨 **로그인 시작 URL 은 따로 연다** (`isAuthStartUrl()` · #210). 위의 in-app 브라우저(`openBrowserAsync`)나 시스템 브라우저로 열면 서버가 302 하는 `icatch://auth` 복귀를 받을 곳이 없다. `openAuthSessionAsync` 로 열고, `success` 일 때만 복귀 쿼리를 `/auth/callback` 에 붙여 **같은 웹뷰를 `location.replace` 로 옮긴다** — 웹뷰를 다시 만들면 `sessionStorage` 의 bind 가 사라진다. 셸은 URL 을 열고 돌려받을 뿐 코드 교환 · 토큰은 웹이 한다 (§1). 흐름 정본은 [`docs/web/kakao-login-v1.md`](../../docs/web/kakao-login-v1.md) §5.
+- 🚨 **백그라운드로 갈 때 웹뷰 쿠키를 flush 한다** (#469 · `src/native/cookie-flush.ts`). 웹은 앱을 켤 때 refresh 쿠키로 로그인을 되살리고(#465) 서버는 그때마다 쿠키를 회전시킨다(#468). 웹뷰는 쿠키를 주기적으로만 디스크에 쓰고(Chromium 기준 약 30초) react-native-webview 는 페이지 로드가 끝날 때만 flush 하는데, 회전은 그 뒤다. flush 없이 바로 앱을 끄면 디스크에 직전 refresh 가 남고, 다음 실행에서 서버가 유예 30초 밖 재사용으로 보고 **세션을 지운다.** Android 는 최근 앱 화면으로 갈 때도 `background` 라 스와이프 종료 전에 지나간다.
+  셸은 쿠키 값을 읽거나 쓰지 않는다 — 기록 시점만 앞당긴다 (§1). 네이티브 쪽은 로컬 모듈 `modules/cookie-flush` 이고 패키지를 늘리지 않았다. iOS 는 WKWebView 가 스스로 저장해 모듈이 없다 (기기 확인 전).
+  ⚠️ **좁은 틈이 하나 남는다.** refresh 응답이 백그라운드 전환보다 늦게 오면(켜자마자 최근 앱 화면으로 간 경우, 왕복 수백 ms) flush 는 옛 쿠키를 쓰고 새 쿠키는 메모리에만 남는다. 그 상태로 스와이프 종료하고 30초 뒤 다시 켜면 서버가 세션을 지운다. 같은 증상을 보면 여기부터 의심한다.
+  ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않는다. `modules/` 를 고치면 `./gradlew assembleDebug` 로 직접 빌드해 본다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
-- 🚨 **웹에서 온 메시지를 믿지 않는다.** `parseBridgeRequest()` 를 거치지 않은 값으로 네이티브를 부르지 않는다.
-  웹뷰는 우리 페이지만 띄우지만(`isInternalUrl`), 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
-- 🚨 **사진 경로 · 파일 이름 · 썸네일을 로그에 찍지 않는다** (최상위 CLAUDE.md §2 개인정보).
-  예외 메시지에도 경로가 섞여 들어오므로 `catch` 에서 그대로 찍지 않는다.
-- 🚨 **권한은 필요한 것만 묻는다.** `granularPermissions: ["photo"]` — 사진만이다. 기본값은 영상 · 오디오까지
-  묻고, 저장 권한(`savePhotosPermission`)과 사진 위치(`isAccessMediaLocationEnabled`)는 끈 채로 둔다.
+- 🚨 **웹에서 오는 메시지(`onMessage`)를 받지 않는다.** 지금 웹이 셸에 부탁할 것이 없다. 창구가 다시 생기면
+  보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만 네이티브를 부른다 —
+  모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
+- 🚨 **권한을 늘리지 않는다** (§3 "사진 권한을 받지 않는다"). 네이티브 기능이 필요해지면 그 권한이 스토어 심사에
+  무엇을 요구하는지부터 본다.
 - 🚨 **safe area 는 셸이 재고, 칠하는 것은 페이지다.** 웹뷰는 화면 끝까지 덮고(`edges={["left","right"]}`),
   상태바·제스처바 크기는 `--shell-inset-top` / `--shell-inset-bottom` 으로 넘긴다
   (`src/native/safe-area.ts` → 웹의 `pt-safe-*`/`pb-safe-*`).
@@ -136,6 +123,17 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   (그냥 화면 `canvas` · 하단 네비 `surface-muted` · 시트가 열리면 딤). 셸은 그중 하나밖에 모르니
   위아래에 흰 띠가 남았다 (#133). 화면별로 색을 바꿔 칠하는 것은 §1 을 깨는 길이다 — 자리만 비워 준다.
   ⚠️ 셸이 그리는 **연결 실패 화면**은 예외다. 그건 셸의 화면이라 거기서는 `SafeAreaView` 가 직접 먹는다.
+- 🚨 **키보드가 열려 있으면 아래 여백을 0 으로 넘긴다** (#462). 웹뷰 바닥이 키보드 윗변으로 올라오고 시스템 바는
+  키보드 아래에 가려지는데, `useSafeAreaInsets()` 의 아래 값은 키보드와 무관하게 그대로라 하단 네비가 키보드 위에
+  빈 띠를 남겼다. `Keyboard` 이벤트로 `shellInsets()` 를 바꾼다. ⚠️ Android 에서만 켠다 — iOS 는 기기 확인 전이다.
+- 🚨 **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)에서 뒤로가기는 히스토리로 가지 않는다** (#462). 탭 이동이
+  push 로 쌓이고 로그인 화면도 히스토리에 남아 있어서 앱이 닫힐 차례가 오지 않았다. 닫힐 차례의 첫 누름은
+  `ToastAndroid` 로 "한 번 더 누르면 종료" 를 띄우고, 2초 안에 또 누르면 `false` 를 돌려 OS 기본 동작에 넘긴다.
+  ⚠️ 기본 동작은 액티비티를 **끝낸다** (Android 17 실기기 확인) — 웹뷰가 새로 만들어진다. 로그인은 웹이 refresh 쿠키로 되살리고(#465) 홈에서 다시 연다.
+  뒤로 보내기만 하려면 `moveTaskToBack` 을 부르는 네이티브 코드가 필요하다.
+  셸이 웹의 **화면** 경로를 아는 곳이다 (`/auth/callback` · `/api` 는 흐름의 입구라 성격이 다르다). 웹이 알려 주려면
+  `onMessage` 를 열어야 해서 경로를 본다. `apps/web/src/components/child-nav.tsx` 의 `TABS` 가 바뀌면 `back-press.ts` 를 같이 고친다.
+  토스트는 OS 가 그리는 것이라 "셸은 화면을 그리지 않는다"(§1)에 걸리지 않는다.
 - ⚠️ **Android 웹뷰의 `env(safe-area-inset-*)` 는 상태바·제스처바를 세지 않는다** (디스플레이 컷아웃만 본다).
   그래서 웹이 스스로 알 수 없고, 셸이 넘겨야 한다. 예전에 셸 패딩과 `env()` 가 **둘 다 걸려 위쪽이 두 번 밀린**
   적이 있는데(#133), 지금은 웹이 셸 값을 먼저 보므로 한 번만 센다.
@@ -150,7 +148,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 브릿지 왕복 · 로그인 · 외부 링크 · 웹뷰 안 주소 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
@@ -191,3 +189,42 @@ adb.exe shell am start -a android.intent.action.VIEW \
 ```
 
 ⚠️ AVD 스냅샷이 깨져 있으면 에뮬레이터가 `offline` 에서 안 넘어온다. `-no-snapshot-load` 로 콜드 부팅한다.
+
+### 배포 빌드 (EAS · #410)
+
+스토어에 올리는 것은 `eas.json` 의 `production` 프로필이 만드는 `.aab` 다. 프로필은 셋이다.
+
+EAS 프로젝트는 **`truedoc` 조직의 `@truedoc/icatch`** 다 (`app.json` 의 `owner` · `extra.eas.projectId`).
+개인 계정이 아니라 조직에 둔 이유는 스토어 운영자(약관의 운영자)와 같은 곳에 빌드 기록과 키를 두기 위해서다.
+빌드하려면 그 조직의 멤버로 로그인한다.
+
+| 프로필 | 산출물 | 띄우는 웹 | 쓰는 곳 |
+| --- | --- | --- | --- |
+| `development` | 개발 빌드 apk | Metro 가 읽는 `.env.local` | 로컬 개발 (`pnpm android` 와 같은 앱) |
+| `preview` | apk | `https://icatch.ai.kr` | 팀원 실기기에 바로 설치해 보는 것 |
+| `production` | aab | `https://icatch.ai.kr` | Play 스토어 업로드 |
+
+```bash
+npx eas-cli@latest login                                    # 최초 1회 — 팀 Expo 계정
+npx eas-cli@latest build -p android --profile production    # aab (EAS 서버에서 빌드)
+npx eas-cli@latest build -p android --profile preview       # apk — 설치 링크가 나온다
+```
+
+- 🚨 **배포 빌드의 웹 주소는 `eas.json` 의 `env` 가 정한다.** `.env.local` 은 `.gitignore` 라 EAS 서버로
+  올라가지 않는다. 주소를 바꾸면 `eas.json` 을 고친다 — `EXPO_PUBLIC_*` 는 번들에 박히므로 다시 빌드해야 한다.
+- 🚨 **`versionCode` 는 EAS 가 올린다** (`appVersionSource: remote` + `autoIncrement`). `app.json` 에 손으로 적지 않는다.
+  사용자에게 보이는 `version`(지금 `0.1.0`)만 `app.json` 에서 올린다.
+- 🚨 **업로드 키는 EAS 가 만들어 `truedoc` 조직 자격 증명에 보관한다** (2026-10-14 결정). 키 파일을 팀원 PC 에
+  두지 않는다 — 누가 빌드하든 같은 키로 서명된다. 한 번 올린 업로드 키는 Play Console 에 재설정을 요청해야 바뀌므로,
+  `eas credentials` 에서 키를 지우거나 새로 만들지 않는다. 백업이 필요하면 조직 Owner 가 `eas credentials` 로 내려받는다.
+- EAS 없이 aab 가 만들어지는지만 볼 때는 로컬 gradle 로 굽는다. 서명은 디버그 키이고 `versionCode` 는 늘 1 이라
+  스토어에는 못 올린다. 🚨 **두 줄을 같이 돌린다.** 셸에서 준 주소가 `.env.local` 보다 앞서는데, `prebuild --clean`
+  없이 둘째 줄만 다른 주소로 다시 돌리면 gradle 이 번들 작업을 건너뛰어 옛 주소가 남을 수 있다.
+
+```bash
+CI=1 pnpm exec expo prebuild --clean --platform android --no-install
+cd android && EXPO_PUBLIC_WEB_URL=https://icatch.ai.kr ./gradlew bundleRelease
+# → android/app/build/outputs/bundle/release/app-release.aab
+# 박힌 주소 확인 (Hermes 문자열이라 앞 글자가 붙어 보일 수 있다)
+unzip -p app/build/outputs/bundle/release/app-release.aab base/assets/index.android.bundle | strings | grep -o 'icatch\.ai\.kr\|localhost:[0-9]*'
+```

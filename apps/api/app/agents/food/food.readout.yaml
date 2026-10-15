@@ -1,7 +1,7 @@
 # Food 의 코드 상수 문구 (Food_Tool_명세.md §4). 모델을 거치지 않고 화면에 그대로 나간다.
 # 테스트(test_food_readouts.py)가 명세 §4 표와 글자 단위로 비교한다. 문구를 바꾸면 명세도 같이 고친다.
-# `{menu}` · `{recorded}` · `{date}` · `{slot}` · `{label}` · `{nutrient}` · `{action}` 자리는 코드가 만든
-# 값으로만 채운다.
+# `{menu}` · `{recorded}` · `{date}` · `{slot}` · `{label}` · `{nutrient}` · `{action}` · `{days}` ·
+# `{group}` · `{count}` 자리는 코드가 만든 값으로만 채운다.
 
 unsupported.milk_meal:
   kind: unsupported
@@ -23,7 +23,7 @@ general.reason.weaning:
   template: "이 시기 아기들이 많이 먹는 재료예요."
 followup.preference:
   kind: followup
-  template: "{menu}는 좋아하는 편인가요?"
+  template: "{menu}은(는) 좋아하는 편인가요?"
 unsupported.milk_amount:
   kind: unsupported
   template: "먹이는 양은 아이마다 달라서 알려드리기 어려워요. 소아과에서 확인해 보세요."
@@ -42,6 +42,9 @@ nutrient.today_empty:
 nutrient.daycare_amount_unknown:
   kind: nutrient
   template: "급식은 메뉴만 알고 얼마나 먹었는지는 몰라서 참고만 했어요."
+nutrient.appearance:
+  kind: nutrient_analysis
+  template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."
 nutrient.band.low:
   kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요."
@@ -72,6 +75,9 @@ daycare.reference_menu:
 daycare.updated:
   kind: daycare
   template: "{date} {slot} 급식을 {menu}(으)로 바꿔 뒀어요."
+daycare.amount_updated:
+  kind: daycare
+  template: "{date} {slot} 급식은 먹은 양을 반영해 뒀어요."
 daycare.absent:
   kind: daycare
   template: "{date}은(는) 기관 식사 없는 걸로 해 뒀어요."
@@ -90,15 +96,12 @@ daycare.out_of_range:
 closed.no_daycare:
   kind: closed
   template: "등록된 기관 급식 정보가 없어요."
-not_ready.meal:
-  kind: closed
-  template: "식단 추천은 아직 준비 중이에요."
-not_ready.daycare:
-  kind: closed
-  template: "급식 정보 확인·수정은 아직 준비 중이에요."
 daycare.not_found:
   kind: daycare
   template: "급식 정보를 못 찾았어요."
 daycare.replaced_unknown:
   kind: daycare
   template: "어떤 메뉴 대신 받았나요?"
+daycare.unchanged:
+  kind: daycare
+  template: "급식 기록은 그대로 두었어요."
