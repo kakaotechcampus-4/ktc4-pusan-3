@@ -2,7 +2,7 @@
 
 여기서 지키는 것 둘.
     ① 무인증으로 열린 경로가 보안 목록 10개를 넘지 않는다
-    ② 브라우저가 부를 수 있는 오리진이 환경변수로 정한 목록뿐이다
+    ② 브라우저가 부를 수 있는 오리진이 환경변수로 정한 목록뿐이다 — 쿠키를 싣는 요청도 (#466)
 
 ①이 중요한 이유 — 인증을 라우터마다 손으로 다는 구조에서는 한 번 깜빡한 엔드포인트가
 조용히 공개된다. 리뷰어의 눈이 아니라 이 테스트가 막는다.
@@ -176,10 +176,26 @@ async def test_every_route_method_passes_preflight(monkeypatch):
         assert response.status_code == 200, method
 
 
+async def test_allowed_origin_may_send_credentials(monkeypatch):
+    """refresh 쿠키를 싣는 요청이 통한다 (#466).
+
+    이 헤더가 없으면 브라우저가 `credentials: "include"` 응답을 스크립트에 넘기지 않고
+    Set-Cookie 도 버린다 — 서버 로그는 200 인데 웹은 로그인이 안 된다.
+    """
+    target = cors_app(monkeypatch, ALLOWED_ORIGIN)
+    response = await preflight(target, ALLOWED_ORIGIN, method="POST")
+
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert response.headers["access-control-allow-origin"] == ALLOWED_ORIGIN
+
+
 async def test_unknown_origin_is_blocked(monkeypatch):
     """🚨 목록 밖 오리진에는 허용 헤더를 내리지 않는다."""
     response = await preflight(cors_app(monkeypatch, ALLOWED_ORIGIN), "https://evil.example.test")
 
+    # Allow-Credentials 는 Starlette 가 막힌 preflight 에도 붙인다. 브라우저는 Allow-Origin 이
+    # 없으면 preflight 를 실패로 보아 본 요청을 보내지 않는다 — 이 한 줄이 막는 것은 preflight 가
+    # 필요한 요청이다. 단순 요청은 서버에서 실행되고, CORS 는 그 응답을 읽지 못하게만 한다.
     assert "access-control-allow-origin" not in response.headers
 
 
