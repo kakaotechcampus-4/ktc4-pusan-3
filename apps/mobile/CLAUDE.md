@@ -217,6 +217,11 @@ npx eas-cli@latest build -p android --profile preview       # apk — 설치 링
 - 🚨 **업로드 키는 EAS 가 만들어 `truedoc` 조직 자격 증명에 보관한다** (2026-10-14 결정). 키 파일을 팀원 PC 에
   두지 않는다 — 누가 빌드하든 같은 키로 서명된다. 한 번 올린 업로드 키는 Play Console 에 재설정을 요청해야 바뀌므로,
   `eas credentials` 에서 키를 지우거나 새로 만들지 않는다. 백업이 필요하면 조직 Owner 가 `eas credentials` 로 내려받는다.
+- 🚨 **앱 식별자는 `kr.ai.icatch` 다** (Android `package` · iOS `bundleIdentifier` · #478). 소유 도메인 `icatch.ai.kr` 의
+  역순이다. Play Console 에 한 번 올리면 영구히 고정되고 앱을 지워도 그 이름은 다시 못 쓴다 — 바꿀 수 있는 건 첫 업로드 전뿐이다.
+  EAS 자격 증명은 applicationId 별로 저장돼서, 10-14 에 만든 `kr.ac.pusan.ktc4.icatch` 용 키는 쓰이지 않고
+  `kr.ai.icatch` 용 키가 첫 `production` 빌드 때 한 번 새로 만들어진다. 그 뒤로는 위 규칙대로 건드리지 않는다.
+  옛 식별자로 깔아 둔 앱은 덮어써지지 않고 따로 남아 둘 다 `icatch://` 를 받는다 — 로그인 복귀 때 앱 선택 창이 뜨니 지운다.
 - EAS 없이 aab 가 만들어지는지만 볼 때는 로컬 gradle 로 굽는다. 서명은 디버그 키이고 `versionCode` 는 늘 1 이라
   스토어에는 못 올린다. 🚨 **두 줄을 같이 돌린다.** 셸에서 준 주소가 `.env.local` 보다 앞서는데, `prebuild --clean`
   없이 둘째 줄만 다른 주소로 다시 돌리면 gradle 이 번들 작업을 건너뛰어 옛 주소가 남을 수 있다.
