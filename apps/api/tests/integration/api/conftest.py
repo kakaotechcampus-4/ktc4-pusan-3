@@ -9,10 +9,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps.auth import hash_token
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
-from app.domains.identity.repository import create_session
+from app.domains.identity.repository import create_access, create_session
 
 Bearer = tuple[dict[str, str], uuid.UUID]
 """(Authorization 헤더, parent_id)."""
+
+
+async def seed_login(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    token: str,
+    access_expires_at: datetime | None = None,
+) -> uuid.UUID:
+    """로그인 1건(refresh)과 access 1건을 직접 심고 세션 id 를 돌려준다.
+
+    가입 플로우의 `_issue_session` 과 같은 두 행이다. access 원문은 `token` 이라 Bearer 로
+    그대로 쓸 수 있고, refresh 는 이 테스트들이 싣지 않으므로 token 에서 파생한 값을 둔다.
+    """
+    now = datetime.now(UTC)
+    session_id = await create_session(
+        session,
+        parent_id=parent_id,
+        refresh_hash=hash_token(f"refresh:{token}"),
+        refresh_expires_at=now + timedelta(days=30),
+        absolute_expires_at=now + timedelta(days=90),
+    )
+    await create_access(
+        session,
+        session_id=session_id,
+        token_hash=hash_token(token),
+        expires_at=access_expires_at or now + timedelta(hours=1),
+    )
+    return session_id
 
 
 async def issue_bearer(session: AsyncSession, *, token: str = "test-token-api") -> Bearer:
@@ -26,12 +55,7 @@ async def issue_bearer(session: AsyncSession, *, token: str = "test-token-api") 
     session.add(parent)
     await session.flush()
 
-    await create_session(
-        session,
-        parent_id=parent.id,
-        token_hash=hash_token(token),
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    await seed_login(session, parent_id=parent.id, token=token)
     return {"Authorization": f"Bearer {token}"}, parent.id
 
 

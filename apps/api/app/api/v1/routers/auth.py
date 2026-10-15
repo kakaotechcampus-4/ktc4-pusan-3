@@ -48,6 +48,7 @@ from app.domains.consent.repository import (
 from app.domains.identity.models import AuthProvider
 from app.domains.identity.repository import (
     consume_handoff,
+    create_access,
     create_handoff,
     create_identity,
     create_parent,
@@ -521,7 +522,7 @@ async def _issue_session(
     parent_id: UUID,
     is_new: bool,
 ) -> SessionResponse:
-    """세션 행 1건을 만들고 응답을 짠다 — 교환과 가입이 같은 모양을 쓴다 (§3-4).
+    """로그인 1건(refresh)과 access 1건을 만들고 응답을 짠다 — 교환과 가입이 같이 쓴다 (§3-4).
 
     🚨 토큰 원문은 저장되지 않는다. 남기는 것은 해시뿐이고, 원문은 이 응답에 한 번
        실려 나가면 끝이다 (§5 · A-18).
@@ -532,17 +533,28 @@ async def _issue_session(
         # 로 끝나므로 실제로는 오지 않는다 (#379).
         raise ApiError(404, "not_found", "계정을 찾을 수 없어요")
 
-    token = secrets.token_urlsafe(32)
-    await create_session(
+    now = datetime.now(UTC)
+    absolute_expires_at = now + timedelta(seconds=settings.REFRESH_ABSOLUTE_TTL)
+    session_id = await create_session(
         session,
         parent_id=parent_id,
+        refresh_hash=hash_token(secrets.token_urlsafe(32)),
+        refresh_expires_at=min(
+            now + timedelta(seconds=settings.REFRESH_IDLE_TTL), absolute_expires_at
+        ),
+        absolute_expires_at=absolute_expires_at,
+    )
+    token = secrets.token_urlsafe(32)
+    await create_access(
+        session,
+        session_id=session_id,
         token_hash=hash_token(token),
-        expires_at=datetime.now(UTC) + timedelta(seconds=settings.SESSION_TTL),
+        expires_at=now + timedelta(seconds=settings.ACCESS_TTL),
     )
 
     return SessionResponse(
         token=token,
-        expires_in=settings.SESSION_TTL,
+        expires_in=settings.ACCESS_TTL,
         is_new=is_new,
         parent=ParentSummary(id=parent.id, nickname=parent.nickname),
         consent_required=await missing_account_scopes(session, parent_id=parent_id),

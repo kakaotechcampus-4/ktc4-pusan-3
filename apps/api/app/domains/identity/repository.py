@@ -20,6 +20,7 @@ from app.domains.identity.models import (
     AuthProvider,
     AuthSession,
     Parent,
+    SessionAccess,
 )
 
 
@@ -74,10 +75,12 @@ async def create_handoff(
 
 @dataclass(frozen=True)
 class SessionRow:
-    """세션 1건 + 그 계정의 탈퇴 여부. 인증 판정에 필요한 칸만 담는다.
+    """access 1건으로 찾은 세션. 인증 판정에 필요한 칸만 담는다.
 
     ORM 객체를 올려보내지 않는다 — 세션이 닫힌 뒤 필드를 더 읽다 실패하는 경로와,
     핸들러가 parent 를 통해 다른 테이블까지 조회하는 경로를 둘 다 막는다.
+
+    expires_at 은 access 의 만료다. 세션(refresh) 만료는 refresh 가 판정한다.
     """
 
     session_id: uuid.UUID
@@ -85,21 +88,22 @@ class SessionRow:
     expires_at: datetime
 
 
-async def find_session_by_token_hash(
+async def find_session_by_access_hash(
     session: AsyncSession,
     *,
     token_hash: bytes,
 ) -> SessionRow | None:
-    """세션 토큰 해시로 한 건 찾는다 (§6-2 ①).
+    """access 토큰 해시로 그 세션을 찾는다 (§6-2 ①).
 
-    탈퇴는 보호자 행을 지우고 세션도 CASCADE 로 함께 지워진다(#379). 그래서 탈퇴 여부를
-    따로 보지 않는다 — 세션이 없으면 그것으로 끝이다.
+    탈퇴는 보호자 행을 지우고 세션 · access 도 CASCADE 로 함께 지워진다(#379). 그래서 탈퇴
+    여부를 따로 보지 않는다 — 행이 없으면 그것으로 끝이다. 로그아웃 · 재사용 탐지도 세션
+    행 삭제라 같다.
     """
-    stmt = select(
-        AuthSession.id,
-        AuthSession.parent_id,
-        AuthSession.expires_at,
-    ).where(AuthSession.token_hash == token_hash)
+    stmt = (
+        select(AuthSession.id, AuthSession.parent_id, SessionAccess.expires_at)
+        .join(AuthSession, AuthSession.id == SessionAccess.session_id)
+        .where(SessionAccess.token_hash == token_hash)
+    )
     row = (await session.execute(stmt)).first()
     return SessionRow(*row) if row is not None else None
 
@@ -186,11 +190,37 @@ async def create_session(
     session: AsyncSession,
     *,
     parent_id: uuid.UUID,
+    refresh_hash: bytes,
+    refresh_expires_at: datetime,
+    absolute_expires_at: datetime,
+) -> uuid.UUID:
+    """기기 로그인 1건 (§5-3). 토큰 원문은 받지 않는다 — 해시만 저장한다 (A-18).
+
+    access 는 따로 create_access 로 만든다. 로그인 1건에 access 가 여러 개 딸린다.
+    """
+    row = AuthSession(
+        parent_id=parent_id,
+        refresh_hash=refresh_hash,
+        refresh_expires_at=refresh_expires_at,
+        absolute_expires_at=absolute_expires_at,
+    )
+    session.add(row)
+    await session.flush()
+    return row.id
+
+
+async def create_access(
+    session: AsyncSession,
+    *,
+    session_id: uuid.UUID,
     token_hash: bytes,
     expires_at: datetime,
 ) -> None:
-    """세션 1건 (§5-3). 토큰 원문은 받지 않는다 — 해시만 저장한다 (A-18)."""
-    session.add(AuthSession(parent_id=parent_id, token_hash=token_hash, expires_at=expires_at))
+    """그 로그인에 access 1건을 단다.
+
+    앞서 나간 access 는 지우지 않는다 — 다른 탭이 쓰는 중일 수 있다. 만료된 것은 배치가 지운다.
+    """
+    session.add(SessionAccess(session_id=session_id, token_hash=token_hash, expires_at=expires_at))
     await session.flush()
 
 

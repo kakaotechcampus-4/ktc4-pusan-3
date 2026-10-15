@@ -18,8 +18,16 @@ from sqlalchemy import func, select
 
 from app.api.deps.auth import hash_token
 from app.domains.consent.models import Consent, ConsentScope
-from app.domains.identity.models import AuthHandoff, AuthIdentity, AuthProvider, AuthSession, Parent
+from app.domains.identity.models import (
+    AuthHandoff,
+    AuthIdentity,
+    AuthProvider,
+    AuthSession,
+    Parent,
+    SessionAccess,
+)
 from app.domains.policy.models import PolicyVersion
+from tests.integration.api.conftest import seed_login
 
 BIND = "A" * 43
 OTHER_BIND = "B" * 43
@@ -84,7 +92,7 @@ async def seed_member(session) -> Parent:
     return parent
 
 
-TRACKED = (Parent, AuthIdentity, AuthSession, Consent, AuthHandoff)
+TRACKED = (Parent, AuthIdentity, AuthSession, SessionAccess, Consent, AuthHandoff)
 """행 수 변화를 지켜볼 테이블."""
 
 
@@ -202,7 +210,7 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
     body = response.json()
     assert body["is_new"] is True
     assert body["token"]
-    assert body["expires_in"] == 43200
+    assert body["expires_in"] == 900
     assert body["consent_required"] == []
     # 한 트랜잭션에서 만들어진 것 전부. 대기표는 소비돼 -1 이다.
     assert await changed(session, base) == {
@@ -210,6 +218,7 @@ async def test_signup_creates_account_and_session_in_one_go(db_client, session):
         "AuthIdentity": 1,
         "Consent": 2,
         "AuthSession": 1,
+        "SessionAccess": 1,
         "AuthHandoff": -1,
     }
 
@@ -687,7 +696,7 @@ async def test_returning_member_gets_session_without_new_identity(db_client, ses
     assert body["parent"]["id"] == str(parent.id)
     assert body["parent"]["nickname"] is None
     # 세션만 생기고 코드는 소비된다. AuthIdentity 가 목록에 없다 = 연결이 늘지 않았다.
-    assert await changed(session, base) == {"AuthSession": 1, "AuthHandoff": -1}
+    assert await changed(session, base) == {"AuthSession": 1, "SessionAccess": 1, "AuthHandoff": -1}
 
 
 async def test_returning_member_sees_outstanding_consents(db_client, session):
@@ -805,40 +814,32 @@ async def test_logout_invalidates_the_token_immediately(db_client, session):
     assert logout.status_code == 204
     assert after.status_code == 401
     assert after.json()["error"]["code"] == "unauthenticated"
-    assert await changed(session, base) == {"AuthSession": -1}
+    # 세션 행을 지우면 딸린 access 도 CASCADE 로 같이 사라진다.
+    assert await changed(session, base) == {"AuthSession": -1, "SessionAccess": -1}
 
 
 async def test_logout_leaves_other_sessions_alone(db_client, session):
     """A-15. 그 행 1건만 지운다. 같은 계정의 다른 기기 세션을 끊지 않는다 (§5-3)."""
     token = await issue_session(db_client, session)
     parent_id = await session.scalar(select(Parent.id))
-    session.add(
-        AuthSession(
-            parent_id=parent_id,
-            token_hash=hash_token("other-device-token"),
-            expires_at=datetime.now(UTC) + timedelta(hours=12),
-        )
-    )
-    await session.flush()
+    await seed_login(session, parent_id=parent_id, token="other-device-token")
     base = await snapshot(session)
 
     await db_client.post("/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
     # 🚨 정확히 1행만 줄었다. 2 였다면 같은 계정의 다른 기기까지 끊은 것이다.
-    assert await changed(session, base) == {"AuthSession": -1}
+    assert await changed(session, base) == {"AuthSession": -1, "SessionAccess": -1}
 
 
 async def test_expired_session_token_is_401(db_client, session):
     """A-14. 만료된 토큰은 401 unauthenticated — 사유를 구분해 알려주지 않는다."""
     parent = await seed_member(session)
-    session.add(
-        AuthSession(
-            parent_id=parent.id,
-            token_hash=hash_token("expired-token"),
-            expires_at=datetime.now(UTC) - timedelta(seconds=1),
-        )
+    await seed_login(
+        session,
+        parent_id=parent.id,
+        token="expired-token",
+        access_expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
-    await session.flush()
 
     response = await db_client.post(
         "/api/v1/auth/logout", headers={"Authorization": "Bearer expired-token"}
@@ -863,7 +864,7 @@ async def test_no_plaintext_secret_is_ever_stored(db_client, session):
     # 🚨 이 테스트가 심은 행만 집는다. 전체 조회로 .one() 을 쓰면 수동으로 로그인해 본
     #    개발자의 DB 에서 MultipleResultsFound 로 깨진다 (#45).
     stored_token = await session.scalar(
-        select(AuthSession.token_hash).where(AuthSession.token_hash == hash_token(token))
+        select(SessionAccess.token_hash).where(SessionAccess.token_hash == hash_token(token))
     )
     handoff = (
         await session.execute(

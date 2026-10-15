@@ -27,10 +27,16 @@ async def test_both_purges_run_and_are_committed(session):
     session.add(parent)
     await session.flush()
     expired = AuthSession(
-        parent_id=parent.id, token_hash=b"c1".ljust(32, b"-"), expires_at=NOW - timedelta(hours=1)
+        parent_id=parent.id,
+        refresh_hash=b"c1".ljust(32, b"-"),
+        refresh_expires_at=NOW - timedelta(hours=1),
+        absolute_expires_at=NOW + timedelta(days=60),
     )
     alive = AuthSession(
-        parent_id=parent.id, token_hash=b"c2".ljust(32, b"-"), expires_at=NOW + timedelta(hours=1)
+        parent_id=parent.id,
+        refresh_hash=b"c2".ljust(32, b"-"),
+        refresh_expires_at=NOW + timedelta(hours=1),
+        absolute_expires_at=NOW + timedelta(days=60),
     )
     policy_version_id = await session.scalar(
         select(PolicyVersion.id).where(PolicyVersion.scope == ConsentScope.SERVICE_TERMS).limit(1)

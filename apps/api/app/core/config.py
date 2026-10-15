@@ -88,7 +88,13 @@ class Settings(AgentLLMSettings):
     AUTH_RETURN_URL_APP: str
 
     # 수명 (초) — 명세 §5. 측정으로 정한 값이 아니다. M-02 뒤에 조정한다 (§10 2번).
-    SESSION_TTL: int = 43200
+    # 로그인 유지는 access + refresh 두 값이다 (#466).
+    #   ACCESS_TTL           — Bearer 로 싣는 access. 웹은 메모리에만 둔다
+    #   REFRESH_IDLE_TTL     — refresh 를 안 쓰고 이만큼 지나면 만료. 회전마다 연장
+    #   REFRESH_ABSOLUTE_TTL — 로그인 시각부터 이만큼이 상한. 연장하지 않는다
+    ACCESS_TTL: int = 900
+    REFRESH_IDLE_TTL: int = 2592000
+    REFRESH_ABSOLUTE_TTL: int = 7776000
     HANDOFF_TTL: int = 120
     SIGNUP_TICKET_TTL: int = 600
     OAUTH_STATE_TTL: int = 600
