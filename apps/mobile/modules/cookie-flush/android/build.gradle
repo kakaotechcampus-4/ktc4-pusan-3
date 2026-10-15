@@ -3,7 +3,7 @@ plugins {
   id 'expo-module-gradle-plugin'
 }
 
-group = 'kr.ac.pusan.ktc4.icatch'
+group = 'kr.ai.icatch'
 version = '0.1.0'
 
 android {
