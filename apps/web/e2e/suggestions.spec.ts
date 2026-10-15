@@ -54,6 +54,42 @@ test.describe("개인화 추천 (default)", () => {
     await expect(page.getByText("또래 기준 일반 추천")).toHaveCount(0);
     await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(0);
   });
+
+  test("이유는 서버 문장 그대로 한 줄이고, 비어 오면 라벨도 세우지 않는다 (#475)", async ({
+    page,
+  }) => {
+    const responded = page.waitForResponse(
+      (r) => r.request().method() === "POST" && r.url().endsWith(`/children/${CHILD}/suggestions`),
+    );
+    await page.goto(SUGGESTIONS);
+    const body = (await (await responded).json()) as {
+      suggestions: { agent: string; content: string; reason: string | null }[];
+    };
+    // 빈 이유가 한 줄도 없으면 이 테스트는 "라벨만 선 줄" 을 못 잡는다
+    expect(body.suggestions.some((s) => s.reason === null)).toBe(true);
+
+    for (const [tab, agent] of [
+      ["식사 3가지", "food"],
+      ["놀이 3가지", "activity"],
+    ] as const) {
+      await page.getByRole("tab", { name: tab }).click();
+      const panel = page.getByRole("tabpanel");
+      for (const s of body.suggestions.filter((x) => x.agent === agent)) {
+        const row = panel.locator(":scope > ul > li").filter({ hasText: s.content });
+        // 행을 못 찾으면 아래 "라벨 0건" 이 그냥 통과한다 — 행이 있다는 전제를 먼저 건다
+        await expect(row).toHaveCount(1);
+        const label = row.getByText("추천 이유", { exact: true });
+        if (s.reason) {
+          await expect(label).toBeVisible();
+          await expect(row.getByText(s.reason, { exact: true })).toBeVisible();
+        } else {
+          await expect(label).toHaveCount(0);
+        }
+      }
+      // 서버가 한 문장으로 보내는 것을 화면이 두 칸으로 나누지 않는다 (Agent 공통규약 C-2)
+      await expect(panel.getByText(/^왜 (이걸|지금)$/)).toHaveCount(0);
+    }
+  });
 });
 
 test.describe("홈 버튼에서 들어오면 (#286)", () => {

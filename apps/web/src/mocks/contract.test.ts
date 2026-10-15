@@ -662,6 +662,17 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     // 답하는 길(#246) 전에는 선택지가 비어 온다 — 서버와 같은 모양
     expect(data.scarcity?.question?.options).toEqual([]);
   });
+
+  it("🚨 추천 이유는 문장 한 칸이다 — 서버 `reason: str | None` 과 같은 모양 (#475)", async () => {
+    const data = await fetchWith("default", { agents: ["food", "activity"] });
+
+    // 목만 `{why_this, why_now}` 로 내리던 동안 화면이 그 모양에 맞춰져 실서버에서 이유 칸이 비었다.
+    const reasons = data.suggestions.map((s) => s.reason as unknown);
+    for (const reason of reasons) expect(reason === null || typeof reason === "string").toBe(true);
+    // 빈 값도 실린다 — 화면이 "라벨만 선 줄" 을 안 그리는지는 빈 값이 있어야 걸린다
+    expect(reasons).toContain(null);
+    expect(reasons.some((r) => typeof r === "string" && r.trim() !== "")).toBe(true);
+  });
 });
 
 describe("⑥ 권한 부족 — 동의 거부", () => {
