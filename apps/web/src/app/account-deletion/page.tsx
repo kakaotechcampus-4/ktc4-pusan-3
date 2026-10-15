@@ -10,7 +10,8 @@ export const metadata: Metadata = {
 };
 
 /**
- * 계정 삭제 안내 — Play Console 데이터 보안 양식의 "계정 삭제 URL" 이 가리키는 페이지다 (#166).
+ * 계정 삭제 안내 — Play Console 데이터 보안 양식의 "계정 삭제 URL" 과 "데이터 삭제 URL"(`#data`)이
+ * 가리키는 페이지다 (#166).
  *
  * 스토어 등록정보에 그대로 걸린다. 앱을 이미 지운 사람도 계정을 지울 수 있게 하려는 칸이라
  * Google 이 이 페이지에 세 가지를 요구한다 — ① 앱 · 개발자 이름 ② 삭제를 요청하는 단계를
@@ -83,7 +84,9 @@ export default function AccountDeletionPage() {
       <section id="data" className="flex flex-col gap-3">
         <h2 className="text-label text-brand">계정은 두고 기록만 지우고 싶을 때</h2>
         <Card>
-          <p className="text-body-sm text-ink">일기는 앱에서 바로 지울 수 있어요.</p>
+          <p className="text-body-sm text-ink">
+            일기는 앱의 캘린더에서 그날을 눌러 &ldquo;일기 지우기&rdquo;로 바로 지울 수 있어요.
+          </p>
           <p className="text-body-sm text-ink-muted mt-2">
             공동 기록을 서버에서 완전히 지우고 싶으면 위 이메일로 요청해 주세요. 요청을 받은 날부터
             10일 안에 처리해요.
