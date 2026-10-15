@@ -13,8 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from app.domains.report.models import ReportCategory
 
 ReportMessage = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=1000, pattern=r"^[^\x00]+$"),
 ]
+"""🚨 NUL(`\\u0000`)을 막는다. JSON 에서는 올바른 값이지만 Postgres text 칸이 받지 못해 500 이 되고,
+   가짜 DB 장애 알림이 간다. 줄바꿈 · 탭은 그대로 받는다 (Nickname 패턴과 같은 이유 · #172)."""
 
 
 class ReportRequest(BaseModel):
@@ -33,4 +36,4 @@ class ReportRequest(BaseModel):
 
 class ReportOut(BaseModel):
     id: uuid.UUID = Field(description="신고 번호. 운영자가 Discord 알림에서 이 번호로 찾는다")
-    created_at: datetime
+    created_at: datetime = Field(description="서버가 받은 시각")

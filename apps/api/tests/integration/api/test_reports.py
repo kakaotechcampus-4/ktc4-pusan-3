@@ -9,10 +9,12 @@ Play 정책(AI 생성 콘텐츠 · 사용자 제작 콘텐츠)이 앱을 나가�
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.domains.identity.models import Parent
+from app.api.v1.routers.reports import REPORT_DAILY_LIMIT
+from app.domains.identity.withdraw import withdraw_parent
 from app.domains.report.models import Report, ReportCategory
 
 PATH = "/api/v1/reports"
@@ -77,6 +79,47 @@ async def test_1000자를_넘는_글은_400(db_client, bearer):
         PATH, json={"category": "other", "message": "가" * 1001}, headers=headers
     )
     assert response.status_code == 400
+    assert "가" * 50 not in response.text  # 400 응답이 보낸 글을 되돌려주지 않는다
+
+
+async def test_정확히_1000자는_받는다(db_client, bearer):
+    headers, _ = bearer
+    response = await db_client.post(
+        PATH, json={"category": "other", "message": "가" * 1000}, headers=headers
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_NUL_글자는_400_줄바꿈은_그대로(db_client, bearer, session):
+    """NUL 은 Postgres text 가 받지 못해 500 · 가짜 DB 장애 알림이 된다. 앞에서 400 으로 막는다."""
+    headers, _ = bearer
+    bad = await db_client.post(
+        PATH, json={"category": "other", "message": "a\u0000b"}, headers=headers
+    )
+    assert bad.status_code == 400
+
+    ok = await db_client.post(
+        PATH, json={"category": "other", "message": "첫 줄\n둘째 줄"}, headers=headers
+    )
+    assert ok.status_code == 201, ok.text
+    row = (
+        await session.execute(select(Report).where(Report.id == uuid.UUID(ok.json()["id"])))
+    ).scalar_one()
+    assert row.message == "첫 줄\n둘째 줄"
+
+
+async def test_하루_상한을_넘으면_429(db_client, bearer):
+    """한 사람이 연타해 Discord 의 분당 한도를 채우면 진짜 장애 알림이 묻힌다."""
+    headers, _ = bearer
+    for _ in range(REPORT_DAILY_LIMIT):
+        sent = await db_client.post(
+            PATH, json={"category": "bug", "message": MESSAGE}, headers=headers
+        )
+        assert sent.status_code == 201, sent.text
+
+    over = await db_client.post(PATH, json={"category": "bug", "message": MESSAGE}, headers=headers)
+    assert over.status_code == 429
+    assert over.json()["error"]["code"] == "too_many_reports"
 
 
 async def test_모르는_칸은_받지_않는다(db_client, bearer):
@@ -90,16 +133,18 @@ async def test_모르는_칸은_받지_않는다(db_client, bearer):
     assert response.status_code == 400
 
 
-async def test_탈퇴로_보호자_행이_지워지면_보낸_신고도_지워진다(db_client, bearer, session):
-    """처리방침 5장 — 탈퇴하면 개인 기록을 지운다. 신고는 FK CASCADE 로 함께 사라진다."""
+async def test_탈퇴하면_보낸_신고도_지워진다(db_client, bearer, session):
+    """처리방침 5장 — 탈퇴하면 개인 기록을 지운다.
+
+    실제 탈퇴 함수로 지워서, 탈퇴 방식이 바뀌어도 이 테스트가 잡는다.
+    """
     headers, parent_id = bearer
     response = await db_client.post(
         PATH, json={"category": "bug", "message": MESSAGE}, headers=headers
     )
     report_id = uuid.UUID(response.json()["id"])
 
-    parent = (await session.execute(select(Parent).where(Parent.id == parent_id))).scalar_one()
-    await session.delete(parent)
+    await withdraw_parent(session, parent_id=parent_id, now=datetime.now(UTC))
     await session.flush()
     session.expunge_all()
 
