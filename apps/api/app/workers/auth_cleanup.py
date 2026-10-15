@@ -15,8 +15,8 @@ session_access.expires_at 을 보고(api/deps/auth.py), 1회용 코드 소비는
 🚨 세션은 access 가 아니라 refresh 의 만료로 지운다 (#466). access 는 15분이라, 그 기준으로
    지우면 15분 쉰 사용자의 로그인이 이 배치에 사라진다. 만료된 access 는 따로 지운다.
 
-스케줄러는 아직 붙이지 않았다. consent_purge 와 같이, 언제 어떻게 부를지(주기 · 운영 진입점)는
-배포 구성이 정해진 뒤에 결정한다.
+부르는 곳은 `app/workers/cleanup.py` 다. 서버 cron 이 하루 한 번 돌린다 (apps/api/README.md
+"만료된 값 정리").
 
 🚨 로그에는 지운 **건수**만 남긴다. 토큰 해시 · 회원번호 · 코드는 남기지 않는다 (§7-5).
 """
