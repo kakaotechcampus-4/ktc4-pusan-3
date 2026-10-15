@@ -44,6 +44,8 @@ test("10 설정", async ({ page }) => {
   await expect(page.getByRole("link", { name: "개인정보 처리방침" })).toBeVisible();
   // 위치 동의는 지금 묻지 않는다 (`askedChoices` · #221) — 켜고 끌 선택 동의가 없어 "동의" 구역도 없다
   await expect(page.getByText("위치정보")).toHaveCount(0);
+  // 없는 구역을 안내하지 않는다 — 머리말도 "동의" 를 빼고 말한다
+  await expect(page.getByText("함께 보는 사람과 계정을 여기서 관리해요.")).toBeVisible();
   await expectNoGate(page);
 });
 

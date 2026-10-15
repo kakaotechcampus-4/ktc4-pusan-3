@@ -108,7 +108,12 @@ function SettingsScreen() {
           </IconButtonLink>
           <PageTitle>설정</PageTitle>
         </div>
-        <p className="text-body-sm text-ink-muted mt-2">함께 보는 사람과 동의를 여기서 관리해요.</p>
+        {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
+        <p className="text-body-sm text-ink-muted mt-2">
+          {hasOptionalConsent
+            ? "함께 보는 사람과 동의를 여기서 관리해요."
+            : "함께 보는 사람과 계정을 여기서 관리해요."}
+        </p>
       </header>
 
       <Section
