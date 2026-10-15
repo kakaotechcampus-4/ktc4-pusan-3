@@ -74,8 +74,8 @@ function Shell() {
    * 고치기 전에 히스토리가 다 떨어졌을 때 타던 길과 같다.
    *
    * ⚠️ **앱을 뒤로 보내는 게 아니라 액티비티를 끝낸다** (Android 17 실기기 `finishActivity` 확인).
-   *    프로세스는 남아도 웹뷰가 새로 만들어져 `sessionStorage` 의 로그인이 풀린다. 뒤로 보내기만 하려면
-   *    `moveTaskToBack` 을 부르는 네이티브 코드가 필요하다 (로그인 유지 논의와 같이 본다).
+   *    프로세스는 남아도 웹뷰가 새로 만들어진다. 로그인은 웹이 refresh 쿠키로 되살리지만(#465) 보던 화면이
+   *    아니라 홈에서 다시 연다. 뒤로 보내기만 하려면 `moveTaskToBack` 을 부르는 네이티브 코드가 필요하다.
    */
   const handleHardwareBack = useCallback(() => {
     const now = Date.now();
