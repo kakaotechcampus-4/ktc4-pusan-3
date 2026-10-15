@@ -76,10 +76,11 @@ export default function AccountDeletionPage() {
         </Card>
       </section>
 
-      {/* 🚨 **"데이터 삭제 URL" 칸도 이 페이지를 가리킨다.** 계정은 두고 기록만 지우는 길이다.
+      {/* 🚨 **"데이터 삭제 URL" 칸은 이 구역을 가리킨다** (`/account-deletion#data`). 계정은 두고
+          기록만 지우는 길이다. 🚨 `id` 를 바꾸면 Play Console 에 넣은 주소도 같이 고친다.
           공동 기록의 "잘못된 기록이에요" 는 숨기기라 서버에 남는다(처리방침 제5장 ④) — 그래서
           여기 적지 않고, 서버에서 지우는 길은 이메일 요청이다(제9장 ④). */}
-      <section className="flex flex-col gap-3">
+      <section id="data" className="flex flex-col gap-3">
         <h2 className="text-label text-brand">계정은 두고 기록만 지우고 싶을 때</h2>
         <Card>
           <p className="text-body-sm text-ink">일기는 앱에서 바로 지울 수 있어요.</p>

@@ -34,4 +34,17 @@ test.describe("로그인 전", () => {
       /\/privacy-policy$/,
     );
   });
+
+  test("데이터 삭제 주소의 #data 가 기록만 지우는 구역을 가리킨다", async ({ page }) => {
+    // Play Console 의 "데이터 삭제 URL" 칸에 `/account-deletion#data` 를 넣었다 — `id` 가 바뀌거나
+    // 다른 구역으로 옮겨 가면 이 테스트가 먼저 깨진다.
+    // 🚨 스크롤 위치는 재지 않는다. 목 모드는 MSW 가 뜰 때까지 화면을 비워 두어서(`providers.tsx`)
+    //    브라우저가 앵커로 내려가는 순간 그 구역이 아직 없다. 실서버 빌드(`next start`)에서는
+    //    첫 HTML 에 구역이 있어 바로 내려간다 (#166 에서 손으로 확인).
+    await page.goto("/account-deletion#data");
+
+    await expect(
+      page.locator("#data").getByRole("heading", { name: "계정은 두고 기록만 지우고 싶을 때" }),
+    ).toBeVisible();
+  });
 });
