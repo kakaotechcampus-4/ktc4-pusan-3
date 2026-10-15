@@ -3640,3 +3640,60 @@ async function findEventDay(): Promise<CalendarMonthResponse["days"][number]> {
   }
   throw new Error(`일정이 걸린 날이 ${months.join(" · ")} 어디에도 없다`);
 }
+
+/**
+ * `POST /auth/refresh` — 앱을 다시 켜도 로그인이 이어지는 길 (#465). 서버와 맞춘 계약은
+ * `lib/api/types.ts` 의 `AuthRefreshResponse` 다. 쿠키 대신 목은 표식을 쓰지만, **언제 생기고
+ * 언제 사라지는지**는 서버 쿠키와 같아야 화면 흐름을 목으로 볼 수 있다.
+ */
+describe("㉖ refresh 로 세션을 잇는다 (#465)", () => {
+  function refresh(): Promise<Response> {
+    return raw("/auth/refresh", { credentials: "include" });
+  }
+
+  it("로그인 전에는 401 unauthenticated 다", async () => {
+    const res = await refresh();
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.code).toBe("unauthenticated");
+  });
+
+  it("로그인(교환)하면 새 access 와 15분을 준다 — 로그인 응답과 같은 수명이다", async () => {
+    const login = await api.post<AuthSession>("/auth/kakao", { code: "c", bind: "b" });
+
+    const res = await refresh();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ token: expect.any(String), expires_in: 900 });
+    expect(login.expires_in).toBe(body.expires_in);
+  });
+
+  it("🚨 /auth/refresh 가 교환 핸들러(:provider)에 먹히지 않는다", async () => {
+    // 먹히면 본문이 없어 400 validation_failed 가 나고, 화면은 그걸 "서버에 닿지 못함" 으로 읽는다.
+    const res = await refresh();
+    expect(res.status).not.toBe(400);
+  });
+
+  it("로그아웃하면 더는 이어지지 않는다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post("/auth/logout");
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("탈퇴하면 더는 이어지지 않는다 — 다른 기기의 앱도 다시 켜면 로그인 화면이다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post<WithdrawResponse>("/auth/withdraw", { acknowledged_immediate_deletion: true });
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("session_unreachable — 서버에 닿지 않는다 (401 이 아니다)", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    setScenario("session_unreachable");
+    try {
+      await expect(refresh()).rejects.toThrow();
+    } finally {
+      setScenario("default");
+    }
+  });
+});
