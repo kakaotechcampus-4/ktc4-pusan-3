@@ -24,6 +24,11 @@ test.describe("로그인 전", () => {
     );
     await expect(page.getByText("최대 30일 뒤 전체 파기")).toBeVisible();
 
+    // Play Console 의 "데이터 삭제 URL" 칸도 이 페이지다 — 계정을 지우지 않고 기록만 지우는 길.
+    await expect(
+      page.getByRole("heading", { name: "계정은 두고 기록만 지우고 싶을 때" }),
+    ).toBeVisible();
+
     await expect(page.getByRole("link", { name: "개인정보 처리방침" })).toHaveAttribute(
       "href",
       /\/privacy-policy$/,
