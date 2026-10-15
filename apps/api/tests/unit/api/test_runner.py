@@ -82,6 +82,31 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert channel.closed
 
 
+async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
+    """창구가 위치 동의를 확인한 좌표와 서버 시작 때 만든 날씨 어댑터 (#380)."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=location,
+        activity_weather=weather,
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["location"] is location
+    assert seen["activity_weather"] is weather
+
+
 async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):
     """#460 — 넘기지 않으면 둘 다 blocked.safety 로 닫힌다. 같은 어댑터 하나를 둘이 다른
     메서드로 읽는다."""

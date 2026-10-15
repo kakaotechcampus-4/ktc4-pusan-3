@@ -125,6 +125,8 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "raw_text": BODY["text"],
             "continuation": None,  # 일반 새 입력
             "reply_to": None,
+            "location": None,
+            "activity_weather": None,
         }
     ]
 
