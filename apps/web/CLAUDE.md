@@ -108,6 +108,7 @@ Owner: 고태영 (프론트 리드)
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
+| 계정 삭제 안내 (로그인 없이 · Play 스토어에 거는 주소) | `/account-deletion` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 라우트를 고른 이유와 화면별 규칙은 [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) §1 이다. 어기면 바로 사고가 나는 것만:
