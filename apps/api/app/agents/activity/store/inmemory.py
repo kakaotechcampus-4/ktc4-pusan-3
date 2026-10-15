@@ -25,6 +25,7 @@ from app.agents.activity.store.ports import (
     RawForecast,
     SafetyEntry,
     SafetyLookupError,
+    SafetyReader,
     ScheduleBlock,
     UnwiredSafety,
     UpstreamUnavailable,
@@ -220,11 +221,13 @@ def unwired_ports(
     consent: ConsentReader,
     memory: ActivityMemoryReader,
     weather: WeatherSource | None = None,
+    safety: SafetyReader | None = None,
 ) -> ActivityPorts:
     """실제 포트가 아직 안 붙은 run 의 기본값 (entrypoint 가 쓴다). 안전 조회가 실패한다.
 
-    - 안전은 `UnwiredSafety` 다 — `build_gate` 가 동의와 상관없이 닫는다. 테스트 · eval 이 알레르기
-      시나리오를 쓰려면 `in_memory_ports(safety=...)` 로 명시한다.
+    - 안전은 api 가 넘긴 `health_safety` 어댑터다(#405 · #460). 안 넘어오면 `UnwiredSafety` 라
+      `build_gate` 가 동의와 상관없이 닫는다. 테스트 · eval 이 알레르기 시나리오를 쓰려면
+      `in_memory_ports(safety=...)` 로 명시한다.
     - 일정은 빈 표다(일정 포트 연결 전). 비는 시간을 묻는 tool 은 "일정 없음" 으로 읽는다.
     - 문서 행은 `reference/activity_doc.yaml` 의 `approved` 행이다. 테이블은 아직 없다.
     - 장소는 None 이다 — 장소 어댑터 전이라 장소 조회가 닫힌다.
@@ -232,7 +235,7 @@ def unwired_ports(
     return ActivityPorts(
         profile=profile,
         consent=consent,
-        safety=UnwiredSafety(),
+        safety=safety or UnwiredSafety(),
         memory=memory,
         schedule=InMemorySchedule(),
         docs=InMemoryActivityDocs.from_seed(),
