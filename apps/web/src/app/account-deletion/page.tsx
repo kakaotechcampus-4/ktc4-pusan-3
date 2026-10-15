@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { Card } from "@/components/ui/card";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { PRIVACY_POLICY_HREF } from "@/lib/consent";
+import { PRIVACY_POLICY_HREF, SERVICE_EMAIL } from "@/lib/consent";
 
 export const metadata: Metadata = {
   title: "계정 삭제 안내",
@@ -23,8 +23,8 @@ export const metadata: Metadata = {
  *    제9장을 옮긴 것이다. 기간이 바뀌면 처리방침이 먼저 바뀌고, 이 페이지는 그 판에 맞춰 고친다 —
  *    어긋나면 처리방침이 정본이라 맨 아래에 그 링크를 둔다.
  * 🚨 **앱 안에서 이 페이지로 오는 길은 만들지 않는다.** 앱 안의 길은 설정 › 계정 › 탈퇴하기다.
+ * 연락처(`SERVICE_EMAIL`)는 처리방침에 적힌 것을 `lib/consent.ts` 한 곳에서 가져온다.
  */
-const SERVICE_EMAIL = "parkhajh0803.dev@gmail.com";
 
 const DELETED_NOW = [
   "계정 정보 — 카카오 회원번호, 부르는 이름",
