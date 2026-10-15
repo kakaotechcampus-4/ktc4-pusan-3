@@ -1,6 +1,7 @@
 """Food · Activity 의 안전 포트(`SafetyReader`)를 `health_safety` 로 구현한다 (#405).
 
-Agent 는 DB 에 직접 닿지 않는다. 러너가 이 어댑터를 만들어 entrypoint 로 넘긴다(PR B).
+Agent 는 DB 에 직접 닿지 않는다. api 가 이 어댑터를 만들어(`agent_ports.safety_readers()`) 러너와
+05 가 entrypoint 로 넘긴다(#460).
 포트 모양(`SafetyEntry`)은 agents 가 정한 계약이라 여기서 import 한다 — `DbMemoryStore` 와 같은
 예외 경로다(apps/api/CLAUDE.md "agents 가 정한 저장 계약").
 

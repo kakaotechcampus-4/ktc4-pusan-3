@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
@@ -79,6 +80,25 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert seen["run_id"] == channel.run_id  # 202 로 준 run_id 가 done 까지 같은 값
     assert names(channel) == ["step", "done"]
     assert channel.closed
+
+
+async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):
+    """#460 — 넘기지 않으면 둘 다 blocked.safety 로 닫힌다. 같은 어댑터 하나를 둘이 다른
+    메서드로 읽는다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["food_safety"], DbSafetyReader)
+    assert seen["activity_safety"] is seen["food_safety"]
 
 
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):

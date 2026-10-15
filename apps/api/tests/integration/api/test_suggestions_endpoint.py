@@ -22,6 +22,7 @@ from app.domains.memory.observation.models import (
     ObservationFood,
     ObservationStatus,
 )
+from app.domains.safety.agent_reader import DbSafetyReader
 from app.domains.safety.models import HealthSafety, SafetyKind, SafetyStatus
 from app.domains.suggestion.models import (
     Suggestion,
@@ -180,6 +181,20 @@ async def test_홈_버튼_키는_표의_문장만_Agent_에_보낸다(db_client,
 
     assert resp.status_code == 200
     assert calls[0]["tasks"][0].request_texts == ("저녁 추천해줘",)  # 화면이 보낸 문장은 없다
+
+
+async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, bearer, cid, agents):
+    # 러너만 넘기면 홈 제안 · 다시 준비하기에서만 Food · Activity 가 닫힌다 (#460)
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+    plan["activity"] = ("empty", "준비할 수 있는 놀이가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food", "activity"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["food_safety"], DbSafetyReader)
+    assert calls[0]["activity_safety"] is calls[0]["food_safety"]
 
 
 async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_client, bearer, cid, agents):
