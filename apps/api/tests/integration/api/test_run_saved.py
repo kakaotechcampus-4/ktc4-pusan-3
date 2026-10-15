@@ -216,14 +216,19 @@ async def test_이어받기_run_도_saved_를_보낸다(monkeypatch, bearer, cid
     assert [o["id"] for o in _saved(channel)] == created
 
 
-async def test_같은_run_에서_지운_관찰은_싣지_않는다(monkeypatch, bearer, cid):
-    """refs 에는 있어도 DB 에 없는 기록을 "저장됨" 으로 보이면 안 된다."""
+async def test_같은_run_에서_지운_관찰은_싣지_않는다(monkeypatch, bearer, cid, caplog):
+    """refs 에는 있어도 DB 에 없는 기록을 "저장됨" 으로 보이면 안 된다.
+
+    정상 경로라 키 불일치 경고를 남기지 않는다 — 경고는 진짜 어긋남에만 (#471 리뷰).
+    """
     _, parent_id = bearer
     created = _pipeline(monkeypatch, FOOD, ACTIVITY, delete_first=True)
 
-    channel = await _run(cid, parent_id)
+    with caplog.at_level(logging.WARNING):
+        channel = await _run(cid, parent_id)
 
     assert [o["id"] for o in _saved(channel)] == created[1:]
+    assert "찾지 못했다" not in caplog.text
 
 
 async def test_실을_기록이_하나도_없으면_saved_를_보내지_않는다(monkeypatch, bearer, cid):
@@ -317,8 +322,11 @@ async def test_다시_읽기_뒤_rollback_까지_실패해도_다음_단계로_�
     assert "ConnectionError" in caplog.text
 
 
-async def test_이번_run_이_만들지_않은_ref_는_싣지_않는다(monkeypatch, bearer, cid):
-    """읽는 대상은 이 run 의 store 가 만든 관찰뿐이다 — refs 에 다른 id 가 와도 싣지 않는다."""
+async def test_이번_run_이_만들지_않은_ref_는_싣지_않는다(monkeypatch, bearer, cid, caplog):
+    """읽는 대상은 이 run 의 store 가 만든 관찰뿐이다 — refs 에 다른 id 가 와도 싣지 않는다.
+
+    refs 와 읽어 둔 키가 어긋난 것이라 경고가 남는다 (#471 리뷰).
+    """
     _, parent_id = bearer
     other = uuid.uuid4()
 
@@ -329,6 +337,8 @@ async def test_이번_run_이_만들지_않은_ref_는_싣지_않는다(monkeypa
 
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
 
-    channel = await _run(cid, parent_id)
+    with caplog.at_level(logging.WARNING):
+        channel = await _run(cid, parent_id)
 
     assert _names(channel) == ["done"]
+    assert "찾지 못했다" in caplog.text

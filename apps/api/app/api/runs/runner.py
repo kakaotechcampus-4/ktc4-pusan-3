@@ -222,7 +222,8 @@ async def _read_saved(
 ) -> dict[tuple[str, str], Any]:
     """commit 된 관찰을 다시 읽어 07 기록 탭과 같은 모양으로 (#471).
 
-    키는 `Saved.refs` 의 (kind, id)다. 같은 run 에서 지운 관찰은 읽히지 않아 빠진다.
+    키는 `Saved.refs` 의 (kind, id)다. 같은 run 에서 지운 관찰은 읽히지 않아 값이 None 이다 —
+    번역기가 "지워서 없음" 과 "키가 어긋나 없음" 을 가른다.
     🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 저장은 이미 확정됐다. failed 로 끝내면 오히려
        "저장 안 됐다" 로 보인다. `saved` 만 빠지고 ERROR 로그를 남긴다(원문 없이, 루트 §2).
     🚨 `affinity` 는 Curator 가 묶기 전(commit 직후)이라 보통 null 이다 — 04 화면은 그리지 않는다.
@@ -262,7 +263,8 @@ async def _read_saved(
                 "run %s 의 rollback 도 실패했다 (%s)", channel.run_id, type(rollback_exc).__name__
             )
         return {}
-    return {(out.kind, out.id): out for out in outs}
+    deleted = {(f"observation_{domain}", str(oid)): None for domain, oid in created}
+    return deleted | {(out.kind, out.id): out for out in outs}
 
 
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:

@@ -8,6 +8,7 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
    러너가 commit 직후 그 run 이 만든 행을 읽어 `saved_rows` 에 넣어 두고, 여기서는 refs 순서대로
    꺼내 싣기만 한다 — emit 은 sync 라 여기서 DB 를 읽을 수 없다. 읽어 둔 행이 없는 ref(같은 run 에서
    지웠거나 읽기에 실패한 것)는 건너뛰고, 하나도 없으면 보내지 않는다(빈 "기록 0건 저장됨" 금지).
+   같은 run 에서 지운 것은 러너가 None 으로 표시해 조용히 빼고, 키가 아예 없으면 경고를 남긴다.
    🚨 pipeline 은 commit 이 끝난 뒤에 `Saved` 를 낸다. 받은 순서대로 보내기만 하고 앞당기지 않는다 —
       화면이 "저장됐어요"로 본 기록은 DB에 있어야 한다.
 
@@ -25,6 +26,7 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -45,6 +47,8 @@ from app.agents.entrypoint import (
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 
+log = logging.getLogger(__name__)
+
 SavedRows = Mapping[tuple[str, str], Any]
 """(kind, id) → 러너가 commit 뒤에 읽어 둔 화면 모양 행(`observation_outs`). model_dump 만 쓴다."""
 
@@ -53,10 +57,19 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
     """이벤트 하나를 화면용 (이름, 내용) 으로. 화면에 보낼 게 아니면 None."""
     if isinstance(event, Saved):
         rows = saved_rows or {}
+        keys = [(ref.kind, ref.id) for ref in event.refs]
+        # None 은 러너가 "같은 run 에서 지워져 읽히지 않음" 으로 표시한 것 — 정상이라 조용히 뺀다.
+        # 키 자체가 없으면 refs 와 러너의 키 형식이 어긋난 것이다 — 조용히 거르면 #471 이 흔적 없이
+        # 돌아온다(화면이 다시 "저장하지 않았어요")
+        missing = [kind for kind, oid in keys if (kind, oid) not in rows]
+        if missing:
+            log.warning(
+                "Saved refs %d건을 읽어 둔 행에서 찾지 못했다 (kind=%s)",
+                len(missing),
+                ",".join(sorted(set(missing))),
+            )
         observations = [
-            rows[(ref.kind, ref.id)].model_dump(mode="json")
-            for ref in event.refs
-            if (ref.kind, ref.id) in rows
+            rows[key].model_dump(mode="json") for key in keys if rows.get(key) is not None
         ]
         return ("saved", {"observations": observations}) if observations else None
     if isinstance(event, Step):

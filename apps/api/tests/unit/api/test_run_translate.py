@@ -8,6 +8,7 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 DB 도 LLM 도 없이 객체만 넣어 본다.
 """
 
+import logging
 import uuid
 from datetime import datetime
 from typing import get_args
@@ -355,12 +356,32 @@ def test_saved_carries_rows_read_after_commit_in_ref_order():
     )
 
 
-def test_saved_skips_refs_it_could_not_read():
-    """같은 run 에서 만들고 지운 관찰 · 읽기에 실패한 관찰은 읽어 둔 행이 없다 — 건너뛴다."""
-    rows = {("observation_food", "o1"): _Row({"id": "o1"})}
+def test_saved_skips_rows_deleted_in_the_same_run_quietly(caplog):
+    """러너는 같은 run 에서 지워진 관찰을 None 으로 표시한다 — 정상 경로라 경고하지 않는다."""
+    rows = {("observation_food", "o1"): _Row({"id": "o1"}), ("observation_food", "gone"): None}
     event = Saved((Ref("observation_food", "o1"), Ref("observation_food", "gone")))
 
-    assert translate.to_sse(event, saved_rows=rows) == ("saved", {"observations": [{"id": "o1"}]})
+    with caplog.at_level(logging.WARNING):
+        sent = translate.to_sse(event, saved_rows=rows)
+
+    assert sent == ("saved", {"observations": [{"id": "o1"}]})
+    assert caplog.records == []
+
+
+def test_saved_warns_when_a_ref_key_is_missing(caplog):
+    """#471 리뷰 — refs 의 (kind, id) 와 러너가 읽어 둔 키가 어긋나면 화면은 다시 "저장하지
+    않았어요" 가 된다. 조용히 거르지 않고 건수 · kind 를 남긴다 (원문 없음)."""
+    rows = {("observation_food", "o1"): _Row({"id": "o1"})}
+    event = Saved((Ref("observation_food", "o1"), Ref("observation_activity", "x")))
+
+    with caplog.at_level(logging.WARNING):
+        sent = translate.to_sse(event, saved_rows=rows)
+
+    assert sent == ("saved", {"observations": [{"id": "o1"}]})
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "1건" in record.getMessage()
+    assert "observation_activity" in record.getMessage()
 
 
 @pytest.mark.parametrize("rows", [None, {}], ids=["no_rows", "empty_rows"])
