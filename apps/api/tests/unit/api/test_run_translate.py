@@ -62,9 +62,10 @@ SENT = {
     Unavailable,
     Partial,
     AgentResult,
+    Saved,
 }
 """화면으로 보내는 것."""
-HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
+HELD = {PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 
@@ -317,13 +318,71 @@ def test_sent_events_become_sse_frames(event):
         DomainRouted("food", "meal_recommendation", "mock", 0),
         Unwritten(hints=1, tools=0, note=True),
         Rerouted(bounced=1),
-        # 화면은 관찰 내용 전체를 원하는데 Saved 는 id 만 준다 — 8단계에서 행을 읽어 채운다
-        Saved((Ref("observation_food", "o1"),)),
     ],
     ids=lambda event: type(event).__name__,
 )
 def test_held_events_are_not_sent(event):
     assert translate.to_sse(event) is None
+
+
+class _Row:
+    """러너가 commit 뒤에 읽어 둔 행 하나 (#471). 번역기는 model_dump 만 부른다."""
+
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def model_dump(self, *, mode: str) -> dict:
+        assert mode == "json"  # 날짜가 문자열로 나가야 frame() 을 통과한다
+        return self.payload
+
+
+def test_saved_carries_rows_read_after_commit_in_ref_order():
+    """#471 — refs 순서대로, 러너가 읽어 둔 행을 그대로 싣는다. 모양은 기록 탭과 같다."""
+    rows = {
+        ("observation_food", "o1"): _Row({"id": "o1", "kind": "observation_food"}),
+        ("observation_activity", "o2"): _Row({"id": "o2", "kind": "observation_activity"}),
+    }
+    event = Saved((Ref("observation_activity", "o2"), Ref("observation_food", "o1")))
+
+    assert translate.to_sse(event, saved_rows=rows) == (
+        "saved",
+        {
+            "observations": [
+                {"id": "o2", "kind": "observation_activity"},
+                {"id": "o1", "kind": "observation_food"},
+            ]
+        },
+    )
+
+
+def test_saved_skips_refs_it_could_not_read():
+    """같은 run 에서 만들고 지운 관찰 · 읽기에 실패한 관찰은 읽어 둔 행이 없다 — 건너뛴다."""
+    rows = {("observation_food", "o1"): _Row({"id": "o1"})}
+    event = Saved((Ref("observation_food", "o1"), Ref("observation_food", "gone")))
+
+    assert translate.to_sse(event, saved_rows=rows) == ("saved", {"observations": [{"id": "o1"}]})
+
+
+@pytest.mark.parametrize("rows", [None, {}], ids=["no_rows", "empty_rows"])
+def test_saved_with_nothing_read_is_not_sent(rows):
+    """🚨 빈 `saved` 를 보내지 않는다 — 화면이 "기록 0건 저장됨" 을 그린다."""
+    assert translate.to_sse(Saved((Ref("observation_food", "o1"),)), saved_rows=rows) is None
+
+
+def test_relay_sends_saved_with_the_rows_it_was_given():
+    """러너가 relay 에 넘긴 dict 를 Saved 가 올 때 읽는다 — commit 이 그 사이에 채운다."""
+    channel = registry.open_run(parent_id=PARENT)
+    rows: dict = {}
+    emit = translate.relay(channel, saved_rows=rows)
+
+    rows[("observation_food", "o1")] = _Row({"id": "o1"})  # commit 이 나중에 채운다
+    emit(Saved((Ref("observation_food", "o1"),)))
+    emit(Done(channel.run_id, 1))
+
+    assert channel.events == [
+        ("saved", {"observations": [{"id": "o1"}]}),
+        ("done", {"run_id": channel.run_id, "model_calls": 1}),
+    ]
 
 
 def test_relay_puts_translated_events_on_the_channel():
