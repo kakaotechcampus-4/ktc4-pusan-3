@@ -17,10 +17,22 @@ from app.core.nutrition_pick import SOURCE_VERSION, NutritionFacts, nutrition_fa
 from app.rules.menu_key import normalize_menu_key
 
 
-def nutrition_catalog_rows(rows: Iterable[RawNutriRow], *, now: datetime) -> list[MenuCatalogRow]:
-    """품목대표 전체 → `menu_catalog` 행. 쓸 수 있는 행이 없는 이름은 빠진다(요청 중과 같다)."""
+def nutrition_catalog_rows(
+    rows: Iterable[RawNutriRow],
+    *,
+    now: datetime,
+    borrowed: Mapping[str, frozenset[str]] | None = None,
+) -> list[MenuCatalogRow]:
+    """품목대표 전체 → `menu_catalog` 행. 쓸 수 있는 행이 없는 이름은 빠진다(요청 중과 같다).
+
+    `borrowed` 는 `menu_key` → 이름이 같은 레시피의 식품군(`borrowable_food_groups`). 대응표에 없는
+    메뉴만 쓴다."""
     picked = nutrition_facts_by_key(rows)
-    return [nutrition_catalog_row(key, facts, now=now) for key, facts in sorted(picked.items())]
+    lent = borrowed or {}
+    return [
+        nutrition_catalog_row(key, facts, now=now, borrowed=lent.get(key, frozenset()))
+        for key, facts in sorted(picked.items())
+    ]
 
 
 def recipe_catalog_rows(
@@ -38,6 +50,22 @@ def recipe_catalog_rows(
         )
         for recipe in sync.recipes
     ]
+
+
+def borrowable_food_groups(recipes: Iterable[MenuCatalogRow]) -> dict[str, frozenset[str]]:
+    """레시피 행 → 이름이 같은 영양DB 메뉴가 빌릴 식품군 (#420).
+
+    찌개 · 국 같은 음식 메뉴는 대분류가 여러 식품군을 섞어 대응표에 줄이 없다. 이름이 정확히 같은
+    레시피가 있으면 그 주재료 식품군을 쓴다 — 비슷한 이름으로 추정하지 않는다(`nutrition_pick`
+    규칙 1, 키 맞추기는 `recipe_catalog_rows` 의 영양값과 같다). 해석된 레시피(재료가 다 정리됨) 중
+    식품군이 있는 것만 쓴다. 같은 이름 레시피가 여럿이고 식품군이 다르면 고르지 않고 빌려 주지
+    않는다.
+    """
+    seen: dict[str, set[frozenset[str]]] = {}
+    for row in recipes:
+        if row.resolved and row.food_groups:
+            seen.setdefault(row.menu_key, set()).add(row.food_groups)
+    return {key: next(iter(groups)) for key, groups in seen.items() if len(groups) == 1}
 
 
 def facts_from_catalog(row: MenuCatalogRow) -> NutritionFacts | None:

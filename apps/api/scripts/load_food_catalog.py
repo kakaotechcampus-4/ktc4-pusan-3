@@ -14,6 +14,9 @@
   으로 끝나고 영양DB 갱신을 놓치며, 레시피는 후보 풀이 통째로 내려간다.
 - 이번 받기에 없는 레시피는 후보 풀에서 내린다(`resolved=false`, 행은 남긴다). 소스가 내린 레시피에
   옛 재료 판정이 `resolved=true` 로 남아 계속 나가지 않게 한다.
+- 찌개 · 국처럼 대응표에 없는 영양DB 메뉴는 이름이 같은 레시피의 주재료 식품군을 빌린다(#420).
+  레시피도 받으면 그 값으로, `--nutrition` 만 돌리면 이미 적재된 레시피 표에서 빌린다.
+  `--recipes` 만 돌리면 메뉴 행은 그대로라, 정리 표 `food_group` 을 고쳤으면 `--all` 로 돌린다.
 - 출력은 건수만이다. 키 · 주소 · 원문 이름을 내지 않는다.
 
 매일 새벽 돌리는 것(크론 · 관리자 API)은 BE 가 붙인다(FT-19).
@@ -33,6 +36,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.food.catalog_rows import (
+    borrowable_food_groups,
     facts_from_catalog,
     nutrition_catalog_rows,
     recipe_catalog_rows,
@@ -54,6 +58,9 @@ class Loaded:
     # 영양DB 에서 받은 원문 행. 같은 이름은 한 메뉴로 모이고 핵심 영양 칸이 빈 이름은 메뉴가 못 돼서
     # `nutrition_rows` 보다 많다(실제 8,807행 → 5,488메뉴). 숫자 하나만 보이면 오해한다
     nutrition_received: int = 0
+    # 그중 식품군이 있는 메뉴. 영양소 분석은 식품군을 아는 메뉴가 절반이 안 되면 출현을
+    # 말하지 않는다
+    grouped_menus: int = 0
 
 
 async def run(
@@ -80,11 +87,16 @@ async def run(
         try:
             loaded = Loaded()
             if nutrition:
-                menus = nutrition_catalog_rows(raw_rows, now=now)
+                borrowed = await _borrowed_groups(session, sync, ingredients, now=now)
+                menus = nutrition_catalog_rows(raw_rows, now=now, borrowed=borrowed)
                 await repository.refresh_nutrition_menus(
                     session, rows=[menu_values(row) for row in menus]
                 )
-                loaded = Loaded(nutrition_rows=len(menus), nutrition_received=len(raw_rows))
+                loaded = Loaded(
+                    nutrition_rows=len(menus),
+                    nutrition_received=len(raw_rows),
+                    grouped_menus=sum(1 for row in menus if row.food_groups),
+                )
             if sync is not None:
                 keys = sorted({key for r in sync.recipes if (key := normalize_menu_key(r.name))})
                 known = await repository.list_nutrition_menus(session, keys=keys)
@@ -114,6 +126,22 @@ async def run(
         else:
             await session.commit()
     return loaded
+
+
+async def _borrowed_groups(
+    session: AsyncSession,
+    sync: RecipeSync | None,
+    table: Mapping[str, IngredientEntry],
+    *,
+    now: datetime,
+) -> dict[str, frozenset[str]]:
+    """영양DB 메뉴가 빌릴 레시피 식품군. 이번에 레시피도 받았으면 그 값으로 만든다 — 식품군은
+    영양값과 무관해서 영양값 없이 만든다(영양값은 아래에서 menu_catalog 를 쓴 뒤 붙인다). 아니면
+    이미 적재된 레시피 표에서 읽는다."""
+    if sync is not None:
+        return borrowable_food_groups(recipe_catalog_rows(sync, table, now=now, nutrition={}))
+    models = await repository.list_resolved_recipes(session)
+    return borrowable_food_groups(catalog_row(model) for model in models)
 
 
 async def _fetch_nutrition() -> Sequence[RawNutriRow]:
@@ -158,8 +186,10 @@ def summary(loaded: Loaded, *, dry_run: bool) -> str:
     suffix = " (dry-run, 쓰지 않음)" if dry_run else ""
     # 영양DB 를 받았을 때만 받은 행 수를 같이 보여준다 — 받은 행과 메뉴 수가 다르다
     received = f"(영양DB {loaded.nutrition_received}행 받음)" if loaded.nutrition_received else ""
+    grouped = f" · 식품군 있음 {loaded.grouped_menus}행" if loaded.nutrition_received else ""
     return (
-        f"menu_catalog {loaded.nutrition_rows}행{received} · recipe_catalog {loaded.recipe_rows}행"
+        f"menu_catalog {loaded.nutrition_rows}행{received}{grouped} · "
+        f"recipe_catalog {loaded.recipe_rows}행"
         f"(후보 풀 {loaded.resolved_recipes}개 · 내린 것 {loaded.retired_recipes}개){suffix}"
     )
 

@@ -18,8 +18,11 @@ food_agent_own_table §1-1). 행 모양은 `MenuCatalogRow` 를 같이 쓰고 `s
 - `allergen_codes` 는 표의 코드와, 메뉴명 · 정리한 재료명을 사전으로 훑은 코드의 합집합이다
   (own_table §1). 제품마다 다른 성분(간장의 밀)은 표에 코드로 넣지 않는다 — 이름이 남아 있으면
   필터가 따로 본다.
-- 식품군(`food_groups`)은 정리 표의 재료별 `food_group` 칸을 모은 합집합이다. 칸이 빈 재료(검수
-  전)는 건너뛰고, 재료가 다 비면 빈 집합이다 — 재료 이름으로 식품군을 추정하지 않는다.
+- 식품군(`food_groups`)은 주재료(재료 역할이 "주재료")의 `food_group` 칸을 모은 합집합이다. 주재료가
+  없거나, 하나라도 칸이 비었거나(아직 안 정함) 표에 없으면 빈 집합이다 — 일부만 적으면 빠진
+  식품군이 "0일" 로 나간다(#420). 부재료 · 양념은 세지 않는다. `none` 은 식품군이 없는 재료(물 ·
+  소금 · 장류)라 정한 것으로 세고 넣지는 않는다. 재료 이름으로 식품군을 추정하지 않는다. 이름이
+  같은 영양DB 메뉴가 이 값을 빌린다(`catalog_rows.borrowable_food_groups`).
 - 주재료(`main_ingredients`)는 레시피 원문의 재료 역할(`RawIngredient.role`)이 "주재료" 인 재료를
   정리한 이름으로 모은다. 역할이 비면 비고, 그러면 "같은 주재료 2개" 제약만 건너뛴다(풀을 줄이지
   않는다).
@@ -54,6 +57,8 @@ _SECTION = re.compile(r"^\s*\[[^\]]*\]\s*")
 
 SOURCE_VERSION = "mafra_recipe"
 MAIN_ROLE = "주재료"  # RawIngredient.role(IRDNT_TY_NM) 값. 부재료 · 양념과 가른다
+# 식품군이 없는 재료(물 · 소금 · 장류). 칸이 비어 있으면 아직 안 정한 것이라 둘을 가른다
+NO_FOOD_GROUP = "none"
 
 
 @dataclass(frozen=True)
@@ -65,7 +70,8 @@ class IngredientEntry:
     codes: frozenset[int]  # 이 재료에 확실히 든 19종 코드
     status: Status
     note: str = ""
-    food_group: str | None = None  # 이 재료의 식품군 한 개. 검수 전에는 비어 있다
+    # 이 재료의 식품군 한 개, 식품군이 없으면 `none`. 비어 있으면 아직 안 정했다
+    food_group: str | None = None
 
 
 def ingredient_key(raw: str) -> str:
@@ -101,7 +107,7 @@ def parse_ingredient_table(data: Mapping[str, Any]) -> dict[str, IngredientEntry
         if status == "ok" and not names:
             raise ValueError(f"{where}: ok 인데 정리한 이름이 없다")
         food_group = raw_entry.get("food_group") or None
-        if food_group is not None and food_group not in FOOD_GROUPS:
+        if food_group is not None and food_group not in FOOD_GROUPS | {NO_FOOD_GROUP}:
             raise ValueError(f"{where}: 정해지지 않은 식품군 {food_group!r}")
         codes = list(raw_entry.get("codes") or ())
         if outside := [c for c in codes if isinstance(c, bool) or c not in ALLERGEN_NAMES]:
@@ -145,7 +151,9 @@ def build_recipe_row(
     ingredients: list[str] = []
     main_ingredients: list[str] = []
     codes: set[int] = set()
-    food_groups: set[str] = set()
+    main_groups: set[str] = set()
+    # 주재료가 있고 모두 식품군을 정했을 때만 식품군을 싣는다
+    groups_known = any((item.role or "").strip() == MAIN_ROLE for item in recipe.ingredients)
     settled = bool(recipe.ingredients)
 
     def add(name: str, *, main: bool) -> None:
@@ -157,14 +165,16 @@ def build_recipe_row(
             main_ingredients.append(name)
 
     for item in recipe.ingredients:
+        is_main = (item.role or "").strip() == MAIN_ROLE
         if item.name is None:
             settled = False  # 이름 없는 재료 — 무엇이 들었는지 모른다
+            groups_known = groups_known and not is_main
             continue
-        is_main = (item.role or "").strip() == MAIN_ROLE
         key = ingredient_key(item.name)
         found = table.get(key) if key else None
         if found is None:
             settled = False
+            groups_known = groups_known and not is_main
             # 표에 없어도 원문은 남긴다 — 사전이 읽을 수 있는 글자면 필터가 막는다
             add(_SECTION.sub("", unicodedata.normalize("NFKC", item.name)).strip(), main=is_main)
             continue
@@ -173,8 +183,11 @@ def build_recipe_row(
         if found.status == "not_food":
             continue
         codes |= found.codes
-        if found.food_group:
-            food_groups.add(found.food_group)
+        if is_main:
+            if found.food_group is None:
+                groups_known = False
+            elif found.food_group != NO_FOOD_GROUP:
+                main_groups.add(found.food_group)
         for name in found.names or (found.raw,):
             add(name, main=is_main)
 
@@ -191,7 +204,7 @@ def build_recipe_row(
         ingredients=tuple(ingredients),
         main_ingredients=tuple(main_ingredients),
         allergen_codes=frozenset(codes),
-        food_groups=frozenset(food_groups),
+        food_groups=frozenset(main_groups) if groups_known else frozenset(),
         stage_min=stage_min,
         source_version=SOURCE_VERSION,
         source_id=recipe.recipe_id,
