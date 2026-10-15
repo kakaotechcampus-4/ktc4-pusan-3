@@ -15,11 +15,14 @@ import type { Scenario } from "@/mocks/scenario";
  *    목 시나리오를 더한다 (apps/web/CLAUDE.md §8 "테스트 전용 핸들러를 만들지 않는다").
  */
 
-/** 목이 심는 세션. `stores/session.ts` 의 persist 모양과 같아야 한다 (/web-smoke 와 같은 값). */
-const MOCK_SESSION = JSON.stringify({
-  state: { token: "mock-token-do-not-use-in-production", expiresAt: null, activeChildId: null },
-  version: 0,
-});
+/**
+ * 로그인한 채로 시작하는 방법. 토큰은 메모리에만 있어서 심을 수 없고, 화면은 앱을 켤 때
+ * refresh 로 받는다 — 그래서 목의 refresh 쿠키 표식을 심는다 (`mocks/handlers/auth.ts` 의
+ * `MOCK_REFRESH_KEY` · /web-smoke 와 같은 값).
+ */
+const MOCK_REFRESH_KEY = "icatch.mock.refresh";
+/** 이 탭에서 이미 심었다는 표시. 로그아웃한 뒤 새로고침했을 때 다시 심지 않으려고 둔다. */
+const SEEDED_KEY = "icatch.e2e.seeded";
 
 /** 목 아이 id (`mocks/fixtures.ts`). */
 export const CHILD = "c1";
@@ -45,14 +48,17 @@ export const test = base.extend<Options>({
   page: async ({ page, scenario, signedIn, allowFailedApi }, provide) => {
     // 🚨 `?scenario=` 대신 저장소에 심는다. 주소로 넘기면 URL 단언마다 쿼리가 끼어든다.
     //    목은 요청마다 이 값을 다시 읽는다 (`currentScenario()`).
+    // 🚨 표식은 탭마다 **한 번만** 심는다. 이 스크립트는 새로고침마다 다시 돈다 — 매번 심으면
+    //    로그아웃이나 탈퇴로 지운 표식이 되살아나 "다시 켜도 로그인돼 있다" 가 된다.
     await page.addInitScript(
-      ([s, session, signed]) => {
+      ([s, refreshKey, seededKey, signed]) => {
         localStorage.setItem("icatch.mock.scenario", s);
-        if (signed && sessionStorage.getItem("icatch.session") === null) {
-          sessionStorage.setItem("icatch.session", session);
+        if (signed && sessionStorage.getItem(seededKey) === null) {
+          localStorage.setItem(refreshKey, "1");
+          sessionStorage.setItem(seededKey, "1");
         }
       },
-      [scenario, MOCK_SESSION, signedIn] as const,
+      [scenario, MOCK_REFRESH_KEY, SEEDED_KEY, signedIn] as const,
     );
 
     // 개발 전용 떠 있는 버튼(Next 개발 표시기 · Query devtools)이 하단 네비와 보내기 버튼을 덮는다.
@@ -136,11 +142,17 @@ export function recordApi(page: Page): ApiCall[] {
   return calls;
 }
 
-/** 쓰기 요청만 (GET 제외). */
+/**
+ * 쓰기 요청만 (GET 제외).
+ *
+ * 🚨 세션 갱신(`POST /auth/refresh`)은 뺀다. 화면이 뜰 때마다 나가는 것이라(#465) 남기면 "누르기
+ *    전에는 0건" 이 늘 깨진다. 아무 기록도 바꾸지 않는다 — 갱신 횟수는 `recordApi` 로 직접 센다.
+ */
 export function writes(calls: ApiCall[], method?: string, path?: RegExp): ApiCall[] {
   return calls.filter(
     (c) =>
       c.method !== "GET" &&
+      c.path !== "/auth/refresh" &&
       (method === undefined || c.method === method) &&
       (path === undefined || path.test(c.path)),
   );

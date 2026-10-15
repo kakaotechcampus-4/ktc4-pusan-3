@@ -123,7 +123,7 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
 - 🚨 **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)에서 뒤로가기는 히스토리로 가지 않는다** (#462). 탭 이동이
   push 로 쌓이고 로그인 화면도 히스토리에 남아 있어서 앱이 닫힐 차례가 오지 않았다. 닫힐 차례의 첫 누름은
   `ToastAndroid` 로 "한 번 더 누르면 종료" 를 띄우고, 2초 안에 또 누르면 `false` 를 돌려 OS 기본 동작에 넘긴다.
-  ⚠️ 기본 동작은 액티비티를 **끝낸다** (Android 17 실기기 확인) — 웹뷰가 새로 만들어져 `sessionStorage` 로그인이 풀린다.
+  ⚠️ 기본 동작은 액티비티를 **끝낸다** (Android 17 실기기 확인) — 웹뷰가 새로 만들어진다. 로그인은 웹이 refresh 쿠키로 되살리고(#465) 홈에서 다시 연다.
   뒤로 보내기만 하려면 `moveTaskToBack` 을 부르는 네이티브 코드가 필요하다.
   셸이 웹의 **화면** 경로를 아는 곳이다 (`/auth/callback` · `/api` 는 흐름의 입구라 성격이 다르다). 웹이 알려 주려면
   `onMessage` 를 열어야 해서 경로를 본다. `apps/web/src/components/child-nav.tsx` 의 `TABS` 가 바뀌면 `back-press.ts` 를 같이 고친다.

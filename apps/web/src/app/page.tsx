@@ -1,17 +1,21 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { SessionChecking } from "@/components/session-checking";
+import { SessionUnreachable } from "@/components/session-unreachable";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DomainIcon } from "@/components/ui/icon";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
-import { api, qk, type Agent, type AuthStatus } from "@/lib/api";
+import { api, isApiError, qk, type Agent, type AuthStatus, type Me } from "@/lib/api";
+import { landingPath } from "@/lib/auth/landing";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
+import { hasLiveSession, useSessionStore } from "@/stores/session";
 
 /**
  * 00 소개 · 로그인 — 프로토타입에 없는 화면이다.
@@ -41,7 +45,49 @@ const NOT_DOING = [
   "이름(별명), 나이, 알레르기 여부까지만 물어봐요.",
 ];
 
-export default function LoginPage() {
+/**
+ * 🚨 **앱은 늘 이 주소로 열린다** (`apps/mobile` 의 `WEB_URL`). 그래서 로그인 화면을 그리기 전에
+ *    세션부터 확인한다 — 살아 있으면 홈으로 보낸다. 안 그러면 refresh 쿠키로 세션을 되살려
+ *    놓고도 앱을 켤 때마다 로그인 화면이 선다 (docs/web/auth-consent-v1.md §2).
+ */
+export default function LandingPage() {
+  const hydrated = useSessionStore((s) => s.hydrated);
+  const live = useSessionStore(hasLiveSession);
+  const restoreFailed = useSessionStore((s) => s.restoreFailed);
+
+  // 확인하는 동안 로그인 화면을 그리지 않는다 — 깜빡였다가 홈으로 넘어간다.
+  if (!hydrated) return <SessionChecking />;
+  if (live) return <ResumeSession />;
+  if (restoreFailed) return <SessionUnreachable />;
+  return <LoginScreen />;
+}
+
+/** 세션이 살아 있다. 마지막에 본 아이의 홈으로 보낸다. `/me` 를 받는 동안도 같은 확인 중 표시다. */
+function ResumeSession() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let cancelled = false;
+    void queryClient
+      .fetchQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") })
+      .then((me) => landingPath(me, useSessionStore.getState().activeChildId))
+      // 🚨 `/me` 실패는 로그아웃이 아니다 — 아이가 있는지 모를 뿐이다. 00-1 은 그 실패를 이미
+      //    감당한다 (콜백 화면과 같은 판단 · `app/auth/callback/page.tsx`). 세션이 끝난 401 이면
+      //    전역 처리가 먼저 이 화면으로 되돌린다.
+      .catch((cause: unknown) => (isApiError(cause, "unauthenticated") ? null : "/start"))
+      .then((path) => {
+        if (path && !cancelled) router.replace(path);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient, router]);
+
+  return <SessionChecking />;
+}
+
+function LoginScreen() {
   const router = useRouter();
 
   // 버튼을 누른 뒤 조회하면 이동 전에 왕복이 한 번 낀다. 그래서 진입 시 미리 받아 둔다.
