@@ -168,7 +168,9 @@ async function send(url: string, init: RequestInit): Promise<Response> {
  *
  * 🚨 다시 보내는 것은 **한 번뿐이다.** 그래도 401 이면 그 응답을 돌려준다 — 판정은 부르는 쪽이다.
  * 🚨 `init` 을 함수로 받는다. 다시 보낼 때 새 토큰으로 헤더를 다시 만들어야 한다.
- *    되돌릴 수 없는 요청도 다시 보내도 된다 — 서버는 인증에서 막고 아무것도 실행하지 않았다.
+ *    되돌릴 수 없는 요청도 같은 Idempotency-Key 로 다시 보낸다 — 서버는 키를 보호자 단위로 기억하고
+ *    보호자는 인증을 통과해야 정해져서, 401 로 끝난 요청은 키도 실행도 남기지 않는다. 서버와 계약으로
+ *    고정했다 (#467 리뷰 · docs/web/auth-consent-v1.md §2).
  */
 export async function authorizedFetch(url: string, init: () => RequestInit): Promise<Response> {
   await prepareToken();

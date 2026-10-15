@@ -107,6 +107,7 @@
 - 🚨 **`/` 는 로그인 화면을 그리기 전에 세션부터 본다.** 앱은 늘 `/` 로 열린다(`apps/mobile` 의 `WEB_URL`). 살아 있으면 `landingPath()` 로 홈에 보낸다 — 안 그러면 세션을 되살려 놓고도 매번 로그인 화면이 선다
 - **갱신은 `lib/api/client.ts` 한 곳에서 한다.** 화면은 갱신을 모른다
   - 만료 1분 전이면 보내기 전에 갱신하고, `401 unauthenticated` 를 받으면 갱신한 뒤 **한 번만** 다시 보낸다 (`authorizedFetch` · SSE 도 같은 길)
+  - 🚨 **되돌릴 수 없는 요청도 같은 Idempotency-Key 로 다시 보낸다.** 서버는 키를 `(parent_id, method, path, key)` 로 기억하고 `parent_id` 는 인증을 통과해야 생기므로, 401 로 끝난 요청은 키에 아무것도 남기지 않고 실행된 것도 없다. 서버와 계약으로 고정했다 (#467 리뷰 · 서버가 [`idempotency-v1.md`](../api/idempotency-v1.md) 에 적는다). 되돌릴 수 없는 요청만 재전송을 빼면 15분마다 승인 버튼이 한 번씩 실패한다
   - 🚨 **갱신은 동시에 하나만 나간다** (`refreshSession` single-flight). 서버는 회전된 refresh 가 늦게 다시 오면 탈취로 보고 그 로그인을 지운다 — 쿼리 여러 개가 각자 갱신하면 우리 스스로 로그아웃을 만든다
   - 🚨 **401 뒤 갱신이 서버에 닿지 못하면 `NetworkError` 로 던진다.** 401 로 끝내면 전역 처리가 세션을 버린다
   - 🚨 `/auth/*` 요청만 `credentials: "include"` 다. 없으면 브라우저가 응답의 Set-Cookie 를 버려서 로그인해도 쿠키가 안 생긴다. 일반 API 는 Bearer 뿐이다
