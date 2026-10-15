@@ -1,29 +1,32 @@
 import Constants from "expo-constants";
 import { StatusBar } from "expo-status-bar";
 import * as WebBrowser from "expo-web-browser";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   BackHandler,
+  Keyboard,
   Linking,
   Platform,
   Pressable,
   StyleSheet,
   Text,
+  ToastAndroid,
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 
-import { WEB_URL, isInternalUrl } from "./src/config";
+import { WEB_URL, isInternalUrl, isRootUrl } from "./src/config";
 import {
   AUTH_RETURN_URL,
   callbackUrlFromReturn,
   isAuthStartUrl,
   navigateScript,
 } from "./src/native/auth-session";
+import { EXIT_HINT, decideBack } from "./src/native/back-press";
 import { isWebUrl } from "./src/native/in-app-browser";
-import { SAFE_AREA_SCRIPT, safeAreaScript } from "./src/native/safe-area";
+import { SAFE_AREA_SCRIPT, safeAreaScript, shellInsets } from "./src/native/safe-area";
 
 /**
  * 🚨 **디자인 값의 원본은 `apps/web/src/app/globals.css` 다** (최상위 CLAUDE.md §6).
@@ -41,6 +44,9 @@ const USER_AGENT_SUFFIX = `IcatchApp/${Constants.expoConfig?.version ?? "0.0.0"}
 function Shell() {
   const webViewRef = useRef<WebView>(null);
   const canGoBackRef = useRef(false);
+  const urlRef = useRef(WEB_URL);
+  /** 직전에 종료 안내를 띄운 시각 — 그 뒤 `EXIT_WINDOW_MS` 안에 또 누르면 닫는다. */
+  const exitHintAtRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -51,17 +57,52 @@ function Shell() {
    */
   const insets = useSafeAreaInsets();
 
-  // Android 물리 뒤로가기 → 웹뷰 히스토리 뒤로. 더 갈 곳이 없으면 앱을 닫는다.
+  /**
+   * 키보드가 열려 있는지 — 열려 있으면 아래 여백을 0 으로 넘긴다 (`shellInsets` · #462).
+   * 🚨 Android 만 켠다. iOS 는 기기에서 확인하기 전이다.
+   */
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const webInsets = useMemo(() => shellInsets(insets, keyboardOpen), [insets, keyboardOpen]);
+
+  /**
+   * Android 물리 뒤로가기 (`src/native/back-press.ts` · #462).
+   *
+   * 하단 네비 네 칸에서는 히스토리가 있어도 뒤로 가지 않고 닫는 쪽으로 간다. 닫힐 차례의 첫 누름은
+   * 안내 토스트만 띄우고, 바로 한 번 더 누르면 닫는다.
+   *
+   * 닫을 때는 `false` 를 돌려 OS 기본 동작(`MainActivity.invokeDefaultOnBackPressed`)에 넘긴다 —
+   * 고치기 전에 히스토리가 다 떨어졌을 때 타던 길과 같다.
+   *
+   * ⚠️ **앱을 뒤로 보내는 게 아니라 액티비티를 끝낸다** (Android 17 실기기 `finishActivity` 확인).
+   *    프로세스는 남아도 웹뷰가 새로 만들어져 `sessionStorage` 의 로그인이 풀린다. 뒤로 보내기만 하려면
+   *    `moveTaskToBack` 을 부르는 네이티브 코드가 필요하다 (로그인 유지 논의와 같이 본다).
+   */
   const handleHardwareBack = useCallback(() => {
-    if (canGoBackRef.current) {
+    const now = Date.now();
+    const action = decideBack({
+      atRoot: isRootUrl(urlRef.current),
+      canGoBack: canGoBackRef.current,
+      now,
+      lastPressAt: exitHintAtRef.current,
+    });
+    if (action === "go-back") {
       webViewRef.current?.goBack();
       return true;
     }
+    if (action === "confirm-exit") {
+      exitHintAtRef.current = now;
+      ToastAndroid.show(EXIT_HINT, ToastAndroid.SHORT);
+      return true;
+    }
+    exitHintAtRef.current = null;
     return false;
   }, []);
 
+  // ⚠️ 웹의 클라이언트 이동(`history.pushState`)도 Android 는 여기로 온다 —
+  //    react-native-webview 가 `doUpdateVisitedHistory` 를 로딩 이벤트로 넘긴다.
   const onNavigationStateChange = useCallback((state: WebViewNavigation) => {
     canGoBackRef.current = state.canGoBack;
+    urlRef.current = state.url;
   }, []);
 
   /**
@@ -117,10 +158,20 @@ function Shell() {
     return () => subscription.remove();
   }, [handleHardwareBack]);
 
-  // 회전·시스템 바 변화로 값이 바뀌면 다시 넘긴다. 첫 값은 주입 스크립트가 이미 들고 간다.
   useEffect(() => {
-    webViewRef.current?.injectJavaScript(safeAreaScript(insets));
-  }, [insets]);
+    if (Platform.OS !== "android") return;
+    const shown = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
+    const hidden = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+
+  // 회전·시스템 바·키보드 변화로 값이 바뀌면 다시 넘긴다. 첫 값은 주입 스크립트가 이미 들고 간다.
+  useEffect(() => {
+    webViewRef.current?.injectJavaScript(safeAreaScript(webInsets));
+  }, [webInsets]);
 
   return (
     <View style={styles.root}>
@@ -175,7 +226,7 @@ function Shell() {
             // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리를 꽂는다 (`src/native/safe-area.ts`).
             // 🚨 웹에서 오는 메시지(`onMessage`)는 받지 않는다. 웹이 셸에 부탁할 것이 없다 —
             //    최근 사진 창구는 사진 권한과 함께 뺐다 (#408 · CLAUDE.md §3).
-            injectedJavaScriptBeforeContentLoaded={SAFE_AREA_SCRIPT + safeAreaScript(insets)}
+            injectedJavaScriptBeforeContentLoaded={SAFE_AREA_SCRIPT + safeAreaScript(webInsets)}
             // 08 사진 분석 — <input type="file"> 이 동작하려면 필요하다.
             allowFileAccess
             allowsInlineMediaPlayback

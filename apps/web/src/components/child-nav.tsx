@@ -33,6 +33,10 @@ import { cn } from "@/lib/cn";
  */
 export type ChildTab = "home" | "calendar" | "memories" | "profile";
 
+/**
+ * 🚨 **앱 셸이 이 네 경로를 안다.** 여기서 Android 뒤로가기는 히스토리로 가지 않고 두 번 눌러 종료다
+ *    (`apps/mobile/src/native/back-press.ts` · #462). `path` 를 바꾸거나 칸을 늘리면 셸도 같이 고친다.
+ */
 const TABS: Array<{ key: ChildTab; label: string; icon: LucideIcon; path: string }> = [
   { key: "home", label: "홈", icon: House, path: "home" },
   { key: "calendar", label: "캘린더", icon: CalendarDays, path: "calendar" },
