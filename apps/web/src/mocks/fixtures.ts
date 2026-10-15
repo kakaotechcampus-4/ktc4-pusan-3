@@ -494,13 +494,15 @@ const observationEvidence: Evidence = {
  *
  * 🚨 **한 Agent 의 후보가 하나뿐이면 화면이 거짓말을 해도 안 들킨다** — "3가지 중에서" 머리줄도,
  *    `food` 묶기도, 대안 사이에 기본 선택을 만들지 않는다는 규칙도 전부 후보가 여럿일 때만 돈다.
+ *
+ * 🚨 **`reason` 은 서버처럼 문장 한 칸이다** (#475). 한동안 목만 `{why_this, why_now}` 로 내려서
+ *    화면이 그 모양에 맞춰졌고, 실서버 응답에서 이유 칸이 비는 것을 목이 가렸다.
  */
 function personalized(
   id: string,
   agent: Agent,
   content: string,
-  whyThis: string,
-  whyNow: string,
+  reason: string | null,
   evidence: Evidence[],
 ): Suggestion {
   return {
@@ -509,7 +511,7 @@ function personalized(
     agent,
     kind: "personalized",
     content,
-    reason: { why_this: whyThis, why_now: whyNow },
+    reason,
     status: "draft",
     expires_at: hoursFromNow(24),
     feedback: null,
@@ -524,8 +526,7 @@ export const suggestions: Suggestion[] = [
     "s_1",
     "food",
     "계란말이에 시금치를 조금 섞어 보세요",
-    "계란 반찬을 서로 다른 3일에 찾았어요",
-    "오늘 급식에 계란 반찬이 없어요",
+    "계란 반찬을 서로 다른 3일에 찾았고, 오늘 급식에는 계란 반찬이 없었어요.",
     // 🚨 **근거는 제안마다 다르다.** 같은 배열을 셋에 복사하면 화면이 "근거가 제안마다 다르다" 를
     //    한 번도 그려 보지 않고 통과한다 — 건수도 종류도 갈라 둔다.
     [evidenceFrom(affinities[0]), mealEvidence, observationEvidence],
@@ -534,16 +535,14 @@ export const suggestions: Suggestion[] = [
     "s_2",
     "food",
     "두부를 부쳐서 한 조각 곁들여 보세요",
-    "두부 반찬을 남기지 않았어요",
-    "오늘 급식에 단백질 반찬이 적어요",
+    "두부 반찬을 남기지 않았고, 오늘 급식과 겹치지 않아요.",
     [evidenceFrom(affinities[0]), observationEvidence],
   ),
   personalized(
     "s_3",
     "food",
     "멸치볶음을 간을 약하게 해서 조금만",
-    "짠 반찬은 한 번에 조금씩 먹었어요",
-    "이번 주에 멸치 반찬이 없었어요",
+    "짠 반찬은 한 번에 조금씩 먹었고, 이번 주에는 멸치 반찬이 없었어요.",
     [mealEvidence],
   ),
   // 주말 놀이 3가지.
@@ -551,8 +550,7 @@ export const suggestions: Suggestion[] = [
     "s_4",
     "activity",
     "주말에 실내 물놀이장은 어떨까요",
-    "물놀이에서 오래 머물렀어요",
-    "이번 주말 일정이 비어 있어요",
+    "물놀이에서 오래 머물렀고, 이번 주말 일정이 비어 있어요.",
     [evidenceFrom(affinities[1])],
   ),
   personalized(
@@ -560,16 +558,16 @@ export const suggestions: Suggestion[] = [
     "activity",
     // 🚨 놀이 제안에도 먹을 것이 붙는다 — 사전검사가 `agent` 가 아니라 `allergens` 로 걸리는 경로.
     "놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요",
-    "바깥 놀이 뒤에 잘 잤어요",
-    "이번 주말 일정이 비어 있어요",
+    "바깥 놀이 뒤에 잘 잤고, 이번 주말 일정이 비어 있어요.",
     [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
   ),
   personalized(
     "s_6",
     "activity",
     "블록으로 높이 쌓기를 해 보세요",
-    "손을 쓰는 놀이를 오래 했어요",
-    "비 소식이 있어요",
+    // 🚨 **이유가 비어 오는 줄.** 서버 `reason` 은 `str | None` 이다 — 라벨만 선 줄을 그리지
+    //    않는다는 규칙(#475)은 빈 값이 목에 하나라도 있어야 돈다.
+    null,
     [evidenceFrom(affinities[1])],
   ),
 ];
