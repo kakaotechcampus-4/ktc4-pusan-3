@@ -1,26 +1,32 @@
-# 식품 대분류 → 식품군 대응표 — 식약처 영양DB `FOOD_CAT1_NM` 값으로 메뉴 카탈로그 행의 food_groups 를 채운다
+# 식품 대분류 → 식품군 대응표 — 식약처 영양DB 행으로 메뉴 카탈로그 행의 food_groups 를 채운다
 # 설계: app/agents/food/food_groups.py · docs/agents/food/Food_Tool_명세.md §0-2
 #
 # 🚨 식품군은 메뉴 카탈로그 행에서 "식품군 출현"과 부족 식품군 가중치를 세는 입력이다. 모델이 고르지 않는다.
-# 🚨 한 대분류가 한 식품군으로 갈리는 것만 적는다. 여러 식품군이 섞이는 대분류(찌개 및 전골류 · 국 및
-#    탕류 · 볶음류 · 면 및 만두류 …)와 쓰임이 갈리는 것(견과류 및 종실류 · 버섯류 · 해조류 · 조미료류)은
-#    줄을 두지 않는다 — 표에 없으면 빈 집합이고 추정하지 않는다.
-# 🚨 검수 전이다. 대분류 이름이 실제 영양DB 응답의 글자와 같은지 대조하지 않았다 — 글자가 다르면 그 줄은
-#    걸리지 않아 식품군이 빌 뿐이고 틀리게 채우지는 않는다. 응답에서 확인한 글자로 고치고 줄을 더한다.
-#    원재료성 행은 `FOOD_CAT1_NM` 이 비고 코드(`FOOD_CAT1_CD`)만 오는 경우가 있다(우유) — 그 행은 이 표로
-#    채워지지 않는다.
+# 🚨 메뉴에 나오는 식품군을 **다** 적을 수 있을 때만 줄을 둔다. 일부만 적으면 그 메뉴는 "식품군을 아는 메뉴" 로
+#    세여 출현 문장이 나가고, 빠진 식품군은 "0일" 이 된다(비빔밥을 곡류만으로 적으면 채소 0일).
+#    여러 식품군이 섞이는 대분류(찌개 및 전골류 · 국 및 탕류 · 볶음류 · 밥류 · 생채·무침류 …)와 쓰임이 갈리는
+#    것(견과 및 종실류 · 버섯류 · 해조류 · 조미료류)은 줄을 두지 않는다 — 표에 없으면 빈 집합이고 추정하지 않는다.
+# 🚨 이름은 실제 영양DB 응답 글자다(품목대표 전체로 대조). 글자가 다르면 그 줄은 걸리지 않는다.
 #
-# 줄 하나 = 대분류 이름 하나. 띄어쓰기는 보지 않는다("곡류및그제품" 도 같다).
-#   category  대분류 이름
+# 찾는 순서 (food_groups.food_groups_of_menu)
+#   1. menus       메뉴 이름이 정확히 같은 줄. 대분류 줄과 다른 메뉴, 대분류 줄이 없는 대분류의 메뉴만 적는다
+#   2. categories  대분류 이름(FOOD_CAT1_NM)
+#   3. codes       원재료성 행이고 대분류 이름이 비었을 때만. 코드(FOOD_CAT1_CD)를 categories 의 이름으로 옮긴다.
+#                  코드 뜻은 DB 그룹마다 다르다(원재료성 09 = 육류, 음식 09 = 전·적 및 부침류)
+#   그래도 없으면 적재 배치가 이름이 같은 레시피의 주재료 식품군을 빌린다(catalog_rows.borrowable_food_groups)
+#
+# 띄어쓰기 · 문장부호는 보지 않는다("우유및유제품류" · "현미밥_쌀" 도 같은 이름이다).
 #   groups    grains · meat_fish_egg_legumes · vegetables · fruits · dairy · fats_sugars 중에서.
 #             food_doc.yaml 이 쓰는 이름과 같아야 한다(어긋나면 읽을 때 실패)
+#   code      두 자리 글자. 따옴표를 꼭 친다 — 09 를 그대로 적으면 YAML 이 숫자 9 로 읽는다
 
-source: "식약처 식품영양성분 DB 식품 대분류 → 6개 식품군 (검수 전)"
-version: "2026.1-draft"
-fetched_at: 2026-10-14
+source: "식약처 식품영양성분 DB 식품 대분류 → 6개 식품군 (응답 글자 대조)"
+version: "2026.1"
+fetched_at: 2026-10-15
 
 categories:
-  - category: "곡류 및 그 제품"
+  # 원재료성
+  - category: "곡류"
     groups: [grains]
   - category: "감자 및 전분류"
     groups: [grains]
@@ -30,7 +36,7 @@ categories:
     groups: [meat_fish_egg_legumes]
   - category: "난류"
     groups: [meat_fish_egg_legumes]
-  - category: "어패류"
+  - category: "어패류 및 기타 수산물"
     groups: [meat_fish_egg_legumes]
   - category: "채소류"
     groups: [vegetables]
@@ -42,3 +48,77 @@ categories:
     groups: [fats_sugars]
   - category: "당류"
     groups: [fats_sugars]
+  # 음식 — 대분류 안 메뉴가 다 한 식품군인 것만. 다른 식품군이 든 메뉴는 menus 에 적는다
+  - category: "나물·숙채류"
+    groups: [vegetables]
+  - category: "김치류"
+    groups: [vegetables]
+
+# 원재료성 행만. 대분류 이름이 비고 코드만 오는 행(품목대표 전체에서 514행)
+codes:
+  - code: "09" # 닭고기 · 쇠고기 403행
+    category: "육류"
+  - code: "10" # 달걀 30행
+    category: "난류"
+  - code: "13" # 우유 6행
+    category: "우유 및 유제품류"
+
+menus:
+  # 나물·숙채류 중 다른 식품군이 든 메뉴
+  - menu: "쑥갓나물_두부"
+    groups: [vegetables, meat_fish_egg_legumes]
+  - menu: "톳나물_두부"
+    groups: [vegetables, meat_fish_egg_legumes]
+  - menu: "숙주나물_숙주_게맛살"
+    groups: [vegetables, meat_fish_egg_legumes]
+  # 가공식품 행인 김치(절임류 또는 조림류 — 대분류에 장아찌 · 조림이 섞인다)
+  - menu: "배추김치"
+    groups: [vegetables]
+  # 밥류 · 죽 및 스프류 중 곡류(감자 · 고구마 포함 — 감자 및 전분류와 같다)만 든 메뉴.
+  # 잡곡밥 · 혼합잡곡밥 · 오곡밥 · 찰밥 · 잡곡죽은 콩 · 팥이 들 수 있어 적지 않는다
+  - menu: "쌀밥"
+    groups: [grains]
+  - menu: "현미밥"
+    groups: [grains]
+  - menu: "현미밥_쌀"
+    groups: [grains]
+  - menu: "순 현미밥"
+    groups: [grains]
+  - menu: "흑미밥"
+    groups: [grains]
+  - menu: "흑미밥_찹쌀"
+    groups: [grains]
+  - menu: "보리밥"
+    groups: [grains]
+  - menu: "잡곡밥_보리"
+    groups: [grains]
+  - menu: "잡곡밥_보리_흑미"
+    groups: [grains]
+  - menu: "잡곡밥_현미"
+    groups: [grains]
+  - menu: "수수밥"
+    groups: [grains]
+  - menu: "차조밥"
+    groups: [grains]
+  - menu: "기장밥"
+    groups: [grains]
+  - menu: "기장밥_찹쌀"
+    groups: [grains]
+  - menu: "귀리밥"
+    groups: [grains]
+  - menu: "율무밥"
+    groups: [grains]
+  - menu: "옥수수밥"
+    groups: [grains]
+  - menu: "감자밥"
+    groups: [grains]
+  - menu: "고구마밥"
+    groups: [grains]
+  - menu: "누룽지"
+    groups: [grains]
+  - menu: "흰죽"
+    groups: [grains]
+  - menu: "쌀죽(흰죽)"
+    groups: [grains]
+  - menu: "찹쌀죽"
+    groups: [grains]

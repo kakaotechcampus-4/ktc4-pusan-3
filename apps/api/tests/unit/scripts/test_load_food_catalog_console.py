@@ -38,3 +38,13 @@ def test_영양DB_를_안_받았으면_받은_행을_말하지_않는다():
 
 def test_도움말은_cp949_콘솔에서도_찍힌다():
     build_parser().format_help().encode("cp949")
+
+
+def test_요약은_식품군이_있는_메뉴_수를_같이_보여준다():
+    # 영양소 분석은 식품군을 아는 메뉴가 절반이 안 되면 "살펴보지 못했어요" 다 — 적재 때 바로 본다
+    text = summary(
+        Loaded(nutrition_rows=5488, nutrition_received=8807, grouped_menus=1300), dry_run=False
+    )
+
+    text.encode("cp949")
+    assert "식품군 있음 1300행" in text

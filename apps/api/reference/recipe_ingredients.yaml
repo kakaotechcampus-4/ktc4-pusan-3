@@ -13,18 +13,18 @@
 #           not_food  음식이 아니다(은박컵 · 랩). names 를 비운다
 #           unknown   이름만으로 구성을 알 수 없다(육수 · 상표 양념) — 그 레시피는 후보에서 빠진다
 #           draft     아직 보지 않았다 (초안 스크립트가 만든 값)
+#   food_group  주재료의 식품군 한 개(food_groups.yaml 의 여섯 이름). 식품군이 없는 재료(물 · 소금 · 장류)는
+#           none. 비어 있으면 아직 안 정한 것이고, 주재료 중 하나라도 비면 그 레시피는 식품군이 빈다.
+#           지금은 영양DB 음식 메뉴와 이름이 같은 레시피의 주재료만 채웠다(#420)
 #   note    초안이 붙인 후보 이유. 검수한 사람 · 날짜를 적어 둔다
 #   rows    이 이름이 나온 재료 행 수 — 많이 나온 것부터 보면 레시피가 빨리 풀린다
 #
-# 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch  (있는 항목은 덮지 않는다)
+# 검수: 696항목 전부 사람이 봤다. 초안이 unknown 후보로 표시한 육수 · 상표 양념 · 소스 28항목은 unknown 이다.
 #
-# 🚨 TEMP(#442) — 지금 이 표는 사람이 검수한 것이 아니다. e2e 를 끝까지 돌려 보려고 전부를 임시로
-#    정리된 것(ok)으로 일괄 처리했다(이름이 빈 5개는 초안 후보대로 not_food). names · codes ·
-#    food_group 은 초안 그대로다. 실제로 검수한 항목은 note 에 검수한 사람 · 날짜를 적는다.
-#    Food 를 켜기 전(remain_task 순서 6)에 실제 검수를 마치고 이 단락을 지운다.
+# 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch  (있는 항목은 덮지 않는다)
 
 source: "농식품정보원 레시피 재료정보 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
-version: "2026.1-temp"
+version: "2026.1"
 fetched_at: 2026-10-11
 
 ingredients:
@@ -37,11 +37,13 @@ ingredients:
     names: ["설탕"]
     codes: []
     status: ok
+    food_group: fats_sugars
     rows: 217
   - raw: "참기름"
     names: ["참기름"]
     codes: []
     status: ok
+    food_group: fats_sugars
     rows: 208
   - raw: "다진마늘"
     names: ["다진마늘"]
@@ -62,11 +64,13 @@ ingredients:
     names: ["물"]
     codes: []
     status: ok
+    food_group: none
     rows: 168
   - raw: "양파"
     names: ["양파"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 136
   - raw: "깨소금"
     names: ["깨소금"]
@@ -82,6 +86,7 @@ ingredients:
     names: ["고춧가루"]
     codes: []
     status: ok
+    food_group: none
     rows: 117
   - raw: "다진파"
     names: ["다진파"]
@@ -92,11 +97,13 @@ ingredients:
     names: ["홍고추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 97
   - raw: "당근"
     names: ["당근"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 95
   - raw: "마늘"
     names: ["마늘"]
@@ -112,16 +119,19 @@ ingredients:
     names: ["계란"]
     codes: [1]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 88
   - raw: "쇠고기"
     names: ["쇠고기"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 81
   - raw: "청고추"
     names: ["청고추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 73
   - raw: "식초"
     names: ["식초"]
@@ -132,41 +142,49 @@ ingredients:
     names: ["고추장"]
     codes: [5]
     status: ok
+    food_group: none
     rows: 70
   - raw: "무"
     names: ["무"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 60
   - raw: "생강"
     names: ["생강"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 59
   - raw: "실파"
     names: ["실파"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 58
   - raw: "표고버섯"
     names: ["표고버섯"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 56
   - raw: "오이"
     names: ["오이"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 55
   - raw: "밀가루"
     names: ["밀가루"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 55
   - raw: "두부"
     names: ["두부"]
     codes: [5]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 55
   - raw: "청주"
     names: ["청주"]
@@ -177,11 +195,13 @@ ingredients:
     names: ["밥"]
     codes: []
     status: ok
+    food_group: grains
     rows: 45
   - raw: "미나리"
     names: ["미나리"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 40
   - raw: "진간장"
     names: ["진간장"]
@@ -197,11 +217,13 @@ ingredients:
     names: ["돼지고기"]
     codes: [10]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 33
   - raw: "오징어"
     names: ["오징어"]
     codes: [17]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 33
   - raw: "다시마"
     names: ["다시마"]
@@ -212,37 +234,43 @@ ingredients:
     names: ["새우"]
     codes: [9]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 32
   - raw: "감자"
     names: ["감자"]
     codes: []
     status: ok
+    food_group: grains
     rows: 31
   - raw: "된장"
     names: ["된장"]
     codes: [5]
     status: ok
+    food_group: none
     rows: 30
   - raw: "깻잎"
     names: ["깻잎"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 28
   - raw: "팽이버섯"
     names: ["팽이버섯"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 28
   - raw: "육수"
     names: ["육수"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 26
   - raw: "콩나물"
     names: ["콩나물"]
     codes: [5]
     status: ok
+    food_group: vegetables
     rows: 25
   - raw: "물엿"
     names: ["물엿"]
@@ -253,6 +281,7 @@ ingredients:
     names: ["피망"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 25
   - raw: "통깨"
     names: ["통깨"]
@@ -273,6 +302,7 @@ ingredients:
     names: ["녹말"]
     codes: []
     status: ok
+    food_group: grains
     rows: 23
   - raw: "맛술"
     names: ["맛술"]
@@ -288,11 +318,13 @@ ingredients:
     names: ["김치"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 22
   - raw: "부추"
     names: ["부추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 20
   - raw: "올리브오일"
     names: ["올리브오일"]
@@ -303,6 +335,7 @@ ingredients:
     names: ["느타리버섯"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 20
   - raw: "호박"
     names: ["호박"]
@@ -313,11 +346,13 @@ ingredients:
     names: ["멸치"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 19
   - raw: "쑥갓"
     names: ["쑥갓"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 19
   - raw: "후추"
     names: ["후추"]
@@ -328,21 +363,25 @@ ingredients:
     names: ["대추"]
     codes: []
     status: ok
+    food_group: fruits
     rows: 18
   - raw: "밤"
     names: ["밤"]
     codes: []
     status: ok
+    food_group: grains
     rows: 17
   - raw: "애호박"
     names: ["애호박"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 16
   - raw: "배"
     names: ["배"]
     codes: []
     status: ok
+    food_group: fruits
     rows: 16
   - raw: "상추"
     names: ["상추"]
@@ -358,6 +397,7 @@ ingredients:
     names: ["쌀"]
     codes: []
     status: ok
+    food_group: grains
     rows: 15
   - raw: "파"
     names: ["파"]
@@ -373,6 +413,7 @@ ingredients:
     names: ["닭"]
     codes: [15]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 15
   - raw: "굴소스"
     names: ["굴소스"]
@@ -383,6 +424,7 @@ ingredients:
     names: ["찹쌀"]
     codes: []
     status: ok
+    food_group: grains
     rows: 14
   - raw: "샐러리"
     names: ["샐러리"]
@@ -398,6 +440,7 @@ ingredients:
     names: ["배추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 14
   - raw: "양배추"
     names: ["양배추"]
@@ -413,11 +456,13 @@ ingredients:
     names: ["잣"]
     codes: [19]
     status: ok
+    food_group: fats_sugars
     rows: 13
   - raw: "죽순"
     names: ["죽순"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 13
   - raw: "양송이버섯"
     names: ["양송이버섯"]
@@ -428,6 +473,7 @@ ingredients:
     names: ["김"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 13
   - raw: "청피망"
     names: ["청피망"]
@@ -438,6 +484,7 @@ ingredients:
     names: ["모시조개"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 12
   - raw: "꿀"
     names: ["꿀"]
@@ -453,11 +500,13 @@ ingredients:
     names: ["가지"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 12
   - raw: "시금치"
     names: ["시금치"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 12
   - raw: "통후추"
     names: ["통후추"]
@@ -473,11 +522,13 @@ ingredients:
     names: ["홍합"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 11
   - raw: "바지락"
     names: ["바지락"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 11
   - raw: "베이컨"
     names: ["베이컨"]
@@ -499,16 +550,19 @@ ingredients:
     names: ["멥쌀"]
     codes: []
     status: ok
+    food_group: grains
     rows: 10
   - raw: "팥"
     names: ["팥"]
     codes: []
     status: ok
+    food_group: grains
     rows: 10
   - raw: "홍피망"
     names: ["홍피망"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 10
   - raw: "계란노른자"
     names: ["계란노른자"]
@@ -529,21 +583,25 @@ ingredients:
     names: ["가래떡"]
     codes: []
     status: ok
+    food_group: grains
     rows: 10
   - raw: "낙지"
     names: ["낙지"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 10
   - raw: "도라지"
     names: ["도라지"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 9
   - raw: "다진쇠고기"
     names: ["다진쇠고기"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 9
   - raw: "바질"
     names: ["바질"]
@@ -559,6 +617,7 @@ ingredients:
     names: ["갓"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 9
   - raw: "게맛살"
     names: ["게맛살"]
@@ -584,6 +643,7 @@ ingredients:
     names: ["고사리"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 8
   - raw: "겨자"
     names: ["겨자"]
@@ -599,6 +659,7 @@ ingredients:
     names: ["굴"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 8
   - raw: "파슬리"
     names: ["파슬리"]
@@ -609,11 +670,13 @@ ingredients:
     names: ["배추김치"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 8
   - raw: "햄"
     names: ["햄"]
     codes: [10]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 대개 돼지고기 — 제품에 따라 닭 · 대두 · 밀 · 우유"
     rows: 8
   - raw: "다시물"
@@ -625,6 +688,7 @@ ingredients:
     names: ["고등어"]
     codes: [7]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 8
   - raw: "생크림"
     names: ["생크림"]
@@ -640,11 +704,13 @@ ingredients:
     names: ["당면"]
     codes: []
     status: ok
+    food_group: grains
     rows: 7
   - raw: "국수"
     names: ["국수"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 7
   - raw: "방울토마토"
     names: ["방울토마토"]
@@ -660,6 +726,7 @@ ingredients:
     names: ["고추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 7
   - raw: "은행"
     names: ["은행"]
@@ -685,6 +752,7 @@ ingredients:
     names: ["닭고기"]
     codes: [15]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 7
   - raw: "레몬"
     names: ["레몬"]
@@ -710,6 +778,7 @@ ingredients:
     names: ["미역"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 6
   - raw: "쌀뜨물"
     names: ["쌀뜨물"]
@@ -758,6 +827,7 @@ ingredients:
     names: ["어묵"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 6
   - raw: "말린표고버섯"
     names: ["말린표고버섯"]
@@ -768,11 +838,13 @@ ingredients:
     names: ["참치"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 6
   - raw: "스파게티"
     names: ["스파게티"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 6
   - raw: "브로콜리"
     names: ["브로콜리"]
@@ -808,6 +880,7 @@ ingredients:
     names: ["소면"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 5
   - raw: "사과"
     names: ["사과"]
@@ -858,6 +931,7 @@ ingredients:
     names: ["갑오징어"]
     codes: [17]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 4
   - raw: "배즙"
     names: ["배즙"]
@@ -868,6 +942,7 @@ ingredients:
     names: ["우엉"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 4
   - raw: "파인애플"
     names: ["파인애플"]
@@ -883,11 +958,13 @@ ingredients:
     names: ["배춧잎"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 4
   - raw: "유부"
     names: ["유부"]
     codes: [5]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 4
   - raw: "멸치젓"
     names: ["멸치젓"]
@@ -898,17 +975,19 @@ ingredients:
     names: ["꽃게"]
     codes: [8]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 4
   - raw: "청정원맛선생"
     names: ["청정원맛선생"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 4
   - raw: "사골"
     names: ["사골"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 4
   - raw: "까나리액젓"
     names: ["까나리액젓"]
@@ -929,11 +1008,13 @@ ingredients:
     names: ["꽁치"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 4
   - raw: "우동면"
     names: ["우동면"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 4
   - raw: "쑥"
     names: ["쑥"]
@@ -994,6 +1075,7 @@ ingredients:
     names: ["쌀국수"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 4
   - raw: "새송이버섯"
     names: ["새송이버섯"]
@@ -1009,6 +1091,7 @@ ingredients:
     names: ["쇠고기육수"]
     codes: [16]
     status: ok
+    food_group: none
     rows: 3
   - raw: "열무"
     names: ["열무"]
@@ -1040,11 +1123,13 @@ ingredients:
     names: ["잔멸치"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 3
   - raw: "갈치"
     names: ["갈치"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 3
   - raw: "통마늘"
     names: ["통마늘"]
@@ -1070,17 +1155,20 @@ ingredients:
     names: ["양"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 소의 위(양) — 곰탕 재료"
     rows: 3
   - raw: "돼지갈비"
     names: ["돼지갈비"]
     codes: [10, 16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 3
   - raw: "라면"
     names: ["라면"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 3
   - raw: "흰후춧가루"
     names: ["흰후춧가루"]
@@ -1111,6 +1199,7 @@ ingredients:
     names: ["미더덕"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 3
   - raw: "깨"
     names: ["깨"]
@@ -1126,6 +1215,7 @@ ingredients:
     names: ["통계피"]
     codes: []
     status: ok
+    food_group: none
     rows: 3
   - raw: "달래"
     names: ["달래"]
@@ -1146,6 +1236,7 @@ ingredients:
     names: ["대하"]
     codes: [9]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 3
   - raw: "다진홍고추"
     names: ["다진홍고추"]
@@ -1166,6 +1257,7 @@ ingredients:
     names: ["바게트"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 3
   - raw: "우스터소스"
     names: ["우스터소스"]
@@ -1196,11 +1288,13 @@ ingredients:
     names: ["칼국수"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 3
   - raw: "라이스페이퍼"
     names: ["라이스페이퍼"]
     codes: []
     status: ok
+    food_group: grains
     rows: 3
   - raw: "가쓰오브시"
     names: ["가쓰오부시"]
@@ -1257,6 +1351,7 @@ ingredients:
     names: ["양지머리"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "수수"
     names: ["수수"]
@@ -1272,6 +1367,7 @@ ingredients:
     names: ["흑임자"]
     codes: []
     status: ok
+    food_group: fats_sugars
     rows: 2
   - raw: "쌈장"
     names: ["쌈장"]
@@ -1281,7 +1377,7 @@ ingredients:
   - raw: "양념장"
     names: ["양념장"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 2
   - raw: "동치미국물"
@@ -1303,6 +1399,7 @@ ingredients:
     names: ["불린미역"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 2
   - raw: "생태"
     names: ["생태"]
@@ -1327,7 +1424,7 @@ ingredients:
   - raw: "소스"
     names: ["소스"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 2
   - raw: "케이퍼"
@@ -1338,7 +1435,7 @@ ingredients:
   - raw: "햇살담은간장"
     names: ["햇살담은간장"]
     codes: [5]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 2
   - raw: "참빛고운포도씨유"
@@ -1371,6 +1468,7 @@ ingredients:
     names: ["갈비"]
     codes: [10, 16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "토마토케찹"
     names: ["토마토케첩"]
@@ -1382,6 +1480,7 @@ ingredients:
     names: ["청국장"]
     codes: [5]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "김칫국물"
     names: ["김칫국물"]
@@ -1392,16 +1491,19 @@ ingredients:
     names: ["흰콩"]
     codes: [5]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "조기"
     names: ["조기"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "명란"
     names: ["명란"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "곤약"
     names: ["곤약"]
@@ -1412,6 +1514,7 @@ ingredients:
     names: ["도가니"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "통생강"
     names: ["통생강"]
@@ -1422,6 +1525,7 @@ ingredients:
     names: ["조갯살"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "칵테일새우"
     names: ["칵테일새우"]
@@ -1442,6 +1546,7 @@ ingredients:
     names: ["잣가루"]
     codes: [19]
     status: ok
+    food_group: fats_sugars
     rows: 2
   - raw: "맛살"
     names: ["맛살"]
@@ -1457,17 +1562,20 @@ ingredients:
     names: ["홀토마토"]
     codes: [12]
     status: ok
+    food_group: vegetables
     rows: 2
   - raw: "프랑크소시지"
     names: ["프랑크소시지"]
     codes: [10]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 대개 돼지고기 — 제품에 따라 닭 · 대두 · 밀 · 우유"
     rows: 2
   - raw: "곱창"
     names: ["곱창"]
     codes: [10, 16]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 소 · 돼지 곱창 — 레시피를 보고 좁힌다"
     rows: 2
   - raw: "강력분"
@@ -1504,6 +1612,7 @@ ingredients:
     names: ["취나물"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 2
   - raw: "다진풋고추"
     names: ["다진풋고추"]
@@ -1529,16 +1638,19 @@ ingredients:
     names: ["정향"]
     codes: []
     status: ok
+    food_group: none
     rows: 2
   - raw: "송이버섯"
     names: ["송이버섯"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 2
   - raw: "불린쌀"
     names: ["불린쌀"]
     codes: []
     status: ok
+    food_group: grains
     rows: 2
   - raw: "꽃상추"
     names: ["꽃상추"]
@@ -1549,6 +1661,7 @@ ingredients:
     names: ["코다리"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "연어알"
     names: ["연어알"]
@@ -1559,6 +1672,7 @@ ingredients:
     names: ["전복"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "멸치다시물"
     names: ["멸치다시물"]
@@ -1574,11 +1688,13 @@ ingredients:
     names: ["생굴"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "닭다리"
     names: ["닭다리"]
     codes: [15]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "들깻가루"
     names: ["들깻가루"]
@@ -1599,6 +1715,7 @@ ingredients:
     names: ["채썬쇠고기"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "[멸치장국] 국멸치"
     names: ["국멸치"]
@@ -1609,6 +1726,7 @@ ingredients:
     names: ["쫄면"]
     codes: [6]
     status: ok
+    food_group: grains
     rows: 2
   - raw: "흰떡"
     names: ["흰떡"]
@@ -1619,6 +1737,7 @@ ingredients:
     names: ["열무김치"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 2
   - raw: "다진고추"
     names: ["다진고추"]
@@ -1670,6 +1789,7 @@ ingredients:
     names: ["장어"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 2
   - raw: "잔새우"
     names: ["잔새우"]
@@ -1715,6 +1835,7 @@ ingredients:
     names: ["절인 배추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 2
   - raw: "소금, 후추"
     names: ["소금", "후추"]
@@ -1778,11 +1899,13 @@ ingredients:
     names: ["청동호박"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "카레"
     names: ["카레"]
     codes: []
     status: ok
+    food_group: none
     rows: 1
   - raw: "연어"
     names: ["연어"]
@@ -1792,13 +1915,13 @@ ingredients:
   - raw: "페스토소스"
     names: ["페스토소스"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "모듬채소"
     names: ["모듬채소"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "삶은 문어살"
@@ -1840,6 +1963,7 @@ ingredients:
     names: ["재첩"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "도미"
     names: ["도미"]
@@ -1879,7 +2003,7 @@ ingredients:
   - raw: "양념간장"
     names: ["양념간장"]
     codes: [5]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "칼국수면"
@@ -1906,11 +2030,13 @@ ingredients:
     names: ["동태"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "통북어"
     names: ["통북어"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "풋배추"
     names: ["풋배추"]
@@ -1931,6 +2057,7 @@ ingredients:
     names: ["아구"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "싸리버섯"
     names: ["싸리버섯"]
@@ -1953,6 +2080,7 @@ ingredients:
     names: ["소 잡뼈"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 소뼈 — 육수에 쇠고기 성분"
     rows: 1
   - raw: "밀국수"
@@ -1964,6 +2092,7 @@ ingredients:
     names: ["연근"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "냉이"
     names: ["냉이"]
@@ -1974,11 +2103,13 @@ ingredients:
     names: ["더덕"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "꽈리고추"
     names: ["꽈리고추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "마른오징어"
     names: ["마른오징어"]
@@ -1999,6 +2130,7 @@ ingredients:
     names: ["문어"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "통도라지"
     names: ["통도라지"]
@@ -2029,11 +2161,12 @@ ingredients:
     names: ["골뱅이통조림"]
     codes: [18]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "후루츠칵테일"
     names: ["후루츠칵테일"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "은박컵"
@@ -2070,7 +2203,7 @@ ingredients:
   - raw: "오렌지마요네즈"
     names: ["오렌지마요네즈"]
     codes: [1]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "앤다이브"
@@ -2092,7 +2225,7 @@ ingredients:
   - raw: "레몬드레싱"
     names: ["레몬드레싱"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "레몬주스"
@@ -2104,6 +2237,7 @@ ingredients:
     names: ["아귀"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "드라이이스트"
     names: ["드라이이스트"]
@@ -2134,6 +2268,7 @@ ingredients:
     names: ["쇠고기(힘줄없는부위)"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "식용유/소금/참기름/잣가루"
     names: ["식용유", "소금", "참기름", "잣가루"]
@@ -2225,6 +2360,7 @@ ingredients:
     names: ["말린새우"]
     codes: [9]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "김치잎"
     names: ["김치잎"]
@@ -2249,7 +2385,7 @@ ingredients:
   - raw: "맛국물"
     names: ["맛국물"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "생새우"
@@ -2277,6 +2413,7 @@ ingredients:
     names: ["게"]
     codes: [8]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "얼음물"
     names: ["얼음물"]
@@ -2306,7 +2443,7 @@ ingredients:
   - raw: "오곡곡물"
     names: ["오곡곡물"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "광어"
@@ -2405,6 +2542,7 @@ ingredients:
     names: ["고들빼기"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "두릅"
     names: ["두릅"]
@@ -2454,7 +2592,7 @@ ingredients:
   - raw: "조미료"
     names: ["조미료"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "김칫잎"
@@ -2465,13 +2603,14 @@ ingredients:
   - raw: "크림수프"
     names: ["크림수프"]
     codes: [2]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "순대"
     names: ["순대"]
     codes: [10]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 돼지 창자 — 속 재료(당면 · 찹쌀 · 선지)는 제품마다"
     rows: 1
   - raw: "이스트"
@@ -2488,6 +2627,7 @@ ingredients:
     names: ["떡"]
     codes: []
     status: ok
+    food_group: grains
     rows: 1
   - raw: "해삼"
     names: ["해삼"]
@@ -2508,6 +2648,7 @@ ingredients:
     names: ["오징어채"]
     codes: [17]
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "청장"
     names: ["청장"]
@@ -2528,6 +2669,7 @@ ingredients:
     names: ["대구"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "기름"
     names: ["기름"]
@@ -2538,6 +2680,7 @@ ingredients:
     names: ["중국부추"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "닭살"
     names: ["닭살"]
@@ -2569,6 +2712,7 @@ ingredients:
     names: ["파래"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "키위"
     names: ["키위"]
@@ -2623,7 +2767,7 @@ ingredients:
   - raw: "냉동만두"
     names: ["냉동만두"]
     codes: [6]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "올리브"
@@ -2660,6 +2804,7 @@ ingredients:
     names: ["해초"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "산초가루"
     names: ["산초가루"]
@@ -2684,7 +2829,7 @@ ingredients:
   - raw: "돈까스소스"
     names: ["돈까스소스"]
     codes: [6, 10]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "바나나"
@@ -2735,7 +2880,7 @@ ingredients:
   - raw: "청정원굴소스"
     names: ["청정원굴소스"]
     codes: [18]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "치자"
@@ -2802,7 +2947,7 @@ ingredients:
   - raw: "양념"
     names: ["양념"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "영양부추"
@@ -2819,11 +2964,13 @@ ingredients:
     names: ["무말랭이"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "육회"
     names: ["육회"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 날 쇠고기 — 연령 규칙(날음식)으로도 막힌다"
     rows: 1
   - raw: "계란후라이"
@@ -2866,18 +3013,21 @@ ingredients:
     names: ["쇠뼈"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 소뼈 — 육수에 쇠고기 성분"
     rows: 1
   - raw: "쇠꼬리"
     names: ["쇠꼬리"]
     codes: [16]
     status: ok
+    food_group: meat_fish_egg_legumes
     note: "사전이 모르는 이름 — 소꼬리"
     rows: 1
   - raw: "팔각"
     names: ["팔각"]
     codes: []
     status: ok
+    food_group: none
     rows: 1
   - raw: "얼갈이배추"
     names: ["얼갈이배추"]
@@ -2919,11 +3069,13 @@ ingredients:
     names: ["근대"]
     codes: []
     status: ok
+    food_group: vegetables
     rows: 1
   - raw: "순창콩된장"
     names: ["순창콩된장"]
     codes: [5]
     status: ok
+    food_group: none
     rows: 1
   - raw: "붉은갓"
     names: ["붉은갓"]
@@ -3060,7 +3212,7 @@ ingredients:
   - raw: "바베큐소스"
     names: ["바베큐소스"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "비트"
@@ -3093,6 +3245,7 @@ ingredients:
     names: ["참치통조림"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "꽃빵"
     names: ["꽃빵"]
@@ -3107,7 +3260,7 @@ ingredients:
   - raw: "청정원국선생"
     names: ["청정원국선생"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "가쯔오브시"
@@ -3119,19 +3272,19 @@ ingredients:
   - raw: "청정원순창쌈장"
     names: ["청정원순창쌈장"]
     codes: [5]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "청정원어장"
     names: ["청정원어장"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "[육수] 시판용장국"
     names: ["시판용장국"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "새싹채소"
@@ -3152,7 +3305,7 @@ ingredients:
   - raw: "과일통조림"
     names: ["과일통조림"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "미니파프리카"
@@ -3178,13 +3331,14 @@ ingredients:
   - raw: "샐러드채소"
     names: ["샐러드채소"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "메기"
     names: ["메기"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "잉어"
     names: ["잉어"]
@@ -3229,7 +3383,7 @@ ingredients:
   - raw: "아기된장소스"
     names: ["아기된장소스"]
     codes: [5]
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "쇠고기(안심 또는 등심)"
@@ -3294,6 +3448,7 @@ ingredients:
     names: ["낙지다리"]
     codes: []
     status: ok
+    food_group: meat_fish_egg_legumes
     rows: 1
   - raw: "감동젓"
     names: ["감동젓"]
@@ -3499,7 +3654,7 @@ ingredients:
   - raw: "허브솔트"
     names: ["허브솔트"]
     codes: []
-    status: ok
+    status: unknown
     note: "이름만으로 구성을 알 수 없음 → unknown 후보"
     rows: 1
   - raw: "머드터드"

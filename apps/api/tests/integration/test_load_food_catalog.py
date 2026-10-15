@@ -273,3 +273,90 @@ async def test_받은_영양DB_행과_적재한_메뉴_수를_따로_센다(sess
     )
 
     assert (loaded.nutrition_received, loaded.nutrition_rows) == (3, 1)
+
+
+def grouped_table():
+    return parse_ingredient_table(
+        {
+            "source": "mafra_recipe",
+            "version": "test",
+            "fetched_at": "2026-10-15",
+            "ingredients": [
+                {
+                    "raw": "두부",
+                    "names": ["두부"],
+                    "codes": [5],
+                    "status": "ok",
+                    "food_group": "meat_fish_egg_legumes",
+                },
+                {
+                    "raw": "애호박",
+                    "names": ["애호박"],
+                    "codes": [],
+                    "status": "ok",
+                    "food_group": "vegetables",
+                },
+                {"raw": "된장", "names": ["된장"], "codes": [5], "status": "ok"},
+            ],
+        }
+    )
+
+
+GROUPED_SYNC = RecipeSync(
+    recipes=(
+        RawRecipe(
+            "1",
+            "된장찌개",
+            ingredients=(
+                RawIngredient("두부", role="주재료"),
+                RawIngredient("애호박", role="주재료"),
+                RawIngredient("된장", role="양념"),
+            ),
+        ),
+    ),
+    recipe_rows=1,
+    ingredient_rows=3,
+    orphan_ingredient_rows=0,
+    unnamed_ingredient_rows=0,
+)
+
+
+async def _grouped_sync():
+    return GROUPED_SYNC
+
+
+async def _never():
+    raise AssertionError("--nutrition 만 돌릴 때는 레시피를 받지 않는다")
+
+
+async def _menu_groups(session) -> dict[str, list[str]]:
+    rows = (await session.scalars(select(MenuCatalog))).all()
+    return {row.menu_key: sorted(row.food_groups) for row in rows}
+
+
+async def test_대응표에_없는_메뉴는_이름이_같은_레시피의_식품군을_빌린다(session, opener):
+    loaded = await run(
+        nutrition=True,
+        recipes=True,
+        fetch_nutrition=_rows,
+        fetch_recipes=_grouped_sync,
+        open_session=opener,
+        table=grouped_table,
+        now=NOW,
+    )
+
+    groups = await _menu_groups(session)
+    assert groups["된장찌개"] == ["meat_fish_egg_legumes", "vegetables"]
+    assert groups["미역국"] == []  # 이름이 같은 레시피가 없다 — 추정하지 않는다
+    assert loaded.grouped_menus == 1
+
+
+async def test_영양DB_만_다시_받아도_적재된_레시피에서_빌린다(session, opener):
+    # 배치가 영양DB 행을 새 값으로 덮는다 — 레시피를 안 받았다고 빌린 식품군이 지워지면 안 된다
+    common = dict(fetch_nutrition=_rows, open_session=opener, table=grouped_table, now=NOW)
+    await run(nutrition=True, recipes=True, fetch_recipes=_grouped_sync, **common)
+
+    loaded = await run(nutrition=True, recipes=False, fetch_recipes=_never, **common)
+
+    assert (await _menu_groups(session))["된장찌개"] == ["meat_fish_egg_legumes", "vegetables"]
+    assert loaded.grouped_menus == 1

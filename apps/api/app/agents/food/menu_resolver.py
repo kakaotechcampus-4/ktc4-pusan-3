@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from app.agents.food.food_groups import food_groups_of_category
+from app.agents.food.food_groups import food_groups_of_menu
 from app.agents.food.nutrition_source import NutritionFacts, pick_nutrition
 from app.agents.food.store.ports import MenuCatalogRow, MenuCatalogStore, MenuSource
 from app.agents.food.tools.safety import menu_codes
@@ -82,11 +82,19 @@ class Unresolved:
 MenuResolution = Resolved | Unresolved
 
 
-def nutrition_catalog_row(menu_key: str, facts: NutritionFacts, *, now: datetime) -> MenuCatalogRow:
+def nutrition_catalog_row(
+    menu_key: str,
+    facts: NutritionFacts,
+    *,
+    now: datetime,
+    borrowed: frozenset[str] = frozenset(),
+) -> MenuCatalogRow:
     """영양DB 에서 고른 행 → `menu_catalog` 행. 요청 중 조회와 배치(FT-19)가 이 함수 하나를 쓴다.
 
     배치가 넣은 행과 요청 중에 넣은 행이 칸 하나라도 다르면 같은 메뉴가 어느 경로로 들어왔느냐에
-    따라 다르게 판정된다.
+    따라 다르게 판정된다. 하나만 다르다 — `borrowed`(이름이 같은 레시피의 식품군, #420)는 배치만
+    넘긴다. 요청 중 조회는 레시피를 찾지 않아서 대응표에 없는 음식 메뉴는 빈 채로 들어가고, 다음
+    배치가 영양DB 행을 덮을 때 채운다.
     """
     return MenuCatalogRow(
         menu_key=menu_key,
@@ -102,8 +110,9 @@ def nutrition_catalog_row(menu_key: str, facts: NutritionFacts, *, now: datetime
         # `recipe_catalog` 에만 있다)
         ingredients=(),
         allergen_codes=menu_codes((facts.name,)),
-        # 영양DB 의 식품 대분류를 대응표로 옮긴다. 표에 없으면 비어 있다 — 추정하지 않는다
-        food_groups=food_groups_of_category(facts.category),
+        # 대응표(메뉴 이름 → 대분류 이름 → 원재료성 코드)로 옮기고, 없으면 배치가 빌려 준 레시피
+        # 식품군. 그래도 없으면 비어 있다 — 추정하지 않는다
+        food_groups=food_groups_of_menu(menu_key, facts) or borrowed,
         source_version=facts.source_version,
     )
 
