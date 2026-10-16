@@ -42,8 +42,9 @@ import { BACK } from "@/lib/view-transition";
  * 🚨 **승인 게이트가 아니다.** 게이트는 캘린더 쓰기 · 건강 기록 확정 딱 2곳이다 (최상위 §2) —
  *    `btn-approve` 도 `caution` 도 쓰지 않는다. 되돌릴 수 없는 5곳도 아니라 `Idempotency-Key` 가 없다.
  *
- * 🚨 **적은 글을 남기지 않는다.** 이 컴포넌트의 상태(`useState`)에만 있고, 보내거나 화면을 떠나면
- *    사라진다. 콘솔에 찍지 않고, `persist` 스토어 · `localStorage` · `sessionStorage` 로 옮기지 않는다.
+ * 🚨 **적은 글을 남기지 않는다.** 이 컴포넌트의 상태(`useState`)와 보내는 동안의 요청 캐시에만
+ *    있고(`gcTime: 0` — 화면을 떠나면 바로 버린다), 보내거나 화면을 떠나면 사라진다. 콘솔에 찍지 않고,
+ *    `persist` 스토어 · `localStorage` · `sessionStorage` 로 옮기지 않는다.
  *    `new Error()` 에도 싣지 않는다 (`docs/web/api-client-v1.md` §4). 서버도 DB 에만 두고 로그에 안 찍는다.
  *
  * 🚨 **열람 · 삭제를 요청하는 공식 창구가 아니다.** 이 양식은 답을 보내는 길이 없어서, 답이 필요한
@@ -91,7 +92,7 @@ function ReportScreen() {
               내 정보 열람이나 삭제처럼 답이 필요한 요청은 이메일(
               <a
                 href={`mailto:${SERVICE_EMAIL}`}
-                className="decoration-line-strong -my-3 inline-block py-3 break-all underline decoration-1 underline-offset-4"
+                className="decoration-line-strong -my-3.5 inline-block py-3.5 break-all underline decoration-1 underline-offset-4"
               >
                 {SERVICE_EMAIL}
               </a>
@@ -118,6 +119,11 @@ function ReportForm({ onSent }: { onSent: () => void }) {
 
   const report = useMutation({
     mutationFn: (body: ReportRequest) => api.post<ReportResponse>("/reports", body),
+    // 🚨 오프라인이어도 바로 보낸다. 기본값("online")은 요청을 보내지도 실패시키지도 않고 멈춰서,
+    //    버튼이 "보내는 중이에요" 에 머문다. 보내 보고 못 닿으면 "확인하지 못했어요" 카드가 선다.
+    networkMode: "always",
+    // 🚨 보낸 글(`variables`)을 요청 캐시에 두지 않는다 — 기본은 화면을 떠난 뒤에도 5분 들고 있다.
+    gcTime: 0,
     onSuccess: onSent,
     onSettled: () => {
       sending.current = false;
@@ -200,7 +206,7 @@ function ReportForm({ onSent }: { onSent: () => void }) {
       <div className="flex flex-col gap-1.5">
         <TextArea
           label="어떤 일이었는지 적어 주세요"
-          hint="어느 화면에서, 어떤 내용이었는지 적어 주시면 확인하기 쉬워요. 아이의 실명이나 연락처는 적지 말아 주세요."
+          hint="어느 화면에서, 어떤 내용이었는지 적어 주시면 확인하기 쉬워요. 1000자까지 적을 수 있어요. 아이의 실명이나 연락처는 적지 말아 주세요."
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           maxLength={REPORT_MESSAGE_MAX_LENGTH}
@@ -214,7 +220,8 @@ function ReportForm({ onSent }: { onSent: () => void }) {
       </div>
 
       <div className="flex flex-col gap-3">
-        {report.isError ? <ReportFailed error={report.error} /> : null}
+        {/* 실패할 때마다 새로 세운다(`key`) — 다시 눌러 또 실패해도 포커스가 카드로 온다. */}
+        {report.isError ? <ReportFailed key={report.submittedAt} error={report.error} /> : null}
         <Button
           type="submit"
           block
@@ -236,13 +243,42 @@ function ReportForm({ onSent }: { onSent: () => void }) {
  * 🚨 **서버가 거절한 것과 응답을 못 받은 것을 같은 말로 하지 않는다** (탈퇴 화면과 같은 구분).
  *    응답만 잃었으면 이미 전해졌을 수 있다 — "보내지 못했어요" 라고 단정하지 않는다.
  *    다시 눌러 두 번 쌓여도 되돌릴 수 없는 일이 아니라서 다시 누르게 한다.
+ * 🚨 **포커스를 카드로 옮긴다.** 보내는 동안 버튼이 꺼지면서 포커스가 `<body>` 로 떨어져, 두면
+ *    키보드 사용자가 맨 위부터 다시 지나와야 한다 (보낸 뒤 안내와 같은 처리).
  */
 function ReportFailed({ error }: { error: Error }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.focus();
+  }, []);
+
+  return (
+    <div ref={box} tabIndex={-1}>
+      <ReportFailedMessage error={error} />
+    </div>
+  );
+}
+
+function ReportFailedMessage({ error }: { error: Error }) {
   if (isApiError(error, "too_many_reports")) {
-    // 문구는 서버 것을 그대로 쓴다 — 횟수 · 기간은 서버 설정값이다.
+    // 문구는 서버 것을 그대로 쓴다 — 횟수 · 기간은 서버 설정값이다. 서버 문구가 "이메일로" 라고만
+    // 해서, 키보드가 올라온 채로 맨 위까지 올라가지 않게 주소를 카드 안에 한 번 더 적는다.
+    // 🚨 링크가 아니라 글자다 — 맨 위 안내에 같은 이름의 링크가 이미 있다 (한 화면에 같은 이름의
+    //    링크를 둘 두지 않는다 · `docs/web/components-v1.md` §1).
     return (
       <CardFailed>
         <p>{error.message}</p>
+        <p className="mt-1 break-all">{SERVICE_EMAIL}</p>
+      </CardFailed>
+    );
+  }
+
+  // 화면이 미리 막는 것(빈 글 · 길이 · NUL)을 지나 서버가 거절했다 — 다시 눌러도 같으니 고치게 한다.
+  if (isApiError(error, "validation_failed")) {
+    return (
+      <CardFailed>
+        <p>보낼 수 없는 내용이 섞여 있어요. 적은 내용은 그대로 있어요.</p>
+        <p className="mt-1">내용을 고쳐 다시 보내 주세요.</p>
       </CardFailed>
     );
   }

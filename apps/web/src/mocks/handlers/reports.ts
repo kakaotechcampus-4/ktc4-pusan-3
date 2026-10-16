@@ -19,7 +19,16 @@ import { apiError, networkDelay, url } from "./helpers";
  *    목은 받은 것을 아무 데도 쓰지 않으므로 리셋할 상태도 없다.
  * 🚨 **하루 한도(보호자당 24시간 10건)는 세지 않는다.** 화면이 보는 것은 429 를 받았을 때의
  *    모양이라 `report_limit` 시나리오로 만든다 (04 의 `daily_limit` 과 같은 판단).
+ * `report_unreached` 는 첫 요청만 서버에 닿기 전에 끊는다 — 다시 누르면 닿는다 (탈퇴의
+ * `withdraw_unreached` 와 같다).
  */
+
+/** `report_unreached` 에서 이미 한 번 끊어 봤는가. 🚨 한 번만 끊는다 — 다시 누르면 닿아야 한다. */
+let unreachedOnce = false;
+
+export function resetReportState(): void {
+  unreachedOnce = false;
+}
 
 const KEYS = ["category", "message"] as const;
 
@@ -39,6 +48,10 @@ function isReportRequest(body: unknown): body is ReportRequest {
 export const reportHandlers = [
   http.post(url("/reports"), async ({ request }) => {
     await networkDelay();
+    if (currentScenario() === "report_unreached" && !unreachedOnce) {
+      unreachedOnce = true;
+      return HttpResponse.error();
+    }
     const body: unknown = await request.json().catch(() => null);
     if (!isReportRequest(body)) {
       return apiError(400, "validation_failed", "보낼 내용을 확인해 주세요");

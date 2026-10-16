@@ -3792,4 +3792,18 @@ describe("㉗ 문제 알리기 — 서버 #488 과 같은 계약 (#487)", () => 
       setScenario("default");
     }
   });
+
+  it("report_unreached — 한 번만 서버에 닿기 전에 끊긴다 (다시 보내면 닿는다)", async () => {
+    setScenario("report_unreached");
+    try {
+      const body = { category: "bug", message: "지어낸 문장" } satisfies ReportRequest;
+      const caught = await api.post("/reports", body).catch((e: unknown) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+
+      const created = await api.post<ReportResponse>("/reports", body);
+      expect(created.id).toBeTruthy();
+    } finally {
+      setScenario("default");
+    }
+  });
 });

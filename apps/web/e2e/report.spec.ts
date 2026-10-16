@@ -134,3 +134,47 @@ test("고객센터의 '질문에 없는 일' 도 이 화면으로 온다 — 옛
   await expect(page).toHaveURL(new RegExp(`${REPORT}$`));
   await expect(page.getByRole("heading", { name: "문제 알리기" })).toBeVisible();
 });
+
+test("붙여 넣은 글에 섞인 NUL 은 떼고 보낸다 — 서버가 400 으로 거절하는 글자다", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await page.goto(REPORT);
+  await choose(page, "기타");
+  await messageBox(page).fill("지어낸\u0000문장");
+  await page.getByRole("button", { name: "보내기" }).click();
+  await expect(page.getByText("알려 주셔서 고마워요. 확인하고 필요하면 조치할게요.")).toBeVisible();
+
+  const posts = writes(calls, "POST", /^\/reports$/);
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.body).toEqual({ category: "other", message: "지어낸문장" });
+});
+
+test.describe("서버에 닿기 전에 끊기면", () => {
+  test.use({ scenario: "report_unreached", allowFailedApi: true });
+
+  test("단정하지 않는 카드로 포커스가 가고, 글은 그대로이며, 다시 누르면 닿는다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(REPORT);
+    await choose(page, "앱이 이상하게 동작해요");
+    await messageBox(page).fill(MESSAGE);
+    await page.getByRole("button", { name: "보내기" }).click();
+
+    const failed = page.getByText("전해졌는지 확인하지 못했어요. 적은 내용은 그대로 있어요.");
+    await expect(failed).toBeVisible();
+    // 보내는 동안 버튼이 꺼져 포커스가 body 로 떨어진다 — 카드로 옮겨 와야 한다.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.textContent ?? ""))
+      .toContain("전해졌는지 확인하지 못했어요");
+    await expect(messageBox(page)).toHaveValue(MESSAGE);
+
+    await page.getByRole("button", { name: "보내기" }).click();
+    await expect(
+      page.getByText("알려 주셔서 고마워요. 확인하고 필요하면 조치할게요."),
+    ).toBeVisible();
+    expect(writes(calls, "POST", /^\/reports$/).length).toBeGreaterThanOrEqual(1);
+    await expectNoGate(page);
+  });
+});

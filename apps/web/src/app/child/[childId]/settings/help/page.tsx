@@ -167,7 +167,7 @@ function HelpScreen() {
           위 질문에 없는 일은{" "}
           <Link
             href={`/child/${childId}/settings/report`}
-            className="text-ink-muted decoration-line-strong -my-3 inline-block py-3 underline decoration-1 underline-offset-4"
+            className="text-ink-muted decoration-line-strong -my-3.5 inline-block py-3.5 underline decoration-1 underline-offset-4"
           >
             문제 알리기
           </Link>
