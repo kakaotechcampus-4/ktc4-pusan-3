@@ -32,7 +32,14 @@ import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
-import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
+import {
+  isHealthObservation,
+  type Agent,
+  type EventDraft,
+  type Observation,
+  type StoredRef,
+} from "@/lib/api/types";
+import { formatEventTime } from "@/lib/format";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -68,6 +75,8 @@ export function RunReply({
   onAnswer,
   onOpenDrafts,
   onPickOffer,
+  archived = false,
+  deleted = NO_REFS,
 }: {
   /** 안내의 목적지를 아이 경로 아래에 붙이는 데 쓴다 (`GUIDANCE_DESTINATION`). */
   childId: string;
@@ -93,6 +102,14 @@ export function RunReply({
   onAnswer: () => void;
   onOpenDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
+  /**
+   * 서버가 남긴 지난 턴이다 (#228 · `lib/chat-history.ts`). 🚨 **그날 화면과 같게 그리되, 지금 누르면 막다른
+   * 길이 되는 것만 뺀다** — 일정 초안의 "확인하고 넣기"(초안은 서버에 남지 않는다)와 부분 실패의 "다시 준비하기"
+   * (05 의 실패 맥락은 15분이다). "후보 보기" 는 남긴다 — 05 가 그 run 의 추천을 지금 상태로 거른다.
+   */
+  archived?: boolean;
+  /** 지난 턴에서 저장했지만 보호자가 지운 기록. 내용 없이 "이 기록은 지웠어요" 한 줄씩 선다. */
+  deleted?: readonly StoredRef[];
 }) {
   if (run.status === "idle" || run.status === "streaming") {
     // 단계 문구는 서버가 보낸 `step.label` 을 그대로 쓴다.
@@ -148,7 +165,9 @@ export function RunReply({
     );
   }
 
-  const noChildObservation = run.observations.length === 0;
+  /** 🚨 지운 기록도 그날 저장한 것이다 — 빼면 지운 뒤 지난 대화가 "저장하지 않았어요" 로 바뀐다. */
+  const savedCount = run.observations.length + deleted.length;
+  const noChildObservation = savedCount === 0;
   /**
    * 🚨 **저장한 것이 없으면 "저장했어요" 라고 하지 않는다.** "이번 주말에 공원 산책 가기" 처럼
    *    앞으로의 계획만 말한 한 줄은 아이에 대한 관찰이 아니라서 쌓을 것이 없고, 일정도 아직
@@ -175,7 +194,8 @@ export function RunReply({
    *    때만 이 길로 닫는다. 그래서 아래의 "저장하지 않았어요" 류 문장을 전부 세우지 않는다.
    */
   const interrupted = run.interrupted;
-  const retryHref = run.partial ? partialRetryHref(run.partial, { childId, runId }) : null;
+  const retryHref =
+    run.partial && !archived ? partialRetryHref(run.partial, { childId, runId }) : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -265,12 +285,21 @@ export function RunReply({
         )
       ) : (
         <section>
-          <h3 className="text-label text-brand">기록 {run.observations.length}건 저장됨</h3>
+          <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
           <Card className="divide-line mt-2 flex flex-col divide-y">
             {run.observations.map((observation) => (
               <ObservationRow key={observation.id} observation={observation} />
+            ))}
+            {/* 🚨 **내용을 싣지 않는다** — 서버도 id 만 준다. 지운 기록이 지난 대화에서 되살아나면 안 된다 (#228). */}
+            {deleted.map((ref) => (
+              <p
+                key={`${ref.kind}:${ref.id}`}
+                className="text-body-sm text-ink-subtle py-3 first:pt-0 last:pb-0"
+              >
+                이 기록은 지웠어요.
+              </p>
             ))}
           </Card>
         </section>
@@ -293,7 +322,9 @@ export function RunReply({
         </section>
       ) : null}
 
-      {run.drafts.length > 0 ? (
+      {run.drafts.length > 0 && archived ? (
+        <ArchivedDraftsCard drafts={run.drafts} />
+      ) : run.drafts.length > 0 ? (
         <DraftsCard
           found={run.drafts.length}
           remaining={remainingDrafts}
@@ -543,6 +574,42 @@ function DraftsCard({
 }
 
 /**
+ * 지난 턴의 일정 초안 (#228). 🚨 **넣는 길이 없다** — 초안은 서버에 남지 않아서(9/21) 그때 내용만 있고,
+ * 넣었는지도 모른다. 여기서 넣게 하면 이미 넣은 일정이 한 번 더 들어간다. 그래서 무엇을 찾았는지만 적고
+ * 캘린더를 가리킨다. 🚨 초안 보관함(`stores/event-draft.ts`)에도 얹지 않는다 (`lib/chat-history.ts`).
+ */
+function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
+  return (
+    <section>
+      <h3 className="text-label text-brand">그때 찾은 일정</h3>
+      <Card className="mt-2">
+        <div className="flex items-start gap-3">
+          <IconTile icon={CalendarPlus} tone="neutral" />
+          <div className="min-w-0">
+            <ul className="flex flex-col gap-1">
+              {drafts.map((draft) => (
+                <li key={draft.draft_id}>
+                  <p className="text-body text-ink">{draft.event.title}</p>
+                  {/* 🚨 일자를 못 읽은 초안은 비어 온다 — 오늘로 채우지 않는다 (`EventDraftFields.starts_at`). */}
+                  {draft.event.starts_at ? (
+                    <p className="text-caption text-ink-subtle">
+                      {formatEventTime(draft.event.starts_at, draft.event.all_day)}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            <p className="text-body-sm text-ink-muted mt-2">
+              지난 대화의 초안이라 여기서는 넣을 수 없어요. 넣은 일정은 캘린더에서 볼 수 있어요.
+            </p>
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+/**
  * 04 의 제목. 🚨 **제목이 화면 내용을 앞질러 말하면 아래 카드가 전부 그 말을 뒤집는다.**
  *
  * 다섯 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
@@ -775,6 +842,8 @@ function NoteCard({
     </Card>
   );
 }
+
+const NO_REFS: readonly StoredRef[] = [];
 
 function ObservationRow({ observation }: { observation: Observation }) {
   const agent = observationAgent(observation.kind);

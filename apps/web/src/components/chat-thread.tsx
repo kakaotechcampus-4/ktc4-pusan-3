@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { isApiError, type Agent } from "@/lib/api";
+import type { PastTurn } from "@/lib/chat-history";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 import { useDraftText } from "@/stores/draft";
@@ -31,15 +32,26 @@ import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
  *    어디서 보냈는지에 따라 다른 자리 · 다른 문구로 섰다.
  * 🚨 **하루가 한 덩어리다.** 날짜 경계는 한국 시간 자정이고 코드가 정한다 (`ChatTurn.day`).
  *    자정을 넘겨 온 답은 질문이 나온 날에 붙으므로, 날짜 머리줄 아래 순서는 보낸 순서와 다를 수 있다.
+ *
+ * ## 지난 대화와 합치기 (#228)
+ *
+ * 🚨 **두 곳에서 온 줄을 `run_id` 로 합친다.** `past` 는 서버가 남긴 턴이고 `turns` 는 이 앱에서 보낸 줄이다.
+ *    run 이 끝나면 서버도 그 턴을 남겨서 같은 run 이 두 곳에 있게 되는데, 🚨 **이 앱에서 보낸 줄이 정본이다** —
+ *    진행 중이거나 다시 시도할 수 있는 줄이고, 서버 쪽은 끝난 run 만 남긴다. 그래서 겹치면 지난 쪽을 뺀다.
+ * 🚨 **같은 날 안에서는 지난 줄이 먼저다.** 이 앱에서 보낸 줄은 앱을 켠 뒤의 것이라 늘 더 늦다.
+ * 🚨 **지난 줄의 날짜는 서버가 정한 것이다**(`PastTurn.day`). 화면이 접수 시각으로 다시 계산하지 않는다.
  */
 export function ChatThread({
   childId,
+  past,
   turns,
   answering,
   onOpenDrafts,
   onPickOffer,
 }: {
   childId: string;
+  /** 서버가 남긴 지난 턴, 오래된 순 (`useChatHistory`). */
+  past: readonly PastTurn[];
   turns: ChatTurn[];
   /** 입력창이 지금 답하는 질문 — 그 질문의 카드가 "답하는 중" 으로 바뀐다. */
   answering: ChatQuestion | null;
@@ -47,38 +59,47 @@ export function ChatThread({
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const last = turns.at(-1);
-  const days = groupByDay(turns);
+  const days = groupByDay(mergeEntries(past, turns));
   /** 하루뿐이면 머리(`chat/page.tsx`)가 날짜를 이미 말한다 — 같은 날짜를 두 번 세우지 않는다. */
   const dividers = days.length > 1;
+  /** 누가 답했는지 — 지난 질문은 뒤에 답한 줄이 있으면 "답함", 없으면 "닫힘" 이다. */
+  const answered = new Set<string>([
+    ...past.flatMap((t) => (t.replyTo ? [t.replyTo] : [])),
+    ...turns.flatMap((t) => (t.body.reply_to ? [t.body.reply_to] : [])),
+  ]);
 
   return (
     <div className="flex flex-col gap-8">
-      {days.map(([day, dayTurns]) => (
-        <section key={day} aria-label={`${formatDay(day)} 대화`} className="flex flex-col gap-6">
+      {days.map(([day, entries]) => (
+        <section
+          key={day}
+          id={chatDayAnchor(day)}
+          aria-label={`${formatDay(day)} 대화`}
+          // 캘린더에서 그날로 열 때 이 자리로 내린다 — 붙어 있는 머리(`Screen` 의 topBar)에 날짜가 가리지 않게 띄운다.
+          className="flex scroll-mt-24 flex-col gap-6"
+        >
           {dividers ? (
             <h2 className="text-caption text-ink-subtle text-center">{formatDay(day)}</h2>
           ) : null}
           <ol className="flex flex-col gap-6">
-            {dayTurns.map((turn) => (
-              <li key={turn.id} className="flex flex-col gap-3">
-                <SentBubble turn={turn} named={turn.id === last?.id} />
-                {turn.send.status === "error" ? (
-                  <SendFailure childId={childId} turn={turn} error={turn.send.error} />
-                ) : (
-                  <TurnReply
-                    childId={childId}
-                    turn={turn}
-                    later={turns.slice(turns.indexOf(turn) + 1)}
-                    answering={answering}
-                    onOpenDrafts={() => onOpenDrafts(turn)}
-                    onPickOffer={(agents) => {
-                      // 🚨 run 을 싣지 않는다 — 04 제안은 처음 요청이다 (`chat/page.tsx` 의 goToSuggestions).
-                      if (turn.send.status === "sent") onPickOffer(agents);
-                    }}
-                  />
-                )}
-              </li>
-            ))}
+            {entries.map((entry) =>
+              entry.kind === "past" ? (
+                <li key={`past:${entry.turn.runId}`} className="flex flex-col gap-3">
+                  <PastTurnItem childId={childId} turn={entry.turn} answered={answered} />
+                </li>
+              ) : (
+                <LiveTurnItem
+                  key={entry.turn.id}
+                  childId={childId}
+                  turn={entry.turn}
+                  named={entry.turn.id === last?.id}
+                  later={turns.slice(turns.indexOf(entry.turn) + 1)}
+                  answering={answering}
+                  onOpenDrafts={onOpenDrafts}
+                  onPickOffer={onPickOffer}
+                />
+              ),
+            )}
           </ol>
         </section>
       ))}
@@ -86,13 +107,108 @@ export function ChatThread({
   );
 }
 
+/** 캘린더 입구가 그날로 내릴 때 찾는 자리 (`chat/page.tsx`). */
+export function chatDayAnchor(day: string): string {
+  return `chat-day-${day}`;
+}
+
+type Entry = { kind: "past"; turn: PastTurn } | { kind: "live"; turn: ChatTurn };
+
+/** 위 "지난 대화와 합치기" — 겹치는 run 은 이 앱의 줄만 남기고, 같은 날 안에서는 지난 줄이 먼저다. */
+function mergeEntries(past: readonly PastTurn[], turns: ChatTurn[]): Entry[] {
+  const live = new Set(turns.flatMap((t) => (t.send.status === "sent" ? [t.send.runId] : [])));
+  return [
+    ...past.filter((t) => !live.has(t.runId)).map((turn) => ({ kind: "past" as const, turn })),
+    ...turns.map((turn) => ({ kind: "live" as const, turn })),
+  ];
+}
+
+/**
+ * 지난 턴 하나 (#228). 🚨 **답 묶음은 그날과 같은 `RunReply` 다** — `archived` 가 지금 누르면 막다른 길이 되는
+ * 버튼만 뺀다. 🚨 지난 질문에는 답할 자리를 열지 않는다 — 서버가 앞 이야기를 15분만 들고 있어서 `reply_to` 로
+ * 보내면 400 이다. 뒤에 답한 줄이 있으면 "답함", 없으면 "닫힘" 이다.
+ */
+function PastTurnItem({
+  childId,
+  turn,
+  answered,
+}: {
+  childId: string;
+  turn: PastTurn;
+  answered: ReadonlySet<string>;
+}) {
+  const asked = turn.run.note?.kind === "question";
+  return (
+    <>
+      <SentBubble text={turn.text} answer={turn.replyTo !== null} named={false} />
+      <RunReply
+        childId={childId}
+        runId={turn.runId}
+        run={turn.run}
+        question={asked ? (answered.has(turn.runId) ? "answered" : "dropped") : null}
+        answeringNow={false}
+        remainingDrafts={0}
+        draftsReplaced={false}
+        followUp={turn.replyTo !== null}
+        rewriteBlocked={false}
+        onAnswer={noop}
+        onOpenDrafts={noop}
+        onPickOffer={noop}
+        archived
+        deleted={turn.deleted}
+      />
+    </>
+  );
+}
+
+function noop() {}
+
+function LiveTurnItem({
+  childId,
+  turn,
+  named,
+  later,
+  answering,
+  onOpenDrafts,
+  onPickOffer,
+}: {
+  childId: string;
+  turn: ChatTurn;
+  named: boolean;
+  later: ChatTurn[];
+  answering: ChatQuestion | null;
+  onOpenDrafts: (turn: ChatTurn) => void;
+  onPickOffer: (agents: Agent[]) => void;
+}) {
+  return (
+    <li className="flex flex-col gap-3">
+      <SentBubble text={turn.body.text} answer={turn.answering !== null} named={named} />
+      {turn.send.status === "error" ? (
+        <SendFailure childId={childId} turn={turn} error={turn.send.error} />
+      ) : (
+        <TurnReply
+          childId={childId}
+          turn={turn}
+          later={later}
+          answering={answering}
+          onOpenDrafts={() => onOpenDrafts(turn)}
+          onPickOffer={(agents) => {
+            // 🚨 run 을 싣지 않는다 — 04 제안은 처음 요청이다 (`chat/page.tsx` 의 goToSuggestions).
+            if (turn.send.status === "sent") onPickOffer(agents);
+          }}
+        />
+      )}
+    </li>
+  );
+}
+
 /** 보낸 순서를 지키면서 날짜로 묶는다. 날짜는 오래된 것부터. */
-function groupByDay(turns: ChatTurn[]): Array<[string, ChatTurn[]]> {
-  const days = new Map<string, ChatTurn[]>();
-  for (const turn of turns) {
-    const list = days.get(turn.day);
-    if (list) list.push(turn);
-    else days.set(turn.day, [turn]);
+function groupByDay(entries: Entry[]): Array<[string, Entry[]]> {
+  const days = new Map<string, Entry[]>();
+  for (const entry of entries) {
+    const list = days.get(entry.turn.day);
+    if (list) list.push(entry);
+    else days.set(entry.turn.day, [entry]);
   }
   return [...days.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
@@ -108,13 +224,14 @@ function groupByDay(turns: ChatTurn[]): Array<[string, ChatTurn[]]> {
  *    모양은 카드 그대로 두고 누르는 반응도 주지 않는다.
  *
  * @param named 막 보낸 한 줄인가. 🚨 이름은 **하나에만** 준다 — 같은 이름이 둘이면 전환이 건너뛴다.
+ * @param answer 되묻기에 답한 줄인가.
  */
-function SentBubble({ turn, named }: { turn: ChatTurn; named: boolean }) {
+function SentBubble({ text, answer, named }: { text: string; answer: boolean; named: boolean }) {
   const bubble = (
     // 흰 글자 6.2:1 (§2-2 `brand` 행) — 캡션도 같은 흰색이다. 흐리게 낮추면 4.5:1 아래로 내려간다.
     <div className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
-      {turn.answering ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
-      <p className="text-body break-words whitespace-pre-wrap">{turn.body.text}</p>
+      {answer ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
+      <p className="text-body break-words whitespace-pre-wrap">{text}</p>
     </div>
   );
 
