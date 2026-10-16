@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
+import Link from "next/link";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
@@ -11,7 +12,7 @@ import { IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
-import { CONTACT_NOT_READY, FAQ_GROUPS, SERVICE_INFO } from "@/lib/help";
+import { FAQ_GROUPS, SERVICE_INFO } from "@/lib/help";
 import { playEnter } from "@/lib/motion";
 import { BACK } from "@/lib/view-transition";
 
@@ -36,9 +37,9 @@ import { BACK } from "@/lib/view-transition";
  * 🚨 **펼친 답은 투명도로만 선다** (디자인 시스템 §8 "펼침"). 높이를 움직이지 않고, 접을 때는 즉시다.
  *    쉐브론은 회전하지 않는다 — 방향은 아이콘을 갈아 끼워 말한다 (고르기 상자와 같은 처리).
  *
- * 🚨 **문의 버튼을 만들지 않는다.** 이메일도 카카오 채널도 아직 없다. 없는 주소를 버튼으로
- *    세우면 부모가 보낸 문의가 아무 데도 도착하지 않는다 — 아무 데도 안 가는 링크를 만들지
- *    않는다는 규칙과 같은 자리다 (`lib/help.ts`). 채널이 정해지면 그때 붙인다.
+ * 🚨 **질문에 없는 일은 10 설정 › 문제 알리기로 보낸다** (#487). 앱 안에서 보내는 창구가 생겨서
+ *    "문의 받는 곳은 준비 중" 이라는 옛 문구를 지우고 그 길을 글 속 링크 하나로 둔다. 버튼으로
+ *    세우지 않는다 — 이 화면은 읽는 화면이고, 설정에 같은 줄이 이미 있다.
  *
  * 🚨 **사업자 정보를 지어내지 않는다.** 이 서비스에는 아직 없다 — 확인할 수 있는 사실만 둔다.
  *
@@ -162,7 +163,16 @@ function HelpScreen() {
             약관과 동의 전문은 설정의 동의 구역에서 볼 수 있어요.
           </p>
         </Card>
-        <p className="text-caption text-ink-subtle">{CONTACT_NOT_READY}</p>
+        <p className="text-caption text-ink-subtle">
+          위 질문에 없는 일은{" "}
+          <Link
+            href={`/child/${childId}/settings/report`}
+            className="text-ink-muted decoration-line-strong -my-3 inline-block py-3 underline decoration-1 underline-offset-4"
+          >
+            문제 알리기
+          </Link>
+          로 알려 주세요.
+        </p>
       </section>
     </Screen>
   );

@@ -122,3 +122,15 @@ test.describe("오늘 보낼 수 있는 만큼 보냈으면", () => {
     await expectNoGate(page);
   });
 });
+
+test("고객센터의 '질문에 없는 일' 도 이 화면으로 온다 — 옛 '문의 받는 곳은 준비 중' 문구는 없다", async ({
+  page,
+}) => {
+  await page.goto(`${SETTINGS}/help`);
+  await expect(
+    page.getByText("따로 문의를 받는 곳은 아직 준비하고 있어요", { exact: false }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "문제 알리기" }).click();
+  await expect(page).toHaveURL(new RegExp(`${REPORT}$`));
+  await expect(page.getByRole("heading", { name: "문제 알리기" })).toBeVisible();
+});
