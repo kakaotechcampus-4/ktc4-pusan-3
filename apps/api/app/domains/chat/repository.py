@@ -4,9 +4,10 @@
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.chat.models import ChatTurn
@@ -72,3 +73,54 @@ async def add_turn(
     session.add(turn)
     await session.flush()
     return turn
+
+
+@dataclass(frozen=True)
+class TurnCursor:
+    """하루 안에서 이어 받을 자리 — 지난 페이지의 가장 이른 턴. 이보다 이른 턴부터 준다."""
+
+    created_at: datetime
+    id: uuid.UUID
+
+
+async def page_turns(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    day: date,
+    cursor: TurnCursor | None,
+    limit: int,
+) -> tuple[list[ChatTurn], TurnCursor | None]:
+    """그날의 턴을 최근 것부터 `limit` 개 끊어 오래된 순으로 준다. 더 이른 턴이 남았으면 커서도.
+
+    대화 화면은 아래(최근)부터 그리고 위로 올리면 이전 것을 붙인다 — 그래서 최근 쪽부터 자르고,
+    한 페이지 안은 화면에 그리는 순서(오래된 순)로 준다.
+    """
+    stmt = select(ChatTurn).where(
+        ChatTurn.parent_id == parent_id,
+        ChatTurn.child_id == child_id,
+        ChatTurn.conversation_date == day,
+    )
+    if cursor is not None:
+        stmt = stmt.where(
+            tuple_(ChatTurn.created_at, ChatTurn.id) < tuple_(cursor.created_at, cursor.id)
+        )
+    stmt = stmt.order_by(ChatTurn.created_at.desc(), ChatTurn.id.desc()).limit(limit + 1)
+    rows = list((await session.scalars(stmt)).all())
+    page = rows[:limit]
+    more = TurnCursor(page[-1].created_at, page[-1].id) if len(rows) > limit else None
+    return list(reversed(page)), more
+
+
+async def previous_date(
+    session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID, before: date
+) -> date | None:
+    """`before` 보다 앞에서 대화가 있었던 가장 늦은 날. 없으면 None — 대화 없는 날은 건너뛴다."""
+    return await session.scalar(
+        select(func.max(ChatTurn.conversation_date)).where(
+            ChatTurn.parent_id == parent_id,
+            ChatTurn.child_id == child_id,
+            ChatTurn.conversation_date < before,
+        )
+    )
