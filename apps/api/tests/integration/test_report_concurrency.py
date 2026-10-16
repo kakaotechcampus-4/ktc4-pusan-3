@@ -57,7 +57,10 @@ async def test_먼저_센_쪽이_커밋할_때까지_다음_세기는_기다린�
                 count = await count_reports_since(b, reporter_parent_id=parent.id, since=since)
                 assert count == REPORT_DAILY_LIMIT
             finally:
-                pending_b.cancel()  # 단언이 실패해도 기다리던 쿼리를 남긴 채 세션을 닫지 않는다
+                # 단언이 실패해도 기다리던 쿼리를 남긴 채 세션을 닫지 않는다. 끝날 때까지 기다려야
+                # 세션 종료가 InterfaceError 로 원래 실패 이유를 덮지 않는다.
+                pending_b.cancel()
+                await asyncio.gather(pending_b, return_exceptions=True)
             await b.rollback()
     finally:
         async with AsyncSession(engine) as cleanup:
@@ -90,6 +93,7 @@ async def test_탈퇴가_먼저_잡으면_잠금은_기다렸다가_False():
                 assert await pending_b is False
             finally:
                 pending_b.cancel()
+                await asyncio.gather(pending_b, return_exceptions=True)
             await b.rollback()
     finally:
         async with AsyncSession(engine) as cleanup:

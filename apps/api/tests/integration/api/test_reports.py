@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.api.v1.routers import reports as reports_router
 from app.api.v1.routers.reports import REPORT_DAILY_LIMIT
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.report.models import Report, ReportCategory
@@ -153,3 +154,29 @@ async def test_탈퇴하면_보낸_신고도_지워진다(db_client, bearer, ses
         await session.execute(select(Report).where(Report.id == report_id))
     ).scalar_one_or_none()
     assert gone is None
+
+
+async def test_인증_뒤에_탈퇴됐으면_401이고_아무것도_남기지_않는다(
+    db_client, bearer, session, caplog, monkeypatch
+):
+    """인증과 잠금 사이에 탈퇴가 커밋되면 FK 위반 500 이 아니라 401 (#487 리뷰).
+
+    HTTP 만으로는 만들 수 없다 — 탈퇴하면 인증 세션도 지워져 인증에서 먼저 401 이다. 그래서 잠금
+    결과만 바꿔 끼운다. 잠금 자체가 False 를 내는지는 test_report_concurrency.py 가 본다.
+    """
+    headers, parent_id = bearer
+
+    async def gone(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(reports_router, "lock_reporter", gone)
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        response = await db_client.post(
+            PATH, json={"category": "bug", "message": MESSAGE}, headers=headers
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthenticated"
+    rows = await session.execute(select(Report).where(Report.reporter_parent_id == parent_id))
+    assert rows.scalars().all() == []
+    assert [r for r in caplog.records if r.name == LOGGER] == []  # 알림도 가지 않는다
