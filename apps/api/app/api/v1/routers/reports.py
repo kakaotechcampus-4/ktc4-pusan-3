@@ -46,6 +46,8 @@ async def submit_report(
     """신고 1건을 저장하고 팀 채널에 알린다. 같은 내용을 두 번 보내면 두 건이 된다."""
     since = datetime.now(UTC) - timedelta(days=1)
     sent = await count_reports_since(session, reporter_parent_id=parent.parent_id, since=since)
+    if sent is None:  # 인증 뒤에 탈퇴가 커밋됐다 — 인증 실패와 같은 401
+        raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
     if sent >= REPORT_DAILY_LIMIT:
         raise ApiError(
             429, "too_many_reports", "오늘은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요."

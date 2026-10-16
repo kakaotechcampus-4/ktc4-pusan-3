@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.routers.reports import REPORT_DAILY_LIMIT
 from app.domains.identity.models import Parent
+from app.domains.identity.withdraw import withdraw_parent
 from app.domains.report.models import ReportCategory
 from app.domains.report.repository import count_reports_since, create_report
 from app.infra.db.session import engine
@@ -56,4 +57,36 @@ async def test_먼저_센_쪽이_커밋할_때까지_다음_세기는_기다린�
     finally:
         async with AsyncSession(engine) as cleanup:
             await cleanup.execute(delete(Parent).where(Parent.id == parent.id))  # 신고는 CASCADE
+            await cleanup.commit()
+
+
+async def test_탈퇴가_먼저_잡으면_세기는_기다렸다가_None():
+    """탈퇴 커밋 직후 들어온 신고가 FK 위반 500 · 가짜 장애 알림으로 끝나지 않게 (#487 리뷰).
+
+    인증은 탈퇴 전에 통과했으니 라우터가 None 을 받아 401 로 끝낸다.
+    """
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        parent = Parent()
+        setup.add(parent)
+        await setup.commit()
+
+    since = datetime.now(UTC) - timedelta(days=1)
+    try:
+        async with (
+            AsyncSession(engine, expire_on_commit=False) as a,
+            AsyncSession(engine, expire_on_commit=False) as b,
+        ):
+            await withdraw_parent(a, parent_id=parent.id, now=datetime.now(UTC))
+            pending_b = asyncio.create_task(
+                count_reports_since(b, reporter_parent_id=parent.id, since=since)
+            )
+            await asyncio.sleep(0.2)
+            assert not pending_b.done()
+
+            await a.commit()
+            assert await pending_b is None
+            await b.rollback()
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Parent).where(Parent.id == parent.id))
             await cleanup.commit()
