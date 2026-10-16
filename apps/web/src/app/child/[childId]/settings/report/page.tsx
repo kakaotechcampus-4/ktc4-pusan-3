@@ -1,13 +1,14 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { ArrowLeft, Check } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
+import { ChoiceField } from "@/components/ui/choice-field";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
@@ -25,7 +26,6 @@ import {
   type ReportRequest,
   type ReportResponse,
 } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { SERVICE_EMAIL } from "@/lib/consent";
 import { BACK } from "@/lib/view-transition";
 
@@ -68,6 +68,19 @@ const CATEGORY_LABEL: Record<ReportCategory, string> = {
   other: "기타",
 };
 
+const CATEGORY_OPTIONS = REPORT_CATEGORIES.map((value) => ({
+  value,
+  label: CATEGORY_LABEL[value],
+}));
+
+/**
+ * 🚨 **처음부터 첫 항목이 골라져 있다.** 안 고른 칸은 체크 아이콘이 투명해서 테두리만 있는 상자
+ *    넷으로 보인다 — 눌러서 고르는 칸인지 모르면 글을 다 적고도 보내기가 왜 꺼져 있는지 알 수
+ *    없다. 하나가 골라져 있으면 체크와 면 색이 보여서 고르는 칸이라는 것이 드러나고, 고르지 않아도
+ *    보낼 수 있다. 맞지 않으면 보호자가 바꾼다.
+ */
+const DEFAULT_CATEGORY: ReportCategory = "ai_content";
+
 function ReportScreen() {
   const childId = useChildId();
   const [sent, setSent] = useState(false);
@@ -89,14 +102,16 @@ function ReportScreen() {
               이상하거나 불편했던 일을 알려 주세요.
             </p>
             <p className="text-caption text-ink-subtle mt-2">
-              내 정보 열람이나 삭제처럼 답이 필요한 요청은 이메일(
+              내 정보 열람이나 삭제처럼 답이 필요한 요청은 아래 이메일로 보내 주세요.
+              {/* 주소는 줄을 따로 쓴다 — 문장 안에 두면 좁은 화면에서 주소가 통째로 다음 줄로
+                  넘어가며 괄호와 조사가 떨어진다. */}
+              <br />
               <a
                 href={`mailto:${SERVICE_EMAIL}`}
                 className="decoration-line-strong -my-3.5 inline-block py-3.5 break-all underline decoration-1 underline-offset-4"
               >
                 {SERVICE_EMAIL}
               </a>
-              )로 보내 주세요.
             </p>
           </>
         )}
@@ -108,8 +123,7 @@ function ReportScreen() {
 }
 
 function ReportForm({ onSent }: { onSent: () => void }) {
-  const categoryName = useId();
-  const [category, setCategory] = useState<ReportCategory | null>(null);
+  const [category, setCategory] = useState<ReportCategory>(DEFAULT_CATEGORY);
   const [message, setMessage] = useState("");
   /**
    * 🚨 **두 번 보내지 않는다.** `isPending` 은 다음 렌더에야 바뀌어서, 빠르게 두 번 누르면 두 번째
@@ -141,10 +155,10 @@ function ReportForm({ onSent }: { onSent: () => void }) {
    *    적은 글은 그대로 둔다 — 이메일로 옮겨 적을 수 있어야 한다.
    */
   const limited = isApiError(report.error, "too_many_reports");
-  const ready = category !== null && trimmed.length > 0 && !limited;
+  const ready = trimmed.length > 0 && !limited;
 
   function submit() {
-    if (!ready || category === null || sending.current) return;
+    if (!ready || sending.current) return;
     sending.current = true;
     // 서버도 앞뒤 공백을 떼고 센다. 뗀 것을 보내서 화면이 센 것과 서버가 센 것이 같게 한다.
     report.mutate({ category, message: trimmed });
@@ -158,50 +172,16 @@ function ReportForm({ onSent }: { onSent: () => void }) {
         submit();
       }}
     >
-      {/* 🚨 **네이티브 라디오다** (`choice-field` 와 같은 처리 · 디자인 시스템 §7 고르는 칸).
-          `ChoiceField` 를 쓰지 않는 이유는 둘이다 — 선택지가 넷이고 길어서 가로로 똑같이 나눌 수
-          없고, 기본값이 없다(아무거나 미리 골라 두면 분류가 틀린 채로 쌓인다). 그렇다고 `Select` 로
-          감추면 넷을 다 읽고 고를 수 없다. 그래서 같은 모양의 칸을 **세로로** 쌓고, 처음엔 아무것도
-          고르지 않은 채로 둔다 — 빈 값을 선택지로 넣지는 않는다. */}
-      <fieldset className="flex min-w-0 flex-col" disabled={report.isPending}>
-        <legend className="text-label text-ink-muted">어떤 일인가요?</legend>
-        <div className="mt-1.5 flex flex-col gap-2">
-          {REPORT_CATEGORIES.map((value) => {
-            const selected = value === category;
-            return (
-              <label
-                key={value}
-                className={cn(
-                  "rounded-field min-h-field ease-standard flex cursor-pointer items-center gap-2 border px-3.5 py-2 transition-colors duration-120",
-                  // 🚨 포커스 링은 숨은 `<input>` 이 아니라 이 상자에 그린다 (`ChoiceField` 와 같다).
-                  "has-focus-visible:outline-brand has-focus-visible:outline-2 has-focus-visible:outline-offset-2",
-                  selected
-                    ? "bg-brand-soft border-brand text-brand-ink"
-                    : "bg-surface border-line-strong text-ink-muted hover:bg-surface-muted hover:border-ink-subtle active:bg-surface-muted active:border-ink-subtle",
-                )}
-              >
-                <input
-                  type="radio"
-                  name={categoryName}
-                  value={value}
-                  checked={selected}
-                  onChange={() => setCategory(value)}
-                  className="sr-only"
-                />
-                {/* 🚨 고른 것을 색 하나로 말하지 않는다 — 체크가 같이 선다. 안 고른 칸에도 늘 그려 두고
-                    투명하게 둔다(고를 때 글자가 밀리지 않게 · `ChoiceField` 와 같다). */}
-                <Check
-                  aria-hidden
-                  size={ICON_SIZE.sm}
-                  strokeWidth={ICON_STROKE}
-                  className={cn("shrink-0", selected ? null : "text-transparent")}
-                />
-                <span className="text-body-sm">{CATEGORY_LABEL[value]}</span>
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
+      {/* 분류는 `ChoiceField` 세로 변형이다 — 넷이고 문장이 길어서 가로로 똑같이 나눌 수 없다.
+          `Select` 로 감추면 넷을 다 읽고 고를 수 없다 (디자인 시스템 §7 고르는 칸). */}
+      <ChoiceField
+        label="어떤 일인가요?"
+        value={category}
+        options={CATEGORY_OPTIONS}
+        onChange={setCategory}
+        direction="vertical"
+        disabled={report.isPending}
+      />
 
       <div className="flex flex-col gap-1.5">
         <TextArea
