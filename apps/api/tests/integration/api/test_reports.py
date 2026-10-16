@@ -122,6 +122,8 @@ async def test_하루_상한을_넘으면_429(db_client, bearer):
     over = await db_client.post(PATH, json={"category": "bug", "message": MESSAGE}, headers=headers)
     assert over.status_code == 429
     assert over.json()["error"]["code"] == "too_many_reports"
+    # 지난 24시간을 센다 — "오늘은" 이라 하면 밤에 다 쓴 보호자가 다음 날 아침에도 막힐 때 틀린다
+    assert over.json()["error"]["message"].startswith("지금은")
 
 
 async def test_모르는_칸은_받지_않는다(db_client, bearer):
