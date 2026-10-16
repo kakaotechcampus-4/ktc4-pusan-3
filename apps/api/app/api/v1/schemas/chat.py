@@ -4,9 +4,9 @@
 `replies` 는 run 화면(SSE)과 같은 이름 · 같은 필드로 둔다 — 화면이 대화 블록을 다시 쓸 수 있게.
 저장 방식(문장 그대로 · id 만)은 `app/api/chat_replies.py` 머리말.
 
-저장할 때 id 만 담은 `saved` 는 여기서 지금 상태로 채운다 — run 화면의 `saved`(`sse.ts` 의
-`SavedEvent`)와 같은 `observations` 에 기록 탭 모양으로, 지운 기록은 내용 없이 `deleted` 에 id 만.
-🚨 건강 관찰은 싣지 않는다 — 기록 탭 · 캘린더와 같이 첫 배포 범위 밖이다.
+저장할 때 id 만 담은 `saved` 는 여기서 지금 상태로 채운다 — run 화면의 `saved`(#471 · `sse.ts` 의
+`SavedEvent`)와 같은 `observations` 에 같은 모양으로(건강 기록 포함), 지운 기록은 내용 없이
+`deleted` 에 id 만. 그 자리에서 "저장됨" 으로 본 카드가 지난 대화에서도 같다.
 """
 
 import datetime as dt
@@ -24,15 +24,15 @@ from app.api.chat_replies import (
     StoredRef,
     UnavailableReply,
 )
-from app.api.v1.schemas.observations import ObservationOut
+from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 
 
 class SavedOut(BaseModel):
     type: Literal["saved"] = "saved"
-    observations: list[ObservationOut] = Field(
+    observations: list[ObservationOut | ObservationHealthOut] = Field(
         description=(
-            "그 run 에서 저장한 기록의 지금 모습, 저장한 순서대로. 기록 탭과 같은 모양 · 같은 상태 "
-            "기준이고, run 화면의 saved 와 같은 칸이다. 건강 기록은 빠진다"
+            "그 run 에서 저장한 기록의 지금 모습, 저장한 순서대로. run 화면의 saved 와 같은 칸 · "
+            "같은 모양이다 — 건강 기록은 kind 가 observation_health 인 건강 모양"
         )
     )
     deleted: list[StoredRef] = Field(

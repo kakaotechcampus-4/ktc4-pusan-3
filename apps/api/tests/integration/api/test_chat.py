@@ -4,7 +4,7 @@
     ② 하루 안은 최근 것부터 끊고, 한 페이지 안은 오래된 순 — next_cursor 로 이어 받는다
     ③ prev_date 는 대화가 없는 날을 건너뛴다 — 처음 날이면 null
     ④ 깨진 커서는 400
-    ⑤ 저장한 기록은 지금 상태로 — 지운 기록은 내용 없이, 건강 기록은 싣지 않는다
+    ⑤ 저장한 기록은 지금 상태로 — run 화면의 saved 와 같은 모양(건강 포함), 지운 기록은 내용 없이
 
 아이 접근 확인(403)은 다른 아이 주소와 같은 의존성이라 여기서 다시 보지 않는다.
 무엇을 어떻게 남기는지는 tests/integration/test_chat_record.py. 발화는 전부 가짜 값이다.
@@ -172,7 +172,7 @@ async def test_saved_records_come_back_as_they_are_now(
 ):
     """지운 기록이 지난 대화에서 되살아나면 안 된다 (#228 완료 기준).
 
-    건강 기록은 기록 탭처럼 빠지고, 건강 기록만 있던 saved 는 통째로 빠진다.
+    건강 기록은 run 화면의 saved(#471)처럼 건강 모양으로 실린다 — 그 자리에서 본 카드와 같게.
     """
     headers, me = bearer
     kept = await _observation(
@@ -193,23 +193,17 @@ async def test_saved_records_come_back_as_they_are_now(
             {"kind": "observation_health", "id": health},
         ],
     }
-    only_health = {"type": "saved", "refs": [{"kind": "observation_health", "id": health}]}
     done = {"type": "done", "completed": True}
     await _turn(session, parent_id=me, child_id=cid, replies=[saved, done])
-    await _turn(
-        session,
-        parent_id=me,
-        child_id=cid,
-        at=NOON + timedelta(minutes=1),
-        replies=[only_health, done],
-    )
 
     body = (
         await db_client.get(CHAT.format(cid=cid), params={"date": "2026-10-15"}, headers=headers)
     ).json()
 
-    [first, second] = body["turns"]
-    [filled, _] = first["replies"]
-    assert [o["subject"] for o in filled["observations"]] == ["계란말이"]
+    [turn] = body["turns"]
+    [filled, _] = turn["replies"]
+    assert [(o["kind"], o["id"]) for o in filled["observations"]] == [
+        ("observation_food", kept),
+        ("observation_health", health),
+    ]
     assert filled["deleted"] == [{"kind": "observation_food", "id": erased}]
-    assert second["replies"] == [done]

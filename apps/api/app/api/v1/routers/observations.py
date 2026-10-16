@@ -13,39 +13,32 @@ import base64
 import binascii
 import json
 import uuid
-from datetime import date, timedelta
-from typing import Annotated, Any, Literal
+from datetime import date
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
 
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
+from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.schemas.observations import (
     CorrectionOut,
-    LinkedAffinityOut,
     ObservationDetailResponse,
-    ObservationOut,
     ObservationsResponse,
-    SourceWriterOut,
     UsedInOut,
 )
 from app.domains.correction.models import CorrectionTargetKind
 from app.domains.correction.repository import list_corrections
-from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import (
     ObservationCursor,
     ObservationDomain,
-    ObservationRecord,
     find_observation,
     page_observations,
 )
-from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.suggestion.repository import list_suggestions_using_observation
-from app.rules.observed_label import observed_label
 
 router = APIRouter()
 
@@ -70,22 +63,6 @@ VISIBLE_DOMAINS = (
     ObservationDomain.EDUCATION,
     ObservationDomain.ACTIVITY,
     ObservationDomain.ROUTINE,
-)
-
-# 응답의 고정 칸으로 따로 싣거나, 화면에 내리지 않는 칸. 나머지가 domain_fields 다.
-_NOT_DOMAIN_FIELDS = frozenset(
-    {
-        "subject",
-        "polarity",
-        "confidence_source",
-        "status",
-        "source_writer",
-        "source_notice_id",
-        "updated_at",
-        "embedding",
-        "affinity_id",
-        "strong_signals",
-    }
 )
 
 
@@ -136,7 +113,7 @@ async def get_observation(
     session: SessionDep,
 ) -> ObservationDetailResponse:
     """관찰 1건 + 그 관찰을 근거로 쓴 추천 + 교정 이력."""
-    domain = visible_domain(kind)
+    domain = _visible_domain(kind)
     record = (
         await find_observation(session, domain=domain, child_id=child.child_id, observation_id=oid)
         if domain
@@ -168,11 +145,8 @@ async def get_observation(
     )
 
 
-def visible_domain(kind: str) -> ObservationDomain | None:
-    """kind(`observation_food` …)가 기록 탭에 보이는 표면 그 도메인. 건강 · 모르는 값은 None.
-
-    상세는 None 을 404 로, 지난 대화(`chat.py`)는 싣지 않는 것으로 쓴다.
-    """
+def _visible_domain(kind: str) -> ObservationDomain | None:
+    """경로의 kind 가 이 화면이 보여주는 표면 그 도메인. 건강 · 모르는 값은 None (→ 404)."""
     if not kind.startswith("observation_"):
         return None
     try:
@@ -180,83 +154,6 @@ def visible_domain(kind: str) -> ObservationDomain | None:
     except ValueError:
         return None
     return domain if domain in VISIBLE_DOMAINS else None
-
-
-async def to_observation_outs(
-    session: SessionDep, records: list[ObservationRecord], *, today: date
-) -> list[ObservationOut]:
-    """묶인 기억과 적은 사람은 한 번씩 모아 읽는다 — 줄마다 조회하지 않는다."""
-    affinity_ids = {r.fields["affinity_id"] for r in records if r.fields.get("affinity_id")}
-    writer_ids = {r.fields["source_writer"] for r in records if r.fields.get("source_writer")}
-    affinities = (
-        {
-            a.id: a
-            for a in await session.scalars(
-                select(ProfileAffinity).where(ProfileAffinity.id.in_(affinity_ids))
-            )
-        }
-        if affinity_ids
-        else {}
-    )
-    writers = (
-        {
-            p.id: p.nickname
-            for p in await session.scalars(select(Parent).where(Parent.id.in_(writer_ids)))
-            if p.nickname
-        }
-        if writer_ids
-        else {}
-    )
-    return [_observation_out(r, affinities, writers, today=today) for r in records]
-
-
-def _observation_out(
-    record: ObservationRecord,
-    affinities: dict[uuid.UUID, ProfileAffinity],
-    writers: dict[uuid.UUID, str],
-    *,
-    today: date,
-) -> ObservationOut:
-    fields = record.fields
-    observed_to = record.observed_range.upper - timedelta(days=1)
-    affinity = affinities.get(fields.get("affinity_id"))
-    writer_id = fields.get("source_writer")
-    return ObservationOut(
-        id=str(record.id),
-        child_id=str(record.child_id),
-        kind=f"observation_{record.domain.value}",
-        raw_text=record.raw_text,
-        subject=fields["subject"],
-        polarity=fields["polarity"],
-        strong_signals=list(fields.get("strong_signals") or []),
-        confidence_source=fields["confidence_source"].value,
-        status=fields["status"].value,
-        observed_from=record.observed_range.lower,
-        observed_to=observed_to,
-        observed_label=observed_label(observed_to, today=today),
-        affinity=(
-            LinkedAffinityOut(
-                id=str(affinity.id), merge_key=affinity.merge_key, state=affinity.state.value
-            )
-            if affinity
-            else None
-        ),
-        domain_fields=_domain_fields(fields),
-        source_writer=(
-            SourceWriterOut(parent_id=str(writer_id), nickname=writers[writer_id])
-            if writer_id in writers
-            else None
-        ),
-        created_at=record.created_at,
-    )
-
-
-def _domain_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value.value if hasattr(value, "value") else value
-        for key, value in fields.items()
-        if key not in _NOT_DOMAIN_FIELDS
-    }
 
 
 def _encode_cursor(cursor: ObservationCursor) -> str:

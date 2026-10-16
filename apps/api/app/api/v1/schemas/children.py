@@ -218,6 +218,17 @@ class OnboardingResponse(BaseModel):
     growth: GrowthLogOut | None = Field(description="키 · 몸무게를 둘 다 안 적었으면 null")
 
 
+class InputLocation(BaseModel):
+    """휴대폰이 흐려 보낸 좌표 (#380). 소수점 둘째 자리(약 1km)로 보낸다 — 서버도 한 번 더 자른다.
+
+    🚨 저장하지 않고 로그에도 남기지 않는다. 이 요청의 run 안에서 날씨 격자 변환과 장소 거리
+    계산에만 쓴다. `repr` 에 값을 싣지 않는다 — 요청 객체를 찍어도 좌표가 새지 않게.
+    """
+
+    lat: float = Field(ge=-90, le=90, repr=False, description="위도. 소수점 둘째 자리로 흐린 값")
+    lon: float = Field(ge=-180, le=180, repr=False, description="경도. 소수점 둘째 자리로 흐린 값")
+
+
 class CreateInputRequest(BaseModel):
     """POST /children/{cid}/inputs — 한 줄 입력."""
 
@@ -231,6 +242,14 @@ class CreateInputRequest(BaseModel):
     """직전 run 에서 Memory가 물은 것에 대한 답이면 그 run_id. 없으면 일반 새 입력이다.
 
       값이 있는데 맥락을 못 찾으면 400 이다."""
+
+    location: InputLocation | None = Field(
+        default=None,
+        description=(
+            "선택. 위치정보 동의와 휴대폰 권한이 있을 때만 보낸다. 놀이 추천(Activity)의 날씨 · "
+            "근처 장소 조회에만 쓰고 저장하지 않는다. 동의가 없으면 서버가 버린다"
+        ),
+    )
 
 
 class CreateInputResponse(BaseModel):

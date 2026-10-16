@@ -156,6 +156,9 @@ class DbMemoryStore:
         self.wrote = False
         """create / update / delete 가 DB 에 실제로 쓴 적이 있으면 True.
         runner 가 commit 표시를 세울지 판단하는 데 쓴다."""
+        self.created: list[tuple[str, UUID]] = []
+        """이 run 에서 새로 만든 관찰 (도메인, id) — 만든 순서대로. 고치기 · 지우기는 넣지 않는다.
+        runner 가 commit 뒤에 이 행들을 읽어 화면에 `saved` 로 보낸다 (#471)."""
 
     def _today(self) -> date:
         """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
@@ -204,6 +207,7 @@ class DbMemoryStore:
         self._session.add(orm)
         await self._session.flush()
         self.wrote = True
+        self.created.append((domain, orm.id))
         return _row_from_orm(domain, orm)
 
     async def query_observations(

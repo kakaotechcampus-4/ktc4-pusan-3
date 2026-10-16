@@ -7,8 +7,8 @@
 하루 단위로 준다. 대화 화면은 날짜 구분선 단위로 그리고, 캘린더 하루 화면이 그 날짜로 연다.
 커서는 둘이다 — 하루 안에서 더 이른 턴은 `next_cursor`, 그날을 다 받으면 `prev_date` 로 전날.
 
-저장할 때 id 만 담은 `saved` 는 지금 상태로 채운다 — 기록 탭과 같은 모양과 같은 기준
-(`VISIBLE_DOMAINS` · 지운 것 제외)이다. 지운 기록은 내용 없이, 건강 기록은 아예 싣지 않는다.
+저장할 때 id 만 담은 `saved` 는 지금 상태로 채운다 — run 화면의 `saved`(#471)와 같은 변환이라
+그 자리에서 본 카드와 같은 모양이다(건강 기록 포함). 지운 기록은 내용 없이 `deleted` 에 id 만.
 
 🚨 `next_cursor` 는 자기 날짜를 품는다. `date` 를 빼면 오늘이라, 날짜 없는 커서를 자정이 지난 뒤
    보내면 새 날에 적용돼 빈 목록과 `prev_date`=어제가 나가고, 화면이 어제를 처음부터 다시 그려
@@ -32,14 +32,14 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
-from app.api.v1.routers.observations import to_observation_outs, visible_domain
+from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.schemas.chat import (
     ChatDayResponse,
     ChatReplyOut,
     ChatTurnOut,
     SavedOut,
 )
-from app.api.v1.schemas.observations import ObservationOut
+from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.domains.chat.repository import TurnCursor, page_turns, previous_date
 from app.domains.memory.observation.repository import ObservationDomain, find_observations
 
@@ -108,30 +108,34 @@ async def get_chat_day(
 
 
 ObservationKey = tuple[ObservationDomain, uuid.UUID]
+ObservationView = ObservationOut | ObservationHealthOut
 
 
-def _visible_key(kind: str, observation_id: str) -> ObservationKey | None:
-    """기록 탭에 보이는 표의 관찰이면 그 키. 건강 · 모르는 값은 None — 싣지 않는다."""
-    domain = visible_domain(kind)
-    if domain is None:
+def _observation_key(kind: str, observation_id: str) -> ObservationKey | None:
+    """`observation_food` 같은 관찰 ref 의 키. 관찰이 아닌 값은 None — 싣지 않는다."""
+    if not kind.startswith("observation_"):
         return None
     try:
-        return domain, uuid.UUID(observation_id)
+        return ObservationDomain(kind.removeprefix("observation_")), uuid.UUID(observation_id)
     except ValueError:
         return None
 
 
 async def _current_observations(
     session: SessionDep, child_id: uuid.UUID, stored: list[list[ChatReply]]
-) -> dict[ObservationKey, ObservationOut]:
-    """한 화면의 saved 관찰을 표마다 한 번씩 읽어 기록 탭 모양으로. 지운 것은 결과에 없다."""
+) -> dict[ObservationKey, ObservationView]:
+    """한 화면의 saved 관찰을 표마다 한 번씩 읽어 run 화면의 saved 와 같은 모양으로.
+
+    지운 것은 결과에 없다. 변환은 run 화면(#471)과 같은 `to_observation_outs` 다 — 그 자리에서
+    "저장됨" 으로 본 카드와 지난 대화의 카드가 같은 모양이 된다(건강 기록 포함).
+    """
     keys = {
         key
         for replies in stored
         for reply in replies
         if isinstance(reply, SavedReply)
         for ref in reply.refs
-        if (key := _visible_key(ref.kind, ref.id)) is not None
+        if (key := _observation_key(ref.kind, ref.id)) is not None
     }
     if not keys:
         return {}
@@ -141,18 +145,18 @@ async def _current_observations(
 
 
 def _fill(
-    replies: list[ChatReply], observations: dict[ObservationKey, ObservationOut]
+    replies: list[ChatReply], observations: dict[ObservationKey, ObservationView]
 ) -> list[ChatReplyOut]:
-    """saved 의 id 를 지금 기록으로 바꾼다. 건강 기록만 있던 saved 는 통째로 뺀다."""
+    """saved 의 id 를 지금 기록으로 바꾼다. 지운 기록은 내용 없이 deleted 에."""
     filled: list[ChatReplyOut] = []
     for reply in replies:
         if not isinstance(reply, SavedReply):
             filled.append(reply)
             continue
-        live: list[ObservationOut] = []
+        live: list[ObservationView] = []
         deleted: list[StoredRef] = []
         for ref in reply.refs:
-            key = _visible_key(ref.kind, ref.id)
+            key = _observation_key(ref.kind, ref.id)
             if key is None:
                 continue
             if key in observations:

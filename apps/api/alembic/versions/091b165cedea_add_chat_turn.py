@@ -13,7 +13,7 @@ autogenerate 를 쓰지 않고 손으로 썼다. 적용 뒤 `alembic revision --
 내는지로 모델과 맞는지 확인한다.
 
 Revision ID: 091b165cedea
-Revises: a3e9c1f7b204
+Revises: 6af377d02e9d
 Create Date: 2026-10-15
 """
 
@@ -24,7 +24,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "091b165cedea"
-down_revision: Union[str, Sequence[str], None] = "a3e9c1f7b204"
+down_revision: Union[str, Sequence[str], None] = "6af377d02e9d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

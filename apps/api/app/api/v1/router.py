@@ -32,6 +32,7 @@ from app.api.v1.routers import (
     observations,
     policies,
     privacy_policy,
+    reports,
     runs,
     suggestions,
 )
@@ -64,6 +65,7 @@ protected_router.include_router(calendar.router)
 protected_router.include_router(chat.router)
 protected_router.include_router(diary.router)
 protected_router.include_router(event_items.router)
+protected_router.include_router(reports.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
 # refresh 가 provider_router 보다 먼저다 — 늦으면 /auth/refresh 가 provider="refresh" 로 잡힌다.

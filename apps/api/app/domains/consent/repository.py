@@ -92,6 +92,17 @@ async def child_health_granted(session: AsyncSession, *, child_id: uuid.UUID) ->
     return action is ConsentAction.GRANTED
 
 
+async def location_granted(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
+    """보호자의 위치정보 동의(`location`, 계정 단위 · 선택)가 지금 granted 인가 (#380).
+
+    입력에 좌표가 실려 왔을 때만 읽는다. 동의가 없으면 창구가 좌표를 버리고 Agent 는 실내 전용으로
+    돈다 — 휴대폰이 좌표를 보냈어도 동의 없이 쓰지 않는다 (위치정보법 · 설계 activity-agent-v1 4-3).
+    조회에 실패하면 예외를 그대로 올린다(`child_health_granted` 와 같다).
+    """
+    action = await latest_action(session, scope=ConsentScope.LOCATION, subject_parent_id=parent_id)
+    return action is ConsentAction.GRANTED
+
+
 async def missing_account_scopes(
     session: AsyncSession,
     *,

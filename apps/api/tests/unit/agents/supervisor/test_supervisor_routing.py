@@ -285,13 +285,56 @@ def test_Supervisor_가_실패하면_Memory_단독으로_간다() -> None:
     assert routing.memory_task is not None
     assert routing.memory_task.raw_text == raw
     assert routing.memory_task.hints == ()  # 힌트 없음
-    assert routing.memory_task.open_lookup_edit is False  # 수정 묶음 닫힘
+    # 수정인지 모르니 묶음을 연다. 수정 문장이 강등되면 새 행이 생겼다 (#483)
+    assert routing.memory_task.open_lookup_edit is True
+    assert routing.memory_task.unclear == ()  # 못 본 것이지 아이 기록이 아니라고 한 게 아니다
     assert routing.domain_tasks == ()  # Food 호출 없음
     assert routing.guidance == ()
 
 
 def test_정상_경로는_강등이_아니다() -> None:
     assert _route_case("RC01").degraded is False
+
+
+# ── unclear (#484) ──────────────────────────────────────────────
+def test_unclear_조각만_있으면_Memory_에_그_조각을_넘긴다() -> None:
+    raw = "딸기 맛있다."
+    output = _output({"text": "딸기 맛있다", "kind": "unclear"})
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+    assert routing.memory_task.unclear == ("딸기 맛있다",)
+    assert routing.memory_task.unclear_only is True
+    assert routing.memory_task.open_lookup_edit is True  # "자동차로 바꿔줘" 가 unclear 로 남는 경우
+
+
+def test_조각에_안_들어간_글자가_있으면_unclear_only_가_아니다() -> None:
+    # Supervisor 가 기록을 빠뜨렸을 수 있다 — unclear 조각만 막고 나머지는 Memory 가 본다
+    raw = "딸기 맛있다. 오늘 공원에서 킥보드 탔어."
+    output = _output({"text": "딸기 맛있다", "kind": "unclear"})
+    task = route(raw, SupervisorResult(output=output), run_id=RUN_ID).memory_task
+
+    assert task is not None
+    assert task.unclear == ("딸기 맛있다",)
+    assert task.unclear_only is False
+
+
+def test_기록_조각과_섞이면_unclear_only_가_아니다() -> None:
+    raw = "딸기 맛있다. 오늘 블록놀이 했어."
+    output = _output(
+        {"text": "딸기 맛있다", "kind": "unclear"},
+        {"text": "오늘 블록놀이 했어", "kind": "record", "work": "observe"},
+    )
+    task = route(raw, SupervisorResult(output=output), run_id=RUN_ID).memory_task
+
+    assert task is not None
+    assert task.unclear == ("딸기 맛있다",)
+    assert task.unclear_only is False
+
+
+def test_기록_조각만_있으면_수정_묶음은_닫혀_있다() -> None:
+    task = _route_case("T01").memory_task
+    assert task is not None and task.unclear == () and task.open_lookup_edit is False
 
 
 # ── Memory 생략 판정 ────────────────────────────────────────────

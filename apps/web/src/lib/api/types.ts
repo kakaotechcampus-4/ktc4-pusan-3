@@ -261,7 +261,16 @@ export interface Suggestion {
    */
   kind: "personalized";
   content: string;
-  reason: { why_this: string; why_now: string };
+  /**
+   * 왜 이 제안인지 한두 문장. **서버 문구 그대로** 그린다 (#475).
+   *
+   * 🚨 **한 칸이다.** `{why_this, why_now}` 로 나누지 않기로 Agent 공통규약 C-2 가 닫았다 —
+   *    모델이 "왜 이걸" 과 "왜 지금" 을 한 문장에 섞어 쓰고, 화면이 그것을 쪼개거나 조립하면
+   *    근거의 뜻을 프론트가 정하게 된다 (CLAUDE.md §3). 한동안 화면만 객체로 알고 있어서
+   *    실서버 응답에서 이유 칸이 비었다.
+   * 🚨 **`null` 이 온다** (서버 `SuggestionOut.reason: str | None`). 비면 라벨도 세우지 않는다.
+   */
+  reason: string | null;
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
