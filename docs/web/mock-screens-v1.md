@@ -122,6 +122,9 @@ location.replace("/");
 | 켤 때 서버에 닿지 못함 | `/child/c1/settings?scenario=session_unreachable` — 로그인 화면이 아니라 **"연결을 확인해 주세요" + 다시 시도.** 되돌리려면 `?scenario=default` 로 열거나 시나리오를 바꾼 뒤 다시 시도 |
 | 10 로그아웃 · 서버에 닿기 전 끊김 | `/child/c1/settings?scenario=logout_unreached` → 로그아웃 → 시트에 **"로그아웃하지 못했어요"** 가 서고 화면에 남는다. 다시 누르면 나간다 |
 | 10 탈퇴 · 서버에 닿기 전 끊김 | `/child/c1/settings/withdraw?scenario=withdraw_unreached` — 시트에 **"아직 지워지지 않았어요"** 가 서야 한다(`/me` 가 200). 다시 누르면 닿는다 |
+| 10 문제 알리기 | `/child/c1/settings/report` — 분류 고르기 → 적기 → 보내기 → "알려 주셔서 고마워요". 처음엔 아무 분류도 안 골라져 있어야 한다 · 하단 네비 없음 (#487) |
+| 10 문제 알리기 · 하루 한도 | `/child/c1/settings/report?scenario=report_limit` — 서버 문구가 서고 **보내기가 잠긴다**. "다시 시도" 가 없어야 한다 |
+| 10 문제 알리기 · 서버에 닿기 전 끊김 | `/child/c1/settings/report?scenario=report_unreached` — **"전해졌는지 확인하지 못했어요"** · 적은 글 그대로 · 다시 누르면 닿는다 |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 
