@@ -68,7 +68,7 @@ class ChatTurnOut(BaseModel):
     replies: list[ChatReplyOut] = Field(
         description=(
             "그 run 의 답을 도착 순서대로. 마지막은 늘 done 이다. "
-            "진행 중에만 의미가 있는 것(step · ping · offer)은 없다. "
+            "진행 단계(step)와 연결 유지 신호(ping)는 없다. "
             "일정 초안(event_draft)은 그때 만든 내용 그대로라 넣기 버튼 없이 읽기 전용으로 그린다"
         )
     )
