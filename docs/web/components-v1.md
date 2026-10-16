@@ -32,14 +32,14 @@
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
-  `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
+  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
-  `AuthGate` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
+  `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
   `ParentSection` · `AccountSection` ·
@@ -53,8 +53,9 @@
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
 - 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 대화·05 제안 후보처럼
   흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7).
-  설정의 하위 화면 둘이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
-  있어서 안 붙인다**(빠져나가는 길은 자기 "그만두고 돌아가기" 하나다)
+  설정의 하위 화면 셋이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
+  있어서 안 붙인다**(빠져나가는 길은 자기 "그만두고 돌아가기" 하나다). **문제 알리기도 안 붙인다** —
+  적는 도중에 새는 길이 있으면 적던 글이 그 자리에서 사라진다 (#487)
 - 🚨 **돌아가기 화살표는 `IconButtonLink` 다** (`components/ui/icon-button.tsx`). `IconButton` 과
   **같은** 모양·톤 표를 쓴다. 🚨 `router.back()` 으로 만들지 않는다 — 히스토리는 어디서 왔는지에
   따라 달라져서, 알림이나 링크로 바로 들어오면 돌아갈 데가 없다. 🚨 `label` 에 "뒤로" 가 아니라
@@ -67,6 +68,15 @@
   돌아가기를 하나 더 뒀더니 스크린리더 링크 목록에 같은 이름이 두 번 떴다 — 둘 다 같은 곳으로
   갔다. 탈퇴 화면은 예외가 아니라 **다른 경우**다(아래 "그만두고 돌아가기" 는 흐름을 그만둔다는
   뜻이라 이름도 하는 일도 화살표와 다르다)
+- 🚨 **10 설정 › 문제 알리기는 앱 안에서 보낸다** (#487 · 서버 `POST /reports`). Google Play 정책(AI 생성
+  콘텐츠 · 사용자 제작 콘텐츠)이 불쾌한 AI 답 · 공동 기록 · 다른 사용자를 **앱을 떠나지 않고** 알릴 길을
+  요구한다 — `mailto:` 로 대신하지 않는다. 🚨 적은 글은 컴포넌트 상태에만 둔다 — 콘솔 · `persist` ·
+  `localStorage` · `sessionStorage` 로 옮기지 않는다(서버도 DB 에만 두고 로그에 안 찍는다). 🚨 승인
+  게이트도 되돌릴 수 없는 5곳도 아니다 — 게이트 표식도 `Idempotency-Key` 도 없다. 🚨 분류는 첫 항목이
+  골라진 채로 시작한다(`ChoiceField` 세로 변형) — 아무것도 안 고른 칸은 테두리만 있는 상자라 고르는
+  칸인지 모르고, 그러면 보내기가 왜 꺼져 있는지 알 수 없다. 🚨 열람 · 삭제처럼 답이 필요한
+  요청은 처리방침의 이메일(`SERVICE_EMAIL`)로 보내 달라고 **적기 전에** 말한다 — 이 양식은 답을
+  보내는 길이 없어서 공식 권리 행사 창구가 아니다. 고객센터의 "질문에 없는 일" 도 이 화면으로 보낸다
 - 🚨 **버튼처럼 보이는 링크는 `ButtonLink` 다** (`components/ui/button.tsx`). `Button` 과 **같은**
   변형·크기 표를 쓴다 — 두 벌이 되면 한쪽만 고쳐져 같은 자리에 선 둘이 달라진다.
   🚨 `<button onClick={router.push}>` 로 대신하지 않는다(링크가 링크가 아니게 된다) ·

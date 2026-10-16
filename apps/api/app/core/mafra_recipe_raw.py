@@ -5,8 +5,8 @@
 `RECIPE_ID` 로 잇기까지만 하고 해석하지 않는다. 재료명 정리(오타 · 부위명 → 19종 코드) · 식품군 ·
 `stage_min` 은 정리 단계(AI)가 맡는다.
 
-🚨 이용 조건 답을 받기 전에는 이 모양의 원문(레시피 이름 · 재료)을 저장소에 넣지 않는다. 테스트는
-   가짜 행으로 쓴다.
+🚨 이용 조건(상업 이용 · 변경)을 확인했다. 원문은 정리 표(`reference/recipe_ingredients.yaml`)와
+   `recipe_catalog` 로만 들어간다 — 테스트는 여전히 가짜 행으로 쓴다.
 """
 
 from dataclasses import dataclass

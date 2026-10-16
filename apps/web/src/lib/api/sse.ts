@@ -1,4 +1,4 @@
-import { authHeaders, buildUrl } from "./client";
+import { authHeaders, authorizedFetch, buildUrl, notifyUnauthenticated } from "./client";
 import { NetworkError } from "./errors";
 import type { Affinity, Agent, EventDraft, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
 
@@ -353,17 +353,15 @@ export async function* streamRunEvents(
   runId: string,
   signal?: AbortSignal,
 ): AsyncGenerator<RunEvent> {
-  let response: Response;
-  try {
-    response = await fetch(buildUrl(`/runs/${runId}/events`), {
-      headers: authHeaders({ Accept: "text/event-stream" }),
-      signal,
-      cache: "no-store",
-    });
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
-    throw new NetworkError(cause);
-  }
+  // access 가 만료됐으면 한 번 갱신해 다시 연결한다 (`authorizedFetch`).
+  const response = await authorizedFetch(buildUrl(`/runs/${runId}/events`), () => ({
+    headers: authHeaders({ Accept: "text/event-stream" }),
+    signal,
+    cache: "no-store",
+  }));
+
+  // 갱신까지 실패했다 — 세션이 끝났다. 화면은 아래 연결 실패로 끝내고, 로그인 화면으로는 전역 처리가 보낸다.
+  if (response.status === 401) notifyUnauthenticated();
 
   if (!response.ok || !response.body) {
     throw new NetworkError(new Error(`SSE 연결 실패 (${response.status})`));

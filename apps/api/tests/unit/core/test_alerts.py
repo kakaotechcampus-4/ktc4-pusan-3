@@ -343,11 +343,15 @@ def test_severity_mark_and_next_step_follow_the_source(attach, sent):
     log.error("api 쪽")
     log.error("화면 쪽", extra={"alert_source": "browser"})
     log.error("급한 쪽", extra={"alert_severity": "high"})
+    log.error("신고 쪽", extra={"alert_source": "report"})
     handler.flush()
 
     assert "🟠" in _desc(sent[0])
     assert "🟡" in _desc(sent[1])
     assert "🔴" in _desc(sent[2])
+    # 앱 안 신고는 장애가 아니다 — 내일 봐도 되고, 다음 할 일은 글을 DB 에서 읽는 것 (#487)
+    assert "🟡" in _desc(sent[3])
+    assert sent[3]["footer"]["text"].startswith("SELECT category, message FROM report")
     assert sent[0]["color"] == 0xFFA500
     assert sent[1]["color"] == 0xFFD700
     assert sent[2]["color"] == 0xFF0000

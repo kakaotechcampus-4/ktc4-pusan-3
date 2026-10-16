@@ -4,6 +4,9 @@ FastAPI는 라우터와 예외 처리기를 자동으로 찾지 않는다. 아�
 include_router와 register_error_handlers 호출이 실제 등록 지점이다.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api import health
@@ -15,6 +18,7 @@ from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
 from app.core.logging_config import configure_logging
 from app.integrations import discord
+from app.integrations.weather.source import PublicWeather
 
 # 앱 로그(app.*)를 시간 · 레벨 · 이름과 함께 찍는다. uvicorn 은 자기 로거만 설정해서, 이게
 # 없으면 info 는 버려지고 경고도 언제 난 건지 모르는 글자만 남는다 (#197 후속).
@@ -26,7 +30,25 @@ configure_logging()
 if settings.alert_webhook_url:
     configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
 
-app = FastAPI(title=settings.APP_NAME)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """프로세스에 하나씩 두는 외부 클라이언트를 만들고 닫는다.
+
+    날씨 어댑터(#380) — 발표분 · 측정소 · 특보 캐시가 프로세스 메모리에 있어 하나를 같이 쓴다
+    (`--workers 1` 전제, #134). 입력 창구가 run 마다 Activity 에 넘긴다. 공공데이터포털 키가
+    없으면 만들지 않는다 — Activity 는 날씨를 묻지 않고 실내 전용으로 돈다.
+    """
+    weather = PublicWeather() if settings.DATA_GO_KR_SERVICE_KEY.strip() else None
+    app.state.activity_weather = weather
+    try:
+        yield
+    finally:
+        if weather is not None:
+            await weather.aclose()
+
+
+app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 
 # 에러 봉투 핸들러 (계약서 §01). 등록을 잊으면 FastAPI 기본 {"detail": ...} 가 나가고
 # 프론트 apps/web/src/lib/api/client.ts 가 code 를 못 읽는다. 그래서 맨 위에 둔다.

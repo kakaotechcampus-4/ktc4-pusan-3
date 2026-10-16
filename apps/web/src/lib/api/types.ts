@@ -261,7 +261,16 @@ export interface Suggestion {
    */
   kind: "personalized";
   content: string;
-  reason: { why_this: string; why_now: string };
+  /**
+   * 왜 이 제안인지 한두 문장. **서버 문구 그대로** 그린다 (#475).
+   *
+   * 🚨 **한 칸이다.** `{why_this, why_now}` 로 나누지 않기로 Agent 공통규약 C-2 가 닫았다 —
+   *    모델이 "왜 이걸" 과 "왜 지금" 을 한 문장에 섞어 쓰고, 화면이 그것을 쪼개거나 조립하면
+   *    근거의 뜻을 프론트가 정하게 된다 (CLAUDE.md §3). 한동안 화면만 객체로 알고 있어서
+   *    실서버 응답에서 이유 칸이 비었다.
+   * 🚨 **`null` 이 온다** (서버 `SuggestionOut.reason: str | None`). 비면 라벨도 세우지 않는다.
+   */
+  reason: string | null;
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -308,7 +317,8 @@ export interface GeneralSuggestion {
  * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
  */
 export interface DocEvidence {
-  ref: { kind: "food_doc" | "activity_doc" | "growth_doc"; id: string };
+  /** 문서 행 · 또는 Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442). 화면은 `id` 만 키로 쓴다. */
+  ref: { kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog"; id: string };
   title: string;
   source_org: string;
   source_title: string;
@@ -1196,11 +1206,23 @@ export type AuthClient = "web" | "app";
 export interface AuthSession {
   /** 불투명 난수 43자. JWT 가 아니다 — 디코딩해서 정보를 꺼내려 하지 않는다. */
   token: string;
-  /** 초 (12시간 = 43200). 없으면 401 을 맞고 나서야 만료를 안다. */
+  /** access 토큰 수명, 초 (15분 = 900). 없으면 401 을 맞고 나서야 만료를 안다. */
   expires_in: number;
   is_new: boolean;
   parent: { id: string; nickname: string | null };
   consent_required: string[];
+}
+
+/**
+ * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`icatch_rt`, HttpOnly)로 인증한다.
+ * 성공하면 새 access 토큰을 주고 쿠키를 회전시킨다. 실패는 전부 `401 unauthenticated` 다.
+ * 정본은 서버 Swagger 다 (docs/web/auth-consent-v1.md §2).
+ */
+export interface AuthRefreshResponse {
+  /** 새 access 토큰. 메모리에만 둔다. */
+  token: string;
+  /** 초 (15분 = 900). */
+  expires_in: number;
 }
 
 /** 신규 회원 — 동의 전에는 parent 가 없어서 토큰이 없다. `consent_code` TTL 10분. */
@@ -1741,4 +1763,40 @@ export interface WithdrawRequest {
 export interface WithdrawResponse {
   /** 지워진 시각. 화면이 계산하지 않는다 — 서버가 만든 값이다. */
   deleted_at: string;
+}
+
+/* ── 10 설정 › 문제 알리기 ───────────────────────────────────────────────── */
+
+/**
+ * POST /reports — #487 · 서버 PR #488. 정본은 서버 Swagger 다 (계약서 v1 에는 없다).
+ *
+ * Google Play 정책(AI 생성 콘텐츠 · 사용자 제작 콘텐츠)이 **앱을 떠나지 않고** 불쾌한 AI 답 ·
+ * 공동 기록 · 다른 사용자를 알리는 길을 요구해서 생겼다 — `mailto:` 는 앱을 떠나서 그 길이 못 된다.
+ *
+ * 🚨 **되돌릴 수 없는 5곳이 아니다.** `Idempotency-Key` 를 받지 않고 `idempotentPath` 표에 더하지
+ *    않는다. 응답만 잃고 다시 보내면 같은 내용이 두 번 쌓일 뿐이다.
+ * 🚨 **본문을 로그에도 저장소에도 남기지 않는다.** 서버는 DB 에만 두고 로그에 찍지 않는다.
+ *    화면도 콘솔에 찍지 않고, `persist` 스토어 · `localStorage` · `sessionStorage` 에 두지 않는다.
+ * 429 `too_many_reports` — 보호자당 24시간에 10건. 문구는 서버 것을 그대로 쓴다.
+ */
+export const REPORT_CATEGORIES = ["ai_content", "shared_record", "bug", "other"] as const;
+export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
+
+/** 서버 검사와 같은 값이다 — 앞뒤 공백을 뗀 뒤 1자 이상, 이 길이 이하. */
+export const REPORT_MESSAGE_MAX_LENGTH = 1000;
+
+/**
+ * 🚨 **필드는 이 둘뿐이다.** 서버는 모르는 필드가 오면 400 `validation_failed` 로 거절한다
+ *    (화면 상태를 통째로 펼쳐 보내지 않는다).
+ */
+export interface ReportRequest {
+  category: ReportCategory;
+  /** 서버가 앞뒤 공백을 떼고 1~1000자인지 본다. NUL 문자는 거절한다. */
+  message: string;
+}
+
+export interface ReportResponse {
+  id: string;
+  /** 서버가 만든 시각. 화면은 쓰지 않는다. */
+  created_at: string;
 }

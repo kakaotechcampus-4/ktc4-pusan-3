@@ -115,15 +115,26 @@ class ParentSummary(BaseModel):
     계정은 null 일 수 있다 (§5-2)."""
 
 
+class RefreshResponse(BaseModel):
+    """refresh 로 받은 새 access — #466. 회전된 refresh 는 본문이 아니라 쿠키로 나간다."""
+
+    token: str
+    """access 토큰. 교환 · 가입 응답의 token 과 같은 것이다."""
+
+    expires_in: int
+    """access 의 수명(초). 로그인 시각부터 정한 최대 기간이 얼마 안 남았으면 그만큼 짧다."""
+
+
 class SessionResponse(BaseModel):
     """세션을 내주는 응답 — 명세 §3-4 · §3-5. 교환과 가입이 같은 모양을 쓴다."""
 
     token: str
-    """불투명 난수. JWT 가 아니다 — 로그아웃·탈퇴·파기 3곳이 즉시 무효화를 요구한다 (§4-2)."""
+    """access 토큰. 불투명 난수다. JWT 가 아니다 — 로그아웃·탈퇴·파기 3곳이 즉시 무효화를
+    요구한다 (§4-2). 웹은 메모리에만 둔다 (#466)."""
 
     expires_in: int
-    """초. 계약서에 없어서 추가한 값이다 — 없으면 프론트가 만료를 미리 알 수 없어
-    매번 401 을 맞고 나서야 재로그인한다 (§3-4)."""
+    """access 의 수명(초). 계약서에 없어서 추가한 값이다 — 없으면 프론트가 만료를 미리 알 수 없어
+    매번 401 을 맞고 나서야 다시 받는다 (§3-4)."""
 
     is_new: bool
     parent: ParentSummary

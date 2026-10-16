@@ -256,7 +256,7 @@ async def test_문서_근거는_아이_기록_근거와_따로_읽는다(session
     await _evidence(session, s, "observation_food", obs.id)
     doc = await _evidence(session, s, "food_doc", obs.id, "질감 안내")
 
-    found = await repository.list_doc_evidence_batch(session, suggestion_ids=[s.id])
+    found = await repository.list_general_evidence_batch(session, suggestion_ids=[s.id])
 
     assert [(row.source_kind, row.note) for row in found[s.id]] == [(doc.source_kind, "질감 안내")]
 

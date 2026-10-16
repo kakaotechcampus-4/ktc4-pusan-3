@@ -26,7 +26,12 @@ ChildRecordKind = Literal[
 # 문서 행. 참고일 뿐이라 개인화 근거로 세지 않는다.
 DocKind = Literal["food_doc", "growth_doc", "activity_doc"]
 
-SourceKind = ChildRecordKind | DocKind
+# 메뉴 행 — Food 일반 추천만 쓴다(#442). 고른 메뉴 자체(레시피 카탈로그 행)라 문서 행이 없는
+# 월령에서도 일반 추천에 근거가 붙는다. 아이 기록이 아니라 개인화 근거로 세지 않는다.
+# 값은 `rules/menu_evidence.MENU_EVIDENCE_KIND` 와 같다
+MenuKind = Literal["recipe_catalog"]
+
+SourceKind = ChildRecordKind | DocKind | MenuKind
 
 _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
     (

@@ -7,7 +7,7 @@
       Supervisor 결과를 바탕으로 코드에서 결정하며, LLM에 다시 묻지 않는다.
 
   - MemoryTask
-      원문 전체와 RECORD 조각 힌트를 전달한다.
+      원문 전체와 RECORD 조각 힌트, UNCLEAR 조각 원문을 전달한다.
       원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
 
   - DomainTask
@@ -148,8 +148,16 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     requests = [s for s in segments if s.kind == SegmentKind.REQUEST]
 
     hints = tuple(MemoryHint(text=s.text, work=WorkType(s.work)) for s in records)
+    # unclear 조각을 넘기지 않으면 Memory 는 강등과 같은 입력을 받아 원문에서 다시 기록을 찾는다
+    unclear = tuple(s.text for s in segments if s.kind == SegmentKind.UNCLEAR)
+    # 기록 조각이 없어도 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 다 막지 않는다
+    unclear_only = not records and bool(unclear) and _covers_all(raw_text, result.output)
     skip_memory = SKIP_MEMORY_FOR_PURE_REQUEST and covers_only_requests(raw_text, result.output)
-    memory_task = None if skip_memory else MemoryTask(raw_text=raw_text, hints=hints)
+    memory_task = (
+        None
+        if skip_memory
+        else MemoryTask(raw_text=raw_text, hints=hints, unclear=unclear, unclear_only=unclear_only)
+    )
 
     # 요청한 agent는 처음 나온 순서대로, 상한까지만
     wanted = list(dict.fromkeys(str(s.agent) for s in requests))
@@ -246,7 +254,11 @@ def covers_only_requests(raw_text: str, output: SupervisorOutput) -> bool:
     """
     if any(s.kind in (SegmentKind.RECORD, SegmentKind.UNCLEAR) for s in output.segments):
         return False
+    return _covers_all(raw_text, output)
 
+
+def _covers_all(raw_text: str, output: SupervisorOutput) -> bool:
+    """원문의 내용 글자가 전부 어느 조각에든 들어가는가."""
     haystack = normalize(raw_text)
     covered = [False] * len(haystack)
     for segment in output.segments:
@@ -259,12 +271,13 @@ def covers_only_requests(raw_text: str, output: SupervisorOutput) -> bool:
 def _log(routing: Routing, supervisor_error: str | None) -> None:
     """원문·조각 없이 개수와 라벨만"""
     logger.info(
-        "routing intent=%s degraded=%s supervisor_error=%s hints=%d lookup_edit=%s "
+        "routing intent=%s degraded=%s supervisor_error=%s hints=%d unclear=%d lookup_edit=%s "
         "domain_tasks=%s unavailable=%s dropped=%s guidance=%s memory=%s",
         routing.intent_type,
         routing.degraded,
         supervisor_error,
         len(routing.memory_task.hints) if routing.memory_task else 0,
+        len(routing.memory_task.unclear) if routing.memory_task else 0,
         routing.memory_task.open_lookup_edit if routing.memory_task else False,
         [f"{task.agent}:{task.task_type}" for task in routing.domain_tasks],
         list(routing.unavailable_agents),

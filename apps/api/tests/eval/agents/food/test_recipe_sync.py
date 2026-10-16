@@ -4,8 +4,8 @@
     uv run pytest tests/eval/agents/food/test_recipe_sync.py -m live
 
 키: MAFRA_RECIPE_API_KEY(농림축산식품 공공데이터포털). 호출 서버 IP 를 등록한 PC 에서만 돈다 —
-등록하지 않은 IP 는 INFO-100 이 와서 건너뛴다. 이용 조건 답을 받기 전이라 원문(레시피 · 재료 이름)은
-파일에 남기지 않고 건수만 남긴다.
+등록하지 않은 IP 는 INFO-100 이 와서 건너뛴다. 원문(레시피 · 재료 이름)은 정리 표와
+`recipe_catalog` 로만 들어가므로 이 eval 도 파일에 남기지 않고 건수만 남긴다.
 
 - 동기화: 기본정보 · 재료를 다 받아 RECIPE_ID 로 이은 결과가 받은 행 수와 맞고, 레시피 이름이 모두
   `menu_key` 가 된다(비면 배치가 그 레시피에서 멈춘다).

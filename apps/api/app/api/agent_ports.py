@@ -77,3 +77,32 @@ def record_counter(child_id: UUID) -> entrypoint.CountRecords:
             )
 
     return count_records
+
+
+def food_stores() -> dict[str, object]:
+    """Food 가 읽는 카탈로그 · 추천 이력 어댑터. 호출마다 짧은 세션을 연다 — 러너와 05 가 같이 쓴다.
+
+    입력 run 과 05 가 같은 어댑터를 넘겨야 두 경로의 후보 풀이 갈라지지 않는다. 만들 때는 세션을
+    열지 않는다(`background_session` 을 함수로 넘길 뿐이다).
+    """
+    from app.domains.food.agent_reader import DbMenuCatalog, DbRecipeCatalog
+    from app.domains.suggestion.agent_reader import DbSuggestionHistory
+
+    return {
+        "food_catalog": DbMenuCatalog(background_session),
+        "food_recipes": DbRecipeCatalog(background_session),
+        "food_suggestions": DbSuggestionHistory(background_session),
+    }
+
+
+def safety_readers() -> dict[str, object]:
+    """Food · Activity 가 읽는 `health_safety` 어댑터 — 러너와 05 가 같이 쓴다 (#460).
+
+    어댑터 하나를 둘에게 넘기고, Food 는 `food_safety`(active · kind 전부), Activity 는
+    `activity_safety`(allergy · environmental · status 전부)로 읽는다. 안 넘기면 둘 다
+    `blocked.safety` 로 닫힌다. 호출마다 짧은 세션을 연다 — 만들 때는 열지 않는다.
+    """
+    from app.domains.safety.agent_reader import DbSafetyReader
+
+    reader = DbSafetyReader(background_session)
+    return {"food_safety": reader, "activity_safety": reader}

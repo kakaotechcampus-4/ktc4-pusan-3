@@ -243,7 +243,7 @@ class ActivityCandidate(ToolArgs):
 
 🚨 **응답의 해석도 Agent 쪽(`weather.py`)이 한다.** 반대 방향도 막혀 있어서 `integrations` 는 `agents` 를 import 할 수 없다. 해석을 어댑터에 두면 `"-"` · `NO_DATA` · 강수 문자열 같은 규칙(4-2)을 테스트 밖에서 한 번 더 짜게 된다. 어댑터는 호출 · 타임아웃 · 지금 시각 칸 고르기까지만 하고, 값은 **원문 문자열 그대로** 포트로 넘긴다.
 
-**어댑터 자리** — `app/integrations/weather/`. 단기예보(`forecast.py`) · 대기질(`air.py`) · 자외선(`uv.py`) · 특보(`advisories.py`)를 `source.PublicWeather` 가 묶어 `WeatherSource` 가 된다. `app/api` 가 프로세스에 하나를 만들어 `handle_input(activity_weather=...)` 로 넘긴다(#380 — agents 쪽 자리는 있고 api 쪽 주입은 PR 2).
+**어댑터 자리** — `app/integrations/weather/`. 단기예보(`forecast.py`) · 대기질(`air.py`) · 자외선(`uv.py`) · 특보(`advisories.py`)를 `source.PublicWeather` 가 묶어 `WeatherSource` 가 된다. `app/main.py` 의 lifespan 이 프로세스에 하나를 만들어(`app.state.activity_weather`, 키가 없으면 None) 입력 창구가 run 마다 `handle_input(activity_weather=...)` 로 넘긴다. 종료할 때 닫는다(#380).
 - **격자 → 시군구 · 특보구역** — 구운 표 `areas_data.py`(`scripts/bake_weather_areas.py`). 출처는 기상청 단기예보 활용가이드의 격자 · 위경도 표와 기상특보 활용가이드의 특보구역 코드 표다(엑셀은 저장소에 넣지 않는다). 격자에서 가장 가까운 읍면동 대표점(6칸 안)의 시군구를 쓴다.
 - **자외선** — 시군구 코드로 묻는다. API 는 읍면동 코드도 받지만 위치를 더 잘게 드러내서 쓰지 않는다. 발표 시각부터 3시간 칸(`h0` · `h3` …) 중 오늘은 지금 칸, 다른 날은 12시 칸.
 - **특보** — 위치 없이 전국 30일치를 한 번에 받아(전국 250행 남짓, 0.6초) 10분 동안 모든 사용자가 같이 쓰고, 그 시군구의 특보구역 행만 넘긴다. 특보구역은 시군 이름으로 찾고 하위 구역(파주시동북부 …)까지 넣는다. **구 단위 특보구역이 없는 광역시(서울 4권역 · 부산 3구역 · 인천 · 대구 · 대전 · 울산 · 옛 광주 구)는 그 시 전체 구역을 본다** — 어느 권역인지 표가 없어서, 시 어디든 발효면 실내만이다.
@@ -481,7 +481,7 @@ async def run(task, context, *, client=None):
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 
-**pipeline 연결 (#380)** — `IMPLEMENTED_AGENTS` · `_RUNNERS` 에 등록돼 있고 context 는 entrypoint 가 Food 와 같은 생일 · 동의 · 기준일 · store 로 만든다. 안전 포트는 `UnwiredSafety` 라 `health_safety` 어댑터가 붙기 전에는 **동의와 상관없이** `blocked.safety` 다. 어댑터는 `domains/safety/agent_reader.py` 의 `DbSafetyReader.activity_safety`(allergy · environmental, status 무관)이고, entrypoint 에 꽂는 것은 #249 · 화면 3단계 뒤다(#405) — 동의하지 않은 아이가 환경 알레르기 확인 없이 열리지 않게(Food 와 같다, #372). pipeline 은 `for_task()` 사본으로 돌리고 결과만 받으므로, 화면에 가야 하는 것은 결과에 실어야 한다 — 알레르기 확인 문구(`state.cautions`)는 `readouts` 맨 앞에 코드 문구로 싣는다. 🚩 추천별 위험 경고(`state.warnings`)는 아직 결과에 없다 — 공통 `SuggestionDraft.warnings` 칸으로 Activity · Growth 가 같이 싣는다(#402). 1차 배포 화면은 추천 승인 때 알레르기 확인 모달만 띄우고 경고 표시는 그 이슈에서 한다(10-13 회의).
+**pipeline 연결 (#380)** — `IMPLEMENTED_AGENTS` · `_RUNNERS` 에 등록돼 있고 context 는 entrypoint 가 Food 와 같은 생일 · 동의 · 기준일 · store 로 만든다. 안전 포트는 러너와 05 가 `agent_ports.safety_readers()` 로 넘기는 `DbSafetyReader.activity_safety`(allergy · environmental, status 무관)다(#405 · #460). 안 넘긴 호출(테스트 · eval)은 `UnwiredSafety` 라 **동의와 상관없이** `blocked.safety` 다. 넘어오면 동의가 있는 아이만 `health_safety` 를 읽고, 동의가 없는 아이는 읽지 않고 거를 것 없이 연다(#372, Food 와 같다) — 꽃가루 · 동물털 같은 환경 알레르기를 확인하지 않은 추천이다. 05 는 동의 없는 아이에게 `allergens` 가 있는 추천을 내지 않는다(`v1/routers/suggestions.py`). #416 은 develop 이 아니라 #412 브랜치로 머지돼 develop 에 없었고, #460 이 같은 배선을 지금 구조로 다시 넣었다. pipeline 은 `for_task()` 사본으로 돌리고 결과만 받으므로, 화면에 가야 하는 것은 결과에 실어야 한다 — 알레르기 확인 문구(`state.cautions`)는 `readouts` 맨 앞에 코드 문구로 싣는다. 🚩 추천별 위험 경고(`state.warnings`)는 아직 결과에 없다 — 공통 `SuggestionDraft.warnings` 칸으로 Activity · Growth 가 같이 싣는다(#402). 1차 배포 화면은 추천 승인 때 알레르기 확인 모달만 띄우고 경고 표시는 그 이슈에서 한다(10-13 회의).
 
 **status** — 날씨를 **불렀는데** 못 읽었으면 `degraded` 이고 날씨 안내 문구가 붙는다. 위치나 날씨 포트가 없어 부르지 않은 것은 실패가 아니다 — 실내 전용으로 정상 동작하고(4-3) "날씨를 확인하지 못했어요" 를 붙이지 않는다. 좌표와 날씨 어댑터가 둘 다 없으면 `lookup_weather` 도 닫고(`Gate.data.weather`), 장소도 같다(`Gate.data.places`) — 열어 두면 부를 때마다 실패만 돌려준다. 프롬프트 `[오늘의 조건]` 은 *확인하지 못했다* 와 *바깥 활동이 어렵다* 를 나눠 쓴다 — 판정(실내만)은 같지만, 한 말로 쓰면 모델이 확인 안 한 날씨를 이유에 쓴다.
 
@@ -710,7 +710,7 @@ terms:
 
 GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선택으로 받고, 휴대폰 권한 팝업은 놀이 추천을 처음 볼 때 띄운다. **휴대폰이 좌표를 약 1km 수준으로 흐려서** 보낸다 — 장소 추천에 쓸 만큼은 남기고 집 위치는 드러나지 않게 한다.
 
-좌표는 **요청 바디로만** 받는다(쿼리스트링은 접근 로그에 남는다). 서버는 그 요청 안에서 **격자 변환과 장소 거리 계산에만** 쓰고 버린다. 좌표는 DB·로그·모델 입력·**예외 메시지**·외부 API 어디에도 남기거나 보내지 않는다.
+좌표는 **요청 바디로만** 받는다(쿼리스트링은 접근 로그에 남는다). 입력 요청(`POST /children/{cid}/inputs`)의 선택 칸 `location: {lat, lon}` 이고, **창구가 보호자의 위치정보 동의(`location`)를 읽어 granted 일 때만** Agent 로 넘긴다 — 동의가 없으면 휴대폰이 보냈어도 버린다. 좌표가 안 왔으면 동의를 읽지도 않는다(#380). 서버는 그 요청 안에서 **격자 변환과 장소 거리 계산에만** 쓰고 버린다. 좌표는 DB·로그·모델 입력·**예외 메시지**·외부 API 어디에도 남기거나 보내지 않는다.
 
 🚨 **거리 계산 결과도 모델에 주지 않는다.** `search_nearby_places` 는 모델에 장소 **이름 · 종류만** 돌려준다. 이름 여러 곳과 거리를 같이 주면 좌표를 직접 주지 않아도 위치를 거꾸로 짐작할 수 있고, 위치 약관(draft-1 제8조 ③)이 인공지능에 전달될 수 있다고 적은 것도 장소 이름뿐이다. 가까운 순 정렬은 코드가 끝낸다 (#193 리뷰).
 

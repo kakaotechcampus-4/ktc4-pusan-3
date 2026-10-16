@@ -707,3 +707,88 @@ class TestEmptyNotice:
     def test_없으면_None(self):
         assert empty_notice((count_notice(2),)) is None
         assert empty_notice(()) is None
+
+
+# ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
+def _menu(note: str = "농식품정보원 레시피로 재료를 확인한 메뉴예요.") -> EvidenceCitation:
+    return EvidenceCitation(ref=Ref(kind="recipe_catalog", id=uuid4()), note=note, label="계란말이")
+
+
+class TestGeneralBasis:
+    """`general_basis` 는 일반 추천일 때만 붙는 근거다. Food 는 고른 메뉴 자체를 넘긴다."""
+
+    def test_메뉴_근거_종류는_규칙_모듈과_같다(self):
+        from app.rules.menu_evidence import MENU_EVIDENCE_KIND
+
+        assert get_args(refs.MenuKind) == (MENU_EVIDENCE_KIND,)
+
+    def test_메뉴_근거는_개인화_근거로_세지_않는다(self):
+        assert _menu().ref.is_child_record is False
+
+    def test_문서_행이_없어도_메뉴_근거만으로_일반_추천이다(self):
+        menu = _menu()
+        draft = build(
+            agent="food",
+            content="계란말이",
+            reason="모델이 쓴 문장",
+            citations=(),
+            general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            general_basis=(menu,),
+            today=TODAY,
+        )
+
+        assert draft.kind == "general"
+        assert draft.citations == (menu,)
+
+    def test_문서_행을_인용했으면_메뉴_근거와_같이_남는다(self):
+        doc, menu = citation(kind="food_doc", polarity=0, label=""), _menu()
+        draft = build(
+            agent="food",
+            content="계란말이",
+            reason="모델이 쓴 문장",
+            citations=(doc,),
+            general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            general_basis=(menu,),
+            today=TODAY,
+        )
+
+        assert draft.citations == (doc, menu)
+
+    def test_개인화_추천에는_메뉴_근거를_붙이지_않는다(self):
+        record = citation()
+        draft = build(
+            agent="food",
+            content="당근전",
+            reason="당근을 잘 먹어서 골랐어요",
+            citations=(record,),
+            general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            general_basis=(_menu(),),
+            today=TODAY,
+        )
+
+        assert draft.kind == "personalized"
+        assert draft.citations == (record,)
+
+    def test_메뉴_근거도_note_가_필요하다(self):
+        with pytest.raises(SuggestionRejected, match="note"):
+            build(
+                agent="food",
+                content="계란말이",
+                reason="",
+                citations=(),
+                general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+                general_basis=(_menu(note=" "),),
+                today=TODAY,
+            )
+
+    def test_메뉴_근거가_없으면_여전히_문서_행이_필요하다(self):
+        # Activity · Growth 는 general_basis 를 넘기지 않는다 — 지금처럼 문서 행이 근거다
+        with pytest.raises(SuggestionRejected, match="근거가 없다"):
+            build(
+                agent="activity",
+                content="블록 쌓기",
+                reason="",
+                citations=(),
+                general_reason="또래 아이들이 많이 하는 놀이예요.",
+                today=TODAY,
+            )

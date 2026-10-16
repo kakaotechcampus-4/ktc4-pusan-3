@@ -69,5 +69,5 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
 - 일반 추천은 문서 행이 근거라, 검수를 마친(`approved`) 문서 행이 없으면 Agent 가 일반 추천을 만들지
   못한다. 지금 `activity_doc.yaml` · `food_doc.yaml` 의 행은 전부 `draft` 라서, 기록이 없는 아이에게는
   일반 추천 대신 0개 안내가 나간다. 문서 검수가 끝나야 이 경로가 실제로 열린다.
-- 운영 포트의 안전 조회가 아직 연결되지 않아(`UnwiredSafety`) Food · Activity 는 `blocked` 로 닫히고 05 는
-  guard 만 낸다 — #412 · #416 이 머지돼야 추천이 나간다.
+- 러너와 05 가 같은 안전 어댑터(`agent_ports.safety_readers()`)를 Food · Activity 에 넘긴다(#460). 안전 조회에
+  실패하면 그 Agent 는 `blocked` 로 닫히고 05 는 guard 만 낸다.

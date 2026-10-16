@@ -7,6 +7,7 @@ import {
   idempotentPath,
   type IdempotentOperation,
   newIdempotencyKey,
+  requiresIdempotencyKey,
 } from "@/lib/api/idempotency";
 import {
   addHealthSafety,
@@ -36,6 +37,7 @@ import {
 import { toISODate } from "@/lib/format";
 import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
+import { REPORT_CATEGORIES, REPORT_MESSAGE_MAX_LENGTH } from "@/lib/api/types";
 import type {
   Affinity,
   AffinitiesResponse,
@@ -65,6 +67,8 @@ import type {
   OnboardingRequest,
   Policy,
   PhotoCommitResponse,
+  ReportRequest,
+  ReportResponse,
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
@@ -661,6 +665,17 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect(data.suggestions).toEqual([]);
     // 답하는 길(#246) 전에는 선택지가 비어 온다 — 서버와 같은 모양
     expect(data.scarcity?.question?.options).toEqual([]);
+  });
+
+  it("🚨 추천 이유는 문장 한 칸이다 — 서버 `reason: str | None` 과 같은 모양 (#475)", async () => {
+    const data = await fetchWith("default", { agents: ["food", "activity"] });
+
+    // 목만 `{why_this, why_now}` 로 내리던 동안 화면이 그 모양에 맞춰져 실서버에서 이유 칸이 비었다.
+    const reasons = data.suggestions.map((s) => s.reason as unknown);
+    for (const reason of reasons) expect(reason === null || typeof reason === "string").toBe(true);
+    // 빈 값도 실린다 — 화면이 "라벨만 선 줄" 을 안 그리는지는 빈 값이 있어야 걸린다
+    expect(reasons).toContain(null);
+    expect(reasons.some((r) => typeof r === "string" && r.trim() !== "")).toBe(true);
   });
 });
 
@@ -3640,3 +3655,155 @@ async function findEventDay(): Promise<CalendarMonthResponse["days"][number]> {
   }
   throw new Error(`일정이 걸린 날이 ${months.join(" · ")} 어디에도 없다`);
 }
+
+/**
+ * `POST /auth/refresh` — 앱을 다시 켜도 로그인이 이어지는 길 (#465). 서버와 맞춘 계약은
+ * `lib/api/types.ts` 의 `AuthRefreshResponse` 다. 쿠키 대신 목은 표식을 쓰지만, **언제 생기고
+ * 언제 사라지는지**는 서버 쿠키와 같아야 화면 흐름을 목으로 볼 수 있다.
+ */
+describe("㉖ refresh 로 세션을 잇는다 (#465)", () => {
+  function refresh(): Promise<Response> {
+    return raw("/auth/refresh", { credentials: "include" });
+  }
+
+  it("로그인 전에는 401 unauthenticated 다", async () => {
+    const res = await refresh();
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.code).toBe("unauthenticated");
+  });
+
+  it("로그인(교환)하면 새 access 와 15분을 준다 — 로그인 응답과 같은 수명이다", async () => {
+    const login = await api.post<AuthSession>("/auth/kakao", { code: "c", bind: "b" });
+
+    const res = await refresh();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ token: expect.any(String), expires_in: 900 });
+    expect(login.expires_in).toBe(body.expires_in);
+  });
+
+  it("🚨 /auth/refresh 가 교환 핸들러(:provider)에 먹히지 않는다", async () => {
+    // 먹히면 본문이 없어 400 validation_failed 가 나고, 화면은 그걸 "서버에 닿지 못함" 으로 읽는다.
+    const res = await refresh();
+    expect(res.status).not.toBe(400);
+  });
+
+  it("로그아웃하면 더는 이어지지 않는다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post("/auth/logout");
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("탈퇴하면 더는 이어지지 않는다 — 다른 기기의 앱도 다시 켜면 로그인 화면이다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post<WithdrawResponse>("/auth/withdraw", { acknowledged_immediate_deletion: true });
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("session_unreachable — 서버에 닿지 않는다 (401 이 아니다)", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    setScenario("session_unreachable");
+    try {
+      await expect(refresh()).rejects.toThrow();
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/**
+ * `POST /reports` — 10 설정 › 문제 알리기 (#487 · 서버 PR #488). 목이 서버와 같은 검사를 거는지 본다.
+ * 🚨 본문은 지어낸 문장이다 — 실제 보호자의 말을 넣지 않는다 (최상위 §9).
+ */
+describe("㉗ 문제 알리기 — 서버 #488 과 같은 계약 (#487)", () => {
+  function send(body: unknown): Promise<Response> {
+    return raw("/reports", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function codeOf(response: Response): Promise<string> {
+    return ((await response.json()) as { error: { code: string } }).error.code;
+  }
+
+  it("201 과 함께 id · created_at 을 준다", async () => {
+    const created = await api.post<ReportResponse>("/reports", {
+      category: "ai_content",
+      message: "지어낸 신고 문장",
+    } satisfies ReportRequest);
+    expect(created).toEqual({ id: expect.any(String), created_at: expect.any(String) });
+  });
+
+  it("🚨 되돌릴 수 없는 5곳이 아니다 — Idempotency-Key 없이 나간다", async () => {
+    expect(requiresIdempotencyKey("POST", "/reports")).toBe(false);
+    const res = await send({ category: "bug", message: "지어낸 문장" });
+    expect(res.status).toBe(201);
+  });
+
+  it.each(REPORT_CATEGORIES)("분류 %s 를 받는다", async (category) => {
+    expect((await send({ category, message: "지어낸 문장" })).status).toBe(201);
+  });
+
+  it("앞뒤 공백을 떼고 센다 — 공백만이면 400, 떼고 1000자면 201", async () => {
+    const blank = await send({ category: "other", message: " \n\t " });
+    expect(blank.status).toBe(400);
+    expect(await codeOf(blank)).toBe("validation_failed");
+
+    const full = "가".repeat(REPORT_MESSAGE_MAX_LENGTH);
+    expect((await send({ category: "other", message: `  ${full}  ` })).status).toBe(201);
+    expect((await send({ category: "other", message: `${full}가` })).status).toBe(400);
+  });
+
+  it("모르는 분류 · NUL 문자 · 문자열이 아닌 본문은 400 이다", async () => {
+    for (const body of [
+      { category: "spam", message: "지어낸 문장" },
+      { category: "bug", message: "지어낸\u0000문장" },
+      { category: "bug", message: 42 },
+      { category: "bug" },
+    ]) {
+      const res = await send(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(await codeOf(res)).toBe("validation_failed");
+    }
+  });
+
+  it("🚨 모르는 필드가 섞이면 400 이다 — 화면 상태를 통째로 보내지 않는다", async () => {
+    const res = await send({ category: "bug", message: "지어낸 문장", child_id: "c1" });
+    expect(res.status).toBe(400);
+    expect(await codeOf(res)).toBe("validation_failed");
+  });
+
+  it("report_limit — 429 too_many_reports 에 서버 문구가 실려 온다", async () => {
+    setScenario("report_limit");
+    try {
+      const failure = await api
+        .post("/reports", { category: "bug", message: "지어낸 문장" })
+        .then(() => null)
+        .catch((e: unknown) => e);
+      expect(isApiError(failure, "too_many_reports")).toBe(true);
+      expect((failure as ApiError).status).toBe(429);
+      expect((failure as ApiError).message).toBe(
+        "지금은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
+      );
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("report_unreached — 한 번만 서버에 닿기 전에 끊긴다 (다시 보내면 닿는다)", async () => {
+    setScenario("report_unreached");
+    try {
+      const body = { category: "bug", message: "지어낸 문장" } satisfies ReportRequest;
+      const caught = await api.post("/reports", body).catch((e: unknown) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+
+      const created = await api.post<ReportResponse>("/reports", body);
+      expect(created.id).toBeTruthy();
+    } finally {
+      setScenario("default");
+    }
+  });
+});

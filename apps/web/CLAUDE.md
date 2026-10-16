@@ -20,7 +20,7 @@ Owner: 고태영 (프론트 리드)
 | --- | --- |
 | 05 · 07 · 08 · 09 · 11-1 · 11-2 화면, 라우트를 더하거나 시트를 라우트로 바꿀 때 | [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) |
 | 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
-| `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴) | [`components-v1.md`](../../docs/web/components-v1.md) |
+| `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | `mocks/` · `*.test.ts` · `e2e/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
@@ -105,9 +105,11 @@ Owner: 고태영 (프론트 리드)
 | 10 설정 | `/child/[childId]/settings` |
 | 10 설정 › 고객센터 (읽는 화면) | `/child/[childId]/settings/help` |
 | 10 설정 › 탈퇴 (흐름 중인 화면) | `/child/[childId]/settings/withdraw` |
+| 10 설정 › 문제 알리기 (흐름 중인 화면 · Play 정책의 앱 안 신고 · #487) | `/child/[childId]/settings/report` |
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
+| 계정 삭제 안내 (로그인 없이 · Play 스토어에 거는 주소) | `/account-deletion` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
 라우트를 고른 이유와 화면별 규칙은 [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) §1 이다. 어기면 바로 사고가 나는 것만:
@@ -121,6 +123,9 @@ Owner: 고태영 (프론트 리드)
 - 🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다.** 어느 구역인지 힌트로만 쓴다
 - 🚨 **기기 뒤로가기는 웹뷰 히스토리다** ([`apps/mobile/App.tsx`](../mobile/App.tsx)). 그래서 04 · 11-1 · 11-2 는 시트가 아니라 라우트고,
   돌아가는 길은 `router.back()` 이 아니라 링크다
+  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
+  ([`back-press.ts`](../mobile/src/native/back-press.ts) · #462). 그 화면 안에서 `push` 로 쌓은 상태는 기기 뒤로가기로 되돌릴 수 없다 —
+  탭 안의 보기 전환은 지금처럼 `replace` 로 둔다. 탭 경로(`child-nav.tsx` 의 `TABS`)를 바꾸면 셸도 같이 고친다
 
 ### 컴포넌트 — 직접 만든다
 
@@ -132,7 +137,7 @@ Owner: 고태영 (프론트 리드)
   화면을 안 그리는 것(`es-hangul` · `react-error-boundary`)은 이 규칙 밖이다
 - ⚠️ `cn()` 은 **tailwind-merge 가 아니다.** primitive 밖에서 `className` 으로 색·크기를 덮지 않는다 — 필요하면 변형을 primitive 안에 더한다
 - 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** 위·아래 고정 바는 `topBar` · `bottomBar` · `nav` 로 넘긴다. 화면 제목은 `PageTitle`
-- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다.** 흐름 중인 화면(04 · 05 · 11-2 · 탈퇴)에 붙이면 고르는 도중에 새는 길이 생긴다
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다.** 흐름 중인 화면(04 · 05 · 11-2 · 탈퇴 · 문제 알리기)에 붙이면 고르는 도중에 새는 길이 생긴다
 - 🚨 **돌아가기는 `IconButtonLink`**(`label` 에 "뒤로" 가 아니라 가는 곳), **버튼처럼 보이는 링크는 `ButtonLink`** 다.
   `router.back()` · `<button onClick={router.push}>` 로 대신하지 않는다
 - 🚨 **승인 게이트 표식(`btn-approve` · `caution`)은 게이트 2곳 전용이다.** 05 채택 · 07 교정 확인 · 08 저장 · 가입 동의는 게이트가 아니다
@@ -151,10 +156,14 @@ Owner: 고태영 (프론트 리드)
 - 🚨 **`/auth/callback` 은 `AuthGate` 로 감싸지 않는다**
 - 🚨 **"전체 동의" 를 만들지 않는다** · 법정대리인 확인을 상수 `true` 로 보내지 않는다 · 무엇을 묻는지의 정본은 `GET /policies` 다
 
-### 세션 — `sessionStorage` 다
+### 세션 — access 는 메모리, refresh 는 쿠키다
 
-- 🚨 **토큰을 `localStorage` 에 두지 않는다.** 불투명 난수라 디코딩하지 않는다. 판정은 `hasLiveSession()`
-- **`401 unauthenticated` 는 `lib/api/client.ts` 에서 한 번에 처리한다.** 화면마다 다루지 않는다 (예외는 탈퇴 화면 하나 · #389)
+규칙 원문은 [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) §2 (#465).
+
+- 🚨 **토큰을 어떤 저장소에도 두지 않는다** (`localStorage` · `sessionStorage` 둘 다). 앱을 켜면 `restore()` 가 refresh 쿠키로 다시 받는다. 불투명 난수라 디코딩하지 않는다
+- 🚨 **갱신은 `lib/api/client.ts` 한 곳에서, 동시에 하나만** 한다. 화면은 갱신을 모른다. 판정은 `hasLiveSession()`(토큰이 있는가) — access 만료 시각으로 로그아웃을 판정하지 않는다
+- 🚨 **세션을 확인하지 못한 것(서버에 닿지 못함)은 로그아웃이 아니다.** 로그인 화면이 아니라 `SessionUnreachable` 을 세운다
+- **갱신까지 실패한 `401 unauthenticated` 는 `lib/api/client.ts` 에서 한 번에 처리한다.** 화면마다 다루지 않는다 (예외는 탈퇴 화면 하나 · #389)
 - 인증이 필요한 화면은 `components/auth-gate.tsx` 로 감싼다
 
 ### 아이콘 — `lucide-react`
@@ -165,7 +174,7 @@ Owner: 고태영 (프론트 리드)
 ### 서버 상태 vs 클라이언트 상태 — 섞지 않는다
 
 - **TanStack Query** = 서버에서 온 것 전부. 관찰·프로필·제안·일정·홈.
-- **Zustand** = 서버가 모르는 것만. 토큰, 지금 보고 있는 아이, 열려 있는 모달.
+- **Zustand** = 서버가 모르는 것만. 토큰(메모리만), 지금 보고 있는 아이, 열려 있는 모달.
 - 🚨 **아이 이름·생일·알레르기를 Zustand 에 캐시하지 않는다.** 개인정보는 화면이 필요할 때 Query 로 가져오고, 스토어에는 `id` 만 둔다 (§2 개인정보).
 
 쿼리 키는 손으로 쓰지 말고 `qk` 팩토리를 쓴다. 아이 스코프는 전부 `qk.child(cid)` 아래라서, 아이를 바꿀 때 한 번의 무효화로 끝난다.
@@ -258,7 +267,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 - 🚨 **콘솔·로그에 발화 원문을 남기지 않는다.** `memory_id` 만 (§2 개인정보).
 - 🚨 **외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다.** `dangerouslySetInnerHTML` 금지, 마크다운을 쓰더라도 raw HTML 비활성(`rehype-raw` 금지).
   이 서비스의 XSS 경로는 특정된다 — **기관 공지 붙여넣기·OCR 로 들어온 외부 텍스트가 LLM 을 거쳐 화면에 렌더링된다** (F-07 · F-14).
-  토큰이 JS 에서 접근 가능하므로 XSS 한 건이 세션을 넘긴다. React 는 기본적으로 이스케이프하니 **구멍은 위 둘뿐이고 막는 비용이 거의 0이다.**
+  access 토큰이 JS 메모리에 있으므로 XSS 한 건이 그 토큰을 넘긴다. React 는 기본적으로 이스케이프하니 **구멍은 위 둘뿐이고 막는 비용이 거의 0이다.**
   ([`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §7-7 이 이 규칙을 최상위 CLAUDE.md §2 로 올릴 것을 제안했다 — 파트 경계를 넘어서 팀 결정 대기 중이고, 그때까지 프론트 규칙으로 여기 둔다.)
 
 ---

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, LifeBuoy, Plus } from "lucide-react";
+import { ArrowLeft, Flag, LifeBuoy, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
@@ -16,7 +16,9 @@ import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
+import { usePolicies } from "@/hooks/use-policies";
 import { api, qk, type Me } from "@/lib/api";
+import { askedChoices, consentChoices } from "@/lib/consent";
 import { BACK, FORWARD } from "@/lib/view-transition";
 
 /**
@@ -74,6 +76,15 @@ function SettingsScreen() {
    *    버튼 없이 초대하라고 말하는 화면이 된다 — 그때는 초대 얘기를 꺼내지 않는다.
    */
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
+  /**
+   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 지금은 유일한 선택 동의(위치)를
+   *    묻지 않는다 (`askedChoices` · #221). 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
+   *    아무것도 없는 목록을 설명하는 화면이 된다. 위치를 다시 물으면 저절로 돌아온다.
+   */
+  const policies = usePolicies();
+  const hasOptionalConsent = askedChoices(consentChoices(policies.data)).some(
+    ({ policy }) => !policy.required,
+  );
   const role = me.data?.children.find((child) => child.child_id === childId)?.role;
   const inviteNote =
     role === "owner"
@@ -97,7 +108,12 @@ function SettingsScreen() {
           </IconButtonLink>
           <PageTitle>설정</PageTitle>
         </div>
-        <p className="text-body-sm text-ink-muted mt-2">함께 보는 사람과 동의를 여기서 관리해요.</p>
+        {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
+        <p className="text-body-sm text-ink-muted mt-2">
+          {hasOptionalConsent
+            ? "함께 보는 사람과 동의를 여기서 관리해요."
+            : "함께 보는 사람과 계정을 여기서 관리해요."}
+        </p>
       </header>
 
       <Section
@@ -123,20 +139,35 @@ function SettingsScreen() {
         />
       </Section>
 
-      <Section
-        title="동의"
-        description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
-      >
-        <ConsentSection childId={childId} />
-      </Section>
+      {hasOptionalConsent ? (
+        <Section
+          title="동의"
+          description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
+        >
+          <ConsentSection childId={childId} />
+        </Section>
+      ) : null}
 
-      <Section title="고객센터" description="자주 묻는 것과 이 서비스의 기본 정보예요.">
+      <Section
+        title="고객센터"
+        description="자주 묻는 것과 이 서비스의 기본 정보, 그리고 문제를 알리는 곳이에요."
+      >
         <SettingsGroup>
           <SettingsLinkRow
             href={`/child/${childId}/settings/help`}
             icon={LifeBuoy}
             title="자주 묻는 질문"
             status="기록 · 제안 · 안전 · 함께 보기"
+            {...FORWARD}
+          />
+          {/* 🚨 **앱 안에서 보내는 길이다** (#487). Google Play 정책이 불쾌한 AI 답 · 공동 기록 ·
+              다른 사용자를 앱을 떠나지 않고 알릴 길을 요구한다 — `mailto:` 로 대신하지 않는다.
+              읽는 줄(자주 묻는 질문) 아래에 둔다: 답을 먼저 찾아보고, 없으면 알린다. */}
+          <SettingsLinkRow
+            href={`/child/${childId}/settings/report`}
+            icon={Flag}
+            title="문제 알리기"
+            status="AI 답 · 공동 기록 · 앱 오류"
             {...FORWARD}
           />
         </SettingsGroup>

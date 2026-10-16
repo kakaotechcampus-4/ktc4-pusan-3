@@ -6,8 +6,12 @@
 
 | | 어디 | 언제 사라지나 |
 | --- | --- | --- |
-| 로그인 세션 · `bind` · 가입 대기표 | `sessionStorage` | **탭 닫으면** 자동 |
+| `bind` · 가입 대기표 | `sessionStorage` | **탭 닫으면** 자동 |
 | 목 시나리오 | `localStorage` | **안 사라진다** — 직접 지우거나 `?scenario=default` |
+| 목의 refresh 쿠키 표식 (`icatch.mock.refresh`) | `localStorage` | **안 사라진다** — 로그아웃 · 탈퇴가 지운다. 실서버의 HttpOnly 쿠키 대신이다 (#465) |
+| 마지막에 본 아이 (`icatch.active-child`) | `localStorage` | 로그아웃하면 비워진다 |
+
+🚨 **로그인 토큰은 저장소에 없다** — 메모리에만 있고, 켤 때 목의 refresh 가 다시 준다. 그래서 탭을 닫거나 새로고침해도 로그인이 이어진다.
 
 아직 제출하지 않은 **일정 초안**도 `sessionStorage` 다 (`icatch.event-drafts`) — 탭을 닫으면 사라진다.
 
@@ -15,14 +19,15 @@
 
 ```js
 sessionStorage.clear();
-localStorage.removeItem("icatch.session");
+localStorage.removeItem("icatch.mock.refresh");
+localStorage.removeItem("icatch.active-child");
 localStorage.removeItem("icatch.mock.scenario");
 location.replace("/");
 ```
 
 | 보고 싶은 화면 | 어떻게 |
 | --- | --- |
-| 00 로그인 | `/` |
+| 00 로그인 | `/` — 🚨 목의 refresh 표식(`icatch.mock.refresh`)이 있으면 로그인 화면이 아니라 **홈으로 간다** (앱은 늘 `/` 로 열린다 · #465). 로그인 화면을 보려면 초기화한다 |
 | 00 로그인 · 버튼 비활성 | `/?scenario=auth_unready` |
 | **가입 (이름 + 동의 → 경로 고르기)** | 초기화 후 `/?scenario=consent` → 카카오로 시작하기 |
 | 가입에서 켠 선택 동의(위치)가 10 설정에 반영되는지 | 가입에서 `[선택] 위치정보` 를 켜고 → `/child/c1/settings` |
@@ -112,7 +117,14 @@ location.replace("/");
 | 10 탈퇴 | `/child/c1/settings/withdraw` — 읽음 표시 → 탈퇴하기 → 확인 시트의 "탈퇴할게요" → "탈퇴했어요". 🚨 끝 화면 다음은 다시 로그인해야 한다(목도 탈퇴한 뒤의 `/me` 가 401 이다) |
 | 10 탈퇴 · 지운 뒤 응답 유실 | `/child/c1/settings/withdraw?scenario=withdraw_lost` — 응답을 못 받아도 **"탈퇴했어요" 로 끝나야 한다.** 🚨 첫 화면으로 튕기면 401 이 전역 처리로 샌 것이다 (#389) |
 | 10 탈퇴 · 응답도 확인도 끊김 | `/child/c1/settings/withdraw?scenario=withdraw_unconfirmed` — 시트에 "처리됐는지 확인하지 못했어요". 🚨 **다시 누르면 첫 화면이 아니라 "탈퇴했어요" 로 가야 한다** (다시 누른 탈퇴가 401 이다 · #389) |
+| 앱을 다시 켠 것 (로그인 유지) | 로그인한 채로 아무 화면에서 새로고침 — 로그인 화면을 거치지 않고 **그 화면 그대로** 서야 한다 (#465) |
+| access 가 만료된 채로 켬 | `/child/c1/settings?scenario=session_expired` — 첫 요청이 401 이어도 **튕기지 않고 그대로 그린다.** 네트워크 탭에 `/auth/refresh` 가 두 번(켤 때 · 401 뒤) |
+| 켤 때 서버에 닿지 못함 | `/child/c1/settings?scenario=session_unreachable` — 로그인 화면이 아니라 **"연결을 확인해 주세요" + 다시 시도.** 되돌리려면 `?scenario=default` 로 열거나 시나리오를 바꾼 뒤 다시 시도 |
+| 10 로그아웃 · 서버에 닿기 전 끊김 | `/child/c1/settings?scenario=logout_unreached` → 로그아웃 → 시트에 **"로그아웃하지 못했어요"** 가 서고 화면에 남는다. 다시 누르면 나간다 |
 | 10 탈퇴 · 서버에 닿기 전 끊김 | `/child/c1/settings/withdraw?scenario=withdraw_unreached` — 시트에 **"아직 지워지지 않았어요"** 가 서야 한다(`/me` 가 200). 다시 누르면 닿는다 |
+| 10 문제 알리기 | `/child/c1/settings/report` — 분류 고르기 → 적기 → 보내기 → "알려 주셔서 고마워요". 처음부터 첫 분류("AI 답이나 추천이 부적절해요")가 골라져 있어야 한다 · 하단 네비 없음 (#487) |
+| 10 문제 알리기 · 하루 한도 | `/child/c1/settings/report?scenario=report_limit` — 서버 문구가 서고 **보내기가 잠긴다**. "다시 시도" 가 없어야 한다 |
+| 10 문제 알리기 · 서버에 닿기 전 끊김 | `/child/c1/settings/report?scenario=report_unreached` — **"전해졌는지 확인하지 못했어요"** · 적은 글 그대로 · 다시 누르면 닿는다 |
 | 로그인 실패 문구 | `/auth/callback?error=invalid_state` |
 | 디자인 시스템 | `/design-system` |
 

@@ -27,7 +27,7 @@ make web-dev                 # http://localhost:3000
 ```bash
 cp ../../deploy/docker/.env.example ../../deploy/docker/.env   # 값 채우기
 make web-image     # 이미지 굽기
-make web-up        # http://localhost:${WEB_PORT}
+make web-up        # Caddy 가 https://icatch.ai.kr 로 프록시 (호스트 포트 없음)
 make web-logs
 ```
 

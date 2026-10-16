@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
@@ -83,6 +84,50 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert isinstance(seen["growth_log"], DbGrowthLogReader)
     assert names(channel) == ["step", "done"]
     assert channel.closed
+
+
+async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
+    """창구가 위치 동의를 확인한 좌표와 서버 시작 때 만든 날씨 어댑터 (#380)."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=location,
+        activity_weather=weather,
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["location"] is location
+    assert seen["activity_weather"] is weather
+
+
+async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):
+    """#460 — 넘기지 않으면 둘 다 blocked.safety 로 닫힌다. 같은 어댑터 하나를 둘이 다른
+    메서드로 읽는다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["food_safety"], DbSafetyReader)
+    assert seen["activity_safety"] is seen["food_safety"]
 
 
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
@@ -917,6 +962,30 @@ async def test_기록_건수_함수를_진입점에_넘기고_짧은_세션에�
     assert counted == [4]
     assert asked == [(CHILD, ("observation_activity",))]
     assert len(opened) == 2  # run 세션 + 건수 세션 — run 세션을 같이 타지 않는다
+
+
+async def test_Food_카탈로그_어댑터를_진입점에_넘긴다(monkeypatch):
+    """#442 — Food 가 DB 의 레시피 · 메뉴 카탈로그 · 추천 이력을 읽는다.
+
+    어댑터는 만들 때 세션을 열지 않는다.
+    """
+    opened = _sessions(monkeypatch)
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert type(seen["food_recipes"]).__name__ == "DbRecipeCatalog"
+    assert type(seen["food_catalog"]).__name__ == "DbMenuCatalog"
+    assert type(seen["food_suggestions"]).__name__ == "DbSuggestionHistory"
+    assert len(opened) == 1  # run 세션 하나뿐 — 어댑터는 호출할 때마다 짧은 세션을 연다
 
 
 async def test_추천_저장_뒤_예외가_나도_done_이고_키를_풀지_않는다(monkeypatch):

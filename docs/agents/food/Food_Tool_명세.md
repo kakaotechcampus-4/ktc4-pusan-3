@@ -48,7 +48,7 @@
 
 [배치] 농식품정보원 레시피 기본 · 재료정보 ──▶ 재료명 정리 표(사람 검수) ──▶ recipe_catalog (추천 후보만)
           재료 → 알레르기 19종 코드 (코드 사전 + 정리 표). 검수 전 재료가 있으면 resolved=false
-          식품분류 → 6개 식품군 (영양DB 행: `reference/food_groups.yaml` 대응표, 레시피 행: 재료 정리 표의 재료별 칸 — #396)
+          식품분류 → 6개 식품군 (영양DB 행: `reference/food_groups.yaml` 의 메뉴 이름 · 대분류 이름 · 원재료성 코드 줄, 없으면 이름이 같은 레시피의 주재료 식품군 — #459 · #420. 레시피 행: 재료 정리 표의 주재료 칸 — #396)
 ```
 
 **두 표를 뗀다**(10-11, #326 리뷰). `menu_catalog` 는 급식 · 기록 · 영양 판정용이고 레시피 재료를 싣지 않는다. 레시피는 추천 후보용 `recipe_catalog` 에만 있다 — 레시피 재료로 급식 메뉴를 판정하면 어린이집이 실제로 넣은 재료를 표준 레시피가 "없음" 으로 덮는다([`food_agent_own_table.md`](food_agent_own_table.md) §1-1).
@@ -132,7 +132,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 | --- | --- | --- | --- |
 | 식약처 **식품영양성분DB정보** (`FoodNtrCpntDbInfo03`) — data.go.kr/data/15127578 | 음식 · 가공식품 · 원재료성 331,212행 — 식품코드 · 분류 · 100g 기준 영양 · 식품중량 | `menu_catalog.nutrients` · `serving_g` — 매일 새벽 배치(품목대표 전체) + 요청 중 캐시 미스 | 이용허락 제한 없음. 클라이언트 `app/integrations/mfds/` · 키 `DATA_GO_KR_SERVICE_KEY`. 이름은 **포함 검색**이라 `DB_CLASS_NM=품목대표` 필터를 걸고 정확히 같은 이름만 고른다(§0-7) |
 | 식약처 **K-FIND** 식품영양성분 DB | 동일 DB 검색 서비스 (130여 종 성분) | 수동 검수 | 2026-07 출범 |
-| **농식품정보원 레시피** 기본 · 재료정보 — data.mafra.go.kr | 레시피 537건 · 재료 6,104행(재료명 · 용량 · 주재료/부재료/양념, `RECIPE_ID` 로 이어짐) | `recipe_catalog`(추천 후보)의 재료 · 알레르기 — **배치로만** | 클라이언트 `app/integrations/mafra/` · 키 `MAFRA_RECIPE_API_KEY`(호출 서버 IP 등록). 평문 HTTP · 키가 주소 경로에 들어가서 배치 한 곳에서만 부른다. 이용 조건 문의 중(10-11) — 운영 적재 · 원문 커밋은 답 뒤. 재료는 정리 표로 읽는다(own_table §1-1) |
+| **농식품정보원 레시피** 기본 · 재료정보 — data.mafra.go.kr | 레시피 537건 · 재료 6,104행(재료명 · 용량 · 주재료/부재료/양념, `RECIPE_ID` 로 이어짐) | `recipe_catalog`(추천 후보)의 재료 · 알레르기 — **배치로만** | 클라이언트 `app/integrations/mafra/` · 키 `MAFRA_RECIPE_API_KEY`(호출 서버 IP 등록). 평문 HTTP · 키가 주소 경로에 들어가서 배치 한 곳에서만 부른다. 이용 조건 답 받음 — 상업 이용 · 변경 가능. 정리 표를 저장소에 두고 운영에 적재한다. 재료는 정리 표로 읽는다(own_table §1-1) |
 | 식약처 **조리식품 레시피 DB** (COOKRCP01) — foodsafetykorea.go.kr | 레시피 1,156건(10-06 받은 CSV 기준) — 재료가 자유 텍스트 | **보류(10-11)** | 재료 파싱(FT-7) · 검수 비용이 커서 쓰지 않는다. 메뉴명도 변형 레시피 이름이다(FT-17). 농식품정보원이 거절되거나 후보 풀이 모자라면 다시 본다 |
 | 식약처 알레르기 표시 대상 19종 | 알류·우유·메밀·땅콩·대두·밀·고등어·게·새우·돼지고기·복숭아·토마토·아황산류·호두·닭고기·쇠고기·오징어·조개류·잣 | `ALLERGEN_CODES` 상수 | 번호 = 이 순서 |
 | 급식표 읽기 (사진 OCR · 센터 배포 엑셀) | 끼니별 메뉴 이름 | `daycare_meal` (급식의 유일한 경로) | 파이프라인 산출물(`MealPlanJSON.name`) 읽기만. 메뉴명에 붙은 알레르기 번호는 읽지 않는다 — 기관이 아이의 알레르기를 관리하고 보호자에게 미리 알린다. 저장 직후 대체·제외 메뉴 확인 안내. NEIS 는 쓰지 않는다(10-09) |
@@ -181,7 +181,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 닫힘 조건 추가: `safety_ok=False` → `meal_recommendation` · `nutrient_analysis` 가 `()`(`blocked.safety`, 모델 0회). 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석도 식품군 안내("달걀 반찬 늘리기")를 내서, 걸러 낼 알레르기를 모르면 열지 않는다(#321, 10-11 변경). `daycare_meal` 은 식품 안내가 아니라서 안전 조회와 무관하다.
 
-안전 포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 안전 포트가 `UnwiredSafety` 라서, `build_gate` 가 **동의와 상관없이** 안전 조회 실패로 읽고 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 보지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다 — 생일 · 동의는 API 가 읽어 값으로 넘기므로(#372) 실제 동의 값이 들어와도 어댑터가 붙기 전에는 같다. 실제 안전 포트는 #405 의 `DbSafetyReader.food_safety`(active · kind 전부)이고, entrypoint 의 `food_safety` 자리로 들어간다(#416). 러너가 Food 에 넘기는 시점은 Food 쪽이 정한다 — #249 · 화면 3단계 · #411 PR 4-1 · 원재료성 행 · 음식 행 식품군이 끝난 뒤다(#411 "순서").
+안전 포트를 안 넘긴 run(entrypoint 기본값 `unwired_ports()`)은 안전 포트가 `UnwiredSafety` 라서, `build_gate` 가 **동의와 상관없이** 안전 조회 실패로 읽고 위 두 라벨이 `blocked.safety` 로 닫힌다. "동의 있음 + 알레르기 0행" 으로 열리면 알레르기가 있는 아이에게 거르지 않은 안내가 나간다. 동의를 보지 않는 이유는, 동의가 없으면 `build_gate` 가 `health_safety` 를 읽지 않아 실패가 드러나지 않아서다 — 생일 · 동의는 API 가 읽어 값으로 넘기므로(#372) 실제 동의 값이 들어와도 어댑터가 붙기 전에는 같다. 실제 안전 포트는 #405 의 `DbSafetyReader.food_safety`(active · kind 전부)이고, 러너와 05 가 `agent_ports.safety_readers()` 로 entrypoint 의 `food_safety` 자리에 넘긴다(#460).
 
 **`consent_child_health=False` 는 Food 를 닫지 않는다** (2026-09-24). 동의가 없으면 `health_safety` 와 `child_growth_log` 를 읽지 못할 뿐이고, 그건 조회 실패가 아니라 **읽을 것이 없는 상태**다 — 읽은 안전 정보(`FoodRunState.safety`)가 빈 튜플이고 권장 열량은 연령군 일반값으로 간다. 동의를 안 했다고 식단을 못 받으면 안 된다.
 

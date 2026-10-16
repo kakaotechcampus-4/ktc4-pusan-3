@@ -29,14 +29,19 @@ from app.domains.identity.repository import (
     consume_handoff,
     create_handoff,
     create_identity,
-    create_session,
 )
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.policy.models import PolicyVersion
 from app.domains.schedule.models import SharedPhoto
 from app.infra.db.session import engine
 from app.integrations.kakao.client import KakaoApiError
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child
+from tests.integration.api.conftest import (
+    Bearer,
+    cookie_header,
+    issue_bearer,
+    link_child,
+    seed_login,
+)
 
 URL = "/api/v1/auth/withdraw"
 ACK = {"acknowledged_immediate_deletion": True}
@@ -100,12 +105,7 @@ async def test_owner_withdraw_deletes_child_and_cuts_members(
     headers, owner = bearer
     member_headers, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    await create_session(
-        session,
-        parent_id=owner,
-        token_hash=hash_token("owner-other-device"),
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    await seed_login(session, parent_id=owner, token="owner-other-device")
     await _signed_up(session, owner)
     await _signed_up(session, member)
     await record_consent(
@@ -161,6 +161,8 @@ async def test_member_withdraw_keeps_child_and_shared_records(
     await session.rollback()
 
     assert resp.status_code == 200
+    # 이 기기의 refresh 쿠키도 지운다 — 세션 행은 이미 없어 남겨도 401 이지만, 남길 이유가 없다
+    assert "Max-Age=0" in cookie_header(resp, "icatch_rt")
     assert await session.get(Parent, member) is None
     assert await session.get(Child, cid) is not None
     await session.refresh(photo)
@@ -387,12 +389,7 @@ async def test_login_exchange_and_withdraw_do_not_deadlock(committed):
         consumed = await consume_handoff(login, code_hash=code_hash, provider=AuthProvider.KAKAO)
         withdrawing = asyncio.create_task(_withdraw_committed(factory, pid))
         await asyncio.sleep(0.3)
-        await create_session(
-            login,
-            parent_id=consumed.parent_id,
-            token_hash=hash_token("new-session"),
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
+        await seed_login(login, parent_id=consumed.parent_id, token="new-session")
         await login.commit()
 
     withdrawn = await asyncio.wait_for(withdrawing, timeout=5)

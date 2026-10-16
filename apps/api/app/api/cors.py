@@ -39,9 +39,14 @@ def register_cors(app: FastAPI) -> None:
     같은 오리진으로 배포하면 필요 없고, 비어 있는데 미들웨어를 달면 "켰는데 아무것도
     허용되지 않는" 상태가 된다 — 안 켠 것과 구분되지 않아 진단만 어려워진다.
 
-    🚨 allow_credentials 를 켜지 않는다. 세션은 sessionStorage 의 Bearer 토큰으로
-       오간다 (명세 §4-3). oauth_state 쿠키는 카카오 왕복(최상위 이동)에서만 쓰이고
-       XHR 에 실리지 않으므로, 자격증명 동반 요청을 열어 줄 이유가 없다.
+    allow_credentials 를 켠다 (#466). refresh 는 HttpOnly 쿠키(icatch_rt)로 오가고, 웹은
+    교환 · 가입 · refresh · 로그아웃 · 탈퇴를 `credentials: "include"` 로 부른다. 이게 꺼져
+    있으면 브라우저가 그 응답을 스크립트에 넘기지 않고 Set-Cookie 도 버린다.
+
+    🚨 응답을 읽을 수 있는 오리진은 기존 허용 목록(환경변수, `*` 는 부팅에서 막힌다)으로 제한된다.
+       CORS 가 막는 것은 응답 읽기뿐이다 — preflight 가 필요 없는 단순 요청은 서버에서 실행된다.
+       쿠키는 SameSite=Strict 라 다른 사이트의 요청에는 실리지 않지만, 같은 사이트의 다른
+       오리진까지 막지는 않는다. Path=/api/v1/auth 라 일반 API 요청에는 실리지 않는다.
     """
     origins = settings.cors_allow_origins
     if not origins:
@@ -51,7 +56,7 @@ def register_cors(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=ALLOW_METHODS,
         allow_headers=ALLOW_HEADERS,
     )

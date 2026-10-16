@@ -10,10 +10,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "kr.ac.pusan.ktc4.icatch"
+      "bundleIdentifier": "kr.ai.icatch"
     },
     "android": {
-      "package": "kr.ac.pusan.ktc4.icatch",
+      "package": "kr.ai.icatch",
       "adaptiveIcon": {
         "backgroundColor": "#E7F1EA",
         "foregroundImage": "./assets/android-icon-foreground.png",

@@ -22,6 +22,7 @@ from app.domains.memory.observation.models import (
     ObservationFood,
     ObservationStatus,
 )
+from app.domains.safety.agent_reader import DbSafetyReader
 from app.domains.safety.models import HealthSafety, SafetyKind, SafetyStatus
 from app.domains.suggestion.models import (
     Suggestion,
@@ -180,6 +181,20 @@ async def test_홈_버튼_키는_표의_문장만_Agent_에_보낸다(db_client,
 
     assert resp.status_code == 200
     assert calls[0]["tasks"][0].request_texts == ("저녁 추천해줘",)  # 화면이 보낸 문장은 없다
+
+
+async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, bearer, cid, agents):
+    # 러너만 넘기면 홈 제안 · 다시 준비하기에서만 Food · Activity 가 닫힌다 (#460)
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+    plan["activity"] = ("empty", "준비할 수 있는 놀이가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food", "activity"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["food_safety"], DbSafetyReader)
+    assert calls[0]["activity_safety"] is calls[0]["food_safety"]
 
 
 async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_client, bearer, cid, agents):
@@ -746,3 +761,72 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
     )
     assert kept == task  # 내일 다시 시도할 수 있게 맥락은 남는다(15분 안이면)
+
+
+async def test_05_도_Food_카탈로그_어댑터를_넘긴다(db_client, bearer, cid, agents):
+    """#442 — 입력 run(러너)과 05 가 같은 어댑터를 넘긴다.
+
+    한쪽만 넘기면 두 경로의 후보 풀이 갈라진다.
+    """
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "조건에 맞는 추천이 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert type(calls[0]["food_catalog"]).__name__ == "DbMenuCatalog"
+    assert type(calls[0]["food_recipes"]).__name__ == "DbRecipeCatalog"
+    assert type(calls[0]["food_suggestions"]).__name__ == "DbSuggestionHistory"
+
+
+# ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
+async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """문서 행이 없는 월령에도 Food 일반 추천이 나간다 — 근거는 고른 메뉴(레시피 카탈로그 행)다."""
+    from app.domains.food import repository as food_repository
+    from app.rules.menu_evidence import menu_evidence_id
+
+    plan, _ = agents
+    headers, _ = bearer
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": "mafra_recipe",
+                "source_id": "7",
+                "menu_key": "두부조림",
+                "display_name": "두부조림",
+                "ingredients": ["두부"],
+                "resolved": True,
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+    )
+    menu = menu_evidence_id("mafra_recipe", "7")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 아이들이 많이 먹는 메뉴예요.",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+                    ),
+                ),
+            )
+        ],
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
+    assert evidence["title"] == "두부조림"
+    assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."

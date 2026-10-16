@@ -1,12 +1,12 @@
 """세션 키 → 부모 식별 → 아이 접근 — 인증·인가 체인의 DB 계약.
 
 API 라우터의 인증 흐름:
-  Bearer token → hash → find_session_by_token_hash → parent_id
+  Bearer token → hash → find_session_by_access_hash → parent_id
                                                       ↓
                                         find_accessible_child(child_id, parent_id)
 
 이 테스트는 체인의 각 단계가 올바르게 동작하고, 단계 간 연결이 끊기지 않는지 검증한다.
-인덱스 의존: ix_session_token_hash (unique), uq_parent_child_parent_id (unique).
+인덱스 의존: session_access PK(token_hash), uq_parent_child_parent_id (unique).
 """
 
 import hashlib
@@ -21,11 +21,8 @@ from app.domains.child.repository import (
     list_children_for_parent,
 )
 from app.domains.identity.models import Parent
-from app.domains.identity.repository import (
-    SessionRow,
-    create_session,
-    find_session_by_token_hash,
-)
+from app.domains.identity.repository import SessionRow, find_session_by_access_hash
+from tests.integration.api.conftest import seed_login
 
 
 def _hash(token: str) -> bytes:
@@ -47,12 +44,9 @@ async def two_parents(session):
 async def test_valid_session_resolves_to_parent(session, two_parents):
     """유효한 세션 토큰 해시로 parent_id를 얻는다."""
     parent_a, _ = two_parents
-    token_hash = _hash("test-token-a")
-    expires = datetime.now(timezone.utc) + timedelta(hours=12)
+    await seed_login(session, parent_id=parent_a.id, token="test-token-a")
 
-    await create_session(session, parent_id=parent_a.id, token_hash=token_hash, expires_at=expires)
-
-    row = await find_session_by_token_hash(session, token_hash=token_hash)
+    row = await find_session_by_access_hash(session, token_hash=_hash("test-token-a"))
 
     assert row is not None
     assert isinstance(row, SessionRow)
@@ -62,14 +56,13 @@ async def test_valid_session_resolves_to_parent(session, two_parents):
 async def test_expired_session_returns_row_with_past_expires_at(session, two_parents):
     """만료된 세션도 행은 반환한다. 만료 판정은 repository가 아니라 deps/auth.py가 한다."""
     parent_a, _ = two_parents
-    token_hash = _hash("expired-token")
     expired_at = datetime.now(timezone.utc) - timedelta(hours=1)
 
-    await create_session(
-        session, parent_id=parent_a.id, token_hash=token_hash, expires_at=expired_at
+    await seed_login(
+        session, parent_id=parent_a.id, token="expired-token", access_expires_at=expired_at
     )
 
-    row = await find_session_by_token_hash(session, token_hash=token_hash)
+    row = await find_session_by_access_hash(session, token_hash=_hash("expired-token"))
 
     assert row is not None
     assert row.expires_at == expired_at
@@ -77,7 +70,7 @@ async def test_expired_session_returns_row_with_past_expires_at(session, two_par
 
 async def test_unknown_token_hash_returns_none(session, two_parents):
     """DB에 없는 토큰 해시 → None. deps/auth.py는 이를 401로 변환한다."""
-    row = await find_session_by_token_hash(session, token_hash=_hash("no-such-token"))
+    row = await find_session_by_access_hash(session, token_hash=_hash("no-such-token"))
     assert row is None
 
 
@@ -129,17 +122,11 @@ async def test_find_accessible_child_blocks_cross_parent_access(session, two_par
 
 
 async def test_full_chain_token_hash_to_parent_to_accessible_child(session, two_parents):
-    """전체 체인: token_hash → SessionRow.parent_id → find_accessible_child 성공/차단."""
+    """전체 체인: access 해시 → SessionRow.parent_id → find_accessible_child 성공/차단."""
     parent_a, parent_b = two_parents
 
     # 세션 생성
-    token_hash = _hash("chain-test-token")
-    await create_session(
-        session,
-        parent_id=parent_a.id,
-        token_hash=token_hash,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
-    )
+    await seed_login(session, parent_id=parent_a.id, token="chain-test-token")
 
     # 아이 등록
     child = await create_child(
@@ -151,7 +138,7 @@ async def test_full_chain_token_hash_to_parent_to_accessible_child(session, two_
     )
 
     # 체인 실행: 토큰 해시 → parent_id → 아이 접근
-    session_row = await find_session_by_token_hash(session, token_hash=token_hash)
+    session_row = await find_session_by_access_hash(session, token_hash=_hash("chain-test-token"))
     assert session_row is not None
 
     resolved_child = await find_accessible_child(
@@ -161,14 +148,10 @@ async def test_full_chain_token_hash_to_parent_to_accessible_child(session, two_
     assert resolved_child.id == child.id
 
     # 다른 부모의 세션으로는 같은 아이에 접근 불가
-    other_token_hash = _hash("other-parent-token")
-    await create_session(
-        session,
-        parent_id=parent_b.id,
-        token_hash=other_token_hash,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+    await seed_login(session, parent_id=parent_b.id, token="other-parent-token")
+    other_session_row = await find_session_by_access_hash(
+        session, token_hash=_hash("other-parent-token")
     )
-    other_session_row = await find_session_by_token_hash(session, token_hash=other_token_hash)
     assert other_session_row is not None
 
     blocked = await find_accessible_child(

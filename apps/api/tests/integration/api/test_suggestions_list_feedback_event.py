@@ -7,7 +7,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import idempotency
+from app.api import agent_ports, idempotency
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.schedule.repository import create_event, create_event_item
@@ -66,8 +66,8 @@ async def _make_suggestion(
 
 
 # 🚨 05 가 돌려주는 근거는 label 이 사람이 읽을 수 있는 값이고 is_stale 이 null 이 아니어야 한다.
-#    진짜 entrypoint 가 돈다 — 운영 포트의 안전 조회가 아직 연결되지 않아(UnwiredSafety) Activity
-#    는 모델 호출 없이 닫히므로 추천 행이 없어도 통과한다. 연결되면 근거가 실제로 검사된다. (#323)
+#    진짜 entrypoint 가 돈다. 운영에서는 러너 · 05 가 안전 어댑터를 넘겨 Activity 가 열리지만(#460),
+#    여기서는 넘기지 않아(UnwiredSafety) 모델 호출 없이 닫힌다 — 실제 LLM 을 부르지 않게. (#323)
 _CHILD_RECORD_KINDS = frozenset(
     (
         "observation_food",
@@ -84,9 +84,20 @@ _CHILD_RECORD_KINDS = frozenset(
 
 
 async def test_evidence_label_and_is_stale_are_filled(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID, monkeypatch: pytest.MonkeyPatch
 ):
     """evidence.label은 source_kind가 아닌 사람이 읽을 수 있는 값, is_stale은 bool이어야 한다."""
+    from app.agents.common import llm_client
+
+    made: list[object] = []
+    real_init = llm_client.LLMClient.__init__
+
+    def counting_init(self: object, *args: object, **kwargs: object) -> None:
+        made.append(kwargs.get("role"))  # Agent 가 예외를 실패로 삼켜서 세어 둔다
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(llm_client.LLMClient, "__init__", counting_init)
+    monkeypatch.setattr(agent_ports, "safety_readers", dict)  # 안전 어댑터를 넘기지 않는다
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/suggestions",
@@ -105,6 +116,8 @@ async def test_evidence_label_and_is_stale_are_filled(
             assert ev["is_stale"] is not None, (
                 "evidence.is_stale이 null이다. 6개월 규칙(§2)이 화면에서 빠진다 (#323)"
             )
+    # 실제 LLM 을 부르지 않는다 — 부르면 로컬 키로 유료 호출이 나가고 결과가 매번 달라진다
+    assert made == []
 
 
 async def test_answer_question_returns_501(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):

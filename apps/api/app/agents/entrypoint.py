@@ -18,6 +18,7 @@ from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsen
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
 from app.agents.activity.store.ports import CoarseLocation, WeatherSource
+from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
 from app.agents.common.readout import Readout
@@ -32,7 +33,13 @@ from app.agents.common.suggestion import (
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
-from app.agents.food.store import InMemoryProfile, unwired_ports
+from app.agents.food.store import InMemoryFoodDocs, InMemoryProfile, unwired_ports
+from app.agents.food.store.ports import (
+    MenuCatalogStore,
+    RecipeCatalogStore,
+    SuggestionHistoryReader,
+)
+from app.agents.food.store.ports import SafetyReader as FoodSafetyReader
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.store.inmemory import InMemoryConsent as GrowthConsent
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthLog
@@ -196,6 +203,11 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
     count_records: CountRecords | None = None,
+    food_catalog: MenuCatalogStore | None = None,
+    food_recipes: RecipeCatalogStore | None = None,
+    food_suggestions: SuggestionHistoryReader | None = None,
+    food_safety: FoodSafetyReader | None = None,
+    activity_safety: ActivitySafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
@@ -233,6 +245,12 @@ async def handle_input(
       run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
     - count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다. 러너가
       `agent_ports.record_counter` 로 만든다. 안 넘기면(테스트 · eval) 그 칸이 빈다.
+    - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
+      어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
+      빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
+    - food_safety · activity_safety 는 api 가 넘긴 `health_safety` 어댑터다(`DbSafetyReader`,
+      #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는 `activity_safety` 로 읽는다 —
+      읽는 행이 다르다. 안 넘기면(테스트 · eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -258,6 +276,11 @@ async def handle_input(
         location=location,
         activity_weather=activity_weather,
         domain_store=domain_store,
+        food_catalog=food_catalog,
+        food_recipes=food_recipes,
+        food_suggestions=food_suggestions,
+        food_safety=food_safety,
+        activity_safety=activity_safety,
         growth_log=growth_log,
     )
 
@@ -312,6 +335,11 @@ async def suggest(
     child_health_granted: bool | None = None,
     domain_store: StoreOpener | None = None,
     store: MemoryStore | None = None,
+    food_catalog: MenuCatalogStore | None = None,
+    food_recipes: RecipeCatalogStore | None = None,
+    food_suggestions: SuggestionHistoryReader | None = None,
+    food_safety: FoodSafetyReader | None = None,
+    activity_safety: ActivitySafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
@@ -338,6 +366,11 @@ async def suggest(
         location=None,
         activity_weather=None,
         domain_store=domain_store,
+        food_catalog=food_catalog,
+        food_recipes=food_recipes,
+        food_suggestions=food_suggestions,
+        food_safety=food_safety,
+        activity_safety=activity_safety,
         growth_log=growth_log,
     )
     domain_tasks = tuple(
@@ -439,6 +472,11 @@ def _domain_contexts(
     location: CoarseLocation | None,
     activity_weather: WeatherSource | None,
     domain_store: StoreOpener | None,
+    food_catalog: MenuCatalogStore | None = None,
+    food_recipes: RecipeCatalogStore | None = None,
+    food_suggestions: SuggestionHistoryReader | None = None,
+    food_safety: FoodSafetyReader | None = None,
+    activity_safety: ActivitySafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
     """Food · Activity · Growth 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
@@ -448,23 +486,37 @@ def _domain_contexts(
     # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
     # 포트가 build_gate 의 LifeStage 계산과 동의 확인 자리에 들어가고, 기억 포트는 같은 run 의
     # store 를 읽게 한다. 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
-    # 안전 조회는 아직 연결되지 않았다(UnwiredSafety) — 포트를 안 넘긴 run 이 "알레르기 0행" 으로
-    # 열리면 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다. 동의 값이 실제로 들어와도
-    # build_gate 는 동의와 상관없이 안전 조회 실패로 읽어서 Food 는 blocked.safety 로 닫힌다.
-    # TODO: health_safety 어댑터가 붙으면 이 자리를 api 가 넘긴 FoodPorts 로 바꾼다 (issue4).
+    # 안전은 api 가 넘긴 health_safety 어댑터다(#460). 안 넘긴 호출(테스트 · eval)은
+    # UnwiredSafety 라 동의와 상관없이 blocked.safety 로 닫힌다 — "알레르기 0행" 으로 열리면
+    # 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다.
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
     memory_port = (
         StoreFoodMemory(store) if domain_store is None else StoreFoodMemory(opener=domain_store)
     )
+    # Food 가 읽는 공용 데이터 · 추천 이력은 api 가 넘긴 어댑터만 바꿔 끼운다(#383 방식). 문서 행은
+    # Activity 처럼 yaml 의 검수된 행이다 — 일반 추천의 근거라 비면 일반 추천을 못 낸다
+    food_stores: dict[str, object] = {"docs": InMemoryFoodDocs.from_seed()}
+    for name, port in (
+        ("catalog", food_catalog),
+        ("recipes", food_recipes),
+        ("suggestions", food_suggestions),
+        ("safety", food_safety),
+    ):
+        if port is not None:
+            food_stores[name] = port
     if child_health_granted is None:
         food_ports = unwired_ports(
-            profile=InMemoryProfile({child_id: resolved_birth_date}), memory=memory_port
+            profile=InMemoryProfile({child_id: resolved_birth_date}),
+            memory=memory_port,
+            **food_stores,
         )
     else:
         child_values = ChildValues(
             child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
         )
-        food_ports = unwired_ports(profile=child_values, consent=child_values, memory=memory_port)
+        food_ports = unwired_ports(
+            profile=child_values, consent=child_values, memory=memory_port, **food_stores
+        )
     # 쓰기 포트는 호출마다 바로 commit
     writes = RunWrites()
     food_ports = record_food_writes(food_ports, writes)
@@ -477,9 +529,9 @@ def _domain_contexts(
         ports=food_ports,
     )
 
-    # Activity 도 Food 와 같은 자리에서 같은 값을 받는다 (#380). 안전 조회는 아직 연결되지 않아
-    # (UnwiredSafety) 동의와 상관없이 blocked.safety 로 닫힌다 — 환경 알레르기를 확인하지 않고
-    # 열리지 않게. 기억은 같은 run 의 store 를 읽고, 문서 행은 yaml 의 approved 행이다.
+    # Activity 도 Food 와 같은 자리에서 같은 값을 받는다 (#380). 안전은 api 가 넘긴 어댑터의
+    # activity_safety 다(#460) — 안 넘기면 닫힌다. 기억은 같은 run 의 store 를 읽고, 문서 행은
+    # yaml 의 approved 행이다.
     activity_child = (
         ChildValues(
             child_id=child_id, birth=resolved_birth_date, health_consent=child_health_granted
@@ -501,6 +553,7 @@ def _domain_contexts(
                 else StoreActivityMemory(opener=domain_store)
             ),
             weather=activity_weather,
+            safety=activity_safety,
         ),
         location=location,
     )

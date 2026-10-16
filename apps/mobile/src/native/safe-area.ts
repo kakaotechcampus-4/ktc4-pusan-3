@@ -49,6 +49,20 @@ export const SAFE_AREA_SCRIPT = `(function () {
 })();
 true;`;
 
+/**
+ * 웹에 넘길 값 — 키보드가 열려 있으면 **아래는 0** 이다 (#462).
+ *
+ * 키보드가 열리면 웹뷰 바닥은 키보드 윗변이고, 제스처바 · 버튼 바는 키보드 아래에 가려진다.
+ * 그런데 `useSafeAreaInsets()` 의 아래 값은 키보드와 무관하게 그대로라, 그대로 넘기면 하단 네비가
+ * 가려진 시스템 바 높이만큼 키보드 위를 비워 둔다 (네비 바닥색의 빈 띠).
+ *
+ * ⚠️ Android 에서만 쓴다. iOS 는 WKWebView 가 키보드를 다르게 다뤄 기기 확인 전이라 호출한 쪽이
+ *    Android 에서만 `keyboardOpen` 을 켠다.
+ */
+export function shellInsets(insets: EdgeInsets, keyboardOpen: boolean): EdgeInsets {
+  return keyboardOpen ? { ...insets, bottom: 0 } : insets;
+}
+
 /** 지금 값을 웹에 넣는 스크립트. 첫 주입에도, 값이 바뀔 때도 같은 것을 쓴다. */
 export function safeAreaScript(insets: EdgeInsets): string {
   // 🚨 `Math.round` — 소수점이 섞이면 기기마다 1px 이 들쭉날쭉해 보인다.

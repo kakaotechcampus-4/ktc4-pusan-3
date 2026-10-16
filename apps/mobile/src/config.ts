@@ -3,6 +3,7 @@
  * 화면·상태·API 호출은 전부 web 에 있고, 여기는 네이티브만 할 수 있는 것을 맡는다.
  */
 
+import { isRootUrlOf } from "./native/back-press";
 import { isInternalUrlOf } from "./native/internal-url";
 
 const rawUrl = process.env.EXPO_PUBLIC_WEB_URL;
@@ -21,4 +22,9 @@ export const ALLOWED_ORIGIN = new URL(WEB_URL).origin;
 /** 출처가 같아도 API 경로(`/api/…`)는 웹뷰 밖이다 (`src/native/internal-url.ts`). */
 export function isInternalUrl(url: string): boolean {
   return isInternalUrlOf(url, ALLOWED_ORIGIN);
+}
+
+/** 하단 네비 네 칸 중 하나인가 — 여기서 뒤로가기는 앱을 닫는 쪽이다 (`src/native/back-press.ts`). */
+export function isRootUrl(url: string): boolean {
+  return isRootUrlOf(url, ALLOWED_ORIGIN);
 }

@@ -46,7 +46,7 @@ class RoutineCategory(StrEnum):
     SELF_CARE = "self_care"  # 양치 / 옷 입기 / 손 씻기
     MEALTIME = "mealtime"  # 식사 도구 / 식사 태도 — 무엇을 먹었는지는 food
     HOUSEHOLD_TASK = "household_task"  # 장난감 정리 / 심부름
-    SOCIAL_MANNER = "social_manner"  # 인사 / 차례 지키기
+    SOCIAL_MANNER = "social_manner"  # 인사 / 차례 지키기 / 친구 도와주기·달래기
     HABIT = "habit"  # 손톱 물어뜯기 / 손가락 빨기 (증상 X, 단순 버릇)
     TRANSITION = "transition"  # 등원 준비 / 잠자리 들기 / 놀이 끝내기
 

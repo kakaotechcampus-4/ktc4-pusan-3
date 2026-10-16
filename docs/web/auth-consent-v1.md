@@ -88,13 +88,32 @@
   고장이 아니라 화면이 낡은 것이다 — 다시 시도가 아니라 **다시 확인**을 시킨다 (대기표는 살아 있다)
 - 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 남은 동의는 10 설정에서 켠다
 
-## 2. 세션 — `sessionStorage` 다
+## 2. 세션 — access 는 메모리, refresh 는 쿠키다 (#465)
 
-- 🚨 **토큰을 `localStorage` 에 두지 않는다.** [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §4-3 이 못박은 규칙이고, 이유는 아래 XSS 항목과 한 덩어리다
-- 토큰은 불투명 난수다. **JWT 가 아니니 디코딩해서 정보를 꺼내려 하지 않는다.** 수명 12시간 · refresh 없음
-- `signIn(token, expiresIn)` 이 만료 시각을 함께 든다. `hasLiveSession()` 으로 판정한다 — 401 을 맞고 나서야 아는 것보다 낫다
-- **`401 unauthenticated` 는 `lib/api/client.ts` 에서 한 번에 처리한다** (Providers 가 핸들러를 꽂는다). 화면마다 401 을 다루지 않는다. 🚨 `invalid_handoff`(401) 는 여기 안 걸린다 — 그건 로그인 교환 실패고 콜백 화면이 자기 문구로 처리한다
-  🚨 **예외는 탈퇴 화면 하나다** (`handleUnauthenticated: false` · #389). 탈퇴는 커밋하면서 세션을 전부 지워서, 응답만 잃은 뒤의 401 은 만료가 아니라 **탈퇴가 끝난 것**이다. 전역 처리에 넘기면 돌아올 주소로 탈퇴 화면을 기억한 채 `/` 로 튕긴다. 만료와는 화면이 든 만료 시각(`hasLiveSession`)으로 가르고, 만료된 세션의 401 은 그대로 전역 처리에 맡긴다. ⚠️ 세션을 나눠 가진 다른 탭의 로그아웃은 못 가른다(계정이 그대로인데 "탈퇴했어요") — 서버가 "이미 탈퇴됨" 을 따로 주지 않는 한 남는 한계다
-- 인증이 필요한 화면은 `components/auth-gate.tsx` 로 감싼다. `hydrated` 전에는 아무것도 그리지 않는다 —
-  토큰이 `sessionStorage` 에 있어서 서버 렌더 시점엔 항상 `null` 이고, 그때 그리면 로그인한 사용자에게도 화면이 깜빡이고 튕긴다
-- ⚠️ 부수 효과로 `activeChildId` 도 세션 스코프가 됐다. "마지막에 본 아이" 복원이 탭을 닫으면 사라진다 — 정본은 URL 이라 화면이 깨지지는 않는다
+앱을 완전히 껐다 켜도 로그인이 이어지게 하려고 바꿨다. 예전에는 토큰을 `sessionStorage` 에 12시간 두고 refresh 가 없었는데, 앱 프로세스가 죽으면 웹뷰가 새로 만들어져 저장소가 비워졌다 — 앱을 켤 때마다 카카오 로그인을 다시 거쳤다.
+
+| | access 토큰 | refresh 토큰 |
+| --- | --- | --- |
+| 어디에 | **JS 메모리만** (`stores/session.ts` · `lib/api/client.ts`) | 서버가 심는 **HttpOnly 쿠키** `icatch_rt` (`Path=/api/v1/auth`) |
+| 수명 | 15분 (`expires_in: 900`) | 유휴 30일(쓸 때마다 연장) · 절대 90일 |
+| 보내는 법 | `Authorization: Bearer` — 일반 API · SSE 전부 | 브라우저가 붙인다. 화면 코드는 읽지도 쓰지도 못한다 |
+| 받는 곳 | 교환 · 가입 응답, `POST /auth/refresh` 응답 | 교환 · 가입 · refresh 가 심고(회전), 로그아웃 · 탈퇴가 지운다 |
+
+- 🚨 **토큰을 어떤 저장소에도 두지 않는다.** `localStorage` 금지는 그대로고(이유는 `apps/web/CLAUDE.md` §4 의 XSS 항목 · [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §7-7), 이제 `sessionStorage` 에도 두지 않는다. 메모리의 access 는 15분이면 끝나고, 오래 사는 refresh 는 JS 가 읽지 못한다.
+  남기는 것은 `activeChildId` 하나다(`localStorage` 의 `icatch.active-child`) — 권한 근거가 아니라 "마지막에 본 아이" 이고, 앱을 다시 켰을 때 그 아이의 홈으로 열려고 둔다. 쓰기 전에 `/me` 목록에 있는지 본다 (`lib/auth/landing.ts`)
+- 토큰은 불투명 난수다. **JWT 가 아니니 디코딩해서 정보를 꺼내려 하지 않는다**
+- **앱을 켜면 `restore()` 가 `POST /auth/refresh` 를 부른다** (Providers · 목이 뜬 뒤). 200 이면 로그인, 401 이면 로그인 전이다.
+  🚨 **서버에 닿지 못한 것(네트워크 · 5xx)은 로그아웃이 아니다** — `restoreFailed` 로 갈라 `SessionUnreachable`(연결 확인 + 다시 시도)을 세우고, 로그인 화면으로 보내지 않는다. 쿠키가 그대로라 연결이 돌아오면 이어진다
+- 🚨 **`/` 는 로그인 화면을 그리기 전에 세션부터 본다.** 앱은 늘 `/` 로 열린다(`apps/mobile` 의 `WEB_URL`). 살아 있으면 `landingPath()` 로 홈에 보낸다 — 안 그러면 세션을 되살려 놓고도 매번 로그인 화면이 선다
+- **갱신은 `lib/api/client.ts` 한 곳에서 한다.** 화면은 갱신을 모른다
+  - 만료 1분 전이면 보내기 전에 갱신하고, `401 unauthenticated` 를 받으면 갱신한 뒤 **한 번만** 다시 보낸다 (`authorizedFetch` · SSE 도 같은 길)
+  - 🚨 **되돌릴 수 없는 요청도 같은 Idempotency-Key 로 다시 보낸다.** 서버는 키를 `(parent_id, method, path, key)` 로 기억하고 `parent_id` 는 인증을 통과해야 생기므로, 401 로 끝난 요청은 키에 아무것도 남기지 않고 실행된 것도 없다. 서버와 계약으로 고정했다 (#467 리뷰 · 서버가 [`idempotency-v1.md`](../api/idempotency-v1.md) 에 적는다). 되돌릴 수 없는 요청만 재전송을 빼면 15분마다 승인 버튼이 한 번씩 실패한다
+  - 🚨 **갱신은 동시에 하나만 나간다** (`refreshSession` single-flight). 서버는 회전된 refresh 가 늦게 다시 오면 탈취로 보고 그 로그인을 지운다 — 쿼리 여러 개가 각자 갱신하면 우리 스스로 로그아웃을 만든다
+  - 🚨 **401 뒤 갱신이 서버에 닿지 못하면 `NetworkError` 로 던진다.** 401 로 끝내면 전역 처리가 세션을 버린다
+  - 🚨 `/auth/*` 요청만 `credentials: "include"` 다. 없으면 브라우저가 응답의 Set-Cookie 를 버려서 로그인해도 쿠키가 안 생긴다. 일반 API 는 Bearer 뿐이다
+- `hasLiveSession()` 은 **토큰이 있는지만** 본다. 🚨 access 만료 시각으로 판정하지 않는다 — 그러면 15분마다 화면이 튕긴다
+- **갱신까지 실패한 `401 unauthenticated` 는 `lib/api/client.ts` 에서 한 번에 처리한다** (Providers 가 핸들러를 꽂는다). 화면마다 401 을 다루지 않는다. 🚨 `invalid_handoff`(401) 는 여기 안 걸린다 — 그건 로그인 교환 실패고 콜백 화면이 자기 문구로 처리한다
+  🚨 **예외는 탈퇴 화면 하나다** (`handleUnauthenticated: false` · #389). 탈퇴는 커밋하면서 세션을 전부 지워서, 응답만 잃은 뒤의 401 은 만료가 아니라 **탈퇴가 끝난 것**이다. 전역 처리에 넘기면 돌아올 주소로 탈퇴 화면을 기억한 채 `/` 로 튕긴다. access 만료는 갱신이 먼저 받으므로 이 화면까지 오는 401 은 세션 행이 없다는 뜻이다. 끄는 것은 "로그인 화면으로 보내기" 뿐이고 갱신은 그대로 한다. ⚠️ 다른 탭이나 기기의 로그아웃, refresh 절대 상한(90일)은 못 가른다(계정이 그대로인데 "탈퇴했어요") — 서버가 "이미 탈퇴됨" 을 따로 주지 않는 한 남는 한계다
+- 🚨 **로그아웃이 서버에 닿지 못하면 나간 척하지 않는다** (`components/account-section.tsx`). refresh 쿠키는 HttpOnly 라 화면이 지울 수 없고, 지우는 것은 로그아웃 응답뿐이다. 이 기기의 토큰만 버리고 "나갔어요" 하면 다음에 앱을 켤 때 그 쿠키로 다시 로그인된다 — 함께 쓰는 기기면 다음 사람이 그대로 들어온다. 실패를 시트에 남기고 다시 누르게 한다
+- 인증이 필요한 화면은 `components/auth-gate.tsx` 로 감싼다. `hydrated`(세션 확인 끝) 전에는 화면 대신 `SessionChecking`(스피너 + "불러오는 중…")만 그린다 — 앱을 켜면 토큰이 비어 있어서 그때 화면을 그리면 로그인한 사용자에게도 깜빡이고 튕긴다. `/` 도 확인과 `/me` 를 받는 동안 같은 표시다. 비워 두면 느린 망에서 왕복 두 번 동안 앱이 멈춘 것처럼 보인다
+- 🚨 **실서버에 `POST /auth/refresh` 와 CORS `allow_credentials` 가 붙기 전에 이 판을 배포하면 로그인이 통째로 막힌다.** 켤 때의 갱신이 CORS 나 404 로 실패해 모든 화면이 연결 확인(`SessionUnreachable`)에 갇히고, 로그인 교환도 `credentials: "include"` 라 CORS 에서 막힌다. develop 에 머지하면 api 와 web 이 같이 배포되므로 **서버 PR(#466)이 먼저 머지 · 배포된 뒤에 머지한다**
