@@ -19,6 +19,10 @@
 
 🚨 저장한 행은 고치지 않는다. 필드를 빼거나 뜻을 바꾸면 이미 쌓인 행을 못 읽는다 — 늘릴 때는
    기본값이 있는 필드로 늘린다.
+🚨 읽을 때는 너그럽다. 배포를 되돌리면 옛 코드가 새 코드가 쓴 행을 읽는다(#498 리뷰). 모르는 칸은
+   버리고(`extra="ignore"`), 모르는 종류의 답은 조회가 그 답만 빼고 넘어간다(`CHAT_REPLY` 로
+   하나씩).
+   하루치를 한 번에 검증하면 답 하나 때문에 그날 대화 전체가 500 이 된다.
 """
 
 from typing import Annotated, Any, Literal
@@ -27,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
 class _Reply(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
 
 class StoredRef(_Reply):
@@ -130,7 +134,7 @@ ChatReply = Annotated[
 ]
 
 CHAT_REPLIES: TypeAdapter[list[ChatReply]] = TypeAdapter(list[ChatReply])
-"""`chat_turn.replies` 를 읽고 쓰는 어댑터.
+"""`chat_turn.replies` 를 쓰는 어댑터 — `dump_python(..., mode="json")`."""
 
-쓸 때 `dump_python(..., mode="json")`, 읽을 때 `validate_python`.
-"""
+CHAT_REPLY: TypeAdapter[ChatReply] = TypeAdapter(ChatReply)
+"""답 하나를 읽는 어댑터. 조회는 답마다 따로 읽어, 못 읽는 답만 뺀다(머리말)."""

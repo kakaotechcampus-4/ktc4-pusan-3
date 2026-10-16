@@ -4,6 +4,7 @@
     ② 하루 안은 최근 것부터 끊고, 한 페이지 안은 오래된 순 — next_cursor 로 이어 받는다
     ③ prev_date 는 대화가 없는 날을 건너뛴다 — 처음 날이면 null
     ④ 깨진 커서는 400
+    ⑥ 못 읽는 답이 있어도 그날은 열린다 — 그 답만 빠진다 (배포를 되돌린 뒤 옛 코드)
     ⑤ 저장한 기록은 지금 상태로 — run 화면의 saved 와 같은 모양(건강 포함), 지운 기록은 내용 없이
 
 아이 접근 확인(403)은 다른 아이 주소와 같은 의존성이라 여기서 다시 보지 않는다.
@@ -207,3 +208,34 @@ async def test_saved_records_come_back_as_they_are_now(
         ("observation_health", health),
     ]
     assert filled["deleted"] == [{"kind": "observation_food", "id": erased}]
+
+
+async def test_unreadable_reply_is_skipped_not_the_whole_day(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """배포를 되돌리면 옛 코드가 새 코드가 쓴 행을 읽는다 (#498 리뷰). 늘어난 칸은 버리고, 모르는
+    종류의 답은 그 답만 뺀다 — 하루치를 한 번에 검증하면 그날 대화 전체가 500 이 된다."""
+    headers, me = bearer
+    done = {"type": "done", "completed": True}
+    run_id = await _turn(
+        session,
+        parent_id=me,
+        child_id=cid,
+        replies=[
+            {"type": "note", "text": "기록했어요.", "kind": "message", "added_later": 1},
+            {"type": "added_later", "body": "synthetic"},
+            done,
+        ],
+    )
+
+    response = await db_client.get(
+        CHAT.format(cid=cid), params={"date": "2026-10-15"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    [turn] = response.json()["turns"]
+    assert (turn["run_id"], turn["raw_text"]) == (run_id, "synthetic line")
+    assert turn["replies"] == [
+        {"type": "note", "text": "기록했어요.", "kind": "message"},
+        done,
+    ]

@@ -19,14 +19,16 @@ import base64
 import binascii
 import datetime as dt
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Query
+from pydantic import ValidationError
 
 from app.api.calendar_dates import check_day
-from app.api.chat_replies import CHAT_REPLIES, ChatReply, SavedReply, StoredRef
+from app.api.chat_replies import CHAT_REPLY, ChatReply, SavedReply, StoredRef
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
@@ -42,6 +44,8 @@ from app.api.v1.schemas.chat import (
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.domains.chat.repository import TurnCursor, page_turns, previous_date
 from app.domains.memory.observation.repository import ObservationDomain, find_observations
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -88,7 +92,7 @@ async def get_chat_day(
         cursor=after.turn if after is not None else None,
         limit=limit,
     )
-    stored = [CHAT_REPLIES.validate_python(turn.replies) for turn in turns]
+    stored = [_readable(turn.id, turn.replies) for turn in turns]
     observations = await _current_observations(session, child.child_id, stored)
     return ChatDayResponse(
         date=day,
@@ -105,6 +109,21 @@ async def get_chat_day(
         next_cursor=_encode_cursor(day, more) if more else None,
         prev_date=await previous_date(session, **owner, before=day),
     )
+
+
+def _readable(turn_id: uuid.UUID, raw: list) -> list[ChatReply]:
+    """저장된 답을 하나씩 읽는다. 못 읽는 답(배포를 되돌린 뒤 옛 코드가 만난 새 종류)은 뺀다.
+
+    턴을 통째로 빼지 않는다 — 보호자가 쓴 말풍선과 나머지 답은 남긴다. 로그에는 내용 없이 id 와
+    몇 번째인지만 남긴다 (루트 §2).
+    """
+    replies: list[ChatReply] = []
+    for index, item in enumerate(raw):
+        try:
+            replies.append(CHAT_REPLY.validate_python(item))
+        except ValidationError:
+            log.error("chat_turn %s 의 답 %d 번째를 읽지 못해 건너뛴다", turn_id, index)
+    return replies
 
 
 ObservationKey = tuple[ObservationDomain, uuid.UUID]
