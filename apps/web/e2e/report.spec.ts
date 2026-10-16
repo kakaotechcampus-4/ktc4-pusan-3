@@ -95,7 +95,7 @@ test("빠르게 두 번 눌러도 한 번만 보낸다", async ({ page }) => {
   expect(posts[0]!.body).toEqual({ category: "shared_record", message: MESSAGE });
 });
 
-test.describe("오늘 보낼 수 있는 만큼 보냈으면", () => {
+test.describe("24시간 안에 보낼 수 있는 만큼 보냈으면", () => {
   test.use({ scenario: "report_limit" });
 
   test("서버 문구를 그대로 세우고, 다시 시도 없이 보내기를 잠그고, 적은 글은 남긴다", async ({
@@ -108,7 +108,7 @@ test.describe("오늘 보낼 수 있는 만큼 보냈으면", () => {
     await page.getByRole("button", { name: "보내기" }).click();
 
     await expect(
-      page.getByText("오늘은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요."),
+      page.getByText("지금은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요."),
     ).toBeVisible();
     // 누를 때마다 같은 429 다 — 다시 시도를 세우지 않고 보내기도 잠근다.
     await expect(page.getByRole("button", { name: "보내기" })).toBeDisabled();

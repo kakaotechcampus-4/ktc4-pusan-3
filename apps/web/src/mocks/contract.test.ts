@@ -3786,7 +3786,7 @@ describe("㉗ 문제 알리기 — 서버 #488 과 같은 계약 (#487)", () => 
       expect(isApiError(failure, "too_many_reports")).toBe(true);
       expect((failure as ApiError).status).toBe(429);
       expect((failure as ApiError).message).toBe(
-        "오늘은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
+        "지금은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
       );
     } finally {
       setScenario("default");
