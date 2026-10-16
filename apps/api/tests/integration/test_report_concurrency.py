@@ -17,7 +17,7 @@ from app.api.v1.routers.reports import REPORT_DAILY_LIMIT
 from app.domains.identity.models import Parent
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.report.models import ReportCategory
-from app.domains.report.repository import count_reports_since, create_report
+from app.domains.report.repository import count_reports_since, create_report, lock_reporter
 from app.infra.db.session import engine
 
 
@@ -38,21 +38,26 @@ async def test_먼저_센_쪽이_커밋할_때까지_다음_세기는_기다린�
             AsyncSession(engine, expire_on_commit=False) as a,
             AsyncSession(engine, expire_on_commit=False) as b,
         ):
-            # a 가 마지막 한 자리를 세고 넣은 뒤 커밋 전. b 는 a 의 잠금에서 기다려야 한다.
+            # a 가 잠그고 마지막 한 자리를 세고 넣은 뒤 커밋 전. b 는 a 의 잠금에서 기다려야 한다.
+            assert await lock_reporter(a, reporter_parent_id=parent.id)
             assert await count_reports_since(a, reporter_parent_id=parent.id, since=since) == (
                 REPORT_DAILY_LIMIT - 1
             )
             await create_report(
                 a, reporter_parent_id=parent.id, category=ReportCategory.BUG, message="x"
             )
-            pending_b = asyncio.create_task(
-                count_reports_since(b, reporter_parent_id=parent.id, since=since)
-            )
-            await asyncio.sleep(0.2)
-            assert not pending_b.done()
+            pending_b = asyncio.create_task(lock_reporter(b, reporter_parent_id=parent.id))
+            try:
+                await asyncio.sleep(0.2)
+                assert not pending_b.done()
 
-            await a.commit()
-            assert await pending_b == REPORT_DAILY_LIMIT  # a 가 넣은 건까지 보고 429 로 간다
+                await a.commit()
+                assert await pending_b
+                # a 가 넣은 건까지 보고 429 로 간다
+                count = await count_reports_since(b, reporter_parent_id=parent.id, since=since)
+                assert count == REPORT_DAILY_LIMIT
+            finally:
+                pending_b.cancel()  # 단언이 실패해도 기다리던 쿼리를 남긴 채 세션을 닫지 않는다
             await b.rollback()
     finally:
         async with AsyncSession(engine) as cleanup:
@@ -60,31 +65,31 @@ async def test_먼저_센_쪽이_커밋할_때까지_다음_세기는_기다린�
             await cleanup.commit()
 
 
-async def test_탈퇴가_먼저_잡으면_세기는_기다렸다가_None():
+async def test_탈퇴가_먼저_잡으면_잠금은_기다렸다가_False():
     """탈퇴 커밋 직후 들어온 신고가 FK 위반 500 · 가짜 장애 알림으로 끝나지 않게 (#487 리뷰).
 
-    인증은 탈퇴 전에 통과했으니 라우터가 None 을 받아 401 로 끝낸다.
+    인증은 탈퇴 전에 통과했으니 라우터가 False 를 받아 401 로 끝낸다.
     """
     async with AsyncSession(engine, expire_on_commit=False) as setup:
         parent = Parent()
         setup.add(parent)
         await setup.commit()
 
-    since = datetime.now(UTC) - timedelta(days=1)
     try:
         async with (
             AsyncSession(engine, expire_on_commit=False) as a,
             AsyncSession(engine, expire_on_commit=False) as b,
         ):
             await withdraw_parent(a, parent_id=parent.id, now=datetime.now(UTC))
-            pending_b = asyncio.create_task(
-                count_reports_since(b, reporter_parent_id=parent.id, since=since)
-            )
-            await asyncio.sleep(0.2)
-            assert not pending_b.done()
+            pending_b = asyncio.create_task(lock_reporter(b, reporter_parent_id=parent.id))
+            try:
+                await asyncio.sleep(0.2)
+                assert not pending_b.done()
 
-            await a.commit()
-            assert await pending_b is None
+                await a.commit()
+                assert await pending_b is False
+            finally:
+                pending_b.cancel()
             await b.rollback()
     finally:
         async with AsyncSession(engine) as cleanup:
