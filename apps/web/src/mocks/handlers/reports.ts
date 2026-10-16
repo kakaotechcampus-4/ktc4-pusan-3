@@ -60,7 +60,7 @@ export const reportHandlers = [
       return apiError(
         429,
         "too_many_reports",
-        "오늘은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
+        "지금은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
       );
     }
     const created: ReportResponse = {
