@@ -17,6 +17,7 @@ from app.domains.identity import models as identity  # noqa: F401
 from app.domains.memory.observation import models as observation  # noqa: F401
 from app.domains.memory.profile import models as profile  # noqa: F401
 from app.domains.policy import models as policy  # noqa: F401
+from app.domains.report import models as report  # noqa: F401
 from app.domains.safety import models as safety  # noqa: F401
 from app.domains.schedule import models as schedule  # noqa: F401
 from app.domains.suggestion import models as suggestion  # noqa: F401
