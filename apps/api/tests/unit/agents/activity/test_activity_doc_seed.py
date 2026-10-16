@@ -11,6 +11,7 @@ from app.agents.activity.doc_seed import activity_doc_seed, parse_activity_doc
 from app.agents.activity.review import TOGETHER_ONLY_BELOW_MONTH
 from app.agents.activity.schemas.common import CaregiverRole
 from app.agents.activity.store.inmemory import InMemoryActivityDocs
+from app.agents.activity.tools.docs import DOC_LIMIT
 from app.agents.common.reference import hazard_terms
 from app.agents.common.reference_docs import DOC_MONTH_LIMIT
 from app.rules.evaluative import find_evaluative
@@ -19,8 +20,10 @@ from app.rules.term_match import match_terms
 SEED = activity_doc_seed()
 IDS = [entry.meta.doc_key for entry in SEED]
 
-# 모든 월령에서 이 수 이상의 행이 있어야 한다. 80행을 채우면 DOC_LIMIT(5)로 올린다
-MIN_ROWS_PER_MONTH = 1
+# 모든 월령에서 [예시] 한 번(DOC_LIMIT 행)을 채울 수 있어야 한다
+MIN_ROWS_PER_MONTH = DOC_LIMIT
+# 설계 D10 의 목표 행 수 (H-10)
+TARGET_ROWS = 80
 
 
 def hazard_hits(entry) -> list[tuple[str, str]]:
@@ -61,6 +64,10 @@ def test_출처는_고시_본문이다(entry):
     assert "고시" in entry.meta.source_title
 
 
+def test_목표_행_수를_채운다():
+    assert len(SEED) >= TARGET_ROWS
+
+
 def test_모든_월령이_행으로_덮인다():
     for months in range(DOC_MONTH_LIMIT):
         covering = [e for e in SEED if e.meta.covers(months)]
@@ -82,6 +89,12 @@ class TestInMemoryDocs:
         docs = InMemoryActivityDocs.from_seed()
         served = {key for months in range(DOC_MONTH_LIMIT) for key in await self.keys(docs, months)}
         assert served == approved
+
+    async def test_include_draft_는_검수_전_행도_싣는다(self):
+        """검수 전에 [예시]가 어떻게 도는지 보는 임시 경로 (#332 리뷰)."""
+        drafts = await self.keys(InMemoryActivityDocs.from_seed(include_draft=True), 40)
+        approved = await self.keys(InMemoryActivityDocs.from_seed(), 40)
+        assert len(drafts) >= DOC_LIMIT and set(approved) <= set(drafts)
 
     def test_id_는_doc_key_로_늘_같다(self):
         (first, *_) = SEED
@@ -125,6 +138,9 @@ def _raw_row() -> dict:
         "license_basis": meta.license_basis,
         "status": meta.status,
         "authored_by": meta.authored_by,
+        # approved 행은 검수 칸이 있어야 읽힌다 — 시드 상태(draft · approved)와 무관하게 복원한다
+        "reviewed_by": meta.reviewed_by,
+        "reviewed_at": meta.reviewed_at,
         "version": meta.version,
         "setting": "indoor",
         "materials": [],

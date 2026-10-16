@@ -1,4 +1,9 @@
-"""handle_input() 검증. 가짜 LLM 2개 + 실제 Food mock 으로 돈다 (API 호출 0).
+"""handle_input() 검증. 가짜 LLM 들로 돈다 (API 호출 0).
+
+Food 는 공통 tool 루프 위에서 실제로 돈다(더 이상 mock 이 아니다) — 그래서
+`_default_food_llm()` 으로 가짜 LLM 을 주입한다(domain_clients). 영양소 분석은 모델을 부르지 않고,
+식단 추천은 레시피가 없으면 후보 풀이 비어 모델을 부르지 않는다(`pool.empty`). 특정 테스트가 Food
+자체의 다른 경로를 보려면 `food_llm=` 을 직접 넘긴다.
 
 Supervisor 출력은 routing_cases 의 정답(RC01 등)을 그대로 쓴다 — 조각을 손으로 적지 않는다.
 일부러 틀리게 나눈 출력은 재분기 테스트에서만 손으로 적는다.
@@ -27,14 +32,20 @@ import pytest
 from app.agents import pipeline
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
+from app.agents.common.refs import EvidenceCitation
+from app.agents.common.refs import Ref as EvidenceRef
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft, count_notice
+from app.agents.food.agent import run as run_food
 from app.agents.food.context import FoodContext
+from app.agents.food.readouts import READOUTS
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import (
     DaycareMealRow,
     InMemoryDaycareMeals,
+    InMemoryFoodDocs,
     InMemoryProfile,
+    InMemoryRecipeCatalog,
     MenuCatalogRow,
     in_memory_ports,
 )
@@ -47,11 +58,13 @@ from app.agents.pipeline import (
     AgentResult,
     DomainRouted,
     Done,
+    EmptyResult,
     Failed,
     MemoryNote,
     Partial,
     PendingReply,
     Rerouted,
+    RetryContext,
     Saved,
     Step,
     Unavailable,
@@ -59,15 +72,25 @@ from app.agents.pipeline import (
     handle_input,
 )
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
+from tests.unit.agents.food.support import MEAL_DOC
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
 CHILD = UUID(int=1)
 RUN_ID = "run-1"
+
+
+@pytest.fixture
+def food_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """미구현 agent 경로를 보는 테스트. activity 가 붙은 뒤에도(#380) 그 경로를 보도록 구현된
+    agent 를 food 하나로 고정한다 — 아직 없는 agent 예시로 activity 를 쓰고 있다."""
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food"}))
+
 
 # 관찰 저장 인자 — 도메인별 필수 필드만 채운다
 _STRAWBERRY = {
@@ -224,6 +247,27 @@ def _supervisor_llm(case_id: str) -> FakeLLM:
     return FakeLLM(_tools(_call("s1", "route", output.model_dump(mode="json", exclude_none=True))))
 
 
+def _default_food_llm() -> FakeLLM:
+    """라우팅만 보려는 테스트의 기본값. Food 의 모델 tool 은 report_nutrient_analysis ·
+    compare_diet_balance · lookup_nutrition 말고는 아직 구현되지 않아서(#321 파트 2),
+    tool 을 부르게 두면 NotImplementedError 로 깨진다 — 실제 네트워크 호출도 0 이어야 한다.
+
+    영양소 분석은 모델을 부르지 않고 코드가 출현 문장을 낸다. 이 테스트들의 food_context 는 레시피가
+    없어 식단 추천도 후보 풀이 비고, 그러면 모델을 부르지 않는다(`pool.empty`). 그래서 이 가짜
+    응답은 쓰이지 않는 것이 기본이다 — 특정 테스트가 Food 자체의 다른 경로를 보려면 `food_llm=` 으로
+    직접 넘긴다.
+    """
+    return FakeLLM(
+        _tools(_call("a", "compare_diet_balance", {"period": "last_7_days"})),
+        _tools(_call("b", "report_nutrient_analysis", {"period": "last_7_days", "findings": []})),
+        _reply("완료했어요."),
+    )
+
+
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
+
+
 async def _handle(
     case_id: str,
     *,
@@ -232,8 +276,11 @@ async def _handle(
     food_context: FoodContext,
     events: list[Any],
     supervisor_llm: FakeLLM | None = None,
+    food_llm: FakeLLM | None = None,
     contexts: dict[str, Any] | None = None,
-    commit: Any = None,
+    commit: Any = _no_commit,
+    save_suggestions: Any = None,
+    count_records: Any = None,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         CASES_BY_ID[case_id].text,
@@ -242,8 +289,11 @@ async def _handle(
         run_id=RUN_ID,
         supervisor_client=supervisor_llm or _supervisor_llm(case_id),
         memory_client=memory_llm,
+        domain_clients={"food": food_llm or _default_food_llm()},
         emit=events.append,
         commit=commit,
+        save_suggestions=InMemorySuggestions() if save_suggestions is None else save_suggestions,
+        count_records=count_records,
     )
 
 
@@ -283,14 +333,15 @@ async def test_RC01_기록한_뒤_Food_로_넘긴다(
         "MemoryNote",
         "Step",  # 다음 행동을 준비하고
         "DomainRouted",
-        "AgentResult",
+        "EmptyResult",  # 0개 안내는 화면 결과보다 먼저 05 보관함 기록으로 나간다 (#249)
+        "AgentResult",  # 식단 추천은 레시피가 없어 후보 풀이 비고, 추천 없이 안내만 나간다
         "Done",
     ]
     assert saved_when_food_ran == [1]  # Food 를 부를 때 이미 저장돼 있었다 (루트 §4)
     assert [(step.index, step.total) for step in _of(events, Step)] == [(1, 3), (2, 3), (3, 3)]
     assert [ref.kind for ref in _of(events, Saved)[0].refs] == ["observation_food"]
-    assert result.failed is None
-    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food mock 0 (S8)
+    assert result.failed is None  # 저장은 됐고 Food 는 추천 없는 안내를 냈다 — 실패가 아니다
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (풀이 비어 모델을 안 부른다)
     assert _of(events, Done)[0] == Done(RUN_ID, 2)
 
 
@@ -311,16 +362,23 @@ async def test_RC01_Food_는_요청_조각과_식이_단계만_받는다(
 
     task = result.routing.domain_tasks[0]
     assert task.request_texts == ("저녁에는 뭐 먹이는 게 좋을까?",)
-    assert _of(events, DomainRouted) == [DomainRouted("food", "meal_recommendation", "mock", 0)]
-    # mock 은 화면에 보낼 것이 없다 — 그래도 Agent 가 끝났다는 이벤트는 나간다 (#227)
-    assert _of(events, AgentResult) == [
-        AgentResult("food", "meal_recommendation", "mock", (), None)
+    # 레시피가 없어 후보 풀이 비면 모델 0회로 추천 없는 안내(`pool.empty`)가 나간다 — 실패가 아니다
+    assert _of(events, DomainRouted) == [
+        DomainRouted("food", "meal_recommendation", "completed", 0)
     ]
-    food = result.domain[0]  # tool 묶음은 Food mock 결과가 들고 있다
-    assert food.task_type == FoodTaskType.MEAL_RECOMMENDATION
-    assert (food.stage, food.status) == ("toddler", "mock")
-    assert len(food.tools) == 5  # 식단 추천 × 유아기
-    assert food.requires_safety_check is True  # health_safety 사전 확인 대상 (S6)
+    (agent_result,) = _of(events, AgentResult)
+    assert agent_result.status == "completed" and agent_result.suggestion_ids == ()
+    assert [readout.body for readout in agent_result.readouts] == [
+        READOUTS.get("pool.empty").template
+    ]
+
+    food = await run_food(task, food_context.for_task(), client=_default_food_llm())
+    assert (food.agent, food.task_type, food.status) == (
+        "food",
+        FoodTaskType.MEAL_RECOMMENDATION.value,
+        "completed",
+    )
+    assert food.suggestions == () and food.model_calls == 0
 
 
 async def test_T07_Memory_가_저장한_관찰을_같은_run_의_Food_가_기억_포트로_읽는다(
@@ -375,9 +433,10 @@ async def test_RC21_영양소_분석은_사전_확인이_없고_묶음이_다르
     assert result.memory.ended_by == "coverage"  # 힌트를 다 채워 요약 호출 없이 끝났다
     assert not _of(events, MemoryNote)  # 조기 종료면 메모가 없다 — 응답 문구는 화면이 만든다
     food = result.domain[0]
-    assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
-    assert len(food.tools) == 7  # 영양소 분석 × 유아기
-    assert food.requires_safety_check is False
+    assert food.task_type == FoodTaskType.NUTRIENT_ANALYSIS.value
+    # 영양소 분석 × 유아기 — 모델을 부르지 않고 코드가 식품군 출현 문장을 낸다
+    assert food.status == "completed"
+    assert food.model_calls == 0
     assert result.failed is None
 
 
@@ -397,8 +456,7 @@ async def test_RC21_영아기에는_영양소_분석을_하지_않는다(
     )
 
     food = result.domain[0]
-    assert food.status == "unsupported_stage"
-    assert food.tools == ()
+    assert food.status == "unsupported"
     assert food.model_calls == 0
 
 
@@ -420,11 +478,13 @@ async def test_RC20_기록할_조각이_없으면_Memory_를_부르지_않는다
     assert result.memory is None
     assert result.routing.memory_task is None
     assert [step.index for step in _of(events, Step)] == [1, 3]  # 저장 단계가 없다
-    assert len(result.domain) == 1  # Food 는 그대로 돈다
+    # Food 는 그대로 돈다 — .domain 은 성공한 것만 담아서 routed 이벤트로 본다
+    assert [routed.agent for routed in _of(events, DomainRouted)] == ["food"]
     assert result.failed is None
-    assert result.model_calls == 1  # Supervisor 한 번뿐
+    assert result.model_calls == 1  # Supervisor 1 + Food 0 (영양소 분석은 코드가 낸다)
 
 
+@pytest.mark.usefixtures("food_only")
 async def test_RC07_미구현_agent_만_짚었어도_실패가_아니다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
@@ -444,6 +504,7 @@ async def test_RC07_미구현_agent_만_짚었어도_실패가_아니다(
     assert result.failed is None  # unparsable 이 아니다 — 못 읽은 게 아니라 아직 없는 agent 다
 
 
+@pytest.mark.usefixtures("food_only")
 async def test_RC16_미구현_agent_는_이름만_남기고_부르지_않는다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
@@ -457,7 +518,8 @@ async def test_RC16_미구현_agent_는_이름만_남기고_부르지_않는다(
     )
 
     assert _of(events, Unavailable)[0].agents == ("activity",)
-    assert len(result.domain) == 1  # food 만 실제로 돌았다
+    # food 만 실제로 돌았다 — 성패와 무관하게 routed 이벤트로 본다(.domain 은 성공한 것만 담는다)
+    assert [routed.agent for routed in _of(events, DomainRouted)] == ["food"]
     assert result.routing.dropped_agents == ()
 
 
@@ -636,7 +698,9 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     assert "딸기케이크" not in feedback  # 적힌 조각은 되돌리지 않는다
 
     assert _of(events, Rerouted) == [Rerouted(1, ("food:meal_recommendation",))]
-    assert [food.task_type for food in result.domain] == [FoodTaskType.MEAL_RECOMMENDATION]
+    # 식단 추천은 결과 연결 전이라 not_ready 로 닫힌다(#357 리뷰) — routed 이벤트로 어느 task 가
+    # 돌았는지 본다
+    assert [routed.task_type for routed in _of(events, DomainRouted)] == ["meal_recommendation"]
     assert result.routing.domain_tasks[0].request_texts == ("저녁에는 뭘 먹이면 좋을까?",)
     assert result.rerouted is not None
     # Memory 는 다시 돌리지 않았다 — 간식은 한 번만 저장됐다
@@ -644,7 +708,7 @@ async def test_T14_Memory_가_적지_않은_물음은_Supervisor_가_다시_나�
     rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
     assert [row.fields["subject"] for row in rows] == ["딸기케이크"]
     assert _order(events).index("Rerouted") < _order(events).index("DomainRouted")
-    assert result.model_calls == 3  # Supervisor 2 + Memory 1 — 다시 나눈 run 의 예산은 5
+    assert result.model_calls == 3  # Supervisor 2 + Memory 1 + Food 0 (닫힘) — 예산은 5
 
 
 async def test_Food_로_간_조각이_있으면_다시_나누지_않는다(
@@ -811,7 +875,7 @@ async def test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는�
     )
 
     assert memory_llm.calls == 4  # 실제 왕복은 네 번
-    assert result.model_calls == 2  # Supervisor 1 + Memory 1
+    assert result.model_calls == 2  # Supervisor 1 + Memory 1 + Food 0 (식단 추천은 닫힘)
     assert "model_calls 예산 초과" not in caplog.text
 
 
@@ -886,6 +950,8 @@ async def test_이어받기는_기록_단계_시간만_남긴다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.times.memory_ms is not None
@@ -911,6 +977,12 @@ async def test_시작도_못_하고_끊긴_task_는_ms_가_없다(
 def test_구현된_agent_마다_실행_함수가_있다() -> None:
     # 한쪽만 늘리면 routing 이 보낸 task 를 pipeline 이 못 찾는다
     assert set(pipeline._RUNNERS) == routing_module.IMPLEMENTED_AGENTS
+
+
+def test_추천을_내는_task_표도_구현된_agent_와_키가_같다() -> None:
+    # 05 의 다시 시도 · 0개 기록은 이 표로 남긴다 (#249). 한쪽만 늘리면 새 Agent 의 실패가 맥락 없이
+    # "이어서 할 수 없음" 으로 떨어진다
+    assert set(pipeline.RECOMMENDING_TASKS) == routing_module.IMPLEMENTED_AGENTS
 
 
 # ── 도메인 Agent 실행 (공통_구현_계획 §5 · NF-06) ─────────────────
@@ -1031,9 +1103,12 @@ async def test_RC16_한_Agent_가_죽어도_나머지_결과는_나간다(
     )
 
     assert [item.agent for item in result.domain] == ["food"]
-    assert result.partial == Partial("agent_error", succeeded=("food",), failed=("activity",))
+    assert result.partial == Partial(
+        "agent_error", succeeded=("food",), failed=("activity",), retryable=("activity",)
+    )
     assert result.failed is None
-    assert _order(events)[-4:] == ["DomainRouted", "AgentResult", "Partial", "Done"]
+    # 죽은 쪽의 다시 시도 맥락은 partial 보다 먼저 나간다 (#249). 화면에는 안 간다
+    assert _order(events)[-5:] == ["DomainRouted", "AgentResult", "RetryContext", "Partial", "Done"]
     # 죽은 쪽은 화면 이벤트가 없다 — partial.failed 로만 알린다
     assert [item.agent for item in _of(events, AgentResult)] == ["food"]
     assert result.model_calls == 3  # 죽은 쪽은 몇 번 불렀는지 몰라 세지 않는다
@@ -1074,41 +1149,368 @@ async def test_도메인_결과의_readout_과_되묻기가_AgentResult_로_나�
     assert _order(events)[-3:] == ["DomainRouted", "AgentResult", "Done"]
 
 
-async def test_추천이_든_결과는_저장_콜백_전까지_AgentResult_를_내지_않는다(
+class _Saver:
+    """저장 함수 대역. 받은 묶음과, 받은 때까지 나간 이벤트 수를 남긴다."""
+
+    def __init__(
+        self,
+        events: list[Any],
+        *,
+        fail: BaseException | None = None,
+        ids: tuple[str, ...] | None = None,
+        delay: float = 0.0,
+    ) -> None:
+        self.events, self.fail, self.ids, self.delay = events, fail, ids, delay
+        self.calls: list[tuple[SuggestionBatch, int]] = []
+
+    async def __call__(self, batch: SuggestionBatch) -> tuple[str, ...]:
+        self.calls.append((batch, len(self.events)))
+        await asyncio.sleep(self.delay)
+        if self.fail is not None:
+            raise self.fail
+        if self.ids is not None:
+            return self.ids
+        return tuple(f"s{index}" for index in range(len(batch.drafts)))
+
+
+def _draft(content: str) -> SuggestionDraft:
+    return SuggestionDraft(agent="food", kind="general", content=content, reason="또래 기준")
+
+
+_NO_MEMORY = "불리면 안 된다"  # RC20 은 순수 요청형이라 Memory 가 돌지 않는다
+
+
+async def test_추천은_저장이_끝난_뒤에_id_를_싣고_나간다(
     monkeypatch: pytest.MonkeyPatch,
     memory_context: AgentContext,
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # 추천 id 를 실을 수 없는 동안 내면 개수 안내만 후보 없이 대화에 먼저 선다
-    draft = SuggestionDraft(
-        agent="food", kind="general", content="두부조림", reason="또래 기준 일반 추천이에요."
-    )
-    notice = count_notice(1)
-    assert notice is not None
-    monkeypatch.setitem(
-        pipeline._RUNNERS,
-        "food",
-        _runner("food", readouts=(notice,), suggestions=(draft,)),
-    )
-    memory_llm = FakeLLM(
-        _tools(_call("a", "create_observation_food", {**_STRAWBERRY, "polarity": 1})),
-        _reply("딸기 기록 남겼어요."),
-    )
+    drafts = (_draft("계란말이"), _draft("두부조림"))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", suggestions=drafts))
+    saver = _Saver(events)
 
     result = await _handle(
-        "RC01",
-        memory_llm=memory_llm,
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    [(batch, sent_before)] = saver.calls
+    assert (batch.run_id, batch.agent, batch.drafts) == (RUN_ID, "food", drafts)
+    assert not _of(events[:sent_before], AgentResult)  # 저장이 끝나기 전에는 카드가 없다
+    [card] = _of(events, AgentResult)
+    assert card.suggestion_ids == ("s0", "s1")  # 추천 순서 그대로
+    assert card.task_type == batch.task_type
+    assert result.partial is None
+
+
+def _personal(content: str) -> SuggestionDraft:
+    """아이 기록 근거 1건이 달린 개인화 추천."""
+    cited = EvidenceCitation(
+        ref=EvidenceRef(kind="observation_food", id=UUID(int=9)), note="잘 먹음"
+    )
+    return SuggestionDraft(
+        agent="food", kind="personalized", content=content, reason="r", citations=(cited,)
+    )
+
+
+class _Counter:
+    """기록 건수 포트 대역. 불린 Agent 를 남긴다."""
+
+    def __init__(self, value: int = 0, fail: Exception | None = None) -> None:
+        self.value, self.fail, self.calls = value, fail, []
+
+    async def __call__(self, agent: str) -> int:
+        self.calls.append(agent)
+        if self.fail is not None:
+            raise self.fail
+        return self.value
+
+
+async def _card(monkeypatch, memory_context, food_context, events, drafts, counter):
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", suggestions=drafts))
+    await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events),
+        count_records=counter,
+    )
+    [card] = _of(events, AgentResult)
+    return card
+
+
+async def test_개인화_묶음은_kind_와_이유를_싣고_건수는_세지_않는다(
+    monkeypatch, memory_context, food_context, events
+):
+    counter = _Counter(7)
+    card = await _card(
+        monkeypatch, memory_context, food_context, events, (_personal("계란말이"),), counter
+    )
+
+    assert (card.kind, card.reason, card.record_count) == (
+        "personalized",
+        "아이 기록 1건을 보고 골랐어요.",
+        None,
+    )
+    assert counter.calls == []
+
+
+async def test_일반_묶음은_쌓인_기록_수를_싣는다(monkeypatch, memory_context, food_context, events):
+    counter = _Counter(0)
+    card = await _card(
+        monkeypatch, memory_context, food_context, events, (_draft("계란말이"),), counter
+    )
+
+    # 0건도 그대로 싣는다 — 화면이 "쌓인 기록 0건" 으로 그린다 (최상위 §2)
+    assert (card.kind, card.reason, card.record_count) == ("general", "또래 기준", 0)
+    assert counter.calls == ["food"]
+
+
+async def test_섞인_묶음은_건수를_세지_않는다(monkeypatch, memory_context, food_context, events):
+    counter = _Counter(3)
+    card = await _card(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        (_personal("계란말이"), _draft("두부조림")),
+        counter,
+    )
+
+    assert (card.kind, card.record_count) == ("personalized", None)
+    assert counter.calls == []
+
+
+async def test_기록_수를_세지_못해도_결과는_나간다(
+    monkeypatch, memory_context, food_context, events, caplog
+):
+    counter = _Counter(fail=RuntimeError("건수 쿼리 문장"))
+    card = await _card(
+        monkeypatch, memory_context, food_context, events, (_draft("계란말이"),), counter
+    )
+
+    assert (card.kind, card.record_count) == ("general", None)
+    assert "건수 쿼리 문장" not in caplog.text  # 예외 종류만 남긴다
+
+
+async def test_추천이_없는_결과는_묶음_칸이_비어_있다(
+    monkeypatch, memory_context, food_context, events
+):
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", readouts=(count_notice(0),)))
+    counter = _Counter(5)
+    await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        count_records=counter,
+    )
+
+    [card] = _of(events, AgentResult)
+    assert (card.kind, card.reason, card.record_count) == (None, None, None)
+    assert counter.calls == []
+
+
+async def test_retryable_은_추천_task_가_실패한_Agent_만(
+    two_agents, monkeypatch, memory_context, food_context, events
+):
+    """04 부분 실패 카드의 "다시 준비하기" 가 이 Agent 들로 05 를 연다 (D9)."""
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _failing(RuntimeError("부서졌다")))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
         memory_context=memory_context,
         food_context=food_context,
         events=events,
         contexts=_FAKE_CONTEXTS,
     )
 
-    assert _of(events, AgentResult) == []
-    assert _order(events)[-2:] == ["DomainRouted", "Done"]  # 로그용 이벤트는 그대로 나간다
-    assert [item.agent for item in result.domain] == ["food"]  # 실패가 아니다
+    assert result.partial is not None
+    assert result.partial.retryable == ("activity",)
+
+
+async def test_추천을_내지_않는_task_만_실패하면_retryable_이_없다(
+    monkeypatch, memory_context, food_context, events
+):
+    # 급식 갱신은 05 화면이 없다 — 다시 준비하기로 갈 곳이 없다 (D9a)
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _failing(RuntimeError("부서졌다")))
+    context, writes = _recorded(food_context)
+
+    result = await _handle_meal_only(memory_context, context, events, writes)
+
+    assert result.partial is None or result.partial.retryable == ()
+
+
+async def test_추천이_없는_결과는_저장하지_않고_빈_id_로_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food"))
+    saver = _Saver(events)
+
+    await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    assert saver.calls == []
+    [card] = _of(events, AgentResult)
+    assert card.suggestion_ids == ()
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [{"fail": RuntimeError("계란말이 저장 실패")}, {"ids": ("s0",)}],
+    ids=["예외", "결과_수가_다름"],
+)
+async def test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    caplog: pytest.LogCaptureFixture,
+    broken: dict[str, Any],
+) -> None:
+    drafts = (_draft("계란말이"), _draft("두부조림"))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", suggestions=drafts))
+
+    with caplog.at_level(logging.INFO):
+        result = await _handle(
+            "RC16",
+            memory_llm=_pool_memory(),
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+            contexts=_FAKE_CONTEXTS,
+            save_suggestions=_Saver(events, **broken),
+        )
+
+    assert result.partial == Partial(
+        "agent_error", succeeded=("activity",), failed=("food",), retryable=("food",)
+    )
+    assert [item.agent for item in _of(events, AgentResult)] == ["activity"]
+    assert [item.agent for item in result.domain] == ["activity"]
+    assert result.model_calls == 4  # 저장에 실패해도 모델은 불렀다
+    text = "\n".join(r.getMessage() for r in caplog.records if r.name == pipeline.__name__)
+    assert "계란말이" not in text  # 예외 메시지에는 추천 문장이 섞일 수 있다 — 종류만 남긴다
+
+
+async def test_실패한_결과는_저장하지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    failed = _runner("food", status="failed", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", failed)
+    saver = _Saver(events)
+
+    await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    assert saver.calls == []
+
+
+async def test_추천을_저장한_run_은_확정된_저장이_있다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 순수 요청형이라 Memory 가 쓰지 않는다. 추천 저장이 이 run 의 확정된 저장이다
+    runner = _runner("food", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", runner)
+
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events),
+    )
+
+    assert result.committed is True
+
+
+async def test_저장이_느려도_이미_끝난_Agent_는_끊기지_않는다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 저장은 Agent 의 시간 제한 밖이다 — commit 을 중간에 끊으면 들어갔는지 모르는 저장이 남는다.
+    # 저장이 제한을 넘겨도 그동안 끝난 activity 는 시간 초과가 아니고, 저장 뒤에 나간다
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.3)  # 앞 단계는 FakeLLM 이라 수 ms
+    food = _runner("food", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", delay=0.05))
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events, delay=0.5),
+    )
+
     assert result.partial is None
+    assert [item.agent for item in _of(events, AgentResult)] == ["food", "activity"]
+
+
+async def test_저장_중_취소는_부분_실패로_숨기지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 러너의 60초 안전망이 저장 중에 run 을 끊는 경우다
+    runner = _runner("food", suggestions=(_draft("계란말이"),))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", runner)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _handle(
+            "RC20",
+            memory_llm=FakeLLM(_reply(_NO_MEMORY)),
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+            contexts=_FAKE_CONTEXTS,
+            save_suggestions=_Saver(events, fail=asyncio.CancelledError()),
+        )
+
+    assert not _of(events, AgentResult)
 
 
 async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만_알린다(
@@ -1132,7 +1534,9 @@ async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만
     )
 
     assert [item.agent for item in result.domain] == ["food"]
-    assert result.partial == Partial("agent_error", succeeded=("food",), failed=("activity",))
+    assert result.partial == Partial(
+        "agent_error", succeeded=("food",), failed=("activity",), retryable=("activity",)
+    )
     assert [item.agent for item in _of(events, AgentResult)] == ["food"]
     # 로그용 DomainRouted 는 둘 다 나간다 — failed 상태도 지표에 남는다
     assert [(item.agent, item.status) for item in _of(events, DomainRouted)] == [
@@ -1141,6 +1545,135 @@ async def test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만
     ]
     assert _order(events)[-2:] == ["Partial", "Done"]
     assert result.model_calls == 4  # 예외와 달리 몇 번 불렀는지 알아서 센다
+
+
+# ── 05 의 다시 시도 · 0개 기록 (#249) ───────────────────────────────────
+@pytest.mark.parametrize("how", ["failed_status", "exception", "save_error"])
+async def test_실패한_추천_task_는_partial_앞에_맥락을_낸다(
+    how: str,
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    """05 의 다시 시도가 쓸 맥락. 화면 이벤트(partial)보다 먼저 나가야 보관함에 먼저 들어간다."""
+    saver = None
+    if how == "failed_status":
+        monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", status="failed"))
+    elif how == "exception":
+        monkeypatch.setitem(pipeline._RUNNERS, "activity", _failing(RuntimeError("부서졌다")))
+    else:
+        runner = _runner("activity", suggestions=(_draft("블록 쌓기"),))
+        monkeypatch.setitem(pipeline._RUNNERS, "activity", runner)
+        saver = _Saver(events, fail=RuntimeError("db"))
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=saver,
+    )
+
+    [retry] = _of(events, RetryContext)
+    assert (retry.run_id, retry.agent, retry.task_type) == (RUN_ID, "activity", None)
+    assert retry.request_texts  # Supervisor 가 나눈 요청 문장
+    assert retry.sent_at == memory_context.now
+    names = _order(events)
+    assert names.index("RetryContext") < names.index("Partial")
+
+
+async def test_시간_초과한_추천_task_도_맥락을_낸다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.05)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", delay=5))
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert [retry.agent for retry in _of(events, RetryContext)] == ["activity"]
+
+
+async def test_0개로_끝난_추천은_결과_이벤트_앞에_기록을_낸다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    empty = _runner("activity", readouts=(count_notice(0),))
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", empty)
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    [recorded] = _of(events, EmptyResult)
+    assert (recorded.run_id, recorded.agent, recorded.task_type) == (RUN_ID, "activity", None)
+    assert recorded.message == "조건에 맞는 추천이 없어요."
+    card = next(e for e in events if isinstance(e, AgentResult) and e.agent == "activity")
+    assert events.index(recorded) < events.index(card)
+
+
+async def test_추천이_있는_결과는_0개_기록이_아니다(
+    two_agents: None,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 0개 안내가 붙어 있어도 추천이 있으면 기록하지 않는다 — 05 가 DB 행으로 돌려준다
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "activity",
+        _runner("activity", readouts=(count_notice(0),), suggestions=(_draft("블록 쌓기"),)),
+    )
+
+    await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert not _of(events, EmptyResult)
+
+
+async def test_추천을_내지_않는_task_는_맥락을_남기지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 급식 갱신은 05 화면이 없다 — 다시 시도할 곳이 없으니 원문 조각을 남기지 않는다
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _failing(RuntimeError("부서졌다")))
+    context, writes = _recorded(food_context)
+
+    await _handle_meal_only(memory_context, context, events, writes)
+
+    assert _of(events, Failed) or _of(events, Partial)
+    assert not any(isinstance(event, RetryContext | EmptyResult) for event in events)
 
 
 async def test_Agent_예외_메시지는_로그에_남기지_않는다(
@@ -1197,13 +1730,15 @@ async def test_같은_Agent_의_task_둘은_state_를_따로_받는다(
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # 식단 추천과 영양소 분석이 동시에 돈다. state 를 같이 쓰면 한쪽 근거가 다른 쪽 검증에 섞인다
+    # 식단 추천과 영양소 분석이 동시에 돈다. state 를 같이 쓰면 한쪽 근거가 다른 쪽 검증에 섞인다.
+    # 여기서 보는 건 pipeline 이 task 마다 context.for_task() 로 state 를 따로 주는지다 —
+    # 그래서 식단 추천(아직 propose_meal_candidates 가 없다, #321 파트 2) 까지 실제로 완주할
+    # 필요는 없다. 상태만 기록하고 바로 끝내는 가짜로 충분하다
     states: list[Any] = []
-    real = pipeline._RUNNERS["food"]
 
     async def recording(task: Any, context: Any, **kwargs: Any) -> Any:
         states.append(context.state)
-        return await real(task, context, **kwargs)
+        return _Outcome(task.agent, task.task_type)
 
     monkeypatch.setitem(pipeline._RUNNERS, "food", recording)
     raw = "영양 골고루 먹었는지 봐줘. 내일 간식은 뭐가 좋을까?"
@@ -1232,6 +1767,8 @@ async def test_같은_Agent_의_task_둘은_state_를_따로_받는다(
         supervisor_client=FakeLLM(_tools(_call("s1", "route", output))),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert [item.task_type for item in result.domain] == [
@@ -1255,6 +1792,8 @@ async def test_구현된_agent_의_context_가_빠지면_부분_실패로_숨기
             supervisor_client=_supervisor_llm("RC20"),
             memory_client=FakeLLM(),
             emit=events.append,
+            commit=_no_commit,
+            save_suggestions=InMemorySuggestions(),
         )
 
 
@@ -1277,7 +1816,9 @@ async def test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다(
         contexts=_FAKE_CONTEXTS,
     )
 
-    assert result.partial == Partial("timeout_20s", succeeded=("food",), failed=("activity",))
+    assert result.partial == Partial(
+        "timeout_20s", succeeded=("food",), failed=("activity",), retryable=("activity",)
+    )
     assert [item.agent for item in result.domain] == ["food"]
     assert result.latency_ms < 3000  # 5초를 기다리지 않았다
 
@@ -1304,7 +1845,9 @@ async def test_RC01_앞에서_시간을_다_쓰면_도메인_Agent_는_바로_�
     )
 
     assert _of(events, Saved)  # Memory 는 끊지 않는다
-    assert result.partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+    assert result.partial == Partial(
+        "timeout_20s", succeeded=(), failed=("food",), retryable=("food",)
+    )
     assert result.failed is None  # 저장이 있으니 실패가 아니다
     assert _order(events)[-2:] == ["Partial", "Done"]
 
@@ -1424,7 +1967,9 @@ async def test_쓰는_task_도_20초_안에서_센다(monkeypatch: pytest.Monkey
     # 쓰는 쪽이 제한을 다 써서 끊겼고, 읽는 쪽은 남은 몫이 없어 시작도 안 했다
     assert log == ["갱신 시작"]
     assert ran.outcomes == ()
-    assert ran.partial == Partial("timeout_20s", succeeded=(), failed=("food",))
+    assert ran.partial == Partial(
+        "timeout_20s", succeeded=(), failed=("food",), retryable=("food",)
+    )
 
 
 # 끝나는 대로 넘기기
@@ -1441,10 +1986,11 @@ async def test_읽는_task_결과는_끝나는_대로_넘긴다(monkeypatch: pyt
         await activity_passed.wait()
         return _Outcome("food", task.task_type)
 
-    def record(outcome: Any) -> None:
+    async def record(outcome: Any) -> bool:
         passed.append(outcome.agent)
         if outcome.agent == "activity":
             activity_passed.set()
+        return True
 
     monkeypatch.setitem(pipeline._RUNNERS, "food", food_after_activity)
     monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
@@ -1471,11 +2017,12 @@ async def test_쓰는_task_결과는_읽는_task_가_시작하기_전에_넘긴�
         ),
     )
 
+    async def record(outcome: Any) -> bool:
+        log.append(f"넘김 {outcome.task_type}")
+        return True
+
     await pipeline._run_domain(
-        (_DINNER, _MEAL),
-        {"food": _FakeContext()},
-        timeout=1.0,
-        on_outcome=lambda outcome: log.append(f"넘김 {outcome.task_type}"),
+        (_DINNER, _MEAL), {"food": _FakeContext()}, timeout=1.0, on_outcome=record
     )
 
     assert log == [
@@ -1494,11 +2041,12 @@ async def test_같이_끝난_결과는_task_순서로_넘긴다(monkeypatch: pyt
     monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity"))
     passed: list[str] = []
 
+    async def record(outcome: Any) -> bool:
+        passed.append(outcome.agent)
+        return True
+
     await pipeline._run_domain(
-        (_FOOD_TASK, _ACTIVITY_TASK),
-        _FAKE_CONTEXTS,
-        timeout=1.0,
-        on_outcome=lambda outcome: passed.append(outcome.agent),
+        (_FOOD_TASK, _ACTIVITY_TASK), _FAKE_CONTEXTS, timeout=1.0, on_outcome=record
     )
 
     assert passed == ["food", "activity"]
@@ -1512,7 +2060,7 @@ async def test_결과를_넘기다_터지면_숨기지_않고_남은_Agent_를_�
     monkeypatch.setitem(pipeline._RUNNERS, "food", _runner("food", delay=0.2, log=log))
     monkeypatch.setitem(pipeline._RUNNERS, "activity", _runner("activity", log=log))
 
-    def broken(outcome: Any) -> None:
+    async def broken(outcome: Any) -> bool:
         raise ValueError("번역 실패")
 
     with pytest.raises(ValueError):
@@ -1534,7 +2082,7 @@ async def test_넘기다_터져도_같이_끝난_Agent_의_예외_메시지는_�
         await asyncio.sleep(0)  # activity 와 같은 틱에 끝나게
         raise RuntimeError("민준이 수영장")
 
-    def broken(outcome: Any) -> None:
+    async def broken(outcome: Any) -> bool:
         raise ValueError("번역 실패")
 
     caplog.set_level(logging.ERROR)
@@ -1641,7 +2189,9 @@ async def test_202_먼저_끝난_추천이_나가고_빠진_쪽은_partial_이�
         < names.index("Done")
     )
     assert [event.agent for event in _of(events, DomainRouted)] == ["activity"]
-    assert _of(events, Partial) == [Partial(reason, succeeded=("activity",), failed=("food",))]
+    assert _of(events, Partial) == [
+        Partial(reason, succeeded=("activity",), failed=("food",), retryable=("food",))
+    ]
     assert result.failed is None  # 끝 신호는 done
     assert result.committed is True
     rows = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
@@ -1673,6 +2223,8 @@ async def test_쓰는_task_가_죽어도_읽는_task_결과는_나가고_partial
         ),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert [event.task_type for event in _of(events, DomainRouted)] == ["meal_recommendation"]
@@ -1716,6 +2268,8 @@ async def test_급식을_고친_뒤의_저녁_추천은_고친_급식을_읽는�
         ),
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert seen == [("두유",)]
@@ -1744,6 +2298,8 @@ async def _handle_meal_only(
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         writes=writes,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
 
@@ -1781,6 +2337,8 @@ async def test_메뉴_카탈로그만_저장했어도_모델이_실패하면_fai
         memory_client=FakeLLM(_reply("불리면 안 된다")),
         emit=events.append,
         writes=writes,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.committed is False
@@ -1903,6 +2461,8 @@ async def test_되묻기_run_은_note_와_pending_을_같이_낸다(
         supervisor_client=supervisor,
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = next(event for event in events if isinstance(event, MemoryNote))
@@ -1937,6 +2497,8 @@ async def test_saved_가_note_보다_먼저_나간다(
         supervisor_client=_supervisor_llm("RC04"),
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     names = [type(event).__name__ for event in events]
@@ -1972,6 +2534,8 @@ async def test_이어받기는_supervisor_와_food_를_타지_않는다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert supervisor.calls == 0
@@ -1996,6 +2560,8 @@ async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
         memory_client=FakeLLM(LLMUnavailableError("down")),
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.failed is not None and result.failed.reason == "llm_unavailable"
@@ -2020,6 +2586,8 @@ async def test_이어받기에_다른_말이_섞이면_따로_보내라는_안�
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     notes = _of(events, MemoryNote)
@@ -2043,6 +2611,8 @@ async def test_다시_물을_때_붙인_안내는_다음_질문_맥락에_들어
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     # 다시 묻는 중이면 화면이 다음 한 줄을 이 질문의 답으로 보낸다. "따로 보내 주세요" 만 있으면
@@ -2071,6 +2641,8 @@ async def test_섞인_말이_없으면_안내를_붙이지_않는다(
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert [note.text for note in _of(events, MemoryNote)] == ["기록해 둘게요."]
@@ -2098,6 +2670,8 @@ async def test_이어받기가_저장한_뒤_물으면_message_로_내리고_따
         memory_client=memory,
         emit=events.append,
         continuation=_LUNCH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2129,6 +2703,8 @@ async def test_재질문_상한에_닿으면_질문_대신_상수_문구를_mess
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     # "따로 보내 주세요" 가 붙으면 보호자가 같은 답을 다시 보내 상한이 의미가 없어진다
@@ -2156,6 +2732,8 @@ async def test_재질문_상한에서_섞인_말이_있으면_따로_보내라�
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_AT_LIMIT,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2183,6 +2761,8 @@ async def test_맥락_없이_물을_때_섞인_말이_있으면_안내를_한_�
         memory_client=memory,
         emit=events.append,
         continuation=_LUNCH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2210,6 +2790,8 @@ async def test_첫_run_에서도_맥락_없이_묻는_질문은_message_로_내�
         supervisor_client=_supervisor_llm("RC04"),
         memory_client=memory,
         emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     note = _of(events, MemoryNote)[0]
@@ -2236,6 +2818,8 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
         memory_client=memory,
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
@@ -2263,6 +2847,8 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             ),
             _answer(_ask_second()),
         ),
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
     assert before.memory is not None and before.memory.pending is not None
 
@@ -2279,6 +2865,8 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
             _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
         ),
         continuation=before.memory.pending,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     activity = await memory_context.store.query_observations(domain="activity", child_id=CHILD)
@@ -2301,6 +2889,8 @@ async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(
         memory_client=FakeLLM(_reply(""), _reply("")),  # 빈 턴 두 번
         emit=events.append,
         continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.failed is not None and result.failed.reason == "unparsable"
@@ -2424,6 +3014,7 @@ async def test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나�
             memory_client=memory,
             emit=events.append,
             commit=broken,
+            save_suggestions=InMemorySuggestions(),
         )
 
     # 확정된 게 없다. 끝 신호는 러너가 failed 로 붙인다
@@ -2481,6 +3072,7 @@ async def test_이어받기도_반복_상한에_걸리면_commit_하지_않고_f
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_commit_into(events),
+        save_suggestions=InMemorySuggestions(),
     )
 
     assert result.memory is not None and result.memory.completed is False
@@ -2524,9 +3116,68 @@ async def test_이어받기도_Memory_다음에_commit_하고_Saved_는_그_뒤�
         emit=events.append,
         continuation=_COUGH_PENDING,
         commit=_commit_into(events),
+        save_suggestions=InMemorySuggestions(),
     )
 
     names = _order(events)
     assert names.count("_Committed") == 1
     assert names.index("_Committed") < names.index("Saved")
     assert result.committed is True
+
+
+async def test_식단_추천_결과는_저장_함수에_한_묶음으로_가고_카드가_그_id_를_받는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 실제 Food run() 이 낸 추천이 pipeline 의 저장 단계를 거친다 — Agent 는 저장 없이 결과만 낸다
+    names = ("두부조림", "시금치나물", "미역국")
+    recipes = [
+        MenuCatalogRow(
+            menu_key=name,
+            display_name=name,
+            source="mafra_recipe",
+            resolved=True,
+            synced_at=NOW,
+            ingredients=("가짜재료",),
+            source_id=name,
+        )
+        for name in names
+    ]
+    context = replace(
+        food_context,
+        ports=replace(
+            food_context.ports,
+            recipes=InMemoryRecipeCatalog(recipes),
+            docs=InMemoryFoodDocs([MEAL_DOC]),  # 일반 추천의 근거는 문서 행이다
+        ),
+    )
+    doc = {"kind": "food_doc", "id": str(MEAL_DOC.id), "note": "식단 자료를 참고함"}
+    candidates = [
+        {
+            "menu_key": name,
+            "meal_slot": "dinner",
+            "reason": "어제와 겹치지 않아요",
+            "evidence": [doc],
+        }
+        for name in names
+    ]
+    saver = InMemorySuggestions()
+
+    result = await _handle(
+        "RC01",
+        memory_llm=FakeLLM(
+            _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+        ),
+        memory_context=memory_context,
+        food_context=context,
+        events=events,
+        food_llm=FakeLLM(_tools(_call("p", "propose_meal_candidates", {"candidates": candidates}))),
+        save_suggestions=saver,
+    )
+
+    [batch] = saver.batches
+    assert (batch.run_id, batch.agent, batch.task_type) == (RUN_ID, "food", "meal_recommendation")
+    assert [draft.content for draft in batch.drafts] == list(names)
+    [card] = _of(events, AgentResult)
+    assert card.status == "completed"
+    assert len(card.suggestion_ids) == len(batch.drafts) == 3  # 카드 id 는 저장된 추천 수와 같다
+    assert result.failed is None and result.partial is None

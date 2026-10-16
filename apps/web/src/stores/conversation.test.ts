@@ -307,6 +307,17 @@ describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기
     await settled(again);
   });
 
+  it("🚨 저장한 뒤 끊긴 run(completed: false)에는 다시 시도가 없다 — 서버가 이미 저장했다 (#271)", async () => {
+    scenario("interrupted");
+    const id = send("그림 그렸어");
+    const ended = await settled(id);
+
+    expect(ended.run.status).toBe("done");
+    expect(ended.run.interrupted).toBe(true);
+    // 같은 키로는 닫힌 run 이 재생될 뿐이고, 새 키로 보내면 두 번 저장된다.
+    expect(canRetry(ended)).toBe(false);
+  });
+
   it(
     "끝까지 처리된 뒤에는 같은 문장도 새 키다",
     async () => {
@@ -460,14 +471,17 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
 
 describe("부분 결과 문구 (PR #215 리뷰)", () => {
   it("저장한 것이 없으면 '저장' 을 말하지 않는다", () => {
-    const text = partialMessage({ reason: "timeout_20s", succeeded: [], failed: ["food"] }, false);
+    const text = partialMessage(
+      { reason: "timeout_20s", succeeded: [], failed: ["food"], retryable: [] },
+      false,
+    );
     expect(text).not.toContain("저장");
     expect(text).toContain("처리하지 못했어요");
   });
 
   it("같은 Agent 가 양쪽에 있으면 '일부' 다", () => {
     const text = partialMessage(
-      { reason: "timeout_20s", succeeded: ["food"], failed: ["food", "activity"] },
+      { reason: "timeout_20s", succeeded: ["food"], failed: ["food", "activity"], retryable: [] },
       true,
     );
     expect(text).toMatch(/쪽 일부, .+ 쪽은 이번에 처리하지 못했어요\./);

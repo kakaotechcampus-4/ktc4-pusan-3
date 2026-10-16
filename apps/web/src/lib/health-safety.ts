@@ -54,3 +54,38 @@ export const SEVERITY_LABEL: Record<string, string> = {
 export function isSeverityFor(type: string, severity: string): boolean {
   return type === "allergy" ? ALLERGY_VALUES.has(severity) : GRADE_VALUES.has(severity);
 }
+
+/* ── 길이 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * 서버가 받는 길이 (`apps/api/app/api/v1/schemas/health_safety.py`). 넘기면 400 이다.
+ *
+ * 🚨 **화면이 먼저 막는다.** 서버의 400 은 화면에서 일반 실패로 그려져 "다시 눌러 주세요" 가
+ *    되는데, 같은 값을 다시 보내면 같은 400 이다. 이름과 메모는 입력이 막고(`maxLength`),
+ *    증상은 쉼표로 한 칸에 적어서 입력이 못 막으니 확인할 때 막는다 (`reactionsProblem`).
+ */
+export const HEALTH_SAFETY_LIMITS = {
+  label: 100,
+  notes: 500,
+  reactions: 20,
+  reaction: 100,
+} as const;
+
+/** 쉼표로 나눠 적은 증상. 빈 칸은 뺀다 — 서버는 빈 증상을 받지 않는다. */
+export function splitReactions(text: string): string[] {
+  return text
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** 증상이 서버가 받는 길이를 넘으면 그 사유, 아니면 `null`. */
+export function reactionsProblem(reactions: string[]): string | null {
+  if (reactions.length > HEALTH_SAFETY_LIMITS.reactions) {
+    return `증상은 ${HEALTH_SAFETY_LIMITS.reactions}개까지 적을 수 있어요`;
+  }
+  if (reactions.some((r) => r.length > HEALTH_SAFETY_LIMITS.reaction)) {
+    return `증상 하나는 ${HEALTH_SAFETY_LIMITS.reaction}자까지 적을 수 있어요`;
+  }
+  return null;
+}

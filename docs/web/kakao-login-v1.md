@@ -26,7 +26,7 @@
 | 복귀 경로             | 웹 `/auth/callback?code=` · 앱 `icatch://auth?code=` — **쿼리 모양이 같다**                          |
 | 앱에서 카카오 페이지  | **인앱 인증 세션** (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`)                        |
 | 웹뷰 안에서 OAuth     | **금지** — 앱이 카카오 계정 입력창을 들여다볼 수 있는 구조가 된다                                     |
-| 세션                  | 불투명 난수 · **12시간** · refresh 없음 · **`sessionStorage`**                                        |
+| 세션                  | access 15분 · **메모리만** + refresh 쿠키(HttpOnly · 30일 · 최대 90일) — §4-7 (#465)                 |
 | 카카오 키             | 프론트·셸 모두 **모른다.** `NEXT_PUBLIC_KAKAO_*` 를 만들지 않는다                                     |
 | 신규 코드             | `lib/auth/oauth.ts` · `lib/auth/oauth-bind.ts` · `app/auth/callback/page.tsx` · 동의 화면 (별도 이슈)   |
 
@@ -313,31 +313,34 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
   }, [pending]);
   ```
 
-### 4-7. 세션 저장 — `localStorage` 를 쓰지 않는다
+### 4-7. 세션 저장 — access 는 메모리, refresh 는 쿠키 (#465)
 
-[명세 §4-3](../api/auth-kakao-v1.md) 이 토큰 저장소를 `sessionStorage` 로 못박았다. [`stores/session.ts`](../../apps/web/src/stores/session.ts) 의 `createJSONStorage(() => localStorage)` 를 `sessionStorage` 로 바꾼다.
+처음에는 [명세 §4-3](../api/auth-kakao-v1.md) 대로 토큰을 `sessionStorage` 에 12시간 두고 refresh 를 두지 않았다. 배포한 앱에서 확인해 보니 **앱 프로세스가 죽을 때마다 웹뷰가 새로 만들어져 저장소가 비워졌고**, 앱을 켤 때마다 카카오 로그인을 다시 거쳤다. 아래 ⚠️ 로 예고했던 그 체감이다. 카카오 `prompt=none` 으로 조용히 다시 로그인하는 길은 구현되지 않았고, 했더라도 열 때마다 인앱 브라우저가 한 번 번쩍였다.
+
+그래서 **짧은 access 는 메모리에, 긴 refresh 는 서버가 심는 HttpOnly 쿠키에** 두는 구조로 바꿨다. 서버(백엔드 담당 확인)와 맞춘 계약:
 
 | | 값 |
 | --- | --- |
-| 토큰 | 불투명 난수 43자. JWT 아님 — 디코딩해서 정보를 꺼내려 하지 않는다 |
-| 수명 | **12시간** (`expires_in: 43200`) |
-| refresh | **없다.** 만료되면 §2 를 다시 탄다 |
-| 저장 | `sessionStorage` |
+| access | 불투명 난수 · **15분** (`expires_in: 900`) · `Authorization: Bearer` · JS 메모리에만 |
+| refresh | 쿠키 `icatch_rt` · `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` · 유휴 30일(쓸 때마다 연장) · 절대 90일 · 쓸 때마다 회전 |
+| 갱신 | `POST /auth/refresh` — 쿠키로만 인증 · 200 `{ token, expires_in }` · 실패는 전부 `401 unauthenticated` |
+| 앱을 켤 때 | 웹이 refresh 를 부른다. **셸은 토큰을 다루지 않는다** — 교환을 웹뷰 안의 웹이 하므로 쿠키가 웹뷰 쿠키 저장소에 남는다. 셸이 하는 일은 백그라운드로 갈 때 그 저장소를 디스크에 쓰는 것뿐이다 (아래 ⚠️) |
 
-- `signIn(token)` → `signIn(token, expiresIn)` 으로 확장해 만료 시각을 같이 든다. 만료가 임박하면 요청을 보내기 전에 로그인 화면으로 유도할 수 있다 — 401 을 맞고 나서야 아는 것보다 낫다.
-- `401 unauthenticated` 는 [`client.ts`](../../apps/web/src/lib/api/client.ts) 에서 한 번에 처리한다 — 세션을 비우고 00 으로. 화면마다 401 을 다루지 않는다.
-- `activeChildId` 는 계속 저장해도 된다. 화면 선택값일 뿐 권한 근거가 아니고 `/me` 로 다시 확인한다.
-  ⚠️ 다만 스토어를 통째로 옮겼으므로 **이 값도 세션 스코프가 됐다** — 탭을 닫으면 "마지막에 본 아이" 복원이 사라진다. 필드 하나 때문에 저장소를 두 벌로 나누지 않았다 (정본은 URL 이라 화면이 깨지지 않는다).
-- 복구 시점에 **이미 만료된 토큰은 들고 있지 않는다.** `onRehydrateStorage` 에서 버린다 — 들고 있어도 첫 요청이 401 이 될 뿐이다.
+- **왜 `localStorage` 가 아닌가** — 아래 XSS 전제가 그대로다. 저장소에 둔 토큰은 XSS 한 건에 꺼내지고, 수명을 늘리면 그만큼 오래 쓰인다. 지금 JS 가 읽을 수 있는 것은 15분짜리 access 하나다
+- **왜 세션 전체를 쿠키로 옮기지 않았나** — 모든 API 에 CSRF 방어가 필요해지고 `client.ts` · `sse.ts` · 계약서 §01(Bearer)이 다 바뀐다. refresh 만 쿠키로 두면 일반 API 의 계약은 그대로다
+- **왜 셸의 보안 저장소(Keychain · Keystore)가 아닌가** — 셸이 토큰을 들지 않는다는 경계([`apps/mobile/CLAUDE.md`](../../apps/mobile/CLAUDE.md) §1)가 깨지고 로그인 코드가 웹과 앱 두 벌이 된다
+- `icatch.ai.kr` 과 `api.icatch.ai.kr` 은 같은 사이트다 (`ai.kr` 이 Public Suffix List 에 있다). 그래서 API 가 심은 쿠키는 서드파티 쿠키 차단에 걸리지 않는다
 
-**🚨 이 저장소 규칙이 의미를 갖는 전제가 프론트에 있다.** 토큰이 JS 에서 접근 가능하므로 XSS 한 건이 세션을 넘기는데, 이 서비스의 XSS 경로는 특정된다 — **기관 공지 붙여넣기·OCR 로 들어온 외부 텍스트가 LLM 을 거쳐 화면에 렌더링된다** (F-07 · F-14). 그래서:
+프론트가 지키는 규칙(갱신 한 번만 · 확인 실패는 로그아웃이 아님 · `/` 가 세션부터 봄 · 로그아웃 실패 시 나간 척하지 않음)은 [`auth-consent-v1.md`](auth-consent-v1.md) §2 가 원문이다.
+
+**🚨 이 저장소 규칙이 의미를 갖는 전제가 프론트에 있다.** access 토큰이 JS 에서 접근 가능하므로 XSS 한 건이 그 15분을 넘기는데, 이 서비스의 XSS 경로는 특정된다 — **기관 공지 붙여넣기·OCR 로 들어온 외부 텍스트가 LLM 을 거쳐 화면에 렌더링된다** (F-07 · F-14). 그래서:
 
 - **LLM 출력과 공지 원문을 HTML 로 렌더링하지 않는다.** `dangerouslySetInnerHTML` 금지, 마크다운을 쓰더라도 raw HTML 비활성(`rehype-raw` 금지).
 - React 는 기본적으로 이스케이프한다. 구멍은 위 둘뿐이고 막는 비용이 거의 0이다.
 
 [명세 §7-7](../api/auth-kakao-v1.md) 이 이 규칙을 최상위 CLAUDE.md §2 절대 규칙으로 올릴 것을 제안한다 — 프론트가 지키지만 어겼을 때 깨지는 것은 인증이라 파트 경계를 넘는다. 동의한다.
 
-⚠️ **앱은 콜드 스타트마다 재로그인이 된다.** `sessionStorage` 는 웹뷰 컨텍스트와 함께 사라지므로, 웹의 "탭을 닫을 때만" 과 성격이 다르다. 카카오 세션이 살아 있으면 `prompt=none` 으로 화면 없이 통과하지만 인앱 브라우저가 한 번 번쩍인다. 하루에 여러 번 여는 앱이라 체감을 측정해야 한다 — §9-2 에 후속으로 올렸다.
+⚠️ **Android 웹뷰는 쿠키를 디스크에 주기적으로만 기록한다.** 앱을 켤 때의 refresh 가 회전시킨 쿠키가 기록되기 전에 앱을 끄면 다음 실행에서 직전 refresh 가 나가고, 서버(#468)는 유예 밖 재사용으로 보고 세션을 지운다. 그래서 셸이 백그라운드로 갈 때 쿠키를 flush 한다 (#469 · [`apps/mobile/CLAUDE.md`](../../apps/mobile/CLAUDE.md) §4). 토큰은 다루지 않는다.
 
 ---
 
@@ -472,7 +475,8 @@ webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location
 - [x] 인앱 브라우저에서 X → 00 으로 돌아오고 버튼이 원래대로 · 이어서 다시 누르면 정상 왕복 (Android)
 - [x] 로그인 시작이 아닌 외부 링크("전문 보기")는 인증 세션으로 열리지 않음 (Android) — #212 부터 in-app 브라우저
 - [ ] bind 를 지우고 교환 → `401 invalid_handoff`
-- [ ] 앱 콜드 스타트 후 재로그인 체감 (§9-2)
+- [ ] 로그인 → 앱 완전 종료 → 다시 실행하면 로그인 화면 없이 홈 (#465 · 서버 refresh 가 붙은 뒤 · Android · iOS)
+- [ ] 앱을 켜고 30초 안에 최근 앱 화면에서 스와이프로 종료 → 30초 넘게 기다렸다 다시 실행하면 로그인 화면 없이 홈 (#469 · 백그라운드 flush · Android)
 
 ---
 
@@ -492,7 +496,7 @@ webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location
 - 🚨 **아이 스코프를 `child_id` 없이 받아 줄 수 있는지 확인이 필요하다.** 계약서 §04 의 `POST /consents` 예시는 아이 스코프에 `child_id` 를 싣는데, `child_basic` 은 **아이를 만들기 전에** 있어야 한다(`child_basic` 없이 `POST /children` → 403). 즉 가입 시점에는 실을 `child_id` 가 없다. 지금 프론트는 **생략하고 보낸다**. 서버가 거절하기로 하면 대안은 ㉠ `signup` 의 `consents` 에 4건을 다 받거나 ㉡ 01 화면에서 아이를 만든 뒤 받는 것인데, ㉡은 "동의는 저장보다 먼저다" 와 부딪힌다.
 - **`guardian_attested` 를 별도 체크박스로 받아야 하는지 확인이 필요하다.** 지금은 아이 스코프에 `true` 로 함께 싣는다. 법정대리인 확인을 별도 문항으로 받아야 하면 항목이 5건이 된다.
 - **`client` 허용값 밖일 때의 응답을 하나로 정해달라.** 명세 §2-3·§3-2 는 `400`, 리뷰 코멘트는 `?error=invalid_client` 리다이렉트였다. 프론트가 잘못된 값을 보낼 일은 없지만, 400 이면 사용자가 JSON 에러 페이지에 남고 리다이렉트면 앱으로 돌아온다.
-- **앱 콜드 스타트 재로그인 체감을 `M-02` 에 넣어야 한다** (§4-7). 웹의 "탭 닫을 때" 와 성격이 다르다 — 앱은 열 때마다 인앱 브라우저가 한 번 번쩍인다. 12시간 조정 논의에 앱 케이스를 같이 올린다.
+- ~~앱 콜드 스타트 재로그인 체감을 `M-02` 에 넣어야 한다~~ → 배포한 앱에서 실제로 매번 재로그인이 됐다. refresh 쿠키로 해결했다 (§4-7 · #465).
 - **"외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다"** 를 최상위 CLAUDE.md §2 절대 규칙으로 올리는 데 동의한다 ([명세 §7-7](../api/auth-kakao-v1.md)).
 
 ### 9-3. 별도 이슈로 뺄 것

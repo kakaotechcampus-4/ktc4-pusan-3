@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { ViewTransition, type ReactNode, type Ref } from "react";
 
 import { cn } from "@/lib/cn";
+import { TRANSITION_TYPE, VIEW_TRANSITION } from "@/lib/view-transition";
 
 /**
  * 화면 컨테이너. 디자인 시스템 §5 · §9 를 한 곳에 고정한다.
@@ -30,9 +31,15 @@ export function Screen({
   topBar,
   bottomBar,
   nav,
+  bodyRef,
 }: {
   children: ReactNode;
   className?: string;
+  /**
+   * 본문 영역(위 · 아래 고정 바를 뺀 것). 화면 하나가 단계마다 본문을 통째로 갈아 끼울 때
+   * 그 교체에 움직임을 거는 자리다 (`lib/motion.ts` · 초대 코드 → 아이 확인).
+   */
+  bodyRef?: Ref<HTMLDivElement>;
   /**
    * 스크롤과 무관하게 화면 위에 붙는 머리 (04 대화). 🚨 **아래로 길게 자라는 흐름 화면에만 쓴다** —
    * 돌아가는 길이 화면 밖으로 밀리는 곳이다. 짧은 화면에 붙이면 본문 자리만 줄어든다.
@@ -61,6 +68,7 @@ export function Screen({
       ) : null}
       {/* 좌우 여백이 본문에만 걸린다 — 아래 바의 구분선은 화면 끝까지 가야 한다. */}
       <div
+        ref={bodyRef}
         className={cn(
           "flex flex-1 flex-col px-3 min-[380px]:px-4",
           // 머리가 붙어 있으면 본문은 그 아래에서 한 칸(24px)만 띄우고 시작한다.
@@ -94,7 +102,23 @@ export function Screen({
           {/* 🚨 네비는 **바닥 면**이다. 선이 아니라 색으로 갈린다 — `line` 1px 은 canvas 위에서
               1.21:1 이라 같은 선이 위(고정 영역 시작)에도 있으면 두 뜻이 한 신호를 나눠 쓴다.
               `surface-muted` 는 대비로는 1.07:1 이지만 **바 전체 면적**에 걸려서 훨씬 세다. */}
-          {nav ? <div className="bg-surface-muted pb-safe-2">{nav}</div> : null}
+          {/* 네비는 이름 쌍이다 — 두 화면이 다 네비를 달면 화면 전환 동안 제자리에 있고 켜진 칸만 바뀐다
+              (`VIEW_TRANSITION.childNav`). 바닥 면까지 같이 묶어야 면만 미끄러지는 일이 없다.
+              🚨 **방향이 붙은 이동에서만 잇는다.** `share="auto"` 로 두면 하단 네비로 옮겨 다닐 때마다
+              (방향 없는 이동) 화면 전체가 크로스페이드를 시작한다 — 지금까지 즉시 바뀌던 이동이다. */}
+          {nav ? (
+            <ViewTransition
+              name={VIEW_TRANSITION.childNav}
+              share={{
+                [TRANSITION_TYPE.forward]: "auto",
+                [TRANSITION_TYPE.back]: "auto",
+                default: "none",
+              }}
+              default="none"
+            >
+              <div className="bg-surface-muted pb-safe-2">{nav}</div>
+            </ViewTransition>
+          ) : null}
         </div>
       ) : null}
     </main>

@@ -9,6 +9,7 @@
 """
 
 from collections.abc import Sequence
+from datetime import date
 from uuid import UUID
 
 import pytest
@@ -131,7 +132,8 @@ async def test_실패하면_아무것도_저장하지_않고_다음_실행에서
 
     assert failed.failed == (("food", "1"), ("activity", "2"), ("food", "3"))
     assert failed.embedded == ()
-    assert await store.list_unlinked(child_id=CHILD) == []  # 벡터가 하나도 안 들어갔다
+    # 벡터가 하나도 안 들어갔다
+    assert await store.list_unlinked(child_id=CHILD, min_observed_on=date(2024, 7, 1)) == []
 
     retried = await embed_pending(store, FakeEmbedder(), child_id=CHILD)
     assert retried.embedded == failed.failed

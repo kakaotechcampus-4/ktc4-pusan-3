@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { API_BASE_URL } from "@/lib/env";
-import { ApiError, isApiError } from "@/lib/api/errors";
-import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
+import { ApiError, isApiError, NetworkError } from "@/lib/api/errors";
+import {
+  idempotentMethod,
+  idempotentPath,
+  type IdempotentOperation,
+  newIdempotencyKey,
+  requiresIdempotencyKey,
+} from "@/lib/api/idempotency";
 import {
   addHealthSafety,
   approveSuggestions,
@@ -11,23 +17,27 @@ import {
   submitEventDraft,
   photoFormData,
   submitOnboarding,
+  updateHealthSafety,
   uploadPhoto,
 } from "@/lib/api/operations";
 import {
   isDraftEvent,
   streamRunEvents,
+  type AgentResultEvent,
   type EventDraftsEvent,
   type GuidanceEvent,
   type LaneEvent,
   type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
+  type PartialEvent,
   type RunEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
 import { toISODate } from "@/lib/format";
 import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
+import { REPORT_CATEGORIES, REPORT_MESSAGE_MAX_LENGTH } from "@/lib/api/types";
 import type {
   Affinity,
   AffinitiesResponse,
@@ -44,19 +54,28 @@ import type {
   CalendarDayResponse,
   CalendarMonthResponse,
   ChildProfile,
+  CorrectionRequest,
   CorrectionResponse,
   GrowthLog,
   GrowthLogsResponse,
   HealthSafety,
   HealthSafetyListResponse,
+  MyDiary,
   Observation,
+  ObservationDetailResponse,
   ObservationsResponse,
+  OnboardingRequest,
   Policy,
   PhotoCommitResponse,
+  ReportRequest,
+  ReportResponse,
   PhotoEntry,
   PhotoLane,
   SafetyScanResponse,
+  UpdateHealthSafetyRequest,
   EventDraft,
+  EventItem,
+  EventItemUpdateResponse,
   SubmitEventBody,
   SuggestionsRequest,
   SuggestionsResponse,
@@ -141,12 +160,16 @@ async function agreed(scopes: readonly string[]) {
   });
 }
 
-describe("① 키 누락 — 표에 있는 5개 전부", () => {
+describe("① 키 누락 — 표에 있는 줄 전부", () => {
   // 🚨 표(lib/api/idempotency.ts)에 줄을 더하고 목을 안 고치면 여기서 깨진다.
-  const cases = Object.entries(idempotentPath).map(([name, build]) => [name, build("c1")] as const);
+  //    메서드도 표가 정한다 — 수정 초안 반영은 PATCH 다 (#316).
+  const cases = (Object.keys(idempotentPath) as IdempotentOperation[]).map(
+    (name) => [name, idempotentMethod[name], idempotentPath[name]("c1", "ev_1")] as const,
+  );
 
-  it.each(cases)("%s 는 키가 없으면 400 이다", async (_name, path) => {
+  it.each(cases)("%s (%s) 는 키가 없으면 400 이다", async (_name, method, path) => {
     const response = await raw(path, {
+      method,
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
@@ -545,6 +568,117 @@ describe("승인 게이트 ㉡", () => {
   });
 });
 
+/**
+ * 05 묶음 안내 · 일반 추천 근거 (#249). 서버 `POST /children/{cid}/suggestions` 와 같은 계약이다.
+ * 🚨 실패는 "묶음이 없는 Agent" 다 — 0개로 끝난 Agent 도 안내와 함께 묶음이 온다.
+ */
+describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
+  async function fetchWith(scenario: Parameters<typeof setScenario>[0], body: SuggestionsRequest) {
+    setScenario(scenario);
+    try {
+      return await api.post<SuggestionsResponse>("/children/c1/suggestions", body);
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
+    const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
+
+    const byAgent = Object.fromEntries((data.groups ?? []).map((g) => [g.agent, g]));
+    expect(byAgent.activity?.notice?.code).toBe("empty");
+    expect(data.suggestions.some((s) => s.agent === "activity")).toBe(false);
+    expect(byAgent.food?.notice?.code).toBe("fewer");
+    // 서버 문구는 비어 있지 않다 — 화면이 그대로 그린다
+    for (const group of data.groups ?? []) expect(group.notice?.message.trim()).not.toBe("");
+  });
+
+  it("🚨 이어서 할 수 없으면 그 묶음에 안내가 오고 오류가 아니다", async () => {
+    const data = await fetchWith("cannot_resume", { agents: ["food", "activity"], run_id: "r1" });
+
+    expect(data.groups?.find((g) => g.agent === "activity")?.notice?.code).toBe("cannot_resume");
+    // 같은 응답에 이어서 할 수 있는 Agent 의 추천이 섞여 온다
+    expect(data.suggestions.some((s) => s.agent === "food")).toBe(true);
+    expect(data.groups?.find((g) => g.agent === "food")?.notice).toBeNull();
+  });
+
+  it("🚨 일반 추천은 문서 행 근거와 출처를 달고 온다", async () => {
+    const data = await fetchWith("scarcity", { agents: ["activity"] });
+
+    expect((data.general ?? []).length).toBeGreaterThan(0);
+    for (const item of data.general ?? []) {
+      expect(item.evidence.length).toBeGreaterThan(0);
+      for (const e of item.evidence) {
+        expect(e.source_org).not.toBe("");
+        expect(["food_doc", "activity_doc", "growth_doc"]).toContain(e.ref.kind);
+      }
+    }
+  });
+
+  it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
+    const plain = await fetchWith("default", { agents: ["food", "activity"] });
+    for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
+
+    const data = await fetchWith("suggest_cautions", { agents: ["food", "activity"] });
+    const activity = data.groups?.find((g) => g.agent === "activity");
+    expect(activity?.cautions.length).toBeGreaterThan(0);
+  });
+
+  it("🚨 일반 추천은 카드마다 그 도메인의 기록 수를 싣는다", async () => {
+    const data = await fetchWith("empty", { agents: ["food", "activity"] });
+    for (const item of data.general ?? []) expect(typeof item.record_count).toBe("number");
+  });
+
+  it("🚨 05 의 하루 한도는 429 daily_input_limit 이다", async () => {
+    await expect(fetchWith("daily_limit", { agents: ["food"] })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "daily_input_limit") && (e as ApiError).status === 429,
+    );
+  });
+
+  it("🚨 run_id 로 오면 채택한 추천도 돌아와 status 로 되살린다 — 홈은 늘 draft 다", async () => {
+    const fresh = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+    });
+    const [first] = fresh.suggestions;
+    expect(fresh.suggestions.every((s) => s.status === "draft")).toBe(true);
+    await approveSuggestions("c1", { suggestion_ids: [first.id] });
+
+    const replayed = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+      run_id: "r1",
+    });
+    expect(replayed.suggestions.find((s) => s.id === first.id)?.status).toBe("approved");
+    // 채택 안 한 것은 그대로 draft 다
+    expect(
+      replayed.suggestions.filter((s) => s.id !== first.id).every((s) => s.status === "draft"),
+    ).toBe(true);
+    // run 없이 다시 받으면 새로 만든 추천이라 draft 다
+    const home = await api.post<SuggestionsResponse>("/children/c1/suggestions", {
+      agents: ["food"],
+    });
+    expect(home.suggestions.every((s) => s.status === "draft")).toBe(true);
+  });
+
+  it("🚨 일반 추천은 개인화 목록에 섞이지 않고, 질문은 하나뿐이다", async () => {
+    const data = await fetchWith("scarcity", { agents: ["activity"] });
+
+    expect(data.suggestions).toEqual([]);
+    // 답하는 길(#246) 전에는 선택지가 비어 온다 — 서버와 같은 모양
+    expect(data.scarcity?.question?.options).toEqual([]);
+  });
+
+  it("🚨 추천 이유는 문장 한 칸이다 — 서버 `reason: str | None` 과 같은 모양 (#475)", async () => {
+    const data = await fetchWith("default", { agents: ["food", "activity"] });
+
+    // 목만 `{why_this, why_now}` 로 내리던 동안 화면이 그 모양에 맞춰져 실서버에서 이유 칸이 비었다.
+    const reasons = data.suggestions.map((s) => s.reason as unknown);
+    for (const reason of reasons) expect(reason === null || typeof reason === "string").toBe(true);
+    // 빈 값도 실린다 — 화면이 "라벨만 선 줄" 을 안 그리는지는 빈 값이 있어야 걸린다
+    expect(reasons).toContain(null);
+    expect(reasons.some((r) => typeof r === "string" && r.trim() !== "")).toBe(true);
+  });
+});
+
 describe("⑥ 권한 부족 — 동의 거부", () => {
   it("403 consent_required 에 deeplink 가 붙고, 저장은 일어나지 않는다", async () => {
     setScenario("consent");
@@ -564,7 +698,7 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
       // 🚨 거부는 "처리 결과" 가 아니다. 동의를 받은 뒤 같은 키로 다시 보내면 통과해야 한다.
       setScenario("default");
       const retried = await submitOnboarding("c1", { gender: "female" }, key);
-      expect(retried.run_id).toBe("r01");
+      expect(retried.child.gender).toBe("female");
     } finally {
       setScenario("default");
     }
@@ -617,7 +751,7 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     for (const d of drafts) {
       expect(d).not.toHaveProperty("id");
       expect(d).not.toHaveProperty("status");
-      // 🚨 `is_prepared` 는 payload 에 없다 — 체크는 PATCH /event-items/{iid} 만의 몫이다 (#122).
+      // 🚨 `is_prepared` 는 payload 에 없다 — 체크는 PATCH /children/{cid}/event-items/{iid} 만의 몫이다 (#122).
       for (const item of d.items) expect(item).not.toHaveProperty("is_prepared");
     }
   });
@@ -673,6 +807,155 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     } finally {
       setScenario("default");
     }
+  });
+
+  /**
+   * 🚨 **저장한 뒤에 끊긴 run 은 failed 가 아니다** (#253 · #271). 서버는 done 에 `completed: false`
+   *    를 싣고 키를 놓지 않는다 — 놓으면 다시 보낸 한 줄이 두 번 저장된다.
+   */
+  it.each([
+    { label: "기록형 한 줄은 저장한 뒤 끊긴다", text: "그림 그렸어", saved: true },
+    { label: "일정형 한 줄은 saved 도 못 보내고 끊긴다", text: "주말에 소풍 가기", saved: false },
+  ])("interrupted — $label", async ({ text, saved }) => {
+    setScenario("interrupted");
+    try {
+      const key = newIdempotencyKey();
+      const body = { text, source: "home_input" };
+      const { run_id } = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+
+      const events = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      const types = events.map((e) => e.type);
+
+      expect(types).not.toContain("failed");
+      expect(types.includes("saved")).toBe(saved);
+      const last = events.at(-1);
+      expect(last?.type).toBe("done");
+      expect((last?.data as { completed?: boolean }).completed).toBe(false);
+
+      // 🚨 키를 놓지 않는다 — 같은 키로 다시 보내면 새 run 이 아니라 이 run 이 재생된다.
+      const again = await api.post<{ run_id: string }>(idempotentPath.input("c1"), body, {
+        idempotencyKey: key,
+      });
+      expect(again.run_id).toBe(run_id);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+describe("⑦-2 도메인 Agent 결과 (#227)", () => {
+  async function eventsOf(
+    scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+  ) {
+    setScenario(scenario);
+    try {
+      const { run_id } = await api.post<{ run_id: string }>(
+        idempotentPath.input("c1"),
+        { text: "지어낸 한 줄", source: "home_input" },
+        { idempotencyKey: newIdempotencyKey() },
+      );
+      const events: RunEvent[] = [];
+      for await (const event of streamRunEvents(run_id)) events.push(event);
+      return events;
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it.each(["agent_readout", "agent_question", "agent_partial"] as const)(
+    "%s — 저장 없이 agent_result 가 오고 done 으로 끝난다",
+    async (scenario) => {
+      const types = (await eventsOf(scenario)).map((e) => e.type);
+      expect(types).toContain("agent_result");
+      // 요청형 한 줄이라 저장할 관찰이 없다. 실패로 끝나지도 않는다.
+      expect(types).not.toContain("saved");
+      expect(types).not.toContain("failed");
+      expect(types.at(-1)).toBe("done");
+    },
+  );
+
+  it("🚨 결과는 키를 늘 싣는다 — 값이 없으면 null · 빈 배열이다 (서버 translate.py 와 같은 규칙)", async () => {
+    for (const event of await eventsOf("agent_readout")) {
+      if (event.type !== "agent_result") continue;
+      const data = event.data as AgentResultEvent;
+      expect(Object.keys(data).sort()).toEqual([
+        "agent",
+        "kind",
+        "question",
+        "readouts",
+        "reason",
+        "record_count",
+        "status",
+        "suggestion_ids",
+        "task_type",
+      ]);
+      // 🚨 추천 칸도 키는 늘 있다 — 추천이 없으면 `[]` · `null` 이다 (#227 3단계).
+      //    키가 빠지면 화면이 "추천 0개" 와 "아직 안 실음" 을 가를 수 없다.
+      for (const readout of data.readouts) {
+        expect(Object.keys(readout).sort()).toEqual([
+          "authored_by",
+          "body",
+          "code",
+          "kind",
+          "title",
+        ]);
+      }
+    }
+  });
+
+  it("🚨 agent_result 는 추천 칸을 늘 키로 싣는다 — 개인화는 이유, 일반은 쌓인 기록 수", async () => {
+    const results = (await eventsOf("agent_suggestions"))
+      .filter((e) => e.type === "agent_result")
+      .map((e) => e.data as AgentResultEvent);
+
+    for (const result of results) {
+      expect(result).toHaveProperty("suggestion_ids");
+      expect(result).toHaveProperty("kind");
+      expect(result).toHaveProperty("reason");
+      expect(result).toHaveProperty("record_count");
+    }
+    const personal = results.find((r) => r.kind === "personalized");
+    const general = results.find((r) => r.kind === "general");
+    expect(personal?.suggestion_ids.length).toBeGreaterThan(0);
+    expect(personal?.reason).toBeTruthy();
+    expect(personal?.record_count).toBeNull();
+    expect(typeof general?.record_count).toBe("number");
+  });
+
+  it("🚨 partial 의 retryable 은 failed 안에 있다 — 화면이 고르지 않는다", async () => {
+    const partial = (await eventsOf("agent_partial")).find((e) => e.type === "partial")
+      ?.data as PartialEvent;
+
+    expect(partial.retryable.length).toBeGreaterThan(0);
+    for (const agent of partial.retryable) expect(partial.failed).toContain(agent);
+  });
+
+  it("🚨 개수 안내는 code 로 찾는다 — 날씨 안내와 같은 kind 라서다 (#276)", async () => {
+    const readouts = (await eventsOf("agent_readout"))
+      .filter((e) => e.type === "agent_result")
+      .flatMap((e) => (e.data as AgentResultEvent).readouts);
+
+    // 추천이 없는 결과에 오는 개수 안내는 0개(`empty`)뿐이다 — `fewer` 는 추천과 같이 오는 것이라 `agent_suggestions` 에 있다.
+    expect(readouts.filter((r) => r.code !== null).map((r) => r.code)).toEqual(["empty"]);
+    // 개수와 상관없는 readout(성장 추이)은 null 이다.
+    expect(readouts.find((r) => r.kind === "growth_delta")?.code).toBeNull();
+  });
+
+  it("🚨 결과를 못 낸 Agent 는 agent_result 없이 partial 에만 오고, partial 은 결과 뒤 · done 앞이다", async () => {
+    const events = await eventsOf("agent_partial");
+    const types = events.map((e) => e.type);
+    const agents = events
+      .filter((e) => e.type === "agent_result")
+      .map((e) => (e.data as AgentResultEvent).agent);
+    const partial = events.find((e) => e.type === "partial")?.data as PartialEvent;
+
+    expect(agents).not.toContain("activity");
+    expect(partial.failed).toEqual(["activity"]);
+    expect(types.lastIndexOf("agent_result")).toBeLessThan(types.indexOf("partial"));
+    expect(types.indexOf("partial")).toBeLessThan(types.indexOf("done"));
   });
 });
 
@@ -982,12 +1265,13 @@ describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
-  it("도메인을 생략하면 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+  it("도메인을 생략하면 건강을 뺀 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const kinds = new Set(page.items.map((item) => item.kind));
     expect(kinds.size).toBeGreaterThan(1);
-    expect(kinds).toContain("observation_health");
+    // 🚨 건강 관찰은 첫 배포 범위 밖이다 — 서버(#266)가 목록에서 뺀다 (#259).
+    expect(kinds).not.toContain("observation_health");
     expect(page.total).toBe(page.items.length);
 
     const dates = page.items.map((item) => item.observed_to);
@@ -1003,6 +1287,70 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(page.items.every((item) => item.kind === "observation_food")).toBe(true);
   });
 
+  // 🚨 `observation_${domain}` 으로 찾으면 없는 테이블(`observation_growth`)을 찾아 늘 비었다 (#269).
+  it("growth 는 education 과 routine 두 테이블을 같이 내려준다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "growth" },
+    });
+
+    expect(new Set(page.items.map((item) => item.kind))).toEqual(
+      new Set(["observation_education", "observation_routine"]),
+    );
+  });
+
+  it("health 는 오류가 아니라 빈 목록이다", async () => {
+    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { domain: "health" },
+    });
+
+    expect(page).toEqual({ items: [], next_cursor: null, total: 0 });
+  });
+
+  it("next_cursor 를 그대로 돌려주면 빠지거나 겹치는 기록 없이 끝까지 넘어간다", async () => {
+    const whole = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ObservationsResponse = await api.get<ObservationsResponse>(
+        "/children/c1/observations",
+        { query: { limit: 2, cursor } },
+      );
+      expect(page.total).toBe(whole.total);
+      seen.push(...page.items.map((item) => `${item.kind}:${item.id}`));
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+
+    expect(seen).toEqual(whole.items.map((item) => `${item.kind}:${item.id}`));
+  });
+
+  it("기본 한 장은 20건이고, 넘치면 next_cursor 가 온다", async () => {
+    setScenario("observations_many");
+    try {
+      const first = await api.get<ObservationsResponse>("/children/c1/observations");
+      expect(first.items).toHaveLength(20);
+      expect(first.total).toBe(25);
+      expect(first.next_cursor).not.toBeNull();
+
+      const second = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { cursor: first.next_cursor },
+      });
+      expect(second.items).toHaveLength(5);
+      expect(second.next_cursor).toBeNull();
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("깨진 커서는 400 validation_failed 다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { cursor: "깨진값" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
   it("프로필은 affinities 한 배열이고 safety 가 따로 온다", async () => {
     const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
 
@@ -1011,11 +1359,11 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(body.safety.length).toBeGreaterThan(0);
   });
 
+  // 목록에서는 빠졌지만 캘린더와 run 결과에는 아직 선다 — 그 화면들이 같은 시트를 연다.
   it("health 관찰에는 subject · polarity · affinity 키가 아예 없다", async () => {
-    const page = await api.get<ObservationsResponse>("/children/c1/observations", {
-      query: { domain: "health" },
-    });
-    const health = page.items[0];
+    const { observation: health } = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_health/o_h1",
+    );
 
     expect(health.kind).toBe("observation_health");
     expect("subject" in health).toBe(false);
@@ -1025,18 +1373,32 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
 });
 
 describe("⑨ 교정은 지우지 않고 내린다", () => {
-  it("target_ref 를 배열로 보내면 422 다", async () => {
+  it("target_ref 를 배열로 보내면 400 이다 — 서버는 본문 검증 실패를 400 으로 준다", async () => {
     const response = await fetch(`${API_BASE_URL}/corrections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target_ref: [{ kind: "profile_affinity", id: "a_12" }],
-        verdict: "confirm",
+        verdict: "wrong",
         child_id: "c1",
       }),
     });
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(400);
+  });
+
+  it("once_only 는 status 를 stand_alone 으로 바꾼다 — active 로 두지 않는다 (#277)", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+    const target = before.items.find((item) => item.kind === "observation_food");
+    expect(target).toBeDefined();
+
+    const result = await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    expect((result.target as Observation).status).toBe("stand_alone");
   });
 
   it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
@@ -1052,37 +1414,157 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
 
     // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
     expect((result.target as Observation).status).toBe("inactive");
-    // 기본 조회는 active 만 본다 — 행은 남았지만 목록에서는 빠진다.
+    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.some((item) => item.id === target!.id)).toBe(false);
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.total).toBe(before.total);
   });
 
-  it("기억 need_more_observation 은 confirmed 를 candidate 로 한 단계만 내린다", async () => {
+  it("이번만 그랬어요로 고친 기록도 목록에 stand_alone 으로 남고, 상세에 이력이 선다", async () => {
     const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_12" },
-      verdict: "need_more_observation",
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
+
+    const list = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(list.items.find((item) => item.id === "o_1")?.status).toBe("stand_alone");
+
+    const detail = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_food/o_1",
+    );
+    expect(detail.observation.status).toBe("stand_alone");
+    expect(detail.corrections.map((c) => c.id)).toEqual([result.correction.id]);
+  });
+
+  it("이미 고친 기록을 또 고치면 409 already_corrected 다 — 값이 틀린 400 과 다르다 (#277)", async () => {
+    const body = {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    } as const;
+    await api.post<CorrectionResponse>("/corrections", body);
+
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "already_corrected")).toBe(true);
+    expect((failure as ApiError).status).toBe(409);
+  });
+
+  it("status 를 고르면 그 상태만 오고 total 도 그 상태로 센다 (#266)", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const all = await api.get<ObservationsResponse>("/children/c1/observations");
+    const standAlone = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "stand_alone" },
+    });
+    const active = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { status: "active" },
+    });
+
+    expect(standAlone.items.map((item) => item.id)).toEqual(["o_1"]);
+    expect(standAlone.total).toBe(1);
+    expect(active.items.some((item) => item.id === "o_1")).toBe(false);
+    expect(active.total).toBe(all.total - 1);
+  });
+
+  it("모르는 status 는 400 이다", async () => {
+    const failure = await api
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: "observation_food", id: "o_1" },
+        verdict: "need_more_observation",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  // 🚨 기억 고치기는 의견이다 — 서버(#277)는 상태를 쌓인 기록 수와 기억 wrong 수로만 다시 센다.
+  //    어느 판정도 기억을 archived 로 보내지 않고, 기억은 목록에 남는다.
+  async function correctAffinity(id: string, verdict: CorrectionRequest["verdict"]) {
+    return api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "profile_affinity", id },
+      verdict,
+      child_id: "c1",
+    });
+  }
+
+  async function listedAffinity(id: string): Promise<Affinity | undefined> {
+    const body = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    return body.affinities.find((a) => a.id === id);
+  }
+
+  it("기억 need_more_observation 은 strength 만 낮춘다 — 확인됨은 확인됨으로 남는다", async () => {
+    const before = await listedAffinity("a_12");
+    const result = await correctAffinity("a_12", "need_more_observation");
+
+    const target = result.target as Affinity;
+    expect(target.state).toBe("confirmed");
+    expect(target.strength).toBeLessThan(before!.strength);
+    expect((await listedAffinity("a_12"))?.state).toBe("confirmed");
+  });
+
+  it("기억 outdated 도 상태를 바꾸지 않고 목록에 남긴다", async () => {
+    const result = await correctAffinity("a_20", "outdated");
 
     expect((result.target as Affinity).state).toBe("candidate");
+    expect(await listedAffinity("a_20")).toBeDefined();
   });
 
-  it("기억 outdated 는 archived 로 내린다 — 한 단계가 아니다", async () => {
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: "profile_affinity", id: "a_20" },
-      verdict: "outdated",
+  it("기억 wrong 은 확인됨의 기준을 올린다 — 기록이 모자라면 후보로 내려가고 목록에 남는다", async () => {
+    // a_12 는 묶인 기록 3건으로 확인됨이다. wrong 1번이면 기준이 4건이 된다.
+    const result = await correctAffinity("a_12", "wrong");
+
+    expect((result.target as Affinity).state).toBe("candidate");
+    expect((await listedAffinity("a_12"))?.state).toBe("candidate");
+  });
+
+  it("묶인 기록을 고치면 기억도 다시 센다 — 고친 기록은 기억의 기록 수에서 빠진다", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
       child_id: "c1",
     });
 
-    expect((result.target as Affinity).state).toBe("archived");
+    const affinity = await listedAffinity("a_12");
+    expect(affinity?.observation_count).toBe(2);
+    expect(affinity?.source_refs.some((ref) => ref.id === "o_1")).toBe(false);
+    expect(affinity?.state).toBe("candidate");
+  });
+
+  it("기억에 once_only 를 보내면 400 이다 — 기록에만 쓰는 값", async () => {
+    const failure = await correctAffinity("a_12", "once_only").catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
   });
 });
 
 describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
   it("memory_changed 가 항상 false 다", async () => {
-    const body = await api.patch<SuggestionFeedbackResponse>("/suggestions/s_past_2/feedback", {
-      feedback: "child_disliked",
-    });
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/s_past_2/feedback",
+      {
+        feedback: "child_disliked",
+      },
+    );
 
     expect(body.suggestion.feedback).toBe("child_disliked");
     // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
@@ -1091,7 +1573,7 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 
   it("피드백을 보내도 관찰 건수가 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
-    await api.patch("/suggestions/s_past_1/feedback", { feedback: "not_acted" });
+    await api.patch("/children/c1/suggestions/s_past_1/feedback", { feedback: "not_acted" });
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
 
     expect(after.total).toBe(before.total);
@@ -1111,18 +1593,14 @@ describe("⑪ 일기는 관찰이 아니다", () => {
 
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
 
-    await api.put<CalendarDayResponse>(`/children/c1/calendar/${date}`, {
-      text: "지어낸 일기 한 줄",
-      image_urls: [],
-      event_ids: [],
-    });
+    await api.put<MyDiary>(`/children/c1/diary/${date}`, { content: "지어낸 일기 한 줄" });
 
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
     // 🚨 계약서 §09 — 일기는 명시적으로 태우지 않는 한 관찰로 추출되지 않는다.
     expect(after.total).toBe(before.total);
 
     const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
-    expect(day.diary?.text).toBe("지어낸 일기 한 줄");
+    expect(day.my_diary?.content).toBe("지어낸 일기 한 줄");
   });
 
   it("월 조회의 has_event 는 그날 일정이 실제로 있는 날만 켠다", async () => {
@@ -1145,64 +1623,466 @@ describe("⑪ 일기는 관찰이 아니다", () => {
     }
   });
 
-  it("준비물 체크는 다시 읽어도 남아 있다", async () => {
-    await api.patch("/event-items/i_1", { is_prepared: true });
+  it("달 보기는 표시할 것이 있는 날만 내리고, 표식은 하루 보기와 같은 사실을 말한다 (#318)", async () => {
+    const days = await recentCalendarDays();
+    expect(days.length).toBeGreaterThan(0);
 
+    for (const day of days) {
+      // 🚨 빈 날은 싣지 않는다 — 서버(#325)와 같다.
+      expect(
+        day.has_event || day.has_my_diary || day.has_shared_photo || day.observation_count > 0,
+      ).toBe(true);
+
+      const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
+      // 🚨 두 화면이 다른 기준을 쓰면 "기록 3건" 을 눌렀는데 2건이 나온다.
+      expect(detail.observations).toHaveLength(day.observation_count);
+      expect(detail.my_diary !== null).toBe(day.has_my_diary);
+      expect(detail.shared_photos.length > 0).toBe(day.has_shared_photo);
+    }
+  });
+
+  it("기록은 기록 탭 목록과 같은 기준이다 — 건강 기록은 빠지고, 고친 기록은 남는다 (#318)", async () => {
+    const list = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { limit: 100 },
+    });
+    const target = list.items.find((item) => item.kind === "observation_food");
+    expect(target).toBeDefined();
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: target!.kind, id: target!.id },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    const days = await recentCalendarDays();
+    const first = days[0]?.date ?? "";
+    const onCalendar: Observation[] = [];
+    for (const day of days) {
+      const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${day.date}`);
+      onCalendar.push(...detail.observations);
+    }
+
+    // 🚨 건강 기록은 첫 배포 범위 밖이다 (#259 · #318). 기록 탭에서도 캘린더에서도 빠진다.
+    expect(onCalendar.some((o) => o.kind === "observation_health")).toBe(false);
+    // 고친 기록(`stand_alone`)도 캘린더에 남는다 — 기록 탭이 남기기 때문이다.
+    expect(onCalendar.find((o) => o.id === target!.id)?.status).toBe("stand_alone");
+
+    const key = (o: Observation) => `${o.kind}:${o.id}`;
+    const inRange = list.items.filter((o) => o.observed_to >= first);
+    expect(new Set(onCalendar.map(key))).toEqual(new Set(inRange.map(key)));
+  });
+
+  it("일기와 사진은 따로 온다 — 일기를 덮어도 공유 사진은 그대로다 (#115)", async () => {
+    const photoDay = (await recentCalendarDays()).find((day) => day.has_shared_photo);
+    expect(photoDay).toBeDefined();
+
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`);
+    await api.put<MyDiary>(`/children/c1/diary/${photoDay!.date}`, {
+      content: "사진 옆에 적은 일기",
+    });
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${photoDay!.date}`);
+
+    expect(after.my_diary?.content).toBe("사진 옆에 적은 일기");
+    expect(after.shared_photos).toEqual(before.shared_photos);
+  });
+
+  it("사진만 있는 날도 달 보기에 선다", async () => {
+    const days = await recentCalendarDays();
+    // 🚨 사진이 일기 안에 있던 때에는 이런 날이 있을 수 없었다. 하루 패널의 빈 상태가 여기서 갈린다.
+    expect(
+      days.some(
+        (day) =>
+          day.has_shared_photo &&
+          !day.has_my_diary &&
+          !day.has_event &&
+          day.observation_count === 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("월 쿼리의 형식이 틀리면 400 이다 (서버 #325)", async () => {
+    const failure = await api
+      .get("/children/c1/calendar", { query: { month: "2026-13" } })
+      .catch((error: unknown) => error);
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+});
+
+/**
+ * 09 캘린더 일기 쓰기 · 지우기 (#364). 서버 정본은 PR #333 (`routers/diary.py` · `test_diary.py`).
+ *
+ * 🚨 **빈 내용은 지우기가 아니다.** 목이 한동안 공백뿐인 PUT 을 지우기로 받아서, 화면이 비우고
+ *    저장하면 목에서는 지워지고 실서버에서는 422 가 났다. 지우는 길은 `DELETE` 하나다.
+ * 🚨 날짜는 픽스처를 import 하지 않고 달 보기로 찾는다 (`findEventDay` 주석과 같은 이유).
+ */
+describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364)", () => {
+  it("다시 쓰면 덮어쓰고, 앞뒤 공백 · 줄바꿈까지 원문 그대로 저장한다", async () => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+    const path = `/children/c1/diary/${date}`;
+
+    await api.put<MyDiary>(path, { content: "처음 적은 일기" });
+    const again = await api.put<MyDiary>(path, { content: "  고친 일기\n둘째 줄\n" });
+
+    // 🚨 화면이 다듬어 보내지 않는 것처럼 목도 다듬어 저장하지 않는다 — 공백 검사는 거절할 때만 쓴다.
+    expect(again.content).toBe("  고친 일기\n둘째 줄\n");
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary?.content).toBe("  고친 일기\n둘째 줄\n");
+  });
+
+  it("PUT 응답은 하루 보기 my_diary 와 같은 값이다 — 화면이 그대로 캐시에 얹는다", async () => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+
+    const saved = await api.put<MyDiary>(`/children/c1/diary/${date}`, {
+      content: "응답과 하루 보기를 맞춰 보는 일기",
+    });
+
+    // 🚨 옛 경로는 하루 보기 전체(`CalendarDayResponse`)를 돌려줬다. 그 모양이 돌아오면 화면이
+    //    `my_diary` 자리에 하루 보기를 통째로 얹는다.
+    expect(Object.keys(saved).sort()).toEqual(["content", "updated_at"]);
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary).toEqual(saved);
+  });
+
+  it.each([
+    ["빈 문자열", ""],
+    ["공백 · 줄바꿈 · 탭뿐", " \n\t"],
+  ])("내용이 %s 이면 422 validation_failed 이고 기존 일기가 남는다", async (_, content) => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+    expect(before.my_diary).not.toBeNull();
+
+    const failure = await api
+      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(422);
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+    expect(after.my_diary).toEqual(before.my_diary);
+  });
+
+  it.each([
+    ["content 가 없다", {}],
+    ["content 가 숫자다", { content: 123 }],
+    ["content 가 null 이다", { content: null }],
+  ])("%s 면 400 이다 — 본문 검증 실패는 400 (서버 errors.py)", async (_, body) => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+
+    const failure = await api
+      .put(`/children/c1/diary/${date}`, body)
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("두 번 지워도 둘 다 204 다 — 없는 일기를 지워도 204", async () => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const path = `/children/c1/diary/${diaryDay!.date}`;
+
+    const first = await raw(path, { method: "DELETE" });
+    const again = await raw(path, { method: "DELETE" });
+
+    expect([first.status, again.status]).toEqual([204, 204]);
+  });
+
+  it("지우면 하루 보기 my_diary 는 null, 달 보기 has_my_diary 는 false 다", async () => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const date = diaryDay!.date;
+
+    await api.delete(`/children/c1/diary/${date}`);
+
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary).toBeNull();
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: date.slice(0, 7) },
+    });
+    // 그날 다른 것이 없으면 달 보기에서 빠지는 것도 맞다 (빈 날은 싣지 않는다 · 서버 #325).
+    expect(month.days.find((d) => d.date === date)?.has_my_diary ?? false).toBe(false);
+  });
+
+  it("일기를 지워도 사진과 has_shared_photo 는 남는다 (#115)", async () => {
+    const photoDay = (await recentCalendarDays()).find((day) => day.has_shared_photo);
+    expect(photoDay).toBeDefined();
+    const date = photoDay!.date;
+    await api.put<MyDiary>(`/children/c1/diary/${date}`, { content: "사진 옆에 적었다 지울 일기" });
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(before.my_diary).not.toBeNull();
+    expect(before.shared_photos.length).toBeGreaterThan(0);
+
+    await api.delete(`/children/c1/diary/${date}`);
+
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(after.my_diary).toBeNull();
+    expect(after.shared_photos).toEqual(before.shared_photos);
+    const month = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month: date.slice(0, 7) },
+    });
+    const summary = month.days.find((d) => d.date === date);
+    expect(summary?.has_shared_photo).toBe(true);
+    expect(summary?.has_my_diary).toBe(false);
+  });
+});
+
+/**
+ * 09 캘린더 준비물 체크 (#367). 서버 정본은 PR #335 (`routers/event_items.py` · `test_event_items.py`).
+ *
+ * 🚨 **체크 시각은 상태가 바뀔 때만 새로 정한다.** 이미 체크된 것을 다시 체크하면 처음 시각을 그대로
+ *    둔다 — 목이 한동안 체크할 때마다 지금 시각을 넣고, 하루 보기에는 픽스처 시각을 내렸다.
+ * 🚨 날짜는 픽스처를 import 하지 않고 달 보기로 찾는다 (`findEventDay` 주석과 같은 이유).
+ */
+describe("㉕ 준비물 체크 — 서버 #335 와 같은 계약 (#367)", () => {
+  async function dayItem(itemId: string): Promise<EventItem | undefined> {
     const eventDay = await findEventDay();
     const detail = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
-    const item = detail.events.flatMap((event) => event.items).find((i) => i.item_id === "i_1");
-    expect(item?.is_prepared).toBe(true);
+    return detail.events.flatMap((event) => event.items).find((i) => i.item_id === itemId);
+  }
+
+  function patchItem(itemId: string, isPrepared: boolean): Promise<EventItem> {
+    return api
+      .patch<EventItemUpdateResponse>(`/children/c1/event-items/${itemId}`, {
+        is_prepared: isPrepared,
+      })
+      .then((res) => res.item);
+  }
+
+  it("아이 경로로 체크한 값이 하루 보기에 그대로 남는다", async () => {
+    expect((await dayItem("i_1"))?.is_prepared).toBe(false);
+
+    const checked = await patchItem("i_1", true);
+
+    expect(checked.is_prepared).toBe(true);
+    expect(checked.prepared_at).not.toBeNull();
+    expect(await dayItem("i_1")).toEqual(checked);
+  });
+
+  it("다시 체크하면 처음 시각을 지키고, 해제하면 null, 해제 뒤 체크는 새 시각이다", async () => {
+    // 목의 i_2 는 이미 체크된 준비물이다 — 처음 시각은 하루 보기에서 읽는다.
+    const first = await dayItem("i_2");
+    expect(first?.is_prepared).toBe(true);
+    expect(first?.prepared_at).not.toBeNull();
+
+    const again = await patchItem("i_2", true); // 체크 → 체크
+    const cleared = await patchItem("i_2", false); // 체크 → 미체크
+    const stillClear = await patchItem("i_2", false); // 미체크 → 미체크
+    const rechecked = await patchItem("i_2", true); // 미체크 → 체크
+
+    expect(again.prepared_at).toBe(first?.prepared_at);
+    expect([cleared.is_prepared, cleared.prepared_at]).toEqual([false, null]);
+    expect([stillClear.is_prepared, stillClear.prepared_at]).toEqual([false, null]);
+    expect(rechecked.is_prepared).toBe(true);
+    expect(rechecked.prepared_at).not.toBeNull();
+    expect(rechecked.prepared_at).not.toBe(first?.prepared_at);
+    expect(await dayItem("i_2")).toEqual(rechecked);
+  });
+
+  it("그 아이의 일정에 없는 준비물은 404 다", async () => {
+    const failure = await patchItem("i_missing", true).catch((error: unknown) => error);
+    expect(isApiError(failure, "not_found")).toBe(true);
+    expect((failure as ApiError).status).toBe(404);
   });
 });
 
 describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
-  /**
-   * 🚨 `child_health` 는 **화면에 철회 버튼이 없는** 필수 동의다. 그래도 API 로는 철회가
-   *    가능하고(계약서 §04 는 스코프를 가리지 않는다), append-only 는 모든 스코프에서
-   *    지켜져야 한다 — 화면이 안 부른다고 목이 안 지켜도 되는 것이 아니다.
-   */
-  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
-    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(before.effective.child_health).toBe(true);
-
-    await api.post<ConsentResponse>("/consents", {
-      scope: "child_health",
-      action: "withdrawn",
-      child_id: "c1",
-      policy_version: await policyVersion("child_health"),
-    });
-
-    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(after.effective.child_health).toBe(false);
-    // 🚨 이력은 증빙이라 지워지지 않는다. 철회 한 줄이 **더해져** 있어야 한다.
-    expect(after.history).toHaveLength(1);
-    expect(after.history[0]).toMatchObject({ scope: "child_health", action: "withdrawn" });
-  });
-
-  it("껐다 켜면 이력 두 줄이 남고 현재 상태는 켜짐이다", async () => {
-    for (const action of ["withdrawn", "granted"] as const) {
-      await api.post<ConsentResponse>("/consents", {
-        scope: "location",
-        action,
-        child_id: "c1",
-        policy_version: await policyVersion("location"),
-      });
-    }
-
-    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(res.effective.location).toBe(true);
-    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(2);
-  });
-
-  it("POST /consents 의 effective 와 GET /consents 의 effective 가 같은 표를 본다", async () => {
-    const posted = await api.post<ConsentResponse>("/consents", {
+  /** 계정 동의(`location`)는 `child_id` 없이 보낸다 — 화면도 `policy.target` 으로 가른다. */
+  async function setLocation(action: "granted" | "withdrawn") {
+    return api.post<ConsentResponse>("/consents", {
       scope: "location",
-      action: "granted",
-      child_id: "c1",
+      action,
       policy_version: await policyVersion("location"),
     });
+  }
+
+  it("철회는 행을 지우는 게 아니라 withdrawn 행을 더한다 (append-only)", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(before.effective.location).toBe(false);
+
+    await setLocation("granted");
+    await setLocation("withdrawn");
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after.effective.location).toBe(false);
+    // 🚨 이력은 증빙이라 지워지지 않는다. 두 줄이 **더해져** 있고, 앞의 행은 그대로다.
+    expect(after.history).toHaveLength(before.history.length + 2);
+    expect(after.history.slice(0, 2)).toMatchObject([
+      { scope: "location", action: "withdrawn" },
+      { scope: "location", action: "granted" },
+    ]);
+    expect(after.history.slice(2)).toEqual(before.history);
+  });
+
+  /** 🚨 실서버도 가입과 아이 등록 때 남은 행을 이력에 넣어 준다 (PR #355). */
+  it("가입과 아이 등록 때 남은 동의도 이력에 있다", async () => {
+    const res = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    const granted = res.history.filter((h) => h.action === "granted").map((h) => h.scope);
+    expect(granted).toEqual(
+      expect.arrayContaining(["service_terms", "privacy_account", "child_basic", "child_health"]),
+    );
+  });
+
+  /**
+   * 🚨 **같은 상태면 행을 더하지 않는다** (실서버 `record_consent`). 안 그러면 "몇 번 동의했는가"
+   *    가 네트워크 재시도 횟수를 센다.
+   */
+  it("같은 상태로 다시 보내면 이력이 늘지 않고 마지막 행을 돌려준다", async () => {
+    const first = await setLocation("granted");
+    const again = await setLocation("granted");
+    expect(again.consent.id).toBe(first.consent.id);
+
+    const res = await api.get<ConsentsResponse>("/consents");
+    expect(res.history.filter((h) => h.scope === "location")).toHaveLength(1);
+  });
+
+  it("child_id 가 없으면 계정 동의만 온다", async () => {
+    const res = await api.get<ConsentsResponse>("/consents");
+    expect(Object.keys(res.effective).sort()).toEqual(
+      ["location", "privacy_account", "service_terms"].sort(),
+    );
+    expect(res.history.every((h) => !h.scope.startsWith("child_"))).toBe(true);
+  });
+
+  /**
+   * 🚨 POST 의 `effective` 는 **보낸 대상의 범위**다 — 계정 동의를 보내면 계정 동의만 온다.
+   *    그래서 `GET ?child_id=` 와 표가 통째로 같지는 않고, 겹치는 키의 값만 같다.
+   *    화면은 이 값으로 그리지 않고 GET 을 다시 불러온다 (`consent-section.tsx`).
+   */
+  it("POST 의 effective 는 보낸 대상의 범위이고, 겹치는 값은 GET 과 같다", async () => {
+    const posted = await setLocation("granted");
+    expect(Object.keys(posted.effective).sort()).toEqual(
+      ["location", "privacy_account", "service_terms"].sort(),
+    );
+
     const fetched = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
-    expect(fetched.effective).toEqual(posted.effective);
+    for (const [scope, on] of Object.entries(posted.effective)) {
+      expect(fetched.effective[scope]).toBe(on);
+    }
+  });
+
+  /** 🚨 끄는 것이 곧 탈퇴라 막는다. 화면은 필수 동의에 철회 버튼을 그리지 않는다. */
+  it("필수 동의는 철회할 수 없다 — 400 validation_failed, 아무것도 쌓지 않는다", async () => {
+    const before = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+
+    const caught = await api
+      .post("/consents", {
+        scope: "child_health",
+        action: "withdrawn",
+        child_id: "c1",
+        policy_version: await policyVersion("child_health"),
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+    expect((caught as ApiError).detail).toMatchObject({ fields: ["scope"] });
+
+    const after = await api.get<ConsentsResponse>("/consents", { query: { child_id: "c1" } });
+    expect(after).toEqual(before);
+  });
+
+  it("계정 동의에 child_id 를 붙이거나 아이 동의에서 빼면 400", async () => {
+    const withChild = await api
+      .post("/consents", {
+        scope: "location",
+        action: "granted",
+        child_id: "c1",
+        policy_version: await policyVersion("location"),
+      })
+      .catch((e) => e);
+    expect(isApiError(withChild, "validation_failed")).toBe(true);
+    expect((withChild as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+
+    const withoutChild = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        guardian_attested: true,
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(withoutChild, "validation_failed")).toBe(true);
+    expect((withoutChild as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+  });
+
+  /** 🚨 서버와 같은 순서로 막는다 — 대상 검사가 필수 끄기 검사보다 먼저다. */
+  it("대상과 필수 끄기가 둘 다 틀리면 대상 쪽으로 막힌다", async () => {
+    const caught = await api
+      .post("/consents", {
+        scope: "service_terms",
+        action: "withdrawn",
+        child_id: "c1",
+        policy_version: await policyVersion("service_terms"),
+      })
+      .catch((e) => e);
+    expect((caught as ApiError).detail).toMatchObject({ fields: ["child_id"] });
+  });
+
+  it("남의 아이면 GET · POST 모두 403 child_access_denied", async () => {
+    const read = await api.get("/consents", { query: { child_id: "c-unknown" } }).catch((e) => e);
+    expect(isApiError(read, "child_access_denied")).toBe(true);
+    expect((read as ApiError).status).toBe(403);
+
+    const write = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        child_id: "c-unknown",
+        guardian_attested: true,
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(write, "child_access_denied")).toBe(true);
+  });
+
+  /** 🚨 아이 등록과 같은 규칙 — 동의와 법정대리인 확인은 별개 의무다. deeplink 는 없다. */
+  it("아이 동의를 켜는데 법정대리인 확인이 없으면 403 consent_required", async () => {
+    const caught = await api
+      .post("/consents", {
+        scope: "child_basic",
+        action: "granted",
+        child_id: "c1",
+        policy_version: await policyVersion("child_basic"),
+      })
+      .catch((e) => e);
+    expect(isApiError(caught, "consent_required")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+    expect((caught as ApiError).detail).toMatchObject({ scopes: ["child_basic"] });
+    expect((caught as ApiError).consentDeeplink).toBeNull();
+  });
+
+  /**
+   * 🚨 **켜기와 끄기가 받는 버전이 다르다.** 끄기까지 지금 버전만 받으면 약관이 바뀐 순간 끄는
+   *    길이 막힌다 (위치 약관 제10조 "언제든"). `-b` 는 목에 등록된 다음 판이다
+   *    (`handlers/policies.ts` 의 `bumpedVersion`) — 등록은 됐지만 지금 보여 주는 판은 아니다.
+   */
+  it("켜기는 지금 버전만, 끄기는 등록된 버전이면 받는다", async () => {
+    const current = await policyVersion("location");
+    await setLocation("granted");
+
+    const grantOld = await api
+      .post("/consents", { scope: "location", action: "granted", policy_version: `${current}-b` })
+      .catch((e) => e);
+    expect(isApiError(grantOld, "policy_version_invalid")).toBe(true);
+
+    const withdrawUnknown = await api
+      .post("/consents", { scope: "location", action: "withdrawn", policy_version: "nope" })
+      .catch((e) => e);
+    expect(isApiError(withdrawUnknown, "policy_version_invalid")).toBe(true);
+
+    const withdrawn = await api.post<ConsentResponse>("/consents", {
+      scope: "location",
+      action: "withdrawn",
+      policy_version: `${current}-b`,
+    });
+    expect(withdrawn.consent).toMatchObject({
+      action: "withdrawn",
+      policy_version: `${current}-b`,
+    });
+    expect(withdrawn.effective.location).toBe(false);
   });
 
   it("owner 는 연결을 끊을 수 없다 — 409 owner_required", async () => {
@@ -1229,6 +2109,113 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(after.parents.map((p) => p.parent_id)).not.toContain(member!.parent_id);
   });
 
+  /** 🚨 서버는 `parent.nickname` 이 비어 있으면 `null` 을 내린다 (#336). 화면이 그 줄을 그리는지 목이 늘 보여 준다. */
+  it("이름이 빈 보호자는 nickname 이 null 로 온다", async () => {
+    const res = await api.get<ChildParentsResponse>("/children/c1/parents");
+    expect(res.parents.some((p) => p.nickname === null)).toBe(true);
+  });
+
+  it("이미 끊긴 보호자를 다시 끊으면 404 not_found", async () => {
+    const before = await api.get<ChildParentsResponse>("/children/c1/parents");
+    const member = before.parents.find((p) => p.role === "member")!;
+    await api.delete(`/children/c1/parents/${member.parent_id}`);
+
+    const caught = await api.delete(`/children/c1/parents/${member.parent_id}`).catch((e) => e);
+    expect(isApiError(caught, "not_found")).toBe(true);
+    expect((caught as ApiError).status).toBe(404);
+  });
+
+  it("연결되지 않은 아이의 보호자 목록은 403 child_access_denied", async () => {
+    const caught = await api.get("/children/c-unknown/parents").catch((e) => e);
+    expect(isApiError(caught, "child_access_denied")).toBe(true);
+    expect((caught as ApiError).status).toBe(403);
+  });
+
+  /**
+   * 🚨 **member 는 자기 자신만 끊는다** (#336 · 재형님 결정 10-06). 화면은 남의 줄에 버튼을
+   *    안 그리지만 서버가 다시 막는다 — 초대 발행과 같은 403 `owner_only` 다.
+   */
+  describe("초대로 들어온 member", () => {
+    async function joinAsMember(): Promise<string> {
+      setScenario("consent");
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        adult_attested: true,
+      });
+      expect(joined.role).toBe("member");
+      return joined.child_id;
+    }
+
+    it("목록에서 자기는 member 이고 owner 는 다른 사람이다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+        const res = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+
+        expect(res.parents.find((p) => p.parent_id === me.id)?.role).toBe("member");
+        const owner = res.parents.find((p) => p.role === "owner");
+        expect(owner?.parent_id).not.toBe(me.id);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    it("다른 보호자를 끊으면 403 owner_only 이고 목록은 그대로다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+        const before = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        const other = before.parents.find((p) => p.role === "member" && p.parent_id !== me.id)!;
+
+        const caught = await api
+          .delete(`/children/${cid}/parents/${other.parent_id}`)
+          .catch((e) => e);
+        expect(isApiError(caught, "owner_only")).toBe(true);
+        expect((caught as ApiError).status).toBe(403);
+
+        const after = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        expect(after.parents).toHaveLength(before.parents.length);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    it("owner 를 끊으면 409 owner_required 다", async () => {
+      try {
+        const cid = await joinAsMember();
+        const res = await api.get<ChildParentsResponse>(`/children/${cid}/parents`);
+        const owner = res.parents.find((p) => p.role === "owner")!;
+
+        const caught = await api
+          .delete(`/children/${cid}/parents/${owner.parent_id}`)
+          .catch((e) => e);
+        expect(isApiError(caught, "owner_required")).toBe(true);
+      } finally {
+        setScenario("default");
+      }
+    });
+
+    /**
+     * 🚨 **나가면 `/me` 에서도 빠진다.** 화면은 이걸 보고 `/start` 로 간다 — `/me` 가 나간
+     *    아이를 계속 주면 `/start` 가 홈으로 되돌린다. 다시 보내면 연결이 없어서 403 이다.
+     */
+    it("자기 자신을 끊으면 나가지고, 다시 보내면 403 child_access_denied", async () => {
+      try {
+        const cid = await joinAsMember();
+        const me = await api.get<Me>("/me");
+
+        await api.delete(`/children/${cid}/parents/${me.id}`);
+        const after = await api.get<Me>("/me");
+        expect(after.children.map((c) => c.child_id)).not.toContain(cid);
+
+        const caught = await api.delete(`/children/${cid}/parents/${me.id}`).catch((e) => e);
+        expect(isApiError(caught, "child_access_denied")).toBe(true);
+        expect((caught as ApiError).status).toBe(403);
+      } finally {
+        setScenario("default");
+      }
+    });
+  });
+
   it("초대 코드는 부를 때마다 새로 나온다 — 한 코드는 한 번만 쓴다", async () => {
     const first = await api.post<InviteResponse>("/children/c1/invites", {});
     const second = await api.post<InviteResponse>("/children/c1/invites", {});
@@ -1242,10 +2229,6 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
    *    계약서 §08 은 아직 발행 시 지정하는 것으로 적혀 있어서, 없다고 막히면 화면이
    *    초대를 아예 못 한다 — 이 테스트가 그 회귀를 잡는다.
    */
-  /**
-   * ⚠️ `POST /auth/withdraw` 는 **계약서에 없다** (`lib/api/types.ts`). 화면을 끝까지 돌려
-   *    보려고 목에만 세운 제안이고, 서버가 붙으면 이 표를 실서버에도 건다.
-   */
   it("POST /auth/logout 이 교환 핸들러에 안 먹힌다 — 204 다", async () => {
     // 🚨 `:provider` 가 `logout` 까지 삼켜서 실제로 500 이 나고 있었다. 화면이 로컬 세션을
     //    비우고 나가 버려서 아무도 눈치채지 못한 종류의 회귀라, 여기서 못을 박는다.
@@ -1253,6 +2236,10 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
     expect(res.status).toBe(204);
   });
 
+  /**
+   * `POST /auth/withdraw` 는 서버 PR #384 와 같은 모양이다 (`lib/api/types.ts`). 서버가 붙으면
+   * 아래 탈퇴 표를 실서버에도 건다 (apps/web/CLAUDE.md §8).
+   */
   it("탈퇴는 화면의 읽음 표시를 같이 받는다 — 없으면 막힌다", async () => {
     const caught = await api.post("/auth/withdraw", {}).catch((e) => e);
     expect(isApiError(caught, "validation_failed")).toBe(true);
@@ -1263,6 +2250,85 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
       acknowledged_immediate_deletion: true,
     });
     expect(new Date(res.deleted_at).getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("탈퇴 확인 값은 JSON true 만 받는다 — 문자열과 숫자도 막힌다", async () => {
+    // 🚨 서버는 `StrictBool` 이다 (PR #384). 목이 느슨하면 화면이 엉뚱한 값을 실어도 개발 중에 통과한다.
+    for (const value of [false, "true", 1]) {
+      const caught = await api
+        .post("/auth/withdraw", { acknowledged_immediate_deletion: value })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed")).toBe(true);
+    }
+    // 막힌 요청은 아무것도 지우지 않는다 — 그 뒤에도 세션이 살아 있다.
+    await expect(api.get<Me>("/me")).resolves.toBeDefined();
+  });
+
+  /**
+   * 🚨 **탈퇴하면 세션이 전부 지워진다** (PR #384). 화면은 응답을 잃었을 때 `/me` 로 확인하고,
+   *    다시 누른 탈퇴의 401 을 "끝났다" 로 받는다 (#389) — 목이 계속 200 을 주면 그 길을 못 본다.
+   */
+  it("탈퇴한 뒤에는 /me 와 다시 보낸 탈퇴가 401 이고, 다시 로그인하면 풀린다", async () => {
+    await api.post<WithdrawResponse>("/auth/withdraw", { acknowledged_immediate_deletion: true });
+
+    const me = await api.get("/me").catch((e) => e);
+    expect(isApiError(me, "unauthenticated")).toBe(true);
+    const again = await api
+      .post("/auth/withdraw", { acknowledged_immediate_deletion: true })
+      .catch((e) => e);
+    expect(isApiError(again, "unauthenticated")).toBe(true);
+
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await expect(api.get<Me>("/me")).resolves.toBeDefined();
+  });
+
+  it("withdraw_lost — 지운 뒤에 응답이 사라진다 (/me 는 401)", async () => {
+    setScenario("withdraw_lost");
+    try {
+      const caught = await api
+        .post("/auth/withdraw", { acknowledged_immediate_deletion: true })
+        .catch((e) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+
+      const me = await api.get("/me").catch((e) => e);
+      expect(isApiError(me, "unauthenticated")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("withdraw_unconfirmed — 지운 뒤 응답도 첫 확인도 끊기고, 다시 보낸 탈퇴는 401 이다", async () => {
+    setScenario("withdraw_unconfirmed");
+    try {
+      const withdrawBody = { acknowledged_immediate_deletion: true };
+      expect(await api.post("/auth/withdraw", withdrawBody).catch((e) => e)).toBeInstanceOf(
+        NetworkError,
+      );
+      expect(await api.get("/me").catch((e) => e)).toBeInstanceOf(NetworkError);
+
+      const again = await api.post("/auth/withdraw", withdrawBody).catch((e) => e);
+      expect(isApiError(again, "unauthenticated")).toBe(true);
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("withdraw_unreached — 한 번만 서버에 닿기 전에 끊긴다 (/me 는 200, 다시 보내면 닿는다)", async () => {
+    setScenario("withdraw_unreached");
+    try {
+      const caught = await api
+        .post("/auth/withdraw", { acknowledged_immediate_deletion: true })
+        .catch((e) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+      await expect(api.get<Me>("/me")).resolves.toBeDefined();
+
+      const res = await api.post<WithdrawResponse>("/auth/withdraw", {
+        acknowledged_immediate_deletion: true,
+      });
+      expect(res.deleted_at).toBeTruthy();
+    } finally {
+      setScenario("default");
+    }
   });
 
   it("relation 없이 초대해도 코드가 나온다", async () => {
@@ -1307,8 +2373,8 @@ describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
 });
 
 /**
- * 초대 수락. 코드 방식은 `docs/api/invite-v1.md` 로 확정됐고, **확인 조회(`GET /invites/{code}`)와
- * 응답 모양은 아직 제안이다** (같은 문서 §7 열린 결정). 서버가 붙으면 이 표를 실서버에도 건다.
+ * 초대 수락. 코드 방식 · 확인 조회(`GET /invites/{code}`) · 만 19세 표시는 `docs/api/invite-v1.md`
+ * 로 확정됐다 (§7 결정 01 · 06). 서버가 붙으면 이 표를 실서버에도 건다.
  */
 describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   /** 🚨 연결이 성공해야 하는 호출은 전부 만 19세 표시를 싣는다 — 화면이 그렇게 보낸다. */
@@ -1342,7 +2408,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       for (let i = 0; i < 5; i += 1) {
         await api.get("/invites/MKWASTED").catch(() => null);
       }
-      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
       expect(isApiError(caught, "too_many_attempts")).toBe(true);
     } finally {
       setScenario("default");
@@ -1384,7 +2450,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     setScenario("consent");
     try {
       for (let i = 0; i < 6; i += 1) {
-        await api.post("/invites/MKTAKEN2/accept", {}).catch(() => null);
+        await api.post("/invites/MKTAKEN2/accept", ADULT).catch(() => null);
       }
       const res = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", ADULT);
       expect(res.child_id).toBe("c1");
@@ -1434,6 +2500,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
       try {
         const caught = await api.post("/invites/MKGRAND1/accept", body).catch((e) => e);
         expect(isApiError(caught, "validation_failed")).toBe(true);
+        expect((caught as ApiError).status).toBe(400);
 
         const me = await api.get<Me>("/me");
         expect(me.children).toHaveLength(0);
@@ -1447,9 +2514,38 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     },
   );
 
+  /**
+   * 🚨 **만 19세 표시가 아이 보유 · 시도 제한보다 먼저다** — 서버와 같은 순서 (invite-v1.md §3-3).
+   *    순서가 바뀌면 아래 두 경우가 409 · 429 로 바뀐다.
+   */
+  it("이미 아이가 있어도 만 19세 표시가 없으면 409 가 아니라 400 이다", async () => {
+    // default 시나리오는 아이가 하나 있는 계정이다.
+    const caught = await api
+      .post("/invites/MKGRAND1/accept", { adult_attested: false })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed")).toBe(true);
+    expect((caught as ApiError).status).toBe(400);
+  });
+
+  it("시도 한도를 다 써도 만 19세 표시가 없으면 429 가 아니라 400 이다", async () => {
+    setScenario("consent");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await api.post("/invites/MKWASTED/accept", ADULT).catch(() => null);
+      }
+      const caught = await api
+        .post("/invites/MKGRAND1/accept", { adult_attested: false })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed")).toBe(true);
+      expect((caught as ApiError).status).toBe(400);
+    } finally {
+      setScenario("default");
+    }
+  });
+
   it("이미 아이가 있으면 수락이 막힌다", async () => {
     // default 시나리오는 아이가 하나 있는 계정이다.
-    const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+    const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
     expect(isApiError(caught, "child_already_exists")).toBe(true);
   });
 
@@ -1460,7 +2556,7 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
   ])("%s 는 %s 로 막힌다", async (code, expected) => {
     setScenario("consent");
     try {
-      const caught = await api.post(`/invites/${code}/accept`, {}).catch((e) => e);
+      const caught = await api.post(`/invites/${code}/accept`, ADULT).catch((e) => e);
       expect(isApiError(caught, expected)).toBe(true);
     } finally {
       setScenario("default");
@@ -1475,9 +2571,9 @@ describe("⑱ 초대 수락 — 아이는 보호자당 한 명", () => {
     setScenario("consent");
     try {
       for (let i = 0; i < 5; i += 1) {
-        await api.post("/invites/MKWASTED/accept", {}).catch(() => null);
+        await api.post("/invites/MKWASTED/accept", ADULT).catch(() => null);
       }
-      const caught = await api.post("/invites/MKGRAND1/accept", {}).catch((e) => e);
+      const caught = await api.post("/invites/MKGRAND1/accept", ADULT).catch((e) => e);
       expect(isApiError(caught, "too_many_attempts")).toBe(true);
     } finally {
       setScenario("default");
@@ -1720,9 +2816,9 @@ describe("⑲ 가입 — 동의가 빠지면 아무것도 만들어지지 않는
 });
 
 /**
- * 11 아이 프로필. ⚠️ 여기서 거는 경로 셋(`GET`/`PATCH /children/{cid}` · `/growth`)은
- * **계약서 v1 에 없다** (이슈 #75). 목이 그 제안된 계약대로 행동하는지를 걸어 둬서,
- * 서버가 붙을 때 같은 표를 실서버에도 그대로 옮길 수 있게 한다.
+ * 11 아이 프로필. 여기서 거는 경로(`GET`/`PATCH /children/{cid}` · PR #334, `/growth` · PR #353)는
+ * 서버 구현이 정본이다. 목이 그 구현대로 행동하는지를 걸어 둬서, 같은 표를 실서버에도
+ * 그대로 옮길 수 있게 한다.
  */
 describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
   it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
@@ -1741,9 +2837,13 @@ describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
     expect(after.nickname).toBe("민서");
   });
 
-  it("빈 별명은 422 다 — 이름 없는 아이를 만들지 않는다", async () => {
-    await expect(api.patch("/children/c1", { nickname: "   " })).rejects.toSatisfy((e: unknown) =>
-      isApiError(e, "validation_failed"),
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it.each([
+    ["빈 별명", "   "],
+    ["21자 별명", "가".repeat(21)],
+  ])("%s 은 400 이다 — 서버 `Nickname` 과 같은 범위", async (_, nickname) => {
+    await expect(api.patch("/children/c1", { nickname })).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
   });
 });
@@ -1769,10 +2869,41 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
     expect(log.weight_kg).toBe(17.4);
   });
 
-  it("둘 다 비어 있으면 422 다", async () => {
+  // 🚨 바디 검증 실패는 400 이다 — 서버 `app/api/errors.py` 가 422 를 경로 값에만 쓴다 (명세 §8-1).
+  it("둘 다 비어 있으면 400 이다", async () => {
     await expect(api.post("/children/c1/growth", { measured_on: "2026-09-12" })).rejects.toSatisfy(
-      (e: unknown) => isApiError(e, "validation_failed"),
+      (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
+  });
+
+  it.each([
+    ["300 을 넘는 키", { height_cm: 300.1 }, "height_cm"],
+    ["반올림해 0 이 되는 몸무게", { weight_kg: 0.04 }, "weight_kg"],
+  ])("%s 는 400 이다 — 서버 `Measurement` 와 같은 범위", async (_, value, field) => {
+    const caught = await api
+      .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+    expect((caught as ApiError).detail).toEqual({ fields: [field] });
+  });
+
+  it.each([
+    ["아이 생일 이전", "2021-04-01"],
+    ["오늘 이후", toISODate(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000))],
+  ])("잰 날이 %s 면 400 이다", async (_, measured_on) => {
+    const caught = await api
+      .post("/children/c1/growth", { measured_on, height_cm: 100 })
+      .catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+    expect((caught as ApiError).detail).toEqual({ fields: ["measured_on"] });
+  });
+
+  it("아이 생일에 잰 것은 받는다", async () => {
+    const { log } = await api.post<{ log: GrowthLog }>("/children/c1/growth", {
+      measured_on: "2021-04-02",
+      height_cm: 50.3,
+    });
+    expect(log.measured_on).toBe("2021-04-02");
   });
 
   it("PATCH 는 보낸 필드만 바꾸고 나머지는 그대로 둔다", async () => {
@@ -1801,13 +2932,25 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
     expect(log.weight_kg).toBe(target.weight_kg);
   });
 
-  it("고친 결과가 둘 다 비면 422 다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
+  it("고친 결과가 둘 다 비면 400 이다 — 잰 것이 없는 기록을 만들지 않는다", async () => {
     const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
     const target = items.find((log) => log.height_cm !== null && log.weight_kg !== null)!;
 
     await expect(
       api.patch(`/children/c1/growth/${target.id}`, { height_cm: null, weight_kg: null }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+  });
+
+  it("고칠 때도 범위와 잰 날을 거른다", async () => {
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    const target = items[0];
+
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { height_cm: 1042 }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
+    await expect(
+      api.patch(`/children/c1/growth/${target.id}`, { measured_on: "2020-01-01" }),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed") && e.status === 400);
   });
 
   it("날짜를 고치면 서버가 날짜 문구도 다시 만든다", async () => {
@@ -1836,6 +2979,53 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
 
     const { items: after } = await api.get<GrowthLogsResponse>("/children/c1/growth");
     expect(after.some((log) => log.id === target.id)).toBe(false);
+  });
+});
+
+/**
+ * 02 온보딩 — 서버 구현(PR #353)이 정본이다. 응답은 `{child, growth}` 이고 11 프로필과 같은 것을
+ * 고친다. 🚨 바디 오류는 400 이다.
+ */
+describe("㉔ 02 온보딩은 적은 것만 저장하고 11 프로필에 그대로 선다", () => {
+  it("성별과 키를 적으면 프로필과 오늘 잰 기록 한 줄이 돌아온다", async () => {
+    const res = await submitOnboarding(
+      "c1",
+      { gender: "female", height_cm: 104.2 },
+      newIdempotencyKey(),
+    );
+
+    expect(res.child.gender).toBe("female");
+    expect(res.growth).toMatchObject({ height_cm: 104.2, weight_kg: null, measured_label: "오늘" });
+    // 🚨 run 을 만들지 않는다 — 계약서 초안의 run_id 를 읽으면 undefined 다.
+    expect(res).not.toHaveProperty("run_id");
+
+    // 같은 상태다 — 02 에서 적은 것이 11 에 그대로 선다.
+    const profile = await api.get<ChildProfile>("/children/c1");
+    expect(profile.gender).toBe("female");
+    const { items } = await api.get<GrowthLogsResponse>("/children/c1/growth");
+    expect(items[0].id).toBe(res.growth?.id);
+  });
+
+  it("키와 몸무게를 안 적었으면 growth 는 null 이다", async () => {
+    const res = await submitOnboarding("c1", { relation: "father" }, newIdempotencyKey());
+    expect(res.child.relation).toBe("father");
+    expect(res.growth).toBeNull();
+  });
+
+  it.each([
+    ["빈 본문", {}],
+    ["null", { gender: null }],
+    ["범위 밖 키", { height_cm: 350 }],
+    // 🚨 알레르기의 쓰기 경로는 승인 게이트 ㉡ 하나다 (최상위 §2) — 이 본문으로 받지 않는다.
+    ["알레르기", { safety: [{ type: "allergy", label: "땅콩" }] }],
+    ["한 줄", { one_line: "지어낸 한 줄" }],
+  ])("%s 은 400 이다", async (_, body) => {
+    const caught = await submitOnboarding(
+      "c1",
+      body as OnboardingRequest,
+      newIdempotencyKey(),
+    ).catch((e) => e);
+    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
   });
 });
 
@@ -1877,6 +3067,30 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
     ).resolves.toBeDefined();
   });
 
+  it("🚨 같은 항목인지는 이름의 앞뒤 공백을 떼고 본다 — 서버와 같다 (#369)", async () => {
+    const { safety } = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "  땅콩 " },
+      newIdempotencyKey(),
+    );
+    expect(safety.label).toBe("땅콩");
+
+    await expect(
+      addHealthSafety("c1", { type: "allergy", label: "땅콩" }, newIdempotencyKey()),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "already_exists"));
+  });
+
+  it("종류와 맞지 않는 심각도는 400 이고, 어느 칸인지 싣는다 (#369)", async () => {
+    const caught = await addHealthSafety(
+      "c1",
+      { type: "allergy", label: "복숭아", severity: "mild" },
+      newIdempotencyKey(),
+    ).catch((e: unknown) => e);
+    expect(isApiError(caught, "validation_failed") && caught.detail).toEqual({
+      fields: ["severity"],
+    });
+  });
+
   it("이미 내려간 항목을 또 내리면 404 다", async () => {
     const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
     const target = items[0];
@@ -1890,49 +3104,110 @@ describe("⑭ 알레르기는 등록한 것이 목록에 서고, 내리면 빠�
 });
 
 /**
- * 🚨 승인 게이트 ㉡ — 고치기. ⚠️ 계약서 v1 에 없다 (이슈 #87).
+ * 🚨 승인 게이트 ㉡ — 고치기. 서버 #370 (`PATCH /children/{cid}/health-safety/{id}` · #87 결정).
  *
- * 여기서 거는 것은 **정체를 못 바꾼다는 것**이다. `type`·`label` 이 바뀌면
- * `UNIQUE(child_id, type, label)` 과 "이미 등록된 항목" 판정이 같이 흔들린다.
+ * 여기서 거는 것은 두 가지다.
+ *   ① **정체를 못 바꾼다** — `type`·`label` 이 바뀌면 "이미 등록된 항목" 판정이 같이 흔들린다
+ *   ② **고치면 새 기록이다** — 지금 기록을 내리고 새 id 로 넣어 이력을 남긴다. 그래서 같은 고치기를
+ *      키 없이 다시 보내면 404 고, 키가 같으면 처음 응답이 재생된다
  */
-describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
-  async function first(): Promise<HealthSafety> {
-    const { items } = await api.get<HealthSafetyListResponse>("/children/c1/health-safety");
-    return items[0];
+describe("⑯ 안전 정보는 정체를 못 바꾸고, 고치면 새 기록이다", () => {
+  async function list(): Promise<HealthSafety[]> {
+    return (await api.get<HealthSafetyListResponse>("/children/c1/health-safety")).items;
   }
 
-  it("심각도·증상·메모는 고쳐진다", async () => {
+  async function first(): Promise<HealthSafety> {
+    return (await list())[0];
+  }
+
+  function edit(id: string, body: UpdateHealthSafetyRequest, key = newIdempotencyKey()) {
+    return updateHealthSafety("c1", id, body, key);
+  }
+
+  it("심각도·증상·메모가 고쳐지고, 새 id 로 온다 — 옛 id 는 목록에서 빠진다", async () => {
     const before = await first();
 
-    const { safety } = await api.patch<{ safety: HealthSafety }>(
-      `/children/c1/health-safety/${before.id}`,
-      { severity: "class_4", reactions: ["기침"], notes: "병원에서 다시 확인" },
-    );
+    const { safety } = await edit(before.id, {
+      severity: "class_4",
+      reactions: ["기침"],
+      notes: "병원에서 다시 확인",
+    });
 
     expect(safety.severity).toBe("class_4");
     expect(safety.reactions).toEqual(["기침"]);
+    expect(safety.notes).toBe("병원에서 다시 확인");
     // 🚨 정체는 그대로다.
     expect(safety.type).toBe(before.type);
     expect(safety.label).toBe(before.label);
+    // 🚨 이력이 남는다 — 같은 항목의 새 기록이다.
+    expect(safety.id).not.toBe(before.id);
+    const ids = (await list()).map((item) => item.id);
+    expect(ids).toContain(safety.id);
+    expect(ids).not.toContain(before.id);
+  });
+
+  it("바뀐 것이 없으면 새 기록을 만들지 않는다 — 같은 id 그대로다", async () => {
+    const before = await first();
+    const count = (await list()).length;
+
+    const { safety } = await edit(before.id, {
+      severity: before.severity,
+      reactions: before.reactions,
+      // 빈 메모는 null 과 같다 — 안 고친 칸을 실어 보내는 시트가 이력을 늘리지 않게
+      notes: "  ",
+    });
+
+    expect(safety.id).toBe(before.id);
+    expect((await list()).length).toBe(count);
+  });
+
+  it("🚨 같은 키로 다시 보내면 처음 응답이 온다 — 옛 id 는 이미 내려가 있어도 404 가 아니다", async () => {
+    const target = await first();
+    const key = newIdempotencyKey();
+
+    const once = await edit(target.id, { severity: "class_5" }, key);
+    const again = await edit(target.id, { severity: "class_5" }, key);
+
+    expect(again.safety.id).toBe(once.safety.id);
+    // 새 키로 같은 고치기를 보내는 것은 재시도가 아니다 — 옛 id 는 이미 내려가 있다.
+    await expect(edit(target.id, { severity: "class_5" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "not_found"),
+    );
+  });
+
+  it("다른 보호자가 먼저 고친 기록을 옛 id 로 고치면 404 다", async () => {
+    const target = await first();
+    await edit(target.id, { notes: "먼저 고친 보호자" });
+
+    await expect(edit(target.id, { severity: "class_2" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "not_found"),
+    );
   });
 
   it("🚨 종류·이름을 보내면 400 이다", async () => {
     const target = await first();
 
+    await expect(edit(target.id, { label: "땅콩" } as UpdateHealthSafetyRequest)).rejects.toSatisfy(
+      (e: unknown) => isApiError(e, "validation_failed"),
+    );
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { label: "땅콩" }),
+      edit(target.id, { type: "chronic_disease" } as UpdateHealthSafetyRequest),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("증상을 null 로 보내면 400 이다 — 비우는 것은 빈 목록이다", async () => {
+    const target = await first();
+
     await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { type: "chronic_disease" }),
+      edit(target.id, { reactions: null } as unknown as UpdateHealthSafetyRequest),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    const { safety } = await edit(target.id, { reactions: [] });
+    expect(safety.reactions).toEqual([]);
   });
 
   it("`severity: null` 은 모르겠어요 로 되돌리는 것이다", async () => {
     const target = await first();
-    const { safety } = await api.patch<{ safety: HealthSafety }>(
-      `/children/c1/health-safety/${target.id}`,
-      { severity: null },
-    );
+    const { safety } = await edit(target.id, { severity: null });
     expect(safety.severity).toBeNull();
   });
 
@@ -1974,14 +3249,11 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
 
   it("고칠 때도 같은 규칙이다", async () => {
     const target = await first(); // 우유 — 알레르기
-    await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "mild" }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
-
-    const { safety } = await api.patch<{ safety: HealthSafety }>(
-      `/children/c1/health-safety/${target.id}`,
-      { severity: "class_4" },
+    await expect(edit(target.id, { severity: "mild" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "validation_failed"),
     );
+
+    const { safety } = await edit(target.id, { severity: "class_4" });
     expect(safety.severity).toBe("class_4");
   });
 
@@ -1989,18 +3261,22 @@ describe("⑯ 안전 정보는 정체를 못 바꾼다", () => {
     const target = await first();
     await api.delete(`/children/c1/health-safety/${target.id}`);
 
-    await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found"));
+    await expect(edit(target.id, { severity: "class_2" })).rejects.toSatisfy((e: unknown) =>
+      isApiError(e, "not_found"),
+    );
   });
 
   it("동의가 없으면 고치지도 못한다", async () => {
     const target = await first();
     setScenario("consent");
-    await expect(
-      api.patch(`/children/c1/health-safety/${target.id}`, { severity: "class_2" }),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "consent_required"));
-    setScenario("default");
+    try {
+      await expect(edit(target.id, { severity: "class_2" })).rejects.toSatisfy((e: unknown) =>
+        isApiError(e, "consent_required"),
+      );
+    } finally {
+      // 🚨 실패해도 되돌린다 — 남으면 뒤 describe 가 전부 동의 없음으로 돈다.
+      setScenario("default");
+    }
   });
 });
 
@@ -2337,6 +3613,27 @@ function monthOf(date: Date): string {
 }
 
 /**
+ * 지난달 · 이번 달 · 다음 달의 달 보기를 이어 붙인 것. 목의 기록과 사진은 지난 며칠 안에,
+ * 일정은 모레에 있어서 월초 · 월말에는 이번 달 하나로 다 안 잡힌다 (아래 `findEventDay` 와 같은 이유).
+ * 🚨 픽스처를 import 하지 않는다 — 부르는 사람의 방법으로 찾는다.
+ */
+async function recentCalendarDays(): Promise<CalendarMonthResponse["days"]> {
+  const now = new Date();
+  const months = [-1, 0, 1].map((offset) =>
+    monthOf(new Date(now.getFullYear(), now.getMonth() + offset, 1)),
+  );
+
+  const days: CalendarMonthResponse["days"] = [];
+  for (const month of months) {
+    const res = await api.get<CalendarMonthResponse>("/children/c1/calendar", {
+      query: { month },
+    });
+    days.push(...res.days);
+  }
+  return days;
+}
+
+/**
  * 일정이 걸린 날 하나. 목의 확정 일정은 **다가오는 것 하나**(모레)라, 이번 달만 물어보면
  * **매달 마지막 이틀에는 그 일정이 다음 달에 있어서** 빈 달이 돌아온다. 실제로 9/29 에
  * 깨졌다 — 화면 버그가 아니라 "이번 달에 일정이 있다" 를 테스트가 전제한 것이 문제였다.
@@ -2358,3 +3655,155 @@ async function findEventDay(): Promise<CalendarMonthResponse["days"][number]> {
   }
   throw new Error(`일정이 걸린 날이 ${months.join(" · ")} 어디에도 없다`);
 }
+
+/**
+ * `POST /auth/refresh` — 앱을 다시 켜도 로그인이 이어지는 길 (#465). 서버와 맞춘 계약은
+ * `lib/api/types.ts` 의 `AuthRefreshResponse` 다. 쿠키 대신 목은 표식을 쓰지만, **언제 생기고
+ * 언제 사라지는지**는 서버 쿠키와 같아야 화면 흐름을 목으로 볼 수 있다.
+ */
+describe("㉖ refresh 로 세션을 잇는다 (#465)", () => {
+  function refresh(): Promise<Response> {
+    return raw("/auth/refresh", { credentials: "include" });
+  }
+
+  it("로그인 전에는 401 unauthenticated 다", async () => {
+    const res = await refresh();
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.code).toBe("unauthenticated");
+  });
+
+  it("로그인(교환)하면 새 access 와 15분을 준다 — 로그인 응답과 같은 수명이다", async () => {
+    const login = await api.post<AuthSession>("/auth/kakao", { code: "c", bind: "b" });
+
+    const res = await refresh();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ token: expect.any(String), expires_in: 900 });
+    expect(login.expires_in).toBe(body.expires_in);
+  });
+
+  it("🚨 /auth/refresh 가 교환 핸들러(:provider)에 먹히지 않는다", async () => {
+    // 먹히면 본문이 없어 400 validation_failed 가 나고, 화면은 그걸 "서버에 닿지 못함" 으로 읽는다.
+    const res = await refresh();
+    expect(res.status).not.toBe(400);
+  });
+
+  it("로그아웃하면 더는 이어지지 않는다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post("/auth/logout");
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("탈퇴하면 더는 이어지지 않는다 — 다른 기기의 앱도 다시 켜면 로그인 화면이다", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    await api.post<WithdrawResponse>("/auth/withdraw", { acknowledged_immediate_deletion: true });
+
+    expect((await refresh()).status).toBe(401);
+  });
+
+  it("session_unreachable — 서버에 닿지 않는다 (401 이 아니다)", async () => {
+    await api.post("/auth/kakao", { code: "c", bind: "b" });
+    setScenario("session_unreachable");
+    try {
+      await expect(refresh()).rejects.toThrow();
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+/**
+ * `POST /reports` — 10 설정 › 문제 알리기 (#487 · 서버 PR #488). 목이 서버와 같은 검사를 거는지 본다.
+ * 🚨 본문은 지어낸 문장이다 — 실제 보호자의 말을 넣지 않는다 (최상위 §9).
+ */
+describe("㉗ 문제 알리기 — 서버 #488 과 같은 계약 (#487)", () => {
+  function send(body: unknown): Promise<Response> {
+    return raw("/reports", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function codeOf(response: Response): Promise<string> {
+    return ((await response.json()) as { error: { code: string } }).error.code;
+  }
+
+  it("201 과 함께 id · created_at 을 준다", async () => {
+    const created = await api.post<ReportResponse>("/reports", {
+      category: "ai_content",
+      message: "지어낸 신고 문장",
+    } satisfies ReportRequest);
+    expect(created).toEqual({ id: expect.any(String), created_at: expect.any(String) });
+  });
+
+  it("🚨 되돌릴 수 없는 5곳이 아니다 — Idempotency-Key 없이 나간다", async () => {
+    expect(requiresIdempotencyKey("POST", "/reports")).toBe(false);
+    const res = await send({ category: "bug", message: "지어낸 문장" });
+    expect(res.status).toBe(201);
+  });
+
+  it.each(REPORT_CATEGORIES)("분류 %s 를 받는다", async (category) => {
+    expect((await send({ category, message: "지어낸 문장" })).status).toBe(201);
+  });
+
+  it("앞뒤 공백을 떼고 센다 — 공백만이면 400, 떼고 1000자면 201", async () => {
+    const blank = await send({ category: "other", message: " \n\t " });
+    expect(blank.status).toBe(400);
+    expect(await codeOf(blank)).toBe("validation_failed");
+
+    const full = "가".repeat(REPORT_MESSAGE_MAX_LENGTH);
+    expect((await send({ category: "other", message: `  ${full}  ` })).status).toBe(201);
+    expect((await send({ category: "other", message: `${full}가` })).status).toBe(400);
+  });
+
+  it("모르는 분류 · NUL 문자 · 문자열이 아닌 본문은 400 이다", async () => {
+    for (const body of [
+      { category: "spam", message: "지어낸 문장" },
+      { category: "bug", message: "지어낸\u0000문장" },
+      { category: "bug", message: 42 },
+      { category: "bug" },
+    ]) {
+      const res = await send(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(await codeOf(res)).toBe("validation_failed");
+    }
+  });
+
+  it("🚨 모르는 필드가 섞이면 400 이다 — 화면 상태를 통째로 보내지 않는다", async () => {
+    const res = await send({ category: "bug", message: "지어낸 문장", child_id: "c1" });
+    expect(res.status).toBe(400);
+    expect(await codeOf(res)).toBe("validation_failed");
+  });
+
+  it("report_limit — 429 too_many_reports 에 서버 문구가 실려 온다", async () => {
+    setScenario("report_limit");
+    try {
+      const failure = await api
+        .post("/reports", { category: "bug", message: "지어낸 문장" })
+        .then(() => null)
+        .catch((e: unknown) => e);
+      expect(isApiError(failure, "too_many_reports")).toBe(true);
+      expect((failure as ApiError).status).toBe(429);
+      expect((failure as ApiError).message).toBe(
+        "지금은 더 보낼 수 없어요. 급한 일이면 이메일로 알려 주세요.",
+      );
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("report_unreached — 한 번만 서버에 닿기 전에 끊긴다 (다시 보내면 닿는다)", async () => {
+    setScenario("report_unreached");
+    try {
+      const body = { category: "bug", message: "지어낸 문장" } satisfies ReportRequest;
+      const caught = await api.post("/reports", body).catch((e: unknown) => e);
+      expect(caught).toBeInstanceOf(NetworkError);
+
+      const created = await api.post<ReportResponse>("/reports", body);
+      expect(created.id).toBeTruthy();
+    } finally {
+      setScenario("default");
+    }
+  });
+});

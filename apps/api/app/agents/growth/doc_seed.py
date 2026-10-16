@@ -34,7 +34,9 @@ SEED_FILE = "growth_doc.yaml"
 KEY_PREFIX = "growth."
 ROW_TYPES: frozenset[str] = frozenset(get_args(GrowthDocType))
 
-# 고시 영역. 표준보육과정(0–2세)은 기본생활을 포함한 6개, 누리과정(3–5세)은 5개다
+# 고시 영역. 2024 개정 표준보육과정(교육부고시 제2024-23호)은 0~5세 모두 5개다.
+# basic_life(기본생활)는 제4차(2020) 표준보육과정 0~2세의 영역이라 값으로만 남아 있고
+# 시드는 쓰지 않는다
 AREAS = frozenset({"basic_life", "physical_health", "communication", "social", "art", "nature"})
 # `observation_routine.routine_category` 와 같은 값 집합 (DDL CHECK 와도 같다).
 # 에이전트끼리 import 하지 않아서 복사했다 — 테스트가 Memory 의 enum 과 같은지 본다
@@ -103,7 +105,7 @@ def growth_doc_seed() -> tuple[GrowthDocEntry, ...]:
 
 
 def parse_growth_doc(data: Mapping[str, Any]) -> tuple[GrowthDocEntry, ...]:
-    """TODO: 행은 별도 PR 로 채우기"""
+    """시드 dict 를 행으로 읽는다. rows 가 비어 있어도 읽힌다 — 모양만 보고 내용은 테스트가 본다."""
     rows = data.get("rows")
     if not isinstance(rows, list):
         raise ValueError(f"{SEED_FILE} 에 rows 가 없다 (아직 행이 없으면 rows: [])")

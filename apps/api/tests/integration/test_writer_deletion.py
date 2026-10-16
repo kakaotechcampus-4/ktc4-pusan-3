@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 
-from app.domains.child.models import Child
+from app.domains.child.models import Child, ChildGrowthLog
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
@@ -48,12 +48,18 @@ RECORDS = [
     (ObservationHealth, "source_writer", {"symptom": ["synthetic symptom"]}),
     (ObservationRoutine, "source_writer", {"routine_category": RoutineCategory.HABIT}),
     (HealthSafety, "created_by", {"kind": SafetyKind.ALLERGY, "label": "synthetic label"}),
+    (ChildGrowthLog, "created_by", {"measured_on": date(2026, 9, 1), "height_cm": 99.1}),
     (
         SharedPhoto,
         "uploader_parent_id",
         {"date": date(2026, 9, 1), "image_url": "https://example.test/photo.jpg"},
     ),
 ]
+
+# 두 번째 줄(다른 보호자가 적은 것)만 바꿀 값. 같은 아이 · 같은 값 두 줄을 DB 가 막는 모델이다 —
+# health_safety 는 active 인 같은 항목(아이 · 종류 · 이름)을 한 줄만 받는다
+# (uq_health_safety_active_item)
+OTHER_EXTRA = {HealthSafety: {"label": "synthetic label (other writer)"}}
 
 
 @pytest.fixture
@@ -86,7 +92,7 @@ async def test_writer_delete_preserves_records_and_child_cascade(
 ):
     owner, writer, child = family
     record = make_record(model, column, extra, child.id, writer.id)
-    other = make_record(model, column, extra, child.id, owner.id)
+    other = make_record(model, column, {**extra, **OTHER_EXTRA.get(model, {})}, child.id, owner.id)
     session.add_all([record, other])
     await session.flush()
     record_id, other_id = record.id, other.id

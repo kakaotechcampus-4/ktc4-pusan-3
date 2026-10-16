@@ -26,6 +26,13 @@ from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output, covered_
 RUN_ID = "run-1"
 
 
+@pytest.fixture
+def food_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """미구현 agent 경로를 보는 테스트. activity 가 붙은 뒤에도(#380) 그 경로를 보도록 구현된
+    agent 를 food 하나로 고정한다 — 아직 없는 agent 예시로 activity 를 쓰고 있다."""
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food"}))
+
+
 def _route_case(case_id: str) -> Any:
     case = CASES_BY_ID[case_id]
     result = SupervisorResult(output=answer_output(case))
@@ -68,6 +75,7 @@ def test_RC21_영양소_분석으로_간다() -> None:
     assert [task.task_type for task in routing.domain_tasks] == [FoodTaskType.NUTRIENT_ANALYSIS]
 
 
+@pytest.mark.usefixtures("food_only")
 def test_RC16_미구현_agent_는_부르지_않고_남긴다() -> None:
     routing = _route_case("RC16")
     assert [task.task_type for task in routing.domain_tasks] == [FoodTaskType.MEAL_RECOMMENDATION]
@@ -117,6 +125,7 @@ def test_RC24_식사_알림은_일정_힌트_하나() -> None:
     assert routing.domain_tasks == ()
 
 
+@pytest.mark.usefixtures("food_only")
 def test_RC07_순수_요청형() -> None:
     routing = _route_case("RC07")
     assert routing.intent_type == "request"
@@ -204,6 +213,7 @@ def test_라벨은_문자열로_넘기고_enum_변환은_Agent_가_한다() -> N
     assert task_type_of(task) is FoodTaskType(task.task_type)
 
 
+@pytest.mark.usefixtures("food_only")
 def test_RC16_구현된_agent_몫만_DomainTask_가_된다() -> None:
     routing = _route_case("RC16")  # 저녁 메뉴(food) + 주말 놀이(activity)
     assert [task.agent for task in routing.domain_tasks] == ["food"]
@@ -227,6 +237,7 @@ def test_힌트의_작업_종류도_enum_이다() -> None:
 
 
 # ── agent 상한 (NF-01) ──────────────────────────────────────────
+@pytest.mark.usefixtures("food_only")
 def test_RC17_agent_가_셋이면_뒤의_것을_뺀다() -> None:
     routing = _route_case("RC17")
 
@@ -246,6 +257,7 @@ def test_상한에_안_걸리면_그_안내는_없다() -> None:
     assert AGENT_LIMIT not in [guidance.code for guidance in _route_case("RC16").guidance]
 
 
+@pytest.mark.usefixtures("food_only")
 def test_상한을_넘은_food_는_부르지_않는다() -> None:
     raw = "주말 놀이랑 한글 공부 방법 추천해줘. 저녁 메뉴도 추천해줘."
     output = _output(
@@ -273,13 +285,56 @@ def test_Supervisor_가_실패하면_Memory_단독으로_간다() -> None:
     assert routing.memory_task is not None
     assert routing.memory_task.raw_text == raw
     assert routing.memory_task.hints == ()  # 힌트 없음
-    assert routing.memory_task.open_lookup_edit is False  # 수정 묶음 닫힘
+    # 수정인지 모르니 묶음을 연다. 수정 문장이 강등되면 새 행이 생겼다 (#483)
+    assert routing.memory_task.open_lookup_edit is True
+    assert routing.memory_task.unclear == ()  # 못 본 것이지 아이 기록이 아니라고 한 게 아니다
     assert routing.domain_tasks == ()  # Food 호출 없음
     assert routing.guidance == ()
 
 
 def test_정상_경로는_강등이_아니다() -> None:
     assert _route_case("RC01").degraded is False
+
+
+# ── unclear (#484) ──────────────────────────────────────────────
+def test_unclear_조각만_있으면_Memory_에_그_조각을_넘긴다() -> None:
+    raw = "딸기 맛있다."
+    output = _output({"text": "딸기 맛있다", "kind": "unclear"})
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+    assert routing.memory_task.unclear == ("딸기 맛있다",)
+    assert routing.memory_task.unclear_only is True
+    assert routing.memory_task.open_lookup_edit is True  # "자동차로 바꿔줘" 가 unclear 로 남는 경우
+
+
+def test_조각에_안_들어간_글자가_있으면_unclear_only_가_아니다() -> None:
+    # Supervisor 가 기록을 빠뜨렸을 수 있다 — unclear 조각만 막고 나머지는 Memory 가 본다
+    raw = "딸기 맛있다. 오늘 공원에서 킥보드 탔어."
+    output = _output({"text": "딸기 맛있다", "kind": "unclear"})
+    task = route(raw, SupervisorResult(output=output), run_id=RUN_ID).memory_task
+
+    assert task is not None
+    assert task.unclear == ("딸기 맛있다",)
+    assert task.unclear_only is False
+
+
+def test_기록_조각과_섞이면_unclear_only_가_아니다() -> None:
+    raw = "딸기 맛있다. 오늘 블록놀이 했어."
+    output = _output(
+        {"text": "딸기 맛있다", "kind": "unclear"},
+        {"text": "오늘 블록놀이 했어", "kind": "record", "work": "observe"},
+    )
+    task = route(raw, SupervisorResult(output=output), run_id=RUN_ID).memory_task
+
+    assert task is not None
+    assert task.unclear == ("딸기 맛있다",)
+    assert task.unclear_only is False
+
+
+def test_기록_조각만_있으면_수정_묶음은_닫혀_있다() -> None:
+    task = _route_case("T01").memory_task
+    assert task is not None and task.unclear == () and task.open_lookup_edit is False
 
 
 # ── Memory 생략 판정 ────────────────────────────────────────────

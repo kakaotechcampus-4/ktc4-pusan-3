@@ -47,6 +47,8 @@ export function ApprovalSheet({
       open={open}
       onClose={onClose}
       dismissible={false}
+      // 승인 게이트 ㉠ — 열고 닫는 움직임이 없다 (디자인 시스템 §8 "하지 않는 것").
+      gate
       title="캘린더에 넣을까요"
       description="넣기 전에는 아무것도 저장되지 않아요."
       footer={

@@ -23,11 +23,12 @@ from app.api.deps.auth import hash_token
 from app.core.config import settings
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
-from app.domains.identity.repository import create_session
+from app.domains.identity.repository import create_access, create_session
 from app.infra.db.session import async_session_factory
 
 TOKEN_TTL = timedelta(hours=12)
-"""auth-kakao-v1 §4-3 과 같은 수명. 데모가 하루를 넘기면 다시 돌린다."""
+"""데모용 access 수명. 실제 access(15분)보다 길게 둔다 — curl 로 두드리다 끊기지 않게.
+데모가 하루를 넘기면 다시 돌린다. refresh 는 내주지 않는다(쿠키라 curl 로 싣지 않는다)."""
 
 LOCAL_DB_HOSTS = ("localhost", "127.0.0.1")
 
@@ -47,11 +48,16 @@ async def seed() -> tuple[str, str]:
         session.add(
             ParentChild(parent_id=parent.id, child_id=child.id, relation=ParentChildRelation.MOTHER)
         )
-        await create_session(
+        now = datetime.now(UTC)
+        session_id = await create_session(
             session,
             parent_id=parent.id,
-            token_hash=hash_token(token),
-            expires_at=datetime.now(UTC) + TOKEN_TTL,
+            refresh_hash=hash_token(secrets.token_urlsafe(32)),
+            refresh_expires_at=now + TOKEN_TTL,
+            absolute_expires_at=now + TOKEN_TTL,
+        )
+        await create_access(
+            session, session_id=session_id, token_hash=hash_token(token), expires_at=now + TOKEN_TTL
         )
         await session.commit()
         return token, str(child.id)

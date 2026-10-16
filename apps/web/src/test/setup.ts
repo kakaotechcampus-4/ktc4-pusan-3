@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
 
+import { resetAuthState } from "@/mocks/handlers/auth";
 import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetInviteState } from "@/mocks/handlers/invites";
 import { resetMembership } from "@/mocks/handlers/membership";
@@ -9,6 +10,7 @@ import { resetProfileState } from "@/mocks/handlers/profile";
 import { resetIdempotencyStore } from "@/mocks/handlers/idempotency";
 import { resetPhotoRuns } from "@/mocks/handlers/photos";
 import { resetPolicyState } from "@/mocks/handlers/policies";
+import { resetReportState } from "@/mocks/handlers/reports";
 import { resetSubmittedInputs } from "@/mocks/handlers/runs";
 import { resetConsentState, resetParentState } from "@/mocks/handlers/settings";
 import { resetSubmittedEvents } from "@/mocks/handlers/suggestions";
@@ -40,6 +42,8 @@ afterEach(() => {
   resetParentState();
   resetInviteState();
   resetMembership();
+  resetAuthState();
+  resetReportState();
 });
 
 afterAll(() => {

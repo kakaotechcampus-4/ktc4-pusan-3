@@ -8,6 +8,7 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 DB 도 LLM 도 없이 객체만 넣어 본다.
 """
 
+import logging
 import uuid
 from datetime import datetime
 from typing import get_args
@@ -25,6 +26,7 @@ from app.agents.entrypoint import (
     AgentResult,
     DomainRouted,
     Done,
+    EmptyResult,
     EventDraft,
     EventDrafts,
     Failed,
@@ -35,6 +37,7 @@ from app.agents.entrypoint import (
     PendingReply,
     Ref,
     Rerouted,
+    RetryContext,
     Saved,
     Step,
     Unavailable,
@@ -60,9 +63,10 @@ SENT = {
     Unavailable,
     Partial,
     AgentResult,
+    Saved,
 }
 """화면으로 보내는 것."""
-HELD = {Saved, PendingReply, DomainRouted, Unwritten, Rerouted}
+HELD = {PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
 """보내지 않는 것. 이유는 translate.py 머리말."""
 
 
@@ -215,8 +219,28 @@ def test_agent_result_copies_readouts_without_source_refs():
                 }
             ],
             "question": None,
+            "suggestion_ids": [],
+            "kind": None,
+            "reason": None,
+            "record_count": None,
         },
     )
+
+
+def test_agent_result_carries_saved_suggestion_ids_in_order():
+    """저장(commit)이 끝난 추천의 id 를 추천 순서대로 싣는다. 화면은 이 id 로 05 를 연다 (#227)."""
+    result = AgentResult(
+        agent="food",
+        task_type="meal_recommendation",
+        status="completed",
+        readouts=(),
+        question=None,
+        suggestion_ids=("s-1", "s-2"),
+    )
+
+    _, payload = translate.to_sse(result)
+
+    assert payload["suggestion_ids"] == ["s-1", "s-2"]
 
 
 def test_agent_result_keeps_the_notice_code():
@@ -295,13 +319,91 @@ def test_sent_events_become_sse_frames(event):
         DomainRouted("food", "meal_recommendation", "mock", 0),
         Unwritten(hints=1, tools=0, note=True),
         Rerouted(bounced=1),
-        # 화면은 관찰 내용 전체를 원하는데 Saved 는 id 만 준다 — 8단계에서 행을 읽어 채운다
-        Saved((Ref("observation_food", "o1"),)),
     ],
     ids=lambda event: type(event).__name__,
 )
 def test_held_events_are_not_sent(event):
     assert translate.to_sse(event) is None
+
+
+class _Row:
+    """러너가 commit 뒤에 읽어 둔 행 하나 (#471). 번역기는 model_dump 만 부른다."""
+
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def model_dump(self, *, mode: str) -> dict:
+        assert mode == "json"  # 날짜가 문자열로 나가야 frame() 을 통과한다
+        return self.payload
+
+
+def test_saved_carries_rows_read_after_commit_in_ref_order():
+    """#471 — refs 순서대로, 러너가 읽어 둔 행을 그대로 싣는다. 모양은 기록 탭과 같다."""
+    rows = {
+        ("observation_food", "o1"): _Row({"id": "o1", "kind": "observation_food"}),
+        ("observation_activity", "o2"): _Row({"id": "o2", "kind": "observation_activity"}),
+    }
+    event = Saved((Ref("observation_activity", "o2"), Ref("observation_food", "o1")))
+
+    assert translate.to_sse(event, saved_rows=rows) == (
+        "saved",
+        {
+            "observations": [
+                {"id": "o2", "kind": "observation_activity"},
+                {"id": "o1", "kind": "observation_food"},
+            ]
+        },
+    )
+
+
+def test_saved_skips_rows_deleted_in_the_same_run_quietly(caplog):
+    """러너는 같은 run 에서 지워진 관찰을 None 으로 표시한다 — 정상 경로라 경고하지 않는다."""
+    rows = {("observation_food", "o1"): _Row({"id": "o1"}), ("observation_food", "gone"): None}
+    event = Saved((Ref("observation_food", "o1"), Ref("observation_food", "gone")))
+
+    with caplog.at_level(logging.WARNING):
+        sent = translate.to_sse(event, saved_rows=rows)
+
+    assert sent == ("saved", {"observations": [{"id": "o1"}]})
+    assert caplog.records == []
+
+
+def test_saved_warns_when_a_ref_key_is_missing(caplog):
+    """#471 리뷰 — refs 의 (kind, id) 와 러너가 읽어 둔 키가 어긋나면 화면은 다시 "저장하지
+    않았어요" 가 된다. 조용히 거르지 않고 건수 · kind 를 남긴다 (원문 없음)."""
+    rows = {("observation_food", "o1"): _Row({"id": "o1"})}
+    event = Saved((Ref("observation_food", "o1"), Ref("observation_activity", "x")))
+
+    with caplog.at_level(logging.WARNING):
+        sent = translate.to_sse(event, saved_rows=rows)
+
+    assert sent == ("saved", {"observations": [{"id": "o1"}]})
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "1건" in record.getMessage()
+    assert "observation_activity" in record.getMessage()
+
+
+@pytest.mark.parametrize("rows", [None, {}], ids=["no_rows", "empty_rows"])
+def test_saved_with_nothing_read_is_not_sent(rows):
+    """🚨 빈 `saved` 를 보내지 않는다 — 화면이 "기록 0건 저장됨" 을 그린다."""
+    assert translate.to_sse(Saved((Ref("observation_food", "o1"),)), saved_rows=rows) is None
+
+
+def test_relay_sends_saved_with_the_rows_it_was_given():
+    """러너가 relay 에 넘긴 dict 를 Saved 가 올 때 읽는다 — commit 이 그 사이에 채운다."""
+    channel = registry.open_run(parent_id=PARENT)
+    rows: dict = {}
+    emit = translate.relay(channel, saved_rows=rows)
+
+    rows[("observation_food", "o1")] = _Row({"id": "o1"})  # commit 이 나중에 채운다
+    emit(Saved((Ref("observation_food", "o1"),)))
+    emit(Done(channel.run_id, 1))
+
+    assert channel.events == [
+        ("saved", {"observations": [{"id": "o1"}]}),
+        ("done", {"run_id": channel.run_id, "model_calls": 1}),
+    ]
 
 
 def test_relay_puts_translated_events_on_the_channel():
@@ -390,6 +492,7 @@ def test_partial_carries_agent_names_only():
             "reason": "timeout_20s",
             "succeeded": ["activity"],
             "failed": ["food"],
+            "retryable": [],
         },
     )
 
@@ -412,3 +515,35 @@ def test_partial_is_not_an_end_signal():
 
     assert [name for name, _ in channel.events] == ["partial", "done"]
     assert channel.ended_with == "done"
+
+
+def test_agent_result_carries_bundle_kind_reason_and_record_count():
+    """04 블록 머리의 묶음 칸 (#227). 화면이 "후보 N개 · 이유 · 쌓인 기록 N건" 을 그린다."""
+    result = AgentResult(
+        agent="activity",
+        task_type=None,
+        status="completed",
+        readouts=(),
+        question=None,
+        suggestion_ids=("s-1",),
+        kind="general",
+        reason="또래 기준",
+        record_count=0,
+    )
+
+    _, payload = translate.to_sse(result)
+
+    assert (payload["kind"], payload["reason"], payload["record_count"]) == (
+        "general",
+        "또래 기준",
+        0,
+    )
+
+
+def test_partial_carries_retryable_agents():
+    """04 부분 실패 카드의 "다시 준비하기" 가 이 Agent 들로 05 를 연다 (D9)."""
+    event = Partial(
+        "agent_error", succeeded=("food",), failed=("activity",), retryable=("activity",)
+    )
+
+    assert translate.to_sse(event)[1]["retryable"] == ["activity"]

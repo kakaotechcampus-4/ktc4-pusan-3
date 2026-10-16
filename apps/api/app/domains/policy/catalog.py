@@ -36,6 +36,10 @@ SCOPE_CATALOG: dict[ConsentScope, ScopeInfo] = {
     # 🚨 선택이다. 필수로 받으면 선택이어야 할 동의를 강제하는 것이 된다 (#172).
     ConsentScope.LOCATION: ScopeInfo(required=False, sensitive=False),
     ConsentScope.CHILD_BASIC: ScopeInfo(required=True, sensitive=False),
+    # 🚨 필수다. 자유 문장 입력에 건강 내용이 섞여 들어와, 선택으로 풀면 동의 없이 민감정보를
+    #    저장 · 외부 전송하게 된다 (개인정보보호법 제23조, #92 결정).
+    #    선택으로 풀면 GET /children/{cid}/health-safety 도 동의를 확인해야 한다 — 지금은 필수라
+    #    목록에서 보지 않는다 (routers/health_safety.py read_health_safety).
     ConsentScope.CHILD_HEALTH: ScopeInfo(required=True, sensitive=True),
 }
 """dict 는 넣은 순서를 지킨다 — 이 순서가 응답 순서다."""

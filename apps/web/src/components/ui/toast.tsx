@@ -11,6 +11,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
+import { useEnterMotion } from "@/lib/motion";
+
 /**
  * 디자인 시스템 §7 토스트 — **화면 안에 자리가 없는 사실**을 잠깐 띄운다.
  *
@@ -37,7 +39,8 @@ import type { ReactNode } from "react";
  * - **위에 붙는다.** 이 앱의 아래쪽은 채팅바 + 이동 바로 이미 192px 이라, 아래에 띄우면
  *   그 둘 중 하나를 덮는다. 위는 제목 자리라 시선이 처음 가는 곳이기도 하다.
  * - **그림자가 없다** (문서 §6 — 그림자는 바텀시트 하나뿐). `line-strong` 1px 이 경계를 만든다.
- * - **등장 애니메이션이 없다** (문서 §8). 하루에 여러 번 뜨는 것이라, 매번 기다리게 하지 않는다.
+ * - **투명도로만 선다** (문서 §8 "떠 있는 것"). 미끄러져 내려오지 않는다 — 하루에 여러 번 뜨는 것이라
+ *   위치가 움직이면 매번 눈이 따라가야 한다. 새 메시지가 앞의 것을 덮을 때도 다시 선다(바뀐 것이 보이게).
  * - **한 번에 하나다.** 쌓으면 390px 화면에서 본문이 묻힌다 — 새 메시지가 앞의 것을 덮어쓴다.
  */
 const DURATION_MS = 6000;
@@ -100,6 +103,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 function Toast({ message }: { message: string | null }) {
+  const ref = useEnterMotion<string | null, HTMLParagraphElement>(message, (_, to) =>
+    to ? "fade" : null,
+  );
+
   return (
     // 🚨 라이브 리전은 **늘 DOM 에 있어야** 한다. 메시지와 함께 나타나면 스크린리더가
     //    리전이 생긴 것으로 보고 내용을 읽지 않는 경우가 있다 — 그래서 빈 채로 세워 둔다.
@@ -114,7 +121,10 @@ function Toast({ message }: { message: string | null }) {
           알 수 없다. 시간이 지나면 사라지고 그 동안 클릭은 바깥의 `pointer-events-none` 으로
           뒤에 통과한다. 🚨 그래서 되돌리기 같은 **행동을 여기 담지 않는다.** */}
       {message ? (
-        <p className="border-line-strong rounded-card bg-surface text-body-sm text-ink border px-4 py-3">
+        <p
+          ref={ref}
+          className="border-line-strong rounded-card bg-surface text-body-sm text-ink border px-4 py-3"
+        >
           {message}
         </p>
       ) : null}

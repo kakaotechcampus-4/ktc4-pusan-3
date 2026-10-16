@@ -1,4 +1,4 @@
-import { authHeaders, buildUrl } from "./client";
+import { authHeaders, authorizedFetch, buildUrl, notifyUnauthenticated } from "./client";
 import { NetworkError } from "./errors";
 import type { Affinity, Agent, EventDraft, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
 
@@ -45,6 +45,12 @@ export interface PartialEvent {
   reason: string;
   succeeded: Agent[];
   failed: Agent[];
+  /**
+   * 실패한 task 중 **추천을 내는 task** 의 Agent (#227 3단계). 화면이 "다시 준비하기" 로 이 Agent 들의 05 를
+   * `run=` 과 함께 연다 — 05 가 그 run 의 처음 시각 · 문장으로 다시 만든다 (#249).
+   * 🚨 **화면이 `failed` 로 고르지 않는다.** 급식 갱신만 실패한 식사도 `failed` 에 있지만 05 화면이 없다.
+   */
+  retryable: Agent[];
 }
 
 /**
@@ -130,6 +136,86 @@ export interface UnavailableEvent {
 }
 
 /**
+ * 04 한 줄 입력 — 도메인 Agent 가 낸 **읽기 전용 한 덩어리** (#227).
+ *
+ * 성장 추이 · 닫힘 안내 · 개수 안내("조건에 맞는 추천이 없어요") 같은 것이다. 저장하지 않고 그 run 에서만 산다.
+ *
+ * 🚨 **`body` 를 화면이 다시 쓰지 않는다.** `authored_by: "code"` 면 서버 코드가 만든 문자열이 그대로
+ *    온다 — 성장 추이가 그렇다. 화면이 줄이거나 꾸미다가 "또래보다" 같은 판정을 붙이면 발달 평가로
+ *    읽힌다 (최상위 §2 키 · 몸무게). 색으로 좋고 나쁨을 말하지도 않는다.
+ * 🚨 **`body` 는 여러 줄일 수 있다** — 성장 추이는 요약 한 줄 아래 잰 기록을 줄마다 적는다.
+ * 🚨 **`kind` 는 열어 둔다.** 모르는 `kind` 가 와도 `body` 는 그린다 — 서버가 종류를 늘려도 화면을 먼저
+ *    배포하지 않아도 된다 (`GuidanceEvent.code` 와 같은 이유).
+ * 🚨 **개수 안내는 `kind` 가 아니라 `code` 로 찾는다.** Activity 날씨 안내도 `kind: "notice"` 라서, 한 블록에
+ *    둘이 같이 오면 `kind` 로는 못 가른다. 문구도 Agent 마다 달라서(Food 의 0개 문구) 문구로 가르면 안 된다.
+ * ⚠️ 서버 readout 의 `source_refs` 는 오지 않는다 (#276). 근거 종류가 `Ref.kind` 에 아직 없다.
+ */
+export interface AgentReadout {
+  kind: "growth_delta" | "notice" | "blocked" | "unsupported" | (string & {});
+  /** 비어 있을 수 있다 (`""`). 비었으면 그리지 않는다. */
+  title: string;
+  body: string;
+  authored_by: "code" | "model";
+  /**
+   * 개수 안내의 종류 (#276 · #249 의 `groups[].notice` 와 같은 값). 서버 `count_notice()` 만 붙인다.
+   * `fewer` 는 1~2개, `empty` 는 0개, 개수와 상관없는 readout(날씨 안내 · 성장 추이)은 `null` 이다. 키는 늘 있다.
+   *
+   * 후보가 있는 블록에서는 개수 안내(`fewer`)를 그리지 않는다 — '후보 N개' 가 대신한다
+   *    (`lib/agent-result.ts` 의 `blockReadouts`).
+   * ⚠️ `cannot_resume`(이어서 할 수 없음)은 05 추천 엔드포인트만 붙인다 (#249). 04 에는 오지 않는다.
+   */
+  code: "fewer" | "empty" | null;
+}
+
+/**
+ * 04 한 줄 입력 — **도메인 Agent 결과 한 건** (#227 · 서버 #276). 한 건이 대화의 Agent 블록 하나다.
+ *
+ * 🚨 **도착한 순서대로 붙이고 재정렬하지 않는다** (#215). 먼저 끝난 Agent 가 먼저 온다.
+ * 🚨 **같은 Agent 가 두 번 올 수 있다** — task 가 둘이면(`daycare_meal` + `meal_recommendation`) 결과도 둘이다.
+ *    `agent` 하나로 묶지 않는다.
+ * 🚨 **결과를 못 낸 Agent 는 이 이벤트가 없다.** 예외 · 시간 초과는 지금처럼 `partial.failed` 로만 온다.
+ * 🚨 **비어 있는 결과도 온다** (`readouts: []` · `question: null`). 쓰는 task(급식 갱신)처럼 화면에 보일 것이
+ *    없는 결과다 — 화면은 블록을 세우지 않는다 (`components/run-result.tsx`).
+ *
+ * 🚨 **추천이 든 결과는 블록에 '후보 N개' · 이유 · '후보 보기' 가 선다** (#227 3단계). 링크는 그 블록의
+ *    Agent 와 그 run 을 싣고 05 가 그 run 의 추천을 되살린다 (#249).
+ */
+export interface AgentResultEvent {
+  agent: Agent;
+  /** Agent 안의 일 종류 (`meal_recommendation` · `growth_review` …). 라벨이 없는 Agent(Activity)는 `null`. */
+  task_type: string | null;
+  /**
+   * ⚠️ `string` 으로 받는다. 서버 실구현 전에는 Food mock 의 `mock` · `unsupported_stage` 가 그대로 오고,
+   *    실구현 뒤에 `completed` · `degraded` · `blocked` · `unsupported` 로 좁혀진다 (#276).
+   *    지금 화면은 이 값으로 그림을 가르지 않는다 — 가를 일("후보 보기" 를 세울지)은 추천 칸과 같이 온다.
+   */
+  status: string;
+  readouts: AgentReadout[];
+  /**
+   * Agent 가 되묻는 한 줄. 없으면 `null` 이다 (키는 늘 있다).
+   *
+   * 🚨 **답할 자리를 열지 않는다.** Memory 의 되묻기(`NoteEvent`)와 답의 쓰임이 달라서, "이 질문에 답하기" 로
+   *    `reply_to` 를 실어 보내면 서버가 400 `reply_context_unavailable` 로 막는다. 답을 받는 길은 #246 에서
+   *    정한다 — 그때까지는 안내 문장으로만 선다.
+   */
+  question: string | null;
+  /** 저장(commit)이 끝난 추천 id. 추천 순서 그대로다. 없으면 `[]` (키는 늘 있다). */
+  suggestion_ids: string[];
+  /**
+   * 추천 묶음의 종류 (#227 3단계). 추천이 없으면 `null`.
+   * 🚨 **개인화 · 일반이 섞인 묶음은 `"personalized"` 로 온다** — 섞인 일반 추천은 05 가 따로 보여 준다.
+   */
+  kind: "personalized" | "general" | null;
+  /** 묶음 이유 한 문장. 🚨 **서버 코드 문구다** — 화면이 줄이거나 다시 쓰지 않는다. 추천이 없으면 `null`. */
+  reason: string | null;
+  /**
+   * 일반 묶음일 때 그 주제로 쌓인 기록 수 (05 `general[].record_count` 와 같은 표). 🚨 **0 도 그린다** (최상위 §2).
+   * 서버가 세지 못했거나 일반 묶음이 아니면 `null`.
+   */
+  record_count: number | null;
+}
+
+/**
  * 08 사진 — 이 사진을 문서로 읽을지 활동 사진으로 읽을지. 🚨 **추측이다.**
  * 프론트가 이 값을 확정으로 쓰지 않는다 — 화면이 부모에게 한 번 되묻고, 부모가 바꾸면 그쪽이 정본이다.
  */
@@ -189,6 +275,20 @@ export function isDraftEvent(type: string): boolean {
 export interface DoneEvent {
   run_id: string;
   model_calls: number;
+  /**
+   * `false` — **저장한 뒤에 끊긴 run** (#253 · #271). 서버가 Memory 의 쓰기를 commit 한 뒤 예외나
+   * 60초 안전망에 걸리면 `failed` 대신 이 값을 싣고 닫는다. 키가 없으면 `true` 로 읽는다 —
+   * 정상 `done` 에는 이 키가 없다.
+   *
+   * 🚨 **무언가 실제로 들어갔다는 보장이다.** 서버는 store 가 쓴 것이 있을 때만 이 길로 보낸다
+   *    (`apps/api/app/api/runs/runner.py` 의 `store.wrote`). 아무것도 쓰지 않은 run 은 `failed` 다.
+   * 🚨 **무엇이 들어갔는지는 모른다.** `saved` 를 보내기 전에 끊겼을 수 있고, 쓴 것이 관찰이 아니라
+   *    일정 · 준비물 변경일 수도 있다. 그래서 화면은 "저장하지 않았어요" 도, 받지 못한 기록 목록도
+   *    말하지 않는다.
+   * 🚨 서버는 Idempotency 키를 놓지 않는다 — 같은 키로 다시 보내면 닫힌 run 이 재생될 뿐이고,
+   *    새 키로 같은 말을 보내면 **두 번 저장된다.** 다시 시도 버튼을 세우지 않는 이유다.
+   */
+  completed?: boolean;
 }
 
 /**
@@ -214,6 +314,7 @@ export type RunEvent =
   | { type: "guidance"; data: GuidanceEvent }
   | { type: "note"; data: NoteEvent }
   | { type: "unavailable"; data: UnavailableEvent }
+  | { type: "agent_result"; data: AgentResultEvent }
   | { type: "ping"; data: PingEvent }
   | { type: "partial"; data: PartialEvent }
   | { type: "failed"; data: FailedEvent }
@@ -252,17 +353,15 @@ export async function* streamRunEvents(
   runId: string,
   signal?: AbortSignal,
 ): AsyncGenerator<RunEvent> {
-  let response: Response;
-  try {
-    response = await fetch(buildUrl(`/runs/${runId}/events`), {
-      headers: authHeaders({ Accept: "text/event-stream" }),
-      signal,
-      cache: "no-store",
-    });
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
-    throw new NetworkError(cause);
-  }
+  // access 가 만료됐으면 한 번 갱신해 다시 연결한다 (`authorizedFetch`).
+  const response = await authorizedFetch(buildUrl(`/runs/${runId}/events`), () => ({
+    headers: authHeaders({ Accept: "text/event-stream" }),
+    signal,
+    cache: "no-store",
+  }));
+
+  // 갱신까지 실패했다 — 세션이 끝났다. 화면은 아래 연결 실패로 끝내고, 로그인 화면으로는 전역 처리가 보낸다.
+  if (response.status === 401) notifyUnauthenticated();
 
   if (!response.ok || !response.body) {
     throw new NetworkError(new Error(`SSE 연결 실패 (${response.status})`));

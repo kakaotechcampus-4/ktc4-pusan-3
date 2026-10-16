@@ -1,12 +1,26 @@
 """제안 표시·피드백과 관찰 상세의 근거 역조회."""
 
+import base64
+import json
 import uuid
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.child.models import ChildGrowthLog
+from app.domains.food.repository import resolved_recipe_names
+from app.domains.memory.observation.models import (
+    ObservationActivity,
+    ObservationEducation,
+    ObservationFood,
+    ObservationHealth,
+    ObservationRoutine,
+    ObservationStatus,
+)
+from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
@@ -16,6 +30,7 @@ from app.domains.suggestion.models import (
     SuggestionKind,
     SuggestionStatus,
 )
+from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
 
 async def create_suggestion(
@@ -30,11 +45,13 @@ async def create_suggestion(
     expires_at: datetime,
     allergens: Sequence[str] = (),
     items: Sequence[str] = (),
+    run_id: str | None = None,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
     `citations` · `allergens` · `items` 는 `SuggestionDraft.to_payload()` 의 같은 이름 칸을
     그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
+    `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
     """
     row = Suggestion(
         child_id=child_id,
@@ -46,6 +63,7 @@ async def create_suggestion(
         items=list(items),
         expires_at=expires_at,
         status=SuggestionStatus.DRAFT,
+        run_id=run_id,
     )
     session.add(row)
     await session.flush()
@@ -70,20 +88,54 @@ async def find_suggestion(
     )
 
 
+def encode_cursor(created_at: datetime, suggestion_id: uuid.UUID) -> str:
+    payload = {"c": created_at.isoformat(), "id": str(suggestion_id)}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    payload = json.loads(base64.urlsafe_b64decode(cursor))
+    return datetime.fromisoformat(payload["c"]), uuid.UUID(payload["id"])
+
+
 async def list_suggestions(
-    session: AsyncSession, *, child_id: uuid.UUID, status: SuggestionStatus | None = None
-) -> list[Suggestion]:
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    status: SuggestionStatus | None = None,
+    kind: SuggestionKind | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> tuple[list[Suggestion], str | None]:
+    """커서 페이징으로 추천 목록을 반환한다. (items, next_cursor)."""
     stmt = select(Suggestion).where(Suggestion.child_id == child_id)
+    if kind is not None:
+        stmt = stmt.where(Suggestion.kind == SuggestionKind(kind))
     if status is not None:
         stmt = stmt.where(Suggestion.status == SuggestionStatus(status))
+    else:
+        # 기본 목록에서 draft 제외 — 07 화면은 approved/rejected 만 쓴다
+        stmt = stmt.where(Suggestion.status != SuggestionStatus.DRAFT)
     # draft 조회 시 만료된 것은 제외 (lazy expiration)
     if status == SuggestionStatus.DRAFT:
         stmt = stmt.where(Suggestion.expires_at > func.now())
-    return list(
-        (
-            await session.scalars(stmt.order_by(Suggestion.created_at.desc(), Suggestion.id.desc()))
-        ).all()
-    )
+    if cursor is not None:
+        cur_created, cur_id = decode_cursor(cursor)
+        stmt = stmt.where(
+            (Suggestion.created_at < cur_created)
+            | ((Suggestion.created_at == cur_created) & (Suggestion.id < cur_id))
+        )
+    stmt = stmt.order_by(Suggestion.created_at.desc(), Suggestion.id.desc()).limit(limit + 1)
+    rows = list((await session.scalars(stmt)).all())
+
+    if len(rows) > limit:
+        rows = rows[:limit]
+        last = rows[-1]
+        next_cursor = encode_cursor(last.created_at, last.id)
+    else:
+        next_cursor = None
+
+    return rows, next_cursor
 
 
 async def set_feedback(
@@ -93,10 +145,14 @@ async def set_feedback(
     suggestion_id: uuid.UUID,
     feedback: SuggestionFeedback,
 ) -> Suggestion | None:
-    """피드백은 제안만 바꾼다. 관찰/성향 상태는 여기서 건드리지 않는다."""
+    """피드백은 채택/거절된 제안만 바꾼다. draft/expired 에는 적용하지 않는다."""
     return await session.scalar(
         update(Suggestion)
-        .where(Suggestion.child_id == child_id, Suggestion.id == suggestion_id)
+        .where(
+            Suggestion.child_id == child_id,
+            Suggestion.id == suggestion_id,
+            Suggestion.status.in_([SuggestionStatus.APPROVED, SuggestionStatus.REJECTED]),
+        )
         .values(feedback=SuggestionFeedback(feedback))
         .returning(Suggestion)
     )
@@ -146,6 +202,251 @@ async def is_any_linked(session: AsyncSession, *, suggestion_ids: list[uuid.UUID
     """suggestion_ids 중 이미 일정에 연결된 것이 있는지."""
     stmt = select(exists().where(SuggestionEvent.suggestion_id.in_(suggestion_ids)))
     return bool(await session.scalar(stmt))
+
+
+# 아이 기록 9종. 문서 행(food_doc 등)은 응답 evidence에서 제외한다.
+# agents/common/refs.py ChildRecordKind와 같은 목록.
+_CHILD_RECORD_KINDS = frozenset(
+    (
+        "observation_food",
+        "observation_health",
+        "observation_education",
+        "observation_activity",
+        "observation_routine",
+        "profile_affinity",
+        "child_growth_log",
+        "notice",
+        "daycare_meal",
+    )
+)
+
+# agents/common/refs.py DocKind 와 같은 목록. 문서 행은 아이 데이터가 아니고 DB 테이블도
+# 아직 없어서(YAML 시드 · uuid5 id) 종류만 본다
+_DOC_KINDS = frozenset(("food_doc", "growth_doc", "activity_doc"))
+
+# agents/common/refs.py MenuKind 와 같은 목록(#442). Food 일반 추천만 고른 메뉴(레시피 카탈로그
+# 행)를 근거로 단다 — 문서 행이 없는 월령에도 일반 추천에 근거가 붙게. 실제 후보 풀의 레시피인지는
+# 저장할 때 본다
+_MENU_KINDS = frozenset((MENU_EVIDENCE_KIND,))
+
+# 근거의 아이 기록 중 대상 테이블이 있는 것 — 같은 아이의 행이 있는지 본다(correction 과 같은
+# 방식). 여기 없는 아이 기록(notice · daycare_meal)은 테이블이 생길 때까지 거절한다
+_EVIDENCE_TARGETS = {
+    "observation_food": ObservationFood,
+    "observation_health": ObservationHealth,
+    "observation_education": ObservationEducation,
+    "observation_activity": ObservationActivity,
+    "observation_routine": ObservationRoutine,
+    "profile_affinity": ProfileAffinity,
+    "child_growth_log": ChildGrowthLog,
+}
+
+SUGGESTION_TTL = timedelta(hours=24)
+"""추천 draft 가 사는 시간. 승인 없는 추천은 이 시간 뒤 만료된다 (루트 §2)."""
+
+
+class SuggestionEvidenceError(ValueError):
+    """추천 묶음의 근거가 규칙에 어긋난다. 메시지에 추천 문장 · 근거 문장 · id 를 싣지 않는다."""
+
+
+async def save_agent_suggestions(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    run_id: str | None,
+    payloads: Sequence[Mapping[str, Any]],
+    now: datetime,
+) -> list[uuid.UUID]:
+    """도메인 Agent 결과 하나의 추천을 저장한다(flush 까지). commit 은 호출자(러너)가 한다.
+
+    - `payloads` 의 한 항목은 `SuggestionDraft.to_payload()` 모양이다. 돌려주는 id 는 그 순서다.
+    - 근거를 먼저 다 본 뒤에 쓴다. 하나라도 어긋나면 `SuggestionEvidenceError` 이고 한 행도
+      쓰지 않는다 — 개인화인데 아이 기록 근거 0행 · 일반인데 아이 기록 근거 · 일반인데 문서 행
+      (Food 는 메뉴 행도) 근거 0행 · Food 일반 추천이 아닌데 메뉴 근거 · 후보 풀에 없는 메뉴 ·
+      정해지지 않은 근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직
+      없는 아이 기록.
+    - 한 추천이 같은 (source_kind, source_id) 를 두 번 인용하면 첫 인용만 남긴다(PK).
+    - `status=draft` · `expires_at=now+SUGGESTION_TTL` 은 여기서 정한다.
+    """
+    checked = [
+        await _checked_citations(session, child_id=child_id, payload=item) for item in payloads
+    ]
+    ids: list[uuid.UUID] = []
+    for item, citations in zip(payloads, checked, strict=True):
+        row = await create_suggestion(
+            session,
+            child_id=child_id,
+            agent=SuggestionAgent(item["agent"]),
+            kind=SuggestionKind(item["kind"]),
+            content=item["content"],
+            reason=item["reason"],
+            citations=citations,
+            expires_at=now + SUGGESTION_TTL,
+            allergens=item["allergens"],
+            items=item["items"],
+            run_id=run_id,
+        )
+        ids.append(row.id)
+    return ids
+
+
+async def _checked_citations(
+    session: AsyncSession, *, child_id: uuid.UUID, payload: Mapping[str, Any]
+) -> list[dict]:
+    """추천 한 건의 인용을 검사해 돌려준다. 같은 근거를 두 번 인용했으면 첫 인용만 남긴다."""
+    SuggestionAgent(payload["agent"])  # 정해지지 않은 Agent 면 쓰기 전에 ValueError
+    kind = SuggestionKind(payload["kind"])
+    citations: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for item in payload["citations"]:
+        key = (item["source_kind"], str(uuid.UUID(str(item["source_id"]))))
+        if key not in seen:
+            seen.add(key)
+            citations.append(dict(item))
+    known = _CHILD_RECORD_KINDS | _DOC_KINDS | _MENU_KINDS
+    if any(item["source_kind"] not in known for item in citations):
+        raise SuggestionEvidenceError("정해지지 않은 근거 종류다")
+    child = [item for item in citations if item["source_kind"] in _CHILD_RECORD_KINDS]
+    menus = [item for item in citations if item["source_kind"] in _MENU_KINDS]
+    if kind is SuggestionKind.PERSONALIZED and not child:
+        raise SuggestionEvidenceError("개인화 추천인데 아이 기록 근거가 없다")
+    if kind is SuggestionKind.GENERAL and child:
+        raise SuggestionEvidenceError("일반 추천에 아이 기록 근거가 있다")
+    if menus and (payload["agent"] != "food" or kind is not SuggestionKind.GENERAL):
+        # 메뉴 근거는 Food 일반 추천만 단다(#442). 개인화는 아이 기록이 근거다
+        raise SuggestionEvidenceError("메뉴 근거는 Food 일반 추천에만 단다")
+    if kind is SuggestionKind.GENERAL and not any(
+        item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations
+    ):
+        raise SuggestionEvidenceError("일반 추천인데 문서 행 근거가 없다")
+    if menus:
+        # 실제 후보 풀(검수된 레시피)의 메뉴여야 근거다 — 아니면 근거 0행과 같다
+        names = await resolved_recipe_names(session)
+        if any(uuid.UUID(str(item["source_id"])) not in names for item in menus):
+            raise SuggestionEvidenceError("메뉴 근거가 레시피 카탈로그에 없다")
+    for item in child:
+        model = _EVIDENCE_TARGETS.get(item["source_kind"])
+        if model is None:
+            raise SuggestionEvidenceError("아직 확인할 수 없는 아이 기록 종류다")
+        source_id = uuid.UUID(str(item["source_id"]))
+        found = await session.scalar(
+            select(model.id).where(model.id == source_id, model.child_id == child_id)
+        )
+        if found is None:
+            raise SuggestionEvidenceError("근거 기록이 없거나 다른 아이의 기록이다")
+    return citations
+
+
+async def list_evidence(
+    session: AsyncSession, *, suggestion_id: uuid.UUID
+) -> list[SuggestionEvidence]:
+    """추천 한 건의 근거 행 (아이 기록만, 문서 행 제외)."""
+    stmt = (
+        select(SuggestionEvidence)
+        .where(
+            SuggestionEvidence.suggestion_id == suggestion_id,
+            SuggestionEvidence.source_kind.in_(_CHILD_RECORD_KINDS),
+        )
+        .order_by(SuggestionEvidence.created_at)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_run_suggestions(
+    session: AsyncSession, *, child_id: uuid.UUID, run_id: str, agent: str, now: datetime
+) -> list[Suggestion]:
+    """그 run 에서 그 Agent 가 낸 추천 — 채택한 것 전부와 만료 전 draft (#249 판단 순서 1).
+
+    채택한 것도 돌려준다. 일부만 채택하고 새로고침했을 때 남은 draft 만 오면 화면이 "1가지 중에서"
+    를 그린다. 만료된 draft · 거절 · 만료 상태는 뺀다.
+    """
+    stmt = (
+        select(Suggestion)
+        .where(
+            Suggestion.child_id == child_id,
+            Suggestion.run_id == run_id,
+            Suggestion.agent == SuggestionAgent(agent),
+            (Suggestion.status == SuggestionStatus.APPROVED)
+            | ((Suggestion.status == SuggestionStatus.DRAFT) & (Suggestion.expires_at > now)),
+        )
+        .order_by(Suggestion.created_at, Suggestion.id)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_suggestions_by_ids(
+    session: AsyncSession, *, child_id: uuid.UUID, ids: Sequence[uuid.UUID]
+) -> list[Suggestion]:
+    """방금 저장한 추천을 저장 순서대로. 다른 아이의 id 는 섞이지 않는다."""
+    if not ids:
+        return []
+    rows = (
+        await session.scalars(
+            select(Suggestion).where(Suggestion.child_id == child_id, Suggestion.id.in_(ids))
+        )
+    ).all()
+    by_id = {row.id: row for row in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+async def count_child_records(
+    session: AsyncSession, *, child_id: uuid.UUID, kinds: Sequence[str]
+) -> int:
+    """그 주제로 쌓인 관찰 건수 — 화면이 "기록 N건" 으로 그대로 보여 준다 (루트 §2).
+
+    남아 있는 관찰(active · stand_alone)만 센다. 잘못된 기록(inactive) · 지운 기록은 빼고,
+    관찰이 아닌 종류는 세지 않는다.
+    """
+    kept = (ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE)
+    total = 0
+    for kind in kinds:
+        model = _EVIDENCE_TARGETS.get(kind)
+        if model is None or not kind.startswith("observation_"):
+            continue
+        total += (
+            await session.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.child_id == child_id, model.status.in_(kept))
+            )
+            or 0
+        )
+    return total
+
+
+async def list_general_evidence_batch(
+    session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """일반 추천의 근거 — 문서 행과 메뉴 행(Food, #442). 아이 기록 근거와 섞지 않는다 — 화면
+    타입이 다르다."""
+    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS | _MENU_KINDS)
+
+
+async def list_evidence_batch(
+    session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """여러 추천의 근거를 한 번에 조회한다 (아이 기록만, 문서 행 제외)."""
+    return await _evidence_batch(session, suggestion_ids, _CHILD_RECORD_KINDS)
+
+
+async def _evidence_batch(
+    session: AsyncSession, suggestion_ids: list[uuid.UUID], kinds: frozenset[str]
+) -> dict[uuid.UUID, list[SuggestionEvidence]]:
+    """추천마다 그 종류의 근거 행을 만든 순서대로. 근거가 없는 추천도 빈 목록으로 둔다."""
+    if not suggestion_ids:
+        return {}
+    stmt = (
+        select(SuggestionEvidence)
+        .where(
+            SuggestionEvidence.suggestion_id.in_(suggestion_ids),
+            SuggestionEvidence.source_kind.in_(kinds),
+        )
+        .order_by(SuggestionEvidence.suggestion_id, SuggestionEvidence.created_at)
+    )
+    result: dict[uuid.UUID, list[SuggestionEvidence]] = {sid: [] for sid in suggestion_ids}
+    for row in (await session.scalars(stmt)).all():
+        result[row.suggestion_id].append(row)
+    return result
 
 
 async def list_suggestions_using_observation(

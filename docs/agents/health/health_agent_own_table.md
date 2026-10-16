@@ -397,7 +397,7 @@ CREATE TABLE prescription_draft (
 
 | 필드 | 비고 |
 | --- | --- |
-| id · child_id (CASCADE) · height · weight · check_date | 수정하지 않고 **append** |
+| id · child_id (CASCADE) · height_cm · weight_kg · measured_on (10-10, 정본 [`data_model.md`](../data_model.md)) | 새로 잰 것은 새 행으로 쌓는다. 보호자는 화면(11-1)에서 잘못 적은 줄을 고치거나 지울 수 있다 (`PATCH` · `DELETE /children/{cid}/growth/{id}`, 10-10). Agent 는 읽기만 한다 |
 
 | Agent | 읽는 목적 | 넘지 않는 선 |
 | --- | --- | --- |

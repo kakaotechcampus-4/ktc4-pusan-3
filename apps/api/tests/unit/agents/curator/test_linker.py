@@ -11,6 +11,7 @@
 
 import math
 from collections.abc import Sequence
+from datetime import date
 from uuid import UUID
 
 import pytest
@@ -70,7 +71,9 @@ def _observe(
 async def _run(
     store: InMemoryCuratorStore, embedder: FakeEmbedder, judge: FakeJudge | None = None
 ) -> LinkResult:
-    return await link_observations(store, embedder, judge or FakeJudge(), child_id=CHILD)
+    return await link_observations(
+        store, embedder, judge or FakeJudge(), child_id=CHILD, birth_date=date(2023, 1, 1)
+    )
 
 
 def _by_id(result: LinkResult) -> dict[str, tuple[str, str | None]]:
@@ -154,7 +157,9 @@ async def test_판정기가_없어도_임베딩과_판정이_필요_없는_연�
     _observe(store, "2", "생딸기")  # 판정이 필요하다 → 보류
     embedder = FakeEmbedder()
 
-    result = await link_observations(store, embedder, None, child_id=CHILD)
+    result = await link_observations(
+        store, embedder, None, child_id=CHILD, birth_date=date(2023, 1, 1)
+    )
 
     assert embedder.calls == [["딸기", "생딸기"]]
     assert _by_id(result) == {"1": ("linked", None), "2": ("held", "judge_unavailable")}
@@ -205,3 +210,55 @@ async def test_LLMError_가_아닌_예외는_그대로_올라온다() -> None:
 
     with pytest.raises(ValueError, match="bug"):
         await _run(store, FakeEmbedder(ValueError("bug")))
+
+
+@pytest.mark.parametrize("domain", ["food", "activity", "education"])
+async def test_영아기_관찰은_임베딩만_하고_재실행에도_연결하지_않는다(domain):
+    store = InMemoryCuratorStore()
+    for id, subject, observed_on in [
+        ("early_same", "딸기", date(2025, 6, 30)),
+        ("early_new", "레고", date(2025, 6, 30)),
+        ("eligible", "딸기", date(2025, 7, 1)),
+    ]:
+        store.add_observation(
+            child_id=CHILD,
+            domain=domain,
+            id=id,
+            subject=subject,
+            polarity=1,
+            observed_on=observed_on,
+        )
+    profile = store.add_profile(
+        child_id=CHILD,
+        domain=domain,
+        merge_key="딸기",
+        polarity=1,
+        embedding=VECTORS["딸기"],
+    )
+    for _ in range(2):
+        await link_observations(
+            store, FakeEmbedder(), FakeJudge(), child_id=CHILD, birth_date=date(2024, 1, 1)
+        )
+        for id in ("early_same", "early_new"):
+            obs = store.observation(domain, id)
+            assert obs.embedding is not None
+            assert obs.affinity_id is None
+            assert store.uncertain_count(domain, id) is None
+        assert store.observation(domain, "eligible").affinity_id == profile.id
+        assert len(store.profiles) == 1
+
+
+async def test_설정된_월령을_연결_기준에_적용한다(monkeypatch):
+    from app.agents.curator.embedding import linker
+
+    monkeypatch.setattr(linker, "AFFINITY_MIN_MONTH", 24)
+    store = InMemoryCuratorStore()
+    for id, observed_on in [("before", date(2025, 12, 31)), ("on", date(2026, 1, 1))]:
+        store.add_observation(
+            child_id=CHILD, domain="food", id=id, subject="딸기", observed_on=observed_on
+        )
+    await link_observations(
+        store, FakeEmbedder(), FakeJudge(), child_id=CHILD, birth_date=date(2024, 1, 1)
+    )
+    assert store.observation("food", "before").affinity_id is None
+    assert store.observation("food", "on").affinity_id is not None

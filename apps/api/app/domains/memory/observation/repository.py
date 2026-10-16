@@ -2,6 +2,7 @@
 
 import enum
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -81,15 +82,20 @@ async def find_observation(
     domain: ObservationDomain | str,
     child_id: uuid.UUID,
     observation_id: uuid.UUID,
+    for_update: bool = False,
 ) -> ObservationRecord | None:
-    """상세 API의 기본 기록. 사용 제안과 교정 이력은 각 리포지터리에서 조회한다."""
+    """상세 API의 기본 기록. 사용 제안과 교정 이력은 각 리포지터리에서 조회한다.
+
+    for_update — 읽은 상태를 보고 바꿀 때 행을 잠가 같은 기록의 동시 요청을 순서대로 세운다.
+    """
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
-    row = await session.scalar(
-        select(model).where(
-            model.id == observation_id, model.child_id == child_id, _not_deleted(model)
-        )
+    stmt = select(model).where(
+        model.id == observation_id, model.child_id == child_id, _not_deleted(model)
     )
+    if for_update:
+        stmt = stmt.with_for_update()
+    row = await session.scalar(stmt)
     return _to_record(resolved, row) if row is not None else None
 
 
@@ -125,55 +131,117 @@ async def count_active_observations(
     child_id: uuid.UUID,
     period_start: date,
     period_end: date,
+    exclude_health: bool = False,
+    statuses: Collection[ObservationStatus] = (ObservationStatus.ACTIVE,),
 ) -> ActiveObservationCounts:
-    """홈의 전체 active 수와 지정 기간 겹침 수. 종료일은 열린 경계다."""
+    """홈의 전체 수와 지정 기간 겹침 수. 종료일은 열린 경계다.
+
+    exclude_health — 첫 배포 범위에서 건강 기록을 세지 않는다 (#259).
+    statuses — 셀 상태. 기본은 active 만이다. deleted 는 받지 않는다.
+    """
+    wanted = sorted({ObservationStatus(s).value for s in statuses})
+    if not wanted or ObservationStatus.DELETED.value in wanted:
+        raise ValueError("deleted 는 셀 수 없는 상태다")
     if period_start >= period_end:
         raise ValueError("집계 기간은 시작일보다 종료일이 늦어야 한다")
     row = (
         await session.execute(
             _COUNT_ACTIVE_SQL,
-            {"child_id": child_id, "period_start": period_start, "period_end": period_end},
+            {
+                "child_id": child_id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "exclude_health": exclude_health,
+                "statuses": wanted,
+            },
         )
     ).one()
     return ActiveObservationCounts(total_count=row.total_count, period_count=row.period_count)
+
+
+async def count_observations_by_day(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    start: date,
+    end: date,
+    domains: Collection[ObservationDomain],
+    statuses: Collection[ObservationStatus],
+) -> dict[date, int]:
+    """[start, end) 의 날짜마다 그날과 `observed_range` 가 겹치는 관찰 수. 0인 날은 키가 없다.
+
+    여러 날에 걸친 관찰은 걸친 날마다 한 번씩 센다 — 하루 목록(page_observations 의 기간
+    overlap)에 그 관찰이 나오는 날과 같다.
+    """
+    wanted = sorted({ObservationStatus(s).value for s in statuses})
+    if not wanted or ObservationStatus.DELETED.value in wanted:
+        raise ValueError("deleted 는 셀 수 없는 상태다")
+    if not domains:
+        raise ValueError("domains 는 비어 있을 수 없다")
+    if start >= end:
+        raise ValueError("집계 기간은 시작일보다 종료일이 늦어야 한다")
+    rows = await session.execute(
+        _COUNT_BY_DAY_SQL,
+        {
+            "child_id": child_id,
+            "start": start,
+            "end_exclusive": end,
+            "kinds": sorted({f"observation_{ObservationDomain(d).value}" for d in domains}),
+            "statuses": wanted,
+        },
+    )
+    return {row.day: row.observation_count for row in rows}
 
 
 async def page_observations(
     session: AsyncSession,
     *,
     child_id: uuid.UUID,
-    domain: ObservationDomain | str | None = None,
+    domains: Collection[ObservationDomain | str] | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     status: ObservationStatus = ObservationStatus.ACTIVE,
+    statuses: Collection[ObservationStatus] | None = None,
     affinity_id: uuid.UUID | None = None,
-    unused_in_suggestions: bool = False,
     cursor: ObservationCursor | None = None,
     limit: int = 20,
 ) -> ObservationPage:
-    """5종 병합 목록: 기간 overlap, 상태/성향/근거사용 필터, 역순 커서.
+    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 역순 커서.
 
-    deleted 는 목록 필터로 열지 않는다. 보호자에게 보이지 않는 상태다.
+    domains 를 주면 그 표들만 합친다. growth Agent 처럼 한 분류가 두 표(education ·
+    routine)를 읽는 경우가 있어 하나가 아니라 목록으로 받는다. 빈 목록은 받지 않는다 —
+    "아무 표도 안 본다" 와 "전부 본다(None)" 가 섞이면 호출자 실수가 전체 조회로 새어 나간다.
+    statuses 를 주면 status 대신 그 상태들을 합쳐서 본다. deleted 는 목록 필터로 열지 않는다.
+    보호자에게 보이지 않는 상태다.
     """
     if not 1 <= limit <= 100:
         raise ValueError("limit은 1~100이어야 한다")
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from은 date_to보다 늦을 수 없다")
-    resolved = ObservationDomain(domain) if domain is not None else None
-    status = ObservationStatus(status)
-    if status is ObservationStatus.DELETED:
+    if domains is not None and not domains:
+        raise ValueError("domains 는 비어 있을 수 없다")
+    kinds = (
+        sorted({f"observation_{ObservationDomain(d).value}" for d in domains})
+        if domains is not None
+        else None
+    )
+    wanted = (
+        {ObservationStatus(s) for s in statuses}
+        if statuses is not None
+        else {ObservationStatus(status)}
+    )
+    if not wanted or ObservationStatus.DELETED in wanted:
         raise ValueError("deleted 는 목록으로 조회할 수 없는 상태다")
     result = (
         await session.execute(
             _PAGE_SQL,
             {
                 "child_id": child_id,
-                "domain": resolved.value if resolved else None,
+                "kinds": kinds,
                 "date_from": date_from,
                 "date_to_exclusive": date_to + timedelta(days=1) if date_to else None,
-                "status": status.value,
+                "statuses": sorted(s.value for s in wanted),
                 "affinity_id": affinity_id,
-                "unused_in_suggestions": unused_in_suggestions,
                 "cursor_upper": cursor.observed_to_exclusive if cursor else None,
                 "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
                 "cursor_id": cursor.id if cursor else None,
@@ -209,6 +277,45 @@ async def page_observations(
         else None
     )
     return ObservationPage(items=items, total=total, next_cursor=next_cursor)
+
+
+# 기억(profile_affinity)으로 묶이는 표. routine · health 는 affinity_id 가 없다.
+_PROMOTABLE_DOMAINS = (
+    ObservationDomain.FOOD,
+    ObservationDomain.EDUCATION,
+    ObservationDomain.ACTIVITY,
+)
+
+
+async def list_active_refs_by_affinity(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    affinity_ids: Collection[uuid.UUID],
+) -> dict[uuid.UUID, list[tuple[ObservationDomain, uuid.UUID]]]:
+    """기억마다 묶인 active 관찰의 (도메인, id). 최근 관찰이 앞이다.
+
+    기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · inactive 는
+    세지 않는다 — Curator 가 세는 것과 같은 기준이어야 카드 숫자가 상태와 어긋나지 않는다.
+    """
+    refs: dict[uuid.UUID, list[tuple[date, ObservationDomain, uuid.UUID]]] = {}
+    if not affinity_ids:
+        return {}
+    for domain in _PROMOTABLE_DOMAINS:
+        model = _MODEL_BY_DOMAIN[domain]
+        rows = await session.execute(
+            select(model.affinity_id, model.id, func.upper(model.observed_range)).where(
+                model.child_id == child_id,
+                model.affinity_id.in_(affinity_ids),
+                model.status == ObservationStatus.ACTIVE,
+            )
+        )
+        for affinity_id, observation_id, upper in rows:
+            refs.setdefault(affinity_id, []).append((upper, domain, observation_id))
+    return {
+        affinity_id: [(domain, oid) for _, domain, oid in sorted(found, reverse=True)]
+        for affinity_id, found in refs.items()
+    }
 
 
 def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
@@ -386,5 +493,8 @@ async def delete_observation(
 
 _COUNT_ACTIVE_SQL = text(
     Path(__file__).with_name("count_active_observations.sql").read_text(encoding="utf-8")
+)
+_COUNT_BY_DAY_SQL = text(
+    Path(__file__).with_name("count_observations_by_day.sql").read_text(encoding="utf-8")
 )
 _PAGE_SQL = text(Path(__file__).with_name("page_observations.sql").read_text(encoding="utf-8"))

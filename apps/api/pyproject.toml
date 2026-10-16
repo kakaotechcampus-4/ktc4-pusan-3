@@ -47,6 +47,10 @@ known-first-party = ["app", "tests"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# 비동기 테스트와 픽스처가 이벤트 루프 하나를 같이 쓴다. asyncpg 커넥션은 만든 루프에 묶여 있어서,
+# 루프를 테스트마다 새로 열면 커넥션 풀을 매번 버려야 한다(tests/conftest.py session 픽스처, #257)
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 # Supervisor eval 진입점이 tests/eval/agents/supervisor/test.py 라 패턴 추가
 python_files = ["test_*.py", "*_test.py", "test.py"]

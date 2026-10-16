@@ -58,7 +58,7 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | `row_type` | varchar(24) | `learning_activity` / `routine_step` / `habit_strategy` / `manner_practice` / `rhythm_info` / `book_guide` / `measure_guide` |
-| `area` | varchar(24) | nullable. 누리과정 5영역(`physical_health`·`communication`·`social`·`art`·`nature`) / 표준보육과정은 기본생활 포함 6영역 |
+| `area` | varchar(24) | nullable. 고시 5영역(`physical_health`·`communication`·`social`·`art`·`nature`) — 2024 개정 표준보육과정(교육부고시 제2024-23호)은 0~5세 모두 5영역이다. `basic_life`(기본생활)는 제4차(2020) 표준보육과정 0~2세의 영역이라 값 집합에만 남아 있고 시드는 쓰지 않는다 |
 | `routine_category` | varchar(24) | nullable. `observation_routine.routine_category`와 **같은 값 집합** |
 | `trigger_tags` | text[] | NOT NULL, default `'{}'`. `habit_strategy`용 (`bored` · `anxious` · `tired` …) |
 | `materials` | text[] | NOT NULL, default `'{}'`. **`hazard_term` 스캔 대상** |
@@ -126,7 +126,7 @@ Growth의 활동 행과 출력 후보도 같은 사전으로 검사합니다. **
 | `propose_learning_activity` 출력 | 사후 필터 |
 | `food_choking` 축 용어 | 교육 · 루틴 출력의 **음식 용어 스캔** — 월령과 무관하게 뺀다 (2026-10-08) |
 
-- **0–17개월 경고 → 차단 승격을 Growth 에도 적용한다** (2026-10-10, #282 PM 리뷰 — 10-08 의 "적용하지 않는다" 를 뒤집었다). 같은 아이에게 놀이는 막고 교육은 내보내면 설명이 안 돼서, 선이 없는 위험에 서비스가 긋는 선은 Activity 와 하나다. 음식 용어가 먼저 빠지므로 12–17개월에 이 승격으로 막히는 축은 `water` · `suffocation_film` 이다. 승격은 지금 Growth `safety.py` 와 Activity(#261) 코드에 따로 있고, 공용 판정(`level_at`)으로 옮기는 것은 별도 이슈다.
+- **0–17개월 경고 → 차단 승격을 Growth 에도 적용한다** (2026-10-10, #282 PM 리뷰 — 10-08 의 "적용하지 않는다" 를 뒤집었다). 같은 아이에게 놀이는 막고 교육은 내보내면 설명이 안 돼서, 선이 없는 위험에 서비스가 긋는 선은 Activity 와 하나다. 음식 용어가 먼저 빠지므로 12–17개월에 이 승격으로 막히는 축은 `water` · `suffocation_film` 이다. 승격은 공용 판정 `HazardAxis.level_at`(`common/reference.py`) 한 곳에 있어 Activity 와 같은 규칙을 읽는다(#319).
 
 ### `health_safety` (보호자 입력)
 
@@ -147,7 +147,7 @@ Growth는 **차분만** 계산합니다. 백분위·저성장·정체기 판정�
 | 테이블 | 요청 | 왜 |
 | --- | --- | --- |
 | `notice` | 테이블 신설 (**우선순위 낮음**) | 기관 맥락 연결만 빠짐. 핵심 기능과 무관 |
-| `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · `check_date date NOT NULL` | 성장폭 계산 (G-5 닫힘) |
+| `child_growth_log` | ✅ 확정(09-22) — `numeric(4,1)` cm/kg · 잰 날 `date NOT NULL`. 칸 이름은 10-10 에 `height_cm` · `weight_kg` · `measured_on` 으로 만들었다 (Agent 포트 `Measurement` · 웹 타입과 같게, `data_model.md`) | 성장폭 계산 (G-5 닫힘) |
 | `profile_affinity` | ✅ 확정(09-23) — `domain` 에 `routine` 은 없다 | Growth 는 education · activity 둘을 읽고, 루틴 관찰은 티어 3 로만 인용한다 |
 | `suggestion` | **`kind`만** 추가 · `source_refs` jsonb 제거 → `suggestion_evidence` 테이블 | 개인화/일반 표시 · 근거를 행으로 세기 위해 |
 
@@ -245,9 +245,9 @@ CREATE INDEX book_catalog_subject_idx ON book_catalog USING gin (subjects);
 | # | 쟁점 | 메모 |
 | --- | --- | --- |
 | GT-1 | `growth_doc` 초기 행 수 | 루틴 40 · 교육 60 · 습관 20 · 예절/리듬 20 · 도서 8 |
-| GT-2 | 해설서·사례집의 라이선스 | 전부 `fact_rewrite`로 시작 |
+| GT-2 | 해설서·사례집의 라이선스 | #337 기준으로 정함 — 상업적 이용 · 변경이 허락된 것만 행 출처로 쓴다. 해설서 · 사례집은 공공누리 제4유형이라 쓰지 않고, 고시 본문(`public_law`)만 쓴다(#293) |
 | GT-3 | 도서 API 연령 파라미터 코드 | 정보나루 `age` 는 대출자 연령대(0 = 영유아 0~5세)라 단계를 못 가른다. 처음 값 — 아동 도서(부가기호 첫 자리 7)로 좁히고, 서명 키워드(보드북 · 촉감책 · 헝겊책 · 사운드북 · 초점책)면 `board` 0–35, KDC 8(문학)이면 `picture` 12–71, 그 밖의 KDC 면 `info` 36–71, 부가기호가 없으면 `unknown`(0–11개월 제외). 청구기호는 쓰지 않는다. 어댑터 계약 테스트에서 실제 응답으로 확정한다. 코드는 `app/rules/book_form.py` 다 (#290). 구현에서 정한 것 — ① 부가기호 첫 자리가 7 이 아니면 서명에 보드북이 있어도 후보에서 뺀다 ② 부가기호가 없으면 서명 키워드 · KDC 가 그럴듯해도 `unknown` ③ 분류번호를 못 읽어도 `unknown` ④ 월령 범위는 양 끝을 포함한다(`board` 0–35 = 35개월까지, 36개월부터는 빠진다) ⑤ `search_books` 는 행의 `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 건다 |
-| GT-4 | `next_step_of` 사슬을 어디까지 만들지 | 양치·배변·옷 입기 3종부터 |
+| GT-4 | `next_step_of` 사슬을 어디까지 만들지 | #293 에서 6사슬(손 씻기 · 양치 · 얼굴 닦기 · 화장실 · 숟가락 · 장난감 정리). 옷 입기 · 신발 · 빨래 바구니 · 외출 준비는 고시 문구가 없어 `growth_doc.yaml` TODO |
 | GT-5 | `notice` 스키마 | OCR 팀 결정 대기. 우선순위 낮음 |
 | GT-6 | ~~`observation_education.source_suggestion_id`~~ | ✅ **폐기(09-22)** — 두지 않는다. 추천 → 관찰의 역방향 추적은 v1 범위 밖 |
 | GT-7 | 루틴 행의 원문 출처 | 배변·수면 자료의 공신력 있는 원문 확보. 별도 KB가 아니라 `growth_doc` 행으로 들어간다 |

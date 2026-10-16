@@ -12,18 +12,22 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
+from app.agents.common.age import stage_of
 from app.agents.common.refs import count_child_records
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs
 from app.agents.growth.store.ports import GrowthDocRow, GrowthDocType
 from app.agents.growth.tools.docs import (
     DOC_LIMIT,
+    DOC_POOL,
+    chain_name,
     doc_row_type,
     load_routine_chain,
+    match_chain,
+    routine_chains,
     search_growth_doc,
 )
 from app.agents.growth.tools.routine import pick_next_step
-from app.rules.age import stage_of
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING
@@ -93,6 +97,7 @@ class TestQuery:
             "interest_keys",
             "routine_category",
             "trigger_tags",
+            "rotation",  # 코드가 "아이 | 날짜" 로 만든다 — 발화를 받는 칸이 아니다
         }
 
     async def test_trigger_tags_는_영문_식별자만_받는다(self):
@@ -160,7 +165,7 @@ class TestResult:
         spy = SpyDocs(rows)
         hits = await search_growth_doc(spy, task_type=LEARNING, months=20)
         assert DOC_LIMIT == 3
-        assert spy.calls[0]["limit"] == DOC_LIMIT
+        assert spy.calls[0]["limit"] == DOC_POOL
         assert [h.row.doc_key for h in hits] == [
             "growth.learn.0",
             "growth.learn.1",
@@ -259,3 +264,58 @@ class TestRoutineChain:
     async def test_자립_단계가_아닌_행은_사슬이_없다(self):
         with pytest.raises(ValueError):
             await load_routine_chain(InMemoryGrowthDocs(), doc_row("growth.learn.a"))
+
+
+class TestRotation:
+    async def test_rotation_이_같으면_같은_세_행이다(self):
+        docs = InMemoryGrowthDocs([doc_row(f"growth.learn.{n}") for n in range(10)])
+        first = await search_growth_doc(docs, task_type=LEARNING, months=30, rotation="a|10-14")
+        again = await search_growth_doc(docs, task_type=LEARNING, months=30, rotation="a|10-14")
+        assert [h.row.id for h in first] == [h.row.id for h in again]
+        assert len(first) == DOC_LIMIT
+
+    async def test_rotation_이_바뀌면_다른_행이_섞인다(self):
+        docs = InMemoryGrowthDocs([doc_row(f"growth.learn.{n}") for n in range(10)])
+        picks = {
+            tuple(
+                h.row.id
+                for h in await search_growth_doc(
+                    docs, task_type=LEARNING, months=30, rotation=f"a|day{day}"
+                )
+            )
+            for day in range(5)
+        }
+        assert len(picks) > 1
+
+    async def test_rotation_이_없으면_포트_순서_앞의_세_행이다(self):
+        rows = [doc_row(f"growth.learn.{n}") for n in range(5)]
+        hits = await search_growth_doc(InMemoryGrowthDocs(rows), task_type=LEARNING, months=30)
+        assert [h.row.id for h in hits] == [r.id for r in rows[:DOC_LIMIT]]
+
+
+class TestChains:
+    async def test_카테고리의_사슬을_이름별로_모은다(self):
+        docs = InMemoryGrowthDocs.from_seed()
+        chains = await routine_chains(docs, months=30, category="self_care")
+        names = {chain_name(chain) for chain in chains.values()}
+        assert {"손 씻기", "양치", "얼굴 닦기", "화장실 가기"} <= names
+        assert all(len(chain) == 4 for chain in chains.values())
+
+    async def test_관찰_subject_는_사슬_이름과_양쪽으로_맞춘다(self):
+        chains = await routine_chains(
+            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
+        )
+        assert chain_name(match_chain(chains, "양치하기")) == "양치"
+        assert chain_name(match_chain(chains, "손씻기")) == "손 씻기"
+
+    async def test_맞는_사슬이_없으면_None(self):
+        chains = await routine_chains(
+            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
+        )
+        assert match_chain(chains, "신발 신기") is None
+
+    async def test_한_글자_subject_는_맞추지_않는다(self):
+        chains = await routine_chains(
+            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
+        )
+        assert match_chain(chains, "손") is None

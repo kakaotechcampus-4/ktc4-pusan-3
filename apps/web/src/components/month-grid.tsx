@@ -9,6 +9,7 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import type { CalendarDay } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { toISODate } from "@/lib/format";
+import { useEnterMotion } from "@/lib/motion";
 
 /**
  * 09 월 그리드 — 날짜 칸이 **무엇이 있었는지까지** 말한다.
@@ -17,14 +18,14 @@ import { toISODate } from "@/lib/format";
  * 전부 눌러 봐야 한다 — 밤에 한 손으로 여는 화면에서 그게 곧 인지 노동이다 (CLAUDE.md §1).
  *
  * 🚨 **표식을 색으로 가르지 않는다.** 이 시스템의 색은 뜻이 1:1 로 정해져 있고(문서 §3),
- *    "일정" · "관찰" · "일기" · "프로필 변화" 는 그 목록에 없다. 새 색을 넷 만들면 도메인 4색과
- *    섞여서 색이 무엇을 뜻하는지가 통째로 흐려진다. 그래서 **모양**으로 가른다.
+ *    "일정" · "관찰" · "일기" 는 그 목록에 없다. 새 색을 만들면 도메인 4색과 섞여서 색이
+ *    무엇을 뜻하는지가 통째로 흐려진다. 그래서 **모양**으로 가른다.
  *
  * 🚨 **모양도 단독 신호가 될 수 없다** (문서 §3 · §10). 모양을 뜻으로 잇는 것은 그리드 아래
  *    **범례**이고, 칸마다 `aria-label` 이 같은 사실을 말로 다시 낸다. 세 경로가 같은 말을 한다.
  *
  * 🚨 **일기에 기록과 같은 표식을 주지 않는다.** 일기는 기록으로 자동 추출되지 않는다(계약서 §09) —
- *    같은 점을 찍으면 화면이 그 규칙의 반대말을 한다. 네 모양을 어떤 축으로 갈랐는지는
+ *    같은 점을 찍으면 화면이 그 규칙의 반대말을 한다. 모양을 어떤 축으로 갈랐는지는
  *    아래 `MARK_SHAPE` 의 표에 있다.
  *
  * 표식은 전부 `currentColor` 다. 고른 날(`brand` 채움 · 흰 글자) · 오늘 · 비활성의 글자색을
@@ -50,11 +51,20 @@ export function MonthGrid({
 }) {
   /** 🚨 렌더마다 새 Map 을 만들면 아래 Provider 값이 매번 바뀐다. 날짜 칸이 통째로 다시 그려진다. */
   const byDate = useMemo(() => new Map(days.map((day) => [day.date, day])), [days]);
-  /** 🚨 계약서에 아직 없는 optional 필드다. 안 오면 고리 표식도 범례의 그 줄도 나오지 않는다. */
-  const hasProfileMarks = days.some((day) => (day.profile_changed_count ?? 0) > 0);
+  /**
+   * 달을 넘기면 날짜 칸이 한 칸 옆으로 넘어간다 — 다음 달은 오른쪽에서, 지난 달은 왼쪽에서
+   * (디자인 시스템 §8 "단계 넘김"). 🚨 **머리줄(연월 · 화살표)은 두고 날짜 칸만 움직인다** — 화살표를
+   * 연달아 누르는 손가락 밑에서 버튼이 미끄러지면 두 번째 누르기가 빗나간다.
+   * 키는 `YYYY-MM` 문자열이라 사전 순서가 곧 달 순서다 — 날짜를 더하거나 빼지 않는다.
+   */
+  const gridRef = useEnterMotion(
+    toISODate(month).slice(0, 7),
+    (from, to) => (to > from ? "forward" : "back"),
+    (root) => root.querySelector("table"),
+  );
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={gridRef} className="flex flex-col gap-3">
       {/* 날짜 칸이 그날 무엇이 있었는지 알아야 하는데, 라이브러리는 `DayButton` 에 day 와
           modifiers 만 준다. 컴포넌트를 렌더 안에서 만들면 안 되므로(아래 🚨) context 로 넘긴다. */}
       <DayMarksContext.Provider value={byDate}>
@@ -77,7 +87,7 @@ export function MonthGrid({
         />
       </DayMarksContext.Provider>
 
-      <DayMarkLegend hasProfileMarks={hasProfileMarks} />
+      <DayMarkLegend />
     </div>
   );
 }
@@ -124,7 +134,7 @@ function CalendarDayButton({ day, modifiers, children, ...buttonProps }: DayButt
     >
       <span>{children}</span>
       {/* 표식이 없는 날에도 자리를 지킨다 — 있고 없고에 따라 숫자가 위아래로 흔들리면
-          달을 훑을 때 줄이 맞지 않는다. 높이는 제일 큰 표식(고리 8 · 사선 획의 대각 7.8)에 맞춘다. */}
+          달을 훑을 때 줄이 맞지 않는다. 높이 8 은 고리 표식(기억 변화 · 보류 #318)까지 들어가게 잡은 값이다. */}
       <span aria-hidden className="flex h-2 items-center justify-center gap-1">
         {marks.map((mark) => (
           <Mark key={mark.kind} kind={mark.kind} />
@@ -142,13 +152,13 @@ const CALENDAR_COMPONENTS = {
 
 /* ── 표식 ─────────────────────────────────────────────────────────────── */
 
-type MarkKind = "event" | "observation" | "diary" | "profile";
+type MarkKind = "event" | "observation" | "diary";
 
 /** 순서는 이 배열이 정한다 — 칸마다 순서가 달라지면 모양을 외울 수 없다. */
-const MARK_ORDER: MarkKind[] = ["event", "observation", "diary", "profile"];
+const MARK_ORDER: MarkKind[] = ["event", "observation", "diary"];
 
 /**
- * 🚨 **네 모양이 한 가족이어야 한다.** 차트 범례처럼 같은 언어로 읽혀야지, 제각각이면 칸에
+ * 🚨 **모양들이 한 가족이어야 한다.** 차트 범례처럼 같은 언어로 읽혀야지, 제각각이면 칸에
  *    부스러기가 흩어진 것처럼 보인다. 그래서 **기울어진 것을 두지 않는다** — 화면의 다른 모든
  *    선이 수직·수평인데 표식 하나만 대각선이면 그것만 혼자 튄다 (실제로 사선 안을 그렸다가
  *    "예쁘지 않다" 로 되돌린 자리다).
@@ -161,30 +171,26 @@ const MARK_ORDER: MarkKind[] = ["event", "observation", "diary", "profile"];
  * | 일정 | 가로로 길다 | 참 | 둥근 끝 | 10×3 |
  * | 기록 | 정사각 | 참 | 둥글다 | 6 |
  * | 일기 | 정사각 | **빔** | **각졌다** | 7 |
- * | 기억 변화 | 정사각 | **빔** | 둥글다 | 8 |
  *
- * 🚨 제일 약한 짝은 **일기(빈 네모 7) vs 기억 변화(빈 원 8)** 다 — 둘 다 비어 있어서 각짐
- *    하나로만 갈리면 위태롭다. 그래서 크기를 한 단계 벌려 **각짐 + 크기** 두 축으로 잡았다.
- *    둘 중 하나의 크기를 건드릴 때 이 문장을 같이 볼 것.
+ * ⚠️ **"기억 변화"(빈 고리 8)는 보류다** (#318). 서버에 기억 변화 이력 표가 없어서 그날 기억이
+ *    달라졌는지를 내려 줄 수 없다 — 표식도 범례 줄도 뺐다. 다시 세울 때는 일기(빈 네모 7)와
+ *    둘 다 비어 있는 짝이라 **각짐 + 크기** 두 축으로 갈라야 한다 (디자인 시스템 §7 캘린더 그리드).
  */
 const MARK_SHAPE: Record<MarkKind, string> = {
   // 가로 막대 — 시간을 차지하는 것(일정)은 눕는다. 유일하게 가로로 긴 표식이다.
   event: "h-[3px] w-2.5 rounded-full bg-current",
   // 찬 점 — 남긴 말 하나.
   observation: "size-1.5 rounded-full bg-current",
-  // 빈 네모 — 펼쳐 놓은 종이 한 장(일기). 기록과 채움이, 기억과 각짐·크기가 다르다.
+  // 빈 네모 — 펼쳐 놓은 종이 한 장(일기). 기록과 채움 · 각짐이 다르다.
   // 🚨 크기를 **rem 으로** 준다 (7px = 0.4375rem). `size-[7px]` 로 두면 글자를 키워도 혼자
-  //    7px 에 머물러, 200% 에서 기록(12) < 일기(7) < 기억(16) 으로 **크기 서열이 뒤집힌다.**
+  //    7px 에 머물러, 200% 에서 기록(12) > 일기(7) 로 **크기 서열이 뒤집힌다.**
   diary: "size-[0.4375rem] rounded-[1.5px] border-[1.5px] border-current",
-  // 빈 고리 — 기록이 모여 **둘레만 생긴** 것. 채워지지 않은 것이 아직 확정이 아니라는 뜻과 맞는다.
-  profile: "size-2 rounded-full border-[1.5px] border-current",
 };
 
 const MARK_LABEL: Record<MarkKind, string> = {
   event: "일정",
   observation: "기록",
   diary: "일기",
-  profile: "기억 변화",
 };
 
 function Mark({ kind }: { kind: MarkKind }) {
@@ -202,8 +208,7 @@ function markList(summary: CalendarDay | undefined): Array<{ kind: MarkKind; spo
   const spoken: Partial<Record<MarkKind, string>> = {};
   if (summary.has_event) spoken.event = "일정 있음";
   if (summary.observation_count > 0) spoken.observation = `기록 ${summary.observation_count}건`;
-  if (summary.has_diary) spoken.diary = "일기 있음";
-  if ((summary.profile_changed_count ?? 0) > 0) spoken.profile = "기억 달라짐";
+  if (summary.has_my_diary) spoken.diary = "일기 있음";
 
   return MARK_ORDER.filter((kind) => spoken[kind] !== undefined).map((kind) => ({
     kind,
@@ -213,14 +218,12 @@ function markList(summary: CalendarDay | undefined): Array<{ kind: MarkKind; spo
 
 /**
  * 모양을 뜻으로 잇는 유일한 자리다. 🚨 지우면 표식이 단독 신호가 된다 (문서 §3 · §10).
- * `/design-system` 도 이 컴포넌트를 그대로 그린다 — 네 모양의 원본이 한 곳이어야 한다.
+ * `/design-system` 도 이 컴포넌트를 그대로 그린다 — 모양의 원본이 한 곳이어야 한다.
  */
-export function DayMarkLegend({ hasProfileMarks }: { hasProfileMarks: boolean }) {
-  const kinds = MARK_ORDER.filter((kind) => kind !== "profile" || hasProfileMarks);
-
+export function DayMarkLegend() {
   return (
     <ul className="text-caption text-ink-muted flex flex-wrap items-center gap-x-4 gap-y-1">
-      {kinds.map((kind) => (
+      {MARK_ORDER.map((kind) => (
         <li key={kind} className="flex items-center gap-1.5">
           <Mark kind={kind} />
           {MARK_LABEL[kind]}
@@ -244,9 +247,9 @@ const CALENDAR_CLASSES = {
   month_caption: "flex min-h-touch items-center justify-center",
   caption_label: "text-section text-ink",
   button_previous:
-    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
+    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted ease-standard transition-colors duration-120 flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   button_next:
-    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
+    "text-ink-muted hover:bg-surface-muted active:bg-surface-muted ease-standard transition-colors duration-120 flex h-touch aspect-square items-center justify-center rounded-full disabled:opacity-40",
   month_grid: "w-full border-collapse",
   weekdays: "flex",
   // 🚨 글자가 들어가는 요소에 고정 높이를 주지 않는다 (apps/web/CLAUDE.md §5). `h-8` 이었는데

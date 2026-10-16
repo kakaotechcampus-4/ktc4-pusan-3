@@ -12,19 +12,24 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
+from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
+from app.agents.common.evidence import RankedEvidence
 from app.agents.common.gate import DataReady, Gate, SafetyState
+from app.agents.common.suggestion import MAX_SUGGESTIONS, SuggestionDraft
 from app.agents.growth.gating import EDUCATION_MIN_MONTH
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import (
     BookRow,
+    GrowthDocRow,
     GrowthMeasurement,
     GrowthPorts,
+    RoutineObservation,
     SafetyEntry,
     SafetyLookupError,
 )
+from app.agents.growth.tools.routine import PickedStep
 from app.agents.growth.tools.safety import SafetyRules, SafetyRulesUnavailable, load_safety_rules
-from app.rules.age import life_stage
 
 
 @dataclass
@@ -47,6 +52,29 @@ class GrowthRunState:
     # `propose_books` 는 이 표에 있는 ISBN 만 통과시킨다 — 연령 필터에 걸러진 책은 들어오지 않는다
     seen_books: dict[str, BookRow] = field(default_factory=dict)
 
+    # ── 모델 경로 ──
+    # 이번 run 에서 조회 tool 이 돌려준 근거 (id → 근거). 이 표 밖 id 는 출력 tool 이 거절한다
+    seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
+    # search_routine_memory 가 돌려준 루틴 관찰. 근거 14일 · 카테고리 대조에 쓴다
+    seen_routine: dict[UUID, RoutineObservation] = field(default_factory=dict)
+    # 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
+    seen_docs: dict[UUID, GrowthDocRow] = field(default_factory=dict)
+    # 관찰 subject(정규화) → 코드가 고른 다음 단계. 모델은 여기 있는 step_id 만 쓴다
+    steps: dict[str, PickedStep] = field(default_factory=dict)
+    # 출력 tool 이 통과시킨 추천과 안전 필터 · 금지 표현으로 빠진 후보 이름 (재호출 제외 목록)
+    suggestions: tuple[SuggestionDraft, ...] = ()
+    excluded: tuple[str, ...] = ()
+    # 식품 사전에 없는 알레르기 이름의 확인 문구 (교육). 결과 readouts 앞에 붙는다
+    cautions: tuple[str, ...] = ()
+    # 이번 출력이 채울 수 있는 최대 개수. 루틴은 고른 단계 수가 상한이다
+    capacity: int = MAX_SUGGESTIONS
+    # 재호출 전에 이미 통과한 루틴 단계. 재호출은 남은 단계만 다시 내면 된다
+    done_steps: frozenset[UUID] = frozenset()
+    # 추천 없이 끝내는 코드 문구 키 (닫힘 · doc.no_row · next_step.chain_end)
+    closing: str | None = None
+    # 되묻기 한 줄 (needs_observation)
+    question: str | None = None
+
 
 @dataclass(frozen=True)
 class GrowthContext:
@@ -55,7 +83,7 @@ class GrowthContext:
     now: datetime  # timezone이 붙은 현재 시각
     timezone: tzinfo
     ports: GrowthPorts
-    # 안전 사전을 읽는 함수. 기본은 develop 의 사전으로 만든 임시 구현이다 (tools/safety.py)
+    # 안전 사전을 읽는 함수. 기본은 사전과 공용 판정으로 만든 load_safety_rules (tools/safety.py)
     safety_rules: Callable[[], SafetyRules] = load_safety_rules
     state: GrowthRunState = field(default_factory=GrowthRunState)
 

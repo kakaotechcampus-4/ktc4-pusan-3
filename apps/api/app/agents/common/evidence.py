@@ -16,8 +16,12 @@ Agent 는 그 결과를 읽기만 한다 — 유예일을 여기서 다시 세�
 
 기피(−1)는 제외 필터가 아니라 근거다. "브로콜리를 싫어해서 이렇게 골랐어요"가 되어야 한다.
 후보에서 지우는 것은 안전 필터의 일이고 이 함수는 순위만 매긴다.
+
+인용은 이번 run에 조회한 근거 안에서만 한다(Tool_공통.md §5-3). 조회 tool 이 `top_refs()` 로
+상위 N 개를 모델에게 돌려주며 run state 의 대조표에 적고, 출력 tool 이 `unseen()` 으로 대조한다.
 """
 
+from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
@@ -32,6 +36,9 @@ AffinityState = Literal["candidate", "confirmed", "archived"]
 OBSERVATION_WINDOW_DAYS = 14
 
 DEFAULT_STRENGTH_THRESHOLD = 0.5
+
+# 조회 tool 이 모델에게 돌려주는 근거 수. 모델은 이 안에서만 인용할 수 있다 (Tool_공통.md §5-3)
+TOP_N = 10
 
 
 @dataclass(frozen=True)
@@ -51,22 +58,34 @@ class AffinityRow:
 
 @dataclass(frozen=True)
 class ObservationRow:
-    """`observation_*` 한 줄."""
+    """`observation_*` 한 줄.
+
+    대조와 설명에 쓰는 칸을 나눈다. 대조(기피 거절 · keywords)는 네 테이블 공통 칸인 `subject`
+    로 한다 — affinity `merge_key` 와 같은 모양이라 같은 대상이 같은 말로 걸린다. 설명(reason ·
+    화면의 "사용한 기록")은 사람이 읽는 칸(Activity `activity` · Education `topic`)을 `label` 로
+    넘긴다. 그런 칸이 없는 도메인(Food · Routine)은 비워 두면 `subject` 를 쓴다.
+    """
 
     id: UUID
     kind: ChildRecordKind  # observation_food · observation_activity …
-    subject: str
+    subject: str  # 대조 키. Curator 가 merge_key 를 만드는 값
     polarity: int  # -1 / 0 / +1. NOT NULL
     observed_on: date
+    label: str = ""  # 근거 설명 · 화면용. 비면 subject
 
 
 @dataclass(frozen=True)
 class RankedEvidence:
     ref: Ref
     tier: Literal[1, 2, 3]
-    label: str
+    label: str  # cite() · reason · 화면. affinity 는 merge_key
     polarity: int
     observed_on: date
+    subject: str = ""  # 기피 거절 · keywords 대조. affinity 는 merge_key. 비면 label
+
+    def __post_init__(self) -> None:
+        if not self.subject:
+            object.__setattr__(self, "subject", self.label)
 
     @property
     def is_avoidance(self) -> bool:
@@ -104,6 +123,7 @@ def rank_evidence(
                 label=row.merge_key,
                 polarity=row.polarity,
                 observed_on=row.last_observed_on,
+                subject=row.merge_key,
             )
         )
 
@@ -115,9 +135,10 @@ def rank_evidence(
             RankedEvidence(
                 ref=Ref(kind=observation.kind, id=observation.id),
                 tier=3,
-                label=observation.subject,
+                label=observation.label or observation.subject,
                 polarity=observation.polarity,
                 observed_on=observation.observed_on,
+                subject=observation.subject,
             )
         )
 
@@ -125,16 +146,48 @@ def rank_evidence(
     return tuple(ranked)
 
 
+def top_refs(ranked: Sequence[RankedEvidence], *, limit: int = TOP_N) -> dict[UUID, RankedEvidence]:
+    """조회 tool이 모델에게 돌려줄 상위 근거 — 이번 run 에 인용할 수 있는 표(id → 근거).
+
+    조회 tool은 이 표를 run state(`seen_evidence`)에 합치고, 같은 순서로 모델에게 보낼 목록을
+    만든다. 상위 N 밖은 모델이 보지 못했으니 인용하면 지어낸 것과 같다.
+    """
+    return {item.ref.id: item for item in ranked[:limit]}
+
+
+def unseen(ids: Iterable[str], seen: Container[UUID]) -> tuple[str, ...]:
+    """인용한 id 중 이번 run 조회 결과에 없는 것. 비어 있지 않으면 그 후보를 거절한다.
+
+    근거만 빼고 통과시키지 않는다 — 모델이 id 를 지어냈다는 뜻이고, 빼고 내보내면 남은 근거로
+    "우리 아이 맞춤" 인 척하게 된다. 거절 코드는 `EVIDENCE_REQUIRED` 다 (#195 리뷰 · Tool_공통.md
+    §5-3). UUID 로 읽히지 않는 문자열도 조회하지 않은 id 다.
+
+    `seen` 은 `top_refs()` 로 모은 표나 id 집합이다.
+    """
+    missing: list[str] = []
+    for raw in ids:
+        try:
+            key = UUID(raw)
+        except ValueError:
+            missing.append(raw)
+            continue
+        if key not in seen:
+            missing.append(raw)
+    return tuple(missing)
+
+
 def cite(ranked: RankedEvidence, *, note: str) -> EvidenceCitation:
     """줄 세운 근거 하나를 인용으로 옮긴다.
 
-    `polarity`와 `label`을 옮기는 자리는 여기 하나다.
+    `polarity` · `label` · `subject` · `observed_on` 을 옮기는 자리는 여기 하나다.
     """
     return EvidenceCitation(
         ref=ranked.ref,
         note=note,
         polarity=ranked.polarity,
         label=ranked.label,
+        subject=ranked.subject,
+        observed_on=ranked.observed_on,
     )
 
 

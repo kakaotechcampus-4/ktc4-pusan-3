@@ -7,6 +7,8 @@ import { qk } from "@/lib/api/queryKeys";
 import {
   isDraftEvent,
   streamRunEvents,
+  type AgentResultEvent,
+  type DoneEvent,
   type EventDraftsEvent,
   type FailedEvent,
   type GuidanceEvent,
@@ -89,6 +91,13 @@ export interface RunState {
    */
   unavailable: Agent[];
   /**
+   * 도메인 Agent 결과 (#227). 🚨 **도착한 순서 그대로 쌓는다** — 재정렬하지도, 같은 Agent 끼리 합치지도
+   *    않는다. task 가 둘인 Agent 는 결과도 둘이고, 둘은 다른 블록이다.
+   * 🚨 비어 있는 결과(`readouts: []` · `question: null`)도 그대로 담는다. 그리지 않는 것은 화면이 정한다 —
+   *    리듀서가 버리면 "결과가 왔는가" 와 "보일 것이 있는가" 가 한 값이 된다.
+   */
+  agentResults: AgentResultEvent[];
+  /**
    * Agent 가 만든 일정 초안 묶음. 🚨 **아직 저장된 것이 아니다** — 보호자가 카드에서 제출해야
    *    캘린더에 들어간다 (승인 게이트 ㉠). 08 사진 run 에서는 늘 빈 배열이다.
    */
@@ -98,6 +107,15 @@ export interface RunState {
    *    그건 `unconfirmed` 다. 둘을 섞으면 화면이 "아무것도 저장하지 않았어요" 라고 단정한다.
    */
   failure: FailedEvent | null;
+  /**
+   * **저장한 뒤에 끊긴 run** — `done` 이 `completed: false` 로 왔다 (#253 · #271).
+   *
+   * 🚨 **실패가 아니다.** 서버는 무언가 실제로 쓴 뒤 끊겼을 때만 이 길로 닫고 Idempotency 키와
+   *    이어받기 맥락을 놓지 않는다. 그래서 `status` 는 그대로 `done`(또는 `partial`)이고
+   *    `isRunConfirmed` 도 참이다 — 화면도 끝난 run 으로 정리한다(질문을 닫는다).
+   * 🚨 **무엇이 저장됐는지는 모른다.** `observations` 가 비어 있어도 "저장하지 않았어요" 가 아니다.
+   */
+  interrupted: boolean;
 }
 
 export const initialRunState: RunState = {
@@ -112,8 +130,10 @@ export const initialRunState: RunState = {
   guidance: [],
   note: null,
   unavailable: [],
+  agentResults: [],
   drafts: [],
   failure: null,
+  interrupted: false,
 };
 
 export type RunAction =
@@ -196,6 +216,12 @@ export function runReducer(state: RunState, action: RunAction): RunState {
           return { ...state, unavailable: [...state.unavailable, ...added] };
         }
 
+        case "agent_result":
+          return {
+            ...state,
+            agentResults: [...state.agentResults, action.event.data as AgentResultEvent],
+          };
+
         // 🚨 **아무것도 하지 않는 것이 맞다** (#140). 조용한 채널의 하트비트라 담을 것이 없고,
         //    20초 타이머는 `pumpRunEvents` 의 `onEvent` 가 이미 되살렸다. 여기서 state 를 새로
         //    만들면 10초마다 04 화면이 통째로 다시 그려진다.
@@ -211,7 +237,12 @@ export function runReducer(state: RunState, action: RunAction): RunState {
 
         case "done":
           // partial 이 왔었다면 done 이 와도 "부분 결과"다. 성공 화면으로 덮지 않는다.
-          return { ...state, status: state.partial ? "partial" : "done" };
+          // 🚨 `completed` 는 `false` 일 때만 끊김이다 — 정상 done 에는 키가 없다 (#271).
+          return {
+            ...state,
+            status: state.partial ? "partial" : "done",
+            interrupted: (action.event.data as DoneEvent).completed === false,
+          };
 
         default:
           /**

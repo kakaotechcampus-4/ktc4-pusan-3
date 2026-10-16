@@ -24,6 +24,13 @@ EventTypeValue = Literal["core", "episodic"]
 EventCategoryValue = Literal["institution", "health", "activity", "etc"]
 
 
+# 제출 요청(SubmitEventRequest · UpdateEventRequest)이 받는 준비물 상한.
+# 초안을 만드는 쪽도 이 안에서만 낸다 — 초안을 그대로 제출했는데 422 가 나면
+# 보호자는 무엇을 지워야 하는지 모른다
+MAX_DRAFT_ITEMS = 100
+MAX_ITEM_NAME = 100
+
+
 class DraftBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

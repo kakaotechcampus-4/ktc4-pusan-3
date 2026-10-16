@@ -3,6 +3,7 @@
 docs/agents/shared/Agent_공통규약.md §3 · §10
 """
 
+import inspect
 from datetime import date, datetime, timedelta, timezone
 from typing import get_args
 from uuid import uuid4
@@ -26,23 +27,29 @@ from app.agents.common.result import (
 )
 from app.agents.common.suggestion import (
     MAX_SUGGESTIONS,
+    BundleSummary,
     SuggestionDraft,
     SuggestionRejected,
     build,
+    bundle_summary,
+    cannot_resume_notice,
     check_count,
     count_notice,
+    empty_notice,
+    merge_drafts,
 )
 
 KST = timezone(timedelta(hours=9))
+TODAY = date(2026, 10, 14)
 
 
-def evidence(*, kind="observation_food", polarity=1, label="당근"):
+def evidence(*, kind="observation_food", polarity=1, label="당근", observed_on=date(2026, 9, 20)):
     return RankedEvidence(
         ref=Ref(kind=kind, id=uuid4()),
         tier=1,
         label=label,
         polarity=polarity,
-        observed_on=date(2026, 9, 20),
+        observed_on=observed_on,
     )
 
 
@@ -54,9 +61,16 @@ def citation(*, kind="observation_food", polarity=1, label="당근", note="지�
 
 
 def general_drafts(count):
-    """근거 없는 일반 추천 count 개. 개수 검사는 내용을 보지 않는다."""
+    """문서 행만 인용한 일반 추천 count 개. 개수 검사는 내용을 보지 않는다."""
     return tuple(
-        build(agent="food", content=f"{i}", reason="", citations=(), general_reason="또래 기준")
+        build(
+            agent="food",
+            content=f"{i}",
+            reason="",
+            citations=(_doc(),),
+            general_reason="또래 기준",
+            today=TODAY,
+        )
         for i in range(count)
     )
 
@@ -94,21 +108,36 @@ class TestSuggestionBuild:
             content="계란말이",
             reason="지난주에 계란을 잘 먹어서요",
             citations=(citation(),),
+            today=TODAY,
         )
         assert draft.kind == "personalized"
         assert len(draft.citations) == 1
 
-    def test_근거_0행이면_일반_추천이고_이유를_덮어쓴다(self):
+    def test_아이_기록도_문서도_없으면_거절한다(self):
+        """일반 추천은 문서 행이 근거다 (루트 §2). 둘 다 없으면 근거 없는 추천이다."""
+        with pytest.raises(SuggestionRejected, match="문서 행 근거"):
+            build(
+                agent="food",
+                content="계란말이",
+                reason="모델이 쓴 개인화 문장",
+                citations=(),
+                general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+                today=TODAY,
+            )
+
+    def test_문서_행을_인용한_일반_추천은_이유를_덮어쓴다(self):
+        doc = citation(kind="food_doc", polarity=0, label="")
         draft = build(
             agent="food",
             content="계란말이",
             reason="모델이 쓴 개인화 문장",
-            citations=(),
+            citations=(doc,),
             general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            today=TODAY,
         )
         assert draft.kind == "general"
         assert draft.reason == "또래 아이들이 많이 먹는 메뉴예요."
-        assert draft.citations == ()
+        assert draft.citations == (doc,)
 
     def test_문서_행만_있으면_일반_추천(self):
         draft = build(
@@ -117,6 +146,7 @@ class TestSuggestionBuild:
             reason="모델이 쓴 문장",
             citations=(citation(kind="growth_doc", polarity=0, label=""),),
             general_reason="또래 아이들이 많이 하는 놀이예요.",
+            today=TODAY,
         )
         assert draft.kind == "general"
         # 문서 행은 kind 를 바꾸지 않지만 인용은 그대로 실려 나간다
@@ -124,11 +154,71 @@ class TestSuggestionBuild:
 
     def test_근거_0행인데_일반_문구가_없으면_거절(self):
         with pytest.raises(SuggestionRejected, match="일반 추천 문구"):
-            build(agent="food", content="계란말이", reason="이유", citations=())
+            build(agent="food", content="계란말이", reason="이유", citations=(), today=TODAY)
 
     def test_개인화인데_이유가_비면_거절(self):
         with pytest.raises(SuggestionRejected, match="이유가 비었다"):
-            build(agent="food", content="계란말이", reason="   ", citations=(citation(),))
+            build(
+                agent="food", content="계란말이", reason="   ", citations=(citation(),), today=TODAY
+            )
+
+
+def _old(on=date(2026, 3, 1)):
+    """TODAY 기준 6개월 넘은 확정 관심을 인용한다."""
+    stale = evidence(kind="profile_affinity", label="딸기", observed_on=on)
+    return cite(stale, note="딸기를 자주 찾았다")
+
+
+def _doc():
+    return EvidenceCitation(ref=Ref(kind="food_doc", id=uuid4()), note="질감 안내")
+
+
+def _draft_of(*citations):
+    return build(
+        agent="food",
+        content="딸기 푸딩",
+        reason="딸기를 좋아해서요",
+        citations=citations,
+        general_reason="또래 기준",
+        today=TODAY,
+    )
+
+
+class TestStaleEvidence:
+    """6개월 넘은 아이 기록은 단독 근거로 쓰지 않는다 (루트 §2 · NF-08 · #329)."""
+
+    def test_6개월_지난_아이_기록만_인용하면_일반_추천이고_그_인용은_빠진다(self):
+        doc = _doc()
+        draft = _draft_of(_old(), doc)
+        assert draft.kind == "general"
+        assert draft.reason == "또래 기준"
+        assert draft.citations == (doc,)  # 문서 행은 남고 아이 기록은 빠진다
+
+    def test_오래된_근거와_최근_근거를_같이_인용하면_개인화이고_둘_다_남는다(self):
+        old, fresh = _old(), citation()
+        draft = _draft_of(old, fresh)
+        assert draft.kind == "personalized"
+        assert draft.citations == (old, fresh)
+
+    @pytest.mark.parametrize(
+        ("on", "kind"), [(date(2026, 4, 14), "general"), (date(2026, 4, 15), "personalized")]
+    )
+    def test_6개월은_달력으로_센다(self, on, kind):
+        assert _draft_of(_old(on), _doc()).kind == kind
+
+    def test_날짜를_모르는_아이_기록은_개인화_근거로_세지_않는다(self):
+        undated = EvidenceCitation(ref=Ref(kind="observation_food", id=uuid4()), note="먹었다")
+        assert _draft_of(undated, _doc()).kind == "general"
+
+    def test_cite_는_근거의_날짜를_옮기고_payload_에는_싣지_않는다(self):
+        item = citation()
+        assert item.observed_on == date(2026, 9, 20)
+        assert set(item.to_payload()) == {"source_kind", "source_id", "note"}
+
+    def test_build_의_today_는_기본값이_없다(self):
+        # 기본값이 있으면 날짜를 안 넘긴 호출이 조용히 6개월 판정을 건너뛴다
+        today = inspect.signature(build).parameters["today"]
+        assert today.default is inspect.Parameter.empty
 
 
 class TestNoteRequired:
@@ -141,6 +231,7 @@ class TestNoteRequired:
                 content="계란말이",
                 reason="계란을 잘 먹어서요",
                 citations=(citation(note="   "),),
+                today=TODAY,
             )
 
     def test_문서_행도_note_가_필요하다(self):
@@ -156,6 +247,7 @@ class TestNoteRequired:
                     ),
                 ),
                 general_reason="또래 아이들이 많이 하는 놀이예요.",
+                today=TODAY,
             )
 
 
@@ -167,7 +259,74 @@ class TestAvoidanceMustBeStated:
                 content="오므라이스",
                 reason="단백질이 들어 있어요",
                 citations=(citation(polarity=-1, label="브로콜리"),),
+                today=TODAY,
             )
+
+    def test_관찰은_문장_label_대신_대상_subject_를_말해도_통과(self):
+        """관찰의 label 은 활동 문장이라 이유에 그대로 나오지 않는다 (Activity 라이브 eval)."""
+        ranked = RankedEvidence(
+            ref=Ref(kind="observation_activity", id=uuid4()),
+            tier=3,
+            label="물감 놀이 하다가 울었음",
+            subject="물감",
+            polarity=-1,
+            observed_on=date(2026, 10, 5),
+        )
+        draft = build(
+            agent="activity",
+            content="종이컵 탑 쌓기",
+            reason="물감은 피해서 종이컵으로 골랐어요",
+            citations=(cite(ranked, note="물감 놀이를 싫어했어요"),),
+            today=TODAY,
+        )
+        assert draft.kind == "personalized"
+        with pytest.raises(SuggestionRejected, match="무엇을 피했는지"):
+            build(
+                agent="activity",
+                content="종이컵 탑 쌓기",
+                reason="집에서 바로 할 수 있어요",
+                citations=(cite(ranked, note="물감 놀이를 싫어했어요"),),
+                today=TODAY,
+            )
+
+    @pytest.mark.parametrize(
+        ("reason", "stated"),
+        [
+            ("물감으로 손도장을 찍어 봐요", False),  # "물" 이 들어 있을 뿐 다른 낱말이다
+            ("물가 대신 모래밭에서 놀아요", False),
+            ("물은 피해서 모래로 골랐어요", True),
+            ("물놀이를 싫어해서 모래로 골랐어요", True),
+            ("물 대신 모래로 골랐어요", True),
+        ],
+    )
+    def test_한_글자_대상은_낱말로만_센다(self, reason, stated):
+        """#305 · #341 의 한 글자 이름 문제와 같다 (#359 리뷰). 두 글자 이상은 그대로다."""
+        ranked = RankedEvidence(
+            ref=Ref(kind="profile_affinity", id=uuid4()),
+            tier=1,
+            label="물",
+            subject="물",
+            polarity=-1,
+            observed_on=date(2026, 10, 5),
+        )
+        citations = (cite(ranked, note="물을 싫어해요"),)
+        if stated:
+            assert build(
+                agent="activity",
+                content="모래 놀이",
+                reason=reason,
+                citations=citations,
+                today=TODAY,
+            )
+        else:
+            with pytest.raises(SuggestionRejected, match="무엇을 피했는지"):
+                build(
+                    agent="activity",
+                    content="모래 놀이",
+                    reason=reason,
+                    citations=citations,
+                    today=TODAY,
+                )
 
     def test_밝히면_통과(self):
         draft = build(
@@ -175,6 +334,7 @@ class TestAvoidanceMustBeStated:
             content="오므라이스",
             reason="브로콜리를 기피해서 계란 맛이 강한 걸로 골랐어요",
             citations=(citation(polarity=-1, label="브로콜리"),),
+            today=TODAY,
         )
         assert draft.kind == "personalized"
 
@@ -184,6 +344,7 @@ class TestAvoidanceMustBeStated:
             content="계란말이",
             reason="계란을 잘 먹어서요",
             citations=(citation(polarity=1, label="계란"),),
+            today=TODAY,
         )
         assert draft.kind == "personalized"
 
@@ -196,7 +357,12 @@ class TestSuggestionLists:
 
     def test_기본은_빈_목록(self):
         draft = build(
-            agent="food", content="된장찌개", reason="", citations=(), general_reason="또래 기준"
+            agent="food",
+            content="된장찌개",
+            reason="",
+            citations=(_doc(),),
+            general_reason="또래 기준",
+            today=TODAY,
         )
         assert draft.allergens == ()
         assert draft.items == ()
@@ -208,10 +374,11 @@ class TestSuggestionLists:
             agent="food",
             content="된장찌개",
             reason="",
-            citations=(),
+            citations=(_doc(),),
             general_reason="또래 기준",
             allergens=("대두",),
             items=("된장", "두부"),
+            today=TODAY,
         )
         assert draft.kind == "general"
         payload = draft.to_payload()
@@ -225,6 +392,7 @@ class TestSuggestionLists:
             reason="물놀이를 좋아해서요",
             citations=(citation(kind="observation_activity", label="물놀이"),),
             items=("수영복",),
+            today=TODAY,
         )
         assert draft.kind == "personalized"
         assert draft.items == ("수영복",)
@@ -282,6 +450,12 @@ class TestCountNotice:
         assert notice.kind == "notice"
         assert notice.authored_by == "code"
         assert notice.code == "empty"
+
+    def test_이어서_할_수_없음_안내는_코드_문구다(self):
+        notice = cannot_resume_notice()
+        assert notice.code == "cannot_resume"
+        assert notice.authored_by == "code"
+        assert notice.body == "이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요."
 
     def test_0개_문구가_따로_있는_Agent_는_그_문구를_쓴다(self):
         notice = count_notice(0, empty=self.POOL_EMPTY)
@@ -433,3 +607,188 @@ class TestEventRequest:
         )
         assert request.category == "health"
         assert request.ends_at is None
+
+
+class TestMergeDrafts:
+    """안전 필터 뒤 재호출 결과 합치기 (#245) — 처음 것 먼저, 빈자리만, 같은 것은 건너뛴다."""
+
+    @staticmethod
+    def drafts(*contents: str) -> tuple[SuggestionDraft, ...]:
+        return tuple(
+            SuggestionDraft(agent="activity", kind="general", content=c, reason="r")
+            for c in contents
+        )
+
+    @staticmethod
+    def content(draft: SuggestionDraft) -> str:
+        return draft.content
+
+    def test_처음_것을_먼저_두고_빈자리만_채운다(self):
+        merged = merge_drafts(
+            self.drafts("가", "나"), self.drafts("다", "라", "마"), key=self.content
+        )
+        assert [d.content for d in merged] == ["가", "나", "다"]
+
+    def test_같은_추천은_Agent_가_넘긴_key_로_가린다(self):
+        """Tool_공통 §5-2 — 무엇이 같은 추천인지는 Agent 가 정한다 (Food 는 menu_key)."""
+
+        def no_spaces(draft: SuggestionDraft) -> str:
+            return "".join(draft.content.split())
+
+        first, again = self.drafts("종이컵 탑", "나"), self.drafts("종이컵탑", "다")
+        assert [d.content for d in merge_drafts(first, again, key=no_spaces)] == [
+            "종이컵 탑",
+            "나",
+            "다",
+        ]
+        assert len(merge_drafts(first, again, key=self.content)) == MAX_SUGGESTIONS
+
+    def test_딸린_값은_짝으로_넘기면_순서가_같이_간다(self):
+        first = tuple(zip(self.drafts("가"), [("경고",)], strict=True))
+        again = tuple(zip(self.drafts("가", "나"), [(), ("다른 경고",)], strict=True))
+        merged = merge_drafts(first, again, key=lambda pair: pair[0].content)
+        assert [(d.content, w) for d, w in merged] == [("가", ("경고",)), ("나", ("다른 경고",))]
+
+    def test_재호출이_비면_처음_것만(self):
+        assert [d.content for d in merge_drafts(self.drafts("가"), (), key=self.content)] == ["가"]
+
+    def test_최대_개수를_넘기지_않는다(self):
+        merged = merge_drafts(self.drafts("가", "나", "다"), self.drafts("라"), key=self.content)
+        assert len(merged) == MAX_SUGGESTIONS
+
+
+class TestBundleSummary:
+    """04 Agent 블록 머리의 묶음 칸 (#227). 모델을 부르지 않고 코드로 만든다."""
+
+    def test_추천이_없으면_칸이_비어_있다(self):
+        assert bundle_summary(()) == BundleSummary(kind=None, reason=None)
+
+    def test_개인화는_근거로_쓴_아이_기록_수로_말한다(self):
+        shared = citation()
+        first = build(
+            agent="food",
+            content="계란말이",
+            reason="r1",
+            citations=(shared, citation(label="두부")),
+            today=TODAY,
+        )
+        second = build(
+            agent="food", content="두부조림", reason="r2", citations=(shared,), today=TODAY
+        )
+
+        # 같은 기록(shared)은 한 번만 센다 — 2건
+        assert bundle_summary((first, second)) == BundleSummary(
+            kind="personalized", reason="아이 기록 2건을 보고 골랐어요."
+        )
+
+    def test_일반은_Agent_의_코드_문구를_쓴다(self):
+        assert bundle_summary(general_drafts(2)) == BundleSummary(
+            kind="general", reason="또래 기준"
+        )
+
+    def test_개인화와_일반이_섞이면_개인화로_보고_개인화_근거만_센다(self):
+        personal = build(
+            agent="food", content="계란말이", reason="r", citations=(citation(),), today=TODAY
+        )
+
+        # 일반 추천의 문서 행 근거는 아이 기록이 아니라 세지 않는다
+        assert bundle_summary((personal, *general_drafts(2))) == BundleSummary(
+            kind="personalized", reason="아이 기록 1건을 보고 골랐어요."
+        )
+
+
+class TestEmptyNotice:
+    """0개 안내는 `code` 로 찾는다 — Food 의 pool.empty 처럼 Agent 마다 문구가 다르다."""
+
+    def test_0개_안내를_찾는다(self):
+        weather = Readout(kind="notice", body="오늘은 맑아요.", authored_by="code")
+        assert empty_notice((weather, count_notice(0))) == count_notice(0)
+
+    def test_없으면_None(self):
+        assert empty_notice((count_notice(2),)) is None
+        assert empty_notice(()) is None
+
+
+# ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
+def _menu(note: str = "농식품정보원 레시피로 재료를 확인한 메뉴예요.") -> EvidenceCitation:
+    return EvidenceCitation(ref=Ref(kind="recipe_catalog", id=uuid4()), note=note, label="계란말이")
+
+
+class TestGeneralBasis:
+    """`general_basis` 는 일반 추천일 때만 붙는 근거다. Food 는 고른 메뉴 자체를 넘긴다."""
+
+    def test_메뉴_근거_종류는_규칙_모듈과_같다(self):
+        from app.rules.menu_evidence import MENU_EVIDENCE_KIND
+
+        assert get_args(refs.MenuKind) == (MENU_EVIDENCE_KIND,)
+
+    def test_메뉴_근거는_개인화_근거로_세지_않는다(self):
+        assert _menu().ref.is_child_record is False
+
+    def test_문서_행이_없어도_메뉴_근거만으로_일반_추천이다(self):
+        menu = _menu()
+        draft = build(
+            agent="food",
+            content="계란말이",
+            reason="모델이 쓴 문장",
+            citations=(),
+            general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            general_basis=(menu,),
+            today=TODAY,
+        )
+
+        assert draft.kind == "general"
+        assert draft.citations == (menu,)
+
+    def test_문서_행을_인용했으면_메뉴_근거와_같이_남는다(self):
+        doc, menu = citation(kind="food_doc", polarity=0, label=""), _menu()
+        draft = build(
+            agent="food",
+            content="계란말이",
+            reason="모델이 쓴 문장",
+            citations=(doc,),
+            general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            general_basis=(menu,),
+            today=TODAY,
+        )
+
+        assert draft.citations == (doc, menu)
+
+    def test_개인화_추천에는_메뉴_근거를_붙이지_않는다(self):
+        record = citation()
+        draft = build(
+            agent="food",
+            content="당근전",
+            reason="당근을 잘 먹어서 골랐어요",
+            citations=(record,),
+            general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+            general_basis=(_menu(),),
+            today=TODAY,
+        )
+
+        assert draft.kind == "personalized"
+        assert draft.citations == (record,)
+
+    def test_메뉴_근거도_note_가_필요하다(self):
+        with pytest.raises(SuggestionRejected, match="note"):
+            build(
+                agent="food",
+                content="계란말이",
+                reason="",
+                citations=(),
+                general_reason="또래 아이들이 많이 먹는 메뉴예요.",
+                general_basis=(_menu(note=" "),),
+                today=TODAY,
+            )
+
+    def test_메뉴_근거가_없으면_여전히_문서_행이_필요하다(self):
+        # Activity · Growth 는 general_basis 를 넘기지 않는다 — 지금처럼 문서 행이 근거다
+        with pytest.raises(SuggestionRejected, match="근거가 없다"):
+            build(
+                agent="activity",
+                content="블록 쌓기",
+                reason="",
+                citations=(),
+                general_reason="또래 아이들이 많이 하는 놀이예요.",
+                today=TODAY,
+            )

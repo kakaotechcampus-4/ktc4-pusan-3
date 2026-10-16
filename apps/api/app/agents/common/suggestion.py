@@ -4,12 +4,16 @@ Agent 는 값만 만들고 INSERT 는 주입된 writer 가 한다. `status` 와 
 tool 인자에 두지 않는다 — 모델이 만료나 승인 상태를 정할 수 없다.
 """
 
+import re
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
 from app.agents.common.readout import Readout, ReadoutCatalog, ReadoutText, code_readout
-from app.agents.common.refs import EvidenceCitation, count_child_records
+from app.agents.common.refs import EvidenceCitation
+from app.rules.staleness import is_stale
 
 SuggestionKind = Literal["general", "personalized"]
 
@@ -17,10 +21,12 @@ SuggestionKind = Literal["general", "personalized"]
 # 더 채울 길이 없을 때뿐이다 — 안전 필터 뒤 재호출 1회를 했거나, 후보 풀이 처음부터 모자라다.
 MAX_SUGGESTIONS = 3
 
-# 개수 안내. 다 채우지 못했을 때만 추천과 함께 나간다 — 문구는 yaml 에, 고르는 것은 count_notice
+# 개수 안내 · 04 묶음 이유. 문구는 yaml 에, 고르는 것은 각 함수
 _NOTICES = ReadoutCatalog.from_yaml(Path(__file__).with_name("suggestion.readout.yaml"))
 PARTIAL_NOTICE: ReadoutText = _NOTICES.get("suggestion.partial")
 EMPTY_NOTICE: ReadoutText = _NOTICES.get("suggestion.empty")
+CANNOT_RESUME_NOTICE: ReadoutText = _NOTICES.get("suggestion.cannot_resume")
+BUNDLE_PERSONALIZED: ReadoutText = _NOTICES.get("suggestion.bundle.personalized")
 
 
 class SuggestionRejected(ValueError):
@@ -64,35 +70,50 @@ def build(
     reason: str,
     citations: tuple[EvidenceCitation, ...] = (),
     general_reason: str | None = None,
+    general_basis: tuple[EvidenceCitation, ...] = (),
     allergens: tuple[str, ...] = (),
     items: tuple[str, ...] = (),
+    today: date,
 ) -> SuggestionDraft:
-    """아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
+    """6개월이 안 지난 아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
 
     아이 기록 0행은 정상 경로다. 그때는 `kind="general"` 이 되고 `reason` 을 코드 템플릿으로
-    덮어쓴다. general 인데 인용이 0행인 것은 거절 사유가 아니라 품질 지표다.
+    덮어쓴다. 이때 문서 행을 하나 이상 인용해야 한다 — 일반 추천의 근거는 문서 행이다(루트 §2).
+
+    `general_basis` 는 일반 추천일 때만 붙는 근거다(개인화면 버린다). 모델이 아니라 코드가 만든다.
+    Food 는 고른 메뉴(레시피 카탈로그 행)를 넘겨서, 문서 행이 없어도 메뉴를 근거로 일반 추천을
+    낸다(#442). 넘기지 않는 Agent(Activity · Growth)는 지금처럼 문서 행이 있어야 한다.
+
+    6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
+    그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
+    인용했으면 개인화로 두고 둘 다 남긴다. 날짜를 모르는 아이 기록은 세지 않는다.
+    `today` 는 호출하는 쪽의 기준일이다.
 
     기피 근거를 인용했으면 `reason` 에 무엇을 피했는지가 있어야 한다. 인용만 하고 말하지
     않으면 보호자에게는 근거 없는 추천과 같다.
     """
-    for item in citations:
+    for item in (*citations, *general_basis):
         if not item.note.strip():
             raise SuggestionRejected(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
             )
 
-    refs = tuple(item.ref for item in citations)
-    if count_child_records(refs) == 0:
+    if not any(_fresh(item, today) for item in citations):
         if general_reason is None:
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
+        basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
+        if not basis:
+            # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도
+            # 없으면 무엇을 기준으로 골랐는지 보호자에게 보여 줄 것이 없다
+            raise SuggestionRejected(f"{agent}: 일반 추천인데 문서 행 근거가 없다")
         return SuggestionDraft(
             agent=agent,
             kind="general",
             content=content,
             reason=general_reason,
-            citations=citations,
+            citations=basis,
             allergens=allergens,
             items=items,
         )
@@ -109,6 +130,15 @@ def build(
         citations=citations,
         allergens=allergens,
         items=items,
+    )
+
+
+def _fresh(item: EvidenceCitation, today: date) -> bool:
+    """개인화 근거로 셀 수 있는 아이 기록인가. 날짜를 모르면 낡았는지 알 수 없어 세지 않는다."""
+    return (
+        item.ref.is_child_record
+        and item.observed_on is not None
+        and not is_stale(item.observed_on, today)
     )
 
 
@@ -131,6 +161,32 @@ def check_count(drafts: tuple[SuggestionDraft, ...], *, exhausted: bool = False)
         raise SuggestionRejected(f"추천을 {MAX_SUGGESTIONS}개 채울 수 있는데 {count}개만 받았다")
 
 
+def merge_drafts[T](
+    first: Sequence[T], again: Sequence[T], *, key: Callable[[T], Hashable]
+) -> tuple[T, ...]:
+    """안전 필터 뒤 재호출 결과를 합친다 (#245 에서 정한 규칙).
+
+    처음에 통과한 것을 먼저 두고, 재호출 결과로 빈자리만 `MAX_SUGGESTIONS` 까지 채운다. `key` 가
+    같은 추천은 건너뛴다. 처음 것을 버리고 재호출 것으로 바꾸지 않는다 — 처음 것도 이미 출력
+    검증을 통과했다.
+
+    - `key` 는 "같은 추천" 판정이다. Agent 가 정한다 (Tool_공통.md §5-2) — Activity 는 정규화한
+      `content`, Food 는 `menu_key`.
+    - 추천에 딸린 값(경고 문구 등)도 같이 옮겨야 하면 `(draft, 딸린 값)` 짝을 넘기고 `key` 에서
+      draft 를 꺼낸다. 따로 합치면 순서가 어긋난다.
+    """
+    merged = list(first[:MAX_SUGGESTIONS])
+    seen = {key(item) for item in merged}
+    for item in again:
+        if len(merged) >= MAX_SUGGESTIONS:
+            break
+        same = key(item)
+        if same not in seen:
+            merged.append(item)
+            seen.add(same)
+    return tuple(merged)
+
+
 def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | None:
     """다 채우지 못한 추천에 붙일 안내 한 줄. 다 채웠으면 없다 (Tool_공통.md §5-2).
 
@@ -150,9 +206,94 @@ def count_notice(count: int, *, empty: ReadoutText = EMPTY_NOTICE) -> Readout | 
     return replace(code_readout(PARTIAL_NOTICE, count=count), code="fewer")
 
 
-def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:
-    """기피한 대상의 라벨이 이유 문장에 들어 있는가.
+def cannot_resume_notice() -> Readout:
+    """05 가 그 Agent 를 이어서 만들 수 없을 때의 안내. 다시 만들지 않는다 (#249 판단 순서 4)."""
+    return replace(code_readout(CANNOT_RESUME_NOTICE), code="cannot_resume")
 
-    문장 품질까지는 못 본다. 라벨조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
+
+def empty_notice(readouts: Sequence[Readout]) -> Readout | None:
+    """결과 readout 중 0개 안내. 문구가 아니라 `code` 로 찾는다 — Agent 마다 0개 문구가 다르다.
+
+    pipeline 의 0개 기록 · 05 의 0개 재생 · 05 의 묶음 안내가 같이 쓴다 (#433 리뷰 ⑩).
     """
-    return any(item.label and item.label in reason for item in citations if item.is_avoidance)
+    return next((readout for readout in readouts if readout.code == "empty"), None)
+
+
+@dataclass(frozen=True)
+class BundleSummary:
+    """04 Agent 블록 머리의 묶음 칸 (#227). 추천이 없으면 둘 다 None."""
+
+    kind: Literal["personalized", "general"] | None
+    reason: str | None
+
+
+def bundle_summary(drafts: Sequence[SuggestionDraft]) -> BundleSummary:
+    """Agent 결과 하나의 추천 묶음을 화면 한 줄로. 모델을 부르지 않는다 (#227).
+
+    - 개인화가 하나라도 있으면 개인화다 — 섞인 묶음의 일반 추천은 05 가 따로 보여 준다. 이유는
+      개인화 추천이 근거로 쓴 아이 기록 수(같은 기록은 한 번)로 말한다. 모델이 쓴 note 를 이어
+      붙이지 않는다 — 그러면 표현 검사를 화면 문장에 한 번 더 해야 한다.
+    - 전부 일반이면 그 Agent 의 일반 추천 문구(`build()` 가 덮어쓴 코드 템플릿)를 쓴다.
+    """
+    if not drafts:
+        return BundleSummary(kind=None, reason=None)
+    personal = [draft for draft in drafts if draft.kind == "personalized"]
+    if not personal:
+        return BundleSummary(kind="general", reason=drafts[0].reason)
+    records = {
+        (item.ref.kind, item.ref.id)
+        for draft in personal
+        for item in draft.citations
+        if item.ref.is_child_record
+    }
+    return BundleSummary(
+        kind="personalized", reason=BUNDLE_PERSONALIZED.template.format(count=len(records))
+    )
+
+
+def _mentions_avoidance(reason: str, citations: tuple[EvidenceCitation, ...]) -> bool:
+    """기피한 대상이 이유 문장에 들어 있는가 — 화면용 이름(`label`)이나 대조 키(`subject`).
+
+    관찰의 label 은 "물감 놀이 하다가 울었음" 같은 문장이라 이유에 그대로 나오지 않는다. 그래서
+    "물감은 피했어요" 처럼 대상(`subject`)만 말해도 밝힌 것으로 본다 (Activity 라이브 eval 에서
+    찾음 — label 만 보면 맞게 쓴 후보가 계속 거절돼 왕복 상한까지 갔다).
+    문장 품질까지는 못 본다. 대상조차 안 나오면 확실히 말하지 않은 것이라는 하한만 건다.
+
+    한 글자 대상은 낱말로만 센다 — "물" 이 "물감으로 손도장" 에 들어 있다고 물놀이를 피했다고
+    밝힌 것이 아니다 (#359 리뷰). 두 글자 이상은 지금처럼 들어 있기만 하면 된다.
+    """
+    return any(
+        _mentions(name, reason)
+        for item in citations
+        if item.is_avoidance
+        for name in (item.label, item.subject)
+        if name
+    )
+
+
+# 한 글자 대상 뒤에 붙어도 같은 낱말로 보는 것 — 조사, 그리고 "물놀이" 처럼 대상에 붙는 "놀이".
+# 받침에 맞는 조사만 센다 — "물가" 의 "가" 는 받침 뒤에 오지 않으니 조사가 아니다
+_ANY_TAIL = ("하고", "에서", "에는", "에도", "까지", "보다", "처럼", "도", "만", "에", "의")
+_AFTER_FINAL = ("이랑", "으로", "과", "이", "은", "을")
+_AFTER_OPEN = ("랑", "와", "가", "는", "를", "로")
+_RIEUL = 8  # 종성 번호 — ㄹ. "로" 는 받침 없는 글자와 ㄹ 받침 뒤에 온다
+
+
+def _particles(last: str) -> str:
+    code = ord(last) - 0xAC00
+    final = code % 28 if 0 <= code < 11172 else None
+    if final is None:
+        tails = (*_ANY_TAIL, *_AFTER_FINAL, *_AFTER_OPEN)
+    elif final == 0:
+        tails = (*_ANY_TAIL, *_AFTER_OPEN)
+    else:
+        tails = (*_ANY_TAIL, *_AFTER_FINAL, *(("로",) if final == _RIEUL else ()))
+    return "|".join(sorted(tails, key=len, reverse=True))
+
+
+def _mentions(name: str, reason: str) -> bool:
+    if len(name) > 1:
+        return name in reason
+    tail = rf"(?:놀이(?:{_particles('이')})?|{_particles(name)})?"
+    word = rf"(?<![가-힣]){re.escape(name)}{tail}(?![가-힣])"
+    return re.search(word, reason) is not None

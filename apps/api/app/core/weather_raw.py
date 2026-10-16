@@ -11,6 +11,17 @@ Activity `weather.py` 가 테스트와 함께 맡는다 (D8).
 from dataclasses import dataclass
 
 
+class UpstreamUnavailable(Exception):
+    """외부 조회 실패. 결과가 0건인 것과 다르다.
+
+    기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니고 미세먼지 실패는 "좋음"이 아니다 (D8).
+    메시지에 격자 · 장소명 · 요청 주소를 넣지 않는다 — 공공데이터포털은 주소에 인증키를 싣는다.
+
+    날씨 어댑터(`app/integrations/`)가 던지고 Activity 가 받는다. 어댑터는 agents 를 import 할 수
+    없어서 여기 둔다. Activity 포트(`store/ports.py`)는 이 클래스를 그대로 다시 내보낸다.
+    """
+
+
 @dataclass(frozen=True)
 class WeatherGrid:
     """기상청 5km 격자. 날씨 포트는 좌표 대신 이 값만 받는다."""

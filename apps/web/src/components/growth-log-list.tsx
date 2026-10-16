@@ -10,7 +10,9 @@ import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
 import { cn } from "@/lib/cn";
 import { formatDay } from "@/lib/format";
+import { useFlip, useReveal } from "@/lib/motion";
 import type { GrowthLog } from "@/lib/api/types";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 11 키·몸무게 측정 기록 — **줄**이다. 차트도, 카드도 아니다.
@@ -58,8 +60,12 @@ export function GrowthLogList({
    */
   scrollable?: boolean;
 }) {
+  /** 새로 적은 줄이 들어오고 지운 줄이 빠질 때 나머지가 비켜난다 (디자인 시스템 §8 "자리 옮김"). */
+  const flipRef = useFlip<HTMLUListElement>();
+
   return (
     <ul
+      ref={flipRef}
       className={cn(
         "border-line divide-line rounded-card bg-surface divide-y border",
         /* 🚨 높이를 `rem` 으로 고정하지 않는다 — 줄 높이가 글자 크기를 따라 늘어나는데
@@ -70,7 +76,7 @@ export function GrowthLogList({
       )}
     >
       {logs.map((log) => (
-        <li key={log.id}>
+        <li key={log.id} data-flip={log.id}>
           <GrowthLogRow
             log={log}
             onEdit={() => onEdit(log)}
@@ -116,6 +122,7 @@ function GrowthLogRow({
    *    열려서, 부모가 보기에는 아무 일도 안 일어난 것이 된다 (안전 정보 목록과 같은 처리).
    */
   const confirmRef = useRef<HTMLDivElement>(null);
+  const revealRef = useReveal(confirming);
   useEffect(() => {
     if (confirming) confirmRef.current?.scrollIntoView({ block: "nearest" });
   }, [confirming]);
@@ -161,7 +168,10 @@ function GrowthLogRow({
 
       {confirming ? (
         <div
-          ref={confirmRef}
+          ref={(node) => {
+            confirmRef.current = node;
+            revealRef.current = node;
+          }}
           // 🚨 `scroll-mb-*` 가 없으면 `scrollIntoView` 가 하단 네비 **뒤**를 "보인다" 고
           //    판단해서 버튼이 그대로 가려진다. 네비 높이(51px)보다 넉넉히 준다.
           className="bg-surface-muted border-line flex scroll-mb-28 flex-col gap-3 border-t px-4 py-3.5"
@@ -229,6 +239,8 @@ export function GrowthLatestCard({ log, href }: { log: GrowthLog; href: string }
   return (
     <Link
       href={href}
+      // 11 → 11-1 은 부모 → 자식 화면 쌍이다 (디자인 시스템 §8 "허용하는 화면 전환").
+      {...FORWARD}
       className="rounded-card border-line bg-surface ease-standard active:bg-surface-muted hover:bg-surface-muted min-h-touch flex items-start gap-3 border px-4 py-3.5 transition-colors duration-120"
     >
       <IconTile icon={Ruler} tone="neutral" />

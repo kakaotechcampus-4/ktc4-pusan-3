@@ -19,6 +19,7 @@ import {
   clearBind,
   clearProvider,
   consumeReturnPath,
+  landingPath,
   readBind,
   readProvider,
   rememberConsentCode,
@@ -115,7 +116,8 @@ function AuthCallbackScreen() {
     error && error !== "oauth_denied" ? (ERROR_MESSAGE[error] ?? DEFAULT_ERROR_MESSAGE) : null;
 
   useEffect(() => {
-    // persist 복구 전에 signIn() 을 부르면 복구가 그 위에 덮어쓴다.
+    // 앱을 켤 때의 세션 확인(`restore`)이 끝난 뒤에 교환한다. 둘이 겹치면 확인 결과가 방금
+    // 받은 세션을 덮을 수 있다 (`stores/session.ts`).
     if (!hydrated || exchanged.current) return;
     exchanged.current = true;
 
@@ -189,11 +191,9 @@ function AuthCallbackScreen() {
           return;
         }
 
-        const first = me.children[0];
-        // 🚨 아이가 없으면 01(아이 만들기)이 아니라 00-1 로 보낸다. 초대를 기다리는 사람이
-        //    바로 아이 만들기에 떨어지면 **같은 아이를 또 등록**하고, 그 뒤로는 초대를
-        //    수락할 수 없다 (아이는 보호자당 한 명 · #96).
-        router.replace(first ? `/child/${first.child_id}/home` : "/start");
+        // 🚨 아이가 없으면 01 이 아니라 00-1 이다 (#96 · `lib/auth/landing.ts`). 앱을 다시 켰을 때와
+        //    같은 곳에 서도록 00 화면과 같은 함수를 쓴다.
+        router.replace(landingPath(me, useSessionStore.getState().activeChildId));
       } catch (cause) {
         clearHandoff();
         if (isApiError(cause, "invalid_handoff")) {

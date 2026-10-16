@@ -87,12 +87,11 @@ async def execute_tool(
     try:
         args = definition.args.model_validate(arguments)
     except ValidationError as exc:
-        return fail(
-            "parse",
-            name,
-            ErrorCode.INVALID_ARGS,
-            f"인자가 스키마와 맞지 않는다: {_summarize(exc)}",
-        )
+        message = f"인자가 스키마와 맞지 않는다: {_summarize(exc)}"
+        if any(error["type"] == "extra_forbidden" for error in exc.errors()):
+            # 다른 도메인의 칸(routine 의 assistance_level 등)을 넣고 고칠 방법을 몰라 포기했다
+            message += ". 이 tool 에 없는 필드는 빼고 다시 부른다"
+        return fail("parse", name, ErrorCode.INVALID_ARGS, message)
 
     return await handler(context, args)
 

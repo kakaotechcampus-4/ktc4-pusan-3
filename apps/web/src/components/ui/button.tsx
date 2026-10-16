@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -66,6 +66,12 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: ButtonSize;
   /** 전체 폭으로 늘린다. approve 는 항상 전체 폭이라 이 값을 보지 않는다. */
   block?: boolean;
+  /**
+   * 포커스를 되돌려 받을 때만 쓴다 (React 19 — `ref` 가 그냥 prop 이다).
+   * 예: 인라인 확인 패널을 "그만두기" 로 닫으면 패널째 버튼이 사라져 포커스가 `<body>` 로
+   * 떨어지므로, 패널을 연 버튼으로 돌려준다 (09 일기 지우기).
+   */
+  ref?: Ref<HTMLButtonElement>;
   children: ReactNode;
 }
 
@@ -117,6 +123,7 @@ export function ButtonLink({
   size = "default",
   block = false,
   className,
+  transitionTypes,
   children,
 }: {
   href: string;
@@ -124,11 +131,14 @@ export function ButtonLink({
   size?: ButtonSize;
   block?: boolean;
   className?: string;
+  /** 이 이동이 어떤 화면 전환인지 (`lib/view-transition.ts` 의 `FORWARD` · `BACK`). 없으면 움직임 없음. */
+  transitionTypes?: string[];
   children: ReactNode;
 }) {
   return (
     <Link
       href={href}
+      transitionTypes={transitionTypes}
       className={cn(
         "text-button ease-standard inline-flex items-center justify-center gap-2 py-2 text-center transition-colors duration-120",
         variant === "approve" ? null : SIZE[size],

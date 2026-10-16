@@ -19,6 +19,15 @@ from app.rules.age import (
 
 KST = timezone(timedelta(hours=9))
 
+# 경계는 `reference/age_gates.yaml` 이 정하고 이 함수들은 인자로 받는다 (#372).
+# 여기서는 파일과 따로 값을 적어 두어, 함수가 받은 경계로만 가르는지 본다.
+BOUNDARIES = (
+    (0, "infant_milk"),
+    (4, "infant_weaning"),
+    (12, "toddler"),
+    (36, "preschool"),
+)
+
 
 class TestMonthsBetween:
     def test_생일_당일에_월령이_오른다(self):
@@ -70,11 +79,11 @@ class TestStageBoundaries:
         ],
     )
     def test_경계_양쪽(self, months, stage):
-        assert stage_of(months) == stage
+        assert stage_of(months, BOUNDARIES) == stage
 
     def test_음수_월령은_거절(self):
         with pytest.raises(ValueError, match="월령은 음수일 수 없다"):
-            stage_of(-1)
+            stage_of(-1, BOUNDARIES)
 
     @pytest.mark.parametrize(
         ("months", "band"),
@@ -83,7 +92,7 @@ class TestStageBoundaries:
     def test_영아기_유아기(self, months, band):
         birth = date(2020, 1, 1)
         today = date(2020 + months // 12, 1 + months % 12, 1)
-        assert life_stage(birth, today).big == band
+        assert life_stage(birth, today, BOUNDARIES).big == band
 
 
 class TestAgeDisplay:
@@ -121,12 +130,12 @@ class TestDateTypeGuard:
         기준일을 호출부가 넘기므로 이 함수는 그 영향을 받지 않는다."""
         moment = datetime(2026, 9, 22, 0, 5, tzinfo=KST)
         today = moment.astimezone(KST).date()
-        assert life_stage(date(2025, 9, 22), today).months == 12
+        assert life_stage(date(2025, 9, 22), today, BOUNDARIES).months == 12
 
 
 class TestLifeStageResult:
     def test_얼어_있다(self):
-        result = life_stage(date(2025, 9, 22), date(2026, 9, 22))
+        result = life_stage(date(2025, 9, 22), date(2026, 9, 22), BOUNDARIES)
         assert result == LifeStage(months=12, stage="toddler", big="toddler")
         with pytest.raises(AttributeError):
             result.months = 13  # type: ignore[misc]
@@ -140,9 +149,54 @@ class TestFirstMonthOf:
         [("infant_milk", 0), ("infant_weaning", 4), ("toddler", 12), ("preschool", 36)],
     )
     def test_단계가_시작하는_월령(self, stage, months):
-        assert first_month_of(stage) == months
-        assert stage_of(first_month_of(stage)) == stage
+        assert first_month_of(stage, BOUNDARIES) == months
+        assert stage_of(first_month_of(stage, BOUNDARIES), BOUNDARIES) == stage
 
     def test_모르는_단계는_ValueError(self):
         with pytest.raises(ValueError, match="모르는 단계"):
-            first_month_of("teen")  # type: ignore[arg-type]
+            first_month_of("teen", BOUNDARIES)  # type: ignore[arg-type]
+
+
+class TestBoundariesAreArguments:
+    """숫자는 인자가 정한다 — 함수 안에 월령이 남아 있으면 파일을 바꿔도 단계가 안 바뀐다."""
+
+    OTHER = (
+        (0, "infant_milk"),
+        (6, "infant_weaning"),
+        (18, "toddler"),
+        (48, "preschool"),
+    )
+
+    @pytest.mark.parametrize(
+        ("months", "stage"),
+        [(5, "infant_milk"), (6, "infant_weaning"), (17, "infant_weaning"), (18, "toddler")],
+    )
+    def test_stage_of_는_받은_경계로_가른다(self, months, stage):
+        assert stage_of(months, self.OTHER) == stage
+
+    def test_life_stage_는_받은_경계를_쓴다(self):
+        result = life_stage(date(2025, 3, 22), date(2026, 3, 22), self.OTHER)  # 12개월
+        assert result.stage == "infant_weaning"
+        assert result.big == "infant"
+
+    def test_first_month_of_는_받은_경계를_쓴다(self):
+        assert first_month_of("toddler", self.OTHER) == 18
+
+
+@pytest.mark.parametrize(
+    ("birth", "months", "expected"),
+    [
+        (date(2024, 1, 1), 18, date(2025, 7, 1)),
+        (date(2024, 8, 31), 18, date(2026, 2, 28)),
+        (date(2022, 8, 31), 18, date(2024, 2, 29)),
+        (date(2024, 2, 29), 12, date(2025, 2, 28)),
+        (date(2024, 1, 31), 0, date(2024, 1, 31)),
+    ],
+)
+def test_기준_월령_도달일은_달력과_말일을_따른다(birth, months, expected):
+    from app.rules.age import date_at_month
+
+    assert date_at_month(birth, months) == expected
+    assert months_between(birth, expected) == months
+    if months:
+        assert months_between(birth, expected - timedelta(days=1)) == months - 1

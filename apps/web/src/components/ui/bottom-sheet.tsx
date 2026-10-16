@@ -15,6 +15,11 @@ import { cn } from "@/lib/cn";
  *    실수로 닫혀서 draft 가 만료되는 경로를 만들지 않는다(승인 없는 draft 는 24시간 뒤 만료).
  *    법적 고지처럼 되돌릴 수 있는 것에는 쓰지 않는다.
  *
+ * 🚨 `gate` 는 **승인 게이트를 담은 시트**다. 열고 닫는 움직임이 없다 — 확인해야 할 것을 부드럽게
+ *    흘려보내지 않는다 (디자인 시스템 §8 "하지 않는 것"). 나머지 시트는 아래에서 올라온다
+ *    (`globals.css` 의 `.bottom-sheet`). 게이트는 시트가 아니라 **그 안의 승인 버튼**이라, 시트 안에
+ *    게이트 버튼이 하나라도 있으면 켠다 (`dismissible` 과 따로다 — 04 찾은 일정 시트는 닫히지만 게이트다).
+ *
  * 🚨 `variant="document"` 는 **약관·동의 전문 전용**이다. 시트를 통째로 `font-doc`(Pretendard)
  *    으로 바꾼다 — 제목만 손글씨로 남기면 `size-adjust` 때문에 같은 시트 안에서 글자 크기감이
  *    어긋나고, 무엇보다 "한 화면 한 서체" 가 깨진다 (디자인 시스템 §4). 손글씨는 자소
@@ -27,6 +32,7 @@ export function BottomSheet({
   title,
   description,
   dismissible = true,
+  gate = false,
   variant = "default",
   children,
   footer,
@@ -37,6 +43,8 @@ export function BottomSheet({
   description?: string;
   /** 🚨 승인 시트만 false. 그 외에는 닫을 길을 막지 않는다. */
   dismissible?: boolean;
+  /** 🚨 승인 게이트(캘린더 쓰기 · 건강 기록 확정) 버튼을 담은 시트만 true. 열고 닫는 움직임이 없다. */
+  gate?: boolean;
   /** 🚨 `document` 는 약관·동의 전문 전용. 시트 전체가 `font-doc` 이 된다. */
   variant?: "default" | "document";
   children: ReactNode;
@@ -72,6 +80,9 @@ export function BottomSheet({
     <dialog
       ref={ref}
       aria-labelledby={titleId}
+      // 🚨 **닫히는 동안에는 보조기술에서 뺀다.** 닫는 움직임(`base`) 동안 시트는 화면에 남아 있어서, 그대로 두면
+      //    바로 다음에 열린 시트와 같은 이름의 대화상자가 둘 읽힌다 (11 알레르기: 고르는 시트 → 적는 시트가 제목이 같다).
+      aria-hidden={open ? undefined : true}
       onCancel={(e) => {
         // ESC. 승인 시트면 브라우저 기본 닫기를 막는다.
         if (!dismissible) e.preventDefault();
@@ -85,6 +96,7 @@ export function BottomSheet({
         // dialog 기본 위치·크기를 지우고 화면 아래에 붙인다.
         "bg-canvas text-ink max-w-content max-h-[88dvh] w-full",
         variant === "document" && "font-doc",
+        !gate && "bottom-sheet",
         "rounded-t-sheet shadow-sheet mx-auto mt-auto mb-0 p-0",
         "backdrop:bg-scrim",
       )}

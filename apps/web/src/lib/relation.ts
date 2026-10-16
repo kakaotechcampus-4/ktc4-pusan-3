@@ -19,6 +19,21 @@ export const RELATION_LABEL: Record<Relation, string> = {
 };
 
 /**
+ * 함께 보는 보호자를 부르는 이름. 🚨 **`nickname` 은 비어서 온다** (#336) — 그때는 관계 이름이다.
+ * 이름 뒤에 조사를 붙이는 자리(`josa`)가 있어서 빈 값을 그대로 두면 화면이 깨진다.
+ *
+ * 🚨 **`other` 만 관계 이름으로 부르지 않는다.** "그 밖에" 는 사람을 부르는 말이 아니라서
+ *    "그 밖에가 더는 못 보게 할까요?" 가 된다 — 그때는 "함께 보는 보호자" 다 (#351 리뷰 · 제품 결정).
+ */
+export function parentDisplayName(parent: { nickname: string | null; relation: Relation }): string {
+  const name = parent.nickname?.trim();
+  if (name) return name;
+  return parent.relation === "other" ? OTHER_PARENT_NAME : RELATION_LABEL[parent.relation];
+}
+
+const OTHER_PARENT_NAME = "함께 보는 보호자";
+
+/**
  * 01 아이를 **등록하는** 보호자가 고를 수 있는 것.
  *
  * 🚨 **시터와 "그 밖에" 를 빼 둔다.** 이 화면에서 같이 받는 것이 아이 정보에 대한

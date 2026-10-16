@@ -473,6 +473,14 @@ const DS_GENDER_OPTIONS = [
   { value: "female", label: "여자아이" },
 ] as const;
 
+/** 넷 이상이거나 문장이 긴 고르는 칸 — 10 설정 › 문제 알리기의 분류가 이 모양이다. */
+const DS_VERTICAL_OPTIONS = [
+  { value: "ai_content", label: "AI 답이나 추천이 부적절해요" },
+  { value: "shared_record", label: "공동 기록이나 다른 보호자에게 문제가 있어요" },
+  { value: "bug", label: "앱이 이상하게 동작해요" },
+  { value: "other", label: "기타" },
+] as const;
+
 const DS_DOMAIN_OPTIONS = [
   { value: "all", label: "전체" },
   { value: "food", label: "식사" },
@@ -495,6 +503,7 @@ function ComponentSection() {
   const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
   const [dsGender, setDsGender] = useState("male");
+  const [dsReportKind, setDsReportKind] = useState("ai_content");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
   const [dsTime, setDsTime] = useState("");
@@ -728,11 +737,11 @@ function ComponentSection() {
       </p>
 
       <SubTitle>캘린더 표식 (09)</SubTitle>
-      <DayMarkLegend hasProfileMarks />
+      <DayMarkLegend />
       <p className="text-caption text-ink-subtle">
-        🚨 색이 아니라 모양으로 가릅니다. 네 표식은 전부 currentColor 라 고른 날(brand 채움)
+        🚨 색이 아니라 모양으로 가릅니다. 세 표식은 전부 currentColor 라 고른 날(brand 채움)
         위에서도 같은 모양이 읽힙니다. 뜻을 잇는 것은 이 범례고, 날짜 칸의 aria-label 이 같은 말을
-        다시 합니다.
+        다시 합니다. 기억 변화(빈 고리)는 근거가 될 이력 표가 없어 보류했습니다 (#318).
       </p>
 
       <SubTitle>배너</SubTitle>
@@ -803,6 +812,21 @@ function ComponentSection() {
         onChange={setDsGender}
       />
 
+      <SubTitle>고르는 칸 (세로)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        선택지가 넷 이상이거나 문장이 길어 가로로 똑같이 나눌 수 없으면 한 줄에 하나씩 쌓는다
+        (direction=&quot;vertical&quot;). 상자 · 색 · 상태는 가로와 같은 표이고, 글자는 왼쪽에 붙고
+        체크 아이콘은 글자 앞에 선다. 🚨 세로여도 비어 있을 수 없다 — 기본값을 준다. 안 고른 칸은
+        테두리만 있는 상자라서, 하나가 골라져 있어야 고르는 칸이라는 것이 보인다.
+      </p>
+      <ChoiceField
+        label="어떤 일인가요?"
+        value={dsReportKind}
+        options={DS_VERTICAL_OPTIONS}
+        onChange={setDsReportKind}
+        direction="vertical"
+      />
+
       <SubTitle>토스트</SubTitle>
       <p className="text-caption text-ink-subtle">
         화면 안에 자리가 없는 사실을 잠깐 띄운다. 🚨 성공을 알리지 않고(성공은 화면이 이미 말한다),
@@ -840,6 +864,7 @@ function ComponentSection() {
         open={sheet !== null}
         onClose={() => setSheet(null)}
         dismissible={sheet !== "approval"}
+        gate={sheet === "approval"}
         variant={sheet === "document" ? "document" : "default"}
         title={
           sheet === "approval"

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { BROWSER_TIME_ZONE } from "./e2e/time-zone";
+
 /**
  * 화면 규칙 회귀 테스트 (#242). 최상위 CLAUDE.md §2 가 화면에서 지켜지는지를 **목 서버로** 건다.
  *
@@ -30,7 +32,8 @@ export default defineConfig({
     // 대부분 apps/mobile 웹뷰 안에서 보인다 (/web-smoke 와 같은 폭).
     viewport: { width: 390, height: 844 },
     // 날짜 표시는 한국 시간 기준이다 (lib/format.ts). 러너 시간대에 따라 문구가 바뀌지 않게 고정한다.
-    timezoneId: "Asia/Seoul",
+    // 🚨 테스트 코드가 날짜를 만들 때도 같은 시간대를 쓴다 (`e2e/time-zone.ts`).
+    timezoneId: BROWSER_TIME_ZONE,
     locale: "ko-KR",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

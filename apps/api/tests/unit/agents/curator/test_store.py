@@ -63,7 +63,9 @@ async def test_연결_대상은_active_이고_벡터는_있고_연결이_없는_
     # 벡터가 있고 연결이 없어도 active 가 아니거나 다른 아이면 빠진다
     _add_excluded(store, embedding=VEC)
 
-    assert _ids(await store.list_unlinked(child_id=CHILD)) == ["ready"]
+    assert _ids(await store.list_unlinked(child_id=CHILD, min_observed_on=date(2024, 7, 1))) == [
+        "ready"
+    ]
 
 
 async def test_벡터를_저장하면_임베딩_대상에서_빠지고_연결_대상이_된다() -> None:
@@ -75,7 +77,9 @@ async def test_벡터를_저장하면_임베딩_대상에서_빠지고_연결_�
 
     # 도메인이 다르면 id 가 같아도 다른 관찰이다
     assert [o.key for o in await store.list_unembedded(child_id=CHILD)] == [("activity", "1")]
-    assert [o.key for o in await store.list_unlinked(child_id=CHILD)] == [("food", "1")]
+    assert [
+        o.key for o in await store.list_unlinked(child_id=CHILD, min_observed_on=date(2024, 7, 1))
+    ] == [("food", "1")]
     assert store.observation("food", "1").embedding == VEC  # 넘긴 벡터 그대로
     assert store.observation("activity", "1").embedding is None
 
@@ -89,7 +93,11 @@ async def test_관찰_날짜가_아니라_저장된_순서대로_돌려준다() 
     assert _ids(await store.list_unembedded(child_id=CHILD)) == ["a", "b", "c"]
 
     await store.save_embeddings(vectors={("food", id): VEC for id in ("a", "b", "c")})
-    assert _ids(await store.list_unlinked(child_id=CHILD)) == ["a", "b", "c"]
+    assert _ids(await store.list_unlinked(child_id=CHILD, min_observed_on=date(2024, 7, 1))) == [
+        "a",
+        "b",
+        "c",
+    ]
 
 
 async def test_Profile_후보는_같은_아이_도메인_polarity_만이다() -> None:
@@ -171,7 +179,7 @@ async def test_새_Profile_은_candidate_로_만들어지고_바로_후보가_�
     # 이것만으로 중복이 막히지는 않는다 — 연결 로직(S3)과 DB 동시성 처리가 함께 필요하다
     assert await store.list_profiles(child_id=CHILD, domain="food", polarity=1) == [created]
     assert store.observation("food", "1").affinity_id == created.id
-    assert await store.list_unlinked(child_id=CHILD) == []
+    assert await store.list_unlinked(child_id=CHILD, min_observed_on=date(2024, 7, 1)) == []
 
 
 # 보류 기록

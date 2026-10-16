@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { useState } from "react";
 
 import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -9,6 +9,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { PanelTabs } from "@/components/ui/tabs";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
+import { useEnterMotion } from "@/lib/motion";
 
 /**
  * 05 제안 후보 목록 — **한 결정에 대한 대안 셋.**
@@ -99,8 +100,6 @@ export function SuggestionList({
     return false;
   });
 
-  if (drawable.length === 0) return null;
-
   /**
    * 🚨 **순서는 서버가 준 순서다.** 화면이 도메인으로 정렬하지 않는다 — Supervisor 가 고른
    *    Agent 순서에 "무엇을 먼저 묻는가" 가 들어 있다.
@@ -116,6 +115,14 @@ export function SuggestionList({
   const rows = drawable.filter((s) => s.agent === agent);
   const group = groups.find((g) => g.agent === agent);
   const chosen = rows.filter((s) => selectedIds.includes(s.id)).length;
+  // 다른 묶음 탭을 고르면 패널 내용이 갈아 끼워진다 (디자인 시스템 §8 "교체"). 탭 표식은 색으로만 바뀐다.
+  const panelRef = useEnterMotion<Agent | undefined, HTMLElement>(
+    agent,
+    "fade",
+    (root) => root.children,
+  );
+
+  if (drawable.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -141,6 +148,7 @@ export function SuggestionList({
       ) : null}
 
       <section
+        ref={panelRef}
         id={PANEL_ID}
         // 🚨 탭이 없으면 `tabpanel` 도 아니다 — 가리킬 탭이 없는 패널은 보조기술에 거짓말이다.
         role={order.length > 1 ? "tabpanel" : undefined}
@@ -194,7 +202,7 @@ export function SuggestionList({
                * 🚨 **색만으로 말하지 않는다** — 체크 아이콘이 함께 선다 (문서 §3).
                */
               className={cn(
-                "rounded-card bg-surface flex overflow-hidden border",
+                "rounded-card bg-surface ease-standard flex overflow-hidden border transition-colors duration-120",
                 selectedIds.includes(suggestion.id) ? "border-brand" : "border-line",
               )}
             >
@@ -207,7 +215,7 @@ export function SuggestionList({
               <span
                 aria-hidden
                 className={cn(
-                  "w-1.5 shrink-0",
+                  "ease-standard w-1.5 shrink-0 transition-colors duration-120",
                   selectedIds.includes(suggestion.id) ? "bg-brand" : domainBar(suggestion.agent),
                 )}
               />
@@ -255,6 +263,12 @@ function SuggestionRow({
    *    식단이나 놀이를 정하지 않고 모아 둔 기록을 보여주기만 한다.
    */
   const isHealth = suggestion.agent === "health";
+  /**
+   * 🚨 **비어 있으면 줄을 세우지 않는다** (#475). 라벨만 선 줄은 "이유가 없다" 인지 "못 불러왔다"
+   *    인지 보호자가 가를 수 없고, 근거 없는 추천처럼 읽힌다. 문장을 지어 채우지도 않는다 —
+   *    왜 골랐는지는 만든 쪽만 안다.
+   */
+  const reason = suggestion.reason?.trim();
 
   return (
     <div className="px-4 py-4">
@@ -283,24 +297,14 @@ function SuggestionRow({
       {/* 🚨 체크박스 칸(20)과 사이(12)만큼 들여써서 이유·근거가 제안 문장과 한 세로선에 선다.
           health 줄은 체크박스가 없으니 들여쓰지 않는다. */}
       <div className={isHealth ? "" : "pl-8"}>
-        <Reasons
-          className="mt-4"
-          items={
-            isHealth
-              ? [
-                  { term: "무엇을 봤나", value: suggestion.reason.why_this },
-                  { term: "참고할 점", value: suggestion.reason.why_now },
-                ]
-              : [
-                  { term: "왜 이걸", value: suggestion.reason.why_this },
-                  { term: "왜 지금", value: suggestion.reason.why_now },
-                ]
-          }
-        />
+        {reason ? (
+          <Reason className="mt-4" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
+        ) : null}
 
         {/* 🚨 **근거는 선 아래에 둔다.** 제안·이유와 같은 무게로 쌓으면 이 제품의 차별점인
-            근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다. */}
-        <div className="border-line mt-3 border-t pt-3">
+            근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다.
+            이유가 없으면 선이 제안 문장 바로 아래로 올라오니, 제안과의 사이를 이유 자리(16)로 둔다. */}
+        <div className={cn("border-line border-t pt-3", reason ? "mt-3" : "mt-4")}>
           <EvidenceList evidence={suggestion.evidence} />
         </div>
 
@@ -316,27 +320,25 @@ function SuggestionRow({
 }
 
 /**
- * 이유 두 줄. 라벨을 한 열로 맞춰 세운다 — 값이 길어 줄이 바뀌어도 라벨이 같은 세로선에 남아서
- * 두 줄이 한 덩어리로 읽힌다.
+ * 이유 한 줄. 서버가 준 문장을 **그대로** 세운다 (`Suggestion.reason` · #475).
+ *
+ * 🚨 **두 칸으로 쪼개지 않는다.** 한동안 "왜 이걸 / 왜 지금" 두 줄이었는데, 서버는 그 둘을 한 문장에
+ *    섞어 보낸다 (Agent 공통규약 C-2). 화면이 문장을 갈라 칸에 나눠 담으면 어느 말이 "지금" 의
+ *    이유인지를 프론트가 정하게 된다 (CLAUDE.md §3).
+ * 🚨 **라벨은 줄의 종류가 정한다** — 개인화는 "추천 이유", health 는 "무엇을 봤나". health 줄은
+ *    무엇을 하라고 권하지 않고 모아 둔 기록을 보여줄 뿐이라(CLAUDE.md §2 진단하지 않는다), 거기에
+ *    "추천" 을 붙이면 기록에서 무언가를 판단해 권한 것처럼 읽힌다.
+ *
+ * 라벨과 문장은 한 행의 두 열이다 — 문장이 길어 줄이 바뀌어도 라벨이 첫 줄 옆에 남는다.
  *
  * 🚨 **도메인 잉크를 쓰지 않는다.** 줄이 색 면을 입지 않게 되면서(위 머리말) 바탕이 `surface` 라,
  *    도메인 잉크를 얹으면 대비가 그 면 기준으로 계산되지 않는다.
  */
-function Reasons({
-  items,
-  className,
-}: {
-  items: Array<{ term: string; value: string }>;
-  className?: string;
-}) {
+function Reason({ term, value, className }: { term: string; value: string; className?: string }) {
   return (
-    <dl className={cn("grid grid-cols-[auto_1fr] gap-x-3 gap-y-1", className)}>
-      {items.map((item) => (
-        <Fragment key={item.term}>
-          <dt className="text-caption text-ink-subtle">{item.term}</dt>
-          <dd className="text-body-sm text-ink-muted">{item.value}</dd>
-        </Fragment>
-      ))}
+    <dl className={cn("grid grid-cols-[auto_1fr] gap-x-3", className)}>
+      <dt className="text-caption text-ink-subtle">{term}</dt>
+      <dd className="text-body-sm text-ink-muted">{value}</dd>
     </dl>
   );
 }
@@ -346,7 +348,7 @@ function Reasons({
  * "왜 그게 근거가 되는가" 다 — 반복 몇 회인지, 언제 것인지, 누가 말한 것인지.
  *
  * 🚨 **설명 줄은 서버 문구(`detail`)를 그대로 쓴다.** 근거 종류마다 뜻이 다르고(성향이면 반복
- *    횟수, 급식 행이면 기관 기록, 알레르기면 규칙 확인), 화면이 종류별로 문장을 조립하려면
+ *    횟수, 급식 행이면 기관 기록, 관찰 한 건이면 그날 본 것), 화면이 종류별로 문장을 조립하려면
  *    근거의 의미를 프론트가 알아야 한다 (CLAUDE.md §3). 서버가 안 보내면 **가진 것으로만**
  *    만든다 — 날짜와 출처 라벨. 없는 것을 지어내지 않는다.
  *

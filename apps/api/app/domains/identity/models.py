@@ -28,7 +28,6 @@ class Parent(Base, UUIDPk, Timestamps):
     __tablename__ = "parent"
 
     nickname: Mapped[str | None] = mapped_column(Text, nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuthIdentity(Base, UUIDPk):
@@ -49,20 +48,23 @@ class AuthIdentity(Base, UUIDPk):
 
 
 class AuthSession(Base, UUIDPk):
-    """로그인 세션 1건 — 명세 docs/api/auth-kakao-v1.md §5-3.
+    """기기 로그인 1건 — refresh 를 맡는다. 명세 docs/api/auth-kakao-v1.md §5-3.
 
     클래스 이름만 AuthSession 이다. 테이블은 명세대로 session 이고, 클래스까지 Session 으로
     두면 이 파일에서 SQLAlchemy 의 Session 과 섞인다.
+
+    access 는 이 행이 아니라 SessionAccess 에 둔다 (#466). 한 행에 access 칸을 하나만 두면
+    탭 두 개가 번갈아 refresh 할 때 서로의 access 를 덮어써 401 이 반복된다.
 
     🚨 토큰 원문은 어디에도 저장하지 않는다. SHA-256 digest(32바이트)만 들고 있다가
        요청이 올 때마다 받은 값을 해시해 대조한다 (§5 · A-18).
 
     🚨 폐기는 행 삭제다. 세션은 증빙이 아니라서 남은 행은 유출 표면일 뿐이다 —
        consent 가 append-only 인 것과 정반대다. 로그아웃은 그 행 1건, 탈퇴는
-       parent_id 로 전부, 만료는 배치로 지운다.
+       parent_id 로 전부, 만료는 배치로 지운다. 딸린 access 는 CASCADE 로 같이 사라진다.
 
-    Timestamps 믹스인을 쓰지 않는다. 세션 행은 갱신되지 않으므로 updated_at 이
-    "한 번도 안 변하는 열" 로 남는다. 명세 §5-3 도 created_at 만 둔다.
+    Timestamps 믹스인을 쓰지 않는다. 행이 바뀌는 건 refresh 회전뿐이고 그 시각은
+    rotated_at 이 따로 든다 — 재사용 유예 판정에 쓰는 값이라 updated_at 과 섞지 않는다.
     """
 
     __tablename__ = "session"
@@ -70,12 +72,46 @@ class AuthSession(Base, UUIDPk):
     parent_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("parent.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    token_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(
+    # 지금 유효한 refresh
+    refresh_hash: Mapped[bytes] = mapped_column(
+        LargeBinary, nullable=False, unique=True, index=True
+    )
+    # 직전 refresh — 재사용 탐지용. 한 번도 회전하지 않았으면 비어 있다
+    prev_refresh_hash: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True, unique=True, index=True
+    )
+    # 마지막 회전 시각 — 재사용 유예 판정용
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 유휴 만료. 회전마다 연장하되 absolute_expires_at 을 넘지 않는다
+    refresh_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    # 절대 만료. 로그인 시각 기준이고 연장하지 않는다
+    absolute_expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SessionAccess(Base):
+    """access 토큰 1건 — 일반 API 와 SSE 가 Bearer 로 싣는 값 (#466).
+
+    한 세션에 여러 행이 있을 수 있다. refresh 할 때마다 한 행이 생기고, 회전 전에 받은
+    access 도 만료 전까지는 그대로 통한다 (탭 여러 개).
+
+    🚨 원문이 아니라 SHA-256 digest 가 PK 다 (A-18). 매 요청이 이 값으로 찾는다.
+    """
+
+    __tablename__ = "session_access"
+
+    token_hash: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("session.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
     )
 
 

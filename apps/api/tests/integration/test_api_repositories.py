@@ -39,7 +39,12 @@ from app.domains.schedule.repository import (
     set_event_item_prepared,
     update_event,
 )
-from app.domains.suggestion.models import SuggestionAgent, SuggestionFeedback, SuggestionKind
+from app.domains.suggestion.models import (
+    SuggestionAgent,
+    SuggestionFeedback,
+    SuggestionKind,
+    SuggestionStatus,
+)
 from app.domains.suggestion.repository import (
     create_suggestion,
     list_suggestions_using_observation,
@@ -137,6 +142,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
             child_id=other.id,
             event_id=event.id,
             title="변경 시도",
+            event_type=EventType.EPISODIC,
             starts_at=start,
             ends_at=None,
             all_day=False,
@@ -149,6 +155,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
         child_id=child.id,
         event_id=event.id,
         title="물놀이 준비",
+        event_type=EventType.EPISODIC,
         starts_at=start,
         ends_at=None,
         all_day=False,
@@ -213,6 +220,7 @@ async def test_diary_put_updates_only_authors_own_day(session, family):
         day=date(2026, 9, 23),
         content="고친 기록",
     )
+    # 연결되지 않은 보호자는 쓰지 못한다 (#427)
     other = await put_diary(
         session,
         child_id=child.id,
@@ -222,7 +230,7 @@ async def test_diary_put_updates_only_authors_own_day(session, family):
     )
     assert revised.id == first.id
     assert revised.content == "고친 기록"
-    assert other.id != first.id
+    assert other is None
 
 
 async def test_affinity_list_defaults_to_non_archived_and_rename_is_scoped(session, family):
@@ -284,6 +292,9 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
         ],
         expires_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
     )
+    # feedback은 approved/rejected 만 허용 — draft → approved 전환
+    suggestion.status = SuggestionStatus.APPROVED
+    await session.flush()
     assert [
         row.id
         for row in await list_suggestions_using_observation(
@@ -298,7 +309,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             session,
             child_id=other.id,
             suggestion_id=suggestion.id,
-            feedback=SuggestionFeedback.LIKED,
+            feedback=SuggestionFeedback.CHILD_LIKED,
         )
         is None
     )
@@ -307,9 +318,9 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             session,
             child_id=child.id,
             suggestion_id=suggestion.id,
-            feedback=SuggestionFeedback.LIKED,
+            feedback=SuggestionFeedback.CHILD_LIKED,
         )
-    ).feedback is SuggestionFeedback.LIKED
+    ).feedback is SuggestionFeedback.CHILD_LIKED
 
     correction = await append_correction(
         session,

@@ -1,7 +1,7 @@
 """MemoryTask에 따라 모델에 노출할 tool 묶음을 결정한다.
 
-기록용 tool은 항상 포함하고, 수정·삭제용 tool은 lookup_edit 작업이 있을 때만 추가한다.
-수정과 삭제는 같은 묶음으로 관리한다.
+기록용 tool은 항상 포함하고, 수정·삭제용 tool은 lookup_edit 작업이 있거나 Supervisor 가 기록 후보를
+확실히 못 정했을 때(`MemoryTask.open_lookup_edit`) 추가한다. 수정과 삭제는 같은 묶음으로 관리한다.
 
 현재 tool 조합은 두 가지이며, 각 조합별 프롬프트 캐시를 유지한다.
 새 tool을 추가할 때는 어느 묶음에 포함할지 함께 정하고 test_bundles에서 누락 여부를 확인한다.

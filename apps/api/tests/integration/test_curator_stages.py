@@ -194,7 +194,9 @@ class TestStage2LinkExactName:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_pending(store, None, child_id=child.id)
+        result = await link_pending(
+            store, None, child_id=child.id, min_observed_on=date(2024, 7, 1)
+        )
 
         assert len(result.outcomes) == 1
         assert result.outcomes[0].status == "linked"
@@ -216,7 +218,9 @@ class TestStage2LinkNewCandidate:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_pending(store, None, child_id=child.id)
+        result = await link_pending(
+            store, None, child_id=child.id, min_observed_on=date(2024, 7, 1)
+        )
 
         assert len(result.outcomes) == 1
         assert result.outcomes[0].status == "created"
@@ -246,7 +250,9 @@ class TestStage2LinkSameRunChaining:
         from app.domains.memory.curator.db_store import DbCuratorStore
 
         store = DbCuratorStore(session)
-        result = await link_pending(store, None, child_id=child.id)
+        result = await link_pending(
+            store, None, child_id=child.id, min_observed_on=date(2024, 7, 1)
+        )
 
         assert len(result.outcomes) == 3
         # 첫 번째: 후보 없음 → 생성
@@ -297,7 +303,9 @@ class TestStage2LinkHoldUncertain:
         await session.flush()
 
         for run in range(3):
-            result = await link_pending(store, judge, child_id=child.id)
+            result = await link_pending(
+                store, judge, child_id=child.id, min_observed_on=date(2024, 7, 1)
+            )
             if run < 2:
                 assert result.outcomes[0].status == "held", f"run {run}: 보류여야 한다"
                 assert result.outcomes[0].reason == "judge_uncertain"
@@ -453,7 +461,9 @@ class TestE2EFullFlow:
         # ── Stage 2: 연결 ──
         from app.agents.curator.embedding.link_step import link_pending
 
-        link_result = await link_pending(store, _FakeJudge(), child_id=child.id)
+        link_result = await link_pending(
+            store, _FakeJudge(), child_id=child.id, min_observed_on=date(2024, 7, 1)
+        )
 
         assert len(link_result.outcomes) == 3
         assert link_result.outcomes[0].status == "created", "첫 관찰: 후보 없음 → 새 Profile"
@@ -498,7 +508,9 @@ class TestE2EFullFlow:
         from app.domains.memory.curator.recompute import recompute_after_linking
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         assert result.embed_calls == 1
         assert len(result.affected_profile_ids) == 1
@@ -522,7 +534,9 @@ class TestE2EFullFlow:
         from app.domains.memory.curator.recompute import recompute_after_linking
 
         store = DbCuratorStore(session)
-        result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child.id)
+        result = await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
 
         await recompute_after_linking(session, result=result, today=today)
 
@@ -552,11 +566,15 @@ class TestE2EFullFlow:
         embedder = _FakeEmbedder()
 
         # 첫 실행
-        r1 = await link_observations(store, embedder, _FakeJudge(), child_id=child.id)
+        r1 = await link_observations(
+            store, embedder, _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
         assert r1.embed_calls == 1
         assert len(r1.affected_profile_ids) == 1
 
         # 두 번째 실행
-        r2 = await link_observations(store, embedder, _FakeJudge(), child_id=child.id)
+        r2 = await link_observations(
+            store, embedder, _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
         assert r2.embed_calls == 0, "임베딩 대상 없음"
         assert len(r2.outcomes) == 0, "연결 대상 없음"

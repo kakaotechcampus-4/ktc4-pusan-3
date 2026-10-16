@@ -7,9 +7,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { SafetyScanReview } from "@/components/safety-scan-review";
-import { toRow, type ScanRow } from "@/components/safety-scan-fields";
+import { isSelectable, toRow, type ScanRow } from "@/components/safety-scan-fields";
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { PageTitle } from "@/components/ui/page-title";
@@ -20,14 +21,16 @@ import { useSafetyScanDraftStore, type PendingScanPhoto } from "@/stores/safety-
 import {
   addHealthSafety,
   api,
+  createIdempotencyKeyHolder,
   isApiError,
-  newIdempotencyKey,
   qk,
   type ApiError,
+  type CreateHealthSafetyRequest,
   type HealthSafetyListResponse,
-  type IdempotencyKey,
+  type IdempotencyKeyHolder,
   type SafetyScanResponse,
 } from "@/lib/api";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 11-2 알레르기 검사지에서 가져오기 (`/child/[childId]/profile/safety-scan`).
@@ -54,7 +57,9 @@ import {
 export default function SafetyScanPage() {
   return (
     <AuthGate>
-      <SafetyScanScreen />
+      <ScreenTransition>
+        <SafetyScanScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -84,8 +89,13 @@ function SafetyScanScreen() {
   const [readError, setReadError] = useState<ApiError | "failed" | null>(null);
   const [saving, setSaving] = useState(false);
 
-  /** 🚨 줄마다 키 하나. 재시도는 같은 키, 새 줄은 새 키다 (아래 `approve`). */
-  const keys = useRef(new Map<string, IdempotencyKey>());
+  /**
+   * 🚨 줄마다 키 하나. 재시도는 같은 키, 새 줄은 새 키다 (아래 `approve`).
+   * 🚨 **줄 안에서도 본문에 묶는다** (`current(본문)`). 실패한 줄을 고치기 시트에서 고친 뒤 다시
+   *    등록하면 다른 요청인데, 키가 그대로면 서버가 처음 응답을 재생해서(#369 · 본문을 비교하지
+   *    않는다) 고친 값은 저장되지 않고 그 줄은 "등록됨" 으로 선다.
+   */
+  const keys = useRef(new Map<string, IdempotencyKeyHolder>());
   const started = useRef(false);
 
   /**
@@ -105,9 +115,10 @@ function SafetyScanScreen() {
    */
   const decorated = useMemo(() => {
     const registered = new Set(safety.data?.items.map((item) => item.label) ?? []);
+    // 서버는 이름의 앞뒤 공백을 떼고 저장한다 (#369) — 검사지에서 옮긴 이름도 떼고 비교한다.
     return rows.map((row) => ({
       ...row,
-      alreadyRegistered: row.label !== "" && registered.has(row.label),
+      alreadyRegistered: row.label.trim() !== "" && registered.has(row.label.trim()),
     }));
   }, [rows, safety.data]);
 
@@ -154,7 +165,7 @@ function SafetyScanScreen() {
   }
 
   function leave() {
-    router.push(`/child/${childId}/profile`);
+    router.push(`/child/${childId}/profile`, BACK);
   }
 
   /**
@@ -166,8 +177,10 @@ function SafetyScanScreen() {
    */
   async function approve() {
     setSaving(true);
+    // 🚨 버튼에 적힌 건수(`SafetyScanReview` 의 `picked`)와 같은 기준이다 — `isSelectable` 을 빼면
+    //    고를 수 없는 줄(확인이 필요한 줄)이 체크만 남아 있을 때 건수보다 많이 나간다.
     const picked = decorated.filter(
-      (row) => row.checked && row.status !== "done" && !row.alreadyRegistered,
+      (row) => row.checked && isSelectable(row) && row.status !== "done" && !row.alreadyRegistered,
     );
 
     /**
@@ -180,25 +193,30 @@ function SafetyScanScreen() {
 
     for (const row of picked) {
       patch(row.id, { status: "saving" });
-      const key = keys.current.get(row.id) ?? newIdempotencyKey();
-      keys.current.set(row.id, key);
+      const holder = keys.current.get(row.id) ?? createIdempotencyKeyHolder();
+      keys.current.set(row.id, holder);
+      const body: CreateHealthSafetyRequest = {
+        type: "allergy",
+        label: row.label.trim(),
+        ...(row.severity ? { severity: row.severity } : {}),
+        ...(row.reactions.length > 0 ? { reactions: row.reactions } : {}),
+        notes: "검사지 사진에서 옮겨 적고 보호자가 확인",
+      };
       try {
-        await addHealthSafety(
-          childId,
-          {
-            type: "allergy",
-            label: row.label.trim(),
-            ...(row.severity ? { severity: row.severity } : {}),
-            ...(row.reactions.length > 0 ? { reactions: row.reactions } : {}),
-            notes: "검사지 사진에서 옮겨 적고 보호자가 확인",
-          },
-          key,
-        );
+        await addHealthSafety(childId, body, holder.current(JSON.stringify(body)));
         patch(row.id, { status: "done", checked: false });
         saved += 1;
-      } catch {
-        patch(row.id, { status: "failed" });
-        failed += 1;
+      } catch (error) {
+        // 🚨 **409 `already_exists` 는 실패가 아니다** (#369). 이미 기록에 있는 항목이라(목록을
+        //    받은 뒤 다른 보호자가 등록했거나, 앞서 등록한 응답만 못 받았다) 다시 눌러도 같은
+        //    409 다. 실패로 남기면 이 화면을 떠날 수 없다.
+        if (isApiError(error, "already_exists")) {
+          patch(row.id, { status: "done", checked: false });
+          saved += 1;
+        } else {
+          patch(row.id, { status: "failed" });
+          failed += 1;
+        }
       }
     }
     setSaving(false);
@@ -218,7 +236,7 @@ function SafetyScanScreen() {
      *    "확인하지 않은 N건은 등록하지 않아요" 라고 이미 말했다 — 그래서 떠나는 것을 막지 않는다.
      */
     if (failed === 0 && saved > 0) {
-      router.push(`/child/${childId}/profile`);
+      router.push(`/child/${childId}/profile`, BACK);
     }
   }
 
@@ -231,6 +249,7 @@ function SafetyScanScreen() {
             아니라 `Link` 다 — 주소로 바로 들어오면 히스토리에 프로필이 없어 앱 밖으로 나간다. */}
         <Link
           href={`/child/${childId}/profile`}
+          {...BACK}
           className="text-body-sm text-ink-muted ease-standard active:text-ink hover:text-ink min-h-touch -my-2 -ml-1 flex w-fit items-center gap-1 py-2 pr-2 pl-1 transition-colors duration-120"
         >
           <ChevronLeft aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
@@ -297,7 +316,7 @@ function NoPhoto({ childId }: { childId: string }) {
         </p>
       </div>
       <div>
-        <Button onClick={() => router.push(`/child/${childId}/profile`)}>
+        <Button onClick={() => router.push(`/child/${childId}/profile`, BACK)}>
           <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           프로필에서 다시 고르기
         </Button>
@@ -345,7 +364,9 @@ function ReadFailed({ childId }: { childId: string }) {
         </p>
       </div>
       <div>
-        <Button onClick={() => router.push(`/child/${childId}/profile`)}>프로필로 돌아가기</Button>
+        <Button onClick={() => router.push(`/child/${childId}/profile`, BACK)}>
+          프로필로 돌아가기
+        </Button>
       </div>
     </div>
   );

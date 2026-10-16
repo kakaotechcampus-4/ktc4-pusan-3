@@ -3,7 +3,6 @@ import { http, HttpResponse } from "msw";
 import {
   draftEvent,
   generalSuggestions,
-  healthSafety,
   mealDraft,
   staleSuggestion,
   suggestionDraft,
@@ -13,6 +12,7 @@ import {
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import type {
+  Agent,
   ApproveSuggestionsRequest,
   ApproveSuggestionsResponse,
   Precheck,
@@ -60,31 +60,117 @@ function refuseUnapproved(ids: string[]) {
 
 /** 05 제안 · 06 승인. */
 export const suggestionHandlers = [
-  http.post(url("/children/:cid/suggestions"), async () => {
+  http.post(url("/children/:cid/suggestions"), async ({ request }) => {
     // Agent 호출이라 홈보다 느리다. 진행 오버레이가 실제로 보이는 시간.
     await networkDelay(900);
     const scenario = currentScenario();
+    const asked = (await request.json().catch(() => ({}))) as {
+      agents?: Agent[];
+      run_id?: string;
+    };
+    /**
+     * 🚨 **run_id 로 들어오면 그 run 의 채택한 추천도 돌아온다** (#249). 새로고침해도 채택이 남는다 —
+     *    화면은 `status` 로 되살리고, 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
+     *    run_id 가 없으면(홈 · 04 제안) 새로 만든 추천이라 늘 `draft` 다.
+     */
+    const withStatus = <T extends { id: string; status: string }>(items: T[]): T[] =>
+      asked.run_id
+        ? items.map((s) =>
+            approvedSuggestions.has(s.id) ? { ...s, status: "approved" as const } : s,
+          )
+        : items;
 
     if (scenario === "consent") return consentRequired("child_health");
+    // 🚨 05 도 하루 한도에 걸린다 — 요청마다 Agent 를 돌려서다. 다시 눌러도 같은 답이라 화면이 다시 시도를 세우지 않는다
+    if (scenario === "daily_limit") {
+      return apiError(
+        429,
+        "daily_input_limit",
+        "오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요.",
+      );
+    }
 
     // 🚨 근거가 없으면 개인화 대신 **일반 추천**이다. 되묻는 질문은 배열이 아니라 단수 — 한 개까지만.
     //    개인화(`suggestions`)와 일반(`general`)은 **다른 필드**다. 한 배열에 섞으면 언젠가
-    //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2).
-    //    ⚠️ `general` 은 계약서 v1 에 아직 없다 — types.ts 의 ⚠️ 참고 (서버 Owner 협의 대상).
+    //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2). 일반 추천의 근거는 **문서 행**이다 (#249).
+    //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
+    //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     if (scenario === "scarcity" || scenario === "empty") {
+      const general = scenario === "empty" ? generalSuggestions : [generalSuggestions[0]];
+      const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
-        general: scenario === "empty" ? generalSuggestions : [generalSuggestions[0]],
-        looked_at: "오늘 급식",
+        // 요청한 Agent 마다 묶음이 온다 — 일반 추천을 낸 쪽은 안내 없이, 못 낸 쪽은 0개 안내와 함께
+        groups: (asked.agents ?? [...generalAgents]).map((agent) => ({
+          agent,
+          merges_into_one: agent === "food",
+          notice: generalAgents.has(agent)
+            ? null
+            : { code: "empty", message: "조건에 맞는 추천이 없어요." },
+          cautions: [],
+        })),
+        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
+        general: general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
+        looked_at: "",
         guards: [],
         scarcity: {
           count: scenario === "empty" ? 0 : 1,
           question: {
             id: "q1",
             text: "요즘 실내와 야외 중 어디를 더 찾나요?",
-            options: ["실내", "야외", "모르겠어요"],
+            options: [],
           },
         },
+        prechecks: [],
+      });
+    }
+
+    // 🚨 아래 둘은 **실패가 아니다** (#249). 결과를 낸 Agent 는 0개여도 안내와 함께 묶음이 오고,
+    //    이어서 할 수 없는 Agent 도 안내만 온다. 묶음이 없는 Agent 만 실패다.
+    if (scenario === "suggest_counts") {
+      return HttpResponse.json({
+        suggestions: suggestions.filter((s) => s.agent === "food").slice(0, 2),
+        groups: [
+          {
+            agent: "food",
+            merges_into_one: true,
+            notice: { code: "fewer", message: "조건에 맞는 추천을 2개 준비했어요." },
+            cautions: [],
+          },
+          {
+            agent: "activity",
+            merges_into_one: false,
+            notice: { code: "empty", message: "조건에 맞는 추천이 없어요." },
+            cautions: [],
+          },
+        ],
+        general: [],
+        looked_at: "",
+        guards: [],
+        scarcity: null,
+        prechecks: [],
+      });
+    }
+    if (scenario === "cannot_resume") {
+      return HttpResponse.json({
+        suggestions: withStatus(suggestions.filter((s) => s.agent === "food")),
+        groups: [
+          { agent: "food", merges_into_one: true, notice: null, cautions: [] },
+          {
+            agent: "activity",
+            merges_into_one: false,
+            notice: {
+              code: "cannot_resume",
+              message: "이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요.",
+            },
+            cautions: [],
+          },
+        ],
+        general: [],
+        looked_at: "",
+        guards: [],
+        scarcity: null,
+        prechecks: [],
       });
     }
 
@@ -150,8 +236,32 @@ export const suggestionHandlers = [
       }
     }
 
+    // 식품 사전에 없는 알레르기(꽃가루)는 뺄 놀이를 코드가 못 정해서 확인 문구만 낸다 (#433 리뷰 ③).
+    // 글자는 서버 activity/tools/filters.allergy_cautions 와 같다
+    if (scenario === "suggest_cautions") {
+      return HttpResponse.json({
+        suggestions: withStatus(alive),
+        groups: suggestionGroups
+          .filter((g) => alive.some((s) => s.agent === g.agent))
+          .map((g) =>
+            g.agent === "activity"
+              ? {
+                  ...g,
+                  cautions: [
+                    "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
+                  ],
+                }
+              : g,
+          ),
+        looked_at: "",
+        guards: [],
+        scarcity: null,
+        prechecks,
+      });
+    }
+
     return HttpResponse.json({
-      suggestions: alive,
+      suggestions: withStatus(alive),
       groups: suggestionGroups.filter((g) => alive.some((s) => s.agent === g.agent)),
       looked_at: "오늘 급식 · 최근 3일 식사 · 확정 관심 2건",
       guards: [],
@@ -242,39 +352,9 @@ export const suggestionHandlers = [
     );
   }),
 
-  /* ── 승인 게이트 ㉡ — 알레르기·건강 기록의 유일한 쓰기 경로 ─────────────
-   * 🚨 보호자 토큰으로만 호출된다. Agent 실행 경로에는 이 함수를 부르는 코드가 없고,
-   *    DB 레벨에서도 Agent/Curator role 에 write 권한이 없다 (계약서 §07 "방어가 두 겹").
-   */
-  http.get(url("/children/:cid/health-safety"), async () => {
-    await networkDelay();
-    return HttpResponse.json({ items: healthSafety });
-  }),
-
-  http.post(url("/children/:cid/health-safety"), async ({ request }) => {
-    await networkDelay();
-    const body = (await request.json()) as { type: string; label: string };
-
-    // UNIQUE(child_id, type, label) — 같은 항목 재등록은 409 다. 지우고 다시 넣어야 한다.
-    if (healthSafety.some((s) => s.type === body.type && s.label === body.label)) {
-      return apiError(409, "conflict", "이미 등록된 항목이에요");
-    }
-
-    return HttpResponse.json(
-      {
-        safety: {
-          ...healthSafety[0],
-          id: `hs_${Date.now()}`,
-          type: body.type,
-          label: body.label,
-          severity: null,
-          reactions: [],
-          notes: null,
-        },
-      },
-      { status: 201 },
-    );
-  }),
+  // 🚨 알레르기 · 건강 기록(`/health-safety`, 게이트 ㉡)은 `handlers/children.ts` 하나가 갖는다 (#374).
+  //    여기 두 번째 벌이 있었는데, 먼저 등록된 children 쪽에 가려 닿지 않으면서 409 를 다른 코드
+  //    (`conflict`)로 내고 있었다 — 등록 순서가 바뀌는 순간 화면이 409 를 실패로 그린다.
 
   // 🚨 승인 게이트 ㉠ — 되돌릴 수 없는 지점. 캘린더에 쓰는 것은 여기 하나다.
   http.post(

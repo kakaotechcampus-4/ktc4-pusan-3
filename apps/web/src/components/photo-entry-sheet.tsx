@@ -77,6 +77,8 @@ export function PhotoEntrySheet({
     <BottomSheet
       open={entry !== null}
       onClose={onClose}
+      // 일정 넣기(승인 게이트 ㉠)가 이 안에 있다 — 열고 닫는 움직임이 없다 (디자인 시스템 §8 "하지 않는 것").
+      gate
       /**
        * 🚨 **제목이 이 시트에서 할 수 있는 일을 다 말한다.** "고치기" 만 적어 두니 캘린더에
        *    넣는 일이 이 안에 있다는 것이 어디에도 안 보였다 — 부모는 열어 보고 나서야 안다.
@@ -368,7 +370,7 @@ function EntryForm({
                   배너를 하나 더 세우지 않는다 — 색은 `caution` 을 쓰되 글자 한 덩이다. */}
               <div
                 className={cn(
-                  "text-body-sm flex flex-col gap-1",
+                  "text-body-sm ease-standard flex flex-col gap-1 transition-colors duration-120",
                   eventLocks.length > 0 ? "text-ink-subtle" : "text-caution",
                 )}
               >

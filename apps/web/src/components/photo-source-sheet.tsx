@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { cn } from "@/lib/cn";
+import { useMotionCue } from "@/lib/motion";
 import { listRecentPhotos, readRecentPhoto, type RecentPhoto } from "@/lib/native/recent-photos";
 import { PHOTO_LANES, type PhotoLane } from "@/lib/api/types";
 
@@ -106,6 +107,12 @@ export function PhotoSourceSheet({
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentPhoto[]>([]);
   const [readingId, setReadingId] = useState<string | null>(null);
+  /**
+   * 1 → 2단계는 한 칸 앞으로, "다른 종류로 바꾸기" 는 한 칸 뒤로 넘어간다 (디자인 시스템 §8 "단계 넘김").
+   * 🚨 **누른 것만 움직인다** (`useMotionCue`). 시트를 다시 열 때 1단계로 되감는 것까지 움직이면,
+   *    올라오는 시트 위에서 단계가 한 번 더 미끄러진다.
+   */
+  const { ref: stepRef, cue: cueStep } = useMotionCue<HTMLDivElement>();
 
   /**
    * 🚨 **시트를 열 때마다 1단계로 되돌린다.** 지난번에 고른 lane 이 남아 있으면 부모가
@@ -220,22 +227,30 @@ export function PhotoSourceSheet({
         onChange={(e) => handleChange(e.currentTarget)}
       />
 
-      {lane === null ? (
-        <LaneStep onChoose={setLane} />
-      ) : (
-        <SourceStep
-          lane={lane}
-          recent={recent}
-          readingId={readingId}
-          onBack={() => {
-            setLane(null);
-            setError(null);
-          }}
-          onRecent={handleRecent}
-          onCamera={() => cameraRef.current?.click()}
-          onAlbum={() => albumRef.current?.click()}
-        />
-      )}
+      <div ref={stepRef}>
+        {lane === null ? (
+          <LaneStep
+            onChoose={(next) => {
+              cueStep("forward");
+              setLane(next);
+            }}
+          />
+        ) : (
+          <SourceStep
+            lane={lane}
+            recent={recent}
+            readingId={readingId}
+            onBack={() => {
+              cueStep("back");
+              setLane(null);
+              setError(null);
+            }}
+            onRecent={handleRecent}
+            onCamera={() => cameraRef.current?.click()}
+            onAlbum={() => albumRef.current?.click()}
+          />
+        )}
+      </div>
 
       {error ? (
         // 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3).
@@ -384,7 +399,10 @@ function RecentStrip({
                 <img
                   src={photo.thumbnailUrl}
                   alt="기기에 있는 최근 사진"
-                  className={cn("size-full object-cover", reading && "opacity-50")}
+                  className={cn(
+                    "ease-standard size-full object-cover transition-opacity duration-120",
+                    reading && "opacity-50",
+                  )}
                 />
               </button>
             </li>

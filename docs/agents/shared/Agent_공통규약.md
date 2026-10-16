@@ -67,10 +67,14 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 - Agent가 받는 것은 DTO(frozen dataclass)뿐이다. 세션 · 트랜잭션 · ORM 객체는 백엔드에 남는다 — 포트도
   `FoodObservation` · `EventRow` 같은 DTO 를 돌려준다. pipeline 이 기록 단계에서 부르는 `commit` 도 러너가 만든
   함수이고, pipeline 은 부르는 시점만 정한다.
-- 데이터는 성격에 따라 두 길로 받는다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다. 발화에 따라
-  무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를 미리 넘기려면
-  범위를 넉넉히 잡아 읽어야 해서다. 어느 값을 값으로 옮길지는 생일 · 동의 포트를 `common/ports.py` 로 옮기는
-  작업에서 정한다.
+- 데이터는 성격에 따라 두 길로 받는 것이 원칙이다. 생일처럼 매 run 쓰는 값은 백엔드가 읽어 값으로 넘긴다.
+  발화에 따라 무엇을 읽을지 달라지는 조회(모델이 조건을 고르는 tool)는 DTO 를 돌려주는 포트로 둔다 — 전부를
+  미리 넘기려면 범위를 넉넉히 잡아 읽어야 해서다. 생일 · 동의는 값으로 넘기는 쪽으로 정했다(#372).
+  입력 라우터가 run 마다 한 번 읽어(`child_health` 동의는 `consent.repository.child_health_granted`)
+  러너 → `entrypoint.handle_input` 으로 넘기고, 값을 감싼 포트(`common/child_values.py` 의 `ChildValues`)가
+  Agent 의 `ChildProfileReader` · `ConsentReader` 자리에 들어간다. Agent 는 #319 의 Protocol 을 그대로 받는다.
+  🚨 동의 조회에 실패하면 "동의 안 함" 으로 바꾸지 않고 run 을 시작하지 않는다 — False 로 넘기면 Agent 가
+  `health_safety` 를 읽지 않고 알레르기 필터 없이 추천을 연다.
 - Agent는 run 내내 DB 연결을 쥐지 않는다. 조회 포트는 호출마다 짧은 세션으로 읽고, 쓰기 포트는 호출 하나가
   짧은 트랜잭션 하나로 바로 commit 된다. 그래서 한 task 안에서도 두 조회의 시점이 다를 수 있다 — 안전 정보는
   task 시작(`build_gate`)에 한 번 읽고 게이트와 필터가 그 값을 같이 쓴다.
@@ -153,7 +157,7 @@ class DomainAgentResult:
 - **되묻기는 한 번에 하나.** 후보가 여럿이면 순위가 가장 높은 하나만 낸다.
 - **초안은 저장하지 않는다.** `medication_drafts`는 Memory의 `event` 초안과 같다 — run 단위 버퍼에 모였다가 JSON payload로 한 번에 나가고, run이 끝나면 사라진다. 비어 있는 NOT NULL 칸 목록(`missing`)을 함께 실어 화면이 제출을 막는다. **만들자마자 행을 쓰는 `suggestion`과 혼동하지 말 것** — 복약은 행이 있다는 것 자체가 승인의 증거다.
 - suggestion은 **저장(commit)이 끝난 뒤에** 화면이 추천 카드로 전환된다. 카드의 승인 · 거절 · 피드백이 저장된 행의 id로 동작하고, 개인화 추천은 `suggestion_evidence`가 함께 저장돼 있어야 해서다(루트 §2). 보여 주면서 동시에 저장을 요청하지 않는다. 저장에 실패하면 그 Agent 카드는 내보내지 않고 `partial`로 둔다. 카드 화면은 그 run의 응답을 그대로 쓴다(묶음 키 없음). 별도의 suggestion 목록 화면은 `expires_at > now()`인 suggestion 전부를 보여준다.
-- **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2).
+- **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2). 반대로 모델이 출력 tool 없이 끝났거나(`no_tool_call`) 왕복 상한(`max_steps`)에 걸린 것은 0개가 아니라 **실패**다 — `status="failed"` 로 내고 화면은 다시 시도를 띄운다 (#320 PM 리뷰). 다만 Food 영양소 분석은 예외다 — 판정 · 식품군 안내가 코드가 계산한 값이라 `failed` 대신 코드 문장 틀(`nutrient.band.*`)을 `status="ok"` 로 낸다(`authored_by="code"`, 경고 로그로 센다 — Food_Tool_명세 §2 · §4, #357 리뷰).
 
 ---
 
@@ -185,7 +189,7 @@ class DomainAgentResult:
 - **코드가 후보에서 지우는 것은 안전뿐이다** — 알레르기(`health_safety`) · 연령 금지식품 · `hazard_term`. 기피는 여기 들어가지 않는다. 안전 필터는 여전히 가중치가 아니라 제거다.
 - **기피를 근거로 썼으면 문장에도 남긴다.** 기피 근거를 인용한 추천은 무엇을 피했는지, 또는 왜 그럼에도 골랐는지를 `reason`에 밝힌다. 인용만 하고 말하지 않으면 보호자에게는 근거 없는 추천과 같다.
 - **Food는 영양이 선호보다 앞선다.** 기피 근거가 있어도 영양 분석이 부족을 가리키면 그 식품군을 뺀 추천을 내지 않는다 — [`Food_Agent_명세.md`](../food/Food_Agent_명세.md) §6.
-- **신선도는 Curator가 맡는다.** 오래된 관심은 Curator가 `strength`를 내리거나 `archived`로 바꾼다. Agent는 그 결과(`state`·`strength`)만 보고 티어를 매기고, 유예일을 다시 세지 않는다 — 값이 두 벌이 되면 한쪽만 갱신된다. NF-08(180일)도 Curator 쪽 규칙이다.
+- **감쇠는 Curator가 맡는다.** 오래된 관심은 Curator가 `strength`를 내리거나 `archived`로 바꾼다. Agent는 그 결과(`state`·`strength`)만 보고 티어를 매기고, 유예일을 다시 세지 않는다 — 값이 두 벌이 되면 한쪽만 갱신된다. 다만 **6개월 넘은 아이 기록만 남은 후보는 `build()`가 일반 추천으로 돌린다**(루트 §2 · NF-08). `archived`는 새 관찰이 그 기억에 연결될 때만 갱신돼서, 몇 달 언급이 없던 관심이 `confirmed`로 남아 단독 근거로 나갈 수 있다. 기준은 `rules/staleness.is_stale`(달력 6개월) 하나이고 기억 카드와 추천 근거의 `is_stale`도 같은 함수다 (#329).
 - 아이 기록이 0행이면 **일반 추천을 낸다**(`kind="general"`). `reason`을 코드 템플릿으로 덮어쓰고, 화면이 "또래 기준"과 함께 `scarcity`(쌓인 기록 건수 + 되물을 질문 1개)를 표시한다. 추천을 빼고 `scarcity`만 내리지 않는다 — 루트 CLAUDE.md §2가 "일반 추천을 낸다"이기 때문이다.
 - **문서 행(`*_doc`)은 개인화 근거가 아니다.** `suggestion_evidence` 에 `source_kind='*_doc'` 으로 같이 쌓되 품질 지표에서는 빼고 센다. 일반 추천을 떠받치는 것이 이 행이다.
 - **Growth 의 `routine_coaching` 은 이 규칙의 예외다.** 근거 0행이면 일반 추천 대신 역질의를 낸다 — 아이와 무관한 생활 조언이 되기 때문이다 ([Growth_Tool_명세.md](../growth/Growth_Tool_명세.md) §propose_routine_plan).
@@ -254,8 +258,9 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 | Activity | 위 표와 같다 — **진입 1회, 안전 필터 재호출 시 2회.** 날씨와 문서 행만 사전 조회하고, 기억 검색 · 일정 · 장소 · 출력은 tool calling 루프 안에서 부른다. 루프 왕복은 `steps` 로만 센다 ([activity-agent-v1.md](../activity/activity-agent-v1.md) §3-2) |
 | 부분 실패 | 한 Agent가 죽어도 나머지 결과를 낸다 (`return_exceptions=True`) |
 | 쓰기 순서 | 같은 run 의 쓰는 task(지금은 `food:daycare_meal`)를 먼저 끝내고 읽는 task 를 동시에 돌린다. 쓰는 task 도 20초 안에서 센다. 쓰는 task 가 실패해도 읽는 task 는 돈다 |
-| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 `failed` 로 확정하지 않고 Idempotency 키도 풀지 않는 방향이다. — 러너 계약에서 확정한다 |
+| commit 뒤 실패 | 기록 단계는 Memory 다음에 commit 한다. commit 된 쓰기가 있는 run 은 `failed` 로 끝나지 않고 `done`(+ `partial`) 으로 끝난다. 도메인 쓰기는 보호자 말을 반영한 쓰기 포트(지금은 급식 수정 · 삭제) 호출이 성공하고 돌아온 뒤에만 commit 이 있었던 것으로 본다 — 쓰기 전에 실패 · 시간 초과한 run, 메뉴 카탈로그만 저장한 run 은 `failed`. Memory 의 쓰기도 일정 초안 · 바뀐 것 없는 성공은 commit 으로 세지 않는다. 추천 저장도 commit 이 돌아온 뒤에는 확정된 저장으로 센다. commit 결과를 모르는 경우(commit 도중 연결이 끊긴 경우)는 표시가 남지 않아 `failed` 다 — 다시 보내도 안전하게 하는 건 쓰기 쪽 멱등성 몫이다(트랜잭션 회의 결정 4) |
 | 20초 초과 | 부분 결과로 전환. 입력부터 잰다. Supervisor·Memory 는 끊지 않고 도메인 Agent 만 끊는다. `partial` 이벤트 |
+| 취소 | **도메인 Agent 는 `CancelledError` 를 삼키지 않는다.** pipeline 은 도메인 task 를 `asyncio.wait_for` 로 끊는데, Agent 가 취소를 잡고 값을 돌려주면 wait_for 가 시간 초과 대신 그 값을 돌려줘서 끊긴 Agent 의 늦은 결과가 성공으로 들어간다. `except BaseException` · 맨 `except:` 를 쓰지 않는다(`except Exception` 은 `CancelledError` 를 잡지 않는다). 정리할 것이 있으면 `finally` 에서 하고 다시 올린다. 공통 루프(`run_tool_loop`)가 이것을 테스트로 고정한다 (#319, #187 리뷰) |
 
 **`model_calls` · `steps` · `calls` 는 서로 다른 값이다.** 셋을 섞으면 예산 얘기가 엉킨다.
 
@@ -362,7 +367,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | # | 내용 |
 | --- | --- |
 | C-1 | ✅ 닫힘 — `suggestion`에 **`kind`만** 추가. `task_type`·`content` jsonb는 안 한다. `reference_refs`는 `suggestion_evidence`로 흡수 |
-| C-2 | ✅ 닫힘 — `reason`은 **text 한 칸**. `{why_this, why_now}`는 쓰지 않는다 |
+| C-2 | ✅ 닫힘 — `reason`은 **text 한 칸**. `{why_this, why_now}`는 쓰지 않는다. 한쪽 칸만 채워진 추천은 보호자에게 근거가 부족해 보이고, "최근 7일간 단백질 섭취가 부족해요" 같은 근거는 어느 칸에 넣어도 자연스러워 나누는 기준이 애매하다. 모델 출력도 `reason` 한 칸이다 (#359 · #400 · #329) |
 | C-3 | ✅ 닫힘 — **일반 추천 + `scarcity` 동봉**(§4). 루트 문서가 이긴다 |
 | C-4 | ✅ 닫힘 — data_model.md가 이미 정했다. `confirm`은 **저장하지 않는다**(상태를 바꾸지 않으므로 이력 값에서 제외) |
 | C-5 | ✅ 닫힘 — **그대로 둔다.** 24시간이면 만료되므로 무효화 배치를 두지 않는다 |

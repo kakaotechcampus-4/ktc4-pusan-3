@@ -6,6 +6,7 @@
 - 장소 이름은 이번 run 장소 조회 결과에 있어야 하고, 통과하면 코드가 문장 앞에 붙인다.
 """
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
@@ -22,14 +23,25 @@ from app.agents.activity.review import (
     review_candidates,
 )
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.schemas.common import (
+    ActivitySetting,
+    CaregiverRole,
+    DayLabel,
+    Intensity,
+    PlaceCategory,
+)
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.store.inmemory import (
     InMemoryActivityMemory,
     InMemorySafety,
     in_memory_ports,
 )
-from app.agents.activity.store.ports import ActivityObservation, PlaceRow, SafetyEntry
+from app.agents.activity.store.ports import (
+    ActivityDocRow,
+    ActivityObservation,
+    PlaceRow,
+    SafetyEntry,
+)
 from app.agents.activity.tools.filters import safety_terms
 from app.agents.activity.tools.recommend import propose_activity_candidates
 from app.agents.common.evidence import RankedEvidence
@@ -69,8 +81,7 @@ def candidate(**kwargs) -> ActivityCandidate:
         physical_intensity="low",
         involves_food=False,
         caregiver_role="together",
-        why_this="블록을 오래 가지고 놀았어요",
-        why_now="오늘 오후가 비어 있어요",
+        reason="블록을 오래 가지고 놀았어요 오늘 오후가 비어 있어요",
         evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
     )
     return ActivityCandidate.model_validate({**base, **kwargs})
@@ -79,8 +90,33 @@ def candidate(**kwargs) -> ActivityCandidate:
 PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
 
 
+TOWER_DOC = ActivityDocRow(
+    id=UUID(int=21),
+    doc_key="act-test-tower",
+    title="종이컵 탑 쌓기",
+    body="종이컵을 쌓고 무너뜨린다",
+    min_month=24,
+    max_month=48,
+    setting=ActivitySetting.INDOOR,
+    materials=("종이컵",),
+    caregiver_role=CaregiverRole.TOGETHER,
+    physical_intensity=Intensity.LOW,
+    involves_food=False,
+)
+DOCS = {TOWER_DOC.id: TOWER_DOC}  # 이번 run 의 프롬프트 [예시]에 실은 행
+# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없이 내는 후보는 이 인용을 단다
+DOC_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
+
+
 def review(
-    *candidates, months=40, seen=SEEN, recent=(), places=(PARK,), safety=(), outdoor_ok=True
+    *candidates,
+    months=40,
+    seen=SEEN,
+    recent=(),
+    places=(PARK,),
+    safety=(),
+    outdoor=None,
+    docs=DOCS,
 ):
     return review_candidates(
         candidates,
@@ -89,7 +125,9 @@ def review(
         recent_activities=recent,
         places=places,
         safety=safety_terms(safety),
-        outdoor_ok=outdoor_ok,
+        outdoor=outdoor,
+        docs=docs,
+        today=TODAY,
     )
 
 
@@ -108,14 +146,38 @@ class TestPass:
         assert citation.label == "블록"  # 모델이 아니라 조회 결과에서 채운다
         assert citation.note == "블록 쌓기를 즐겨 했어요"
 
-    def test_근거가_없으면_일반_추천이고_이유를_코드_문구로_덮는다(self):
-        (draft,) = review(candidate(evidence=[])).drafts
+    def test_문서_행만_인용하면_일반_추천이고_이유를_코드_문구로_덮는다(self):
+        (draft,) = review(candidate(evidence=[DOC_PICK])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
 
+    def test_인용이_하나도_없으면_거절한다(self):
+        """일반 추천의 근거는 문서 행이다. 아이 기록도 문서도 없는 후보는 나가지 않는다."""
+        assert reason_of(review(candidate(evidence=[]))) is RejectReason.BUILD
+
+    def test_6개월_지난_확정_관심_하나만_인용하면_일반_추천이고_그_인용은_빠진다(self):
+        """새로 생기는 동작이다. Curator 의 archived 는 새 관찰이 붙을 때만 갱신돼서, 몇 달
+        언급이 없던 관심이 confirmed 로 남아 단독 근거로 나갈 수 있었다 (#329)."""
+        old = {**SEEN, BLOCKS: replace(SEEN[BLOCKS], observed_on=date(2026, 3, 1))}
+
+        blocks = {"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}
+        (draft,) = review(candidate(evidence=[blocks, DOC_PICK]), seen=old).drafts
+
+        assert draft.kind == "general"
+        assert draft.reason == GENERAL_REASON
+        assert [c.ref.kind for c in draft.citations] == ["activity_doc"]  # 아이 기록 인용은 빠진다
+
+    def test_모델이_쓴_reason_이_그대로_추천의_reason_이다(self):
+        """#329 완료 기준. 두 칸(why_this · why_now)을 합치던 단계는 #359 에서 없어졌다 —
+        여기서는 고정만 한다. 앞뒤 공백만 뺀다."""
+        (draft,) = review(candidate(reason="  블록을 오래 가지고 놀았어요  ")).drafts
+
+        assert draft.kind == "personalized"
+        assert draft.reason == "블록을 오래 가지고 놀았어요"
+
 
 class TestEvaluative:
-    @pytest.mark.parametrize("field", ["content", "why_this", "why_now"])
+    @pytest.mark.parametrize("field", ["content", "reason"])
     def test_평가_표현이_있으면_거절(self, field):
         result = review(candidate(**{field: "또래보다 잘하는 블록 쌓기"}))
         assert reason_of(result) is RejectReason.EVALUATIVE
@@ -126,7 +188,7 @@ class TestEvaluative:
 
     def test_평가_표현이_먼저다(self):
         """순서가 결과를 바꾼다 — 근거 id 도 틀렸지만 앞 검사 사유가 나간다."""
-        result = review(candidate(why_this="재능이 보여요", evidence=[{"id": "x", "note": "n"}]))
+        result = review(candidate(reason="재능이 보여요", evidence=[{"id": "x", "note": "n"}]))
         assert reason_of(result) is RejectReason.EVALUATIVE
 
 
@@ -138,11 +200,62 @@ class TestEvidence:
         assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
 
 
+class TestDocEvidence:
+    """일반 추천은 문서 행을 근거로 단다. 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)."""
+
+    def doc_pick(self, note="종이컵 탑 쌓기 예시를 참고했어요"):
+        return {"id": str(TOWER_DOC.id), "note": note}
+
+    def test_문서_행만_달면_일반_추천이고_근거로_남는다(self):
+        result = review(candidate(content="종이컵으로 높은 탑 쌓기", evidence=[self.doc_pick()]))
+        draft = result.drafts[0]
+        assert draft.kind == "general"
+        assert draft.reason == GENERAL_REASON
+        assert [(c.ref.kind, c.ref.id, c.label) for c in draft.citations] == [
+            ("activity_doc", TOWER_DOC.id, "종이컵 탑 쌓기")
+        ]
+
+    def test_기억과_같이_달면_개인화이고_둘_다_근거다(self):
+        memory = {"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}
+        result = review(candidate(evidence=[memory, self.doc_pick()]))
+        draft = result.drafts[0]
+        assert draft.kind == "personalized"
+        assert [c.ref.kind for c in draft.citations] == ["profile_affinity", "activity_doc"]
+
+    def test_예시에_싣지_않은_문서_id_는_거절(self):
+        result = review(candidate(evidence=[self.doc_pick()]), docs={})
+        assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+    def test_문서_근거_note_에_아이에_대한_반복_표현은_거절(self):
+        """ "늘 좋아하는" 은 문서가 아니라 아이에 대한 말이다. 기록 없이 성향을 말하지 않는다."""
+        result = review(candidate(evidence=[self.doc_pick("아이가 늘 좋아하는 놀이예요")]))
+        assert reason_of(result) is RejectReason.OVERSTATED_NOTE
+
+
 class TestAvoided:
     def test_싫어한다고_나온_활동은_다시_내지_않는다(self):
         """인용하지 않았어도 조회된 기피면 막는다."""
         result = review(candidate(content="아파트 물놀이터 가기", evidence=[]))
         assert reason_of(result) is RejectReason.AVOIDED
+
+    def test_기피_대조는_활동명이_아니라_subject_로_한다(self):
+        """관찰의 활동명("물감 놀이")은 후보에 그대로 나오는 일이 드물다.
+        subject("물감")로 막는다 (#304 리뷰)."""
+        paint = UUID(int=15)
+        seen = {
+            **SEEN,
+            paint: RankedEvidence(
+                ref=Ref(kind="observation_activity", id=paint),
+                tier=3,
+                label="물감 놀이",
+                subject="물감",
+                polarity=-1,
+                observed_on=TODAY,
+            ),
+        }
+        for content in ("손가락 물감 찍기", "물감으로 그림 그리기"):
+            result = review(candidate(content=content, evidence=[]), seen=seen)
+            assert reason_of(result) is RejectReason.AVOIDED
 
     def test_기피는_근거로는_쓸_수_있다(self):
         """ "물놀이를 싫어해서 모래놀이를 골랐어요" 가 되어야 한다 (D4)."""
@@ -150,7 +263,7 @@ class TestAvoided:
         result = review(
             candidate(
                 content="놀이터에서 모래성 쌓기",
-                why_this="물놀이를 싫어해서 모래로 노는 활동을 골랐어요",
+                reason="물놀이를 싫어해서 모래로 노는 활동을 골랐어요",
                 evidence=[pick],
             )
         )
@@ -165,7 +278,7 @@ class TestAvoided:
     def test_한_글자_기피_라벨로는_거절하지_않는다(self):
         """ "공" 을 싫어한다고 "공원" · "공룡" 까지 막으면 과차단이다."""
         assert MIN_AVOIDED_LABEL == 2
-        result = review(candidate(content="공원에서 공룡 그림 그리기", evidence=[]))
+        result = review(candidate(content="공원에서 공룡 그림 그리기", evidence=[DOC_PICK]))
         assert result.rejections == ()
 
 
@@ -290,14 +403,14 @@ class TestSafety:
         assert result.removed[0].hits == ("health_safety",)
 
     def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
-        result = review(candidate(), candidate(content="구슬 꿰기", evidence=[]), months=40)
+        result = review(candidate(), candidate(content="구슬 꿰기", evidence=[DOC_PICK]), months=40)
         small_parts = hazard_terms().axes["small_parts"].warning_text
         assert result.warnings == ((), (small_parts,))
 
     def test_allergens_와_items_를_코드가_채운다(self):
         """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
         result = review(
-            candidate(content="밀가루 반죽 놀이", materials=["밀가루", "밀대"], evidence=[])
+            candidate(content="밀가루 반죽 놀이", materials=["밀가루", "밀대"], evidence=[DOC_PICK])
         )
         (draft,) = result.drafts
         assert draft.allergens == ("밀",)
@@ -305,18 +418,27 @@ class TestSafety:
 
 
 class TestOutdoor:
-    """날씨 판정이 야외를 막은 날(D8)에는 야외 후보를 거절한다. 모델이 실내로 고친다."""
+    """그날 날씨 판정이 야외를 막았으면(D8) 야외 후보를 거절한다. 모델이 실내로 고친다 (#377)."""
+
+    RAIN_TODAY = {DayLabel.TODAY: False, DayLabel.TOMORROW: True}
 
     def test_바깥_활동이_어려운_날_야외_후보는_거절(self):
-        result = review(candidate(setting="outdoor"), outdoor_ok=False)
+        result = review(candidate(setting="outdoor"), outdoor=self.RAIN_TODAY)
         assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
 
     @pytest.mark.parametrize("setting", ["indoor", "either"])
     def test_실내나_어디서든은_통과(self, setting):
-        assert review(candidate(setting=setting), outdoor_ok=False).rejections == ()
+        assert review(candidate(setting=setting), outdoor=self.RAIN_TODAY).rejections == ()
 
-    def test_바깥이_괜찮은_날은_야외도_통과(self):
-        assert review(candidate(setting="outdoor"), outdoor_ok=True).rejections == ()
+    def test_오늘_비가_와도_내일_야외는_통과(self):
+        """요청이 내일이면 오늘 날씨로 막지 않는다 (#359 리뷰)."""
+        tomorrow = candidate(setting="outdoor", day="tomorrow")
+        assert review(tomorrow, outdoor=self.RAIN_TODAY).rejections == ()
+
+    def test_판정하지_않은_날은_맑다고_가정하지_않는다(self):
+        weekend = candidate(setting="outdoor", day="this_weekend")
+        result = review(weekend, outdoor=self.RAIN_TODAY)
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
 
 
 class TestOutputTool:
@@ -345,6 +467,7 @@ class TestOutputTool:
         )
         ctx.state.gate = await build_gate(ctx, outdoor_ok=outdoor_ok)
         ctx.state.seen_evidence.update(SEEN)
+        ctx.state.seen_docs = dict(DOCS)
         return ctx
 
     def args(self, *candidates):
@@ -356,8 +479,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is True
@@ -373,8 +496,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[], place_name=PARK),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK], place_name=PARK),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
@@ -385,8 +508,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="아파트 물놀이터 가기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="아파트 물놀이터 가기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is False
@@ -399,8 +522,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(evidence=[{"id": str(UUID(int=999)), "note": "블록을 즐겨 했어요"}]),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
@@ -412,9 +535,9 @@ class TestOutputTool:
         result = await propose_activity_candidates(
             ctx,
             self.args(
-                candidate(content="아파트 물놀이터 가기", evidence=[]),
+                candidate(content="아파트 물놀이터 가기", evidence=[DOC_PICK]),
                 candidate(evidence=[{"id": str(UUID(int=999)), "note": "블록을 즐겨 했어요"}]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
@@ -429,8 +552,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is False
@@ -444,8 +567,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is True
@@ -458,14 +581,32 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="밀가루 점토 놀이", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="밀가루 점토 놀이", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert result.success is True
         assert result.data["count"] == 2
         assert len(ctx.state.suggestions) == 2
         assert ctx.state.excluded == ("밀가루 점토 놀이",)
+
+    async def test_식품_사전에_없는_알레르기는_확인_문구를_run_state_에_담는다(self):
+        """화면 자리(#249)가 생기기 전까지 run state 에 둔다. 이름이 문장에 없으면 후보는
+        그대로다."""
+        entry = SafetyEntry(kind="allergy", label="꽃가루", status="active")
+        ctx = await self.context(safety=InMemorySafety([entry]))
+        await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
+            ),
+        )
+        assert len(ctx.state.suggestions) == 3
+        assert ctx.state.cautions == (
+            "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
+        )
 
     async def test_출력_검증_동안_안전_정보를_다시_읽지_않는다(self):
         """build_gate 가 한 번 읽은 값을 쓴다. 다시 읽으면 게이트와 필터가 다른 행을 볼 수 있다."""
@@ -476,8 +617,8 @@ class TestOutputTool:
             ctx,
             self.args(
                 candidate(),
-                candidate(content="모래성 쌓기", evidence=[]),
-                candidate(content="종이컵 탑 쌓기", evidence=[]),
+                candidate(content="모래성 쌓기", evidence=[DOC_PICK]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
             ),
         )
         assert safety.calls == 1

@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
+import { useFlip } from "@/lib/motion";
 import { SEVERITY_LABEL } from "@/lib/health-safety";
 
 /**
@@ -97,6 +98,13 @@ export function SafetyScanReview({
    */
   const [showChecked, setShowChecked] = useState(true);
   const [showRegistered, setShowRegistered] = useState(false);
+  /**
+   * 자리 옮김 (디자인 시스템 §8). 확인한 줄이 "확인이 필요해요" 에서 "잘 읽었어요" 로 옮겨 가고, 등록을
+   * 마친 줄이 빠진 자리를 나머지가 메운다. 세 묶음을 함께 감싸야 묶음을 건너가는 줄이 이어진다.
+   * 🚨 **승인 게이트 ㉡ 화면이라 새로 나타나는 줄은 페이드하지 않는다** (`fadeIn: false` · §8 "하지 않는 것").
+   *    확인해야 할 것을 흘려보내지 않고, 보호자가 이미 본 줄이 어디로 갔는지만 보여 준다.
+   */
+  const flipRef = useFlip<HTMLDivElement>({ fadeIn: false });
 
   const live = rows.filter((row) => row.status !== "done");
   const review = live.filter((row) => needsReview(row));
@@ -119,7 +127,7 @@ export function SafetyScanReview({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={flipRef} className="flex flex-col gap-6">
       {/* 🚨 `caution` 은 승인 게이트 2곳 전용이다 (디자인 시스템 §3). 여기가 그중 하나다. */}
       <Banner tone="caution" title="검사지에 적힌 것만 옮겼어요">
         사진에서 읽은 것이라 잘못 옮겨졌을 수 있어요. 읽지 못한 칸은 비워 뒀으니 검사지를 보고 직접
@@ -284,7 +292,7 @@ function ReviewGroup({
       note="검사지를 보고 채워야 등록할 수 있어요."
     >
       {rows.map((row) => (
-        <li key={row.id}>
+        <li key={row.id} data-flip={row.id}>
           <ScanRowCard row={row} onPatch={onPatch} onEdit={onEdit} />
         </li>
       ))}
@@ -299,7 +307,8 @@ function ReviewGroup({
  *    위의 "확인이 필요해요" 가 화면 밖으로 밀린다. 건수는 접힌 채로도 보인다.
  * 🚨 **접혀 있어도 고른 상태는 그대로다.** 안 보이는 것이 안 등록되는 것은 아니다 —
  *    그래서 아래 "이렇게 등록할게요" 가 건수를 항상 말한다.
- * 🚨 **등장 애니메이션을 만들지 않는다** (디자인 시스템 §8). 펼침은 즉시다.
+ * 🚨 **펼침은 즉시다.** 승인 게이트 ㉡ 화면이라 펼친 줄을 투명도로 흘려보내지 않는다 (디자인 시스템 §8
+ *    "하지 않는 것"). 펼쳐서 밀려난 아래 줄이 비켜나는 것만 `useFlip` 이 움직인다.
  */
 function CheckedGroup({
   rows,
@@ -332,7 +341,7 @@ function CheckedGroup({
       scrollable
     >
       {rows.map((row) => (
-        <li key={row.id}>
+        <li key={row.id} data-flip={row.id}>
           <ScanRowCard row={row} onPatch={onPatch} onEdit={onEdit} />
         </li>
       ))}
@@ -368,7 +377,7 @@ function RegisteredGroup({
       onToggle={onToggle}
     >
       {rows.map((row) => (
-        <li key={row.id}>
+        <li key={row.id} data-flip={row.id}>
           <div className="rounded-card border-line bg-surface border p-4">
             <p className="text-body text-ink-muted">{row.label}</p>
             {row.sourceText ? <SourceText text={row.sourceText} /> : null}
@@ -494,7 +503,7 @@ function ScanRowCard({
   return (
     <div
       className={cn(
-        "rounded-card bg-surface border p-4",
+        "rounded-card bg-surface ease-standard border p-4 transition-colors duration-120",
         // 🚨 확인이 필요한 것을 빨강으로 칠하지 않는다. 사고가 아니라 **아직 안 한 일**이다 —
         //    테두리만 진하게 해서 눈에 먼저 들어오게 한다.
         review ? "border-line-strong" : "border-line",

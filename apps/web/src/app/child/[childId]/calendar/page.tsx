@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { CalendarDayPanel } from "@/components/calendar-day";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -13,6 +14,7 @@ import { MonthGrid } from "@/components/month-grid";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import {
   api,
@@ -28,7 +30,7 @@ import { formatDay, parseISODate, toISODate, toMonthKey } from "@/lib/format";
  * 09 캘린더.
  *
  * 🚨 **여기에 승인 게이트가 없다.** 캘린더 쓰기(게이트 ㉠)는 05·06 이 지고, 이 화면에 서는
- *    일정은 전부 이미 확정된 것이다 (`has_event` 는 `confirmed` 만 센다). 그래서
+ *    일정은 전부 보호자가 이미 제출한 것이다 (`event` 에는 제출한 행만 있다 · #118). 그래서
  *    `btn-approve` 도 `caution` 도 쓰지 않는다 — 그 둘은 되돌릴 수 없는 2곳 전용이다.
  *
  * 🚨 **일기는 관찰이 아니다** (계약서 §09). 같은 날짜 아래 있어도 구역이 다르고, 화면이
@@ -42,7 +44,9 @@ export default function CalendarPage() {
     // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (05·07 과 같은 이유).
     <Suspense fallback={null}>
       <AuthGate>
-        <CalendarScreen />
+        <ScreenTransition>
+          <CalendarScreen />
+        </ScreenTransition>
       </AuthGate>
     </Suspense>
   );
@@ -123,23 +127,27 @@ function CalendarScreen() {
           ) : null}
         </div>
 
-        {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
+        {/* 다른 날을 고르면 이 자리의 하루가 갈아 끼워진다 (디자인 시스템 §8 "교체"). 날짜가 같으면
+            다시 받아도 그대로다. */}
+        <Swap id={`${date}:${phaseOf(dayQuery)}`}>
+          {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
 
-        {dayQuery.isError ? (
-          <LoadFailed what="이날을" childId={childId} error={dayQuery.error} />
-        ) : null}
+          {dayQuery.isError ? (
+            <LoadFailed what="이날을" childId={childId} error={dayQuery.error} />
+          ) : null}
 
-        {dayQuery.data ? (
-          // 🚨 `key` 로 날짜마다 새로 세운다. 안 그러면 일기 초안과 "쓰는 중" 상태가 앞 날짜에서
-          //    넘어오고, 그 사이에 저장을 누르면 **다른 날의 일기가 이 날짜로 저장된다.**
-          <CalendarDayPanel
-            key={date}
-            childId={childId}
-            date={date}
-            data={dayQuery.data}
-            onOpenObservation={(observation) => setTarget({ type: "observation", observation })}
-          />
-        ) : null}
+          {dayQuery.data ? (
+            // 🚨 `key` 로 날짜마다 새로 세운다. 안 그러면 일기 초안과 "쓰는 중" 상태가 앞 날짜에서
+            //    넘어오고, 그 사이에 저장을 누르면 **다른 날의 일기가 이 날짜로 저장된다.**
+            <CalendarDayPanel
+              key={date}
+              childId={childId}
+              date={date}
+              data={dayQuery.data}
+              onOpenObservation={(observation) => setTarget({ type: "observation", observation })}
+            />
+          ) : null}
+        </Swap>
       </section>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />
@@ -160,8 +168,9 @@ function daySummary(summary: CalendarDay | undefined): string | null {
   const parts: string[] = [];
   if (summary.has_event) parts.push("일정 있음");
   if (summary.observation_count > 0) parts.push(`기록 ${summary.observation_count}건`);
-  if (summary.has_diary) parts.push("일기 있음");
-  if ((summary.profile_changed_count ?? 0) > 0) parts.push("기억 달라짐");
+  if (summary.has_my_diary) parts.push("일기 있음");
+  // 월 그리드에는 사진 표식이 없다 — 사진만 있는 날을 골랐을 때 이 줄이 그 사실을 먼저 말한다.
+  if (summary.has_shared_photo) parts.push("사진 있음");
 
   // 🚨 빈 날은 **여기서 말하지 않는다.** 아래 하루 패널의 빈 상태가 그 말을 맡는다 —
   //    같은 사실을 두 곳에서 하면 화면이 사과하는 것처럼 읽힌다 (문서 §7).

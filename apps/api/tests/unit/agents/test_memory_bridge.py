@@ -1,12 +1,17 @@
 """memory_bridge 검증. 같은 run 의 Memory store 를 Food · Activity 기억 포트로 읽는다."""
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.agents.common.datetime_rules import build_observed_range
-from app.agents.memory.store import InMemoryStore
+from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory.store.ports import ObservationRow
 from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory
 
@@ -158,3 +163,37 @@ async def test_status_가_없는_관찰은_읽지_않는다() -> None:
     )
 
     assert rows == []
+
+
+async def test_opener_를_주면_호출마다_store_를_새로_연다() -> None:
+    """DB 에서는 호출마다 짧은 세션을 연다. 같은 세션을 두 task 가 동시에 쓰지 않게 (#257)."""
+    store = InMemoryStore(now=NOW)
+    await _save(store, "food", subject="딸기", polarity=1, status="active")
+    opened: list[int] = []
+
+    @asynccontextmanager
+    async def opener() -> AsyncIterator[MemoryStore]:
+        opened.append(len(opened))
+        yield store
+
+    reader = StoreFoodMemory(opener=opener)
+    first, second = await asyncio.gather(
+        reader.observations(child_id=CHILD, date_from=TODAY, date_to=TODAY),
+        reader.observations(child_id=CHILD, date_from=TODAY, date_to=TODAY),
+    )
+
+    assert len(opened) == 2
+    assert [o.subject for o in first] == [o.subject for o in second] == ["딸기"]
+
+
+def test_store_와_opener_는_하나만_받는다() -> None:
+    store = InMemoryStore(now=NOW)
+
+    @asynccontextmanager
+    async def opener() -> AsyncIterator[MemoryStore]:
+        yield store
+
+    with pytest.raises(TypeError):
+        StoreFoodMemory(store, opener=opener)
+    with pytest.raises(TypeError):
+        StoreActivityMemory()

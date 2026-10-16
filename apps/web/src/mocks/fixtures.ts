@@ -12,20 +12,21 @@
 import type {
   Affinity,
   Agent,
-  CalendarDay,
   CalendarEvent,
-  Evidence,
-  EventDraft,
   ChildProfile,
+  EventDraft,
+  Evidence,
   GeneralSuggestion,
   GrowthLog,
   HealthSafety,
-  SafetyScanResponse,
   HomeResponse,
   Me,
+  MyDiary,
   Observation,
   ObservationHealth,
   ObservationPromotable,
+  SafetyScanResponse,
+  SharedPhoto,
   Suggestion,
   SuggestionGroup,
 } from "@/lib/api/types";
@@ -236,14 +237,16 @@ export function newHealthSafety(input: {
 }): HealthSafety {
   return {
     kind: "health_safety",
-    id: `hs_${Date.now()}`,
+    // 🚨 시각만 쓰면 같은 밀리초에 등록과 고치기가 같은 id 를 받는다 — 고치면 새 id 라서 겹치면 안 된다.
+    id: `hs_${crypto.randomUUID()}`,
     type: input.type,
     label: input.label,
     severity: input.severity ?? null,
     reactions: input.reactions ?? [],
     management: null,
     notes: input.notes ?? null,
-    created_by: { parent_id: PARENT_ID, nickname: me.nickname ?? "" },
+    // 서버처럼 부르는 이름이 없으면 통째로 null 이다 — 빈 이름을 지어 붙이지 않는다.
+    created_by: me.nickname ? { parent_id: PARENT_ID, nickname: me.nickname } : null,
     updated_at: hoursFromNow(0),
   };
 }
@@ -362,7 +365,7 @@ export const safetyScan: SafetyScanResponse = {
 /* ── 11 아이 프로필 · 측정 로그 ───────────────────────────────────────── */
 
 /**
- * ⚠️ `GET /children/{cid}` 는 계약서 v1 에 없다 (이슈 #75). 여기가 그 제안의 유일한 구현이다.
+ * `GET /children/{cid}` 의 응답 모양은 서버 구현(PR #334)이 정본이다.
  * 🚨 `age_display` 는 **서버 문구**라 목이 만든다 — 화면은 생일에서 나이를 계산하지 않는다.
  */
 export const childProfile: ChildProfile = {
@@ -459,9 +462,14 @@ function evidenceFrom(a: Affinity): Evidence {
 }
 
 /**
- * 성향이 아닌 근거. 🚨 **근거는 `profile_affinity` 만이 아니다** — 급식 행과 규칙 확인도 근거로
+ * 성향이 아닌 근거. 🚨 **근거는 `profile_affinity` 만이 아니다** — 관찰 한 건과 급식 행도 근거로
  *    나간다 (CLAUDE.md §5 "컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문").
  *    픽스처에 성향만 있으면 화면이 그 한 종류만 그려 보고 통과한다.
+ *
+ * 🚨 **아이 기록 9종 밖의 것을 근거로 만들지 않는다** (`EVIDENCE_KINDS` · #284). 한동안 여기에
+ *    `health_safety` 근거("알레르기 제한 없음")가 있었는데, 서버는 9종 밖의 근거를 응답에서 뺀다
+ *    (`apps/api/app/domains/suggestion/repository.py` 의 `_CHILD_RECORD_KINDS`). 목이 실서버에
+ *    없는 모양을 그리면 화면이 그 모양에 맞춰진다.
  */
 const mealEvidence: Evidence = {
   ref: { kind: "daycare_meal", id: "dm_1" },
@@ -471,12 +479,12 @@ const mealEvidence: Evidence = {
   note: "어린이집에서 받음 · 기관 기록 · 오늘",
 };
 
-const safetyEvidence: Evidence = {
-  ref: { kind: "health_safety", id: "hs_none" },
-  label: "알레르기 제한 없음",
-  observed_to: daysAgo(0),
+const observationEvidence: Evidence = {
+  ref: { kind: "observation_food", id: observations[1].id },
+  label: observations[1].subject,
+  observed_to: observations[1].observed_to,
   confidence_source: "parent_direct",
-  note: "규칙 확인 · 보호자 입력값",
+  note: "두 그릇 먹음 · 출처 보호자",
 };
 
 /** 🚨 evidence 0건인 suggestion 은 만들지 않는다 — 그건 서버가 버리고 scarcity 로 내린다. */
@@ -486,13 +494,15 @@ const safetyEvidence: Evidence = {
  *
  * 🚨 **한 Agent 의 후보가 하나뿐이면 화면이 거짓말을 해도 안 들킨다** — "3가지 중에서" 머리줄도,
  *    `food` 묶기도, 대안 사이에 기본 선택을 만들지 않는다는 규칙도 전부 후보가 여럿일 때만 돈다.
+ *
+ * 🚨 **`reason` 은 서버처럼 문장 한 칸이다** (#475). 한동안 목만 `{why_this, why_now}` 로 내려서
+ *    화면이 그 모양에 맞춰졌고, 실서버 응답에서 이유 칸이 비는 것을 목이 가렸다.
  */
 function personalized(
   id: string,
   agent: Agent,
   content: string,
-  whyThis: string,
-  whyNow: string,
+  reason: string | null,
   evidence: Evidence[],
 ): Suggestion {
   return {
@@ -501,7 +511,7 @@ function personalized(
     agent,
     kind: "personalized",
     content,
-    reason: { why_this: whyThis, why_now: whyNow },
+    reason,
     status: "draft",
     expires_at: hoursFromNow(24),
     feedback: null,
@@ -516,26 +526,23 @@ export const suggestions: Suggestion[] = [
     "s_1",
     "food",
     "계란말이에 시금치를 조금 섞어 보세요",
-    "계란 반찬을 서로 다른 3일에 찾았어요",
-    "오늘 급식에 계란 반찬이 없어요",
+    "계란 반찬을 서로 다른 3일에 찾았고, 오늘 급식에는 계란 반찬이 없었어요.",
     // 🚨 **근거는 제안마다 다르다.** 같은 배열을 셋에 복사하면 화면이 "근거가 제안마다 다르다" 를
     //    한 번도 그려 보지 않고 통과한다 — 건수도 종류도 갈라 둔다.
-    [evidenceFrom(affinities[0]), mealEvidence, safetyEvidence],
+    [evidenceFrom(affinities[0]), mealEvidence, observationEvidence],
   ),
   personalized(
     "s_2",
     "food",
     "두부를 부쳐서 한 조각 곁들여 보세요",
-    "두부 반찬을 남기지 않았어요",
-    "오늘 급식에 단백질 반찬이 적어요",
-    [evidenceFrom(affinities[0]), safetyEvidence],
+    "두부 반찬을 남기지 않았고, 오늘 급식과 겹치지 않아요.",
+    [evidenceFrom(affinities[0]), observationEvidence],
   ),
   personalized(
     "s_3",
     "food",
     "멸치볶음을 간을 약하게 해서 조금만",
-    "짠 반찬은 한 번에 조금씩 먹었어요",
-    "이번 주에 멸치 반찬이 없었어요",
+    "짠 반찬은 한 번에 조금씩 먹었고, 이번 주에는 멸치 반찬이 없었어요.",
     [mealEvidence],
   ),
   // 주말 놀이 3가지.
@@ -543,8 +550,7 @@ export const suggestions: Suggestion[] = [
     "s_4",
     "activity",
     "주말에 실내 물놀이장은 어떨까요",
-    "물놀이에서 오래 머물렀어요",
-    "이번 주말 일정이 비어 있어요",
+    "물놀이에서 오래 머물렀고, 이번 주말 일정이 비어 있어요.",
     [evidenceFrom(affinities[1])],
   ),
   personalized(
@@ -552,16 +558,16 @@ export const suggestions: Suggestion[] = [
     "activity",
     // 🚨 놀이 제안에도 먹을 것이 붙는다 — 사전검사가 `agent` 가 아니라 `allergens` 로 걸리는 경로.
     "놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요",
-    "바깥 놀이 뒤에 잘 잤어요",
-    "이번 주말 일정이 비어 있어요",
+    "바깥 놀이 뒤에 잘 잤고, 이번 주말 일정이 비어 있어요.",
     [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
   ),
   personalized(
     "s_6",
     "activity",
     "블록으로 높이 쌓기를 해 보세요",
-    "손을 쓰는 놀이를 오래 했어요",
-    "비 소식이 있어요",
+    // 🚨 **이유가 비어 오는 줄.** 서버 `reason` 은 `str | None` 이다 — 라벨만 선 줄을 그리지
+    //    않는다는 규칙(#475)은 빈 값이 목에 하나라도 있어야 돈다.
+    null,
     [evidenceFrom(affinities[1])],
   ),
 ];
@@ -588,14 +594,15 @@ export const suggestionAllergens: Record<string, string[]> = {
  * 🚨 `food` 만 `merges_into_one` 이다. 반찬 셋을 골라도 "저녁 식사" 한 건이 된다.
  */
 export const suggestionGroups: SuggestionGroup[] = [
-  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true },
-  { agent: "activity", prompt: "주말에 뭐 하고 놀까요" },
+  { agent: "food", prompt: "오늘 저녁 뭐 차려 줄까요", merges_into_one: true, cautions: [] },
+  { agent: "activity", prompt: "주말에 뭐 하고 놀까요", cautions: [] },
 ];
 
 /**
  * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 추천 (CLAUDE.md §2).
  *
- * 🚨 `evidence` 필드가 없다 — 일반 추천은 근거 0행이 정상이고, 그래서 개인화와 **타입이 다르다.**
+ * 🚨 `evidence` 는 **아이 기록이 아니라 문서 행**이다 (`DocEvidence`) — 일반 추천은 아이 기록 근거 0행이
+ *    정상이고, 그래서 개인화와 **타입이 다르다.** 문서 근거가 없는 일반 추천은 서버가 내지 않는다.
  * 🚨 `basis` 는 서버가 만든 문구다. 목에서도 프론트가 "또래 기준" 을 지어내지 않게 여기 둔다.
  */
 export const generalSuggestions: GeneralSuggestion[] = [
@@ -606,6 +613,19 @@ export const generalSuggestions: GeneralSuggestion[] = [
     kind: "general",
     content: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요",
     basis: "36개월 또래가 자주 찾는 놀이예요",
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    record_count: 1,
+    evidence: [
+      {
+        ref: { kind: "activity_doc", id: "doc_1" },
+        title: "블록 쌓기",
+        source_org: "교육부",
+        source_title: "표준보육과정",
+        source_url: null,
+        note: "또래 놀이 자료",
+      },
+    ],
   },
   {
     id: "g_2",
@@ -614,6 +634,19 @@ export const generalSuggestions: GeneralSuggestion[] = [
     kind: "general",
     content: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요",
     basis: "36개월 또래의 식사에서 흔한 형태예요",
+    status: "draft",
+    expires_at: hoursFromNow(24),
+    record_count: 1,
+    evidence: [
+      {
+        ref: { kind: "food_doc", id: "doc_2" },
+        title: "한 끼 구성",
+        source_org: "보건복지부",
+        source_title: "영유아 식생활 지침",
+        source_url: null,
+        note: "또래 식사 자료",
+      },
+    ],
   },
 ];
 
@@ -647,9 +680,11 @@ export const home: HomeResponse = {
     state_reason: "서로 다른 3일에 기록됐어요",
     ref: { kind: "profile_affinity", id: "a_12" },
   },
+  // 서버(#286 `rules/home_prompts.py`)의 저녁 시간대와 같은 모양이다. 문구는 서버가 별명으로 만든다.
+  // 🚨 `prompt_key` 는 누르면 05 의 추천 요청에 그대로 실린다 — 문장은 서버가 이 키로 정한다.
   agent_prompts: [
-    { agent: "food", text: "오늘 저녁 뭐 할지 같이 정하기" },
-    { agent: "activity", text: "주말에 뭐 하고 놀지 정하기" },
+    { agent: "food", text: "민준이가 먹을 저녁 추천해드릴까요?", prompt_key: "dinner" },
+    { agent: "activity", text: "민준이랑 할 놀이 추천해드릴까요?", prompt_key: "play" },
   ],
 };
 
@@ -805,17 +840,53 @@ export const educationObservation: ObservationPromotable = promotable(
   null,
 );
 
-/** 4개 테이블을 `observed_to DESC` 로 병합한 모양 — 서버가 하는 일을 목도 그대로 한다. */
+/**
+ * 생활습관 기록. 🚨 `growth` 분류에 education 과 **같이** 나와야 한다 (#266) — 목이 이걸 안 갖고
+ * 있어서, routine 이 한 건만 섞여도 07 화면이 멈추는 것을 목으로는 못 봤다 (#269).
+ * 승격 대상이 아니라 `affinity` 는 늘 `null`, `strong_signals` 는 늘 빈 배열이다.
+ */
+export const routineObservation: ObservationPromotable = {
+  ...promotable(
+    "o_6",
+    "observation_routine",
+    "양치",
+    "자기 전에 혼자 양치하겠다고 했어요",
+    4,
+    null,
+  ),
+  strong_signals: [],
+};
+
+/**
+ * 다섯 테이블 전부. 목록과 캘린더는 여기서 건강을 빼고 내려주지만(첫 배포 범위 밖 · #259 · #318),
+ * 상세는 아직 이 배열에서 찾는다.
+ */
 export const allObservations: Observation[] = [
   ...observations,
   educationObservation,
+  routineObservation,
   healthObservation,
 ].sort((a, b) => (a.observed_to < b.observed_to ? 1 : -1));
 
 /**
- * 07 피드백 탭이 평가할 제안 목록.
- * ⚠️ `GET /children/{cid}/suggestions` 는 계약서 v1 에 아직 없다 (types.ts 의 ⚠️).
+ * `observations_many` 시나리오의 07 기록 — 한 장(20건)을 넘겨야 "더 보기" 가 선다.
+ * 기본 기록 뒤에 1주 전부터 하루씩 거슬러 간 놀이 기록을 붙인다.
  */
+export const manyObservations: Observation[] = [
+  ...allObservations,
+  ...Array.from({ length: 19 }, (_, i) =>
+    promotable(
+      `o_m${i + 1}`,
+      "observation_activity",
+      "블록",
+      `블록으로 탑을 쌓았어요 (${i + 1})`,
+      7 + i,
+      null,
+    ),
+  ),
+];
+
+/** 07 피드백 탭이 평가할 제안 목록 (`GET /children/{cid}/suggestions` · #284). */
 export const receivedSuggestions: Suggestion[] = [
   { ...suggestions[0], id: "s_past_1", status: "approved", feedback: "child_liked" },
   { ...suggestions[1], id: "s_past_2", status: "rejected", feedback: null },
@@ -842,36 +913,97 @@ export const confirmedEvent: CalendarEvent = {
   reminders: [],
 };
 
-/** 일기는 관찰이 아니다 — 별도 저장소에 둔다 (계약서 §09). 날짜 → 본문·사진. */
-const diaries = new Map<string, { text: string; image_urls: string[] }>([
-  [
-    daysAgo(1),
-    {
-      text: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
-      image_urls: [],
-    },
-  ],
-]);
+/**
+ * 내 일기 (`diary_entry`). 일기는 관찰이 아니다 — 별도 저장소에 둔다 (계약서 §09).
+ *
+ * 🚨 **로그인한 보호자 본인 것만 들고 있다** (#115). 목에는 보호자가 한 명뿐이라 날짜 → 일기 한 벌이면
+ *    서버와 같은 결과다. 다른 보호자의 일기는 서버도 내려 주지 않는다.
+ */
+const diaries = new Map<string, MyDiary>();
 
-/** 🚨 프로필 승격이 일어난 날. 프론트가 관찰 건수로 역산할 수 없는 값이라 목이 들고 있다. */
-const profileChanged = new Map<string, number>([[daysAgo(0), 1]]);
+function seedDiaries(): void {
+  diaries.set(daysAgo(1), {
+    content: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
+    updated_at: `${daysAgo(1)}T21:30:00+09:00`,
+  });
+}
+seedDiaries();
 
-export function readDiary(date: string): { text: string; image_urls: string[] } | null {
+export function readMyDiary(date: string): MyDiary | null {
   return diaries.get(date) ?? null;
 }
 
-export function writeDiary(date: string, value: { text: string; image_urls: string[] }): void {
-  if (value.text.trim() === "") diaries.delete(date);
-  else diaries.set(date, value);
+/**
+ * 그날 내 일기를 쓴다. 이미 있으면 덮어쓴다 (서버 `put_diary` 와 같다 · #364).
+ *
+ * 🚨 **빈 내용을 지우기로 보지 않는다.** 한동안 공백뿐이면 지웠는데, 서버(PR #333)는 그 요청을
+ *    422 로 거절하고 기존 일기를 남긴다. 거절은 핸들러가 하고, 지우기는 `deleteMyDiary` 하나다.
+ *    저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다.
+ */
+export function writeMyDiary(date: string, content: string): MyDiary {
+  const diary: MyDiary = { content, updated_at: new Date().toISOString() };
+  diaries.set(date, diary);
+  return diary;
+}
+
+/**
+ * 그날 내 일기를 지운다. 없으면 아무것도 하지 않는다 (서버 `delete_diary` 와 같다 · #364).
+ *
+ * 🚨 **사진은 건드리지 않는다** (#115). 공유 사진은 일기 밖의 저장소(`sharedPhotos`)라, 일기를
+ *    지운 날에도 사진은 그대로 남고 달 보기의 `has_shared_photo` 도 그대로다.
+ */
+export function deleteMyDiary(date: string): void {
+  diaries.delete(date);
+}
+
+export function myDiaryDates(): string[] {
+  return [...diaries.keys()];
 }
 
 /** 테스트용 — 목은 프로세스 수명만큼 살아 있다 (apps/web/CLAUDE.md §8). */
 export function resetDiaries(): void {
   diaries.clear();
-  diaries.set(daysAgo(1), {
-    text: "저녁에 블록을 한참 쌓다가 무너지니까 웃었다.\n자기 전에 물을 두 컵 마셨다.",
-    image_urls: [],
-  });
+  seedDiaries();
+}
+
+/** 실제 사진이 아니라는 것이 한눈에 보여야 한다 (`native-bridge.ts` 와 같은 규칙 · 커밋되는 이미지가 없다). */
+function placeholderPhoto(label: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">
+    <rect width="320" height="240" fill="rgb(214,208,200)"/>
+    <text x="160" y="132" font-family="sans-serif" font-size="32" fill="rgb(110,105,97)"
+          text-anchor="middle">${label}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/**
+ * 공유 사진 (`shared_photo`). 🚨 **일기 밖에 있다** (#115) — 연결된 보호자가 함께 보고, 일기를
+ *    덮거나 지워도 그대로다. 오늘은 기록과 같이 있는 날, 7일 전은 **사진만 있는 날**이다.
+ *    업로드는 K 묶음이라 목도 조회만 한다.
+ */
+const sharedPhotos: Array<SharedPhoto & { date: string }> = [
+  {
+    id: "sp_1",
+    date: daysAgo(0),
+    image_url: placeholderPhoto("사진 1"),
+    created_at: hoursFromNow(-3),
+  },
+  {
+    id: "sp_2",
+    date: daysAgo(7),
+    image_url: placeholderPhoto("사진 2"),
+    created_at: `${daysAgo(7)}T16:00:00+09:00`,
+  },
+];
+
+export function sharedPhotosOn(date: string): SharedPhoto[] {
+  return sharedPhotos
+    .filter((photo) => photo.date === date)
+    .map(({ id, image_url, created_at }) => ({ id, image_url, created_at }));
+}
+
+export function sharedPhotoDates(): string[] {
+  return sharedPhotos.map((photo) => photo.date);
 }
 
 /** 일정이 걸린 날. 서버가 `starts_at` 을 날짜로 접어 내리는 자리다. */
@@ -883,30 +1015,6 @@ export function calendarEventsOn(date: string): CalendarEvent[] {
   return [confirmedEvent].filter((event) => eventDate(event) === date);
 }
 
-export function calendarObservationsOn(date: string): Observation[] {
-  return allObservations.filter((observation) => observation.observed_to === date);
-}
-
-/**
- * 월 조회. 🚨 `has_event` 는 `confirmed` 만 센다 — draft 는 아직 캘린더에 쓴 것이 아니다.
- */
-export function calendarMonth(month: string): CalendarDay[] {
-  const dates = new Set<string>();
-  for (const observation of allObservations) {
-    if (observation.observed_to.startsWith(month)) dates.add(observation.observed_to);
-  }
-  for (const event of [confirmedEvent]) {
-    if (eventDate(event).startsWith(month)) dates.add(eventDate(event));
-  }
-  for (const date of diaries.keys()) if (date.startsWith(month)) dates.add(date);
-  for (const date of profileChanged.keys()) if (date.startsWith(month)) dates.add(date);
-
-  return [...dates].sort().map((date) => ({
-    date,
-    has_diary: diaries.has(date),
-    has_event: calendarEventsOn(date).length > 0,
-    has_image: (diaries.get(date)?.image_urls.length ?? 0) > 0,
-    observation_count: calendarObservationsOn(date).length,
-    profile_changed_count: profileChanged.get(date) ?? 0,
-  }));
+export function calendarEventDates(): string[] {
+  return [confirmedEvent].map(eventDate);
 }

@@ -4,8 +4,8 @@
 실패해도 관찰은 이미 저장돼 있고, 벡터·연결이 안 된 관찰은
 다음 실행(list_unembedded / list_unlinked)이 자동으로 집는다.
 
-호출 시점: pipeline.handle_input 에서 Memory Agent 완료 후.
-현재는 InMemoryStore 라 아직 연결되지 않았다 — DB 저장소가 붙으면 활성화한다.
+호출 시점: Memory 가 commit 된 직후. 러너(api/runs/runner.py `_curator_trigger`)가 이 함수를 감싼
+콜백을 만들어 entrypoint 로 넘기고, pipeline 이 (child_id, 기준일) 로 부른다.
 """
 
 import asyncio
@@ -13,11 +13,12 @@ import logging
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.curator.embedding.linker import link_observations
+from app.domains.child.models import Child
 from app.domains.memory.curator.db_store import DbCuratorStore
 from app.domains.memory.curator.recompute import recompute_after_linking
 from app.infra.db.session import async_session_factory
@@ -49,8 +50,19 @@ async def _run_curator(
                 text("SELECT pg_advisory_xact_lock(:ns, :key)"),
                 {"ns": _CURATOR_LOCK_NS, "key": child_id.int % (2**31)},
             )
+            # 잠금 대기 중 바뀐 생일도 반영한다. PATCH 자체를 잠그는 것은 아니다.
+            birth_date = (
+                await session.execute(
+                    select(Child.birth_date).where(Child.id == child_id, Child.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if birth_date is None:
+                # 대기 중 삭제된 아이는 정상 종료한다. 세션 종료 시 잠금도 해제된다.
+                return
             store = DbCuratorStore(session)
-            result = await link_observations(store, embedder, judge, child_id=child_id)
+            result = await link_observations(
+                store, embedder, judge, child_id=child_id, birth_date=birth_date
+            )
 
             if result.affected_profile_ids:
                 await recompute_after_linking(session, result=result, today=today)

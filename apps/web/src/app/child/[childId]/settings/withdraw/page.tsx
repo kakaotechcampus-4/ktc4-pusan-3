@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
@@ -15,8 +16,16 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { useChildId } from "@/hooks/use-child-id";
-import { api, ApiError, type WithdrawRequest, type WithdrawResponse } from "@/lib/api";
-import { useSessionStore } from "@/stores/session";
+import {
+  api,
+  ApiError,
+  isApiError,
+  type Me,
+  type WithdrawRequest,
+  type WithdrawResponse,
+} from "@/lib/api";
+import { hasLiveSession, useSessionStore } from "@/stores/session";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 10 설정 › 탈퇴 — **흐름 중인 화면이다.**
@@ -44,7 +53,7 @@ import { useSessionStore } from "@/stores/session";
  *    같은 이유로 ㉡ 읽음 표시와 ㉢ 확인 시트를 **줄이지 않는다**: 되돌릴 장치가 없어서
  *    실수를 막는 것이 그 둘뿐이다.
  *
- * ⚠️ `POST /auth/withdraw` 는 **계약서에 없다** (`lib/api/types.ts`). 지금은 MSW 목 위에서만 돈다.
+ * 계약은 서버 Swagger 가 정본이다 (`POST /auth/withdraw` · PR #384). 무엇을 지우는지는 그 PR 의 표다.
  */
 export default function WithdrawPage() {
   /**
@@ -58,7 +67,9 @@ export default function WithdrawPage() {
 
   return (
     <AuthGate>
-      <WithdrawScreen onDone={() => setDone(true)} />
+      <ScreenTransition>
+        <WithdrawScreen onDone={() => setDone(true)} />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -72,10 +83,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
   const [confirming, setConfirming] = useState(false);
 
   const withdraw = useMutation({
-    mutationFn: () => {
-      const body: WithdrawRequest = { acknowledged_immediate_deletion: true };
-      return api.post<WithdrawResponse>("/auth/withdraw", body);
-    },
+    mutationFn: requestWithdraw,
     /**
      * 🚨 성공하면 **이 기기의 세션도 버린다.** 서버가 그 보호자의 세션을 전부 무효화하므로
      *    (`docs/api/auth-kakao-v1.md` §5-3) 토큰을 들고 남으면 다음 요청이 401 이다.
@@ -104,7 +112,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
             ⚠️ 제목은 화살표 폭만큼 안으로 들어간다 — 아래 구역 머리줄들과 **왼쪽이 안 맞는
             유일한 요소**다. 가로로 붙이는 한 피할 수 없다(44px 타깃이 16px 여백보다 넓다). */}
         <div className="-ml-3 flex items-center gap-1">
-          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기">
+          <IconButtonLink href={`/child/${childId}/settings`} label="설정으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <PageTitle>탈퇴하기</PageTitle>
@@ -123,7 +131,12 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
             <li>함께 보는 사람만 줄이고 싶다면 그 보호자의 연결만 끊을 수 있어요.</li>
           </ul>
           <div className="mt-3">
-            <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" size="compact">
+            <ButtonLink
+              href={`/child/${childId}/settings`}
+              variant="tertiary"
+              size="compact"
+              {...BACK}
+            >
               설정에서 골라 볼게요
             </ButtonLink>
           </div>
@@ -151,10 +164,14 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
                 않으니 먼저 말씀해 주시는 편이 좋아요.
               </span>
             </li>
+            {/* 🚨 **일기가 먼저다** (#389). 일기는 쓴 보호자에 묶여 있어서(`author_parent_id`
+                CASCADE) 함께 보는 보호자가 탈퇴해도 지워진다. "공동 기록은 남아요" 만 쓰면 내가 쓴
+                일기도 남는 줄 안다 — 이 줄에서도 사라지는 것이 맨 앞이다 (위 주석). */}
             <li>
-              함께 보는 보호자라면, 공동 기록은 아이에게 남고 쓴 사람 이름만 사라져요.
+              함께 보는 보호자라면, 내가 쓴 일기는 지워지고 공동 기록은 아이에게 남아요.
               <span className="text-body-sm text-ink-muted mt-1 block">
-                아이와 등록 보호자 쪽은 그대로예요. 대신 내가 이 아이를 보는 연결이 끊겨요.
+                공동 기록에서는 쓴 사람 이름만 사라져요. 아이와 등록 보호자 쪽은 그대로예요. 대신
+                내가 이 아이를 보는 연결이 끊겨요.
               </span>
             </li>
             <li>
@@ -171,13 +188,16 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
               </span>
             </li>
           </ul>
-          {/* 🚨 정해지지 않은 것을 정해진 것처럼 쓰지 않는다 (약관의 같은 처리).
-              🚨 **여기에 "한 톨도 남지 않아요" 를 쓰지 않는다.** 동의문 1 이 백업 사본을
-                 최대 30일, 약관 제9조 ② 가 동의 기록을 1년 보관한다고 약속한다 (#182 리뷰) —
-                 그 API 가 생기는 날 이 문단을 그 숫자에 맞춘다. 지금 "전부 지워져요" 로
-                 단정하면 그때 화면이 약관과 어긋난 채로 남는다. */}
+          {/* 🚨 **여기에 "한 톨도 남지 않아요" 를 쓰지 않는다** (#182 리뷰). 서버는 동의 증빙을
+                 보관 칸으로 옮긴 뒤 지운다(PR #384) — 약관 제9조 ② 의 "동의 기록 1년" 이다.
+              ⚠️ 같은 조항의 백업 30일은 **적지 않는다.** 백업이 아직 없어서
+                 (`docs/safety/consent-texts-v1.md`) 화면이 없는 사본을 예고하게 된다. 외부
+                 인공지능에 보낸 사본도 같은 조항이 처리방침으로 미뤘고 그 처리방침이 아직
+                 고쳐지는 중이라 적지 않는다. 둘 중 하나가 생기면 이 문단에 더한다.
+              🚨 그래서 **"기록만" 이라고 쓰지 않는다** (#389 리뷰) — 적지 않은 두 사본까지 "없다" 로
+                 단정하는 말이 되어 "전부 지워져요" 와 같은 뜻이 된다. */}
           <p className="border-line text-caption text-ink-subtle mt-4 border-t pt-4">
-            무엇을 어디까지 지우는지는 아직 정리하고 있어요. 정해지면 이 안내를 먼저 고칩니다.
+            언제 무엇에 동의했는지 남긴 기록은 약관에 따라 1년 동안 따로 보관했다가 파기해요.
           </p>
         </Card>
       </section>
@@ -195,7 +215,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
         <Button variant="danger" block disabled={!acknowledged} onClick={() => setConfirming(true)}>
           탈퇴하기
         </Button>
-        <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" block>
+        <ButtonLink href={`/child/${childId}/settings`} variant="tertiary" block {...BACK}>
           그만두고 돌아가기
         </ButtonLink>
       </section>
@@ -231,7 +251,10 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
       >
         <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
           <li>아이를 등록한 보호자라면 아이와 쌓인 기록이 함께 지워져요.</li>
-          <li>함께 보는 보호자라면 공동 기록은 아이에게 남고, 이 아이를 보는 연결이 끊겨요.</li>
+          <li>
+            함께 보는 보호자라면 내가 쓴 일기는 지워지고, 공동 기록은 아이에게 남아요. 이 아이를
+            보는 연결도 끊겨요.
+          </li>
           <li>되살릴 방법이 없어요. 다시 쓰시려면 처음부터 다시 만들어야 해요.</li>
         </ul>
         {withdraw.isError ? <WithdrawFailed error={withdraw.error} /> : null}
@@ -241,22 +264,83 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
 }
 
 /**
+ * 응답을 못 받아 `/me` 를 불렀더니 200 이었다 — **그 순간에는** 계정이 있었다.
+ *
+ * 🚨 **"계정은 그대로예요" 로 단정하지 않는다** (#389 리뷰). 게이트웨이 시간 초과나 망 전환처럼
+ *    브라우저만 포기하고 서버는 아직 지우는 중일 수 있는데, 그 사이의 `/me` 는 잠금에 막히지
+ *    않고 200 이다. 그래서 "아직" 이고 다시 누르게 한다 — 다시 보낸 요청은 앞 요청이 끝날 때까지
+ *    보호자 잠금에서 기다렸다가 지워진 것을 보고 401 로 결말이 난다 (PR #384 `withdraw_parent`).
+ */
+class WithdrawNotApplied extends Error {
+  constructor() {
+    super("탈퇴가 처리되지 않았다");
+    this.name = "WithdrawNotApplied";
+  }
+}
+
+/**
+ * 탈퇴를 보내고, 끝났는지 모르면 한 번 확인한다. 돌아오면 탈퇴가 끝난 것이다.
+ *
+ * 🚨 **세션이 살아 있을 때 받은 401 은 탈퇴가 끝났다는 뜻이다** (#389). 서버는 커밋하면서 그
+ *    보호자의 세션을 전부 지운다(PR #384) — 응답만 잃은 뒤 다시 누른 요청, 다른 기기에서 먼저
+ *    끝난 탈퇴가 여기로 온다. 이 401 을 전역 처리(`lib/api/client.ts`)에 넘기면 돌아올 주소로
+ *    이 화면을 기억한 채 `/` 로 튕겨서 "탈퇴했어요" 를 아무도 못 본다.
+ * 🚨 **access 만료는 여기 오지 않는다.** `lib/api/client.ts` 가 refresh 쿠키로 갱신해 한 번 다시
+ *    보내고, 갱신까지 실패해야 401 이 돌아온다 — 서버에 이 로그인의 세션 행이 없다는 뜻이다.
+ *    로그인돼 있지 않은 채로 보낸 요청(`live` 가 아님)만 평소대로 전역 처리에 맡긴다.
+ *    ⚠️ **가르지 못하는 경우가 남는다.** 서버는 로그아웃(그 세션 하나)에서도 세션을 지운다 —
+ *    다른 탭에서 로그아웃한 뒤 이 탭에서 누르면, 계정이 그대로인데 "탈퇴했어요" 가 선다.
+ *    refresh 의 절대 상한(90일)에 마침 닿은 경우도 같다. 서버가 "이미 탈퇴됨" 을 따로 주지 않는
+ *    한 화면은 이 경우를 모른다.
+ * 🚨 **응답을 못 받았으면 `/me` 로 한 번 확인한다** (PR #384). 커밋 뒤에 응답이 사라졌을 수
+ *    있어서 "계정은 그대로예요" 로 단정하지 않는다. 401 이면 끝났고, 200 이면 아직 안 지워졌고,
+ *    그것도 못 받으면 모르는 채로 둔다 — 그때 다시 누르는 요청이 위의 401 길로 결말을 낸다.
+ */
+async function requestWithdraw(): Promise<void> {
+  const live = hasLiveSession(useSessionStore.getState());
+  const body: WithdrawRequest = { acknowledged_immediate_deletion: true };
+  try {
+    await api.post<WithdrawResponse>("/auth/withdraw", body, { handleUnauthenticated: !live });
+    return;
+  } catch (error) {
+    if (live && isApiError(error, "unauthenticated")) return;
+    if (!live || (error instanceof ApiError && error.status < 500)) throw error;
+
+    try {
+      await api.get<Me>("/me", { handleUnauthenticated: false });
+    } catch (probe) {
+      if (isApiError(probe, "unauthenticated")) return;
+      throw error;
+    }
+    throw new WithdrawNotApplied();
+  }
+}
+
+/**
  * 확정 시트의 실패 자리.
  *
  * 🚨 **서버가 거절한 것과 응답을 못 받은 것을 같은 말로 하지 않는다** (#182 리뷰).
  *    유예가 없어서 요청이 서버에 닿았다면 그 순간 지워지는데(#167), 연결이 끊겨 응답만
  *    못 받은 경우에 "계정은 그대로예요" 라고 하면 **이미 지워진 사람에게 거짓말**이 된다.
  *
- * 가르는 선은 **서버가 답을 줬는가**다. 4xx 는 서버가 요청을 받고 거절한 것이라 계정이
- * 그대로지만, 5xx · 네트워크 실패는 무엇이 저장됐는지 모르는 상태다 —
- * `useRunStream` 이 `unconfirmed` 를 따로 두는 것과 같은 구분이다.
+ * 말은 셋이다. 4xx 는 서버가 요청을 받고 거절한 것이라 계정이 그대로다. `WithdrawNotApplied`
+ * 는 `/me` 로 본 그 순간 계정이 있었던 것이라 "아직" 이다 (위 주석). 나머지(5xx · 네트워크
+ * 실패에 확인까지 못 한 것)는 무엇이 지워졌는지 모르는 상태다 — `useRunStream` 이
+ * `unconfirmed` 를 따로 두는 것과 같은 구분이다. 401 은 여기 오지 않는다(`requestWithdraw`).
  *
  * 🚨 **실패를 빨강으로 칠하지 않는다** (디자인 시스템 §7). `CardFailed` 가 중립 면이다.
  */
 function WithdrawFailed({ error }: { error: unknown }) {
-  const refusedByServer = error instanceof ApiError && error.status < 500;
+  if (error instanceof WithdrawNotApplied) {
+    return (
+      <CardFailed className="mt-4">
+        <p>확인해 보니 아직 지워지지 않았어요.</p>
+        <p className="mt-1">다시 눌러 주세요. 그 사이에 지워졌다면 탈퇴했다는 안내로 넘어가요.</p>
+      </CardFailed>
+    );
+  }
 
-  if (refusedByServer) {
+  if (error instanceof ApiError && error.status < 500) {
     return (
       <CardFailed className="mt-4">
         <p>탈퇴를 처리하지 못했어요. 계정은 그대로예요.</p>
@@ -269,8 +353,8 @@ function WithdrawFailed({ error }: { error: unknown }) {
     <CardFailed className="mt-4">
       <p>처리됐는지 확인하지 못했어요.</p>
       <p className="mt-1">
-        연결이 끊겨서 지워졌는지 알 수 없어요. 다시 눌러 주세요. 이미 지워졌다면 처음 화면으로
-        돌아가요.
+        연결이 끊겨서 지워졌는지 알 수 없어요. 다시 눌러 주세요. 이미 지워졌다면 탈퇴했다는 안내로
+        넘어가요.
       </p>
     </CardFailed>
   );
@@ -297,8 +381,8 @@ function WithdrawDone() {
             함께 보는 보호자였다면 공동 기록은 아이에게 남는다 — 이 화면은 세션이 이미
             없어서 물어볼 곳도 없다. 그래서 두 경우를 **그대로 적는다.** */}
         <p className="text-body-sm text-ink-muted mt-2">
-          아이를 등록한 보호자였다면 아이와 쌓인 기록도 함께 지워졌고, 함께 보는 보호자였다면 공동
-          기록은 아이에게 남아요.
+          아이를 등록한 보호자였다면 아이와 쌓인 기록도 함께 지워졌어요. 함께 보는 보호자였다면 내가
+          쓴 일기는 지워졌고, 공동 기록은 아이에게 남아요.
         </p>
       </Card>
 

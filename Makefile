@@ -3,7 +3,9 @@
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
-        web-typecheck web-check web-image web-up web-down web-logs
+        web-typecheck web-check web-image web-up web-down web-logs \
+        api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
+        deploy-load-food-dry deploy-load-food
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
@@ -50,10 +52,19 @@ help:
 	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
 	@echo ""
 	@echo "── 배포 (docker) ──"
+	@echo "  make api-image    API 이미지 굽기"
+	@echo "  make api-up       API 컨테이너 기동 (db+redis 의존)"
+	@echo "  make api-down     API 컨테이너 중지"
+	@echo "  make api-logs     API 컨테이너 로그"
 	@echo "  make web-image    프론트 이미지 굽기 (deploy/docker/.env 의 NEXT_PUBLIC_API_BASE_URL 이 박힌다)"
 	@echo "  make web-up       프론트 컨테이너 기동"
 	@echo "  make web-down     프론트 컨테이너 중지"
 	@echo "  make web-logs     프론트 컨테이너 로그"
+	@echo "  make deploy-up      전체 기동 (db + redis + api + web)"
+	@echo "  make deploy-down    전체 중지"
+	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
+	@echo "  make deploy-load-food-dry  배포 DB 에 Food 카탈로그를 받고 세기만 (쓰지 않음)"
+	@echo "  make deploy-load-food      배포 DB 에 Food 카탈로그 적재 (영양DB + 레시피, 한 트랜잭션)"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
 	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다 (배포 4개는 docker)."
@@ -155,6 +166,19 @@ db-psql:
 	docker exec -it ktc4-postgres psql -U $$(docker exec ktc4-postgres printenv POSTGRES_USER) -d $$(docker exec ktc4-postgres printenv POSTGRES_DB)
 
 # ── 배포 (docker) ────────────────────────────────────────────────────
+
+api-image:
+	$(COMPOSE_DEPLOY) build api
+
+api-up:
+	$(COMPOSE_DEPLOY) up -d api
+
+api-down:
+	$(COMPOSE_DEPLOY) down api
+
+api-logs:
+	$(COMPOSE_DEPLOY) logs -f api
+
 # 🚨 web-image 는 deploy/docker/.env 의 NEXT_PUBLIC_API_BASE_URL 을 번들에 박는다.
 #    주소가 바뀌면 web-up 을 다시 하는 게 아니라 web-image 를 다시 굽는다.
 
@@ -165,7 +189,24 @@ web-up:
 	$(COMPOSE_DEPLOY) up -d web
 
 web-down:
-	$(COMPOSE_DEPLOY) down
+	$(COMPOSE_DEPLOY) down web
 
 web-logs:
 	$(COMPOSE_DEPLOY) logs -f web
+
+deploy-up:
+	$(COMPOSE_DEPLOY) up -d
+
+deploy-down:
+	$(COMPOSE_DEPLOY) down
+
+deploy-migrate:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync alembic upgrade heads
+
+# Food 카탈로그 적재 (FT-19). 배포된 api 이미지 안의 스크립트를 프로세스로 돌린다 — 정리 표 ·
+# 식품군 대응표는 이미지에 구워진 것을 쓴다. 출력은 건수뿐이다.
+deploy-load-food-dry:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
+
+deploy-load-food:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all

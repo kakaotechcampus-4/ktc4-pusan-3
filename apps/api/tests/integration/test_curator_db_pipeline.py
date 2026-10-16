@@ -64,7 +64,13 @@ async def _run_curator(session, child_id, today):
     from app.domains.memory.curator.recompute import recompute_after_linking
 
     store = DbCuratorStore(session)
-    result = await link_observations(store, _FakeEmbedder(), _FakeJudge(), child_id=child_id)
+    result = await link_observations(
+        store,
+        _FakeEmbedder(),
+        _FakeJudge(),
+        child_id=child_id,
+        birth_date=(await session.get(Child, child_id)).birth_date,
+    )
     if result.affected_profile_ids:
         await recompute_after_linking(session, result=result, today=today)
     return result

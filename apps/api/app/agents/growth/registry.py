@@ -47,15 +47,19 @@ task별로 모델에 열리는 tool:
 `search_growth_doc`, `rank_evidence` 같은 코드 내부 tool은
 모델에 노출하지 않는다. 모델에 노출하면 Gate를 우회할 수 있기 때문이다.
 
-모델용 tool의 정의, 인자 검증, 실행(`execute_tool`)은
-모델 실행 경로에서 연결한다(TODO)
+모델용 tool 의 정의는 `schemas/tool_defs.py`, 실행은 `execute_tool` 이다. 정의가 없는 이름
+(`lookup_notice` · `search_books` · `propose_books`)은 `tools_for` 가 내도 스펙에 싣지 않고 실행도
+하지 않는다 — 공지 내용 · 도서 포트가 운영에 없다.
 """
 
-
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.agents.common.gate import Gate
+from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
+from app.agents.growth.context import GrowthContext
 from app.agents.growth.gating import EDUCATION_MIN_MONTH, MIN_MONTH, opens
 from app.agents.growth.readouts import (
     BLOCKED_SAFETY,
@@ -63,9 +67,34 @@ from app.agents.growth.readouts import (
     CLOSED_CONSENT,
     CLOSED_INFANT_LEARNING,
 )
+from app.agents.growth.result import ErrorCode, ToolResult, fail
 from app.agents.growth.schemas.task import GrowthTaskType
+from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.growth.tools.delta import compute_growth_delta
+from app.agents.growth.tools.memory import (
+    search_activity_memory,
+    search_affinity,
+    search_education_memory,
+    search_routine_memory,
+)
+from app.agents.growth.tools.propose import propose_learning_activity, propose_routine_plan
 from app.agents.growth.tools.routine import check_routine_category, pick_next_step
+
+ToolHandler = Callable[[GrowthContext, Any], Awaitable[ToolResult]]
+
+TOOL_HANDLERS: dict[str, ToolHandler] = {
+    "search_education_memory": search_education_memory,
+    "search_routine_memory": search_routine_memory,
+    "search_activity_memory": search_activity_memory,
+    "search_affinity": search_affinity,
+    "propose_learning_activity": propose_learning_activity,
+    "propose_routine_plan": propose_routine_plan,
+}
+_DEFINITIONS: dict[str, ToolDefinition] = {d.name: d for d in TOOL_DEFINITIONS}
+_SPECS_BY_NAME: dict[str, dict[str, Any]] = {
+    spec["function"]["name"]: spec
+    for spec in build_tool_specs([d for d in TOOL_DEFINITIONS if d.name in TOOL_HANDLERS])
+}
 
 TASK_TOOLS: dict[GrowthTaskType, frozenset[str]] = {
     GrowthTaskType.LEARNING_SUGGESTION: frozenset(
@@ -135,3 +164,41 @@ def tools_for(task: GrowthTaskType, gate: Gate) -> tuple[str, ...]:
         return ()
     names = TASK_TOOLS[task]
     return tuple(name for name in MIN_MONTH if name in names and opens(name, gate))
+
+
+def specs_for(names: Collection[str]) -> list[dict[str, Any]]:
+    """`tools_for` 결과 중 정의 · 핸들러가 있는 것만, `TOOL_DEFINITIONS` 순서로."""
+    return [_SPECS_BY_NAME[name] for name in _SPECS_BY_NAME if name in names]
+
+
+async def execute_tool(
+    name: str, arguments: dict[str, Any], context: GrowthContext, *, allowed: Collection[str]
+) -> ToolResult:
+    """tool 을 한 번 실행한다. 허용 목록 → 이름 조회 → 인자 검증 → 실행 순서.
+
+    모델에게 안 보여준 tool 을 이름으로 불러도 실행하지 않는다. 핸들러가 낸 예외는 삼키지 않는다.
+    """
+    definition = _DEFINITIONS.get(name)
+    handler = TOOL_HANDLERS.get(name)
+    if name not in allowed or definition is None or handler is None:
+        return fail(
+            None,
+            name,
+            ErrorCode.TOOL_NOT_ALLOWED,
+            f"'{name}' 은 이번 요청에서 쓸 수 없는 tool 이다. 제공된 tool 중에서 고른다.",
+        )
+    try:
+        args = definition.args.model_validate(arguments)
+    except ValidationError as exc:
+        return fail(
+            None, name, ErrorCode.INVALID_ARGS, f"인자가 스키마와 맞지 않는다: {_summarize(exc)}"
+        )
+    return await handler(context, args)
+
+
+def _summarize(exc: ValidationError, limit: int = 3) -> str:
+    """필드와 사유만 짧게. 값 원문은 싣지 않는다."""
+    return " / ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
+        for error in exc.errors()[:limit]
+    )

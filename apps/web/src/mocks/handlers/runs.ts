@@ -1,8 +1,15 @@
 import { http, HttpResponse } from "msw";
 
+import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
 import type { Agent, Observation } from "@/lib/api/types";
 
-import { healthObservation, observations, runEventDrafts } from "../fixtures";
+import {
+  generalSuggestions,
+  healthObservation,
+  observations,
+  runEventDrafts,
+  suggestions,
+} from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import { forgetRun, withIdempotency } from "./idempotency";
@@ -126,6 +133,183 @@ const MAX_QUESTIONS = 4;
  *    "확인하지 못해" 가 그 바로 아래 서면 한 화면에서 말이 부딪힌다 (#251 리뷰).
  */
 const ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요.";
+
+/**
+ * 성장 추이 readout (#227). 서버 `compute_growth_delta` 템플릿 모양이다 (`docs/agents/growth/Growth_Tool_명세.md`
+ * — 요약 한 줄 + 잰 기록을 줄마다, 해석 문구 없음). 🚨 **숫자는 지어낸 것이다** (최상위 §9).
+ */
+const GROWTH_DELTA_BODY = [
+  "2026-03-02부터 2026-09-01까지 6개월간 키 3.1cm · 몸무게 0.8kg 늘었어요.",
+  "  2026-03-02  키 96.4cm · 몸무게 14.2kg",
+  "  2026-09-01  키 99.5cm · 몸무게 15.0kg  (직전 대비 키 3.1cm · 몸무게 0.8kg)",
+].join("\n");
+
+/**
+ * 0개 안내 — 서버 `suggestion.readout.yaml` 의 `suggestion.empty` 와 같은 글자.
+ * 🚨 `code` 는 `empty` 다 — 서버 `count_notice()` 가 붙인다 (#276).
+ */
+const EMPTY_NOTICE_READOUT: AgentReadout = {
+  kind: "notice",
+  title: "",
+  body: "조건에 맞는 추천이 없어요.",
+  authored_by: "code",
+  code: "empty",
+};
+
+/** Agent 가 되묻는 한 줄 (`needs_observation`). Memory 의 `NOTE_QUESTION` 과 **다른 문장**이라 화면에서 갈린다. */
+const AGENT_QUESTION = "요즘 주로 집 안에서 노는지 바깥에서 노는지 알려주시겠어요?";
+
+/**
+ * 요청형 한 줄의 run (#227 · 서버 #276). 저장할 관찰이 없어서 Memory 단계가 없고, Agent 결과가 끝나는 대로
+ * 하나씩 온다. 순서는 서버와 같다 — `agent_result`(끝난 순서) → `partial`(있으면 한 번) → `done`.
+ *
+ * 🚨 **같은 Agent 가 두 번 온다** (`agent_readout` 의 Food). 하나는 화면에 보일 것이 없는 쓰는 task 라
+ *    블록이 하나만 서야 한다.
+ */
+async function* agentResultScript(
+  runId: string,
+  scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 3, total: 3, label: "다음 행동을 준비하고 있어요" });
+  await sleep(700);
+
+  const results: AgentResultEvent[] =
+    scenario === "agent_suggestions"
+      ? [
+          {
+            agent: "food",
+            task_type: "meal_recommendation",
+            status: "completed",
+            readouts: [],
+            question: null,
+            suggestion_ids: suggestions
+              .filter((s) => s.agent === "food")
+              .slice(0, 3)
+              .map((s) => s.id),
+            kind: "personalized",
+            // 서버 suggestion.readout.yaml 의 suggestion.bundle.personalized 와 같은 글자
+            reason: "아이 기록 4건을 보고 골랐어요.",
+            record_count: null,
+          },
+          {
+            agent: "activity",
+            task_type: null,
+            status: "completed",
+            readouts: [
+              {
+                kind: "notice",
+                title: "",
+                body: "조건에 맞는 추천을 1개 준비했어요.",
+                authored_by: "code",
+                code: "fewer",
+              },
+              {
+                // 서버 activity.readout.yaml 의 날씨 안내와 같은 글자 — code 가 없다
+                kind: "notice",
+                title: "",
+                body: "오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요.",
+                authored_by: "code",
+                code: null,
+              },
+            ],
+            question: null,
+            suggestion_ids: [generalSuggestions[0].id],
+            kind: "general",
+            // 서버 activity/review.py 의 GENERAL_REASON 과 같은 글자
+            reason: "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요.",
+            record_count: 1,
+          },
+        ]
+      : scenario === "agent_readout"
+        ? [
+            {
+              agent: "growth",
+              task_type: "growth_review",
+              status: "completed",
+              readouts: [
+                {
+                  kind: "growth_delta",
+                  title: "",
+                  body: GROWTH_DELTA_BODY,
+                  authored_by: "code",
+                  code: null,
+                },
+              ],
+              question: null,
+              suggestion_ids: [],
+              kind: null,
+              reason: null,
+              record_count: null,
+            },
+            {
+              agent: "food",
+              task_type: "daycare_meal",
+              status: "completed",
+              readouts: [],
+              question: null,
+              suggestion_ids: [],
+              kind: null,
+              reason: null,
+              record_count: null,
+            },
+            {
+              agent: "food",
+              task_type: "meal_recommendation",
+              status: "completed",
+              readouts: [EMPTY_NOTICE_READOUT],
+              question: null,
+              suggestion_ids: [],
+              kind: null,
+              reason: null,
+              record_count: null,
+            },
+          ]
+        : scenario === "agent_question"
+          ? [
+              {
+                agent: "activity",
+                task_type: null,
+                status: "completed",
+                readouts: [],
+                question: AGENT_QUESTION,
+                suggestion_ids: [],
+                kind: null,
+                reason: null,
+                record_count: null,
+              },
+            ]
+          : [
+              {
+                agent: "food",
+                task_type: "meal_recommendation",
+                status: "completed",
+                readouts: [EMPTY_NOTICE_READOUT],
+                question: null,
+                suggestion_ids: [],
+                kind: null,
+                reason: null,
+                record_count: null,
+              },
+            ];
+
+  for (const result of results) {
+    yield frame("agent_result", result);
+    await sleep(400);
+  }
+
+  if (scenario === "agent_partial") {
+    // 🚨 결과를 못 낸 Agent 는 `agent_result` 없이 여기에만 이름이 온다.
+    yield frame("partial", {
+      reason: "timeout_20s",
+      succeeded: ["food"],
+      failed: ["activity"],
+      retryable: ["activity"],
+    });
+    await sleep(200);
+  }
+
+  yield frame("done", { run_id: runId, model_calls: results.length });
+}
 
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
@@ -276,6 +460,16 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   yield frame("ping", {});
   await sleep(200);
 
+  if (
+    scenario === "agent_readout" ||
+    scenario === "agent_question" ||
+    scenario === "agent_partial" ||
+    scenario === "agent_suggestions"
+  ) {
+    yield* agentResultScript(runId, scenario);
+    return;
+  }
+
   /**
    * 🚨 **안내만 나가고 끝나는 run 이다.** 원문이 전부 안내 조각이면 서버는 Memory 를 아예
    *    건너뛴다 (`apps/api/app/agents/pipeline.py`) — 그래서 `saved` 도 `promoted` 도 없다.
@@ -354,6 +548,22 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   await sleep(700);
 
   /**
+   * 🚨 **저장한 뒤에 끊긴 run 이다** (#253 · #271). 서버는 Memory 가 쓴 것을 commit 한 뒤 예외나
+   *    60초 안전망에 걸리면 `failed` 가 아니라 `done` 에 `completed: false` 를 싣고 닫는다 —
+   *    `failed` 로 닫으면 키가 풀려 다시 보낸 한 줄이 **두 번 저장된다.** 그래서 여기서는
+   *    `forgetRun` 을 부르지 않는다. 같은 키로 다시 보내면 이 run 이 재생된다.
+   *    일정 낱말만 쓴 한 줄은 `saved` 를 보내기 전에 끊긴 run 으로 쓴다 — 화면이 받은 기록이 없는 갈래다.
+   */
+  if (scenario === "interrupted") {
+    if (intent !== "event") {
+      yield frame("saved", { observations: [observations[0]] });
+      await sleep(300);
+    }
+    yield frame("done", { run_id: runId, model_calls: 0, completed: false });
+    return;
+  }
+
+  /**
    * 🚨 **일정만 말한 한 줄에는 관찰이 없다.** "이번 주말에 공원 산책 가기" 는 아이가 무엇을
    *    했다는 말이 아니라 앞으로의 계획이라, 기록으로 쌓을 것이 없다 — 화면은 그때
    *    "아이에 관한 기록은 찾지 못했어요" 를 그리고 아래에 초안을 세운다.
@@ -401,7 +611,8 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     // 🚨 실패 화면으로 떨어뜨리지 않는다. 성공한 쪽은 그대로 보여준다 (NF-06).
     const succeeded: Agent[] = ["food"];
     const failed: Agent[] = ["activity"];
-    yield frame("partial", { reason: "timeout_20s", succeeded, failed });
+    // 실패한 Agent 가 추천 Agent(식사 · 놀이)면 다시 준비할 수 있다 — 서버 `Partial.retryable`
+    yield frame("partial", { reason: "timeout_20s", succeeded, failed, retryable: failed });
     await sleep(200);
   } else if (scenario === "unavailable") {
     // 🚨 준비 중이라고 말한 Agent 를 바로 아래에서 권하지 않는다 — 화면이 자기 말을 뒤집는다.
