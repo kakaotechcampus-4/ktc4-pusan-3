@@ -20,7 +20,7 @@ Owner: 고태영 (프론트 리드)
 | --- | --- |
 | 05 · 07 · 08 · 09 · 11-1 · 11-2 화면, 라우트를 더하거나 시트를 라우트로 바꿀 때 | [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) |
 | 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
-| `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴) | [`components-v1.md`](../../docs/web/components-v1.md) |
+| `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | `mocks/` · `*.test.ts` · `e2e/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
@@ -105,6 +105,7 @@ Owner: 고태영 (프론트 리드)
 | 10 설정 | `/child/[childId]/settings` |
 | 10 설정 › 고객센터 (읽는 화면) | `/child/[childId]/settings/help` |
 | 10 설정 › 탈퇴 (흐름 중인 화면) | `/child/[childId]/settings/withdraw` |
+| 10 설정 › 문제 알리기 (흐름 중인 화면 · Play 정책의 앱 안 신고 · #487) | `/child/[childId]/settings/report` |
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
@@ -136,7 +137,7 @@ Owner: 고태영 (프론트 리드)
   화면을 안 그리는 것(`es-hangul` · `react-error-boundary`)은 이 규칙 밖이다
 - ⚠️ `cn()` 은 **tailwind-merge 가 아니다.** primitive 밖에서 `className` 으로 색·크기를 덮지 않는다 — 필요하면 변형을 primitive 안에 더한다
 - 🚨 **`<Screen>` 에 `py-*` 를 넘기지 않는다.** 위·아래 고정 바는 `topBar` · `bottomBar` · `nav` 로 넘긴다. 화면 제목은 `PageTitle`
-- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다.** 흐름 중인 화면(04 · 05 · 11-2 · 탈퇴)에 붙이면 고르는 도중에 새는 길이 생긴다
+- 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다.** 흐름 중인 화면(04 · 05 · 11-2 · 탈퇴 · 문제 알리기)에 붙이면 고르는 도중에 새는 길이 생긴다
 - 🚨 **돌아가기는 `IconButtonLink`**(`label` 에 "뒤로" 가 아니라 가는 곳), **버튼처럼 보이는 링크는 `ButtonLink`** 다.
   `router.back()` · `<button onClick={router.push}>` 로 대신하지 않는다
 - 🚨 **승인 게이트 표식(`btn-approve` · `caution`)은 게이트 2곳 전용이다.** 05 채택 · 07 교정 확인 · 08 저장 · 가입 동의는 게이트가 아니다
