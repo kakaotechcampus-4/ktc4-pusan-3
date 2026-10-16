@@ -113,6 +113,21 @@ async def page_turns(
     return list(reversed(page)), more
 
 
+async def count_turns(
+    session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID, day: date
+) -> int:
+    """그날 내가 나눈 대화 수. 캘린더 하루 화면의 "이날 나눈 대화 N개" 다."""
+    return await session.scalar(
+        select(func.count())
+        .select_from(ChatTurn)
+        .where(
+            ChatTurn.parent_id == parent_id,
+            ChatTurn.child_id == child_id,
+            ChatTurn.conversation_date == day,
+        )
+    )
+
+
 async def previous_date(
     session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID, before: date
 ) -> date | None:
