@@ -39,14 +39,14 @@ async def add_turn(
     reply_to: str | None,
     replies: list,
     created_at: datetime,
-) -> ChatTurn | None:
-    """대화 한 턴을 쓴다. 보호자가 이 아이와 연결돼 있지 않으면 쓰지 않고 None.
+) -> None:
+    """대화 한 턴을 쓴다. 보호자가 이 아이와 연결돼 있지 않으면 쓰지 않는다.
 
     🚨 보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡은 뒤 연결을 확인한다 — 일기(`put_diary`,
        #427)와 같은 이유 · 같은 순서다. run 은 접수 뒤 최대 60초를 뒤에서 돌아서, 그 사이에 연결
        끊기(`unlink_parent`)가 연결과 대화를 지우고 커밋하면 여기서 쓴 행이 끊긴 보호자에게 남는다.
-       잡아 두면 끊기가 먼저면 행이 없어 None, 여기가 먼저면 끊기가 커밋을 기다렸다가 이 행까지
-       지운다. 탈퇴 · 아이 삭제가 먼저면 보호자 · 아이 행이 없어 역시 None 이다.
+       잡아 두면 끊기가 먼저면 연결 행이 없어 쓰지 않고, 여기가 먼저면 끊기가 커밋을 기다렸다가
+       이 행까지 지운다. 탈퇴 · 아이 삭제가 먼저면 보호자 · 아이 행이 없어 역시 쓰지 않는다.
     """
     key_share = {"read": True, "key_share": True}
     await session.execute(
@@ -59,20 +59,20 @@ async def add_turn(
         .with_for_update(**key_share)
     )
     if linked is None:
-        return None
-    turn = ChatTurn(
-        parent_id=parent_id,
-        child_id=child_id,
-        run_id=run_id,
-        conversation_date=conversation_date,
-        raw_text=raw_text,
-        reply_to=reply_to,
-        replies=replies,
-        created_at=created_at,
+        return
+    session.add(
+        ChatTurn(
+            parent_id=parent_id,
+            child_id=child_id,
+            run_id=run_id,
+            conversation_date=conversation_date,
+            raw_text=raw_text,
+            reply_to=reply_to,
+            replies=replies,
+            created_at=created_at,
+        )
     )
-    session.add(turn)
     await session.flush()
-    return turn
 
 
 @dataclass(frozen=True)

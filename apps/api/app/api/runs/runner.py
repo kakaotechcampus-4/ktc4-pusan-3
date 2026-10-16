@@ -107,9 +107,9 @@ def agent_job(
       되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
       끊는 순간 진행 중인 모델 호출도 취소된다.
-    - `on_event` 는 이벤트를 번역 · 분기하기 전에 하나씩 받는다. 대화 기록(`chat_record`)이
-      화면에 보내지 않는 `Saved` 까지 받으려고 여기서 넘긴다 (#228). 끝 신호 뒤의 것은 넘기지
-      않는다.
+    - `on_event` 는 이벤트를 번역한 뒤에 하나씩 받는다. 대화 기록(`chat_record`)이
+      화면에 보내지 않는 `Saved` 까지 받으려고 여기서 넘긴다 (#228). 끝 신호 뒤의 것과 번역이
+      터진 것은 넘기지 않는다 — 화면에 안 나간 것이다.
 
     🚨 `entrypoint.handle_input` 을 모듈 이름으로 부른다 — 테스트가 진입점을 바꿔 끼울 수 있게.
     """
@@ -119,8 +119,7 @@ def agent_job(
 
         def emit(event: entrypoint.Event) -> None:
             # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
-            if on_event is not None and channel.ended_with is None:
-                on_event(event)
+            live = channel.ended_with is None
             if isinstance(event, entrypoint.PendingReply):
                 pending_reply.put(
                     run_id=event.run_id,
@@ -151,6 +150,10 @@ def agent_job(
                 )
                 return
             relay(event)
+            # 번역이 끝난 뒤에 넘긴다 — 번역이 터진 이벤트는 화면에 안 나갔다. 위에서 돌아간
+            # 셋(PendingReply 등)은 대화에도 남기지 않는 것이라 여기까지 오지 않아도 된다
+            if on_event is not None and live:
+                on_event(event)
 
         def mark_saved() -> None:
             # commit 이 돌아온 뒤에만 표시한다. 결과를 모르면 표시가 없어 failed 다(결정 4)
