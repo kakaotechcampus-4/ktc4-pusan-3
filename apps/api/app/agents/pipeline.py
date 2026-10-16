@@ -32,6 +32,8 @@ from app.agents.common.suggestion import (
 )
 from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
+from app.agents.growth.agent import run as run_growth
+from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
@@ -125,6 +127,7 @@ PartialReason = Literal["timeout_20s", "agent_error"]
 _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
     DomainAgentName.ACTIVITY.value: run_activity,
+    DomainAgentName.GROWTH.value: run_growth,
 }
 
 # 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.
@@ -138,6 +141,8 @@ _WRITING_TASKS: dict[str, frozenset[str]] = {
 RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.FOOD.value: frozenset({"meal_recommendation"}),
     DomainAgentName.ACTIVITY.value: frozenset({None}),
+    # growth_review 는 추천이 아니다 — 05 화면이 없다
+    DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
 
 

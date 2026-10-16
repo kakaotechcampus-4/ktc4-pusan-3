@@ -219,10 +219,35 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
 async def test_구현_안_된_Agent_는_not_ready(db_client, bearer, cid, agents):
     headers, _ = bearer
 
-    data = (await _post(db_client, cid, headers, agents=["growth"])).json()
+    data = (await _post(db_client, cid, headers, agents=["health"])).json()
 
     assert [g["code"] for g in data["guards"]] == ["not_ready"]
     assert agents[1] == []  # Agent 를 부르지 않았다
+
+
+async def test_Growth_처음_요청은_라벨을_못_골라_not_ready(db_client, bearer, cid, agents):
+    """Growth 는 추천 라벨이 셋이라 run 없이 무엇을 돌릴지 모른다."""
+    headers, _ = bearer
+
+    data = (await _post(db_client, cid, headers, agents=["growth"])).json()
+
+    assert [g["code"] for g in data["guards"]] == ["not_ready"]
+    assert [g["blocked_agents"] for g in data["guards"]] == [["growth"]]
+    assert agents[1] == []
+
+
+async def test_run_이_있으면_Growth_추천도_그_run_에서_재생한다(
+    db_client, session, bearer, cid, agents
+):
+    _, calls = agents
+    headers, parent_id = bearer
+    row = await _saved_in_run(session, cid, parent_id, "run-1", agent="growth")
+
+    data = (await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")).json()
+
+    assert [s["id"] for s in data["suggestions"]] == [str(row.id)]
+    assert data["guards"] == []
+    assert calls == []  # 다시 만든 것이 없다
 
 
 # ── 판단 순서 ────────────────────────────────────────────────────────────

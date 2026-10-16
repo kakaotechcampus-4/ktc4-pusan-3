@@ -142,6 +142,8 @@ DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-
 
 ## 7. S6 — 모델 tool · 프롬프트
 
+> **진행(#443)** — 교육 · 루틴 완료(조회 4 + 출력 2 · `run()` 공통 루프 · 재호출 1회). 도서(`search_books` · `propose_books`)와 `lookup_notice` 는 운영 포트 · `book_guide` 행이 생긴 뒤. 예절 · 습관 전략은 행(P1)이 생길 때까지 `doc.no_row` 로 닫는다.
+
 조회 6 (`search_education_memory` · `search_routine_memory` · `search_activity_memory` · `search_affinity` · `lookup_notice` · `search_books`) + 출력 3 (`propose_learning_activity` · `propose_routine_plan` · `propose_books`).
 
 **출력 검증**
@@ -169,6 +171,8 @@ DoD: 성장폭 readout에 **측정일 2개**가 항상 있음 · 닫힘 문구�
 ---
 
 ## 9. S8 — 파이프라인 통합
+
+> **진행(#446)** — 공통 연결 완료: Supervisor `growth_task`(빠지면 `learning_suggestion`) · run 당 Growth 추천 하나(`task_limit` 안내) · pipeline 등록 · entrypoint `GrowthContext`(안전은 `UnwiredSafety`, 도서 · 공지 포트 없음) · `StoreGrowthMemory` · 성장 기록 DB 어댑터 · 05 처음 요청은 `not_ready`. 운영에서 열리는 것은 성장 추이 · 루틴이다. 교육은 `growth_safety` 어댑터 뒤, 도서는 포트 · 일반 추천 근거 결정 뒤.
 
 - `IMPLEMENTED_AGENTS`에 `growth` · **라벨 4개** 라우팅
 - Supervisor 경계 예시 투입: activity↔growth 4줄 · 신체 성장 3줄("잘 크고 있어?"까지 전부 `growth_review`) · 의료 처치 · 증상 같은 습관("약 먹기 싫어해" · "눈을 자꾸 깜빡여")도 `routine_coaching` 으로 와서 코드가 닫는다

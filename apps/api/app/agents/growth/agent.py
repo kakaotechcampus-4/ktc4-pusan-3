@@ -11,7 +11,8 @@
      (model_calls=2). 처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts`)
 
 도서(`book_suggestion`)는 포트가 있어도 아직 모델 경로가 없다 — `unsupported`. 저장은 하지 않는다 —
-결과의 suggestions 를 pipeline 이 저장한다. 파이프라인에는 아직 연결하지 않았다(TODO).
+결과의 suggestions 를 pipeline 이 저장한다.
+pipeline 에 등록돼 있다 — context 는 entrypoint 가 만든다.
 """
 
 import logging

@@ -902,3 +902,40 @@ async def test_넘긴_Food_어댑터를_handle_input_과_suggest_가_둘_다_받
     )
 
     assert seen == [(catalog, recipes, suggestions)] * 2
+
+
+async def test_Growth_는_같은_생일_기준일_store_를_쓰고_안전은_미연결이다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents.growth.store.ports import UnwiredSafety
+    from app.agents.memory_bridge import StoreGrowthMemory
+
+    birth_date = _months_ago(30)
+    seen = await _activity_of(monkeypatch, birth_date=birth_date, child_health_granted=True)
+    growth, food = seen["contexts"]["growth"], seen["contexts"]["food"]
+
+    assert await growth.ports.profile.birth_date(child_id=CHILD) == birth_date
+    assert await growth.ports.consent.child_health_granted(child_id=CHILD) is True
+    assert growth.now == food.now and growth.timezone is food.timezone
+    assert isinstance(growth.ports.memory, StoreGrowthMemory)
+    assert isinstance(growth.ports.safety, UnwiredSafety)
+    assert growth.ports.books is None and growth.ports.notice is None
+
+
+async def test_동의_값을_못_받은_Growth_는_동의_없음으로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """테스트 · eval 호출 — 키 · 몸무게를 동의 없이 읽지 않게."""
+    seen = await _activity_of(monkeypatch, birth_date=_months_ago(30))
+    growth = seen["contexts"]["growth"]
+
+    assert await growth.ports.consent.child_health_granted(child_id=CHILD) is False
+
+
+async def test_넘긴_성장_기록_포트를_Growth_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents.growth.store.inmemory import InMemoryGrowthLog
+
+    log = InMemoryGrowthLog()
+    seen = await _activity_of(monkeypatch, growth_log=log)
+
+    assert seen["contexts"]["growth"].ports.growth_log is log
