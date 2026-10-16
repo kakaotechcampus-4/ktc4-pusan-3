@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, LifeBuoy, Plus } from "lucide-react";
+import { ArrowLeft, Flag, LifeBuoy, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
@@ -148,13 +148,26 @@ function SettingsScreen() {
         </Section>
       ) : null}
 
-      <Section title="고객센터" description="자주 묻는 것과 이 서비스의 기본 정보예요.">
+      <Section
+        title="고객센터"
+        description="자주 묻는 것과 이 서비스의 기본 정보, 그리고 문제를 알리는 곳이에요."
+      >
         <SettingsGroup>
           <SettingsLinkRow
             href={`/child/${childId}/settings/help`}
             icon={LifeBuoy}
             title="자주 묻는 질문"
             status="기록 · 제안 · 안전 · 함께 보기"
+            {...FORWARD}
+          />
+          {/* 🚨 **앱 안에서 보내는 길이다** (#487). Google Play 정책이 불쾌한 AI 답 · 공동 기록 ·
+              다른 사용자를 앱을 떠나지 않고 알릴 길을 요구한다 — `mailto:` 로 대신하지 않는다.
+              읽는 줄(자주 묻는 질문) 아래에 둔다: 답을 먼저 찾아보고, 없으면 알린다. */}
+          <SettingsLinkRow
+            href={`/child/${childId}/settings/report`}
+            icon={Flag}
+            title="문제 알리기"
+            status="AI 답 · 공동 기록 · 앱 오류"
             {...FORWARD}
           />
         </SettingsGroup>
