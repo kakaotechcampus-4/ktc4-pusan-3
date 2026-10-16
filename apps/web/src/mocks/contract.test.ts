@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { API_BASE_URL } from "@/lib/env";
 import { ApiError, isApiError, NetworkError } from "@/lib/api/errors";
@@ -15,6 +15,7 @@ import {
   commitPhotoRun,
   createEventDrafts,
   submitEventDraft,
+  submitInput,
   photoFormData,
   submitOnboarding,
   updateHealthSafety,
@@ -52,6 +53,7 @@ import type {
   Me,
   WithdrawResponse,
   CalendarDayResponse,
+  ChatDayResponse,
   CalendarMonthResponse,
   ChildProfile,
   CorrectionRequest,
@@ -86,7 +88,7 @@ import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { submittedInput } from "./handlers/runs";
 
-import { suggestionAllergens, suggestions } from "./fixtures";
+import { daysAgo, suggestionAllergens, suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -3805,5 +3807,82 @@ describe("㉗ 문제 알리기 — 서버 #488 과 같은 계약 (#487)", () => 
     } finally {
       setScenario("default");
     }
+  });
+});
+
+/* ── 04 지난 대화 (#228) ─────────────────────────────────────────────── */
+
+const CHAT_CHILD = "c1";
+
+/** 입력 하나를 보내고 run 이 끝날 때까지 흘린다. */
+async function runChatToEnd(text: string): Promise<string> {
+  const { run_id } = await submitInput(
+    CHAT_CHILD,
+    { text, source: "home_input" },
+    newIdempotencyKey(),
+  );
+  for await (const event of streamRunEvents(run_id, new AbortController().signal)) {
+    void event;
+  }
+  return run_id;
+}
+
+function chatDay(query: Record<string, string> = {}) {
+  return api.get<ChatDayResponse>(`/children/${CHAT_CHILD}/chat`, { query });
+}
+
+describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () => {
+  afterEach(() => setScenario("default"));
+
+  it("done 으로 끝난 run 은 오늘 대화에 남고, 하루 보기의 대화 수와 같다", async () => {
+    const runId = await runChatToEnd("오늘 블록 놀이 했어");
+
+    const today = await chatDay();
+    expect(today.date).toBe(daysAgo(0));
+    expect(today.turns.map((t) => t.run_id)).toEqual([runId]);
+    expect(today.turns[0].raw_text).toBe("오늘 블록 놀이 했어");
+    expect(today.turns[0].replies.at(-1)).toEqual({ type: "done", completed: true });
+    // 진행 단계 · 연결 유지 · 제안은 남기지 않는다.
+    expect(today.turns[0].replies.map((r) => r.type)).not.toContain("step");
+    expect(today.turns[0].replies.map((r) => r.type)).not.toContain("offer");
+
+    const day = await api.get<CalendarDayResponse>(
+      `/children/${CHAT_CHILD}/calendar/${daysAgo(0)}`,
+    );
+    expect(day.chat_count).toBe(1);
+  }, 15_000);
+
+  it("🚨 같은 run 을 다시 구독해도 한 턴이다 — 서버는 run 당 한 행이다", async () => {
+    const runId = await runChatToEnd("오늘 블록 놀이 했어");
+    for await (const event of streamRunEvents(runId, new AbortController().signal)) void event;
+    expect((await chatDay()).turns.map((t) => t.run_id)).toEqual([runId]);
+  }, 15_000);
+
+  it("🚨 failed 로 끝난 run 은 남기지 않는다 — 다시 보내면 새 run 이라 같은 말풍선이 두 번 선다", async () => {
+    setScenario("failed");
+    await runChatToEnd("지어낸 한 줄");
+    expect((await chatDay()).turns).toEqual([]);
+  }, 15_000);
+
+  it("🚨 커서가 품은 날짜와 date 가 다르면 400 이다", async () => {
+    setScenario("chat_history");
+    const first = await chatDay({ date: daysAgo(1), limit: "1" });
+    expect(first.next_cursor).not.toBeNull();
+
+    const next = await chatDay({ cursor: first.next_cursor! });
+    expect(next.date).toBe(daysAgo(1));
+    expect(next.turns.length).toBeGreaterThan(0);
+
+    const mismatched = await chatDay({ cursor: first.next_cursor!, date: daysAgo(0) }).catch(
+      (error: unknown) => error,
+    );
+    expect(isApiError(mismatched, "validation_failed")).toBe(true);
+  });
+
+  it("prev_date 는 대화가 있었던 바로 앞 날이다 — 대화 없는 날은 건너뛴다", async () => {
+    setScenario("chat_history");
+    expect((await chatDay()).prev_date).toBe(daysAgo(1));
+    expect((await chatDay({ date: daysAgo(1) })).prev_date).toBe(daysAgo(3));
+    expect((await chatDay({ date: daysAgo(3) })).prev_date).toBeNull();
   });
 });
