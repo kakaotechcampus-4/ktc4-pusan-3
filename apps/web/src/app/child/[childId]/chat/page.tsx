@@ -181,8 +181,6 @@ function ChatScreen() {
         <BottomSheet
           open={draftsOf !== null}
           onClose={() => setDraftsOf(null)}
-          // 카드마다의 "넣기" 가 승인 게이트 ㉠ 이다 — 열고 닫는 움직임이 없다 (디자인 시스템 §8 "하지 않는 것").
-          gate
           // 🚨 설명을 달지 않는다 — 목록이 자기 머리글("일정으로 만들까요?" · 넣기 전에는 안 들어간다)을
           //    이미 세운다. 시트 머리에도 같은 말을 두면 한 화면에 같은 두 줄이 겹쳐 선다.
           title="찾은 일정"

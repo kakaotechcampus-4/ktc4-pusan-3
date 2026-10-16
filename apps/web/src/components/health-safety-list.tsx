@@ -399,8 +399,6 @@ export function HealthSafetySheet({
       title={editing ? "알레르기 · 건강 기록 고치기" : "알레르기 · 건강 기록 추가"}
       // 🚨 승인 시트는 스크림 탭·ESC 로 닫히지 않는다 (디자인 시스템 §7). 나가는 길은 아래 버튼이다.
       dismissible={false}
-      // 승인 게이트 ㉡ — 열고 닫는 움직임이 없다 (디자인 시스템 §8 "하지 않는 것").
-      gate
       footer={
         <div className="flex flex-col gap-2">
           {/* 🚨 **실패 문구가 버튼 옆에 있어야 한다.** 예전에는 시트 본문 맨 아래였는데,
