@@ -34,6 +34,7 @@ from app.api.runs.registry import RunChannel
 log = logging.getLogger(__name__)
 
 Job = Callable[[RunChannel], Awaitable[None]]
+OnEnd = Callable[[RunChannel], Awaitable[None]]
 
 DEMO_STEP_DELAY = 0.4
 """가짜 러너의 단계 사이 간격(초). 브라우저에서 진행 오버레이가 움직이는 게 보이라고 둔 값이다."""
@@ -78,6 +79,7 @@ def agent_job(
     child_health_granted: bool | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
+    on_event: Callable[[entrypoint.Event], None] | None = None,
 ) -> Job:
     """진짜 Agent(entrypoint.handle_input)를 돌리는 job 을 만든다. 진행 이벤트는 번역해서 채널로.
 
@@ -105,6 +107,9 @@ def agent_job(
       되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
       끊는 순간 진행 중인 모델 호출도 취소된다.
+    - `on_event` 는 이벤트를 번역 · 분기하기 전에 하나씩 받는다. 대화 기록(`chat_record`)이
+      화면에 보내지 않는 `Saved` 까지 받으려고 여기서 넘긴다 (#228). 끝 신호 뒤의 것은 넘기지
+      않는다.
 
     🚨 `entrypoint.handle_input` 을 모듈 이름으로 부른다 — 테스트가 진입점을 바꿔 끼울 수 있게.
     """
@@ -113,6 +118,9 @@ def agent_job(
         relay = translate.relay(channel)
 
         def emit(event: entrypoint.Event) -> None:
+            # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
+            if on_event is not None and channel.ended_with is None:
+                on_event(event)
             if isinstance(event, entrypoint.PendingReply):
                 pending_reply.put(
                     run_id=event.run_id,
@@ -227,7 +235,9 @@ async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> N
     emit(entrypoint.Done(channel.run_id, 0))
 
 
-async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
+async def _guarded(
+    channel: RunChannel, job: Job, raw_text: str, on_end: OnEnd | None = None
+) -> None:
     try:
         await job(channel)
     except Exception as exc:
@@ -264,10 +274,22 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         if channel.ended_with == "failed":
             idempotency.forget_run(channel.run_id)
         channel.close()
+    # 닫은 뒤에 부른다 — 화면은 끝 신호까지 다 받았고, 여기서 무엇이 늦어져도 기다리지 않는다
+    if on_end is not None:
+        await on_end(channel)
 
 
-def start(channel: RunChannel, job: Job, *, raw_text: str) -> asyncio.Task[None]:
-    """job 을 뒤에서 돌리기 시작하고 바로 돌아온다. 기다리지 않는다."""
-    task = asyncio.create_task(_guarded(channel, job, raw_text), name=f"run:{channel.run_id}")
+def start(
+    channel: RunChannel, job: Job, *, raw_text: str, on_end: OnEnd | None = None
+) -> asyncio.Task[None]:
+    """job 을 뒤에서 돌리기 시작하고 바로 돌아온다. 기다리지 않는다.
+
+    `on_end` 는 끝 신호를 내고 채널을 닫은 뒤에 한 번 부른다. 끝 신호는 job 이 아니라 여기서
+    붙기도 해서(예외 · 끝 신호 없이 돌아온 job) 끝난 모양을 보고 할 일(대화 기록)은 여기서 건다.
+    🚨 `on_end` 는 예외를 밖으로 내지 않아야 한다 — 이 태스크를 기다리는 곳이 없다.
+    """
+    task = asyncio.create_task(
+        _guarded(channel, job, raw_text, on_end), name=f"run:{channel.run_id}"
+    )
     channel.task = task
     return task

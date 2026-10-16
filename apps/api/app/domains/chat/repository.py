@@ -1,0 +1,74 @@
+"""대화 기록(`chat_turn`)의 DB 접근 함수 (#228).
+
+쓴 보호자 본인만 보는 개인 기록이다. 모든 함수가 보호자 · 아이 둘 다로 거른다.
+"""
+
+import uuid
+from datetime import date, datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domains.chat.models import ChatTurn
+from app.domains.child.models import Child, ParentChild
+from app.domains.identity.models import Parent
+
+
+async def find_turn_date(
+    session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID, run_id: str
+) -> date | None:
+    """그 run 의 대화 날짜. 되묻기에 답한 run 이 질문 턴의 날짜를 따를 때 쓴다. 없으면 None."""
+    return await session.scalar(
+        select(ChatTurn.conversation_date).where(
+            ChatTurn.parent_id == parent_id,
+            ChatTurn.child_id == child_id,
+            ChatTurn.run_id == run_id,
+        )
+    )
+
+
+async def add_turn(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    run_id: str,
+    conversation_date: date,
+    raw_text: str,
+    reply_to: str | None,
+    replies: list,
+    created_at: datetime,
+) -> ChatTurn | None:
+    """대화 한 턴을 쓴다. 보호자가 이 아이와 연결돼 있지 않으면 쓰지 않고 None.
+
+    🚨 보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡은 뒤 연결을 확인한다 — 일기(`put_diary`,
+       #427)와 같은 이유 · 같은 순서다. run 은 접수 뒤 최대 60초를 뒤에서 돌아서, 그 사이에 연결
+       끊기(`unlink_parent`)가 연결과 대화를 지우고 커밋하면 여기서 쓴 행이 끊긴 보호자에게 남는다.
+       잡아 두면 끊기가 먼저면 행이 없어 None, 여기가 먼저면 끊기가 커밋을 기다렸다가 이 행까지
+       지운다. 탈퇴 · 아이 삭제가 먼저면 보호자 · 아이 행이 없어 역시 None 이다.
+    """
+    key_share = {"read": True, "key_share": True}
+    await session.execute(
+        select(Parent.id).where(Parent.id == parent_id).with_for_update(**key_share)
+    )
+    await session.execute(select(Child.id).where(Child.id == child_id).with_for_update(**key_share))
+    linked = await session.scalar(
+        select(ParentChild.id)
+        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
+        .with_for_update(**key_share)
+    )
+    if linked is None:
+        return None
+    turn = ChatTurn(
+        parent_id=parent_id,
+        child_id=child_id,
+        run_id=run_id,
+        conversation_date=conversation_date,
+        raw_text=raw_text,
+        reply_to=reply_to,
+        replies=replies,
+        created_at=created_at,
+    )
+    session.add(turn)
+    await session.flush()
+    return turn

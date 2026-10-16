@@ -15,7 +15,9 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from unittest.mock import ANY
 
 import pytest
 from sqlalchemy import select
@@ -23,8 +25,9 @@ from sqlalchemy import select
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency, quota
-from app.api.runs import pending_reply, registry, runner
+from app.api.runs import chat_record, pending_reply, registry, runner
 from app.core.config import settings
+from app.domains.chat.models import ChatTurn
 from app.domains.child.models import Child
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
@@ -125,6 +128,7 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "raw_text": BODY["text"],
             "continuation": None,  # 일반 새 입력
             "reply_to": None,
+            "on_event": ANY,  # 대화 기록(#228) — test_finished_run_is_kept_as_a_chat_turn
         }
     ]
 
@@ -357,6 +361,27 @@ async def test_post_then_get_streams_steps_to_done(db_client, bearer, cid):
     assert frames[0].startswith("event: step\n")
     assert frames[-1].startswith("event: done\n")
     assert f'"run_id":"{run_id}"' in frames[-1]
+
+
+async def test_finished_run_is_kept_as_a_chat_turn(db_client, bearer, session, monkeypatch, cid):
+    """접수한 한 줄과 그 run 의 답이 끝난 뒤 대화 한 턴으로 남는다 (#228).
+
+    창구가 러너에 대화 기록을 넘기는지만 본다. 무엇을 어떻게 남기는지는 test_chat_record.py.
+    """
+
+    @asynccontextmanager
+    async def same():
+        yield session
+
+    monkeypatch.setattr(chat_record, "background_session", same)
+    headers, parent_id = bearer
+
+    accepted = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+    run_id = accepted.json()["run_id"]
+    await asyncio.wait_for(registry.get(run_id).task, timeout=2)
+
+    turn = await session.scalar(select(ChatTurn).where(ChatTurn.run_id == run_id))
+    assert (turn.parent_id, turn.child_id, turn.raw_text) == (parent_id, cid, BODY["text"])
 
 
 # ── reply_to — Memory 가 물은 것에 대한 답 ──────────────────────
