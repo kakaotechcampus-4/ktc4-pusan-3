@@ -4,6 +4,7 @@
     ② 하루 안은 최근 것부터 끊고, 한 페이지 안은 오래된 순 — next_cursor 로 이어 받는다
     ③ prev_date 는 대화가 없는 날을 건너뛴다 — 처음 날이면 null
     ④ 깨진 커서는 400
+    ⑤ 저장한 기록은 지금 상태로 — 지운 기록은 내용 없이, 건강 기록은 싣지 않는다
 
 아이 접근 확인(403)은 다른 아이 주소와 같은 의존성이라 여기서 다시 보지 않는다.
 무엇을 어떻게 남기는지는 tests/integration/test_chat_record.py. 발화는 전부 가짜 값이다.
@@ -13,9 +14,12 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from httpx import AsyncClient
+from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.chat.repository import add_turn
+from app.domains.memory.observation.models import ConfidenceSource
+from app.domains.memory.observation.repository import create_observation, delete_observation
 from tests.integration.api.conftest import Bearer, issue_bearer, link_child
 
 CHAT = "/api/v1/children/{cid}/chat"
@@ -31,6 +35,7 @@ async def _turn(
     day: date = DAY,
     at: datetime = NOON,
     text: str = "synthetic line",
+    replies: list | None = None,
 ) -> str:
     run_id = uuid.uuid4().hex
     await add_turn(
@@ -41,7 +46,7 @@ async def _turn(
         conversation_date=day,
         raw_text=text,
         reply_to=None,
-        replies=[{"type": "done", "completed": True}],
+        replies=replies or [{"type": "done", "completed": True}],
         created_at=at,
     )
     return run_id
@@ -145,3 +150,66 @@ async def test_broken_cursor_is_400(db_client: AsyncClient, bearer: Bearer, cid:
     )
 
     assert response.status_code == 400
+
+
+async def _observation(
+    session: AsyncSession, *, domain: str, child_id: uuid.UUID, writer: uuid.UUID, fields: dict
+) -> str:
+    record = await create_observation(
+        session,
+        domain=domain,
+        child_id=child_id,
+        source_writer=writer,
+        raw_text="synthetic record",
+        observed_range=Range(DAY, DAY + timedelta(days=1), bounds="[)"),
+        fields={"confidence_source": ConfidenceSource.PARENT_DIRECT, **fields},
+    )
+    return str(record.id)
+
+
+async def test_saved_records_come_back_as_they_are_now(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """지운 기록이 지난 대화에서 되살아나면 안 된다 (#228 완료 기준).
+
+    건강 기록은 기록 탭처럼 빠지고, 건강 기록만 있던 saved 는 통째로 빠진다.
+    """
+    headers, me = bearer
+    kept = await _observation(
+        session, domain="food", child_id=cid, writer=me, fields={"subject": "계란말이"}
+    )
+    erased = await _observation(
+        session, domain="food", child_id=cid, writer=me, fields={"subject": "당근"}
+    )
+    health = await _observation(
+        session, domain="health", child_id=cid, writer=me, fields={"symptom": ["기침"]}
+    )
+    await delete_observation(session, domain="food", child_id=cid, observation_id=uuid.UUID(erased))
+    saved = {
+        "type": "saved",
+        "refs": [
+            {"kind": "observation_food", "id": kept},
+            {"kind": "observation_food", "id": erased},
+            {"kind": "observation_health", "id": health},
+        ],
+    }
+    only_health = {"type": "saved", "refs": [{"kind": "observation_health", "id": health}]}
+    done = {"type": "done", "completed": True}
+    await _turn(session, parent_id=me, child_id=cid, replies=[saved, done])
+    await _turn(
+        session,
+        parent_id=me,
+        child_id=cid,
+        at=NOON + timedelta(minutes=1),
+        replies=[only_health, done],
+    )
+
+    body = (
+        await db_client.get(CHAT.format(cid=cid), params={"date": "2026-10-15"}, headers=headers)
+    ).json()
+
+    [first, second] = body["turns"]
+    [filled, _] = first["replies"]
+    assert [o["subject"] for o in filled["observations"]] == ["계란말이"]
+    assert filled["deleted"] == [{"kind": "observation_food", "id": erased}]
+    assert second["replies"] == [done]

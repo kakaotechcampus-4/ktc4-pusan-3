@@ -7,6 +7,9 @@
 하루 단위로 준다. 대화 화면은 날짜 구분선 단위로 그리고, 캘린더 하루 화면이 그 날짜로 연다.
 커서는 둘이다 — 하루 안에서 더 이른 턴은 `next_cursor`, 그날을 다 받으면 `prev_date` 로 전날.
 
+저장할 때 id 만 담은 `saved` 는 지금 상태로 채운다 — 기록 탭과 같은 모양과 같은 기준
+(`VISIBLE_DOMAINS` · 지운 것 제외)이다. 지운 기록은 내용 없이, 건강 기록은 아예 싣지 않는다.
+
 🚨 `next_cursor` 는 자기 날짜를 품는다. `date` 를 빼면 오늘이라, 날짜 없는 커서를 자정이 지난 뒤
    보내면 새 날에 적용돼 빈 목록과 `prev_date`=어제가 나가고, 화면이 어제를 처음부터 다시 그려
    이미 보이는 턴이 두 번 생긴다. 커서가 오면 그 날짜로 읽고, `date` 가 함께 와서 다르면 400 이다.
@@ -23,14 +26,22 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.calendar_dates import check_day
-from app.api.chat_replies import CHAT_REPLIES
+from app.api.chat_replies import CHAT_REPLIES, ChatReply, SavedReply, StoredRef
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
-from app.api.v1.schemas.chat import ChatDayResponse, ChatTurnOut
+from app.api.v1.routers.observations import to_observation_outs, visible_domain
+from app.api.v1.schemas.chat import (
+    ChatDayResponse,
+    ChatReplyOut,
+    ChatTurnOut,
+    SavedOut,
+)
+from app.api.v1.schemas.observations import ObservationOut
 from app.domains.chat.repository import TurnCursor, page_turns, previous_date
+from app.domains.memory.observation.repository import ObservationDomain, find_observations
 
 router = APIRouter()
 
@@ -77,6 +88,8 @@ async def get_chat_day(
         cursor=after.turn if after is not None else None,
         limit=limit,
     )
+    stored = [CHAT_REPLIES.validate_python(turn.replies) for turn in turns]
+    observations = await _current_observations(session, child.child_id, stored)
     return ChatDayResponse(
         date=day,
         turns=[
@@ -85,13 +98,70 @@ async def get_chat_day(
                 raw_text=turn.raw_text,
                 reply_to=turn.reply_to,
                 created_at=turn.created_at,
-                replies=CHAT_REPLIES.validate_python(turn.replies),
+                replies=_fill(replies, observations),
             )
-            for turn in turns
+            for turn, replies in zip(turns, stored, strict=True)
         ],
         next_cursor=_encode_cursor(day, more) if more else None,
         prev_date=await previous_date(session, **owner, before=day),
     )
+
+
+ObservationKey = tuple[ObservationDomain, uuid.UUID]
+
+
+def _visible_key(kind: str, observation_id: str) -> ObservationKey | None:
+    """기록 탭에 보이는 표의 관찰이면 그 키. 건강 · 모르는 값은 None — 싣지 않는다."""
+    domain = visible_domain(kind)
+    if domain is None:
+        return None
+    try:
+        return domain, uuid.UUID(observation_id)
+    except ValueError:
+        return None
+
+
+async def _current_observations(
+    session: SessionDep, child_id: uuid.UUID, stored: list[list[ChatReply]]
+) -> dict[ObservationKey, ObservationOut]:
+    """한 화면의 saved 관찰을 표마다 한 번씩 읽어 기록 탭 모양으로. 지운 것은 결과에 없다."""
+    keys = {
+        key
+        for replies in stored
+        for reply in replies
+        if isinstance(reply, SavedReply)
+        for ref in reply.refs
+        if (key := _visible_key(ref.kind, ref.id)) is not None
+    }
+    if not keys:
+        return {}
+    records = await find_observations(session, child_id=child_id, refs=keys)
+    outs = await to_observation_outs(session, list(records.values()), today=today_kst())
+    return dict(zip(records.keys(), outs, strict=True))
+
+
+def _fill(
+    replies: list[ChatReply], observations: dict[ObservationKey, ObservationOut]
+) -> list[ChatReplyOut]:
+    """saved 의 id 를 지금 기록으로 바꾼다. 건강 기록만 있던 saved 는 통째로 뺀다."""
+    filled: list[ChatReplyOut] = []
+    for reply in replies:
+        if not isinstance(reply, SavedReply):
+            filled.append(reply)
+            continue
+        live: list[ObservationOut] = []
+        deleted: list[StoredRef] = []
+        for ref in reply.refs:
+            key = _visible_key(ref.kind, ref.id)
+            if key is None:
+                continue
+            if key in observations:
+                live.append(observations[key])
+            else:
+                deleted.append(ref)
+        if live or deleted:
+            filled.append(SavedOut(observations=live, deleted=deleted))
+    return filled
 
 
 @dataclass(frozen=True)

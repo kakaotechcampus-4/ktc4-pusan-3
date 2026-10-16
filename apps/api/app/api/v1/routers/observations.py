@@ -136,7 +136,7 @@ async def get_observation(
     session: SessionDep,
 ) -> ObservationDetailResponse:
     """관찰 1건 + 그 관찰을 근거로 쓴 추천 + 교정 이력."""
-    domain = _visible_domain(kind)
+    domain = visible_domain(kind)
     record = (
         await find_observation(session, domain=domain, child_id=child.child_id, observation_id=oid)
         if domain
@@ -168,8 +168,11 @@ async def get_observation(
     )
 
 
-def _visible_domain(kind: str) -> ObservationDomain | None:
-    """경로의 kind 가 이 화면이 보여주는 표면 그 도메인. 건강 · 모르는 값은 None (→ 404)."""
+def visible_domain(kind: str) -> ObservationDomain | None:
+    """kind(`observation_food` …)가 기록 탭에 보이는 표면 그 도메인. 건강 · 모르는 값은 None.
+
+    상세는 None 을 404 로, 지난 대화(`chat.py`)는 싣지 않는 것으로 쓴다.
+    """
     if not kind.startswith("observation_"):
         return None
     try:
