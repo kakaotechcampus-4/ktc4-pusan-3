@@ -45,6 +45,7 @@ async def test_신고를_저장하고_알림에는_분류와_번호만_싣는다
     assert str(report_id) in line
     # 글은 로그에도, Discord 로 가는 값에도 없다
     assert MESSAGE not in line
+    assert records[0].alert_source == "report"  # Discord 에서 report-alert 로 — 장애 알림과 갈린다
     assert records[0].alert_heading == "신고 접수"
     assert records[0].alert_detail == f"ai_content · `{report_id}`"
     assert MESSAGE not in records[0].alert_detail

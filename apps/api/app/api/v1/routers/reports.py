@@ -12,7 +12,8 @@ Play 정책 두 개가 "앱을 나가지 않고" 신고하는 길을 요구한�
    DB 로 세서 서버를 다시 켜도 그대로다. 세기 전에 보호자 행을 잠가 동시에 와도 넘치지 않는다
    (count_reports_since).
 🚨 ERROR 로 찍는 이유는 오류라서가 아니라 Discord 로 가는 길이 ERROR 하나라서다
-   (app/core/alerts.py). 머리글이 "신고 접수" 라 오류 알림과 섞이지 않는다.
+   (app/core/alerts.py). 출처가 report 라 Discord 에서 report-alert · 🟡 로 뜨고, 바닥글이 조회
+   SQL 이라 오류 알림과 섞이지 않는다. 분당 한도는 오류 알림과 같이 쓴다.
 """
 
 import logging
@@ -63,6 +64,7 @@ async def submit_report(
         row.id,
         parent.parent_id,
         extra={
+            "alert_source": "report",
             "alert_heading": "신고 접수",
             "alert_detail": f"{row.category.value} · `{row.id}`",
         },
