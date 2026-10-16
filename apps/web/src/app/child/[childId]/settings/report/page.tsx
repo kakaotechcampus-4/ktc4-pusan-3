@@ -124,7 +124,11 @@ function ReportForm({ onSent }: { onSent: () => void }) {
     },
   });
 
-  const trimmed = message.trim();
+  /**
+   * 🚨 **NUL(`\u0000`)은 떼고 보낸다.** 서버가 400 으로 거절하는 글자라(Postgres 가 받지 못한다),
+   *    다른 앱에서 붙여 넣은 글에 섞여 오면 다시 눌러도 계속 막힌다. 화면에는 보이지 않는 글자다.
+   */
+  const trimmed = message.split("\u0000").join("").trim();
   /**
    * 🚨 **하루 한도에 걸리면 보내기를 잠근다** (429 `too_many_reports`). 누를 때마다 같은 응답이라
    *    "다시 시도" 를 세우지 않는 것과 같은 이유다 (`docs/web/api-client-v1.md` §3 `daily_input_limit`).
