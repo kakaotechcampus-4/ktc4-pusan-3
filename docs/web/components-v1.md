@@ -32,7 +32,7 @@
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
-  `Select` · `ChoiceField`(둘 중 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 디자인 시스템 §7) ·
+  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
@@ -72,8 +72,9 @@
   콘텐츠 · 사용자 제작 콘텐츠)이 불쾌한 AI 답 · 공동 기록 · 다른 사용자를 **앱을 떠나지 않고** 알릴 길을
   요구한다 — `mailto:` 로 대신하지 않는다. 🚨 적은 글은 컴포넌트 상태에만 둔다 — 콘솔 · `persist` ·
   `localStorage` · `sessionStorage` 로 옮기지 않는다(서버도 DB 에만 두고 로그에 안 찍는다). 🚨 승인
-  게이트도 되돌릴 수 없는 5곳도 아니다 — 게이트 표식도 `Idempotency-Key` 도 없다. 🚨 분류는 처음에
-  아무것도 고르지 않은 채로 둔다 — 기본값으로 틀린 분류가 쌓인다. 🚨 열람 · 삭제처럼 답이 필요한
+  게이트도 되돌릴 수 없는 5곳도 아니다 — 게이트 표식도 `Idempotency-Key` 도 없다. 🚨 분류는 첫 항목이
+  골라진 채로 시작한다(`ChoiceField` 세로 변형) — 아무것도 안 고른 칸은 테두리만 있는 상자라 고르는
+  칸인지 모르고, 그러면 보내기가 왜 꺼져 있는지 알 수 없다. 🚨 열람 · 삭제처럼 답이 필요한
   요청은 처리방침의 이메일(`SERVICE_EMAIL`)로 보내 달라고 **적기 전에** 말한다 — 이 양식은 답을
   보내는 길이 없어서 공식 권리 행사 창구가 아니다. 고객센터의 "질문에 없는 일" 도 이 화면으로 보낸다
 - 🚨 **버튼처럼 보이는 링크는 `ButtonLink` 다** (`components/ui/button.tsx`). `Button` 과 **같은**
