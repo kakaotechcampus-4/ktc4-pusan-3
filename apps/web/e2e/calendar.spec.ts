@@ -24,6 +24,8 @@ test("사진만 있는 날은 빈 날이 아니다 — 사진이 서고 빈 상�
   await expect(page.getByRole("img", { name: "이날 캘린더에 남은 사진" })).toHaveCount(1);
   await expect(page.getByText("사진 있음")).toBeVisible();
   await expect(page.getByText("이날은 아무것도 없어요")).toHaveCount(0);
+  // 🚨 사진은 보기만 한다 — 하루 패널에서 넣는 길을 두지 않는다 (#503).
+  await expect(page.getByRole("button", { name: "사진으로 적기" })).toHaveCount(0);
 });
 
 test("내 일기는 일기 구역에 그대로 선다", async ({ page }) => {
@@ -33,23 +35,63 @@ test("내 일기는 일기 구역에 그대로 선다", async ({ page }) => {
   await expect(page.getByRole("button", { name: "일기 고치기" })).toBeVisible();
 });
 
-test("일기 구역이 하루 패널 맨 위에 서고, 일기 쓰기는 제목 줄에 있다 (#503)", async ({ page }) => {
+test("일기 쓰기는 화면 머리에 있고, 쓰면 일기가 하루 패널 맨 위에 열린다 (#503)", async ({
+  page,
+}) => {
   // 목의 이틀 전은 기록이 있고 일기가 없는 날이다.
   await page.goto(`${CALENDAR}?date=${browserDaysAgo(2)}`);
 
-  const diary = page.getByRole("heading", { name: "이날의 일기" });
+  const title = page.getByRole("heading", { level: 1, name: "캘린더" });
   const records = page.getByRole("heading", { name: "이날 남긴 기록" });
   const write = page.getByRole("button", { name: "일기 쓰기" });
   await expect(records).toBeVisible();
+  // 일기가 없는 날은 일기 구역이 서지 않는다 — 제목만 남은 빈 구역을 세우지 않는다.
+  await expect(page.getByRole("heading", { name: "이날의 일기" })).toHaveCount(0);
 
-  const [diaryBox, recordsBox, writeBox] = await Promise.all(
-    [diary, records, write].map((locator) => locator.boundingBox()),
-  );
+  // 머리의 제목과 한 줄, 오른쪽이다.
+  const [titleBox, writeBox] = await Promise.all([title.boundingBox(), write.boundingBox()]);
+  expect(writeBox!.y).toBeLessThan(titleBox!.y + titleBox!.height);
+  expect(writeBox!.x).toBeGreaterThan(titleBox!.x + titleBox!.width);
+
+  await write.click();
+  // 버튼과 편집기가 멀어서 편집기가 포커스를 받는다. 쓰는 동안 머리 버튼은 내려간다.
+  await expect(page.getByRole("textbox", { name: "이날의 일기" })).toBeFocused();
+  await expect(write).toHaveCount(0);
+  const [diaryBox, recordsBox] = await Promise.all([
+    page.getByRole("heading", { name: "이날의 일기" }).boundingBox(),
+    records.boundingBox(),
+  ]);
   expect(diaryBox!.y).toBeLessThan(recordsBox!.y);
-  // 제목과 한 줄이다 — 버튼의 세로 범위가 제목을 품고, 버튼이 제목 오른쪽에 있다.
-  expect(writeBox!.y).toBeLessThanOrEqual(diaryBox!.y);
-  expect(writeBox!.y + writeBox!.height).toBeGreaterThanOrEqual(diaryBox!.y + diaryBox!.height);
-  expect(writeBox!.x).toBeGreaterThan(diaryBox!.x + diaryBox!.width);
+});
+
+test("편집기를 연 채 다른 날에 갔다 돌아오면 편집기는 닫혀 있다 (#503)", async ({ page }) => {
+  const date = browserDaysAgo(2);
+  await page.goto(`${CALENDAR}?date=${date}`);
+  await page.getByRole("button", { name: "일기 쓰기" }).click();
+  await expect(page.getByRole("textbox", { name: "이날의 일기" })).toBeVisible();
+
+  // 같은 달의 다른 날로 갔다가 (고른 날 말고 첫 칸) 그날로 돌아온다.
+  await page.getByRole("gridcell", { selected: false }).getByRole("button").first().click();
+  await expect(page).not.toHaveURL(new RegExp(`date=${date}`));
+  await page
+    .getByRole("gridcell")
+    .getByRole("button")
+    .filter({ hasText: new RegExp(`^${Number(date.slice(8))}$`) })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`date=${date}`));
+
+  // 🚨 누르지도 않은 편집기가 다시 열리면 키보드가 올라온다.
+  await expect(page.getByRole("button", { name: "일기 쓰기" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "이날의 일기" })).toHaveCount(0);
+});
+
+test("일기가 있는 날은 머리에 일기 쓰기가 서지 않는다 — 카드의 고치기가 그 일을 한다 (#503)", async ({
+  page,
+}) => {
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(1)}`);
+
+  await expect(page.getByRole("button", { name: "일기 고치기" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "일기 쓰기" })).toHaveCount(0);
 });
 
 test("건강 기록은 캘린더에 서지 않는다 (첫 배포 범위 밖 · #259 · #318)", async ({ page }) => {
@@ -137,11 +179,20 @@ test("일기를 쓰고 고치고 지운다 — 새 경로로 키 없이 보내�
 
   // 지우기 확정
   await page.getByRole("button", { name: "일기 지우기" }).click();
-  await page.getByRole("button", { name: "지우기", exact: true }).click();
+  const confirm = page.getByRole("button", { name: "지우기", exact: true });
+  // 폰 화면 높이로 줄인다 — 넉넉한 화면이면 지운 뒤 문서가 화면보다 짧아져 스크롤이 0 으로 깎이고,
+  // 그러면 머리로 튀었는지 잴 수 없다.
+  await page.setViewportSize({ width: 390, height: 500 });
+  await confirm.scrollIntoViewIfNeeded();
+  await expect(write).not.toBeInViewport();
+  await confirm.click();
 
-  // 🚨 일기 구역이 "일기 쓰기" 로 돌아가고, 누른 버튼이 사라진 자리에서 포커스가 그 버튼으로 온다.
+  // 🚨 머리에 "일기 쓰기" 가 다시 서고, 누른 버튼이 구역째 사라졌으니 포커스가 그 버튼으로 온다.
+  //    🚨 화면은 머리로 튀지 않는다 (`preventScroll` · #503).
   await expect(write).toBeVisible();
   await expect(write).toBeFocused();
+  // 지운 일기만큼 문서가 짧아져 스크롤 위치는 조금 움직일 수 있다. 재는 것은 머리까지 올라갔는가다.
+  await expect(write).not.toBeInViewport();
   await expect(page.getByText("손을 두 번 씻었다.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "일기 고치기" })).toHaveCount(0);
   expect(writes(calls, "DELETE")).toEqual([
