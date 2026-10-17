@@ -130,7 +130,7 @@ Growth의 활동 행과 출력 후보도 같은 사전으로 검사합니다. **
 
 ### `health_safety` (보호자 입력)
 
-Growth 는 **`learning_suggestion` 에서만**, 동의가 있을 때 `allergy` · `environmental` 의 active 행을 읽는다(`build_gate` 에서 run 당 한 번). 보호자가 적은 이름이 교육 활동 후보의 문장 · `materials` 에 나오면 뺀다 — 19종은 사전 별칭으로 넓히고(한 글자 별칭 제외), 식품 사전에 없는 알레르기(라텍스 · 꽃가루 · 동물털)는 적은 이름 그대로 본다. 꽃가루 · 동물털도 `allergy` 이고 `environmental` 은 고소공포 같은 것이다(`data_model.md`). 이름을 물건 · 장소로 넓히는 대응표는 만들지 않고, `allergy` active 행 중 이름이 식품 사전에 없는 것이 있으면 확인 문구(`caution.non_food_allergy`)를 붙인다(#261 리뷰 4번 · #282 리뷰). `environmental` 에는 붙이지 않는다. 동의가 없으면 읽지 않는다. 조회에 실패하면 빈 목록으로 폴백하지 않고 교육 활동을 닫는다(`blocked.safety`). `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다(Activity D7 과 같은 이유). 루틴 · 도서 · `growth_review` 는 읽지 않는다.
+Growth 는 **`learning_suggestion` 에서만**, 동의가 있을 때 `allergy` · `environmental` 의 active 행을 읽는다(`build_gate` 에서 run 당 한 번). 보호자가 적은 이름이 교육 활동 후보의 문장 · `materials` 에 나오면 뺀다 — 19종은 사전 별칭으로 넓히고(한 글자 별칭 제외), 식품 사전에 없는 알레르기(라텍스 · 꽃가루 · 동물털)는 적은 이름 그대로 본다. 꽃가루 · 동물털도 `allergy` 이고 `environmental` 은 고소공포 같은 것이다(`data_model.md`). 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 사람이 정한 대응표(`reference/allergy_related_terms.yaml`)의 낱말이 든 후보 · [예시]를 뺀다(PM 확인). 확인 문구는 없다. `environmental` 은 대상이 아니다. 동의가 없으면 읽지 않는다. 조회에 실패하면 빈 목록으로 폴백하지 않고 교육 활동을 닫는다(`blocked.safety`). `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다(Activity D7 과 같은 이유). 루틴 · 도서 · `growth_review` 는 읽지 않는다.
 
 ### `notice` (Memory · OCR 파이프라인 소유)
 
