@@ -7,7 +7,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
@@ -86,7 +86,8 @@ export function CalendarDayPanel({
     data.events.length === 0 &&
     data.observations.length === 0 &&
     !hasDiary &&
-    data.shared_photos.length === 0;
+    data.shared_photos.length === 0 &&
+    data.chat_count === 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -105,6 +106,24 @@ export function CalendarDayPanel({
       {data.observations.length > 0 ? (
         <Section title="이날 남긴 기록">
           <ObservationList observations={data.observations} onOpen={onOpenObservation} />
+        </Section>
+      ) : null}
+
+      {/* 그날 나눈 대화로 가는 문 (#228). 🚨 **대화가 없는 날에는 세우지 않는다** — 일기 · 사진과 달리 여기서
+          대화를 시작하지 않아서(대화는 홈의 한 줄로 시작한다) 빈 날에 세우면 아무것도 없는 곳으로 가는 문이 된다.
+          🚨 내 대화만 센 수다 — 같은 아이의 다른 보호자 대화는 보이지 않는다. */}
+      {data.chat_count > 0 ? (
+        <Section title="이날 나눈 대화">
+          <div>
+            <ButtonLink
+              href={`/child/${childId}/chat?date=${date}`}
+              variant="tertiary"
+              size="compact"
+              transitionTypes={FORWARD.transitionTypes}
+            >
+              대화 {data.chat_count}개 보기
+            </ButtonLink>
+          </div>
         </Section>
       ) : null}
 

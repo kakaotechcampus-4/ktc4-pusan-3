@@ -12,6 +12,7 @@ import {
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { recordingTurn } from "./chat";
 import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
 
@@ -696,7 +697,10 @@ export const runHandlers = [
    */
   http.get(url("/runs/:runId/events"), ({ params }) => {
     const runId = String(params.runId);
-    const script = isPhotoRun(runId) ? photoRunScript(runId) : runScript(runId);
+    // 🚨 입력 run 만 대화로 남긴다 — 사진 run 은 대화 턴이 아니다 (서버도 입력 창구에서만 붙인다).
+    const script = isPhotoRun(runId)
+      ? photoRunScript(runId)
+      : recordingTurn(runId, inputByRun.get(runId), runScript(runId));
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {

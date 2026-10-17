@@ -63,6 +63,16 @@ export const qk = {
    */
   calendarDay: (childId: string, date: string) =>
     [...qk.child(childId), "calendar-day", date] as const,
+  /**
+   * 04 지난 대화 (`GET /children/{cid}/chat` · #228). 하루 한 장씩 이어 받는 목록이다.
+   * 🚨 run 이 끝나면 `qk.child` 무효화에 같이 걸린다 — 그 턴의 날짜를 화면이 계산하지 않는다.
+   */
+  chat: (childId: string) => [...qk.child(childId), "chat"] as const,
+  /**
+   * 03 홈의 "오늘 대화 이어보기" 가 보는 오늘 한 장. 🚨 **`chat` 과 따로 둔다** — 같은 키면 홈에 올 때마다
+   * 대화 화면에서 받아 둔 지난 날을 전부 다시 받는다. `chat` 아래라 대화 무효화에 같이 걸린다.
+   */
+  chatToday: (childId: string) => [...qk.chat(childId), "today"] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,
 } as const;

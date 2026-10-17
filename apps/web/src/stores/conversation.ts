@@ -11,8 +11,8 @@ import {
 import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
-import { qk } from "@/lib/api/queryKeys";
 import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
+import { refreshAfterRun } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
@@ -33,7 +33,8 @@ import { useEventDraftStore } from "@/stores/event-draft";
  *    계란이 두 번 저장되고 7일 승격 집계가 한 번의 관찰을 두 번으로 센다 (최상위 §2 · #154).
  * 2. 🚨 **`persist` 를 붙이지 말 것.** 보낸 원문과 되묻는 질문에는 아이 이야기가 그대로 들어 있다.
  *    디스크에 남기지 않는다 (최상위 §2 개인정보 · `stores/draft.ts` 와 같은 규칙). 그래서 앱을 끄면
- *    그날 대화가 사라진다 — 남기는 것은 서버 쪽 일이다 (#228). 🚨 콘솔·로그에도 찍지 않는다.
+ *    이 스토어는 빈다 — 다시 켜면 서버가 남긴 대화를 화면이 다시 그린다 (`useChatHistory` · #228).
+ *    🚨 그 지난 대화를 이 스토어에 옮겨 담지 않는다. 🚨 콘솔·로그에도 찍지 않는다.
  * 3. 🚨 **지우는 때는 보낸 때가 아니라 서버가 끝까지 처리했다고 말한 때다** (`isRunConfirmed` ·
  *    #71 · #175 리뷰). 이어받기 run 이 실패하면 서버는 맥락을 되돌려 두고, 화면은 같은 키 ·
  *    같은 `reply_to` 로 다시 보낼 수 있어야 한다. `unconfirmed` 에서 정리하면 저장됐는지 모르는
@@ -472,7 +473,8 @@ function failSend(childId: string, turn: ChatTurn, error: unknown): void {
  * 이 run 이 또 물었으면 그 질문이 입력창의 새 대상이 된다 (이어받기 run 이 또 물으면 그 run).
  */
 function settle(childId: string, turnId: string): void {
-  void getQueryClient().invalidateQueries({ queryKey: qk.child(childId) });
+  // 🚨 `qk.child` 를 통째로 무효화하되 대화 목록은 오늘 장만 갈아 끼운다 (`refreshAfterRun`).
+  void refreshAfterRun(getQueryClient(), childId);
 
   const turn = findTurn(childId, turnId);
   if (!turn || !isRunConfirmed(turn.run.status)) return;
