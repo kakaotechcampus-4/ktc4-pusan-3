@@ -2,20 +2,16 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarOff } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
-import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
-import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, qk } from "@/lib/api";
-import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
@@ -29,21 +25,20 @@ import type {
 } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 import { useReveal } from "@/lib/motion";
-import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 09 하루 패널 — 고른 날의 내 일기 · 일정 · 관찰 · 함께 보는 사진 (이 순서로 선다 · #503).
  *
  * 🚨 **없는 구역은 그리지 않는다.** 빈 상자를 늘어놓아 하루를 채우지 않는다 — 프로토타입의
- *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다.
+ *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다. 일기가 없는 날은
+ *    일기 구역도 서지 않는다. 쓰는 버튼은 09 화면 머리(제목 오른쪽)에 있다.
  *
  * 🚨 **일기와 관찰을 한 구역에 섞지 않는다.** 일기는 관찰로 자동 추출되지 않는다(계약서 §09) —
  *    사용자가 일기라고 쓴 것을 아이 성향으로 조용히 승격시키면 신뢰가 깨진다. 화면이 그 사실을
  *    말하고, 기억으로 남기는 길(홈의 한 줄)을 따로 알려준다.
  *
- * 🚨 **사진을 여기서 올리지 않는다.** 넣는 것은 08 사진 화면(`/child/{cid}/photos?date=`)이고,
- *    이 패널은 그 화면으로 가는 문 하나와 이미 남은 사진의 조회만 맡는다 — 사진은 읽어낸 것을
- *    보호자가 확인해야 저장되는데(승인 전 저장 금지) 그 확인이 하루 패널에 들어갈 크기가 아니다.
+ * 🚨 **사진은 보기만 한다** (#503). 이미 남은 사진이 있는 날에만 사진 구역이 선다. 사진을 넣는
+ *    길은 홈의 카메라 하나다 — 이 패널에 "사진으로 적기" 를 두지 않는다.
  *
  * 🚨 **일기와 사진은 다른 저장소다** (#115). 일기(`my_diary`)는 쓴 보호자 본인 것만 오고, 사진
  *    (`shared_photos`)은 연결된 보호자가 함께 본다. 그래서 두 구역이 따로 서고, 사진만 있는 날도 있다.
@@ -52,33 +47,30 @@ export function CalendarDayPanel({
   childId,
   date,
   data,
+  writing,
+  onWritingDone,
+  onDiaryDeleted,
   onOpenObservation,
 }: {
   childId: string;
   /** `YYYY-MM-DD`. */
   date: string;
   data: CalendarDayResponse;
-  onOpenObservation: (observation: Observation) => void;
-}) {
   /**
+   * 머리의 "일기 쓰기" 를 눌러 이날 편집기를 열었다. 09 화면이 날짜와 함께 들고 있어서,
+   * 다른 날로 옮기면 저절로 닫힌다.
+   *
    * 🚨 **빈 입력창을 하루마다 세워 두지 않는다.** 처음에는 일기 칸을 늘 펼쳐 뒀는데, 그러면
    *    아무것도 없는 날에 "채우려고 만들지 않아요" 바로 위에 **채우라는 큰 입력 상자**가 서서
    *    화면이 스스로를 부정했다. 쓰겠다고 누른 날만 편집기가 열린다.
-   *
-   * 날짜가 바뀌면 이 상태도 처음으로 돌아가야 한다 — 그건 이 컴포넌트를 `key={date}` 로
-   * 세우는 쪽(09 화면)이 책임진다.
    */
-  const [writing, setWriting] = useState(false);
-  /**
-   * 방금 일기를 지웠다. 🚨 지우면 누른 버튼이 구역째 사라져서 포커스가 `<body>` 로 떨어진다 —
-   * 키보드 · 스크린리더 사용자는 어디에 서 있는지 잃는다. 그 자리에 새로 서는 "일기 쓰기" 가
-   * 포커스를 받는다 (프로그램 포커스라 터치로 눌렀을 때는 테두리가 보이지 않는다).
-   */
-  const [diaryDeleted, setDiaryDeleted] = useState(false);
-  const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
-  const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
-  const router = useRouter();
-
+  writing: boolean;
+  /** 편집이 끝났다(저장했거나 취소했다). */
+  onWritingDone: () => void;
+  /** 서버가 일기를 지웠다(204). 09 화면이 머리의 "일기 쓰기" 로 포커스를 옮긴다. */
+  onDiaryDeleted: () => void;
+  onOpenObservation: (observation: Observation) => void;
+}) {
   const hasDiary = data.my_diary !== null;
   // 🚨 사진도 센다. 사진은 일기 밖에 있어서, 빼면 사진만 있는 날에 "아무것도 없어요" 가
   //    그 사진 바로 위에 선다.
@@ -91,41 +83,18 @@ export function CalendarDayPanel({
   return (
     <div className="flex flex-col gap-5">
       {/* 🚨 **일기가 맨 위다** (#503). 보호자가 그날을 다시 열 때 먼저 찾는 것은 자기가 쓴 글인데,
-          기록 아래에 두면 기록이 있는 날마다 스크롤해야 보였다. 빈 날에도 같은 자리에 선다 —
-          그날 일기를 쓰는 법이 날마다 달라지지 않게 (아래 빈 상태의 🚨). */}
+          기록 아래에 두면 기록이 있는 날마다 스크롤해야 보였다. */}
       {hasDiary || writing ? (
         <Section title="이날의 일기">
           <Diary
             childId={childId}
             date={date}
             data={data}
-            onDone={() => setWriting(false)}
-            onDeleted={() => setDiaryDeleted(true)}
+            onDone={onWritingDone}
+            onDeleted={onDiaryDeleted}
           />
         </Section>
-      ) : (
-        // 일기만 없는 날. 입력창은 접어 두고 쓰는 버튼은 제목 줄 오른쪽에 둔다 — 제목 아래 한 줄을
-        // 버튼이 따로 먹지 않는다. 일기를 지운 뒤에도 이 모양으로 돌아온다.
-        <Section
-          title="이날의 일기"
-          action={
-            <Button
-              variant="tertiary"
-              size="compact"
-              // 지운 직후에만 건다 (위 `diaryDeleted`). 날을 처음 열 때 포커스를 뺏지 않는다.
-              autoFocus={diaryDeleted}
-              onClick={() => {
-                setDiaryDeleted(false);
-                setWriting(true);
-              }}
-            >
-              일기 쓰기
-            </Button>
-          }
-        >
-          <DiaryNote />
-        </Section>
-      )}
+      ) : null}
 
       {data.events.length > 0 ? (
         <Section title="저장된 일정">
@@ -147,8 +116,8 @@ export function CalendarDayPanel({
 
       {/* 🚨 **"채우려고 만들지 않아요" 와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
           버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를
-          나눈다. 빈 날이라고 일기 구역을 숨기지도 않는다. 그러면 "그날 일기를 쓰는 법" 이
-          날마다 달라져서, 빈 날에만 다른 버튼을 찾아야 한다. 일기를 지워 그날 다른 것이 없으면
+          나눈다. 그래서 쓰는 버튼은 패널 밖, 화면 머리에 있다. 머리 자리는 날마다 같아서
+          "그날 일기를 쓰는 법" 이 빈 날에만 달라지지도 않는다. 일기를 지워 그날 다른 것이 없으면
           이 빈 상태가 다시 선다. */}
       {nothing && !writing ? (
         <EmptyState
@@ -160,35 +129,7 @@ export function CalendarDayPanel({
         />
       ) : null}
 
-      {/* 🚨 일기 구역과 같은 규칙이다 — **빈 날에도 같은 모양으로** 선다. 사진이 있는 날에만
-          이 구역이 생기면 "그날 사진을 넣는 법" 이 날마다 달라져서, 빈 날에는 부모가 홈까지
-          올라가 카메라 버튼을 찾아야 한다.
-          ⚠️ 넣는 길이 닫혀 있는 동안(`lib/features.ts` · #409)은 이미 남은 사진이 있는 날에만 선다 —
-          넣을 수 없는 날에 빈 구역만 세우면 아무 데도 안 가는 자리가 된다. */}
-      {PENDING_SERVER_FEATURES.photoEntry ? (
-        <Section title="이날의 사진">
-          {data.shared_photos.length > 0 ? <Photos photos={data.shared_photos} /> : null}
-          <div>
-            <Button variant="tertiary" size="compact" onClick={() => setPhotoSheetOpen(true)}>
-              사진으로 적기
-            </Button>
-          </div>
-          <p className="text-caption text-ink-subtle">
-            사진에서 읽어낸 것을 보여드리고, 승인해야 저장돼요.
-          </p>
-          {/* 🚨 홈과 **같은 시트**다. 사진을 고르는 방법이 화면마다 다르면 부모가 매번 다시 찾는다. */}
-          <PhotoSourceSheet
-            open={photoSheetOpen}
-            onClose={() => setPhotoSheetOpen(false)}
-            onPick={({ file, lane }) => {
-              putPhoto(childId, file, lane);
-              setPhotoSheetOpen(false);
-              // 🚨 고른 날을 그대로 싣는다 — 08 이 날짜를 다시 계산하지 않는다.
-              router.push(`/child/${childId}/photos?date=${date}`, FORWARD);
-            }}
-          />
-        </Section>
-      ) : data.shared_photos.length > 0 ? (
+      {data.shared_photos.length > 0 ? (
         <Section title="이날의 사진">
           <Photos photos={data.shared_photos} />
         </Section>
@@ -197,22 +138,10 @@ export function CalendarDayPanel({
   );
 }
 
-function Section({
-  title,
-  action,
-  children,
-}: {
-  title: string;
-  /** 제목 줄 오른쪽 끝에 서는 그 구역의 행동 하나. */
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-section text-ink">{title}</h3>
-        {action}
-      </div>
+      <h3 className="text-section text-ink">{title}</h3>
       {children}
     </section>
   );
@@ -555,6 +484,9 @@ function Diary({
       <TextArea
         label="이날의 일기"
         labelHidden
+        // 🚨 편집기는 누른 뒤에만 선다(머리의 "일기 쓰기" · "일기 고치기"). 머리 버튼은 편집기에서
+        //    멀리 있어서, 포커스를 옮기지 않으면 어디가 열렸는지 찾아 내려가야 한다 (#503).
+        autoFocus
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         placeholder="이날 어땠는지 편하게 적어주세요."

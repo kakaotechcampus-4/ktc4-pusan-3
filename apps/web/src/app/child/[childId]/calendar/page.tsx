@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
@@ -11,6 +11,7 @@ import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { MemoryDetailSheet, type MemoryTarget } from "@/components/memory-detail-sheet";
 import { MonthGrid } from "@/components/month-grid";
+import { Button } from "@/components/ui/button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
@@ -71,6 +72,24 @@ function CalendarScreen() {
 
   const [target, setTarget] = useState<MemoryTarget | null>(null);
 
+  /**
+   * 일기 편집기를 연 날. 🚨 불리언이 아니라 **날짜**로 든다 — 다른 날로 옮기면(뒤로가기로 날짜만
+   * 바뀌어도) 닫힌다. 열린 채로 넘어가면 그 사이 저장이 **다른 날의 일기**가 된다.
+   * 🚨 **옮기는 순간 비운다.** 날짜 비교만 하면 옮긴 동안만 닫히고, 그날로 돌아오면 누르지도 않은
+   *    빈 편집기가 다시 열려 키보드까지 올라온다. 렌더 중에 비우는 것은 이전 값에 맞춰 상태를
+   *    고치는 React 의 방식이다 (effect 로 비우면 한 번은 열린 채로 그려진다).
+   */
+  const [writingDate, setWritingDate] = useState<string | null>(null);
+  if (writingDate !== null && writingDate !== date) setWritingDate(null);
+  const writing = writingDate === date;
+  /**
+   * 방금 일기를 지웠다. 🚨 지우면 누른 버튼이 구역째 사라져서 포커스가 `<body>` 로 떨어진다 —
+   * 키보드 · 스크린리더 사용자는 어디에 서 있는지 잃는다. 다시 서는 머리의 "일기 쓰기" 가
+   * 포커스를 받는다 (아래 버튼의 `ref`). 🚨 `preventScroll` — 보던 자리에서 화면 맨 위로 튀지 않는다.
+   * 렌더와 상관없는 표시라 상태가 아니라 ref 다.
+   */
+  const focusWriteOnMount = useRef(false);
+
   const monthQuery = useQuery({
     queryKey: qk.calendar(childId, monthKey),
     queryFn: () =>
@@ -87,6 +106,12 @@ function CalendarScreen() {
   const days = monthQuery.data?.days ?? [];
   const summary = days.find((day) => day.date === date);
 
+  /**
+   * 머리의 "일기 쓰기" 는 **그날 일기가 없다는 것을 안 뒤에만** 선다. 있는 날은 일기 카드의
+   * "일기 고치기" 가 그 일을 하고, 하루 보기를 받기 전에는 어느 쪽인지 모른다.
+   */
+  const canWrite = dayQuery.data?.my_diary === null && !writing;
+
   function selectDate(next: Date) {
     router.replace(`/child/${childId}/calendar?date=${toISODate(next)}`, { scroll: false });
   }
@@ -94,8 +119,32 @@ function CalendarScreen() {
   return (
     <Screen className="gap-6" nav={<ChildNav active="calendar" />}>
       <header>
-        <PageTitle>캘린더</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
+        {/* 🚨 **버튼은 제목 줄에만 서고, 그 줄은 버튼이 없어도 버튼 높이다** (`min-h-touch`).
+            버튼은 일기 없는 날에만 서서, 부제 옆까지 차지하면 좁은 폭(360)에서 부제 줄 수가
+            날마다 바뀌고 **달력이 손가락 밑에서 위아래로 움직인다.** */}
+        <div className="min-h-touch flex items-center justify-between gap-3">
+          <PageTitle>캘린더</PageTitle>
+          {/* 고른 날의 일기를 쓴다 (#503). 홈의 설정 톱니와 같은 자리 — 화면 머리 오른쪽 끝이다.
+              🚨 하루 패널의 빈 상태("채우려고 만들지 않아요")와 떨어진 자리라 둘이 붙지 않는다. */}
+          {canWrite ? (
+            <Button
+              ref={(node) => {
+                if (!node || !focusWriteOnMount.current) return;
+                focusWriteOnMount.current = false;
+                node.focus({ preventScroll: true });
+              }}
+              variant="tertiary"
+              size="compact"
+              className="shrink-0"
+              // 🚨 버튼이 고른 날과 멀리 있어서, 어느 날의 일기인지는 이름이 말한다 (보이는 글자를 품는다).
+              aria-label={`${formatDay(date)} 일기 쓰기`}
+              onClick={() => setWritingDate(date)}
+            >
+              일기 쓰기
+            </Button>
+          ) : null}
+        </div>
+        <p className="text-body-sm text-ink-muted mt-1">
           승인한 일정과 그날 남긴 기록이 날짜별로 모여요.
         </p>
       </header>
@@ -137,13 +186,18 @@ function CalendarScreen() {
           ) : null}
 
           {dayQuery.data ? (
-            // 🚨 `key` 로 날짜마다 새로 세운다. 안 그러면 일기 초안과 "쓰는 중" 상태가 앞 날짜에서
+            // 🚨 `key` 로 날짜마다 새로 세운다. 안 그러면 일기 초안이 앞 날짜에서
             //    넘어오고, 그 사이에 저장을 누르면 **다른 날의 일기가 이 날짜로 저장된다.**
             <CalendarDayPanel
               key={date}
               childId={childId}
               date={date}
               data={dayQuery.data}
+              writing={writing}
+              onWritingDone={() => setWritingDate(null)}
+              onDiaryDeleted={() => {
+                focusWriteOnMount.current = true;
+              }}
               onOpenObservation={(observation) => setTarget({ type: "observation", observation })}
             />
           ) : null}
