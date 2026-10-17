@@ -139,3 +139,19 @@ async def previous_date(
             ChatTurn.conversation_date < before,
         )
     )
+
+
+async def next_date(
+    session: AsyncSession, *, parent_id: uuid.UUID, child_id: uuid.UUID, after: date
+) -> date | None:
+    """`after` 보다 뒤에서 대화가 있었던 가장 이른 날. 없으면 None — `previous_date` 와 대칭이다.
+
+    캘린더에서 지난 날을 바로 열고 아래로 내리며 다음 날을 붙일 때 쓴다 (#500 리뷰).
+    """
+    return await session.scalar(
+        select(func.min(ChatTurn.conversation_date)).where(
+            ChatTurn.parent_id == parent_id,
+            ChatTurn.child_id == child_id,
+            ChatTurn.conversation_date > after,
+        )
+    )

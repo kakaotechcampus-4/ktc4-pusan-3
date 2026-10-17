@@ -6,9 +6,14 @@
 
 하루 단위로 준다. 대화 화면은 날짜 구분선 단위로 그리고, 캘린더 하루 화면이 그 날짜로 연다.
 커서는 둘이다 — 하루 안에서 더 이른 턴은 `next_cursor`, 그날을 다 받으면 `prev_date` 로 전날.
+캘린더에서 지난 날을 바로 열면 `next_date` 로 다음 날을 아래에 붙인다.
 
 저장할 때 id 만 담은 `saved` 는 지금 상태로 채운다 — run 화면의 `saved`(#471)와 같은 변환이라
 그 자리에서 본 카드와 같은 모양이다(건강 기록 포함). 지운 기록은 내용 없이 `deleted` 에 id 만.
+`agent_result` 의 추천도 지금 상태를 `suggestions` 에 더한다 — 만료는 상태 칸에 써지지 않아서
+(24시간이 지나도 draft) 여기서 `expires_at` 으로 가른다 (#500 리뷰).
+되묻기는 맥락이 아직 살아 있는지(`reply_open`)를 서버 메모리에서 읽어 싣는다 — 앱을 다시 켜도
+15분 안이면 이어서 답할 수 있다.
 
 🚨 `next_cursor` 는 자기 날짜를 품는다. `date` 를 빼면 오늘이라, 날짜 없는 커서를 자정이 지난 뒤
    보내면 새 날에 적용돼 빈 목록과 `prev_date`=어제가 나가고, 화면이 어제를 처음부터 다시 그려
@@ -28,22 +33,33 @@ from fastapi import APIRouter, Query
 from pydantic import ValidationError
 
 from app.api.calendar_dates import check_day
-from app.api.chat_replies import CHAT_REPLY, ChatReply, SavedReply, StoredRef
+from app.api.chat_replies import (
+    CHAT_REPLY,
+    AgentResultReply,
+    ChatReply,
+    SavedReply,
+    StoredRef,
+)
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
+from app.api.runs import pending_reply
 from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.schemas.chat import (
+    AgentResultOut,
     ChatDayResponse,
     ChatReplyOut,
     ChatTurnOut,
     SavedOut,
+    SuggestionStateOut,
 )
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
-from app.domains.chat.repository import TurnCursor, page_turns, previous_date
+from app.domains.chat.repository import TurnCursor, next_date, page_turns, previous_date
 from app.domains.memory.observation.repository import ObservationDomain, find_observations
+from app.domains.suggestion.models import Suggestion, SuggestionStatus
+from app.domains.suggestion.repository import list_suggestions_by_ids
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +110,7 @@ async def get_chat_day(
     )
     stored = [_readable(turn.id, turn.replies) for turn in turns]
     observations = await _current_observations(session, child.child_id, stored)
+    suggestions = await _current_suggestions(session, child.child_id, stored)
     return ChatDayResponse(
         date=day,
         turns=[
@@ -102,12 +119,14 @@ async def get_chat_day(
                 raw_text=turn.raw_text,
                 reply_to=turn.reply_to,
                 created_at=turn.created_at,
-                replies=_fill(replies, observations),
+                reply_open=pending_reply.get(run_id=turn.run_id, **owner) is not None,
+                replies=_fill(replies, observations, suggestions),
             )
             for turn, replies in zip(turns, stored, strict=True)
         ],
         next_cursor=_encode_cursor(day, more) if more else None,
         prev_date=await previous_date(session, **owner, before=day),
+        next_date=await next_date(session, **owner, after=day),
     )
 
 
@@ -163,12 +182,74 @@ async def _current_observations(
     return dict(zip(records.keys(), outs, strict=True))
 
 
+async def _current_suggestions(
+    session: SessionDep, child_id: uuid.UUID, stored: list[list[ChatReply]]
+) -> dict[str, SuggestionStateOut]:
+    """한 화면의 추천 id 를 한 번에 읽어 지금 상태로. 못 찾은 id 는 결과에 없다."""
+    ids = {
+        suggestion_id
+        for replies in stored
+        for reply in replies
+        if isinstance(reply, AgentResultReply)
+        for raw in reply.suggestion_ids
+        if (suggestion_id := _uuid(raw)) is not None
+    }
+    if not ids:
+        return {}
+    rows = await list_suggestions_by_ids(session, child_id=child_id, ids=list(ids))
+    now = dt.datetime.now(dt.UTC)
+    return {
+        str(row.id): SuggestionStateOut(id=str(row.id), status=_status(row, now)) for row in rows
+    }
+
+
+def _uuid(value: str) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
+
+
+def _states(
+    suggestion_ids: list[str], suggestions: dict[str, SuggestionStateOut]
+) -> list[SuggestionStateOut]:
+    """저장한 id 순서대로 지금 상태를. 읽지 못한 id(깨졌거나 행이 없음)는 뺀다."""
+    states: list[SuggestionStateOut] = []
+    for raw in suggestion_ids:
+        suggestion_id = _uuid(raw)
+        if suggestion_id is None:
+            continue
+        state = suggestions.get(str(suggestion_id))
+        if state is not None:
+            states.append(state)
+    return states
+
+
+def _status(row: Suggestion, now: dt.datetime) -> str:
+    """지금 상태. 만료는 상태 칸에 써지지 않는다 — 05 가 거르는 기준(`list_run_suggestions`)과 같게
+    `expires_at` 이 지난 draft 는 expired 다."""
+    if row.status == SuggestionStatus.DRAFT and row.expires_at <= now:
+        return SuggestionStatus.EXPIRED.value
+    return row.status.value
+
+
 def _fill(
-    replies: list[ChatReply], observations: dict[ObservationKey, ObservationView]
+    replies: list[ChatReply],
+    observations: dict[ObservationKey, ObservationView],
+    suggestions: dict[str, SuggestionStateOut],
 ) -> list[ChatReplyOut]:
-    """saved 의 id 를 지금 기록으로 바꾼다. 지운 기록은 내용 없이 deleted 에."""
+    """saved 의 id 를 지금 기록으로 바꾼다. 지운 기록은 내용 없이 deleted 에.
+    agent_result 에는 추천의 지금 상태를 더한다."""
     filled: list[ChatReplyOut] = []
     for reply in replies:
+        if isinstance(reply, AgentResultReply):
+            filled.append(
+                AgentResultOut(
+                    **reply.model_dump(),
+                    suggestions=_states(reply.suggestion_ids, suggestions),
+                )
+            )
+            continue
         if not isinstance(reply, SavedReply):
             filled.append(reply)
             continue
