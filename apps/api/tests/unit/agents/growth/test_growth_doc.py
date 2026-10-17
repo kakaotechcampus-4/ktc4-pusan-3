@@ -13,6 +13,7 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 
 from app.agents.common.age import stage_of
+from app.agents.common.allergy import allergy_related_table, related_blocks
 from app.agents.common.refs import count_child_records
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs
@@ -28,6 +29,7 @@ from app.agents.growth.tools.docs import (
     search_growth_doc,
 )
 from app.agents.growth.tools.routine import pick_next_step
+from app.rules.term_match import match_fields
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING
@@ -98,6 +100,7 @@ class TestQuery:
             "routine_category",
             "trigger_tags",
             "rotation",  # 코드가 "아이 | 날짜" 로 만든다 — 발화를 받는 칸이 아니다
+            "blocked",  # 대응표 낱말이다 — 포트 · 쿼리로 가지 않고 돌려받은 행을 거르기만 한다
         }
 
     async def test_trigger_tags_는_영문_식별자만_받는다(self):
@@ -319,3 +322,20 @@ class TestChains:
             InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
         )
         assert match_chain(chains, "손") is None
+
+
+@pytest.mark.parametrize("months", [13, 30, 40])
+async def test_막을_낱말이_든_행은_고르기_전에_빼고_구간마다_3행이_남는다(months):
+    """꽃가루 아이 — 12–24 · 24–36 · 36–72 구간마다 [예시] 3행이 그대로 찬다."""
+    pollen = related_blocks(["꽃가루"], allergy_related_table())
+    hits = await search_growth_doc(
+        InMemoryGrowthDocs.from_seed(),
+        task_type=GrowthTaskType.LEARNING_SUGGESTION,
+        months=months,
+        rotation="child|day",
+        blocked=pollen,
+    )
+    assert len(hits) == 3
+    assert not any(
+        match_fields((hit.row.title, hit.row.body, *hit.row.materials), pollen) for hit in hits
+    )

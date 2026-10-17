@@ -1,0 +1,28 @@
+# 식품 아닌 알레르기 이름 → 교육 후보에서 막을 낱말 — reference/allergy_related_terms.yaml
+# 설계: docs/agents/growth/Growth_Tool_명세.md §2 "안전 필터"
+#
+# 🚨 표는 사람이 정한다 (hazard_terms.yaml 과 같은 원칙). 모델이 고르지 않는다.
+# 🚨 Growth 교육 후보(제목 · 단계 · 준비물)와 [예시] 문서 행에만 쓴다. Activity 는 아직 확인 문구를 쓴다.
+# 🚨 aliases 는 보호자가 적을 이름, blocks 는 막을 낱말이다. 매칭은 match_fields — 칸마다 따로, guard 는
+#    띄어쓰기를 넘지 않는다.
+# 🚨 넣지 않은 것 — "풀" 한 글자(준비물 칸의 "풀" 은 접착제라 guard 로 못 가른다) · "밖"(바깥만) ·
+#    인형 · 공 · 동물 단독(헝겊 공 · 인형극까지 빠진다).
+# ⚠️ 낱말을 바꾸면 tests/unit/agents/growth/test_growth_safety.py 의 시드 건수가 바뀐다 — 과차단인지 본다.
+
+source: Growth Owner 초안 — PM(재형) 확인. 시드 growth_doc 교육 행 80개로 걸리는 수를 재서 정했다
+version: "2026.1"
+fetched_at: 2026-10-17
+
+entries:
+  - label: 꽃가루
+    aliases: [꽃가루, 화분증]
+    blocks: [꽃, 풀밭, 풀잎, 들풀, 풀숲, 나뭇잎, 잎, 산책, 바깥, 화분, 숲, 공원, 텃밭, 씨앗]
+    guards: [꽃게]
+  - label: 라텍스
+    aliases: [라텍스, 고무]
+    blocks: [풍선, 고무, 고무장갑, 고무줄]
+    guards: []
+  - label: 동물털
+    aliases: [동물털, 개털, 고양이털, 반려동물]
+    blocks: [털, 깃털, 강아지, 고양이, 반려동물, 동물원]
+    guards: [털어, 털기, 털고]

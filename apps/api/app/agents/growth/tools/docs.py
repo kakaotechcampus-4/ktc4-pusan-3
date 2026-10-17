@@ -27,7 +27,7 @@ from app.agents.growth.gating import routine_mode
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import GrowthDocReader, GrowthDocRow, GrowthDocType
 from app.agents.growth.tools.routine import ordered_chain
-from app.rules.term_match import normalize
+from app.rules.term_match import Term, match_fields, normalize
 
 # 프롬프트 [예시]에 싣는 행 수 (RAG_plan §7 — Growth 3)
 DOC_LIMIT = 3
@@ -99,6 +99,7 @@ async def search_growth_doc(
     routine_category: str | None = None,
     trigger_tags: Sequence[str] = (),
     rotation: str = "",
+    blocked: Sequence[Term] = (),
 ) -> tuple[DocHit, ...]:
     """월령 슬라이스 → 의미 검색 상위 `DOC_POOL` 행 중 `rotation` 으로 돌린 `DOC_LIMIT` 행.
 
@@ -108,6 +109,9 @@ async def search_growth_doc(
     `interest_keys` 는 `profile_affinity` 의 `merge_key` 다. `trigger_tags` 는 습관 교정이 읽는 상황
     태그라서 영문 식별자만 받는다. 모르는 `routine_category` 와 식별자가 아닌 태그는 `ValueError` —
     포트까지 가지 않는다.
+
+    `blocked` 는 식품 아닌 알레르기의 대응표 낱말이다. 제목 · 본문 · 준비물 중 한 칸이라도 걸린
+    행은 돌려 고르기 전에 뺀다 — 막힐 예시를 보이면 모델이 베껴 재호출만 는다.
     """
     if routine_category is not None and routine_category not in ROUTINE_CATEGORIES:
         raise ValueError(f"routine_category 가 정해진 값이 아니다: {routine_category!r}")
@@ -124,6 +128,8 @@ async def search_growth_doc(
         limit=DOC_POOL,
     )
     served = [r for r in rows if r.row_type == row_type and r.min_month <= months < r.max_month]
+    if blocked:
+        served = [r for r in served if not match_fields((r.title, r.body, *r.materials), blocked)]
     if rotation:
         served.sort(key=lambda row: _turn(rotation, row.doc_key))
     return tuple(DocHit(row) for row in served[:DOC_LIMIT])

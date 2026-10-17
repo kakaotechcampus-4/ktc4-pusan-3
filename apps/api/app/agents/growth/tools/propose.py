@@ -22,7 +22,7 @@ from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.memory import SELF_RELIANCE
 from app.agents.growth.tools.routine import ask_question, check_routine_category, routine_gap
-from app.agents.growth.tools.safety import SafetyRules, allergy_cautions
+from app.agents.growth.tools.safety import SafetyRules
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,6 @@ async def propose_learning_activity(
         check_count(review.drafts)
     state.suggestions = review.drafts
     state.capacity = MAX_SUGGESTIONS
-    state.cautions = allergy_cautions(state.safety_entries)
     return ok("propose", _LEARNING, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
 
 

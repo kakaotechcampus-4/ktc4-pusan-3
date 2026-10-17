@@ -1,7 +1,7 @@
 """Growth 가 pipeline 에서 도는지 — Supervisor 라벨 → routing → Growth run() → 화면 결과.
 
 LLM 은 정해 둔 응답을 내는 가짜다. 포트는 entrypoint 가 만드는 것 그대로다(`_domain_contexts`) —
-안전은 미연결, 성장 기록은 넘긴 InMemory, 기억은 같은 run 의 Memory store.
+안전은 넘긴 어댑터(안 넘기면 미연결), 성장 기록은 넘긴 InMemory, 기억은 같은 run 의 Memory store.
 """
 
 import json
@@ -15,13 +15,16 @@ from zoneinfo import ZoneInfo
 from app.agents import entrypoint, pipeline
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.llm_client import LLMResponse
+from app.agents.common.ports import SafetyLookupError
+from app.agents.growth.readouts import READOUTS as GROWTH_READOUTS
 from app.agents.growth.store.inmemory import InMemoryGrowthLog
-from app.agents.growth.store.ports import GrowthMeasurement
+from app.agents.growth.store.ports import GrowthMeasurement, SafetyEntry
 from app.agents.growth.tools.docs import match_chain, routine_chains
 from app.agents.growth.tools.routine import pick_next_step
 from app.agents.memory.context import AgentContext
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreGrowthMemory
+from tests.unit.agents.growth.support import ProposesExamples
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 10, 15, 10, 0, tzinfo=KST)
@@ -67,14 +70,14 @@ async def _no_commit() -> None:
     return None
 
 
-def contexts(store: InMemoryStore, **kwargs: Any) -> dict[str, Any]:
+def contexts(store: InMemoryStore, *, granted: bool = True, **kwargs: Any) -> dict[str, Any]:
     built, _ = entrypoint._domain_contexts(
         child_id=CHILD,
         run_id="run-1",
         now=NOW,
         store=store,
         birth_date=BIRTH_36,
-        child_health_granted=True,
+        child_health_granted=granted,
         location=None,
         activity_weather=None,
         domain_store=None,
@@ -87,16 +90,17 @@ async def handle(
     raw: str,
     label: str,
     store: InMemoryStore,
-    growth_llm: FakeLLM,
+    growth_llm: Any,
     *,
     saved: entrypoint.InMemorySuggestions | None = None,
+    granted: bool = True,
     **ports,
 ):
     events: list[Any] = []
     await pipeline.handle_input(
         raw,
         AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
-        contexts(store, **ports),
+        contexts(store, granted=granted, **ports),
         run_id="run-1",
         supervisor_client=route(raw, label),
         memory_client=FakeLLM(),
@@ -135,13 +139,144 @@ async def test_성장_추이는_모델_없이_화면_결과로_나간다():
     assert growth_llm.calls == 0
 
 
-async def test_교육은_안전_어댑터_전이라_닫힌_안내만_나간다():
+async def test_안전_어댑터를_안_넘기면_교육은_닫힌_안내만_나간다():
     growth_llm = FakeLLM()
     (shown,) = await handle(
         "숫자 놀이 추천해줘", "learning_suggestion", InMemoryStore(now=NOW), growth_llm
     )
 
     assert shown.status == "blocked"
+    assert growth_llm.calls == 0
+
+
+POLLEN = SafetyEntry(kind="allergy", label="꽃가루", status="active")
+
+
+class CountingSafety:
+    """`DbSafetyReader.growth_safety` 자리. 몇 번 읽었는지 남긴다."""
+
+    def __init__(self, *entries: SafetyEntry, fail: bool = False) -> None:
+        self.entries = list(entries)
+        self.fail = fail
+        self.calls = 0
+
+    async def growth_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
+        self.calls += 1
+        if self.fail:
+            raise SafetyLookupError("못 읽음")
+        return list(self.entries)
+
+
+async def test_안전_어댑터를_넘기면_교육이_열리고_추천이_저장된다():
+    growth_llm = ProposesExamples()
+    saved = entrypoint.InMemorySuggestions()
+    safety = CountingSafety(POLLEN)
+
+    (shown,) = await handle(
+        "숫자 놀이 추천해줘",
+        "learning_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_safety=safety,
+    )
+
+    assert (shown.task_type, shown.status) == ("learning_suggestion", "completed")
+    assert len(shown.suggestion_ids) == 3 and shown.kind == "general"
+    assert shown.readouts == ()  # Growth 는 알레르기 확인 문구를 내지 않는다 — 표로 막는다
+    assert safety.calls == 1  # 건강정보는 run 당 한 번만 읽는다
+    # 일반 추천의 근거는 문서 행이다 — 근거 0행으로 저장되지 않는다 (루트 §2)
+    (batch,) = saved.batches
+    assert all(any(c.ref.kind == "growth_doc" for c in d.citations) for d in batch.drafts)
+
+
+async def test_꽃가루_아이에게는_표_낱말이_든_후보가_빠지고_이유는_모델에_가지_않는다():
+    growth_llm = ProposesExamples(titles=("나뭇잎 세기", "색깔 찾기", "모양 맞추기"))
+    saved = entrypoint.InMemorySuggestions()
+
+    (shown,) = await handle(
+        "숫자 놀이 추천해줘",
+        "learning_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_safety=CountingSafety(POLLEN),
+    )
+
+    (batch,) = saved.batches
+    titles = [d.content.split("\n")[0] for d in batch.drafts]
+    assert titles == ["색깔 찾기", "모양 맞추기"]  # 재호출에도 같은 후보라 둘만 남는다
+    assert [r.code for r in shown.readouts] == ["fewer"]  # 개수 안내뿐, 확인 문구는 없다
+    sent = json.dumps(growth_llm.seen, ensure_ascii=False)
+    assert "꽃가루" not in sent and "알레르기" not in sent  # 이름도 이유도 모델 입력에 없다
+
+
+async def test_동의가_없으면_건강정보를_읽지_않고_교육이_그대로_나간다():
+    safety = CountingSafety(POLLEN)
+
+    (shown,) = await handle(
+        "숫자 놀이 추천해줘",
+        "learning_suggestion",
+        InMemoryStore(now=NOW),
+        ProposesExamples(),
+        granted=False,
+        growth_safety=safety,
+    )
+
+    assert shown.status == "completed" and len(shown.suggestion_ids) == 3
+    assert safety.calls == 0
+
+
+async def test_안전_조회가_실패하면_교육만_닫히고_성장_추이는_나간다():
+    raw = "잘 크고 있어? 숫자 놀이도 추천해줘"
+    supervisor = FakeLLM(
+        call(
+            "route",
+            {
+                "segments": [
+                    {
+                        "text": "잘 크고 있어?",
+                        "kind": "request",
+                        "agent": "growth",
+                        "growth_task": "growth_review",
+                    },
+                    {
+                        "text": "숫자 놀이도 추천해줘",
+                        "kind": "request",
+                        "agent": "growth",
+                        "growth_task": "learning_suggestion",
+                    },
+                ]
+            },
+        )
+    )
+    log = InMemoryGrowthLog(
+        [
+            measurement(1, date(2026, 4, 15), "95.0", "14.0"),
+            measurement(2, date(2026, 10, 1), "100.0", "15.5"),
+        ]
+    )
+    store = InMemoryStore(now=NOW)
+    growth_llm = FakeLLM()
+    events: list[Any] = []
+
+    await pipeline.handle_input(
+        raw,
+        AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
+        contexts(store, growth_log=log, growth_safety=CountingSafety(fail=True)),
+        run_id="run-1",
+        supervisor_client=supervisor,
+        memory_client=FakeLLM(),
+        domain_clients={"growth": growth_llm},
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=entrypoint.InMemorySuggestions(),
+    )
+
+    shown = {e.task_type: e for e in events if isinstance(e, pipeline.AgentResult)}
+    assert shown["learning_suggestion"].status == "blocked"
+    assert shown["learning_suggestion"].readouts == (GROWTH_READOUTS.render("blocked.safety"),)
+    assert shown["growth_review"].status == "completed"
     assert growth_llm.calls == 0
 
 
