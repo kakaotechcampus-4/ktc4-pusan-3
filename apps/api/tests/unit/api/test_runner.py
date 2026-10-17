@@ -111,9 +111,9 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert seen["activity_weather"] is weather
 
 
-async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):
-    """#460 — 넘기지 않으면 둘 다 blocked.safety 로 닫힌다. 같은 어댑터 하나를 둘이 다른
-    메서드로 읽는다."""
+async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(monkeypatch):
+    """#460 — 넘기지 않으면 Food · Activity 와 Growth 교육이 blocked.safety 로 닫힌다. 같은
+    어댑터 하나를 셋이 다른 메서드로 읽는다."""
     seen: dict = {}
 
     async def fake_handle_input(**kwargs):
@@ -128,6 +128,7 @@ async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(mon
 
     assert isinstance(seen["food_safety"], DbSafetyReader)
     assert seen["activity_safety"] is seen["food_safety"]
+    assert seen["growth_safety"] is seen["food_safety"]
 
 
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):

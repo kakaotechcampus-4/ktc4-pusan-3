@@ -135,7 +135,7 @@ DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-
 | 5-5 | 평가 표현 필터 | 출력 사후 · 걸리면 후보 **삭제**(수정 아님) |
 | 5-6 | `hazard` 사후 스캔 | 활동 후보의 `materials`·문장 · 0–17개월은 경고도 **차단**(Activity 와 같다, #282 PM 리뷰) |
 | 5-7 | 음식 용어 스캔 | 교육 · 루틴 후보 · `allergen_terms.yaml` + `food_choking` · 아이 · 월령 무관 · 한 글자 별칭 안 씀 · Activity 제외 별칭 공유 (#264 · #261 전엔 포트 주입) |
-| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조(대응표 없음) · `allergy` 중 식품 사전에 없는 이름이 있으면 확인 문구(`caution.non_food_allergy`, `environmental` 제외) · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
+| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조 · 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 대응표(`reference/allergy_related_terms.yaml`) 낱말이 든 후보 · [예시]를 뺀다(`allergy_related`, PM 확인) · 확인 문구 없음 · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
 | 5-9 | 루틴 닫힘 | 의료 처치 용어 → `closed.medical_routine` · 증상처럼 보이는 습관 → `closed.symptom_habit` · 요청 문장 · 관찰 `subject` 에 걸리면 모델 0 |
 
 ---
@@ -173,6 +173,8 @@ DoD: 성장폭 readout에 **측정일 2개**가 항상 있음 · 닫힘 문구�
 ## 9. S8 — 파이프라인 통합
 
 > **진행(#446)** — 공통 연결 완료: Supervisor `growth_task`(빠지면 `learning_suggestion`) · run 당 Growth 추천 하나(`task_limit` 안내) · pipeline 등록 · entrypoint `GrowthContext`(안전은 `UnwiredSafety`, 도서 · 공지 포트 없음) · `StoreGrowthMemory` · 성장 기록 DB 어댑터 · 05 처음 요청은 `not_ready`. 운영에서 열리는 것은 성장 추이 · 루틴이다. 교육은 `growth_safety` 어댑터 뒤, 도서는 포트 · 일반 추천 근거 결정 뒤.
+
+> **진행(#504)** — 교육 열림: 러너 · 05 가 `growth_safety`(`DbSafetyReader`, allergy · environmental · status 전부)를 넘긴다 · 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 확인 문구 대신 대응표(`reference/allergy_related_terms.yaml`)의 낱말이 든 후보와 [예시] 행을 뺀다(PM 확인) · [예시]도 달 수 있는 아이 기록도 없으면 `doc.no_row`(모델 0회) · note 의 성향 표현은 티어 1 근거에만 · 한 번 낸 후보 안의 같은 제목은 거절. 경고가 붙는 교육 후보는 #402 전까지 뺀다. 도서는 포트 · 일반 추천 근거 결정 뒤.
 
 - `IMPLEMENTED_AGENTS`에 `growth` · **라벨 4개** 라우팅
 - Supervisor 경계 예시 투입: activity↔growth 4줄 · 신체 성장 3줄("잘 크고 있어?"까지 전부 `growth_review`) · 의료 처치 · 증상 같은 습관("약 먹기 싫어해" · "눈을 자꾸 깜빡여")도 `routine_coaching` 으로 와서 코드가 닫는다

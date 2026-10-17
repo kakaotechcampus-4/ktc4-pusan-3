@@ -1,13 +1,17 @@
 """Growth 테스트가 같이 쓰는 값과 만드는 함수. 테스트 파일이 아니다(수집되지 않는다)."""
 
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
+from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.store.inmemory import in_memory_ports
@@ -77,3 +81,41 @@ def doc_inputs() -> dict[str, str]:
             key, text = line[1:].split("] ", 1)
             parsed[key] = text
     return parsed
+
+
+class ProposesExamples:
+    """[예시] 첫 문서 행 id 를 system 프롬프트에서 읽어 교육 후보 셋을 내는 모델 가짜.
+
+    [예시]는 아이 · 날짜로 돌려 고르므로 테스트가 id 를 미리 알 수 없다. 받은 대화는 `seen` 에
+    남긴다 — 모델 입력에 건강정보가 없는지 테스트가 본다.
+    """
+
+    TITLES = ("블록 세기", "색깔 찾기", "모양 맞추기")
+
+    def __init__(self, titles: tuple[str, ...] = TITLES) -> None:
+        self.titles = titles
+        self.seen: list[list[dict[str, Any]]] = []
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.seen.append([dict(m) for m in messages])
+        doc_id = messages[0]["content"].split("- id ", 1)[1].split(" ", 1)[0]
+        items = [
+            {
+                "title": title,
+                "steps": ["하나씩 해 본다"],
+                "materials": [],
+                "evidence": [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}],
+                "reason": "이 나이에 많이 하는 활동이에요",
+            }
+            for title in self.titles
+        ]
+        call = SimpleNamespace(
+            id=f"p{len(self.seen)}",
+            function=SimpleNamespace(
+                name="propose_learning_activity",
+                arguments=json.dumps({"items": items}, ensure_ascii=False),
+            ),
+        )
+        return LLMResponse(
+            message=SimpleNamespace(content=None, tool_calls=[call]), usage={}, latency_ms=1
+        )

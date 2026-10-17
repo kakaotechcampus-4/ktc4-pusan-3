@@ -45,6 +45,7 @@ from app.agents.growth.store.inmemory import InMemoryConsent as GrowthConsent
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthLog
 from app.agents.growth.store.inmemory import InMemoryProfile as GrowthProfile
 from app.agents.growth.store.ports import GrowthLogReader, GrowthPorts
+from app.agents.growth.store.ports import SafetyReader as GrowthSafetyReader
 from app.agents.growth.store.ports import UnwiredSafety as GrowthUnwiredSafety
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
@@ -208,6 +209,7 @@ async def handle_input(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    growth_safety: GrowthSafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
@@ -248,9 +250,10 @@ async def handle_input(
     - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
       어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
       빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
-    - food_safety · activity_safety 는 api 가 넘긴 `health_safety` 어댑터다(`DbSafetyReader`,
-      #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는 `activity_safety` 로 읽는다 —
-      읽는 행이 다르다. 안 넘기면(테스트 · eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다.
+    - food_safety · activity_safety · growth_safety 는 api 가 넘긴 `health_safety` 어댑터다
+      (`DbSafetyReader`, #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는
+      `activity_safety`, Growth 는 `growth_safety` 로 읽는다 — 읽는 행이 다르다. 안 넘기면(테스트 ·
+      eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다 — Growth 는 교육만 닫힌다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -281,6 +284,7 @@ async def handle_input(
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
+        growth_safety=growth_safety,
         growth_log=growth_log,
     )
 
@@ -340,6 +344,7 @@ async def suggest(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    growth_safety: GrowthSafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
@@ -371,6 +376,7 @@ async def suggest(
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
+        growth_safety=growth_safety,
         growth_log=growth_log,
     )
     domain_tasks = tuple(
@@ -477,6 +483,7 @@ def _domain_contexts(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    growth_safety: GrowthSafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
     """Food · Activity · Growth 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
@@ -557,8 +564,9 @@ def _domain_contexts(
         ),
         location=location,
     )
-    # Growth 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 안전 조회는 아직 연결하지 않아
-    # (UnwiredSafety) 교육은 동의와 상관없이 blocked.safety 로 닫히고 루틴 · 성장 추이만 열린다.
+    # Growth 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 안전은 api 가 넘긴 어댑터의
+    # growth_safety 다 — 교육만 읽고, 동의가 없으면 읽지 않는다. 안 넘기면 UnwiredSafety 라
+    # 교육은 동의와 상관없이 blocked.safety 로 닫힌다. 루틴 · 성장 추이는 안전 포트를 읽지 않는다.
     # 도서 · 공지 포트는 없다 — 도서는 closed.book_api, lookup_notice 는 빠진다.
     # 동의 값을 못 받은 호출(테스트 · eval)은 동의 없음으로 읽는다 — 키 · 몸무게를 읽지 않게
     growth_context = GrowthContext(
@@ -569,7 +577,7 @@ def _domain_contexts(
         ports=GrowthPorts(
             profile=activity_child or GrowthProfile({child_id: resolved_birth_date}),
             consent=activity_child or GrowthConsent({child_id: False}),
-            safety=GrowthUnwiredSafety(),
+            safety=growth_safety or GrowthUnwiredSafety(),
             growth_log=growth_log or InMemoryGrowthLog(),
             memory=(
                 StoreGrowthMemory(store)
