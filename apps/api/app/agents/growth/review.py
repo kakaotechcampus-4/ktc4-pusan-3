@@ -4,7 +4,8 @@
                  걸린 후보는 거절이 아니라 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다
   2. 금지 표현   걸리면 뺀다. 재호출 제외 목록에도 넣는다 — Tool_공통 §5-2 는 안전 필터만 적었고
                  Growth 가 넓혔다(같은 후보가 다시 나오지 않게)
-  3. Growth 검증 근거 id 대조 · 루틴은 코드가 고른 단계(step_id)만
+  3. Growth 검증 같은 제목(교육) · 근거 id 대조 · note 의 성향 표현은 티어 1 근거에만 ·
+                 루틴은 코드가 고른 단계(step_id)만
   4. build()     아이 기록 근거 수로 kind 를 정한다. 루틴은 일반 추천을 내지 않는다
 
 🚨 #402(추천별 경고 자리) 전까지 교육 후보는 경고가 붙어도 뺀다. 화면에 경고 자리가 없으면
@@ -17,7 +18,7 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
-from app.agents.common.evidence import RankedEvidence, cite
+from app.agents.common.evidence import RankedEvidence, cite, overstates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.agents.growth.result import ErrorCode
@@ -33,6 +34,7 @@ from app.agents.growth.tools.safety import (
     check_routine_candidate,
 )
 from app.rules.evaluative import find_evaluative
+from app.rules.term_match import normalize
 
 AGENT = "growth"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general", 루트 §2)
@@ -48,7 +50,9 @@ class RejectReason(StrEnum):
     UNKNOWN_EVIDENCE = "unknown_evidence"
     UNKNOWN_STEP = "unknown_step"
     DUPLICATE_STEP = "duplicate_step"
+    DUPLICATE_TITLE = "duplicate_title"
     OVER_CAPACITY = "over_capacity"
+    OVERSTATED_NOTE = "overstated_note"
     BUILD = "build_rejected"
 
 
@@ -56,7 +60,11 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.UNKNOWN_EVIDENCE: "evidence 에는 조회 결과나 [예시]에 있던 id 만 쓴다.",
     RejectReason.UNKNOWN_STEP: "step_id 는 search_routine_memory 의 next_steps 에 있던 것만 쓴다.",
     RejectReason.DUPLICATE_STEP: "같은 단계를 두 번 냈다. 단계마다 하나씩만 낸다.",
+    RejectReason.DUPLICATE_TITLE: "같은 활동을 두 번 냈다. 후보마다 다른 활동을 낸다.",
     RejectReason.OVER_CAPACITY: "next_steps 에 있는 단계 수보다 많이 냈다.",
+    RejectReason.OVERSTATED_NOTE: (
+        "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
+    ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
         "생활 루틴은 그 루틴 기록을 인용한다. 싫어하는 것을 근거로 썼으면 "
@@ -97,6 +105,7 @@ def review_learning(
     drafts: list[SuggestionDraft] = []
     rejections: list[Rejection] = []
     removed: list[int] = []
+    titles: set[str] = set()
     for index, item in enumerate(items):
         texts = (item.title, *item.steps, *item.materials)
         verdict = check_learning_candidate(texts, months=months, entries=entries, rules=rules)
@@ -106,9 +115,18 @@ def review_learning(
         if _evaluative((item.title, *item.steps, item.reason), item.evidence):
             removed.append(index)
             continue
+        # 같은 카드가 두 장 나가지 않게. 재호출 합치기(`agent._same`)와 같은 키다
+        title = normalize(item.title)
+        if title and title in titles:
+            rejections.append(Rejection(index, RejectReason.DUPLICATE_TITLE))
+            continue
+        titles.add(title)
         citations = _resolve(item.evidence, seen, docs)
         if citations is None:
             rejections.append(Rejection(index, RejectReason.UNKNOWN_EVIDENCE))
+            continue
+        if _overstated(item.evidence, seen):
+            rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
             continue
         try:
             drafts.append(
@@ -172,6 +190,9 @@ def review_routine(
         if citations is None:
             rejections.append(Rejection(index, RejectReason.UNKNOWN_EVIDENCE))
             continue
+        if _overstated(item.evidence, seen):
+            rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
+            continue
         cited = [observations[c.ref.id] for c in citations if c.ref.id in observations]
         if not routine_evidence(cited, category=category, today=today):
             rejections.append(Rejection(index, RejectReason.BUILD))
@@ -216,6 +237,23 @@ def explain(rejections: Sequence[Rejection]) -> str:
 
 def _evaluative(texts: Sequence[str], evidence: Sequence[EvidencePick]) -> bool:
     return any(find_evaluative(text) for text in (*texts, *(pick.note for pick in evidence)))
+
+
+def _overstated(evidence: Sequence[EvidencePick], seen: Seen) -> bool:
+    """note 가 반복 · 성향 표현인데 그 근거가 티어 1(확정 관심)이 아닌가.
+
+    한 번의 관찰을 성향으로 확정하지 않는다(루트 §2) — Activity 와 같은 판정이다. 문서 행 ·
+    관찰은 티어 1 이 아니다. "늘 좋아하는" 은 문서가 아니라 아이에 대한 말이라 문서 행 note 도
+    본다. 조회 결과에 없는 id 는 `_resolve` 가 먼저 거절한다.
+    """
+    for pick in evidence:
+        if not overstates(pick.note):
+            continue
+        key = _uuid(pick.id)
+        found = seen.get(key) if key is not None else None
+        if found is None or found.tier != 1:
+            return True
+    return False
 
 
 def _uuid(raw: str) -> UUID | None:

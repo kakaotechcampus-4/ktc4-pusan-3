@@ -6,10 +6,16 @@
 from datetime import timedelta
 from uuid import UUID
 
+import pytest
+
 from app.agents.common.evidence import AffinityRow
 from app.agents.growth.context import build_gate
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
-from app.agents.growth.schemas.memory import SearchAffinityArgs, SearchRoutineMemoryArgs
+from app.agents.growth.schemas.memory import (
+    SearchAffinityArgs,
+    SearchEducationMemoryArgs,
+    SearchRoutineMemoryArgs,
+)
 from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import (
@@ -17,8 +23,12 @@ from app.agents.growth.store.inmemory import (
     InMemoryGrowthMemory,
     InMemorySafety,
 )
-from app.agents.growth.store.ports import RoutineObservation, SafetyEntry
-from app.agents.growth.tools.memory import search_affinity, search_routine_memory
+from app.agents.growth.store.ports import EducationObservation, RoutineObservation, SafetyEntry
+from app.agents.growth.tools.memory import (
+    search_affinity,
+    search_education_memory,
+    search_routine_memory,
+)
 from app.agents.growth.tools.propose import propose_learning_activity, propose_routine_plan
 from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context
 
@@ -65,6 +75,46 @@ def learning_args(ctx, *titles: str, **overrides) -> ProposeLearningActivityArgs
     )
 
 
+EDU = EducationObservation(
+    id=UUID(int=801),
+    child_id=CHILD,
+    observed_on=TODAY - timedelta(days=2),
+    subject="숫자",
+    topic="숫자 세기",
+    polarity=1,
+)
+NUMBERS = AffinityRow(
+    id=UUID(int=802),
+    merge_key="숫자",
+    state="confirmed",
+    polarity=1,
+    strength=0.9,
+    last_observed_on=TODAY - timedelta(days=3),
+)
+
+
+async def memory_ctx():
+    """교육 관찰(티어 3) 하나와 확정 관심(티어 1) 하나를 조회해 둔 교육 컨텍스트."""
+    ctx = await learning_ctx(
+        memory=InMemoryGrowthMemory(education=[EDU], affinities=[("education", NUMBERS)])
+    )
+    await search_education_memory(ctx, SearchEducationMemoryArgs())
+    return ctx
+
+
+def cited(ctx, first: dict) -> ProposeLearningActivityArgs:
+    """첫 후보만 `first` 근거를 달고, 나머지 둘은 [예시] 문서 행을 단다."""
+    return ProposeLearningActivityArgs.model_validate(
+        {
+            "items": [
+                item("숫자 세기", evidence=[first], reason="숫자 세기를 이어 가려고 골랐어요"),
+                item("색깔 찾기", evidence=[doc_pick(ctx)]),
+                item("모양 맞추기", evidence=[doc_pick(ctx)]),
+            ]
+        }
+    )
+
+
 class TestLearning:
     async def test_문서_행만_인용하면_일반_추천_세_개다(self):
         ctx = await learning_ctx()
@@ -83,6 +133,18 @@ class TestLearning:
         assert result.success and len(ctx.state.suggestions) == 2
         assert ctx.state.excluded == ("땅콩으로 숫자 세기",)
         assert "땅콩" not in str(result.to_payload())
+
+    async def test_같은_제목을_두_번_내면_거절한다(self):
+        """띄어쓰기 · 문장부호만 다른 것도 같은 활동이다 — 같은 카드가 두 장 나가지 않게."""
+        ctx = await learning_ctx()
+        result = await propose_learning_activity(
+            ctx, learning_args(ctx, "블록 세기", "블록  세기!", "모양 맞추기")
+        )
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+        assert result.error["message"] == (
+            "2번 후보: 같은 활동을 두 번 냈다. 후보마다 다른 활동을 낸다."
+        )
+        assert ctx.state.suggestions == ()
 
     async def test_경고가_붙는_후보도_뺀다_결정A(self):
         ctx = await learning_ctx(months=40)
@@ -127,13 +189,16 @@ class TestLearning:
         result = await propose_learning_activity(ctx, args)
         assert result.error["code"] == "CANDIDATE_REJECTED"
 
-    async def test_식품이_아닌_알레르기는_확인_문구를_남긴다(self):
+    async def test_식품이_아닌_알레르기는_표_낱말이_든_후보를_빼고_문구는_없다(self):
         safety = InMemorySafety([SafetyEntry(kind="allergy", label="라텍스", status="active")])
         ctx = await learning_ctx(safety=safety)
-        await propose_learning_activity(
-            ctx, learning_args(ctx, "블록 세기", "색깔 찾기", "모양 맞추기")
+        result = await propose_learning_activity(
+            ctx, learning_args(ctx, "고무 도장 찍기", "색깔 찾기", "모양 맞추기")
         )
-        assert ctx.state.cautions and "라텍스" in ctx.state.cautions[0]
+        assert result.success and len(ctx.state.suggestions) == 2
+        assert ctx.state.excluded == ("고무 도장 찍기",)  # 모델이 낸 제목뿐 — 이름 · 이유는 없다
+        assert "라텍스" not in str(result.to_payload())
+        assert not hasattr(ctx.state, "cautions")
 
 
 def routine_obs(n, subject, level, category="self_care"):
@@ -164,6 +229,65 @@ def plan(category, subject, items=()):
     return ProposeRoutinePlanArgs.model_validate(
         {"category": category, "subject": subject, "items": list(items)}
     )
+
+
+class TestOverstatedNote:
+    """note 의 반복 · 성향 표현은 확정 관심(티어 1) 근거에만 — Activity 와 같은 판정이다."""
+
+    @pytest.mark.parametrize(
+        "note", ["늘 숫자를 세요", "숫자 세기를 좋아하는 아이예요", "어제도 숫자를 셌어요"]
+    )
+    async def test_관찰_근거에_성향_표현을_쓰면_거절한다(self, note):
+        ctx = await memory_ctx()
+        result = await propose_learning_activity(ctx, cited(ctx, {"id": str(EDU.id), "note": note}))
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+        assert result.error["message"].startswith("1번 후보:")
+        assert "tier 1" in result.error["message"]
+        assert ctx.state.suggestions == ()
+
+    async def test_확정_관심에는_쓸_수_있다(self):
+        ctx = await memory_ctx()
+        result = await propose_learning_activity(
+            ctx, cited(ctx, {"id": str(NUMBERS.id), "note": "늘 숫자를 세요"})
+        )
+        assert result.success
+        assert ctx.state.suggestions[0].kind == "personalized"
+
+    async def test_문서_행_note_도_본다(self):
+        ctx = await learning_ctx()
+        result = await propose_learning_activity(
+            ctx, cited(ctx, {**doc_pick(ctx), "note": "늘 숫자를 좋아하는 아이에게"})
+        )
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+
+    @pytest.mark.parametrize("note", ["오늘 숫자를 셌어요", "블록을 늘어놓으며 셌어요"])
+    async def test_글자만_겹치는_말은_거절하지_않는다(self, note):
+        ctx = await memory_ctx()
+        result = await propose_learning_activity(ctx, cited(ctx, {"id": str(EDU.id), "note": note}))
+        assert result.success
+        assert ctx.state.suggestions[0].kind == "personalized"
+
+    async def test_루틴_관찰에_성향_표현을_쓰면_거절한다(self):
+        ctx = await routine_ctx(observations=[routine_obs(1, "양치", "full_assist")])
+        (picked,) = ctx.state.steps.values()
+        result = await propose_routine_plan(
+            ctx,
+            plan(
+                "self_care",
+                "양치",
+                [
+                    {
+                        "step_id": str(picked.step.row.id),
+                        "next_step": "칫솔을 같이 쥐고 닦아 봐요",
+                        "how": "어른 손을 아이 손 위에 얹어요",
+                        "evidence": [{"id": str(UUID(int=701)), "note": "늘 어른이 다 닦아 줘요"}],
+                        "reason": "지금은 어른이 다 닦아 주고 있어서 한 칸만 올려요",
+                    }
+                ],
+            ),
+        )
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+        assert "tier 1" in result.error["message"]
 
 
 class TestRoutine:
