@@ -45,7 +45,7 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
   | `domains/memory/curator/db_store.py` | `agents.curator.embedding.ports` |
   | `domains/memory/curator/recompute.py` | `agents.curator.embedding.linker`(`LinkResult` 타입) |
   | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
-  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports`(`SafetyEntry`) |
+  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) |
   | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
   | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) |
 
