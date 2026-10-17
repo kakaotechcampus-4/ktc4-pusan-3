@@ -1,4 +1,8 @@
+import type { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
+
 import { initialRunState, runReducer, type RunState } from "@/hooks/use-run-stream";
+import { api } from "@/lib/api/client";
+import { qk } from "@/lib/api/queryKeys";
 import type { RunEvent } from "@/lib/api/sse";
 import type { ChatDayResponse, ChatReply, ChatTurnOut, StoredRef } from "@/lib/api/types";
 
@@ -78,4 +82,67 @@ function toPastTurn(turn: ChatTurnOut, day: string): PastTurn {
  */
 export function pastTurnsOf(pages: readonly ChatDayResponse[]): PastTurn[] {
   return [...pages].reverse().flatMap((page) => page.turns.map((t) => toPastTurn(t, page.date)));
+}
+
+/* ── run 이 끝난 뒤 ───────────────────────────────────────────────────── */
+
+export type ChatPages = InfiniteData<ChatDayResponse, ChatPageParam | null>;
+
+/**
+ * 오늘 장만 갈아 끼운 대화 목록. 갈아 끼우면 안 되는 경우는 `null` 이다 — 그때는 목록을 통째로 다시 받는다.
+ *
+ * - 자정을 넘겼다(받은 첫 장의 날이 다르다) — 어제 장을 오늘 장으로 덮으면 어제가 사라진다
+ * - 오늘이 여러 장이다(`next_cursor`) — 첫 장의 창이 밀려서, 뒤 장과 겹치거나 사이가 빈다
+ * - 전날이 바뀌었다(`prev_date`) — 뒤에 붙인 장이 그 값으로 받은 것이라 어긋난다
+ */
+export function withNewestPage(data: ChatPages, newest: ChatDayResponse): ChatPages | null {
+  const current = data.pages[0];
+  if (!current || current.date !== newest.date) return null;
+  if (current.next_cursor !== null || newest.next_cursor !== null) return null;
+  if (current.prev_date !== newest.prev_date) return null;
+  return { ...data, pages: [newest, ...data.pages.slice(1)] };
+}
+
+/** 대화 목록 그 자체인가 (`qk.chatToday` 처럼 그 아래에 있는 키는 아니다). */
+function isChatList(key: QueryKey, childId: string): boolean {
+  const list = qk.chat(childId);
+  return key.length === list.length && list.every((part, i) => key[i] === part);
+}
+
+/**
+ * run 이 끝난 뒤의 무효화 (#228 리뷰). 🚨 **대화 목록은 통째로 다시 받지 않고 오늘 장만 갈아 끼운다.**
+ *
+ * run 하나가 홈 · 관찰 · 프로필을 같이 바꿔서 `qk.child` 는 통째로 무효화한다(`docs/web/chat-run-v1.md` §3).
+ * 그런데 대화 목록은 무한 목록이라 무효화하면 받아 둔 장을 전부 순서대로 다시 받는다 — 지난 날을 멀리 올려 둔
+ * 화면에서 한 줄 보낼 때마다 그만큼 요청이 나간다. run 이 바꾸는 것은 오늘 장 하나뿐이다.
+ *
+ * - 대화 목록을 받아 둔 적이 없으면 할 일이 없다 — 대화 화면을 열 때 처음부터 받는다
+ * - 오늘 장을 못 받으면 낡았다고만 표시한다 — 다음에 대화 화면을 열 때 다시 받는다
+ * - ⚠️ 그 사이 더 이른 장을 받는 중이었으면 그 결과가 이 갈아 끼운 것을 덮을 수 있다. 그래도 방금 run 은
+ *   대화 스토어에 있어서 화면에서 빠지지 않고, 다음 run 이 끝나면 다시 맞춰진다
+ */
+export async function refreshAfterRun(queryClient: QueryClient, childId: string): Promise<void> {
+  void queryClient.invalidateQueries({
+    queryKey: qk.child(childId),
+    predicate: (query) => !isChatList(query.queryKey, childId),
+  });
+  if (!queryClient.getQueryData<ChatPages>(qk.chat(childId))) return;
+
+  let newest: ChatDayResponse;
+  try {
+    newest = await api.get<ChatDayResponse>(`/children/${childId}/chat`);
+  } catch {
+    void queryClient.invalidateQueries({
+      queryKey: qk.chat(childId),
+      exact: true,
+      refetchType: "none",
+    });
+    return;
+  }
+  // 기다리는 동안 바뀌었을 수 있다(더 이른 장이 붙었다) — 지금 것에 끼운다.
+  const data = queryClient.getQueryData<ChatPages>(qk.chat(childId));
+  if (!data) return;
+  const next = withNewestPage(data, newest);
+  if (next) queryClient.setQueryData<ChatPages>(qk.chat(childId), next);
+  else void queryClient.invalidateQueries({ queryKey: qk.chat(childId), exact: true });
 }

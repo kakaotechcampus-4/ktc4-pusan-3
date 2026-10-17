@@ -11,8 +11,8 @@ import {
 import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
-import { qk } from "@/lib/api/queryKeys";
 import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
+import { refreshAfterRun } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
@@ -473,7 +473,8 @@ function failSend(childId: string, turn: ChatTurn, error: unknown): void {
  * 이 run 이 또 물었으면 그 질문이 입력창의 새 대상이 된다 (이어받기 run 이 또 물으면 그 run).
  */
 function settle(childId: string, turnId: string): void {
-  void getQueryClient().invalidateQueries({ queryKey: qk.child(childId) });
+  // 🚨 `qk.child` 를 통째로 무효화하되 대화 목록은 오늘 장만 갈아 끼운다 (`refreshAfterRun`).
+  void refreshAfterRun(getQueryClient(), childId);
 
   const turn = findTurn(childId, turnId);
   if (!turn || !isRunConfirmed(turn.run.status)) return;
