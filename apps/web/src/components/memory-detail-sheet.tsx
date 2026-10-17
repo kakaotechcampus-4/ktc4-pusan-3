@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import { STATE_LABEL } from "@/components/affinity-list";
 import { CORRECTED_OBSERVATION, CorrectionButtons } from "@/components/correction-buttons";
-import { DomainMeta, observationAgent } from "@/components/domain-chip";
+import { DomainMeta, ObservationMeta } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -290,7 +290,7 @@ function ObservationDetail({
 
       <dl className="flex flex-col gap-2">
         <MetaRow label="분류">
-          <DomainMeta agent={observationAgent(observation.kind)} />
+          <ObservationMeta kind={observation.kind} />
         </MetaRow>
         {observation.observed_label ? (
           <MetaRow label="언제">{observation.observed_label}</MetaRow>

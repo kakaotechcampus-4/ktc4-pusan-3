@@ -4,8 +4,13 @@ import { josa } from "es-hangul";
 import { ChevronRight, PencilLine } from "lucide-react";
 
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
-import { domainField, domainLabel, observationAgent } from "@/components/domain-chip";
-import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import {
+  domainField,
+  OBSERVATION_ICON,
+  observationAgent,
+  observationLabel,
+} from "@/components/domain-chip";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -92,8 +97,9 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
           : "bg-surface border-line active:bg-surface-muted",
       )}
     >
+      {/* 모양과 이름은 기록 종류, 색은 그 기록을 읽는 Agent 다 — 교육 · 생활습관이 같은 성장 색이다 (#501). */}
       <IconTile
-        icon={DOMAIN_ICON[agent]}
+        icon={OBSERVATION_ICON[observation.kind]}
         tone={wrong ? "neutral" : "plain"}
         className={wrong ? undefined : domainField(agent)}
       />
@@ -115,7 +121,7 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
             wrong ? "text-ink-muted" : "text-ink-subtle",
           )}
         >
-          {domainLabel(agent)}
+          {observationLabel(observation.kind)}
           {observation.observed_label ? ` · ${observation.observed_label}` : ""}
         </span>
 
