@@ -32,7 +32,7 @@ import { useReveal } from "@/lib/motion";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
- * 09 하루 패널 — 고른 날의 일정 · 관찰 · 내 일기 · 함께 보는 사진.
+ * 09 하루 패널 — 고른 날의 내 일기 · 일정 · 관찰 · 함께 보는 사진 (이 순서로 선다 · #503).
  *
  * 🚨 **없는 구역은 그리지 않는다.** 빈 상자를 늘어놓아 하루를 채우지 않는다 — 프로토타입의
  *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다.
@@ -90,6 +90,43 @@ export function CalendarDayPanel({
 
   return (
     <div className="flex flex-col gap-5">
+      {/* 🚨 **일기가 맨 위다** (#503). 보호자가 그날을 다시 열 때 먼저 찾는 것은 자기가 쓴 글인데,
+          기록 아래에 두면 기록이 있는 날마다 스크롤해야 보였다. 빈 날에도 같은 자리에 선다 —
+          그날 일기를 쓰는 법이 날마다 달라지지 않게 (아래 빈 상태의 🚨). */}
+      {hasDiary || writing ? (
+        <Section title="이날의 일기">
+          <Diary
+            childId={childId}
+            date={date}
+            data={data}
+            onDone={() => setWriting(false)}
+            onDeleted={() => setDiaryDeleted(true)}
+          />
+        </Section>
+      ) : (
+        // 일기만 없는 날. 입력창은 접어 두고 쓰는 버튼은 제목 줄 오른쪽에 둔다 — 제목 아래 한 줄을
+        // 버튼이 따로 먹지 않는다. 일기를 지운 뒤에도 이 모양으로 돌아온다.
+        <Section
+          title="이날의 일기"
+          action={
+            <Button
+              variant="tertiary"
+              size="compact"
+              // 지운 직후에만 건다 (위 `diaryDeleted`). 날을 처음 열 때 포커스를 뺏지 않는다.
+              autoFocus={diaryDeleted}
+              onClick={() => {
+                setDiaryDeleted(false);
+                setWriting(true);
+              }}
+            >
+              일기 쓰기
+            </Button>
+          }
+        >
+          <DiaryNote />
+        </Section>
+      )}
+
       {data.events.length > 0 ? (
         <Section title="저장된 일정">
           <ul className="flex flex-col gap-3">
@@ -111,7 +148,8 @@ export function CalendarDayPanel({
       {/* 🚨 **"채우려고 만들지 않아요" 와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
           버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를
           나눈다. 빈 날이라고 일기 구역을 숨기지도 않는다. 그러면 "그날 일기를 쓰는 법" 이
-          날마다 달라져서, 빈 날에만 다른 버튼을 찾아야 한다. */}
+          날마다 달라져서, 빈 날에만 다른 버튼을 찾아야 한다. 일기를 지워 그날 다른 것이 없으면
+          이 빈 상태가 다시 선다. */}
       {nothing && !writing ? (
         <EmptyState
           icon={CalendarOff}
@@ -121,38 +159,6 @@ export function CalendarDayPanel({
           countLabel="이날의 기록"
         />
       ) : null}
-
-      {hasDiary || writing ? (
-        <Section title="이날의 일기">
-          <Diary
-            childId={childId}
-            date={date}
-            data={data}
-            onDone={() => setWriting(false)}
-            onDeleted={() => setDiaryDeleted(true)}
-          />
-        </Section>
-      ) : (
-        // 일기만 없는 날. 구역 제목은 남기되 입력창은 접어 둔다 — 빈 날도 같은 모양이다.
-        // 일기를 지운 뒤에도 이 모양으로 돌아온다 — 그날 다른 것이 없으면 위의 빈 상태도 다시 선다.
-        <Section title="이날의 일기">
-          <div>
-            <Button
-              variant="tertiary"
-              size="compact"
-              // 지운 직후에만 건다 (위 `diaryDeleted`). 날을 처음 열 때 포커스를 뺏지 않는다.
-              autoFocus={diaryDeleted}
-              onClick={() => {
-                setDiaryDeleted(false);
-                setWriting(true);
-              }}
-            >
-              일기 쓰기
-            </Button>
-          </div>
-          <DiaryNote />
-        </Section>
-      )}
 
       {/* 🚨 일기 구역과 같은 규칙이다 — **빈 날에도 같은 모양으로** 선다. 사진이 있는 날에만
           이 구역이 생기면 "그날 사진을 넣는 법" 이 날마다 달라져서, 빈 날에는 부모가 홈까지
@@ -191,10 +197,22 @@ export function CalendarDayPanel({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  /** 제목 줄 오른쪽 끝에 서는 그 구역의 행동 하나. */
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-section text-ink">{title}</h3>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-section text-ink">{title}</h3>
+        {action}
+      </div>
       {children}
     </section>
   );
