@@ -33,6 +33,25 @@ test("내 일기는 일기 구역에 그대로 선다", async ({ page }) => {
   await expect(page.getByRole("button", { name: "일기 고치기" })).toBeVisible();
 });
 
+test("일기 구역이 하루 패널 맨 위에 서고, 일기 쓰기는 제목 줄에 있다 (#503)", async ({ page }) => {
+  // 목의 이틀 전은 기록이 있고 일기가 없는 날이다.
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(2)}`);
+
+  const diary = page.getByRole("heading", { name: "이날의 일기" });
+  const records = page.getByRole("heading", { name: "이날 남긴 기록" });
+  const write = page.getByRole("button", { name: "일기 쓰기" });
+  await expect(records).toBeVisible();
+
+  const [diaryBox, recordsBox, writeBox] = await Promise.all(
+    [diary, records, write].map((locator) => locator.boundingBox()),
+  );
+  expect(diaryBox!.y).toBeLessThan(recordsBox!.y);
+  // 제목과 한 줄이다 — 버튼의 세로 범위가 제목을 품고, 버튼이 제목 오른쪽에 있다.
+  expect(writeBox!.y).toBeLessThanOrEqual(diaryBox!.y);
+  expect(writeBox!.y + writeBox!.height).toBeGreaterThanOrEqual(diaryBox!.y + diaryBox!.height);
+  expect(writeBox!.x).toBeGreaterThan(diaryBox!.x + diaryBox!.width);
+});
+
 test("건강 기록은 캘린더에 서지 않는다 (첫 배포 범위 밖 · #259 · #318)", async ({ page }) => {
   // 목의 건강 관찰은 어제 날짜다. 서버는 기록 탭과 같은 기준으로 캘린더에서도 뺀다.
   // ⚠️ 그래서 건강 기록의 상세 시트("진단 · 평가를 하지 않는다")를 여는 화면이 지금은 없다.
@@ -188,6 +207,9 @@ test("준비물 체크는 아이 경로로 키 없이 나가고, 다시 받은 �
   await page.goto(`${CALENDAR}?date=${date}`);
 
   const towel = page.getByRole("checkbox", { name: "수건" });
+  // 🚨 눈에 보이는 줄(`label`)을 누른다. 체크박스는 `sr-only` 라 `force` 로 누르면 좌표만 찍혀서,
+  //    일정 구역이 하단 네비 뒤에 걸리는 날(일기가 맨 위에 서고 나서 · #503) 네비의 "홈" 이 눌린다.
+  const towelRow = page.locator("label").filter({ has: towel });
   await expect(towel).not.toBeChecked();
   // 체크가 끝나면 하루 보기를 다시 받는다 (`PreparedCheckbox` 의 onSettled).
   const reread = page.waitForResponse(
@@ -195,7 +217,7 @@ test("준비물 체크는 아이 경로로 키 없이 나가고, 다시 받은 �
       res.request().method() === "GET" && new URL(res.url()).pathname === `/api/v1${dayPath}`,
   );
 
-  await towel.click({ force: true });
+  await towelRow.click();
 
   // 🚨 옛 경로(`PATCH /event-items/{iid}`)가 아니라 서버 #335 의 아이 경로다.
   //    Idempotency-Key 를 받지 않는 경로다 — 되돌릴 수 있는 체크라 되돌릴 수 없는 5곳이 아니다.
@@ -217,7 +239,7 @@ test("준비물 체크는 아이 경로로 키 없이 나가고, 다시 받은 �
   await expect(towel).toBeChecked();
 
   // 해제도 같은 경로로 최종 상태를 보낸다.
-  await towel.click({ force: true });
+  await towelRow.click();
   await expect
     .poll(() => writes(calls, "PATCH").map((c) => c.body))
     .toEqual([{ is_prepared: true }, { is_prepared: false }]);
