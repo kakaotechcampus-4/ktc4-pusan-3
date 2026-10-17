@@ -155,6 +155,36 @@ test.describe("오늘 대화가 없는 날 캘린더에서 지난 날로 들어�
   });
 });
 
+test.describe("run 이 끝나면 대화 목록은 오늘 장만 다시 받는다 (#228 리뷰)", () => {
+  test.use({ scenario: "chat_history" });
+
+  test("🚨 올려 둔 지난 날을 다시 받지 않는다 — 무한 목록을 통째로 무효화하면 받아 둔 장을 전부 다시 받는다", async ({
+    page,
+  }) => {
+    await page.goto(`/child/${CHILD}/chat`);
+    await page.getByRole("button", { name: "이전 대화 보기" }).click();
+    await expect(turn(page, "주말에 물놀이 가기로 했어")).toBeVisible();
+    await page.getByRole("button", { name: "이전 대화 보기" }).click();
+    await expect(turn(page, "블록 놀이를 오래 했어")).toBeVisible();
+
+    const chatRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === `/api/v1/children/${CHILD}/chat`) chatRequests.push(url.search);
+    });
+    await page.getByRole("textbox", { name: "오늘 있었던 일" }).fill("블록 놀이 했어");
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await expect(turn(page, "블록 놀이 했어")).toContainText("이렇게 저장했어요");
+    await page.waitForLoadState("networkidle");
+
+    // 오늘 장(쿼리 없음)만 다시 받는다. 전날 장(`date=`)이나 같은 날 뒷장(`cursor=`)은 부르지 않는다.
+    expect(chatRequests.length).toBeGreaterThan(0);
+    expect(chatRequests.filter((search) => search !== "")).toEqual([]);
+    // 지난 날은 그대로 화면에 있다.
+    await expect(turn(page, "블록 놀이를 오래 했어")).toBeAttached();
+  });
+});
+
 test.describe("이 앱에서 보낸 줄과 서버가 남긴 줄", () => {
   test("🚨 같은 run 은 한 번만 선다 — run 이 끝나 서버가 남겨도 말풍선이 둘이 되지 않는다", async ({
     page,

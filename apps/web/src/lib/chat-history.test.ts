@@ -1,10 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { qk } from "@/lib/api/queryKeys";
 import type { ChatDayResponse, ChatReply } from "@/lib/api/types";
-import { healthObservation, observations, runEventDrafts } from "@/mocks/fixtures";
+import { daysAgo, healthObservation, observations, runEventDrafts } from "@/mocks/fixtures";
+import { setScenario } from "@/mocks/scenario";
 import { useEventDraftStore } from "@/stores/event-draft";
 
-import { chatQuery, olderPageParam, pastTurnsOf, toPastRun } from "./chat-history";
+import {
+  chatQuery,
+  olderPageParam,
+  pastTurnsOf,
+  refreshAfterRun,
+  toPastRun,
+  withNewestPage,
+  type ChatPages,
+} from "./chat-history";
 
 /**
  * 04 지난 대화 (#228) — 서버가 남긴 답을 run 화면과 같은 상태로 되살리는가, 다음 장을 어느 순서로 부르는가.
@@ -122,5 +133,81 @@ describe("다음 장", () => {
       ["late", "2026-10-15"],
       ["today", "2026-10-16"],
     ]);
+  });
+});
+
+describe("run 이 끝난 뒤 — 오늘 장만 갈아 끼운다 (#228 리뷰)", () => {
+  const older = page("2026-10-15", { prev_date: "2026-10-13" });
+  const pages = (first: ChatDayResponse): ChatPages => ({
+    pages: [first, older],
+    pageParams: [null, { date: "2026-10-15" }],
+  });
+
+  it("같은 날이면 첫 장만 바꾸고 받아 둔 지난 장은 그대로 둔다", () => {
+    const newest = page("2026-10-16", { prev_date: "2026-10-15" });
+    const next = withNewestPage(pages(page("2026-10-16", { prev_date: "2026-10-15" })), newest);
+    expect(next?.pages[0]).toBe(newest);
+    expect(next?.pages[1]).toBe(older);
+    expect(next?.pageParams).toEqual([null, { date: "2026-10-15" }]);
+  });
+
+  it("🚨 갈아 끼우면 어긋나는 경우는 통째로 다시 받는다 — 자정, 오늘이 여러 장, 전날이 바뀜", () => {
+    const today = page("2026-10-16", { prev_date: "2026-10-15" });
+    // 자정을 넘겼다 — 어제 장을 오늘 장으로 덮으면 어제가 사라진다.
+    expect(
+      withNewestPage(pages(today), page("2026-10-17", { prev_date: "2026-10-16" })),
+    ).toBeNull();
+    // 오늘이 여러 장 — 첫 장의 창이 밀려 뒤 장과 겹치거나 사이가 빈다.
+    expect(withNewestPage(pages(today), { ...today, next_cursor: "c" })).toBeNull();
+    expect(withNewestPage(pages({ ...today, next_cursor: "c" }), today)).toBeNull();
+    // 전날이 바뀌었다 — 뒤 장이 그 값으로 받은 것이다.
+    expect(withNewestPage(pages(today), { ...today, prev_date: "2026-10-14" })).toBeNull();
+  });
+
+  describe("refreshAfterRun", () => {
+    afterEach(() => setScenario("default"));
+
+    it("오늘 장을 새로 받아 끼우고, 지난 장은 다시 받지 않는다", async () => {
+      setScenario("chat_history");
+      const client = new QueryClient();
+      const stale = page(daysAgo(0), { prev_date: daysAgo(1) });
+      const yesterday = page(daysAgo(1), { prev_date: daysAgo(3) });
+      client.setQueryData<ChatPages>(qk.chat(CHILD), {
+        pages: [stale, yesterday],
+        pageParams: [null, { date: daysAgo(1) }],
+      });
+
+      await refreshAfterRun(client, CHILD);
+
+      const data = client.getQueryData<ChatPages>(qk.chat(CHILD));
+      expect(data?.pages[0].turns.map((t) => t.run_id)).toEqual(["r_hist_breakfast"]);
+      expect(data?.pages[1]).toBe(yesterday);
+      expect(client.getQueryState(qk.chat(CHILD))?.isInvalidated).toBe(false);
+    });
+
+    it("갈아 끼울 수 없으면 대화 목록을 낡았다고 표시한다", async () => {
+      setScenario("chat_history");
+      const client = new QueryClient();
+      // 받아 둔 첫 장이 어제다 — 앱을 켜 둔 채 자정을 넘긴 경우.
+      client.setQueryData<ChatPages>(qk.chat(CHILD), {
+        pages: [page(daysAgo(1), { prev_date: daysAgo(3) })],
+        pageParams: [null],
+      });
+
+      await refreshAfterRun(client, CHILD);
+
+      expect(client.getQueryState(qk.chat(CHILD))?.isInvalidated).toBe(true);
+    });
+
+    it("대화 목록이 아닌 아이 쿼리는 그대로 무효화한다 — run 하나가 홈과 기록을 같이 바꾼다", async () => {
+      const client = new QueryClient();
+      client.setQueryData(qk.home(CHILD), { stale: true });
+      client.setQueryData(qk.chatToday(CHILD), page(daysAgo(0)));
+
+      await refreshAfterRun(client, CHILD);
+
+      expect(client.getQueryState(qk.home(CHILD))?.isInvalidated).toBe(true);
+      expect(client.getQueryState(qk.chatToday(CHILD))?.isInvalidated).toBe(true);
+    });
   });
 });
