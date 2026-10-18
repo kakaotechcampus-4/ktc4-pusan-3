@@ -64,6 +64,7 @@ from app.domains.suggestion import repository as suggestion_repo
 from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.evidence_view import EvidenceView, describe_evidence
 from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
+from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.home_prompts import prompt_request
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
@@ -499,6 +500,7 @@ async def create_suggestions(
                 domain_store=agent_ports.domain_store_opener(child.child_id),
                 **agent_ports.food_stores(),
                 **agent_ports.safety_readers(),
+                **agent_ports.growth_book_ports(),
                 growth_log=agent_ports.growth_log_reader(),
             )
             settled = {o.agent for o in run.outcomes}
@@ -615,7 +617,8 @@ async def _suggestions_response(
             basis = [
                 out
                 for e in general_ev.get(row.id, [])
-                if (out := _general_evidence_out(e, cards, menus)) is not None
+                if (out := _general_evidence_out(e, cards, menus, book_title=row.content))
+                is not None
             ]
             if not basis:
                 # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
@@ -729,10 +732,19 @@ MENU_SOURCE_ORG = "농식품정보원"
 MENU_SOURCE_TITLE = "농림축산식품 공공데이터포털 레시피 기본 · 재료정보"
 MENU_SOURCE_URL = "https://data.mafra.go.kr"
 
+# Growth 도서 추천의 근거 카드 — 그 책을 찾은 공개 서지 정보의 출처다. 화면은 문서 카드와 같이
+# "참고 · 제목(저자) (기관, 출처)" 로 그린다. 책 정보 표가 없어서 제목은 그 추천의 "제목(저자)" 다
+BOOK_SOURCE_ORG = "국립중앙도서관"
+BOOK_SOURCE_TITLE = "도서관 정보나루"
+BOOK_SOURCE_URL = "https://data4library.kr"
 
-def _general_evidence_out(e, cards: dict, menus: dict[_uuid.UUID, str]) -> DocEvidenceOut | None:
+
+def _general_evidence_out(
+    e, cards: dict, menus: dict[_uuid.UUID, str], *, book_title: str
+) -> DocEvidenceOut | None:
     """일반 추천 근거 한 행 → 화면 카드. 문서 행은 검수된 시드에서, 메뉴 행은 후보 풀(검수된
-    레시피)에서 찾는다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
+    레시피)에서 찾는다. 책 행(Growth 도서)은 그 추천의 "제목(저자)"(`book_title`)로 그린다 — 근거가
+    그 책 자체라 따로 찾을 곳이 없다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
     ref = Ref(kind=e.source_kind, id=str(e.source_id))
     if e.source_kind == MENU_EVIDENCE_KIND:
         name = menus.get(e.source_id)
@@ -744,6 +756,15 @@ def _general_evidence_out(e, cards: dict, menus: dict[_uuid.UUID, str]) -> DocEv
             source_org=MENU_SOURCE_ORG,
             source_title=MENU_SOURCE_TITLE,
             source_url=MENU_SOURCE_URL,
+            note=e.note,
+        )
+    if e.source_kind == BOOK_EVIDENCE_KIND:
+        return DocEvidenceOut(
+            ref=ref,
+            title=book_title,
+            source_org=BOOK_SOURCE_ORG,
+            source_title=BOOK_SOURCE_TITLE,
+            source_url=BOOK_SOURCE_URL,
             note=e.note,
         )
     card = cards.get((e.source_kind, e.source_id))
