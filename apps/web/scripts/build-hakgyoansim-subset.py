@@ -26,6 +26,14 @@ Reserved Font Name 선언이 없어서 굵기를 늘린 파생본을 같은 이�
   전부 실물 외곽선이 되고, 합성은 아무 데서도 일어나지 않는다.
 - 정적으로 여러 벌 싣는 대신 가변폰트를 고른 것은 용량 때문이다 — 굵기 한 벌마다 92개
   파티션이 통째로 하나 더 생긴다. 실측으로 정적 3벌이 x3.00, 가변폰트가 x1.59 다.
+
+🚨 원본의 빈 한글을 채운다 — `hakgyoansim_fill.py`
+- 원본은 한글 11,172자를 cmap 에 전부 등록했지만 8,392자는 외곽선이 비어 있다. 브라우저는
+  cmap 에 글자가 없을 때만 폴백하므로, 그대로 두면 `킼` 같은 글자가 **빈칸으로 보인다**.
+- 굵기를 만들기 전에 빈 한글을 자모 조각으로 채우고(자동 판정 통과분만), 그래도 빈 글자는
+  cmap 과 unicode-range 에서 뺀다. 빠진 글자는 `--font-sans` 의 다음 서체(Pretendard)로 간다.
+- 눈으로 보고 빼야 할 글자가 생기면 `hakgyoansim_fill.EXCLUDE` 에 넣는다. 그 글자는 Pretendard 로 간다
+  (검수 시트: `hakgyoansim-fill-sheet.py`).
 """
 
 from __future__ import annotations
@@ -40,6 +48,7 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.subset import main as subset_main
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as build_variable
+from hakgyoansim_fill import EXCLUDE, drop_blank_codepoints, fill_hangul
 
 WEB = Path(__file__).resolve().parent.parent
 SRC = WEB / "fonts-src" / "Hakgyoansim_NalgaeR.ttf"
@@ -89,6 +98,11 @@ HEADER = """/* 학교안심 날개 R — wght 400-700 가변폰트 · 동적 서
  *   §4 의 400·500·600·700 이 전부 실물 외곽선이고 **브라우저 합성은 일어나지 않는다.**
  *   `font-weight: 400 700` 이 그 범위를 알리는 선언이다 — 이게 빠지면 브라우저가
  *   400 단일로 보고 600 이상을 다시 합성한다.
+ *
+ * 🚨 unicode-range 가 Pretendard 의 파티션보다 좁다
+ *   원본은 한글 8,392자를 빈 외곽선으로 등록해 두어, 그대로 내보내면 `킼` 같은 글자가
+ *   빈칸으로 보였다. 스크립트가 그중 판정을 통과한 글자를 자모 조각으로 채우고, 나머지는
+ *   cmap 과 이 범위에서 뺀다. 빠진 글자는 --font-sans 의 다음 서체(Pretendard)로 그려진다.
  *
  * 라이선스: public/fonts/hakgyoansim/LICENSE.txt
  */
@@ -224,15 +238,26 @@ def verify(light: TTFont, bold: TTFont) -> None:
     print(f"팽창 검사 통과 — {len(light.getGlyphOrder()):,} 글리프 · STRENGTH {STRENGTH:g}")
 
 
-def build_variable_font(out: Path) -> None:
-    """원본(400) 과 팽창 마스터(700) 로 wght 축 가변폰트를 만든다."""
-    bold = TTFont(SRC)
+def prepare_source(out: Path) -> set[int]:
+    """원본에 빈 한글을 채우고 남은 빈 글자를 cmap 에서 뺀 400 마스터. 덮는 코드포인트를 돌려준다."""
+    font = TTFont(SRC)
+    report = fill_hangul(font, exclude=EXCLUDE)
+    dropped = drop_blank_codepoints(font)
+    font.save(out)
+    rejected = ", ".join(f"{reason} {len(cps):,}" for reason, cps in sorted(report.rejected.items()))
+    print(f"빈 한글 채움 {len(report.filled):,}자 · 못 채움 {rejected} · cmap 에서 뺀 빈 글자 {len(dropped):,}개")
+    return set(TTFont(out).getBestCmap())
+
+
+def build_variable_font(src: Path, out: Path) -> None:
+    """400 마스터와 팽창 마스터(700) 로 wght 축 가변폰트를 만든다."""
+    bold = TTFont(src)
     glyf = bold["glyf"]
     for name in bold.getGlyphOrder():
         embolden_glyph(glyf[name], glyf, STRENGTH)
     bold["OS/2"].usWeightClass = 700
 
-    verify(TTFont(SRC, lazy=True), bold)
+    verify(TTFont(src, lazy=True), bold)
 
     doc = DesignSpaceDocument()
     axis = AxisDescriptor()
@@ -240,7 +265,7 @@ def build_variable_font(out: Path) -> None:
     axis.minimum, axis.default, axis.maximum = 400, 400, 700
     axis.labelNames = {"en": "Weight"}
     doc.addAxis(axis)
-    for weight, font in ((400, TTFont(SRC)), (700, bold)):
+    for weight, font in ((400, TTFont(src)), (700, bold)):
         source = SourceDescriptor()
         source.font, source.name = font, f"master{weight}"
         source.location = {"Weight": weight}
@@ -250,6 +275,27 @@ def build_variable_font(out: Path) -> None:
 
     variable, _, _ = build_variable(doc)
     variable.save(out)
+
+
+def _parse_range(unicode_range: str) -> set[int]:
+    out: set[int] = set()
+    for part in unicode_range.replace("U+", "").replace(" ", "").split(","):
+        first, _, last = part.partition("-")
+        out.update(range(int(first, 16), int(last or first, 16) + 1))
+    return out
+
+
+def _format_range(codepoints: set[int]) -> str:
+    runs, ordered = [], sorted(codepoints)
+    start = prev = ordered[0]
+    for cp in ordered[1:] + [None]:
+        if cp is not None and cp == prev + 1:
+            prev = cp
+            continue
+        runs.append(f"U+{start:x}" if start == prev else f"U+{start:x}-{prev:x}")
+        if cp is not None:
+            start = prev = cp
+    return ", ".join(runs)
 
 
 def _stamp_license(path: Path) -> None:
@@ -290,11 +336,19 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         # 가변폰트 원본은 파생물이라 커밋하지 않는다 — 서브셋만 저장소에 남는다
+        source = Path(tmp) / "HakgyoansimNalgae-filled.ttf"
+        covered = prepare_source(source)
         variable = Path(tmp) / "HakgyoansimNalgae-VF.ttf"
-        build_variable_font(variable)
+        build_variable_font(source, variable)
 
         faces, total = [], 0
-        for index, unicode_range in blocks:
+        for index, pretendard_range in blocks:
+            # 🚨 이 서체에 없는 글자는 unicode-range 에서도 뺀다. 남겨 두면 그 글자 하나 때문에
+            #    블록 파일을 받고 나서야 Pretendard 로 넘어간다.
+            codepoints = _parse_range(pretendard_range) & covered
+            if not codepoints:
+                continue
+            unicode_range = _format_range(codepoints)
             out = OUT_DIR / f"{STEM}.{index}.woff2"
             subset_main([
                 str(variable),
@@ -319,7 +373,7 @@ def main() -> None:
                 f"\tdescent-override: {descent}%;\n"
                 f'\tsrc: url("/fonts/hakgyoansim/{out.name}") '
                 f"format('woff2-variations');\n"
-                f"\tunicode-range: {unicode_range.strip()};\n"
+                f"\tunicode-range: {unicode_range};\n"
                 f"}}\n"
             )
 
