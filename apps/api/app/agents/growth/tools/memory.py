@@ -11,6 +11,8 @@
 - 다음 단계는 모델이 고르지 않는다. 관찰 subject 를 사슬 이름(`docs.match_chain`)에 맞추고,
   14일 안 도움 수준으로 `pick_next_step` 이 바로 다음 칸을 고른다. 맞는 사슬이 없으면 `doc.no_row`
   — 단계를 지어내지 않는다.
+
+코드가 부르는 `has_citable_memory` 는 [예시]가 빈 교육 run 을 모델 전에 닫을지 정한다.
 """
 
 from collections.abc import Sequence
@@ -42,6 +44,7 @@ from app.agents.growth.tools.routine import (
     current_assistance_level,
     pick_next_step,
 )
+from app.rules.staleness import is_stale
 from app.rules.term_match import normalize
 
 # 모델에게 돌려주는 근거 수 (공통 TOP_N 과 같다)
@@ -108,6 +111,44 @@ def _remember(context: GrowthContext, ranked: Sequence[RankedEvidence]) -> list[
         }
         for item in picked.values()
     ]
+
+
+async def has_citable_memory(context: GrowthContext) -> bool:
+    """교육 대화가 근거로 달 수 있는 아이 기록이 하나라도 있는가. 모델에게 보이지 않는다.
+
+    [예시]가 빈 교육 run 은 이게 없으면 모델 전에 닫는다(`doc.no_row`). 문서 행도 아이 기록도
+    못 달면 build() 가 모든 후보를 거절해, 모델이 왕복 상한까지 돌고 failed 로 끝난다.
+    범위는 교육에 열린 조회 tool 넷과 같다 — 교육 · 놀이 · 루틴 관찰 14일과 education ·
+    activity 관심. 순위는 `rank_evidence`, 6개월 판정은 build() 와 같은 `is_stale` 이다.
+    """
+    _require_gate(context)
+    start, today = _window(context)
+    memory = context.ports.memory
+    child_id = context.child_id
+    affinities = await memory.affinities(child_id=child_id, domains=("education", "activity"))
+    education = await memory.education(child_id=child_id, date_from=start, date_to=today)
+    activities = await memory.activities(child_id=child_id, date_from=start, date_to=today)
+    routine = await memory.routine(child_id=child_id, date_from=start, date_to=today)
+    rows = [
+        *(("observation_education", row) for row in education),
+        *(("observation_activity", row) for row in activities),
+        *(("observation_routine", row) for row in routine),
+    ]
+    ranked = rank_evidence(
+        tuple(affinities),
+        tuple(
+            ObservationRow(
+                id=row.id,
+                kind=kind,
+                subject=row.subject,
+                polarity=row.polarity,
+                observed_on=row.observed_on,
+            )
+            for kind, row in rows
+        ),
+        today=today,
+    )
+    return any(not is_stale(item.observed_on, today) for item in ranked)
 
 
 async def search_education_memory(

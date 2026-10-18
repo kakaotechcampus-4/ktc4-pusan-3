@@ -694,6 +694,12 @@ class _Reader:
             raise SafetyLookupError("못 읽음")
         return []
 
+    async def growth_safety(self, *, child_id: UUID) -> list:
+        self.calls.append("growth")
+        if self.fail:
+            raise SafetyLookupError("못 읽음")
+        return []
+
 
 async def test_안전_어댑터를_넘기면_Food_와_Activity_가_열린다(
     monkeypatch: pytest.MonkeyPatch,
@@ -762,7 +768,7 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
     original = entrypoint._domain_contexts
 
     def spy(**kwargs: Any) -> Any:
-        seen.append((kwargs["food_safety"], kwargs["activity_safety"]))
+        seen.append((kwargs["food_safety"], kwargs["activity_safety"], kwargs["growth_safety"]))
         return original(**kwargs)
 
     async def fake_run(*args: Any, **kwargs: Any) -> Any:
@@ -775,7 +781,7 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
     monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
     monkeypatch.setattr(entrypoint, "_handle_input", fake_handle)
     reader = _Reader()
-    readers = {"food_safety": reader, "activity_safety": reader}
+    readers = {"food_safety": reader, "activity_safety": reader, "growth_safety": reader}
 
     await entrypoint.handle_input(
         child_id=CHILD,
@@ -796,7 +802,7 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
         **readers,
     )
 
-    assert seen == [(reader, reader)] * 2
+    assert seen == [(reader, reader, reader)] * 2
 
 
 # ── Food 카탈로그 · 추천 이력 어댑터와 문서 시드 (#442) ──────────────────────
@@ -904,7 +910,7 @@ async def test_넘긴_Food_어댑터를_handle_input_과_suggest_가_둘_다_받
     assert seen == [(catalog, recipes, suggestions)] * 2
 
 
-async def test_Growth_는_같은_생일_기준일_store_를_쓰고_안전은_미연결이다(
+async def test_Growth_는_같은_생일_기준일_store_를_쓰고_안전을_안_넘기면_미연결이다(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.agents.growth.store.ports import UnwiredSafety
@@ -920,6 +926,26 @@ async def test_Growth_는_같은_생일_기준일_store_를_쓰고_안전은_미
     assert isinstance(growth.ports.memory, StoreGrowthMemory)
     assert isinstance(growth.ports.safety, UnwiredSafety)
     assert growth.ports.books is None and growth.ports.notice is None
+
+
+async def test_넘긴_안전_어댑터를_Growth_가_교육에서_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents.growth.context import build_gate as build_growth_gate
+    from app.agents.growth.registry import closed_readout_key as growth_closed_key
+    from app.agents.growth.schemas.task import GrowthTaskType
+
+    reader = _Reader()
+    seen = await _activity_of(
+        monkeypatch, birth_date=_months_ago(30), child_health_granted=True, growth_safety=reader
+    )
+    growth = seen["contexts"]["growth"]
+
+    gate = await build_growth_gate(growth, GrowthTaskType.LEARNING_SUGGESTION)
+
+    assert growth.ports.safety is reader
+    assert growth_closed_key(GrowthTaskType.LEARNING_SUGGESTION, gate) is None
+    assert reader.calls == ["growth"]
 
 
 async def test_동의_값을_못_받은_Growth_는_동의_없음으로_읽는다(

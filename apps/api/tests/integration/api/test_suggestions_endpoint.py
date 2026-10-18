@@ -195,6 +195,7 @@ async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, 
     assert resp.status_code == 200
     assert isinstance(calls[0]["food_safety"], DbSafetyReader)
     assert calls[0]["activity_safety"] is calls[0]["food_safety"]
+    assert calls[0]["growth_safety"] is calls[0]["food_safety"]
 
 
 async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_client, bearer, cid, agents):

@@ -9,15 +9,25 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+import pytest
+
+from app.agents.common.evidence import AffinityRow
 from app.agents.common.llm_client import LLMResponse
 from app.agents.growth.agent import run
+from app.agents.growth.readouts import READOUTS
+from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import (
     InMemoryGrowthDocs,
     InMemoryGrowthMemory,
     InMemorySafety,
 )
-from app.agents.growth.store.ports import RoutineObservation, SafetyEntry
-from app.agents.growth.tools.docs import match_chain, routine_chains
+from app.agents.growth.store.ports import (
+    ActivityObservation,
+    EducationObservation,
+    RoutineObservation,
+    SafetyEntry,
+)
+from app.agents.growth.tools.docs import match_chain, routine_chains, search_growth_doc
 from app.agents.growth.tools.routine import pick_next_step
 from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context, task
 
@@ -99,6 +109,17 @@ class TestLearning:
         recall = llm.seen[1][-1]["content"]
         assert "땅콩 세기" in recall and "땅콩" not in llm.seen[1][0]["content"]
 
+    async def test_같은_제목을_내면_거절되고_고쳐_낸_것이_나간다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("블록 세기", "블록 세기", "블록 세기", doc_id=doc_id),
+            learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+        )
+        result = await run(task("learning_suggestion"), docs_ctx(), client=llm)
+        assert result.status == "completed" and result.model_calls == 1
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["블록 세기", "색깔 찾기", "모양 맞추기"]
+
     async def test_말로_끝내면_failed_다(self):
         result = await run(task("learning_suggestion"), docs_ctx(), client=FakeLLM())
         assert result.status == "failed" and result.suggestions == ()
@@ -108,6 +129,98 @@ class TestLearning:
         llm = FakeLLM()
         await run(task("learning_suggestion"), docs_ctx(safety=safety), client=llm)
         assert "라텍스" not in json.dumps(llm.seen, ensure_ascii=False)
+
+    async def test_꽃가루_아이의_예시에는_표_낱말이_든_행이_없다(self):
+        safety = InMemorySafety([SafetyEntry(kind="allergy", label="꽃가루", status="active")])
+        probe = FakeLLM()
+        await run(task("learning_suggestion"), docs_ctx(months=13, safety=safety), client=probe)
+        system = probe.seen[0][0]["content"]
+        assert system.count("- id ") == 3
+        for title in ("걷다가 멈춰서 구경하기", "나뭇잎 만져 보기", "꽃과 풀 가까이서 보기"):
+            assert title not in system
+        assert "꽃가루" not in system
+
+    async def test_확인_문구_readout_을_내지_않는다(self):
+        doc_id = await example_id()
+        safety = InMemorySafety([SafetyEntry(kind="allergy", label="라텍스", status="active")])
+        llm = FakeLLM(learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        result = await run(task("learning_suggestion"), docs_ctx(safety=safety), client=llm)
+        assert result.status == "completed" and result.readouts == ()
+
+
+def empty_docs_ctx(**kwargs):
+    """[예시]가 빈 월령 — 문서 검수에서 draft 로 돌아간 행이 생기면 실제로 온다."""
+    return context(birth_for(30), docs=InMemoryGrowthDocs(), **kwargs)
+
+
+class TestLearningWithoutExamples:
+    async def test_예시도_기록도_없으면_모델_없이_doc_no_row_로_닫는다(self):
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), empty_docs_ctx(), client=llm)
+        assert (result.status, result.model_calls) == ("blocked", 0)
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert llm.seen == []
+
+    async def test_시드에_교육_행이_없는_72개월_이상도_모델_없이_닫는다(self):
+        ctx = context(birth_for(80), docs=InMemoryGrowthDocs.from_seed())
+        # 시드의 교육 행은 72개월 미만까지다. 행이 생기면 이 테스트의 월령을 옮긴다
+        assert not await search_growth_doc(
+            ctx.ports.docs, task_type=GrowthTaskType.LEARNING_SUGGESTION, months=80
+        )
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), ctx, client=llm)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
+    async def test_6개월_지난_관심만_있어도_닫는다(self):
+        """오래된 관심은 build() 가 근거에서 빼서 개인화도 일반 추천도 못 된다 (루트 §2)."""
+        old = AffinityRow(
+            id=UUID(int=901),
+            merge_key="숫자",
+            state="confirmed",
+            polarity=1,
+            strength=0.9,
+            last_observed_on=TODAY - timedelta(days=200),
+        )
+        ctx = empty_docs_ctx(memory=InMemoryGrowthMemory(affinities=[("education", old)]))
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), ctx, client=llm)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
+    @pytest.mark.parametrize(
+        "memory",
+        [
+            InMemoryGrowthMemory(
+                education=[
+                    EducationObservation(
+                        id=UUID(int=902),
+                        child_id=CHILD,
+                        observed_on=TODAY - timedelta(days=1),
+                        subject="숫자",
+                        topic="숫자 세기",
+                        polarity=1,
+                    )
+                ]
+            ),
+            InMemoryGrowthMemory(
+                activities=[
+                    ActivityObservation(
+                        id=UUID(int=903),
+                        child_id=CHILD,
+                        observed_on=TODAY - timedelta(days=1),
+                        subject="블록",
+                        activity="블록 쌓기",
+                        polarity=1,
+                    )
+                ]
+            ),
+        ],
+        ids=["교육_기록", "놀이_기록"],
+    )
+    async def test_달_수_있는_기록이_있으면_모델까지_간다(self, memory):
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), empty_docs_ctx(memory=memory), client=llm)
+        assert llm.seen  # 말로 끝내는 가짜라 failed 지만 모델을 불렀다
+        assert result.status == "failed"
 
 
 class TestRoutine:

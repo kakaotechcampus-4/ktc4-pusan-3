@@ -65,8 +65,6 @@ class GrowthRunState:
     # 출력 tool 이 통과시킨 추천과 안전 필터 · 금지 표현으로 빠진 후보 이름 (재호출 제외 목록)
     suggestions: tuple[SuggestionDraft, ...] = ()
     excluded: tuple[str, ...] = ()
-    # 식품 사전에 없는 알레르기 이름의 확인 문구 (교육). 결과 readouts 앞에 붙는다
-    cautions: tuple[str, ...] = ()
     # 이번 출력이 채울 수 있는 최대 개수. 루틴은 고른 단계 수가 상한이다
     capacity: int = MAX_SUGGESTIONS
     # 재호출 전에 이미 통과한 루틴 단계. 재호출은 남은 단계만 다시 내면 된다

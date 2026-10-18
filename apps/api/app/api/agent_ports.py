@@ -96,13 +96,14 @@ def food_stores() -> dict[str, object]:
 
 
 def safety_readers() -> dict[str, object]:
-    """Food · Activity 가 읽는 `health_safety` 어댑터 — 러너와 05 가 같이 쓴다 (#460).
+    """Food · Activity · Growth 가 읽는 `health_safety` 어댑터 — 러너와 05 가 같이 쓴다 (#460).
 
-    어댑터 하나를 둘에게 넘기고, Food 는 `food_safety`(active · kind 전부), Activity 는
-    `activity_safety`(allergy · environmental · status 전부)로 읽는다. 안 넘기면 둘 다
-    `blocked.safety` 로 닫힌다. 호출마다 짧은 세션을 연다 — 만들 때는 열지 않는다.
+    어댑터 하나를 셋에게 넘기고, Food 는 `food_safety`(active · kind 전부), Activity 와 Growth 는
+    `activity_safety` · `growth_safety`(allergy · environmental · status 전부)로 읽는다. 안 넘기면
+    Food · Activity 와 Growth 교육이 `blocked.safety` 로 닫힌다. 호출마다 짧은 세션을 연다 —
+    만들 때는 열지 않는다.
     """
     from app.domains.safety.agent_reader import DbSafetyReader
 
     reader = DbSafetyReader(background_session)
-    return {"food_safety": reader, "activity_safety": reader}
+    return {"food_safety": reader, "activity_safety": reader, "growth_safety": reader}

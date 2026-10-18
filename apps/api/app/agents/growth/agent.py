@@ -5,7 +5,8 @@
   ② 루틴 요청이 의료 처치 · 증상 목록에 걸리면 닫는다 — 모델 0회
   ③ growth_review 는 측정을 그대로 정리한 readout 하나 — 모델 0회
   ④ 0–11개월 루틴은 리듬 안내(`rhythm_info` 행, 없으면 `rhythm.no_row`) 하나 — 모델 0회
-  ⑤ 교육은 코드가 문서 행 [예시]를 골라 프롬프트에 싣는다. 모델에게 문서 검색 tool 은 없다
+  ⑤ 교육은 코드가 문서 행 [예시]를 골라 프롬프트에 싣는다. 모델에게 문서 검색 tool 은 없다.
+     [예시]도 근거로 달 아이 기록도 없으면 `doc.no_row` 로 닫는다 — 모델 0회
   ⑥ 공통 `run_tool_loop` 로 대화한다. 출력 tool 이 통과하면 끝난다
   ⑦ 안전 필터 · 금지 표현으로 모자라면 같은 대화에 제외 목록 한 줄을 더해 1회 더 부른다
      (model_calls=2). 처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts`)
@@ -33,7 +34,7 @@ from app.agents.common.tool_loop import run_tool_loop
 from app.agents.growth.context import GrowthContext, build_gate
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
-from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS, RHYTHM_NO_ROW
+from app.agents.growth.readouts import DOC_NO_ROW, READOUTS, RHYTHM_NO_ROW
 from app.agents.growth.registry import (
     OUTPUT_TOOL,
     closed_readout_key,
@@ -47,6 +48,7 @@ from app.agents.growth.schemas.task import GrowthTaskType, task_type_of
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
+from app.agents.growth.tools.memory import has_citable_memory
 from app.rules.term_match import normalize
 
 logger = logging.getLogger(__name__)
@@ -91,15 +93,23 @@ async def run(
 
     examples: tuple[DocHit, ...] = ()
     if task_type is GrowthTaskType.LEARNING_SUGGESTION:
+        rules = context.state.rules
+        assert rules is not None  # 교육이 열렸으면 build_gate 가 채운다
+        active = [e for e in context.state.safety_entries if e.status == "active"]
         examples = await search_growth_doc(
             context.ports.docs,
             task_type=task_type,
             months=gate.stage.months,
             # 같은 날 같은 아이는 같은 [예시] — 재호출도 같은 프롬프트다. 날이 바뀌면 바뀐다
             rotation=f"{context.child_id}|{context.today.isoformat()}",
+            # 식품 아닌 알레르기의 대응표 낱말이 든 행은 싣지 않는다
+            blocked=rules.related_blocks(active),
         )
         # 프롬프트에 실은 행만 근거로 달 수 있다
         context.state.seen_docs = {hit.row.id: hit.row for hit in examples}
+        if not examples and not await has_citable_memory(context):
+            # 문서 행도 아이 기록도 못 단다 — 어떤 후보도 build() 를 못 지나서 모델을 부르지 않는다
+            return _result(task_type, "blocked", readouts=(READOUTS.render(DOC_NO_ROW),))
 
     allowed = tools_for(task_type, gate)
     llm = client or LLMClient(role="growth")
@@ -128,10 +138,7 @@ async def run(
         check_count(picked, exhausted=True)
 
     notice = count_notice(len(picked))
-    readouts = (
-        *(_caution(text) for text in state.cautions),
-        *((notice,) if notice else ()),
-    )
+    readouts = (notice,) if notice else ()
     return _result(
         task_type, "completed", suggestions=picked, readouts=readouts, model_calls=model_calls
     )
@@ -177,10 +184,6 @@ async def _rhythm(context: GrowthContext) -> Readout:
         return READOUTS.render(RHYTHM_NO_ROW)
     row = hits[0].row
     return Readout(kind="rhythm_info", title=row.title, body=row.body, authored_by="code")
-
-
-def _caution(text: str) -> Readout:
-    return Readout(kind=READOUTS.get(CAUTION_NON_FOOD_ALLERGY).kind, body=text, authored_by="code")
 
 
 def _same(task_type: GrowthTaskType) -> Callable[[SuggestionDraft], object]:
