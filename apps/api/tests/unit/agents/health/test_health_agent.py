@@ -43,7 +43,9 @@ async def test_동의가_없으면_전_라벨이_닫힌다(label):
     assert result.suggestions == ()
 
 
-@pytest.mark.parametrize("label", list(HealthTaskType))
+@pytest.mark.parametrize(
+    "label", [label for label in HealthTaskType if label not in registry.IMPLEMENTED_TASKS]
+)
 async def test_구현되지_않은_라벨은_모델_없이_unsupported(label):
     llm = FakeLLM()
 

@@ -111,9 +111,13 @@ def test_안전_조회_실패로는_닫지_않는다(label):
 
 
 @pytest.mark.parametrize("label", list(HealthTaskType))
-def test_구현되지_않은_라벨은_tool_이_없다(label):
-    assert label not in IMPLEMENTED_TASKS
+def test_열리는_tool_은_구현된_것뿐이다(label):
+    # 구현된 라벨이어도 핸들러가 있는 tool 만 열린다 — schedule_check 는 모델 tool 이 없다
     assert tools_for(label, gate(48)) == ()
+
+
+def test_구현된_라벨은_schedule_check_뿐이다():
+    assert IMPLEMENTED_TASKS == {HealthTaskType.SCHEDULE_CHECK}
 
 
 def test_정의와_핸들러가_같다():
