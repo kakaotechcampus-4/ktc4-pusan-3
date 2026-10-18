@@ -6,6 +6,7 @@
 > **2026-09-22 갱신** — `growth_doc`이 핵심 기능(관찰 × 문서 연결 추천)의 재료 · `notice`는 보조 · 성장 판정은 시스템 전체에서 없음
 > **2026-10-08** — `profile_affinity` 는 education · activity 둘 · 교육 활동만 `health_safety`(allergy · environmental)를 읽는다 · 음식 용어 스캔에 `allergen_terms.yaml` · `food_choking` · 18개월 미만 승격 미적용 · 교육 알레르기는 이름 대조 + 환경 알레르기 확인 문구(#261) · 도서 연령 처음 값(GT-3)
 > **2026-10-10** — `book_query_cache` 는 테이블이 아니라 Redis 키 · 키는 키워드만 · 키워드당 50권 · 메모리 폴백 없음 (#292 리뷰)
+> **2026-10-18** — 1차는 `book_catalog` 표 없이 Redis 검색어 캐시 하나 — 값에 원문 행을 50권까지 싣고 `form` 은 읽을 때 정한다 · 일반 도서 추천의 근거는 고른 책의 서지 행(`source_kind='book_catalog'`, ISBN 의 uuid5) · GT-3 실제 응답으로 확정 (#506)
 
 ---
 
@@ -16,8 +17,8 @@
 | 테이블 | 쓰는 주체 | 읽는 주체 | 성격 |
 | --- | --- | --- | --- |
 | `growth_doc` | 마이그레이션 시드 | Growth | 문서 행 (교육과정·루틴 자료를 **재작성한** 행) — **핵심 기능의 재료**. 별도 KB 인덱스는 없다 |
-| `book_catalog` | 동기화 배치 (`integrations`) | Growth | 도서 API 캐시 |
-| `book_query_cache` — **Redis 키**, 테이블 아님 (§2) | 동기화 배치 (`integrations`) | Growth | 검색어 → ISBN 목록 캐시, 30일 |
+| `book_catalog` | — **1차에 만들지 않는다** (§2) | – | 도서 API 캐시 — 사서추천 가중치 · 주제어 색인을 붙일 때 만든다 |
+| `book_query_cache` — **Redis 키**, 테이블 아님 (§2) | 정보나루 어댑터 (`integrations/data4library`) | Growth | 검색어 → 원문 행 50권, 30일 |
 | `hazard_term` (상수 파일 `reference/hazard_terms.yaml`) | **Activity 소유** | Activity · **Growth** | 안전 사전 — 구현은 하나만 |
 | `reference/allergen_terms.yaml` (상수 파일) | 공용 (`common/reference.py`) | Food · Activity · **Growth** | 식품 알레르기 사전 — Growth 는 음식 용어 스캔에만 쓴다 |
 | `notice` | **OCR 파이프라인** (일반 기관 공지). 텍스트 일반 공지 경로 미정 | Growth | 읽기만 · **보조** |
@@ -81,6 +82,8 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 
 모델이 책 제목을 지어내지 못하게 하는 장치입니다. `propose_books`는 **직전 검색 결과의 ISBN만** 통과시킵니다.
 
+> 🚨 **1차는 이 표를 만들지 않는다** (#506). 05 일반 카드의 제목은 추천 행의 "제목(저자)" 로 그리고, 근거 id 는 ISBN 의 uuid5 라 표 PK 가 필요 없다. 아래 DDL 은 사서추천 가중치(`pick_weight`) · 주제어(`subjects`)를 붙일 때의 설계로 남긴다.
+
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | `isbn` | text | **PK** (ISBN-13) |
@@ -104,8 +107,8 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 
 | 항목 | 값 |
 | --- | --- |
-| 키 | 정규화한 키워드. 월령 · `form` 은 넣지 않는다 — `search_books` 가 캐시 뒤에서 건다 |
-| 값 | ISBN 목록, 정보나루 결과 순서 그대로. 키워드당 `SEARCH_POOL`(50)권까지 — 적게 담으면 영아에게 나갈 보드북이 모자란다 |
+| 키 | `book:q:v1:<검색어>` — 앞뒤 공백을 지우고 사이 공백을 한 칸으로. 월령 · `form` 은 넣지 않는다 — `search_books` 가 캐시 뒤에서 건다. `v1` 은 값 칸을 바꿀 때 옛 캐시를 버리는 자리 |
+| 값 | 원문 행(ISBN · 서명 · 저자 · 출판사 · 발행년 · 부가기호 · KDC · 표지) JSON, 정보나루 결과 순서 그대로. 키워드당 `SEARCH_POOL`(50)권까지 — 적게 담으면 영아에게 나갈 보드북이 모자란다. `form` 은 담지 않고 읽을 때 `rules/book_form` 으로 정한다(GT-3 를 고치면 바로 적용). 오류 · 실패 응답은 담지 않고 0권 응답은 담는다 |
 | 만료 | `SETEX` 30일 |
 | `REDIS_URL` 이 없을 때 | 메모리 폴백 없이 정보나루를 바로 부른다. idempotency 와 달리 캐시가 없어도 깨지는 동작이 없다 |
 | 캐시가 빌 때 | 배포 compose 의 redis 는 볼륨 · AOF 가 없어 `docker compose down` 뒤 비지만 받아들인다 — 서버 IP 등록 뒤 하루 30,000회라 다시 불러도 감당된다 |
@@ -246,7 +249,7 @@ CREATE INDEX book_catalog_subject_idx ON book_catalog USING gin (subjects);
 | --- | --- | --- |
 | GT-1 | `growth_doc` 초기 행 수 | 루틴 40 · 교육 60 · 습관 20 · 예절/리듬 20 · 도서 8 |
 | GT-2 | 해설서·사례집의 라이선스 | #337 기준으로 정함 — 상업적 이용 · 변경이 허락된 것만 행 출처로 쓴다. 해설서 · 사례집은 공공누리 제4유형이라 쓰지 않고, 고시 본문(`public_law`)만 쓴다(#293) |
-| GT-3 | 도서 API 연령 파라미터 코드 | 정보나루 `age` 는 대출자 연령대(0 = 영유아 0~5세)라 단계를 못 가른다. 처음 값 — 아동 도서(부가기호 첫 자리 7)로 좁히고, 서명 키워드(보드북 · 촉감책 · 헝겊책 · 사운드북 · 초점책)면 `board` 0–35, KDC 8(문학)이면 `picture` 12–71, 그 밖의 KDC 면 `info` 36–71, 부가기호가 없으면 `unknown`(0–11개월 제외). 청구기호는 쓰지 않는다. 어댑터 계약 테스트에서 실제 응답으로 확정한다. 코드는 `app/rules/book_form.py` 다 (#290). 구현에서 정한 것 — ① 부가기호 첫 자리가 7 이 아니면 서명에 보드북이 있어도 후보에서 뺀다 ② 부가기호가 없으면 서명 키워드 · KDC 가 그럴듯해도 `unknown` ③ 분류번호를 못 읽어도 `unknown` ④ 월령 범위는 양 끝을 포함한다(`board` 0–35 = 35개월까지, 36개월부터는 빠진다) ⑤ `search_books` 는 행의 `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 건다 |
+| GT-3 | 도서 API 연령 파라미터 코드 | 정보나루 `age` 는 대출자 연령대(0 = 영유아 0~5세)라 단계를 못 가른다. 처음 값 — 아동 도서(부가기호 첫 자리 7)로 좁히고, 서명 키워드(보드북 · 촉감책 · 헝겊책 · 사운드북 · 초점책)면 `board` 0–35, KDC 8(문학)이면 `picture` 12–71, 그 밖의 KDC 면 `info` 36–71, 부가기호가 없으면 `unknown`(0–11개월 제외). 청구기호는 쓰지 않는다. 어댑터 계약 테스트(`tests/unit/integrations/test_data4library_client.py`, 실제 응답 픽스처)로 확정했다 — 부가기호는 5자리 숫자, KDC 는 `813.8` 꼴로 오고 실제 응답에서 보드북 · 그림책이 가려진다(#506). 코드는 `app/rules/book_form.py` 다 (#290). 구현에서 정한 것 — ① 부가기호 첫 자리가 7 이 아니면 서명에 보드북이 있어도 후보에서 뺀다 ② 부가기호가 없으면 서명 키워드 · KDC 가 그럴듯해도 `unknown` ③ 분류번호를 못 읽어도 `unknown` ④ 월령 범위는 양 끝을 포함한다(`board` 0–35 = 35개월까지, 36개월부터는 빠진다) ⑤ `search_books` 는 행의 `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 건다 |
 | GT-4 | `next_step_of` 사슬을 어디까지 만들지 | #293 에서 6사슬(손 씻기 · 양치 · 얼굴 닦기 · 화장실 · 숟가락 · 장난감 정리). 옷 입기 · 신발 · 빨래 바구니 · 외출 준비는 고시 문구가 없어 `growth_doc.yaml` TODO |
 | GT-5 | `notice` 스키마 | OCR 팀 결정 대기. 우선순위 낮음 |
 | GT-6 | ~~`observation_education.source_suggestion_id`~~ | ✅ **폐기(09-22)** — 두지 않는다. 추천 → 관찰의 역방향 추적은 v1 범위 밖 |

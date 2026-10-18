@@ -41,10 +41,16 @@ from app.agents.food.store.ports import (
 )
 from app.agents.food.store.ports import SafetyReader as FoodSafetyReader
 from app.agents.growth.context import GrowthContext
+from app.agents.growth.library import LibraryBooks
 from app.agents.growth.store.inmemory import InMemoryConsent as GrowthConsent
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthLog
 from app.agents.growth.store.inmemory import InMemoryProfile as GrowthProfile
-from app.agents.growth.store.ports import GrowthLogReader, GrowthPorts
+from app.agents.growth.store.ports import (
+    GrowthLogReader,
+    GrowthPorts,
+    IssuedBookReader,
+    RawBookSearch,
+)
 from app.agents.growth.store.ports import SafetyReader as GrowthSafetyReader
 from app.agents.growth.store.ports import UnwiredSafety as GrowthUnwiredSafety
 from app.agents.memory.agent import MemoryReply
@@ -116,6 +122,7 @@ __all__ = [
     "GrowthLogReader",
     "InMemoryStore",
     "InMemorySuggestions",
+    "IssuedBookReader",
     "MemoryNote",
     "MemoryReply",
     "MemoryStore",
@@ -123,6 +130,7 @@ __all__ = [
     "PendingMemoryContext",
     "PendingReply",
     "PipelineResult",
+    "RawBookSearch",
     "Readout",
     "Ref",
     "Rerouted",
@@ -211,6 +219,8 @@ async def handle_input(
     activity_safety: ActivitySafetyReader | None = None,
     growth_safety: GrowthSafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
+    growth_books: RawBookSearch | None = None,
+    growth_issued_books: IssuedBookReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -240,6 +250,9 @@ async def handle_input(
     - curator_trigger 를 넘기면 Memory 가 commit 된 직후 pipeline 이 (child_id, 기준일) 로 한 번
       부른다. 콜백이 별도 세션에서 Curator 를 백그라운드로 띄운다. 러너가 `curator_deps()` 로
       만든다. 안 넘기면(테스트 · eval) Curator 는 돌지 않는다.
+    - growth_books · growth_issued_books 는 api 가 넘긴 도서 어댑터다 — 정보나루 검색(검색어 캐시
+      포함)과 만료 전 Growth 추천의 "제목(저자)". 둘 다 있어야 도서가 열린다. 하나라도 없으면(키
+      없음 · 테스트 · eval) `closed.book_api` 로 닫힌다 — 낸 책을 모르면 같은 책이 다시 나온다.
     - growth_log 는 러너가 짧은 DB 세션으로 만든 성장 기록 어댑터다. 안 넘기면(테스트 · eval)
       측정이 없는 것으로 읽힌다.
     - domain_store 를 넘기면 도메인 Agent 의 기억 포트가 호출마다 그것으로 store 를 새로 연다.
@@ -286,6 +299,8 @@ async def handle_input(
         activity_safety=activity_safety,
         growth_safety=growth_safety,
         growth_log=growth_log,
+        growth_books=growth_books,
+        growth_issued_books=growth_issued_books,
     )
 
     return await _handle_input(
@@ -346,6 +361,8 @@ async def suggest(
     activity_safety: ActivitySafetyReader | None = None,
     growth_safety: GrowthSafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
+    growth_books: RawBookSearch | None = None,
+    growth_issued_books: IssuedBookReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
 
@@ -378,6 +395,8 @@ async def suggest(
         activity_safety=activity_safety,
         growth_safety=growth_safety,
         growth_log=growth_log,
+        growth_books=growth_books,
+        growth_issued_books=growth_issued_books,
     )
     domain_tasks = tuple(
         DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
@@ -485,6 +504,8 @@ def _domain_contexts(
     activity_safety: ActivitySafetyReader | None = None,
     growth_safety: GrowthSafetyReader | None = None,
     growth_log: GrowthLogReader | None = None,
+    growth_books: RawBookSearch | None = None,
+    growth_issued_books: IssuedBookReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
     """Food · Activity · Growth 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
 
@@ -567,8 +588,14 @@ def _domain_contexts(
     # Growth 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 안전은 api 가 넘긴 어댑터의
     # growth_safety 다 — 교육만 읽고, 동의가 없으면 읽지 않는다. 안 넘기면 UnwiredSafety 라
     # 교육은 동의와 상관없이 blocked.safety 로 닫힌다. 루틴 · 성장 추이는 안전 포트를 읽지 않는다.
-    # 도서 · 공지 포트는 없다 — 도서는 closed.book_api, lookup_notice 는 빠진다.
+    # 도서는 정보나루 · 이미 낸 책 어댑터를 둘 다 받았을 때만 열린다(아니면 closed.book_api).
+    # 공지 포트는 없다 — lookup_notice 는 빠진다.
     # 동의 값을 못 받은 호출(테스트 · eval)은 동의 없음으로 읽는다 — 키 · 몸무게를 읽지 않게
+    books = (
+        LibraryBooks(growth_books)
+        if growth_books is not None and growth_issued_books is not None
+        else None
+    )
     growth_context = GrowthContext(
         child_id=child_id,
         run_id=run_id,
@@ -585,6 +612,8 @@ def _domain_contexts(
                 else StoreGrowthMemory(opener=domain_store)
             ),
             docs=InMemoryGrowthDocs.from_seed(),
+            books=books,
+            issued_books=growth_issued_books if books is not None else None,
         ),
     )
     return {

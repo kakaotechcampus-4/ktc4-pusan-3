@@ -92,9 +92,9 @@ DoD: upgrade/downgrade 왕복 · agent role로 `growth_doc` INSERT 시도 → �
 | # | 작업 | DoD |
 | --- | --- | --- |
 | 3-1 | 정보나루 인증키 + **서버 IP 등록** | 한도 500 → 30,000/일 |
-| 3-2 | 어댑터 + 계약 테스트 | 실제 응답 샘플 → dataclass |
-| 3-3 | 연령 산출식 (`age_min/max_month`) | 아동 도서(부가기호 7)로 좁히고 `form` 의 월령 범위로 — 처음 값은 own_table §7 GT-3 |
-| 3-4 | `form` 분류 (보드북/그림책/지식책) | 불명이면 `unknown` → **영아기 제외** |
+| 3-2 | 어댑터 + 계약 테스트 | 실제 응답 샘플 → dataclass ✅ (#506) |
+| 3-3 | 연령 산출식 (`age_min/max_month`) | 아동 도서(부가기호 7)로 좁히고 `form` 의 월령 범위로 — 처음 값은 own_table §7 GT-3 ✅ (#506) |
+| 3-4 | `form` 분류 (보드북/그림책/지식책) | 불명이면 `unknown` → **영아기 제외** ✅ (#506) |
 | 3-5 | 사서추천도서 월 1회 배치 | `pick_weight` 반영 |
 | 3-6 | 주제어(`subjects`) 색인 | 관심사 매칭 |
 
@@ -143,6 +143,8 @@ DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-
 ## 7. S6 — 모델 tool · 프롬프트
 
 > **진행(#443)** — 교육 · 루틴 완료(조회 4 + 출력 2 · `run()` 공통 루프 · 재호출 1회). 도서(`search_books` · `propose_books`)와 `lookup_notice` 는 운영 포트 · `book_guide` 행이 생긴 뒤. 예절 · 습관 전략은 행(P1)이 생길 때까지 `doc.no_row` 로 닫는다.
+
+> **진행(#506)** — 도서 열림: `search_books` · `propose_books` 정의 · 핸들러 · `[도서]` 구획 · 검색 실패는 `closed.book_api` · 재호출은 고른 책을 다시 안 낸다(key "제목(저자)") · 정보나루 어댑터 + Redis 검색어 캐시 · 이미 낸 책 DB 어댑터 · 일반 도서 추천은 고른 책을 근거로(`book_catalog`). `book_guide` 행은 필요 없다. `lookup_notice` 는 그대로 공지 포트 뒤.
 
 조회 6 (`search_education_memory` · `search_routine_memory` · `search_activity_memory` · `search_affinity` · `lookup_notice` · `search_books`) + 출력 3 (`propose_learning_activity` · `propose_routine_plan` · `propose_books`).
 

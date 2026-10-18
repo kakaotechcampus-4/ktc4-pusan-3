@@ -222,3 +222,14 @@ class TestExecute:
         from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
 
         assert {d.name for d in TOOL_DEFINITIONS} == set(TOOL_HANDLERS)
+
+    def test_도서_tool_은_정의와_핸들러가_있어_모델에게_보인다(self):
+        from app.agents.growth.registry import specs_for
+
+        names = [spec["function"]["name"] for spec in specs_for(tools_for(BOOK, gate(30)))]
+        assert names == [
+            "search_education_memory",
+            "search_affinity",
+            "search_books",
+            "propose_books",
+        ]

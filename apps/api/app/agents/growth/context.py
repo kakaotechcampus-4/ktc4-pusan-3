@@ -52,6 +52,11 @@ class GrowthRunState:
     # book_suggestion. 이번 run 에서 `search_books` 가 돌려준 책 (정규화한 ISBN → 행).
     # `propose_books` 는 이 표에 있는 ISBN 만 통과시킨다 — 연령 필터에 걸러진 책은 들어오지 않는다
     seen_books: dict[str, BookRow] = field(default_factory=dict)
+    # book_suggestion. 이번 run 에서 search_books 를 한 번이라도 불렀는가 — 0권 제출은 검색한 뒤에만
+    # 받는다. 찾아보지도 않고 "추천이 없어요" 를 내지 않게
+    book_searched: bool = False
+    # 재호출 전에 이미 통과했거나 빠진 책(정규화한 "제목(저자)"). 재호출은 이 책을 다시 낼 수 없다
+    done_books: frozenset[str] = frozenset()
 
     # ── 모델 경로 ──
     # 이번 run 에서 조회 tool 이 돌려준 근거 (id → 근거). 이 표 밖 id 는 출력 tool 이 거절한다

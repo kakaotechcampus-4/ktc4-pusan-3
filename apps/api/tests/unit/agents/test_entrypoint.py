@@ -965,3 +965,52 @@ async def test_넘긴_성장_기록_포트를_Growth_가_받는다(monkeypatch: 
     seen = await _activity_of(monkeypatch, growth_log=log)
 
     assert seen["contexts"]["growth"].ports.growth_log is log
+
+
+async def test_도서는_정보나루와_이미_낸_책을_둘_다_받아야_열린다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents.growth.library import LibraryBooks
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+
+    issued = InMemoryIssuedBooks()
+    seen = await _activity_of(monkeypatch, growth_books=object(), growth_issued_books=issued)
+    ports = seen["contexts"]["growth"].ports
+
+    assert isinstance(ports.books, LibraryBooks)
+    assert ports.issued_books is issued
+
+
+@pytest.mark.parametrize("given", [{"growth_books": object()}, {"growth_issued_books": object()}])
+async def test_도서_어댑터가_하나라도_없으면_닫힌다(
+    monkeypatch: pytest.MonkeyPatch, given: dict[str, Any]
+) -> None:
+    """낸 책을 모르면 "다른 책도" 에 같은 책이 다시 나온다 — 그 전에 closed.book_api 로 닫는다."""
+    seen = await _activity_of(monkeypatch, **given)
+    ports = seen["contexts"]["growth"].ports
+
+    assert ports.books is None and ports.issued_books is None
+
+
+async def test_05_도_도서_어댑터를_Growth_에_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents.growth.library import LibraryBooks
+
+    seen: dict[str, Any] = {}
+
+    async def fake_run(tasks: Any, contexts: Any, **kwargs: Any) -> Any:
+        seen["contexts"] = contexts
+        return entrypoint.SuggestRun(outcomes=(), failed=())
+
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+        growth_books=object(),
+        growth_issued_books=object(),
+    )
+
+    assert isinstance(seen["contexts"]["growth"].ports.books, LibraryBooks)

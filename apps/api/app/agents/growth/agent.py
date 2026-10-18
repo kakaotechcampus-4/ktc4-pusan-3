@@ -11,8 +11,9 @@
   ⑦ 안전 필터 · 금지 표현으로 모자라면 같은 대화에 제외 목록 한 줄을 더해 1회 더 부른다
      (model_calls=2). 처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts`)
 
-도서(`book_suggestion`)는 포트가 있어도 아직 모델 경로가 없다 — `unsupported`. 저장은 하지 않는다 —
-결과의 suggestions 를 pipeline 이 저장한다.
+도서(`book_suggestion`)는 포트(정보나루 · 이미 낸 책)가 없으면 게이트가 `closed.book_api` 로 닫는다.
+검색이 실패하면(`UpstreamUnavailable`) 같은 문구로 닫는다 — 빈 목록이나 캐시로 꾸미지 않는다.
+저장은 하지 않는다 — 결과의 suggestions 를 pipeline 이 저장한다.
 pipeline 에 등록돼 있다 — context 는 entrypoint 가 만든다.
 """
 
@@ -34,7 +35,7 @@ from app.agents.common.tool_loop import run_tool_loop
 from app.agents.growth.context import GrowthContext, build_gate
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
-from app.agents.growth.readouts import DOC_NO_ROW, READOUTS, RHYTHM_NO_ROW
+from app.agents.growth.readouts import CLOSED_BOOK_API, DOC_NO_ROW, READOUTS, RHYTHM_NO_ROW
 from app.agents.growth.registry import (
     OUTPUT_TOOL,
     closed_readout_key,
@@ -45,6 +46,7 @@ from app.agents.growth.registry import (
 from app.agents.growth.result import ToolResult
 from app.agents.growth.review import step_of
 from app.agents.growth.schemas.task import GrowthTaskType, task_type_of
+from app.agents.growth.store.ports import UpstreamUnavailable
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
@@ -82,9 +84,6 @@ async def run(
         )
         return _result(task_type, "completed", readouts=(readout,))
 
-    if task_type is GrowthTaskType.BOOK_SUGGESTION:
-        return _result(task_type, "unsupported")
-
     if (
         task_type is GrowthTaskType.ROUTINE_COACHING
         and routine_mode(gate.stage.months, None) == "rhythm_info"
@@ -118,7 +117,15 @@ async def run(
         {"role": "user", "content": request_message(task.request_texts)},
     ]
     output = OUTPUT_TOOL[task_type]
-    if not await _converse(llm, messages, context, allowed, output):
+    try:
+        completed = await _converse(llm, messages, context, allowed, output)
+    except UpstreamUnavailable:
+        # 도서 검색이 실패했다. 빈 목록이나 캐시로 꾸미지 않고 닫는다 — 모델은 한 번 불렀다
+        logger.warning("Growth 도서 검색 실패 run_id=%s", context.run_id)
+        return _result(
+            task_type, "blocked", readouts=(READOUTS.render(CLOSED_BOOK_API),), model_calls=1
+        )
+    if not completed:
         return _result(task_type, "failed", model_calls=1)
 
     state = context.state
@@ -131,7 +138,17 @@ async def run(
         # 안전 필터 · 금지 표현으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다
         model_calls = 2
         state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
-        again = await _recall(llm, messages, task, context, allowed, output, picked)
+        if task_type is GrowthTaskType.BOOK_SUGGESTION:
+            # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
+            state.done_books = frozenset(
+                normalize(name) for name in (*(d.content for d in picked), *state.excluded)
+            )
+        try:
+            again = await _recall(llm, messages, task, context, allowed, output, picked)
+        except UpstreamUnavailable:
+            # 재호출에서 다시 찾다가 실패했다. 처음 통과한 책은 그대로 낸다 (부분 결과)
+            logger.warning("Growth 도서 재검색 실패 run_id=%s", context.run_id)
+            again = None
         if again is None and not picked:
             return _result(task_type, "failed", model_calls=model_calls)
         picked = merge_drafts(picked, again or (), key=_same(task_type))
@@ -187,9 +204,12 @@ async def _rhythm(context: GrowthContext) -> Readout:
 
 
 def _same(task_type: GrowthTaskType) -> Callable[[SuggestionDraft], object]:
-    """재호출 결과에서 "같은 추천" — 루틴은 옮긴 단계 행, 교육은 정규화한 제목 줄."""
+    """재호출 결과에서 "같은 추천" — 루틴은 옮긴 단계 행, 도서는 "제목(저자)", 교육은 정규화한
+    제목 줄."""
     if task_type is GrowthTaskType.ROUTINE_COACHING:
         return lambda draft: step_of(draft) or normalize(draft.content)
+    if task_type is GrowthTaskType.BOOK_SUGGESTION:
+        return lambda draft: normalize(draft.content)
     return lambda draft: normalize(draft.content.split("\n", 1)[0])
 
 

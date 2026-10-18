@@ -3,6 +3,7 @@
 도메인 Agent 의 기억 포트는 호출마다, 추천 저장은 Agent 결과 하나마다 세션 하나다. 요청 세션이나
 run 세션을 같이 타면 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다.
 기록 건수도 호출마다 세션 하나다.
+Growth 도서 어댑터(정보나루 · 이미 낸 책)도 같다 — 인증키가 있을 때만 만든다.
 """
 
 from collections.abc import AsyncIterator, Callable
@@ -107,3 +108,25 @@ def safety_readers() -> dict[str, object]:
 
     reader = DbSafetyReader(background_session)
     return {"food_safety": reader, "activity_safety": reader, "growth_safety": reader}
+
+
+def growth_book_ports() -> dict[str, object]:
+    """Growth 도서 어댑터 — 정보나루 검색(검색어 캐시 포함)과 이미 낸 책. 러너와 05 가 같이 쓴다.
+
+    인증키(`DATA4LIBRARY_AUTH_KEY`)가 없으면 둘 다 넘기지 않는다 — 도서는 `closed.book_api` 로
+    닫힌다. 키 없이 빈 목록으로 채우지 않는다. 검색어 캐시는 `REDIS_URL` 이 있을 때만 쓴다(없으면
+    정보나루를 바로 부른다). 만들 때는 세션 · HTTP 연결을 열지 않는다 — 호출마다 연다.
+    """
+    from app.core.config import settings
+
+    key = settings.DATA4LIBRARY_AUTH_KEY.strip()
+    if not key:
+        return {}
+    from app.domains.suggestion.agent_reader import DbIssuedBooks
+    from app.infra.redis import get_redis
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    return {
+        "growth_books": Data4LibraryBooks(auth_key=key, cache=get_redis()),
+        "growth_issued_books": DbIssuedBooks(background_session),
+    }

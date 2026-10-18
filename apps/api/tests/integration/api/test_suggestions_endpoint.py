@@ -198,6 +198,22 @@ async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, 
     assert calls[0]["growth_safety"] is calls[0]["food_safety"]
 
 
+async def test_05_도_인증키가_있으면_도서_어댑터를_넘긴다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    monkeypatch.setattr(settings, "DATA4LIBRARY_AUTH_KEY", "test-auth-key")
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["growth_books"], Data4LibraryBooks)
+
+
 async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_client, bearer, cid, agents):
     plan, _ = agents
     headers, _ = bearer
@@ -831,3 +847,44 @@ async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
     assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
     assert evidence["title"] == "두부조림"
     assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."
+
+
+# ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────
+async def test_Growth_도서_일반_추천은_그_책을_정보나루_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """도서는 책 정보 표가 없어서 카드 제목은 그 추천의 "제목(저자)" 다 — 근거는 그 책 자체다."""
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.book_evidence import book_evidence_id
+
+    headers, _ = bearer
+    book = book_evidence_id("9788900000001")
+    draft = SuggestionDraft(
+        agent="growth",
+        kind="general",
+        content="공룡 기차(가나다)",
+        reason="쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="book_catalog", id=book),
+                note="도서관 정보나루 검색 결과에 있는 책이에요.",
+            ),
+        ),
+        items=("공룡 기차(가나다)",),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "book_catalog", "id": str(book)}
+    assert evidence["title"] == "공룡 기차(가나다)"
+    assert (evidence["source_org"], evidence["source_title"]) == (
+        "국립중앙도서관",
+        "도서관 정보나루",
+    )
+    assert evidence["source_url"] == "https://data4library.kr"

@@ -441,3 +441,39 @@ async def test_같은_run_에서_Memory_가_저장한_기록을_Growth_가_근�
     assert ("observation_routine", observation.id) in {
         (c.ref.kind, c.ref.id) for c in draft.citations
     }
+
+
+async def test_도서는_정보나루_어댑터가_있으면_고른_책을_책_근거와_함께_저장한다():
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+    from app.rules.book_evidence import book_evidence_id
+    from tests.unit.agents.growth.support import FakeRawSearch, raw_book
+
+    raw = FakeRawSearch({"공룡": [raw_book(n) for n in range(1, 4)]})
+    items = [
+        {"isbn": raw_book(n).isbn13, "evidence": [], "reason": "공룡이 나오는 그림책이에요"}
+        for n in range(1, 4)
+    ]
+    growth_llm = FakeLLM(
+        call("search_books", {"keywords": ["공룡"]}),
+        call("propose_books", {"items": items}),
+    )
+
+    saved = entrypoint.InMemorySuggestions()
+    (shown,) = await handle(
+        "공룡 책 추천해줘",
+        "book_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_books=raw,
+        growth_issued_books=InMemoryIssuedBooks(),
+    )
+
+    assert shown.status == "completed" and len(shown.suggestion_ids) == 3
+    assert shown.kind == "general"
+    first = saved.batches[0].drafts[0]
+    assert first.content == "책1(가나다)" and first.items == ("책1(가나다)",)
+    assert [(c.ref.kind, c.ref.id) for c in first.citations] == [
+        ("book_catalog", book_evidence_id(raw_book(1).isbn13))
+    ]
+    assert raw.calls == [("공룡", 50)]

@@ -15,7 +15,8 @@ Growth는 쓰기 포트가 없다 — 관찰은 Memory가, 추천 저장은 주�
 | GrowthMemoryReader | profile_affinity(education · activity) · 교육 · 루틴 · 놀이 관찰 |
 | NoticeReader | notice — 기관 공지가 있는가 (없어도 추천은 동작) |
 | GrowthDocReader | growth_doc — 월령 슬라이스 + 의미 검색, 자립 단계 사슬 통째로 |
-| BookSource | 도서 검색 — book_catalog 캐시 + 도서관 정보나루 |
+| BookSource | 도서 검색 — 정보나루 원문을 `library.LibraryBooks` 가 책 행으로 |
+| RawBookSearch | 정보나루 키워드 검색 원문 + 검색어 캐시 (`integrations/data4library`) |
 | IssuedBookReader | 만료 전 Growth suggestion 의 items — 도서는 "제목(저자)" |
 
 🚨 키 · 몸무게는 `Decimal` 이다.
@@ -33,15 +34,9 @@ from app.agents.common.ports import (
     ConsentReader,
     SafetyLookupError,
 )
+from app.core.book_raw import RawBook
+from app.core.book_raw import UpstreamUnavailable as UpstreamUnavailable  # 다시 내보낸다
 from app.rules.book_form import BookForm
-
-
-class UpstreamUnavailable(Exception):
-    """외부 조회 실패(도서 API). 결과가 0건인 것과 다르다.
-
-    캐시만으로 목록을 꾸미지 않고 `book_suggestion` 을 `closed.book_api` 로 닫는다.
-    """
-
 
 # 읽는 health_safety kind. 나머지 셋(chronic_disease · behavioral · other_medical)은 어디서도
 # 읽지 않는다 — 그걸로 추천을 가르면 LLM 없는 자동 진단이다
@@ -263,7 +258,19 @@ class GrowthDocReader(Protocol):
 
 class BookSource(Protocol):
     async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
-        """캐시를 먼저 보고 API 를 부른다. 실패하면 UpstreamUnavailable — 빈 목록이 아니다."""
+        """검색어 여럿의 책 행. 실패하면 UpstreamUnavailable — 빈 목록이 아니다.
+
+        `limit` 은 검색어마다 받는 권수다 — 합쳐서 자르지 않는다. 구현은 `library.LibraryBooks`.
+        """
+        ...
+
+
+class RawBookSearch(Protocol):
+    async def search(self, *, keyword: str, limit: int) -> tuple[RawBook, ...]:
+        """검색어 하나의 정보나루 원문, 결과 순서 그대로 `limit` 권까지. 캐시를 먼저 본다.
+
+        실패하면 UpstreamUnavailable. 0건은 빈 튜플이다. 해석(아동 도서 · 형태)은 하지 않는다.
+        """
         ...
 
 

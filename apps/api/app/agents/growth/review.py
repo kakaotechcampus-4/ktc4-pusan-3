@@ -1,12 +1,14 @@
-"""교육 · 루틴 후보 출력 검증 (Tool_공통 §5-1 순서).
+"""교육 · 루틴 · 도서 후보 출력 검증 (Tool_공통 §5-1 순서).
 
   1. 안전 필터   교육: 음식 용어 · 등록 이름 · 위험 용어 / 루틴: 음식 용어 · 의료 처치 · 증상.
                  걸린 후보는 거절이 아니라 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다
+                 도서: 안전 필터 없음(책은 정보나루 행이고 건강정보를 읽지 않는다)
   2. 금지 표현   걸리면 뺀다. 재호출 제외 목록에도 넣는다 — Tool_공통 §5-2 는 안전 필터만 적었고
                  Growth 가 넓혔다(같은 후보가 다시 나오지 않게)
   3. Growth 검증 같은 제목(교육) · 근거 id 대조 · note 의 성향 표현은 티어 1 근거에만 ·
                  루틴은 코드가 고른 단계(step_id)만
-  4. build()     아이 기록 근거 수로 kind 를 정한다. 루틴은 일반 추천을 내지 않는다
+  4. build()     아이 기록 근거 수로 kind 를 정한다. 루틴은 일반 추천을 내지 않는다.
+                 도서는 기록이 없으면 그 책 자체가 근거다
 
 🚨 #402(추천별 경고 자리) 전까지 교육 후보는 경고가 붙어도 뺀다. 화면에 경고 자리가 없으면
 "경고와 함께" 가 실제로는 경고 없이 나가는 것이다.
@@ -22,10 +24,12 @@ from app.agents.common.evidence import RankedEvidence, cite, overstates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.agents.growth.result import ErrorCode
+from app.agents.growth.schemas.books import BookItem
 from app.agents.growth.schemas.common import EvidencePick
 from app.agents.growth.schemas.learning import LearningItem
 from app.agents.growth.schemas.routine import RoutineItem
-from app.agents.growth.store.ports import GrowthDocRow, RoutineObservation, SafetyEntry
+from app.agents.growth.store.ports import BookRow, GrowthDocRow, RoutineObservation, SafetyEntry
+from app.agents.growth.tools.books import book_label
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.routine import routine_evidence
 from app.agents.growth.tools.safety import (
@@ -33,12 +37,19 @@ from app.agents.growth.tools.safety import (
     check_learning_candidate,
     check_routine_candidate,
 )
+from app.rules.book_evidence import book_evidence_id
 from app.rules.evaluative import find_evaluative
 from app.rules.term_match import normalize
 
 AGENT = "growth"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general", 루트 §2)
 GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
+# 도서 일반 추천의 이유 — 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다.
+# 무엇으로 골랐는지(월령에 맞는 형태)만 말한다 — 재지 않은 인기 · 대출 수를 말하지 않는다
+BOOK_GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요."
+# 책 근거 행의 note. 코드 문구라 금지 표현 검사가 필요 없다. 비울 수 없는 칸이다
+# (Food `meal_review.MENU_EVIDENCE_NOTE` 와 같은 자리)
+BOOK_EVIDENCE_NOTE = "도서관 정보나루 검색 결과에 있는 책이에요."
 # #402 전까지 경고가 붙는 교육 후보도 뺀다. 경고 자리가 생기면 False 로 두고 경고를 싣는다
 DROP_WARNED = True
 
@@ -216,6 +227,62 @@ def review_routine(
             rejections.append(Rejection(index, RejectReason.BUILD))
             continue
         used.add(step_id)
+    return Review(tuple(drafts), tuple(rejections), tuple(removed))
+
+
+def book_basis(row: BookRow) -> tuple[EvidenceCitation, ...]:
+    """고른 책 자체를 일반 도서 추천의 근거로. 개인화 추천이면 `build()` 가 버린다.
+
+    Food `meal_review._menu_basis` 와 같은 자리다(#442). 모델 citations 에 섞지 않고 코드가
+    `general_basis` 로만 넘긴다 — 모델이 책 근거를 고르거나 빼지 못하고, 개인화 근거에는 아이 기록만
+    남는다. id 는 ISBN 의 uuid5 다(`rules/book_evidence`).
+    """
+    ref = Ref(kind="book_catalog", id=book_evidence_id(row.isbn))
+    return (EvidenceCitation(ref=ref, note=BOOK_EVIDENCE_NOTE, label=row.title),)
+
+
+def review_books(
+    items: Sequence[BookItem], rows: Sequence[BookRow], *, seen: Seen, today: date
+) -> Review:
+    """`rows[i]` 는 `items[i]` 가 고른 책이다 — `propose_books` 가 다 통과시킨 뒤에만 부른다.
+
+    도서는 안전 필터가 없다(Growth_Tool_명세 §2 안전 필터 표). 금지 표현만 본다 — 모델이 쓴 이유 ·
+    근거 메모와 "제목(저자)". 책 이름은 정보나루 원문이지만 화면에 그대로 나가서 같이 본다.
+    개인화 근거는 모델이 고른 아이 기록(`seen`)뿐이다. 기록이 없거나 6개월이 지났으면 일반 추천이고,
+    이유는 코드 문구로 덮이고 근거는 그 책(`book_basis`, `general_basis`)이다 — 개인화면
+    `build()` 가 책 근거를 버린다. `suggestion.items` 는 "제목(저자)" 하나 — 일정으로 만들면
+    준비물이 된다.
+    """
+    drafts: list[SuggestionDraft] = []
+    rejections: list[Rejection] = []
+    removed: list[int] = []
+    for index, (item, row) in enumerate(zip(items, rows, strict=True)):
+        label = book_label(row)
+        if _evaluative((label, item.reason), item.evidence):
+            removed.append(index)
+            continue
+        citations = _resolve(item.evidence, seen, {})
+        if citations is None:
+            rejections.append(Rejection(index, RejectReason.UNKNOWN_EVIDENCE))
+            continue
+        if _overstated(item.evidence, seen):
+            rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
+            continue
+        try:
+            drafts.append(
+                build(
+                    agent=AGENT,
+                    content=label,
+                    reason=item.reason.strip(),
+                    citations=citations,
+                    general_reason=BOOK_GENERAL_REASON,
+                    general_basis=book_basis(row),
+                    items=(label,),
+                    today=today,
+                )
+            )
+        except SuggestionRejected:
+            rejections.append(Rejection(index, RejectReason.BUILD))
     return Review(tuple(drafts), tuple(rejections), tuple(removed))
 
 
