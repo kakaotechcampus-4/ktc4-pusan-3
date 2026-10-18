@@ -457,11 +457,21 @@ class TestAllergyRelated:
         assert verdict.removed_by != "allergy_related"
 
     def test_표에_없는_이름은_이름_대조만_한다(self, rules):
-        dog = SafetyEntry("allergy", "강아지", "active")
-        named = check_learning_candidate(("강아지 흉내",), months=30, entries=[dog], rules=rules)
-        other = check_learning_candidate(("고양이 흉내",), months=30, entries=[dog], rules=rules)
+        mite = SafetyEntry("allergy", "집먼지진드기", "active")
+        named = check_learning_candidate(
+            ("집먼지진드기 관찰",), months=30, entries=[mite], rules=rules
+        )
+        other = check_learning_candidate(("먼지 관찰",), months=30, entries=[mite], rules=rules)
         assert named.removed_by == "allergy_name"
         assert other.allowed
+
+    @pytest.mark.parametrize("label", ["강아지 털", "강아지", "고양이", "애완동물"])
+    def test_동물_이름으로_적어도_동물털_낱말이_든_후보를_뺀다(self, rules, label):
+        """동물털 알레르기를 흔히 적는 이름으로 적어도 깃털 · 동물원 후보가 안 나간다."""
+        entry = SafetyEntry("allergy", label, "active")
+        for text in ("깃털 날리기", "동물원 구경", "털실 만지기"):
+            verdict = check_learning_candidate((text,), months=30, entries=[entry], rules=rules)
+            assert verdict.removed_by in {"allergy_related", "allergy_name"}, (label, text)
 
     def test_결과에_알레르기_이름이나_낱말을_싣지_않는다(self, rules):
         verdict = check_learning_candidate(
