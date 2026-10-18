@@ -3,7 +3,7 @@
 > **한 줄 요약** — 진단을 대신하지 않고, 보호자가 아이의 건강 기록을 **다시 찾고 · 정리하고 · 챙기는 노동**을 줄이는 Agent. 판단이 필요한 계산은 전부 코드가 공신력 있는 기준표로 하고, AI는 기록을 옮겨 적는 일만 합니다.
 >
 > 대상 독자: 기획 · 디자인 · 프론트엔드 · 백엔드 · QA
-> 최종 갱신: 2026-09-22 (개정 3 — 성장 판정 제거 · 복약 초안 payload · 중단 soft delete · 성별 미사용 · 알레르기 후보 감지 제거 · 문서 테이블 대신 상수 파일 · `event_requests`도 초안 payload) · 관련 문서: [`Agent_공통규약.md`](../shared/Agent_공통규약.md) · [`health_agent_own_table.md`](health_agent_own_table.md)(소유 테이블) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · `설계_점검_2026-09-20.md`(저장소 밖)
+> 최종 갱신: 2026-10-18 (개정 4 — 복약 중단은 한 번 묻고 '네' 면 중단(중단 시각은 `updated_at`) · 증상 반복은 1주 안 기록된 날 수로 · 등록 만성질환 × 증상 안내 · 검진 맥락 요약에서 측정값 제외 · 응급 카드에서 보호자 연락처 제외) · 2026-09-22 (개정 3 — 성장 판정 제거 · 복약 초안 payload · 중단 soft delete · 성별 미사용 · 알레르기 후보 감지 제거 · 문서 테이블 대신 상수 파일 · `event_requests`도 초안 payload) · 관련 문서: [`Agent_공통규약.md`](../shared/Agent_공통규약.md) · [`health_agent_own_table.md`](health_agent_own_table.md)(소유 테이블) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · `설계_점검_2026-09-20.md`(저장소 밖)
 
 ### 개정 1에서 늘어난 것 — "판단은 줄이고 산출물은 늘린다"
 
@@ -26,8 +26,18 @@
 | 라벨 | 4개 — 성장 판정이 `schedule_check` 안에 | ~~5개 — `growth_check` 분리~~ → **성장 판정 자체를 제거**(09-22). 라벨은 `care_handoff` 포함 5개 | 신체 성장은 Growth가 추이만 정리 |
 | 알레르기 후보 | 관찰에서 감지해 확인 요청 | **v1에서 뺀다** | 알레르기는 LLM이 생성·추론하지 않는다(CLAUDE.md §2). 등록은 보호자가 앱에서 하는 경로 하나뿐 |
 | `resolve_dose_timing` | "AI가 anchor를 고름"(§7) vs "코드 tool"(§8) | **AI는 시점 표현을 복사만, 코드가 결정** | NF-03 |
-| 증상 3회 | 기간 미정 | **14일 창**(설정값) | 기간 없이는 규칙이 아님 |
+| 증상 반복 | 기간 미정 | ~~14일 창~~ → **1주 안 기록된 날 3일**(설정값, 10-18) | 기간 없이는 규칙이 아님 |
 | 검진 window | `event`로 이관 | **저장하지 않고 매번 계산** | 생년월일에서 결정되는 값 |
+
+### 개정 4에서 바뀐 것 (2026-10-18)
+
+| | 개정 3 | 개정 4 | 이유 |
+| --- | --- | --- | --- |
+| 복약 중단 | 묻지 않고 즉시 `status='stopped'` | **한 번 묻고**(`med.stop_confirm`) 보호자가 '네' 하면 `stopped`. 중단 시각은 `updated_at` | 엉뚱한 약의 알림이 확인 없이 끊기지 않게. 확인 모달 · 초안은 두지 않는다 — 멈출 시각을 다시 보여줄 필요가 없다 |
+| 증상 반복 | 에피소드 기준 14일 3회 | **최근 7일 안 기록된 날 3일** | 사흘 내리 이어진 증상도 반복으로 본다. 에피소드 묶기는 타임라인 표시에만 쓴다 |
+| 반복 안내 | 증상만 말함 | 등록 만성질환과 맞는 (질환 × 증상) 행이 있으면 **질환 이름을 붙인 문장 + 공공 출처 안내 카드** | 보호자가 이미 등록한 사실을 잇는 것까지. 원인·질환 추정은 여전히 하지 않는다 |
+| 검진 맥락 요약 | 마지막 측정값 포함 | **측정값 제외** | Health는 `child_growth_log`를 읽지 않는다 |
+| 응급 카드 | 보호자 연락처 포함 | **연락처 없음** | 연락처 칸이 없고, 넣으면 수집 항목이 늘어난다 (루트 CLAUDE.md §2) |
 
 ---
 
@@ -60,7 +70,7 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | `visit_summary` (진료 준비) | "내일 소아과 가는데 정리해줘" · "요즘 열 얼마나 났지?" | 증상·식사·복약 타임라인 | 1 |
 | `schedule_check` (검진·접종) | "검진 언제야?" · "이번 달 맞을 주사 있어?" | 현재·다음 검진 차수, 이 시기 권장 접종 | **0** |
 | `place_lookup` (병원 찾기) | "지금 문 연 소아과" · "야간 진료" | 병원 목록 | **0** |
-| `medication` (복약) | "항생제 하루 세 번 식후" · "약 끊었어" · "아까 약 먹였어" · "다음 약 언제야?" | 복약 일정 생성·수정(**초안 payload → 보호자 제출**)·중단(`status='stopped'`) · 복용 기록 · 다음 예정 시각 | 1 (기록·조회는 **0**) |
+| `medication` (복약) | "항생제 하루 세 번 식후" · "약 끊었어" · "아까 약 먹였어" · "다음 약 언제야?" | 복약 일정 생성·수정(**초안 payload → 보호자 제출**) · 중단(한 번 묻고 `status='stopped'`) · 복용 기록 · 다음 예정 시각 | 1 (기록·조회는 **0**) |
 | **`care_handoff`** (전달용 서류) | "어린이집 투약의뢰서 써야 해" · "시터한테 알레르기 뭐라고 알려주지" | 투약의뢰서 · 응급 카드 (복사·공유용) | **0** |
 
 ### 이 Agent로 오지 않는 것
@@ -98,8 +108,8 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 - **진료 준비** — 최근 증상·식사량·먹인 약·알레르기를 날짜순으로 정리. 모든 줄에 원 기록 링크
 - **검진·접종 안내** — 월령으로 현재 검진 차수와 이 시기 권장 접종을 계산
 - **병원 찾기** — 시간대에 맞춰 소아청소년과 · 달빛어린이병원 · 응급실
-- **복약 일정 CRUD** — 생성·수정은 초안 payload를 내고 보호자가 제출할 때 백엔드가 저장, 중단은 soft delete
-- **증상 반복 감지** — 같은 증상이 반복되면 병원 확인 안내
+- **복약 일정 CRUD** — 생성·수정은 초안 payload를 내고 보호자가 제출할 때 백엔드가 저장. 중단은 한 번 묻고 '네' 면 soft delete(`status='stopped'`)
+- **증상 반복 감지** — 같은 증상이 최근 7일 안 3일 기록되면 병원 확인 안내. 등록 만성질환과 맞으면 그 이름과 공공 출처 안내를 함께 (§6-7)
 - **복약 기록** — "먹였어"를 남기고, 다음 예정 시각과 남은 횟수를 알려줌
 - **전달용 서류** — 기관 투약의뢰서 · 시터·조부모에게 줄 응급 카드를 고정 서식으로 생성
 - **열 경과 나열** — 기록된 체온과 복약 시각을 시간순으로. 계산만 하고 해석은 안 함
@@ -140,22 +150,23 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 
 | 무엇 | 라벨 | 쓰는 이유 |
 | --- | --- | --- |
-| `observation_health` | visit_summary · (hook) | 증상 경과 · 반복 감지 · 알레르기 후보 |
+| `observation_health` | visit_summary · (hook) | 증상 경과 · 반복 감지 |
 | `observation_food` | visit_summary | 최근 3일 식사량 변화 |
-| `health_safety` (status=active) | visit_summary · (hook) | 기존 알레르기·만성질환 |
+| `health_safety` (status=active) | visit_summary · care_handoff · (hook) | 기존 알레르기·만성질환 · 반복 안내에 붙일 만성질환 |
 | `medication_schedule` · `medication_dose` | visit_summary · medication · care_handoff | 먹이고 있는 약 |
 | `medication_dose_log` | medication · visit_summary | 실제로 먹인 기록 |
 | `prescription_draft` | medication | **OCR 파이프라인 산출물. 읽기만** — 값은 보호자가 확인한 뒤에만 쓰임 |
 | `observation_routine` · `observation_education` | (검진 맥락 요약) | 기록 요약용. 판정 금지 |
 | `child` (생년월일) | schedule_check | 월령. **성별은 읽지 않음** |
 | 공식 기준표 (코드 상수) | schedule_check | §11 |
+| 질환 사전 · (질환 × 증상) 안내 (코드 상수) | (hook) | §6-7 · §11 |
 | 공공 API | place_lookup | §11 |
 
 ### 쓰기
 
 | 무엇 | 방식 |
 | --- | --- |
-| `medication_schedule` · `medication_dose` · **`medication_dose_log`** | **직접 CRUD** — 도메인 전용 테이블. 다른 Agent가 읽지 않음 ([`health_agent_own_table.md`](health_agent_own_table.md)). 단, 코스 **생성·수정은 직접 쓰지 않는다** — 초안 payload를 내고 보호자가 제출하면 백엔드가 쓴다. Agent가 직접 쓰는 것은 복용 기록(`medication_dose_log`)과 중단(`status='stopped'`)뿐 |
+| `medication_schedule` · `medication_dose` · **`medication_dose_log`** | 도메인 전용 테이블. 다른 Agent가 읽지 않음 ([`health_agent_own_table.md`](health_agent_own_table.md)). 코스 **생성·수정은 직접 쓰지 않는다** — 초안 payload를 내고 보호자가 제출하면 백엔드가 쓴다. **Agent가 직접 쓰는 것은 복용 기록(`medication_dose_log`)과, 한 번 물어 보호자가 확인한 중단(`status='stopped'`)뿐** |
 | `prescription_draft` | **쓰지 않음.** OCR 파이프라인이 쓰고 Health는 읽기만 |
 | `health_safety` | **쓰지 않음.** 후보만 내고, 보호자 확인 후 앱이 보호자 권한으로 저장 |
 | `event` | 쓰지 않음. 필요하면 `event_requests`로 Memory에 넘김 — **초안 payload로 나가고 보호자가 제출해야 저장된다** |
@@ -202,7 +213,8 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | --- | --- |
 | 최근 식사 경향 · 복용 중인 약 · 최근 아팠던 이력 | **발달 문항 답변·체크** |
 | 등록된 알레르기·만성질환 | 문진표 항목 대필 |
-| 마지막 측정값과 측정일 | 수면 시간 — **기록 구조가 없습니다** |
+| | 수면 시간 — **기록 구조가 없습니다** |
+| | 키·몸무게 — Health는 `child_growth_log`를 읽지 않습니다 (10-18) |
 
 문진표는 보호자가 직접 작성합니다. 이 요약은 그때 **옆에 두고 보는 기록**이지 답안이 아닙니다.
 
@@ -220,7 +232,7 @@ AI는 **정리 담당**입니다. 읽기 tool로 기록을 모으고, 출력 too
 **모델이 받기 전에 코드가 묶습니다**
 - `normalize_symptom_term` — "열나" · "미열" · "38도" → `fever` 표준 코드
 - `group_symptom_episodes` — 같은 증상 코드가 48시간 이내로 이어지면 **한 에피소드**. "3/12–3/15 발열 (4일)"
-- 이 묶기가 있어야 증상 반복 판정(3회)도 의미를 가집니다. 지금은 3일 연속 발열이 3회인지 1회인지 정의가 없습니다
+- 에피소드는 **타임라인 표시용**입니다. 증상 반복 판정(§6-7)은 에피소드가 아니라 **기록된 날 수**로 셉니다(10-18) — 사흘 내리 발열이면 타임라인에는 1건, 반복 판정에는 3일입니다
 
 **열 타임라인** (`build_fever_timeline`, AI 0회) — "열 언제부터 났지"에는 모델을 부르지 않습니다.
 
@@ -286,7 +298,7 @@ AI는 **정리 담당**입니다. 읽기 tool로 기록을 모으고, 출력 too
 - 수정은 `op="update"` 초안입니다. 제출 전까지 기존 알림은 그대로 울리고, 제출하면 **같은 행을 UPDATE**하고 dose를 다시 만듭니다. 코스를 지웠다 새로 만들지 않으므로 복용 기록이 남습니다.
 - **취소하거나 화면을 떠나면 아무 일도 없습니다.** 초안은 run과 함께 사라집니다 — 만료라는 개념이 없습니다. 발송 잡은 `active` 코스만 읽습니다.
 
-**중단** — "약 끊었어"는 `stop_medication_schedule` → `status='stopped'`(soft delete). 행이 남으므로 **먹인 기록이 보존됩니다.** 발송 잡은 `active`만 읽으니 알림은 즉시 멈춥니다. 되돌릴 수 없는 삭제가 아니라서 `event` 삭제와는 방식이 다릅니다 — event는 남길 기록이 없지만 복약은 있습니다.
+**중단** (10-18 변경) — "약 끊었어"는 `stop_medication_schedule` 이 대상 코스를 찾아 **한 번 묻습니다** — `med.stop_confirm`("{title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."). 확인 모달이나 초안은 두지 않습니다 — 멈출 시각을 다시 보여줄 필요가 없어서입니다. 묻는 run 에서는 아무것도 바꾸지 않고, 물은 대상(`schedule_id`)을 되묻기 맥락으로 남깁니다. 보호자가 '네' 하면 다음 run 에서 Agent 가 `status='stopped'`(soft delete)로 바꾸고 `med.stopped` 를 냅니다. **중단 시각은 `updated_at` 에 남습니다** — 중단된 코스는 다시 고치지 않으므로 `updated_at` 이 그대로 중단 시각입니다. '아니요' 거나 답이 애매하면 바꾸지 않고 `med.stop_kept`. 대상 약이 둘 이상인데 원문으로 못 가리면 묻기 전에 어느 약인지 먼저 묻습니다. 행이 남으므로 **먹인 기록이 보존됩니다.** 발송 잡은 `active`만 읽으니 '네' 하면 알림이 바로 멈춥니다. Memory 의 관찰 삭제 확인(#177)과 같은 되묻기라 승인 게이트를 늘리지 않습니다. 되돌릴 수 없는 삭제가 아니라서 `event` 삭제와는 방식이 다릅니다 — event는 남길 기록이 없지만 복약은 있습니다.
 
 **복약 이유** — `indication_text`에 보호자 발화를 **그대로 복사**합니다("중이염 때문에"). 발화에 없으면 NULL이고 추정하지 않습니다. `symptom_codes`는 코드가 사전으로 뽑습니다. 이 값은 **진단이 아니라 보호자 기록**이라 `health_safety`로 올라가지 않습니다.
 
@@ -327,7 +339,7 @@ AI는 **정리 담당**입니다. 읽기 tool로 기록을 모으고, 출력 too
 - 저장하지 않고 **복사·공유만** 합니다(알림장 앱에 붙여넣기).
 - 끝에 "보호자 확인 후 서명해 주세요"가 **항상** 붙습니다. 투약의뢰서는 보호자 책임 서류입니다.
 
-**응급 카드** (`build_emergency_card`) — 알레르기 · 만성질환 · 복용 중인 약 · 아이 기본 정보 · 보호자 연락처를 한 장으로. 등록된 값의 **복사본**이라 새로 판단하는 것이 하나도 없습니다.
+**응급 카드** (`build_emergency_card`) — 알레르기 · 만성질환 · 복용 중인 약 · 아이 기본 정보를 한 장으로. 등록된 값의 **복사본**이라 새로 판단하는 것이 하나도 없습니다. **보호자 연락처는 넣지 않습니다**(10-18) — 연락처를 담을 칸이 없고, 넣으려면 수집 항목이 늘어납니다(루트 CLAUDE.md §2).
 
 ### 6-7. 코드 hook — 라벨과 무관하게 도는 것
 
@@ -335,7 +347,29 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 
 | hook | 조건 | 출력 |
 | --- | --- | --- |
-| `check_symptom_repetition` | 같은 증상이 **14일 안에 3회 이상** (설정값) | readout: "최근 2주 동안 '발열'이 3번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요." + 병원 찾기 버튼 |
+| `check_symptom_repetition` | 같은 증상 코드가 **최근 7일 안 3일 이상** 기록됨 (설정값) | readout `symptom_repeat` + 병원 찾기 버튼. 등록 만성질환과 맞는 행이 있으면 질환 이름을 붙인 문장 + 안내 카드(`condition_guidance`) |
+
+**세는 법** (10-18)
+
+- 단위는 **날**입니다. 같은 날 여러 번 기록돼도 1일이고, 사흘 내리 기록되면 3일입니다. 에피소드(48시간 묶음)로 세지 않습니다.
+- 날짜는 아이 타임존의 달력 날짜입니다. 관찰 시점(`observed_time`)이 있으면 그 날, 없으면 관찰한 날(`observed_range`)로 셉니다. "어제 기침했어" 를 오늘 말해도 어제로 셉니다. 기간이 여러 날인 기록("사흘째 기침해")은 그 날들을 다 셉니다.
+- 정정으로 내린 기록(`wrong`)은 세지 않습니다. 보호자 발화의 "세 번째"를 믿지 않고 기록으로 셉니다.
+- 증상은 `normalize_symptom_term`의 표준 코드로 묶습니다 — "열나"와 "미열"은 같은 `fever`입니다.
+
+**문장** — 코드 상수입니다([`Health_Tool_명세.md`](Health_Tool_명세.md) §4).
+
+- 기본: "최근 1주 동안 '기침'이 3번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요."
+- 등록 만성질환과 이어질 때: "최근 1주 동안 '기침'이 3번 기록됐어요. 등록하신 '만성 면역력 저하증'이 있어 병원에서 확인해 보시는 게 좋겠어요."
+
+**만성질환 연결** (10-18)
+
+- `health_safety`(active) 중 `chronic_disease` · `other_medical`만 봅니다. **알레르기는 붙이지 않습니다** — "등록하신 '우유'가 있어"는 증상의 원인을 알레르기로 읽게 만듭니다. 알레르기 후보 감지를 뺀 것과 같은 이유입니다.
+- 보호자가 자유롭게 적은 이름(`label`)을 **질환 사전**(`reference/condition_codes.yaml`)이 표준 코드로 맞춥니다. 공통 매처(`app/rules/term_match.py`)를 씁니다. **사전에 없는 이름이면 기본 문장만** 냅니다 — 추측해서 잇지 않습니다.
+- 질환 문장은 **(질환 코드 × 증상 코드) 행이 `reference/condition_guidance.yaml`에 있을 때만** 나갑니다. 등록 질환이 있다는 것만으로 아무 증상에나 붙이지 않습니다.
+- 문장 속 질환 이름은 보호자가 등록한 `label` **원문 그대로**입니다.
+- 같은 행의 **안내 카드**(`condition_guidance`)가 함께 나갑니다. 공공 출처에서 가져와 의료 검수를 거친 고정 문구와 출처입니다. `management`에 적어 둘 만한 내용을 보호자가 읽고 판단하도록 **보여주기만** 합니다 — 어디에도 쓰지 않고 승인도 받지 않습니다. `health_safety.management`는 보호자가 설정 화면에서 직접 고칩니다.
+- 방향은 **등록된 질환 → 관리 안내**입니다. 증상에서 질환을 찾는 매핑(§11 "쓰지 않는 것")과 다릅니다.
+- 하지 않는 것: 원인 추정("면역력 저하로 인해") · 질환명 추정("감기에 걸린 건 아닌지") · 모델이 출처 문서를 읽고 문장 만들기.
 
 - hook은 `check_symptom_repetition` **하나뿐**입니다. 알레르기 후보 감지(`detect_allergy_candidate`)는 v1에서 뺐습니다 — 알레르기는 보호자가 앱에서 직접 등록하는 경로 하나만 둡니다.
 - 반응이 심한 경우(호흡곤란 등)는 **Supervisor 응급 검사가 먼저** 잡습니다.
@@ -352,7 +386,7 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | `compose_symptom_timeline` | **타임라인 출력** | ✓ | – | – | – | – | – | 보임 |
 | `create_medication_schedule` | 코스+dose **초안 payload** (DB 저장 없음) | – | – | – | – | ✓ | – | 보임 |
 | `update_medication_schedule` | **초안 payload** (`op="update"`) | – | – | – | – | ✓ | – | 보임 |
-| `stop_medication_schedule` | 중단 — `status='stopped'` | – | – | – | – | ✓ | – | 보임 |
+| `stop_medication_schedule` | 중단 — 한 번 묻고, '네' 면 `status='stopped'` | – | – | – | – | ✓ | – | 보임 |
 | `log_dose_taken` | **복용 기록** | – | – | – | – | ✓ | – | 보임 |
 | `log_dose_skipped` | **미복용 기록** | – | – | – | – | ✓ | – | 보임 |
 | `load_health_safety` | 알레르기·만성질환 주입 | ✓ | – | – | – | – | ✓ | **안 보임** |
@@ -370,6 +404,7 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | `compute_vaccine_schedule` | 권장 접종 | – | ✓ | – | – | – | – | **안 보임** |
 | `find_pediatric_places` | 병원 검색 | – | – | – | ✓ | – | – | **안 보임** |
 | `check_symptom_repetition` | 증상 반복 (hook) | – | – | – | – | – | – | **안 보임** |
+| `lookup_condition_guidance` | **질환 사전 매칭 + (질환 × 증상) 안내** (hook) | – | – | – | – | – | – | **안 보임** |
 
 - 늘어난 tool 아홉 개 중 **모델에게 보이는 것은 `log_dose_taken` 하나**입니다. 나머지는 전부 코드가 부릅니다.
 - `care_handoff`는 **모델 호출 0회**입니다. 조회와 서식 채우기가 전부입니다.
@@ -387,6 +422,8 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | 진행 중 복약 0건 | `care_handoff`의 투약의뢰서 (응급 카드는 동작) |
 | `observation_health.temperature` 0건 | `build_fever_timeline` → "체온 기록이 없어요" |
 | `prescription_draft` 없음 | 처방전 카드 없이 평소 복약 등록 흐름 |
+| 질환 사전에 없는 이름 · (질환 × 증상) 행 없음 | 반복 안내의 질환 문장·안내 카드 (기본 문장은 나감) |
+| hook 중 `health_safety` 조회 실패 | 질환 연결 없이 기본 문장. "등록 질환 없음"으로 말하지 않는다 |
 
 ---
 
@@ -399,6 +436,7 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | `readouts` | `place_list` | 코드 | 안 함 |
 | `readouts` | `medication_notice` (확인 모달 · 제출 후 안내) | **코드** | 안 함 |
 | `readouts` | `symptom_repeat` | 코드 | 안 함 |
+| `readouts` | `condition_guidance` (등록 만성질환 × 증상 안내 · 출처) | **코드 (고정 문구)** | 안 함 — 승인·저장 버튼 없음 |
 | `readouts` | `fever_timeline` | **코드** | 안 함 |
 | `readouts` | `dose_status` (다음 예정·남은 횟수) | **코드** | 안 함 |
 | `readouts` | `med_notice_form` (투약의뢰서) | **코드 (고정 서식)** | 안 함 — 복사·공유만 |
@@ -407,8 +445,9 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | `readouts` | `prescription_draft` (확인 카드) | **코드** | 안 함 — 확인 후 복약 테이블로 |
 | `readouts` | `unsupported` | 코드 | 안 함 |
 | `event_requests` | 검진 알림 | 코드 | **안 함** — pipeline이 Memory 일정 tool을 코드로 불러 초안 payload로. 보호자가 제출해야 `event` 행이 생긴다 |
-| `needs_observation` | 되묻기 (복용 시점 · 대상 약) | 코드 | 안 함 |
-| **`medication_drafts`** (신설) | 복약 코스 생성·수정 초안 | 코드 | **안 함** — 보호자가 "등록" → 백엔드가 `medication_schedule` INSERT/UPDATE |
+| `needs_observation` | 되묻기 (복용 시점 · 대상 약 · 중단 확인) | 코드 | 안 함 |
+| **`medication_drafts`** (신설) | 복약 코스 생성·수정 초안 | 코드 | **안 함** — 보호자가 제출 → 백엔드가 `medication_schedule` INSERT/UPDATE |
+| 되묻기 맥락 (신설, 10-18) | 중단 확인 — 물은 대상(`schedule_id` · 약 이름) | 코드 | **안 함** — run 사이에 잠깐 보관했다가 다음 입력(`reply_to`)에 돌려준다. Memory 되묻기 맥락과 같은 자리 |
 
 알레르기 후보 채널(`safety_confirmations`)은 **v1에서 뺐습니다.** 알레르기 등록은 보호자가 앱에서 직접 하는 경로 하나뿐입니다.
 
@@ -481,6 +520,7 @@ class MedicationDraft:
 | 병원 | 건강보험심사평가원 병원정보서비스 Open API (data.go.kr) | `find_pediatric_places` | API |
 | 야간·휴일 소아 | 국립중앙의료원 달빛어린이병원 · 응급의료정보(E-Gen) (data.go.kr) | `find_pediatric_places` | API |
 | 응급 신호·증상 문구 검수 | 질병관리청 국가건강정보포털 health.kdca.go.kr · 대한소아청소년과학회 | Supervisor 규칙 · `reference/health_phrases.yaml` | 검수 시 |
+| 만성질환 × 증상 안내 (10-18) | 공공 출처 — **공공누리 제0·1유형 · 고시 · CC BY만** 행 출처로 쓴다 | `reference/condition_codes.yaml` · `reference/condition_guidance.yaml` | 검수 시 (**의료 검수 필수**) |
 | 알레르기 표시 대상 | 식품 등의 표시·광고 법령 알레르기 표시 대상 | `health_safety` 라벨 정규화 (Food와 공유) | 고시 개정 시 |
 
 **의도적으로 쓰지 않는 것**
@@ -500,7 +540,9 @@ class MedicationDraft:
 - 알레르기 확인 카드는 **등록 / 아니요** 두 버튼. "아니요"는 같은 식품으로 다시 묻지 않음
 - 복약 등록·수정 시 **확인 모달**이 뜨고, 모달에 **실제 알림 시각**이 반드시 나옴. 제출 전에는 저장도 알림도 없음
 - 초안에 빈 필수 칸이 있으면 **제출 버튼이 잠김** (처방전 카드와 같은 규칙)
-- 복약 중단은 soft delete(`status='stopped'`) — 알림은 즉시 멈추지만 먹인 기록은 남습니다
+- 복약 중단은 확인 모달 없이 **대화로 한 번 묻습니다**(10-18, `med.stop_confirm`). '네' 하면 알림이 바로 멈추고(`med.stopped`), 먹인 기록은 남습니다 (soft delete)
+- 증상 반복 안내에 등록 만성질환 이름이 붙을 수 있고, 그때 공공 출처 안내 카드가 함께 뜹니다. 카드는 읽기 전용 — 저장·승인 버튼이 없습니다
+- 응급 카드에 보호자 연락처는 없습니다
 - 응급 안내 화면에는 다른 추천 카드를 같이 띄우지 않음
 
 ### 프론트엔드
@@ -508,10 +550,10 @@ class MedicationDraft:
 - 위치는 요청 시점에만 전달, 저장 안 함
 
 ### 백엔드
-- Agent role: `medication_*` write 부여 · `health_safety` write **비부여**
+- Agent role: `medication_dose_log` INSERT · `medication_schedule` 의 중단(`status` · `updated_at`) UPDATE 만 부여 — 코스 생성·수정은 보호자 제출 API가 쓴다(10-18) · `health_safety` write **비부여**
 - `health_safety` INSERT는 보호자 세션의 앱 API만 (`created_by = parent.id`)
 - 기준표와 **고정 문구 전부** `reference/`에 버전 파일로, 테스트에서 글자 단위로 고정. Health에는 문서 테이블이 없다
-- hook 두 개는 pipeline에서 Memory 저장 **직후** 동기 실행
+- hook(`check_symptom_repetition`)은 pipeline에서 Memory 저장 **직후** 동기 실행
 - 선행 스키마: consent 조회 포트 (`child.gender` · `child_growth_log`는 Health와 무관해짐)
 - **신규 소유 테이블**: `medication_dose_log` · `medication_schedule` 컬럼 4개 추가 → [`health_agent_own_table.md`](health_agent_own_table.md)
 - **공유 테이블 변경 요청**: `observation_health.temperature` · `measured_at` · `measure_site` (Memory 소유, Health는 읽기만)
@@ -526,15 +568,19 @@ class MedicationDraft:
 - 제출 전에는 **DB에 행이 없음** (`medication_schedule` 0건) · 알림도 없음
 - NOT NULL 칸이 빈 초안 → `missing`에 이름이 있고 제출이 막히는가
 - 수정 → `op="update"` 초안, 제출 전까지 기존 알림 유지 · 제출 시 같은 행 UPDATE(복용 기록 유지)
-- "약 끊었어" → `status='stopped'` · 발송 0건 · `medication_dose_log` 보존
-- 14일 안 발열 3회 → 반복 readout / 15일 간격 3회 → 없음
+- "약 끊었어" → `med.stop_confirm` 되묻기 · **그 run 변경 0건 · 확인 모달 없음** → '네' → `status='stopped'` · `updated_at`=중단 시각 · 발송 0건 · `medication_dose_log` 보존 / '아니요' → 변경 0건
+- 7일 안 발열 3일 → 반복 readout / 같은 날 3번 기록 → 1일이라 없음 / 3일이 7일 창 밖으로 흩어짐 → 없음
+- 만성질환 '만성 면역력 저하증' 등록 + 기침 3일 → 질환 문장이 상수와 글자 단위로 같고 안내 카드에 출처가 붙는가 · `health_safety` 변경 0건
+- 사전에 없는 질환 이름 · 알레르기만 등록 · (질환 × 증상) 행 없음 → 기본 문장만
+- 반복 안내·안내 카드에 원인·질환 추정 표현 0건 ("~로 인해" · "~에 걸린")
+- 응급 카드에 연락처 줄 0건
 - "숨을 못 쉬어" → Health까지 **가지 않고** 응급 안내
 - 동의 철회 → Health 전 라벨 AI 0회
 - 투약의뢰서·응급 카드 → AI 호출 **0회**, 서식이 상수와 글자 단위로 같음
 - 투약의뢰서 끝에 "보호자 확인 후 서명" 문구가 **항상** 있는가
 - 열 타임라인 출력에 **약 성분·계열 단어가 0건**인가 (아세트아미노펜·이부프로펜 등)
 - "지금 또 먹여도 돼?" → 허가 문구 0건, 반환값에 `can_take` 필드 **없음**
-- 3일 연속 발열 → 에피소드 **1건**으로 묶이는가 (반복 3회 오판정 방지)
+- 3일 연속 발열 → 타임라인은 에피소드 **1건**, 반복 판정은 **3일**(안내 나감)
 - 처방전 초안에서 안 읽힌 칸 → 빈칸으로 남고 자동 채움 0건
 - 검진 맥락 요약에 **발달 문항·체크·점수 0건**
 - `indication_text` — 발화에 이유가 없으면 NULL (추정 저장 0건)
@@ -550,13 +596,14 @@ class MedicationDraft:
 | H-3 | ~~`growth_check` 라벨 분리 승인~~ | ✅ 폐기 — 라벨 자체 제거 |
 | H-4 | ✅ **폐기(09-22)** — 알레르기 후보 감지를 v1에서 뺐다. 채널도 함께 사라졌다 |
 | H-5 | ~~누운키/선키 측정 방식~~ | ✅ **이관(09-22)** — Health와 무관. `measure_guide` 문구와 함께 Growth로 넘겼다 |
-| H-6 | 증상 반복 창·횟수 | **설정값 — 14일 3회로 시작.** 운영하며 조정 |
+| H-6 | 증상 반복 창·횟수 | ✅ **닫힘(10-18)** — **최근 7일 안 기록된 날 3일.** 단위는 날. 설정값으로 두고 운영하며 조정 |
 | H-7 | ✅ **닫힘(09-22)** — `care_handoff` 승인. Supervisor 라벨 11개 |
-| H-8 | 증상 표준 코드 사전 범위 | 에피소드·반복 판정이 이 어휘 위에 선다. `reference/symptom_codes.yaml`과 `health_phrases.yaml`의 `seek_care` 키가 같아야 한다 |
-| H-9 | 에피소드 병합 간격 | **설정값 — 48시간으로 시작** |
+| H-8 | 증상 표준 코드 사전 범위 | 에피소드·반복 판정이 이 어휘 위에 선다. `reference/symptom_codes.yaml`과 `health_phrases.yaml`의 `seek_care` 키, `condition_guidance.yaml`의 증상 키가 같아야 한다 |
+| H-9 | 에피소드 병합 간격 | **설정값 — 48시간으로 시작.** 타임라인 표시용이고 반복 판정에는 쓰지 않는다(10-18) |
 | H-10 | ✅ **닫힘(09-22)** — 대조하지 않는다. 일치 여부 표시도 없다 |
 | H-11 | 기관별 투약의뢰서 서식 차이 | **공통 서식 1종으로 시작.** 기관이 요구하면 그때 연다 |
-| H-12 | 응급 카드의 보호자 연락처 | `parent` 프로필에서. 지금 `parent`에 연락처 컬럼이 없어 **앱에 추가 요청**이 필요하다 |
+| H-12 | ~~응급 카드의 보호자 연락처~~ | ✅ **닫힘(10-18)** — 카드에서 연락처를 뺐다. 수집 항목이 늘지 않는다 |
+| H-13 | 질환 사전 · (질환 × 증상) 안내 행의 범위와 출처 | 행이 없으면 질환 문장·안내 카드 없이 기본 문장만 나간다. 출처는 공공누리 0·1 · 고시 · CC BY만, **의료 검수 필수** |
 | M-1~M-14 | 복약 미결 ([`health_agent_own_table.md`](health_agent_own_table.md) §10) — M-1·M-3·M-11·M-12·M-14 닫힘 | 영아 복약 알림이 늦게 울림 |
 
 ---
