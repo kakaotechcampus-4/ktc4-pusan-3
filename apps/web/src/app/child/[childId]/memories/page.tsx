@@ -33,7 +33,7 @@ import {
   type Agent,
   type Observation,
   type ObservationsResponse,
-  type Suggestion,
+  type ReceivedSuggestion,
   type SuggestionFeedback,
   type SuggestionFeedbackResponse,
   type SuggestionListResponse,
@@ -483,8 +483,8 @@ function FeedbackTab({ childId }: { childId: string }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   /**
-   * 받은 개인화 제안 목록 (#284). 서버가 `kind = 'personalized'` 로 걸러 준다.
-   * ⚠️ 채택한 일반 추천(#509)의 피드백은 아직 열지 않았다 (`SuggestionListResponse` 주석).
+   * 받은 제안 목록 (#284) — 개인화와 채택한 일반 추천(#509)이 같이 온다.
+   * ⚠️ 실서버는 아직 개인화만 내린다 (`SuggestionListResponse` 주석).
    * ⚠️ 첫 장(20건)만 그린다 — `next_cursor` 로 더 보기는 아직 없다 (#316 하지 않는 것).
    */
   const received = useQuery({
@@ -497,7 +497,7 @@ function FeedbackTab({ childId }: { childId: string }) {
       suggestion,
       feedback,
     }: {
-      suggestion: Suggestion;
+      suggestion: ReceivedSuggestion;
       feedback: SuggestionFeedback;
     }) =>
       api.patch<SuggestionFeedbackResponse>(

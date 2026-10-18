@@ -17,6 +17,7 @@ import type {
   EventDraft,
   Evidence,
   GeneralSuggestion,
+  ReceivedSuggestion,
   GrowthLog,
   HealthSafety,
   HomeResponse,
@@ -889,9 +890,20 @@ export const manyObservations: Observation[] = [
 ];
 
 /** 07 피드백 탭이 평가할 제안 목록 (`GET /children/{cid}/suggestions` · #284). */
-export const receivedSuggestions: Suggestion[] = [
+export const receivedSuggestions: ReceivedSuggestion[] = [
   { ...suggestions[0], id: "s_past_1", status: "approved", feedback: "child_liked" },
   { ...suggestions[1], id: "s_past_2", status: "rejected", feedback: null },
+  // 05 에서 채택한 일반 추천 (#509). 🚨 실서버 모양이라 `basis` · 문서 근거가 없다 (`ReceivedGeneralSuggestion`)
+  {
+    id: "g_past_1",
+    child_id: CHILD_ID,
+    agent: generalSuggestions[0].agent,
+    kind: "general",
+    content: generalSuggestions[0].content,
+    status: "approved",
+    expires_at: generalSuggestions[0].expires_at,
+    feedback: null,
+  },
 ];
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */

@@ -905,21 +905,39 @@ export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
  *    기억을 고치려면 `POST /corrections` 로 간다.
  */
 export interface SuggestionFeedbackResponse {
-  suggestion: Suggestion;
+  suggestion: ReceivedSuggestion;
   memory_changed: boolean;
 }
 
 /**
+ * 07 피드백 목록의 일반 추천 한 줄 (#509). 05 에서 채택한 일반 추천도 해 보고 나서 평가한다.
+ *
+ * 🚨 **`GeneralSuggestion` 이 아니다.** 실서버는 이 목록에서 일반 추천도 개인화와 같은 모양
+ *    (`SuggestionOut`)에 `kind: "general"` · `evidence: []` 를 실어 보낸다 — `basis` · `record_count` ·
+ *    문서 근거가 없다. 그래서 **두 모양에 공통인 필드만** 적는다. 근거를 읽을 길이 타입에 없어야
+ *    "근거 0행인 것이 개인화로 그려지는" 길도 없다 (CLAUDE.md §2).
+ */
+export interface ReceivedGeneralSuggestion extends Pick<
+  Suggestion,
+  "id" | "child_id" | "agent" | "content" | "status" | "expires_at" | "feedback"
+> {
+  kind: "general";
+}
+
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
+
+/**
  * `GET /children/{cid}/suggestions` — 07 피드백 탭이 평가할 제안 목록 (#284).
  *
- * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다. 그래서 `items` 가
- *    `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
- *    ⚠️ 05 에서 일반 추천도 채택할 수 있게 됐지만(#509) 채택한 일반 추천의 피드백은 아직 열지 않았다 —
- *    서버 필터를 바꾸는 일이라 따로 정한다.
+ * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
+ *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
+ * ⚠️ **실서버는 아직 개인화만 내린다** (`kind = 'personalized'` 필터). 목이 먼저 일반 추천을 싣고,
+ *    필터를 푸는 것은 백엔드에 요청한다 (#509 PR).
  * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
  */
 export interface SuggestionListResponse {
-  items: Suggestion[];
+  items: ReceivedSuggestion[];
   next_cursor: string | null;
 }
 
