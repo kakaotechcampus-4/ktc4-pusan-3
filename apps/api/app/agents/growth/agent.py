@@ -191,16 +191,29 @@ def _ended(task_type: GrowthTaskType, context: GrowthContext) -> DomainAgentResu
 
 
 async def _rhythm(context: GrowthContext) -> Readout:
-    """0–11개월 루틴 — `rhythm_info` 행 본문 하나. 없으면 `rhythm.no_row`."""
+    """0–11개월 루틴 — `rhythm_info` 행 본문 하나. 없으면 `rhythm.no_row`.
+
+    한 구간에 행이 여럿이면 교육 [예시]처럼 아이 · 날짜로 돌려 고른다 — 같은 날 같은 아이는 같은
+    안내다. 출처를 따라갈 수 있게 그 행을 `source_refs` 에 단다(화면에는 싣지 않는다).
+    """
     gate = context.state.gate
     assert gate is not None
     hits = await search_growth_doc(
-        context.ports.docs, task_type=GrowthTaskType.ROUTINE_COACHING, months=gate.stage.months
+        context.ports.docs,
+        task_type=GrowthTaskType.ROUTINE_COACHING,
+        months=gate.stage.months,
+        rotation=f"{context.child_id}|{context.today.isoformat()}",
     )
     if not hits:
         return READOUTS.render(RHYTHM_NO_ROW)
-    row = hits[0].row
-    return Readout(kind="rhythm_info", title=row.title, body=row.body, authored_by="code")
+    hit = hits[0]
+    return Readout(
+        kind="rhythm_info",
+        title=hit.row.title,
+        body=hit.row.body,
+        authored_by="code",
+        source_refs=(hit.ref,),
+    )
 
 
 def _same(task_type: GrowthTaskType) -> Callable[[SuggestionDraft], object]:

@@ -18,10 +18,29 @@ from app.agents.growth.tools.memory import (
     search_education_memory,
     search_routine_memory,
 )
-from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context
+from tests.unit.agents.growth.support import (
+    CALM,
+    CHILD,
+    GREETING,
+    REST,
+    TAKING_TURNS,
+    TODAY,
+    birth_for,
+    context,
+    fixture_docs,
+    strategy_row,
+)
 
 
-def routine(n: int, subject: str, level: str | None, *, days_ago: int = 1, category="self_care"):
+def routine(
+    n: int,
+    subject: str,
+    level: str | None,
+    *,
+    days_ago: int = 1,
+    category="self_care",
+    trigger: str | None = None,
+):
     return RoutineObservation(
         id=UUID(int=700 + n),
         child_id=CHILD,
@@ -30,11 +49,12 @@ def routine(n: int, subject: str, level: str | None, *, days_ago: int = 1, categ
         routine_category=category,
         polarity=0,
         assistance_level=level,
+        trigger=trigger,
     )
 
 
 async def opened(task_type: GrowthTaskType, **kwargs):
-    ctx = context(birth_for(30), docs=InMemoryGrowthDocs.from_seed(), **kwargs)
+    ctx = context(birth_for(30), docs=fixture_docs(), **kwargs)
     ctx.state.gate = await build_gate(ctx, task_type)
     return ctx
 
@@ -119,11 +139,12 @@ class TestRoutine:
         (picked,) = ctx.state.steps.values()
         assert picked.step.readout_key == "ask.routine_current"
 
-    async def test_습관_카테고리는_사슬을_찾지_않는다(self):
+    async def test_습관은_사슬을_찾지_않고_trigger_가_없으면_전략도_고르지_않는다(self):
         memory = InMemoryGrowthMemory(routine=[routine(1, "손톱 물기", None, category="habit")])
         ctx = await opened(GrowthTaskType.ROUTINE_COACHING, memory=memory)
         result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
-        assert result.data["next_steps"] == [] and ctx.state.steps == {}
+        assert result.data["next_steps"] == []
+        assert ctx.state.steps["habit|손톱물기"].step.readout_key == "doc.no_row"
         assert set(ctx.state.seen_routine) == {UUID(int=701)}
 
     async def test_기록이_없으면_NO_RECORDS_고_되묻기를_안내한다(self):
@@ -144,3 +165,116 @@ class TestRoutine:
         (picked,) = ctx.state.steps.values()
         assert picked.step.readout_key == "next_step.chain_end"
         assert result.data["next_steps"] == []
+
+
+class SpyDocs(InMemoryGrowthDocs):
+    """포트가 받은 조회 인자를 남긴다 — 보호자가 말한 trigger 가 조회에 가지 않는지 본다."""
+
+    def __init__(self, rows) -> None:
+        super().__init__(rows)
+        self.calls: list[dict] = []
+
+    async def search(self, **kwargs):
+        self.calls.append(kwargs)
+        return await super().search(**kwargs)
+
+
+async def strategy_ctx(months: int, observations, *rows):
+    ctx = context(
+        birth_for(months),
+        docs=fixture_docs(*rows),
+        memory=InMemoryGrowthMemory(routine=list(observations)),
+    )
+    ctx.state.gate = await build_gate(ctx, GrowthTaskType.ROUTINE_COACHING)
+    return ctx
+
+
+class TestStrategy:
+    async def test_예절은_행동_이름이_맞는_연습_행을_고른다(self):
+        obs = routine(1, "인사하기", None, category="social_manner")
+        ctx = await strategy_ctx(40, [obs], GREETING, TAKING_TURNS)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        (step,) = result.data["next_steps"]
+        assert (step["step_id"], step["subject"]) == (str(GREETING.id), "인사하기")
+
+    async def test_예절에_맞는_행이_없으면_doc_no_row_로_남긴다(self):
+        obs = routine(1, "인사하기", None, category="social_manner")
+        ctx = await strategy_ctx(40, [obs], TAKING_TURNS)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        assert result.data["next_steps"] == []
+        assert ctx.state.steps["social_manner|인사하기"].step.readout_key == "doc.no_row"
+
+    async def test_습관은_trigger_의_상황_태그로_대응_행을_고른다(self):
+        obs = routine(1, "손톱 물어뜯기", None, category="habit", trigger="긴장할 때")
+        ctx = await strategy_ctx(40, [obs], CALM, REST)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        (step,) = result.data["next_steps"]
+        assert (step["step_id"], step["subject"]) == (str(CALM.id), "손톱 물어뜯기")
+
+    async def test_습관_trigger_가_사전에_없으면_doc_no_row_로_남긴다(self):
+        obs = routine(1, "손톱 물어뜯기", None, category="habit", trigger="TV 볼 때")
+        ctx = await strategy_ctx(40, [obs], CALM, REST)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        assert result.data["next_steps"] == []
+        assert ctx.state.steps["habit|손톱물어뜯기"].step.readout_key == "doc.no_row"
+
+    async def test_문서_조회에는_보호자가_말한_trigger_대신_코드가_정한_태그만_간다(self):
+        obs = routine(1, "손톱 물어뜯기", None, category="habit", trigger="긴장할 때")
+        docs = SpyDocs([CALM])
+        ctx = context(birth_for(40), docs=docs, memory=InMemoryGrowthMemory(routine=[obs]))
+        ctx.state.gate = await build_gate(ctx, GrowthTaskType.ROUTINE_COACHING)
+        await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        (call,) = [c for c in docs.calls if c["row_type"] == "habit_strategy"]
+        assert call["trigger_tags"] == ("anxious",)
+        assert "긴장" not in call["query"]
+
+    async def test_카테고리마다_전략_행은_세_칸까지다(self):
+        rows = [
+            strategy_row(f"growth.manner.greeting.r{n}", f"인사하기 — {n}", lo=24) for n in range(2)
+        ] + [
+            strategy_row(f"growth.manner.promise.r{n}", f"약속 지키기 — {n}", lo=24)
+            for n in range(2)
+        ]
+        observations = [
+            routine(1, "인사하기", None, category="social_manner"),
+            routine(2, "약속 지키기", None, category="social_manner", days_ago=2),
+        ]
+        ctx = await strategy_ctx(40, observations, *rows)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        assert len(result.data["next_steps"]) == 3
+
+    async def test_증상으로_닫히는_subject_는_전략_행을_받지_않고_doc_no_row_로_남긴다(self):
+        """trigger 가 사전에 걸려도 눈 깜빡임 같은 증상은 습관 대응 행으로 가지 않는다."""
+        obs = routine(1, "눈 깜빡임", None, category="habit", trigger="긴장할 때")
+        ctx = await strategy_ctx(48, [obs], CALM, REST)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        assert result.data["next_steps"] == []
+        assert ctx.state.steps["habit|눈깜빡임"].step.readout_key == "doc.no_row"
+
+    async def test_습관은_행동마다_자기_trigger_로_행을_고른다(self):
+        """손톱 물어뜯기 에 손가락 빨기 의 졸림 trigger 가 붙지 않는다."""
+        observations = [
+            routine(1, "손톱 물어뜯기", None, category="habit", days_ago=1),
+            routine(2, "손가락 빨기", None, category="habit", days_ago=3, trigger="졸릴 때"),
+        ]
+        ctx = await strategy_ctx(40, observations, CALM, REST)
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        assert [(s["step_id"], s["subject"]) for s in result.data["next_steps"]] == [
+            (str(REST.id), "손가락 빨기")
+        ]
+        assert ctx.state.steps["habit|손톱물어뜯기"].step.readout_key == "doc.no_row"
+
+    async def test_다시_조회해도_카테고리의_전략_행은_세_칸을_넘지_않는다(self):
+        rows = [
+            strategy_row(f"growth.manner.{topic}.r{n}", f"{name} — {n}", lo=24)
+            for topic, name in (("greeting", "인사하기"), ("promise", "약속 지키기"))
+            for n in range(3)
+        ]
+        observations = [
+            routine(1, "인사하기", None, category="social_manner"),
+            routine(2, "약속 지키기", None, category="social_manner", days_ago=2),
+        ]
+        ctx = await strategy_ctx(40, observations, *rows)
+        await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
+        assert len(result.data["next_steps"]) == 3

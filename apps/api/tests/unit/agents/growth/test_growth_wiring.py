@@ -12,19 +12,21 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.agents import entrypoint, pipeline
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.ports import SafetyLookupError
 from app.agents.growth.readouts import READOUTS as GROWTH_READOUTS
-from app.agents.growth.store.inmemory import InMemoryGrowthLog
+from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthLog
 from app.agents.growth.store.ports import GrowthMeasurement, SafetyEntry
 from app.agents.growth.tools.docs import match_chain, routine_chains
 from app.agents.growth.tools.routine import pick_next_step
 from app.agents.memory.context import AgentContext
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreGrowthMemory
-from tests.unit.agents.growth.support import ProposesExamples
+from tests.unit.agents.growth.support import ProposesExamples, fixture_docs
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 10, 15, 10, 0, tzinfo=KST)
@@ -32,6 +34,12 @@ TODAY = NOW.date()
 CHILD = UUID(int=1)
 PARENT = UUID(int=2)
 BIRTH_36 = date(2023, 10, 15)
+
+
+@pytest.fixture(autouse=True)
+def _fixture_docs(monkeypatch):
+    """entrypoint 는 시드를 읽는다. 검수 결과로 시드 사슬이 바뀌어도 이 파일은 고정 행으로 돈다."""
+    monkeypatch.setattr(InMemoryGrowthDocs, "from_seed", classmethod(lambda cls: fixture_docs()))
 
 
 class FakeLLM:

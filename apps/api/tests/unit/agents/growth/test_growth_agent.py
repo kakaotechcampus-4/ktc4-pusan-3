@@ -7,14 +7,15 @@ import json
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.llm_client import LLMResponse
+from app.agents.common.refs import Ref
 from app.agents.growth.agent import run
-from app.agents.growth.readouts import READOUTS
+from app.agents.growth.readouts import READOUTS, RHYTHM_NO_ROW
 from app.agents.growth.review import BOOK_GENERAL_REASON
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import (
@@ -28,6 +29,7 @@ from app.agents.growth.store.ports import (
     ActivityObservation,
     BookRow,
     EducationObservation,
+    GrowthDocRow,
     RoutineObservation,
     SafetyEntry,
     UpstreamUnavailable,
@@ -35,7 +37,16 @@ from app.agents.growth.store.ports import (
 from app.agents.growth.tools.docs import match_chain, routine_chains, search_growth_doc
 from app.agents.growth.tools.routine import pick_next_step
 from app.rules.book_evidence import book_evidence_id
-from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context, task
+from tests.unit.agents.growth.support import (
+    CALM,
+    CHILD,
+    REST,
+    TODAY,
+    birth_for,
+    context,
+    fixture_docs,
+    task,
+)
 
 
 class FakeLLM:
@@ -80,7 +91,7 @@ def learning(*titles: str, doc_id: str) -> LLMResponse:
 
 
 def docs_ctx(months=30, **kwargs):
-    return context(birth_for(months), docs=InMemoryGrowthDocs.from_seed(), **kwargs)
+    return context(birth_for(months), docs=fixture_docs(), **kwargs)
 
 
 async def example_id() -> str:
@@ -350,6 +361,45 @@ class TestRoutine:
         assert result.model_calls == 2 and len(result.suggestions) == 2
         assert [r.code for r in result.readouts] == ["fewer"]  # 단계가 둘뿐이라 개수 안내가 붙는다
 
+    async def test_습관은_trigger_와_맞는_대응_행으로_개인화_추천_하나다(self):
+        obs = RoutineObservation(
+            id=UUID(int=720),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="손톱 물어뜯기",
+            routine_category="habit",
+            polarity=0,
+            trigger="긴장할 때",
+        )
+        ctx = context(
+            birth_for(40),
+            docs=fixture_docs(CALM, REST),
+            memory=InMemoryGrowthMemory(routine=[obs]),
+        )
+        llm = FakeLLM(
+            call("search_routine_memory", {}),
+            call(
+                "propose_routine_plan",
+                {
+                    "category": "habit",
+                    "subject": "손톱 물어뜯기",
+                    "items": [
+                        {
+                            "step_id": str(CALM.id),
+                            "next_step": "긴장한 마음을 말로 먼저 붙여 줘요",
+                            "how": "손을 잡고 지금 마음을 한 낱말로 같이 말해요",
+                            "evidence": [{"id": str(obs.id), "note": "긴장할 때 물었어요"}],
+                            "reason": "긴장할 때 나오는 행동이라 마음을 먼저 다뤄요",
+                        }
+                    ],
+                },
+            ),
+        )
+        result = await run(task("routine_coaching", "긴장하면 손톱을 물어뜯어"), ctx, client=llm)
+        assert result.status == "completed" and result.model_calls == 1
+        assert [d.kind for d in result.suggestions] == ["personalized"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
 
 def book(n: int, form: str = "picture") -> BookRow:
     return BookRow(isbn=f"978890000{n:04d}", title=f"책{n}", form=form, author="가")
@@ -382,6 +432,53 @@ class FailsSecondSearch(InMemoryBooks):
         if self.searches > 1:
             raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
         return await super().search(keywords=keywords, limit=limit)
+
+
+def rhythm_row(key: str, lo: int, hi: int) -> GrowthDocRow:
+    return GrowthDocRow(
+        id=uuid5(NAMESPACE_URL, key),
+        doc_key=key,
+        row_type="rhythm_info",
+        title=f"{key} — 제목",
+        body=f"{key} 본문",
+        min_month=lo,
+        max_month=hi,
+    )
+
+
+class TestRhythm:
+    """0–11개월 루틴은 모델 없이 리듬 안내 행 하나다 (Growth_Tool_명세 §2 "0–11개월")."""
+
+    async def test_리듬_행이_있으면_모델_없이_그_행이_출처와_함께_나간다(self):
+        row = rhythm_row("growth.rhythm.m6_9.order", 6, 9)
+        ctx = context(birth_for(8), docs=fixture_docs(row))
+        llm = FakeLLM()
+        result = await run(task("routine_coaching", "밤잠 재우기"), ctx, client=llm)
+        assert (result.status, result.model_calls, result.suggestions) == ("completed", 0, ())
+        (readout,) = result.readouts
+        assert (readout.kind, readout.title, readout.body) == ("rhythm_info", row.title, row.body)
+        assert readout.source_refs == (Ref(kind="growth_doc", id=row.id),)
+        assert llm.seen == []
+
+    async def test_월령_밖_리듬_행은_읽지_않고_준비_못_한_안내다(self):
+        ctx = context(birth_for(8), docs=fixture_docs(rhythm_row("growth.rhythm.m0_3.order", 0, 3)))
+        result = await run(task("routine_coaching"), ctx, client=FakeLLM())
+        assert result.readouts == (READOUTS.render(RHYTHM_NO_ROW),)
+
+    async def test_한_구간에_행이_여럿이면_아이와_날짜로_돌려_고른다(self):
+        rows = [rhythm_row(f"growth.rhythm.m6_9.r{n}", 6, 9) for n in range(6)]
+        docs = fixture_docs(*rows)
+        expected = await search_growth_doc(
+            docs,
+            task_type=GrowthTaskType.ROUTINE_COACHING,
+            months=8,
+            rotation=f"{CHILD}|{TODAY.isoformat()}",
+        )
+        assert expected[0].row != rows[0]  # 포트 순서 그대로면 이 테스트가 돌려 고르기를 못 본다
+        result = await run(
+            task("routine_coaching"), context(birth_for(8), docs=docs), client=FakeLLM()
+        )
+        assert result.readouts[0].body == expected[0].row.body
 
 
 class TestBook:

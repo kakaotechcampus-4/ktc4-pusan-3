@@ -29,7 +29,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="search_routine_memory",
         description=(
-            "생활 루틴 기록(도움 수준 · 상황)과, 코드가 고른 다음 단계(next_steps)를 가져온다. "
+            "생활 루틴 기록(도움 수준 · 상황)과, 코드가 고른 다음 단계 · 예절 연습 · "
+            "습관 대응(next_steps)을 가져온다. "
             "생활 루틴을 제안하기 전에 먼저 부른다. step_id 는 이 결과에 있는 것만 쓴다."
         ),
         args=SearchRoutineMemoryArgs,
