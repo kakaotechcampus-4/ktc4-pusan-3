@@ -9,14 +9,14 @@ READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("places.readout.yam
 
 _TIER_LABEL = {
     FacilityTier.PEDIATRIC_CLINIC: "소아청소년과",
-    FacilityTier.MOONLIGHT: "달빛어린이병원",
+    FacilityTier.NIGHT_CLINIC: "야간 · 휴일 진료",
     FacilityTier.EMERGENCY_ROOM: "응급실",
 }
 
 # 목록 머리에 쓰는 말 — 처음 나온 종류로 고른다. 야간에 달빛어린이병원이 없으면 응급실만 남는다
 _WHAT = {
     FacilityTier.PEDIATRIC_CLINIC: "소아청소년과",
-    FacilityTier.MOONLIGHT: "야간 · 휴일 진료 병원",
+    FacilityTier.NIGHT_CLINIC: "야간 · 휴일 진료 병원",
     FacilityTier.EMERGENCY_ROOM: "응급실",
 }
 

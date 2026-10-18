@@ -15,9 +15,9 @@
 | 국민건강보험공단 **영유아 건강검진** — nhis.or.kr | 일반 8회 · 구강 4회 주기 | `compute_checkup_schedule` | `reference/checkup_nhis.yaml` | 제도 변경 시 |
 | 질병관리청 고시 「예방접종의 실시기준 및 방법」 **[별표 1] 국가예방접종 대상 및 표준접종시기** | 백신·차수·표준접종 월령 | `compute_vaccine_schedule` | `reference/vaccine_2026.yaml` | **고시 개정 시** |
 | 예방접종도우미 — nip.kdca.go.kr | 개인 접종 기록 | 안내 링크만 | 연동 없음 | – |
-| 건강보험심사평가원 **병원정보서비스** Open API (data.go.kr) | 병원 목록 · 진료과목 · 좌표 | `find_pediatric_places` (주간) | REST · 24h 캐시 | – |
-| 국립중앙의료원 **응급의료정보** (E-Gen, data.go.kr) | 응급의료기관 · 실시간 가용 | `find_pediatric_places` (야간·응급) | REST · **캐시 안 함** | 실시간 |
-| 달빛어린이병원 지정 목록 (보건복지부·국립중앙의료원) | 야간·휴일 소아 경증 진료기관 | 야간·휴일 1순위 | 목록 동기화 + 심평원 좌표 조인 | 월 1회 |
+| 국립중앙의료원 **전국 병·의원 찾기 서비스** (data.go.kr/15000736) | 병원 목록 · 진료과목 · 좌표 · 요일별 진료시간 | `find_pediatric_places` (주간 · 야간 소아청소년과) | REST · 시도별 24h 캐시 | – |
+| 국립중앙의료원 **전국 응급의료기관 정보 조회 서비스** (data.go.kr/15000563) | 응급의료기관 목록 · 좌표 (실시간 병상은 아직 안 씀) | `find_pediatric_places` (야간·응급) | REST · 시도별 10분 캐시 | 실시간 |
+| ~~달빛어린이병원 지정 목록~~ | – | **쓰지 않음** — 병·의원 진료시간으로 "지금 진료 중" 을 골라 달빛어린이병원도 잡힌다 (10-18) | – | – |
 | 식약처 알레르기 표시 대상 19종 | 코드표 | `health_safety` 라벨 정규화 | Food `ALLERGEN_CODES` 공유 | 고시 개정 시 |
 | 국가건강정보포털 health.kdca.go.kr · 대한소아청소년과학회 | 응급 신호 · 증상 문구 | Supervisor 규칙 · 고정 문구 **검수 근거** | 문서 | 검수 시 |
 | 공공 출처 (**공공누리 0·1 · 고시 · CC BY만**) | 만성질환별 관리 안내 | `lookup_condition_guidance` | `reference/condition_codes.yaml` · `reference/condition_guidance.yaml` | 검수 시 (**의료 검수 필수**) |
@@ -88,11 +88,11 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 ### `find_pediatric_places`
 | 입력 | 흐린 좌표(`CoarseLocation`, 약 1km · 비저장), `now`(KST), `mode: "normal"\|"emergency"` |
 | --- | --- |
-| 위치 | 🚨 **보호자 좌표를 병원 API 에 보내지 않는다** — 좌표 → 5km 격자만 어댑터(`FacilitySource`)에 넘기고, 어댑터가 시군구로 바꿔 조회한다. 거리는 받은 기관 좌표로 서버 안에서 계산한다 (Activity 와 같은 원칙 · activity-agent-v1 D9 · #166 위치 약관) |
-| 분기 | 평일 09–18시 → 소아청소년과 · 그 밖(토 · 일 · 공휴일 · 야간) → 달빛어린이병원 → 응급의료기관 · emergency → 응급의료기관만. 종류 순서가 거리보다 먼저다 |
+| 위치 | 🚨 **보호자 좌표를 병원 API 에 보내지 않는다** — 좌표 → 5km 격자만 어댑터(`FacilitySource`)에 넘기고, 어댑터가 시도로 바꿔 조회한다. 거리는 받은 기관 좌표로 서버 안에서 계산한다 (Activity 와 같은 원칙 · activity-agent-v1 D9 · #166 위치 약관) |
+| 분기 | 평일 09–18시 → 소아청소년과 · 그 밖(토 · 일 · 공휴일 · 야간) → **진료시간상 지금 진료 중인 소아청소년과**(달빛어린이병원 포함) → 응급의료기관 · emergency → 응급의료기관만. 종류 순서가 거리보다 먼저다. 달빛어린이병원은 API 에 표시 칸이 없어(자유 글에만 있음) 지정 목록 대신 진료시간(`dutyTime1~8`)으로 고른다 (10-18) |
 | 출력 | 종류 순 · 같은 종류는 거리순 ≤5 `{name, tier, distance_m, phone, open_now}` → `Readout(kind="place_list")`. 문을 닫은 게 확실한 곳(`open_now=False`)은 뺀다 |
 | 실패 | 조회 실패 → "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요." · 0곳은 실패와 따로 → "근처에서 지금 찾을 수 있는 병원이 없어요. …" · 위치 없음 → "위치를 허용하시면 가까운 병원을 찾아드려요." |
-| 코드 | `app/agents/health/places/` — 순수 판정 · 거리순 · readout. 공공 API 어댑터는 활용신청 뒤 `app/integrations/` 에 붙인다 |
+| 코드 | `app/agents/health/places/` — 시간대 분기 · 지금 진료 중 판정 · 거리순 · readout. 어댑터는 `app/integrations/hospital/`(`NmcHospitals`) — 국립중앙의료원 병·의원 찾기(`QD=D002` 소아청소년과) · 응급의료기관 목록을 **시도 이름**으로 묻는다(이 API 는 시군구를 이름으로만 받는다). 소아청소년과는 시도마다 24시간, 응급실은 10분 기억한다. 원문 계약은 `core/hospital_raw.py` |
 
 ### `resolve_dose_timing`
 | 입력 | `timing_span` (발화 원문) |

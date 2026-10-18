@@ -5,8 +5,8 @@
 1. 좌표가 없으면 닫는다 — "위치를 허용하시면 가까운 병원을 찾아드려요".
 2. 좌표 → 기상청 격자. 어댑터는 격자만 받아 시군구로 바꿔 조회한다 — 밖으로 나가는 위치 값은
    시군구뿐이다.
-3. 시간대가 기관 종류의 순서를 정한다 — 평일 주간은 소아청소년과, 야간 · 휴일은 달빛어린이병원
-   다음 응급의료기관, 응급 안내에서 넘어오면 응급의료기관만.
+3. 시간대가 기관 종류의 순서를 정한다 — 평일 주간은 소아청소년과, 야간 · 휴일은 지금 진료 중인
+   소아청소년과(달빛어린이병원 포함) 다음 응급의료기관, 응급 안내에서 넘어오면 응급의료기관만.
 4. 종류 순서대로, 같은 종류 안에서는 가까운 순으로 다섯 곳. 평가 · 추천 순위는 매기지 않는다.
 """
 
@@ -16,21 +16,22 @@ from dataclasses import dataclass
 from datetime import datetime, time
 
 from app.agents.activity.store.ports import CoarseLocation
+from app.agents.health.places.hours import open_now
 from app.agents.health.places.ports import (
-    Facility,
     FacilityLookupError,
     FacilitySource,
     FacilityTier,
     NearbyPlace,
     PlaceLookup,
     PlaceMode,
+    RawFacility,
 )
 from app.rules.holidays import holidays_known, is_public_holiday
 
 logger = logging.getLogger(__name__)
 
 # 평일 주간 — 소아청소년과 의원이 문을 여는 시간으로 본다. 토요일은 오전 진료가 의원마다 달라서
-# 야간 · 휴일 쪽(달빛어린이병원은 토요일에도 연다)으로 보낸다
+# 야간 · 휴일 쪽(진료시간으로 지금 연 곳만)으로 보낸다
 DAYTIME_START = time(9, 0)
 DAYTIME_END = time(18, 0)
 
@@ -41,8 +42,9 @@ _EARTH_RADIUS_M = 6_371_000
 
 @dataclass(frozen=True)
 class _Ranked:
-    facility: Facility
+    facility: RawFacility
     distance_m: int
+    open_now: bool | None
 
 
 def tiers_for(now: datetime, mode: PlaceMode) -> tuple[FacilityTier, ...]:
@@ -51,7 +53,7 @@ def tiers_for(now: datetime, mode: PlaceMode) -> tuple[FacilityTier, ...]:
         return (FacilityTier.EMERGENCY_ROOM,)
     if _is_weekday_daytime(now):
         return (FacilityTier.PEDIATRIC_CLINIC,)
-    return (FacilityTier.MOONLIGHT, FacilityTier.EMERGENCY_ROOM)
+    return (FacilityTier.NIGHT_CLINIC, FacilityTier.EMERGENCY_ROOM)
 
 
 def _is_weekday_daytime(now: datetime) -> bool:
@@ -82,15 +84,16 @@ async def find_pediatric_places(
     ranked: list[_Ranked] = []
     for tier in tiers_for(now, mode):
         try:
-            found = await source.facilities(grid=grid, tier=tier, now=now)
+            found = await source.facilities(grid=grid, tier=tier)
         except FacilityLookupError:
             logger.warning("병원 정보를 읽지 못했다", extra={"tier": tier.value})
             return PlaceLookup(status="unavailable")
-        # 문을 닫은 게 확실한 곳은 뺀다. 모르는 곳(None)은 남긴다 — 전화로 확인할 수 있다
-        candidates = [f for f in found if f.tier is tier and f.open_now is not False]
+        candidates = [
+            _Ranked(f, _distance_m(location, f), open_now(f, now)) for f in found if f.tier is tier
+        ]
         ranked.extend(
             sorted(
-                (_Ranked(f, _distance_m(location, f)) for f in candidates),
+                (r for r in candidates if _shown(tier, r.open_now)),
                 key=lambda r: (r.distance_m, r.facility.name),
             )
         )
@@ -103,14 +106,23 @@ async def find_pediatric_places(
             tier=r.facility.tier,
             distance_m=r.distance_m,
             phone=r.facility.phone,
-            open_now=r.facility.open_now,
+            open_now=r.open_now,
         )
         for r in ranked[:PLACE_TOP_K]
     )
     return PlaceLookup(status="ok" if places else "empty", places=places)
 
 
-def _distance_m(location: CoarseLocation, facility: Facility) -> int:
+def _shown(tier: FacilityTier, is_open: bool | None) -> bool:
+    """야간 · 휴일 소아청소년과는 지금 진료 중인 게 확실한 곳만 — 밤에 "모름" 은 헛걸음이다.
+    그 밖은 문을 닫은 게 확실한 곳만 뺀다. 모르는 곳은 남긴다 — 전화로 확인할 수 있다.
+    """
+    if tier is FacilityTier.NIGHT_CLINIC:
+        return is_open is True
+    return is_open is not False
+
+
+def _distance_m(location: CoarseLocation, facility: RawFacility) -> int:
     """하버사인 거리(m). 보호자 좌표는 이미 약 1km 로 흐린 값이라 100m 단위로 자른다."""
     lat1, lon1 = math.radians(location.lat), math.radians(location.lon)
     lat2, lon2 = math.radians(facility.lat), math.radians(facility.lon)
