@@ -60,6 +60,9 @@ class ActivityRunState:
     # 안전 필터로 빠진 후보의 content. run() 이 재호출할 때 제외 목록으로만 넣는다 —
     # 걸린 사유는 넣지 않는다 (Tool_공통.md §5-2)
     excluded: tuple[str, ...] = ()
+    # 통과한 바깥 활동의 정규화한 content. 재호출 결과까지 모은다 — 날씨를 묻지 않은 날의 안내를
+    # 바깥 활동이 실제로 나갈 때만 붙인다
+    outdoor_drafts: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

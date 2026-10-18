@@ -28,7 +28,7 @@ from app.agents.activity.rules import normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.outing import check_weather
-from app.agents.activity.weather import WEATHER_UNCHECKED
+from app.agents.activity.weather import WEATHER_NOT_ASKED, WEATHER_UNCHECKED, WeatherBrief
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
@@ -120,7 +120,7 @@ async def run(
         suggestions=drafts,
         readouts=(
             *(_caution(text) for text in context.state.cautions),
-            *(READOUTS.render(key) for key in weather.notices if attempted),
+            *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
             *((notice,) if notice else ()),
         ),
         model_calls=model_calls,
@@ -128,6 +128,16 @@ async def run(
 
 
 Picked = tuple[tuple[SuggestionDraft, tuple[str, ...]], ...]
+
+
+def _weather_notices(
+    weather: WeatherBrief, drafts: tuple[SuggestionDraft, ...], context: ActivityContext
+) -> tuple[str, ...]:
+    """화면에 붙일 날씨 안내 키. 날씨를 묻지 않은 날의 "확인하지 않았어요" 는 바깥 활동이 실제로
+    나갈 때만 붙인다 — 실내 놀이만 나간 결과에 날씨 확인을 당부하면 군말이다.
+    """
+    outdoor = any(normalize_activity(d.content) in context.state.outdoor_drafts for d in drafts)
+    return tuple(key for key in weather.notices if key != WEATHER_NOT_ASKED or outdoor)
 
 
 def _caution(text: str) -> Readout:
