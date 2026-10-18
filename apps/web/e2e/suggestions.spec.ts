@@ -138,12 +138,44 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toHaveCount(1);
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toBeVisible();
 
-      // 🚨 "우리 아이 맞춤" 인 척하지 않는다 — 개인화 화면의 부품이 하나도 없다.
+      // 🚨 "우리 아이 맞춤" 인 척하지 않는다 — 아이 기록 근거도, 개인화 묶음 탭도 없다.
+      //    고르는 칸은 있다 (#509) — 고르는 것은 개인화의 부품이 아니다.
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
-      await expect(page.getByRole("checkbox")).toHaveCount(0);
       await expect(page.getByRole("tablist")).toHaveCount(0);
-      await expect(page.getByText("이렇게 준비할게요")).toHaveCount(0);
       await expectNoGate(page);
+    });
+
+    test("일반 추천도 골라서 채택하고 일정으로 만든다 (#509)", async ({ page }) => {
+      const calls = recordApi(page);
+      await page.goto(SUGGESTIONS);
+      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const checkbox = card.getByRole("checkbox", { name: /블록 쌓기처럼/ });
+
+      // 🚨 다음 행동은 고를 것보다 아래다.
+      const summary = page.getByText("이렇게 준비할게요");
+      expect((await card.boundingBox())!.y).toBeLessThan((await summary.boundingBox())!.y);
+
+      await card.getByText("블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요").click();
+      await expect(checkbox).toBeChecked();
+      // 🚨 골라도 점선은 남는다 — 고른다고 우리 아이 기준 추천이 되는 것이 아니다.
+      expect(await card.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe("dashed");
+
+      // 채택은 게이트가 아니다 — 표식도 키도 없다.
+      await expectNoGate(page);
+      await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+      await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+      const approve = writes(calls, "POST", /\/suggestions\/approve$/);
+      expect(approve).toHaveLength(1);
+      expect(approve[0].body).toMatchObject({ suggestion_ids: ["g_1"] });
+      expect(approve[0].idempotencyKey).toBeUndefined();
+
+      // 초안 만들기는 아무것도 쓰지 않는다. 캘린더에 쓰는 것은 승인 시트의 제출 하나다 (게이트 ㉠).
+      await page.getByRole("button", { name: "일정으로 만들기" }).click();
+      await expect(page.getByRole("dialog", { name: "캘린더에 넣을까요" })).toBeVisible();
+      const drafts = writes(calls, "POST", /\/suggestions\/event-drafts$/);
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0].body).toMatchObject({ suggestion_ids: ["g_1"] });
+      expect(writes(calls, "POST", /\/events$/)).toEqual([]);
     });
 
     test("일반 추천이 위, 되묻는 질문이 아래다", async ({ page }) => {
@@ -201,6 +233,18 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       ).toBeVisible();
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(1);
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
+    });
+
+    test("일반 추천도 알레르기 확인이 채택보다 먼저다 (#509 · 게이트 ㉡)", async ({ page }) => {
+      const calls = recordApi(page);
+      await page.goto(SUGGESTIONS);
+      await page.getByText("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요").click();
+      await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+
+      const sheet = page.getByRole("dialog");
+      await expect(sheet.getByText("처음 보는 재료가 있어요")).toBeVisible();
+      await expect(sheet.getByText("참깨")).toBeVisible();
+      expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
     });
   });
 });

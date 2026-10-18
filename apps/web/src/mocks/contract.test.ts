@@ -582,6 +582,18 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     }
   }
 
+  it("🚨 일반 추천도 사전검사가 실리고, active 로 등록하면 그 추천이 빠진다 (#509)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const before = await fetchWith("empty", body);
+    const check = (before.prechecks ?? []).find((p) => p.suggestion_id === "g_2");
+    expect(check?.item).toBe("참깨");
+
+    await addHealthSafety("c1", { type: "allergy", label: "참깨" }, newIdempotencyKey());
+    const after = await fetchWith("empty", body);
+    expect((after.general ?? []).map((g) => g.id)).not.toContain("g_2");
+    expect((after.prechecks ?? []).some((p) => p.item === "참깨")).toBe(false);
+  });
+
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
 
