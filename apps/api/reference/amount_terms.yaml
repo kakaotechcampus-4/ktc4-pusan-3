@@ -1,0 +1,37 @@
+# 양 텍스트 → 섭취 계수. 정본은 docs/agents/food/영양소_계산_설계.md §4 표.
+# 집 식사(observation_food.amount_text)와 급식이 같이 쓴다.
+#
+# 🚨 known=false 는 "양을 모른다" 다. 식품군 출현에는 그대로 세고 부족 · 과잉 판정에는 절반만
+#    넣는다(app/rules/nutrition.amount_weight). 0 으로 바꾸지 않는다.
+# 🚨 사전에 없는 말은 "기록 없음"(1.0 · known=false)으로 본다 — 모르는 말에서 양을 지어내지 않는다.
+#
+# amount 텍스트 값 집합은 Memory 와 함께 확정한다(설계 N-4). 지금은 자유 텍스트라 별칭으로 받는다.
+
+source: docs/agents/food/영양소_계산_설계.md §4 양 추정 규칙
+version: "1"
+fetched_at: 2026-10-12
+
+default:
+  factor: 1.0
+  known: false
+
+rules:
+  # 급식 · 집 식사가 같이 쓴다. "많이" 쪽은 급식에서 나오는 말이다(Food_Tool_명세 급식 갱신)
+  - factor: 1.5
+    known: true
+    aliases: [엄청 많이, 많이, 더 달라고 했대]
+  - factor: 1.0
+    known: true
+    aliases: [다 먹음, 완식, 한 그릇, 전부, 싹 비움]
+  - factor: 0.5
+    known: true
+    aliases: [반 그릇, 절반, 반만, 반 정도]
+  - factor: 0.25
+    known: true
+    aliases: [조금, 몇 입, 한 입, 살짝]
+  - factor: 0.5
+    known: false
+    aliases: [남김, 남겼음, 조금 남김, 남겼대, 남겼어]
+  - factor: 0.0
+    known: true
+    aliases: [뱉음, 안 먹음, 거부, 입에 안 댐]

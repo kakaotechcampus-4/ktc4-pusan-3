@@ -25,7 +25,7 @@
 ## 2. `life_stage` — 코드
 
 ```python
-def life_stage(birth_date: date, today: date) -> LifeStage
+def life_stage(birth_date: date, today: date) -> LifeStage  # app/agents/common/age.py — 경계는 age_gates.yaml
 # LifeStage(months: int, stage: Stage, big: Literal["infant","toddler"])
 ```
 
@@ -82,9 +82,9 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 | 2 | `candidate` · polarity ∈ {+1, −1} · strength ≥ 임계 |
 | 3 | 최근 14일 관찰 (polarity 무관) |
 | 역질의 | `candidate` + polarity NULL → `needs_observation` 후보로 반환 (1개만 사용) |
-| 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다 |
+| 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다. 6개월 넘은 아이 기록만 남은 후보는 `build()` 가 일반 추천으로 돌린다(§5-3) |
 
-> 🟡 **`profile_affinity` 는 Agent 가 만들지 않는다.** 관찰을 승격해 이 행을 만드는 것도, 오래된 관심을 내리는 것도 Curator(백엔드 배치)의 일이다. Agent 는 이미 만들어진 행을 **읽기만** 한다 — 유예일을 Agent 가 다시 세면 값이 두 벌이 되고 한쪽만 갱신된다. NF-08(6개월)도 Curator 가 `archived` 로 바꾸는 것으로 지켜진다.
+> 🟡 **`profile_affinity` 는 Agent 가 만들지 않는다.** 관찰을 승격해 이 행을 만드는 것도, 오래된 관심을 내리는 것도 Curator(백엔드 배치)의 일이다. Agent 는 이미 만들어진 행을 **읽기만** 한다 — 유예일을 Agent 가 다시 세면 값이 두 벌이 되고 한쪽만 갱신된다. NF-08(6개월)은 감쇠와 별개로 `build()` 가 한 번 더 막는다 — `archived` 는 새 관찰이 연결될 때만 갱신된다(§5-3 · #329).
 >
 > 🔴 **기피(−1)는 제외 필터가 아니라 근거다.** "브로콜리를 싫어해서"도 추천을 고르는 이유다. `rank_evidence`는 제거 목록을 반환하지 않는다.
 > 후보에서 지우는 것은 **안전뿐** — 알레르기(`health_safety`) · 연령 금지식품 · `hazard_term`. 이건 `rank_evidence`가 아니라 Agent별 안전 필터의 일이다.
@@ -116,11 +116,12 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - 재호출은 1회로 끝난다. 그래도 못 채우거나 후보 풀이 처음부터 3개보다 적으면 **남은 만큼(1~2개)만** 낸다. 3개를 채우려고 안전 조건을 늦추거나 풀 밖 후보를 만들지 않는다. `check_count(exhausted=True)` 가 이 경우를 통과시킨다.
 - **재호출 결과는 빈자리만 채운다.** 첫 호출에서 통과한 것을 먼저 두고, 재호출에서 통과한 것으로 3개가 될 때까지만 채운다. 첫 호출 것과 같은 후보는 건너뛰고 남는 것은 버린다 — 둘을 그대로 합치면 4개가 넘을 수 있고, 그러면 `check_count` 가 넘친다고 거절한다. 무엇을 같은 후보로 볼지는 Agent 가 정한다 — Food 는 `menu_key`, Activity 는 `content`(최근 중복 검사 `is_recent_duplicate` 가 보는 칸)로 본다 (#245 리뷰).
 - **0개는 실패가 아니다.** 더 채울 길이 없는데 0개면 `check_count(exhausted=True)` 가 예외 없이 통과시키고, Agent 는 추천 없이 안내만 내고 끝낸다. 호출부는 0개를 따로 거르지 않고 `check_count` → `count_notice(len(drafts))` 순서로 부르면 0~3개가 다 처리된다 — 0개에 예외를 던지면 호출부가 놓쳤을 때 pipeline 이 그 Agent 를 실패로 세고 화면에 다시 시도가 뜬다 (#245 리뷰). 채울 수 있는데 0개(`exhausted=False`)는 1~2개처럼 거절한다. `status` 는 `completed` 다 — 실패가 아니라 안전 조건을 통과한 후보가 없다는 결과라, 화면은 다시 시도를 띄우지 않는다. 근거가 없어 일반 추천으로 가는 경우(5-3)와 다르다 — 그쪽은 추천이 나간다.
+- **모델이 결과를 못 낸 것은 0개가 아니라 실패다.** tool 루프가 `no_tool_call`(출력 tool 없이 말로 끝남)이나 `max_steps`(상한까지 출력 tool 이 통과하지 못함)로 끝나면 Agent 는 `status="failed"` 로 낸다 — 화면은 다시 시도를 띄운다. 이걸 0개(`completed` + 0개 안내)로 받으면 모델이 실패한 게 "추천할 게 없다" 로 보인다. 0개 `completed` 는 출력 tool 이 통과했는데 안전 조건을 지난 후보가 없을 때(풀 0개 · 사후 필터 뒤 0개)뿐이다 (#320 PM 리뷰 — 각 Agent 의 `run()` 연결에서 지킨다). 다만 Food 영양소 분석은 예외다 — 판정 · 식품군 안내가 코드가 계산한 값이라 `failed` 대신 코드 문장 틀(`nutrient.band.*`)을 `status="ok"` 로 낸다(`authored_by="code"`, 경고 로그로 센다 — Food_Tool_명세 §2 · §4, #357 리뷰). 도메인 Agent 의 tool 루프는 `tool_choice="required"` 로 부른다 — Activity 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀고(#320), Food 급식 갱신도 auto 에서 분명한 지시 12건 중 4건이 말로 끝났다(#411). 출력 tool 이 쓰기뿐이면 쓰지 않고 끝내는 출력 tool 을 같이 두고, 되돌릴 수 없는 쓰기는 원문을 코드가 다시 본다(Food `keep_daycare_meal` · `daycare_intent`).
 - 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다.
 - 이때만 그 Agent 의 진입 수가 2가 된다 ([Agent_공통규약.md](Agent_공통규약.md) §7).
 - `note` 가 비어 후보가 빠지면 개수가 3개 아래로 내려간다. 재호출 사유는 안전 필터뿐이라 지금은 묶음이 거절된다. 금지 표현 필터(5-1 의 2번)도 같은 자리에 있어 새로 생긴 문제는 아니다. 재호출 사유를 늘릴지는 아직 안 정했다 (2026-09-25).
 - 다 채우지 못했으면 안내 한 줄이 같이 나간다. 문구는 코드 상수(`app/agents/common/suggestion.readout.yaml`)이고 `count_notice()` 가 나가는 개수로 고른다 — 아래 표.
-- 화면이 받는 모양 — 0개여도 그 Agent 묶음은 오고 추천 목록만 빈다. 안내는 그 묶음에 실린다. 안내를 결과의 어느 칸에 실어 보낼지 · 응답 칸 이름 · Swagger 의 "0~3개" 설명은 추천 엔드포인트 이슈 #249 에서 정한다 ([공통_구현_계획.md](공통_구현_계획.md) K-12).
+- 화면이 받는 모양 — 0개여도 그 Agent 묶음은 오고 추천 목록만 빈다. 안내는 그 묶음에 실린다. 안내는 05 응답의 `groups[].notice`(`fewer` · `empty` · `cannot_resume`)에, 04 는 `agent_result.readouts[].code` 에 실린다 (#249 · [`docs/api/suggestions-v1.md`](../../api/suggestions-v1.md) · [공통_구현_계획.md](공통_구현_계획.md) K-12).
 
 | 나가는 개수 | 안내 key | 문구 |
 | --- | --- | --- |
@@ -132,13 +133,16 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 
 ### 5-3. 근거 — `kind` 는 코드가 정한다
 
-모델이 `kind` 를 고르지 않는다. `build()` 가 **아이 기록 근거의 행 수**로 정한다.
+모델이 `kind` 를 고르지 않는다. `build()` 가 **6개월이 안 지난 아이 기록 근거의 행 수**로 정한다.
 
-- 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal`)이 1행 이상이면 `kind="personalized"`. `reason` 이 비어 있으면 거절한다.
+- 6개월이 안 지난 아이 기록(`observation_*` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal`)이 1행 이상이면 `kind="personalized"`. `reason` 이 비어 있으면 거절한다. 오래된 기록과 같이 인용했으면 둘 다 근거로 남는다.
 - 0행이면 `kind="general"`. `reason` 을 **코드 템플릿(`general_reason`)으로 덮어쓴다.** 모델이 쓴 개인화 문장이 그대로 나가면 근거 없이 "우리 아이 맞춤"인 척하게 된다. 템플릿이 없으면 거절한다. 문서 행(`*_doc`)은 세지 않는다 — 있든 없든 아이 기록이 0행이면 general 이다.
+- **6개월 넘은 아이 기록만 인용했으면 일반 추천이다.** 그 인용은 빼고 문서 행 인용만 남긴다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 날짜를 모르는 아이 기록도 세지 않는다. 판정은 `rules/staleness.is_stale`(달력 6개월)이고, 날짜는 `cite()` 가 `RankedEvidence.observed_on` 에서 옮긴다 (#329).
 - **general 은 거절 사유가 아니다.** 추천은 그대로 나가고 화면이 또래 기준임을 말한다 (루트 CLAUDE.md §2). `general` 인데 인용이 0행인 것은 문서에서도 근거를 못 찾았다는 뜻이라 품질 지표로 본다 (2026-09-25).
 - **인용마다 `note` 가 있어야 한다.** 그 행에서 무엇을 근거로 봤는지를 Agent 가 한 줄로 쓴다. 비면 그 후보를 거절한다. 거절은 후보 단위라 묶음은 그대로 간다.
-- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. **아직 코드에 없다**(이번 run 에서 조회한 id 인지 대조하는 자리). 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
+- 후보마다 `evidence_ids` ⊂ `rank_evidence` 상위 N(=10) — 위반은 `EVIDENCE_REQUIRED`. 코드는 [`common/evidence.py`](../../../apps/api/app/agents/common/evidence.py) 다 — 조회 tool 이 `top_refs()` 로 상위 10개를 모델에게 돌려주며 run state 의 대조표(`seen_evidence`)에 적고, 출력 tool 이 `unseen()` 으로 인용한 id 를 그 표와 대조한다(#319). **조회하지 않은 id 가 하나라도 있으면 근거만 빼지 않고 그 후보를 거절한다** — 모델이 id 를 지어냈다는 뜻이고, 빼고 내보내면 남은 근거로 "우리 아이 맞춤" 인 척하게 된다(#195 리뷰). UUID 로 읽히지 않는 id 도 조회하지 않은 id 다. 인용된 id 는 `suggestion_evidence` 행이 된다 (`source_kind` + `source_id`).
+
+- **대조는 `subject`, 설명은 사람이 읽는 칸.** `rank_evidence` 의 근거는 두 칸을 갖는다 (#304 리뷰). 기피 거절 · keywords 대조는 네 관찰 테이블 공통 칸인 `subject`(affinity 는 `merge_key`)로 하고, `cite()` · `reason` · 화면의 "사용한 기록" 은 `label` 을 쓴다. `label` 은 사람이 읽는 칸이다 — Activity `activity`, Education `topic`. 그런 칸이 없는 Food · Routine 은 `ObservationRow.label` 을 비워 두면 `subject` 가 된다.
 
 ### 5-4. 문구 — 기피를 인용했으면 말해야 한다
 

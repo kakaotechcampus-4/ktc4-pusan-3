@@ -36,7 +36,7 @@ job 인자로 넘기는 이유는 실행 시점이다. 창구가 202 를 먼저 
 
 LLM 이 직접 채우는 id 도 있다. `event_id`, `item_id`, `observation_id` 는 조회 tool 결과에서 골라 넘긴다. 정상 흐름에서는 그 아이의 행만 나오지만, 모델이 결과 밖의 id 를 넘겨도 저장소가 아이 범위로 걸러서 찾지 못하게 해야 한다.
 
-지금 `MemoryStore` 포트의 id 조회 메서드는 아이를 받지 않는다([ports.py:111-174](apps/api/app/agents/memory/store/ports.py#L111-L174)). `get_observation` · `update_observation` · `delete_observation` · `get_event` · `delete_event` · `get_event_item` · `list_event_items` · `update_event_item` · `delete_event_item` 이 그렇다. run 마다 새 `InMemoryStore` 를 쓰는 동안은 다른 아이 행이 없어서 드러나지 않는다. DB 저장이 붙으면 그대로 구멍이 된다.
+지금 `MemoryStore` 포트의 id 조회 메서드는 아이를 받지 않는다([ports.py:111-174](apps/api/app/agents/memory/store/ports.py#L111-L174)). `get_observation` · `update_observation` · `delete_observation` · `get_event` · `delete_event` · `get_event_item` · `list_event_items` · `set_event_item_prepared` · `delete_event_item` 이 그렇다. run 마다 새 `InMemoryStore` 를 쓰는 동안은 다른 아이 행이 없어서 드러나지 않는다. DB 저장이 붙으면 그대로 구멍이 된다.
 
 DB 리포지토리는 이미 모든 함수에서 `child_id` 를 받는다([observation/repository.py](apps/api/app/domains/memory/observation/repository.py), [schedule/repository.py](apps/api/app/domains/schedule/repository.py)). 어댑터가 넘기기만 하면 된다.
 
@@ -75,7 +75,7 @@ LLM 은 지금도 바뀐 값만 낸다. `update_event` 의 인자가 patch 다. 
 
 제출 API 는 보호자가 시트에서 고친 시각도 `check_when` 으로 다시 검증해야 한다(일정 초안 흐름 §4-2). 그런데 `app/api` 는 `app/agents` 를 진입점으로만 본다. `datetime_rules.py` 는 표준 라이브러리만 import 해서([datetime_rules.py:16-19](apps/api/app/agents/common/datetime_rules.py#L16-L19)) `app/rules/` 의 허용 범위 안에 있다. 파트 리드는 `app/rules/` 를 리뷰 없이 고칠 수 있다(공통_구현_계획 K-4).
 
-`prepared_at_for`([schedule.py:470-480](apps/api/app/agents/memory/tools/schedule.py#L470-L480))도 같이 옮긴다. `PATCH /event-items/{iid}` 가 같은 규칙을 써야 한다는 TODO 가 이미 붙어 있다.
+준비물 체크 시각(`prepared_at`)은 옮기지 않는다. Memory store 가 정하고 DB 구현은 백엔드 저장 함수를 그대로 부른다(`memory-agent-v1.md` "`prepared_at` 은 store 가 정한다").
 
 ### 2-4. 제출 API 의 비교 규칙을 BE 와 정한다 (1-3)
 

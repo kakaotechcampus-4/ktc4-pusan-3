@@ -6,6 +6,7 @@
 """
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal
 from uuid import UUID
 
@@ -25,7 +26,12 @@ ChildRecordKind = Literal[
 # 문서 행. 참고일 뿐이라 개인화 근거로 세지 않는다.
 DocKind = Literal["food_doc", "growth_doc", "activity_doc"]
 
-SourceKind = ChildRecordKind | DocKind
+# 메뉴 행 — Food 일반 추천만 쓴다(#442). 고른 메뉴 자체(레시피 카탈로그 행)라 문서 행이 없는
+# 월령에서도 일반 추천에 근거가 붙는다. 아이 기록이 아니라 개인화 근거로 세지 않는다.
+# 값은 `rules/menu_evidence.MENU_EVIDENCE_KIND` 와 같다
+MenuKind = Literal["recipe_catalog"]
+
+SourceKind = ChildRecordKind | DocKind | MenuKind
 
 _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
     (
@@ -70,13 +76,21 @@ class EvidenceCitation:
     `note`는 Agent가 쓰므로, 문서 행이든 아이 기록이든 비워 둘 수 없다.
     "보호자 화면에 그대로 나가는 값"이다.
 
-    `polarity` 와 `label` 은 기피 검사에만 쓴다. 문서 행은 기본값 그대로다.
+    `polarity` · `label` · `subject` 는 기피 검사에만 쓴다. 문서 행은 기본값 그대로다.
+    `label` 은 화면용 이름이라 관찰이면 "물감 놀이 하다가 울었음" 같은 문장일 수 있고,
+    `subject` 는 대조 키("물감")다 (Tool_공통 §5-3). 이유 문장에 둘 중 하나가 나오면
+    밝힌 것으로 본다.
+
+    `observed_on` 은 아이 기록의 날짜다(affinity 는 마지막 관찰일, 문서 행은 None). `build()` 가
+    6개월 판정에 쓰고 `suggestion_evidence` 로는 나가지 않는다.
     """
 
     ref: Ref
     note: str
     polarity: int = 0
     label: str = ""
+    subject: str = ""
+    observed_on: date | None = None
 
     @property
     def is_avoidance(self) -> bool:

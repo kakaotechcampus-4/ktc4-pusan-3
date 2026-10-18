@@ -26,17 +26,18 @@ from app.agents.activity.registry import (
 from app.agents.activity.schemas.task import ActivityTaskType
 from app.agents.activity.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.activity.store.inmemory import in_memory_ports
-from app.agents.common.gate import Gate
+from app.agents.common.age import stage_of
+from app.agents.common.gate import DataReady, Gate
 from app.agents.common.tool_runtime import ErrorCode
-from app.rules.age import LifeStage, stage_of
+from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
 NOW = datetime(2026, 9, 28, tzinfo=UTC)
 TASK = ActivityTaskType.ACTIVITY_RECOMMENDATION
 
+# 위치가 없으면 날씨 · 장소 조회가 둘 다 닫힌다
 BASE = (
     "search_activity_memory",
-    "lookup_weather",
     "lookup_schedule",
     "propose_activity_candidates",
 )
@@ -59,6 +60,7 @@ def gate(months: int, **kwargs) -> Gate:
         safety_ok=True,
         has_location=True,
         outdoor_ok=True,
+        data=DataReady(places=True, weather=True),
     )
     return Gate(**{**base, **kwargs})
 
@@ -80,8 +82,15 @@ class TestToolsFor:
         assert tools_for(TASK, gate(months)) == WITH_PLACES
 
     def test_위치가_없으면_장소_조회가_닫힌다(self):
-        """기본 좌표로 대체하지 않는다. 실내 전용으로 정상 동작한다 (4-3)."""
+        """기본 좌표로 대체하지 않는다. 실내 전용으로 정상 동작한다 (4-3). 날씨도 조회할 수 없다."""
         assert tools_for(TASK, gate(40, has_location=False)) == BASE
+
+    def test_좌표가_있어도_어댑터가_없으면_그_tool_은_닫힌다(self):
+        """부르면 늘 실패만 돌려주고 왕복 하나를 쓴다 (#359 리뷰)."""
+        no_places = tools_for(TASK, gate(40, data=DataReady(weather=True)))
+        no_weather = tools_for(TASK, gate(40, data=DataReady(places=True)))
+        assert "search_nearby_places" not in no_places and "lookup_weather" in no_places
+        assert "lookup_weather" not in no_weather and "search_nearby_places" in no_weather
 
     def test_야외가_안_돼도_장소_조회는_열린다(self):
         """비 오는 날엔 도서관 · 실내 놀이터를 찾는다. 좁히는 것은 tool 이 한다 (3-2)."""
@@ -177,6 +186,5 @@ class TestExecuteTool:
         assert result.error["code"] == ErrorCode.INVALID_ARGS
 
     async def test_통과하면_핸들러까지_간다(self):
-        """지금 핸들러는 mock 이다. 예외를 삼키지 않고 그대로 올린다."""
-        with pytest.raises(NotImplementedError):
-            await execute_tool("lookup_weather", {}, context(), allowed=BASE)
+        result = await execute_tool("lookup_schedule", {}, context(), allowed=BASE)
+        assert (result.success, result.resource) == (True, "lookup_schedule")

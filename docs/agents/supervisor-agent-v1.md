@@ -99,6 +99,18 @@
 
 [health / medication]
 "하루 세 번 항생제 먹여야 해"       → health / medication  (Memory 아님)
+
+[record ↔ unclear (#484)]
+"딸기 맛있다" · "나 딸기 좋아해"     → unclear (보호자 자신의 감상 · 얘기)
+"딸기 맛있대" · "맛있어하더라"      → record / observe (아이 반응을 전함)
+
+[정정 (#483)]
+"~를 ~로 바꿔줘" · "A말고 B"       → record / lookup_edit 문장 전체
+"당근 말고 다 먹었어"              → record / observe (빼고 말한 것)
+"어린이집 점심 우유 말고 두유로"    → food / daycare_meal (급식 변경)
+
+[공부·놀이 + 생활 행동 (#482)]
+"그림책 보고 나서 제자리에 갖다 놨어" → observe 두 조각 (하다가 보인 짜증·거부는 나누지 않는다)
 ```
 
 애매하면 **판정·확인이 붙는 쪽**으로 보낸다.

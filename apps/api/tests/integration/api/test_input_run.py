@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
@@ -25,6 +26,9 @@ from app.api import idempotency, quota
 from app.api.runs import pending_reply, registry, runner
 from app.core.config import settings
 from app.domains.child.models import Child
+from app.domains.consent.models import ConsentAction, ConsentScope
+from app.domains.consent.repository import record_consent
+from app.domains.policy.models import PolicyVersion
 
 from .conftest import issue_bearer, link_child
 
@@ -115,12 +119,52 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "child_id": cid,
             # 확인한 아이의 생일 — 식이 단계(12개월 경계)를 진입점이 여기서 계산한다 (9단계)
             "birth_date": date(2023, 1, 1),
+            # 동의한 적이 없는 아이는 "동의 안 함" 이다 (#372). 조회 실패와는 다르다 — 실패는 예외다
+            "child_health_granted": False,
             "parent_id": parent_id,
             "raw_text": BODY["text"],
             "continuation": None,  # 일반 새 입력
             "reply_to": None,
+            "location": None,
+            "activity_weather": None,
         }
     ]
+
+
+async def _record_child_health(session, *, parent_id, child_id, action: ConsentAction) -> None:
+    version = await session.scalar(
+        select(PolicyVersion.id).where(PolicyVersion.scope == ConsentScope.CHILD_HEALTH)
+    )
+    await record_consent(
+        session,
+        actor_parent_id=parent_id,
+        child_id=child_id,
+        scope=ConsentScope.CHILD_HEALTH,
+        action=action,
+        policy_version_id=version,
+    )
+
+
+@pytest.mark.parametrize(
+    ("actions", "expected"),
+    [
+        ([ConsentAction.GRANTED], True),
+        ([ConsentAction.GRANTED, ConsentAction.WITHDRAWN], False),  # 마지막 action 이 현재 상태다
+        ([ConsentAction.GRANTED, ConsentAction.WITHDRAWN, ConsentAction.GRANTED], True),
+    ],
+)
+async def test_inputs_pass_the_current_child_health_consent_to_the_agents(
+    db_client, session, bearer, agent_calls, cid, actions, expected
+):
+    """#372 PR 2 — 입력 한 번에 읽은 동의의 현재 값이 러너 job 까지 간다."""
+    headers, parent_id = bearer
+    for action in actions:
+        await _record_child_health(session, parent_id=parent_id, child_id=cid, action=action)
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert response.status_code == 202
+    assert agent_calls[0]["child_health_granted"] is expected
 
 
 async def test_inputs_accepts_and_returns_run_id(db_client, bearer, cid):

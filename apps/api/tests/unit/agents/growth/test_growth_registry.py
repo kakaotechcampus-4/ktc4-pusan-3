@@ -18,7 +18,7 @@ from app.agents.growth.registry import (
     tools_for,
 )
 from app.agents.growth.schemas.task import GrowthTaskType, task_type_of
-from tests.unit.agents.growth.support import gate, task
+from tests.unit.agents.growth.support import context, gate, task
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING
@@ -184,3 +184,41 @@ class TestTaskType:
     def test_모르는_라벨은_거부한다(self):
         with pytest.raises(ValueError):
             task_type_of(task("health_review"))
+
+
+class TestExecute:
+    async def test_열리지_않은_tool_은_실행하지_않는다(self):
+        from app.agents.growth.registry import execute_tool
+
+        result = await execute_tool("propose_learning_activity", {}, context(), allowed=())
+        assert result.error["code"] == "TOOL_NOT_ALLOWED"
+
+    async def test_정의가_없는_tool_은_열려_있어도_실행하지_않는다(self):
+        from app.agents.growth.registry import execute_tool
+
+        result = await execute_tool("lookup_notice", {}, context(), allowed=("lookup_notice",))
+        assert result.error["code"] == "TOOL_NOT_ALLOWED"
+
+    async def test_인자가_틀리면_INVALID_ARGS_고_값_원문을_싣지_않는다(self):
+        from app.agents.growth.registry import execute_tool
+
+        result = await execute_tool(
+            "propose_routine_plan",
+            {"category": "self_care", "subject": "비밀 행동" * 5, "items": []},
+            context(),
+            allowed=("propose_routine_plan",),
+        )
+        assert result.error["code"] == "INVALID_ARGS"
+        assert "비밀 행동" not in result.error["message"]
+
+    def test_specs_for_는_정의된_것만_싣는다(self):
+        from app.agents.growth.registry import specs_for
+
+        specs = specs_for(("lookup_notice", "search_affinity"))
+        assert [spec["function"]["name"] for spec in specs] == ["search_affinity"]
+
+    def test_모든_정의에_핸들러가_있다(self):
+        from app.agents.growth.registry import TOOL_HANDLERS
+        from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
+
+        assert {d.name for d in TOOL_DEFINITIONS} == set(TOOL_HANDLERS)

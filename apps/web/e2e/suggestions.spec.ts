@@ -1,4 +1,13 @@
-import { CHILD, expect, expectNoGate, gateMarks, recordApi, test, writes } from "./fixtures";
+import {
+  CHILD,
+  asOtherCaregiver,
+  expect,
+  expectNoGate,
+  gateMarks,
+  recordApi,
+  test,
+  writes,
+} from "./fixtures";
 
 /**
  * 05 제안 후보 · 06 승인 시트 — 최상위 CLAUDE.md §2 기억 · 안전 · 실행.
@@ -44,6 +53,65 @@ test.describe("개인화 추천 (default)", () => {
     // 일반 추천의 표시가 개인화 화면에 섞이지 않는다 — 둘은 한 화면에 같이 서지 않는다.
     await expect(page.getByText("또래 기준 일반 추천")).toHaveCount(0);
     await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(0);
+  });
+
+  test("이유는 서버 문장 그대로 한 줄이고, 비어 오면 라벨도 세우지 않는다 (#475)", async ({
+    page,
+  }) => {
+    const responded = page.waitForResponse(
+      (r) => r.request().method() === "POST" && r.url().endsWith(`/children/${CHILD}/suggestions`),
+    );
+    await page.goto(SUGGESTIONS);
+    const body = (await (await responded).json()) as {
+      suggestions: { agent: string; content: string; reason: string | null }[];
+    };
+    // 빈 이유가 한 줄도 없으면 이 테스트는 "라벨만 선 줄" 을 못 잡는다
+    expect(body.suggestions.some((s) => s.reason === null)).toBe(true);
+
+    for (const [tab, agent] of [
+      ["식사 3가지", "food"],
+      ["놀이 3가지", "activity"],
+    ] as const) {
+      await page.getByRole("tab", { name: tab }).click();
+      const panel = page.getByRole("tabpanel");
+      for (const s of body.suggestions.filter((x) => x.agent === agent)) {
+        const row = panel.locator(":scope > ul > li").filter({ hasText: s.content });
+        // 행을 못 찾으면 아래 "라벨 0건" 이 그냥 통과한다 — 행이 있다는 전제를 먼저 건다
+        await expect(row).toHaveCount(1);
+        const label = row.getByText("추천 이유", { exact: true });
+        if (s.reason) {
+          await expect(label).toBeVisible();
+          await expect(row.getByText(s.reason, { exact: true })).toBeVisible();
+        } else {
+          await expect(label).toHaveCount(0);
+        }
+      }
+      // 서버가 한 문장으로 보내는 것을 화면이 두 칸으로 나누지 않는다 (Agent 공통규약 C-2)
+      await expect(panel.getByText(/^왜 (이걸|지금)$/)).toHaveCount(0);
+    }
+  });
+});
+
+test.describe("홈 버튼에서 들어오면 (#286)", () => {
+  const suggestionsBody = (calls: ReturnType<typeof recordApi>) =>
+    writes(calls, "POST", new RegExp(`^/children/${CHILD}/suggestions$`)).map((c) => c.body);
+
+  test("누른 버튼의 키만 추천 요청에 싣고, 문장은 보내지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    await page.getByRole("button", { name: /저녁 추천해드릴까요/ }).click();
+
+    await expect(page).toHaveURL(/\/suggestions\?agents=food&prompt=dinner$/);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    // 🚨 문장이 실리면 Supervisor 사전검사를 안 거친 문장으로 Agent 가 돈다 (#249).
+    expect(suggestionsBody(calls)).toEqual([{ agents: ["food"], prompt_key: "dinner" }]);
+  });
+
+  test("주소의 모르는 키는 버리고 키 없이 요청한다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/suggestions?agents=food&prompt=midnight_snack`);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    expect(suggestionsBody(calls)).toEqual([{ agents: ["food"] }]);
   });
 });
 
@@ -228,6 +296,28 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
   });
 
+  test("다른 보호자가 먼저 등록한 재료면 기록된 것으로 서고, 다시 시도가 없다 (#374)", async ({
+    page,
+  }) => {
+    const sheet = await pickEggAndAdopt(page);
+    expect(
+      await asOtherCaregiver(page, {
+        method: "POST",
+        path: `/children/${CHILD}/health-safety`,
+        body: { type: "allergy", label: "계란" },
+        idempotent: true,
+      }),
+    ).toBe(201);
+
+    // 🚨 409 already_exists 는 "이미 기록에 있다" 다 — 다음 제안에서도 걸러진다.
+    await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
+    await expect(sheet.getByText("알레르기 기록에 추가했어요")).toBeVisible();
+    await expect(
+      sheet.getByText("알레르기 기록에 저장하지 못했어요", { exact: false }),
+    ).toHaveCount(0);
+    await expect(sheet.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+  });
+
   test('"괜찮았어요" 는 알레르기 기록을 만들지 않는다', async ({ page }) => {
     const calls = recordApi(page);
     const sheet = await pickEggAndAdopt(page);
@@ -325,5 +415,77 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     expect(submitted).toHaveLength(1);
     expect(submitted[0].idempotencyKey).toBeTruthy();
     expect(submitted[0].body).toMatchObject({ suggestion_ids: ["s_4"] });
+  });
+});
+
+test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", () => {
+  test.describe("개수 안내", () => {
+    test.use({ scenario: "suggest_counts" });
+
+    test("0개로 끝난 Agent 는 안내만 서고 다시 시도가 없다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+
+      // 서버 문구를 그대로 그린다 — 놀이는 0개, 식사는 2개
+      await expect(page.getByText("조건에 맞는 추천이 없어요.")).toBeVisible();
+      await expect(page.getByText("조건에 맞는 추천을 2개 준비했어요.")).toBeVisible();
+      // 🚨 실패는 "묶음이 없는 Agent" 다 — 0개를 실패 카드로 그리면 눌러도 같은 0개만 다시 온다.
+      await expect(page.getByText(/쪽은 이번에 준비하지 못했어요/)).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("이어서 할 수 없음", () => {
+    test.use({ scenario: "cannot_resume" });
+
+    test("안내만 서고 다시 시도가 없고, 이어서 할 수 있는 쪽은 그대로 보인다", async ({ page }) => {
+      await page.goto(`${SUGGESTIONS}&run=r1`);
+
+      await expect(
+        page.getByText("이전 요청을 이어서 준비할 수 없어요. 홈에서 다시 골라 주세요."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+      // 성공과 안내를 한 화면에 섞는다 (NF-06) — 식사 후보는 그대로 선다.
+      // 서버가 `prompt` 를 아직 안 주므로(null) 머리줄은 도메인 라벨이다
+      await expect(page.getByText("식사 · 3가지 중에서")).toBeVisible();
+    });
+  });
+
+  test.describe("일반 추천의 근거", () => {
+    test.use({ scenario: "scarcity" });
+
+    test("문서 출처를 적고, 아이 기록처럼 세지 않는다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+
+      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      await expect(card).toContainText("참고 · 블록 쌓기 (교육부, 표준보육과정)");
+      // 🚨 문서는 아이 기록이 아니다 — "사용한 기록 N건" 으로 세지 않는다
+      await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
+      // 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 서고 칩이 없다
+      await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toBeVisible();
+      await expect(page.getByRole("button", { name: "실내" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("식품 아닌 알레르기 확인 문구", () => {
+    test.use({ scenario: "suggest_cautions" });
+
+    test("놀이 묶음에 확인 문구가 선다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      await expect(
+        page.getByText("등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."),
+      ).toBeVisible();
+    });
+  });
+
+  test.describe("하루 한도", () => {
+    test.use({ scenario: "daily_limit" });
+
+    test("🚨 다시 시도를 세우지 않는다 — 눌러도 같은 답이다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      await expect(
+        page.getByText("오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+    });
   });
 });

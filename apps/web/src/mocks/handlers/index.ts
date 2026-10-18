@@ -1,4 +1,4 @@
-import { authHandlers } from "./auth";
+import { authHandlers, sessionGuardHandlers } from "./auth";
 import { calendarHandlers } from "./calendar";
 import { childrenHandlers } from "./children";
 import { clientErrorHandlers } from "./client-errors";
@@ -7,6 +7,7 @@ import { memoryHandlers } from "./memories";
 import { photoHandlers } from "./photos";
 import { policyHandlers } from "./policies";
 import { profileHandlers } from "./profile";
+import { reportHandlers } from "./reports";
 import { runHandlers } from "./runs";
 import { settingsHandlers } from "./settings";
 import { suggestionHandlers } from "./suggestions";
@@ -22,6 +23,8 @@ import { suggestionHandlers } from "./suggestions";
  *    사라지지 않게 파일을 나눠 뒀다.
  */
 export const handlers = [
+  // 🚨 맨 앞이다 — 만료된 access 를 어느 경로에서든 먼저 막는다 (`session_expired`).
+  ...sessionGuardHandlers,
   // 🚨 무인증 엔드포인트다 — 가입 동의 화면이 로그인 전에 부른다 (#91).
   ...policyHandlers,
   ...authHandlers,
@@ -42,4 +45,6 @@ export const handlers = [
   ...inviteHandlers,
   // 화면 오류 보고 — 오류 바운더리가 부른다. 아이 스코프 밖, 겹치는 경로 없음.
   ...clientErrorHandlers,
+  // 10 설정 › 문제 알리기 (#487). 아이 스코프 밖, 겹치는 경로 없음.
+  ...reportHandlers,
 ];

@@ -34,25 +34,17 @@ from app.agents.activity.schemas.common import (
     PlaceCategory,
 )
 from app.agents.common.evidence import AffinityRow
+from app.agents.common.ports import (
+    ChildProfileReader,
+    ConsentReader,
+    SafetyLookupError,
+)
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
+
+# 외부 조회 실패. 날씨 어댑터가 던져야 해서 core 에 있다 — 여기서 다시 내보낸다
+from app.core.weather_raw import UpstreamUnavailable as UpstreamUnavailable
 from app.rules.kma_grid import latlon_to_grid
-
-
-class SafetyLookupError(Exception):
-    """health_safety를 읽지 못함. 0행(건강정보 동의 안 함)과 다르다.
-
-    빈 목록으로 대신 돌려주지 않는다. Activity가 이때 어떻게 할지는 D7 을 따른다.
-    """
-
-
-class UpstreamUnavailable(Exception):
-    """외부 조회 실패. 결과가 0건인 것과 다르다.
-
-    기본값으로 메우지 않는다 — 날씨 실패는 "맑음"이 아니고 미세먼지 실패는 "좋음"이 아니다 (D8).
-    메시지에 격자·장소명을 넣지 않는다.
-    """
-
 
 # 읽는 health_safety kind (D7 · 10/4 확정안). 꽃가루 · 동물털 같은 환경 알레르기도 'allergy' 고,
 # 'environmental' 은 고소공포 같은 것이다(data_model.md). 나머지 셋(chronic_disease · behavioral ·
@@ -191,18 +183,6 @@ class PlaceRow:
     source: Literal["city_park", "kids_play_facility", "library"]
 
 
-class ChildProfileReader(Protocol):
-    async def birth_date(self, *, child_id: UUID) -> date:
-        """월령은 이 값에서 코드가 계산한다 (app/rules/age.py)."""
-        ...
-
-
-class ConsentReader(Protocol):
-    async def child_health_granted(self, *, child_id: UUID) -> bool:
-        """consent(scope=child_health) 최신 행이 granted 인가."""
-        ...
-
-
 class SafetyReader(Protocol):
     async def activity_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
         """`allergy` · `environmental` 행을 status 무관하게 돌려준다. 거르는 것은 호출부다.
@@ -215,6 +195,19 @@ class SafetyReader(Protocol):
         필터는 다른 행으로 거르는 경우).
         """
         ...
+
+
+class UnwiredSafety:
+    """`health_safety` 어댑터가 붙기 전의 자리. 읽으면 늘 `SafetyLookupError` 다 (Food 와 같다).
+
+    `build_gate` 는 이 포트가 들어 있으면 동의를 보지 않고 안전 조회 실패(`safety_ok=False`)로
+    읽는다. 동의가 없는 아이는 원래 `health_safety` 를 읽지 않아서 그대로 두면 실패가 드러나지
+    않고 Activity 가 환경 알레르기(꽃가루 · 동물털) 확인 없이 열린다 — 어댑터가 붙기 전에는 동의와
+    상관없이 닫혀 있어야 한다 (#372 · #380). 어댑터가 붙으면 이 클래스를 쓰는 자리가 없어진다.
+    """
+
+    async def activity_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
+        raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
 
 
 class ActivityMemoryReader(Protocol):

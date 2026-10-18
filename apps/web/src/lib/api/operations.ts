@@ -27,6 +27,8 @@ import type {
   PhotoLane,
   SubmitEventBody,
   SubmitEventResponse,
+  UpdateHealthSafetyRequest,
+  UpdateHealthSafetyResponse,
 } from "./types";
 
 /* ── 04 한 줄 입력 ────────────────────────────────────────────────────── */
@@ -74,7 +76,7 @@ export function submitInput(
  *    보호자가 적은 라벨만 올리고 심각도·반응·메모를 추측하지 않으므로(NF-03) 지금은 정본이 맞다.
  */
 
-/** 전부 선택이다 — 모두 건너뛰어도 200 이다. */
+/** 전부 선택이지만 빈 본문은 400 이다 — 아무것도 안 적었으면 부르지 않는다. */
 export function submitOnboarding(
   childId: string,
   body: OnboardingRequest,
@@ -166,6 +168,23 @@ export function addHealthSafety(
   return api.post(idempotentPath.healthSafety(childId), body, { idempotencyKey });
 }
 
+/**
+ * 🚨 승인 게이트 ㉡ — **고치기.** 등록과 같은 게이트의 다른 메서드다 (일정 제출의 POST · PATCH 와 같다).
+ *
+ * 🚨 **응답의 id 가 바뀔 수 있다** (서버 #370) — 고치면 지금 기록을 내리고 새 기록을 넣는다. 바뀐 것이
+ *    없으면 같은 id 그대로다. 화면은 응답 뒤 목록을 다시 받아 그리고, 들고 있던 id 를 다시 쓰지 않는다.
+ * 🚨 `404 not_found` 는 먼저 고쳐졌거나 내려간 기록이다(다른 보호자, 또는 응답을 잃은 뒤 값을 바꿔
+ *    다시 보낸 본인) — 같은 요청을 다시 보내도 같다.
+ */
+export function updateHealthSafety(
+  childId: string,
+  safetyId: string,
+  body: UpdateHealthSafetyRequest,
+  idempotencyKey: IdempotencyKey,
+): Promise<UpdateHealthSafetyResponse> {
+  return api.patch(idempotentPath.updateHealthSafety(childId, safetyId), body, { idempotencyKey });
+}
+
 /* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */
 
 /**
@@ -222,15 +241,16 @@ export function submitEventDraft(
  *    보내는데 서버는 그게 이미 들어간 것인지 알 방법이 없다. 서버가 저장하고 응답만 유실되면
  *    카드가 실패로 보이고, 보호자가 한 번 더 누르면 **"모자" 가 두 줄** 들어간다.
  *
- * ⚠️ 경로가 미정이다 (`docs/event/event-draft-flow-v1.md` §6 — op 별로 가른다는 것까지만 정했다).
- *    🚨 그래서 `idempotentPath` 표에는 **아직 넣지 않았다** — 그 표는 POST 차단과 계약 테스트
- *    ①(키 없으면 400)을 함께 돌리는데, `POST /events/{eid}` 는 존재하지 않는 경로다.
- *    경로가 확정되면 표로 옮긴다.
+ * 🚨 **아이 스코프 아래 경로다** (#284 · #316). 서버가 `AccessibleChild` 로 권한을 본다 —
+ *    `event_id` 하나로는 남의 아이 일정인지 가릴 수 없다.
+ * 🚨 본문은 `submitEventDraft` 와 같은 **최종 목록**이다 (`items` 에서 빠진 `item_id` 는 삭제).
+ *    `suggestion_ids` 는 싣지 않는다 — 제안 ↔ 일정 연결은 create 에서만 생긴다.
  */
 export function updateEventDraft(
+  childId: string,
   eventId: string,
-  body: SubmitEventBody,
+  body: Omit<SubmitEventBody, "suggestion_ids">,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
-  return api.patch(`/events/${eventId}`, body, { idempotencyKey });
+  return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });
 }

@@ -80,7 +80,7 @@ async def test_조회는_표시를_남기지_않는다() -> None:
     )
     await ports.catalog.get("두유")  # type: ignore[attr-defined]
     await ports.catalog.get_many(("두유",))  # type: ignore[attr-defined]
-    await ports.catalog.all_resolved()  # type: ignore[attr-defined]
+    await ports.recipes.all_resolved()  # type: ignore[attr-defined]
 
     assert rows == [_ROW]
     assert writes.wrote is False

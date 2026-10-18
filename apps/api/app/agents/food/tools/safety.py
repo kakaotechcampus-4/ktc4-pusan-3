@@ -14,11 +14,13 @@
 
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
+from types import MappingProxyType
 from typing import Literal
 
+from app.agents.common.age import first_month_of
 from app.agents.common.allergy import (
     LabelBook,
     NameRule,
@@ -35,7 +37,7 @@ from app.agents.common.reference import (
     food_safety_terms,
 )
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.rules.age import Stage, first_month_of
+from app.rules.age import Stage
 from app.rules.allergen import ALLERGEN_NAMES, strip_allergen_marks
 from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, prepare_fields
 
@@ -43,13 +45,220 @@ from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, p
 # 필터가 조용히 꺼지지 않게(fail closed).
 _INACTIVE_STATUSES = frozenset({"retracted", "none"})
 
-# 추천인지 급식 조회인지. 급식은 기관이 이미 잘라서 주는 떡을 막지 않고 주의만 단다
+# 추천인지 급식 조회인지. 급식은 기관이 이미 잘라서 주는 떡을 막지 않고 문구 없이 표시한다
 Purpose = Literal["recommend", "daycare"]
 
 # 연령 규칙의 exact 는 메뉴명에서 급식표의 알레르기 번호 · 괄호 · 양을 뗀 뒤 비교한다
 # ("우유 2,5" · "우유(2)" · "우유(200ml)" · "우유 한 컵" 은 마시는 우유다)
 _BRACKETS = re.compile(r"\([^)]*\)|\[[^\]]*\]")
 _AMOUNT = re.compile(r"(?:\d+(?:\.\d+)?|한|두|반)\s*(?:ml|cc|l|g|컵|잔|팩|병|개)", re.IGNORECASE)
+
+# 사전에 없는 한 글자 이름은 글자 그대로 막지 않는다 — 강아지 알레르기를 "개" 로 적으면 찌개 ·
+# 조개탕이 막혔다 (#305). 아래 한 글자 식품만, 보호자가 그 한 글자로 적었을 때 글자 그대로 막는다.
+# 값은 그 글자가 음식이 아닌 뜻으로 메뉴에 나오는 자리(guard)다. Activity · Growth 의
+# `common/allergy.SINGLE_CHAR_NAMES` 와 같은 규칙이고, 목록은 메뉴(음식 글)를 보는 쪽이라 다르다 —
+# 그 목록의 글자(잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)도 Food 는 다 막는다(잣 · 콩 · 깨 · 쌀 · 팥은 사전
+# 이름, 쑥 · 꽃은 아래 목록).
+#
+# 사전(food_safety_terms.yaml)에 넣지 않는다. 사전의 이름은 보호자가 적은 다른 이름 안의 글자를 찾을
+# 때와 메뉴의 알레르기 이름 표에도 쓰여서, 흔한 한 글자를 넣으면 "알레르기 비염" 이 난류로 ·
+# "설파제" 가 파로 읽히고 대파가 든 메뉴마다 이름 표에 "파" 가 붙는다(#305 PR 의 비교).
+#
+# 목록은 레시피 재료(식약처 COOKRCP01 · 농식품정보원)의 한 글자 낱말에서 골랐다. 소 · 양 · 알은
+# 음식 뜻(소고기 · 양고기 · 메추리알)이 있어 넣었다 — 빼면 지금 글자 그대로 막히는 그 메뉴가
+# 풀린다.
+# 쑥갓(쑥) · 양파(파) · 양곱창(양)처럼 그 글자가 든 다른 음식은 guard 에 넣지 않는다(막는 쪽).
+SINGLE_CHAR_FOODS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "쑥": (),
+        "배": ("배추", "배춧", "배아", "배합", "배달", "배꼽", "배식", "곱배기"),
+        "감": ("감자", "감귤", "감태", "감초", "감칠", "감미", "감바스", "감싼", "감싸"),
+        "파": (
+            "파스타",
+            "파프리카",
+            "파인애플",
+            "파이",
+            "파슬리",
+            "파래",
+            "파마산",
+            "파르메",
+            "파니니",
+            "파운드",
+            "파에야",
+            "파우더",
+            "파르페",
+            "파파야",
+            "스파",
+            "알파",
+        ),
+        "김": ("김치", "김칫", "김장", "튀김"),
+        "무": (
+            "무침",
+            "무화과",
+            "무스",
+            "무염",
+            "무가당",
+            "무설탕",
+            "무첨가",
+            "무농약",
+            "무지방",
+            "무지개",
+            "버무리",
+            "나무",
+            "무게",
+            "율무",
+            "스무디",
+            "무른",
+            "우무",
+        ),
+        "밤": ("밤참", "밤새", "밤고구마", "밤호박", "물밤"),
+        "갓": ("쑥갓", "갓 구운", "갓 지은"),
+        "마": (
+            "마늘",
+            "마요",
+            "마카",
+            "마들렌",
+            "마라",
+            "마파",
+            "고구마",
+            "토마토",
+            "마시멜",
+            "마스카",
+            "마멀",
+            "마리네",
+            "마살라",
+            "다시마",
+            "마른",
+            "마가린",
+            "마르게",
+            "치마",
+            "마구로",
+            "마스타드",
+            "파마산",
+            "로즈마리",
+            "스마일",
+            "다마고",
+            "크레마",
+        ),
+        "톳": (),
+        "귤": (),
+        "조": (
+            "조기",
+            "조개",
+            "조갯",
+            "조림",
+            "조미",
+            "조각",
+            "조청",
+            "조리",
+            "조랭이",
+            "조금",
+            "조물",
+            "조선",
+            "조합",
+            "구조",
+            "고조",
+            "리조또",
+            "리조뜨",
+            "양조",
+            "해조",
+            "건조",
+        ),
+        "묵": ("묵은", "어묵"),
+        "딜": (),
+        "꿀": (),
+        "술": ("큰술", "작은술"),  # 미술 · 마술은 넣지 않는다 — "조미술"(알코올이 든 양념)을 덮는다
+        "꽃": (
+            "꽃게",
+            "꽃빵",
+            "꽃소금",
+            "꽃말이",
+            "꽃모양",
+            "꽃 모양",
+            "꽃등심",
+            "꽃살",
+            "꽃갈비",
+            "꽃새우",
+            "꽃맛살",
+        ),
+        "소": (
+            "소금",
+            "소스",
+            "고소",
+            "소시지",
+            "소세지",
+            "소면",
+            "소라",
+            "소주",
+            "소다",
+            "소보로",
+            "소보루",
+            "소박이",
+            "소테",
+            "소르베",
+            "소분",
+            "소량",
+            "소야",
+            "소프트",
+            "소이",
+            "효소",
+            "색소",
+            "미소",
+            "소바",
+            "채소",
+        ),
+        "양": (
+            "양파",
+            "양념",
+            "양배추",
+            "양송이",
+            "양상추",
+            "양갱",
+            "양장피",
+            "양식",
+            "양지",
+            "양푼",
+            "양조",
+            "영양",
+            "다양",
+            "모양",
+            "서양",
+            "태양",
+            "양껏",
+            "양면",
+            "양쪽",
+            "청양",
+            "쳥양",
+            "보양",
+        ),
+        "알": (
+            "알배추",
+            "알감자",
+            "알새우",
+            "알타리",
+            "알룰로스",
+            "알밤",
+            "알로에",
+            "알리오",
+            "알코올",
+            "알맹이",
+            "알토란",
+            "알곡",
+            "알록달록",
+            "알싸",
+            "알프레도",
+            "알맞",
+            "알파",
+            "알마늘",
+            "새알",
+            "옥수수알",
+            "포도알",
+            "콩알",
+            "알비트",
+            "알콩달콩",
+        ),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -75,8 +284,8 @@ class SafetyVerdict:
     blocked: tuple[MenuCatalogRow, ...]
     unchecked: tuple[MenuCatalogRow, ...]  # 해석 실패거나 재료 모름 — 추천하지 않는다
     hits: dict[str, tuple[str, ...]]  # menu_key → 걸린 key. 로그에 싣지 않음
-    # menu_key → 주의 규칙 label. 막지 않고 안내만 붙인다(질식 주의 → guide.choking_caution).
-    # 나뉜 묶음과 따로 본다 — passed 행에도 붙는다
+    # menu_key → 주의 규칙 label. 막지 않는다. 화면에 문구를 내지 않는다(어른이 곁에서 지켜본다는
+    # 전제) — 판정만 계속 계산해 둔다. 나뉜 묶음과 따로 본다 — passed 행에도 붙는다
     cautions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # menu_key → 그 메뉴에 들어 있거나 제품에 따라 들어 있을 수 있는 19종 정식 명칭(코드 순).
     # passed · needs_check 행만 싣고, 없으면 키가 없다.
@@ -220,6 +429,8 @@ def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
       `chronic_restriction.yaml` 매핑에 있을 때만 그 식품을 막고, 없는 label(당뇨 · 고소공포)은
       식품을 유도하지 않는다.
     - 사전에서 정확히 같은 이름을 못 찾은 조각은 그 글자 그대로도 막는다(키위 → "키위").
+      한 글자는 `SINGLE_CHAR_FOODS` 에 있을 때만 그 guard 와 함께 막는다 — 강아지 알레르기를
+      "개" 로 적어도 찌개가 막히지 않는다 (#305).
     """
     book = food_book()
     codes: set[int] = set()
@@ -236,8 +447,11 @@ def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
         codes |= found.codes
         for term in found.terms:
             add(term)
-        if rest:
-            add(Term(key=entry.label, aliases=rest))
+        if literal := tuple(word for word in rest if len(word) > 1):
+            add(Term(key=entry.label, aliases=literal))
+        for word in rest:
+            if word in SINGLE_CHAR_FOODS:
+                add(Term(key=entry.label, aliases=(word,), guards=SINGLE_CHAR_FOODS[word]))
     return SafetyRules(codes=frozenset(codes), terms=tuple(terms))
 
 

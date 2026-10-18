@@ -1,0 +1,107 @@
+# Food 의 코드 상수 문구 (Food_Tool_명세.md §4). 모델을 거치지 않고 화면에 그대로 나간다.
+# 테스트(test_food_readouts.py)가 명세 §4 표와 글자 단위로 비교한다. 문구를 바꾸면 명세도 같이 고친다.
+# `{menu}` · `{recorded}` · `{date}` · `{slot}` · `{label}` · `{nutrient}` · `{action}` · `{days}` ·
+# `{group}` · `{count}` 자리는 코드가 만든 값으로만 채운다.
+
+unsupported.milk_meal:
+  kind: unsupported
+  template: "이 시기에는 모유나 분유만 먹어요. 이유식은 보통 생후 4~6개월에 시작해요."
+unsupported.infant_nutrient:
+  kind: unsupported
+  template: "돌 전에는 영양소 분석을 지원하지 않아요."
+blocked.safety:
+  kind: blocked
+  template: "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요."
+pool.empty:
+  kind: pool
+  template: "조건에 맞는 메뉴가 없어요."
+general.reason.toddler:
+  kind: general
+  template: "또래 아이들이 많이 먹는 메뉴예요."
+general.reason.weaning:
+  kind: general
+  template: "이 시기 아기들이 많이 먹는 재료예요."
+followup.preference:
+  kind: followup
+  template: "{menu}은(는) 좋아하는 편인가요?"
+unsupported.milk_amount:
+  kind: unsupported
+  template: "먹이는 양은 아이마다 달라서 알려드리기 어려워요. 소아과에서 확인해 보세요."
+unsupported.weaning_over12:
+  kind: unsupported
+  template: "지금은 이유식 시기가 지나서 일반식으로 알려드릴게요."
+unsupported.weight_diet:
+  kind: unsupported
+  template: "체중을 목표로 한 식단은 만들지 않아요. 몸무게 이야기는 영유아 건강검진에서 확인해 보세요."
+nutrient.insufficient:
+  kind: nutrient
+  template: "최근 식사 기록이 적어서 영양 이야기는 정확하지 않아요. ({recorded}건 기록됨)"
+nutrient.today_empty:
+  kind: nutrient
+  template: "오늘 먹은 기록이 아직 없어서 최근 며칠을 기준으로 골랐어요."
+nutrient.daycare_amount_unknown:
+  kind: nutrient
+  template: "급식은 메뉴만 알고 얼마나 먹었는지는 몰라서 참고만 했어요."
+nutrient.appearance:
+  kind: nutrient_analysis
+  template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."
+nutrient.band.low:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요."
+nutrient.band.low_action:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요 — {action}"
+nutrient.band.high:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건을 보면 {nutrient} 많은 음식이 자주 보여요."
+nutrient.band.high_action:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건을 보면 {nutrient} 많은 음식이 자주 보여요 — {action}"
+nutrient.band.all_ok:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건을 보면 살펴본 영양소가 고르게 담겨 있어요."
+nutrient.unscored:
+  kind: nutrient
+  template: "기록된 식사 {recorded}건으로는 영양소 비중을 아직 살펴보지 못했어요."
+daycare.ask_substitute:
+  kind: daycare
+  template: "대체식이나 알레르기 때문에 빼놓은 메뉴가 있으면 알려주세요."
+daycare.unchecked:
+  kind: daycare
+  template: "대체식 확인 전"
+daycare.reference_menu:
+  kind: daycare
+  template: "지역 표준식단이라 우리 아이가 실제로 먹은 것과 다를 수 있어요."
+daycare.updated:
+  kind: daycare
+  template: "{date} {slot} 급식을 {menu}(으)로 바꿔 뒀어요."
+daycare.amount_updated:
+  kind: daycare
+  template: "{date} {slot} 급식은 먹은 양을 반영해 뒀어요."
+daycare.absent:
+  kind: daycare
+  template: "{date}은(는) 기관 식사 없는 걸로 해 뒀어요."
+daycare.ambiguous:
+  kind: daycare
+  template: "어느 날 급식을 말씀하시는 걸까요?"
+daycare.slot_ambiguous:
+  kind: daycare
+  template: "그날은 점심과 간식이 다 있어요. 어느 쪽일까요?"
+daycare.allergy_conflict:
+  kind: daycare
+  template: "기록해 뒀어요. 그런데 등록된 {label} 알레르기와 겹쳐요."
+daycare.out_of_range:
+  kind: daycare
+  template: "너무 지난 날이라 급식 기록이 남아 있지 않아요."
+closed.no_daycare:
+  kind: closed
+  template: "등록된 기관 급식 정보가 없어요."
+daycare.not_found:
+  kind: daycare
+  template: "급식 정보를 못 찾았어요."
+daycare.replaced_unknown:
+  kind: daycare
+  template: "어떤 메뉴 대신 받았나요?"
+daycare.unchanged:
+  kind: daycare
+  template: "급식 기록은 그대로 두었어요."

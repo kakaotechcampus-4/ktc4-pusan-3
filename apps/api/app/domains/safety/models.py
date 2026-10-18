@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,6 +67,16 @@ class HealthSafety(Base, UUIDPk, Timestamps):
         CheckConstraint(
             f"severity IS NULL OR (kind = 'allergy') = (severity IN ({_ALLERGY_SEVERITY_VALUES}))",
             name="health_safety_severity_by_kind",
+        ),
+        # active 인 같은 항목은 한 줄만. 등록 API 의 코드 확인을 동시 요청이 빠져나가도 DB 가
+        # 막는다. 내린 줄은 인덱스 밖이라 같은 이름을 다시 등록할 수 있다.
+        Index(
+            "uq_health_safety_active_item",
+            "child_id",
+            "kind",
+            "label",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
         ),
     )
 

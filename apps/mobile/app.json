@@ -2,6 +2,7 @@
   "expo": {
     "name": "아이캐치",
     "slug": "icatch",
+    "owner": "truedoc",
     "scheme": "icatch",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -9,34 +10,34 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "kr.ac.pusan.ktc4.icatch"
+      "bundleIdentifier": "kr.ai.icatch"
     },
     "android": {
-      "package": "kr.ac.pusan.ktc4.icatch",
+      "package": "kr.ai.icatch",
       "adaptiveIcon": {
         "backgroundColor": "#E7F1EA",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE"
+      ]
     },
     "plugins": [
-      [
-        "expo-media-library",
-        {
-          "photosPermission": "받아 둔 알림장이나 아이 사진을 시트에서 바로 고를 수 있게 사진 접근을 허용해 주세요.",
-          "savePhotosPermission": false,
-          "isAccessMediaLocationEnabled": false,
-          "granularPermissions": [
-            "photo"
-          ]
-        }
-      ],
       "expo-web-browser"
     ],
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "67403aa7-3f76-4e90-917e-47c6104323a4"
+      }
     }
   }
 }

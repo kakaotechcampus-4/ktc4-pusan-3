@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { GrowthChart } from "@/components/growth-chart";
 import { GrowthLogList } from "@/components/growth-log-list";
@@ -19,8 +20,10 @@ import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 11-1 키 · 몸무게 상세 — 이 아이 안에서 어떻게 움직였고, 언제 무엇을 쟀는지.
@@ -42,7 +45,9 @@ import { api, qk, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
 export default function GrowthDetailPage() {
   return (
     <AuthGate>
-      <GrowthDetailScreen />
+      <ScreenTransition>
+        <GrowthDetailScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -85,6 +90,7 @@ function GrowthDetailScreen() {
             히스토리에 프로필이 없어서 back 이 앱 밖으로 나간다. */}
         <Link
           href={`/child/${childId}/profile`}
+          {...BACK}
           className="text-body-sm text-ink-muted ease-standard active:text-ink hover:text-ink min-h-touch -my-2 -ml-1 flex w-fit items-center gap-1 py-2 pr-2 pl-1 transition-colors duration-120"
         >
           <ChevronLeft aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
@@ -116,58 +122,61 @@ function GrowthDetailScreen() {
         </div>
       </header>
 
-      {growth.isPending ? (
-        <SkeletonBlock label="측정 기록을 불러오는 중" />
-      ) : growth.isError ? (
-        /* 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3). */
-        <CardFailed>
-          <p className="text-body text-ink">측정 기록을 불러오지 못했어요</p>
-          <Button
-            variant="secondary"
-            size="compact"
-            onClick={() => void growth.refetch()}
-            className="mt-3"
-          >
-            다시 불러오기
-          </Button>
-        </CardFailed>
-      ) : logs.length === 0 ? (
-        // 🚨 빈 상태를 사과문으로 쓰지 않는다. 쌓인 건수를 그대로 보여준다 (`EmptyState`).
-        <EmptyState
-          icon={Ruler}
-          title="아직 잰 기록이 없어요"
-          description="어린이집 신체검사나 병원에서 잰 날, 여기에 적어 두면 돼요."
-          count={0}
-          countLabel="적어 둔 기록"
-        />
-      ) : (
-        <>
-          <section className="flex flex-col gap-3">
-            <h2 className="text-label text-brand">변화</h2>
-            <GrowthChart logs={logs} />
-          </section>
+      {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
+      <Swap id={phaseOf(growth)}>
+        {growth.isPending ? (
+          <SkeletonBlock label="측정 기록을 불러오는 중" />
+        ) : growth.isError ? (
+          /* 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3). */
+          <CardFailed>
+            <p className="text-body text-ink">측정 기록을 불러오지 못했어요</p>
+            <Button
+              variant="secondary"
+              size="compact"
+              onClick={() => void growth.refetch()}
+              className="mt-3"
+            >
+              다시 불러오기
+            </Button>
+          </CardFailed>
+        ) : logs.length === 0 ? (
+          // 🚨 빈 상태를 사과문으로 쓰지 않는다. 쌓인 건수를 그대로 보여준다 (`EmptyState`).
+          <EmptyState
+            icon={Ruler}
+            title="아직 잰 기록이 없어요"
+            description="어린이집 신체검사나 병원에서 잰 날, 여기에 적어 두면 돼요."
+            count={0}
+            countLabel="적어 둔 기록"
+          />
+        ) : (
+          <>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">변화</h2>
+              <GrowthChart logs={logs} />
+            </section>
 
-          <section className="flex flex-col gap-3">
-            <h2 className="text-label text-brand">기록</h2>
-            {/* 🚨 **목록이 화면을 밀지 않게 목록 안에서 스크롤한다.** 잰 기록은 해가 갈수록
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">기록</h2>
+              {/* 🚨 **목록이 화면을 밀지 않게 목록 안에서 스크롤한다.** 잰 기록은 해가 갈수록
                 쌓이기만 하는데, 다 펼치면 그래프가 화면 위로 사라지고 "새로 적기" 는 스크롤
                 끝까지 가야 닿는다. 🚨 그래도 **목록을 접거나 몇 건만 보여주지 않는다** — 쌓인
                 것을 그대로 보여주는 것이 이 화면이 하는 일이다 (최상위 CLAUDE.md §2). */}
-            <GrowthLogList
-              logs={logs}
-              onEdit={setEditing}
-              onDelete={(log) => remove.mutate(log)}
-              deletingId={deletingId}
-              scrollable
-            />
-            {remove.isError ? (
-              <p role="status" className="text-body-sm text-ink-muted">
-                지우지 못했어요. 그 줄은 아직 목록에 있으니 다시 눌러 주세요.
-              </p>
-            ) : null}
-          </section>
-        </>
-      )}
+              <GrowthLogList
+                logs={logs}
+                onEdit={setEditing}
+                onDelete={(log) => remove.mutate(log)}
+                deletingId={deletingId}
+                scrollable
+              />
+              {remove.isError ? (
+                <p role="status" className="text-body-sm text-ink-muted">
+                  지우지 못했어요. 그 줄은 아직 목록에 있으니 다시 눌러 주세요.
+                </p>
+              ) : null}
+            </section>
+          </>
+        )}
+      </Swap>
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
 

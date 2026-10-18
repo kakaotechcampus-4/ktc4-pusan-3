@@ -18,13 +18,13 @@
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
-| import 규칙 강제 | import-linter (CI) |
+| import 규칙 강제 | import-linter (CI, 예정 — #79 API CI 와 함께) |
 
 ---
 
 ## 레이어 경계
 
-import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
+import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설정이 생기기 전까지는 리뷰가 막는다.
 
 ### `app/rules/`
 - **허용**: 표준 라이브러리만
@@ -35,6 +35,22 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
 ### `app/domains/`
 - **허용**: rules, core, infra/db, sqlalchemy
 - **금지**: fastapi, agents, providers, integrations
+- **예외 — agents 가 정한 저장 계약**: agents 의 포트를 DB 로 구현하는 어댑터는 그 계약을 import 한다.
+  계약을 domains 로 옮기면 agents 가 domains 를 거쳐야 포트 모양을 알게 돼서 방향이 뒤집힌다.
+  아래 표에 없는 import 는 여전히 금지다. 새로 필요하면 이 표부터 고친다(두 Owner 협의).
+
+  | 파일 | import 하는 agents 모듈 |
+  | --- | --- |
+  | `domains/memory/store/db_store.py` | `agents.memory.store.ports` · `agents.common.datetime_rules`(`DateRange`) |
+  | `domains/memory/curator/db_store.py` | `agents.curator.embedding.ports` |
+  | `domains/memory/curator/recompute.py` | `agents.curator.embedding.linker`(`LinkResult` 타입) |
+  | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
+  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports`(`SafetyEntry`) |
+  | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
+
+  - `trigger.py` 만 타입이 아니라 agents 의 함수를 부른다. Curator 판정 흐름은 agents 몫이고 세션 ·
+    트랜잭션 · advisory lock 은 domains 몫이라 여기서 만난다. 실행을 api 로 옮기려면 api 가
+    entrypoint 밖의 agents 를 import 해야 해서 지금은 이 자리에 둔다.
 
 ### `app/agents/`
 - **허용**: domains, rules, providers, core
@@ -58,6 +74,8 @@ import-linter 로 CI 에서 강제한다. 위반 = PR 차단.
   여기서 내보낸다. `pipeline` 이나 `memory`·`food` 하위 모듈을 직접 import 하지 않는다.
 - **DB 예외**: `app/api/deps/db.py` 한 곳만 `app/infra/db/session.py` 를 import 한다.
   라우터는 엔진이나 `get_session` 을 직접 가져오지 않고 `SessionDep` 를 받는다.
+  요청 밖에서 도는 백그라운드 러너(`app/api/runs/`)는 같은 파일의 `background_session()` 을 쓴다.
+  러너와 05 가 같이 쓰는 Agent 포트(`app/api/agent_ports.py`)도 같다.
 - FastAPI 전용 오류 모델·예외 핸들러는 `app/api/errors.py` 에 둔다. `app/core/` 에
   FastAPI·Starlette 의존성을 추가하지 않는다.
 

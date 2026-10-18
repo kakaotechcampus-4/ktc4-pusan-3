@@ -6,7 +6,11 @@ Memory가 관리.
 """
 
 from app.agents.common.tool_schema import ToolDefinition
-from app.agents.food.schemas.daycare import DeleteDaycareMealArgs, UpdateDaycareMealArgs
+from app.agents.food.schemas.daycare import (
+    DeleteDaycareMealArgs,
+    KeepDaycareMealArgs,
+    UpdateDaycareMealArgs,
+)
 from app.agents.food.schemas.infant import GuideWeaningStageArgs
 from app.agents.food.schemas.menu import DaycareMenuArgs
 from app.agents.food.schemas.nutrition import (
@@ -77,12 +81,22 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         ),
         args=DeleteDaycareMealArgs,
     ),
+    # daycare_meal — 그대로 두기. 급식이 실제로 바뀌었다는 말이 아닐 때 쓰지 않고 끝낸다
+    ToolDefinition(
+        name="keep_daycare_meal",
+        description=(
+            "급식 기록을 바꾸지 않고 끝낸다. 급식이 실제로 바뀌었다는 말이 아닐 때만 부른다 — "
+            "묻는 말, 가정이나 짐작, 급식이 뭐였는지 알고 싶은 말. 바꿔 달라는 말인데 날짜나 "
+            "메뉴가 빠졌으면 이 tool 이 아니라 update_daycare_meal 을 부른다(코드가 되묻는다)."
+        ),
+        args=KeepDaycareMealArgs,
+    ),
     # 유아기 — 식품 영양성분 조회 · Nutrition Lookup
     ToolDefinition(
         name="lookup_nutrition",
         description=(
-            "음식·재료의 영양성분을 식품영양성분 DB 에서 찾는다. 영양소 분석에서만 쓴다. "
-            "수치를 지어내지 않고 이 결과만 쓴다."
+            "음식·재료가 식품영양성분 DB 에 있는지와 식품군을 찾는다. 영양소 분석에서만 쓴다. "
+            "영양 수치는 돌려주지 않는다 — 구간 판정은 compare_diet_balance 가 한다."
         ),
         args=LookupNutritionArgs,
     ),
@@ -109,7 +123,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="propose_meal_candidates",
         description=(
             "식사·간식 후보를 제출한다. 식단 추천의 마지막에 한 번 부른다. "
-            "재료는 빠짐없이 적는다 — 알레르기 필터는 코드가 이 재료 목록으로 한다."
+            "보여 준 후보 목록에서 menu_key 로 고른다 — 메뉴 이름과 재료는 코드가 채운다."
         ),
         args=ProposeMealCandidatesArgs,
     ),

@@ -49,8 +49,15 @@ class DbCuratorStore:
     async def list_unembedded(self, *, child_id: UUID) -> list[ObservationItem]:
         return await self._list(child_id, embedding_is_null=True, affinity_id_is_null=None)
 
-    async def list_unlinked(self, *, child_id: UUID) -> list[ObservationItem]:
-        return await self._list(child_id, embedding_is_null=False, affinity_id_is_null=True)
+    async def list_unlinked(
+        self, *, child_id: UUID, min_observed_on: date
+    ) -> list[ObservationItem]:
+        return await self._list(
+            child_id,
+            embedding_is_null=False,
+            affinity_id_is_null=True,
+            min_observed_on=min_observed_on,
+        )
 
     async def _list(
         self,
@@ -58,6 +65,7 @@ class DbCuratorStore:
         *,
         embedding_is_null: bool,
         affinity_id_is_null: bool | None,
+        min_observed_on: date | None = None,
     ) -> list[ObservationItem]:
         """도메인별 쿼리 → created_at 오름차순 병합."""
         per_domain: list[list[tuple]] = []
@@ -85,6 +93,9 @@ class DbCuratorStore:
                 stmt = stmt.where(model.embedding.isnot(None))
             if affinity_id_is_null is True:
                 stmt = stmt.where(model.affinity_id.is_(None))
+
+            if min_observed_on is not None:
+                stmt = stmt.where(func.lower(model.observed_range) >= min_observed_on)
 
             rows = (await self._session.execute(stmt)).all()
             per_domain.append([(domain, r) for r in rows])

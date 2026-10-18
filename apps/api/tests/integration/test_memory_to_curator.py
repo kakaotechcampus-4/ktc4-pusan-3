@@ -15,13 +15,16 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.common.llm_client import LLMResponse
+from app.agents import pipeline
+from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.food.context import FoodContext
 from app.agents.food.store import InMemoryProfile, in_memory_ports
 from app.agents.memory.context import AgentContext
+from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import Saved, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ObservationFood
@@ -68,11 +71,16 @@ def _call(call_id: str, name: str, arguments: dict[str, Any]) -> SimpleNamespace
 
 
 class FakeLLM:
-    def __init__(self, *items: LLMResponse) -> None:
+    """정해둔 응답을 차례로 돌려준다. 예외를 넣어 두면 그 차례에 던진다."""
+
+    def __init__(self, *items: LLMResponse | Exception) -> None:
         self._queue = list(items)
 
     async def chat(self, **kwargs: Any) -> LLMResponse:
-        return self._queue.pop(0) if self._queue else _reply("끝")
+        item = self._queue.pop(0) if self._queue else _reply("끝")
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 def _supervisor_llm(case_id: str) -> FakeLLM:
@@ -105,6 +113,32 @@ class _FakeJudge:
 class _FakeContext:
     def for_task(self) -> "_FakeContext":
         return _FakeContext()
+
+
+_STRAWBERRY = {
+    "raw_text": "딸기 잘 먹었어",
+    "observed_on": "오늘",
+    "subject": "딸기",
+    "polarity": 1,
+    "confidence_source": "parent_direct",
+}
+
+
+def _memory_context(store: DbMemoryStore, owner: Parent, child: Child) -> AgentContext:
+    return AgentContext(
+        child_id=child.id, source_writer=owner.id, now=NOW, timezone=KST, store=store
+    )
+
+
+def _saves_strawberry(*then: LLMResponse | Exception) -> FakeLLM:
+    return FakeLLM(_tools(_call("a", "create_observation_food", _STRAWBERRY)), *then)
+
+
+async def _food_subjects(session: AsyncSession, child: Child) -> list[str]:
+    rows = await session.scalars(
+        select(ObservationFood.subject).where(ObservationFood.child_id == child.id)
+    )
+    return list(rows)
 
 
 # ── test ────────────────────────────────────────────────────────
@@ -175,6 +209,7 @@ class TestMemoryToCurator:
             emit=events.append,
             commit=commit,
             writes=writes,
+            save_suggestions=InMemorySuggestions(),
         )
 
         # ── pipeline 성공 ──
@@ -204,7 +239,11 @@ class TestMemoryToCurator:
 
         curator_store = DbCuratorStore(session)
         link_result = await link_observations(
-            curator_store, _FakeEmbedder(), _FakeJudge(), child_id=child.id
+            curator_store,
+            _FakeEmbedder(),
+            _FakeJudge(),
+            child_id=child.id,
+            birth_date=date(2023, 1, 1),
         )
         if link_result.affected_profile_ids:
             await recompute_after_linking(session, result=link_result, today=TODAY)
@@ -220,3 +259,102 @@ class TestMemoryToCurator:
         assert profile is not None
         assert profile.state == ProfileState.CANDIDATE
         assert profile.merge_key == "딸기"
+
+
+class TestCommitPoint:
+    """Memory 직후 commit 이 run 의 확정 지점이다 (#257).
+
+    러너가 끝에서 commit 안 된 세션을 닫는(= rollback) 자리는 session.rollback() 으로 흉내 낸다.
+    """
+
+    async def test_Memory_commit_뒤_Food_가_죽어도_관찰은_남는다(
+        self, session: AsyncSession, family: tuple, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        owner, child = family
+        store = DbMemoryStore(session, child_id=child.id)
+        order: list[str] = []
+
+        async def commit() -> None:
+            await session.commit()
+            order.append("commit")
+
+        async def food_down(task: Any, context: Any, **kwargs: Any) -> Any:
+            order.append("food")
+            raise RuntimeError("food down")
+
+        monkeypatch.setitem(pipeline._RUNNERS, "food", food_down)
+
+        result = await handle_input(
+            CASES_BY_ID["RC01"].text,
+            _memory_context(store, owner, child),
+            {"food": _FakeContext()},
+            run_id=RUN_ID,
+            supervisor_client=_supervisor_llm("RC01"),
+            memory_client=_saves_strawberry(_answer({"reply": "기록했어요.", "kind": "message"})),
+            commit=commit,
+            save_suggestions=InMemorySuggestions(),
+        )
+
+        assert result.committed and result.failed is None
+        assert result.partial is not None  # Food 만 빠졌다
+        assert order == ["commit", "food"]  # Food 는 commit 뒤에 돈다
+        await session.rollback()  # 러너가 끝에서 commit 안 된 것을 되돌리는 자리
+        assert await _food_subjects(session, child) == ["딸기"]
+
+    async def test_Memory_가_commit_전에_죽으면_관찰이_남지_않는다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child = family
+        store = DbMemoryStore(session, child_id=child.id)
+        commits: list[str] = []
+
+        async def commit() -> None:
+            commits.append("commit")
+            await session.commit()
+
+        result = await handle_input(
+            CASES_BY_ID["RC01"].text,
+            _memory_context(store, owner, child),
+            {"food": _FakeContext()},
+            run_id=RUN_ID,
+            supervisor_client=_supervisor_llm("RC01"),
+            # 관찰 하나를 flush 한 뒤 다음 모델 호출에서 죽는다
+            memory_client=_saves_strawberry(LLMUnavailableError("망")),
+            commit=commit,
+            save_suggestions=InMemorySuggestions(),
+        )
+
+        assert result.failed is not None and result.failed.reason == "llm_unavailable"
+        assert commits == []
+        assert store.wrote is True  # flush 는 됐다 — 그래서 되돌리는 것이 의미가 있다
+        await session.rollback()
+        assert await _food_subjects(session, child) == []
+
+    async def test_이어받기_run_도_Memory_직후_commit_된다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child = family
+        store = DbMemoryStore(session, child_id=child.id)
+        commits: list[str] = []
+
+        async def commit() -> None:
+            await session.commit()
+            commits.append("commit")
+
+        result = await handle_input(
+            "반 개 먹었어",
+            _memory_context(store, owner, child),
+            {},
+            run_id=RUN_ID,
+            memory_client=_saves_strawberry(_answer({"reply": "기록했어요.", "kind": "message"})),
+            continuation=PendingMemoryContext(
+                "요즘 딸기 먹어?", "얼마나 먹었어요?", WorkType.OBSERVE
+            ),
+            commit=commit,
+            save_suggestions=InMemorySuggestions(),
+        )
+
+        assert result.committed
+        assert commits == ["commit"]
+        await session.rollback()
+        assert await _food_subjects(session, child) == ["딸기"]

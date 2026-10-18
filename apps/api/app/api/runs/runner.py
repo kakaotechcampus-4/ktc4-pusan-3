@@ -23,11 +23,13 @@ import logging
 import traceback
 from collections.abc import Awaitable, Callable
 from datetime import date
+from typing import Any
 from uuid import UUID
 
 from app.agents import entrypoint
-from app.api import idempotency
-from app.api.runs import pending_reply, sse, translate
+from app.api import agent_ports, idempotency
+from app.api.deps.db import background_session
+from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
@@ -50,12 +52,33 @@ RUN_DEADLINE_SECONDS = 60.0
 """
 
 
+def _curator_trigger() -> entrypoint.CuratorTrigger | None:
+    """Memory commit 직후 Curator 를 띄우는 콜백. 임베딩 키가 없으면 None — pipeline 이 건너뛴다.
+
+    store · commit 과 같이 러너가 만든다. DB 세션을 여는 곳을 러너 한 곳에 모으려는 것이다 (#257).
+    콜백은 별도 세션에서 백그라운드 task 로 돈다 — run 은 Curator 를 기다리지 않는다.
+    """
+    from app.domains.memory.curator.trigger import trigger_curator_background
+
+    embedder, judge = entrypoint.curator_deps()
+    if embedder is None:
+        return None
+
+    def trigger(child_id: UUID, today: date) -> None:
+        trigger_curator_background(child_id, today, embedder, judge)
+
+    return trigger
+
+
 def agent_job(
     *,
     child_id: UUID,
     parent_id: UUID,
     raw_text: str,
     birth_date: date | None = None,
+    child_health_granted: bool | None = None,
+    location: entrypoint.CoarseLocation | None = None,
+    activity_weather: entrypoint.WeatherSource | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
 ) -> Job:
@@ -63,12 +86,26 @@ def agent_job(
 
     - 저장소는 DB 세션으로 만든 DbMemoryStore 를 넘긴다. commit 은 session.commit 을 감싼다.
       async with 블록이 빠져나가면 commit 되지 않은 세션은 close(implicit rollback) 된다.
+    - 도메인 Agent 의 기억 포트가 쓸 store 와 추천 저장 함수는 `agent_ports` 로 연다. 호출마다
+      · Agent 결과 하나마다 짧은 세션이고, 저장 commit 이 돌아오면 `channel.suggestions_saved`
+      를 세운다 — Memory commit 과 같이 확정된 저장이다. 일반 추천 블록의 기록 건수도 같은 곳에서
+      연다(#227).
+    - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
+      넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
       None 이면 진입점의 기본값을 쓴다.
+    - `child_health_granted` 는 창구가 입력 한 번에 읽은 `child_health` 동의의 현재 값이다 (#372).
+      그대로 진입점에 넘긴다 — 여기서 바꾸지 않는다. None 은 값이 없다는 뜻이고
+      "동의 안 함"(False)이 아니다. 읽기에 실패하면 창구가 run 을 시작하지 않아서 이 job 이
+      만들어지지 않는다.
+    - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
+      날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
       done 앞에 들어가야 화면이 note 를 받은 직후 보낸 답도 맥락을 찾는다.
+    - 실패한 추천 맥락(RetryContext) · 0개 기록(EmptyResult)은 05 보관함(`suggestion_retry`)에
+      넣는다 — PendingReply 처럼 화면 결과보다 먼저 온다.
     - 이어받기 run 이 done 없이 끝나면(실패 · 시간 초과 · 예외) 창구가 꺼낸 맥락을 reply_to 로
       되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
@@ -78,7 +115,9 @@ def agent_job(
     """
 
     async def job(channel: RunChannel) -> None:
-        relay = translate.relay(channel)
+        # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
+        saved_rows: dict[tuple[str, str], Any] = {}
+        relay = translate.relay(channel, saved_rows=saved_rows)
 
         def emit(event: entrypoint.Event) -> None:
             if isinstance(event, entrypoint.PendingReply):
@@ -89,20 +128,44 @@ def agent_job(
                     context=event.context,
                 )
                 return
+            if isinstance(event, entrypoint.RetryContext):
+                # 원문 조각이 있다 — 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)
+                suggestion_retry.put_failed(
+                    run_id=event.run_id,
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    agent=event.agent,
+                    task=suggestion_retry.RetryTask(
+                        event.task_type, event.request_texts, event.sent_at
+                    ),
+                )
+                return
+            if isinstance(event, entrypoint.EmptyResult):
+                suggestion_retry.put_empty(
+                    run_id=event.run_id,
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    agent=event.agent,
+                    message=event.message,
+                )
+                return
             relay(event)
 
-        from app.domains.memory.store.db_store import DbMemoryStore
-        from app.infra.db.session import async_session_factory
+        def mark_saved() -> None:
+            # commit 이 돌아온 뒤에만 표시한다. 결과를 모르면 표시가 없어 failed 다(결정 4)
+            channel.suggestions_saved = True
 
-        # TODO: 도메인 Agent 가 DB 포트를 쓰면 이 세션을 동시에 타서
-        #   AsyncSession 에러가 난다. task 마다 별도 세션을 열어야 한다.
-        async with async_session_factory() as session:
+        async with background_session() as session:
+            from app.domains.memory.store.db_store import DbMemoryStore
+
             store = DbMemoryStore(session, child_id=child_id)
 
             async def commit() -> None:
                 await session.commit()
                 if store.wrote:
                     channel.memory_committed = True
+                # pipeline 은 이 commit 뒤에 Saved 를 낸다 — 그때 화면에 실을 행을 읽어 둔다
+                saved_rows.update(await _read_saved(session, child_id, store.created, channel))
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
@@ -111,17 +174,28 @@ def agent_job(
                         parent_id=parent_id,
                         raw_text=raw_text,
                         birth_date=birth_date,
+                        child_health_granted=child_health_granted,
+                        location=location,
+                        activity_weather=activity_weather,
                         run_id=channel.run_id,
                         emit=emit,
                         continuation=continuation,
                         store=store,
                         commit=commit,
+                        save_suggestions=agent_ports.suggestion_saver(
+                            child_id, on_commit=mark_saved
+                        ),
+                        count_records=agent_ports.record_counter(child_id),
+                        curator_trigger=_curator_trigger(),
+                        domain_store=agent_ports.domain_store_opener(child_id),
+                        **agent_ports.food_stores(),
+                        **agent_ports.safety_readers(),
                     )
             except TimeoutError:
                 log.warning(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
-                if channel.memory_committed:
+                if channel.committed:
                     done = (
                         "done",
                         {"run_id": channel.run_id, "model_calls": 0, "completed": False},
@@ -136,7 +210,7 @@ def agent_job(
                     continuation is not None
                     and reply_to is not None
                     and not_done
-                    and not channel.memory_committed
+                    and not channel.committed
                 )
                 if should_restore:
                     pending_reply.put(
@@ -147,6 +221,56 @@ def agent_job(
                     )
 
     return job
+
+
+async def _read_saved(
+    session: Any, child_id: UUID, created: list[tuple[str, UUID]], channel: RunChannel
+) -> dict[tuple[str, str], Any]:
+    """commit 된 관찰을 다시 읽어 07 기록 탭과 같은 모양으로 (#471).
+
+    키는 `Saved.refs` 의 (kind, id)다. 같은 run 에서 지운 관찰은 읽히지 않아 값이 None 이다 —
+    번역기가 "지워서 없음" 과 "키가 어긋나 없음" 을 가른다.
+    🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 저장은 이미 확정됐다. failed 로 끝내면 오히려
+       "저장 안 됐다" 로 보인다. `saved` 만 빠지고 ERROR 로그를 남긴다(원문 없이, 루트 §2).
+    🚨 `affinity` 는 Curator 가 묶기 전(commit 직후)이라 보통 null 이다 — 04 화면은 그리지 않는다.
+    """
+    from app.api.quota import today_kst
+    from app.api.v1.observation_outs import to_observation_outs
+    from app.domains.memory.observation.repository import find_observation
+
+    if not created:
+        return {}
+    try:
+        records = [
+            record
+            for domain, oid in created
+            if (
+                record := await find_observation(
+                    session, domain=domain, child_id=child_id, observation_id=oid
+                )
+            )
+        ]
+        outs = await to_observation_outs(session, records, today=today_kst())
+    except Exception as exc:
+        # ERROR 다 — 스키마가 바뀐 코드 버그도 여기로 와서, 경고면 "saved 빠짐" 으로만 묻힌다.
+        # 원문 대신 예외 종류와 코드 위치만 남긴다 (_guarded 와 같은 방식)
+        log.error(
+            "run %s 의 저장한 관찰을 다시 읽지 못했다 (%s) — saved 를 건너뛴다\n%s",
+            channel.run_id,
+            type(exc).__name__,
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
+        # rollback 까지 실패해도 commit() 밖으로 내보내지 않는다 — 내보내면 추천 단계가 빠진다.
+        # 같은 세션을 받는 도메인 Agent 가 뒤이어 실패할 수 있어서 원인은 남긴다(종류만)
+        try:
+            await session.rollback()
+        except Exception as rollback_exc:
+            log.warning(
+                "run %s 의 rollback 도 실패했다 (%s)", channel.run_id, type(rollback_exc).__name__
+            )
+        return {}
+    deleted = {(f"observation_{domain}", str(oid)): None for domain, oid in created}
+    return deleted | {(out.kind, out.id): out for out in outs}
 
 
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:
@@ -183,11 +307,12 @@ async def _guarded(channel: RunChannel, job: Job, raw_text: str) -> None:
         #    "확인하지 못했어요" 로 떨어지고 키도 안 풀려 다시 눌러도 닫힌 run 만 재생된다.
         #    이미 나갔으면(done 뒤 결과 기록에서 터진 경우) 붙이지 않는다 — 화면은 이미 결과를
         #    받았다.
-        # 🚨 Memory 단계가 끝나면 commit 한다. commit 이후에 터져도 저장된 관찰은
-        #    되돌리지 않는다 — commit 된 run 은 done 으로 끝내고 키를 놓지 않는다.
+        # 🚨 Memory 단계가 끝나면 commit 하고, 추천은 Agent 결과마다 저장 · commit 한다. commit
+        #    이후에 터져도 저장된 관찰 · 추천은 되돌리지 않는다 — commit 된 run 은 done 으로
+        #    끝내고 키를 놓지 않는다.
         if channel.ended_with is None:
-            if channel.memory_committed:
-                # commit 이후에 터졌다. 관찰은 이미 DB 에 있으므로 done 으로 끝낸다.
+            if channel.committed:
+                # commit 이후에 터졌다. 관찰 · 추천이 이미 DB 에 있으므로 done 으로 끝낸다.
                 # failed 로 끝내면 키가 풀려 재시도 시 두 번 저장된다.
                 done = ("done", {"run_id": channel.run_id, "model_calls": 0, "completed": False})
                 channel.publish(done)

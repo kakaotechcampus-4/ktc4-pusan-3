@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictBool
 
 from app.domains.child.models import ParentChildRelation
 
@@ -57,6 +57,16 @@ class AcceptInviteRequest(BaseModel):
 
     relation: ParentChildRelation | None = None
     """안 고르면 other 로 저장한다 (#131)."""
+    # 🚨 약관 제7조 ② 의 "만 19세 이상 표시" 다. 법정대리인 표시(guardian_attested)가 아니다 —
+    #    초대받은 사람은 법정대리인이 아닐 수 있다. 따로 저장하지 않는다: 서버가 true 를 강제하므로
+    #    아이와 연결된 보호자는 모두 표시한 사람이다 (#166 · 10-14 PM 결정, 마이그레이션 없음).
+    adult_attested: StrictBool = Field(
+        description=(
+            "'만 19세 이상이에요' 체크. JSON true · false 만 받는다 (\"true\" · 1 은 400)."
+            " true 가 아니면 400 validation_failed 이고,"
+            " 코드를 쓰지 않으며 시도 제한에도 세지 않는다"
+        )
+    )
 
 
 class AcceptInviteResponse(BaseModel):

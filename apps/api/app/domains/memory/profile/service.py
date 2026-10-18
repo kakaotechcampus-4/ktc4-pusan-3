@@ -6,6 +6,7 @@ grep 으로 직접 `.state =` 대입이 이 함수 밖에 없어야 한다.
 호출 시점:
   - correction 핸들러 (handle_observation_correction, handle_profile_correction)
   - Curator 연결 후 (curator/recompute.recompute_after_linking)
+  - Memory Agent 가 관찰을 고치거나 지운 뒤 (memory/store/db_store.py, #257)
 TODO(#149-followup): 시간 경과에 의한 상태 변화(21일 무관찰 → archived)를
   반영하는 배치 호출이 아직 없다. Agent 가 DB 의 state 를 그대로 읽으므로
   오래 전에 confirmed 된 성향이 배치 전까지 개인화 근거로 남을 수 있다.
@@ -92,6 +93,29 @@ async def recompute_profile(
 
     await session.flush()
     return profile
+
+
+async def refresh_profile(
+    session: AsyncSession,
+    *,
+    profile_id: uuid.UUID,
+    today: date,
+) -> None:
+    """관찰이 붙거나 빠진 Profile 의 last_observed_on 과 상태를 다시 계산한다.
+
+    active 관찰이 하나도 안 남으면(latest=None) last_observed_on 은 건드리지 않는다 —
+    recompute 가 O=0 으로 상태를 정하고, 시간이 지나면 archived 로 내려간다.
+    """
+    profile = await session.get(ProfileAffinity, profile_id)
+    if profile is None:
+        return
+    latest = await get_latest_active_observed_on(
+        session, affinity_id=profile_id, domain=profile.domain
+    )
+    if latest is not None and latest != profile.last_observed_on:
+        profile.last_observed_on = latest
+        await session.flush()
+    await recompute_profile(session, profile_id=profile_id, today=today)
 
 
 async def handle_observation_correction(

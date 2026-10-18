@@ -569,17 +569,17 @@
       {
         "name": "base",
         "value": "200ms",
-        "purpose": "펼침·접힘, 탭 전환, 화면 전환의 크로스페이드 · 들어오는 화면이 나타나는 시간."
+        "purpose": "교체 · 펼침의 페이드(스켈레톤 → 내용 · 탭 본문 · 펼친 내용), 바텀시트 닫힘, 화면 전환의 크로스페이드 · 들어오는 화면이 나타나는 시간."
       },
       {
         "name": "sheet",
         "value": "280ms",
-        "purpose": "바텀시트 등장·퇴장 · 화면 전환을 닫을 때의 이동."
+        "purpose": "바텀시트 열림 · 단계 넘김의 이동 · 화면 전환에서 부모로 돌아갈 때의 이동."
       },
       {
         "name": "screen",
         "value": "400ms",
-        "purpose": "화면 전환을 열 때 움직이는 것 — 03 → 04 에서 들어오는 대화 화면 · 날아가는 한 줄 · 채팅바. 닫을 때의 이동은 sheet."
+        "purpose": "화면 전환을 열 때 움직이는 것(들어오는 자식 화면 · 03 → 04 의 날아가는 한 줄 · 채팅바)과 자리 옮김(목록의 줄이 새 자리로). 부모로 돌아갈 때의 이동은 sheet."
       },
       {
         "name": "exit",
@@ -597,19 +597,29 @@
         "purpose": "막 보낸 한 줄의 입력창 글자가 사라지는 시간. 초록 말풍선과 겹쳐 탁해지는 순간을 줄인다."
       },
       {
+        "name": "distance-screen",
+        "value": "72px",
+        "purpose": "화면 전환에서 들어오는(빠지는) 자식 화면이 움직이는 거리. 화면 폭을 가로지르지 않는다."
+      },
+      {
+        "name": "distance-step",
+        "value": "24px",
+        "purpose": "화면 전환에서 비켜나는 부모 화면, 단계 넘김에서 들어오는 내용이 움직이는 거리."
+      },
+      {
         "name": "ease-standard",
         "value": "cubic-bezier(0.2, 0, 0, 1)",
-        "purpose": "화면 전환을 뺀 전 구간 공통 이징. 색만 바꾸고 크기·위치는 건드리지 않는다."
+        "purpose": "화면 전환 · 단계 넘김 · 자리 옮김을 뺀 공통 이징(색 변화 · 교체 · 펼침의 페이드)."
       },
       {
         "name": "ease-enter",
         "value": "cubic-bezier(0.05, 0.7, 0.1, 1)",
-        "purpose": "화면 전환 — 들어오는 것. 빨리 출발해 길게 감속한다(어디에 내려앉았는지 보이게)."
+        "purpose": "들어오는 것 — 화면 전환 · 시트 열림 · 단계 넘김 · 자리 옮김. 빨리 출발해 길게 감속한다(어디에 내려앉았는지 보이게)."
       },
       {
         "name": "ease-exit",
         "value": "cubic-bezier(0.3, 0, 0.8, 0.15)",
-        "purpose": "화면 전환 — 나가는 것. 천천히 출발해 빨리 사라진다."
+        "purpose": "나가는 것 — 화면 전환 · 시트 닫힘. 천천히 출발해 빨리 사라진다."
       }
     ],
     "breakpoints": [
@@ -697,7 +707,7 @@
       "kind": "list-row",
       "refersTo": "suggestion-row",
       "description": "05 제안 후보의 개인화 추천 한 장. 후보마다 카드 한 장이고 항상 펼쳐져 있다 — Agent 당 후보가 3가지라 접으면 대안 비교가 안 되고, 하나만 열어 두면 그것이 추천처럼 보인다. 도메인 색은 카드 왼쪽의 6px 세로 띠 하나이고 나머지는 흰 면이다. -soft 가 아니라 진한 쪽을 쓴다(6px 면이라 연한 색은 1px 테두리와 구분이 안 된다). 사이에 머리를 -soft 면으로 칠해 봤는데, 면 위의 글자가 전부 그 도메인의 -ink 가 되면서 제안·이유·근거의 회색 위계를 먹어서 띠로 바꿨다. 띠는 aria-hidden 이고, 어느 영역인지는 탭과 머리줄이 글자로 진다. 고른 카드는 테두리가 brand 이고 체크 아이콘이 함께 선다. 제안 문장이 체크박스의 라벨이다: 줄마다 '이걸로' 버튼을 두면 초록이 여섯 개가 되어 '한 화면에 primary 하나' 가 깨진다. 근거 목록이 없으면 이 줄을 쓸 수 없고, 근거는 제목 + 설명 두 줄이며 접지 않는다. 묶음(Agent)은 탭으로 갈려서 한 번에 한 묶음만 서고, 그 묶음의 질문은 카드 위에 display(24) h2 로 선다 — 후보 제목(20)보다 커야 무엇에 대한 답인지가 답보다 크게 읽힌다. 거절 버튼은 두지 않는다 — 고르는 칸이 체크박스라 안 고르는 것이 곧 거절이고, 있던 '안 할래요' 는 서버로 아무것도 보내지 않고 화면에서만 접었다.",
-      "html": "<li class=\"ds-srow\"><span class=\"ds-srow-bar\" aria-hidden=\"true\"></span><div class=\"ds-srow-body\"><label class=\"ds-srow-pick\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/></svg><span class=\"ds-srow-title\">종이컵 탑 쌓기</span></label><dl class=\"ds-srow-why\"><dt>왜 이걸</dt><dd>블록 쌓기를 서로 다른 3일에 찾았어요</dd><dt>왜 지금</dt><dd>이번 주말 일정이 비어 있어요</dd></dl><div class=\"ds-srow-ev\"><p class=\"ds-srow-meta\">사용한 기록 2건</p><ul class=\"ds-srow-evlist\"><li><p class=\"ds-ev-t\">블록 쌓기</p><p class=\"ds-ev-d\">좋아함 · 반복 3회 · 최근 9일 · 출처 보호자</p></li><li><p class=\"ds-ev-t\">종이 만들기</p><p class=\"ds-ev-d\">좋아함 · 반복 2회 · 최근 4일 · 출처 보호자</p></li></ul></div></div></li>",
+      "html": "<li class=\"ds-srow\"><span class=\"ds-srow-bar\" aria-hidden=\"true\"></span><div class=\"ds-srow-body\"><label class=\"ds-srow-pick\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/></svg><span class=\"ds-srow-title\">종이컵 탑 쌓기</span></label><dl class=\"ds-srow-why\"><dt>추천 이유</dt><dd>블록 쌓기를 서로 다른 3일에 찾았고, 이번 주말 일정이 비어 있어요.</dd></dl><div class=\"ds-srow-ev\"><p class=\"ds-srow-meta\">사용한 기록 2건</p><ul class=\"ds-srow-evlist\"><li><p class=\"ds-ev-t\">블록 쌓기</p><p class=\"ds-ev-d\">좋아함 · 반복 3회 · 최근 9일 · 출처 보호자</p></li><li><p class=\"ds-ev-t\">종이 만들기</p><p class=\"ds-ev-d\">좋아함 · 반복 2회 · 최근 4일 · 출처 보호자</p></li></ul></div></div></li>",
       "css": ".ds-srow{display:flex;list-style:none;font-family:var(--font-sans);background:var(--color-surface);border:1px solid var(--color-line);border-radius:var(--radius-card);overflow:hidden}.ds-srow-bar{width:6px;flex:none;background:var(--color-activity)}.ds-srow-body{flex:1;min-width:0;padding:16px}.ds-srow-pick{display:flex;align-items:flex-start;gap:12px;color:var(--color-ink-subtle);cursor:pointer}.ds-srow-title{font-size:1.25rem;font-weight:700;line-height:1.35;letter-spacing:-0.01em;color:var(--color-ink)}.ds-srow-why{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:12px 0 0}.ds-srow-why dt{font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}.ds-srow-why dd{margin:0;font-size:0.875rem;line-height:1.55;color:var(--color-ink-muted)}.ds-srow-ev{margin:12px 0 0;padding:12px 0 0;border-top:1px solid var(--color-line)}.ds-srow-meta{margin:0 0 8px;font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-subtle)}.ds-srow-evlist{margin:0;padding:0;list-style:none;display:grid;gap:8px}.ds-ev-t{margin:0;font-size:0.875rem;line-height:1.55;color:var(--color-ink)}.ds-ev-d{margin:2px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}"
     },
     {
@@ -827,7 +837,7 @@
       },
       {
         "name": "The 인라인이냐 모달이냐 규칙",
-        "body": "\"한 화면에 primary 는 하나\" 를 가르는 선은 인라인이냐 모달이냐다. 바텀시트는 뒤가 inert 라 자기 primary 를 가져도 되지만, 줄 아래에 펼쳐지는 인라인 확인 패널은 화면의 primary 와 같은 뷰포트에 함께 서므로 secondary 로 내려간다. 07 교정 확인이 btn-primary 인 것은 07 에 화면 primary 가 없어서고, 11 의 한 줄 지우기 확인이 secondary 인 것은 위에 저장 버튼이 서 있어서다.",
+        "body": "\"한 화면에 primary 는 하나\" 를 가르는 선은 인라인이냐 모달이냐다. 바텀시트는 뒤가 inert 라 자기 primary 를 가져도 되지만, 줄 아래에 펼쳐지는 인라인 확인 패널은 화면의 primary 와 같은 뷰포트에 함께 서므로 secondary 로 내려간다. 07 교정 확인이 btn-primary 인 것은 07 에 화면 primary 가 없어서고, 11 의 한 줄 지우기 확인이 secondary 인 것은 위에 저장 버튼이 서 있어서다. 화면 primary 가 없다는 것은 primary 를 쓸 수 있다는 뜻이지 써야 한다는 뜻이 아니다 — 확정이 없애는 행동이면 초록을 칠하지 않고 secondary 로 둔다(09 일기 지우기).",
         "section": "components"
       }
     ],
@@ -836,9 +846,10 @@
       "Do 색을 바꿀 때 그 색이 얹히는 배경과의 쌍을 다시 계산한다. soft 배경 위 텍스트는 canvas 가 아니라 그 soft 색과 비교한다.",
       "Do 기록 건수 · 날짜 · 근거를 화면에 그대로 보여준다. 근거가 없으면 '또래 기준 일반 추천' 이라고 쓴다.",
       "Do 상태 변화를 색으로만 만든다(120ms). 크기와 위치는 움직이지 않는다.",
+      "Do 움직임은 상태가 바뀐 순간에만 쓴다(시트 · 펼침 · 교체 · 단계 넘김 · 자리 옮김 · 화면 전환). 처음 그려질 때는 움직이지 않고, 승인 게이트 안에는 색 변화 말고 넣지 않는다.",
       "Do 브라우저가 대신 칠하는 표면(선택 영역 · 캐럿 · 탭 하이라이트 · 스크롤바)도 팔레트 안에 둔다.",
       "Do 화면 제목에 PageTitle 을 쓴다. 좁은 폰에서 display → title 로 낮추는 규칙이 거기 한 곳에 있다.",
-      "Do btn-danger 를 뜻으로 고른다 — 파괴적 확정(동의 철회 · 데이터 삭제 · 안전 정보 회수)에만. 되돌릴 수 있는 삭제는 secondary + tertiary 다."
+      "Do btn-danger 를 뜻으로 고른다 — 파괴적 확정(동의 철회 · 데이터 삭제 · 안전 정보 회수)에만. 되돌릴 수 있는 삭제와 보호자가 쓴 한 건을 스스로 지우는 것(09 일기)은 secondary + tertiary 다."
     ],
     "donts": [
       "Don't 병원·의료 앱처럼 보이게 만들지 않는다. 건강 도메인에도 심전도·청진기 기호를 쓰지 않는다.",

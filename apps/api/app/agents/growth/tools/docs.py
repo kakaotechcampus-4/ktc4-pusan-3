@@ -15,20 +15,30 @@ run 시작에 코드가 한 번 부른다. 결과는 프롬프트 `[예시]` 구
 읽어 `pick_next_step` 에 넘긴다 — top-3 에는 사슬이 다 오지 않는다.
 """
 
+import hashlib
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from app.agents.common.age import stage_of
 from app.agents.common.refs import Ref
 from app.agents.growth.doc_seed import ROUTINE_CATEGORIES, chain_key
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import GrowthDocReader, GrowthDocRow, GrowthDocType
 from app.agents.growth.tools.routine import ordered_chain
-from app.rules.age import stage_of
+from app.rules.term_match import normalize
 
 # 프롬프트 [예시]에 싣는 행 수 (RAG_plan §7 — Growth 3)
 DOC_LIMIT = 3
+# 포트에서 먼저 받는 수. 같은 월령 아이가 늘 같은 앞 3행을 받지 않게 이 안에서 돌려 고른다
+DOC_POOL = 30
+# 자립 단계 사슬을 모을 때 받는 행 수. 카테고리 하나의 사슬 행이 다 들어오는 크기
+CHAIN_POOL = 60
+# 사슬 이름과 관찰 subject 를 서로 포함 관계로 볼 때 짧은 쪽의 최소 길이 ("손" ≠ "손 씻기")
+MIN_CHAIN_MATCH = 2
+# 자립 단계 행 제목의 "이름 — 단계 설명" 구분자
+_TITLE_SEP = " — "
 
 # 상황 태그는 영문 식별자다 (bored · anxious · tired …). 발화 한 줄이 필터 · 쿼리로 안 흘러가게 한다
 _TRIGGER_TAG = re.compile(r"[a-z][a-z0-9_]*")
@@ -88,8 +98,12 @@ async def search_growth_doc(
     interest_keys: Sequence[str] = (),
     routine_category: str | None = None,
     trigger_tags: Sequence[str] = (),
+    rotation: str = "",
 ) -> tuple[DocHit, ...]:
-    """월령 슬라이스 → 의미 검색 상위 `DOC_LIMIT` 행. 없으면 빈 튜플.
+    """월령 슬라이스 → 의미 검색 상위 `DOC_POOL` 행 중 `rotation` 으로 돌린 `DOC_LIMIT` 행.
+
+    없으면 빈 튜플. `rotation` 은 run() 이 넘기는 "아이 · 날짜" 다 — 같은 날 같은 아이는 같은
+    [예시]를 받고(재호출도 같은 프롬프트), 날이 바뀌면 바뀐다. 비면 포트 순서 그대로다.
 
     `interest_keys` 는 `profile_affinity` 의 `merge_key` 다. `trigger_tags` 는 습관 교정이 읽는 상황
     태그라서 영문 식별자만 받는다. 모르는 `routine_category` 와 식별자가 아닌 태그는 `ValueError` —
@@ -107,10 +121,12 @@ async def search_growth_doc(
         routine_category=routine_category,
         trigger_tags=tuple(trigger_tags),
         query=build_doc_query(task_type, months, interest_keys, routine_category),
-        limit=DOC_LIMIT,
+        limit=DOC_POOL,
     )
-    served = (r for r in rows if r.row_type == row_type and r.min_month <= months < r.max_month)
-    return tuple(DocHit(row) for row in served)[:DOC_LIMIT]
+    served = [r for r in rows if r.row_type == row_type and r.min_month <= months < r.max_month]
+    if rotation:
+        served.sort(key=lambda row: _turn(rotation, row.doc_key))
+    return tuple(DocHit(row) for row in served[:DOC_LIMIT])
 
 
 async def load_routine_chain(docs: GrowthDocReader, row: GrowthDocRow) -> tuple[GrowthDocRow, ...]:
@@ -123,3 +139,61 @@ async def load_routine_chain(docs: GrowthDocReader, row: GrowthDocRow) -> tuple[
     if row.row_type != "routine_step":
         raise ValueError(f"자립 단계 행이 아니다: {row.doc_key}")
     return ordered_chain(await docs.chain(chain_key=chain_key(row.doc_key)))
+
+
+def _turn(rotation: str, doc_key: str) -> str:
+    return hashlib.sha256(f"{rotation}|{doc_key}".encode()).hexdigest()
+
+
+async def routine_chains(
+    docs: GrowthDocReader, *, months: int, category: str
+) -> dict[str, tuple[GrowthDocRow, ...]]:
+    """이 월령 · 카테고리의 자립 단계 사슬 전부. 사슬 키(`doc_seed.chain_key`) → 처음부터 끝까지.
+
+    검색에 걸린 행의 사슬을 통째로 다시 읽는다 — 월령으로 걸러 중간이 빠지면 다음 칸을 못 고른다.
+    """
+    if category not in ROUTINE_CATEGORIES:
+        raise ValueError(f"routine_category 가 정해진 값이 아니다: {category!r}")
+    rows = await docs.search(
+        months=months,
+        row_type="routine_step",
+        routine_category=category,
+        trigger_tags=(),
+        query=build_doc_query(GrowthTaskType.ROUTINE_COACHING, months, (), category),
+        limit=CHAIN_POOL,
+    )
+    keys = dict.fromkeys(
+        chain_key(row.doc_key)
+        for row in rows
+        if row.row_type == "routine_step" and row.routine_category == category
+    )
+    return {key: ordered_chain(await docs.chain(chain_key=key)) for key in keys}
+
+
+def chain_name(chain: Sequence[GrowthDocRow]) -> str:
+    """사슬의 행동 이름 — 첫 행 제목의 " — " 앞. 예: "손 씻기 — 어른이 …" → "손 씻기"."""
+    return chain[0].title.split(_TITLE_SEP, 1)[0].strip()
+
+
+def match_chain(
+    chains: Mapping[str, tuple[GrowthDocRow, ...]], subject: str
+) -> tuple[GrowthDocRow, ...] | None:
+    """관찰의 행동 이름에 맞는 사슬. 띄어쓰기를 무시하고 서로 포함 관계로 본다.
+
+    짧은 쪽이 `MIN_CHAIN_MATCH` 보다 짧으면 같을 때만 맞는다. 둘 이상 맞으면 이름이 긴 쪽이다.
+    없으면 None — 호출부는 `doc.no_row` 로 닫는다(단계를 지어내지 않는다).
+    """
+    wanted = normalize(subject)
+    found = [chain for chain in chains.values() if _related(normalize(chain_name(chain)), wanted)]
+    if not found:
+        return None
+    return max(found, key=lambda chain: len(chain_name(chain)))
+
+
+def _related(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long = sorted((a, b), key=len)
+    return len(short) >= MIN_CHAIN_MATCH and short in long

@@ -160,6 +160,10 @@
   --motion-exit: 160ms;
   --motion-stagger: 60ms;
   --motion-swap: 90ms;
+  /* 움직이는 거리 (문서 §8 토큰 표). 🚨 화면 폭을 가로지르지 않는다 — 나머지 거리는 페이드가 진다.
+   *   screen = 화면 전환에서 들어오는 화면 · step = 비켜나는 화면, 같은 자리에서 한 칸 넘어가는 단계 */
+  --motion-distance-screen: 72px;
+  --motion-distance-step: 24px;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   /* 화면 전환 전용 (문서 §8 "허용하는 화면 전환"). 들어오는 것은 빨리 출발해 길게 멈추고(감속),
    * 나가는 것은 천천히 출발해 빨리 사라진다(가속) — 눈이 따라가야 하는 쪽이 들어오는 화면이라서다. */
@@ -274,15 +278,85 @@
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
+
+    /* 바텀시트는 올라오는 대신 투명도로 선다. 위 `*` 규칙에 맡기면 가림막까지 즉시 깔려서
+     * "위에 하나가 열렸다" 가 통째로 사라진다. 🚨 이 규칙은 위 `*` 와 **같은 레이어**에 둔다 —
+     * `!important` 는 앞 레이어가 이겨서, 아래 components 레이어에 두면 `*` 에 진다. */
+    .bottom-sheet,
+    .bottom-sheet::backdrop {
+      translate: none !important;
+      transition-property: opacity, overlay, display !important;
+      transition-duration: var(--motion-base) !important;
+      transition-timing-function: var(--ease-standard) !important;
+      transition-behavior: allow-discrete;
+    }
+    .bottom-sheet:not([open]) {
+      opacity: 0;
+    }
+    @starting-style {
+      .bottom-sheet[open] {
+        opacity: 0;
+      }
+    }
   }
 }
 
-/* 화면 전환 — 03 홈 ↔ 04 대화 (#226 · 문서 §8 "허용하는 화면 전환").
+/* 바텀시트 열기 · 닫기 (문서 §8 "펼침 · 시트"). `BottomSheet` 가 `.bottom-sheet` 를 단다.
+ *
+ * 열 때는 화면 아래 가장자리에서 자기 높이만큼 올라오고(`sheet` · 감속), 닫을 때는 더 짧게 내려간다
+ * (`base` · 가속) — 나가려는 사람을 기다리게 하지 않는다. 가림막은 같은 시간에 투명도로만 깔린다.
+ * 시트는 화면 가장자리에 붙은 면이라 자기 높이만큼 움직여도 화면을 가로지르지 않는다 (72px 상한은
+ * 화면 통째로 움직이는 전환의 규칙이다).
+ *
+ * 🚨 **승인 게이트를 담은 시트에는 달지 않는다** (`gate` · 문서 §8 "하지 않는 것"). 확인해야 할 것을
+ *    부드럽게 흘려보내지 않는다.
+ * 🚨 `<dialog>` 는 닫히면 `display: none` 이 되고 top layer 에서 빠진다. 둘을 `allow-discrete` 로
+ *    전환 끝까지 미뤄야 닫히는 움직임이 보인다 (미지원 브라우저는 즉시 닫힌다 — 그대로 둔다). */
+@layer components {
+  .bottom-sheet {
+    transition:
+      translate var(--motion-sheet) var(--ease-enter),
+      overlay var(--motion-sheet) allow-discrete,
+      display var(--motion-sheet) allow-discrete;
+  }
+  /* 🚨 닫히는 동안에는 누르기를 받지 않는다. top layer 에 남아 그려지지만 modal 도 inert 도 아니라서,
+   *    닫자마자 아래 화면을 누르면 그 한 번이 시트나 가림막에 맞아 사라진다. */
+  .bottom-sheet:not([open]) {
+    translate: 0 100%;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-exit);
+    pointer-events: none;
+  }
+  @starting-style {
+    .bottom-sheet[open] {
+      translate: 0 100%;
+    }
+  }
+
+  .bottom-sheet::backdrop {
+    transition:
+      opacity var(--motion-sheet) var(--ease-standard),
+      overlay var(--motion-sheet) allow-discrete,
+      display var(--motion-sheet) allow-discrete;
+  }
+  .bottom-sheet:not([open])::backdrop {
+    opacity: 0;
+    transition-duration: var(--motion-base);
+    pointer-events: none;
+  }
+  @starting-style {
+    .bottom-sheet[open]::backdrop {
+      opacity: 0;
+    }
+  }
+}
+
+/* 화면 전환 — 부모 ↔ 자식 화면 쌍 (문서 §8 "허용하는 화면 전환"). 03 홈 ↔ 04 대화(#226)에서 시작했다.
  *
  * 움직임은 세 겹이다.
  *   ① 이름 없는 나머지 — 루트 크로스페이드 (`base` 200ms). 방향 값 없는 이동(기기 뒤로가기)은 이것뿐이다
- *   ② 화면 통째로 — 방향 값(`chat-open` · `chat-close`)이 붙은 이동만. `ChatRouteTransition` 이 클래스를 단다
- *   ③ 이름 쌍 — 채팅바 · 막 보낸 한 줄이 제자리를 찾아 옮겨 간다 (`lib/view-transition.ts`)
+ *   ② 화면 통째로 — 방향 값(`forward` · `back`)이 붙은 이동만. `ScreenTransition` 이 클래스를 단다
+ *   ③ 이름 쌍 — 채팅바 · 막 보낸 한 줄 · 하단 네비가 제자리를 찾아 옮겨 간다 (`lib/view-transition.ts`)
  *
  * 🚨 **움직이는 속성은 `translate` · `opacity` (이름 쌍은 브라우저가 크기를 옮긴다) 뿐이다.** 셋 다 합성(compositor)에서 끝나서
  *    레이아웃을 다시 계산하지 않는다 — 웹뷰에서 프레임이 떨어지는 것은 대개 높이 · 위치를 직접 바꾸는
@@ -304,35 +378,35 @@
   animation-timing-function: var(--ease-standard);
 }
 
-/* ② 홈 → 대화: 대화가 72px 오른쪽에서 들어오고, 홈은 24px 왼쪽으로 비켜나며 사라진다.
- *    앞으로 가는 이동이라 오른쪽에서 온다 — 기기의 기본 전환 · 가로 스와이프 뒤로가기와 같은 방향이다.
- *    🚨 **화면 폭 전체를 가로지르지 않는다.** 거리는 72px · 24px 까지고 나머지는 페이드가 진다 (문서 §8). */
-::view-transition-old(.home-out) {
+/* ② 한 칸 앞으로 (`forward`): 자식 화면이 72px 오른쪽에서 들어오고, 부모 화면은 24px 왼쪽으로 비켜나며 사라진다.
+ *    기기의 기본 전환 · 가로 스와이프 뒤로가기와 같은 방향이다.
+ *    🚨 **화면 폭 전체를 가로지르지 않는다.** 거리는 토큰(`--motion-distance-*`)까지고 나머지는 페이드가 진다 (문서 §8). */
+::view-transition-old(.screen-forward-out) {
   animation:
     var(--motion-exit) var(--ease-exit) both vt-fade-out,
     var(--motion-screen) var(--ease-enter) both vt-to-left;
 }
-::view-transition-new(.chat-in) {
+::view-transition-new(.screen-forward-in) {
   animation:
     var(--motion-base) var(--ease-enter) var(--motion-stagger) both vt-fade-in,
     var(--motion-screen) var(--ease-enter) both vt-from-right;
 }
 
-/* ② 대화 → 홈: 반대로. 대화가 오른쪽으로 빠지고 홈이 왼쪽에서 제자리로 온다. 닫는 쪽은 짧다(`sheet` 280ms) —
- *    나가는 사람을 기다리게 하지 않는다. */
-::view-transition-old(.chat-out) {
+/* ② 부모로 돌아가기 (`back`): 반대로. 자식이 오른쪽으로 빠지고 부모가 왼쪽에서 제자리로 온다. 돌아가는 쪽은
+ *    짧다(`sheet` 280ms) — 나가는 사람을 기다리게 하지 않는다. */
+::view-transition-old(.screen-back-out) {
   animation:
     var(--motion-exit) var(--ease-exit) both vt-fade-out,
     var(--motion-sheet) var(--ease-exit) both vt-to-right;
 }
-::view-transition-new(.home-in) {
+::view-transition-new(.screen-back-in) {
   animation:
     var(--motion-base) var(--ease-enter) var(--motion-stagger) both vt-fade-in,
     var(--motion-sheet) var(--ease-enter) both vt-from-left;
 }
 
 /* ③ 이름 쌍 — 화면보다 조금 앞서 도착하지 않게 같은 400ms · 같은 감속 곡선으로 옮긴다.
- *    막 보낸 한 줄이 입력창에서 말풍선 자리로 날아가는 것이 이 전환의 주인공이다. */
+ *    막 보낸 한 줄이 입력창에서 말풍선 자리로 날아가는 것이 03 → 04 전환의 주인공이다. */
 ::view-transition-group(chat-bar),
 ::view-transition-group(sent-line) {
   animation-duration: var(--motion-screen);
@@ -358,6 +432,11 @@
 ::view-transition-new(sent-line) {
   animation: var(--motion-base) var(--ease-enter) both vt-fade-in;
 }
+/* 하단 네비는 두 화면에 같은 것이 같은 자리에 있다 — 화면과 함께 미끄러지면 바닥이 들썩인다.
+ *    그림만 바꿔 끼우고(켜진 칸의 색) 자리는 그대로 둔다. 화면보다 위에 그려야 비켜나는 화면에 안 덮인다. */
+::view-transition-group(child-nav) {
+  z-index: 1;
+}
 
 @keyframes vt-fade-in {
   from {
@@ -371,22 +450,22 @@
 }
 @keyframes vt-from-right {
   from {
-    translate: 72px 0;
+    translate: var(--motion-distance-screen) 0;
   }
 }
 @keyframes vt-to-right {
   to {
-    translate: 72px 0;
+    translate: var(--motion-distance-screen) 0;
   }
 }
 @keyframes vt-to-left {
   to {
-    translate: -24px 0;
+    translate: calc(var(--motion-distance-step) * -1) 0;
   }
 }
 @keyframes vt-from-left {
   from {
-    translate: -24px 0;
+    translate: calc(var(--motion-distance-step) * -1) 0;
   }
 }
 
@@ -394,13 +473,13 @@
   ::view-transition-group(*) {
     animation: none;
   }
-  ::view-transition-old(.home-out),
-  ::view-transition-old(.chat-out),
+  ::view-transition-old(.screen-forward-out),
+  ::view-transition-old(.screen-back-out),
   ::view-transition-old(sent-line) {
     animation: var(--motion-base) var(--ease-standard) both vt-fade-out;
   }
-  ::view-transition-new(.chat-in),
-  ::view-transition-new(.home-in),
+  ::view-transition-new(.screen-forward-in),
+  ::view-transition-new(.screen-back-in),
   ::view-transition-new(sent-line) {
     animation: var(--motion-base) var(--ease-standard) both vt-fade-in;
   }

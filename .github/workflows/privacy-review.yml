@@ -1,0 +1,130 @@
+name: Privacy Review
+# 새로 저장하거나 밖으로 보내는 정보가 생길 수 있는 파일을 바꾼 PR 에 PM 을 리뷰어로 건다 (#221).
+#
+# 처리방침 · 동의문은 "코드가 바뀌었는데 글은 안 바뀐" 상태가 되기 쉽다. 사람의 기억 대신
+# 파일 경로를 신호로 쓴다 — 아래 세 곳이 바뀌면 처리방침과 맞는지 PM 이 본다.
+#   apps/api/alembic/versions/   새 테이블 · 칸 = 새로 저장하는 정보
+#   apps/api/app/integrations/   새 외부 서비스로 보냄
+#   apps/mobile/app.json         앱 권한이 바뀜 (위치 등)
+# ⚠️ 새 AI 제공사(apps/api/app/providers/)는 넣지 않았다 — AI 쪽 PR 대부분이 건드려 매번 걸린다.
+#    새 AI 회사를 붙이는 PR 은 작성자가 손으로 PM 리뷰를 요청한다 (처리방침 6장 · 7장이 바뀐다).
+#
+# 하는 일: ① PM 을 리뷰어로 지정 ② "개인정보 확인" 라벨 ③ 왜 불렀는지 댓글 하나 (푸시마다 갱신).
+# 봇이 라벨과 이유 댓글을 같이 달아서, 사람이 건 리뷰 요청과 구분된다.
+#
+# 🚨 CODEOWNERS 로 하지 않는다. 그 파일의 주인이 운영진(pipeline-admin)이라 한 줄만 고쳐도
+#    develop → main 멘토 PR 이 운영진 승인 대기에 걸린다 (main ruleset 의 code owner review).
+# ⚠️ develop 으로 가는 PR 만 본다. main PR 은 한 주의 변경이 다 모여 있어 매번 걸린다.
+# ⚠️ 리뷰 요청은 처음 걸릴 때 한 번만 한다. 그 뒤 푸시는 댓글의 파일 목록만 고친다.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - develop
+    paths:
+      - apps/api/alembic/versions/**
+      - apps/api/app/integrations/**
+      - apps/mobile/app.json
+      - .github/workflows/privacy-review.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write # 리뷰어 지정 · 바뀐 파일 목록
+  issues: write # 라벨 · 댓글 (PR 댓글과 라벨은 issues API 다)
+
+env:
+  REVIEWER: jjaa0803 # PM (박재형)
+  LABEL: 개인정보 확인
+
+jobs:
+  request:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const RULES = [
+              { match: (f) => f.startsWith('apps/api/alembic/versions/'), why: '새 테이블 · 칸 — 새로 저장하는 정보' },
+              { match: (f) => f.startsWith('apps/api/app/integrations/'), why: '외부 서비스 — 밖으로 보내는 정보' },
+              { match: (f) => f === 'apps/mobile/app.json', why: '앱 권한' },
+            ];
+            const MARKER = '<!-- privacy-review -->';
+            const { REVIEWER, LABEL } = process.env;
+            const pr = context.payload.pull_request;
+            const base = { owner: context.repo.owner, repo: context.repo.repo };
+
+            // paths 필터는 "하나라도 걸렸나" 만 본다 — 어느 파일이 왜 걸렸는지는 여기서 다시 고른다.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...base, pull_number: pr.number, per_page: 100,
+            });
+            const hits = files
+              .map((f) => ({ name: f.filename, rule: RULES.find((r) => r.match(f.filename)) }))
+              .filter((h) => h.rule);
+            if (hits.length === 0) {
+              core.info('세 경로에 바뀐 파일이 없다 (이 워크플로 파일만 바뀐 경우 등). 아무것도 하지 않는다.');
+              return;
+            }
+
+            const body = [
+              MARKER,
+              '### 🔒 개인정보 확인이 필요한 파일이 바뀌었어요',
+              '',
+              '아래 파일은 새로 저장하거나 밖으로 보내는 정보가 생길 수 있는 곳이라, 처리방침 · 동의문과 맞는지 PM 이 함께 봅니다.',
+              '',
+              '| 파일 | 왜 보나 |',
+              '| --- | --- |',
+              ...hits.map((h) => `| \`${h.name}\` | ${h.rule.why} |`),
+              '',
+              '본문에 한 줄만 적어 주시면 빨라요.',
+              '- 새로 저장하거나 밖으로 보내는 정보가 **있으면** — 무엇을, 어디로',
+              '- **없으면** — "개인정보 변화 없음"',
+              '',
+              '_이 댓글과 리뷰 요청은 `.github/workflows/privacy-review.yml` 이 자동으로 답니다._',
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...base, issue_number: pr.number, per_page: 100,
+            });
+            const mine = comments.find((c) => c.user.type === 'Bot' && c.body.startsWith(MARKER));
+            if (mine) {
+              await github.rest.issues.updateComment({ ...base, comment_id: mine.id, body });
+              core.info('이미 건 PR 이다 — 댓글의 파일 목록만 고쳤다.');
+              return;
+            }
+
+            // 처음 걸린 PR — 라벨이 없으면 만들고 붙인 뒤 댓글 · 리뷰 요청.
+            try {
+              await github.rest.issues.getLabel({ ...base, name: LABEL });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({
+                ...base, name: LABEL, color: 'd93f0b',
+                description: '새로 저장하거나 밖으로 보내는 정보 — 처리방침 확인',
+              });
+            }
+            await github.rest.issues.addLabels({ ...base, issue_number: pr.number, labels: [LABEL] });
+            await github.rest.issues.createComment({ ...base, issue_number: pr.number, body });
+
+            // 작성자 본인에게는 리뷰를 요청할 수 없다 (GitHub 이 422 로 거절) — 라벨 · 댓글만 남긴다.
+            if (pr.user.login === REVIEWER) {
+              core.info('PM 이 작성한 PR 이라 리뷰 요청은 건너뛴다.');
+              return;
+            }
+            // 리뷰어 계정이 바뀌거나 권한이 빠지면 422 · 404 로 거절된다. 라벨 · 댓글은 이미 달렸으니
+            // 워크플로를 빨간불로 만들지 않고 경고만 남긴다 (#440 리뷰).
+            try {
+              await github.rest.pulls.requestReviewers({
+                ...base, pull_number: pr.number, reviewers: [REVIEWER],
+              });
+              core.info(`${REVIEWER} 에게 리뷰를 요청했다.`);
+            } catch (e) {
+              core.warning(`리뷰 요청 실패 (${e.status}) — 라벨 · 댓글은 달렸다. REVIEWER 값을 확인할 것.`);
+            }

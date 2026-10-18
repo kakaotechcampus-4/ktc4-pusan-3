@@ -5,6 +5,7 @@ import { Pencil, Ruler } from "lucide-react";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { ScreenTransition } from "@/components/route-transition";
 import { ChildIdentityCard, ChildIdentitySheet } from "@/components/child-identity";
 import { ChildNav } from "@/components/child-nav";
 import { GrowthLatestCard } from "@/components/growth-log-list";
@@ -15,6 +16,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
@@ -22,7 +24,9 @@ import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } f
 export default function ChildProfilePage() {
   return (
     <AuthGate>
-      <ChildProfileScreen />
+      <ScreenTransition>
+        <ChildProfileScreen />
+      </ScreenTransition>
     </AuthGate>
   );
 }
@@ -88,27 +92,30 @@ function IdentitySection({
         ) : undefined
       }
     >
-      {query.isPending ? (
-        <SkeletonBlock label="아이 정보를 불러오는 중" />
-      ) : query.isError ? (
-        <SectionError what="아이 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
-      ) : (
-        <>
-          <ChildIdentityCard profile={query.data} />
-          {/* 🚨 열 때마다 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서 같은
+      {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
+      <Swap id={phaseOf(query)}>
+        {query.isPending ? (
+          <SkeletonBlock label="아이 정보를 불러오는 중" />
+        ) : query.isError ? (
+          <SectionError what="아이 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
+        ) : (
+          <>
+            <ChildIdentityCard profile={query.data} />
+            {/* 🚨 열 때마다 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서 같은
               인스턴스를 재사용하면 지난번에 고치다 만 값이 남는다. */}
-          {editing ? (
-            <ChildIdentitySheet
-              key={query.data.id}
-              open
-              onClose={() => setEditing(false)}
-              childId={childId}
-              profile={query.data}
-              earliestBirthDate={EARLIEST_BIRTH_DATE}
-            />
-          ) : null}
-        </>
-      )}
+            {editing ? (
+              <ChildIdentitySheet
+                key={query.data.id}
+                open
+                onClose={() => setEditing(false)}
+                childId={childId}
+                profile={query.data}
+                earliestBirthDate={EARLIEST_BIRTH_DATE}
+              />
+            ) : null}
+          </>
+        )}
+      </Swap>
     </Section>
   );
 }
@@ -156,23 +163,25 @@ function GrowthSection({
         <SectionAction label="키·몸무게 새로 적기" onClick={() => setAdding(true)} />
       }
     >
-      {query.isPending ? (
-        <SkeletonBlock label="측정 기록을 불러오는 중" />
-      ) : query.isError ? (
-        <SectionError what="측정 기록을 불러오지 못했어요" onRetry={() => void query.refetch()} />
-      ) : latest === null ? (
-        // 🚨 빈 상태를 사과문으로 쓰지 않는다. 쌓인 건수를 그대로 보여준다 (`EmptyState`).
-        // 🚨 상세로 가는 길을 여기 붙이지 않는다 — 가 봐야 같은 0 건이다.
-        <EmptyState
-          icon={Ruler}
-          title="아직 잰 기록이 없어요"
-          description="어린이집 신체검사나 병원에서 잰 날, 여기에 적어 두면 돼요."
-          count={0}
-          countLabel="적어 둔 기록"
-        />
-      ) : (
-        <GrowthLatestCard log={latest} href={`/child/${childId}/profile/growth`} />
-      )}
+      <Swap id={phaseOf(query)}>
+        {query.isPending ? (
+          <SkeletonBlock label="측정 기록을 불러오는 중" />
+        ) : query.isError ? (
+          <SectionError what="측정 기록을 불러오지 못했어요" onRetry={() => void query.refetch()} />
+        ) : latest === null ? (
+          // 🚨 빈 상태를 사과문으로 쓰지 않는다. 쌓인 건수를 그대로 보여준다 (`EmptyState`).
+          // 🚨 상세로 가는 길을 여기 붙이지 않는다 — 가 봐야 같은 0 건이다.
+          <EmptyState
+            icon={Ruler}
+            title="아직 잰 기록이 없어요"
+            description="어린이집 신체검사나 병원에서 잰 날, 여기에 적어 두면 돼요."
+            count={0}
+            countLabel="적어 둔 기록"
+          />
+        ) : (
+          <GrowthLatestCard log={latest} href={`/child/${childId}/profile/growth`} />
+        )}
+      </Swap>
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
     </Section>

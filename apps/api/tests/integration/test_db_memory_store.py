@@ -7,8 +7,10 @@ child_a's observation id로 child_b의 store에서 get/update/delete하면 차�
 """
 
 from datetime import date, datetime, timedelta, timezone
+from uuid import UUID
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
@@ -328,10 +330,9 @@ class TestEventItemChildIdIsolationUpdateDelete:
         await session.flush()
 
         store_b = DbMemoryStore(session, child_id=child_b.id)
-        result = await store_b.update_event_item(
-            item_id=str(item.item_id), fields={"is_prepared": True}
-        )
+        result = await store_b.set_event_item_prepared(item_id=str(item.item_id), is_prepared=True)
         assert result is None
+        assert store_b.wrote is False  # 남의 준비물은 안 바뀌고 쓴 표시도 안 선다
 
     async def test_다른_아이의_준비물을_delete하면_False(
         self, session: AsyncSession, family: tuple
@@ -415,7 +416,7 @@ class TestWroteFlag:
 
         store = DbMemoryStore(session, child_id=child_a.id)
         assert store.wrote is False
-        await store.update_event_item(item_id=str(item.item_id), fields={"is_prepared": True})
+        await store.set_event_item_prepared(item_id=str(item.item_id), is_prepared=True)
         assert store.wrote is True
 
     async def test_delete_event_item_후_wrote가_True(
@@ -508,6 +509,55 @@ class TestWroteFlagStaysFalse:
         assert store.wrote is False
 
 
+class TestCreatedObservations:
+    """run 이 만든 관찰 목록 (#471) — 러너가 commit 뒤에 이 행들을 읽어 화면 `saved` 로 보낸다."""
+
+    async def test_create_한_관찰만_만든_순서대로_남는다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        assert store.created == []
+        food = await store.create_observation(
+            domain="food",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="사과 잘 먹었어",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"subject": "사과", "polarity": 1, "confidence_source": "parent_direct"},
+        )
+        health = await store.create_observation(
+            domain="health",
+            child_id=child_a.id,
+            source_writer=owner.id,
+            raw_text="기침해",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"symptom": ["기침"], "confidence_source": "parent_direct"},
+        )
+
+        # 고치기 · 지우기는 새로 만든 기록이 아니다 — "저장됨" 목록에 넣지 않는다
+        await store.update_observation(
+            domain="food", observation_id=food.id, fields={"subject": "배"}
+        )
+        assert store.created == [("food", UUID(food.id)), ("health", UUID(health.id))]
+
+    async def test_고치기_지우기만_한_store_는_비어_있다(
+        self, session: AsyncSession, family: tuple, obs_of_a: str
+    ) -> None:
+        _, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+
+        await store.update_observation(
+            domain="food", observation_id=obs_of_a, fields={"subject": "배"}
+        )
+        await store.delete_observation(domain="food", observation_id=obs_of_a)
+
+        assert store.wrote is True
+        assert store.created == []
+
+
 class TestInvalidUuidUpdateDefence:
     async def test_잘못된_id로_update하면_None(self, session: AsyncSession, family: tuple) -> None:
         _, child_a, _ = family
@@ -516,3 +566,31 @@ class TestInvalidUuidUpdateDefence:
             domain="food", observation_id="bad", fields={"subject": "x"}
         )
         assert result is None
+
+
+class TestUpdatedAtRefresh:
+    """수정분은 updated_at 이 갱신되면서 Curator 재집계에 들어간다(#257 결정). 그 전제가 지켜지는지.
+
+    테스트 트랜잭션 안에서는 DB now() 가 늘 같은 값이라
+    updated_at 을 과거로 밀어 두고 바뀌는지 본다.
+    """
+
+    async def test_update_observation_은_updated_at_을_갱신한다(
+        self, session: AsyncSession, family: tuple, obs_of_a: str
+    ) -> None:
+        _, child_a, _ = family
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        await session.execute(
+            update(ObservationFood)
+            .where(ObservationFood.id == UUID(obs_of_a))
+            .values(updated_at=past)
+        )
+        store = DbMemoryStore(session, child_id=child_a.id)
+
+        await store.update_observation(
+            domain="food", observation_id=obs_of_a, fields={"subject": "바나나"}
+        )
+
+        orm = await session.get(ObservationFood, UUID(obs_of_a), populate_existing=True)
+        assert orm is not None
+        assert orm.updated_at > past

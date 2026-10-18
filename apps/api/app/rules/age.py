@@ -11,6 +11,10 @@
     Activity 미정
 
 stage 는 참고값이지 공통 게이팅 축이 아니다.
+
+🚨 월령 경계값은 이 파일에 없다. `reference/age_gates.yaml` 이 정본이고, 표준 라이브러리만 쓰는 이
+층은 YAML 을 읽을 수 없어서 경계를 인자로 받는다. 파일에서 읽어 넘기는 것은
+`app/agents/common/age.py` 다 — Agent 는 거기 있는 같은 이름의 함수를 쓴다 (#372).
 """
 
 from dataclasses import dataclass
@@ -20,21 +24,10 @@ from typing import Literal
 Stage = Literal["infant_milk", "infant_weaning", "toddler", "preschool"]
 Band = Literal["infant", "toddler"]
 
-# 단계 경계. 월령 내림차순으로 훑어 처음 걸리는 칸이 그 아이의 stage 다.
-# docs/agents/shared/Tool_공통.md §2 의 표와 같은 값이어야 한다.
-# TODO: reference/age_gates.yaml이 정본(새로 생성하기)
-# 파일이 생기기 전까지 여기가 유일한 자리다 — 코드·프롬프트 어디에도 숫자를 복제하지 않는다.
-_STAGE_BOUNDARIES: tuple[tuple[int, Stage], ...] = (
-    (36, "preschool"),
-    (12, "toddler"),
-    (4, "infant_weaning"),
-    (0, "infant_milk"),
-)
-
-# v1 범위 상한 — 이 월령 미만(만 6세 전)까지가 서비스가 다루는 범위다
-# (docs/agents/shared/연령별_Tool_전략.md §2 "72 · v1 범위 상한"). 아이 등록을 막는 값이 아니다 —
-# 검진 · 접종 안내가 끝나는 경계이고, 문서 행 월령의 끝이다 (A-6).
-V1_MONTH_LIMIT = 72
+# 단계 경계 — (시작 월령, 단계) 를 월령 오름차순으로. 월령이 시작 월령 이상인 마지막 칸이 그
+# 아이의 stage 다. 첫 칸은 0 에서 시작해야 한다 (로더가 검사한다).
+# 값은 `reference/age_gates.yaml` 이 정한다.
+StageBoundaries = tuple[tuple[int, Stage], ...]
 
 # 화면에 내리는 나이 문구의 경계. 월령이 이 값보다 작으면 그 단위로 부른다.
 #   _DAYS_BEFORE_MONTHS 미만   → "생후 N일"
@@ -61,14 +54,14 @@ class LifeStage:
     big: Band
 
 
-def life_stage(birth_date: date, today: date) -> LifeStage:
+def life_stage(birth_date: date, today: date, boundaries: StageBoundaries) -> LifeStage:
     """생년월일과 기준일로 월령·단계를 계산한다.
 
     today 는 호출하는 쪽이 넘긴다. 이 함수 안에서 date.today() 를 부르지 않는다 —
     UTC 서버에서 부르면 KST 00:00~09:00 사이에 하루가 어긋나 그 시간대에만 게이트가 안 열린다.
     """
     months = months_between(birth_date, today)
-    stage = stage_of(months)
+    stage = stage_of(months, boundaries)
     return LifeStage(months=months, stage=stage, big=_BANDS[stage])
 
 
@@ -93,6 +86,16 @@ def months_between(birth_date: date, today: date) -> int:
     return months
 
 
+def date_at_month(birth_date: date, months: int) -> date:
+    """기준 월령이 되는 날. 해당 일이 없는 달은 말일로 맞춘다."""
+    _require_plain_date(birth_date, "birth_date")
+    if months < 0:
+        raise ValueError(f"월령은 음수일 수 없다: {months}")
+    year, month_index = divmod(birth_date.year * 12 + birth_date.month - 1 + months, 12)
+    month = month_index + 1
+    return date(year, month, min(birth_date.day, _last_day_of_month(year, month)))
+
+
 def age_display(birth_date: date, today: date) -> str:
     """화면에 그대로 보여 줄 나이 문구. 프론트는 나이를 계산하지 않고 이 값을 쓴다.
 
@@ -109,19 +112,19 @@ def age_display(birth_date: date, today: date) -> str:
     return f"만 {months // 12}세"
 
 
-def stage_of(months: int) -> Stage:
+def stage_of(months: int, boundaries: StageBoundaries) -> Stage:
     """월령을 단계로 바꾼다. 경계 월령이 되는 날 다음 단계가 된다."""
     if months < 0:
         raise ValueError(f"월령은 음수일 수 없다: {months}")
-    for boundary, stage in _STAGE_BOUNDARIES:
+    for boundary, stage in reversed(boundaries):
         if months >= boundary:
             return stage
-    raise AssertionError("_STAGE_BOUNDARIES 의 마지막 칸이 0 이 아니다")  # pragma: no cover
+    raise AssertionError("boundaries 의 첫 칸이 0 이 아니다")  # pragma: no cover
 
 
-def first_month_of(stage: Stage) -> int:
+def first_month_of(stage: Stage, boundaries: StageBoundaries) -> int:
     """그 단계가 시작하는 월령. 월령을 모르고 단계만 알 때 가장 어린 쪽으로 볼 때 쓴다."""
-    for boundary, candidate in _STAGE_BOUNDARIES:
+    for boundary, candidate in boundaries:
         if candidate == stage:
             return boundary
     raise ValueError(f"모르는 단계: {stage!r}")

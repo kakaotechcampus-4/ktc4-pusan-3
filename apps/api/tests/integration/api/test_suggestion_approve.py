@@ -4,6 +4,7 @@ PR #196 멘토 합의: approved = "보호자가 채택했다", 일정은 연결 
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
@@ -28,6 +29,7 @@ async def _make_suggestion(
     agent: SuggestionAgent = SuggestionAgent.ACTIVITY,
     status: SuggestionStatus = SuggestionStatus.DRAFT,
     expires_at: datetime | None = None,
+    items: Sequence[str] = (),
 ) -> Suggestion:
     """테스트용 제안 직접 INSERT."""
     row = Suggestion(
@@ -37,6 +39,7 @@ async def _make_suggestion(
         content="공원 산책",
         reason="야외 활동 선호",
         status=status,
+        items=list(items),
         expires_at=expires_at or (datetime.now(UTC) + timedelta(hours=24)),
     )
     session.add(row)
@@ -182,6 +185,125 @@ async def test_event_drafts_food_grouped(
     assert len(data["drafts"]) == 1
     assert data["drafts"][0]["event"]["title"] == "저녁 식사"
     assert len(data["drafts"][0]["suggestion_ids"]) == 2
+
+
+async def test_event_drafts_carry_activity_items(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """활동 추천의 준비물이 초안에 그대로 실린다 (#315)."""
+    s = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, items=["돗자리", "물통"]
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert draft["items"] == [
+        {"item_id": None, "item_name": "돗자리"},
+        {"item_id": None, "item_name": "물통"},
+    ]
+
+
+async def test_event_drafts_food_items_merged_once(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """food 둘을 한 끼로 묶으면 겹치는 재료는 한 번 — 공백만 다른 것도 같은 재료 (#315)."""
+    s1 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", " 애호박", ""],
+    )
+    s2 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부 ", "양파"],
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s1.id), str(s2.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert [i["item_name"] for i in draft["items"]] == ["두부", "애호박", "양파"]
+    assert all(i["item_id"] is None for i in draft["items"])
+
+
+async def test_event_drafts_items_stay_with_their_suggestion(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """활동 추천 둘은 초안도 둘이고 준비물도 각자다. food 재료가 활동 초안에 섞이지 않는다."""
+    a1 = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, items=["돗자리"]
+    )
+    a2 = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, items=["물감"]
+    )
+    f1 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부"],
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(a1.id), str(f1.id), str(a2.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    by_suggestion = {
+        tuple(d["suggestion_ids"]): [i["item_name"] for i in d["items"]]
+        for d in resp.json()["drafts"]
+    }
+    assert by_suggestion == {
+        (str(f1.id),): ["두부"],
+        (str(a1.id),): ["돗자리"],
+        (str(a2.id),): ["물감"],
+    }
+
+
+async def test_event_draft_items_can_be_submitted_as_is(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """초안의 준비물을 고치지 않고 그대로 제출해도 받는다 — 초안이 제출 상한 안에 있다."""
+    idempotency.clear()
+    s = await _make_suggestion(
+        session,
+        child_id=cid,
+        status=SuggestionStatus.APPROVED,
+        items=["가" * 101, "수영복", " 수영복"],
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s.id)]},
+        headers=headers,
+    )
+    [draft] = resp.json()["drafts"]
+    assert [i["item_name"] for i in draft["items"]] == ["수영복"]
+
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {**draft["event"], "starts_at": "2026-10-15T09:00:00+09:00"},
+            "items": draft["items"],
+            "suggestion_ids": draft["suggestion_ids"],
+        },
+        headers={**headers, "Idempotency-Key": "draft-items-as-is"},
+    )
+    assert resp.status_code == 201
+    assert [i["item_name"] for i in resp.json()["event"]["items"]] == ["수영복"]
 
 
 async def test_event_drafts_ids_are_unique_uuids(
@@ -466,12 +588,12 @@ async def test_expire_only_affects_draft(session: AsyncSession, cid: uuid.UUID):
     # 살아있는 draft
     s_alive = await _make_suggestion(session, child_id=cid)
 
-    drafts = await repo.list_suggestions(session, child_id=cid, status=SuggestionStatus.DRAFT)
+    drafts, _ = await repo.list_suggestions(session, child_id=cid, status=SuggestionStatus.DRAFT)
     draft_ids = {s.id for s in drafts}
     assert s_alive.id in draft_ids  # 살아있는 draft는 보인다
     assert s_expired.id not in draft_ids  # 만료된 draft는 안 보인다
 
-    all_approved = await repo.list_suggestions(
+    all_approved, _ = await repo.list_suggestions(
         session, child_id=cid, status=SuggestionStatus.APPROVED
     )
     assert s_approved.id in {s.id for s in all_approved}  # approved는 만료 무관

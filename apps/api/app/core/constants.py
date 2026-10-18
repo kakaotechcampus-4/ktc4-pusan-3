@@ -19,9 +19,10 @@ API_V1_PREFIX = "/api/v1"
 AUTH_PREFIX = "/auth"
 """인증 라우터의 접두사. /api/v1 은 마운트 시점에 붙으므로 여기 넣지 않는다."""
 
-OAUTH_COOKIE_PATH = f"{API_V1_PREFIX}{AUTH_PREFIX}"
-"""oauth_state 쿠키의 Path (명세 §5-5).
+AUTH_COOKIE_PATH = f"{API_V1_PREFIX}{AUTH_PREFIX}"
+"""인증 쿠키 둘(oauth_state · icatch_rt)의 Path (명세 §5-5 · #466).
 
-쿠키를 인증 요청에만 실리게 좁힌다. 이 값을 문자열로 다시 적지 말고 여기서 가져간다 —
-마운트 지점을 바꾸면 쿠키 Path 도 함께 따라와야 한다.
+쿠키를 인증 요청에만 실리게 좁힌다. 일반 API 와 SSE 에는 실리지 않는다 — 그쪽은 Bearer 다.
+이 값을 문자열로 다시 적지 말고 여기서 가져간다 — 마운트 지점을 바꾸면 쿠키 Path 도 함께
+따라와야 한다. 심을 때와 지울 때 Path 가 다르면 지워지지 않는다.
 """

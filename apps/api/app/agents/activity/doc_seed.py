@@ -13,18 +13,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from typing import Any
-from uuid import NAMESPACE_URL, uuid5
 
 from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, Intensity
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.common.reference import load_reference
-from app.agents.common.reference_docs import DocMeta, check_unique_doc_keys, parse_doc_meta
+from app.agents.common.reference_docs import (
+    DocMeta,
+    check_unique_doc_keys,
+    doc_row_id,
+    parse_doc_meta,
+)
 
 SEED_FILE = "activity_doc.yaml"
 KEY_PREFIX = "activity."
 ROW_TYPES = frozenset({"play_idea"})
 
-# 고시 영역. 표준보육과정(0–2세)은 기본생활을 포함한 6개, 누리과정(3–5세)은 5개라
+# 고시 영역. 현행 표준보육과정(교육부고시 제2024-23호)은 0–5세 모두 5개다. basic_life 는 제4차(2020)
+# 0–2세의 기본생활 영역으로, Growth 시드와 같은 목록을 쓰려고 남겨 둔다.
 # 신체운동 · 신체운동·건강은 physical_health 하나로 묶는다
 AREAS = frozenset({"basic_life", "physical_health", "communication", "social", "art", "nature"})
 
@@ -48,7 +53,7 @@ class ActivityDocEntry:
     def to_row(self) -> ActivityDocRow:
         """포트가 돌려주는 모양. `id` 는 doc_key 로 늘 같게 만든다 — DB 의 uuidv7 과는 다르다."""
         return ActivityDocRow(
-            id=uuid5(NAMESPACE_URL, f"activity_doc:{self.meta.doc_key}"),
+            id=doc_row_id("activity_doc", self.meta.doc_key),
             doc_key=self.meta.doc_key,
             title=self.meta.title,
             body=self.meta.body,

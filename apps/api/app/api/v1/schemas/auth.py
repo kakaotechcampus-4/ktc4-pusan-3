@@ -5,10 +5,11 @@
    부른다. 설정이 비어도 문자열을 내리는 이유가 이것이다 (아래 참조).
 """
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import AfterValidator, BaseModel, StrictBool, StringConstraints
 
 from app.domains.consent.models import ConsentScope
 
@@ -114,15 +115,26 @@ class ParentSummary(BaseModel):
     계정은 null 일 수 있다 (§5-2)."""
 
 
+class RefreshResponse(BaseModel):
+    """refresh 로 받은 새 access — #466. 회전된 refresh 는 본문이 아니라 쿠키로 나간다."""
+
+    token: str
+    """access 토큰. 교환 · 가입 응답의 token 과 같은 것이다."""
+
+    expires_in: int
+    """access 의 수명(초). 로그인 시각부터 정한 최대 기간이 얼마 안 남았으면 그만큼 짧다."""
+
+
 class SessionResponse(BaseModel):
     """세션을 내주는 응답 — 명세 §3-4 · §3-5. 교환과 가입이 같은 모양을 쓴다."""
 
     token: str
-    """불투명 난수. JWT 가 아니다 — 로그아웃·탈퇴·파기 3곳이 즉시 무효화를 요구한다 (§4-2)."""
+    """access 토큰. 불투명 난수다. JWT 가 아니다 — 로그아웃·탈퇴·파기 3곳이 즉시 무효화를
+    요구한다 (§4-2). 웹은 메모리에만 둔다 (#466)."""
 
     expires_in: int
-    """초. 계약서에 없어서 추가한 값이다 — 없으면 프론트가 만료를 미리 알 수 없어
-    매번 401 을 맞고 나서야 재로그인한다 (§3-4)."""
+    """access 의 수명(초). 계약서에 없어서 추가한 값이다 — 없으면 프론트가 만료를 미리 알 수 없어
+    매번 401 을 맞고 나서야 다시 받는다 (§3-4)."""
 
     is_new: bool
     parent: ParentSummary
@@ -143,3 +155,29 @@ class ConsentRequiredResponse(BaseModel):
 
     status: Literal["consent_required"] = "consent_required"
     consent_code: str
+
+
+def _must_be_true(value: bool) -> bool:
+    if value is not True:
+        raise ValueError("true 여야 한다")
+    return value
+
+
+class WithdrawRequest(BaseModel):
+    """POST /auth/withdraw (#379).
+
+    프론트 apps/web/src/lib/api/types.ts 의 WithdrawRequest 와 같다.
+    """
+
+    acknowledged_immediate_deletion: Annotated[StrictBool, AfterValidator(_must_be_true)]
+    """화면이 "지금 지워지고 되돌릴 수 없다" 를 보여줬다는 표시. 저장하지 않고 확인용으로만 쓴다.
+
+    🚨 JSON 불리언 true 만 받는다. Literal[True] 는 1 도 통과시키고(1 == True), 기본 bool 은
+       "true" 문자열까지 바꿔 받는다 — 화면 버그로 잘못 나간 탈퇴를 한 번 더 막는 자리라
+       엄격하게 본다.
+    """
+
+
+class WithdrawResponse(BaseModel):
+    deleted_at: datetime
+    """서버가 지운 시각. 화면이 계산하지 않는다."""

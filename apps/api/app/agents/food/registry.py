@@ -8,15 +8,20 @@
     toddler·preschool(12+) search·analyze·repeated·(daycare)·propose
   라벨: nutrient_analysis
     infant_milk·infant_weaning(0–11)  닫힘
-    toddler·preschool(12+)            search·analyze·repeated·(daycare)·
-                                       nutrition·balance·report
+    toddler·preschool(12+)            열린 tool 없음 — 모델을 부르지 않고 코드가 출현 문장을 낸다
+                                      (닫힘이 아니다. `closed_readout_key` 는 None 이다)
   라벨: daycare_meal — 단계로 닫지 않음
-    급식 행 있음  lookup·update·delete
+    급식 행 있음  lookup·update·delete·keep
     급식 행 없음  닫힘
 
-
-- `meal_recommendation`은 `safety_ok=False`면 단계와 무관하게 닫힌다(`blocked.safety`) —
-  알레르기 필터를 걸 수 없어서다. `nutrient_analysis`·`daycare_meal`은 영향받지 않는다.
+- 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. tool 이 아직 스텁인 task 는
+  `NOT_READY` 에 문구 키를 적어 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
+  구현되면 `NOT_READY` 에서 그 task 를 뺀다. `test_food_stub_gate.py` 가 막는다.
+- 지금은 tool 12개가 다 구현돼 있고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서
+  `NOT_READY` 는 비어 있다.
+- `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
+  알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
+  안내를 내서 식단 추천과 같이 닫고, `daycare_meal`은 영향받지 않는다.
 - `consent_child_health`는 어느 라벨도 닫지 않는다. 동의가 없으면 `build_gate`가
   `health_safety`를 읽지 않고 `context.state.safety` 를 빈 튜플로 둘 뿐이다.
 - `(daycare)`는 `toddler`·`preschool` 에서만, 급식 행이 있을 때만 더해지는 tool이다.
@@ -39,6 +44,7 @@ from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.food.tools.infant import guide_weaning_stage
 from app.agents.food.tools.menu import (
     delete_daycare_meal,
+    keep_daycare_meal,
     lookup_daycare_menu,
     update_daycare_meal,
 )
@@ -64,6 +70,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "lookup_daycare_menu": lookup_daycare_menu,
     "update_daycare_meal": update_daycare_meal,
     "delete_daycare_meal": delete_daycare_meal,
+    "keep_daycare_meal": keep_daycare_meal,
     "lookup_nutrition": lookup_nutrition,
     "compare_diet_balance": compare_diet_balance,
     "guide_weaning_stage": guide_weaning_stage,
@@ -86,7 +93,7 @@ _SPECS_BY_NAME: dict[str, dict[str, Any]] = {spec["function"]["name"]: spec for 
 
 # 라벨별로 열리는 tool 이름
 _DAYCARE_TOOLS: frozenset[str] = frozenset(
-    {"lookup_daycare_menu", "update_daycare_meal", "delete_daycare_meal"}
+    {"lookup_daycare_menu", "update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
 )
 _WEANING_MEAL: frozenset[str] = frozenset(
     {"search_food_memory", "guide_weaning_stage", "propose_meal_candidates"}
@@ -99,16 +106,16 @@ _TODDLER_MEAL_BASE: frozenset[str] = frozenset(
         "propose_meal_candidates",
     }
 )
-_TODDLER_NUTRIENT_BASE: frozenset[str] = frozenset(
-    {
-        "search_food_memory",
-        "analyze_meal_records",
-        "check_repeated_menus",
-        "lookup_nutrition",
-        "compare_diet_balance",
-        "report_nutrient_analysis",
-    }
+# 영양소 분석을 모델이 문장으로 다듬던 tool. 1차 출력은 모델을 부르지 않아 열지 않는다 —
+# 구간을 다시 화면에 낼 때 `tools_for` 에서 이 집합을 연다
+_NUTRIENT_MODEL_TOOLS: frozenset[str] = frozenset(
+    {"lookup_nutrition", "compare_diet_balance", "report_nutrient_analysis"}
 )
+
+# 모델에게 열지 않고 코드 문구로 닫는 task → 문구 키. tool 이 아직 스텁인 task 를 여기에 적는다.
+# 지금은 tool 12개가 다 구현되고 `run()` 이 결과를 옮겨서 비어 있다. 열린 tool 에 스텁이 남아 있으면
+# `test_food_stub_gate.py` 가 막는다 (#357 리뷰 4-②)
+NOT_READY: dict[FoodTaskType, str] = {}
 
 # life_stage() 의 네 값 중 영아기 둘. 영양소 분석은 이 두 단계 전부에서 닫힌다
 _INFANT_STAGES = ("infant_milk", "infant_weaning")
@@ -126,11 +133,16 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
             return "unsupported.milk_meal"
         if not gate.safety_ok:
             return "blocked.safety"
-        return None
+        return NOT_READY.get(task)
     if task == FoodTaskType.NUTRIENT_ANALYSIS:
-        return "unsupported.infant_nutrient" if stage in _INFANT_STAGES else None
+        if stage in _INFANT_STAGES:
+            return "unsupported.infant_nutrient"
+        # 영양 안내가 식품군("달걀 반찬 늘리기")을 말하므로, 걸러 낼 알레르기를 모르면 열지 않는다
+        return None if gate.safety_ok else "blocked.safety"
     if task == FoodTaskType.DAYCARE_MEAL:
-        return None if gate.data.daycare_meal else "closed.no_daycare"
+        if not gate.data.daycare_meal:
+            return "closed.no_daycare"
+        return NOT_READY.get(task)
     raise AssertionError(f"모르는 FoodTaskType: {task}")  # pragma: no cover
 
 
@@ -152,16 +164,32 @@ def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
             if gate.data.daycare_meal:
                 opened.add("lookup_daycare_menu")
     else:  # NUTRIENT_ANALYSIS — infant_* 는 위에서 이미 닫혔다
-        opened = set(_TODDLER_NUTRIENT_BASE)
-        if gate.data.daycare_meal:
-            opened.add("lookup_daycare_menu")
+        # 1차 출력은 모델을 부르지 않는다 — 코드가 식품군 출현 문장을 낸다(N-17). 열린 tool 이 없을
+        # 뿐 닫힘(`closed_readout_key`)과 다르다 — 이 task 는 `run()` 이 코드로 끝까지 간다
+        opened: set[str] = set()
 
     return tuple(d.name for d in TOOL_DEFINITIONS if d.name in opened)
 
 
-def requires_safety_check(task: FoodTaskType) -> bool:
-    """모델 호출 전에 health_safety 를 읽어야 하는가. 식단 추천만 (S6 ①)."""
-    return task == FoodTaskType.MEAL_RECOMMENDATION
+def answers_by_code(task: FoodTaskType) -> bool:
+    """모델을 부르지 않고 코드가 결과를 내는 task. 영양소 분석 1차 출력이다(N-17)."""
+    return task == FoodTaskType.NUTRIENT_ANALYSIS
+
+
+# task 마다 결과를 내는 tool. run_tool_loop 이 이 안에서 끝낸다(output_accepted).
+_OUTPUT_TOOLS: dict[FoodTaskType, frozenset[str]] = {
+    FoodTaskType.MEAL_RECOMMENDATION: frozenset({"propose_meal_candidates"}),
+    FoodTaskType.NUTRIENT_ANALYSIS: frozenset({"report_nutrient_analysis"}),
+    # 급식 갱신은 tool 을 꼭 부른다(required). 쓰지 않고 끝내는 keep 이 없으면 묻는 말도 쓰기로 간다
+    FoodTaskType.DAYCARE_MEAL: frozenset(
+        {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
+    ),
+}
+
+
+def output_tools_for(task: FoodTaskType) -> frozenset[str]:
+    """이 task 의 출력 tool 이름. `run_tool_loop` 의 `output_tools` 로 그대로 넘긴다."""
+    return _OUTPUT_TOOLS[task]
 
 
 def specs_for(names: Collection[str]) -> list[dict[str, Any]]:
@@ -178,7 +206,8 @@ async def execute_tool(
     """tool 을 한 번 실행한다. 허용 목록 → 이름 조회 → 인자 검증 → 실행 순서.
 
     모델에게 안 보여준 tool 을 이름으로 불러도 실행하지 않는다. allowed 는 tools_for() 결과다.
-    지금 핸들러는 NotImplementedError 를 낸다 — 삼키지 않고 그대로 올린다.
+    핸들러 예외는 삼키지 않고 그대로 올린다(Tool_공통). 스텁 tool 은 모델에게 열지 않는다 —
+    `tests/unit/agents/food/test_food_stub_gate.py` 가 막는다.
     """
     definition = _DEFINITIONS.get(name)
     handler = TOOL_HANDLERS.get(name)

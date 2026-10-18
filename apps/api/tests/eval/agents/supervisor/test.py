@@ -12,8 +12,8 @@ SUPERVISOR_MODEL · SUPERVISOR_BASE_URL 이 비면 MEMORY_* 를 쓴다 — 기�
 
   split        Supervisor만 호출: 조각을 어떻게 나누고 어디로 보내는지
   end_to_end   Supervisor → Memory(task 모드) → Food까지
-               Food 는 테스트 가짜가 아니라 agents/food 의 mock 그대로다 —
-               실구현이 들어오면 이 테스트가 그대로 회귀 테스트가 된다
+               Food 는 실구현이다 — 아이 · 레시피 · 급식 · 문서는 `food/world.py` 의 가짜 세계다.
+               Memory 가 같은 run 에 저장한 관찰을 Food 가 기억 포트로 읽는다
 
 """
 
@@ -21,10 +21,11 @@ import asyncio
 import calendar
 import json
 import os
+import re
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -35,9 +36,8 @@ import pytest
 
 from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRange
 from app.agents.common.llm_client import LLMClient, LLMConfigError
-from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
-from app.agents.food.store import InMemoryProfile, in_memory_ports
+from app.agents.food.store.ports import DaycareMealRow
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
@@ -47,9 +47,11 @@ from app.agents.memory.tools.observation import MEAL_SLOTS  # 끼니 목록은 t
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import agent as supervisor
 from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
 from app.rules.age import Stage
+from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
     RC_CASES,
@@ -70,6 +72,13 @@ pytestmark = pytest.mark.live
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
 
 KST = ZoneInfo("Asia/Seoul")
+# Food 출력에 쓰면 안 되는 영양 단위(공통 실패 1). 자세한 판정은 food/test_food_run.py
+# 단어 경계는 한글 조사 앞에서 안 걸린다("10g을") — 뒤에 영문자만 아니면 단위로 본다
+_FOOD_UNIT = re.compile(
+    r"%|\d\s*(?:g|mg|kcal)(?![a-z])|㎎|㎉|퍼센트|칼로리|밀리그램", re.IGNORECASE
+)
+# 급식 행을 지워도 되는 말. 이 말이 없는 케이스에서 행이 줄면 실패다
+_ABSENCE = re.compile(r"빠지|빠져|빠졌|결석|안 ?가|못 ?가|쉬어|쉰다|휴원|없었")
 # 기준 시각은 오늘 오전 9시. 날짜를 박아 두면 모델이 보는 "현재 시각" 이 실제와 달라진다.
 # 결과를 나란히 비교할 때만 고정한다 — $env:EVAL_NOW="2026-09-09" (test_memory.py 와 같은 변수)
 _PINNED = os.getenv("EVAL_NOW")
@@ -84,6 +93,16 @@ _STAGE_MONTHS: dict[Stage, int] = {
     "infant_weaning": 6,
     "toddler": 24,
     "preschool": 48,
+}
+
+
+# 식이 단계 → Food 가짜 세계. 아이의 생일은 `_birth_date_for` 가 단계 안의 월령으로 따로 정한다 —
+# 세계는 그 단계의 레시피 · 급식 · 문서를 준다(이유기는 이유식 레시피, 유아기는 일반 레시피)
+_WORLD_FOR_STAGE: dict[Stage, str] = {
+    "infant_milk": "C2",
+    "infant_weaning": "C8",
+    "toddler": "C48",
+    "preschool": "C48",
 }
 
 
@@ -103,6 +122,10 @@ INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
 _CASES = (*RC_CASES, *T_CASES)
+
+
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다. commit 은 필수 인자라 아무것도 안 하는 것을 넘긴다."""
 
 
 def _client() -> LLMClient:
@@ -273,6 +296,8 @@ class Observed:
     failures: list[str] = field(default_factory=list)
     reports: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)  # 저장에 안 남은 관찰 구간 (콘솔 전용)
+    daycare_before: tuple[DaycareMealRow, ...] = ()  # 가짜 세계의 급식 행
+    daycare_after: tuple[DaycareMealRow, ...] = ()
 
     @property
     def rows(self) -> list[ObservationRow]:
@@ -336,10 +361,11 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         "food.subject 에 끼니 이름(아침·점심·저녁·간식)이 들어가지 않는다",
         "같은 날 같은 대상이 두 번 저장되지 않는다",
         "저장된 일정의 종료가 시작보다 뒤다 (종일이면 00:00~23:59)",
-        "영양소 분석에 propose_meal_candidates 가 안 열리고 filter_food_safety 는 안 보인다",
+        "영양소 분석은 모델을 부르지 않는다 — 코드가 출현 문장을 낸다",
+        "결석 말이 없으면 급식 행이 지워지지 않는다",
     ]
     if live.label == "RC20-i":
-        expected.append(f"{live.stage} 라 영양소 분석이 unsupported_stage 로 막힌다")
+        expected.append(f"{live.stage} 라 영양소 분석이 unsupported 로 닫힌다")
     if case.case_id == "RC15":
         expected.append("보호자 얘기가 아이 관찰로 저장되지 않는다")
     if case.case_id == "RC13":
@@ -371,17 +397,15 @@ async def _run_once(
     # 기억 포트 · 쓰기 표시는 entrypoint 와 같게 묶는다 — Food 실구현이 붙으면 같은 run에
     # 저장한 관찰을 읽고, 급식만 고친 run이 failed가 아니라 done으로 끝나게 한다
     writes = RunWrites()
-    ports = in_memory_ports(
-        profile=InMemoryProfile({CHILD: _birth_date_for(live.stage)}),
+    world = build_world(
+        _WORLD_FOR_STAGE[live.stage],
+        now=NOW,
+        run_id=f"live-{live.label}",
+        birth_date=_birth_date_for(live.stage),
         memory=StoreFoodMemory(store),
     )
-    food_context = FoodContext(
-        child_id=CHILD,
-        run_id=f"live-{live.label}",
-        now=NOW,
-        timezone=KST,
-        ports=record_food_writes(ports, writes),
-    )
+    food_context = replace(world.context, ports=record_food_writes(world.context.ports, writes))
+    daycare_before = await _daycare_rows(world)
     seed = _SEEDS.get(live.case.case_id)
     if seed is not None:
         await seed(memory_context)
@@ -397,6 +421,8 @@ async def _run_once(
         memory_client=memory_client,
         emit=emitted.append,
         writes=writes,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
@@ -413,6 +439,8 @@ async def _run_once(
         events=events,
         order=[type(event).__name__ for event in emitted],
         elapsed_ms=elapsed_ms,
+        daycare_before=daycare_before,
+        daycare_after=await _daycare_rows(world),
     )
     _judge(observed)
     return observed
@@ -457,19 +485,16 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"Food 호출 {len(_food(result))}회 ≠ food 유형 {expected}개")
 
     for food in _food(result):
-        # S3 · S6 — 분석에 식품 제안이 열리면 안 되고, 안전 필터는 모델에게 보이면 안 된다
-        if (
-            food.task_type == FoodTaskType.NUTRIENT_ANALYSIS
-            and "propose_meal_candidates" in food.tools
-        ):
-            observed.failures.append("영양소 분석에 propose_meal_candidates 가 열렸다")
-        if "filter_food_safety" in food.tools:
-            observed.failures.append("filter_food_safety 가 모델에게 보인다")
+        _judge_food(observed, food)
+    # failed 로 끝난 Agent 는 result.domain 에 없고 partial 로만 알린다
+    if result.partial is not None and "food" in result.partial.failed:
+        observed.reports.append("Food task 가 failed 로 끝났다")
+    _judge_daycare_rows(observed)
 
     if observed.live.label == "RC20-i":
         status = _food(result)[0].status if _food(result) else "(호출 없음)"
-        if status != "unsupported_stage":
-            observed.failures.append(f"영아기 영양소 분석이 unsupported_stage 가 아니다: {status}")
+        if status != "unsupported":
+            observed.failures.append(f"영아기 영양소 분석이 unsupported 가 아니다: {status}")
 
     # 루트 §4 — 저장이 검색보다 먼저
     if "DomainRouted" in observed.order and "Saved" in observed.order:
@@ -563,6 +588,46 @@ def _judge_clear(observed: Observed) -> None:
             observed.failures.append(f"초안의 시작이 바뀌었다 ({_interval(draft)})")
 
 
+def _judge_food(observed: Observed, food: Any) -> None:
+    """Food 결과의 공통 실패 조건(test_expected_food.md §0). 자세한 판정은 test_food_run.py."""
+    if food.task_type == FoodTaskType.NUTRIENT_ANALYSIS and food.model_calls:
+        observed.failures.append("영양소 분석이 모델을 불렀다 — 코드가 출현 문장을 낸다(N-17)")
+    texts = [
+        *(readout.body for readout in food.readouts),
+        *(f"{d.content} {d.reason} {' '.join(d.items)}" for d in food.suggestions),
+        *(citation.note for d in food.suggestions for citation in d.citations),
+    ]
+    if any(_FOOD_UNIT.search(text) for text in texts):
+        observed.failures.append("Food 출력에 단위 문자(% · g · mg · kcal)가 있다")
+    if len(food.suggestions) > 3:
+        observed.failures.append(f"추천이 {len(food.suggestions)}개다 (최대 3)")
+    for draft in food.suggestions:
+        has_child_record = any(c.ref.is_child_record for c in draft.citations)
+        if draft.kind == "personalized" and not has_child_record:
+            observed.failures.append("근거 0행인데 개인화 추천이다")
+
+
+async def _daycare_rows(world: Any) -> tuple[DaycareMealRow, ...]:
+    ports = world.context.ports
+    rows = await ports.daycare.rows(
+        child_id=world.context.child_id,
+        date_from=world.today - timedelta(days=45),
+        date_to=world.today + timedelta(days=21),
+    )
+    return tuple(rows)
+
+
+def _judge_daycare_rows(observed: Observed) -> None:
+    """급식 행은 Food 가 되돌릴 수 없게 지우는 유일한 자리다. 결석 말이 없으면 지우지 않는다."""
+    after = {row.id for row in observed.daycare_after}
+    gone = [row for row in observed.daycare_before if row.id not in after]
+    if gone and not _ABSENCE.search(observed.live.case.text):
+        observed.failures.append(f"결석 말이 없는데 급식 행 {len(gone)}개가 지워졌다")
+    changed = len(set(observed.daycare_before) - set(observed.daycare_after)) - len(gone)
+    if changed:
+        observed.reports.append(f"급식 행 {changed}개가 고쳐졌다")
+
+
 def _judge_event_intervals(observed: Observed) -> None:
     """초안의 시간 구간이 성립하는지 확인한다. 보호자에게 올라가기 전 마지막 관문이다."""
     for row in observed.events:
@@ -634,7 +699,7 @@ def _report(observed: Observed) -> None:
 
 
 def _food(result: PipelineResult) -> list[Any]:
-    """도메인 결과 중 Food 몫. mock 결과라 tools · stage 를 그대로 읽는다."""
+    """도메인 결과 중 Food 몫."""
     return [item for item in result.domain if item.agent == "food"]
 
 
@@ -682,11 +747,14 @@ def _print_case(observed: Observed, attempt: int) -> None:
         )
         print(f"      저장 {_saved_summary(observed)}")
     for food in _food(result):
-        safety = "health_safety 사전 확인 대상" if food.requires_safety_check else "사전 확인 없음"
         print(
-            f"    F {food.task_type}·{food.stage} ← {list(food.request_texts)} · "
-            f"tools {len(food.tools)} · {safety} · {food.status}"
+            f"    F {food.task_type} · {food.status} · 추천 {len(food.suggestions)}개 · "
+            f"모델 {food.model_calls}회"
         )
+        for draft in food.suggestions:
+            print(f"      - {draft.content} ({draft.kind})")
+        for readout in food.readouts:
+            print(f"      · {readout.body}")
     if result.routing.unavailable_agents:
         print(f"      미구현 agent: {list(result.routing.unavailable_agents)}")
     for guidance in result.routing.guidance:
@@ -765,10 +833,9 @@ def _record(observed: Observed) -> dict[str, Any]:
         "food": [
             {
                 "task_type": str(food.task_type),
-                "stage": str(food.stage),
                 "status": food.status,
-                "tools": len(food.tools),
-                "requires_safety_check": food.requires_safety_check,
+                "suggestions": len(food.suggestions),
+                "model_calls": food.model_calls,
             }
             for food in _food(result)
         ],

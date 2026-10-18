@@ -18,7 +18,9 @@
    `extra={"alert_heading": ...}`(제목) 둘뿐 — 서버가 모양을 검사한 값만 여기 넣는다
    (화면 오류 보고). 어디서 내보내는지 `grep -rn alert_ app` 한 번으로 다 보인다.
    `extra={"alert_source": "browser"}` 은 출처다 (기본 api · 감시 스크립트는 infra) — Discord 에서
-   보내는 이름(api-alert · browser-alert · infra-alert)이 갈려 채널 하나에서도 구별된다.
+   보내는 이름(api-alert · browser-alert · report-alert · infra-alert)이 갈려 채널 하나에서도
+   구별된다. report 는 앱 안 신고다 — 오류가 아닌데 Discord 로 가는 길이 ERROR 하나라 ERROR 로
+   찍는다 (#487).
 🚨 알림이 실패해도 요청 처리는 영향이 없다. 실패는 WARNING 한 줄 — SendError 면 그 메시지, 다른
    예외는 종류 이름만 (httpx 의 메시지에는 웹훅 URL(비밀)이 통째로 있다).
 🚨 Discord 가 막히거나 느려도 서버 종료를 붙들지 않는다 — flush 는 기한이 있고, 큐는 분당 상한만큼만
@@ -46,12 +48,13 @@ SEVERITY_MARK = {"high": "🔴", "normal": "🟠", "low": "🟡"}
 🔴 지금 봐야 함 · 🟠 오늘 안에 · 🟡 내일 봐도 됨. `extra={"alert_severity": "high"}` 로 바꿀 수
 있다.
 감시 스크립트는 🔴(죽음) · 🟢(복구)를 자기가 붙인다."""
-DEFAULT_SEVERITY = {"api": "normal", "browser": "low"}
+DEFAULT_SEVERITY = {"api": "normal", "browser": "low", "report": "low"}
 SEVERITY_COLOR = {"high": 0xFF0000, "normal": 0xFFA500, "low": 0xFFD700}
 """embed 사이드바 색. SEVERITY_MARK 와 같은 키."""
 NEXT_STEP = {
     "api": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep ERROR',
     "browser": 'journalctl CONTAINER_NAME=ktc4-api --since "10 min ago" | grep "화면 오류"',
+    "report": "SELECT category, message FROM report WHERE id = '<신고 번호>'",
 }
 """카드 바닥글의 "다음에 칠 명령" — 알림을 보고 뭘 할지 바로 알게 (런북의 가장 작은 모양).
 바닥글은 Discord 가 마크다운을 안 받아 코드 모양이 아니다."""

@@ -1,4 +1,4 @@
-import { CHILD, EVALUATIVE, expect, test, visibleText } from "./fixtures";
+import { CHILD, EVALUATIVE, expect, recordApi, test, visibleText, writes } from "./fixtures";
 
 /**
  * 11-1 키 · 몸무게 상세 — 보호자가 넣은 숫자를 그대로 그린다 (최상위 CLAUDE.md §2 개인정보).
@@ -83,4 +83,40 @@ test("툴팁은 값과 날짜만 보여주고 직전과의 차이를 만들지 �
   const text = await tooltip.innerText();
   expect(text).not.toMatch(/[+-]\s?\d|지난번|늘었|줄었/);
   expect(text).not.toMatch(EVALUATIVE);
+});
+
+/**
+ * 적기 시트는 서버(PR #353)가 400 으로 막는 값을 보내기 전에 거른다 — 400 은 화면에서
+ * "다시 눌러 주세요" 로만 보이고, 다시 눌러도 같다.
+ */
+test.describe("새로 재서 적기", () => {
+  async function openSheet(page: import("@playwright/test").Page) {
+    await page.getByRole("button", { name: "키·몸무게 새로 적기" }).click();
+    return page.getByRole("dialog", { name: "새로 재서 적기" });
+  }
+
+  test("범위 밖 값은 보내지 않고 그 칸에 이유를 붙인다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openSheet(page);
+
+    await sheet.getByLabel("키 · cm").fill("1042");
+    await sheet.getByRole("button", { name: "적어 두기" }).click();
+
+    await expect(sheet.getByText("0.1부터 300까지 적을 수 있어요")).toBeVisible();
+    expect(writes(calls, "POST", /\/growth$/)).toHaveLength(0);
+  });
+
+  test("잰 날 달력은 아이 생일(목 2021-04-02)부터 고를 수 있다", async ({ page }) => {
+    const sheet = await openSheet(page);
+    await sheet.getByRole("button", { name: /잰 날/ }).click();
+    const calendar = page.getByRole("dialog", { name: "잰 날" });
+
+    await calendar.getByRole("button", { expanded: false }).filter({ hasText: "년" }).click();
+    await expect(calendar.getByRole("button", { name: "2021", exact: true })).toBeVisible();
+    await expect(calendar.getByRole("button", { name: "2020", exact: true })).toHaveCount(0);
+
+    await calendar.getByRole("button", { name: "2021", exact: true }).click();
+    await expect(calendar.getByRole("button", { name: "3월" })).toBeDisabled();
+    await expect(calendar.getByRole("button", { name: "4월" })).toBeEnabled();
+  });
 });

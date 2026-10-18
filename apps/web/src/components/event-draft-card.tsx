@@ -52,7 +52,7 @@ import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/typ
  * 🚨 **`items` 는 최종 목록이다** (#122 확정). 배열에서 빠진 `item_id` 가 삭제를 표현하는
  *    유일한 방법이라, 지우기가 화면에 있어야 계약이 성립한다.
  * 🚨 **준비물에 체크박스를 그리지 않는다.** `is_prepared` 는 payload 에 없고 체크는
- *    `PATCH /event-items/{iid}` 만의 몫이다 — 여기서 건드리면 제출하는 순간 풀린다.
+ *    `PATCH /children/{cid}/event-items/{iid}` 만의 몫이다 — 여기서 건드리면 제출하는 순간 풀린다.
  *
  * 🚨 **알레르기 사전검사(`prechecks`)를 카드가 들고 있지 않다.** 그건 승인 게이트 ㉡ 이고
  *    제안 경로에만 온다 — 세 경로가 공유하는 카드에 두면 나머지 둘이 빈 칸을 진다.
@@ -309,7 +309,7 @@ export function EventDraftCard({
                 두 번째 관문을 알게 된다 — 제안 경로는 일자가 늘 비어 있어서 늘 그랬다. */}
             <div
               className={cn(
-                "mb-3 flex flex-col gap-1",
+                "ease-standard mb-3 flex flex-col gap-1 transition-colors duration-120",
                 canSubmit ? "text-caution" : "text-ink-subtle",
               )}
             >

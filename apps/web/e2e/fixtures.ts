@@ -15,11 +15,14 @@ import type { Scenario } from "@/mocks/scenario";
  *    목 시나리오를 더한다 (apps/web/CLAUDE.md §8 "테스트 전용 핸들러를 만들지 않는다").
  */
 
-/** 목이 심는 세션. `stores/session.ts` 의 persist 모양과 같아야 한다 (/web-smoke 와 같은 값). */
-const MOCK_SESSION = JSON.stringify({
-  state: { token: "mock-token-do-not-use-in-production", expiresAt: null, activeChildId: null },
-  version: 0,
-});
+/**
+ * 로그인한 채로 시작하는 방법. 토큰은 메모리에만 있어서 심을 수 없고, 화면은 앱을 켤 때
+ * refresh 로 받는다 — 그래서 목의 refresh 쿠키 표식을 심는다 (`mocks/handlers/auth.ts` 의
+ * `MOCK_REFRESH_KEY` · /web-smoke 와 같은 값).
+ */
+const MOCK_REFRESH_KEY = "icatch.mock.refresh";
+/** 이 탭에서 이미 심었다는 표시. 로그아웃한 뒤 새로고침했을 때 다시 심지 않으려고 둔다. */
+const SEEDED_KEY = "icatch.e2e.seeded";
 
 /** 목 아이 id (`mocks/fixtures.ts`). */
 export const CHILD = "c1";
@@ -45,14 +48,17 @@ export const test = base.extend<Options>({
   page: async ({ page, scenario, signedIn, allowFailedApi }, provide) => {
     // 🚨 `?scenario=` 대신 저장소에 심는다. 주소로 넘기면 URL 단언마다 쿼리가 끼어든다.
     //    목은 요청마다 이 값을 다시 읽는다 (`currentScenario()`).
+    // 🚨 표식은 탭마다 **한 번만** 심는다. 이 스크립트는 새로고침마다 다시 돈다 — 매번 심으면
+    //    로그아웃이나 탈퇴로 지운 표식이 되살아나 "다시 켜도 로그인돼 있다" 가 된다.
     await page.addInitScript(
-      ([s, session, signed]) => {
+      ([s, refreshKey, seededKey, signed]) => {
         localStorage.setItem("icatch.mock.scenario", s);
-        if (signed && sessionStorage.getItem("icatch.session") === null) {
-          sessionStorage.setItem("icatch.session", session);
+        if (signed && sessionStorage.getItem(seededKey) === null) {
+          localStorage.setItem(refreshKey, "1");
+          sessionStorage.setItem(seededKey, "1");
         }
       },
-      [scenario, MOCK_SESSION, signedIn] as const,
+      [scenario, MOCK_REFRESH_KEY, SEEDED_KEY, signedIn] as const,
     );
 
     // 개발 전용 떠 있는 버튼(Next 개발 표시기 · Query devtools)이 하단 네비와 보내기 버튼을 덮는다.
@@ -136,11 +142,17 @@ export function recordApi(page: Page): ApiCall[] {
   return calls;
 }
 
-/** 쓰기 요청만 (GET 제외). */
+/**
+ * 쓰기 요청만 (GET 제외).
+ *
+ * 🚨 세션 갱신(`POST /auth/refresh`)은 뺀다. 화면이 뜰 때마다 나가는 것이라(#465) 남기면 "누르기
+ *    전에는 0건" 이 늘 깨진다. 아무 기록도 바꾸지 않는다 — 갱신 횟수는 `recordApi` 로 직접 센다.
+ */
 export function writes(calls: ApiCall[], method?: string, path?: RegExp): ApiCall[] {
   return calls.filter(
     (c) =>
       c.method !== "GET" &&
+      c.path !== "/auth/refresh" &&
       (method === undefined || c.method === method) &&
       (path === undefined || path.test(c.path)),
   );
@@ -202,4 +214,46 @@ export const EVALUATIVE = /백분위|또래|평균|정상|빠르|느리|표준|�
 /** 페이지에 보이는 글자 전체 (접근성 트리와 무관하게 innerText). */
 export async function visibleText(page: Page): Promise<string> {
   return page.evaluate(() => document.body.innerText);
+}
+
+/* ── 다른 보호자 ───────────────────────────────────────────────────────── */
+
+/**
+ * **다른 보호자가 먼저 한 일**을 목에 만든다 — 화면이 들고 있는 값이 서버에서 이미 바뀐 경우다
+ * (먼저 내린 기록 · 먼저 등록한 알레르기).
+ *
+ * 🚨 `page.route` 로는 응답을 못 바꿔서(위 머리말) 페이지 안에서 직접 `fetch` 한다. 서비스
+ *    워커가 받으니 화면과 **같은 목 상태**가 바뀐다. 시나리오를 더하지 않는 이유는, 이것이
+ *    "서버가 이상하게 군다" 가 아니라 정상 응답의 다른 순서이기 때문이다.
+ * 🚨 API 주소는 화면이 이미 보낸 요청에서 읽는다 — 개발 서버가 어떤 주소로 떴든 같다. 그래서
+ *    화면이 API 를 한 번은 부른 뒤에 쓴다.
+ */
+export async function asOtherCaregiver(
+  page: Page,
+  request: { method: string; path: string; body?: unknown; idempotent?: boolean },
+): Promise<number> {
+  return page.evaluate(async ({ method, path, body, idempotent }) => {
+    const seen = performance
+      .getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .find((name) => new URL(name).pathname.startsWith("/api/v1/"));
+    if (!seen) throw new Error("화면이 아직 API 를 부르지 않았다");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (idempotent) headers["Idempotency-Key"] = crypto.randomUUID();
+    const response = await fetch(`${new URL(seen).origin}/api/v1${path}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return response.status;
+  }, request);
+}
+
+/**
+ * 테스트 중간에 목 시나리오를 바꾼다. 목은 요청마다 시나리오를 다시 읽어서(`currentScenario()`)
+ * **그다음 요청부터** 바뀐 응답이 온다 — 한 번 실패한 뒤 고쳐서 다시 누르는 흐름에 쓴다.
+ * 🚨 `page.goto` 로 다시 들어가면 안 된다 — 목 상태와 화면 상태가 같이 날아간다 (위 머리말).
+ */
+export async function switchScenario(page: Page, scenario: Scenario): Promise<void> {
+  await page.evaluate((s) => localStorage.setItem("icatch.mock.scenario", s), scenario);
 }

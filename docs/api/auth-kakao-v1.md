@@ -5,6 +5,7 @@
 기준 브랜치: `docs/be-18-auth-kakao`
 작성일: 2026-09-09
 담당: 이도헌
+개정: 2026-10-15 — 로그인 유지(access + refresh 쿠키, [#466](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/466) · 웹 [#465](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/465)). §0 · §3 · §4-3 · §5 · §7-7 · §9 · §10 · §11
 선행 문서: [`docs/api/api-interface-v1.html`](./api-interface-v1.html) §01 공통 규약 · §04 인증·동의 — 그 문서의 인증 절을 대체한다
 
 > 이 문서는 [#19](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/19) 리뷰에서 고태영님 제안을 반영해 **서버 주도 흐름**으로 다시 쓴 것이다. 이전 안(클라이언트가 카카오 인가 코드를 직접 받는 방식)이 왜 안 되는지는 §2-1 에 남겼다.
@@ -21,10 +22,10 @@
 | 교환 | `POST /auth/{provider}` `{ code, bind }` → 세션 (§3-4) |
 | `bind` | 클라이언트가 만든 비밀. **1회용 코드가 오가는 홉을 지킨다** (§7-2) |
 | 신규 회원 | 세션 대신 `{ status: "consent_required", consent_code }`. **동의 전에는 `parent` 를 만들지 않는다** (§6-1) |
-| 세션 토큰 | **불투명 난수** 256비트, DB 에는 SHA-256 해시. 12시간, refresh 없음 |
-| 전달 | `Authorization: Bearer` — 계약서 §01 그대로 |
-| 신규 테이블 | `session` · `auth_handoff` 2개 (§5-3 · §5-4) |
-| 무인증 엔드포인트 | **5개.** §01 에 예외로 명시해야 한다 (§3) |
+| 세션 토큰 | **access + refresh 둘 다 불투명 난수** 256비트, DB 에는 SHA-256 해시. access 15분, refresh 는 30일 안 쓰면 만료 · 로그인부터 최대 90일 (§4-3) |
+| 전달 | access 는 `Authorization: Bearer` — 계약서 §01 그대로. refresh 는 HttpOnly 쿠키 `icatch_rt` (§3-7) |
+| 신규 테이블 | `session` · `session_access` · `auth_handoff` 3개 (§5-3 · §5-4) |
+| 무인증 엔드포인트 | **6개** — 로그인 5개 + 쿠키로 인증하는 `POST /auth/refresh`. §01 에 예외로 명시해야 한다 (§3) |
 
 **계약서 §04 는 사실상 재작성**이다 (§12).
 
@@ -34,10 +35,11 @@
 | --- | --- | --- |
 | **제약** | 인가 코드 방식 | 카카오 JS SDK 에 클라이언트가 토큰을 받는 메서드가 없다 (§2-1) |
 | **제약** | 서버가 콜백을 받는다 | **preview 배포는 도메인이 매번 달라** 클라이언트 콜백 URL 을 콘솔에 등록할 수 없다 (§2-1) |
-| **선택** | 세션을 Bearer 로 전달 | 계약서 §01 이고 `client.ts`·`sse.ts` 가 이미 그 전제 (§4-1) |
+| **선택** | access 를 Bearer 로 전달 | 계약서 §01 이고 `client.ts`·`sse.ts` 가 이미 그 전제 (§4-1) |
+| **선택** | refresh 는 HttpOnly 쿠키 | 앱을 끄면 웹뷰 저장소가 비워진다. JS 가 읽지 못하는 곳에 두고 앱을 다시 켤 때 access 를 다시 받는다 (§4-3) |
 | **선택** | 불투명 토큰 (JWT 아님) | 로그아웃·탈퇴·아이 파기 3곳이 즉시 무효화를 요구 (§4-2) |
 | **선택** | 필수 동의 후 `parent` 생성 | 동의하지 않은 계정을 DB에 남기지 않는다 (§6-1) |
-| **선택** | 수명 12시간 · `sessionStorage` | 측정한 값이 아니다. `M-02` 후 조정 (§4-3) |
+| **선택** | access 15분 · refresh 유휴 30일 · 절대 90일 | 측정한 값이 아니다 (§4-3) |
 
 ---
 
@@ -52,7 +54,7 @@
 | 동의 문구·개인정보 처리방침·이용약관 | `safety/` — NF-04 확정이 선행 조건 |
 | 아이 스코프 권한 (`requireConnected` · `requireOwner` · `requireWriter`) | 노션 「테크스팩 보완 제안 — 보호자 권한과 동의」 §2-1 |
 | 보호자 초대·연결 | 같은 문서 §2-3 |
-| 계정 탈퇴·파기 배치 | 같은 문서 §2-5. 파기 시 카카오 연결 끊기만 §7-4 에 남긴다 |
+| 계정 탈퇴·파기 배치 | 같은 문서 §2-5. 탈퇴할 때의 카카오 연결 끊기만 §7-4 에 남긴다 (#379) |
 | 앱 셸의 인앱 인증 세션 구현 | 프론트 이슈 ([#26](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/26) 에서 이관) |
 | 아이 스코프 권한에서 이번에 발견한 구멍 4건 | **부록 A** — 별도 이슈 대상 |
 
@@ -100,7 +102,7 @@
         POST /auth/kakao { code, bind }
         ↓
 ⑧ 서버  auth_handoff 를 DELETE … RETURNING 으로 소비 · bind 해시 대조 · 만료 확인
-        기존 회원 → 200 { token, expires_in, is_new: false, parent, consent_required }
+        기존 회원 → 200 { token, expires_in, is_new: false, parent, consent_required } + refresh 쿠키
         신규      → 200 { status: "consent_required", consent_code }
         ↓
 ⑨ 신규만 POST /auth/kakao/signup { consent_code, bind, consents: [...] }
@@ -156,7 +158,7 @@ AUTH_RETURN_URL_APP=icatch://auth
 
 경로·시간 표기는 [계약서 §01](./api-interface-v1.html)을 따른다.
 
-🚨 **무인증 엔드포인트가 5개 생긴다.** 계약서 §01 의 "인증 `Bearer` — 예외 없음" 에 **예외 목록을 명시**해야 한다.
+🚨 **Bearer 없이 부르는 엔드포인트가 6개 생긴다.** 로그인 5개와, Bearer 대신 refresh 쿠키로 인증하는 `POST /auth/refresh`(§3-7)다. 계약서 §01 의 "인증 `Bearer` — 예외 없음" 에 **예외 목록을 명시**해야 한다. 정본 목록은 루트 `CLAUDE.md` §9 다.
 
 | 엔드포인트 | 인증 | 응답 형식 |
 | --- | --- | --- |
@@ -165,6 +167,7 @@ AUTH_RETURN_URL_APP=icatch://auth
 | `GET /auth/{provider}/callback` | 없음 | **302** |
 | `POST /auth/{provider}` | 없음 | JSON |
 | `POST /auth/{provider}/signup` | 없음 | JSON |
+| `POST /auth/refresh` | **refresh 쿠키** | JSON |
 | `POST /auth/logout` | **Bearer** | 204 |
 
 🚨 **302 로 답하는 둘은 공통 에러 봉투를 쓸 수 없다.** 실패도 리다이렉트로 나간다 (§8-2). 이것도 §01 예외로 적는다.
@@ -244,7 +247,7 @@ Cache-Control: no-store
 // 기존 회원
 {
   "token": "Ky8vN2pRt7...",
-  "expires_in": 43200,
+  "expires_in": 900,
   "is_new": false,
   "parent": { "id": "p1", "nickname": "지은" },
   "consent_required": []
@@ -260,12 +263,12 @@ Cache-Control: no-store
 
 | 필드 | 뜻 |
 | --- | --- |
-| `token` | 세션 토큰. **불투명 난수** (§4-2) |
-| `expires_in` | 초. **계약서에 없어서 추가한다** — 없으면 FE 가 만료를 미리 알 수 없어 매번 401 을 맞고 나서야 재로그인한다 |
+| `token` | **access 토큰.** 불투명 난수 (§4-2). 웹은 메모리에만 둔다 |
+| `expires_in` | access 의 수명(초). **계약서에 없어서 추가한다** — 없으면 FE 가 만료를 미리 알 수 없어 매번 401 을 맞고 나서야 다시 받는다 |
 | `parent.nickname` | `null` 일 수 있다 (§5-2) |
 | `consent_code` | 가입 대기표. §3-5 에서 쓴다. TTL 10분 |
 
-`Cache-Control: no-store`.
+`Cache-Control: no-store`. 세션이 나가는 갈래(기존 회원)는 **refresh 를 `icatch_rt` 쿠키로 함께 심는다** (§3-7).
 
 ### 3-5. `POST /auth/{provider}/signup` — 🔶 신설
 
@@ -291,7 +294,7 @@ Cache-Control: no-store
 
 🚨 **"전문 보기" 는 `html_path` 의 정본 페이지(`GET /policies/{scope}/{version}`)를 손대지 않고 연다** (#172). 그래서 `GET /policies` 는 원문을 내려보내지 않는다 — 화면이 원문을 직접 그리면 문단을 숨기거나 바꿀 수 있어 "보호자가 본 글" 을 증명하지 못한다 (멘토 #71-4).
 
-**응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`).
+**응답 200** — §3-4 의 기존 회원 응답과 같은 모양 (`is_new: true`). refresh 쿠키도 같이 심는다.
 
 `parent` · `auth_identity` · `consent` 를 **한 트랜잭션에서** 만든다. 필수 스코프가 빠지면 `403 consent_required`.
 
@@ -301,11 +304,45 @@ Cache-Control: no-store
 
 ### 3-6. `POST /auth/logout`
 
-요청 바디 없음. `Authorization` 헤더로 세션을 식별한다. **응답 204** — `session` 행을 삭제한다.
+요청 바디 없음. `Authorization` 헤더로 세션을 식별한다. **응답 204** — `session` 행을 삭제하고(딸린 access 도 함께) refresh 쿠키를 `Max-Age=0` 으로 지운다. 탈퇴(`POST /auth/withdraw`)도 커밋 뒤 같은 방식으로 쿠키를 지운다.
 
 **계약서 28개 목록에 이것이 없다.** 없으면 클라이언트가 토큰을 버리는 것으로 흉내낼 뿐이고 서버에서는 만료까지 유효하다.
 
 카카오 쪽 로그아웃(`POST /v1/user/logout`)은 **부르지 않는다.** 우리 서비스에서 나가는 것과 카카오 계정에서 로그아웃하는 것은 다른 행위다.
+
+### 3-7. `POST /auth/refresh` — 🔶 신설 (#466)
+
+요청 바디 없음. **Bearer 를 받지 않는다** — access 가 만료된 뒤에 부르는 곳이다. `icatch_rt` 쿠키로만 인증한다.
+
+**응답 200**
+
+```json
+{ "token": "<새 access>", "expires_in": 900 }
+```
+
+`expires_in` 은 로그인의 절대 만료가 15분보다 적게 남았으면 그만큼 짧다. `Cache-Control: no-store`.
+
+| 들어온 쿠키 | 결과 |
+| --- | --- |
+| 현재 refresh, 만료 전 | 200. 새 access + **회전된 쿠키** (새 refresh, 유휴 만료 30일 연장 · 절대 만료는 넘지 않음) |
+| 직전 refresh, 회전 후 **30초 안** | 200. access 만. 동시 요청에서 진 쪽이고, 쿠키는 이긴 응답이 이미 바꿨다 |
+| 직전 refresh, 30초 뒤 | 401. **재사용으로 보고 세션을 지운다** — 그 로그인의 access 도 바로 401 |
+| 없음 · 모르는 값 · 유휴 또는 절대 만료 | 401 (만료면 세션 행도 지운다) |
+
+- 실패는 사유를 구분하지 않고 **전부 `401 unauthenticated`** 다 (§8-1). 실패 응답은 쿠키도 지운다.
+- 세션은 `refresh_hash = h OR prev_refresh_hash = h` 를 **`FOR UPDATE`** 로 잠그고 찾는다. 같은 refresh 로 두 요청이 겹치면 나중 요청은 회전이 끝날 때까지 기다렸다가 직전 refresh 로 걸린다 — 두 번 회전하지 않는다. 만료 판정 시각은 잠금을 얻은 뒤에 잡는다.
+- **30초 뒤 재사용은 탈취와 정상 기기의 쿠키 유실(응답 직전 앱 종료 · Android 쿠키 기록 지연)을 구분하지 못한다.** 그래서 세션을 지울 때 세션 id 만 WARNING 으로 남긴다. 건수가 많으면 정상 사용자가 쫓겨나고 있다는 신호다.
+
+**쿠키**
+
+```
+Set-Cookie: icatch_rt=<43자>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age=<유휴 만료까지 초>
+```
+
+- 🚨 **`Max-Age` 를 빼지 않는다.** 빠지면 세션 쿠키가 되어 앱을 끌 때 사라진다 — `sessionStorage` 때문에 매번 다시 로그인하던 증상이 그대로 돌아온다.
+- `Domain` 을 주지 않는다 — API 호스트에만 저장된다. `Path` 는 `oauth_state` 와 같아 인증 경로에만 실리고 일반 API · SSE 에는 실리지 않는다.
+- `SameSite=Strict` 여도 웹(`icatch.ai.kr`)이 API(`api.icatch.ai.kr`)를 부를 때는 실린다 — `ai.kr` 이 Public Suffix List 에 있어 둘이 같은 사이트다. 다른 사이트의 요청에는 실리지 않지만, 같은 사이트의 다른 오리진까지 막지는 않는다.
+- 웹은 교환 · 가입 · refresh · 로그아웃 · 탈퇴를 `credentials: "include"` 로 부르고, 서버 CORS 는 `allow_credentials` 를 켠다. 응답을 읽을 수 있는 오리진은 기존 허용 목록 그대로다.
 
 ---
 
@@ -313,37 +350,36 @@ Cache-Control: no-store
 
 ### 4-1. 계약서 §01 과 기존 프론트 코드를 그대로 쓴다
 
-세션은 `Authorization: Bearer` 로 보낸다. 이 문서가 `token` 을 불투명 문자열로 정의하는 것으로 §01 이 그대로 성립한다.
+access 는 `Authorization: Bearer` 로 보낸다. 이 문서가 `token` 을 불투명 문자열로 정의하는 것으로 §01 이 그대로 성립한다.
 
 프론트가 이미 이 전제로 구현돼 있다 — `client.ts` 가 Bearer 를 붙이고, `sse.ts` 는 **`EventSource` 를 쓰지 않고** fetch 스트리밍으로 돌린다. `apps/web/CLAUDE.md` §3 이 이유를 적어뒀다:
 
 > `EventSource` 를 쓰지 않는다. Authorization 헤더를 못 붙여서 NF-09 를 깬다.
 
-세션을 쿠키로 옮기면 `client.ts` 와 `sse.ts` 를 둘 다 고쳐야 한다.
+세션 전체를 쿠키로 옮기면 `client.ts` 와 `sse.ts` 를 둘 다 고치고 모든 API 에 CSRF 방어를 더해야 한다.
 
-> **쿠키를 아예 안 쓰는 것은 아니다.** `oauth_state` 는 쿠키다(§5-5). 카카오 왕복 동안만 살고 콜백에서 소비된다. **세션 전달**에만 쓰지 않는다.
+> **쿠키는 인증 경로에만 쓴다.** `oauth_state`(§5-5)는 카카오 왕복 동안만 살고, `icatch_rt`(§3-7)는 access 를 다시 받는 데만 쓴다. 둘 다 `Path=/api/v1/auth` 라 일반 API 와 SSE 에는 실리지 않는다.
 
 ### 4-2. 왜 JWT 가 아닌가
 
-이 서비스는 **즉시 무효화**를 세 곳에서 요구한다 — 로그아웃, 계정 탈퇴(`parent.deleted_at`), 아이 파기(`410 child_deleted`). stateless JWT 는 서명이 유효한 동안 서버가 거절할 방법이 없다. 아동 정보를 다루면서 그 창을 만들 이유가 없다.
+이 서비스는 **즉시 무효화**를 세 곳에서 요구한다 — 로그아웃, 계정 탈퇴(보호자 행 삭제 — 세션도 함께 지워진다, #379), 아이 파기(`410 child_deleted`). stateless JWT 는 서명이 유효한 동안 서버가 거절할 방법이 없다. 아동 정보를 다루면서 그 창을 만들 이유가 없다.
 
 DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 읽기라 실질 비용이 거의 없다. JWT 의 다른 이점(서비스 간 stateless 전달)도 해당되지 않는다 — CLAUDE.md §6 이 백엔드와 AI 를 **한 서비스로 묶기로** 정했고 Agent 는 같은 프로세스의 폴더다. **토큰을 건네줄 상대가 없다.**
 
 ### 4-3. 토큰과 수명
 
-| | 값 |
-| --- | --- |
-| 생성 | CSPRNG 256비트 → base64url (43자) |
-| DB 저장 | **SHA-256 해시.** 원문은 저장하지 않는다 |
-| 수명 | **12시간** |
-| 만료 시 | `401 unauthenticated` → FE 가 §2-2 를 다시 탄다 |
-| 클라이언트 저장 | **`sessionStorage`** 의 `auth.token` (§5-6). `localStorage` 금지 (§7-7 2번) |
+| | access | refresh |
+| --- | --- | --- |
+| 생성 | CSPRNG 256비트 → base64url (43자) | 같음 |
+| DB 저장 | **SHA-256 해시** — `session_access.token_hash` | **SHA-256 해시** — `session.refresh_hash` |
+| 수명 | **15분** (`ACCESS_TTL`). 로그인의 절대 만료를 넘지 않는다 | **30일 안 쓰면 만료**(`REFRESH_IDLE_TTL`, 회전마다 연장) · **로그인부터 최대 90일**(`REFRESH_ABSOLUTE_TTL`, 연장 없음) |
+| 전달 | `Authorization: Bearer` | HttpOnly 쿠키 `icatch_rt` (§3-7) |
+| 클라이언트 저장 | **웹 JS 메모리** (#465). `localStorage` · `sessionStorage` 금지 (§7-7 2번) | 브라우저 · 웹뷰 쿠키 저장소. JS 가 읽지 못한다 |
+| 만료 시 | `401 unauthenticated` → FE 가 refresh 후 원래 요청 1회 재시도 | `401` → FE 가 §2-2 를 다시 탄다 |
 
-**refresh 토큰을 만들지 않는다.** 카카오 세션이 살아 있으면 authorize 가 화면 없이 통과한다 — 카카오가 이를 위해 `prompt=none` 을 제공한다(세션이 있으면 즉시 코드 발급, 없으면 `consent_required` 에러). 재로그인 자체가 조용하다.
+**refresh 를 둔 이유 (#466)** — 처음에는 refresh 없이 12시간짜리 토큰 하나를 `sessionStorage` 에 두었다. 그런데 앱을 끄면 웹뷰가 새로 만들어지며 `sessionStorage` 가 비워져, 서버 세션이 살아 있어도 앱을 켤 때마다 카카오 로그인을 다시 거쳤다. 토큰을 `localStorage` 로 옮기는 것은 §7-7 이 막는다. 그래서 JS 가 읽는 값(access)은 짧게 메모리에 두고, 오래 사는 값(refresh)은 JS 가 읽지 못하는 쿠키에 둔다.
 
-> ⚠️ **숨긴 iframe 갱신은 쓸 수 없다.** 브라우저의 서드파티 쿠키 차단 때문에 iframe 안에서 카카오 쿠키가 실리지 않는다. 웹은 전체 페이지 리다이렉트를, 앱은 인앱 인증 세션을 탄다. 체감은 `M-02` 로 확인하고 12시간을 조정한다.
-
-**🚨 현재 코드가 저장 규칙을 어기고 있다.** [`apps/web/src/stores/session.ts`](../../apps/web/src/stores/session.ts) 가 Zustand persist 로 토큰을 **localStorage** 에 영속 저장한다. `createJSONStorage(() => sessionStorage)` 로 바꾼다. `activeChildId` 는 계속 저장해도 된다 — 화면 선택값일 뿐 권한 근거가 아니고, `/me` 결과로 유효성을 다시 확인한다.
+> ⚠️ **숨긴 iframe 갱신은 쓸 수 없다.** 브라우저의 서드파티 쿠키 차단 때문에 iframe 안에서 카카오 쿠키가 실리지 않는다. refresh 가 만료되면 웹은 전체 페이지 리다이렉트를, 앱은 인앱 인증 세션을 탄다.
 
 ### 4-4. 보호자 표시 이름
 
@@ -362,7 +398,8 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 | `state` | 백엔드 | 브라우저 쿠키 | 없음 — 서버가 저장하지 않는다 (§5-5) | 없음 |
 | `bind` | 프론트 | 프론트 `sessionStorage` (§5-6) | `oauth_state` 쿠키 → `auth_handoff.bind_hash` | 없음 |
 | 1회용 코드 | 백엔드 | 복귀 URL 쿼리 (일시) | `auth_handoff.code_hash` | 없음 |
-| 세션 토큰 | 백엔드 | 프론트 `sessionStorage` (§5-6) | `session.token_hash` | 없음 |
+| access 토큰 | 백엔드 | 프론트 JS 메모리 (§4-3) | `session_access.token_hash` | 없음 |
+| refresh 토큰 | 백엔드 | HttpOnly 쿠키 `icatch_rt` (§3-7) | `session.refresh_hash` · 직전 값은 `session.prev_refresh_hash` | 없음 |
 | 카카오 access token | 카카오 | — | — | 폐기 (§7-4) |
 
 **서버는 어떤 비밀도 원문으로 보관하지 않는다.** 대조가 필요한 값은 받은 값을 그때그때 해시해 저장된 해시와 비교한다. DB 덤프가 유출돼도 살아 있는 자격증명이 되지 않게 하려는 것이다.
@@ -409,29 +446,51 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 
 → **PR #8 이 develop 에 머지되기 전이면 모델과 마이그레이션을 같이 고치면 되고 새 리비전이 안 붙는다.** ([PR #8 코멘트](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/8#pullrequestreview-5148979830))
 
-### 5-3. `session` — 신설 🔶 협의 대상
+### 5-3. `session` · `session_access` — 신설 🔶 협의 대상
+
+`session` 은 **기기 로그인 1건**이고 refresh 를 맡는다. access 는 `session_access` 에 따로 둔다 (#466) — 한 행에 access 칸을 하나만 두면 탭 두 개가 번갈아 refresh 할 때 서로의 access 를 덮어써 401 이 반복된다. 그래서 로그인 1건에 access 여러 행을 둔다.
+
+**`session`**
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
 | `id` | uuid | PK |
-| `parent_id` | uuid | FK → `parent.id`, NOT NULL |
-| `token_hash` | bytea | **UNIQUE, NOT NULL.** SHA-256(토큰 원문) |
-| `expires_at` | timestamptz | NOT NULL |
+| `parent_id` | uuid | FK → `parent.id` ON DELETE CASCADE, NOT NULL |
+| `refresh_hash` | bytea | **UNIQUE, NOT NULL.** SHA-256(지금 유효한 refresh) |
+| `prev_refresh_hash` | bytea | UNIQUE, NULL. 직전 refresh — 재사용 탐지용 (§3-7) |
+| `rotated_at` | timestamptz | NULL. 마지막 회전 시각 — 30초 유예 판정용 |
+| `refresh_expires_at` | timestamptz | NOT NULL. 유휴 만료. 회전마다 now()+30일, `absolute_expires_at` 을 넘지 않는다 |
+| `absolute_expires_at` | timestamptz | NOT NULL. 로그인 시각 + 90일. 연장하지 않는다 |
 | `created_at` | timestamptz | NOT NULL, default now() |
 
+**`session_access`**
+
+| 필드 | 타입 | 비고 |
+| --- | --- | --- |
+| `token_hash` | bytea | **PK.** SHA-256(access 원문). 매 요청의 Bearer 대조가 이 값으로 찾는다 |
+| `session_id` | uuid | FK → `session.id` **ON DELETE CASCADE**, NOT NULL |
+| `expires_at` | timestamptz | NOT NULL. 발급 + 15분 |
+
 ```sql
-CREATE UNIQUE INDEX ON session (token_hash);
+CREATE UNIQUE INDEX ON session (refresh_hash);
+CREATE UNIQUE INDEX ON session (prev_refresh_hash);
 CREATE INDEX ON session (parent_id);
-CREATE INDEX ON session (expires_at);
+CREATE INDEX ON session (refresh_expires_at);
+CREATE INDEX ON session (absolute_expires_at);
+CREATE INDEX ON session_access (session_id);
+CREATE INDEX ON session_access (expires_at);
 ```
 
-**폐기는 행 삭제로 한다.** 세션은 증빙이 아니다. `consent` 가 append-only 인 것과 정반대로, 남은 행은 유출 표면일 뿐이다.
+**폐기는 행 삭제로 한다.** 세션은 증빙이 아니다. `consent` 가 append-only 인 것과 정반대로, 남은 행은 유출 표면일 뿐이다. `session` 행을 지우면 딸린 access 가 CASCADE 로 함께 사라져 **다음 요청부터 401** 이다.
 
 | 언제 | 무엇을 지우나 |
 | --- | --- |
-| 로그아웃 | 그 행 1건 |
+| 로그아웃 | 그 `session` 행 1건 |
 | 계정 탈퇴 · 아이 파기 | `parent_id` 로 전부 |
-| 만료 | 배치로 `expires_at <= now()` 전부 — 세션 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 주기 실행은 배포 구성이 정해진 뒤) |
+| refresh 재사용 (직전 refresh 가 30초 뒤에 옴) · refresh 만료 | 그 `session` 행 1건 (§3-7) |
+| 만료 | 배치로 `refresh_expires_at <= now()` 또는 `absolute_expires_at <= now()` 인 `session`, 그리고 `expires_at <= now()` 인 `session_access` — 인증 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 주기 실행은 배포 구성이 정해진 뒤) |
+
+🚨 **세션을 access 만료로 지우지 않는다.** access 는 15분이라, 그 기준으로 지우면 15분 쉰 사용자의 로그인이 배치에 사라진다.
 
 ### 5-4. `auth_handoff` — 신설 🔶 협의 대상
 
@@ -507,16 +566,17 @@ Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth
 
 🚨 **시작과 콜백이 같은 오리진이어야 한다.** 다르면 쿠키가 콜백에 실리지 않는다. `start_url` 을 서버가 `KAKAO_CALLBACK_URL` 에서 파생해 내려주는 이유가 이것이다 (§3-1). **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과하니 배포 기준으로 확인해야 한다.**
 
-### 5-6. 프론트 `sessionStorage` — 클라이언트가 들고 있는 두 값
+### 5-6. 프론트 `sessionStorage` — 클라이언트가 들고 있는 값
 
 서버 테이블은 아니지만 **대조의 한쪽 끝이라 여기서 같이 고정한다.**
 
 | 키 | 값 | 언제 넣나 | 언제 지우나 |
 | --- | --- | --- | --- |
 | `auth.bind` | `bind` **원문** | 로그인 시작 직전 (§2-2 ②) | 교환·가입 성공 직후 |
-| `auth.token` | 세션 토큰 **원문** | 교환·가입 성공 직후 | 로그아웃 시 |
 
-탭을 닫으면 사라진다. 앱도 같다 — WebView 가 사는 동안 유지되고 앱을 완전히 종료하면 사라진다. `localStorage` 를 쓰지 않는 이유는 §7-7.
+탭을 닫으면 사라진다. 앱도 같다 — WebView 가 사는 동안 유지되고 앱을 완전히 종료하면 사라진다. 로그인 과정 동안만 쓰는 값이라 그래도 된다. `localStorage` 를 쓰지 않는 이유는 §7-7.
+
+**access 는 여기 두지 않는다** (#466). 앱을 끄면 사라져 매번 다시 로그인하게 되던 것이 refresh 를 둔 이유다 (§4-3). access 는 JS 메모리에, refresh 는 HttpOnly 쿠키에 있다.
 
 **`bind` 는 교환에 성공하면 바로 지운다.** 남겨둘 이유가 없고, 남은 값은 다음 로그인에서 재사용될 위험만 만든다.
 
@@ -528,11 +588,12 @@ Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth
 | `bind` 원문 | 교환까지 | 없음 — 프론트가 판단 | 교환 성공 후 `sessionStorage` 에서 제거 |
 | 1회용 코드 | **2분** | `auth_handoff.expires_at` | 교환 시 `DELETE`, 또는 배치 |
 | 가입 대기표 | **10분** | 같은 컬럼 | signup 시 `DELETE`, 또는 배치 |
-| 세션 토큰 | **12시간** | `session.expires_at` | 로그아웃 · 탈퇴 · 만료 배치 |
+| access 토큰 | **15분** | `session_access.expires_at` | 세션 행 삭제(CASCADE) · 만료 배치 |
+| refresh 토큰 | **30일 안 쓰면 · 로그인부터 최대 90일** | `session.refresh_expires_at` · `absolute_expires_at` · 쿠키 `Max-Age` | 회전 · 로그아웃 · 탈퇴 · 재사용 탐지 · 만료 배치 |
 | 카카오 access token | — | 저장하지 않음 | 회원번호 조회 직후 폐기 |
 | 카카오 인가 코드 | 카카오가 정함 | 저장하지 않음 | 교환 즉시 무효 |
 
-🔶 **수명 숫자 중 측정으로 정한 것은 없다.** 12시간은 `M-02` 뒤에 조정한다 (§10 2번).
+🔶 **수명 숫자 중 측정으로 정한 것은 없다.**
 
 ---
 
@@ -556,7 +617,7 @@ CLAUDE.md 의 "필수 동의가 비어 있으면 그 아래 어떤 저장도 일
 ### 6-2. 미들웨어 순서 (NF-11)
 
 ```
-① authenticate            Bearer 토큰 → SHA-256 → session 조회 → parent_id
+① authenticate            Bearer(access) → SHA-256 → session_access 조회 → session 조인 → parent_id
 ② requireAccountConsent   service_terms · privacy_account 최신 행이 granted 인가
 ③ requireConnected / requireOwner / requireWriter    아이 스코프
 ④ requireChildConsent(scope)   child_basic · child_health
@@ -564,8 +625,9 @@ CLAUDE.md 의 "필수 동의가 비어 있으면 그 아래 어떤 저장도 일
 
 | 경로 | 통과해야 하는 것 |
 | --- | --- |
-| `/auth/*` (§3 의 무인증 5개) | 없음 |
-| `POST /auth/logout` | ① |
+| `/auth/*` (§3 의 로그인 5개) | 없음 |
+| `POST /auth/refresh` | ① 대신 **refresh 쿠키** (§3-7). Bearer 를 보지 않는다 — access 가 만료된 뒤에 부른다 |
+| `POST /auth/logout` · `POST /auth/withdraw` | ① |
 | `GET /me` · `POST /consents` · `GET /consents` | ① |
 | 그 외 전부 | ① ② + (아이 스코프면) ③ ④ |
 
@@ -573,7 +635,17 @@ CLAUDE.md 의 "필수 동의가 비어 있으면 그 아래 어떤 저장도 일
 
 핸들러가 직접 권한 쿼리를 쓰지 않는다. 미들웨어 한 곳에서만 판정한다.
 
-**CSRF 방어는 필요 없다.** 세션을 쿠키로 보내지 않으므로 브라우저가 자동으로 자격증명을 붙이지 않는다.
+**Bearer API 에는 CSRF 방어가 필요 없다.** access 는 쿠키로 보내지 않으므로 브라우저가 자동으로 자격증명을 붙이지 않는다.
+
+**예외는 `POST /auth/refresh` 하나다** — 쿠키로 인증하므로 브라우저가 자동으로 싣는다. 무엇이 막고 무엇이 못 막는지를 구분한다.
+
+| 장치 | 막는 것 | 못 막는 것 |
+| --- | --- | --- |
+| `SameSite=Strict` | **다른 사이트**에서 시작된 요청에 쿠키가 실리는 것 | **같은 사이트의 다른 오리진**(`*.icatch.ai.kr`)에서 시작된 요청 |
+| CORS 허용 목록 | 목록 밖 오리진이 **응답(새 access)을 읽는** 것 · preflight 가 필요한 요청의 전송 | 단순 요청이 **서버에서 실행되는** 것 — CORS 는 응답 읽기만 막는다 |
+| `Path=/api/v1/auth` | 일반 API · SSE 요청에 쿠키가 실리는 것 | — |
+
+그래서 refresh 가 허용 목록 밖에서 실행되더라도 새 access 는 그쪽이 읽지 못한다.
 
 ---
 
@@ -625,7 +697,7 @@ Cookie: oauth_state=<우리가 ③ 에서 심은 값>
 | **세션 토큰 · 1회용 코드 · `bind` 원문** | 전부 해시만 저장한다 |
 | 카카오 인가 코드 | 1회용이고 교환 즉시 무효다 |
 
-**예외 — 파기 배치.** 아이·계정 파기 시 카카오 연결을 끊어야 하는데 토큰이 없으므로 어드민 키로 대상을 지정한다.
+**예외 — 탈퇴.** 탈퇴하면 카카오 연결을 끊어야 하는데 토큰이 없으므로 어드민 키로 대상을 지정한다 (#379).
 
 ```
 POST https://kapi.kakao.com/v1/user/unlink
@@ -635,11 +707,16 @@ Content-Type: application/x-www-form-urlencoded;charset=utf-8
 target_id_type=user_id&target_id={provider_user_id}
 ```
 
-어드민 키는 앱 전체 권한이다. **서버 .env 에만 두고 파기 배치 외 어떤 경로에서도 부르지 않는다.**
+어드민 키는 앱 전체 권한이다. **서버 .env 에만 두고 탈퇴(`POST /auth/withdraw`) 외 어떤 경로에서도 부르지 않는다.**
+
+- 처음에는 "파기 배치에서만" 이었다. 탈퇴를 유예 없이 바로 지우기로 하면서(#167) 배치가 없어져 탈퇴 요청에서 부른다
+- 🚨 **DB 커밋 뒤에** 부르고, 실패해도 탈퇴는 성공(200)이다. 카카오가 먼저면 카카오 장애 때 탈퇴가 막힌다. 연결이 남아도 다시 로그인하면 신규 가입이라 지운 데이터는 돌아오지 않는다
+- 회원번호는 `auth_identity` 와 함께 지워지므로 커밋 전에 읽어 둔다. 그래서 자동 재시도는 없고, 실패하면 카카오의 "연결된 서비스" 에 이 서비스가 남는 것이 운영상 한계다
+- `APP_ENV=prod` 에서 키가 비어 있으면 서버가 뜨지 않는다. local · dev 에서 비어 있으면 연결 끊기만 건너뛴다
 
 ### 7-5. 로그
 
-**카카오 회원번호·인가 코드·카카오 토큰·1회용 코드·`bind`·세션 토큰을 남기지 않는다.** 식별이 필요하면 `parent_id` 만 쓴다. NF-05 의 "원문 대신 `memory_id`"를 인증 영역으로 확장한 것이다.
+**카카오 회원번호·인가 코드·카카오 토큰·1회용 코드·`bind`·세션 토큰(access · refresh)을 남기지 않는다. 해시도 남기지 않는다.** 식별이 필요하면 `parent_id` 나 세션 행의 `id` 만 쓴다 — refresh 재사용으로 세션을 지울 때 남기는 것이 세션 `id` 다 (§3-7). 행 번호일 뿐 자격증명이 아니다. NF-05 의 "원문 대신 `memory_id`"를 인증 영역으로 확장한 것이다.
 
 🚨 **콜백 URL 전체를 로깅하지 않는다** — 쿼리에 인가 코드가 들어 있다. 복귀 URL 도 마찬가지로 1회용 코드가 실린다. 카카오 호출 실패는 상태 코드와 카카오 에러 코드만 남긴다.
 
@@ -662,15 +739,15 @@ target_id_type=user_id&target_id={provider_user_id}
 
 ### 7-7. XSS 방어 — 헤더 방식을 고른 대가
 
-토큰이 JS 에서 접근 가능하므로 **XSS 한 건이 세션을 넘긴다.**
+access 가 JS 에서 접근 가능하므로 **XSS 한 건이 그 access 를 넘긴다.** refresh 는 HttpOnly 쿠키라 JS 가 읽지 못한다 (§3-7).
 
 이 서비스의 XSS 는 막연한 위험이 아니라 **경로가 특정된다** — 기관 공지 붙여넣기·OCR 로 들어온 **외부 텍스트가 LLM 을 거쳐 화면에 렌더링**된다 (F-07 · F-14).
 
 | # | 무엇 | 왜 이 순서인가 |
 | --- | --- | --- |
 | 1 | **LLM 출력과 공지 원문을 HTML 로 렌더링하지 않는다.** `dangerouslySetInnerHTML` 금지, 마크다운은 raw HTML 비활성 (`rehype-raw` 금지) | React 는 기본적으로 이스케이프한다. 구멍은 이 둘뿐이고 막는 비용이 거의 0이다 |
-| 2 | **토큰을 `localStorage` 에 두지 않는다** (§4-3) | 저장소를 훑는 가장 흔한 공격을 무력화한다 |
-| 3 | **세션 수명 12시간** | 털려도 유효 기간이 그만큼이다 |
+| 2 | **access 를 `localStorage` · `sessionStorage` 에 두지 않는다** — JS 메모리에만 (§4-3) | 저장소를 훑는 가장 흔한 공격을 무력화한다 |
+| 3 | **access 수명 15분 · refresh 는 HttpOnly** | 털려도 JS 가 읽을 수 있는 건 15분짜리 access 뿐이다 |
 | 4 | **CSP** — `Report-Only` 로 위반을 모은 뒤 강제로 전환 | XSS 가 나도 `connect-src` 로 외부 유출을 막는다. Next.js 는 인라인 스크립트를 쓰므로 처음부터 강제하면 화면이 깨진다 |
 
 > 1번은 **파트 경계를 넘는 규칙**이다. 프론트가 지키지만 어겼을 때 깨지는 것은 인증이다. CLAUDE.md §2 절대 규칙에 한 줄로 올리는 것을 제안한다 — *"외부 텍스트와 LLM 출력을 HTML 로 렌더링하지 않는다."*
@@ -688,7 +765,7 @@ target_id_type=user_id&target_id={provider_user_id}
 | 401 | `invalid_handoff` | 1회용 코드가 없음·만료·이미 사용됨, 또는 **`bind` 불일치** | 🆕 |
 | 401 | `unauthenticated` | 세션 토큰 없음·만료·이미 삭제됨 | |
 | 403 | `consent_required` | 필수 동의 스코프가 빠짐 (§3-5) | |
-| 404 | `not_found` | `deleted_at` 이 찍힌 parent (→ §10 1번 — 즉시 삭제로 확정) | |
+| 404 | `not_found` | 교환 중 보호자 행이 없음 — 방어용. 탈퇴하면 대기표도 함께 지워져 실제로는 그 전에 `401 invalid_handoff` 다 (#379) | |
 | 422 | `validation_failed` | `provider` 가 enum 밖 | |
 | 502 | `oauth_provider_error` | 카카오 API 5xx·타임아웃, 코드 교환 실패 | 🆕 |
 
@@ -745,8 +822,13 @@ icatch://auth?error=oauth_denied
 | A-16 | 카카오 API 가 500 | `302 …?error=oauth_provider_error`, `parent` 미생성 |
 | A-17 | 사용자가 카카오에서 취소 | `302 …?error=oauth_denied` |
 | A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
-| A-19 | `parent.deleted_at` 이 찍힌 계정의 세션 | `404 not_found` — 만료를 기다리지 않는다 (§8-1 · §10 1번) |
+| A-19 | 탈퇴한 계정의 다른 기기 세션 | `401 unauthenticated` — 세션이 보호자 행과 함께 지워진다. 만료를 기다리지 않는다 (§8-1 · §10 1번 · #379) |
 | A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
+| A-21 | 교환 · 가입 응답의 refresh 쿠키 | `icatch_rt` 가 HttpOnly · Secure · SameSite=Strict · Path · **Max-Age** 를 갖고 `Domain` 이 없다. DB 에는 해시만 (§3-7) |
+| A-22 | 현재 refresh 로 refresh | 200, 새 access 가 통하고 쿠키가 회전된다. 회전 전 access 도 만료 전까지 통한다 |
+| A-23 | 🚨 **직전 refresh 가 30초 뒤에 옴** | `401`, 세션 삭제 — 그 로그인의 access 도 바로 401. 30초 안이면 200 · 쿠키 그대로 |
+| A-24 | 🚨 **같은 refresh 로 두 요청이 겹침** | 둘 다 200, **회전은 한 번** (`FOR UPDATE`) |
+| A-25 | access 만 만료된 세션에 정리 배치 | 세션은 남고 만료된 access 행만 지운다 (§5-3) |
 
 **A-05 · A-08 · A-15 가 이 목록의 이유다.** A-05 가 실패하면 §7-2 가 무의미하고, A-08 이 실패하면 로그인 CSRF 가 열리며, A-15 가 실패하면 JWT 대신 불투명 토큰을 고른 이유가 사라진다.
 
@@ -759,7 +841,7 @@ icatch://auth?error=oauth_denied
 | M-01 | 🚨 **시작과 콜백이 같은 오리진인지 배포 환경에서 확인.** 다르면 `state` 쿠키가 콜백에 실리지 않는다. **로컬은 포트가 달라도 우연히 통과한다** (§5-5) | 김명성 · 고태영 |
 | M-02 | **앱에서 로그인 → `icatch://auth` 복귀 → 웹뷰 세션 생성** — 실기기 iOS·Android 각각 | 고태영 |
 
-배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **무인증 엔드포인트가 루트 CLAUDE.md §9 의 7개(§3 의 로그인 5개 + 약관 `GET /policies` · `GET /policies/{scope}/{version}`)뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
+배포 전 AI 보안 리뷰(고태영)에 세 항목을 추가한다 — **Bearer 없는 엔드포인트가 루트 CLAUDE.md §9 의 목록(§3 의 로그인 5개 + `POST /auth/refresh` + 약관 · 처리방침 정본)뿐인지**, **복귀 URL 에 문구가 실리지 않는지**(§8-2), **`dangerouslySetInnerHTML` 과 raw HTML 마크다운이 코드에 없는지**(§7-7 1번).
 
 ---
 
@@ -767,8 +849,8 @@ icatch://auth?error=oauth_denied
 
 | # | 무엇 | 왜 지금 못 정하나 | 누구 |
 | --- | --- | --- | --- |
-| 1 | ~~탈퇴 유예기간 중 재로그인 — 복구인가 신규인가~~ | ✅ **확정: 유예 없이 즉시 삭제** (삭제 정책 정본 §9 · #167). 되살릴 계정이 없으므로 탈퇴 후 다시 로그인하면 **신규 가입**이다. `deleted_at` 이 찍힌 계정이 보이면 세션을 내주지 않고 `404 not_found` 로 막는 방어는 그대로 둔다 | 확정 09-29 |
-| 2 | **세션 수명 12시간이 맞는지** | `M-02` 결과에 달렸다. 측정한 값이 아니다 | 고태영 |
+| 1 | ~~탈퇴 유예기간 중 재로그인 — 복구인가 신규인가~~ | ✅ **확정: 유예 없이 즉시 삭제** (삭제 정책 정본 §9 · #167). 되살릴 계정이 없으므로 탈퇴 후 다시 로그인하면 **신규 가입**이다. 탈퇴(#379)가 보호자 행을 지우므로 `parent.deleted_at` 칸과 그 `404 not_found` 방어는 뺐다. 탈퇴한 계정의 다른 기기는 세션째 지워져 `401` 이다 | 확정 09-29 |
+| 2 | ~~세션 수명 12시간이 맞는지~~ | ✅ **확정: access 15분 · refresh 유휴 30일 · 절대 90일** (#466). 12시간짜리 토큰 하나를 `sessionStorage` 에 두었더니 앱을 끌 때마다 다시 로그인해야 했다 (§4-3) | 확정 10-15 |
 | 3 | **Apple 로그인 병행** | iOS 배포 시 App Store 심사 규정 확인 필요 (논의 ⑭). 이 흐름은 provider 별 모양이 같아 추가가 쉽다 | 박재형 |
 | 4 | **법정대리인 확인 방식** | 개인정보보호법 제22조의2 는 동의와 별도로 "확인" 의무를 둔다. **카카오 OAuth 로는 확인되지 않는다.** 현재 수단은 `consent.guardian_attested` 자기확인뿐 (논의 ①) | 팀 · **10월 3주 배포 전 필수** |
 
@@ -786,11 +868,14 @@ icatch://auth?error=oauth_denied
 KAKAO_REST_API_KEY=          # 콘솔 > 앱 키 > REST API 키
 KAKAO_CLIENT_SECRET=         # 콘솔 > 카카오 로그인 > 보안 에서 활성화 후 발급
 KAKAO_CALLBACK_URL=          # API 오리진 절대 URL. 콘솔 등록값과 정확히 일치 (운영·로컬 각각)
-KAKAO_ADMIN_KEY=             # 어드민 키. 파기 배치에서만 사용
+KAKAO_ADMIN_KEY=             # 어드민 키. 탈퇴의 카카오 연결 끊기에서만 사용 (§7-4)
 KAKAO_API_TIMEOUT=3          # 초
 AUTH_RETURN_URL_WEB=         # 🚨 필수. 예: https://<도메인>/auth/callback
 AUTH_RETURN_URL_APP=         # 🚨 필수. 예: icatch://auth
-SESSION_TTL=43200            # 초 (12시간)
+ACCESS_TTL=900               # 초 (15분)
+REFRESH_IDLE_TTL=2592000     # 초 (30일). 안 쓰고 이만큼 지나면 만료, 회전마다 연장
+REFRESH_ABSOLUTE_TTL=7776000 # 초 (90일). 로그인부터 상한, 연장 없음
+REFRESH_REUSE_GRACE=30       # 초. 회전 직후 직전 refresh 를 동시 요청으로 보아주는 시간
 HANDOFF_TTL=120              # 초 (2분)
 SIGNUP_TICKET_TTL=600        # 초 (10분)
 OAUTH_STATE_TTL=600          # 초 (10분)
@@ -806,15 +891,15 @@ OAUTH_STATE_TTL=600          # 초 (10분)
 
 | | 무엇 |
 | --- | --- |
-| **신설** | `GET /auth/{provider}/status` · `GET /auth/{provider}` · `GET /auth/{provider}/callback` · `POST /auth/{provider}/signup` · `POST /auth/logout` |
+| **신설** | `GET /auth/{provider}/status` · `GET /auth/{provider}` · `GET /auth/{provider}/callback` · `POST /auth/{provider}/signup` · `POST /auth/refresh` · `POST /auth/logout` |
 | **변경** | `POST /auth/{provider}` — 요청 `{access_token}` → `{code, bind}`, 응답이 **union** (세션 또는 `consent_required`), `expires_in` 추가 |
-| **§01 예외 ①** | 인증 없는 엔드포인트 **5개를 명시** (§3) |
+| **§01 예외 ①** | Bearer 없는 엔드포인트 **6개를 명시** — 로그인 5개 + 쿠키로 인증하는 refresh (§3) |
 | **§01 예외 ②** | **302 엔드포인트 2개는 공통 에러 봉투를 쓰지 않는다** (§8-2) |
 | **에러** | `invalid_handoff` · `oauth_provider_error` 추가. 리다이렉트 에러 코드 5종 (§8-2) |
 
 CLAUDE.md §8 의 결정 방식상 **영역 간 인터페이스 = 관련 Owner 협의**다. 김명성(백엔드) · 고태영(프론트) 합의 후 계약서를 고친다. **합의 전까지 이 문서는 제안 상태로 읽을 것.**
 
-**§5-3 `session` · §5-4 `auth_handoff` 신설**과 **§5-2 `parent.nickname` nullable 전환**도 같은 협의 대상이다.
+**§5-3 `session` · `session_access` · §5-4 `auth_handoff` 신설**과 **§5-2 `parent.nickname` nullable 전환**도 같은 협의 대상이다.
 **§6-1의 필수 동의 후 `parent` 생성은 #34 구현 기준으로 확정했다.**
 
 ---

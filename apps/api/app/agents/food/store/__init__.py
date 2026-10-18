@@ -13,9 +13,11 @@ from app.agents.food.store.inmemory import (
     InMemoryMenuCatalog,
     InMemoryMenuSource,
     InMemoryProfile,
+    InMemoryRecipeCatalog,
     InMemorySafety,
     InMemorySuggestionHistory,
     in_memory_ports,
+    unwired_ports,
 )
 from app.agents.food.store.ports import (
     ChildProfileReader,
@@ -36,10 +38,12 @@ from app.agents.food.store.ports import (
     MenuSourceError,
     NutrientBand,
     NutritionFacts,
+    RecipeCatalogStore,
     SafetyEntry,
     SafetyLookupError,
     SafetyReader,
     SuggestionHistoryReader,
+    UnwiredSafety,
 )
 
 __all__ = [
@@ -62,6 +66,7 @@ __all__ = [
     "InMemoryMenuCatalog",
     "InMemoryMenuSource",
     "InMemoryProfile",
+    "InMemoryRecipeCatalog",
     "InMemorySafety",
     "InMemorySuggestionHistory",
     "Measurement",
@@ -71,9 +76,12 @@ __all__ = [
     "MenuSourceError",
     "NutrientBand",
     "NutritionFacts",
+    "RecipeCatalogStore",
     "SafetyEntry",
     "SafetyLookupError",
     "SafetyReader",
     "SuggestionHistoryReader",
+    "UnwiredSafety",
     "in_memory_ports",
+    "unwired_ports",
 ]
