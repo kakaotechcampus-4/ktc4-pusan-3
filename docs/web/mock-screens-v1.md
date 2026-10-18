@@ -79,8 +79,8 @@ location.replace("/");
 | 05 · 알레르기 확인 문구 | `/child/c1/suggestions?agents=food,activity&scenario=suggest_cautions` — 놀이 확인 문구가 목록 위에 선다 |
 | 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
 | 05 · 홈 버튼에서 | 03 홈의 "민준이가 먹을 저녁 추천해드릴까요?" — 주소가 `?agents=food&prompt=dinner` 로 바뀐다. 🚨 추천 요청 본문에 **`prompt_key: "dinner"` 가 실려야 하고 문장은 없어야 한다** (#286) |
-| 05 · 근거 부족 (일반 추천 1건 + 질문 1개) | 위 주소에 `&scenario=scarcity` |
-| 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` |
+| 05 · 근거 부족 (일반 추천 1건 + 질문 1개) | 위 주소에 `&scenario=scarcity` — 일반 추천도 골라서 채택하고 "일정으로 만들기" 로 승인 시트까지 간다 (#509) |
+| 05 · 기록 0건 (일반 추천 2건 + 질문 1개) | 위 주소에 `&scenario=empty` — 식사 일반 추천을 고르고 채택하면 알레르기 확인 시트(참깨)가 먼저 뜬다 (#509) |
 | 05 · 알레르기 미상 guard · 오래된 근거 | 위 주소에 `&scenario=stale` |
 | 05 · 개수 안내 (식사 2개 · 놀이 0개) | 위 주소에 `&scenario=suggest_counts` — 🚨 놀이 0개는 안내 한 줄이고 실패 카드 · 다시 시도가 없다 |
 | 05 · 이어서 할 수 없음 | `/child/c1/suggestions?agents=food,activity&run=r1&scenario=cannot_resume` — 🚨 놀이는 안내만, 식사 후보는 그대로 |

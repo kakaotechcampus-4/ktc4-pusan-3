@@ -42,13 +42,18 @@ export function resetSubmittedEvents(): void {
 }
 
 /**
+ * 고를 수 있는 제안 — 개인화와 일반 둘 다다 (#509). 실서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다.
+ */
+const pickable = [...suggestions, ...generalSuggestions];
+
+/**
  * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
  *    없는 제안 404 → 채택 안 된 제안 422. 화면은 이 경로의 `message` 를 그대로 띄운다.
  * 🚨 **모르는 id 를 조용히 걸러 내지 않는다.** 화면에 없는 제안이 섞였다는 뜻이라 버그다.
  */
 function refuseUnapproved(ids: string[]) {
   for (const id of ids) {
-    if (!suggestions.some((s) => s.id === id)) {
+    if (!pickable.some((s) => s.id === id)) {
       return apiError(404, "not_found", "제안을 찾을 수 없어요");
     }
     if (!approvedSuggestions.has(id)) {
@@ -96,7 +101,12 @@ export const suggestionHandlers = [
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     if (scenario === "scarcity" || scenario === "empty") {
-      const general = scenario === "empty" ? generalSuggestions : [generalSuggestions[0]];
+      // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 — 아래 기본 경로의 `alive` 와 같은
+      //    규칙이다 (실서버 `check.blocked`). 사전검사만 거르면 확인 시트에서 "있어요" 로 등록한 재료가
+      //    다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
+      const general = (scenario === "empty" ? generalSuggestions : [generalSuggestions[0]]).filter(
+        (g) => !(suggestionAllergens[g.id] ?? []).some((a) => allergyStatus(a) === "active"),
+      );
       const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
@@ -110,7 +120,9 @@ export const suggestionHandlers = [
           cautions: [],
         })),
         // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
-        general: general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
+        general: withStatus(
+          general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
+        ),
         looked_at: "",
         guards: [],
         scarcity: {
@@ -121,7 +133,18 @@ export const suggestionHandlers = [
             options: [],
           },
         },
-        prechecks: [],
+        // 🚨 일반 추천도 고르고 채택하므로 알레르기 사전검사가 걸린다 (#509 · 게이트 ㉡) —
+        //    기본 경로와 같은 규칙이다: 등록한 재료가 든 추천은 위에서 빠졌고, 기록이 있는 재료는 묻지 않는다.
+        prechecks: general.flatMap((g) =>
+          (suggestionAllergens[g.id] ?? [])
+            .filter((a) => allergyStatus(a) === null)
+            .map((a) => ({
+              code: "unknown_ingredient" as const,
+              item: a,
+              note: "알레르기 기록에 없음",
+              suggestion_id: g.id,
+            })),
+        ),
       });
     }
 
@@ -293,7 +316,7 @@ export const suggestionHandlers = [
     const ids = [...new Set(body.suggestion_ids ?? [])];
     if (ids.length === 0) return apiError(400, "validation_failed", "제안을 선택해 주세요");
 
-    const picked = suggestions.filter((s) => ids.includes(s.id));
+    const picked = pickable.filter((s) => ids.includes(s.id));
     if (picked.length !== ids.length) {
       return apiError(404, "not_found", "제안을 찾을 수 없어요");
     }
@@ -329,7 +352,7 @@ export const suggestionHandlers = [
     const refused = refuseUnapproved(ids);
     if (refused) return refused;
 
-    const pool = [...suggestions, staleSuggestion];
+    const pool = [...pickable, staleSuggestion];
     const chosen = ids
       .map((id) => pool.find((s) => s.id === id))
       .filter((s): s is (typeof pool)[number] => s !== undefined);

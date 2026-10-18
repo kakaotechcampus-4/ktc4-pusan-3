@@ -587,6 +587,8 @@ export const suggestionAllergens: Record<string, string[]> = {
   s_4: [],
   s_5: ["땅콩"],
   s_6: [],
+  // 일반 추천도 사전검사가 걸린다 (#509) — 실서버는 `kind` 를 가리지 않고 `suggestion_id` 를 단다
+  g_2: ["참깨"],
 };
 
 /**
@@ -766,7 +768,7 @@ export const runEventDrafts: EventDraft[] = [
  * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 이 일정에 연결된다 (#206) —
  *    단수로 두면 묶인 나머지는 일정이 됐다는 사실이 안 남는다.
  */
-export function mealDraft(items: Suggestion[]): EventDraft {
+export function mealDraft(items: Array<Suggestion | GeneralSuggestion>): EventDraft {
   return {
     // 🚨 **요청마다 새 id 다** (#241 · 서버는 `uuid4`). 제안에서 지어내면 같은 제안으로 다시 만든
     //    초안이 우연히 같은 장으로 합쳐져서, 실서버에서만 두 장이 서는 것을 목이 가린다.
@@ -788,7 +790,7 @@ export function mealDraft(items: Suggestion[]): EventDraft {
   };
 }
 
-export function suggestionDraft(suggestion: Suggestion): EventDraft {
+export function suggestionDraft(suggestion: Suggestion | GeneralSuggestion): EventDraft {
   return {
     draft_id: crypto.randomUUID(), // 🚨 요청마다 새 id 다 (위 `mealDraft` 와 같은 이유)
     op: "create",

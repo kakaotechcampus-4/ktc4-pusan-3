@@ -54,6 +54,8 @@ import { useEnterMotion } from "@/lib/motion";
  * 🚨 **근거가 부족하면 개인화 대신 일반 추천을 그린다** (CLAUDE.md §2). 개인화 목록과
  *    일반 카드는 **다른 컴포넌트 · 다른 타입 · 응답의 다른 필드**다 — 한 곳에 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다. 둘이 한 화면에 같이 나오는 경우는 없다.
+ *    🚨 **고르기는 둘이 같이 쓴다** (#509). 그리는 컴포넌트만 다르고, 고른 id · 채택 · 일정
+ *    만들기는 한 줄로 흐른다 — 서버의 채택 · 초안 API 는 `kind` 를 보지 않는다.
  *
  * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내(`notice`)와 함께 묶음이 오고,
  *    이어서 할 수 없는 Agent(`cannot_resume`)도 안내만 온다 — 둘 다 다시 시도를 두지 않는다.
@@ -105,6 +107,8 @@ function SuggestionsScreen() {
    *    `food` 제안들은 서버가 한 끼로 묶어 초안 1건으로 내려준다 (`types.ts` 참고).
    */
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   /**
    * 채택한 제안. `null` 이면 아직 고르는 중이다.
    *
@@ -198,20 +202,28 @@ function SuggestionsScreen() {
   }
   const visible = data?.suggestions ?? [];
   /**
-   * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
-   *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
-   */
-  const restored = visible.filter((s) => s.status === "approved").map((s) => s.id);
-  const chosenIds = approvedIds ?? (restored.length > 0 ? restored : null);
-  /** 화면에 "고른 것" 으로 서는 id. 채택이 끝났으면 서버가 아는 채택, 아니면 지금 고르는 중인 것. */
-  const pickedIds = chosenIds ?? selectedIds;
-  /**
    * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
    * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
    * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
    */
   const scarcity = data?.scarcity ?? null;
   const general = scarcity ? (data?.general ?? []) : [];
+  /**
+   * 고를 수 있게 그린 제안 전부 — 개인화가 먼저, 일반이 뒤다 (화면에 선 순서).
+   * 🚨 **id 와 Agent 만 꺼낸다.** 두 타입을 한 배열의 원소로 섞으면 근거를 읽는 자리에서
+   *    둘을 가를 수 없게 된다 — 여기서 쓰는 것은 고른 개수 · 채택 상태뿐이다.
+   */
+  const pickable = [...visible, ...general].map(({ id, agent, status }) => ({ id, agent, status }));
+  /**
+   * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
+   *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
+   */
+  const restored = pickable.filter((s) => s.status === "approved").map((s) => s.id);
+  const chosenIds = approvedIds ?? (restored.length > 0 ? restored : null);
+  /** 화면에 "고른 것" 으로 서는 id. 채택이 끝났으면 서버가 아는 채택, 아니면 지금 고르는 중인 것. */
+  const pickedIds = chosenIds ?? selectedIds;
+  /** 채택 중이거나 채택이 끝났다. 🚨 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다. */
+  const pickLocked = approve.isPending || chosenIds !== null;
   const blockedByGuard = new Set(data?.guards.flatMap((g) => g.blocked_agents) ?? []);
   /**
    * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내와 함께 묶음이 온다 —
@@ -236,7 +248,7 @@ function SuggestionsScreen() {
    * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
    *    보호자가 둘을 맞춰 읽어야 한다.
    */
-  const pickedByAgent = visible.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
+  const pickedByAgent = pickable.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
     if (!pickedIds.includes(s.id)) return acc;
     const found = acc.find((g) => g.agent === s.agent);
     if (found) found.count += 1;
@@ -356,20 +368,48 @@ function SuggestionsScreen() {
           suggestions={visible}
           groups={data?.groups ?? []}
           selectedIds={pickedIds}
-          // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
-          busy={approve.isPending || chosenIds !== null}
-          onToggleSelect={(suggestion) =>
-            setSelectedIds((prev) =>
-              prev.includes(suggestion.id)
-                ? prev.filter((id) => id !== suggestion.id)
-                : [...prev, suggestion.id],
-            )
-          }
+          busy={pickLocked}
+          onToggleSelect={(suggestion) => toggleSelect(suggestion.id)}
         />
+
+        {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
+          질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
+          카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다.
+          🚨 **아래 요약 카드보다 위에 선다** (#509). 일반 추천도 고르는 대상이라, 다음 행동이
+          고를 것보다 먼저 서면 안 된다 (다음 행동은 목록 아래 한 곳 · `suggestion-list.tsx` 머리말). */}
+        {scarcity && general.length > 0 ? (
+          <ul className="flex flex-col gap-3">
+            {general.map((item) => (
+              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              <GeneralSuggestionCard
+                key={item.id}
+                suggestion={item}
+                recordCount={item.record_count}
+                selected={pickedIds.includes(item.id)}
+                onToggleSelect={() => toggleSelect(item.id)}
+                busy={pickLocked}
+              />
+            ))}
+          </ul>
+        ) : null}
+        {/* 🚨 묶인다는 것을 고르기 전에 말한다 — 개인화 목록(`SuggestionList`)과 같은 규칙이다.
+            서버가 `merges_into_one` 을 안 보내면 아무 말도 하지 않는다. */}
+        {(data?.groups ?? [])
+          .filter((group) => group.merges_into_one)
+          .map((group) => {
+            const count = general.filter(
+              (g) => g.agent === group.agent && pickedIds.includes(g.id),
+            ).length;
+            return count > 1 ? (
+              <p key={`merge:${group.agent}`} role="status" className="text-body-sm text-ink-muted">
+                고른 {count}가지는 일정 하나로 묶여요.
+              </p>
+            ) : null;
+          })}
 
         {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
-        {visible.some((s) => s.agent !== "health") ? (
+        {pickable.some((s) => s.agent !== "health") ? (
           <Card>
             <p className="text-section text-ink">
               {chosenIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
@@ -492,22 +532,6 @@ function SuggestionsScreen() {
             </Button>
           </CardFailed>
         ))}
-
-        {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
-          질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
-          카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다. */}
-        {scarcity && general.length > 0 ? (
-          <ul className="flex flex-col gap-3">
-            {general.map((item) => (
-              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
-              <GeneralSuggestionCard
-                key={item.id}
-                suggestion={item}
-                recordCount={item.record_count}
-              />
-            ))}
-          </ul>
-        ) : null}
 
         {scarcity ? (
           <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />

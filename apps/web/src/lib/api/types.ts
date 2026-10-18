@@ -698,9 +698,16 @@ export interface ApproveSuggestionsRequest {
   suggestion_ids: string[];
 }
 
-/** 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다. */
+/**
+ * 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다.
+ *
+ * ⚠️ 일반 추천도 채택한다 (#509). 실서버는 일반 추천도 개인화와 같은 모양(`SuggestionOut`)에
+ *    `kind: "general"` · `evidence: []` 를 실어 돌려줘서 `GeneralSuggestion` 과도 맞지 않는다
+ *    (`basis` · `record_count` 가 없다). 그래서 **두 모양에 공통인 필드만** 적는다 — 더 꺼내 쓰면
+ *    목에서는 되고 실서버에서는 `undefined` 가 된다. 응답 모양은 백엔드와 정리할 몫이다.
+ */
 export interface ApproveSuggestionsResponse {
-  suggestions: Suggestion[];
+  suggestions: Array<Pick<Suggestion, "id" | "child_id" | "agent" | "content" | "status">>;
 }
 
 /**
@@ -905,8 +912,10 @@ export interface SuggestionFeedbackResponse {
 /**
  * `GET /children/{cid}/suggestions` — 07 피드백 탭이 평가할 제안 목록 (#284).
  *
- * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다 — 일반 추천은 채택하는 흐름이
- *    없어서 평가 대상이 아니다. 그래서 `items` 가 `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
+ * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다. 그래서 `items` 가
+ *    `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
+ *    ⚠️ 05 에서 일반 추천도 채택할 수 있게 됐지만(#509) 채택한 일반 추천의 피드백은 아직 열지 않았다 —
+ *    서버 필터를 바꾸는 일이라 따로 정한다.
  * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
  */
 export interface SuggestionListResponse {

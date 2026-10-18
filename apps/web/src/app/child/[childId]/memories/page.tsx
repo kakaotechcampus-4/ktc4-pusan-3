@@ -483,8 +483,8 @@ function FeedbackTab({ childId }: { childId: string }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   /**
-   * 받은 개인화 제안 목록 (#284). 일반 추천은 채택하는 흐름이 없어서 평가 대상이 아니고,
-   * 서버가 `kind = 'personalized'` 로 걸러 준다.
+   * 받은 개인화 제안 목록 (#284). 서버가 `kind = 'personalized'` 로 걸러 준다.
+   * ⚠️ 채택한 일반 추천(#509)의 피드백은 아직 열지 않았다 (`SuggestionListResponse` 주석).
    * ⚠️ 첫 장(20건)만 그린다 — `next_cursor` 로 더 보기는 아직 없다 (#316 하지 않는 것).
    */
   const received = useQuery({
