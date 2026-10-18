@@ -1,6 +1,7 @@
 """Growth 테스트가 같이 쓰는 값과 만드는 함수. 테스트 파일이 아니다(수집되지 않는다)."""
 
 import json
+from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -15,7 +16,8 @@ from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.store.inmemory import in_memory_ports
-from app.agents.growth.store.ports import GrowthMeasurement
+from app.agents.growth.store.ports import GrowthMeasurement, UpstreamUnavailable
+from app.core.book_raw import RawBook
 from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
@@ -119,3 +121,40 @@ class ProposesExamples:
         return LLMResponse(
             message=SimpleNamespace(content=None, tool_calls=[call]), usage={}, latency_ms=1
         )
+
+
+def raw_book(
+    n: int,
+    *,
+    title: str | None = None,
+    symbol: str | None = "77810",
+    class_no: str | None = "813.8",
+    authors: str | None = "글: 가나다 ; 그림: 라마바",
+    isbn: str | None = None,
+) -> RawBook:
+    """정보나루 원문 한 권 — 가짜 값이다. 기본은 아동(부가기호 7) 문학(KDC 8) = 그림책."""
+    return RawBook(
+        isbn13=isbn if isbn is not None else f"978890000{n:04d}",
+        title=title if title is not None else f"책{n}",
+        authors=authors,
+        publisher="출판사",
+        addition_symbol=symbol,
+        class_no=class_no,
+    )
+
+
+class FakeRawSearch:
+    """`RawBookSearch` 가짜. 검색어마다 정해 둔 원문을 주고 `fail` 의 검색어는 조회 실패다."""
+
+    def __init__(
+        self, by_keyword: dict[str, Sequence[RawBook]], *, fail: Collection[str] = ()
+    ) -> None:
+        self._by_keyword = {keyword: tuple(rows) for keyword, rows in by_keyword.items()}
+        self._fail = frozenset(fail)
+        self.calls: list[tuple[str, int]] = []
+
+    async def search(self, *, keyword: str, limit: int) -> tuple[RawBook, ...]:
+        self.calls.append((keyword, limit))
+        if keyword in self._fail:
+            raise UpstreamUnavailable("정보나루 조회 실패 (테스트 주입)")
+        return self._by_keyword.get(keyword, ())[:limit]
