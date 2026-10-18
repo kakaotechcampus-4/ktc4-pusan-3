@@ -80,6 +80,7 @@ import type {
   SuggestionsRequest,
   SuggestionsResponse,
   SuggestionFeedbackResponse,
+  SuggestionListResponse,
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
@@ -1580,6 +1581,22 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 
     expect(body.suggestion.feedback).toBe("child_disliked");
     // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
+    expect(body.memory_changed).toBe(false);
+  });
+
+  it("🚨 채택한 일반 추천도 목록에 오고 평가할 수 있다 — kind 는 general 그대로다 (#509)", async () => {
+    const list = await api.get<SuggestionListResponse>("/children/c1/suggestions");
+    const general = list.items.find((s) => s.kind === "general");
+    expect(general?.id).toBe("g_past_1");
+    // 일반 추천은 근거 필드가 없다 — 개인화로 집계될 길이 없다
+    expect(general && "evidence" in general).toBe(false);
+
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/g_past_1/feedback",
+      { feedback: "child_liked" },
+    );
+    expect(body.suggestion.kind).toBe("general");
+    expect(body.suggestion.feedback).toBe("child_liked");
     expect(body.memory_changed).toBe(false);
   });
 

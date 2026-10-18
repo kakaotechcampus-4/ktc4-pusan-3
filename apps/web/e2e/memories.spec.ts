@@ -226,6 +226,23 @@ test.describe("07 기록 탭은 서버(#266)가 주는 대로 그린다 (#269)",
   });
 });
 
+test.describe("피드백 탭의 일반 추천 (#509)", () => {
+  test("채택한 일반 추천은 또래 기준이라고 적고, 개인화처럼 평가할 수 있다", async ({ page }) => {
+    await page.goto(`${MEMORIES}?tab=feedback`);
+    const row = page
+      .locator("li")
+      .filter({ hasText: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요" });
+    await expect(row).toContainText("또래 기준 일반 추천");
+    // 🚨 개인화 줄에는 그 라벨이 없다 — 우리 아이 기준 제안을 일반 추천으로 부르지 않는다.
+    await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
+
+    const liked = row.getByRole("button", { name: "아이가 좋아했어요" });
+    await liked.click();
+    await expect(liked).toHaveAttribute("aria-pressed", "true");
+    await expectNoGate(page);
+  });
+});
+
 test("07 세 탭 어디에도 승인 게이트 표식이 없다", async ({ page }) => {
   // 탭마다 데이터가 다 그려진 것을 확인하고 본다 — 빈 껍데기에서는 표식이 없는 게 당연하다.
   for (const [tab, loaded] of [
