@@ -131,6 +131,33 @@ async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(
     assert seen["growth_safety"] is seen["food_safety"]
 
 
+@pytest.mark.parametrize("key", ["test-auth-key", ""])
+async def test_agent_job_인증키가_있을_때만_도서_어댑터를_넘긴다(monkeypatch, key):
+    """키가 없으면 둘 다 넘기지 않는다 — 도서는 closed.book_api 로 닫힌다."""
+    from app.core.config import settings
+    from app.domains.suggestion.agent_reader import DbIssuedBooks
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    monkeypatch.setattr(settings, "DATA4LIBRARY_AUTH_KEY", key)
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    if key:
+        assert isinstance(seen["growth_books"], Data4LibraryBooks)
+        assert isinstance(seen["growth_issued_books"], DbIssuedBooks)
+    else:
+        assert "growth_books" not in seen and "growth_issued_books" not in seen
+
+
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
     """안전망 — 모델이 멈춘 run 을 끊는다. 서버가 안 끊으면 ping 이 화면의 20초 타이머를 계속
     되살려서 진행 화면이 몇 분씩 돈다.
