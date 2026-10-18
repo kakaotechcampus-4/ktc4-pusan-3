@@ -15,20 +15,26 @@ from app.agents.common.evidence import AffinityRow
 from app.agents.common.llm_client import LLMResponse
 from app.agents.growth.agent import run
 from app.agents.growth.readouts import READOUTS
+from app.agents.growth.review import BOOK_GENERAL_REASON
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import (
+    InMemoryBooks,
     InMemoryGrowthDocs,
     InMemoryGrowthMemory,
+    InMemoryIssuedBooks,
     InMemorySafety,
 )
 from app.agents.growth.store.ports import (
     ActivityObservation,
+    BookRow,
     EducationObservation,
     RoutineObservation,
     SafetyEntry,
+    UpstreamUnavailable,
 )
 from app.agents.growth.tools.docs import match_chain, routine_chains, search_growth_doc
 from app.agents.growth.tools.routine import pick_next_step
+from app.rules.book_evidence import book_evidence_id
 from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context, task
 
 
@@ -345,7 +351,168 @@ class TestRoutine:
         assert [r.code for r in result.readouts] == ["fewer"]  # 단계가 둘뿐이라 개수 안내가 붙는다
 
 
+def book(n: int, form: str = "picture") -> BookRow:
+    return BookRow(isbn=f"978890000{n:04d}", title=f"책{n}", form=form, author="가")
+
+
+def pick(
+    n: int, *, evidence: list | None = None, reason: str = "공룡이 나오는 그림책이에요"
+) -> dict:
+    return {"isbn": f"978890000{n:04d}", "evidence": evidence or [], "reason": reason}
+
+
+def books_ctx(months: int = 30, rows=(), *, issued=(), fail: bool = False, **kwargs):
+    return context(
+        birth_for(months),
+        books=InMemoryBooks(list(rows), fail=fail),
+        issued_books=InMemoryIssuedBooks(issued),
+        **kwargs,
+    )
+
+
+class FailsSecondSearch(InMemoryBooks):
+    """첫 검색은 답하고 두 번째부터 실패한다 — 재호출에서 다시 찾다가 장애가 난 경우."""
+
+    def __init__(self, rows) -> None:
+        super().__init__(rows)
+        self.searches = 0
+
+    async def search(self, *, keywords, limit):
+        self.searches += 1
+        if self.searches > 1:
+            raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
+        return await super().search(keywords=keywords, limit=limit)
+
+
 class TestBook:
     async def test_도서_포트가_없으면_닫힌다(self):
         result = await run(task("book_suggestion", "공룡 책"), docs_ctx(), client=FakeLLM())
         assert result.status == "blocked" and result.model_calls == 0
+
+    async def test_검색한_책_3권을_일반_추천으로_낸다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call("propose_books", {"items": [pick(1), pick(2), pick(3)]}),
+        )
+        rows = [book(n) for n in range(1, 6)]
+        result = await run(
+            task("book_suggestion", "공룡 책 추천해줘"), books_ctx(rows=rows), client=llm
+        )
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert [d.content for d in result.suggestions] == ["책1(가)", "책2(가)", "책3(가)"]
+        assert {d.kind for d in result.suggestions} == {"general"}
+        assert all(d.reason == BOOK_GENERAL_REASON for d in result.suggestions)
+        assert [(c.ref.kind, c.ref.id) for c in result.suggestions[0].citations] == [
+            ("book_catalog", book_evidence_id(book(1).isbn))
+        ]
+        assert result.readouts == ()
+
+    async def test_배움_기록을_인용하면_개인화고_근거는_그_기록뿐이다(self):
+        edu = EducationObservation(
+            id=UUID(int=901),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=2),
+            subject="공룡",
+            topic="공룡 그림을 오래 봤다",
+            polarity=1,
+        )
+        cite = [{"id": str(edu.id), "note": "공룡 그림을 오래 봤어요"}]
+        llm = FakeLLM(
+            call("search_education_memory", {"keywords": ["공룡"]}),
+            call("search_books", {"keywords": ["공룡"]}),
+            call("propose_books", {"items": [pick(n, evidence=cite) for n in (1, 2, 3)]}),
+        )
+        ctx = books_ctx(
+            rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(education=[edu])
+        )
+        result = await run(task("book_suggestion", "공룡 책"), ctx, client=llm)
+
+        assert {d.kind for d in result.suggestions} == {"personalized"}
+        for draft in result.suggestions:
+            # 책 근거는 일반 추천에만 붙는다 — 개인화 도서의 book_catalog 근거는 0행
+            # (Food #442 와 같다)
+            assert [(c.ref.kind, c.ref.id) for c in draft.citations] == [
+                ("observation_education", edu.id)
+            ]
+
+    async def test_검색이_실패하면_closed_book_api_로_닫는다(self):
+        llm = FakeLLM(call("search_books", {"keywords": ["공룡"]}))
+        result = await run(
+            task("book_suggestion"), books_ctx(rows=[book(1)], fail=True), client=llm
+        )
+
+        assert result.status == "blocked" and result.model_calls == 1
+        assert result.suggestions == ()
+        assert [r.body for r in result.readouts] == [READOUTS.render("closed.book_api").body]
+
+    async def test_8개월은_보드북만_나가고_모자라면_개수_안내가_붙는다(self):
+        rows = [book(1), book(2, "board"), book(3)]
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["동물"]}),
+            call("propose_books", {"items": [pick(2)]}),
+        )
+        result = await run(task("book_suggestion"), books_ctx(8, rows), client=llm)
+
+        assert [d.content for d in result.suggestions] == ["책2(가)"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_맞는_책이_없으면_빈_제출로_0개_안내다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["동물"]}),
+            call("propose_books", {"items": []}),
+        )
+        result = await run(task("book_suggestion"), books_ctx(8, [book(1)]), client=llm)
+
+        assert result.status == "completed" and result.suggestions == ()
+        assert [r.code for r in result.readouts] == ["empty"]
+
+    async def test_금지_표현으로_빠지면_재호출에서_다른_책으로_빈자리만_채운다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("propose_books", {"items": [pick(2), pick(4), pick(5)]}),  # 처음 고른 책2 → 거절
+            call("propose_books", {"items": [pick(4), pick(5)]}),
+        )
+        result = await run(
+            task("book_suggestion"), books_ctx(rows=[book(n) for n in range(1, 6)]), client=llm
+        )
+
+        assert result.model_calls == 2
+        assert [d.content for d in result.suggestions] == ["책2(가)", "책3(가)", "책4(가)"]
+        recall = llm.seen[2][-1]["content"]
+        assert "책1(가)" in recall and "책2(가)" in recall
+
+    async def test_재호출에서_검색이_실패하면_처음_고른_책만_낸다(self):
+        ctx = context(
+            birth_for(30),
+            books=FailsSecondSearch([book(n) for n in range(1, 4)]),
+            issued_books=InMemoryIssuedBooks(),
+        )
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("search_books", {"keywords": ["기차"]}),
+        )
+        result = await run(task("book_suggestion"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 2
+        assert [d.content for d in result.suggestions] == ["책2(가)", "책3(가)"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_도서_프롬프트는_도서_구획이고_예시가_없다(self):
+        llm = FakeLLM()
+        await run(task("book_suggestion"), books_ctx(rows=[book(1)]), client=llm)
+
+        system = llm.seen[0][0]["content"]
+        assert "[도서]" in system and "[교육 활동]" not in system
+        # [근거] 구획의 글에도 "[예시]" 가 나온다 — 문서 행 예시 블록(머리줄 · 항목)이 없는지 본다
+        assert not any(line.startswith("[예시]") for line in system.splitlines())
+        assert "- id " not in system
+        assert str(CHILD) not in system
