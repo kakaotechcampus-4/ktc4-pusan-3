@@ -18,11 +18,7 @@ from app.agents.growth.schemas.memory import (
 )
 from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.schemas.task import GrowthTaskType
-from app.agents.growth.store.inmemory import (
-    InMemoryGrowthDocs,
-    InMemoryGrowthMemory,
-    InMemorySafety,
-)
+from app.agents.growth.store.inmemory import InMemoryGrowthMemory, InMemorySafety
 from app.agents.growth.store.ports import EducationObservation, RoutineObservation, SafetyEntry
 from app.agents.growth.tools.memory import (
     search_affinity,
@@ -30,7 +26,16 @@ from app.agents.growth.tools.memory import (
     search_routine_memory,
 )
 from app.agents.growth.tools.propose import propose_learning_activity, propose_routine_plan
-from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context
+from tests.unit.agents.growth.support import (
+    CALM,
+    CHILD,
+    GREETING,
+    REST,
+    TODAY,
+    birth_for,
+    context,
+    fixture_docs,
+)
 
 
 def item(
@@ -51,7 +56,7 @@ def item(
 
 
 async def learning_ctx(months=30, **kwargs):
-    ctx = context(birth_for(months), docs=InMemoryGrowthDocs.from_seed(), **kwargs)
+    ctx = context(birth_for(months), docs=fixture_docs(), **kwargs)
     ctx.state.gate = await build_gate(ctx, GrowthTaskType.LEARNING_SUGGESTION)
     rows = await ctx.ports.docs.search(
         months=months,
@@ -201,7 +206,7 @@ class TestLearning:
         assert not hasattr(ctx.state, "cautions")
 
 
-def routine_obs(n, subject, level, category="self_care"):
+def routine_obs(n, subject, level, category="self_care", trigger=None):
     return RoutineObservation(
         id=UUID(int=700 + n),
         child_id=CHILD,
@@ -210,13 +215,14 @@ def routine_obs(n, subject, level, category="self_care"):
         routine_category=category,
         polarity=0,
         assistance_level=level,
+        trigger=trigger,
     )
 
 
-async def routine_ctx(months=30, observations=()):
+async def routine_ctx(months=30, observations=(), rows=()):
     ctx = context(
         birth_for(months),
-        docs=InMemoryGrowthDocs.from_seed(),
+        docs=fixture_docs(*rows),
         memory=InMemoryGrowthMemory(routine=list(observations)),
     )
     ctx.state.gate = await build_gate(ctx, GrowthTaskType.ROUTINE_COACHING)
@@ -404,7 +410,7 @@ class TestRoutine:
         )
         ctx = context(
             birth_for(30),
-            docs=InMemoryGrowthDocs.from_seed(),
+            docs=fixture_docs(),
             memory=InMemoryGrowthMemory(
                 routine=[routine_obs(1, "양치", "full_assist")], affinities=[("activity", affinity)]
             ),
@@ -431,3 +437,67 @@ class TestRoutine:
         )
         assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
         assert ctx.state.suggestions == ()
+
+
+def strategy_item(row, note: str, reason: str) -> dict:
+    return {
+        "step_id": str(row.id),
+        "next_step": f"{row.title.split(' — ')[0]}를 집에서 해 봐요",
+        "how": "어른이 먼저 해 보이고 아이가 따라 해요",
+        "evidence": [{"id": str(UUID(int=701)), "note": note}],
+        "reason": reason,
+    }
+
+
+class TestStrategyPlan:
+    """예절 · 습관은 전략 행이 있으면 열리고, 없으면 지금처럼 doc.no_row 다."""
+
+    async def test_예절_연습_행을_문장으로_옮기면_개인화_추천이다(self):
+        ctx = await routine_ctx(
+            months=40,
+            observations=[routine_obs(1, "인사하기", None, "social_manner")],
+            rows=(GREETING,),
+        )
+        item = strategy_item(GREETING, "어제 어른에게 인사를 안 했어요", "놀이로 먼저 해 봐요")
+        result = await propose_routine_plan(ctx, plan("social_manner", "인사하기", [item]))
+        assert result.success
+        (draft,) = ctx.state.suggestions
+        assert draft.kind == "personalized"
+        assert ("growth_doc", GREETING.id) in {(c.ref.kind, c.ref.id) for c in draft.citations}
+        assert ctx.state.capacity == 1
+
+    async def test_예절_행이_없으면_모델이_지어내지_않게_doc_no_row_로_닫는다(self):
+        ctx = await routine_ctx(
+            months=40, observations=[routine_obs(1, "인사하기", None, "social_manner")]
+        )
+        await propose_routine_plan(ctx, plan("social_manner", "인사하기"))
+        assert ctx.state.closing == "doc.no_row" and ctx.state.question is None
+
+    async def test_습관은_trigger_와_맞는_대응_행으로_개인화_추천이다(self):
+        obs = routine_obs(1, "손톱 물어뜯기", None, "habit", trigger="긴장할 때")
+        ctx = await routine_ctx(months=40, observations=[obs], rows=(CALM, REST))
+        item = strategy_item(CALM, "긴장할 때 손톱을 물었어요", "긴장한 마음을 말로 먼저 붙여요")
+        result = await propose_routine_plan(ctx, plan("habit", "손톱 물어뜯기", [item]))
+        assert result.success
+        (draft,) = ctx.state.suggestions
+        assert draft.kind == "personalized"
+
+    async def test_습관은_trigger_가_없으면_대응_행이_있어도_되묻는다(self):
+        obs = routine_obs(1, "손톱 물어뜯기", None, "habit")
+        ctx = await routine_ctx(months=40, observations=[obs], rows=(CALM,))
+        await propose_routine_plan(ctx, plan("habit", "손톱 물어뜯기"))
+        assert ctx.state.question == "손톱 물어뜯기은(는) 주로 어떤 상황에서 하나요?"
+        assert ctx.state.suggestions == ()
+
+    async def test_습관_trigger_에_맞는_행이_없으면_doc_no_row_로_닫는다(self):
+        obs = routine_obs(1, "손톱 물어뜯기", None, "habit", trigger="졸릴 때")
+        ctx = await routine_ctx(months=40, observations=[obs], rows=(CALM,))
+        await propose_routine_plan(ctx, plan("habit", "손톱 물어뜯기"))
+        assert ctx.state.closing == "doc.no_row"
+
+    async def test_고르지_않은_전략_행은_거절한다(self):
+        obs = routine_obs(1, "손톱 물어뜯기", None, "habit", trigger="긴장할 때")
+        ctx = await routine_ctx(months=40, observations=[obs], rows=(CALM, REST))
+        item = strategy_item(REST, "긴장할 때 손톱을 물었어요", "쉬는 시간을 늘려요")
+        result = await propose_routine_plan(ctx, plan("habit", "손톱 물어뜯기", [item]))
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"

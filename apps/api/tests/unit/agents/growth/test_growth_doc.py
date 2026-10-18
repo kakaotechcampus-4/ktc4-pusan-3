@@ -27,9 +27,18 @@ from app.agents.growth.tools.docs import (
     match_chain,
     routine_chains,
     search_growth_doc,
+    strategy_rows,
 )
 from app.agents.growth.tools.routine import pick_next_step
 from app.rules.term_match import match_fields
+from tests.unit.agents.growth.support import (
+    CALM,
+    GREETING,
+    REST,
+    TAKING_TURNS,
+    fixture_docs,
+    strategy_row,
+)
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING
@@ -298,29 +307,22 @@ class TestRotation:
 
 class TestChains:
     async def test_카테고리의_사슬을_이름별로_모은다(self):
-        docs = InMemoryGrowthDocs.from_seed()
-        chains = await routine_chains(docs, months=30, category="self_care")
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         names = {chain_name(chain) for chain in chains.values()}
         assert {"손 씻기", "양치", "얼굴 닦기", "화장실 가기"} <= names
         assert all(len(chain) == 4 for chain in chains.values())
 
     async def test_관찰_subject_는_사슬_이름과_양쪽으로_맞춘다(self):
-        chains = await routine_chains(
-            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
-        )
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         assert chain_name(match_chain(chains, "양치하기")) == "양치"
         assert chain_name(match_chain(chains, "손씻기")) == "손 씻기"
 
     async def test_맞는_사슬이_없으면_None(self):
-        chains = await routine_chains(
-            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
-        )
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         assert match_chain(chains, "신발 신기") is None
 
     async def test_한_글자_subject_는_맞추지_않는다(self):
-        chains = await routine_chains(
-            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
-        )
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         assert match_chain(chains, "손") is None
 
 
@@ -339,3 +341,58 @@ async def test_막을_낱말이_든_행은_고르기_전에_빼고_구간마다_
     assert not any(
         match_fields((hit.row.title, hit.row.body, *hit.row.materials), pollen) for hit in hits
     )
+
+
+class TestStrategyRows:
+    """예절 · 습관은 사슬이 아니라 행 하나가 연습 · 대응 방법 하나다. 코드가 고른다."""
+
+    async def test_예절은_행_이름이_관찰_subject_와_맞는_행만_고른다(self):
+        docs = SpyDocs([GREETING, TAKING_TURNS])
+        picked = await strategy_rows(docs, months=40, category="social_manner", subject="인사")
+        assert picked == (GREETING,)
+        assert docs.calls[0]["row_type"] == "manner_practice"
+
+    async def test_습관은_상황_태그가_겹치는_행만_고른다(self):
+        docs = SpyDocs([CALM, REST])
+        picked = await strategy_rows(docs, months=40, category="habit", trigger_tags=("tired",))
+        assert picked == (REST,)
+        assert docs.calls[0]["row_type"] == "habit_strategy"
+        assert docs.calls[0]["trigger_tags"] == ("tired",)
+
+    async def test_습관은_태그가_없으면_포트에_가지_않는다(self):
+        docs = SpyDocs([CALM])
+        assert await strategy_rows(docs, months=40, category="habit") == ()
+        assert docs.calls == []
+
+    async def test_월령_밖_행은_포트가_돌려줘도_고르지_않는다(self):
+        """차례 지키기 행은 36개월부터다. 걸러 주지 않는 포트여도 30개월에는 나가지 않는다."""
+        picked = await strategy_rows(
+            SpyDocs([TAKING_TURNS]), months=30, category="social_manner", subject="차례 지키기"
+        )
+        assert picked == ()
+
+    async def test_다른_카테고리_행은_고르지_않는다(self):
+        picked = await strategy_rows(
+            SpyDocs([CALM]), months=40, category="social_manner", subject="긴장할 때"
+        )
+        assert picked == ()
+
+    async def test_최대_세_행이다(self):
+        rows = [
+            strategy_row(
+                f"growth.habit.anxious.r{n}", f"긴장할 때 — {n}", lo=36, trigger_tags=("anxious",)
+            )
+            for n in range(5)
+        ]
+        picked = await strategy_rows(
+            SpyDocs(rows), months=40, category="habit", trigger_tags=("anxious",)
+        )
+        assert len(picked) == DOC_LIMIT
+
+    async def test_자립_카테고리는_전략_행이_없다(self):
+        with pytest.raises(ValueError, match="전략"):
+            await strategy_rows(SpyDocs(), months=40, category="self_care", subject="양치")
+
+    async def test_trigger_tags_는_영문_식별자만_받는다(self):
+        with pytest.raises(ValueError, match="trigger_tags"):
+            await strategy_rows(SpyDocs(), months=40, category="habit", trigger_tags=("긴장할 때",))

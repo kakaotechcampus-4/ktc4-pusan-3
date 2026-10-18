@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from app.agents.common.age import stage_of
@@ -15,8 +15,9 @@ from app.agents.common.gate import DataReady, Gate
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.context import GrowthContext
-from app.agents.growth.store.inmemory import in_memory_ports
-from app.agents.growth.store.ports import GrowthMeasurement, UpstreamUnavailable
+from app.agents.growth.doc_seed import parse_growth_doc
+from app.agents.growth.store.inmemory import InMemoryGrowthDocs, in_memory_ports
+from app.agents.growth.store.ports import GrowthDocRow, GrowthMeasurement, UpstreamUnavailable
 from app.core.book_raw import RawBook
 from app.rules.age import LifeStage
 
@@ -158,3 +159,127 @@ class FakeRawSearch:
         if keyword in self._fail:
             raise UpstreamUnavailable("정보나루 조회 실패 (테스트 주입)")
         return self._by_keyword.get(keyword, ())[:limit]
+
+
+# ── 문서 포트 — 시드 파일과 떨어진 고정 행 ──────────────────────────────────────
+# 시드(reference/growth_doc.yaml)는 검수로 행이 draft 가 되고 새 사슬 · 전략 행이 들어온다.
+# 단위 테스트가 그 결과에 따라 깨지지 않게 이 고정 행을 읽는다.
+# 시드 자체는 test_growth_doc_seed.py 가 본다.
+
+# (카테고리, 사슬 이름, 제목의 행동 이름, 준비물). 도움이 많이 필요한 쪽에서 혼자 하는 쪽으로 네 칸
+_FIXTURE_CHAINS = (
+    ("self_care", "toothbrush", "양치", ("칫솔",)),
+    ("self_care", "handwash", "손 씻기", ("비누", "수건")),
+    ("self_care", "face_wipe", "얼굴 닦기", ("수건",)),
+    ("self_care", "toilet", "화장실 가기", ()),
+    ("mealtime", "spoon", "숟가락 쓰기", ("숟가락",)),
+)
+_FIXTURE_LEVELS = ("full_assist", "partial_assist", "verbal_prompt", "independent")
+# 교육 활동 구간 — 시드와 같은 경계(표준보육과정 0~1세 · 2세, 3~5세)
+_FIXTURE_BANDS = ((12, 24), (24, 36), (36, 72))
+_FIXTURE_META = {
+    "source_title": "(테스트) 문서명",
+    "source_org": "(테스트) 발행처",
+    "source_year": 2024,
+    "source_locator": "(테스트) 절",
+    "license_basis": "public_law",
+    "status": "approved",
+    "authored_by": "fixture-writer",
+    "reviewed_by": "fixture-reviewer",
+    "reviewed_at": date(2026, 10, 9),
+    "version": 1,
+}
+
+
+def _chain_rows(category: str, chain: str, name: str, materials: tuple[str, ...]) -> list[dict]:
+    rows = []
+    for n, level in enumerate(_FIXTURE_LEVELS, start=1):
+        before = f"growth.routine.{category}.{chain}.step{n - 1}"
+        previous = {"next_step_of": before} if n > 1 else {}
+        rows.append(
+            {
+                "doc_key": f"growth.routine.{category}.{chain}.step{n}",
+                "row_type": "routine_step",
+                "title": f"{name} — {n}단계",
+                "body": f"{name}의 {n}단계를 어른과 같이 해 본다.",
+                "min_month": 12,
+                "max_month": 72,
+                "setting": "indoor",
+                "routine_category": category,
+                "materials": list(materials),
+                "tags": [category, f"assistance:{level}"],
+                **previous,
+                **_FIXTURE_META,
+            }
+        )
+    return rows
+
+
+def _learning_rows(lo: int, hi: int) -> list[dict]:
+    return [
+        {
+            "doc_key": f"growth.learn.fixture.m{lo}_{hi}.n{n}",
+            "row_type": "learning_activity",
+            "title": f"그림 카드 짝 맞추기 {n}",
+            "body": "그림 카드를 늘어놓고 같은 그림끼리 짝을 지어 본다.",
+            "min_month": lo,
+            "max_month": hi,
+            "setting": "indoor",
+            "area": "communication",
+            "materials": ["그림 카드"],
+            "tags": ["communication"],
+            **_FIXTURE_META,
+        }
+        for n in range(1, 6)
+    ]
+
+
+def fixture_docs(*extra: GrowthDocRow) -> InMemoryGrowthDocs:
+    """고정 행(사슬 5개 · 교육 구간 3개 × 5행)과 테스트가 더하는 행. 시드가 바뀌어도 그대로다."""
+    raws = [
+        *(row for spec in _FIXTURE_CHAINS for row in _chain_rows(*spec)),
+        *(row for band in _FIXTURE_BANDS for row in _learning_rows(*band)),
+    ]
+    entries = parse_growth_doc({"rows": raws})
+    return InMemoryGrowthDocs([*(entry.to_row() for entry in entries), *extra])
+
+
+def strategy_row(
+    key: str, title: str, *, lo: int, hi: int = 72, trigger_tags: tuple[str, ...] = ()
+) -> GrowthDocRow:
+    """예절 · 습관 전략 행 (approved 로 포트에 들어 있는 모양). doc_key 둘째 칸이 종류를 정한다."""
+    row_type, category = {
+        "manner": ("manner_practice", "social_manner"),
+        "habit": ("habit_strategy", "habit"),
+    }[key.split(".")[1]]
+    return GrowthDocRow(
+        id=uuid5(NAMESPACE_URL, key),
+        doc_key=key,
+        row_type=row_type,
+        title=title,
+        body=f"{title} 본문",
+        min_month=lo,
+        max_month=hi,
+        routine_category=category,
+        trigger_tags=trigger_tags,
+    )
+
+
+GREETING = strategy_row(
+    "growth.manner.greeting.puppet", "인사하기 — 인형 둘로 인사 주고받기", lo=24
+)
+TAKING_TURNS = strategy_row(
+    "growth.manner.turns.timer", "차례 지키기 — 타이머로 순서 바꾸기", lo=36
+)
+CALM = strategy_row(
+    "growth.habit.anxious.name_feeling",
+    "긴장할 때 — 마음을 말로 붙여 주기",
+    lo=36,
+    trigger_tags=("anxious",),
+)
+REST = strategy_row(
+    "growth.habit.tired.wind_down",
+    "졸릴 때 — 잠들기 전 조용한 손놀이로 바꾸기",
+    lo=36,
+    trigger_tags=("tired",),
+)

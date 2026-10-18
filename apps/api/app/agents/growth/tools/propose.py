@@ -5,8 +5,8 @@
 않는다. 3개(루틴은 고른 단계 수)가 안 되면 재호출 1회는 `run()` 이 한다.
 
 루틴은 후보를 보기 전에 코드가 끝낼 수 있다 — 의료 처치 · 증상, 연령 허용표, 근거 0(되묻기),
-단계 없음. 그때는 `state.closing`(코드 문구 키) 이나 `state.question`(되묻기 한 줄)을 남기고
-성공으로 돌려준다 — 루프는 끝나고 `run()` 이 그 값으로 결과를 만든다.
+단계 · 전략 행 없음. 그때는 `state.closing`(코드 문구 키) 이나 `state.question`(되묻기 한 줄)을
+남기고 성공으로 돌려준다 — 루프는 끝나고 `run()` 이 그 값으로 결과를 만든다.
 """
 
 import logging
@@ -91,20 +91,18 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         state.question = ask_question(gap, _subject(context, args.category, args.subject))
         return ok("propose", _ROUTINE, asked=True)
 
-    if args.category not in SELF_RELIANCE:
-        # 예절 · 습관 전략 행이 아직 없다(P1 행). 모델이 전략을 지어내지 않게 닫는다
-        state.closing = DOC_NO_ROW
-        return ok("propose", _ROUTINE, closed=True)
-
+    # 자립은 사슬의 다음 칸, 예절 · 습관은 전략 행이다.
+    # 어느 쪽이든 search_routine_memory 가 코드로 골라 둔 행만 쓴다
     picked = [p for p in state.steps.values() if p.category == args.category]
     rows = {p.step.row.id: p.step.row for p in picked if p.step.row is not None}
     if not rows:
         keys = {p.step.readout_key for p in picked}
-        if ASK_ROUTINE_CURRENT in keys or not picked:
+        if args.category in SELF_RELIANCE and (ASK_ROUTINE_CURRENT in keys or not picked):
             state.question = ask_question(
                 ASK_ROUTINE_CURRENT, _subject(context, args.category, args.subject)
             )
             return ok("propose", _ROUTINE, asked=True)
+        # 맞는 사슬 · 전략 행이 없다. 모델이 단계 · 전략을 지어내지 않게 코드 문구로 닫는다
         state.closing = NEXT_STEP_CHAIN_END if NEXT_STEP_CHAIN_END in keys else DOC_NO_ROW
         return ok("propose", _ROUTINE, closed=True)
 

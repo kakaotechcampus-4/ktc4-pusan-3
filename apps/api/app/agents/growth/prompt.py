@@ -43,6 +43,7 @@ _ROUTINE = """
 [생활 루틴]
 - 먼저 search_routine_memory 를 부른다. 다음 단계(next_steps)는 코드가 골랐다 — 단계를 건너뛰거나
   새로 만들지 않는다. next_steps 의 단계마다 하나씩, 그 단계를 이 집 상황에 맞춘 문장으로 옮긴다.
+- 예절 · 습관이면 next_steps 는 코드가 고른 연습 · 대응 방법이다. 같은 방식으로 하나씩 옮긴다.
 - next_steps 가 없거나 기록이 없으면 items 를 비우고 category · subject 만 낸다.
   코드가 알맞은 안내나 질문을 낸다.
 """.strip()

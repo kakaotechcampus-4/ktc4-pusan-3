@@ -13,6 +13,9 @@ run 시작에 코드가 한 번 부른다. 결과는 프롬프트 `[예시]` 구
 
 자립 단계는 검색에 걸린 행 하나로 끝나지 않는다. `load_routine_chain` 이 그 행의 사슬을 통째로
 읽어 `pick_next_step` 에 넘긴다 — top-3 에는 사슬이 다 오지 않는다.
+
+예절 · 습관은 사슬이 없다. `strategy_rows` 가 행 하나 = 연습 · 대응 방법 하나로 고른다 — 예절은 행
+이름이 관찰 subject 와 맞는 행, 습관은 관찰 trigger 에서 코드가 읽은 상황 태그가 겹치는 행이다.
 """
 
 import hashlib
@@ -42,6 +45,10 @@ _TITLE_SEP = " — "
 
 # 상황 태그는 영문 식별자다 (bored · anxious · tired …). 발화 한 줄이 필터 · 쿼리로 안 흘러가게 한다
 _TRIGGER_TAG = re.compile(r"[a-z][a-z0-9_]*")
+
+# 사슬 대신 행 하나가 연습 · 대응 방법 하나인 카테고리.
+# 예절은 manner_practice, 습관은 habit_strategy 행이다
+STRATEGY_CATEGORIES = frozenset({"social_manner", "habit"})
 
 
 @dataclass(frozen=True)
@@ -176,9 +183,64 @@ async def routine_chains(
     return {key: ordered_chain(await docs.chain(chain_key=key)) for key in keys}
 
 
+def row_name(row: GrowthDocRow) -> str:
+    """행 제목의 이름 — " — " 앞. 예: "인사하기 — 인형 둘로 …" → "인사하기"."""
+    return row.title.split(_TITLE_SEP, 1)[0].strip()
+
+
 def chain_name(chain: Sequence[GrowthDocRow]) -> str:
     """사슬의 행동 이름 — 첫 행 제목의 " — " 앞. 예: "손 씻기 — 어른이 …" → "손 씻기"."""
-    return chain[0].title.split(_TITLE_SEP, 1)[0].strip()
+    return row_name(chain[0])
+
+
+async def strategy_rows(
+    docs: GrowthDocReader,
+    *,
+    months: int,
+    category: str,
+    subject: str = "",
+    trigger_tags: Sequence[str] = (),
+    rotation: str = "",
+) -> tuple[GrowthDocRow, ...]:
+    """예절 · 습관의 전략 행 — 최대 `DOC_LIMIT` 개. 없으면 빈 튜플이고 호출부는 `doc.no_row` 다.
+
+    - 예절(`manner_practice`) — 행 이름(제목의 " — " 앞)이 관찰 subject 와 맞는 행. 맞춤 규칙은
+      사슬 이름과 같다(`match_chain`)
+    - 습관(`habit_strategy`) — 상황 태그가 겹치는 행. 태그가 없으면 포트에 가지 않는다 — 언제
+      나오는 행동인지 모르는 교정안은 일반론이다
+    월령 · 종류 두 번째 관문은 `search_growth_doc` 과 같다. `rotation` 은 "아이 · 날짜" 다.
+    """
+    if category not in STRATEGY_CATEGORIES:
+        raise ValueError(f"전략 행이 있는 카테고리가 아니다: {category!r}")
+    if not all(_TRIGGER_TAG.fullmatch(tag) for tag in trigger_tags):
+        raise ValueError("trigger_tags 는 영문 소문자 식별자만 받는다")
+    if category == "habit" and not trigger_tags:
+        return ()
+    row_type = doc_row_type(GrowthTaskType.ROUTINE_COACHING, months, category)
+    rows = await docs.search(
+        months=months,
+        row_type=row_type,
+        routine_category=category,
+        trigger_tags=tuple(trigger_tags),
+        query=build_doc_query(GrowthTaskType.ROUTINE_COACHING, months, (), category),
+        limit=DOC_POOL,
+    )
+    wanted, tags = normalize(subject), set(trigger_tags)
+    served = [
+        row
+        for row in rows
+        if row.row_type == row_type
+        and row.routine_category == category
+        and row.min_month <= months < row.max_month
+        and (
+            bool(tags & set(row.trigger_tags))
+            if category == "habit"
+            else _related(normalize(row_name(row)), wanted)
+        )
+    ]
+    if rotation:
+        served.sort(key=lambda row: _turn(rotation, row.doc_key))
+    return tuple(served[:DOC_LIMIT])
 
 
 def match_chain(
