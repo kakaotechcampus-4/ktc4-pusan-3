@@ -1,4 +1,4 @@
-"""Growth 모델 tool 인자 — 개수 고정 · 정의 안 된 칸 거부 · tool 정의 6개."""
+"""Growth 모델 tool 인자 — 개수 고정 · 정의 안 된 칸 거부 · tool 정의 8개."""
 
 import pytest
 from pydantic import ValidationError
@@ -72,14 +72,16 @@ class TestAffinity:
 
 
 class TestDefinitions:
-    def test_모델_tool_정의는_여섯_개다(self):
+    def test_모델_tool_정의는_여덟_개다(self):
         assert [d.name for d in TOOL_DEFINITIONS] == [
             "search_education_memory",
             "search_routine_memory",
             "search_activity_memory",
             "search_affinity",
+            "search_books",
             "propose_learning_activity",
             "propose_routine_plan",
+            "propose_books",
         ]
 
     def test_모델이_kind_status_allergens_를_고르는_칸이_없다(self):
@@ -87,3 +89,39 @@ class TestDefinitions:
             schema = str(definition.args.model_json_schema())
             for forbidden in ("'kind'", "'status'", "'allergens'", "'expires_at'"):
                 assert forbidden not in schema, (definition.name, forbidden)
+
+
+class TestBookArgs:
+    """검색어는 정보나루로 나간다 — 문장 · 문장부호 · 긴 이름이 밖으로 나가지 않게 모양을 묶는다."""
+
+    @pytest.mark.parametrize("words", [["공룡"], ["아기 공룡", "dino", "숫자 123"]])
+    def test_주제_낱말은_받는다(self, words):
+        from app.agents.growth.schemas.books import SearchBooksArgs
+
+        assert SearchBooksArgs.model_validate({"keywords": words}).keywords == words
+
+    @pytest.mark.parametrize(
+        "words",
+        [
+            [],
+            ["공룡", "기차", "동물", "숫자"],
+            ["가" * 13],
+            [" 공룡"],
+            ["공룡  책"],
+            ["우리 아이가 좋아하는 공룡!"],
+            ["공룡\n책"],
+        ],
+    )
+    def test_모양이_다르면_받지_않는다(self, words):
+        from app.agents.growth.schemas.books import SearchBooksArgs
+
+        with pytest.raises(ValidationError):
+            SearchBooksArgs.model_validate({"keywords": words})
+
+    def test_책은_3권까지_빈_제출도_모양으로는_받는다(self):
+        from app.agents.growth.schemas.books import ProposeBooksArgs
+
+        assert ProposeBooksArgs.model_validate({"items": []}).items == []
+        item = {"isbn": "9788900000001", "reason": "공룡이 나와요"}
+        with pytest.raises(ValidationError):
+            ProposeBooksArgs.model_validate({"items": [item] * 4})

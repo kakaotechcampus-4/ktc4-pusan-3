@@ -1,4 +1,4 @@
-"""교육 · 루틴 추천의 출력 (모델 tool 2개).
+"""교육 · 루틴 · 도서 추천의 출력 (모델 tool 3개).
 
 통과한 추천은 `state.suggestions` 에 담는다. 저장 · 발송은 하지 않는다 — pipeline 이 저장한다.
 안전 필터 · 금지 표현으로 빠진 후보는 이름만 `state.excluded` 에 남기고 모델에게 사유를 알리지
@@ -16,9 +16,18 @@ from app.agents.common.suggestion import MAX_SUGGESTIONS, check_count
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.readouts import ASK_ROUTINE_CURRENT, DOC_NO_ROW, NEXT_STEP_CHAIN_END
 from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
-from app.agents.growth.review import error_code, explain, review_learning, review_routine
+from app.agents.growth.review import (
+    error_code,
+    explain,
+    review_books,
+    review_learning,
+    review_routine,
+)
+from app.agents.growth.schemas.books import ProposeBooksArgs
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
 from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
+from app.agents.growth.tools.books import book_label, propose_books
+from app.agents.growth.tools.books import explain as explain_books
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.memory import SELF_RELIANCE
 from app.agents.growth.tools.routine import ask_question, check_routine_category, routine_gap
@@ -28,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 _LEARNING = "propose_learning_activity"
 _ROUTINE = "propose_routine_plan"
+_BOOKS = "propose_books"
 
 
 def _ready(context: GrowthContext) -> tuple[Gate, SafetyRules]:
@@ -127,6 +137,48 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
     state.suggestions = review.drafts
     state.capacity = capacity
     return ok("propose", _ROUTINE, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
+
+
+async def propose_books_tool(context: GrowthContext, args: ProposeBooksArgs) -> ToolResult:
+    """도서 출력. 검색한 책 중에서 고른 것만 낸다 — 지어낸 책 · 이미 낸 책 · 같은 책은 사유와 함께
+    돌려준다(`tools/books.propose_books`).
+
+    낼 수 있는 책(`available`, 3권까지)을 다 내야 한다. 검색 결과가 모자라면 있는 만큼, 0권이면 빈
+    제출을 받는다 — 단 검색을 한 뒤에만. 금지 표현이 든 후보는 빠지고(제외 목록) 재호출 1회는
+    `run()` 이 한다. 안전 필터는 없다 — 도서는 건강정보를 읽지 않는다.
+    """
+    state = context.state
+    state.suggestions, state.excluded = (), ()
+    if not state.book_searched:
+        return fail(
+            "propose", _BOOKS, ErrorCode.CANDIDATE_REJECTED, "먼저 search_books 로 책을 찾는다."
+        )
+    picked = await propose_books(context, [item.isbn for item in args.items])
+    if picked.rejections:
+        hint = "" if picked.available else " 낼 수 있는 책이 더 없으면 items 를 비운다."
+        return fail(
+            "propose", _BOOKS, ErrorCode.CANDIDATE_REJECTED, explain_books(picked.rejections) + hint
+        )
+    review = review_books(
+        args.items, picked.accepted, seen=state.seen_evidence, today=context.today
+    )
+    if review.rejections:
+        return fail("propose", _BOOKS, error_code(review.rejections), explain(review.rejections))
+    if not review.removed and len(review.drafts) < picked.available:
+        return fail(
+            "propose",
+            _BOOKS,
+            ErrorCode.CANDIDATE_REJECTED,
+            f"search_books 결과에 낼 수 있는 책이 {picked.available}권 있다. "
+            f"{picked.available}권을 낸다.",
+        )
+    _log_removed(context, len(review.removed))
+    state.excluded = tuple(book_label(picked.accepted[i]) for i in review.removed)
+    if not review.removed:
+        check_count(review.drafts, exhausted=picked.available < MAX_SUGGESTIONS)
+    state.suggestions = review.drafts
+    state.capacity = picked.available
+    return ok("propose", _BOOKS, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
 
 
 def _subject(context: GrowthContext, category: str, fallback: str) -> str:

@@ -48,8 +48,8 @@ task별로 모델에 열리는 tool:
 모델에 노출하지 않는다. 모델에 노출하면 Gate를 우회할 수 있기 때문이다.
 
 모델용 tool 의 정의는 `schemas/tool_defs.py`, 실행은 `execute_tool` 이다. 정의가 없는 이름
-(`lookup_notice` · `search_books` · `propose_books`)은 `tools_for` 가 내도 스펙에 싣지 않고 실행도
-하지 않는다 — 공지 내용 · 도서 포트가 운영에 없다.
+(`lookup_notice`)은 `tools_for` 가 내도 스펙에 싣지 않고 실행도 하지 않는다 — 공지 내용 포트가
+운영에 없다. 도서 tool 은 도서 포트가 없으면 `closed_readout_key` 가 먼저 닫는다.
 """
 
 from collections.abc import Awaitable, Callable, Collection
@@ -70,6 +70,7 @@ from app.agents.growth.readouts import (
 from app.agents.growth.result import ErrorCode, ToolResult, fail
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
+from app.agents.growth.tools.books import search_books_tool
 from app.agents.growth.tools.delta import compute_growth_delta
 from app.agents.growth.tools.memory import (
     search_activity_memory,
@@ -77,7 +78,11 @@ from app.agents.growth.tools.memory import (
     search_education_memory,
     search_routine_memory,
 )
-from app.agents.growth.tools.propose import propose_learning_activity, propose_routine_plan
+from app.agents.growth.tools.propose import (
+    propose_books_tool,
+    propose_learning_activity,
+    propose_routine_plan,
+)
 from app.agents.growth.tools.routine import check_routine_category, pick_next_step
 
 ToolHandler = Callable[[GrowthContext, Any], Awaitable[ToolResult]]
@@ -87,8 +92,10 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_routine_memory": search_routine_memory,
     "search_activity_memory": search_activity_memory,
     "search_affinity": search_affinity,
+    "search_books": search_books_tool,
     "propose_learning_activity": propose_learning_activity,
     "propose_routine_plan": propose_routine_plan,
+    "propose_books": propose_books_tool,
 }
 _DEFINITIONS: dict[str, ToolDefinition] = {d.name: d for d in TOOL_DEFINITIONS}
 _SPECS_BY_NAME: dict[str, dict[str, Any]] = {

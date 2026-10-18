@@ -1,12 +1,13 @@
-"""모델에게 보이는 Growth tool 6개의 이름 · 호출 조건 · argument 모델.
+"""모델에게 보이는 Growth tool 8개의 이름 · 호출 조건 · argument 모델.
 
 description 에는 '무엇을 하는가'보다 '언제 부르는가'를 적는다. 문서 행 조회 · 단계 고르기 ·
 안전 필터는 코드 tool 이라 여기 없다 (`gating.CODE_TOOL_NAMES`).
-`lookup_notice` · `search_books` · `propose_books` 는 아직 정의하지 않는다 — 공지 내용 포트와
-도서 포트가 운영에 없다. `tools_for` 가 이름을 내도 `specs_for` 가 정의된 것만 싣는다.
+`lookup_notice` 는 아직 정의하지 않는다 — 공지 내용 포트가 운영에 없다. `tools_for` 가 이름을
+내도 `specs_for` 가 정의된 것만 싣는다.
 """
 
 from app.agents.common.tool_schema import ToolDefinition
+from app.agents.growth.schemas.books import ProposeBooksArgs, SearchBooksArgs
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
 from app.agents.growth.schemas.memory import (
     SearchActivityMemoryArgs,
@@ -46,6 +47,14 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         args=SearchAffinityArgs,
     ),
     ToolDefinition(
+        name="search_books",
+        description=(
+            "관심 주제 낱말로 책을 찾는다. 이 나이에 맞는 형태의 책만 돌려준다. "
+            "책을 내기 전에 부른다. 결과의 isbn 만 propose_books 에 쓸 수 있다."
+        ),
+        args=SearchBooksArgs,
+    ),
+    ToolDefinition(
         name="propose_learning_activity",
         description=(
             "교육 활동 후보 3개를 제출한다. 마지막에 한 번 부른다. "
@@ -60,5 +69,13 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "next_steps 가 없으면 items 를 비우고 category · subject 만 낸다."
         ),
         args=ProposeRoutinePlanArgs,
+    ),
+    ToolDefinition(
+        name="propose_books",
+        description=(
+            "책 3권을 제출한다. 마지막에 한 번 부른다. search_books 결과의 isbn 만 쓴다. "
+            "낼 책이 모자라면 있는 만큼, 하나도 없으면 items 를 비운다."
+        ),
+        args=ProposeBooksArgs,
     ),
 ]
