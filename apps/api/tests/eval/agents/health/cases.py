@@ -4,8 +4,9 @@
 `test_expected_health.md` 가 정본이다. 문서에 입력이 더해졌는데 이 표를 안 고치면
 `test_health_eval_cases.py` 가 깨진다.
 
-판정은 동의 철회 다섯만 `consent_closed` 다 — 지금 시점에 완성된 경로가 그것뿐이다. 나머지는
-`pending` 이라 라벨이 구현되기 전에는 GAP, 구현된 뒤에는 판정을 쓰라고 실패한다.
+판정은 완성된 경로만 쓴다 — 동의 철회 다섯(`consent_closed`)과 `schedule_check`(`schedule_check`).
+나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP, 구현된 뒤에는 판정을 쓰라고 실패한다.
+검진 맥락 요약(T34 · T35)은 `schedule_check` 안의 `unsupported` 라 `pending(partial=True)` 다.
 """
 
 from collections.abc import Callable
@@ -13,7 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.agents.health.schemas.task import HealthTaskType
-from tests.eval.agents.health.judges import Ran, Verdict, consent_closed, pending
+from tests.eval.agents.health.judges import (
+    Ran,
+    Verdict,
+    consent_closed,
+    pending,
+    schedule_check,
+)
 
 HEALTH_DOCS = Path(__file__).resolve().parents[6] / "docs" / "agents" / "health"
 
@@ -197,27 +204,71 @@ CASES: list[Case] = [
     ),
     _case("T25-safetyfail", None, "C48-safetyfail", "symptom.repeat 기본 문장만"),
     # ── 검진 · 접종 ──
-    _case("T30", S, "C48", "현재·다음 차수 (48개월: 6–7차 구간)"),
-    _case("T30-C2", S, "C2", "2차(4–6개월) 안내"),
-    _case("T30-C23", S, "C23", "4차(18–24개월) 구간"),
-    _case("T30-C24", S, "C24", "다음 차수 5차(30–36개월) 안내"),
-    _case("T30-C71", S, "C71", "8차(66–71개월) 구간"),
-    _case("T30-C72", S, "C72", "checkup.aged_out 글자 그대로"),
+    _case("T30", S, "C48", "현재·다음 차수 (48개월: 6–7차 구간)", judge=schedule_check(6, 7)),
+    _case("T30-C2", S, "C2", "2차(4–6개월) 안내", judge=schedule_check(None, 2)),
+    _case("T30-C23", S, "C23", "4차(18–24개월) 구간", judge=schedule_check(4, 5)),
+    _case("T30-C24", S, "C24", "다음 차수 5차(30–36개월) 안내", judge=schedule_check(4, 5)),
+    _case("T30-C71", S, "C71", "8차(66–71개월) 구간", judge=schedule_check(8, None)),
+    _case(
+        "T30-C72",
+        S,
+        "C72",
+        "checkup.aged_out 글자 그대로 · 이어서 이 시기 접종 목록(만 4–6세 · 만 6세)",
+        judge=schedule_check(None, None, aged_out=True, due=True),
+    ),
     _closed("T30-noconsent", S),
-    _case("T31", S, "C48", "이 시기 권장 접종 + vaccine.disclaimer"),
-    _case("T31-C35", S, "C35", "추가 접종 구간"),
-    _case("T31-C36", S, "C36", "만 4–6세 추가 접종 구간"),
-    _case("T31-C71", S, "C71", "권장 접종 목록 + vaccine.disclaimer"),
-    _case("T31-C72", S, "C72", "checkup.aged_out · 접종 목록 없음"),
-    _case("T32", S, "C48", "권장 목록 + 예방접종도우미 안내"),
-    _case("T33", S, "C48", "event_requests 1건이 초안 payload로 나감 · event 테이블 0건"),
+    _case(
+        "T31",
+        S,
+        "C48",
+        "이 시기 권장 접종 + vaccine.disclaimer",
+        judge=schedule_check(6, 7),
+    ),
+    _case("T31-C35", S, "C35", "추가 접종 구간", judge=schedule_check(5, 6, due=True)),
+    _case(
+        "T31-C36",
+        S,
+        "C36",
+        "vaccine.none_now + 다음 접종 시기(만 4–6세 추가 접종)",
+        judge=schedule_check(5, 6, due=False, upcoming=True),
+    ),
+    _case(
+        "T31-C71",
+        S,
+        "C71",
+        "권장 접종 목록 + vaccine.disclaimer",
+        judge=schedule_check(8, None, due=True),
+    ),
+    _case(
+        "T31-C72",
+        S,
+        "C72",
+        "checkup.aged_out · 이 시기 접종 목록(DTaP 5차 · IPV 4차 · MMR 2차 · 일본뇌염 4차) "
+        "+ vaccine.disclaimer",
+        judge=schedule_check(None, None, aged_out=True, due=True),
+    ),
+    _case("T32", S, "C48", "권장 목록 + 예방접종도우미 안내", judge=schedule_check(6, 7)),
+    _case(
+        "T33",
+        S,
+        "C48",
+        "event_requests 1건이 초안 payload로 나감 · event 테이블 0건",
+        judge=schedule_check(6, 7, alarm=True),
+    ),
     _case(
         "T34",
         S,
         "C48",
         "checkup_context · 식사 경향·복약·최근 증상·알레르기·만성질환 · 고정 footer",
+        judge=pending("검진 맥락 요약", partial=True),
     ),
-    _case("T35", S, "C48", "대필 거절 + 요약 제공"),
+    _case(
+        "T35",
+        S,
+        "C48",
+        "대필 거절 + 요약 제공",
+        judge=pending("검진 맥락 요약", partial=True),
+    ),
     # ── 병원 찾기 ──
     _case("T41", P, "C48", "평일 주간 → 소아청소년과 거리순 ≤5"),
     _case("T41-nolocation", P, "C48-nolocation", "위치 허용 안내"),
