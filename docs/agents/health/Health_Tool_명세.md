@@ -86,11 +86,13 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 검진 주기 상수: 일반 14–35일 · 4–6 · 9–12 · 18–24 · 30–36 · 42–48 · 54–60 · 66–71개월 / 구강 18–29 · 30–41 · 42–53 · 54–65개월
 
 ### `find_pediatric_places`
-| 입력 | 좌표(기기, 비저장), `now`, `mode: "normal"\|"emergency"` |
+| 입력 | 흐린 좌표(`CoarseLocation`, 약 1km · 비저장), `now`(KST), `mode: "normal"\|"emergency"` |
 | --- | --- |
-| 분기 | 평일 주간 → 심평원 소아청소년과 · 야간·휴일 → 달빛어린이병원 → 응급의료기관 · emergency → 응급의료기관만 |
-| 출력 | 거리순 ≤5 `{name, distance, phone, open_now}` → `Readout(code, kind="place_list")` |
-| 실패 | "병원 정보를 불러오지 못했어요. 응급 시 119" |
+| 위치 | 🚨 **보호자 좌표를 병원 API 에 보내지 않는다** — 좌표 → 5km 격자만 어댑터(`FacilitySource`)에 넘기고, 어댑터가 시군구로 바꿔 조회한다. 거리는 받은 기관 좌표로 서버 안에서 계산한다 (Activity 와 같은 원칙 · activity-agent-v1 D9 · #166 위치 약관) |
+| 분기 | 평일 09–18시 → 소아청소년과 · 그 밖(토 · 일 · 공휴일 · 야간) → 달빛어린이병원 → 응급의료기관 · emergency → 응급의료기관만. 종류 순서가 거리보다 먼저다 |
+| 출력 | 종류 순 · 같은 종류는 거리순 ≤5 `{name, tier, distance_m, phone, open_now}` → `Readout(kind="place_list")`. 문을 닫은 게 확실한 곳(`open_now=False`)은 뺀다 |
+| 실패 | 조회 실패 → "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요." · 0곳은 실패와 따로 → "근처에서 지금 찾을 수 있는 병원이 없어요. …" · 위치 없음 → "위치를 허용하시면 가까운 병원을 찾아드려요." |
+| 코드 | `app/agents/health/places/` — 순수 판정 · 거리순 · readout. 공공 API 어댑터는 활용신청 뒤 `app/integrations/` 에 붙인다 |
 
 ### `resolve_dose_timing`
 | 입력 | `timing_span` (발화 원문) |
