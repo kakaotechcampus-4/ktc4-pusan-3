@@ -87,6 +87,8 @@ DoD: upgrade/downgrade 왕복 · agent role로 `growth_doc` INSERT 시도 → �
 
 `next_step_of` 사슬은 양치·배변 등 고시 문구로 받칠 수 있는 6종부터(GT-4). 옷 입기는 고시에 문구가 없어 뺐다.
 
+> **진행(#511)** — 예절 · 습관은 전략 행이 있으면 열린다 — 예절은 행동 이름, 습관은 trigger 의 상황 태그(`reference/growth_triggers.yaml`)로 코드가 고르고, 맞는 행이 없으면 `doc.no_row`. 리듬 안내는 아이 · 날짜로 돌려 고른다. 행은 표준보육과정 고시 본문에서 새로 써 넣었다(예절 22 · 리듬 10 · 습관 20, `reviewed_by: admin` 임시 검수 — 실제 검수는 별도 이슈). 새 자립 사슬(옷 입기 · 신발 · 빨래 바구니 · 등원 준비)은 고시로 단계를 받칠 수 없어 0행이다. `book_guide` · `measure_guide` 는 쓰지 않는다(읽는 코드 · 출처가 없고, 일반 도서 추천의 근거는 도서 API 행으로 정하는 쪽이다). 행 수는 `growth_doc.yaml` 이 정본이다.
+
 ### 4-2. 도서
 
 | # | 작업 | DoD |

@@ -72,6 +72,7 @@ Growth는 관찰을 직접 쓰지 않지만, 보호자가 추천을 승인하면
 - 적재 시 두 검사를 통과해야 합니다 — **평가 표현 lint**(또래·발달·늦·뛰어나 …)와 **`hazard_term` 스캔**(`materials`·`body`가 행의 `min_month`와 충돌하면 오류).
 - `next_step_of`로 자립 단계를 사슬로 묶습니다. **`pick_next_step`(코드)이 관찰의 `assistance_level`로 지금 칸을 찾고 사슬의 바로 다음 행을 고릅니다.** 모델은 그 행을 집 상황에 맞춰 문장으로 옮길 뿐이라 단계를 건너뛸 수 없습니다.
 - **`routine_step` 행 규칙** — `tags` 에 `assistance:<independent|verbal_prompt|partial_assist|full_assist>` 를 **정확히 하나** 적습니다(그 행이 어느 도움 수준에 해당하는지). `next_step_of` 는 앞 단계 행이고, 한 사슬은 처음이 하나이며 갈라짐·끊김·순환이 없고 도움이 많이 필요한 수준에서 혼자 하는 수준 순서로 나아갑니다. 적재 검사는 `pick_next_step` 이 쓰는 `ordered_chain` 을 그대로 씁니다(`tests/unit/agents/growth/test_growth_doc_seed.py`). doc_key 는 `growth.routine.<routine_category>.<사슬 이름>.step<N>` 이고, `.step<N>` 앞까지가 사슬 이름입니다. run 은 의미 검색에 걸린 행의 사슬 이름으로 approved 행을 통째로 읽어(`GrowthDocReader.chain`) `pick_next_step` 에 넘깁니다 — top-3 에는 사슬이 다 오지 않습니다. 사슬은 월령으로 거르지 않고, 컬럼을 더하지 않아 DDL 은 그대로입니다.
+- **예절 · 습관 · 리듬 행 규칙** — `manner_practice` 는 doc_key `growth.manner.<주제>.<이름>`, 제목 "행동 이름 — 설명"(이름을 관찰 subject 와 맞춘다). `habit_strategy` 는 doc_key `growth.habit.<상황 태그>.<이름>`, `trigger_tags` 는 `reference/growth_triggers.yaml` 의 태그 **하나**(doc_key 셋째 칸과 같다). `rhythm_info` 는 doc_key `growth.rhythm.m<lo>_<hi>.<이름>`, `max_month` 12 이하, 잠 · 하루 일과 순서만(수유 · 숫자 없음). 적재 검사가 막는다(`test_growth_doc_seed.py`). 컬럼을 더하지 않아 DDL 은 그대로다.
 - **교육과정 자료와 루틴 자료가 같은 테이블에 있습니다.** 별도 KB 인덱스를 만들지 않습니다 — 조회 경로는 `search_growth_doc` 하나뿐이고, 갈리는 것은 `row_type`과 월령입니다.
 
 **담지 않는 것** — 발달 이정표, "이 나이면 ~할 수 있다" 형태의 문장, 또래 비교. 이런 행은 평가 문장의 씨앗이 됩니다.
@@ -247,10 +248,10 @@ CREATE INDEX book_catalog_subject_idx ON book_catalog USING gin (subjects);
 
 | # | 쟁점 | 메모 |
 | --- | --- | --- |
-| GT-1 | `growth_doc` 초기 행 수 | 루틴 40 · 교육 60 · 습관 20 · 예절/리듬 20 · 도서 8 |
+| GT-1 | `growth_doc` 초기 행 수 | 루틴 40(6사슬 24 + 새 4사슬 16 — 새 사슬은 #337 기준 자료가 생긴 뒤) · 교육 80 · 습관 20(상황 태그 4 × 5) · 예절 22 · 리듬 10 · 도서 · 측정 0 — book_guide · measure_guide 는 읽는 코드와 출처가 없어 쓰지 않는다 |
 | GT-2 | 해설서·사례집의 라이선스 | #337 기준으로 정함 — 상업적 이용 · 변경이 허락된 것만 행 출처로 쓴다. 해설서 · 사례집은 공공누리 제4유형이라 쓰지 않고, 고시 본문(`public_law`)만 쓴다(#293) |
 | GT-3 | 도서 API 연령 파라미터 코드 | 정보나루 `age` 는 대출자 연령대(0 = 영유아 0~5세)라 단계를 못 가른다. 처음 값 — 아동 도서(부가기호 첫 자리 7)로 좁히고, 서명 키워드(보드북 · 촉감책 · 헝겊책 · 사운드북 · 초점책)면 `board` 0–35, KDC 8(문학)이면 `picture` 12–71, 그 밖의 KDC 면 `info` 36–71, 부가기호가 없으면 `unknown`(0–11개월 제외). 청구기호는 쓰지 않는다. 어댑터 계약 테스트(`tests/unit/integrations/test_data4library_client.py`, 실제 응답 픽스처)로 확정했다 — 부가기호는 5자리 숫자, KDC 는 `813.8` 꼴로 오고 실제 응답에서 보드북 · 그림책이 가려진다(#506). 코드는 `app/rules/book_form.py` 다 (#290). 구현에서 정한 것 — ① 부가기호 첫 자리가 7 이 아니면 서명에 보드북이 있어도 후보에서 뺀다 ② 부가기호가 없으면 서명 키워드 · KDC 가 그럴듯해도 `unknown` ③ 분류번호를 못 읽어도 `unknown` ④ 월령 범위는 양 끝을 포함한다(`board` 0–35 = 35개월까지, 36개월부터는 빠진다) ⑤ `search_books` 는 행의 `age_min_month` · `age_max_month` 를 다시 믿지 않고 `form` 으로 건다 |
-| GT-4 | `next_step_of` 사슬을 어디까지 만들지 | #293 에서 6사슬(손 씻기 · 양치 · 얼굴 닦기 · 화장실 · 숟가락 · 장난감 정리). 옷 입기 · 신발 · 빨래 바구니 · 외출 준비는 고시 문구가 없어 `growth_doc.yaml` TODO |
+| GT-4 | `next_step_of` 사슬을 어디까지 만들지 | #293 에서 6사슬(손 씻기 · 양치 · 얼굴 닦기 · 화장실 · 숟가락 · 장난감 정리). 옷 입기 · 신발 · 빨래 바구니 · 외출 준비는 고시 문구가 없어 `growth_doc.yaml` TODO. 새 사슬 이름은 옷 입기 · 신발 신기 · 빨래 바구니에 넣기 · 등원 준비(관찰 subject 와 맞는 말) — #337 기준 자료가 있을 때만 쓴다 |
 | GT-5 | `notice` 스키마 | OCR 팀 결정 대기. 우선순위 낮음 |
 | GT-6 | ~~`observation_education.source_suggestion_id`~~ | ✅ **폐기(09-22)** — 두지 않는다. 추천 → 관찰의 역방향 추적은 v1 범위 밖 |
-| GT-7 | 루틴 행의 원문 출처 | 배변·수면 자료의 공신력 있는 원문 확보. 별도 KB가 아니라 `growth_doc` 행으로 들어간다 |
+| GT-7 | 루틴 행의 원문 출처 | 예절 · 습관 · 리듬은 고시 내용(사회관계 · 신체운동·건강 · 의사소통)에서 쓴다. 고시에 없는 것은 #337 기준 자료(공공누리 제1유형 · 고시 · CC BY · 서면 허락)만 — 국가건강정보포털 · 해설서는 제4유형이라 안 된다. 별도 KB 가 아니라 growth_doc 행으로 들어간다 |

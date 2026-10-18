@@ -18,7 +18,7 @@
 | **국립중앙도서관 사서추천도서 API** — nl.go.kr | 사서 추천 목록(분류별) | 추천 가중치 (+) | 월 1회 배치 |
 | 교육부 **표준보육과정 고시** (교육부고시 제2024-23호) — 0~1세 · 2세 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 12–35 · `routine_step`) | 사람이 읽고 **행으로 재작성**. 고시는 `public_law`(저작권법 제7조 2호) |
 | 같은 고시의 **3~5세(누리과정)** — 「2019 개정 누리과정」 고시와 내용이 같다 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 36+ · `routine_step`) | 동일. 출처 문자열은 0~5세 모두 `표준보육과정 고시 (교육부고시 제2024-23호)` 하나(activity_doc 과 같다) |
-| 루틴 자료 (배변·수면·습관·예절) | 미확보 — 상업적 이용 · 변경이 허락된 자료만 쓴다(#337). 국가건강정보포털 · 해설서는 공공누리 제4유형이라 쓰지 않는다 | `search_growth_doc` (`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 확보 전에는 연령별 코드 템플릿만 |
+| 루틴 자료 (배변·수면·습관·예절) | 미확보 — 상업적 이용 · 변경이 허락된 자료만 쓴다(#337). 국가건강정보포털 · 해설서는 공공누리 제4유형이라 쓰지 않는다 | `search_growth_doc` (`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 예절 · 습관 · 리듬은 고시 내용(사회관계 · 신체운동·건강 · 의사소통)에서 쓰고, 고시로 단계를 받칠 수 없는 자립 사슬(옷 입기 · 신발 · 빨래 · 등원 준비)은 #337 기준 자료가 생길 때까지 행이 없다. 행이 없으면 `doc.no_row` · `rhythm.no_row` |
 | `child_growth_log` | 키·몸무게·측정일 | `compute_growth_delta` | 포트 |
 
 - 도서는 **API 응답만 추천 가능** — 모델이 책 제목을 생성하면 `propose_books`가 ISBN 검증에서 거절.
@@ -58,14 +58,14 @@
 | `lookup_notice` | `period: "this_week"\|"next_week"` | 일반 기관 공지 요약 (보조) | 읽기만. 준비물·행사는 `event`로 가므로 여기 없음 |
 | `search_books` | `keywords[1–3]` — 한 개 12자 · 한글 영문 숫자 · 낱말 사이 한 칸(정보나루로 나가는 값이라 코드가 모양을 묶는다) | `{isbn, title, author, publisher, form}` 최대 10권 | 연령 필터 코드 주입 · 캐시 우선 · 0권이면 `NO_RECORDS` 로 다른 낱말 · 빈 제출 안내 |
 | `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence[{id, note}], reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다. 그 뒤 같은 호출 안의 같은 제목(띄어쓰기 · 문장부호 무시)은 거절하고, 근거 note 의 반복 · 성향 표현(어제도 · 또 · 늘 · 항상 · 좋아하는)은 티어 1 근거에만 쓴다 — Activity 와 같은 `common/evidence.overstates` |
-| `propose_routine_plan` | `category`, `subject`, `items[≤next_steps 수]: {step_id, next_step, how, evidence[{id, note}], reason}` (`rhythm_info` 모드면 `items` 없음 · 되묻기 · 닫힘이면 `items` 를 비운다) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 음식 용어 → 금지 표현 필터 · 근거 note 의 성향 표현은 티어 1 근거에만(교육과 같다) |
+| `propose_routine_plan` | `category`, `subject`, `items[≤next_steps 수]: {step_id, next_step, how, evidence[{id, note}], reason}` (`rhythm_info` 모드면 `items` 없음 · 되묻기 · 닫힘이면 `items` 를 비운다) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 예절 · 습관은 사슬 대신 코드가 고른 전략 행을 옮긴다(아래 "예절 · 습관 — 전략 행") · 음식 용어 → 금지 표현 필터 · 근거 note 의 성향 표현은 티어 1 근거에만(교육과 같다) |
 | `propose_books` | `items[≤3]: {isbn, evidence[{id, note}], reason}` — 검색한 책 중 낼 수 있는 책이 3권보다 적으면 그만큼, 0권이면 빈 제출(검색한 뒤에만) | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 낸 책도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 같은 책과 4권째도 거절한다. 같은 책은 ISBN 이 아니라 `items` 에 들어가는 "제목(저자)"(`book_label`)로 가른다 — ISBN 은 저장하지 않아서 지난 추천과 맞춰 볼 값이 이것뿐이고, 보드북판 · 양장판처럼 ISBN 만 다른 같은 책도 함께 거른다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` · 개인화 근거는 고른 기록뿐이고, 기록이 없으면 일반 추천이며 근거는 그 책(`book_catalog`)이다 — Food 메뉴(#442)처럼 코드가 `general_basis` 로만 단다. 금지 표현은 이유 · 근거 메모 · 책 이름에 건다. 핸들러는 `tools/books.search_books_tool` · `tools/propose.propose_books_tool` |
 
 ### 0–11개월은 추천을 내지 않는다
 
 `mode=rhythm_info`는 **`Readout(code)` 하나**다. 수면·수유 리듬 안내는 "다음에 해볼 것"이 아니라 일반 안내라서 승인할 것이 없고, 카드 3장을 띄우면 화면이 거짓말을 한다. 18개월 미만은 `profile_affinity`가 구조적으로 0행이라 티어 1·2 근거가 없다. 티어 3(최근 14일 관찰)은 살아 있어서 개인화가 아예 막히지는 않는다.
 
-문구는 `growth_doc`의 `rhythm_info` 행에서 온다. 행이 없으면 연령별 코드 템플릿으로 간다.
+문구는 `growth_doc`의 `rhythm_info` 행 본문 그대로다(모델을 거치지 않는다). 한 구간에 행이 여럿이면 아이 · 날짜로 돌려 고르고(교육 [예시]와 같다), 출처를 따라갈 수 있게 그 행을 readout 의 `source_refs` 에 단다. 행이 없으면 `rhythm.no_row` 한 줄이다. 리듬 행은 잠 · 하루 일과 순서만 담는다 — 수유 · 이유식은 Food 몫이고, 시간 · 횟수 숫자는 기준표라 넣지 않는다.
 
 ### 승인된 추천이 가는 관찰 테이블
 
@@ -110,6 +110,16 @@
 - 교육 · 놀이 affinity 는 관심사를 잇는 데(*"공룡을 좋아해서 공룡 칫솔 노래"*) 더해서 인용할 수 있지만 **개수에 넣지 않는다.** 그것만 있으면 아이가 지금 어디까지 하는지 모르는 채 다음 단계를 내게 된다.
 - `pick_next_step` 도 같은 창 안 관찰의 `assistance_level` 만 읽는다. 창 안 관찰이 없거나 `assistance_level` 이 비어 있으면 `ask.routine_current` 로 되묻는다. 오래된 수준으로 단계를 고르면 이미 넘어선 단계를 시킬 수 있다.
 - 창을 넓히지 않는다. #246 의 재질문 상한(4회)은 Memory 되묻기 것이라 여기에 그대로 걸리지 않고, 되묻기가 잦아지는 문제는 도메인 Agent 되묻기에 답하는 길과 같이 #246 에서 정한다(#276).
+
+### 예절 · 습관 — 전략 행
+
+예절(`social_manner`, 24개월+)과 습관(`habit`, 36개월+)은 자립 단계처럼 사슬을 따라가지 않는다. 행 하나가 연습 · 대응 방법 하나이고, `search_routine_memory` 가 **코드로** 골라 `next_steps` 에 싣는다(`tools/docs.strategy_rows`). 모델은 그 행을 집 상황에 맞춰 문장으로 옮길 뿐이다.
+
+- 예절 — `manner_practice` 행 제목의 이름(" — " 앞)이 관찰 subject 와 맞는 행. 맞춤 규칙은 사슬 이름과 같다(띄어쓰기 무시 · 서로 포함 · 두 글자 이상)
+- 습관 — 행동(subject)마다 그 행동 자신의 관찰 `trigger` 를 코드가 상황 태그로 옮기고(다른 행동의 trigger 를 빌리지 않는다. 증상으로 닫히는 subject 는 행을 고르지 않는다)(`reference/growth_triggers.yaml` — 긴장 · 화남 · 졸림 · 심심함), 그 태그의 `habit_strategy` 행. 보호자가 말한 trigger 원문은 문서 조회에 넣지 않는다
+- 카테고리마다 최대 3칸, 같은 날 같은 아이는 같은 행(아이 · 날짜로 돌린다)
+- 근거는 자립과 같다 — 같은 카테고리 14일 관찰을 인용해야 하고, 고른 행은 코드가 `growth_doc` 근거로 덧붙인다. 일반 추천은 없다
+- 닫힘 — 맞는 행이 없으면 `doc.no_row`(모델이 전략을 지어내지 않는다). 습관 trigger 가 비면 지금처럼 `ask.habit_trigger` 로 되묻고, trigger 가 있는데 사전에 없는 상황이면 되묻지 않고 `doc.no_row` 다 — 이미 답한 질문을 다시 하게 되어서다
 
 ### 루틴에서 닫는 것 — 의료 처치 · 증상 (2026-10-08)
 
