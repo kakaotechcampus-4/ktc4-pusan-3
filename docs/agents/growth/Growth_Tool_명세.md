@@ -8,12 +8,13 @@
 > **2026-10-08** — 안전 필터 범위(음식 용어는 교육·루틴, `health_safety` 는 교육만) · 18개월 미만 승격 미적용 · 루틴 근거는 같은 카테고리 14일 · 성장폭은 지표별 + 자세 단서 · 의료 처치 / 증상 닫힘 · `search_affinity` 는 {education, activity} · 교육 알레르기는 이름 대조 + 환경 알레르기 확인 문구(#261) · 도서 연령은 책 형태(`form`)로
 > **2026-10-10** — #282 PM 리뷰 반영: 0–17개월 경고 → 차단 승격을 Growth 에도 적용 · G-9 확정(요약은 방향을 동사로, 숫자는 크기만) · 확인 문구는 식품 사전에 없는 알레르기 이름에(`caution.non_food_allergy`, `environmental` 제외) · 루틴 닫힘 목록 확정 · 교육 활동은 #249 경고 자리 전에는 파이프라인에 붙이지 않는다
 > **2026-10-14** — 모델 경로(교육 · 루틴): 인자 근거를 `evidence[{id, note}]` 로 · 루틴 `items` 에 `step_id` 와 요청 `subject` 추가, `curriculum_ref` 는 뺌(문서 행은 [예시] id 를 `evidence` 로) · 루틴 다음 단계는 `search_routine_memory` 가 관찰 subject 와 사슬 이름을 맞춰 코드가 고름(맞는 사슬이 없으면 `doc.no_row`) · #402 전까지 교육 후보는 경고가 붙어도 뺌 · 예절 · 습관은 전략 행이 생길 때까지 `doc.no_row` · 도서는 포트 · `book_guide` 행이 생긴 뒤
+> **2026-10-18** — 도서 열림: `search_books(keywords[1–3])` · `propose_books(items[≤3]: {isbn, evidence[{id, note}], reason})` · 정보나루 어댑터 + Redis 검색어 캐시(`book_catalog` 표 없음) · 일반 도서 추천의 근거는 고른 책의 서지 행(`book_catalog`) — `book_guide` 행은 필수가 아니다 (#506)
 
 ## 0. 외부 데이터 소스
 
 | 소스 | 제공 | 용도 | 연결 방식 |
 | --- | --- | --- | --- |
-| **도서관 정보나루** (국립중앙도서관) — data4library.kr | 도서 검색 · 연령대별 인기대출 · 도서 상세(ISBN·표지) | `search_books` | REST. 하루 500회, 서버 IP 등록 시 30,000회 → **`book_catalog` 캐시** |
+| **도서관 정보나루** (국립중앙도서관) — data4library.kr | 도서 검색 · 연령대별 인기대출 · 도서 상세(ISBN·표지) | `search_books` | REST. 하루 500회, 서버 IP 등록 시 30,000회 → **검색어 캐시(Redis, 30일)** |
 | **국립중앙도서관 사서추천도서 API** — nl.go.kr | 사서 추천 목록(분류별) | 추천 가중치 (+) | 월 1회 배치 |
 | 교육부 **표준보육과정 고시** (교육부고시 제2024-23호) — 0~1세 · 2세 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 12–35 · `routine_step`) | 사람이 읽고 **행으로 재작성**. 고시는 `public_law`(저작권법 제7조 2호) |
 | 같은 고시의 **3~5세(누리과정)** — 「2019 개정 누리과정」 고시와 내용이 같다 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 36+ · `routine_step`) | 동일. 출처 문자열은 0~5세 모두 `표준보육과정 고시 (교육부고시 제2024-23호)` 하나(activity_doc 과 같다) |
@@ -55,10 +56,10 @@
 | `search_activity_memory` | `query?`, `period` | `observation_activity` (참고) | 결과 ref에 `kind="observation_activity"` 표시 → 화면 문구 분기 |
 | `search_affinity` | `domains ⊂ {education, activity}` | `rank_evidence` 정렬 결과 | `routine` 은 affinity 가 없다(09-23) — 루틴 관찰은 티어 3 로만 인용한다 |
 | `lookup_notice` | `period: "this_week"\|"next_week"` | 일반 기관 공지 요약 (보조) | 읽기만. 준비물·행사는 `event`로 가므로 여기 없음 |
-| `search_books` | `keywords[]`, `k≤10` | `{isbn, title, author, publisher, cover_url}` | 연령 필터 코드 주입 · 캐시 우선 |
+| `search_books` | `keywords[1–3]` — 한 개 12자 · 한글 영문 숫자 · 낱말 사이 한 칸(정보나루로 나가는 값이라 코드가 모양을 묶는다) | `{isbn, title, author, publisher, form}` 최대 10권 | 연령 필터 코드 주입 · 캐시 우선 · 0권이면 `NO_RECORDS` 로 다른 낱말 · 빈 제출 안내 |
 | `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence[{id, note}], reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다. 그 뒤 같은 호출 안의 같은 제목(띄어쓰기 · 문장부호 무시)은 거절하고, 근거 note 의 반복 · 성향 표현(어제도 · 또 · 늘 · 항상 · 좋아하는)은 티어 1 근거에만 쓴다 — Activity 와 같은 `common/evidence.overstates` |
 | `propose_routine_plan` | `category`, `subject`, `items[≤next_steps 수]: {step_id, next_step, how, evidence[{id, note}], reason}` (`rhythm_info` 모드면 `items` 없음 · 되묻기 · 닫힘이면 `items` 를 비운다) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 음식 용어 → 금지 표현 필터 · 근거 note 의 성향 표현은 티어 1 근거에만(교육과 같다) |
-| `propose_books` | `items[3]: {isbn, reason, evidence_ids[]}` | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 낸 책도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 같은 책과 4권째도 거절한다. 같은 책은 ISBN 이 아니라 `items` 에 들어가는 "제목(저자)"(`book_label`)로 가른다 — ISBN 은 저장하지 않아서 지난 추천과 맞춰 볼 값이 이것뿐이고, 보드북판 · 양장판처럼 ISBN 만 다른 같은 책도 함께 거른다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` |
+| `propose_books` | `items[≤3]: {isbn, evidence[{id, note}], reason}` — 검색한 책 중 낼 수 있는 책이 3권보다 적으면 그만큼, 0권이면 빈 제출(검색한 뒤에만) | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 낸 책도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 같은 책과 4권째도 거절한다. 같은 책은 ISBN 이 아니라 `items` 에 들어가는 "제목(저자)"(`book_label`)로 가른다 — ISBN 은 저장하지 않아서 지난 추천과 맞춰 볼 값이 이것뿐이고, 보드북판 · 양장판처럼 ISBN 만 다른 같은 책도 함께 거른다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` · 개인화 근거는 고른 기록뿐이고, 기록이 없으면 일반 추천이며 근거는 그 책(`book_catalog`)이다 — Food 메뉴(#442)처럼 코드가 `general_basis` 로만 단다. 금지 표현은 이유 · 근거 메모 · 책 이름에 건다. 핸들러는 `tools/books.search_books_tool` · `tools/propose.propose_books_tool` |
 
 ### 0–11개월은 추천을 내지 않는다
 
