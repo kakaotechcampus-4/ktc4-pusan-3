@@ -53,6 +53,8 @@ UV_GRADE_FLOORS: tuple[tuple[int, str], ...] = (
 # ── 화면 문구 키 ────────────────────────────────────────────────────────────
 # 문구는 activity.readout.yaml 에 있다 (공통규약 §10). 여기는 키만 둔다
 WEATHER_UNCHECKED = "weather.unchecked"
+# 날씨를 아예 묻지 않았다(위치 · 날씨 어댑터 없음). 조회 실패(WEATHER_UNCHECKED)와 다르다
+WEATHER_NOT_ASKED = "weather.not_asked"
 AIR_UNCHECKED = "weather.air_unchecked"
 UV_UNCHECKED = "weather.uv_unchecked"
 OUTDOOR_BLOCKED = "weather.outdoor_blocked"
@@ -63,6 +65,9 @@ AIR_BAD = "weather.air_bad"
 OZONE_ADVISORY = "weather.ozone_advisory"
 UV_VERY_HIGH = "weather.uv_very_high"
 RAIN_LIKELY = "weather.rain_likely"
+
+# "실내 놀이만 골랐어요" 류 — 바깥 활동이 결과에 나가면 붙이지 않는다 (#515 리뷰)
+INDOOR_ONLY = frozenset({WEATHER_UNCHECKED, OUTDOOR_BLOCKED, AFTER_SUNSET})
 
 # 야외를 막아도 남겨야 하는 안내 — 무엇을 확인 못 했는지는 막혀도 알린다
 _UNCHECKED = frozenset({AIR_UNCHECKED, UV_UNCHECKED})
@@ -81,6 +86,19 @@ class WeatherBrief:
 
     def notice_texts(self) -> tuple[str, ...]:
         return tuple(READOUTS.get(key).template for key in self.notices)
+
+
+def not_asked(*, after_sunset: bool) -> WeatherBrief:
+    """날씨를 아예 묻지 않은 날의 판정 — 바깥 놀이를 막지 않고 확인을 보호자에게 맡긴다.
+
+    위치가 없으면(1차 배포는 위치 기능을 두지 않는다, #451) 매번 실내만 나가 공원 · 산책 같은
+    추천이 한 번도 안 나온다. 그래서 조회를 시도하지 않은 날은 바깥 놀이를 열고 "날씨는 확인하지
+    않았어요" 를 붙인다. 🚨 **조회했는데 실패한 날은 그대로 실내만이다** — 실패를 기본값으로
+    메우지 않는다(D8). 해가 진 뒤는 묻지 않았어도 실내만이다.
+    """
+    if after_sunset:
+        return WeatherBrief(outdoor_ok=False, notices=(AFTER_SUNSET,))
+    return WeatherBrief(outdoor_ok=True, notices=(WEATHER_NOT_ASKED,))
 
 
 def judge_weather(
