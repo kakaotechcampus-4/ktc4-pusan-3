@@ -9,6 +9,7 @@ alembic/env.py 도 여기를 쓴다. 목록이 두 벌이면 한쪽만 늘어난
 서로 다른 스키마를 본다. 새 도메인을 만들면 이 파일에 한 줄 추가하면 된다.
 """
 
+from app.domains.chat import models as chat  # noqa: F401
 from app.domains.child import models as child  # noqa: F401
 from app.domains.consent import models as consent  # noqa: F401
 from app.domains.correction import models as correction  # noqa: F401

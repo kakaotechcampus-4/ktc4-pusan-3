@@ -53,3 +53,9 @@ class CalendarDayResponse(BaseModel):
     observations: list[ObservationOut] = Field(
         description="그날과 기간이 겹치는 기록. 기록 탭 목록과 같은 모양 · 같은 상태 기준이다"
     )
+    chat_count: int = Field(
+        description=(
+            '로그인한 보호자가 그날 나눈 대화 수(#228). "이날 나눈 대화 N개" 로 그리고 '
+            "0 이면 그리지 않는다. 남의 대화는 세지 않는다"
+        )
+    )

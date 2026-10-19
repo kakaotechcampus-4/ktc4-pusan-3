@@ -17,6 +17,7 @@ from app.api.v1.routers import (
     affinities,
     auth,
     calendar,
+    chat,
     child_parents,
     children,
     client_errors,
@@ -61,6 +62,7 @@ protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
 protected_router.include_router(home.router)
 protected_router.include_router(calendar.router)
+protected_router.include_router(chat.router)
 protected_router.include_router(diary.router)
 protected_router.include_router(event_items.router)
 protected_router.include_router(reports.router)
