@@ -33,6 +33,7 @@ import type { RunState } from "@/hooks/use-run-stream";
 import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
 import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
+import { formatTimeOfDay } from "@/lib/format";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -779,7 +780,11 @@ function NoteCard({
 function ObservationRow({ observation }: { observation: Observation }) {
   const agent = observationAgent(observation.kind);
   const detail = isHealthObservation(observation)
-    ? [observation.domain_fields.symptom?.join(", "), observation.domain_fields.observed_time]
+    ? [
+        observation.domain_fields.symptom?.join(", "),
+        observation.domain_fields.observed_time &&
+          formatTimeOfDay(observation.domain_fields.observed_time),
+      ]
         .filter(Boolean)
         .join(", ")
     : observation.subject;
