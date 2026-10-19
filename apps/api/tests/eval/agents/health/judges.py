@@ -15,7 +15,13 @@ from dataclasses import asdict, dataclass, field
 
 from app.agents.common.result import DomainAgentResult
 from app.agents.health import registry
-from app.agents.health.readouts import BLOCKED_CONSENT, READOUTS
+from app.agents.health.readouts import (
+    BLOCKED_CONSENT,
+    READOUTS,
+    SYMPTOM_REPEAT,
+    SYMPTOM_REPEAT_CONDITION,
+)
+from app.agents.health.reference import Guidance
 from tests.eval.agents.health.world import World
 
 
@@ -290,3 +296,70 @@ def _check_vaccines(
         if not first_vaccine < next_at[0] < len(bodies) - 1:
             failures.append("다음 접종 시기 줄이 접종 줄과 고지 사이에 있지 않다")
     return failures
+
+
+# 증상 반복 hook 에 넣는 (질환 × 증상) 안내 — 지어낸 행 하나(면역저하 × 기침). 운영 yaml 의
+# 검수 상태와 상관없이 "연결이 되는가" 를 본다. 문구는 시험용이다 — 화면 문구로 읽지 말 것
+EVAL_GUIDANCE: dict[tuple[str, str], Guidance] = {
+    ("immunocompromised", "cough"): Guidance(
+        condition="immunocompromised",
+        symptom="cough",
+        text="테스트 안내 문구",
+        source_title="테스트 문서",
+        publisher="테스트 기관",
+        url="https://example.org/guide",
+        license="KOGL-1",
+    )
+}
+
+
+def symptom_repeat(
+    *, symptom: str, condition: str | None, days: int = 3
+) -> Callable[[Ran], Verdict]:
+    """증상 반복 hook 판정 — 기록된 날 수 · 문구 글자 · 안내 카드 · 쓰기 0건.
+
+    `symptom` 은 화면 이름("발열"), `condition` 은 보호자가 등록한 이름 원문이다
+    (None = 기본 문장만).
+    건강 항목은 반복이 서고 안내 행이 있으니 정확히 한 번 읽어야 한다 — 조회 실패 케이스도 읽으려고
+    했다는 것까지 본다("등록 질환 없음" 으로 넘어간 게 아니라).
+    """
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = Verdict()
+        result = ran.result
+        if result is None:
+            verdict.failures.append("증상 반복 hook 결과가 없다")
+            return verdict
+        if result.status != "completed" or result.model_calls != 0:
+            verdict.failures.append(
+                f"status={result.status} 모델 {result.model_calls}회 (hook 은 0회)"
+            )
+        if result.suggestions or result.medication_drafts or result.event_requests:
+            verdict.failures.append("hook 이 추천 · 초안 · 일정 요청을 냈다 (아무것도 쓰지 않는다)")
+
+        values = {"symptom": symptom, "n": str(days)}
+        if condition is None:
+            sentence = READOUTS.render(SYMPTOM_REPEAT, **values)
+            cards = 0
+        else:
+            sentence = READOUTS.render(SYMPTOM_REPEAT_CONDITION, condition=condition, **values)
+            cards = 1
+        readouts = list(result.readouts)
+        if not readouts or readouts[0] != sentence:
+            got = readouts[0].body if readouts else None
+            verdict.failures.append(f"반복 문장이 글자 그대로가 아니다: {got!r}")
+        found = [r for r in readouts[1:] if r.kind == "condition_guidance"]
+        if len(readouts) != 1 + cards or len(found) != cards:
+            verdict.failures.append(f"안내 카드가 {len(found)}장이다 ({cards}장)")
+        for card in found:
+            if not card.title.startswith("출처: "):
+                verdict.failures.append("안내 카드에 출처가 없다")
+            if card.body != EVAL_GUIDANCE[("immunocompromised", "cough")].text:
+                verdict.failures.append("안내 카드 문구가 행의 문구와 다르다")
+        if ran.world.safety.calls != 1:
+            verdict.failures.append(f"health_safety 를 {ran.world.safety.calls}회 읽었다 (1회)")
+        if tuple(ran.world.safety._entries) != ran.world.spec.safety:
+            verdict.failures.append("health_safety 가 바뀌었다")
+        return verdict
+
+    return judge

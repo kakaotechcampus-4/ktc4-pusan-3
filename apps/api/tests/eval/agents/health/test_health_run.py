@@ -34,10 +34,12 @@ import pytest
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.common.schemas.task import DomainTask
 from app.agents.health import agent as health_agent
+from app.agents.health.envelope import result as hook_result
+from app.agents.health.hook import check_symptom_repetition
 from app.agents.health.registry import IMPLEMENTED_TASKS, MODEL_TASKS
 from app.agents.health.schemas.task import HealthTaskType
 from tests.eval.agents.health.cases import CASES, OUTSIDE, Case, doc_inputs
-from tests.eval.agents.health.judges import Ran, common
+from tests.eval.agents.health.judges import EVAL_GUIDANCE, Ran, common
 from tests.eval.agents.health.world import DAY, NIGHT, build_world
 
 pytestmark = pytest.mark.live
@@ -86,8 +88,10 @@ async def test_health_run(case: Case, expect: Callable[..., None]) -> None:
 
     started = time.perf_counter()
     if case.label is None:
-        # hook 케이스 — Health-4 가 hook 함수를 붙인다
-        result = None
+        # hook 케이스 — 라벨이 아니라 Memory 저장 직후 pipeline 이 부르는 함수를 직접 부른다.
+        # pipeline 연결은 다른 이슈라 여기서는 결과를 봉투에 싸기만 한다
+        readouts = await check_symptom_repetition(world.context, guidance=EVAL_GUIDANCE)
+        result = hook_result(None, "completed", readouts=readouts)
     else:
         client = _client_for(case.label)
         task = DomainTask(

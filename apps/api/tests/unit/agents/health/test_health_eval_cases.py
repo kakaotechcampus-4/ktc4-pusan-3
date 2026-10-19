@@ -7,15 +7,19 @@ eval 본체(`tests/eval/agents/health/test_health_run.py`)는 -m live 라 기본
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
 from app.agents.health import registry
+from app.agents.health.envelope import result as hook_result
+from app.agents.health.hook import check_symptom_repetition
 from app.agents.health.readouts import READOUTS
 from app.agents.health.schemas.task import HealthTaskType
 from tests.eval.agents.health.cases import CASES, OUTSIDE, doc_inputs
 from tests.eval.agents.health.judges import (
+    EVAL_GUIDANCE,
     Ran,
     common,
     consent_closed,
     pending,
     schedule_check,
+    symptom_repeat,
 )
 from tests.eval.agents.health.world import CHILD, WORLDS, build_world
 
@@ -370,3 +374,68 @@ def test_schedule_check_다음_접종_줄은_고지_앞에_와야_한다():
 
     assert schedule_check(None, None, aged_out=True, upcoming=True)(_ran(good)).failures == []
     assert schedule_check(None, None, aged_out=True, upcoming=True)(_ran(swapped)).failures
+
+
+# ── 증상 반복 hook 판정 ──
+async def _hook(world_name):
+    """eval 이 하는 대로 hook 을 직접 불러 `Ran` 을 만든다."""
+    world = build_world(world_name)
+    readouts = await check_symptom_repetition(world.context, guidance=EVAL_GUIDANCE)
+    result = hook_result(None, "completed", readouts=readouts)
+    return Ran(case_id="T25", world=world, request="x", result=result, elapsed_ms=0)
+
+
+async def test_symptom_repeat_는_질환_문장과_카드를_통과시킨다():
+    ran = await _hook("C48-chronic")
+
+    verdict = symptom_repeat(symptom="기침", condition="만성 면역력 저하증")(ran)
+
+    assert verdict.failures == []
+
+
+async def test_symptom_repeat_는_기본_문장을_통과시킨다():
+    for name in ("C48-chronic-unknown", "C48-allergyonly", "C48-safetyfail"):
+        verdict = symptom_repeat(symptom="기침", condition=None)(await _hook(name))
+
+        assert verdict.failures == [], name
+
+
+async def test_T25_는_같은_날_두_번_적힌_기록을_하루로_센다():
+    ran = await _hook("C48")
+
+    assert symptom_repeat(symptom="발열", condition=None, days=3)(ran).failures == []
+    assert symptom_repeat(symptom="발열", condition=None, days=4)(ran).failures
+
+
+async def test_symptom_repeat_는_질환_문장이_빠지면_실패다():
+    ran = await _hook("C48-chronic-unknown")  # 기본 문장이 나간 결과
+
+    assert symptom_repeat(symptom="기침", condition="만성 면역력 저하증")(ran).failures
+
+
+async def test_symptom_repeat_는_엉뚱한_카드가_붙으면_실패다():
+    ran = await _hook("C48-chronic")  # 질환 문장 + 카드가 나간 결과
+
+    assert symptom_repeat(symptom="기침", condition=None)(ran).failures
+
+
+async def test_symptom_repeat_는_모델을_불렀으면_실패다():
+    ran = await _hook("C48-chronic")
+    called = hook_result(None, "completed", readouts=ran.result.readouts, model_calls=1)
+    ran = Ran(case_id="T25", world=ran.world, request="x", result=called, elapsed_ms=0)
+
+    assert symptom_repeat(symptom="기침", condition="만성 면역력 저하증")(ran).failures
+
+
+def test_hook_케이스는_전부_판정이_있다():
+    hook_cases = [c for c in CASES if c.label is None]
+
+    assert [c.case_id for c in hook_cases] == [
+        "T25",
+        "T25-chronic",
+        "T25-chronic-unknown",
+        "T25-allergyonly",
+        "T25-safetyfail",
+    ]
+    for case in hook_cases:
+        assert case.judge.__qualname__.startswith("symptom_repeat."), case.case_id
