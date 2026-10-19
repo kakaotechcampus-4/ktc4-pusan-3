@@ -5,7 +5,8 @@
 
     음식 용어 스캔   교육 · 루틴 후보. 알레르기 사전 용어나 질식 위험 음식 용어가 나오면 **아이 ·
                     월령 · 동의와 무관하게** 뺀다. 음식 · 재료가 들어가는 놀이는 Activity 몫이다.
-                    한 글자 · 외래어 별칭(포크 · pork)은 문장에서 다른 뜻으로 걸려 쓰지 않는다
+                    외래어 별칭(포크 · pork)과 한 글자 별칭은 문장에서 다른 뜻으로 걸려 쓰지 않는다.
+                    한 글자는 잣 · 콩만 문장 guard 와 함께 본다
     등록한 이름 대조  교육만, 동의가 있을 때. 보호자가 `health_safety` 에 적은 이름이
                     후보 문장에 나오면 뺀다. 이름은 공용 `read_label` 로 조각마다 읽는다.
                     한 글자는 Activity 와 같은 허용 목록(잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만
@@ -23,12 +24,13 @@
 🚨 매처 · 사전은 `SafetyRules`로 주입한다 — 판정 흐름 테스트는 가짜 매처로 돈다.
 `load_safety_rules()` 는 Food · Activity 와 같은 공용 판정을 쓴다 — 보호자 이름은 `read_label`,
 위험 용어 월령은 `HazardAxis.level_at`, 식품 아닌 알레르기 낱말은 `related_blocks`.
-TODO: 음식 용어 스캔의 한 글자 식품("콩")은 따로 고친다. 사전을 읽지 못하면 빈
-사전으로 통과시키지 않고 `SafetyRulesUnavailable` 을 올린다.
+대조는 필드마다 `match_fields` 다 — guard 가 띄어쓰기를 넘지 않는다(Activity · Food 와 같다).
+사전을 읽지 못하면 빈 사전으로 통과시키지 않고 `SafetyRulesUnavailable` 을 올린다.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal
 
 from app.agents.common.allergy import (
@@ -40,7 +42,7 @@ from app.agents.common.allergy import (
 )
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.store.ports import SafetyEntry
-from app.rules.term_match import Term, match_fields, match_terms, normalize
+from app.rules.term_match import Term, match_fields, normalize
 
 HazardLevel = Literal["block", "warn"]
 RemovedBy = Literal["food_term", "allergy_name", "allergy_related", "hazard_block"]
@@ -53,6 +55,13 @@ FOOD_CHOKING_AXIS = "food_choking"
 # 보호자가 이 이름으로 등록한 걸 읽을 때는 쓴다
 _LOANWORD_ALIASES = frozenset(
     {"에그", "밀크", "피넛", "크랩", "쉬림프", "포크", "피치", "월넛", "비프", "파인넛"}
+)
+# 문장 스캔에서도 보는 한 글자 식품 — Activity 의 허용 목록(SINGLE_CHAR_NAMES) 중 알레르기 사전
+# 별칭인 것(대두의 콩 · 잣)이다. 놀이 문장에서도 거의 그 식품이다("콩으로 숫자 세기" · "잣 까기").
+# 밀 · 게 · 닭 · 굴은 다른 뜻("공 밀기" · "카드 게임")으로 더 자주 나와 계속 쓰지 않는다.
+# 값은 문장에서 그 글자가 식품이 아닌 자리 — 사전 guard 에 더한다
+_SENTENCE_SINGLE_CHARS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {"콩": ("콩콩", "콩닥", "콩당", "콩쥐"), "잣": ()}
 )
 
 
@@ -187,11 +196,11 @@ def load_safety_rules() -> SafetyRules:
         return (*coded, *_registered_aliases_only(named.terms), *literal)
 
     def scan_food(text: str) -> tuple[str, ...]:
-        return match_terms(text, food_terms)
+        return match_fields((text,), food_terms)
 
     def scan_hazard(text: str, months: int) -> tuple[HazardHit, ...]:
         hits: list[HazardHit] = []
-        for label in match_terms(text, hazards.terms):
+        for label in match_fields((text,), hazards.terms):
             axis = hazards.axis_of(label)
             level = axis.level_at(months)
             if level is not None:
@@ -206,7 +215,7 @@ def load_safety_rules() -> SafetyRules:
         return tuple(hits)
 
     def scan_registered(text: str, entries: Sequence[SafetyEntry]) -> tuple[SafetyEntry, ...]:
-        return tuple(entry for entry in entries if match_terms(text, registered_terms(entry)))
+        return tuple(entry for entry in entries if match_fields((text,), registered_terms(entry)))
 
     def scan_related(entries: Sequence[SafetyEntry]) -> tuple[Term, ...]:
         # allergy 만 본다 — environmental(고소공포)은 대상이 아니다
@@ -223,14 +232,24 @@ def load_safety_rules() -> SafetyRules:
 def _scan_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
     """문장 스캔에 쓰지 않는 별칭을 뗀다.
 
-    한 글자(밀 · 게 · 닭 · 잣)는 놀이 문장의 "공 밀기" · "카드 게임" 이 걸리고,
-    외래어(포크 · pork)는 식사 도구 · 노래 이름으로 걸린다.
+    한 글자(밀 · 게 · 닭)는 놀이 문장의 "공 밀기" · "카드 게임" 이 걸리고, 외래어(포크 · pork)는
+    식사 도구 · 노래 이름으로 걸린다. 한 글자 중 잣 · 콩(`_SENTENCE_SINGLE_CHARS`)은 남기고 문장
+    guard 를 더한다.
     """
     kept: list[Term] = []
     for term in terms:
-        aliases = tuple(alias for alias in term.aliases if _scans(alias))
+        aliases = tuple(
+            alias
+            for alias in term.aliases
+            if _scans(alias) or normalize(alias) in _SENTENCE_SINGLE_CHARS
+        )
         if aliases:
-            kept.append(Term(key=term.key, aliases=aliases, guards=term.guards))
+            extra = tuple(
+                guard
+                for alias in aliases
+                for guard in _SENTENCE_SINGLE_CHARS.get(normalize(alias), ())
+            )
+            kept.append(Term(key=term.key, aliases=aliases, guards=(*term.guards, *extra)))
     return tuple(kept)
 
 
