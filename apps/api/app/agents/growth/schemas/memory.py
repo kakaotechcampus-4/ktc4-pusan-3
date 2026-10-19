@@ -2,23 +2,31 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from app.agents.growth.schemas.common import RoutineCategory, ToolArgs
 
+MAX_KEYWORDS = 5
+
+
+def _first_keywords(value: object) -> object:
+    """다섯 개를 넘게 적으면 거절하지 않고 앞의 다섯 개만 쓴다 — 거절하면 대화가 한 번 늘어난다."""
+    return value[:MAX_KEYWORDS] if isinstance(value, list) else value
+
+
 _KEYWORDS = Field(
     default_factory=list,
-    max_length=5,
+    max_length=MAX_KEYWORDS,
     description="찾을 주제 이름. 예: 숫자, 공룡. 비우면 최근 기록과 관심 전체",
 )
 
 
 class SearchEducationMemoryArgs(ToolArgs):
-    keywords: Annotated[list[str], _KEYWORDS]
+    keywords: Annotated[list[str], BeforeValidator(_first_keywords), _KEYWORDS]
 
 
 class SearchActivityMemoryArgs(ToolArgs):
-    keywords: Annotated[list[str], _KEYWORDS]
+    keywords: Annotated[list[str], BeforeValidator(_first_keywords), _KEYWORDS]
 
 
 class SearchRoutineMemoryArgs(ToolArgs):

@@ -2,7 +2,7 @@
 
 순서
   ① build_gate 로 월령 · 동의 · 안전 조회를 모은다. 닫혔으면 코드 문구로 끝 — 모델 0회
-  ② 루틴 요청이 의료 처치 · 증상 목록에 걸리면 닫는다 — 모델 0회
+  ② 루틴 요청 · 같은 입력의 기록 조각이 의료 처치 · 증상 목록에 걸리면 닫는다 — 모델 0회
   ③ growth_review 는 측정을 그대로 정리한 readout 하나 — 모델 0회
   ④ 0–11개월 루틴은 리듬 안내(`rhythm_info` 행, 없으면 `rhythm.no_row`) 하나 — 모델 0회
   ⑤ 교육은 코드가 문서 행 [예시]를 골라 프롬프트에 싣는다. 모델에게 문서 검색 tool 은 없다.
@@ -71,7 +71,8 @@ async def run(
 
     key = closed_readout_key(task_type, gate)
     if key is None and task_type is GrowthTaskType.ROUTINE_COACHING:
-        key = closure_key(task.request_texts)
+        # 같은 입력의 기록 조각도 본다 — "약 먹기 싫어해. 어떻게 하지?" 는 요청 조각에 약이 없다
+        key = closure_key((*task.request_texts, *task.record_texts))
     if key is not None:
         return _result(task_type, "blocked", readouts=(READOUTS.render(key),))
 

@@ -13,12 +13,13 @@ import logging
 
 from app.agents.common.gate import Gate
 from app.agents.common.suggestion import MAX_SUGGESTIONS, check_count
-from app.agents.growth.context import GrowthContext
+from app.agents.growth.context import GrowthContext, GrowthRunState
 from app.agents.growth.readouts import ASK_ROUTINE_CURRENT, DOC_NO_ROW, NEXT_STEP_CHAIN_END
 from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
 from app.agents.growth.review import (
     error_code,
     explain,
+    parse_id,
     review_books,
     review_learning,
     review_routine,
@@ -29,9 +30,16 @@ from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.tools.books import book_label, propose_books
 from app.agents.growth.tools.books import explain as explain_books
 from app.agents.growth.tools.closures import closure_key
+from app.agents.growth.tools.docs import chain_name, related_names
 from app.agents.growth.tools.memory import SELF_RELIANCE
-from app.agents.growth.tools.routine import ask_question, check_routine_category, routine_gap
+from app.agents.growth.tools.routine import (
+    PickedStep,
+    ask_question,
+    check_routine_category,
+    routine_gap,
+)
 from app.agents.growth.tools.safety import SafetyRules
+from app.rules.term_match import normalize
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +88,11 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
     months, today = gate.stage.months, context.today
     state.suggestions, state.excluded, state.closing, state.question = (), (), None, None
 
-    closed = closure_key((args.subject,)) or check_routine_category(args.category, months)
+    # 요청한 행동 · 근거로 단 관찰의 행동이 의료 처치 · 증상이면 닫는다
+    # (Tool 명세 §2 "루틴에서 닫는 것")
+    closed = closure_key((args.subject, *_cited_subjects(state, args))) or check_routine_category(
+        args.category, months
+    )
     if closed is not None:
         state.closing = closed
         return ok("propose", _ROUTINE, closed=True)
@@ -94,6 +106,15 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
     # 자립은 사슬의 다음 칸, 예절 · 습관은 전략 행이다.
     # 어느 쪽이든 search_routine_memory 가 코드로 골라 둔 행만 쓴다
     picked = [p for p in state.steps.values() if p.category == args.category]
+    # 요청한 행동의 단계만 낸다 — 양치를 물었는데 같은 카테고리의 손 씻기 단계를 끼우지 않는다.
+    # 맞는 단계가 없고 모델이 단계를 비워 냈으면 그 행동의 지금 수준을 모르므로 되묻는다.
+    # 맞는 것이 없는데 단계를 냈으면("아침 씻기" 처럼 여러 행동) 지금처럼 고른 단계 전부다
+    wanted = [p for p in picked if _same_behavior(p, args.subject)]
+    if wanted:
+        picked = wanted
+    elif picked and not args.items:
+        state.question = ask_question(ASK_ROUTINE_CURRENT, args.subject.strip())
+        return ok("propose", _ROUTINE, asked=True)
     rows = {p.step.row.id: p.step.row for p in picked if p.step.row is not None}
     if not rows:
         keys = {p.step.readout_key for p in picked}
@@ -109,8 +130,10 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
     # 재호출이면 이미 통과한 단계는 빼고 남은 단계만 받는다
     rows = {step_id: row for step_id, row in rows.items() if step_id not in state.done_steps}
     capacity = min(MAX_SUGGESTIONS, len(rows))
+    # 요청 행동으로 좁혔으면 다른 행동 단계의 후보는 거절하지 않고 건너뛴다
+    items = [i for i in args.items if parse_id(i.step_id) in rows] if wanted else list(args.items)
     review = review_routine(
-        args.items,
+        items,
         rows=rows,
         capacity=capacity,
         category=args.category,
@@ -129,7 +152,7 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
             f"next_steps 에 있는 단계 {capacity}개를 하나씩 다 낸다.",
         )
     _log_removed(context, len(review.removed))
-    state.excluded = tuple(args.items[i].next_step for i in review.removed)
+    state.excluded = tuple(items[i].next_step for i in review.removed)
     if not review.removed:
         check_count(review.drafts, exhausted=capacity < MAX_SUGGESTIONS)
     state.suggestions = review.drafts
@@ -179,12 +202,39 @@ async def propose_books_tool(context: GrowthContext, args: ProposeBooksArgs) -> 
     return ok("propose", _BOOKS, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
 
 
+def _cited_subjects(state: GrowthRunState, args: ProposeRoutinePlanArgs) -> tuple[str, ...]:
+    """모델이 근거로 단 루틴 관찰의 행동 이름(코드가 가진 값). 조회 결과에 없는 id는 건너뛴다 —
+    그 후보는 출력 검증이 거절한다."""
+    subjects: list[str] = []
+    for item in args.items:
+        for pick in item.evidence:
+            key = parse_id(pick.id)
+            row = state.seen_routine.get(key) if key is not None else None
+            if row is not None:
+                subjects.append(row.subject)
+    return tuple(subjects)
+
+
 def _subject(context: GrowthContext, category: str, fallback: str) -> str:
-    """되묻기에 넣을 행동 이름 — 같은 카테고리 관찰의 subject(코드가 가진 값)가 먼저다."""
+    """되묻기에 넣을 행동 이름. 요청한 행동과 같은 관찰의 subject(코드가 가진 값)가 먼저다.
+
+    같은 카테고리라도 다른 행동의 이름으로 묻지 않는다 — 손가락 빨기를 물었는데 손톱 물어뜯기로
+    묻게 된다. 맞는 관찰이 없으면 모델이 적은 행동 이름이다.
+    """
+    wanted = normalize(fallback)
     for row in context.state.seen_routine.values():
-        if row.routine_category == category:
+        if row.routine_category == category and related_names(normalize(row.subject), wanted):
             return row.subject
     return fallback.strip()
+
+
+def _same_behavior(picked: PickedStep, subject: str) -> bool:
+    """관찰의 행동 이름이나 사슬 이름이 요청한 행동과 같은가 (`docs.related_names`)."""
+    names = [picked.subject]
+    if picked.step.row is not None:
+        names.append(chain_name((picked.step.row,)))
+    wanted = normalize(subject)
+    return any(related_names(normalize(name), wanted) for name in names)
 
 
 def _log_removed(context: GrowthContext, count: int) -> None:

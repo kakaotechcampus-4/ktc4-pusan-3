@@ -14,6 +14,7 @@ import pytest
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.refs import Ref
+from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.agent import run
 from app.agents.growth.readouts import READOUTS, RHYTHM_NO_ROW
 from app.agents.growth.review import BOOK_GENERAL_REASON
@@ -163,6 +164,23 @@ class TestLearning:
         llm = FakeLLM(learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
         result = await run(task("learning_suggestion"), docs_ctx(safety=safety), client=llm)
         assert result.status == "completed" and result.readouts == ()
+
+    async def test_콩이_든_후보는_빠지고_재호출로_채운다(self):
+        """C48-food — 모델 후보 하나에 음식 재료.
+
+        재호출 1회 뒤 음식 용어 없는 3개 (test_expected T04).
+        """
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("콩으로 숫자 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+            learning("소리 듣기", "그림자 놀이", "블록 세기", doc_id=doc_id),
+        )
+        result = await run(
+            task("learning_suggestion", "숫자 놀이 뭐 없어?"), docs_ctx(), client=llm
+        )
+        assert result.model_calls == 2
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["색깔 찾기", "모양 맞추기", "소리 듣기"]
 
 
 def empty_docs_ctx(**kwargs):
@@ -349,7 +367,7 @@ class TestRoutine:
         def propose(*items: dict) -> LLMResponse:
             return call(
                 "propose_routine_plan",
-                {"category": "self_care", "subject": "양치", "items": list(items)},
+                {"category": "self_care", "subject": "아침 씻기", "items": list(items)},
             )
 
         llm = FakeLLM(
@@ -357,7 +375,9 @@ class TestRoutine:
             propose(item("양치", 0, "어른 손을 포개요"), item("손 씻기", 1, "땅콩 크림을 발라요")),
             propose(item("손 씻기", 1, "비누 거품을 같이 내요")),
         )
-        result = await run(task("routine_coaching", "양치 혼자 하게"), ctx, client=llm)
+        # 여러 행동을 한 번에 묻는 요청 —
+        # 요청 행동과 맞는 단계가 없고 모델이 단계를 냈으니 전부 낸다
+        result = await run(task("routine_coaching", "아침에 씻는 걸 혼자 하게"), ctx, client=llm)
         assert result.model_calls == 2 and len(result.suggestions) == 2
         assert [r.code for r in result.readouts] == ["fewer"]  # 단계가 둘뿐이라 개수 안내가 붙는다
 
@@ -399,6 +419,19 @@ class TestRoutine:
         assert result.status == "completed" and result.model_calls == 1
         assert [d.kind for d in result.suggestions] == ["personalized"]
         assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_같은_입력의_기록_조각이_약이면_모델_없이_닫는다(self):
+        llm = FakeLLM()
+        growth_task = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=("어떻게 하지?",),
+            record_texts=("약 먹기 싫어해",),
+        )
+        result = await run(growth_task, docs_ctx(), client=llm)
+        assert (result.status, result.model_calls, llm.seen) == ("blocked", 0, [])
+        assert result.readouts == (READOUTS.render("closed.medical_routine"),)
 
 
 def book(n: int, form: str = "picture") -> BookRow:

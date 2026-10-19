@@ -166,6 +166,7 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     domain_tasks, trimmed = _domain_tasks(
         [s for s in requests if str(s.agent) in selected and str(s.agent) in IMPLEMENTED_AGENTS],
         run_id=run_id,
+        record_texts=tuple(s.text for s in records),
     )
 
     routing = Routing(
@@ -187,11 +188,14 @@ def _intent(*, has_record: bool, has_request: bool) -> IntentType:
     return "record"
 
 
-def _domain_tasks(segments: list, *, run_id: str) -> tuple[tuple[DomainTask, ...], bool]:
+def _domain_tasks(
+    segments: list, *, run_id: str, record_texts: tuple[str, ...] = ()
+) -> tuple[tuple[DomainTask, ...], bool]:
     """agent × task_type 당 하나. 처음 나온 순서를 따른다.
 
     `_ONE_RECOMMENDATION` 의 Agent 는 추천 라벨을 처음 것 하나만 남긴다. 뺀 조각이 있으면 True —
     호출부가 안내 한 줄을 붙인다(조용히 빠지면 사용자는 답이 없는 이유를 모른다).
+    `record_texts` 는 같은 입력의 기록 조각이다 — 모든 task 에 같이 싣는다(코드 판정만 읽는다).
     """
     texts: dict[tuple[str, str | None], list[str]] = {}
     trimmed = False
@@ -206,7 +210,13 @@ def _domain_tasks(segments: list, *, run_id: str) -> tuple[tuple[DomainTask, ...
             continue
         texts.setdefault((agent, label), []).append(segment.text)
     tasks = tuple(
-        DomainTask(run_id=run_id, agent=agent, task_type=task_type, request_texts=tuple(items))
+        DomainTask(
+            run_id=run_id,
+            agent=agent,
+            task_type=task_type,
+            request_texts=tuple(items),
+            record_texts=record_texts,
+        )
         for (agent, task_type), items in texts.items()
     )
     return tasks, trimmed
