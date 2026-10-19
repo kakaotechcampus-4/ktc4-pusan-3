@@ -1,4 +1,4 @@
-"""Health 기준표 두 장 — 영유아 검진 시기 · 국가예방접종 표준접종 시기.
+"""Health 기준표 — 검진 · 접종 시기, 증상 · 질환 사전, (질환 × 증상) 안내.
 
 값은 `reference/checkup_nhis.yaml` · `reference/vaccine_2026.yaml` 에 있고 여기는 읽는 쪽이다
 (`load_reference` 가 `source` · `version` · `fetched_at` 이 없으면 막는다). 계산은
@@ -6,6 +6,10 @@
 통과시키면 검진 안내가 조용히 사라진다.
 
 접종 표는 해마다 새 파일(`vaccine_<연도>.yaml`)로 갈아 끼운다. 파일 이름은 `_VACCINE_FILE` 한 곳.
+
+증상 · 질환 사전은 `hazard_terms.yaml` 의 terms 와 같은 모양이고 매칭은
+`app/rules/term_match.py` 다. (질환 × 증상) 안내는 `medical_reviewed: true` 인 행만 로드한다 —
+검수 전 행도 모양은 검사하고 결과에서 뺀다.
 """
 
 from collections.abc import Mapping
@@ -14,6 +18,7 @@ from functools import cache
 from typing import Any, Literal
 
 from app.agents.common.reference import load_reference
+from app.rules.term_match import Term, normalize
 
 _VACCINE_FILE = "vaccine_2026.yaml"
 
@@ -133,3 +138,148 @@ def parse_vaccine_table(data: Mapping[str, Any]) -> VaccineTable:
         seen.add(key)
         doses.append(VaccineDose(raw["vaccine"], raw["dose"], first, last))
     return VaccineTable(doses=tuple(doses), year=year, source=str(data["source"]))
+
+
+# ── 증상 · 질환 사전 ──
+
+_TERM_KEYS = frozenset({"code", "label", "aliases", "guards"})
+_MIN_ALIAS_LENGTH = 2  # 한 글자 별칭("열")은 아무 글에나 걸린다
+
+
+@dataclass(frozen=True)
+class CodeBook:
+    """증상 · 질환 사전 공용. `terms` 의 `Term.key` 는 코드다."""
+
+    terms: tuple[Term, ...]
+    labels: Mapping[str, str]  # 코드 → 화면 이름 ("cough" → "기침")
+
+
+@cache
+def symptom_codes() -> CodeBook:
+    return parse_code_book(load_reference("symptom_codes.yaml"), section="symptom_codes.yaml")
+
+
+@cache
+def condition_codes() -> CodeBook:
+    return parse_code_book(load_reference("condition_codes.yaml"), section="condition_codes.yaml")
+
+
+def parse_code_book(data: Mapping[str, Any], *, section: str) -> CodeBook:
+    """사전 yaml 을 읽은 dict 를 검사해 `CodeBook` 으로. `section` 은 오류 문구에 쓰는 파일 이름."""
+    terms: list[Term] = []
+    labels: dict[str, str] = {}
+    alias_owner: dict[str, str] = {}
+    for raw in data.get("terms") or []:
+        code = raw.get("code")
+        if extra := set(raw) - _TERM_KEYS:
+            raise ValueError(f"{section} 코드 {code!r} 에 정해지지 않은 칸이 있다: {sorted(extra)}")
+        label = raw.get("label")
+        aliases = tuple(raw.get("aliases") or ())
+        if not code or not label:
+            raise ValueError(f"{section} 에 code · label 이 없는 줄이 있다: {dict(raw)}")
+        if label not in aliases:
+            raise ValueError(f"{section} 코드 {code!r} 의 aliases 에 label 자신이 없다")
+        if code in labels:
+            raise ValueError(f"{section} 에 코드가 겹친다: {code!r}")
+        for alias in aliases:
+            key = normalize(alias)
+            if len(key) < _MIN_ALIAS_LENGTH:
+                raise ValueError(f"{section} 코드 {code!r} 에 한 글자 별칭 {alias!r} — 과차단")
+            if alias_owner.get(key, code) != code:
+                raise ValueError(
+                    f"{section} 에 별칭이 겹친다: {alias!r} ({alias_owner[key]} · {code})"
+                )
+            alias_owner[key] = code
+        terms.append(Term(key=code, aliases=aliases, guards=tuple(raw.get("guards") or ())))
+        labels[code] = label
+    return CodeBook(terms=tuple(terms), labels=labels)
+
+
+# ── (질환 × 증상) 안내 ──
+
+_GUIDANCE_FILE = "condition_guidance.yaml"
+_GUIDANCE_KEYS = frozenset(
+    {
+        "condition",
+        "symptom",
+        "text",
+        "source_title",
+        "publisher",
+        "url",
+        "license",
+        "medical_reviewed",
+        "reviewed_by",
+        "reviewed_at",
+    }
+)
+_GUIDANCE_REQUIRED = ("condition", "symptom", "text", "source_title", "publisher", "url", "license")
+# 문구를 그대로 옮겨 싣는 쓰임에 맞는 이용 조건만. 상업적이용금지 · 변경금지(KOGL-3 · 4)는 뺀다
+ALLOWED_LICENSES = frozenset({"KOGL-0", "KOGL-1", "고시", "CC-BY"})
+# 원인 · 병명을 짐작하는 말 (명세 §3 lookup_condition_guidance 금지). 문구에만 건다
+_GUESS_PHRASES = ("로 인해", "에 걸린")  # eval 공통 금지어(judges.FORBIDDEN)와 같은 범위
+
+
+@dataclass(frozen=True)
+class Guidance:
+    condition: str  # 질환 코드
+    symptom: str  # 증상 코드
+    text: str
+    source_title: str
+    publisher: str
+    url: str
+    license: str  # "KOGL-0" · "KOGL-1" · "고시" · "CC-BY"
+
+
+@cache
+def condition_guidance() -> Mapping[tuple[str, str], Guidance]:
+    """`medical_reviewed: true` 인 행만. 검수 전 행은 로드하지 않는다."""
+    return parse_condition_guidance(load_reference(_GUIDANCE_FILE))
+
+
+def parse_condition_guidance(data: Mapping[str, Any]) -> Mapping[tuple[str, str], Guidance]:
+    """yaml 을 읽은 dict 를 검사해 (질환 코드, 증상 코드) → 안내로.
+
+    검수 전 행도 모양은 검사한다 — 검수를 요청할 때 처음 깨지지 않게. 결과에는 넣지 않는다.
+    """
+    if extra := set(data) - _META_KEYS - {"rows"}:
+        raise ValueError(f"{_GUIDANCE_FILE} 에 정해지지 않은 키가 있다: {sorted(extra)}")
+    conditions = {term.key for term in condition_codes().terms}
+    symptoms = {term.key for term in symptom_codes().terms}
+    rows: dict[tuple[str, str], Guidance] = {}
+    seen: set[tuple[str, str]] = set()
+    for raw in data.get("rows") or []:
+        where = f"{_GUIDANCE_FILE} {raw.get('condition')}×{raw.get('symptom')}"
+        if extra := set(raw) - _GUIDANCE_KEYS:
+            raise ValueError(f"{where} 에 정해지지 않은 칸이 있다: {sorted(extra)}")
+        if missing := [key for key in _GUIDANCE_REQUIRED if not str(raw.get(key) or "").strip()]:
+            raise ValueError(f"{where} 에 빈 칸이 있다: {missing}")
+        key = (raw["condition"], raw["symptom"])
+        if key[0] not in conditions:
+            raise ValueError(f"{where} 의 질환 코드가 사전(condition_codes.yaml)에 없다")
+        if key[1] not in symptoms:
+            raise ValueError(f"{where} 의 증상 코드가 사전(symptom_codes.yaml)에 없다")
+        if raw["license"] not in ALLOWED_LICENSES:
+            raise ValueError(
+                f"{where} 의 license {raw['license']!r} 는 허용 밖이다: {sorted(ALLOWED_LICENSES)}"
+            )
+        if phrase := next((p for p in _GUESS_PHRASES if p in raw["text"]), None):
+            raise ValueError(f"{where} 의 문구에 원인 · 병명 추정 표현이 있다: {phrase!r}")
+        if key in seen:
+            raise ValueError(f"{_GUIDANCE_FILE} 에 같은 (질환 × 증상) 행이 겹친다: {key}")
+        seen.add(key)
+        reviewed = raw.get("medical_reviewed", False)
+        if not isinstance(reviewed, bool):
+            raise ValueError(f"{where} 의 medical_reviewed 는 true · false 여야 한다: {reviewed!r}")
+        if reviewed and not str(raw.get("reviewed_by") or "").strip():
+            raise ValueError(f"{where} 은 검수했다고 적었는데 reviewed_by 가 없다")
+        if reviewed:
+            rows[key] = Guidance(
+                condition=key[0],
+                symptom=key[1],
+                text=raw["text"],
+                source_title=raw["source_title"],
+                publisher=raw["publisher"],
+                url=raw["url"],
+                license=raw["license"],
+            )
+    return rows

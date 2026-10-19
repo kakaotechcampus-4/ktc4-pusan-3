@@ -4,8 +4,9 @@
 `test_expected_health.md` 가 정본이다. 문서에 입력이 더해졌는데 이 표를 안 고치면
 `test_health_eval_cases.py` 가 깨진다.
 
-판정은 완성된 경로만 쓴다 — 동의 철회 다섯(`consent_closed`)과 `schedule_check`(`schedule_check`).
-나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP, 구현된 뒤에는 판정을 쓰라고 실패한다.
+판정은 완성된 경로만 쓴다 — 동의 철회 다섯(`consent_closed`) · `schedule_check`(`schedule_check`) ·
+증상 반복 hook 다섯(`symptom_repeat`). 나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP,
+구현된 뒤에는 판정을 쓰라고 실패한다.
 검진 맥락 요약(T34 · T35)은 `schedule_check` 안의 `unsupported` 라 `pending(partial=True)` 다.
 """
 
@@ -20,6 +21,7 @@ from tests.eval.agents.health.judges import (
     consent_closed,
     pending,
     schedule_check,
+    symptom_repeat,
 )
 
 HEALTH_DOCS = Path(__file__).resolve().parents[6] / "docs" / "agents" / "health"
@@ -179,12 +181,13 @@ CASES: list[Case] = [
         "T24-safetyfail", V, "C48-safetyfail", "visit_summary는 진행 + safety.unavailable 경고 줄"
     ),
     _case("T24-norecord", V, "C48-norecord", "visit.no_record · 모델 호출 안 함"),
-    # ── hook (Health-4 가 hook 함수를 붙인다) ──
+    # ── hook — `check_symptom_repetition` 을 직접 부른다 (pipeline 연결은 다른 이슈) ──
     _case(
         "T25",
         None,
         "C48",
         "기록된 날 수로 셈 · 최근 7일 안 3일이면 symptom.repeat 글자 그대로 + 병원 찾기 버튼",
+        judge=symptom_repeat(symptom="발열", condition=None),
     ),
     _case(
         "T25-chronic",
@@ -192,17 +195,29 @@ CASES: list[Case] = [
         "C48-chronic",
         "symptom.repeat_condition 글자 그대로('만성 면역력 저하증' 원문) + condition_guidance "
         "카드에 출처 · health_safety 변경 0건",
+        judge=symptom_repeat(symptom="기침", condition="만성 면역력 저하증"),
     ),
     _case(
         "T25-chronic-unknown",
         None,
         "C48-chronic-unknown",
         "symptom.repeat 기본 문장만 · 안내 카드 없음",
+        judge=symptom_repeat(symptom="기침", condition=None),
     ),
     _case(
-        "T25-allergyonly", None, "C48-allergyonly", "symptom.repeat 기본 문장만 · 안내 카드 없음"
+        "T25-allergyonly",
+        None,
+        "C48-allergyonly",
+        "symptom.repeat 기본 문장만 · 안내 카드 없음",
+        judge=symptom_repeat(symptom="기침", condition=None),
     ),
-    _case("T25-safetyfail", None, "C48-safetyfail", "symptom.repeat 기본 문장만"),
+    _case(
+        "T25-safetyfail",
+        None,
+        "C48-safetyfail",
+        "symptom.repeat 기본 문장만",
+        judge=symptom_repeat(symptom="기침", condition=None),
+    ),
     # ── 검진 · 접종 ──
     _case("T30", S, "C48", "현재·다음 차수 (48개월: 6–7차 구간)", judge=schedule_check(6, 7)),
     _case("T30-C2", S, "C2", "2차(4–6개월) 안내", judge=schedule_check(None, 2)),

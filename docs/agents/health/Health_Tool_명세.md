@@ -20,7 +20,7 @@
 | 달빛어린이병원 지정 목록 (보건복지부·국립중앙의료원) | 야간·휴일 소아 경증 진료기관 | 야간·휴일 1순위 | 목록 동기화 + 심평원 좌표 조인 | 월 1회 |
 | 식약처 알레르기 표시 대상 19종 | 코드표 | `health_safety` 라벨 정규화 | Food `ALLERGEN_CODES` 공유 | 고시 개정 시 |
 | 국가건강정보포털 health.kdca.go.kr · 대한소아청소년과학회 | 응급 신호 · 증상 문구 | Supervisor 규칙 · 고정 문구 **검수 근거** | 문서 | 검수 시 |
-| 공공 출처 (**공공누리 0·1 · 고시 · CC BY만**) | 만성질환별 관리 안내 | `lookup_condition_guidance` | `reference/condition_codes.yaml` · `reference/condition_guidance.yaml` | 검수 시 (**의료 검수 필수**) |
+| 공공 출처 (**공공누리 0·1 · 고시 · CC BY만**) | 만성질환별 관리 안내 | `lookup_condition_guidance` | `reference/condition_codes.yaml` · `reference/condition_guidance.yaml` | 검수 시 (**원문 대조 + 연결 적절성 확인** — 의료인 검수는 필수 아님, 10-19) |
 | **OCR 파이프라인** (처방전·약봉투) | 약품명·용량·용법 추출 텍스트 | `lookup_prescription_draft` | `prescription_draft` 테이블 **읽기만** | – |
 | ~~의약품 허가 정보~~ | – | **쓰지 않음**(H-10 닫힘) | – | – |
 
@@ -173,12 +173,13 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | --- | --- |
 | 입력 | 증상 코드 · `health_safety` active 중 `chronic_disease` · `other_medical` 항목 |
 | 사전 | `reference/condition_codes.yaml` — 표준 질환 코드 + 별칭 + guards. 보호자가 적은 `label`을 공통 매처(`app/rules/term_match.py`)로 맞춘다 |
-| 안내 | `reference/condition_guidance.yaml` — **(질환 코드 × 증상 코드) 키 정확 일치.** 행 = 고정 문구 · 출처(제목 · 기관 · URL · 이용 조건) · `medical_reviewed` |
+| 안내 | `reference/condition_guidance.yaml` — **(질환 코드 × 증상 코드) 키 정확 일치.** 행 = 고정 문구 · 출처(제목 · 기관 · URL · 이용 조건) · `medical_reviewed` · `reviewed_by` |
 | 출력 | 맞는 행마다 `Readout(code, kind="condition_guidance", source_refs=출처)` — 문구 글자 그대로. 반복 문장은 `symptom.repeat_condition`이고 `{condition}`은 등록된 `label` 원문 |
 | 여럿이 맞으면 | 등록 순으로 전부. 문장의 `{condition}`은 `'A' · 'B'`로 잇는다 |
 | 없으면 | 사전에 없는 이름 · 행 없음 · `health_safety` 조회 실패 → 질환 문장도 카드도 없이 `symptom.repeat`만. 조회 실패를 "등록 질환 없음"으로 말하지 않는다 |
 | 쓰기 | **없음.** `health_safety.management`에 쓰지 않고 승인도 받지 않는다 — 보호자가 설정 화면에서 직접 고친다 |
-| 부팅 검사 | `medical_reviewed: true`가 아닌 행은 로드하지 않는다 · 출처 이용 조건은 공공누리 0·1 · 고시 · CC BY만 · 증상 키는 `symptom_codes.yaml`에 있어야 한다 · 해석 금지어 lint(문구만, `{condition}` 자리의 보호자 원문은 대상 아님) |
+| 검수 (10-19) | 이 안내는 **우리가 문장을 쓰지 않고 공공 출처 문장을 원문 그대로 연결**한다. 그래서 검수는 의료 판단이 아니라 두 가지다 — ① 문구가 출처 원문과 글자 단위로 같은가 ② 이 질환 × 증상에 이 문장을 붙이는 게 출처의 맥락에 맞는가(오래된 자료 · 시기가 한정된 자료를 연중 보여 주지 않는가). 작성자가 해도 되고 의료인이어야 하는 건 아니다. `medical_reviewed: true` 는 이 확인을 마쳤다는 뜻이며(필드 이름은 `seek_care` 와 맞춰 유지), 확인한 사람의 GitHub 아이디를 `reviewed_by` 에 적는다. **응급 신호 · `seek_care` 문구는 이 완화의 대상이 아니다 — 그쪽은 의료 검수 필수.** ⚠️ 정책 변경이라 PM 확인 대기 |
+| 부팅 검사 | `medical_reviewed: true`가 아닌 행은 로드하지 않는다 · `true` 인데 `reviewed_by` 가 비면 거절한다 · 출처 이용 조건은 공공누리 0·1 · 고시 · CC BY만 · 증상 키는 `symptom_codes.yaml`에 있어야 한다 · 해석 금지어 lint(문구만, `{condition}` 자리의 보호자 원문은 대상 아님) |
 | 금지 | 알레르기를 질환 문장에 붙이기 · 원인·질환 추정("~로 인해", "~에 걸린") · 모델이 출처를 읽고 문장 만들기 · 증상에서 질환 찾기 |
 
 ## 4. 출력 상수 (code readout)
