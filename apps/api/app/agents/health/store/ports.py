@@ -8,11 +8,13 @@
 | ChildProfileReader | Child_Profile — birth_date 만 |
 | ConsentReader | consent(scope=child_health) 최신 행 |
 | HealthSafetyReader | health_safety — active 행, kind 전부. 응급 카드 · 진료 준비 · 반복 안내 |
+| HealthMemoryReader | observation_health — 증상 기록. 반복 안내 · (다음 이슈) 진료 준비 |
 
-복약 · 건강 관찰 · 체온 · 장소 포트는 그 tool 을 만드는 이슈가 더한다.
+복약 · 체온 · 장소 포트는 그 tool 을 만드는 이슈가 더한다.
 """
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
@@ -44,9 +46,31 @@ class HealthSafetyReader(Protocol):
 
 
 @dataclass(frozen=True)
+class HealthObservation:
+    """observation_health 한 행 — 증상 기록. 읽기 전용이다."""
+
+    id: UUID
+    observed_from: date  # observed_range 시작
+    observed_to: date  # 포함 (range 끝 - 1일). 하루짜리 기록은 observed_from 과 같다
+    observed_time: datetime | None  # 몇 시인지 말했을 때만. DB 에서 온 값은 UTC 오프셋일 수 있다
+    symptoms: tuple[str, ...]  # 보호자가 쓴 말 원문. 코드로 바꾸는 건 tools/symptoms.py
+    severity: str | None = None
+    action_taken: str | None = None
+
+
+class HealthMemoryReader(Protocol):
+    async def health_observations(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[HealthObservation]:
+        """[date_from, date_to] 에 관찰된 증상 기록. 정정으로 내린 기록(wrong)은 빠져 있다."""
+        ...
+
+
+@dataclass(frozen=True)
 class HealthPorts:
     """아이 하나 몫의 읽기 포트 묶음."""
 
     profile: ChildProfileReader
     consent: ConsentReader
     safety: HealthSafetyReader
+    memory: HealthMemoryReader

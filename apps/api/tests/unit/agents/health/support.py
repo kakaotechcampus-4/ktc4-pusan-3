@@ -1,6 +1,7 @@
 """Health 테스트가 같이 쓰는 값과 만드는 함수. 테스트 파일이 아니다(수집되지 않는다)."""
 
 from datetime import UTC, date, datetime
+from itertools import count
 from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -9,7 +10,12 @@ from app.agents.common.age import stage_of
 from app.agents.common.gate import DataReady, Gate
 from app.agents.common.schemas.task import DomainTask
 from app.agents.health.context import HealthContext
-from app.agents.health.store.inmemory import InMemoryHealthSafety, in_memory_ports
+from app.agents.health.store.inmemory import (
+    InMemoryHealthMemory,
+    InMemoryHealthSafety,
+    in_memory_ports,
+)
+from app.agents.health.store.ports import HealthObservation
 from app.rules.age import LifeStage
 
 CHILD = UUID(int=1)
@@ -45,13 +51,36 @@ def context(
     *,
     consent: bool = True,
     safety: InMemoryHealthSafety | None = None,
+    memory: InMemoryHealthMemory | None = None,
 ) -> HealthContext:
     return HealthContext(
         child_id=CHILD,
         run_id="run-1",
         now=NOW,
         timezone=KST,
-        ports=in_memory_ports(CHILD, birth or BIRTH_48, consent=consent, safety=safety),
+        ports=in_memory_ports(
+            CHILD, birth or BIRTH_48, consent=consent, safety=safety, memory=memory
+        ),
+    )
+
+
+_OBSERVATION_IDS = count(1)
+
+
+def observation(
+    day: date,
+    *,
+    to: date | None = None,
+    symptoms: tuple[str, ...] = ("기침",),
+    at: datetime | None = None,
+) -> HealthObservation:
+    """증상 기록 한 건. `to` 가 있으면 `day` ~ `to`(포함) 기간 기록이다."""
+    return HealthObservation(
+        id=UUID(int=1000 + next(_OBSERVATION_IDS)),
+        observed_from=day,
+        observed_to=to or day,
+        observed_time=at,
+        symptoms=symptoms,
     )
 
 

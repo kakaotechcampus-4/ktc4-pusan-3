@@ -10,7 +10,12 @@ from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
-from app.agents.health.store.ports import HealthPorts, HealthSafetyEntry, SafetyLookupError
+from app.agents.health.store.ports import (
+    HealthObservation,
+    HealthPorts,
+    HealthSafetyEntry,
+    SafetyLookupError,
+)
 
 
 class InMemoryProfile:
@@ -44,16 +49,37 @@ class InMemoryHealthSafety:
         return list(self._entries)
 
 
+class InMemoryHealthMemory:
+    def __init__(self, observations: Sequence[HealthObservation] = ()) -> None:
+        self._observations = list(observations)
+        self.calls = 0  # 동의가 없으면 아예 읽지 않는지 테스트가 본다
+        self.requested: list[tuple[date, date]] = []  # 요청한 구간
+
+    async def health_observations(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[HealthObservation]:
+        self.calls += 1
+        self.requested.append((date_from, date_to))
+        # 기간 기록은 구간과 겹치면 읽는다
+        return [
+            row
+            for row in self._observations
+            if row.observed_to >= date_from and row.observed_from <= date_to
+        ]
+
+
 def in_memory_ports(
     child_id: UUID,
     birth_date: date,
     *,
     consent: bool,
     safety: InMemoryHealthSafety | None = None,
+    memory: InMemoryHealthMemory | None = None,
 ) -> HealthPorts:
     """아이 하나 몫의 포트 묶음. `consent` 는 꼭 적는다 — 기본값이 없다."""
     return HealthPorts(
         profile=InMemoryProfile({child_id: birth_date}),
         consent=InMemoryConsent({child_id: consent}),
         safety=safety or InMemoryHealthSafety(),
+        memory=memory or InMemoryHealthMemory(),
     )

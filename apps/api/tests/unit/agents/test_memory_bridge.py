@@ -3,17 +3,17 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agents.common.datetime_rules import build_observed_range
+from app.agents.common.datetime_rules import DateRange, build_observed_range
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory.store.ports import ObservationRow
-from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory
+from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, StoreHealthMemory
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
@@ -35,7 +35,7 @@ async def _save(
         domain=domain,
         child_id=child_id,
         source_writer=PARENT,
-        raw_text=f"{fields['subject']} 기록",
+        raw_text=f"{fields.get('subject') or domain} 기록",
         observed_on=day,
         observed_range=build_observed_range(day),
         fields=fields,
@@ -197,3 +197,47 @@ def test_store_와_opener_는_하나만_받는다() -> None:
         StoreFoodMemory(store, opener=opener)
     with pytest.raises(TypeError):
         StoreActivityMemory()
+
+
+async def test_Health_포트는_날짜_범위의_health_관찰을_읽고_status_를_거른다() -> None:
+    store = InMemoryStore(now=NOW)
+    for offset in (2, 1, 0):
+        await _save(store, "health", day=TODAY - timedelta(days=offset), symptom=["기침"])
+    gone = await _save(store, "health", day=TODAY, symptom=["콧물"])
+    await store.update_observation(
+        domain="health", observation_id=gone.id, fields={"status": "inactive"}
+    )
+    await _save(store, "health", day=TODAY - timedelta(days=9), symptom=["발진"])  # 구간 밖
+    await _save(store, "food", subject="딸기")  # 다른 도메인
+    await _save(store, "health", child_id=OTHER, symptom=["구토"])  # 다른 아이
+    reader = StoreHealthMemory(store)
+
+    rows = await reader.health_observations(
+        child_id=CHILD, date_from=TODAY - timedelta(days=6), date_to=TODAY
+    )
+
+    assert [row.symptoms for row in rows] == [("기침",)] * 3
+    assert [row.observed_from for row in rows] == [TODAY - timedelta(days=n) for n in (2, 1, 0)]
+    assert all(row.observed_to == row.observed_from for row in rows)  # [d, d+1) 은 하루다
+
+
+async def test_Health_포트는_기간_기록과_관찰_시각을_넘긴다() -> None:
+    store = InMemoryStore(now=NOW)
+    at = datetime(2026, 9, 9, 8, 0, tzinfo=KST)
+    await store.create_observation(
+        domain="health",
+        child_id=CHILD,
+        source_writer=PARENT,
+        raw_text="사흘째 기침해",
+        observed_on=TODAY - timedelta(days=2),
+        observed_range=DateRange(TODAY - timedelta(days=2), TODAY + timedelta(days=1)),
+        fields={"symptom": ["기침"], "observed_time": at, "severity": "mild", "action_taken": "물"},
+    )
+
+    [row] = await StoreHealthMemory(store).health_observations(
+        child_id=CHILD, date_from=TODAY - timedelta(days=6), date_to=TODAY
+    )
+
+    assert (row.observed_from, row.observed_to) == (TODAY - timedelta(days=2), TODAY)
+    assert row.observed_time == at
+    assert (row.severity, row.action_taken) == ("mild", "물")
