@@ -3879,10 +3879,42 @@ describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () =>
     expect(isApiError(mismatched, "validation_failed")).toBe(true);
   });
 
-  it("prev_date 는 대화가 있었던 바로 앞 날이다 — 대화 없는 날은 건너뛴다", async () => {
+  it("prev_date 와 next_date 는 대화가 있었던 바로 앞 날과 뒤 날이다 — 대화 없는 날은 건너뛴다", async () => {
     setScenario("chat_history");
-    expect((await chatDay()).prev_date).toBe(daysAgo(1));
-    expect((await chatDay({ date: daysAgo(1) })).prev_date).toBe(daysAgo(3));
-    expect((await chatDay({ date: daysAgo(3) })).prev_date).toBeNull();
+    const today = await chatDay();
+    expect([today.prev_date, today.next_date]).toEqual([daysAgo(1), null]);
+    const yesterday = await chatDay({ date: daysAgo(1) });
+    expect([yesterday.prev_date, yesterday.next_date]).toEqual([daysAgo(3), daysAgo(0)]);
+    const earlier = await chatDay({ date: daysAgo(3) });
+    expect([earlier.prev_date, earlier.next_date]).toEqual([null, daysAgo(1)]);
+  });
+
+  it("reply_open 은 되묻기 맥락이 남은 질문 턴만 참이다 — 답하면 닫힌다", async () => {
+    setScenario("chat_history");
+    const open = (await chatDay()).turns.find((t) => t.run_id === "r_hist_nap");
+    expect(open?.reply_open).toBe(true);
+    // 맥락이 없는 지난 질문 · 질문이 아닌 턴은 닫혀 있다.
+    const earlier = await chatDay({ date: daysAgo(3) });
+    expect(earlier.turns.every((t) => !t.reply_open)).toBe(true);
+
+    await submitInput(
+      CHAT_CHILD,
+      { text: "한 시간쯤", source: "home_input", reply_to: "r_hist_nap" },
+      newIdempotencyKey(),
+    );
+    const after = (await chatDay()).turns.find((t) => t.run_id === "r_hist_nap");
+    expect(after?.reply_open).toBe(false);
+  });
+
+  it("추천은 지금 상태가 같이 온다 — suggestion_ids 는 그대로다", async () => {
+    setScenario("chat_history");
+    const earlier = await chatDay({ date: daysAgo(3) });
+    const results = earlier.turns.flatMap((t) =>
+      t.replies.flatMap((r) => (r.type === "agent_result" ? [r] : [])),
+    );
+    expect(results.length).toBeGreaterThan(0);
+    for (const result of results) {
+      expect(result.suggestions.map((s) => s.id)).toEqual(result.suggestion_ids);
+    }
   });
 });

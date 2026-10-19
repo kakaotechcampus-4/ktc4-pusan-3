@@ -9,6 +9,7 @@ import { useEventDraftStore } from "@/stores/event-draft";
 
 import {
   chatQuery,
+  newerPageParam,
   olderPageParam,
   pastTurnsOf,
   refreshAfterRun,
@@ -26,7 +27,7 @@ const CHILD = "c1";
 const done: ChatReply = { type: "done", completed: true };
 
 function page(date: string, overrides: Partial<ChatDayResponse> = {}): ChatDayResponse {
-  return { date, turns: [], next_cursor: null, prev_date: null, ...overrides };
+  return { date, turns: [], next_cursor: null, prev_date: null, next_date: null, ...overrides };
 }
 
 describe("toPastRun — 리듀서를 그대로 쓴다", () => {
@@ -109,6 +110,13 @@ describe("다음 장", () => {
     expect(olderPageParam(page("2026-10-16"))).toBeUndefined();
   });
 
+  it("더 늦은 장은 다음 날이다 — 지난 날을 바로 열었을 때 아래로 이어 받는다", () => {
+    expect(newerPageParam(page("2026-10-13", { next_date: "2026-10-15" }))).toEqual({
+      date: "2026-10-15",
+    });
+    expect(newerPageParam(page("2026-10-16"))).toBeUndefined();
+  });
+
   it("🚨 커서만 보낸다 — 날짜를 같이 보내 어긋나면 400 이다", () => {
     expect(chatQuery(null)).toEqual({});
     expect(chatQuery({ cursor: "c" })).toEqual({ cursor: "c" });
@@ -121,6 +129,7 @@ describe("다음 장", () => {
       raw_text: run_id,
       reply_to: null,
       created_at: "2026-10-16T00:00:00+09:00",
+      reply_open: run_id === "late",
       replies: [done],
     });
     const turns = pastTurnsOf([
@@ -128,10 +137,10 @@ describe("다음 장", () => {
       page("2026-10-15", { turns: [turn("late")] }),
       page("2026-10-15", { turns: [turn("early")] }),
     ]);
-    expect(turns.map((t) => [t.runId, t.day])).toEqual([
-      ["early", "2026-10-15"],
-      ["late", "2026-10-15"],
-      ["today", "2026-10-16"],
+    expect(turns.map((t) => [t.runId, t.day, t.replyOpen])).toEqual([
+      ["early", "2026-10-15", false],
+      ["late", "2026-10-15", true],
+      ["today", "2026-10-16", false],
     ]);
   });
 });
@@ -172,31 +181,46 @@ describe("run 이 끝난 뒤 — 오늘 장만 갈아 끼운다 (#228 리뷰)", 
       const client = new QueryClient();
       const stale = page(daysAgo(0), { prev_date: daysAgo(1) });
       const yesterday = page(daysAgo(1), { prev_date: daysAgo(3) });
-      client.setQueryData<ChatPages>(qk.chat(CHILD), {
+      client.setQueryData<ChatPages>(qk.chatList(CHILD, null), {
         pages: [stale, yesterday],
         pageParams: [null, { date: daysAgo(1) }],
       });
 
       await refreshAfterRun(client, CHILD);
 
-      const data = client.getQueryData<ChatPages>(qk.chat(CHILD));
-      expect(data?.pages[0].turns.map((t) => t.run_id)).toEqual(["r_hist_breakfast"]);
+      const data = client.getQueryData<ChatPages>(qk.chatList(CHILD, null));
+      expect(data?.pages[0].turns.map((t) => t.run_id)).toEqual(["r_hist_breakfast", "r_hist_nap"]);
       expect(data?.pages[1]).toBe(yesterday);
-      expect(client.getQueryState(qk.chat(CHILD))?.isInvalidated).toBe(false);
+      expect(client.getQueryState(qk.chatList(CHILD, null))?.isInvalidated).toBe(false);
     });
 
     it("갈아 끼울 수 없으면 대화 목록을 낡았다고 표시한다", async () => {
       setScenario("chat_history");
       const client = new QueryClient();
       // 받아 둔 첫 장이 어제다 — 앱을 켜 둔 채 자정을 넘긴 경우.
-      client.setQueryData<ChatPages>(qk.chat(CHILD), {
+      client.setQueryData<ChatPages>(qk.chatList(CHILD, null), {
         pages: [page(daysAgo(1), { prev_date: daysAgo(3) })],
         pageParams: [null],
       });
 
       await refreshAfterRun(client, CHILD);
 
-      expect(client.getQueryState(qk.chat(CHILD))?.isInvalidated).toBe(true);
+      expect(client.getQueryState(qk.chatList(CHILD, null))?.isInvalidated).toBe(true);
+    });
+
+    it("지난 날부터 연 목록은 갈아 끼우지 않고 낡았다고만 표시한다 — 오늘 장이 붙어 있는지 모른다", async () => {
+      const client = new QueryClient();
+      const opened = page(daysAgo(3), { next_date: daysAgo(1) });
+      client.setQueryData<ChatPages>(qk.chatList(CHILD, daysAgo(3)), {
+        pages: [opened],
+        pageParams: [{ date: daysAgo(3) }],
+      });
+
+      await refreshAfterRun(client, CHILD);
+
+      const state = client.getQueryState(qk.chatList(CHILD, daysAgo(3)));
+      expect(state?.isInvalidated).toBe(true);
+      expect(client.getQueryData<ChatPages>(qk.chatList(CHILD, daysAgo(3)))?.pages[0]).toBe(opened);
     });
 
     it("대화 목록이 아닌 아이 쿼리는 그대로 무효화한다 — run 하나가 홈과 기록을 같이 바꾼다", async () => {
