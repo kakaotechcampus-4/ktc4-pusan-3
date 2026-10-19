@@ -57,3 +57,16 @@ def test_읽을_수_없으면_모름(bad):
 def test_진료시간이_없는_기관은_모름():
     er = RawFacility(name="응급실", tier=FacilityTier.EMERGENCY_ROOM, lat=0, lon=0)
     assert open_now(er, WED.replace(hour=3)) is None
+
+
+def test_시작과_끝이_같으면_모름():
+    """원문에 ("1830", "1830") 같은 칸이 있다 — 24시간 진료로 읽으면 밤에 헛걸음 (#517 리뷰)."""
+    same = clinic(*[("1830", "1830")] * 8)
+    assert open_now(same, WED.replace(hour=23)) is None
+    assert open_now(same, WED.replace(hour=4)) is None
+
+
+def test_끝이_새벽보다_늦게_거꾸로면_원문_오류로_보고_모름():
+    """("1830", "1330") 은 밤샘 진료가 아니라 시작 · 끝이 뒤바뀐 칸이다."""
+    swapped = clinic(*[("1830", "1330")] * 8)
+    assert open_now(swapped, WED.replace(hour=20)) is None

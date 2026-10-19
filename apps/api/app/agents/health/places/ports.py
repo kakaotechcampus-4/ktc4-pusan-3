@@ -38,7 +38,7 @@ class FacilitySource(Protocol):
     async def facilities(self, *, grid: WeatherGrid, tier: FacilityTier) -> list[RawFacility]:
         """그 격자가 속한 지역의 기관. 실패하면 FacilityLookupError.
 
-        🚨 보호자 좌표를 받지 않는다 — 날씨와 같은 5km 격자만 받고, 어댑터가 격자를 지역 코드로
+        🚨 보호자 좌표를 받지 않는다 — 날씨와 같은 5km 격자만 받고, 어댑터가 격자를 시도 이름으로
         바꿔 조회한다 (Activity 와 같은 원칙, activity-agent-v1 D9). 거리와 "지금 진료 중" 은
         호출부가 서버 안에서 계산한다. 격자에 맞는 지역이 없으면(바다) 빈 목록이다.
         """

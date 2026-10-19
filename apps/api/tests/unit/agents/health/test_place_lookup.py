@@ -144,6 +144,27 @@ class TestLookup:
 
         assert [p.name for p in result.places] == ["열림"]
 
+    async def test_멀리_있는_의원은_빼고_밤에는_응급실이_채운다(self):
+        """목록이 시도 전체라 자르지 않으면 46km 의원이 600m 응급실보다 먼저 나온다 (#517 리뷰)."""
+        rows = [at("가까운야간", N, 0.02), at("먼야간", N, 0.42), at("응급실", E, 0.005)]
+
+        result = await run(FakeSource(rows), now=WED_NIGHT)
+
+        assert [p.name for p in result.places] == ["가까운야간", "응급실"]
+
+    async def test_응급실은_멀어도_자르지_않는다(self):
+        result = await run(FakeSource([at("먼응급실", E, 0.5)]), mode=PlaceMode.EMERGENCY)
+
+        assert [p.name for p in result.places] == ["먼응급실"]
+
+    async def test_토요일_오전도_낮과_같은_라벨이다(self):
+        """같은 목록이 화 11시엔 "소아청소년과", 토 10시엔 "야간 · 휴일" 로 나갔다 (#517 리뷰)."""
+        rows = [at("의원", N, 0.01)]
+
+        readout = place_readout(await run(FakeSource(rows), now=SAT_NOON.replace(hour=10)))
+
+        assert readout.body.splitlines()[1] == "의원 · 소아청소년과 진료 · 1.1km · 지금 진료 중"
+
 
 class TestClosedAndFailure:
     async def test_위치가_없으면_묻지_않고_닫는다(self):
@@ -190,9 +211,9 @@ class TestReadout:
         assert readout.kind == "place_list"
         assert readout.authored_by == "code"
         assert readout.body.splitlines() == [
-            "가까운 소아청소년과 목록이에요. 가기 전에 전화로 진료 중인지 확인해 주세요.",
-            "가까운의원 · 소아청소년과 · 400m · 지금 진료 중 · 051-000-0000",
-            "먼의원 · 소아청소년과 · 2.2km",
+            "가까운 소아청소년과 진료 병원 목록이에요. 가기 전에 전화로 진료 중인지 확인해 주세요.",
+            "가까운의원 · 소아청소년과 진료 · 400m · 지금 진료 중 · 051-000-0000",
+            "먼의원 · 소아청소년과 진료 · 2.2km",
         ]
 
     @pytest.mark.parametrize("word", ["추천", "좋은", "최고", "평점"])

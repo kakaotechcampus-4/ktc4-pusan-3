@@ -3,8 +3,8 @@
 모델을 부르지 않는다. 순서는 이렇다.
 
 1. 좌표가 없으면 닫는다 — "위치를 허용하시면 가까운 병원을 찾아드려요".
-2. 좌표 → 기상청 격자. 어댑터는 격자만 받아 시군구로 바꿔 조회한다 — 밖으로 나가는 위치 값은
-   시군구뿐이다.
+2. 좌표 → 기상청 격자. 어댑터는 격자만 받아 시도 이름으로 바꿔 조회한다 — 밖으로 나가는 위치
+   값은 시도 이름뿐이다.
 3. 시간대가 기관 종류의 순서를 정한다 — 평일 주간은 소아청소년과, 야간 · 휴일은 지금 진료 중인
    소아청소년과(달빛어린이병원 포함) 다음 응급의료기관, 응급 안내에서 넘어오면 응급의료기관만.
 4. 종류 순서대로, 같은 종류 안에서는 가까운 순으로 다섯 곳. 평가 · 추천 순위는 매기지 않는다.
@@ -36,6 +36,10 @@ DAYTIME_START = time(9, 0)
 DAYTIME_END = time(18, 0)
 
 PLACE_TOP_K = 5
+
+# 소아청소년과(낮 · 밤)는 이 거리 안만 보인다. 목록이 시도 전체라 자르지 않으면 밤에 46km 의원이
+# 600m 응급실보다 먼저 다섯 칸을 채운다 (#517 리뷰). 응급실은 자르지 않는다 — 멀어도 가야 한다
+CLINIC_MAX_DISTANCE_M = 10_000
 
 _EARTH_RADIUS_M = 6_371_000
 
@@ -93,7 +97,7 @@ async def find_pediatric_places(
         ]
         ranked.extend(
             sorted(
-                (r for r in candidates if _shown(tier, r.open_now)),
+                (r for r in candidates if _shown(tier, r.open_now, r.distance_m)),
                 key=lambda r: (r.distance_m, r.facility.name),
             )
         )
@@ -113,10 +117,12 @@ async def find_pediatric_places(
     return PlaceLookup(status="ok" if places else "empty", places=places)
 
 
-def _shown(tier: FacilityTier, is_open: bool | None) -> bool:
+def _shown(tier: FacilityTier, is_open: bool | None, distance_m: int) -> bool:
     """야간 · 휴일 소아청소년과는 지금 진료 중인 게 확실한 곳만 — 밤에 "모름" 은 헛걸음이다.
     그 밖은 문을 닫은 게 확실한 곳만 뺀다. 모르는 곳은 남긴다 — 전화로 확인할 수 있다.
     """
+    if tier is not FacilityTier.EMERGENCY_ROOM and distance_m > CLINIC_MAX_DISTANCE_M:
+        return False
     if tier is FacilityTier.NIGHT_CLINIC:
         return is_open is True
     return is_open is not False

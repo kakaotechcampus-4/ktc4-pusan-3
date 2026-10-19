@@ -7,16 +7,19 @@ from app.agents.health.places.ports import FacilityTier, NearbyPlace, PlaceLooku
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("places.readout.yaml"))
 
+# 진료과목에 소아청소년과가 있는 기관이다 — 소아청소년과 의원만이 아니라 내과 · 이비인후과도
+# 들어온다(API 에 진료과 칸이 없다). 그래서 "소아청소년과" 가 아니라 "소아청소년과 진료" 라고 쓴다.
+# 낮 · 밤 · 토요일 오전이 같은 목록이라 라벨도 같다. 밤에는 "지금 진료 중" 이 붙는다 (#517 리뷰)
 _TIER_LABEL = {
-    FacilityTier.PEDIATRIC_CLINIC: "소아청소년과",
-    FacilityTier.NIGHT_CLINIC: "야간 · 휴일 진료",
+    FacilityTier.PEDIATRIC_CLINIC: "소아청소년과 진료",
+    FacilityTier.NIGHT_CLINIC: "소아청소년과 진료",
     FacilityTier.EMERGENCY_ROOM: "응급실",
 }
 
-# 목록 머리에 쓰는 말 — 처음 나온 종류로 고른다. 야간에 달빛어린이병원이 없으면 응급실만 남는다
+# 목록 머리에 쓰는 말 — 처음 나온 종류로 고른다. 밤에 문 연 곳이 없으면 응급실만 남는다
 _WHAT = {
-    FacilityTier.PEDIATRIC_CLINIC: "소아청소년과",
-    FacilityTier.NIGHT_CLINIC: "야간 · 휴일 진료 병원",
+    FacilityTier.PEDIATRIC_CLINIC: "소아청소년과 진료 병원",
+    FacilityTier.NIGHT_CLINIC: "소아청소년과 진료 병원",
     FacilityTier.EMERGENCY_ROOM: "응급실",
 }
 
