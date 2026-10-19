@@ -114,7 +114,12 @@ export interface ObservationHealth extends ObservationBase {
     body_part?: string;
     suspected_trigger?: string;
     action_taken?: string;
-    observed_time?: string;
+    /**
+     * ISO 시각 (`2026-10-15T21:00:00+09:00`). "밤" 같은 문구가 아니다 — 서버는 몇 시인지 알 수
+     * 있는 말만 시각으로 바꿔 담는다. 날짜는 `observed_label` 이 말하므로 화면은
+     * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
+     */
+    observed_time?: string | null;
     [key: string]: unknown;
   };
 }
@@ -1763,4 +1768,40 @@ export interface WithdrawRequest {
 export interface WithdrawResponse {
   /** 지워진 시각. 화면이 계산하지 않는다 — 서버가 만든 값이다. */
   deleted_at: string;
+}
+
+/* ── 10 설정 › 문제 알리기 ───────────────────────────────────────────────── */
+
+/**
+ * POST /reports — #487 · 서버 PR #488. 정본은 서버 Swagger 다 (계약서 v1 에는 없다).
+ *
+ * Google Play 정책(AI 생성 콘텐츠 · 사용자 제작 콘텐츠)이 **앱을 떠나지 않고** 불쾌한 AI 답 ·
+ * 공동 기록 · 다른 사용자를 알리는 길을 요구해서 생겼다 — `mailto:` 는 앱을 떠나서 그 길이 못 된다.
+ *
+ * 🚨 **되돌릴 수 없는 5곳이 아니다.** `Idempotency-Key` 를 받지 않고 `idempotentPath` 표에 더하지
+ *    않는다. 응답만 잃고 다시 보내면 같은 내용이 두 번 쌓일 뿐이다.
+ * 🚨 **본문을 로그에도 저장소에도 남기지 않는다.** 서버는 DB 에만 두고 로그에 찍지 않는다.
+ *    화면도 콘솔에 찍지 않고, `persist` 스토어 · `localStorage` · `sessionStorage` 에 두지 않는다.
+ * 429 `too_many_reports` — 보호자당 24시간에 10건. 문구는 서버 것을 그대로 쓴다.
+ */
+export const REPORT_CATEGORIES = ["ai_content", "shared_record", "bug", "other"] as const;
+export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
+
+/** 서버 검사와 같은 값이다 — 앞뒤 공백을 뗀 뒤 1자 이상, 이 길이 이하. */
+export const REPORT_MESSAGE_MAX_LENGTH = 1000;
+
+/**
+ * 🚨 **필드는 이 둘뿐이다.** 서버는 모르는 필드가 오면 400 `validation_failed` 로 거절한다
+ *    (화면 상태를 통째로 펼쳐 보내지 않는다).
+ */
+export interface ReportRequest {
+  category: ReportCategory;
+  /** 서버가 앞뒤 공백을 떼고 1~1000자인지 본다. NUL 문자는 거절한다. */
+  message: string;
+}
+
+export interface ReportResponse {
+  id: string;
+  /** 서버가 만든 시각. 화면은 쓰지 않는다. */
+  created_at: string;
 }

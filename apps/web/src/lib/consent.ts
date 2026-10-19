@@ -266,6 +266,14 @@ export const POLICY_TEXT_PENDING = "전문을 다듬고 있어요. 준비되면 
 export const PRIVACY_POLICY_HREF = `${API_BASE_URL}/privacy-policy`;
 
 /**
+ * 처리방침 · 이용약관에 적힌 연락처 — 열람 · 삭제처럼 **답이 필요한 요청**을 받는 곳이다.
+ *
+ * 🚨 **바뀌면 처리방침이 먼저다.** 화면은 정본에 적힌 주소를 옮겨 적을 뿐이다. 계정 삭제 안내
+ *    (`/account-deletion`)와 10 설정 › 문제 알리기(#487)가 같은 값을 쓴다 — 두 벌로 두지 않는다.
+ */
+export const SERVICE_EMAIL = "parkhajh0803.dev@gmail.com";
+
+/**
  * 10 설정의 **약관과 방침**이 보여주는 것.
  *
  * 🚨 **동의 스코프와 다른 개념이다.** 동의 목록은 *무엇에 동의를 받는가* 이고, 여기 둘은

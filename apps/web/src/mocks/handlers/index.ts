@@ -7,6 +7,7 @@ import { memoryHandlers } from "./memories";
 import { photoHandlers } from "./photos";
 import { policyHandlers } from "./policies";
 import { profileHandlers } from "./profile";
+import { reportHandlers } from "./reports";
 import { runHandlers } from "./runs";
 import { settingsHandlers } from "./settings";
 import { suggestionHandlers } from "./suggestions";
@@ -44,4 +45,6 @@ export const handlers = [
   ...inviteHandlers,
   // 화면 오류 보고 — 오류 바운더리가 부른다. 아이 스코프 밖, 겹치는 경로 없음.
   ...clientErrorHandlers,
+  // 10 설정 › 문제 알리기 (#487). 아이 스코프 밖, 겹치는 경로 없음.
+  ...reportHandlers,
 ];

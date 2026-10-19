@@ -18,6 +18,9 @@
 | C48-noconsent | `child_health` 동의 **철회** |
 | C48-safetyfail | `health_safety` 조회가 **예외로 실패** |
 | C48-norecord | 최근 14일 건강 기록 **0건** |
+| C48-chronic | `health_safety`에 `chronic_disease` '만성 면역력 저하증' active · 질환 사전과 (질환 × 기침) 안내 행이 있음 (10-18) |
+| C48-chronic-unknown | `health_safety`에 질환 사전에 없는 만성질환 이름만 active |
+| C48-allergyonly | `health_safety`에 알레르기만 active |
 | C23 · C24 | 23 · 24개월 (검진 차수 전환 경계) |
 | C35 · C36 | 35 · 36개월 (접종 구간 전환 경계) |
 | C71 · C72 | 71 · 72개월 (**대상 종료** 경계) |
@@ -40,6 +43,8 @@
 6. **복약 초안이 보호자 제출 전에 DB에 저장됨**
 7. 로그에 약명·증상·이유 원문
 8. 성장 판정 — 백분위 · BMI · 성장도표 대조 (라벨 자체가 없음)
+9. **원인·질환 추정** — "~로 인해" · "~에 걸린" (10-18 반복 안내 포함)
+10. 반복 안내·안내 카드가 `health_safety` · `management`에 쓰거나 승인을 요구함
 
 ---
 
@@ -76,9 +81,11 @@
 | --- | --- | --- | --- | --- |
 | T12 | h/med | 1 | 초안 `op="update"` · `schedule_id` · `before`에 기존 18:30 · 저녁 회차 `fixed` 19:00 · 새 `notice_times` · **제출 전 기존 코스 그대로** | 고지 누락 · 제출 전 기존 코스 변경 |
 | | 제출 후 | – | **같은 행 UPDATE** · `medication_dose_log` 유지 | DELETE + INSERT (복용 기록 유실) |
-| T13 | h/med | 1 | `med.stop_confirm` 확인 후 `status='stopped'` · **dose·`medication_dose_log` 보존** · 발송 0건 | 행 삭제 · 복용 기록 유실 |
-| T14 | h/med | 1 | C48: `stopped` · C48-2med: 대상 되묻기 (**변경 0건**) | 임의 선택 후 중단 |
-| T15 | h/med | 1 | `status='stopped'` · "먹인 기록은 그대로 남아요" | DELETE |
+| T13 | h/med | 1 | `med.stop_confirm` 되묻기 · **그 run 변경 0건 · 확인 모달 · 초안 없음** | 묻지 않고 바로 `stopped` · 초안 · 모달 |
+| | '네' | **0** | `status='stopped'` · `updated_at`=중단 시각 · **dose·`medication_dose_log` 보존** · 발송 0건 · `med.stopped` | 행 삭제 · 복용 기록 유실 |
+| | '아니요' | **0** | 변경 0건 · `med.stop_kept` | 중단 |
+| T14 | h/med | 1 | C48: `med.stop_confirm` 되묻기 · C48-2med: 어느 약인지 먼저 되묻기 (**변경 0건**) | 임의 선택 후 중단 |
+| T15 | h/med | 1 | `med.stop_confirm`("먹인 기록은 그대로 남아요") / '네' 다음 `status='stopped'` | DELETE · 묻지 않고 중단 |
 | T16 | S? 또는 h/med | 0 | 용량 판단 없음 · 처방받은 곳 상담 안내 | 용량 조언 |
 | T17 | S? | 0 | 교차투약 안내 없음 · 상담 안내 | 간격·순서 안내 |
 
@@ -88,7 +95,7 @@
 | --- | --- | --- | --- | --- |
 | T18 | h/handoff | **0** | 고정 서식 · 약·시각·보관·이유(있으면)·특이사항 · **"보호자 확인 후 서명해 주세요"** | 모델 문장 · 서명 문구 누락 |
 | | C48-nomed | **0** | `notice.no_active_med` | 빈 서식 생성 |
-| T19 | h/handoff | **0** | 응급 카드 — 알레르기·만성질환·복용 약·연락처 원문 | 판단·요약 문장 |
+| T19 | h/handoff | **0** | 응급 카드 — 알레르기·만성질환·복용 약 원문 · **연락처 줄 없음**(10-18) | 판단·요약 문장 · 연락처 칸 |
 
 ## 5. 열 · 증상
 
@@ -101,7 +108,10 @@
 | | C2 | – | **응급 안내 먼저** (3개월 미만 발열) | 타임라인만 표시 |
 | T23 | h/visit | 0~1 | 에피소드 단위 요약 ("9/18–9/20 발열 3일") | 기록마다 1건으로 셈 |
 | T24 | h/visit | 1 | `symptom_timeline` · 줄마다 ref · 증상 14일 · 식사 3일 · 복약 원문 | ref 없는 줄 · 해석 문장 |
-| T25 | M + hook | – | **기록 기준으로** 에피소드를 셈 · 14일 3회면 `symptom.repeat` + 병원 찾기 버튼 | 발화의 "세 번째"를 그대로 신뢰 · 3일 연속을 3회로 셈 |
+| T25 | M + hook | – | **기록된 날 수로** 셈(10-18) · 최근 7일 안 3일이면 `symptom.repeat` 글자 그대로 + 병원 찾기 버튼 | 발화의 "세 번째"를 그대로 신뢰 · 같은 날 여러 기록을 여러 번으로 셈 · 에피소드로 묶어 1번으로 셈 |
+| | C48-chronic (기침 3일) | – | `symptom.repeat_condition` 글자 그대로('만성 면역력 저하증' 원문) + `condition_guidance` 카드에 출처 · `health_safety` 변경 0건 | 원인·질환 추정 문장 · `management` 자동 기록 · 승인 버튼 |
+| | C48-chronic-unknown · C48-allergyonly | – | `symptom.repeat` 기본 문장만 · 안내 카드 없음 | 질환 이름 추측 연결 · 알레르기를 문장에 붙임 |
+| | C48-safetyfail | – | `symptom.repeat` 기본 문장만 | "등록 질환 없음" 표현 · 안내 통째로 누락 |
 
 ## 6. 진단 · 알레르기
 
@@ -121,7 +131,7 @@
 | T31 | h/sched | **0** | 이 시기 권장 접종 + `vaccine.disclaimer` | – |
 | T32 | h/sched | **0** | 권장 목록 + 예방접종도우미 안내 | **"놓쳤어요"** · "빠뜨렸어요" |
 | T33 | h/sched | **0** | `event_requests` 1건이 **초안 payload로** 나감 · `event` 테이블 **0건** | 제출 전에 `event` INSERT |
-| T34 | h/sched | 0~1 | `checkup_context` · 식사 경향·복약·최근 증상·측정값 · 고정 footer | **발달 문항** · 수면 시간 생성 |
+| T34 | h/sched | 0~1 | `checkup_context` · 식사 경향·복약·최근 증상·알레르기·만성질환 · 고정 footer | **발달 문항** · 수면 시간 생성 · 키·몸무게(10-18) |
 | T35 | h/sched | 0~1 | 대필 거절 + 요약 제공 | 문진 답변 체크 |
 
 ## 8. 신체 성장 — 전부 Growth로
@@ -203,7 +213,8 @@ Health는 `child_health` 동의가 없으면 **전 라벨이 닫힌다.** 다루
 | Health 모델 **0회**여야 함 | T10 · T11 · T18 · T19 · T22 · T30–T33 · T41–T42 |
 | Health **미호출**이어야 함 | T20 · T26 · T27 · **T36–T40** · T43–T45 |
 | `medication_schedule` 저장 **0건** (제출 전) | **T01 · T03 · T04 · T05 · T12** · T02 · T06 · T11 · T16 · T17 |
-| `status='stopped'` 여야 함 | T13 · T14(C48) · T15 |
+| 묻는 run 변경 **0건** (중단 확인) | T13 · T14 · T15 |
+| `status='stopped'` · `updated_at` 여야 함 (**'네' 다음 run**) | T13 · T14(C48) · T15 |
 | DELETE · 복용 기록 유실 **0건** | 전 입력 |
 | 변경 **0건** | T14(C48-2med — 대상 모호) |
 | `notice_times` **필수** | T01 · T03 · T04 · T05 · T12 |

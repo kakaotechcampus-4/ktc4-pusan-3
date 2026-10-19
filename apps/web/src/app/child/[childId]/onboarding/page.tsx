@@ -144,11 +144,7 @@ function ChildOnboardingScreen() {
     <Screen className="gap-5">
       <div>
         <p className="text-label text-ink-subtle">아이 등록 · 2 / 2</p>
-        <PageTitle className="mt-2">
-          알려주실 게
-          <br />
-          있다면 지금
-        </PageTitle>
+        <PageTitle className="mt-2">알려주실 게 있다면 지금</PageTitle>
         <p className="text-body text-ink-muted mt-3">
           전부 선택이에요. 편한 것만 적고 넘어가도 되고, 나중에 프로필에서 적어도 돼요.
         </p>

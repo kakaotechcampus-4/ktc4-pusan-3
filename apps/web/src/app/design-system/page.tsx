@@ -473,6 +473,14 @@ const DS_GENDER_OPTIONS = [
   { value: "female", label: "여자아이" },
 ] as const;
 
+/** 넷 이상이거나 문장이 긴 고르는 칸 — 10 설정 › 문제 알리기의 분류가 이 모양이다. */
+const DS_VERTICAL_OPTIONS = [
+  { value: "ai_content", label: "AI 답이나 추천이 부적절해요" },
+  { value: "shared_record", label: "공동 기록이나 다른 보호자에게 문제가 있어요" },
+  { value: "bug", label: "앱이 이상하게 동작해요" },
+  { value: "other", label: "기타" },
+] as const;
+
 const DS_DOMAIN_OPTIONS = [
   { value: "all", label: "전체" },
   { value: "food", label: "식사" },
@@ -495,6 +503,7 @@ function ComponentSection() {
   const toast = useToast();
   const [sheet, setSheet] = useState<null | "normal" | "approval" | "document">(null);
   const [dsGender, setDsGender] = useState("male");
+  const [dsReportKind, setDsReportKind] = useState("ai_content");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
   const [dsTime, setDsTime] = useState("");
@@ -801,6 +810,21 @@ function ComponentSection() {
         value={dsGender}
         options={DS_GENDER_OPTIONS}
         onChange={setDsGender}
+      />
+
+      <SubTitle>고르는 칸 (세로)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        선택지가 넷 이상이거나 문장이 길어 가로로 똑같이 나눌 수 없으면 한 줄에 하나씩 쌓는다
+        (direction=&quot;vertical&quot;). 상자 · 색 · 상태는 가로와 같은 표이고, 글자는 왼쪽에 붙고
+        체크 아이콘은 글자 앞에 선다. 🚨 세로여도 비어 있을 수 없다 — 기본값을 준다. 안 고른 칸은
+        테두리만 있는 상자라서, 하나가 골라져 있어야 고르는 칸이라는 것이 보인다.
+      </p>
+      <ChoiceField
+        label="어떤 일인가요?"
+        value={dsReportKind}
+        options={DS_VERTICAL_OPTIONS}
+        onChange={setDsReportKind}
+        direction="vertical"
       />
 
       <SubTitle>토스트</SubTitle>

@@ -244,6 +244,29 @@ async def 이슈_재현_관찰_시각을_null_로_보내도_지워지지_않고_
     assert after["body_part"] == "팔"
 
 
+async def 날짜만_고쳐도_관찰_시각이_새_날짜를_따라간다(
+    h: Harness, *, time_args: dict[str, Any]
+) -> None:
+    # observed_time 은 날짜까지 품은 timestamptz 다.
+    # 날짜만 고치고 두면 observed_range 와 다른 날을 가리킨다 (#485)
+    observation_id = await _create_observation(h, "health")
+
+    result = await execute_tool(
+        "update_observation_health",
+        {
+            "observation_id": observation_id,
+            "observed_on": "어제",
+            "temporal_direction": "past",
+            **time_args,
+        },
+        h.context,
+    )
+
+    assert result.success is True, result.error
+    after = await _fields(h, "health", observation_id)
+    assert after["observed_time"] == datetime(2026, 9, 14, 8, 0, tzinfo=KST)
+
+
 async def 빈_시각_표현은_지우기가_아니다(h: Harness) -> None:
     # "  " 는 resolve_time 에서 None 으로 풀린다. None 을 그보다 먼저 거르면 이 값이 지우기가 된다
     observation_id = await _create_observation(h, "health")
@@ -510,6 +533,15 @@ CASES = [
     ),
     _case(여러_필드를_한_번에_비울_수_있다),
     _case(이슈_재현_관찰_시각을_null_로_보내도_지워지지_않고_clear_로만_지워진다),
+    # 빈 시각 표현은 "시각은 안 바꿈" 이라 키 없음과 같아야 한다
+    *(
+        _case(날짜만_고쳐도_관찰_시각이_새_날짜를_따라간다, label, time_args=args)
+        for label, args in (
+            ("키_없음", {}),
+            ("null", {"observed_time": None}),
+            ("빈_표현", {"observed_time": "  "}),
+        )
+    ),
     _case(빈_시각_표현은_지우기가_아니다),
     *(
         _case(비울_수_없는_필드를_적으면_거부하고_저장도_바꾸지_않는다, d, domain=d, name=n)
