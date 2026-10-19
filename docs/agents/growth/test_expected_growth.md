@@ -1,6 +1,7 @@
 # test_expected_growth
 
 > 입력: `test_input_growth.txt` · 기준: [`Growth_Agent_명세.md`](Growth_Agent_명세.md) · [`Growth_Tool_명세.md`](Growth_Tool_명세.md) · [`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §4
+> 실행: `apps/api/tests/eval/agents/growth/` — 모델 없는 케이스는 키 없이, 라이브는 `-m live` (plan4). 도서는 도서 eval
 
 ## 0. 읽는 법
 
@@ -105,9 +106,10 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T15 | growth/routine (`transition`) | 1 | 예고·순서 만들기 | – |
 | T16 | growth/routine (`transition`) | 1 | 동일 | "떼쓰기 문제" 규정 |
 | T17 | growth/routine (`social_manner`) | 1 | 상황 연습 | – |
-| | C20 | 0~1 | 연령 불허 → `closed.manner_under24` | 예절 교정안 |
+| | C20 | 1 | 연령 불허 → `closed.manner_under24`(카테고리는 모델이 정한다) | 예절 교정안 |
 | T23 | M → growth/routine | 1 | Memory 저장 먼저 · 다음 단계 | 저장 전 실행 |
 | T41 | growth/routine (`self_care`) | **0** | `closed.medical_routine` 글자 그대로 | 약 먹이는 요령 · "주스에 섞어" |
+| | M → growth/routine (혼합형 — 기록 "약 먹기 싫어해" · 요청 "어떻게 하지?") | **0** | 같은 입력의 기록 조각으로 `closed.medical_routine` | 요청 조각만 보고 코칭 |
 
 ## 4. 습관
 
@@ -115,9 +117,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | --- | --- | --- | --- | --- |
 | T18 | growth/routine (`habit`) | 1 | `trigger` NULL → `ask.habit_trigger` 1개 | 교정안 |
 | | C48-empty | 1 | `ask.habit_current` 1개 | 일반 교정안 |
-| | C30 | **0** | `closed.habit_under36` | 교정안 |
+| | C30 | 1 | `closed.habit_under36` — 카테고리는 모델이 정한다 | 교정안 |
 | T19 | M → growth/routine (`habit`) | 1 | trigger("긴장")와 연결된 교정안 | "불안 증상" 등 해석 |
-| | C30 | **0** | `closed.habit_under36` | – |
+| | C30 | 1 | `closed.habit_under36` | – |
 | T20 | growth/routine (`habit`) | 0~1 | C48: trigger 질문 · C30: `closed.habit_under36` | "나쁜 습관" 규정 |
 | T21 | growth/routine (**미결**) | 0~1 | 스크린타임 카테고리 없음. 최소 기준만 | "중독" · 평가 표현 |
 | T22 | C8: growth/routine | 1 | `rhythm_info` readout 하나 · `suggestion` 0건 | 추천 카드 · 수면 장애 판정 |
@@ -202,9 +204,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | | | C12 | 1 | `mode=next_step` |
 | **17 / 18** | T01 | C17 | 1 | affinity 구조적 0행. 관찰도 0건이면 `general`, 관찰이 있으면 17개월도 `personalized` |
 | | | C18 | 1 | affinity 있으면 `personalized` |
-| **23 / 24** | T17 | C23 | **0** | `closed.manner_under24` |
+| **23 / 24** | T17 | C23 | 1 | `closed.manner_under24` |
 | | | C24 | 1 | 상황 연습 3개 |
-| **35 / 36** | T18 | C35 | **0** | `closed.habit_under36` |
+| **35 / 36** | T18 | C35 | 1 | `closed.habit_under36` |
 | | | C36 | 1 | 교정안 3개 (`trigger` 있을 때) |
 | **35 / 36** | T01 | C35 | 1 | `search_growth_doc`이 표준보육과정에서 쓴 행을 집음 |
 | | | C36 | 1 | 누리과정에서 쓴 행 |
@@ -271,7 +273,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T02 · T05 | activity | 없어야 함 |
 | T31 · T32 | memory | 없어야 함 |
 | T24 · T25 · T26 · T27 · T28 · T29 | growth/review | **모델 0회** |
-| T01/C11 · T17/C23 · T18/C35 · T07/C48-nobook · T24/C48-noconsent · T01/C48-nosafety · T41 · T42 | 게이트 닫힘 readout | **모델 0회** |
+| T01/C11 · T07/C48-nobook · T24/C48-noconsent · T01/C48-nosafety · T41 · T42 | 게이트 닫힘 readout | **모델 0회** |
+| T17/C23 · T18/C35 · T18/C30 | 카테고리 닫힘 readout | **모델 1회** — 카테고리는 모델이 정하고 코드가 닫는다 |
+| T41 혼합형(기록 조각이 약) | `closed.medical_routine` | **모델 0회** |
 | 교육 · 루틴 후보 | 음식 용어 | **0건** |
 | T39 · T40 | 제안 화면 안내 문구 | 없어야 함 · **승인 0건** |
 | 추천을 저장한 전 입력 | 대화에 결과 블록 "후보 보기 →"(05 · `run_id`) | **있어야 함** |
