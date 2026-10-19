@@ -1,0 +1,33 @@
+# 보호자가 health_safety 에 적은 질환 이름 → 표준 질환 코드 — reference/condition_codes.yaml
+# 설계: docs/agents/health/Health_Tool_명세.md §3 lookup_condition_guidance
+#
+# 🚨 이 파일은 이름만 맞춘다. 증상에서 질환을 찾는 데는 쓰지 않는다 (진단 금지).
+# 🚨 사전에 없는 이름은 코드로 바꾸지 않는다 — 그러면 질환 문장 없이 기본 문장만 나간다.
+# 형식은 symptom_codes.yaml 과 같다. 매칭은 app/rules/term_match.py (Food 알레르기 필터와 같은 매처).
+# 첫 범위(H-13): 면역저하 · 천식 · 선천성 심장질환 · 당뇨 · 뇌전증.
+
+source: 보호자가 health_safety 에 적는 질환 이름 (팀 작성 사전)
+version: "2026.1"
+fetched_at: 2026-10-19
+
+terms:
+  - code: immunocompromised
+    label: 면역저하
+    aliases: [면역저하, 면역력 저하, 면역 저하, 면역결핍, 면역부전, 면역억제]
+    guards: []
+  - code: asthma
+    label: 천식
+    aliases: [천식, asthma]
+    guards: []
+  - code: congenital_heart_disease
+    label: 선천성 심장질환
+    aliases: [선천성 심장질환, 선천성 심장병, 선천 심장병, 선천성 심질환, 심방중격결손, 심실중격결손]
+    guards: []
+  - code: diabetes
+    label: 당뇨
+    aliases: [당뇨, diabetes]
+    guards: []
+  - code: epilepsy
+    label: 뇌전증
+    aliases: [뇌전증, 간질, epilepsy]
+    guards: [간질환, 간질성]
