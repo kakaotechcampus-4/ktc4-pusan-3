@@ -11,6 +11,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 import { api, isApiError, qk, type HealthSafety, type HealthSafetyListResponse } from "@/lib/api";
 import { PENDING_SERVER_FEATURES } from "@/lib/features";
@@ -58,7 +59,7 @@ export function SafetySection({ childId }: { childId: string }) {
    */
   const [mode, setMode] = useState<null | "choose" | "manual">(null);
   /** 고치는 중인 기록. 있으면 같은 승인 게이트 시트가 고치기로 열린다. */
-  const [editing, setEditing] = useState<HealthSafety | null>(null);
+  const editing = useSheetTarget<HealthSafety>();
 
   /**
    * 🚨 **파일 입력은 사용자 제스처에서 열어야 한다.** 시트를 닫고 나서 열려고 하면 제스처가
@@ -105,7 +106,7 @@ export function SafetySection({ childId }: { childId: string }) {
           countLabel="등록된 항목"
         />
       ) : (
-        <HealthSafetyList childId={childId} items={items} onEdit={setEditing} />
+        <HealthSafetyList childId={childId} items={items} onEdit={editing.show} />
       )}
 
       {PENDING_SERVER_FEATURES.safetyScan ? (
@@ -140,15 +141,16 @@ export function SafetySection({ childId }: { childId: string }) {
 
       <HealthSafetySheet open={mode === "manual"} onClose={() => setMode(null)} childId={childId} />
 
-      {/* 🚨 고치는 기록이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
-          같은 인스턴스를 재사용하면 앞 기록의 입력이 남는다. */}
-      {editing ? (
+      {/* 🚨 열 때마다 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
+          같은 인스턴스를 재사용하면 앞 기록의 입력이 남는다. 닫는 것은 `open` 이 해서
+          내려가는 움직임이 남는다 (`useSheetTarget`). */}
+      {editing.target ? (
         <HealthSafetySheet
-          key={editing.id}
-          open
-          onClose={() => setEditing(null)}
+          key={editing.session}
+          open={editing.open}
+          onClose={editing.close}
           childId={childId}
-          item={editing}
+          item={editing.target}
         />
       ) : null}
     </Section>
