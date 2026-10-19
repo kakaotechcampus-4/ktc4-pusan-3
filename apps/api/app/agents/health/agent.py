@@ -7,33 +7,29 @@
   ④ 구현된 라벨 경로가 없으면 `unsupported` — 모델 0회, readout 없음
   ⑤ 구현된 라벨은 `_LABEL_RUNNERS` 의 경로가 처리한다
 
-라벨 경로는 아직 하나도 없다. 라벨 이슈가 `_LABEL_RUNNERS` 와 `registry.IMPLEMENTED_TASKS` 에 같이
-더한다. 저장은 하지 않는다 — 복약 초안(`medication_drafts`)과 일정 초안(`event_requests`)은 결과로만
-나가고, 보호자가 제출해야 백엔드가 쓴다. pipeline 에는 아직 연결하지 않았다 — 연결 이슈
-(docs/agents/health/health_plan.md §16).
+라벨 경로는 라벨 이슈가 `_LABEL_RUNNERS` 와 `registry.IMPLEMENTED_TASKS` 에 같이 더한다
+(지금은 `schedule_check` 만 있다). 저장은 하지 않는다 — 복약 초안(`medication_drafts`)과 일정
+초안(`event_requests`)은 결과로만 나가고, 보호자가 제출해야 백엔드가 쓴다. pipeline 에는 아직
+연결하지 않았다 — 연결 이슈(docs/agents/health/health_plan.md §16).
 """
 
 from collections.abc import Awaitable, Callable
 
 from app.agents.common.llm_client import LLMClient
-from app.agents.common.readout import Readout
-from app.agents.common.result import (
-    AgentStatus,
-    DomainAgentResult,
-    EventRequest,
-    MedicationDraft,
-)
+from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.health.context import HealthContext, build_gate
+from app.agents.health.envelope import result as _result
+from app.agents.health.labels.schedule import run_schedule_check
 from app.agents.health.readouts import READOUTS
 from app.agents.health.registry import IMPLEMENTED_TASKS, closed_readout_key
 from app.agents.health.schemas.task import HealthTaskType, task_type_of
 
-AGENT = "health"
-
 LabelRunner = Callable[[DomainTask, HealthContext, LLMClient | None], Awaitable[DomainAgentResult]]
 # 라벨 이슈가 더한다. 키는 `registry.IMPLEMENTED_TASKS` 와 같아야 한다 (테스트가 본다)
-_LABEL_RUNNERS: dict[HealthTaskType, LabelRunner] = {}
+_LABEL_RUNNERS: dict[HealthTaskType, LabelRunner] = {
+    HealthTaskType.SCHEDULE_CHECK: run_schedule_check,
+}
 
 
 async def run(
@@ -55,25 +51,3 @@ async def run(
         return _result(task_type, "unsupported")
 
     return await _LABEL_RUNNERS[task_type](task, context, client)
-
-
-def _result(
-    task_type: HealthTaskType | None,
-    status: AgentStatus,
-    *,
-    readouts: tuple[Readout, ...] = (),
-    question: str | None = None,
-    medication_drafts: tuple[MedicationDraft, ...] = (),
-    event_requests: tuple[EventRequest, ...] = (),
-    model_calls: int = 0,
-) -> DomainAgentResult:
-    return DomainAgentResult(
-        agent=AGENT,
-        task_type=task_type.value if task_type is not None else None,
-        status=status,
-        readouts=readouts,
-        needs_observation=(question,) if question else (),
-        medication_drafts=medication_drafts,
-        event_requests=event_requests,
-        model_calls=model_calls,
-    )

@@ -125,7 +125,7 @@ OUTPUT_TOOLS: dict[HealthTaskType, frozenset[str]] = {
 MODEL_TASKS: frozenset[HealthTaskType] = frozenset(OUTPUT_TOOLS)
 
 # 라벨 경로가 다 붙은 라벨. 이슈가 라벨 하나를 끝낼 때 여기 더한다 (`agent._LABEL_RUNNERS` 와 같다)
-IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset()
+IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset({HealthTaskType.SCHEDULE_CHECK})
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {}
 _DEFINITIONS: dict[str, ToolDefinition] = {d.name: d for d in TOOL_DEFINITIONS}

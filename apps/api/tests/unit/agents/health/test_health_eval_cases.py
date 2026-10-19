@@ -10,7 +10,13 @@ from app.agents.health import registry
 from app.agents.health.readouts import READOUTS
 from app.agents.health.schemas.task import HealthTaskType
 from tests.eval.agents.health.cases import CASES, OUTSIDE, doc_inputs
-from tests.eval.agents.health.judges import Ran, common, consent_closed, pending
+from tests.eval.agents.health.judges import (
+    Ran,
+    common,
+    consent_closed,
+    pending,
+    schedule_check,
+)
 from tests.eval.agents.health.world import CHILD, WORLDS, build_world
 
 
@@ -164,3 +170,203 @@ def test_구현된_라벨이_unsupported_로_돌아오면_실패다(monkeypatch)
 
     assert verdict.failures
     assert not verdict.gaps
+
+
+# ── schedule_check 판정 ──
+async def _real(world_name, text):
+    """eval 이 하는 대로 실제 run() 을 돌려 `Ran` 을 만든다."""
+    from app.agents.common.schemas.task import DomainTask
+    from app.agents.health.agent import run
+    from tests.eval.agents.health.world import DAY
+
+    world = build_world(world_name, now=DAY)
+    task = DomainTask(run_id="r", agent="health", task_type="schedule_check", request_texts=(text,))
+    result = await run(task, world.context, client=None)
+    return Ran(case_id="T30", world=world, request=text, result=result, elapsed_ms=0)
+
+
+async def test_schedule_check_는_기대한_차수를_통과시킨다():
+    ran = await _real("C48", "영유아 검진 언제 받아야 해?")
+
+    verdict = schedule_check(6, 7)(ran)
+
+    assert verdict.failures == [] and verdict.gaps == []
+
+
+async def test_schedule_check_는_틀린_차수를_실패로_잡는다():
+    ran = await _real("C48", "영유아 검진 언제 받아야 해?")
+
+    assert schedule_check(5, 7)(ran).failures
+    assert schedule_check(6, 8)(ran).failures
+    assert schedule_check(None, 7)(ran).failures  # 지금 차수가 있는데 없다고 기대
+
+
+async def test_schedule_check_는_지금_차수가_없다는_기대도_본다():
+    ran = await _real("C2", "영유아 검진 언제 받아야 해?")
+
+    assert schedule_check(None, 2)(ran).failures == []
+    assert schedule_check(1, 2)(ran).failures
+
+
+async def test_schedule_check_대상_종료():
+    ran = await _real("C72", "영유아 검진 언제 받아야 해?")
+
+    assert schedule_check(None, None, aged_out=True)(ran).failures == []
+    assert schedule_check(8, None)(ran).failures
+
+
+async def test_schedule_check_알림은_초안_한_장():
+    ran = await _real("C48", "다음 검진 알림 받고 싶어.")
+
+    assert schedule_check(6, 7, alarm=True)(ran).failures == []
+    assert schedule_check(6, 7)(ran).failures  # 초안이 나가면 안 되는 케이스에서 나갔다
+
+
+async def test_schedule_check_접종_창을_본다():
+    c35 = await _real("C35", "이번 달에 맞아야 하는 주사 있어?")
+    c36 = await _real("C36", "이번 달에 맞아야 하는 주사 있어?")
+
+    assert schedule_check(5, 6, due=True)(c35).failures == []
+    assert schedule_check(5, 6, due=False)(c35).failures
+    assert schedule_check(5, 6, due=False)(c36).failures == []
+
+
+def test_schedule_check_모델을_부르면_실패다():
+    ran = _ran(
+        _result("completed", READOUTS.render("checkup.aged_out").body, model_calls=1),
+        world="C72",
+    )
+
+    assert any("모델" in item for item in schedule_check(None, None, aged_out=True)(ran).failures)
+
+
+def test_schedule_check_금지_표현을_잡는다():
+    bad = _result("completed", "접종을 놓쳤어요")
+
+    assert schedule_check(None, None, vaccines=False)(_ran(bad)).failures
+
+
+def test_schedule_check_결과가_없으면_실패다():
+    assert schedule_check(6, 7)(_ran(None)).failures
+
+
+def test_pending_partial_은_구현된_라벨의_unsupported_를_gap_으로_둔다(monkeypatch):
+    monkeypatch.setattr(registry, "IMPLEMENTED_TASKS", frozenset({HealthTaskType.MEDICATION}))
+
+    gap = pending("검진 맥락 요약", partial=True)(_ran(_result("unsupported")))
+    done = pending("검진 맥락 요약", partial=True)(_ran(_result("completed")))
+
+    assert gap.gaps and not gap.failures
+    assert done.failures and not done.gaps  # 구현되면 판정을 쓰라고 실패한다
+
+
+async def test_schedule_케이스는_실제_run_으로_판정을_통과한다():
+    from app.agents.common.schemas.task import DomainTask
+    from app.agents.health.agent import run
+    from tests.eval.agents.health.world import DAY, NIGHT
+
+    judged = [c for c in CASES if c.label is HealthTaskType.SCHEDULE_CHECK]
+    assert judged
+    for case in judged:
+        world = build_world(case.world, now=NIGHT if case.night else DAY)
+        request = doc_inputs()[case.input_id]
+        task = DomainTask(
+            run_id="r", agent="health", task_type="schedule_check", request_texts=(request,)
+        )
+        result = await run(task, world.context, client=None)
+        ran = Ran(case.case_id, world, request, result, 0)
+
+        verdict = common(ran).extend(case.judge(ran))
+
+        assert verdict.failures == [], (case.case_id, verdict.failures)
+        if case.case_id in {"T34", "T35"}:
+            assert verdict.gaps, case.case_id  # 검진 맥락은 진료 준비 이슈 전까지 GAP
+        else:
+            assert verdict.gaps == [], (case.case_id, verdict.gaps)
+
+
+def test_모델을_부르지_않는_schedule_케이스는_열세_개_이상이다():
+    done = {c.case_id for c in CASES if c.label is HealthTaskType.SCHEDULE_CHECK}
+
+    assert {
+        "T30",
+        "T31",
+        "T32",
+        "T33",
+        "T30-C2",
+        "T30-C23",
+        "T30-C24",
+        "T30-C71",
+        "T30-C72",
+        "T31-C35",
+        "T31-C36",
+        "T31-C71",
+        "T31-C72",
+    } <= done
+
+
+def test_백신_이름의_폐렴구균은_진단명으로_잡지_않는다():
+    vaccine = _result("completed", "이 시기에 권장되는 접종: 폐렴구균 1차")
+
+    assert common(_ran(vaccine)).failures == []
+
+
+def test_폐렴구균_옆에_진단명이_따로_있으면_잡는다():
+    mixed = _result("completed", "이 시기에 권장되는 접종: 폐렴구균 1차. 폐렴이 의심돼요")
+
+    assert any("폐렴" in item for item in common(_ran(mixed)).failures)
+
+
+async def test_schedule_check_는_구강검진만_있는_시기를_지금_차수로_세지_않는다(monkeypatch):
+    from tests.eval.agents.health.world import WorldSpec
+
+    monkeypatch.setitem(WORLDS, "C26", WorldSpec(months=26))
+    ran = await _real("C26", "영유아 검진 언제 받아야 해?")
+
+    # 26개월: 일반검진 지금 차수는 없고 구강 1차 기간이다. 다음은 5차
+    assert schedule_check(None, 5)(ran).failures == []
+    assert schedule_check(4, 5)(ran).failures
+
+
+def test_schedule_check_대상_종료인데_접종_안내가_빠지면_실패다():
+    # 예전 동작(종료 안내 한 줄뿐)은 만 4–6세 접종을 가린다 — 이제는 실패다
+    only_notice = _result("completed", READOUTS.render("checkup.aged_out").body)
+
+    assert schedule_check(None, None, aged_out=True)(_ran(only_notice, world="C72")).failures
+
+
+async def test_schedule_check_대상_종료에_차수_안내가_섞이면_실패다():
+    ran = await _real("C48", "영유아 검진 언제 받아야 해?")  # 48개월은 차수 안내가 나간다
+
+    assert schedule_check(None, None, aged_out=True)(ran).failures
+
+
+async def test_schedule_check_다음_접종_줄을_본다(monkeypatch):
+    from tests.eval.agents.health.world import WorldSpec
+
+    monkeypatch.setitem(WORLDS, "C144", WorldSpec(months=144))
+    c36 = await _real("C36", "이번 달에 맞아야 하는 주사 있어?")  # 다음은 48개월
+    c144 = await _real("C144", "이번 달에 맞아야 하는 주사 있어?")  # 표 끝
+
+    assert schedule_check(5, 6, due=False, upcoming=True)(c36).failures == []
+    assert schedule_check(5, 6, due=False, upcoming=False)(c36).failures
+    assert schedule_check(None, None, aged_out=True, upcoming=False)(c144).failures == []
+    assert schedule_check(None, None, aged_out=True, upcoming=True)(c144).failures
+
+
+def test_schedule_check_다음_접종_줄은_고지_앞에_와야_한다():
+    notice = READOUTS.render("checkup.aged_out")
+    due = READOUTS.render("vaccine.due", vaccines="Tdap 추가")
+    nxt = READOUTS.render("vaccine.next", starts_on="2030년 1월 1일", vaccines="HPV 1차")
+    disclaimer = READOUTS.render("vaccine.disclaimer")
+
+    def result(*readouts):
+        return DomainAgentResult(
+            agent="health", task_type="schedule_check", status="completed", readouts=readouts
+        )
+
+    good = result(notice, due, nxt, disclaimer)
+    swapped = result(notice, due, disclaimer, nxt)
+
+    assert schedule_check(None, None, aged_out=True, upcoming=True)(_ran(good)).failures == []
+    assert schedule_check(None, None, aged_out=True, upcoming=True)(_ran(swapped)).failures

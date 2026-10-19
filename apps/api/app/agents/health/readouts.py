@@ -14,6 +14,13 @@ SYMPTOM_REPEAT_CONDITION = "symptom.repeat_condition"  # 등록된 만성질환�
 
 # 검진 · 접종
 VACCINE_DISCLAIMER = "vaccine.disclaimer"
+VACCINE_DUE = "vaccine.due"
+VACCINE_NONE_NOW = "vaccine.none_now"
+VACCINE_NEXT = "vaccine.next"  # 지금 뒤에 처음 열리는 접종 칸
+CHECKUP_CURRENT = "checkup.current"
+CHECKUP_NEXT = "checkup.next"
+CHECKUP_ORAL = "checkup.oral"  # 일반검진 기간 안의 구강검진
+CHECKUP_ORAL_ONLY = "checkup.oral_only"  # 일반검진 기간이 아닌데 구강검진 기간일 때
 CHECKUP_AGED_OUT = "checkup.aged_out"  # 72개월 이상
 CHECKUP_CONTEXT_FOOTER = "checkup.context_footer"
 

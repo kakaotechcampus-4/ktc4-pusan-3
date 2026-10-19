@@ -13,7 +13,7 @@
 | 소스 | 제공 | 용도 | 연결 | 갱신 |
 | --- | --- | --- | --- | --- |
 | 국민건강보험공단 **영유아 건강검진** — nhis.or.kr | 일반 8회 · 구강 4회 주기 | `compute_checkup_schedule` | `reference/checkup_nhis.yaml` | 제도 변경 시 |
-| 질병관리청 **2026 국가예방접종 지침** · 표준예방접종일정표 | 백신·차수·권장 월령 | `compute_vaccine_schedule` | `reference/vaccine_2026.yaml` | **매년** |
+| 질병관리청 고시 「예방접종의 실시기준 및 방법」 **[별표 1] 국가예방접종 대상 및 표준접종시기** | 백신·차수·표준접종 월령 | `compute_vaccine_schedule` | `reference/vaccine_2026.yaml` | **고시 개정 시** |
 | 예방접종도우미 — nip.kdca.go.kr | 개인 접종 기록 | 안내 링크만 | 연동 없음 | – |
 | 건강보험심사평가원 **병원정보서비스** Open API (data.go.kr) | 병원 목록 · 진료과목 · 좌표 | `find_pediatric_places` (주간) | REST · 24h 캐시 | – |
 | 국립중앙의료원 **응급의료정보** (E-Gen, data.go.kr) | 응급의료기관 · 실시간 가용 | `find_pediatric_places` (야간·응급) | REST · **캐시 안 함** | 실시간 |
@@ -47,7 +47,7 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 | | 0–23 | 24–35 | 36–71 | 72+ |
 | --- | --- | --- | --- | --- |
-| 검진·접종 | 1–4차 · 기초 접종 | 5차 | 6–8차 · 만 4–6세 추가 | 대상 종료 안내 |
+| 검진·접종 | 1–4차 · 기초 접종 | 5차 | 6–8차 · 만 4–6세 추가 | 검진 종료 안내 · 접종은 만 4–6세 · 6세 · 11–12세 안내 |
 | 복약 기준 시각 | 영아 취침 상수 (미정 M-3) | 공통 | 공통 | 공통 |
 
 **접종·검진 시기는 출생일 기준**이다.
@@ -203,10 +203,17 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | `notice.no_active_med` | 지금 등록된 복약 일정이 없어요. |
 | `prescription.low_confidence` | 흐리게 읽힌 칸이 있어요. 확인하고 채워 주세요. |
 | `checkup.context_footer` | 문진표는 보호자가 직접 작성해 주세요. 이 요약은 참고용이에요. |
-| `checkup.aged_out` | 영유아 건강검진과 국가예방접종은 만 6세까지예요. 지금은 대상 기간이 끝났어요. |
+| `checkup.aged_out` | 영유아 건강검진은 만 6세 미만까지예요. 지금은 대상 기간이 끝났어요. |
 | `blocked.consent` | 건강 기록을 보려면 건강정보 동의가 필요해요. |
 | `visit.no_record` | 최근 2주 동안 건강 기록이 없어요. |
 | `place.unavailable` | 병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요. |
 | `prescription.not_found` | 처방전 정보를 찾지 못했어요. |
 | `safety.unavailable` | 알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요. |
 | `dose.skipped` | {title} 못 먹인 걸로 기록했어요. ({slot}) |
+| `checkup.current` | 지금은 {round}차 영유아 건강검진 기간이에요. ({starts_on} ~ {ends_on}) |
+| `checkup.next` | 다음 {round}차 영유아 건강검진은 {starts_on}부터예요. |
+| `checkup.oral` | 같은 시기에 구강검진도 받을 수 있어요. ({starts_on} ~ {ends_on}) |
+| `vaccine.due` | 이 시기에 권장되는 접종: {vaccines} |
+| `vaccine.none_now` | 월령으로 정해진 접종은 지금 없어요. 인플루엔자 같은 절기 접종은 예방접종도우미에서 확인해 보세요. |
+| `checkup.oral_only` | 지금은 구강검진 {round}차 기간이에요. ({starts_on} ~ {ends_on}) |
+| `vaccine.next` | 다음 접종은 {starts_on}부터예요: {vaccines} |

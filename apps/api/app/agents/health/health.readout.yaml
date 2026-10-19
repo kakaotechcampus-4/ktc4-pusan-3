@@ -16,7 +16,28 @@ vaccine.disclaimer:
   template: "이 시기에 권장되는 접종이에요. 실제 접종 기록은 예방접종도우미에서 확인할 수 있어요."
 checkup.aged_out:
   kind: checkup_schedule
-  template: "영유아 건강검진과 국가예방접종은 만 6세까지예요. 지금은 대상 기간이 끝났어요."
+  template: "영유아 건강검진은 만 6세 미만까지예요. 지금은 대상 기간이 끝났어요."
+checkup.current:
+  kind: checkup_schedule
+  template: "지금은 {round}차 영유아 건강검진 기간이에요. ({starts_on} ~ {ends_on})"
+checkup.next:
+  kind: checkup_schedule
+  template: "다음 {round}차 영유아 건강검진은 {starts_on}부터예요."
+checkup.oral:
+  kind: checkup_schedule
+  template: "같은 시기에 구강검진도 받을 수 있어요. ({starts_on} ~ {ends_on})"
+vaccine.due:
+  kind: checkup_schedule
+  template: "이 시기에 권장되는 접종: {vaccines}"
+vaccine.none_now:
+  kind: checkup_schedule
+  template: "월령으로 정해진 접종은 지금 없어요. 인플루엔자 같은 절기 접종은 예방접종도우미에서 확인해 보세요."
+vaccine.next:
+  kind: checkup_schedule
+  template: "다음 접종은 {starts_on}부터예요: {vaccines}"
+checkup.oral_only:
+  kind: checkup_schedule
+  template: "지금은 구강검진 {round}차 기간이에요. ({starts_on} ~ {ends_on})"
 checkup.context_footer:
   kind: checkup_context
   template: "문진표는 보호자가 직접 작성해 주세요. 이 요약은 참고용이에요."
