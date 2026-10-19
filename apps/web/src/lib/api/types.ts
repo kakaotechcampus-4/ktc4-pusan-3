@@ -124,7 +124,12 @@ export interface ObservationHealth extends ObservationBase {
     body_part?: string;
     suspected_trigger?: string;
     action_taken?: string;
-    observed_time?: string;
+    /**
+     * ISO 시각 (`2026-10-15T21:00:00+09:00`). "밤" 같은 문구가 아니다 — 서버는 몇 시인지 알 수
+     * 있는 말만 시각으로 바꿔 담는다. 날짜는 `observed_label` 이 말하므로 화면은
+     * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
+     */
+    observed_time?: string | null;
     [key: string]: unknown;
   };
 }

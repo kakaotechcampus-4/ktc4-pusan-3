@@ -175,8 +175,8 @@ class TestOutdoorOn:
         assert await self.weekend(saturday=False, sunday=False) is False
 
     async def test_판정이_없는_날은_그_자리에서_판정한다(self):
-        """날씨 포트가 없으면 못 읽은 날이라 실내만이다 — 맑다고 가정하지 않는다."""
+        """날씨 포트가 없으면 묻지 않은 날이라 바깥을 연다(`weather.not_asked`). 판정은 남긴다."""
         ctx = await context()
         ctx.state.weather.clear()
-        assert await outdoor_on(ctx, DayLabel.TOMORROW) is False
+        assert await outdoor_on(ctx, DayLabel.TOMORROW) is True
         assert len(ctx.state.weather) == 1

@@ -12,6 +12,7 @@ from datetime import date, datetime, tzinfo
 from functools import partial
 from uuid import UUID
 
+from app.agents.activity.schemas.common import DayLabel
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityPorts,
@@ -60,6 +61,9 @@ class ActivityRunState:
     # 안전 필터로 빠진 후보의 content. run() 이 재호출할 때 제외 목록으로만 넣는다 —
     # 걸린 사유는 넣지 않는다 (Tool_공통.md §5-2)
     excluded: tuple[str, ...] = ()
+    # 통과한 바깥 활동의 (정규화한 content, 날). 재호출 결과까지 모은다 — 날씨 안내를 결과에 실제로
+    # 나간 바깥 활동의 날로 고른다
+    outdoor_drafts: frozenset[tuple[str, DayLabel]] = frozenset()
 
 
 @dataclass(frozen=True)

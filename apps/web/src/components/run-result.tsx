@@ -39,7 +39,7 @@ import {
   type Observation,
   type StoredRef,
 } from "@/lib/api/types";
-import { formatEventTime } from "@/lib/format";
+import { formatEventTime, formatTimeOfDay } from "@/lib/format";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -848,7 +848,11 @@ const NO_REFS: readonly StoredRef[] = [];
 function ObservationRow({ observation }: { observation: Observation }) {
   const agent = observationAgent(observation.kind);
   const detail = isHealthObservation(observation)
-    ? [observation.domain_fields.symptom?.join(", "), observation.domain_fields.observed_time]
+    ? [
+        observation.domain_fields.symptom?.join(", "),
+        observation.domain_fields.observed_time &&
+          formatTimeOfDay(observation.domain_fields.observed_time),
+      ]
         .filter(Boolean)
         .join(", ")
     : observation.subject;
