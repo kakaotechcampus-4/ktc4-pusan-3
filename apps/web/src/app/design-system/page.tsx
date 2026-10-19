@@ -864,7 +864,6 @@ function ComponentSection() {
         open={sheet !== null}
         onClose={() => setSheet(null)}
         dismissible={sheet !== "approval"}
-        gate={sheet === "approval"}
         variant={sheet === "document" ? "document" : "default"}
         title={
           sheet === "approval"

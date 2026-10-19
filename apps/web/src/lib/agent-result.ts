@@ -39,18 +39,34 @@ export interface BlockCandidates {
   general: boolean;
   /** 일반 묶음의 쌓인 기록 수. 🚨 0 도 그린다. 서버가 세지 못했으면 `null` 이고 라벨만 선다. */
   recordCount: number | null;
-  /** 그 블록의 Agent · 그 run 의 05. run 을 모르면 `null` — 링크를 그리지 않는다. */
+  /**
+   * 그 블록의 Agent · 그 run 의 05. run 을 모르거나 고를 수 있는 후보가 남지 않았으면 `null` — 링크를 그리지 않는다.
+   */
   href: string | null;
+  /**
+   * 지난 대화에서 고를 수 있는 후보가 하나도 남지 않았다 (#228). 링크 대신 그 사실을 한 줄로 말한다.
+   * 실시간 run 에서는 늘 `false` 다.
+   */
+  closed: boolean;
 }
 
+/**
+ * 블록의 후보 묶음. 🚨 **지난 대화는 지금 상태로 가른다** (`AgentResultEvent.suggestions` · #228 리뷰).
+ * `draft`(아직 고를 수 있다)나 `approved`(05 에서 보인다)가 하나라도 있어야 "후보 보기" 가 선다 — 다 지났거나
+ * 거절했으면 눌러도 05 가 "이어서 할 수 없어요" 만 낸다. 실시간 run 은 상태가 오지 않고 방금 만든 것이라 늘 연다.
+ */
 export function blockCandidates(result: AgentResultEvent, place: Place): BlockCandidates | null {
   if (result.suggestion_ids.length === 0) return null;
+  const closed =
+    result.suggestions !== undefined &&
+    !result.suggestions.some((s) => s.status === "draft" || s.status === "approved");
   return {
     count: result.suggestion_ids.length,
     reason: result.reason,
     general: result.kind === "general",
     recordCount: result.record_count,
-    href: suggestionsHref([result.agent], place),
+    href: closed ? null : suggestionsHref([result.agent], place),
+    closed,
   };
 }
 

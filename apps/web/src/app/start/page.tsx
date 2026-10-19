@@ -63,11 +63,7 @@ function StartScreen() {
   return (
     <Screen className="gap-6">
       <div>
-        <PageTitle>
-          어떻게
-          <br />
-          시작할까요
-        </PageTitle>
+        <PageTitle>어떻게 시작할까요</PageTitle>
         <p className="text-body text-ink-muted mt-3">
           아이를 새로 등록하거나, 이미 등록한 보호자에게 받은 코드로 참여할 수 있어요.
         </p>

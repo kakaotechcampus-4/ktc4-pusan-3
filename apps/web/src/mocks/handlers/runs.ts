@@ -12,6 +12,8 @@ import {
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { recordingTurn } from "./chat";
+import { pendingReplies } from "./pending-replies";
 import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
 
@@ -35,17 +37,6 @@ interface SubmittedInput {
 }
 
 const inputByRun = new Map<string, SubmittedInput>();
-
-/**
- * 되물은 run → 그 질문이 어느 아이 것인가. 서버의 pending store 를 흉내 낸다
- * (`apps/api/app/api/runs/pending_reply.py` · #175).
- *
- * - 질문을 내보내기 **직전에** 넣는다 — 서버도 `done` 앞에 넣어서, `note` 를 받자마자 보낸 답도 찾는다
- * - 답이 오면 **한 번만** 꺼낸다 — 같은 질문에 두 번 답하면 관찰이 두 행이 된다
- * - 이어받기 run 이 `failed` 로 끝나면 되돌려 둔다 — 같은 답으로 다시 시도할 수 있어야 한다
- * - 15분 만료 · 재시작은 흉내 내지 않는다. 그 400 은 `reply_unavailable` 시나리오가 만든다
- */
-const pendingReplies = new Map<string, string>();
 
 /**
  * `reply_failed` 에서 이미 한 번 실패시킨 질문. 🚨 **한 번만 실패시킨다** — 늘 실패하면
@@ -696,7 +687,10 @@ export const runHandlers = [
    */
   http.get(url("/runs/:runId/events"), ({ params }) => {
     const runId = String(params.runId);
-    const script = isPhotoRun(runId) ? photoRunScript(runId) : runScript(runId);
+    // 🚨 입력 run 만 대화로 남긴다 — 사진 run 은 대화 턴이 아니다 (서버도 입력 창구에서만 붙인다).
+    const script = isPhotoRun(runId)
+      ? photoRunScript(runId)
+      : recordingTurn(runId, inputByRun.get(runId), runScript(runId));
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {

@@ -146,11 +146,7 @@ export default function AuthConsentPage() {
     <Screen className="gap-6">
       <div>
         <p className="text-label text-ink-subtle">가입</p>
-        <PageTitle className="mt-2">
-          시작하기 전에
-          <br />
-          확인해 주세요
-        </PageTitle>
+        <PageTitle className="mt-2">시작하기 전에 확인해 주세요</PageTitle>
         <p className="text-body text-ink-muted mt-3">
           이름 하나와 보호자 계정에 대한 동의예요. 아이에 대한 동의는 아이를 등록할 때 따로 받아요.
         </p>

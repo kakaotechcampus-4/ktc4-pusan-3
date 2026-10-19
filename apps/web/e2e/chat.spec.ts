@@ -285,6 +285,17 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
   });
 });
 
+test.describe("건강 기록의 시각은 시각으로 그린다 (#485)", () => {
+  test("서버가 보낸 ISO 시각을 그대로 찍지 않는다", async ({ page }) => {
+    await sendFromHome(page, "계란볶음밥 먹었어");
+    const reply = turn(page, "계란볶음밥 먹었어");
+    await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+    // 날짜는 같은 줄의 "어제" 가 말한다 — 여기는 시각만 선다.
+    await expect(reply.getByText("기침, 오후 9:00")).toBeVisible();
+    await expect(reply.getByText(/T21:00/)).toHaveCount(0);
+  });
+});
+
 test.describe("되묻기의 답은 원문을 다시 보내지 않는다 (#158)", () => {
   test.use({ scenario: "note_mixed" });
 
