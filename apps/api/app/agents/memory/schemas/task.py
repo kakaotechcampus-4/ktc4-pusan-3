@@ -53,6 +53,17 @@ class MemoryTask:
 
 
 @dataclass(frozen=True)
+class FoundRef:
+    """되묻기 전에 조회로 찾은 행 하나. 원문은 담지 않고 이어받을 때 store로 다시 읽는다.
+
+    resource는 조회 tool 결과의 resource 이름이다 (`observation_food` … `event`).
+    """
+
+    resource: str
+    id: str
+
+
+@dataclass(frozen=True)
 class PendingMemoryContext:
     """되묻고 멈춘 자리. 다음 입력이 이 맥락 위에 얹힌다.
 
@@ -71,3 +82,6 @@ class PendingMemoryContext:
     # unclear 조각만 있던 입력에서 아이 얘기인지 물은 것.
     # 보호자가 아니라고 하면 저장하지 않고 끝난다
     unclear: bool = False
+    # 이 질문 전에 조회로 찾은 행. 코드가 tool 결과에서 모으고 모델이 고르지 않는다.
+    # "응" 을 받은 run이 검색을 처음부터 다시 하다 못 찾는 상황 방지
+    found: tuple[FoundRef, ...] = ()
