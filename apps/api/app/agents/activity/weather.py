@@ -66,6 +66,9 @@ OZONE_ADVISORY = "weather.ozone_advisory"
 UV_VERY_HIGH = "weather.uv_very_high"
 RAIN_LIKELY = "weather.rain_likely"
 
+# "실내 놀이만 골랐어요" 류 — 바깥 활동이 결과에 나가면 붙이지 않는다 (#515 리뷰)
+INDOOR_ONLY = frozenset({WEATHER_UNCHECKED, OUTDOOR_BLOCKED, AFTER_SUNSET})
+
 # 야외를 막아도 남겨야 하는 안내 — 무엇을 확인 못 했는지는 막혀도 알린다
 _UNCHECKED = frozenset({AIR_UNCHECKED, UV_UNCHECKED})
 

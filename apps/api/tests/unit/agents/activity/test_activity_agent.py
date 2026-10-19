@@ -366,6 +366,33 @@ class TestWeather:
         assert contents(result)[0] == "거실 보물찾기"
         assert [r.body for r in result.readouts] == ["해가 져서 실내 놀이만 골랐어요."]
 
+    async def test_오늘_해가_져도_내일_바깥_놀이에는_해_진_안내를_붙이지_않는다(self):
+        """안내는 결과에 나간 바깥 활동의 날로 고른다 — 오늘 판정을 붙이면 틀린다 (#515 리뷰)."""
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor", day="tomorrow")
+        )
+        night = datetime(2026, 10, 7, 21, 0, tzinfo=KST)
+        result = await run(task(), context(now=night, timezone=KST), client=llm)
+        assert contents(result)[0] == "공원 산책"
+        assert [r.body for r in result.readouts] == [
+            "날씨는 확인하지 않았어요. 바깥 놀이라면 나가기 전에 날씨를 한 번 봐 주세요."
+        ]
+
+    async def test_오늘_비가_와도_내일_바깥_놀이에는_실내만_안내를_붙이지_않는다(self):
+        tomorrow = NOW.date() + timedelta(days=1)
+        weather = InMemoryWeather(
+            uv="4",
+            forecast=RAINY,
+            forecasts={tomorrow: RawForecast(sky="1", pcp="강수없음", pop="0")},
+        )
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor", day="tomorrow")
+        )
+        result = await run(task(), context(location=BUSAN, weather=weather), client=llm)
+        assert contents(result)[0] == "공원 산책"
+        bodies = [r.body for r in result.readouts]
+        assert not any("실내 놀이만" in body for body in bodies)
+
     async def test_예보를_못_읽은_날은_그대로_실내만이다(self):
         """조회했는데 실패한 날은 바깥을 열지 않는다 — 실패를 기본값으로 메우지 않는다 (D8)."""
         llm = FakeLLM(

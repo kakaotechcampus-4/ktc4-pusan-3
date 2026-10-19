@@ -27,8 +27,13 @@ from app.agents.activity.result import ToolResult
 from app.agents.activity.rules import normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
-from app.agents.activity.tools.outing import check_weather
-from app.agents.activity.weather import WEATHER_NOT_ASKED, WEATHER_UNCHECKED, WeatherBrief
+from app.agents.activity.tools.outing import check_weather, days_of
+from app.agents.activity.weather import (
+    INDOOR_ONLY,
+    WEATHER_NOT_ASKED,
+    WEATHER_UNCHECKED,
+    WeatherBrief,
+)
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
@@ -133,11 +138,26 @@ Picked = tuple[tuple[SuggestionDraft, tuple[str, ...]], ...]
 def _weather_notices(
     weather: WeatherBrief, drafts: tuple[SuggestionDraft, ...], context: ActivityContext
 ) -> tuple[str, ...]:
-    """화면에 붙일 날씨 안내 키. 날씨를 묻지 않은 날의 "확인하지 않았어요" 는 바깥 활동이 실제로
-    나갈 때만 붙인다 — 실내 놀이만 나간 결과에 날씨 확인을 당부하면 군말이다.
+    """화면에 붙일 날씨 안내 키 — 결과에 실제로 나간 추천의 날로 고른다 (#515 리뷰).
+
+    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("해가 져서" · "확인하지 못해")를
+      알린다. "날씨는 확인하지 않았어요" 는 빼고 — 실내 놀이에 날씨 확인을 당부하면 군말이다.
+    - 바깥 활동이 있으면 그 활동의 날 중 바깥이 열린 날의 안내다. "실내 놀이만 골랐어요" 류는
+      뺀다 — 오늘 해가 졌어도 내일 공원이 나가면 그 말은 틀린다.
     """
-    outdoor = any(normalize_activity(d.content) in context.state.outdoor_drafts for d in drafts)
-    return tuple(key for key in weather.notices if key != WEATHER_NOT_ASKED or outdoor)
+    shown = {normalize_activity(d.content) for d in drafts}
+    labels = dict.fromkeys(
+        day for content, day in sorted(context.state.outdoor_drafts) if content in shown
+    )
+    if not labels:
+        return tuple(key for key in weather.notices if key != WEATHER_NOT_ASKED)
+    keys: list[str] = []
+    for label in labels:
+        for day in days_of(label, context.today):
+            brief = context.state.weather.get(day)
+            if brief is not None and brief.outdoor_ok:
+                keys.extend(key for key in brief.notices if key not in INDOOR_ONLY)
+    return tuple(dict.fromkeys(keys))
 
 
 def _caution(text: str) -> Readout:
