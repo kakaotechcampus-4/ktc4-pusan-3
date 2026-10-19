@@ -17,6 +17,7 @@
 코드가 부르는 `has_citable_memory` 는 [예시]가 빈 교육 run 을 모델 전에 닫을지 정한다.
 """
 
+import logging
 from collections.abc import Sequence
 from datetime import date, timedelta
 
@@ -48,6 +49,7 @@ from app.agents.growth.tools.docs import (
     strategy_rows,
 )
 from app.agents.growth.tools.routine import (
+    ChainError,
     NextStep,
     PickedStep,
     current_assistance_level,
@@ -56,6 +58,8 @@ from app.agents.growth.tools.routine import (
 from app.agents.growth.tools.triggers import trigger_tags
 from app.rules.staleness import is_stale
 from app.rules.term_match import normalize
+
+logger = logging.getLogger(__name__)
 
 # 모델에게 돌려주는 근거 수 (공통 TOP_N 과 같다)
 MEMORY_LIMIT = TOP_N
@@ -339,11 +343,13 @@ async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]
         ]
         level = current_assistance_level(same, category=category, subject=None, today=today)
         latest = max(same, key=lambda obs: obs.observed_on)
-        steps[key] = PickedStep(
-            subject=latest.subject,
-            category=category,
-            step=pick_next_step(chain, assistance_level=level),
-        )
+        try:
+            step = pick_next_step(chain, assistance_level=level)
+        except ChainError:
+            # 도움 수준 태그가 이상한 사슬이다. 단계를 추측하지 않고 그 행동만 닫는다
+            logger.warning("Growth 자립 단계 사슬의 태그가 이상해 뺀다 chain=%s", key)
+            step = NextStep(readout_key=DOC_NO_ROW)
+        steps[key] = PickedStep(subject=latest.subject, category=category, step=step)
 
     for category in sorted(STRATEGY_CATEGORIES):
         same = [obs for obs in rows if obs.routine_category == category]

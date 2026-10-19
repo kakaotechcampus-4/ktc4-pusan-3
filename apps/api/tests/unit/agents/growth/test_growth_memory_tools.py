@@ -1,10 +1,15 @@
 """Growth 조회 tool — 근거 순서 · seen 표 · 루틴 다음 단계를 코드가 고른다."""
 
+import logging
+from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID
 
+import pytest
+
 from app.agents.common.evidence import AffinityRow
 from app.agents.growth.context import build_gate
+from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.schemas.memory import (
     SearchAffinityArgs,
     SearchEducationMemoryArgs,
@@ -278,3 +283,39 @@ class TestStrategy:
         await search_routine_memory(ctx, SearchRoutineMemoryArgs())
         result = await search_routine_memory(ctx, SearchRoutineMemoryArgs())
         assert len(result.data["next_steps"]) == 3
+
+
+_TOOTH = "growth.routine.self_care.toothbrush"
+
+
+def _drop_step2(rows):
+    return [row for row in rows if row.doc_key != f"{_TOOTH}.step2"]
+
+
+def _untag_step3(rows):
+    return [
+        replace(row, tags=("self_care",)) if row.doc_key == f"{_TOOTH}.step3" else row
+        for row in rows
+    ]
+
+
+class TestBrokenChain:
+    """문서 검수에서 중간 단계가 draft 로 돌아가면 approved 사슬이 끊긴다 — run 이 죽지 않는다."""
+
+    @pytest.mark.parametrize(
+        "breaks", [_drop_step2, _untag_step3], ids=["중간_단계_빠짐", "도움_수준_태그_없음"]
+    )
+    async def test_끊긴_사슬은_그_행동만_doc_no_row_다(self, breaks, caplog):
+        rows = breaks([e.to_row() for e in growth_doc_seed() if e.meta.status == "approved"])
+        memory = InMemoryGrowthMemory(
+            routine=[routine(1, "양치하기", "partial_assist"), routine(2, "손 씻기", "full_assist")]
+        )
+        ctx = context(birth_for(30), docs=InMemoryGrowthDocs(rows), memory=memory)
+        ctx.state.gate = await build_gate(ctx, GrowthTaskType.ROUTINE_COACHING)
+        with caplog.at_level(logging.WARNING):
+            result = await search_routine_memory(ctx, SearchRoutineMemoryArgs(category="self_care"))
+        assert result.success
+        steps = {picked.subject: picked.step for picked in ctx.state.steps.values()}
+        assert steps["양치하기"].readout_key == "doc.no_row"
+        assert steps["손 씻기"].row is not None
+        assert _TOOTH in caplog.text and "양치" not in caplog.text

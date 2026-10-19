@@ -79,7 +79,7 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
         "생활 루틴은 그 루틴 기록을 인용한다. 싫어하는 것을 근거로 썼으면 "
-        "무엇을 피했는지 reason 에 쓴다."
+        "무엇을 피했는지 reason 에 쓴다. 그 기록의 subject(행동 이름)를 reason 에 그대로 넣는다."
     ),
 }
 
@@ -123,7 +123,8 @@ def review_learning(
         if not verdict.allowed or (DROP_WARNED and verdict.cautions):
             removed.append(index)
             continue
-        if _evaluative((item.title, *item.steps, item.reason), item.evidence):
+        # 준비물도 화면 · 일정 준비물로 그대로 나간다 — 안전 필터와 같은 칸을 본다
+        if _evaluative((item.title, *item.steps, *item.materials, item.reason), item.evidence):
             removed.append(index)
             continue
         # 같은 카드가 두 장 나가지 않게. 재호출 합치기(`agent._same`)와 같은 키다
@@ -182,7 +183,7 @@ def review_routine(
         if index >= capacity:
             rejections.append(Rejection(index, RejectReason.OVER_CAPACITY))
             continue
-        step_id = _uuid(item.step_id)
+        step_id = parse_id(item.step_id)
         row = rows.get(step_id) if step_id else None
         if row is None or step_id is None:
             rejections.append(Rejection(index, RejectReason.UNKNOWN_STEP))
@@ -316,16 +317,20 @@ def _overstated(evidence: Sequence[EvidencePick], seen: Seen) -> bool:
     for pick in evidence:
         if not overstates(pick.note):
             continue
-        key = _uuid(pick.id)
+        key = parse_id(pick.id)
         found = seen.get(key) if key is not None else None
         if found is None or found.tier != 1:
             return True
     return False
 
 
-def _uuid(raw: str) -> UUID | None:
+def parse_id(raw: str) -> UUID | None:
+    """모델이 옮겨 적은 id 를 읽는다. 가운데 공백만 지우고, 읽은 값은 알려진 id 와 대조한다.
+
+    공백을 지운 결과가 조회 결과나 [예시]의 id와 정확히 같을 때만 받는다.
+    """
     try:
-        return UUID(raw)
+        return UUID("".join(raw.split()))
     except ValueError:
         return None
 
@@ -336,7 +341,7 @@ def _resolve(
     """조회 결과 · [예시]에 있던 id 만 인용으로 옮긴다. 하나라도 밖이면 None — 후보를 거절한다."""
     citations: list[EvidenceCitation] = []
     for pick in picks:
-        key = _uuid(pick.id)
+        key = parse_id(pick.id)
         if key is not None and key in seen:
             citations.append(cite(seen[key], note=pick.note))
         elif key is not None and key in docs:

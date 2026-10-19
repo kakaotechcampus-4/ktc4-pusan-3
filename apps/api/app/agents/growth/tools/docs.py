@@ -19,6 +19,7 @@ run 시작에 코드가 한 번 부른다. 결과는 프롬프트 `[예시]` 구
 """
 
 import hashlib
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -29,8 +30,10 @@ from app.agents.growth.doc_seed import ROUTINE_CATEGORIES, chain_key
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import GrowthDocReader, GrowthDocRow, GrowthDocType
-from app.agents.growth.tools.routine import ordered_chain
+from app.agents.growth.tools.routine import ChainError, ordered_chain
 from app.rules.term_match import Term, match_fields, normalize
+
+logger = logging.getLogger(__name__)
 
 # 프롬프트 [예시]에 싣는 행 수 (RAG_plan §7 — Growth 3)
 DOC_LIMIT = 3
@@ -164,6 +167,7 @@ async def routine_chains(
     """이 월령 · 카테고리의 자립 단계 사슬 전부. 사슬 키(`doc_seed.chain_key`) → 처음부터 끝까지.
 
     검색에 걸린 행의 사슬을 통째로 다시 읽는다 — 월령으로 걸러 중간이 빠지면 다음 칸을 못 고른다.
+    끊긴 사슬(`ChainError`)은 빼고 경고만 남긴다 — 그 행동은 `doc.no_row` 로 닫힌다.
     """
     if category not in ROUTINE_CATEGORIES:
         raise ValueError(f"routine_category 가 정해진 값이 아니다: {category!r}")
@@ -180,7 +184,15 @@ async def routine_chains(
         for row in rows
         if row.row_type == "routine_step" and row.routine_category == category
     )
-    return {key: ordered_chain(await docs.chain(chain_key=key)) for key in keys}
+    chains: dict[str, tuple[GrowthDocRow, ...]] = {}
+    for key in keys:
+        try:
+            chains[key] = ordered_chain(await docs.chain(chain_key=key))
+        except ChainError:
+            # 검수에서 중간 단계가 draft 로 돌아가면 approved 사슬이 끊긴다. 추측해서 잇지 않는다.
+            # 로그에는 사슬 이름만 남긴다
+            logger.warning("Growth 자립 단계 사슬이 끊겨 뺀다 chain=%s", key)
+    return chains
 
 
 def row_name(row: GrowthDocRow) -> str:
@@ -235,7 +247,7 @@ async def strategy_rows(
         and (
             bool(tags & set(row.trigger_tags))
             if category == "habit"
-            else _related(normalize(row_name(row)), wanted)
+            else related_names(normalize(row_name(row)), wanted)
         )
     ]
     if rotation:
@@ -252,13 +264,16 @@ def match_chain(
     없으면 None — 호출부는 `doc.no_row` 로 닫는다(단계를 지어내지 않는다).
     """
     wanted = normalize(subject)
-    found = [chain for chain in chains.values() if _related(normalize(chain_name(chain)), wanted)]
+    found = [
+        chain for chain in chains.values() if related_names(normalize(chain_name(chain)), wanted)
+    ]
     if not found:
         return None
     return max(found, key=lambda chain: len(chain_name(chain)))
 
 
-def _related(a: str, b: str) -> bool:
+def related_names(a: str, b: str) -> bool:
+    """정규화한 두 행동 이름이 같은 행동인가 — 같거나, 짧은 쪽이 두 글자 이상이고 긴 쪽에 든다."""
     if not a or not b:
         return False
     if a == b:

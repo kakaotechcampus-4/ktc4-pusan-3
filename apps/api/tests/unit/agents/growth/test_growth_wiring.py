@@ -485,3 +485,64 @@ async def test_도서는_정보나루_어댑터가_있으면_고른_책을_책_�
         ("book_catalog", book_evidence_id(raw_book(1).isbn13))
     ]
     assert raw.calls == [("공룡", 50)]
+
+
+async def test_기록_조각이_약이면_요청_조각만_와도_Growth_가_모델_없이_닫는다():
+    """혼합형 — "약 먹기 싫어해" 는 기록, "어떻게 하지?" 는 요청으로 갈린다.
+
+    요청 조각에는 약이 없다.
+    """
+    raw = "약 먹기 싫어해. 어떻게 하지?"
+    supervisor = FakeLLM(
+        call(
+            "route",
+            {
+                "segments": [
+                    {"text": "약 먹기 싫어해", "kind": "record", "work": "observe"},
+                    {
+                        "text": "어떻게 하지?",
+                        "kind": "request",
+                        "agent": "growth",
+                        "growth_task": "routine_coaching",
+                    },
+                ]
+            },
+        )
+    )
+    memory = FakeLLM(
+        call(
+            "create_observation_routine",
+            {
+                "raw_text": "약 먹기 싫어해",
+                "observed_on": "오늘",
+                "subject": "약 먹기",
+                "routine_category": "self_care",
+                "assistance_level": "partial_assist",
+            },
+        ),
+        LLMResponse(
+            message=SimpleNamespace(content="기록했어요.", tool_calls=None), usage={}, latency_ms=1
+        ),
+    )
+    growth_llm = FakeLLM()
+    store = InMemoryStore(now=NOW)
+    events: list[Any] = []
+
+    await pipeline.handle_input(
+        raw,
+        AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
+        contexts(store),
+        run_id="run-1",
+        supervisor_client=supervisor,
+        memory_client=memory,
+        domain_clients={"growth": growth_llm},
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=entrypoint.InMemorySuggestions(),
+    )
+
+    (shown,) = [e for e in events if isinstance(e, pipeline.AgentResult)]
+    assert shown.status == "blocked" and growth_llm.calls == 0
+    assert [r.body for r in shown.readouts] == [
+        GROWTH_READOUTS.get("closed.medical_routine").template
+    ]

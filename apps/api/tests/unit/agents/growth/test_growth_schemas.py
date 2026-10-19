@@ -4,7 +4,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
-from app.agents.growth.schemas.memory import SearchAffinityArgs, SearchRoutineMemoryArgs
+from app.agents.growth.schemas.memory import (
+    SearchActivityMemoryArgs,
+    SearchAffinityArgs,
+    SearchEducationMemoryArgs,
+    SearchRoutineMemoryArgs,
+)
 from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
 
@@ -18,6 +23,22 @@ def learning_item(title: str = "블록 숫자 세기", **overrides) -> dict:
         "reason": "이 나이에 많이 하는 수 세기 놀이예요",
         **overrides,
     }
+
+
+class TestMemoryKeywords:
+    """기억 조회 검색어는 다섯 개까지다. 넘게 적으면 거절하지 않고 앞의 다섯 개만 쓴다.
+
+    거절하면 모델이 한 번 더 부르느라 대화가 한 번 늘고, 검색어 몇 개 덜 쓰는 것은 안전과 무관하다.
+    """
+
+    @pytest.mark.parametrize("args", [SearchEducationMemoryArgs, SearchActivityMemoryArgs])
+    def test_다섯_개를_넘으면_앞의_다섯_개만_쓴다(self, args):
+        words = ["숫자", "공룡", "그림", "블록", "노래", "퍼즐"]
+        assert args.model_validate({"keywords": words}).keywords == words[:5]
+
+    @pytest.mark.parametrize("args", [SearchEducationMemoryArgs, SearchActivityMemoryArgs])
+    def test_다섯_개_이하는_그대로다(self, args):
+        assert args.model_validate({"keywords": ["숫자", "공룡"]}).keywords == ["숫자", "공룡"]
 
 
 class TestLearning:

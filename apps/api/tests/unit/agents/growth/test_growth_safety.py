@@ -187,6 +187,37 @@ class TestDefaultRules:
     def test_한_글자_별칭은_놀이_문장에서_쓰지_않는다(self, rules, text):
         assert rules.food_terms(text) == ()
 
+    @pytest.mark.parametrize(
+        "text", ["콩으로 숫자 세기", "검은콩 세기", "콩주머니 던지기", "잣 까기"]
+    )
+    def test_한_글자_식품_콩_잣은_문장에서도_찾는다(self, rules, text):
+        """C48-food — 아이와 상관없이 뺀다. 콩주머니에도 실제 콩이 든다."""
+        assert rules.food_terms(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "콩콩 뛰기 놀이",
+            "콩닥콩닥 심장 소리 듣기",
+            "콩쥐팥쥐 동화 읽기",
+            "홍콩 지도 보기",
+            "강낭콩 키우기",  # 대두가 아닌 콩은 사전 guard 다 — 심고 기르는 활동
+            "잦은 실수 줄이기",
+        ],
+    )
+    def test_콩_잣이_식품이_아닌_자리는_걸리지_않는다(self, rules, text):
+        assert rules.food_terms(text) == ()
+
+    def test_guard_는_띄어쓰기를_넘지_않는다(self, rules):
+        """'꽃 게임' 은 띄어 썼다 — guard '꽃게' 로 덮지 않는다.
+
+        Activity · Food 의 match_fields 와 같다. "꽃" 은 대응표 별칭(꽃가루 · 화분증)이 아니라
+        이름 대조만 한다 — 표 판정은 plan1 테스트가 본다.
+        """
+        flower = (SafetyEntry("allergy", "꽃", "active"),)
+        assert rules.registered_names("꽃 게임 하기", flower)
+        assert rules.registered_names("꽃게 그리기", flower) == ()
+
     def test_18개월_미만은_경고도_차단이다(self, rules):
         hits = rules.hazards("풍선으로 숫자 세기", 15)
         assert [(h.axis, h.level) for h in hits] == [("suffocation_film", "block")]

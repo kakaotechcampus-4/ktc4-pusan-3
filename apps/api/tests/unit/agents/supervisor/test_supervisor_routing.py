@@ -396,6 +396,29 @@ def _growth(text: str, label: str) -> dict[str, Any]:
     return {"text": text, "kind": "request", "agent": "growth", "growth_task": label}
 
 
+def test_혼합형의_기록_조각을_도메인_task_에도_싣는다() -> None:
+    """요청 조각만으로는 무엇을 묻는지 모른다 — Growth 닫힘 판정이 같은 입력의 기록 조각을 본다."""
+    raw = "약 먹기 싫어해. 어떻게 하지?"
+    output = _output(
+        {"text": "약 먹기 싫어해", "kind": "record", "work": "observe"},
+        _growth("어떻게 하지?", "routine_coaching"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    (task,) = routing.domain_tasks
+    assert task.request_texts == ("어떻게 하지?",)
+    assert task.record_texts == ("약 먹기 싫어해",)
+
+
+def test_기록_조각이_없으면_빈_튜플이다() -> None:
+    raw = "양치 혼자 하게 하고 싶어"
+    routing = route(
+        raw,
+        SupervisorResult(output=_output(_growth(raw, "routine_coaching"))),
+        run_id=RUN_ID,
+    )
+    assert routing.domain_tasks[0].record_texts == ()
+
+
 def test_한_run_에_Growth_추천은_처음_것_하나만_돈다() -> None:
     raw = "공룡 책이랑 숫자 놀이 추천해줘"
     output = _output(

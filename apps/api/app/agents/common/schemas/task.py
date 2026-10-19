@@ -16,3 +16,9 @@ class DomainTask:
     agent: str  # food · activity · growth · health
     task_type: str | None  # Activity 는 라벨이 없어 None
     request_texts: tuple[str, ...]
+    # 같은 입력의 기록 조각(Memory 몫). 모델에게 보내지 않는다 —
+    # 코드 판정만 읽는다(Growth 루틴 닫힘).
+    # "약 먹기 싫어해. 어떻게 하지?" 는 기록과 요청으로 갈려 요청 조각만으로는 무엇을 묻는지 모른다.
+    # 05 다시 시도(entrypoint.suggest)는 싣지 않는다 —
+    # 닫힌 run 은 실패가 아니라 다시 시도 맥락이 없다
+    record_texts: tuple[str, ...] = ()
