@@ -25,12 +25,14 @@ export interface PastTurn {
   /** 보낸 글 그대로. */
   text: string;
   replyTo: string | null;
+  /** 이 턴의 되묻기에 아직 답할 수 있는가 (받은 순간의 값 · 서버 `reply_open`). */
+  replyOpen: boolean;
   run: RunState;
   /** 그 run 에서 저장했지만 보호자가 지운 기록. 내용 없이 id 만 있다. */
   deleted: StoredRef[];
 }
 
-/** 다음(더 이른) 장을 부르는 값. 같은 날 안이면 커서, 그날을 다 받았으면 전날. */
+/** 다음 장을 부르는 값. 더 이른 쪽은 같은 날 안의 커서 또는 전날, 더 늦은 쪽은 다음 날이다. */
 export type ChatPageParam = { cursor: string } | { date: string };
 
 /** 지난 대화 한 장의 주소. 첫 장(`null`)은 날짜 없이 부른다 — 서버의 오늘이다. */
@@ -49,6 +51,16 @@ export function olderPageParam(page: ChatDayResponse): ChatPageParam | undefined
   if (page.next_cursor !== null) return { cursor: page.next_cursor };
   if (page.prev_date !== null) return { date: page.prev_date };
   return undefined;
+}
+
+/**
+ * 맨 위(가장 늦은) 장 다음에 부를 더 늦은 장. 지난 날을 바로 열었을 때(09 입구)만 쓰인다 — 오늘부터 연
+ * 목록은 첫 장이 오늘이라 `next_date` 가 늘 `null` 이다.
+ * ⚠️ 다음 날이 여러 장이면(하루 20턴 초과) 그날의 앞부분이 빠진다 — 서버가 최근 턴부터 끊어 준다. 지금 하루
+ *    입력 한도(5회)로는 하루가 늘 한 장이라 생기지 않는다. 한도가 `limit` 를 넘게 늘면 여기를 다시 본다.
+ */
+export function newerPageParam(page: ChatDayResponse): ChatPageParam | undefined {
+  return page.next_date !== null ? { date: page.next_date } : undefined;
 }
 
 /** 서버가 남긴 답 묶음을 run 화면의 상태로. */
@@ -72,6 +84,7 @@ function toPastTurn(turn: ChatTurnOut, day: string): PastTurn {
     day,
     text: turn.raw_text,
     replyTo: turn.reply_to,
+    replyOpen: turn.reply_open,
     ...toPastRun(turn.replies),
   };
 }
@@ -103,10 +116,10 @@ export function withNewestPage(data: ChatPages, newest: ChatDayResponse): ChatPa
   return { ...data, pages: [newest, ...data.pages.slice(1)] };
 }
 
-/** 대화 목록 그 자체인가 (`qk.chatToday` 처럼 그 아래에 있는 키는 아니다). */
+/** 대화 목록인가 (어느 날부터 열었든). `qk.chatToday` 처럼 같은 접두어 아래의 다른 키는 아니다. */
 function isChatList(key: QueryKey, childId: string): boolean {
-  const list = qk.chat(childId);
-  return key.length === list.length && list.every((part, i) => key[i] === part);
+  const prefix = [...qk.chat(childId), "list"];
+  return key.length > prefix.length && prefix.every((part, i) => key[i] === part);
 }
 
 /**
@@ -115,34 +128,47 @@ function isChatList(key: QueryKey, childId: string): boolean {
  * run 하나가 홈 · 관찰 · 프로필을 같이 바꿔서 `qk.child` 는 통째로 무효화한다(`docs/web/chat-run-v1.md` §3).
  * 그런데 대화 목록은 무한 목록이라 무효화하면 받아 둔 장을 전부 순서대로 다시 받는다 — 지난 날을 멀리 올려 둔
  * 화면에서 한 줄 보낼 때마다 그만큼 요청이 나간다. run 이 바꾸는 것은 오늘 장 하나뿐이다.
- *
- * - 대화 목록을 받아 둔 적이 없으면 할 일이 없다 — 대화 화면을 열 때 처음부터 받는다
- * - 오늘 장을 못 받으면 낡았다고만 표시한다 — 다음에 대화 화면을 열 때 다시 받는다
- * - ⚠️ 그 사이 더 이른 장을 받는 중이었으면 그 결과가 이 갈아 끼운 것을 덮을 수 있다. 그래도 방금 run 은
- *   대화 스토어에 있어서 화면에서 빠지지 않고, 다음 run 이 끝나면 다시 맞춰진다
  */
 export async function refreshAfterRun(queryClient: QueryClient, childId: string): Promise<void> {
   void queryClient.invalidateQueries({
     queryKey: qk.child(childId),
     predicate: (query) => !isChatList(query.queryKey, childId),
   });
-  if (!queryClient.getQueryData<ChatPages>(qk.chat(childId))) return;
+  await refreshTodayChat(queryClient, childId);
+}
+
+/**
+ * 대화 목록의 오늘 장만 다시 받는다. run 이 끝났을 때, 그리고 지난 질문의 맥락이 사라졌다고 서버가 말했을 때
+ * (`reply_context_unavailable` — 다시 받으면 그 턴의 `reply_open` 이 닫혀 온다) 부른다.
+ *
+ * - 오늘부터 연 목록(`qk.chatList(cid, null)`)을 받아 둔 적이 없으면 할 일이 없다 — 열 때 처음부터 받는다
+ * - 지난 날부터 연 목록(09 입구)은 낡았다고만 표시한다 — 오늘 장이 붙어 있는지 모르고, 그 화면에서 보내면
+ *   오늘부터 연 화면으로 넘어간다 (`chat/page.tsx`)
+ * - 오늘 장을 못 받으면 낡았다고만 표시한다 — 다음에 대화 화면을 열 때 다시 받는다
+ * - ⚠️ 그 사이 더 이른 장을 받는 중이었으면 그 결과가 이 갈아 끼운 것을 덮을 수 있다. 그래도 방금 run 은
+ *   대화 스토어에 있어서 화면에서 빠지지 않고, 다음 run 이 끝나면 다시 맞춰진다
+ */
+export async function refreshTodayChat(queryClient: QueryClient, childId: string): Promise<void> {
+  const todayList = qk.chatList(childId, null);
+  void queryClient.invalidateQueries({
+    queryKey: [...qk.chat(childId), "list"],
+    predicate: (query) => query.queryKey.at(-1) !== null,
+    refetchType: "none",
+  });
+  void queryClient.invalidateQueries({ queryKey: qk.chatToday(childId) });
+  if (!queryClient.getQueryData<ChatPages>(todayList)) return;
 
   let newest: ChatDayResponse;
   try {
     newest = await api.get<ChatDayResponse>(`/children/${childId}/chat`);
   } catch {
-    void queryClient.invalidateQueries({
-      queryKey: qk.chat(childId),
-      exact: true,
-      refetchType: "none",
-    });
+    void queryClient.invalidateQueries({ queryKey: todayList, exact: true, refetchType: "none" });
     return;
   }
   // 기다리는 동안 바뀌었을 수 있다(더 이른 장이 붙었다) — 지금 것에 끼운다.
-  const data = queryClient.getQueryData<ChatPages>(qk.chat(childId));
+  const data = queryClient.getQueryData<ChatPages>(todayList);
   if (!data) return;
   const next = withNewestPage(data, newest);
-  if (next) queryClient.setQueryData<ChatPages>(qk.chat(childId), next);
-  else void queryClient.invalidateQueries({ queryKey: qk.chat(childId), exact: true });
+  if (next) queryClient.setQueryData<ChatPages>(todayList, next);
+  else void queryClient.invalidateQueries({ queryKey: todayList, exact: true });
 }

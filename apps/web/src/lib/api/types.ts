@@ -1126,7 +1126,7 @@ export interface StoredRef {
  * SSE 와 다른 곳만 적는다.
  * - `saved` — 관찰은 **지금 모습**으로 온다(건강 기록 포함). 보호자가 지운 기록은 내용 없이 `deleted` 에 id 만 온다.
  * - `event_draft` — 🚨 **그때 만든 내용 그대로다.** 초안은 서버에 남지 않아서 지금 상태가 없다 — 읽기 전용으로만 그린다.
- * - `agent_result` — 추천은 **id 만** 온다(지금 상태 없음). 채택 · 만료는 "후보 보기" 가 여는 05 가 거른다.
+ * - `agent_result` — 추천의 **지금 상태**(`suggestions`)가 같이 온다. 고를 수 있는 것이 없으면 "후보 보기" 를 세우지 않는다.
  * - `done` — `completed` 만 온다. 늘 마지막이다.
  * - 오지 않는 것 — `step` · `ping` · `offer` · `promoted` · `failed`(실패한 run 은 남기지 않는다).
  */
@@ -1136,7 +1136,7 @@ export type ChatReply =
   | ({ type: "unavailable" } & UnavailableEvent)
   | ({ type: "saved"; deleted: StoredRef[] } & SavedEvent)
   | ({ type: "event_draft" } & EventDraftsEvent)
-  | ({ type: "agent_result" } & AgentResultEvent)
+  | ({ type: "agent_result" } & AgentResultEvent & Required<Pick<AgentResultEvent, "suggestions">>)
   | ({ type: "partial" } & PartialEvent)
   | { type: "done"; completed: boolean };
 
@@ -1148,6 +1148,13 @@ export interface ChatTurnOut {
   reply_to: string | null;
   /** 입력을 접수한 시각. 🚨 날짜 묶음은 이 값이 아니라 응답의 `date` 로 한다 (서버가 정한 대화 날짜). */
   created_at: string;
+  /**
+   * 이 턴의 되묻기에 지금 `reply_to` 로 답할 수 있는가. 서버가 맥락을 15분만 들고 있어서 그 안이고 아직
+   * 답하지 않았을 때만 `true` 다. 되묻기가 아닌 턴은 늘 `false`.
+   * 🚨 **받은 순간의 값이다** — 그 뒤에 닫힐 수 있고, 그때 답하면 400 `reply_context_unavailable` 이다.
+   *    맥락 확인은 하루 한도보다 앞이라 400 은 하루 입력을 쓰지 않는다.
+   */
+  reply_open: boolean;
   /** 도착 순서대로. 마지막은 늘 `done` 이다. */
   replies: ChatReply[];
 }
@@ -1164,6 +1171,11 @@ export interface ChatDayResponse {
   next_cursor: string | null;
   /** 이 날짜보다 앞에서 대화가 있었던 가장 늦은 날. 대화 없는 날은 건너뛴다. 없으면 `null`. */
   prev_date: string | null;
+  /**
+   * 이 날짜보다 뒤에서 대화가 있었던 가장 이른 날. 대화 없는 날은 건너뛴다. 오늘이면 늘 `null`.
+   * 지난 날을 바로 열었을 때(09 입구) 아래로 내리며 다음 날을 이어 받는다.
+   */
+  next_date: string | null;
 }
 
 /**

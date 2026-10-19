@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
+import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
+import { CorrectedMark } from "@/components/observation-list";
 import { RewriteButton } from "@/components/rewrite-button";
 import { domainLabel, observationAgent } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -28,6 +30,7 @@ import {
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
+import { cn } from "@/lib/cn";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
@@ -104,8 +107,9 @@ export function RunReply({
   onPickOffer: (agents: Agent[]) => void;
   /**
    * 서버가 남긴 지난 턴이다 (#228 · `lib/chat-history.ts`). 🚨 **그날 화면과 같게 그리되, 지금 누르면 막다른
-   * 길이 되는 것만 뺀다** — 일정 초안의 "확인하고 넣기"(초안은 서버에 남지 않는다)와 부분 실패의 "다시 준비하기"
-   * (05 의 실패 맥락은 15분이다). "후보 보기" 는 남긴다 — 05 가 그 run 의 추천을 지금 상태로 거른다.
+   * 길이 되는 것만 뺀다** — 보관함에 남지 않은 일정 초안의 "확인하고 넣기"(초안은 서버에 남지 않는다 · 남은
+   * 수는 `remainingDrafts`)와 부분 실패의 "다시 준비하기"(05 의 실패 맥락은 15분이다). "후보 보기" 는 고를 수
+   * 있는 추천이 남았을 때만 선다 (`blockCandidates`).
    */
   archived?: boolean;
   /** 지난 턴에서 저장했지만 보호자가 지운 기록. 내용 없이 "이 기록은 지웠어요" 한 줄씩 선다. */
@@ -322,7 +326,8 @@ export function RunReply({
         </section>
       ) : null}
 
-      {run.drafts.length > 0 && archived ? (
+      {/* 🚨 지난 턴이어도 보관함에 남은 초안이 있으면 그대로 넣을 수 있다 — 아직 넣지 않은 것이다 (`PastTurnItem`). */}
+      {run.drafts.length > 0 && archived && remainingDrafts === 0 ? (
         <ArchivedDraftsCard drafts={run.drafts} />
       ) : run.drafts.length > 0 ? (
         <DraftsCard
@@ -500,6 +505,10 @@ function AgentResultCard({
               {result.question}
             </p>
           ) : null}
+          {/* 지난 대화에서 다 지났거나 거절한 묶음 — 링크 대신 사실만 적는다 (#228). */}
+          {candidates?.closed ? (
+            <p className="text-caption text-ink-subtle mt-2">지금은 고를 수 있는 후보가 없어요.</p>
+          ) : null}
           {/* 그 블록의 Agent · 그 run 의 05 (#249 가 그 run 의 추천을 되살린다). 링크 글자에 기호를 붙이지 않는다. */}
           {candidates?.href ? (
             <ButtonLink
@@ -574,9 +583,10 @@ function DraftsCard({
 }
 
 /**
- * 지난 턴의 일정 초안 (#228). 🚨 **넣는 길이 없다** — 초안은 서버에 남지 않아서(9/21) 그때 내용만 있고,
- * 넣었는지도 모른다. 여기서 넣게 하면 이미 넣은 일정이 한 번 더 들어간다. 그래서 무엇을 찾았는지만 적고
- * 캘린더를 가리킨다. 🚨 초안 보관함(`stores/event-draft.ts`)에도 얹지 않는다 (`lib/chat-history.ts`).
+ * 보관함에 남지 않은 지난 턴의 일정 초안 (#228). 🚨 **넣는 길이 없다** — 초안은 서버에 남지 않아서(9/21) 그때
+ * 내용만 있고, 넣었는지도 모른다. 여기서 넣게 하면 이미 넣은 일정이 한 번 더 들어간다. 그래서 무엇을 찾았는지만
+ * 적고 캘린더를 가리킨다. 보관함에 남아 있으면 아직 넣지 않은 것이라 이 카드 대신 `DraftsCard` 가 선다.
+ * 🚨 지난 턴의 초안을 보관함에 새로 얹지는 않는다 (`lib/chat-history.ts`).
  */
 function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
   return (
@@ -845,8 +855,15 @@ function NoteCard({
 
 const NO_REFS: readonly StoredRef[] = [];
 
+/**
+ * 저장된 기록 한 줄. 🚨 **지난 대화에서는 고친 기록도 온다** (#228 리뷰) — 교정은 기록을 지우지 않고 상태만
+ * 바꿔서, 서버가 지금 모습(`status`)으로 싣는다. 방금 저장한 run 에서는 늘 `active` 라 예전엔 볼 필요가 없었다.
+ * 07 기록 탭과 같은 고친 표시를 달고, 잘못된 기록(`inactive`)은 글자를 물린다 — 근거에서도 빠진 기록이다.
+ * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
+ */
 function ObservationRow({ observation }: { observation: Observation }) {
   const agent = observationAgent(observation.kind);
+  const wrong = observation.status === "inactive";
   const detail = isHealthObservation(observation)
     ? [
         observation.domain_fields.symptom?.join(", "),
@@ -871,13 +888,21 @@ function ObservationRow({ observation }: { observation: Observation }) {
         ) : null}
       </div>
 
-      <p className="text-body text-ink mt-2">{observation.raw_text}</p>
+      <p className={cn("text-body mt-2", wrong ? "text-ink-muted" : "text-ink")}>
+        {observation.raw_text}
+      </p>
 
       <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-1.5">
         {detail ? <span>{detail}</span> : null}
         {detail ? <span aria-hidden>·</span> : null}
         <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
       </div>
+
+      {observation.status !== "active" ? (
+        <div className="mt-1.5">
+          <CorrectedMark label={CORRECTED_OBSERVATION[observation.status].label} />
+        </div>
+      ) : null}
     </div>
   );
 }

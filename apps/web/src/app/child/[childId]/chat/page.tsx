@@ -21,6 +21,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChatHistory } from "@/hooks/use-chat-history";
+import type { PastTurn } from "@/lib/chat-history";
 import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Agent, type Me } from "@/lib/api";
 import { useSeoulToday } from "@/hooks/use-seoul-today";
@@ -56,8 +57,11 @@ import { usePhotoDraftStore } from "@/stores/photo-draft";
  *    남긴 턴(`useChatHistory`)을 이 앱에서 보낸 줄과 `run_id` 로 합쳐 그린다 (`ChatThread` 머리말).
  * 🚨 **위로 올리면 더 이른 대화를 붙인다** — 같은 날의 앞부분, 그다음 대화가 있었던 전날. 붙이는 동안 보고 있던
  *    줄이 제자리에 있어야 한다 (아래 `anchor`). 화면이 짧아 올릴 수 없을 때를 위해 "이전 대화 보기" 도 세운다.
- * 🚨 **`?date=` 로 열면 그날 자리로 내린다** (09 캘린더 하루 보기의 입구). 그날만 따로 여는 화면이 아니다 —
- *    오늘부터 그날까지 이어 받아 같은 대화에 둔다. 따로 열면 거기서 보낸 한 줄이 며칠을 건너뛰고 붙는다.
+ * 🚨 **`?date=` 로 열면 그날부터 연다** (09 캘린더 하루 보기의 입구 · 서버 `next_date` · #228 리뷰). 위로 올리면
+ *    전날이, 아래로 내리면 다음 날이 붙는다 — 한동안 오늘부터 그날까지 하루씩 이어 받았는데, 한 달 전을 고르면
+ *    대화한 날 수만큼 요청이 순서대로 나갔다.
+ *    🚨 **오늘까지 내려오기 전에는 이 앱에서 보낸 줄을 그리지 않는다** — 그날 아래에 며칠을 건너뛰고 오늘 줄이 붙는다.
+ *    그래서 이 화면에서 한 줄 보내면 오늘부터 연 대화로 넘어간다 (`send`).
  */
 export default function ChatPage() {
   return (
@@ -71,24 +75,42 @@ export default function ChatPage() {
 }
 
 /**
- * 맨 위에서 이만큼 안쪽이면 더 이른 대화를 부른다. 맨 위에 닿은 뒤에야 부르면 버튼이 먼저 보이고 나서
- * 한 박자 늦게 붙는다 — 버튼 한 줄 높이보다 조금 넉넉하게 둔다.
+ * 맨 위(또는 맨 아래)에서 이만큼 안쪽이면 더 이른(늦은) 대화를 부른다. 끝에 닿은 뒤에야 부르면 버튼이 먼저
+ * 보이고 나서 한 박자 늦게 붙는다 — 버튼 한 줄 높이보다 조금 넉넉하게 둔다.
  */
-const LOAD_OLDER_THRESHOLD_PX = 120;
+const LOAD_MORE_THRESHOLD_PX = 120;
 
 function ChatScreen() {
   const childId = useChildId();
   const router = useRouter();
   const conversation = useConversation(childId);
   const busy = isBusy(conversation);
-  const history = useChatHistory(childId);
 
   /**
-   * 캘린더 하루 보기에서 들어온 날. 🚨 형식만 본다 — 날짜를 계산하지 않고 서버가 준 `date` 와 글자로 비교한다.
-   * 잘못된 값이면 날짜 없이 연 것과 같다.
+   * 캘린더 하루 보기에서 들어온 날. 🚨 형식만 본다 — 날짜를 계산하지 않는다. 잘못된 값이면 날짜 없이 연 것과 같다.
    */
   const dateParam = useSearchParams().get("date");
   const target = dateParam && parseISODate(dateParam) ? dateParam : null;
+  const history = useChatHistory(childId, target);
+  const {
+    data,
+    isError,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+    hasPreviousPage,
+    isFetchingPreviousPage,
+    isFetchPreviousPageError,
+    fetchPreviousPage,
+  } = history;
+  /**
+   * 이 앱에서 보낸 줄을 그리는가 — 지난 날부터 연 화면은 오늘까지 내려온 뒤에만 (위 머리말).
+   * 🚨 **받기 전에도 숨긴다** — 받기 전에는 `hasPreviousPage` 가 거짓이라, 그것만 보면 그날을 보러 왔는데
+   *    오늘 줄이 먼저 섰다가 사라진다. 그동안은 스켈레톤이다.
+   */
+  const liveTurns =
+    !target || (data !== undefined && !hasPreviousPage) ? conversation.turns : NO_TURNS;
 
   // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
@@ -98,14 +120,17 @@ function ChatScreen() {
    * 대화의 날이 다르다. 대화가 없을 때만 오늘(한국 시간)이다. 🚨 `today` 도 자정을 따라 바뀐다.
    */
   const today = useSeoulToday();
-  const shownDay = conversation.turns.at(-1)?.day ?? history.turns.at(-1)?.day ?? today;
+  const shownDay = liveTurns.at(-1)?.day ?? history.turns.at(-1)?.day ?? today;
 
   // 🚨 `useState` 가 아니다 — 홈과 같은 입력창이다. 네비로 다녀와도 쓰던 글이 살아 있다.
   const [text, setText] = useDraftText(childId);
   const clearDraft = useDraftStore((s) => s.clearDraft);
 
-  /** 일정 초안 시트가 보여주는 답. 🚨 시트는 하나다 — 답마다 하나씩 두면 닫힌 `<dialog>` 가 쌓인다. */
-  const [draftsOf, setDraftsOf] = useState<ChatTurn | null>(null);
+  /**
+   * 일정 초안 시트가 보여주는 답의 초안. 🚨 시트는 하나다 — 답마다 하나씩 두면 닫힌 `<dialog>` 가 쌓인다.
+   * 지난 턴도 연다 — 보관함에 아직 남은 초안이면 이어서 넣을 수 있다 (`ChatThread` 의 `PastTurnItem`).
+   */
+  const [draftsOf, setDraftsOf] = useState<{ key: string; draftIds: string[] } | null>(null);
   const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
 
@@ -115,92 +140,81 @@ function ChatScreen() {
    * 답이 자라는 동안(단계 · 저장 · 초안)에도 따라 내린다.
    */
   const last = conversation.turns.at(-1);
-  /**
-   * 오늘(첫 장)의 턴 수. 🚨 더 이른 장이 붙는 것으로는 내리지 않는다 — 올려 보던 자리가 바닥으로 튄다.
-   * 🚨 캘린더에서 그날로 들어온 화면은 이것으로 내리지 않는다 — 뒤이은 다시 받기에서 오늘 턴이 늘면(서버는 채널을
-   *    닫은 뒤에 쓴다) 보던 지난 날에서 바닥으로 튄다. 그 화면은 이 앱에서 보낸 줄로만 내린다.
-   */
-  const newestCount = target ? 0 : (history.data?.pages[0]?.turns.length ?? 0);
-  /**
-   * 캘린더에서 고른 날로 이미 내렸는가(또는 받기를 포기했는가). 그 전에는 바닥으로 내리지 않는다.
-   * 🚨 **이 화면에서 보낸 줄이 있으면 내린다** — 그날을 찾는 중이거나 못 받았어도 방금 보낸 답은 따라가야 한다.
-   */
-  const jumped = useRef(false);
+  /** 오늘(첫 장)의 턴 수. 🚨 더 이른 장이 붙는 것으로는 내리지 않는다 — 올려 보던 자리가 바닥으로 튄다. */
+  const newestCount = data?.pages[0]?.turns.length ?? 0;
   useEffect(() => {
-    if (target && !jumped.current && conversation.turns.length === 0) return;
+    // 지난 날부터 연 화면은 그날 자리에 둔다 — 거기서 보내면 오늘 대화로 넘어가서 여기서 따라 내릴 줄이 없다.
+    if (target) return;
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
   }, [target, newestCount, conversation.turns.length, last?.send.status, last?.run.status]);
 
-  /**
-   * 그날까지 이어 받고 그 자리로 내린다. 대화가 있었던 날만 한 장씩이라, 그 사이 대화한 날 수만큼 부른다.
-   * 그날에 대화가 없으면(지웠거나 주소를 손으로 고친 경우) 그보다 이른 장에서 멈추고 내리지 않는다.
-   */
-  const { data, isError, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } =
-    history;
-  /**
-   * 그날을 찾아 이어 받는 중인가. 🚨 그동안은 빈 상태를 세우지 않는다 — 오늘 대화가 없는 날 캘린더에서
-   * 지난 날로 들어오면 첫 장이 비어 와서 "여기서 이어져요" 가 한 번 깜빡인다. 다음 장이 실패하면 멈춘다.
-   */
-  const seeking =
-    target !== null &&
-    data !== undefined &&
-    !data.pages.some((page) => page.date <= target) &&
-    hasNextPage &&
-    !isFetchNextPageError;
+  /** 지난 날부터 연 화면은 처음 받았을 때 그날 자리로 한 번 내린다. */
+  const jumped = useRef(false);
   useEffect(() => {
-    if (!target || jumped.current) return;
-    if (!data) {
-      // 첫 장부터 못 받았으면 찾기를 그만둔다 — 그래야 이 화면에서 보낸 줄을 따라 내린다.
-      if (isError) jumped.current = true;
-      return;
-    }
-    if (seeking) {
-      if (!isFetchingNextPage) void fetchNextPage();
-      return;
-    }
+    if (!target || jumped.current || !data) return;
     jumped.current = true;
     document.getElementById(chatDayAnchor(target))?.scrollIntoView({ block: "start" });
-  }, [target, data, isError, seeking, isFetchingNextPage, fetchNextPage]);
+  }, [target, data]);
 
   /**
    * 더 이른 장을 붙이기 직전의 자리. 🚨 **위에 붙으면 보던 줄이 아래로 밀린다** — 붙은 높이만큼 다시 내려
    * 보던 줄을 제자리에 둔다. 브라우저의 스크롤 고정(`overflow-anchor`)은 웹뷰마다 달라서 직접 한다.
+   * 더 늦은 장은 아래에 붙어서 보던 줄이 밀리지 않는다 — 가장 이른 장이 바뀐 때만 맞춘다.
    */
   const anchor = useRef<{ height: number; top: number } | null>(null);
+  /** 🚨 한 번에 한 방향만 — 짧은 날을 밀면 위아래가 같이 걸리는데, 진행 중인 쪽을 다른 쪽이 취소한다. */
+  const loadingMore = isFetchingNextPage || isFetchingPreviousPage;
   function loadOlder() {
-    if (!hasNextPage || isFetchingNextPage) return;
+    if (!hasNextPage || loadingMore) return;
     anchor.current = { height: document.documentElement.scrollHeight, top: window.scrollY };
     void fetchNextPage();
   }
-  const pageCount = data?.pages.length ?? 0;
+  function loadNewer() {
+    if (!hasPreviousPage || loadingMore) return;
+    void fetchPreviousPage();
+  }
+  const oldestPage = data?.pages.at(-1);
   useLayoutEffect(() => {
     const before = anchor.current;
     if (!before) return;
     anchor.current = null;
     const grown = document.documentElement.scrollHeight - before.height;
     window.scrollTo({ top: before.top + grown, behavior: "instant" });
-  }, [pageCount]);
+  }, [oldestPage]);
 
   /**
-   * 위로 올리면 붙인다. 🚨 **사람이 굴린 뒤에만 건다** — 대화가 짧으면 처음부터 맨 위라, 그대로 두면 열자마자
-   * 지난 대화를 끝까지 줄줄이 받는다. 바닥으로 내리는 `scrollTo` 도 스크롤 이벤트라 그것과 구분한다.
-   * 🚨 **이미 맨 위에서 올리면 스크롤 이벤트가 없다** — 그래서 휠 · 터치 자체도 맨 위인지 본다. 키보드는 건다만
-   *    하고 보지 않는다 — 대화가 짧은 화면에서 입력창에 글자를 칠 때마다 지난 날을 받게 된다.
+   * 위로 올리면 더 이른 날을, 아래로 내리면 더 늦은 날을 붙인다(지난 날부터 연 화면만).
+   * 🚨 **사람이 굴린 뒤에만 건다** — 대화가 짧으면 처음부터 맨 위라, 그대로 두면 열자마자 지난 대화를 끝까지
+   *    줄줄이 받는다. 바닥으로 내리는 `scrollTo` 도 스크롤 이벤트라 그것과 구분한다.
+   * 🚨 **이미 끝에서 더 밀면 스크롤 이벤트가 없다** — 그래서 휠 · 터치 자체도 끝인지 본다. 키보드는 걸기만
+   *    하고 보지 않는다 — 대화가 짧은 화면에서 입력창에 글자를 칠 때마다 다른 날을 받게 된다.
    */
-  const loadOlderRef = useRef(loadOlder);
+  const loadRef = useRef({ loadOlder, loadNewer });
   useEffect(() => {
-    loadOlderRef.current = loadOlder;
+    loadRef.current = { loadOlder, loadNewer };
   });
   useEffect(() => {
     let armed = false;
     const nearTop = () => {
-      if (armed && window.scrollY < LOAD_OLDER_THRESHOLD_PX) loadOlderRef.current();
+      if (armed && window.scrollY < LOAD_MORE_THRESHOLD_PX) loadRef.current.loadOlder();
+    };
+    const nearBottom = () => {
+      const below = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+      if (armed && below < LOAD_MORE_THRESHOLD_PX) loadRef.current.loadNewer();
+    };
+    const onScroll = () => {
+      nearTop();
+      nearBottom();
     };
     const pulled = (event: Event) => {
       armed = true;
-      // 휠은 방향을 안다 — 맨 위에서 아래로 굴린 것까지 지난 날을 부를 까닭은 없다.
-      if (event instanceof WheelEvent && event.deltaY >= 0) return;
-      nearTop();
+      // 휠은 방향을 안다 — 위로 굴렸으면 위만, 아래로 굴렸으면 아래만 본다.
+      if (event instanceof WheelEvent) {
+        if (event.deltaY < 0) nearTop();
+        else if (event.deltaY > 0) nearBottom();
+        return;
+      }
+      onScroll();
     };
     const arm = () => {
       armed = true;
@@ -208,16 +222,16 @@ function ChatScreen() {
     window.addEventListener("wheel", pulled, { passive: true });
     window.addEventListener("touchmove", pulled, { passive: true });
     window.addEventListener("keydown", arm);
-    window.addEventListener("scroll", nearTop, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       window.removeEventListener("wheel", pulled);
       window.removeEventListener("touchmove", pulled);
       window.removeEventListener("keydown", arm);
-      window.removeEventListener("scroll", nearTop);
+      window.removeEventListener("scroll", onScroll);
     };
   }, []);
 
-  const nothingYet = conversation.turns.length === 0 && history.turns.length === 0;
+  const nothingYet = liveTurns.length === 0 && history.turns.length === 0;
 
   function send() {
     const sent = sendLine(childId, text, {
@@ -226,7 +240,11 @@ function ChatScreen() {
       source: "home_input",
     });
     // 입력창은 비운다. 🚨 원문은 말풍선이 들고 있다 — 서버가 끝을 말하기 전에는 거기서 안 사라진다.
-    if (sent) clearDraft(childId);
+    if (!sent) return;
+    clearDraft(childId);
+    // 🚨 지난 날부터 연 화면이면 오늘 대화로 넘어간다 — 여기서는 그날 아래에 오늘 줄을 붙일 수 없다 (머리말).
+    //    `replace` 다: 기기 뒤로가기가 이 화면으로 돌아오면 방금 보낸 줄이 안 보이는 화면이 된다.
+    if (target) router.replace(`/child/${childId}/chat`);
   }
 
   /**
@@ -278,7 +296,11 @@ function ChatScreen() {
             {conversation.answering ? (
               <AnsweringBar
                 question={conversation.answering}
-                savedAlongside={savedAlongside(conversation.turns, conversation.answering.runId)}
+                savedAlongside={savedAlongside(
+                  conversation.turns,
+                  history.turns,
+                  conversation.answering.runId,
+                )}
                 onStop={() => stopAnswering(childId)}
               />
             ) : null}
@@ -297,7 +319,8 @@ function ChatScreen() {
         }
       >
         {hasNextPage ? (
-          <OlderTurns
+          <MoreTurns
+            label="이전 대화 보기"
             loading={isFetchingNextPage}
             failed={isFetchNextPageError}
             onMore={loadOlder}
@@ -325,9 +348,18 @@ function ChatScreen() {
 
         {nothingYet ? (
           // 🚨 받는 중에 빈 상태를 먼저 세우지 않는다 — 앱을 다시 켤 때마다 "아무것도 없다" 가 한 번 깜빡인다.
-          history.isPending || seeking ? (
+          history.isPending ? (
             <SkeletonBlock label="대화를 불러오는 중" />
-          ) : isError ? null : (
+          ) : isError ? null : target ? (
+            // 그날 대화가 없다 — 지웠거나 주소를 손으로 고친 경우다. 다른 날은 위아래 문으로 이어 볼 수 있다.
+            <EmptyState
+              icon={MessagesSquare}
+              title="이날은 나눈 대화가 없어요"
+              description="아래에 한 줄 적으면 오늘 대화로 이어져요."
+              count={0}
+              countLabel="이날 보낸 한 줄"
+            />
+          ) : (
             <EmptyState
               icon={MessagesSquare}
               title="아래에 한 줄 적으면 여기서 이어져요"
@@ -340,12 +372,21 @@ function ChatScreen() {
           <ChatThread
             childId={childId}
             past={history.turns}
-            turns={conversation.turns}
+            turns={liveTurns}
             answering={conversation.answering}
-            onOpenDrafts={setDraftsOf}
+            onOpenDrafts={(key, draftIds) => setDraftsOf({ key, draftIds })}
             onPickOffer={goToSuggestions}
           />
         )}
+
+        {target && hasPreviousPage ? (
+          <MoreTurns
+            label="다음 대화 보기"
+            loading={isFetchingPreviousPage}
+            failed={isFetchPreviousPageError}
+            onMore={loadNewer}
+          />
+        ) : null}
 
         {/* 🚨 **승인 게이트 ㉠ 이 이 시트 안의 카드에 있다.** 시트에는 등장 애니메이션이 없다
           (디자인 시스템 §8). 닫아도 초안은 남는다 — 넣지 않은 장은 다시 열면 그대로 선다. */}
@@ -366,10 +407,10 @@ function ChatScreen() {
           {draftsOf ? (
             // 🚨 `key` 로 답마다 새로 그린다 — 안 그러면 앞 답의 넘김 위치 · 넣은 표시가 남는다.
             <EventDraftList
-              key={draftsOf.id}
+              key={draftsOf.key}
               childId={childId}
               incoming={[]}
-              draftIds={draftsOf.run.drafts.map((d) => d.draft_id)}
+              draftIds={draftsOf.draftIds}
               origin="input"
               found="적어주신 말에서 일정을 찾았어요."
             />
@@ -430,14 +471,17 @@ function AnsweringBar({
 }
 
 /**
- * 더 이른 대화로 가는 문 (#228). 위로 올리면 저절로 붙지만, 화면이 짧아 올릴 수 없을 때 이 버튼이 길이다.
+ * 더 이른(지난 날부터 연 화면에서는 더 늦은) 대화로 가는 문 (#228). 위아래로 밀면 저절로 붙지만, 화면이 짧아
+ * 밀 수 없을 때 이 버튼이 길이다.
  * 🚨 다음 장만 실패한 것은 받아 둔 대화를 지우지 않고 여기서 말한다 (07 "기록 더 보기" 와 같다).
  */
-function OlderTurns({
+function MoreTurns({
+  label,
   loading,
   failed,
   onMore,
 }: {
+  label: string;
   loading: boolean;
   failed: boolean;
   onMore: () => void;
@@ -446,18 +490,26 @@ function OlderTurns({
     <div className="flex flex-col items-center gap-2">
       {failed ? (
         <p role="status" className="text-body-sm text-ink-muted">
-          이전 대화를 불러오지 못했어요. 다시 눌러 주세요.
+          대화를 더 불러오지 못했어요. 다시 눌러 주세요.
         </p>
       ) : null}
       <Button variant="tertiary" size="compact" onClick={onMore} disabled={loading}>
-        {loading ? "불러오는 중" : "이전 대화 보기"}
+        {loading ? "불러오는 중" : label}
       </Button>
     </div>
   );
 }
 
-/** 그 질문을 낸 run 이 저장한 것이 있는가 — 입력창 위 문장이 이걸로 갈린다 (`AnsweringBar`). */
-function savedAlongside(turns: ChatTurn[], runId: string): boolean {
-  const asked = turns.find((t) => t.send.status === "sent" && t.send.runId === runId);
-  return (asked?.run.observations.length ?? 0) > 0;
+/**
+ * 그 질문을 낸 run 이 저장한 것이 있는가 — 입력창 위 문장이 이걸로 갈린다 (`AnsweringBar`).
+ * 지난 턴의 질문(다시 켠 뒤 15분 안 · `reply_open`)이면 서버가 남긴 턴에서 본다.
+ */
+function savedAlongside(turns: ChatTurn[], past: readonly PastTurn[], runId: string): boolean {
+  const live = turns.find((t) => t.send.status === "sent" && t.send.runId === runId);
+  if (live) return live.run.observations.length > 0;
+  const earlier = past.find((t) => t.runId === runId);
+  return (earlier?.run.observations.length ?? 0) + (earlier?.deleted.length ?? 0) > 0;
 }
+
+/** 지난 날부터 연 화면이 오늘까지 내려오기 전에 넘기는 빈 줄 목록 (렌더마다 새 배열을 만들지 않는다). */
+const NO_TURNS: ChatTurn[] = [];

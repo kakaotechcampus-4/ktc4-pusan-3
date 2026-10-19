@@ -40,6 +40,8 @@ import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
  *    진행 중이거나 다시 시도할 수 있는 줄이고, 서버 쪽은 끝난 run 만 남긴다. 그래서 겹치면 지난 쪽을 뺀다.
  * 🚨 **같은 날 안에서는 지난 줄이 먼저다.** 이 앱에서 보낸 줄은 앱을 켠 뒤의 것이라 늘 더 늦다.
  * 🚨 **지난 줄의 날짜는 서버가 정한 것이다**(`PastTurn.day`). 화면이 접수 시각으로 다시 계산하지 않는다.
+ *
+ * `onOpenDrafts` 는 일정 초안 시트를 그 답의 초안으로 연다 — `key` 는 시트를 답마다 새로 그리는 값이다.
  */
 export function ChatThread({
   childId,
@@ -55,7 +57,7 @@ export function ChatThread({
   turns: ChatTurn[];
   /** 입력창이 지금 답하는 질문 — 그 질문의 카드가 "답하는 중" 으로 바뀐다. */
   answering: ChatQuestion | null;
-  onOpenDrafts: (turn: ChatTurn) => void;
+  onOpenDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const last = turns.at(-1);
@@ -85,7 +87,13 @@ export function ChatThread({
             {entries.map((entry) =>
               entry.kind === "past" ? (
                 <li key={`past:${entry.turn.runId}`} className="flex flex-col gap-3">
-                  <PastTurnItem childId={childId} turn={entry.turn} answered={answered} />
+                  <PastTurnItem
+                    childId={childId}
+                    turn={entry.turn}
+                    answered={answered}
+                    answering={answering}
+                    onOpenDrafts={onOpenDrafts}
+                  />
                 </li>
               ) : (
                 <LiveTurnItem
@@ -125,19 +133,41 @@ function mergeEntries(past: readonly PastTurn[], turns: ChatTurn[]): Entry[] {
 
 /**
  * 지난 턴 하나 (#228). 🚨 **답 묶음은 그날과 같은 `RunReply` 다** — `archived` 가 지금 누르면 막다른 길이 되는
- * 버튼만 뺀다. 🚨 지난 질문에는 답할 자리를 열지 않는다 — 서버가 앞 이야기를 15분만 들고 있어서 `reply_to` 로
- * 보내면 400 이다. 뒤에 답한 줄이 있으면 "답함", 없으면 "닫힘" 이다.
+ * 버튼만 뺀다.
+ *
+ * - 되묻기: 뒤에 답한 줄이 있으면 "답함". 🚨 **서버가 아직 답할 수 있다고 하면(`reply_open`) 열린 질문이다** —
+ *   앱을 다시 켠 지 15분이 안 된 경우다. 그 밖에는 "닫힘" 이다(맥락이 없어 `reply_to` 로 보내면 400).
+ * - 일정 초안: 🚨 **보관함(`stores/event-draft.ts`)에 아직 남은 초안이면 이어서 넣는다.** 보관함은 탭이 살아 있는
+ *   동안 남고(새로고침 포함) 넣으면 빠지므로, 남아 있으면 아직 넣지 않은 것이다. 없으면 그때 내용만 읽기 전용이다.
  */
 function PastTurnItem({
   childId,
   turn,
   answered,
+  answering,
+  onOpenDrafts,
 }: {
   childId: string;
   turn: PastTurn;
   answered: ReadonlySet<string>;
+  answering: ChatQuestion | null;
+  onOpenDrafts: (key: string, draftIds: string[]) => void;
 }) {
-  const asked = turn.run.note?.kind === "question";
+  const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
+  const draftIds = turn.run.drafts.map((d) => d.draft_id);
+  const remainingDrafts = stored.filter(
+    (d) => d.origin === "input" && draftIds.includes(d.draft.draft_id),
+  ).length;
+  const note = turn.run.note;
+  const asked = note?.kind === "question";
+  const question = !asked
+    ? null
+    : answered.has(turn.runId)
+      ? "answered"
+      : turn.replyOpen
+        ? "open"
+        : "dropped";
+
   return (
     <>
       <SentBubble text={turn.text} answer={turn.replyTo !== null} named={false} />
@@ -145,14 +175,16 @@ function PastTurnItem({
         childId={childId}
         runId={turn.runId}
         run={turn.run}
-        question={asked ? (answered.has(turn.runId) ? "answered" : "dropped") : null}
-        answeringNow={false}
-        remainingDrafts={0}
+        question={question}
+        answeringNow={answering?.runId === turn.runId}
+        remainingDrafts={remainingDrafts}
         draftsReplaced={false}
         followUp={turn.replyTo !== null}
         rewriteBlocked={false}
-        onAnswer={noop}
-        onOpenDrafts={noop}
+        onAnswer={() => {
+          if (note) answerQuestion(childId, turn.runId, { text: note.text, day: turn.day });
+        }}
+        onOpenDrafts={() => onOpenDrafts(`past:${turn.runId}`, draftIds)}
         onPickOffer={noop}
         archived
         deleted={turn.deleted}
@@ -177,7 +209,7 @@ function LiveTurnItem({
   named: boolean;
   later: ChatTurn[];
   answering: ChatQuestion | null;
-  onOpenDrafts: (turn: ChatTurn) => void;
+  onOpenDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   return (
@@ -191,7 +223,12 @@ function LiveTurnItem({
           turn={turn}
           later={later}
           answering={answering}
-          onOpenDrafts={() => onOpenDrafts(turn)}
+          onOpenDrafts={() =>
+            onOpenDrafts(
+              turn.id,
+              turn.run.drafts.map((d) => d.draft_id),
+            )
+          }
           onPickOffer={(agents) => {
             // 🚨 run 을 싣지 않는다 — 04 제안은 처음 요청이다 (`chat/page.tsx` 의 goToSuggestions).
             if (turn.send.status === "sent") onPickOffer(agents);
