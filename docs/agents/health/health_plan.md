@@ -41,7 +41,7 @@
 | 1 | 명세 개정 4 (#514) | S0 | PM — 루트 문구 |
 | 2 | 뼈대 + 케이스 재실행 eval | S5 | – |
 | 3 | 검진 · 접종 (`schedule_check`) | S1 · S6 일부 | – |
-| 4 | 증상 반복 안내 — 날 수 세기 · 만성질환 연결 | S1 · S3 · S6 | 의료 검수 — (질환 × 증상) 안내 문구 |
+| 4 | 증상 반복 안내 — 날 수 세기 · 만성질환 연결 | S1 · S3 · S6 | (질환 × 증상) 안내 문구 확인 — 원문 대조 · 연결 적절성 (의료인 검수 필수 아님, PM 확인 대기) |
 | 5 | 복약 기록 · 초안 + 전달 서류 | S2 · S6 · S7 | – |
 | 6 | 진료 준비 정리 · 열 타임라인 · 검진 맥락 요약 | S2(체온 3칸) · S8 | 의료 검수 — 3개월 미만 발열 응급 기준 |
 | 7 | 병원 찾기 (`place_lookup`) — 다른 작업자 | S4 · S6 | PM — 위치 약관 목적 · 다시 동의, API 키 · 서버 IP |
@@ -73,7 +73,7 @@
 | `reference/vaccine_2026.yaml` | 표준예방접종일정 | **매년 교체** 절차 문서화 |
 | `reference/symptom_codes.yaml` | 증상 표준 코드 + 별칭 | `health_phrases.yaml`의 `seek_care` 키 · `condition_guidance.yaml`의 증상 키와 **동일 어휘** |
 | `reference/condition_codes.yaml` (10-18) | 질환 표준 코드 + 별칭 + guards — 보호자가 `health_safety`에 적는 만성질환 이름을 맞춘다 | 사전 밖 이름은 기본 문장으로 떨어지는지 · 알레르기 항목은 대상 아님 |
-| `reference/condition_guidance.yaml` (10-18) | (질환 코드 × 증상 코드) → 고정 안내 문구 + 출처 | **의료 검수 필수** · 출처는 공공누리 0·1 · 고시 · CC BY만 · `medical_reviewed: true`만 로드 |
+| `reference/condition_guidance.yaml` (10-18) | (질환 코드 × 증상 코드) → 고정 안내 문구 + 출처 | **원문 대조 + 연결 적절성 확인**(작성자 가능, 의료인 검수 필수 아님) · 출처는 공공누리 0·1 · 고시 · CC BY만 · `medical_reviewed: true` + `reviewed_by` 가 있는 행만 로드 |
 | `allergen_term` | Food와 공유 | 이미 적재돼 있으면 재사용 |
 
 
