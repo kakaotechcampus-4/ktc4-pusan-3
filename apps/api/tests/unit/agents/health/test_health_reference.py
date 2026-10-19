@@ -131,8 +131,9 @@ def test_접종표에_기초_백신이_들어_있다():
     assert {"BCG", "B형간염", "DTaP", "IPV", "Hib", "폐렴구균", "MMR", "수두", "A형간염"} <= names
 
 
-def test_접종표_값을_질병청_표와_대조한다():
-    # 「2026 국가예방접종 지침」 표준접종 표의 값. 칸 하나가 어긋나면 안내가 한 달 틀어진다
+def test_접종표_값을_고시_별표_1과_대조한다():
+    # 질병관리청 고시 「예방접종의 실시기준 및 방법」 별표 1 의 표준접종시기. 칸 하나가 어긋나면
+    # 안내가 한 달 틀어진다
     got = {(d.vaccine, d.dose): (d.first_month, d.last_month) for d in vaccine_table().doses}
 
     assert got[("BCG", "1회")] == (0, 0)
@@ -205,3 +206,22 @@ def test_접종표_모양이_틀리면_ValueError(change):
 
     with pytest.raises(ValueError):
         parse_vaccine_table(data)
+
+
+def test_접종표_출처는_고시다():
+    # 고시는 저작권법 제7조의 보호받지 못하는 저작물이다. 지침(공공누리 제4유형)은 출처로 안 둔다
+    source = vaccine_table().source
+
+    assert "고시" in source and "별표 1" in source
+    assert "지침" not in source and "공공누리" not in source
+
+
+def test_고시가_간격으로만_적은_칸은_계산한_값이다():
+    got = {(d.vaccine, d.dose): (d.first_month, d.last_month) for d in vaccine_table().doses}
+
+    # A형간염: 1차 12~23개월 뒤 6~12개월에 2차 → 12+6 ~ 23+12
+    assert got[("A형간염", "2차")] == (18, 35)
+    # 일본뇌염 생백신: 1차 12~23개월 뒤 12개월에 2차 → 12+12 ~ 23+12
+    assert got[("일본뇌염(생백신)", "2차")] == (24, 35)
+    # IPV 3차: 표준은 6개월이고 18개월까지 접종 가능하다고 적는다
+    assert got[("IPV", "3차")] == (6, 18)

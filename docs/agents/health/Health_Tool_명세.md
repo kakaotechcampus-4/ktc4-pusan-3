@@ -13,7 +13,7 @@
 | 소스 | 제공 | 용도 | 연결 | 갱신 |
 | --- | --- | --- | --- | --- |
 | 국민건강보험공단 **영유아 건강검진** — nhis.or.kr | 일반 8회 · 구강 4회 주기 | `compute_checkup_schedule` | `reference/checkup_nhis.yaml` | 제도 변경 시 |
-| 질병관리청 **2026 국가예방접종 지침** · 표준예방접종일정표 | 백신·차수·권장 월령 | `compute_vaccine_schedule` | `reference/vaccine_2026.yaml` | **매년** |
+| 질병관리청 고시 「예방접종의 실시기준 및 방법」 **[별표 1] 국가예방접종 대상 및 표준접종시기** | 백신·차수·표준접종 월령 | `compute_vaccine_schedule` | `reference/vaccine_2026.yaml` | **고시 개정 시** |
 | 예방접종도우미 — nip.kdca.go.kr | 개인 접종 기록 | 안내 링크만 | 연동 없음 | – |
 | 건강보험심사평가원 **병원정보서비스** Open API (data.go.kr) | 병원 목록 · 진료과목 · 좌표 | `find_pediatric_places` (주간) | REST · 24h 캐시 | – |
 | 국립중앙의료원 **응급의료정보** (E-Gen, data.go.kr) | 응급의료기관 · 실시간 가용 | `find_pediatric_places` (야간·응급) | REST · **캐시 안 함** | 실시간 |
