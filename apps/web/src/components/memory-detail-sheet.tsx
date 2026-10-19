@@ -303,9 +303,9 @@ function ObservationDetail({
           <HealthFields fields={observation.domain_fields} />
         ) : observation.affinity ? (
           // 🚨 고친 기록도 서버가 `affinity` 를 그대로 싣는다 — 고치기는 `status` 만 바꾸고 연결은
-          //    남긴다. 다만 그 기억의 기록 수에는 `active` 만 들어가서, 고친 기록에 "묶인 기억" 이라고
+          //    남긴다. 다만 그 기억의 기록 수에는 `active` 만 들어가서, 고친 기록에 "관련된 기억" 이라고
           //    쓰면 여전히 센다고 읽힌다. 사실은 버리지 않고 라벨로 말한다 (목록은 칩을 아예 뺀다).
-          <MetaRow label={currentStatus === "active" ? "묶인 기억" : "세지 않는 기억"}>
+          <MetaRow label={currentStatus === "active" ? "관련된 기억" : "세지 않는 기억"}>
             {observation.affinity.merge_key}
           </MetaRow>
         ) : null}
