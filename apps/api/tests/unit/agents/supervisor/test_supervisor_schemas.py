@@ -418,3 +418,18 @@ def test_프롬프트가_growth_네_라벨과_경계_예시를_싣는다() -> No
     # 의료 처치 · 증상 습관도 routine_coaching 으로 보낸다 — Growth 가 코드로 닫는다
     assert "약 먹는 걸 너무 싫어해" in prompt
     assert "눈을 자꾸 깜빡여" in prompt
+    # 신체 성장은 판정을 물어도 growth_review — supervisor-agent-v1 §4 의 세 줄 전부
+    for line in ("얼마나 컸어?", "잘 크고 있어?", "10cm 컸는데 많이 큰 거야?"):
+        assert line in prompt
+
+
+def test_프롬프트가_놀이_라는_말보다_배우는_낱말을_먼저_본다() -> None:
+    """ "숫자 놀이" 처럼 놀이가 붙어도 배우는 낱말이 있으면 growth 다.
+
+    끝까지 라이브에서 이런 입력이 activity 로 샜다.
+    """
+    from app.agents.supervisor.prompt import build_system_prompt
+
+    prompt = build_system_prompt()
+    assert "'놀이' 라는 말이 있어도" in prompt
+    assert "배우는 낱말" in prompt
