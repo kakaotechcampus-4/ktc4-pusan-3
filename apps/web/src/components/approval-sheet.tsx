@@ -56,11 +56,14 @@ export function ApprovalSheet({
       }
     >
       {/* 🚨 초안이 여러 장이면 **한 장씩 넘긴다** (`event-draft-list.tsx` 머리말).
-          제출 버튼이 그 안에 있고, 그게 승인 게이트 ㉠ 이다. */}
+          제출 버튼이 그 안에 있고, 그게 승인 게이트 ㉠ 이다.
+          🚨 **이번에 고른 제안의 초안만 세운다** (`transient` · #539). 제안 초안은 보관함에 두지
+          않고, 그 전에 남은 것은 여기서 지운다. */}
       <EventDraftList
         childId={childId}
         incoming={result.drafts}
         origin="suggestion"
+        transient
         found="고른 제안으로 저장될 내용을 만들었어요."
       />
     </BottomSheet>
