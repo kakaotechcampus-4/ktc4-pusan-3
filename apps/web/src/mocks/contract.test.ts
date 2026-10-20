@@ -597,6 +597,22 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect((after.prechecks ?? []).some((p) => p.item === "참깨")).toBe(false);
   });
 
+  it("🚨 같은 Agent 의 개인화와 일반이 한 응답에 섞여 온다 — 둘 다 묶음은 하나다 (#512 리뷰)", async () => {
+    const data = await fetchWith("suggest_mixed", { agents: ["food", "activity"] });
+
+    expect(data.suggestions.some((s) => s.agent === "food")).toBe(true);
+    expect((data.general ?? []).some((g) => g.agent === "food")).toBe(true);
+    // 일반 추천이 있으면 scarcity 도 붙는다 (서버와 같다)
+    expect(data.scarcity).not.toBeNull();
+    // 묶음은 kind 가 아니라 Agent 단위다 — 식사 묶음 하나가 둘 다 묶는다
+    const food = (data.groups ?? []).filter((g) => g.agent === "food");
+    expect(food).toHaveLength(1);
+    expect(food[0].merges_into_one).toBe(true);
+    // 일반 추천의 알레르기 사전검사도 같이 실린다
+    const ids = new Set((data.general ?? []).map((g) => g.id));
+    expect((data.prechecks ?? []).some((p) => ids.has(p.suggestion_id!))).toBe(true);
+  });
+
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
 
