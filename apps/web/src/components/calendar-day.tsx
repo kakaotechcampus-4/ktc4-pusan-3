@@ -1,11 +1,20 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CalendarOff, ChevronRight, PenLine, Pencil, Trash2 } from "lucide-react";
+import {
+  CalendarOff,
+  ChevronRight,
+  MessagesSquare,
+  PenLine,
+  Pencil,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
+import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
-import { Button, ButtonLink } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -112,19 +121,18 @@ export function CalendarDayPanel({
 
       {/* 그날 나눈 대화로 가는 문 (#228). 🚨 **대화가 없는 날에는 세우지 않는다** — 일기와 달리 여기서
           대화를 시작하지 않아서(대화는 홈의 한 줄로 시작한다) 빈 날에 세우면 아무것도 없는 곳으로 가는 문이 된다.
-          🚨 내 대화만 센 수다 — 같은 아이의 다른 보호자 대화는 보이지 않는다. */}
+          🚨 내 대화만 센 수다 — 같은 아이의 다른 보호자 대화는 보이지 않는다.
+          🚨 **"이날의 일기 쓰기" 와 같은 줄 모양이다** (`PANEL_ROW` · #503). 테두리 버튼 하나를 두면 덩그러니
+             놓여 보였다. 다른 화면(04)으로 가는 것이라 버튼이 아니라 `<Link>` 다 (10 설정 줄과 같다). */}
       {data.chat_count > 0 ? (
         <Section title="이날 나눈 대화">
-          <div>
-            <ButtonLink
-              href={`/child/${childId}/chat?date=${date}`}
-              variant="tertiary"
-              size="compact"
-              transitionTypes={FORWARD.transitionTypes}
-            >
-              대화 {data.chat_count}개 보기
-            </ButtonLink>
-          </div>
+          <Link
+            href={`/child/${childId}/chat?date=${date}`}
+            transitionTypes={FORWARD.transitionTypes}
+            className={PANEL_ROW}
+          >
+            <PanelRowContent icon={MessagesSquare} label={`대화 ${data.chat_count}개 보기`} />
+          </Link>
         </Section>
       ) : null}
 
@@ -179,6 +187,30 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * 하루 패널의 누르는 줄 — 아이콘 · 글 · 화살표 (#503). "이날의 일기 쓰기" 와 "이날 나눈 대화" 가 같이 쓴다.
+ * 🚨 **"이날 남긴 기록" 줄(`ObservationList`)과 같은 모양이다.** 한 패널에 누르는 줄의 모양이 하나라야
+ *    "누르면 들어간다" 가 한 번에 읽힌다. 아이콘 칸은 `neutral` 이다 — 도메인 색도 브랜드색도 아니다
+ *    (디자인 시스템 §3, 브랜드색은 정해진 자리에만).
+ */
+const PANEL_ROW =
+  "min-h-touch rounded-field bg-surface border-line active:bg-surface-muted ease-standard flex w-full items-center gap-3 border px-4 py-3.5 text-left transition-colors duration-120";
+
+function PanelRowContent({ icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <>
+      <IconTile icon={icon} tone="neutral" />
+      <span className="text-body text-ink flex-1">{label}</span>
+      <ChevronRight
+        aria-hidden
+        size={ICON_SIZE.md}
+        strokeWidth={ICON_STROKE}
+        className="text-ink-subtle shrink-0"
+      />
+    </>
   );
 }
 
@@ -547,16 +579,9 @@ function DiaryCard({
             setDraft("");
             onEditingChange(true);
           }}
-          className="min-h-touch rounded-field bg-surface border-line active:bg-surface-muted ease-standard flex w-full items-center gap-3 border px-4 py-3.5 text-left transition-colors duration-120"
+          className={PANEL_ROW}
         >
-          <IconTile icon={PenLine} tone="neutral" />
-          <span className="text-body text-ink flex-1">이날의 일기 쓰기</span>
-          <ChevronRight
-            aria-hidden
-            size={ICON_SIZE.md}
-            strokeWidth={ICON_STROKE}
-            className="text-ink-subtle shrink-0"
-          />
+          <PanelRowContent icon={PenLine} label="이날의 일기 쓰기" />
         </button>
       ) : (
         /*
