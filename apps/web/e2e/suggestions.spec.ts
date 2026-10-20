@@ -416,6 +416,66 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     expect(submitted[0].idempotencyKey).toBeTruthy();
     expect(submitted[0].body).toMatchObject({ suggestion_ids: ["s_4"] });
   });
+
+  test("🚨 전에 넣지 않고 떠난 제안 초안은 시트에 서지 않고, 제안 초안은 보관함에 두지 않는다 (#539)", async ({
+    page,
+  }) => {
+    const leftover = (draftId: string, title: string, suggestionIds?: string[]) => ({
+      draft_id: draftId,
+      op: "create",
+      event_id: null,
+      event: {
+        title,
+        starts_at: null,
+        ends_at: null,
+        all_day: true,
+        event_type: "episodic",
+        category: "etc",
+      },
+      before: null,
+      items: [],
+      ...(suggestionIds ? { suggestion_ids: suggestionIds } : {}),
+    });
+    await page.goto(SUGGESTIONS);
+    // 지난번 05 에서 만들고 넣지 않은 제안 초안 + 04 에서 넣지 않은 초안. 보관함은 새로고침에도 남는다.
+    await page.evaluate(
+      ({ child, drafts }) =>
+        sessionStorage.setItem(
+          "icatch.event-drafts",
+          JSON.stringify({ state: { byChild: { [child]: drafts } }, version: 0 }),
+        ),
+      {
+        child: CHILD,
+        drafts: [
+          { origin: "suggestion", draft: leftover("old-suggestion", "지난번 제안", ["s_old"]) },
+          { origin: "input", draft: leftover("old-input", "한 줄 입력 초안") },
+        ],
+      },
+    );
+    await page.reload();
+
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    await page.getByText("주말에 실내 물놀이장은 어떨까요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+
+    const sheet = page.getByRole("dialog", { name: "캘린더에 넣을까요" });
+    await expect(sheet.getByRole("textbox", { name: "제목" })).toHaveValue(
+      "주말에 실내 물놀이장은 어떨까요",
+    );
+    // 한 장뿐이라 넘기는 줄이 서지 않는다 — 지난 초안이 섞이면 "2건 중 1번째" 가 선다.
+    await expect(sheet.getByText(/건 중/)).toHaveCount(0);
+
+    // 🚨 제안 초안은 보관함에 두지 않는다 — 남은 것은 지우고, 이번 것도 얹지 않는다. 04 초안은 그대로다.
+    const kept = await page.evaluate((child) => {
+      const raw = sessionStorage.getItem("icatch.event-drafts");
+      const state = raw ? JSON.parse(raw).state : { byChild: {} };
+      return (state.byChild[child] ?? []).map(
+        (d: { origin: string; draft: { draft_id: string } }) => [d.origin, d.draft.draft_id],
+      );
+    }, CHILD);
+    expect(kept).toEqual([["input", "old-input"]]);
+  });
 });
 
 test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", () => {
