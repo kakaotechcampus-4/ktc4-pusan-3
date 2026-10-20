@@ -15,9 +15,13 @@
 검색이 실패하면(`UpstreamUnavailable`) 같은 문구로 닫는다 — 빈 목록이나 캐시로 꾸미지 않는다.
 저장은 하지 않는다 — 결과의 suggestions 를 pipeline 이 저장한다.
 pipeline 에 등록돼 있다 — context 는 entrypoint 가 만든다.
+끝나면 관측 한 줄(`growth run …`)을 남긴다 — 20초에 끊기거나 예외로 끝나도 남긴다. 원문 · 관심사 ·
+활동 이름 · 책 제목은 싣지 않는다. pipeline 의 `도메인 task …` 줄과 run_id 로 잇는다.
 """
 
+import asyncio
 import logging
+import time
 from collections.abc import Callable, Collection
 from typing import Any
 
@@ -27,12 +31,13 @@ from app.agents.common.result import AgentStatus, DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
     SuggestionDraft,
+    bundle_summary,
     check_count,
     count_notice,
     merge_drafts,
 )
 from app.agents.common.tool_loop import run_tool_loop
-from app.agents.growth.context import GrowthContext, build_gate
+from app.agents.growth.context import GrowthContext, GrowthRunState, build_gate
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
 from app.agents.growth.readouts import CLOSED_BOOK_API, DOC_NO_ROW, READOUTS, RHYTHM_NO_ROW
@@ -64,7 +69,27 @@ MAX_COMPLETION_TOKENS = 2000
 async def run(
     task: DomainTask, context: GrowthContext, *, client: LLMClient | None = None
 ) -> DomainAgentResult:
-    """Growth 요청 하나를 처리한다. 결과는 공통 `DomainAgentResult` 다."""
+    """Growth 요청 하나를 처리한다. 결과는 공통 `DomainAgentResult` 다.
+
+    끝나면 관측 한 줄을 남긴다(`_observe`). pipeline 의 20초에 끊기거나 예외로 끝나도 남긴다.
+    """
+    started = time.perf_counter()
+    status = "error"
+    result: DomainAgentResult | None = None
+    try:
+        result = await _run(task, context, client=client)
+        status = result.status
+        return result
+    except asyncio.CancelledError:
+        status = "cancelled"  # pipeline 의 20초에 끊겼다
+        raise
+    finally:
+        _observe(task, context, status, result, started)
+
+
+async def _run(
+    task: DomainTask, context: GrowthContext, *, client: LLMClient | None
+) -> DomainAgentResult:
     task_type = task_type_of(task)
     gate = await build_gate(context, task_type)
     context.state.gate = gate
@@ -74,6 +99,7 @@ async def run(
         # 같은 입력의 기록 조각도 본다 — "약 먹기 싫어해. 어떻게 하지?" 는 요청 조각에 약이 없다
         key = closure_key((*task.request_texts, *task.record_texts))
     if key is not None:
+        context.state.closed_reason = key
         return _result(task_type, "blocked", readouts=(READOUTS.render(key),))
 
     if task_type is GrowthTaskType.GROWTH_REVIEW:
@@ -109,6 +135,7 @@ async def run(
         context.state.seen_docs = {hit.row.id: hit.row for hit in examples}
         if not examples and not await has_citable_memory(context):
             # 문서 행도 아이 기록도 못 단다 — 어떤 후보도 build() 를 못 지나서 모델을 부르지 않는다
+            context.state.closed_reason = DOC_NO_ROW
             return _result(task_type, "blocked", readouts=(READOUTS.render(DOC_NO_ROW),))
 
     allowed = tools_for(task_type, gate)
@@ -118,11 +145,13 @@ async def run(
         {"role": "user", "content": request_message(task.request_texts)},
     ]
     output = OUTPUT_TOOL[task_type]
+    context.state.model_calls = 1
     try:
         completed = await _converse(llm, messages, context, allowed, output)
     except UpstreamUnavailable:
         # 도서 검색이 실패했다. 빈 목록이나 캐시로 꾸미지 않고 닫는다 — 모델은 한 번 불렀다
         logger.warning("Growth 도서 검색 실패 run_id=%s", context.run_id)
+        context.state.closed_reason = CLOSED_BOOK_API
         return _result(
             task_type, "blocked", readouts=(READOUTS.render(CLOSED_BOOK_API),), model_calls=1
         )
@@ -138,6 +167,7 @@ async def run(
     if state.excluded and len(picked) < state.capacity:
         # 안전 필터 · 금지 표현으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다
         model_calls = 2
+        state.model_calls = 2
         state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
         if task_type is GrowthTaskType.BOOK_SUGGESTION:
             # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
@@ -160,6 +190,46 @@ async def run(
     return _result(
         task_type, "completed", suggestions=picked, readouts=readouts, model_calls=model_calls
     )
+
+
+def _observe(
+    task: DomainTask,
+    context: GrowthContext,
+    status: str,
+    result: DomainAgentResult | None,
+    started: float,
+) -> None:
+    """run 하나에 한 줄 (growth_plan §11-5). 원문 · 관심사 · 활동 이름 · 책 제목은 싣지 않는다.
+
+    status 는 결과의 것이고, 20초에 끊기면 cancelled · 예외면 error 다. 결과가 없으면 모델 호출 수는
+    시작한 대화 수다. INFO 라 알림(ERROR 이상)으로 가지 않는다.
+    """
+    state = context.state
+    gate = state.gate
+    logger.info(
+        "growth run run_id=%s child_id=%s stage=%s task_type=%s status=%s model_calls=%d "
+        "evidence_mode=%s doc_hit=%d asked=%s closed_reason=%s latency_ms=%d",
+        context.run_id,
+        context.child_id,
+        gate.stage.stage if gate is not None else None,
+        task.task_type,
+        status,
+        result.model_calls if result is not None else state.model_calls,
+        bundle_summary(result.suggestions).kind if result is not None else None,
+        _doc_hits(state),
+        bool(result.needs_observation) if result is not None else False,
+        state.closed_reason,
+        int((time.perf_counter() - started) * 1000),
+    )
+
+
+def _doc_hits(state: GrowthRunState) -> int:
+    """이 run 이 모델에게 넘긴 `growth_doc` 행 수 — 교육 [예시] + 루틴 다음 단계.
+
+    0–11개월 리듬 안내는 세지 않는다. closed_reason 이 rhythm.no_row 가 아니면 행을 찾은 것이다.
+    """
+    steps = sum(1 for picked in state.steps.values() if picked.step.row is not None)
+    return len(state.seen_docs) + steps
 
 
 def _result(
@@ -188,6 +258,7 @@ def _ended(task_type: GrowthTaskType, context: GrowthContext) -> DomainAgentResu
     if state.question is not None:
         return _result(task_type, "completed", question=state.question, model_calls=1)
     assert state.closing is not None
+    state.closed_reason = state.closing
     return _result(task_type, "blocked", readouts=(READOUTS.render(state.closing),), model_calls=1)
 
 
@@ -206,6 +277,7 @@ async def _rhythm(context: GrowthContext) -> Readout:
         rotation=f"{context.child_id}|{context.today.isoformat()}",
     )
     if not hits:
+        context.state.closed_reason = RHYTHM_NO_ROW
         return READOUTS.render(RHYTHM_NO_ROW)
     hit = hits[0]
     return Readout(
