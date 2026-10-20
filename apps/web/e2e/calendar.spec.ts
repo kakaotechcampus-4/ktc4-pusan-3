@@ -112,6 +112,23 @@ test("일기가 있는 날은 고치기와 지우기가 제목 줄에 있다 (#5
   }
 });
 
+test("그날 나눈 대화는 쓰기 줄과 같은 줄 모양의 링크다 (#503 · #228)", async ({ page }) => {
+  // 목의 지난 대화는 `chat_history` 시나리오에서 오늘 · 어제 · 사흘 전에 있다.
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(3)}&scenario=chat_history`);
+
+  const chat = page.getByRole("region", { name: "이날 나눈 대화" });
+  const link = chat.getByRole("link", { name: /대화 \d+개 보기/ });
+  const write = page.getByRole("button", { name: "일기 쓰기" });
+  await expect(link).toBeVisible();
+
+  // 구역 폭을 다 쓰고, 쓰기 줄과 높이가 같다 — 테두리 버튼 하나가 덩그러니 서지 않는다.
+  const [chatBox, linkBox, writeBox] = await Promise.all(
+    [chat, link, write].map((locator) => locator.boundingBox()),
+  );
+  expect(linkBox!.width).toBe(chatBox!.width);
+  expect(linkBox!.height).toBe(writeBox!.height);
+});
+
 test("건강 기록은 캘린더에 서지 않는다 (첫 배포 범위 밖 · #259 · #318)", async ({ page }) => {
   // 목의 건강 관찰은 어제 날짜다. 서버는 기록 탭과 같은 기준으로 캘린더에서도 뺀다.
   // ⚠️ 그래서 건강 기록의 상세 시트("진단 · 평가를 하지 않는다")를 여는 화면이 지금은 없다.
