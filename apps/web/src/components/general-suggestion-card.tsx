@@ -7,8 +7,9 @@ import { cn } from "@/lib/cn";
 /**
  * 디자인 시스템 §7 `card-general` — 또래 기준 일반 추천.
  *
- * 근거 Memory 가 부족할 때 개인화 **대신** 나간다 (CLAUDE.md §2). 05 화면에서 개인화 목록
- * (`SuggestionList`)이 서는 자리에 이 카드가 선다 — 둘이 같이 나오는 경우는 없다.
+ * 근거 Memory 가 부족한 후보는 개인화 **대신** 이 카드로 나간다 (CLAUDE.md §2).
+ * ⚠️ 같은 Agent 안에서도 개인화 목록(`SuggestionList`)과 **같이 설 수 있다** — Agent 가 후보마다 아이 기록
+ *    근거로 `kind` 를 정한다 (#512 리뷰 · 서버 `build()`).
  *
  * 🚨 **개인화 줄과 같은 컴포넌트로 만들지 않는다.** 한 컴포넌트에 플래그를 넣으면 언젠가
  *    근거 0건인데 개인화로 그려진다 (문서 §7). 타입도 따로라(`GeneralSuggestion.evidence` 는

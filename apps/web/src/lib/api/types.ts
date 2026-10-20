@@ -296,7 +296,8 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족할 때 개인화 **대신** 나간다 (CLAUDE.md §2).
+ * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
@@ -545,8 +546,9 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
-   * 둘이 같이 나오지 않는다). 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
+   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
+   * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
   general?: GeneralSuggestion[] | null;
   /** "오늘 급식 · 최근 3일 식사 · 확정 관심 2건" — 무엇을 봤는지. 서버가 만든 문구다. */

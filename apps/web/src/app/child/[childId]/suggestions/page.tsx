@@ -54,7 +54,9 @@ import { useEnterMotion } from "@/lib/motion";
  *
  * 🚨 **근거가 부족하면 개인화 대신 일반 추천을 그린다** (CLAUDE.md §2). 개인화 목록과
  *    일반 카드는 **다른 컴포넌트 · 다른 타입 · 응답의 다른 필드**다 — 한 곳에 섞으면
- *    언젠가 근거 0건인 것이 개인화로 그려진다. 둘이 한 화면에 같이 나오는 경우는 없다.
+ *    언젠가 근거 0건인 것이 개인화로 그려진다.
+ *    ⚠️ **둘이 한 화면에 같이 온다** (#512 리뷰). 같은 Agent 안에서도 후보마다 아이 기록 근거로
+ *    `kind` 가 갈려서(서버 `build()`), 한 응답에 `suggestions` · `general` · `scarcity` 가 다 실릴 수 있다.
  *    🚨 **고르기는 둘이 같이 쓴다** (#509). 그리는 컴포넌트만 다르고, 고른 id · 채택 · 일정
  *    만들기는 한 줄로 흐른다 — 서버의 채택 · 초안 API 는 `kind` 를 보지 않는다.
  *
@@ -203,8 +205,9 @@ function SuggestionsScreen() {
   }
   const visible = data?.suggestions ?? [];
   /**
-   * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
-   * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
+   * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 서버도 일반 추천이 있을 때만
+   * `scarcity` 를 붙인다. 근거가 부족한 후보가 개인화 **대신** 나간 것이라, 개인화와 같은 화면에
+   * 설 때도 카드 라벨과 점선이 "또래 기준" 을 말한다 (CLAUDE.md §2 · #512 리뷰).
    * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
    */
   const scarcity = data?.scarcity ?? null;
@@ -393,17 +396,21 @@ function SuggestionsScreen() {
             ))}
           </ul>
         ) : null}
-        {/* 🚨 묶인다는 것을 고르기 전에 말한다 — 개인화 목록(`SuggestionList`)과 같은 규칙이다.
-            서버가 `merges_into_one` 을 안 보내면 아무 말도 하지 않는다. */}
+        {/* 🚨 **묶인다는 것을 고르기 전에 말한다.** 셋을 고르고 일정 1건이 나오면 놀란다.
+            🚨 **개인화와 일반을 합쳐 센다** (#512 리뷰). 서버는 `kind` 가 아니라 Agent 로 묶어서, 식사
+               개인화 1 + 식사 일반 1 도 초안 한 장이다. 두 목록이 각자 세면 그때 안내가 안 뜨거나 숫자가 모자란다.
+            🚨 **어느 영역인지 글자로 말한다** — 탭 밖에 서므로 지금 보는 탭과 다른 영역의 안내일 수 있다.
+            🚨 서버가 `merges_into_one` 을 안 보내면 **아무 말도 하지 않는다** — 어느 Agent 가
+               묶이는지는 도메인 지식이라 화면이 알 수 없다. */}
         {(data?.groups ?? [])
           .filter((group) => group.merges_into_one)
           .map((group) => {
-            const count = general.filter(
-              (g) => g.agent === group.agent && pickedIds.includes(g.id),
+            const count = pickable.filter(
+              (s) => s.agent === group.agent && pickedIds.includes(s.id),
             ).length;
             return count > 1 ? (
               <p key={`merge:${group.agent}`} role="status" className="text-body-sm text-ink-muted">
-                고른 {count}가지는 일정 하나로 묶여요.
+                {domainLabel(group.agent)}에서 고른 {count}가지는 일정 하나로 묶여요.
               </p>
             ) : null;
           })}
@@ -535,7 +542,12 @@ function SuggestionsScreen() {
         ))}
 
         {scarcity ? (
-          <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
+          <ScarcityCard
+            childId={childId}
+            scarcity={scarcity}
+            hasGeneral={general.length > 0}
+            hasPersonal={visible.length > 0}
+          />
         ) : null}
       </Swap>
 
@@ -582,15 +594,22 @@ function SuggestionsScreen() {
  * 🚨 **위에 일반 추천을 그렸는지에 따라 문구가 달라진다.** 또래 기준 추천을 이미 보여 준 화면에서
  *    "추천을 만들지 않겠다" 고 말하면 화면이 스스로를 부정한다. 카드가 두 경우를 다 알고 있어야
  *    서버가 `general` 을 안 보낼 때도 말이 된다.
+ * 🚨 **개인화도 같이 선 화면에서는 "위 추천" 이라고 하지 않는다** (#512 리뷰). 같은 Agent 안에서도 둘이
+ *    섞여 오는데, 그때 "위 추천은 또래 기준이에요" 는 위에 선 개인화 추천까지 또래 기준이라고 부른다 —
+ *    우리 아이 기록으로 고른 것을 일반 추천이라고 낮춰 부르는 것도 §2 가 막는 혼동이다.
+ *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다.
  */
 function ScarcityCard({
   childId,
   scarcity,
   hasGeneral,
+  hasPersonal,
 }: {
   childId: string;
   scarcity: Scarcity;
   hasGeneral: boolean;
+  /** 같은 화면에 개인화 추천도 섰다. */
+  hasPersonal: boolean;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
   /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
@@ -616,10 +635,11 @@ function ScarcityCard({
           ? "이 주제로 쌓인 기록이 아직 없어요."
           : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
         {hasGeneral
-          ? question
-            ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+          ? hasPersonal
+            ? "그래서 또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요."
             : "그래서 위 추천은 또래 기준이에요."
           : "근거 없이 추천을 만들지는 않을게요."}
+        {hasGeneral && question ? " 하나만 알려주시면 다음부터 달라져요." : null}
       </p>
 
       {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}

@@ -62,6 +62,9 @@ import { useEnterMotion } from "@/lib/motion";
  *
  * 🚨 **일반 추천(`card-general`)을 이 컴포넌트에 플래그로 넣지 않는다** (CLAUDE.md §2).
  *    개인화와 일반이 한 컴포넌트가 되는 순간 근거 0건이 개인화로 그려질 길이 생긴다.
+ *    ⚠️ 같은 Agent 안에서도 둘이 **섞여 온다** — Agent 가 후보마다 아이 기록 근거로 `kind` 를 정한다
+ *    (서버 `agents/common/suggestion.py` 의 `build()`). 그래도 그리는 컴포넌트는 나누고, 고르기 ·
+ *    채택 · 묶음 안내만 05 페이지가 합친다.
  */
 export function SuggestionList({
   suggestions,
@@ -114,7 +117,6 @@ export function SuggestionList({
   const agent = open !== null && order.includes(open) ? open : order[0];
   const rows = drawable.filter((s) => s.agent === agent);
   const group = groups.find((g) => g.agent === agent);
-  const chosen = rows.filter((s) => selectedIds.includes(s.id)).length;
   // 다른 묶음 탭을 고르면 패널 내용이 갈아 끼워진다 (디자인 시스템 §8 "교체"). 탭 표식은 색으로만 바뀐다.
   const panelRef = useEnterMotion<Agent | undefined, HTMLElement>(
     agent,
@@ -231,14 +233,9 @@ export function SuggestionList({
           ))}
         </ul>
 
-        {/* 🚨 **묶인다는 것을 고르기 전에 말한다.** 셋을 고르고 일정 1건이 나오면 놀란다.
-            🚨 서버가 `merges_into_one` 을 안 보내면 **아무 말도 하지 않는다** — 어느 Agent 가
-               묶이는지는 도메인 지식이라 화면이 알 수 없다. */}
-        {group?.merges_into_one && chosen > 1 ? (
-          <p role="status" className="text-body-sm text-ink-muted">
-            고른 {chosen}가지는 일정 하나로 묶여요.
-          </p>
-        ) : null}
+        {/* 🚨 "고른 N가지는 일정 하나로 묶여요" 는 여기서 세지 않는다 (#512 리뷰). 같은 Agent 의
+            일반 추천(`GeneralSuggestionCard`)도 같은 초안에 묶이는데 이 목록 밖에 서서, 여기서 세면
+            개인화만 센 숫자가 된다. 05 페이지가 두 쪽을 합쳐 한 곳에서 말한다. */}
       </section>
     </div>
   );
