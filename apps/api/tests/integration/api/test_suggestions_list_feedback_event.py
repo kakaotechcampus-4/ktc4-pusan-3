@@ -177,21 +177,38 @@ async def test_list_suggestions_with_evidence(
 async def test_list_suggestions_includes_general(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """채택한 일반 추천도 07 목록에 kind 로 구분돼 나온다. 근거는 늘 비어 있다 (#532)."""
+    """채택한 일반 추천도 07 목록에 kind 로 구분돼 나온다 (#532).
+
+    일반 추천은 문서 행을 근거로 달고 저장되지만, 목록은 아이 기록 근거만 싣는다 — 문서 근거가
+    07 에 실리면 일반 추천이 "우리 아이 기록에서 나온 것" 처럼 읽힌다 (§2 타입 구분).
+    아직 채택 안 한 일반 추천(draft)은 기본 목록에 없다.
+    """
     p = await _make_suggestion(
         session, child_id=cid, status=SuggestionStatus.APPROVED, with_evidence=True
     )
     g = await _make_suggestion(
         session, child_id=cid, status=SuggestionStatus.APPROVED, kind=SuggestionKind.GENERAL
     )
+    session.add(
+        SuggestionEvidence(
+            suggestion_id=g.id, source_kind="activity_doc", source_id=uuid.uuid4(), note="문서"
+        )
+    )
+    await session.flush()
+    draft = await _make_suggestion(session, child_id=cid, kind=SuggestionKind.GENERAL)
     headers, _ = bearer
     resp = await db_client.get(f"/api/v1/children/{cid}/suggestions", headers=headers)
     assert resp.status_code == 200
     items = {i["id"]: i for i in resp.json()["items"]}
     assert items[str(p.id)]["kind"] == "personalized"
-    assert items[str(g.id)]["kind"] == "general"
-    assert items[str(g.id)]["evidence"] == []
-    assert items[str(g.id)]["source_refs"] == []
+    assert len(items[str(p.id)]["evidence"]) == 1
+    general = items[str(g.id)]
+    assert general["kind"] == "general"
+    assert general["evidence"] == []
+    assert general["source_refs"] == []
+    # 05 의 basis 와 같은 문구 — 둘 다 행의 reason 이다
+    assert general["reason"] == g.reason
+    assert str(draft.id) not in items
 
 
 async def test_list_suggestions_status_filter(
@@ -298,6 +315,24 @@ async def test_feedback_on_general(
     assert resp.status_code == 200
     assert resp.json()["suggestion"]["kind"] == "general"
     assert resp.json()["suggestion"]["feedback"] == "child_liked"
+
+
+async def test_approve_response_has_no_evidence(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """채택 응답은 근거를 읽지 않는다 — 근거가 있는 개인화도 빈 배열 (#532 계약)."""
+    s = await _make_suggestion(session, child_id=cid, with_evidence=True)
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/approve",
+        json={"suggestion_ids": [str(s.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    [approved] = resp.json()["suggestions"]
+    assert approved["kind"] == "personalized"
+    assert approved["evidence"] == []
+    assert approved["source_refs"] == []
 
 
 async def test_feedback_not_found(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):

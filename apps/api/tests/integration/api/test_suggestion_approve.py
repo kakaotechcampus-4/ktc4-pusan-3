@@ -205,7 +205,12 @@ async def test_general_suggestion_approve_draft_submit(
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["suggestions"][0]["kind"] == "general"
+    [approved] = resp.json()["suggestions"]
+    assert approved["kind"] == "general"
+    assert approved["status"] == "approved"
+    # 채택 응답은 근거를 읽지 않는다 — 개인화도 빈 배열 (아래 테스트)
+    assert approved["evidence"] == []
+    assert approved["source_refs"] == []
 
     resp = await db_client.post(
         f"/api/v1/children/{cid}/suggestions/event-drafts",
