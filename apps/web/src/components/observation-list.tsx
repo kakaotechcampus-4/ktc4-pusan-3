@@ -4,8 +4,13 @@ import { josa } from "es-hangul";
 import { ChevronRight, PencilLine } from "lucide-react";
 
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
-import { domainField, domainLabel, observationAgent } from "@/components/domain-chip";
-import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import {
+  domainField,
+  OBSERVATION_ICON,
+  observationAgent,
+  observationLabel,
+} from "@/components/domain-chip";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -108,8 +113,9 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
           : "bg-surface border-line active:bg-surface-muted",
       )}
     >
+      {/* 모양과 이름은 기록 종류, 색은 그 기록을 읽는 Agent 다 — 교육 · 생활습관이 같은 성장 색이다 (#501). */}
       <IconTile
-        icon={DOMAIN_ICON[agent]}
+        icon={OBSERVATION_ICON[observation.kind]}
         tone={wrong ? "neutral" : "plain"}
         className={wrong ? undefined : domainField(agent)}
       />
@@ -127,14 +133,14 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
         {/* 원문은 근거라 한 단계 약하게 선다. 자르지 않는다 (문서 §10). 제목이 원문이면 다시 쓰지 않는다. */}
         {title ? <span className="text-body-sm text-ink-muted">{observation.raw_text}</span> : null}
 
-        {/* 도메인과 날짜는 가운뎃점 없이 간격으로 가른다 (#524). 칩은 아래 줄. */}
+        {/* 기록 종류와 날짜는 가운뎃점 없이 간격으로 가른다 (#524). 칩은 아래 줄. */}
         <span
           className={cn(
             "text-caption ease-standard flex flex-wrap gap-x-2 transition-colors duration-120",
             wrong ? "text-ink-muted" : "text-ink-subtle",
           )}
         >
-          <span>{domainLabel(agent)}</span>
+          <span>{observationLabel(observation.kind)}</span>
           {observation.observed_label ? <span>{observation.observed_label}</span> : null}
         </span>
 
@@ -184,8 +190,11 @@ function LinkChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다. */
-function CorrectedMark({ label }: { label: string }) {
+/**
+ * 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다.
+ * 04 지난 대화의 저장 카드도 같은 표시를 쓴다 (`run-result.tsx` 의 `ObservationRow` · #228 리뷰).
+ */
+export function CorrectedMark({ label }: { label: string }) {
   return (
     <span className="text-caption text-ink-muted inline-flex items-center gap-1">
       <PencilLine aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />
