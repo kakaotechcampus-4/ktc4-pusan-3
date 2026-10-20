@@ -157,6 +157,10 @@ WORLDS: dict[str, WorldSpec] = {
     "C48-allergy-noconsent": WorldSpec(safety=_ALLERGY, consent=False),
     "C48-stale": WorldSpec(**_only(_routine(15, "양치하기", "self_care", "partial_assist"))),
     "C48-othercat": WorldSpec(**_only(_routine(2, "숟가락 쓰기", "mealtime", "partial_assist"))),
+    # 양치를 힘들어하는 기록 하나 — 도서 주제가 생활 기록에서 나오는지 본다
+    "C48-brush": WorldSpec(
+        **_only(_routine(1, "양치하기", "self_care", "full_assist", polarity=-1))
+    ),
     "C48-noassist": WorldSpec(**_only(_routine(2, "양치하기", "self_care"))),
     "C48-trigger": WorldSpec(
         **_only(_routine(2, "손톱 물어뜯기", "habit", polarity=-1, trigger="긴장할 때"))
@@ -227,9 +231,8 @@ def birth_date_for(months: int, today: date) -> date:
     return date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
 
 
-async def build_world(name: str, *, run_id: str = "live") -> World:
-    spec = WORLDS[name]
-    birth = birth_date_for(spec.months, TODAY)
+async def seed_store(spec: WorldSpec) -> InMemoryStore:
+    """세계의 관찰을 심은 Memory store. 운영 run 이 읽는 것과 같은 store 모양이다."""
     store = InMemoryStore(now=NOW)
     for domain, days_ago, fields in spec.observations:
         day = TODAY - timedelta(days=days_ago)
@@ -242,7 +245,14 @@ async def build_world(name: str, *, run_id: str = "live") -> World:
             observed_range=build_observed_range(day),
             fields=dict(fields),
         )
-    measurements = _measurements(spec.measurements, birth=birth)
+    return store
+
+
+async def build_world(name: str, *, run_id: str = "live") -> World:
+    spec = WORLDS[name]
+    birth = birth_date_for(spec.months, TODAY)
+    store = await seed_store(spec)
+    measurements = measurements_for(spec.measurements, birth=birth)
     safety = InMemorySafety(spec.safety, fail=spec.safety_fails)
     growth_log = InMemoryGrowthLog(measurements)
     contexts, _ = entrypoint._domain_contexts(
@@ -303,7 +313,7 @@ def _m(n: int, day: date, height: str | None, weight: str | None) -> GrowthMeasu
     )
 
 
-def _measurements(kind: str, *, birth: date) -> tuple[GrowthMeasurement, ...]:
+def measurements_for(kind: str, *, birth: date) -> tuple[GrowthMeasurement, ...]:
     """측정 모양 — test_expected §5 의 픽스처. 값은 지어낸 것이다."""
     recent = TODAY - timedelta(days=3)
     if kind == "none":
