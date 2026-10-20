@@ -209,6 +209,11 @@ async def test_list_suggestions_includes_general(
     # 05 의 basis 와 같은 문구 — 둘 다 행의 reason 이다
     assert general["reason"] == g.reason
     assert str(draft.id) not in items
+    # status 필터 경로도 kind 를 보지 않는다
+    resp = await db_client.get(
+        f"/api/v1/children/{cid}/suggestions", params={"status": "approved"}, headers=headers
+    )
+    assert str(g.id) in {i["id"] for i in resp.json()["items"]}
 
 
 async def test_list_suggestions_status_filter(
