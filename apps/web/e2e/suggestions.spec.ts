@@ -270,6 +270,13 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(notice).toHaveText("식사에서 고른 3가지는 일정 하나로 묶여요.");
   });
 
+  test("묶음 건수 줄은 개인화만 셌다는 것을 글자로 말한다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    // 아래 일반 카드까지 식사 후보는 넷이다 — "3가지 중에서" 만 쓰면 숫자가 어긋난다
+    await expect(page.getByText("우리 아이 기준 식사 3가지 중에서")).toBeVisible();
+    await expect(page.getByText("식사 · 3가지 중에서")).toHaveCount(0);
+  });
+
   test("질문 카드는 위의 개인화까지 또래 기준이라고 부르지 않는다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     // 둘 다 선다 — 근거가 붙은 개인화와 라벨이 붙은 일반
@@ -277,6 +284,13 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
 
     await expect(page.getByText("위 추천은 또래 기준이에요", { exact: false })).toHaveCount(0);
+    // 🚨 제목도 "다음엔 우리 아이 기준으로" 가 아니다 — 위에 우리 아이 기준 추천이 이미 서 있다
+    await expect(
+      page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요" }),
+    ).toBeVisible();
     await expect(
       page.getByText("또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요", {
         exact: false,
