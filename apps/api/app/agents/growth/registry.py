@@ -14,7 +14,7 @@ task별로 모델에 열리는 tool:
   propose_routine_plan
 
 - book_suggestion
-  education / affinity 검색,
+  search_book_interests(교육 · 관심 · 놀이 · 생활 기록을 코드가 점수로 줄 세운다),
   search_books, propose_books
 
 - growth_review
@@ -72,6 +72,7 @@ from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
 from app.agents.growth.tools.books import search_books_tool
 from app.agents.growth.tools.delta import compute_growth_delta
+from app.agents.growth.tools.interests import search_book_interests
 from app.agents.growth.tools.memory import (
     search_activity_memory,
     search_affinity,
@@ -92,6 +93,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_routine_memory": search_routine_memory,
     "search_activity_memory": search_activity_memory,
     "search_affinity": search_affinity,
+    "search_book_interests": search_book_interests,
     "search_books": search_books_tool,
     "propose_learning_activity": propose_learning_activity,
     "propose_routine_plan": propose_routine_plan,
@@ -123,7 +125,7 @@ TASK_TOOLS: dict[GrowthTaskType, frozenset[str]] = {
         }
     ),
     GrowthTaskType.BOOK_SUGGESTION: frozenset(
-        {"search_education_memory", "search_affinity", "search_books", "propose_books"}
+        {"search_book_interests", "search_books", "propose_books"}
     ),
     GrowthTaskType.GROWTH_REVIEW: frozenset(),
 }

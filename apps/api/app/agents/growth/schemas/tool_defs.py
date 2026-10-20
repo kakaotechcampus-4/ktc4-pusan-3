@@ -1,4 +1,4 @@
-"""모델에게 보이는 Growth tool 8개의 이름 · 호출 조건 · argument 모델.
+"""모델에게 보이는 Growth tool 9개의 이름 · 호출 조건 · argument 모델.
 
 description 에는 '무엇을 하는가'보다 '언제 부르는가'를 적는다. 문서 행 조회 · 단계 고르기 ·
 안전 필터는 코드 tool 이라 여기 없다 (`gating.CODE_TOOL_NAMES`).
@@ -12,6 +12,7 @@ from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
 from app.agents.growth.schemas.memory import (
     SearchActivityMemoryArgs,
     SearchAffinityArgs,
+    SearchBookInterestsArgs,
     SearchEducationMemoryArgs,
     SearchRoutineMemoryArgs,
 )
@@ -46,6 +47,15 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="search_affinity",
         description="확정되거나 쌓이는 중인 관심(배움 · 놀이)만 찾는다. 관심사를 이을 때 부른다.",
         args=SearchAffinityArgs,
+    ),
+    ToolDefinition(
+        name="search_book_interests",
+        description=(
+            "책을 고르기 전에 한 번 부른다. 아이의 교육 · 관심 · 놀이 · 생활 기록을 코드가 정한 "
+            "점수 순 주제로 돌려준다. 점수가 높을수록 아이에게 가깝다. 결과의 id 만 evidence "
+            "로 쓸 수 있다."
+        ),
+        args=SearchBookInterestsArgs,
     ),
     ToolDefinition(
         name="search_books",

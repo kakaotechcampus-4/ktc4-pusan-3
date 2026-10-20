@@ -3,7 +3,10 @@
 모델은 정해 둔 응답을 순서대로 내는 가짜다 (Activity test_activity_agent.py 와 같은 모양).
 """
 
+import asyncio
 import json
+import logging
+import re
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -549,7 +552,7 @@ class TestBook:
         )
         cite = [{"id": str(edu.id), "note": "공룡 그림을 오래 봤어요"}]
         llm = FakeLLM(
-            call("search_education_memory", {"keywords": ["공룡"]}),
+            call("search_book_interests", {}),
             call("search_books", {"keywords": ["공룡"]}),
             call("propose_books", {"items": [pick(n, evidence=cite) for n in (1, 2, 3)]}),
         )
@@ -565,6 +568,85 @@ class TestBook:
             assert [(c.ref.kind, c.ref.id) for c in draft.citations] == [
                 ("observation_education", edu.id)
             ]
+
+    async def test_힘들어하는_생활_행동도_주제가_되고_reason_에_그_행동을_쓰면_개인화다(self):
+        brush = RoutineObservation(
+            id=UUID(int=902),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="양치하기",
+            routine_category="self_care",
+            polarity=-1,
+            assistance_level="full_assist",
+        )
+        cite = [{"id": str(brush.id), "note": "양치를 힘들어한 기록이 있어요"}]
+        reason = "양치하기를 힘들어해서 양치 이야기를 담은 그림책이에요"
+        llm = FakeLLM(
+            call("search_book_interests", {}),
+            call("search_books", {"keywords": ["양치"]}),
+            call(
+                "propose_books",
+                {"items": [pick(n, evidence=cite, reason=reason) for n in (1, 2, 3)]},
+            ),
+        )
+        ctx = books_ctx(
+            rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(routine=[brush])
+        )
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        assert result.status == "completed"
+        assert {d.kind for d in result.suggestions} == {"personalized"}
+        assert [c.ref.kind for c in result.suggestions[0].citations] == ["observation_routine"]
+
+    async def test_힘들어하는_행동을_reason_에_안_쓰면_그_후보는_거절된다(self):
+        brush = RoutineObservation(
+            id=UUID(int=902),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="양치하기",
+            routine_category="self_care",
+            polarity=-1,
+            assistance_level="full_assist",
+        )
+        cite = [{"id": str(brush.id), "note": "양치를 힘들어한 기록이 있어요"}]
+        llm = FakeLLM(
+            call("search_book_interests", {}),
+            call("search_books", {"keywords": ["양치"]}),
+            call("propose_books", {"items": [pick(n, evidence=cite) for n in (1, 2, 3)]}),
+        )
+        ctx = books_ctx(
+            rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(routine=[brush])
+        )
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        assert result.status == "failed"  # 거절만 받고 끝났다 — 개인화인 척 나가지 않는다
+
+    async def test_교육_놀이_관심이_함께_모여_점수_순_주제가_모델에게_간다(self):
+        edu = EducationObservation(
+            id=UUID(int=903),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=2),
+            subject="공룡",
+            topic="공룡 이름 말하기",
+            polarity=1,
+        )
+        play = ActivityObservation(
+            id=UUID(int=904),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="공룡 인형",
+            activity="공룡 인형 놀이",
+            polarity=1,
+        )
+        llm = FakeLLM(call("search_book_interests", {}))
+        ctx = books_ctx(
+            rows=[book(1)], memory=InMemoryGrowthMemory(education=[edu], activities=[play])
+        )
+        await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        tool_result = next(m for m in llm.seen[-1] if m.get("role") == "tool")
+        assert "공룡" in tool_result["content"] and "놀이 기록" in tool_result["content"]
+        assert "교육 기록" in tool_result["content"]
 
     async def test_검색이_실패하면_closed_book_api_로_닫는다(self):
         llm = FakeLLM(call("search_books", {"keywords": ["공룡"]}))
@@ -646,3 +728,49 @@ class TestBook:
         assert not any(line.startswith("[예시]") for line in system.splitlines())
         assert "- id " not in system
         assert str(CHILD) not in system
+
+
+class TestObserve:
+    """run 하나에 관측 한 줄 — 원문 · 활동 이름이 없다 (growth_plan §11-5)."""
+
+    @staticmethod
+    def line(caplog) -> str:
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("growth run ")]
+        assert len(lines) == 1
+        return lines[0]
+
+    async def test_교육_추천은_단계_근거_모드_문서_행_수를_남기고_원문은_없다(self, caplog):
+        doc_id = await example_id()
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        caplog.clear()  # example_id() 가 돌린 run 의 줄은 세지 않는다
+        llm = FakeLLM(learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        await run(
+            task("learning_suggestion", "공룡으로 숫자 놀이 추천해줘"), docs_ctx(), client=llm
+        )
+
+        line = self.line(caplog)
+        assert "stage=toddler task_type=learning_suggestion status=completed model_calls=1" in line
+        assert "evidence_mode=general" in line and "closed_reason=None" in line
+        assert re.search(r"doc_hit=[1-9]", line)
+        assert "공룡" not in line and "블록 세기" not in line
+
+    async def test_닫히면_코드_문구_키를_남기고_모델은_0회다(self, caplog):
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        await run(task("book_suggestion", "공룡 책"), docs_ctx(), client=FakeLLM())
+
+        line = self.line(caplog)
+        assert "status=blocked model_calls=0" in line
+        assert "closed_reason=closed.book_api" in line
+
+    async def test_20초에_끊겨도_몇_번째_대화였는지_한_줄을_남긴다(self, caplog):
+        class Hangs:
+            async def chat(self, messages, **kwargs):
+                await asyncio.sleep(10)
+
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                run(task("learning_suggestion"), docs_ctx(), client=Hangs()), 0.05
+            )
+
+        assert "status=cancelled model_calls=1" in self.line(caplog)
