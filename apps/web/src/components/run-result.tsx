@@ -17,10 +17,10 @@ import { AgentPrompts } from "@/components/agent-prompts";
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
 import { CorrectedMark } from "@/components/observation-list";
 import { RewriteButton } from "@/components/rewrite-button";
-import { domainLabel, observationAgent } from "@/components/domain-chip";
+import { domainLabel, ObservationIcon, observationLabel } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
-import { DOMAIN_ICON, DomainIcon } from "@/components/ui/icon";
+import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import {
@@ -862,7 +862,6 @@ const NO_REFS: readonly StoredRef[] = [];
  * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
  */
 function ObservationRow({ observation }: { observation: Observation }) {
-  const agent = observationAgent(observation.kind);
   const wrong = observation.status === "inactive";
   const detail = isHealthObservation(observation)
     ? [
@@ -881,8 +880,8 @@ function ObservationRow({ observation }: { observation: Observation }) {
           "어느 Agent 의 결과인가" 신호라(05 제안) 저장된 관찰에 쓰면 그 뜻이 흐려진다.
           모양은 아이콘이, 뜻은 라벨이 진다. */}
       <div className="text-label text-ink-muted flex flex-wrap items-center gap-1.5">
-        <DomainIcon agent={agent} className="text-ink-subtle" />
-        {domainLabel(agent)}
+        <ObservationIcon kind={observation.kind} className="text-ink-subtle" />
+        {observationLabel(observation.kind)}
         {observation.observed_label ? (
           <span className="text-caption text-ink-subtle">· {observation.observed_label}</span>
         ) : null}

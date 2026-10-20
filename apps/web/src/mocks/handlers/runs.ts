@@ -4,9 +4,11 @@ import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
 import type { Agent, Observation } from "@/lib/api/types";
 
 import {
+  educationObservation,
   generalSuggestions,
   healthObservation,
   observations,
+  routineObservation,
   runEventDrafts,
   suggestions,
 } from "../fixtures";
@@ -404,6 +406,13 @@ const RECORD_WORDS = ["했대", "했어", "놀았", "먹었", "좋아해", "싫�
 
 type Intent = "record" | "event" | "both";
 
+/**
+ * 성장 Agent 가 읽는 두 테이블(교육 · 생활습관)의 기록이 04 에 서는 갈래 (#501). 기록 줄은 Agent 가
+ * 아니라 기록 종류로 그리는데, 아래 기본 갈래는 식사 · 건강만 저장해서 둘을 볼 길이 없었다.
+ * 🚨 건수는 기본 갈래와 같은 2건이다 — 의도(`intentOf`)도 그대로라 낱말 하나로 기록 종류만 바뀐다.
+ */
+const GROWTH_WORDS = ["양치"];
+
 function intentOf(text: string): Intent {
   const hasEvent = EVENT_WORDS.some((word) => text.includes(word));
   const hasRecord = RECORD_WORDS.some((word) => text.includes(word));
@@ -560,7 +569,9 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    "아이에 관한 기록은 찾지 못했어요" 를 그리고 아래에 초안을 세운다.
    */
   if (intent !== "event") {
-    const saved: Observation[] = [observations[0], healthObservation];
+    const saved: Observation[] = GROWTH_WORDS.some((word) => rawText.includes(word))
+      ? [routineObservation, educationObservation]
+      : [observations[0], healthObservation];
     yield frame("saved", { observations: saved });
     await sleep(400);
 

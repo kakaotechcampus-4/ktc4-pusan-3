@@ -388,3 +388,19 @@ function storedText(page: Page): Promise<string> {
       .join("\n"),
   );
 }
+
+test.describe("기록 줄은 Agent 가 아니라 기록 종류로 선다 (#501)", () => {
+  // 목은 `양치` 가 든 한 줄에 생활습관 · 교육 기록 2건을 저장한다 (`mocks/handlers/runs.ts` 의 GROWTH_WORDS).
+  test("성장 Agent 의 두 기록이 '성장' 이 아니라 '생활습관' 과 '교육' 으로 선다", async ({
+    page,
+  }) => {
+    await sendFromHome(page, "오늘 혼자 양치했어");
+    const reply = turn(page, "오늘 혼자 양치했어");
+
+    await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+    // 기록 줄 머리는 이름과 "· 언제" 가 한 덩어리라 머리글자로 찾는다.
+    await expect(reply.getByText(/^생활습관/)).toBeVisible();
+    await expect(reply.getByText(/^교육/)).toBeVisible();
+    await expect(reply.getByText(/^성장/)).toHaveCount(0);
+  });
+});

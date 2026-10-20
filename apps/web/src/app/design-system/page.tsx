@@ -14,7 +14,12 @@ import {
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { AppErrorBoundary } from "@/components/app-error-boundary";
-import { DomainChip } from "@/components/domain-chip";
+import {
+  DomainChip,
+  ObservationIcon,
+  observationAgent,
+  observationLabel,
+} from "@/components/domain-chip";
 import { DayMarkLegend } from "@/components/month-grid";
 import { Banner } from "@/components/ui/banner";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -40,7 +45,12 @@ import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import { TimeField } from "@/components/ui/time-field";
 import { EventDraftCard } from "@/components/event-draft-card";
-import type { Agent, EventDraft, EventDraftFields } from "@/lib/api/types";
+import {
+  OBSERVATION_KINDS,
+  type Agent,
+  type EventDraft,
+  type EventDraftFields,
+} from "@/lib/api/types";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
 import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
 
@@ -953,6 +963,27 @@ function ComponentSection() {
               <DomainIcon agent={agent} size="md" />
             </span>
             <span className="text-body-sm text-ink">{agent}</span>
+          </li>
+        ))}
+      </ul>
+
+      <SubTitle>아이콘 · 기록 종류</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        기록 한 건(07 · 09 기록 줄 · 기록 상세 · 04 기록 줄)에만 쓴다. growth 만 교육 · 생활습관
+        둘로 갈리고, 색은 둘 다 growth 다 (#501). 필터 · 제안은 Agent 라 위의 도메인 아이콘
+        그대로다.
+      </p>
+      <ul className="flex flex-col gap-2">
+        {OBSERVATION_KINDS.map((kind) => (
+          <li key={kind} className="flex items-center gap-3">
+            <span
+              className={`flex size-10 items-center justify-center rounded-full ${softOf(observationAgent(kind))}`}
+            >
+              <ObservationIcon kind={kind} size="md" />
+            </span>
+            <span className="text-body-sm text-ink">
+              {kind} · {observationLabel(kind)}
+            </span>
           </li>
         ))}
       </ul>

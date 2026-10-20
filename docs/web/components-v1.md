@@ -37,7 +37,7 @@
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
-- 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
+- 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
@@ -147,6 +147,10 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 
 🚨 `DomainIcon` 은 **`aria-hidden`** 이다. 도메인 아이콘은 색과 함께 단독 신호가 될 수 없고
 (디자인 시스템 §3), 의미는 항상 옆의 텍스트 라벨이 진다.
+
+기록 한 건을 그리는 자리(07 · 09 기록 줄 · 기록 상세 · 04 기록 줄)는 Agent 가 아니라 **기록 종류**로 그린다 —
+`ObservationIcon` · `ObservationMeta` · `observationLabel()` (셋 다 `components/domain-chip.tsx` — 관찰 테이블 이름은 도메인 타입이라 `ui/icon.tsx` 에 두지 않는다). 성장 기록만 교육 · 생활습관으로 갈리고,
+색은 그대로 `observationAgent()` 로 고른다 (디자인 시스템 §7 아이콘 · #501). 필터 · 제안 · Agent 블록은 `DomainIcon` 그대로다.
 
 ## 3. 스타일
 
