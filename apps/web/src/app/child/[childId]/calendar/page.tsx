@@ -120,7 +120,7 @@ function CalendarScreen() {
         <div>
           {/* 🚨 날짜 문구를 조합해 만들지 않는다 — 절대 날짜 하나를 한국어 표기로 바꾼 것뿐이다. */}
           <h2 className="text-title text-ink">{formatDay(date)}</h2>
-          {/* 🚨 아무것도 없는 날에는 이 줄을 그리지 않는다. 바로 아래 빈 상태가 같은 말을
+          {/* 🚨 아무것도 없는 날에는 이 줄을 그리지 않는다. 하루 패널의 빈 상태가 같은 말을
               더 크게 하고 있어서, 남겨 두면 한 화면이 같은 사실을 두 번 말한다. */}
           {daySummary(summary) ? (
             <p className="text-body-sm text-ink-muted mt-1">{daySummary(summary)}</p>

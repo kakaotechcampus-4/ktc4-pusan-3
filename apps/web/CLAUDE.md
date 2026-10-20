@@ -100,7 +100,7 @@ Owner: 고태영 (프론트 리드)
 | 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
-| 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
+| 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜를 싣는 화면은 지금 없다 · #503) |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
 | 10 설정 | `/child/[childId]/settings` |
 | 10 설정 › 고객센터 (읽는 화면) | `/child/[childId]/settings/help` |
