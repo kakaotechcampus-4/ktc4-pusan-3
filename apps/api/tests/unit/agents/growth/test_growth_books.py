@@ -424,6 +424,20 @@ class TestSearchTool:
             {"isbn": isbn(1), "title": "책1", "author": "가", "publisher": "나", "form": "picture"}
         ]
 
+    async def test_제목과_저자가_같은_다른_판은_모델에게_한_권만_보인다(self):
+        # 둘을 다 보이면 모델이 같은 책을 두 번 골라 거절당하고 대화가 한 번 더 돈다
+        # (끝까지 라이브에서 찾음)
+        rows = [
+            book(1, "picture", author="가"),
+            BookRow(isbn=isbn(2), title="책1", form="picture", author="가"),
+            book(3, "picture", author="가"),
+        ]
+        ctx = await ready(30, rows)
+        result = await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
+        assert [b["isbn"] for b in result.data["books"]] == [isbn(1), isbn(3)]
+        # 낸 판이 아닌 판의 ISBN 을 알아도 propose 가 같은 책으로 거른다 — seen 에는 남는다
+        assert set(ctx.state.seen_books) == {isbn(1), isbn(2), isbn(3)}
+
     async def test_맞는_책이_없으면_NO_RECORDS_로_다른_낱말이나_빈_제출을_알린다(self):
         ctx = await ready(8, [book(1, "picture")])
         result = await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
