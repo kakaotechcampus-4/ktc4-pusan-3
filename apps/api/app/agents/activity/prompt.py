@@ -177,14 +177,17 @@ def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
 def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
 
-    확인하지 못한 날(위치 · 날씨 어댑터가 없거나 예보를 못 읽음)은 "어렵다" 와 나눠 쓴다 — 같은
-    말이면 모델이 확인 안 한 날씨를 이유 문장에 쓴다. 판정은 같다(실내만, D8).
+    확인하지 못한 날은 "어렵다" 와 나눠 쓴다 — 같은 말이면 모델이 확인 안 한 날씨를 이유 문장에
+    쓴다. 예보를 못 읽은 날은 실내만(D8)이고, 위치 · 날씨 어댑터가 없어 묻지 않은 날은 바깥
+    활동도 연다(`weather.not_asked`).
     오늘 판정은 오늘 하는 활동에만 건다. 내일 · 주말은 그날 판정으로 거른다 (#377).
     """
     if not checks_weather(gate):
+        # 묻지 않은 날 — 바깥 놀이를 막지 않는다. 확인은 보호자 몫이라 화면 문구가 알린다
         outdoor = (
-            "날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않고, "
-            "setting 이 indoor 나 either 인 활동만 낸다."
+            "날씨는 확인하지 않았다. 날씨 이야기를 쓰지 않는다. 바깥 활동(outdoor)도 낼 수 있다."
+            if weather.outdoor_ok
+            else "해가 졌다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
     elif not checked:
         outdoor = (

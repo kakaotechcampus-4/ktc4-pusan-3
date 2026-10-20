@@ -31,6 +31,7 @@ import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
@@ -78,6 +79,7 @@ function HomeScreen() {
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
 
   const conversation = useConversation(childId);
+  const todayChat = useTodayChat(childId);
   const busy = isBusy(conversation);
   /**
    * 막 보낸 한 줄. 화면이 넘어가는 동안 입력창에 **그대로 둔다** — 이 글자가 대화 화면의 첫 말풍선
@@ -145,10 +147,14 @@ function HomeScreen() {
               busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
               sentLine={leaving !== null}
               lead={
-                // 🚨 **대화가 있을 때만 선다.** 앱을 끄면 그날 대화가 사라져서(#228 전까지) 빈 대화로
-                //    가는 문을 세우지 않는다.
-                conversation.turns.length > 0 ? (
-                  <ChatEntryLink href={chatHref} asking={hasOpenQuestion(conversation)} />
+                // 🚨 **오늘 대화가 있을 때만 선다** — 빈 대화로 가는 문을 세우지 않는다. 앱을 다시 켜면 대화
+                //    스토어가 비어 있어서 서버에 남은 오늘 대화도 본다 (#228).
+                conversation.turns.length > 0 || todayChat.hasChat ? (
+                  <ChatEntryLink
+                    href={chatHref}
+                    // 다시 켠 뒤에도 15분 안이면 서버의 질문이 아직 열려 있다 (`reply_open`).
+                    asking={hasOpenQuestion(conversation) || todayChat.asking}
+                  />
                 ) : undefined
               }
             />

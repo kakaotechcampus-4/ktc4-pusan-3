@@ -67,7 +67,18 @@ const MONTH_ONLY = new Intl.DateTimeFormat("ko-KR", {
 export function formatEventTime(iso: string, allDay = false): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "";
-  return allDay ? `${DATE_ONLY.format(at)} 하루 종일` : DATE_TIME.format(at);
+  return allDay ? `${DATE_ONLY.format(at)} 하루 종일` : formatDateTime(iso);
+}
+
+/**
+ * 날짜와 시각 한 줄 ("10월 17일 (토) 오후 3:20"). 🚨 **기한처럼 시각까지가 본체인 값**에 쓴다 —
+ * 초대 코드는 만든 시각부터 24시간이라, 날짜만 적으면 그날 하루가 끝날 때까지 쓸 수 있다고
+ * 읽힌다 (#493). 분 아래는 반올림하지 않고 버리므로, 보이는 시각이 실제 기한보다 늦지 않다.
+ */
+export function formatDateTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return DATE_TIME.format(at);
 }
 
 /**

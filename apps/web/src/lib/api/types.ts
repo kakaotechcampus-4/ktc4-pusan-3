@@ -3,6 +3,16 @@
  * 정본은 docs/api/api-interface-v1.html — 여기 타입이 계약서와 어긋나면 계약서가 맞다.
  */
 
+import type {
+  AgentResultEvent,
+  EventDraftsEvent,
+  GuidanceEvent,
+  NoteEvent,
+  PartialEvent,
+  SavedEvent,
+  UnavailableEvent,
+} from "./sse";
+
 /* ── Ref — 도메인 간 참조 ────────────────────────────────────────────────
  * observation 테이블이 5개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
  * 모든 참조는 { kind, id } 모양이다.
@@ -114,7 +124,12 @@ export interface ObservationHealth extends ObservationBase {
     body_part?: string;
     suspected_trigger?: string;
     action_taken?: string;
-    observed_time?: string;
+    /**
+     * ISO 시각 (`2026-10-15T21:00:00+09:00`). "밤" 같은 문구가 아니다 — 서버는 몇 시인지 알 수
+     * 있는 말만 시각으로 바꿔 담는다. 날짜는 `observed_label` 이 말하므로 화면은
+     * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
+     */
+    observed_time?: string | null;
     [key: string]: unknown;
   };
 }
@@ -1113,6 +1128,81 @@ export interface CalendarDayResponse {
   events: CalendarEvent[];
   /** 기록 탭 목록과 같은 모양 · 같은 상태 기준이다. */
   observations: Observation[];
+  /**
+   * 로그인한 보호자가 그날 나눈 대화 수 (#228). 🚨 **남의 대화는 세지 않는다** — 대화는 일기처럼
+   * 쓴 보호자 본인만 본다. 0 이면 그리지 않는다 (이 화면의 "없는 구역은 그리지 않는다").
+   */
+  chat_count: number;
+}
+
+/* ── 지난 대화 (#228) ─────────────────────────────────────────────────────
+ * `GET /children/{cid}/chat` — run 하나가 대화 한 턴이고, 하루 단위로 온다. 쓴 보호자 본인 것만 온다.
+ * 흐름과 이유는 서버 `docs/api/chat-v1.md`, 화면 규칙은 `docs/web/chat-run-v1.md` §4.
+ */
+
+/** 저장할 때 id 만 남긴 행. 관찰이면 `observation_food` 처럼 표 이름이 `kind` 다. */
+export interface StoredRef {
+  kind: string;
+  id: string;
+}
+
+/**
+ * 지난 턴의 답 하나. 🚨 **run 화면(SSE)과 같은 이름 · 같은 칸이다** — `type` 을 떼어 `data` 로 감싸면
+ * 그대로 `RunEvent` 가 되어 `runReducer` 에 흘릴 수 있다 (`lib/chat-history.ts`).
+ *
+ * SSE 와 다른 곳만 적는다.
+ * - `saved` — 관찰은 **지금 모습**으로 온다(건강 기록 포함). 보호자가 지운 기록은 내용 없이 `deleted` 에 id 만 온다.
+ * - `event_draft` — 🚨 **그때 만든 내용 그대로다.** 초안은 서버에 남지 않아서 지금 상태가 없다 — 읽기 전용으로만 그린다.
+ * - `agent_result` — 추천의 **지금 상태**(`suggestions`)가 같이 온다. 고를 수 있는 것이 없으면 "후보 보기" 를 세우지 않는다.
+ * - `done` — `completed` 만 온다. 늘 마지막이다.
+ * - 오지 않는 것 — `step` · `ping` · `offer` · `promoted` · `failed`(실패한 run 은 남기지 않는다).
+ */
+export type ChatReply =
+  | ({ type: "note" } & NoteEvent)
+  | ({ type: "guidance" } & GuidanceEvent)
+  | ({ type: "unavailable" } & UnavailableEvent)
+  | ({ type: "saved"; deleted: StoredRef[] } & SavedEvent)
+  | ({ type: "event_draft" } & EventDraftsEvent)
+  | ({ type: "agent_result" } & AgentResultEvent & Required<Pick<AgentResultEvent, "suggestions">>)
+  | ({ type: "partial" } & PartialEvent)
+  | { type: "done"; completed: boolean };
+
+export interface ChatTurnOut {
+  run_id: string;
+  /** 보호자가 보낸 글 그대로. 🚨 화면에 그릴 때 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */
+  raw_text: string;
+  /** 되묻기에 답한 턴이면 그 질문 턴의 `run_id`. 질문과 같은 날에 붙는다. */
+  reply_to: string | null;
+  /** 입력을 접수한 시각. 🚨 날짜 묶음은 이 값이 아니라 응답의 `date` 로 한다 (서버가 정한 대화 날짜). */
+  created_at: string;
+  /**
+   * 이 턴의 되묻기에 지금 `reply_to` 로 답할 수 있는가. 서버가 맥락을 15분만 들고 있어서 그 안이고 아직
+   * 답하지 않았을 때만 `true` 다. 되묻기가 아닌 턴은 늘 `false`.
+   * 🚨 **받은 순간의 값이다** — 그 뒤에 닫힐 수 있고, 그때 답하면 400 `reply_context_unavailable` 이다.
+   *    맥락 확인은 하루 한도보다 앞이라 400 은 하루 입력을 쓰지 않는다.
+   */
+  reply_open: boolean;
+  /** 도착 순서대로. 마지막은 늘 `done` 이다. */
+  replies: ChatReply[];
+}
+
+export interface ChatDayResponse {
+  /** 이 응답의 날짜(한국 시간 `YYYY-MM-DD`). `date` 없이 부르면 서버의 오늘이다. */
+  date: string;
+  /** 그날의 턴, 오래된 순. 최근 것부터 `limit` 개를 끊는다. 대화가 없는 날이면 빈 배열이다. */
+  turns: ChatTurnOut[];
+  /**
+   * 그날 안에 더 이른 턴이 남았으면 그 자리. 🚨 **날짜를 품은 값이라 풀어 보지 않고 그대로 돌려준다** —
+   * 날짜 없는 커서를 자정 뒤에 보내면 새 날로 읽혀 이미 보이는 턴이 두 번 그려진다(서버가 막는다).
+   */
+  next_cursor: string | null;
+  /** 이 날짜보다 앞에서 대화가 있었던 가장 늦은 날. 대화 없는 날은 건너뛴다. 없으면 `null`. */
+  prev_date: string | null;
+  /**
+   * 이 날짜보다 뒤에서 대화가 있었던 가장 이른 날. 대화 없는 날은 건너뛴다. 오늘이면 늘 `null`.
+   * 지난 날을 바로 열었을 때(09 입구) 아래로 내리며 다음 날을 이어 받는다.
+   */
+  next_date: string | null;
 }
 
 /**

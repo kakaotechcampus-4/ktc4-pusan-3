@@ -88,5 +88,6 @@ async def propose_activity_candidates(
         context.state.excluded = ()
     context.state.suggestions = review.drafts
     context.state.warnings = review.warnings
+    context.state.outdoor_drafts = context.state.outdoor_drafts | review.outdoor
     context.state.cautions = allergy_cautions(entries)
     return ok("propose", _NAME, count=len(review.drafts), kinds=[d.kind for d in review.drafts])

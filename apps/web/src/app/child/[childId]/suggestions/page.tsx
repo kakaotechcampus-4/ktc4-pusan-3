@@ -22,6 +22,7 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import {
   AGENTS,
   PROMPT_KEYS,
@@ -124,7 +125,7 @@ function SuggestionsScreen() {
    *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
    */
   const [checkingSafety, setCheckingSafety] = useState(false);
-  const [approving, setApproving] = useState<CreateEventDraftsResponse | null>(null);
+  const approving = useSheetTarget<CreateEventDraftsResponse>();
 
   const suggestions = useQuery({
     queryKey: qk.suggestions(childId, runId, agents, promptKey),
@@ -155,7 +156,7 @@ function SuggestionsScreen() {
    */
   const createDrafts = useMutation({
     mutationFn: (ids: string[]) => createEventDrafts(childId, { suggestion_ids: ids }),
-    onSuccess: (result) => setApproving(result),
+    onSuccess: (result) => approving.show(result),
   });
 
   /**
@@ -557,15 +558,17 @@ function SuggestionsScreen() {
         onConfirm={afterSafety}
       />
 
-      {approving ? (
+      {/* 닫는 것은 `open` 이 해서 내려가는 움직임이 남는다 (`useSheetTarget`). */}
+      {approving.target ? (
         <ApprovalSheet
-          open
+          key={approving.session}
+          open={approving.open}
           onClose={() => {
-            setApproving(null);
+            approving.close();
             createDrafts.reset();
           }}
           childId={childId}
-          result={approving}
+          result={approving.target}
         />
       ) : null}
     </Screen>

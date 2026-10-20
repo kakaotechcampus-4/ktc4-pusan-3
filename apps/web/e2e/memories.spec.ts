@@ -66,9 +66,9 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
 
     await row.click();
     await expect(sheet.getByText("이번만 그랬어요로 고친 기록이에요.")).toBeVisible();
-    // 연결은 남지만 기억의 기록 수에는 들어가지 않는다 — "묶인 기억" 이라고 쓰지 않는다.
+    // 연결은 남지만 기억의 기록 수에는 들어가지 않는다 — "관련된 기억" 이라고 쓰지 않는다.
     await expect(sheet.getByText("세지 않는 기억")).toBeVisible();
-    await expect(sheet.getByText("묶인 기억")).toHaveCount(0);
+    await expect(sheet.getByText("관련된 기억")).toHaveCount(0);
     await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
   });
 
@@ -189,14 +189,22 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
 });
 
 test.describe("07 기록 탭은 서버(#266)가 주는 대로 그린다 (#269)", () => {
-  test("생활습관 기록이 섞여도 멈추지 않고 '성장' 으로 선다", async ({ page }) => {
+  // 🚨 필터는 Agent("성장")로 고르고, 내려온 기록은 종류("교육" · "생활습관")로 선다 (#501).
+  test("'성장' 을 고르면 교육과 생활습관 기록이 각자 이름으로 함께 선다", async ({ page }) => {
     await page.goto(`${MEMORIES}?domain=growth`);
-    const row = page.getByRole("button").filter({ hasText: "자기 전에 혼자 양치하겠다고 했어요" });
-    await expect(row).toContainText("성장");
-    await expect(page.getByText("블록을 세면서 열까지 갔어요")).toBeVisible();
+    const routine = page
+      .getByRole("button")
+      .filter({ hasText: "자기 전에 혼자 양치하겠다고 했어요" });
+    const education = page.getByRole("button").filter({ hasText: "블록을 세면서 열까지 갔어요" });
+    await expect(routine).toContainText("생활습관");
+    await expect(education).toContainText("교육");
+    await expect(routine).not.toContainText("성장");
+    await expect(education).not.toContainText("성장");
 
-    await row.click();
-    await expect(page.getByRole("dialog", { name: "기록 상세" })).toBeVisible();
+    await routine.click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByText("생활습관", { exact: true })).toBeVisible();
   });
 
   test("분류에 '건강' 이 없고, 주소에 남아 있어도 전체로 읽는다", async ({ page }) => {
