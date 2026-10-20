@@ -14,6 +14,7 @@
       구현된 agent 로 간 REQUEST 조각을 agent × task_type 당 하나로 묶는다.
       task_type 은 Supervisor 라벨 문자열 그대로다. enum 변환은 각 Agent 의 task_type_of 가 한다.
       라벨이 없는 Agent(activity)는 None 이다.
+      Growth 추천 라벨은 run 당 하나 — 처음 것이되 늘 닫히는 도서는 다른 추천 라벨에 자리를 내준다.
 
   - 미구현 Agent 처리
       activity / growth / health 로 라우팅된 조각은
@@ -42,6 +43,7 @@ from typing import Literal
 
 from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
 from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
+from app.agents.growth.schemas.task import YIELDING_LABELS as GROWTH_YIELDING
 from app.agents.memory.schemas.task import MemoryHint, MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.schemas import (
@@ -61,10 +63,16 @@ IMPLEMENTED_AGENTS: frozenset[str] = frozenset(
     {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value, DomainAgentName.GROWTH.value}
 )
 
+
 # 한 run 에 추천 라벨을 하나만 돌리는 Agent. 05 의 다시 시도 맥락 · 0개 기록이 (run, agent) 로
 # 묶여서, 같은 Agent 의 추천 task 가 둘이면 서로 덮는다. Food 는 추천 라벨이 하나라 해당이 없다
 _ONE_RECOMMENDATION: dict[str, frozenset[str]] = {
     DomainAgentName.GROWTH.value: GROWTH_RECOMMENDING,
+}
+# _ONE_RECOMMENDATION 의 Agent 가 추천 하나를 고를 때 뒤로 미는 라벨 —
+# 다른 추천 라벨이 없을 때만 돈다
+_YIELDING: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: GROWTH_YIELDING,
 }
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
@@ -193,19 +201,16 @@ def _domain_tasks(
 ) -> tuple[tuple[DomainTask, ...], bool]:
     """agent × task_type 당 하나. 처음 나온 순서를 따른다.
 
-    `_ONE_RECOMMENDATION` 의 Agent 는 추천 라벨을 처음 것 하나만 남긴다. 뺀 조각이 있으면 True —
-    호출부가 안내 한 줄을 붙인다(조용히 빠지면 사용자는 답이 없는 이유를 모른다).
+    `_ONE_RECOMMENDATION` 의 Agent 는 추천 라벨을 하나만 남긴다(`_kept_recommendations`). 뺀 조각이
+    있으면 True — 호출부가 안내 한 줄을 붙인다(조용히 빠지면 사용자는 답이 없는 이유를 모른다).
     `record_texts` 는 같은 입력의 기록 조각이다 — 모든 task 에 같이 싣는다(코드 판정만 읽는다).
     """
+    kept = _kept_recommendations(segments)
     texts: dict[tuple[str, str | None], list[str]] = {}
     trimmed = False
     for segment in segments:
         agent, label = str(segment.agent), _task_label(segment)
-        limited = _ONE_RECOMMENDATION.get(agent, frozenset())
-        if label in limited and any(
-            other_agent == agent and other in limited and other != label
-            for other_agent, other in texts
-        ):
+        if label in _ONE_RECOMMENDATION.get(agent, frozenset()) and label != kept.get(agent):
             trimmed = True
             continue
         texts.setdefault((agent, label), []).append(segment.text)
@@ -220,6 +225,26 @@ def _domain_tasks(
         for (agent, task_type), items in texts.items()
     )
     return tasks, trimmed
+
+
+def _kept_recommendations(segments: list) -> dict[str, str]:
+    """`_ONE_RECOMMENDATION` Agent 마다 이번 run 에 돌릴 추천 라벨 하나.
+
+    처음 나온 것이되 `_YIELDING` 라벨은 다른 추천 라벨이 없을 때만 고른다 — "공룡 책이랑 양치 혼자
+    하는 법" 에서 늘 닫히는 도서가 앞이라고 열리는 루틴까지 빠지지 않게.
+    """
+    kept: dict[str, str] = {}
+    for agent, limited in _ONE_RECOMMENDATION.items():
+        labels = [
+            label
+            for segment in segments
+            if str(segment.agent) == agent and (label := _task_label(segment)) in limited
+        ]
+        if not labels:
+            continue
+        yielding = _YIELDING.get(agent, frozenset())
+        kept[agent] = next((label for label in labels if label not in yielding), labels[0])
+    return kept
 
 
 def _task_label(segment) -> str | None:
