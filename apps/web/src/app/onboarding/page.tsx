@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ConsentChecklist } from "@/components/consent-checklist";
+import { StartBackLink } from "@/components/start-back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -125,19 +126,18 @@ function CreateChildScreen() {
 
   return (
     <Screen className="gap-6">
-      <div>
+      <header>
         <p className="text-label text-ink-subtle">아이 등록 · 1 / 2</p>
-        <PageTitle className="mt-2">
-          누구 이야기를
-          <br />
-          모아둘까요
-        </PageTitle>
+        <div className="mt-1 -ml-3 flex items-center gap-1">
+          <StartBackLink />
+          <PageTitle>누구 이야기를 모아둘까요</PageTitle>
+        </div>
         <p className="text-body text-ink-muted mt-3">
           별명과 생일만 먼저 알려주세요.
           <br />
           나머지는 다음 화면에서 골라도 되고, 건너뛰어도 돼요.
         </p>
-      </div>
+      </header>
 
       <div className="flex flex-col gap-5">
         <TextInput

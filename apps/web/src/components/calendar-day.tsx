@@ -5,7 +5,7 @@ import { CalendarOff, ChevronRight, PenLine, Pencil, Trash2 } from "lucide-react
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -28,9 +28,10 @@ import type {
 } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 import { useReveal } from "@/lib/motion";
+import { FORWARD } from "@/lib/view-transition";
 
 /**
- * 09 하루 패널 — 고른 날의 내 일기 · 일정 · 관찰 · 함께 보는 사진 (이 순서로 선다 · #503).
+ * 09 하루 패널 — 고른 날의 내 일기 · 일정 · 관찰 · 나눈 대화 · 함께 보는 사진 (이 순서로 선다 · #503 · #228).
  *
  * 🚨 **없는 구역은 그리지 않는다.** 빈 상자를 늘어놓아 하루를 채우지 않는다 — 프로토타입의
  *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다. 일기 카드만은
@@ -76,7 +77,8 @@ export function CalendarDayPanel({
     data.events.length === 0 &&
     data.observations.length === 0 &&
     !hasDiary &&
-    data.shared_photos.length === 0;
+    data.shared_photos.length === 0 &&
+    data.chat_count === 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -105,6 +107,24 @@ export function CalendarDayPanel({
       {data.observations.length > 0 ? (
         <Section title="이날 남긴 기록">
           <ObservationList observations={data.observations} onOpen={onOpenObservation} />
+        </Section>
+      ) : null}
+
+      {/* 그날 나눈 대화로 가는 문 (#228). 🚨 **대화가 없는 날에는 세우지 않는다** — 일기와 달리 여기서
+          대화를 시작하지 않아서(대화는 홈의 한 줄로 시작한다) 빈 날에 세우면 아무것도 없는 곳으로 가는 문이 된다.
+          🚨 내 대화만 센 수다 — 같은 아이의 다른 보호자 대화는 보이지 않는다. */}
+      {data.chat_count > 0 ? (
+        <Section title="이날 나눈 대화">
+          <div>
+            <ButtonLink
+              href={`/child/${childId}/chat?date=${date}`}
+              variant="tertiary"
+              size="compact"
+              transitionTypes={FORWARD.transitionTypes}
+            >
+              대화 {data.chat_count}개 보기
+            </ButtonLink>
+          </div>
         </Section>
       ) : null}
 

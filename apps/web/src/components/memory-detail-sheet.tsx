@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import { STATE_LABEL } from "@/components/affinity-list";
 import { CORRECTED_OBSERVATION, CorrectionButtons } from "@/components/correction-buttons";
-import { DomainMeta, observationAgent } from "@/components/domain-chip";
+import { DomainMeta, ObservationMeta } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,7 +24,7 @@ import type {
   Ref,
 } from "@/lib/api/types";
 import { isHealthObservation } from "@/lib/api/types";
-import { formatDay } from "@/lib/format";
+import { formatDay, formatTimeOfDay } from "@/lib/format";
 
 /**
  * 07 상세 · 교정 시트 — 관찰과 프로필이 **같은 시트**를 쓴다.
@@ -290,7 +290,7 @@ function ObservationDetail({
 
       <dl className="flex flex-col gap-2">
         <MetaRow label="분류">
-          <DomainMeta agent={observationAgent(observation.kind)} />
+          <ObservationMeta kind={observation.kind} />
         </MetaRow>
         {observation.observed_label ? (
           <MetaRow label="언제">{observation.observed_label}</MetaRow>
@@ -356,7 +356,8 @@ function ObservationDetail({
 function HealthFields({ fields }: { fields: { symptom?: string[]; [key: string]: unknown } }) {
   const symptoms = fields.symptom;
   const bodyPart = typeof fields.body_part === "string" ? fields.body_part : null;
-  const when = typeof fields.observed_time === "string" ? fields.observed_time : null;
+  const when =
+    typeof fields.observed_time === "string" ? formatTimeOfDay(fields.observed_time) : null;
 
   return (
     <>

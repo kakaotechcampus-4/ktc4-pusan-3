@@ -171,8 +171,6 @@ export function SafetyCheckSheet({
       open={open}
       onClose={onCancel}
       dismissible={false}
-      // 알레르기 등록(승인 게이트 ㉡)이 이 안에 있다 — 열고 닫는 움직임이 없다 (디자인 시스템 §8 "하지 않는 것").
-      gate
       title="확인해 주세요"
       description="고르기 전에 알레르기부터 확인해요."
       footer={

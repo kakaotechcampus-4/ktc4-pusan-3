@@ -4,8 +4,13 @@ import { josa } from "es-hangul";
 import { ChevronRight, PencilLine } from "lucide-react";
 
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
-import { domainField, domainLabel, observationAgent } from "@/components/domain-chip";
-import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import {
+  domainField,
+  OBSERVATION_ICON,
+  observationAgent,
+  observationLabel,
+} from "@/components/domain-chip";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -92,8 +97,9 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
           : "bg-surface border-line active:bg-surface-muted",
       )}
     >
+      {/* 모양과 이름은 기록 종류, 색은 그 기록을 읽는 Agent 다 — 교육 · 생활습관이 같은 성장 색이다 (#501). */}
       <IconTile
-        icon={DOMAIN_ICON[agent]}
+        icon={OBSERVATION_ICON[observation.kind]}
         tone={wrong ? "neutral" : "plain"}
         className={wrong ? undefined : domainField(agent)}
       />
@@ -115,7 +121,7 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
             wrong ? "text-ink-muted" : "text-ink-subtle",
           )}
         >
-          {domainLabel(agent)}
+          {observationLabel(observation.kind)}
           {observation.observed_label ? ` · ${observation.observed_label}` : ""}
         </span>
 
@@ -148,8 +154,11 @@ function LinkChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다. */
-function CorrectedMark({ label }: { label: string }) {
+/**
+ * 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다.
+ * 04 지난 대화의 저장 카드도 같은 표시를 쓴다 (`run-result.tsx` 의 `ObservationRow` · #228 리뷰).
+ */
+export function CorrectedMark({ label }: { label: string }) {
   return (
     <span className="text-caption text-ink-muted inline-flex items-center gap-1">
       <PencilLine aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />

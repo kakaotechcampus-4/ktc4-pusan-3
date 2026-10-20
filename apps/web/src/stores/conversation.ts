@@ -11,8 +11,8 @@ import {
 import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
-import { qk } from "@/lib/api/queryKeys";
 import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
+import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
@@ -33,7 +33,8 @@ import { useEventDraftStore } from "@/stores/event-draft";
  *    계란이 두 번 저장되고 7일 승격 집계가 한 번의 관찰을 두 번으로 센다 (최상위 §2 · #154).
  * 2. 🚨 **`persist` 를 붙이지 말 것.** 보낸 원문과 되묻는 질문에는 아이 이야기가 그대로 들어 있다.
  *    디스크에 남기지 않는다 (최상위 §2 개인정보 · `stores/draft.ts` 와 같은 규칙). 그래서 앱을 끄면
- *    그날 대화가 사라진다 — 남기는 것은 서버 쪽 일이다 (#228). 🚨 콘솔·로그에도 찍지 않는다.
+ *    이 스토어는 빈다 — 다시 켜면 서버가 남긴 대화를 화면이 다시 그린다 (`useChatHistory` · #228).
+ *    🚨 그 지난 대화를 이 스토어에 옮겨 담지 않는다. 🚨 콘솔·로그에도 찍지 않는다.
  * 3. 🚨 **지우는 때는 보낸 때가 아니라 서버가 끝까지 처리했다고 말한 때다** (`isRunConfirmed` ·
  *    #71 · #175 리뷰). 이어받기 run 이 실패하면 서버는 맥락을 되돌려 두고, 화면은 같은 키 ·
  *    같은 `reply_to` 로 다시 보낼 수 있어야 한다. `unconfirmed` 에서 정리하면 저장됐는지 모르는
@@ -66,6 +67,11 @@ export interface ChatQuestion {
   text: string;
   /** 그 질문을 낸 run. 답을 보낼 때 `reply_to` 로 싣는다. */
   runId: string;
+  /**
+   * 그 질문이 나온 날 — 서버가 남긴 지난 턴의 질문일 때만 있다 (#228). 이 스토어에는 그 줄이 없어서 답의 날을
+   * 여기서 물려받는다. 이 앱에서 보낸 줄의 질문이면 그 줄의 `day` 를 본다.
+   */
+  day?: string;
 }
 
 /**
@@ -272,10 +278,10 @@ export function sendLine(
     // 🚨 원문을 다시 보내지 않고 **어느 run 에 대한 답인지**만 싣는다 (위 규칙 1).
     ...(answering ? { reply_to: answering.runId } : {}),
   };
-  // 🚨 자정을 넘겨 온 답은 질문이 나온 날에 붙인다 (#226).
+  // 🚨 자정을 넘겨 온 답은 질문이 나온 날에 붙인다 (#226). 지난 턴의 질문이면 그 턴의 날이다 (#228).
   const askedOn = answering
-    ? conversation.turns.find((t) => t.send.status === "sent" && t.send.runId === answering.runId)
-        ?.day
+    ? (conversation.turns.find((t) => t.send.status === "sent" && t.send.runId === answering.runId)
+        ?.day ?? answering.day)
     : undefined;
 
   const turn: ChatTurn = {
@@ -352,14 +358,24 @@ export function canHandBack(childId: string): boolean {
   return !(useDraftStore.getState().byChild[childId] ?? "").trim();
 }
 
-/** 열린 질문 하나를 입력창의 대상으로 고른다 (대화 안의 "이 질문에 답하기"). */
-export function answerQuestion(childId: string, runId: string): void {
+/**
+ * 열린 질문 하나를 입력창의 대상으로 고른다 (대화 안의 "이 질문에 답하기").
+ *
+ * @param past 서버가 남긴 지난 턴의 질문일 때 그 문장과 날 (#228 · `reply_open`). 🚨 이 스토어에는 그 줄이 없다 —
+ *   앱을 다시 켰는데 서버가 아직 맥락을 들고 있는 경우다. 열려 있는지는 화면이 서버 값으로 정했다.
+ */
+export function answerQuestion(
+  childId: string,
+  runId: string,
+  past?: { text: string; day: string },
+): void {
   update(childId, (c) => {
     const asked = c.turns.find(
       (t) => t.question === "open" && t.send.status === "sent" && t.send.runId === runId,
     );
-    if (!asked?.run.note) return c;
-    return { ...c, answering: { text: asked.run.note.text, runId } };
+    if (asked?.run.note) return { ...c, answering: { text: asked.run.note.text, runId } };
+    if (past) return { ...c, answering: { text: past.text, runId, day: past.day } };
+    return c;
   });
 }
 
@@ -444,6 +460,8 @@ export function isRejected(error: unknown): boolean {
  */
 function failSend(childId: string, turn: ChatTurn, error: unknown): void {
   const lostContext = isApiError(error, "reply_context_unavailable");
+  // 지난 턴의 질문이었으면 서버의 `reply_open` 도 닫혔다 — 오늘 장을 다시 받아야 "닫힘" 으로 바뀐다 (#228).
+  if (lostContext) void refreshTodayChat(getQueryClient(), childId);
   const keepInComposer =
     isApiError(error, "daily_input_limit") || isApiError(error, "consent_required");
 
@@ -472,7 +490,8 @@ function failSend(childId: string, turn: ChatTurn, error: unknown): void {
  * 이 run 이 또 물었으면 그 질문이 입력창의 새 대상이 된다 (이어받기 run 이 또 물으면 그 run).
  */
 function settle(childId: string, turnId: string): void {
-  void getQueryClient().invalidateQueries({ queryKey: qk.child(childId) });
+  // 🚨 `qk.child` 를 통째로 무효화하되 대화 목록은 오늘 장만 갈아 끼운다 (`refreshAfterRun`).
+  void refreshAfterRun(getQueryClient(), childId);
 
   const turn = findTurn(childId, turnId);
   if (!turn || !isRunConfirmed(turn.run.status)) return;

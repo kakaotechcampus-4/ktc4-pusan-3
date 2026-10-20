@@ -55,6 +55,22 @@ test.describe("owner 가 볼 때", () => {
     await expect(page.getByText("연결을 끊지 못했어요")).toHaveCount(0);
     await expect(page.getByRole("listitem").filter({ hasText: "현우" })).toHaveCount(0);
   });
+
+  /**
+   * 🚨 **기한은 시각까지 적는다** (#493). 코드는 만든 시각부터 24시간인데 날짜만 적으면
+   *    그날 하루가 끝날 때까지 쓸 수 있다고 읽힌다.
+   */
+  test("초대 코드를 만들면 쓸 수 있는 기한이 날짜와 시각으로 보인다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/settings`);
+    await page.getByRole("button", { name: "보호자 초대하기" }).click();
+
+    const sheet = page.getByRole("dialog");
+    await sheet.getByRole("button", { name: "초대 코드 만들기" }).click();
+
+    await expect(
+      sheet.getByText(/^\d{1,2}월 \d{1,2}일 \(.\) 오[전후] \d{1,2}:\d{2}까지 쓸 수 있어요\.$/),
+    ).toBeVisible();
+  });
 });
 
 test.describe("초대로 들어온 member 가 볼 때", () => {
