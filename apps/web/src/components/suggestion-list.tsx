@@ -72,6 +72,7 @@ export function SuggestionList({
   selectedIds,
   onToggleSelect,
   busy,
+  generalAgents,
 }: {
   suggestions: Suggestion[];
   /**
@@ -84,6 +85,11 @@ export function SuggestionList({
   onToggleSelect: (suggestion: Suggestion) => void;
   /** 초안을 만드는 중. 고르기를 잠근다 — 보내는 값이 바뀌면 안 된다. */
   busy: boolean;
+  /**
+   * 같은 화면에 일반 추천 카드도 선 Agent (#512 리뷰). 그 묶음의 건수가 개인화만 센 것이라는 걸
+   * 머리줄이 글자로 말한다 — 아래 일반 카드까지 보이는데 "3가지 중에서" 라고만 하면 숫자가 어긋난다.
+   */
+  generalAgents: Agent[];
 }) {
   /**
    * 지금 보고 있는 묶음. 🚨 **서버 상태가 아니라 화면 상태다** — 주소에 두지 않는다.
@@ -175,9 +181,15 @@ export function SuggestionList({
             {group?.prompt ? <h2 className="text-display text-ink">{group.prompt}</h2> : null}
             {/* 🚨 탭이 있으면 이름·건수를 여기서 다시 말하지 않는다 — 탭이 "놀이 3가지" 로
                 이미 말해서 60px 안에 같은 말이 두 번 선다. 탭이 없을 때(묶음 하나)만 선다. */}
+            {/* 🚨 **같은 영역의 일반 추천이 같이 서면 무엇을 셌는지 말한다** (#512 리뷰). 건수는 개인화
+                줄만 센 것이고, 일반 카드는 자기 라벨("또래 기준 일반 추천")로 따로 말한다. 합쳐 세지
+                않는 이유는 일반 카드가 이 묶음 밖에 서서다 — 탭이 있으면 "4가지" 탭을 눌러도 셋만 보인다.
+                ⚠️ 탭 이름("식사 3가지")은 그대로다. 탭 이름은 패널 안 줄 수와 맞다. */}
             {order.length > 1 ? null : (
               <p className="text-caption text-ink-subtle mt-0.5">
-                {domainLabel(agent)} · {rows.length}가지 중에서
+                {generalAgents.includes(agent)
+                  ? `우리 아이 기준 ${domainLabel(agent)} ${rows.length}가지 중에서`
+                  : `${domainLabel(agent)} · ${rows.length}가지 중에서`}
               </p>
             )}
           </div>

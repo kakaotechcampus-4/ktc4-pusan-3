@@ -374,6 +374,7 @@ function SuggestionsScreen() {
           selectedIds={pickedIds}
           busy={pickLocked}
           onToggleSelect={(suggestion) => toggleSelect(suggestion.id)}
+          generalAgents={general.map((g) => g.agent)}
         />
 
         {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
@@ -597,7 +598,8 @@ function SuggestionsScreen() {
  * 🚨 **개인화도 같이 선 화면에서는 "위 추천" 이라고 하지 않는다** (#512 리뷰). 같은 Agent 안에서도 둘이
  *    섞여 오는데, 그때 "위 추천은 또래 기준이에요" 는 위에 선 개인화 추천까지 또래 기준이라고 부른다 —
  *    우리 아이 기록으로 고른 것을 일반 추천이라고 낮춰 부르는 것도 §2 가 막는 혼동이다.
- *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다.
+ *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다. 제목도 같다 — 위에 우리 아이 기준 추천이
+ *    서 있는데 "다음엔 우리 아이 기준으로" 라고 하면 지금 것은 아니라는 뜻으로 읽힌다.
  */
 function ScarcityCard({
   childId,
@@ -628,7 +630,11 @@ function ScarcityCard({
   return (
     <Card>
       <h2 className="text-section text-ink">
-        {hasGeneral ? "다음엔 우리 아이 기준으로 골라 드릴게요" : "판단할 기록이 부족해요"}
+        {hasGeneral
+          ? hasPersonal
+            ? "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요"
+            : "다음엔 우리 아이 기준으로 골라 드릴게요"
+          : "판단할 기록이 부족해요"}
       </h2>
       <p className="text-body-sm text-ink-muted mt-1">
         {scarcity.count === 0
