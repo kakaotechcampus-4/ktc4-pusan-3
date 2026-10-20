@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { partialMessage } from "@/components/run-result";
 import { ApiError, NetworkError, isApiError } from "@/lib/api/errors";
 import { initialRunState } from "@/hooks/use-run-stream";
+import { api } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/idempotency";
 import { submittedInput } from "@/mocks/handlers/runs";
 import { setScenario, type Scenario } from "@/mocks/scenario";
@@ -486,5 +487,38 @@ describe("부분 결과 문구 (PR #215 리뷰)", () => {
     );
     expect(text).toMatch(/쪽 일부, .+ 쪽은 이번에 처리하지 못했어요\./);
     expect(text).toContain("저장한 기록은 그대로");
+  });
+});
+
+describe("지난 턴의 질문에 답한다 (#228 · reply_open)", () => {
+  it("스토어에 없는 질문도 서버가 열려 있다고 하면 답한다 — reply_to 가 그 run 을, 날은 그 턴의 날을 따른다", async () => {
+    scenario("chat_history");
+    // 앱을 다시 켠 상태 — 스토어는 비었고 서버만 질문을 들고 있다 (목은 이 조회에서 맥락을 연다).
+    await api.get(`/children/${CHILD}/chat`);
+    expect(conversation().turns).toEqual([]);
+
+    answerQuestion(CHILD, "r_hist_nap", {
+      text: "몇 분쯤 잤는지 알려주시겠어요?",
+      day: "2026-10-01",
+    });
+    expect(conversation().answering).toEqual({
+      text: "몇 분쯤 잤는지 알려주시겠어요?",
+      runId: "r_hist_nap",
+      day: "2026-10-01",
+    });
+
+    const id = send("한 시간쯤", true);
+    // 🚨 자정을 넘겨 답해도 질문이 나온 날에 붙는다 — 그 줄이 스토어에 없어도 같다.
+    expect(turn(id).day).toBe("2026-10-01");
+    const done = await settled(id);
+    expect(done.run.status).toBe("done");
+    expect(submittedInput(runIdOf(id))).toMatchObject({ text: "한 시간쯤", replyTo: "r_hist_nap" });
+    // 답이 끝나면 입력창은 그 질문을 놓는다.
+    expect(conversation().answering).toBeNull();
+  });
+
+  it("past 없이 부르면 스토어에 없는 질문은 고르지 않는다", () => {
+    answerQuestion(CHILD, "r_unknown");
+    expect(conversation().answering).toBeNull();
   });
 });

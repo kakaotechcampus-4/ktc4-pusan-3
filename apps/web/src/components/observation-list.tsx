@@ -154,8 +154,11 @@ function LinkChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다. */
-function CorrectedMark({ label }: { label: string }) {
+/**
+ * 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다.
+ * 04 지난 대화의 저장 카드도 같은 표시를 쓴다 (`run-result.tsx` 의 `ObservationRow` · #228 리뷰).
+ */
+export function CorrectedMark({ label }: { label: string }) {
   return (
     <span className="text-caption text-ink-muted inline-flex items-center gap-1">
       <PencilLine aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />

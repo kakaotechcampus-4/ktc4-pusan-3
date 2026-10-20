@@ -2,6 +2,8 @@
 
 > `medication_schedule.md`를 흡수하고, 복약 기록·복약 이유·전달 서류에 필요한 컬럼을 더한 **정본**.
 >
+> **2026-10-18 갱신** — **중단은 한 번 묻고**(`med.stop_confirm`) 보호자가 '네' 하면 Agent 가 `status='stopped'`. 확인 모달 · 초안 없음. 중단 시각은 `updated_at` (M-15)
+>
 > **2026-09-22 갱신** — 생성·수정은 **초안 payload**(DB 저장 없음, `event` 초안과 같은 방식) · 중단 soft delete(`status='stopped'`) · `child_growth_log`는 Health가 더 이상 읽지 않음
 > 관련: [`Health_Agent_명세.md`](Health_Agent_명세.md) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · [`Agent_공통규약.md`](../shared/Agent_공통규약.md) §2 · [`data_model.md`](../data_model.md)(표기 규칙)
 
@@ -11,9 +13,9 @@
 
 | 테이블 | 소유 | 다른 Agent |
 | --- | --- | --- |
-| `medication_schedule` | **Health (CRUD)** | 읽지 않음 |
-| `medication_dose` | **Health (CRUD)** | 읽지 않음 |
-| `medication_dose_log` | **Health (CRUD)** — 신규 | 읽지 않음 |
+| `medication_schedule` | **Health** — 생성·수정은 보호자 제출 API가, 확인된 중단은 Agent 가 쓴다 | 읽지 않음 |
+| `medication_dose` | **Health** — 생성·수정 제출 때 같이 쓰인다 | 읽지 않음 |
+| `medication_dose_log` | **Health** — 신규. Agent가 INSERT | 읽지 않음 |
 | `prescription_draft` | **OCR 파이프라인** | Health는 **읽기만**, write 권한 없음 |
 | `health_safety` | 앱 API (보호자 권한) | Food 읽음 · Health 읽음 |
 | `observation_health` · `event` | Memory | Health 읽음 |
@@ -23,7 +25,7 @@
 
 > **기준은 누가 쓰느냐가 아니라 누가 읽느냐다.** 공유 테이블의 단일 writer는 Memory이고, 아무도 읽지 않는 도메인 전용 테이블은 소유 Agent가 쓴다. 이 원칙이 유지되려면 **Food·Activity·Growth가 `medication_*`을 읽지 않아야** 한다. "약 시간이랑 밥 시간이 겹쳐요" 같은 요구가 실제로 오면 그때 규칙을 다시 연다.
 
-DB 권한: Agent role에 `medication_*` write 부여 · `health_safety` write **비부여** · `prescription_draft` write **비부여**.
+DB 권한: Agent role에 `medication_dose_log` INSERT · `medication_schedule` 의 중단 UPDATE(`status` · `updated_at` 두 칸)만 부여(10-18 — 생성·수정은 제출 API) · `health_safety` write **비부여** · `prescription_draft` write **비부여**.
 
 ---
 
@@ -61,7 +63,7 @@ DB 권한: Agent role에 `medication_*` write 부여 · `health_safety` write **
 | **med_form** | varchar(16) | nullable. **신규** — `liquid` / `powder` / `tablet` / `ointment` / `drops` |
 | starts_on | date | NOT NULL |
 | ends_on | date | nullable. NULL = 무기한 |
-| status | varchar(16) | `active` / `stopped` / `completed`, NOT NULL, default `active`. **행이 존재한다 = 보호자가 이미 제출했다.** 중단은 `stopped`로 전환(soft delete) — 행이 남아야 복용 기록이 살아남는다 |
+| status | varchar(16) | `active` / `stopped` / `completed`, NOT NULL, default `active`. **행이 존재한다 = 보호자가 이미 제출했다.** 중단은 `stopped`로 전환(soft delete) — 행이 남아야 복용 기록이 살아남는다. 중단은 Agent 가 한 번 묻고 보호자가 '네' 할 때 바꾸고, 그때 `updated_at` 이 중단 시각이다(10-18). **중단된 코스는 다시 고치지 않는다** — `updated_at` 이 중단 시각으로 남게 |
 | note | text | nullable |
 | created_by | varchar(16) | `agent` / `caregiver`, NOT NULL |
 | **source** | varchar(16) | **신규** — `utterance` / `prescription_ocr`. 값의 출처 추적 |
@@ -73,7 +75,7 @@ DB 권한: Agent role에 `medication_*` write 부여 · `health_safety` write **
 - `CHECK (storage IS NULL OR storage IN ('room','fridge'))`
 - `CHECK (med_form IS NULL OR med_form IN ('liquid','powder','tablet','ointment','drops'))`
 - `CHECK (source IN ('utterance','prescription_ocr'))`
-- **중단은 soft delete** — "약 끊었어"는 `status='stopped'`. 행이 남으므로 `medication_dose_log`가 보존되고, `visit_summary`·열 타임라인에서 과거 복약이 그대로 보인다. `event` 삭제(hard delete)와는 방식이 다르다 — event는 남길 기록이 없지만 복약은 있다
+- **중단은 soft delete** — "약 끊었어"는 한 번 묻고, 보호자가 '네' 하면 `status='stopped'` · 중단 시각은 `updated_at`(10-18). 행이 남으므로 `medication_dose_log`가 보존되고, `visit_summary`·열 타임라인에서 과거 복약이 그대로 보인다. `event` 삭제(hard delete)와는 방식이 다르다 — event는 남길 기록이 없지만 복약은 있다
 - **승인 전 상태는 이 테이블에 없다.** 생성·수정은 초안 payload로 나가고, 보호자가 제출한 뒤에야 행이 생기거나 바뀐다 (§6)
 
 **새 컬럼의 성격**
@@ -193,7 +195,10 @@ DB 권한: Agent role에 `medication_*` write 부여 · `health_safety` write **
        → 초안 payload(op="update", schedule_id, before) → 확인 모달(바뀐 시각)
           ├ 제출 → UPDATE 코스 + dose 재생성 (한 트랜잭션)
           └ 취소·이탈 → 기존 코스 그대로
-중단:  status='stopped' (soft delete). dose는 그대로 두고 발송만 멈춘다. 초안 없이 즉시 실행
+중단:  "약 끊었어" → 대상 코스 찾기 (모호하면 어느 약인지 먼저 되묻기)   (10-18 — 확인 모달 · 초안 없음)
+       → "{title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요." (그 run 변경 0건, 되묻기 맥락에 schedule_id)
+          ├ "네" → status='stopped', updated_at=중단 시각 (soft delete). dose·복용 기록은 그대로, 발송만 멈춘다
+          └ "아니요"·애매함 → 그대로
 ```
 
 **초안 payload** — `EventDraft.to_payload()`와 같은 모양이다.
@@ -213,8 +218,7 @@ DB 권한: Agent role에 `medication_*` write 부여 · `health_safety` write **
 }
 ```
 
-- `op="update"`면 `schedule_id`와 `before`(수정 전 원본)가 더 실린다. 화면이 "18:30 → 19:00"을 보여주는 데 쓴다
-- **`missing`은 비어 있는 NOT NULL 칸의 이름이다**(`title` · `starts_on`). 비어 있지 않으면 화면이 제출 버튼을 잠근다. 보호자가 채워서 보내야 INSERT가 성립한다
+- `op="update"`면 `schedule_id`와 `before`(수정 전 원본)가 더 실린다. 화면이 "18:30 → 19:00"을 보여주는 데 쓴다- **`missing`은 비어 있는 NOT NULL 칸의 이름이다**(`title` · `starts_on`). 비어 있지 않으면 화면이 제출 버튼을 잠근다. 보호자가 채워서 보내야 INSERT가 성립한다
 - 처방전 카드의 "빈칸 + 등록 잠김"은 **다른 잠금이다.** 그쪽은 OCR 신뢰도가 낮은 칸을 잠그는 것이라 nullable 칸(`dosage` 등)도 대상이 된다. 둘 다 통과해야 제출된다
 - `draft_id`는 화면이 초안을 가리키고 제출 요청에 되돌려 보내는 키다. 배열 인덱스로는 안 된다 — 초안 두 장 중 하나만 제출하면 인덱스가 밀린다
 - 초안은 이 payload로 나가고 끝이다. **run이 끝나면 사라지고 되받을 경로가 없다.** 만료(`expires_at`)라는 개념이 필요 없어진 이유다
@@ -390,6 +394,7 @@ CREATE TABLE prescription_draft (
 | M-12 | ✅ **닫힘(09-22)** — 중단을 soft delete(`status='stopped'`)로 바꿔 행이 남는다. 복용 기록이 지워지지 않는다 |
 | M-13 | **처방전 확인 카드 = 승인 모달** | 카드에 실제 알림 시각까지 표시하고 "확인·등록"을 승인으로 겸하는 안. 두 번 묻지 않기 위함 |
 | M-14 | ✅ **수정 시 기존 코스의 복용 기록** | 닫힘(09-22) — 수정이 DELETE+INSERT가 아니라 같은 행 UPDATE라 `medication_dose_log`가 그대로 남는다. dose 재생성은 `medication_dose`만 건드린다 |
+| M-15 | ✅ **중단 확인** | 닫힘(10-18) — 확인 모달 · 초안 없이 한 번 묻고(`med.stop_confirm`) 보호자가 '네' 하면 Agent 가 `status='stopped'`. 중단 시각은 `updated_at`(중단된 코스는 다시 고치지 않는다). M-11 의 "중단은 즉시"를 대체한다. Memory 관찰 삭제 확인(#177)과 같은 되묻기라 승인 게이트를 늘리지 않는다 |
 
 ---
 

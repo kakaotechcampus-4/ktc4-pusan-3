@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll } from "vitest";
 
 import { resetAuthState } from "@/mocks/handlers/auth";
 import { resetCalendarState } from "@/mocks/handlers/calendar";
+import { resetChatState } from "@/mocks/handlers/chat";
 import { resetInviteState } from "@/mocks/handlers/invites";
 import { resetMembership } from "@/mocks/handlers/membership";
 import { resetSafetyState } from "@/mocks/handlers/children";
@@ -33,6 +34,7 @@ afterEach(() => {
   resetSafetyState();
   resetMemoryState();
   resetCalendarState();
+  resetChatState();
   resetPhotoRuns();
   resetSubmittedInputs();
   resetProfileState();

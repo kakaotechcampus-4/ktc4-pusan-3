@@ -160,7 +160,8 @@ export const healthObservation: ObservationHealth = {
   domain_fields: {
     symptom: ["기침"],
     severity: "mild",
-    observed_time: "밤",
+    // 서버와 같은 ISO 시각이다 — "밤" 같은 문구를 두면 화면이 원문을 그대로 찍는 것이 목에서 안 보인다 (#485)
+    observed_time: `${daysAgo(1)}T21:00:00+09:00`,
   },
 };
 
