@@ -66,9 +66,9 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
 
     await row.click();
     await expect(sheet.getByText("이번만 그랬어요로 고친 기록이에요.")).toBeVisible();
-    // 연결은 남지만 기억의 기록 수에는 들어가지 않는다 — "묶인 기억" 이라고 쓰지 않는다.
+    // 연결은 남지만 기억의 기록 수에는 들어가지 않는다 — "관련된 기억" 이라고 쓰지 않는다.
     await expect(sheet.getByText("세지 않는 기억")).toBeVisible();
-    await expect(sheet.getByText("묶인 기억")).toHaveCount(0);
+    await expect(sheet.getByText("관련된 기억")).toHaveCount(0);
     await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
   });
 
