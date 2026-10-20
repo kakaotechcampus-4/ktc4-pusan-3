@@ -12,7 +12,6 @@ Agent 가 내보내는 진행 이벤트와, 나중에 따로 붙는 화면(SSE) 
 """
 
 import asyncio
-import time
 import uuid
 
 import pytest
@@ -29,10 +28,7 @@ DONE = ("done", {})
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
-    """전역 dict 가 테스트 사이에 새지 않게.
-
-    앞 테스트가 연 채널이 남아 있으면 뒤 테스트의 sweep 개수가 달라진다.
-    """
+    """전역 dict 가 테스트 사이에 새지 않게."""
     registry.clear()
     yield
     registry.clear()
@@ -124,23 +120,19 @@ async def test_unknown_run_is_none():
     assert registry.get("no-such-run") is None
 
 
-async def test_sweep_removes_only_channels_closed_long_ago():
-    """프로세스 메모리에 두는 구조라, 닫힌 채널을 안 치우면 요청마다 쌓인다.
+async def test_closed_channel_is_removed_after_the_expiry(monkeypatch: pytest.MonkeyPatch):
+    """닫힌 채널은 정한 시간 동안만 남는다 — 그 안에는 새로고침이 처음부터 받고, 지나면 없다.
 
-    세 가지를 한 번에 본다 — 오래전에 닫힘(치움) · 방금 닫힘(둠) · 아직 열림(둠).
+    🚨 안 지우면 failed 에 실린 보호자 원문이 서버를 다시 켤 때까지 메모리에 남는다 (#533).
     """
-    old = registry.open_run(parent_id=PARENT)
-    old.close()
-    old.closed_at = time.monotonic() - 3600  # 한 시간 전에 닫힌 것처럼
+    monkeypatch.setattr(registry, "EXPIRE_AFTER_SECONDS", 0.05)
+    channel = registry.open_run(parent_id=PARENT)
+    channel.publish(("failed", {"reason": "internal_error", "raw_text": "한 줄"}))
+    channel.close()
 
-    recent = registry.open_run(parent_id=PARENT)
-    recent.close()
+    assert registry.get(channel.run_id) is channel
+    assert await collect(channel) == [("failed", {"reason": "internal_error", "raw_text": "한 줄"})]
 
-    still_open = registry.open_run(parent_id=PARENT)
+    await asyncio.sleep(0.1)
 
-    removed = registry.sweep(ttl_seconds=300)
-
-    assert removed == 1
-    assert registry.get(old.run_id) is None
-    assert registry.get(recent.run_id) is recent
-    assert registry.get(still_open.run_id) is still_open
+    assert registry.get(channel.run_id) is None
