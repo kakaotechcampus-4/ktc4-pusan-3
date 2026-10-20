@@ -28,6 +28,7 @@ async def _make_suggestion(
     child_id: uuid.UUID,
     agent: SuggestionAgent = SuggestionAgent.ACTIVITY,
     status: SuggestionStatus = SuggestionStatus.DRAFT,
+    kind: SuggestionKind = SuggestionKind.PERSONALIZED,
     expires_at: datetime | None = None,
     items: Sequence[str] = (),
 ) -> Suggestion:
@@ -35,7 +36,7 @@ async def _make_suggestion(
     row = Suggestion(
         child_id=child_id,
         agent=agent,
-        kind=SuggestionKind.PERSONALIZED,
+        kind=kind,
         content="공원 산책",
         reason="야외 활동 선호",
         status=status,
@@ -185,6 +186,81 @@ async def test_event_drafts_food_grouped(
     assert len(data["drafts"]) == 1
     assert data["drafts"][0]["event"]["title"] == "저녁 식사"
     assert len(data["drafts"][0]["suggestion_ids"]) == 2
+
+
+# 🚨 채택 · 초안 · 제출은 kind 를 보지 않는다 — 05 의 일반 추천도 같은 길로 일정이 된다
+#    (#512 · #532). 나중에 kind 검사가 생기면 여기가 깨져야 한다.
+
+
+async def test_general_suggestion_approve_draft_submit(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """일반 추천 id 로 approve → event-drafts → events 까지 통과한다."""
+    idempotency.clear()
+    s = await _make_suggestion(session, child_id=cid, kind=SuggestionKind.GENERAL)
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/approve",
+        json={"suggestion_ids": [str(s.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["suggestions"][0]["kind"] == "general"
+
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    draft = resp.json()["drafts"][0]
+
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        # 초안은 일자를 모른다 — 보호자가 승인 시트에서 채운다
+        json={
+            "event": {**draft["event"], "starts_at": "2026-10-10T15:00:00+09:00"},
+            "items": [],
+            "suggestion_ids": draft["suggestion_ids"],
+        },
+        headers={**headers, "Idempotency-Key": "general-submit"},
+    )
+    assert resp.status_code == 201
+    link = await session.scalar(
+        select(SuggestionEvent).where(SuggestionEvent.suggestion_id == s.id)
+    )
+    assert link is not None
+
+
+async def test_event_drafts_food_grouped_across_kinds(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """food 묶기는 agent 기준이다 — 일반+일반, 개인화+일반 모두 초안 1장."""
+    headers, _ = bearer
+    for kinds in (
+        (SuggestionKind.GENERAL, SuggestionKind.GENERAL),
+        (SuggestionKind.PERSONALIZED, SuggestionKind.GENERAL),
+    ):
+        rows = [
+            await _make_suggestion(
+                session,
+                child_id=cid,
+                agent=SuggestionAgent.FOOD,
+                status=SuggestionStatus.APPROVED,
+                kind=kind,
+            )
+            for kind in kinds
+        ]
+        resp = await db_client.post(
+            f"/api/v1/children/{cid}/suggestions/event-drafts",
+            json={"suggestion_ids": [str(r.id) for r in rows]},
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        drafts = resp.json()["drafts"]
+        assert len(drafts) == 1
+        assert drafts[0]["event"]["title"] == "저녁 식사"
+        assert len(drafts[0]["suggestion_ids"]) == 2
 
 
 async def test_event_drafts_carry_activity_items(

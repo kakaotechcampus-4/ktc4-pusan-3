@@ -27,12 +27,13 @@ async def _make_suggestion(
     child_id: uuid.UUID,
     agent: SuggestionAgent = SuggestionAgent.ACTIVITY,
     status: SuggestionStatus = SuggestionStatus.DRAFT,
+    kind: SuggestionKind = SuggestionKind.PERSONALIZED,
     with_evidence: bool = False,
 ) -> Suggestion:
     row = Suggestion(
         child_id=child_id,
         agent=agent,
-        kind=SuggestionKind.PERSONALIZED,
+        kind=kind,
         content="공원 산책",
         reason="야외 활동 선호",
         status=status,
@@ -173,6 +174,26 @@ async def test_list_suggestions_with_evidence(
     assert len(item["source_refs"]) == 1
 
 
+async def test_list_suggestions_includes_general(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """채택한 일반 추천도 07 목록에 kind 로 구분돼 나온다. 근거는 늘 비어 있다 (#532)."""
+    p = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, with_evidence=True
+    )
+    g = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, kind=SuggestionKind.GENERAL
+    )
+    headers, _ = bearer
+    resp = await db_client.get(f"/api/v1/children/{cid}/suggestions", headers=headers)
+    assert resp.status_code == 200
+    items = {i["id"]: i for i in resp.json()["items"]}
+    assert items[str(p.id)]["kind"] == "personalized"
+    assert items[str(g.id)]["kind"] == "general"
+    assert items[str(g.id)]["evidence"] == []
+    assert items[str(g.id)]["source_refs"] == []
+
+
 async def test_list_suggestions_status_filter(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
@@ -259,6 +280,24 @@ async def test_feedback_sets_value(
     assert resp.status_code == 200
     data = resp.json()
     assert data["suggestion"]["feedback"] == "child_liked"
+
+
+async def test_feedback_on_general(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """일반 추천 평가도 저장된다 — 평가는 kind 를 보지 않는다 (#532)."""
+    s = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, kind=SuggestionKind.GENERAL
+    )
+    headers, _ = bearer
+    resp = await db_client.patch(
+        f"/api/v1/children/{cid}/suggestions/{s.id}/feedback",
+        json={"feedback": "child_liked"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["suggestion"]["kind"] == "general"
+    assert resp.json()["suggestion"]["feedback"] == "child_liked"
 
 
 async def test_feedback_not_found(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
