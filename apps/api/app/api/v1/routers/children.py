@@ -515,7 +515,12 @@ async def create_input(
         )
 
     channel = registry.open_run(parent_id=parent.parent_id)
-    idempotency.remember(**scope, replay=channel.run_id)
+    try:
+        idempotency.remember(**scope, replay=channel.run_id)
+    except Exception:
+        # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
+        channel.close()
+        raise
     # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
     record = chat_record.TurnRecorder(
         parent_id=parent.parent_id,

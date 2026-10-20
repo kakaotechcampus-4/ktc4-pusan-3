@@ -331,13 +331,15 @@ async def _guarded(
                 channel.publish(done)
             else:
                 channel.publish(sse.failed_event("internal_error", raw_text))
+        # 🚨 닫기가 키 놓기보다 먼저다. forget_run 은 Redis 를 부르고 예외를 삼키지 않는다 —
+        #    거기서 터지면 close 가 안 불려 원문이 실린 failed 채널이 지워지지 않는다 (#536 리뷰).
+        channel.close()
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
         # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.
         # 🚨 publish 와 여기 사이에 await 가 없어야 한다. 화면이 failed 를 받자마자 재시도해도
-        #    키가 이미 지워져 있다.
+        #    키가 이미 지워져 있다. close 도 sync 라 사이에 끼워도 된다.
         if channel.ended_with == "failed":
             idempotency.forget_run(channel.run_id)
-        channel.close()
     # 닫은 뒤에 부른다 — 화면은 끝 신호까지 다 받았고, 여기서 무엇이 늦어져도 기다리지 않는다
     if on_end is not None:
         await on_end(channel)
