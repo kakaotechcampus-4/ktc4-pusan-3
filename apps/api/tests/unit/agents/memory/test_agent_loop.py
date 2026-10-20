@@ -1270,6 +1270,20 @@ async def test_일정을_조회하고_되물으면_일정_id를_남긴다(contex
     assert result.pending.found == (FoundRef("event", event.id),)
 
 
+async def test_찾은_기록이_상한과_같으면_모두_남긴다(context: AgentContext) -> None:
+    for index in range(MAX_FOUND):
+        await _seed_juk(context, f"전복죽 {index}")
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
+    )
+
+    result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
+
+    assert result.pending is not None
+    assert len(result.pending.found) == MAX_FOUND
+
+
 async def test_찾은_기록이_상한을_넘으면_하나도_남기지_않는다(context: AgentContext) -> None:
     # 일부만 남기면 "전부 지워줘" 에 "응" 했을 때 일부만 지워진다
     for index in range(MAX_FOUND + 1):

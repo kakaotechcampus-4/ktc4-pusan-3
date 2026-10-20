@@ -60,7 +60,7 @@ MAX_COMPLETION_TOKENS = 1400
 MAX_QUESTIONS = 4
 
 # 되묻기 맥락에 남기는 조회 결과 행 수의 상한. 넘으면 하나도 남기지 않는다
-MAX_FOUND = 20
+MAX_FOUND = 40
 
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
