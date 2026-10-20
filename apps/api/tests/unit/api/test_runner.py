@@ -247,6 +247,30 @@ async def test_부분_결과는_done_으로_끝나고_키를_놓지_않는다(mo
     assert idempotency.recall(**scope) == channel.run_id
 
 
+async def test_키_놓기가_터져도_채널은_닫힌다(monkeypatch):
+    """🚨 failed 에는 원문이 실려 있다. 닫혀야 지울 예약이 걸린다 (registry.EXPIRE_AFTER_SECONDS).
+
+    forget_run 은 Redis 를 부르고 예외를 삼키지 않는다. 닫기가 그 뒤에 있으면 Redis 가 잠깐
+    끊긴 것만으로 원문이 서버를 다시 켤 때까지 남는다 (#536 리뷰).
+    """
+
+    def broken_forget_run(run_id: str) -> None:
+        raise ConnectionError("Redis 끊김")
+
+    monkeypatch.setattr(idempotency, "forget_run", broken_forget_run)
+    channel = registry.open_run(parent_id=PARENT)
+
+    async def boom(ch: registry.RunChannel) -> None:
+        raise RuntimeError("모델 오류")
+
+    task = runner.start(channel, boom, raw_text=RAW_TEXT)
+    with pytest.raises(ConnectionError):
+        await asyncio.wait_for(task, timeout=1)
+
+    assert names(channel) == ["failed"]
+    assert channel.closed
+
+
 async def test_start_runs_job_attaches_task_and_closes_channel():
     channel = registry.open_run(parent_id=PARENT)
 
