@@ -3,9 +3,8 @@
 🚨 연결 끊기는 DB 가 알아서 지워 주지 않는다. 개인 기록의 CASCADE 는 보호자 행이 지워질 때(탈퇴)만
    동작하고, 연결 끊기는 parent_child 행만 지워 보호자 행이 남는다. 그래서 그 보호자가 이 아이에 쓴
    개인 기록은 여기서 직접 지운다 (노션 삭제 정책 정본 §9 · 재형님 결정 10-06).
-   - 지운다: 일기(diary_entry) · 이 아이 일정에 건 개인 알림(reminder)
+   - 지운다: 일기(diary_entry) · 이 아이 일정에 건 개인 알림(reminder) · 대화 기록(chat_turn, #228)
    - 남긴다: 관찰 · 건강 · 함께 보는 사진 · 고치기 이력과 그 "적은 사람" 칸 — 아이의 공동 기록이다
-   대화 기록(#228)은 표가 생기면 unlink_parent 에 지우기를 더한다.
 """
 
 import uuid
@@ -15,6 +14,7 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.chat.models import ChatTurn
 from app.domains.child.models import ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.schedule.models import DiaryEntry, Event, Reminder
@@ -62,6 +62,9 @@ async def unlink_parent(
         delete(DiaryEntry).where(
             DiaryEntry.child_id == child_id, DiaryEntry.author_parent_id == parent_id
         )
+    )
+    await session.execute(
+        delete(ChatTurn).where(ChatTurn.child_id == child_id, ChatTurn.parent_id == parent_id)
     )
     # reminder 에는 아이 칸이 없다 — 이 아이의 일정에 걸린 것만 고른다.
     await session.execute(

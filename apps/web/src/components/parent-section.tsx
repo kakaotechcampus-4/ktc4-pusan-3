@@ -24,7 +24,7 @@ import {
 } from "@/lib/api";
 import { formatInviteCode } from "@/lib/invite-code";
 import { parentDisplayName, RELATION_LABEL } from "@/lib/relation";
-import { formatDay } from "@/lib/format";
+import { formatDateTime, formatDay } from "@/lib/format";
 
 /**
  * 10 설정 — 함께 보는 보호자.
@@ -238,7 +238,7 @@ export function ParentSection({
               {formatInviteCode(issued.invite_code)}
             </p>
             <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-1.5 pl-5">
-              <li>{formatDay(issued.expires_at)}까지 쓸 수 있어요.</li>
+              <li>{formatDateTime(issued.expires_at)}까지 쓸 수 있어요.</li>
               <li>한 번 쓰면 그 코드는 닫혀요. 더 초대하려면 다시 만들어 주세요.</li>
               <li>받는 분은 앱에서 로그인한 뒤 이 코드를 입력하면 돼요.</li>
             </ul>

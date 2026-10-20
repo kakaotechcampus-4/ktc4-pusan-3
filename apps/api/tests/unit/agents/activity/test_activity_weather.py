@@ -242,7 +242,7 @@ class TestModelPayload:
         """키만 있고 문구가 없으면 판정이 그 키를 낼 때 KeyError 다 — 부팅 전에 잡는다."""
         keys = {v for k, v in vars(weather).items() if k.isupper() and isinstance(v, str)}
         notice_keys = {key for key in keys if key.startswith("weather.")}
-        assert len(notice_keys) == 11
+        assert len(notice_keys) == 12
         for key in notice_keys:
             assert READOUTS.get(key).kind == "notice"
 

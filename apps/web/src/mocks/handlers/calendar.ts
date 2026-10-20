@@ -22,6 +22,7 @@ import {
   writeMyDiary,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
+import { chatCountOn } from "./chat";
 import { apiError, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 import { listedObservations } from "./memories";
@@ -118,12 +119,14 @@ function calendarMonth(month: string): CalendarDay[] {
     );
 }
 
-function calendarDay(date: string): CalendarDayResponse {
+function calendarDay(childId: string, date: string): CalendarDayResponse {
   return {
     my_diary: readMyDiary(date),
     shared_photos: sharedPhotosOn(date),
     events: withPrepared(date),
     observations: observationsOn(date),
+    // 🚨 지난 대화 목록과 같은 표에서 센다 (`handlers/chat.ts`) — 내 대화만 센다.
+    chat_count: chatCountOn(childId, date),
   };
 }
 
@@ -153,11 +156,12 @@ export const calendarHandlers = [
         shared_photos: [],
         events: [],
         observations: [],
+        chat_count: 0,
       };
       return HttpResponse.json(empty);
     }
 
-    return HttpResponse.json(calendarDay(date));
+    return HttpResponse.json(calendarDay(String(params.cid), date));
   }),
 
   /**

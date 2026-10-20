@@ -4,8 +4,13 @@ import { josa } from "es-hangul";
 import { ChevronRight, PencilLine } from "lucide-react";
 
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
-import { domainField, domainLabel, observationAgent } from "@/components/domain-chip";
-import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import {
+  domainField,
+  OBSERVATION_ICON,
+  observationAgent,
+  observationLabel,
+} from "@/components/domain-chip";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -34,9 +39,24 @@ import { cn } from "@/lib/cn";
  *    알약 모양이면 "이번만 그랬어요" 가 기억 이름처럼 읽혔다 — 모양이 달라야 다른 것으로 읽힌다.
  *    라벨만 두지 않고 "…로 고친 기록" 까지 쓰는 것도 같은 이유다.
  *
- * 🚨 **줄을 끌고 가는 것은 부모가 적은 말(`raw_text`)이다.** 도메인도 날짜도 그 아래 메타다.
+ * 🚨 **줄을 끌고 가는 것은 그 기록이 무엇에 관한 것인지(`subject` · health 는 `symptom`)다**
+ *    (#524). 부모가 적은 말(`raw_text`)은 그 아래 한 단계 약하게 선다. 한 발화는 관찰 여러 건으로
+ *    나뉘어 저장되는데(최상위 CLAUDE.md §4 ②), 원문이 제목이던 때는 같은 문장이 줄마다 같은
+ *    무게로 반복돼서 "같은 말이 세 번 저장됐다" 로 읽혔다.
+ *    ⚠️ **`subject` 와 묶인 기억 이름(`merge_key`)은 같은 말인 경우가 많다.** Curator 가 새 기억의
+ *    이름을 첫 기록의 `subject` 로 짓고, 이름이 같으면 그 기억에 붙인다 (`link_step.py`). 그래서
+ *    "물놀이" 제목 아래 "관련된 기억 | 물놀이" 칩이 서는 것이 보통이다 — 받아들인 겹침이다.
+ *    제목은 "이 기록이 무엇에 관한 것인가", 칩은 "이 기록이 어느 기억에 세어졌나" 라 같은
+ *    단어여도 말하는 것이 다르고, 칩이 빠지면 기록이 기억으로 쌓인다는 것이 안 보인다.
+ *    제목을 `merge_key` 로 쓰지 않는 이유는 늘 있는 값이 아니어서다 — routine 과 아직 안 묶인
+ *    기록은 `affinity` 가 `null` 이다. `subject` 는 health 밖의 모든 기록에 있다.
+ *    health 의 증상 칩은 뺐다 — 제목과 **같은 필드**라 늘 같은 말이고, 이어진 기억도 없다.
  *
- * 줄의 뼈대는 세 가지 **다른 종류**다 — 왼쪽 타일(어느 영역인지) · 문장 · 그 아래 한 줄.
+ * 줄의 뼈대는 네 층이다 — 왼쪽 타일(어느 영역인지) 옆에 제목 · 원문 · 메타 · 칩(또는 고친 표시).
+ * 🚨 **제목은 `body` 600 이다.** 굵기로 원문(`body-sm`)과 가르고, 크기는 `body` 에 둔다 —
+ *    `section`(17) 이상으로 올리면 기억 카드 이름(`title` 20)과 갈리는 글자 크기가 좁아진다.
+ * 🚨 **줄 안에 가운뎃점을 쓰지 않는다** (제품 결정 · #524). 메타는 간격으로, 칩은 세로 선과
+ *    글자색으로 가른다.
  * 전부 같은 크기의 글자로 쌓으면 훑을 기준선이 없어서 목록이 통째로 회색 덩어리로 읽힌다.
  * 🚨 **타일은 그 영역의 도메인 색이다** (문서 §3 · §7 "07 기록 줄 · 기억 카드").
  *    도메인 색의 뜻을 "어느 Agent 결과인가" 에서 **"어느 영역인가"** 로 넓히면서 열린 자리다 —
@@ -80,6 +100,7 @@ export function ObservationList({
 function ObservationRow({ observation, onOpen }: { observation: Observation; onOpen: () => void }) {
   const agent = observationAgent(observation.kind);
   const wrong = observation.status === "inactive";
+  const title = observationTitle(observation);
 
   return (
     <button
@@ -92,8 +113,9 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
           : "bg-surface border-line active:bg-surface-muted",
       )}
     >
+      {/* 모양과 이름은 기록 종류, 색은 그 기록을 읽는 Agent 다 — 교육 · 생활습관이 같은 성장 색이다 (#501). */}
       <IconTile
-        icon={DOMAIN_ICON[agent]}
+        icon={OBSERVATION_ICON[observation.kind]}
         tone={wrong ? "neutral" : "plain"}
         className={wrong ? undefined : domainField(agent)}
       />
@@ -101,22 +123,25 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span
           className={cn(
-            "text-body ease-standard transition-colors duration-120",
+            "text-body ease-standard font-semibold transition-colors duration-120",
             wrong ? "text-ink-muted" : "text-ink",
           )}
         >
-          {observation.raw_text}
+          {title ?? observation.raw_text}
         </span>
 
-        {/* 🚨 띄운 가운뎃점은 **줄당 하나**다 (문서 §4). 도메인과 날짜가 한 줄, 칩은 아래 줄. */}
+        {/* 원문은 근거라 한 단계 약하게 선다. 자르지 않는다 (문서 §10). 제목이 원문이면 다시 쓰지 않는다. */}
+        {title ? <span className="text-body-sm text-ink-muted">{observation.raw_text}</span> : null}
+
+        {/* 기록 종류와 날짜는 가운뎃점 없이 간격으로 가른다 (#524). 칩은 아래 줄. */}
         <span
           className={cn(
-            "text-caption ease-standard transition-colors duration-120",
+            "text-caption ease-standard flex flex-wrap gap-x-2 transition-colors duration-120",
             wrong ? "text-ink-muted" : "text-ink-subtle",
           )}
         >
-          {domainLabel(agent)}
-          {observation.observed_label ? ` · ${observation.observed_label}` : ""}
+          <span>{observationLabel(observation.kind)}</span>
+          {observation.observed_label ? <span>{observation.observed_label}</span> : null}
         </span>
 
         <ObservationLink observation={observation} />
@@ -135,21 +160,41 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
   );
 }
 
+/**
+ * 줄의 제목 — 이 기록이 무엇에 관한 것인가. 04 대화 결과의 기록 줄(`run-result.tsx`)과 같은 필드를
+ * 쓴다 (04 는 health 에 `observed_time` 까지 붙이고, 07 은 시각을 상세에만 둔다).
+ * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 증상이 없으면 `null` 이고, 줄은 원문을 제목으로 쓴다.
+ */
+function observationTitle(observation: Observation): string | null {
+  if (isHealthObservation(observation)) {
+    const symptoms = observation.domain_fields.symptom;
+    return symptoms && symptoms.length > 0 ? symptoms.join(", ") : null;
+  }
+  return observation.subject || null;
+}
+
 /** 줄 아래에 하나만 서는 작은 표식. 글자 줄이 아니라 **모양**이라 메타와 안 섞인다. */
 function LinkChip({ label, value }: { label: string; value: string }) {
   return (
     // 🚨 `truncate` 로 잘라 맞추지 않는다 (문서 §10). 글자를 키우면 칩이 두 줄이 될지언정
     //    묶인 기억 이름이 잘리지는 않는다 — 이름이 반만 보이면 무엇에 묶였는지 알 수 없다.
-    <span className="bg-surface-muted text-ink-muted text-caption min-h-chip inline-flex w-fit max-w-full items-center gap-1 rounded-full px-2.5 py-1">
-      {/* 띄운 가운뎃점은 줄당 하나다 (문서 §4). 이 칩은 자기 줄이라 위 메타 줄과 겹치지 않는다. */}
-      <span className="text-ink-subtle shrink-0">{label} ·</span>
-      <span>{value}</span>
+    <span className="bg-surface-muted text-ink-muted text-caption min-h-chip inline-flex w-fit max-w-full items-center gap-2 rounded-full px-2.5 py-1">
+      {/* 라벨과 이름은 가운뎃점이 아니라 세로 선과 글자색으로 가른다 (#524). 선은 글자가 아니라 면이라
+          기호 금지(apps/web/CLAUDE.md §5)에 걸리지 않고, 읽기 프로그램도 읽지 않는다. `line` 은
+          `surface-muted` 위에서 안 보여서 테두리 쪽 `line-strong` 이다. 이름이 `ink` 인 것은
+          `ink-muted` 가 라벨의 `ink-subtle` 과 가까워 둘이 한 구절로 읽혔기 때문이다. */}
+      <span className="text-ink-subtle shrink-0">{label}</span>
+      <span aria-hidden className="bg-line-strong h-3 w-px shrink-0" />
+      <span className="text-ink">{value}</span>
     </span>
   );
 }
 
-/** 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다. */
-function CorrectedMark({ label }: { label: string }) {
+/**
+ * 고친 기록의 표시. 🚨 칩(면 + 알약)이 아니다 — 같은 자리의 기억 칩과 모양으로 갈린다.
+ * 04 지난 대화의 저장 카드도 같은 표시를 쓴다 (`run-result.tsx` 의 `ObservationRow` · #228 리뷰).
+ */
+export function CorrectedMark({ label }: { label: string }) {
   return (
     <span className="text-caption text-ink-muted inline-flex items-center gap-1">
       <PencilLine aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />
@@ -163,7 +208,8 @@ function CorrectedMark({ label }: { label: string }) {
  *
  * 🚨 **health 는 모양이 다르다** — `subject` · `polarity` · `affinity` 키가 **아예 없다.**
  *    `null` 검사가 아니라 `kind === "observation_health"` 로 분기한다 (apps/web/CLAUDE.md §4).
- *    승격 파이프라인 밖이라 묶일 프로필이 없고, 대신 증상이 그 자리를 받는다.
+ *    승격 파이프라인 밖이라 묶일 프로필이 없다. 예전엔 증상 칩이 그 자리를 받았는데, 증상이
+ *    줄 제목이 되면서(#524) 같은 말이 두 번 서게 돼 뺐다.
  */
 function ObservationLink({ observation }: { observation: Observation }) {
   // 고친 기록은 기억으로 세지 않는다 — 묶인 기억 칩 대신 무엇으로 고쳤는지가 그 자리에 선다.
@@ -171,12 +217,7 @@ function ObservationLink({ observation }: { observation: Observation }) {
     return <CorrectedMark label={CORRECTED_OBSERVATION[observation.status].label} />;
   }
 
-  if (isHealthObservation(observation)) {
-    const symptoms = observation.domain_fields.symptom;
-    if (!symptoms || symptoms.length === 0) return null;
-    return <LinkChip label="증상" value={symptoms.join(", ")} />;
-  }
-
-  if (!observation.affinity) return null;
-  return <LinkChip label="기억" value={observation.affinity.merge_key} />;
+  if (isHealthObservation(observation) || !observation.affinity) return null;
+  // "기억" 한 단어로는 이 기록이 그 기억에 세어졌다는 관계가 안 읽힌다 (#524).
+  return <LinkChip label="관련된 기억" value={observation.affinity.merge_key} />;
 }

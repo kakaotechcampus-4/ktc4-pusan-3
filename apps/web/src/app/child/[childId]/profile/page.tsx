@@ -18,6 +18,7 @@ import { Section, SectionAction, SectionError } from "@/components/ui/section";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
 
@@ -76,7 +77,8 @@ function IdentitySection({
   childId: string;
   query: ReturnType<typeof useQuery<ChildProfile>>;
 }) {
-  const [editing, setEditing] = useState(false);
+  /** 고칠 대상은 늘 이 아이라 따로 들 값이 없다 — 열 때마다 바뀌는 `session`(시트를 새로 만드는 `key`)만 쓴다. */
+  const editing = useSheetTarget<true>();
 
   return (
     <Section
@@ -88,7 +90,11 @@ function IdentitySection({
       //    (`ChildIdentityCard` 머리말). 다른 두 구역과 같은 머리줄 문법이다.
       action={
         query.data ? (
-          <SectionAction label="기본 정보 고치기" icon={Pencil} onClick={() => setEditing(true)} />
+          <SectionAction
+            label="기본 정보 고치기"
+            icon={Pencil}
+            onClick={() => editing.show(true)}
+          />
         ) : undefined
       }
     >
@@ -102,12 +108,13 @@ function IdentitySection({
           <>
             <ChildIdentityCard profile={query.data} />
             {/* 🚨 열 때마다 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서 같은
-              인스턴스를 재사용하면 지난번에 고치다 만 값이 남는다. */}
-            {editing ? (
+              인스턴스를 재사용하면 지난번에 고치다 만 값이 남는다. 닫는 것은 `open` 이 해서
+              내려가는 움직임이 남는다 (`useSheetTarget`). */}
+            {editing.target ? (
               <ChildIdentitySheet
-                key={query.data.id}
-                open
-                onClose={() => setEditing(false)}
+                key={editing.session}
+                open={editing.open}
+                onClose={editing.close}
                 childId={childId}
                 profile={query.data}
                 earliestBirthDate={EARLIEST_BIRTH_DATE}

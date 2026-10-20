@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { StartBackLink } from "@/components/start-back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -141,11 +142,7 @@ function InviteScreen() {
       <Screen className="gap-6" bodyRef={stepRef}>
         <div>
           <p className="text-label text-ink-subtle">초대 확인</p>
-          <PageTitle className="mt-2">
-            이 아이가
-            <br />
-            맞나요
-          </PageTitle>
+          <PageTitle className="mt-2">이 아이가 맞나요</PageTitle>
           <p className="text-body text-ink-muted mt-3">
             맞다면 연결할게요. 아니면 코드를 다시 확인해 주세요.
           </p>
@@ -249,16 +246,15 @@ function InviteScreen() {
 
   return (
     <Screen className="gap-6" bodyRef={stepRef}>
-      <div>
-        <PageTitle>
-          받은 코드를
-          <br />
-          입력해 주세요
-        </PageTitle>
+      <header>
+        <div className="-ml-3 flex items-center gap-1">
+          <StartBackLink />
+          <PageTitle>받은 코드를 입력해 주세요</PageTitle>
+        </div>
         <p className="text-body text-ink-muted mt-3">
           아이를 등록한 보호자가 만든 {INVITE_CODE_LENGTH}자리 코드예요. 한 번만 쓸 수 있어요.
         </p>
-      </div>
+      </header>
 
       <TextInput
         label="초대 코드"
@@ -293,13 +289,6 @@ function InviteScreen() {
         <p className="text-caption text-ink-subtle text-center">
           누구의 초대인지 먼저 보여드려요. 아직 연결되지 않아요.
         </p>
-        <button
-          type="button"
-          className="text-button text-ink-muted min-h-touch"
-          onClick={() => router.replace("/start")}
-        >
-          코드가 없어요
-        </button>
       </div>
     </Screen>
   );
