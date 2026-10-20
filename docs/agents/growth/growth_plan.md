@@ -180,6 +180,8 @@ DoD: 성장폭 readout에 **측정일 2개**가 항상 있음 · 닫힘 문구�
 
 > **진행(#504)** — 교육 열림: 러너 · 05 가 `growth_safety`(`DbSafetyReader`, allergy · environmental · status 전부)를 넘긴다 · 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 확인 문구 대신 대응표(`reference/allergy_related_terms.yaml`)의 낱말이 든 후보와 [예시] 행을 뺀다(PM 확인) · [예시]도 달 수 있는 아이 기록도 없으면 `doc.no_row`(모델 0회) · note 의 성향 표현은 티어 1 근거에만 · 한 번 낸 후보 안의 같은 제목은 거절. 경고가 붙는 교육 후보는 #402 전까지 뺀다. 도서는 포트 · 일반 추천 근거 결정 뒤.
 
+> **진행(#531)** — Supervisor 다듬기 · 운영 설정: 도서는 다른 Growth 추천에 자리를 내준다(`YIELDING_LABELS`) · 신체 성장 경계 예시 세 줄 · 라우팅 eval GR01~GR28(합격선 90% · 0건 규칙 셋) · 도서 검색어를 교육 · 관심 · 놀이 · 생활 기록의 점수 순으로(`search_book_interests`) · run 하나에 관측 한 줄 · 배포 체크리스트와 스모크(§11-6).
+
 - `IMPLEMENTED_AGENTS`에 `growth` · **라벨 4개** 라우팅
 - Supervisor 경계 예시 투입: activity↔growth 4줄 · 신체 성장 3줄("잘 크고 있어?"까지 전부 `growth_review`) · 의료 처치 · 증상 같은 습관("약 먹기 싫어해" · "눈을 자꾸 깜빡여")도 `routine_coaching` 으로 와서 코드가 닫는다
 - `growth_review`·닫힘 경로는 `model_calls=0`으로 집계
@@ -238,10 +240,47 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 | G4 | Curator 미구현 상태(affinity 0행)에서 일반 추천 정상 |
 
 ### 11-4. 롤백
-`IMPLEMENTED_AGENTS`에서 제거. 라벨 4개가 Supervisor에서 빠지면 해당 발화는 Activity 또는 Memory로 흡수됩니다.
+`IMPLEMENTED_AGENTS` 에서 `growth` 를 빼고 배포한다 (운영 담당). 라벨 4개가 Supervisor 에서 빠지면 해당 발화는 Activity 또는 Memory 로 흡수됩니다.
+
+- 환경변수 스위치는 두지 않았다. #446 이 develop 에 들어가는 순간 Growth 가 열리고, 켜는 시점을 서버 설정에 맡기지 않는다 (core `Settings` 가 `extra=forbid` 라 `.env` 키를 늘리면 `.env.example` 도 같이 고쳐야 한다)
+- 이 표는 pipeline `_RUNNERS` · `RECOMMENDING_TASKS` · entrypoint context 와 키가 같아야 해서, 빼려면 그 세 곳과 키 같음 테스트(`test_구현된_agent_마다_실행_함수가_있다` · `test_entrypoint`)도 같이 고친다
+- 이미 저장된 Growth 추천은 두고 24시간 만료에 맡긴다 — 앱을 거치지 않고 DB 로 상태를 바꾸지 않는다
+- 재배포는 진행 중 run · 되묻기 맥락 · 05 다시 시도 보관함 · 그날 하루 한도 수도 비운다(전부 프로세스 메모리, `--workers 1`)
 
 ### 11-5. 관측
 `{run_id, child_id, stage, task_type, model_calls, evidence_mode, doc_hit, closed_reason, latency_ms}` — 관심사·책 제목 원문은 남기지 않습니다.
+
+구현 — `growth/agent.py` 의 `_observe` 가 run 하나에 INFO 한 줄 `growth run …` 을 남긴다. 위 아홉 칸에 `status`(20초에 끊기면 `cancelled`) · `asked`(되묻기로 끝남)를 더했다. `doc_hit` 은 모델에게 넘긴 `growth_doc` 행 수(교육 [예시] + 루틴 다음 단계)다. 결과 · ms · timeout 은 pipeline 의 `도메인 task …` 줄에 있고 `run_id` 로 잇는다. `status=cancelled model_calls=2`(재호출 중 끊김)가 나오면 Activity · Food 와 같이 "재호출 전 남은 예산 보기" 를 후속으로 연다.
+
+    journalctl CONTAINER_NAME=ktc4-api --since "1 hour ago" | grep -E "growth run|도메인 task"
+
+### 11-6. 운영 켜기 — 배포 체크리스트 · 스모크
+
+**배포 전 (서버 `apps/api/.env`, 운영 담당)**
+
+| # | 확인 | 어떻게 |
+| --- | --- | --- |
+| 1 | `GROWTH_API_KEY` · `GROWTH_BASE_URL` · `GROWTH_MODEL` · `GROWTH_REASONING_EFFORT` 를 `ACTIVITY_*` 와 같은 값으로(비어 있으면 같이 비운다 → `MEMORY_*`) | Growth 는 Activity 와 같은 tool 루프(`tool_choice=required`)다. 엘리스 밖 회사 주소면 처리방침 "외부로 보내는 곳" 부터 고친다(`core/agent_config.py` 머리말) |
+| 2 | 읽은 키 이름 확인 — 값은 찍히지 않는다 | `docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env run --rm api uv run --no-sync python -c "from app.agents.common.config import get_agent_settings as g; s = g(); print(s.profile('growth').keys, s.profile('activity').keys)"` → 두 dict 의 키 이름이 같다. `AgentConfigError` 면 MODEL · BASE_URL 중 하나만 채운 것 |
+| 3 | 이미지에 참조 파일 | `.dockerignore` 는 `.env*` · `tests/` 만 뺀다. 같은 `run --rm api uv run --no-sync python -c "from collections import Counter; from app.agents.growth.doc_seed import growth_doc_seed as s; print(Counter(e.meta.status for e in s()))"` → `approved` 수가 `growth_doc.yaml` 검수 결과와 같다 |
+| 4 | 마이그레이션 | Growth 는 새 revision 이 없다(`child_growth_log` · `suggestion` 은 develop 에 있다). 배포 workflow 의 `make deploy-migrate` 그대로 |
+| 5 | 헬스체크 | compose 의 `/health` 200. `age_gates.yaml` · `growth.readout.yaml` · `growth_closures.yaml` 은 import · 첫 run 에 읽어서 빠지면 api 가 안 뜨거나 모든 run 이 실패한다 — 5 가 통과하면 3 의 파일도 있다 |
+
+**배포 뒤 스모크 (테스트 계정 — 실제 아이 정보 금지)**
+
+준비: 팀 테스트 계정에 아이 하나(별명 "테스트", 생일은 30개월 전, 건강정보 동의 켬). 07 성장 기록에 키 · 몸무게 두 건을 날짜를 달리해 직접 넣는다. 하루 한도(`INPUT_DAILY_LIMIT=5`)가 보호자당이라 아래 다섯 줄이 딱 한도다 — 다시 하려면 다음 날이나 두 번째 테스트 계정.
+
+| # | 입력 | 정상 | 로그(`growth run`) |
+| --- | --- | --- | --- |
+| S1 | 잘 크고 있어? | Growth 블록 — 측정일 두 개 + 검진 안내. 판정 · 비교 문구 없음 | `task_type=growth_review status=completed model_calls=0` |
+| S2 | 오늘 양치는 아빠가 도와줘서 했어. 혼자 하게 하려면 어떻게 해? | 기록 저장 + 루틴 추천(근거가 이 run 의 양치 기록, "후보 보기" 로 연 05 가 같은 카드) 또는 "요즘 어느 정도까지 혼자 하나요?" 되묻기 한 줄 — 둘 다 정상. `partial` · 실패 카드면 키 설정부터 본다(모델을 처음 부르는 경로다) | `routine_coaching status=completed model_calls=1` · `evidence_mode=personalized` 또는 `asked=True` |
+| S3 | 숫자 놀이 뭐 해 볼까? | 교육 추천 카드(기록이 없으면 일반 추천 · 출처 카드) | `learning_suggestion status=completed` · `doc_hit` 1 이상 |
+| S4 | 공룡 책이랑 숫자 놀이 추천해줘 | 숫자 놀이(교육)만 돌고 "한 번에 한 가지씩" 안내. 도서 닫힘 안내는 없다 | `learning_suggestion` 한 줄뿐 |
+| S5 | 오늘 블록 쌓는 거 배웠대 | 기록 저장만 · Growth 블록 없음 | 줄 없음 |
+
+- 끝나고 `journalctl CONTAINER_NAME=ktc4-api --since "30 min ago" | grep "growth run"` → 네 줄(S1 ~ S4). 줄에 입력 문장이 없다
+- 그동안 Discord 에 ERROR 알림이 없다
+- 하나라도 정상이 아니면 §11-4 로 끄고 원인을 본다
 
 ---
 
