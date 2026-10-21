@@ -9,13 +9,25 @@
   의 사전 로더와 같은 값인지는 테스트(`tests/unit/core/test_symptom_codes.py`)가 본다.
 - 초안 계약(`ScheduleDraft`)은 이 검사를 하지 않는다. 사전에서 빠진 옛 코드를 가진 코스의
   수정 초안이 만들어져야 해서, 거르는 일은 제출 요청 모델이 이 함수를 쓰는 것으로 한다.
+- 수정 제출이면 DB 에 이미 저장된 코드는 통과시키고 새로 들어온 코드만 거른다.
+  화면은 이 칸을 고칠 수 없어서, 사전에서 빠진 옛 코드("retired_code")를 그대로 거르면 보호자가
+  그 코스를 계속 고치지 못한다.
 
 ```python
-class SubmitMedicationBody(BaseModel):
+class SubmitMedicationBody(BaseModel):          # 생성 제출
     symptom_codes: list[str] = []
 
     _codes = field_validator("symptom_codes")(validate_symptom_codes)
+
+
+# 수정 제출 — 저장된 값은 통과, 새로 들어온 것만
+validate_symptom_codes([c for c in body.symptom_codes if c not in row.symptom_codes])
 ```
+
+이 이중 점검을 다른 도메인에 넓히는 기준은 "Agent 가 만든 값이 화면을 거쳐 제출 본문으로
+되돌아오는가" 다. Food · Activity 추천은 서버가 바로 저장하고 화면은 id 만 보내서 해당하지
+않고, 일정 초안은 `event_type` · `category` 를 Literal 로 이미 거른다. 같은 구조가 새로 생기면
+그때 정한다.
 """
 
 from collections.abc import Sequence

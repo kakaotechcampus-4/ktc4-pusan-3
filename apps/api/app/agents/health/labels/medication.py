@@ -59,7 +59,11 @@ from app.agents.health.tools.drafts import (
     update_for,
 )
 from app.agents.health.tools.spans import normalize_spaces
-from app.agents.health.tools.timing import anchors_named, resolve_dose_answer
+from app.agents.health.tools.timing import (
+    anchors_named,
+    resolve_dose_answer,
+    resolve_dose_timing,
+)
 from app.core.medication_draft import MedicationDraft
 
 logger = logging.getLogger(__name__)
@@ -298,12 +302,21 @@ async def _resume_timing(
         if op not in ("create", "update"):
             raise ValueError(op)
         schedule_id = payload.get("schedule_id")
+        same = payload.get("same_time", False)
+        if not isinstance(same, bool):
+            raise TypeError(same)
     except (KeyError, ValueError, TypeError) as exc:
         raise _BadPending from exc
 
     answer = " ".join(texts)
-    timing = resolve_dose_answer(spans, answer, months=await child_months(context))
-    spans = [*spans, answer]
+    months = await child_months(context)
+    if same:
+        # 같은 시각이라 하나씩 물었다 — 답이 새 시각 전부다. 원래 말에 이어 붙이면 또 겹친다.
+        # 바꿀 회차는 원래 말로만 가린다(답의 "저녁 8시" 의 저녁은 저녁 회차를 가리키지 않는다)
+        timing = resolve_dose_timing([answer], months=months)
+    else:
+        timing = resolve_dose_answer(spans, answer, months=months)
+        spans = [*spans, answer]
     if timing is None:
         context.state.readouts.append(READOUTS.render(MED_TIMING_UNCLEAR))
         return

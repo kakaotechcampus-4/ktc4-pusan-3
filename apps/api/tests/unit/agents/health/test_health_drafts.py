@@ -25,11 +25,13 @@ from app.agents.health.store.ports import DoseSlot
 from app.agents.health.tools.drafts import (
     Ambiguous,
     create_medication_schedule,
+    finish_create,
     pick_course,
     stop_medication_schedule,
     update_for,
     update_medication_schedule,
 )
+from app.agents.health.tools.timing import ResolvedDose
 from tests.unit.agents.health.support import TODAY, birth_for, context
 
 PATTERN = (DoseSlot.of("breakfast", 30), DoseSlot.of("lunch", 30), DoseSlot.of("dinner", 30))
@@ -998,3 +1000,74 @@ class TestNearestIsFixedOnly:
 
         [draft] = ctx.state.drafts
         assert draft.notice_times == ["08:30", "12:30", "20:00"]
+
+
+class TestSameTimeAsks:
+    """같은 시각 회차가 둘이 되면 초안을 내지 않고 시각을 하나씩 묻는다.
+
+    전에는 계약 검증(같은 시각 둘 금지)에 걸려 INVALID_ARGS 를 돌려줬다. span 은 원문 복사라 모델이
+    고칠 수 없어 같은 호출을 되풀이하다 failed 로 끝났다.
+    """
+
+    async def test_새_약의_시각이_겹치면_시각을_하나씩_묻는다(self):
+        ctx, store = world(text="항생제 저녁 먹고 30분 뒤랑 자기 전", birth=birth_for(12))
+
+        result = await create_medication_schedule(
+            ctx,
+            create_args(title_span="항생제", timing_spans=["저녁 먹고 30분 뒤", "자기 전"]),
+        )
+
+        assert result.success and ctx.state.drafts == []
+        pending = ctx.state.pending
+        assert pending is not None and pending.kind == "dose_timing"
+        assert pending.payload["same_time"] is True
+        assert ctx.state.question == READOUTS.render("ask.dose_same_time").body
+        assert store.writes == []
+
+    async def test_수정으로_남은_회차와_겹치면_시각을_하나씩_묻는다(self):
+        # 영아 코스(저녁 식후 19:30)에 "자기 전에도" — 영아 자기 전은 고정 19:30
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 자기 전에도 먹여줘", birth=birth_for(12))
+
+        result = await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["자기 전"])
+        )
+
+        assert result.success and ctx.state.drafts == []
+        pending = ctx.state.pending
+        assert pending is not None and pending.payload["same_time"] is True
+        assert pending.payload["schedule_id"] == str(course.id)
+        assert ctx.state.question == READOUTS.render("ask.dose_same_time").body
+
+    async def test_겹치지_않으면_묻지_않는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 자기 전에도 먹여줘", birth=birth_for(48))
+
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["자기 전"])
+        )
+
+        [draft] = ctx.state.drafts
+        assert draft.notice_times == ["08:30", "12:30", "19:30", "20:30"]
+        assert ctx.state.pending is None
+
+
+class TestContractRejectionEndsCleanly:
+    def test_화면에_못_나갈_초안은_실패가_아니라_안내로_끝낸다(self):
+        # 마지막 안전망 — 계약 검증에 걸리면 모델에게 실패를 돌려주지 않는다(모델이 고칠 수 없다)
+        ctx, _ = world(text="항생제")
+        twice = [ResolvedDose("dinner", 30, None), ResolvedDose("fixed", 0, time(19, 30))]
+
+        result = finish_create(
+            ctx,
+            title="항생제",
+            dosage=None,
+            indication_text=None,
+            starts_on=TODAY,
+            ends_on=None,
+            timing=twice,
+        )
+
+        assert result.success and result.data["draft"] is False
+        assert ctx.state.drafts == []
+        assert [r.body for r in ctx.state.readouts] == [READOUTS.render("med.timing_unclear").body]

@@ -38,6 +38,7 @@ from tests.unit.agents.health.support import (
     NOW,
     TODAY,
     FakeLLM,
+    birth_for,
     call,
     calls,
     context,
@@ -1023,3 +1024,57 @@ class TestResumeStopRereadsActive:
         assert [r.body for r in result.readouts] == [
             READOUTS.render("med.stopped", title="항생제").body
         ]
+
+
+class TestSameTimeFlow:
+    async def test_영아의_같은_시각은_묻고_답으로_푼다(self):
+        ctx, store = world(birth=birth_for(12))
+        llm = FakeLLM(
+            call(
+                "create_medication_schedule",
+                {"title_span": "항생제", "timing_spans": ["저녁 먹고 30분 뒤", "자기 전"]},
+            )
+        )
+
+        first = await run(med("항생제 저녁 먹고 30분 뒤랑 자기 전에 먹여"), ctx, client=llm)
+
+        assert first.status == "completed" and first.model_calls == 1
+        assert first.needs_observation == (READOUTS.render("ask.dose_same_time").body,)
+        assert first.medication_drafts == ()
+
+        result = await run(med("저녁 7시 반, 저녁 8시"), next_turn(ctx, first), client=FakeLLM())
+
+        [draft] = result.medication_drafts
+        assert draft.notice_times == ("19:30", "20:00")
+        assert result.model_calls == 0 and store.writes == []
+
+    async def test_수정에서_겹치면_묻고_답한_시각만_더한다(self):
+        ctx, _ = world(antibiotic(), birth=birth_for(12))
+        llm = FakeLLM(
+            call(
+                "update_medication_schedule", {"title_span": "항생제", "timing_spans": ["자기 전"]}
+            )
+        )
+        first = await run(med("항생제 자기 전에도 먹여줘"), ctx, client=llm)
+        assert first.needs_observation == (READOUTS.render("ask.dose_same_time").body,)
+
+        result = await run(med("저녁 8시요"), next_turn(ctx, first), client=FakeLLM())
+
+        # 저녁 식후(19:30)는 그대로 두고 답한 시각만 더한다 — 답의 "저녁" 은 회차를 가리키지 않는다
+        [draft] = result.medication_drafts
+        assert draft.notice_times == ("08:30", "12:30", "19:30", "20:00")
+
+    async def test_답도_겹치면_안내만_한다(self):
+        ctx, _ = world(birth=birth_for(12))
+        llm = FakeLLM(
+            call(
+                "create_medication_schedule",
+                {"title_span": "항생제", "timing_spans": ["저녁 먹고 30분 뒤", "자기 전"]},
+            )
+        )
+        first = await run(med("항생제 저녁 먹고 30분 뒤랑 자기 전에 먹여"), ctx, client=llm)
+
+        result = await run(med("저녁 7시 반이랑 자기 전"), next_turn(ctx, first), client=FakeLLM())
+
+        assert result.medication_drafts == () and result.pending is None
+        assert [r.body for r in result.readouts] == [READOUTS.render("med.timing_unclear").body]

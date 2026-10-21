@@ -34,6 +34,7 @@ MED_STOP_KEPT = "med.stop_kept"
 ASK_DOSE_TIMING = "ask.dose_timing"
 ASK_WHICH_MED = "ask.which_med"
 ASK_DOSE_CLOCK = "ask.dose_clock"  # 시각이 모호하다 — 오전 · 오후까지 묻는다
+ASK_DOSE_SAME_TIME = "ask.dose_same_time"  # 다른 회차가 같은 시각 — 하나씩 묻는다
 MED_WHICH_UNCLEAR = "med.which_unclear"  # 되묻기 답을 못 가렸다 — 쓰지 않는다
 MED_TIMING_UNCLEAR = "med.timing_unclear"
 MED_NO_CHANGE = "med.no_change"  # 수정인데 지금 값과 같다

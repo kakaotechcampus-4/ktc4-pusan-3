@@ -71,6 +71,10 @@ ask.which_med:
 ask.dose_clock:
   kind: ask
   template: "몇 시인지 오전 · 오후까지 숫자로 말씀해 주세요. 예: 저녁 8시"
+# 다른 회차가 같은 시각에 겹친다(영아의 자기 전 19:30 과 저녁 식후 19:30) — 합치지 않고 하나씩 묻는다
+ask.dose_same_time:
+  kind: ask
+  template: "같은 시각에 두 번 먹이게 돼요. 먹일 시각을 하나씩 말씀해 주세요. 예: 저녁 7시 반, 저녁 8시"
 # 되묻기에 대한 답을 못 알아들었을 때. 아무것도 쓰지 않고 다시 묻지도 않는다
 med.which_unclear:
   kind: medication_notice

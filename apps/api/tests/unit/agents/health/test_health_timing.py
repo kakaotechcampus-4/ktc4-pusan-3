@@ -19,6 +19,7 @@ from app.agents.health.tools.timing import (
     resolve_dose_answer,
     resolve_dose_timing,
     resolve_period,
+    same_time,
     unclear_clock,
 )
 from app.core.medication_draft import OFFSET_MAX, OFFSET_MIN
@@ -493,3 +494,28 @@ class TestVerbatimSlashAndPeriod:
     )
     def test_분수_소수점_조각은_계속_거절(self, span, source):
         assert is_verbatim(span, [source]) is False
+
+
+class TestSameTimeIsNotResolved:
+    """풀린 회차 둘이 같은 시각이면 합치지 않고 풀지 않는다 — 합치면 두 번 먹일 약이 한 번이다."""
+
+    def test_영아의_저녁_식후와_자기_전은_같은_시각이라_풀지_않는다(self):
+        # 저녁 19:00 + 30 = 19:30, 영아 자기 전 = 고정 19:30
+        spans = ["저녁 먹고 30분 뒤", "자기 전"]
+
+        assert resolve_dose_timing(spans, months=12) is None
+        assert same_time(spans, months=12) is True
+
+    def test_영아가_아니면_자기_전이_20_30_이라_풀린다(self):
+        spans = ["저녁 먹고 30분 뒤", "자기 전"]
+
+        assert times(spans) == [time(19, 30), time(20, 30)]
+        assert same_time(spans, months=48) is False
+
+    def test_영아가_아니어도_같은_시각이면_풀지_않는다(self):
+        # 저녁 식사 때(19:00) · 저녁 7시(19:00)
+        assert resolve_dose_timing(["저녁 식사 때", "저녁 7시"], months=48) is None
+        assert same_time(["저녁 식사 때", "저녁 7시"], months=48) is True
+
+    def test_못_푼_말은_같은_시각이_아니다(self):
+        assert same_time(["하루 세 번"], months=48) is False

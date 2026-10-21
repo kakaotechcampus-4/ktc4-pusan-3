@@ -214,7 +214,7 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 - `op="update"`면 `schedule_id`와 `before`(수정 전 원본)가 더 실린다. 화면이 "19:30 → 20:00"을 보여주는 데 쓴다
 - **`missing`은 비어 있는 NOT NULL 칸의 이름이다**(`title` · `starts_on` · `ends_on`). 비어 있지 않으면 화면이 제출 버튼을 잠근다. 보호자가 채워서 보내야 INSERT가 성립한다. 발화에 기간이 없으면 Agent 는 `ends_on` 을 짐작하지 않고 여기에 싣는다
 - `storage` · `med_form` · `note`(투약의뢰서 특이사항)는 **Agent 가 비워 두고 보호자가 카드에서 채우는 선택 칸**이다. 비어도 `missing` 이 아니다
-- `schedule.symptom_codes` 는 **Agent 가 `indication_text` 를 증상 사전으로 맞춰 싣는 코드 목록**이다(없으면 `[]`, 모델 인자에는 이 칸이 없다). 제출 API 는 받은 값을 그대로 `medication_schedule.symptom_codes` 에 저장하고, 카드는 이 칸을 보여 주거나 고치지 않는다. 사전에 없는 말("중이염")은 코드가 되지 않는다
+- `schedule.symptom_codes` 는 **Agent 가 `indication_text` 를 증상 사전으로 맞춰 싣는 코드 목록**이다(없으면 `[]`, 모델 인자에는 이 칸이 없다). 제출 API 는 사전 안의 코드인지 거른 뒤(`app/core/symptom_codes.py`) `medication_schedule.symptom_codes` 에 저장한다 — 수정 제출이면 이미 저장된 코드는 통과시키고 새로 들어온 코드만 거른다(사전에서 빠진 옛 코드 때문에 수정이 막히지 않게). 카드는 이 칸을 보여 주거나 고치지 않는다. 사전에 없는 말("중이염")은 코드가 되지 않는다
 - 검증은 DB CHECK 를 그대로 옮긴다(`fixed` ↔ `fixed_time` · offset −120 ~ 180 · 같은 시각 둘 금지 · `ends_on` ≥ `starts_on`). 초안을 그대로 제출했는데 DB 에서 터지는 일이 없게 한다. 모양은 `app/core/medication_draft.py`
 - 처방전 카드의 "빈칸 + 등록 잠김"은 **다른 잠금이다.** 그쪽은 OCR 신뢰도가 낮은 칸을 잠그는 것이라 nullable 칸(`dosage` 등)도 대상이 된다. 둘 다 통과해야 제출된다
 - `draft_id`는 **화면 전용 키**다 — 화면이 초안을 가리키고 세션 스토리지 키로 쓴다. 서버는 읽지 않고 제출 요청에도 싣지 않는다(`event-draft-flow-v1.md` §4-4). 배열 인덱스로는 안 된다 — 초안 두 장 중 하나만 제출하면 인덱스가 밀린다
@@ -353,7 +353,7 @@ CREATE TABLE prescription_draft (
 | M-5 | ✅ **닫힘(10-20)** — `days_of_week` 는 없앴다 | 회차가 날짜별 행이라 "격일 복용"은 패턴이 아니라 행을 건너뛰는 일이 된다. 요구가 오면 초안 모양부터 다시 연다 |
 | M-6 | **`prescription_draft` 만료 기간** | 미확인 draft를 며칠 둘지 |
 | M-7 | **`symptom_codes` 사전 범위** (H-8과 동일) | 에피소드·반복 판정과 같은 어휘 |
-| M-16 | **`symptom_codes` 를 사전과 맞추는 위치** | **지금은 Agent**(`symptom_codes_of`)가 맞춰 초안에 싣는다 — Food 와 같은 방식이다. 제출 API 는 `app/core/symptom_codes.py` 의 코드 집합으로 사전 안의 코드인지 한 번 더 거른다(PR #544 리뷰 — core 는 `agents` 를 import 하지 않아 같은 yaml 의 코드만 따로 읽고, 테스트가 Health 사전과 같은 값인지 본다). 맞추는 위치 자체를 제출 때 BE 로 옮길지는 이 값을 읽는 기능(진료 준비 정리 등)이 생길 때 같이 정한다. 옮기면 초안의 이 칸은 빠진다 |
+| M-16 | **`symptom_codes` 를 사전과 맞추는 위치** | **지금은 Agent**(`symptom_codes_of`)가 맞춰 초안에 싣는다 — Food 와 같은 방식이다. 제출 API 는 `app/core/symptom_codes.py` 의 코드 집합으로 사전 안의 코드인지 한 번 더 거른다(PR #544 리뷰 — core 는 `agents` 를 import 하지 않아 같은 yaml 의 코드만 따로 읽고, 테스트가 Health 사전과 같은 값인지 본다). 수정 제출에서는 저장된 코드를 통과시키고 새 코드만 거른다. 맞추는 위치 자체를 제출 때 BE 로 옮길지는 이 값을 읽는 기능이 생길 때 같이 정한다(진료 준비 정리 #6 은 읽지 않는다). 옮기면 초안의 이 칸은 빠진다. 이 이중 점검을 다른 도메인에 넓히는 기준은 "Agent 가 만든 값이 화면을 거쳐 제출 본문으로 되돌아오는가" 다 — Food · Activity 추천은 해당하지 않고 일정 초안은 Literal 로 이미 거른다 |
 | M-8 | ✅ **닫힘(10-20)** — 체크 정정은 보호자 화면에서 회차를 해제하는 것 | 체크는 되돌릴 수 있어서 승인 게이트가 아니다. Agent 는 체크를 쓰지 않는다 |
 | M-9 | `storage` · `med_form`을 누가 묻나 | 등록 카드의 선택 입력. 비어도 서식은 생성 |
 | M-10 | 보호자 입력 접종 이력(`immunization_record`) | 도입하면 접종 안내가 개인 일정이 된다. 이번 범위 밖 |

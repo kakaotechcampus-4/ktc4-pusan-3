@@ -33,6 +33,7 @@ from app.agents.common.result import DomainPending
 from app.agents.health.context import HealthContext
 from app.agents.health.readouts import (
     ASK_DOSE_CLOCK,
+    ASK_DOSE_SAME_TIME,
     ASK_DOSE_TIMING,
     ASK_WHICH_MED,
     MED_CONFIRM,
@@ -40,6 +41,7 @@ from app.agents.health.readouts import (
     MED_ONE_AT_A_TIME,
     MED_PERIOD_UNCLEAR,
     MED_STOP_CONFIRM,
+    MED_TIMING_UNCLEAR,
     MED_UPDATE_CONFIRM,
     NOTICE_NO_ACTIVE_MED,
     READOUTS,
@@ -56,8 +58,10 @@ from app.agents.health.tools.symptoms import symptom_codes_of
 from app.agents.health.tools.timing import (
     ResolvedDose,
     anchors_named,
+    has_same_time,
     resolve_dose_timing,
     resolve_period,
+    same_time,
     unclear_clock,
 )
 from app.core.medication_draft import (
@@ -138,9 +142,17 @@ async def create_medication_schedule(
         starts_on=starts_on,
         ends_on=ends_on,
     )
-    timing = resolve_dose_timing(args.timing_spans, months=await child_months(context))
+    months = await child_months(context)
+    timing = resolve_dose_timing(args.timing_spans, months=months)
     if timing is None:
-        return _ask_timing(context, CREATE, "create", _spans(args.timing_spans), fields)
+        return _ask_timing(
+            context,
+            CREATE,
+            "create",
+            _spans(args.timing_spans),
+            fields,
+            same=same_time(args.timing_spans, months=months),
+        )
     return finish_create(context, timing=timing, **fields)
 
 
@@ -256,16 +268,19 @@ async def _update_for(
     dosage = dosage_span or base.schedule.dosage
     if timing_spans is None:  # 시점은 안 바뀌었다
         return finish_update(context, course, dosage=dosage, ends_on=ends_on, timing=None)
-    timing = resolve_dose_timing(timing_spans, months=await child_months(context))
+    months = await child_months(context)
+    timing = resolve_dose_timing(timing_spans, months=months)
     if timing is None:
-        fields = dict(
-            title=base.schedule.title,
-            dosage=dosage,
-            indication_text=base.schedule.indication_text,
-            starts_on=base.schedule.starts_on,
-            ends_on=ends_on,
+        fields = _ask_fields(base, dosage=dosage, ends_on=ends_on)
+        return _ask_timing(
+            context,
+            UPDATE,
+            "update",
+            timing_spans,
+            fields,
+            course=course,
+            same=same_time(timing_spans, months=months),
         )
-        return _ask_timing(context, UPDATE, "update", timing_spans, fields, course=course)
     return finish_update(
         context,
         course,
@@ -273,6 +288,17 @@ async def _update_for(
         ends_on=ends_on,
         timing=timing,
         named=anchors_named(timing_spans),
+        timing_spans=timing_spans,
+    )
+
+
+def _ask_fields(base: "_Base", *, dosage: str | None, ends_on: date) -> dict[str, Any]:
+    return dict(
+        title=base.schedule.title,
+        dosage=dosage,
+        indication_text=base.schedule.indication_text,
+        starts_on=base.schedule.starts_on,
+        ends_on=ends_on,
     )
 
 
@@ -349,6 +375,7 @@ def finish_update(
     ends_on: date,
     timing: Sequence[ResolvedDose] | None,
     named: set[TimingAnchor] | None = None,
+    timing_spans: list[str] | None = None,
 ) -> ToolResult:
     """수정 초안. 일정처럼 **전체 값**(지금 값에 바뀐 값을 얹은 것)과 `before` 를 싣는다.
 
@@ -368,6 +395,20 @@ def finish_update(
         # 끼니를 말했으면 그 회차만 바꾸고, 안 말했으면("하루 두 번 식후로") 패턴 전체를 바꾼다
         kept = _replace_named(current, named) if named else []
         doses = kept + _dose_drafts(timing)
+        if has_same_time(doses):
+            # 남은 회차와 새 회차가 같은 시각이다(영아 코스에 "자기 전에도" — 19:30 끼리).
+            # 합치지 않는다
+            if timing_spans is None:  # 되묻기에 대한 답으로도 겹친다 — 다시 묻지 않는다
+                return fail(
+                    "draft",
+                    UPDATE,
+                    ErrorCode.INVALID_ARGS,
+                    "답한 시각도 남은 회차와 겹친다.",
+                )
+            fields = _ask_fields(base, dosage=dosage, ends_on=ends_on)
+            return _ask_timing(
+                context, UPDATE, "update", timing_spans, fields, course=course, same=True
+            )
     schedule = base.schedule.model_copy(update={"dosage": dosage, "ends_on": ends_on})
     if _same(base.schedule, current, schedule, doses):
         # 같은 값으로 "바꿀까요?" 카드를 띄우지 않는다
@@ -428,13 +469,11 @@ def _publish(
             before=before,
         )
     except ValidationError:
-        # 화면에 못 나갈 초안(같은 시각 둘 등)은 내지 않는다. 값은 메시지에 싣지 않는다
-        return fail(
-            "draft",
-            resource,
-            ErrorCode.INVALID_ARGS,
-            "초안이 계약과 맞지 않는다(같은 시각이 겹치는 등). 시점을 확인해 다시 호출한다.",
-        )
+        # 화면에 못 나갈 초안은 내지 않는다. span 은 원문 복사라 모델이 고칠 수 없으니 실패로
+        # 돌려주지 않고(되풀이하다 failed 가 된다) 안내로 끝낸다. 같은 시각은 앞에서 되물어
+        # 여기 오지 않는다
+        _note(context, MED_TIMING_UNCLEAR)
+        return ok("draft", resource, draft=False)
     state = context.state
     # 같은 draft_id 면 그 자리를 갈아 끼운다 — 한 약의 수정은 한 장이다(일정의 DraftBook 과 같다)
     index = next(
@@ -545,10 +584,13 @@ def _ask_timing(
     fields: Mapping[str, Any],
     *,
     course: MedicationCourse | None = None,
+    same: bool = False,
 ) -> ToolResult:
     """시점을 못 풀었다 — 짐작하지 않고 되묻는다. 시점 밖 칸은 맥락에 실어 다음 run 이 이어 간다.
 
     시각이 모호해서("8시에") 못 풀었으면 식전 · 식후가 아니라 몇 시인지(오전 · 오후)를 묻는다.
+    다른 회차가 같은 시각에 겹쳐서(`same`) 못 풀었으면 시각을 하나씩 묻고, 맥락에 `same_time` 을
+    싣는다 — 이어받는 run 은 답을 원래 말에 이어 붙이지 않고 답만으로 푼다.
     """
     if busy := _busy(context, resource, courses=(course,) if course else ()):
         return busy
@@ -562,14 +604,17 @@ def _ask_timing(
     }
     if course is not None:
         payload["schedule_id"] = str(course.id)
+    if same:
+        payload["same_time"] = True
+        question = ASK_DOSE_SAME_TIME
+    else:
+        question = ASK_DOSE_CLOCK if unclear_clock(timing_spans) else ASK_DOSE_TIMING
     _ask(
         context,
         DomainPending(
             agent=AGENT,
             kind=KIND_TIMING,
-            question=READOUTS.render(
-                ASK_DOSE_CLOCK if unclear_clock(timing_spans) else ASK_DOSE_TIMING
-            ).body,
+            question=READOUTS.render(question).body,
             payload=payload,
         ),
     )

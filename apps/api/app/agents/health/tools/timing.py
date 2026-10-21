@@ -8,6 +8,8 @@
   알림이 나간다. 호출하는 쪽이 되묻는다. 오전 · 오후를 모르는 "3시" 도 짐작하지 않는다.
 - 끼니가 붙으면 그 끼니, 안 붙고 "하루 세 번" 이면 세 끼니, "하루 두 번" 이면 아침 · 저녁이다.
   끼니 수와 말한 횟수가 안 맞으면(하루 세 번 + 오후 3시) 풀지 않는다.
+- 풀린 회차 둘이 같은 시각이면 합치지 않고 풀지 않는다(`same_time` 이 참) — 영아의 자기 전(고정
+  19:30)과 저녁 식후(19:00 + 30)처럼. 합치면 두 번 먹일 약이 한 번이 된다.
 - 식전 · 식후를 둘 다 말했거나 따로 온 말이 서로 다르면 하나를 고르지 않는다 — 반대편 시각이
   카드에 뜬다. 자기 전 · 일어나서에 분 · 시간이 붙은 말("자기 전 30분")도 풀지 않는다 — 그 오프셋을
   버리면 말한 시각이 아니다.
@@ -21,6 +23,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, time, timedelta
+from typing import Any
 
 from app.agents.common.reference import age_gates
 from app.agents.health.tools.spans import normalize_spaces
@@ -103,8 +106,28 @@ def resolve_dose_timing(spans: Sequence[str], *, months: int) -> tuple[ResolvedD
     """시점 표현들 → 하루 시각 패턴. 풀지 못하면 None — 호출하는 쪽이 되묻는다.
 
     `spans` 는 모델이 복사한 표현이거나, 되묻기에 대한 답까지 이어 붙인 것이다
-    (`["하루 세 번", "식후요"]`). 시각순으로 정렬하고 같은 시각은 하나로 합친다.
+    (`["하루 세 번", "식후요"]`). 시각순으로 정렬하고 똑같은 회차는 하나로 합친다. 다른 회차가 같은
+    시각에 겹치면 합치지 않고 풀지 않는다 — 그때 되묻는 말은 `same_time` 으로 고른다.
     """
+    doses = _doses(spans, months=months)
+    if doses is None or has_same_time(doses):
+        return None
+    return doses
+
+
+def same_time(spans: Sequence[str], *, months: int) -> bool:
+    """풀리기는 하는데 다른 회차 둘이 같은 시각이다. 되묻는 말이 "시각을 하나씩" 이 된다."""
+    doses = _doses(spans, months=months)
+    return doses is not None and has_same_time(doses)
+
+
+def has_same_time(doses: Sequence[Any]) -> bool:
+    """`scheduled_time` 이 같은 회차가 둘 이상인가. 초안 계약(같은 시각 둘 금지)과 같은 기준이다."""
+    times = [dose.scheduled_time for dose in doses]
+    return len(set(times)) != len(times)
+
+
+def _doses(spans: Sequence[str], *, months: int) -> tuple[ResolvedDose, ...] | None:
     parsed = [_parse(normalize_spaces(span)) for span in spans if span.strip()]
     if not parsed or any(p.ambiguous for p in parsed) or _conflicting(parsed):
         return None
@@ -112,18 +135,21 @@ def resolve_dose_timing(spans: Sequence[str], *, months: int) -> tuple[ResolvedD
     # 끼니 없이 시점만 말한 span("식후요")의 값은 끼니만 말한 span("아침") 에도 쓴다
     shared = next(iter(_shared_offsets(parsed)), None)
 
-    doses: list[ResolvedDose] = []
+    # (어떤 말에서 왔는가, 회차). 같은 말을 되풀이한 것만 하나로 합친다 — 영아의 자기 전
+    # (고정 19:30)과 "저녁 7시 반" 은 둘 다 fixed 19:30 이지만 다른 회차다
+    found: dict[tuple[str, ResolvedDose], None] = {}
     for p in parsed:
         meal_offset = p.offset if p.offset is not None else (shared or 0)
-        doses += [ResolvedDose(meal, meal_offset, None) for meal in p.meals]
-        doses += [ResolvedDose("fixed", 0, clock) for clock in p.clocks]
+        found.update(dict.fromkeys(("meal", ResolvedDose(m, meal_offset, None)) for m in p.meals))
+        found.update(dict.fromkeys(("clock", ResolvedDose("fixed", 0, c)) for c in p.clocks))
         if p.wake:
-            doses.append(ResolvedDose("wake_up", 0, None))
+            found[("wake", ResolvedDose("wake_up", 0, None))] = None
         if p.bedtime:
-            doses.append(_bedtime(months))
+            found[("bedtime", _bedtime(months))] = None
+    doses = [dose for _, dose in found]
 
     if doses:
-        if count is not None and len(set(doses)) != count:
+        if count is not None and len(doses) != count:
             return None  # "하루 세 번" 인데 시각은 하나 — 어느 쪽이 맞는지 모른다
         if not any(p.meals for p in parsed) and any(p.offset is not None for p in parsed):
             return None  # "식사 30분 전, 자기 전" — 어느 끼니의 오프셋인지 모른다
@@ -136,7 +162,7 @@ def resolve_dose_timing(spans: Sequence[str], *, months: int) -> tuple[ResolvedD
 
     if any(not OFFSET_MIN <= dose.offset_minutes <= OFFSET_MAX for dose in doses):
         return None
-    return tuple(sorted(set(doses), key=lambda dose: dose.scheduled_time))
+    return tuple(sorted(doses, key=lambda dose: dose.scheduled_time))
 
 
 def _shared_offsets(parsed: Sequence[_Parsed]) -> set[int]:
