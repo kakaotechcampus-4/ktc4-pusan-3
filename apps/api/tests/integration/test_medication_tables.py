@@ -293,6 +293,23 @@ async def test_진행_중은_active_이면서_오늘_끝나지_않은_코스(ses
     assert list(titles.scalars()) == ["내일 끝남", "오늘 끝남"]
 
 
+async def test_아직_시작하지_않은_코스는_진행_중이_아니다(session, child):
+    # 응급 카드 "복용 중인 약" 에 시작 전인 약이 실리지 않게. #544 active_courses 와 같은 정의
+    today = date(2026, 10, 21)
+    end = today + timedelta(days=5)
+    await add_schedule(session, child, title="오늘 시작", starts_on=today, ends_on=end)
+    await add_schedule(
+        session, child, title="내일 시작", starts_on=today + timedelta(days=1), ends_on=end
+    )
+
+    titles = await session.execute(
+        select(MedicationSchedule.title).where(
+            MedicationSchedule.child_id == child.id, in_progress(today)
+        )
+    )
+    assert list(titles.scalars()) == ["오늘 시작"]
+
+
 async def test_진행_중_판정은_넘겨받은_오늘을_쓴다(session, child):
     # DB 의 CURRENT_DATE(UTC)가 아니라 인자로 받은 KST 오늘이 기준이다
     await add_schedule(session, child, ends_on=date(2000, 1, 1), starts_on=date(2000, 1, 1))

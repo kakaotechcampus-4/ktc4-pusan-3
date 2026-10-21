@@ -178,5 +178,6 @@ def in_progress(today: date) -> ColumnElement[bool]:
     """
     return and_(
         MedicationSchedule.status == MedicationStatus.ACTIVE,
+        MedicationSchedule.starts_on <= today,
         MedicationSchedule.ends_on >= today,
     )
