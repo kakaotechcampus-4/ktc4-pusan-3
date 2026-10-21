@@ -14,8 +14,10 @@
             아니라 `XFAIL · 알고 있는 구멍 — …` 으로 적는다. 남은 일이 눈에 보이는 게 목적이다
   notes     판정 못 한 것 · 세계에 아직 없는 데이터
 
-아이 · 동의 · 안전 정보는 전부 가짜다(`world.py`). 모델을 부르는 라벨이 아직 없어서 LLM 키 없이도
-끝까지 돈다. 결과는 `test_health_run_results.jsonl` 에 한 줄씩 남는다.
+아이 · 동의 · 안전 정보 · 복약 코스는 전부 가짜다(`world.py`). 모델을 부르는 케이스
+(T01–T05 · T12–T16)만 LLM 설정(`HEALTH_*` 또는 `MEMORY_*`)이 필요하고, 나머지는 키 없이도 끝까지
+돈다. 되묻기를 이어받는 케이스는 `followups` 로 다음 턴을 이어 돈다(`runner.py`).
+결과는 `test_health_run_results.jsonl` 에 한 줄씩 남는다.
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
 """
@@ -23,7 +25,6 @@
 import json
 import os
 import sys
-import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -32,15 +33,11 @@ from typing import Any
 import pytest
 
 from app.agents.common.llm_client import LLMClient, LLMConfigError
-from app.agents.common.schemas.task import DomainTask
-from app.agents.health import agent as health_agent
-from app.agents.health.envelope import result as hook_result
-from app.agents.health.hook import check_symptom_repetition
 from app.agents.health.registry import IMPLEMENTED_TASKS, MODEL_TASKS
 from app.agents.health.schemas.task import HealthTaskType
-from tests.eval.agents.health.cases import CASES, OUTSIDE, Case, doc_inputs
-from tests.eval.agents.health.judges import EVAL_GUIDANCE, Ran, common
-from tests.eval.agents.health.world import DAY, NIGHT, build_world
+from tests.eval.agents.health.cases import CASES, OUTSIDE, Case
+from tests.eval.agents.health.judges import common
+from tests.eval.agents.health.runner import run_case
 
 pytestmark = pytest.mark.live
 
@@ -83,46 +80,28 @@ def _say(text: str) -> None:
 @pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
 async def test_health_run(case: Case, expect: Callable[..., None]) -> None:
     expect(case.expect)
-    world = build_world(case.world, now=NIGHT if case.night else DAY, run_id=f"live-{case.case_id}")
-    request = doc_inputs()[case.input_id]
-
-    started = time.perf_counter()
-    if case.label is None:
-        # hook 케이스 — 라벨이 아니라 Memory 저장 직후 pipeline 이 부르는 함수를 직접 부른다.
-        # pipeline 연결은 다른 이슈라 여기서는 결과를 봉투에 싸기만 한다
-        readouts = await check_symptom_repetition(world.context, guidance=EVAL_GUIDANCE)
-        result = hook_result(None, "completed", readouts=readouts)
-    else:
-        client = _client_for(case.label)
-        task = DomainTask(
-            run_id=world.context.run_id,
-            agent="health",
-            task_type=case.label.value,
-            request_texts=(request,),
-        )
-        # 모듈 속성으로 부른다 — conftest 가 감싼 run 이 걸려야 결과 파일에 agent call 이 남는다
-        result = await health_agent.run(task, world.context, client=client)
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-
-    ran = Ran(
-        case_id=case.case_id,
-        world=world,
-        request=request,
-        result=result,
-        elapsed_ms=elapsed_ms,
-    )
+    ran = await run_case(case, client=_client_for(case.label))
+    result, request, elapsed_ms = ran.result, ran.request, ran.elapsed_ms
     verdict = common(ran).extend(case.judge(ran))
 
     outcome = "FAIL" if verdict.failures else ("GAP" if verdict.gaps else "PASS")
     label = case.label.value if case.label else "hook"
     _say(f"\n[{case.case_id}] {outcome}  {request!r}")
     _say(f"    {label} · 세계 {case.world} · 기대: {case.expect}")
-    if result is not None:
-        _say(f"    status={result.status} 모델 {result.model_calls}회 {elapsed_ms}ms")
-        for readout in result.readouts:
+    for number, turn in enumerate(ran.turns, start=1):
+        turn_result = turn.result
+        _say(
+            f"    [{number}턴] {turn.request!r} → status={turn_result.status} "
+            f"모델 {turn_result.model_calls}회 쓰기 {len(turn.writes)}건"
+        )
+        for readout in turn_result.readouts:
             _say(f"    · {readout.body}")
-        if result.needs_observation:
-            _say(f"    ? {result.needs_observation[0]}")
+        for draft in turn_result.medication_drafts:
+            _say(f"    + 초안 {draft.op} {draft.notice_times} missing={draft.missing}")
+        if turn_result.needs_observation:
+            _say(f"    ? {turn_result.needs_observation[0]}")
+    if result is not None:
+        _say(f"    {elapsed_ms}ms")
     for title, items in (
         ("실패", verdict.failures),
         ("미구현", verdict.gaps),
@@ -147,6 +126,20 @@ async def test_health_run(case: Case, expect: Callable[..., None]) -> None:
             "medication_drafts": [asdict(d) for d in result.medication_drafts] if result else [],
             "event_requests": [asdict(e) for e in result.event_requests] if result else [],
             "tools": list(ran.tools),
+            "turns": [
+                {
+                    "request": turn.request,
+                    "status": turn.result.status,
+                    "model_calls": turn.result.model_calls,
+                    "writes": [
+                        [str(schedule_id), at.isoformat()] for schedule_id, at in turn.writes
+                    ],
+                    "readouts": [r.body for r in turn.result.readouts],
+                    "needs_observation": list(turn.result.needs_observation),
+                    "drafts": [asdict(d) for d in turn.result.medication_drafts],
+                }
+                for turn in ran.turns
+            ],
             "failures": verdict.failures,
             "gaps": verdict.gaps,
             "notes": verdict.notes,
