@@ -223,7 +223,13 @@ async def _resume(
 async def _resume_stop(
     context: HealthContext, payload: Mapping[str, Any], texts: Sequence[str]
 ) -> ToolResult | None:
-    """중단 확인에 대한 답. '네' 면 멈추고 중단 시각은 이 run 의 now 다. 그 밖에는 그대로 둔다."""
+    """중단 확인에 대한 답. '네' 면 멈추고 중단 시각은 이 run 의 now 다. 그 밖에는 그대로 둔다.
+
+    '네' 를 받았을 때 그 코스가 **지금도 진행 중인지 다시 읽는다**(`_resume_which` 와 같다).
+    오늘 끝나는 코스를 23:55 에 묻고 00:05 에 '네' 를 받으면 이미 끝난 코스가 `stopped` 로
+    바뀌기 때문이다. 이 아이의 진행 중 코스에서만 찾으므로 맥락의 id 가 다른 아이의 코스여도
+    멈추지 않는다.
+    """
     try:
         schedule_id, title = UUID(payload["schedule_id"]), str(payload["title"])
     except (KeyError, ValueError, TypeError) as exc:
@@ -231,6 +237,9 @@ async def _resume_stop(
 
     if confirm_answer(texts) != "yes":
         context.state.readouts.append(READOUTS.render(MED_STOP_KEPT, title=title))
+        return
+    if not any(course.id == schedule_id for course in await _active(context)):
+        context.state.readouts.append(READOUTS.render(NOTICE_NO_ACTIVE_MED))  # 끝났거나 멈췄다
         return
     outcome = await context.ports.medication_writer.stop_course(
         schedule_id=schedule_id, stopped_at=context.now

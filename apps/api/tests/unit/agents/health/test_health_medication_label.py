@@ -10,9 +10,11 @@
 import json
 from dataclasses import replace
 from datetime import datetime, time, timedelta
+from uuid import uuid4
 
 import pytest
 
+from app.agents.common.result import DomainPending
 from app.agents.health.agent import run
 from app.agents.health.context import HealthRunState
 from app.agents.health.labels.medication import (
@@ -371,10 +373,12 @@ class TestResumeStop:
         # 묻고 답하는 사이에 다른 경로로 이미 멈췄다
         await store.stop_course(schedule_id=course.id, stopped_at=NOW - timedelta(hours=1))
 
-        await run(med("응"), next_turn(ctx, first), client=FakeLLM())
+        result = await run(med("응"), next_turn(ctx, first), client=FakeLLM())
 
         assert store.stopped == {course.id: NOW - timedelta(hours=1)}
         assert len(store.writes) == 1
+        # 멈춘 코스는 진행 중 목록에 없다 — 멈췄다고 다시 말하지 않고 없다고 안내한다
+        assert [r.body for r in result.readouts] == [READOUTS.render("notice.no_active_med").body]
 
     async def test_사라진_코스는_없다고_안내한다(self):
         ctx, store, first = await self._asked(antibiotic())
@@ -969,3 +973,53 @@ class TestNoActiveCourseUpdate:
         assert [r.body for r in result.readouts] == [READOUTS.render("notice.no_active_med").body]
         assert result.medication_drafts == () and result.pending is None
         assert store.writes == []
+
+
+class TestResumeStopRereadsActive:
+    """'네' 를 받은 run 은 묻던 때의 코스가 아니라 **지금 진행 중인 코스**를 다시 찾아 멈춘다."""
+
+    async def test_자정을_넘겨_네_하면_끝난_코스를_멈추지_않는다(self):
+        # 오늘 끝나는 코스를 23:55 에 묻고 00:05 에 '네' — 끝난 코스가 stopped 가 되면 안 된다
+        course, rows = course_with_doses("항생제", PATTERN, TODAY - timedelta(days=1), TODAY)
+        ctx, store = world((course, rows))
+        llm = FakeLLM(call("stop_medication_schedule", {"title_span": "항생제"}))
+        first = await run(med("항생제 끊었어."), ctx, client=llm)
+        assert first.pending is not None
+        past_midnight = datetime.combine(TODAY + timedelta(days=1), time(0, 5), tzinfo=ctx.timezone)
+
+        result = await run(
+            med("응"), replace(next_turn(ctx, first), now=past_midnight), client=FakeLLM()
+        )
+
+        assert store.writes == [] and store.stopped == {}
+        assert [r.body for r in result.readouts] == [READOUTS.render("notice.no_active_med").body]
+        assert result.pending is None and result.model_calls == 0
+
+    async def test_맥락의_코스가_진행_중_목록에_없으면_멈추지_않는다(self):
+        # 맥락이 가리키는 id 가 이 아이의 진행 중 코스가 아니다(변조 · 다른 아이의 코스)
+        ctx, store = world(antibiotic())
+        forged = DomainPending(
+            agent="health",
+            kind="medication_stop",
+            question="항생제 복약 알림을 멈출까요?",
+            payload={"schedule_id": str(uuid4()), "title": "항생제"},
+        )
+
+        result = await run(med("응"), replace(ctx, pending=forged), client=FakeLLM())
+
+        assert store.writes == [] and store.stopped == {}
+        assert [r.body for r in result.readouts] == [READOUTS.render("notice.no_active_med").body]
+
+    async def test_진행_중이면_지금처럼_멈춘다(self):
+        course, rows = antibiotic()
+        ctx, store = world((course, rows))
+        llm = FakeLLM(call("stop_medication_schedule", {"title_span": "항생제"}))
+        first = await run(med("항생제 끊었어."), ctx, client=llm)
+        second_ctx = next_turn(ctx, first)
+
+        result = await run(med("응"), second_ctx, client=FakeLLM())
+
+        assert store.stopped == {course.id: second_ctx.now}
+        assert [r.body for r in result.readouts] == [
+            READOUTS.render("med.stopped", title="항생제").body
+        ]

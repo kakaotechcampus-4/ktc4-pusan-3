@@ -299,9 +299,9 @@ AI는 **정리 담당**입니다. 읽기 tool로 기록을 모으고, 출력 too
 - 수정은 `op="update"` 초안입니다. 일정 초안과 같이 **전체 값 + `before`** 를 싣고(바뀐 부분만 따로 보내지 않습니다 — 화면이 `before` 와 비교합니다), 같은 약을 한 run 에서 두 번 고치면 한 장에 쌓입니다. 제출 전까지 기존 알림은 그대로 울리고, 제출하면 **같은 행을 UPDATE**하고 **아직 오지 않은 회차 행만** 지우고 다시 만듭니다. 코스를 지웠다 새로 만들지 않고 지난 회차와 그 체크는 그대로 두므로 체크 이력이 남습니다.
 - **취소하거나 화면을 떠나면 아무 일도 없습니다.** 초안은 run과 함께 사라집니다 — 만료라는 개념이 없습니다. 발송 잡은 `active` 코스만 읽습니다.
 
-**중단** (10-18 변경) — "약 끊었어"는 `stop_medication_schedule` 이 대상 코스를 찾아 **한 번 묻습니다** — `med.stop_confirm`("{title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."). 확인 모달이나 초안은 두지 않습니다 — 멈출 시각을 다시 보여줄 필요가 없어서입니다. 묻는 run 에서는 아무것도 바꾸지 않고, 물은 대상(`schedule_id`)을 되묻기 맥락으로 남깁니다. 보호자가 '네' 하면 다음 run 에서 Agent 가 `status='stopped'`(soft delete)로 바꾸고 `med.stopped` 를 냅니다. **중단 시각은 `updated_at` 에 남습니다** — 중단된 코스는 다시 고치지 않으므로 `updated_at` 이 그대로 중단 시각입니다. '아니요' 거나 답이 애매하면 바꾸지 않고 `med.stop_kept`. 대상 약이 둘 이상인데 원문으로 못 가리면 묻기 전에 어느 약인지 먼저 묻습니다. 행이 남으므로 **회차와 체크가 보존됩니다.** 발송 잡은 `active`만 읽으니 '네' 하면 알림이 바로 멈춥니다. 되묻고 멈추는 자리는 세 곳(중단 확인 · 대상 약 고르기 · 복용 시점)이고 전부 두 턴입니다 — 묻는 run 은 되묻기 맥락(`pending`)에 이어서 처리할 것을 싣고 끝나고, 다음 run 이 받으면 **모델 없이** 답을 가릅니다(대상 약은 진행 중 약 이름과 원문 대조, '네'/'아니요'는 표현 표, 시점은 시점 사전). 못 가리면 아무것도 쓰지 않고 다시 묻지도 않습니다. Memory 의 관찰 삭제 확인(#177)과 같은 되묻기라 승인 게이트를 늘리지 않습니다. 되돌릴 수 없는 삭제가 아니라서 `event` 삭제와는 방식이 다릅니다 — event는 남길 기록이 없지만 복약은 있습니다.
+**중단** (10-18 변경) — "약 끊었어"는 `stop_medication_schedule` 이 대상 코스를 찾아 **한 번 묻습니다** — `med.stop_confirm`("{title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."). 확인 모달이나 초안은 두지 않습니다 — 멈출 시각을 다시 보여줄 필요가 없어서입니다. 묻는 run 에서는 아무것도 바꾸지 않고, 물은 대상(`schedule_id`)을 되묻기 맥락으로 남깁니다. 보호자가 '네' 하면 다음 run 에서 Agent 가 `status='stopped'`(soft delete)로 바꾸고 `med.stopped` 를 냅니다. '네' 를 받은 run 은 그 코스가 지금도 진행 중인지 **다시 읽습니다** — 자정을 넘겨 끝난 코스는 멈추지 않고 `notice.no_active_med` 로 안내합니다. **중단 시각은 `updated_at` 에 남습니다** — 중단된 코스는 다시 고치지 않으므로 `updated_at` 이 그대로 중단 시각입니다. '아니요' 거나 답이 애매하면 바꾸지 않고 `med.stop_kept`. 대상 약이 둘 이상인데 원문으로 못 가리면 묻기 전에 어느 약인지 먼저 묻습니다. 행이 남으므로 **회차와 체크가 보존됩니다.** 발송 잡은 `active`만 읽으니 '네' 하면 알림이 바로 멈춥니다. 되묻고 멈추는 자리는 세 곳(중단 확인 · 대상 약 고르기 · 복용 시점)이고 전부 두 턴입니다 — 묻는 run 은 되묻기 맥락(`pending`)에 이어서 처리할 것을 싣고 끝나고, 다음 run 이 받으면 **모델 없이** 답을 가릅니다(대상 약은 진행 중 약 이름과 원문 대조, '네'/'아니요'는 표현 표, 시점은 시점 사전). 못 가리면 아무것도 쓰지 않고 다시 묻지도 않습니다. Memory 의 관찰 삭제 확인(#177)과 같은 되묻기라 승인 게이트를 늘리지 않습니다. 되돌릴 수 없는 삭제가 아니라서 `event` 삭제와는 방식이 다릅니다 — event는 남길 기록이 없지만 복약은 있습니다.
 
-**복약 이유** — `indication_text`에 보호자 발화를 **그대로 복사**합니다("중이염 때문에"). 발화에 없으면 NULL이고 추정하지 않습니다. `symptom_codes` 는 Agent 의 코드가 이 원문을 증상 사전(`symptom_codes.yaml`)으로 맞춰 초안에 싣고, 제출 API 는 받은 값을 그대로 저장합니다. 모델은 코드를 고르지 않고, 사전에 없는 말("중이염")은 코드가 되지 않습니다. 이 값은 **진단이 아니라 보호자 기록**이라 `health_safety`로 올라가지 않습니다.
+**복약 이유** — `indication_text`에 보호자 발화를 **그대로 복사**합니다("중이염 때문에"). 발화에 없으면 NULL이고 추정하지 않습니다. `symptom_codes` 는 Agent 의 코드가 이 원문을 증상 사전(`symptom_codes.yaml`)으로 맞춰 초안에 싣고, 제출 API 는 사전 안의 코드인지 한 번 더 거른 뒤 저장합니다. 모델은 코드를 고르지 않고, 사전에 없는 말("중이염")은 코드가 되지 않습니다. 이 값은 **진단이 아니라 보호자 기록**이라 `health_safety`로 올라가지 않습니다.
 
 **복용 체크** (AI 0회, 10-20 변경) — 복용 기록은 **보호자가 복약 화면에서 회차마다 체크**하는 것뿐입니다(`medication_dose.checked_at`). Agent 는 체크를 **읽기만** 하고 쓰지 않습니다.
 
@@ -457,11 +457,11 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 ```python
 @dataclass(frozen=True)
 class MedicationDraft:
-    draft_id: str                  # 화면이 제출 요청에 되돌려 보내는 키
+    draft_id: str                  # 화면 전용 키 — 서버는 읽지 않고 제출 요청에도 싣지 않는다
     op: Literal["create", "update"]
     source: Literal["utterance", "prescription_ocr"]
     schedule_id: str | None        # create면 None
-    schedule: dict[str, Any]       # title · dosage · indication_text · storage · med_form · note · starts_on · ends_on
+    schedule: dict[str, Any]       # title · dosage · indication_text · storage · med_form · note · symptom_codes · starts_on · ends_on
     doses: tuple[dict[str, Any], ...]   # 하루 시각 패턴(날짜 없음) — 제출 때 백엔드가 기간만큼 펼쳐 회차 행을 만든다
     notice_times: tuple[str, ...]  # 필수 — 실제로 울릴 시각
     missing: tuple[str, ...]       # 비어 있는 NOT NULL 칸 이름. 비지 않으면 제출 잠김

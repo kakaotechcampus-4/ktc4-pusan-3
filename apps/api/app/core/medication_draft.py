@@ -37,6 +37,8 @@ OFFSET_MIN, OFFSET_MAX = -120, 180
 # medication_schedule.storage · med_form CHECK 와 같은 값. core 는 domains 를 import 하지 않는다
 StorageValue = Literal["room", "fridge"]
 MedFormValue = Literal["liquid", "powder", "tablet", "ointment", "drops"]
+# medication_schedule.source CHECK 와 같은 값. 밖의 값은 제출했을 때 DB 에서 터진다
+SourceValue = Literal["utterance", "prescription_ocr"]
 
 # 비면 제출할 수 없는 칸. 비어 있으면 `missing` 에 실린다 (NOT NULL 컬럼)
 REQUIRED_SCHEDULE_FIELDS = ("title", "starts_on", "ends_on")
@@ -97,7 +99,9 @@ class ScheduleDraft(DraftBase):
     med_form: MedFormValue | None  # 〃
     note: str | None  # 투약의뢰서 특이사항 — 〃
     # 복약 이유(`indication_text`)를 증상 사전(`reference/symptom_codes.yaml`)으로 맞춘 코드.
-    # Agent 가 사전으로 만들어 싣고 제출 API 는 받은 값을 그대로 저장한다 — 모델이 고르지 않는다
+    # Agent 가 사전으로 만들어 싣고, 제출 API 는 `validate_symptom_codes`(core/symptom_codes.py)
+    # 로 사전 안의 코드인지 거른 뒤 저장한다 — 모델이 고르지 않는다. 사전에서 빠진 옛 코드를
+    # 가진 코스의 수정 초안(`before`)도 만들어져야 해서 이 모델은 사전 밖 코드를 거절하지 않는다
     symptom_codes: list[str] = Field(default_factory=list)
     starts_on: date | None
     ends_on: date | None  # 제출 때는 필수(무기한 코스 방지)
@@ -126,9 +130,11 @@ class MedicationSnapshot(DraftBase):
 
 
 class MedicationDraft(DraftBase):
-    draft_id: str  # 화면이 초안을 가리키고 제출 요청에 되돌려 보내는 키
+    # 화면 전용 키 — 카드를 가리키고 세션 스토리지 키로 쓴다. 서버는 읽지 않고 제출 요청에도
+    # 싣지 않는다(event-draft-flow-v1.md §4-4). 전체에서 유일한 uuid 다
+    draft_id: str
     op: Literal["create", "update"]
-    source: str | None  # "utterance" · (처방전 경로가 생기면) "prescription_ocr"
+    source: SourceValue | None  # 처방전 경로가 생기면 "prescription_ocr"
     schedule: ScheduleDraft
     doses: Annotated[list[DoseDraft], Field(min_length=1)]  # 같은 시각 둘 금지
     notice_times: list[str]  # 실제로 울릴 시각 "HH:MM" 정렬

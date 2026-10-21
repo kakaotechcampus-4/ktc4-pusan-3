@@ -363,3 +363,22 @@ class TestSymptomCodes:
 
         with pytest.raises(ValidationError):
             MedicationDraft.model_validate(payload)
+
+
+class TestSource:
+    """`source` 는 `medication_schedule.source` CHECK 와 같은 값만 — 밖의 값은 DB 에서 터진다."""
+
+    @pytest.mark.parametrize("source", ["utterance", "prescription_ocr", None])
+    def test_DB_CHECK_안의_값과_null_은_통과(self, source):
+        payload = create_payload()
+        payload["source"] = source
+
+        assert MedicationDraft.model_validate(payload).to_payload()["source"] == source
+
+    @pytest.mark.parametrize("source", ["voice", "", "Utterance", "ocr"])
+    def test_DB_CHECK_밖의_값은_거절(self, source):
+        payload = create_payload()
+        payload["source"] = source
+
+        with pytest.raises(ValidationError):
+            MedicationDraft.model_validate(payload)
