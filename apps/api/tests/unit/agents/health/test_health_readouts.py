@@ -1,7 +1,7 @@
 """코드 상수 문구가 Health_Tool_명세.md §4 와 글자 단위로 같은지.
 
 문구는 모델을 거치지 않고 화면에 그대로 나간다. 명세와 코드가 따로 놀지 않게 표를 읽어 비교한다.
-명세 §4 에는 문구 뒤의 괄호 주석이 없다. "({taken_at})" 처럼 괄호로 끝나는 문구가 있어서 주석을
+명세 §4 에는 문구 뒤의 괄호 주석이 없다. "({ends_on})" 처럼 괄호로 끝나는 문구가 있어서 주석을
 허용하면 잘린 문구가 통과한다 — 그래서 셀 전체가 글자 그대로 같아야 한다.
 """
 
@@ -26,11 +26,13 @@ KINDS = {
     "fever_timeline",
     "emergency",
     "med_notice_form",
+    "emergency_card",
     "prescription_draft",
     "blocked",
     "symptom_timeline",
     "place_list",
     "caution",
+    "notice",
 }
 
 
@@ -40,8 +42,8 @@ def doc_constants() -> dict[str, str]:
     return dict(_ROW.findall(section))
 
 
-def test_명세의_문구는_32개다():
-    assert len(doc_constants()) == 32
+def test_명세의_문구는_50개다():
+    assert len(doc_constants()) == 50
 
 
 class TestDocParity:

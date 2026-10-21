@@ -3,6 +3,8 @@
 > ⚠ **이 문서는 [`health_agent_own_table.md`](health_agent_own_table.md)에 흡수됐다 — 정본은 그쪽이다.** 2026-09-22 결정은 양쪽에 반영했고, 미결 번호는 정본 기준(M-11 게이트 범위 · M-12 중단 시 복용 기록 · M-13 처방전 카드 = 승인 · M-14 수정 시 복용 기록).
 >
 > ⚠ **2026-10-18 결정(중단은 한 번 묻고 '네' 면 `stopped`, 중단 시각은 `updated_at` — M-15)은 정본에만 반영했다.** 이 문서의 "중단은 soft delete — 즉시" 서술은 낡았다.
+>
+> ⚠ **2026-10-20 결정(`medication_dose` 회차 1행 + `checked_at` 체크 칸 · `medication_dose_log` 없음 · `ends_on` 필수 · `status` 는 `active`/`stopped` 둘 · 저녁 기준 시각 17:00)도 정본에만 반영했다.** 이 문서의 dose 모양 · `completed` · 무기한 코스 · 18:00 서술은 낡았다.
 
 > 기준 문서: [`data_model.md`](../data_model.md) (표 형식·제약 표기) · [`Health_Agent_명세.md`](Health_Agent_명세.md) · [`공통_구현_계획.md`](../shared/공통_구현_계획.md) §6 (suggestion·초안 쓰기)
 >
