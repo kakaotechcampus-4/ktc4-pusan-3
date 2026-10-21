@@ -99,6 +99,19 @@
 - **중단 UPDATE 는 `updated_at = now()` 를 직접 쓴다.** `Timestamps` 의 `onupdate` 는 ORM update 때만 채워진다(`EventItem` docstring 과 같은 함정).
 - `stopped` 코스 수정 거절.
 
+### 시간대 — 표를 쓰는 코드가 지킬 것
+
+DB 세션은 UTC 다(로컬 · 배포 db 컨테이너 모두 TZ 없음). API 컨테이너만 `TZ=Asia/Seoul` 이라
+같은 코드가 환경마다 다르게 도는 자리가 생긴다. 아래 셋은 실제 DB 에서 확인했다(`test_medication_tables.py` §6).
+
+- **"오늘"은 `now.astimezone(KST).date()` 로 구해 `in_progress(today)` 에 넘긴다.** UTC 날짜를 넘기면
+  KST 자정 ~ 09:00 사이에 어제 끝난 약이 '복용 중' 으로 잡힌다.
+- **SQL 에서 체크한 날은 `(checked_at AT TIME ZONE 'Asia/Seoul')::date`.** `checked_at::date` 는 세션(UTC)
+  날짜라 KST 오전 9시 전 체크가 하루 앞 날짜가 된다.
+- **`checked_at` 에는 시간대가 붙은 값(`datetime.now(KST)`)이나 DB `now()` 만 쓴다.** 시간대 없는
+  `datetime` 은 asyncpg 가 프로세스 TZ 로 해석해서, 같은 07:00 이 `TZ=Asia/Seoul` 에서는 KST 07:00,
+  `TZ=UTC`(CI 등)에서는 KST 16:00 으로 저장된다(로컬에서 두 TZ 로 실행해 확인).
+
 ## 6. 기준 시각이 두 곳에 있다
 
 생성 컬럼의 기준 시각과 초안 계약(`app/core/medication_draft.py`, #544)의 `ANCHOR_TIMES` · `scheduled_time_of` 는 같은 값이어야 한다.

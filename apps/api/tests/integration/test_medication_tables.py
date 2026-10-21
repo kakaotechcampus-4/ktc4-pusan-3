@@ -4,7 +4,8 @@ CHECK 위반은 raw SQL 로 넣는다. ORM 으로 넣으면 enum 칸은 SQLAlche
 DB 의 CHECK 가 실제로 있는지 확인하지 못한다.
 """
 
-from datetime import date, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func, select, text
@@ -21,6 +22,7 @@ from app.domains.medication.models import (
 )
 
 STARTS = date(2026, 10, 20)
+KST = ZoneInfo("Asia/Seoul")
 
 
 @pytest.fixture
@@ -298,3 +300,69 @@ async def test_진행_중_판정은_넘겨받은_오늘을_쓴다(session, child
         .where(MedicationSchedule.child_id == child.id, in_progress(date(2000, 1, 1)))
     )
     assert found.scalar_one() == 1
+
+
+# ── 6. 시간대 ─────────────────────────────────────────────────────────────
+# DB 세션은 UTC 다(배포 db 컨테이너에도 TZ 가 없다). 날짜는 KST 로 구해서 넘긴다.
+
+
+async def test_KST_자정_직후에는_어제_끝난_코스가_진행_중이_아니다(session, child):
+    await add_schedule(session, child, starts_on=STARTS, ends_on=date(2026, 10, 21))
+    now = datetime(2026, 10, 21, 15, 30, tzinfo=UTC)  # KST 10/22 00:30
+
+    async def count(today: date) -> int:
+        found = await session.execute(
+            select(func.count())
+            .select_from(MedicationSchedule)
+            .where(MedicationSchedule.child_id == child.id, in_progress(today))
+        )
+        return found.scalar_one()
+
+    assert await count(now.astimezone(KST).date()) == 0
+    assert await count(now.date()) == 1  # UTC 날짜를 넘기면 끝난 약이 '복용 중' 으로 잡힌다
+
+
+async def test_checked_at_은_같은_순간으로_돌아온다(session, child):
+    schedule = await add_schedule(session, child)
+    checked = datetime(2026, 10, 21, 7, 0, tzinfo=KST)  # = UTC 10/20 22:00
+    dose = MedicationDose(
+        schedule_id=schedule.id,
+        dose_date=date(2026, 10, 21),
+        timing_anchor="breakfast",
+        offset_minutes=30,
+        checked_at=checked,
+    )
+    session.add(dose)
+    await session.flush()
+
+    back = await session.scalar(
+        select(MedicationDose.checked_at).where(MedicationDose.id == dose.id)
+    )
+    assert back == checked
+    assert back.astimezone(KST).date() == date(2026, 10, 21)
+
+
+async def test_SQL_에서_체크한_날은_AT_TIME_ZONE_으로_구한다(session, child):
+    schedule = await add_schedule(session, child)
+    dose = MedicationDose(
+        schedule_id=schedule.id,
+        dose_date=date(2026, 10, 21),
+        timing_anchor="breakfast",
+        offset_minutes=30,
+        checked_at=datetime(2026, 10, 21, 7, 0, tzinfo=KST),
+    )
+    session.add(dose)
+    await session.flush()
+    await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
+
+    plain, kst = (
+        await session.execute(
+            text(
+                "SELECT checked_at::date, (checked_at AT TIME ZONE 'Asia/Seoul')::date "
+                "FROM medication_dose WHERE id = :id"
+            ),
+            {"id": dose.id},
+        )
+    ).one()
+    assert kst == date(2026, 10, 21)
+    assert plain == date(2026, 10, 20)  # ::date 는 세션 시간대(UTC) 날짜라 하루 앞이다
