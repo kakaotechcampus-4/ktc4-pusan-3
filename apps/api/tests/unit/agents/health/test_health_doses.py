@@ -152,7 +152,7 @@ class TestGetNextDose:
 
     async def test_마지막_체크는_가장_늦은_회차(self):
         yesterday = TODAY - timedelta(days=1)
-        ctx, _ = world(antibiotic(checked={(yesterday, time(17, 30)), (TODAY, time(8, 30))}))
+        ctx, _ = world(antibiotic(checked={(yesterday, time(19, 30)), (TODAY, time(8, 30))}))
 
         [status] = await get_next_dose(ctx)
 
@@ -228,11 +228,11 @@ class TestDoseStatusReadouts:
 
     async def test_다른_날의_시각은_날짜를_붙인다(self):
         yesterday = TODAY - timedelta(days=1)
-        ctx, _ = world(antibiotic(checked={(yesterday, time(17, 30))}))
+        ctx, _ = world(antibiotic(checked={(yesterday, time(19, 30))}))
 
         [readout] = await dose_status_readouts(ctx)
 
-        assert readout.body.startswith("마지막 체크 9/27 17:30 회차")
+        assert readout.body.startswith("마지막 체크 9/27 19:30 회차")
 
     async def test_허가_문구가_없다(self):
         ctx, _ = world(antibiotic(checked={(TODAY, time(8, 30))}))
@@ -261,7 +261,7 @@ class TestSearchMedicationSchedules:
         assert row == {
             "title": "항생제",
             "dosage": "5ml",
-            "notice_times": ["08:30", "12:30", "17:30"],
+            "notice_times": ["08:30", "12:30", "19:30"],
             "starts_on": "2026-09-27",
             "ends_on": "2026-09-29",
         }

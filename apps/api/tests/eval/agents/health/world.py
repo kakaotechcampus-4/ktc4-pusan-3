@@ -44,7 +44,7 @@ CourseFactory = Callable[[date], tuple[MedicationCourse, list[MedicationDose]]]
 
 
 def antibiotic(today: date) -> tuple[MedicationCourse, list[MedicationDose]]:
-    """항생제 — 어제 · 오늘 · 내일 3일, 하루 세 번 식후(08:30 · 12:30 · 17:30), 용량 "5ml".
+    """항생제 — 어제 · 오늘 · 내일 3일, 하루 세 번 식후(08:30 · 12:30 · 19:30), 용량 "5ml".
 
     어제는 세 회차 모두 체크했고 오늘은 08:30 만 체크했다(지금 14:00). 값은 전부 지어낸 것이다.
     """
@@ -55,7 +55,7 @@ def antibiotic(today: date) -> tuple[MedicationCourse, list[MedicationDose]]:
         yesterday,
         today + timedelta(days=1),
         dosage="5ml",
-        checked={(yesterday, time(8, 30)), (yesterday, time(12, 30)), (yesterday, time(17, 30))}
+        checked={(yesterday, time(8, 30)), (yesterday, time(12, 30)), (yesterday, time(19, 30))}
         | {(today, time(8, 30))},
     )
 

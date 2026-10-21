@@ -58,7 +58,7 @@ class MedicationDraft:
     notice_times: tuple[str, ...]  # 필수 — 보호자가 승인하는 것은 실제로 울릴 시각이다
     missing: tuple[str, ...] = ()  # 비어 있는 NOT NULL 칸. 비지 않으면 화면이 제출을 막는다
     schedule_id: UUID | None = None  # update 만
-    before: dict[str, Any] | None = None  # update 만 — 화면이 "17:30 → 19:00" 을 보여준다
+    before: dict[str, Any] | None = None  # update 만 — 화면이 "19:30 → 20:00" 을 보여준다
 
     def __post_init__(self) -> None:
         if not self.notice_times:

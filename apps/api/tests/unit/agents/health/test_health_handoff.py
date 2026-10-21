@@ -74,7 +74,7 @@ class TestMedNotice:
         assert lines(result) == [
             "[투약 의뢰서]  2026-09-28",
             "• 약 종류 : 항생제 (5ml)",
-            "• 투약 시각 : 08:30 · 12:30 · 17:30",
+            "• 투약 시각 : 08:30 · 12:30 · 19:30",
             "• 보관 : 냉장",
             "• 복용 이유 : 중이염",
             "• 특이사항 : 흔들어서 주세요",
@@ -84,7 +84,7 @@ class TestMedNotice:
     async def test_투약_시각은_코스_패턴(self):
         result = await run(handoff(NOTICE_TEXT), world(antibiotic()), client=FakeLLM())
 
-        assert "• 투약 시각 : 08:30 · 12:30 · 17:30" in lines(result)
+        assert "• 투약 시각 : 08:30 · 12:30 · 19:30" in lines(result)
 
     async def test_복약이_없으면_서식_대신_안내(self):
         # C48-nomed — 빈 서식을 만들지 않는다

@@ -28,7 +28,7 @@ ANCHOR_TIMES: Mapping[str, time] = {
     "wake_up": time(7, 30),
     "breakfast": time(8, 0),
     "lunch": time(12, 0),
-    "dinner": time(17, 0),
+    "dinner": time(19, 0),
     "bedtime": time(20, 30),
 }
 # medication_dose.offset_minutes CHECK 와 동일
@@ -119,7 +119,7 @@ class ScheduleDraft(DraftBase):
 
 
 class MedicationSnapshot(DraftBase):
-    """수정 전 원본. 화면이 "17:30 → 19:00" 을 그리는 데 쓴다."""
+    """수정 전 원본. 화면이 "19:30 → 20:00" 을 그리는 데 쓴다."""
 
     schedule: ScheduleDraft
     doses: list[DoseDraft]

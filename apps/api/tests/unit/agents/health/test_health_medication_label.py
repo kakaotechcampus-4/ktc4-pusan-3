@@ -157,7 +157,7 @@ class TestModelPath:
         [draft] = result.medication_drafts
         assert (draft.op, draft.source, draft.schedule_id) == ("create", "utterance", None)
         assert draft.schedule["title"] == "항생제" and draft.schedule["dosage"] == "5ml"
-        assert draft.notice_times == ("08:30", "12:30", "17:30")
+        assert draft.notice_times == ("08:30", "12:30", "19:30")
         assert draft.missing == ("ends_on",)
         assert len(draft.doses) == 3
         assert [r.kind for r in result.readouts] == ["medication_notice"]
@@ -200,7 +200,7 @@ class TestModelPath:
         assert (draft.op, str(draft.schedule_id)) == ("update", str(course.id))
         assert draft.notice_times == ("08:30", "12:30", "19:00")
         assert draft.before is not None
-        assert [d["scheduled_time"] for d in draft.before["doses"]] == ["08:30", "12:30", "17:30"]
+        assert [d["scheduled_time"] for d in draft.before["doses"]] == ["08:30", "12:30", "19:30"]
 
     async def test_되묻고_멈추면_질문과_맥락이_같이_나간다(self):
         course, rows = antibiotic()
@@ -477,7 +477,7 @@ class TestResumeTiming:
 
         assert llm.seen == [] and result.model_calls == 0
         [draft] = result.medication_drafts
-        assert draft.notice_times == ("08:30", "12:30", "17:30")
+        assert draft.notice_times == ("08:30", "12:30", "19:30")
         assert draft.missing == ("title", "ends_on")
         assert result.pending is None and store.writes == []
 
@@ -507,11 +507,11 @@ class TestResumeTiming:
 
         [draft] = result.medication_drafts
         assert (draft.op, str(draft.schedule_id)) == ("update", str(course.id))
-        assert draft.notice_times == ("08:30", "17:30")
+        assert draft.notice_times == ("08:30", "19:30")
         assert draft.schedule["dosage"] == "5ml"
 
     async def test_지금과_같은_시점으로_답하면_바뀐_게_없다고_안내한다(self):
-        course, rows = antibiotic()  # 08:30 12:30 17:30
+        course, rows = antibiotic()  # 08:30 12:30 19:30
         ctx, store = world((course, rows))
         llm = FakeLLM(
             call(
@@ -639,7 +639,7 @@ class TestActionCuesBeatTables:
 
         assert result.model_calls == 1
         [draft] = result.medication_drafts
-        assert draft.notice_times == ("08:30", "12:30", "17:30")
+        assert draft.notice_times == ("08:30", "12:30", "19:30")
 
     @pytest.mark.parametrize("text", ["다음 약 언제 먹여야 해?", "아까 약 먹였어."])
     async def test_수정_표현이_없으면_표가_그대로_받는다(self, text):
@@ -721,7 +721,7 @@ class TestUpdateTwiceInOneResponse:
         [draft] = result.medication_drafts
         assert draft.schedule["dosage"] == "7ml"
         assert draft.notice_times == ("08:30", "12:30", "19:00")
-        assert [d["scheduled_time"] for d in draft.before["doses"]] == ["08:30", "12:30", "17:30"]
+        assert [d["scheduled_time"] for d in draft.before["doses"]] == ["08:30", "12:30", "19:30"]
         assert len(result.readouts) == 1 and store.writes == []
 
 
@@ -937,7 +937,7 @@ class TestConflictThenAnswer:
         result = await run(med("식후요"), next_turn(ctx, first), client=FakeLLM())
 
         [draft] = result.medication_drafts
-        assert draft.notice_times == ("08:30", "17:30")
+        assert draft.notice_times == ("08:30", "19:30")
 
 
 class TestUnreadablePeriodLabel:

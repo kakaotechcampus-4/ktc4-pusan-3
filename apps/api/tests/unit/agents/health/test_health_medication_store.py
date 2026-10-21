@@ -35,7 +35,7 @@ def test_회차_행은_기간_곱하기_패턴():
 
     assert len(doses) == 9
     assert {(dose.dose_date, dose.scheduled_time) for dose in doses} == {
-        (date(2026, 9, day), time(hour, 30)) for day in (26, 27, 28) for hour in (8, 12, 17)
+        (date(2026, 9, day), time(hour, 30)) for day in (26, 27, 28) for hour in (8, 12, 19)
     }
     assert len({dose.id for dose in doses}) == 9
     assert all(dose.schedule_id == course.id and dose.checked_at is None for dose in doses)
@@ -50,7 +50,7 @@ def test_체크한_회차만_checked_at_이_있다():
     assert {dose.scheduled_time: dose.checked_at for dose in doses} == {
         time(8, 30): checked_at,
         time(12, 30): None,
-        time(17, 30): None,
+        time(19, 30): None,
     }
 
 
@@ -67,7 +67,7 @@ async def test_doses_는_기간으로_자른다():
     assert [(row.dose_date, row.scheduled_time) for row in today_rows] == [
         (TODAY, time(8, 30)),
         (TODAY, time(12, 30)),
-        (TODAY, time(17, 30)),
+        (TODAY, time(19, 30)),
     ]
     assert len(span_rows) == 3 + 3 + 1  # 어제 3 · 오늘 3 · 다른 코스 오늘 1
     assert [row.dose_date for row in span_rows] == sorted(row.dose_date for row in span_rows)

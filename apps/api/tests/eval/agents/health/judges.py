@@ -642,7 +642,7 @@ def asks(key: str) -> Callable[[Ran], Verdict]:
 def med_timing(*, then: str) -> Callable[[Ran], Verdict]:
     """시점을 되묻고, 답으로 초안을 만들거나("answer") 못 알아듣고 끝낸다("unclear")."""
     if then == "answer":
-        times = ("08:30", "12:30", "17:30")
+        times = ("08:30", "12:30", "19:30")
         done = drafts("create", times, title=None, missing=("title", "ends_on"))
     else:
         done = timing_unclear()
@@ -745,7 +745,7 @@ def dose_status() -> Callable[[Ran], Verdict]:
         if result is None:
             return verdict
         # C48: 어제는 세 회차 모두 · 오늘은 08:30 만 체크했고 지금은 14:00 이다
-        want = "마지막 체크 08:30 회차 · 다음 예정 17:30 · 오늘 체크 1/3회"
+        want = "마지막 체크 08:30 회차 · 다음 예정 19:30 · 오늘 체크 1/3회"
         if len(result.readouts) != 1 or result.readouts[0].kind != "dose_status":
             verdict.failures.append("dose_status 한 장이 아니다")
         elif result.readouts[0].body != want:
@@ -773,7 +773,7 @@ def handoff_notice() -> Callable[[Ran], Verdict]:
         want = [
             f"[투약 의뢰서]  {ran.world.today.isoformat()}",
             "• 약 종류 : 항생제 (5ml)",
-            "• 투약 시각 : 08:30 · 12:30 · 17:30",
+            "• 투약 시각 : 08:30 · 12:30 · 19:30",
             "• 보관 : -",
             "• 복용 이유 : -",
             "• 특이사항 : -",

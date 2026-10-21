@@ -684,10 +684,14 @@ NEAREST_WINDOW_MINUTES = 150
 
 
 def _replace_named(doses: list[DoseDraft], named: set[TimingAnchor]) -> list[DoseDraft]:
-    """말한 끼니의 회차를 뺀다. 그 anchor 가 없으면 그 끼니 시각 둘레(±150분)의 회차를 뺀다.
+    """말한 끼니의 회차를 뺀다. 그 anchor 가 없으면 그 시각 둘레(±150분)의 `fixed` 회차를 뺀다.
 
     "저녁 7시로" 로 이미 한 번 고친 코스는 저녁 회차가 `fixed` 라 anchor 로는 못 찾는다. 둘레에
     회차가 없으면(말한 끼니가 원래 패턴에 없었다) 아무것도 빼지 않고 새 회차만 더한다.
+
+    찾는 것은 보호자가 시각으로 고쳐 둔 `fixed` 회차뿐이다. 다른 기준점의 회차(저녁 식후 ·
+    자기 전)는 가까워도 같은 회차가 아니다 — 저녁(19:00)과 자기 전(20:30)은 90분 차이라, 가깝다고
+    옮기면 말하지 않은 회차가 조용히 사라진다.
     """
     remaining = list(doses)
     for anchor in sorted(named, key=lambda a: ANCHOR_TIMES[a]):
@@ -697,8 +701,11 @@ def _replace_named(doses: list[DoseDraft], named: set[TimingAnchor]) -> list[Dos
         if exact is not None:
             remaining.remove(exact)
             continue
+        fixed = [d for d in remaining if d.timing_anchor == "fixed"]
+        if not fixed:
+            continue
         base = _minutes(ANCHOR_TIMES[anchor])
-        nearest = min(remaining, key=lambda d: abs(_minutes(d.scheduled_time) - base))
+        nearest = min(fixed, key=lambda d: abs(_minutes(d.scheduled_time) - base))
         if abs(_minutes(nearest.scheduled_time) - base) <= NEAREST_WINDOW_MINUTES:
             remaining.remove(nearest)
     return remaining
@@ -708,7 +715,7 @@ def _without_references(timing: Sequence[ResolvedDose]) -> Sequence[ResolvedDose
     """ "저녁 약은 자기 전으로" 의 저녁은 옮길 회차를 가리키는 말이지 새 회차가 아니다.
 
     끼니만 말한(시점 표현이 없는) 회차와 자기 전 · 일어나서 · 시각이 한 말에 같이 있으면 끼니 쪽을
-    새 회차로 더하지 않는다. 안 그러면 저녁이 17:00 으로 다시 생겨 옮긴 것이 아니라 하나 늘어난다.
+    새 회차로 더하지 않는다. 안 그러면 저녁이 19:00 으로 다시 생겨 옮긴 것이 아니라 하나 늘어난다.
     """
     bare = [d for d in timing if d.timing_anchor in _MEALS and d.offset_minutes == 0]
     others = [d for d in timing if d not in bare]

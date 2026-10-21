@@ -2,7 +2,7 @@
 
 > `medication_schedule.md`를 흡수하고, 복약 기록·복약 이유·전달 서류에 필요한 컬럼을 더한 **정본**.
 >
-> **2026-10-20 갱신** — **`medication_dose` 가 회차 1번 = 1행**(3일 × 하루 3번 = 9행)이고 행마다 `checked_at` 체크 칸을 둔다. 복용 기록 테이블(`medication_dose_log`)은 없다 — 복용 체크는 보호자가 화면에서만 하고 Agent 는 읽기만 한다. 행을 기간만큼 미리 만들어서 `ends_on` 은 필수(무기한 코스 없음), `status` 는 `active` / `stopped` 둘(끝남은 `ends_on` 으로 계산). 저녁 기준 시각 18:00 → 17:00
+> **2026-10-20 갱신** — **`medication_dose` 가 회차 1번 = 1행**(3일 × 하루 3번 = 9행)이고 행마다 `checked_at` 체크 칸을 둔다. 복용 기록 테이블(`medication_dose_log`)은 없다 — 복용 체크는 보호자가 화면에서만 하고 Agent 는 읽기만 한다. 행을 기간만큼 미리 만들어서 `ends_on` 은 필수(무기한 코스 없음), `status` 는 `active` / `stopped` 둘(끝남은 `ends_on` 으로 계산). 저녁 기준 시각 18:00 → 19:00
 >
 > **2026-10-18 갱신** — **중단은 한 번 묻고**(`med.stop_confirm`) 보호자가 '네' 하면 Agent 가 `status='stopped'`. 확인 모달 · 초안 없음. 중단 시각은 `updated_at` (M-15)
 >
@@ -39,14 +39,14 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 | `wake_up` | 07:30 |
 | `breakfast` | 08:00 |
 | `lunch` | 12:00 |
-| `dinner` | 17:00 |
+| `dinner` | 19:00 |
 | `bedtime` | 20:30 |
 | `fixed` | 보호자가 지정 (`fixed_time`) |
 
 `offset_minutes`는 **부호 있는 분**이다. 식전 = 음수, 식후 = 양수. "식후"의 기본값 **+30**은 `resolve_dose_timing` 사전의 한 줄이지 DB 값이 아니다.
 
 - "아침식사 30분 후" → `breakfast` + 30 → **08:30**
-- "저녁 먹기 30분 전" → `dinner` − 30 → **16:30**
+- "저녁 먹기 30분 전" → `dinner` − 30 → **18:30**
 
 ---
 
@@ -126,11 +126,11 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 | 발화 | anchor | offset | scheduled_time |
 | --- | --- | --- | --- |
 | 아침식사 30분 후 | `breakfast` | 30 | 08:30 |
-| 저녁 먹기 30분 전 | `dinner` | −30 | 16:30 |
+| 저녁 먹기 30분 전 | `dinner` | −30 | 18:30 |
 | 점심 먹고 바로 | `lunch` | 0 | 12:00 |
 | 자기 전에 | `bedtime` | 0 | 20:30 |
 | 오후 3시에 | `fixed` | 0 | 15:00 |
-| 하루 세 번 식후 | breakfast/lunch/dinner | 각 30 | 08:30 · 12:30 · 17:30 (패턴 **3칸**, 3일이면 9행) |
+| 하루 세 번 식후 | breakfast/lunch/dinner | 각 30 | 08:30 · 12:30 · 19:30 (패턴 **3칸**, 3일이면 9행) |
 | 하루 세 번 (시점 없음) | — | — | **저장 안 함. 되묻기** |
 
 ---
@@ -204,14 +204,14 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
             {"timing_anchor": "lunch", "offset_minutes": 30, "fixed_time": null,
              "scheduled_time": "12:30"},
             {"timing_anchor": "dinner", "offset_minutes": 30, "fixed_time": null,
-             "scheduled_time": "17:30"}],
-  "notice_times": ["08:30", "12:30", "17:30"],
+             "scheduled_time": "19:30"}],
+  "notice_times": ["08:30", "12:30", "19:30"],
   "missing": ["ends_on"]
 }
 ```
 
 - `doses` 는 **하루 시각 패턴**이다(날짜 없음). 제출 때 백엔드가 `starts_on` ~ `ends_on` 의 날마다 펼쳐 회차 행을 만든다
-- `op="update"`면 `schedule_id`와 `before`(수정 전 원본)가 더 실린다. 화면이 "17:30 → 19:00"을 보여주는 데 쓴다
+- `op="update"`면 `schedule_id`와 `before`(수정 전 원본)가 더 실린다. 화면이 "19:30 → 20:00"을 보여주는 데 쓴다
 - **`missing`은 비어 있는 NOT NULL 칸의 이름이다**(`title` · `starts_on` · `ends_on`). 비어 있지 않으면 화면이 제출 버튼을 잠근다. 보호자가 채워서 보내야 INSERT가 성립한다. 발화에 기간이 없으면 Agent 는 `ends_on` 을 짐작하지 않고 여기에 싣는다
 - `storage` · `med_form` · `note`(투약의뢰서 특이사항)는 **Agent 가 비워 두고 보호자가 카드에서 채우는 선택 칸**이다. 비어도 `missing` 이 아니다
 - `schedule.symptom_codes` 는 **Agent 가 `indication_text` 를 증상 사전으로 맞춰 싣는 코드 목록**이다(없으면 `[]`, 모델 인자에는 이 칸이 없다). 제출 API 는 받은 값을 그대로 `medication_schedule.symptom_codes` 에 저장하고, 카드는 이 칸을 보여 주거나 고치지 않는다. 사전에 없는 말("중이염")은 코드가 되지 않는다
@@ -282,7 +282,7 @@ CREATE TABLE medication_dose (
             WHEN 'wake_up'   THEN TIME '07:30' + make_interval(mins => offset_minutes)
             WHEN 'breakfast' THEN TIME '08:00' + make_interval(mins => offset_minutes)
             WHEN 'lunch'     THEN TIME '12:00' + make_interval(mins => offset_minutes)
-            WHEN 'dinner'    THEN TIME '17:00' + make_interval(mins => offset_minutes)
+            WHEN 'dinner'    THEN TIME '19:00' + make_interval(mins => offset_minutes)
             WHEN 'bedtime'   THEN TIME '20:30' + make_interval(mins => offset_minutes)
         END
     ) STORED,

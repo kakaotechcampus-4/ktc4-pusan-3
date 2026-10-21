@@ -126,17 +126,17 @@ CASES: list[Case] = [
         "T01",
         M,
         "C48",
-        '초안 1장 (op="create") · dose 3 · notice_times=["08:30","12:30","17:30"] · '
+        '초안 1장 (op="create") · dose 3 · notice_times=["08:30","12:30","19:30"] · '
         'title="항생제" · dosage="5ml" · indication_text=null · '
         'missing=["ends_on"](발화에 기간 없음) · 저장 0건',
-        judge=med_create(("08:30", "12:30", "17:30"), dosage="5ml", missing=("ends_on",)),
+        judge=med_create(("08:30", "12:30", "19:30"), dosage="5ml", missing=("ends_on",)),
     ),
     _case(
         "T02",
         M,
         "C48",
         '초안 0장 · "식사 전후 언제 먹이면 되나요?" → 다음 턴 "식후요" 는 모델 없이 초안 1장 '
-        '(08:30 · 12:30 · 17:30 · missing=["title","ends_on"])',
+        '(08:30 · 12:30 · 19:30 · missing=["title","ends_on"])',
         judge=med_timing(then="answer"),
         followups=("식후요",),
     ),
@@ -170,7 +170,7 @@ CASES: list[Case] = [
         '초안의 indication_text에 "중이염" 원문 span · ends_on=오늘 포함 5일(+4일) · missing=[] '
         "(Memory 관찰 저장은 Health 밖)",
         judge=med_create(
-            ("08:30", "12:30", "17:30"), indication="중이염", ends_in_days=4, missing=()
+            ("08:30", "12:30", "19:30"), indication="중이염", ends_in_days=4, missing=()
         ),
     ),
     _case("T07", M, "C48", "쓰기 0 · 모델 0회 · dose.check_on_screen", judge=check_on_screen()),
@@ -181,7 +181,7 @@ CASES: list[Case] = [
         "T10",
         M,
         "C48",
-        "dose.status (마지막 체크 08:30 회차 · 다음 예정 17:30 · 오늘 체크 1/3회) · 모델 0회",
+        "dose.status (마지막 체크 08:30 회차 · 다음 예정 19:30 · 오늘 체크 1/3회) · 모델 0회",
         judge=dose_status(),
     ),
     _case("T11", M, "C48", "dose.status만 · 허가 문구 없음 · can_take 없음", judge=dose_status()),
@@ -189,9 +189,9 @@ CASES: list[Case] = [
         "T12",
         M,
         "C48",
-        '초안 op="update" · schedule_id · before에 기존 17:30 · 저녁 회차 fixed 19:00 · '
+        '초안 op="update" · schedule_id · before에 기존 19:30 · 저녁 회차 fixed 19:00 · '
         "새 notice_times 08:30 · 12:30 · 19:00 · 제출 전 기존 코스 그대로",
-        judge=med_update(("08:30", "12:30", "17:30"), ("08:30", "12:30", "19:00")),
+        judge=med_update(("08:30", "12:30", "19:30"), ("08:30", "12:30", "19:00")),
     ),
     _case(
         "T13",

@@ -73,9 +73,9 @@ def create_payload() -> dict[str, Any]:
         "doses": [
             dose("breakfast", 30, "08:30"),
             dose("lunch", 30, "12:30"),
-            dose("dinner", 30, "17:30"),
+            dose("dinner", 30, "19:30"),
         ],
-        "notice_times": ["08:30", "12:30", "17:30"],
+        "notice_times": ["08:30", "12:30", "19:30"],
         "missing": [],
     }
 
@@ -190,7 +190,7 @@ class TestNoticeTimes:
 
     def test_notice_times_는_정렬돼_있어야_한다(self):
         payload = create_payload()
-        payload["notice_times"] = ["17:30", "08:30", "12:30"]
+        payload["notice_times"] = ["19:30", "08:30", "12:30"]
 
         with pytest.raises(ValidationError):
             MedicationDraft.model_validate(payload)
@@ -201,7 +201,7 @@ class TestNoticeTimes:
 
         draft = MedicationDraft.model_validate(payload)
 
-        assert draft.notice_times == ["08:30", "12:30", "17:30"]
+        assert draft.notice_times == ["08:30", "12:30", "19:30"]
 
 
 class TestOpShape:
@@ -318,13 +318,13 @@ def test_기준_시각_상수():
         "wake_up": time(7, 30),
         "breakfast": time(8, 0),
         "lunch": time(12, 0),
-        "dinner": time(17, 0),
+        "dinner": time(19, 0),
         "bedtime": time(20, 30),
     }
     assert scheduled_time_of("breakfast", 30, None) == time(8, 30)
     assert scheduled_time_of("lunch", 30, None) == time(12, 30)
-    assert scheduled_time_of("dinner", 30, None) == time(17, 30)
-    assert scheduled_time_of("dinner", -30, None) == time(16, 30)
+    assert scheduled_time_of("dinner", 30, None) == time(19, 30)
+    assert scheduled_time_of("dinner", -30, None) == time(18, 30)
     assert scheduled_time_of("bedtime", 0, None) == time(20, 30)
     assert scheduled_time_of("fixed", 0, time(15, 0)) == time(15, 0)
 

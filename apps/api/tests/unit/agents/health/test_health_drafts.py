@@ -90,7 +90,7 @@ class TestCreate:
         assert draft.schedule.indication_text is None
         assert (draft.schedule.storage, draft.schedule.med_form, draft.schedule.note) == (None,) * 3
         assert len(draft.doses) == 3
-        assert draft.notice_times == ["08:30", "12:30", "17:30"]
+        assert draft.notice_times == ["08:30", "12:30", "19:30"]
         assert draft.schedule.starts_on == TODAY
         assert draft.schedule.ends_on is None and draft.missing == ["ends_on"]
 
@@ -118,7 +118,7 @@ class TestCreate:
 
         [readout] = ctx.state.readouts
         assert readout.authored_by == "code" and readout.kind == "medication_notice"
-        assert "08:30 · 12:30 · 17:30" in readout.body and "항생제" in readout.body
+        assert "08:30 · 12:30 · 19:30" in readout.body and "항생제" in readout.body
 
     async def test_중이염_이유는_원문_그대로(self):
         ctx, _ = world(text=T05)
@@ -248,13 +248,13 @@ class TestUpdate:
         assert [d.scheduled_time for d in draft.before.doses] == [
             time(8, 30),
             time(12, 30),
-            time(17, 30),
+            time(19, 30),
         ]
         # 저녁 회차만 바뀐다 — 아침 · 점심은 그대로다
         assert draft.notice_times == ["08:30", "12:30", "19:00"]
         dinner = next(d for d in draft.doses if d.scheduled_time == time(19, 0))
         assert (dinner.timing_anchor, dinner.fixed_time) == ("fixed", time(19, 0))
-        assert "17:30" not in draft.notice_times
+        assert "19:30" not in draft.notice_times
 
     async def test_말하지_않은_칸은_지금_값_그대로(self):
         course, rows = antibiotic()
@@ -313,7 +313,7 @@ class TestUpdate:
         assert ctx.state.drafts == []
 
     async def test_같은_값으로_바꾸면_초안을_내지_않는다(self):
-        course, rows = antibiotic()  # 용량 5ml · 08:30 12:30 17:30
+        course, rows = antibiotic()  # 용량 5ml · 08:30 12:30 19:30
         ctx, _ = world((course, rows), text="항생제 5ml 하루 세 번 식후")
 
         result = await update_medication_schedule(
@@ -514,7 +514,7 @@ class TestUpdateWhichDose:
         )
 
         [draft] = ctx.state.drafts
-        assert draft.notice_times == ["08:30", "17:30"]
+        assert draft.notice_times == ["08:30", "19:30"]
 
     async def test_저녁_식전으로_바꾸면_저녁_회차만_바뀐다(self):
         course, rows = antibiotic()
@@ -525,13 +525,13 @@ class TestUpdateWhichDose:
         )
 
         [draft] = ctx.state.drafts
-        assert draft.notice_times == ["08:30", "12:30", "16:30"]
+        assert draft.notice_times == ["08:30", "12:30", "18:30"]
 
 
 # ── 최종 리뷰 반영 ──
 class TestMoveDose:
     async def test_저녁_약은_자기_전으로는_저녁_회차를_자기_전으로_옮긴다(self):
-        # "저녁 약은 자기 전으로" — 점심이 지워지거나 17:00 저녁이 새로 생기면 안 된다
+        # "저녁 약은 자기 전으로" — 점심이 지워지거나 19:00 저녁이 새로 생기면 안 된다
         course, rows = antibiotic()
         ctx, _ = world((course, rows), text="항생제 저녁 약은 자기 전으로 바꿔줘")
 
@@ -542,8 +542,8 @@ class TestMoveDose:
         [draft] = ctx.state.drafts
         assert draft.notice_times == ["08:30", "12:30", "20:30"]
 
-    async def test_멀리_있는_회차는_가장_가깝다고_지우지_않는다(self):
-        # 자기 전(20:30) 근처에 회차가 없다 — 17:30 도 세 시간 떨어져 있어 그대로 두고 더한다
+    async def test_기준점이_다른_회차는_가깝다고_지우지_않는다(self):
+        # 저녁 식후(19:30)는 자기 전(20:30)과 한 시간 차이지만 다른 회차다 — 그대로 두고 더한다
         course, rows = antibiotic()
         ctx, _ = world((course, rows), text="항생제 자기 전에도 먹여줘")
 
@@ -552,7 +552,7 @@ class TestMoveDose:
         )
 
         [draft] = ctx.state.drafts
-        assert draft.notice_times == ["08:30", "12:30", "17:30", "20:30"]
+        assert draft.notice_times == ["08:30", "12:30", "19:30", "20:30"]
 
     async def test_말한_끼니가_패턴에_없으면_더하기만_한다(self):
         pattern = (DoseSlot.of("breakfast", 30), DoseSlot.of("dinner", 30))
@@ -564,7 +564,7 @@ class TestMoveDose:
         )
 
         [draft] = ctx.state.drafts
-        assert draft.notice_times == ["08:30", "12:30", "17:30"]
+        assert draft.notice_times == ["08:30", "12:30", "19:30"]
 
 
 class TestOneQuestionAtATime:
@@ -676,7 +676,7 @@ class TestUpdateStacksOnOneCard:
         assert [d.scheduled_time for d in draft.before.doses] == [
             time(8, 30),
             time(12, 30),
-            time(17, 30),
+            time(19, 30),
         ]
         assert draft.schedule_id == str(course.id)
 
@@ -684,7 +684,7 @@ class TestUpdateStacksOnOneCard:
         ctx, _, _, _ = await self._two()
 
         [readout] = ctx.state.readouts
-        assert "19:00" in readout.body and "17:30" not in readout.body
+        assert "19:00" in readout.body and "19:30" not in readout.body
 
     async def test_바뀐_필드_이름을_tool_결과로_돌려준다(self):
         _, _, first, second = await self._two()
@@ -952,3 +952,49 @@ class TestUnreadablePeriod:
         await update_medication_schedule(ctx, args)
 
         assert len(ctx.state.readouts) == 1
+
+
+class TestNearestIsFixedOnly:
+    """anchor 로 못 찾았을 때 가까운 회차로 찾는 것은 `fixed`(시각으로 고친) 회차뿐이다.
+
+    저녁(19:00)과 자기 전(20:30)은 90분 차이다. 기준점이 있는 회차까지 "가장 가깝다" 고
+    옮기면 말하지 않은 회차가 조용히 사라진다.
+    """
+
+    async def test_저녁_7시로_바꿔도_자기_전_회차는_남는다(self):
+        pattern = (DoseSlot.of("breakfast", 30), DoseSlot.of("lunch", 30), DoseSlot.of("bedtime"))
+        seed = course_with_doses("항생제", pattern, TODAY, TODAY + timedelta(days=2))
+        ctx, _ = world(seed, text="항생제 저녁 7시도 먹여줘")
+
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["저녁 7시"])
+        )
+
+        [draft] = ctx.state.drafts
+        assert draft.notice_times == ["08:30", "12:30", "19:00", "20:30"]
+
+    async def test_일어나서도_먹여줘는_아침_회차를_지우지_않는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 일어나서도 먹여줘")
+
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["일어나서"])
+        )
+
+        [draft] = ctx.state.drafts
+        assert draft.notice_times == ["07:30", "08:30", "12:30", "19:30"]
+
+    async def test_시각으로_고쳐_둔_저녁_회차는_계속_찾는다(self):
+        # 저녁 7시로 한 번 고친 코스(저녁이 fixed)를 다시 고친다 — anchor 로는 못 찾아도 옮겨진다
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 저녁 7시로, 다시 저녁 8시로")
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["저녁 7시"])
+        )
+
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["저녁 8시"])
+        )
+
+        [draft] = ctx.state.drafts
+        assert draft.notice_times == ["08:30", "12:30", "20:00"]

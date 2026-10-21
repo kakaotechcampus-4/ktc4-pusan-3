@@ -1,6 +1,6 @@
 """복약 시점 사전 · 기간 · 원문 대조 — 모델은 표현을 복사만 하고 anchor 는 코드가 정한다.
 
-- "하루 세 번 식후" → 08:30 · 12:30 · 17:30. 끼니도 시각도 없는 "하루 세 번" 은 풀지 않는다
+- "하루 세 번 식후" → 08:30 · 12:30 · 19:30. 끼니도 시각도 없는 "하루 세 번" 은 풀지 않는다
 - 시각은 짐작하지 않는다 — 오전 · 오후를 모르는 "3시" 는 풀지 않는다
 - 영아(0–23개월)는 자기 전을 취침 상수 대신 19:30 으로 낸다 (M-3)
 - offset 은 DB CHECK(-120 ~ 180) 안이다. 밖이면 자르지 않고 풀지 않는다
@@ -44,13 +44,13 @@ class TestMealTiming:
             ("lunch", 30),
             ("dinner", 30),
         ]
-        assert [d.scheduled_time for d in doses] == [time(8, 30), time(12, 30), time(17, 30)]
+        assert [d.scheduled_time for d in doses] == [time(8, 30), time(12, 30), time(19, 30)]
 
     def test_하루_두_번_식후는_아침_저녁(self):
-        assert times(["하루 두 번 식후"]) == [time(8, 30), time(17, 30)]
+        assert times(["하루 두 번 식후"]) == [time(8, 30), time(19, 30)]
 
     def test_끼니가_붙으면_그_끼니만(self):
-        assert times(["점심 저녁 식후"]) == [time(12, 30), time(17, 30)]
+        assert times(["점심 저녁 식후"]) == [time(12, 30), time(19, 30)]
 
     def test_아침_먹기_30분_전(self):
         [dose] = resolved(["아침 먹기 30분 전"])
@@ -59,7 +59,7 @@ class TestMealTiming:
         assert dose.scheduled_time == time(7, 30)
 
     def test_저녁_먹기_30분_전은_16시_30분(self):
-        assert times(["저녁 먹기 30분 전"]) == [time(16, 30)]
+        assert times(["저녁 먹기 30분 전"]) == [time(18, 30)]
 
     @pytest.mark.parametrize(
         ("span", "offset"),
@@ -79,13 +79,13 @@ class TestMealTiming:
         assert {d.offset_minutes for d in resolved([span])} == {offset}
 
     def test_끼니마다_시점이_다를_수_있다(self):
-        assert times(["아침 식후", "저녁 식전"]) == [time(8, 30), time(16, 30)]
+        assert times(["아침 식후", "저녁 식전"]) == [time(8, 30), time(18, 30)]
 
     def test_되묻기_답과_합치면_풀린다(self):
         # "하루 세 번" 만으로는 못 풀어 되물었고, "식후요" 로 답했다
         assert resolve_dose_timing(["하루 세 번"], months=48) is None
 
-        assert times(["하루 세 번", "식후요"]) == [time(8, 30), time(12, 30), time(17, 30)]
+        assert times(["하루 세 번", "식후요"]) == [time(8, 30), time(12, 30), time(19, 30)]
 
     def test_점심_먹고_바로(self):
         assert times(["점심 먹고 바로"]) == [time(12, 0)]
@@ -314,7 +314,7 @@ class TestWrongTimeIsNone:
     def test_모호하지_않았던_표현은_답을_그대로_이어_붙인다(self):
         got = resolve_dose_answer(["하루 세 번"], "식후요", months=48)
 
-        assert [d.scheduled_time for d in got or []] == [time(8, 30), time(12, 30), time(17, 30)]
+        assert [d.scheduled_time for d in got or []] == [time(8, 30), time(12, 30), time(19, 30)]
 
     def test_시각이_애매한지_안다(self):
         assert unclear_clock(["8시에"]) is True
@@ -358,10 +358,10 @@ class TestConflictingDirections:
         assert resolve_dose_answer(["하루 세 번"], "식전 말고 식후요", months=48) is None
 
     def test_같은_방향을_두_번_말하면_푼다(self):
-        assert times(["하루 세 번 식전", "식전이요"]) == [time(7, 30), time(11, 30), time(16, 30)]
+        assert times(["하루 세 번 식전", "식전이요"]) == [time(7, 30), time(11, 30), time(18, 30)]
 
     def test_끼니마다_다른_시점은_따로_말한_것이라_풀린다(self):
-        assert times(["아침 식후", "저녁 식전"]) == [time(8, 30), time(16, 30)]
+        assert times(["아침 식후", "저녁 식전"]) == [time(8, 30), time(18, 30)]
 
     def test_식전_식후_충돌은_시각이_모호한_것이_아니다(self):
         # 되묻는 말이 "몇 시인지" 가 되면 안 된다
@@ -446,12 +446,12 @@ class TestConflictThenAnswer:
     @pytest.mark.parametrize(
         ("spans", "answer", "expected"),
         [
-            (["아침은 식전 저녁은 식후"], "식후요", [time(8, 30), time(17, 30)]),
-            (["하루 세 번 식전 말고 식후"], "식전이요", [time(7, 30), time(11, 30), time(16, 30)]),
+            (["아침은 식전 저녁은 식후"], "식후요", [time(8, 30), time(19, 30)]),
+            (["하루 세 번 식전 말고 식후"], "식전이요", [time(7, 30), time(11, 30), time(18, 30)]),
             (
                 ["하루 세 번 식전 30분 말고 식후 30분"],
                 "식후요",
-                [time(8, 30), time(12, 30), time(17, 30)],
+                [time(8, 30), time(12, 30), time(19, 30)],
             ),
         ],
     )
