@@ -8,6 +8,7 @@ from app.agents.common.readout import Readout
 from app.agents.common.result import (
     AgentStatus,
     DomainAgentResult,
+    DomainPending,
     EventRequest,
     MedicationDraft,
 )
@@ -24,6 +25,7 @@ def result(
     question: str | None = None,
     medication_drafts: tuple[MedicationDraft, ...] = (),
     event_requests: tuple[EventRequest, ...] = (),
+    pending: DomainPending | None = None,
     model_calls: int = 0,
 ) -> DomainAgentResult:
     return DomainAgentResult(
@@ -34,5 +36,6 @@ def result(
         needs_observation=(question,) if question else (),
         medication_drafts=medication_drafts,
         event_requests=event_requests,
+        pending=pending,
         model_calls=model_calls,
     )
