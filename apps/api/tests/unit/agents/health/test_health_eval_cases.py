@@ -30,10 +30,12 @@ def _ran(result: DomainAgentResult | None, *, request: str = "x", world: str = "
     )
 
 
-def _result(status="completed", *bodies: str, **kwargs) -> DomainAgentResult:
+def _result(
+    status="completed", *bodies: str, task_type="medication", **kwargs
+) -> DomainAgentResult:
     readouts = tuple(Readout(kind="notice", body=body, authored_by="code") for body in bodies)
     return DomainAgentResult(
-        agent="health", task_type="medication", status=status, readouts=readouts, **kwargs
+        agent="health", task_type=task_type, status=status, readouts=readouts, **kwargs
     )
 
 
@@ -85,7 +87,8 @@ def test_구현된_라벨인데_판정이_gap_이면_실패다():
 
 
 def test_미구현은_gap_이다():
-    verdict = pending("medication")(_ran(_result("unsupported")))
+    # 병원 찾기는 연결 이슈 전까지 Health run() 에 라벨 경로가 없다
+    verdict = pending("병원 찾기")(_ran(_result("unsupported", task_type="place_lookup")))
 
     assert len(verdict.gaps) == 1
     assert not verdict.failures
@@ -118,7 +121,7 @@ def test_미구현_케이스에도_공통_조건을_건다():
 
 
 def test_아직_못_넣은_데이터는_참고로_남는다():
-    verdict = common(_ran(_result("unsupported"), world="C48-2med"))
+    verdict = common(_ran(_result("unsupported"), world="C48-fever"))
 
     assert verdict.notes
     assert not verdict.failures

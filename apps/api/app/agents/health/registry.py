@@ -11,8 +11,8 @@ task별 모델 tool (코드 tool 은 모델에 노출하지 않는다 — 노출
 
 - visit_summary   search_health_observations · search_recent_meals · search_medication_schedules ·
                   compose_symptom_timeline(출력)
-- medication      search_medication_schedules · create / update / stop_medication_schedule ·
-                  log_dose_taken · log_dose_skipped  (생성 · 수정 · 중단 · 복용 기록이 출력)
+- medication      search_medication_schedules · create / update / stop_medication_schedule
+                  (생성 · 수정 · 중단이 출력. 복용 체크는 tool 이 아니라 보호자 화면이다)
 - schedule_check · place_lookup · care_handoff   모델을 부르지 않는다
 
 hook(`check_symptom_repetition` · `lookup_condition_guidance`)은 Memory 가 `observation_health` 를
@@ -36,6 +36,12 @@ from app.agents.health.readouts import BLOCKED_CONSENT
 from app.agents.health.result import ErrorCode, ToolResult, fail
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.schemas.tool_defs import TOOL_DEFINITIONS
+from app.agents.health.tools.doses import search_medication_schedules
+from app.agents.health.tools.drafts import (
+    create_medication_schedule,
+    stop_medication_schedule,
+    update_medication_schedule,
+)
 
 ToolHandler = Callable[[HealthContext, Any], Awaitable[ToolResult]]
 
@@ -57,8 +63,6 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
             "create_medication_schedule",
             "update_medication_schedule",
             "stop_medication_schedule",
-            "log_dose_taken",
-            "log_dose_skipped",
         }
     ),
     HealthTaskType.CARE_HANDOFF: frozenset(),
@@ -117,17 +121,22 @@ OUTPUT_TOOLS: dict[HealthTaskType, frozenset[str]] = {
             "create_medication_schedule",
             "update_medication_schedule",
             "stop_medication_schedule",
-            "log_dose_taken",
-            "log_dose_skipped",
         }
     ),
 }
 MODEL_TASKS: frozenset[HealthTaskType] = frozenset(OUTPUT_TOOLS)
 
 # 라벨 경로가 다 붙은 라벨. 이슈가 라벨 하나를 끝낼 때 여기 더한다 (`agent._LABEL_RUNNERS` 와 같다)
-IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset({HealthTaskType.SCHEDULE_CHECK})
+IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset(
+    {HealthTaskType.SCHEDULE_CHECK, HealthTaskType.MEDICATION, HealthTaskType.CARE_HANDOFF}
+)
 
-TOOL_HANDLERS: dict[str, ToolHandler] = {}
+TOOL_HANDLERS: dict[str, ToolHandler] = {
+    "search_medication_schedules": search_medication_schedules,
+    "create_medication_schedule": create_medication_schedule,
+    "update_medication_schedule": update_medication_schedule,
+    "stop_medication_schedule": stop_medication_schedule,
+}
 _DEFINITIONS: dict[str, ToolDefinition] = {d.name: d for d in TOOL_DEFINITIONS}
 _SPECS_BY_NAME: dict[str, dict[str, Any]] = {
     spec["function"]["name"]: spec
