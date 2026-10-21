@@ -27,6 +27,7 @@ from app.agents.health.tools.drafts import (
     create_medication_schedule,
     pick_course,
     stop_medication_schedule,
+    update_for,
     update_medication_schedule,
 )
 from tests.unit.agents.health.support import TODAY, birth_for, context
@@ -308,9 +309,8 @@ class TestUpdate:
 
         result = await update_medication_schedule(ctx, update_args(title_span="항생제"))
 
-        assert result.success is False
-        assert result.error is not None and result.error["code"] == ErrorCode.NO_CHANGE
-        assert ctx.state.drafts == [] and ctx.state.readouts == []
+        assert result.success and result.data["draft"] is False
+        assert ctx.state.drafts == []
 
     async def test_같은_값으로_바꾸면_초안을_내지_않는다(self):
         course, rows = antibiotic()  # 용량 5ml · 08:30 12:30 17:30
@@ -321,18 +321,22 @@ class TestUpdate:
             update_args(title_span="항생제", dosage_span="5ml", timing_spans=["하루 세 번 식후"]),
         )
 
-        assert result.success is False
-        assert result.error is not None and result.error["code"] == ErrorCode.NO_CHANGE
+        assert result.success and result.data["draft"] is False
+        assert ctx.state.drafts == []
 
-    async def test_진행_중인_복약이_없으면_찾지_못한다(self):
+    async def test_진행_중인_복약이_없으면_안내로_끝난다(self):
+        # 실패로 돌려주면 `tool_choice="required"` 라 모델이 같은 호출을 되풀이한다 — stop 과 같다
         ctx, _ = world(text="항생제 저녁 7시로 바꿔줘")
 
         result = await update_medication_schedule(
             ctx, update_args(title_span="항생제", timing_spans=["저녁 7시"])
         )
 
-        assert result.success is False
-        assert result.error is not None and result.error["code"] == ErrorCode.NOT_FOUND
+        assert result.success and result.data["draft"] is False
+        assert ctx.state.drafts == []
+        assert [r.body for r in ctx.state.readouts] == [
+            READOUTS.render("notice.no_active_med").body
+        ]
 
     async def test_멈춘_코스는_고치지_않는다(self):
         # 중단 시각(updated_at)을 지킨다 — 멈춘 코스는 진행 중 목록에 없다
@@ -343,7 +347,12 @@ class TestUpdate:
             ctx, update_args(title_span="항생제", timing_spans=["저녁 7시"])
         )
 
-        assert result.success is False and ctx.state.drafts == []
+        # 멈춘 코스는 진행 중이 아니라 고치지 않는다 — 안내로 끝난다
+        assert result.success and result.data["draft"] is False
+        assert ctx.state.drafts == []
+        assert [r.body for r in ctx.state.readouts] == [
+            READOUTS.render("notice.no_active_med").body
+        ]
 
     async def test_약이_둘이고_이름이_없으면_되묻고_이어갈_값을_남긴다(self):
         ctx, _ = world(antibiotic(), syrup(), text="저녁 7시로 바꿔줘")
@@ -708,9 +717,10 @@ class TestUpdateStacksOnOneCard:
             ctx, update_args(title_span="항생제", dosage_span="5ml")
         )
 
-        assert back.success is False
-        assert back.error is not None and back.error["code"] == ErrorCode.NO_CHANGE
-        assert ctx.state.drafts == [] and ctx.state.readouts == []
+        assert back.success and back.data["draft"] is False
+        assert ctx.state.drafts == []
+        # 앞 초안의 확인 문구(7ml)는 거두고 바뀐 게 없다는 안내만 남는다
+        assert [r.body for r in ctx.state.readouts] == [READOUTS.render("med.no_change").body]
 
     async def test_새_약_초안은_합치지_않는다(self):
         ctx, _ = world(text="기침약 하루 세 번 식후, 해열제 하루 세 번 식후")
@@ -723,3 +733,222 @@ class TestUpdateStacksOnOneCard:
         )
 
         assert len(ctx.state.drafts) == 2
+
+
+class TestNoChangeEndsCleanly:
+    """바꿀 것이 없으면 모델이 거기서 끝낼 수 있어야 한다 — 일정의 draft=False 와 같다.
+
+    출력 tool 이 모두 쓰는 tool 이라 실패로 돌려주면 모델이 6번을 더 돈다(`tool_choice="required"`).
+    """
+
+    async def test_바꿀_값이_없으면_초안_없이_성공으로_끝낸다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 양 좀 늘려도 돼?")
+
+        result = await update_medication_schedule(ctx, update_args(title_span="항생제"))
+
+        assert result.success and result.data["draft"] is False and result.data["changed"] == []
+        assert ctx.state.drafts == []
+        assert [r.body for r in ctx.state.readouts] == [READOUTS.render("med.no_change").body]
+
+    async def test_같은_안내는_한_번만_붙는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 양 좀 늘려도 돼?")
+
+        await update_medication_schedule(ctx, update_args(title_span="항생제"))
+        await update_medication_schedule(ctx, update_args(title_span="항생제"))
+
+        assert len(ctx.state.readouts) == 1
+
+    async def test_이어받는_길은_실패_코드로_알린다(self):
+        # 되묻기를 이어받는 run 은 update_for 를 직접 부른다 — 실패 코드로 med.no_change 를 고른다
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="")
+
+        result = await update_for(
+            ctx, course, dosage_span=None, timing_spans=None, period_span=None
+        )
+
+        assert result.success is False
+        assert result.error is not None and result.error["code"] == ErrorCode.NO_CHANGE
+
+
+class TestSameCourseCardOrQuestion:
+    """한 약에 카드와 되묻기를 한 run 에 같이 내지 않는다.
+
+    질문 뒤 다음 run 이 DB 에서 새 카드를 만들면 같은 약 카드가 둘이 되어, 승인 순서가 최종 값을
+    정한다(전체 값을 든 카드가 서로 되돌린다).
+    """
+
+    async def test_카드를_낸_약의_시점_되묻기는_하지_않는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 7ml 로 늘리고 하루 두 번으로 바꿔줘")
+        await update_medication_schedule(ctx, update_args(title_span="항생제", dosage_span="7ml"))
+
+        result = await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["하루 두 번"])
+        )
+
+        assert result.success is False
+        assert ctx.state.pending is None and ctx.state.question is None
+        [draft] = ctx.state.drafts
+        assert draft.schedule.dosage == "7ml"
+        assert READOUTS.render("med.one_at_a_time") in ctx.state.readouts
+
+    async def test_되묻는_중인_약은_또_고치지_않는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 하루 두 번으로 바꾸고 7ml 로 늘려줘")
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["하루 두 번"])
+        )
+        asked = ctx.state.pending
+
+        result = await update_medication_schedule(
+            ctx, update_args(title_span="항생제", dosage_span="7ml")
+        )
+
+        assert result.success is False
+        assert ctx.state.drafts == [] and ctx.state.pending is asked
+        assert READOUTS.render("med.one_at_a_time") in ctx.state.readouts
+
+    async def test_카드를_낸_약의_중단_확인은_하지_않는다(self):
+        course, rows = antibiotic()
+        ctx, store = world((course, rows), text="항생제 저녁 7시로 바꾸고 끊어줘")
+        await update_medication_schedule(
+            ctx, update_args(title_span="항생제", timing_spans=["저녁 7시"])
+        )
+
+        result = await stop_medication_schedule(ctx, StopMedicationArgs(title_span="항생제"))
+
+        assert result.success is False
+        assert ctx.state.pending is None and len(ctx.state.drafts) == 1
+        assert store.writes == []
+
+    async def test_중단을_묻는_약은_또_고치지_않는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 끊고 7ml 로 바꿔줘")
+        await stop_medication_schedule(ctx, StopMedicationArgs(title_span="항생제"))
+
+        result = await update_medication_schedule(
+            ctx, update_args(title_span="항생제", dosage_span="7ml")
+        )
+
+        assert result.success is False
+        assert ctx.state.drafts == [] and ctx.state.pending.kind == "medication_stop"
+
+    async def test_다른_약의_질문은_막지_않는다(self):
+        ctx, _ = world(antibiotic(), syrup(), text="항생제 7ml 로 바꾸고 시럽은 끊어줘")
+        await update_medication_schedule(ctx, update_args(title_span="항생제", dosage_span="7ml"))
+
+        result = await stop_medication_schedule(ctx, StopMedicationArgs(title_span="시럽"))
+
+        assert result.success
+        assert len(ctx.state.drafts) == 1 and ctx.state.pending.kind == "medication_stop"
+
+
+class TestSymptomCodes:
+    """복약 이유의 증상 코드는 모델이 고르지 않는다 — Food 처럼 Agent 코드가 사전으로 맞춘다.
+
+    제출 API 는 받은 값을 그대로 저장하고, 사전을 따로 읽지 않는다.
+    """
+
+    async def _create(self, text, span):
+        ctx, _ = world(text=text)
+        result = await create_medication_schedule(
+            ctx,
+            create_args(
+                title_span="항생제", indication_span=span, timing_spans=["하루 세 번 식후"]
+            ),
+        )
+        assert result.success
+        return ctx.state.drafts[0]
+
+    @pytest.mark.parametrize(
+        ("span", "codes"),
+        [
+            ("열이 나서", ["fever"]),
+            ("열이 나고 기침도 해서", ["fever", "cough"]),
+            ("열이 없는데 기침해서", ["cough"]),  # 사전의 취소 표현("열이 없")은 발열이 아니다
+            ("중이염 때문에", []),  # 사전에 없는 말은 코드로 바꾸지 않는다
+            (None, []),
+        ],
+    )
+    async def test_복약_이유를_사전으로_맞춘다(self, span, codes):
+        text = f"항생제 {span or ''} 하루 세 번 식후"
+
+        draft = await self._create(text, span)
+
+        assert draft.schedule.symptom_codes == codes
+        assert draft.to_payload()["schedule"]["symptom_codes"] == codes
+
+    async def test_수정_초안은_저장된_코드를_그대로_싣는다(self):
+        # 사전이 바뀐 뒤의 옛 값("cough")도 다시 계산하지 않는다 — 제출 API 는 받은 값을 저장한다
+        course, rows = antibiotic(indication_text="열이 나서", symptom_codes=("cough",))
+        ctx, _ = world((course, rows), text="항생제 7ml 로 늘려줘")
+
+        await update_medication_schedule(ctx, update_args(title_span="항생제", dosage_span="7ml"))
+
+        [draft] = ctx.state.drafts
+        assert draft.schedule.symptom_codes == ["cough"]
+        assert draft.before.schedule.symptom_codes == ["cough"]
+        assert ctx.state.changed[draft.draft_id] == ("dosage",)  # 코드가 바뀐 것으로 세지 않는다
+
+    async def test_이유가_없어도_저장된_코드는_지우지_않는다(self):
+        course, rows = antibiotic(symptom_codes=("fever",))
+        ctx, _ = world((course, rows), text="항생제 7ml 로 늘려줘")
+
+        await update_medication_schedule(ctx, update_args(title_span="항생제", dosage_span="7ml"))
+
+        [draft] = ctx.state.drafts
+        assert draft.schedule.symptom_codes == ["fever"]
+
+    def test_모델_인자에는_증상_코드_칸이_없다(self):
+        for model in (CreateMedicationArgs, UpdateMedicationArgs):
+            assert "symptom_codes" not in model.model_fields
+
+
+class TestUnreadablePeriod:
+    """못 읽은 기간을 "바꿀 내용이 없어요" 로 뭉개지 않는다 — 보호자는 이미 그 날짜인 줄 안다."""
+
+    async def test_못_읽는_기간만_말하면_못_읽었다고_알린다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 다음 주 월요일까지로 늘려줘")
+
+        result = await update_medication_schedule(
+            ctx, update_args(title_span="항생제", period_span="다음 주 월요일까지")
+        )
+
+        assert result.success and result.data["draft"] is False
+        assert [r.body for r in ctx.state.readouts] == [READOUTS.render("med.period_unclear").body]
+
+    async def test_다른_변경이_있으면_카드와_함께_알린다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 7ml 로 다음 주 월요일까지")
+
+        await update_medication_schedule(
+            ctx,
+            update_args(title_span="항생제", dosage_span="7ml", period_span="다음 주 월요일까지"),
+        )
+
+        [draft] = ctx.state.drafts
+        assert draft.schedule.dosage == "7ml" and draft.schedule.ends_on == course.ends_on
+        assert READOUTS.render("med.period_unclear") in ctx.state.readouts
+        assert READOUTS.render("med.no_change") not in ctx.state.readouts
+
+    async def test_기간을_읽으면_알리지_않는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 5일 더 먹여")
+
+        await update_medication_schedule(ctx, update_args(title_span="항생제", period_span="5일"))
+
+        assert READOUTS.render("med.period_unclear") not in ctx.state.readouts
+
+    async def test_같은_안내는_한_번만_붙는다(self):
+        course, rows = antibiotic()
+        ctx, _ = world((course, rows), text="항생제 다음 주 월요일까지")
+        args = update_args(title_span="항생제", period_span="다음 주 월요일까지")
+
+        await update_medication_schedule(ctx, args)
+        await update_medication_schedule(ctx, args)
+
+        assert len(ctx.state.readouts) == 1

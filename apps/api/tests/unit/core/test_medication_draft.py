@@ -9,6 +9,7 @@
     - 같은 시각 dose 둘 금지 · `notice_times` 는 dose 시각과 같다
     - `missing` 은 비어 있는 필수 칸(title · starts_on · ends_on)과 같다
     - `ends_on` 은 `starts_on` 이상
+    - `symptom_codes` 는 복약 이유를 사전으로 맞춘 코드다 — Agent 가 싣고 API 는 그대로 저장한다
 """
 
 import json
@@ -65,6 +66,7 @@ def create_payload() -> dict[str, Any]:
             "storage": None,
             "med_form": None,
             "note": None,
+            "symptom_codes": [],
             "starts_on": "2026-09-22",
             "ends_on": "2026-09-26",
         },
@@ -325,3 +327,39 @@ def test_기준_시각_상수():
     assert scheduled_time_of("dinner", -30, None) == time(16, 30)
     assert scheduled_time_of("bedtime", 0, None) == time(20, 30)
     assert scheduled_time_of("fixed", 0, time(15, 0)) == time(15, 0)
+
+
+class TestSymptomCodes:
+    def test_빠져_있으면_빈_목록이다(self):
+        payload = create_payload()
+        del payload["schedule"]["symptom_codes"]
+
+        draft = MedicationDraft.model_validate(payload)
+
+        assert draft.schedule.symptom_codes == []
+        assert draft.to_payload()["schedule"]["symptom_codes"] == []
+
+    def test_싣고_되돌아_나간다(self):
+        payload = create_payload()
+        payload["schedule"]["symptom_codes"] = ["fever", "cough"]
+
+        draft = MedicationDraft.model_validate(payload)
+
+        assert draft.to_payload()["schedule"]["symptom_codes"] == ["fever", "cough"]
+
+    def test_수정_전_원본에도_실린다(self):
+        payload = update_payload()
+        payload["schedule"]["symptom_codes"] = ["fever"]
+        payload["before"]["schedule"]["symptom_codes"] = ["fever"]
+
+        draft = MedicationDraft.model_validate(payload)
+
+        assert draft.before is not None and draft.before.schedule.symptom_codes == ["fever"]
+
+    @pytest.mark.parametrize("codes", [[""], [" "], ["fever", "fever"], "fever", [None]])
+    def test_빈_코드_중복_목록이_아닌_값은_거절(self, codes):
+        payload = create_payload()
+        payload["schedule"]["symptom_codes"] = codes
+
+        with pytest.raises(ValidationError):
+            MedicationDraft.model_validate(payload)

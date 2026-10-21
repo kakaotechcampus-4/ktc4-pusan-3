@@ -59,7 +59,7 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 | title | text | NOT NULL. **보호자 발화 원문 복사.** "항생제" / "타이레놀" |
 | dosage | text | nullable. "5ml" / "1포". 원문 보존 |
 | **indication_text** | text | nullable. **신규** — 복약 이유. 보호자 발화 원문 복사. 없으면 NULL (추정 금지) |
-| **symptom_codes** | text[] | NOT NULL, default `'{}'`. **신규** — `normalize_symptom_term`이 정규화한 코드. 모델이 고르지 않는다 |
+| **symptom_codes** | text[] | NOT NULL, default `'{}'`. **신규** — `indication_text` 를 증상 사전(`symptom_codes.yaml`)으로 맞춘 코드. Agent 가 초안에 싣고 제출 API 는 받은 값을 그대로 저장한다. 모델이 고르지 않는다 |
 | **storage** | varchar(16) | nullable. **신규** — `room` / `fridge`. 보호자 선택값 |
 | **med_form** | varchar(16) | nullable. **신규** — `liquid` / `powder` / `tablet` / `ointment` / `drops` |
 | starts_on | date | NOT NULL |
@@ -84,7 +84,7 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 | 컬럼 | 누가 채우나 | 금지 |
 | --- | --- | --- |
 | `indication_text` | 모델이 발화에서 **복사만** (span 검증) | 추정·보정 |
-| `symptom_codes` | **코드**가 사전으로 | 모델이 코드 선택 |
+| `symptom_codes` | **Agent 의 코드**가 사전으로 `indication_text` 에서 맞춰 초안에 싣는다(Food · Activity 가 사전으로 맞추는 것과 같은 자리). 제출 API 는 받은 값을 그대로 저장한다 | 모델이 코드 선택 · 제출 API 가 사전을 따로 읽기 |
 | `storage` · `med_form` · `note` | 보호자가 초안 카드에서 선택(처방전 경로면 추출값) — Agent 는 비워 둔다 | 모델 추론 |
 
 > `indication_text`는 **진단이 아니라 보호자 기록**이다. `health_safety`로 승격되지 않고, 다른 Agent에 전달되지 않는다. 같은 증상이 다시 왔을 때 "지난번엔 이 약을 먹였어요"라는 **사실 제시**까지만 쓰이고, "그 약을 먹이세요"는 처방이라 하지 않는다.
@@ -197,6 +197,7 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
   "source": null,
   "schedule": {"title": "항생제", "dosage": "5ml", "indication_text": null,
                "storage": null, "med_form": null, "note": null,
+               "symptom_codes": [],
                "starts_on": "2026-09-22", "ends_on": null},
   "doses": [{"timing_anchor": "breakfast", "offset_minutes": 30, "fixed_time": null,
              "scheduled_time": "08:30"},
@@ -213,6 +214,7 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 - `op="update"`면 `schedule_id`와 `before`(수정 전 원본)가 더 실린다. 화면이 "17:30 → 19:00"을 보여주는 데 쓴다
 - **`missing`은 비어 있는 NOT NULL 칸의 이름이다**(`title` · `starts_on` · `ends_on`). 비어 있지 않으면 화면이 제출 버튼을 잠근다. 보호자가 채워서 보내야 INSERT가 성립한다. 발화에 기간이 없으면 Agent 는 `ends_on` 을 짐작하지 않고 여기에 싣는다
 - `storage` · `med_form` · `note`(투약의뢰서 특이사항)는 **Agent 가 비워 두고 보호자가 카드에서 채우는 선택 칸**이다. 비어도 `missing` 이 아니다
+- `schedule.symptom_codes` 는 **Agent 가 `indication_text` 를 증상 사전으로 맞춰 싣는 코드 목록**이다(없으면 `[]`, 모델 인자에는 이 칸이 없다). 제출 API 는 받은 값을 그대로 `medication_schedule.symptom_codes` 에 저장하고, 카드는 이 칸을 보여 주거나 고치지 않는다. 사전에 없는 말("중이염")은 코드가 되지 않는다
 - 검증은 DB CHECK 를 그대로 옮긴다(`fixed` ↔ `fixed_time` · offset −120 ~ 180 · 같은 시각 둘 금지 · `ends_on` ≥ `starts_on`). 초안을 그대로 제출했는데 DB 에서 터지는 일이 없게 한다. 모양은 `app/core/medication_draft.py`
 - 처방전 카드의 "빈칸 + 등록 잠김"은 **다른 잠금이다.** 그쪽은 OCR 신뢰도가 낮은 칸을 잠그는 것이라 nullable 칸(`dosage` 등)도 대상이 된다. 둘 다 통과해야 제출된다
 - `draft_id`는 화면이 초안을 가리키고 제출 요청에 되돌려 보내는 키다. 배열 인덱스로는 안 된다 — 초안 두 장 중 하나만 제출하면 인덱스가 밀린다
@@ -351,6 +353,7 @@ CREATE TABLE prescription_draft (
 | M-5 | ✅ **닫힘(10-20)** — `days_of_week` 는 없앴다 | 회차가 날짜별 행이라 "격일 복용"은 패턴이 아니라 행을 건너뛰는 일이 된다. 요구가 오면 초안 모양부터 다시 연다 |
 | M-6 | **`prescription_draft` 만료 기간** | 미확인 draft를 며칠 둘지 |
 | M-7 | **`symptom_codes` 사전 범위** (H-8과 동일) | 에피소드·반복 판정과 같은 어휘 |
+| M-16 | **`symptom_codes` 를 사전과 맞추는 위치** | **지금은 Agent**(`symptom_codes_of`)가 맞춰 초안에 싣는다 — Food 와 같은 방식이고, 제출 API 가 `agents` 의 사전을 읽지 않아도 된다. 제출 때 BE 가 맞추는 쪽으로 옮길지는 이 값을 읽는 기능(진료 준비 정리 등)이 생길 때 같이 정한다. 옮기면 초안의 이 칸은 빠진다 |
 | M-8 | ✅ **닫힘(10-20)** — 체크 정정은 보호자 화면에서 회차를 해제하는 것 | 체크는 되돌릴 수 있어서 승인 게이트가 아니다. Agent 는 체크를 쓰지 않는다 |
 | M-9 | `storage` · `med_form`을 누가 묻나 | 등록 카드의 선택 입력. 비어도 서식은 생성 |
 | M-10 | 보호자 입력 접종 이력(`immunization_record`) | 도입하면 접종 안내가 개인 일정이 된다. 이번 범위 밖 |

@@ -105,6 +105,9 @@ class MedicationCourse:
     # 오늘 이후 회차 행에서 시각이 겹치지 않게 모은 것(남은 회차가 없으면 마지막 날의 행에서).
     # 수정 초안의 before · 서식의 투약 시각에 쓴다. 어댑터는 이 규칙으로 회차 행에서 만든다
     pattern: tuple[DoseSlot, ...]
+    # 저장된 값(`medication_schedule.symptom_codes`). 수정 초안은 사전으로 다시 계산하지 않고
+    # 이 값을 싣는다 — 제출 API 는 받은 값을 그대로 저장해서, 다시 계산하면 옛 코스의 값이 덮인다
+    symptom_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

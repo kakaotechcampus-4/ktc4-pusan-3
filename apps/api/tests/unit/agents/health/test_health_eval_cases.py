@@ -4,8 +4,10 @@ eval 본체(`tests/eval/agents/health/test_health_run.py`)는 -m live 라 기본
 표가 문서와 따로 놀거나 판정이 미구현을 숨기는 일은 여기서 잡는다.
 """
 
+from datetime import UTC, datetime
+
 from app.agents.common.readout import Readout
-from app.agents.common.result import DomainAgentResult
+from app.agents.common.result import DomainAgentResult, DomainPending
 from app.agents.health import registry
 from app.agents.health.envelope import result as hook_result
 from app.agents.health.hook import check_symptom_repetition
@@ -15,8 +17,10 @@ from tests.eval.agents.health.cases import CASES, OUTSIDE, doc_inputs
 from tests.eval.agents.health.judges import (
     EVAL_GUIDANCE,
     Ran,
+    Turn,
     common,
     consent_closed,
+    med_no_advice,
     pending,
     schedule_check,
     symptom_repeat,
@@ -442,3 +446,48 @@ def test_hook_케이스는_전부_판정이_있다():
     ]
     for case in hook_cases:
         assert case.judge.__qualname__.startswith("symptom_repeat."), case.case_id
+
+
+def _no_advice_ran(result: DomainAgentResult) -> Ran:
+    turn = Turn(request="x", result=result, now=datetime(2026, 9, 28, tzinfo=UTC))
+    return Ran(
+        case_id="T16",
+        world=build_world("C48"),
+        request="x",
+        result=result,
+        elapsed_ms=0,
+        turns=(turn,),
+    )
+
+
+def test_med_no_advice_바꿀_게_없다는_안내로_끝나면_통과다():
+    ran = _no_advice_ran(_result("completed", READOUTS.render("med.no_change").body))
+
+    assert med_no_advice()(ran).failures == []
+
+
+def test_med_no_advice_실패로_끝나면_잡는다():
+    # 출력 tool 이 실패를 돌려주면 모델이 6번을 돌고 failed 로 끝난다
+    ran = _no_advice_ran(_result("failed"))
+
+    assert any("completed" in failure for failure in med_no_advice()(ran).failures)
+
+
+def test_med_no_advice_되묻기가_나가면_잡는다():
+    pending_ask = DomainPending(agent="health", kind="dose_timing", question="?", payload={})
+    ran = _no_advice_ran(
+        _result(
+            "completed",
+            READOUTS.render("med.no_change").body,
+            pending=pending_ask,
+            needs_observation=("?",),
+        )
+    )
+
+    assert any("되묻기" in failure for failure in med_no_advice()(ran).failures)
+
+
+def test_med_no_advice_안내_없이_끝나면_잡는다():
+    ran = _no_advice_ran(_result("completed", READOUTS.render("dose.check_on_screen").body))
+
+    assert any("med.no_change" in failure for failure in med_no_advice()(ran).failures)

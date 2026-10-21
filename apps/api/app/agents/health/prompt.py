@@ -36,6 +36,8 @@ _TOOLS = """
 - 새로 먹이기 시작하는 약 → create_medication_schedule
 - 이미 등록된 약의 시각 · 양 · 기간 바꾸기 → update_medication_schedule (title_span 은 바꿀 약 이름)
 - 약을 끊기 · 그만 먹이기 → stop_medication_schedule (약 이름을 말하지 않았으면 비운다)
+- 용량 · 시각을 바꿔도 되는지 묻기만 하고 바꿀 값을 말하지 않았으면 update_medication_schedule 을
+  title_span 만 넣어 부른다. 바뀌는 게 없어서 코드가 안내만 내고, 되는지 안 되는지는 말하지 않는다.
 - 등록된 약이 무엇인지 알아야 할 때만 search_medication_schedules 를 먼저 부른다.
 - 이 요청은 저장되지 않는다. 보호자가 확인 카드에서 눌러야 등록되고, 중단은 코드가 한 번 더 묻는다.
 """.strip()

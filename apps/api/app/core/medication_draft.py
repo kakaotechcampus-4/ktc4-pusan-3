@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from datetime import date, time
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import AfterValidator, Field, PlainSerializer, model_validator
+from pydantic import AfterValidator, Field, PlainSerializer, field_validator, model_validator
 
 from app.core.event_draft import DraftBase
 
@@ -96,8 +96,20 @@ class ScheduleDraft(DraftBase):
     storage: StorageValue | None  # 보호자가 카드에서 적는 선택 칸 — Agent는 None
     med_form: MedFormValue | None  # 〃
     note: str | None  # 투약의뢰서 특이사항 — 〃
+    # 복약 이유(`indication_text`)를 증상 사전(`reference/symptom_codes.yaml`)으로 맞춘 코드.
+    # Agent 가 사전으로 만들어 싣고 제출 API 는 받은 값을 그대로 저장한다 — 모델이 고르지 않는다
+    symptom_codes: list[str] = Field(default_factory=list)
     starts_on: date | None
     ends_on: date | None  # 제출 때는 필수(무기한 코스 방지)
+
+    @field_validator("symptom_codes")
+    @classmethod
+    def _check_codes(cls, codes: list[str]) -> list[str]:
+        if any(not code.strip() for code in codes):
+            raise ValueError("증상 코드는 비어 있을 수 없다")
+        if len(set(codes)) != len(codes):
+            raise ValueError("증상 코드가 겹친다")
+        return codes
 
     @model_validator(mode="after")
     def _check_span(self) -> Self:

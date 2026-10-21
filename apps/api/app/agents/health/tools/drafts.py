@@ -36,7 +36,9 @@ from app.agents.health.readouts import (
     ASK_DOSE_TIMING,
     ASK_WHICH_MED,
     MED_CONFIRM,
+    MED_NO_CHANGE,
     MED_ONE_AT_A_TIME,
+    MED_PERIOD_UNCLEAR,
     MED_STOP_CONFIRM,
     MED_UPDATE_CONFIRM,
     NOTICE_NO_ACTIVE_MED,
@@ -50,6 +52,7 @@ from app.agents.health.schemas.medication import (
 )
 from app.agents.health.store.ports import MedicationCourse
 from app.agents.health.tools.spans import is_verbatim, normalize_spaces
+from app.agents.health.tools.symptoms import symptom_codes_of
 from app.agents.health.tools.timing import (
     ResolvedDose,
     anchors_named,
@@ -159,12 +162,9 @@ async def update_medication_schedule(
 
     target = pick_course(await _active(context), args.title_span)
     if target is None:
-        return fail(
-            "draft",
-            UPDATE,
-            ErrorCode.NOT_FOUND,
-            "진행 중인 복약이 없어 바꿀 수 없다. 새로 등록할지 보호자에게 묻는다.",
-        )
+        # 바꿀 약이 없다는 것도 끝이다 — 실패로 돌려주면 모델이 같은 호출을 되풀이한다(stop 과 같다)
+        _note(context, NOTICE_NO_ACTIVE_MED)
+        return ok("draft", UPDATE, draft=False, changed=[])
     timing_spans = _spans(args.timing_spans) if args.timing_spans is not None else None
     if isinstance(target, Ambiguous):
         return _ask_which(
@@ -178,13 +178,41 @@ async def update_medication_schedule(
                 "period_span": _clean(args.period_span),
             },
         )
-    return await update_for(
+    outcome = await update_for(
         context,
         target,
         dosage_span=_clean(args.dosage_span),
         timing_spans=timing_spans,
         period_span=_clean(args.period_span),
     )
+    if outcome.error is not None and outcome.error["code"] == ErrorCode.NO_CHANGE:
+        return _nothing_to_change(context, target)
+    return outcome
+
+
+def _nothing_to_change(context: HealthContext, course: MedicationCourse) -> ToolResult:
+    """바꿀 것이 없다는 것도 끝이다. 출력 tool 이 실패하면 모델이 같은 호출을 되풀이한다.
+
+    "양 늘려도 돼?" 처럼 바꿀 값을 말하지 않은 요청이 여기로 온다(일정의 `draft=False` 와 같다).
+    이 약의 카드가 이미 나가 있으면 그 카드가 답이라 안내를 더하지 않는다. 없으면 안내를 한 번 낸다.
+    """
+    state = context.state
+    card = next(
+        (d for d in state.drafts if d.op == "update" and d.schedule_id == str(course.id)), None
+    )
+    if card is not None:
+        return ok(
+            "draft",
+            UPDATE,
+            draft=True,
+            draft_id=card.draft_id,
+            notice_times=card.notice_times,
+            missing=card.missing,
+            changed=list(state.changed.get(card.draft_id, ())),
+        )
+    if READOUTS.render(MED_PERIOD_UNCLEAR) not in state.readouts:  # 그 안내가 이유를 말한다
+        _note(context, MED_NO_CHANGE)
+    return ok("draft", UPDATE, draft=False, changed=[])
 
 
 async def update_for(
@@ -198,8 +226,29 @@ async def update_for(
     """대상 코스가 정해진 수정. 대상 약을 고른 뒤 이어 갈 때도 이 길로 온다(span 은 검증됨).
 
     이 run 에서 같은 약의 수정 초안이 이미 있으면 그 위에 쌓는다 — DB 현재 값이 아니라 앞 초안이
-    현재 값이다(`_base_for`).
+    현재 값이다(`_base_for`). 말한 기간을 못 읽었으면 지금 값 그대로 두고 그렇다고 알린다 —
+    보호자는 그 날짜로 바뀐 줄 안다.
     """
+    outcome = await _update_for(
+        context,
+        course,
+        dosage_span=dosage_span,
+        timing_spans=timing_spans,
+        period_span=period_span,
+    )
+    if resolve_period(period_span, today=context.today) is None:
+        _note(context, MED_PERIOD_UNCLEAR)
+    return outcome
+
+
+async def _update_for(
+    context: HealthContext,
+    course: MedicationCourse,
+    *,
+    dosage_span: str | None,
+    timing_spans: list[str] | None,
+    period_span: str | None,
+) -> ToolResult:
     base = _base_for(context, course)
     ends_on = base.schedule.ends_on or course.ends_on
     if period := resolve_period(period_span, today=context.today):
@@ -245,7 +294,7 @@ async def stop_medication_schedule(context: HealthContext, args: StopMedicationA
 
 def ask_stop(context: HealthContext, course: MedicationCourse) -> ToolResult:
     """중단 확인 질문. 이 run 에서는 아무것도 바꾸지 않는다."""
-    if busy := _busy(context, STOP):
+    if busy := _busy(context, STOP, courses=(course,)):
         return busy
     question = READOUTS.render(MED_STOP_CONFIRM, title=course.title).body
     _ask(
@@ -278,6 +327,7 @@ def finish_create(
         storage=None,  # 보호자가 카드에서 적는 선택 칸 — Agent 는 비워 둔다
         med_form=None,
         note=None,
+        symptom_codes=_symptom_codes(indication_text),
         starts_on=starts_on,
         ends_on=ends_on,
     )
@@ -307,6 +357,8 @@ def finish_update(
     보호자가 적은 칸(보관 · 제형 · 특이사항)과 말하지 않은 칸은 지금 값 그대로다. 같은 약을 이
     run 에서 이미 고쳤으면 앞 초안 위에 쌓고 같은 `draft_id` 로 갈아 끼운다.
     """
+    if blocked := _question_open(context, course):
+        return blocked
     base = _base_for(context, course)
     current = base.doses
     if timing is None:
@@ -498,7 +550,7 @@ def _ask_timing(
 
     시각이 모호해서("8시에") 못 풀었으면 식전 · 식후가 아니라 몇 시인지(오전 · 오후)를 묻는다.
     """
-    if busy := _busy(context, resource):
+    if busy := _busy(context, resource, courses=(course,) if course else ()):
         return busy
     payload: dict[str, Any] = {
         "op": op,
@@ -532,7 +584,7 @@ def _ask_which(
     args: Mapping[str, Any],
 ) -> ToolResult:
     """대상 약을 못 가렸다 — 어느 약인지 먼저 묻는다. 이어서 할 일(op · span)을 맥락에 싣는다."""
-    if busy := _busy(context, resource):
+    if busy := _busy(context, resource, courses=candidates):
         return busy
     titles = " · ".join(course.title for course in candidates)
     _ask(
@@ -553,23 +605,59 @@ def _ask_which(
     return ok("draft" if op == "update" else "record", resource, asked=True)
 
 
-def _busy(context: HealthContext, resource: str) -> ToolResult | None:
-    """이미 되묻는 중이면 두 번째 되묻기는 하지 않는다.
+def _busy(
+    context: HealthContext, resource: str, *, courses: Sequence[MedicationCourse] = ()
+) -> ToolResult | None:
+    """되묻기를 해도 되는지. 이미 되묻는 중이거나, 되물을 약의 카드가 나가 있으면 하지 않는다.
 
     보호자에게는 질문이 하나만 나가야 하고, 둘째가 첫째의 맥락을 덮어쓰면 첫째 약이 조용히 사라진다.
-    대신 나머지는 이어서 말해 달라고 안내한다(한 번만).
+    같은 약의 카드와 질문을 같이 내면 질문 뒤 다음 run 이 DB 에서 새 카드를 또 만들어, 한 약의
+    카드가 둘이 되고 승인 순서가 최종 값을 정한다. 대신 나머지는 이어서 말해 달라고 안내한다
+    (한 번만).
     """
-    if context.state.pending is None:
+    state = context.state
+    ids = {str(course.id) for course in courses}
+    if state.pending is None and not any(
+        d.op == "update" and d.schedule_id in ids for d in state.drafts
+    ):
         return None
-    note = READOUTS.render(MED_ONE_AT_A_TIME)
-    if note not in context.state.readouts:
-        context.state.readouts.append(note)
-    return fail(
-        "draft",
+    return _one_at_a_time(
+        context,
         resource,
-        ErrorCode.INVALID_ARGS,
-        "이미 보호자에게 되묻는 중이다. 되묻기는 한 번에 하나만 한다. 이 약은 지금 처리 안 한다.",
+        "이미 보호자에게 되묻는 중이거나 이 약의 카드가 나갔다. 같은 약의 카드와 질문, 두 번째 "
+        "질문은 같이 내지 않는다. 이 약은 지금 처리 안 한다.",
     )
+
+
+def _question_open(context: HealthContext, course: MedicationCourse) -> ToolResult | None:
+    """이 약을 되묻는 중이면 카드를 내지 않는다 — 답을 받은 다음 run 이 새 카드를 또 만든다."""
+    pending = context.state.pending
+    if pending is None or str(course.id) not in _pending_course_ids(pending):
+        return None
+    return _one_at_a_time(
+        context,
+        UPDATE,
+        "이 약은 지금 보호자에게 되묻는 중이다. 같은 약의 카드와 질문은 같이 내지 않는다.",
+    )
+
+
+def _pending_course_ids(pending: DomainPending) -> set[str]:
+    payload = pending.payload
+    ids = {str(payload["schedule_id"])} if payload.get("schedule_id") else set()
+    ids.update(str(c["schedule_id"]) for c in payload.get("candidates", []))
+    return ids
+
+
+def _one_at_a_time(context: HealthContext, resource: str, message: str) -> ToolResult:
+    _note(context, MED_ONE_AT_A_TIME)
+    return fail("draft", resource, ErrorCode.INVALID_ARGS, message)
+
+
+def _note(context: HealthContext, key: str) -> None:
+    """안내 한 줄. 같은 안내는 한 run 에 한 번만 붙는다."""
+    readout = READOUTS.render(key)
+    if readout not in context.state.readouts:
+        context.state.readouts.append(readout)
 
 
 def _ask(context: HealthContext, pending: DomainPending) -> None:
@@ -635,6 +723,11 @@ def _minutes(moment) -> int:
     return moment.hour * 60 + moment.minute
 
 
+def _symptom_codes(indication_text: str | None) -> list[str]:
+    """복약 이유 원문을 증상 사전으로 맞춘다. 모델이 고르지 않고, 사전에 없는 말은 코드가 아니다."""
+    return list(symptom_codes_of([indication_text])) if indication_text else []
+
+
 def _schedule_of(course: MedicationCourse) -> ScheduleDraft:
     return ScheduleDraft(
         title=course.title,
@@ -643,6 +736,7 @@ def _schedule_of(course: MedicationCourse) -> ScheduleDraft:
         storage=course.storage,
         med_form=course.med_form,
         note=course.note,
+        symptom_codes=list(course.symptom_codes),  # 저장된 값 — 사전으로 다시 계산하지 않는다
         starts_on=course.starts_on,
         ends_on=course.ends_on,
     )

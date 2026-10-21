@@ -336,3 +336,160 @@ class TestPeriodIsDurationOnly:
     )
     def test_기간_모양은_읽는다(self, span):
         assert resolve_period(span, today=TODAY)[1] == TODAY + timedelta(days=int(span[0]) - 1)
+
+
+# ── 최종 리뷰 반영 ──
+class TestConflictingDirections:
+    """식전 · 식후를 둘 다 말했거나 서로 다르게 말하면 고르지 않는다 — 반대편 시각이 카드에 뜬다."""
+
+    @pytest.mark.parametrize(
+        "spans",
+        [
+            ["아침은 식전 저녁은 식후"],
+            ["하루 세 번 식전 말고 식후"],
+            ["하루 세 번 식전 30분 말고 식후 30분"],
+            ["하루 세 번 식전", "아니 식후요"],  # 따로 온 두 말이 서로 다른 시점이다
+        ],
+    )
+    def test_식전과_식후가_같이_있으면_풀지_않는다(self, spans):
+        assert resolve_dose_timing(spans, months=48) is None
+
+    def test_스스로_고친_답은_못_풀어서_되묻는다(self):
+        assert resolve_dose_answer(["하루 세 번"], "식전 말고 식후요", months=48) is None
+
+    def test_같은_방향을_두_번_말하면_푼다(self):
+        assert times(["하루 세 번 식전", "식전이요"]) == [time(7, 30), time(11, 30), time(16, 30)]
+
+    def test_끼니마다_다른_시점은_따로_말한_것이라_풀린다(self):
+        assert times(["아침 식후", "저녁 식전"]) == [time(8, 30), time(16, 30)]
+
+    def test_식전_식후_충돌은_시각이_모호한_것이_아니다(self):
+        # 되묻는 말이 "몇 시인지" 가 되면 안 된다
+        assert unclear_clock(["식전 말고 식후"]) is False
+
+
+class TestAnswerKeepsOtherDoses:
+    def test_모호한_시각만_답으로_바꾸고_다른_회차는_남긴다(self):
+        got = resolve_dose_answer(["아침 식후", "8시"], "저녁 8시요", months=48)
+
+        assert [d.scheduled_time for d in got or []] == [time(8, 30), time(20, 0)]
+
+    def test_답이_오전_오후만_말해도_다른_회차는_남는다(self):
+        got = resolve_dose_answer(["아침 식후", "8시"], "저녁이요", months=48)
+
+        assert [d.scheduled_time for d in got or []] == [time(8, 30), time(20, 0)]
+
+
+class TestOffsetOnWakeAndBedtime:
+    @pytest.mark.parametrize("span", ["일어나서 30분 뒤", "자기 전 30분", "자기 30분 전에"])
+    def test_분을_말했는데_anchor_가_자기_전_일어나서면_풀지_않는다(self, span):
+        # 오프셋을 조용히 버리면 20:30 · 07:30 이 나온다 — 보호자가 말한 시각이 아니다
+        assert resolve_dose_timing([span], months=48) is None
+
+    def test_분이_없는_자기_전은_그대로_푼다(self):
+        assert times(["자기 전에"]) == [time(20, 30)]
+
+
+class TestVerbatimMoreBoundaries:
+    @pytest.mark.parametrize(
+        ("span", "source"),
+        [
+            ("2포", "1/2포 먹여"),
+            ("5ml", ".5ml 먹여"),
+            ("3ml", "2~3ml 먹여"),
+            ("10ml", "5-10ml 먹여"),
+            ("5ml", "5ml~10ml 먹여"),
+            ("5ml", "5ml-10ml 먹여"),
+        ],
+    )
+    def test_분수_범위_소수점_한가운데서_자른_말은_거절(self, span, source):
+        assert is_verbatim(span, [source]) is False
+
+    @pytest.mark.parametrize(
+        ("span", "source"),
+        [
+            ("5ml", "항생제 - 5ml 먹여"),
+            ("5ml", "항생제: 5ml."),
+            ("5ml", "2~3ml 말고 5ml"),
+            ("1/2포", "1/2포 먹여"),
+            ("2~3ml", "2~3ml 먹여"),
+        ],
+    )
+    def test_경계가_맞으면_통과(self, span, source):
+        assert is_verbatim(span, [source]) is True
+
+
+class TestAttachedAmountOnly:
+    """분이 자기 전 · 일어나서에 **바로 붙었을 때만** 풀지 않는다. 식후에 붙은 분은 상관없다."""
+
+    def test_식후에_붙은_분은_자기_전과_상관없다(self):
+        span = "아침 식후 30분이랑 자기 전에"
+
+        assert times([span]) == [time(8, 30), time(20, 30)]
+        assert unclear_clock([span]) is False
+
+    def test_일어나서와_식후_분이_같이_있어도_푼다(self):
+        assert times(["일어나서 아침 식후 30분"]) == [time(7, 30), time(8, 30)]
+
+    @pytest.mark.parametrize("span", ["자기 전 30분", "일어나서 30분 뒤", "자기 전 1시간"])
+    def test_바로_붙은_분은_계속_풀지_않는다(self, span):
+        assert resolve_dose_timing([span], months=48) is None
+        assert unclear_clock([span]) is True
+
+    def test_끼니_없이_식사_분_전만_있으면_풀지_않는다(self):
+        # "식사 30분 전" 은 어느 끼니인지 모른다 — 자기 전 하나만 남기면 끼니 회차가 사라진다
+        assert resolve_dose_timing(["식사 30분 전, 자기 전"], months=48) is None
+        assert unclear_clock(["식사 30분 전, 자기 전"]) is False
+
+
+class TestConflictThenAnswer:
+    @pytest.mark.parametrize(
+        ("spans", "answer", "expected"),
+        [
+            (["아침은 식전 저녁은 식후"], "식후요", [time(8, 30), time(17, 30)]),
+            (["하루 세 번 식전 말고 식후"], "식전이요", [time(7, 30), time(11, 30), time(16, 30)]),
+            (
+                ["하루 세 번 식전 30분 말고 식후 30분"],
+                "식후요",
+                [time(8, 30), time(12, 30), time(17, 30)],
+            ),
+        ],
+    )
+    def test_엇갈린_말은_답의_방향으로_푼다(self, spans, answer, expected):
+        got = resolve_dose_answer(spans, answer, months=48)
+
+        assert [d.scheduled_time for d in got or []] == expected
+
+    def test_답도_엇갈리면_계속_모른다(self):
+        assert (
+            resolve_dose_answer(["아침은 식전 저녁은 식후"], "식전 말고 식후요", months=48) is None
+        )
+
+    def test_엇갈린_말에_횟수가_없으면_답만으로는_모른다(self):
+        assert resolve_dose_answer(["식전", "아니 식후요"], "식후요", months=48) is None
+
+
+class TestVerbatimSlashAndPeriod:
+    @pytest.mark.parametrize(
+        ("span", "source"),
+        [
+            ("3회", "1일/3회 먹여"),
+            ("2번", "하루/2번 먹여"),
+            ("3일", "열 나요.3일 먹여"),
+            ("5ml", "항생제/5ml 먹여"),
+        ],
+    )
+    def test_분수가_아닌_슬래시_마침표_뒤는_통과(self, span, source):
+        assert is_verbatim(span, [source]) is True
+
+    @pytest.mark.parametrize(
+        ("span", "source"),
+        [
+            ("2포", "1/2포 먹여"),
+            ("5ml", ".5ml 먹여"),
+            ("5ml", "먹여 .5ml"),
+            ("5ml", "0.5ml 먹여"),
+        ],
+    )
+    def test_분수_소수점_조각은_계속_거절(self, span, source):
+        assert is_verbatim(span, [source]) is False

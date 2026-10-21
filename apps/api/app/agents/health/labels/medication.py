@@ -13,8 +13,8 @@ Agent 가 쓰는 것은 한 번 물어 보호자가 확인한 **중단 하나**�
 처리할 것을 싣고 끝나고, 다음 run 이 받으면 모델 없이 답을 가른다. 못 가린 답은 아무것도 쓰지
 않고 다시 묻지도 않는다 — 같은 질문을 반복하면 보호자가 막힌다.
 
-표(`QUERY_WORDS` · `DOSE_WORDS` · `YES_WORDS` · `NO_WORDS`)가 커지면 결국 의도 분류를 코드로 하는
-셈이다. 그래서 표를 짧게 두고, 못 걸리는 말은 모델이 본다.
+표(`QUERY_WORDS` · `DOSE_WORDS` · `YES_WORDS` · `STOP_STEMS` · `NO_WORDS`)가 커지면
+결국 의도 분류를 코드로 하는 셈이다. 그래서 표를 짧게 두고, 못 걸리는 말은 모델이 본다.
 """
 
 import logging
@@ -35,6 +35,7 @@ from app.agents.health.envelope import result
 from app.agents.health.prompt import build_system_prompt
 from app.agents.health.readouts import (
     MED_NO_CHANGE,
+    MED_PERIOD_UNCLEAR,
     MED_STOP_KEPT,
     MED_STOPPED,
     MED_TIMING_UNCLEAR,
@@ -90,10 +91,26 @@ ACTION_WORDS: tuple[str, ...] = (
 # "그래서" · "반응이" 처럼 앞글자만 같은 말을 '네' 로 읽으면 약이 멈춘다
 YES_WORDS: tuple[str, ...] = ("응", "네", "예", "그래", "멈춰", "끊어", "맞아", "좋아")
 NO_WORDS: tuple[str, ...] = ("아니", "아냐", "취소", "계속", "그대로", "말고")
+# 멈추겠다는 말. 어미가 붙어야 센다 — "그만" · "중단" 만으로는 "그만 먹여도 돼?" 에도 걸린다
+STOP_STEMS: tuple[str, ...] = ("중단", "그만둘", "그만", "끊을", "멈출")
 _ENDINGS = "(?:요|용|야|줘|줘요|주세요|에요|예요|해|해줘|해요|둬|둬요)?"
-_YES = re.compile(rf"^(?:{'|'.join(YES_WORDS)})+{_ENDINGS}$")
+_STOP_ENDINGS = (
+    "(?:할게요|할게|할래요|할래|하겠어요|하겠습니다|해줘요|해줘|해주세요|해요|해|게요|게|래요|래)"
+)
+_YES = re.compile(
+    rf"^(?:{'|'.join(YES_WORDS)}|(?:{'|'.join(STOP_STEMS)}){_STOP_ENDINGS})+{_ENDINGS}$"
+)
 _NO = re.compile(rf"^(?:{'|'.join(NO_WORDS)})+{_ENDINGS}$")
 _TOKEN = re.compile(r"[가-힣A-Za-z0-9]+")
+# "안 끊을게요" · "못 멈출게요" 는 멈추지 않겠다는 말이다. 어간 + 어미만 보면 '네' 가 되어
+# 반대로 쓴다. 부정 말이 한 토큰으로 있으면 '네' 로 세지 않는다
+_NEGATIONS = ("안", "못")
+# "네 번 남았어요" 의 네는 숫자다. 이것을 '네' 로 읽으면 중단 쓰기가 일어난다. 세는 말이 뒤따를 때만
+# 숫자로 본다 — "네 알겠어요" 의 네는 대답이다
+_NUMERAL_NE = re.compile(r"네\s*(?:번|개|회|가지|시간|시(?:에|쯤|경|까지|부터))")
+# "기침이 끊이지 않아" · "열이 끊어지지 않아" 는 약을 끊는다는 말이 아니다. 걸러 내지 않으면
+# "끊" 한 글자에 걸려 체크 안내가 모델로 새고, 묻지 않은 중단 질문이 나간다
+_NOT_STOP_REQUEST = re.compile(r"끊이|끊어지|끊기지|끊겨|끊긴|끊김")
 
 
 class _BadPending(Exception):
@@ -104,11 +121,14 @@ def confirm_answer(texts: Sequence[str]) -> Literal["yes", "no", "unclear"]:
     """'네' · '아니요' 를 표현 표로 가른다.
 
     아니요가 하나라도 있으면 아니요, 네만 있으면 네, 그 밖은 모른다. 못 알아들은 답은 "그대로
-    둔다" 쪽이다 — 알림이 멈추는 것은 보호자가 모르고 지나가기 쉽다.
+    둔다" 쪽이다 — 알림이 멈추는 것은 보호자가 모르고 지나가기 쉽다. 숫자 "네 번" 은 네가 아니고,
+    "끊을게요" · "중단해 주세요" 같은 분명한 말은 네다.
     """
-    tokens = [token for text in texts for token in _TOKEN.findall(text)]
+    tokens = [token for text in texts for token in _TOKEN.findall(_NUMERAL_NE.sub(" ", text))]
     if any(_NO.match(token) for token in tokens):
         return "no"
+    if any(token in _NEGATIONS for token in tokens):
+        return "unclear"
     if any(_YES.match(token) for token in tokens):
         return "yes"
     return "unclear"
@@ -121,7 +141,7 @@ async def run_medication(
     if context.pending is not None:
         return await _resume(context, context.pending, task.request_texts)
 
-    text = " ".join(task.request_texts)
+    text = _NOT_STOP_REQUEST.sub(" ", " ".join(task.request_texts))
     # 등록 · 수정 · 중단 말이 같이 있으면 표가 가로채지 않는다 — "먹였는데 이제 끊을게" 가 체크
     # 안내로 가면 보호자의 요청이 아무 말 없이 사라진다. 그런 말은 모델이 본다
     if not any(word in text for word in ACTION_WORDS):
@@ -191,9 +211,12 @@ async def _resume(
     if outcome is not None and not outcome.success:
         # 초안을 못 냈다 — 지금과 같은 값이거나, 시각이 겹쳐 화면에 못 나가는 초안이다
         no_change = outcome.error is not None and outcome.error["code"] == ErrorCode.NO_CHANGE
-        context.state.readouts.append(
-            READOUTS.render(MED_NO_CHANGE if no_change else MED_TIMING_UNCLEAR)
-        )
+        # 기간을 못 읽어서 바뀐 게 없는 것이면 그 안내가 이미 이유를 말한다
+        explained = no_change and READOUTS.render(MED_PERIOD_UNCLEAR) in context.state.readouts
+        if not explained:
+            context.state.readouts.append(
+                READOUTS.render(MED_NO_CHANGE if no_change else MED_TIMING_UNCLEAR)
+            )
     return _finish(context)
 
 

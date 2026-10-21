@@ -155,6 +155,7 @@ def course_with_doses(
     status: Literal["active", "stopped"] = "active",
     checked: Collection[tuple[date, time]] | Mapping[tuple[date, time], datetime] = (),
     course_id: UUID | None = None,
+    symptom_codes: Sequence[str] = (),
 ) -> tuple[MedicationCourse, list[MedicationDose]]:
     """코스와 그 회차 행. 기간 × 패턴만큼 행을 만든다 — 백엔드 제출이 만들 모양과 같다.
 
@@ -173,6 +174,7 @@ def course_with_doses(
         status=status,
         note=note,
         pattern=tuple(pattern),
+        symptom_codes=tuple(symptom_codes),
     )
     if isinstance(checked, Mapping):
         checked_at = dict(checked)

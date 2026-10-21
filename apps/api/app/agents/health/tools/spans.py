@@ -12,6 +12,11 @@
 "5ml/kg" · "항생제A"), 앞이 소수점("0.5ml") · 뒤가 소수점 숫자("5.5ml")이면 그 자리의 일치는
 세지 않는다.
 한글 조사("5ml씩") · 쉼표 · 문장 끝 마침표("5ml.")는 경계다.
+
+숫자가 낀 말은 분수 · 범위의 한쪽도 아니다. "1/2포" 에서 "2포", "2~3ml" 에서 "3ml", "5ml~10ml" 에서
+"5ml" 을 꺼내면 반 포가 두 포가 되고 범위의 끝이 용량이 된다. 앞이 `숫자/` 이거나
+시작 · 공백 뒤의 `.` 이거나 `숫자~` · `숫자-` 이면, 뒤가 `~숫자` · `-숫자` 이면 그 자리의
+일치는 세지 않는다. 띄어 쓴 범위("2 ~ 3ml")는 읽지 않는다.
 """
 
 import re
@@ -19,6 +24,11 @@ from collections.abc import Sequence
 
 _NOT_BEFORE = r"(?<![0-9A-Za-z])(?<![0-9]\.)"
 _NOT_AFTER = r"(?![0-9A-Za-z/])(?!\.[0-9])"
+# 숫자가 낀 말에만 건다 — "항생제/해열제" 의 해열제는 분수 · 범위가 아니다
+# 분수("1/2포")는 앞이 숫자 + 슬래시일 때만, 앞 소수점(".5ml")은 점 앞이 시작 · 공백일 때만 거른다.
+# "1일/3회" · "열 나요.3일" 의 뒤쪽은 정상 복사다
+_NOT_FRACTION_BEFORE = r"(?<![0-9]/)(?:(?<!\.)|(?<=[^\s.]\.))(?<![0-9][~-])"
+_NOT_RANGE_AFTER = r"(?![~-][0-9])"
 
 
 def normalize_spaces(text: str) -> str:
@@ -30,5 +40,7 @@ def is_verbatim(span: str, source_texts: Sequence[str]) -> bool:
     needle = normalize_spaces(span)
     if not needle:
         return False
-    pattern = re.compile(_NOT_BEFORE + re.escape(needle) + _NOT_AFTER)
+    before = _NOT_BEFORE + (_NOT_FRACTION_BEFORE if needle[0].isdigit() else "")
+    after = _NOT_AFTER + (_NOT_RANGE_AFTER if any(ch.isdigit() for ch in needle) else "")
+    pattern = re.compile(before + re.escape(needle) + after)
     return any(pattern.search(normalize_spaces(text)) for text in source_texts)

@@ -37,6 +37,7 @@ ASK_DOSE_CLOCK = "ask.dose_clock"  # 시각이 모호하다 — 오전 · 오후
 MED_WHICH_UNCLEAR = "med.which_unclear"  # 되묻기 답을 못 가렸다 — 쓰지 않는다
 MED_TIMING_UNCLEAR = "med.timing_unclear"
 MED_NO_CHANGE = "med.no_change"  # 수정인데 지금 값과 같다
+MED_PERIOD_UNCLEAR = "med.period_unclear"  # 수정할 기간을 못 읽었다
 MED_ONE_AT_A_TIME = "med.one_at_a_time"  # 되묻기는 한 번에 하나
 DOSE_STATUS = "dose.status"
 DOSE_CHECK_ON_SCREEN = "dose.check_on_screen"

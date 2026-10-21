@@ -82,6 +82,10 @@ med.timing_unclear:
 med.no_change:
   kind: medication_notice
   template: "바꿀 내용이 없어서 수정 카드를 만들지 않았어요."
+# 수정할 기간을 읽지 못했다 — "바꿀 내용이 없어요" 로 뭉개지 않는다
+med.period_unclear:
+  kind: medication_notice
+  template: "기간을 알아듣지 못해서 바꾸지 않았어요. 며칠인지(예: 5일) 말씀해 주세요."
 # 한 응답에 되묻기가 둘 이상 왔다 — 첫째만 묻고 나머지는 이어서 말해 달라고 안내한다
 med.one_at_a_time:
   kind: medication_notice

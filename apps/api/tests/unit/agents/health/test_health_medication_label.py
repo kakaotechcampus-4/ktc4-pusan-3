@@ -18,6 +18,7 @@ from app.agents.health.context import HealthRunState
 from app.agents.health.labels.medication import (
     NO_WORDS,
     QUERY_WORDS,
+    STOP_STEMS,
     YES_WORDS,
     confirm_answer,
 )
@@ -722,3 +723,249 @@ class TestUpdateTwiceInOneResponse:
         assert draft.notice_times == ("08:30", "12:30", "19:00")
         assert [d["scheduled_time"] for d in draft.before["doses"]] == ["08:30", "12:30", "17:30"]
         assert len(result.readouts) == 1 and store.writes == []
+
+
+class TestNothingToChange:
+    async def test_바꿀_값이_없는_말은_모델_한_번으로_끝난다(self):
+        # 용량 · 허가를 묻는 말에 모델이 update 를 title 만 넣어 불러도 6번을 돌지 않고 끝난다
+        ctx, store = world(antibiotic())
+        llm = FakeLLM(call("update_medication_schedule", {"title_span": "항생제"}))
+
+        result = await run(med("항생제 양 늘려도 돼?"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert len(llm.seen) == 1
+        assert [r.body for r in result.readouts] == [READOUTS.render("med.no_change").body]
+        assert result.medication_drafts == () and store.writes == []
+        assert result.needs_observation == () and result.pending is None
+
+    async def test_되돌린_수정은_빈_결과가_아니라_안내가_나간다(self):
+        ctx, _ = world(antibiotic(dosage="5ml"))  # 원래 5ml — 7ml 로 고쳤다가 5ml 로 돌아온다
+        llm = FakeLLM(
+            calls(
+                ("update_medication_schedule", {"title_span": "항생제", "dosage_span": "7ml"}),
+                ("update_medication_schedule", {"title_span": "항생제", "dosage_span": "5ml"}),
+            )
+        )
+
+        result = await run(med("항생제 7ml 로 했다가 5ml 로 돌려줘"), ctx, client=llm)
+
+        assert result.status == "completed" and result.medication_drafts == ()
+        assert [r.body for r in result.readouts] == [READOUTS.render("med.no_change").body]
+
+    async def test_프롬프트가_바꿀_게_없는_말의_길을_알려_준다(self):
+        ctx, _ = world()
+
+        prompt = build_system_prompt(ctx, HealthTaskType.MEDICATION)
+
+        assert "title_span 만" in prompt and "용량" in prompt
+
+
+class TestStopCueWords:
+    async def test_끊이지_않는다는_말은_중단_요청이_아니다(self):
+        # "끊" 한 글자가 "끊이지" 에도 걸려 체크 안내가 모델로 새면 묻지 않은 중단 질문이 나간다
+        ctx, _ = world(antibiotic())
+        llm = FakeLLM()
+
+        result = await run(med("기침이 끊이지 않아서 아까 해열제 먹였어"), ctx, client=llm)
+
+        assert llm.seen == [] and result.model_calls == 0
+        assert [r.body for r in result.readouts] == [READOUTS.render("dose.check_on_screen").body]
+
+    @pytest.mark.parametrize(
+        "text", ["먹였는데 끊었어", "먹였는데 이제 끊을게", "먹였는데 끊어줘", "먹였는데 끊고 싶어"]
+    )
+    async def test_끊는다는_말은_모델이_본다(self, text):
+        ctx, _ = world(antibiotic())
+        llm = FakeLLM(call("stop_medication_schedule", {"title_span": None}))
+
+        result = await run(med(text), ctx, client=llm)
+
+        assert result.model_calls == 1
+        assert result.needs_observation == (
+            READOUTS.render("med.stop_confirm", title="항생제").body,
+        )
+
+
+class TestCardThenQuestionSameCourse:
+    async def test_한_응답의_수정과_시점_되묻기는_카드만_남긴다(self):
+        ctx, store = world(antibiotic())
+        llm = FakeLLM(
+            calls(
+                ("update_medication_schedule", {"title_span": "항생제", "dosage_span": "7ml"}),
+                (
+                    "update_medication_schedule",
+                    {"title_span": "항생제", "timing_spans": ["하루 두 번"]},
+                ),
+            )
+        )
+
+        result = await run(med("항생제 7ml 로 늘리고 하루 두 번으로 바꿔줘"), ctx, client=llm)
+
+        [draft] = result.medication_drafts
+        assert draft.schedule["dosage"] == "7ml"
+        assert result.pending is None and result.needs_observation == ()
+        assert READOUTS.render("med.one_at_a_time") in result.readouts
+        assert store.writes == []
+
+
+class TestResumeKeepsSymptomCodes:
+    async def test_시점을_되물은_뒤에도_이유의_증상_코드가_실린다(self):
+        ctx, _ = world()
+        llm = FakeLLM(
+            call(
+                "create_medication_schedule",
+                {
+                    "title_span": "항생제",
+                    "timing_spans": ["하루 세 번"],
+                    "indication_span": "열이 나서",
+                },
+            )
+        )
+        first = await run(med("항생제 열이 나서 하루 세 번 먹여야 해."), ctx, client=llm)
+        assert first.pending is not None
+
+        result = await run(med("식후요"), next_turn(ctx, first), client=FakeLLM())
+
+        [draft] = result.medication_drafts
+        assert draft.schedule["symptom_codes"] == ["fever"]
+
+
+class TestConfirmAnswerNumeral:
+    """ "네 번 남았어요" 의 네는 숫자다. 중단을 쓰는 유일한 경로라 '네' 로 읽으면 알림이 멈춘다."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "네 번 남았는데 다 먹일게요",
+            "아직 네 번 남았어요",
+            "네 번째 약이에요",
+            "하루에 네번 먹여요",
+            "네 시간 뒤에 또 먹여요",
+            "네 개 남았어",
+        ],
+    )
+    def test_숫자_네는_네가_아니다(self, text):
+        assert confirm_answer([text]) == "unclear"
+
+    @pytest.mark.parametrize(
+        "text", ["네, 네 번 남았어요", "네 번 남았지만 끊어줘", "네 네 번 남았어요"]
+    )
+    def test_진짜_네와_같이_말하면_네다(self, text):
+        assert confirm_answer([text]) == "yes"
+
+
+class TestConfirmAnswerStopWords:
+    """멈추겠다는 분명한 말은 '네' 다. 어미가 붙어야 센다 — "그만" 만으로는 질문에도 걸린다."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "중단해 주세요",
+            "중단해줘",
+            "중단할게요",
+            "그만할게요",
+            "그만둘게요",
+            "그만해줘",
+            "끊을게요",
+            "끊을래요",
+            "멈출게요",
+        ],
+    )
+    def test_멈추겠다는_말은_네다(self, text):
+        assert confirm_answer([text]) == "yes"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "중단하지 마세요",
+            "그만 먹여도 돼?",
+            "그만할까요",
+            "중단 안 할래요",
+            "끊지 마",
+            "끊이지 않아요",
+            "멈추지 마세요",
+            "그만",
+            "중단",
+        ],
+    )
+    def test_멈추지_말라는_말과_질문은_모른다로_둔다(self, text):
+        assert confirm_answer([text]) == "unclear"
+
+    def test_아니요가_있으면_멈춘다는_말이_있어도_아니요다(self):
+        assert confirm_answer(["아니 그만할게요 말고 계속"]) == "no"
+
+    def test_어간_상수(self):
+        assert STOP_STEMS == ("중단", "그만둘", "그만", "끊을", "멈출")
+
+
+class TestConfirmAnswerNegation:
+    """ "안 끊을게요" 는 멈추지 않겠다는 말이다. 어간 + 어미로만 읽으면 '네' 가 되어 반대로 쓴다."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "안 끊을게요",
+            "안 멈출게요",
+            "안 그만둘게요",
+            "안 중단할게요",
+            "못 끊을게요",
+            "안끊을게요",
+            "응 안 끊을게요",
+        ],
+    )
+    def test_부정이_붙은_멈춤_말은_네가_아니다(self, text):
+        assert confirm_answer([text]) == "unclear"
+
+    def test_아니요가_함께면_아니요다(self):
+        assert confirm_answer(["아니 안 끊을게요"]) == "no"
+
+
+class TestConflictThenAnswer:
+    async def test_식전_식후가_엇갈린_말은_답으로_풀린다(self):
+        ctx, _ = world()
+        llm = FakeLLM(
+            call(
+                "create_medication_schedule",
+                {"title_span": "항생제", "timing_spans": ["아침은 식전 저녁은 식후"]},
+            )
+        )
+        first = await run(med("항생제 아침은 식전 저녁은 식후로 먹여야 해"), ctx, client=llm)
+        assert first.pending is not None and first.pending.kind == "dose_timing"
+        assert first.needs_observation == (READOUTS.render("ask.dose_timing").body,)
+
+        result = await run(med("식후요"), next_turn(ctx, first), client=FakeLLM())
+
+        [draft] = result.medication_drafts
+        assert draft.notice_times == ("08:30", "17:30")
+
+
+class TestUnreadablePeriodLabel:
+    async def test_못_읽는_기간으로_고쳐_달라는_말에_안내가_나간다(self):
+        ctx, store = world(antibiotic(dosage="5ml"))
+        llm = FakeLLM(
+            call(
+                "update_medication_schedule",
+                {"title_span": "항생제", "period_span": "다음 주 월요일까지"},
+            )
+        )
+
+        result = await run(med("항생제 다음 주 월요일까지로 늘려줘"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert [r.body for r in result.readouts] == [READOUTS.render("med.period_unclear").body]
+        assert result.medication_drafts == () and store.writes == []
+
+
+class TestNoActiveCourseUpdate:
+    async def test_진행_중인_복약이_없으면_모델_한_번으로_끝난다(self):
+        # 용량 질문 → update(title 만). 코스가 없어도 실패 루프가 되지 않는다
+        ctx, store = world()
+        llm = FakeLLM(call("update_medication_schedule", {"title_span": "항생제"}))
+
+        result = await run(med("항생제 양 늘려도 돼?"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert [r.body for r in result.readouts] == [READOUTS.render("notice.no_active_med").body]
+        assert result.medication_drafts == () and result.pending is None
+        assert store.writes == []
