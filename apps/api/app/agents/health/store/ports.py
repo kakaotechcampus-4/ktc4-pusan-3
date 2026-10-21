@@ -9,13 +9,19 @@
 | ConsentReader | consent(scope=child_health) 최신 행 |
 | HealthSafetyReader | health_safety — active 행, kind 전부. 응급 카드 · 진료 준비 · 반복 안내 |
 | HealthMemoryReader | observation_health — 증상 기록. 반복 안내 · (다음 이슈) 진료 준비 |
+| MedicationReader | medication_schedule · medication_dose — 진행 중 코스 · 회차 · 체크 |
+| MedicationWriter | medication_schedule — 확인된 중단 하나. Agent 가 쓰는 유일한 것 |
+| ChildBasicReader | child — 별명 · 생일. 응급 카드 |
 
-복약 · 체온 · 장소 포트는 그 tool 을 만드는 이슈가 더한다.
+복약 포트의 칸 이름은 `medication_schedule` · `medication_dose` 스키마와 같다
+(docs/agents/health/health_agent_own_table.md §7).
+체온 · 장소 포트는 그 tool 을 만드는 이슈가 더한다.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
-from typing import Literal, Protocol
+from datetime import date, datetime, time
+from typing import Literal, Protocol, Self
 from uuid import UUID
 
 from app.agents.common.ports import (
@@ -23,6 +29,7 @@ from app.agents.common.ports import (
     ConsentReader,
     SafetyLookupError,  # noqa: F401 — context.py · inmemory.py 가 여기서 가져간다
 )
+from app.core.medication_draft import TimingAnchor, scheduled_time_of
 
 # health_safety 의 kind · status 와 같은 값. 어긋나면 어댑터 테스트가 잡는다
 SafetyKind = Literal["allergy", "chronic_disease", "behavioral", "environmental", "other_medical"]
@@ -67,10 +74,94 @@ class HealthMemoryReader(Protocol):
 
 
 @dataclass(frozen=True)
+class DoseSlot:
+    """하루 시각 패턴 한 칸 (날짜 없음). 초안의 `DoseDraft` 와 같은 칸이다."""
+
+    timing_anchor: TimingAnchor
+    offset_minutes: int
+    fixed_time: time | None
+    scheduled_time: time
+
+    @classmethod
+    def of(
+        cls, anchor: TimingAnchor, offset_minutes: int = 0, *, fixed_time: time | None = None
+    ) -> Self:
+        scheduled = scheduled_time_of(anchor, offset_minutes, fixed_time)
+        return cls(anchor, offset_minutes, fixed_time, scheduled)
+
+
+@dataclass(frozen=True)
+class MedicationCourse:
+    id: UUID
+    title: str  # 보호자 발화 원문
+    dosage: str | None
+    indication_text: str | None
+    storage: Literal["room", "fridge"] | None
+    med_form: Literal["liquid", "powder", "tablet", "ointment", "drops"] | None
+    starts_on: date
+    ends_on: date  # 필수 — 무기한 코스는 없다
+    status: Literal["active", "stopped"]  # 끝남은 status 가 아니라 ends_on 으로 본다
+    note: str | None  # 투약의뢰서 특이사항(보호자 입력)
+    # 오늘 이후 회차 행에서 시각이 겹치지 않게 모은 것(남은 회차가 없으면 마지막 날의 행에서).
+    # 수정 초안의 before · 서식의 투약 시각에 쓴다. 어댑터는 이 규칙으로 회차 행에서 만든다
+    pattern: tuple[DoseSlot, ...]
+
+
+@dataclass(frozen=True)
+class MedicationDose:
+    """회차 1행. 체크는 보호자가 화면에서 한다 — Agent 는 읽기만 한다."""
+
+    id: UUID
+    schedule_id: UUID
+    dose_date: date  # 아이 타임존(KST) 날짜
+    scheduled_time: time
+    checked_at: datetime | None  # None = 체크 안 됨. "안 먹였다" 는 뜻이 아니다
+
+
+class MedicationReader(Protocol):
+    async def active_courses(self, *, child_id: UUID, today: date) -> list[MedicationCourse]:
+        """status='active' AND starts_on <= today <= ends_on. 끝난 코스는 ends_on 으로 빠진다."""
+        ...
+
+    async def courses_overlapping(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[MedicationCourse]:
+        """status 와 상관없이 기간이 [date_from, date_to] 와 겹치는 코스 — 끝났거나 멈춘 것도."""
+        ...
+
+    async def doses(
+        self, *, schedule_ids: Sequence[UUID], date_from: date, date_to: date
+    ) -> list[MedicationDose]:
+        """dose_date 가 [date_from, date_to] 인 회차 행. (dose_date, scheduled_time) 순."""
+        ...
+
+
+class MedicationWriter(Protocol):
+    async def stop_course(
+        self, *, schedule_id: UUID, stopped_at: datetime
+    ) -> Literal["stopped", "already", "missing"]:
+        """status='stopped' · updated_at=stopped_at. 이미 멈춘 코스는 시각을 안 바꾸고 "already"."""
+        ...
+
+
+@dataclass(frozen=True)
+class ChildBasic:
+    nickname: str
+    birth_date: date
+
+
+class ChildBasicReader(Protocol):
+    async def basic(self, *, child_id: UUID) -> ChildBasic: ...
+
+
+@dataclass(frozen=True)
 class HealthPorts:
-    """아이 하나 몫의 읽기 포트 묶음."""
+    """아이 하나 몫의 읽기 포트 묶음. `medication_writer` 만 쓰기다 — 확인된 중단 하나."""
 
     profile: ChildProfileReader
     consent: ConsentReader
     safety: HealthSafetyReader
     memory: HealthMemoryReader
+    medication: MedicationReader
+    medication_writer: MedicationWriter
+    child: ChildBasicReader
