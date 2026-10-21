@@ -117,13 +117,19 @@ class MedicationDose:
     id: UUID
     schedule_id: UUID
     dose_date: date  # 아이 타임존(KST) 날짜
+    # DB 칸은 nullable 이지만(#546) CHECK 가 NULL 이 되는 입력을 막는다. NULL 이 오면 어댑터 버그다
     scheduled_time: time
     checked_at: datetime | None  # None = 체크 안 됨. "안 먹였다" 는 뜻이 아니다
 
 
 class MedicationReader(Protocol):
     async def active_courses(self, *, child_id: UUID, today: date) -> list[MedicationCourse]:
-        """status='active' AND starts_on <= today <= ends_on. 끝난 코스는 ends_on 으로 빠진다."""
+        """status='active' AND starts_on <= today <= ends_on. 끝난 코스는 ends_on 으로 빠진다.
+
+        BE 의 `in_progress(today)`(app/domains/medication/models.py)와 같은 조건이다. 어댑터는 그
+        함수를 쓰고, `today` 는 KST 날짜(`context.today`)를 그대로 넘긴다 — DB 의 CURRENT_DATE 는
+        UTC 다.
+        """
         ...
 
     async def courses_overlapping(

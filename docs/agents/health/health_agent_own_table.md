@@ -34,6 +34,8 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 
 보호자는 "식후", "자기 전"처럼 **시점**으로 말한다. 저장은 `기준점 + 오프셋(분)` 두 값으로 하고, 실제 알림 시각은 DB가 계산한다.
 
+기준 시각은 두 곳에 있다 — Agent 쪽 `app/core/medication_draft.py` 의 `ANCHOR_TIMES` 와 BE 표의 생성 식 `app/domains/medication/models.py` 의 `SCHEDULED_TIME_SQL`(#546). 두 값이 같은지는 `tests/integration/test_medication_tables.py` 의 대조 테스트가 본다. 생성 컬럼이 STORED 라 값을 바꾸면 표를 다시 쓰는 마이그레이션이 필요하다.
+
 | `timing_anchor` | 기준 시각 |
 | --- | --- |
 | `wake_up` | 07:30 |
@@ -60,15 +62,15 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 | dosage | text | nullable. "5ml" / "1포". 원문 보존 |
 | **indication_text** | text | nullable. **신규** — 복약 이유. 보호자 발화 원문 복사. 없으면 NULL (추정 금지) |
 | **symptom_codes** | text[] | NOT NULL, default `'{}'`. **신규** — `indication_text` 를 증상 사전(`symptom_codes.yaml`)으로 맞춘 코드. Agent 가 초안에 싣고, 제출 API 는 사전 안의 코드인지 거른 뒤(`app/core/symptom_codes.py`) 저장한다. 모델이 고르지 않는다 |
-| **storage** | varchar(16) | nullable. **신규** — `room` / `fridge`. 보호자 선택값 |
-| **med_form** | varchar(16) | nullable. **신규** — `liquid` / `powder` / `tablet` / `ointment` / `drops` |
+| **storage** | varchar(32) | nullable. **신규** — `room` / `fridge`. 보호자 선택값 |
+| **med_form** | varchar(32) | nullable. **신규** — `liquid` / `powder` / `tablet` / `ointment` / `drops` |
 | starts_on | date | NOT NULL |
 | ends_on | date | **NOT NULL.** 회차 행을 기간만큼 미리 만들어서 필수다 — **무기한 코스는 없다.** 발화에 기간이 없으면 Agent 는 짐작하지 않고 초안의 `missing` 에 `ends_on` 을 실어 카드에서 채우게 한다 |
-| status | varchar(16) | `active` / `stopped` 둘, NOT NULL, default `active`. **행이 존재한다 = 보호자가 이미 제출했다.** 중단은 `stopped`로 전환(soft delete) — 행이 남아야 체크 이력이 살아남는다. 중단은 Agent 가 한 번 묻고 보호자가 '네' 할 때 바꾸고, 그때 `updated_at` 이 중단 시각이다(10-18). **중단된 코스는 다시 고치지 않는다** — `updated_at` 이 중단 시각으로 남게. **끝남은 status 가 아니라 `ends_on` 으로 계산한다** — `ends_on` 이 지나도 `active` 그대로 둔다(`completed` 없음). 화면이 끝난 복약을 따로 보여 줘야 하면 `ends_on < 오늘` 로 계산한다 |
+| status | varchar(32) | `active` / `stopped` 둘, NOT NULL, default `active`. **행이 존재한다 = 보호자가 이미 제출했다.** 중단은 `stopped`로 전환(soft delete) — 행이 남아야 체크 이력이 살아남는다. 중단은 Agent 가 한 번 묻고 보호자가 '네' 할 때 바꾸고, 그때 `updated_at` 이 중단 시각이다(10-18). **중단된 코스는 다시 고치지 않는다** — `updated_at` 이 중단 시각으로 남게. **끝남은 status 가 아니라 `ends_on` 으로 계산한다** — `ends_on` 이 지나도 `active` 그대로 둔다(`completed` 없음). 화면이 끝난 복약을 따로 보여 줘야 하면 `ends_on < 오늘` 로 계산한다 |
 | note | text | nullable. **투약의뢰서 특이사항** — 보호자가 초안 카드에서 적는 선택 칸. Agent 는 비워 둔다 |
-| created_by | varchar(16) | `agent` / `caregiver`, NOT NULL |
-| **source** | varchar(16) | **신규** — `utterance` / `prescription_ocr`. 값의 출처 추적 |
-| **source_draft_id** | uuid | nullable. **신규** — FK → `prescription_draft.id`, `ON DELETE SET NULL` |
+| created_by | varchar(32) | `agent` / `caregiver`, NOT NULL |
+| **source** | varchar(32) | **신규** — `utterance` / `prescription_ocr`. 값의 출처 추적 |
+| **source_draft_id** | uuid | nullable. **신규** — 처방전 초안 id. FK 는 아직 없다 — `prescription_draft` 표가 생길 때 `ON DELETE SET NULL` 로 단다(#546) |
 | created_at · updated_at | timestamptz | NOT NULL, default now() |
 
 **제약**
@@ -100,10 +102,10 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 | id | uuid | PK, DEFAULT `uuidv7()` |
 | schedule_id | uuid | NOT NULL. FK → `medication_schedule.id`, CASCADE |
 | dose_date | date | NOT NULL. 이 회차의 날짜 (KST) |
-| timing_anchor | varchar(16) | `fixed`/`wake_up`/`breakfast`/`lunch`/`dinner`/`bedtime`, NOT NULL |
+| timing_anchor | varchar(32) | `fixed`/`wake_up`/`breakfast`/`lunch`/`dinner`/`bedtime`, NOT NULL |
 | offset_minutes | smallint | NOT NULL, default 0. `-120 ~ +180` |
 | fixed_time | time | nullable. `timing_anchor='fixed'`일 때만 |
-| scheduled_time | time | **GENERATED ALWAYS … STORED.** 회차의 예정 시각 |
+| scheduled_time | time | **GENERATED ALWAYS … STORED.** 회차의 예정 시각. NOT NULL 은 달지 않았다 — 위 CHECK 와 `timing_anchor` CHECK 가 NULL 이 되는 입력을 막는다(#546) |
 | checked_at | timestamptz | nullable. **보호자가 화면에서 체크한 시각.** NULL = 체크 안 됨 — **"안 먹였다"가 아니다** |
 
 `created_at` · `updated_at` · `days_of_week` · `is_active` 는 없다 — 회차 행은 제출 때 한 번 만들어지고(수정하면 아직 오지 않은 회차만 지우고 다시 만든다), 매일 / 격일 구분은 행이 날짜별로 있으니 필요 없다.
@@ -111,6 +113,7 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 **제약**
 - `CHECK ((timing_anchor = 'fixed') = (fixed_time IS NOT NULL))`
 - `CHECK (timing_anchor <> 'fixed' OR offset_minutes = 0)`
+- `CHECK (offset_minutes BETWEEN -120 AND 180)` — 기준 시각이 05:30 ~ 23:30 안이라 `time + interval` 이 자정을 넘지 않는다
 - `UNIQUE (schedule_id, dose_date, scheduled_time)` — 같은 약 같은 날 같은 시각 회차 중복 차단
 
 **체크 규칙** (복용 기록은 여기서만 생긴다)
@@ -235,6 +238,8 @@ DB 권한: Agent role에 `medication_schedule` 의 중단 UPDATE(`status` · `up
 
 ## 7. DDL
 
+실제 표는 BE 가 만든 것이 정본이다 — 모델 `app/domains/medication/models.py`, 마이그레이션 `c6e2a8d41f93`, 설계 `docs/medication/medication-tables-v1.md`(#546). 아래는 Agent 가 기대하는 모양을 그 표에 맞춘 사본이고, 어긋나면 BE 쪽이 맞다. enum 칸은 저장소 관례(`enum_col_py`)대로 `varchar(32)` + CHECK 다. 진행 중 판정은 BE 의 `in_progress(today)` 한 곳에서 하고(`status='active' AND starts_on <= today <= ends_on`), `today` 는 KST 날짜다.
+
 ```sql
 -- 복약 코스 1건
 CREATE TABLE medication_schedule (
@@ -244,18 +249,18 @@ CREATE TABLE medication_schedule (
     dosage          text,
     indication_text text,
     symptom_codes   text[]      NOT NULL DEFAULT '{}',
-    storage         varchar(16) CHECK (storage IN ('room','fridge')),
-    med_form        varchar(16) CHECK (med_form IN ('liquid','powder','tablet','ointment','drops')),
+    storage         varchar(32) CHECK (storage IN ('room','fridge')),
+    med_form        varchar(32) CHECK (med_form IN ('liquid','powder','tablet','ointment','drops')),
     starts_on       date        NOT NULL,
     ends_on         date        NOT NULL,                       -- 무기한 코스 없음
-    status          varchar(16) NOT NULL DEFAULT 'active'
+    status          varchar(32) NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active','stopped')),   -- 끝남은 ends_on 으로 계산
     -- 승인 전 값은 이 테이블에 없다. 초안은 payload 로 나가고 제출 때 INSERT 된다(§6)
     note            text,                                       -- 투약의뢰서 특이사항. 보호자가 초안 카드에서 적는 선택 칸
-    created_by      varchar(16) NOT NULL CHECK (created_by IN ('agent','caregiver')),
-    source          varchar(16) NOT NULL DEFAULT 'utterance'
+    created_by      varchar(32) NOT NULL CHECK (created_by IN ('agent','caregiver')),
+    source          varchar(32) NOT NULL DEFAULT 'utterance'
                     CHECK (source IN ('utterance','prescription_ocr')),
-    source_draft_id uuid        REFERENCES prescription_draft(id) ON DELETE SET NULL,
+    source_draft_id uuid,                                       -- FK 는 prescription_draft 가 생길 때 (ON DELETE SET NULL)
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),         -- stopped 면 중단 시각
     CHECK (ends_on >= starts_on)
@@ -270,12 +275,12 @@ CREATE TABLE medication_dose (
     id             uuid        PRIMARY KEY DEFAULT uuidv7(),
     schedule_id    uuid        NOT NULL REFERENCES medication_schedule(id) ON DELETE CASCADE,
     dose_date      date        NOT NULL,                        -- KST 날짜
-    timing_anchor  varchar(16) NOT NULL
+    timing_anchor  varchar(32) NOT NULL
                    CHECK (timing_anchor IN ('fixed','wake_up','breakfast','lunch','dinner','bedtime')),
     offset_minutes smallint    NOT NULL DEFAULT 0 CHECK (offset_minutes BETWEEN -120 AND 180),
     fixed_time     time,
 
-    -- 기준 시각은 시스템 상수. 여기가 유일한 정의 지점이다 (app/core/medication_draft.py 의 ANCHOR_TIMES 와 같은 값)
+    -- 기준 시각은 시스템 상수. BE 의 SCHEDULED_TIME_SQL 과 core 의 ANCHOR_TIMES 두 곳 — 대조 테스트가 같은지 본다
     scheduled_time time GENERATED ALWAYS AS (
         CASE timing_anchor
             WHEN 'fixed'     THEN fixed_time

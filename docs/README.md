@@ -93,7 +93,7 @@
 
 ## 복약 (medication)
 
-- [medication/medication-tables-v1.md](medication/medication-tables-v1.md) — 회차 1번 = 1행이고 체크 칸이 곧 복용 기록(로그 표 없음) · 그래서 `ends_on` 필수 · `status` 는 `active`/`stopped` 둘, 진행 중은 `in_progress(today)` 한 곳 · 회차에 `created_at`·`updated_at` 없음 · 오프셋 범위가 자정 넘김을 막음 · DB 가 못 막아 제출 API 가 막을 것(체크된 회차는 지우지 않음) · core 기준 시각 대조 테스트는 후속 (#537)
+- [medication/medication-tables-v1.md](medication/medication-tables-v1.md) — 회차 1번 = 1행이고 체크 칸이 곧 복용 기록(로그 표 없음) · 그래서 `ends_on` 필수 · `status` 는 `active`/`stopped` 둘, 진행 중은 `in_progress(today)` 한 곳 · 회차에 `created_at`·`updated_at` 없음 · 오프셋 범위가 자정 넘김을 막음 · DB 가 못 막아 제출 API 가 막을 것(체크된 회차는 지우지 않음) · core 기준 시각(`ANCHOR_TIMES`)과 생성 식 대조 테스트는 `test_medication_tables.py` (#537)
 
 ## 급식표 (meal-plan)
 
