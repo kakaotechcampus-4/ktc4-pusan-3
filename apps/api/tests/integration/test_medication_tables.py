@@ -246,16 +246,18 @@ async def test_다른_날이면_같은_시각을_둘_수_있다(session, child):
 # ── 4. CASCADE ────────────────────────────────────────────────────────────
 
 
-async def count(session, table: str) -> int:
-    return (await session.execute(text(f"SELECT count(*) FROM {table}"))).scalar_one()
+# 이 테스트가 만든 행만 센다 — 표 전체를 세면 공유 개발 DB 에 남은 복약 행 때문에 깨진다
+async def count(session, table: str, column: str, value) -> int:
+    sql = text(f"SELECT count(*) FROM {table} WHERE {column} = :v")
+    return (await session.execute(sql, {"v": value})).scalar_one()
 
 
 async def test_아이를_지우면_코스와_회차가_함께_지워진다(session, child):
     schedule_id = await insert_schedule(session, child)
     await insert_dose(session, schedule_id)
     await session.execute(text("DELETE FROM child WHERE id = :id"), {"id": child.id})
-    assert await count(session, "medication_schedule") == 0
-    assert await count(session, "medication_dose") == 0
+    assert await count(session, "medication_schedule", "child_id", child.id) == 0
+    assert await count(session, "medication_dose", "schedule_id", schedule_id) == 0
 
 
 async def test_코스를_지우면_회차가_함께_지워진다(session, child):
@@ -264,7 +266,7 @@ async def test_코스를_지우면_회차가_함께_지워진다(session, child)
     await session.execute(
         text("DELETE FROM medication_schedule WHERE id = :id"), {"id": schedule_id}
     )
-    assert await count(session, "medication_dose") == 0
+    assert await count(session, "medication_dose", "schedule_id", schedule_id) == 0
 
 
 # ── 5. 진행 중 코스 ───────────────────────────────────────────────────────
