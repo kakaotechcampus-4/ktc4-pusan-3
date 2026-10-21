@@ -43,6 +43,11 @@ def test_게이트_값은_옮기기_전과_같다():
     assert gates.habit_min_month == 36
 
 
+def test_Health_영아_취침_경계는_24개월():
+    # 영아(0–23개월)는 자기 전을 취침 상수 대신 fixed 19:30 으로 낸다 (M-3)
+    assert age_gates().infant_bedtime_below_month == 24
+
+
 def test_모양이_맞는_데이터는_통과한다():
     assert parse_age_gates(raw()) == age_gates()
 

@@ -1,0 +1,176 @@
+# Health 코드 상수 문구 (Health_Tool_명세.md §4). 모델을 거치지 않고 화면에 그대로 나간다.
+# 테스트(test_health_readouts.py)가 명세 §4 표와 글자 단위로 비교한다. 문구를 바꾸면 명세도 같이 고친다.
+# `{name}` 자리는 코드가 만든 값으로만 채운다 (symptom · n · condition · title · times …).
+
+# ── 증상 반복 안내 (hook) ──
+symptom.repeat:
+  kind: symptom_repeat
+  template: "최근 1주 동안 '{symptom}'이(가) {n}번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요."
+symptom.repeat_condition:
+  kind: symptom_repeat
+  template: "최근 1주 동안 '{symptom}'이(가) {n}번 기록됐어요. 등록하신 '{condition}'이(가) 있어 병원에서 확인해 보시는 게 좋겠어요."
+
+# ── 검진 · 접종 ──
+vaccine.disclaimer:
+  kind: checkup_schedule
+  template: "이 시기에 권장되는 접종이에요. 실제 접종 기록은 예방접종도우미에서 확인할 수 있어요."
+checkup.aged_out:
+  kind: checkup_schedule
+  template: "영유아 건강검진은 만 6세 미만까지예요. 지금은 대상 기간이 끝났어요."
+checkup.current:
+  kind: checkup_schedule
+  template: "지금은 {round}차 영유아 건강검진 기간이에요. ({starts_on} ~ {ends_on})"
+checkup.next:
+  kind: checkup_schedule
+  template: "다음 {round}차 영유아 건강검진은 {starts_on}부터예요."
+checkup.oral:
+  kind: checkup_schedule
+  template: "같은 시기에 구강검진도 받을 수 있어요. ({starts_on} ~ {ends_on})"
+vaccine.due:
+  kind: checkup_schedule
+  template: "이 시기에 권장되는 접종: {vaccines}"
+vaccine.none_now:
+  kind: checkup_schedule
+  template: "월령으로 정해진 접종은 지금 없어요. 인플루엔자 같은 절기 접종은 예방접종도우미에서 확인해 보세요."
+vaccine.next:
+  kind: checkup_schedule
+  template: "다음 접종은 {starts_on}부터예요: {vaccines}"
+checkup.oral_only:
+  kind: checkup_schedule
+  template: "지금은 구강검진 {round}차 기간이에요. ({starts_on} ~ {ends_on})"
+checkup.context_footer:
+  kind: checkup_context
+  template: "문진표는 보호자가 직접 작성해 주세요. 이 요약은 참고용이에요."
+
+# ── 복약 ──
+med.confirm:
+  kind: medication_notice
+  template: "{title} — {times}에 알려드릴까요? ({starts_on} ~ {ends_on})"
+med.update_confirm:
+  kind: medication_notice
+  template: "{title} 알림을 {times}로 바꿀까요? 확인 전까지는 기존 시각에 알려드려요."
+med.notice:
+  kind: medication_notice
+  template: "{title} — {times}에 알려드릴게요. ({starts_on} ~ {ends_on})"
+med.stop_confirm:
+  kind: medication_notice
+  template: "{title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."
+med.stopped:
+  kind: medication_notice
+  template: "{title} 복약 알림을 멈췄어요. 먹인 기록은 그대로 남아요."
+med.stop_kept:
+  kind: medication_notice
+  template: "{title} 복약 알림은 그대로 둘게요."
+ask.dose_timing:
+  kind: ask
+  template: "식사 전후 언제 먹이면 되나요?"
+ask.which_med:
+  kind: ask
+  template: "어느 약 말씀이세요? {titles}"
+# 시각이 모호할 때("8시에" · "일곱 시") — 식전 · 식후가 아니라 몇 시인지 묻는다
+ask.dose_clock:
+  kind: ask
+  template: "몇 시인지 오전 · 오후까지 숫자로 말씀해 주세요. 예: 저녁 8시"
+# 되묻기에 대한 답을 못 알아들었을 때. 아무것도 쓰지 않고 다시 묻지도 않는다
+med.which_unclear:
+  kind: medication_notice
+  template: "어느 약인지 알아듣지 못했어요. 약 이름을 넣어 다시 말씀해 주세요."
+med.timing_unclear:
+  kind: medication_notice
+  template: "언제 먹일지 알아듣지 못해서 등록하지 않았어요. 시간을 넣어 다시 말씀해 주세요."
+# 수정인데 지금 값과 같다 — 같은 값의 카드를 띄우지 않는다
+med.no_change:
+  kind: medication_notice
+  template: "바꿀 내용이 없어서 수정 카드를 만들지 않았어요."
+# 수정할 기간을 읽지 못했다 — "바꿀 내용이 없어요" 로 뭉개지 않는다
+med.period_unclear:
+  kind: medication_notice
+  template: "기간을 알아듣지 못해서 바꾸지 않았어요. 며칠인지(예: 5일) 말씀해 주세요."
+# 한 응답에 되묻기가 둘 이상 왔다 — 첫째만 묻고 나머지는 이어서 말해 달라고 안내한다
+med.one_at_a_time:
+  kind: medication_notice
+  template: "약은 한 번에 하나씩 확인해요. 나머지는 이어서 말씀해 주세요."
+dose.status:
+  kind: dose_status
+  template: "마지막 체크 {last} 회차 · 다음 예정 {next} · 오늘 체크 {checked}/{planned}회"
+# "먹였어" · "못 먹였어" — 아무것도 쓰지 않는다. 복용 기록은 보호자가 화면에서 회차마다 체크한다
+dose.check_on_screen:
+  kind: notice
+  template: "복용 체크는 복약 화면에서 해 주세요."
+
+# ── 열 · 응급 ──
+fever.no_record:
+  kind: fever_timeline
+  template: "체온 기록이 없어요. 재실 때 남겨 두시면 정리해 드릴게요."
+emergency:
+  kind: emergency
+  template: "지금 바로 119에 연락하거나 가까운 응급실로 가세요."
+
+# ── 전달 서류 ──
+notice.signature:
+  kind: med_notice_form
+  template: "보호자 확인 후 서명해 주세요."
+# 투약의뢰서 · 응급 카드 — 줄 하나에 키 하나다. 코드가 줄바꿈으로 이어 한 덩어리로 낸다
+# (명세 표 칸에는 줄바꿈을 넣을 수 없다). 빈 칸은 `-` 이고 짐작해서 채우지 않는다
+notice.header:
+  kind: med_notice_form
+  template: "[투약 의뢰서]  {date}"
+notice.line_title:
+  kind: med_notice_form
+  template: "• 약 종류 : {title} ({dosage})"
+notice.line_time:
+  kind: med_notice_form
+  template: "• 투약 시각 : {times}"
+notice.line_storage:
+  kind: med_notice_form
+  template: "• 보관 : {storage}"
+notice.line_indication:
+  kind: med_notice_form
+  template: "• 복용 이유 : {indication}"
+notice.line_note:
+  kind: med_notice_form
+  template: "• 특이사항 : {note}"
+card.header:
+  kind: emergency_card
+  template: "[응급 카드]  {date}"
+card.child:
+  kind: emergency_card
+  template: "• 아이 : {nickname} ({birth}생, {age})"
+card.allergy:
+  kind: emergency_card
+  template: "• 알레르기 : {items}"
+card.chronic:
+  kind: emergency_card
+  template: "• 만성질환 : {items}"
+card.meds:
+  kind: emergency_card
+  template: "• 복용 중인 약 : {items}"
+card.empty:
+  kind: emergency_card
+  template: "등록된 내용이 없어요"
+card.safety_unavailable:
+  kind: emergency_card
+  template: "• 알레르기 · 만성질환 : 불러오지 못했어요. 직접 확인해 주세요."
+notice.no_active_med:
+  kind: med_notice_form
+  template: "지금 등록된 복약 일정이 없어요."
+prescription.low_confidence:
+  kind: prescription_draft
+  template: "흐리게 읽힌 칸이 있어요. 확인하고 채워 주세요."
+prescription.not_found:
+  kind: prescription_draft
+  template: "처방전 정보를 찾지 못했어요."
+
+# ── 닫힘 · 기록 없음 · 조회 실패 ──
+blocked.consent:
+  kind: blocked
+  template: "건강 기록을 보려면 건강정보 동의가 필요해요."
+visit.no_record:
+  kind: symptom_timeline
+  template: "최근 2주 동안 건강 기록이 없어요."
+place.unavailable:
+  kind: place_list
+  template: "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요."
+safety.unavailable:
+  kind: caution
+  template: "알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요."

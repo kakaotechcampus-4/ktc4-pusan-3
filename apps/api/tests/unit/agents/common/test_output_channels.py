@@ -22,6 +22,7 @@ from app.agents.common.refs import (
 )
 from app.agents.common.result import (
     DomainAgentResult,
+    DomainPending,
     EventRequest,
     MedicationDraft,
 )
@@ -557,7 +558,39 @@ class TestDomainAgentResult:
         assert result.suggestions == ()
         assert result.readouts == ()
         assert result.medication_drafts == ()
+        assert result.pending is None
         assert result.model_calls == 0
+
+    def test_pending_이면_needs_observation_이_같은_질문이다(self):
+        pending = DomainPending(
+            agent="health",
+            kind="medication_stop",
+            question="항생제 복약 알림을 멈출까요?",
+            payload={"schedule_id": "s1"},
+        )
+
+        result = DomainAgentResult(
+            agent="health",
+            task_type="medication",
+            status="completed",
+            needs_observation=(pending.question,),
+            pending=pending,
+        )
+
+        assert result.pending is pending
+
+    @pytest.mark.parametrize("asked", [(), ("다른 질문이에요",)])
+    def test_pending_의_질문과_되묻기가_다르면_거절(self, asked):
+        pending = DomainPending(agent="health", kind="dose_timing", question="언제요?", payload={})
+
+        with pytest.raises(ValueError, match="pending"):
+            DomainAgentResult(
+                agent="health",
+                task_type="medication",
+                status="completed",
+                needs_observation=asked,
+                pending=pending,
+            )
 
     def test_채널을_섞어_담을_수_있다(self):
         result = DomainAgentResult(

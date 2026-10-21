@@ -21,12 +21,13 @@ profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.agents.activity.store.ports import ActivityObservation
 from app.agents.common.evidence import AffinityRow
 from app.agents.food.store.ports import FoodObservation
+from app.agents.health.store.ports import HealthObservation
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
 
 # 검색에 남는 status. stand_alone 은 Correction once_only("이번만 그랬어요") 라
@@ -35,6 +36,9 @@ FOOD_STATUSES = frozenset({"active", "stand_alone"})
 # Activity는 active만 읽는다. Activity 포트(ActivityObservation 주석)와 activity-agent-v1
 #   A-10 이 stand_alone을 근거에서 뺀다 — "이번만 그랬어요" 로 고친 기록이 근거로 돌아오지 않게
 ACTIVITY_STATUSES = frozenset({"active"})
+# Health 는 Food 와 같다 — stand_alone("이번만 그랬어요")도 그날 있었던 증상이라 날 수에 센다.
+# 정정으로 내린 기록(wrong → inactive)과 삭제는 읽지 않는다
+HEALTH_STATUSES = frozenset({"active", "stand_alone"})
 
 
 # 호출 한 번에 쓸 store 를 여는 함수. 러너가 짧은 DB 세션으로 만든다
@@ -144,3 +148,36 @@ class StoreActivityMemory(_StoreReader):
             )
             for row in rows
         ]
+
+
+class StoreHealthMemory(_StoreReader):
+    """`HealthMemoryReader` 구현. `observation_health` 를 Memory store 에서 읽는다."""
+
+    async def health_observations(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[HealthObservation]:
+        rows = await _rows(
+            self._open,
+            "health",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=HEALTH_STATUSES,
+        )
+        found: list[HealthObservation] = []
+        for row in rows:
+            observed_range = row.fields.get("observed_range")
+            # [start, end) 반닫힘 — 포함하는 마지막 날은 end 의 전날이다
+            last = observed_range.end - timedelta(days=1) if observed_range else row.observed_on
+            found.append(
+                HealthObservation(
+                    id=_uuid(row.id),
+                    observed_from=row.observed_on,
+                    observed_to=max(last, row.observed_on),
+                    observed_time=row.fields.get("observed_time"),
+                    symptoms=tuple(row.fields.get("symptom") or ()),
+                    severity=row.fields.get("severity"),
+                    action_taken=row.fields.get("action_taken"),
+                )
+            )
+        return found

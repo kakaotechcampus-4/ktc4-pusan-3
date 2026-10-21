@@ -61,3 +61,7 @@ gates:
   # Growth — 습관 교정 카테고리가 열린다. 설정값으로 시작한다 (G-7).
   # growth_doc 의 habit_strategy 행 min_month CHECK 와 같은 값이어야 한다.
   habit_min_month: 36
+
+  # Health — 이 월령 미만(영아)은 "자기 전" 을 취침 기준 시각(20:30) 대신 19:30 고정 시각으로 낸다 (M-3).
+  # 복약 알림 시각이라 보호자가 확인 카드에서 실제 시각을 본다.
+  infant_bedtime_below_month: 24
