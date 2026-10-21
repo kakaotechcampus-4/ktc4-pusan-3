@@ -42,7 +42,7 @@
 | `checked_at` | timestamptz, nullable | NULL = 미체크. 체크 · 해제는 이 칸만 바꾼다 |
 | `created_at` · `updated_at` | **없음** | 제출 때 한꺼번에 만들어져 코스의 시각으로 알 수 있고, 바뀌는 건 체크뿐인데 그 시각은 `checked_at` 에 남는다 |
 
-기준 시각: 기상 07:30 · 아침 08:00 · 점심 12:00 · 저녁 17:00 · 취침 20:30.
+기준 시각: 기상 07:30 · 아침 08:00 · 점심 12:00 · 저녁 19:00 · 취침 20:30. 저녁은 #537 본문의 17:00 에서 19:00 으로 바꿨다 — 퇴근 시간대를 고려한 저녁 식사 시각(#546 코멘트, 이시하).
 
 ### enum
 
@@ -118,26 +118,17 @@ DB 세션은 UTC 다(로컬 · 배포 db 컨테이너 모두 TZ 없음). API 컨
 생성 컬럼의 기준 시각과 초안 계약(`app/core/medication_draft.py`, #544)의 `ANCHOR_TIMES` · `scheduled_time_of` 는 같은 값이어야 한다.
 어긋나면 초안 카드가 보여 준 시각과 실제 행의 시각이 달라진다.
 
-- 이 PR 은 develop 기준이라 core 상수를 import 하지 않는다. 대신 기준 시각을 **DB 에서 직접** 검증한다(`test_기준_시각에_오프셋을_더한다`).
-- **core 상수 대조 테스트는 후속**이다 — #544 가 develop 에 들어온 뒤, `ANCHOR_TIMES` · `OFFSET_MIN/MAX` 와
-  `scheduled_time_of(anchor, offset, fixed_time)` 를 생성 컬럼과 대조하는 테스트를 테이블 쪽에 넣는다.
-  (작성 시점에 #544 브랜치의 함수를 따로 불러 5개 기준 × 오프셋 −120~180 = 1,505 조합을 DB 계산과 대조해 모두 같았다. 저장소에 남긴 테스트는 아니다.)
+- 이 PR 은 #544 브랜치 위에 있어 core 상수를 바로 import 한다. `test_생성_컬럼은_초안_계약의_시각_계산과_같다` 가
+  `ANCHOR_TIMES` 의 기준 시점 다섯 개 × 오프셋 `OFFSET_MIN`~`OFFSET_MAX`(1,505 조합)를 실제 행으로 넣어 생성 컬럼과
+  `scheduled_time_of` 를 대조한다. 기준 시점 이름과 오프셋 범위가 DB 와 같은지도 따로 본다.
+  (저녁을 19:00 으로 바꾸기 전 DB 가 17:00 이던 상태에서 이 테스트가 깨지는 것을 확인했다.)
 - 기준 시각을 바꾸려면 STORED 생성 컬럼이라 **표를 다시 쓰는 마이그레이션**이 필요하다. autogenerate 는 생성 식 변경을 잡지 못한다.
 
 ## 7. 정본 차이 — `docs/agents/health/health_agent_own_table.md`
 
-명세는 AI 소유라 여기서 고치지 않는다. develop 의 §7 DDL 과 이 표가 다른 곳:
+명세는 AI 소유라 여기서 고치지 않는다. #544 의 §7 DDL 과 이 표가 다른 곳:
 
-| 명세 §7 (develop) | 이 표 | 근거 |
+| 명세 §7 (#544) | 이 표 | 근거 |
 | --- | --- | --- |
-| `ends_on` nullable | NOT NULL | 회차 1행(§1) |
-| `status` 에 `completed` | 없음 | §3, #537 코멘트 |
-| `source_draft_id REFERENCES prescription_draft` | FK 없음 | §2 |
-| dose `dinner` 18:00 | 17:00 | #537 본문 |
-| dose `days_of_week` · `is_active` · `UNIQUE (schedule_id, scheduled_time)` · 발송 부분 인덱스 | 없음 · `dose_date` · `checked_at` · `UNIQUE (schedule_id, dose_date, scheduled_time)` | 회차 1행(§1) · 발송 범위 밖 |
-| dose `created_at` · `updated_at` | 없음 | §2 |
-| `medication_dose_log` | 없음 | §1 |
+| `source_draft_id REFERENCES prescription_draft` | FK 없음 | §2 — 가리킬 표가 아직 없다 |
 | enum `varchar(16)` | `varchar(32)` | §2 enum |
-
-#544 브랜치의 명세 갱신본은 대부분을 반영했지만, 작성 시점에 §7 DDL 의 `medication_dose` 에는 아직 `created_at` · `updated_at` 이
-남아 있고(같은 문서 §3 본문은 "없다"), `source_draft_id` 는 FK 로 적혀 있다.

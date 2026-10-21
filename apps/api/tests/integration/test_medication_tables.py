@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
+from app.core.medication_draft import ANCHOR_TIMES, OFFSET_MAX, OFFSET_MIN, scheduled_time_of
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.medication.models import (
@@ -77,7 +78,7 @@ async def test_하루_세_번_식후_3일이면_회차_9행(session, child):
     await session.flush()
 
     times = await scheduled_times(session, schedule.id)
-    assert times == [time(8, 30), time(12, 30), time(17, 30)] * 3
+    assert times == [time(8, 30), time(12, 30), time(19, 30)] * 3
 
 
 @pytest.mark.parametrize(
@@ -86,7 +87,7 @@ async def test_하루_세_번_식후_3일이면_회차_9행(session, child):
         ("wake_up", 0, time(7, 30)),
         ("breakfast", 0, time(8, 0)),
         ("lunch", 0, time(12, 0)),
-        ("dinner", 0, time(17, 0)),
+        ("dinner", 0, time(19, 0)),
         ("bedtime", 0, time(20, 30)),
         ("breakfast", -30, time(7, 30)),  # 식전
         ("wake_up", -120, time(5, 30)),  # 가장 이른 시각
@@ -102,6 +103,47 @@ async def test_기준_시각에_오프셋을_더한다(session, child, anchor, o
     )
     await session.flush()
     assert await scheduled_times(session, schedule.id) == [expected]
+
+
+async def test_생성_컬럼은_초안_계약의_시각_계산과_같다(session, child):
+    """DB 생성 컬럼과 core 의 ANCHOR_TIMES · scheduled_time_of 가 갈리면 보호자가 승인한 시각과
+    실제 저장되는 시각이 달라진다. 기준 시점 다섯 개 × 오프셋 전 범위를 한 번에 대조한다."""
+    schedule = await add_schedule(session, child)
+    combos = [
+        (anchor, offset) for anchor in ANCHOR_TIMES for offset in range(OFFSET_MIN, OFFSET_MAX + 1)
+    ]
+    # UNIQUE(schedule_id, dose_date, scheduled_time) 에 걸리지 않게 조합마다 날짜를 다르게 둔다
+    session.add_all(
+        MedicationDose(
+            schedule_id=schedule.id,
+            dose_date=STARTS + timedelta(days=i),
+            timing_anchor=anchor,
+            offset_minutes=offset,
+        )
+        for i, (anchor, offset) in enumerate(combos)
+    )
+    await session.flush()
+
+    rows = await session.execute(
+        select(
+            MedicationDose.timing_anchor,
+            MedicationDose.offset_minutes,
+            MedicationDose.scheduled_time,
+        ).where(MedicationDose.schedule_id == schedule.id)
+    )
+    db = {(str(a), o): t for a, o, t in rows}
+    assert len(db) == len(combos)
+    wrong = {
+        k: (t, scheduled_time_of(k[0], k[1], None))
+        for k, t in db.items()
+        if t != scheduled_time_of(k[0], k[1], None)
+    }
+    assert wrong == {}
+
+
+def test_기준_시점_이름이_초안_계약과_같다():
+    assert set(ANCHOR_TIMES) | {"fixed"} == {a.value for a in TimingAnchor}
+    assert (OFFSET_MIN, OFFSET_MAX) == (-120, 180)  # DB CHECK medication_dose_offset_range
 
 
 async def test_fixed_는_fixed_time_이_곧_알림_시각(session, child):

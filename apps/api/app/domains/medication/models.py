@@ -76,7 +76,7 @@ SCHEDULED_TIME_SQL = """CASE timing_anchor
     WHEN 'wake_up' THEN TIME '07:30' + make_interval(mins => offset_minutes)
     WHEN 'breakfast' THEN TIME '08:00' + make_interval(mins => offset_minutes)
     WHEN 'lunch' THEN TIME '12:00' + make_interval(mins => offset_minutes)
-    WHEN 'dinner' THEN TIME '17:00' + make_interval(mins => offset_minutes)
+    WHEN 'dinner' THEN TIME '19:00' + make_interval(mins => offset_minutes)
     WHEN 'bedtime' THEN TIME '20:30' + make_interval(mins => offset_minutes)
 END"""
 
