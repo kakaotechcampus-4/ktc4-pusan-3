@@ -1,15 +1,18 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
 import { Named } from "@/components/ui/named";
 import { Swap } from "@/components/ui/swap";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { RewriteButton } from "@/components/rewrite-button";
 import { RunReply } from "@/components/run-result";
-import { Button } from "@/components/ui/button";
-import { CardFailed } from "@/components/ui/card";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { Card, CardFailed } from "@/components/ui/card";
 import { initialRunState } from "@/hooks/use-run-stream";
-import { isApiError, type Agent } from "@/lib/api";
-import type { PastTurn } from "@/lib/chat-history";
+import { api, isApiError, qk, type Agent, type ChatDayResponse } from "@/lib/api";
+import { pastTurnsOf, type PastTurn } from "@/lib/chat-history";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 import { useDraftText } from "@/stores/draft";
@@ -38,6 +41,9 @@ import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
  * 🚨 **두 곳에서 온 줄을 `run_id` 로 합친다.** `past` 는 서버가 남긴 턴이고 `turns` 는 이 앱에서 보낸 줄이다.
  *    run 이 끝나면 서버도 그 턴을 남겨서 같은 run 이 두 곳에 있게 되는데, 🚨 **이 앱에서 보낸 줄이 정본이다** —
  *    진행 중이거나 다시 시도할 수 있는 줄이고, 서버 쪽은 끝난 run 만 남긴다. 그래서 겹치면 지난 쪽을 뺀다.
+ *    🚨 **예외는 결과 미확인(`unconfirmed`) 줄이다** (#538). 서버에 그 턴이 있으면 끝까지 처리돼 저장된 run 이라,
+ *    "저장됐는지 모르는" 카드가 저장된 결과를 가리면 안 된다. 그때는 지난 쪽을 그리고 이 앱의 줄을 뺀다 —
+ *    같은 말풍선과 결과가 그 자리에 서므로 원문이 사라지는 것이 아니다.
  * 🚨 **같은 날 안에서는 지난 줄이 먼저다.** 이 앱에서 보낸 줄은 앱을 켠 뒤의 것이라 늘 더 늦다.
  * 🚨 **지난 줄의 날짜는 서버가 정한 것이다**(`PastTurn.day`). 화면이 접수 시각으로 다시 계산하지 않는다.
  *
@@ -102,6 +108,7 @@ export function ChatThread({
                   turn={entry.turn}
                   named={entry.turn.id === last?.id}
                   later={turns.slice(turns.indexOf(entry.turn) + 1)}
+                  answered={answered}
                   answering={answering}
                   onOpenDrafts={onOpenDrafts}
                   onPickOffer={onPickOffer}
@@ -122,25 +129,76 @@ export function chatDayAnchor(day: string): string {
 
 type Entry = { kind: "past"; turn: PastTurn } | { kind: "live"; turn: ChatTurn };
 
-/** 위 "지난 대화와 합치기" — 겹치는 run 은 이 앱의 줄만 남기고, 같은 날 안에서는 지난 줄이 먼저다. */
+/**
+ * 위 "지난 대화와 합치기" — 겹치는 run 은 이 앱의 줄만 남기고, 같은 날 안에서는 지난 줄이 먼저다.
+ * 결과 미확인 줄은 그 run 의 끝을 보여 주는 곳이 따로 있으면 빠진다 (`isSuperseded`).
+ */
 function mergeEntries(past: readonly PastTurn[], turns: ChatTurn[]): Entry[] {
-  const live = new Set(turns.flatMap((t) => (t.send.status === "sent" ? [t.send.runId] : [])));
+  const stored = new Set(past.map((t) => t.runId));
+  const shown = turns.filter((t) => !isSuperseded(t, stored, turns));
+  const live = new Set(shown.flatMap((t) => (t.send.status === "sent" ? [t.send.runId] : [])));
   return [
     ...past.filter((t) => !live.has(t.runId)).map((turn) => ({ kind: "past" as const, turn })),
-    ...turns.map((turn) => ({ kind: "live" as const, turn })),
+    ...shown.map((turn) => ({ kind: "live" as const, turn })),
   ];
 }
 
 /**
+ * 이 결과 미확인 줄을 다른 곳이 대신 보여 주는가 (#538) — 서버가 남긴 턴이 있거나, 뒤에 같은 run 을 받은 줄이 있다.
+ * 뒤의 경우는 결과 미확인 줄을 고치지 않고 그대로 다시 적어 보낸 경우다(같은 본문이라 같은 키 · 같은 run). 그 run 의
+ * 지금 상태는 뒤 줄이 들고 있어서, 앞 줄까지 그리면 같은 말풍선과 같은 카드가 두 번 선다.
+ */
+function isSuperseded(turn: ChatTurn, stored: ReadonlySet<string>, turns: ChatTurn[]): boolean {
+  if (turn.send.status !== "sent" || turn.run.status !== "unconfirmed" || turn.recordedOn) {
+    return false;
+  }
+  const { runId } = turn.send;
+  if (stored.has(runId)) return true;
+  return turns
+    .slice(turns.indexOf(turn) + 1)
+    .some((later) => later.send.status === "sent" && later.send.runId === runId);
+}
+
+/**
  * 지난 턴 하나 (#228). 🚨 **답 묶음은 그날과 같은 `RunReply` 다** — `archived` 가 지금 누르면 막다른 길이 되는
- * 버튼만 뺀다.
+ * 버튼만 뺀다 (`PastReply`).
+ */
+function PastTurnItem({
+  childId,
+  turn,
+  answered,
+  answering,
+  onOpenDrafts,
+}: {
+  childId: string;
+  turn: PastTurn;
+  answered: ReadonlySet<string>;
+  answering: ChatQuestion | null;
+  onOpenDrafts: (key: string, draftIds: string[]) => void;
+}) {
+  return (
+    <>
+      <SentBubble text={turn.text} answer={turn.replyTo !== null} named={false} />
+      <PastReply
+        childId={childId}
+        turn={turn}
+        answered={answered}
+        answering={answering}
+        onOpenDrafts={onOpenDrafts}
+      />
+    </>
+  );
+}
+
+/**
+ * 서버가 남긴 턴의 답 묶음. 지난 턴과, 다시 보냈더니 이미 끝났다고 한 줄(`RecordedReply`)이 같이 쓴다.
  *
  * - 되묻기: 뒤에 답한 줄이 있으면 "답함". 🚨 **서버가 아직 답할 수 있다고 하면(`reply_open`) 열린 질문이다** —
  *   앱을 다시 켠 지 15분이 안 된 경우다. 그 밖에는 "닫힘" 이다(맥락이 없어 `reply_to` 로 보내면 400).
  * - 일정 초안: 🚨 **보관함(`stores/event-draft.ts`)에 아직 남은 초안이면 이어서 넣는다.** 보관함은 탭이 살아 있는
  *   동안 남고(새로고침 포함) 넣으면 빠지므로, 남아 있으면 아직 넣지 않은 것이다. 없으면 그때 내용만 읽기 전용이다.
  */
-function PastTurnItem({
+function PastReply({
   childId,
   turn,
   answered,
@@ -169,27 +227,24 @@ function PastTurnItem({
         : "dropped";
 
   return (
-    <>
-      <SentBubble text={turn.text} answer={turn.replyTo !== null} named={false} />
-      <RunReply
-        childId={childId}
-        runId={turn.runId}
-        run={turn.run}
-        question={question}
-        answeringNow={answering?.runId === turn.runId}
-        remainingDrafts={remainingDrafts}
-        draftsReplaced={false}
-        followUp={turn.replyTo !== null}
-        rewriteBlocked={false}
-        onAnswer={() => {
-          if (note) answerQuestion(childId, turn.runId, { text: note.text, day: turn.day });
-        }}
-        onOpenDrafts={() => onOpenDrafts(`past:${turn.runId}`, draftIds)}
-        onPickOffer={noop}
-        archived
-        deleted={turn.deleted}
-      />
-    </>
+    <RunReply
+      childId={childId}
+      runId={turn.runId}
+      run={turn.run}
+      question={question}
+      answeringNow={answering?.runId === turn.runId}
+      remainingDrafts={remainingDrafts}
+      draftsReplaced={false}
+      followUp={turn.replyTo !== null}
+      rewriteBlocked={false}
+      onAnswer={() => {
+        if (note) answerQuestion(childId, turn.runId, { text: note.text, day: turn.day });
+      }}
+      onOpenDrafts={() => onOpenDrafts(`past:${turn.runId}`, draftIds)}
+      onPickOffer={noop}
+      archived
+      deleted={turn.deleted}
+    />
   );
 }
 
@@ -200,6 +255,7 @@ function LiveTurnItem({
   turn,
   named,
   later,
+  answered,
   answering,
   onOpenDrafts,
   onPickOffer,
@@ -208,6 +264,7 @@ function LiveTurnItem({
   turn: ChatTurn;
   named: boolean;
   later: ChatTurn[];
+  answered: ReadonlySet<string>;
   answering: ChatQuestion | null;
   onOpenDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
@@ -217,6 +274,15 @@ function LiveTurnItem({
       <SentBubble text={turn.body.text} answer={turn.answering !== null} named={named} />
       {turn.send.status === "error" ? (
         <SendFailure childId={childId} turn={turn} error={turn.send.error} />
+      ) : turn.recordedOn !== null && turn.send.status === "sent" ? (
+        <RecordedReply
+          childId={childId}
+          runId={turn.send.runId}
+          day={turn.recordedOn}
+          answered={answered}
+          answering={answering}
+          onOpenDrafts={onOpenDrafts}
+        />
       ) : (
         <TurnReply
           childId={childId}
@@ -236,6 +302,94 @@ function LiveTurnItem({
         />
       )}
     </li>
+  );
+}
+
+/**
+ * 다시 보냈더니 서버가 이미 끝난 run 이라고 한 줄의 답 (#538 · `ChatTurn.recordedOn`). 서버가 대화 기록에 남긴 그 턴을
+ * 그날 한 장에서 찾아 지난 턴과 같게 그린다(`PastReply`).
+ *
+ * - 🚨 **다시 시도 · 고쳐 쓰기를 세우지 않는다.** 결과가 이미 저장돼 있다 — 고쳐 쓴 한 줄은 새 키로 나가서 두 번
+ *   저장된다. 대신 다시 보내지 않아도 된다는 것을 글자로 말한다.
+ * - 🚨 **대화 목록(`useChatHistory`)에서 찾지 않는다.** 되묻기 답이면 그 턴이 목록이 아직 받지 않은 지난 날에 붙어
+ *   있을 수 있다. 하루 입력 한도가 한 장(20턴)보다 작아서 그날 한 장이면 반드시 들어 있다 (`lib/chat-history.ts`).
+ * - 못 찾으면(그새 연결을 끊어 대화가 지워졌다 등) 결과를 그리지 못한다고만 말하고 기록 화면으로 보낸다.
+ */
+function RecordedReply({
+  childId,
+  runId,
+  day,
+  answered,
+  answering,
+  onOpenDrafts,
+}: {
+  childId: string;
+  runId: string;
+  day: string;
+  answered: ReadonlySet<string>;
+  answering: ChatQuestion | null;
+  onOpenDrafts: (key: string, draftIds: string[]) => void;
+}) {
+  const page = useQuery({
+    queryKey: qk.chatDay(childId, day),
+    queryFn: () => api.get<ChatDayResponse>(`/children/${childId}/chat`, { query: { date: day } }),
+  });
+  const data = page.data;
+  const stored = useMemo(
+    () => (data ? pastTurnsOf([data]).find((t) => t.runId === runId) : undefined),
+    [data, runId],
+  );
+
+  if (stored) {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-caption text-ink-subtle">
+          앞서 처리된 결과예요. 같은 말을 다시 보내지 않아도 돼요.
+        </p>
+        <PastReply
+          childId={childId}
+          turn={stored}
+          answered={answered}
+          answering={answering}
+          onOpenDrafts={onOpenDrafts}
+        />
+      </div>
+    );
+  }
+
+  if (page.isPending) {
+    return (
+      <Card>
+        <p className="text-body-sm text-ink-muted">앞서 처리된 결과를 불러오고 있어요</p>
+      </Card>
+    );
+  }
+
+  if (page.isError) {
+    return (
+      <CardFailed>
+        <p>앞서 처리된 한 줄인데, 결과를 불러오지 못했어요. 같은 말을 다시 보내지 않아도 돼요.</p>
+        <div className="mt-3">
+          <Button variant="secondary" size="compact" onClick={() => void page.refetch()}>
+            다시 불러오기
+          </Button>
+        </div>
+      </CardFailed>
+    );
+  }
+
+  return (
+    <CardFailed>
+      <p>앞서 처리된 한 줄이에요. 결과는 기록 탭에서 볼 수 있어요.</p>
+      <ButtonLink
+        href={`/child/${childId}/memories`}
+        variant="secondary"
+        size="compact"
+        className="mt-3"
+      >
+        기록 확인하기
+      </ButtonLink>
+    </CardFailed>
   );
 }
 
@@ -322,6 +476,7 @@ function TurnReply({
         // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
         followUp={turn.answering !== null}
         onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
+        checkRecords={turn.replayed}
         onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
         rewriteBlocked={rewriteBlocked}
         onAnswer={() => {
