@@ -1096,7 +1096,7 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
     """성공한 관찰 저장 결과만 반환.
 
     health 는 호출 한 번이 증상 행과 약 행 두 개를 만들 수 있다 — 약 행은 `medication_id` 로 온다
-    (#557). 빼면 04 화면의 "저장됨" 에서 약 행이 빠진다.
+    (#551). 빼면 04 화면의 "저장됨" 에서 약 행이 빠진다.
     """
     return tuple(
         Ref(kind=call.result["resource"], id=row_id)

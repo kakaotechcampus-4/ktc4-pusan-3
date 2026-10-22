@@ -133,7 +133,7 @@ def _field_value(value: Any) -> Any:
     🚨 DB 는 timestamptz 를 UTC 로 돌려준다(health `observed_time` · `measured_at`). 그대로 실으면
        보호자가 말한 밤 9시가 `…T12:00:00Z` 로 보인다 (#471 검토).
     🚨 numeric(3,1) 은 Decimal 로 온다(health `temperature`). JSON 으로 바꾸면 "38.5" 글자가 된다 —
-       소수 첫째 자리까지라 float 로 옮겨도 값이 바뀌지 않는다 (#557).
+       소수 첫째 자리까지라 float 로 옮겨도 값이 바뀌지 않는다 (#551).
     """
     if isinstance(value, datetime):
         return value.astimezone(KST)

@@ -205,7 +205,7 @@ async def test_health_관찰_시각은_한국_시간으로_싣는다(monkeypatch
 
 
 async def test_health_체온은_숫자로_싣는다(monkeypatch, bearer, cid):
-    """#557 — DB 는 numeric(3,1) 을 Decimal 로 돌려주고, JSON 으로 바꾸면 "38.5" 글자가 된다.
+    """#551 — DB 는 numeric(3,1) 을 Decimal 로 돌려주고, JSON 으로 바꾸면 "38.5" 글자가 된다.
     화면이 숫자로 그리도록 숫자로 싣는다. 먹인 약 두 칸도 domain_fields 에 같이 실린다.
     """
     _, parent_id = bearer

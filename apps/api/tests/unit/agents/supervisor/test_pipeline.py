@@ -2834,7 +2834,7 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
 async def test_증상과_먹인_약을_한_번에_저장하면_Saved_에_두_행이_다_실린다(
     memory_context: AgentContext,
 ) -> None:
-    # #557 — tool 호출 한 번이 두 행을 만든다. id 하나만 실으면 04 화면에서 약 행이 빠진다
+    # #551 — tool 호출 한 번이 두 행을 만든다. id 하나만 실으면 04 화면에서 약 행이 빠진다
     fever_and_medicine = {
         "raw_text": "열이 끓길래 바로 해열제 먹였어",
         "observed_on": "오늘",

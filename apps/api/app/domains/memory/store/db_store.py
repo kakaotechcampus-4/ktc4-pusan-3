@@ -198,7 +198,7 @@ class DbMemoryStore:
             if k not in {"child_id", "source_writer", "observed_range", "status"}
         }
         if isinstance(col_fields.get("linked_symptom_id"), str):
-            # tool 은 앞서 만든 증상 행의 문자열 id 를 그대로 넘긴다 (#557)
+            # tool 은 앞서 만든 증상 행의 문자열 id 를 그대로 넘긴다 (#551)
             col_fields["linked_symptom_id"] = UUID(col_fields["linked_symptom_id"])
         orm = model(
             child_id=child_id,
