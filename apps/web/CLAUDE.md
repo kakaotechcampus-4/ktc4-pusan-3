@@ -203,6 +203,7 @@ const mutation = useMutation({
 
 - 🚨 **`mutationFn` 안에서 `newIdempotencyKey()` 를 부르지 않는다.** 재시도마다 새 키가 나가면 중복 방지가 무의미해진다 (타입이 못 잡는다)
 - 🚨 **`rotate()` 를 실패 경로에서도, 끝을 확인하지 못한 경로에서도 부르지 않는다.** 재시도는 같은 키다
+  (예외: 한 줄 입력의 run 이 SSE `failed` 로 끝나면 새 키다 — 서버가 "저장 없음" 을 보장한다 · [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2)
 - 🚨 **사용자가 고쳐 쓸 수 있는 본문은 `current(text)` 로 본문을 넘긴다** — 키가 본문을 따라 바뀌어야 "같은 키 · 다른 본문" 422 에 안 갇힌다
 - `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.**
 

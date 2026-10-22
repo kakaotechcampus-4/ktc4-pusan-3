@@ -37,6 +37,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `partial` | Agent 2개 중 1개 실패 — 성공·실패를 한 화면에 (NF-06) |
 | `failed` | 입력 처리 실패 — `raw_text` 복원 |
 | `interrupted` | 04 저장한 뒤 끊김 — `done` + `completed: false`. **다시 시도가 없어야 한다** · 일정형 한 줄이면 받은 기록 없이 끊긴다 (#271) |
+| `replay_finished` | 04 결과 못 받음 → 다시 시도. 끊긴 뒤 5분이 지난 것으로 쳐서 SSE 는 404 고, 서버는 끝냈고 대화 기록이 있다(`finished`). 🚨 **SSE 를 열지 않고 저장된 결과가 그 줄에 서야 한다** · 다시 시도 · 고쳐 쓰기가 없어야 한다 (#538) |
+| `replay_unknown` | 04 결과 못 받음 → 다시 시도. 채널도 대화 기록도 없다(run_id 만 재생). 🚨 **또 결과 미확인이고 기록에서 확인하라는 안내가 선다** · 다시 시도는 같은 키다 (#538) |
 | `consent` | 신규 가입 대기(`{ status, consent_code }`) · 403 `consent_required` — 저장 차단 · deeplink |
 | `policy_bumped` | 가입 동의 — **제출 직전에 약관이 새 판으로** (400 `policy_version_invalid`). 바뀐 항목만 체크가 풀리고 다시 확인받아야 한다 |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
