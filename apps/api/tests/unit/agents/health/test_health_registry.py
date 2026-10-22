@@ -27,6 +27,7 @@ SPEC_MODEL = {
         "search_health_observations",
         "search_recent_meals",
         "search_medication_schedules",
+        "search_medication_checks",
         "compose_symptom_timeline",
     },
     "schedule_check": set(),
@@ -109,7 +110,12 @@ def test_안전_조회_실패로는_닫지_않는다(label):
 
 
 @pytest.mark.parametrize(
-    "label", [label for label in HealthTaskType if label is not HealthTaskType.MEDICATION]
+    "label",
+    [
+        label
+        for label in HealthTaskType
+        if label not in (HealthTaskType.MEDICATION, HealthTaskType.VISIT_SUMMARY)
+    ],
 )
 def test_열리는_tool_은_구현된_것뿐이다(label):
     # 구현된 라벨이어도 핸들러가 있는 tool 만 열린다 — schedule_check 는 모델 tool 이 없다
@@ -125,11 +131,12 @@ def test_복약_라벨은_핸들러가_있는_모델_tool_만_이름순으로_�
     )
 
 
-def test_구현된_라벨은_schedule_check_medication_care_handoff_이다():
+def test_구현된_라벨은_schedule_check_medication_care_handoff_visit_summary_이다():
     assert IMPLEMENTED_TASKS == {
         HealthTaskType.SCHEDULE_CHECK,
         HealthTaskType.MEDICATION,
         HealthTaskType.CARE_HANDOFF,
+        HealthTaskType.VISIT_SUMMARY,
     }
 
 
@@ -138,7 +145,33 @@ def test_정의와_핸들러가_같다():
 
 
 def test_스펙은_핸들러가_있는_tool_만_싣는다():
-    assert specs_for(["compose_symptom_timeline", "search_recent_meals"]) == []
+    # build_fever_timeline 은 코드 tool 이라 정의 · 핸들러가 없다
+    specs = specs_for(["build_fever_timeline", "search_recent_meals"])
+
+    assert [spec["function"]["name"] for spec in specs] == ["search_recent_meals"]
+
+
+def test_진료_준비_조회_tool_은_모델_tool_표와_핸들러에_다_있다():
+    reads = {
+        "search_health_observations",
+        "search_recent_meals",
+        "search_medication_schedules",
+        "search_medication_checks",
+    }
+
+    assert reads <= MODEL_TOOLS[HealthTaskType.VISIT_SUMMARY]
+    assert reads <= set(TOOL_HANDLERS)
+
+
+def test_진료_준비_라벨은_조회_넷과_출력_하나만_이름순으로_연다():
+    # 코드 tool(build_fever_timeline 등)은 모델에 열리지 않는다
+    assert tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
+        "compose_symptom_timeline",
+        "search_health_observations",
+        "search_medication_checks",
+        "search_medication_schedules",
+        "search_recent_meals",
+    )
 
 
 async def test_없는_tool_은_거절():

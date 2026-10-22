@@ -31,7 +31,11 @@ DocKind = Literal["food_doc", "growth_doc", "activity_doc"]
 # 값은 `rules/menu_evidence.MENU_EVIDENCE_KIND` 와 같다
 MenuKind = Literal["recipe_catalog"]
 
-SourceKind = ChildRecordKind | DocKind | MenuKind
+# 복약 코스 행 — Health 진료 준비의 복약 체크 줄만 단다(#557). Health 는 추천을 내지 않아
+# `suggestion_evidence` 로 가지 않고 `Readout.source_refs` 에만 실린다. 개인화 근거로 세지 않는다
+MedicationKind = Literal["medication_schedule"]
+
+SourceKind = ChildRecordKind | DocKind | MenuKind | MedicationKind
 
 _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
     (

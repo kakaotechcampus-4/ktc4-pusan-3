@@ -10,7 +10,7 @@
 task별 모델 tool (코드 tool 은 모델에 노출하지 않는다 — 노출하면 Gate 를 우회할 수 있다)
 
 - visit_summary   search_health_observations · search_recent_meals · search_medication_schedules ·
-                  compose_symptom_timeline(출력)
+                  search_medication_checks · compose_symptom_timeline(출력)
 - medication      search_medication_schedules · create / update / stop_medication_schedule
                   (생성 · 수정 · 중단이 출력. 복용 체크는 tool 이 아니라 보호자 화면이다)
 - schedule_check · place_lookup · care_handoff   모델을 부르지 않는다
@@ -42,6 +42,12 @@ from app.agents.health.tools.drafts import (
     stop_medication_schedule,
     update_medication_schedule,
 )
+from app.agents.health.tools.records import (
+    search_health_observations,
+    search_medication_checks,
+    search_recent_meals,
+)
+from app.agents.health.tools.timeline import compose_symptom_timeline
 
 ToolHandler = Callable[[HealthContext, Any], Awaitable[ToolResult]]
 
@@ -52,6 +58,7 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
             "search_health_observations",
             "search_recent_meals",
             "search_medication_schedules",
+            "search_medication_checks",
             "compose_symptom_timeline",
         }
     ),
@@ -128,11 +135,20 @@ MODEL_TASKS: frozenset[HealthTaskType] = frozenset(OUTPUT_TOOLS)
 
 # 라벨 경로가 다 붙은 라벨. 이슈가 라벨 하나를 끝낼 때 여기 더한다 (`agent._LABEL_RUNNERS` 와 같다)
 IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset(
-    {HealthTaskType.SCHEDULE_CHECK, HealthTaskType.MEDICATION, HealthTaskType.CARE_HANDOFF}
+    {
+        HealthTaskType.SCHEDULE_CHECK,
+        HealthTaskType.MEDICATION,
+        HealthTaskType.CARE_HANDOFF,
+        HealthTaskType.VISIT_SUMMARY,
+    }
 )
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
+    "search_health_observations": search_health_observations,
+    "search_recent_meals": search_recent_meals,
     "search_medication_schedules": search_medication_schedules,
+    "search_medication_checks": search_medication_checks,
+    "compose_symptom_timeline": compose_symptom_timeline,
     "create_medication_schedule": create_medication_schedule,
     "update_medication_schedule": update_medication_schedule,
     "stop_medication_schedule": stop_medication_schedule,

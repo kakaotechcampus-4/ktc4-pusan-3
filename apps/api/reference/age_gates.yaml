@@ -65,3 +65,8 @@ gates:
   # Health — 이 월령 미만(영아)은 "자기 전" 을 취침 기준 시각(20:30) 대신 19:30 고정 시각으로 낸다 (M-3).
   # 복약 알림 시각이라 보호자가 확인 카드에서 실제 시각을 본다.
   infant_bedtime_below_month: 24
+
+  # Health — 이 월령 미만(생후 3개월 미만) 아이가 최근 48시간 안에 발열 기록이 있으면 열 타임라인보다
+  # 응급 안내(emergency)가 먼저 나간다 (#557). 발열의 체온 기준값(38.0)은 월령 게이트가 아니라
+  # tools/fever.py 의 `FEVER_TEMPERATURE` 다. 값은 의료 검수 대상이다.
+  infant_fever_emergency_below_month: 3
