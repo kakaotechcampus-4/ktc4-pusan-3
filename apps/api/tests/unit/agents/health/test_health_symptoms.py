@@ -110,3 +110,22 @@ def test_사전_밖_증상은_에피소드로_묶지_않는다():
 
 def test_간격은_설정값이다():
     assert EPISODE_GAP == timedelta(hours=48)
+
+
+async def test_인메모리_리더는_식사를_구간으로_거른다():
+    from datetime import date
+    from uuid import UUID
+
+    from app.agents.health.store.inmemory import InMemoryHealthMemory
+    from app.agents.health.store.ports import MealRecord
+
+    inside = MealRecord(UUID(int=1), date(2026, 9, 27), "죽", "반 그릇")
+    outside = MealRecord(UUID(int=2), date(2026, 9, 1), "국수", None)
+    memory = InMemoryHealthMemory(meals=[inside, outside])
+
+    found = await memory.meals(
+        child_id=UUID(int=9), date_from=date(2026, 9, 22), date_to=date(2026, 9, 28)
+    )
+
+    assert found == [inside]
+    assert memory.calls == 1
