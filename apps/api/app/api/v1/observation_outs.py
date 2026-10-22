@@ -11,6 +11,7 @@
 
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -127,11 +128,15 @@ def _domain_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _field_value(value: Any) -> Any:
-    """enum 은 값으로, 시각은 서비스 시간대(KST)로.
+    """enum 은 값으로, 시각은 서비스 시간대(KST)로, 체온은 숫자로.
 
-    🚨 DB 는 timestamptz 를 UTC 로 돌려준다(health `observed_time`). 그대로 실으면 보호자가 말한
-       밤 9시가 `…T12:00:00Z` 로 보인다 (#471 검토).
+    🚨 DB 는 timestamptz 를 UTC 로 돌려준다(health `observed_time` · `measured_at`). 그대로 실으면
+       보호자가 말한 밤 9시가 `…T12:00:00Z` 로 보인다 (#471 검토).
+    🚨 numeric(3,1) 은 Decimal 로 온다(health `temperature`). JSON 으로 바꾸면 "38.5" 글자가 된다 —
+       소수 첫째 자리까지라 float 로 옮겨도 값이 바뀌지 않는다 (#557).
     """
     if isinstance(value, datetime):
         return value.astimezone(KST)
+    if isinstance(value, Decimal):
+        return float(value)
     return value.value if hasattr(value, "value") else value

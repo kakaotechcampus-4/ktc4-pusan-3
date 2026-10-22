@@ -33,12 +33,20 @@ class ObservationRow:
     fields: dict[str, Any]  # 도메인별 컬럼. subject / symptom / activity ...
 
     def to_summary(self) -> dict[str, Any]:
-        """조회 결과 요약. created_at · raw_text에 id를 붙인다."""
-        return {
+        """조회 결과 요약. created_at · raw_text에 id를 붙인다.
+
+        health 는 kind(symptom / medication)를 더 싣는다. 증상과 먹인 약을 한 번에 저장하면
+        두 행의 raw_text 가 같아서, 이것 없이는 모델이 어느 행을 고칠지 못 가른다 (#557).
+        """
+        summary = {
             "id": self.id,
             "created_at": self.created_at.isoformat(),
             "raw_text": self.raw_text,
         }
+        if self.domain == "health":
+            given = self.fields.get("medication_given") is not None
+            summary["kind"] = "medication" if given else "symptom"
+        return summary
 
 
 @dataclass(frozen=True)

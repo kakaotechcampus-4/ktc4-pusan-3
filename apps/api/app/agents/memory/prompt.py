@@ -88,6 +88,14 @@ _VALUES = """
   context, assistance_level, completion_status, trigger 는 말로 드러났을 때만 채우고
   아니면 넣지 않는다.
 - 없었다고 말한 증상은 symptom에 넣지 않는다. "콧물이 났는데 열은 없었대" 는 콧물만 기록한다.
+- 체온 숫자가 있으면 temperature 에 숫자만, 잰 시각은 measured_at,
+  잰 부위가 말에 있을 때만 measure_site. 숫자를 바꾸거나 단위를 바꾸지 않는다.
+  "밤 11시에 38.5도였어" 는 temperature=38.5, measured_at="밤 11시" 다.
+  measured_at · given_time 에도 몇 시인지 알 수 있는 표현만 넣는다.
+- 이미 먹인 약은 action_taken 이 아니라 medication_given 이다.
+  같은 말에 증상과 먹인 약이 같이 있으면 create_observation_health 한 번에 같이 넣는다.
+  약만 말하면 증상을 넣지 않는다(해열제를 먹였다고 발열을 넣지 않는다).
+  약 이름은 말한 그대로 넣고, 먹인 시각은 말했을 때만 given_time 에 넣는다.
 - 보호자가 직접 본 것은 parent_direct, "~했대" "선생님 말로는" 처럼 전해 들은 것은
   parent_hearsay, 확신이 약하면 parent_hedged, 알림장·기관 공지는 institution_notice.
 - 새 일정의 준비물은 create_event 의 items 에 모두 넣는다. 몇 개든 create_event 한 번이다.

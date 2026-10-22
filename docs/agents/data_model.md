@@ -213,16 +213,32 @@
 | amount | text | "반 그릇" / "다 먹음" — 값 집합 미확정이라 enum 대신 text로 구현 |
 | reaction | text | "좋아함" / "싫어함" / "무반응" — 값 집합 미확정이라 enum 대신 text로 구현 |
 
-### 2. observation_health (증상·컨디션)
+### 2. observation_health (증상·컨디션 · 먹인 약)
+
+**한 행 = 한 사건이다** — 증상 행이거나 먹인 약 행이다 (2026-10-22, #557). 칸별 결정은 아래
+["observation_health — 체온 세 칸 · 먹인 약 두 칸"](#observation_health--체온-세-칸--먹인-약-두-칸) 에 있다.
 
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
-| symptom | text[] | "발열" / "콧물" / "두드러기", NOT NULL |
+| symptom | text[] | "발열" / "콧물" / "두드러기", NOT NULL, DEFAULT `'{}'`. 약 행은 빈 배열 |
 | severity | enum | mild / moderate / severe / emergency |
 | body_part | text | "얼굴" / "팔" |
 | suspected_trigger | text | "우유 먹은 뒤"/”쌓기놀이 직후” |
-| action_taken | text | "병원" / "해열제" / "관찰" |
-| observed_time | timestamptz | 관찰 시점, nullable |
+| action_taken | text | "병원" / "찜질" / "관찰". 먹인 약은 `medication_given` 행으로 따로 남긴다 |
+| observed_time | timestamptz | 관찰 시점, nullable. **약 행이면 먹인 시각** |
+| temperature | numeric(3,1) | nullable. ℃, 보호자가 말한 숫자 그대로. CHECK 30.0 ~ 45.0 |
+| measured_at | timestamptz | nullable. 체온을 잰 시각 |
+| measure_site | varchar(16) | nullable. `ear` / `forehead` / `armpit` / `oral` / `rectal` (CHECK) |
+| medication_given | text | nullable. 보호자가 말한 약 이름 그대로 |
+| linked_symptom_id | uuid | nullable. FK → `observation_health.id`, `ON DELETE SET NULL`. 같은 말에서 함께 기록된 증상 행 |
+
+**제약** (이름은 마이그레이션 `e5b1d7c3a9f2` 와 같다)
+
+- `observation_health_symptom_or_medication` — `(cardinality(symptom) > 0) <> (medication_given IS NOT NULL)`. 증상이나 약 중 하나만
+- `observation_health_link_needs_medication` — `linked_symptom_id IS NULL OR medication_given IS NOT NULL`. 연결은 약 행에만
+- `observation_health_medication_no_temperature` — `medication_given IS NULL OR (temperature IS NULL AND measured_at IS NULL AND measure_site IS NULL)`. 약 행에는 체온 세 칸이 없다 (열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 내지 않게)
+- `observation_health_temperature_range` — `temperature IS NULL OR temperature BETWEEN 30.0 AND 45.0`
+- `observation_health_measure_site` — 위 다섯 값만
 
 ### 3. observation_education (학습 세션)
 
@@ -553,16 +569,40 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 | `child_growth_log` — `numeric(4,1)` · `measured_on date NOT NULL` (09-22 의 `check_date`) | Child §child_growth_log | Growth (G-5) |
 | `suggestion.kind` (`general`/`personalized`) | Suggestion §suggestion | Food · Growth |
 | `source_refs` 제거 → `suggestion_evidence` | Suggestion §suggestion_evidence | Food · Growth |
+| `observation_health` 체온 세 칸 · 먹인 약 두 칸 (아래 절) | Memory/Observation §2 | Health (#557) |
 
-### 아직 위 표에 없는 것
+#### observation_health — 체온 세 칸 · 먹인 약 두 칸
 
-#### observation_health — 체온 세 칸
+2026-10-22 §2 표에 반영했다 (#557, 마이그레이션 `e5b1d7c3a9f2`). Memory 가 발화에서 채우고 Health 가 읽는다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
-| temperature | numeric(3,1) | nullable. **℃.** 38.4 같은 값. `symptom text[]` 에 "발열" 만 들어가면 숫자가 남지 않는다 |
-| measured_at | timestamptz | nullable. 잰 시각. `observed_time`(관찰 시점)과 다르다 — 한 번의 관찰에서 여러 번 잰다 |
-| measure_site | enum | `ear` / `forehead` / `armpit` / `oral` / `rectal`, nullable. **잰 부위.** 부위마다 정상 범위가 달라 숫자만으로는 못 읽는다 |
+| temperature | numeric(3,1) | nullable. **℃.** 38.4 같은 값. `symptom text[]` 에 "발열" 만 들어가면 숫자가 남지 않는다. 말한 숫자 그대로 — 단위 환산 · 보정 없음. 30.0 미만 · 45.0 초과는 Memory 가 저장하지 않고 되묻는다(DB CHECK 도 같은 범위) |
+| measured_at | timestamptz | nullable. 잰 시각. `observed_time`(관찰 시점)과 다르다 — 한 번의 관찰에서 여러 번 잰다. "밤 11시" 같은 표현을 `observed_time` 과 같은 규칙으로 관찰 날짜에 얹는다 |
+| measure_site | varchar(16) | `ear` / `forehead` / `armpit` / `oral` / `rectal`, nullable. **잰 부위.** 부위마다 정상 범위가 달라 숫자만으로는 못 읽는다. 말에 부위가 있을 때만 |
+| medication_given | text | nullable. **이미 먹인 약 이름, 보호자가 말한 그대로.** Memory 의 코드가 **이번 run 의 보호자 발화**(`AgentContext.utterance`)와 tool 인자 `raw_text` 안에 글자 그대로 있는지 보고 저장한다 — "타이레놀" 을 "아세트아미노펜" 으로 바꿔 쓰지 않는다. `raw_text` 는 모델이 옮겨 적는 칸이라 그것만으로는 기준이 못 된다. 수정으로 약 이름을 바꿀 때도 새 이름이 이번 발화에 있어야 한다("타이레놀 말고 부루펜") |
+| linked_symptom_id | uuid | nullable. FK → `observation_health.id`, `ON DELETE SET NULL`. 같은 말에서 함께 기록된 증상 행 |
+
+- **한 행에는 증상이나 먹인 약 중 하나만 둔다.** 약 행은 `symptom = '{}'` 이고 `observed_time` 이 먹인 시각이다.
+  해열제처럼 필요할 때만 먹이는 약은 복약 회차(`medication_dose`)가 없어 체크할 곳이 없어서 이 행으로 남긴다.
+- **연결은 코드가 채운다.** Memory 저장 tool 은 한 번 호출에 증상과 먹인 약을 같이 받고, 코드가 두 행으로 나누며
+  약 행에 방금 만든 증상 행의 id 를 넣는다. 모델이 id 를 골라 잇지 않는다 — `linked_symptom_id` 는 생성 · 수정 인자에 없다.
+  따로 온 "해열제 먹였어" 는 직전 열 기록에 잇지 않는다(이유를 말하지 않았는데 이으면 원인을 짐작해 사실처럼 남기는 것이다).
+- 증상과 약을 한 번에 저장한 두 행은 `raw_text` 가 같아서, Memory 조회 결과의 health 행에는 `kind`(`symptom` / `medication`)가 붙는다.
+  수정으로 증상 행에 약을 넣거나 약 행에 증상을 넣으면 Memory 가 CHECK 전에 돌려주며 `kind` 가 맞는 행의 id 로 고치라고 안내한다
+  (새로 먹인 약 · 새로 본 증상일 때만 새로 만든다). 약 행에 증상 칸(체온 세 칸 · `severity` · `body_part` ·
+  `suspected_trigger` · `action_taken`)을 얹는 수정도 같다 — `observed_time` 은 약 행에선 먹인 시각이라 고칠 수 있다.
+  체온 세 칸은 DB 도 막는다(`observation_health_medication_no_temperature`). 다섯 칸이 같은 마이그레이션에서 생긴 새 칸이라
+  기존 행에는 늘 참이어서 NOT VALID 없이 건다.
+- 같은 run 에서 체온을 여러 번 말하거나("아침 8시에 38.2도, 밤 9시에 39.1도") 약을 여러 번 먹였으면 행도 여럿이다.
+  Memory 의 run 중복 막기는 증상 · 날짜에 더해 체온 · 잰 시각 · 본 시각 · 약 이름 · 먹인 시각까지 같아야 같은 호출로 본다.
+  `ObservationHealthUpdate.symptom` 은 최소 1개다. `medication_given` 은 비울 수 없다(비우면 증상도 약도 없는 행이 된다).
+- 증상이 빈 약 행은 증상 코드가 0개라 반복 판정 · 에피소드에 들어가지 않는다.
+- **배포 안전** — 이전에는 수정 인자에 최소 1개 제한이 없어 증상이 빈 행이 있을 수 있었다.
+  `observation_health_symptom_or_medication` 은 NOT VALID 로 건 뒤 그런 행을 세어 0건일 때만 같은 마이그레이션에서 VALIDATE 한다.
+  있으면 NOT VALID 로 두고 경고 로그(건수만)를 남긴다 — 보호자 기록이라 지우지 않고, 정리한 뒤 VALIDATE 한다.
+
+### 아직 위 표에 없는 것
 
 #### notice (기관 공지) — 테이블 신설
 
@@ -593,7 +633,7 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 
 **컬럼이 없다**
 
-- `observation_health` 의 체온 세 칸 — `temperature` · `measured_at` · `measure_site`
+- ~~`observation_health` 의 체온 세 칸 — `temperature` · `measured_at` · `measure_site`~~ — 2026-10-22 먹인 약 두 칸과 함께 반영했다 (마이그레이션 `e5b1d7c3a9f2`)
 
 **제약이 없다**
 

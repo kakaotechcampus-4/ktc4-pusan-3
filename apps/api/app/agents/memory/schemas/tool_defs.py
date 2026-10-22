@@ -54,14 +54,19 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="create_observation_health",
         description=(
-            "관찰된 증상이나 컨디션을 기록한다. 발화에 드러난 것만 담고 원인을 추정하지 않는다. "
+            "관찰된 증상이나 컨디션, 이미 먹인 약을 기록한다. 발화에 드러난 것만 담고 원인을 "
+            "추정하지 않는다. 증상과 먹인 약을 같이 말했으면 이 tool 한 번에 같이 넣는다. "
             "알레르기·만성질환 등록에는 쓰지 않는다 — 그건 보호자가 직접 입력한다."
         ),
         args=ObservationHealthCreate,
     ),
     ToolDefinition(
         name="query_observation_health",
-        description=f"저장된 증상 기록을 날짜나 키워드로 찾는다. {_NEEDS_QUERY}",
+        description=(
+            "저장된 증상 · 먹인 약 기록을 날짜나 키워드로 찾는다. "
+            "결과의 kind 가 symptom 이면 증상, medication 이면 먹인 약 기록이다. "
+            f"{_NEEDS_QUERY}"
+        ),
         args=ObservationQueryArgs,
     ),
     ToolDefinition(

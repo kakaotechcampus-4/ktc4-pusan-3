@@ -21,7 +21,7 @@ import json
 import logging
 from collections import Counter
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from pydantic import ValidationError
@@ -244,6 +244,7 @@ async def run(
         )
     elif task is not None and task.raw_text != raw_text:
         raise ValueError("task.raw_text와 raw_text가 다르다")
+    context = replace(context, utterance=_utterance(raw_text, continuation))
 
     shown = await _reread(continuation.found, context) if continuation is not None else []
     llm = client or LLMClient(role="memory")
@@ -418,6 +419,18 @@ async def run(
         ended_by="max_steps",
         drafts=context.drafts.all(),
     )
+
+
+def _utterance(raw_text: str, continuation: PendingMemoryContext | None) -> str:
+    """보호자가 실제로 한 말만 잇는다. tool 이 "말한 그대로" 를 대조하는 기준이다 (#557).
+
+    이어받기는 앞 조각과 보호자 답들, 이번 답이다. transcript 는 (질문, 답) 순으로 쌓이고
+    질문은 모델이 쓴 글이라 뺀다 — "타이레놀이었어요?" "응" 으로 약 이름이 생기지 않게.
+    """
+    if continuation is None:
+        return raw_text
+    answers = continuation.transcript[1::2]
+    return "\n".join((continuation.hint_text, *answers, raw_text))
 
 
 def _user_message(raw_text: str, task: MemoryTask | None) -> str:
@@ -832,6 +845,10 @@ def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+# 건강 관찰에서 같은 대상 · 같은 날이어도 다른 사건을 가르는 칸
+_HEALTH_REPEATS = ("temperature", "measured_at", "observed_time", "medication_given", "given_time")
+
+
 def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
     """같은 run에서 두 번 하면 안 되는 작업인지 가른다.
 
@@ -842,9 +859,12 @@ def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
         return None  # 분리·조회는 반복 호출해도 상태 안 바뀜
     if name.startswith("create_observation_"):
         target = arguments.get("subject") or arguments.get("symptom") or arguments.get("raw_text")
-        return name, json.dumps(
-            [target, arguments.get("observed_on")], sort_keys=True, ensure_ascii=False
-        )
+        key = [target, arguments.get("observed_on")]
+        if name == "create_observation_health":
+            # 체온 · 먹인 약은 한 말에서 여러 번 나온다("8시에 38.2도, 9시에 39.1도") — 값이나
+            # 시각이 다르면 다른 관찰이다. 막으면 모델이 첫 체온을 update 로 덮어쓴다
+            key += [arguments.get(field) for field in _HEALTH_REPEATS]
+        return name, json.dumps(key, sort_keys=True, ensure_ascii=False, default=str)
     return name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
 
 
