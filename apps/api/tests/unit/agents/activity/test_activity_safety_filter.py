@@ -237,6 +237,41 @@ class TestNonFoodAllergyCaution:
         assert allergy_cautions([allergy("꽃가루", "retracted")]) == ()
 
 
+class TestExtraAllergenAliases:
+    """19종 밖 알레르기 식품은 그 별칭 전부로 막는다 (#437 · QA 16).
+
+    별칭 표는 Food 의 `extra_allergens` 이고 공용 `allergy_book()` 이 Activity 에도 준다.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("키위", "참다래 썰어 모양 만들기"),
+            ("귀리", "오트밀 반죽 놀이"),
+            ("녹두", "숙주 키우기"),
+            ("버섯류", "표고버섯 만져 보기"),
+            ("버섯류", "느타리 찢어 보기"),
+        ],
+    )
+    def test_등록한_이름이_아닌_다른_이름도_막는다(self, label, content):
+        assert check(content, entries=[allergy(label)]).blocked
+
+    @pytest.mark.parametrize("content", ["팽이 돌리기", "포도송이 그리기", "종이컵 탑 쌓기"])
+    def test_버섯류로_등록해도_다른_뜻의_글자는_통과한다(self, content):
+        assert not check(content, entries=[allergy("버섯류")]).blocked
+
+    @pytest.mark.parametrize("content", ["잠 깨우기 노래", "깨진 컵 치우기", "감자 으깨기"])
+    def test_별칭의_한_글자도_놀이_문장용_guard_를_쓴다(self, content):
+        """참깨의 별칭 "깨" 는 메뉴용 guard 만 있었다 — 놀이 문장에서는 한 글자 허용 목록의 guard 를
+        같이 쓴다."""
+        assert not check(content, entries=[allergy("깨")]).blocked
+
+    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리"])
+    def test_19종_밖_식품에는_확인_문구를_내지_않는다(self, label):
+        """식품은 이름 대조가 후보를 뺀다 — "식품 아닌 알레르기" 로 보면 결과마다 문구가 붙는다."""
+        assert allergy_cautions([allergy(label)]) == ()
+
+
 class TestFilter:
     def test_후보마다_같은_순서로_판정한다(self):
         result = filter_activity_safety(

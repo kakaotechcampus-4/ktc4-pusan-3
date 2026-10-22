@@ -33,9 +33,9 @@ from typing import Literal
 
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
+    allergy_book,
     non_food_allergies,
     read_label,
-    shared_book,
 )
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
@@ -143,7 +143,7 @@ def allergy_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
     """
     return tuple(
         READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=label).body
-        for label in non_food_allergies(entries, shared_book())
+        for label in non_food_allergies(entries, allergy_book())
     )
 
 
@@ -161,7 +161,7 @@ def load_safety_rules() -> SafetyRules:
         hazards = hazard_terms()
         raw_allergens = allergen_terms()
         # 보호자가 적은 이름을 읽는 사전. 확인 문구(`allergy_cautions`)도 이 사전으로 고른다
-        book = shared_book()
+        book = allergy_book()
     except Exception as exc:
         raise SafetyRulesUnavailable("안전 사전을 읽지 못했다") from exc
 

@@ -12,9 +12,9 @@ from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
+    allergy_book,
     non_food_allergies,
     read_label,
-    shared_book,
 )
 from app.agents.common.reference import allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
@@ -65,7 +65,7 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
     - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다.
     """
     canonical = _canonical_allergens()
-    book = shared_book()
+    book = allergy_book()
 
     blocking: list[Term] = []
     registered: list[Term] = []
@@ -163,7 +163,7 @@ def allergy_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
     """
     return tuple(
         READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=label).body
-        for label in non_food_allergies(entries, shared_book())
+        for label in non_food_allergies(entries, allergy_book())
     )
 
 

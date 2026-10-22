@@ -305,6 +305,15 @@ class TestDefaultRules:
         entries = [SafetyEntry("allergy", label, "active")]
         assert [e.label for e in rules.registered_names(text, entries)] == [label]
 
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [("키위", "참다래 그림 그리기"), ("버섯류", "표고버섯 관찰하기")],
+    )
+    def test_19종_밖_식품은_다른_이름도_막는다(self, rules, label, text):
+        """Activity 와 같은 공용 사전(`allergy_book`)을 쓴다 (#437)."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert [e.label for e in rules.registered_names(text, entries)] == [label]
+
     def test_띄어_쓴_이름은_낱말로도_대조한다(self, rules):
         """ "고양이 털" 로 등록한 아이에게 고양이 쓰다듬기가 나가면 안 된다 — 칸 전체만 보면
         놓친다."""
@@ -431,13 +440,13 @@ class TestRulesUnavailable:
             load_safety_rules()
 
     def test_이름_사전을_못_읽어도_같다(self, monkeypatch):
-        """확인 문구를 고르는 이름 사전(`shared_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 문구
+        """확인 문구를 고르는 이름 사전(`allergy_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 문구
         없이 넘기지 않는다."""
 
         def broken():
             raise ValueError("allergen_groups.yaml 깨짐")
 
-        monkeypatch.setattr("app.agents.growth.tools.safety.shared_book", broken)
+        monkeypatch.setattr("app.agents.growth.tools.safety.allergy_book", broken)
         with pytest.raises(SafetyRulesUnavailable):
             load_safety_rules()
 
