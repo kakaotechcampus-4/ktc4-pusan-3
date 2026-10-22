@@ -121,8 +121,9 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
     알레르기 확인 · 초안 만들기는 개인화와 **한 흐름**이다 (서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다).
     그래서 일반 카드는 **"이렇게 준비할게요" 요약 카드보다 위**에 선다 — 다음 행동이 고를 것보다 먼저 서면
     안 된다. 순서는 개인화 목록 → 일반 카드 → 요약 카드 → 안내 · 실패 → 되묻는 질문이다
-  - ⚠️ 채택 응답(`ApproveSuggestionsResponse`)에서 일반 추천은 실서버가 개인화 모양에 `kind: "general"` ·
-    `evidence: []` 를 실어 보낸다. 화면은 거기서 `id` 만 쓴다
+  - ⚠️ 채택 응답(`ApproveSuggestionsResponse`)은 일반 추천도 개인화 모양(`SuggestionOut`)에 `kind: "general"` 을
+    실어 보내고, 근거를 읽지 않아 **개인화도 `evidence: []`** 다. 화면은 거기서 `id` 만 쓴다.
+    서버 계약은 [`docs/api/suggestions-v1.md`](../api/suggestions-v1.md) §7 (#545)
 - 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내(`groups[].notice`)와 함께 묶음이
   오고, 이어서 할 수 없는 Agent(`cannot_resume`)도 안내만 온다 — 둘 다 **실패 카드가 아니고 다시 시도를
   두지 않는다**(눌러도 같은 응답이 온다). 문구는 서버 것을 그대로 그린다. `groups` 를 안 보내던 응답은 예전
@@ -156,8 +157,10 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   해 본 뒤의 평가도 받는다. 줄에 **"또래 기준 일반 추천" 을 글자로** 적고(색 · 점선으로 가르지 않는다),
   둘은 `kind` 로 가른다. 일반 추천 줄의 타입(`ReceivedGeneralSuggestion`)에는 근거 필드가 아예 없다 —
   이 목록은 근거를 그리지 않아서 05 와 달리 한 컴포넌트에 둔다.
-  ⚠️ 실서버는 아직 목록을 `kind = 'personalized'` 로 거른다. 목이 먼저 일반 추천을 싣고, 필터를 푸는 것은
-  백엔드에 요청한다. 평가(`PATCH /feedback`)는 이미 `kind` 를 보지 않는다
+  목록(`GET /children/{cid}/suggestions`)과 평가(`PATCH /children/{cid}/suggestions/{sid}/feedback`)는 `kind` 를 가리지 않고, 기본 목록은 `draft` 를 뺀다 —
+  05 에서 고르지 않은 일반 추천은 이 탭에 서지 않는다. 일반 추천 줄에 기록 건수를 적지 않는 것도 계약이다
+  (`record_count` 는 05 응답 때 세는 값이라 저장되지 않는다). 서버 계약은
+  [`docs/api/suggestions-v1.md`](../api/suggestions-v1.md) §7 (#545)
 
 - 🚨 **화면에서 부르는 말과 코드의 이름이 다르다** — 관찰(`observation`)은 **기록**, 프로필
   (`profile_affinity`)은 **기억**으로 보여준다. 🚨 **코드·타입·쿼리 키의 이름은 계약서를 따른다.**
