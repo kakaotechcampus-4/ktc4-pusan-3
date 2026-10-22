@@ -103,9 +103,24 @@ TOWER_DOC = ActivityDocRow(
     physical_intensity=Intensity.LOW,
     involves_food=False,
 )
-DOCS = {TOWER_DOC.id: TOWER_DOC}  # 이번 run 의 프롬프트 [예시]에 실은 행
+# 제목이 흔한 말뿐이고 준비물이 없어 어느 후보에 달아도 맞는 문서로 본다 — 다른 축을 보는 테스트용
+GENERIC_DOC = ActivityDocRow(
+    id=UUID(int=22),
+    doc_key="act-test-generic",
+    title="함께 놀이",
+    body="보호자와 함께 논다",
+    min_month=0,
+    max_month=72,
+    setting=ActivitySetting.INDOOR,
+    materials=(),
+    caregiver_role=CaregiverRole.TOGETHER,
+    physical_intensity=Intensity.LOW,
+    involves_food=False,
+)
+DOCS = {TOWER_DOC.id: TOWER_DOC, GENERIC_DOC.id: GENERIC_DOC}  # 이번 run 의 [예시]에 실은 행
 # 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없이 내는 후보는 이 인용을 단다
-DOC_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
+DOC_PICK = {"id": str(GENERIC_DOC.id), "note": "이 나이 예시를 참고했어요"}
+TOWER_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
 
 
 def review(
@@ -628,3 +643,27 @@ class TestOutputTool:
         ctx.state.safety_entries = None
         with pytest.raises(RuntimeError):
             await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
+
+
+class TestDocRelevance:
+    """[예시] 문서 행은 그 활동의 근거여야 한다 — 손 씻기 문서가 종이컵 쌓기에 붙었다 (운영 QA)."""
+
+    def test_문서의_준비물이나_제목이_후보에_나오면_통과(self):
+        result = review(candidate(content="종이컵을 높이 쌓아 보기", evidence=[TOWER_PICK]))
+        assert result.rejections == ()
+        assert result.drafts[0].citations[0].ref.kind == "activity_doc"
+
+    def test_세_글자_넘는_제목_낱말은_앞_두_글자로_본다(self):
+        """모델은 낱말을 바꿔 쓴다 — "종이컵" 의 "종이" 가 나오면 같은 활동으로 본다."""
+        result = review(candidate(content="종이로 높은 탑 만들기", evidence=[TOWER_PICK]))
+        assert result.rejections == ()
+
+    def test_아무것도_안_겹치는_문서를_달면_거절(self):
+        result = review(candidate(content="비누로 손 씻기 노래 부르기", evidence=[TOWER_PICK]))
+        assert [r.reason for r in result.rejections] == [RejectReason.UNRELATED_DOC]
+        assert "맞지 않는다" in explain(result.rejections)
+
+    def test_아이_기록_근거는_보지_않는다(self):
+        """관찰 · 관심 근거는 활동과 다른 낱말로 적혀도 된다 — 문서 행만 본다."""
+        pick = {"id": str(SAND), "note": "모래 놀이 기록"}
+        assert review(candidate(content="종이컵 탑 쌓기", evidence=[pick])).rejections == ()

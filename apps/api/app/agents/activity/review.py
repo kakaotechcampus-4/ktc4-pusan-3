@@ -37,6 +37,7 @@ from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.rules.evaluative import find_evaluative
+from app.rules.term_match import normalize, split_words
 
 # 이 월령 미만은 보호자가 같이 하는 활동만 낸다 (3-3). 밴드 경계와 따로 둔다 —
 # 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게. 값은 `reference/age_gates.yaml` (#372).
@@ -64,6 +65,7 @@ class RejectReason(StrEnum):
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
     OUTDOOR_CLOSED = "outdoor_closed"
+    UNRELATED_DOC = "unrelated_doc"
     BUILD = "build_rejected"
 
 
@@ -85,6 +87,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.OUTDOOR_CLOSED: (
         "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
         " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
+    ),
+    RejectReason.UNRELATED_DOC: (
+        "근거로 단 [예시] 문서 행이 그 활동과 맞지 않는다. 활동에 맞는 [예시] 행을 근거로 달거나,"
+        " [예시]에 있는 활동으로 바꾼다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
@@ -244,6 +250,14 @@ def _check(
             return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, found))
 
+    # 문서 행은 "이 활동의 근거" 다 — [예시]에 있기만 하면 통과시키면 손 씻기 문서가 종이컵 쌓기의
+    # 근거로 붙는다(운영 QA). 일반 추천은 근거가 문서 행뿐이라 여기서 막아야 한다 (루트 §2)
+    if any(
+        isinstance(found, ActivityDocRow) and not _doc_related(candidate, found)
+        for _, found in resolved
+    ):
+        return RejectReason.UNRELATED_DOC, (), None
+
     place: str | None = None
     if candidate.place_name and candidate.place_name.strip():
         place = places.get(normalize_activity(candidate.place_name))
@@ -303,6 +317,43 @@ def _with_place(content: str, place: str | None) -> str:
     if place is None or normalize_activity(place) in normalize_activity(content):
         return content
     return f"{place}에서 {content}"
+
+
+# 문서 제목에서 활동을 가르지 못하는 낱말 — 어느 놀이 제목에나 나온다
+_GENERIC_TITLE_WORDS = frozenset(
+    {
+        "보기",
+        "하기",
+        "놀이",
+        "만들기",
+        "함께",
+        "같이",
+        "다음",
+        "따라",
+        "놀기",
+        "하며",
+        "보며",
+        "주기",
+    }
+)
+
+
+def _doc_related(candidate: ActivityCandidate, doc: ActivityDocRow) -> bool:
+    """후보가 그 문서 행의 활동인가 — 문서의 준비물이나 제목 낱말이 후보에 나오는가.
+
+    제목 낱말은 앞 두 글자로 본다("쌓기" · "노래하며" → "노래") — 모델이 "쌓아" · "노래를" 처럼
+    바꿔 쓴다. 거른 낱말이 하나도 없는 문서(제목이 전부 흔한 말)는 막지 않는다 — 판단할 근거가 없다.
+    완전한 의미 대조가 아니라, 손 씻기 문서를 종이컵 쌓기에 다는 것처럼 **아무것도 안 겹치는**
+    인용을 막는 하한이다.
+    """
+    keys = {key for item in doc.materials if len(key := normalize(item)) >= 2}
+    for word in split_words(doc.title):
+        if len(word) >= 2 and word not in _GENERIC_TITLE_WORDS:
+            keys.add(word[:2])
+    if not keys:
+        return True
+    texts = [normalize(candidate.content), *(normalize(item) for item in candidate.materials)]
+    return any(key in text for key in keys for text in texts)
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:
