@@ -17,6 +17,9 @@ caution.non_food_allergy:
 weather.unchecked:
   kind: notice
   template: 날씨를 확인하지 못해 실내 놀이만 골랐어요.
+weather.not_asked:
+  kind: notice
+  template: 날씨는 확인하지 않았어요. 바깥 놀이라면 나가기 전에 날씨를 한 번 봐 주세요.
 weather.air_unchecked:
   kind: notice
   template: 미세먼지는 확인하지 못했어요.

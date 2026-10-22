@@ -83,12 +83,17 @@
 - [api/invite-v1.md](api/invite-v1.md) — **초대를 링크가 아니라 코드로.** 카톡 링크는 인앱 브라우저에서 열려 `sessionStorage` 가 날아가면 `bind` 까지 잃고 **로그인 자체가 깨진다** · Crockford Base32 8자(`I`·`L`·`O`·`U` 제외) · 정규화한 값을 해시로 저장 · 24시간 · 1회용 · 🚨 **시도 제한이 이 선택의 전제**(40비트 · 확인과 수락이 같은 통) · 관계는 **받는 쪽이 수락할 때** 고른다 · 수락 전 확인 `GET /invites/{code}` · 시도 제한 계정 5회 · IP 30회 / 1시간 (#198 에서 확정) · ⚠️ 계약서 §05 를 **대체한다**
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
 - [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249)
+- [api/chat-v1.md](api/chat-v1.md) — **지난 대화 다시 보기.** run 하나를 대화 한 턴(`chat_turn`)으로 · 쓴 보호자 본인만 보고 탈퇴 · 연결 끊기 · 아이 삭제 때 지운다 · `done` 으로 끝난 run 만 · 말풍선은 그날 오간 말 그대로, 관찰은 id 로 담아 조회 때 지금 상태로(지운 기록은 `deleted`) · 날짜는 접수 KST, 되묻기 답은 질문한 날 · 커서는 날짜를 품는다 (#228)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).
 
 ## 일정 (event)
 
 - [event/event-draft-flow-v1.md](event/event-draft-flow-v1.md) — 승인 전 `event` 행을 두지 않기로 하면서 생긴 초안 계약 · `op`(create/update) 두 모양 · `items` 는 최종 목록(빠진 `item_id` 는 삭제) · `before` 는 원본 전체이고 `changed` 는 뺌 · `draft_id` 는 화면 전용 키 · `is_prepared` 는 초안이 읽지 않음
+
+## 복약 (medication)
+
+- [medication/medication-tables-v1.md](medication/medication-tables-v1.md) — 회차 1번 = 1행이고 체크 칸이 곧 복용 기록(로그 표 없음) · 그래서 `ends_on` 필수 · `status` 는 `active`/`stopped` 둘, 진행 중은 `in_progress(today)` 한 곳 · 회차에 `created_at`·`updated_at` 없음 · 오프셋 범위가 자정 넘김을 막음 · DB 가 못 막아 제출 API 가 막을 것(체크된 회차는 지우지 않음) · core 기준 시각(`ANCHOR_TIMES`)과 생성 식 대조 테스트는 `test_medication_tables.py` (#537)
 
 ## 급식표 (meal-plan)
 

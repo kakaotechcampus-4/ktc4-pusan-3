@@ -24,7 +24,7 @@ from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord, run
 from app.agents.memory.context import AgentContext
-from app.agents.memory.schemas.task import WorkType
+from app.agents.memory.schemas.task import MemoryHint, MemoryTask, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.routing import route
@@ -51,13 +51,26 @@ _SAID_DELETED = ("삭제했", "삭제됐", "삭제되었", "지웠")
 class Case:
     case_id: str
     answer: str  # "삭제할까요?" 에 대한 보호자의 답
-    deleted: bool  # 둘째 턴이 끝난 뒤 사과 기록이 지워져 있어야 하는지
+    deleted: bool  # 둘째 턴이 끝난 뒤 그 기록이 지워져 있어야 하는지
+    # 아래 셋이 기본값이면 T10 의 사과 기록. 바꾸면 긴 원문 기록을 지우는 케이스다 (#529) —
+    # 모델이 검색어를 줄여 쓰면 원문에 그 글자가 붙어 있지 않아 둘째 턴이 못 찾았다
+    seed_text: str = "어제 사과를 먹었어"
+    subject: str = "사과"
+    ask: str | None = None
 
 
 CASES = [
     Case("D01", "응", True),
     # 아니라고 하면 지우지 않는다. 이 케이스가 없으면 답과 상관없이 지우는 모델도 D01 을 통과한다
     Case("D02", "아니, 그냥 둬", False),
+    Case(
+        "D03",
+        "응 지워줘.",
+        True,
+        seed_text="점심으로는 전복죽 먹었어.",
+        subject="전복죽",
+        ask='아까 "점심으로는 전복죽 먹었어." 기록 보낸 것 지워줘.',
+    ),
 ]
 
 
@@ -73,15 +86,17 @@ def _context(store: InMemoryStore) -> AgentContext:
     return AgentContext(child_id=CHILD, source_writer=WRITER, now=NOW, timezone=KST, store=store)
 
 
-async def _seed_apple(store: InMemoryStore) -> str:
+async def _seed_food(store: InMemoryStore, case: Case) -> str:
+    # 기본 케이스는 어제, 직접 물은 케이스("아까")는 오늘 기록이다
+    day = TODAY if case.ask else YESTERDAY
     row = await store.create_observation(
         domain="food",
         child_id=CHILD,
         source_writer=WRITER,
-        raw_text="어제 사과를 먹었어",
-        observed_on=YESTERDAY,
-        observed_range=DateRange(start=YESTERDAY, end=TODAY),
-        fields={"subject": "사과", "action": "먹었다"},
+        raw_text=case.seed_text,
+        observed_on=day,
+        observed_range=DateRange(start=day, end=day + timedelta(days=1)),
+        fields={"subject": case.subject, "action": "먹었다"},
     )
     return row.id
 
@@ -124,21 +139,28 @@ def _log(turn: str, result: MemoryAgentResult, counts: dict[str, int]) -> None:
 
 async def _flow(case: Case, client: LLMClient) -> None:
     store = InMemoryStore(now=NOW)
-    apple = await _seed_apple(store)
+    seeded = await _seed_food(store, case)
 
     # 첫 턴: 조회로 찾은 기록을 짚어 묻고, 지우지 않는다
-    routing = route(ASK.text, SupervisorResult(output=answer_output(ASK)), run_id="eval-delete")
-    assert routing.memory_task is not None
-    first = await run(ASK.text, _context(store), client=client, task=routing.memory_task)
+    if case.ask is None:
+        routing = route(ASK.text, SupervisorResult(output=answer_output(ASK)), run_id="eval-delete")
+        assert routing.memory_task is not None
+        asked, task = ASK.text, routing.memory_task
+    else:
+        asked = case.ask
+        task = MemoryTask(
+            raw_text=asked, hints=(MemoryHint(text=asked, work=WorkType.LOOKUP_EDIT),)
+        )
+    first = await run(asked, _context(store), client=client, task=task)
     counts = await _counts(store)
     print(f"\n[{case.case_id}]")
     _log("1", first, counts)
 
     assert "query_observation_food" in first.tool_names, "조회하지 않고 물었다"
     assert not _deletes(first), "묻기 전에 지웠다"
-    assert counts["food"] == 1, "첫 턴에 사과 기록이 사라졌다"
+    assert counts["food"] == 1, f"첫 턴에 {case.subject} 기록이 사라졌다"
     assert first.reply is not None and first.reply.kind == "question", "지울지 묻지 않았다"
-    assert "사과" in first.reply.text, "어떤 기록을 지울지 짚지 않았다"
+    assert case.subject in first.reply.text, "어떤 기록을 지울지 짚지 않았다"
     # 화면은 pending 이 있어야 "이어서 적기" 를 연다.
     # 작업 종류가 바뀌면 둘째 턴에 update 가 안 열린다
     assert first.pending is not None, "되물었는데 이어받을 맥락이 없다"
@@ -157,8 +179,8 @@ async def _flow(case: Case, client: LLMClient) -> None:
 
     if case.deleted:
         deletes = _deletes(second)
-        assert [call.arguments.get("observation_id") for call in deletes] == [apple], (
-            f"사과 기록 한 건을 지우지 않았다: {[call.name for call in deletes]}"
+        assert [call.arguments.get("observation_id") for call in deletes] == [seeded], (
+            f"{case.subject} 기록 한 건을 지우지 않았다: {[call.name for call in deletes]}"
         )
         assert counts["food"] == 0, "지웠다는데 조회에 남아 있다"
         assert _writes(second) == [deletes[0].name], f"삭제 말고 다른 쓰기: {_writes(second)}"
@@ -167,7 +189,7 @@ async def _flow(case: Case, client: LLMClient) -> None:
         assert any(word in second.reply.text for word in _SAID_DELETED), "지웠다고 알리지 않았다"
     else:
         assert not _writes(second), f"아니라고 했는데 썼다: {_writes(second)}"
-        assert counts["food"] == 1, "아니라고 했는데 사과 기록이 사라졌다"
+        assert counts["food"] == 1, f"아니라고 했는데 {case.subject} 기록이 사라졌다"
         said = any(word in second.reply.text for word in _SAID_DELETED)
         assert not said, "안 지웠는데 지웠다고 했다"
 
@@ -175,13 +197,50 @@ async def _flow(case: Case, client: LLMClient) -> None:
 @pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
 def test_삭제는_확인을_받고_지운다(case: Case, expect: Callable[..., None]) -> None:
     second = (
-        "사과 기록 한 건만 status=deleted, 조회에서 빠지고 지웠다고 알린다"
+        f"{case.subject} 기록 한 건만 status=deleted, 조회에서 빠지고 지웠다고 알린다"
         if case.deleted
-        else "아무것도 쓰지 않고 사과 기록이 남는다"
+        else f"아무것도 쓰지 않고 {case.subject} 기록이 남는다"
     )
     expect(
-        f"1턴 {ASK.text!r} → 조회 후 사과 기록을 짚어 되묻고 지우지 않는다 "
+        f"1턴 {case.ask or ASK.text!r} → 조회 후 기록을 짚어 되묻고 지우지 않는다 "
         "(kind=question · pending=lookup_edit)",
         f"2턴 {case.answer!r} → {second}",
     )
     asyncio.run(_flow(case, _client()))
+
+
+# ── 일정 — 질문이 제목을 바꿔 말해도 둘째 턴이 같은 일정을 지운다 (#529) ──────────
+async def _event_flow(client: LLMClient) -> None:
+    store = InMemoryStore(now=NOW)
+    saturday = TODAY + timedelta((5 - TODAY.weekday()) % 7 or 7)
+    event = await store.create_event(
+        child_id=CHILD,
+        title="소아과 예약",
+        starts_at=datetime(saturday.year, saturday.month, saturday.day, 10, tzinfo=KST),
+        ends_at=None,
+        all_day=False,
+        fields={},
+    )
+    asked = "토요일 소아과 예약 일정 지워줘."
+    task = MemoryTask(raw_text=asked, hints=(MemoryHint(text=asked, work=WorkType.LOOKUP_EDIT),))
+    first = await run(asked, _context(store), client=client, task=task)
+    print(f"\n[D04] 1 tools={first.tool_names} pending={first.pending is not None}")
+    print(f"  {first.final_message!r}")
+    if first.pending is None:
+        # 일정 삭제는 확인 규칙이 프롬프트에 없어 바로 지울 수도 있다 — 이어받기를 볼 수 없다
+        pytest.skip("첫 턴이 되묻지 않았다")
+
+    second = await run("응", _context(store), client=client, continuation=first.pending)
+    print(f"  2 tools={second.tool_names} {second.final_message!r}")
+
+    deletes = [c for c in second.calls if c.success and c.name == "delete_event"]
+    assert [c.arguments.get("event_id") for c in deletes] == [event.id], "일정을 지우지 않았다"
+    assert await store.get_event(event_id=event.id) is None, "지웠다는데 일정이 남아 있다"
+
+
+def test_일정_삭제는_되물은_일정을_그대로_지운다(expect: Callable[..., None]) -> None:
+    expect(
+        "1턴 '토요일 소아과 예약 일정 지워줘.' → 조회 후 되묻는다",
+        "2턴 '응' → 조회 결과의 그 일정 한 건만 delete_event",
+    )
+    asyncio.run(_event_flow(_client()))

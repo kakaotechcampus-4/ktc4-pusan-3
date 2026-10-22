@@ -141,11 +141,7 @@ function LoginScreen() {
     <Screen className="gap-8">
       <header>
         <p className="text-label text-brand">아이캐치</p>
-        <PageTitle className="mt-2">
-          아이 이야기를
-          <br />
-          여기에 모아둘게요
-        </PageTitle>
+        <PageTitle className="mt-2">아이 이야기를 여기에 모아둘게요</PageTitle>
         <p className="text-body text-ink-muted mt-3">
           육아를 가장 많이 아는 AI 가 아니라,
           <br />

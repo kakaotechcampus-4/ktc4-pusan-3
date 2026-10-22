@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -34,6 +34,11 @@ interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   /** 스크린리더가 읽을 이름. 눈에 보이지 않으므로 생략할 수 없다. */
   label: string;
   tone?: IconButtonTone;
+  /**
+   * 포커스를 되돌려 받을 때만 쓴다 (React 19 — `ref` 가 그냥 prop 이다 · `Button` 과 같다).
+   * 예: 인라인 확인 띠를 "그만두기" 로 닫으면 띠째 버튼이 사라지므로, 띠를 연 버튼으로 돌려준다 (09 일기 지우기).
+   */
+  ref?: Ref<HTMLButtonElement>;
   children: ReactNode;
 }
 

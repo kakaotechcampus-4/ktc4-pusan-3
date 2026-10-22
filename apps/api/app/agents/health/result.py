@@ -19,7 +19,9 @@ __all__ = ["ErrorCode", "Operation", "ToolResult", "fail", "ok"]
 
 
 class ErrorCode(CommonErrorCode):
-    """Health 만의 실패 코드는 아직 없다. tool 이 생기며 필요하면 여기 더한다."""
+    """Health 만의 실패 코드. 값은 덮어쓰지 않고 더한다."""
+
+    NO_CHANGE = "NO_CHANGE"  # 수정인데 지금 값과 같다 → 카드를 띄우지 않는다
 
 
 def ok(operation: Operation, resource: str, **data: Any) -> ToolResult:

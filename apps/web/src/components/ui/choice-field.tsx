@@ -99,9 +99,8 @@ export function ChoiceField<T extends string>({
                 vertical
                   ? // 세로는 글자를 왼쪽에 붙인다 — 체크 아이콘이 흐름 안에서 글자 앞에 선다.
                     "gap-2 px-3.5"
-                  : // 🚨 `relative` 는 체크 아이콘의 기준이다 (아래 주석).
-                    // 🚨 좌우 여백이 `px-6`(24px) 인 이유는 체크 아이콘이다 — 아래 주석.
-                    "group relative flex-1 basis-0 justify-center px-6 text-center",
+                  : // 🚨 좌우 여백이 `px-6`(24px) 인 이유는 체크 아이콘이다 — 아래 주석.
+                    "group flex-1 basis-0 justify-center px-6 text-center",
                 // 🚨 포커스 링은 숨은 `<input>` 이 아니라 이 상자에 그린다 (`Checkbox` 와 같다).
                 "has-focus-visible:outline-brand has-focus-visible:outline-2 has-focus-visible:outline-offset-2",
                 selected
@@ -121,31 +120,48 @@ export function ChoiceField<T extends string>({
               {/*
                 🚨 **늘 그려 둔다** — 고를 때 아이콘이 생기면서 글자가 밀리면 "색만
                    바뀐다"(§8)가 깨지고 칸이 들썩인다. 안 고른 상태는 `text-transparent` 다.
-                🚨 **흐름에서 빼서 왼쪽에 띄운다.** 예전에는 글자 옆에 나란히 섰는데, 그러면
-                   아이콘 + 간격(22px)이 가운데 정렬의 기준을 옮겨서 **글자가 상자 중앙에서
-                   11px 오른쪽으로 밀렸다.** 칸마다 글자 길이가 달라 그 어긋남이 눈에 띄었다.
-                   `absolute` 면 자리를 차지하지 않으므로 글자는 상자 정중앙에 서고,
-                   고를 때 움직이는 것은 여전히 색뿐이다.
-                🚨 **그래서 좌우 여백이 `px-6`(24px) 다.** 아이콘은 `left-1.5`(6px)에서 22px
-                   까지를 쓰므로 글자가 24px 부터 시작하면 닿지 않는다. **여백을 좌우
-                   같게 두는 것이 핵심**이다 — 왼쪽만 키우면 글자가 다시 오른쪽으로 밀린다.
-                   🚨 `px-3` 으로 줄이지 말 것. 그러면 390px 폭에서 긴 라벨이 한 줄에
-                   들어가면서 **아이콘 위로 올라탄다** (실제로 그렇게 겹쳤다).
+                🚨 **가로는 아이콘을 글자 첫 줄 앞에 세우되 폭을 차지하지 않는다.** 16px + 오른쪽 간격
+                   6px 을 왼쪽 음수 여백 22px 로 되돌려서(`-ml-5.5`) 줄 안에서 차지하는 폭이 0 이다.
+                   - 글자와 나란히 폭을 차지하면 아이콘 + 간격(22px)이 가운데 정렬의 기준을 옮겨서
+                     **글자가 상자 중앙에서 11px 오른쪽으로 밀렸다.**
+                   - 상자 기준으로 왼쪽 끝(`absolute left-1.5`)에 띄우면 글자는 가운데지만 **체크가
+                     글자와 떨어져 칸 가장자리에 붙는다** (#490).
+                   - 글자 상자 기준(`absolute right-full`)도 안 된다. 라벨이 두 줄로 꺾이면 글자
+                     상자가 칸 폭만큼 늘어서 다시 가장자리에 붙는다 — 성별 기본값 "밝히지
+                     않을래요" 가 바로 그 칸이다.
+                   줄 안의 인라인이면 꺾여도 **첫 줄 첫 글자 바로 앞**에 선다. 폭이 0 이라 줄을
+                   어디서 꺾을지도 아이콘이 없을 때와 같다 (`keep-all` 이라 띄어쓰기에서만 꺾인다).
+                🚨 **그래서 가로의 좌우 여백이 `px-6`(24px) 다.** 아이콘이 글자 왼쪽 바깥 22px 을 쓰므로,
+                   글자가 칸을 꽉 채워도 아이콘이 테두리 안에 든다. **여백을 좌우 같게 두는 것이
+                   핵심**이다 — 왼쪽만 키우면 글자가 다시 오른쪽으로 밀린다. 🚨 `px-3` 으로 줄이지
+                   말 것. 긴 라벨이 칸을 채우면 아이콘이 테두리 밖으로 나간다.
                 세로는 글자가 왼쪽에 붙어서 가운데 정렬이 어긋날 일이 없다 — 흐름 안에 둔다.
                 늘 그려 두는 것은 같다(안 고른 칸의 글자도 같은 자리에서 시작한다).
               */}
-              <Check
-                aria-hidden
-                size={ICON_SIZE.sm}
-                strokeWidth={ICON_STROKE}
-                className={cn(
-                  vertical
-                    ? "shrink-0"
-                    : "pointer-events-none absolute top-1/2 left-1.5 -translate-y-1/2",
-                  selected ? null : "text-transparent",
-                )}
-              />
-              <span className="text-body-sm">{option.label}</span>
+              {vertical ? (
+                <>
+                  <Check
+                    aria-hidden
+                    size={ICON_SIZE.sm}
+                    strokeWidth={ICON_STROKE}
+                    className={cn("shrink-0", selected ? null : "text-transparent")}
+                  />
+                  <span className="text-body-sm">{option.label}</span>
+                </>
+              ) : (
+                <span className="text-body-sm">
+                  <Check
+                    aria-hidden
+                    size={ICON_SIZE.sm}
+                    strokeWidth={ICON_STROKE}
+                    className={cn(
+                      "pointer-events-none -mt-0.5 mr-1.5 -ml-5.5 inline-block align-middle",
+                      selected ? null : "text-transparent",
+                    )}
+                  />
+                  {option.label}
+                </span>
+              )}
             </label>
           );
         })}

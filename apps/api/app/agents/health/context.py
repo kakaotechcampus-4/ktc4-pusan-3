@@ -14,8 +14,11 @@ from uuid import UUID
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import Gate, SafetyState
+from app.agents.common.readout import Readout
+from app.agents.common.result import DomainPending
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.ports import HealthPorts, HealthSafetyEntry, SafetyLookupError
+from app.core.medication_draft import MedicationDraft
 
 # health_safety 를 쓰는 라벨. 그 밖의 라벨은 동의가 있어도 읽지 않는다
 SAFETY_TASKS: frozenset[HealthTaskType] = frozenset(
@@ -36,6 +39,17 @@ class HealthRunState:
     # SAFETY_TASKS + 동의가 있을 때만. active 행의 kind 전부 — 알레르기만이 아니다.
     # 조회에 실패하면 비어 있다 — 그때는 `gate.safety_ok` 가 False 다 ("없음" 과 구분한다)
     safety_entries: tuple[HealthSafetyEntry, ...] = ()
+    # 요청 원문. 모델이 복사한 span 이 원문의 부분 문자열인지 tool 이 본다 — 라벨 실행기가 넣는다
+    request_texts: tuple[str, ...] = ()
+    # tool 이 쌓은 결과. 라벨 실행기가 마지막에 `DomainAgentResult` 로 옮긴다
+    drafts: list[MedicationDraft] = field(default_factory=list)
+    # 수정 초안은 일정처럼 한 약에 한 장으로 쌓인다. draft_id → 처음 값과 실제로 달라진 필드 이름
+    # (payload 에는 싣지 않는다 — 화면은 before 와 비교한다) · 그 초안의 확인 문구(다시 고치면 교체)
+    changed: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    confirms: dict[str, Readout] = field(default_factory=dict)
+    readouts: list[Readout] = field(default_factory=list)
+    question: str | None = None
+    pending: DomainPending | None = None  # 되묻고 멈춘 자리. question 과 같이 채워진다
 
 
 @dataclass(frozen=True)
@@ -46,6 +60,8 @@ class HealthContext:
     timezone: tzinfo
     ports: HealthPorts
     state: HealthRunState = field(default_factory=HealthRunState)
+    # 이전 run 이 되묻고 멈춘 자리. 연결 이슈가 reply_to 로 받아 넣는다 — 있으면 모델 없이 이어 간다
+    pending: DomainPending | None = None
 
     @property
     def today(self) -> date:

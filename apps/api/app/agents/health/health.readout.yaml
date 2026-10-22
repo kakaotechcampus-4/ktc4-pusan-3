@@ -61,18 +61,46 @@ med.stopped:
 med.stop_kept:
   kind: medication_notice
   template: "{title} 복약 알림은 그대로 둘게요."
+ask.dose_timing:
+  kind: ask
+  template: "식사 전후 언제 먹이면 되나요?"
+ask.which_med:
+  kind: ask
+  template: "어느 약 말씀이세요? {titles}"
+# 시각이 모호할 때("8시에" · "일곱 시") — 식전 · 식후가 아니라 몇 시인지 묻는다
+ask.dose_clock:
+  kind: ask
+  template: "몇 시인지 오전 · 오후까지 숫자로 말씀해 주세요. 예: 저녁 8시"
+# 다른 회차가 같은 시각에 겹친다(영아의 자기 전 19:30 과 저녁 식후 19:30) — 합치지 않고 하나씩 묻는다
+ask.dose_same_time:
+  kind: ask
+  template: "같은 시각에 두 번 먹이게 돼요. 먹일 시각을 하나씩 말씀해 주세요. 예: 저녁 7시 반, 저녁 8시"
+# 되묻기에 대한 답을 못 알아들었을 때. 아무것도 쓰지 않고 다시 묻지도 않는다
+med.which_unclear:
+  kind: medication_notice
+  template: "어느 약인지 알아듣지 못했어요. 약 이름을 넣어 다시 말씀해 주세요."
+med.timing_unclear:
+  kind: medication_notice
+  template: "언제 먹일지 알아듣지 못해서 등록하지 않았어요. 시간을 넣어 다시 말씀해 주세요."
+# 수정인데 지금 값과 같다 — 같은 값의 카드를 띄우지 않는다
+med.no_change:
+  kind: medication_notice
+  template: "바꿀 내용이 없어서 수정 카드를 만들지 않았어요."
+# 수정할 기간을 읽지 못했다 — "바꿀 내용이 없어요" 로 뭉개지 않는다
+med.period_unclear:
+  kind: medication_notice
+  template: "기간을 알아듣지 못해서 바꾸지 않았어요. 며칠인지(예: 5일) 말씀해 주세요."
+# 한 응답에 되묻기가 둘 이상 왔다 — 첫째만 묻고 나머지는 이어서 말해 달라고 안내한다
+med.one_at_a_time:
+  kind: medication_notice
+  template: "약은 한 번에 하나씩 확인해요. 나머지는 이어서 말씀해 주세요."
 dose.status:
   kind: dose_status
-  template: "마지막 복용 {last} · 다음 예정 {next} · 오늘 {taken}/{planned}회"
-dose.logged:
-  kind: dose_status
-  template: "{title} 먹인 걸로 기록했어요. ({taken_at})"
-dose.skipped:
-  kind: dose_status
-  template: "{title} 못 먹인 걸로 기록했어요. ({slot})"
-dose.duplicate:
-  kind: ask
-  template: "오늘 예정된 복용이 이미 모두 기록돼 있어요. 추가로 남길까요?"
+  template: "마지막 체크 {last} 회차 · 다음 예정 {next} · 오늘 체크 {checked}/{planned}회"
+# "먹였어" · "못 먹였어" — 아무것도 쓰지 않는다. 복용 기록은 보호자가 화면에서 회차마다 체크한다
+dose.check_on_screen:
+  kind: notice
+  template: "복용 체크는 복약 화면에서 해 주세요."
 
 # ── 열 · 응급 ──
 fever.no_record:
@@ -86,6 +114,47 @@ emergency:
 notice.signature:
   kind: med_notice_form
   template: "보호자 확인 후 서명해 주세요."
+# 투약의뢰서 · 응급 카드 — 줄 하나에 키 하나다. 코드가 줄바꿈으로 이어 한 덩어리로 낸다
+# (명세 표 칸에는 줄바꿈을 넣을 수 없다). 빈 칸은 `-` 이고 짐작해서 채우지 않는다
+notice.header:
+  kind: med_notice_form
+  template: "[투약 의뢰서]  {date}"
+notice.line_title:
+  kind: med_notice_form
+  template: "• 약 종류 : {title} ({dosage})"
+notice.line_time:
+  kind: med_notice_form
+  template: "• 투약 시각 : {times}"
+notice.line_storage:
+  kind: med_notice_form
+  template: "• 보관 : {storage}"
+notice.line_indication:
+  kind: med_notice_form
+  template: "• 복용 이유 : {indication}"
+notice.line_note:
+  kind: med_notice_form
+  template: "• 특이사항 : {note}"
+card.header:
+  kind: emergency_card
+  template: "[응급 카드]  {date}"
+card.child:
+  kind: emergency_card
+  template: "• 아이 : {nickname} ({birth}생, {age})"
+card.allergy:
+  kind: emergency_card
+  template: "• 알레르기 : {items}"
+card.chronic:
+  kind: emergency_card
+  template: "• 만성질환 : {items}"
+card.meds:
+  kind: emergency_card
+  template: "• 복용 중인 약 : {items}"
+card.empty:
+  kind: emergency_card
+  template: "등록된 내용이 없어요"
+card.safety_unavailable:
+  kind: emergency_card
+  template: "• 알레르기 · 만성질환 : 불러오지 못했어요. 직접 확인해 주세요."
 notice.no_active_med:
   kind: med_notice_form
   template: "지금 등록된 복약 일정이 없어요."

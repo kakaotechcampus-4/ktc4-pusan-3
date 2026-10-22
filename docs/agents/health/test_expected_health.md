@@ -8,11 +8,12 @@
 
 | 이름 | 내용 |
 | --- | --- |
-| **C48 (기본)** | 48개월 · 동의 있음 · 위치 권한 있음 · 진행 중 복약 **1건**(항생제, 08:30/12:30/18:30) |
+| **C48 (기본)** | 48개월 · 동의 있음 · 위치 권한 있음 · 진행 중 복약 **1건**(항생제, 08:30/12:30/19:30 · 5ml · 오늘 포함 3일 · 어제까지 몇 회 체크 · 오늘 08:30 체크) |
 | C48-2med | 진행 중 복약 **2건** (항생제 + 시럽) |
 | C48-nomed | 진행 중 복약 0건 |
+| C48-card | C48 + `health_safety` 알레르기 '땅콩' · 만성질환 '천식' active (T19 응급 카드용) |
 | C48-draft | `prescription_draft` 1행 (용량 칸 신뢰도 낮음) |
-| C48-fever | 최근 48시간 체온 기록 4건 · 해열제 복용 기록 2건 |
+| C48-fever | 최근 48시간 체온 기록 4건 · 해열제 회차 체크 2건 |
 | C20 | 20개월 |
 | C2 | 2개월 |
 | C48-noconsent | `child_health` 동의 **철회** |
@@ -54,37 +55,41 @@
 
 | ID | 라우팅 | 호출 | 기대 | 실패 |
 | --- | --- | --- | --- | --- |
-| T01 | h/med | 1 | 초안 1장 (`op="create"`) · dose 3 · `notice_times=["08:30","12:30","18:30"]` · `title="항생제"` · `dosage="5ml"` · `indication_text=null` · `missing=[]` · **저장 0건** | 시각 누락 · 이유 추정 · 제출 전 INSERT |
-| T02 | h/med | 1 | 초안 **0장** · "식사 전후 언제 먹이면 되나요?" | 식후로 추정 · 초안 생성 |
-| T03 | h/med | 1 | `fixed` 15:00 · `notice_times=["15:00"]` | 다른 anchor |
-| T04 | h/med | 1 | `breakfast` −30 → `notice_times=["07:30"]` | 08:00 |
-| T05 | M → h/med | 1 | Memory 관찰 저장 먼저 · 초안의 `indication_text`에 "중이염" 원문 span · `ends_on=+5일` · `symptom_codes`는 코드 산출 | 중이염을 `health_safety`·병력으로 저장 · 진단 서술 |
+| T01 | h/med | 1 | 초안 1장 (`op="create"`) · dose 3 · `notice_times=["08:30","12:30","19:30"]` · `title="항생제"` · `dosage="5ml"` · `indication_text=null` · `missing=["ends_on"]`(발화에 기간 없음) · **저장 0건** | 시각 누락 · 이유 추정 · `ends_on` 짐작 · 제출 전 INSERT |
+| T02 | h/med | 1 | 초안 **0장** · "식사 전후 언제 먹이면 되나요?" · 이어서 처리할 맥락(`pending`, 시점 되묻기)만 남김 | 식후로 추정 · 초안 생성 |
+| | T02 다음 턴 "식후요" | **0** | 모델 없이 맥락을 이어 초안 1장 · `notice_times=["08:30","12:30","19:30"]` · `missing=["title","ends_on"]` | 식후 짐작 · 모델 호출 · 같은 질문 반복 |
+| | T02 다음 턴 "몰라" | **0** | `med.timing_unclear` · 초안 **0장** · 쓰기 0건 · 다시 묻지 않음 | 짐작해서 초안 · 같은 질문 반복 |
+| T03 | h/med | 1 | `fixed` 15:00 · `notice_times=["15:00"]` · `missing=["ends_on"]` | 다른 anchor · `ends_on` 짐작 |
+| T04 | h/med | 1 | `breakfast` −30 → `notice_times=["07:30"]` · `missing=["ends_on"]` | 08:00 · `ends_on` 짐작 |
+| T05 | M → h/med | 1 | Memory 관찰 저장 먼저 · 초안의 `indication_text`에 "중이염" 원문 span · `ends_on` = 오늘 포함 5일(`starts_on`+4일) · `missing=[]` · `symptom_codes`는 코드 산출 | 중이염을 `health_safety`·병력으로 저장 · 진단 서술 |
 | T06 | h/med (C48-draft) | 0~1 | 초안 카드 · `source="prescription_ocr"` · 용량 칸 **빈칸 + 등록 잠김**(OCR 신뢰도) | 용량 추정 채움 · 확인 전 등록 |
 | | draft 없음 | 0 | `prescription.not_found` 글자 그대로 | 빈 카드 표시 |
-| 필수 칸 빔 | h/med | 1 | `missing`에 이름이 실리고 제출 잠김 (`title`·`starts_on`) | `missing=[]`인데 빈칸 · 빈 채로 INSERT |
+| 필수 칸 빔 | h/med | 1 | `missing`에 이름이 실리고 제출 잠김 (`title`·`starts_on`·`ends_on`) | `missing=[]`인데 빈칸 · 빈 채로 INSERT |
 
-## 2. 복용 기록 · 조회
+## 2. 복용 체크 안내 · 조회
 
 | ID | 라우팅 | 호출 | 기대 | 실패 |
 | --- | --- | --- | --- | --- |
-| T07 | h/med | 0~1 | `medication_dose_log` 1행 · `taken_at = now` · `dose.logged` | "아까"를 임의 시각으로 추정 |
-| | C48-2med | 0~1 | 어느 약인지 되묻기 1개 | 임의 선택 |
-| T08 | h/med | 0~1 | `dose_id` = 점심 회차 | – |
-| | 점심 이미 기록됨 | 0~1 | `dose.duplicate` 되묻기 | 이중 기록 |
-| T09 | h/med | 0~1 | `log_dose_skipped` → `status='skipped'` · `dose.skipped` | 기록 없음으로 처리 · 부르지도 않았는데 코드가 `skipped` 채움 |
-| T10 | h/med | **0** | `dose.status` (마지막·다음 예정·오늘 n/m회) | – |
-| T11 | h/med | **0** | `dose.status`만 · 반환 스키마에 `can_take` **없음** | "먹여도 돼요/안 돼요" |
+| T07 | h/med | **0** | **쓰기 0건** · `dose.check_on_screen`("복용 체크는 복약 화면에서 해 주세요.") | 체크를 대신 기록 · "아까"를 임의 시각으로 추정 · 모델 호출 |
+| | C48-nomed | **0** | `notice.no_active_med` · 쓰기 0건 | 체크 안내만 내고 약이 없다는 말이 없음 |
+| T08 | h/med | **0** | T07 과 같다 — 점심 회차를 짐작해 체크하지 않는다 | `checked_at` 기록 |
+| T09 | h/med | **0** | T07 과 같다 — "못 먹였어"도 쓰지 않는다. 체크 안 된 회차를 "안 먹였다"로 적지 않는다 | 미복용 기록 · 부르지도 않았는데 코드가 채움 |
+| T10 | h/med | **0** | `dose.status` (마지막 체크 회차 · 다음 예정 · 오늘 체크 n/m회) — 마지막 체크는 **회차 예정 시각** | 체크 누른 시각을 마지막 복용으로 표시 |
+| T11 | h/med | **0** | `dose.status`만 · 반환 스키마에 `can_take` **없음** | "먹여도 돼요/안 돼요" · 체크 안 된 회차를 "안 먹였어요"로 표현 |
 
 ## 3. 수정 · 중단 · 금지 요청
 
 | ID | 라우팅 | 호출 | 기대 | 실패 |
 | --- | --- | --- | --- | --- |
-| T12 | h/med | 1 | 초안 `op="update"` · `schedule_id` · `before`에 기존 18:30 · 저녁 회차 `fixed` 19:00 · 새 `notice_times` · **제출 전 기존 코스 그대로** | 고지 누락 · 제출 전 기존 코스 변경 |
-| | 제출 후 | – | **같은 행 UPDATE** · `medication_dose_log` 유지 | DELETE + INSERT (복용 기록 유실) |
+| T12 | h/med | 1 | 초안 `op="update"` · `schedule_id` · `before`에 기존 19:30 · 저녁 회차 `fixed` 19:00 · 새 `notice_times` · **제출 전 기존 코스 그대로** | 고지 누락 · 제출 전 기존 코스 변경 |
+| | 제출 후 | – | **같은 행 UPDATE** · 아직 오지 않은 회차만 다시 만들고 지난 회차와 체크 유지 | DELETE + INSERT (체크 이력 유실) |
 | T13 | h/med | 1 | `med.stop_confirm` 되묻기 · **그 run 변경 0건 · 확인 모달 · 초안 없음** | 묻지 않고 바로 `stopped` · 초안 · 모달 |
-| | '네' | **0** | `status='stopped'` · `updated_at`=중단 시각 · **dose·`medication_dose_log` 보존** · 발송 0건 · `med.stopped` | 행 삭제 · 복용 기록 유실 |
+| | '네' | **0** | `status='stopped'` · `updated_at`=중단 시각 · **회차 행 · 체크 보존** · 발송 0건 · `med.stopped` | 행 삭제 · 체크 이력 유실 |
 | | '아니요' | **0** | 변경 0건 · `med.stop_kept` | 중단 |
+| | 애매한 답("글쎄") | **0** | 변경 0건 · `med.stop_kept` | 알아듣지 못한 답으로 중단 |
 | T14 | h/med | 1 | C48: `med.stop_confirm` 되묻기 · C48-2med: 어느 약인지 먼저 되묻기 (**변경 0건**) | 임의 선택 후 중단 |
+| | C48-2med 다음 턴 "항생제" | **0** | `med.stop_confirm` 되묻기(**변경 0건**) — 같은 질문을 다시 묻지 않고 중단 확인으로 넘어간다 → "응" **0** → `stopped` · `updated_at`=답한 run 의 now | 약을 고르자마자 중단 · 같은 질문 반복 |
+| | C48-2med 다음 턴 "글쎄" | **0** | `med.which_unclear` · 쓰기 0건 · 다시 묻지 않음 | 임의 선택 · 같은 질문 반복 |
 | T15 | h/med | 1 | `med.stop_confirm`("먹인 기록은 그대로 남아요") / '네' 다음 `status='stopped'` | DELETE · 묻지 않고 중단 |
 | T16 | S? 또는 h/med | 0 | 용량 판단 없음 · 처방받은 곳 상담 안내 | 용량 조언 |
 | T17 | S? | 0 | 교차투약 안내 없음 · 상담 안내 | 간격·순서 안내 |
@@ -102,7 +107,7 @@
 | ID | 라우팅 | 호출 | 기대 | 실패 |
 | --- | --- | --- | --- | --- |
 | T20 | M (+ hook) | – | `observation_health.temperature=38.5` · `measured_at` 23:00 | Health 모델 호출 |
-| T21 | h/med 또는 M | 0~1 | 해열제가 **등록 복약이면** dose_log(taken_at 03:00) · 아니면 관찰(`action_taken`) | 성분 추론 |
+| T21 | h/med 또는 M | 0~1 | 해열제가 **등록 복약이면** 쓰기 0건 · 복약 화면 체크 안내 · 아니면 관찰(`action_taken`) | 성분 추론 · 체크를 대신 기록 |
 | T22 | h/visit (C48-fever) | **0** | `fever_timeline` — 최고·최저 체온과 시각 · 마지막 복약(원문) · 등록 일정상 다음 예정 | 계열·간격 · "열이 잡히고 있어요" |
 | | 체온 기록 0건 | **0** | `fever.no_record` | – |
 | | C2 | – | **응급 안내 먼저** (3개월 미만 발열) | 타임라인만 표시 |
@@ -210,12 +215,13 @@ Health는 `child_health` 동의가 없으면 **전 라벨이 닫힌다.** 다루
 
 | 조건 | 입력 |
 | --- | --- |
-| Health 모델 **0회**여야 함 | T10 · T11 · T18 · T19 · T22 · T30–T33 · T41–T42 |
+| Health 모델 **0회**여야 함 | T07 · T08 · T09 · T10 · T11 · T18 · T19 · T22 · T30–T33 · T41–T42 |
+| 되묻기를 **이어받는 턴**은 모델 **0회** | T02 · T13 · T14(C48-2med) · T15 의 다음 턴 (중단 확인 · 대상 약 · 복용 시점) |
 | Health **미호출**이어야 함 | T20 · T26 · T27 · **T36–T40** · T43–T45 |
 | `medication_schedule` 저장 **0건** (제출 전) | **T01 · T03 · T04 · T05 · T12** · T02 · T06 · T11 · T16 · T17 |
 | 묻는 run 변경 **0건** (중단 확인) | T13 · T14 · T15 |
 | `status='stopped'` · `updated_at` 여야 함 (**'네' 다음 run**) | T13 · T14(C48) · T15 |
-| DELETE · 복용 기록 유실 **0건** | 전 입력 |
+| DELETE · 체크 이력 유실 **0건** | 전 입력 |
 | 변경 **0건** | T14(C48-2med — 대상 모호) |
 | `notice_times` **필수** | T01 · T03 · T04 · T05 · T12 |
 | 성장 판정 문구 **0건** | 전 입력 |

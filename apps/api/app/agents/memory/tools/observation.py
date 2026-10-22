@@ -161,11 +161,18 @@ async def _update(
         # 날짜가 바뀌면 observed_range 도 같이 바꾼다. 어긋나면 조회와 감쇠가 다른 날을 본다
         fields["observed_range"] = build_observed_range(day)
 
-    if resolve_observed_time and fields.get("observed_time") is not None:
-        try:
-            moment = resolve_time(fields["observed_time"])
-        except DateParseError as exc:
-            return fail("update", resource, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
+    if resolve_observed_time:
+        moment = None
+        if fields.get("observed_time") is not None:
+            try:
+                moment = resolve_time(fields["observed_time"])
+            except DateParseError as exc:
+                return fail("update", resource, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
+        recorded = current.fields.get("observed_time")
+        if moment is None and args.observed_on is not None and recorded is not None:
+            # 날짜만 바뀌어도 원래 시각을 새 날짜에 다시 얹는다.
+            # 그냥 두면 observed_range 와 다른 날을 가리킨다
+            moment = recorded.astimezone(context.timezone).time()
         # 날짜를 같이 바꿨으면 새 날짜에, 아니면 원래 관찰 일자에 시각을 얹는다
         fields["observed_time"] = combine(day, moment, context.timezone) if moment else None
 

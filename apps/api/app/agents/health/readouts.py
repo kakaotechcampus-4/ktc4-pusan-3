@@ -31,10 +31,17 @@ MED_NOTICE = "med.notice"
 MED_STOP_CONFIRM = "med.stop_confirm"
 MED_STOPPED = "med.stopped"
 MED_STOP_KEPT = "med.stop_kept"
+ASK_DOSE_TIMING = "ask.dose_timing"
+ASK_WHICH_MED = "ask.which_med"
+ASK_DOSE_CLOCK = "ask.dose_clock"  # 시각이 모호하다 — 오전 · 오후까지 묻는다
+ASK_DOSE_SAME_TIME = "ask.dose_same_time"  # 다른 회차가 같은 시각 — 하나씩 묻는다
+MED_WHICH_UNCLEAR = "med.which_unclear"  # 되묻기 답을 못 가렸다 — 쓰지 않는다
+MED_TIMING_UNCLEAR = "med.timing_unclear"
+MED_NO_CHANGE = "med.no_change"  # 수정인데 지금 값과 같다
+MED_PERIOD_UNCLEAR = "med.period_unclear"  # 수정할 기간을 못 읽었다
+MED_ONE_AT_A_TIME = "med.one_at_a_time"  # 되묻기는 한 번에 하나
 DOSE_STATUS = "dose.status"
-DOSE_LOGGED = "dose.logged"
-DOSE_SKIPPED = "dose.skipped"
-DOSE_DUPLICATE = "dose.duplicate"
+DOSE_CHECK_ON_SCREEN = "dose.check_on_screen"
 
 # 열 · 응급
 FEVER_NO_RECORD = "fever.no_record"
@@ -43,6 +50,19 @@ EMERGENCY = "emergency"
 # 전달 서류
 NOTICE_SIGNATURE = "notice.signature"
 NOTICE_NO_ACTIVE_MED = "notice.no_active_med"
+NOTICE_HEADER = "notice.header"
+NOTICE_LINE_TITLE = "notice.line_title"
+NOTICE_LINE_TIME = "notice.line_time"
+NOTICE_LINE_STORAGE = "notice.line_storage"
+NOTICE_LINE_INDICATION = "notice.line_indication"
+NOTICE_LINE_NOTE = "notice.line_note"
+CARD_HEADER = "card.header"
+CARD_CHILD = "card.child"
+CARD_ALLERGY = "card.allergy"
+CARD_CHRONIC = "card.chronic"
+CARD_MEDS = "card.meds"
+CARD_EMPTY = "card.empty"  # 등록한 것이 없다
+CARD_SAFETY_UNAVAILABLE = "card.safety_unavailable"  # 조회 실패 — "없음" 이 아니다
 PRESCRIPTION_LOW_CONFIDENCE = "prescription.low_confidence"
 PRESCRIPTION_NOT_FOUND = "prescription.not_found"
 

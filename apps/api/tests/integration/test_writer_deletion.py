@@ -7,6 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 
+from app.domains.chat.models import ChatTurn
 from app.domains.child.models import Child, ChildGrowthLog
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
 from app.domains.identity.models import Parent
@@ -144,6 +145,36 @@ async def test_diary_deleted_with_author(session, family):
     await session.execute(delete(Child).where(Child.id == child.id))
     assert (
         await session.scalars(select(DiaryEntry.id).where(DiaryEntry.id.in_([entry_id, other_id])))
+    ).all() == []
+
+
+async def test_chat_turn_deleted_with_author(session, family):
+    """대화 기록도 일기처럼 개인 기록이다 — 쓴 보호자가 지워지면 같이 지워진다 (#228)."""
+    owner, writer, child = family
+    turns = [
+        ChatTurn(
+            parent_id=parent_id,
+            child_id=child.id,
+            run_id=run_id,
+            conversation_date=date(2026, 9, 1),
+            raw_text="synthetic",
+            replies=[],
+        )
+        for parent_id, run_id in ((writer.id, "run-writer"), (owner.id, "run-owner"))
+    ]
+    session.add_all(turns)
+    await session.flush()
+    turn_id, other_id = turns[0].id, turns[1].id
+
+    await session.execute(delete(Parent).where(Parent.id == writer.id))
+
+    assert await session.scalar(select(ChatTurn.id).where(ChatTurn.id == turn_id)) is None
+    assert await session.scalar(select(ChatTurn.id).where(ChatTurn.id == other_id)) == other_id
+
+    # other_id survived the author delete above — still there to prove the child cascade.
+    await session.execute(delete(Child).where(Child.id == child.id))
+    assert (
+        await session.scalars(select(ChatTurn.id).where(ChatTurn.id.in_([turn_id, other_id])))
     ).all() == []
 
 

@@ -36,8 +36,6 @@ SPEC_MODEL = {
         "create_medication_schedule",
         "update_medication_schedule",
         "stop_medication_schedule",
-        "log_dose_taken",
-        "log_dose_skipped",
     },
     "care_handoff": set(),
 }
@@ -110,14 +108,29 @@ def test_안전_조회_실패로는_닫지_않는다(label):
     assert closed_readout_key(label, gate(48, safety_ok=False)) is None
 
 
-@pytest.mark.parametrize("label", list(HealthTaskType))
+@pytest.mark.parametrize(
+    "label", [label for label in HealthTaskType if label is not HealthTaskType.MEDICATION]
+)
 def test_열리는_tool_은_구현된_것뿐이다(label):
     # 구현된 라벨이어도 핸들러가 있는 tool 만 열린다 — schedule_check 는 모델 tool 이 없다
     assert tools_for(label, gate(48)) == ()
 
 
-def test_구현된_라벨은_schedule_check_뿐이다():
-    assert IMPLEMENTED_TASKS == {HealthTaskType.SCHEDULE_CHECK}
+def test_복약_라벨은_핸들러가_있는_모델_tool_만_이름순으로_연다():
+    assert tools_for(HealthTaskType.MEDICATION, gate(48)) == (
+        "create_medication_schedule",
+        "search_medication_schedules",
+        "stop_medication_schedule",
+        "update_medication_schedule",
+    )
+
+
+def test_구현된_라벨은_schedule_check_medication_care_handoff_이다():
+    assert IMPLEMENTED_TASKS == {
+        HealthTaskType.SCHEDULE_CHECK,
+        HealthTaskType.MEDICATION,
+        HealthTaskType.CARE_HANDOFF,
+    }
 
 
 def test_정의와_핸들러가_같다():
@@ -125,18 +138,20 @@ def test_정의와_핸들러가_같다():
 
 
 def test_스펙은_핸들러가_있는_tool_만_싣는다():
-    assert specs_for(["log_dose_taken", "search_medication_schedules"]) == []
+    assert specs_for(["compose_symptom_timeline", "search_recent_meals"]) == []
 
 
 async def test_없는_tool_은_거절():
-    result = await execute_tool("log_dose_taken", {}, context(), allowed=())
+    result = await execute_tool("compose_symptom_timeline", {}, context(), allowed=())
 
     assert result.success is False
     assert result.error is not None and result.error["code"] == ErrorCode.TOOL_NOT_ALLOWED
 
 
 async def test_허용_목록_밖이면_핸들러가_있어도_거절():
-    result = await execute_tool("log_dose_taken", {}, context(), allowed=("search_recent_meals",))
+    result = await execute_tool(
+        "compose_symptom_timeline", {}, context(), allowed=("search_recent_meals",)
+    )
 
     assert result.success is False
     assert result.error is not None and result.error["code"] == ErrorCode.TOOL_NOT_ALLOWED

@@ -99,6 +99,30 @@ async def find_observation(
     return _to_record(resolved, row) if row is not None else None
 
 
+async def find_observations(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    refs: Collection[tuple[ObservationDomain, uuid.UUID]],
+) -> dict[tuple[ObservationDomain, uuid.UUID], ObservationRecord]:
+    """여러 관찰을 표마다 한 번씩 읽는다. 지운 · 없는 · 다른 아이의 것은 결과에 없다.
+
+    지난 대화(#228)가 한 화면의 `saved` 관찰을 모아 읽는다 — 하나씩 읽으면 턴 수만큼 쿼리가 나간다.
+    """
+    ids_by_domain: dict[ObservationDomain, set[uuid.UUID]] = {}
+    for domain, observation_id in refs:
+        ids_by_domain.setdefault(domain, set()).add(observation_id)
+    found: dict[tuple[ObservationDomain, uuid.UUID], ObservationRecord] = {}
+    for domain, ids in ids_by_domain.items():
+        model = _MODEL_BY_DOMAIN[domain]
+        rows = await session.scalars(
+            select(model).where(model.id.in_(ids), model.child_id == child_id, _not_deleted(model))
+        )
+        for row in rows:
+            found[(domain, row.id)] = _to_record(domain, row)
+    return found
+
+
 async def set_observation_status(
     session: AsyncSession,
     *,

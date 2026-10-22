@@ -4,9 +4,12 @@
 `test_expected_health.md` 가 정본이다. 문서에 입력이 더해졌는데 이 표를 안 고치면
 `test_health_eval_cases.py` 가 깨진다.
 
-판정은 완성된 경로만 쓴다 — 동의 철회 다섯(`consent_closed`) · `schedule_check`(`schedule_check`) ·
-증상 반복 hook 다섯(`symptom_repeat`). 나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP,
-구현된 뒤에는 판정을 쓰라고 실패한다.
+판정은 완성된 경로만 쓴다 — 동의 철회(`consent_closed`) · `schedule_check` · 증상 반복 hook ·
+`medication` · `care_handoff`. 나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP, 구현된 뒤에는
+판정을 쓰라고 실패한다.
+
+되묻고 멈추는 케이스는 `followups` 로 다음 턴 입력을 이어 돈다 — 앞 턴 결과의 `pending` 을 다음 턴
+컨텍스트에 넣고 now 를 2분 뒤로 둔다(연결 이슈의 `reply_to` 를 흉내 낸다). 이어받는 턴은 모델 0회다.
 검진 맥락 요약(T34 · T35)은 `schedule_check` 안의 `unsupported` 라 `pending(partial=True)` 다.
 """
 
@@ -16,9 +19,21 @@ from pathlib import Path
 
 from app.agents.health.schemas.task import HealthTaskType
 from tests.eval.agents.health.judges import (
+    ANY,
     Ran,
     Verdict,
+    check_on_screen,
     consent_closed,
+    dose_status,
+    emergency_card,
+    handoff_notice,
+    med_create,
+    med_no_advice,
+    med_stop,
+    med_stop_which,
+    med_timing,
+    med_update,
+    no_active_med,
     pending,
     schedule_check,
     symptom_repeat,
@@ -42,6 +57,7 @@ class Case:
     expect: str  # test_expected_health.md 의 "기대" 한 줄
     judge: Callable[[Ran], Verdict]
     night: bool = False
+    followups: tuple[str, ...] = ()  # 되묻기에 답하는 다음 턴 입력 — 앞 턴의 pending 을 이어받는다
 
 
 def doc_inputs() -> dict[str, str]:
@@ -85,6 +101,7 @@ def _case(
     *,
     judge: Callable[[Ran], Verdict] | None = None,
     night: bool = False,
+    followups: tuple[str, ...] = (),
 ) -> Case:
     return Case(
         case_id=case_id,
@@ -94,6 +111,7 @@ def _case(
         expect=expect,
         judge=judge or pending(label.value if label else "hook"),
         night=night,
+        followups=followups,
     )
 
 
@@ -103,53 +121,139 @@ def _closed(case_id: str, label: HealthTaskType, detail: str = "") -> Case:
 
 
 CASES: list[Case] = [
-    # ── 복약 ──
+    # ── 복약 ── (T01–T05 · T12–T16 은 모델 한 번, 나머지는 모델 0회. 되묻기는 followups)
     _case(
         "T01",
         M,
         "C48",
-        '초안 1장 (op="create") · dose 3 · notice_times=["08:30","12:30","18:30"] · '
-        'title="항생제" · dosage="5ml" · indication_text=null · missing=[] · 저장 0건',
+        '초안 1장 (op="create") · dose 3 · notice_times=["08:30","12:30","19:30"] · '
+        'title="항생제" · dosage="5ml" · indication_text=null · '
+        'missing=["ends_on"](발화에 기간 없음) · 저장 0건',
+        judge=med_create(("08:30", "12:30", "19:30"), dosage="5ml", missing=("ends_on",)),
     ),
-    _case("T02", M, "C48", '초안 0장 · "식사 전후 언제 먹이면 되나요?"'),
-    _case("T03", M, "C48", 'fixed 15:00 · notice_times=["15:00"]'),
-    _case("T04", M, "C48", 'breakfast −30 → notice_times=["07:30"]'),
+    _case(
+        "T02",
+        M,
+        "C48",
+        '초안 0장 · "식사 전후 언제 먹이면 되나요?" → 다음 턴 "식후요" 는 모델 없이 초안 1장 '
+        '(08:30 · 12:30 · 19:30 · missing=["title","ends_on"])',
+        judge=med_timing(then="answer"),
+        followups=("식후요",),
+    ),
+    _case(
+        "T02-unclear",
+        M,
+        "C48",
+        '"식사 전후 언제 먹이면 되나요?" → 다음 턴 "몰라" 는 med.timing_unclear · 초안 0 · '
+        "쓰기 0 · 다시 묻지 않음",
+        judge=med_timing(then="unclear"),
+        followups=("몰라",),
+    ),
+    _case(
+        "T03",
+        M,
+        "C48",
+        'fixed 15:00 · notice_times=["15:00"] · missing=["ends_on"]',
+        judge=med_create(("15:00",), missing=("ends_on",), title=ANY),
+    ),
+    _case(
+        "T04",
+        M,
+        "C48",
+        'breakfast −30 → notice_times=["07:30"] · missing=["ends_on"]',
+        judge=med_create(("07:30",), missing=("ends_on",), title=ANY),
+    ),
     _case(
         "T05",
         M,
         "C48",
-        'Memory 관찰 저장 먼저 · 초안의 indication_text에 "중이염" 원문 span · ends_on=+5일 · '
-        "symptom_codes는 코드 산출",
+        '초안의 indication_text에 "중이염" 원문 span · ends_on=오늘 포함 5일(+4일) · missing=[] '
+        "(Memory 관찰 저장은 Health 밖)",
+        judge=med_create(
+            ("08:30", "12:30", "19:30"), indication="중이염", ends_in_days=4, missing=()
+        ),
     ),
-    _case("T07", M, "C48", "medication_dose_log 1행 · taken_at = now · dose.logged"),
-    _case("T07-2med", M, "C48-2med", "어느 약인지 되묻기 1개"),
-    _case("T08", M, "C48", "dose_id = 점심 회차"),
-    _case("T08-lunchlogged", M, "C48-lunchlogged", "dose.duplicate 되묻기"),
-    _case("T09", M, "C48", "log_dose_skipped → status='skipped' · dose.skipped"),
-    _case("T10", M, "C48", "dose.status (마지막·다음 예정·오늘 n/m회)"),
-    _case("T11", M, "C48", "dose.status만 · 반환 스키마에 can_take 없음"),
+    _case("T07", M, "C48", "쓰기 0 · 모델 0회 · dose.check_on_screen", judge=check_on_screen()),
+    _case("T07-nomed", M, "C48-nomed", "복약이 없으면 notice.no_active_med", judge=no_active_med()),
+    _case("T08", M, "C48", "쓰기 0 · 모델 0회 · dose.check_on_screen", judge=check_on_screen()),
+    _case("T09", M, "C48", "쓰기 0 · 모델 0회 · dose.check_on_screen", judge=check_on_screen()),
+    _case(
+        "T10",
+        M,
+        "C48",
+        "dose.status (마지막 체크 08:30 회차 · 다음 예정 19:30 · 오늘 체크 1/3회) · 모델 0회",
+        judge=dose_status(),
+    ),
+    _case("T11", M, "C48", "dose.status만 · 허가 문구 없음 · can_take 없음", judge=dose_status()),
     _case(
         "T12",
         M,
         "C48",
-        '초안 op="update" · schedule_id · before에 기존 18:30 · 저녁 회차 fixed 19:00 · '
-        "새 notice_times · 제출 전 기존 코스 그대로",
+        '초안 op="update" · schedule_id · before에 기존 19:30 · 저녁 회차 fixed 19:00 · '
+        "새 notice_times 08:30 · 12:30 · 19:00 · 제출 전 기존 코스 그대로",
+        judge=med_update(("08:30", "12:30", "19:30"), ("08:30", "12:30", "19:00")),
     ),
-    _case("T13", M, "C48", "med.stop_confirm 되묻기 · 그 run 변경 0건 · 확인 모달 · 초안 없음"),
-    _case("T14", M, "C48", "med.stop_confirm 되묻기"),
-    _case("T14-2med", M, "C48-2med", "어느 약인지 먼저 되묻기 (변경 0건)"),
+    _case(
+        "T13",
+        M,
+        "C48",
+        "med.stop_confirm 되묻기 · 그 run 변경 0건 · 초안 없음 → '네' 다음 run 에서 "
+        "status='stopped' (중단 시각 = 답한 run 의 now) · med.stopped · 모델 0회",
+        judge=med_stop(answer="yes"),
+        followups=("응",),
+    ),
+    _case(
+        "T13-no",
+        M,
+        "C48",
+        "med.stop_confirm 되묻기 → '아니요' 다음 run 은 변경 0건 · med.stop_kept",
+        judge=med_stop(answer="no"),
+        followups=("아니 그냥 둬",),
+    ),
+    _case(
+        "T14",
+        M,
+        "C48",
+        "약이 하나면 이름이 없어도 med.stop_confirm 되묻기 · 변경 0건",
+        judge=med_stop(answer="ask"),
+    ),
+    _case(
+        "T14-2med",
+        M,
+        "C48-2med",
+        "어느 약인지 먼저 되묻기(변경 0건) → '항생제' 로 중단 확인 → '네' 로 중단",
+        judge=med_stop_which(then="yes"),
+        followups=("항생제", "응"),
+    ),
+    _case(
+        "T14-2med-unclear",
+        M,
+        "C48-2med",
+        "어느 약인지 되묻기 → 못 고른 답('글쎄')은 med.which_unclear · 쓰기 0 · 다시 묻지 않음",
+        judge=med_stop_which(then="unclear"),
+        followups=("글쎄",),
+    ),
     _case(
         "T15",
         M,
         "C48",
-        "med.stop_confirm(\"먹인 기록은 그대로 남아요\") / '네' 다음 status='stopped'",
+        "med.stop_confirm(\"먹인 기록은 그대로 남아요\") → '네' 다음 run 에서 status='stopped'",
+        judge=med_stop(answer="yes"),
+        followups=("응",),
     ),
-    _case("T16", M, "C48", "용량 판단 없음 · 처방받은 곳 상담 안내"),
+    _case(
+        "T16",
+        M,
+        "C48",
+        "용량 판단 없음 · 초안 없음 · 쓰기 0 · med.no_change 안내로 끝 (상담 안내는 Supervisor 몫)",
+        judge=med_no_advice(),
+    ),
     _case(
         "T21",
         M,
         "C48",
-        "해열제가 등록 복약이면 dose_log(taken_at 03:00) · 아니면 관찰(action_taken)",
+        "해열제가 등록 복약이면 쓰기 0 · 복약 화면 체크 안내 (아니면 관찰 — Memory)",
+        judge=check_on_screen(),
     ),
     _closed("T01-noconsent", M, "초안 0장"),
     # ── 전달 서류 ──
@@ -158,12 +262,23 @@ CASES: list[Case] = [
         H,
         "C48",
         '고정 서식 · 약·시각·보관·이유(있으면)·특이사항 · "보호자 확인 후 서명해 주세요"',
+        judge=handoff_notice(),
     ),
-    _case("T18-nomed", H, "C48-nomed", "notice.no_active_med"),
+    _case("T18-nomed", H, "C48-nomed", "notice.no_active_med", judge=no_active_med()),
     _closed("T18-noconsent", H),
-    _case("T19", H, "C48", "응급 카드 — 알레르기·만성질환·복용 약 원문 · 연락처 줄 없음"),
     _case(
-        "T19-safetyfail", H, "C48-safetyfail", "응급 카드의 알레르기 칸을 비우고 조회 실패를 명시"
+        "T19",
+        H,
+        "C48-card",
+        "응급 카드 — 알레르기·만성질환·복용 약 원문 · 연락처 줄 없음",
+        judge=emergency_card(),
+    ),
+    _case(
+        "T19-safetyfail",
+        H,
+        "C48-safetyfail",
+        "응급 카드의 알레르기 · 만성질환 칸을 비우고 조회 실패를 명시",
+        judge=emergency_card(safety_ok=False),
     ),
     # ── 열 · 증상 · 진료 준비 ──
     _case(

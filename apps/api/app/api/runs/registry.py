@@ -13,11 +13,17 @@
 """
 
 import asyncio
-import time
 import uuid
 
 TERMINAL = frozenset({"failed", "done"})
 """끝 신호. run 하나에 한 번만 나간다 — 화면은 둘 중 하나를 받으면 읽기를 멈춘다(sse.ts)."""
+
+EXPIRE_AFTER_SECONDS = 300.0
+"""닫힌 채널을 남겨 두는 시간(초). 새로고침한 화면이 결과를 처음부터 다시 받을 수 있는 동안이다.
+
+🚨 그 뒤에는 반드시 지운다. failed 에는 보호자가 적은 문장이 그대로 실려 있어서, 안 지우면
+   서버를 다시 켤 때까지 원문이 메모리에 남는다 (#533).
+"""
 
 _channels: dict[str, "RunChannel"] = {}
 
@@ -38,7 +44,6 @@ class RunChannel:
         """추천 저장이 한 번이라도 commit 됐으면 True. Memory commit 과 같이 확정된 저장이다
         (공통규약 §7) — 저장된 draft 가 있는 run 을 failed 로 닫으면 다시 보낼 때 두 벌이 된다."""
         self.closed = False
-        self.closed_at = None
         self._changed = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         """이 run 을 돌리는 백그라운드 태스크. 참조를 여기 매달아야 GC 가 도중에 거두지 않는다."""
@@ -68,10 +73,16 @@ class RunChannel:
         self._changed.set()
 
     def close(self) -> None:
-        """더 올 게 없다. 구독자가 마지막까지 읽고 나서 끝나게 하고, sweep 이 치울 시각을 남긴다."""
+        """더 올 게 없다. 구독자가 마지막까지 읽고 나서 끝나게 하고, 지울 때를 예약한다.
+
+        러너는 run 이 어떻게 끝나든 finally 에서 이걸 부른다 — 그래서 지우는 일을 여기 묶는다.
+        주기 청소는 따로 도는 작업이 멈추면 조용히 쌓이고, cron 은 이 프로세스 메모리를 못 본다.
+        """
         self.closed = True
-        self.closed_at = time.monotonic()
         self._changed.set()
+        asyncio.get_running_loop().call_later(
+            EXPIRE_AFTER_SECONDS, _channels.pop, self.run_id, None
+        )
 
     async def wait_changed(self, timeout: float | None = None) -> bool:
         """깃발을 내리고, 올라갈 때까지 잔다. timeout 안에 안 올라가면 False.
@@ -114,22 +125,6 @@ def open_run(*, parent_id: uuid.UUID) -> RunChannel:
 
 def get(run_id: str) -> RunChannel | None:
     return _channels.get(run_id)
-
-
-def sweep(ttl_seconds: float = 300.0, *, now: float | None = None) -> int:
-    """닫힌 지 ttl 을 넘긴 채널을 치우고 개수를 돌려준다. 안 치우면 요청마다 메모리에 쌓인다.
-
-    지울 것을 먼저 모으고 나서 지운다 — dict 를 돌면서 동시에 지우면 RuntimeError 다.
-    """
-    now = time.monotonic() if now is None else now
-    expired = [
-        run_id
-        for run_id, channel in _channels.items()
-        if channel.closed and now - channel.closed_at > ttl_seconds
-    ]
-    for run_id in expired:
-        del _channels[run_id]
-    return len(expired)
 
 
 def clear() -> None:

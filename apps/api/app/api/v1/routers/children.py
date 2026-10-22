@@ -26,7 +26,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
-from app.api.runs import pending_reply, registry, runner
+from app.api.runs import chat_record, pending_reply, registry, runner
 from app.api.v1.schemas.children import (
     ChildProfile,
     CreateChildRequest,
@@ -515,7 +515,21 @@ async def create_input(
         )
 
     channel = registry.open_run(parent_id=parent.parent_id)
-    idempotency.remember(**scope, replay=channel.run_id)
+    try:
+        idempotency.remember(**scope, replay=channel.run_id)
+    except Exception:
+        # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
+        channel.close()
+        raise
+    # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
+    record = chat_record.TurnRecorder(
+        parent_id=parent.parent_id,
+        child_id=child.child_id,
+        run_id=channel.run_id,
+        raw_text=body.text,
+        reply_to=body.reply_to,
+        accepted_at=datetime.now(UTC),
+    )
     # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
     # 되지 않는다 (§2).
     job = runner.agent_job(
@@ -528,6 +542,7 @@ async def create_input(
         raw_text=body.text,
         continuation=continuation,
         reply_to=body.reply_to,
+        on_event=record.add,
     )
-    runner.start(channel, job, raw_text=body.text)
+    runner.start(channel, job, raw_text=body.text, on_end=record.save)
     return CreateInputResponse(run_id=channel.run_id)

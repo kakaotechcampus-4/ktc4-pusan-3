@@ -8,9 +8,10 @@
   ⑤ 구현된 라벨은 `_LABEL_RUNNERS` 의 경로가 처리한다
 
 라벨 경로는 라벨 이슈가 `_LABEL_RUNNERS` 와 `registry.IMPLEMENTED_TASKS` 에 같이 더한다
-(지금은 `schedule_check` 만 있다). 저장은 하지 않는다 — 복약 초안(`medication_drafts`)과 일정
-초안(`event_requests`)은 결과로만 나가고, 보호자가 제출해야 백엔드가 쓴다. pipeline 에는 아직
-연결하지 않았다 — 연결 이슈(docs/agents/health/health_plan.md §16).
+(지금은 `schedule_check` · `medication` · `care_handoff` 가 있다). 저장은 하지 않는다 — 복약 초안
+(`medication_drafts`)과 일정 초안(`event_requests`)은 결과로만 나가고, 보호자가 제출해야 백엔드가
+쓴다. 복약 중단만 예외다 — 한 번 물어 '네' 를 받은 다음 run 이 `medication` 경로에서 쓴다.
+pipeline 에는 아직 연결하지 않았다 — 연결 이슈(docs/agents/health/health_plan.md §16).
 """
 
 from collections.abc import Awaitable, Callable
@@ -20,6 +21,8 @@ from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.health.context import HealthContext, build_gate
 from app.agents.health.envelope import result as _result
+from app.agents.health.labels.handoff import run_care_handoff
+from app.agents.health.labels.medication import run_medication
 from app.agents.health.labels.schedule import run_schedule_check
 from app.agents.health.readouts import READOUTS
 from app.agents.health.registry import IMPLEMENTED_TASKS, closed_readout_key
@@ -29,6 +32,8 @@ LabelRunner = Callable[[DomainTask, HealthContext, LLMClient | None], Awaitable[
 # 라벨 이슈가 더한다. 키는 `registry.IMPLEMENTED_TASKS` 와 같아야 한다 (테스트가 본다)
 _LABEL_RUNNERS: dict[HealthTaskType, LabelRunner] = {
     HealthTaskType.SCHEDULE_CHECK: run_schedule_check,
+    HealthTaskType.MEDICATION: run_medication,
+    HealthTaskType.CARE_HANDOFF: run_care_handoff,
 }
 
 
