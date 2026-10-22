@@ -82,6 +82,7 @@ import type {
   SuggestionsRequest,
   SuggestionsResponse,
   SuggestionFeedbackResponse,
+  SuggestionListResponse,
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
@@ -583,6 +584,34 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
       setScenario("default");
     }
   }
+
+  it("🚨 일반 추천도 사전검사가 실리고, active 로 등록하면 그 추천이 빠진다 (#509)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const before = await fetchWith("empty", body);
+    const check = (before.prechecks ?? []).find((p) => p.suggestion_id === "g_2");
+    expect(check?.item).toBe("참깨");
+
+    await addHealthSafety("c1", { type: "allergy", label: "참깨" }, newIdempotencyKey());
+    const after = await fetchWith("empty", body);
+    expect((after.general ?? []).map((g) => g.id)).not.toContain("g_2");
+    expect((after.prechecks ?? []).some((p) => p.item === "참깨")).toBe(false);
+  });
+
+  it("🚨 같은 Agent 의 개인화와 일반이 한 응답에 섞여 온다 — 둘 다 묶음은 하나다 (#512 리뷰)", async () => {
+    const data = await fetchWith("suggest_mixed", { agents: ["food", "activity"] });
+
+    expect(data.suggestions.some((s) => s.agent === "food")).toBe(true);
+    expect((data.general ?? []).some((g) => g.agent === "food")).toBe(true);
+    // 일반 추천이 있으면 scarcity 도 붙는다 (서버와 같다)
+    expect(data.scarcity).not.toBeNull();
+    // 묶음은 kind 가 아니라 Agent 단위다 — 식사 묶음 하나가 둘 다 묶는다
+    const food = (data.groups ?? []).filter((g) => g.agent === "food");
+    expect(food).toHaveLength(1);
+    expect(food[0].merges_into_one).toBe(true);
+    // 일반 추천의 알레르기 사전검사도 같이 실린다
+    const ids = new Set((data.general ?? []).map((g) => g.id));
+    expect((data.prechecks ?? []).some((p) => ids.has(p.suggestion_id!))).toBe(true);
+  });
 
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
@@ -1570,6 +1599,22 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 
     expect(body.suggestion.feedback).toBe("child_disliked");
     // 🚨 화면 문구("기억은 그대로 둬요")와 같은 사실이다 (계약서 §08).
+    expect(body.memory_changed).toBe(false);
+  });
+
+  it("🚨 채택한 일반 추천도 목록에 오고 평가할 수 있다 — kind 는 general 그대로다 (#509)", async () => {
+    const list = await api.get<SuggestionListResponse>("/children/c1/suggestions");
+    const general = list.items.find((s) => s.kind === "general");
+    expect(general?.id).toBe("g_past_1");
+    // 일반 추천은 근거 필드가 없다 — 개인화로 집계될 길이 없다
+    expect(general && "evidence" in general).toBe(false);
+
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/g_past_1/feedback",
+      { feedback: "child_liked" },
+    );
+    expect(body.suggestion.kind).toBe("general");
+    expect(body.suggestion.feedback).toBe("child_liked");
     expect(body.memory_changed).toBe(false);
   });
 

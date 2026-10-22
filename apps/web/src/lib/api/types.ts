@@ -296,7 +296,8 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족할 때 개인화 **대신** 나간다 (CLAUDE.md §2).
+ * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
@@ -545,8 +546,9 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
-   * 둘이 같이 나오지 않는다). 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
+   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
+   * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
   general?: GeneralSuggestion[] | null;
   /** "오늘 급식 · 최근 3일 식사 · 확정 관심 2건" — 무엇을 봤는지. 서버가 만든 문구다. */
@@ -713,9 +715,16 @@ export interface ApproveSuggestionsRequest {
   suggestion_ids: string[];
 }
 
-/** 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다. */
+/**
+ * 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다.
+ *
+ * ⚠️ 일반 추천도 채택한다 (#509). 실서버는 일반 추천도 개인화와 같은 모양(`SuggestionOut`)에
+ *    `kind: "general"` · `evidence: []` 를 실어 돌려줘서 `GeneralSuggestion` 과도 맞지 않는다
+ *    (`basis` · `record_count` 가 없다). 그래서 **두 모양에 공통인 필드만** 적는다 — 더 꺼내 쓰면
+ *    목에서는 되고 실서버에서는 `undefined` 가 된다. 응답 모양은 백엔드와 정리할 몫이다.
+ */
 export interface ApproveSuggestionsResponse {
-  suggestions: Suggestion[];
+  suggestions: Array<Pick<Suggestion, "id" | "child_id" | "agent" | "content" | "status">>;
 }
 
 /**
@@ -913,19 +922,39 @@ export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
  *    기억을 고치려면 `POST /corrections` 로 간다.
  */
 export interface SuggestionFeedbackResponse {
-  suggestion: Suggestion;
+  suggestion: ReceivedSuggestion;
   memory_changed: boolean;
 }
 
 /**
+ * 07 피드백 목록의 일반 추천 한 줄 (#509). 05 에서 채택한 일반 추천도 해 보고 나서 평가한다.
+ *
+ * 🚨 **`GeneralSuggestion` 이 아니다.** 실서버는 이 목록에서 일반 추천도 개인화와 같은 모양
+ *    (`SuggestionOut`)에 `kind: "general"` · `evidence: []` 를 실어 보낸다 — `basis` · `record_count` ·
+ *    문서 근거가 없다. 그래서 **두 모양에 공통인 필드만** 적는다. 근거를 읽을 길이 타입에 없어야
+ *    "근거 0행인 것이 개인화로 그려지는" 길도 없다 (CLAUDE.md §2).
+ */
+export interface ReceivedGeneralSuggestion extends Pick<
+  Suggestion,
+  "id" | "child_id" | "agent" | "content" | "status" | "expires_at" | "feedback"
+> {
+  kind: "general";
+}
+
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
+
+/**
  * `GET /children/{cid}/suggestions` — 07 피드백 탭이 평가할 제안 목록 (#284).
  *
- * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다 — 일반 추천은 채택하는 흐름이
- *    없어서 평가 대상이 아니다. 그래서 `items` 가 `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
+ * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
+ *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
+ * ⚠️ **실서버는 아직 개인화만 내린다** (`kind = 'personalized'` 필터). 목이 먼저 일반 추천을 싣고,
+ *    필터를 푸는 것은 백엔드에 요청한다 (#509 PR).
  * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
  */
 export interface SuggestionListResponse {
-  items: Suggestion[];
+  items: ReceivedSuggestion[];
   next_cursor: string | null;
 }
 
