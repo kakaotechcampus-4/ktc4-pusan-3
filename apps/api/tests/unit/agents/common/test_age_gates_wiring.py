@@ -31,11 +31,6 @@ WIRED = [
         "INFANT_BEDTIME_BELOW_MONTH",
         lambda g: g.infant_bedtime_below_month,
     ),
-    (
-        "app.agents.health.tools.fever",
-        "INFANT_FEVER_BELOW_MONTH",
-        lambda g: g.infant_fever_emergency_below_month,
-    ),
 ]
 
 

@@ -1,0 +1,40 @@
+# 생후 3개월 미만 아이의 발열 → 응급 안내(`emergency`)가 열 타임라인 · 진료 준비보다 먼저 나간다.
+# Health_Agent_명세 §9 응급 신호 후보 "생후 3개월 미만의 발열" — H-1(응급 신호 원문 대조) 검수 대기.
+# 읽는 쪽은 app/agents/health/reference.py 의 `infant_fever_rule()`, 판정은 tools/fever.py 의 `infant_fever`.
+#
+# 🚨 medical_reviewed: false 여도 이 규칙은 켠다 (10-23 결정, #551).
+#    condition_guidance.yaml 은 검수 전 행을 로드하지 않는다 — 그 안내는 빠져도 위험하지 않다.
+#    여기서 끄면 3개월 미만 발열에 응급 안내가 사라진다 — 놓치는 쪽이 더 위험하다.
+#    그 대신 체온은 보호자가 말한 숫자와 대조된 값만 저장된다(memory/tools/observation.py 의
+#    `_temperature_said`) — LLM 이 바꾼 숫자로는 이 안내가 뜨지 않는다.
+#
+# 검수 — 응급 신호는 의료 검수 필수다(Health_Tool_명세 "검수 (10-19)" 의 완화 대상이 아니다).
+#   ① 아래 두 값(월령 · 체온)이 출처 원문과 같은가 ② 출처가 "지금 바로 119 · 응급실" 강도의 안내를
+#   이 경우에 하는가. 마치면 medical_reviewed: true 와 reviewed_by(GitHub 아이디) · reviewed_at 을 채운다.
+#   값이 바뀌면 이 파일만 고친다 — 코드에 숫자를 두지 않는다.
+
+source: 출처 후보 2건(sources) — 원문 대조 전
+version: "2026.1"
+fetched_at: 2026-10-23
+
+below_month: 3          # 이 월령 미만
+fever_temperature: 38.0 # 이 체온(℃) 이상이면 발열로 본다. 증상 사전의 fever 코드도 발열이다
+
+medical_reviewed: false
+reviewed_by: null
+reviewed_at: null
+
+sources:
+  - title: 소아 발열
+    publisher: 서울대학교병원 의학정보
+    url: https://www.snuh.org/health/nMedInfo/nView.do?medid=AC000168
+    note: >-
+      "38.0˚C 이상의 발열이 있을 때는 의료기관을 방문하여 진찰을 받는 것이 좋다" 는 취지의 문장을
+      확인했다(요약 도구로 읽음 — 글자 대조 전). 3개월 미만만 따로 다룬 문장과 "응급실" 강도의 안내는
+      이 문서에서 찾지 못했다.
+  - title: 소아 발열 대처법
+    publisher: 질병관리청 국가건강정보포털
+    url: https://health.kdca.go.kr
+    note: >-
+      원문을 직접 열지 못했다. "생후 3개월 미만 아기가 38℃ 이상 열이 나면 컨디션과 상관없이 바로 응급실"
+      이라는 2차 인용만 확인했다 — 원문 페이지와 글자 대조가 필요하다.

@@ -18,7 +18,8 @@
 - 로그에 원문을 싣지 않는다 — 이 파일은 로그를 남기지 않는다
 
 `infant_fever` 는 3개월 미만 + 48시간 안 발열이면 참이다. 응급 안내(`emergency`)를 타임라인보다
-먼저 내는 것은 부르는 쪽(라벨)이다.
+먼저 내는 것은 부르는 쪽(라벨)이다. 월령 · 체온 기준은 `reference/infant_fever.yaml` 한 곳이다 —
+의료 검수 전이지만 켜 둔다(끄면 응급 안내가 사라진다. 그 파일 머리말).
 """
 
 from collections.abc import Iterable, Sequence
@@ -28,7 +29,6 @@ from decimal import Decimal
 from uuid import UUID
 
 from app.agents.common.readout import Readout
-from app.agents.common.reference import age_gates
 from app.agents.common.refs import Ref
 from app.agents.health.readouts import (
     FEVER_GIVEN_DOSE,
@@ -40,17 +40,18 @@ from app.agents.health.readouts import (
     FEVER_PEAK,
     READOUTS,
 )
+from app.agents.health.reference import infant_fever_rule
 from app.agents.health.store.ports import HealthObservation, MedicationCourse, MedicationDose
 from app.agents.health.tools.symptoms import observation_days, symptom_codes_of
+from app.agents.health.when import dose_moment, md, md_time
 
 WINDOW = timedelta(hours=48)
 
-# 발열로 보는 체온 하나. 부위별 기준값은 이슈 리뷰 결정 전이라 두지 않는다(#557).
-# 출처 미확정 — 의료 검수 대상이다. 확정되면 출처를 이 주석과 명세에 적는다
-FEVER_TEMPERATURE = Decimal("38.0")
-
-# 이 월령 미만의 발열은 응급 안내가 먼저다. 값은 age_gates.yaml 이 정본이다 (의료 검수 대상)
-INFANT_FEVER_BELOW_MONTH = age_gates().infant_fever_emergency_below_month
+# 응급 안내 기준 — 값과 출처 · 검수 상태는 reference/infant_fever.yaml 이 정본이다 (#551).
+# 부위별 기준값은 두지 않는다 — 출처 검수(H-1)에서 정한다
+_RULE = infant_fever_rule()
+FEVER_TEMPERATURE = _RULE.fever_temperature  # 발열로 보는 체온
+INFANT_FEVER_BELOW_MONTH = _RULE.below_month  # 이 월령 미만의 발열은 응급 안내가 먼저다
 
 _SITE_LABEL = {
     "ear": "귀",
@@ -75,8 +76,8 @@ class _Event:
 
     def label(self) -> str:
         if self.moment is None:
-            return _md(self.day)
-        return _md_time(self.moment)
+            return md(self.day)
+        return md_time(self.moment)
 
 
 def build_fever_timeline(
@@ -232,7 +233,7 @@ def _last_doses(
             for d in doses
             if d.schedule_id == course.id
             and d.checked_at is not None
-            and _dose_moment(d, timezone) <= now
+            and dose_moment(d, timezone) <= now
         ]
         if not checked:
             continue
@@ -242,7 +243,7 @@ def _last_doses(
                 READOUTS.render(
                     FEVER_LAST_DOSE,
                     title=course.title,
-                    time=_md_time(datetime.combine(last.dose_date, last.scheduled_time)),
+                    time=md_time(datetime.combine(last.dose_date, last.scheduled_time)),
                 ),
                 Ref("medication_schedule", course.id),
             )
@@ -262,7 +263,7 @@ def _next_dose(
     """
     active = {course.id: course for course in courses if course.status == "active"}
     upcoming = [
-        (_dose_moment(d, timezone), d.schedule_id)
+        (dose_moment(d, timezone), d.schedule_id)
         for d in doses
         if d.schedule_id in active and d.checked_at is None
     ]
@@ -272,15 +273,10 @@ def _next_dose(
     moment, schedule_id = min(later, key=lambda item: item[0])
     return [
         _with_ref(
-            READOUTS.render(FEVER_NEXT_DOSE, time=_md_time(moment)),
+            READOUTS.render(FEVER_NEXT_DOSE, time=md_time(moment)),
             Ref("medication_schedule", schedule_id),
         )
     ]
-
-
-def _dose_moment(dose: MedicationDose, timezone: tzinfo) -> datetime:
-    """회차의 예정 시각 — 날짜 + 시각을 아이 타임존으로."""
-    return datetime.combine(dose.dose_date, dose.scheduled_time, tzinfo=timezone)
 
 
 def _with_ref(readout: Readout, ref: Ref) -> Readout:
@@ -290,12 +286,3 @@ def _with_ref(readout: Readout, ref: Ref) -> Readout:
         authored_by=readout.authored_by,
         source_refs=(ref,),
     )
-
-
-def _md(day: date) -> str:
-    return f"{day.month}/{day.day}"
-
-
-def _md_time(moment: datetime) -> str:
-    """`10/14 23:00` — 날짜는 0 을 채우지 않는다(복약 현황 `dose.status` 와 같은 꼴)."""
-    return f"{moment.month}/{moment.day} {moment:%H:%M}"

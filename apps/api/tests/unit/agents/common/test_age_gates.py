@@ -48,11 +48,6 @@ def test_Health_영아_취침_경계는_24개월():
     assert age_gates().infant_bedtime_below_month == 24
 
 
-def test_Health_영아_발열_응급_경계는_3개월():
-    # 생후 3개월 미만 + 48시간 안 발열이면 타임라인보다 응급 안내가 먼저다 (#557)
-    assert age_gates().infant_fever_emergency_below_month == 3
-
-
 def test_모양이_맞는_데이터는_통과한다():
     assert parse_age_gates(raw()) == age_gates()
 
@@ -84,7 +79,6 @@ def _drop(path: tuple[str, ...]):
         (_set(("gates", "엉뚱한_게이트"), 1), "정해지지 않은 칸"),
         (_set(("stage_boundaries", "teen"), 72), "단계"),
         (_drop(("gates", "habit_min_month")), "빠진 칸"),
-        (_drop(("gates", "infant_fever_emergency_below_month")), "빠진 칸"),
         (_drop(("stage_boundaries", "toddler")), "단계"),
         (_drop(("v1_month_limit",)), "빠진 칸"),
         (_set(("gates", "habit_min_month"), "36"), "정수"),
