@@ -53,7 +53,7 @@ def agent_calls(monkeypatch) -> list[dict]:
         return runner.fake_job
 
     monkeypatch.setattr(runner, "agent_job", fake_agent_job)
-    monkeypatch.setattr(runner, "start", lambda channel, job, *, raw_text: None)
+    monkeypatch.setattr(runner, "start", lambda channel, job, *, raw_text, on_end: None)
     return calls
 
 

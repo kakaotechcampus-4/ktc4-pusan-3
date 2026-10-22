@@ -31,6 +31,7 @@ from app.api.v1.schemas.calendar import (
     SharedPhotoOut,
 )
 from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut
+from app.domains.chat.repository import count_turns
 from app.domains.memory.observation.repository import (
     ObservationRecord,
     count_observations_by_day,
@@ -111,7 +112,7 @@ async def get_calendar_day(
     session: SessionDep,
     date: dt.date,
 ) -> CalendarDayResponse:
-    """하루 보기 — 내 일기 · 공동 사진 · 일정(준비물 포함) · 기록."""
+    """하루 보기 — 내 일기 · 공동 사진 · 일정(준비물 포함) · 기록 · 내 대화 수."""
     check_day(date, status=422)
     diary = await find_diary(session, child_id=child.child_id, parent_id=parent.parent_id, day=date)
     photos = await list_shared_photos(session, child_id=child.child_id, day=date)
@@ -124,6 +125,9 @@ async def get_calendar_day(
     )
     items = await list_items_by_event(session, event_ids=[e.id for e in events])
     records = await _observations_on(session, child_id=child.child_id, day=date)
+    chats = await count_turns(
+        session, parent_id=parent.parent_id, child_id=child.child_id, day=date
+    )
 
     return CalendarDayResponse(
         my_diary=MyDiaryOut(content=diary.content, updated_at=diary.updated_at) if diary else None,
@@ -133,6 +137,7 @@ async def get_calendar_day(
         ],
         events=[_event_out(e, items.get(e.id, [])) for e in events],
         observations=await to_observation_outs(session, records, today=today_kst()),
+        chat_count=chats,
     )
 
 

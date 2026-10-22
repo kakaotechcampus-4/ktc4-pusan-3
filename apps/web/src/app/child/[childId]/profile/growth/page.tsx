@@ -22,6 +22,7 @@ import { Screen } from "@/components/ui/screen";
 import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { api, qk, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
 import { BACK } from "@/lib/view-transition";
 
@@ -58,7 +59,7 @@ function GrowthDetailScreen() {
 
   const [adding, setAdding] = useState(false);
   /** 고치는 중인 줄. 있으면 **같은 시트**가 고치기로 열린다 (`GrowthSheet` 머리말). */
-  const [editing, setEditing] = useState<GrowthLog | null>(null);
+  const editing = useSheetTarget<GrowthLog>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   /** 🚨 프로필 화면과 **같은 쿼리 키**다 — 여기서 지운 줄이 뒤로 갔을 때 그대로 남으면 안 된다. */
@@ -163,7 +164,7 @@ function GrowthDetailScreen() {
                 것을 그대로 보여주는 것이 이 화면이 하는 일이다 (최상위 CLAUDE.md §2). */}
               <GrowthLogList
                 logs={logs}
-                onEdit={setEditing}
+                onEdit={editing.show}
                 onDelete={(log) => remove.mutate(log)}
                 deletingId={deletingId}
                 scrollable
@@ -180,15 +181,16 @@ function GrowthDetailScreen() {
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
 
-      {/* 🚨 고치는 줄이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
-          같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다). */}
-      {editing ? (
+      {/* 🚨 열 때마다 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
+          같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다).
+          닫는 것은 `open` 이 해서 내려가는 움직임이 남는다 (`useSheetTarget`). */}
+      {editing.target ? (
         <GrowthSheet
-          key={editing.id}
-          open
-          onClose={() => setEditing(null)}
+          key={editing.session}
+          open={editing.open}
+          onClose={editing.close}
           childId={childId}
-          log={editing}
+          log={editing.target}
         />
       ) : null}
     </Screen>

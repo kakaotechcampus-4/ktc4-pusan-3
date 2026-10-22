@@ -21,6 +21,12 @@
 | 루틴 자료 (배변·수면·습관·예절) | 미확보 — 상업적 이용 · 변경이 허락된 자료만 쓴다(#337). 국가건강정보포털 · 해설서는 공공누리 제4유형이라 쓰지 않는다 | `search_growth_doc` (`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 예절 · 습관 · 리듬은 고시 내용(사회관계 · 신체운동·건강 · 의사소통)에서 쓰고, 고시로 단계를 받칠 수 없는 자립 사슬(옷 입기 · 신발 · 빨래 · 등원 준비)은 #337 기준 자료가 생길 때까지 행이 없다. 행이 없으면 `doc.no_row` · `rhythm.no_row` |
 | `child_growth_log` | 키·몸무게·측정일 | `compute_growth_delta` | 포트 |
 
+- **도서 검색어** — 어떤 낱말로 책을 찾을지는 `search_book_interests` 가 읽은 기록의 점수를 보고 모델이 정한다. 점수는 코드가 정한다(`tools/interests.py`):
+  - 출처 가중치 — 확정 관심 3.0 · 쌓이는 관심 2.0 · 교육 기록 1.5 · 놀이 기록 1.0 · 생활 기록 1.0. 같은 낱말(서로 포함하는 두 글자 이상 낱말)의 기록은 점수를 더한다
+  - 최근성 — 관찰은 `1 / (1 + 경과일 / 7)`, 관심은 마지막 관찰일 기준 `1 / (1 + 경과일 / 30)`. 극성 계수는 긍정 1.0 · 중립 0.5
+  - 뺀다 — 싫어한 교육 · 놀이 · 관심, 6개월 지난 관심, 14일 지난 관찰, 12개월 전 교육 기록, 음식 기록(읽지 않는다). 생활 기록은 **힘들어하는 행동(극성 −1)만** 쓰고 습관 카테고리 · 의료 처치 · 증상처럼 보이는 행동은 쓰지 않는다
+  - 모델은 요청에 주제가 있으면 그 낱말을 먼저, 기록 주제는 보조로 쓴다. 상위 주제 한두 개를 함께 보고, 한 권도 못 찾으면 두 번 더 찾아 본 뒤에만 빈 제출을 한다. 힘들어하는 행동을 근거로 달면 reason 에 그 행동 이름을 쓴다(기피 근거 규칙)
+  - 검색어에서 행동 이름의 "~하기" 는 뗀다("양치하기" 는 정보나루에서 0권, "양치" 는 그림책이 나온다)
 - 도서는 **API 응답만 추천 가능** — 모델이 책 제목을 생성하면 `propose_books`가 ISBN 검증에서 거절.
 - 연령 필터는 코드가 넣는다. 정보나루의 연령 코드(`age`)는 대출자 연령대라(0 = 영유아 0~5세) v1 월령 전체가 코드 하나에 들어가므로, 아동 도서(ISBN 부가기호 첫 자리 7)로 좁힌 뒤 서명 키워드(보드북·촉감책)와 KDC 로 책 형태(`form`)를 가르고 그 형태의 월령 범위를 쓴다. 처음 값은 [`growth_agent_own_table.md`](growth_agent_own_table.md) §7 GT-3 이다. 청구기호(`유` 계열)는 소장 도서관마다 달라 쓰지 않는다.
 - **별도 KB 인덱스를 만들지 않는다.** 교육과정도 루틴 자료도 전부 `growth_doc` 행이다. 원문을 청크로 잘라 색인하면 라이선스가 걸리고 품질도 사람이 못 고친다 — 사람이 읽고 한 행 = 한 가지 쓸모로 새로 쓴다([`RAG_plan.md`](../shared/RAG_plan.md) §0).
@@ -34,7 +40,7 @@
 
 | tool | `min_month` |
 | --- | --- |
-| routine · activity · affinity 검색 · `propose_routine_plan` · `search_books` · `propose_books` · `compute_growth_delta` | 0 |
+| routine · activity · affinity 검색 · `search_book_interests` · `propose_routine_plan` · `search_books` · `propose_books` · `compute_growth_delta` | 0 |
 | `search_education_memory` · `lookup_notice` · `propose_learning_activity` | **12** |
 
 라벨 안에서 코드가 정하는 것: `propose_routine_plan.mode`(0–11 `rhythm_info` / 12+ `next_step` / 36+ `habit_fix`) · 허용 `routine_category`(12+ 자립·식사·전환·집안일, 24+ 예절, 36+ 습관) · `search_growth_doc`의 월령 필터(12–35는 표준보육과정에서 쓴 행, 36+는 누리과정에서 쓴 행) · 도서 연령 필터(보드북 / 그림책 / 지식책).
@@ -56,6 +62,7 @@
 | `search_activity_memory` | `query?`, `period` | `observation_activity` (참고) | 결과 ref에 `kind="observation_activity"` 표시 → 화면 문구 분기 |
 | `search_affinity` | `domains ⊂ {education, activity}` | `rank_evidence` 정렬 결과 | `routine` 은 affinity 가 없다(09-23) — 루틴 관찰은 티어 3 로만 인용한다 |
 | `lookup_notice` | `period: "this_week"\|"next_week"` | 일반 기관 공지 요약 (보조) | 읽기만. 준비물·행사는 `event`로 가므로 여기 없음 |
+| `search_book_interests` | 없음 | `{keyword, score, signals[], evidence[{id, kind, tier, label, polarity, observed_on}]}` 점수 순 최대 5주제 · 주제마다 근거 3개까지 | 도서 검색어의 근거. 교육 · 관심 · 놀이 · 생활 기록을 코드가 한 번에 읽어 점수로 줄 세운다(아래 "도서 검색어"). 기록이 없으면 `NO_RECORDS` — 요청 낱말로 찾는다 |
 | `search_books` | `keywords[1–3]` — 한 개 12자 · 한글 영문 숫자 · 낱말 사이 한 칸(정보나루로 나가는 값이라 코드가 모양을 묶는다) | `{isbn, title, author, publisher, form}` 최대 10권 | 연령 필터 코드 주입 · 캐시 우선 · 0권이면 `NO_RECORDS` 로 다른 낱말 · 빈 제출 안내 |
 | `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence[{id, note}], reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다. 그 뒤 같은 호출 안의 같은 제목(띄어쓰기 · 문장부호 무시)은 거절하고, 근거 note 의 반복 · 성향 표현(어제도 · 또 · 늘 · 항상 · 좋아하는)은 티어 1 근거에만 쓴다 — Activity 와 같은 `common/evidence.overstates` |
 | `propose_routine_plan` | `category`, `subject`, `items[≤next_steps 수]: {step_id, next_step, how, evidence[{id, note}], reason}` (`rhythm_info` 모드면 `items` 없음 · 되묻기 · 닫힘이면 `items` 를 비운다) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 예절 · 습관은 사슬 대신 코드가 고른 전략 행을 옮긴다(아래 "예절 · 습관 — 전략 행") · 음식 용어 → 금지 표현 필터 · 근거 note 의 성향 표현은 티어 1 근거에만(교육과 같다) · 낼 단계는 요청한 행동(`subject`)과 같은 사슬만이다 — 같은 카테고리의 다른 행동 단계를 끼우지 않는다. 맞는 사슬이 없고 `items` 가 비면 그 행동 이름으로 `ask.routine_current` |

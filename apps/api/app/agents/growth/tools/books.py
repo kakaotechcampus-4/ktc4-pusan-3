@@ -196,6 +196,11 @@ async def search_books_tool(context: GrowthContext, args: SearchBooksArgs) -> To
     found = await search_books(context, keywords=args.keywords)
     if not found:
         return fail("query", "search_books", ErrorCode.NO_RECORDS, _NO_BOOKS)
+    # 제목 · 저자가 같은 다른 판은 한 권만 보인다. 둘을 다 보이면 모델이 같은 책을 두 번 골라
+    # `propose_books` 에 거절당하고 대화가 한 번 더 돈다. `seen_books` 에는 둘 다 남는다
+    first: dict[str, BookRow] = {}
+    for row in found:
+        first.setdefault(normalize(book_label(row)), row)
     return ok(
         "query",
         "search_books",
@@ -208,5 +213,6 @@ async def search_books_tool(context: GrowthContext, args: SearchBooksArgs) -> To
                 "form": row.form,
             }
             for row in found
+            if first[normalize(book_label(row))] is row
         ],
     )

@@ -1,4 +1,4 @@
-"""Growth 모델 tool 인자 — 개수 고정 · 정의 안 된 칸 거부 · tool 정의 8개."""
+"""Growth 모델 tool 인자 — 개수 고정 · 정의 안 된 칸 거부 · tool 정의 9개."""
 
 import pytest
 from pydantic import ValidationError
@@ -93,12 +93,13 @@ class TestAffinity:
 
 
 class TestDefinitions:
-    def test_모델_tool_정의는_여덟_개다(self):
+    def test_모델_tool_정의는_아홉_개다(self):
         assert [d.name for d in TOOL_DEFINITIONS] == [
             "search_education_memory",
             "search_routine_memory",
             "search_activity_memory",
             "search_affinity",
+            "search_book_interests",
             "search_books",
             "propose_learning_activity",
             "propose_routine_plan",

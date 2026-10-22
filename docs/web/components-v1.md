@@ -41,7 +41,7 @@
   `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
-  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `ConsentSection`/`LegalDocumentSection` ·
+  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` ·
   `ParentSection` · `AccountSection` ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
@@ -197,7 +197,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
 - **움직임은 바뀐 순간에만 쓴다** (디자인 시스템 §8 — 시트 · 펼침 · 교체 · 단계 넘김 · 자리 옮김 · 화면 전환).
   🚨 **화면이 처음 뜰 때 · 스크롤할 때는 움직이지 않는다.** 하루에 여러 번 지친 상태로 여는 화면이라, 처음엔 살아 있어
   보여도 100번째엔 매번 기다려야 하는 것이 된다. `lib/motion.ts` 의 훅과 `Swap` 은 전부 첫 렌더를 건너뛴다 — 직접
-  `animate()` 를 부르지 말고 그것을 쓴다. 🚨 승인 게이트 안에는 색 변화 말고 넣지 않는다 (`BottomSheet` 의 `gate`).
+  `animate()` 를 부르지 말고 그것을 쓴다. 🚨 승인 게이트 안에는 색 변화 말고 넣지 않는다. 게이트를 담은 시트 자체는 다른 시트와 같이 열리고 닫힌다 (#490).
 - 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 추천이 없어서 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../../apps/mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
 - 노치·상태바·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 값의 출처는 둘이다 — 웹뷰 안에서는 네이티브 셸이 꽂아 주는 `--shell-inset-*`, 모바일 브라우저 직접 접속에서는 `env(safe-area-inset-*)`. 🚨 **셸이 그 자리를 대신 칠하게 두지 않는다** — 화면마다 아래 색이 달라서(네비 · 시트 · 그냥 화면) 셸이 한 색으로 칠하면 흰 띠가 남는다 (#133).

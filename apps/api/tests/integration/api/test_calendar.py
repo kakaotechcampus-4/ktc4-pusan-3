@@ -5,7 +5,7 @@
 """
 
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.quota import KST
+from app.domains.chat.repository import add_turn
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
@@ -139,13 +140,26 @@ async def test_event_ending_at_midnight_stays_on_its_day(
 async def test_only_my_diary_but_shared_photos(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """일기는 쓴 보호자 본인 것만, 사진은 연결된 보호자가 함께 본다."""
+    """일기 · 대화는 쓴 보호자 본인 것만, 사진은 연결된 보호자가 함께 본다."""
     headers, me = bearer
     _, partner = await issue_bearer(session, token="partner")
     await link_child(session, parent_id=partner, child_id=cid)
     other_day = DAY + timedelta(days=1)
     await put_diary(session, child_id=cid, parent_id=me, day=DAY, content="내 일기")
     await put_diary(session, child_id=cid, parent_id=partner, day=other_day, content="남 일기")
+    # 대화도 일기처럼 내 것만 센다 (#228) — 같은 날 남의 대화는 세지 않는다
+    for parent_id in (me, partner):
+        await add_turn(
+            session,
+            parent_id=parent_id,
+            child_id=cid,
+            run_id=uuid.uuid4().hex,
+            conversation_date=DAY,
+            raw_text="synthetic line",
+            reply_to=None,
+            replies=[],
+            created_at=datetime.combine(DAY, time(9), tzinfo=KST),
+        )
     await add_shared_photo(
         session, child_id=cid, parent_id=partner, day=other_day, image_url="https://x/1.jpg"
     )
@@ -166,6 +180,7 @@ async def test_only_my_diary_but_shared_photos(
     ]
     assert mine["my_diary"]["content"] == "내 일기"
     assert theirs["my_diary"] is None
+    assert mine["chat_count"] == 1
     assert [p["image_url"] for p in theirs["shared_photos"]] == ["https://x/1.jpg"]
 
 

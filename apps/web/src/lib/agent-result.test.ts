@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentReadout, AgentResultEvent, PartialEvent } from "@/lib/api/sse";
+import type { SuggestionStatus } from "@/lib/api/types";
 
 import {
   blockCandidates,
@@ -76,6 +77,7 @@ describe("blockCandidates", () => {
       general: false,
       recordCount: null,
       href: "/child/c1/suggestions?agents=food&run=r1",
+      closed: false,
     });
   });
 
@@ -94,6 +96,35 @@ describe("blockCandidates", () => {
       runId: null,
     });
     expect(candidates?.href).toBeNull();
+  });
+
+  describe("지난 대화 — 추천의 지금 상태로 가른다 (#228)", () => {
+    const withStates = (...statuses: SuggestionStatus[]) =>
+      result({
+        suggestion_ids: statuses.map((_, i) => `s_${i}`),
+        suggestions: statuses.map((status, i) => ({ id: `s_${i}`, status })),
+      });
+
+    it("고를 수 있거나(draft) 05 에서 보이는(approved) 것이 하나라도 있으면 연다", () => {
+      expect(blockCandidates(withStates("expired", "draft"), place)?.href).not.toBeNull();
+      expect(blockCandidates(withStates("approved", "rejected"), place)?.href).not.toBeNull();
+    });
+
+    it("🚨 다 지났거나 거절했으면 링크 대신 닫혔다고 말한다 — 눌러도 이어서 할 수 없다", () => {
+      const candidates = blockCandidates(withStates("expired", "rejected"), place);
+      expect(candidates?.href).toBeNull();
+      expect(candidates?.closed).toBe(true);
+      // 개수와 이유는 그대로 선다 — 그날 무엇을 받았는지는 지난 대화의 일부다.
+      expect(candidates?.count).toBe(2);
+    });
+
+    it("행을 찾지 못해 상태가 하나도 없으면 고를 수 있는 것이 없다", () => {
+      const candidates = blockCandidates(
+        result({ suggestion_ids: ["s_gone"], suggestions: [] }),
+        place,
+      );
+      expect(candidates?.closed).toBe(true);
+    });
   });
 });
 

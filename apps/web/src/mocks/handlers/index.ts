@@ -1,5 +1,6 @@
 import { authHandlers, sessionGuardHandlers } from "./auth";
 import { calendarHandlers } from "./calendar";
+import { chatHandlers } from "./chat";
 import { childrenHandlers } from "./children";
 import { clientErrorHandlers } from "./client-errors";
 import { inviteHandlers } from "./invites";
@@ -40,6 +41,8 @@ export const handlers = [
   ...suggestionHandlers,
   ...memoryHandlers,
   ...calendarHandlers,
+  // 04 지난 대화 (#228). 끝난 입력 run 을 `runHandlers` 가 이리로 남긴다 (`recordingTurn`).
+  ...chatHandlers,
   ...settingsHandlers,
   // `/invites/{code}/accept` 는 아이 스코프 밖이라 어느 핸들러와도 경로가 겹치지 않는다.
   ...inviteHandlers,

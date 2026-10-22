@@ -29,6 +29,10 @@ class SearchActivityMemoryArgs(ToolArgs):
     keywords: Annotated[list[str], BeforeValidator(_first_keywords), _KEYWORDS]
 
 
+class SearchBookInterestsArgs(ToolArgs):
+    """인자가 없다 — 교육 · 관심 · 놀이 · 생활 기록을 코드가 한 번에 읽고 점수로 줄 세운다."""
+
+
 class SearchRoutineMemoryArgs(ToolArgs):
     category: Annotated[
         RoutineCategory | None,

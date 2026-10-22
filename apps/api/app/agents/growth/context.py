@@ -79,6 +79,12 @@ class GrowthRunState:
     # 되묻기 한 줄 (needs_observation)
     question: str | None = None
 
+    # ── 관측 로그 (agent.run 이 끝날 때 한 줄) ──
+    # 추천 없이 끝낸 코드 문구 키 — closed.* · blocked.safety · doc.no_row · rhythm.no_row …
+    closed_reason: str | None = None
+    # 시작한 대화 수. 20초에 끊겨 결과가 없을 때 몇 번째 대화에서 끊겼는지 남긴다
+    model_calls: int = 0
+
 
 @dataclass(frozen=True)
 class GrowthContext:

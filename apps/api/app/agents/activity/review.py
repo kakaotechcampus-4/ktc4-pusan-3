@@ -115,6 +115,9 @@ class Review:
     removed: tuple[Removal, ...] = ()
     # drafts 와 같은 순서로 짝지은 위험 용어 경고 문구 (상수). 경고가 없으면 빈 튜플
     warnings: tuple[tuple[str, ...], ...] = ()
+    # 통과한 바깥 활동(setting=outdoor)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
+    # 바깥 활동의 날로 고르는 데 쓴다 — 오늘 해가 졌어도 내일 공원은 나간다 (#515 리뷰)
+    outdoor: frozenset[tuple[str, DayLabel]] = frozenset()
 
 
 def review_candidates(
@@ -155,6 +158,7 @@ def review_candidates(
     known_places = {key: name for name in places if (key := normalize_activity(name))}
     drafts: list[SuggestionDraft] = []
     warnings: list[tuple[str, ...]] = []
+    outdoor_drafts: set[tuple[str, DayLabel]] = set()
     rejections: list[Rejection] = []
     removed: list[Removal] = []
     for index, candidate in enumerate(candidates):
@@ -182,6 +186,8 @@ def review_candidates(
                 reason = RejectReason.BUILD
             else:
                 warnings.append(check.warnings)
+                if candidate.setting == ActivitySetting.OUTDOOR:
+                    outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
         if reason is not None:
             rejections.append(Rejection(index=index, reason=reason))
     return Review(
@@ -189,6 +195,7 @@ def review_candidates(
         rejections=tuple(rejections),
         removed=tuple(removed),
         warnings=tuple(warnings),
+        outdoor=frozenset(outdoor_drafts),
     )
 
 

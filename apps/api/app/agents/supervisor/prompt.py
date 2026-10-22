@@ -64,6 +64,8 @@ _REQUEST = """
   book_suggestion      책 · 그림책 추천
   growth_review        키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지. 판정을 물어도 이쪽이다
 - 놀 거리 · 나들이는 activity, 배울 거리 · 생활 습관 · 책은 growth 다.
+- '놀이' 라는 말이 있어도 숫자 · 한글 · 글자처럼 배우는 낱말이 있으면
+  growth/learning_suggestion 이다. 배우는 낱말이 없는 놀 거리는 activity 다.
 - growth 유형이 애매하면 learning_suggestion 으로 보낸다.
 """.strip()
 
@@ -105,7 +107,10 @@ _EXAMPLES = """
 - "농구 좋아하는데 뭐 하고 놀까" → request/activity
 - "농구 좋아하는데 관련된 책 있어?" → request/growth/book_suggestion
 - "밥 먹을 때 혼자 하게 하고 싶은데" → request/growth/routine_coaching
+- "얼마나 컸어?" → request/growth/growth_review
 - "잘 크고 있어?" → request/growth/growth_review
+- "10cm 컸는데 많이 큰 거야?" → request/growth/growth_review
+  (판정을 물어도 guarded 가 아니다 — Growth 가 판정 없이 추이만 정리한다)
 - "약 먹는 걸 너무 싫어해. 어떻게 먹이지?" → request/growth/routine_coaching
   (guarded 가 아니다 — Growth 가 코드로 닫는다)
 - "눈을 자꾸 깜빡여. 어떻게 고쳐?" → request/growth/routine_coaching
