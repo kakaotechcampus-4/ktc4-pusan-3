@@ -1,8 +1,9 @@
-"""observation_health 체온 세 칸 · 먹인 약 두 칸 마이그레이션을 격리된 스키마에서 검증한다 (#557).
+"""observation_health 체온 세 칸 · 먹인 약 두 칸 마이그레이션을 격리된 스키마에서 검증한다 (#551).
 
 🚨 develop 머지는 배포(`deploy-down` → `alembic upgrade heads` → `deploy-up`)다. 증상이 빈 기존 행
-   하나 때문에 업그레이드가 실패하면 서비스가 내려간 채로 남는다. 그래서 증상/약 CHECK 는 NOT VALID
-   로 걸고, 빈 행이 0건일 때만 같은 마이그레이션에서 VALIDATE 한다. 행은 지우지 않는다.
+   하나 때문에 업그레이드가 실패하면 서비스가 내려간 채로 남는다. 그래서 DB 는 "증상과 약이 한 행에
+   같이 있다" 만 막는다 — 기존 행에는 늘 참이라 바로 VALIDATE 되고, 증상이 빈 옛 행도 계속 고칠 수
+   있다. "둘 다 없다" 는 Memory 스키마가 막는다. 행은 지우지 않는다.
 """
 
 from pathlib import Path
@@ -41,12 +42,10 @@ NEW_COLUMNS = {
 CHECKS = {
     "observation_health_temperature_range",
     "observation_health_measure_site",
-    "observation_health_symptom_or_medication",
+    "observation_health_symptom_not_with_medication",
     "observation_health_link_needs_medication",
     "observation_health_medication_no_temperature",
 }
-SYMPTOM_OR_MEDICATION = "observation_health_symptom_or_medication"
-NO_TEMPERATURE = "observation_health_medication_no_temperature"
 
 
 def _isolate(conn) -> None:
@@ -101,7 +100,8 @@ async def test_올리고_내리면_다섯_칸과_CHECK_가_생겼다_사라진�
             assert _columns(conn) >= NEW_COLUMNS
             checks = _checks(conn)
             assert set(checks) >= CHECKS
-            assert checks[SYMPTOM_OR_MEDICATION] is True  # 빈 행이 없으니 같은 자리에서 VALIDATE
+            # 다섯 칸이 모두 새 칸이라 기존 행에는 늘 참이다 — 전부 같은 자리에서 VALIDATE 된다
+            assert all(checks[name] for name in CHECKS)
 
             # 약 행 — symptom 을 안 넣으면 '{}' 가 들어간다
             medicine = conn.execute(
@@ -111,8 +111,7 @@ async def test_올리고_내리면_다섯_칸과_CHECK_가_생겼다_사라진�
                 )
             ).one()
             assert medicine.symptom == []
-            # 증상/약 둘 중 하나만
-            assert _rejected(conn, "(raw_text, symptom) VALUES ('x', '{}')")
+            # 증상과 약이 한 행에 같이 있지 않다
             assert _rejected(
                 conn, "(raw_text, symptom, medication_given) VALUES ('x', '{발열}', '약')"
             )
@@ -126,8 +125,7 @@ async def test_올리고_내리면_다섯_칸과_CHECK_가_생겼다_사라진�
                 "(raw_text, medication_given, linked_symptom_id) "
                 f"VALUES ('x', '약', '{medicine.id}')",
             )
-            # 약 행에는 체온 세 칸이 없다 — 새 칸이라 같은 자리에서 VALIDATE 된 채다
-            assert checks[NO_TEMPERATURE] is True
+            # 약 행에는 체온 세 칸이 없다
             for column, value in (
                 ("temperature", "38.5"),
                 ("measured_at", "now()"),
@@ -200,11 +198,14 @@ async def test_증상이_빈_기존_행이_있어도_업그레이드된다(sessi
             migration["upgrade"]()  # 여기서 실패하면 배포가 내려간 채로 남는다
 
             checks = _checks(conn)
-            assert checks[SYMPTOM_OR_MEDICATION] is False  # NOT VALID 그대로 — 정리는 사람이 한다
+            assert all(checks[name] for name in CHECKS)  # 옛 행이 있어도 전부 VALIDATE 된다
             # 보호자 기록이라 지우지 않는다
             assert conn.execute(text("SELECT count(*) FROM observation_health")).scalar() == 2
-            # NOT VALID 여도 새 행은 검사한다
-            assert _rejected(conn, "(raw_text, symptom) VALUES ('x', '{}')")
+            # 증상이 빈 옛 행도 계속 고칠 수 있다 — soft delete · Correction 이 이 UPDATE 다
+            with conn.begin_nested():
+                conn.execute(
+                    text("UPDATE observation_health SET raw_text = 'x' WHERE symptom = '{}'")
+                )
 
             migration["downgrade"]()
             assert _columns(conn) & NEW_COLUMNS == set()

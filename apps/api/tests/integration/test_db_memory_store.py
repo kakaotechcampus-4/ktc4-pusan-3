@@ -599,7 +599,7 @@ class TestUpdatedAtRefresh:
 
 
 class TestHealthTemperatureAndMedication:
-    """observation_health 체온 세 칸 · 먹인 약 두 칸 (#557).
+    """observation_health 체온 세 칸 · 먹인 약 두 칸 (#551).
 
     한 행 = 한 사건 — DB 가 마지막에 막는다.
     CHECK 위반은 savepoint 안에서 넣는다. 밖에서 넣으면 테스트 트랜잭션이 통째로 죽는다.
@@ -686,10 +686,12 @@ class TestHealthTemperatureAndMedication:
     ) -> None:
         assert await self._rejected(session, family, symptom=["발열"], medication_given="해열제")
 
-    async def test_증상도_약도_없으면_DB_가_거절(
+    async def test_증상도_약도_없는_행은_DB_가_아니라_스키마가_막는다(
         self, session: AsyncSession, family: tuple
     ) -> None:
-        assert await self._rejected(session, family)
+        # DB 에서 막으면 증상이 빈 옛 행이 그 CHECK 에 걸려 soft delete · Correction 이 실패한다.
+        # 새 행은 Memory 스키마(ObservationHealthCreate)가 막는다 — unit 의 test_observation_health
+        assert not await self._rejected(session, family)
 
     async def test_약_행에_체온이_있으면_DB_가_거절(
         self, session: AsyncSession, family: tuple

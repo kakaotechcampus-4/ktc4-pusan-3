@@ -91,8 +91,8 @@ def test_스키마의_허용_목록은_D3_와_같다(domain: str) -> None:
     assert _UPDATE_SCHEMAS[domain].CLEARABLE == _CLEARABLE[domain]
 
 
-# nullable 이지만 비우면 CHECK 에 걸리는 칸. 약 행의 약 이름은 비우면 증상도 약도 없는 행이 되고,
-# 증상 행에는 처음부터 없다 (#557 observation_health_symptom_or_medication)
+# nullable 이지만 비우면 안 되는 칸. 약 행의 약 이름은 비우면 증상도 약도 없는 행이 되고(#551 —
+# DB 가 아니라 Memory 스키마가 막는 모양이다), 증상 행에는 처음부터 없다
 _NULLABLE_NOT_CLEARABLE: dict[str, set[str]] = {"health": {"medication_given"}}
 
 

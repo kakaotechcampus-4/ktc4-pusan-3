@@ -194,7 +194,7 @@ class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
 class ObservationHealth(Base, UUIDPk, Timestamps):
     """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다.
 
-    한 행 = 한 사건이다 — 증상 행이거나 먹인 약 행이다(#557). 약 행은 `symptom` 이 비고
+    한 행 = 한 사건이다 — 증상 행이거나 먹인 약 행이다(#551). 약 행은 `symptom` 이 비고
     `observed_time` 이 먹인 시각이다. `linked_symptom_id` 는 같은 말에서 함께 기록된 증상 행이고,
     Memory 의 코드가 채운다(모델이 id 를 골라 잇지 않는다).
 
@@ -213,9 +213,11 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
             "measure_site IN ('ear', 'forehead', 'armpit', 'oral', 'rectal')",
             name="observation_health_measure_site",
         ),
+        # 증상과 약이 한 행에 같이 있지 않다. "둘 다 없다" 는 DB 가 아니라 Memory 스키마가 막는다 —
+        # 증상이 빈 옛 행이 있어서 DB 에서 막으면 그 행의 soft delete · Correction 이 실패한다
         CheckConstraint(
-            "(cardinality(symptom) > 0) <> (medication_given IS NOT NULL)",
-            name="observation_health_symptom_or_medication",
+            "cardinality(symptom) = 0 OR medication_given IS NULL",
+            name="observation_health_symptom_not_with_medication",
         ),
         CheckConstraint(
             "linked_symptom_id IS NULL OR medication_given IS NOT NULL",
@@ -242,7 +244,8 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    # 약 행은 비어 있다. 증상 행은 1개 이상 — CHECK observation_health_symptom_or_medication
+    # 약 행은 비어 있다(CHECK observation_health_symptom_not_with_medication).
+    # 증상 행은 1개 이상 — Memory 스키마가 막는다(옛 행에는 빈 것이 있을 수 있다)
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     severity: Mapped[HealthSeverity | None] = mapped_column(
         enum_col_py(HealthSeverity, name="health_severity"),

@@ -215,7 +215,7 @@
 
 ### 2. observation_health (증상·컨디션 · 먹인 약)
 
-**한 행 = 한 사건이다** — 증상 행이거나 먹인 약 행이다 (2026-10-22, #557). 칸별 결정은 아래
+**한 행 = 한 사건이다** — 증상 행이거나 먹인 약 행이다 (2026-10-22, #551). 칸별 결정은 아래
 ["observation_health — 체온 세 칸 · 먹인 약 두 칸"](#observation_health--체온-세-칸--먹인-약-두-칸) 에 있다.
 
 | **필드** | **타입** | **비고** |
@@ -234,7 +234,8 @@
 
 **제약** (이름은 마이그레이션 `e5b1d7c3a9f2` 와 같다)
 
-- `observation_health_symptom_or_medication` — `(cardinality(symptom) > 0) <> (medication_given IS NOT NULL)`. 증상이나 약 중 하나만
+- `observation_health_symptom_not_with_medication` — `cardinality(symptom) = 0 OR medication_given IS NULL`. 증상과 약이 한 행에 같이 있지 않다.
+  "증상도 약도 없다" 는 DB 가 아니라 Memory 스키마가 막는다 — 아래 **배포 안전**
 - `observation_health_link_needs_medication` — `linked_symptom_id IS NULL OR medication_given IS NOT NULL`. 연결은 약 행에만
 - `observation_health_medication_no_temperature` — `medication_given IS NULL OR (temperature IS NULL AND measured_at IS NULL AND measure_site IS NULL)`. 약 행에는 체온 세 칸이 없다 (열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 내지 않게)
 - `observation_health_temperature_range` — `temperature IS NULL OR temperature BETWEEN 30.0 AND 45.0`
@@ -569,11 +570,11 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 | `child_growth_log` — `numeric(4,1)` · `measured_on date NOT NULL` (09-22 의 `check_date`) | Child §child_growth_log | Growth (G-5) |
 | `suggestion.kind` (`general`/`personalized`) | Suggestion §suggestion | Food · Growth |
 | `source_refs` 제거 → `suggestion_evidence` | Suggestion §suggestion_evidence | Food · Growth |
-| `observation_health` 체온 세 칸 · 먹인 약 두 칸 (아래 절) | Memory/Observation §2 | Health (#557) |
+| `observation_health` 체온 세 칸 · 먹인 약 두 칸 (아래 절) | Memory/Observation §2 | Health (#551) |
 
 #### observation_health — 체온 세 칸 · 먹인 약 두 칸
 
-2026-10-22 §2 표에 반영했다 (#557, 마이그레이션 `e5b1d7c3a9f2`). Memory 가 발화에서 채우고 Health 가 읽는다.
+2026-10-22 §2 표에 반영했다 (#551, 마이그레이션 `e5b1d7c3a9f2`). Memory 가 발화에서 채우고 Health 가 읽는다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
@@ -595,12 +596,19 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
   체온 세 칸은 DB 도 막는다(`observation_health_medication_no_temperature`). 다섯 칸이 같은 마이그레이션에서 생긴 새 칸이라
   기존 행에는 늘 참이어서 NOT VALID 없이 건다.
 - 같은 run 에서 체온을 여러 번 말하거나("아침 8시에 38.2도, 밤 9시에 39.1도") 약을 여러 번 먹였으면 행도 여럿이다.
-  Memory 의 run 중복 막기는 증상 · 날짜에 더해 체온 · 잰 시각 · 본 시각 · 약 이름 · 먹인 시각까지 같아야 같은 호출로 본다.
+  Memory 의 run 중복 막기는 증상 몫(증상 · 날짜 · 체온 · 잰 시각 · 본 시각)과 약 몫(약 이름 · 날짜 · 먹인 시각)을
+  따로 센다. 둘 다 이미 저장했으면 같은 호출이고, 한쪽만 저장했으면 남은 쪽만 다시 부르게 돌려준다 — 하나로 세면
+  "발열 38.5" 뒤의 "발열 38.5 + 해열제" 가 통과해 증상 행이 둘이 된다.
+- 체온 숫자도 약 이름처럼 이번 발화에 있어야 저장 · 수정된다(값으로 견준다 — "38" 은 38.0, "38도 5부" 는 38.5).
+  반올림 · 화씨 환산한 숫자는 거절한다. 발화를 모르는 수정 호출은 약 이름 · 체온을 고치지 않는다(대조할 글이 없으면
+  통과시키지 않는다).
   `ObservationHealthUpdate.symptom` 은 최소 1개다. `medication_given` 은 비울 수 없다(비우면 증상도 약도 없는 행이 된다).
 - 증상이 빈 약 행은 증상 코드가 0개라 반복 판정 · 에피소드에 들어가지 않는다.
-- **배포 안전** — 이전에는 수정 인자에 최소 1개 제한이 없어 증상이 빈 행이 있을 수 있었다.
-  `observation_health_symptom_or_medication` 은 NOT VALID 로 건 뒤 그런 행을 세어 0건일 때만 같은 마이그레이션에서 VALIDATE 한다.
-  있으면 NOT VALID 로 두고 경고 로그(건수만)를 남긴다 — 보호자 기록이라 지우지 않고, 정리한 뒤 VALIDATE 한다.
+- **배포 안전** — 이전에는 수정 인자에 최소 1개 제한이 없어 증상이 빈 행이 있을 수 있었다. 그래서 DB 는 "증상과 약이
+  한 행에 같이 있다" 만 막는다 — 기존 행은 약 칸이 전부 NULL 이라 늘 참이고, 다섯 CHECK 모두 바로 VALIDATE 된다.
+  "증상도 약도 없다" 를 DB 에서 막으면(NOT VALID 로 걸어도) 그 옛 행의 이후 UPDATE — soft delete · Correction 포함 — 가
+  전부 CHECK 에 걸린다. 새 행은 Memory 스키마가 막는다(`ObservationHealthCreate` 의 증상 또는 약 · 수정의 증상 최소 1개).
+  옛 행은 보호자 기록이라 지우지 않는다.
 
 ### 아직 위 표에 없는 것
 
