@@ -179,14 +179,16 @@ async def test_다음_차수가_없는_71개월은_알림_초안이_없다():
         "검진 때 뭐 챙길까?",
     ],
 )
-async def test_검진_맥락은_아직_unsupported(text):
+async def test_검진_맥락은_요약으로_간다(text):
     llm = FakeLLM()
 
     result = await _run(48, text, llm=llm)
 
-    assert result.status == "unsupported"
+    assert result.status == "completed"
     assert result.task_type == "schedule_check"
-    assert result.readouts == () and result.event_requests == ()
+    assert result.readouts[-1] == READOUTS.render("checkup.context_footer")
+    assert not any(r.kind == "checkup_schedule" for r in result.readouts)
+    assert result.event_requests == ()
     assert result.model_calls == 0 and llm.seen == []
 
 

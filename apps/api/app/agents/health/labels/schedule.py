@@ -4,8 +4,9 @@
 
     schedule  지금 · 다음 검진 차수와 이 시기 권장 접종을 안내한다
     alarm     같은 안내에 더해 다음 차수 시작일로 `EventRequest` 초안을 낸다
-    context   "검진 때 뭐 챙겨가?" · 문진표 — 식사 · 복약 · 증상 기록이 다 있어야 해서 진료 준비
-              이슈 전까지 `unsupported` 다. 차수 안내로 새지 않는다
+    context   "검진 때 뭐 챙겨가?" · 문진표 — 들고 갈 기록 요약(`summarize_checkup_context`).
+              차수 안내로 새지 않는다. 문진표 대필을 부탁하는 말이면 거절 문구가 맨 앞에 붙는다
+              (요약은 그대로)
 
 계산은 `tools/checkup.py`(저장하지 않는다)이고 문구는 `health.readout.yaml` 이다. 접종은 맞았는지
 모르므로 "놓쳤다" 를 말하지 않고 늘 `vaccine.disclaimer` 를 붙인다. 72개월부터는 검진만 끝난다 —
@@ -44,6 +45,7 @@ from app.agents.health.tools.checkup import (
     compute_next_vaccines,
     compute_vaccine_schedule,
 )
+from app.agents.health.tools.checkup_context import summarize_checkup_context
 
 ScheduleIntent = Literal["schedule", "alarm", "context"]
 
@@ -81,6 +83,22 @@ CONTEXT_WORDS: tuple[str, ...] = (
     "문진",
 )
 
+# 문진표를 대신 써 달라는 표현. 걸리면 거절 문구가 앞에 붙고 요약은 그대로 나간다. 그냥 "문진표" ·
+# "작성" 만으로는 걸지 않는다 — "문진표 뭐 물어봐?" 는 요약만 받으면 된다
+GHOSTWRITE_WORDS: tuple[str, ...] = (
+    "대신작성",
+    "대신써",
+    "대신채",
+    "대신해",
+    "대필",
+    "작성해줘",
+    "작성해주",
+    "써줘",
+    "써주",
+    "채워줘",
+    "채워주",
+)
+
 _ALARM_AT = time(9, 0)
 
 
@@ -104,6 +122,12 @@ def schedule_intent(texts: Sequence[str]) -> ScheduleIntent:
     if any(_is_alarm(text) for text in squashed):
         return "alarm"
     return "schedule"
+
+
+def is_ghostwrite(texts: Sequence[str]) -> bool:
+    """문진표를 대신 작성해 달라는 말인가. 표 말고는 보지 않는다."""
+    squashed = "".join(_squash(text) for text in texts)
+    return any(word in squashed for word in GHOSTWRITE_WORDS)
 
 
 def _day(value: date) -> str:
@@ -133,7 +157,10 @@ async def run_schedule_check(
     label = HealthTaskType.SCHEDULE_CHECK
     intent = schedule_intent(task.request_texts)
     if intent == "context":
-        return result(label, "unsupported")
+        readouts = await summarize_checkup_context(
+            context, ghostwrite=is_ghostwrite(task.request_texts)
+        )
+        return result(label, "completed", readouts=readouts)
 
     birth_date = context.state.birth_date
     assert birth_date is not None  # build_gate 가 채운다

@@ -7,26 +7,42 @@
 턴 `HealthContext.pending` 에 넣고(연결 이슈의 `reply_to` 를 흉내 낸다), **now 를 2분 뒤로 둔다** —
 중단 시각이 묻던 턴의 now 가 아니라 답한 턴의 now 인지 가리려고. 턴마다 저장소의 쓰기 카운터가
 얼마나 늘었는지도 기록한다.
+
+Memory 저장 케이스(`case.memory`)는 Health 대신 Memory Agent 를 인메모리 저장소로 한 번 돌리고,
+저장된 관찰 행(전 도메인)을 `Ran.memory_rows` 에 담는다. `client` 는 Memory 몫이다. 저장소에는
+`case.memory_seed` 의 기록만 미리 있다(T21-memory 의 앞선 열 기록 — 따로 말한 약을 잇지 않는지
+보려고).
 """
 
 import time
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
+from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.schemas.task import DomainTask
 from app.agents.health import agent as health_agent
 from app.agents.health.envelope import result as hook_result
 from app.agents.health.hook import check_symptom_repetition
+from app.agents.memory import agent as memory_agent
+from app.agents.memory.context import AgentContext
+from app.agents.memory.store import InMemoryStore
 from tests.eval.agents.health.cases import Case, doc_inputs
 from tests.eval.agents.health.judges import EVAL_GUIDANCE, Ran, Turn
-from tests.eval.agents.health.world import DAY, NIGHT, build_world
+from tests.eval.agents.health.world import CHILD, DAY, NIGHT, World, build_world
+
+WRITER = UUID("00000000-0000-7000-8000-0000000000ff")  # 말한 보호자 (지어낸 id)
+_DOMAINS = ("food", "health", "education", "activity", "routine")
 
 
 async def run_case(case: Case, *, client: Any | None) -> Ran:
     world = build_world(case.world, now=NIGHT if case.night else DAY, run_id=f"live-{case.case_id}")
-    request = doc_inputs()[case.input_id]
+    request = case.text or doc_inputs()[case.input_id]
     started = time.perf_counter()
+
+    if case.memory:
+        return await _run_memory(case, world, request, client=client, started=started)
 
     turns: list[Turn] = []
     if case.label is None:
@@ -65,4 +81,47 @@ async def run_case(case: Case, *, client: Any | None) -> Ran:
         result=result,
         elapsed_ms=elapsed_ms,
         turns=tuple(turns),
+    )
+
+
+async def _run_memory(
+    case: Case, world: World, request: str, *, client: Any | None, started: float
+) -> Ran:
+    """Memory 를 한 번 돌린다. Health 결과는 없다(`result=None`).
+
+    저장소는 비어 있거나 `case.memory_seed` 의 기록(오늘)만 있다 — 시드 id 는 `Ran.memory_seeded`.
+    """
+    store = InMemoryStore(now=world.context.now)
+    seeded = [
+        await store.create_observation(
+            domain="health",
+            child_id=CHILD,
+            source_writer=WRITER,
+            raw_text=seed.raw_text,
+            observed_on=world.today,
+            observed_range=build_observed_range(world.today),
+            fields={"symptom": list(seed.symptom), "confidence_source": "parent_direct"},
+        )
+        for seed in case.memory_seed
+    ]
+    context = AgentContext(
+        child_id=CHILD,
+        source_writer=WRITER,
+        now=world.context.now,
+        timezone=world.context.timezone,
+        store=store,
+    )
+    outcome = await memory_agent.run(request, context, client=client)
+    rows: list = []
+    for domain in _DOMAINS:
+        rows += await store.query_observations(domain=domain, child_id=CHILD)
+    return Ran(
+        case_id=case.case_id,
+        world=world,
+        request=request,
+        result=None,
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+        tools=tuple(outcome.tool_names),
+        memory_rows=tuple(rows),
+        memory_seeded=tuple(row.id for row in seeded),
     )
