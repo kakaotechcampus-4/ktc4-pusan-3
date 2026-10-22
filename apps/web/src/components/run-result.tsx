@@ -43,6 +43,7 @@ import {
   type StoredRef,
 } from "@/lib/api/types";
 import { formatEventTime, formatTimeOfDay } from "@/lib/format";
+import { healthTitle, temperatureLabel } from "@/lib/health-observation";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -863,9 +864,11 @@ const NO_REFS: readonly StoredRef[] = [];
  */
 function ObservationRow({ observation }: { observation: Observation }) {
   const wrong = observation.status === "inactive";
+  // 먹인 약 행은 증상이 비어 온다 — 약 이름이 제목을 받는다 (#551). 체온은 숫자만 옮긴다
   const detail = isHealthObservation(observation)
     ? [
-        observation.domain_fields.symptom?.join(", "),
+        healthTitle(observation.domain_fields),
+        temperatureLabel(observation.domain_fields),
         observation.domain_fields.observed_time &&
           formatTimeOfDay(observation.domain_fields.observed_time),
       ]

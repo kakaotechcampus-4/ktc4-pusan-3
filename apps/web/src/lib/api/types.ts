@@ -130,9 +130,27 @@ export interface ObservationHealth extends ObservationBase {
      * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
      */
     observed_time?: string | null;
+    /**
+     * 보호자가 말한 체온 숫자(℃) 그대로 (#551). 화면은 숫자를 옮기기만 한다 — 정상 범위 ·
+     * 높다/낮다 · 색으로 평가하지 않는다 (최상위 CLAUDE.md §2).
+     */
+    temperature?: number | null;
+    /** 체온을 잰 ISO 시각. `observed_time` 과 다르다. */
+    measured_at?: string | null;
+    measure_site?: MeasureSite | null;
+    /**
+     * 🚨 이 값이 있으면 **먹인 약 행**이다 (#551) — 한 행 = 한 사건이라 `symptom` 이 비어 온다.
+     * 보호자가 말한 약 이름 그대로이고, 이 행의 `observed_time` 은 먹인 시각이다.
+     */
+    medication_given?: string | null;
+    /** 같은 말에서 함께 기록된 증상 행 id. 묶음 표시일 뿐 "때문에" 가 아니다. */
+    linked_symptom_id?: string | null;
     [key: string]: unknown;
   };
 }
+
+/** 체온을 잰 부위. */
+export type MeasureSite = "ear" | "forehead" | "armpit" | "oral" | "rectal";
 
 export type Observation = ObservationPromotable | ObservationHealth;
 

@@ -14,6 +14,7 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
+import { healthTitle } from "@/lib/health-observation";
 
 /**
  * 07 관찰 목록 — **줄**이다. 카드가 아니다.
@@ -163,13 +164,12 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
 /**
  * 줄의 제목 — 이 기록이 무엇에 관한 것인가. 04 대화 결과의 기록 줄(`run-result.tsx`)과 같은 필드를
  * 쓴다 (04 는 health 에 `observed_time` 까지 붙이고, 07 은 시각을 상세에만 둔다).
- * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 증상이 없으면 `null` 이고, 줄은 원문을 제목으로 쓴다.
+ * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 먹인 약 행은 약 이름이 받는다 — 증상과 같은 말에서
+ * 저장된 약 행은 원문이 같아서, 원문을 제목으로 쓰면 같은 줄이 두 번 보인다 (#551). 둘 다 없으면 `null` 이고,
+ * 줄은 원문을 제목으로 쓴다.
  */
 function observationTitle(observation: Observation): string | null {
-  if (isHealthObservation(observation)) {
-    const symptoms = observation.domain_fields.symptom;
-    return symptoms && symptoms.length > 0 ? symptoms.join(", ") : null;
-  }
+  if (isHealthObservation(observation)) return healthTitle(observation.domain_fields);
   return observation.subject || null;
 }
 
