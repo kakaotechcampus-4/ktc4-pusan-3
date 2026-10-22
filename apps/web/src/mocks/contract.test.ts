@@ -38,7 +38,11 @@ import {
 import { toISODate } from "@/lib/format";
 import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
-import { REPORT_CATEGORIES, REPORT_MESSAGE_MAX_LENGTH } from "@/lib/api/types";
+import {
+  DIARY_CONTENT_MAX_LENGTH,
+  REPORT_CATEGORIES,
+  REPORT_MESSAGE_MAX_LENGTH,
+} from "@/lib/api/types";
 import type {
   Affinity,
   AffinitiesResponse,
@@ -1825,6 +1829,41 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
 
     expect(isApiError(failure, "validation_failed")).toBe(true);
     expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("앞뒤 공백까지 원문 길이로 센다 — 정확히 1000자는 저장되고 1001자는 400 이다 (#549)", async () => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+    const path = `/children/c1/diary/${date}`;
+    // 🚨 신고와 달리 앞뒤 공백을 떼지 않는다 — 떼고 세면 아래 1001자가 1000자로 통과한다.
+    const full = ` ${"가".repeat(DIARY_CONTENT_MAX_LENGTH - 2)} `;
+
+    expect((await api.put<MyDiary>(path, { content: full })).content).toBe(full);
+
+    const failure = await api.put(path, { content: `${full}가` }).catch((error: unknown) => error);
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary?.content).toBe(full);
+  });
+
+  it.each([
+    ["NUL 이 든", "지어낸\u0000일기"],
+    // 서버는 바디 검증(400)이 라우터의 공백 검사(422)보다 먼저다.
+    ["공백뿐이고 1000자를 넘는", " ".repeat(DIARY_CONTENT_MAX_LENGTH + 1)],
+  ])("%s 본문은 400 이고 기존 일기가 남는다 (#549)", async (_, content) => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+
+    const failure = await api
+      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+    expect(after.my_diary).toEqual(before.my_diary);
   });
 
   it("두 번 지워도 둘 다 204 다 — 없는 일기를 지워도 204", async () => {

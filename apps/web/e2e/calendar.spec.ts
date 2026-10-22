@@ -259,6 +259,33 @@ test("고치다가 내용을 다 비우면 저장이 꺼지고, 편집 중에는
   expect(writes(calls)).toEqual([]);
 });
 
+test("일기는 1000자까지 적고, 앞뒤 공백까지 원문 그대로 센다 (#549)", async ({ page }) => {
+  const calls = recordApi(page);
+  // 목의 이틀 전은 기록이 있고 일기가 없는 날이다.
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(2)}`);
+
+  await page.getByRole("button", { name: "일기 쓰기" }).click();
+  const editor = page.getByRole("textbox", { name: "이날의 일기" });
+  await expect(page.getByText(/0\/1000$/)).toBeVisible();
+
+  // 🚨 신고와 달리 앞뒤 공백을 떼지 않고 센다 — 일기는 원문 그대로 저장한다.
+  const typed = "  모래 놀이를 했다.\n";
+  await editor.fill(typed);
+  await expect(page.getByText(new RegExp(`${typed.length}/1000$`))).toBeVisible();
+
+  // 1000자에 닿으면 더 적히지 않는다 — 서버가 400 으로 거절하는 글을 만들 수 없다.
+  const full = "가".repeat(1000);
+  await editor.fill(full);
+  await editor.press("End");
+  await page.keyboard.type("나");
+  await expect(editor).toHaveValue(full);
+  await expect(page.getByText(/1000\/1000$/)).toBeVisible();
+
+  await page.getByRole("button", { name: "일기 저장" }).click();
+  await expect(page.getByRole("button", { name: "일기 고치기" })).toBeFocused();
+  expect(writes(calls, "PUT").map((call) => call.body)).toEqual([{ content: full }]);
+});
+
 test("일기 지우기 확인 패널은 승인 게이트가 아니다 — 게이트 표식이 없다 (§2 실행 · #364)", async ({
   page,
 }) => {
