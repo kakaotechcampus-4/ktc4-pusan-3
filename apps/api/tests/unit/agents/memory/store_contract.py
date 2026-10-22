@@ -85,6 +85,8 @@ CLEARABLE: dict[str, set[str]] = {
 _FULL_ARGS: dict[str, dict[str, Any]] = {
     "food": {"subject": "김밥", "action": "먹었다", "amount": "반 그릇", "reaction": "좋아함"},
     "health": {
+        # 체온은 원문에 있는 숫자만 저장된다 (#551)
+        "raw_text": "이마가 뜨거워서 오전 8시에 재 보니 38.5도",
         "symptom": ["발열"],
         "severity": "mild",
         "body_part": "이마",

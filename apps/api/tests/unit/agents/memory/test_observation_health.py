@@ -1,4 +1,4 @@
-"""observation_health 의 체온 세 칸과 먹인 약 두 칸 (#557).
+"""observation_health 의 체온 세 칸과 먹인 약 두 칸 (#551).
 
 체온:
     - "밤 11시에 38.5도" 는 temperature · measured_at · measure_site 세 칸으로 들어간다
@@ -12,10 +12,16 @@
     - 약 이름이 raw_text 에 글자 그대로 없으면 저장하지 않는다(성분명으로 바꿔 쓰기 금지)
     - 수정으로 증상 행에 약을 넣거나 증상을 비우면 실패한다
 
+발화 대조 (#551):
+    - 체온 숫자도 보호자가 한 말에 있어야 저장한다(반올림 · 화씨 환산 금지). "38도 5부" 는 38.5 다
+    - 발화를 모르는 수정 호출은 약 이름 · 체온을 고치지 않는다(대조할 글이 없으면 통과시키지 않는다)
+    - 같은 run 에서 증상 · 약은 따로 센다 — 증상을 저장한 뒤 같은 증상 + 약으로 다시 부르면 막는다
+
 가짜 LLM 응답으로 돌리므로 실제 API 를 부르지 않는다. 발화는 지어낸 예시다.
 """
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -88,6 +94,11 @@ async def _rows(context: AgentContext) -> list[Any]:
 
 async def _create(context: AgentContext, **arguments: Any):
     return await execute_tool("create_observation_health", arguments, context)
+
+
+def said(context: AgentContext, utterance: str) -> AgentContext:
+    """이번 run 의 발화를 실은 context — run() 이 채우는 값이다. 같은 store 를 본다."""
+    return replace(context, utterance=utterance)
 
 
 # ── 체온 세 칸 ──────────────────────────────────────────────────
@@ -282,7 +293,7 @@ async def test_수정으로_증상_행에_약을_넣으면_실패(context: Agent
     result = await execute_tool(
         "update_observation_health",
         {"observation_id": created.data["id"], "medication_given": "해열제"},
-        context,
+        said(context, "해열제 먹였어"),
     )
 
     assert result.success is False
@@ -328,7 +339,9 @@ async def test_수정으로_약_행에_증상_칸을_넣으면_실패(context: A
     )
 
     result = await execute_tool(
-        "update_observation_health", {"observation_id": created.data["id"], **change}, context
+        "update_observation_health",
+        {"observation_id": created.data["id"], **change},
+        said(context, "38.5도였어"),
     )
 
     assert result.success is False
@@ -362,7 +375,7 @@ async def test_수정으로_증상_행의_체온은_고칠_수_있다(context: A
     result = await execute_tool(
         "update_observation_health",
         {"observation_id": created.data["id"], "temperature": 38.9, "severity": "severe"},
-        context,
+        said(context, "아니 38.9도였고 많이 힘들어했어"),
     )
 
     assert result.success is True
@@ -390,7 +403,7 @@ async def test_수정으로_잰_시각을_바꾸면_원래_관찰_날짜에_얹�
     result = await execute_tool(
         "update_observation_health",
         {"observation_id": created.data["id"], "measured_at": "밤 10시", "temperature": 38.2},
-        context,
+        said(context, "밤 10시에 38.2도였어"),
     )
 
     assert result.success is True
@@ -646,7 +659,7 @@ async def test_증상_행에_약을_넣으려_하면_약_행의_id_로_고치라
     result = await execute_tool(
         "update_observation_health",
         {"observation_id": created.data["id"], "medication_given": "해열제"},
-        context,
+        said(context, "해열제였어"),
     )
 
     assert result.success is False
@@ -654,3 +667,160 @@ async def test_증상_행에_약을_넣으려_하면_약_행의_id_로_고치라
     message = result.error["message"]
     assert "kind" in message and "medication" in message
     assert "새로 먹인 약일 때만" in message
+
+
+# ── 체온도 보호자가 한 말과 대조한다 (#551) ───────────────────────
+# LLM 이 바꾼 숫자는 열 타임라인과 3개월 미만 응급 안내까지 끌고 간다
+
+
+@pytest.mark.parametrize(
+    ("utterance", "temperature"),
+    [
+        ("열이 나서 재 보니 38.5도", 38.5),
+        ("열이 38도 5부까지 올랐어", 38.5),
+        ("열이 38도였어", 38.0),
+        ("열이 39.0도", 39),
+    ],
+)
+async def test_발화에_있는_체온은_저장한다(context: AgentContext, utterance, temperature) -> None:
+    arguments = {"raw_text": utterance, "observed_on": "오늘", "symptom": ["발열"]}
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", {**arguments, "temperature": temperature})),
+        _done(),
+    )
+
+    result = await run(utterance, context, client=llm)
+
+    assert [call.success for call in result.calls] == [True]
+    [row] = await _rows(context)
+    assert row.fields["temperature"] == Decimal(str(temperature))
+
+
+@pytest.mark.parametrize(
+    ("utterance", "temperature"),
+    [
+        ("열이 38.9도 같아", 38.5),  # 반올림 · 바꿔 쓰기
+        ("열이 101도야", 38.3),  # 화씨를 섭씨로 환산
+        ("열이 펄펄 끓어", 39.0),  # 숫자를 말하지 않았다
+    ],
+)
+async def test_발화에_없는_체온은_저장하지_않는다(
+    context: AgentContext, utterance, temperature
+) -> None:
+    # 모델이 raw_text 를 같이 바꿔 써도 이번 발화가 기준이다
+    arguments = {
+        "raw_text": f"열이 {temperature}도",
+        "observed_on": "오늘",
+        "symptom": ["발열"],
+        "temperature": temperature,
+    }
+    llm = FakeLLM(_tools(_call("c1", "create_observation_health", arguments)), _done())
+
+    result = await run(utterance, context, client=llm)
+
+    [call] = result.calls
+    assert call.success is False
+    assert call.result["error"]["code"] == ErrorCode.INVALID_ARGS
+    assert str(temperature) not in call.result["error"]["message"]  # 로그로 흘러가는 글이다
+    assert await _rows(context) == []
+
+
+async def test_수정으로_바꾼_체온이_발화에_없으면_고치지_않는다(context: AgentContext) -> None:
+    created = await _create(context, **_FEVER_NIGHT)
+
+    result = await execute_tool(
+        "update_observation_health",
+        {"observation_id": created.data["id"], "temperature": 39.5},
+        said(context, "아니 39도였어"),
+    )
+
+    assert result.success is False
+    [row] = await _rows(context)
+    assert row.fields["temperature"] == Decimal("38.5")
+
+
+@pytest.mark.parametrize("change", [{"medication_given": "부루펜"}, {"temperature": 38.5}])
+async def test_발화를_모르는_수정은_약_이름_체온을_고치지_않는다(
+    context: AgentContext, change
+) -> None:
+    # run 을 거치지 않은 직접 호출 — 대조할 글이 없으면 통과시키지 않는다
+    created = await _create(context, **_FEVER_NIGHT)
+    medicine = await _create(
+        context, raw_text="해열제 먹였어", observed_on="오늘", medication_given="해열제"
+    )
+    target = medicine if "medication_given" in change else created
+
+    result = await execute_tool(
+        "update_observation_health", {"observation_id": target.data["id"], **change}, context
+    )
+
+    assert result.success is False
+    assert result.error is not None and result.error["code"] == ErrorCode.INVALID_ARGS
+
+
+# ── 같은 run 에서 증상 · 약을 따로 센다 (#551) ─────────────────────
+# 증상과 약을 한 번에 세면 "발열 38.5" 뒤의 "발열 38.5 + 해열제" 가 통과해 증상 행이 둘이 된다
+
+
+async def test_증상을_저장한_뒤_같은_증상과_약을_다시_부르면_막는다(context: AgentContext) -> None:
+    utterance = "열이 나서 38.5도였고 해열제 먹였어"
+    base = {"raw_text": utterance, "observed_on": "오늘", "symptom": ["발열"], "temperature": 38.5}
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_health", base),
+            _call("c2", "create_observation_health", {**base, "medication_given": "해열제"}),
+        ),
+        _done(),
+    )
+
+    result = await run(utterance, context, client=llm)
+
+    assert [call.success for call in result.calls] == [True, False]
+    message = result.calls[1].result["error"]["message"]
+    assert "남은 쪽만" in message and "해열제" not in message
+    rows = await _rows(context)
+    assert [row.fields["symptom"] for row in rows] == [["발열"]]
+
+
+async def test_막힌_뒤_약만_다시_부르면_약_행이_생긴다(context: AgentContext) -> None:
+    utterance = "열이 나서 38.5도였고 해열제 먹였어"
+    base = {"raw_text": utterance, "observed_on": "오늘", "symptom": ["발열"], "temperature": 38.5}
+    medicine = {"raw_text": utterance, "observed_on": "오늘", "medication_given": "해열제"}
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_health", base),
+            _call("c2", "create_observation_health", {**base, "medication_given": "해열제"}),
+        ),
+        _tools(_call("c3", "create_observation_health", medicine)),
+        _done(),
+    )
+
+    result = await run(utterance, context, client=llm)
+
+    assert [call.success for call in result.calls] == [True, False, True]
+    rows = await _rows(context)
+    assert sorted(bool(row.fields["symptom"]) for row in rows) == [False, True]
+
+
+async def test_약을_저장한_뒤_같은_약을_다시_부르면_막는다(context: AgentContext) -> None:
+    utterance = "해열제 먹였어"
+    medicine = {"raw_text": utterance, "observed_on": "오늘", "medication_given": "해열제"}
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_health", medicine),
+            _call("c2", "create_observation_health", medicine),
+        ),
+        _done(),
+    )
+
+    result = await run(utterance, context, client=llm)
+
+    assert [call.success for call in result.calls] == [True, False]
+    assert len(await _rows(context)) == 1
+
+
+def test_프롬프트의_체온_예시는_증상과_같이_있다(context: AgentContext) -> None:
+    # 증상 없이 체온만 넣으면 스키마가 거절한다 — 예시가 그 길로 이끌면 모델이 발열을 지어낸다
+    prompt = build_system_prompt(context)
+    assert 'symptom=["열"], temperature=38.5' in prompt
+    assert "증상을 지어내지 않고" in prompt

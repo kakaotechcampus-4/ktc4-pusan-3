@@ -90,7 +90,10 @@ _VALUES = """
 - 없었다고 말한 증상은 symptom에 넣지 않는다. "콧물이 났는데 열은 없었대" 는 콧물만 기록한다.
 - 체온 숫자가 있으면 temperature 에 숫자만, 잰 시각은 measured_at,
   잰 부위가 말에 있을 때만 measure_site. 숫자를 바꾸거나 단위를 바꾸지 않는다.
-  "밤 11시에 38.5도였어" 는 temperature=38.5, measured_at="밤 11시" 다.
+  "열이 나서 밤 11시에 재 보니 38.5도였어" 는 symptom=["열"], temperature=38.5,
+  measured_at="밤 11시" 다. 체온은 증상 기록의 칸이라 증상 말이 있어야 저장한다.
+  "38.5도였어" 처럼 증상 말 없이 숫자만 있으면 증상을 지어내지 않고(발열을 넣지 않는다)
+  어떤 증상이 있었는지 묻는다.
   measured_at · given_time 에도 몇 시인지 알 수 있는 표현만 넣는다.
 - 이미 먹인 약은 action_taken 이 아니라 medication_given 이다.
   같은 말에 증상과 먹인 약이 같이 있으면 create_observation_health 한 번에 같이 넣는다.

@@ -9,6 +9,8 @@ create / query / update 3종. 삭제는 update 에 status=deleted 로 온다 (so
 LLM은 표현까지만 제공하고, 계산과 기본값은 이쪽에서 해결
 """
 
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.agents.common.datetime_rules import (
@@ -35,6 +37,7 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
 )
+from app.agents.memory.store.ports import ObservationRow
 
 # create 인자 중 store가 따로 받는 것들. fields에 중복으로 넣지 않는다
 _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
@@ -179,13 +182,21 @@ async def _update(
     *,
     domain: str,
     time_fields: tuple[str, ...] = (),
+    check: Callable[[ObservationRow], str | None] | None = None,
 ) -> ToolResult:
+    """`check` 는 읽어 온 행을 보고 고칠 수 없는 이유를 돌려준다(없으면 None).
+
+    행은 여기서 한 번만 읽는다 — 검사와 수정이 같은 행을 본다.
+    """
     resource = _resource(domain)
     if args.status == "deleted":
         return await _delete(context, args, domain=domain)
     current = await context.store.get_observation(domain=domain, observation_id=args.observation_id)
     if current is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
+    reason = check(current) if check is not None else None
+    if reason is not None:
+        return fail("update", resource, ErrorCode.INVALID_ARGS, reason)
 
     fields = args.model_dump(exclude=_UPDATE_HANDLED)
 
@@ -319,15 +330,52 @@ _SYMPTOM_ON_MEDICINE = (
 )
 
 
-def _said(name: str, context: AgentContext, *quoted: str) -> bool:
-    """약 이름이 보호자가 한 말 안에 글자 그대로 있나.
+# 로그로 흘러가는 메시지라 숫자를 싣지 않는다
+_TEMPERATURE_NOT_SAID = (
+    "temperature 는 보호자가 말한 체온 숫자 그대로 넣는다. 말에 없는 숫자다 — 반올림하거나 "
+    "화씨를 섭씨로 바꾸지 않는다. 보호자가 섭씨 숫자를 말하지 않았으면 넣지 않고 "
+    "몇 도였는지 묻는다."
+)
 
-    기준은 이번 run 의 발화(`context.utterance`)다. tool 인자의 raw_text 는 모델이 옮겨 적은 글이라
-    모델이 raw_text 와 약 이름을 같이 바꿔 쓰면 그것만으로는 못 막는다. 발화를 모르는 호출
-    (run 을 거치지 않은 tool 직접 호출)은 넘겨받은 원문만 본다.
+# 말에 적힌 체온 꼴. "38.5" · "38도" · "38도 5부"(= 38.5)
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_DEGREE_TENTH = re.compile(r"(\d+)\s*도\s*(\d)\s*부")
+
+
+def _sources(context: AgentContext, *quoted: str) -> list[str]:
+    """대조할 글들. 이번 run 의 발화(`context.utterance`)가 기준이다.
+
+    tool 인자의 raw_text 는 모델이 옮겨 적은 글이라 모델이 raw_text 와 값을 같이 바꿔 쓰면
+    그것만으로는 못 막는다. 발화를 모르는 호출(run 을 거치지 않은 tool 직접 호출)은 넘겨받은
+    원문만 본다.
     """
-    sources = [*quoted] if context.utterance is None else [context.utterance, *quoted]
-    return all(name in source for source in sources)
+    return [*quoted] if context.utterance is None else [context.utterance, *quoted]
+
+
+def _said(name: str, context: AgentContext, *quoted: str) -> bool:
+    """약 이름이 보호자가 한 말 안에 글자 그대로 있나. 대조할 글이 없으면 거짓이다."""
+    sources = _sources(context, *quoted)
+    return bool(sources) and all(name in source for source in sources)
+
+
+def _temperature_said(value: Decimal, context: AgentContext, *quoted: str) -> bool:
+    """체온 숫자가 보호자가 한 말 안에 있나 — LLM 이 바꾼 숫자는 응급 안내까지 끌고 간다 (#551).
+
+    값으로 견준다("38" 과 38.0 은 같다). "38도 5부" 는 38.5 다. 대조할 글이 없으면 거짓이다.
+    """
+    sources = _sources(context, *quoted)
+    return bool(sources) and all(value in _temperatures(source) for source in sources)
+
+
+def _temperatures(text: str) -> set[Decimal]:
+    found: set[Decimal] = set()
+    for number in _NUMBER.findall(text):
+        try:
+            found.add(Decimal(number))
+        except InvalidOperation:  # pragma: no cover — 정규식이 숫자만 뽑는다
+            continue
+    found.update(Decimal(f"{whole}.{tenth}") for whole, tenth in _DEGREE_TENTH.findall(text))
+    return found
 
 
 async def create_observation_health(
@@ -337,34 +385,38 @@ async def create_observation_health(
         args.medication_given, context, args.raw_text
     ):
         return fail("create", _resource("health"), ErrorCode.INVALID_ARGS, _MEDICINE_NOT_SAID)
+    if args.temperature is not None and not _temperature_said(
+        args.temperature, context, args.raw_text
+    ):
+        return fail("create", _resource("health"), ErrorCode.INVALID_ARGS, _TEMPERATURE_NOT_SAID)
     return await _create(context, args, domain="health", time_fields=_HEALTH_CREATE_TIMES)
 
 
 async def update_observation_health(
     context: AgentContext, args: ObservationHealthUpdate
 ) -> ToolResult:
+    # 고친 값은 원래 raw_text 에 없다("타이레놀 말고 부루펜") — 이번 발화에 있어야 한다
     if args.medication_given is not None and not _said(args.medication_given, context):
-        # 고친 이름은 원래 raw_text 에 없다("타이레놀 말고 부루펜") — 이번 발화에 있어야 한다
         return fail("update", _resource("health"), ErrorCode.INVALID_ARGS, _MEDICINE_NOT_SAID)
-    symptom_fields = any(getattr(args, name) is not None for name in _SYMPTOM_FIELDS)
-    if args.status is None and (
-        args.medication_given is not None or args.symptom is not None or symptom_fields
-    ):
+    if args.temperature is not None and not _temperature_said(args.temperature, context):
+        return fail("update", _resource("health"), ErrorCode.INVALID_ARGS, _TEMPERATURE_NOT_SAID)
+
+    def kind_check(current: ObservationRow) -> str | None:
         # 한 행 = 한 사건. 증상 행과 약 행을 서로 바꾸면 DB CHECK 에 걸린다 — 그 전에 돌려준다.
         # 약 행에 체온 · 정도 같은 증상 칸을 얹는 것도 같다 — 열 타임라인이 그 행을 두 번 낸다
-        current = await context.store.get_observation(
-            domain="health", observation_id=args.observation_id
-        )
-        if current is None:
-            return fail(
-                "update", _resource("health"), ErrorCode.TARGET_NOT_FOUND, _not_found("health")
-            )
+        if args.status is not None:
+            return None
         is_medicine = current.fields.get("medication_given") is not None
+        symptom_fields = any(getattr(args, name) is not None for name in _SYMPTOM_FIELDS)
         if args.medication_given is not None and not is_medicine:
-            return fail("update", _resource("health"), ErrorCode.INVALID_ARGS, _MEDICINE_ON_SYMPTOM)
+            return _MEDICINE_ON_SYMPTOM
         if (args.symptom is not None or symptom_fields) and is_medicine:
-            return fail("update", _resource("health"), ErrorCode.INVALID_ARGS, _SYMPTOM_ON_MEDICINE)
-    return await _update(context, args, domain="health", time_fields=_HEALTH_UPDATE_TIMES)
+            return _SYMPTOM_ON_MEDICINE
+        return None
+
+    return await _update(
+        context, args, domain="health", time_fields=_HEALTH_UPDATE_TIMES, check=kind_check
+    )
 
 
 # education
