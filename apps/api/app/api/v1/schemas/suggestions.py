@@ -36,17 +36,33 @@ class SuggestionOut(BaseModel):
     id: str
     child_id: str
     agent: str
-    kind: str
+    kind: Literal["personalized", "general"] = Field(
+        description=(
+            "개인화(아이 기록 근거) · 일반(또래 기준) 구분. 07 목록은 둘을 함께 돌려준다 (#532)"
+        )
+    )
     content: str
     reason: str | None = Field(
         default=None,
-        description="현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정",
+        description=(
+            "현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정. "
+            "일반 추천이면 05 의 basis 와 같은 문구"
+        ),
     )
     status: str
     expires_at: str
     feedback: str | None
-    source_refs: list[Ref] = []
-    evidence: list[EvidenceOut] = []
+    source_refs: list[Ref] = Field(
+        default=[],
+        description="evidence 의 ref 만 모은 것. evidence 와 같이 비는 조건이 같다",
+    )
+    evidence: list[EvidenceOut] = Field(
+        default=[],
+        description=(
+            "아이 기록 근거만 싣는다. 일반 추천이면 늘 빈 배열이고, "
+            "채택 응답은 근거를 읽지 않아 개인화도 빈 배열이다"
+        ),
+    )
 
 
 # ── 채택 ──────────────────────────────────────────────────────────────────
