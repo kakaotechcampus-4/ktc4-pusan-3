@@ -34,7 +34,7 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 | 라벨 | 모델 tool | 코드 tool | 모델 호출 |
 | --- | --- | --- | --- |
-| `visit_summary` | search_health_observations · search_recent_meals · search_medication_schedules · search_medication_checks · compose_symptom_timeline | load_health_safety · normalize_symptom_term · group_symptom_episodes · build_fever_timeline · get_next_dose · get_health_phrase | 1 (열 타임라인만 요청 시 **0**) |
+| `visit_summary` | search_health_observations · search_recent_meals · search_medication_checks · compose_symptom_timeline | load_health_safety · normalize_symptom_term · group_symptom_episodes · build_fever_timeline · get_next_dose · get_health_phrase | 1 (열 타임라인만 요청 시 **0**) |
 | `schedule_check` | – | compute_checkup_schedule · compute_vaccine_schedule · summarize_checkup_context · get_health_phrase | 0 |
 | `place_lookup` | – | find_pediatric_places | 0 |
 | `medication` | search_medication_schedules · create/update/stop_medication_schedule | resolve_dose_timing · normalize_symptom_term · get_next_dose · lookup_prescription_draft | 1 (조회 · "먹였어" 안내는 **0**) |
@@ -60,11 +60,11 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 | Tool | 입력 | 출력 | 규칙 |
 | --- | --- | --- | --- |
-| `search_health_observations` | `period: "3d"\|"7d"\|"14d"\|"30d"`(기본 14d), `symptom?` | **에피소드 줄** `{ref, refs[], from, to, symptom(원문), codes[](사전 코드), severity, action_taken}` — 같은 코드가 48시간 안에 이어지면 한 줄, 사전에 없는 말은 기록 하나가 한 줄(`codes=[]`). **먹인 약 줄** `{ref, time, medication_given, linked_symptom_ref}` 는 에피소드 밖에서 시각순(`time` 은 아이 타임존, 시각을 말하지 않았으면 날짜만). `linked_symptom_ref` 는 연결된 증상 행이 이번 결과에 있을 때만 그 행의 id. 체온 칸은 싣지 않는다(열 타임라인 몫) | 기간은 오늘 포함 N일. 돌려준 id 는 전부 `seen_refs` 에. 증상 · 약 둘 다 0건이면 `NO_RECORDS`. `symptom` 을 주면 그 증상(코드가 같은 말 포함)과 그 증상에 묶인 약만 |
-| `search_recent_meals` | `period: "3d"` | 날짜별 `{ref, date, subject, amount_text}` (보호자가 쓴 말 그대로) | 영양 수치 없음. 0건이어도 실패가 아니다 |
-| `search_medication_schedules` | `status="active"` | 코스 + dose(`scheduled_time`) | `medication` · `visit_summary` 가 연다 (id 는 싣지 않는다) |
-| `search_medication_checks` | `period: "3d"\|"7d"\|"14d"`(기본 14d) | 날짜 · 코스별 `{ref(=코스 id), date, title(등록 원문), checked, planned}` — `checked` = 그날 `checked_at` 이 있는 회차 수 · `planned` = 그날 회차 수 | 오늘 이후 회차는 세지 않는다. `courses_overlapping` 으로 읽어 끝났거나 멈춘 코스도 기간이 겹치면 넣는다. 체크 안 된 회차는 "안 먹였다" 가 아니라 `planned` 에만 들어간다. 겹치는 코스가 없으면 `NO_RECORDS` |
-| `compose_symptom_timeline` | `lines[]: {date, section, text, ref}` | `Readout(model, kind="symptom_timeline")` | ref 없는 줄 삭제 · 약명·용량 원문 대조 · 해석 금지어 필터 |
+| `search_health_observations` | `period: "3d"\|"7d"\|"14d"\|"30d"`(기본 14d), `symptom?` | 모델에게는 **에피소드 줄** `{key, from, to, codes[](사전 코드)}` · **먹인 약 줄** `{key, date, symptom_key}` 만 — 같은 코드가 48시간 안에 이어지면 한 줄, 사전에 없는 말은 기록 하나가 한 줄(`codes=[]`). 먹인 약 줄은 에피소드 밖에서 시각순. `symptom_key` 는 연결된 증상 줄이 이번 결과에 있을 때만 그 줄의 key. 줄의 글(사전 이름 · 원문 · 정도 · 조치 · 약 이름 · 시각)은 코드가 그려(`visit.symptom` · `visit.given`) `state.visit_lines` 에만 둔다. 체온 칸은 싣지 않는다(열 타임라인 몫) | 기간은 오늘 포함 N일. 증상 · 약 둘 다 0건이면 `NO_RECORDS`. `symptom` 을 주면 그 증상(코드가 같은 말 포함)과 그 증상에 묶인 약만. 같은 기록은 다시 불러도 같은 key |
+| `search_recent_meals` | `period: "3d"` | 모델에게는 `{key, date}` 만. 글(`visit.meal` — 먹은 것 · 양 원문)은 코드가 그린다 | 영양 수치 없음. 0건이어도 실패가 아니다 |
+| `search_medication_schedules` | `status="active"` | 코스 + dose(`scheduled_time`) | `medication` 만 연다 (id 는 싣지 않는다). 약 이름 · 용량을 모델에게 보여 줘서 `visit_summary` 는 열지 않는다 (#551) |
+| `search_medication_checks` | `period: "3d"\|"7d"\|"14d"\|"30d"`(기본 14d) | 날짜 · 코스별 줄. 모델에게는 `{key, date}` 만. 글(`visit.med_check` — 등록한 이름 · 용량 원문 + 체크 `n/m회`)은 코드가 그린다 — `n` = 그날 `checked_at` 이 있는 회차 수 · `m` = 그날 회차 수 | 오늘 이후 회차는 세지 않는다. `courses_overlapping` 으로 읽어 끝났거나 멈춘 코스도 기간이 겹치면 넣는다. 체크 안 된 회차는 "안 먹였다" 가 아니라 `m` 에만 들어간다. 겹치는 코스가 없으면 `NO_RECORDS` |
+| `compose_symptom_timeline` | `keys[]` (1~200개, 조회 결과의 key) | `Readout(model, kind="symptom_timeline")` — 고른 줄을 날 → 구획(증상 · 먹인 약 · 복약 체크 · 식사) → 조회 순으로 + 알레르기 · 만성질환 줄 | 조회하지 않은 key 는 지운다. 남는 줄이 없으면 `EVIDENCE_REQUIRED`. 모델은 문장을 쓰지 않는다 (#551) |
 | `create_medication_schedule` | `title_span?`, `dosage_span?`, `timing_spans[]`, `period_span?`, `indication_span?` | **초안 payload**(`op="create"`) — 코스 + dose N · **`notice_times[]` 필수**(확인 모달용) · `missing[]` · `schedule.symptom_codes`(`indication_span` 을 증상 사전으로 맞춘 코드 — 코드가 정하고 모델은 고르지 않는다) | **DB를 건드리지 않는다.** span은 발화 원문 부분 문자열이어야 함(코드 검증) · 시각은 `resolve_dose_timing` 결과만 |
 | `update_medication_schedule` | `title_span`(바꿀 약), `dosage_span?`, `timing_spans?[]`, `period_span?` — **`schedule_id` 는 모델에게 받지 않는다**(코드가 `title_span` 으로 진행 중 코스에서 찾는다) | **초안 payload**(`op="update"`, `schedule_id`, `before`) · 변경 후 `notice_times[]`. 값은 일정처럼 **전체 값**(지금 값에 바뀐 값을 얹은 것)이고 바뀐 부분만 따로 싣지 않는다 — 화면이 `before` 와 비교한다. tool 결과(모델)에는 바뀐 필드 이름 `changed[]` 가 실리고 payload 에는 없다 | 동일. 같은 약을 한 run 에서 또 고치면 앞 초안 위에 쌓여 **한 장**으로 나가고(같은 `draft_id`) 확인 문구도 마지막 것 하나만 남는다 — 일정의 `DraftBook` 과 같다. 지금 값과 같으면(처음 값으로 되돌려도) 초안을 만들지 않고 **성공으로** 끝낸다(`draft=false` · `changed=[]` · 안내 `med.no_change`) — 출력 tool 이 실패를 돌려주면 모델이 같은 호출을 되풀이한다. 이 약의 카드가 이미 나가 있으면 안내 없이 그 카드가 답이다. 되묻기를 이어받는 run 은 실패 코드 `NO_CHANGE` 로 같은 안내를 고른다. 같은 약의 카드와 되묻기(시점 · 중단 확인)는 한 run 에 같이 내지 않는다(`med.one_at_a_time`) — 질문 뒤 다음 run 이 새 카드를 또 만들어 한 약의 카드가 둘이 된다. 진행 중인 복약이 없으면 `notice.no_active_med` 로 성공 종료한다(실패로 돌리면 모델이 되풀이한다 — stop 과 같다). 말한 기간을 못 읽으면("다음 주 월요일까지") 지금 값 그대로 두고 `med.period_unclear` 를 붙인다 — `med.no_change` 로 뭉개지 않는다. 대상 회차를 anchor 로 못 찾으면 그 시각 둘레(±150분)의 **`fixed` 회차만** 같은 회차로 본다 — 저녁(19:00)과 자기 전(20:30)은 90분 차이라, 기준점이 있는 회차까지 가깝다고 옮기면 말하지 않은 회차가 사라진다. 기존 코스는 제출 전까지 그대로. 제출 시 같은 행 UPDATE + 아직 오지 않은 회차 행만 지우고 다시 만들기 — 지난 회차와 그 체크는 그대로 남는다 |
 | `stop_medication_schedule` | `title_span?` — 약 이름을 말하지 않았으면 비운다(약이 하나면 그 약, 둘 이상이면 되묻는다) | 묻는 run: `med.stop_confirm` 되묻기 + 되묻기 맥락(대상 `schedule_id` · 약 이름) / '네' 다음 run: 진행 중 코스를 다시 읽어(끝났거나 멈췄으면 `notice.no_active_med`) `status='stopped'` · `updated_at`=중단 시각 · `med.stopped` / '아니요' · 애매함: `med.stop_kept` | 확인 모달 · 초안 없음(10-18). **묻는 run 에서는 DB 를 건드리지 않는다.** soft delete — 회차 행·체크 보존. 대상 약 2개 이상 후보면 먼저 어느 약인지 `needs_observation` — 엉뚱한 약의 알림이 끊기므로 모호하면 되묻기 |
@@ -75,11 +75,17 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 **복약 생성·수정의 입력은 span입니다.** `title_span` · `dosage_span` · `timing_spans[]` · `period_span` · **`indication_span`**(복약 이유)은 전부 원문의 부분 문자열이어야 하고, 코드가 검증합니다. 출처는 **보호자 발화 또는 `prescription_draft`의 추출 텍스트** 둘 중 하나입니다. 발화에 이유가 없으면 `indication_span`은 비웁니다 — 추정 금지.
 
-**해석 금지어** (코드 `review.py`): 때문 · 의심 · 같아요 · 가능성 · ~염 · ~증 · 진단 · 괜찮아요 · 위험 ·
-같아 · 같습 · 같음 · 것 같 · 듯 · 추정 · 원인 · 탓 · 로 인해 · 우려. 병 이름 감기 · 독감 · 수족구 · 수두 · 홍역 · 코로나 ·
-바이러스 · 세균 · 탈수 와 ~염 · ~렴(뒤에 무엇이 붙든 — '~제' 만 뺀다) · ~증(조사까지) 은 그 줄 ref 원문에 있을 때만
-인용으로 통과한다. `compose_symptom_timeline` 은 그 밖에 줄 날짜가 그 ref 기록의 날짜 범위 안인지, 용량이 원문 용량과
-낱개로 같은지, 복약 줄의 체크 수가 `n/m회` 꼴 그대로 조회한 숫자인지("3회 중 3회" 같은 꼴은 거절) 본다 (#557 최종 리뷰)
+**진료 준비는 모델이 줄을 고르기만 한다 (#551).** 조회 tool 결과로 모델(외부 LLM)에게 가는 것은 줄의 key · 날짜 ·
+증상 코드뿐이다 — 증상 원문 · 조치 · 약 이름 · 용량 · 식사 내용은 보내지 않는다. 외부 LLM 전달 범위가 아직 열린
+결정이라(루트 CLAUDE.md §10) 정리에 꼭 필요한 것만 보낸다. 줄의 글은 코드가 기록 원문 · 등록값에서 그리고
+(`tools/visit_lines.py`), 모델이 문장을 쓰지 않으니 모델 글을 사후에 거르는 단계도 없다.
+
+**원문 거르기** (코드 `wording.py`): 진료 준비 · 검진 맥락 요약이 기록 원문(사전에 없는 증상 · 조치 · 식사)을 줄로 낼 때
+때문 · 의심 · 같아요 · 가능성 · 진단 · 괜찮아요 · 위험 · 같아 · 같습 · 같음 · 것 같 · 듯 · 추정 · 원인 · 탓 · 로 인해 · 우려,
+병 이름 감기 · 독감 · 수족구 · 수두 · 홍역 · 코로나 · 바이러스 · 세균 · 탈수 와 ~염 · ~렴(뒤에 무엇이 붙든 — '~제' 만
+뺀다) · ~증(조사까지), 측정 · 성장 평가 말이 들었으면 원문 대신 `기록 1건 (표현은 기록에서 확인)` 을 낸다. 원문은
+Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해서 인용 예외가 없다. 먹인 약 이름은 Memory 가 저장할 때
+발화와 글자 단위로 대조했으므로 거르지 않는다(열 타임라인과 같다)
 
 ## 3. 코드 tool
 
@@ -124,11 +130,11 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | 마지막 복약 | 48시간과 겹치는 코스(어제 끝난 코스 포함)마다 `checked_at` 이 있는 가장 늦은 **회차**의 예정 시각(`dose_date` + `scheduled_time`). 체크를 누른 시각(`checked_at`)은 쓰지 않는다 — 몰아서 누르면 실제와 어긋난다. 체크 안 된 회차는 나열하지 않는다("안 먹였다" 로 읽힌다) |
 | 다음 예정 | 진행 중 코스의 회차 행 중 지금 이후 가장 이른 것. 행이 없거나 멈춘 코스뿐이면 줄이 없다 — 패턴에서 계산하지 않는다 |
 | 먹인 약 | 48시간 안의 약 행(`medication_given`)을 `fever.given_dose` 로 시각(보호자가 말한 시각)순 나열. `linked_symptom_id` 가 있으면 연결된 체온 줄 바로 아래에 묶음으로만 놓는다("때문에" 로 잇지 않는다). 연결된 줄이 보이지 않으면 시각순에 둔다. 체크된 회차(`fever.last_dose`)와 시각의 뜻이 달라 문구를 나눈다 |
-| 가안 (#557) | `fever.last_dose` 의 시각 · `fever.given_dose` 문구는 PR 리뷰에서 확인한다 · 최저 체온은 체온 기록이 둘 이상일 때만 내고 같은 값이면 먼저 잰 것을 고른다 |
+| 가안 (#551) | `fever.last_dose` 의 시각 · `fever.given_dose` 문구는 PR 리뷰에서 확인한다 · 최저 체온은 체온 기록이 둘 이상일 때만 내고 같은 값이면 먼저 잰 것을 고른다 |
 | 금지 | 약 성분·계열 판정(아세트아미노펜/이부프로펜) · 계열 최소 간격으로 계산한 "투약 가능 시각" · 경과 해석 |
 | 선행 | `observation_health` 체온 세 칸 (공유 테이블 변경 요청) |
-| 부위 | 값 옆에 **잰 부위를 함께 보여준다.** 부위마다 정상 범위가 달라 숫자만 나열하면 들쭉날쭉해 보인다. 부위별 기준값은 **코드 상수**다 — 모델이 정상 범위를 지어내지 않는다. `measure_site` 가 비면 부위 비교 없이 숫자만 낸다. (#557 구현은 부위를 값 옆에 적기만 한다 — 부위별 기준값은 이슈 리뷰 결정 전이라 내지 않는다) |
-| 우선순위 | 응급 신호(3개월 미만 발열 등)에 걸리면 타임라인보다 병원 안내가 먼저. 판정은 `infant_fever(observations, months, now, timezone)` — 3개월 미만(`age_gates.yaml` 의 `infant_fever_emergency_below_month`) + 48시간 안 `fever` 코드 또는 `temperature >= FEVER_TEMPERATURE`(38.0, 코드 상수 하나 · 의료 검수 대상) |
+| 부위 | 값 옆에 **잰 부위를 함께 보여준다.** 부위마다 정상 범위가 달라 숫자만 나열하면 들쭉날쭉해 보인다. 부위별 기준값은 **코드 상수**다 — 모델이 정상 범위를 지어내지 않는다. `measure_site` 가 비면 부위 비교 없이 숫자만 낸다. (#551 구현은 부위를 값 옆에 적기만 한다 — 부위별 기준값은 이슈 리뷰 결정 전이라 내지 않는다) |
+| 우선순위 | 응급 신호(3개월 미만 발열 등)에 걸리면 타임라인보다 병원 안내가 먼저. 판정은 `infant_fever(observations, months, now, timezone)` — `below_month`(3) 개월 미만 + 48시간 안 `fever` 코드 또는 `temperature >= fever_temperature`(38.0). 두 값과 출처 후보 · 검수 상태는 `reference/infant_fever.yaml` 한 곳이다. **의료 검수(H-1) 전이지만 켜 둔다** — 끄면 3개월 미만 발열에 응급 안내가 사라진다(10-23 결정). 그 대신 체온은 보호자 발화와 대조된 숫자만 저장된다(Memory `_temperature_said`) |
 
 ### `get_next_dose`
 | 입력 | `schedule_id?`(없으면 active 전부), `now` |
@@ -254,7 +260,11 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | `checkup.no_ghostwrite` | 문진표는 대신 작성해 드릴 수 없어요. 들고 가실 기록을 정리했어요. |
 | `checkup.aged_out` | 영유아 건강검진은 만 6세 미만까지예요. 지금은 대상 기간이 끝났어요. |
 | `blocked.consent` | 건강 기록을 보려면 건강정보 동의가 필요해요. |
-| `visit.no_record` | 최근 2주 동안 건강 기록이 없어요. |
+| `visit.no_record` | 최근 한 달 동안 건강 기록이 없어요. |
+| `visit.symptom` | {days} {symptom}{detail} |
+| `visit.given` | {time} {title} 먹였다고 기록하셨어요 |
+| `visit.med_check` | {day} {title} 체크 {checked}/{planned}회 |
+| `visit.meal` | {day} {text} |
 | `place.unavailable` | 병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요. |
 | `prescription.not_found` | 처방전 정보를 찾지 못했어요. |
 | `safety.unavailable` | 알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요. |

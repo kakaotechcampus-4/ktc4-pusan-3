@@ -80,6 +80,10 @@ PRESCRIPTION_NOT_FOUND = "prescription.not_found"
 # 닫힘 · 기록 없음 · 조회 실패
 BLOCKED_CONSENT = "blocked.consent"  # 건강정보 동의 없음 — 전 라벨
 VISIT_NO_RECORD = "visit.no_record"
+VISIT_SYMPTOM = "visit.symptom"
+VISIT_GIVEN = "visit.given"
+VISIT_MED_CHECK = "visit.med_check"
+VISIT_MEAL = "visit.meal"
 PLACE_UNAVAILABLE = "place.unavailable"
 SAFETY_UNAVAILABLE = "safety.unavailable"
 

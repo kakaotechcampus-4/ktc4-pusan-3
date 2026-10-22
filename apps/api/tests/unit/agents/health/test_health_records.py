@@ -1,13 +1,15 @@
 """진료 준비 조회 tool — 증상 에피소드 · 먹인 약 · 최근 식사 · 복약 체크.
 
-- 증상은 에피소드 단위 줄이고(원문 · 코드 둘 다), 먹인 약 행은 에피소드 밖에서 시각순 줄로 간다
+- 🚨 모델에게 가는 결과는 key · 날짜 · 증상 코드뿐이다 (#551). 원문 · 약 이름 · 용량 · 식사 내용은
+  `state.visit_lines` 의 줄(코드가 그린 글)에만 있다
+- 증상은 에피소드 단위 줄이고, 먹인 약 행은 에피소드 밖에서 시각순 줄로 간다
 - 식사 줄에는 영양 수치가 없다
 - 복약 체크는 날짜 · 코스별 `n/m회` 사실만 — 체크 안 된 회차는 "안 먹였다" 가 아니라 `m` 에 센 채
   `n` 에서 빠진다
 - 오늘 이후 회차는 세지 않는다. 끝났거나 멈춘 코스도 기간이 겹치면 넣는다
-- 돌려준 id 는 `seen_refs` 에 적는다 — 출력 tool 이 줄의 ref 를 이걸로 검사한다
 """
 
+import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -34,6 +36,7 @@ from app.agents.health.tools.records import (
     search_medication_checks,
     search_recent_meals,
 )
+from app.agents.health.wording import FLAGGED, FORBIDDEN_DOSE_GUESS
 from tests.unit.agents.health.support import CHILD, KST, TODAY, context
 
 DAY = timedelta(days=1)
@@ -80,11 +83,21 @@ def antibiotic(checked=(), *, start: int = 2, end: int = 0, **kwargs):
     )
 
 
+def line(ctx, key: str) -> str:
+    """코드가 그린 그 key 의 줄."""
+    return ctx.state.visit_lines[key].body
+
+
+def sent(result) -> str:
+    """모델에게 가는 tool 결과 그대로(JSON)."""
+    return json.dumps(result.to_payload(), ensure_ascii=False, default=str)
+
+
 class TestSearchHealthObservations:
     async def test_증상은_에피소드_단위(self):
-        # 기침 3일 연속은 한 줄. 사흘 전 고열은 따로 한 줄
+        # 기침 3일 연속은 한 줄. 나흘 전 고열은 따로 한 줄
         ctx = with_memory(
-            row(TODAY - 4 * DAY, symptoms=("열나",), severity="높음"),
+            row(TODAY - 4 * DAY, symptoms=("열나",), severity="severe"),
             row(TODAY - 2 * DAY, symptoms=("기침",)),
             row(TODAY - DAY, symptoms=("기침",), action_taken="물 많이 먹임"),
             row(TODAY, symptoms=("잔기침",)),
@@ -93,41 +106,52 @@ class TestSearchHealthObservations:
         result = await search_health_observations(ctx, SearchHealthArgs())
 
         assert result.success
-        episodes = result.data["episodes"]
-        assert [(e["codes"], e["from"], e["to"]) for e in episodes] == [
-            (["fever"], "2026-09-24", "2026-09-24"),
-            (["cough"], "2026-09-26", "2026-09-28"),
+        assert result.data["symptoms"] == [
+            {"key": "s1", "from": "2026-09-24", "to": "2026-09-24", "codes": ["fever"]},
+            {"key": "s2", "from": "2026-09-26", "to": "2026-09-28", "codes": ["cough"]},
         ]
-        cough = episodes[1]
-        # 원문과 코드 둘 다. 조치는 보호자가 쓴 말 그대로
-        assert cough["symptom"] == "기침 / 잔기침"
-        assert cough["action_taken"] == "물 많이 먹임"
-        assert episodes[0]["severity"] == "높음"
-        assert set(cough) == {
-            "ref",
-            "refs",
-            "from",
-            "to",
-            "symptom",
-            "codes",
-            "severity",
-            "action_taken",
-        }
+        # 글은 코드가 그린다 — 사전 이름 · 보호자가 말한 정도 · 조치 원문
+        assert line(ctx, "s1") == "9/24 발열 · 정도: 심함"
+        assert line(ctx, "s2") == "9/26–9/28 기침 · 조치: 물 많이 먹임"
 
-    async def test_사전에_없는_증상도_원문_그대로_한_줄(self):
+    async def test_사전에_없는_증상은_원문_그대로_한_줄(self):
         ctx = with_memory(row(TODAY - DAY, symptoms=("눈을 자꾸 비벼요",)))
 
         result = await search_health_observations(ctx, SearchHealthArgs())
 
-        [line] = result.data["episodes"]
-        assert (line["symptom"], line["codes"]) == ("눈을 자꾸 비벼요", [])
+        assert result.data["symptoms"] == [
+            {"key": "s1", "from": "2026-09-27", "to": "2026-09-27", "codes": []}
+        ]
+        assert line(ctx, "s1") == "9/27 눈을 자꾸 비벼요"
+
+    async def test_원문의_해석_표현은_줄에_내지_않는다(self):
+        # Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못한다 — 인용 예외가 없다
+        ctx = with_memory(row(TODAY, symptoms=("중이염이래요",), action_taken="감기 때문에 병원"))
+
+        await search_health_observations(ctx, SearchHealthArgs())
+
+        assert line(ctx, "s1") == f"9/28 {FLAGGED} · 조치: {FLAGGED}"
+
+    async def test_모델에게는_원문을_보내지_않는다(self):
+        fever = row(TODAY - DAY, symptoms=("열나", "귀를 만져요"), action_taken="물수건")
+        medicine = given_row(TODAY, "타이레놀", linked_symptom_id=fever.id)
+        ctx = with_memory(fever, medicine)
+
+        result = await search_health_observations(ctx, SearchHealthArgs())
+
+        payload = sent(result)
+        for text in ("열나", "귀를 만져요", "물수건", "타이레놀"):
+            assert text not in payload
+        assert set(result.data) == {"symptoms", "given"}
+        assert all(set(e) == {"key", "from", "to", "codes"} for e in result.data["symptoms"])
+        assert all(set(g) == {"key", "date", "symptom_key"} for g in result.data["given"])
 
     async def test_먹인_약은_에피소드_밖_시각순_줄로(self):
         fever = row(TODAY - DAY, symptoms=("열나",))
         late = given_row(
             TODAY,
             "해열제",
-            at=datetime(2026, 9, 28, 1, 0, tzinfo=KST),
+            at=datetime(2026, 9, 28, 9, 0, tzinfo=KST),
             linked_symptom_id=fever.id,
         )
         early = given_row(TODAY - DAY, "해열제", at=datetime(2026, 9, 27, 22, 30, tzinfo=UTC))
@@ -136,25 +160,26 @@ class TestSearchHealthObservations:
         result = await search_health_observations(ctx, SearchHealthArgs())
 
         # 약 행은 에피소드 줄에 들어가지 않는다 — 증상 줄은 열 하나
-        assert [e["codes"] for e in result.data["episodes"]] == [["fever"]]
+        assert [e["codes"] for e in result.data["symptoms"]] == [["fever"]]
         given = result.data["given"]
         # UTC 로 온 시각은 아이 타임존으로 — 9/27 22:30 UTC 는 KST 9/28 07:30 이다
-        assert [(g["time"], g["medication_given"]) for g in given] == [
-            ("2026-09-28T01:00", "해열제"),
-            ("2026-09-28T07:30", "해열제"),
+        assert [g["date"] for g in given] == ["2026-09-28", "2026-09-28"]
+        assert [line(ctx, g["key"]) for g in given] == [
+            "9/28 07:30 해열제 먹였다고 기록하셨어요",
+            "9/28 09:00 해열제 먹였다고 기록하셨어요",
         ]
-        assert [g["ref"] for g in given] == [str(late.id), str(early.id)]
-        # 연결은 돌려준 증상 행이면 그 행의 id, 아니면 None
-        assert given[0]["linked_symptom_ref"] == str(fever.id)
-        assert given[1]["linked_symptom_ref"] is None
+        # 연결은 돌려준 증상 줄이면 그 줄의 key, 아니면 None
+        assert [g["symptom_key"] for g in given] == [None, "s1"]
 
     async def test_시각을_모르는_약_행은_날짜만(self):
         ctx = with_memory(given_row(TODAY - DAY, "시럽"))
 
         result = await search_health_observations(ctx, SearchHealthArgs())
 
-        assert result.data["given"][0]["time"] == "2026-09-27"
-        assert result.data["episodes"] == []
+        [given] = result.data["given"]
+        assert given["date"] == "2026-09-27"
+        assert line(ctx, given["key"]) == "9/27 시럽 먹였다고 기록하셨어요"
+        assert result.data["symptoms"] == []
 
     async def test_증상_필터에_걸리지_않은_증상에_묶인_약_행은_넣지_않는다(self):
         cough = row(TODAY, symptoms=("기침",))
@@ -164,26 +189,26 @@ class TestSearchHealthObservations:
 
         result = await search_health_observations(ctx, SearchHealthArgs(symptom="기침"))
 
-        assert [e["codes"] for e in result.data["episodes"]] == [["cough"]]
+        assert [e["codes"] for e in result.data["symptoms"]] == [["cough"]]
         assert result.data["given"] == []
-        assert str(medicine.id) not in ctx.state.seen_refs
+        assert {ref.id for v in ctx.state.visit_lines.values() for ref in v.refs} == {cough.id}
 
     async def test_연결된_증상이_기간_밖이면_연결을_싣지_않는다(self):
-        # 이번 결과에 없는 행의 id 를 돌려주면 모델이 못 본 줄을 가리키게 된다
+        # 이번 결과에 없는 줄의 key 를 돌려주면 모델이 못 본 줄을 가리키게 된다
         old_fever = row(TODAY - 20 * DAY, symptoms=("열나",))
         medicine = given_row(TODAY, "해열제", linked_symptom_id=old_fever.id)
         ctx = with_memory(old_fever, medicine)
 
         result = await search_health_observations(ctx, SearchHealthArgs(period="14d"))
 
-        assert result.data["given"][0]["linked_symptom_ref"] is None
+        assert result.data["given"][0]["symptom_key"] is None
 
     async def test_증상_필터는_코드가_같은_말을_함께_찾는다(self):
         ctx = with_memory(row(TODAY - DAY, symptoms=("기침",)), row(TODAY, symptoms=("콧물",)))
 
         result = await search_health_observations(ctx, SearchHealthArgs(symptom="콜록"))
 
-        assert [e["codes"] for e in result.data["episodes"]] == [["cough"]]
+        assert [e["codes"] for e in result.data["symptoms"]] == [["cough"]]
 
     async def test_기간_밖_기록은_읽지_않는다(self):
         ctx = with_memory(
@@ -192,7 +217,7 @@ class TestSearchHealthObservations:
 
         result = await search_health_observations(ctx, SearchHealthArgs(period="3d"))
 
-        assert [e["codes"] for e in result.data["episodes"]] == [["cough"]]
+        assert [e["codes"] for e in result.data["symptoms"]] == [["cough"]]
         assert ctx.ports.memory.requested == [(TODAY - 2 * DAY, TODAY)]
 
     async def test_기록이_없으면_NO_RECORDS(self):
@@ -215,9 +240,9 @@ class TestSearchHealthObservations:
 
         result = await search_health_observations(ctx, SearchHealthArgs())
 
-        assert "temperature" not in result.data["episodes"][0]
+        assert "38.5" not in sent(result) and "38.5" not in line(ctx, "s1")
 
-    async def test_돌려준_id_는_seen_refs_에(self):
+    async def test_줄의_근거는_묶은_기록_전부(self):
         fever = row(TODAY - DAY, symptoms=("열나",))
         again = row(TODAY, symptoms=("열나",))
         medicine = given_row(TODAY, "해열제", linked_symptom_id=again.id)
@@ -225,14 +250,23 @@ class TestSearchHealthObservations:
 
         result = await search_health_observations(ctx, SearchHealthArgs())
 
-        seen = ctx.state.seen_refs
-        # 에피소드는 기록 둘을 묶는다 — 줄의 ref 와 refs 가 전부 seen_refs 에 있다
-        [line] = result.data["episodes"]
-        assert line["ref"] == str(fever.id)
-        assert line["refs"] == [str(fever.id), str(again.id)]
-        assert set(seen) == {str(fever.id), str(again.id), str(medicine.id)}
-        assert all(ref.kind == "observation_health" for ref in seen.values())
-        assert seen[str(medicine.id)] == Ref("observation_health", medicine.id)
+        [episode] = result.data["symptoms"]
+        assert ctx.state.visit_lines[episode["key"]].refs == (
+            Ref("observation_health", fever.id),
+            Ref("observation_health", again.id),
+        )
+        [given] = result.data["given"]
+        assert given["symptom_key"] == episode["key"]
+        assert ctx.state.visit_lines[given["key"]].refs == (Ref("observation_health", medicine.id),)
+
+    async def test_다시_불러도_같은_기록은_같은_key(self):
+        ctx = with_memory(row(TODAY, symptoms=("열나",)), given_row(TODAY, "해열제"))
+
+        first = await search_health_observations(ctx, SearchHealthArgs())
+        again = await search_health_observations(ctx, SearchHealthArgs(period="30d"))
+
+        assert first.data == again.data
+        assert set(ctx.state.visit_lines) == {"s1", "g1"}
 
 
 class TestSearchRecentMeals:
@@ -243,23 +277,18 @@ class TestSearchRecentMeals:
         result = await search_recent_meals(ctx, SearchMealsArgs())
 
         assert result.success
-        # 3일 밖(9일 전)은 읽지 않는다
-        assert result.data["meals"] == [
-            {
-                "ref": str(meal.id),
-                "date": "2026-09-27",
-                "subject": "미역국",
-                "amount_text": "반 그릇",
-            }
-        ]
-        assert ctx.state.seen_refs == {str(meal.id): Ref("observation_food", meal.id)}
+        # 3일 밖(9일 전)은 읽지 않는다. 모델에게는 key · 날짜만
+        assert result.data["meals"] == [{"key": "f1", "date": "2026-09-27"}]
+        assert "미역국" not in sent(result)
+        assert line(ctx, "f1") == "9/27 미역국 반 그릇"
+        assert ctx.state.visit_lines["f1"].refs == (Ref("observation_food", meal.id),)
 
-    async def test_양을_말하지_않았으면_None(self):
+    async def test_양을_말하지_않았으면_음식만(self):
         ctx = with_memory(meals=[MealRecord(UUID(int=79), TODAY, "죽", None)])
 
-        result = await search_recent_meals(ctx, SearchMealsArgs())
+        await search_recent_meals(ctx, SearchMealsArgs())
 
-        assert result.data["meals"][0]["amount_text"] is None
+        assert line(ctx, "f1") == "9/28 죽"
 
     async def test_기록이_없어도_실패가_아니다(self):
         # 식사는 곁들이는 줄이라 0건이 진료 준비를 막지 않는다
@@ -279,13 +308,18 @@ class TestSearchMedicationChecks:
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
         assert result.success
-        assert [
-            (c["date"], c["title"], c["checked"], c["planned"]) for c in result.data["checks"]
-        ] == [
-            ("2026-09-26", "항생제", 3, 3),
-            ("2026-09-27", "항생제", 3, 3),
-            ("2026-09-28", "항생제", 1, 3),
+        assert result.data["checks"] == [
+            {"key": "c1", "date": "2026-09-26"},
+            {"key": "c2", "date": "2026-09-27"},
+            {"key": "c3", "date": "2026-09-28"},
         ]
+        assert [line(ctx, f"c{n}") for n in (1, 2, 3)] == [
+            "9/26 항생제 5ml 체크 3/3회",
+            "9/27 항생제 5ml 체크 3/3회",
+            "9/28 항생제 5ml 체크 1/3회",
+        ]
+        # 약 이름 · 용량은 모델에게 가지 않는다
+        assert "항생제" not in sent(result) and "5ml" not in sent(result)
 
     async def test_오늘_이후_회차는_세지_않는다(self):
         # 오늘 10:00 — 08:30 회차만 지났다. 12:30 · 19:30 은 아직 오지 않았다
@@ -294,8 +328,8 @@ class TestSearchMedicationChecks:
 
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
-        today = [c for c in result.data["checks"] if c["date"] == "2026-09-28"]
-        assert [(c["checked"], c["planned"]) for c in today] == [(1, 1)]
+        [today] = [c for c in result.data["checks"] if c["date"] == "2026-09-28"]
+        assert line(ctx, today["key"]) == "9/28 항생제 5ml 체크 1/1회"
 
     async def test_끝난_코스와_중단한_코스도_기간이_겹치면_넣는다(self):
         ended = antibiotic(start=6, end=3)  # 지난주에 끝난 항생제
@@ -307,7 +341,8 @@ class TestSearchMedicationChecks:
 
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs(period="7d"))
 
-        assert {c["title"] for c in result.data["checks"]} == {"항생제", "시럽"}
+        titles = {line(ctx, c["key"]).split()[1] for c in result.data["checks"]}
+        assert titles == {"항생제", "시럽"}
 
     async def test_멈춘_코스의_멈춘_뒤_회차는_계획이_아니다(self):
         # 이틀 전 낮에 멈춘 코스 — 그 뒤 날짜에 0/3 줄이 생기면 먹이려던 적 없는 회차를 센 것이다
@@ -326,9 +361,9 @@ class TestSearchMedicationChecks:
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
         # 멈춘 날은 08:30 · 12:30 두 회차만(19:30 은 멈춘 뒤). 그 뒤 날짜는 줄이 없다
-        assert [(c["date"], c["checked"], c["planned"]) for c in result.data["checks"]] == [
-            ("2026-09-25", 1, 3),
-            ("2026-09-26", 0, 2),
+        assert [line(ctx, c["key"]) for c in result.data["checks"]] == [
+            "9/25 시럽 체크 1/3회",
+            "9/26 시럽 체크 0/2회",
         ]
 
     async def test_멈춘_뒤에_체크된_회차도_사실이라_센다(self):
@@ -347,20 +382,19 @@ class TestSearchMedicationChecks:
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
         # 08:30 은 멈추기 전이라 계획, 12:30 은 멈춘 뒤지만 체크돼 있어 계획 + 체크, 19:30 은 뺀다
-        assert [(c["date"], c["checked"], c["planned"]) for c in result.data["checks"]] == [
-            ("2026-09-27", 1, 2)
-        ]
+        assert [line(ctx, c["key"]) for c in result.data["checks"]] == ["9/27 시럽 체크 1/2회"]
 
     async def test_멈춘_시각을_모르면_예전처럼_센다(self):
         stopped = course_with_doses(
             "시럽", PATTERN, TODAY - DAY, TODAY, status="stopped", stopped_at=None
         )
+        ctx = with_courses(stopped)
 
-        result = await search_medication_checks(with_courses(stopped), SearchMedicationChecksArgs())
+        result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
-        assert [(c["date"], c["planned"]) for c in result.data["checks"]] == [
-            ("2026-09-27", 3),
-            ("2026-09-28", 3),
+        assert [line(ctx, c["key"]) for c in result.data["checks"]] == [
+            "9/27 시럽 체크 0/3회",
+            "9/28 시럽 체크 0/3회",
         ]
 
     async def test_저장소로_멈추면_멈춘_시각이_코스에_실린다(self):
@@ -376,9 +410,11 @@ class TestSearchMedicationChecks:
         assert (seen.status, seen.stopped_at) == ("stopped", at)
 
     async def test_기간과_겹치는_코스가_없으면_NO_RECORDS(self):
-        old = course_with_doses("옛 약", PATTERN, TODAY - 30 * DAY, TODAY - 20 * DAY)
+        old = course_with_doses("옛 약", PATTERN, TODAY - 40 * DAY, TODAY - 31 * DAY)
 
-        result = await search_medication_checks(with_courses(old), SearchMedicationChecksArgs())
+        result = await search_medication_checks(
+            with_courses(old), SearchMedicationChecksArgs(period="30d")
+        )
 
         assert result.success is False
         assert result.error is not None and result.error["code"] == ErrorCode.NO_RECORDS
@@ -392,31 +428,30 @@ class TestSearchMedicationChecks:
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
         assert result.success and result.data["checks"] == []
-        assert ctx.state.seen_refs == {}
+        assert ctx.state.visit_lines == {}
 
     async def test_체크_안_된_회차를_안_먹였다고_쓰지_않는다(self):
         ctx = with_courses(antibiotic())
 
         result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
-        # 체크 0 이어도 "안 먹였다" 필드 · 문구가 없다 — checked / planned 두 숫자뿐
-        assert {c["checked"] for c in result.data["checks"]} == {0}
-        assert all(
-            set(c) == {"ref", "date", "title", "checked", "planned"} for c in result.data["checks"]
-        )
+        bodies = [line(ctx, c["key"]) for c in result.data["checks"]]
+        assert bodies and all(body.endswith("체크 0/3회") for body in bodies)
+        assert not any(word in body for body in bodies for word in FORBIDDEN_DOSE_GUESS)
 
-    async def test_돌려준_id_는_seen_refs_에(self):
+    async def test_줄의_근거는_코스(self):
         course, doses = antibiotic()
         ctx = with_courses((course, doses))
 
-        result = await search_medication_checks(ctx, SearchMedicationChecksArgs())
+        await search_medication_checks(ctx, SearchMedicationChecksArgs())
 
-        assert {c["ref"] for c in result.data["checks"]} == {str(course.id)}
-        assert ctx.state.seen_refs == {str(course.id): Ref("medication_schedule", course.id)}
+        assert {v.refs for v in ctx.state.visit_lines.values()} == {
+            (Ref("medication_schedule", course.id),)
+        }
 
 
 class TestRegistry:
-    async def test_네_tool_이름으로_실행된다(self):
+    async def test_세_tool_이름으로_실행된다(self):
         ctx = with_memory(row(TODAY, symptoms=("열나",)))
         allowed = (
             "search_health_observations",
@@ -436,7 +471,7 @@ class TestRegistry:
         [
             ("search_health_observations", {"period": "90d"}),
             ("search_recent_meals", {"period": "7d"}),
-            ("search_medication_checks", {"period": "30d"}),
+            ("search_medication_checks", {"period": "90d"}),
             ("search_health_observations", {"child_id": "x"}),
         ],
     )
@@ -444,61 +479,3 @@ class TestRegistry:
         result = await execute_tool(name, arguments, context(), allowed=(name,))
 
         assert result.error is not None and result.error["code"] == ErrorCode.INVALID_ARGS
-
-
-class TestRefTexts:
-    """출력 tool 의 사후 검사가 줄을 원문과 대조할 수 있게, 조회한 id 의 원문을 같이 적는다."""
-
-    async def test_증상_행은_보호자가_쓴_말_전부를_적는다(self):
-        fever = row(TODAY, symptoms=("열나",), severity="높음", action_taken="물수건")
-        ctx = with_memory(fever)
-
-        await search_health_observations(ctx, SearchHealthArgs())
-
-        assert ctx.state.ref_texts[str(fever.id)] == "열나 높음 물수건"
-        # 약 행이 아니면 약 이름 칸에 없다
-        assert str(fever.id) not in ctx.state.ref_names
-
-    async def test_먹인_약_행은_약_이름_원문을_적는다(self):
-        medicine = given_row(TODAY, "해열제")
-        ctx = with_memory(medicine)
-
-        await search_health_observations(ctx, SearchHealthArgs())
-
-        assert ctx.state.ref_names[str(medicine.id)] == "해열제"
-        assert ctx.state.ref_texts[str(medicine.id)] == "해열제"
-
-    async def test_식사는_음식과_양_원문을_적는다(self):
-        meal = MealRecord(UUID(int=7001), TODAY, "미음", "반 그릇")
-        ctx = with_memory(meals=[meal])
-
-        await search_recent_meals(ctx, SearchMealsArgs())
-
-        assert ctx.state.ref_texts[str(meal.id)] == "미음 반 그릇"
-
-    async def test_복약_코스는_등록한_이름과_용량_원문을_적는다(self):
-        course, doses = antibiotic()
-        ctx = with_courses((course, doses))
-
-        await search_medication_checks(ctx, SearchMedicationChecksArgs())
-
-        assert ctx.state.ref_names[str(course.id)] == "항생제"
-        assert ctx.state.ref_texts[str(course.id)] == "항생제 5ml"
-
-    async def test_필터에_걸러진_행의_원문은_적지_않는다(self):
-        cough = row(TODAY, symptoms=("기침",))
-        fever = row(TODAY, symptoms=("열나",))
-        ctx = with_memory(cough, fever)
-
-        await search_health_observations(ctx, SearchHealthArgs(symptom="기침"))
-
-        assert str(fever.id) not in ctx.state.ref_texts
-
-    async def test_복약_체크_수는_날짜별로_적는다(self):
-        course, doses = antibiotic(checked={(TODAY - DAY, time(8, 30))})
-        ctx = with_courses((course, doses))
-
-        await search_medication_checks(ctx, SearchMedicationChecksArgs())
-
-        assert ctx.state.check_counts[(str(course.id), TODAY - DAY)] == (1, 3)
-        assert ctx.state.check_counts[(str(course.id), TODAY)] == (0, 3)

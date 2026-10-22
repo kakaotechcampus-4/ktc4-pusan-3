@@ -12,6 +12,9 @@ Memory 저장 케이스(`case.memory`)는 Health 대신 Memory Agent 를 인메�
 저장된 관찰 행(전 도메인)을 `Ran.memory_rows` 에 담는다. `client` 는 Memory 몫이다. 저장소에는
 `case.memory_seed` 의 기록만 미리 있다(T21-memory 의 앞선 열 기록 — 따로 말한 약을 잇지 않는지
 보려고).
+
+라벨 케이스는 모델 자리를 `_Recorder` 로 감싸 모델에게 간 system · tool 메시지를 `Ran.model_inputs`
+에 담는다 — 진료 준비가 기록 원문 · 약 이름 · 용량을 외부 LLM 으로 보내지 않는지 판정이 본다 (#551).
 """
 
 import time
@@ -36,6 +39,27 @@ WRITER = UUID("00000000-0000-7000-8000-0000000000ff")  # 말한 보호자 (지�
 _DOMAINS = ("food", "health", "education", "activity", "routine")
 
 
+class _Recorder:
+    """모델 자리를 감싸 모델에게 간 system · tool 메시지를 모은다. 나머지는 그대로 넘긴다."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.messages: list[dict] = []
+
+    async def chat(self, messages, **kwargs):
+        # loop 가 messages 를 이어 쓰므로 부를 때마다 처음부터 다시 담긴다 — 판정은 중복을
+        # 개의치 않는다
+        self.messages.extend(
+            {"role": m.get("role"), "content": m.get("content")}
+            for m in messages
+            if m.get("role") in {"system", "tool"}
+        )
+        return await self._inner.chat(messages, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 async def run_case(case: Case, *, client: Any | None) -> Ran:
     world = build_world(case.world, now=NIGHT if case.night else DAY, run_id=f"live-{case.case_id}")
     request = case.text or doc_inputs()[case.input_id]
@@ -45,6 +69,7 @@ async def run_case(case: Case, *, client: Any | None) -> Ran:
         return await _run_memory(case, world, request, client=client, started=started)
 
     turns: list[Turn] = []
+    recorder = _Recorder(client) if client is not None else None
     if case.label is None:
         # hook 케이스 — 라벨이 아니라 Memory 저장 직후 pipeline 이 부르는 함수를 직접 부른다.
         # pipeline 연결은 다른 이슈라 여기서는 결과를 봉투에 싸기만 한다
@@ -67,7 +92,7 @@ async def run_case(case: Case, *, client: Any | None) -> Ran:
                 request_texts=(text,),
             )
             # 모듈 속성으로 부른다 — conftest 가 감싼 run 이 걸려야 결과 파일에 agent call 이 남는다
-            turn_result = await health_agent.run(task, context, client=client)
+            turn_result = await health_agent.run(task, context, client=recorder)
             turns.append(
                 Turn(text, turn_result, context.now, tuple(world.medication.writes[written:]))
             )
@@ -81,6 +106,7 @@ async def run_case(case: Case, *, client: Any | None) -> Ran:
         result=result,
         elapsed_ms=elapsed_ms,
         turns=tuple(turns),
+        model_inputs=tuple(recorder.messages) if recorder is not None else (),
     )
 
 

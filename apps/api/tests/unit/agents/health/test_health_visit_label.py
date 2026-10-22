@@ -1,11 +1,14 @@
 """`visit_summary` 라벨 실행기 — 열 질문 · 기록 없음은 모델 0회, 정리는 모델 한 번.
 
-- 순서: 3개월 미만 발열이면 `emergency` 가 맨 앞 → 열 표현이면 열 타임라인(0회) → 최근 14일 건강
-  기록 0건이면 `visit.no_record`(0회) → 그 밖에는 tool loop(`model_calls=1`)
+- 순서: 3개월 미만 발열이면 `emergency` 가 맨 앞 → 열 표현이면 열 타임라인(0회) → 최근 30일 건강
+  기록도 복약 코스도 0건이면 `visit.no_record`(0회) → 그 밖에는 tool loop(`model_calls=1`)
+- 🚨 정리 loop 에서 모델은 줄의 key 만 고른다 (#551) — 모델에게 가는 글에 기록 원문 · 약 이름 ·
+  용량 · 식사 내용이 없다
 - 열 표현은 작은 표로 가른다. 모델이 가르지 않는다
 - 안전 조회가 실패해도 정리는 진행하고 `safety.unavailable` 경고가 정리 맨 위에 붙는다
 """
 
+import json
 from dataclasses import replace
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -18,7 +21,6 @@ from app.agents.health.agent import run
 from app.agents.health.labels.visit import FEVER_WORDS, is_fever_question
 from app.agents.health.prompt import build_system_prompt
 from app.agents.health.readouts import READOUTS
-from app.agents.health.review import FORBIDDEN_INTERPRETATION
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.inmemory import (
     InMemoryHealthMemory,
@@ -106,9 +108,9 @@ async def test_기록이_없으면_모델_없이_안내():
     assert result.readouts == (READOUTS.render("visit.no_record"),)
 
 
-async def test_14일_밖의_기록만_있으면_기록이_없는_것이다():
+async def test_30일_밖의_기록만_있으면_기록이_없는_것이다():
     old = replace(
-        COUGH, id=UUID(int=4010), observed_from=TODAY - 20 * DAY, observed_to=TODAY - 20 * DAY
+        COUGH, id=UUID(int=4010), observed_from=TODAY - 40 * DAY, observed_to=TODAY - 40 * DAY
     )
     llm = FakeLLM()
 
@@ -118,29 +120,50 @@ async def test_14일_밖의_기록만_있으면_기록이_없는_것이다():
     assert result.readouts == (READOUTS.render("visit.no_record"),)
 
 
+async def test_2주보다_오래된_기록도_한_달_안이면_정리로_간다():
+    # 보호자가 한 달을 물을 수 있다 — 14일만 보고 "없어요" 로 막지 않는다
+    old = replace(
+        COUGH, id=UUID(int=4011), observed_from=TODAY - 20 * DAY, observed_to=TODAY - 20 * DAY
+    )
+    llm = FakeLLM(
+        call("search_health_observations", {"period": "30d"}),
+        call("compose_symptom_timeline", {"keys": ["s1"]}),
+    )
+
+    result = await run(visit("한 달 동안 증상 정리해줘"), world(old), client=llm)
+
+    assert result.model_calls == 1
+    assert timeline_of(result).body.startswith("9/8 기침")
+
+
+async def test_복약_코스만_있어도_기록이_있는_것이다():
+    # 증상 기록이 없어도 복약 체크 n/m 은 진료에 들고 갈 기록이다
+    ctx = world(courses=[antibiotic(checked={(TODAY - DAY, time(8, 30))})])
+    llm = FakeLLM(
+        call("search_medication_checks", {}),
+        call("compose_symptom_timeline", {"keys": ["c2"]}),
+    )
+
+    result = await run(visit(), ctx, client=llm)
+
+    assert result.model_calls == 1
+    assert timeline_of(result).body.startswith("9/27 항생제 5ml 체크 1/3회")
+
+
 async def test_먹인_약_행만_있어도_기록이_있는_것이다():
     # 약 행도 건강 기록이다 — 증상이 없다고 "기록 없음" 으로 막지 않는다
     llm = FakeLLM(
         call("search_health_observations", {"period": "14d"}),
         call(
             "compose_symptom_timeline",
-            {
-                "lines": [
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "given",
-                        "text": "해열제 먹였다고 기록",
-                        "ref": str(GIVEN_ONLY.id),
-                    }
-                ]
-            },
+            {"keys": ["g1"]},
         ),
     )
 
     result = await run(visit(), world(GIVEN_ONLY), client=llm)
 
     assert result.model_calls == 1
-    assert "해열제" in timeline_of(result).body
+    assert timeline_of(result).body.startswith("9/27 해열제 먹였다고 기록하셨어요")
 
 
 async def test_열_언제부터는_모델_없이():
@@ -176,16 +199,7 @@ async def test_열_표현이_없으면_체온이_있어도_정리로_간다():
         call("search_health_observations", {}),
         call(
             "compose_symptom_timeline",
-            {
-                "lines": [
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "symptom",
-                        "text": "기침 (조금)",
-                        "ref": str(COUGH.id),
-                    }
-                ]
-            },
+            {"keys": ["s1"]},
         ),
     )
 
@@ -218,10 +232,6 @@ async def test_정리는_모델_한_번():
         meals=[MEAL],
         courses=[antibiotic(checked={(TODAY - DAY, time(8, 30))})],
     )
-    store = ctx.ports.medication
-    [course] = await store.courses_overlapping(
-        child_id=ctx.child_id, date_from=TODAY - 14 * DAY, date_to=TODAY
-    )
     llm = FakeLLM(
         calls(
             ("search_health_observations", {"period": "14d"}),
@@ -230,28 +240,7 @@ async def test_정리는_모델_한_번():
         ),
         call(
             "compose_symptom_timeline",
-            {
-                "lines": [
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "symptom",
-                        "text": "기침 (조금)",
-                        "ref": str(COUGH.id),
-                    },
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "meal",
-                        "text": "미음 반 그릇",
-                        "ref": str(MEAL.id),
-                    },
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "medication",
-                        "text": "항생제 5ml 체크 1/3회",
-                        "ref": str(course.id),
-                    },
-                ]
-            },
+            {"keys": ["s1", "f1", "c2"]},
         ),
     )
 
@@ -259,12 +248,19 @@ async def test_정리는_모델_한_번():
 
     assert result.status == "completed"
     assert result.model_calls == 1 and len(llm.seen) == 2
-    body = timeline_of(result).body
-    assert "9/27 기침 (조금)" in body and "미음 반 그릇" in body
-    assert "항생제 5ml 체크 1/3회" in body
-    # 알레르기 · 만성질환 줄은 코드가 붙인다
-    assert READOUTS.render("card.allergy", items="등록된 내용이 없어요").body in body
+    # 줄의 글은 코드가 기록에서 그린다. 알레르기 · 만성질환 줄도 코드가 붙인다
+    assert timeline_of(result).body.split("\n") == [
+        "9/27 기침 · 정도: 조금",
+        "9/27 항생제 5ml 체크 1/3회",
+        "9/27 미음 반 그릇",
+        READOUTS.render("card.allergy", items="등록된 내용이 없어요").body,
+        READOUTS.render("card.chronic", items="등록된 내용이 없어요").body,
+    ]
     assert result.medication_drafts == () and result.event_requests == ()
+    # 모델이 본 글(system · 요청 · tool 결과)에 기록 원문 · 약 이름 · 용량 · 식사 내용이 없다
+    seen = json.dumps(llm.seen, ensure_ascii=False, default=str)
+    for raw in ("기침", "조금", "항생제", "5ml", "미음", "반 그릇"):
+        assert raw not in seen, raw
 
 
 async def test_모델이_정리를_내지_못하면_실패():
@@ -290,16 +286,7 @@ async def test_3개월_미만_발열은_응급_안내가_먼저():
         call("search_health_observations", {}),
         call(
             "compose_symptom_timeline",
-            {
-                "lines": [
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "symptom",
-                        "text": "열나",
-                        "ref": str(READING.id),
-                    }
-                ]
-            },
+            {"keys": ["s1"]},
         ),
     )
     summary = await run(visit(), world(READING, birth=young), client=llm)
@@ -327,16 +314,7 @@ async def test_안전_조회_실패여도_진행하고_경고():
         call("search_health_observations", {}),
         call(
             "compose_symptom_timeline",
-            {
-                "lines": [
-                    {
-                        "date": (TODAY - DAY).isoformat(),
-                        "section": "symptom",
-                        "text": "기침 (조금)",
-                        "ref": str(COUGH.id),
-                    }
-                ]
-            },
+            {"keys": ["s1"]},
         ),
     )
 
@@ -449,16 +427,7 @@ class TestRouting:
             call("search_health_observations", {}),
             call(
                 "compose_symptom_timeline",
-                {
-                    "lines": [
-                        {
-                            "date": (TODAY - DAY).isoformat(),
-                            "section": "symptom",
-                            "text": "기침 (조금)",
-                            "ref": str(COUGH.id),
-                        }
-                    ]
-                },
+                {"keys": ["s1"]},
             ),
         )
 
@@ -475,42 +444,40 @@ class TestRegistered:
         assert HealthTaskType.VISIT_SUMMARY in registry.IMPLEMENTED_TASKS
         assert set(agent._LABEL_RUNNERS) == registry.IMPLEMENTED_TASKS
 
-    def test_모델에는_조회_넷과_출력_하나만_열린다(self):
+    def test_모델에는_조회_셋과_출력_하나만_열린다(self):
+        # 약 이름 · 용량을 보여 주는 search_medication_schedules 는 열지 않는다 (#551)
         assert registry.tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
             "compose_symptom_timeline",
             "search_health_observations",
             "search_medication_checks",
-            "search_medication_schedules",
             "search_recent_meals",
         )
 
 
 class TestPrompt:
-    def test_정리만_하고_해석하지_않는다(self):
+    def test_줄은_고르기만_하고_쓰지_않는다(self):
         prompt = build_system_prompt(world(), HealthTaskType.VISIT_SUMMARY)
 
         assert TODAY.isoformat() in prompt
-        for word in FORBIDDEN_INTERPRETATION:
-            assert word in prompt  # 금지어를 열거해 쓰지 말라고 적는다
-        for section in ("symptom", "meal", "medication", "given"):
-            assert section in prompt
-        assert "ref" in prompt and "compose_symptom_timeline" in prompt
-        assert "체크 안 됨" in prompt
+        assert "key" in prompt and "compose_symptom_timeline" in prompt
+        assert "문장을 쓰지 않는다" in prompt
+        # 줄을 쓰던 시절의 지시가 남아 있지 않다
+        assert "ref" not in prompt and "전체 줄" not in prompt
 
-    def test_거절되면_전체_줄을_다시_보낸다(self):
+    def test_조회_tool_셋만_안내한다(self):
         prompt = build_system_prompt(world(), HealthTaskType.VISIT_SUMMARY)
 
-        assert "전체 줄" in prompt and "그 줄만 고쳐" not in prompt
+        for name in (
+            "search_health_observations",
+            "search_recent_meals",
+            "search_medication_checks",
+        ):
+            assert name in prompt
+        assert "search_medication_schedules" not in prompt
 
-    def test_복약_줄은_체크_조회에서_만들고_등록_약_조회는_ref_로_쓰지_않는다(self):
+    def test_알레르기는_코드가_붙이고_건강정보를_싣지_않는다(self):
         prompt = build_system_prompt(world(), HealthTaskType.VISIT_SUMMARY)
 
-        assert "ref 로 쓰지 않는다" in prompt
-        assert "지금 먹이는 약은 search_medication_schedules" not in prompt
-
-    def test_알레르기를_쓰지_말라고_하고_건강정보를_싣지_않는다(self):
-        prompt = build_system_prompt(world(), HealthTaskType.VISIT_SUMMARY)
-
-        assert "알레르기" in prompt and "만성질환" in prompt  # 쓰지 말라는 지시
+        assert "알레르기" in prompt and "만성질환" in prompt  # 코드가 붙인다는 안내
         for forbidden in ("별이", "땅콩"):
             assert forbidden not in prompt

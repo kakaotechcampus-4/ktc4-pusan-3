@@ -26,7 +26,6 @@ SPEC_MODEL = {
     "visit_summary": {
         "search_health_observations",
         "search_recent_meals",
-        "search_medication_schedules",
         "search_medication_checks",
         "compose_symptom_timeline",
     },
@@ -155,7 +154,6 @@ def test_진료_준비_조회_tool_은_모델_tool_표와_핸들러에_다_있�
     reads = {
         "search_health_observations",
         "search_recent_meals",
-        "search_medication_schedules",
         "search_medication_checks",
     }
 
@@ -163,13 +161,13 @@ def test_진료_준비_조회_tool_은_모델_tool_표와_핸들러에_다_있�
     assert reads <= set(TOOL_HANDLERS)
 
 
-def test_진료_준비_라벨은_조회_넷과_출력_하나만_이름순으로_연다():
-    # 코드 tool(build_fever_timeline 등)은 모델에 열리지 않는다
+def test_진료_준비_라벨은_조회_셋과_출력_하나만_이름순으로_연다():
+    # 코드 tool(build_fever_timeline 등)은 모델에 열리지 않는다. 약 이름 · 용량을 모델에게 보여 주는
+    # search_medication_schedules 도 열지 않는다 (#551)
     assert tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
         "compose_symptom_timeline",
         "search_health_observations",
         "search_medication_checks",
-        "search_medication_schedules",
         "search_recent_meals",
     )
 

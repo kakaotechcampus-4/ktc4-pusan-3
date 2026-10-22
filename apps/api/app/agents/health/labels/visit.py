@@ -3,12 +3,14 @@
 순서 (앞에서 걸리면 거기서 끝난다 — 단 ①은 끝내지 않고 맨 앞에 얹는다)
   ① 3개월 미만 + 최근 48시간 발열 → `emergency` 를 결과 맨 앞에 둔다. 타임라인보다 먼저다
   ② 열 표현("열 언제부터" · "몇 도")  → 열 타임라인(`build_fever_timeline`) — 모델 0회
-  ③ 최근 14일 건강 기록 0건 → `visit.no_record` — 모델 0회. 빈 타임라인을 만들지 않는다
-  ④ 그 밖에는 tool loop — 조회 tool 넷 + 출력 `compose_symptom_timeline`. `model_calls=1`
+  ③ 조회 tool 이 볼 수 있는 가장 긴 기간(30일)에 건강 기록도 복약 코스도 0건 → `visit.no_record`
+     — 모델 0회. 빈 타임라인을 만들지 않는다. 복약만 있어도 정리로 간다(체크 n/m 을 보여 준다)
+  ④ 그 밖에는 tool loop — 조회 tool 셋 + 출력 `compose_symptom_timeline`. `model_calls=1`
 
-④의 왕복(조회 → compose, 거절되면 고쳐 한 번 더)은 같은 loop 안이라 `model_calls` 가 늘지 않는다.
-왕복 수는 loop 의 `steps` 다 (`common/tool_loop.py`). 모델은 정리만 하고, ref · 약 이름 · 해석
-금지어 · 알레르기 줄은 출력 tool 이 코드로 거르고 붙인다(`tools/timeline.py` · `review.py`).
+④의 왕복(조회 → compose)은 같은 loop 안이라 `model_calls` 가 늘지 않는다. 왕복 수는 loop 의
+`steps` 다 (`common/tool_loop.py`). 🚨 모델은 줄의 key 만 고른다 (#551) — 조회 결과로 모델에게 가는
+것은 key · 날짜 · 증상 코드뿐이고, 줄의 글(원문 · 약 이름 · 용량)과 알레르기 줄은 코드가 그린다
+(`tools/records.py` · `tools/visit_lines.py` · `tools/timeline.py`).
 
 열 표현 표(`FEVER_WORDS`)는 `medication` 의 조회 표현 표처럼 짧게 둔다. 못 걸리는 말은 정리로
 간다 — 열 질문이 정리에 섞여 나가는 쪽이 정리 요청이 열 타임라인으로 새는 쪽보다 낫다. 같은 이유로
@@ -38,15 +40,18 @@ from app.agents.health.registry import OUTPUT_TOOLS, execute_tool, specs_for, to
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.ports import HealthObservation
 from app.agents.health.tools.fever import WINDOW, build_fever_timeline, infant_fever
+from app.agents.health.wording import squash
 
 logger = logging.getLogger(__name__)
 
 TASK = HealthTaskType.VISIT_SUMMARY
-# 조회 한 번 + 식사 · 복약 조회 + 정리 + 거절 뒤 재제출
+# 증상 · 식사 · 복약 조회 + 정리 + key 를 잘못 낸 뒤 한 번 더
 MAX_STEPS = 6
+# 출력은 key 목록뿐이다("s12" 꼴). 상한(`schemas/records.MAX_KEYS`)까지 보내도 넉넉하다
 MAX_COMPLETION_TOKENS = 2000
-# 진료 준비가 거슬러 보는 기간. 조회 tool 의 기본 기간(14d)과 같다 — 오늘 포함 N일
-RECORD_DAYS = 14
+# "기록 없음" 을 판정하는 기간. 조회 tool 이 받는 가장 긴 기간(30d)과 같다 — 오늘 포함 N일.
+# 짧게 잡으면 보호자가 한 달을 물었을 때 그 앞 기록이 있어도 "없어요" 가 나간다
+RECORD_DAYS = 30
 
 # 열 질문 표현. 걸리면 모델을 부르지 않고 체온 · 체크된 복약 · 먹인 약을 나열만 한다.
 # 공백을 없애고 견준다 — "열 언제" 와 "열언제" 를 같은 말로 본다
@@ -55,20 +60,16 @@ FEVER_WORDS: tuple[str, ...] = ("열 언제", "열이 언제", "몇 도", "체�
 SUMMARY_WORDS: tuple[str, ...] = ("정리", "요약", "한눈에")
 
 
-def _squash(text: str) -> str:
-    return "".join(text.split())
-
-
 def is_fever_question(texts: Sequence[str]) -> bool:
     """열 표현이 있고 정리 표현은 없으면 참. 표 말고는 보지 않는다.
 
     열 말과 정리 말이 같이 있으면("열이 언제부터인지랑 기침도 정리해줘") 정리로 간다 — 열 질문
     하나로 읽으면 같이 달라고 한 증상 · 식사가 말없이 빠진다. 그래서 "체온 정리해줘" 도 정리다.
     """
-    squashed = "".join(_squash(text) for text in texts)
-    if any(_squash(word) in squashed for word in SUMMARY_WORDS):
+    squashed = "".join(squash(text) for text in texts)
+    if any(squash(word) in squashed for word in SUMMARY_WORDS):
         return False
-    return any(_squash(word) in squashed for word in FEVER_WORDS)
+    return any(squash(word) in squashed for word in FEVER_WORDS)
 
 
 async def run_visit_summary(
@@ -78,7 +79,7 @@ async def run_visit_summary(
     gate = context.state.gate
     assert gate is not None  # run() 이 채운다
 
-    # 최근 14일 건강 기록 한 번. 응급 판정 · 열 타임라인 · 기록 없음 판정이 같이 쓴다
+    # 최근 30일 건강 기록 한 번. 응급 판정 · 열 타임라인 · 기록 없음 판정이 같이 쓴다
     observations = await context.ports.memory.health_observations(
         child_id=context.child_id,
         date_from=_first_day(context),
@@ -102,8 +103,8 @@ async def run_visit_summary(
             return _emergency_only(context, exc)
         return _finish(context)
 
-    # ③ 기록이 없으면 모델을 부르지 않는다. 약 행도 건강 기록이다
-    if not observations:
+    # ③ 기록이 없으면 모델을 부르지 않는다. 먹인 약 행 · 복약 코스도 건강 기록이다
+    if not observations and not await _has_courses(context):
         context.state.readouts.append(READOUTS.render(VISIT_NO_RECORD))
         return _finish(context)
 
@@ -197,8 +198,16 @@ def _emergency_only(context: HealthContext, exc: Exception) -> DomainAgentResult
 
 
 def _first_day(context: HealthContext) -> date:
-    """오늘을 포함해 14일 전의 첫날 — 조회 tool 의 `_first_day` 와 같은 세는 법."""
+    """오늘을 포함해 30일 전의 첫날 — 조회 tool 의 `first_day` 와 같은 세는 법."""
     return context.today - timedelta(days=RECORD_DAYS - 1)
+
+
+async def _has_courses(context: HealthContext) -> bool:
+    """같은 기간과 겹치는 복약 코스(끝났거나 멈춘 것 포함)가 있나."""
+    courses = await context.ports.medication.courses_overlapping(
+        child_id=context.child_id, date_from=_first_day(context), date_to=context.today
+    )
+    return bool(courses)
 
 
 def _finish(

@@ -18,7 +18,6 @@ import pytest
 from app.agents.health.agent import run
 from app.agents.health.context import build_gate
 from app.agents.health.readouts import READOUTS
-from app.agents.health.review import FORBIDDEN_INTERPRETATION, FORBIDDEN_SUFFIX
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.inmemory import (
     InMemoryHealthMemory,
@@ -27,10 +26,12 @@ from app.agents.health.store.inmemory import (
     course_with_doses,
 )
 from app.agents.health.store.ports import DoseSlot, HealthSafetyEntry, MealRecord
-from app.agents.health.tools.checkup_context import (
+from app.agents.health.tools.checkup_context import summarize_checkup_context
+from app.agents.health.wording import (
     FLAGGED,
+    FORBIDDEN_INTERPRETATION,
+    FORBIDDEN_SUFFIX,
     MEASUREMENT_WORDS,
-    summarize_checkup_context,
 )
 from tests.unit.agents.health.support import (
     FakeLLM,

@@ -6,7 +6,8 @@
 여기서는 같은 실행기(`runner.run_case`)로 케이스를 돌리되 모델 자리에 가짜를 넣는다.
 
     - 열 타임라인 · 기록 없음은 모델 0회 경로라 가짜가 불리면 안 된다
-    - 정리(T23 · T24)는 조회 셋을 부르고 돌려받은 줄을 그대로 옮겨 적는 "말 잘 듣는" 가짜다
+    - 정리(T23 · T24)는 조회 셋을 부르고 돌려받은 key 를 전부 넘기는 "말 잘 듣는" 가짜다 — 줄의
+      글은 코드가 그린다 (#551)
     - 먹인 약(T21-memory · T21-linked)은 Memory 저장 tool 을 한 번 부르는 가짜다
     - 판정이 어긋난 결과("안 먹였", 비율, 바뀐 약 이름, 응급 안내 뒤로 밀림, 기록 0건에 모델 호출)를
       실패로 잡는지 본다
@@ -48,9 +49,9 @@ MEMORY = [case for case in CASES if case.memory]
 
 
 class ComposingLLM:
-    """조회 셋을 부르고, 돌려받은 줄을 그대로 옮겨 `compose_symptom_timeline` 을 부르는 가짜.
+    """조회 셋을 부르고, 돌려받은 key 를 전부 넘겨 `compose_symptom_timeline` 을 부르는 가짜.
 
-    해석을 붙이지 않고 약 이름 · 체크 수를 조회 결과 그대로 적는 모델이다. `seen` 은 부른 횟수다.
+    보호자가 범위를 좁히지 않았을 때의 모델이다. `seen` 은 부른 횟수다.
     """
 
     def __init__(self) -> None:
@@ -67,37 +68,23 @@ class ComposingLLM:
                 ("search_medication_checks", {}),
             )
         if self._step == 2:
-            return call("compose_symptom_timeline", {"lines": _lines_from(messages)})
+            return call("compose_symptom_timeline", {"keys": _keys_from(messages)})
         return LLMResponse(
             message=SimpleNamespace(content="끝", tool_calls=None), usage={}, latency_ms=1
         )
 
 
-def _lines_from(messages: list[dict]) -> list[dict]:
-    lines: list[dict] = []
+def _keys_from(messages: list[dict]) -> list[str]:
+    keys: list[str] = []
     for message in messages:
         if message.get("role") != "tool":
             continue
         payload = json.loads(message["content"])
         if not payload["success"]:
             continue
-        data = payload["data"]
-        for episode in data.get("episodes", ()):
-            lines.append(_line(episode["from"], "symptom", episode["symptom"], episode["ref"]))
-        for given in data.get("given", ()):
-            text = f"{given['medication_given']} 먹였다고 기록"
-            lines.append(_line(given["time"][:10], "given", text, given["ref"]))
-        for meal in data.get("meals", ()):
-            text = " ".join(p for p in (meal["subject"], meal["amount_text"]) if p)
-            lines.append(_line(meal["date"], "meal", text, meal["ref"]))
-        for check in data.get("checks", ()):
-            text = f"{check['title']} 체크 {check['checked']}/{check['planned']}회"
-            lines.append(_line(check["date"], "medication", text, check["ref"]))
-    return lines
-
-
-def _line(day: str, section: str, text: str, ref: str) -> dict:
-    return {"date": day, "section": section, "text": text, "ref": ref}
+        for lines in payload["data"].values():
+            keys += [line["key"] for line in lines if isinstance(line, dict) and "key" in line]
+    return keys
 
 
 # 먹인 약 — Memory 가 한 번 부르는 저장 tool. 원문에 있는 말만 넣는다
@@ -194,11 +181,13 @@ def test_C2_는_2개월_38_2도_한_건이다():
     assert [o.temperature for o in spec.observations] == [Decimal("38.2")]
 
 
-def test_C48_norecord_는_14일_안에_기록이_없다():
+def test_C48_norecord_는_30일_안에_기록도_복약_코스도_없다():
+    # 기록 없음 판정은 조회 tool 이 받는 가장 긴 기간(30일)이고 복약 코스도 건강 기록이다
     spec = WORLDS["C48-norecord"]
-    first = (DAY - timedelta(days=13)).date()
+    first = (DAY - timedelta(days=29)).date()
 
-    assert all(o.observed_to < first for o in spec.observations)
+    assert spec.observations and all(o.observed_to < first for o in spec.observations)
+    assert spec.courses == ()
     assert spec.pending == ""
 
 
@@ -286,8 +275,8 @@ async def test_T24_는_체크_수를_날짜별로_적는다():
     ran = await _ran("T24")
     [timeline] = ran.result.readouts
 
-    assert "10/13 항생제 체크 3/3회" in timeline.body
-    assert "10/14 항생제 체크 1/2회" in timeline.body
+    assert "10/13 항생제 5ml 체크 3/3회" in timeline.body
+    assert "10/14 항생제 5ml 체크 1/2회" in timeline.body
     assert "호박죽" not in timeline.body  # 3일 밖 식사
 
 
@@ -399,7 +388,7 @@ def _timeline_with(ran: Ran, old: str, new: str) -> Ran:
 async def test_정리의_약_이름이_바뀌면_실패다():
     ran = await _ran("T24")
 
-    bad = _timeline_with(ran, "항생제 체크 1/2회", "아목시실린 체크 1/2회")
+    bad = _timeline_with(ran, "항생제 5ml 체크 1/2회", "아목시실린 5ml 체크 1/2회")
 
     assert any("약 이름" in item for item in visit_timeline()(bad).failures)
 
@@ -407,7 +396,7 @@ async def test_정리의_약_이름이_바뀌면_실패다():
 async def test_정리의_용량이_등록과_다르면_실패다():
     ran = await _ran("T24")
 
-    bad = _timeline_with(ran, "항생제 체크 1/2회", "항생제 10ml 체크 1/2회")
+    bad = _timeline_with(ran, "항생제 5ml 체크 1/2회", "항생제 10ml 체크 1/2회")
 
     assert visit_timeline()(bad).failures
 
@@ -689,15 +678,17 @@ _REVIEW_MISSED = (
 
 
 @pytest.mark.parametrize("added", _REVIEW_MISSED)
-async def test_판정은_review_표와_따로_병_이름_추측_표현을_잡는다(added, monkeypatch):
-    # review.py 의 표가 비어 있어도(구멍이 있어도) 판정이 같이 놓치지 않는다
+async def test_판정은_wording_표와_따로_병_이름_추측_표현을_잡는다(added, monkeypatch):
+    # wording.py 의 표가 비어 있어도(구멍이 있어도) 판정이 같이 놓치지 않는다. 기록 밖 줄 판정도
+    # 이 줄을 잡지만, 여기서는 판정 전용 표가 잡는지를 본다
     monkeypatch.setattr(judges, "FORBIDDEN_INTERPRETATION", ())
     monkeypatch.setattr(judges, "FORBIDDEN_SUFFIX", re.compile(r"(?!)(x)"))
     ran = await _ran("T24")
     [timeline] = ran.result.readouts
     first = timeline.body.split("\n")[0]
 
-    assert visit_timeline()(_timeline_with(ran, first, first + added)).failures, added
+    failures = visit_timeline()(_timeline_with(ran, first, first + added)).failures
+    assert any("판정 표" in item for item in failures), added
 
 
 @pytest.mark.parametrize("added", _REVIEW_MISSED)
@@ -740,3 +731,84 @@ async def test_체온을_지어내면_실패다():
     hot = replace(symptom, fields={**symptom.fields, "temperature": Decimal("39.0")})
 
     assert memory_given(linked=True)(replace(ran, memory_rows=(hot, medicine))).failures
+
+
+# ── 진료 준비 — 모델 입력 · 기록 밖 줄 (#551) ──
+def _tool_message(resource: str, data: dict) -> dict:
+    payload = {"success": True, "operation": "query", "resource": resource, "data": data}
+    return {"role": "tool", "content": json.dumps(payload, ensure_ascii=False)}
+
+
+async def test_정리의_모델_입력에는_key_날짜_코드뿐이다():
+    ran = await _ran("T24")
+
+    assert any(m["role"] == "tool" for m in ran.model_inputs)  # 실행기가 모았다
+    assert judges.model_input_failures(ran.world, ran.model_inputs) == []
+    assert visit_timeline()(ran).notes == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"symptoms": [{"key": "s1", "symptom": "열나"}]},  # 증상 원문
+        {"given": [{"key": "g1", "medication_given": "좌약"}]},  # 먹인 약 이름
+        {"checks": [{"key": "c1", "title": "항생제"}]},  # 등록 약 이름
+        {"checks": [{"key": "c1", "dosage": "5ml"}]},  # 용량 — 한글이 아니어도 잡는다
+        {"meals": [{"key": "f1", "subject": "바나나"}]},  # 식사 내용
+    ],
+)
+async def test_모델_입력에_원문_약_이름_용량_식사가_있으면_실패다(data):
+    ran = await _ran("T24")
+    leaked = (*ran.model_inputs, _tool_message("search_health_observations", data))
+
+    assert visit_timeline()(replace(ran, model_inputs=leaked)).failures, data
+
+
+async def test_system_메시지에_약_이름이_있으면_실패다():
+    ran = await _ran("T24")
+    course = ran.world.courses[0]
+    leaked = (*ran.model_inputs, {"role": "system", "content": f"등록된 약: {course.title}"})
+
+    failures = visit_timeline()(replace(ran, model_inputs=leaked)).failures
+    assert any("system" in item for item in failures)
+
+
+async def test_실패한_조회의_안내문은_한글이어도_된다():
+    ran = await _ran("T24")
+    payload = {"success": False, "resource": "search_medication_checks", "error": {"m": "없다"}}
+    failed = {"role": "tool", "content": json.dumps(payload, ensure_ascii=False)}
+
+    assert judges.model_input_failures(ran.world, (*ran.model_inputs, failed)) == []
+
+
+async def test_모델_입력을_못_모았으면_참고로_남는다():
+    ran = await _ran("T24")
+
+    assert visit_timeline()(replace(ran, model_inputs=())).notes
+
+
+async def test_정리에_기록_밖_줄이_있으면_실패다():
+    ran = await _ran("T24")
+    [timeline] = ran.result.readouts
+    first = timeline.body.split("\n")[0]
+
+    bad = _timeline_with(ran, first, first + "\n10/14 사과 한 개")
+    assert any("기록에서 나올 수 없는" in item for item in visit_timeline()(bad).failures)
+
+
+async def test_정리가_날짜순이_아니면_실패다():
+    ran = await _ran("T24")
+    [timeline] = ran.result.readouts
+    lines = timeline.body.split("\n")
+    content, safety = lines[:-2], lines[-2:]
+
+    shuffled = _with_bodies(ran, "\n".join([*reversed(content), *safety]))
+    assert any("날짜순" in item for item in visit_timeline()(shuffled).failures)
+
+
+async def test_최근_증상_기록이_있는데_증상_줄이_없으면_실패다():
+    ran = await _ran("T24")
+
+    failures = visit_timeline()(_without_lines(ran, "발열")).failures
+
+    assert any("증상 줄" in item for item in failures)

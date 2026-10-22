@@ -24,16 +24,16 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="search_health_observations",
         description=(
             "진료 준비를 정리할 때 가장 먼저 부른다. 최근 증상 기록을 에피소드(같은 증상이 이어진 "
-            "기간)로 묶어 가져오고, 보호자가 기록한 먹인 약은 따로 시각순으로 준다. 특정 증상만 "
-            "원하면 symptom 에 그 말을 넣는다."
+            "기간)로 묶은 줄과 보호자가 기록한 먹인 약 줄을 준다. 줄마다 key · 날짜와, 증상 줄은 "
+            "증상 코드(사전에 없는 증상이면 빈 목록)가 있다. 특정 증상만 원하면 symptom 에 그 말을 "
+            "넣는다."
         ),
         args=SearchHealthArgs,
     ),
     ToolDefinition(
         name="search_recent_meals",
         description=(
-            "진료 준비에 최근 3일 식사를 곁들일 때 부른다. 날짜별로 보호자가 적은 음식과 양 원문을 "
-            "준다. 영양 정보는 없다."
+            "진료 준비에 최근 3일 식사를 곁들일 때 부른다. 식사 한 건마다 key · 날짜를 준다."
         ),
         args=SearchMealsArgs,
     ),
@@ -41,18 +41,15 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="search_medication_checks",
         description=(
             "진료 준비에 복약 이력을 넣을 때 부른다. 끝났거나 멈춘 약도 기간이 겹치면 포함해 "
-            "날짜 · 약별로 체크된 회차 수와 전체 회차 수를 준다. 체크 안 된 회차는 안 먹였다는 "
-            "뜻이 아니다."
+            "날짜 · 약별 체크 줄의 key · 날짜를 준다."
         ),
         args=SearchMedicationChecksArgs,
     ),
     ToolDefinition(
         name="compose_symptom_timeline",
         description=(
-            "진료 준비의 마지막에 한 번 부른다. 조회한 증상 · 식사 · 복약 체크 · 먹인 약을 날짜순 "
-            "줄로 정리해 넘긴다. 줄마다 조회 결과의 ref 를 달아야 하고 없으면 지워진다. 알레르기 · "
-            "만성질환은 쓰지 않는다(코드가 붙인다). 거절되면 사유를 읽고 그 줄만 고쳐 한 번 더 "
-            "부른다."
+            "진료 준비의 마지막에 한 번 부른다. 정리에 넣을 줄의 key 를 조회 결과에서 그대로 "
+            "복사해 넘긴다. 줄의 글 · 날짜순 정렬 · 알레르기 · 만성질환 줄은 코드가 만든다."
         ),
         args=ComposeTimelineArgs,
     ),
@@ -60,8 +57,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="search_medication_schedules",
         description=(
             "지금 진행 중인 복약(약 이름 · 용량 · 알림 시각 · 기간)을 가져온다. 새 약을 등록하거나 "
-            "바꾸기 전에 이미 등록된 약이 있는지 볼 때, 진료 준비에 먹이고 있는 약을 넣을 때 "
-            "부른다."
+            "바꾸기 전에 이미 등록된 약이 있는지 볼 때 부른다."
         ),
         args=SearchMedicationArgs,
     ),

@@ -9,8 +9,10 @@
 
 task별 모델 tool (코드 tool 은 모델에 노출하지 않는다 — 노출하면 Gate 를 우회할 수 있다)
 
-- visit_summary   search_health_observations · search_recent_meals · search_medication_schedules ·
-                  search_medication_checks · compose_symptom_timeline(출력)
+- visit_summary   search_health_observations · search_recent_meals · search_medication_checks ·
+                  compose_symptom_timeline(출력). 조회 결과는 줄의 key · 날짜 · 증상 코드뿐이다 —
+                  약 이름 · 용량을 모델에게 보여 주는 search_medication_schedules 는 쓰지
+                  않는다 (#551)
 - medication      search_medication_schedules · create / update / stop_medication_schedule
                   (생성 · 수정 · 중단이 출력. 복용 체크는 tool 이 아니라 보호자 화면이다)
 - schedule_check · place_lookup · care_handoff   모델을 부르지 않는다
@@ -57,7 +59,6 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
         {
             "search_health_observations",
             "search_recent_meals",
-            "search_medication_schedules",
             "search_medication_checks",
             "compose_symptom_timeline",
         }

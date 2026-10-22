@@ -9,6 +9,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 동의)과 날짜 계산의 �
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
+from typing import Literal
 from uuid import UUID
 
 from app.agents.common.age import life_stage
@@ -25,6 +26,19 @@ from app.core.medication_draft import MedicationDraft
 SAFETY_TASKS: frozenset[HealthTaskType] = frozenset(
     {HealthTaskType.VISIT_SUMMARY, HealthTaskType.SCHEDULE_CHECK, HealthTaskType.CARE_HANDOFF}
 )
+
+
+VisitSection = Literal["symptom", "given", "medication", "meal"]
+
+
+@dataclass(frozen=True)
+class VisitLine:
+    """진료 준비 정리의 한 줄. 글은 코드가 기록 원문 · 등록값에서 그린다 — 모델이 쓰지 않는다."""
+
+    section: VisitSection
+    day: date  # 정렬 기준 — 증상은 에피소드 첫날, 그 밖은 그 기록의 날
+    body: str = field(repr=False)  # 원문이 들어 있다. 로그에 싣지 않는다
+    refs: tuple[Ref, ...]
 
 
 @dataclass
@@ -49,21 +63,13 @@ class HealthRunState:
     changed: dict[str, tuple[str, ...]] = field(default_factory=dict)
     confirms: dict[str, Readout] = field(default_factory=dict)
     readouts: list[Readout] = field(default_factory=list)
-    # 진료 준비 조회 tool 이 돌려준 행. id 문자열 → 그 행을 가리키는 Ref. 출력 tool 이 줄의 ref 가
-    # 여기 있는지 본다 — 이번 run 이 조회하지 않은 id 는 근거가 아니다
-    seen_refs: dict[str, Ref] = field(default_factory=dict)
-    # seen_refs 와 같은 키. 사후 검사가 줄을 원문과 대조하는 데 쓴다 — 보호자가 쓴 말(증상 · 조치 ·
-    # 먹인 약 · 식사 · 등록한 약 이름과 용량)을 이어 붙인 것. 로그에 싣지 않는다
-    ref_texts: dict[str, str] = field(default_factory=dict, repr=False)
-    # 약 줄의 이름 원문. 복약 코스는 `title`, 먹인 약 행은 `medication_given` — 줄의 약 이름이
-    # 이것과 글자 단위로 같아야 한다. 약 행이 아닌 id 는 여기 없다
-    ref_names: dict[str, str] = field(default_factory=dict, repr=False)
-    # (코스 id, 날짜) → (체크된 회차 수, 그날 회차 수). 복약 줄의 "n/m회" 를 이 숫자와 견준다
-    check_counts: dict[tuple[str, date], tuple[int, int]] = field(default_factory=dict, repr=False)
-    # seen_refs 와 같은 키 → 그 기록의 날짜 범위(첫날, 끝날 — 아이 타임존). 증상은 에피소드 기간,
-    # 식사는 먹은 날, 먹인 약은 먹인 날이다. 정리 줄의 날짜가 이 범위 밖이면 사후 검사가 거절한다.
-    # 복약 코스는 없다 — 날짜별 체크 수(check_counts)가 날짜를 본다
-    ref_days: dict[str, tuple[date, date]] = field(default_factory=dict, repr=False)
+    # 진료 준비 조회 tool 이 그린 줄. 짧은 key("s1" · "g1" · "f1" · "c1") → 코드가 기록에서 그린 줄.
+    # 모델은 key · 날짜 · 증상 코드만 보고 고른다 — 원문 · 약 이름 · 용량은 모델로 가지 않는다
+    # (#551).
+    # 출력 tool 은 여기 있는 key 만 줄로 낸다 — 이번 run 이 조회하지 않은 것은 근거가 아니다
+    visit_lines: dict[str, VisitLine] = field(default_factory=dict, repr=False)
+    # (구획, 기록 정체) → key. 같은 조회를 다시 불러도 같은 key 를 준다
+    visit_keys: dict[tuple[str, object], str] = field(default_factory=dict, repr=False)
     question: str | None = None
     pending: DomainPending | None = None  # 되묻고 멈춘 자리. question 과 같이 채워진다
 

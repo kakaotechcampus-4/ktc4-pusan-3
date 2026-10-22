@@ -152,8 +152,9 @@ _GIVEN_LINKED = HealthObservation(
 )
 # T22-C2 — 2개월 아이의 오늘 아침 체온 하나. 응급 안내가 타임라인보다 먼저다
 _INFANT_READING = _reading(20, _at(0, 6), "38.2")
-# T24-norecord — 14일보다 오래된 기록 하나뿐. 기간 밖이라 "기록 없음" 이어야 한다
-_OLD_COUGH = _record(20, "기침", 30)
+# T24-norecord — 30일보다 오래된 기록 하나뿐(복약 코스도 없다). 기록 없음 판정 기간(30일 —
+# 조회 tool 이 받는 가장 긴 기간) 밖이라 "기록 없음" 이어야 한다
+_OLD_COUGH = _record(40, "기침", 30)
 
 
 def _meal(days_ago: int, subject: str, amount: str, serial: int) -> MealRecord:

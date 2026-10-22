@@ -374,8 +374,9 @@ CASES: list[Case] = [
         "T24",
         V,
         "C48",
-        "symptom_timeline · 모델 1회 · 근거가 전부 조회한 기록 · 증상 14일 · 식사 3일 · "
-        "복약은 등록 원문 + 날짜별 체크 n/m회 · 해석 · '안 먹였' · 비율 0건 · 알레르기 줄은 코드",
+        "symptom_timeline · 모델 1회 · 모델은 key 만 고르고 줄은 코드가 기록에서 그린다 · "
+        "모델 입력에 원문 · 약 이름 · 용량 0건 · 근거가 전부 조회한 기록 · 식사 3일 · 복약은 "
+        "등록 원문 + 날짜별 체크 n/m회 · 해석 · '안 먹였' · 비율 0건 · 알레르기 줄은 코드",
         judge=visit_timeline(),
     ),
     _closed("T24-noconsent", V),
@@ -390,7 +391,7 @@ CASES: list[Case] = [
         "T24-norecord",
         V,
         "C48-norecord",
-        "visit.no_record · 모델 호출 안 함",
+        "visit.no_record(30일 · 복약 코스 없음) · 모델 호출 안 함",
         judge=visit_no_record(),
     ),
     # ── hook — `check_symptom_repetition` 을 직접 부른다 (pipeline 연결은 다른 이슈) ──
