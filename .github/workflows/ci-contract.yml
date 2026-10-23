@@ -1,0 +1,107 @@
+name: Contract CI
+# 웹이 손으로 적은 API 타입(apps/web/src/lib/api/types.ts)이 서버 계약(OpenAPI)과 맞는지 본다 (#559).
+# `make web-contract` 와 같다 — 서버 계약을 덤프한 뒤 apps/web/contract/ 의 비교 테스트를 돈다.
+#
+# 서버 스키마를 바꾼 PR 에서도 돈다. 그때 빨간불이면 웹 타입이 따라오지 않았다는 뜻이다 —
+# 서버 PR 을 막으려는 것이 아니라 어긋남이 그 PR 에서 보이게 하려는 것이다 (규칙: docs/web/mock-and-tests-v1.md §2).
+#
+# ⚠️ 필수 체크(브랜치 보호)로 지정하지 않았다. 지정 전에 팀과 정할 것 — paths 필터라 안 건드린 PR 에는 안 뜬다.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - apps/api/app/**
+      - apps/api/scripts/dump_openapi.py
+      - apps/api/pyproject.toml
+      - apps/api/uv.lock
+      - apps/web/src/lib/api/**
+      - apps/web/src/lib/report-render-error.ts
+      - apps/web/contract/**
+      - apps/web/vitest.contract.config.mts
+      - apps/web/tsconfig.json
+      - apps/web/package.json
+      - apps/web/pnpm-lock.yaml
+      - .github/workflows/ci-contract.yml
+  push:
+    branches:
+      - develop
+    paths:
+      - apps/api/app/**
+      - apps/api/scripts/dump_openapi.py
+      - apps/api/pyproject.toml
+      - apps/api/uv.lock
+      - apps/web/src/lib/api/**
+      - apps/web/src/lib/report-render-error.ts
+      - apps/web/contract/**
+      - apps/web/vitest.contract.config.mts
+      - apps/web/tsconfig.json
+      - apps/web/package.json
+      - apps/web/pnpm-lock.yaml
+      - .github/workflows/ci-contract.yml
+
+# ci-web.yml 과 같은 규칙 — PR 은 새 커밋이 오면 이전 실행을 끊고, develop push 는 커밋마다 끝까지 돈다.
+concurrency:
+  group: >-
+    ${{ github.ref == 'refs/heads/develop'
+        && format('{0}-{1}', github.workflow, github.sha)
+        || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # uv · Python 은 API 배포 이미지(apps/api/Dockerfile)와 같게 둔다. 그쪽을 올리면 여기도 같이 올린다.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
+          python-version: "3.12"
+          working-directory: apps/api
+
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      # app.main 을 import 하면 설정 검사가 돈다. DB · 카카오에는 붙지 않으니 값은 더미다.
+      - name: Dump OpenAPI
+        working-directory: apps/api
+        env:
+          DB_HOST: dummy
+          DB_USER: dummy
+          DB_PASSWORD: dummy
+          DB_NAME: dummy
+          AUTH_RETURN_URL_WEB: http://localhost:3000/auth/callback
+          AUTH_RETURN_URL_APP: icatch://auth
+        run: uv run python -m scripts.dump_openapi ../web/.openapi.json
+
+      # 🚨 pnpm 버전을 여기 적지 않는다. 정본은 package.json 의 `packageManager` 하나다 (ci-web.yml 과 같다).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Compare web types with OpenAPI
+        working-directory: apps/web
+        run: pnpm test:contract
