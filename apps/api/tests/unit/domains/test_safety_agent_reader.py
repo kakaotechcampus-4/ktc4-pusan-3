@@ -1,4 +1,4 @@
-"""health_safety → Food · Activity 안전 포트 어댑터 (#405). DB 없이 도는 쪽.
+"""health_safety → Food · Activity · Health 안전 포트 어댑터 (#405). DB 없이 도는 쪽.
 
 DB 로 실제 행을 읽는 것은 tests/integration/test_safety_agent_reader.py 가 본다.
 """
@@ -14,15 +14,30 @@ from sqlalchemy.exc import OperationalError
 from app.agents.activity.store import ports as activity_ports
 from app.agents.common.ports import SafetyLookupError
 from app.agents.food.store import ports as food_ports
+from app.agents.health.store import ports as health_ports
 from app.domains.safety import agent_reader
 from app.domains.safety.agent_reader import ACTIVITY_KINDS, DbSafetyReader
-from app.domains.safety.models import SafetyKind, SafetyStatus
+from app.domains.safety.models import SafetyKind, SafetySeverity, SafetyStatus
 
 CHILD = uuid.UUID(int=1)
 
 
-def row(kind: SafetyKind, label: str, status: SafetyStatus = SafetyStatus.ACTIVE):
-    return SimpleNamespace(kind=kind, label=label, status=status)
+def row(
+    kind: SafetyKind,
+    label: str,
+    status: SafetyStatus = SafetyStatus.ACTIVE,
+    severity: SafetySeverity | None = None,
+    reactions: tuple[str, ...] = (),
+    management: str | None = None,
+):
+    return SimpleNamespace(
+        kind=kind,
+        label=label,
+        status=status,
+        severity=severity,
+        reactions=reactions,
+        management=management,
+    )
 
 
 def reader(opened: list[object] | None = None, *, fail: Exception | None = None):
@@ -90,6 +105,49 @@ class TestActivity:
         assert entries == [
             activity_ports.SafetyEntry(kind="environmental", label="꽃가루", status="retracted")
         ]
+
+
+class TestHealth:
+    async def test_Health_는_active_만_kind_전부_관리_칸까지(self, monkeypatch):
+        calls: list[uuid.UUID] = []
+
+        async def fake(session, *, child_id):
+            calls.append(child_id)
+            return [
+                row(
+                    SafetyKind.ALLERGY,
+                    "땅콩",
+                    severity=SafetySeverity.CLASS_3,
+                    reactions=("두드러기", "구토"),
+                    management="에피펜",
+                ),
+                row(SafetyKind.CHRONIC_DISEASE, "만성 면역력 저하증"),
+            ]
+
+        monkeypatch.setattr(agent_reader, "list_active_safety", fake)
+
+        entries = await reader().health_safety(child_id=CHILD)
+
+        assert calls == [CHILD]
+        assert entries == [
+            health_ports.HealthSafetyEntry(
+                kind="allergy",
+                label="땅콩",
+                status="active",
+                severity="class_3",
+                reactions=("두드러기", "구토"),
+                management="에피펜",
+            ),
+            health_ports.HealthSafetyEntry(
+                kind="chronic_disease", label="만성 면역력 저하증", status="active"
+            ),
+        ]
+
+    async def test_Health_도_못_읽으면_SafetyLookupError(self):
+        down = OperationalError("SELECT ...", {}, Exception("password=secret host=db"))
+
+        with pytest.raises(SafetyLookupError):
+            await reader(fail=down).health_safety(child_id=CHILD)
 
 
 class TestFailure:

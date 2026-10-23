@@ -1,0 +1,38 @@
+# 영유아 건강검진 시기 — 일반 8회 · 구강 4회 (Health `compute_checkup_schedule`).
+#
+# 출처: 보건복지부 고시 「건강검진 실시기준」 제8조제2항의 시기 구분. 국민건강보험공단
+#   건강모아 "영유아 건강검진 안내" (https://www.nhis.or.kr/nhis/healthin/wbhaca04800m01.do) 와
+#   표를 대조했다. 이 파일에는 숫자(시기)만 옮겼고 안내문은 옮기지 않았다.
+#
+# 단위: 1차(일반)만 생후 "일" 이다. 나머지는 생후 "개월" 이고 first · last 둘 다 포함한다.
+#
+# 🚨 기간 끝 해석 — "4~6개월" 의 마지막 날을 어떻게 세는가.
+#   공단 안내와 고시 요약 어디에도 끝 날짜 산정 방식이 없다. 이 표는 **개월 말까지(포함)** 로 읽는다:
+#     4~6개월 = 생후 4개월 생일부터 7개월 생일 전날까지 (last + 1 개월 생일의 전날)
+#     18~24개월(4차) = 18개월 생일부터 25개월 생일 전날까지
+#   1차는 생후 14일부터 35일까지(둘 다 포함, 태어난 날이 0일).
+#   이 해석이 공단 실제 기준과 다르면 마지막 하루 이틀이 어긋난다 — 값이 아니라 계산식(tools/checkup.py)
+#   을 고친다. 확인 창구: 공단 고객센터 1577-1000 · 영유아 검진일자 조회.
+#   근거 테스트: test_health_reference.py `test_차수_기간_끝은_원문_해석대로다`,
+#   test_health_checkup.py `test_차수_기간은_last_다음_개월_생일_전날까지다`.
+#
+# 구강검진은 일반 4~7차와 같은 시기에 별도로 받는다. 번호는 구강 1~4차다.
+source: "보건복지부 고시 「건강검진 실시기준」 제8조제2항 (국민건강보험공단 건강모아 안내와 대조)"
+version: "영유아 건강검진 8회 · 구강 4회"
+fetched_at: "2026-10-19"
+
+general:
+  - { round: 1, start: day, first: 14, last: 35 }
+  - { round: 2, start: month, first: 4, last: 6 }
+  - { round: 3, start: month, first: 9, last: 12 }
+  - { round: 4, start: month, first: 18, last: 24 }
+  - { round: 5, start: month, first: 30, last: 36 }
+  - { round: 6, start: month, first: 42, last: 48 }
+  - { round: 7, start: month, first: 54, last: 60 }
+  - { round: 8, start: month, first: 66, last: 71 }
+
+oral:
+  - { round: 1, start: month, first: 18, last: 29 }
+  - { round: 2, start: month, first: 30, last: 41 }
+  - { round: 3, start: month, first: 42, last: 53 }
+  - { round: 4, start: month, first: 54, last: 65 }

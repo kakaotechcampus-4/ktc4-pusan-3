@@ -542,7 +542,7 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 도메인 전용 테이블은 여기 두지 않는다 — 다른 Agent 가 읽지 않는 테이블은 소유 Agent 문서에 있다.
 `daycare_meal` · `menu_catalog` · `nutrient_reference` · `food_doc` · `allergen_term` 은 [food_agent_own_table.md](food/food_agent_own_table.md),
-`medication_schedule` · `medication_dose` · `medication_dose_log` · `prescription_draft` 은 [health_agent_own_table.md](health/health_agent_own_table.md),
+`medication_schedule` · `medication_dose` · `prescription_draft` 은 [health_agent_own_table.md](health/health_agent_own_table.md),
 `growth_doc` · `book_catalog` 은 [growth_agent_own_table.md](growth/growth_agent_own_table.md).
 
 ### 이미 위 표에 반영된 것

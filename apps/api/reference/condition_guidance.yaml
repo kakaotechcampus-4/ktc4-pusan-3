@@ -1,0 +1,69 @@
+# (질환 코드 × 증상 코드) → 고정 안내 문구 + 공공 출처 — reference/condition_guidance.yaml
+# 설계: docs/agents/health/Health_Tool_명세.md §3 lookup_condition_guidance
+#
+# 🚨 검수 대상이다. medical_reviewed: true 인 행만 로드한다 (아니면 로드하지 않는다 — 모양 검사는 한다).
+#    검수 전에는 질환 문장 · 안내 카드 없이 기본 문장(symptom.repeat)만 나간다.
+#    검수는 의료 판단이 아니다 — 우리가 문장을 쓰지 않고 공공 출처 문장을 원문 그대로 연결하기 때문이다.
+#    ① 문구가 출처 원문과 글자 단위로 같은가 ② 이 질환 × 증상에 붙이는 게 출처의 맥락에 맞는가를 본다.
+#    작성자가 해도 된다 (Health_Tool_명세.md 검수 항목, 10-19). PM 확인 대기.
+#    ⚠️ 응급 신호 · seek_care 문구(health_phrases.yaml)는 이 완화의 대상이 아니다 — 그쪽은 의료 검수 필수.
+# 🚨 출처 이용 조건(license)은 KOGL-0 · KOGL-1 · 고시 · CC-BY 만. 상업적이용금지 · 변경금지(KOGL-3 · 4)는
+#    문구를 그대로 옮겨 앱에 싣는 이 쓰임과 맞지 않는다. 국가건강정보포털(health.kdca.go.kr)의 질환 페이지
+#    일부는 제4유형이다 (천식 cntnts_sn=6784 확인, 2026-10-19) — 행마다 페이지 하단 표시를 직접 확인한다.
+# 🚨 문구는 출처 원문 그대로 옮긴다. 원인 · 병명을 짐작하는 표현("~로 인해" · "~에 걸린")은 로더가 거절한다.
+#
+# 행 모양
+#   condition         condition_codes.yaml 의 코드
+#   symptom           symptom_codes.yaml 의 코드
+#   text              화면에 그대로 나가는 안내 (출처 원문)
+#   source_title      출처 문서 제목 · publisher 기관 · url 원문 주소
+#   license           KOGL-0 · KOGL-1 · 고시 · CC-BY
+#   medical_reviewed  위 검수(원문 대조 + 연결 적절성)를 마쳤는지. true 면 reviewed_by 가 있어야 한다
+#                     (필드 이름은 health_phrases.yaml 의 seek_care 와 맞춰 두었다)
+#   reviewed_by       검수한 사람의 GitHub 아이디 (reviewed_at 은 선택)
+#
+#   검수에서 본 것
+#   - 면역저하 × 발열 · 기침: 출처가 인플루엔자 유행주의보 보도자료다. 유행 시기가 아닌 때에도 보여 줘도
+#     되는 문장인지. 문구는 요약 줄 + 고위험군 정의 각주를 이었다.
+#   - 천식 × 기침: 2013년 자료이고 가정 관리 안내다 (병원에 가라는 문장이 아니다). "감기에 걸리면" 이
+#     아이의 병명을 짐작하는 말로 읽히지 않는지.
+#   의료인이 나중에 보게 되면 이 두 가지가 먼저 볼 곳이다. 그때 reviewed_by 에 그 사람을 더한다.
+#   이용 조건은 각 페이지 하단의 공공누리 표시를 직접 읽어 확인했다.
+
+source: 공공 출처 (공공누리 제0·1유형 · 고시 · CC BY) — 행마다 source_title · url
+version: "2026.2"
+fetched_at: 2026-10-19
+
+rows:
+  - condition: immunocompromised
+    symptom: fever
+    text: "고위험군은 발열 및 호흡기 증상 있을 시 조기에 의료기관을 방문하여 적절한 진료 필요 (고위험군: 소아, 임신 또는 출산 2주 이내 산모, 65세 이상 어르신, 면역저하자, 기저질환자 등)"
+    source_title: 2026-2027절기 인플루엔자 유행주의보 발령, 예년보다 이른 유행, 학생 및 고위험군 대응 강화
+    publisher: 질병관리청
+    url: https://www.kdca.go.kr/kdca/2848/subview.do?enc=Zm5jdDF8QEB8JTJGYmJzJTJGa2RjYSUyRjQyJTJGMzEyNTkzJTJGYXJ0Y2xWaWV3LmRvJTNG
+    license: KOGL-0
+    medical_reviewed: true
+    reviewed_by: nnhhlee
+    reviewed_at: 2026-10-19
+
+  - condition: immunocompromised
+    symptom: cough
+    text: "고위험군은 발열 및 호흡기 증상 있을 시 조기에 의료기관을 방문하여 적절한 진료 필요 (고위험군: 소아, 임신 또는 출산 2주 이내 산모, 65세 이상 어르신, 면역저하자, 기저질환자 등)"
+    source_title: 2026-2027절기 인플루엔자 유행주의보 발령, 예년보다 이른 유행, 학생 및 고위험군 대응 강화
+    publisher: 질병관리청
+    url: https://www.kdca.go.kr/kdca/2848/subview.do?enc=Zm5jdDF8QEB8JTJGYmJzJTJGa2RjYSUyRjQyJTJGMzEyNTkzJTJGYXJ0Y2xWaWV3LmRvJTNG
+    license: KOGL-0
+    medical_reviewed: true
+    reviewed_by: nnhhlee
+    reviewed_at: 2026-10-19
+
+  - condition: asthma
+    symptom: cough
+    text: "천식환자의 경우 겨울철 찬 공기에 갑자기 노출되거나, 감기에 걸리면 증상이 악화되므로 적정 실내온도 및 습도를 유지하여 증상을 잘 조절하고 지속적인 천식치료로 폐기능을 정상으로 유지하는 것이 좋다"
+    source_title: 차가운 바람 부는 12월, 호흡기 약한 어린이 '천식' 주의
+    publisher: 건강보험심사평가원
+    url: https://www.hira.or.kr/bbsDummy.do?brdBltNo=8623&brdScnBltNo=4&pgmid=HIRAA020041000100
+    license: KOGL-1
+    medical_reviewed: true
+    reviewed_by: nnhhlee
+    reviewed_at: 2026-10-19
