@@ -250,6 +250,107 @@ async def test_finished_run_keeps_its_key_even_if_it_crashes_after(
     assert retried.json() == first.json()
 
 
+# ── 채널이 지워진 뒤의 재생 (#538) ─────────────────────────────
+# 키는 24시간, 채널은 닫힌 뒤 5분이다. 그 5분을 짧게 줄여 지워진 뒤를 본다.
+
+
+async def _run_until_channel_expires(db_client, monkeypatch, *, cid, keyed) -> dict:
+    monkeypatch.setattr(registry, "EXPIRE_AFTER_SECONDS", 0.01)
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    run_id = first.json()["run_id"]
+    await asyncio.wait_for(registry.get(run_id).task, timeout=2)
+    await asyncio.sleep(0.05)
+    assert registry.get(run_id) is None
+    return first.json()
+
+
+async def test_saved_run_replays_as_finished_after_its_channel_expires(
+    db_client, bearer, session, agent_calls, monkeypatch, cid
+):
+    """끝나서 대화 기록이 남은 run 은 SSE(404) 대신 지난 대화 날짜를 알려 준다.
+
+    화면이 같은 run 을 다시 받는 길은 같은 키로 다시 보내기뿐이다. run_id 만 주면 GET 이 404 라
+    몇 번을 보내도 "확인하지 못했어요" 로 남는다.
+    """
+
+    @asynccontextmanager
+    async def same():
+        yield session
+
+    monkeypatch.setattr(chat_record, "background_session", same)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    first = await _run_until_channel_expires(db_client, monkeypatch, cid=cid, keyed=keyed)
+
+    retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    turn = await session.scalar(select(ChatTurn).where(ChatTurn.run_id == first["run_id"]))
+    assert retried.status_code == 202
+    assert retried.json() == {
+        "run_id": first["run_id"],
+        "finished": True,
+        "conversation_date": turn.conversation_date.isoformat(),
+    }
+    assert len(agent_calls) == 1  # 새 run 을 띄우지 않았다
+
+
+async def test_unrecorded_run_replays_only_its_run_id_after_its_channel_expires(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """대화 기록이 없으면 저장됐는지 서버도 모른다 — 키를 놓지 않고 run_id 만 재생한다.
+
+    재시작으로 죽은 run 은 Memory commit 이 이미 끝났을 수 있다. 새 run 을 띄우면 두 번 저장된다.
+    """
+
+    async def unrecorded(self, channel):
+        return None
+
+    monkeypatch.setattr(chat_record.TurnRecorder, "save", unrecorded)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    first = await _run_until_channel_expires(db_client, monkeypatch, cid=cid, keyed=keyed)
+
+    retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert retried.json() == {**first, "finished": False, "conversation_date": None}
+    assert len(agent_calls) == 1
+
+
+async def test_failed_run_whose_key_was_left_starts_a_new_run(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """failed 로 끝날 때 키 놓기가 실패해 키가 남아도, 같은 키로 다시 보내면 새 run 이다.
+
+    failed 는 저장 없음이라 새 run 으로 받아도 두 번 저장되지 않는다. 재생하면 다시 보내도 같은
+    실패만 받는다. 키는 새 run 을 가리켜야 한다 — 그 run 을 또 보내면 재생이다.
+    """
+
+    async def boom(channel):
+        raise RuntimeError("일부러 낸 실패")
+
+    real_job, real_forget = runner.fake_job, idempotency.forget_run
+
+    def redis_down(run_id):
+        raise ConnectionError("일부러 낸 Redis 오류")
+
+    monkeypatch.setattr(runner, "fake_job", boom)
+    monkeypatch.setattr(idempotency, "forget_run", redis_down)
+    headers, _ = bearer
+    keyed = with_key(headers)
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    task = registry.get(first.json()["run_id"]).task
+    await asyncio.wait([task], timeout=2)
+    assert isinstance(task.exception(), ConnectionError)  # 키가 남았다
+    monkeypatch.setattr(idempotency, "forget_run", real_forget)
+    monkeypatch.setattr(runner, "fake_job", real_job)
+
+    retried = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    again = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    assert retried.json()["run_id"] != first.json()["run_id"]
+    assert again.json()["run_id"] == retried.json()["run_id"]
+
+
 async def test_inputs_over_the_daily_limit_are_rejected(
     db_client, bearer, monkeypatch, agent_calls, cid
 ):
