@@ -5,12 +5,14 @@
   ② 열 표현("열 언제부터" · "몇 도")  → 열 타임라인(`build_fever_timeline`) — 모델 0회
   ③ 조회 tool 이 볼 수 있는 가장 긴 기간(30일)에 건강 기록도 복약 코스도 0건 → `visit.no_record`
      — 모델 0회. 빈 타임라인을 만들지 않는다. 복약만 있어도 정리로 간다(체크 n/m 을 보여 준다)
-  ④ 그 밖에는 tool loop — 조회 tool 셋 + 출력 `compose_symptom_timeline`. `model_calls=1`
+  ④ 그 밖에는 tool loop — 증상 조회 `search_health_observations` + 출력 `compose_symptom_timeline`.
+     `model_calls=1`
 
 ④의 왕복(조회 → compose)은 같은 loop 안이라 `model_calls` 가 늘지 않는다. 왕복 수는 loop 의
-`steps` 다 (`common/tool_loop.py`). 🚨 모델은 줄의 key 만 고른다 (#551) — 조회 결과로 모델에게 가는
-것은 key · 날짜 · 증상 코드뿐이고, 줄의 글(원문 · 약 이름 · 용량)과 알레르기 줄은 코드가 그린다
-(`tools/records.py` · `tools/visit_lines.py` · `tools/timeline.py`).
+`steps` 다 (`common/tool_loop.py`). 🚨 모델은 증상을 거슬러 볼 기간과 증상 하나만 정한다 (#551 리뷰)
+— 줄을 고르지 않는다. 고르게 했더니 라이브 eval 에서 식사 · 복약 조회를 건너뛰고 증상 줄도
+빠뜨렸다. 조회 결과로 모델에게 가는 것은 줄 수뿐이고, 줄 · 식사 · 복약 체크 · 알레르기 줄은 코드가
+넣는다(`tools/records.py` · `tools/visit_lines.py` · `tools/timeline.py`).
 
 열 표현 표(`FEVER_WORDS`)는 `medication` 의 조회 표현 표처럼 짧게 둔다. 못 걸리는 말은 정리로
 간다 — 열 질문이 정리에 섞여 나가는 쪽이 정리 요청이 열 타임라인으로 새는 쪽보다 낫다. 같은 이유로
@@ -45,9 +47,9 @@ from app.agents.health.wording import squash
 logger = logging.getLogger(__name__)
 
 TASK = HealthTaskType.VISIT_SUMMARY
-# 증상 · 식사 · 복약 조회 + 정리 + key 를 잘못 낸 뒤 한 번 더
+# 증상 조회 + 정리 + 인자를 잘못 낸 뒤 한 번 더
 MAX_STEPS = 6
-# 출력은 key 목록뿐이다("s12" 꼴). 상한(`schemas/records.MAX_KEYS`)까지 보내도 넉넉하다
+# 출력은 짧은 인자뿐이다(기간 · 증상 하나, 정리는 인자 없음)
 MAX_COMPLETION_TOKENS = 2000
 # "기록 없음" 을 판정하는 기간. 조회 tool 이 받는 가장 긴 기간(30d)과 같다 — 오늘 포함 N일.
 # 짧게 잡으면 보호자가 한 달을 물었을 때 그 앞 기록이 있어도 "없어요" 가 나간다

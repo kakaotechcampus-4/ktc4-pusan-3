@@ -12,44 +12,23 @@ from app.agents.health.schemas.medication import (
     StopMedicationArgs,
     UpdateMedicationArgs,
 )
-from app.agents.health.schemas.records import (
-    ComposeTimelineArgs,
-    SearchHealthArgs,
-    SearchMealsArgs,
-    SearchMedicationChecksArgs,
-)
+from app.agents.health.schemas.records import ComposeTimelineArgs, SearchHealthArgs
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="search_health_observations",
         description=(
-            "진료 준비를 정리할 때 가장 먼저 부른다. 최근 증상 기록을 에피소드(같은 증상이 이어진 "
-            "기간)로 묶은 줄과 보호자가 기록한 먹인 약 줄을 준다. 줄마다 key · 날짜와, 증상 줄은 "
-            "증상 코드(사전에 없는 증상이면 빈 목록)가 있다. 특정 증상만 원하면 symptom 에 그 말을 "
-            "넣는다."
+            "진료 준비를 정리할 때 먼저 한 번 부른다. 보호자가 말한 기간(없으면 14d)과, 특정 "
+            "증상만 원하면 그 증상 말을 넣는다. 그 범위의 증상 · 먹인 약 기록을 정리에 담고 "
+            "줄 수만 돌려준다."
         ),
         args=SearchHealthArgs,
     ),
     ToolDefinition(
-        name="search_recent_meals",
-        description=(
-            "진료 준비에 최근 3일 식사를 곁들일 때 부른다. 식사 한 건마다 key · 날짜를 준다."
-        ),
-        args=SearchMealsArgs,
-    ),
-    ToolDefinition(
-        name="search_medication_checks",
-        description=(
-            "진료 준비에 복약 이력을 넣을 때 부른다. 끝났거나 멈춘 약도 기간이 겹치면 포함해 "
-            "날짜 · 약별 체크 줄의 key · 날짜를 준다."
-        ),
-        args=SearchMedicationChecksArgs,
-    ),
-    ToolDefinition(
         name="compose_symptom_timeline",
         description=(
-            "진료 준비의 마지막에 한 번 부른다. 정리에 넣을 줄의 key 를 조회 결과에서 그대로 "
-            "복사해 넘긴다. 줄의 글 · 날짜순 정렬 · 알레르기 · 만성질환 줄은 코드가 만든다."
+            "진료 준비의 마지막에 한 번 부른다. 인자가 없다. 조회한 증상 · 먹인 약과 "
+            "최근 3일 식사 · 복약 체크 · 알레르기 · 만성질환을 코드가 날짜순으로 정리한다."
         ),
         args=ComposeTimelineArgs,
     ),

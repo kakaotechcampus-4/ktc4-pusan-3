@@ -9,10 +9,9 @@
 
 task별 모델 tool (코드 tool 은 모델에 노출하지 않는다 — 노출하면 Gate 를 우회할 수 있다)
 
-- visit_summary   search_health_observations · search_recent_meals · search_medication_checks ·
-                  compose_symptom_timeline(출력). 조회 결과는 줄의 key · 날짜 · 증상 코드뿐이다 —
-                  약 이름 · 용량을 모델에게 보여 주는 search_medication_schedules 는 쓰지
-                  않는다 (#551)
+- visit_summary   search_health_observations(기간 · 증상 하나를 정한다) ·
+                  compose_symptom_timeline(출력, 인자 없음). 모델은 줄을 고르지 않는다 — 식사 ·
+                  복약 체크는 코드 tool 이 늘 넣는다(#551 리뷰). 조회 결과는 줄 수뿐이다
 - medication      search_medication_schedules · create / update / stop_medication_schedule
                   (생성 · 수정 · 중단이 출력. 복용 체크는 tool 이 아니라 보호자 화면이다)
 - schedule_check · place_lookup · care_handoff   모델을 부르지 않는다
@@ -46,8 +45,6 @@ from app.agents.health.tools.drafts import (
 )
 from app.agents.health.tools.records import (
     search_health_observations,
-    search_medication_checks,
-    search_recent_meals,
 )
 from app.agents.health.tools.timeline import compose_symptom_timeline
 
@@ -58,8 +55,6 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
     HealthTaskType.VISIT_SUMMARY: frozenset(
         {
             "search_health_observations",
-            "search_recent_meals",
-            "search_medication_checks",
             "compose_symptom_timeline",
         }
     ),
@@ -80,6 +75,8 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
 CODE_TOOLS: dict[HealthTaskType, frozenset[str]] = {
     HealthTaskType.VISIT_SUMMARY: frozenset(
         {
+            "collect_meals",
+            "collect_medication_checks",
             "load_health_safety",
             "normalize_symptom_term",
             "group_symptom_episodes",
@@ -146,9 +143,7 @@ IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset(
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_health_observations": search_health_observations,
-    "search_recent_meals": search_recent_meals,
     "search_medication_schedules": search_medication_schedules,
-    "search_medication_checks": search_medication_checks,
     "compose_symptom_timeline": compose_symptom_timeline,
     "create_medication_schedule": create_medication_schedule,
     "update_medication_schedule": update_medication_schedule,

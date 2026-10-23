@@ -23,12 +23,7 @@ from tests.unit.agents.health.support import context, gate
 
 # Health_Tool_명세.md §1 의 "모델 tool" · "코드 tool" 칸
 SPEC_MODEL = {
-    "visit_summary": {
-        "search_health_observations",
-        "search_recent_meals",
-        "search_medication_checks",
-        "compose_symptom_timeline",
-    },
+    "visit_summary": {"search_health_observations", "compose_symptom_timeline"},
     "schedule_check": set(),
     "place_lookup": set(),
     "medication": {
@@ -41,6 +36,8 @@ SPEC_MODEL = {
 }
 SPEC_CODE = {
     "visit_summary": {
+        "collect_meals",
+        "collect_medication_checks",
         "load_health_safety",
         "normalize_symptom_term",
         "group_symptom_episodes",
@@ -145,30 +142,25 @@ def test_정의와_핸들러가_같다():
 
 def test_스펙은_핸들러가_있는_tool_만_싣는다():
     # build_fever_timeline 은 코드 tool 이라 정의 · 핸들러가 없다
-    specs = specs_for(["build_fever_timeline", "search_recent_meals"])
+    specs = specs_for(["build_fever_timeline", "search_health_observations"])
 
-    assert [spec["function"]["name"] for spec in specs] == ["search_recent_meals"]
-
-
-def test_진료_준비_조회_tool_은_모델_tool_표와_핸들러에_다_있다():
-    reads = {
-        "search_health_observations",
-        "search_recent_meals",
-        "search_medication_checks",
-    }
-
-    assert reads <= MODEL_TOOLS[HealthTaskType.VISIT_SUMMARY]
-    assert reads <= set(TOOL_HANDLERS)
+    assert [spec["function"]["name"] for spec in specs] == ["search_health_observations"]
 
 
-def test_진료_준비_라벨은_조회_셋과_출력_하나만_이름순으로_연다():
-    # 코드 tool(build_fever_timeline 등)은 모델에 열리지 않는다. 약 이름 · 용량을 모델에게 보여 주는
-    # search_medication_schedules 도 열지 않는다 (#551)
+def test_진료_준비_식사_복약은_모델_tool_이_아니다():
+    # 모델에게 고르게 했더니 라이브 eval 에서 건너뛰었다 — 코드가 늘 읽는다 (#551 리뷰)
+    for name in ("search_recent_meals", "search_medication_checks"):
+        assert name not in MODEL_TOOLS[HealthTaskType.VISIT_SUMMARY]
+        assert name not in TOOL_HANDLERS
+    assert "search_health_observations" in TOOL_HANDLERS
+
+
+def test_진료_준비_라벨은_증상_조회와_출력_하나만_이름순으로_연다():
+    # 코드 tool(build_fever_timeline · collect_* 등)은 모델에 열리지 않는다. 약 이름 · 용량을
+    # 모델에게 보여 주는 search_medication_schedules 도 열지 않는다 (#551)
     assert tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
         "compose_symptom_timeline",
         "search_health_observations",
-        "search_medication_checks",
-        "search_recent_meals",
     )
 
 

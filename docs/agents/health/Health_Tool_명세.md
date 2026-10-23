@@ -34,7 +34,7 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 | 라벨 | 모델 tool | 코드 tool | 모델 호출 |
 | --- | --- | --- | --- |
-| `visit_summary` | search_health_observations · search_recent_meals · search_medication_checks · compose_symptom_timeline | load_health_safety · normalize_symptom_term · group_symptom_episodes · build_fever_timeline · get_next_dose · get_health_phrase | 1 (열 타임라인만 요청 시 **0**) |
+| `visit_summary` | search_health_observations · compose_symptom_timeline | collect_meals · collect_medication_checks · load_health_safety · normalize_symptom_term · group_symptom_episodes · build_fever_timeline · get_next_dose · get_health_phrase | 1 (열 타임라인만 요청 시 **0**) |
 | `schedule_check` | – | compute_checkup_schedule · compute_vaccine_schedule · summarize_checkup_context · get_health_phrase | 0 |
 | `place_lookup` | – | find_pediatric_places | 0 |
 | `medication` | search_medication_schedules · create/update/stop_medication_schedule | resolve_dose_timing · normalize_symptom_term · get_next_dose · lookup_prescription_draft | 1 (조회 · "먹였어" 안내는 **0**) |
@@ -60,11 +60,11 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 | Tool | 입력 | 출력 | 규칙 |
 | --- | --- | --- | --- |
-| `search_health_observations` | `period: "3d"\|"7d"\|"14d"\|"30d"`(기본 14d), `symptom?` | 모델에게는 **에피소드 줄** `{key, from, to, codes[](사전 코드)}` · **먹인 약 줄** `{key, date, symptom_key}` 만 — 같은 코드가 48시간 안에 이어지면 한 줄, 사전에 없는 말은 기록 하나가 한 줄(`codes=[]`). 먹인 약 줄은 에피소드 밖에서 시각순. `symptom_key` 는 연결된 증상 줄이 이번 결과에 있을 때만 그 줄의 key. 줄의 글(사전 이름 · 원문 · 정도 · 조치 · 약 이름 · 시각)은 코드가 그려(`visit.symptom` · `visit.given`) `state.visit_lines` 에만 둔다. 체온 칸은 싣지 않는다(열 타임라인 몫) | 기간은 오늘 포함 N일. 증상 · 약 둘 다 0건이면 `NO_RECORDS`. `symptom` 을 주면 그 증상(코드가 같은 말 포함)과 그 증상에 묶인 약만. 같은 기록은 다시 불러도 같은 key |
-| `search_recent_meals` | `period: "3d"` | 모델에게는 `{key, date}` 만. 글(`visit.meal` — 먹은 것 · 양 원문)은 코드가 그린다 | 영양 수치 없음. 0건이어도 실패가 아니다 |
+| `search_health_observations` | `period: "3d"\|"7d"\|"14d"\|"30d"`(기본 14d), `symptom?` | 모델에게는 줄 수 `{symptom_lines, given_lines}` 만. **에피소드 줄**(같은 코드가 48시간 안에 이어지면 한 줄, 사전에 없는 말은 기록 하나가 한 줄)과 **먹인 약 줄**(에피소드 밖, 시각순)의 글(`visit.symptom` · `visit.given`)은 코드가 그려 `state.visit_lines` 에 둔다. 체온 칸은 싣지 않는다(열 타임라인 몫) | 기간은 오늘 포함 N일. 증상 · 약 둘 다 0건이면 `NO_RECORDS`. `symptom` 을 주면 그 증상(코드가 같은 말 포함 — 별칭이 아닌 짧은 말도 사전 이름 · 별칭의 조각이면 그 코드로 본다, "열" → 발열)과 그 증상에 묶인 약만. 부른 기간 중 가장 긴 것을 `state.visit_period` 에 남긴다(복약 체크가 같은 기간을 본다). 같은 기록은 몇 번 읽어도 한 줄 |
+| `collect_meals` (코드) | – | 최근 3일 식사 줄(`visit.meal` — 먹은 것 · 양 원문) | 출력 tool 이 늘 부른다(#551 리뷰 — 모델에게 맡기면 건너뛴다). 영양 수치 없음. 0건이어도 실패가 아니다 |
 | `search_medication_schedules` | `status="active"` | 코스 + dose(`scheduled_time`) | `medication` 만 연다 (id 는 싣지 않는다). 약 이름 · 용량을 모델에게 보여 줘서 `visit_summary` 는 열지 않는다 (#551) |
-| `search_medication_checks` | `period: "3d"\|"7d"\|"14d"\|"30d"`(기본 14d) | 날짜 · 코스별 줄. 모델에게는 `{key, date}` 만. 글(`visit.med_check` — 등록한 이름 · 용량 원문 + 체크 `n/m회`)은 코드가 그린다 — `n` = 그날 `checked_at` 이 있는 회차 수 · `m` = 그날 회차 수 | 오늘 이후 회차는 세지 않는다. `courses_overlapping` 으로 읽어 끝났거나 멈춘 코스도 기간이 겹치면 넣는다. 체크 안 된 회차는 "안 먹였다" 가 아니라 `m` 에만 들어간다. 겹치는 코스가 없으면 `NO_RECORDS` |
-| `compose_symptom_timeline` | `keys[]` (1~200개, 조회 결과의 key) | `Readout(model, kind="symptom_timeline")` — 고른 줄을 날 → 구획(증상 · 먹인 약 · 복약 체크 · 식사) → 조회 순으로 + 알레르기 · 만성질환 줄 | 조회하지 않은 key 는 지운다. 남는 줄이 없으면 `EVIDENCE_REQUIRED`. 모델은 문장을 쓰지 않는다 (#551) |
+| `collect_medication_checks` (코드) | 모델이 증상 조회에 쓴 기간 중 가장 긴 것(없으면 14d) | 날짜 · 코스별 줄(`visit.med_check` — 등록한 이름 · 용량 원문 + 체크 `n/m회`)은 코드가 그린다 — `n` = 그날 `checked_at` 이 있는 회차 수 · `m` = 그날 회차 수 | 오늘 이후 회차는 세지 않는다. `courses_overlapping` 으로 읽어 끝났거나 멈춘 코스도 기간이 겹치면 넣는다. 체크 안 된 회차는 "안 먹였다" 가 아니라 `m` 에만 들어간다. 출력 tool 이 늘 부른다 |
+| `compose_symptom_timeline` | 없음 | `Readout(model, kind="symptom_timeline")` — 증상 · 먹인 약(모델이 조회한 것, 안 불렀으면 14일) + 식사 3일 + 복약 체크를 날 → 구획(증상 · 먹인 약 · 복약 체크 · 식사) → 읽은 순으로 + 알레르기 · 만성질환 줄 | 줄이 하나도 없으면 `EVIDENCE_REQUIRED`. 모델은 줄을 고르지도 쓰지도 않는다 (#551 리뷰) |
 | `create_medication_schedule` | `title_span?`, `dosage_span?`, `timing_spans[]`, `period_span?`, `indication_span?` | **초안 payload**(`op="create"`) — 코스 + dose N · **`notice_times[]` 필수**(확인 모달용) · `missing[]` · `schedule.symptom_codes`(`indication_span` 을 증상 사전으로 맞춘 코드 — 코드가 정하고 모델은 고르지 않는다) | **DB를 건드리지 않는다.** span은 발화 원문 부분 문자열이어야 함(코드 검증) · 시각은 `resolve_dose_timing` 결과만 |
 | `update_medication_schedule` | `title_span`(바꿀 약), `dosage_span?`, `timing_spans?[]`, `period_span?` — **`schedule_id` 는 모델에게 받지 않는다**(코드가 `title_span` 으로 진행 중 코스에서 찾는다) | **초안 payload**(`op="update"`, `schedule_id`, `before`) · 변경 후 `notice_times[]`. 값은 일정처럼 **전체 값**(지금 값에 바뀐 값을 얹은 것)이고 바뀐 부분만 따로 싣지 않는다 — 화면이 `before` 와 비교한다. tool 결과(모델)에는 바뀐 필드 이름 `changed[]` 가 실리고 payload 에는 없다 | 동일. 같은 약을 한 run 에서 또 고치면 앞 초안 위에 쌓여 **한 장**으로 나가고(같은 `draft_id`) 확인 문구도 마지막 것 하나만 남는다 — 일정의 `DraftBook` 과 같다. 지금 값과 같으면(처음 값으로 되돌려도) 초안을 만들지 않고 **성공으로** 끝낸다(`draft=false` · `changed=[]` · 안내 `med.no_change`) — 출력 tool 이 실패를 돌려주면 모델이 같은 호출을 되풀이한다. 이 약의 카드가 이미 나가 있으면 안내 없이 그 카드가 답이다. 되묻기를 이어받는 run 은 실패 코드 `NO_CHANGE` 로 같은 안내를 고른다. 같은 약의 카드와 되묻기(시점 · 중단 확인)는 한 run 에 같이 내지 않는다(`med.one_at_a_time`) — 질문 뒤 다음 run 이 새 카드를 또 만들어 한 약의 카드가 둘이 된다. 진행 중인 복약이 없으면 `notice.no_active_med` 로 성공 종료한다(실패로 돌리면 모델이 되풀이한다 — stop 과 같다). 말한 기간을 못 읽으면("다음 주 월요일까지") 지금 값 그대로 두고 `med.period_unclear` 를 붙인다 — `med.no_change` 로 뭉개지 않는다. 대상 회차를 anchor 로 못 찾으면 그 시각 둘레(±150분)의 **`fixed` 회차만** 같은 회차로 본다 — 저녁(19:00)과 자기 전(20:30)은 90분 차이라, 기준점이 있는 회차까지 가깝다고 옮기면 말하지 않은 회차가 사라진다. 기존 코스는 제출 전까지 그대로. 제출 시 같은 행 UPDATE + 아직 오지 않은 회차 행만 지우고 다시 만들기 — 지난 회차와 그 체크는 그대로 남는다 |
 | `stop_medication_schedule` | `title_span?` — 약 이름을 말하지 않았으면 비운다(약이 하나면 그 약, 둘 이상이면 되묻는다) | 묻는 run: `med.stop_confirm` 되묻기 + 되묻기 맥락(대상 `schedule_id` · 약 이름) / '네' 다음 run: 진행 중 코스를 다시 읽어(끝났거나 멈췄으면 `notice.no_active_med`) `status='stopped'` · `updated_at`=중단 시각 · `med.stopped` / '아니요' · 애매함: `med.stop_kept` | 확인 모달 · 초안 없음(10-18). **묻는 run 에서는 DB 를 건드리지 않는다.** soft delete — 회차 행·체크 보존. 대상 약 2개 이상 후보면 먼저 어느 약인지 `needs_observation` — 엉뚱한 약의 알림이 끊기므로 모호하면 되묻기 |
@@ -75,10 +75,13 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 **복약 생성·수정의 입력은 span입니다.** `title_span` · `dosage_span` · `timing_spans[]` · `period_span` · **`indication_span`**(복약 이유)은 전부 원문의 부분 문자열이어야 하고, 코드가 검증합니다. 출처는 **보호자 발화 또는 `prescription_draft`의 추출 텍스트** 둘 중 하나입니다. 발화에 이유가 없으면 `indication_span`은 비웁니다 — 추정 금지.
 
-**진료 준비는 모델이 줄을 고르기만 한다 (#551).** 조회 tool 결과로 모델(외부 LLM)에게 가는 것은 줄의 key · 날짜 ·
-증상 코드뿐이다 — 증상 원문 · 조치 · 약 이름 · 용량 · 식사 내용은 보내지 않는다. 외부 LLM 전달 범위가 아직 열린
-결정이라(루트 CLAUDE.md §10) 정리에 꼭 필요한 것만 보낸다. 줄의 글은 코드가 기록 원문 · 등록값에서 그리고
-(`tools/visit_lines.py`), 모델이 문장을 쓰지 않으니 모델 글을 사후에 거르는 단계도 없다.
+**진료 준비에서 모델은 증상을 거슬러 볼 기간과 증상 하나만 정한다 (#551 리뷰).** 줄을 고르지도 쓰지도 않는다 —
+처음에는 모델이 조회 tool 셋을 불러 줄의 key 를 고르게 했는데, 라이브 eval(T23 · T24)에서 식사 · 복약 조회를
+건너뛰고 증상 줄도 빠뜨렸다. 날짜 · 집계로 정해지는 줄은 코드 몫이라(루트 CLAUDE.md §3) 식사 · 복약 체크는 출력
+tool 이 늘 읽고, 증상 · 먹인 약은 모델이 고른 범위를 빠짐없이 넣는다. 조회 결과로 모델(외부 LLM)에게 가는 것은 줄
+수뿐이라 증상 원문 · 조치 · 약 이름 · 용량 · 식사 내용은 보내지 않는다(외부 LLM 전달 범위는 열린 결정이다 —
+루트 CLAUDE.md §10). 줄의 글은 코드가 기록 원문 · 등록값에서 그리고(`tools/visit_lines.py`), 모델 글을 사후에
+거르는 단계도 없다.
 
 **원문 거르기** (코드 `wording.py`): 진료 준비 · 검진 맥락 요약이 기록 원문(사전에 없는 증상 · 조치 · 식사)을 줄로 낼 때
 때문 · 의심 · 같아요 · 가능성 · 진단 · 괜찮아요 · 위험 · 같아 · 같습 · 같음 · 것 같 · 듯 · 추정 · 원인 · 탓 · 로 인해 · 우려,

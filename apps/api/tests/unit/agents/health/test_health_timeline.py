@@ -1,9 +1,11 @@
-"""진료 준비 출력 tool `compose_symptom_timeline`.
+"""진료 준비 출력 tool `compose_symptom_timeline` — 인자가 없다.
 
-- 🚨 모델은 줄의 key 만 고른다 (#551). 줄의 글은 조회 tool 이 기록에서 그린 것이다 — 모델이 문장을
-  쓸 자리가 없어서 해석 표현 · 바꿔 적은 약 이름 · 용량이 나갈 길이 없다
-- 이번 run 이 조회하지 않은 key 는 지운다. 남는 줄이 없으면 정리를 내지 않는다
-- 정렬은 코드 몫이다 — 날 → 구획 → 조회한 순서
+- 🚨 모델은 줄을 고르지도 쓰지도 않는다 (#551 리뷰). 모델이 조회한 증상 · 먹인 약 줄에 코드가 읽는
+  최근 3일 식사 · 복약 체크 줄을 늘 더한다 — 라이브 eval 에서 모델이 식사 · 복약 조회를 건너뛰고
+  증상 줄도 빠뜨렸다
+- 모델이 증상 조회를 부르지 않았으면 기본 기간(14일)으로 대신 읽는다. 복약 체크는 모델이 고른 기간을
+  따른다
+- 정렬은 코드 몫이다 — 날 → 구획 → 읽은 순서
 - 알레르기 · 만성질환 줄은 코드가 `safety_entries` 원문으로 붙인다. 조회 실패면 경고 줄이다
 """
 
@@ -17,13 +19,7 @@ import pytest
 from app.agents.health.readouts import READOUTS
 from app.agents.health.registry import TOOL_HANDLERS, execute_tool
 from app.agents.health.result import ErrorCode
-from app.agents.health.schemas.records import (
-    MAX_KEYS,
-    ComposeTimelineArgs,
-    SearchHealthArgs,
-    SearchMealsArgs,
-    SearchMedicationChecksArgs,
-)
+from app.agents.health.schemas.records import ComposeTimelineArgs, SearchHealthArgs
 from app.agents.health.store.inmemory import (
     InMemoryHealthMemory,
     InMemoryMedicationStore,
@@ -35,11 +31,7 @@ from app.agents.health.store.ports import (
     HealthSafetyEntry,
     MealRecord,
 )
-from app.agents.health.tools.records import (
-    search_health_observations,
-    search_medication_checks,
-    search_recent_meals,
-)
+from app.agents.health.tools.records import search_health_observations
 from app.agents.health.tools.timeline import compose_symptom_timeline
 from app.agents.health.wording import (
     FLAGGED,
@@ -57,6 +49,18 @@ PEANUT = HealthSafetyEntry("allergy", "땅콩", "active")
 ASTHMA = HealthSafetyEntry("chronic_disease", "천식", "active")
 _ids = count(9000)
 
+# 열(어제) · 귀를 만져요 + 중이염이래요(오늘) · 해열제(어제 밤) · 미음(어제) ·
+# 항생제 체크(그제~오늘)
+EVERYTHING = [
+    "9/26 항생제 5ml 체크 0/3회",
+    "9/27 발열 · 정도: 심함",
+    "9/27 21:00 해열제 먹였다고 기록하셨어요",
+    "9/27 항생제 5ml 체크 1/3회",
+    "9/27 미음 반 그릇",
+    f"9/28 귀를 자꾸 만져요 / {FLAGGED}",
+    "9/28 항생제 5ml 체크 0/3회",
+]
+
 
 def obs(day: date, *, symptoms=(), **kwargs) -> HealthObservation:
     return HealthObservation(
@@ -70,13 +74,7 @@ def obs(day: date, *, symptoms=(), **kwargs) -> HealthObservation:
 
 
 class World:
-    """조회 tool 셋을 한 번씩 부른 뒤의 context — `visit_lines` 가 채워진 상태.
-
-    key 는 s1 열(어제) · s2 귀를 만져요 + 중이염이래요(오늘, 사전에 없는 말) · g1 해열제(어제 밤) ·
-    f1 미음(어제) · c1~c3 항생제 체크(그제 · 어제 · 오늘) 다.
-    """
-
-    def __init__(self, *, entries=(), safety_ok=True) -> None:
+    def __init__(self, *, entries=(), safety_ok=True, empty=False, extra_courses=()) -> None:
         self.fever = obs(TODAY - DAY, symptoms=("열나",), severity="severe")
         self.ear = obs(TODAY, symptoms=("귀를 자꾸 만져요", "중이염이래요"))
         self.given = obs(
@@ -94,21 +92,26 @@ class World:
             dosage="5ml",
             checked={(TODAY - DAY, time(8, 30))},
         )
-        memory = InMemoryHealthMemory([self.fever, self.ear, self.given], [self.meal])
-        base = context(memory=memory, medication=InMemoryMedicationStore([self.course], doses))
-        self.ctx = replace(base, now=EVENING_END)
+        courses = [(self.course, doses), *extra_courses]
+        memory = InMemoryHealthMemory(
+            [] if empty else [self.fever, self.ear, self.given], [] if empty else [self.meal]
+        )
+        store = InMemoryMedicationStore(
+            [] if empty else [c for c, _ in courses],
+            [] if empty else [d for _, rows in courses for d in rows],
+        )
+        self.ctx = replace(context(memory=memory, medication=store), now=EVENING_END)
         self.ctx.state.gate = gate(48, safety_ok=safety_ok)
         self.ctx.state.safety_entries = tuple(entries)
 
-    async def read_all(self) -> "World":
-        await search_health_observations(self.ctx, SearchHealthArgs())
-        await search_recent_meals(self.ctx, SearchMealsArgs())
-        await search_medication_checks(self.ctx, SearchMedicationChecksArgs())
+    async def search(self, **args) -> "World":
+        """모델이 증상 조회를 부른 것."""
+        await search_health_observations(self.ctx, SearchHealthArgs(**args))
         return self
 
 
-async def compose(world: World, *keys: str):
-    return await compose_symptom_timeline(world.ctx, ComposeTimelineArgs(keys=list(keys)))
+async def compose(world: World):
+    return await compose_symptom_timeline(world.ctx, ComposeTimelineArgs())
 
 
 def timeline_of(world: World):
@@ -121,64 +124,64 @@ def content(world: World) -> list[str]:
     return timeline_of(world).body.split("\n")[:-2]
 
 
-async def test_조회한_줄을_날짜_구획_순서로_낸다():
-    world = await World().read_all()
+async def test_조회한_증상에_식사_복약을_코드가_더해_날짜_구획_순서로_낸다():
+    world = await World().search()
 
-    result = await compose(world, "c3", "f1", "s2", "c2", "g1", "s1", "c1")
+    result = await compose(world)
 
-    assert result.success and result.data == {"lines": 7, "dropped": 0}
-    assert content(world) == [
-        "9/26 항생제 5ml 체크 0/3회",
-        "9/27 발열 · 정도: 심함",
-        "9/27 21:00 해열제 먹였다고 기록하셨어요",
-        "9/27 항생제 5ml 체크 1/3회",
-        "9/27 미음 반 그릇",
-        f"9/28 귀를 자꾸 만져요 / {FLAGGED}",
-        "9/28 항생제 5ml 체크 0/3회",
+    assert result.success and result.data == {"lines": 7}
+    assert content(world) == EVERYTHING
+
+
+async def test_모델이_증상_조회를_건너뛰어도_기본_기간으로_다_넣는다():
+    # 라이브 eval 에서 모델이 조회 tool 을 건너뛴 일이 있었다 — 줄이 통째로 빠지지 않는다
+    world = World()
+
+    result = await compose(world)
+
+    assert result.success
+    assert content(world) == EVERYTHING
+    assert world.ctx.state.visit_period == "14d"
+
+
+async def test_증상을_좁혀도_식사_복약은_늘_들어간다():
+    world = await World().search(symptom="열")
+
+    await compose(world)
+
+    assert content(world) == [line for line in EVERYTHING if "귀를" not in line]
+
+
+async def test_복약_체크는_모델이_고른_기간을_따른다():
+    old = course_with_doses("시럽", PATTERN, TODAY - 20 * DAY, TODAY - 18 * DAY)
+    short = await World(extra_courses=[old]).search(period="14d")
+    long = await World(extra_courses=[old]).search(period="30d")
+
+    await compose(short)
+    await compose(long)
+
+    assert not any("시럽" in line for line in content(short))
+    assert [line for line in content(long) if "시럽" in line] == [
+        "9/8 시럽 체크 0/3회",
+        "9/9 시럽 체크 0/3회",
+        "9/10 시럽 체크 0/3회",
     ]
 
 
-async def test_조회하지_않은_key_는_지운다():
-    world = await World().read_all()
+async def test_기록이_하나도_없으면_정리를_내지_않는다():
+    world = World(empty=True)
 
-    result = await compose(world, "s1", "s99", "x")
-
-    # 지어낸 key 줄은 조용히 지워진다 — 실패가 아니라 나머지로 정리한다
-    assert result.success and result.data == {"lines": 1, "dropped": 2}
-    assert content(world) == ["9/27 발열 · 정도: 심함"]
-
-
-async def test_남는_줄이_없으면_정리를_내지_않는다():
-    world = await World().read_all()
-
-    result = await compose(world, "s99")
+    result = await compose(world)
 
     assert result.error is not None and result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
     assert not [r for r in world.ctx.state.readouts if r.kind == "symptom_timeline"]
 
 
-async def test_조회하기_전에는_어떤_key_도_근거가_아니다():
-    world = World()  # 조회 tool 을 부르지 않았다
-
-    result = await compose(world, "s1")
-
-    assert result.error is not None and result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
-
-
-async def test_같은_key_를_두_번_넣어도_한_줄():
-    world = await World().read_all()
-
-    result = await compose(world, "s1", "s1")
-
-    assert result.data == {"lines": 1, "dropped": 0}
-    assert content(world) == ["9/27 발열 · 정도: 심함"]
-
-
 async def test_정리에는_해석_병_이름_안_먹였다는_말이_없다():
     # 기록 원문에 "중이염이래요" 가 있어도 줄에는 자리표시만 나간다
-    world = await World().read_all()
+    world = await World().search()
 
-    await compose(world, "s1", "s2", "g1", "f1", "c1", "c2", "c3")
+    await compose(world)
 
     body = timeline_of(world).body
     assert not any(word in body.replace(" ", "") for word in FORBIDDEN_INTERPRETATION)
@@ -187,89 +190,83 @@ async def test_정리에는_해석_병_이름_안_먹였다는_말이_없다():
     assert not any(word in body for word in FORBIDDEN_DOSE_GUESS)
 
 
-async def test_readout_은_모델이_고른_것이고_근거를_단다():
-    world = await World().read_all()
+async def test_readout_은_근거를_단다():
+    world = await World().search()
 
-    await compose(world, "s1", "g1", "c2")
+    await compose(world)
 
     readout = timeline_of(world)
     assert readout.authored_by == "model"
     assert {(ref.kind, ref.id) for ref in readout.source_refs} == {
         ("observation_health", world.fever.id),
+        ("observation_health", world.ear.id),
         ("observation_health", world.given.id),
+        ("observation_food", world.meal.id),
         ("medication_schedule", world.course.id),
     }
 
 
 async def test_알레르기_줄은_코드가_붙인다():
-    world = await World(entries=(PEANUT, ASTHMA)).read_all()
+    world = await World(entries=(PEANUT, ASTHMA)).search()
 
-    result = await compose(world, "s1")
+    await compose(world)
 
-    assert result.success
     lines = timeline_of(world).body.split("\n")
-    allergy = READOUTS.render("card.allergy", items="땅콩").body
-    chronic = READOUTS.render("card.chronic", items="천식").body
     # 타임라인 줄이 먼저, 안전 줄이 뒤다
-    assert lines == ["9/27 발열 · 정도: 심함", allergy, chronic]
+    assert lines[-2:] == [
+        READOUTS.render("card.allergy", items="땅콩").body,
+        READOUTS.render("card.chronic", items="천식").body,
+    ]
 
 
-def test_모델은_줄의_글을_넘길_수_없다():
-    # 출력 tool 은 key 목록만 받는다 — 글 · 구획 · 날짜를 넘길 칸이 없다
-    with pytest.raises(ValueError):
-        ComposeTimelineArgs.model_validate(
-            {"keys": ["s1"], "lines": [{"text": "땅콩 알레르기", "ref": "x"}]}
-        )
-
-
-@pytest.mark.parametrize("keys", [[], [f"s{n}" for n in range(MAX_KEYS + 1)]])
-def test_key_는_하나_이상_상한_이하(keys):
-    with pytest.raises(ValueError):
-        ComposeTimelineArgs(keys=keys)
+def test_모델은_정리에_아무것도_넘길_수_없다():
+    # 줄 · key · 글을 넘길 칸이 없다
+    for extra in ({"keys": ["s1"]}, {"lines": [{"text": "땅콩 알레르기"}]}):
+        with pytest.raises(ValueError):
+            ComposeTimelineArgs.model_validate(extra)
 
 
 async def test_등록된_알레르기가_없으면_없다고_적지_않고_등록_없음으로_적는다():
-    world = await World().read_all()
+    world = await World().search()
 
-    await compose(world, "s1")
+    await compose(world)
 
     body = timeline_of(world).body
     assert READOUTS.render("card.allergy", items="등록된 내용이 없어요").body in body
 
 
 async def test_안전_조회_실패면_경고_줄():
-    world = await World(entries=(), safety_ok=False).read_all()
+    world = await World(safety_ok=False).search()
 
-    result = await compose(world, "s1")
+    await compose(world)
 
-    assert result.success
-    body = timeline_of(world).body
-    warning = READOUTS.render("safety.unavailable").body
+    lines = timeline_of(world).body.split("\n")
     # "아래 정리는 …" 라서 경고가 위, 그리고 "알레르기 없음" 같은 줄은 없다
-    assert body.split("\n") == [warning, "9/27 발열 · 정도: 심함"]
+    assert lines == [READOUTS.render("safety.unavailable").body, *EVERYTHING]
 
 
 async def test_게이트가_없으면_조회_실패로_본다():
     # 읽었는지 모르는 상태를 "알레르기 없음" 으로 쓰지 않는다
-    world = await World().read_all()
+    world = await World().search()
     world.ctx.state.gate = None
 
-    await compose(world, "s1")
+    await compose(world)
 
     assert READOUTS.render("safety.unavailable").body in timeline_of(world).body
 
 
 async def test_다시_부르면_정리가_한_번만_남는다():
-    world = await World().read_all()
+    world = await World().search()
 
-    await compose(world, "s1")
-    await compose(world, "s1", "g1")
+    await compose(world)
+    await compose(world)
 
-    assert content(world) == ["9/27 발열 · 정도: 심함", "9/27 21:00 해열제 먹였다고 기록하셨어요"]
+    assert content(world) == EVERYTHING
 
 
-async def test_원문은_state_repr_에_나오지_않는다():
-    world = await World().read_all()
+async def test_조회한_원문은_state_repr_에_나오지_않는다():
+    # 정리가 나가기 전까지 원문은 visit_lines 에만 있다 — repr(로그)에 싣지 않는다
+    world = await World().search()
 
     text = repr(world.ctx.state)
 
@@ -279,7 +276,7 @@ async def test_원문은_state_repr_에_나오지_않는다():
 async def test_진료_준비_tool_이_아니면_이름으로_부를_수_없다():
     assert "compose_symptom_timeline" in TOOL_HANDLERS
     result = await execute_tool(
-        "compose_symptom_timeline", {"keys": ["s1"]}, context(), allowed=("search_recent_meals",)
+        "compose_symptom_timeline", {}, context(), allowed=("search_health_observations",)
     )
 
     assert result.error is not None and result.error["code"] == ErrorCode.TOOL_NOT_ALLOWED

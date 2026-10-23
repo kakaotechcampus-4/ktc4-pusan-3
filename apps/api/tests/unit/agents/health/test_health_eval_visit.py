@@ -41,7 +41,7 @@ from tests.eval.agents.health.judges import (
 )
 from tests.eval.agents.health.runner import run_case
 from tests.eval.agents.health.world import DAY, KST, WORLDS, build_world
-from tests.unit.agents.health.support import FakeLLM, call, calls
+from tests.unit.agents.health.support import FakeLLM, call
 
 BY_ID = {case.case_id: case for case in CASES}
 VISIT = [case for case in CASES if case.label is HealthTaskType.VISIT_SUMMARY]
@@ -49,9 +49,10 @@ MEMORY = [case for case in CASES if case.memory]
 
 
 class ComposingLLM:
-    """조회 셋을 부르고, 돌려받은 key 를 전부 넘겨 `compose_symptom_timeline` 을 부르는 가짜.
+    """증상 조회 하나를 부르고 이어서 인자 없이 `compose_symptom_timeline` 을 부르는 가짜.
 
-    보호자가 범위를 좁히지 않았을 때의 모델이다. `seen` 은 부른 횟수다.
+    보호자가 범위를 좁히지 않았을 때의 모델이다. 줄 · 식사 · 복약 체크는 코드가 넣는다 (#551 리뷰).
+    `seen` 은 부른 횟수다.
     """
 
     def __init__(self) -> None:
@@ -62,29 +63,12 @@ class ComposingLLM:
         self.seen.append([dict(m) for m in messages])
         self._step += 1
         if self._step == 1:
-            return calls(
-                ("search_health_observations", {"period": "14d"}),
-                ("search_recent_meals", {}),
-                ("search_medication_checks", {}),
-            )
+            return call("search_health_observations", {"period": "14d"})
         if self._step == 2:
-            return call("compose_symptom_timeline", {"keys": _keys_from(messages)})
+            return call("compose_symptom_timeline", {})
         return LLMResponse(
             message=SimpleNamespace(content="끝", tool_calls=None), usage={}, latency_ms=1
         )
-
-
-def _keys_from(messages: list[dict]) -> list[str]:
-    keys: list[str] = []
-    for message in messages:
-        if message.get("role") != "tool":
-            continue
-        payload = json.loads(message["content"])
-        if not payload["success"]:
-            continue
-        for lines in payload["data"].values():
-            keys += [line["key"] for line in lines if isinstance(line, dict) and "key" in line]
-    return keys
 
 
 # 먹인 약 — Memory 가 한 번 부르는 저장 tool. 원문에 있는 말만 넣는다
@@ -739,7 +723,7 @@ def _tool_message(resource: str, data: dict) -> dict:
     return {"role": "tool", "content": json.dumps(payload, ensure_ascii=False)}
 
 
-async def test_정리의_모델_입력에는_key_날짜_코드뿐이다():
+async def test_정리의_모델_입력에는_줄_수뿐이다():
     ran = await _ran("T24")
 
     assert any(m["role"] == "tool" for m in ran.model_inputs)  # 실행기가 모았다
@@ -785,6 +769,19 @@ async def test_모델_입력을_못_모았으면_참고로_남는다():
     ran = await _ran("T24")
 
     assert visit_timeline()(replace(ran, model_inputs=())).notes
+
+
+@pytest.mark.parametrize(
+    "args", [{"period": "3d", "symptom": "열"}, {"period": "7d", "symptom": "열"}]
+)
+async def test_T23_열만_좁혀_짧은_기간으로_불러도_통과한다(args):
+    # 라이브 eval 에서 모델이 "요즘 열 얼마나 났지" 에 symptom="열" 을 넣었다 (#551 BE 리뷰).
+    # "열" 이 사전 별칭이 아니라 "38도" 기록이 떨어져 "10/14 발열" 로 잘렸던 경우다
+    client = FakeLLM(call("search_health_observations", args), call("compose_symptom_timeline", {}))
+    ran = await run_case(BY_ID["T23"], client=client)
+
+    assert visit_timeline()(ran).failures == []
+    assert "10/12–10/14 발열" in ran.result.readouts[0].body
 
 
 async def test_정리에_기록_밖_줄이_있으면_실패다():

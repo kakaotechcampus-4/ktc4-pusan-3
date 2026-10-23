@@ -969,6 +969,9 @@ _FEVER_WINDOW = timedelta(hours=48)
 _RECORD_DAYS = 30  # 진료 준비 조회 tool 이 받는 가장 긴 기간 · 기록 없음 판정 기간 — 오늘 포함
 _SYMPTOM_DAYS = 14  # 보호자가 기간을 말하지 않았을 때 조회 기본 기간 — 증상 줄을 요구하는 범위
 _MEAL_DAYS = 3  # 식사는 최근 3일만
+# 모델이 고를 수 있는 증상 조회 기간. 기간 경계가 에피소드를 자르면 줄의 날짜 범위가 짧아진다
+# (10/10–10/13 에피소드를 3일로 보면 10/12–10/13) — 그 줄도 기록에서 나온 줄이다
+_PERIOD_DAYS = (3, 7, 14, 30)
 _DATE_HEAD = re.compile(r"(\d{1,2})/(\d{1,2})[ –]")
 _CHECK_COUNT = re.compile(r"(\d+)/(\d+)회")
 _DOSE_TEXT = re.compile(r"(?<![\d./])\d+(?:[./]\d+)?\s*(?:ml|mg|cc|g)", re.IGNORECASE)
@@ -1248,7 +1251,7 @@ def model_input_failures(world: World, inputs: Iterable[dict]) -> list[str]:
     """모델에게 간 메시지에 기록 원문 · 약 이름 · 용량 · 안전 정보가 있으면 실패 (#551).
 
     tool 메시지는 성공한 결과의 data 만 본다 — 실패 사유는 코드가 쓴 고정 안내문이라 한글이다.
-    data 에는 key · 날짜 · 증상 코드뿐이라 한글이 하나도 없어야 한다. system 메시지는 코드가 쓴
+    data 에는 줄 수뿐이라 한글이 하나도 없어야 한다. system 메시지는 코드가 쓴
     안내문이라 한글이 있다 — 거기서는 이 세계의 약 이름 · 용량 · 안전 정보만 찾는다.
     """
     failures: list[str] = []
@@ -1391,7 +1394,11 @@ def _visit_candidates(world: World) -> set[str]:
     """
     tz, today = world.context.timezone, world.today
     first_day = today - timedelta(days=_RECORD_DAYS - 1)
-    lines = set(_symptom_candidates(world, first_day))
+    lines = {
+        line
+        for days in _PERIOD_DAYS
+        for line in _symptom_candidates(world, today - timedelta(days=days - 1))
+    }
     for row in world.spec.observations:
         if row.medication_given is None:
             continue
