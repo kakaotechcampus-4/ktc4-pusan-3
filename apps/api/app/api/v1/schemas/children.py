@@ -253,6 +253,26 @@ class CreateInputRequest(BaseModel):
 
 
 class CreateInputResponse(BaseModel):
-    """202 — run_id 만. 결과는 전부 GET /runs/{rid}/events 로 흐른다."""
+    """202 — run_id. 결과는 전부 GET /runs/{rid}/events 로 흐른다.
+
+    같은 키 재생에서 그 run 의 채널이 이미 지워졌고(닫힌 지 5분 뒤 · 서버 재시작) 대화 기록이
+    남아 있으면 `finished` 와 `conversation_date` 가 같이 온다 (#538).
+    """
 
     run_id: str
+    finished: bool = Field(
+        default=False,
+        description=(
+            "true 면 이미 끝나 결과가 대화 기록에 저장된 run 이다. GET /runs/{rid}/events 를 열지 "
+            "말고 conversation_date 의 지난 대화(GET /children/{cid}/chat)로 결과를 그린다. "
+            "false 면 지금처럼 SSE 를 연다 — 같은 키 재생에서 채널도 대화 기록도 없으면 저장됐는지 "
+            "서버도 모르는 run 이라 false 다"
+        ),
+    )
+    conversation_date: date | None = Field(
+        default=None,
+        description=(
+            "finished 가 true 일 때만. 그 턴이 붙은 대화 날짜(KST). 되묻기에 답한 run 은 질문한 "
+            "날이라 접수한 날과 다를 수 있다"
+        ),
+    )

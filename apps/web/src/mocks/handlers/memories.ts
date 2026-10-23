@@ -340,7 +340,7 @@ export const memoryHandlers = [
   }),
 
   /**
-   * 07 피드백 탭이 평가할 제안 목록 (#284). 서버는 개인화(`kind = 'personalized'`)만 내린다.
+   * 07 피드백 탭이 평가할 제안 목록 (#284). 개인화와 채택한 일반 추천(#509)이 같이 온다.
    * 목은 한 장으로 끝난다(`next_cursor: null`).
    */
   http.get(url("/children/:cid/suggestions"), async () => {

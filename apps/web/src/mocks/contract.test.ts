@@ -38,7 +38,11 @@ import {
 import { toISODate } from "@/lib/format";
 import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
-import { REPORT_CATEGORIES, REPORT_MESSAGE_MAX_LENGTH } from "@/lib/api/types";
+import {
+  DIARY_CONTENT_MAX_LENGTH,
+  REPORT_CATEGORIES,
+  REPORT_MESSAGE_MAX_LENGTH,
+} from "@/lib/api/types";
 import type {
   Affinity,
   AffinitiesResponse,
@@ -82,6 +86,7 @@ import type {
   SuggestionsRequest,
   SuggestionsResponse,
   SuggestionFeedbackResponse,
+  SuggestionListResponse,
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
@@ -583,6 +588,34 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
       setScenario("default");
     }
   }
+
+  it("🚨 일반 추천도 사전검사가 실리고, active 로 등록하면 그 추천이 빠진다 (#509)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const before = await fetchWith("empty", body);
+    const check = (before.prechecks ?? []).find((p) => p.suggestion_id === "g_2");
+    expect(check?.item).toBe("참깨");
+
+    await addHealthSafety("c1", { type: "allergy", label: "참깨" }, newIdempotencyKey());
+    const after = await fetchWith("empty", body);
+    expect((after.general ?? []).map((g) => g.id)).not.toContain("g_2");
+    expect((after.prechecks ?? []).some((p) => p.item === "참깨")).toBe(false);
+  });
+
+  it("🚨 같은 Agent 의 개인화와 일반이 한 응답에 섞여 온다 — 둘 다 묶음은 하나다 (#512 리뷰)", async () => {
+    const data = await fetchWith("suggest_mixed", { agents: ["food", "activity"] });
+
+    expect(data.suggestions.some((s) => s.agent === "food")).toBe(true);
+    expect((data.general ?? []).some((g) => g.agent === "food")).toBe(true);
+    // 일반 추천이 있으면 scarcity 도 붙는다 (서버와 같다)
+    expect(data.scarcity).not.toBeNull();
+    // 묶음은 kind 가 아니라 Agent 단위다 — 식사 묶음 하나가 둘 다 묶는다
+    const food = (data.groups ?? []).filter((g) => g.agent === "food");
+    expect(food).toHaveLength(1);
+    expect(food[0].merges_into_one).toBe(true);
+    // 일반 추천의 알레르기 사전검사도 같이 실린다
+    const ids = new Set((data.general ?? []).map((g) => g.id));
+    expect((data.prechecks ?? []).some((p) => ids.has(p.suggestion_id!))).toBe(true);
+  });
 
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
@@ -1573,6 +1606,22 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
     expect(body.memory_changed).toBe(false);
   });
 
+  it("🚨 채택한 일반 추천도 목록에 오고 평가할 수 있다 — kind 는 general 그대로다 (#509)", async () => {
+    const list = await api.get<SuggestionListResponse>("/children/c1/suggestions");
+    const general = list.items.find((s) => s.kind === "general");
+    expect(general?.id).toBe("g_past_1");
+    // 일반 추천은 근거 필드가 없다 — 개인화로 집계될 길이 없다
+    expect(general && "evidence" in general).toBe(false);
+
+    const body = await api.patch<SuggestionFeedbackResponse>(
+      "/children/c1/suggestions/g_past_1/feedback",
+      { feedback: "child_liked" },
+    );
+    expect(body.suggestion.kind).toBe("general");
+    expect(body.suggestion.feedback).toBe("child_liked");
+    expect(body.memory_changed).toBe(false);
+  });
+
   it("피드백을 보내도 관찰 건수가 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
     await api.patch("/children/c1/suggestions/s_past_1/feedback", { feedback: "not_acted" });
@@ -1780,6 +1829,41 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
 
     expect(isApiError(failure, "validation_failed")).toBe(true);
     expect((failure as ApiError).status).toBe(400);
+  });
+
+  it("앞뒤 공백까지 원문 길이로 센다 — 정확히 1000자는 저장되고 1001자는 400 이다 (#549)", async () => {
+    const date = (await recentCalendarDays())[0]?.date;
+    expect(date).toBeDefined();
+    const path = `/children/c1/diary/${date}`;
+    // 🚨 신고와 달리 앞뒤 공백을 떼지 않는다 — 떼고 세면 아래 1001자가 1000자로 통과한다.
+    const full = ` ${"가".repeat(DIARY_CONTENT_MAX_LENGTH - 2)} `;
+
+    expect((await api.put<MyDiary>(path, { content: full })).content).toBe(full);
+
+    const failure = await api.put(path, { content: `${full}가` }).catch((error: unknown) => error);
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.my_diary?.content).toBe(full);
+  });
+
+  it.each([
+    ["NUL 이 든", "지어낸\u0000일기"],
+    // 서버는 바디 검증(400)이 라우터의 공백 검사(422)보다 먼저다.
+    ["공백뿐이고 1000자를 넘는", " ".repeat(DIARY_CONTENT_MAX_LENGTH + 1)],
+  ])("%s 본문은 400 이고 기존 일기가 남는다 (#549)", async (_, content) => {
+    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+    expect(diaryDay).toBeDefined();
+    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+
+    const failure = await api
+      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
+    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+    expect(after.my_diary).toEqual(before.my_diary);
   });
 
   it("두 번 지워도 둘 다 204 다 — 없는 일기를 지워도 204", async () => {

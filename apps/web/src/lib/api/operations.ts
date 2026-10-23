@@ -19,6 +19,7 @@ import type {
   ApproveSuggestionsResponse,
   CreateEventDraftsRequest,
   CreateEventDraftsResponse,
+  CreateInputResponse,
   HealthSafety,
   OnboardingRequest,
   OnboardingResponse,
@@ -52,12 +53,15 @@ export interface InputRequest {
   reply_to?: string;
 }
 
-/** 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다 (streamRunEvents). */
+/**
+ * 202 로 run_id 가 온다. 결과는 SSE 로 흐른다 (streamRunEvents).
+ * 🚨 `finished` 가 참이면 SSE 를 열지 않는다 — 채널이 이미 지워진 끝난 run 이다 (`CreateInputResponse`).
+ */
 export function submitInput(
   childId: string,
   body: InputRequest,
   idempotencyKey: IdempotencyKey,
-): Promise<{ run_id: string }> {
+): Promise<CreateInputResponse> {
   return api.post(idempotentPath.input(childId), body, { idempotencyKey });
 }
 

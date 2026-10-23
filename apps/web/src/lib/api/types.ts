@@ -296,7 +296,8 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족할 때 개인화 **대신** 나간다 (CLAUDE.md §2).
+ * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
@@ -415,7 +416,8 @@ export type PromptKey = (typeof PROMPT_KEYS)[number];
 /* ── 03 홈 · 한 줄 입력 ──────────────────────────────────────────────── */
 
 /**
- * POST /children/{cid}/inputs — 즉시 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다.
+ * POST /children/{cid}/inputs — 즉시 202 로 run_id 가 온다. 결과는 SSE 로 흐른다 (끝난 run 의 재생은
+ * `CreateInputResponse` 의 `finished`).
  * 🚨 Idempotency-Key 가 필수다. 재시도할 때 키를 새로 만들지 않는다.
  */
 /**
@@ -430,8 +432,23 @@ export interface CreateInputRequest {
   reply_to?: string;
 }
 
+/**
+ * 202 — run_id. 결과는 SSE 로 흐른다.
+ *
+ * 🚨 **같은 키 재생에서만 `finished` 가 참일 수 있다** (#538 · 서버 `docs/api/idempotency-v1.md` §3-4-1).
+ *    서버는 끝난 run 의 채널을 5분 뒤 지우는데 키는 24시간 남는다. 그 사이에 결과를 못 받은 줄을 다시 보내면
+ *    서버가 대화 기록으로 끝났음을 알린다 — 그때는 SSE 를 열지 않는다(404 다). 같은 키 재생에서 채널도 대화
+ *    기록도 없으면 저장됐는지 서버도 모르는 run 이라 `false` 로 run_id 만 온다.
+ */
 export interface CreateInputResponse {
   run_id: string;
+  /**
+   * 참이면 이미 끝나 결과가 대화 기록에 저장된 run 이다. `conversation_date` 의 지난 대화로 그린다.
+   * ⚠️ 서버 #547 머지 전에는 오지 않는다 — 없으면 지금처럼 SSE 를 연다(404 → 결과 미확인). 그래서 선택 필드로 받는다.
+   */
+  finished?: boolean;
+  /** `finished` 일 때만. 그 턴이 붙은 대화 날짜(한국 시간). 되묻기 답이면 질문한 날이라 오늘이 아닐 수 있다. */
+  conversation_date?: string | null;
 }
 
 /* ── 05 제안 후보 ────────────────────────────────────────────────────── */
@@ -545,8 +562,9 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
-   * 둘이 같이 나오지 않는다). 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
+   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
+   * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
   general?: GeneralSuggestion[] | null;
   /** "오늘 급식 · 최근 3일 식사 · 확정 관심 2건" — 무엇을 봤는지. 서버가 만든 문구다. */
@@ -713,9 +731,18 @@ export interface ApproveSuggestionsRequest {
   suggestion_ids: string[];
 }
 
-/** 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다. */
+/**
+ * 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다.
+ *
+ * ⚠️ 일반 추천도 채택한다 (#509). 실서버는 일반 추천도 개인화와 같은 모양(`SuggestionOut`)에
+ *    `kind: "general"` 을 실어 돌려줘서 `GeneralSuggestion` 과도 맞지 않는다 (`basis` · `record_count` 가
+ *    없다). 그래서 **두 모양에 공통인 필드만** 적는다 — 더 꺼내 쓰면 목에서는 되고 실서버에서는
+ *    `undefined` 가 된다.
+ * 🚨 **채택 응답은 근거를 읽지 않는다** — 개인화도 `evidence: []` 로 온다. 이 모양은 서버 계약으로
+ *    고정됐다 (`docs/api/suggestions-v1.md` §7 · #545). 근거가 필요하면 05 응답에서 읽는다.
+ */
 export interface ApproveSuggestionsResponse {
-  suggestions: Suggestion[];
+  suggestions: Array<Pick<Suggestion, "id" | "child_id" | "agent" | "content" | "status">>;
 }
 
 /**
@@ -913,19 +940,42 @@ export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
  *    기억을 고치려면 `POST /corrections` 로 간다.
  */
 export interface SuggestionFeedbackResponse {
-  suggestion: Suggestion;
+  suggestion: ReceivedSuggestion;
   memory_changed: boolean;
 }
 
 /**
+ * 07 피드백 목록의 일반 추천 한 줄 (#509). 05 에서 채택한 일반 추천도 해 보고 나서 평가한다.
+ *
+ * 🚨 **`GeneralSuggestion` 이 아니다.** 실서버는 이 목록에서 일반 추천도 개인화와 같은 모양
+ *    (`SuggestionOut`)에 `kind: "general"` · `evidence: []` 를 실어 보낸다 — `basis` · `record_count` ·
+ *    문서 근거가 없다. 그래서 **두 모양에 공통인 필드만** 적는다. 근거를 읽을 길이 타입에 없어야
+ *    "근거 0행인 것이 개인화로 그려지는" 길도 없다 (CLAUDE.md §2).
+ * ⚠️ `record_count` 를 싣지 않는 것은 서버가 정한 계약이다 (`docs/api/suggestions-v1.md` §7 · #545) —
+ *    05 응답 때 세는 값이라 저장되지 않고, 지금 다시 세면 그 추천이 지금 기록에서 나온 것처럼 읽힌다.
+ *    그래서 07 의 일반 추천 줄은 라벨만 둔다.
+ */
+export interface ReceivedGeneralSuggestion extends Pick<
+  Suggestion,
+  "id" | "child_id" | "agent" | "content" | "status" | "expires_at" | "feedback"
+> {
+  kind: "general";
+}
+
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
+
+/**
  * `GET /children/{cid}/suggestions` — 07 피드백 탭이 평가할 제안 목록 (#284).
  *
- * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다 — 일반 추천은 채택하는 흐름이
- *    없어서 평가 대상이 아니다. 그래서 `items` 가 `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
+ * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
+ *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
+ * 기본 목록은 `draft` 를 뺀다 — 05 에서 고르지 않은 일반 추천은 여기 오지 않는다.
+ * 계약은 `docs/api/suggestions-v1.md` §7 (#545).
  * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
  */
 export interface SuggestionListResponse {
-  items: Suggestion[];
+  items: ReceivedSuggestion[];
   next_cursor: string | null;
 }
 
@@ -1189,10 +1239,19 @@ export interface ChatDayResponse {
  * 작성자는 로그인한 보호자다 — 요청에 싣지 않는다. 사진은 일기 밖에 있어서(#115) 여기 싣지 않고,
  * 일기를 덮거나 지워도 사진은 그대로다. `Idempotency-Key` 를 받지 않는다 — 몇 번 보내도 결과가
  * 같은 요청이다 (`idempotency.ts` 의 5곳이 아니다).
+ *
+ * 🚨 **1000자를 넘거나 NUL 이 든 `content` 는 400 `validation_failed` 다** (#549 · 서버 PR #550).
+ *    신고와 달리 앞뒤 공백을 떼지 않고 원문 길이로 센다 — 저장하는 것이 원문이라서다.
  */
 export interface DiaryRequest {
   content: string;
 }
+
+/**
+ * 서버 `DIARY_CONTENT_MAX`(`schemas/diary.py`)와 같은 값이다. 한쪽만 바꾸지 않는다.
+ * 앞뒤 공백 · 줄바꿈을 떼지 않은 원문 길이의 상한이다.
+ */
+export const DIARY_CONTENT_MAX_LENGTH = 1000;
 
 /** `PATCH /children/{cid}/event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
 export interface EventItemUpdateResponse {
