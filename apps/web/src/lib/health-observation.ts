@@ -34,6 +34,14 @@ export function healthTitle(fields: HealthFields): string | null {
   return symptoms && symptoms.length > 0 ? symptoms.join(", ") : null;
 }
 
+/**
+ * 줄에 붙일 시각(ISO). 본 시각(`observed_time`)이 먼저고, 없으면 잰 시각(`measured_at`)이다 —
+ * 체온 행은 잰 시각만 있는 일이 많아서, 같은 날 두 번 잰 기록이 시각 없이 같은 줄로 겹친다.
+ */
+export function healthMoment(fields: HealthFields): string | null {
+  return fields.observed_time ?? fields.measured_at ?? null;
+}
+
 /** "38.5℃ (귀)". 체온이 없으면 `null`. 숫자는 소수 첫째 자리까지 그대로 쓴다. */
 export function temperatureLabel(fields: HealthFields): string | null {
   if (typeof fields.temperature !== "number") return null;

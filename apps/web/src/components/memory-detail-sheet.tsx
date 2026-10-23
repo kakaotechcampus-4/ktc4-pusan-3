@@ -373,11 +373,8 @@ function HealthFields({ fields }: { fields: ObservationHealth["domain_fields"] }
         <MetaRow label="증상">{symptoms.join(", ")}</MetaRow>
       ) : null}
       {medicine ? <MetaRow label="먹인 약">{fields.medication_given}</MetaRow> : null}
-      {temperature ? (
-        <MetaRow label="체온">
-          {measuredAt ? `${temperature} · ${measuredAt}` : temperature}
-        </MetaRow>
-      ) : null}
+      {temperature ? <MetaRow label="체온">{temperature}</MetaRow> : null}
+      {measuredAt ? <MetaRow label="잰 시간">{measuredAt}</MetaRow> : null}
       {bodyPart ? <MetaRow label="부위">{bodyPart}</MetaRow> : null}
       {when ? <MetaRow label={medicine ? "먹인 시간" : "시간"}>{when}</MetaRow> : null}
     </>
