@@ -76,6 +76,8 @@ export function ChatThread({
         <section
           key={day}
           id={chatDayAnchor(day)}
+          // 머리(`chat/page.tsx`)가 지금 보고 있는 날을 찾을 때 읽는다.
+          data-chat-day={day}
           aria-label={`${formatDay(day)} 대화`}
           // 캘린더에서 그날로 열 때 이 자리로 내린다 — 붙어 있는 머리(`Screen` 의 topBar)에 날짜가 가리지 않게 띄운다.
           className="flex scroll-mt-24 flex-col gap-6"

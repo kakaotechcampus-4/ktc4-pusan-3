@@ -205,6 +205,30 @@ test.describe("09 캘린더 하루 보기에서 그날 대화로 들어간다", 
     await expect(page.getByRole("button", { name: "다음 대화 보기" })).toHaveCount(0);
   });
 
+  test("머리는 「대화」 하나이고, 날짜는 머리 아래에 걸린 날을 따라간다 (#541)", async ({
+    page,
+  }) => {
+    await page.goto(`/child/${CHILD}/chat?date=${browserDaysAgo(3)}`);
+    const header = page.locator("header");
+    await expect(header.getByRole("heading", { name: "대화", exact: true })).toBeVisible();
+    await expect(header).toContainText(dayLabel(3));
+
+    await page.getByRole("button", { name: "다음 대화 보기" }).click();
+    await expect(page.getByText("요즘 기침을 해")).toBeVisible();
+    await page.getByRole("button", { name: "다음 대화 보기" }).click();
+    await expect(page.getByText("아침에 계란을 잘 먹었어")).toBeVisible();
+
+    // 🚨 오늘까지 붙어도 제목에 "오늘" 이 서지 않는다 — 머리의 날짜는 마지막 한 줄이 아니라 보고 있는 날이다.
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await expect(header).toContainText(dayLabel(3));
+    await expect(header.getByRole("heading", { name: "대화", exact: true })).toBeVisible();
+
+    await page
+      .getByRole("region", { name: new RegExp(dayLabel(1)) })
+      .evaluate((el) => el.scrollIntoView({ block: "start", behavior: "instant" }));
+    await expect(header).toContainText(dayLabel(1));
+  });
+
   test("🚨 그날 화면에서 한 줄 보내면 오늘 대화로 넘어간다 — 며칠을 건너뛰고 붙지 않는다", async ({
     page,
   }) => {
