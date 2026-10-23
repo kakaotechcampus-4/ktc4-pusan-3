@@ -88,7 +88,8 @@ _VALUES = """
   context, assistance_level, completion_status, trigger 는 말로 드러났을 때만 채우고
   아니면 넣지 않는다.
 - 없었다고 말한 증상은 symptom에 넣지 않는다. "콧물이 났는데 열은 없었대" 는 콧물만 기록한다.
-- 체온 숫자가 있으면 temperature 에 숫자만, 잰 시각은 measured_at,
+- "38.5도" · "38.5℃" · "38도 5부" 처럼 섭씨 체온을 말했으면 temperature 에 숫자만(38도 5부는 38.5),
+  "도" 없이 숫자만 말했으면 넣지 않고 몇 도였는지 묻는다. 잰 시각은 measured_at,
   잰 부위가 말에 있을 때만 measure_site. 숫자를 바꾸거나 단위를 바꾸지 않는다.
   "열이 나서 밤 11시에 재 보니 38.5도였어" 는 symptom=["열"], temperature=38.5,
   measured_at="밤 11시" 다. 체온은 증상 기록의 칸이라 증상 말이 있어야 저장한다.

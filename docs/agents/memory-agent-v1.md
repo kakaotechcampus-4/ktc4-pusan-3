@@ -31,7 +31,7 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 > 먹인 약(`medication_given` · `given_time`)은 같은 생성 tool 로 받고, 코드가 증상 행과 약 행으로 나눠 약 행에만
 > `linked_symptom_id` 를 채운다. 약 이름은 `run()` 이 컨텍스트에 넣는 이번 발화(`AgentContext.utterance` — 이어받기면
 > 앞 조각 + 보호자 답들, 모델이 쓴 질문은 빼고)에 글자 그대로 있어야 저장 · 수정된다.
-> 체온 숫자도 같은 발화와 값으로 대조한다(반올림 · 화씨 환산 거절). 발화를 모르는 수정 호출은 약 이름 · 체온을
+> 체온 숫자도 같은 발화와 값으로 대조한다 — 섭씨 단위가 붙은 숫자만 보고("생후 38일" 은 체온이 아니다), 반올림 · 화씨는 거절한다. 발화를 모르는 수정 호출은 약 이름 · 체온을
 > 고치지 않는다. 결정과 제약은 [data_model.md](data_model.md) "observation_health — 체온 세 칸 · 먹인 약 두 칸".
 
 `max_steps`(기본 `MAX_STEPS = 7`)는 **LLM 왕복 수** 상한이지 tool 건수 상한이 아니다. 한 왕복에 tool 이 여러 개 와도 그 바퀴에서 전부 실행하고 `steps` 는 1만 올라간다 — 실행 건수는 `len(calls)` 다. run 예산(`model_calls`)은 이 루프를 몇 바퀴 돌았든 Memory 를 1로 센다 ([Agent_공통규약.md](shared/Agent_공통규약.md) §7).

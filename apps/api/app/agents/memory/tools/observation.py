@@ -337,9 +337,11 @@ _TEMPERATURE_NOT_SAID = (
     "몇 도였는지 묻는다."
 )
 
-# 말에 적힌 체온 꼴. "38.5" · "38도" · "38도 5부"(= 38.5)
-_NUMBER = re.compile(r"\d+(?:\.\d+)?")
-_DEGREE_TENTH = re.compile(r"(\d+)\s*도\s*(\d)\s*부")
+# 말에 적힌 체온 꼴 — 섭씨 단위가 붙은 숫자만 센다(#551 BE 리뷰). "38.5도" · "38도" · "38.5℃" ·
+# "38.5°C". 단위 없는 숫자는 날수 · 월령 · 분일 수 있다("생후 38일" 이 38.0 으로 통과했다).
+# "38도 5부" 는 38.5 하나다 — 38 은 아니다. °F 는 받지 않는다(화씨 숫자를 섭씨 칸에 넣지 않는다)
+_DEGREE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:℃|°(?!\s*[Ff])|도(?!\s*\d\s*부))")
+_DEGREE_TENTH = re.compile(r"(?<![\d.])(\d+)\s*도\s*(\d)\s*부")
 
 
 def _sources(context: AgentContext, *quoted: str) -> list[str]:
@@ -361,7 +363,8 @@ def _said(name: str, context: AgentContext, *quoted: str) -> bool:
 def _temperature_said(value: Decimal, context: AgentContext, *quoted: str) -> bool:
     """체온 숫자가 보호자가 한 말 안에 있나 — LLM 이 바꾼 숫자는 응급 안내까지 끌고 간다 (#551).
 
-    값으로 견준다("38" 과 38.0 은 같다). "38도 5부" 는 38.5 다. 대조할 글이 없으면 거짓이다.
+    단위가 붙은 숫자만 값으로 견준다("38도" 와 38.0 은 같다). "38도 5부" 는 38.5 다. 대조할 글이
+    없으면 거짓이다.
     """
     sources = _sources(context, *quoted)
     return bool(sources) and all(value in _temperatures(source) for source in sources)
@@ -369,7 +372,7 @@ def _temperature_said(value: Decimal, context: AgentContext, *quoted: str) -> bo
 
 def _temperatures(text: str) -> set[Decimal]:
     found: set[Decimal] = set()
-    for number in _NUMBER.findall(text):
+    for number in _DEGREE.findall(text):
         try:
             found.add(Decimal(number))
         except InvalidOperation:  # pragma: no cover — 정규식이 숫자만 뽑는다
