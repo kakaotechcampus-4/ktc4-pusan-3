@@ -375,3 +375,43 @@ describe("저장한 뒤 끊긴 run — done + completed: false (#271)", () => {
     expect(runReducer(ended, { type: "start" }).interrupted).toBe(false);
   });
 });
+
+describe("복약 초안 프레임 (#537)", () => {
+  const draft = {
+    draft_id: "d1",
+    op: "create" as const,
+    source: "utterance" as const,
+    schedule: {
+      title: "기침 시럽",
+      dosage: null,
+      indication_text: null,
+      storage: null,
+      med_form: null,
+      note: null,
+      symptom_codes: [],
+      starts_on: null,
+      ends_on: null,
+    },
+    doses: [
+      {
+        timing_anchor: "fixed" as const,
+        offset_minutes: 0,
+        fixed_time: "09:00",
+        scheduled_time: "09:00",
+      },
+    ],
+    notice_times: ["09:00"],
+    missing: ["starts_on", "ends_on"],
+  };
+
+  it("🚨 이름이 잠정이라 두 후보를 다 받고, 일정 초안과 다른 칸에 쌓는다", () => {
+    const state = fold([
+      { type: "medication_drafts", data: { drafts: [draft] } },
+      { type: "medication_draft", data: { drafts: [{ ...draft, draft_id: "d2" }] } },
+      DONE,
+    ]);
+    expect(state.medicationDrafts.map((d) => d.draft_id)).toEqual(["d1", "d2"]);
+    expect(state.drafts).toEqual([]);
+    expect(state.status).toBe("done");
+  });
+});
