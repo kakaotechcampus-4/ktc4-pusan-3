@@ -2,6 +2,8 @@ import { http, HttpResponse } from "msw";
 
 import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
 import type { Agent, CreateInputResponse, Observation } from "@/lib/api/types";
+// 서버는 서류 머리에 오늘을 `isoformat()` 으로 싣는다 (`YYYY-MM-DD`).
+import { toSeoulDateKey } from "@/lib/format";
 
 import {
   educationObservation,
@@ -18,6 +20,7 @@ import { hideTurn, recordedDayOf, recordingTurn, revealTurns } from "./chat";
 import { pendingReplies } from "./pending-replies";
 import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
+import { medicationRunDrafts, stopSeededCourse } from "./medications";
 
 /**
  * 04 대화 — 입력 한 줄과 run 스트림.
@@ -53,6 +56,12 @@ const failedOnce = new Set<string>();
  */
 const askedAgain = new Set<string>();
 
+/**
+ * `med_question` 이 되물은 run (#537). 🚨 이 run 에 온 답은 Memory 가 아니라 **Health 가 이어받는다** — 서버도
+ * 되묻기 맥락에 어느 Agent 의 것인지 싣는다(`DomainPending.agent`). 이어받기 대본이 이 표로 갈린다.
+ */
+const medicationQuestions = new Set<string>();
+
 /** `send_failed` 에서 이미 한 번 끊어 본 Idempotency-Key. 🚨 키마다 한 번만 끊는다 — 다시 시도가 닿아야 한다. */
 const droppedSends = new Set<string>();
 
@@ -75,6 +84,7 @@ export function resetSubmittedInputs(): void {
   askedAgain.clear();
   droppedSends.clear();
   expiredRuns.clear();
+  medicationQuestions.clear();
 }
 
 /**
@@ -340,6 +350,134 @@ async function* agentResultScript(
   yield frame("done", { run_id: runId, model_calls: results.length });
 }
 
+/** Health 결과 한 건의 빈 칸. 대본마다 바뀌는 것만 덮어 쓴다. */
+function healthResult(fields: Partial<AgentResultEvent>): AgentResultEvent {
+  return {
+    agent: "health",
+    task_type: "medication",
+    status: "completed",
+    readouts: [],
+    question: null,
+    awaits_reply: false,
+    suggestion_ids: [],
+    kind: null,
+    reason: null,
+    record_count: null,
+    ...fields,
+  };
+}
+
+/** Health readout 한 줄 — 서버 `health.readout.yaml` 의 코드 문구 모양이다 (`authored_by: "code"`). */
+function healthReadout(kind: string, body: string): AgentReadout {
+  return { kind, title: "", body, authored_by: "code", code: null };
+}
+
+/** 서버 `med.stop_confirm` 과 같은 글자. 🚨 Health 의 질문은 readout 이 아니라 `question` 으로 나간다 (#537). */
+const MED_STOP_QUESTION = "해열 시럽 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요.";
+
+/**
+ * Health 복약 run (#537). 서버 순서와 같다 — `agent_result` → (초안이 있으면) 복약 초안 프레임 → `done`.
+ *
+ * - `med_draft` — 새 복약 + 수정 초안. 🚨 **아무것도 저장되지 않았다** — 넣는 것은 카드의 게이트 ㉡ 다.
+ * - `med_question` — 중단을 **한 번 묻고** 이 run 에서는 아무것도 바꾸지 않는다. 답을 받는 질문이라 `awaits_reply`.
+ * - `med_handoff` — 회차 현황 · 투약의뢰서 · 응급 카드. 🚨 알레르기 조회가 실패한 줄을 "없음" 으로 쓰지 않는다.
+ * ⚠️ 복약 초안 프레임 이름이 잠정이다 (`sse.ts` 의 `MEDICATION_DRAFT_EVENT_NAMES`).
+ */
+async function* medicationScript(
+  runId: string,
+  scenario: "med_draft" | "med_question" | "med_handoff",
+  childId: string | undefined,
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 3, total: 3, label: "다음 행동을 준비하고 있어요" });
+  await sleep(600);
+
+  if (scenario === "med_draft") {
+    yield frame(
+      "agent_result",
+      healthResult({
+        readouts: [
+          healthReadout("medication_notice", "기침 시럽 — 08:30, 12:30, 19:30에 알려드릴까요?"),
+          healthReadout(
+            "medication_notice",
+            "해열 시럽 알림을 08:30, 12:30, 20:00로 바꿀까요? 확인 전까지는 기존 시각에 알려드려요.",
+          ),
+        ],
+      }),
+    );
+    await sleep(300);
+    yield frame("medication_drafts", { drafts: medicationRunDrafts() });
+    await sleep(200);
+  } else if (scenario === "med_question") {
+    // 🚨 질문을 내보내기 **직전에** 맥락을 넣는다 — 서버도 `done` 앞에 넣는다 (`pending-replies.ts`).
+    if (childId) pendingReplies.set(runId, childId);
+    medicationQuestions.add(runId);
+    yield frame("agent_result", healthResult({ question: MED_STOP_QUESTION, awaits_reply: true }));
+    await sleep(300);
+  } else {
+    yield frame(
+      "agent_result",
+      healthResult({
+        task_type: "care_handoff",
+        readouts: [
+          healthReadout(
+            "dose_status",
+            "마지막 체크 12:30 회차 · 다음 예정 19:30 · 오늘 체크 2/3회",
+          ),
+          healthReadout(
+            "med_notice_form",
+            [
+              `[투약 의뢰서]  ${toSeoulDateKey(new Date())}`,
+              "• 약 종류 : 해열 시럽 (5ml)",
+              "• 투약 시각 : 12:30",
+              "• 보관 : 실온",
+              "• 복용 이유 : 열",
+              "• 특이사항 : -",
+              "보호자 확인 후 서명해 주세요.",
+            ].join("\n"),
+          ),
+          healthReadout(
+            "emergency_card",
+            [
+              `[응급 카드]  ${toSeoulDateKey(new Date())}`,
+              "• 아이 : 하늘이 (2022-03-01생, 만 4세)",
+              "• 알레르기 · 만성질환 : 불러오지 못했어요. 직접 확인해 주세요.",
+              "• 복용 중인 약 : 해열 시럽 (5ml)",
+            ].join("\n"),
+          ),
+        ],
+      }),
+    );
+    await sleep(300);
+  }
+
+  yield frame("done", { run_id: runId, model_calls: scenario === "med_draft" ? 1 : 0 });
+}
+
+/**
+ * 복약 되묻기에 대한 답을 이어받는 run (#537). 🚨 **모델 없이** 이어 간다 — '네' 면 멈추고, '아니요' 면 그대로 둔다.
+ * 못 가리면 아무것도 쓰지 않고 다시 묻지도 않는다 (서버 `med.which_unclear` 류). 문구는 `health.readout.yaml` 과 같다.
+ */
+async function* medicationContinuation(
+  runId: string,
+  input: SubmittedInput,
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 1, total: 1, label: "이어서 적은 내용을 살펴보고 있어요" });
+  await sleep(500);
+  const answer = input.text.trim();
+  const body = /^(네|응|멈춰)/.test(answer)
+    ? "해열 시럽 복약 알림을 멈췄어요. 먹인 기록은 그대로 남아요."
+    : /^(아니|그대로)/.test(answer)
+      ? "해열 시럽 복약 알림은 그대로 둘게요."
+      : "어느 약인지 알아듣지 못했어요. 약 이름을 넣어 다시 말씀해 주세요.";
+  if (body.includes("멈췄어요")) stopSeededCourse(input.childId);
+  yield frame(
+    "agent_result",
+    healthResult({ readouts: [healthReadout("medication_notice", body)] }),
+  );
+  await sleep(300);
+  yield frame("done", { run_id: runId, model_calls: 0 });
+}
+
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
  * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계가 하나고 추천 제안(`offer`)도 없다
@@ -464,6 +602,12 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   const input = inputByRun.get(runId);
   const rawText = input?.text ?? "";
 
+  // 🚨 복약 되묻기의 답은 Health 가 이어받는다 (#537) — Memory 이어받기 대본으로 보내지 않는다.
+  if (input?.replyTo !== undefined && medicationQuestions.has(input.replyTo)) {
+    yield* medicationContinuation(runId, input);
+    return;
+  }
+
   // 🚨 이어받기 run 은 Supervisor 를 타지 않는다 (#175) — 의도 분류도, 일정 초안도 없다.
   if (input?.replyTo !== undefined) {
     yield* continuationScript(runId, { ...input, replyTo: input.replyTo });
@@ -503,6 +647,11 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     scenario === "agent_suggestions"
   ) {
     yield* agentResultScript(runId, scenario);
+    return;
+  }
+
+  if (scenario === "med_draft" || scenario === "med_question" || scenario === "med_handoff") {
+    yield* medicationScript(runId, scenario, input?.childId);
     return;
   }
 

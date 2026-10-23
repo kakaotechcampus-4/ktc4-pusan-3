@@ -82,10 +82,12 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5곳. 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety)이 여기 포함된다.
+ * 계약서 §01 의 5곳. 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
  * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
  *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
+ *    🚨 **복약 제출(`submitMedication` · `updateMedication`)도 게이트 ㉡ 안의 메서드다** (#537) — 건강 기록을
+ *    확정하는 같은 게이트에 메서드가 는 것이지 세 번째 게이트가 아니다 (최상위 §2 — 딱 2곳).
  * 여기에 줄을 더하면 아래 정규식과 operations.ts 가 자동으로 따라온다.
  * 🚨 줄을 더하면 `idempotentMethod` 에도 더한다 — 타입이 빠진 줄을 잡는다.
  */
@@ -120,6 +122,20 @@ export const idempotentPath = {
    *    다시 보내면 서버는 이미 들어간 것인지 알 수 없어서 준비물이 두 줄 들어간다.
    */
   updateEvent: (childId: string, eventId: string) => `/children/${childId}/events/${eventId}`,
+  /**
+   * 🚨 승인 게이트 ㉡ — 복약 초안 **제출** (#537). 코스 한 건과 기간만큼의 회차 행을 한 번에 만든다 —
+   *    두 번 나가면 같은 약이 두 코스가 되고 알림이 두 번 울린다.
+   * ⚠️ **경로가 잠정이다.** 서버 API 가 아직 없다 (`docs/web/medication-v1.md` §5). 바뀌면 이 줄만 고친다.
+   */
+  submitMedication: (childId: string) => `/children/${childId}/medications`,
+  /**
+   * 🚨 승인 게이트 ㉡ — 복약 수정 초안 반영 (#537). 서버는 아직 오지 않은 미체크 회차를 지우고 다시 만든다
+   *    (`docs/medication/medication-tables-v1.md` §5) — 응답만 잃고 다시 보내도 결과는 같지만, 화면이 그걸
+   *    믿고 키를 빼면 서버 규칙이 바뀌는 날 조용히 두 번 쓴다. 일정 수정(`updateEvent`)과 같이 키를 단다.
+   * ⚠️ 경로 잠정.
+   */
+  updateMedication: (childId: string, scheduleId: string) =>
+    `/children/${childId}/medications/${scheduleId}`,
 } as const satisfies Record<string, (...ids: string[]) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;
@@ -138,6 +154,8 @@ export const idempotentMethod = {
   updateHealthSafety: "PATCH",
   submitEvent: "POST",
   updateEvent: "PATCH",
+  submitMedication: "POST",
+  updateMedication: "PATCH",
 } as const satisfies Record<IdempotentOperation, "POST" | "PATCH">;
 
 const ID_SLOT = "__ID__";

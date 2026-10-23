@@ -4,6 +4,7 @@ import type {
   Affinity,
   Agent,
   EventDraft,
+  MedicationDraft,
   Observation,
   PhotoEntry,
   PhotoLane,
@@ -203,11 +204,19 @@ export interface AgentResultEvent {
   /**
    * Agent 가 되묻는 한 줄. 없으면 `null` 이다 (키는 늘 있다).
    *
-   * 🚨 **답할 자리를 열지 않는다.** Memory 의 되묻기(`NoteEvent`)와 답의 쓰임이 달라서, "이 질문에 답하기" 로
-   *    `reply_to` 를 실어 보내면 서버가 400 `reply_context_unavailable` 로 막는다. 답을 받는 길은 #246 에서
-   *    정한다 — 그때까지는 안내 문장으로만 선다.
+   * 🚨 **`awaits_reply` 가 참일 때만 답할 자리를 연다** (#537). 아니면 서버가 맥락을 들고 있지 않아서, "이 질문에
+   *    답하기" 로 `reply_to` 를 실어 보내면 400 `reply_context_unavailable` 이다 (#246) — 안내 문장으로만 선다.
    */
   question: string | null;
+  /**
+   * 이 `question` 이 **답을 받는 질문**인가 (#537 · 잠정 이름). 서버가 그 run 의 되묻기 맥락을 들고 있을 때만
+   * `true` 다 — Health 의 복약 되묻기(중단 확인 · 어느 약 · 언제 먹일지)가 그렇다. 없으면 `false` 로 읽는다.
+   *
+   * 🚨 **이 값이 참인 질문만 답할 자리를 연다.** 아닌 질문에 `reply_to` 를 실어 보내면 서버가 400
+   *    `reply_context_unavailable` 로 막는다 (#246). 답은 Memory 질문과 같은 길(`reply_to` = 이 run)로 간다.
+   * ⚠️ 서버가 아직 싣지 않는다 — #537 의 BE 몫이다. 이름이 바뀌면 여기와 `lib/agent-result.ts` 의 `askedQuestion` 만 고친다.
+   */
+  awaits_reply?: boolean;
   /** 저장(commit)이 끝난 추천 id. 추천 순서 그대로다. 없으면 `[]` (키는 늘 있다). */
   suggestion_ids: string[];
   /**
@@ -287,6 +296,25 @@ export function isDraftEvent(type: string): boolean {
   return (DRAFT_EVENT_NAMES as readonly string[]).includes(type);
 }
 
+/**
+ * 04 한 줄 입력 — Health 가 만든 **복약 초안 묶음** (#537).
+ *
+ * 🚨 **아직 아무것도 저장되지 않았다.** 제출이 승인 게이트 ㉡(건강 기록 확정)이다 — 일정 초안(게이트 ㉠)과
+ *    모양도 게이트도 다르다. 같은 카드 · 같은 프레임에 섞지 않는다.
+ * ⚠️ **이벤트 이름이 잠정이다.** 서버 번역(`translate.py`)이 아직 없다. 일정 초안처럼 후보 둘을 다 받고,
+ *    확정되면 하나로 줄인다 (`docs/web/medication-v1.md` §5).
+ */
+export interface MedicationDraftsEvent {
+  drafts: MedicationDraft[];
+}
+
+/** 🚨 이름이 확정될 때까지 **둘 다 받는다** — `DRAFT_EVENT_NAMES` 와 같은 이유. */
+export const MEDICATION_DRAFT_EVENT_NAMES = ["medication_drafts", "medication_draft"] as const;
+
+export function isMedicationDraftEvent(type: string): boolean {
+  return (MEDICATION_DRAFT_EVENT_NAMES as readonly string[]).includes(type);
+}
+
 /** model_calls 가 4 를 넘으면 서버 알람이다 (NF-01). Agent 진입 1회 + 재시도마다 +1 로 센다. */
 export interface DoneEvent {
   run_id: string;
@@ -327,6 +355,8 @@ export type RunEvent =
   | { type: "offer"; data: OfferEvent }
   | { type: "event_draft"; data: EventDraftsEvent }
   | { type: "event_drafts"; data: EventDraftsEvent }
+  | { type: "medication_drafts"; data: MedicationDraftsEvent }
+  | { type: "medication_draft"; data: MedicationDraftsEvent }
   | { type: "guidance"; data: GuidanceEvent }
   | { type: "note"; data: NoteEvent }
   | { type: "unavailable"; data: UnavailableEvent }

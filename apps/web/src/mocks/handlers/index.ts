@@ -4,6 +4,7 @@ import { chatHandlers } from "./chat";
 import { childrenHandlers } from "./children";
 import { clientErrorHandlers } from "./client-errors";
 import { inviteHandlers } from "./invites";
+import { medicationHandlers } from "./medications";
 import { memoryHandlers } from "./memories";
 import { photoHandlers } from "./photos";
 import { policyHandlers } from "./policies";
@@ -41,6 +42,8 @@ export const handlers = [
   ...suggestionHandlers,
   ...memoryHandlers,
   ...calendarHandlers,
+  // 복약 (#537 · 잠정 경로). 아이 스코프 아래 `/medications` · `/medication-doses` 라 겹치는 경로가 없다.
+  ...medicationHandlers,
   // 04 지난 대화 (#228). 끝난 입력 run 을 `runHandlers` 가 이리로 남긴다 (`recordingTurn`).
   ...chatHandlers,
   ...settingsHandlers,
