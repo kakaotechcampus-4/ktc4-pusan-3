@@ -58,6 +58,15 @@ _REQUEST = """
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
                        급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다
 - meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
+- growth로 보내는 건 네 가지다.
+  learning_suggestion  배움 · 공부 · 한글 · 숫자 · 교육 활동을 추천해 달라는 말
+  routine_coaching     생활 습관 · 혼자 하기(양치 · 손 씻기 · 숟가락) · 예절 · 습관 고치기 · 잠 리듬
+  book_suggestion      책 · 그림책 추천
+  growth_review        키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지. 판정을 물어도 이쪽이다
+- 놀 거리 · 나들이는 activity, 배울 거리 · 생활 습관 · 책은 growth 다.
+- '놀이' 라는 말이 있어도 숫자 · 한글 · 글자처럼 배우는 낱말이 있으면
+  growth/learning_suggestion 이다. 배우는 낱말이 없는 놀 거리는 activity 다.
+- growth 유형이 애매하면 learning_suggestion 으로 보낸다.
 """.strip()
 
 _GUARDED = """
@@ -94,7 +103,19 @@ _EXAMPLES = """
   → record/observe "요즘 밥을 잘 안 먹는데" + request/food/nutrient_analysis "영양은 괜찮을까?"
 - "간식이랑 주말 나들이 추천해줘."
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
-- "숫자 공부는 어떻게 시켜야 할까?" → request/growth
+- "숫자 공부는 어떻게 시켜야 할까?" → request/growth/learning_suggestion
+- "농구 좋아하는데 뭐 하고 놀까" → request/activity
+- "농구 좋아하는데 관련된 책 있어?" → request/growth/book_suggestion
+- "밥 먹을 때 혼자 하게 하고 싶은데" → request/growth/routine_coaching
+- "얼마나 컸어?" → request/growth/growth_review
+- "잘 크고 있어?" → request/growth/growth_review
+- "10cm 컸는데 많이 큰 거야?" → request/growth/growth_review
+  (판정을 물어도 guarded 가 아니다 — Growth 가 판정 없이 추이만 정리한다)
+- "약 먹는 걸 너무 싫어해. 어떻게 먹이지?" → request/growth/routine_coaching
+  (guarded 가 아니다 — Growth 가 코드로 닫는다)
+- "눈을 자꾸 깜빡여. 어떻게 고쳐?" → request/growth/routine_coaching
+  (진단하지 않는다 — Growth 가 교정안 없이 닫는다)
+- "오늘 블록 쌓는 거 배웠대" → record/observe (요청이 아니다)
 - "어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal
 - "오늘 급식 대신 두유 받았대" → request/food/daycare_meal
 - "내일모레는 어린이집 빠져" → request/food/daycare_meal

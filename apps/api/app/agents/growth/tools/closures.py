@@ -9,9 +9,15 @@
 않는다 — Health 는 기록만 하고 조언하지 않아서 보호자가 답을 못 받는다.
 
 문장은 **하나씩 따로** 대조한다. 요청 문장이 둘이면 이어 붙이지 않는다.
+guard 는 띄어쓰기를 넘지 않는다(`match_fields`) —
+"약 한 숟가락" 의 "약 한" 은 guard "약한" 이 아니다.
+띄어 쓴 guard("약 올")는 붙여 쓴 것도 덮는다. "약 30분" · "약 3살" 처럼 숫자와 시간 · 나이 단위
+앞의 "약" 은 '대략' 이라 지우고 본다(`_APPROXIMATE`). 오탐 · 놓침은 지어낸 문장으로 잰다 —
+tests/unit/agents/growth/test_growth_closure_cases.py.
 모델 출력에 걸린 후보는 빼고 재호출 규칙을 따른다 — 출력 쪽 연결은 모델 경로가 한다.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
@@ -19,10 +25,14 @@ from typing import Any
 
 from app.agents.common.reference import load_reference
 from app.agents.growth.readouts import CLOSED_MEDICAL_ROUTINE, CLOSED_SYMPTOM_HABIT
-from app.rules.term_match import Term, match_terms, normalize
+from app.rules.term_match import Term, match_fields, normalize
 
 _LIST_KEYS = frozenset({"medical_routine", "symptom_habit"})
 _TERM_KEYS = frozenset({"label", "aliases", "guards"})
+# "약 30분 걸려" · "약 3살부터" 의 약은 '대략' 이다. 숫자 + 시간 · 나이 단위 앞의 약만 지운다.
+# "약 4시간마다" 는 먹이는 간격이라 남긴다. 일 · 주 · 개월은 먹이는 기간("약 6개월째")일 수 있어
+# 넣지 않는다
+_APPROXIMATE = re.compile(r"약\s*\d+(?:\.\d+)?\s*(?:분|시간|초|살|세)(?!\s*마다)")
 
 
 @dataclass(frozen=True)
@@ -82,8 +92,9 @@ def closure_key(texts: Sequence[str], *, terms: ClosureTerms | None = None) -> s
     의료 처치가 먼저다 — "약 먹을 때 눈을 깜빡여" 는 처치 쪽 문구가 맞다.
     """
     terms = terms or closure_terms()
-    if any(match_terms(text, terms.medical) for text in texts):
+    fields = [_APPROXIMATE.sub(" ", text) for text in texts]
+    if any(match_fields((text,), terms.medical) for text in fields):
         return CLOSED_MEDICAL_ROUTINE
-    if any(match_terms(text, terms.symptom) for text in texts):
+    if any(match_fields((text,), terms.symptom) for text in fields):
         return CLOSED_SYMPTOM_HABIT
     return None

@@ -23,7 +23,6 @@ from app.agents.activity.agent import run
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.review import GENERAL_REASON
-from app.agents.activity.rules import overstates
 from app.agents.activity.store.inmemory import (
     InMemoryActivityDocs,
     InMemoryActivityMemory,
@@ -32,7 +31,7 @@ from app.agents.activity.store.inmemory import (
     in_memory_ports,
 )
 from app.agents.activity.store.ports import ActivityObservation, CoarseLocation, SafetyEntry
-from app.agents.common.evidence import AffinityRow
+from app.agents.common.evidence import AffinityRow, overstates
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
