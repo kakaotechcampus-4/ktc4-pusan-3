@@ -416,7 +416,8 @@ export type PromptKey = (typeof PROMPT_KEYS)[number];
 /* ── 03 홈 · 한 줄 입력 ──────────────────────────────────────────────── */
 
 /**
- * POST /children/{cid}/inputs — 즉시 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다.
+ * POST /children/{cid}/inputs — 즉시 202 로 run_id 가 온다. 결과는 SSE 로 흐른다 (끝난 run 의 재생은
+ * `CreateInputResponse` 의 `finished`).
  * 🚨 Idempotency-Key 가 필수다. 재시도할 때 키를 새로 만들지 않는다.
  */
 /**
@@ -431,8 +432,23 @@ export interface CreateInputRequest {
   reply_to?: string;
 }
 
+/**
+ * 202 — run_id. 결과는 SSE 로 흐른다.
+ *
+ * 🚨 **같은 키 재생에서만 `finished` 가 참일 수 있다** (#538 · 서버 `docs/api/idempotency-v1.md` §3-4-1).
+ *    서버는 끝난 run 의 채널을 5분 뒤 지우는데 키는 24시간 남는다. 그 사이에 결과를 못 받은 줄을 다시 보내면
+ *    서버가 대화 기록으로 끝났음을 알린다 — 그때는 SSE 를 열지 않는다(404 다). 같은 키 재생에서 채널도 대화
+ *    기록도 없으면 저장됐는지 서버도 모르는 run 이라 `false` 로 run_id 만 온다.
+ */
 export interface CreateInputResponse {
   run_id: string;
+  /**
+   * 참이면 이미 끝나 결과가 대화 기록에 저장된 run 이다. `conversation_date` 의 지난 대화로 그린다.
+   * ⚠️ 서버 #547 머지 전에는 오지 않는다 — 없으면 지금처럼 SSE 를 연다(404 → 결과 미확인). 그래서 선택 필드로 받는다.
+   */
+  finished?: boolean;
+  /** `finished` 일 때만. 그 턴이 붙은 대화 날짜(한국 시간). 되묻기 답이면 질문한 날이라 오늘이 아닐 수 있다. */
+  conversation_date?: string | null;
 }
 
 /* ── 05 제안 후보 ────────────────────────────────────────────────────── */

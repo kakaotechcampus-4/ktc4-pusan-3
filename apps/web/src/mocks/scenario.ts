@@ -20,6 +20,12 @@ export const SCENARIOS = {
   //    일정 낱말만 쓰면 `saved` 도 못 보내고 끊긴 run 이 된다 (무엇이 저장됐는지 화면이 모르는 경우).
   interrupted: "04 저장한 뒤 끊김 — done + completed: false (다시 시도 없이 '반영했어요')",
   disconnected: "종료 이벤트 없이 스트림이 끊김 — 저장 여부를 모르는 상태",
+  // 🚨 **아래 둘은 끊긴 뒤 5분이 지난 것으로 친다** (#538). 서버는 닫힌 채널을 5분 뒤 지우는데 키는 24시간 남아서,
+  //    그 뒤에 같은 한 줄을 다시 보내면 SSE 가 404 다. 서버는 대화 기록이 있을 때만 끝났다고 알린다.
+  replay_finished:
+    "04 결과 못 받음 → 다시 시도 — 서버는 끝냈고 대화 기록이 있다 (SSE 없이 저장된 결과가 그 줄에 · 다시 보내기 없음)",
+  replay_unknown:
+    "04 결과 못 받음 → 다시 시도 — 채널도 대화 기록도 없다 (또 결과 미확인 · 기록에서 확인하라는 안내)",
   consent: "필수 동의 미완료 — 신규 가입 대기 · 403 consent_required 로 저장 차단",
   auth_unready: "로그인 미연결 — GET /auth/kakao/status 가 ready: false",
   // 🚨 **받아 간 뒤에 바뀐 것**이라 정적으로 만들 수 없다 (`handlers/policies.ts`). 첫 제출이
