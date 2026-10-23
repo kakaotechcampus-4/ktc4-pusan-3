@@ -33,6 +33,10 @@
 `PATCH …/health-safety/{id}` (서버 #370 · #375). 서버는 고치면 지금 기록을 내리고 **새 id** 로 다시 넣어서
 (이력이 남는다) 같은 고치기를 두 번 보내면 두 번째가 404 다 — 그래서 고치기도 키를 단다. 서버는 키를
 선택으로 받지만 화면은 표에 넣어 키 없이는 나가지 않게 했다. 내리기(`DELETE`)는 같은 결과라 키가 없다.
+🚨 **복약 초안 제출도 게이트 ㉡ 의 두 메서드다** (#537) — 등록 `POST /children/{cid}/medications`, 수정
+`PATCH …/medications/{sid}`. 코스와 기간만큼의 회차를 만드는 건강 기록 확정이라 ㉡ 안에 메서드가 는 것이지
+세 번째 게이트가 아니다. 둘 다 키를 단다. ⚠️ 경로는 잠정이다 — 서버 API 가 아직 없다 ([`medication-v1.md`](medication-v1.md) §5).
+회차 체크(`PUT …/medication-doses/{did}/check`)는 되돌릴 수 있어서 표에 없다.
 그래서 표(`idempotentPath`)는 줄마다 메서드(`idempotentMethod`)를 같이 들고, 클라이언트 차단도 그 메서드로 건다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.

@@ -24,6 +24,7 @@ Owner: 고태영 (프론트 리드)
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | `mocks/` · `*.test.ts` · `e2e/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
+| 복약 초안 카드 · 11-3 복약 · `stores/medication-draft.ts` · `lib/medication.ts` (#537) | [`medication-v1.md`](../../docs/web/medication-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
@@ -67,13 +68,14 @@ Owner: 고태영 (프론트 리드)
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
   🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
   서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
-- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (08 사진으로 적기 · 11-2 검사지 · #409). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
+- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (08 사진으로 적기 · 11-2 검사지 · 11-3 복약 · #409). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
 - `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
   🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
   🚨 `stores/photo-draft.ts`(**아이 사진 원본**) · `stores/safety-scan-draft.ts`(**알레르기 검사지
   사진** — 의료 기록이다) · `stores/conversation.ts`(**그날 대화** — 보낸 원문 · run 결과 · 되물은
-  질문이 그대로 들어 있다) 도 같다. 넷 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
+  질문이 그대로 들어 있다) · `stores/medication-draft.ts`(**복약 초안** — 약 이름 · 복용 이유) 도 같다.
+  다섯 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
   대화 스토어는 로그아웃에서 **도는 스트림도 끊는다**
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
 
@@ -109,6 +111,7 @@ Owner: 고태영 (프론트 리드)
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
+| 11-3 복약 (회차 체크 · 게이트 아님 · #537) | `/child/[childId]/profile/medications` |
 | 계정 삭제 안내 (로그인 없이 · Play 스토어에 거는 주소) | `/account-deletion` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
@@ -188,6 +191,7 @@ Owner: 고태영 (프론트 리드)
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
 
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡ · 고치기 `PATCH` 포함) · **초안 제출**(게이트 ㉠ · `POST`/`PATCH` events).
+🚨 **복약 초안 제출**(`POST`/`PATCH` medications · #537)도 게이트 ㉡ 안의 메서드다 — 게이트를 늘린 것이 아니다 ([`medication-v1.md`](../../docs/web/medication-v1.md)).
 메서드가 둘인 이유와 각 줄의 규칙 원문은 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
