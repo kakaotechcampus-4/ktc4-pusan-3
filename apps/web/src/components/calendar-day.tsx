@@ -23,7 +23,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
-import { api, qk } from "@/lib/api";
+import { api, DIARY_CONTENT_MAX_LENGTH, qk } from "@/lib/api";
 import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
@@ -515,7 +515,15 @@ function DiaryCard({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               placeholder="이날 어땠는지 편하게 적어주세요."
+              maxLength={DIARY_CONTENT_MAX_LENGTH}
             />
+            {/* 10 문제 알리기와 같은 카운터다 (#549). 브라우저의 `maxLength` 와 같은 단위(UTF-16)로
+                센다 — 막히는 자리와 숫자가 어긋나지 않게.
+                🚨 신고와 달리 앞뒤 공백을 떼지 않고 센다. 일기는 원문 그대로 저장되고 서버도 원문으로 센다. */}
+            <p className="text-caption text-ink-subtle text-right">
+              <span className="sr-only">글자 수 </span>
+              {draft.length}/{DIARY_CONTENT_MAX_LENGTH}
+            </p>
             <DiaryNote />
           </div>
           <div className="flex flex-col gap-2">

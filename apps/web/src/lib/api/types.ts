@@ -1239,10 +1239,19 @@ export interface ChatDayResponse {
  * 작성자는 로그인한 보호자다 — 요청에 싣지 않는다. 사진은 일기 밖에 있어서(#115) 여기 싣지 않고,
  * 일기를 덮거나 지워도 사진은 그대로다. `Idempotency-Key` 를 받지 않는다 — 몇 번 보내도 결과가
  * 같은 요청이다 (`idempotency.ts` 의 5곳이 아니다).
+ *
+ * 🚨 **1000자를 넘거나 NUL 이 든 `content` 는 400 `validation_failed` 다** (#549 · 서버 PR #550).
+ *    신고와 달리 앞뒤 공백을 떼지 않고 원문 길이로 센다 — 저장하는 것이 원문이라서다.
  */
 export interface DiaryRequest {
   content: string;
 }
+
+/**
+ * 서버 `DIARY_CONTENT_MAX`(`schemas/diary.py`)와 같은 값이다. 한쪽만 바꾸지 않는다.
+ * 앞뒤 공백 · 줄바꿈을 떼지 않은 원문 길이의 상한이다.
+ */
+export const DIARY_CONTENT_MAX_LENGTH = 1000;
 
 /** `PATCH /children/{cid}/event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
 export interface EventItemUpdateResponse {
