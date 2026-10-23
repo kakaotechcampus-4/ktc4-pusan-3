@@ -73,16 +73,9 @@ jobs:
         working-directory: apps/api
         run: uv sync --frozen
 
-      # app.main 을 import 하면 설정 검사가 돈다. DB · 카카오에는 붙지 않으니 값은 더미다.
+      # .env 가 없으니 스크립트가 필수 설정을 더미로 채운다 (scripts/dump_openapi.py 머리말). DB 에는 붙지 않는다.
       - name: Dump OpenAPI
         working-directory: apps/api
-        env:
-          DB_HOST: dummy
-          DB_USER: dummy
-          DB_PASSWORD: dummy
-          DB_NAME: dummy
-          AUTH_RETURN_URL_WEB: http://localhost:3000/auth/callback
-          AUTH_RETURN_URL_APP: icatch://auth
         run: uv run python -m scripts.dump_openapi ../web/.openapi.json
 
       # 🚨 pnpm 버전을 여기 적지 않는다. 정본은 package.json 의 `packageManager` 하나다 (ci-web.yml 과 같다).

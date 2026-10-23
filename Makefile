@@ -124,7 +124,7 @@ web-fmt-check:
 web-check: web-fmt-check web-typecheck web-lint web-test
 
 # 웹 API 타입이 서버 계약(OpenAPI)과 맞는지 (#559 · ci-contract.yml). 서버 계약을 덤프한 뒤 비교한다.
-# apps/api 의 .env 가 있어야 한다 (설정 검사 때문 — DB 에는 붙지 않는다).
+# apps/api 의 .env 가 없어도 돈다 — 스크립트가 필수 설정을 더미로 채운다. DB 에는 붙지 않는다.
 web-contract:
 	cd apps/api && uv run python -m scripts.dump_openapi ../web/.openapi.json
 	cd apps/web && pnpm test:contract
