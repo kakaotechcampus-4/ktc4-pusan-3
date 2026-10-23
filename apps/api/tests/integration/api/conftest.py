@@ -108,10 +108,24 @@ async def cid(session: AsyncSession, bearer: Bearer) -> uuid.UUID:
     return await link_child(session, parent_id=parent_id)
 
 
+@pytest.fixture
+def clean_in_memory_stores():
+    """`stash_in_memory` 를 쓰는 테스트가 받는다.
+
+    보관함은 프로세스 메모리라 비우지 않으면 다음 테스트로 샌다.
+    """
+    pending_reply.clear()
+    suggestion_retry.clear()
+    yield
+    pending_reply.clear()
+    suggestion_retry.clear()
+
+
 def stash_in_memory(*, parent_id: uuid.UUID, child_id: uuid.UUID) -> str:
     """메모리 보관함 둘(되묻기 · 05 다시 시도)에 그 보호자 · 아이의 항목을 하나씩 넣는다.
 
     돌려준 run_id 로 `in_memory` 가 남아 있는지 본다 (#561).
+    🚨 `clean_in_memory_stores` 와 같이 쓴다.
     """
     run_id = uuid.uuid4().hex
     owner = {"parent_id": parent_id, "child_id": child_id}

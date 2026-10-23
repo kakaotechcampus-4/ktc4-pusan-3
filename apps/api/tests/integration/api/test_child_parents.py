@@ -169,7 +169,11 @@ async def test_unlink_deletes_only_their_personal_records(
 
 
 async def test_unlink_forgets_only_their_in_memory_entries(
-    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    clean_in_memory_stores,
 ):
     """끊긴 보호자의 메모리 보관함 항목만 바로 지운다.
 
