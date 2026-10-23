@@ -356,7 +356,16 @@ export const suggestionHandlers = [
 
     const response: ApproveSuggestionsResponse = {
       // 🚨 바뀐 행을 그대로 돌려준다 — 화면이 `status` 를 지어내지 않는다.
-      suggestions: picked.map((s) => ({ ...s, status: "approved" as const })),
+      // 🚨 **계약 모양으로 줄인다** (`docs/api/suggestions-v1.md` §7 · #554). 실서버 채택 응답은 근거를 읽지
+      //    않아 개인화도 `evidence: []` 이고, 일반 추천에 `basis` · `record_count` 가 없다. 목이 행을 통째로
+      //    돌려주면 실서버에 없는 필드가 목에서만 차 있게 된다 — 화면이 기대는 공통 필드만 싣는다.
+      suggestions: picked.map((s) => ({
+        id: s.id,
+        child_id: s.child_id,
+        agent: s.agent,
+        content: s.content,
+        status: "approved" as const,
+      })),
     };
     return HttpResponse.json(response, { status: 200 });
   }),

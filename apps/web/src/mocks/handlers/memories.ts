@@ -341,7 +341,6 @@ export const memoryHandlers = [
 
   /**
    * 07 피드백 탭이 평가할 제안 목록 (#284). 개인화와 채택한 일반 추천(#509)이 같이 온다.
-   * ⚠️ 실서버는 아직 개인화(`kind = 'personalized'`)만 내린다 — 목이 먼저 싣고 백엔드에 요청한다.
    * 목은 한 장으로 끝난다(`next_cursor: null`).
    */
   http.get(url("/children/:cid/suggestions"), async () => {

@@ -719,9 +719,11 @@ export interface ApproveSuggestionsRequest {
  * 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다.
  *
  * ⚠️ 일반 추천도 채택한다 (#509). 실서버는 일반 추천도 개인화와 같은 모양(`SuggestionOut`)에
- *    `kind: "general"` · `evidence: []` 를 실어 돌려줘서 `GeneralSuggestion` 과도 맞지 않는다
- *    (`basis` · `record_count` 가 없다). 그래서 **두 모양에 공통인 필드만** 적는다 — 더 꺼내 쓰면
- *    목에서는 되고 실서버에서는 `undefined` 가 된다. 응답 모양은 백엔드와 정리할 몫이다.
+ *    `kind: "general"` 을 실어 돌려줘서 `GeneralSuggestion` 과도 맞지 않는다 (`basis` · `record_count` 가
+ *    없다). 그래서 **두 모양에 공통인 필드만** 적는다 — 더 꺼내 쓰면 목에서는 되고 실서버에서는
+ *    `undefined` 가 된다.
+ * 🚨 **채택 응답은 근거를 읽지 않는다** — 개인화도 `evidence: []` 로 온다. 이 모양은 서버 계약으로
+ *    고정됐다 (`docs/api/suggestions-v1.md` §7 · #545). 근거가 필요하면 05 응답에서 읽는다.
  */
 export interface ApproveSuggestionsResponse {
   suggestions: Array<Pick<Suggestion, "id" | "child_id" | "agent" | "content" | "status">>;
@@ -933,6 +935,9 @@ export interface SuggestionFeedbackResponse {
  *    (`SuggestionOut`)에 `kind: "general"` · `evidence: []` 를 실어 보낸다 — `basis` · `record_count` ·
  *    문서 근거가 없다. 그래서 **두 모양에 공통인 필드만** 적는다. 근거를 읽을 길이 타입에 없어야
  *    "근거 0행인 것이 개인화로 그려지는" 길도 없다 (CLAUDE.md §2).
+ * ⚠️ `record_count` 를 싣지 않는 것은 서버가 정한 계약이다 (`docs/api/suggestions-v1.md` §7 · #545) —
+ *    05 응답 때 세는 값이라 저장되지 않고, 지금 다시 세면 그 추천이 지금 기록에서 나온 것처럼 읽힌다.
+ *    그래서 07 의 일반 추천 줄은 라벨만 둔다.
  */
 export interface ReceivedGeneralSuggestion extends Pick<
   Suggestion,
@@ -949,8 +954,8 @@ export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
  *
  * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
  *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
- * ⚠️ **실서버는 아직 개인화만 내린다** (`kind = 'personalized'` 필터). 목이 먼저 일반 추천을 싣고,
- *    필터를 푸는 것은 백엔드에 요청한다 (#509 PR).
+ * 기본 목록은 `draft` 를 뺀다 — 05 에서 고르지 않은 일반 추천은 여기 오지 않는다.
+ * 계약은 `docs/api/suggestions-v1.md` §7 (#545).
  * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
  */
 export interface SuggestionListResponse {

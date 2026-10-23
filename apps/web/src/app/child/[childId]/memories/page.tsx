@@ -484,7 +484,6 @@ function FeedbackTab({ childId }: { childId: string }) {
 
   /**
    * 받은 제안 목록 (#284) — 개인화와 채택한 일반 추천(#509)이 같이 온다.
-   * ⚠️ 실서버는 아직 개인화만 내린다 (`SuggestionListResponse` 주석).
    * ⚠️ 첫 장(20건)만 그린다 — `next_cursor` 로 더 보기는 아직 없다 (#316 하지 않는 것).
    */
   const received = useQuery({
