@@ -152,11 +152,18 @@ OpenAPI(`app.openapi()` · Swagger 와 같은 것)와 칸 단위로 맞춘다 (#
 - `contract/schema-map.ts` — 서버 스키마 ↔ 웹 타입 대응표. 🚨 **서버 스키마는 전부 대응하거나 `NOT_MAPPED` 에 이유를
   적는다.** 서버에 스키마가 새로 생기면 여기서 걸린다
 - `contract/compare.test.ts` — 비교기가 규칙대로 잡는지. 서버 계약 없이 돈다
-- 🚨 **기본 `pnpm test` 에 넣지 않았다.** 서버 계약을 뽑으려면 `apps/api` 의 uv 와 `.env` 가 있어야 해서다.
+- 🚨 **기본 `pnpm test` 에 넣지 않았다.** 서버 계약을 뽑으려면 `apps/api` 의 uv(Python)가 있어야 해서다.
+  `.env` 는 없어도 된다 — 덤프 스크립트가 필수 설정을 더미로 채운다.
   `make web-contract` 가 덤프(`apps/api/scripts/dump_openapi.py` → `apps/web/.openapi.json`, 커밋 안 함)부터 돈다.
   CI 는 `.github/workflows/ci-contract.yml` — 서버 스키마를 바꾼 PR 에서도 돈다
 - 깨졌을 때 — 웹 타입이 틀렸으면 `types.ts` 를 고친다. 의도된 차이면 대응표의 `allow` 에 **이유를** 적는다
   (호출부가 막고 있다면 그 위치까지). 서버가 틀렸으면 서버 Owner 와 맞춘다 — 계약 정본은 Swagger 다 (최상위 §5)
+- 🚨 **BE PR 에서 빨간불일 때 누가 고치나** (#560 리뷰에서 BE 와 합의)
+  - 웹이 아직 안 쓰는 **새 스키마**: BE PR 이 `NOT_MAPPED` 에 `"웹 미사용 — FE 후속 #이슈"` 한 줄을 같이 넣고 초록불로 머지한다.
+    FE 파일 한 줄이 BE PR 에 섞이는 것은 괜찮다 — 빨간 develop 이 남아 모두가 빨간불에 익숙해지는 쪽이 더 나쁘다.
+    FE 는 그 이슈에서 웹 타입을 붙이고 `NOT_MAPPED` 줄을 뺀다
+  - 웹이 **읽는 칸**을 바꾸거나 지우는 변경: 실제로 화면이 깨지는 변경이라 빨간불이 맞다. 같은 PR 에서 `types.ts` 를
+    맞추거나, FE PR 을 먼저 머지하는 순서로 맞춘다
 - ⚠️ **보지 못하는 것** — 통과했다고 이 자리까지 확인된 것이 아니다
   - SSE 이벤트(`GET /runs/{rid}/events`). OpenAPI 에 모양이 없다. 지난 대화(`GET /children/{cid}/chat`)의 답이
     같은 모양이라 `ChatReply<type=…>` 로 간접적으로만 걸린다

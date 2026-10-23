@@ -219,7 +219,12 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   },
 };
 
-/** 웹 타입을 붙이지 않는 서버 스키마와 그 이유. */
+/**
+ * 웹 타입을 붙이지 않는 서버 스키마와 그 이유.
+ *
+ * BE PR 이 웹이 아직 안 쓰는 스키마를 더할 때는 여기에 `"웹 미사용 — FE 후속 #이슈"` 한 줄을 같이 넣는다.
+ * FE 는 그 이슈에서 웹 타입을 붙이고 이 줄을 뺀다 (docs/web/mock-and-tests-v1.md §2 · #560 리뷰).
+ */
 export const NOT_MAPPED: Record<string, string> = {
   HTTPValidationError:
     "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
