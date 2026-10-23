@@ -89,5 +89,10 @@ Claude outputs/
 
 # ── Agent eval 실행 결과 (돌릴 때마다 값이 바뀌어 재현되지 않는다) ──
 # 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.
+apps/api/app/agents/test/**/*_result.txt
+apps/api/app/agents/test/**/*_results.jsonl
+
+# ── 로컬 구현 계획 (개발 과정 문서, 커밋 불필요) ──
+.impl-plan/
 apps/api/tests/**/*_result.txt
 apps/api/tests/**/*_results.jsonl
