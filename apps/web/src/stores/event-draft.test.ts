@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { EventDraft } from "@/lib/api/types";
-import { mergeDrafts, type StoredDraft } from "@/stores/event-draft";
+import { mergeDrafts, useEventDraftStore, type StoredDraft } from "@/stores/event-draft";
 
 function draft(overrides: Partial<EventDraft> & Pick<EventDraft, "draft_id">): StoredDraft {
   return {
@@ -53,5 +53,42 @@ describe("mergeDrafts", () => {
     const merged = mergeDrafts(before, [draft({ draft_id: "b" })]);
 
     expect(ids(merged)).toEqual(["a", "b"]);
+  });
+});
+
+describe("dropDrafts", () => {
+  const CHILD = "c1";
+  const store = () => useEventDraftStore.getState();
+  const stored = () => store().byChild[CHILD] ?? [];
+
+  afterEach(() => store().clearAll());
+
+  it("🚨 그 경로의 남은 초안을 전부 뗀다 — 전에 넣지 않은 제안 초안이 다음 시트의 첫 장으로 서면 안 된다 (#539)", () => {
+    store().addDrafts(CHILD, "suggestion", [
+      draft({ draft_id: "a", suggestion_ids: ["s1"] }).draft,
+      draft({ draft_id: "b", suggestion_ids: ["s2"] }).draft,
+    ]);
+    store().dropDrafts(CHILD, "suggestion");
+
+    expect(stored()).toEqual([]);
+  });
+
+  it("다른 경로의 초안은 그대로 둔다 — 04 · 08 초안은 그 화면이 되읽는다", () => {
+    store().addDrafts(CHILD, "input", [draft({ draft_id: "input" }).draft]);
+    store().addDrafts(CHILD, "suggestion", [draft({ draft_id: "old" }).draft]);
+    store().addDrafts(CHILD, "photo", [draft({ draft_id: "photo" }).draft]);
+    store().dropDrafts(CHILD, "suggestion");
+
+    expect(stored().map((d) => [d.origin, d.draft.draft_id])).toEqual([
+      ["input", "input"],
+      ["photo", "photo"],
+    ]);
+  });
+
+  it("다른 아이의 초안은 건드리지 않는다", () => {
+    store().addDrafts("c2", "suggestion", [draft({ draft_id: "other-child" }).draft]);
+    store().dropDrafts(CHILD, "suggestion");
+
+    expect(ids(store().byChild.c2 ?? [])).toEqual(["other-child"]);
   });
 });
