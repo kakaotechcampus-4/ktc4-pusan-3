@@ -5,8 +5,10 @@ Memory가 저장하지 못한 조각을 임시 보관하고, 후속 입력(reply
 프로세스 메모리 기반: 재시작/멀티 워커 간 공유 불가.
 추후 DB·Redis 전환 시 put/get/consume만 교체.
 RunChannel과 분리하며, 원문·질문을 포함하므로 15분만 보관하고 로그는 남기지 않는다.
+🚨 넣을 때 지울 때를 예약한다(#561). 꺼내는 쪽이 만료를 걸러도 지우지 않으면 원문은 메모리에 남는다.
 """
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
@@ -36,11 +38,26 @@ def put(
     now: float | None = None,
 ) -> None:
     moment = time.monotonic() if now is None else now
-    # 서버가 따로 치우지 않는다. 넣을 때마다 만료된 것을 치워 원문이 메모리에 남지 않게 한다
-    sweep(now=moment)
     _pending[run_id] = _Entry(
         parent_id=parent_id, child_id=child_id, context=context, stored_at=moment
     )
+    asyncio.get_running_loop().call_later(TTL_SECONDS, _expire, run_id)
+
+
+def _expire(run_id: str) -> None:
+    """예약한 때가 되면 지운다. 답해서 이미 꺼냈으면(consume) 할 일이 없다.
+
+    🚨 예약은 조금 일찍 돌 수 있다(이벤트 루프의 시계 해상도). 아직 만료 전이면 남은 시간만큼
+       다시 예약한다 — 그냥 넘어가면 그 항목을 지울 예약이 더는 없다.
+    """
+    entry = _pending.get(run_id)
+    if entry is None:
+        return
+    left = entry.stored_at + TTL_SECONDS - time.monotonic()
+    if left > 0:
+        asyncio.get_running_loop().call_later(left, _expire, run_id)
+        return
+    del _pending[run_id]
 
 
 def get(
@@ -68,18 +85,19 @@ def consume(
     return context
 
 
-def sweep(ttl_seconds: float = TTL_SECONDS, *, now: float | None = None) -> int:
-    """만료된 것을 치우고 개수를 돌려준다. 안 치우면 답하지 않은 질문이 쌓인다.
+def forget_parent(*, parent_id: uuid.UUID, child_id: uuid.UUID | None = None) -> None:
+    """그 보호자의 것을 바로 지운다 — 탈퇴 · 연결 끊기 (#561). child_id 를 주면 그 아이 것만."""
+    for run_id, entry in list(_pending.items()):
+        if entry.parent_id == parent_id and child_id in (None, entry.child_id):
+            del _pending[run_id]
 
-    지울 것을 먼저 모으고 나서 지운다.
-    """
-    moment = time.monotonic() if now is None else now
-    expired = [
-        run_id for run_id, entry in _pending.items() if moment - entry.stored_at > ttl_seconds
-    ]
-    for run_id in expired:
-        del _pending[run_id]
-    return len(expired)
+
+def forget_child(child_id: uuid.UUID) -> None:
+    """그 아이의 것을 보호자와 상관없이 바로 지운다 — 등록 보호자의 탈퇴로 아이가 지워질 때
+    (#561)."""
+    for run_id, entry in list(_pending.items()):
+        if entry.child_id == child_id:
+            del _pending[run_id]
 
 
 def clear() -> None:

@@ -24,6 +24,7 @@ from fastapi.responses import RedirectResponse
 from app.api.deps.auth import CurrentParent, hash_token
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, envelope
+from app.api.runs import pending_reply, suggestion_retry
 from app.api.v1.schemas.auth import (
     BIND_PATTERN,
     AuthStatusResponse,
@@ -438,10 +439,23 @@ async def withdraw(
         raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
     await session.commit()
     _expire_refresh(response)
+    _forget_in_memory(auth.parent_id, withdrawn.child_ids)
 
     if withdrawn.kakao_user_id is not None:
         await _unlink_kakao(withdrawn.kakao_user_id)
     return WithdrawResponse(deleted_at=now)
+
+
+def _forget_in_memory(parent_id: UUID, child_ids: tuple[UUID, ...]) -> None:
+    """원문이 든 메모리 보관함(되묻기 · 05 다시 시도)도 DB 처럼 그 자리에서 비운다 (#561).
+
+    🚨 커밋 뒤에 부른다. 커밋 전에 실패하면 DB 가 되돌아가니 보관함도 남아 있어야 한다.
+    함께 지운 아이의 것은 함께 보던 보호자의 것까지 지운다 — 일기 · 대화 기록과 같은 기준이다.
+    """
+    for store in (pending_reply, suggestion_retry):
+        store.forget_parent(parent_id=parent_id)
+        for child_id in child_ids:
+            store.forget_child(child_id)
 
 
 async def _unlink_kakao(user_id: str) -> None:
