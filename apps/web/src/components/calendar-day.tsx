@@ -30,6 +30,7 @@ import type {
   CalendarEvent,
   DiaryRequest,
   EventItem,
+  EventItemUpdateRequest,
   EventItemUpdateResponse,
   MyDiary,
   Observation,
@@ -289,7 +290,7 @@ function PreparedCheckbox({
       queue.run(() =>
         api.patch<EventItemUpdateResponse>(`/children/${childId}/event-items/${item.item_id}`, {
           is_prepared: isPrepared,
-        }),
+        } satisfies EventItemUpdateRequest),
       ),
     onMutate: async (isPrepared) => {
       await queryClient.cancelQueries({ queryKey: key });

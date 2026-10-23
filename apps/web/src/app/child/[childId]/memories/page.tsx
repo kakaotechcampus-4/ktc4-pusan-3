@@ -35,6 +35,7 @@ import {
   type ObservationsResponse,
   type ReceivedSuggestion,
   type SuggestionFeedback,
+  type SuggestionFeedbackRequest,
   type SuggestionFeedbackResponse,
   type SuggestionListResponse,
 } from "@/lib/api";
@@ -501,7 +502,7 @@ function FeedbackTab({ childId }: { childId: string }) {
     }) =>
       api.patch<SuggestionFeedbackResponse>(
         `/children/${childId}/suggestions/${suggestion.id}/feedback`,
-        { feedback },
+        { feedback } satisfies SuggestionFeedbackRequest,
       ),
     onMutate: ({ suggestion }) => setPendingId(suggestion.id),
     onSettled: () => setPendingId(null),
