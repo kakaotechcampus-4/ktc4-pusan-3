@@ -117,10 +117,12 @@ msw 버전을 올리면 워커를 다시 만들어야 한다 — `pnpm exec msw 
 pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:watch
 pnpm test:e2e      # Playwright — 화면 규칙 (make web-e2e)
+pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract — 서버 계약 덤프부터 돈다)
 ```
 
-두 벌이다. **Vitest** 는 node 에서 목 · 스토어를 직접 돌리고, **Playwright** 는 목 서버로 띄운 화면을
+세 벌이다. **Vitest** 는 node 에서 목 · 스토어를 직접 돌리고, **Playwright** 는 목 서버로 띄운 화면을
 실제 브라우저로 연다 (#242). 실서버 E2E 가 아니다 — 그건 API 가 붙은 뒤 따로 더한다.
+앞의 둘은 웹 타입(`lib/api/types.ts`)을 믿고 도는데, **계약 비교**가 그 타입을 서버 OpenAPI 와 맞춘다 (#559).
 
 ### 무엇을 거는가 — Vitest
 
@@ -138,6 +140,31 @@ pnpm test:e2e      # Playwright — 화면 규칙 (make web-e2e)
 - `src/test/motion-rules.test.ts` — 움직임 규칙 중 코드 모양으로 걸 수 있는 것 (#426 · 디자인 시스템 §8). 시트의 `open` 을
   상수로 박지 않는지, 게이트 화면의 움직임 제한, `Element.animate` 는 `lib/motion.ts` 한 곳에서만 부르는지.
   🚨 깨졌다면 목록을 고치기 전에 **게이트 안에 움직임을 넣는 변경인지**부터 본다. 실제로 움직이는지는 `e2e/motion.spec.ts` 가 본다
+
+### 무엇을 거는가 — 서버 계약 (`contract/` · `make web-contract`)
+
+목과 화면은 `lib/api/types.ts` 를 따르는데, 그 타입 자체는 손으로 적은 것이다. 타입이 서버와 어긋나면 위 Vitest 와
+Playwright 는 **같이 틀린 채로 통과한다** (#554 — 목 채택 응답이 서버 모양과 달랐다). 그래서 타입을 서버
+OpenAPI(`app.openapi()` · Swagger 와 같은 것)와 칸 단위로 맞춘다 (#559).
+
+- `contract/openapi.test.ts` — 서버 스키마마다 대응하는 웹 타입과 맞춘다. 칸이 있는가 · 빠질 수 있는가 · 값의 종류
+  (`null` 포함) · enum 값. 방향에 따라 규칙이 다르다 — 받는 쪽이 넓으면 괜찮다 (`contract/compare.ts` 머리말)
+- `contract/schema-map.ts` — 서버 스키마 ↔ 웹 타입 대응표. 🚨 **서버 스키마는 전부 대응하거나 `NOT_MAPPED` 에 이유를
+  적는다.** 서버에 스키마가 새로 생기면 여기서 걸린다
+- `contract/compare.test.ts` — 비교기가 규칙대로 잡는지. 서버 계약 없이 돈다
+- 🚨 **기본 `pnpm test` 에 넣지 않았다.** 서버 계약을 뽑으려면 `apps/api` 의 uv 와 `.env` 가 있어야 해서다.
+  `make web-contract` 가 덤프(`apps/api/scripts/dump_openapi.py` → `apps/web/.openapi.json`, 커밋 안 함)부터 돈다.
+  CI 는 `.github/workflows/ci-contract.yml` — 서버 스키마를 바꾼 PR 에서도 돈다
+- 깨졌을 때 — 웹 타입이 틀렸으면 `types.ts` 를 고친다. 의도된 차이면 대응표의 `allow` 에 **이유를** 적는다
+  (호출부가 막고 있다면 그 위치까지). 서버가 틀렸으면 서버 Owner 와 맞춘다 — 계약 정본은 Swagger 다 (최상위 §5)
+- ⚠️ **보지 못하는 것** — 통과했다고 이 자리까지 확인된 것이 아니다
+  - SSE 이벤트(`GET /runs/{rid}/events`). OpenAPI 에 모양이 없다. 지난 대화(`GET /children/{cid}/chat`)의 답이
+    같은 모양이라 `ChatReply<type=…>` 로 간접적으로만 걸린다
+  - 쿼리 · 경로 파라미터(`parameters`). 본문만 비교한다
+  - 응답에 서버가 **칸을 더한 것**. 웹이 안 읽을 뿐이라 일부러 통과시킨다 (`compare.ts` 머리말)
+  - 응답의 `required`. Pydantic 이 기본값 칸을 필수로 적지 않아서 믿지 않는다. 칸을 빼고 보내는 곳(`exclude_none`)은
+    `null` 검사로만 걸린다 — 라우터에 `response_model_exclude_none` 을 더하면 대응표에 그 사정을 적는다
+  - `allow` 에 적은 칸은 그 칸 전체(있는지 · 선택인지 · 값)를 건너뛴다. 이유에 무엇이 의도된 차이인지까지 적는다
 
 ### 무엇을 거는가 — Playwright (`e2e/`)
 
