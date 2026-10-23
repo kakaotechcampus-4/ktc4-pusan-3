@@ -38,9 +38,11 @@ from app.integrations.kakao.client import KakaoApiError
 from tests.integration.api.conftest import (
     Bearer,
     cookie_header,
+    in_memory,
     issue_bearer,
     link_child,
     seed_login,
+    stash_in_memory,
 )
 
 URL = "/api/v1/auth/withdraw"
@@ -170,6 +172,40 @@ async def test_member_withdraw_keeps_child_and_shared_records(
     owner_me = await db_client.get("/api/v1/me", headers=owner_headers)
     assert [c["child_id"] for c in owner_me.json()["children"]] == [str(cid)]
     assert await _retained(session, subject_parent_ref=member) == 1
+
+
+async def test_owner_withdraw_forgets_in_memory_entries_of_the_child(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, kakao
+):
+    """등록 보호자의 탈퇴 — 아이가 지워지니 함께 보던 보호자 것까지 지운다 (#561)."""
+    headers, owner = bearer
+    _, member = await issue_bearer(session, token="member")
+    await link_child(session, parent_id=member, child_id=cid)
+    owners = stash_in_memory(parent_id=owner, child_id=cid)
+    members = stash_in_memory(parent_id=member, child_id=cid)
+
+    resp = await db_client.post(URL, json=ACK, headers=headers)
+
+    assert resp.status_code == 200
+    assert in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
+    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
+
+
+async def test_member_withdraw_forgets_only_their_in_memory_entries(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, kakao
+):
+    """연결 보호자의 탈퇴 — 아이는 남으니 그 보호자 것만 지운다 (#561)."""
+    _, owner = bearer
+    member_headers, member = await issue_bearer(session, token="member")
+    await link_child(session, parent_id=member, child_id=cid)
+    owners = stash_in_memory(parent_id=owner, child_id=cid)
+    members = stash_in_memory(parent_id=member, child_id=cid)
+
+    resp = await db_client.post(URL, json=ACK, headers=member_headers)
+
+    assert resp.status_code == 200
+    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 @pytest.mark.parametrize(

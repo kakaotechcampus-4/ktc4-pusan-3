@@ -21,6 +21,7 @@ from fastapi import APIRouter, Response
 from app.api.deps.auth import CurrentParent
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
+from app.api.runs import pending_reply, suggestion_retry
 from app.api.v1.schemas.child_parents import ChildParentOut, ChildParentsResponse
 from app.domains.child.models import Child
 from app.domains.child.parents import list_parents_with_nickname, unlink_parent
@@ -85,4 +86,7 @@ async def unlink(cid: UUID, pid: UUID, parent: CurrentParent, session: SessionDe
     if not await unlink_parent(session, child_id=child.id, parent_id=pid):
         raise ApiError(404, "not_found", "그 보호자를 찾지 못했어요")
     await session.commit()
+    # 원문이 든 메모리 보관함(되묻기 · 05 다시 시도)도 그 자리에서 비운다. 커밋 뒤여야 한다 (#561)
+    for store in (pending_reply, suggestion_retry):
+        store.forget_parent(parent_id=pid, child_id=child.id)
     return Response(status_code=204)

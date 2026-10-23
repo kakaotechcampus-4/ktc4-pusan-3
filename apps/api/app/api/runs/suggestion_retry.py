@@ -175,6 +175,21 @@ def drop(*, run_id: str, agent: str) -> None:
     _entries.pop((run_id, agent), None)
 
 
+def forget_parent(*, parent_id: uuid.UUID, child_id: uuid.UUID | None = None) -> None:
+    """그 보호자의 것을 바로 지운다 — 탈퇴 · 연결 끊기 (#561). child_id 를 주면 그 아이 것만."""
+    for key, entry in list(_entries.items()):
+        if entry.parent_id == parent_id and child_id in (None, entry.child_id):
+            del _entries[key]
+
+
+def forget_child(child_id: uuid.UUID) -> None:
+    """그 아이의 것을 보호자와 상관없이 바로 지운다 — 등록 보호자의 탈퇴로 아이가 지워질 때
+    (#561)."""
+    for key, entry in list(_entries.items()):
+        if entry.child_id == child_id:
+            del _entries[key]
+
+
 def clear() -> None:
     """테스트가 서로 새지 않게 쓰는 것이고, 서버 코드는 부르지 않는다."""
     _entries.clear()

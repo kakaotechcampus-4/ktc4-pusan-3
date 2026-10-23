@@ -24,7 +24,13 @@ from app.domains.schedule.models import (
     SharedPhoto,
 )
 from app.domains.schedule.repository import create_event, create_reminder, put_diary
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child
+from tests.integration.api.conftest import (
+    Bearer,
+    in_memory,
+    issue_bearer,
+    link_child,
+    stash_in_memory,
+)
 
 DAY = date(2026, 3, 10)
 AT = datetime(2026, 3, 10, 1, tzinfo=UTC)
@@ -160,6 +166,24 @@ async def test_unlink_deletes_only_their_personal_records(
     assert list(chats) == [owner]
     await session.refresh(photo)
     assert photo.uploader_parent_id == member
+
+
+async def test_unlink_forgets_only_their_in_memory_entries(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끊긴 보호자의 메모리 보관함 항목만 바로 지운다.
+
+    같은 아이의 다른 보호자 것은 남는다 (#561)."""
+    owner_headers, owner = bearer
+    _, member = await _member(session, cid, "member")
+    theirs = stash_in_memory(parent_id=member, child_id=cid)
+    owners = stash_in_memory(parent_id=owner, child_id=cid)
+
+    resp = await db_client.delete(f"/api/v1/children/{cid}/parents/{member}", headers=owner_headers)
+
+    assert resp.status_code == 204
+    assert in_memory(theirs, parent_id=member, child_id=cid) == (False, False)
+    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 async def test_member_leaves_and_loses_access_even_on_replay(
