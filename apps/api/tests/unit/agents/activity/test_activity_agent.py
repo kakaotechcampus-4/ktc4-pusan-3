@@ -44,7 +44,7 @@ DEFAULT_DOC = ActivityDocRow(
     id=UUID(int=20),
     doc_key="act-test-default",
     title="함께 놀이",
-    body="보호자와 함께 논다",
+    body="함께 놀이",
     min_month=0,
     max_month=72,
     setting=ActivitySetting.INDOOR,

@@ -15,12 +15,15 @@
 사유는 코드로만 남긴다 — 활동명 · 근거 문장을 싣지 않는다 (로그로 흘러간다).
 """
 
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+from functools import cache
 from uuid import UUID
 
+from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import (
@@ -319,8 +322,8 @@ def _with_place(content: str, place: str | None) -> str:
     return f"{place}에서 {content}"
 
 
-# 문서 제목에서 활동을 가르지 못하는 낱말 — 어느 놀이 제목에나 나온다
-_GENERIC_TITLE_WORDS = frozenset(
+# 문서에서 활동을 가르지 못하는 낱말 — 어느 놀이 문장에나 나온다
+_GENERIC_WORDS = frozenset(
     {
         "보기",
         "하기",
@@ -334,26 +337,69 @@ _GENERIC_TITLE_WORDS = frozenset(
         "하며",
         "보며",
         "주기",
+        "보고",
+        "한다",
+        "하고",
+        "본다",
+        "다시",
+        "하나",
+        "있는",
+        "같은",
+        "내며",
     }
 )
+# 이만큼 넘는 문서 행에 나오는 낱말은 활동을 가르지 못한다 — "그림" · "놀이" (#557 리뷰)
+COMMON_DOC_WORD_ROWS = 4
+
+
+def _stems(text: str) -> set[str]:
+    """두 글자 이상 낱말. 세 글자 이상은 앞 두 글자 — 모델이 "쌓기" 를 "쌓아" 로 쓴다."""
+    return {
+        word if len(word) == 2 else word[:2]
+        for word in split_words(text)
+        if len(word) >= 2 and word not in _GENERIC_WORDS
+    }
+
+
+def _doc_keys(doc: ActivityDocRow) -> set[str]:
+    """문서 행의 준비물(그대로) · 제목 · 본문 낱말."""
+    materials = {key for item in doc.materials if len(key := normalize(item)) >= 2}
+    return materials | _stems(doc.title) | _stems(doc.body)
+
+
+@cache
+def _common_doc_words() -> frozenset[str]:
+    """시드 문서 행 여럿(`COMMON_DOC_WORD_ROWS` 이상)에 나오는 낱말. 시드가 DB 행의 정본이다."""
+    counts = Counter(key for entry in activity_doc_seed() for key in _doc_keys(entry.to_row()))
+    return frozenset(key for key, count in counts.items() if count >= COMMON_DOC_WORD_ROWS)
 
 
 def _doc_related(candidate: ActivityCandidate, doc: ActivityDocRow) -> bool:
-    """후보가 그 문서 행의 활동인가 — 문서의 준비물이나 제목 낱말이 후보에 나오는가.
+    """후보가 그 문서 행의 활동인가 — 문서를 가르는 낱말이 후보에 하나라도 나오는가.
 
-    제목 낱말은 앞 두 글자로 본다("쌓기" · "노래하며" → "노래") — 모델이 "쌓아" · "노래를" 처럼
-    바꿔 쓴다. 거른 낱말이 하나도 없는 문서(제목이 전부 흔한 말)는 막지 않는다 — 판단할 근거가 없다.
-    완전한 의미 대조가 아니라, 손 씻기 문서를 종이컵 쌓기에 다는 것처럼 **아무것도 안 겹치는**
-    인용을 막는 하한이다.
+    - 문서의 준비물 · 제목 · 본문 낱말에서 여러 행에 흔한 낱말("그림" · "놀이")을 뺀 것으로 본다.
+      제목만 보면 "곰처럼 네 발로 걸어 보기" 가 "동물 흉내 내며 걷기" 와 안 겹치고(본문에는 "곰처럼"
+      이 있다), 흔한 낱말까지 보면 "그림책 다음 장 맞혀 보기" 가 "손 그림자" 와 겹친다 (#557 리뷰).
+    - 가르는 낱말이 하나도 없는 문서(전부 흔한 말)는 흔한 낱말로 본다. 흔한 낱말이라도 제목 낱말
+      둘이 같이 나오면 같은 활동이다. 낱말이 아예 없으면 막지 않는다.
+    - 완전한 의미 대조가 아니라, 손 씻기 문서를 종이컵 쌓기에 다는 것처럼 아무것도 안 겹치는
+      인용을 막는 하한이다.
     """
-    keys = {key for item in doc.materials if len(key := normalize(item)) >= 2}
-    for word in split_words(doc.title):
-        if len(word) >= 2 and word not in _GENERIC_TITLE_WORDS:
-            keys.add(word[:2])
+    keys = _doc_keys(doc)
     if not keys:
         return True
     texts = [normalize(candidate.content), *(normalize(item) for item in candidate.materials)]
-    return any(key in text for key in keys for text in texts)
+
+    def found(key: str) -> bool:
+        return any(key in text for text in texts)
+
+    informative = keys - _common_doc_words()
+    if any(found(key) for key in informative or keys):
+        return True
+    # 제목이 흔한 낱말뿐인 행("노래에 맞춰 손 흔들기")은 흔한 낱말 둘이 같이 나오면 같은 활동이다.
+    # 제목 낱말이 하나뿐이면("상자로 집 만들기" 의 상자) 그 하나다
+    title = _stems(doc.title)
+    return bool(title) and sum(found(key) for key in title) >= min(2, len(title))
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:

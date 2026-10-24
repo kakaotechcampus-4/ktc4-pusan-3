@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 
 from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.review import (
     GENERAL_REASON,
@@ -108,7 +109,7 @@ GENERIC_DOC = ActivityDocRow(
     id=UUID(int=22),
     doc_key="act-test-generic",
     title="함께 놀이",
-    body="보호자와 함께 논다",
+    body="함께 놀이",
     min_month=0,
     max_month=72,
     setting=ActivitySetting.INDOOR,
@@ -121,6 +122,8 @@ DOCS = {TOWER_DOC.id: TOWER_DOC, GENERIC_DOC.id: GENERIC_DOC}  # 이번 run 의 
 # 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없이 내는 후보는 이 인용을 단다
 DOC_PICK = {"id": str(GENERIC_DOC.id), "note": "이 나이 예시를 참고했어요"}
 TOWER_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
+# 관련도는 실제 시드 행으로 본다 — 흔한 낱말을 시드에서 센다
+SEED_DOCS = tuple(entry.to_row() for entry in activity_doc_seed())
 
 
 def review(
@@ -653,10 +656,22 @@ class TestDocRelevance:
         assert result.rejections == ()
         assert result.drafts[0].citations[0].ref.kind == "activity_doc"
 
-    def test_세_글자_넘는_제목_낱말은_앞_두_글자로_본다(self):
-        """모델은 낱말을 바꿔 쓴다 — "종이컵" 의 "종이" 가 나오면 같은 활동으로 본다."""
-        result = review(candidate(content="종이로 높은 탑 만들기", evidence=[TOWER_PICK]))
-        assert result.rejections == ()
+    @pytest.mark.parametrize(
+        ("doc_title", "content", "related"),
+        [
+            # 시드 행 기준 (#557 리뷰). 흔한 낱말("그림" · "놀이")만 겹치면 다른 활동이다
+            ("그림책 다음 장 맞혀 보기", "손전등으로 손 그림자 만들기", False),
+            ("가게 놀이로 주고받기", "모래 놀이터에서 퍼 담기", False),
+            # 본문 낱말까지 본다 — 제목에는 없는 "곰처럼" 이 본문에 있다
+            ("동물 흉내 내며 걷기", "곰처럼 네 발로 걸어 보기", True),
+            ("노래하며 손 씻기", "종이컵을 쌓아 올린 뒤 무너뜨리고 다시 쌓기", False),
+        ],
+    )
+    def test_시드_행으로_본_관련도(self, doc_title, content, related):
+        doc = next(row for row in SEED_DOCS if row.title == doc_title)
+        pick = {"id": str(doc.id), "note": "예시를 참고했어요"}
+        result = review(candidate(content=content, evidence=[pick]), docs={doc.id: doc})
+        assert (result.rejections == ()) is related
 
     def test_아무것도_안_겹치는_문서를_달면_거절(self):
         result = review(candidate(content="비누로 손 씻기 노래 부르기", evidence=[TOWER_PICK]))
