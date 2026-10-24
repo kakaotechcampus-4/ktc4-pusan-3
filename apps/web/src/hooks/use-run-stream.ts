@@ -263,7 +263,7 @@ export function runReducer(state: RunState, action: RunAction): RunState {
             const { drafts } = action.event.data as EventDraftsEvent;
             return { ...state, drafts: [...state.drafts, ...drafts] };
           }
-          // 🚨 복약 초안도 이름이 잠정이라 같은 방식으로 받는다 (#537 · `MEDICATION_DRAFT_EVENT_NAMES`).
+          // 복약 초안은 일정 초안과 다른 칸에 쌓는다 (#537 · `MEDICATION_DRAFT_EVENT`).
           if (isMedicationDraftEvent(action.event.type)) {
             const { drafts } = action.event.data as MedicationDraftsEvent;
             return { ...state, medicationDrafts: [...state.medicationDrafts, ...drafts] };

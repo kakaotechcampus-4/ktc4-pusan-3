@@ -70,8 +70,8 @@
 
 Health 는 세 자리에서 되묻고 멈춘다 — 중단 확인 · 어느 약 · 언제 먹일지. 셋 다 `agent_result.question` 으로 나간다.
 
-- 🚨 **`awaits_reply` 가 참인 질문만 답할 자리를 연다** (§5 잠정 이름). 아닌 Agent 질문은 서버가 맥락을 들고 있지 않아서 `reply_to` 로 보내면 400 이다 (#246) — 안내 문장으로만 선다.
-- 🚨 **run 당 답을 받는 질문은 하나다** (`lib/agent-result.ts` 의 `askedQuestion`). Memory 질문이 먼저고, 그다음이 `awaits_reply` 인 Agent 질문의 첫째다. 답은 `reply_to` = 그 run 하나로 가고, 서버가 이어받는 맥락도 run 당 하나라서 둘을 다 열면 보호자가 고른 질문과 서버가 이어받는 질문이 어긋날 수 있다.
+- 🚨 **`awaits_reply` 가 참인 질문만 답할 자리를 연다** (이름은 #563 리뷰에서 AI 와 맞췄다 — Health 결과에 `pending` 이 있을 때 `true`). 아닌 Agent 질문은 서버가 맥락을 들고 있지 않아서 `reply_to` 로 보내면 400 이다 (#246) — 안내 문장으로만 선다.
+- 🚨 **run 당 답을 받는 질문은 하나다** (`lib/agent-result.ts` 의 `askedQuestion`). Memory 질문이 먼저고, 그다음이 `awaits_reply` 인 Agent 질문의 첫째다 (#563 리뷰에서 AI 와 합의 — 한 run 에 둘이 같이 오는 경우의 서버 쪽 보관은 Supervisor 연결 이슈에서 한다). 답은 `reply_to` = 그 run 하나로 가고, 서버가 이어받는 맥락도 run 당 하나라서 둘을 다 열면 보호자가 고른 질문과 서버가 이어받는 질문이 어긋날 수 있다.
 - 답하는 길은 Memory 질문과 **같다** — 입력창이 그 질문을 대상으로 잡고, 원문을 다시 보내지 않고, 내려놓아도 질문은 열린 채 남는다 (`chat-run-v1.md` §3).
 - 🚨 **답은 짧은 글로 받는다** ("네" · 약 이름 · "저녁 8시"). 버튼으로 답을 미리 깔지 않았다 — 서버가 글자로 받고, 버튼을 두면 "어느 약" 처럼 선택지가 서버 값인 질문마다 모양이 갈린다. (이슈의 "같이 정하고 싶은 것" 둘째 — §6)
 
@@ -81,8 +81,8 @@ Health 는 세 자리에서 되묻고 멈춘다 — 중단 확인 · 어느 약 
 
 | | 잠정 | 고칠 곳 |
 | --- | --- | --- |
-| SSE 복약 초안 프레임 | 이름 `medication_drafts` · `medication_draft` 둘 다 받는다. 모양 `{ drafts: MedicationDraft[] }` 한 프레임 (일정 초안과 같은 모양) | `lib/api/sse.ts` 의 `MEDICATION_DRAFT_EVENT_NAMES` · 목 |
-| 답을 받는 질문 표시 | `agent_result.awaits_reply: boolean` (없으면 `false`) | `sse.ts` 의 `AgentResultEvent` · `askedQuestion` |
+| SSE 복약 초안 프레임 | 이름 `medication_draft` 하나 (#563 리뷰에서 AI 와 맞춤 · 일정 초안 `event_draft` 와 같은 단수형). 모양 `{ drafts: MedicationDraft[] }` 한 프레임 | `lib/api/sse.ts` 의 `MEDICATION_DRAFT_EVENT` · 목 |
+| 답을 받는 질문 표시 | `agent_result.awaits_reply: boolean` (없으면 `false`). 이름 확정 · Health 결과에 `pending` 이 있을 때 `true` (#563 리뷰) | `sse.ts` 의 `AgentResultEvent` · `askedQuestion` |
 | 등록 (게이트 ㉡) | `POST /children/{cid}/medications` · Idempotency-Key 필수 · 본문 `{ schedule, doses, source }` · 201 `{ course }` | `idempotentPath.submitMedication` · `SubmitMedicationBody` |
 | 수정 (게이트 ㉡) | `PATCH /children/{cid}/medications/{sid}` · 키 필수 · 본문 `{ schedule, doses }` | `idempotentPath.updateMedication` |
 | 진행 중 코스 | `GET /children/{cid}/medications` → `{ today, courses[] }`. 코스마다 `notice_times` 와 **오늘까지의** 회차 | `MedicationsResponse` · 11-3 · 11 |

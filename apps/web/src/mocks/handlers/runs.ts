@@ -381,7 +381,7 @@ const MED_STOP_QUESTION = "해열 시럽 복약 알림을 멈출까요? 먹인 �
  * - `med_draft` — 새 복약 + 수정 초안. 🚨 **아무것도 저장되지 않았다** — 넣는 것은 카드의 게이트 ㉡ 다.
  * - `med_question` — 중단을 **한 번 묻고** 이 run 에서는 아무것도 바꾸지 않는다. 답을 받는 질문이라 `awaits_reply`.
  * - `med_handoff` — 회차 현황 · 투약의뢰서 · 응급 카드. 🚨 알레르기 조회가 실패한 줄을 "없음" 으로 쓰지 않는다.
- * ⚠️ 복약 초안 프레임 이름이 잠정이다 (`sse.ts` 의 `MEDICATION_DRAFT_EVENT_NAMES`).
+ * 복약 초안 프레임 이름은 `medication_draft` 하나다 (`sse.ts` 의 `MEDICATION_DRAFT_EVENT` · #563 리뷰).
  */
 async function* medicationScript(
   runId: string,
@@ -405,7 +405,7 @@ async function* medicationScript(
       }),
     );
     await sleep(300);
-    yield frame("medication_drafts", { drafts: medicationRunDrafts() });
+    yield frame("medication_draft", { drafts: medicationRunDrafts() });
     await sleep(200);
   } else if (scenario === "med_question") {
     // 🚨 질문을 내보내기 **직전에** 맥락을 넣는다 — 서버도 `done` 앞에 넣는다 (`pending-replies.ts`).

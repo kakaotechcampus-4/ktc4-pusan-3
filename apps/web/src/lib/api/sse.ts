@@ -214,7 +214,8 @@ export interface AgentResultEvent {
    *
    * 🚨 **이 값이 참인 질문만 답할 자리를 연다.** 아닌 질문에 `reply_to` 를 실어 보내면 서버가 400
    *    `reply_context_unavailable` 로 막는다 (#246). 답은 Memory 질문과 같은 길(`reply_to` = 이 run)로 간다.
-   * ⚠️ 서버가 아직 싣지 않는다 — #537 의 BE 몫이다. 이름이 바뀌면 여기와 `lib/agent-result.ts` 의 `askedQuestion` 만 고친다.
+   * 이름은 #563 리뷰에서 AI 와 맞췄다 — Health 결과에 `pending` 이 있을 때 `true` 다. ⚠️ 서버가 아직 싣지 않는다
+   *    (Supervisor 연결 이슈 · BE 번역).
    */
   awaits_reply?: boolean;
   /** 저장(commit)이 끝난 추천 id. 추천 순서 그대로다. 없으면 `[]` (키는 늘 있다). */
@@ -301,18 +302,17 @@ export function isDraftEvent(type: string): boolean {
  *
  * 🚨 **아직 아무것도 저장되지 않았다.** 제출이 승인 게이트 ㉡(건강 기록 확정)이다 — 일정 초안(게이트 ㉠)과
  *    모양도 게이트도 다르다. 같은 카드 · 같은 프레임에 섞지 않는다.
- * ⚠️ **이벤트 이름이 잠정이다.** 서버 번역(`translate.py`)이 아직 없다. 일정 초안처럼 후보 둘을 다 받고,
- *    확정되면 하나로 줄인다 (`docs/web/medication-v1.md` §5).
+ * 🚨 **이름은 `medication_draft` 하나다** (#563 리뷰 · AI 와 합의). 일정 초안(`event_draft`)과 같은 단수형이고,
+ *    모양도 같은 `{ drafts: [...] }` 한 프레임이다. ⚠️ 서버 번역(`translate.py`)은 아직 없다 — BE 가 이 이름으로 낸다.
  */
 export interface MedicationDraftsEvent {
   drafts: MedicationDraft[];
 }
 
-/** 🚨 이름이 확정될 때까지 **둘 다 받는다** — `DRAFT_EVENT_NAMES` 와 같은 이유. */
-export const MEDICATION_DRAFT_EVENT_NAMES = ["medication_drafts", "medication_draft"] as const;
+export const MEDICATION_DRAFT_EVENT = "medication_draft";
 
 export function isMedicationDraftEvent(type: string): boolean {
-  return (MEDICATION_DRAFT_EVENT_NAMES as readonly string[]).includes(type);
+  return type === MEDICATION_DRAFT_EVENT;
 }
 
 /** model_calls 가 4 를 넘으면 서버 알람이다 (NF-01). Agent 진입 1회 + 재시도마다 +1 로 센다. */
@@ -355,7 +355,6 @@ export type RunEvent =
   | { type: "offer"; data: OfferEvent }
   | { type: "event_draft"; data: EventDraftsEvent }
   | { type: "event_drafts"; data: EventDraftsEvent }
-  | { type: "medication_drafts"; data: MedicationDraftsEvent }
   | { type: "medication_draft"; data: MedicationDraftsEvent }
   | { type: "guidance"; data: GuidanceEvent }
   | { type: "note"; data: NoteEvent }
