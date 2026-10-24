@@ -266,7 +266,42 @@ class TestExtraAllergenAliases:
         같이 쓴다."""
         assert not check(content, entries=[allergy("깨")]).blocked
 
-    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리"])
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("사과", "친구에게 사과하기"),
+            ("오리", "오리처럼 뒤뚱뒤뚱 걷기"),
+            ("육류", "염소 먹이 주기"),
+            ("명태", "생태 관찰 일기 쓰기"),
+            ("쌀", "한글 미음 쓰기"),
+            ("초콜릿", "카카오톡으로 사진 보내기"),
+            ("생선", "도미노 쓰러뜨리기"),
+            ("생선", "방어하기 놀이"),
+            ("오렌지", "오렌지색 크레파스로 칠하기"),
+            ("견과류", "은행놀이로 돈 세기"),
+        ],
+    )
+    def test_문장에서_다른_뜻인_별칭은_막지_않는다(self, label, content):
+        """별칭 표는 메뉴용이라 놀이 문장에서는 다른 뜻으로 나온다 (#556 리뷰)."""
+        assert not check(content, entries=[allergy(label)]).blocked
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("사과", "사과 그림 그리기"),
+            ("오리", "오리고기 볶음 만들기"),
+            ("명태", "명태 살 바르기"),
+            ("쌀", "현미 밥 짓기"),
+            ("초콜릿", "초코 쿠키 굽기"),
+            ("오렌지", "오렌지 껍질 까기"),
+            # guard 는 띄어쓰기를 넘지 않는다 — 띄어 쓴 다른 뜻은 막는 쪽으로 둔다
+            ("대구", "대구 여행 계획 세우기"),
+        ],
+    )
+    def test_그_식품을_다루거나_띄어_쓴_다른_뜻은_막는다(self, label, content):
+        assert check(content, entries=[allergy(label)]).blocked
+
+    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리", "오리"])
     def test_19종_밖_식품에는_확인_문구를_내지_않는다(self, label):
         """식품은 이름 대조가 후보를 뺀다 — "식품 아닌 알레르기" 로 보면 결과마다 문구가 붙는다."""
         assert allergy_cautions([allergy(label)]) == ()

@@ -137,29 +137,61 @@ def allergy_book() -> LabelBook:
     검사까지 넓어진다(allergen_terms.yaml 머리말).
     """
     food = food_safety_terms()
-    rules = shared_name_rules(food.group_foods)
+    groups = {label: _for_sentences(term) for label, term in food.group_foods.items()}
+    rules = shared_name_rules({label: term for label, term in groups.items() if term.aliases})
     for raw in food.extras:
-        term = _with_sentence_guards(raw)
-        rules.extend((name, Restriction(terms=(term,)), term.guards) for name in term.aliases)
+        # 이름은 별칭 전부로 알아본다(오리로 등록하면 식품) — 문장 대조에 쓰는 별칭만 줄인다
+        term = _for_sentences(raw)
+        blocks = Restriction(terms=(term,)) if term.aliases else Restriction()
+        rules.extend((name, blocks, raw.guards) for name in raw.aliases)
     return make_book(rules)
 
 
-def _with_sentence_guards(term: Term) -> Term:
-    """한 글자 별칭(참깨의 "깨" · 쌀의 "쌀")에 놀이 · 교육 문장용 guard 를 더한다.
+# 놀이 · 교육 문장에서 다른 뜻으로 더 자주 나오는 19종 밖 식품 별칭 (#556 리뷰). 그 이름으로 등록한
+# 아이도 문장에는 이 별칭으로 대조하지 않는다 — 고기 알레르기의 오리 · 염소 · 사슴은 동물 놀이로,
+# 생태(명태)는 "생태 관찰" 로, 미음(쌀죽)은 한글 자음으로, 동부(콩)는 방향으로 나온다.
+# 같은 식품의 다른 별칭(오리고기 · 명태 · 현미)은 그대로 막는다. 메뉴를 보는 Food 는 쓰지 않는다.
+SENTENCE_EXCLUDED_ALIASES = frozenset(
+    {"오리", "칠면조", "사슴", "염소", "흑염소", "생태", "미음", "동부"}
+)
 
-    별칭 표의 guard 는 메뉴 이름용이라 "잠 깨우기" · "쌀쌀한 날씨" 를 덮지 못한다. 놀이 문장에서
-    한 글자를 대조할 때 쓰는 guard(`SINGLE_CHAR_NAMES`)를 같이 붙인다 — 더 덮는 쪽이지만 그 자리는
-    그 식품이 아닌 자리만 모은 것이다.
+# 놀이 · 교육 문장에서 그 별칭이 다른 뜻으로 나오는 자리 — 메뉴용 guard 에 더한다 (#556 리뷰).
+# guard 는 띄어쓰기를 넘지 않아서 붙여 쓴 자리만 덮는다("사과하기" · "도미노"). 띄어 쓴 다른 뜻
+# ("대구 여행" · "은행 놀이")은 막힌다 — 그 별칭을 빼면 "대구 살 바르기" 같은 음식 활동이 빠져서
+# 더 막는 쪽을 둔다. "사과 그리기" 도 그대로 막는다 — 그 식품을 다루는 활동이다.
+SENTENCE_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "사과": ("사과하", "사과해", "사과했", "사과드"),
+        "대구": ("대구광역시", "대구시", "대구에", "대구로", "대구에서"),
+        "은행": ("은행놀이", "은행원", "은행에", "은행나무", "은행잎"),
+        "카카오": ("카카오톡", "카카오맵", "카카오프렌즈"),
+        "오렌지": ("오렌지색",),
+        "조기": ("조기교육", "조기축구"),
+        "방어": ("방어하", "방어해", "방어막"),
+        "도미": ("도미노",),
+    }
+)
+
+
+def _for_sentences(term: Term) -> Term:
+    """별칭 표의 Term 을 놀이 · 교육 문장 대조용으로 (#437 · #556 리뷰).
+
+    별칭 표의 guard 는 메뉴 이름용이라 문장의 다른 뜻을 덮지 못한다 — "친구에게 사과하기" ·
+    "대구 여행" · "잠 깨우기" 가 걸린다. 문장에서 다른 뜻이 더 흔한 별칭은 빼고
+    (`SENTENCE_EXCLUDED_ALIASES`), 다른 뜻이 나오는 자리를 guard 로 더한다(`SENTENCE_GUARDS` ·
+    한 글자는 `SINGLE_CHAR_NAMES`). 별칭이 다 빠지면 aliases 가 빈 Term — 호출부가 대조하지 않는다.
     """
+    aliases = tuple(a for a in term.aliases if normalize(a) not in SENTENCE_EXCLUDED_ALIASES)
     extra = [
         guard
-        for alias in term.aliases
-        for guard in SINGLE_CHAR_NAMES.get(normalize(alias), ())
+        for alias in aliases
+        for guard in (
+            *SENTENCE_GUARDS.get(normalize(alias), ()),
+            *SINGLE_CHAR_NAMES.get(normalize(alias), ()),
+        )
         if guard not in term.guards
     ]
-    if not extra:
-        return term
-    return Term(key=term.key, aliases=term.aliases, guards=(*term.guards, *dict.fromkeys(extra)))
+    return Term(key=term.key, aliases=aliases, guards=(*term.guards, *dict.fromkeys(extra)))
 
 
 # 한 칸에 여러 이름을 적은 경우("우유, 땅콩" · "우유(유제품)")를 나눈다.

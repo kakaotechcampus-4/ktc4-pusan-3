@@ -306,6 +306,13 @@ class TestDefaultRules:
         assert [e.label for e in rules.registered_names(text, entries)] == [label]
 
     @pytest.mark.parametrize(
+        ("label", "text"), [("사과", "친구에게 사과하는 말 연습"), ("쌀", "한글 미음 써 보기")]
+    )
+    def test_문장에서_다른_뜻인_별칭은_막지_않는다(self, rules, label, text):
+        """Activity 와 같은 문장용 guard · 제외 별칭이다 (#556 리뷰)."""
+        assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")]) == ()
+
+    @pytest.mark.parametrize(
         ("label", "text"),
         [("키위", "참다래 그림 그리기"), ("버섯류", "표고버섯 관찰하기")],
     )
