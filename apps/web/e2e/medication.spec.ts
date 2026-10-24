@@ -231,3 +231,60 @@ test.describe("11-3 복약 — 회차 체크 (게이트가 아니다)", () => {
     });
   });
 });
+
+test.describe("03 홈 — 오늘 먹일 약 (#563 리뷰)", () => {
+  test("오늘 회차를 홈에서 체크하면 11-3 에도 같은 값이고, 게이트 표식이 없다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    // 🚨 홈 내용이 처음 서는 **그 순간** 구역도 이미 있다 — 뒤늦게 끼어들며 아래 카드를 밀지 않는다 (#563 재리뷰).
+    //    `toBeVisible` 은 간격을 두고 다시 봐서 늦게 선 구역도 통과시킨다. 그래서 페이지 안에서 DOM 이 바뀔 때마다 보고,
+    //    "이번 주 기록" 이 처음 보인 변화에서 구역이 같이 있었는지를 남긴다.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __medsWithHome?: boolean };
+      const observer = new MutationObserver(() => {
+        const text = document.body.innerText;
+        if (w.__medsWithHome === undefined && text.includes("이번 주 기록")) {
+          w.__medsWithHome = text.includes("오늘 먹일 약");
+          observer.disconnect();
+        }
+      });
+      document.addEventListener("DOMContentLoaded", () =>
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true }),
+      );
+    });
+    await page.goto(`/child/${CHILD}/home`);
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { __medsWithHome?: boolean }).__medsWithHome),
+      )
+      .toBe(true);
+    const section = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "오늘 먹일 약" }) });
+    await expect(section.getByText("오늘 체크 0/3회")).toBeVisible();
+    // 🚨 오늘 회차만 선다 — 어제 회차(체크 둘)는 11-3 몫이다.
+    await expect(section.getByRole("checkbox")).toHaveCount(3);
+    expect(await gateMarks(page)).toEqual([]);
+
+    await section.getByText("12:30").click();
+    await expect(section.getByText("오늘 체크 1/3회")).toBeVisible();
+    await expect
+      .poll(() => writes(calls, "PUT", /\/medication-doses\/.+\/check$/).map((c) => c.body))
+      .toEqual([{ checked: true }]);
+
+    await section.getByRole("link", { name: "지난 날짜와 전체 일정 보기" }).click();
+    await page.waitForURL(`**/child/${CHILD}/profile/medications`);
+    await expect(page.getByText("오늘 체크 1/3회")).toBeVisible();
+  });
+
+  test.describe("먹일 약이 없으면", () => {
+    test.use({ scenario: "empty" });
+
+    test("구역 자체가 없다 — 홈을 복잡하게 하지 않는다", async ({ page }) => {
+      await page.goto(`/child/${CHILD}/home`);
+      await expect(page.getByText("아래에 한 줄 적으면 여기에 쌓여요")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "오늘 먹일 약" })).toHaveCount(0);
+    });
+  });
+});
