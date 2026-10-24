@@ -9,6 +9,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ChatThread, chatDayAnchor } from "@/components/chat-thread";
 import { ScreenTransition } from "@/components/route-transition";
 import { EventDraftList } from "@/components/event-draft-list";
+import { MedicationDraftList } from "@/components/medication-draft-list";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -171,6 +172,10 @@ function ChatScreen() {
    * 지난 턴도 연다 — 보관함에 아직 남은 초안이면 이어서 넣을 수 있다 (`ChatThread` 의 `PastTurnItem`).
    */
   const [draftsOf, setDraftsOf] = useState<{ key: string; draftIds: string[] } | null>(null);
+  /** 복약 초안 시트 (#537). 🚨 일정 초안 시트와 따로다 — 넣는 곳이 다른 게이트다. */
+  const [medicationsOf, setMedicationsOf] = useState<{ key: string; draftIds: string[] } | null>(
+    null,
+  );
   const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
 
@@ -416,6 +421,7 @@ function ChatScreen() {
             turns={liveTurns}
             answering={conversation.answering}
             onOpenDrafts={(key, draftIds) => setDraftsOf({ key, draftIds })}
+            onOpenMedicationDrafts={(key, draftIds) => setMedicationsOf({ key, draftIds })}
             onPickOffer={goToSuggestions}
           />
         )}
@@ -454,6 +460,27 @@ function ChatScreen() {
               draftIds={draftsOf.draftIds}
               origin="input"
               found="적어주신 말에서 일정을 찾았어요."
+            />
+          ) : null}
+        </BottomSheet>
+
+        {/* 🚨 **승인 게이트 ㉡ 가 이 시트 안의 카드에 있다** (#537 · 복약 제출). 일정 시트와 같은 이유로 스크림으로도
+            닫힌다 — 닫아도 초안은 남고 넣는 것은 카드마다의 버튼이다. 닫으면 아무것도 부르지 않는다. */}
+        <BottomSheet
+          open={medicationsOf !== null}
+          onClose={() => setMedicationsOf(null)}
+          title="찾은 복약"
+          footer={
+            <Button variant="secondary" block onClick={() => setMedicationsOf(null)}>
+              닫기
+            </Button>
+          }
+        >
+          {medicationsOf ? (
+            <MedicationDraftList
+              key={medicationsOf.key}
+              childId={childId}
+              draftIds={medicationsOf.draftIds}
             />
           ) : null}
         </BottomSheet>

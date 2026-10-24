@@ -141,8 +141,10 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
   보일 것이 없는 결과(쓰는 task)는 블록을 세우지 않는다 (`visibleAgentResults`).
   - 🚨 **Agent 결과도 이유를 말한 것이다.** 블록이 서면 "아이에 관한 기록은 찾지 못했어요" 를 세우지 않는다 —
     요청형 한 줄은 저장할 관찰이 없는 것이 정상이다 (`noticedWhy`)
-  - 🚨 **Agent 의 되묻기(`question`)에는 답할 자리를 열지 않는다.** Memory 의 되묻기(`note`)와 답의 쓰임이
-    달라서 `reply_to` 로 보내면 400 이다. 답을 받는 길은 #246 에서 정하고, 그때까지는 안내 문장이다
+  - 🚨 **Agent 의 되묻기(`question`)는 `awaits_reply` 가 참일 때만 답할 자리를 연다** (#537). 아니면 서버가 맥락을
+    들고 있지 않아서 `reply_to` 로 보내면 400 이다 (#246) — 안내 문장으로만 선다. 답을 받는 질문은 **run 당 하나**다:
+    Memory 질문이 먼저, 그다음이 `awaits_reply` 인 Agent 질문의 첫째다 (`lib/agent-result.ts` 의 `askedQuestion`).
+    답하는 길은 Memory 질문과 같다 — 원문 없이 `reply_to`. 규칙 원문은 [`medication-v1.md`](medication-v1.md) §4
   - 🚨 **추천이 든 결과는 "후보 N개" · 이유 한 문장 · "후보 보기" 가 블록에 선다** (#227 3단계). 링크는 그 블록의
     Agent 하나와 그 run 을 싣는다(`?agents=<agent>&run=<run_id>`) — 05 가 그 run 의 추천을 되살린다 (#249).
     후보가 있으면 개수 안내(`code`)는 "후보 N개" 가 대신해 그리지 않고, `code` 가 없는 readout(날씨 안내)은 그대로

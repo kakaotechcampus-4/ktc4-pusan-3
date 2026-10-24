@@ -6,6 +6,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { qk } from "@/lib/api/queryKeys";
 import {
   isDraftEvent,
+  isMedicationDraftEvent,
   streamRunEvents,
   type AgentResultEvent,
   type DoneEvent,
@@ -13,6 +14,7 @@ import {
   type FailedEvent,
   type GuidanceEvent,
   type LaneEvent,
+  type MedicationDraftsEvent,
   type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
@@ -22,7 +24,7 @@ import {
   type StepEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
-import type { Agent, EventDraft, Observation } from "@/lib/api/types";
+import type { Agent, EventDraft, MedicationDraft, Observation } from "@/lib/api/types";
 
 /**
  * 04 대화 · 08 사진 분석 — run 이벤트 스트림 상태.
@@ -103,6 +105,11 @@ export interface RunState {
    */
   drafts: EventDraft[];
   /**
+   * Health 가 만든 복약 초안 (#537). 🚨 **일정 초안과 다른 칸이다** — 제출이 게이트 ㉡(건강 기록 확정)이고
+   *    모양도 다르다. 한 배열에 섞으면 카드가 게이트를 갈라야 한다. 08 사진 run 에서는 늘 빈 배열이다.
+   */
+  medicationDrafts: MedicationDraft[];
+  /**
    * 🚨 **서버가 `failed` 로 말한 실패만 들어온다.** 연결이 끊긴 경우는 여기 오지 않는다 —
    *    그건 `unconfirmed` 다. 둘을 섞으면 화면이 "아무것도 저장하지 않았어요" 라고 단정한다.
    */
@@ -132,6 +139,7 @@ export const initialRunState: RunState = {
   unavailable: [],
   agentResults: [],
   drafts: [],
+  medicationDrafts: [],
   failure: null,
   interrupted: false,
 };
@@ -254,6 +262,11 @@ export function runReducer(state: RunState, action: RunAction): RunState {
           if (isDraftEvent(action.event.type)) {
             const { drafts } = action.event.data as EventDraftsEvent;
             return { ...state, drafts: [...state.drafts, ...drafts] };
+          }
+          // 복약 초안은 일정 초안과 다른 칸에 쌓는다 (#537 · `MEDICATION_DRAFT_EVENT`).
+          if (isMedicationDraftEvent(action.event.type)) {
+            const { drafts } = action.event.data as MedicationDraftsEvent;
+            return { ...state, medicationDrafts: [...state.medicationDrafts, ...drafts] };
           }
           return state;
       }

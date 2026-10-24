@@ -1,4 +1,4 @@
-import type { AgentReadout, AgentResultEvent, PartialEvent } from "@/lib/api/sse";
+import type { AgentReadout, AgentResultEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 
 /**
  * 04 답 묶음에 무엇을 세울지 고른다 (#227). 화면(`components/run-result.tsx`)은 그리기만 한다.
@@ -19,6 +19,29 @@ export function visibleAgentResults(results: AgentResultEvent[]): AgentResultEve
       result.readouts.some((readout) => readout.body.trim() !== "") ||
       (result.question ?? "").trim() !== "",
   );
+}
+
+/**
+ * run 이 **답을 기다리는 질문** 하나 (#537). 없으면 `null`.
+ *
+ * - Memory 의 되묻기(`note.kind === "question"`)가 먼저다. 그다음이 `awaits_reply` 인 Agent 질문의 첫째다.
+ * - 🚨 **하나만 고른다.** 답은 `reply_to` = 이 run 하나로 가서, 서버가 이어받는 맥락도 run 당 하나다
+ *   (`pending_reply.py`). 둘을 다 열면 보호자가 고른 질문과 서버가 이어받는 질문이 어긋날 수 있다.
+ *   그래서 고르지 않은 질문은 안내 문장으로만 선다.
+ * - 🚨 `awaits_reply` 가 없는 Agent 질문은 답할 수 없다 (#246) — 서버가 맥락을 들고 있지 않아 400 이다.
+ *
+ * @returns `result` 가 `null` 이면 Memory 의 질문이다. Agent 질문이면 그 결과 객체 자체다 — 화면은 어느 블록에
+ *   답하기 버튼을 세울지 이 참조로 가른다.
+ */
+export function askedQuestion(run: {
+  note: NoteEvent | null;
+  agentResults: readonly AgentResultEvent[];
+}): { text: string; result: AgentResultEvent | null } | null {
+  if (run.note?.kind === "question") return { text: run.note.text, result: null };
+  const result = run.agentResults.find(
+    (r) => r.awaits_reply === true && (r.question ?? "").trim() !== "",
+  );
+  return result?.question ? { text: result.question, result } : null;
 }
 
 /**
