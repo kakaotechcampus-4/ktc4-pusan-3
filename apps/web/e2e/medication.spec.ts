@@ -88,6 +88,12 @@ test.describe("med_draft — 복약 초안 (게이트 ㉡)", () => {
     ).toBeVisible();
     await expect(sheet.getByText("08:30, 12:30, 20:00", { exact: true }).first()).toBeVisible();
 
+    // 🚨 수정은 등록과 다른 말을 한다 — 새 코스가 아니라 남은 회차를 다시 만든다.
+    await expect(
+      sheet
+        .getByText(/^누르면 아직 오지 않은 회차가 바뀐 내용으로 다시 만들어져요/)
+        .filter({ visible: true }),
+    ).toBeVisible();
     await sheet.getByRole("button", { name: "확인했어요, 이대로 바꿀게요" }).click();
     await expect(sheet.getByText("넣었어요", { exact: true })).toBeVisible();
     const patched = writes(calls, "PATCH", /\/children\/c1\/medications\/ms_seed$/);
