@@ -13,6 +13,8 @@
 
 import pytest
 
+from app.agents.common.reference import allergen_groups, food_safety_terms
+from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.store.ports import SafetyEntry
 from app.agents.growth.tools.safety import (
     HazardHit,
@@ -24,6 +26,7 @@ from app.agents.growth.tools.safety import (
     check_routine_candidate,
     load_safety_rules,
 )
+from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import Term
 
 
@@ -381,6 +384,45 @@ class TestDefaultRules:
         다른 뜻인 자리("쌀쌀한" · "깨끗이" · "쑥쑥")는 `SINGLE_CHAR_NAMES` 의 guard 가 덮는다."""
         entries = [SafetyEntry("allergy", label, "active")]
         assert bool(rules.registered_names(text, entries)) is blocked
+
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [
+            ("참깨", "머리 어깨 무릎 짚기"),
+            ("생선", "어른이 입을 다물고 기다린다"),
+            ("육류", "손대지 않고 기다린다"),
+        ],
+    )
+    def test_이름은_띄어쓰기를_넘어_찾지_않는다(self, rules, label, text):
+        """Activity 와 같은 판정이다 — "다물고 기다린다" 의 "물고 기" 는 물고기가 아니다."""
+        assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")]) == ()
+
+    def test_시드_문장은_어느_식품_알레르기로도_막히지_않는다(self, rules):
+        """별칭이 늘 때마다 교육 문장 오탐이 조용히 생길 수 있다 (#556 리뷰 — 회귀 테스트).
+
+        교육 · 루틴 시드는 음식을 다루지 않는다(음식 용어 스캔이 뺀다). 제목 · 본문 · 준비물이
+        식품 이름으로 막히면 별칭이나 guard 가 문장의 다른 뜻을 덮지 못한 것이다.
+        """
+        food = food_safety_terms()
+        labels = dict.fromkeys(
+            [
+                *ALLERGEN_NAMES.values(),
+                *(group.label for group in allergen_groups()),
+                *(term.key for term in food.extras),
+                *food.group_foods,
+            ]
+        )
+        rows = [entry.to_row() for entry in growth_doc_seed()]
+        found = [
+            (label, row.doc_key)
+            for label in labels
+            for row in rows
+            if any(
+                rules.registered_names(text, [SafetyEntry("allergy", label, "active")])
+                for text in (row.title, row.body, *row.materials)
+            )
+        ]
+        assert found == []
 
     def test_사전에_없는_한_글자는_글자_그대로_대조하지_않는다(self, rules):
         """강아지 알레르기를 "개" 로 적어도 "블록 3개" 를 막지 않는다 — Activity 와 같다 (#305 ·

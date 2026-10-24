@@ -58,7 +58,20 @@ SINGLE_CHAR_NAMES: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "잣": (),
         "콩": (),
-        "깨": ("깨끗", "깨우", "깨워", "깨면", "깨진", "깨지", "깨져", "으깨"),
+        "깨": (
+            "깨끗",
+            "깨우",
+            "깨워",
+            "깨면",
+            "깨진",
+            "깨지",
+            "깨져",
+            "으깨",
+            "깨어",
+            "깨물",
+            "깨뜨",
+            "어깨",
+        ),
         "쑥": ("쑥쑥",),
         "쌀": ("쌀쌀", "좁쌀", "보리쌀"),
         "팥": (),
@@ -135,22 +148,22 @@ def allergy_book() -> LabelBook:
     별칭 표는 `food_safety_terms.yaml` 의 `extra_allergens` · `group_foods` 로 공용 로더가 읽는다 —
     food 패키지를 import 하지 않는다. Food 의 음식 이름 어휘(빵 · 라면)는 더하지 않는다 — 놀이 문장
     검사까지 넓어진다(allergen_terms.yaml 머리말).
+
+    사전의 Term 은 별칭 표 그대로다(메뉴용 guard). 놀이 · 교육 문장에 대조할 때는 호출부가
+    `for_sentences` 로 바꿔 쓴다.
     """
     food = food_safety_terms()
-    groups = {label: _for_sentences(term) for label, term in food.group_foods.items()}
-    rules = shared_name_rules({label: term for label, term in groups.items() if term.aliases})
-    for raw in food.extras:
-        # 이름은 별칭 전부로 알아본다(오리로 등록하면 식품) — 문장 대조에 쓰는 별칭만 줄인다
-        term = _for_sentences(raw)
-        blocks = Restriction(terms=(term,)) if term.aliases else Restriction()
-        rules.extend((name, blocks, raw.guards) for name in raw.aliases)
+    rules = shared_name_rules(food.group_foods)
+    for term in food.extras:
+        rules.extend((name, Restriction(terms=(term,)), term.guards) for name in term.aliases)
     return make_book(rules)
 
 
 # 놀이 · 교육 문장에서 다른 뜻으로 더 자주 나오는 19종 밖 식품 별칭 (#556 리뷰). 그 이름으로 등록한
 # 아이도 문장에는 이 별칭으로 대조하지 않는다 — 고기 알레르기의 오리 · 염소 · 사슴은 동물 놀이로,
 # 생태(명태)는 "생태 관찰" 로, 미음(쌀죽)은 한글 자음으로, 동부(콩)는 방향으로 나온다.
-# 같은 식품의 다른 별칭(오리고기 · 명태 · 현미)은 그대로 막는다. 메뉴를 보는 Food 는 쓰지 않는다.
+# 같은 식품의 다른 별칭(오리고기 · 명태 · 현미)은 그대로 막는다. 준비물 칸("오리" · "미음")은
+# 그 식품이라 이 별칭으로도 막는다(`for_sentences(items=True)`). 메뉴를 보는 Food 는 쓰지 않는다.
 SENTENCE_EXCLUDED_ALIASES = frozenset(
     {"오리", "칠면조", "사슴", "염소", "흑염소", "생태", "미음", "동부"}
 )
@@ -173,15 +186,19 @@ SENTENCE_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 )
 
 
-def _for_sentences(term: Term) -> Term:
-    """별칭 표의 Term 을 놀이 · 교육 문장 대조용으로 (#437 · #556 리뷰).
+def for_sentences(term: Term, *, items: bool = False) -> Term:
+    """`allergy_book()` 의 Term 을 놀이 · 교육 문장 대조용으로 (#437 · #556 리뷰).
 
     별칭 표의 guard 는 메뉴 이름용이라 문장의 다른 뜻을 덮지 못한다 — "친구에게 사과하기" ·
-    "대구 여행" · "잠 깨우기" 가 걸린다. 문장에서 다른 뜻이 더 흔한 별칭은 빼고
-    (`SENTENCE_EXCLUDED_ALIASES`), 다른 뜻이 나오는 자리를 guard 로 더한다(`SENTENCE_GUARDS` ·
-    한 글자는 `SINGLE_CHAR_NAMES`). 별칭이 다 빠지면 aliases 가 빈 Term — 호출부가 대조하지 않는다.
+    "대구 여행" · "잠 깨우기" 가 걸린다. 다른 뜻이 나오는 자리를 guard 로 더하고(`SENTENCE_GUARDS` ·
+    한 글자는 `SINGLE_CHAR_NAMES`), 문장에서 다른 뜻이 더 흔한 별칭은 뺀다
+    (`SENTENCE_EXCLUDED_ALIASES`). `items=True` 면 준비물 칸이라 별칭을 빼지 않는다 — 준비물로 적은
+    "오리" 는 그 식품이다. 별칭이 다 빠지면 aliases 가 빈 Term — 호출부가 대조하지 않는다.
+    대조는 띄어쓰기를 넘지 않게 한다(`match_fields(cross_spaces=False)`).
     """
-    aliases = tuple(a for a in term.aliases if normalize(a) not in SENTENCE_EXCLUDED_ALIASES)
+    aliases = tuple(
+        a for a in term.aliases if items or normalize(a) not in SENTENCE_EXCLUDED_ALIASES
+    )
     extra = [
         guard
         for alias in aliases

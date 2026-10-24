@@ -5,6 +5,7 @@
 
 import pytest
 
+from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.activity.tools import filters
@@ -14,7 +15,14 @@ from app.agents.activity.tools.filters import (
     filter_activity_safety,
     safety_terms,
 )
-from app.agents.common.reference import SAFETY_PROMOTE_BELOW_MONTH, hazard_terms
+from app.agents.common.reference import (
+    SAFETY_PROMOTE_BELOW_MONTH,
+    HazardTerms,
+    allergen_groups,
+    food_safety_terms,
+    hazard_terms,
+)
+from app.rules.allergen import ALLERGEN_NAMES
 
 
 def candidate(content: str, materials: tuple[str, ...] = ()) -> ActivityCandidate:
@@ -260,11 +268,43 @@ class TestExtraAllergenAliases:
     def test_버섯류로_등록해도_다른_뜻의_글자는_통과한다(self, content):
         assert not check(content, entries=[allergy("버섯류")]).blocked
 
-    @pytest.mark.parametrize("content", ["잠 깨우기 노래", "깨진 컵 치우기", "감자 으깨기"])
-    def test_별칭의_한_글자도_놀이_문장용_guard_를_쓴다(self, content):
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "잠 깨우기 노래",
+            "깨진 컵 치우기",
+            "감자 으깨기",
+            "아기가 깨어 있을 때 엎드리기",
+            "머리 어깨 무릎 짚기",
+            "치발기 깨물기",
+        ],
+    )
+    @pytest.mark.parametrize("label", ["깨", "참깨"])
+    def test_별칭의_한_글자도_놀이_문장용_guard_를_쓴다(self, label, content):
         """참깨의 별칭 "깨" 는 메뉴용 guard 만 있었다 — 놀이 문장에서는 한 글자 허용 목록의 guard 를
         같이 쓴다."""
-        assert not check(content, entries=[allergy("깨")]).blocked
+        assert not check(content, entries=[allergy(label)]).blocked
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("감자", "장난감 자동차 굴리기"),
+            ("새우", "수건 두 장 중 하나에 숨기기"),
+            ("육류", "장난감을 두고 기어서 가지러 오기"),
+            ("생선", "입을 다물고 기다리기"),
+        ],
+    )
+    def test_이름은_띄어쓰기를_넘어_찾지_않는다(self, label, content):
+        """띄어 쓴 두 낱말에 걸친 글자는 그 식품이 아니다 — "장난감 자동차" 의 "감 자"."""
+        result = check(content, entries=[allergy(label)])
+        assert not result.blocked
+        assert result.allergens == ()
+
+    def test_다른_뜻인_별칭도_준비물에_적으면_막는다(self):
+        """준비물 칸은 문장이 아니라 그 물건 이름이다 — "오리" 를 적었으면 그 식품을 쓴다."""
+        assert check("백숙 끓이기", ("오리", "냄비"), entries=[allergy("오리")]).blocked
+        assert check("죽 쑤기", ("미음",), entries=[allergy("쌀")]).blocked
+        assert not check("오리처럼 걷기", entries=[allergy("오리")]).blocked
 
     @pytest.mark.parametrize(
         ("label", "content"),
@@ -305,6 +345,43 @@ class TestExtraAllergenAliases:
     def test_19종_밖_식품에는_확인_문구를_내지_않는다(self, label):
         """식품은 이름 대조가 후보를 뺀다 — "식품 아닌 알레르기" 로 보면 결과마다 문구가 붙는다."""
         assert allergy_cautions([allergy(label)]) == ()
+
+
+def food_allergy_names() -> list[str]:
+    """보호자가 적을 수 있는 식품 이름 — 19종 · 묶음 · 19종 밖 식품(별칭 표)과 그 묶음."""
+    food = food_safety_terms()
+    return list(
+        dict.fromkeys(
+            [
+                *ALLERGEN_NAMES.values(),
+                *(group.label for group in allergen_groups()),
+                *(term.key for term in food.extras),
+                *food.group_foods,
+            ]
+        )
+    )
+
+
+def test_시드의_음식_아닌_활동은_어느_식품_알레르기로도_막히지_않는다(monkeypatch):
+    """별칭이 늘 때마다 놀이 문장 오탐이 조용히 생길 수 있다 (#556 리뷰 — 회귀 테스트).
+
+    시드 문장은 모델이 쓰는 후보 문장과 같은 모양이다. 음식이 들지 않은 행(`involves_food=False`)의
+    제목 · 본문 · 준비물이 어떤 식품 이름으로도 막히거나 알레르기 항목으로 잡히면 별칭이나 guard 가
+    문장의 다른 뜻을 덮지 못한 것이다 — "머리 어깨 무릎" 의 깨 · "장난감 자동차" 의 감자.
+    위험 용어는 이 테스트가 보는 것이 아니라 빈 사전으로 둔다 — 후보마다 색인을 다시 만들어 느리다.
+    """
+    monkeypatch.setattr(filters, "hazard_terms", lambda: HazardTerms({}, (), {}))
+    rows = [entry.to_row() for entry in activity_doc_seed() if not entry.involves_food]
+    # 제목과 본문은 줄을 바꿔 한 칸에 — 이름이 띄어쓰기를 넘지 않으니 둘에 걸쳐 걸리지 않는다
+    seeds = [(row.doc_key, candidate(f"{row.title}\n{row.body}", row.materials)) for row in rows]
+    found = []
+    for label in food_allergy_names():
+        terms = safety_terms([allergy(label)])
+        for doc_key, seed in seeds:
+            result = check_candidate(seed, months=40, terms=terms)
+            if "health_safety" in result.hits or result.allergens:
+                found.append((label, doc_key, result.allergens))
+    assert found == []
 
 
 class TestFilter:

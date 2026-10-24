@@ -34,13 +34,14 @@ from typing import Literal
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
     allergy_book,
+    for_sentences,
     non_food_allergies,
     read_label,
 )
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.growth.store.ports import SafetyEntry
-from app.rules.term_match import Term, match_terms, normalize
+from app.rules.term_match import Term, match_fields, match_terms, normalize
 
 HazardLevel = Literal["block", "warn"]
 RemovedBy = Literal["food_term", "allergy_name", "hazard_block"]
@@ -186,7 +187,9 @@ def load_safety_rules() -> SafetyRules:
             for word in rest
             if len(word) >= 2 or word in SINGLE_CHAR_NAMES
         )
-        return (*coded, *_registered_aliases_only(named.terms), *literal)
+        # 19종 밖 식품(별칭 표)은 문장용 guard 를 더하고 다른 뜻이 흔한 별칭(오리)을 뺀다
+        sentence = tuple(for_sentences(term) for term in named.terms)
+        return (*coded, *_registered_aliases_only(sentence), *literal)
 
     def scan_food(text: str) -> tuple[str, ...]:
         return match_terms(text, food_terms)
@@ -208,7 +211,13 @@ def load_safety_rules() -> SafetyRules:
         return tuple(hits)
 
     def scan_registered(text: str, entries: Sequence[SafetyEntry]) -> tuple[SafetyEntry, ...]:
-        return tuple(entry for entry in entries if match_terms(text, registered_terms(entry)))
+        # 이름은 띄어쓰기를 넘지 않는다 — 넘으면 "다물고 기다린다" 가 물고기로 걸린다.
+        # 판정은 Activity 와 같다(`match_fields(cross_spaces=False)`)
+        return tuple(
+            entry
+            for entry in entries
+            if match_fields((text,), registered_terms(entry), cross_spaces=False)
+        )
 
     return SafetyRules(
         food_terms=scan_food,
